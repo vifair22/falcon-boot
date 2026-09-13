@@ -1,0 +1,93 @@
+# clang-tidy configuration for airies-boot.
+#
+# The loader is freestanding C11 built for PE32+ by the mingw cross-gcc, with
+# no libc and no CRT, and it talks to firmware through UEFI protocol tables
+# whose shapes the spec fixes. A stock clang-tidy check set assumes a hosted
+# C program and a codebase free to pick its own types; several checks fire
+# purely on that mismatch. Everything switched off below is switched off for
+# that reason, and each one carries the reason.
+#
+# Run it through tools/analyze.sh, which supplies the compilation database and
+# gates the result against docs/notes/analyze-baseline.txt.
+#
+# Enabled families: bugprone-*, clang-analyzer-*, performance-*, portability-*,
+# misc-*. cert-* is deliberately not enabled: on this tree it is entirely
+# aliases of checks already in the set above, and it found nothing the set
+# above did not.
+#
+# Disabled, with reasons:
+#
+#   misc-include-cleaner
+#       src/efi/uefi.h is a deliberate umbrella over the split EFI headers, so
+#       every spec typedef reached through it is "not directly included". 304
+#       findings, all of them that.
+#
+#   clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling
+#       Wants the C11 Annex K _s functions. Freestanding: there is no libc to
+#       provide them, and src/lib/string.c is the only mem* implementation.
+#
+#   bugprone-easily-swappable-parameters
+#       Stylistic, and unactionable for functions whose signature is dictated
+#       by a UEFI protocol or by an existing internal contract.
+#
+#   bugprone-casting-through-void
+#       The (T *)(void *)p intermediate is not an accident here: it is what
+#       silences gcc -Wcast-align, which is in the repo-standard CFLAGS. The
+#       two checks want opposite code, and the gcc flag wins.
+#
+#   bugprone-multi-level-implicit-pointer-conversion
+#       UEFI hands protocol interfaces back through void **, and FreePool
+#       takes void *. Passing an EFI_HANDLE * to either is the spec's API.
+#
+#   performance-no-int-to-ptr
+#       EFI_PHYSICAL_ADDRESS is an integer by spec, and (CHAR16 *)(uintptr_t)s
+#       is how a const string reaches a non-const UEFI output parameter
+#       without tripping gcc -Wcast-qual, also in the standard CFLAGS.
+#
+#   misc-no-recursion
+#       src/efi/main.c scan_dir recurses on purpose; frame size is policed by
+#       -Wstack-usage=32768, which is the control that actually matters here.
+#
+#   clang-analyzer-optin.performance.Padding
+#       Struct field order follows the spec layout or reading order. Padding
+#       in a handful of descriptors is not a cost this loader can measure.
+#
+#   readability-*, including readability-identifier-naming
+#       The EFI headers must use the spec's CamelCase and the rest of the tree
+#       uses snake_case. No single naming rule describes both, so the whole
+#       family stays off rather than encoding an exception list that would be
+#       wrong half the time.
+#
+# Deliberately left ON despite currently firing (see the baseline file):
+#
+#   bugprone-implicit-widening-of-multiplication-result
+#       All 23 current hits are audited false positives (small compile-time
+#       constants times bounded indices), but this is exactly the check that
+#       would catch a real overflow in the exFAT/ext4/ISO parsers, which read
+#       attacker-supplied media. It stays on and the current hits are
+#       baselined, so a new one has to be looked at.
+
+Checks: >-
+  -*,
+  bugprone-*,
+  clang-analyzer-*,
+  performance-*,
+  portability-*,
+  misc-*,
+  -misc-include-cleaner,
+  -misc-no-recursion,
+  -clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling,
+  -clang-analyzer-optin.performance.Padding,
+  -bugprone-easily-swappable-parameters,
+  -bugprone-casting-through-void,
+  -bugprone-multi-level-implicit-pointer-conversion,
+  -performance-no-int-to-ptr
+
+# Our own headers carry static inline code and are worth checking; anything
+# from the mingw sysroot is not ours to fix.
+HeaderFilterRegex: '.*/src/.*'
+
+# tools/analyze.sh decides what fails the build, after the baseline is applied.
+WarningsAsErrors: ''
+
+FormatStyle: none

@@ -567,8 +567,6 @@ static int verify_digest(const json_value *digests, const json_value *name,
                          const luks_master_key *mk)
 {
     json_iter it;
-    int matched = 0;
-
     if (json_iter_init(digests, &it) != JSON_OK) {
         return LUKS_ERR_CORRUPT;
     }
@@ -596,8 +594,6 @@ static int verify_digest(const json_value *digests, const json_value *name,
         if (!arr_has_str(&keyslots, name->ptr, name->len)) {
             continue;
         }
-        matched = 1;
-
         if (!obj_str_is(&dobj, "type", "pbkdf2")) {
             return LUKS_ERR_UNSUPPORTED;
         }
@@ -639,7 +635,12 @@ static int verify_digest(const json_value *digests, const json_value *name,
         }
         return LUKS_ERR_NOKEY;
     }
-    return matched ? LUKS_ERR_NOKEY : LUKS_ERR_CORRUPT;
+    /* The first digest referencing the keyslot decides, and every outcome
+     * of examining it returns from inside the loop, so reaching this point
+     * means no digest references the keyslot at all. That is a broken
+     * volume, not a wrong passphrase: a candidate key that cannot be
+     * verified must never unlock anything. */
+    return LUKS_ERR_CORRUPT;
 }
 
 static int try_slot(luks_vol *v, const json_value *name,

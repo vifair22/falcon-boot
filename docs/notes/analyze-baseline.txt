@@ -1,0 +1,129 @@
+# airies-boot static analysis baseline.
+#
+# Managed by tools/analyze.sh. Data lines below are tab separated:
+#
+#     stage <TAB> file <TAB> check-id <TAB> message
+#
+# with no line or column number, so an edit that only moves code around does
+# not churn the file. Duplicate keys are kept, one line per occurrence, which
+# means the *count* is part of the gate: a second hit of an already-baselined
+# pattern in the same file is reported as new and has to be looked at.
+#
+# Regenerate with `tools/analyze.sh --update-baseline`. That preserves this
+# comment block and nothing else, so every entry's reasoning belongs here.
+#
+# An entry here is a claim that a human looked at the finding and decided it
+# does not describe a defect. Do not add one without reading the code.
+#
+# ==========================================================================
+# 1. -Wanalyzer-null-dereference, src/iso/iso.c (2 entries)
+# ==========================================================================
+#
+# Both are `if (esp_open_root(bs, esp_handle, &root) == EFI_SUCCESS) { ...
+# root->Close(root); }`, in iso_boot and in iso_survey_media.
+#
+# The path gcc reports is infeasible. It enters esp_open_root, takes the
+# `*root = NULL` store, takes the EFI_ERROR(status) *true* branch out of
+# HandleProtocol, and then at the call site takes the `== EFI_SUCCESS` *true*
+# branch with root still NULL. Those two branch choices contradict each other:
+# EFI_ERROR is the high bit of the status, so a status that satisfies it
+# cannot also be zero. The analyzer's constraint manager does not derive
+# "value is nonzero" from "bit 63 of value is set", loses the relation, and
+# joins the two states.
+#
+# The real success path cannot produce a NULL root either: on it, the last
+# thing esp_open_root does is `return sfs->OpenVolume(sfs, root)`, and
+# EFI_SIMPLE_FILE_SYSTEM_PROTOCOL.OpenVolume is required by UEFI Section 13.4
+# to have written Root before it returns EFI_SUCCESS.
+#
+# Not suppressed with -Wno-analyzer-null-dereference on iso.c: that would
+# blind the whole file, and iso.c is one of the files that parses
+# attacker-supplied media. Baselined narrowly instead.
+#
+# ==========================================================================
+# 2. bugprone-implicit-widening-of-multiplication-result (23 entries)
+# ==========================================================================
+#
+# The check stays enabled (see .clang-tidy) because it is the one that would
+# catch a real offset overflow in the media parsers. Every current hit was
+# audited and every one multiplies a bounded index by a small compile-time
+# constant, in unsigned int, with no way to reach 2^32:
+#
+#   src/crypto/{aes,aesni,sha256,sha512}.c   19 entries. All `4u * i`,
+#       `16u * r` and friends where the index is a loop counter bounded by a
+#       literal (4, 8, 16, 64) or by nk <= 8. Fixed-size state arrays.
+#
+#   src/exfat/exfat.c:503                    `2u * j`, j is a uint8_t bounded
+#       by take, which is clamped to 15 two lines earlier.
+#
+#   src/ext4/ext4.c:516,526,550              `i * EXT_ENT_SIZE`, EXT_ENT_SIZE
+#       is 12 and i < entries. entries comes from a 16-bit on-disk field, so
+#       it is at most 65535 and the product is at most 786420. The bound that
+#       actually matters, entries against the buffer, is enforced by
+#       extent_node_check, which every node passes through before it is
+#       indexed (including the in-inode root, checked before the descent
+#       loop).
+#
+#   src/iso/iso.c:455,458                    `(DIR_SECURITY + 1u) * 8u` and
+#       `DIR_SECURITY * 8u`. Both operands are literals.
+#
+#   src/luks/luks.c:121                      the operand is the macro
+#       LUKS_MAX_HDR_SIZE, `(4u * 1024u * 1024u)`. A constant, compared
+#       against a uint64_t.
+#
+# ==========================================================================
+# 3. misc-use-internal-linkage, src/efi/main.c (1 entry)
+# ==========================================================================
+#
+# `efi_main` has no declaration in a header and no in-tree caller, so the
+# check concludes it can be static. It cannot: it is the PE entry point, named
+# by `-Wl,-e efi_main` in LDFLAGS and called by the firmware. Would be a
+# one-line NOLINT at the definition if inline suppressions were in play.
+#
+# ==========================================================================
+# 4. clang-analyzer-deadcode.DeadStores, src/luks/luks.c (1 entry)
+# ==========================================================================
+#
+# OPEN FINDING, baselined so the gate is usable, NOT a false positive.
+#
+# In the digest loop, `matched = 1` at luks.c:599 is genuinely dead: every
+# path after it returns from inside the loop, and every `continue` is above
+# it. So the loop's only exit to the tail is the `r == 0` break, where matched
+# is still 0, and the tail `return matched ? LUKS_ERR_NOKEY : LUKS_ERR_CORRUPT`
+# can only ever yield LUKS_ERR_CORRUPT.
+#
+# cppcheck agrees independently (unreadVariable at the same line, visible with
+# CPPCHECK_ENABLE=style). Not a memory-safety problem: the reachable answer,
+# "no digest references this keyslot" -> LUKS_ERR_CORRUPT, is a defensible
+# one. But the two-way tail says the author expected a second outcome, so
+# either the variable and the ternary should go, or a case that should return
+# LUKS_ERR_NOKEY is currently returning something else. Needs an owner
+# decision; remove this entry once it is resolved.
+
+fanalyzer	src/iso/iso.c	-Wanalyzer-null-dereference	dereference of NULL 'root' [CWE-476]
+fanalyzer	src/iso/iso.c	-Wanalyzer-null-dereference	dereference of NULL 'root' [CWE-476]
+tidy	src/crypto/aes.c	bugprone-implicit-widening-of-multiplication-result	result of multiplication in type 'unsigned int' is used as a pointer offset after an implicit widening conversion to type 'size_t'
+tidy	src/crypto/aes.c	bugprone-implicit-widening-of-multiplication-result	result of multiplication in type 'unsigned int' is used as a pointer offset after an implicit widening conversion to type 'size_t'
+tidy	src/crypto/aes.c	bugprone-implicit-widening-of-multiplication-result	result of multiplication in type 'unsigned int' is used as a pointer offset after an implicit widening conversion to type 'size_t'
+tidy	src/crypto/aes.c	bugprone-implicit-widening-of-multiplication-result	result of multiplication in type 'unsigned int' is used as a pointer offset after an implicit widening conversion to type 'size_t'
+tidy	src/crypto/aes.c	bugprone-implicit-widening-of-multiplication-result	result of multiplication in type 'unsigned int' is used as a pointer offset after an implicit widening conversion to type 'size_t'
+tidy	src/crypto/aes.c	bugprone-implicit-widening-of-multiplication-result	result of multiplication in type 'unsigned int' is used as a pointer offset after an implicit widening conversion to type 'size_t'
+tidy	src/crypto/aes.c	bugprone-implicit-widening-of-multiplication-result	result of multiplication in type 'unsigned int' is used as a pointer offset after an implicit widening conversion to type 'size_t'
+tidy	src/crypto/aes.c	bugprone-implicit-widening-of-multiplication-result	result of multiplication in type 'unsigned int' is used as a pointer offset after an implicit widening conversion to type 'size_t'
+tidy	src/crypto/aes.c	bugprone-implicit-widening-of-multiplication-result	result of multiplication in type 'unsigned int' is used as a pointer offset after an implicit widening conversion to type 'size_t'
+tidy	src/crypto/aesni.c	bugprone-implicit-widening-of-multiplication-result	result of multiplication in type 'unsigned int' is used as a pointer offset after an implicit widening conversion to type 'size_t'
+tidy	src/crypto/aesni.c	bugprone-implicit-widening-of-multiplication-result	result of multiplication in type 'unsigned int' is used as a pointer offset after an implicit widening conversion to type 'size_t'
+tidy	src/crypto/aesni.c	bugprone-implicit-widening-of-multiplication-result	result of multiplication in type 'unsigned int' is used as a pointer offset after an implicit widening conversion to type 'size_t'
+tidy	src/crypto/sha256.c	bugprone-implicit-widening-of-multiplication-result	result of multiplication in type 'unsigned int' is used as a pointer offset after an implicit widening conversion to type 'size_t'
+tidy	src/crypto/sha256.c	bugprone-implicit-widening-of-multiplication-result	result of multiplication in type 'unsigned int' is used as a pointer offset after an implicit widening conversion to type 'size_t'
+tidy	src/crypto/sha512.c	bugprone-implicit-widening-of-multiplication-result	result of multiplication in type 'unsigned int' is used as a pointer offset after an implicit widening conversion to type 'size_t'
+tidy	src/crypto/sha512.c	bugprone-implicit-widening-of-multiplication-result	result of multiplication in type 'unsigned int' is used as a pointer offset after an implicit widening conversion to type 'size_t'
+tidy	src/efi/main.c	misc-use-internal-linkage	function 'efi_main' can be made static to enforce internal linkage
+tidy	src/exfat/exfat.c	bugprone-implicit-widening-of-multiplication-result	result of multiplication in type 'unsigned int' is used as a pointer offset after an implicit widening conversion to type 'size_t'
+tidy	src/ext4/ext4.c	bugprone-implicit-widening-of-multiplication-result	result of multiplication in type 'unsigned int' is used as a pointer offset after an implicit widening conversion to type 'size_t'
+tidy	src/ext4/ext4.c	bugprone-implicit-widening-of-multiplication-result	result of multiplication in type 'unsigned int' is used as a pointer offset after an implicit widening conversion to type 'size_t'
+tidy	src/ext4/ext4.c	bugprone-implicit-widening-of-multiplication-result	result of multiplication in type 'unsigned int' is used as a pointer offset after an implicit widening conversion to type 'size_t'
+tidy	src/iso/iso.c	bugprone-implicit-widening-of-multiplication-result	performing an implicit widening conversion to type 'size_t' (aka 'unsigned long long') of a multiplication performed in type 'unsigned int'
+tidy	src/iso/iso.c	bugprone-implicit-widening-of-multiplication-result	result of multiplication in type 'unsigned int' is used as a pointer offset after an implicit widening conversion to type 'size_t'
+tidy	src/luks/luks.c	bugprone-implicit-widening-of-multiplication-result	performing an implicit widening conversion to type 'uint64_t' (aka 'unsigned long long') of a multiplication performed in type 'unsigned int'
+tidy	src/part/part.c	bugprone-implicit-widening-of-multiplication-result	result of multiplication in type 'uint32_t' (aka 'unsigned int') is used as a pointer offset after an implicit widening conversion to type 'size_t'
