@@ -13,6 +13,7 @@ int run_extent_tests(void);
 int run_fixture_tests(void);
 int run_cpio_tests(void);
 int run_family_tests(void);
+int run_isoprobe_tests(void);
 int run_manifest_tests(void);
 int run_bless_tests(void);
 int run_crypto_tests(void);
@@ -20,6 +21,7 @@ int run_json_tests(void);
 int run_luks_tests(void);
 int run_ext4_tests(void);
 int run_fs_tests(void);
+int run_iso_overlay_tests(void);
 int run_part_tests(void);
 int run_sb_tests(void);
 

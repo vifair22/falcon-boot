@@ -9,6 +9,14 @@
 #   src/exfat/exfat.c    device access through a read callback
 #   src/cpio/cpio.c      no allocator: the caller supplies the buffer
 #   src/family/family.c  filesystem access through two probe callbacks
+#   src/cli/sign/isoprobe.c the bless tool's view of an ISO. Host code, not
+#                        loader code, but EFI-free for the same reason and
+#                        testable for the same reason: the ISO9660 and UDF
+#                        listings it unions are built here from listing text
+#                        instead of from bsdtar and 7-Zip, so no helper
+#                        process and no image are involved. src/cli/sign/util.c
+#                        comes with it as a dependency, not as a unit under
+#                        test
 #   src/manifest/*.c     pure text in, records out; no I/O at all
 #   src/bless/blesscore.c the blessed-boot record cache; manifest bytes in,
 #                        a per-entry label and boot decision out. No I/O
@@ -23,6 +31,13 @@
 #   src/part/part.c      device access through a read callback; the firmware
 #                        half of that module is src/part/partefi.c, which is
 #                        EFI-only by nature and deliberately not built here
+#   src/iso/overlay.h    the virtual-media override layer's address
+#                        arithmetic. Header-only and EFI-free on purpose (no
+#                        UEFI types, no I/O, fs_file pointers carried and
+#                        never followed), so it needs no UUT_SRCS entry: the
+#                        test TU that includes it is the only copy in this
+#                        binary. The firmware half is src/iso/iso.c and is
+#                        Block I/O all the way down, so it is not built here
 #   src/sb/sb.c          reads three EFI variables through the runtime
 #                        services pointer it is handed, so a fake GetVariable
 #                        is the whole platform it needs. It is the one unit
@@ -110,6 +125,7 @@ TEST_SRCS := \
 	$(TEST_DIR)/exfat_fixture_test.c \
 	$(TEST_DIR)/cpio_test.c \
 	$(TEST_DIR)/family_test.c \
+	$(TEST_DIR)/isoprobe_test.c \
 	$(TEST_DIR)/manifest_test.c \
 	$(TEST_DIR)/bless_test.c \
 	$(TEST_DIR)/crypto_test.c \
@@ -119,12 +135,15 @@ TEST_SRCS := \
 	$(TEST_DIR)/part_test.c \
 	$(TEST_DIR)/sb_test.c \
 	$(TEST_DIR)/fs_test.c \
+	$(TEST_DIR)/iso_overlay_test.c \
 	$(TEST_DIR)/synth.c
 
 UUT_SRCS := \
 	$(ROOT)/src/exfat/exfat.c \
 	$(ROOT)/src/cpio/cpio.c \
 	$(ROOT)/src/family/family.c \
+	$(ROOT)/src/cli/sign/isoprobe.c \
+	$(ROOT)/src/cli/sign/util.c \
 	$(ROOT)/src/manifest/manifest.c \
 	$(ROOT)/src/manifest/manifest_write.c \
 	$(ROOT)/src/bless/blesscore.c \
@@ -146,19 +165,45 @@ UUT_SRCS := \
 	$(ROOT)/src/luks/luks.c
 
 # Filter for the coverage report, one alternative per unit above.
-COV_FILTER := .*/src/(exfat/exfat|cpio/cpio|family/family|manifest/[a-z_]+|bless/blesscore|ext4/ext4|part/part|fs/fs|sb/sb|crypto/[a-z0-9]+|luks/[a-z0-9]+)\.c$$
+# src/cli/sign/util.c is deliberately absent: it is compiled in because
+# isoprobe.c calls into it, not as a unit under test here. Its subprocess
+# runners and file I/O are exercised by running the tool, and reporting them
+# as an untested unit would only depress a number that is supposed to mean
+# something.
+COV_FILTER := .*/src/(exfat/exfat|cpio/cpio|family/family|cli/sign/isoprobe|manifest/[a-z_]+|bless/blesscore|ext4/ext4|part/part|fs/fs|sb/sb|crypto/[a-z0-9]+|luks/[a-z0-9]+)\.c$$|.*/src/iso/overlay\.h$$
 
 OBJS := $(patsubst $(TEST_DIR)/%.c,$(OBJ)/%.o,$(TEST_SRCS)) \
 	$(patsubst $(ROOT)/src/%.c,$(OBJ)/uut/%.o,$(UUT_SRCS))
 DEPS := $(OBJS:.o=.o.d)
 
-.PHONY: all run coverage clean
+.PHONY: all run coverage compile-db clean
 
-all: $(BIN)
+all: $(BIN) compile-db
 
 $(BIN): $(OBJS)
 	@mkdir -p $(@D)
 	$(CC) $(LDFLAGS) -o $@ $(OBJS) $(LDLIBS)
+
+# clangd finds the nearest compile_commands.json by walking up from the file,
+# so a database here is what makes the test sources resolve: the root one
+# describes only src/, and without this every cmocka assertion reads as an
+# undeclared function in the editor. Kept out of the root database on purpose,
+# since tools/analyze.sh analyses everything it finds there and the test
+# binaries are not what that gate is for.
+compile-db: $(TEST_DIR)/compile_commands.json
+
+$(TEST_DIR)/compile_commands.json: $(TEST_DIR)/Makefile
+	@echo '[' > $@
+	@for src in $(TEST_SRCS) $(UUT_SRCS); do \
+		printf '  {\n' >> $@; \
+		printf '    "directory": "%s",\n' '$(TEST_DIR)' >> $@; \
+		printf '    "command": "%s %s -c %s",\n' \
+			'$(CC)' '$(strip $(CFLAGS))' "$$src" >> $@; \
+		printf '    "file": "%s"\n' "$$src" >> $@; \
+		printf '  },\n' >> $@; \
+	done
+	@sed -i '$$ s/,$$//' $@
+	@echo ']' >> $@
 
 $(OBJ)/%.o: $(TEST_DIR)/%.c
 	@mkdir -p $(@D)
@@ -186,6 +231,12 @@ $(OBJ)/uut/crypto/aesni.o: CFLAGS += -maes
 # 16-bit under either setting, so the test and the unit agree on the bytes
 # without agreeing on a compiler flag.
 $(OBJ)/uut/sb/sb.o: CFLAGS += -fshort-wchar
+
+# util.c calls realpath(), which glibc declares only under _XOPEN_SOURCE or
+# _GNU_SOURCE; the tool's own build uses the latter. The rest of the suite
+# stays on the narrower _POSIX_C_SOURCE, so the widening is confined to this
+# one object exactly as -maes and -fshort-wchar are.
+$(OBJ)/uut/cli/sign/util.o: CFLAGS += -D_XOPEN_SOURCE=700
 
 -include $(DEPS)
 

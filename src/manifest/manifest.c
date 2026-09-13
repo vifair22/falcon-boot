@@ -138,8 +138,9 @@ manifest_bless manifest_lookup(const manifest_record *recs, size_t n,
 
 /* Accumulator for the block being read. "bad" is sticky: once a block has
  * shown one unusable field it is dropped whole, because a record is only
- * meaningful as a set (a path without its size cannot be matched, a size
- * without its uki names nothing to boot). */
+ * meaningful as a set (a path without its size cannot be matched, a blessed
+ * size without its uki names nothing to boot, a prepared splice without its
+ * hash has no folder to resolve in). */
 typedef struct {
     manifest_record rec;
     int             active;   /* an iso= has been seen */
@@ -148,7 +149,11 @@ typedef struct {
     int             has_uki;
 } block;
 
-static int key_is(const char *k, size_t n, const char *want)
+/* Case-insensitive match of a length-counted token against a lowercase
+ * literal. Used for key names and for the two kind= values, which are the
+ * only enumerated value in the format; everything else is a name or a number
+ * and is compared, or not compared, as written. */
+static int tok_is(const char *k, size_t n, const char *want)
 {
     size_t i;
 
@@ -227,9 +232,72 @@ static int sha256_set(char *dst, const char *src, size_t n)
     return 1;
 }
 
+/* One splice= value: <iso_off>:<len>:<name>, split on the first two colons so
+ * a name is whatever follows the second one. Zero on any malformed shape, and
+ * the caller turns that into a dropped record rather than a dropped key: a
+ * byte map with a hole in it would serve the original bytes at the spliced
+ * range, which is the failure the preparation existed to remove.
+ *
+ * The numbers come off writable exFAT, so they are parsed the way size= is
+ * (parse_u64 rejects rather than wraps) and then bounded as a pair: len zero
+ * is nothing to serve, and iso_off + len is held under MANIFEST_SIZE_MAX by
+ * subtracting rather than adding, so the end offset a consumer computes is
+ * known not to overflow. */
+static int splice_add(block *b, const char *v, size_t n)
+{
+    manifest_splice *sp;
+    uint64_t off;
+    uint64_t len;
+    size_t c1 = 0;
+    size_t c2;
+    size_t nlen;
+
+    if (b->rec.splice_n >= MANIFEST_SPLICE_MAX)
+        return 0;
+    while (c1 < n && v[c1] != ':')
+        c1++;
+    if (c1 == n)
+        return 0;
+    c2 = c1 + 1u;
+    while (c2 < n && v[c2] != ':')
+        c2++;
+    if (c2 == n)
+        return 0;
+    if (!parse_u64(v, c1, &off) || !parse_u64(v + c1 + 1u, c2 - c1 - 1u, &len))
+        return 0;
+    if (len == 0 || off > MANIFEST_SIZE_MAX - len)
+        return 0;
+
+    v += c2 + 1u;
+    nlen = n - c2 - 1u;
+    sp = &b->rec.splice[b->rec.splice_n];
+    if (nlen == 0 || !value_printable(v, nlen) ||
+        !field_set(sp->name, sizeof(sp->name), v, nlen))
+        return 0;
+    sp->iso_off = off;
+    sp->len = len;
+    b->rec.splice_n = (uint8_t)(b->rec.splice_n + 1u);
+    return 1;
+}
+
 static void block_reset(block *b)
 {
     memset(b, 0, sizeof(*b));
+}
+
+/* The per-kind validity rule (manifest.h), in the one place that decides
+ * whether a block becomes a record. Per kind rather than one global test
+ * because the two kinds name different artifacts: requiring uki= of both
+ * would drop every prepared record silently, which is exactly the bug this
+ * key was added to fix, and requiring it of neither would let a blessed
+ * record with nothing to boot reach the menu. */
+static int block_valid(const block *b)
+{
+    if (b->bad || !b->has_size || b->rec.iso[0] == '\0')
+        return 0;
+    if (b->rec.kind == MANIFEST_KIND_PREPARED)
+        return b->rec.has_sha256 != 0u;
+    return b->has_uki && b->rec.splice_n == 0u;
 }
 
 /* Emits the accumulated block if it is usable. Counts every valid record,
@@ -240,7 +308,7 @@ static void block_flush(block *b, manifest_record *out, size_t cap,
 {
     if (!b->active)
         return;
-    if (!b->bad && b->has_size && b->has_uki && b->rec.iso[0] != '\0') {
+    if (block_valid(b)) {
         if (*count < cap)
             out[*count] = b->rec;
         (*count)++;
@@ -318,7 +386,7 @@ int manifest_parse(const void *buf, size_t len,
             vlen--;
         }
 
-        if (key_is(key, klen, "iso")) {
+        if (tok_is(key, klen, "iso")) {
             /* A new iso= closes the previous block, which is what makes the
              * format streamable and a missing key a local failure. */
             block_flush(&b, out, cap, count);
@@ -332,25 +400,40 @@ int manifest_parse(const void *buf, size_t len,
         if (!b.active)
             continue;   /* keys before the first iso= belong to no block */
 
-        if (key_is(key, klen, "size")) {
+        if (tok_is(key, klen, "size")) {
             if (!parse_u64(val, vlen, &b.rec.size))
                 b.bad = 1;
             else
                 b.has_size = 1;
-        } else if (key_is(key, klen, "uki")) {
+        } else if (tok_is(key, klen, "uki")) {
             if (vlen == 0 || !value_printable(val, vlen) ||
                 !field_set(b.rec.uki, sizeof(b.rec.uki), val, vlen))
                 b.bad = 1;
             else
                 b.has_uki = 1;
-        } else if (key_is(key, klen, "family")) {
+        } else if (tok_is(key, klen, "family")) {
             if (!value_printable(val, vlen) ||
                 !field_set(b.rec.family, sizeof(b.rec.family), val, vlen))
                 b.bad = 1;
-        } else if (key_is(key, klen, "sha256")) {
+        } else if (tok_is(key, klen, "sha256")) {
             b.rec.has_sha256 = sha256_set(b.rec.sha256, val, vlen) ? 1u : 0u;
             if (!b.rec.has_sha256)
                 b.rec.sha256[0] = '\0';
+        } else if (tok_is(key, klen, "kind")) {
+            /* Optional, and its absence is the whole reason it can be: every
+             * manifest written before this key existed carries only blessed
+             * records, and block_reset has already said so. A kind nobody
+             * knows is a record nobody should act on, so it drops the record
+             * rather than falling back to blessed. */
+            if (tok_is(val, vlen, "blessed"))
+                b.rec.kind = MANIFEST_KIND_BLESSED;
+            else if (tok_is(val, vlen, "prepared"))
+                b.rec.kind = MANIFEST_KIND_PREPARED;
+            else
+                b.bad = 1;
+        } else if (tok_is(key, klen, "splice")) {
+            if (!splice_add(&b, val, vlen))
+                b.bad = 1;
         }
         /* Any other key: skipped, per the forward-compatibility rule. */
     }

@@ -159,6 +159,48 @@ SIGN_OBJS := $(SIGN_SRCS:src/%.c=build/host/%.o)
 PAYLOAD_SRC := tools/payload/payload.c
 PAYLOAD := build/test/payload.efi
 
+# ---- WinPE jump binary (DESIGN Section 6.3) ----
+#
+# Windows userland, not firmware: this is an ordinary Win64 console process
+# that runs inside WinPE after ExitBootServices, so it links the CRT and calls
+# Win32 directly. It shares only the cross-compiler with the loader, which is
+# why it gets its own flag set rather than CFLAGS: none of the freestanding
+# switches apply, and the hosted protections the host tooling turns on (stack
+# protector) belong here too. -Wstack-usage is absent for the same reason it
+# exists in EFI-land - Windows grows this thread's stack on demand.
+#
+# It is deliberately not in SRCS: nothing here may ever link into the loader.
+WINJUMP := build/bin/winjump.exe
+WINJUMP_SRCS := src/winjump/winjump.c
+WINJUMP_OBJS := $(WINJUMP_SRCS:src/%.c=build/winjump/%.o)
+WINJUMP_DEPS := $(WINJUMP_OBJS:.o=.o.d)
+
+# Redundant for gcc, which already searches its own sysroot, and present for
+# the clang-based tools: clang-tidy infers the mingw target from the compiler
+# name but not where this toolchain keeps its headers, so without this it
+# cannot find windows.h and the analyze gate fails on a file that compiles
+# cleanly. Derived rather than written out, since the prefix is a property of
+# whichever mingw is installed.
+MINGW_SYSROOT := $(shell $(CC) -print-sysroot 2>/dev/null)
+WINJUMP_SYSINC := $(if $(MINGW_SYSROOT),\
+	-isystem $(MINGW_SYSROOT)/x86_64-w64-mingw32/include,)
+
+WINJUMP_CFLAGS := -std=c11 -O2 \
+	-Wall -Wextra -Wpedantic -Wshadow -Wunused -Wdouble-promotion \
+	-Wformat=2 -Wformat-truncation \
+	-Wmissing-prototypes -Wstrict-prototypes \
+	-Wmissing-declarations -Wcast-align -Wcast-qual -Wnull-dereference \
+	-Wconversion -Wsign-conversion \
+	-fstack-protector-strong \
+	$(WINJUMP_SYSINC) \
+	-Isrc
+
+# VirtDisk.dll is the whole point; advapi32 supplies the token calls that
+# AttachVirtualDisk's privilege requirement needs. Both are inbox in WinPE
+# (measured in the 25H2 boot.wim), as are kernel32 and msvcrt.
+WINJUMP_LDFLAGS := -fstack-protector-strong -Wl,--no-insert-timestamp
+WINJUMP_LIBS := -lvirtdisk -ladvapi32
+
 EFI := build/bin/falcon-boot.efi
 ESP := build/esp
 TEST_IMG := build/test-exfat.img
@@ -184,11 +226,11 @@ SEMVER := $(shell cat release_version)
 # Repo-standard full version: SEMVER_YYYYMMDD.HHMM.TYPE.
 VERSION := $(SEMVER)_$(shell date +%Y%m%d.%H%M).$(VARIANT)
 
-.PHONY: all cli appliance test-appliance-stick test-appliance check-tools esp run run-secboot run-stick run-stick-secboot \
+.PHONY: all cli winjump appliance test-appliance-stick test-appliance check-tools esp run run-secboot run-stick run-stick-secboot \
 	analyze sbat-check sign mok-test test-image test-iso test-img test-stick \
 	test-uki payload version-stamp clean
 
-all: $(EFI) cli compile_commands.json
+all: $(EFI) cli winjump compile_commands.json
 
 $(EFI): $(OBJS)
 	@mkdir -p $(@D)
@@ -234,6 +276,18 @@ build/host/%.o: src/%.c
 build/host/crypto/aesni.o: HOST_CFLAGS += -maes
 
 -include $(HOST_DEPS)
+
+winjump: $(WINJUMP)
+
+$(WINJUMP): $(WINJUMP_OBJS)
+	@mkdir -p $(@D)
+	$(CC) $(WINJUMP_LDFLAGS) -o $@ $(WINJUMP_OBJS) $(WINJUMP_LIBS)
+
+build/winjump/%.o: src/%.c
+	@mkdir -p $(@D)
+	$(CC) $(WINJUMP_CFLAGS) -MMD -MF $@.d -c -o $@ $<
+
+-include $(WINJUMP_DEPS)
 
 payload: $(PAYLOAD)
 
@@ -313,6 +367,17 @@ compile_commands.json: Makefile
 		printf '    "file": "%s/%s"\n' '$(CURDIR)' "$$src" >> $@; \
 		printf '  },\n' >> $@; \
 	done
+	@for entry in $(foreach s,$(WINJUMP_SRCS),$(s):$(s:src/%.c=build/winjump/%.o)); do \
+		src=$${entry%%:*}; \
+		obj=$${entry##*:}; \
+		printf '  {\n' >> $@; \
+		printf '    "directory": "%s",\n' '$(CURDIR)' >> $@; \
+		printf '    "command": "%s %s -MMD -MF %s.d -c -o %s %s/%s",\n' \
+			'$(CC)' '$(strip $(WINJUMP_CFLAGS))' "$$obj" "$$obj" \
+			'$(CURDIR)' "$$src" >> $@; \
+		printf '    "file": "%s/%s"\n' '$(CURDIR)' "$$src" >> $@; \
+		printf '  },\n' >> $@; \
+	done
 	@sed -i '$$ s/,$$//' $@
 	@echo ']' >> $@
 
@@ -325,9 +390,11 @@ check-tools:
 		command -v $$t >/dev/null 2>&1 || { echo "MISSING (required): $$t"; missing=1; }; \
 	done; \
 	for t in qemu-system-x86_64 sgdisk losetup openssl cryptsetup sbsign \
-	         mkfs.fat mkfs.exfat mkfs.ext4 bsdtar ukify; do \
+	         mkfs.fat mkfs.exfat mkfs.ext4 bsdtar ukify wimlib-imagex; do \
 		command -v $$t >/dev/null 2>&1 || echo "missing (needed for host tooling / tests): $$t"; \
 	done; \
+	command -v 7z >/dev/null 2>&1 || command -v 7zz >/dev/null 2>&1 || \
+		echo "missing (bless reads UDF media with it; without it Windows ISOs classify as unknown): 7z"; \
 	if [ $$missing -ne 0 ]; then echo "Required toolchain incomplete."; exit 1; fi; \
 	echo "Toolchain OK."
 

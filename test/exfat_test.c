@@ -13,6 +13,12 @@
  * construction, so they are unit-testable here with no firmware and no image
  * at all.
  *
+ * The bless tool's view of an ISO (src/cli/sign/isoprobe.c) is host code
+ * rather than loader code, but it is here for the same reason: the union of
+ * the ISO9660 and UDF listings, and the case folding over both, are built
+ * from listing text, so they need neither a helper process nor a
+ * multi-gigabyte image.
+ *
  * crypto and the LUKS2 JSON scanner: published test vectors and embedded
  * snippets, no image either. Hand-written crypto checked only against itself
  * is worth nothing, so every primitive is pinned to FIPS/RFC/IEEE vectors.
@@ -58,6 +64,7 @@ int main(void)
     failed += run_fixture_tests();
     failed += run_cpio_tests();
     failed += run_family_tests();
+    failed += run_isoprobe_tests();
     failed += run_manifest_tests();
     failed += run_bless_tests();
     failed += run_crypto_tests();
@@ -65,6 +72,7 @@ int main(void)
     failed += run_luks_tests();
     failed += run_ext4_tests();
     failed += run_fs_tests();
+    failed += run_iso_overlay_tests();
     failed += run_part_tests();
     failed += run_sb_tests();
 

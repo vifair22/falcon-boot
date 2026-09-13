@@ -63,6 +63,26 @@ static int field_ok(const char *s, size_t cap, int allow_empty)
     return 1;
 }
 
+/* The splice list, checked against exactly what the parser will accept back:
+ * the count, the two bounds on the numbers, and a name that survives being
+ * written between a colon and a newline. */
+static int splices_ok(const manifest_record *r)
+{
+    size_t i;
+
+    if (r->splice_n > MANIFEST_SPLICE_MAX)
+        return 0;
+    for (i = 0; i < r->splice_n; i++) {
+        const manifest_splice *sp = &r->splice[i];
+
+        if (!field_ok(sp->name, sizeof(sp->name), 0))
+            return 0;
+        if (sp->len == 0 || sp->iso_off > MANIFEST_SIZE_MAX - sp->len)
+            return 0;
+    }
+    return 1;
+}
+
 int manifest_record_valid(const manifest_record *r)
 {
     size_t i;
@@ -70,8 +90,6 @@ int manifest_record_valid(const manifest_record *r)
     if (r == NUL)
         return 0;
     if (!field_ok(r->iso, sizeof(r->iso), 0))
-        return 0;
-    if (!field_ok(r->uki, sizeof(r->uki), 0))
         return 0;
     if (!field_ok(r->family, sizeof(r->family), 1))
         return 0;
@@ -87,7 +105,19 @@ int manifest_record_valid(const manifest_record *r)
                 return 0;
         }
     }
-    return 1;
+    if (!splices_ok(r))
+        return 0;
+
+    /* Per kind, and the same rule manifest_parse applies on the way back in:
+     * whatever this function accepts, render() writes and parse() must
+     * return unchanged. A uki= on a prepared record is tolerated rather than
+     * refused (it round-trips, and nothing reads it on that kind), but a
+     * splice on a blessed one is not: there is no byte map to apply it to. */
+    if (r->kind == MANIFEST_KIND_PREPARED)
+        return field_ok(r->uki, sizeof(r->uki), 1) && r->has_sha256 != 0u;
+    if (r->kind != MANIFEST_KIND_BLESSED)
+        return 0;
+    return field_ok(r->uki, sizeof(r->uki), 0) && r->splice_n == 0u;
 }
 
 int manifest_upsert(manifest_record *recs, size_t *n, size_t cap,
@@ -195,16 +225,33 @@ int manifest_render(const manifest_record *recs, size_t n,
 
     put_bytes(&k, g_header, sizeof(g_header) - 1u);
     for (i = 0; i < n; i++) {
+        size_t s;
+
         put_str(&k, "\niso=");
         put_str(&k, recs[i].iso);
+        /* Only the prepared kind is spelled out. A blessed record is written
+         * exactly as every earlier version of this tool wrote it, which is
+         * what makes the new key cost nothing to an older reader. */
+        if (recs[i].kind == MANIFEST_KIND_PREPARED)
+            put_str(&k, "\nkind=prepared");
         put_str(&k, "\nsize=");
         put_u64(&k, recs[i].size);
         if (recs[i].has_sha256) {
             put_str(&k, "\nsha256=");
             put_str(&k, recs[i].sha256);
         }
-        put_str(&k, "\nuki=");
-        put_str(&k, recs[i].uki);
+        if (recs[i].uki[0] != '\0') {
+            put_str(&k, "\nuki=");
+            put_str(&k, recs[i].uki);
+        }
+        for (s = 0; s < recs[i].splice_n; s++) {
+            put_str(&k, "\nsplice=");
+            put_u64(&k, recs[i].splice[s].iso_off);
+            put_str(&k, ":");
+            put_u64(&k, recs[i].splice[s].len);
+            put_str(&k, ":");
+            put_str(&k, recs[i].splice[s].name);
+        }
         if (recs[i].family[0] != '\0') {
             put_str(&k, "\nfamily=");
             put_str(&k, recs[i].family);

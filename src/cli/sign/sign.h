@@ -2,9 +2,9 @@
  *
  * Wraps an ISO's kernel in a minimal signed UKI so the ISO can boot with
  * Secure Boot validation left on, and records the fact in the p2 manifest.
- * Ordinary Linux userland C: it shells out to bsdtar, ukify and sbsign
- * rather than reimplementing ISO9660, PE assembly or Authenticode, which is
- * the vendoring line DESIGN Section 8.1 draws. It never reimplements
+ * Ordinary Linux userland C: it shells out to bsdtar, 7-Zip, ukify and
+ * sbsign rather than reimplementing ISO9660, UDF, PE assembly or
+ * Authenticode, which is the vendoring line DESIGN Section 8.1 draws. It never reimplements
  * signing and it never holds anything but the key file the user pointed it
  * at, which stays the caller's problem to keep encrypted at rest.
  *
@@ -131,11 +131,21 @@ int sgn_fs_uuid_for_path(const char *path, char *out, size_t cap);
 
 typedef struct iso_view iso_view;
 
-/* Opens the ISO by listing it with bsdtar. No mount, no loop device and no
- * root: the listing is the directory tree, and individual members are
- * extracted on demand. */
+/* Opens the ISO by listing it: bsdtar for the ISO9660/Rock Ridge namespace,
+ * 7-Zip for the UDF one, and the view is the union. No mount, no loop device
+ * and no root: the listing is the directory tree, and individual members are
+ * extracted on demand by whichever helper listed them.
+ *
+ * 7-Zip is a soft dependency. Without it the ISO9660 half still lists, which
+ * is every Linux image in full; what is lost is UDF-only media, and open logs
+ * a warning saying so. */
 int iso_view_open(const char *path, iso_view **out);
 void iso_view_close(iso_view *v);
+
+/* Which helper read this image's UDF namespace, or NULL when none was
+ * available. Callers use it to tell "this image has no such file" apart from
+ * "nothing here could read the namespace the file would be in". */
+const char *iso_view_udf_reader(const iso_view *v);
 
 /* Fills in a family_probe backed by this view, so src/family/family.c
  * fingerprints a real ISO through the same two callbacks the loader gives

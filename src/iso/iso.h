@@ -21,6 +21,7 @@
 #include <efi/uefi.h>
 #include <family/family.h>
 #include <fs/fs.h>
+#include <iso/overlay.h>
 
 /* Which shape the virtual device is published as, chosen from the file's
  * extension by the scan (DESIGN Section 6 stage 2).
@@ -79,6 +80,37 @@ typedef struct {
 EFI_STATUS iso_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
                     fs_vol *vol, const fs_dirent *file, iso_media_kind kind,
                     iso_boot_result *result);
+
+/* The same boot, with a modified view of the medium (DESIGN Section 6.3 and
+ * src/iso/overlay.h): named byte ranges answered from sidecar files on p2
+ * instead of from the image, and optionally virtual sectors past its end.
+ * iso_boot is this with ovl NULL, and is not a separate path.
+ *
+ * The overlay is an ARGUMENT rather than a setter on a device, which is what
+ * makes "installed on an already-published device" unrepresentable: the device
+ * does not exist yet when this is called, and it is torn down before this
+ * returns. There is no handle to hang a second set on.
+ *
+ * ovl is copied, so the caller's struct need not outlive the call. The fs_file
+ * objects it names must: they are read on every block the firmware asks for,
+ * they must already be open, and neither they nor the volume they were opened
+ * on may go away until this returns. They must also be distinct from the image
+ * itself, which is refused.
+ *
+ * The set is validated in full before anything is published and any failure
+ * refuses the boot outright (see iso_overlay_check). It is untrusted data off
+ * a writable partition; a partially honoured byte map would be indistinguish-
+ * able from a correct one at the point where it matters.
+ *
+ * NOTE: nothing about verification changes here. The payload is still named to
+ * the platform's LoadImage by device path and the platform still decides what
+ * may run (DESIGN Sections 7.2 and 7.6). An overlay changes which BYTES the
+ * medium serves, never which images are allowed to execute; a payload whose
+ * bytes we substituted is verified exactly as any other is. */
+EFI_STATUS iso_boot_overlaid(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
+                             fs_vol *vol, const fs_dirent *file,
+                             iso_media_kind kind, const iso_overlay *ovl,
+                             iso_boot_result *result);
 
 /* Looks inside the medium without booting anything: builds the same virtual
  * device, lets the firmware surface the ESP, reads the two facts the menu

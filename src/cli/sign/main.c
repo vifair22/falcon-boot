@@ -2,7 +2,8 @@
  *
  * Flow, in the order the steps depend on each other:
  *
- *   1. list the ISO with bsdtar (no mount, no root)
+ *   1. list the ISO with bsdtar and 7-Zip, one namespace each (no mount,
+ *      no root)
  *   2. fingerprint it through src/family/family.c, over that listing
  *   3. find the family's kernel inside the ISO
  *   4. render the family's cmdline template with the ISO's path on p2
@@ -540,7 +541,10 @@ static int bless(const options *o)
     int rc;
 
     /* Every helper up front: a missing ukify three minutes into hashing a
-     * 5 GB ISO is a worse message than a missing ukify now. */
+     * 5 GB ISO is a worse message than a missing ukify now. 7z is not in this
+     * list because it is a soft dependency: without it Linux media still
+     * blesses, and iso_view_open warns about the UDF namespace it could not
+     * read rather than refusing the whole run. */
     if (!sgn_have_program("bsdtar") || !sgn_have_program("ukify") ||
         !sgn_have_program("sbsign")) {
         sgn_set_error(SGN_ERR_EXEC,
@@ -574,6 +578,15 @@ static int bless(const options *o)
         char known[512];
         size_t w = 0;
         size_t i;
+        /* An image whose files are all in UDF lists as very nearly empty
+         * without a reader for that namespace, and "matches no known family"
+         * would then be true of the listing and false of the medium. Say
+         * which it is. */
+        const char *udf_hint =
+            (iso_view_udf_reader(view) == NULL)
+                ? " Note that 7z is not on PATH, so this ISO's UDF namespace "
+                  "was not read; Windows install media looks empty without it."
+                : "";
 
         for (i = 0; i < count; i++) {
             int k;
@@ -591,7 +604,7 @@ static int bless(const options *o)
                       "cmdline template to derive its boot arguments from. "
                       "Known families: %s. Pass --cmdline '<arguments>' and "
                       "--kernel <path-in-iso> to bless it anyway with "
-                      "arguments you supply.", known);
+                      "arguments you supply.%s", known, udf_hint);
         rc = SGN_ERR_FORMAT;
         goto out;
     }

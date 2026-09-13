@@ -164,16 +164,55 @@ states at creation time rather than letting the user discover:
 **Partition identification (decision 2026-09-13).** The loader must not treat
 "any exFAT volume" as p2 or "any LUKS2 volume" as p3: on real hardware the
 stick sits next to internal disks that may carry both. mkstick creates every
-partition, so identification is by **GPT partition type GUID**: one falcon
-GUID minted per role (p2 ISO library, p3 UKI shelf; p1 keeps the standard ESP
-type, p4 keeps the standard Linux dm-crypt type since only the initramfs
-touches it). The install manifest additionally records each partition's
-PARTUUID as a tiebreaker if two falcon sticks are ever plugged in at once.
-The loader matches type GUIDs read from the GPT entry protocol (or by parsing
+partition, so identification comes out of the **GPT partition entry**, not out
+of the volume's contents. The install manifest additionally records each
+partition's PARTUUID as a tiebreaker if two falcon sticks are ever plugged in
+at once. The loader reads the entry from the GPT entry protocol (or by parsing
 the GPT itself off the parent BlockIO if the firmware's PartitionInfo is
 absent) and falls back to the current probe-everything behavior only when it
-finds no falcon-typed partition at all, so the QEMU rig images keep working
-until mkstick (Section 8) exists to stamp them.
+finds no partition it recognises at all, so the QEMU rig images keep working
+whatever is stamped on them.
+
+*Amended 2026-09-13, and the amendment is the interesting half:*
+
+- **p2 carries the Microsoft basic data type, `EBD0A0A2-B9E5-4433-87C0-68B6B72699C7`.**
+  It was originally given a falcon type GUID of its own, and that was wrong.
+  Windows' `partmgr` creates no volume for a GPT partition whose type GUID it
+  does not recognise: measured in WinPE 10.0.26100 against our own test image,
+  `diskpart` reported the falcon-typed p2 as `Hidden : Yes` with "There is no
+  volume associated with this partition", so no drive letter and no access at
+  all. Setting the type to basic data made it appear instantly as exFAT with a
+  letter, no driver load. Two things in this document depend on that:
+  drag-and-drop from a Windows host, which Section 1's in-scope item 2 and
+  this section both promise, and the Section 6.3 jump binary inside WinPE,
+  which has to find the ISO on p2. Both are dead if Windows cannot see the
+  partition. The measurement is recorded in `docs/notes/windows-route.md`.
+- **The discriminator moves to the GPT partition NAME, `FALCON-ISO`** (the
+  36-unit UTF-16 field of UEFI 5.3.3), matched exactly, case-sensitively, and
+  with no terminator assumed. p2 must satisfy **both** halves: the basic data
+  type and the name. The type alone is worn by every Windows data partition in
+  the machine; the name alone, on a partition of some unrelated type, is far
+  likelier to be a coincidence or somebody's label than it is to be ours.
+- **State the weakness plainly.** A partition name is not a type GUID. It is
+  user-editable from every OS's partition editor, nothing makes it unique, and
+  anyone can set it on any disk they like. It is a weaker discriminator than
+  what it replaces, and we take that trade because the alternative is a p2 the
+  user cannot drag files onto. What keeps a wrong guess from being fatal is the
+  fallback above: identification only ever *narrows* the scan, so a
+  misidentified or unrecognised stick still gets the probe-everything path and
+  still boots. Nothing is trusted because of a name; a name only decides where
+  to look first.
+- **p3 and p4 keep their unrecognised types, deliberately.** p3 keeps the
+  falcon UKI-shelf GUID `9CB02E90-85F4-4AF7-9AF3-1F9D6A95FEAF` and p4 keeps the
+  standard Linux LUKS type. This is the exact mirror of the p2 decision and not
+  an oversight: Windows offers to **format** a basic-data partition it cannot
+  read, and a LUKS volume is precisely that. The partition Windows would offer
+  to format is the one holding the stick's only copy of its MOK private key.
+  Their unrecognised types are what keep Windows' hands off them, so the
+  asymmetry - p2 visible to Windows, p3 and p4 invisible - is the whole design.
+  p1 keeps the standard ESP type, which the firmware must recognise to boot the
+  stick at all. The loader never matches p4 in any case; only the initramfs
+  touches it.
 
 
 ## 4. ESP contents and the Secure Boot chain
@@ -1239,8 +1278,9 @@ p2:/falcon/prepared/<sha256>/      prepared-media sidecars, one folder per
                                    ISO's checksum (Section 6.3.1)
 ```
 
-Manifest format: line-based records, `#` comments, one block per blessed
-ISO, keys before the next `iso=` belong to the current block:
+Manifest format: line-based records, `#` comments, one block per authorised
+ISO, keys before the next `iso=` belong to the current block. Two kinds of
+record, told apart by the optional `kind=` key:
 
 ```
 iso=Linux/archlinux-2026.01.01-x86_64.iso   # path relative to p2 root
@@ -1248,7 +1288,52 @@ size=1538670592                              # byte size at bless time
 sha256=<hex>                                 # ISO hash at bless time
 uki=archlinux-2026.01.01-x86_64.uki          # file under /falcon/blessed/
 family=arch                                  # registry id (Section 6.2)
+
+iso=Windows/Win11_25H2_x64.iso
+kind=prepared                                # absent means blessed
+size=7218589696
+sha256=<hex>                                 # also names the sidecar folder
+splice=22095872:593121462:boot.wim           # repeatable, at most 8
+family=windows
 ```
+
+**`kind=` is optional and its absence means `blessed` (decided 2026-09-13).**
+That is the whole reason it is optional: every manifest written before the
+key existed carries only blessed records, so an older file parses unchanged
+and an older reader still reads a file this tool writes, provided the stick
+carries no prepared media. `falcon-boot-sign` emits the key only on a
+prepared record, for the same reason. A `kind=` naming neither value drops
+the record, rather than falling back to blessed: a kind nobody knows is a
+record nobody should act on.
+
+Validity is **per kind**, not one rule for every record:
+
+- `kind=blessed` needs `iso=`, `size=` and `uki=`, and must carry no
+  `splice=`. Unchanged from the shape above. A splice here is a
+  contradiction (there is no byte map to apply it over) and so is malformed
+  rather than ignored.
+- `kind=prepared` needs `iso=`, `size=` and `sha256=`, and never needs
+  `uki=`: a prepared ISO has no wrap to boot. `sha256=` is required because
+  it is what names `/falcon/prepared/<sha256>/` (Section 6.3.1), so a
+  prepared record without one cannot say where its artifacts are. There is
+  deliberately no separate location key; the link stays intrinsic.
+
+`splice=<iso_off>:<len>:<name>` is the override list of Section 6.3 written
+down: replace `len` bytes at `iso_off` of the virtual ISO with the contents
+of `<name>`, a file inside that record's prepared folder. Both numbers are
+decimal bytes, and both are bounded the way `size=` is, end offset
+(`iso_off + len`) included, so the loader may add them without checking for
+wrap. The key repeats, up to **eight** per record: the MVP patch shape is one
+whole-file substitution, the delta-plus-UDF-surgery fallback of Section 6.3
+is a handful of descriptor patches, and a bound has to exist at all because
+the record is fixed-size and parsed from attacker-editable exFAT. A record
+whose splice list is malformed in any way (a missing field, a non-decimal or
+overflowing number, a zero length, an empty or overlong name, a ninth splice)
+is dropped whole rather than partially applied: an ISO served with half its
+byte map is worse than one served with none of it.
+
+Unknown keys stay ignored, as they always have, so a later version may add
+one without invalidating today's files.
 
 Loader behavior: a menu entry whose path matches a manifest record *and*
 whose current file size equals `size=` is labeled blessed and boots the
@@ -1264,32 +1349,55 @@ influence is either signed (the UKI) or already-unverified data an attacker
 could edit directly (the manifest itself, the initrd). Corrupt or absent
 manifest degrades to "nothing is blessed," never to an error.
 
-**Open format decision: the Windows record (raised 2026-09-13, not yet
-decided).** A patched Windows ISO (Section 6.3) has no UKI. It has an override
-sidecar instead, and the loader's job for such an entry is to publish the ISO
-with that byte map applied rather than to boot a signed wrap. The format has
-no way to say that today, and worse than "no way" it has a silent one: the
-parser requires `uki=` before a block becomes a record at all
+**The Windows record: how the decision above was reached (settled
+2026-09-13).** A patched Windows ISO (Section 6.3) has no UKI. It has an
+override sidecar instead, and the loader's job for such an entry is to publish
+the ISO with that byte map applied rather than to boot a signed wrap. The
+format had no way to say that, and worse than "no way" it had a silent one:
+the parser required `uki=` before a block became a record at all
 (`src/manifest/manifest.c`, `block_flush`), so a Windows record written in the
-current shape would be **dropped without a word** rather than rejected. This
-is a format decision to make before the Windows path lands, not a bug in the
-parser, which is behaving exactly as Section 8.1 specified it.
+old shape was **dropped without a word** rather than rejected. That was a
+format decision to make before the Windows path landed, not a bug in the
+parser, which was behaving exactly as this section had specified it.
 
-Candidates, neither chosen here: a `kind=` key that defaults to the current
-UKI shape when absent, so existing manifests keep parsing unchanged; or
-relaxing the requirement to "`uki=` **or** a patch key" and letting whichever
-key is present say what the record is. Constraints on whatever is chosen: the
-parser must stay total over its input, absent or unusable records must stay a
-degradation and never an error, and the loader must never be able to implement
-half the rule. Either way a Windows record still carries `iso=`, `size=`,
-`sha256=` and `family=windows`, and still means the same thing every other
-record means: the user authorised this entry to be booted differently.
+Two candidates were weighed. The chosen one is the `kind=` key above,
+defaulting to the current UKI shape when absent so existing manifests keep
+parsing. The rejected one was relaxing the requirement to "`uki=` **or** a
+patch key" and letting whichever key is present say what the record is: it
+needs no new key, but it infers the record's meaning from which optional keys
+survived parsing, so a mistyped or dropped `splice=` silently demotes a
+Windows record to a blessed one with no UKI, and every consumer has to
+re-derive the kind for itself. An explicit key states it once, which is what
+keeps the loader from implementing half the rule. The constraints both
+candidates had to meet are met: the parser stays total over its input, and an
+unusable record stays a degradation (skipped, uncounted) and never an error.
+A Windows record still carries `iso=`, `size=`, `sha256=` and
+`family=windows`, and still means what every other record means: the user
+authorised this entry to be booted differently.
 
-Shelling out to `cryptsetup`, `sbsign`, `mkfs.*`, `ukify` is the intended
-vendoring line: reimplementing argon2id, Authenticode PE signing, or ext4
-creation in-repo would be madness for a config tool that runs on a full Linux
-box. The `sign` tool shells out to `sbsign`; it never reimplements signing, in
+Shelling out to `cryptsetup`, `sbsign`, `mkfs.*`, `ukify`, `bsdtar`,
+`wimlib` and `7z` is the intended vendoring line: reimplementing argon2id,
+Authenticode PE signing, ext4 creation, WIM compression or a UDF reader
+in-repo would be madness for a config tool that runs on a full Linux box.
+The `sign` tool shells out to `sbsign`; it never reimplements signing, in
 either the host or appliance route.
+
+Two of those are Windows-driven and differ in how hard a requirement they
+are (both measured 2026-09-13):
+
+- **`wimlib`** (`app-arch/wimlib`) is required to prepare Windows media at
+  all: it is what rewrites `boot.wim`. The appliance image carries it
+  (Section 6.3.1).
+- **`7z`** is a **soft** dependency of the bless tool, and the reason is
+  worth stating because it is not obvious. `bsdtar` reads ISO 9660 and Rock
+  Ridge but not UDF, and Microsoft builds install media with `oscdimg -u1`,
+  whose ISO 9660 namespace is a stub `README.TXT` while every real file
+  lives only in UDF. `xorriso` was checked and is no better. So the tool
+  lists both namespaces and takes their union, tagging each entry with the
+  reader that produced it so Linux media keeps the exact bsdtar path it has
+  always used. Without `7z` the tool still blesses Linux media normally and
+  says plainly what it cannot see, rather than misreporting Windows media as
+  an unknown family.
 
 
 ## 9. EFI application internals

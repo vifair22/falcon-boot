@@ -14,6 +14,7 @@
  */
 
 #include <iso/iso.h>
+#include <iso/overlay.h>
 #include <efi/blockio.h>
 #include <efi/devpath.h>
 #include <efi/sfs.h>
@@ -75,6 +76,19 @@ typedef struct {
     EFI_BLOCK_IO_MEDIA    media;
     iso_device_path       path;
     fs_file               file;
+    /* The two sizes, kept apart on purpose (src/iso/overlay.h). image_size is
+     * how far the file on p2 runs; virt_size is how far the MEDIUM runs, which
+     * an append region makes larger and block truncation can make smaller.
+     * Every bounds decision in the read path is against virt_size, and
+     * image_size is only ever asked "how many of these bytes physically
+     * exist". */
+    uint64_t              image_size;
+    uint64_t              virt_size;
+    /* The modified view, copied by value so no caller-owned array has to
+     * outlive the boot. The fs_file objects it points at still do; see the
+     * lifetime note in overlay.h. Cleared by device_init and by teardown, so
+     * a set can never survive into a different entry's boot. */
+    iso_overlay           ovl;
     EFI_HANDLE            handle;
     UINT8                 in_use;
     UINT8                 connected;
@@ -109,14 +123,44 @@ static EFI_STATUS EFIAPI iso_reset(EFI_BLOCK_IO_PROTOCOL *self,
     return EFI_SUCCESS;
 }
 
+/* Serves len bytes of the VIRTUAL medium at off from the image file itself.
+ *
+ * A CD image whose length is not a whole number of 2048-byte blocks still
+ * advertises that last partial block, so serve the bytes that exist and zero
+ * the rest rather than failing the read. A disk image cannot get here with a
+ * partial tail: iso_open refuses one outright, because a sector the firmware
+ * half-reads is a partition table it half-believes.
+ *
+ * The clamp is written as a comparison rather than the subtraction it used to
+ * be for a reason that only appeared with the append region: off is a virtual
+ * offset and can legitimately sit PAST the end of the image file, at which
+ * point "image_size - off" underflows into an enormous avail and the read runs
+ * off the end of the caller's buffer. Past the image, every byte is a zero
+ * this device is inventing, which is the same answer the short tail gets. */
+static EFI_STATUS read_image(iso_device *dev, uint64_t off, uint64_t len,
+                             UINT8 *dst)
+{
+    uint64_t avail = (off < dev->image_size) ? dev->image_size - off : 0;
+
+    if (avail > len)
+        avail = len;
+    if (avail != 0 && fs_file_read(&dev->file, off, avail, dst) != FS_OK)
+        return EFI_DEVICE_ERROR;
+    if (avail < len)
+        memset(dst + avail, 0, (size_t)(len - avail));
+    return EFI_SUCCESS;
+}
+
 static EFI_STATUS EFIAPI iso_read_blocks(EFI_BLOCK_IO_PROTOCOL *self,
                                          UINT32 media_id, EFI_LBA lba,
                                          UINTN size, void *buffer)
 {
     iso_device *dev = device_of(self);
     UINTN bs = dev->media.BlockSize;
+    iso_segment seg[ISO_MAX_SEGMENTS];
+    size_t nseg = 0;
+    size_t i;
     uint64_t off;
-    uint64_t avail;
 
     if (media_id != dev->media.MediaId)
         return EFI_MEDIA_CHANGED;
@@ -133,18 +177,39 @@ static EFI_STATUS EFIAPI iso_read_blocks(EFI_BLOCK_IO_PROTOCOL *self,
     if (size / bs - 1 > dev->media.LastBlock - lba)
         return EFI_INVALID_PARAMETER;
 
-    /* A CD image whose length is not a whole number of 2048-byte blocks still
-     * advertises that last partial block, so serve the bytes that exist and
-     * zero the rest rather than failing the read. A disk image cannot get
-     * here with a partial tail: iso_open refuses one outright, because a
-     * sector the firmware half-reads is a partition table it half-believes. */
-    avail = fs_file_size(&dev->file) - off;
-    if (avail > (uint64_t)size)
-        avail = (uint64_t)size;
-    if (fs_file_read(&dev->file, off, avail, buffer) != FS_OK)
-        return EFI_DEVICE_ERROR;
-    if (avail < (uint64_t)size)
-        memset((UINT8 *)buffer + avail, 0, (size_t)((uint64_t)size - avail));
+    /* The overwhelmingly common case is a medium with no modified view at all,
+     * and it must cost exactly what it always did: one call, no split, no
+     * segment array touched. */
+    if (dev->ovl.n == 0)
+        return read_image(dev, off, (uint64_t)size, (UINT8 *)buffer);
+
+    /* Otherwise cut the request at every override boundary it crosses. A
+     * single block is routinely part image and part sidecar - overrides are
+     * byte ranges and blocks are 2048 bytes, and nothing aligns the two - so
+     * the split is what keeps a straddling read from being served entirely
+     * from the wrong source. ISO_MAX_SEGMENTS is the proven worst case, so
+     * NOSPACE here would be a bug in the bound rather than in the data. */
+    if (iso_overlay_split(&dev->ovl, dev->virt_size, off, (uint64_t)size,
+                          seg, ISO_MAX_SEGMENTS, &nseg) != ISO_OVL_OK)
+        return EFI_INVALID_PARAMETER;
+
+    for (i = 0; i < nseg; i++) {
+        UINT8 *dst = (UINT8 *)buffer + (seg[i].virt_off - off);
+
+        if (seg[i].src == (fs_file *)0) {
+            EFI_STATUS status = read_image(dev, seg[i].src_off, seg[i].len,
+                                           dst);
+
+            if (EFI_ERROR(status))
+                return status;
+        } else if (fs_file_read(seg[i].src, seg[i].src_off, seg[i].len,
+                                dst) != FS_OK) {
+            /* No zero fill on this side: iso_overlay_check proved at install
+             * time that the sidecar holds every byte this entry promises, so a
+             * short read here is a real device error and is reported as one. */
+            return EFI_DEVICE_ERROR;
+        }
+    }
     return EFI_SUCCESS;
 }
 
@@ -170,9 +235,22 @@ static EFI_STATUS EFIAPI iso_flush_blocks(EFI_BLOCK_IO_PROTOCOL *self)
 
 /* ---- device lifecycle ---- */
 
-static void device_init(iso_device *dev, uint64_t size, UINT32 block_size)
+/* image_size is the file on p2; virt_size is the medium, already truncated to
+ * whole blocks by iso_overlay_media_size. ovl may be NULL, which is the
+ * ordinary unmodified medium and is what iso_survey_media always passes. */
+static void device_init(iso_device *dev, uint64_t image_size,
+                        uint64_t virt_size, UINT32 block_size,
+                        const iso_overlay *ovl)
 {
     EFI_GUID vendor_guid = FALCON_ISO_MEDIA_GUID;
+
+    dev->image_size = image_size;
+    dev->virt_size = virt_size;
+    /* Never left over from the previous entry: a stale src pointer here would
+     * be a different ISO's sidecar served into this one's address space. */
+    memset(&dev->ovl, 0, sizeof(dev->ovl));
+    if (ovl != (const iso_overlay *)0)
+        memcpy(&dev->ovl, ovl, sizeof(dev->ovl));
 
     dev->media.MediaId = g_next_media_id++;
     /* True for both flavors and honest for both: the file can be deleted or
@@ -188,7 +266,7 @@ static void device_init(iso_device *dev, uint64_t size, UINT32 block_size)
      * an El Torito catalog", 512 says "disk, go read a partition table". */
     dev->media.BlockSize = block_size;
     dev->media.IoAlign = 0;
-    dev->media.LastBlock = size / block_size - 1;
+    dev->media.LastBlock = virt_size / block_size - 1;
 
     dev->bio.Revision = EFI_BLOCK_IO_PROTOCOL_REVISION;
     dev->bio.Media = &dev->media;
@@ -233,10 +311,19 @@ static EFI_STATUS device_teardown(EFI_BOOT_SERVICES *bs, iso_device *dev)
     if (EFI_ERROR(status)) {
         /* A driver we could not stop still points at this instance. It is
          * static so it stays valid, but it must never be handed to a second
-         * ISO: leaving in_use set is what refuses that. */
+         * ISO: leaving in_use set is what refuses that. The override set stays
+         * too, for the same reason - the drivers still reading this device
+         * must keep seeing the view they were connected against. */
         return status;
     }
 
+    /* The last reader is gone, so the modified view goes with it. device_init
+     * would clear this anyway; doing it here as well means the window in which
+     * a released device still holds pointers to another entry's sidecars does
+     * not exist at all. */
+    memset(&dev->ovl, 0, sizeof(dev->ovl));
+    dev->image_size = 0;
+    dev->virt_size = 0;
     dev->handle = (EFI_HANDLE)0;
     dev->in_use = 0;
     return EFI_SUCCESS;
@@ -791,10 +878,34 @@ static EFI_STATUS chainload(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
  * device_teardown. It stays zero only when a previous device is still held by
  * a driver: that instance belongs to the earlier attempt, and tearing it down
  * from here would disconnect drivers this caller never connected. */
+/* Why the override set is refused, in words the user can act on. This data
+ * comes off a writable exFAT partition, so "the modified view on your stick is
+ * wrong, and here is how" is the message that matters; a single "bad overlay"
+ * would send someone reading hex. */
+static const CHAR16 *overlay_reason(int rc)
+{
+    switch (rc) {
+    case ISO_OVL_ERR_COUNT:
+        return L"the override set has more entries than the loader allows";
+    case ISO_OVL_ERR_EMPTY:
+        return L"the override set has a zero-length entry";
+    case ISO_OVL_ERR_ORDER:
+        return L"the override set is unsorted or its entries overlap";
+    case ISO_OVL_ERR_RANGE:
+        return L"an override reaches past the end of the virtual medium";
+    case ISO_OVL_ERR_SOURCE:
+        return L"an override's sidecar file is missing or too short";
+    case ISO_OVL_ERR_GEOM:
+        return L"the appended region is not a whole number of blocks";
+    default:
+        return L"the override set failed validation";
+    }
+}
+
 static EFI_STATUS iso_open(EFI_SYSTEM_TABLE *st, fs_vol *vol,
                            const fs_dirent *file, iso_media_kind kind,
-                           const CHAR16 **stage, iso_volumes *vols,
-                           UINT8 *owned)
+                           const iso_overlay *ovl, const CHAR16 **stage,
+                           iso_volumes *vols, UINT8 *owned)
 {
     EFI_BOOT_SERVICES *bs = st->BootServices;
     EFI_GUID bio_guid = EFI_BLOCK_IO_PROTOCOL_GUID;
@@ -803,8 +914,11 @@ static EFI_STATUS iso_open(EFI_SYSTEM_TABLE *st, fs_vol *vol,
     UINTN before_n = 0;
     UINT32 block_size = (kind == ISO_MEDIA_DISK) ? ISO_DISK_BLOCK_SIZE
                                                  : ISO_CD_BLOCK_SIZE;
+    uint64_t src_sizes[ISO_MAX_OVERRIDES];
     uint64_t size;
+    uint64_t virt_size;
     EFI_STATUS status;
+    int rc;
 
     vols->n = 0;
     *owned = 0;
@@ -838,7 +952,47 @@ static EFI_STATUS iso_open(EFI_SYSTEM_TABLE *st, fs_vol *vol,
         return EFI_UNSUPPORTED;
     }
 
-    device_init(&g_dev, size, block_size);
+    /* Validate the modified view BEFORE anything is published, so an invalid
+     * set costs a refusal rather than a device that serves attacker-chosen
+     * bytes. Everything the check needs about the sidecars is read here, which
+     * is the only side that can call fs_file_size; the arithmetic itself stays
+     * in the EFI-free overlay.h so it can be tested on the host. */
+    virt_size = size - size % block_size;
+    if (ovl != (const iso_overlay *)0 && (ovl->n != 0 || ovl->extra != 0)) {
+        size_t i;
+
+        if (ovl->n > ISO_MAX_OVERRIDES) {
+            *stage = overlay_reason(ISO_OVL_ERR_COUNT);
+            return EFI_INVALID_PARAMETER;
+        }
+        rc = iso_overlay_media_size(ovl, size, block_size, &virt_size);
+        if (rc != ISO_OVL_OK) {
+            *stage = overlay_reason(rc);
+            return EFI_UNSUPPORTED;
+        }
+        for (i = 0; i < ovl->n; i++) {
+            if (ovl->ovl[i].src == (fs_file *)0) {
+                *stage = overlay_reason(ISO_OVL_ERR_SOURCE);
+                return EFI_INVALID_PARAMETER;
+            }
+            /* One file cursor cannot serve two interleaved streams: the exFAT
+             * driver restarts its FAT walk on every backward seek, so an
+             * override pointed at the image's own handle would turn each block
+             * read into a full chain walk. Refuse rather than crawl. */
+            if (ovl->ovl[i].src == &g_dev.file) {
+                *stage = L"an override names the image itself as its sidecar";
+                return EFI_INVALID_PARAMETER;
+            }
+            src_sizes[i] = fs_file_size(ovl->ovl[i].src);
+        }
+        rc = iso_overlay_check(ovl, virt_size, src_sizes);
+        if (rc != ISO_OVL_OK) {
+            *stage = overlay_reason(rc);
+            return EFI_INVALID_PARAMETER;
+        }
+    }
+
+    device_init(&g_dev, size, virt_size, block_size, ovl);
     *owned = 1;
 
     *stage = L"publishing the virtual media";
@@ -886,6 +1040,15 @@ EFI_STATUS iso_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
                     fs_vol *vol, const fs_dirent *file, iso_media_kind kind,
                     iso_boot_result *result)
 {
+    return iso_boot_overlaid(st, parent_image, vol, file, kind,
+                             (const iso_overlay *)0, result);
+}
+
+EFI_STATUS iso_boot_overlaid(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
+                             fs_vol *vol, const fs_dirent *file,
+                             iso_media_kind kind, const iso_overlay *ovl,
+                             iso_boot_result *result)
+{
     EFI_BOOT_SERVICES *bs;
     iso_volumes vols;
     UINT8 owned = 0;
@@ -900,7 +1063,7 @@ EFI_STATUS iso_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
     result->status = EFI_SUCCESS;
     result->family = (const family_desc *)0;
 
-    status = iso_open(st, vol, file, kind, &result->stage, &vols, &owned);
+    status = iso_open(st, vol, file, kind, ovl, &result->stage, &vols, &owned);
     if (!EFI_ERROR(status)) {
         /* Detection is reported, never acted on. It runs before the chainload
          * only so the answer exists while the volumes are still mounted; the
@@ -946,7 +1109,12 @@ EFI_STATUS iso_survey_media(EFI_SYSTEM_TABLE *st, fs_vol *vol,
         return EFI_INVALID_PARAMETER;
 
     bs = st->BootServices;
-    status = iso_open(st, vol, file, kind, &stage, &vols, &owned);
+    /* No overlay, ever. The menu draws a label per entry and publishes a
+     * device per entry to do it; overrides answer no question a label asks,
+     * and making the survey pay for reading and validating a byte map would
+     * put that cost on every entry on the stick at menu-draw time. */
+    status = iso_open(st, vol, file, kind, (const iso_overlay *)0, &stage,
+                      &vols, &owned);
     if (EFI_ERROR(status)) {
         /* A medium the firmware found nothing bootable in: no El Torito
          * catalog, no partition table and no FAT, or one pointing at no ESP.
