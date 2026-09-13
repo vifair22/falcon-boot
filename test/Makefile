@@ -9,6 +9,9 @@
 #   src/exfat/exfat.c    device access through a read callback
 #   src/cpio/cpio.c      no allocator: the caller supplies the buffer
 #   src/family/family.c  filesystem access through two probe callbacks
+#   src/crypto/*.c       no I/O at all; every context is caller-allocated
+#   src/luks/*.c         device access through a read callback
+#   src/ext4/ext4.c      device access through a read callback
 #
 # Why src/lib/string.c is NOT compiled in: it defines memcpy, memmove, memset
 # and memcmp, which the freestanding EFI build needs because there is no libc,
@@ -36,8 +39,20 @@ ifeq ($(origin CC),default)
 CC := gcc
 endif
 
-# Override to test against an image built somewhere else.
-FIXTURE_IMG ?= $(ROOT)/build/test-exfat.img
+# Override to test against images built somewhere else. Each fixture group
+# skips itself cleanly when its image is absent, so a fresh checkout can run
+# the suite before anyone has been asked for a sudo password.
+#   test-exfat.img       tools/mk-test-exfat.sh
+#   test-ext4.*          tools/mk-test-ext4.sh
+#   test-luks*           tools/mk-test-luks.sh
+FIXTURE_IMG      ?= $(ROOT)/build/test-exfat.img
+EXT4_IMG         ?= $(ROOT)/build/test-ext4.img
+EXT4_MANIFEST    ?= $(ROOT)/build/test-ext4.manifest
+EXT4_BIGFILE     ?= $(ROOT)/build/test-ext4.bigfile
+LUKS_IMG         ?= $(ROOT)/build/test-luks.img
+LUKS_ARGON_IMG   ?= $(ROOT)/build/test-luks-argon.img
+LUKS_MANIFEST    ?= $(ROOT)/build/test-luks.manifest
+LUKS_REF         ?= $(ROOT)/build/test-luks.ref64k
 
 # The repo's standard warning set, minus the flags that only mean something
 # for the freestanding EFI target (-ffreestanding, -fshort-wchar,
@@ -58,6 +73,13 @@ CMOCKA_LIBS   := $(shell pkg-config --libs cmocka)
 CFLAGS := -std=c11 -O0 -g --coverage $(WARNS) \
 	-D_POSIX_C_SOURCE=200809L -D_FILE_OFFSET_BITS=64 \
 	-DFIXTURE_IMG='"$(FIXTURE_IMG)"' \
+	-DEXT4_IMG='"$(EXT4_IMG)"' \
+	-DEXT4_MANIFEST='"$(EXT4_MANIFEST)"' \
+	-DEXT4_BIGFILE='"$(EXT4_BIGFILE)"' \
+	-DLUKS_IMG='"$(LUKS_IMG)"' \
+	-DLUKS_ARGON_IMG='"$(LUKS_ARGON_IMG)"' \
+	-DLUKS_MANIFEST='"$(LUKS_MANIFEST)"' \
+	-DLUKS_REF='"$(LUKS_REF)"' \
 	-I$(TEST_DIR)/hostshim -I$(ROOT)/src -I$(TEST_DIR) \
 	$(CMOCKA_CFLAGS)
 
@@ -72,15 +94,32 @@ TEST_SRCS := \
 	$(TEST_DIR)/exfat_fixture_test.c \
 	$(TEST_DIR)/cpio_test.c \
 	$(TEST_DIR)/family_test.c \
+	$(TEST_DIR)/crypto_test.c \
+	$(TEST_DIR)/json_test.c \
+	$(TEST_DIR)/luks_test.c \
+	$(TEST_DIR)/ext4_test.c \
 	$(TEST_DIR)/synth.c
 
 UUT_SRCS := \
 	$(ROOT)/src/exfat/exfat.c \
 	$(ROOT)/src/cpio/cpio.c \
-	$(ROOT)/src/family/family.c
+	$(ROOT)/src/family/family.c \
+	$(ROOT)/src/ext4/ext4.c \
+	$(ROOT)/src/crypto/crypto.c \
+	$(ROOT)/src/crypto/sha256.c \
+	$(ROOT)/src/crypto/sha512.c \
+	$(ROOT)/src/crypto/hash.c \
+	$(ROOT)/src/crypto/hmac.c \
+	$(ROOT)/src/crypto/pbkdf2.c \
+	$(ROOT)/src/crypto/aes.c \
+	$(ROOT)/src/crypto/aesni.c \
+	$(ROOT)/src/crypto/xts.c \
+	$(ROOT)/src/luks/json.c \
+	$(ROOT)/src/luks/af.c \
+	$(ROOT)/src/luks/luks.c
 
 # Filter for the coverage report, one alternative per unit above.
-COV_FILTER := .*/src/(exfat/exfat|cpio/cpio|family/family)\.c$$
+COV_FILTER := .*/src/(exfat/exfat|cpio/cpio|family/family|ext4/ext4|crypto/[a-z0-9]+|luks/[a-z0-9]+)\.c$$
 
 OBJS := $(patsubst $(TEST_DIR)/%.c,$(OBJ)/%.o,$(TEST_SRCS)) \
 	$(patsubst $(ROOT)/src/%.c,$(OBJ)/uut/%.o,$(UUT_SRCS))
@@ -101,6 +140,15 @@ $(OBJ)/%.o: $(TEST_DIR)/%.c
 $(OBJ)/uut/%.o: $(ROOT)/src/%.c
 	@mkdir -p $(@D)
 	$(CC) $(CFLAGS) -MMD -MF $@.d -c -o $@ $<
+
+# The AES-NI intrinsics need -maes, this object only, exactly as the
+# freestanding build does it. It is compiled in on the host too rather than
+# stubbed out, because the host is where the two XTS implementations get
+# checked against each other; the runtime path is still gated by
+# crypto_has_aesni(), so a machine without the instructions builds this object
+# and never enters it, and the vector tests that would compare the two skip
+# themselves there.
+$(OBJ)/uut/crypto/aesni.o: CFLAGS += -maes
 
 -include $(DEPS)
 

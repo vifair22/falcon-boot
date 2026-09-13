@@ -10,6 +10,15 @@
  *
  * cpio writer and family registry: both are EFI-free by construction, so they
  * are unit-testable here with no firmware and no image at all.
+ *
+ * crypto and the LUKS2 JSON scanner: published test vectors and embedded
+ * snippets, no image either. Hand-written crypto checked only against itself
+ * is worth nothing, so every primitive is pinned to FIPS/RFC/IEEE vectors.
+ *
+ * LUKS2 and ext4: fixture images that cryptsetup and mkfs.ext4 themselves
+ * produced (tools/mk-test-luks.sh, tools/mk-test-ext4.sh), which is the only
+ * evidence that these readers agree with the implementations that wrote the
+ * bytes. Both groups skip cleanly when their image is absent.
  */
 
 #include "tests.h"
@@ -39,6 +48,10 @@ int main(void)
     failed += run_fixture_tests();
     failed += run_cpio_tests();
     failed += run_family_tests();
+    failed += run_crypto_tests();
+    failed += run_json_tests();
+    failed += run_luks_tests();
+    failed += run_ext4_tests();
 
     printf("\ntotal failed: %d\n", failed);
     return failed == 0 ? 0 : 1;

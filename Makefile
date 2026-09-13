@@ -39,6 +39,8 @@ SRCS := \
 	src/ext4/ext4.c \
 	src/iso/iso.c \
 	src/menu/menu.c \
+	src/menu/prompt.c \
+	src/pos/pos.c \
 	src/sb/sb.c \
 	src/family/family.c \
 	src/cpio/cpio.c \
@@ -67,6 +69,7 @@ PAYLOAD := build/test/payload.efi
 EFI := build/bin/airies-boot.efi
 ESP := build/esp
 TEST_IMG := build/test-exfat.img
+TEST_STICK := build/test-stick.img
 
 # Secure Boot rig artifacts. The key here is a throwaway that exists only to
 # make the SB-ON rig runnable: the product's key model is DESIGN Section 7.5
@@ -85,8 +88,9 @@ SEMVER := $(shell cat release_version)
 # Repo-standard full version: SEMVER_YYYYMMDD.HHMM.TYPE.
 VERSION := $(SEMVER)_$(shell date +%Y%m%d.%H%M).$(VARIANT)
 
-.PHONY: all check-tools esp run run-secboot sbat-check sign mok-test \
-	test-image test-iso payload version-stamp clean
+.PHONY: all check-tools esp run run-secboot run-stick run-stick-secboot \
+	sbat-check sign mok-test test-image test-iso test-stick payload \
+	version-stamp clean
 
 all: $(EFI) compile_commands.json
 
@@ -223,6 +227,22 @@ test-image: test-iso
 
 test-iso: $(PAYLOAD)
 	tools/mk-test-iso.sh
+
+# The four-partition stick the personal-OS path needs (DESIGN Section 3). It
+# wants the signed loader for p1's shim chain and the payload for p3's /uki,
+# so both are prerequisites; the script degrades to an unsigned stick on its
+# own if the test MOK is absent.
+test-stick: $(EFI_SIGNED) test-iso
+	tools/mk-test-stick.sh
+
+# No prerequisite on $(TEST_STICK): rebuilding it needs sudo and takes seconds
+# of cryptsetup, so it stays an explicit `make test-stick`. The rig says so if
+# the image is missing.
+run-stick:
+	tools/run-qemu.sh --stick
+
+run-stick-secboot:
+	tools/run-qemu.sh --stick --secboot
 
 clean:
 	rm -rf build compile_commands.json

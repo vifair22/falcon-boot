@@ -480,6 +480,36 @@ static void test_cpio_bad_entries(void **state)
           { "/etc/passwd", NULL, 0, CPIO_MODE_FILE } },
         { "leading slash on a bare name",
           { "/f", NULL, 0, CPIO_MODE_FILE } },
+        /* So would a ".." component: the kernel's unpacker resolves it, so
+         * every spelling of it has to be refused and not just the obvious
+         * leading one. */
+        { "dotdot alone",
+          { "..", NULL, 0, CPIO_MODE_FILE } },
+        { "dotdot leading",
+          { "../foo", NULL, 0, CPIO_MODE_FILE } },
+        { "dotdot in the middle",
+          { "x/../y", NULL, 0, CPIO_MODE_FILE } },
+        { "dotdot trailing",
+          { "x/..", NULL, 0, CPIO_MODE_FILE } },
+        { "dotdot twice over",
+          { "../../etc/passwd", NULL, 0, CPIO_MODE_FILE } },
+        { "dotdot as a directory entry",
+          { "x/..", NULL, 0, CPIO_MODE_DIR } },
+        /* An empty component names nothing, and is what a path built by
+         * concatenating onto a directory that already ended in a slash looks
+         * like. */
+        { "empty component",
+          { "a//b", NULL, 0, CPIO_MODE_FILE } },
+        { "empty component leading a path",
+          { "a///b", NULL, 0, CPIO_MODE_FILE } },
+        { "trailing slash on a file",
+          { "f/", NULL, 0, CPIO_MODE_FILE } },
+        /* Rejected for a directory too: newc names directories without one,
+         * and GNU cpio emits none. */
+        { "trailing slash on a directory",
+          { "d/", NULL, 0, CPIO_MODE_DIR } },
+        { "trailing slash after a nested name",
+          { "a/b/", NULL, 0, CPIO_MODE_FILE } },
         /* A directory record carries no data; newc has no way to express
          * one, so this is a caller mistake rather than something to drop. */
         { "directory with data",
@@ -527,6 +557,46 @@ static void test_cpio_bad_entry_mid_list(void **state)
                      CPIO_ERR_BAD_ARG);
     for (i = 0; i < 256u; i++)
         assert_int_equal(buf[i], FILLER);
+}
+
+/* The other side of the path check: names that look like the rejected ones to
+ * a careless matcher but are ordinary names, and the "." component, which is
+ * legal because it resolves to the directory it already sits in and so cannot
+ * leave the archive root. Each must not merely be accepted; the name has to
+ * reach the record unaltered, since the writer never rewrites a path and a
+ * "helpful" normalisation would be its own bug. */
+static void test_cpio_legal_near_misses(void **state)
+{
+    static const char *const names[] = {
+        "..foo",     /* a name that starts with two dots is still a name */
+        "a..b",      /* and so is one with two dots inside it            */
+        "foo..",     /* or ending in them                                */
+        "...",       /* three dots is a name; two would not be           */
+        ".hidden",   /* the ordinary dotfile case                        */
+        ".",         /* the current directory, spelled as one component  */
+        "./x",       /* a leading "." component                          */
+        "a/./b",     /* and one in the middle                            */
+        "a/.b/c",    /* a dotfile as a directory component               */
+    };
+    uint8_t buf[BUF_MAX];
+    size_t i;
+
+    (void)state;
+    for (i = 0; i < sizeof(names) / sizeof(names[0]); i++) {
+        cpio_entry e = { NULL, NULL, 0, CPIO_MODE_FILE };
+        size_t written = 0;
+        size_t name_len = strlen(names[i]);
+
+        e.path = names[i];
+        assert_int_equal(check_size_matches_write(&e, 1),
+                         HDR_LEN + name_len + 1u +
+                         pad4(HDR_LEN + name_len + 1u) + 124u);
+
+        memset(buf, FILLER, sizeof(buf));
+        assert_int_equal(cpio_write(&e, 1, buf, sizeof(buf), &written),
+                         CPIO_OK);
+        assert_memory_equal(buf + HDR_LEN, names[i], name_len + 1u);
+    }
 }
 
 /* newc stores the file size in eight hex digits, so anything that does not
@@ -680,6 +750,7 @@ int run_cpio_tests(void)
         cmocka_unit_test(test_cpio_bad_args),
         cmocka_unit_test(test_cpio_bad_entries),
         cmocka_unit_test(test_cpio_bad_entry_mid_list),
+        cmocka_unit_test(test_cpio_legal_near_misses),
         cmocka_unit_test(test_cpio_field_range),
         cmocka_unit_test(test_cpio_roundtrip_optional),
     };

@@ -1,0 +1,92 @@
+/* The masked passphrase line editor. See menu.h for the contract and for why
+ * it produces bytes rather than CHAR16.
+ *
+ * Separate translation unit from menu.c on purpose: this one handles a secret
+ * and menu.c does not, so "which code has ever held the passphrase" stays a
+ * question with a one-file answer.
+ */
+
+#include <menu/menu.h>
+#include <crypto/crypto.h>
+
+/* Control characters the console delivers in UnicodeChar with ScanCode 0
+ * (UEFI spec 12.3, Table 12.3). CR is the only commit key: LF never arrives
+ * on its own from a real console, and treating it as a commit would make a
+ * stray keystroke submit a half-typed passphrase. */
+#define CHAR_BACKSPACE 0x0008
+#define CHAR_CR        0x000D
+
+static void out(EFI_SYSTEM_TABLE *st, const CHAR16 *s)
+{
+    /* OutputString's parameter is mutable because the spec declares it so,
+     * not because the firmware writes to it; the round trip through
+     * uintptr_t is what keeps -Wcast-qual quiet about the spec's wart. */
+    st->ConOut->OutputString(st->ConOut, (CHAR16 *)(uintptr_t)s);
+}
+
+INTN menu_prompt_secret(EFI_SYSTEM_TABLE *st, const CHAR16 *prompt,
+                        char *buf, UINTN cap)
+{
+    UINTN len = 0;
+
+    if (st == (void *)0 || buf == (void *)0 || cap == 0)
+        return -1;
+
+    buf[0] = '\0';
+    st->ConOut->EnableCursor(st->ConOut, TRUE);
+    if (prompt != (void *)0)
+        out(st, prompt);
+
+    for (;;) {
+        EFI_INPUT_KEY key;
+        UINTN index;
+
+        if (st->BootServices->WaitForEvent(1, &st->ConIn->WaitForKey,
+                                           &index) != EFI_SUCCESS)
+            break;
+        if (st->ConIn->ReadKeyStroke(st->ConIn, &key) != EFI_SUCCESS)
+            continue;
+
+        if (key.ScanCode == EFI_SCAN_ESC) {
+            /* Cancel wipes here rather than leaving it to the caller: a
+             * cancelled prompt is the one exit where the caller has no
+             * reason to think it ever held anything. */
+            crypto_wipe(buf, (size_t)cap);
+            out(st, L"\r\n");
+            return -1;
+        }
+        if (key.ScanCode != EFI_SCAN_NULL)
+            continue; /* arrows, function keys: nothing to do in a line */
+
+        if (key.UnicodeChar == CHAR_CR) {
+            out(st, L"\r\n");
+            buf[len] = '\0';
+            return (INTN)len;
+        }
+        if (key.UnicodeChar == CHAR_BACKSPACE) {
+            if (len > 0) {
+                len--;
+                /* Overwrite the byte as it leaves the buffer, not merely on
+                 * the way out: a passphrase retyped after a correction would
+                 * otherwise leave its earlier tail sitting past len. */
+                buf[len] = '\0';
+                out(st, L"\b \b");
+            }
+            continue;
+        }
+        /* Printable ASCII only, and only while there is room for the byte
+         * plus its terminator. An over-long passphrase stops echoing, which
+         * is the honest signal that the keystroke did not land. */
+        if (key.UnicodeChar < 0x20 || key.UnicodeChar > 0x7E)
+            continue;
+        if (len + 1 >= cap)
+            continue;
+        buf[len++] = (char)key.UnicodeChar;
+        out(st, L"*");
+    }
+
+    /* WaitForEvent failed, which means the console is gone; treat it as a
+     * cancel so no caller is left holding a half-read secret. */
+    crypto_wipe(buf, (size_t)cap);
+    return -1;
+}

@@ -6,12 +6,20 @@
 # Serial output mirrors the firmware console for logging; OVMF's debug port
 # is captured to build/ovmf-debug.log.
 #
-# Usage: tools/run-qemu.sh [--secboot] [--headless] [extra qemu args...]
+# Usage: tools/run-qemu.sh [--secboot] [--stick] [--headless] [qemu args...]
 #   --secboot   Secure Boot OVMF, with the real chain staged: shim as the
 #               removable-media default loader, our SIGNED loader under the
 #               next-stage name shim has compiled in, and a varstore that
 #               trusts the test MOK. Needs `make sign` first (which needs
 #               tools/mk-test-mok.sh). See the SECBOOT block below.
+#   --stick     boot build/test-stick.img and nothing else: no vvfat ESP, no
+#               separate exFAT fixture, just the one raw disk with a real GPT
+#               on it (tools/mk-test-stick.sh). This is the shape the personal
+#               OS path needs, because p3 only exists as a partition of a
+#               partitioned disk. Combines with --secboot, which then supplies
+#               the MokList varstore; the stick image itself is the same file
+#               either way, since the shim chain on its p1 is staged at build
+#               time rather than here.
 #   --headless  no window, serial to build/serial.log, QEMU monitor on the
 #               unix socket build/mon.sock. This is the scriptable shape:
 #               drive the menu with "sendkey" through the monitor and assert
@@ -37,6 +45,8 @@ VARS="$BUILD/OVMF_VARS.fd"
 
 HEADLESS=0
 SECBOOT=0
+STICK=0
+STICK_IMG="$BUILD/test-stick.img"
 
 # Secure Boot chain inputs. Fedora's shim-x64 16.1 is the one the spike
 # recommends shipping (dual-signed by the MS 2011 and 2023 UEFI CAs, smallest
@@ -63,6 +73,10 @@ while [[ $# -gt 0 ]]; do
         ESP="$BUILD/esp-secboot"
         shift
         ;;
+    --stick)
+        STICK=1
+        shift
+        ;;
     --headless)
         HEADLESS=1
         shift
@@ -75,7 +89,18 @@ done
 
 [[ -f "$CODE" ]] || { echo "ERROR: OVMF not found at $CODE (set OVMF_DIR)" >&2; exit 1; }
 
-if [[ "$SECBOOT" -eq 1 ]]; then
+# In stick mode the disk image already carries its own ESP and its own copy of
+# the shim chain, so none of the vvfat staging below applies. The only thing
+# --secboot still contributes is the varstore that trusts the test MOK.
+if [[ "$STICK" -eq 1 ]]; then
+    [[ -f "$STICK_IMG" ]] || {
+        echo "ERROR: $STICK_IMG missing (run: make test-stick)" >&2; exit 1; }
+    if [[ "$SECBOOT" -eq 1 ]]; then
+        [[ -f "$MOK_VARS" ]] || {
+            echo "ERROR: $MOK_VARS missing (run: tools/mk-test-mok.sh)" >&2
+            exit 1; }
+    fi
+elif [[ "$SECBOOT" -eq 1 ]]; then
     [[ -f "$EFI_SIGNED" ]] || {
         echo "ERROR: $EFI_SIGNED not built (run: make sign)" >&2; exit 1; }
     [[ -f "$MOK_VARS" ]] || {
@@ -104,12 +129,25 @@ fi
 [[ -f "$VARS" ]] || cp "$VARS_SRC" "$VARS"
 chmod u+w "$VARS"
 
-# The exFAT test image (tools/mk-test-exfat.sh) stands in for the stick's ISO
-# partition. Optional: without it the loader boots and finds no volume, which
-# is itself a case worth being able to run.
-TEST_DRIVE=()
-if [[ -f "$BUILD/test-exfat.img" ]]; then
-    TEST_DRIVE=(-drive "format=raw,file=$BUILD/test-exfat.img")
+# What the firmware is given to boot from.
+#
+# Stick mode is one raw disk and nothing else, on purpose: a vvfat ESP beside
+# it would give the loader a second, unpartitioned filesystem to find and would
+# make "which partition did p3 come from" ambiguous in exactly the test that
+# exists to answer it.
+#
+# Otherwise it is the vvfat ESP plus, if built, the whole-device exFAT fixture
+# (tools/mk-test-exfat.sh) standing in for the stick's ISO partition. That one
+# is optional: without it the loader boots and finds no volume, which is itself
+# a case worth being able to run.
+DRIVES=()
+if [[ "$STICK" -eq 1 ]]; then
+    DRIVES=(-drive "format=raw,file=$STICK_IMG")
+else
+    DRIVES=(-drive "format=raw,file=fat:rw:$ESP")
+    if [[ -f "$BUILD/test-exfat.img" ]]; then
+        DRIVES+=(-drive "format=raw,file=$BUILD/test-exfat.img")
+    fi
 fi
 
 ACCEL=()
@@ -136,8 +174,7 @@ exec qemu-system-x86_64 \
     "${ACCEL[@]}" \
     -drive if=pflash,format=raw,readonly=on,file="$CODE" \
     -drive if=pflash,format=raw,file="$VARS" \
-    -drive format=raw,file=fat:rw:"$ESP" \
-    "${TEST_DRIVE[@]}" \
+    "${DRIVES[@]}" \
     -net none \
     "${CONSOLE[@]}" \
     -debugcon file:"$BUILD/ovmf-debug.log" -global isa-debugcon.iobase=0x402 \

@@ -117,10 +117,18 @@ static int probe_head_contains(const family_probe *p, const char *path,
 
     if (p->read == (void *)0)
         return 0;
+    /* Zeroed before the call, not after: a callback that reports more bytes
+     * than it actually wrote then leaves the scan running over deterministic
+     * zeroes instead of whatever the stack happened to hold. */
+    memset(head, 0, sizeof(head));
     if (p->read(p->ctx, path, 0, head, sizeof(head), &got) != 0)
         return 0;
+    /* sizeof(head) is both the buffer and the length asked for, so this one
+     * bound catches an overrun and a callback claiming more than it was
+     * offered. Rejected rather than clamped: a callback that cannot describe
+     * the size of its own result is not one to believe about the content. */
     if (got > sizeof(head))
-        return 0; /* a callback that lies about the length gets ignored */
+        return 0;
     return buf_contains(head, got, needle);
 }
 

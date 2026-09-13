@@ -31,4 +31,27 @@ typedef struct {
 INTN menu_run(EFI_SYSTEM_TABLE *st, const menu_banner *banner,
               const menu_entry *entries, UINTN count);
 
+/* Masked line editor, for the p3 passphrase (DESIGN Section 5 step 2).
+ *
+ * Lives in the menu module because it is console presentation and nothing
+ * else: it knows how to echo a '*' and how to take a backspace, and it has no
+ * idea what the bytes are for. What they are for, and the wiping discipline
+ * that follows from it, is the caller's (src/pos).
+ *
+ * The result is BYTES, not CHAR16: a LUKS passphrase is a byte string, and
+ * widening it to UTF-16 here only to narrow it again at the LUKS call would
+ * put a second copy of the secret in a second buffer. Input is restricted to
+ * printable ASCII for exactly the same reason it is on the mkstick side:
+ * anything else has no single agreed byte encoding, so a passphrase typed at
+ * this prompt and one typed at a Linux prompt would silently differ.
+ * Non-ASCII keystrokes are ignored rather than rejected, because a refusal
+ * message would be a keystroke-by-keystroke oracle for nothing.
+ *
+ * Returns the number of bytes typed (0 is a legal answer, and the LUKS layer
+ * will reject it like any wrong passphrase), or a negative value if the user
+ * pressed ESC. On ESC the buffer is wiped before returning; on success the
+ * caller owns the wipe. buf always ends NUL-terminated within cap. */
+INTN menu_prompt_secret(EFI_SYSTEM_TABLE *st, const CHAR16 *prompt,
+                        char *buf, UINTN cap);
+
 #endif /* AIRIES_MENU_H */

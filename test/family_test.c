@@ -51,7 +51,8 @@ typedef struct {
     size_t           n;
     unsigned         exists_calls;
     unsigned         read_calls;
-    int              lie_about_length; /* report more bytes than delivered */
+    int              lie_about_length; /* report past the buffer offered */
+    int              over_report;      /* report the whole buffer as filled */
 } fake_tree;
 
 static int fake_exists(void *ctx, const char *path)
@@ -91,8 +92,16 @@ static int fake_read(void *ctx, const char *path, uint64_t off, void *buf,
             take = len;
         memcpy(buf, c + off, take);
         /* A callback that claims more than it wrote is a bug the module has
-         * to survive rather than read uninitialised bytes over. */
-        *got = t->lie_about_length ? len + 1u : take;
+         * to survive rather than read uninitialised bytes over. The two lies
+         * are refused by different rules: one is past the buffer it was
+         * offered, the other is inside it and looks exactly like a file that
+         * happened to fill the window. */
+        if (t->lie_about_length)
+            *got = len + 1u;
+        else if (t->over_report)
+            *got = len;
+        else
+            *got = take;
         return 0;
     }
     return -1; /* not present, or present but not readable */
@@ -513,13 +522,48 @@ static void test_family_fingerprint_shorter_than_needle(void **state)
     expect_family(empty, 1, FAMILY_UNKNOWN, NULL);
 }
 
-/* A callback that reports more bytes than it delivered must be ignored rather
- * than believed: believing it would search uninitialised stack. */
+/* Writes the needle across a stack region larger than the module's read
+ * window, so a probe frame laid down afterwards sits on bytes that would match
+ * if anything scanned past what a callback actually delivered.
+ *
+ * Nothing here asserts the two frames overlap, and the test passes either way;
+ * when they do overlap this is the difference between a deterministic answer
+ * and a fingerprint conjured out of stack residue. */
+static volatile char stack_sink;
+
+static void dirty_stack(const char *needle)
+{
+    char scratch[8192];
+    size_t nl = strlen(needle);
+    size_t i;
+
+    for (i = 0; i + nl <= sizeof(scratch); i += nl)
+        memcpy(scratch + i, needle, nl);
+    /* So the writes cannot be discarded as dead. */
+    stack_sink = scratch[sizeof(scratch) - 1u];
+}
+
+/* A callback that reports more bytes than it delivered must not be able to
+ * turn whatever was on the stack into a fingerprint. Two shapes, refused by
+ * two different rules:
+ *
+ *   past the buffer    got exceeds the length offered, so the callback cannot
+ *                      describe its own result and the read is dropped whole.
+ *   inside the buffer  got is within the offer but past what was written,
+ *                      which is indistinguishable from a file that filled the
+ *                      window. The scan runs, and must run over the zeroes the
+ *                      module lays down first. */
 static void test_family_lying_read_callback(void **state)
 {
     static const char conf[] = "options archisobasedir=arch\n";
+    /* No needle anywhere in it: the only way this classifies as Arch is bytes
+     * the callback never delivered. */
+    static const char quiet_conf[] = "title   Something else\n";
     static const fake_file t[] = {
         { "/loader/entries/archiso-x86_64.conf", conf },
+    };
+    static const fake_file quiet[] = {
+        { "/loader/entries/archiso-x86_64.conf", quiet_conf },
     };
     family_probe p;
     fake_tree tr;
@@ -529,6 +573,19 @@ static void test_family_lying_read_callback(void **state)
     tr.lie_about_length = 1;
     assert_int_equal(family_detect(&p)->id, FAMILY_UNKNOWN);
     assert_true(tr.read_calls > 0);
+
+    /* Both needles the module searches for, because either one left on the
+     * stack would classify the medium. */
+    dirty_stack("archisobasedir=arch");
+    tree_probe(&p, &tr, quiet, 1);
+    tr.over_report = 1;
+    assert_int_equal(family_detect(&p)->id, FAMILY_UNKNOWN);
+    assert_true(tr.read_calls > 0);
+
+    dirty_stack("archisobasedir=sysresccd");
+    tree_probe(&p, &tr, quiet, 1);
+    tr.over_report = 1;
+    assert_int_equal(family_detect(&p)->id, FAMILY_UNKNOWN);
 }
 
 /* ------------------------------------------------------------- registry */

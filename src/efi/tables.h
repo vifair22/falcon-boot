@@ -28,6 +28,22 @@ typedef struct {
 typedef UINT32 EFI_MEMORY_TYPE;
 #define EfiLoaderData ((EFI_MEMORY_TYPE)2)
 
+/* AllocatePages allocation types (spec 7.2). Only AllocateAnyPages is passed;
+ * the other two are named so a reader can see the enum is complete and that
+ * the value 0 we use is the one that means "anywhere". */
+typedef UINT32 EFI_ALLOCATE_TYPE;
+#define AllocateAnyPages   ((EFI_ALLOCATE_TYPE)0)
+#define AllocateMaxAddress ((EFI_ALLOCATE_TYPE)1)
+#define AllocateAddress    ((EFI_ALLOCATE_TYPE)2)
+
+/* A physical address is 64-bit on every architecture the spec defines it for,
+ * and stays UINT64 rather than a pointer type: AllocatePages writes the
+ * allocated address through this, and on a 32-bit build it would still be a
+ * 64-bit slot. */
+typedef UINT64 EFI_PHYSICAL_ADDRESS;
+
+#define EFI_PAGE_SIZE 4096u
+
 /* LocateHandleBuffer search types (spec 7.3). */
 typedef UINT32 EFI_LOCATE_SEARCH_TYPE;
 #define AllHandles       ((EFI_LOCATE_SEARCH_TYPE)0)
@@ -44,8 +60,17 @@ struct EFI_BOOT_SERVICES {
     void *RestoreTPL;
 
     /* Memory */
-    void *AllocatePages;
-    void *FreePages;
+    /* Page allocation, for the one buffer that cannot come from the pool:
+     * the personal-OS UKI read out of the encrypted p3 (DESIGN Section 5).
+     * A UKI is tens of megabytes and is handed to LoadImage as a source
+     * buffer, so it wants page granularity and page alignment rather than
+     * the pool's arbitrary alignment. */
+    EFI_STATUS (EFIAPI *AllocatePages)(EFI_ALLOCATE_TYPE Type,
+                                       EFI_MEMORY_TYPE MemoryType,
+                                       UINTN Pages,
+                                       EFI_PHYSICAL_ADDRESS *Memory);
+    EFI_STATUS (EFIAPI *FreePages)(EFI_PHYSICAL_ADDRESS Memory,
+                                   UINTN Pages);
     void *GetMemoryMap;
     EFI_STATUS (EFIAPI *AllocatePool)(EFI_MEMORY_TYPE PoolType,
                                       UINTN Size,
@@ -76,11 +101,23 @@ struct EFI_BOOT_SERVICES {
     void *InstallConfigurationTable;
 
     /* Image */
-    /* The verifying load path of DESIGN Sections 2, 6 and 7: with
-     * SourceBuffer NULL the firmware reads the image itself and runs it
-     * through the platform's security hooks. We never load payloads from a
-     * memory buffer and never install a security override, so what boots is
-     * the platform's decision, not ours. */
+    /* The verifying load path of DESIGN Sections 2, 6 and 7. We never
+     * install a security override, so what boots is the platform's decision
+     * on both of the two shapes this call takes here:
+     *
+     *   - ISO path (Section 6): DevicePath set, SourceBuffer NULL. The
+     *     firmware reads the image itself, which is also what gives the
+     *     payload a LoadedImage->DeviceHandle pointing at the ISO's ESP so a
+     *     distro bootloader can find its own configuration.
+     *   - UKI path (Section 5): SourceBuffer set, DevicePath NULL, because a
+     *     LUKS volume has no firmware-readable device path at all. The image
+     *     is still verified: the load goes through the shim-verified path of
+     *     Section 7.6, and shim verifies the bytes in the buffer against
+     *     db/MOK/SBAT before it will run them.
+     *
+     * Neither shape is a relaxation, and neither may be "unified" into the
+     * other: the ISO path must name a device path to keep its DeviceHandle,
+     * and the UKI path has no device path to name. */
     EFI_STATUS (EFIAPI *LoadImage)(BOOLEAN BootPolicy,
                                    EFI_HANDLE ParentImageHandle,
                                    EFI_DEVICE_PATH_PROTOCOL *DevicePath,

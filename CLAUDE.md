@@ -11,17 +11,37 @@ records the alternatives that were considered and rejected, so do not reintroduc
 a rejected approach without re-reading why it was rejected. `README.md` is the
 short public summary of the same model.
 
-Status: pre-1.0 MVP. Steps 1-3 of the build order in `docs/DESIGN.md` Section
-11 are done: the mingw PE toolchain and QEMU/OVMF rig are proven, the loader
-enumerates `*.iso` from exFAT (own read-only driver) into a working text menu,
-and selecting an entry boots it (virtual CD, `ConnectController`, then the
-platform's verifying `LoadImage` of the ISO's `\EFI\BOOT\BOOTX64.EFI`),
-proven end to end under OVMF with Secure Boot off and surviving a payload
-exit back into the menu. Next is step 4 (SB-state UX plus the injection
-framework: family detection, descriptor registry, extent map, cpio append).
-Still outstanding: the shim binary to ship and the Section 7.6 load-path
-classification that goes with it, which gates the Secure Boot ON half of
-step 3.
+Status: pre-1.0 MVP. Steps 1-5 of the build order in `docs/DESIGN.md` Section
+11 are done, with one carve-out named below. The mingw PE toolchain and the
+QEMU/OVMF rig are proven; the shim question is settled (Fedora shim-x64 16.1,
+`SHIM_IMAGE_LOADER`, `docs/notes/shim-spike.md`) and the loader carries the
+`.sbat` section that needs. The loader enumerates `*.iso` from exFAT into a
+text menu labelled with family and signature presence, boots an entry through
+the platform's verifying `LoadImage` of the ISO's `\EFI\BOOT\BOOTX64.EFI`,
+and shows the Secure Boot state banner. The personal-OS entry is pinned at the
+top of the menu when a pbkdf2-capable LUKS2 volume is in sight, and it works
+end to end: masked passphrase prompt, LUKS2 unlock of p3, read-only ext4
+inside, `/uki/*.efi` discovery (`/EFI/Linux` as fallback), and `LoadImage` of
+the image through the shim-verified path.
+
+Proven headless under OVMF against `build/test-stick.img`, a real
+four-partition GPT disk (`make test-stick`, `make run-stick` /
+`run-stick-secboot`), with Secure Boot both off and on. Under Secure Boot on,
+shim verifies the MOK-signed image read out of the encrypted partition and
+refuses an unsigned one with `EFI_SECURITY_VIOLATION` and an actionable
+message; the menu survives both. p4's argon2id keyslot is recognised and
+skipped without a second prompt.
+
+The carve-out and the next step are the same thing: **step 6, the passphrase
+handoff.** Today the typed passphrase unlocks p3 and is then wiped, so the
+personal OS boots but nothing carries the passphrase on to the initramfs for
+p4. Step 6 synthesizes the virtual credential filesystem of Section 5.1 so
+sd-stub packs it into the initrd and stock `systemd-cryptsetup` consumes it.
+That also replaces today's `LoadImage(SourceBuffer, DevicePath=NULL)` with a
+device-path load off that synthetic filesystem, which is what gives a real
+sd-stub UKI the non-NULL `LoadedImage->DeviceHandle` its `.extra.d` scan
+needs. Also still outstanding from step 4: the injection framework's runtime
+half (extent map and cpio append exist; per-family injectors do not).
 
 ## Non-negotiable security invariants (DESIGN.md Section 7)
 
@@ -64,16 +84,25 @@ Makefiles.
   minimal UEFI headers live here too.
 - `src/exfat/` read-only exFAT driver, EFI-free (device access through a read
   callback) so it is testable off the firmware.
-- `src/menu/` text menu over Simple Text Output/Input.
+- `src/menu/` text menu over Simple Text Output/Input, plus the masked
+  passphrase prompt (`prompt.c`, its own TU so "what has held the secret" has
+  a one-file answer).
+- `src/pos/` the personal-OS path (DESIGN Section 5): LUKS2 volume discovery,
+  unlock, the ext4 inside, UKI discovery, and the shim-verified load. The only
+  module that ever holds the passphrase. Glue over `src/luks` and `src/ext4`;
+  it writes no crypto and no filesystem code.
 - `src/lib/` freestanding support routines: `mem*` and the UCS-2 helpers.
 - `src/cli/` host tooling (Linux userland C), arriving at step 7 of the build
   order. May shell out to `cryptsetup`, `sbsign`, `mkfs.*`, `ukify`. The `sign`
   tool is a portable static binary shared between the host and the on-stick
   signing appliance.
 - `docs/` DESIGN.md (authoritative) and later Manual.md.
-- `tools/` host scripts: the QEMU + OVMF rig (`run-qemu.sh`) and the exFAT test
-  fixture builder (`mk-test-exfat.sh`). OVMF (plain and secboot) is present on
-  this machine.
+- `tools/` host scripts: the QEMU + OVMF rig (`run-qemu.sh`, with `--secboot`,
+  `--stick` and `--headless`), the exFAT fixture builder (`mk-test-exfat.sh`),
+  the El Torito payload ISO (`mk-test-iso.sh`), the throwaway test MOK
+  (`mk-test-mok.sh`), and the four-partition GPT test stick
+  (`mk-test-stick.sh`, `make test-stick`) that the personal-OS path needs.
+  OVMF (plain and secboot) is present on this machine.
 
 `make check-tools` verifies the toolchain. Objects land in
 `build/<variant>/<module>/`, the linked loader in `build/bin/airies-boot.efi`,

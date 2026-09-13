@@ -124,6 +124,39 @@ static void emit_record(cpio_out *o, uint32_t ino, uint32_t mode,
     emit_zeros(o, pad_to(len));
 }
 
+/* Every '/'-separated component must be a name the archive can contain.
+ *
+ * An empty component is rejected because it names nothing: a leading '/' makes
+ * the first one empty, a trailing '/' the last one, and "a//b" one in the
+ * middle, which is what a path built by concatenating a directory that already
+ * ended in a slash looks like. A ".." component is rejected because the
+ * kernel's unpacker resolves it, so the record would land outside the
+ * initramfs root this archive describes.
+ *
+ * A "." component stays legal on purpose. It resolves to the directory it
+ * already sits in, so it cannot leave the root, and rejecting it would be
+ * style policing in a check whose job is containment. Names that merely start
+ * with dots ("..foo", ".hidden") and names with dots inside them ("a..b") are
+ * ordinary names and are not touched by either rule. */
+static int path_ok(const char *p, size_t n)
+{
+    size_t i = 0;
+
+    for (;;) {
+        size_t start = i;
+
+        while (i < n && p[i] != '/')
+            i++;
+        if (i == start)
+            return 0;
+        if (i - start == 2 && p[start] == '.' && p[start + 1] == '.')
+            return 0;
+        if (i == n)
+            return 1;
+        i++; /* the separator; a trailing one leaves the next pass empty */
+    }
+}
+
 static int check_entry(const cpio_entry *e, size_t *name_len)
 {
     size_t nl;
@@ -131,7 +164,7 @@ static int check_entry(const cpio_entry *e, size_t *name_len)
     if (e->path == (void *)0)
         return CPIO_ERR_BAD_ARG;
     nl = cstr_len(e->path);
-    if (nl == 0 || e->path[0] == '/')
+    if (nl == 0 || !path_ok(e->path, nl))
         return CPIO_ERR_BAD_ARG; /* archive-relative names only */
     if (e->len != 0 && e->data == (void *)0)
         return CPIO_ERR_BAD_ARG;

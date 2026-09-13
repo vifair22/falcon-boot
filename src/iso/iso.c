@@ -346,10 +346,15 @@ static int probe_exists(void *ctx, const char *path)
     return 1;
 }
 
-/* Reads from the head of a file only. Every fingerprint family.c has, and the
- * PE header read below, start at offset zero; seeking would mean carrying
- * SetPosition in our File Protocol declaration for no caller, so a nonzero
- * offset is reported as unreadable instead of silently answered wrong. */
+/* Bounded read at an arbitrary offset. The File Protocol has no positioned
+ * read, so an offset is a SetPosition ahead of the Read; the handle is opened
+ * and closed per call, so the seek cannot leak into anyone else's position.
+ *
+ * A seek past the end is not an error here: the spec allows it and the Read
+ * that follows simply delivers nothing, which is the "short only at end of
+ * file" the family_probe contract already describes. Every fingerprint
+ * family.c has, and the PE header read below, still start at zero; the offset
+ * is honoured so that a later one does not have to be written around. */
 static int probe_read(void *ctx, const char *path, uint64_t off, void *buf,
                       size_t len, size_t *got)
 {
@@ -358,10 +363,12 @@ static int probe_read(void *ctx, const char *path, uint64_t off, void *buf,
     EFI_STATUS status;
 
     *got = 0;
-    if (off != 0)
-        return -1;
     if (probe_open(ctx, path, &file) != EFI_SUCCESS)
         return -1;
+    if (off != 0 && EFI_ERROR(file->SetPosition(file, off))) {
+        file->Close(file);
+        return -1;
+    }
     status = file->Read(file, &size, buf);
     file->Close(file);
     if (EFI_ERROR(status))

@@ -4,7 +4,9 @@
  * driver publishes Simple File System on the ISO's embedded ESP, and that
  * handle appearing is how we find the child to chainload from. The file
  * members carry real prototypes because family detection (DESIGN Section 6.2)
- * fingerprints that same filesystem next; everything else stays a placeholder.
+ * fingerprints that same filesystem next, the positioning pair with them
+ * because the protocol has no positioned read and a fingerprint that does not
+ * start at byte zero needs a seek; everything else stays a placeholder.
  */
 
 #ifndef AIRIES_UEFI_SFS_H
@@ -39,8 +41,10 @@ struct EFI_FILE_PROTOCOL {
                               UINTN *BufferSize,
                               void *Buffer);
     void *Write;
-    void *GetPosition;
-    void *SetPosition;
+    EFI_STATUS (EFIAPI *GetPosition)(EFI_FILE_PROTOCOL *This,
+                                     UINT64 *Position);
+    EFI_STATUS (EFIAPI *SetPosition)(EFI_FILE_PROTOCOL *This,
+                                     UINT64 Position);
     EFI_STATUS (EFIAPI *GetInfo)(EFI_FILE_PROTOCOL *This,
                                  EFI_GUID *InformationType,
                                  UINTN *BufferSize,

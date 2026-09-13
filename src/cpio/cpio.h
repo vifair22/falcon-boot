@@ -37,10 +37,17 @@ enum {
 #define CPIO_MODE_DIR  0040755u
 
 typedef struct {
-    /* Archive-relative path, no leading '/'. Every parent directory must
-     * appear as its own CPIO_MODE_DIR entry earlier in the list: the kernel's
-     * unpacker creates only what the archive names, so a file under a missing
-     * directory is silently dropped. */
+    /* Archive-relative path: '/'-separated components, each one a non-empty
+     * name that is not "..". That rules out a leading or trailing '/' and an
+     * empty component ("a//b"), which name nothing, and any path the kernel's
+     * unpacker would resolve to somewhere outside the initramfs root this
+     * archive describes. A "." component is legal; it resolves to the
+     * directory it sits in and cannot leave the root. Anything else is
+     * CPIO_ERR_BAD_ARG for the whole archive.
+     *
+     * Every parent directory must appear as its own CPIO_MODE_DIR entry
+     * earlier in the list: the kernel's unpacker creates only what the archive
+     * names, so a file under a missing directory is silently dropped. */
     const char *path;
     const void *data;      /* NULL for a directory, or for an empty file */
     size_t      len;       /* 0 for a directory */
