@@ -44,6 +44,18 @@
  * booted by firmware puts its loader here (UEFI spec 3.5.1.1). */
 static const CHAR16 boot_file_path[] = L"\\EFI\\BOOT\\BOOTX64.EFI";
 
+/* The same path in the ASCII, forward-slash form the probe helpers take. The
+ * two spellings have to stay identical character for character, case
+ * included: one is the string LoadImage is handed and the other is what
+ * decides which volume gets handed it. */
+#define ISO_BOOT_PATH "/EFI/BOOT/BOOTX64.EFI"
+
+/* How many of our own volumes are kept. A medium publishes one (a plain ESP)
+ * or two (an El Torito FAT boot image plus the ISO's own filesystem); the
+ * bound is what keeps a firmware that enumerates something unexpected costing
+ * a fixed amount of work per menu entry rather than an unbounded amount. */
+#define ISO_MAX_VOLUMES 4u
+
 typedef struct {
     VENDOR_DEVICE_PATH       vendor;
     EFI_DEVICE_PATH_PROTOCOL end;
@@ -67,6 +79,14 @@ typedef struct {
     UINT8                 in_use;
     UINT8                 connected;
 } iso_device;
+
+/* The filesystems the firmware mounted inside one medium. Index 0 is the one
+ * to boot; the rest exist because the bootable volume is not always the one
+ * that says what the medium is. */
+typedef struct {
+    EFI_HANDLE vol[ISO_MAX_VOLUMES];
+    UINTN      n;
+} iso_volumes;
 
 /* One ISO boots at a time, and the instance must outlive every firmware
  * driver that binds to it, so it is static rather than pool-allocated. */
@@ -222,7 +242,7 @@ static EFI_STATUS device_teardown(EFI_BOOT_SERVICES *bs, iso_device *dev)
     return EFI_SUCCESS;
 }
 
-/* ---- finding the ESP the firmware mounted inside the ISO ---- */
+/* ---- finding the filesystems the firmware mounted inside the ISO ---- */
 
 static EFI_STATUS sfs_handles(EFI_BOOT_SERVICES *bs, EFI_HANDLE **buf,
                               UINTN *count)
@@ -274,27 +294,32 @@ static BOOLEAN is_our_child(EFI_BOOT_SERVICES *bs, iso_device *dev,
                             sizeof(dev->path.vendor)) == 0);
 }
 
-/* The medium's ESP is whichever Simple File System handle appeared while we
- * were connecting drivers. Comparing handle sets is firmer than matching
- * device paths alone, because it does not depend on how the firmware's
- * partition driver chooses to name its children; the device path is then used
- * only to break ties if several handles appeared at once.
+/* The medium's filesystems are whichever Simple File System handles appeared
+ * while we were connecting drivers. Comparing handle sets is firmer than
+ * matching device paths alone, because it does not depend on how the
+ * firmware's partition driver chooses to name its children; the device path is
+ * then used only to tell our own children from anyone else's.
  *
  * It is also what makes the superfloppy case work for free: a FAT driver that
  * binds to our own handle rather than to a partition child installs the new
  * Simple File System interface on a handle that was not in the before-set
- * either, so the diff finds it the same way. */
-static EFI_STATUS find_iso_esp(EFI_BOOT_SERVICES *bs, iso_device *dev,
-                               EFI_HANDLE *before, UINTN before_n,
-                               EFI_HANDLE *out)
+ * either, so the diff finds it the same way.
+ *
+ * More than one is the normal case, not an oddity: a CD image with an El
+ * Torito catalog yields a FAT boot image and the ISO's own filesystem as two
+ * separate children. Which of them boots is decided in select_boot_volume,
+ * which needs to read files and so lives further down. */
+static EFI_STATUS collect_iso_volumes(EFI_BOOT_SERVICES *bs, iso_device *dev,
+                                      EFI_HANDLE *before, UINTN before_n,
+                                      iso_volumes *out)
 {
     EFI_HANDLE *after = (EFI_HANDLE *)0;
     EFI_HANDLE first_new = (EFI_HANDLE)0;
-    EFI_HANDLE matched = (EFI_HANDLE)0;
     UINTN after_n = 0;
     UINTN i;
     EFI_STATUS status;
 
+    out->n = 0;
     status = sfs_handles(bs, &after, &after_n);
     if (EFI_ERROR(status))
         return status;
@@ -304,15 +329,23 @@ static EFI_STATUS find_iso_esp(EFI_BOOT_SERVICES *bs, iso_device *dev,
             continue;
         if (first_new == (EFI_HANDLE)0)
             first_new = after[i];
-        if (matched == (EFI_HANDLE)0 && is_our_child(bs, dev, after[i]))
-            matched = after[i];
+        if (out->n < ISO_MAX_VOLUMES && is_our_child(bs, dev, after[i]))
+            out->vol[out->n++] = after[i];
     }
 
     if (after != (EFI_HANDLE *)0)
         bs->FreePool(after);
 
-    *out = (matched != (EFI_HANDLE)0) ? matched : first_new;
-    return (*out != (EFI_HANDLE)0) ? EFI_SUCCESS : EFI_NOT_FOUND;
+    if (out->n != 0)
+        return EFI_SUCCESS;
+    /* Nothing carried our vendor node, but something did appear: a firmware
+     * whose children we cannot recognise is still better served by the one
+     * new filesystem than by no filesystem at all. */
+    if (first_new == (EFI_HANDLE)0)
+        return EFI_NOT_FOUND;
+    out->vol[0] = first_new;
+    out->n = 1;
+    return EFI_SUCCESS;
 }
 
 /* ---- looking inside the ESP: family and signature presence ---- */
@@ -375,11 +408,71 @@ static EFI_STATUS probe_open(void *ctx, const char *path,
     return root->Open(root, file, wide, EFI_FILE_MODE_READ, 0);
 }
 
+/* Folds an ASCII path to lower case. Returns 0 when the result is worth
+ * trying, nonzero when there is nothing to retry: already lower case, or too
+ * long for the buffer. */
+static int path_fold_lower(const char *path, char *out, size_t cap)
+{
+    size_t i = 0;
+    int changed = 0;
+
+    while (path[i] != '\0') {
+        char c = path[i];
+
+        if (i + 1 >= cap)
+            return -1;
+        if (c >= 'A' && c <= 'Z') {
+            c = (char)(c + ('a' - 'A'));
+            changed = 1;
+        }
+        out[i] = c;
+        i++;
+    }
+    out[i] = '\0';
+    return changed ? 0 : -1;
+}
+
+/* Fingerprint open: the path as written, then the same path folded to lower
+ * case.
+ *
+ * The constraint is that a File Protocol provider is not required to match
+ * case-insensitively and EDK2's UDF driver does not. Measured on OVMF against
+ * Windows install media: \EFI\BOOT\BOOTX64.EFI on the UDF volume is
+ * EFI_NOT_FOUND while \efi\boot\bootx64.efi opens. The fingerprint table is
+ * written in the case each family's own documentation uses, so without the
+ * retry a mixed-case fingerprint misses a file that is there.
+ *
+ * The boot path is deliberately not opened this way. LoadImage is handed one
+ * exact string, and a probe more forgiving than the loader would call a volume
+ * bootable that the platform then refuses to boot. */
+static EFI_STATUS probe_open_ci(void *ctx, const char *path,
+                                EFI_FILE_PROTOCOL **file)
+{
+    char folded[PROBE_PATH_MAX];
+    EFI_STATUS status = probe_open(ctx, path, file);
+
+    if (!EFI_ERROR(status))
+        return status;
+    if (path_fold_lower(path, folded, sizeof(folded)) != 0)
+        return status;
+    return probe_open(ctx, folded, file);
+}
+
 static int probe_exists(void *ctx, const char *path)
 {
     EFI_FILE_PROTOCOL *file;
 
     if (probe_open(ctx, path, &file) != EFI_SUCCESS)
+        return 0;
+    file->Close(file);
+    return 1;
+}
+
+static int probe_exists_ci(void *ctx, const char *path)
+{
+    EFI_FILE_PROTOCOL *file;
+
+    if (probe_open_ci(ctx, path, &file) != EFI_SUCCESS)
         return 0;
     file->Close(file);
     return 1;
@@ -394,16 +487,12 @@ static int probe_exists(void *ctx, const char *path)
  * file" the family_probe contract already describes. Every fingerprint
  * family.c has, and the PE header read below, still start at zero; the offset
  * is honoured so that a later one does not have to be written around. */
-static int probe_read(void *ctx, const char *path, uint64_t off, void *buf,
-                      size_t len, size_t *got)
+static int file_read_at(EFI_FILE_PROTOCOL *file, uint64_t off, void *buf,
+                        size_t len, size_t *got)
 {
-    EFI_FILE_PROTOCOL *file;
     UINTN size = (UINTN)len;
     EFI_STATUS status;
 
-    *got = 0;
-    if (probe_open(ctx, path, &file) != EFI_SUCCESS)
-        return -1;
     if (off != 0 && EFI_ERROR(file->SetPosition(file, off))) {
         file->Close(file);
         return -1;
@@ -414,6 +503,28 @@ static int probe_read(void *ctx, const char *path, uint64_t off, void *buf,
         return -1;
     *got = (size_t)size;
     return 0;
+}
+
+static int probe_read(void *ctx, const char *path, uint64_t off, void *buf,
+                      size_t len, size_t *got)
+{
+    EFI_FILE_PROTOCOL *file;
+
+    *got = 0;
+    if (probe_open(ctx, path, &file) != EFI_SUCCESS)
+        return -1;
+    return file_read_at(file, off, buf, len, got);
+}
+
+static int probe_read_ci(void *ctx, const char *path, uint64_t off, void *buf,
+                         size_t len, size_t *got)
+{
+    EFI_FILE_PROTOCOL *file;
+
+    *got = 0;
+    if (probe_open_ci(ctx, path, &file) != EFI_SUCCESS)
+        return -1;
+    return file_read_at(file, off, buf, len, got);
 }
 
 static EFI_STATUS esp_open_root(EFI_BOOT_SERVICES *bs, EFI_HANDLE esp,
@@ -434,10 +545,79 @@ static const family_desc *root_family(EFI_FILE_PROTOCOL *root)
 {
     family_probe probe;
 
-    probe.exists = probe_exists;
-    probe.read = probe_read;
+    probe.exists = probe_exists_ci;
+    probe.read = probe_read_ci;
     probe.ctx = root;
     return family_detect(&probe);
+}
+
+/* Promotes the volume that holds the path we are about to load to index 0.
+ *
+ * Enumeration order is not an answer to "which of these boots". Windows
+ * install media publishes two volumes: the El Torito FAT boot image, whose
+ * \EFI\BOOT\BOOTX64.EFI is cdboot.efi and is the one that works, and the UDF
+ * volume, whose \efi\boot\bootx64.efi is bootmgfw.efi and was measured to
+ * fail LoadImage with EFI_LOAD_ERROR from a real CD-ROM as well as from ours.
+ * The order the firmware happens to return them in must not decide that.
+ *
+ * The test is the exact boot path, not a case-folded one, for the reason
+ * probe_open_ci states: a volume that cannot serve the string LoadImage will
+ * be given is not the volume to boot. */
+static void select_boot_volume(EFI_BOOT_SERVICES *bs, iso_volumes *vols)
+{
+    UINTN i;
+
+    /* One candidate is not a choice, and the menu pays for this per entry. */
+    if (vols->n < 2)
+        return;
+
+    for (i = 0; i < vols->n; i++) {
+        EFI_FILE_PROTOCOL *root;
+        int found;
+
+        if (esp_open_root(bs, vols->vol[i], &root) != EFI_SUCCESS)
+            continue;
+        found = probe_exists(root, ISO_BOOT_PATH);
+        root->Close(root);
+        if (found) {
+            EFI_HANDLE pick = vols->vol[i];
+
+            vols->vol[i] = vols->vol[0];
+            vols->vol[0] = pick;
+            return;
+        }
+    }
+}
+
+/* Fingerprints the medium across its volumes, starting at index first.
+ *
+ * One volume is not enough on Microsoft's install media: oscdimg leaves the
+ * ISO 9660 namespace holding a single stub README.TXT and puts every real
+ * file, /sources/install.wim included, in the UDF namespace only, while the
+ * El Torito boot image is a 1.4 MB FAT volume carrying nothing but the
+ * loader. Fingerprinting the bootable volume alone can only ever answer
+ * "unknown" there.
+ *
+ * first exists so a caller that has already fingerprinted the boot volume
+ * does not pay for it twice, which is what keeps the menu's cost unchanged
+ * for every medium that classifies on the first volume. */
+static const family_desc *media_family(EFI_BOOT_SERVICES *bs,
+                                       const iso_volumes *vols, UINTN first)
+{
+    UINTN i;
+
+    for (i = first; i < vols->n; i++) {
+        EFI_FILE_PROTOCOL *root;
+        const family_desc *fam;
+
+        if (esp_open_root(bs, vols->vol[i], &root) != EFI_SUCCESS)
+            continue;
+        fam = root_family(root);
+        root->Close(root);
+        if (fam->id != FAMILY_UNKNOWN)
+            return fam;
+    }
+    return family_by_id(FAMILY_UNKNOWN);
 }
 
 /* Does the ISO's default loader carry a certificate table?
@@ -458,8 +638,7 @@ static iso_sig root_signature(EFI_FILE_PROTOCOL *root)
     uint16_t magic;
     uint32_t nrva;
 
-    if (probe_read(root, "/EFI/BOOT/BOOTX64.EFI", 0, head, sizeof(head),
-                   &got) != 0)
+    if (probe_read(root, ISO_BOOT_PATH, 0, head, sizeof(head), &got) != 0)
         return ISO_SIG_NO_EFI;
 
     /* From here on the file exists but does not parse, which is a different
@@ -614,7 +793,7 @@ static EFI_STATUS chainload(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
  * from here would disconnect drivers this caller never connected. */
 static EFI_STATUS iso_open(EFI_SYSTEM_TABLE *st, fs_vol *vol,
                            const fs_dirent *file, iso_media_kind kind,
-                           const CHAR16 **stage, EFI_HANDLE *esp_handle,
+                           const CHAR16 **stage, iso_volumes *vols,
                            UINT8 *owned)
 {
     EFI_BOOT_SERVICES *bs = st->BootServices;
@@ -627,7 +806,7 @@ static EFI_STATUS iso_open(EFI_SYSTEM_TABLE *st, fs_vol *vol,
     uint64_t size;
     EFI_STATUS status;
 
-    *esp_handle = (EFI_HANDLE)0;
+    vols->n = 0;
     *owned = 0;
     *stage = L"preparing the virtual media";
 
@@ -693,7 +872,9 @@ static EFI_STATUS iso_open(EFI_SYSTEM_TABLE *st, fs_vol *vol,
                                    (EFI_DEVICE_PATH_PROTOCOL *)0, TRUE);
     if (!EFI_ERROR(status)) {
         *stage = L"finding the medium's EFI System Partition";
-        status = find_iso_esp(bs, &g_dev, before, before_n, esp_handle);
+        status = collect_iso_volumes(bs, &g_dev, before, before_n, vols);
+        if (!EFI_ERROR(status))
+            select_boot_volume(bs, vols);
     }
 
     if (before != (EFI_HANDLE *)0)
@@ -706,7 +887,7 @@ EFI_STATUS iso_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
                     iso_boot_result *result)
 {
     EFI_BOOT_SERVICES *bs;
-    EFI_HANDLE esp_handle = (EFI_HANDLE)0;
+    iso_volumes vols;
     UINT8 owned = 0;
     EFI_STATUS status;
     EFI_STATUS teardown;
@@ -719,20 +900,14 @@ EFI_STATUS iso_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
     result->status = EFI_SUCCESS;
     result->family = (const family_desc *)0;
 
-    status = iso_open(st, vol, file, kind, &result->stage, &esp_handle,
-                      &owned);
+    status = iso_open(st, vol, file, kind, &result->stage, &vols, &owned);
     if (!EFI_ERROR(status)) {
-        EFI_FILE_PROTOCOL *root;
-
         /* Detection is reported, never acted on. It runs before the chainload
-         * only so the answer exists while the ESP is still mounted; the load
-         * path below is byte-for-byte what it was without it, and no cmdline
-         * template has a consumer yet (DESIGN Section 6.2). */
-        if (esp_open_root(bs, esp_handle, &root) == EFI_SUCCESS) {
-            result->family = root_family(root);
-            root->Close(root);
-        }
-        status = chainload(st, parent_image, esp_handle, result);
+         * only so the answer exists while the volumes are still mounted; the
+         * load path below is byte-for-byte what it was without it, and no
+         * cmdline template has a consumer yet (DESIGN Section 6.2). */
+        result->family = media_family(bs, &vols, 0);
+        status = chainload(st, parent_image, vols.vol[0], result);
     }
     if (EFI_ERROR(status))
         result->status = status;
@@ -756,7 +931,7 @@ EFI_STATUS iso_survey_media(EFI_SYSTEM_TABLE *st, fs_vol *vol,
                             iso_survey *out)
 {
     EFI_BOOT_SERVICES *bs;
-    EFI_HANDLE esp_handle = (EFI_HANDLE)0;
+    iso_volumes vols;
     EFI_FILE_PROTOCOL *root;
     const CHAR16 *stage;
     UINT8 owned = 0;
@@ -771,7 +946,7 @@ EFI_STATUS iso_survey_media(EFI_SYSTEM_TABLE *st, fs_vol *vol,
         return EFI_INVALID_PARAMETER;
 
     bs = st->BootServices;
-    status = iso_open(st, vol, file, kind, &stage, &esp_handle, &owned);
+    status = iso_open(st, vol, file, kind, &stage, &vols, &owned);
     if (EFI_ERROR(status)) {
         /* A medium the firmware found nothing bootable in: no El Torito
          * catalog, no partition table and no FAT, or one pointing at no ESP.
@@ -780,10 +955,14 @@ EFI_STATUS iso_survey_media(EFI_SYSTEM_TABLE *st, fs_vol *vol,
          * error worth showing, just an entry we cannot say anything about. */
         if (status == EFI_NOT_FOUND || status == EFI_UNSUPPORTED)
             out->sig = ISO_SIG_NO_EFI;
-    } else if (esp_open_root(bs, esp_handle, &root) == EFI_SUCCESS) {
+    } else if (esp_open_root(bs, vols.vol[0], &root) == EFI_SUCCESS) {
         out->family = root_family(root);
         out->sig = root_signature(root);
         root->Close(root);
+        /* Only a medium the bootable volume cannot describe pays for the
+         * other volumes, so the common entry costs exactly what it did. */
+        if (out->family->id == FAMILY_UNKNOWN)
+            out->family = media_family(bs, &vols, 1);
     }
 
     if (owned) {

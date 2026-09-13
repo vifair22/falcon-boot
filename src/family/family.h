@@ -74,8 +74,11 @@ typedef struct {
 } family_desc;
 
 /* Filesystem probe. Paths are absolute, '/'-separated, ASCII, and carry no
- * trailing slash; matching is expected to be case-insensitive, which both
- * the UEFI File Protocol and the media we fingerprint already are. */
+ * trailing slash. Each fingerprint is written in the case its family's media
+ * actually uses, because a File Protocol provider is not obliged to match
+ * case-insensitively and EDK2's UDF driver does not; absorbing that is the
+ * consumer's job (src/iso/iso.c retries folded to lower case), not something
+ * this table encodes twice. */
 typedef struct {
     /* Nonzero if path exists (file or directory), zero if not. Errors are
      * reported as "does not exist": a fingerprint that cannot be read is a

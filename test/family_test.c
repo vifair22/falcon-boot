@@ -163,11 +163,45 @@ static void test_family_windows(void **state)
     };
 
     (void)state;
-    /* No template: Windows is deferred by DESIGN Section 1, and recorded as
-     * needing injection so nothing mistakes it for a cmdline rescue. */
+    /* No template and no injection: the injection column means the
+     * extent-map/device-mapper hook, which is a Linux initramfs mechanism,
+     * and WinPE re-finds its medium from Windows userland instead. */
     expect_family(wim, 3, FAMILY_WINDOWS, NULL);
     expect_family(esd, 2, FAMILY_WINDOWS, NULL);
-    assert_int_equal(family_by_id(FAMILY_WINDOWS)->needs_injection, 1);
+    assert_int_equal(family_by_id(FAMILY_WINDOWS)->needs_injection, 0);
+}
+
+/* Which volume of the medium is fingerprinted decides the answer, and on
+ * Microsoft's media it is not the bootable one. oscdimg leaves the ISO 9660
+ * namespace holding a single stub README.TXT and puts every real file in the
+ * UDF namespace; the El Torito boot image is a 1.4 MB FAT volume carrying
+ * nothing but the loader. Both trees below are real: the first is what
+ * fingerprinting the boot volume alone can see, the second is the UDF volume.
+ *
+ * The UDF tree is spelled entirely in lower case on purpose. The fake probe
+ * matches with strcmp, so it stands in for a case-sensitive provider, and the
+ * Windows fingerprint has to be written in the case the media uses to match
+ * through one. */
+static void test_family_windows_only_on_the_udf_volume(void **state)
+{
+    static const fake_file eltorito[] = {
+        { "/EFI", NULL },
+        { "/EFI/BOOT", NULL },
+        { "/EFI/BOOT/BOOTX64.EFI", NULL },
+    };
+    static const fake_file udf[] = {
+        { "/boot", NULL },
+        { "/efi/boot/bootx64.efi", NULL },
+        { "/efi/microsoft/boot/bcd", NULL },
+        { "/setup.exe", NULL },
+        { "/sources", NULL },
+        { "/sources/boot.wim", NULL },
+        { "/sources/install.wim", NULL },
+    };
+
+    (void)state;
+    expect_family(eltorito, 3, FAMILY_UNKNOWN, NULL);
+    expect_family(udf, 7, FAMILY_WINDOWS, NULL);
 }
 
 static void test_family_systemrescue(void **state)
@@ -741,6 +775,7 @@ int run_family_tests(void)
 {
     const struct CMUnitTest tests[] = {
         cmocka_unit_test(test_family_windows),
+        cmocka_unit_test(test_family_windows_only_on_the_udf_volume),
         cmocka_unit_test(test_family_systemrescue),
         cmocka_unit_test(test_family_casper),
         cmocka_unit_test(test_family_debian_live),

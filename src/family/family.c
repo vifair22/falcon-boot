@@ -73,11 +73,15 @@ static const family_desc g_families[] = {
       (void *)0, 0,
       FAMILY_TRI_NO, FAMILY_TRI_NO },
 
-    /* Deferred by DESIGN Section 1: the plumbing is built, the injector is
-     * not. Recorded as needing injection so nothing mistakes it for a family
-     * a cmdline can rescue. */
+    /* No cmdline and no injection. The injection column means one specific
+     * mechanism, the extent-map/device-mapper hook of DESIGN Section 6.2, and
+     * that is a Linux initramfs mechanism with nothing to answer here: WinPE
+     * boots into a RAM disk and re-finds the medium from Windows userland, so
+     * the post-ExitBootServices media problem the hook exists for does not
+     * arise. Whatever Windows does need happens before the firmware ever runs
+     * and is not this field. */
     { FAMILY_WINDOWS, "Windows install media",
-      (void *)0, 1,
+      (void *)0, 0,
       FAMILY_TRI_NO, FAMILY_TRI_NO },
 };
 
