@@ -25,16 +25,17 @@ static void out(EFI_SYSTEM_TABLE *st, const CHAR16 *s)
     st->ConOut->OutputString(st->ConOut, (CHAR16 *)(uintptr_t)s);
 }
 
-/* Blanks n columns from the cursor and returns the cursor to where it was:
- * how both the hint and (via one column) an asterisk are unprinted. */
-static void erase_forward(EFI_SYSTEM_TABLE *st, UINTN n)
+/* Erases the n characters left of the cursor. The "\b \b" shape works on
+ * both console behaviors the spec permits: OVMF's backspace is destructive
+ * (measured 2026-09-13: a bare \b wipes the glyph it crosses, which is why
+ * the hint cannot be cursor-parked), and on a non-destructive console the
+ * explicit space does the erasing. */
+static void erase_back(EFI_SYSTEM_TABLE *st, UINTN n)
 {
     UINTN i;
 
     for (i = 0; i < n; i++)
-        out(st, L" ");
-    for (i = 0; i < n; i++)
-        out(st, L"\b");
+        out(st, L"\b \b");
 }
 
 INTN menu_prompt_secret(EFI_SYSTEM_TABLE *st, const CHAR16 *prompt,
@@ -59,20 +60,13 @@ INTN menu_prompt_secret(EFI_SYSTEM_TABLE *st, const CHAR16 *prompt,
     st->ConOut->EnableCursor(st->ConOut, TRUE);
     if (prompt != (void *)0)
         out(st, prompt);
-    {
-        INT32 attr = st->ConOut->Mode->Attribute;
-        UINTN i;
-
-        st->ConOut->SetAttribute(st->ConOut,
-                                 EFI_TEXT_ATTR(EFI_DARKGRAY, EFI_BLACK));
-        out(st, hint);
-        st->ConOut->SetAttribute(st->ConOut, (UINTN)attr);
-        /* Park the cursor back at the hint's first column so the first
-         * asterisk lands where the hint starts rather than after it. */
-        for (i = 0; hint[i] != L'\0'; i++)
-            out(st, L"\b");
-        hint_shown = TRUE;
-    }
+    /* systemd renders this hint dim and parks the cursor before it; OVMF
+     * renders DARKGRAY as black-on-black and its backspace is destructive
+     * (both measured from screendumps, 2026-09-13), so the hint inherits
+     * the prompt's attribute and the cursor rests after it. The first
+     * keystroke erases it, exactly as systemd's does. */
+    out(st, hint);
+    hint_shown = TRUE;
 
     for (;;) {
         EFI_INPUT_KEY key;
@@ -102,7 +96,7 @@ INTN menu_prompt_secret(EFI_SYSTEM_TABLE *st, const CHAR16 *prompt,
         }
         if (key.UnicodeChar == CHAR_TAB) {
             if (hint_shown) {
-                erase_forward(st, sizeof(hint) / sizeof(hint[0]) - 1);
+                erase_back(st, sizeof(hint) / sizeof(hint[0]) - 1);
                 hint_shown = FALSE;
             }
             if (!silent) {
@@ -134,7 +128,7 @@ INTN menu_prompt_secret(EFI_SYSTEM_TABLE *st, const CHAR16 *prompt,
         if (len + 1 >= cap)
             continue;
         if (hint_shown) {
-            erase_forward(st, sizeof(hint) / sizeof(hint[0]) - 1);
+            erase_back(st, sizeof(hint) / sizeof(hint[0]) - 1);
             hint_shown = FALSE;
         }
         buf[len++] = (char)key.UnicodeChar;
