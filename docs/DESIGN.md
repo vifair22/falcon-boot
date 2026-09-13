@@ -800,8 +800,12 @@ the sd-stub credential handoff in Sections 5/5.1). Partition identification
 per Section 3 is implemented (airies GPT type GUIDs, probe-everything
 fallback for unstamped rigs). Step 4's injectors are the framework plus
 native-cmdline descriptors, per the plan; nothing consumes the cmdline
-templates until the bless path lands. Next: step 7 (host tooling; the bless
-manifest is specified in Section 8.1).
+templates until the bless path lands. Step 7 is also done: the
+airies-boot-mkstick and airies-boot-sign host tools exist, and a
+mkstick-created stick boots Secure Boot ON end to end with its own generated
+MOK. Next: the loader-side blessed-boot path (consume src/manifest per
+Section 8.1), then step 8 (signing appliance), step 9 (permissive-mode UX),
+step 10 (real hardware).
 
 1. OVMF hello-world: mingw PE loader that prints and reads a key. Proves
    toolchain + test rig. Then the **shim plumbing spike**, which gates several

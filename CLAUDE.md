@@ -11,7 +11,13 @@ records the alternatives that were considered and rejected, so do not reintroduc
 a rejected approach without re-reading why it was rejected. `README.md` is the
 short public summary of the same model.
 
-Status: pre-1.0 MVP. Steps 1-6 of the build order in `docs/DESIGN.md` Section
+Status: pre-1.0 MVP. Build-order steps 1-7 are done (see docs/DESIGN.md
+Section 11 status header); host tools airies-boot-mkstick and
+airies-boot-sign exist and are proven end to end (a mkstick-created image
+boots Secure Boot ON with its own generated MOK and delivers the p4
+credential). Next: step 8 (signing appliance), step 9 (permissive-mode UX),
+step 10 (real hardware), plus the loader-side blessed-boot path consuming
+src/manifest (Section 8.1). Older status text follows for context: Steps 1-6 of the build order in `docs/DESIGN.md` Section
 11 are done, with one carve-out named below. The mingw PE toolchain and the
 QEMU/OVMF rig are proven; the shim question is settled (Fedora shim-x64 16.1,
 `SHIM_IMAGE_LOADER`, `docs/notes/shim-spike.md`) and the loader carries the
