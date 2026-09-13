@@ -1,0 +1,728 @@
+# airies-boot Design
+
+A single-purpose, auditable multi-boot loader for UEFI x64. A distilled Ventoy:
+drag-and-drop ISO booting, plus a first-class path for booting a personal
+LUKS-backed OS via a Unified Kernel Image.
+
+Status: pre-1.0 MVP. This document is the source of truth for architecture and
+scope. It is written to be read cold, months from now, by the person who has to
+change it.
+
+
+## 1. Scope
+
+### In scope (MVP)
+
+1. UEFI x64 firmware only. No BIOS/CSM and no IA32, ever (see Non-goals).
+2. Drag-and-drop ISO booting from an exFAT partition, Ventoy-style: copy an
+   `.iso` onto the stick from any OS, it appears in the menu, it boots. No
+   host-side registration step. (When Secure Boot is ON, unsigned media that does
+   not ship its own signed chain requires the optional `sign` bless step; see
+   Section 7.)
+3. Booting a personal OS: a Unified Kernel Image (UKI) sitting on a small
+   LUKS2+ext4 partition, whose initramfs then unlocks the real root/home on a
+   second LUKS2 partition and pivots into it.
+4. Never weaken the machine's Secure Boot posture, chaining through Fedora's
+   shim-x64 16.1 (dual MS-signed, 2011 + 2023 CAs; decision 2026-09-12, see
+   Section 4 and docs/notes/shim-spike.md): uphold Secure Boot when it is on,
+   load freely when it is off. See Section 2 for the posture and Section 7
+   for the trust model and coverage matrix.
+
+### Non-goals
+
+Rejected, not deferred (decisions 2026-09-12):
+
+- BIOS / legacy boot. It has no Secure Boot story, it requires a parallel
+  real-mode loader stack that shares almost nothing with the EFI code, and
+  the hardware is dying out. If it is ever revisited, the recorded approach
+  is a minimal BIOS chain that starts a small Linux which then kexecs
+  targets - not a port of this loader.
+- IA32 (32-bit UEFI). Effectively extinct: it existed on the 2013-2015
+  Atom tablet class and is rarer in the wild today than BIOS-only machines.
+  Not worth the dual-arch discipline tax on the whole codebase.
+
+Explicitly deferred, not forgotten:
+- Windows install media and other ISOs that need Ventoy's runtime driver
+  injection to boot. The injection *plumbing* is built in from day one
+  (Section 6), but the per-family injectors that would cover these are not.
+- Persistence overlays for live ISOs.
+- A graphical/framebuffer menu with themes. MVP menu is text via
+  Simple Text Output.
+
+
+## 2. Secure Boot posture (read this first)
+
+**Governing principle: airies-boot must never weaken the machine's Secure Boot
+posture.** It behaves according to the firmware's current Secure Boot state:
+
+- **Secure Boot ON:** uphold it. The loader boots only payloads that verify
+  against the platform trust chain (db / MOK, through shim). Anything that does
+  not verify is refused, exactly as it would be if booted directly.
+- **Secure Boot OFF:** there is nothing to uphold, so the loader chainloads
+  whatever the user selects.
+
+We do not implement our own signature checking, and we never disable the
+platform's. The behavior above is obtained by *deferring to shim* rather than
+by adding code:
+
+- We always chainload through a shim-verified load path, and we never install
+  a security-protocol override. Exactly which entry point that is (firmware
+  `LoadImage` intercepted by shim's security hook, or shim's own image-loader
+  protocol) is firmware/shim plumbing resolved by the step-1 spike; see
+  Section 7.6. Either way, verification is shim's.
+- shim already keys its verification off the firmware `SecureBoot` state: it
+  enforces signatures when Secure Boot is on and allows everything when it is
+  off. Because every image our loader launches goes through shim's verification
+  hook, "uphold SB when on, load anything when off" falls out of the platform
+  for free.
+
+We do read the `SecureBoot` (and `SetupMode`) EFI variables ourselves, but only
+for UX: to label each menu entry with its verification status and to print an
+actionable message when Secure Boot blocks an unsigned selection.
+
+This is a deliberate reversal of an earlier design that overrode verification to
+force unsigned media to boot under Secure Boot. That approach reduced security
+and has been removed; see Section 7 for the trust model and coverage matrix that
+replace it.
+
+The personal-OS path (UKI on LUKS, Section 5) is a separate story: it stays
+fully signature-verified end to end, because we build and sign those artifacts
+ourselves.
+
+
+## 3. On-disk layout
+
+GPT, four partitions:
+
+```
+p1  ESP        FAT32   ~64 MB   loader + shim + MokManager + our public cert
+p2  ISOs       exFAT   bulk     the ISO library (drag-and-drop target) + injection assets
+p3  UKI shelf  LUKS2 -> ext4    ~1 GB   personal-OS UKI + signing-appliance UKI + MOK private key, pbkdf2 keyslot
+p4  root+home  LUKS2 -> ext4    bulk    real root and home, argon2id keyslot
+```
+
+Rationale per partition:
+
+- **p1 ESP.** Standard. Contents in Section 4. FAT32 because firmware only
+  guarantees FAT.
+- **p2 exFAT.** exFAT so large ISOs (>4 GB) fit and any modern OS
+  (Windows/macOS/Linux) can drop files on it. Firmware does not read exFAT, so
+  we bring our own read-only exFAT driver (Section 6).
+- **p3 UKI shelf, pbkdf2.** LUKS2 here uses a **pbkdf2** keyslot, not the LUKS2
+  default argon2id. argon2id is memory-hard by design and brutal in a
+  single-threaded EFI environment with no tuned memory allocator. pbkdf2 reduces
+  the unlock to SHA-256 iteration, which is cheap. We control p3's creation
+  (Section 8), so we mandate this. p3 holds the personal-OS UKI, the
+  signing-appliance UKI (Section 7.5), and the MOK private key, all encrypted at
+  rest under this one keyslot. Roughly 1 GB. The private key living here (under
+  LUKS), never on the readable exFAT partition and never in the loader, is
+  central to the key model in Section 7.5.
+- **p4 root+home, argon2id.** p4 is unlocked by the *Linux* kernel inside the
+  UKI's initramfs, where argon2id is fine, so it keeps the strong default. p4 is
+  a separate partition from p3 purely so that EFI-land never has to understand or
+  mount the real root filesystem. EFI touches p3 only.
+
+p3 and p4 share the same passphrase (Section 5).
+
+
+## 4. ESP contents and the Secure Boot chain
+
+```
+p1:/EFI/BOOT/BOOTX64.EFI     Fedora shim-x64 16.1 (dual MS-signed, 2011+2023)
+p1:/EFI/BOOT/mmx64.efi       MokManager, shim's enrollment UI (Fedora naming)
+p1:/EFI/BOOT/grubx64.efi     OUR loader (see note on next-stage name)
+p1:/airies-boot.cer          our public cert, for first-boot enrollment
+```
+
+Shim vendor decision (2026-09-12, spike data in `docs/notes/shim-spike.md`):
+Fedora's shim-x64 16.1 over the earlier SUSE assumption. Rationale: dual
+MS signatures (2011 + 2023; the 2011 CA retirement will strand single-signed
+shims), the smallest vendor trust surface of the classified candidates (one
+Fedora CA, no vendor dbx payload), pinnable Koji package URLs, and >= 16.0
+is required anyway for the SHIM_IMAGE_LOADER load path (Section 7.6).
+
+Boot chain under Secure Boot:
+
+1. Firmware verifies `BOOTX64.EFI` (shim) against the platform db. Passes: shim
+   is MS-signed.
+2. Shim installs its verification protocol and loads its next-stage binary. It
+   cannot verify our loader against db, so it consults MOK. On first boot MOK is
+   empty for our key, so shim launches MokManager, which prompts the user to
+   enroll `airies-boot.cer`. After enrollment and reboot, shim verifies our
+   loader against MOK. Passes.
+3. Our loader runs. For the ISO path it chainloads payloads without a signature
+   requirement (Section 7). For the UKI path it loads only our-signed artifacts,
+   which shim verifies honestly (Section 5).
+
+**Next-stage name.** Shim's default next-stage loader filename is compiled
+into the shim binary. The spike confirmed Fedora 16.1 uses `grubx64.efi`
+(and openSUSE still `grub.efi` / `MokManager.efi`). The install tool
+(Section 8) must still read the actual embedded default path out of the
+specific shim binary being installed and name our loader to match, rather
+than assuming, so a future shim swap stays a data change.
+
+
+## 5. Personal OS path: UKI on LUKS, with passphrase handoff
+
+Goal: type the passphrase once, boot into the real encrypted OS.
+
+Flow:
+
+1. User selects the personal-OS entry in our menu.
+2. Loader prompts for the passphrase.
+3. Loader unlocks **p3** (LUKS2, pbkdf2) using our in-EFI LUKS + AES-XTS stack
+   (Section 6), and reads the UKI off the ext4 inside.
+4. Loader synthesizes a **virtual read-only filesystem** carrying the UKI plus
+   a credential file holding the passphrase (Section 5.1), then
+   `LoadImage`/`StartImage` the UKI from that filesystem. The UKI is signed by
+   our key, so it passes shim verification honestly (via the shim-verified
+   load path, Section 7.6). Full verification applies on this path.
+5. The UKI's sd-stub packs the credential into the initrd; the initramfs's
+   stock `systemd-cryptsetup` consumes it to unlock **p4** (LUKS2, argon2id)
+   and pivots into the real root.
+
+p3 and p4 share the passphrase precisely so this handoff is "reuse the string
+the user already typed." p4 is separate only so EFI never mounts root.
+
+### 5.1 The handoff mechanism
+
+The passphrase is entered at runtime, so it cannot be baked into the UKI at
+build time. We pass it from our pre-ExitBootServices loader to the initramfs
+through **sd-stub's companion-credential pickup**:
+
+- The UKI is built with `ukify` (Section 8), so its stub is systemd-stub. When
+  sd-stub is loaded from a filesystem, it scans a `<uki>.efi.extra.d/`
+  directory next to the image for `*.cred` files, packs them into a cpio, and
+  merges that cpio into the initrd at `/.extra/credentials/`.
+- The loader never writes real storage, so the credential is not staged on
+  disk. The loader synthesizes a small **virtual read-only filesystem** in RAM
+  (the same virtual-device machinery the ISO path already needs, Section 6)
+  containing the UKI bytes read off p3 plus `<uki>.efi.extra.d/p4.cred`, and
+  calls `LoadImage` with that device path.
+- `systemd-cryptsetup` natively consumes credentials (`cryptsetup.passphrase`),
+  so the initramfs needs no custom hook, only a systemd-based initramfs
+  (mkinitcpio `systemd` hooks). That is a build-time property of the UKI,
+  which we build (Section 8).
+
+Lifetime and exposure: the credential exists only in RAM (the virtual
+filesystem evaporates at `ExitBootServices`; the cpio copy lives inside the
+initramfs), is root-only, and is discarded when the initramfs pivots. It never
+touches persistent storage and is never world-readable. If
+`LoadImage`/`StartImage` fails, the loader zeroes the credential buffer and
+tears down the virtual filesystem before returning to the menu.
+
+To verify in the QEMU rig before this section is considered settled (step-1
+spike, Section 11): the exact `.extra.d` naming and pickup rules for our
+systemd version; that sd-stub accepts unauthenticated `.cred` files under
+Secure Boot (expected: accepted and measured into TPM PCR 12; credentials are
+data, not code); and that pickup works when the source device is our synthetic
+filesystem rather than a real ESP.
+
+**Rejected: volatile EFI variable.** An earlier design stashed the passphrase
+in a volatile (`BOOTSERVICE_ACCESS | RUNTIME_ACCESS`, not `NON_VOLATILE`) EFI
+variable, with the initramfs reading it via efivarfs and then deleting it.
+This does not work as specified: the UEFI spec makes volatile variables
+**read-only after `ExitBootServices`** (a runtime `SetVariable` on them fails,
+and deletion is a `SetVariable`), so the wipe is impossible and the passphrase
+would sit in the variable store until reboot. Worse, efivarfs exposes
+variables as mode-0644 files, making the secret readable by any local user for
+the whole session. Do not resurrect this design.
+
+**Fallback kept in reserve** if an sd-stub detail does not cooperate: a
+dedicated random keyfile, generated at mkstick time, stored on p3, and
+enrolled as an extra p4 keyslot; the loader passes the keyfile (never the
+passphrase) through the volatile variable. The wipe is still impossible, but
+what leaks is a revocable p4 keyslot key, not the passphrase that also opens
+p3 and the MOK key. Strictly worse than the credential route; use only if the
+credential route fails.
+
+
+## 6. ISO path: drag-and-drop mechanism
+
+No host-side registration. The stages:
+
+1. **Scan.** At boot, the exFAT driver enumerates `*.iso` on p2. That listing is
+   the menu. Dropping a file on from any OS is the entire "add" workflow.
+2. **Present as virtual media.** On selection, register an `EFI_BLOCK_IO`
+   (and `EFI_DISK_IO`) device whose reads are served from the ISO file's bytes
+   by the exFAT driver. Typed as a CD-ROM (2048-byte blocks).
+3. **Let firmware parse it.** `ConnectController` (recursive) on the virtual
+   device. The UEFI spec mandates El Torito boot support for CD-ROM media: the
+   firmware's *partition* driver recognizes the El Torito boot catalog and
+   surfaces the ISO's embedded EFI System Partition image, which the
+   firmware's FAT driver then mounts. No ISO9660 *filesystem* driver is
+   involved or required, and **we do not write an ISO9660 reader.** Fallback
+   kept in pocket for ISOs with a defective El Torito entry: present the
+   isohybrid as a 512-byte-sector disk instead and let the firmware's GPT/MBR
+   partition path find the same embedded ESP.
+4. **Chainload through the verifying `LoadImage`.** `LoadImage` the ISO's
+   embedded `\EFI\BOOT\BOOTX64.EFI`, then `StartImage`. We never override or
+   disable verification; the call goes through shim as usual (Section 7), so:
+   - Secure Boot ON: shim verifies the payload. A distro ISO whose
+     `\EFI\BOOT\BOOTX64.EFI` is its own MS-signed shim passes, and that inner
+     shim verifies its kernel with its own vendor cert. An unsigned payload is
+     refused; the menu entry was already marked unverified and we print why.
+   - Secure Boot OFF: shim allows the load, and any ISO boots.
+
+### 6.1 The post-ExitBootServices problem
+
+Stages 2-5 all live in boot services. The virtual CD is a boot-services fiction:
+it evaporates the instant the distro kernel calls `ExitBootServices`. The
+distro's initramfs then hunts for its squashfs on a CD-ROM that no longer
+exists, and drops to an emergency shell. This is the single hardest problem in
+the whole project and the reason Ventoy is enormous.
+
+Two handling strategies, and we build the framework for both:
+
+- **Native find-the-ISO (the easy families).** Many distros' stock initramfs can
+  locate the ISO *file* on a normal partition given the right cmdline:
+  `iso-scan/filename=` (Debian/Ubuntu casper, dracut/Fedora),
+  `img_loop=` / `img_dev=` (Arch archiso), `rd.live.image` and friends. For
+  these we inject nothing at boot; we just supply the cmdline from a per-family
+  template. In the framework this is the degenerate "empty injector" case.
+- **Runtime injection (the Ventoy tax).** For families whose initramfs cannot
+  find a file-backed ISO, we recreate the ISO as a block device *after*
+  ExitBootServices. This means: compute the ISO file's extent map on p2 (the
+  list of physical LBA ranges backing the contiguous or fragmented file),
+  append a compressed cpio segment to the initrd carrying (a) that extent map,
+  (b) an early hook and a small kernel helper that assembles a device-mapper
+  target over p2 using those extents and exposes it where the distro expects its
+  media, and then let the stock initramfs proceed.
+
+### 6.2 Injection framework (built in MVP, injectors filled in over time)
+
+Because runtime injection is where Ventoy's line count lives, the MVP does not
+ship every injector, but it *does* ship the machinery so injectors are pure
+data/scripts dropped into a registry, never core surgery:
+
+- **Family detection.** Fingerprint the mounted ISO's ESP / directory layout
+  (`/casper`, `/live`, `/arch`, `/LiveOS`, presence of specific bootloaders) to
+  classify it into a family.
+- **Per-family descriptor.** A registry entry per family carrying: the cmdline
+  template, whether it needs injection or just a cmdline, (if injection) the
+  hook payload to append, and what the family's stock initramfs can consume:
+  whether it includes exFAT support (needed to `iso-scan` a file on p2) and
+  device-mapper support (needed by the extent-map hook). We cannot ship kernel
+  modules (they must match the running kernel), so these facts gate which
+  strategy each family can use and are recorded per family, never assumed.
+- **Extent-map computation.** In the exFAT driver, resolve an ISO file to its
+  ordered list of physical extents on p2. Needed by any injector; also validates
+  the "ISO must be resolvable to raw LBAs" assumption at add-nothing time.
+- **initrd cpio append.** Load the ISO's initrd into memory, concatenate our
+  cpio segment, pass the combined image to the kernel. Standard early-initramfs
+  override mechanism.
+- **Assets on p2.** Injection payloads (hook scripts, the helper module blobs)
+  live on p2 under a reserved directory so they travel with the stick and can be
+  updated without reflashing.
+
+MVP ships: family detection, the descriptor registry, extent-map computation,
+the cpio-append path, and native-cmdline injectors for the tested families
+(Debian/Ubuntu, Fedora, Arch, SystemRescue; memtest needs no ISO backing at
+all). Full runtime-injection payloads for the hard families are stubs behind the
+same interface.
+
+
+## 7. Security model
+
+Governing principle (Section 2): airies-boot never weakens the machine's Secure
+Boot posture, and it never holds or uses a signing secret. All control over what
+is trusted rests with the user, exercised on a host they control or through the
+platform's own physical-presence mechanisms. It rests neither with us (the loader
+ships no way to relax enforcement) nor with an attacker (no secret is reachable
+from removable media, and no enforcement change is reachable without physical
+presence).
+
+Two invariants make this concrete and must never be violated:
+
+1. **The loader verifies; it never signs.** Verification of anything the loader
+   launches is performed by shim (Section 7.1). The loader never performs a
+   signing operation and never holds a private key. Signing is a private-key
+   operation that happens only in Linux userland (Section 7.5).
+2. **Enforcement is the platform's, never the loader's.** The loader never
+   changes what is allowed to run. It reads Secure Boot state only to inform the
+   user. Every relaxation of enforcement is a platform mechanism the user invokes
+   with physical presence (Section 7.4).
+
+We do not implement our own verification and we do not disable the platform's.
+We launch everything through a shim-verified load path (Section 7.6); shim
+enforces or permits according to the firmware `SecureBoot` state. The behavior
+we want falls out of deferring to shim, not from adding code.
+
+### 7.1 Trust chain
+
+- **Loader integrity.** firmware -> shim -> our loader. The firmware will not run
+  a tampered or substituted loader; ours must be MOK-signed. Honest and intact
+  regardless of what we boot next.
+- **ISO path.** The loader launches the ISO's payload with the normal verifying
+  `LoadImage`:
+  - Secure Boot ON -> shim verifies the payload against db / MOK / shim's vendor
+    cert / SBAT. It boots only if it verifies. Unsigned payloads are refused.
+  - Secure Boot OFF -> shim permits everything, the payload boots.
+- **UKI path.** shim -> our loader -> our-signed UKI (personal OS and the signing
+  appliance, Section 7.5), verified end to end because we build and sign them.
+  Under Secure Boot ON this is enforced; the UKI must carry our signature.
+  MOK-signed images are not verifiable by the firmware's own `LoadImage`
+  against db alone, so this path depends on the shim-verified load path
+  resolved in Section 7.6.
+
+### 7.2 What boots, by Secure Boot state (coverage)
+
+This is not a limit we impose; it is what Secure Boot means. An unsigned payload
+does not boot under Secure Boot, whether launched by us or directly.
+
+- **Secure Boot OFF:** every templated ISO drag-and-drops and boots. Nothing to
+  uphold, nothing to sign.
+- **Secure Boot ON, validation on (default):**
+  - *Distro ISOs shipping their own MS-signed shim* (Ubuntu, Fedora, Debian,
+    recent Arch, SystemRescue, ...): boot with no preparation, verified.
+    Their `\EFI\BOOT\BOOTX64.EFI` is an MS-signed shim, so it passes db; that
+    inner shim verifies its own kernel with its embedded vendor cert. Real
+    end-to-end Secure Boot, still drag-and-drop. Be blunt about the limit:
+    because the distro's own bootloader runs its own `grub.cfg`, we do not
+    insert `iso-scan` or inject the initrd on this route, and stock ISO
+    configs carry no such argument (they are written for real CD/USB media,
+    which no longer exists after `ExitBootServices`). Expect this route to
+    verify and launch the kernel and then usually *fail* to find its squashfs
+    and drop to an emergency shell (Section 6.1). Under Secure Boot ON,
+    blessing is the reliable route to a live desktop; this route is "verified
+    launch, best-effort media," and the Manual must not oversell it. (A
+    gray-area future idea, deliberately not designed here: overlay a modified
+    `grub.cfg` in the bytes the virtual CD serves. Config files are unverified
+    data even under Secure Boot, but injecting cmdline into another vendor's
+    trust chain deserves its own design discussion before anyone builds it.)
+  - *User-blessed media:* the reliable route. The bless step (Section 7.5)
+    extracts the ISO's kernel and signs it with the MOK key, so the loader boots
+    that signed kernel directly with our `iso-scan`-style cmdline and initrd
+    injection, media-finding included. Works for signed and unsigned ISOs alike.
+    Blessing runs either on an external host the user controls or on the on-stick
+    signing appliance; both keep the private key encrypted and out of the loader.
+  - *Unsigned, unblessed media* (memtest, older/niche rescue ISOs): refused, with
+    an actionable message pointing at the two doors: bless it, or use the
+    permissive opt-in (Section 7.4).
+- **Secure Boot ON, validation off (user opt-in, Section 7.4):** shim permits
+  everything, so every ISO drag-and-drops with nothing signed, on that machine.
+
+The only combination that cannot exist is "drag-and-drop an arbitrary *unsigned*
+ISO with reliable media-finding *and* keep Secure Boot validation on," because
+that requires either our signature on the kernel (blessing) or the distro doing
+its own media-finding. Everything else has a clean home above.
+
+### 7.3 Discipline (what must stay true)
+
+- No mechanism that relaxes signature enforcement exists anywhere in the loader.
+  If one is ever proposed, it is a design regression: it would place an
+  enforcement change inside a trusted, MOK-signed binary reachable without
+  physical presence, which is exactly the class of thing SBAT revocation exists
+  to remove, and it would move control off the user.
+- The loader never signs and never holds a private key (Section 7.5).
+- The loader reads `SecureBoot` / `SetupMode` / `MokSBState` only to drive UX
+  (per-entry verification labels, actionable messages, a state banner), never to
+  change what is allowed to run. Enforcement is shim's job.
+- The Manual documents each Secure Boot state, how to bless media, and how to use
+  the platform opt-out.
+
+### 7.4 User opt-out and permissive mode
+
+A user who wants the classic "boot anything" experience can have it, through
+mechanisms the platform already provides. We do not build any of them; we inherit
+them for free by deferring to shim, and we make them discoverable.
+
+Two sanctioned mechanisms, both gated by physical presence:
+
+- **Firmware Secure Boot off.** The user disables Secure Boot in firmware setup.
+  shim then permits everything; the loader boots any ISO.
+- **shim `MokSBState` (`mokutil --disable-validation`).** Confirmed at the
+  MokManager screen with a one-time password and physical presence on the next
+  boot. This tells shim to stop validating even while firmware Secure Boot stays
+  on. After that, the loader boots any ISO, with nothing signed. This is the
+  frictionless classic-mode opt-in: one deliberate action, no per-ISO signing.
+
+Why this is a platform opt-out and not an enforcement mechanism we own: the
+relaxation is performed by shim, the platform's own maintained component, only
+after a human confirms it at the MokManager screen. No attacker without physical
+presence can trigger it, and our loader is unchanged either way. This is the line
+between a platform opt-out (physical-presence gated, sanctioned) and a relaxation
+baked into a signed binary (reachable without physical presence, the thing we
+refuse to build).
+
+Properties the user should know, and the Manual must state:
+
+- `MokSBState` is stored in that machine's firmware NVRAM. It is **per-machine**,
+  does not travel with the stick, and must be set on each machine where the user
+  wants permissive mode. A stick cannot carry "disable everyone's Secure Boot."
+- With validation off, that machine runs *all* unsigned EFI code, not only ours.
+  It is a machine-level choice, and the loader shows a clear banner when it
+  detects the state so it is never a surprise.
+
+What we build here is UX only: detect `SecureBoot` / `MokSBState`, show the
+current mode, and when an unsigned selection is refused under enforcement, guide
+the user to the two doors (bless, or opt in via the platform). The host tool can
+run `mokutil --disable-validation` for the user; whether the loader itself can
+request the MokManager prompt by setting the shim request variable is a
+convenience to verify, with the host-tool path as the certain fallback.
+
+We ship no in-loader enforcement toggle. Rejected for the reasons in 7.3.
+
+### 7.5 Key model and signing
+
+The whole model rests on an asymmetry:
+
+- The **public cert** travels on the stick (p1) and is what gets enrolled in MOK
+  and what shim uses to verify. Public; leaking it does nothing.
+- The **private key** stays encrypted on p3 under LUKS. It is never on the
+  readable exFAT partition, and it is never in the loader.
+
+**Why the loader never signs.** Signing an ISO's kernel is a private-key
+operation, so it requires the private key wherever it runs. Loader integrity
+(which Secure Boot provides) is code integrity, not key confidentiality: a
+verified, untampered loader still cannot safely hold a signing key, because the
+threat is not a tampered loader but offline reading of the key from removable
+media, and a key inside the loader would make the loader a passphrase-gated
+signing oracle. Both are rejected. The private key stays where a private key
+belongs: encrypted at rest, used only in an authenticated Linux userland.
+
+**Where signing happens.** Two userland routes, both keeping the key encrypted at
+rest and out of the loader:
+
+1. **External host** the user controls, running the `sign` tool (Section 8). The
+   key can additionally sit behind a passphrase or a hardware token there. Right
+   for a portable signed toolkit built and maintained from a home machine.
+2. **On-stick signing appliance.** A minimal UKI (busybox + cryptsetup + sbsign +
+   the portable `sign` tool), built and signed by us so it boots under full
+   Secure Boot, with no network and no purpose beyond signing. It is a boot entry
+   in the loader menu. On selection it:
+   - boots (our-signed UKI, passes Secure Boot),
+   - unlocks p3 with the passphrase and reads the MOK private key,
+   - lists the pending unsigned ISOs and requires **per-ISO confirmation** (the
+     explicit "I vouch for this" act, which also stops a dropped-in malicious ISO
+     from being blessed silently),
+   - for each confirmed ISO, extracts the kernel, signs it with `sbsign`, and
+     stages the signed kernel plus the derived `iso-scan` cmdline in the manifest,
+   - reboots to the loader.
+
+   The appliance makes the stick self-hosting for signing: a portable signed
+   toolkit can be extended from the stick itself, with no external box. Because
+   the appliance is network-less and single-purpose, the window in which the key
+   is decrypted is small and hardened, smaller than booting a full OS to sign.
+
+The `sign` logic is identical in both routes; build it as a portable static
+binary that runs both on a host and inside the appliance initramfs, so there is
+one implementation.
+
+**Residuals** (acceptable for a personal toolkit, stated for honesty):
+
+- Blessing requires a reboot cycle (drop, sign, reboot, boot). The appliance
+  makes the signing leg fast, and the permissive opt-in (7.4) covers the "boot it
+  right now without signing" case.
+- Concentration: the key on p3 shares the passphrase with the OS. A passphrase
+  compromise yields the OS and the key together, but an attacker who has the
+  passphrase already controls the OS, so the key is not the weakest link. A
+  second passphrase or a hardware token for the key is normal host hygiene the
+  user can add; it is not something the loader manages.
+- On the bless path the kernel is our-signed, but the initrd it loads from p2
+  is not signature-verified (Linux does not verify initrds; virtually every
+  distro's normal boot has the same property). An attacker with write access
+  to the stick can swap the initrd and get code execution in that boot. This
+  matches the status quo of ordinary distro boots; stated for honesty.
+
+### 7.6 Load-path plumbing (verified by the 2026-09-12 spike)
+
+The firmware's native `LoadImage` verifies against db/dbx only; it knows
+nothing about MOK. Our loader itself is verified *by shim*, so it is fine
+regardless; but our UKIs and blessed kernels are MOK-signed images loaded *by
+us*, and they pass a `LoadImage`-style load only if shim provides the
+verification. The branches below were the candidate mechanisms; the spike
+(full data in `docs/notes/shim-spike.md`, measured on Fedora shim 15.8 and
+16.1, openSUSE 16.1, Debian 16.1) settled which ones exist:
+
+- **Branch A: shim hooks the Security/Security2 architectural protocols**
+  (`OVERRIDE_SECURITY_POLICY`, a shim compile-time option). **Measured: no
+  current distro shim compiles this in** (confirmed by disassembly xref count
+  and a runtime probe on all four binaries). Dead in practice.
+- **Branch B: shim's image-loader protocol** (`SHIM_IMAGE_LOADER`, first
+  ships in shim **16.0**, not 15.7 as this section previously guessed). Shim
+  installs a `LoadImage`/`StartImage`-alike that verifies against
+  db + MOK + SBAT and performs the PE loading itself. **Measured: present
+  and working on Fedora/openSUSE/Debian 16.1; MOK-signed images load, unsigned
+  images are refused with `EFI_SECURITY_VIOLATION`, everything loads with SB
+  off.** This is the chosen branch.
+- **The mechanism the branches missed, found by the spike:** under Secure
+  Boot, shim >= 16.0 also **patches `gBS->LoadImage`/`StartImage` in the
+  system table in place** (`hook_system_services`); the patched pointers are
+  identical to the protocol's. So on shim 16.x a plain `gBS->LoadImage` IS
+  the MOK-verifying path, and with SB off the pointers are the firmware's
+  own. On 15.8 the hook merely forwards to firmware (MOK never consulted),
+  which is why the minimum shim version we ship is 16.0.
+- **Branch C (last resort, still unbuilt, requires amending this document):**
+  `shim_lock->Verify` plus our own PE loader. Not needed.
+- **Branch D: vendor choice is free.** Any MS-signed shim passes db on any
+  machine; choose by feature, not sentiment.
+
+Loader shape settled by the spike: locate `SHIM_IMAGE_LOADER` at startup and
+prefer it; fall back to `gBS->LoadImage` (which shim has patched under SB on
+16.x, and which is the firmware's honest loader otherwise). The invariants
+are untouched either way: verification is shim's, enforcement is the
+platform's, and the loader neither relaxes nor signs. The phrase "verifying
+`LoadImage`" elsewhere in this document means this load path.
+
+Two operational facts from the spike that gate other sections: our loader
+binary MUST carry a `.sbat` section or shim 16.x refuses it with the same
+`EFI_SECURITY_VIOLATION` a bad signature gives (Section 9 has the build
+mechanics); and images loaded *through* the hook are exempt from that
+section requirement (measured both ways), so blessed bare kernels are not
+SBAT-blocked. Still unverified: real MokManager enrollment on hardware, a
+signed bzImage end to end, and `StartImage` semantics of the protocol;
+procedures are in `docs/notes/shim-spike.md` Section 9.
+
+Note the ISO path does not depend on any of this: a distro ISO's inner shim
+is MS-signed and passes db through the firmware's own `LoadImage` natively.
+
+
+## 8. Host tooling (userland, C)
+
+EFI-land stays freestanding and lean. The device-configuration tooling is
+ordinary Linux userland C and is allowed to shell out to system tools rather
+than reimplementing cryptography or filesystem creation:
+
+- `airies-boot-mkstick` (or subcommands): partition (GPT), format p1 FAT32 and
+  p2 exFAT (`mkfs.fat`, `mkfs.exfat`), and create p3/p4 via `cryptsetup
+  luksFormat` with the correct KDF per partition (`--pbkdf pbkdf2` on p3,
+  argon2id default on p4), then `mkfs.ext4` inside each. On p3, pin
+  `--pbkdf-force-iterations` to a value budgeted for our in-EFI PBKDF2
+  implementation: cryptsetup's host-side benchmark would pick around 2M
+  iterations, which is seconds of unlock time in unoptimized freestanding C.
+  Pick the number once the EFI implementation is measurable, and record it
+  here.
+- Install shim + MokManager + our loader + cert onto p1, naming our loader to
+  match the shim's embedded next-stage path (Section 4).
+- Generate the MOK keypair; keep the private key encrypted on p3 (Section 7.5),
+  export the public cert to p1 for enrollment.
+- Sign our loader, the personal-OS UKI, and the signing-appliance UKI with the
+  MOK key via `sbsign`.
+- Build/stage the personal-OS UKI (via `ukify` or equivalent) with our initramfs
+  handoff hook (Section 5.1) baked in, and build the signing-appliance UKI
+  (Section 7.5): a minimal initramfs of busybox + cryptsetup + sbsign + the
+  portable `sign` tool.
+- `airies-boot sign <iso>`: the bless step (Section 7.5). Extracts the ISO's
+  kernel, signs it (EFI-stub / UKI) with the MOK key via `sbsign`, stages the
+  signed kernel plus the derived `iso-scan`-style cmdline in the manifest so the
+  loader boots the signed kernel directly while the ISO stays on p2 for its
+  initramfs to find. Built as a **portable static binary** so the identical
+  implementation runs both on an external host and inside the on-stick signing
+  appliance. Not needed when Secure Boot is off, and not needed for ISOs that
+  already ship their own MS-signed shim and find their own media. If the
+  step-1 spike (Sections 7.6, 11) shows the chosen load path enforces SBAT on
+  everything it loads, raw signed bzImages (which carry no `.sbat` section)
+  will be refused; in that case `sign` emits a minimal UKI wrap (stub +
+  kernel, `.sbat` inherited from the stub) instead of a bare signed kernel. A
+  tool detail, not an architecture change.
+
+Shelling out to `cryptsetup`, `sbsign`, `mkfs.*`, `ukify` is the intended
+vendoring line: reimplementing argon2id, Authenticode PE signing, or ext4
+creation in-repo would be madness for a config tool that runs on a full Linux
+box. The `sign` tool shells out to `sbsign`; it never reimplements signing, in
+either the host or appliance route.
+
+
+## 9. EFI application internals
+
+- **Language/ABI:** freestanding C11, MS x64 ABI, built to PE32+ directly with
+  `x86_64-w64-mingw32-gcc`. No gnu-efi, no EDK2. We carry our own minimal UEFI
+  headers (the protocols and GUIDs we actually use) under
+  `src/efi/`. This avoids gnu-efi's ELF-then-objcopy dance and its
+  `uefi_call_wrapper` cruft, which exist to solve problems mingw solved.
+- **Build:** Makefile-based. Full strict warning set per repo C standard, adapted
+  for freestanding (`-ffreestanding -fno-stack-protector` where the environment
+  forces it, `-mno-red-zone`, `-fshort-wchar`). Build variants under `build/`.
+- **SBAT:** shim refuses second-stage binaries without a valid `.sbat`
+  section (confirmed empirically on 16.1; the refusal is the same opaque
+  `EFI_SECURITY_VIOLATION` a bad signature gives). Our loader carries one.
+  Build mechanics, measured: a `__attribute__((section(".sbat")))` const
+  array in the mingw build works; `objcopy --add-section` post-link does
+  NOT produce a section shim accepts. Decide our SBAT component name and
+  generation policy once and record them here; bumping the generation is
+  the revocation lever. UKIs get `.sbat` from sd-stub via `ukify` for free;
+  images loaded through shim's hook (blessed kernels) are exempt from the
+  requirement.
+- **Crypto in EFI:** LUKS2 unlock needs pbkdf2 (SHA-256) and AES-XTS-512 sector
+  decryption. Use AES-NI intrinsics for XTS. Keep the primitives small and
+  self-contained; this is the one place in EFI-land where we write crypto, and
+  it is deliberately the minimum: SHA-256, PBKDF2-HMAC-SHA256, AES-XTS decrypt.
+- **Filesystem drivers in EFI:** read-only exFAT (for p2) and read-only ext4
+  (for p3). Both read-only; the stick is configured from Linux userland, never
+  written by the loader.
+- **Modules:**
+  - `menu` - text menu over Simple Text Output/Input. Lists ISOs, the personal-OS
+    entry, and the signing-appliance entry (Section 7.5); shows per-entry
+    verification labels and the Secure Boot state banner.
+  - `exfat` - read-only exFAT, file read + directory enumeration + extent map.
+  - `ext4` - read-only ext4 (p3 only; constrained mkfs feature set at install).
+  - `luks` - LUKS2 header parse, pbkdf2, AES-XTS decrypt. Unlocks p3 only; the
+    module reads the UKI bytes off p3 and never exposes the p3 private key (that
+    file is read by the signing appliance in userland, not by the loader).
+  - `iso` - virtual BlockIO/DiskIO over an exFAT-backed ISO file; family detect;
+    injection framework.
+  - `sb` - reads `SecureBoot` / `SetupMode` / `MokSBState` for UX only (per-entry
+    verification labels, refusal messages, state banner). No enforcement logic
+    and no signing; enforcement is shim's, signing is userland's (Section 7).
+  - `loader` - shim-verified load glue (Section 7.6; never relaxes
+    verification and never signs, see Section 7), cmdline construction, and
+    the virtual credential-filesystem handoff (Section 5.1).
+
+
+## 10. Test rig
+
+- QEMU + OVMF. Both plain (`/usr/share/edk2/OvmfX64/OVMF_CODE.fd`) and Secure
+  Boot (`OVMF_CODE.secboot.fd`) builds are present on this machine. The
+  shipped `OVMF_VARS.secboot.fd` is already fully enrolled (MS 2011+2023
+  db/KEK, Red Hat PK, populated dbx), so the SB rig needs no key setup
+  beyond MOK; `virt-fw-vars` can inject `MokList` into a varstore copy to
+  test MOK verification without the interactive MokManager UI (procedure in
+  `docs/notes/shim-spike.md`). Both OVMF builds are release builds: the
+  `-debugcon` log stays empty, do not chase that.
+- Buildable disk image with the four-partition layout, populated by the host
+  tool, booted under QEMU with a writable copy of OVMF_VARS for MOK enrollment
+  testing.
+- Real hardware last, for the shim/MokManager enrollment flow, which is the
+  least QEMU-friendly step.
+
+
+## 11. MVP build order
+
+1. OVMF hello-world: mingw PE loader that prints and reads a key. Proves
+   toolchain + test rig. Then the **shim plumbing spike**, which gates several
+   designs (Sections 5.1, 7.6, 8, 9):
+   - classify the shim binary we intend to ship: version, Security2 hook
+     present, image-loader protocol present (GUID/strings inspection first,
+     it is cheap and static);
+   - under OVMF secboot, attempt to load a throwaway MOK-signed binary and
+     pick the Section 7.6 branch;
+   - check whether the chosen path enforces SBAT on a raw signed bzImage
+     (decides the bless tool's output format, Section 8);
+   - verify sd-stub `.cred` pickup rules and that pickup works from a
+     synthetic filesystem (Section 5.1);
+   - confirm for the record that volatile EFI variables are read-only after
+     `ExitBootServices` (Section 5.1's rejection rationale).
+2. Text menu + read-only exFAT: enumerate `*.iso` on p2 and list them.
+3. ISO boot: virtual BlockIO + ConnectController + verifying `LoadImage` of the
+   embedded bootloader (never relaxes verification). Prove one family end to end
+   first with Secure Boot OFF (Arch is a good first target: archiso finds its
+   media natively). Then prove the Secure Boot ON case boots a shim-carrying
+   distro ISO (e.g. Fedora) and refuses an unsigned one with a clear message.
+4. SB-state UX (`sb` module) + injection framework: family detection, descriptor
+   registry, extent map, cpio-append. Native-cmdline injectors for the tested
+   families; per-entry verification labels; Secure Boot state banner.
+5. UKI path: read-only ext4 + LUKS2/pbkdf2/AES-XTS unlock of p3 + LoadImage the
+   personal-OS UKI.
+6. Passphrase handoff: virtual credential filesystem synthesized by the
+   loader, sd-stub `.cred` pickup, stock `systemd-cryptsetup` consumes the
+   credential, p4 unlock (Section 5.1).
+7. Host tooling: `mkstick`, MOK keygen (private key onto p3, cert onto p1), shim
+   install with correct next-stage naming, signing our loader/UKIs, and the
+   portable `airies-boot sign` tool for blessing media.
+8. Signing appliance: minimal signing-appliance UKI (busybox + cryptsetup +
+   sbsign + the portable `sign` tool), as a loader menu entry; unlock p3, per-ISO
+   confirm, sign, stage manifest, reboot (Section 7.5).
+9. Permissive-mode UX: detect `MokSBState`, banner, and guidance to the platform
+   opt-out (Section 7.4).
+10. Real-hardware shim/MOK enrollment.
