@@ -137,6 +137,10 @@ SIGN_SRCS := \
 	src/cli/sign/main.c \
 	src/cli/sign/util.c \
 	src/cli/sign/isoprobe.c \
+	src/cli/sign/manifestio.c \
+	src/cli/sign/wimext.c \
+	src/cli/sign/prepcore.c \
+	src/cli/sign/prepare.c \
 	src/manifest/manifest.c \
 	src/manifest/manifest_write.c \
 	src/family/family.c \
@@ -336,8 +340,19 @@ CC_DB_ENTRIES := \
 # file would make every consumer analyse it twice: tools/analyze.sh treats a
 # repeated finding as a new one, so the duplicate would show up as a
 # regression in code nobody touched.
+CC_DB_HOST_SRCS := $(CLI_SRCS) \
+	src/cli/sign/main.c \
+	src/cli/sign/util.c \
+	src/cli/sign/isoprobe.c \
+	src/cli/sign/manifestio.c \
+	src/cli/sign/wimext.c \
+	src/cli/sign/prepcore.c \
+	src/cli/sign/prepare.c \
+	src/manifest/manifest.c \
+	src/manifest/manifest_write.c
+
 CC_DB_HOST_ENTRIES := \
-	$(foreach s,$(CLI_SRCS) src/cli/sign/main.c src/cli/sign/util.c src/cli/sign/isoprobe.c src/manifest/manifest.c src/manifest/manifest_write.c,$(s):$(s:src/%.c=build/host/%.o))
+	$(foreach s,$(CC_DB_HOST_SRCS),$(s):$(s:src/%.c=build/host/%.o))
 
 compile_commands.json: Makefile
 	@echo '[' > $@

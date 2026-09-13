@@ -1,9 +1,12 @@
 # falcon-boot static analysis baseline.
 #
-# src/cli/sign/util.c fd-leak x2: gcc's analyzer has no model for exec, so
-# the dup2 onto stdout/stderr in the forked child before execvp reads as a
-# leak; the descriptor surviving the exec is the whole point. Identical
-# pattern and rationale as the scoped pragma in src/cli/common/proc.c.
+# src/cli/sign/util.c fd-leak x3: gcc's analyzer has no model for exec, so
+# each dup2 onto a standard descriptor in the forked child before execvp
+# reads as a leak; the descriptor surviving the exec is the whole point. The
+# stdin one is the same pattern as the other two and arrived with it: wimlib's
+# update subcommand takes its command list on stdin and nowhere else, so the
+# prepare path needs a runner that redirects it. Identical pattern and
+# rationale as the scoped pragma in src/cli/common/proc.c.
 #
 # Managed by tools/analyze.sh. Data lines below are tab separated:
 #
@@ -104,6 +107,7 @@
 #       bitmask enums.
 
 fanalyzer	src/cli/sign/util.c	-Wanalyzer-fd-leak	leak of file descriptor 'dup2(fds[1], 1)' [CWE-775]
+fanalyzer	src/cli/sign/util.c	-Wanalyzer-fd-leak	leak of file descriptor 'dup2(in_fd, 0)' [CWE-775]
 fanalyzer	src/cli/sign/util.c	-Wanalyzer-fd-leak	leak of file descriptor 'dup2(out_fd, 1)' [CWE-775]
 tidy	src/crypto/aes.c	bugprone-implicit-widening-of-multiplication-result	result of multiplication in type 'unsigned int' is used as a pointer offset after an implicit widening conversion to type 'size_t'
 tidy	src/crypto/aes.c	bugprone-implicit-widening-of-multiplication-result	result of multiplication in type 'unsigned int' is used as a pointer offset after an implicit widening conversion to type 'size_t'

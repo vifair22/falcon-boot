@@ -234,8 +234,11 @@ static BOOL widen_relative(const char *rel, wchar_t *out, int cap)
     return TRUE;
 }
 
+/* Enough for 26 roots rendered as "C:\(2) ". */
+#define SEEN_CAP 256
+
 /*
- * Find the volume carrying the ISO.
+ * One pass over the volumes Windows reports right now.
  *
  * Honest statement of the ambiguity we accept: the match is "this relative
  * path exists on this volume and is exactly this many bytes long". Two sticks
@@ -246,22 +249,52 @@ static BOOL widen_relative(const char *rel, wchar_t *out, int cap)
  * this properly by matching the backing physical disk's GUID through
  * IOCTL_VOLUME_GET_VOLUME_DISK_EXTENTS; doing the same here needs the bless
  * step to record our p2 disk identity, which it does not yet.
+ *
+ * seen receives the drive set this pass observed, each root with its drive
+ * type. The caller passes back what the previous pass saw, and detail is
+ * logged only when the two differ: across a poll that runs dozens of times
+ * the interesting event is the storage stack changing, not the dozens of
+ * identical passes around it.
  */
-static BOOL find_iso(const struct cfg *cfg, wchar_t *out, int cap)
+static BOOL find_iso_once(const struct cfg *cfg, const wchar_t *rel,
+                          wchar_t *out, int cap,
+                          const wchar_t *prev_seen, wchar_t *seen)
 {
     wchar_t drives[512];
-    wchar_t rel[MAX_PATH];
+    size_t at = 0;
     DWORD n;
     const wchar_t *root;
+    BOOL verbose;
 
-    if (!widen_relative(cfg->iso, rel, MAX_PATH))
-        return FALSE;
+    seen[0] = L'\0';
 
     n = GetLogicalDriveStringsW(sizeof drives / sizeof drives[0] - 1, drives);
     if (n == 0 || n >= sizeof drives / sizeof drives[0]) {
-        jlog("scan: GetLogicalDriveStrings failed, err=%lu", GetLastError());
+        lstrcpynW(seen, L"(enumeration failed)", SEEN_CAP);
+        if (wcscmp(prev_seen, seen) != 0)
+            jlog("scan: GetLogicalDriveStrings failed, err=%lu", GetLastError());
         return FALSE;
     }
+
+    for (root = drives; *root != L'\0'; root += wcslen(root) + 1) {
+        int w;
+
+        if (SEEN_CAP - at < 16)
+            break;
+        w = swprintf(seen + at, SEEN_CAP - at, L"%ls(%u) ", root,
+                     (unsigned)GetDriveTypeW(root));
+        if (w < 0) {
+            /* A truncating swprintf leaves the buffer indeterminate, so the
+             * terminator has to be restored before anything logs it. */
+            seen[at] = L'\0';
+            break;
+        }
+        at += (size_t)w;
+    }
+
+    verbose = wcscmp(prev_seen, seen) != 0;
+    if (verbose)
+        jlog("scan: drives %ls", seen);
 
     for (root = drives; *root != L'\0'; root += wcslen(root) + 1) {
         WIN32_FILE_ATTRIBUTE_DATA fad;
@@ -270,25 +303,104 @@ static BOOL find_iso(const struct cfg *cfg, wchar_t *out, int cap)
         if (swprintf(out, (size_t)cap, L"%ls%ls", root, rel) < 0)
             continue;
         if (!GetFileAttributesExW(out, GetFileExInfoStandard, &fad)) {
-            jlog("scan: %ls absent (%ls, type %u)", out, root,
-                 (unsigned)GetDriveTypeW(root));
+            if (verbose)
+                jlog("scan: %ls absent", out);
             continue;
         }
 
         size = ((unsigned long long)fad.nFileSizeHigh << 32) | fad.nFileSizeLow;
         if (cfg->size != 0 && size != cfg->size) {
-            jlog("scan: %ls is %llu bytes, want %llu; skipping", out, size,
-                 cfg->size);
+            if (verbose)
+                jlog("scan: %ls is %llu bytes, want %llu; skipping", out, size,
+                     cfg->size);
             continue;
         }
         jlog("scan: found %ls (%llu bytes)", out, size);
         return TRUE;
     }
 
-    jlog("scan: no volume carries %s", cfg->iso);
     return FALSE;
 }
 
+/*
+ * Deadline, interval and heartbeat for the search.
+ *
+ * WinPE brings its storage stack up asynchronously, so the exFAT volume can
+ * arrive after we do: a USB 2.0 port behind a hub, a large disk still
+ * spinning up, or simply more devices to enumerate all push it later. Looking
+ * once loses that race silently and totally - no ISO, no attach, and Setup
+ * reports a missing media driver - so we poll instead.
+ *
+ * The budget is wall time, not a pass count, because a pass costs whatever
+ * the slowest volume in it costs: a stalled device can make one
+ * GetFileAttributesEx block for seconds, and a count would then expire in an
+ * unpredictable amount of real time. 30 s is several times the few seconds
+ * USB enumeration takes when it is merely slow, and is nothing against a
+ * Windows install measured in minutes. It is also bounded on purpose: a
+ * media-less WinPE is recoverable and explainable, a shell that never starts
+ * is neither.
+ *
+ * 500 ms between passes gives about 60 passes over the budget and adds at
+ * most half a second of latency once the media does appear. A pass is a
+ * drive-string enumeration plus one attribute query per volume, so polling at
+ * that rate costs nothing measurable.
+ */
+#define FIND_DEADLINE_MS  30000u
+#define FIND_INTERVAL_MS    500u
+#define FIND_HEARTBEAT_MS  5000u
+
+static BOOL find_iso(const struct cfg *cfg, wchar_t *out, int cap)
+{
+    wchar_t rel[MAX_PATH];
+    /* Two buffers rather than one: the drive set is re-enumerated every pass,
+     * and the previous pass's set has to survive to compare against. */
+    wchar_t seen[SEEN_CAP];
+    wchar_t prev_seen[SEEN_CAP];
+    ULONGLONG start;
+    ULONGLONG beat;
+    unsigned passes = 0;
+
+    if (!widen_relative(cfg->iso, rel, MAX_PATH))
+        return FALSE;
+
+    /* Not a drive set any enumeration can produce, so the first pass always
+     * counts as a change and logs what it saw. */
+    lstrcpynW(prev_seen, L"(nothing yet)", SEEN_CAP);
+
+    start = GetTickCount64();
+    beat = start;
+    for (;;) {
+        ULONGLONG now;
+
+        passes++;
+        if (find_iso_once(cfg, rel, out, cap, prev_seen, seen))
+            return TRUE;
+        lstrcpynW(prev_seen, seen, SEEN_CAP);
+
+        now = GetTickCount64();
+        if (now - start >= FIND_DEADLINE_MS) {
+            jlog("scan: no volume carries %s after %llu ms and %u passes",
+                 cfg->iso, now - start, passes);
+            jlog("scan: last drives seen %ls", seen);
+            return FALSE;
+        }
+        if (now - beat >= FIND_HEARTBEAT_MS) {
+            jlog("scan: still waiting, %llu ms elapsed, %u passes, drives %ls",
+                 now - start, passes, seen);
+            beat = now;
+        }
+        Sleep(FIND_INTERVAL_MS);
+    }
+}
+
+/*
+ * Single-shot on purpose, unlike the search above. This runs only after a
+ * pass found the ISO, which means the volume is mounted and readable, so the
+ * asynchronous-storage window the poll exists for is already closed. The
+ * failures left are the deterministic ones - privilege not held, flags an ISO
+ * does not support, an image the VHD stack will not open - and retrying those
+ * only delays the shell launch that is the actual fail-safe.
+ */
 static BOOL attach_iso(const wchar_t *path)
 {
     VIRTUAL_STORAGE_TYPE st;

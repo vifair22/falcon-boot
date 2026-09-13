@@ -65,8 +65,11 @@ int main(void)
     failed += run_cpio_tests();
     failed += run_family_tests();
     failed += run_isoprobe_tests();
+    failed += run_wimext_tests();
+    failed += run_prepcore_tests();
     failed += run_manifest_tests();
     failed += run_bless_tests();
+    failed += run_prep_tests();
     failed += run_crypto_tests();
     failed += run_json_tests();
     failed += run_luks_tests();

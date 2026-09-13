@@ -427,13 +427,48 @@ static int plain_shelf_usable(discover_dev *dev, const fs_ops *ops)
     return ok;
 }
 
+/* The signing appliance, by name (pos.h, POS_APPLIANCE_PREFIX). Case-folded
+ * ASCII compare over the raw UCS-2 name: mkstick writes these names and they
+ * are ASCII by construction, so a name that is not cannot be the appliance. */
+static int name_is_appliance(const fs_dirent *e)
+{
+    static const char want[] = POS_APPLIANCE_PREFIX;
+    UINTN i;
+
+    if (e->name_len + 1u < sizeof want)
+        return 0;
+    for (i = 0; i + 1u < sizeof want; i++) {
+        uint16_t c = e->name[i];
+
+        if (c >= u'A' && c <= u'Z')
+            c = (uint16_t)(c + (u'a' - u'A'));
+        if (c != (uint16_t)(unsigned char)want[i])
+            return 0;
+    }
+    return 1;
+}
+
 /* Which UKI to boot. One is booted without asking; several are offered,
  * because on a stick built to DESIGN Section 7.5 the second one is the
  * signing appliance and picking for the user would be picking wrong half the
- * time. Returns the index, or a negative value if the user backed out. */
-static INTN choose_uki(const menu_banner *banner)
+ * time. Returns the index, or a negative value if the user backed out.
+ *
+ * The appliance case asks nothing at all: the user has already said what they
+ * want (DESIGN Section 6.3.1's one confirmation), and a chooser here would
+ * only be a second place to pick the wrong image. A shelf with no appliance on
+ * it is a negative return, which the caller turns into the message that says
+ * so. */
+static INTN choose_uki(const menu_banner *banner, pos_pick pick)
 {
     UINTN i;
+
+    if (pick == POS_PICK_APPLIANCE) {
+        for (i = 0; i < g_uki_n; i++) {
+            if (name_is_appliance(&g_ukis[i]))
+                return (INTN)i;
+        }
+        return -1;
+    }
 
     if (g_uki_n == 1)
         return 0;
@@ -778,6 +813,12 @@ const CHAR16 *pos_entry_label(void)
 EFI_STATUS pos_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
                     pos_result *result)
 {
+    return pos_boot_pick(st, parent_image, POS_PICK_ASK, result);
+}
+
+EFI_STATUS pos_boot_pick(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
+                         pos_pick want, pos_result *result)
+{
     EFI_BOOT_SERVICES *bs;
     menu_banner banner = { L"falcon-boot: which image?", (const CHAR16 *)0,
                            0 };
@@ -896,8 +937,22 @@ EFI_STATUS pos_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
         goto out_close;
     }
 
-    pick = choose_uki(&banner);
+    pick = choose_uki(&banner, want);
     if (pick < 0) {
+        /* The appliance case never showed a chooser, so a negative answer
+         * there is not a user cancelling: it is a shelf with no appliance on
+         * it, which is a different thing to say and a different status. */
+        if (want == POS_PICK_APPLIANCE) {
+            result->stage = L"looking for the signing appliance";
+            result->advice =
+                L"no signing-appliance image is on this stick's shelf. A "
+                L"stick whose p3 was\r\ncreated plaintext has none by design "
+                L"(no on-stick private key), and one\r\nbuilt without the "
+                L"appliance UKI has none either. Prepare the ISO on a Linux"
+                L"\r\nhost with falcon-boot-sign instead.";
+            status = EFI_NOT_FOUND;
+            goto out_close;
+        }
         result->stage = L"choosing an image";
         status = EFI_ABORTED;
         goto out_close;

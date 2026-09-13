@@ -218,6 +218,79 @@ static void test_isoprobe_unterminated_last_line(void **state)
     iso_view_close(v);
 }
 
+/* ---------------------------------------------------------------- size */
+
+/* Preparation needs the byte length the ISO's own directory entry records, so
+ * that the range it locates and serves is the one the filesystem describes
+ * rather than whatever the extractor happened to produce. 7-Zip prints it as a
+ * property of the record above it. */
+static void test_isoprobe_size_from_the_udf_listing(void **state)
+{
+    iso_view *v = open_listings(k_win_iso9660, k_win_udf);
+    const char *match = NULL;
+    uint64_t size = 1;
+
+    (void)state;
+    assert_true(iso_view_find(v, "/sources/boot.wim", &match));
+    assert_true(iso_view_size(v, match, &size));
+    assert_int_equal(size, 576716800u);
+
+    assert_true(iso_view_find(v, "/sources/install.wim", &match));
+    assert_true(iso_view_size(v, match, &size));
+    assert_int_equal(size, 5749051392u);
+    iso_view_close(v);
+}
+
+/* "Packed Size" is the cluster-rounded allocation, not the file length, and a
+ * prefix match on "Size = " would silently take it for the wrong entry. A
+ * directory's empty Size leaves that entry with none at all. */
+static void test_isoprobe_size_ignores_packed_and_empty(void **state)
+{
+    static const char udf[] =
+        "Path = sources/boot.wim\n"
+        "Folder = -\n"
+        "Size = 593121462\n"
+        "Packed Size = 593123328\n"
+        "\n"
+        "Path = efi\n"
+        "Folder = +\n"
+        "Size = \n"
+        "Packed Size = \n";
+    iso_view *v = open_listings(NULL, udf);
+    const char *match = NULL;
+    uint64_t size = 0;
+
+    (void)state;
+    assert_true(iso_view_find(v, "/sources/boot.wim", &match));
+    assert_true(iso_view_size(v, match, &size));
+    assert_int_equal(size, 593121462u);
+
+    assert_true(iso_view_find(v, "/efi", &match));
+    size = 42;
+    assert_false(iso_view_size(v, match, &size));
+    assert_int_equal(size, 0);
+    iso_view_close(v);
+}
+
+/* bsdtar lists names and no sizes, so an ISO9660 entry answers "no length
+ * here" rather than zero-as-a-length, and the caller has to say which. */
+static void test_isoprobe_size_absent_for_iso9660(void **state)
+{
+    iso_view *v = open_listings(k_arch_iso9660, NULL);
+    const char *match = NULL;
+    uint64_t size = 7;
+
+    (void)state;
+    assert_true(iso_view_find(v, "/arch/boot/x86_64/vmlinuz-linux", &match));
+    assert_false(iso_view_size(v, match, &size));
+    assert_int_equal(size, 0);
+
+    assert_false(iso_view_size(v, "not-a-member-pointer", &size));
+    assert_false(iso_view_size(NULL, match, &size));
+    assert_false(iso_view_size(v, match, NULL));
+    iso_view_close(v);
+}
+
 /* ---------------------------------------------------------------- case */
 
 /* The two namespaces of one image disagree about case, and the fingerprints
@@ -364,6 +437,9 @@ int run_isoprobe_tests(void)
         cmocka_unit_test(test_isoprobe_slt_reads_only_path_properties),
         cmocka_unit_test(test_isoprobe_normalises_separators),
         cmocka_unit_test(test_isoprobe_unterminated_last_line),
+        cmocka_unit_test(test_isoprobe_size_from_the_udf_listing),
+        cmocka_unit_test(test_isoprobe_size_ignores_packed_and_empty),
+        cmocka_unit_test(test_isoprobe_size_absent_for_iso9660),
         cmocka_unit_test(test_isoprobe_case_insensitive_both_ways),
         cmocka_unit_test(test_isoprobe_directory_matches_on_component_boundary),
         cmocka_unit_test(test_isoprobe_wildcard_suffix),

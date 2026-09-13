@@ -184,6 +184,11 @@ struct EFI_BOOT_SERVICES {
 
 /* ---- Runtime services (spec 4.5) ---- */
 
+/* Variable attributes (spec 8.2). Only the two this loader ever sets are
+ * named; the rest are added when something needs one. */
+#define EFI_VARIABLE_NON_VOLATILE       0x00000001u
+#define EFI_VARIABLE_BOOTSERVICE_ACCESS 0x00000002u
+
 typedef struct {
     EFI_TABLE_HEADER Hdr;
 
@@ -197,16 +202,25 @@ typedef struct {
     void *SetVirtualAddressMap;
     void *ConvertPointer;
 
-    /* Variables. GetVariable is UX-only in this loader (DESIGN Section 7.3):
-     * SecureBoot / SetupMode / MokSBState drive labels and messages, never
-     * enforcement. */
+    /* Variables. GetVariable is UX-only for the platform's own variables
+     * (DESIGN Section 7.3): SecureBoot / SetupMode / MokSBState drive labels
+     * and messages, never enforcement.
+     *
+     * SetVariable writes exactly one variable, FalconNextBoot, our own, whose
+     * whole lifecycle belongs to this loader (DESIGN Section 6.3.1 and the
+     * `loader` module of Section 9). Nothing the platform owns is written
+     * here, and no variable gates a load. */
     EFI_STATUS (EFIAPI *GetVariable)(CHAR16 *VariableName,
                                      EFI_GUID *VendorGuid,
                                      UINT32 *Attributes,
                                      UINTN *DataSize,
                                      void *Data);
     void *GetNextVariableName;
-    void *SetVariable;
+    EFI_STATUS (EFIAPI *SetVariable)(CHAR16 *VariableName,
+                                     EFI_GUID *VendorGuid,
+                                     UINT32 Attributes,
+                                     UINTN DataSize,
+                                     void *Data);
 
     /* Miscellaneous */
     void *GetNextHighMonotonicCount;

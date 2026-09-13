@@ -83,6 +83,26 @@ UINTN pos_scan(EFI_SYSTEM_TABLE *st);
  * Meaningful only after pos_scan. */
 const CHAR16 *pos_entry_label(void);
 
+/* Which image on the shelf an attempt is for.
+ *
+ * ASK is the personal-OS entry: the shelf's images are offered and the user
+ * picks, because on a stick built to DESIGN Section 7.5 the second one is the
+ * signing appliance and choosing for them would be choosing wrong half the
+ * time. APPLIANCE is the Windows auto-prep path of Section 6.3.1, where the
+ * user has already said which thing they want and a chooser would only be a
+ * second way to get it wrong; the appliance image is identified by name (see
+ * POS_APPLIANCE_PREFIX). */
+typedef enum {
+    POS_PICK_ASK       = 0,
+    POS_PICK_APPLIANCE = 1
+} pos_pick;
+
+/* How the signing-appliance image is told apart from every other UKI on the
+ * shelf: its file name starts with this, ASCII, case-insensitively. A name
+ * rather than a manifest because p3 has no manifest and the loader cannot
+ * write one; mkstick is what makes it true when it stages the image. */
+#define POS_APPLIANCE_PREFIX "appliance"
+
 /* The entry's action, start to finish. Prompts, unlocks, mounts, reads and
  * launches; returns when the UKI exits or a stage fails.
  *
@@ -94,5 +114,15 @@ const CHAR16 *pos_entry_label(void);
  * Every exit path wipes the passphrase and the recovered volume key. */
 EFI_STATUS pos_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
                     pos_result *result);
+
+/* The same attempt, for a named image rather than a chosen one. pos_boot is
+ * this with POS_PICK_ASK and is not a separate path.
+ *
+ * EFI_NOT_FOUND with an actionable result->advice is what a shelf carrying no
+ * appliance image answers, which includes every --p3-plain stick (DESIGN
+ * Section 3: no LUKS on p3 means no on-stick private key and so no signing
+ * appliance there at all). */
+EFI_STATUS pos_boot_pick(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
+                         pos_pick want, pos_result *result);
 
 #endif /* FALCON_POS_H */

@@ -11,6 +11,7 @@
 
 #include <efi/uefi.h>
 #include <efi/blockio.h>
+#include <efi/loadops.h>
 #include <bless/bless.h>
 #include <discover/discover.h>
 #include <fs/fs.h>
@@ -135,9 +136,24 @@ typedef struct {
     UINTN vol;
     fs_dirent ent;
     iso_media_kind kind;
-    bless_state bless;
-    bless_hit   hit;       /* valid only when bless != BLESS_NONE */
+    /* Filled on every entry, including the ones no record names: the lookup
+     * writes the whole hit either way, so "what does the stick say about this
+     * entry" has one answer and not a flag beside it that could disagree. */
+    bless_hit   hit;
     UINTN dir_len;
+    /* What the medium turned out to be, as the survey found it, and whether
+     * it was looked at in the first place. Carried because the Windows
+     * auto-prep offer (DESIGN Section 6.3.1) turns on the family and the
+     * survey runs at most PROBE_LIMIT times; FAMILY_UNKNOWN with probed 0
+     * means "nobody has looked", which is a different thing from "looked and
+     * recognised nothing". */
+    family_id fam;
+    UINT8 probed;
+    /* Set when the suffix ate into the path, which is what makes label and
+     * dir_len no longer reconstruct the file's path on p2. Only a path within
+     * a few characters of MENU_PATH_MAX can get here, and the one caller that
+     * needs the path back refuses rather than guessing. */
+    UINT8 clipped;
 } iso_target;
 
 typedef struct {
@@ -169,8 +185,14 @@ static void list_add(iso_list *list, const CHAR16 *prefix,
     t->kind = kind;
     t->dir_len = pl;
     /* Resolved in probe_entries, once the list is sorted and the label is
-     * still the bare path; NONE until then so a target is never half-filled. */
-    t->bless = BLESS_NONE;
+     * still the bare path; empty until then so a target is never
+     * half-filled. */
+    t->hit.rec = (const manifest_record *)0;
+    t->hit.src = (const void *)0;
+    t->hit.state = BLESS_NONE;
+    t->fam = FAMILY_UNKNOWN;
+    t->probed = 0;
+    t->clipped = 0;
     memcpy(&t->ent, ent, sizeof(*ent));
 }
 
@@ -244,6 +266,18 @@ static void sort_list(iso_list *list)
  * walk that found it, and its reads go back through the volume it came
  * from. Hence the fixed pool rather than one reused mount. */
 static fs_vol g_vols[MAX_VOLS];   /* ~4 KB of driver cache each */
+
+/* ---- the next-boot marker, as this file sees it (DESIGN Section 6.3.1) ----
+ *
+ * Read and DELETED at the top of efi_main, decoded there, and resolved to an
+ * entry during the scan. Three separate steps on purpose: the delete happens
+ * before anything about the value is believed, the decode turns NVRAM bytes
+ * into something comparable, and only the resolve - which needs a record set
+ * and a current file size that do not exist yet at the top - decides whether
+ * anything is booted. */
+static char  g_next_path[MANIFEST_PATH_MAX]; /* empty when there was none */
+static UINTN g_next_idx = MAX_ISOS;          /* MAX_ISOS = nothing matched */
+static UINT8 g_next_bad;                     /* a value we would not decode */
 
 /* Walk the ISO-role rows of the one discovery inventory (DESIGN Section 9)
  * and scan each volume a filesystem driver claimed for bootable images.
@@ -326,9 +360,9 @@ static void wbuf_ascii(wbuf *w, const char *s)
  *
  * survey NULL means the entry was past PROBE_LIMIT and was never looked at. */
 static void suffix_build(CHAR16 *buf, UINTN cap, const iso_survey *survey,
-                         bless_state bless)
+                         const bless_hit *hit, family_id fam)
 {
-    const CHAR16 *blessed = bless_suffix(bless);
+    const CHAR16 *blessed = bless_suffix(hit, fam);
     wbuf w = { buf, cap, 0 };
 
     wbuf_ucs2(&w, L"  [");
@@ -349,9 +383,12 @@ static void suffix_build(CHAR16 *buf, UINTN cap, const iso_survey *survey,
     }
     wbuf_ucs2(&w, L"]");
 
-    /* DESIGN Section 8.1's label, appended rather than merged: the bracket
-     * above reports what is inside the medium, this one reports what the
-     * stick says stands behind it, and the two are found different ways. The
+    /* DESIGN Sections 8.1 and 6.3.1's label, appended rather than merged: the
+     * bracket above reports what is inside the medium, this one reports what
+     * the stick says stands behind it, and the two are found different ways.
+     * "[not prepared]" is the one that says something is missing rather than
+     * present, and it is here rather than in the first bracket for exactly
+     * that reason: it is a fact about the stick, not about the ISO. The
      * module hands over the words; composing them is the menu's job. */
     if (blessed != (const CHAR16 *)0)
         wbuf_ucs2(&w, blessed);
@@ -372,11 +409,12 @@ static void label_suffix(menu_entry *e, iso_target *t,
     CHAR16 suffix[SUFFIX_MAX];
     UINTN sl, pl;
 
-    suffix_build(suffix, SUFFIX_MAX, survey, t->bless);
+    suffix_build(suffix, SUFFIX_MAX, survey, &t->hit, t->fam);
     sl = ucs2_len(suffix);
     pl = ucs2_len(e->label);
     if (pl + sl + 1 > MENU_PATH_MAX) {
         pl = MENU_PATH_MAX - 1 - sl;
+        t->clipped = 1;
         if (t->dir_len > pl)
             t->dir_len = pl;
     }
@@ -415,14 +453,25 @@ static void probe_entries(iso_list *list)
          * cost is a string compare per record, so it runs for every entry
          * rather than only the probed ones: PROBE_LIMIT exists to bound
          * firmware work, and there is none here. */
-        t->bless = bless_lookup(&g_vols[t->vol], list->entries[i].label,
-                                t->ent.size, &t->hit);
+        (void)bless_lookup(&g_vols[t->vol], list->entries[i].label,
+                           t->ent.size, &t->hit);
+
+        /* The next-boot marker is matched here for the same reason, and it is
+         * the only window in which it can be: the value names a path on p2,
+         * and one line further down every label stops being one. A compare
+         * against a path the scan found is also the only use the value ever
+         * gets - nothing indexes anything with it (DESIGN Section 6.3.1). */
+        if (g_next_idx >= MAX_ISOS && g_next_path[0] != '\0' &&
+            bless_next_names(list->entries[i].label, g_next_path))
+            g_next_idx = i;
 
         if (i >= probed) {
             label_suffix(&list->entries[i], t, (const iso_survey *)0);
             continue;
         }
         iso_survey_media(g_st, &g_vols[t->vol], &t->ent, t->kind, &survey);
+        t->fam = survey.family->id;
+        t->probed = 1;
         label_suffix(&list->entries[i], t, &survey);
         out(L".");
     }
@@ -719,6 +768,261 @@ static void boot_blessed(EFI_HANDLE image_handle, const menu_entry *entry,
     out(L"\r\npress any key to return to the menu.\r\n");
 }
 
+/* A prepared entry's action (DESIGN Sections 6.3 and 6.3.1): the ISO itself,
+ * served with the byte map the stick staged for it.
+ *
+ * Like boot_blessed, there is no fallback to boot_target, and for a sharper
+ * reason than there: an unprepared Windows ISO boots, reaches the Setup
+ * screen, and only then fails to find its install source, with nothing to say
+ * that the preparation was the broken part. A refusal the user can read beats
+ * a boot they cannot diagnose. */
+static void boot_prepared(EFI_HANDLE image_handle, const menu_entry *entry,
+                          iso_target *target)
+{
+    bless_result result = { L"starting", EFI_SUCCESS, (const CHAR16 *)0 };
+    EFI_STATUS status;
+
+    g_st->ConOut->ClearScreen(g_st->ConOut);
+    out(L"booting prepared: ");
+    out(entry->label);
+    out(L"\r\n\r\n");
+
+    status = bless_prepared_boot(g_st, image_handle, &target->hit,
+                                 &g_vols[target->vol], &target->ent,
+                                 target->kind, &result);
+
+    g_st->ConOut->ClearScreen(g_st->ConOut);
+    out(entry->label);
+    if (!EFI_ERROR(status)) {
+        out(L"\r\nthe payload exited, status ");
+        out_hex(result.status);
+        out(L"\r\n");
+    } else {
+        out(L"\r\nprepared boot failed while ");
+        out(result.stage);
+        out(L": ");
+        out_hex(result.status);
+        out(L"\r\n");
+    }
+    if (result.advice != (const CHAR16 *)0) {
+        out(L"\r\n");
+        out(result.advice);
+        out(L"\r\n");
+    }
+    out(L"\r\npress any key to return to the menu.\r\n");
+}
+
+/* ---- offering preparation (DESIGN Section 6.3.1) ---- */
+
+typedef enum {
+    OFFER_PREPARE = 0,
+    OFFER_PLAIN,
+    OFFER_CANCEL
+} offer_choice;
+
+/* The whole flow, on one screen, before anything happens.
+ *
+ * A keypress rather than a typed word, and the difference from the appliance's
+ * typed "yes" is not tone but what is being agreed to: that confirmation is
+ * the binding "I vouch for these" act of the trust model (DESIGN Section 7.5),
+ * over media about to be signed with the user's own key. Preparation signs
+ * nothing, uses no key, and leaves every image the platform verifies
+ * Microsoft-signed and untouched (Section 6.3), so a proportionate confirm is
+ * a confirm and not a ritual.
+ *
+ * "Boot it unprepared" stays on the screen because it is a real thing to want
+ * (looking around WinPE) and because a loader that removed it would be making
+ * the user's decision for them. What it does is stated plainly enough that
+ * nobody picks it by accident. */
+static offer_choice offer_prepare(const menu_entry *entry, bless_prep prep)
+{
+    g_st->ConOut->ClearScreen(g_st->ConOut);
+    out(entry->label);
+    out(L"\r\n\r\n");
+    if (prep == BLESS_PREP_STALE)
+        out(L"This Windows ISO was prepared once, but the file has changed "
+            L"since: what is\r\nstaged on the stick was computed from other "
+            L"bytes.\r\n\r\n");
+    else
+        out(L"This Windows ISO has not been prepared.\r\n\r\n");
+    out(L"Windows Setup looks for its install source on the media it booted "
+        L"from, and\r\nthat media stops existing when Windows takes over from "
+        L"the firmware. The fix\r\nis a patched copy of the ISO's boot image, "
+        L"staged on the stick and served in\r\nits place: no key is used, "
+        L"nothing is signed, and the ISO itself is not\r\nmodified.\r\n\r\n"
+        L"Preparing boots the signing appliance, which prepares every "
+        L"unprepared\r\nWindows ISO on this stick and reboots once. This "
+        L"entry then boots straight\r\naway, now and every time after. Once "
+        L"per ISO, ever.\r\n\r\n"
+        L"Booting it unprepared reaches the Setup screen and then fails to "
+        L"find its\r\ninstall source; it is worth doing only to look "
+        L"around.\r\n\r\n");
+    out(L"  [p] prepare now (one reboot)   [b] boot unprepared   [esc] back"
+        L"\r\n");
+
+    for (;;) {
+        EFI_INPUT_KEY key;
+
+        if (EFI_ERROR(wait_key(&key)))
+            return OFFER_CANCEL;
+        if (key.ScanCode == EFI_SCAN_ESC)
+            return OFFER_CANCEL;
+        if (key.UnicodeChar == L'p' || key.UnicodeChar == L'P')
+            return OFFER_PREPARE;
+        if (key.UnicodeChar == L'b' || key.UnicodeChar == L'B')
+            return OFFER_PLAIN;
+        /* Anything else is ignored rather than taken as a refusal, the same
+         * way the menu ignores keys it has no meaning for. */
+    }
+}
+
+/* The entry's path on p2, as ASCII, rebuilt from the parts the scan kept.
+ *
+ * The label cannot be used directly: by the time anything is booted it has a
+ * suffix on it. dir_len still marks where the file name starts, and the
+ * dirent still holds that name, so the two together are the path - unless the
+ * suffix ate into it, which is what `clipped` records and what this refuses
+ * rather than guesses at. */
+static BOOLEAN entry_path_ascii(const menu_entry *e, const iso_target *t,
+                                char *out_path, UINTN cap)
+{
+    CHAR16 path[MENU_PATH_MAX];
+    UINTN nl = ucs2_len(t->ent.name);
+
+    if (t->clipped || t->dir_len + nl + 1 > MENU_PATH_MAX)
+        return FALSE;
+    memcpy(path, e->label, t->dir_len * sizeof(CHAR16));
+    memcpy(path + t->dir_len, t->ent.name, (nl + 1) * sizeof(CHAR16));
+    return (manifest_path_from_ucs2(path, out_path, cap) == MANIFEST_OK)
+               ? TRUE : FALSE;
+}
+
+/* Sets the marker and launches the appliance, in that order (DESIGN Section
+ * 6.3.1: the loader sets it immediately before launching).
+ *
+ * Every return from here is a launch that did NOT happen or did not reboot, so
+ * every one of them clears the marker again: it names a preparation nobody
+ * performed, and leaving it would cost the next boot a message about something
+ * the user already saw fail. */
+static void launch_appliance(EFI_HANDLE image_handle, const menu_entry *entry,
+                             const iso_target *t, UINTN pinned)
+{
+    pos_result result = { L"starting", EFI_SUCCESS, (const CHAR16 *)0 };
+    char path[MANIFEST_PATH_MAX];
+    EFI_STATUS status;
+
+    g_st->ConOut->ClearScreen(g_st->ConOut);
+    out(entry->label);
+    out(L"\r\n\r\n");
+
+    if (!entry_path_ascii(entry, t, path, sizeof path)) {
+        out(L"this ISO's path cannot be written down for the next boot: it is "
+            L"too long,\r\nor it is not plain ASCII. Rename it, or prepare it "
+            L"on a Linux host with\r\nfalcon-boot-sign.\r\n");
+        out(L"\r\npress any key to return to the menu.\r\n");
+        return;
+    }
+    if (pinned == 0) {
+        /* No shelf was found at scan time, so there is nothing to boot the
+         * appliance out of. Said here rather than discovered inside pos,
+         * because "there is no p3 in this machine" is a different sentence
+         * from "the shelf has no appliance on it". */
+        out(L"the signing appliance lives on this stick's encrypted shelf, and "
+            L"no shelf\r\nthis loader can open is in sight. Prepare the ISO on "
+            L"a Linux host with\r\nfalcon-boot-sign instead.\r\n");
+        out(L"\r\npress any key to return to the menu.\r\n");
+        return;
+    }
+
+    status = loader_next_boot_set(g_st, path);
+    if (EFI_ERROR(status)) {
+        out(L"the next-boot marker could not be written (");
+        out_hex(status);
+        out(L"),\r\nso preparing now would not boot the ISO afterwards. This "
+            L"machine's firmware\r\nis refusing an EFI variable write; prepare "
+            L"the ISO on a Linux host with\r\nfalcon-boot-sign instead.\r\n");
+        out(L"\r\npress any key to return to the menu.\r\n");
+        return;
+    }
+
+    out(L"starting the signing appliance. It prepares every unprepared "
+        L"Windows ISO\r\non this stick and reboots; this entry boots by itself "
+        L"afterwards.\r\n\r\n");
+
+    status = pos_boot_pick(g_st, image_handle, POS_PICK_APPLIANCE, &result);
+
+    /* Reached only when the appliance did not reboot the machine: it was never
+     * started, it was refused, or it exited. The marker goes either way, which
+     * is what keeps a failure here from becoming a message on every subsequent
+     * boot about a preparation that was never attempted. */
+    (void)loader_next_boot_set(g_st, (const char *)0);
+
+    if (status == EFI_ABORTED)
+        return; /* ESC at the passphrase prompt; nothing to read */
+
+    out(L"\r\n");
+    if (!EFI_ERROR(status)) {
+        out(L"the appliance exited without rebooting, status ");
+        out_hex(result.status);
+        out(L"\r\nnothing was prepared.\r\n");
+    } else {
+        out(L"the signing appliance could not be started while ");
+        out(result.stage);
+        out(L": ");
+        out_hex(result.status);
+        out(L"\r\n");
+    }
+    if (result.advice != (const CHAR16 *)0) {
+        out(L"\r\n");
+        out(result.advice);
+        out(L"\r\n");
+    }
+    out(L"\r\npress any key to return to the menu.\r\n");
+}
+
+/* An entry with nothing fresh on the stick behind it. Either it is Windows
+ * media that wants preparing, in which case the offer comes first, or it is
+ * the ordinary chainload this loader has always done.
+ *
+ * Returns FALSE when the user backed out and there is nothing on screen worth
+ * acknowledging, which is the same contract boot_personal has. */
+static BOOLEAN boot_plain_or_offer(EFI_HANDLE image_handle,
+                                   const menu_entry *entry, iso_target *t,
+                                   UINTN pinned)
+{
+    bless_prep prep;
+
+    /* An entry past PROBE_LIMIT was never looked inside, so nothing yet knows
+     * whether it is Windows media. Looking now costs one virtual-media publish
+     * and teardown, on an explicit user action rather than at draw time, and
+     * it is the difference between an unprobed Windows ISO getting the offer
+     * and booting silently into a Setup that cannot find its install source.
+     * Nothing on the no-Windows path pays for it at menu-draw time. */
+    if (!t->probed) {
+        iso_survey survey;
+
+        iso_survey_media(g_st, &g_vols[t->vol], &t->ent, t->kind, &survey);
+        t->fam = survey.family->id;
+        t->probed = 1;
+    }
+
+    prep = bless_prep_state(&t->hit, t->fam);
+    if (prep == BLESS_PREP_ABSENT || prep == BLESS_PREP_STALE) {
+        switch (offer_prepare(entry, prep)) {
+        case OFFER_PREPARE:
+            launch_appliance(image_handle, entry, t, pinned);
+            return TRUE;
+        case OFFER_CANCEL:
+            return FALSE;
+        case OFFER_PLAIN:
+        default:
+            break;
+        }
+    }
+    boot_target(image_handle, entry, t);
+    return TRUE;
+}
+
 /* The personal-OS entry's action (DESIGN Section 5). The module owns the
  * screen while it prompts and reads, so this reports only the outcome.
  *
@@ -815,6 +1119,58 @@ static void permissive_notice(sb_mode mode)
         L"screen on the next boot.\r\n\r\n");
 }
 
+/* The one-shot's second half (DESIGN Section 6.3.1): the marker has already
+ * been read and deleted; this is the validation and, if it passes, the boot
+ * that happens WITHOUT drawing the menu.
+ *
+ * Validation is against what is on the stick right now, never against the
+ * value itself: the entry must exist in the scan, and its record must be a
+ * fresh prepared one, which is bless_hit_action's answer and not a rule
+ * restated here. A value naming something else - an ISO that is not there, one
+ * that was never prepared, one whose preparation failed halfway - falls
+ * through to the menu with a line saying which of those it was.
+ *
+ * The boot loop this design is against cannot form: the marker was deleted
+ * before any of this ran, so every path below, including the ones that boot
+ * and come back, leaves the machine with nothing to repeat. */
+static void next_boot_run(EFI_HANDLE image_handle, iso_list *list)
+{
+    EFI_INPUT_KEY key;
+    iso_target *t;
+
+    g_st->ConOut->ClearScreen(g_st->ConOut);
+
+    if (g_next_bad) {
+        out(L"note: the next-boot marker held something that is not a path on "
+            L"this stick.\r\nIt has been cleared; nothing was booted from it."
+            L"\r\n\r\npress any key for the menu.\r\n");
+        wait_key(&key);
+        return;
+    }
+    if (g_next_idx >= list->count) {
+        out(L"the ISO this boot was supposed to start is not on the stick any "
+            L"more.\r\nIt has been cleared; nothing was booted from it."
+            L"\r\n\r\npress any key for the menu.\r\n");
+        wait_key(&key);
+        return;
+    }
+
+    t = &list->targets[g_next_idx];
+    if (bless_hit_action(&t->hit) != BLESS_ACT_OVERLAY) {
+        out(list->entries[g_next_idx].label);
+        out(L"\r\n\r\nthis ISO was queued to boot after preparation, and it is "
+            L"still not\r\nprepared: the appliance did not finish, or it could "
+            L"not prepare this one.\r\nNothing was booted. Select it again to "
+            L"retry, or prepare it on a Linux\r\nhost with falcon-boot-sign."
+            L"\r\n\r\npress any key for the menu.\r\n");
+        wait_key(&key);
+        return;
+    }
+
+    boot_prepared(image_handle, &list->entries[g_next_idx], t);
+    wait_key(&key);
+}
+
 EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
 {
     iso_list list = { (void *)0, (void *)0, 0, 0, 0 };
@@ -835,6 +1191,24 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
 
     st->BootServices->SetWatchdogTimer(0, 0, 0, (CHAR16 *)0);
     st->ConOut->Reset(st->ConOut, FALSE);
+
+    /* The next-boot marker, first thing and before anything that can fail
+     * (DESIGN Section 6.3.1). Reading it here rather than where it is acted on
+     * is the point: loader_next_boot_take deletes it as it reads, so from this
+     * line onward there is nothing on the machine that could make this boot
+     * happen a second time, whatever goes wrong below. Decoding it is separate
+     * again, and acting on it needs a record set that does not exist yet. */
+    {
+        UINT8 raw[BLESS_NEXT_MAX];
+        UINTN raw_len = loader_next_boot_take(st, raw, sizeof raw);
+
+        if (raw_len != 0 &&
+            bless_next_decode(raw, raw_len, g_next_path, sizeof g_next_path)
+                != BLESS_OK) {
+            g_next_path[0] = '\0';
+            g_next_bad = 1;
+        }
+    }
 
     /* Two label arrays, because the flat list and the screen are no longer the
      * same thing: the scan's full-path labels stay as they are for the whole
@@ -875,6 +1249,13 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
      * order the list by what was found rather than by path. */
     sort_list(&list);
     probe_entries(&list);
+
+    /* The queued entry, if there was one, boots here: before the menu is ever
+     * drawn, which is what makes the whole flow cost one confirmation and one
+     * reboot (DESIGN Section 6.3.1). Falls through to the menu afterwards,
+     * whether it booted, refused, or found nothing to boot. */
+    if (g_next_path[0] != '\0' || g_next_bad)
+        next_boot_run(image_handle, &list);
 
     for (;;) {
         UINTN shown = view_build(&list, cur, cur_len, pinned, view, rows);
@@ -934,14 +1315,28 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
              * and what is reported are both the flat entry. */
             UINTN idx = rows[sel].idx;
 
-            /* DESIGN Section 8.1: a fresh blessing boots the signed wrap, a
-             * stale one boots as if it were not blessed at all. */
-            if (list.targets[idx].bless == BLESS_FRESH)
+            /* One branch for the two kinds of record and for having neither
+             * (DESIGN Sections 8.1 and 6.3.1). A fresh blessing boots the
+             * signed wrap; a fresh preparation boots the ISO with its byte
+             * map; a stale record of either kind boots as if it were not
+             * there, which for Windows media means the offer to prepare it
+             * again rather than a chainload into a dead Setup. */
+            switch (bless_hit_action(&list.targets[idx].hit)) {
+            case BLESS_ACT_UKI:
                 boot_blessed(image_handle, &list.entries[idx],
                              &list.targets[idx]);
-            else
-                boot_target(image_handle, &list.entries[idx],
-                            &list.targets[idx]);
+                break;
+            case BLESS_ACT_OVERLAY:
+                boot_prepared(image_handle, &list.entries[idx],
+                              &list.targets[idx]);
+                break;
+            case BLESS_ACT_PLAIN:
+            default:
+                if (!boot_plain_or_offer(image_handle, &list.entries[idx],
+                                         &list.targets[idx], pinned))
+                    continue;
+                break;
+            }
             break;
         }
         }

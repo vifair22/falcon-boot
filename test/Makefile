@@ -126,8 +126,11 @@ TEST_SRCS := \
 	$(TEST_DIR)/cpio_test.c \
 	$(TEST_DIR)/family_test.c \
 	$(TEST_DIR)/isoprobe_test.c \
+	$(TEST_DIR)/wimext_test.c \
+	$(TEST_DIR)/prepcore_test.c \
 	$(TEST_DIR)/manifest_test.c \
 	$(TEST_DIR)/bless_test.c \
+	$(TEST_DIR)/prep_test.c \
 	$(TEST_DIR)/crypto_test.c \
 	$(TEST_DIR)/json_test.c \
 	$(TEST_DIR)/luks_test.c \
@@ -143,6 +146,8 @@ UUT_SRCS := \
 	$(ROOT)/src/cpio/cpio.c \
 	$(ROOT)/src/family/family.c \
 	$(ROOT)/src/cli/sign/isoprobe.c \
+	$(ROOT)/src/cli/sign/wimext.c \
+	$(ROOT)/src/cli/sign/prepcore.c \
 	$(ROOT)/src/cli/sign/util.c \
 	$(ROOT)/src/manifest/manifest.c \
 	$(ROOT)/src/manifest/manifest_write.c \
@@ -170,7 +175,7 @@ UUT_SRCS := \
 # runners and file I/O are exercised by running the tool, and reporting them
 # as an untested unit would only depress a number that is supposed to mean
 # something.
-COV_FILTER := .*/src/(exfat/exfat|cpio/cpio|family/family|cli/sign/isoprobe|manifest/[a-z_]+|bless/blesscore|ext4/ext4|part/part|fs/fs|sb/sb|crypto/[a-z0-9]+|luks/[a-z0-9]+)\.c$$|.*/src/iso/overlay\.h$$
+COV_FILTER := .*/src/(exfat/exfat|cpio/cpio|family/family|cli/sign/(isoprobe|wimext|prepcore)|manifest/[a-z_]+|bless/blesscore|ext4/ext4|part/part|fs/fs|sb/sb|crypto/[a-z0-9]+|luks/[a-z0-9]+)\.c$$|.*/src/iso/overlay\.h$$
 
 OBJS := $(patsubst $(TEST_DIR)/%.c,$(OBJ)/%.o,$(TEST_SRCS)) \
 	$(patsubst $(ROOT)/src/%.c,$(OBJ)/uut/%.o,$(UUT_SRCS))

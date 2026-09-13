@@ -88,4 +88,45 @@ BOOLEAN load_ops_inner_load_blocked(EFI_SYSTEM_TABLE *st, const load_ops *ops);
  * type. Wrapped at 78 columns for the spec's guaranteed 80x25 mode. */
 const CHAR16 *load_ops_inner_load_advice(void);
 
+/* ---- the next-boot marker (DESIGN Section 6.3.1) ----
+ *
+ * One non-volatile EFI variable, FalconNextBoot, under our own vendor GUID.
+ * The loader sets it before launching the signing appliance to prepare media,
+ * and reads it on the next boot to know which entry the user was waiting for.
+ * It lives here because DESIGN Section 9 gives the whole lifecycle to the
+ * `loader` module: one component both sets and clears it, and it is the only
+ * place in this loader that writes an EFI variable at all.
+ *
+ * Why a variable and not a file on the stick: every filesystem driver in
+ * EFI-land is read-only by design, so the loader can read a marker on p2 but
+ * can never clear one, and a one-shot that cannot be cleared is not a one-shot.
+ * The delete is legal here because all of this runs before ExitBootServices,
+ * which is exactly what Section 5.1's rejected volatile-variable design did
+ * not have.
+ *
+ * Nothing about enforcement changes: NVRAM is not the stick, this variable is
+ * not read by anything but us, and what it names still has to survive
+ * validation against the manifest before a single byte of it is acted on. */
+#define LOADER_NEXT_BOOT_NAME L"FalconNextBoot"
+
+/* Reads the marker and DELETES it, in that order, unconditionally.
+ *
+ * That order is the whole boot-loop defence and is not an optimisation to
+ * reverse: if preparation failed, or the value was never ours, or anything at
+ * all goes wrong below this call, the marker is already gone and the next boot
+ * draws the menu. Validating first and deleting after would make every
+ * failure that could not boot the entry repeat forever.
+ *
+ * Returns the byte count written to buf (0 when there was no marker, or when
+ * it is longer than cap, which for a value this short means it is not ours).
+ * The bytes are raw and untrusted; bless_next_decode is what turns them into
+ * something that may be compared against a path. */
+UINTN loader_next_boot_take(EFI_SYSTEM_TABLE *st, void *buf, UINTN cap);
+
+/* Sets the marker to an ASCII path, or clears it when name is NULL or empty.
+ * Non-volatile plus boot-services access: it must survive the reboot the
+ * appliance performs, and nothing after ExitBootServices has any business
+ * reading it. Returns the firmware's status. */
+EFI_STATUS loader_next_boot_set(EFI_SYSTEM_TABLE *st, const char *name);
+
 #endif /* FALCON_EFI_LOADOPS_H */

@@ -31,6 +31,7 @@
 
 #include <bless/blesscore.h>
 #include <fs/fs.h>
+#include <iso/iso.h>
 
 /* Where a bless lives on p2, matching `falcon-boot-sign`'s BLESSED_DIR and
  * the reserved directory of DESIGN Section 6.2. Two components, walked one at
@@ -39,6 +40,12 @@
 #define BLESS_DIR_L1 "falcon"
 #define BLESS_DIR_L2 "blessed"
 #define BLESS_MANIFEST_NAME "manifest"
+
+/* Where a prepared medium's sidecars live: p2:/falcon/prepared/<sha256>/,
+ * three components under the same reserved directory (DESIGN Section 6.3.1).
+ * The last one is the record's own sha256=, which is what keeps the link
+ * between an ISO and its artifacts intrinsic rather than by file name. */
+#define BLESS_DIR_PREPARED "prepared"
 
 /* A sanity bound on the UKI, not a format limit. Section 8.1 puts a blessed
  * wrap at 100-250 MB because it embeds the ISO's initramfs, so this is a few
@@ -101,5 +108,33 @@ UINTN bless_dropped(void);
  * be retried and the menu comes back intact. */
 EFI_STATUS bless_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
                       const bless_hit *hit, bless_result *result);
+
+/* Boots a PREPARED medium: the ISO itself, served with the byte map its
+ * record asks for (DESIGN Sections 6.3 and 6.3.1).
+ *
+ * Nothing is signed and nothing is verified differently here. The overlay
+ * changes which bytes the virtual medium serves; every image the platform
+ * checks on a Windows boot stays Microsoft-signed and untouched, and the
+ * payload is named to LoadImage by device path exactly as an unprepared one
+ * is (see iso_boot_overlaid).
+ *
+ * Fails closed and says why. A splice file that is absent, a record with no
+ * byte map, one asking for more ranges than a medium may carry, and a sidecar
+ * too short for the range it backs are all refusals with an actionable line in
+ * result->advice - never a quiet fallback to booting the ISO unprepared, which
+ * is the one outcome the user cannot diagnose: Windows Setup would come up and
+ * then fail to find its install source, exactly as it does with no preparation
+ * at all, with nothing on screen to say the preparation was the broken part.
+ *
+ * vol and file are the medium's own volume and directory entry, as the scan
+ * found them; hit->src named the volume the record was read from, which is the
+ * same volume by construction (bless_cache_lookup matches on it).
+ *
+ * Returns EFI_SUCCESS when the payload ran and returned, with result->status
+ * its exit status; any other value is the status that ended the attempt. */
+EFI_STATUS bless_prepared_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
+                               const bless_hit *hit, fs_vol *vol,
+                               const fs_dirent *file, iso_media_kind kind,
+                               bless_result *result);
 
 #endif /* FALCON_BLESS_H */

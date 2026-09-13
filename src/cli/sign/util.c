@@ -93,13 +93,14 @@ void sgn_log(sgn_level lvl, const char *fmt, ...)
 
 /* ------------------------------------------------------------ exec */
 
-/* Common half of the three runners: fork, point the child's stdout at
- * out_fd (or leave it alone when out_fd is -1), exec, and wait.
+/* Common half of the runners: fork, point the child's stdout at out_fd and
+ * its stdin at in_fd (either may be -1 to leave that descriptor alone), exec,
+ * and wait.
  *
  * execvp rather than a shell: the whole point is that no argument is ever
  * parsed by anything, so a path with a space, a quote or a semicolon in it
  * is just a path. */
-static int run_common(char *const argv[], int out_fd)
+static int run_common_io(char *const argv[], int out_fd, int in_fd)
 {
     pid_t pid;
     int status = 0;
@@ -121,6 +122,12 @@ static int run_common(char *const argv[], int out_fd)
                 _exit(127);
             if (out_fd != STDOUT_FILENO)
                 (void)close(out_fd);
+        }
+        if (in_fd >= 0) {
+            if (dup2(in_fd, STDIN_FILENO) < 0)
+                _exit(127);
+            if (in_fd != STDIN_FILENO)
+                (void)close(in_fd);
         }
         execvp(argv[0], argv);
         (void)fprintf(stderr, "falcon-boot-sign: exec %s: %s\n", argv[0],
@@ -156,8 +163,31 @@ int sgn_run(char *const argv[])
         sgn_set_error_errno(SGN_ERR_IO, "open /dev/null");
         return SGN_ERR_IO;
     }
-    rc = run_common(argv, devnull);
+    rc = run_common_io(argv, devnull, -1);
     (void)close(devnull);
+    return rc;
+}
+
+int sgn_run_stdin(char *const argv[], const char *path)
+{
+    int devnull;
+    int in_fd;
+    int rc;
+
+    in_fd = open(path, O_RDONLY | O_CLOEXEC);
+    if (in_fd < 0) {
+        sgn_set_error_errno(SGN_ERR_IO, "open '%s' for read", path);
+        return SGN_ERR_IO;
+    }
+    devnull = open("/dev/null", O_WRONLY | O_CLOEXEC);
+    if (devnull < 0) {
+        sgn_set_error_errno(SGN_ERR_IO, "open /dev/null");
+        (void)close(in_fd);
+        return SGN_ERR_IO;
+    }
+    rc = run_common_io(argv, devnull, in_fd);
+    (void)close(devnull);
+    (void)close(in_fd);
     return rc;
 }
 
@@ -170,7 +200,7 @@ int sgn_run_to_file(char *const argv[], const char *path)
         sgn_set_error_errno(SGN_ERR_IO, "open '%s' for write", path);
         return SGN_ERR_IO;
     }
-    rc = run_common(argv, fd);
+    rc = run_common_io(argv, fd, -1);
     if (close(fd) < 0 && rc == SGN_OK) {
         sgn_set_error_errno(SGN_ERR_IO, "close '%s'", path);
         rc = SGN_ERR_IO;
@@ -342,6 +372,265 @@ int sgn_file_exists(const char *path)
     struct stat st;
 
     return path != NULL && stat(path, &st) == 0;
+}
+
+int sgn_file_size(const char *path, uint64_t *out)
+{
+    struct stat st;
+
+    if (path == NULL || out == NULL) {
+        sgn_set_error(SGN_ERR_INTERNAL, "sgn_file_size: bad arguments");
+        return SGN_ERR_INTERNAL;
+    }
+    if (stat(path, &st) != 0) {
+        sgn_set_error_errno(SGN_ERR_IO, "stat '%s'", path);
+        return SGN_ERR_IO;
+    }
+    if (!S_ISREG(st.st_mode)) {
+        sgn_set_error(SGN_ERR_IO, "'%s' is not a regular file", path);
+        return SGN_ERR_IO;
+    }
+    *out = (uint64_t)st.st_size;
+    return SGN_OK;
+}
+
+int sgn_pad_file(const char *path, uint64_t len)
+{
+    uint64_t have = 0;
+    int rc;
+    int fd;
+
+    rc = sgn_file_size(path, &have);
+    if (rc != SGN_OK)
+        return rc;
+    if (have == len)
+        return SGN_OK;
+    if (have > len) {
+        sgn_set_error(SGN_ERR_INTERNAL,
+                      "refusing to truncate '%s' from %llu to %llu bytes",
+                      path, (unsigned long long)have,
+                      (unsigned long long)len);
+        return SGN_ERR_INTERNAL;
+    }
+
+    fd = open(path, O_WRONLY | O_CLOEXEC);
+    if (fd < 0) {
+        sgn_set_error_errno(SGN_ERR_IO, "open '%s' to pad", path);
+        return SGN_ERR_IO;
+    }
+    /* ftruncate past the end, which POSIX defines as reading back zeroes.
+     * That leaves a sparse tail on a filesystem that supports one, so the
+     * padding costs no writes here; the loader serves the range and reads the
+     * zeroes exactly as if they had been written. */
+    if (ftruncate(fd, (off_t)len) < 0) {
+        sgn_set_error_errno(SGN_ERR_IO, "pad '%s' to %llu bytes", path,
+                            (unsigned long long)len);
+        (void)close(fd);
+        return SGN_ERR_IO;
+    }
+    if (fsync(fd) < 0) {
+        sgn_set_error_errno(SGN_ERR_IO, "fsync '%s'", path);
+        (void)close(fd);
+        return SGN_ERR_IO;
+    }
+    if (close(fd) < 0) {
+        sgn_set_error_errno(SGN_ERR_IO, "close '%s'", path);
+        return SGN_ERR_IO;
+    }
+    return SGN_OK;
+}
+
+/* Bounded on purpose. Every tree this removes is one the tool built two
+ * function calls ago and is at most two levels deep; a depth limit turns a
+ * symlink loop or a path this code did not create into a refusal rather than
+ * an unbounded walk, and the caller is never asking it to clean up anything
+ * it did not make. */
+#define RM_MAX_DEPTH 4
+
+static int rm_rf_depth(const char *path, int depth)
+{
+    DIR *d;
+    struct dirent *ent;
+    struct stat st;
+    int rc = SGN_OK;
+
+    if (lstat(path, &st) != 0) {
+        if (errno == ENOENT)
+            return SGN_OK;
+        sgn_set_error_errno(SGN_ERR_IO, "lstat '%s'", path);
+        return SGN_ERR_IO;
+    }
+    if (!S_ISDIR(st.st_mode)) {
+        if (unlink(path) != 0 && errno != ENOENT) {
+            sgn_set_error_errno(SGN_ERR_IO, "unlink '%s'", path);
+            return SGN_ERR_IO;
+        }
+        return SGN_OK;
+    }
+    if (depth >= RM_MAX_DEPTH) {
+        sgn_set_error(SGN_ERR_IO,
+                      "'%s' is deeper than this cleanup will descend", path);
+        return SGN_ERR_IO;
+    }
+
+    d = opendir(path);
+    if (d == NULL) {
+        sgn_set_error_errno(SGN_ERR_IO, "opendir '%s'", path);
+        return SGN_ERR_IO;
+    }
+    while ((ent = readdir(d)) != NULL) {
+        char child[PATH_MAX];
+
+        if (strcmp(ent->d_name, ".") == 0 || strcmp(ent->d_name, "..") == 0)
+            continue;
+        if (snprintf(child, sizeof(child), "%s/%s", path, ent->d_name) >=
+            (int)sizeof(child)) {
+            sgn_set_error(SGN_ERR_NOSPACE, "path too long under '%s'", path);
+            rc = SGN_ERR_NOSPACE;
+            break;
+        }
+        rc = rm_rf_depth(child, depth + 1);
+        if (rc != SGN_OK)
+            break;
+    }
+    (void)closedir(d);
+    if (rc != SGN_OK)
+        return rc;
+
+    if (rmdir(path) != 0 && errno != ENOENT) {
+        sgn_set_error_errno(SGN_ERR_IO, "rmdir '%s'", path);
+        return SGN_ERR_IO;
+    }
+    return SGN_OK;
+}
+
+int sgn_rm_rf(const char *path)
+{
+    if (path == NULL || path[0] == '\0' || strcmp(path, "/") == 0) {
+        sgn_set_error(SGN_ERR_INTERNAL, "sgn_rm_rf: refusing '%s'",
+                      (path != NULL) ? path : "(null)");
+        return SGN_ERR_INTERNAL;
+    }
+    return rm_rf_depth(path, 0);
+}
+
+/* ------------------------------------------------------------ paths */
+
+const char *sgn_base_name(const char *p)
+{
+    const char *slash;
+
+    if (p == NULL)
+        return "";
+    slash = strrchr(p, '/');
+    return (slash != NULL) ? slash + 1 : p;
+}
+
+int sgn_field_copy(char *dst, size_t cap, const char *src, const char *what)
+{
+    size_t n;
+
+    if (dst == NULL || src == NULL || cap == 0) {
+        sgn_set_error(SGN_ERR_INTERNAL, "sgn_field_copy: bad arguments");
+        return SGN_ERR_INTERNAL;
+    }
+    n = strlen(src);
+    if (n + 1u > cap) {
+        sgn_set_error(SGN_ERR_NOSPACE,
+                      "%s is %zu bytes, which does not fit the manifest's "
+                      "%zu-byte field: shorten it or use --name",
+                      what, n, cap - 1u);
+        return SGN_ERR_NOSPACE;
+    }
+    memcpy(dst, src, n + 1u);
+    return SGN_OK;
+}
+
+int sgn_derive_iso_path(const char *iso, const char *stick,
+                        const char *override_path, char *out, size_t cap)
+{
+    char iso_real[PATH_MAX];
+    char stick_real[PATH_MAX];
+    size_t slen;
+
+    if (iso == NULL || stick == NULL || out == NULL) {
+        sgn_set_error(SGN_ERR_INTERNAL, "sgn_derive_iso_path: bad arguments");
+        return SGN_ERR_INTERNAL;
+    }
+
+    if (override_path != NULL) {
+        const char *p = override_path;
+
+        while (*p == '/')
+            p++;
+        if (snprintf(out, cap, "/%s", p) >= (int)cap) {
+            sgn_set_error(SGN_ERR_NOSPACE, "--iso-path is too long");
+            return SGN_ERR_NOSPACE;
+        }
+        return SGN_OK;
+    }
+
+    if (realpath(iso, iso_real) == NULL) {
+        sgn_set_error_errno(SGN_ERR_IO, "realpath '%s'", iso);
+        return SGN_ERR_IO;
+    }
+    if (realpath(stick, stick_real) == NULL) {
+        sgn_set_error_errno(SGN_ERR_IO, "realpath '%s'", stick);
+        return SGN_ERR_IO;
+    }
+    slen = strlen(stick_real);
+    if (slen > 0 && stick_real[slen - 1u] == '/')
+        slen--;
+
+    if (strncmp(iso_real, stick_real, slen) == 0 && iso_real[slen] == '/') {
+        if (snprintf(out, cap, "%s", iso_real + slen) >= (int)cap) {
+            sgn_set_error(SGN_ERR_NOSPACE, "the ISO's path on p2 is too long");
+            return SGN_ERR_NOSPACE;
+        }
+        return SGN_OK;
+    }
+
+    sgn_log(SGN_LOG_WARN,
+            "the ISO is not under --stick, so its path on p2 is a guess: "
+            "assuming /%s. Copy it there, or pass --iso-path.",
+            sgn_base_name(iso));
+    if (snprintf(out, cap, "/%s", sgn_base_name(iso)) >= (int)cap) {
+        sgn_set_error(SGN_ERR_NOSPACE, "the ISO's name is too long");
+        return SGN_ERR_NOSPACE;
+    }
+    return SGN_OK;
+}
+
+/* ------------------------------------------------------------ families */
+
+typedef struct {
+    family_id   id;
+    const char *slug;
+} family_slug;
+
+/* These live here rather than in src/family/family.h because nothing in the
+ * loader needs them until the blessed boot path reads the manifest, at which
+ * point this table is what that path should be taught from. */
+static const family_slug g_slugs[] = {
+    { FAMILY_UNKNOWN,       "unknown" },
+    { FAMILY_DEBIAN_CASPER, "casper" },
+    { FAMILY_DEBIAN_LIVE,   "debian-live" },
+    { FAMILY_FEDORA_DRACUT, "fedora" },
+    { FAMILY_ARCH,          "arch" },
+    { FAMILY_SYSTEMRESCUE,  "systemrescue" },
+    { FAMILY_MEMTEST,       "memtest" },
+    { FAMILY_WINDOWS,       "windows" },
+};
+
+const char *sgn_family_slug(family_id id)
+{
+    size_t i;
+
+    for (i = 0; i < sizeof(g_slugs) / sizeof(g_slugs[0]); i++) {
+        if (g_slugs[i].id == id)
+            return g_slugs[i].slug;
+    }
+    return "unknown";
 }
 
 int sgn_sha256_file(const char *path, uint8_t digest[32], uint64_t *size)

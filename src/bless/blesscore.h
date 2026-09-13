@@ -27,6 +27,9 @@
  * The deliberate non-check is the hash. Section 8.1 has the loader compare
  * size only, because hashing a multi-gigabyte ISO to draw a menu is not a
  * boot loader's job and the boot's security does not rest on the answer.
+ * That rule covers BOTH kinds of record: a prepared one carries a sha256=
+ * too, and it is read only as the NAME of the sidecar folder (Section 6.3.1),
+ * never recomputed over the ISO.
  */
 
 #ifndef FALCON_BLESS_CORE_H
@@ -35,7 +38,20 @@
 #include <stdint.h>
 #include <stddef.h>
 
+#include <family/family.h>
+#include <iso/overlay.h>
 #include <manifest/manifest.h>
+
+/* Status codes for the calls below that can fail, repo convention: OK zero,
+ * errors negative. The lookups do not appear here; they are total. */
+enum {
+    BLESS_OK           =  0,
+    BLESS_ERR_BAD_ARG  = -1,
+    BLESS_ERR_KIND     = -2,  /* asked of a record of the other kind */
+    BLESS_ERR_NOSPLICE = -3,  /* a prepared record with no byte map at all */
+    BLESS_ERR_SPLICES  = -4,  /* more splices than one medium may carry */
+    BLESS_ERR_VALUE    = -5   /* the next-boot marker is not a usable path */
+};
 
 /* How many blessed ISOs one stick may offer.
  *
@@ -121,14 +137,102 @@ bless_state bless_cache_lookup(const bless_cache *c, const void *src,
                                const uint16_t *path, uint64_t cur_size,
                                bless_hit *out);
 
-/* The label suffix for a state, or NULL for BLESS_NONE (nothing to append).
+/* ---- what a hit means (DESIGN Sections 8.1 and 6.3.1) ---- */
+
+/* Which launch path a matched entry takes.
+ *
+ * Stated once, here, rather than re-derived from state and kind at each call
+ * site, because the two ways of getting it wrong are both silent: chainloading
+ * media the user blessed precisely to avoid chainloading, or serving a Windows
+ * ISO without the byte map that makes Setup able to find its install source.
+ *
+ * STALE is PLAIN for both kinds, which is Section 8.1's rule extended to the
+ * second kind for the same reason it holds for the first: the artifacts were
+ * computed from bytes the file no longer has. */
+typedef enum {
+    BLESS_ACT_PLAIN   = 0,  /* boot the medium as it sits on p2 */
+    BLESS_ACT_UKI     = 1,  /* fresh blessed record: launch the signed wrap */
+    BLESS_ACT_OVERLAY = 2   /* fresh prepared record: serve it with its map */
+} bless_action;
+
+bless_action bless_hit_action(const bless_hit *h);
+
+/* Where a Windows entry stands with respect to preparation (Section 6.3.1).
+ *
+ * `fam` is what the ISO survey found inside the medium, or FAMILY_UNKNOWN when
+ * the entry was never probed. An unprobed entry with a fresh record is still
+ * READY: the record says what it is, and the survey is only needed to notice
+ * media that has NO record, which is the one answer the record cannot give. */
+typedef enum {
+    BLESS_PREP_NA = 0,   /* nothing to prepare, or nothing known to prepare */
+    BLESS_PREP_READY,    /* a fresh prepared record stands behind it */
+    BLESS_PREP_STALE,    /* a prepared record, but the ISO changed since */
+    BLESS_PREP_ABSENT    /* Windows media and no prepared record at all */
+} bless_prep;
+
+bless_prep bless_prep_state(const bless_hit *h, family_id fam);
+
+/* The label suffix for a hit, or NULL when the entry has earned none.
  *
  * Strings rather than drawing: the menu is presentation and this module is
  * not it, so the caller composes. The wording follows the same rule the ISO
  * survey labels do (DESIGN Section 9): it reports what was found on the
  * stick, never a verdict about what will be allowed to run. "blessed" means
  * a manifest record names a signed wrap for this ISO, not that anything
- * verified it; shim decides that at load time. */
-const uint16_t *bless_suffix(bless_state s);
+ * verified it; shim decides that at load time. "prepared" means a byte map
+ * for it is staged on the stick, and nothing about Windows media is verified
+ * by anyone here in the first place (Section 6.3: every component the platform
+ * checks stays Microsoft-signed and untouched). */
+const uint16_t *bless_suffix(const bless_hit *h, family_id fam);
+
+/* ---- the byte map a prepared record asks for (DESIGN Section 6.3) ---- */
+
+/* Turns a prepared record's splice list into an override set.
+ *
+ * One entry per splice, in the record's own order: the whole sidecar replaces
+ * `len` bytes at `iso_off`, so src_off is zero. Every src is left NULL,
+ * because opening files is the caller's side of the line and this module has
+ * no filesystem.
+ *
+ * What is NOT checked here: ordering, overlap, range against the medium, and
+ * whether each sidecar actually holds the bytes it promises. That is
+ * iso_overlay_check's, which the boot path runs as a fail-closed gate with the
+ * files open; a second implementation of the same rule could only be a second
+ * answer to it. What IS checked is what cannot be represented at all: a
+ * record of the wrong kind, a record with no splices (a preparation that did
+ * nothing, which would serve the ISO unaltered under a label promising
+ * otherwise), and more splices than one medium may carry. */
+int bless_prepared_overlay(const manifest_record *r, iso_overlay *out);
+
+/* ---- the next-boot marker (DESIGN Section 6.3.1) ---- */
+
+/* Longest marker value worth looking at: the path of an ISO on p2, so the
+ * manifest's own path cap is the bound, terminator included. */
+#define BLESS_NEXT_MAX MANIFEST_PATH_MAX
+
+/* Decodes the raw variable bytes into a path, or refuses them.
+ *
+ * UNTRUSTED INPUT, and more so than the manifest: this comes out of NVRAM,
+ * which anything with boot services on the machine may write, including
+ * something that has never seen this stick. So it is decoded, never believed:
+ * the bytes must be printable ASCII, non-empty, and short enough to be a path
+ * a record could carry, with at most one trailing NUL (the loader writes one;
+ * a tool that did not is not wrong). Anything else is BLESS_ERR_VALUE and the
+ * marker is discarded. The result is still only a NAME at this point: whether
+ * it may be acted on is bless_next_names plus bless_hit_action, against
+ * records read from the stick.
+ *
+ * out is NUL-terminated on success and left empty otherwise. */
+int bless_next_decode(const void *buf, size_t len, char *out, size_t cap);
+
+/* Does this menu entry's path name the file the marker names?
+ *
+ * path is the entry's path relative to the volume root, as the scan built it,
+ * exactly as bless_cache_lookup takes it. Nonzero when they are the same file
+ * by manifest_path_eq's rule. This is the only way a marker value is ever
+ * turned into an entry: it is matched against paths the scan found, never used
+ * to index anything, so a hostile value can name a file that is not there and
+ * nothing else. */
+int bless_next_names(const uint16_t *path, const char *name);
 
 #endif /* FALCON_BLESS_CORE_H */

@@ -83,11 +83,15 @@ void sgn_log(sgn_level lvl, const char *fmt, ...)
  *
  * sgn_run           child stdout discarded, stderr inherited
  * sgn_run_to_file   child stdout written to path (created/truncated)
+ * sgn_run_stdin     child stdin read from path, stdout discarded. wimlib's
+ *                   update takes its command list on stdin and nowhere else,
+ *                   which is the only reason this shape exists.
  * sgn_run_capture   child stdout collected into *out (malloc'd, NUL
  *                   terminated, caller frees), capped at max bytes
  */
 int sgn_run(char *const argv[]);
 int sgn_run_to_file(char *const argv[], const char *path);
+int sgn_run_stdin(char *const argv[], const char *path);
 int sgn_run_capture(char *const argv[], char **out, size_t *len, size_t max);
 
 /* execvp takes char *const argv[], not const char *const argv[]: a POSIX
@@ -120,6 +124,43 @@ int sgn_write_file_atomic(const char *path, const void *buf, size_t len);
 int sgn_mkdir_p(const char *path);
 int sgn_file_exists(const char *path);
 
+/* Size of a regular file. SGN_ERR_IO when it is not one. */
+int sgn_file_size(const char *path, uint64_t *out);
+
+/* Grows a file to exactly len bytes, the tail reading as zeroes. This is the
+ * zero-padding of DESIGN Section 6.3: a WIM self-describes its length in its
+ * header and ignores whatever follows, so the patched image is padded back to
+ * the byte length of the extent it will be served over. Never shrinks: a
+ * shorter target is a caller bug and is refused rather than truncating a WIM.
+ */
+int sgn_pad_file(const char *path, uint64_t len);
+
+/* Removes a directory tree. Used only to take back a staging directory this
+ * tool created moments earlier, so that a failed run leaves no half-written
+ * prepared folder on p2; it refuses to descend more than a handful of levels
+ * and never follows a symlink out of the tree. */
+int sgn_rm_rf(const char *path);
+
+/* The last component of a path, or the whole string when there is none. */
+const char *sgn_base_name(const char *p);
+
+/* Copies src into a fixed manifest field, or fails with a message naming the
+ * field, the size it needed and the cap it overran. */
+int sgn_field_copy(char *dst, size_t cap, const char *src, const char *what);
+
+/* The ISO's path as the booted system will see it: relative to the p2 root,
+ * with a leading slash. Derived from where the file sits under stick, because
+ * that is the only place it can be at boot; an ISO outside the stick is a copy
+ * the user still has to make, and saying so beats recording a path that will
+ * not resolve. An explicit override (the tool's --iso-path) wins outright. */
+int sgn_derive_iso_path(const char *iso, const char *stick,
+                        const char *override_path, char *out, size_t cap);
+
+/* Short registry ids for the manifest's family= field. DESIGN Section 8.1
+ * spells the Arch one "arch", and the loader matches on these strings, so they
+ * are a wire format: add rows, never rename them. */
+const char *sgn_family_slug(family_id id);
+
 /* Filesystem UUID of the block device backing path, as blkid would report
  * it, rendered ready for a kernel cmdline tag ("1234-ABCD"). Reads
  * /proc/self/mountinfo and /dev/disk/by-uuid, so it needs no privileges and
@@ -151,6 +192,13 @@ const char *iso_view_udf_reader(const iso_view *v);
  * fingerprints a real ISO through the same two callbacks the loader gives
  * it for a firmware-mounted ESP. */
 void iso_view_family_probe(iso_view *v, family_probe *fp);
+
+/* The byte length the ISO's own directory entry records for a member, as the
+ * UDF listing reported it. Nonzero when the entry carried one; the ISO9660
+ * reader lists names without sizes, so a member that came from there answers
+ * zero and the caller must say so rather than assume. The member pointer must
+ * be one iso_view_find handed out. */
+int iso_view_size(const iso_view *v, const char *member, uint64_t *out);
 
 /* Does the member exist? Paths are absolute and '/'-separated as
  * family.h specifies; a trailing '*' matches any suffix. On success with a

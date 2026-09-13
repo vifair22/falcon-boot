@@ -28,6 +28,8 @@
  */
 
 #include <cli/sign/sign.h>
+#include <cli/sign/manifestio.h>
+#include <cli/sign/prepare.h>
 
 #include <manifest/manifest.h>
 
@@ -38,49 +40,12 @@
 #include <unistd.h>
 
 #define CMDLINE_MAX 4096u
-#define MANIFEST_RECORDS 512u
-/* A manifest with 512 records at the field caps of manifest.h; the renderer
- * reports what it would have needed if this is ever too small. */
-#define MANIFEST_TEXT_MAX (1u << 20)
 
 /* ukify's own default, named here so --stub documents what it overrides and
  * so a missing systemd-boot is one clear message instead of a ukify traceback. */
 #define DEFAULT_STUB "/usr/lib/systemd/boot/efi/linuxx64.efi.stub"
 
-#define BLESSED_DIR "falcon/blessed"
-
-/* Short registry ids for the manifest's family= field. DESIGN Section 8.1
- * spells the Arch one "arch", and the loader will match on these strings, so
- * they are a wire format: add rows, never rename them. They live here rather
- * than in src/family/family.h because nothing in the loader needs them until
- * the blessed boot path reads the manifest, at which point this table is
- * what that path should be taught from. */
-typedef struct {
-    family_id   id;
-    const char *slug;
-} family_slug;
-
-static const family_slug g_slugs[] = {
-    { FAMILY_UNKNOWN,       "unknown" },
-    { FAMILY_DEBIAN_CASPER, "casper" },
-    { FAMILY_DEBIAN_LIVE,   "debian-live" },
-    { FAMILY_FEDORA_DRACUT, "fedora" },
-    { FAMILY_ARCH,          "arch" },
-    { FAMILY_SYSTEMRESCUE,  "systemrescue" },
-    { FAMILY_MEMTEST,       "memtest" },
-    { FAMILY_WINDOWS,       "windows" },
-};
-
-static const char *slug_for(family_id id)
-{
-    size_t i;
-
-    for (i = 0; i < sizeof(g_slugs) / sizeof(g_slugs[0]); i++) {
-        if (g_slugs[i].id == id)
-            return g_slugs[i].slug;
-    }
-    return "unknown";
-}
+#define BLESSED_DIR SGN_BLESSED_DIR
 
 /* ------------------------------------------------------------ options */
 
@@ -137,7 +102,14 @@ static void usage(FILE *f)
     size_t i;
 
     (void)fprintf(f,
-"usage: falcon-boot-sign <iso> --stick <dir> --key <mok.key> --cert <mok.crt>\n"
+"usage: falcon-boot-sign [bless] <iso> --stick <dir> --key <mok.key> --cert <mok.crt>\n"
+"       falcon-boot-sign prepare <iso> --stick <dir>\n"
+"\n"
+"Two operations on one manifest (docs/DESIGN.md Section 8): bless signs Linux\n"
+"media so it boots with Secure Boot validation left on, prepare patches\n"
+"Windows install media so Setup can find its own ISO afterwards. `bless' is\n"
+"the default when no operation is named, so every existing invocation still\n"
+"means what it did. Run `falcon-boot-sign prepare --help' for that half.\n"
 "\n"
 "Blesses an ISO for Secure Boot: wraps the ISO's kernel in a minimal UKI\n"
 "whose embedded cmdline points the distro's own initramfs back at the ISO\n"
@@ -179,7 +151,7 @@ static void usage(FILE *f)
     for (i = 0; i < n; i++) {
         if (tab[i].id == FAMILY_UNKNOWN)
             continue;
-        (void)fprintf(f, "  %-14s %-22s %s\n", slug_for(tab[i].id),
+        (void)fprintf(f, "  %-14s %-22s %s\n", sgn_family_slug(tab[i].id),
                       tab[i].name,
                       tab[i].cmdline_template != NULL
                           ? tab[i].cmdline_template : "(no cmdline needed)");
@@ -287,28 +259,6 @@ static int parse_args(int argc, char **argv, options *o)
 
 /* ------------------------------------------------------------ helpers */
 
-static const char *base_name(const char *p)
-{
-    const char *slash = strrchr(p, '/');
-
-    return (slash != NULL) ? slash + 1 : p;
-}
-
-static int field_copy(char *dst, size_t cap, const char *src, const char *what)
-{
-    size_t n = strlen(src);
-
-    if (n + 1u > cap) {
-        sgn_set_error(SGN_ERR_NOSPACE,
-                      "%s is %zu bytes, which does not fit the manifest's "
-                      "%zu-byte field: shorten it or use --name",
-                      what, n, cap - 1u);
-        return SGN_ERR_NOSPACE;
-    }
-    memcpy(dst, src, n + 1u);
-    return SGN_OK;
-}
-
 /* Substitutes the two placeholders family.h documents. Anything else in the
  * template is copied through, so a template gaining a third placeholder
  * fails loudly at boot rather than silently here. */
@@ -358,60 +308,6 @@ static int render_cmdline(const char *tmpl, const char *iso_arg,
     return SGN_OK;
 }
 
-/* The ISO's path as the booted kernel will see it: relative to the p2 root,
- * with a leading slash. Derived from where the file sits under --stick,
- * because that is the only place it can be at boot; an ISO outside the stick
- * is a copy the user still has to make, and saying so beats embedding a path
- * that will not resolve into something signed. */
-static int derive_iso_path(const options *o, char *out, size_t cap)
-{
-    char iso_real[PATH_MAX];
-    char stick_real[PATH_MAX];
-    size_t slen;
-
-    if (o->iso_path != NULL) {
-        const char *p = o->iso_path;
-
-        while (*p == '/')
-            p++;
-        if (snprintf(out, cap, "/%s", p) >= (int)cap) {
-            sgn_set_error(SGN_ERR_NOSPACE, "--iso-path is too long");
-            return SGN_ERR_NOSPACE;
-        }
-        return SGN_OK;
-    }
-
-    if (realpath(o->iso, iso_real) == NULL) {
-        sgn_set_error_errno(SGN_ERR_IO, "realpath '%s'", o->iso);
-        return SGN_ERR_IO;
-    }
-    if (realpath(o->stick, stick_real) == NULL) {
-        sgn_set_error_errno(SGN_ERR_IO, "realpath '%s'", o->stick);
-        return SGN_ERR_IO;
-    }
-    slen = strlen(stick_real);
-    if (slen > 0 && stick_real[slen - 1u] == '/')
-        slen--;
-
-    if (strncmp(iso_real, stick_real, slen) == 0 && iso_real[slen] == '/') {
-        if (snprintf(out, cap, "%s", iso_real + slen) >= (int)cap) {
-            sgn_set_error(SGN_ERR_NOSPACE, "the ISO's path on p2 is too long");
-            return SGN_ERR_NOSPACE;
-        }
-        return SGN_OK;
-    }
-
-    sgn_log(SGN_LOG_WARN,
-            "the ISO is not under --stick, so its path on p2 is a guess: "
-            "assuming /%s. Copy it there, or pass --iso-path.",
-            base_name(o->iso));
-    if (snprintf(out, cap, "/%s", base_name(o->iso)) >= (int)cap) {
-        sgn_set_error(SGN_ERR_NOSPACE, "the ISO's name is too long");
-        return SGN_ERR_NOSPACE;
-    }
-    return SGN_OK;
-}
-
 static int derive_uki_name(const options *o, char *out, size_t cap)
 {
     const char *base;
@@ -424,9 +320,9 @@ static int derive_uki_name(const options *o, char *out, size_t cap)
                           ", not a path: '%s'", o->name);
             return SGN_ERR_ARG;
         }
-        return field_copy(out, cap, o->name, "--name");
+        return sgn_field_copy(out, cap, o->name, "--name");
     }
-    base = base_name(o->iso);
+    base = sgn_base_name(o->iso);
     n = strlen(base);
     if (n > 4u && strcmp(base + n - 4u, ".iso") == 0)
         n -= 4u;
@@ -438,77 +334,6 @@ static int derive_uki_name(const options *o, char *out, size_t cap)
     memcpy(out, base, n);
     memcpy(out + n, ".uki", 5u);
     return SGN_OK;
-}
-
-/* ------------------------------------------------------------ manifest */
-
-static int manifest_update(const char *manifest_path,
-                           const manifest_record *rec, int *replaced)
-{
-    manifest_record *recs = NULL;
-    char *text = NULL;
-    char *rendered = NULL;
-    size_t len = 0;
-    size_t n = 0;
-    size_t used = 0;
-    int rc;
-
-    recs = calloc(MANIFEST_RECORDS, sizeof(*recs));
-    rendered = malloc(MANIFEST_TEXT_MAX);
-    if (recs == NULL || rendered == NULL) {
-        sgn_set_error(SGN_ERR_IO, "out of memory building the manifest");
-        rc = SGN_ERR_IO;
-        goto out;
-    }
-
-    /* An absent manifest is the first bless on this stick, not an error;
-     * a corrupt one degrades to the records that did parse, which is the
-     * same rule the loader follows (DESIGN Section 8.1). */
-    if (sgn_file_exists(manifest_path)) {
-        rc = sgn_read_file(manifest_path, &text, &len, MANIFEST_TEXT_MAX);
-        if (rc != SGN_OK)
-            goto out;
-        rc = manifest_parse(text, len, recs, MANIFEST_RECORDS, &n);
-        if (rc == MANIFEST_ERR_NOSPACE) {
-            sgn_set_error(SGN_ERR_NOSPACE,
-                          "'%s' holds %zu records, more than this build's "
-                          "limit of %u", manifest_path, n,
-                          (unsigned)MANIFEST_RECORDS);
-            rc = SGN_ERR_NOSPACE;
-            goto out;
-        }
-        if (rc != MANIFEST_OK) {
-            sgn_set_error(SGN_ERR_INTERNAL, "manifest parse rejected its "
-                          "own arguments");
-            rc = SGN_ERR_INTERNAL;
-            goto out;
-        }
-        sgn_log(SGN_LOG_DEBUG, "manifest: %zu existing record(s)", n);
-    }
-
-    *replaced = (manifest_find(recs, n, rec->iso) != NULL);
-
-    rc = manifest_upsert(recs, &n, MANIFEST_RECORDS, rec);
-    if (rc != MANIFEST_OK) {
-        sgn_set_error(SGN_ERR_NOSPACE,
-                      "could not add the record to the manifest (%d)", rc);
-        rc = SGN_ERR_NOSPACE;
-        goto out;
-    }
-    rc = manifest_render(recs, n, rendered, MANIFEST_TEXT_MAX, &used);
-    if (rc != MANIFEST_OK) {
-        sgn_set_error(SGN_ERR_NOSPACE, "the manifest would need %zu bytes",
-                      used);
-        rc = SGN_ERR_NOSPACE;
-        goto out;
-    }
-    rc = sgn_write_file_atomic(manifest_path, rendered, used);
-
-out:
-    free(rendered);
-    free(text);
-    free(recs);
-    return rc;
 }
 
 /* ------------------------------------------------------------ the bless */
@@ -570,7 +395,7 @@ static int bless(const options *o)
 
     iso_view_family_probe(view, &probe);
     fam = family_detect(&probe);
-    sgn_log(SGN_LOG_INFO, "family: %s (%s)", fam->name, slug_for(fam->id));
+    sgn_log(SGN_LOG_INFO, "family: %s (%s)", fam->name, sgn_family_slug(fam->id));
 
     if (fam->id == FAMILY_UNKNOWN && o->cmdline == NULL) {
         size_t count = 0;
@@ -594,7 +419,7 @@ static int bless(const options *o)
             if (tab[i].id == FAMILY_UNKNOWN)
                 continue;
             k = snprintf(known + w, sizeof(known) - w, "%s%s",
-                         w > 0 ? ", " : "", slug_for(tab[i].id));
+                         w > 0 ? ", " : "", sgn_family_slug(tab[i].id));
             if (k < 0 || (size_t)k >= sizeof(known) - w)
                 break;
             w += (size_t)k;
@@ -627,7 +452,8 @@ static int bless(const options *o)
 
     /* ---- the cmdline ---- */
 
-    rc = derive_iso_path(o, iso_arg, sizeof(iso_arg));
+    rc = sgn_derive_iso_path(o->iso, o->stick, o->iso_path, iso_arg,
+                             sizeof(iso_arg));
     if (rc != SGN_OK)
         goto out;
     rc = derive_uki_name(o, uki_name, sizeof(uki_name));
@@ -708,13 +534,13 @@ static int bless(const options *o)
     sgn_hex32(digest, hex);
 
     memset(&rec, 0, sizeof(rec));
-    rc = field_copy(rec.iso, sizeof(rec.iso), iso_arg + 1, "the ISO's path");
+    rc = sgn_field_copy(rec.iso, sizeof(rec.iso), iso_arg + 1, "the ISO's path");
     if (rc != SGN_OK)
         goto out;
-    rc = field_copy(rec.uki, sizeof(rec.uki), uki_name, "the UKI's name");
+    rc = sgn_field_copy(rec.uki, sizeof(rec.uki), uki_name, "the UKI's name");
     if (rc != SGN_OK)
         goto out;
-    rc = field_copy(rec.family, sizeof(rec.family), slug_for(fam->id),
+    rc = sgn_field_copy(rec.family, sizeof(rec.family), sgn_family_slug(fam->id),
                     "the family id");
     if (rc != SGN_OK)
         goto out;
@@ -840,7 +666,7 @@ static int bless(const options *o)
             goto cleanup;
     }
 
-    rc = manifest_update(manifest_path, &rec, &replaced);
+    rc = sgn_manifest_update(manifest_path, &rec, &replaced);
     if (rc != SGN_OK)
         goto cleanup;
 
@@ -862,15 +688,48 @@ out:
     return rc;
 }
 
+/* Operation dispatch. One verb, optional, and only because the tool had a
+ * bare-positional shape before preparation existed: `falcon-boot-sign x.iso
+ * ...` has always meant bless, and scripts and the appliance both spell it
+ * that way, so an absent verb keeps meaning that. A verb is recognised only in
+ * the first position, which is what keeps an ISO that happens to be named
+ * "prepare" from being one. */
+typedef struct {
+    const char *name;
+    int (*run)(int argc, char **argv);
+} sgn_command;
+
+static const sgn_command g_commands[] = {
+    { "prepare", sgn_prepare_main },
+};
+
 int main(int argc, char **argv)
 {
     options o;
+    size_t i;
     int rc;
 
     if (argc < 2) {
         usage(stderr);
         return 1;
     }
+
+    for (i = 0; i < sizeof(g_commands) / sizeof(g_commands[0]); i++) {
+        if (strcmp(argv[1], g_commands[i].name) != 0)
+            continue;
+        return (g_commands[i].run(argc - 1, argv + 1) == SGN_OK) ? 0 : 1;
+    }
+    /* The default operation may also be named outright, so a caller that
+     * wants to be explicit can be, and so `bless` never becomes a filename. */
+    if (strcmp(argv[1], "bless") == 0) {
+        argc--;
+        argv++;
+        if (argc < 2) {
+            usage(stderr);
+            return 1;
+        }
+    }
+
     rc = parse_args(argc, argv, &o);
     if (rc != SGN_OK) {
         sgn_log(SGN_LOG_ERROR, "%s", sgn_error());

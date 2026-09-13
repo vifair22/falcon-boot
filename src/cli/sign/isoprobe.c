@@ -70,9 +70,21 @@
 /* Every -slt property line is "key = value"; only this key names an entry. */
 #define Z_PATH_KEY "Path = "
 
+/* The one other property worth keeping: the byte length the ISO's own
+ * directory entry records. Preparation needs it to know how long a range it
+ * has to locate and serve (DESIGN Section 6.3), and taking it from the
+ * listing rather than from the extracted copy is what makes "the length
+ * agrees with the directory entry" a real check rather than a tautology.
+ * Matched at the start of the line so that "Packed Size = ", which is the
+ * cluster-rounded allocation and not the file length, cannot be mistaken
+ * for it. */
+#define Z_SIZE_KEY "Size = "
+
 typedef struct {
     char      *name;      /* into the owning listing buffer, normalised */
+    uint64_t   size;      /* directory-entry length, when the reader gave one */
     iso_reader reader;    /* which helper can extract it */
+    uint8_t    has_size;
 } iso_entry;
 
 struct iso_view {
@@ -154,8 +166,40 @@ static int entries_push(iso_view *v, char *name, iso_reader reader)
     }
     v->entries[v->n_entries].name = name;
     v->entries[v->n_entries].reader = reader;
+    v->entries[v->n_entries].size = 0;
+    v->entries[v->n_entries].has_size = 0;
     v->n_entries++;
     return SGN_OK;
+}
+
+/* Decimal, whole string, no sign and no overflow. Anything else means the
+ * property was not a plain byte count (7-Zip prints an empty Size for a
+ * directory), and the entry simply keeps no size. */
+static int parse_u64(const char *s, uint64_t *out)
+{
+    uint64_t v = 0;
+    size_t digits = 0;
+    size_t i = 0;
+
+    while (s[i] >= '0' && s[i] <= '9') {
+        unsigned d = (unsigned)(s[i] - '0');
+
+        if (v > (UINT64_MAX - d) / 10u)
+            return 0;
+        v = v * 10u + d;
+        digits++;
+        i++;
+    }
+    if (digits == 0)
+        return 0;
+    /* A CRLF listing leaves the carriage return on the value; nothing else
+     * may follow the number. */
+    while (s[i] == '\r' || s[i] == ' ' || s[i] == '\t')
+        i++;
+    if (s[i] != '\0')
+        return 0;
+    *out = v;
+    return 1;
 }
 
 /* Chops one helper's output into NUL-terminated lines in place and indexes
@@ -184,6 +228,25 @@ int iso_listing_index(iso_view *v, char *text, iso_reader reader)
             text[i++] = '\0';
 
         if (reader == ISO_READER_7Z) {
+            if (n >= sizeof(Z_SIZE_KEY) - 1u &&
+                memcmp(line, Z_SIZE_KEY, sizeof(Z_SIZE_KEY) - 1u) == 0) {
+                uint64_t sz = 0;
+                iso_entry *last;
+
+                /* Properties belong to the record above them, and only to one
+                 * this pass just indexed: an entry the other reader supplied
+                 * has no business acquiring a size from this listing. */
+                if (v->n_entries == 0)
+                    continue;
+                last = &v->entries[v->n_entries - 1u];
+                if (last->reader != reader || last->has_size)
+                    continue;
+                if (parse_u64(line + sizeof(Z_SIZE_KEY) - 1u, &sz)) {
+                    last->size = sz;
+                    last->has_size = 1;
+                }
+                continue;
+            }
             if (n < sizeof(Z_PATH_KEY) - 1u ||
                 memcmp(line, Z_PATH_KEY, sizeof(Z_PATH_KEY) - 1u) != 0)
                 continue;
@@ -463,6 +526,25 @@ iso_reader iso_view_reader_of(const iso_view *v, const char *member)
             return v->entries[i].reader;
     }
     return ISO_READER_ISO9660;
+}
+
+int iso_view_size(const iso_view *v, const char *member, uint64_t *out)
+{
+    size_t i;
+
+    if (out != NULL)
+        *out = 0;
+    if (v == NULL || member == NULL || out == NULL)
+        return 0;
+    for (i = 0; i < v->n_entries; i++) {
+        if (v->entries[i].name != member)
+            continue;
+        if (!v->entries[i].has_size)
+            return 0;
+        *out = v->entries[i].size;
+        return 1;
+    }
+    return 0;
 }
 
 /* Fills argv with the command that writes one member to stdout. 7-Zip needs
