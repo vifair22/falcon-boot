@@ -535,6 +535,19 @@ Properties the user should know, and the Manual must state:
 - With validation off, that machine runs *all* unsigned EFI code, not only ours.
   It is a machine-level choice, and the loader shows a clear banner when it
   detects the state so it is never a surprise.
+- **The opt-out is for the ISO path; it turns UKIs off.** Measured 2026-09-13
+  (notes Section 11): with Secure Boot on and validation disabled, a UKI
+  cannot boot - ours, a blessed wrap, or anyone else's. sd-stub loads its
+  inner kernel through `gBS->LoadImage`, and in this state shim installs its
+  loader protocol but does not hook the boot-services table (Section 7.6), so
+  that call is the firmware's own `LoadImage`, which refuses everything not
+  in db - the unsigned inner kernel and MOK-signed images alike. Blessing and
+  the opt-out are therefore **alternatives, not a stack**: choosing the
+  opt-out disables blessing (and the personal OS) on that machine until
+  validation is re-enabled. This is an upstream shim/sd-stub interaction, not
+  ours to fix (Section 7.3); the loader detects the state before the slow
+  image read, warns, and attaches actionable advice when the started image
+  fails (src/efi/loadops.c).
 
 What we build here is UX only: detect `SecureBoot` / `MokSBState`, show the
 current mode, and when an unsigned selection is refused under enforcement, guide
@@ -618,7 +631,8 @@ one implementation.
 
 - Blessing requires a reboot cycle (drop, sign, reboot, boot). The appliance
   makes the signing leg fast, and the permissive opt-in (7.4) covers the "boot it
-  right now without signing" case.
+  right now without signing" case - for the ISO path only; the opt-out and
+  blessing are alternatives, not a stack (see 7.4).
 - Concentration: the key on p3 shares the passphrase with the OS. A passphrase
   compromise yields the OS and the key together, but an attacker who has the
   passphrase already controls the OS, so the key is not the weakest link. A
@@ -630,7 +644,7 @@ one implementation.
   to the stick can swap the initrd and get code execution in that boot. This
   matches the status quo of ordinary distro boots; stated for honesty.
 
-### 7.6 Load-path plumbing (verified by the 2026-09-12 spike)
+### 7.6 Load-path plumbing (verified by the shim spike, 2026-09-12/13)
 
 The firmware's native `LoadImage` verifies against db/dbx only; it knows
 nothing about MOK. Our loader itself is verified *by shim*, so it is fine
@@ -658,6 +672,30 @@ verification. The branches below were the candidate mechanisms; the spike
   the MOK-verifying path, and with SB off the pointers are the firmware's
   own. On 15.8 the hook merely forwards to firmware (MOK never consulted),
   which is why the minimum shim version we ship is 16.0.
+
+**Protocol presence and the table hook are independent** (measured
+2026-09-13, notes Section 11; this section previously read as though they
+arrive together, which is true in only two of the three states).
+`install_shim_protocols()` runs unconditionally; `hook_system_services()`
+runs only under `secure_mode()`, which `MokSBState` turns off. So with
+Secure Boot on and validation disabled, `SHIM_IMAGE_LOADER` is present and
+permits everything while `gBS->LoadImage` is the firmware's and refuses
+everything not in db - the state behind the 7.4 UKI limitation. The loader's
+`resolve_load_ops()` records this as `table_unhooked` and derives "an image
+we launch cannot load its own inner PE" from it AND Secure Boot being on
+(the table is equally unhooked with SB off, and nothing is wrong there).
+Detection reads the live table, not `MokSBStateRT`: it detects the mechanism
+that breaks, not one cause of it.
+
+**Pairing rule** (measured, notes Section 11.4): the three members of a
+resolved load path - `LoadImage`, `StartImage`, `UnloadImage` - must come
+from one source and be used as a set. shim's `shim_start_image()` and
+`shim_unload_image()` forward handles they do not recognise through saved
+firmware pointers that are populated only under `secure_mode()`; in every
+non-enforcing state they are NULL and the forward is a call through zero
+(a measured #GP, machine down). Mixing `gBS` and `SHIM_IMAGE_LOADER`
+members is therefore a crash, not a style problem; src/efi/loadops.c
+resolves once and hands out the set.
 - **Branch C (last resort, still unbuilt, requires amending this document):**
   `shim_lock->Verify` plus our own PE loader. Not needed.
 - **Branch D: vendor choice is free.** Any MS-signed shim passes db on any

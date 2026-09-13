@@ -424,3 +424,233 @@ TAG=-mok PROBE_BIN=build/shim/probe-mok.efi \
 
 Serial logs land in `build/shim/log-<variant>-<fw><tag>.txt`. Each run starts
 from a fresh copy of the varstore, so no state leaks between runs.
+
+
+## 11. The validation-disabled state, measured (2026-09-13)
+
+Added after UAT found that a **blessed wrap does not boot** when Secure Boot
+is on and shim validation has been turned off with `MokSBState`, the exact
+state DESIGN Section 7.4 sanctions as the frictionless opt-in. The loader
+survives; the wrap loads and starts; sd-stub then says
+
+```
+../systemd-261.2/src/boot/linux.c:86@load_via_boot_services:
+    Error loading inner kernel with shim: Load error
+the blessed image exited, status 0x8000000000000001
+```
+
+Sections 1 to 10 never measured this state. They measured Secure Boot on with
+enforcement, and Secure Boot off. The state in between turns out to behave
+like neither, and the difference is the whole bug.
+
+### 11.1 What the probe was extended with
+
+`tools/shim-spike/probe.c` gained three things, and
+`tools/shim-spike/moksb-setup.sh` (new) builds the varstore for the state:
+
+1. A **loader x source matrix**: `gBS->LoadImage` and
+   `SHIM_IMAGE_LOADER->LoadImage`, each given a device path and each given a
+   source buffer, for a MOK-signed payload and an unsigned one. The original
+   Section 4.2 test was one cell of that grid (`gBS`, device path), and it is
+   the cell that does *not* describe what a UKI does: sd-stub already holds
+   the kernel in memory as one of its own PE sections and passes it as a
+   `SourceBuffer` with a memmap device path.
+2. `SIL->UnloadImage` reported alongside the other protocol pointers.
+3. A **paired-loader hazard test**, last because it can be fatal (11.4).
+
+### 11.2 The measurement
+
+Fedora shim 16.1, OVMF secboot, throwaway MOK enrolled in all three runs.
+Logs: `build/shim/log-fedora-16.1-{plain,secboot-mok,secboot-moksb}.txt`.
+
+| | SB off | SB on, enforcing | SB on, `MokSBState` set |
+| --- | --- | --- | --- |
+| `SecureBoot` | unset | 1 | **1** |
+| `MokSBState` | unset | unset | 1, attr `0x3` |
+| `MokSBStateRT` | unset | unset | 1, attr `0x6` |
+| `SHIM_LOCK` | present | present | **present** |
+| `SHIM_IMAGE_LOADER` | present | present | **present** |
+| `gBS->LoadImage` | firmware's | shim's | **firmware's** |
+| `gBS->LoadImage == SIL->LoadImage` | no | yes | **no** |
+
+and the grid, with the status each cell returned:
+
+| payload / call | SB off | SB on, enforcing | SB on, `MokSBState` set |
+| --- | --- | --- | --- |
+| MOK-signed, `gBS` devpath | loaded | loaded | **refused `0x0f`** |
+| MOK-signed, `gBS` buffer | loaded | loaded | **refused `0x0f`** |
+| MOK-signed, `SIL` devpath | loaded | loaded | loaded |
+| MOK-signed, `SIL` buffer | loaded | loaded | loaded |
+| unsigned, `gBS` devpath | loaded | refused `0x1a` | **refused `0x0f`** |
+| unsigned, `gBS` buffer | loaded | refused `0x1a` | **refused `0x0f`** |
+| unsigned, `SIL` devpath | loaded | refused `0x1a` | **loaded** |
+| unsigned, `SIL` buffer | loaded | refused `0x1a` | **loaded** |
+
+`0x1a` is `EFI_SECURITY_VIOLATION` from shim; `0x0f` is `EFI_ACCESS_DENIED`
+from the firmware. Read the right-hand column as one sentence: **with
+validation disabled the two loaders disagree completely.** shim's loads
+everything, including unsigned; the firmware's refuses everything, including
+what the machine has a MOK for, because the firmware only ever knew db.
+
+### 11.3 Why, from the two sources
+
+shim 16.1 `shim.c`:
+
+- `install_shim_protocols()` installs `SHIM_LOCK` and `SHIM_IMAGE_LOADER`
+  with one `InstallMultipleProtocolInterfaces`, **before** its
+  `if (!secure_mode()) return;`. The protocols are therefore present in every
+  state, which Section 3 already recorded and which now turns out to matter.
+- `shim_init()` calls `hook_system_services(systab)` only inside
+  `if (secure_mode())`. `secure_mode()` returns FALSE as soon as
+  `user_insecure_mode` is set, which is what `MokSBState` sets. **So the
+  boot-services table is patched only while shim is enforcing.**
+- `pe.c` `verify_image()` wraps its `verify_buffer()` call in
+  `if (secure_mode())`. shim's own loader therefore verifies nothing in this
+  state, which is what the `SIL` rows above show, and which is correct: the
+  user asked the platform to stop verifying.
+
+systemd 261 `src/boot/linux.c`:
+
+- `linux_exec()` line 225 chooses the shim path on
+  `secure_boot_enabled() && (shim_loader_available() || ...)`. The first term
+  reads the `SecureBoot` variable, still 1. The second is a `LocateProtocol`
+  for `SHIM_IMAGE_LOADER`, still present. **Both hold, so sd-stub takes the
+  shim path -- in a state where the thing it then calls is not shim's.**
+- `load_via_boot_services()` line 75 calls `BS->LoadImage` with the inner
+  kernel as a source buffer. That is the firmware's `LoadImage` here, and the
+  inner kernel is an unsigned PE section, so it comes back `0x0f`.
+- Line 86 reports it as
+  `log_error_status(EFI_LOAD_ERROR, "Error loading inner kernel with shim: %m")`.
+  `%m` renders the status **passed to the call**, not `err`, so the real
+  `EFI_ACCESS_DENIED` never reaches the screen and the message says "Load
+  error" and names shim for a call shim did not make. That is why the
+  symptom looked like a loader bug and reads like a shim bug while being
+  neither.
+
+Chain, end to end: shim installs its protocol but not its hook -> sd-stub
+reads the protocol as proof of the hook -> sd-stub calls the firmware ->
+the firmware enforces db on an unsigned buffer -> `0x0f`, masked to
+`EFI_LOAD_ERROR`, surfaced as exit status `0x8000000000000001`.
+
+This is an upstream interaction defect between shim and sd-stub. Nothing in
+airies-boot participates in it: our own load of the wrap succeeds, and the
+failing call is made by the started image, two layers down.
+
+### 11.4 A second finding: the paired-loader hazard
+
+shim's `shim_unload_image()` and `shim_start_image()` forward a handle they
+do not recognise to a saved `system_unload_image` / `system_start_image`
+(`loader-proto.c` lines 366 and 416). Those statics are assigned **only** in
+`hook_system_services()`. In every state where the table is not patched they
+are still NULL.
+
+Measured, not inferred. The probe loads a payload with `gBS->LoadImage` and
+then calls `SIL->UnloadImage` on the handle:
+
+| | result |
+| --- | --- |
+| SB on, enforcing | returns `EFI_SUCCESS` (the handle *is* shim's, same function) |
+| SB off | `#GP`, `RIP - 0000000000000000` |
+| SB on, `MokSBState` set | `#GP`, `RIP - 0000000000000000` |
+
+So a loader that resolved `LoadImage` from one place and `UnloadImage` or
+`StartImage` from the other would crash the machine outright in two of the
+three states. `src/efi/loadops.c` never mixes them (one resolve, all three
+members from the same source, used as a set), and `loadops.h` now says why
+that is a requirement rather than a tidiness.
+
+### 11.5 What was rejected
+
+- **Prefer `gBS->LoadImage` in this state.** Measured dead: the firmware
+  refuses our MOK-signed wrap with `0x0f`. It would turn an image that starts
+  and then fails into one that never loads.
+- **Patch `gBS->LoadImage` to `SIL->LoadImage` ourselves**, restoring what
+  shim does when enforcing. This would work. It is refused on the invariants,
+  not on the mechanics: it is the loader changing what the platform allows to
+  run (CLAUDE.md invariant 2) and it is a relaxation mechanism living inside a
+  signed binary (invariant 3). That the platform has already decided to permit
+  everything does not make it ours to implement, and a signed binary that
+  swaps in a non-verifying loader on a variable's say-so is exactly the shape
+  the invariants exist to keep out.
+- **Uninstall or otherwise adjust shim's protocol** so sd-stub picks its own
+  internal loader. We do not modify shim, and it would change behaviour for
+  everything else in the boot.
+
+### 11.6 What was implemented
+
+Detection and honest guidance; the launch is unchanged.
+
+`resolve_load_ops()` now also records `table_unhooked`, i.e. shim's loader
+protocol is present but `gBS->LoadImage` is not it.
+`load_ops_inner_load_blocked()` ANDs that with "Secure Boot is on", which is
+the whole condition and nothing more:
+
+| state | `via_shim` | `table_unhooked` | SB on | blocked |
+| --- | --- | --- | --- | --- |
+| SB off | yes | yes | no | **no** |
+| SB on, enforcing | yes | no | yes | **no** |
+| SB on, `MokSBState` set | yes | yes | yes | **yes** |
+| SB on, no shim | no | - | yes | **no** |
+
+Deriving it from the live boot-services table rather than from `MokSBStateRT`
+is deliberate: it detects the mechanism that breaks, not one cause of it. The
+SB-off row is the reason the Secure Boot term is needed at all -- the table is
+equally unhooked there and nothing is wrong, because the firmware's loader
+verifies nothing when Secure Boot is off.
+
+`src/bless` and `src/pos` each resolve once before reading the image, warn on
+screen if blocked (before the read, which is the slow part), and attach
+`load_ops_inner_load_advice()` when the started image comes back with an
+error. Nothing reads the flag to decide whether to launch: doing that would be
+the Section 7.3 regression, and it would be it in the one state where the user
+has explicitly told the platform to stop refusing things.
+
+### 11.7 Proof
+
+Stick `build/uat-stick.img`, Fedora shim 16.1, loader signed with the stick's
+own MOK, headless.
+
+| run | varstore | result |
+| --- | --- | --- |
+| blessed, validation disabled | `uat-vars-moksb.fd` | warning before the read, stub fails as before, advice printed, menu returns |
+| personal OS, validation disabled | `uat-vars-moksb.fd` | same, on `appliance.efi` (confirms the suspicion that p3's UKI fails identically) |
+| blessed, enforcing | `uat-vars.fd` | no warning; `AIRIES-UKI-INIT` ... `AIRIES-UKI-DONE` |
+| personal OS, enforcing | `uat-vars.fd` | no warning; `AIRIES-CRED-OK`, credential handoff intact |
+| blessed, Secure Boot off | `OVMF_VARS.fd` | no warning; boots. This is the false-positive the SB term exists to prevent |
+
+### 11.8 What DESIGN.md should gain
+
+1. **Section 7.4** promises that after the `MokSBState` opt-out "the loader
+   boots any ISO, with nothing signed". True, and it should say what it does
+   not cover: a **UKI cannot boot in that state**, ours or anyone's, because
+   its stub loads its kernel through a `gBS->LoadImage` that shim has left as
+   the firmware's while Secure Boot is still on. The opt-out is for the ISO
+   path. Blessing and the opt-out are alternatives, not a stack, and choosing
+   the opt-out turns blessing off.
+2. **Section 7.6** should record that `SHIM_IMAGE_LOADER`'s presence and the
+   boot-services patch are **independent**: the protocol is installed
+   unconditionally, the patch happens only under `secure_mode()`. The section
+   currently reads as though the two arrive together, which is true in the two
+   states it was measured in and false in the third. The version floor
+   correction in Section 8 above is unaffected.
+3. **Section 7.6** should also carry the pairing rule from 11.4: the three
+   members of a resolved load path must be used as a set, because shim's
+   fallbacks for foreign handles are NULL whenever it is not enforcing.
+
+### 11.9 Reproducing
+
+```sh
+make -C tools/shim-spike                        # build/shim/probe.efi
+tools/shim-spike/mok-setup.sh                   # enforcing varstore + payloads
+tools/shim-spike/moksb-setup.sh                 # validation-disabled varstore
+tools/shim-spike/run-probe.sh fedora-16.1 plain
+TAG=-mok PROBE_BIN=build/shim/probe-mok.efi \
+  VARS_TEMPLATE=build/shim/vars-template-mok.fd \
+  tools/shim-spike/run-probe.sh fedora-16.1 secboot
+TAG=-moksb PROBE_BIN=build/shim/probe-mok.efi \
+  VARS_TEMPLATE=build/shim/vars-template-moksb.fd \
+  tools/shim-spike/run-probe.sh fedora-16.1 secboot
+```
+
+The last two runs end in a `#GP` from 11.4 by design; everything above it is
+already in the log when it happens.

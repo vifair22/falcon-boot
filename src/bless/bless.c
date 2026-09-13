@@ -296,6 +296,7 @@ static EFI_STATUS publish_image(EFI_SYSTEM_TABLE *st, const char *uki_name,
  * the caller, which owns the allocation. */
 static EFI_STATUS launch_uki(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent,
                              const char *uki_name, void *buf, UINT64 size,
+                             const load_ops *opsp, BOOLEAN inner_blocked,
                              UINT8 *retain, bless_result *result)
 {
     EFI_BOOT_SERVICES *bs = st->BootServices;
@@ -304,11 +305,12 @@ static EFI_STATUS launch_uki(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent,
     CHAR16 *exit_data = (CHAR16 *)0;
     UINTN exit_size = 0;
     BOOLEAN published = FALSE;
-    load_ops ops;
+    load_ops ops = *opsp;
     EFI_STATUS status;
 
+    /* Resolved by the caller, before the read, so the warning that goes with
+     * it can be on screen for the whole of a read that takes a while. */
     *retain = 0;
-    resolve_load_ops(bs, &ops);
 
     result->stage = L"publishing the blessed image";
     status = publish_image(st, uki_name, buf, size);
@@ -385,6 +387,12 @@ static EFI_STATUS launch_uki(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent,
 
     result->stage = L"blessed UKI exit";
     result->status = status;
+    /* A UKI that returns at all has failed (it should have left for a
+     * kernel). In this state there is one overwhelming reason for it, the
+     * loader knows it, and the stub's own message names shim without
+     * mentioning the setting that actually did it. */
+    if (inner_blocked && EFI_ERROR(status))
+        result->advice = load_ops_inner_load_advice();
     return EFI_SUCCESS;
 }
 
@@ -398,6 +406,8 @@ EFI_STATUS bless_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
     UINT64 size = 0;
     UINTN pages = 0;
     UINT8 retain = 0;
+    BOOLEAN inner_blocked = FALSE;
+    load_ops ops;
     EFI_STATUS status;
 
     if (st == (EFI_SYSTEM_TABLE *)0 || result == (bless_result *)0)
@@ -433,6 +443,20 @@ EFI_STATUS bless_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
     }
 
     st->ConOut->ClearScreen(st->ConOut);
+
+    /* Resolved and judged here rather than inside the launch so the warning
+     * precedes the read: a blessed wrap carries its own initramfs and the
+     * read is the slow part, and telling a user afterwards that the wait was
+     * never going to pay off is the wrong order to say it in.
+     *
+     * The boot proceeds either way. Nothing below reads inner_blocked to
+     * decide anything; it only decides what is said (DESIGN Section 7.3). */
+    resolve_load_ops(bs, &ops);
+    inner_blocked = load_ops_inner_load_blocked(st, &ops);
+    if (inner_blocked)
+        out(L"warning: this image is very unlikely to start on this machine;"
+            L"\r\n         see the note after it exits.\r\n\r\n");
+
     out(L"reading ");
     out(uki_display(hit->rec->uki));
     out(L" ");
@@ -448,8 +472,8 @@ EFI_STATUS bless_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
     out_dec(size);
     out(L" bytes read; starting it.\r\n\r\n");
 
-    status = launch_uki(st, parent_image, hit->rec->uki, buf, size, &retain,
-                        result);
+    status = launch_uki(st, parent_image, hit->rec->uki, buf, size, &ops,
+                        inner_blocked, &retain, result);
 
     /* The image is loaded and running from the firmware's own copy by now, so
      * these pages are ours to release whether it succeeded or not. Doing it

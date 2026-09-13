@@ -99,6 +99,40 @@ typedef EFI_STATUS (EFIAPI *EFI_IMAGE_LOAD)(BOOLEAN BootPolicy,
                                             UINTN SourceSize,
                                             EFI_HANDLE *ImageHandle);
 
+typedef EFI_STATUS (EFIAPI *EFI_IMAGE_UNLOAD)(EFI_HANDLE ImageHandle);
+
+/* Simple File System and File protocols, only the calls needed to slurp a
+ * staged payload into a buffer. Placeholders keep the vtable offsets right,
+ * same rule as the boot-services table above. */
+typedef struct EFI_FILE_PROTOCOL EFI_FILE_PROTOCOL;
+struct EFI_FILE_PROTOCOL {
+    UINT64 Revision;
+    EFI_STATUS (EFIAPI *Open)(EFI_FILE_PROTOCOL *This,
+                              EFI_FILE_PROTOCOL **NewHandle, CHAR16 *FileName,
+                              UINT64 OpenMode, UINT64 Attributes);
+    EFI_STATUS (EFIAPI *Close)(EFI_FILE_PROTOCOL *This);
+    void *Delete;
+    EFI_STATUS (EFIAPI *Read)(EFI_FILE_PROTOCOL *This, UINTN *BufferSize,
+                              void *Buffer);
+    void *Write;
+    EFI_STATUS (EFIAPI *GetPosition)(EFI_FILE_PROTOCOL *This,
+                                     UINT64 *Position);
+    EFI_STATUS (EFIAPI *SetPosition)(EFI_FILE_PROTOCOL *This,
+                                     UINT64 Position);
+    void *GetInfo;
+    void *SetInfo;
+    void *Flush;
+};
+
+#define EFI_FILE_MODE_READ ((UINT64)0x0000000000000001ULL)
+
+typedef struct EFI_SIMPLE_FILE_SYSTEM_PROTOCOL EFI_SIMPLE_FILE_SYSTEM_PROTOCOL;
+struct EFI_SIMPLE_FILE_SYSTEM_PROTOCOL {
+    UINT64 Revision;
+    EFI_STATUS (EFIAPI *OpenVolume)(EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *This,
+                                    EFI_FILE_PROTOCOL **Root);
+};
+
 typedef UINT32 EFI_MEMORY_TYPE;
 #define EfiLoaderData ((EFI_MEMORY_TYPE)2)
 
@@ -230,13 +264,14 @@ typedef struct {
     void       *Unload;
 } EFI_LOADED_IMAGE_PROTOCOL;
 
-/* SHIM_IMAGE_LOADER, shim loader-proto.h. Same four calls as boot services,
- * so the probe only needs the pointers, not callable prototypes. */
+/* SHIM_IMAGE_LOADER, shim loader-proto.h. Same four calls as boot services.
+ * LoadImage and UnloadImage carry real prototypes because the probe calls
+ * them; StartImage and Exit are only ever printed. */
 typedef struct {
     EFI_IMAGE_LOAD LoadImage;
     void *StartImage;
     void *Exit;
-    void *UnloadImage;
+    EFI_IMAGE_UNLOAD UnloadImage;
 } SHIM_IMAGE_LOADER;
 
 #endif /* SHIM_SPIKE_PROBE_EFI_H */

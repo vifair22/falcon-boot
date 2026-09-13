@@ -605,6 +605,7 @@ static EFI_STATUS publish_credfs(EFI_SYSTEM_TABLE *st, const fs_dirent *ent,
  * for why the device path is what this whole step exists to obtain. */
 static EFI_STATUS launch_uki(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent,
                              const fs_dirent *ent, void *buf, UINT64 size,
+                             const load_ops *opsp, BOOLEAN inner_blocked,
                              UINT8 *retain, pos_result *result)
 {
     EFI_BOOT_SERVICES *bs = st->BootServices;
@@ -613,13 +614,14 @@ static EFI_STATUS launch_uki(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent,
     CHAR16 *exit_data = (CHAR16 *)0;
     UINTN exit_size = 0;
     BOOLEAN published = FALSE;
-    load_ops ops;
+    load_ops ops = *opsp;
     EFI_STATUS status;
 
     /* Set on the one path that leaves the UKI's pages published: see the
-     * caller, which owns the allocation. */
+     * caller, which owns the allocation. The load ops were resolved by the
+     * caller, before the read, so the warning that goes with them could be
+     * printed while there was still a wait to spend it on. */
     *retain = 0;
-    resolve_load_ops(bs, &ops);
 
     result->stage = L"publishing the credential filesystem";
     status = publish_credfs(st, ent, buf, size);
@@ -700,6 +702,11 @@ static EFI_STATUS launch_uki(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent,
 
     result->stage = L"UKI exit";
     result->status = status;
+    /* An sd-stub image that returns has failed, and in this state there is
+     * one overwhelming reason for it that the stub's own message does not
+     * name. */
+    if (inner_blocked && EFI_ERROR(status))
+        result->advice = load_ops_inner_load_advice();
     return EFI_SUCCESS;
 }
 
@@ -782,6 +789,8 @@ EFI_STATUS pos_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
     UINTN chosen;
     INTN pick;
     int rc;
+    BOOLEAN inner_blocked = FALSE;
+    load_ops ops;
     EFI_STATUS status = EFI_SUCCESS;
 
     if (st == (void *)0 || result == (void *)0)
@@ -896,6 +905,19 @@ EFI_STATUS pos_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
     chosen = (UINTN)pick;
 
     st->ConOut->ClearScreen(st->ConOut);
+
+    /* The personal OS is a UKI, so it loads its kernel exactly the way a
+     * blessed wrap does and is stopped by exactly the same platform state.
+     * Judged before the read for the same reason bless.c judges it there: the
+     * read is the slow part, and a warning that arrives after it is a
+     * warning about a wait that has already been spent. The boot proceeds
+     * regardless; this only decides what is said (DESIGN Section 7.3). */
+    resolve_load_ops(bs, &ops);
+    inner_blocked = load_ops_inner_load_blocked(st, &ops);
+    if (inner_blocked)
+        out(L"warning: this image is very unlikely to start on this machine;"
+            L"\r\n         see the note after it exits.\r\n\r\n");
+
     out(L"reading ");
     out_name(g_ukis[chosen].name, g_ukis[chosen].name_len);
     out(L" ");
@@ -907,8 +929,8 @@ EFI_STATUS pos_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
     out_dec(size);
     out(L" bytes read; starting it.\r\n\r\n");
 
-    status = launch_uki(st, parent_image, &g_ukis[chosen], buf, size, &retain,
-                        result);
+    status = launch_uki(st, parent_image, &g_ukis[chosen], buf, size, &ops,
+                        inner_blocked, &retain, result);
 
     /* The image is loaded and running from the firmware's own copy by now, so
      * these pages are ours to release whether it succeeded or not. Doing it

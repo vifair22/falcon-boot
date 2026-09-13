@@ -66,6 +66,8 @@ static EFI_GUID GUID_MOK_VAR =
     {0xc451ed2b, 0x9694, 0x45d3, {0xba, 0xba, 0xed, 0x9f, 0x89, 0x88, 0xa3, 0x89}};
 static EFI_GUID GUID_DEVICE_PATH =
     {0x09576e91, 0x6d3f, 0x11d2, {0x8e, 0x39, 0x00, 0xa0, 0xc9, 0x69, 0x72, 0x3b}};
+static EFI_GUID GUID_SIMPLE_FS =
+    {0x0964e5b22, 0x6459, 0x11d2, {0x8e, 0x39, 0x00, 0xa0, 0xc9, 0x69, 0x72, 0x3b}};
 
 static void put(CHAR16 *s)
 {
@@ -284,6 +286,133 @@ static void try_load(CHAR16 *label, EFI_HANDLE self, EFI_HANDLE device,
     BS->FreePool(dp);
 }
 
+/* ---- 2026-09-13 addition: the loader x source matrix ----
+ *
+ * The original probe above measured one cell of a four-cell grid: the
+ * boot-services LoadImage, given a device path. That was enough while the
+ * only question was "does a MOK-signed image load under Secure Boot", and it
+ * is not enough for the question that came out of UAT: in the state where
+ * shim honours MokSBState and stops validating, which of the two loaders is
+ * which, and does either still take a buffer?
+ *
+ * It matters because a UKI's stub does not load its inner kernel from a file.
+ * It has the kernel in memory already, as a section of itself, and hands it
+ * to LoadImage as a SourceBuffer with a memmap device path. So "device path,
+ * boot services" is precisely the cell that does not describe what sd-stub
+ * does, and the cell it does use was never measured.
+ */
+
+/* Read a staged payload into pool memory, so the buffer half of the matrix
+ * has something to hand LoadImage. Size comes from seeking to the end rather
+ * than from EFI_FILE_INFO: one less struct to declare, and GetPosition after
+ * a seek to 0xffffffffffffffff is the spec's own idiom for it. */
+static void *read_file(EFI_HANDLE device, CHAR16 *path, UINTN *size_out)
+{
+    EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *sfs = 0;
+    EFI_FILE_PROTOCOL *root = 0, *f = 0;
+    UINT64 size = 0;
+    void *buf = 0;
+    UINTN n;
+
+    *size_out = 0;
+    if (EFI_ERROR(BS->HandleProtocol(device, &GUID_SIMPLE_FS, (void **)&sfs))
+        || !sfs)
+        return 0;
+    if (EFI_ERROR(sfs->OpenVolume(sfs, &root)) || !root)
+        return 0;
+    if (EFI_ERROR(root->Open(root, &f, path, EFI_FILE_MODE_READ, 0)) || !f) {
+        root->Close(root);
+        return 0;
+    }
+    if (EFI_ERROR(f->SetPosition(f, 0xffffffffffffffffULL)) ||
+        EFI_ERROR(f->GetPosition(f, &size)) || size == 0 ||
+        EFI_ERROR(f->SetPosition(f, 0)))
+        goto done;
+    if (EFI_ERROR(BS->AllocatePool(EfiLoaderData, (UINTN)size, &buf)) || !buf) {
+        buf = 0;
+        goto done;
+    }
+    n = (UINTN)size;
+    if (EFI_ERROR(f->Read(f, &n, buf)) || n != (UINTN)size) {
+        BS->FreePool(buf);
+        buf = 0;
+        goto done;
+    }
+    *size_out = n;
+done:
+    f->Close(f);
+    root->Close(root);
+    return buf;
+}
+
+/* One cell: loader x (device path | buffer) x payload.
+ *
+ * The unload deliberately uses the same loader that did the load. Mixing them
+ * is not a hypothetical mistake in the state this run is measuring; see the
+ * paired-loader experiment at the end of main. */
+static void try_cell(CHAR16 *label, EFI_IMAGE_LOAD load, EFI_IMAGE_UNLOAD unload,
+                     EFI_HANDLE self, EFI_DEVICE_PATH_PROTOCOL *dp, void *buf,
+                     UINTN size)
+{
+    EFI_HANDLE loaded = 0;
+    EFI_STATUS st;
+
+    put(u"  ");
+    put(label);
+    put(u": ");
+    if (!dp && !buf) {
+        put(u"payload unavailable");
+        line();
+        return;
+    }
+
+    st = load(0, self, dp, buf, size, &loaded);
+    if (st == EFI_SUCCESS) {
+        put(u"LOADED   handle=");
+        put_hex((UINT64)loaded);
+        if (loaded && unload)
+            unload(loaded);
+    } else {
+        put(u"refused  status=");
+        put_hex(st);
+        /* Spec 7.4: a security refusal still leaves the image loaded. */
+        if (loaded && unload)
+            unload(loaded);
+    }
+    line();
+}
+
+/* The grid, for one payload. */
+static void try_payload(CHAR16 *what, EFI_HANDLE self, EFI_HANDLE device,
+                        CHAR16 *path, SHIM_IMAGE_LOADER *sil)
+{
+    EFI_DEVICE_PATH_PROTOCOL *dp;
+    void *buf;
+    UINTN size = 0;
+
+    put(u"  -- ");
+    put(what);
+    line();
+
+    dp = dp_for_file(device, path);
+    buf = read_file(device, path, &size);
+
+    try_cell(u"gBS  devpath", BS->LoadImage, BS->UnloadImage, self, dp, 0, 0);
+    try_cell(u"gBS  buffer ", BS->LoadImage, BS->UnloadImage, self, 0, buf,
+             size);
+    if (sil) {
+        try_cell(u"SIL  devpath", sil->LoadImage, sil->UnloadImage, self, dp, 0,
+                 0);
+        try_cell(u"SIL  buffer ", sil->LoadImage, sil->UnloadImage, self, 0,
+                 buf, size);
+    }
+
+    if (dp)
+        BS->FreePool(dp);
+    if (buf)
+        BS->FreePool(buf);
+}
+
 EFI_STATUS EFIAPI efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *systab);
 
 EFI_STATUS EFIAPI efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *systab)
@@ -355,6 +484,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *systab)
         report_addr(u"SIL->LoadImage     ", (UINT64)sil->LoadImage);
         report_ptr(u"SIL->StartImage    ", sil->StartImage);
         report_ptr(u"SIL->Exit          ", sil->Exit);
+        report_addr(u"SIL->UnloadImage   ", (UINT64)sil->UnloadImage);
         put(u"  gBS->LoadImage is shim's: ");
         put(BS->LoadImage == sil->LoadImage ? u"YES" : u"NO");
         line();
@@ -374,6 +504,65 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *systab)
                  u"\\EFI\\BOOT\\pay-mok-nosbat.efi");
         try_load(u"unsigned   +sbat  ", image, li->DeviceHandle,
                  u"\\EFI\\BOOT\\pay-unsigned.efi");
+    }
+
+    /* The grid the original three-row test was one column of. Reported for
+     * every firmware/shim combination so the validation-disabled row can be
+     * read against the enforcing one without switching documents. */
+    if (li && li->DeviceHandle) {
+        put(u"[loader x source matrix]");
+        line();
+        try_payload(u"mok-signed +sbat", image, li->DeviceHandle,
+                    u"\\EFI\\BOOT\\pay-mok-sbat.efi", sil);
+        try_payload(u"unsigned", image, li->DeviceHandle,
+                    u"\\EFI\\BOOT\\pay-unsigned.efi", sil);
+    }
+
+    /* Last, because it can be fatal, and everything above is already in the
+     * log by the time it runs.
+     *
+     * shim's shim_unload_image() forwards to a saved system_unload_image when
+     * the handle was not one of its own. That pointer is populated by
+     * hook_system_services(), which shim calls only when secure_mode() is
+     * true -- so with Secure Boot off, or with validation disabled via
+     * MokSBState, it is still NULL and the forward is a call through zero.
+     * Read out of shim 16.1 loader-proto.c and tested here because a loader
+     * that resolved its LoadImage and its UnloadImage from different places
+     * would hit it, and "it crashes" is a better thing to know than "it might".
+     */
+    if (sil && li && li->DeviceHandle) {
+        EFI_DEVICE_PATH_PROTOCOL *dp;
+        EFI_HANDLE loaded = 0;
+
+        put(u"[paired-loader hazard: SIL->UnloadImage on a gBS-loaded handle]");
+        line();
+        /* Needs a handle the *firmware* accepted, which in the
+         * validation-disabled state rules out everything MOK-signed: only db
+         * passes there. shim itself is the one file on this ESP that is in
+         * db on every machine, so it is the payload that makes this test
+         * reachable in the state the test exists for. */
+        dp = dp_for_file(li->DeviceHandle, u"\\EFI\\BOOT\\pay-mok-sbat.efi");
+        if (!dp || BS->LoadImage(0, image, dp, 0, 0, &loaded) != EFI_SUCCESS ||
+            !loaded) {
+            if (dp)
+                BS->FreePool(dp);
+            loaded = 0;
+            dp = dp_for_file(li->DeviceHandle, u"\\EFI\\BOOT\\BOOTX64.EFI");
+            if (dp && BS->LoadImage(0, image, dp, 0, 0, &loaded) != EFI_SUCCESS)
+                loaded = 0;
+        }
+        if (loaded) {
+            put(u"  loaded via gBS, calling SIL->UnloadImage now...");
+            line();
+            put(u"  returned status=");
+            put_hex(sil->UnloadImage(loaded));
+            line();
+        } else {
+            put(u"  skipped: gBS->LoadImage would not load the payload");
+            line();
+        }
+        if (dp)
+            BS->FreePool(dp);
     }
 
     put(u"=== probe done, press a key to return to the caller ===");
