@@ -8,6 +8,7 @@
 #include <efi/devpath.h>
 #include <efi/sfs.h>
 #include <efi/shimguid.h>
+#include <family/family.h>
 #include <lib/string.h>
 
 /* El Torito lives on 2048-byte media; the firmware's partition driver only
@@ -275,6 +276,183 @@ static EFI_STATUS find_iso_esp(EFI_BOOT_SERVICES *bs, iso_device *dev,
     return (*out != (EFI_HANDLE)0) ? EFI_SUCCESS : EFI_NOT_FOUND;
 }
 
+/* ---- looking inside the ESP: family and signature presence ---- */
+
+/* Fingerprint paths are short by construction (family.c's longest is a
+ * loader entry filename); a path that does not fit is a fingerprint that
+ * does not match, which is the same answer as "absent". */
+#define PROBE_PATH_MAX 128u
+
+/* Enough for a PE's DOS stub, COFF header, optional header and the whole
+ * data directory array. Anything with a further e_lfanew is not a PE we can
+ * read with a single short read, and we say so rather than guess. */
+#define PE_HEAD_MAX 1024u
+
+/* Offsets inside the optional header, which is where PE32 and PE32+ differ:
+ * the 64-bit form widens three fields, pushing NumberOfRvaAndSizes and the
+ * directory array 16 bytes later (PE/COFF spec 3.4). */
+#define OPT_MAGIC_PE32   0x10bu
+#define OPT_MAGIC_PE32P  0x20bu
+#define DIR_SECURITY     4u     /* certificate table (Authenticode) */
+
+/* The probe's ctx is the ESP's root directory handle itself; there is no
+ * per-probe state worth a wrapper struct. */
+static EFI_FILE_PROTOCOL *probe_root(void *ctx)
+{
+    return (EFI_FILE_PROTOCOL *)ctx;
+}
+
+/* "/EFI/BOOT/BOOTX64.EFI" -> L"\EFI\BOOT\BOOTX64.EFI". The File Protocol
+ * wants backslashes and CHAR16; family.c speaks ASCII with forward slashes so
+ * the identical fingerprints run against a host directory tree in a test. */
+static int path_to_ucs2(const char *path, CHAR16 *out, UINTN cap)
+{
+    UINTN i = 0;
+
+    if (path == (const char *)0)
+        return -1;
+    while (path[i] != '\0') {
+        unsigned char c = (unsigned char)path[i];
+
+        if (i + 1 >= cap || c >= 0x80)
+            return -1;
+        out[i] = (c == '/') ? L'\\' : (CHAR16)c;
+        i++;
+    }
+    out[i] = 0;
+    return 0;
+}
+
+static EFI_STATUS probe_open(void *ctx, const char *path,
+                             EFI_FILE_PROTOCOL **file)
+{
+    EFI_FILE_PROTOCOL *root = probe_root(ctx);
+    CHAR16 wide[PROBE_PATH_MAX];
+
+    if (root == (EFI_FILE_PROTOCOL *)0)
+        return EFI_INVALID_PARAMETER;
+    if (path_to_ucs2(path, wide, PROBE_PATH_MAX) != 0)
+        return EFI_INVALID_PARAMETER;
+    return root->Open(root, file, wide, EFI_FILE_MODE_READ, 0);
+}
+
+static int probe_exists(void *ctx, const char *path)
+{
+    EFI_FILE_PROTOCOL *file;
+
+    if (probe_open(ctx, path, &file) != EFI_SUCCESS)
+        return 0;
+    file->Close(file);
+    return 1;
+}
+
+/* Reads from the head of a file only. Every fingerprint family.c has, and the
+ * PE header read below, start at offset zero; seeking would mean carrying
+ * SetPosition in our File Protocol declaration for no caller, so a nonzero
+ * offset is reported as unreadable instead of silently answered wrong. */
+static int probe_read(void *ctx, const char *path, uint64_t off, void *buf,
+                      size_t len, size_t *got)
+{
+    EFI_FILE_PROTOCOL *file;
+    UINTN size = (UINTN)len;
+    EFI_STATUS status;
+
+    *got = 0;
+    if (off != 0)
+        return -1;
+    if (probe_open(ctx, path, &file) != EFI_SUCCESS)
+        return -1;
+    status = file->Read(file, &size, buf);
+    file->Close(file);
+    if (EFI_ERROR(status))
+        return -1;
+    *got = (size_t)size;
+    return 0;
+}
+
+static EFI_STATUS esp_open_root(EFI_BOOT_SERVICES *bs, EFI_HANDLE esp,
+                                EFI_FILE_PROTOCOL **root)
+{
+    EFI_GUID sfs_guid = EFI_SIMPLE_FILE_SYSTEM_PROTOCOL_GUID;
+    EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *sfs;
+    EFI_STATUS status;
+
+    *root = (EFI_FILE_PROTOCOL *)0;
+    status = bs->HandleProtocol(esp, &sfs_guid, (void **)&sfs);
+    if (EFI_ERROR(status))
+        return status;
+    return sfs->OpenVolume(sfs, root);
+}
+
+static const family_desc *root_family(EFI_FILE_PROTOCOL *root)
+{
+    family_probe probe;
+
+    probe.exists = probe_exists;
+    probe.read = probe_read;
+    probe.ctx = root;
+    return family_detect(&probe);
+}
+
+/* Does the ISO's default loader carry a certificate table?
+ *
+ * Read the header, look at data directory 4, report whether its size field is
+ * nonzero. That is the entire check, and it is deliberately the entire check:
+ * a nonzero size says bytes claiming to be a signature are attached, nothing
+ * about whose key signed them or whether the platform will accept them. The
+ * answer feeds a menu label and nothing else. */
+static iso_sig root_signature(EFI_FILE_PROTOCOL *root)
+{
+    uint8_t head[PE_HEAD_MAX];
+    size_t got = 0;
+    size_t pe;
+    size_t opt;
+    size_t nrva_off;
+    size_t dir_off;
+    uint16_t magic;
+    uint32_t nrva;
+
+    if (probe_read(root, "/EFI/BOOT/BOOTX64.EFI", 0, head, sizeof(head),
+                   &got) != 0)
+        return ISO_SIG_NO_EFI;
+
+    /* From here on the file exists but does not parse, which is a different
+     * fact from "no loader" and gets a different label. */
+    if (got < 0x40u || head[0] != 'M' || head[1] != 'Z')
+        return ISO_SIG_UNKNOWN;
+    pe = (size_t)get_le32(head + 0x3c);
+    if (pe > got || got - pe < 24u + 2u)
+        return ISO_SIG_UNKNOWN;
+    if (memcmp(head + pe, "PE\0\0", 4) != 0)
+        return ISO_SIG_UNKNOWN;
+
+    opt = pe + 24u; /* signature (4) + COFF file header (20) */
+    magic = get_le16(head + opt);
+    if (magic == OPT_MAGIC_PE32P) {
+        nrva_off = 108u;
+        dir_off = 112u;
+    } else if (magic == OPT_MAGIC_PE32) {
+        nrva_off = 92u;
+        dir_off = 96u;
+    } else {
+        return ISO_SIG_UNKNOWN;
+    }
+
+    if (got - opt < nrva_off + 4u)
+        return ISO_SIG_UNKNOWN;
+    nrva = get_le32(head + opt + nrva_off);
+    /* An image with a short directory array simply has no certificate table
+     * entry, which is an answer, not a parse failure. */
+    if (nrva <= DIR_SECURITY)
+        return ISO_SIG_ABSENT;
+    if (got - opt < dir_off + (DIR_SECURITY + 1u) * 8u)
+        return ISO_SIG_UNKNOWN;
+
+    return get_le32(head + opt + dir_off + DIR_SECURITY * 8u + 4u) != 0
+               ? ISO_SIG_PRESENT
+               : ISO_SIG_ABSENT;
+}
+
 /* ---- chainload ---- */
 
 /* The load path of DESIGN Section 7.6, resolved per boot attempt.
@@ -428,18 +606,90 @@ static EFI_STATUS chainload(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
     return EFI_SUCCESS;
 }
 
-/* ---- entry point ---- */
+/* ---- entry points ---- */
+
+/* Everything up to and including "the firmware has mounted the ISO's ESP".
+ * Booting and surveying need exactly this much and differ only in what they
+ * do with the handle, so the sequence lives in one place.
+ *
+ * *owned says whether the caller now holds the virtual device and must call
+ * device_teardown. It stays zero only when a previous device is still held by
+ * a driver: that instance belongs to the earlier attempt, and tearing it down
+ * from here would disconnect drivers this caller never connected. */
+static EFI_STATUS iso_open(EFI_SYSTEM_TABLE *st, exfat_vol *vol,
+                           const exfat_dirent *file, const CHAR16 **stage,
+                           EFI_HANDLE *esp_handle, UINT8 *owned)
+{
+    EFI_BOOT_SERVICES *bs = st->BootServices;
+    EFI_GUID bio_guid = EFI_BLOCK_IO_PROTOCOL_GUID;
+    EFI_GUID dp_guid = EFI_DEVICE_PATH_PROTOCOL_GUID;
+    EFI_HANDLE *before = (EFI_HANDLE *)0;
+    UINTN before_n = 0;
+    EFI_STATUS status;
+
+    *esp_handle = (EFI_HANDLE)0;
+    *owned = 0;
+    *stage = L"preparing the virtual CD";
+
+    if (g_dev.in_use) {
+        *stage = L"previous virtual CD still held by a driver";
+        return EFI_ACCESS_DENIED;
+    }
+    if (file->size < ISO_BLOCK_SIZE) {
+        *stage = L"ISO is too small to be CD media";
+        return EFI_UNSUPPORTED;
+    }
+    if (exfat_file_open(vol, &g_dev.file, file) != EXFAT_OK) {
+        *stage = L"opening the ISO on the exFAT volume";
+        return EFI_DEVICE_ERROR;
+    }
+
+    device_init(&g_dev, file);
+    *owned = 1;
+
+    *stage = L"publishing the virtual CD";
+    status = bs->InstallMultipleProtocolInterfaces(
+        &g_dev.handle,
+        &bio_guid, &g_dev.bio,
+        &dp_guid, &g_dev.path,
+        (void *)0);
+    if (EFI_ERROR(status))
+        return status;
+    g_dev.in_use = 1;
+
+    /* Snapshot before connecting: the ISO's ESP is the filesystem that is
+     * not here yet. */
+    *stage = L"enumerating filesystems";
+    status = sfs_handles(bs, &before, &before_n);
+    if (EFI_ERROR(status))
+        return status;
+
+    /* The firmware's own partition driver parses El Torito and its FAT
+     * driver mounts the embedded ESP; we write no ISO9660 reader for this
+     * (DESIGN Section 6 stage 3). */
+    *stage = L"ConnectController on the virtual CD";
+    /* Set before the call: a partial bind still leaves drivers attached, and
+     * teardown must disconnect them. */
+    g_dev.connected = 1;
+    status = bs->ConnectController(g_dev.handle, (EFI_HANDLE *)0,
+                                   (EFI_DEVICE_PATH_PROTOCOL *)0, TRUE);
+    if (!EFI_ERROR(status)) {
+        *stage = L"finding the ISO's EFI System Partition";
+        status = find_iso_esp(bs, &g_dev, before, before_n, esp_handle);
+    }
+
+    if (before != (EFI_HANDLE *)0)
+        bs->FreePool(before);
+    return status;
+}
 
 EFI_STATUS iso_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
                     exfat_vol *vol, const exfat_dirent *file,
                     iso_boot_result *result)
 {
     EFI_BOOT_SERVICES *bs;
-    EFI_GUID bio_guid = EFI_BLOCK_IO_PROTOCOL_GUID;
-    EFI_GUID dp_guid = EFI_DEVICE_PATH_PROTOCOL_GUID;
-    EFI_HANDLE *before = (EFI_HANDLE *)0;
     EFI_HANDLE esp_handle = (EFI_HANDLE)0;
-    UINTN before_n = 0;
+    UINT8 owned = 0;
     EFI_STATUS status;
     EFI_STATUS teardown;
 
@@ -448,70 +698,28 @@ EFI_STATUS iso_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
         return EFI_INVALID_PARAMETER;
 
     bs = st->BootServices;
-    result->stage = L"preparing the virtual CD";
     result->status = EFI_SUCCESS;
+    result->family = (const family_desc *)0;
 
-    if (g_dev.in_use) {
-        result->stage = L"previous virtual CD still held by a driver";
-        result->status = EFI_ACCESS_DENIED;
-        return EFI_ACCESS_DENIED;
-    }
-    if (file->size < ISO_BLOCK_SIZE) {
-        result->stage = L"ISO is too small to be CD media";
-        result->status = EFI_UNSUPPORTED;
-        return EFI_UNSUPPORTED;
-    }
-    if (exfat_file_open(vol, &g_dev.file, file) != EXFAT_OK) {
-        result->stage = L"opening the ISO on the exFAT volume";
-        result->status = EFI_DEVICE_ERROR;
-        return EFI_DEVICE_ERROR;
-    }
+    status = iso_open(st, vol, file, &result->stage, &esp_handle, &owned);
+    if (!EFI_ERROR(status)) {
+        EFI_FILE_PROTOCOL *root;
 
-    device_init(&g_dev, file);
-
-    result->stage = L"publishing the virtual CD";
-    status = bs->InstallMultipleProtocolInterfaces(
-        &g_dev.handle,
-        &bio_guid, &g_dev.bio,
-        &dp_guid, &g_dev.path,
-        (void *)0);
-    if (EFI_ERROR(status)) {
+        /* Detection is reported, never acted on. It runs before the chainload
+         * only so the answer exists while the ESP is still mounted; the load
+         * path below is byte-for-byte what it was without it, and no cmdline
+         * template has a consumer yet (DESIGN Section 6.2). */
+        if (esp_open_root(bs, esp_handle, &root) == EFI_SUCCESS) {
+            result->family = root_family(root);
+            root->Close(root);
+        }
+        status = chainload(st, parent_image, esp_handle, result);
+    }
+    if (EFI_ERROR(status))
         result->status = status;
+
+    if (!owned)
         return status;
-    }
-    g_dev.in_use = 1;
-
-    /* Snapshot before connecting: the ISO's ESP is the filesystem that is
-     * not here yet. */
-    result->stage = L"enumerating filesystems";
-    status = sfs_handles(bs, &before, &before_n);
-    if (EFI_ERROR(status))
-        goto out;
-
-    /* The firmware's own partition driver parses El Torito and its FAT
-     * driver mounts the embedded ESP; we write no ISO9660 reader for this
-     * (DESIGN Section 6 stage 3). */
-    result->stage = L"ConnectController on the virtual CD";
-    /* Set before the call: a partial bind still leaves drivers attached, and
-     * teardown must disconnect them. */
-    g_dev.connected = 1;
-    status = bs->ConnectController(g_dev.handle, (EFI_HANDLE *)0,
-                                   (EFI_DEVICE_PATH_PROTOCOL *)0, TRUE);
-    if (EFI_ERROR(status))
-        goto out;
-
-    result->stage = L"finding the ISO's EFI System Partition";
-    status = find_iso_esp(bs, &g_dev, before, before_n, &esp_handle);
-    if (EFI_ERROR(status))
-        goto out;
-
-    status = chainload(st, parent_image, esp_handle, result);
-
-out:
-    if (before != (EFI_HANDLE *)0)
-        bs->FreePool(before);
-    if (EFI_ERROR(status))
-        result->status = status;
 
     teardown = device_teardown(bs, &g_dev);
     if (EFI_ERROR(teardown)) {
@@ -520,6 +728,46 @@ out:
         result->stage = L"releasing the virtual CD";
         result->status = teardown;
         return teardown;
+    }
+    return status;
+}
+
+EFI_STATUS iso_survey_media(EFI_SYSTEM_TABLE *st, exfat_vol *vol,
+                            const exfat_dirent *file, iso_survey *out)
+{
+    EFI_BOOT_SERVICES *bs;
+    EFI_HANDLE esp_handle = (EFI_HANDLE)0;
+    EFI_FILE_PROTOCOL *root;
+    const CHAR16 *stage;
+    UINT8 owned = 0;
+    EFI_STATUS status;
+    EFI_STATUS teardown;
+
+    if (out == (void *)0)
+        return EFI_INVALID_PARAMETER;
+    out->family = family_by_id(FAMILY_UNKNOWN);
+    out->sig = ISO_SIG_UNKNOWN;
+    if (st == (void *)0 || vol == (void *)0 || file == (void *)0)
+        return EFI_INVALID_PARAMETER;
+
+    bs = st->BootServices;
+    status = iso_open(st, vol, file, &stage, &esp_handle, &owned);
+    if (EFI_ERROR(status)) {
+        /* A medium the firmware found nothing bootable in: no El Torito
+         * catalog, or a catalog pointing at no ESP. Not an error worth
+         * showing, just an entry we cannot say anything about. */
+        if (status == EFI_NOT_FOUND)
+            out->sig = ISO_SIG_NO_EFI;
+    } else if (esp_open_root(bs, esp_handle, &root) == EFI_SUCCESS) {
+        out->family = root_family(root);
+        out->sig = root_signature(root);
+        root->Close(root);
+    }
+
+    if (owned) {
+        teardown = device_teardown(bs, &g_dev);
+        if (EFI_ERROR(teardown))
+            status = teardown;
     }
     return status;
 }

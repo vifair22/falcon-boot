@@ -99,8 +99,14 @@ INTN menu_run(EFI_SYSTEM_TABLE *st, const menu_banner *banner,
     draw_banner(st, cols, banner);
     st->ConOut->SetAttribute(st->ConOut,
                              EFI_TEXT_ATTR(EFI_DARKGRAY, EFI_BLACK));
+    /* The legend is part of the hint rather than a header row because the
+     * per-entry label is easy to misread as a verdict, and the one place a
+     * user is looking when they read a label is this screen. "presence" is
+     * the whole claim: the menu never verifies anything, and neither does
+     * anything else in the loader (DESIGN Section 7.3). */
     draw_row(st, rows - 1, cols,
-             count ? L"up/down select | enter boot | esc exit"
+             count ? L"up/down select | enter boot | esc exit | "
+                     L"[family, signature presence]"
                    : L"no entries | esc exit");
 
     for (;;) {

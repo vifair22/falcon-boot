@@ -36,11 +36,24 @@ SRCS := \
 	src/efi/sbat.c \
 	src/lib/string.c \
 	src/exfat/exfat.c \
+	src/ext4/ext4.c \
 	src/iso/iso.c \
 	src/menu/menu.c \
 	src/sb/sb.c \
 	src/family/family.c \
-	src/cpio/cpio.c
+	src/cpio/cpio.c \
+	src/crypto/crypto.c \
+	src/crypto/sha256.c \
+	src/crypto/sha512.c \
+	src/crypto/hash.c \
+	src/crypto/hmac.c \
+	src/crypto/pbkdf2.c \
+	src/crypto/aes.c \
+	src/crypto/xts.c \
+	src/crypto/aesni.c \
+	src/luks/json.c \
+	src/luks/af.c \
+	src/luks/luks.c
 
 OBJS := $(SRCS:src/%.c=build/$(VARIANT)/%.o)
 DEPS := $(OBJS:.o=.o.d)
@@ -84,6 +97,12 @@ $(EFI): $(OBJS)
 build/$(VARIANT)/%.o: src/%.c
 	@mkdir -p $(@D)
 	$(CC) $(CFLAGS) -MMD -MF $@.d -c -o $@ $<
+
+# AES-NI intrinsics, this object only: -maes lets gcc emit those instructions
+# anywhere in the TU, so nothing else may carry it. The CPUID probe that gates
+# this path lives in crypto.c, built with the baseline flags, precisely so it
+# cannot fault on the CPUs it exists to detect.
+build/$(VARIANT)/crypto/aesni.o: CFLAGS += -maes
 
 -include $(DEPS)
 
@@ -130,10 +149,12 @@ compile_commands.json: Makefile
 	@for entry in $(CC_DB_ENTRIES); do \
 		src=$${entry%%:*}; \
 		obj=$${entry##*:}; \
+		extra=""; \
+		case "$$obj" in */crypto/aesni.o) extra=" -maes";; esac; \
 		printf '  {\n' >> $@; \
 		printf '    "directory": "%s",\n' '$(CURDIR)' >> $@; \
-		printf '    "command": "%s %s -MMD -MF %s.d -c -o %s %s/%s",\n' \
-			'$(CC)' '$(strip $(CFLAGS))' "$$obj" "$$obj" \
+		printf '    "command": "%s %s%s -MMD -MF %s.d -c -o %s %s/%s",\n' \
+			'$(CC)' '$(strip $(CFLAGS))' "$$extra" "$$obj" "$$obj" \
 			'$(CURDIR)' "$$src" >> $@; \
 		printf '    "file": "%s/%s"\n' '$(CURDIR)' "$$src" >> $@; \
 		printf '  },\n' >> $@; \

@@ -389,7 +389,11 @@ int exfat_file_extents(exfat_vol *v, const exfat_dirent *e,
          * The far end is still validated, because a NoFatChain file whose
          * size runs off the end of the heap is corruption we must not hand
          * on as a mapping. */
-        uint64_t clusters = (e->size + cb - 1) / cb;
+        /* Overflow-safe round-up: `(size + cb - 1) / cb` wraps for a
+         * hostile size near 2^64, yielding clusters == 0 and a bogus
+         * in-range `last` that would map the whole claimed size onto the
+         * volume. Divide first instead; nothing here can wrap. */
+        uint64_t clusters = e->size / cb + (e->size % cb != 0 ? 1 : 0);
         uint64_t last = (uint64_t)cl + clusters - 1;
 
         if (last > 0xFFFFFFFFu || !cluster_valid(v, (uint32_t)last))

@@ -1,4 +1,4 @@
-/* Shared declarations for the exFAT unit test binary. */
+/* Shared declarations for the airies-boot unit test binary. */
 
 #ifndef AIRIES_TEST_TESTS_H
 #define AIRIES_TEST_TESTS_H
@@ -9,7 +9,10 @@
 /* Each returns the number of failed tests, as cmocka_run_group_tests does. */
 int run_synth_tests(void);
 int run_file_tests(void);
+int run_extent_tests(void);
 int run_fixture_tests(void);
+int run_cpio_tests(void);
+int run_family_tests(void);
 
 /* Copies a UCS-2 filename into an ASCII buffer. Every character the tests use
  * is ASCII; anything outside that range is rendered '?' so a mismatch is

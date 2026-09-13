@@ -644,10 +644,16 @@ either the host or appliance route.
   the revocation lever. UKIs get `.sbat` from sd-stub via `ukify` for free;
   images loaded through shim's hook (blessed kernels) are exempt from the
   requirement.
-- **Crypto in EFI:** LUKS2 unlock needs pbkdf2 (SHA-256) and AES-XTS-512 sector
-  decryption. Use AES-NI intrinsics for XTS. Keep the primitives small and
-  self-contained; this is the one place in EFI-land where we write crypto, and
-  it is deliberately the minimum: SHA-256, PBKDF2-HMAC-SHA256, AES-XTS decrypt.
+- **Crypto in EFI:** LUKS2 unlock needs pbkdf2 and AES-XTS-512 sector
+  decryption. AES-NI intrinsics for XTS, with a portable C fallback selected
+  by CPUID at runtime. Keep the primitives small and self-contained; this is
+  the one place in EFI-land where we write crypto, and it is deliberately
+  the minimum: SHA-256 and SHA-512, HMAC and PBKDF2 parameterized over both,
+  AES-XTS decrypt. SHA-512 earns its ~150 lines because a LUKS2 header names
+  its hash in four independent places and `cryptsetup --hash sha512` (which
+  the user's own p4 header used for its digest) switches all four; a loader
+  that cannot hash cannot unlock, and the parameterization costs less than
+  the support burden of a "sha256-only" constraint on mkstick.
 - **Filesystem drivers in EFI:** read-only exFAT (for p2) and read-only ext4
   (for p3). Both read-only; the stick is configured from Linux userland, never
   written by the loader.

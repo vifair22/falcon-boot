@@ -26,6 +26,16 @@
 #define MAX_VOLS  4u
 #define SCAN_DEPTH_MAX 4u
 
+/* How many entries get looked inside before the menu appears. Each probe
+ * builds a virtual CD, makes the firmware bind its partition and FAT drivers
+ * to it and tears the whole thing down again, so the cost is bounded by a
+ * constant rather than by how many ISOs someone dropped on the stick. The
+ * rest are shown with an unprobed label, which is honest and instant. */
+#define PROBE_LIMIT 24u
+
+/* Label suffix budget: "  [Ubuntu install media, unsigned]" and friends. */
+#define SUFFIX_MAX 48u
+
 static EFI_SYSTEM_TABLE *g_st;
 
 EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st);
@@ -64,6 +74,24 @@ static void out_dec(UINT64 v)
         v /= 10;
     } while (v != 0);
     out(&buf[i]);
+}
+
+/* The registry's family names are narrow strings (family.c is EFI-free on
+ * purpose), and the console wants CHAR16. ASCII-only by the module's own
+ * contract, so widening a byte at a time is the whole conversion. */
+static void out_ascii(const char *s)
+{
+    CHAR16 buf[64];
+    UINTN i = 0;
+
+    if (s == (const char *)0)
+        return;
+    while (s[i] != '\0' && i + 1 < sizeof(buf) / sizeof(buf[0])) {
+        buf[i] = (CHAR16)(unsigned char)s[i];
+        i++;
+    }
+    buf[i] = 0;
+    out(buf);
 }
 
 static EFI_STATUS wait_key(EFI_INPUT_KEY *key)
@@ -246,6 +274,118 @@ static void scan_all_volumes(iso_list *list, UINTN *vols_found)
     g_st->BootServices->FreePool(handles);
 }
 
+/* ---- per-entry labels (DESIGN Section 9) ---- */
+
+/* A bounded append target. The suffix is assembled from several pieces and
+ * must never run off the end of a fixed buffer; tracking the length here
+ * beats repeating the same bounds check at each piece. */
+typedef struct {
+    CHAR16 *buf;
+    UINTN   cap;
+    UINTN   len;
+} wbuf;
+
+static void wbuf_ucs2(wbuf *w, const CHAR16 *s)
+{
+    while (*s != 0 && w->len + 1 < w->cap)
+        w->buf[w->len++] = *s++;
+    w->buf[w->len] = 0;
+}
+
+static void wbuf_ascii(wbuf *w, const char *s)
+{
+    while (*s != '\0' && w->len + 1 < w->cap) {
+        w->buf[w->len++] = (CHAR16)(unsigned char)*s;
+        s++;
+    }
+    w->buf[w->len] = 0;
+}
+
+/* Builds the entry's suffix. Wording rule (DESIGN Section 7.2, and the
+ * invariant that the loader never verifies): these words report what was
+ * found on the medium, never a verdict. "signed" means a certificate table is
+ * attached, not that anything checked it; whether the image runs is decided
+ * by the platform at load time and by nothing here. The menu's hint line
+ * carries the same caveat where a user will actually read it.
+ *
+ * survey NULL means the entry was past PROBE_LIMIT and was never looked at. */
+static void suffix_build(CHAR16 *buf, UINTN cap, const iso_survey *survey)
+{
+    wbuf w = { buf, cap, 0 };
+
+    wbuf_ucs2(&w, L"  [");
+    if (survey == (const iso_survey *)0) {
+        wbuf_ucs2(&w, L"?");
+    } else if (survey->sig == ISO_SIG_NO_EFI) {
+        /* No ESP surfaced at all, so there is no family to name either. */
+        wbuf_ucs2(&w, L"no efi");
+    } else {
+        wbuf_ascii(&w, survey->family->name);
+        wbuf_ucs2(&w, L", ");
+        if (survey->sig == ISO_SIG_PRESENT)
+            wbuf_ucs2(&w, L"signed");
+        else if (survey->sig == ISO_SIG_ABSENT)
+            wbuf_ucs2(&w, L"unsigned");
+        else
+            wbuf_ucs2(&w, L"sig?");
+    }
+    wbuf_ucs2(&w, L"]");
+}
+
+/* Appends the suffix to the entry's path label. If the two cannot both fit,
+ * the path is what loses characters: a truncated path is still recognisable,
+ * whereas a truncated suffix would misstate what was found. */
+static void label_suffix(menu_entry *e, const iso_survey *survey)
+{
+    CHAR16 suffix[SUFFIX_MAX];
+    UINTN sl, pl;
+
+    suffix_build(suffix, SUFFIX_MAX, survey);
+    sl = ucs2_len(suffix);
+    pl = ucs2_len(e->label);
+    if (pl + sl + 1 > MENU_PATH_MAX)
+        pl = MENU_PATH_MAX - 1 - sl;
+    memcpy(e->label + pl, suffix, (sl + 1) * sizeof(CHAR16));
+}
+
+/* Look inside the first PROBE_LIMIT ISOs and label every entry.
+ *
+ * This is the slow part of startup, so it says so: each probe makes the
+ * firmware bind drivers to a synthetic CD and release them again, and a quiet
+ * pause with no explanation reads as a hang. */
+static void probe_entries(iso_list *list)
+{
+    UINTN probed = list->count < PROBE_LIMIT ? list->count : PROBE_LIMIT;
+    UINTN i;
+
+    if (list->count == 0)
+        return;
+
+    out(L"airies-boot: probing ");
+    out_dec(probed);
+    out(L" ISO(s) for family and signature presence");
+    if (probed < list->count) {
+        out(L" (");
+        out_dec(list->count - probed);
+        out(L" left unprobed)");
+    }
+    out(L"\r\n");
+
+    for (i = 0; i < list->count; i++) {
+        iso_survey survey;
+
+        if (i >= probed) {
+            label_suffix(&list->entries[i], (const iso_survey *)0);
+            continue;
+        }
+        iso_survey_media(g_st, &g_vols[list->targets[i].vol],
+                         &list->targets[i].ent, &survey);
+        label_suffix(&list->entries[i], &survey);
+        out(L".");
+    }
+    out(L"\r\n");
+}
+
 /* ---- entry point ---- */
 
 /* Boot the selection and report what came back. Both outcomes land here:
@@ -254,7 +394,8 @@ static void scan_all_volumes(iso_list *list, UINTN *vols_found)
 static void boot_target(EFI_HANDLE image_handle, const menu_entry *entry,
                         iso_target *target)
 {
-    iso_boot_result result = { L"starting", EFI_SUCCESS };
+    iso_boot_result result = { L"starting", EFI_SUCCESS,
+                               (const family_desc *)0 };
     EFI_STATUS status;
 
     g_st->ConOut->ClearScreen(g_st->ConOut);
@@ -267,6 +408,13 @@ static void boot_target(EFI_HANDLE image_handle, const menu_entry *entry,
 
     g_st->ConOut->ClearScreen(g_st->ConOut);
     out(entry->label);
+    /* What the ISO's ESP turned out to be, reported after the fact because
+     * the payload owns the screen in between. Informational only: no cmdline
+     * or initrd decision is taken from it yet (DESIGN Section 6.2). */
+    if (result.family != (const family_desc *)0) {
+        out(L"\r\nfamily: ");
+        out_ascii(result.family->name);
+    }
     if (!EFI_ERROR(status)) {
         out(L"\r\nthe payload exited, status ");
         out_hex(result.status);
@@ -337,7 +485,10 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
 
     banner_init(&banner, L"airies-boot " WIDEN(AIRIES_VERSION));
     scan_all_volumes(&list, &vols);
+    /* Sort first: probing appends to the labels, and sorting after that would
+     * order the list by what was found rather than by path. */
     sort_list(&list);
+    probe_entries(&list);
 
     for (;;) {
         INTN pick = menu_run(st, &banner, list.entries, list.count);

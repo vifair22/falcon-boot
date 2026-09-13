@@ -1,9 +1,15 @@
-/* Entry point for the exFAT driver unit tests.
+/* Entry point for the host-side unit tests.
  *
- * Two groups: synthetic in-memory volumes (which reach every error path) and
- * the mkfs.exfat-produced fixture image (which proves the driver agrees with
- * a real implementation). Both run in one binary so a single gcov pass covers
- * src/exfat/exfat.c end to end.
+ * Everything the loader can exercise off the firmware runs from this one
+ * binary, so a single gcov pass covers every unit under test at once.
+ *
+ * exFAT driver: synthetic in-memory volumes (which reach the error paths a
+ * real mkfs.exfat image can never produce), the extent map that the ISO
+ * injection framework depends on, and the mkfs.exfat-produced fixture image
+ * (which proves the driver agrees with a real implementation).
+ *
+ * cpio writer and family registry: both are EFI-free by construction, so they
+ * are unit-testable here with no firmware and no image at all.
  */
 
 #include "tests.h"
@@ -29,7 +35,10 @@ int main(void)
 
     failed += run_synth_tests();
     failed += run_file_tests();
+    failed += run_extent_tests();
     failed += run_fixture_tests();
+    failed += run_cpio_tests();
+    failed += run_family_tests();
 
     printf("\ntotal failed: %d\n", failed);
     return failed == 0 ? 0 : 1;

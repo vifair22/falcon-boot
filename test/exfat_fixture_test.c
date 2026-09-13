@@ -600,6 +600,144 @@ static void test_fixture_file_read_random_spans(void **state)
         skip();
 }
 
+/* ------------------------------------------------------------ extent map */
+
+/* Rebuilds one file from its extent list by reading the named volume ranges
+ * straight off the image, and compares that against what the driver's read
+ * path returns for the same file.
+ *
+ * The two answers share nothing below the dirent: one walks the FAT and
+ * copies through the driver's sector cache, the other is a list of byte
+ * ranges handed to pread. That is the point. On a real mkfs.exfat volume the
+ * synthetic tests' hand-built fragmentation is gone, so what is left to prove
+ * here is that the map agrees with reality on an allocation nobody designed
+ * for the test. */
+static void check_file_extents(exfat_vol *v, const exfat_dirent *e,
+                               const char *path)
+{
+    exfat_extent *ex;
+    exfat_file f;
+    uint8_t *from_extents;
+    uint8_t *from_read;
+    uint64_t total = 0;
+    size_t count = 0;
+    size_t got = 0;
+    size_t i;
+    int rc;
+
+    /* The sizing call, against real data. */
+    rc = exfat_file_extents(v, e, NULL, 0, &count);
+    if (e->size == 0) {
+        assert_int_equal(rc, EXFAT_OK);
+        assert_int_equal(count, 0);
+        return;
+    }
+    assert_int_equal(rc, EXFAT_ERR_NOSPACE);
+    assert_true(count > 0);
+
+    ex = malloc(count * sizeof(*ex));
+    assert_non_null(ex);
+    assert_int_equal(exfat_file_extents(v, e, ex, count, &got), EXFAT_OK);
+    assert_int_equal(got, count);
+
+    for (i = 0; i < count; i++) {
+        assert_true(ex[i].len > 0);
+        /* Every range has to be inside the volume, or the mapping would send
+         * a consumer off the end of the partition. */
+        assert_true(ex[i].vol_off < FIXTURE_BYTES);
+        assert_true(ex[i].len <= FIXTURE_BYTES - ex[i].vol_off);
+        total += ex[i].len;
+    }
+    /* The lengths cover the valid data length exactly: the tail of the final
+     * cluster is not included. */
+    assert_true(total == e->size);
+
+    from_extents = malloc((size_t)e->size);
+    from_read = malloc((size_t)e->size);
+    assert_non_null(from_extents);
+    assert_non_null(from_read);
+
+    total = 0;
+    for (i = 0; i < count; i++) {
+        assert_int_equal(img_read(&img_fd, ex[i].vol_off, ex[i].len,
+                                  from_extents + total), 0);
+        total += ex[i].len;
+    }
+
+    assert_int_equal(exfat_file_open(v, &f, e), EXFAT_OK);
+    assert_int_equal(exfat_file_read(&f, 0, e->size, from_read), EXFAT_OK);
+    if (memcmp(from_extents, from_read, (size_t)e->size) != 0)
+        printf("  extent reassembly differs from the read path for %s\n",
+               path);
+    assert_memory_equal(from_extents, from_read, (size_t)e->size);
+
+    free(from_extents);
+    free(from_read);
+    free(ex);
+}
+
+/* Depth-first over the whole volume, checking every file it finds. Nothing is
+ * hardcoded about which files exist, so an optional artifact or a change to
+ * tools/mk-test-exfat.sh widens the coverage instead of breaking the test. */
+static unsigned extent_walk(exfat_vol *v, exfat_dir *d, const char *prefix,
+                            unsigned depth)
+{
+    exfat_dirent e;
+    unsigned checked = 0;
+    int rc;
+
+    assert_true(depth < 8);
+    for (;;) {
+        char name[PATH_MAX_T];
+        char path[PATH_MAX_T];
+
+        rc = exfat_dir_next(d, &e);
+        assert_true(rc >= 0);
+        if (rc == 0)
+            break;
+
+        ucs2_to_ascii(e.name, name, sizeof(name));
+        snprintf(path, sizeof(path), "%s%s%s", prefix,
+                 prefix[0] != '\0' ? "/" : "", name);
+
+        if (e.is_dir) {
+            exfat_dir sub;
+
+            /* A directory has an allocation but no extent map: the call is
+             * refused rather than answered, on a real dirent as well as a
+             * synthetic one. */
+            {
+                size_t count = 99;
+
+                assert_int_equal(exfat_file_extents(v, &e, NULL, 0, &count),
+                                 EXFAT_ERR_BAD_ARG);
+            }
+            assert_int_equal(exfat_dir_open(v, &sub, &e), EXFAT_OK);
+            checked += extent_walk(v, &sub, path, depth + 1);
+            continue;
+        }
+
+        check_file_extents(v, &e, path);
+        checked++;
+    }
+    return checked;
+}
+
+static void test_fixture_extents_every_file(void **state)
+{
+    exfat_vol v;
+    exfat_dir root;
+    unsigned checked;
+
+    (void)state;
+    mount_fixture(&v);
+    assert_int_equal(exfat_dir_open_root(&v, &root), EXFAT_OK);
+    checked = extent_walk(&v, &root, "", 0);
+    /* The fixture script always writes more than one file; zero here would
+     * mean the walk found nothing and the test proved nothing. */
+    assert_true(checked >= 8u);
+}
+
 /* The range contract holds on a real file too: the last byte is readable, one
  * past it is not, and neither is a length that would run off the end. */
 static void test_fixture_file_read_range_guard(void **state)
@@ -681,6 +819,7 @@ int run_fixture_tests(void)
         cmocka_unit_test(test_fixture_file_read_io_error),
         cmocka_unit_test(test_fixture_file_read_whole_file),
         cmocka_unit_test(test_fixture_file_read_random_spans),
+        cmocka_unit_test(test_fixture_extents_every_file),
     };
     int fd = open(FIXTURE_IMG, O_RDONLY);
 
