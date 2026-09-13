@@ -7,15 +7,23 @@
 # scanner's rules as well as its happy path, so a regression in the depth cap
 # or the dotfile/extension filters shows up as a changed menu.
 #
-# Expected menu after a boot against this image:
-#   Linux/fedora-fake.iso
-#   Linux/ubuntu-fake.iso
+# The tree is also what exercises the folder view of DESIGN Section 6 stage 1,
+# so it deliberately carries one of each shape: images in the root, a folder
+# with both images and a subfolder in it, a chain of folders that hold nothing
+# but the next folder, a folder with no images anywhere below it (which must
+# not appear at all), and a real bootable image three levels down.
+#
+# Expected root screen after a boot against this image (folders first, then
+# the images sitting in the root, each group in path order):
+#   deep/
+#   Linux/
 #   archlinux-fake.iso
-#   deep/a/b/justdeepenough-fake.iso
-#   systemrescue-fake.iso
 #   payload-floppy.img
 #   payload-gpt.img
 #   payload-test.iso
+#   systemrescue-fake.iso
+# Entering Linux/ shows "..", then rescue/, then fedora-fake.iso and
+# ubuntu-fake.iso by name; deep/ -> a/ -> b/ ends at the two images there.
 #
 # The fake ISOs are zero-filled and exist only to be listed. The real,
 # bootable entries are copied in when they have been built:
@@ -66,20 +74,27 @@ mkiso() {
     dd if=/dev/zero of="$MNT/$1" bs=1M count=1 status=none
 }
 
-# Happy path: root-level and one subdirectory deep.
+# Happy path: root-level and one subdirectory deep. Linux/ also holds a
+# subfolder, so one folder screen shows both kinds of row.
 mkiso archlinux-fake.iso
 mkiso systemrescue-fake.iso
 mkiso Linux/ubuntu-fake.iso
 mkiso Linux/fedora-fake.iso
+mkiso Linux/rescue/gparted-fake.iso
 
 # Depth cap (SCAN_DEPTH_MAX in src/efi/main.c): the walk enters directories at
 # depth 1..3, so files in deep/a/b are the last ones still listed and anything
-# under deep/a/b/c is never reached.
+# under deep/a/b/c is never reached. deep/ and deep/a/ hold nothing but the
+# next folder, which is the folder view's "only subfolders here" case.
 mkiso deep/a/b/justdeepenough-fake.iso
 mkiso deep/a/b/c/toodeep-fake.iso
 
-# Filtered out: wrong extension, and a name starting with '.'.
+# Filtered out: wrong extension, and a name starting with '.'. The folder is
+# the point of the second and third: a directory with no image anywhere below
+# it contributes no entry, so the folder view never offers it either.
 echo "not an ISO" > "$MNT/notaniso.txt"
+mkdir -p "$MNT/notes"
+echo "not an ISO" > "$MNT/notes/readme.txt"
 mkiso .hiddendir/hidden-fake.iso
 
 # The bootable entries, each copied in only when it has been built. Their
@@ -102,6 +117,10 @@ HAVE_IMG=0
 # drag-and-drop from a file manager produces.
 if [[ -f "$PAYLOAD_ISO" ]]; then
     cp --sparse=never "$PAYLOAD_ISO" "$MNT/payload-test.iso"
+    # The same image again, three folders down: booting THIS one is what shows
+    # that the folder view is presentation only, since everything from the
+    # dirent to the chainload still works off the full p2 path.
+    cp --sparse=never "$PAYLOAD_ISO" "$MNT/deep/a/b/payload-nested.iso"
     HAVE_PAYLOAD=1
 fi
 if [[ -f "$PAYLOAD_GPT" && -f "$PAYLOAD_FLOPPY" ]]; then
@@ -114,14 +133,16 @@ sync
 
 echo "created $IMG (${SIZE_MIB} MiB, whole-device exFAT, label AIRIES-ISO)"
 echo
-echo "listed by the loader:"
+echo "listed by the loader (shown by folder; full paths here):"
 echo "  archlinux-fake.iso"
 echo "  systemrescue-fake.iso"
 echo "  Linux/ubuntu-fake.iso"
 echo "  Linux/fedora-fake.iso"
+echo "  Linux/rescue/gparted-fake.iso"
 echo "  deep/a/b/justdeepenough-fake.iso"
 if [[ "$HAVE_PAYLOAD" -eq 1 ]]; then
     echo "  payload-test.iso              (real, bootable: AIRIES-PAYLOAD-OK)"
+    echo "  deep/a/b/payload-nested.iso   (the same one, three folders down)"
 else
     echo
     echo "note: build/test-payload.iso absent, so no bootable ISO entry is in"
@@ -139,4 +160,5 @@ echo
 echo "present but deliberately not listed:"
 echo "  deep/a/b/c/toodeep-fake.iso   (past the depth cap)"
 echo "  notaniso.txt                  (neither a .iso nor a .img)"
+echo "  notes/readme.txt              (folder with no image below it)"
 echo "  .hiddendir/hidden-fake.iso    (dot-prefixed directory)"

@@ -123,13 +123,21 @@ static EFI_STATUS wait_key(EFI_INPUT_KEY *key)
  * The blessing (DESIGN Section 8.1) is resolved once, while the labels are
  * built, and carried here for the same reason: the lookup needs the entry's
  * path relative to the volume root, and by the time the user picks something
- * that label has a suffix appended to it. */
+ * that label has a suffix appended to it.
+ *
+ * dir_len is where the file name starts inside that label, i.e. the length of
+ * the '/'-terminated directory prefix the walk was in when it found the file
+ * (0 at the volume root). It is what the folder view of DESIGN Section 6
+ * stage 1 groups on, and it means the view needs no second copy of the path:
+ * label[0..dir_len) is the folder, label + dir_len is the file name with its
+ * suffix already on it. */
 typedef struct {
     UINTN vol;
     fs_dirent ent;
     iso_media_kind kind;
     bless_state bless;
     bless_hit   hit;       /* valid only when bless != BLESS_NONE */
+    UINTN dir_len;
 } iso_target;
 
 typedef struct {
@@ -159,6 +167,7 @@ static void list_add(iso_list *list, const CHAR16 *prefix,
     memcpy(e->label + pl, ent->name, (nl + 1) * sizeof(CHAR16));
     t->vol = list->cur_vol;
     t->kind = kind;
+    t->dir_len = pl;
     /* Resolved in probe_entries, once the list is sorted and the label is
      * still the bare path; NONE until then so a target is never half-filled. */
     t->bless = BLESS_NONE;
@@ -350,18 +359,27 @@ static void suffix_build(CHAR16 *buf, UINTN cap, const iso_survey *survey,
 
 /* Appends the suffix to the entry's path label. If the two cannot both fit,
  * the path is what loses characters: a truncated path is still recognisable,
- * whereas a truncated suffix would misstate what was found. */
-static void label_suffix(menu_entry *e, const iso_survey *survey,
-                         bless_state bless)
+ * whereas a truncated suffix would misstate what was found.
+ *
+ * A truncation that eats into the file name would leave dir_len pointing past
+ * the end of what is left, so it is pulled back with the path: the folder view
+ * then shows the entry a level or more shallower than it really is, which is
+ * wrong-looking but bounded, where an unclamped offset would index into the
+ * suffix. Only a path within a few characters of MENU_PATH_MAX gets here. */
+static void label_suffix(menu_entry *e, iso_target *t,
+                         const iso_survey *survey)
 {
     CHAR16 suffix[SUFFIX_MAX];
     UINTN sl, pl;
 
-    suffix_build(suffix, SUFFIX_MAX, survey, bless);
+    suffix_build(suffix, SUFFIX_MAX, survey, t->bless);
     sl = ucs2_len(suffix);
     pl = ucs2_len(e->label);
-    if (pl + sl + 1 > MENU_PATH_MAX)
+    if (pl + sl + 1 > MENU_PATH_MAX) {
         pl = MENU_PATH_MAX - 1 - sl;
+        if (t->dir_len > pl)
+            t->dir_len = pl;
+    }
     memcpy(e->label + pl, suffix, (sl + 1) * sizeof(CHAR16));
 }
 
@@ -401,14 +419,203 @@ static void probe_entries(iso_list *list)
                                 t->ent.size, &t->hit);
 
         if (i >= probed) {
-            label_suffix(&list->entries[i], (const iso_survey *)0, t->bless);
+            label_suffix(&list->entries[i], t, (const iso_survey *)0);
             continue;
         }
         iso_survey_media(g_st, &g_vols[t->vol], &t->ent, t->kind, &survey);
-        label_suffix(&list->entries[i], &survey, t->bless);
+        label_suffix(&list->entries[i], t, &survey);
         out(L".");
     }
     out(L"\r\n");
+}
+
+/* ---- folder view (DESIGN Section 6 stage 1) ---- */
+
+/* The listing is presented by folder; nothing underneath it is. The scan
+ * still walks every directory in one pass, the labels are still built from
+ * full p2 paths, the bless lookup still matches on those paths and the boot
+ * still hands src/iso the dirent the walk found. This layer owns one string,
+ * the folder currently on screen, and derives the rows from the flat list
+ * each time it changes. Descending and going up allocate nothing, read
+ * nothing off the volume, and cannot disagree with the flat list about what
+ * an entry is, because they never copy anything out of it.
+ *
+ * Consequence worth stating: a row's label is what the user reads, never what
+ * the loader acts on. Picking an image dispatches on its flat index, which
+ * carries the full path, its volume and its media kind (see iso_target). */
+
+/* Every entry at one level, plus the one extra row the level can carry: ".."
+ * below the root, the pinned personal-OS entry at it, never both. */
+#define VIEW_MAX (MAX_ISOS + 2u)
+
+typedef enum {
+    VIEW_PERSONAL,   /* the pinned personal-OS entry; root screen only */
+    VIEW_UP,         /* leave the current folder */
+    VIEW_DIR,        /* descend into the folder this row names */
+    VIEW_IMAGE       /* boot flat entry idx */
+} view_kind;
+
+/* What a screen row means, kept beside the labels rather than parsed back out
+ * of them: a label is text for a human and a file called "..iso" must not be
+ * able to impersonate a navigation row. */
+typedef struct {
+    view_kind kind;
+    UINTN     idx;   /* flat list index; VIEW_DIR (a member) and VIEW_IMAGE */
+} view_row;
+
+/* Does this entry live at or below the folder on screen? Exact comparison,
+ * not the case-insensitive one the sort uses: both strings were assembled by
+ * the same walk out of the same directory names, so here a difference in case
+ * is a difference in directory. Reads stay inside the label buffer because
+ * cur_len is always shorter than it, and the first NUL in a shorter label
+ * mismatches a prefix character that is never NUL. */
+static BOOLEAN under_cur(const CHAR16 *label, const CHAR16 *cur, UINTN cur_len)
+{
+    UINTN i;
+
+    for (i = 0; i < cur_len; i++) {
+        if (label[i] != cur[i])
+            return FALSE;
+    }
+    return TRUE;
+}
+
+/* Length of the next path component of an entry below the current folder:
+ * label[cur_len..] up to the '/' that ends it. The walk terminates every
+ * directory prefix with '/', so for an entry whose dir_len exceeds cur_len
+ * that separator is always there. */
+static UINTN comp_len(const CHAR16 *label, UINTN cur_len)
+{
+    UINTN n = 0;
+
+    while (label[cur_len + n] != u'/' && label[cur_len + n] != 0)
+        n++;
+    return n;
+}
+
+/* Is an existing folder row the same folder as the cl characters at p? The
+ * row's label is the name with its '/' on the end, and a component never
+ * contains one, so a shorter row mismatches at its separator rather than
+ * running off its terminator. */
+static BOOLEAN dir_row_is(const CHAR16 *row, const CHAR16 *p, UINTN cl)
+{
+    UINTN i;
+
+    for (i = 0; i < cl; i++) {
+        if (row[i] != p[i])
+            return FALSE;
+    }
+    return row[cl] == u'/';
+}
+
+/* The ".." row doubles as the only place the current folder is named. The
+ * rows under it are file names, so the path has to be somewhere, and the
+ * banner is not it: its columns are spoken for by the Secure Boot state,
+ * which DESIGN Section 7.4 wants unmissable and a long path would push off
+ * the row. */
+static void up_label(CHAR16 *dst, const CHAR16 *cur)
+{
+    wbuf w = { dst, MENU_PATH_MAX, 0 };
+
+    wbuf_ucs2(&w, L"..  (now in /");
+    wbuf_ucs2(&w, cur);
+    wbuf_ucs2(&w, L")");
+}
+
+/* Paints the rows for one folder and returns how many there are: the one
+ * navigation or pinned row, then the subfolders, then the images sitting
+ * directly in this folder. Both groups come out of the flat list in its own
+ * order, which the sort already made the path order, so both are sorted.
+ *
+ * The bounds tests cannot fire (a folder's rows are at most one per flat
+ * entry, since every subfolder needs an entry beneath it to exist at all)
+ * and are there so that a future cap change cannot turn into an overrun. */
+static UINTN view_build(const iso_list *list, const CHAR16 *cur, UINTN cur_len,
+                        UINTN pinned, menu_entry *view, view_row *rows)
+{
+    UINTN n = 0;
+    UINTN i, j;
+
+    if (cur_len == 0) {
+        if (pinned != 0) {
+            rows[n].kind = VIEW_PERSONAL;
+            rows[n].idx = 0;
+            ucs2_copy(view[n].label, MENU_PATH_MAX, pos_entry_label());
+            n++;
+        }
+    } else {
+        rows[n].kind = VIEW_UP;
+        rows[n].idx = 0;
+        up_label(view[n].label, cur);
+        n++;
+    }
+
+    for (i = 0; i < list->count && n < VIEW_MAX; i++) {
+        const CHAR16 *label = list->entries[i].label;
+        UINTN cl;
+
+        if (list->targets[i].dir_len <= cur_len ||
+            !under_cur(label, cur, cur_len))
+            continue;
+        cl = comp_len(label, cur_len);
+        for (j = 0; j < n; j++) {
+            if (rows[j].kind == VIEW_DIR &&
+                dir_row_is(view[j].label, label + cur_len, cl))
+                break;
+        }
+        if (j < n)
+            continue;   /* a sibling already put this folder on screen */
+        memcpy(view[n].label, label + cur_len, cl * sizeof(CHAR16));
+        view[n].label[cl] = u'/';
+        view[n].label[cl + 1] = 0;
+        rows[n].kind = VIEW_DIR;
+        rows[n].idx = i;
+        n++;
+    }
+
+    for (i = 0; i < list->count && n < VIEW_MAX; i++) {
+        const CHAR16 *label = list->entries[i].label;
+
+        if (list->targets[i].dir_len != cur_len ||
+            !under_cur(label, cur, cur_len))
+            continue;
+        /* From dir_len on, the label is already the file name followed by the
+         * suffix probe_entries built for it, so the folder screen shows the
+         * same [family, signature] and [blessed] words the flat list would. */
+        ucs2_copy(view[n].label, MENU_PATH_MAX, label + cur_len);
+        rows[n].kind = VIEW_IMAGE;
+        rows[n].idx = i;
+        n++;
+    }
+
+    return n;
+}
+
+/* Descend. The row's label is the folder name with its separator already on
+ * it, which is exactly what the path wants appended; the length test cannot
+ * fire, because the path this name was taken from fit in the same buffer. */
+static void view_enter(CHAR16 *cur, UINTN *cur_len, const CHAR16 *row)
+{
+    UINTN n = ucs2_len(row);
+
+    if (*cur_len + n + 1 > MENU_PATH_MAX)
+        return;
+    memcpy(cur + *cur_len, row, (n + 1) * sizeof(CHAR16));
+    *cur_len += n;
+}
+
+/* Up one level: drop the last component, its separator with it. */
+static void view_up(CHAR16 *cur, UINTN *cur_len)
+{
+    UINTN n = *cur_len;
+
+    if (n == 0)
+        return;
+    n--;                                  /* the trailing '/' */
+    while (n > 0 && cur[n - 1] != u'/')
+        n--;
+    cur[n] = 0;
+    *cur_len = n;
 }
 
 /* ---- entry point ---- */
@@ -611,12 +818,17 @@ static void permissive_notice(sb_mode mode)
 EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
 {
     iso_list list = { (void *)0, (void *)0, 0, 0, 0 };
-    menu_entry *display = (menu_entry *)0;
+    menu_entry *view = (menu_entry *)0;
     menu_banner banner;
+    /* The folder on screen, '/'-terminated, empty at the volume root, and the
+     * rows derived from it. Static because together they are three kilobytes
+     * and the rest of this file keeps buffers that size off the stack. */
+    static view_row rows[VIEW_MAX];
+    static CHAR16 cur[MENU_PATH_MAX];
+    UINTN cur_len = 0;
     UINTN vols = 0;
-    /* 1 when the personal-OS entry is pinned at the top of the list, 0 when
-     * no unlockable LUKS2 volume is in sight. It is also the offset between a
-     * menu index and an ISO index, which is why it is not a bare BOOLEAN. */
+    /* 1 when the personal-OS entry is pinned at the top of the root screen,
+     * 0 when no unlockable LUKS2 volume is in sight. */
     UINTN pinned = 0;
 
     g_st = st;
@@ -624,12 +836,17 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
     st->BootServices->SetWatchdogTimer(0, 0, 0, (CHAR16 *)0);
     st->ConOut->Reset(st->ConOut, FALSE);
 
-    /* One slot more than the ISO cap: the personal-OS entry is rendered from
-     * the same array, so the menu stays a single flat list, and the ISO half
-     * keeps indexing from zero by handing the scan a shifted pointer. */
+    /* Two label arrays, because the flat list and the screen are no longer the
+     * same thing: the scan's full-path labels stay as they are for the whole
+     * run (the bless lookup, the boot banner and every index into targets
+     * depend on that), and the folder view writes its own rows beside them. */
     if (st->BootServices->AllocatePool(EfiLoaderData,
-                                       (MAX_ISOS + 1) * sizeof(menu_entry),
-                                       (void **)&display)
+                                       MAX_ISOS * sizeof(menu_entry),
+                                       (void **)&list.entries)
+        != EFI_SUCCESS ||
+        st->BootServices->AllocatePool(EfiLoaderData,
+                                       VIEW_MAX * sizeof(menu_entry),
+                                       (void **)&view)
         != EFI_SUCCESS ||
         st->BootServices->AllocatePool(EfiLoaderData,
                                        MAX_ISOS * sizeof(iso_target),
@@ -652,7 +869,6 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
      * promises nothing about whether they know the passphrase. */
     if (pos_scan(st) != 0)
         pinned = 1;
-    list.entries = display + pinned;
 
     scan_all_volumes(&list, &vols);
     /* Sort first: probing appends to the labels, and sorting after that would
@@ -660,14 +876,19 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
     sort_list(&list);
     probe_entries(&list);
 
-    if (pinned != 0)
-        ucs2_copy(display[0].label, MENU_PATH_MAX, pos_entry_label());
-
     for (;;) {
-        INTN pick = menu_run(st, &banner, display, list.count + pinned);
+        UINTN shown = view_build(&list, cur, cur_len, pinned, view, rows);
+        INTN pick = menu_run(st, &banner, view, shown);
         EFI_INPUT_KEY key;
+        UINTN sel;
 
         if (pick < 0) {
+            /* ESC is "back": out of the folder while there is one to leave,
+             * out of the loader at the root. */
+            if (cur_len != 0) {
+                view_up(cur, &cur_len);
+                continue;
+            }
             st->ConOut->ClearScreen(st->ConOut);
             out(L"airies-boot: returning to firmware.\r\n");
             if (vols == 0)
@@ -690,15 +911,28 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
                     L"read\r\n");
             }
             g_st->BootServices->FreePool(list.targets);
-            g_st->BootServices->FreePool(display);
+            g_st->BootServices->FreePool(view);
+            g_st->BootServices->FreePool(list.entries);
             return EFI_SUCCESS;
         }
 
-        if (pinned != 0 && (UINTN)pick == 0) {
+        sel = (UINTN)pick;
+        switch (rows[sel].kind) {
+        case VIEW_UP:
+            view_up(cur, &cur_len);
+            continue;
+        case VIEW_DIR:
+            view_enter(cur, &cur_len, view[sel].label);
+            continue;
+        case VIEW_PERSONAL:
             if (!boot_personal(image_handle))
                 continue;
-        } else {
-            UINTN idx = (UINTN)pick - pinned;
+            break;
+        case VIEW_IMAGE:
+        default: {
+            /* The full-path label, not the row the user read: what is booted
+             * and what is reported are both the flat entry. */
+            UINTN idx = rows[sel].idx;
 
             /* DESIGN Section 8.1: a fresh blessing boots the signed wrap, a
              * stale one boots as if it were not blessed at all. */
@@ -708,6 +942,8 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
             else
                 boot_target(image_handle, &list.entries[idx],
                             &list.targets[idx]);
+            break;
+        }
         }
         wait_key(&key);
     }

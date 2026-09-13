@@ -2,12 +2,12 @@
  * build order step 8).
  *
  * The appliance is a signed UKI that boots under full Secure Boot, unlocks p3
- * with the user's passphrase, reads the MOK private key that lives there, asks
- * the user to vouch for each unsigned ISO on p2 one at a time, and hands each
- * confirmed one to the SAME `airies-boot-sign` implementation the host route
- * runs (here the static link, /usr/bin/airies-boot-sign-static). Then it
- * reboots. That is the whole program; there is no shell in this initramfs and
- * nothing else to run.
+ * with the user's passphrase, reads the MOK private key that lives there, has
+ * the user mark the unsigned ISOs on p2 one by one and then confirm the marked
+ * set as a whole, and hands each confirmed one to the SAME `airies-boot-sign`
+ * implementation the host route runs (here the static link,
+ * /usr/bin/airies-boot-sign-static). Then it reboots. That is the whole
+ * program; there is no shell in this initramfs and nothing else to run.
  *
  * Why a C init rather than busybox: the appliance is the only place besides an
  * external host where the private key is ever decrypted, so the userland
@@ -28,10 +28,13 @@
  *     to the shelf: the UKI wrap and the manifest record both land on p2. A
  *     read-only mapping means a bug in anything downstream cannot damage the
  *     one copy of the key.
- *   - Every ISO requires the user to type "yes". That typed word IS the
- *     "I vouch for this" act the design rests on: it is what stops an ISO
- *     someone dropped on the stick from being blessed because it happened to
- *     be sitting there. There is no "sign all" and there must never be one.
+ *   - Nothing is signed that the user did not mark by hand and then confirm.
+ *     The per-image mark plus the typed "yes" over the reviewed list together
+ *     ARE the "I vouch for these" act the design rests on: they are what stops
+ *     an ISO someone dropped on the stick from being blessed because it
+ *     happened to be sitting there. The list is never pre-marked, and the
+ *     confirmation prints every path it is about to sign, so nothing can be
+ *     swept in unseen (DESIGN Section 7.5, select-then-sign).
  *   - There is no network in this initramfs (no interface is brought up, and
  *     nothing here would use one), so the decrypted-key window cannot be
  *     reached from outside the machine.
@@ -603,6 +606,7 @@ typedef struct {
     char           rel[MANIFEST_PATH_MAX];  /* path relative to the p2 root */
     uint64_t       size;
     manifest_bless state;                   /* NONE or STALE; FRESH is skipped */
+    int            selected;                /* marked by hand; never preset */
 } candidate;
 
 static manifest_record g_records[MAX_RECORDS];
@@ -658,6 +662,7 @@ static void add_candidate(const char *rel, uint64_t size, manifest_bless st)
     }
     g_cand[g_cand_n].size = size;
     g_cand[g_cand_n].state = st;
+    g_cand[g_cand_n].selected = 0;
     g_cand_n++;
 }
 
@@ -710,6 +715,235 @@ static void walk(const char *abs, const char *rel, unsigned depth)
         }
     }
     (void)closedir(d);
+}
+
+/* ---- the pending list and the selection ceremony ----
+ *
+ * DESIGN Section 7.5 (select-then-sign, 2026-09-13): the user marks the images
+ * one at a time, the whole marked set is shown back once, and only a typed
+ * "yes" over that reviewed set starts any signing. The listing is grouped by
+ * folder so it reads like the loader's own folder-view menu (Section 6 stage
+ * 1); the grouping is presentation only, everything below still works on the
+ * full p2-relative path. */
+
+/* The file name half of a p2-relative path. */
+static const char *base_of(const char *rel)
+{
+    const char *slash = strrchr(rel, '/');
+
+    return (slash != NULL) ? slash + 1 : rel;
+}
+
+/* The folder half, "" for an image sitting at the p2 root. */
+static void dir_of(char *out, size_t cap, const char *rel)
+{
+    const char *slash = strrchr(rel, '/');
+    size_t n = (slash != NULL) ? (size_t)(slash - rel) : 0u;
+
+    if (n >= cap)
+        n = cap - 1u;
+    memcpy(out, rel, n);
+    out[n] = '\0';
+}
+
+/* Path order, with the folder compared before the file name so every folder's
+ * images come out contiguous and the root's come first ("" sorts before any
+ * folder name). That is the order the numbers, the review and the signing run
+ * all use, so the number next to an image never moves under the user. */
+static int cand_cmp(const void *a, const void *b)
+{
+    const candidate *x = (const candidate *)a;
+    const candidate *y = (const candidate *)b;
+    char dx[MANIFEST_PATH_MAX];
+    char dy[MANIFEST_PATH_MAX];
+    int c;
+
+    dir_of(dx, sizeof(dx), x->rel);
+    dir_of(dy, sizeof(dy), y->rel);
+    c = strcmp(dx, dy);
+    if (c != 0)
+        return c;
+    return strcmp(base_of(x->rel), base_of(y->rel));
+}
+
+static size_t selected_count(void)
+{
+    size_t i;
+    size_t n = 0;
+
+    for (i = 0; i < g_cand_n; i++) {
+        if (g_cand[i].selected)
+            n++;
+    }
+    return n;
+}
+
+/* One image's line. Printed on its own after a toggle so a dumb serial console
+ * does not have to redraw the whole list for every keystroke. */
+static void print_item(size_t i)
+{
+    say("    [%c] %2zu  %s  (%llu MiB)\n", g_cand[i].selected ? 'x' : ' ',
+        i + 1u, base_of(g_cand[i].rel),
+        (unsigned long long)(g_cand[i].size / (1024u * 1024u)));
+    if (g_cand[i].state == MANIFEST_BLESS_STALE)
+        say("           blessed earlier; the file has changed since\n");
+}
+
+static void print_list(void)
+{
+    char dir[MANIFEST_PATH_MAX];
+    char cur[MANIFEST_PATH_MAX];
+    size_t i;
+    int have_cur = 0;
+
+    cur[0] = '\0';
+    say("\npending unsigned images:\n\n");
+    for (i = 0; i < g_cand_n; i++) {
+        dir_of(dir, sizeof(dir), g_cand[i].rel);
+        if (!have_cur || strcmp(dir, cur) != 0) {
+            /* "/" for the root, "Linux/" for a folder: one shape, and the
+             * trailing slash is what says "this is a folder, not an image". */
+            say("  %s/\n", dir);
+            (void)snprintf(cur, sizeof(cur), "%s", dir);
+            have_cur = 1;
+        }
+        print_item(i);
+    }
+}
+
+/* A bare 1-based image number, and nothing else. Returns 1 and the 0-based
+ * index for a number in range, -1 for a number that names no image, 0 for
+ * anything that is not a number. Deliberately strict: "2 " or "2y" is a typo,
+ * and guessing what a typo meant is not a thing to do in front of a signing
+ * key. */
+static int parse_index(const char *s, size_t *out)
+{
+    unsigned long v = 0;
+    size_t i;
+
+    if (s[0] == '\0')
+        return 0;
+    for (i = 0; s[i] != '\0'; i++) {
+        if (s[i] < '0' || s[i] > '9')
+            return 0;
+        v = v * 10u + (unsigned long)(s[i] - '0');
+        if (v > (unsigned long)g_cand_n)
+            return -1;   /* keeps the accumulator from running away too */
+    }
+    if (v == 0u)
+        return -1;
+    *out = (size_t)v - 1u;
+    return 1;
+}
+
+/* The batch review. Prints every marked path in full and takes the one word
+ * that authorises the batch. 1 = confirmed, 0 = back to the list (a typo must
+ * not cost the marks), -1 = the console closed. */
+static int review(size_t n)
+{
+    char answer[32];
+    size_t i;
+
+    say("\nreview: %zu image%s marked\n\n", n, (n == 1u) ? "" : "s");
+    for (i = 0; i < g_cand_n; i++) {
+        if (g_cand[i].selected)
+            say("  /%s\n", g_cand[i].rel);
+    }
+    say("\nSigning these says you trust every one of them to run on this\n"
+        "machine with Secure Boot on.\n"
+        "type 'yes' to sign them, anything else to go back to the list: ");
+    if (read_line(answer, sizeof(answer)) < 0)
+        return -1;
+    if (strcmp(answer, "yes") != 0) {
+        say("not confirmed; back to the list (the marks are kept).\n");
+        return 0;
+    }
+    return 1;
+}
+
+/* Runs the whole ceremony. Returns 1 when a reviewed set was confirmed, 0 when
+ * the user left without vouching for anything. The marks live in
+ * g_cand[].selected and start clear. */
+static int choose_candidates(void)
+{
+    print_list();
+    say("\nMark what you vouch for, then review it:\n"
+        "  <n>   toggle image n        all / none   mark every image / clear\n"
+        "  list  reprint the list      done         review the marked set\n"
+        "  quit  reboot without signing anything\n");
+
+    for (;;) {
+        char line[64];
+        size_t idx;
+
+        say("select> ");
+        if (read_line(line, sizeof(line)) < 0) {
+            say("\nconsole closed; nothing was signed.\n");
+            return 0;
+        }
+        /* An empty line is "done": it is what a user leans on Enter for, and
+         * on an empty selection "done" only re-prompts, so it cannot sign. */
+        if (line[0] == '\0' || strcasecmp(line, "done") == 0) {
+            size_t n = selected_count();
+            int r;
+
+            if (n == 0) {
+                say("nothing is marked. Mark an image by number, or 'quit' to\n"
+                    "leave without signing.\n");
+                continue;
+            }
+            r = review(n);
+            if (r > 0)
+                return 1;
+            if (r < 0) {
+                say("\nconsole closed; nothing was signed.\n");
+                return 0;
+            }
+            continue;
+        }
+        if (strcasecmp(line, "quit") == 0) {
+            say("leaving without signing anything.\n");
+            return 0;
+        }
+        if (strcasecmp(line, "list") == 0) {
+            print_list();
+            continue;
+        }
+        if (strcasecmp(line, "all") == 0) {
+            size_t i;
+
+            for (i = 0; i < g_cand_n; i++)
+                g_cand[i].selected = 1;
+            print_list();
+            say("all %zu marked; the review lists every one, read it.\n",
+                g_cand_n);
+            continue;
+        }
+        if (strcasecmp(line, "none") == 0) {
+            size_t i;
+
+            for (i = 0; i < g_cand_n; i++)
+                g_cand[i].selected = 0;
+            print_list();
+            continue;
+        }
+        {
+            int r = parse_index(line, &idx);
+
+            if (r > 0) {
+                g_cand[idx].selected = !g_cand[idx].selected;
+                print_item(idx);
+                continue;
+            }
+            if (r < 0) {
+                say("there is no image %s; the list has %zu.\n", line,
+                    g_cand_n);
+                continue;
+            }
+        }
+        say("not understood: '%s'. Type an image number, or all, none, list,\n"
+            "done, quit.\n", line);
+    }
 }
 
 /* ---- teardown ---- */
@@ -774,7 +1008,8 @@ int main(void)
         "airies-boot signing appliance\n"
         "=============================\n"
         "Signs ISOs on p2 with the MOK private key that lives encrypted on p3.\n"
-        "No network. Nothing else runs in here. Every ISO is confirmed by hand.\n\n");
+        "No network. Nothing else runs in here. Nothing is signed that you did\n"
+        "not mark by hand and confirm.\n\n");
 
     load_modules();
 
@@ -895,65 +1130,74 @@ int main(void)
         finish(p2_mounted, p3_mounted, mapped);
     }
 
+    /* Path order once, here, so the numbers the user types, the order the
+     * review prints and the order the batch signs in are all the same one. */
+    qsort(g_cand, g_cand_n, sizeof(g_cand[0]), cand_cmp);
+
     say("\nAIRIES-APPLIANCE-PENDING %zu\n", g_cand_n);
-    for (i = 0; i < g_cand_n; i++) {
-        say("  [%zu] %s (%llu MiB)%s\n", i + 1u, g_cand[i].rel,
-            (unsigned long long)(g_cand[i].size / (1024u * 1024u)),
-            g_cand[i].state == MANIFEST_BLESS_STALE
-                ? "  [blessed earlier; the file has changed since]" : "");
-    }
 
-    /* ---- per-ISO confirmation, then the bless ----
+    /* ---- mark, review, confirm, then the bless ----
      *
-     * DESIGN Section 7.5: the typed "yes" is the user vouching for this
-     * specific image. Anything else skips it. There is no bulk answer. */
-    say("\nSigning an ISO says you trust it to run on this machine with\n"
-        "Secure Boot on. Type 'yes' for each one you vouch for.\n");
+     * DESIGN Section 7.5: the marks are the per-image vouch and the typed
+     * "yes" over the reviewed set releases the batch. Nothing below runs
+     * unless both happened. */
+    if (!choose_candidates()) {
+        /* Nothing was vouched for, so every pending image is a skip. */
+        skipped_n = g_cand_n;
+    } else {
+        size_t sel_n = selected_count();
+        size_t done_n = 0;
 
-    for (i = 0; i < g_cand_n; i++) {
-        char answer[32];
-        char abs[PATH_MAX];
-        char rel_arg[MANIFEST_PATH_MAX + 2u];
-        int rc;
+        say("\nAIRIES-APPLIANCE-SELECTED %zu\n", sel_n);
 
-        say("\n[%zu/%zu] %s\n      sign this ISO? type 'yes': ", i + 1u,
-            g_cand_n, g_cand[i].rel);
-        if (read_line(answer, sizeof(answer)) < 0) {
-            say("\nconsole closed; stopping here.\n");
-            break;
-        }
-        if (strcmp(answer, "yes") != 0) {
-            say("      skipped.\n");
-            skipped_n++;
-            continue;
-        }
+        for (i = 0; i < g_cand_n; i++) {
+            char abs[PATH_MAX];
+            char rel_arg[MANIFEST_PATH_MAX + 2u];
+            int rc;
 
-        (void)snprintf(abs, sizeof(abs), "%s/%s", P2_MNT, g_cand[i].rel);
-        (void)snprintf(rel_arg, sizeof(rel_arg), "/%s", g_cand[i].rel);
+            if (!g_cand[i].selected) {
+                skipped_n++;
+                continue;
+            }
+            done_n++;
 
-        {
-            char *argv[] = {
-                (char *)SIGN_TOOL,
-                abs,
-                (char *)"--stick", (char *)P2_MNT,
-                (char *)"--key", (char *)KEY_PATH,
-                (char *)"--cert", (char *)CERT_PATH,
-                (char *)"--iso-path", rel_arg,
-                (char *)"--dev", dev_arg,
-                (char *)"--stub", (char *)STUB_PATH,
-                NULL
-            };
+            /* The precision restates what add_candidate already guaranteed
+             * (the path fits the field, terminator included). It is spelled
+             * out here because the bound is what keeps a p2 path from running
+             * off the end of either buffer, and a bound stated in the call is
+             * one the compiler checks rather than one a reader has to trust. */
+            (void)snprintf(abs, sizeof(abs), "%s/%.*s", P2_MNT,
+                           (int)(sizeof(g_cand[i].rel) - 1u), g_cand[i].rel);
+            (void)snprintf(rel_arg, sizeof(rel_arg), "/%.*s",
+                           (int)(sizeof(g_cand[i].rel) - 1u), g_cand[i].rel);
 
-            say("      signing (this reads the whole ISO once to hash it)\n");
-            rc = run(argv, NULL, 0);
-        }
-        if (rc == 0) {
-            say("      AIRIES-APPLIANCE-SIGNED %s\n", g_cand[i].rel);
-            signed_n++;
-        } else {
-            say("      AIRIES-APPLIANCE-FAILED %s (exit %d)\n", g_cand[i].rel,
-                rc);
-            failed_n++;
+            {
+                char *argv[] = {
+                    (char *)SIGN_TOOL,
+                    abs,
+                    (char *)"--stick", (char *)P2_MNT,
+                    (char *)"--key", (char *)KEY_PATH,
+                    (char *)"--cert", (char *)CERT_PATH,
+                    (char *)"--iso-path", rel_arg,
+                    (char *)"--dev", dev_arg,
+                    (char *)"--stub", (char *)STUB_PATH,
+                    NULL
+                };
+
+                say("\n[%zu/%zu] /%s\n", done_n, sel_n, g_cand[i].rel);
+                say("      signing (this reads the whole ISO once to hash it)\n");
+                rc = run(argv, NULL, 0);
+            }
+            /* One image failing is that image's problem: the rest of the batch
+             * was vouched for too and still deserves to be signed. */
+            if (rc == 0) {
+                say("      AIRIES-APPLIANCE-SIGNED %s\n", g_cand[i].rel);
+                signed_n++;
+            } else {
+                say("      AIRIES-APPLIANCE-FAILED %s (exit %d)\n",
+                    g_cand[i].rel, rc);
+                failed_n++;
+            }
         }
     }
 

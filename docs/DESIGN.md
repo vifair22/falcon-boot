@@ -591,13 +591,15 @@ rest and out of the loader:
    - unlocks p3 with the passphrase and reads the MOK private key,
    - lists the pending unsigned ISOs (grouped by folder, matching the
      loader's menu) and requires **per-ISO selection followed by a batch
-     review**: each ISO is marked individually - that explicit act is the
-     "I vouch for this" of the trust model, and it is what stops a
-     dropped-in malicious ISO from being blessed silently - then the full
-     selection is shown once more and confirmed as a whole before anything
-     is signed (UX decision 2026-09-13: select-then-sign replaces the
-     original ask-as-you-go loop; the per-ISO human act is preserved, the
-     signing runs as one batch),
+     review**: ISOs are marked (individually as the normal case; a bulk
+     mark exists as a convenience), the marked set is then shown as a
+     review that names every path, and a typed "yes" over that review
+     releases the batch. The review-plus-yes is the binding "I vouch for
+     these" act of the trust model: nothing is ever pre-marked, every path
+     about to be signed is on screen at the moment of confirmation, and
+     that is what stops a dropped-in malicious ISO from being blessed
+     silently (UX decision 2026-09-13: select-then-sign replaces the
+     original ask-as-you-go loop),
    - for each selected ISO, extracts the kernel, wraps and signs it as a
      minimal UKI with the derived `iso-scan` cmdline embedded, and stages it
      plus its manifest record per Section 8.1,

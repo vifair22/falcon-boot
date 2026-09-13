@@ -7,18 +7,26 @@
 # appliance, and drives the appliance itself. Two appliance runs in one QEMU
 # session, because the second one is what proves the first one was recorded:
 #
-#   run 1  confirm the Arch ISO ("yes"), decline payload-test.iso
-#          -> expect 2 pending, 1 signed, 1 skipped
-#   run 2  a WRONG passphrase first (expect a clean retry, no key exposure),
-#          then the right one; the Arch ISO must no longer be pending, and
-#          confirming payload-test.iso must fail cleanly (it carries no
-#          Linux kernel for the bless to wrap)
-#          -> expect 1 pending, 0 signed, 1 failed
+#   run 1  the select-then-sign flow of DESIGN Section 7.5. Two pending ISOs,
+#          one at the p2 root and one in a folder, so the grouped listing has
+#          something to group. A junk line first (it must cost one error line,
+#          not the session), then image 2 is marked, reviewed and confirmed.
+#          -> expect 2 pending, SELECTED 1, 1 signed, 1 skipped
+#   run 2  the same stick a second time: the blessed ISO must no longer be
+#          pending, and 'quit' at the selection prompt must leave without
+#          signing.
+#          -> expect 1 pending, no SELECTED marker, 0 signed, 0 failed
 #
-# Then the stick is mounted on the host and checked: the wrap exists, it
-# verifies against the stick's certificate, the manifest's sha256 is the ISO's
-# real hash, and the signed cmdline names p2 by the volume serial that
-# partition actually carries.
+# Neither run types a passphrase on the usual path: the loader hands the
+# appliance the one it already collected (DESIGN Section 5.1). The driver
+# waits for whichever unlock the run takes, so the interactive fallback is
+# still driven if the credential is ever missing.
+#
+# Then the stick is mounted on the host and checked: exactly one wrap exists,
+# it verifies against the stick's certificate, the manifest holds exactly the
+# one record, its sha256 is the ISO's real hash, and the signed cmdline names
+# p2 by the volume serial that partition actually carries and the ISO by its
+# path inside the folder.
 #
 # Two serial ports, and the reason matters: ttyS0 is the rig's usual
 # write-only log (tools/run-qemu.sh --headless), which carries the firmware
@@ -45,10 +53,13 @@ CONSOLE_LOG="$OUT/appliance-console.log"
 MON="$OUT/mon.sock"
 
 PASS="${AIRIES_TEST_PASS:-airies-test}"
-WRONG_PASS=wrongpass
 
-ARCH_ISO_NAME=archlinux-2026.01.01-x86_64.iso
-BLESSED_UKI=archlinux-2026.01.01-x86_64.uki
+# What tools/mk-test-appliance-stick.sh staged on p2, and what signing the
+# second of them must produce under airies/blessed.
+ROOT_ISO_NAME=arch-mini-root.iso
+FOLDER=Linux
+FOLDER_ISO_NAME=arch-mini-linux.iso
+BLESSED_UKI=arch-mini-linux.uki
 
 QEMU_PID=
 READER_PID=
@@ -130,31 +141,60 @@ wait_for_from() {
     fail "timed out after ${secs}s waiting for '$pat' in $file"
 }
 
-# Prompts are counted rather than searched for by offset: the appliance
-# prints the whole list and the first prompt in one breath, so a driver that
-# marks a position only after reading the list has already missed it. The Nth
-# prompt of the session is an unambiguous thing to wait for.
-prompt_count() { grep -ac "sign this ISO" "$CONSOLE_LOG" 2>/dev/null || true; }
+# True when a pattern has appeared in the appliance console since a byte
+# offset. The console is a serial line, so every line ends CR LF; -F keeps the
+# brackets and slashes in the patterns below literal.
+seen_from() {
+    local off="$1" pat="$2"
 
-wait_prompt() {
-    local want="$1" secs="${2:-120}" i=0
+    tail -c "+$(( off + 1 ))" "$CONSOLE_LOG" 2>/dev/null | grep -aqF "$pat"
+}
+
+# The selection prompt carries no newline, so prompts are counted rather than
+# waited for by position: the appliance prints the whole list and the first
+# prompt in one breath, and the Nth prompt since a mark is an unambiguous
+# thing to synchronise on.
+select_count() {
+    tail -c "+$(( ${1:-0} + 1 ))" "$CONSOLE_LOG" 2>/dev/null |
+        grep -ac 'select>' || true
+}
+
+# The loader hands the appliance the passphrase it already collected (DESIGN
+# Section 5.1), so the usual path reaches the pending list with no prompt at
+# all; the prompt is the fallback for a missing or stale credential. Which one
+# a run takes is the loader's business, so it is waited for rather than
+# assumed, and the fallback still gets driven when it happens.
+unlock_appliance() {
+    local off="$1" secs="${2:-180}" i=0
 
     while (( i < secs * 10 )); do
-        if (( $(prompt_count) >= want )); then
+        if seen_from "$off" "p3 unlocked (read-only)"; then
+            echo "   p3 unlocked with the credential the loader delivered"
+            return 0
+        fi
+        if seen_from "$off" "passphrase for p3 (attempt 1 of 3)"; then
+            echo "   no usable credential; typing the passphrase"
+            say_to_appliance "$PASS"
+            wait_for_from "$CONSOLE_LOG" "$off" "p3 unlocked (read-only)" 120
             return 0
         fi
         sleep 0.1
         i=$(( i + 1 ))
     done
-    fail "timed out after ${secs}s waiting for confirmation prompt #$want"
+    fail "timed out after ${secs}s waiting for p3 to unlock"
 }
 
-# Which ISO the newest prompt is about: the appliance names it on the line
-# immediately above.
-current_iso() {
-    # The console is a serial line, so every line ends CR LF; the CR would
-    # otherwise ride along inside the file name and fail every comparison.
-    grep -ao '\[[0-9]*/[0-9]*\] [^ ]*' "$CONSOLE_LOG" | tail -1 | tr -d '\r'
+wait_select() {
+    local off="$1" want="$2" secs="${3:-120}" i=0
+
+    while (( i < secs * 10 )); do
+        if (( $(select_count "$off") >= want )); then
+            return 0
+        fi
+        sleep 0.1
+        i=$(( i + 1 ))
+    done
+    fail "timed out after ${secs}s waiting for selection prompt #$want"
 }
 
 size_of() { stat -c%s "$1" 2>/dev/null || echo 0; }
@@ -258,41 +298,77 @@ QEMU_PID=$!
 READER_PID=$!
 exec 3> "$CONSOLE.in"
 
-# ---- run 1: bless the Arch ISO ----
+# ---- run 1: mark one image, review it, sign it ----
 
 echo
 echo "== run 1: drive the loader into the appliance"
+RUN1_MARK=$(size_of "$CONSOLE_LOG")
 enter_appliance
 
 wait_for "$CONSOLE_LOG" "airies-boot signing appliance" 180
-wait_for "$CONSOLE_LOG" "passphrase for p3 (attempt 1 of 3)" 120
-T_PROMPT=$(date +%s%N)
-echo "   appliance is up and asking for the passphrase"
-echo "   TIMING boot-to-prompt $(( (T_PROMPT - T_LAUNCH) / 1000000 )) ms" \
+T_UP=$(date +%s%N)
+echo "   appliance is up"
+echo "   TIMING boot-to-console $(( (T_UP - T_LAUNCH) / 1000000 )) ms" \
      "(from the menu selection, so it includes the loader reading the image)"
-say_to_appliance "$PASS"
+unlock_appliance "$RUN1_MARK"
 
 wait_for "$CONSOLE_LOG" "AIRIES-APPLIANCE-PENDING" 120
-grep -a "AIRIES-APPLIANCE-PENDING" "$CONSOLE_LOG" | tail -1
+PENDING1=$(grep -a "AIRIES-APPLIANCE-PENDING" "$CONSOLE_LOG" | tail -1)
+echo "   $PENDING1"
+[[ "$PENDING1" == *"PENDING 2"* ]] ||
+    fail "run 1 should see both staged ISOs pending, got '$PENDING1'"
 
-# Two prompts, answered by what the prompt names: the Arch ISO is vouched
-# for, the payload ISO is not. Answering per ISO is the point of the flow, so
-# the driver answers per ISO too rather than replying to a count.
-for n in 1 2; do
-    wait_prompt "$n" 120
-    iso=$(current_iso)
-    if [[ "$iso" == *"$ARCH_ISO_NAME" ]]; then
-        echo "   $iso -> confirming"
-        T_SIGN=$(date +%s%N)
-        say_to_appliance "yes"
-        wait_for "$CONSOLE_LOG" "AIRIES-APPLIANCE-SIGNED" 900
-        echo "   TIMING bless $(( ($(date +%s%N) - T_SIGN) / 1000000 )) ms" \
-             "(hash 1.4 GiB, extract the kernel, ukify, sbsign, record)"
-    else
-        echo "   $iso -> declining"
-        say_to_appliance "no"
-    fi
-done
+# The listing is the loader's folder view in text (DESIGN Section 6 stage 1,
+# Section 7.5): a header per folder, the root's images first, and a mark box
+# per image. Checked as a shape, not as a blob of text, so a regression that
+# flattens the grouping fails here rather than being read past.
+wait_select "$RUN1_MARK" 1 60
+seen_from "$RUN1_MARK" "pending unsigned images:" ||
+    fail "the appliance did not print the pending list"
+seen_from "$RUN1_MARK" "  $FOLDER/" ||
+    fail "no '$FOLDER/' folder header: the listing is not grouped by folder"
+seen_from "$RUN1_MARK" "[ ]  1  $ROOT_ISO_NAME" ||
+    fail "the root ISO is not listed as unmarked image 1"
+seen_from "$RUN1_MARK" "[ ]  2  $FOLDER_ISO_NAME" ||
+    fail "the folder's ISO is not listed as unmarked image 2"
+echo "   grouped listing:"
+tail -c "+$(( RUN1_MARK + 1 ))" "$CONSOLE_LOG" |
+    awk '/Mark what you vouch for/ { exit }
+         /pending unsigned images/ { f = 1 }
+         f { print }' | sed 's/\r$//; s/^/     /'
+
+# A line that means nothing must cost one error line and nothing else. The
+# selections are the user's vouch; losing them to a typo would push the user
+# toward answering fast the second time.
+echo "   sending junk at the selection prompt"
+say_to_appliance "bogus"
+wait_for_from "$CONSOLE_LOG" "$RUN1_MARK" "not understood: 'bogus'" 60
+
+wait_select "$RUN1_MARK" 2 60
+echo "   marking image 2 ($FOLDER/$FOLDER_ISO_NAME)"
+say_to_appliance "2"
+wait_for_from "$CONSOLE_LOG" "$RUN1_MARK" "[x]  2  $FOLDER_ISO_NAME" 60
+
+wait_select "$RUN1_MARK" 3 60
+say_to_appliance "done"
+wait_for_from "$CONSOLE_LOG" "$RUN1_MARK" "review: 1 image marked" 60
+seen_from "$RUN1_MARK" "  /$FOLDER/$FOLDER_ISO_NAME" ||
+    fail "the review did not print the marked image's full path"
+seen_from "$RUN1_MARK" "  /$ROOT_ISO_NAME" &&
+    fail "the review listed an image that was never marked"
+echo "   review shows exactly the one marked path; confirming"
+
+T_SIGN=$(date +%s%N)
+say_to_appliance "yes"
+wait_for_from "$CONSOLE_LOG" "$RUN1_MARK" "AIRIES-APPLIANCE-SELECTED 1" 60
+wait_for_from "$CONSOLE_LOG" "$RUN1_MARK" "AIRIES-APPLIANCE-SIGNED" 900
+echo "   TIMING bless $(( ($(date +%s%N) - T_SIGN) / 1000000 )) ms" \
+     "(hash the ISO, extract the kernel, ukify, sbsign, record)"
+SIGNED1=$(tail -c "+$(( RUN1_MARK + 1 ))" "$CONSOLE_LOG" |
+          grep -a "AIRIES-APPLIANCE-SIGNED" | tail -1 | sed 's/\r$//')
+echo "  $SIGNED1"
+[[ "$SIGNED1" == *"$FOLDER/$FOLDER_ISO_NAME"* ]] ||
+    fail "run 1 signed something other than the marked image: '$SIGNED1'"
 
 wait_for "$CONSOLE_LOG" "AIRIES-APPLIANCE-SUMMARY" 600
 SUMMARY1=$(grep -a "AIRIES-APPLIANCE-SUMMARY" "$CONSOLE_LOG" | tail -1)
@@ -303,20 +379,15 @@ echo "   $SUMMARY1"
 wait_for "$CONSOLE_LOG" "rebooting to the loader" 60
 echo "   appliance rebooted"
 
-# ---- run 2: idempotence, a wrong passphrase, and a bless that must fail ----
+# ---- run 2: idempotence, and a quit that signs nothing ----
 
 echo
 echo "== run 2: same stick, second visit"
 RUN2_MARK=$(size_of "$CONSOLE_LOG")
 enter_appliance
 
-wait_for_from "$CONSOLE_LOG" "$RUN2_MARK" "passphrase for p3 (attempt 1 of 3)" 180
-echo "   sending a WRONG passphrase first"
-say_to_appliance "$WRONG_PASS"
-wait_for_from "$CONSOLE_LOG" "$RUN2_MARK" "wrong passphrase" 120
-wait_for_from "$CONSOLE_LOG" "$RUN2_MARK" "passphrase for p3 (attempt 2 of 3)" 60
-echo "   refused, and it asked again; sending the right one"
-say_to_appliance "$PASS"
+wait_for_from "$CONSOLE_LOG" "$RUN2_MARK" "airies-boot signing appliance" 180
+unlock_appliance "$RUN2_MARK"
 
 wait_for_from "$CONSOLE_LOG" "$RUN2_MARK" "AIRIES-APPLIANCE-PENDING" 120
 PENDING2=$(tail -c "+$(( RUN2_MARK + 1 ))" "$CONSOLE_LOG" |
@@ -324,24 +395,31 @@ PENDING2=$(tail -c "+$(( RUN2_MARK + 1 ))" "$CONSOLE_LOG" |
 echo "   $PENDING2"
 [[ "$PENDING2" == *"PENDING 1"* ]] ||
     fail "run 2 should have exactly one pending ISO left, got '$PENDING2'"
-tail -c "+$(( RUN2_MARK + 1 ))" "$CONSOLE_LOG" | grep -a "^  \[1\]" |
-    grep -aq "$ARCH_ISO_NAME" &&
-    fail "the Arch ISO is still listed as pending after being blessed"
 
-wait_prompt 3 120
-iso=$(current_iso)
-[[ "$iso" == *payload-test.iso ]] ||
-    fail "run 2 offered '$iso', not the one ISO that is still pending"
-echo "   $iso -> confirming, and it has no kernel to wrap"
-say_to_appliance "yes"
-wait_for_from "$CONSOLE_LOG" "$RUN2_MARK" "AIRIES-APPLIANCE-FAILED" 300
+wait_select "$RUN2_MARK" 1 120
+seen_from "$RUN2_MARK" "$FOLDER_ISO_NAME" &&
+    fail "the blessed ISO is still listed as pending"
+seen_from "$RUN2_MARK" "  $FOLDER/" &&
+    fail "the '$FOLDER/' header survived though its only image is blessed"
+seen_from "$RUN2_MARK" "[ ]  1  $ROOT_ISO_NAME" ||
+    fail "the still-unsigned root ISO is not the one pending image"
+echo "   only the unsigned root ISO is pending, and its folder header is gone"
 
-wait_for_from "$CONSOLE_LOG" "$RUN2_MARK" "AIRIES-APPLIANCE-SUMMARY" 300
+echo "   quitting at the selection prompt"
+say_to_appliance "quit"
+wait_for_from "$CONSOLE_LOG" "$RUN2_MARK" "leaving without signing anything" 60
+
+wait_for_from "$CONSOLE_LOG" "$RUN2_MARK" "AIRIES-APPLIANCE-SUMMARY" 120
 SUMMARY2=$(tail -c "+$(( RUN2_MARK + 1 ))" "$CONSOLE_LOG" |
            grep -a "AIRIES-APPLIANCE-SUMMARY" | tail -1)
 echo "   $SUMMARY2"
-[[ "$SUMMARY2" == *"signed=0 failed=1 skipped=0"* ]] ||
+[[ "$SUMMARY2" == *"signed=0 failed=0 skipped=1"* ]] ||
     fail "run 2 summary is '$SUMMARY2'"
+seen_from "$RUN2_MARK" "AIRIES-APPLIANCE-SELECTED" &&
+    fail "run 2 reported a confirmed selection though it was quit"
+seen_from "$RUN2_MARK" "AIRIES-APPLIANCE-SIGNED" &&
+    fail "run 2 signed something after quit"
+echo "   quit confirmed nothing and signed nothing"
 
 wait_for_from "$CONSOLE_LOG" "$RUN2_MARK" "rebooting to the loader" 60
 echo "   appliance rebooted"
@@ -369,6 +447,16 @@ UKI="$MNT/airies/blessed/$BLESSED_UKI"
 [[ -f "$UKI" ]] || fail "no $BLESSED_UKI on p2"
 echo "   wrap:     $BLESSED_UKI ($(stat -c%s "$UKI") bytes)"
 
+# One wrap and one record, because one image was confirmed. The unmarked one
+# and the run that was quit must have left nothing behind at all.
+WRAPS=$(find "$MNT/airies/blessed" -maxdepth 1 -name '*.uki' | wc -l)
+[[ "$WRAPS" == 1 ]] ||
+    fail "$WRAPS wraps under airies/blessed; exactly one image was confirmed"
+RECORDS=$(grep -ac '^iso=' "$MNT/airies/blessed/manifest" || true)
+[[ "$RECORDS" == 1 ]] ||
+    fail "$RECORDS manifest records; exactly one image was confirmed"
+echo "   exactly one wrap and one manifest record"
+
 sbverify --cert "$CERT" "$UKI" >/dev/null 2>&1 ||
     fail "$BLESSED_UKI does not verify against $CERT"
 echo "   signature verifies against the stick's own MOK certificate"
@@ -384,6 +472,8 @@ REAL_SIZE=$(stat -c%s "$MNT/$REC_ISO")
     fail "manifest sha256 $REC_SHA is not the ISO's $REAL_SHA"
 [[ "$REC_SIZE" == "$REAL_SIZE" ]] ||
     fail "manifest size $REC_SIZE is not the ISO's $REAL_SIZE"
+[[ "$REC_ISO" == "$FOLDER/$FOLDER_ISO_NAME" ]] ||
+    fail "the manifest records '$REC_ISO', not the image that was confirmed"
 echo "   manifest: iso=$REC_ISO size=$REC_SIZE"
 echo "             sha256=$REC_SHA (recomputed on the host: matches)"
 

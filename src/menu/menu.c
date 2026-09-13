@@ -103,11 +103,17 @@ INTN menu_run(EFI_SYSTEM_TABLE *st, const menu_banner *banner,
      * per-entry label is easy to misread as a verdict, and the one place a
      * user is looking when they read a label is this screen. "presence" is
      * the whole claim: the menu never verifies anything, and neither does
-     * anything else in the loader (DESIGN Section 7.3). */
+     * anything else in the loader (DESIGN Section 7.3).
+     *
+     * The two key words stay general because what they do is the caller's:
+     * enter opens a folder or boots an image on the main menu and picks an
+     * image in the personal-OS chooser, and esc leaves a folder, the chooser
+     * or the loader depending on where the caller is. Naming one of those
+     * here would be wrong on the other screens. */
     draw_row(st, rows - 1, cols,
-             count ? L"up/down select | enter boot | esc exit | "
+             count ? L"up/down select | enter choose | esc back | "
                      L"[family, signature presence]"
-                   : L"no entries | esc exit");
+                   : L"no entries | esc back");
 
     for (;;) {
         UINTN i;

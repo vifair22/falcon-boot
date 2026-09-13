@@ -10,8 +10,15 @@
 # key some shell script had placed would be testing the shell script.
 #
 #   p1  ESP        64M  shim -> our signed loader
-#   p2  exFAT       2G  the real Arch ISO (unsigned, and therefore pending)
-#                       plus payload-test.iso (no kernel: the skip case)
+#   p2  exFAT       2G  two pending ISOs, one at the root and one in a folder:
+#                         /arch-mini-root.iso
+#                         /Linux/arch-mini-linux.iso
+#                       Both are the same small archiso-layout fixture, so both
+#                       are really signable; the folder is what gives the
+#                       appliance's grouped listing (DESIGN Section 7.5) and the
+#                       loader's folder view (Section 6 stage 1) a real case,
+#                       and signing one leaves the other pending, which is what
+#                       the proof's second run reads back.
 #   p3  LUKS2+ext4  1G  airies-mok.key, /uki/appliance-uki.efi, /uki/fixture-uki.efi
 #   p4  LUKS2      rest untouched
 #
@@ -22,7 +29,6 @@
 #
 # Usage: tools/mk-test-appliance-stick.sh
 # Env:   AIRIES_TEST_PASS  p3/p4 passphrase (default "airies-test")
-#        ARCH_ISO          the ISO to stage on p2 and bless
 #
 # THIS IS RIG SCAFFOLDING in one respect only: the passphrase is a well-known
 # string and the varstore skips the interactive MokManager enrollment a real
@@ -40,8 +46,20 @@ VARS="$OUT/OVMF_VARS.secboot.mok.fd"
 PASSFILE="$OUT/passphrase"
 
 PASS="${AIRIES_TEST_PASS:-airies-test}"
-ARCH_ISO="${ARCH_ISO:-/mnt/980pro/vtoy-backup/Linux/archlinux-2026.01.01-x86_64.iso}"
-PAYLOAD_ISO=build/test-payload.iso
+
+# The pending library. One small archiso-layout ISO, staged twice under two
+# names: a 17 MiB fixture keeps the proof's signing leg to seconds instead of
+# the minutes a 1.4 GiB distro ISO spends being hashed, and `sign` treats it as
+# the real thing (src/family/family.c fingerprints /arch/boot/x86_64, and
+# nothing here passes --kernel, so family detection runs for real).
+MINI_ISO="$OUT/arch-mini.iso"
+MINI_STAGE="$OUT/arch-mini-root"
+ROOT_ISO_NAME=arch-mini-root.iso
+FOLDER=Linux
+FOLDER_ISO_NAME=arch-mini-linux.iso
+
+FIXTURE_KERNEL=build/test/fixture-vmlinuz
+FIXTURE_INITRD=build/test/fixture-initrd.cpio
 
 MKSTICK=build/bin/airies-boot-mkstick
 APPLIANCE_UKI="$OUT/appliance-uki.efi"
@@ -72,7 +90,11 @@ trap cleanup EXIT
     exit 1
 }
 [[ -f "$LOADER" ]] || { echo "ERROR: $LOADER not built (run: make)" >&2; exit 1; }
-[[ -f "$ARCH_ISO" ]] || { echo "ERROR: $ARCH_ISO not found (set ARCH_ISO)" >&2; exit 1; }
+[[ -f "$FIXTURE_KERNEL" && -f "$FIXTURE_INITRD" ]] || {
+    echo "ERROR: fixture kernel/initramfs missing (run: make test-uki)" >&2
+    exit 1
+}
+command -v xorriso >/dev/null 2>&1 || { echo "ERROR: xorriso not found" >&2; exit 1; }
 if [[ ! -f "$SHIM_DIR/fedora-16.1-shimx64.efi" ]]; then
     echo "== fetching the pinned shim packages"
     tools/shim-spike/fetch-shims.sh
@@ -117,23 +139,35 @@ rm -f "$PASSFILE"
 
 # ---- the ISOs ----
 #
+# -r for Rock Ridge so the names inside survive verbatim: bsdtar (which is how
+# the bless tool reads an ISO) would otherwise see ISO9660's uppercased,
+# ";1"-suffixed forms and the /arch/boot/x86_64 fingerprint would not match.
+echo "== building $MINI_ISO (fixture kernel + initramfs, archiso layout)"
+rm -rf "$MINI_STAGE" "$MINI_ISO"
+mkdir -p "$MINI_STAGE/arch/boot/x86_64"
+cp "$FIXTURE_KERNEL" "$MINI_STAGE/arch/boot/x86_64/vmlinuz-linux"
+cp "$FIXTURE_INITRD" "$MINI_STAGE/arch/boot/x86_64/initramfs-linux.img"
+xorriso -as mkisofs -r -J -V AIRIES_MINI -o "$MINI_ISO" "$MINI_STAGE" \
+    >/dev/null 2>&1
+rm -rf "$MINI_STAGE"
+echo "   $MINI_ISO ($(stat -c%s "$MINI_ISO") bytes)"
+
 # Staged after the fact because mkstick creates the library, it does not fill
 # it: filling it is what the user does by dragging files onto p2, and that is
-# exactly the state the appliance exists to deal with.
+# exactly the state the appliance exists to deal with. Two copies under two
+# names, one of them in a folder, because "which of these do I vouch for" is
+# only a real question when there is more than one and they are not all in the
+# same place.
 echo "== staging ISOs on p2"
 LOOP=$(sudo losetup --show -f -P "$IMG")
 sudo udevadm settle 2>/dev/null || sleep 1
 MNT=$(mktemp -d)
 sudo mount -o uid="$(id -u)",gid="$(id -g)" "${LOOP}p2" "$MNT"
-cp "$ARCH_ISO" "$MNT/$(basename "$ARCH_ISO")"
-if [[ -f "$PAYLOAD_ISO" ]]; then
-    # A real El Torito ISO with no Linux kernel in it. The appliance must list
-    # it like any other pending ISO and must not sign it unless it is
-    # confirmed, which is what makes it the skip case in the proof.
-    cp "$PAYLOAD_ISO" "$MNT/payload-test.iso"
-fi
+cp "$MINI_ISO" "$MNT/$ROOT_ISO_NAME"
+mkdir -p "$MNT/$FOLDER"
+cp "$MINI_ISO" "$MNT/$FOLDER/$FOLDER_ISO_NAME"
 sync
-ls -l "$MNT"
+ls -lR "$MNT"
 sudo umount "$MNT"
 rmdir "$MNT"
 MNT=

@@ -202,8 +202,11 @@ static void test_fixture_mount_geometry(void **state)
  * reported as an unexpected entry. */
 static int is_optional(const char *path)
 {
-    /* Copied in only when build/test-payload.iso has been built. */
+    /* Copied in only when build/test-payload.iso has been built. The nested
+     * one is the same image again, three folders down, for the loader's
+     * folder view. */
     return strcmp(path, "payload-test.iso") == 0 ||
+           strcmp(path, "deep/a/b/payload-nested.iso") == 0 ||
            strcmp(path, "payload-gpt.img") == 0 ||
            strcmp(path, "payload-floppy.img") == 0;
 }
@@ -223,6 +226,10 @@ static void test_fixture_tree(void **state)
         { "Linux",                            1, 0 },
         { "Linux/ubuntu-fake.iso",            0, ISO_BYTES },
         { "Linux/fedora-fake.iso",            0, ISO_BYTES },
+        { "Linux/rescue",                     1, 0 },
+        { "Linux/rescue/gparted-fake.iso",    0, ISO_BYTES },
+        { "notes",                            1, 0 },
+        { "notes/readme.txt",                 0, TXT_BYTES },
         { "deep",                             1, 0 },
         { "deep/a",                           1, 0 },
         { "deep/a/b",                         1, 0 },
