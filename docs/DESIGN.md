@@ -306,8 +306,13 @@ credential route fails.
 No host-side registration. The stages:
 
 1. **Scan.** At boot, the exFAT driver enumerates `*.iso` and `*.img` on p2.
-   That listing is the menu. Dropping a file on from any OS is the entire
-   "add" workflow.
+   That listing is the menu, presented **by folder** (decision 2026-09-13,
+   Ventoy tree-view style): each menu screen shows the current directory's
+   subfolders and images, entering a folder descends, ".." (or ESC) goes
+   up, and ESC at the root exits to firmware. The pinned entries (personal
+   OS) live at the root screen. Purely presentation: the scan, the labels,
+   the bless lookup and the boot paths all keep operating on full p2 paths.
+   Dropping a file on from any OS is the entire "add" workflow.
 2. **Present as virtual media.** On selection, register an `EFI_BLOCK_IO`
    (and `EFI_DISK_IO`) device whose reads are served from the file's bytes
    by the exFAT driver. **Two media flavors, one publisher** (decision
@@ -584,10 +589,16 @@ rest and out of the loader:
    in the loader menu. On selection it:
    - boots (our-signed UKI, passes Secure Boot),
    - unlocks p3 with the passphrase and reads the MOK private key,
-   - lists the pending unsigned ISOs and requires **per-ISO confirmation** (the
-     explicit "I vouch for this" act, which also stops a dropped-in malicious ISO
-     from being blessed silently),
-   - for each confirmed ISO, extracts the kernel, wraps and signs it as a
+   - lists the pending unsigned ISOs (grouped by folder, matching the
+     loader's menu) and requires **per-ISO selection followed by a batch
+     review**: each ISO is marked individually - that explicit act is the
+     "I vouch for this" of the trust model, and it is what stops a
+     dropped-in malicious ISO from being blessed silently - then the full
+     selection is shown once more and confirmed as a whole before anything
+     is signed (UX decision 2026-09-13: select-then-sign replaces the
+     original ask-as-you-go loop; the per-ISO human act is preserved, the
+     signing runs as one batch),
+   - for each selected ISO, extracts the kernel, wraps and signs it as a
      minimal UKI with the derived `iso-scan` cmdline embedded, and stages it
      plus its manifest record per Section 8.1,
    - reboots to the loader.
