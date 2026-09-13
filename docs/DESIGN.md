@@ -30,6 +30,16 @@ change it.
    Section 4 and docs/notes/shim-spike.md): uphold Secure Boot when it is on,
    load freely when it is off. See Section 2 for the posture and Section 7
    for the trust model and coverage matrix.
+5. **Windows install media (decision 2026-09-13).** A stock Windows installer
+   ISO drag-and-drops like any other and reaches a working Setup, in all three
+   Secure Boot states. Promoted from an explicitly deferred non-goal to a
+   required, first-class capability: "windows must work." The mechanism is
+   Section 6.3 and the trust model it needs is Section 7.7. The cost is
+   stated honestly in both: Windows is the one family whose support is an
+   ongoing tracking commitment rather than a finished feature, because
+   everything it leans on inside `boot.wim` is undocumented or
+   version-dependent and Microsoft can change it in any build. That cost was
+   weighed and accepted, not overlooked.
 
 ### Non-goals
 
@@ -45,9 +55,12 @@ Rejected, not deferred (decisions 2026-09-12):
   Not worth the dual-arch discipline tax on the whole codebase.
 
 Explicitly deferred, not forgotten:
-- Windows install media and other ISOs that need Ventoy's runtime driver
-  injection to boot. The injection *plumbing* is built in from day one
-  (Section 6), but the per-family injectors that would cover these are not.
+- ISOs that need Ventoy's runtime driver injection to boot. The injection
+  *plumbing* is built in from day one (Section 6), but the per-family
+  injectors that would cover these are not. Windows sat in this bullet until
+  2026-09-13 and was moved out of it on a correction, not a change of
+  appetite: Windows never needed runtime injection in the first place
+  (Section 6.3).
 - Persistence overlays for live ISOs.
 - A graphical/framebuffer menu with themes. MVP menu is text via
   Simple Text Output.
@@ -349,6 +362,14 @@ No host-side registration. The stages:
      refused; the menu entry was already marked unverified and we print why.
    - Secure Boot OFF: shim allows the load, and any ISO boots.
 
+**Landmine, measured 2026-09-13: EDK2's UdfDxe is case-sensitive.** On the UDF
+volume a firmware UDF driver publishes (Windows install media, Section 6.3),
+`\EFI\BOOT\BOOTX64.EFI` returns NOT_FOUND while `\efi\boot\bootx64.efi` opens
+the same file. The FAT driver folds case; the UDF driver compares byte for
+byte. Any path we hand the firmware for UDF media must match the case recorded
+on the volume. The El Torito ESP child is FAT and is unaffected; only the UDF
+view of the same medium cares.
+
 ### 6.1 The post-ExitBootServices problem
 
 Stages 2-5 all live in boot services. The virtual CD is a boot-services fiction:
@@ -356,6 +377,16 @@ it evaporates the instant the distro kernel calls `ExitBootServices`. The
 distro's initramfs then hunts for its squashfs on a CD-ROM that no longer
 exists, and drops to an emergency shell. This is the single hardest problem in
 the whole project and the reason Ventoy is enormous.
+
+**This is a Linux problem, not a universal one (correction, 2026-09-13.)**
+An earlier version of this document filed Windows install media under "ISOs
+that need Ventoy's runtime driver injection." That was wrong. Windows has no
+post-`ExitBootServices` media problem at all: the Windows boot manager reads
+`\sources\boot.wim` off our virtual CD *while still in boot services* and
+materialises WinPE as a RAM disk, so by the time the virtual media evaporates
+nothing is looking for it, and WinPE then re-enumerates hardware with its own
+drivers and finds our exFAT p2 natively. None of the framework below applies
+to Windows. Its actual problem is later and narrower; see Section 6.3.
 
 Two handling strategies, and we build the framework for both:
 
@@ -405,6 +436,258 @@ the cpio-append path, and native-cmdline injectors for the tested families
 (Debian/Ubuntu, Fedora, Arch, SystemRescue; memtest needs no ISO backing at
 all). Full runtime-injection payloads for the hard families are stubs behind the
 same interface.
+
+### 6.3 Windows install media (decision 2026-09-13)
+
+Required capability, per Section 1. The research record, with sources and the
+measurements quoted below, is `docs/notes/windows-route.md`.
+
+Section 6.1 states the correction this whole subsection rests on: Windows is
+the easy case, not the hard one. What fails on a stock Windows ISO booted from
+our virtual CD is not WinPE, which comes up fine. It is Setup, afterwards,
+looking for `\sources\install.wim` on media that no longer exists. The fix is
+to make Windows mount the ISO **for itself**, from Windows userland, once it
+is up. That is one boot-time byte patch and one user-mode executable, and no
+injection framework at all.
+
+**Mechanism (Ventoy's shape, with all preparation moved to Linux bless time).**
+
+- Stock WinPE already ships every component this needs, all Microsoft-signed
+  and present in *both* images of the Win11 25H2 `boot.wim` (measured):
+  `virtdisk.dll`, `vhdmp.sys`, `vdrvroot.sys`, `cdrom.sys`, `udfs.sys`,
+  `exfat.sys`, `winpeshl.exe`. We ship none of them and load none of them.
+- Windows' inbox Win32 VirtDisk API (`OpenVirtualDisk` plus
+  `AttachVirtualDisk` with `VIRTUAL_STORAGE_TYPE_DEVICE_ISO`) attaches an ISO
+  *file* as a genuine CD-ROM class device (`\Device\CdRomN`), which
+  `cdrom.sys` and `udfs.sys` then mount as ordinary UDF.
+  `ATTACH_VIRTUAL_DISK_FLAG_READ_ONLY` is **mandatory** for an ISO
+  (documented by Microsoft, not a choice we make), and
+  `ATTACH_VIRTUAL_DISK_FLAG_PERMANENT_LIFETIME` is what keeps the mount alive
+  after the calling process exits.
+- There is no inbox CLI for this. `diskpart` handles VHD/VHDX only (measured:
+  attaching a footered ISO yields a disk-class device with no partition table
+  and no mountable volume), and `Mount-DiskImage` is PowerShell, which WinPE
+  does not have. So we write a small native Win64 executable, on the order of
+  100 lines, against `virtdisk.dll`. **The same `x86_64-w64-mingw32-gcc` that
+  builds our EFI loader builds it**, and `virtdisk.h` plus `libvirtdisk.a` are
+  already present in that toolchain: the Windows route adds **zero new
+  toolchain dependencies**, which is a large part of why it won.
+- Delivery: at bless time, in Linux userland, we patch the ISO's
+  `\sources\boot.wim` to replace `\Windows\System32\winpeshl.exe` with that
+  jump binary, preserving the original alongside it (e.g.
+  `winpeshl_orig.exe`). At runtime the jump binary attaches the ISO read-only
+  from the exFAT partition and then executes the original `winpeshl.exe`, so
+  Windows Setup proceeds exactly as it would have and finds `install.wim` on a
+  real, mounted CD-ROM.
+
+**No third-party kernel driver, and the reason is not the obvious one.**
+Windows kernel-mode driver trust chains to Microsoft's own hard-coded roots
+and has nothing whatever to do with our MOK or the UEFI `db`. That settles
+one thing permanently: we could never sign a driver ourselves, at any price
+short of a Partner Center account and an attestation submission, so writing
+our own `.sys` is dead. It does **not** settle the third-party candidates, and
+the record has to be explicit so nobody re-derives the wrong reason later:
+**ImDisk and Arsenal Image Mounter are both genuinely
+Microsoft-attestation-signed in 2026 and would load with Secure Boot ON.**
+They were rejected on other grounds entirely.
+
+- **ImDisk:** redistributing a GPLv2 kernel blob on every stick, to solve a
+  problem the inbox `vhdmp.sys` already solves, and the project is declared
+  legacy by its own author.
+- **Arsenal Image Mounter:** AGPLv3, and its root-enumerated PnP install walks
+  into a documented WinPE 26100 PnP regression in which injected drivers land
+  in `CM_PROB_REINSTALL`. Technically it has the best CD-ROM emulation of any
+  candidate; that did not save it.
+
+Held in reserve rather than rejected outright: if a rig test ever shows
+`AttachVirtualDisk` unusable, the pick is **ImDisk**, because its non-PnP
+design makes `CreateService` plus `StartService` the entire install and
+sidesteps the 26100 regression.
+
+**Loader side: two new layers, and they are pure data.** The virtual-media
+publisher of Section 6 stage 2 grows:
+
+- an **override list**: (byte offset in the virtual image, length, replacement
+  bytes served from a sidecar file on p2), answered from the sidecar instead
+  of from the ISO;
+- an **append region**: virtual sectors past the end of the ISO, backed by a
+  sidecar on p2.
+
+No WIM parsing, no UDF parsing and no Windows knowledge enters EFI-land. The
+loader applies a byte map that Linux userland computed. The single
+interposition point is `iso_read_blocks()` in `src/iso/iso.c`, because the
+entire read path is one `fs_file_read` call (Section 9).
+
+Reusability, recorded with its consequence rather than as a selling point:
+these are exactly the two layers the "overlay a modified `grub.cfg`" idea
+parked in Section 7.2 would need. Building them for Windows makes that idea
+mechanically possible and does nothing else. It still requires its own design
+discussion before anyone uses it there; a primitive existing is not
+authorisation to use it.
+
+**Patch shape: size-preserving whole-file substitution (MVP choice).** Two
+shapes were measured.
+
+- **Size-preserving whole-file substitution (chosen).** wimlib repacks
+  Microsoft's own `boot.wim` *smaller* than shipped (measured: `wimoptimize`
+  alone -697 KB; a full LZX recompress -6.73 MB), and a WIM tolerates trailing
+  zero padding (measured: padded back to the original's exact 593,121,462
+  bytes, `wimverify` passes, injected payload intact). So the patched WIM is
+  padded to the original's exact length and the override becomes **one
+  contiguous byte-range substitution**, with no ISO 9660 or UDF metadata
+  rewritten at all. `boot.wim` was verified to be a single contiguous extent
+  in the real Win11 25H2 ISO, at byte offset 22,095,872. The cost is about
+  570 MB of p2 per blessed Windows ISO, and space is the cheapest resource on
+  the stick.
+- **Delta plus UDF surgery (fallback and optimisation).** Ventoy's own
+  approach: append the WIM's tail as new virtual sectors, and override the UDF
+  File Entry's information length and allocation descriptors plus the
+  partition descriptor's sector count. Cheaper in space, dearer in risk: UDF
+  descriptors carry CRC-16 tags that must be recomputed, and the layout
+  details are version-dependent. Not the MVP choice.
+
+The size-preserving shape wins because it removes every piece of byte-level
+UDF and WIM-header surgery from the critical path, which is where the risk
+actually lives, and because the one assumption it does rest on - that a
+patched WIM fits back in the original's footprint - has been measured on the
+real media rather than argued. (The research note ranks these the other way
+round. It was written before the repack-size and zero-padding measurements,
+which is what settled it; the note stands as the record of the reasoning at
+the time. Note that "fits and verifies" is not "boots": see the unproven list
+at the end of this subsection.)
+
+**Guard, required.** The bless tool MUST refuse when the patched WIM exceeds
+the original's allocated length, with an actionable message naming both sizes,
+rather than truncating it or silently switching shape. The repack margin is
+real but it is Microsoft's to change in any build.
+
+**Nothing on this path is signed, and nothing verified is touched.**
+`boot.wim` is not a PE, is not Authenticode-signed, carries no integrity table
+in the shipped media, and the BCD binds no hash to it. Secure Boot verifies
+`bootmgfw.efi`, then `winload.efi`, then the kernel; all three stay untouched
+and Microsoft-signed. Two consequences, both worth stating plainly because
+they invert the intuition the rest of this document builds:
+
+- **A Windows ISO needs no blessing to boot under Secure Boot ON.** Every
+  component the platform verifies is already Microsoft-signed and already in
+  `db`, so enforcement has nothing to object to. Our patch fixes
+  media-finding, nothing else. (This follows from the chain, and the premise
+  underneath it is no longer chain-derived: a stock Windows ISO now boots
+  through our existing virtual CD to the Setup GUI in the rig, measured
+  2026-09-13. See the premise-check block below.)
+- **Our MOK is irrelevant to the Windows path end to end.** It is not used,
+  not needed, and (research note Section 3) invisible to Windows in any case.
+
+**Known constraint, to verify in the rig.** Win11 Setup launched from WinPE
+additionally requires the WinPE-WMI and WinPE-SecureStartup optional
+components present, or it falsely reports that the machine fails the minimum
+hardware requirements.
+
+**Premise check: PROVEN (measured 2026-09-13, rig scripts in
+`tools/win-spike/`).** The cheapest and most load-bearing assumption of the
+whole route holds: a stock, **unmodified** Win11 25H2 ISO, sitting on a p2 that
+carries the falcon ISO type GUID, boots through the virtual CD we **already
+have**, with no loader changes, all the way to the Windows Setup GUI. Facts
+worth keeping:
+
+- **`\EFI\BOOT\BOOTX64.EFI` inside a Windows ISO's El Torito image is not
+  `bootmgfw.efi`. It is `cdboot.efi`**, the stub that draws "Press any key to
+  boot from CD or DVD..." and returns `EFI_TIMEOUT`
+  (0x8000000000000012) if no key arrives. It draws that prompt through GOP and
+  never on ConOut, so a serial log shows nothing whatever and the run looks
+  like an instant silent failure. This cost a debugging session; write it
+  down once. **Any headless rig test of a Windows ISO must send a keypress.**
+  The same `EFI_TIMEOUT` reproduces on a real CD-ROM with no keypress, so it
+  is not an artefact of our virtual device.
+- OVMF does contain `UdfDxe`, it binds to our vendor-path virtual device, and
+  it publishes a SimpleFileSystem for the UDF volume with the whole Windows
+  tree visible (`efi/microsoft/boot/bcd` and `sources/boot.wim` both present).
+  Our virtual CD's child handle tree is structurally identical to a real
+  CD-ROM's: El Torito entry, FAT ESP child, UDF volume. The firmware installs
+  `EFI_DISK_IO` on our handle by itself, so we need not. BlockIo revision 1
+  and our `MEDIA_VENDOR_DP` node are both fine; neither PartitionDxe nor
+  UdfDxe cares. (The case-sensitivity landmine that goes with this is recorded
+  at the end of Section 6.)
+- **Rejected: load the UDF volume's `bootmgfw.efi` directly** to skip the
+  press-any-key prompt. It fails with `EFI_LOAD_ERROR` on a real CD-ROM too,
+  so the route is dead for everyone and not just for us.
+- UX nicety to bank, explicitly not designed here: users booting a Windows ISO
+  see Microsoft's press-any-key prompt, which is normal for a DVD and mildly
+  odd from a stick. Once the override layer exists it could patch the El
+  Torito boot catalog to skip it. Not a blocker and not a plan.
+
+**The next wall, now known.** Setup comes up and then cannot find
+`install.wim` once the virtual CD evaporates at `ExitBootServices`. That is
+exactly the failure this subsection's mechanism exists to remove, and proving
+the removal is the next thing to do.
+
+**Still unproven**, and the rig work is Section 11 step 11: that a real
+`bootmgr`/`winload` boots the patched, padded and overlaid `boot.wim`; that
+the jump binary's `AttachVirtualDisk` works from WinPE against a file on our
+exFAT p2; which WIM image index to patch (1, 2, or both - measured: the boot
+image index is 2, Setup, not 1); and Windows Setup reaching the install screen
+end to end.
+
+#### 6.3.1 Automatic on-stick preparation and the next-boot handoff (decision 2026-09-13)
+
+Preparation is not a host errand. The user drops a Windows ISO and selects it;
+the loader detects that it is unprepared, says so, and offers to prepare it.
+Accepting boots the signing appliance, which patches the ISO, stages the
+artifacts and reboots; on that next boot the loader boots the prepared entry
+**directly, without drawing the menu**. Net cost to the user: one confirmation
+and one automatic reboot, once per ISO, ever. Every later boot of that ISO is
+immediate. Why this shape rather than host-only preparation is Section 8.
+
+**The reboot is unavoidable and is not a design failure.** Windows Setup starts
+as an EFI application (`bootmgfw.efi`) and needs boot services. The appliance
+is Linux, running after `ExitBootServices`; there is no way back to firmware
+from there except a reboot. Nobody kexecs Windows.
+
+**Batching.** If several unprepared Windows ISOs are present, the appliance
+prepares all of them in that one run. Dropping three ISOs costs one reboot,
+not three.
+
+**The next-boot handoff: a non-volatile EFI variable the loader owns.** The
+loader has no write path to the stick at all - every filesystem driver in
+EFI-land is read-only by design and the stick is configured from Linux
+userland (Section 9) - so it can read
+a marker file on p2 but can never clear one, and a one-shot that cannot be
+cleared is not a one-shot. The mechanism is therefore an EFI variable, e.g.
+`FalconNextBoot`, non-volatile, and its whole lifecycle belongs to the loader:
+
+- the loader **sets** it immediately before launching the appliance for
+  preparation;
+- on the next boot the loader **reads** it, **deletes** it at once, then
+  **validates** against the manifest (Section 8.1) that the named entry really
+  is prepared, and only then boots it without a menu.
+
+The delete is legal here because the loader runs before `ExitBootServices`;
+contrast Section 5.1's rejected volatile-variable design, which needed a delete
+*after* `ExitBootServices` and could not have one. If preparation failed, the
+marker is already gone and the user lands on the menu with an actionable
+message. This is idiomatic rather than clever: it is what the firmware's own
+`BootNext` does. It stays inside the invariants too - NVRAM is not the stick,
+and nothing about enforcement changes.
+
+**The appliance never touches EFI variables.** It writes the stick, which is
+its job. One component owns the marker's lifecycle, and it is the one that can
+both set and clear it.
+
+**Sidecar layout: named by the source ISO's checksum (decision 2026-09-13).**
+Prepared artifacts live under the reserved directory of Section 6.2, in a
+folder named by the checksum of the ISO they were computed from
+(`p2:/falcon/prepared/<sha256>/`, Section 8.1), so the link between an ISO and
+its artifacts is intrinsic rather than by filename. Two consequences fall out
+for free:
+
+- renaming or moving the ISO on p2 does not orphan its artifacts;
+- replacing the ISO with a different build changes the checksum, so the old
+  artifacts are simply not found and preparation re-runs automatically. There
+  is no staleness check to write, and none to get wrong.
+
+The cost, stated honestly and to be repeated in the Manual: roughly 570 MB of
+p2 per prepared Windows ISO, which is the padded `boot.wim` of the
+size-preserving patch shape above.
 
 
 ## 7. Security model
@@ -481,11 +764,30 @@ does not boot under Secure Boot, whether launched by us or directly.
     injection, media-finding included. Works for signed and unsigned ISOs alike.
     Blessing runs either on an external host the user controls or on the on-stick
     signing appliance; both keep the private key encrypted and out of the loader.
+  - *Windows install media:* verified with **no blessing and nothing signed by
+    us**, because a Windows ISO's `\EFI\BOOT\BOOTX64.EFI` is Microsoft's own
+    `bootmgfw.efi` and everything downstream of it is Microsoft-signed
+    (Section 6.3). The media-finding fix Windows does need is a byte patch,
+    not a signature, so it sits on a different axis from this matrix entirely;
+    see Section 7.7. (Follows from the chain; the rig has now booted a stock
+    Windows ISO through our virtual CD to the Setup GUI, measured 2026-09-13,
+    Section 6.3. What remains for step 11 is the media-finding fix, not the
+    verification story.)
   - *Unsigned, unblessed media* (memtest, older/niche rescue ISOs): refused, with
     an actionable message pointing at the two doors: bless it, or use the
     permissive opt-in (Section 7.4).
 - **Secure Boot ON, validation off (user opt-in, Section 7.4):** shim permits
   everything, so every ISO drag-and-drops with nothing signed, on that machine.
+
+**Windows should be the only path that covers all three states above**,
+including the validation-off state, where no UKI can boot at all - not ours,
+not a blessed wrap (Section 7.4's limitation, measured). Windows is unaffected
+because it goes through the firmware's own `LoadImage` to an MS-signed
+`bootmgfw`, which `db` accepts in every state; there is no MOK-signed image
+anywhere in its chain to be refused. So in the one state where blessing and
+the personal OS are both unavailable, Windows keeps working. Derived from the
+chain and from the measured shim behaviour behind 7.4, not yet observed
+directly; it is on step 11's list.
 
 The only combination that cannot exist is "drag-and-drop an arbitrary *unsigned*
 ISO with reliable media-finding *and* keep Secure Boot validation on," because
@@ -550,7 +852,9 @@ Properties the user should know, and the Manual must state:
   validation is re-enabled. This is an upstream shim/sd-stub interaction, not
   ours to fix (Section 7.3); the loader detects the state before the slow
   image read, warns, and attaches actionable advice when the started image
-  fails (src/efi/loadops.c).
+  fails (src/efi/loadops.c). **Windows media is the exception that keeps
+  working in this state** (Section 7.2): its chain is `db`-signed end to end
+  and contains no UKI, so the opt-out costs it nothing.
 
 What we build here is UX only: detect `SecureBoot` / `MokSBState`, show the
 current mode, and when an unsigned selection is refused under enforcement, guide
@@ -619,6 +923,10 @@ rest and out of the loader:
    - for each selected ISO, extracts the kernel, wraps and signs it as a
      minimal UKI with the derived `iso-scan` cmdline embedded, and stages it
      plus its manifest record per Section 8.1,
+   - for a Windows ISO, *prepares* rather than signs it (the patch of
+     Section 6.3, no key involved), which is why the appliance carries wimlib;
+     the appliance is also entered automatically for this case, and the
+     handoff back is Section 6.3.1,
    - reboots to the loader.
 
    The appliance makes the stick self-hosting for signing: a portable signed
@@ -723,6 +1031,66 @@ procedures are in `docs/notes/shim-spike.md` Section 9.
 Note the ISO path does not depend on any of this: a distro ISO's inner shim
 is MS-signed and passes db through the firmware's own `LoadImage` natively.
 
+### 7.7 Two kinds of authorised modification: signed media and patched media
+
+With Windows in scope (Sections 1 and 6.3), falcon-boot supports **two** kinds
+of user-authorised modification of media the user did not produce. They are
+peers, and that is why this is a section of the security model rather than a
+paragraph buried in the ISO path:
+
+- **Signed media (blessing, Section 7.5).** We sign a vendor's kernel with the
+  user's MOK and boot that signed wrap instead of the vendor's own chain.
+- **Patched media (Windows, Section 6.3).** We serve altered bytes of a
+  vendor's image - a user-mode executable inside `boot.wim` - so that the
+  vendor's own chain can find its media. No signature is involved anywhere.
+
+What they share is the point: both are the user deliberately authorising a
+modification to media they own, both are computed in Linux userland by a tool
+the user runs, and neither changes what the platform will enforce.
+
+**The four invariants hold on the patched path, checked one at a time**,
+because a new capability is exactly the moment that check is worth writing
+down rather than assuming:
+
+1. *The loader verifies; it never signs.* The Windows path performs no signing
+   operation at all and needs no private key.
+2. *Enforcement is the platform's, never the loader's.* Untouched.
+   `bootmgfw.efi` is launched through the same verifying load path as any
+   other ISO payload and passes `db` on its own Microsoft signature.
+3. *No mechanism that relaxes signature enforcement exists in the loader.* The
+   override and append layers serve bytes. They cannot make an image verify
+   that would not otherwise have verified, and they are not reachable by
+   anything but a menu entry the user selected. (Ventoy's own
+   `VTOY_SECURE_BOOT_POLICY` bypass, which is a real enforcement relaxation,
+   is rejected here as it is everywhere else in this document; we never need
+   it for Windows.)
+4. *The private MOK key stays encrypted on p3 and never travels.* The Windows
+   path never reads it and does not care that it exists (Section 8).
+
+**The honest asymmetry, stated loudly on purpose.** A signature is *visible*:
+the platform sees it, refuses it when it is wrong, and anyone can inspect the
+signed wrap after the fact. A byte patch is visible to nothing. It is not
+verified, not recorded in any chain, and the WinPE it produces is
+indistinguishable from an unpatched one from the inside. That invisibility is
+exactly why the technique works and exactly why it has to be documented here
+and in the Manual rather than discovered years from now by someone reading a
+hex dump.
+
+**The mitigating property, and it is a real one.** The user's ISO file on p2
+is **never modified**. It stays byte-identical to what the vendor published
+and stays SHA-256 verifiable against the vendor's published hash, which
+matters most for precisely the family whose users are most likely to be
+checking. The patch exists only in the bytes the loader serves for that one
+boot, lives in a sidecar file beside the manifest, and is inert on any machine
+that boots the same ISO some other way.
+
+**Consent is the same act for both.** The per-ISO review-and-yes of Section
+7.5 - nothing pre-marked, every path on screen at the moment of confirmation,
+a typed "yes" over the review - applies to Windows patching exactly as it
+applies to signing. Patching is a bless operation and passes through the same
+gate. What the review *shows* differs (this entry will be patched, not
+signed); that it is shown, and that the user says yes to it, does not.
+
 
 ## 8. Host tooling (userland, C)
 
@@ -761,6 +1129,82 @@ than reimplementing cryptography or filesystem creation:
   and not needed for ISOs that already ship their own MS-signed shim and
   find their own media.
 
+**Bless now covers two operations (decision 2026-09-13).** `falcon-boot sign`
+*signs* Linux media and *patches* Windows media (Sections 6.3 and 7.7). One
+command, one confirmation gate, one manifest, two outputs. Consequences that
+land on this section:
+
+- **wimlib becomes a host-tooling dependency** (`app-arch/wimlib` on Gentoo),
+  joining `cryptsetup`, `sbsign`, `mkfs.*` and `ukify` on the intended
+  vendoring line described at the end of Section 8.1. The tool shells out to
+  it; we no more reimplement LZX and solid WIM resources than we reimplement
+  Authenticode.
+- **The Windows path needs no private key**, so it works on a `--p3-plain`
+  stick (Section 3), where signing cannot. The only thing it asks of the stick
+  is space on p2. One caveat that follows from Section 3 rather than from the
+  Windows path: a `--p3-plain` stick has no signing appliance at all, so the
+  on-stick preparation of the next bullet does not exist there and preparation
+  is host-only on that stick.
+- **On the stick, automatically (decision 2026-09-13, reversing an earlier
+  "host-only for MVP" entry in this section).** Windows ISO preparation runs in
+  the signing appliance, on the stick, without the user going to find a Linux
+  box. **The appliance therefore carries wimlib.** The flow and the next-boot
+  handoff are Section 6.3.1.
+
+  The reason is the drag-and-drop contract of Section 1, in-scope item 2, which
+  is this project's flagship promise. Requiring a separate Linux host with
+  wimlib installed for every Windows ISO breaks that promise far more severely
+  than blessing does. Blessing breaks drag-and-drop only under Secure Boot ON,
+  and only because of a platform constraint we did not create; Windows
+  preparation would break it *always*, Secure Boot OFF included, for a
+  media-finding problem that Ventoy solves with no per-ISO step at all. Being
+  strictly worse than the thing we are distilling, on the flagship use case, by
+  choice, is not acceptable.
+
+  The measured costs are what make this affordable, and they now support the
+  design rather than a deferred option: 23-106 MB peak RSS, roughly 1.2 GB of
+  scratch space, and seconds of CPU for a full repack.
+
+- **Rejected: do the WIM surgery at boot time, in the loader, the way Ventoy
+  does** (decompress the WIM metadata, parse the `SYSTEM` registry hive to find
+  the configured PE shell, rebuild the resource, recompute the SHA-1 hashes,
+  all inside the bootloader). Estimated at 2500-3500 lines of new freestanding
+  code including an LZX decompressor, a UDF reader and SHA-1. Rejected on two
+  grounds, and both belong in the record:
+
+  1. *It puts the volatile, Microsoft-tracking logic inside the trust anchor.*
+     Windows internals are precisely the part of this route that rots (see the
+     tracking-commitment bullet below). In that design every Windows
+     compatibility fix ships as a newly signed loader, with MOK re-signing and
+     an SBAT generation question attached. In the chosen design the same fix is
+     an appliance or host-tool update, and the trust anchor never moves.
+  2. *It parses attacker-controlled data pre-boot inside a trusted binary.* A
+     dropped ISO is untrusted input, and this design would parse it inside a
+     Secure-Boot-trusted, MOK-signed binary with no ASLR, no NX guarantees and
+     no process isolation. A memory-safety bug in an LZX decompressor or a UDF
+     reader there is pre-boot code execution in a trusted context, which is
+     exactly the class of defect SBAT revocation exists to clean up after
+     (Section 7.3). In the chosen design the identical parsing happens in Linux
+     userland, after the trust boundary, where the same bug is a crashed tool.
+     This is a security argument consistent with the existing invariants, not a
+     matter of taste.
+
+  It remains available later as a **pure optimisation**, not as a rethink: if
+  Windows ISOs ever land often enough that the one-time prepare-and-reboot
+  grates, the bless-side logic will by then be written and tested, so moving it
+  into EFI-land is a port of known-good code rather than a research project.
+  The two objections above do not expire, and would have to be re-weighed
+  against a convenience gain that is one reboot per ISO.
+- **Windows support is an ongoing tracking commitment**, and this is the real
+  price of the Section 1 decision. The `winpeshl.exe` replacement, which WIM
+  image index is the boot image (measured: 2, Setup, not 1), the UDF layout
+  details, and WinPE's component requirements are all undocumented or
+  version-dependent, and Microsoft can change any of them in any Windows
+  build. Linux families are not like this: their cmdline templates are stable
+  and a new release usually needs nothing. Ventoy's history is largely a
+  record of chasing exactly this, and we should expect the same shape of
+  maintenance, at a much smaller scale.
+
 ### 8.1 Blessed artifacts and the manifest (decided 2026-09-13)
 
 The bless output is always a **signed UKI wrap** (sd-stub + kernel +
@@ -790,6 +1234,9 @@ On-stick layout, under the reserved directory of Section 6.2:
 ```
 p2:/falcon/blessed/<name>.uki      signed UKI wraps, one per blessed ISO
 p2:/falcon/blessed/manifest        the manifest, plain ASCII text
+p2:/falcon/prepared/<sha256>/      prepared-media sidecars, one folder per
+                                   prepared Windows ISO, named by the source
+                                   ISO's checksum (Section 6.3.1)
 ```
 
 Manifest format: line-based records, `#` comments, one block per blessed
@@ -816,6 +1263,27 @@ the boot does not rest on the manifest at all: everything the manifest can
 influence is either signed (the UKI) or already-unverified data an attacker
 could edit directly (the manifest itself, the initrd). Corrupt or absent
 manifest degrades to "nothing is blessed," never to an error.
+
+**Open format decision: the Windows record (raised 2026-09-13, not yet
+decided).** A patched Windows ISO (Section 6.3) has no UKI. It has an override
+sidecar instead, and the loader's job for such an entry is to publish the ISO
+with that byte map applied rather than to boot a signed wrap. The format has
+no way to say that today, and worse than "no way" it has a silent one: the
+parser requires `uki=` before a block becomes a record at all
+(`src/manifest/manifest.c`, `block_flush`), so a Windows record written in the
+current shape would be **dropped without a word** rather than rejected. This
+is a format decision to make before the Windows path lands, not a bug in the
+parser, which is behaving exactly as Section 8.1 specified it.
+
+Candidates, neither chosen here: a `kind=` key that defaults to the current
+UKI shape when absent, so existing manifests keep parsing unchanged; or
+relaxing the requirement to "`uki=` **or** a patch key" and letting whichever
+key is present say what the record is. Constraints on whatever is chosen: the
+parser must stay total over its input, absent or unusable records must stay a
+degradation and never an error, and the loader must never be able to implement
+half the rule. Either way a Windows record still carries `iso=`, `size=`,
+`sha256=` and `family=windows`, and still means the same thing every other
+record means: the user authorised this entry to be booted differently.
 
 Shelling out to `cryptsetup`, `sbsign`, `mkfs.*`, `ukify` is the intended
 vendoring line: reimplementing argon2id, Authenticode PE signing, or ext4
@@ -892,14 +1360,24 @@ either the host or appliance route.
   - `luks` - LUKS2 header parse, pbkdf2, AES-XTS decrypt. Unlocks p3 only; the
     module reads the UKI bytes off p3 and never exposes the p3 private key (that
     file is read by the signing appliance in userland, not by the loader).
-  - `iso` - virtual BlockIO/DiskIO over an exFAT-backed ISO file; family detect;
-    injection framework.
+  - `iso` - virtual BlockIO/DiskIO over an exFAT-backed image file; family
+    detect; injection framework; and the override/append layer of Section 6.3.
+    That layer is one interposition in `iso_read_blocks()` (src/iso/iso.c),
+    which is the only place the whole read path touches the backing file: an
+    ordered list of (offset, length, sidecar source) substitutions, plus an
+    append region of virtual sectors past the end of the file. Pure data, and
+    deliberately so - no format knowledge, no WIM or UDF parsing, no Windows
+    knowledge in EFI-land. The byte map is computed by the bless tool on
+    Linux and read from a sidecar on p2.
   - `sb` - reads `SecureBoot` / `SetupMode` / `MokSBState` for UX only (per-entry
     verification labels, refusal messages, state banner). No enforcement logic
     and no signing; enforcement is shim's, signing is userland's (Section 7).
   - `loader` - shim-verified load glue (Section 7.6; never relaxes
     verification and never signs, see Section 7), cmdline construction, and
-    the virtual credential-filesystem handoff (Section 5.1).
+    the virtual credential-filesystem handoff (Section 5.1). It also owns the
+    whole lifecycle of the `FalconNextBoot` variable (Section 6.3.1): the only
+    place in the loader that writes an EFI variable, and the only one that
+    deletes it.
 
 
 ## 10. Test rig
@@ -939,8 +1417,12 @@ QEMU end to end (unlock p3 read-only, per-ISO confirm, sign, manifest,
 reboot, idempotent second run). Step 9 (permissive-mode
 UX) is done: the MokSBState opt-in is proven in the rig (unsigned media
 boots with SB nominally on, banner and notice unmissable, refusals carry
-both doors consistently). Remaining: step 10 (real hardware / UAT),
-Windows injectors, Manual.md, and the falcon-boot rename during polish.
+both doors consistently). Remaining: step 10 (real hardware / UAT), step 11
+(Windows install media, new 2026-09-13, Section 6.3; its premise check is
+done - a stock Win11 ISO reaches the Setup GUI on our existing virtual CD -
+and the rest of the step is open), Manual.md, and the
+falcon-boot rename during polish. The earlier "Windows injectors" entry here
+was struck: Windows needs no injector, for the reason in Section 6.1.
 
 1. OVMF hello-world: mingw PE loader that prints and reads a key. Proves
    toolchain + test rig. Then the **shim plumbing spike**, which gates several
@@ -979,3 +1461,46 @@ Windows injectors, Manual.md, and the falcon-boot rename during polish.
 9. Permissive-mode UX: detect `MokSBState`, banner, and guidance to the platform
    opt-out (Section 7.4).
 10. Real-hardware shim/MOK enrollment.
+11. Windows install media (Section 6.3; scope decision 2026-09-13, research
+    record in `docs/notes/windows-route.md`). It is last in the list but it
+    does not depend on step 10 and can run in parallel with it. The internal
+    order is chosen so that any failure is attributable to one change:
+    - **DONE (2026-09-13).** Boot a stock, **unmodified** Windows ISO on the
+      virtual CD we already have and confirm it reaches WinPE and only then
+      fails looking for `install.wim`. It does: a Win11 25H2 ISO reaches the
+      Setup GUI with no loader changes, and the failure that follows is
+      exactly `install.wim` going missing with the virtual CD. Measured detail,
+      including the `cdboot.efi` press-any-key trap that makes a headless run
+      look like a silent failure, is in Section 6.3;
+    - write the mingw jump binary and run it **by hand** from the WinPE
+      command prompt (Shift+F10) against the ISO on p2, before touching a
+      single WIM byte. This de-risks the entire route for an afternoon's work.
+      The failure to watch for is `OpenVirtualDisk` returning
+      `ERROR_VIRTDISK_PROVIDER_NOT_FOUND`, which is the code Ventoy itself
+      treats as "not supported";
+    - the wimlib patch plus zero-pad of `boot.wim`, tested first by rebuilding
+      an ISO around the patched file, and only then through the override
+      layer;
+    - the loader's override/append layer (Section 9) and its sidecar format;
+    - the bless tool's Windows path: family detection, the patch, the sidecar
+      folder named by the ISO checksum (Section 6.3.1), the manifest record
+      decision (Section 8.1), and the guard that refuses an over-length
+      patched WIM;
+    - the automatic preparation flow of Section 6.3.1: wimlib in the appliance
+      initramfs, batching of several unprepared ISOs in one run, and the
+      `FalconNextBoot` variable the loader sets, then reads, deletes and
+      validates against the manifest before booting an entry menu-less.
+
+    Proven so far: the premise (first bullet), and with it that our virtual
+    CD's handle tree is structurally what firmware expects of a real CD-ROM,
+    UDF volume included (Section 6.3).
+
+    Open items carried into this step, none of them yet proven: whether a real
+    `bootmgr`/`winload` boots the patched, padded and overlaid `boot.wim`;
+    whether `AttachVirtualDisk` works from WinPE against a file on our exFAT
+    p2; which WIM image index to patch (1, 2, or both; the boot image is
+    index 2); whether Win11 Setup needs the WinPE-WMI and WinPE-SecureStartup
+    optional components present to stop falsely reporting a hardware-
+    requirements failure; whether a Windows ISO behaves the same under Secure
+    Boot ON as the chain in Section 7.2 says it must; and Windows Setup
+    reaching the install screen end to end.
