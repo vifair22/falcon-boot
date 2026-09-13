@@ -1192,7 +1192,7 @@ int main(void)
                 };
 
                 say("\n[%zu/%zu] /%s\n", done_n, sel_n, g_cand[i].rel);
-                say("      signing (this reads the whole ISO once to hash it)\n");
+                say("      signing...\n");
                 rc = run(argv, NULL, 0);
             }
             /* One image failing is that image's problem: the rest of the batch

@@ -688,7 +688,7 @@ static int bless(const options *o)
 
     /* ---- the ISO's identity ---- */
 
-    sgn_log(SGN_LOG_INFO, "hashing %s (this reads the whole ISO)", o->iso);
+    sgn_log(SGN_LOG_INFO, "hashing %s...", o->iso);
     rc = sgn_sha256_file(o->iso, digest, &size);
     if (rc != SGN_OK)
         goto out;
@@ -739,7 +739,7 @@ static int bless(const options *o)
     if (rc != SGN_OK)
         goto out;
 
-    sgn_log(SGN_LOG_INFO, "extracting the kernel");
+    sgn_log(SGN_LOG_INFO, "extracting kernel");
     rc = iso_view_extract(view, kernel_member, work_kernel);
     if (rc != SGN_OK)
         goto cleanup;
@@ -764,7 +764,7 @@ static int bless(const options *o)
             rc = SGN_ERR_FORMAT;
             goto cleanup;
         }
-        sgn_log(SGN_LOG_INFO, "extracting the initramfs /%s", initrd_member);
+        sgn_log(SGN_LOG_INFO, "extracting initramfs /%s", initrd_member);
         rc = iso_view_extract(view, initrd_member, work_initrd);
         if (rc != SGN_OK)
             goto cleanup;
