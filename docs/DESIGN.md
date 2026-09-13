@@ -124,6 +124,27 @@ Rationale per partition:
 
 p3 and p4 share the same passphrase (Section 5).
 
+**p3 encryption is the default, not a requirement (decision 2026-09-13).**
+mkstick can create p3 plaintext (`--p3-plain`), for users who want the UKI
+shelf simple or firmware-readable. Consequences, all of which the tooling
+states at creation time rather than letting the user discover:
+
+- No LUKS on p3 means **no on-stick private key**: the signing appliance
+  (Section 7.5) cannot exist on that stick, and blessing is external-host
+  only. The key model's invariant is unchanged - the private key lives
+  encrypted or it does not live on the stick at all.
+- The loader skips the passphrase prompt entirely and the credential
+  handoff (Section 5.1) is simply not used; the initramfs prompts for p4
+  itself. Still a single prompt, just later and owned by the OS.
+- Integrity is unaffected: the UKI is signed and shim verifies it off a
+  plaintext shelf exactly as off a decrypted one. What is given up is
+  confidentiality of the UKI contents (embedded initramfs included) and
+  the appliance. A legitimate trade, the user's to make.
+- The p3 filesystem choice is orthogonal (see the fs_ops registry,
+  Section 9); note that p3's filesystem never meets the personal OS's own
+  initramfs - p3 is read by our EFI driver alone, and the initramfs
+  unlocks and mounts p4 directly.
+
 **Partition identification (decision 2026-09-13).** The loader must not treat
 "any exFAT volume" as p2 or "any LUKS2 volume" as p3: on real hardware the
 stick sits next to internal disks that may carry both. mkstick creates every
@@ -752,9 +773,35 @@ either the host or appliance route.
   the user's own p4 header used for its digest) switches all four; a loader
   that cannot hash cannot unlock, and the parameterization costs less than
   the support burden of a "sha256-only" constraint on mkstick.
-- **Filesystem drivers in EFI:** read-only exFAT (for p2) and read-only ext4
-  (for p3). Both read-only; the stick is configured from Linux userland, never
-  written by the loader.
+- **Filesystem drivers in EFI:** read-only, always; the stick is configured
+  from Linux userland, never written by the loader. Drivers sit behind a
+  common vtable (decision 2026-09-13): `fs_ops {name, probe, mount,
+  dir_open_root, dir_open, dir_next, file_open, file_read, extents}` over
+  the shared byte-read callback, registered in a static table. `extents` is
+  an **optional capability**: the injection framework needs file-to-LBA
+  resolution on p2, and a driver that cannot provide it (btrfs CoW and
+  compression can make "the file's raw LBAs" not exist) still serves the
+  menu and boot paths, with the degradation surfaced honestly rather than
+  failed weirdly. Consumers select a driver through the registry (role GUID
+  hint first, probe order second), never by naming a driver directly, so a
+  new filesystem is one driver plus one registry row.
+  **Sanctioned driver targets** (write on demand, not ahead of it): exFAT
+  and ext4 (implemented), FAT32, xfs, btrfs. Per-target caveats recorded
+  now: FAT32 on p2 cannot hold >4 GB ISOs; btrfs likely ships without
+  `extents`. A new driver's checklist: EFI-free over the byte-read
+  callback, host-testable, constrained feature set matched to what its
+  mkfs actually emits (the ext4 driver's approach), cmocka suite with a
+  fixture image, and zero warnings under the repo flag set.
+- **Device discovery (decision 2026-09-13):** ONE pass, one inventory,
+  every consumer reads it. A `discover` module enumerates the Block I/O
+  handles once at startup and classifies each: media present, role by GPT
+  type GUID (Section 3), LUKS2 magic, filesystem identification through
+  the fs_ops registry. The ISO scan, the personal-OS scan, and the
+  blessed-boot path all consume the same inventory rows rather than
+  running their own enumeration loops, so a device cannot be discovered
+  for one purpose and missed for another; classification is eager (cheap
+  per-handle reads), mounting stays lazy per consumer. Re-scan is the
+  same single entry point run again.
 - **Modules:**
   - `menu` - text menu over Simple Text Output/Input. Lists ISOs, the personal-OS
     entry, and the signing-appliance entry (Section 7.5); shows per-entry
