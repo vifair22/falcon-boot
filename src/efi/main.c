@@ -1,21 +1,21 @@
 /* airies-boot EFI application entry point.
  *
- * Steps 2, 3 and 5 of the MVP build order (docs/DESIGN.md Section 11): find
- * the exFAT ISO partitions through Block I/O, enumerate *.iso with our own
- * read-only exFAT driver, probe the same handles for the LUKS2 volume the
- * personal OS lives on, present the text menu, and hand the selection to
- * whichever path owns it: the ISO path (virtual CD + the platform's verifying
- * LoadImage) or the personal-OS path (passphrase, LUKS2, ext4, UKI). A boot
- * attempt that fails, or a payload that exits, comes back to the menu.
+ * Steps 2, 3 and 5 of the MVP build order (docs/DESIGN.md Section 11): take
+ * the one device inventory src/discover builds (Section 9), enumerate *.iso
+ * on the ISO-role volumes through the filesystem registry, present the text
+ * menu, and hand the selection to whichever path owns it: the ISO path
+ * (virtual CD + the platform's verifying LoadImage) or the personal-OS path
+ * (passphrase, LUKS2, ext4, UKI). A boot attempt that fails, or a payload
+ * that exits, comes back to the menu.
  */
 
 #include <efi/uefi.h>
 #include <efi/blockio.h>
-#include <exfat/exfat.h>
+#include <discover/discover.h>
+#include <fs/fs.h>
 #include <iso/iso.h>
 #include <lib/string.h>
 #include <menu/menu.h>
-#include <part/partefi.h>
 #include <pos/pos.h>
 #include <sb/sb.h>
 
@@ -110,34 +110,13 @@ static EFI_STATUS wait_key(EFI_INPUT_KEY *key)
     return g_st->ConIn->ReadKeyStroke(g_st->ConIn, key);
 }
 
-/* ---- exFAT-over-BlockIO plumbing ---- */
-
-typedef struct {
-    EFI_BLOCK_IO_PROTOCOL *bio;
-} bio_ctx;
-
-static int bio_read(void *ctxv, uint64_t off, uint64_t len, void *buf)
-{
-    bio_ctx *ctx = ctxv;
-    UINT32 bs = ctx->bio->Media->BlockSize;
-
-    /* exFAT sectors are >= 512 and power-of-two, so aligned requests are
-     * the norm; anything else is a driver bug, not a device condition. */
-    if (bs == 0 || off % bs != 0 || len % bs != 0)
-        return -1;
-    if (ctx->bio->ReadBlocks(ctx->bio, ctx->bio->Media->MediaId,
-                             off / bs, len, buf) != EFI_SUCCESS)
-        return -1;
-    return 0;
-}
-
 /* ---- ISO scan ---- */
 
 /* What booting an entry needs, which the menu's label alone cannot carry:
  * which mounted volume the file lives on and where on it. */
 typedef struct {
     UINTN vol;
-    exfat_dirent ent;
+    fs_dirent ent;
 } iso_target;
 
 typedef struct {
@@ -149,7 +128,7 @@ typedef struct {
 } iso_list;
 
 static void list_add(iso_list *list, const CHAR16 *prefix,
-                     const exfat_dirent *ent)
+                     const fs_dirent *ent)
 {
     menu_entry *e;
     iso_target *t;
@@ -171,17 +150,17 @@ static void list_add(iso_list *list, const CHAR16 *prefix,
 
 /* Depth-first walk. Frames carry a directory iterator (~4.5 KB); depth is
  * capped so worst-case stack stays a few tens of KB. */
-static void scan_dir(exfat_vol *vol, exfat_dir *dir, CHAR16 *prefix,
+static void scan_dir(fs_vol *vol, fs_dir *dir, CHAR16 *prefix,
                      UINTN depth, iso_list *list)
 {
-    exfat_dirent ent;
+    fs_dirent ent;
 
-    while (exfat_dir_next(dir, &ent) == 1) {
+    while (fs_dir_next(dir, &ent) == 1) {
         if (ent.name[0] == u'.')
             continue; /* dotfiles and trash dirs */
 
         if (ent.is_dir) {
-            exfat_dir sub;
+            fs_dir sub;
             UINTN pl = ucs2_len(prefix);
             UINTN nl = ucs2_len(ent.name);
 
@@ -189,7 +168,7 @@ static void scan_dir(exfat_vol *vol, exfat_dir *dir, CHAR16 *prefix,
                 continue;
             if (pl + nl + 2 > MENU_PATH_MAX)
                 continue;
-            if (exfat_dir_open(vol, &sub, &ent) != EXFAT_OK)
+            if (fs_dir_open(vol, &sub, &ent) != FS_OK)
                 continue;
             /* Extend prefix in place; restore on the way out. */
             memcpy(prefix + pl, ent.name, nl * sizeof(CHAR16));
@@ -231,57 +210,44 @@ static void sort_list(iso_list *list)
 /* Mounted volumes outlive the scan: a menu entry is booted long after the
  * walk that found it, and its reads go back through the volume it came
  * from. Hence the fixed pool rather than one reused mount. */
-static exfat_vol g_vols[MAX_VOLS];   /* ~4 KB FAT cache each */
-static bio_ctx g_bio_ctx[MAX_VOLS];
+static fs_vol g_vols[MAX_VOLS];   /* ~4 KB of driver cache each */
 
-/* Probe Block I/O handles for an exFAT volume and scan each hit.
+/* Walk the ISO-role rows of the one discovery inventory (DESIGN Section 9)
+ * and scan each volume a filesystem driver claimed.
  *
- * Which handles get probed is DESIGN Section 3's rule, and part_scan_accept
- * is that rule: if any partition in the machine carries the airies p2 type
- * GUID, only those are looked at, so an internal disk's exFAT volume can
- * never contribute entries; if none does, everything is looked at, which is
- * what keeps the QEMU rig images working until mkstick stamps the types. */
+ * Which rows those are is DESIGN Section 3's rule, applied once at discovery
+ * time: if any partition in the machine carries the airies p2 type GUID, only
+ * those are offered here, so an internal disk's exFAT volume can never
+ * contribute entries; if none does, everything is, which is what keeps the
+ * QEMU rig images working until mkstick stamps the types.
+ *
+ * Which driver reads it is the registry's answer, not this function's: a p2
+ * is exFAT today, and the day one is not, the menu keeps working because the
+ * inventory row already says what claimed the bytes. */
 static void scan_all_volumes(iso_list *list, UINTN *vols_found)
 {
-    EFI_GUID bio_guid = EFI_BLOCK_IO_PROTOCOL_GUID;
-    EFI_HANDLE *handles = (void *)0;
-    UINTN count = 0;
-    UINTN i;
-    static exfat_dir root;      /* ~4.5 KB: keep off the stack */
+    static fs_dir root;         /* ~4.4 KB: keep off the stack */
     static CHAR16 prefix[MENU_PATH_MAX];
+    UINTN cursor = 0;
+    discover_dev *dev;
 
     *vols_found = 0;
-    if (g_st->BootServices->LocateHandleBuffer(ByProtocol, &bio_guid,
-                                               (void *)0, &count,
-                                               &handles) != EFI_SUCCESS)
-        return;
+    while (*vols_found < MAX_VOLS &&
+           (dev = discover_next(PART_ROLE_ISO, &cursor)) != (discover_dev *)0) {
+        fs_vol *vol = &g_vols[*vols_found];
 
-    for (i = 0; i < count && *vols_found < MAX_VOLS; i++) {
-        EFI_BLOCK_IO_PROTOCOL *bio;
-        exfat_vol *vol = &g_vols[*vols_found];
-        bio_ctx *ctx = &g_bio_ctx[*vols_found];
-
-        if (g_st->BootServices->HandleProtocol(handles[i], &bio_guid,
-                                               (void **)&bio) != EFI_SUCCESS)
+        if (dev->fs == (const fs_ops *)0)
             continue;
-        if (!bio->Media->MediaPresent)
-            continue;
-        if (!part_scan_accept(g_st, handles[i], PART_ROLE_ISO))
-            continue;
-
-        ctx->bio = bio;
-        if (exfat_mount(vol, bio_read, ctx) != EXFAT_OK)
+        if (fs_mount(vol, dev->fs, discover_read, dev) != FS_OK)
             continue;
         list->cur_vol = *vols_found;
         (*vols_found)++;
 
-        if (exfat_dir_open_root(vol, &root) != EXFAT_OK)
+        if (fs_dir_open_root(vol, &root) != FS_OK)
             continue;
         prefix[0] = 0;
         scan_dir(vol, &root, prefix, 0, list);
     }
-
-    g_st->BootServices->FreePool(handles);
 }
 
 /* ---- per-entry labels (DESIGN Section 9) ---- */
@@ -459,7 +425,8 @@ static BOOLEAN boot_personal(EFI_HANDLE image_handle)
     EFI_STATUS status;
 
     g_st->ConOut->ClearScreen(g_st->ConOut);
-    out(L"Personal OS (encrypted)\r\n\r\n");
+    out(pos_entry_label());
+    out(L"\r\n\r\n");
 
     status = pos_boot(g_st, image_handle, &result);
 
@@ -543,6 +510,11 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
 
     banner_init(&banner, L"airies-boot " WIDEN(AIRIES_VERSION));
 
+    /* One pass over the Block I/O handles for the whole loader (DESIGN
+     * Section 9): media, role, LUKS2 magic and filesystem identification for
+     * every device, before any consumer looks at one. */
+    discover_scan(st);
+
     /* Header probe only: it reads a block and parses metadata, and never asks
      * for a passphrase, so the entry's presence costs the user nothing and
      * promises nothing about whether they know the passphrase. */
@@ -557,8 +529,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
     probe_entries(&list);
 
     if (pinned != 0)
-        ucs2_copy(display[0].label, MENU_PATH_MAX,
-                  L"Personal OS (encrypted)");
+        ucs2_copy(display[0].label, MENU_PATH_MAX, pos_entry_label());
 
     for (;;) {
         INTN pick = menu_run(st, &banner, display, list.count + pinned);
@@ -568,7 +539,13 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
             st->ConOut->ClearScreen(st->ConOut);
             out(L"airies-boot: returning to firmware.\r\n");
             if (vols == 0)
-                out(L"note: no exFAT volume was found.\r\n");
+                out(L"note: no readable ISO volume was found.\r\n");
+            if (discover_skipped() != 0) {
+                out(L"note: ");
+                out_dec(discover_skipped());
+                out(L" block device(s) past the inventory cap were not "
+                    L"looked at\r\n");
+            }
             if (list.skipped != 0) {
                 out(L"note: ");
                 out_dec(list.skipped);

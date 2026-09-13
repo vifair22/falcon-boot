@@ -37,6 +37,8 @@ SRCS := \
 	src/lib/string.c \
 	src/exfat/exfat.c \
 	src/ext4/ext4.c \
+	src/fs/fs.c \
+	src/discover/discover.c \
 	src/iso/iso.c \
 	src/part/part.c \
 	src/part/partefi.c \
@@ -112,6 +114,8 @@ CLI_SRCS := \
 CLI_SHARED_SRCS := \
 	src/part/part.c \
 	src/exfat/exfat.c \
+	src/ext4/ext4.c \
+	src/fs/fs.c \
 	src/luks/json.c \
 	src/luks/af.c \
 	src/luks/luks.c \

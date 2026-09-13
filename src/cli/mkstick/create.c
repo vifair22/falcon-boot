@@ -46,6 +46,7 @@
 #include <cli/mkstick/pass.h>
 #include <cli/mkstick/shimname.h>
 
+#include <fs/fs.h>
 #include <part/part.h>
 
 #define DEFAULT_SHIM_DIR   "build/shim/bins"
@@ -85,8 +86,84 @@ static const cli_opt create_opts[] = {
     { "cert-out", CLI_OPT_VALUE, 0, "<file>",
       "also write the PUBLIC certificate here, in PEM form" },
     { "key-out", CLI_OPT_VALUE, 0, "<dir>",
-      "also keep the MOK key and cert here (host-side signing route)" }
+      "also keep the MOK key and cert here (host-side signing route)" },
+    { "p3-plain", CLI_OPT_FLAG, 0, NULL,
+      "create p3 WITHOUT LUKS; no on-stick private key, no signing appliance" },
+    { "p2-fs", CLI_OPT_VALUE, 0, "<fs>",
+      "filesystem for p2 (default exfat)" },
+    { "p3-fs", CLI_OPT_VALUE, 0, "<fs>",
+      "filesystem for p3 (default ext4)" }
 };
+
+/* ---- filesystem choices (DESIGN Section 9) ----
+ *
+ * The flags exist so the CLI surface is future-proof, and the lists exist so
+ * it stays honest: a driver target DESIGN sanctions but nobody has written is
+ * refused by name rather than accepted into a stick the loader cannot read.
+ *
+ * Per role rather than one list, because the roles are not interchangeable.
+ * p2 must be readable by every desktop OS the user drags an ISO from and must
+ * carry the extent map the injection framework resolves files through (DESIGN
+ * Section 6.2), which is exFAT today. p3 is read by our driver alone.
+ *
+ * `implemented` is cross-checked against the loader's own registry, so this
+ * tool cannot offer to create something the loader could not then mount. */
+static const char *const p2_implemented[] = { "exfat" };
+static const char *const p3_implemented[] = { "ext4" };
+
+/* Sanctioned in DESIGN Section 9, write on demand. Named in the refusal so a
+ * user asking for one learns it is planned rather than rejected. */
+static const char *const sanctioned[] = {
+    "exfat", "ext4", "fat32", "xfs", "btrfs"
+};
+
+static int in_list(const char *const *list, size_t n, const char *name)
+{
+    size_t i;
+
+    for (i = 0; i < n; i++) {
+        if (strcmp(list[i], name) == 0)
+            return 1;
+    }
+    return 0;
+}
+
+static cli_status fs_choose(const cli_args *a, const char *opt,
+                            const char *const *impl, size_t n,
+                            const char *dflt, const char **out)
+{
+    const char *want = cli_value(a, opt, dflt);
+
+    *out = dflt;
+    if (in_list(impl, n, want)) {
+        /* The loader's registry is the authority on "implemented": if these
+         * two ever disagree, the stick is the thing that would not boot. */
+        if (fs_by_name(want) == NULL)
+            return set_error(CLI_ERR_INTERNAL,
+                             "%s is listed here but no loader driver claims "
+                             "that name", want);
+        *out = want;
+        return CLI_OK;
+    }
+    if (in_list(sanctioned, sizeof sanctioned / sizeof sanctioned[0], want))
+        return set_error(CLI_ERR_USAGE,
+                         "--%s %s: driver not yet implemented for this "
+                         "partition; implemented: %s. Sanctioned targets "
+                         "(DESIGN Section 9): exfat, ext4, fat32, xfs, btrfs",
+                         opt, want, impl[0]);
+    return set_error(CLI_ERR_USAGE,
+                     "--%s %s: no such filesystem driver; implemented: %s. "
+                     "Sanctioned targets (DESIGN Section 9): exfat, ext4, "
+                     "fat32, xfs, btrfs", opt, want, impl[0]);
+}
+
+/* What `create` was asked to build, beyond the sizes. Gathered once so the
+ * steps below take a decision rather than re-reading the command line. */
+typedef struct {
+    int         p3_plain;
+    const char *p2_fs;
+    const char *p3_fs;
+} fs_plan;
 
 /* ---- a small argv builder, because sgdisk's arguments are computed ---- */
 
@@ -485,7 +562,21 @@ static cli_status write_partition_table(const mks_disk *d, const layout *l)
     }
 }
 
-static cli_status make_filesystems(const mks_disk *d, const mks_pass *pass)
+/* One mkfs invocation, chosen by name. The label flag is not shared across
+ * filesystems (mkfs.exfat and mkfs.ext4 spell it the same way by luck, not by
+ * standard), so a new target adds a row here rather than a special case at
+ * every call site. */
+static cli_status make_fs(const char *fs, const char *label, const char *dev)
+{
+    if (strcmp(fs, "exfat") == 0)
+        return proc_runl_quiet("mkfs.exfat", "-n", label, dev, PROC_END);
+    if (strcmp(fs, "ext4") == 0)
+        return proc_runl_quiet("mkfs.ext4", "-q", "-L", label, dev, PROC_END);
+    return set_error(CLI_ERR_INTERNAL, "no mkfs rule for %s", fs);
+}
+
+static cli_status make_filesystems(const mks_disk *d, const mks_pass *pass,
+                                   const fs_plan *plan)
 {
     char mapper[64];
     char mapper_path[MKS_PATH_MAX];
@@ -497,18 +588,30 @@ static cli_status make_filesystems(const mks_disk *d, const mks_pass *pass)
     if (rc != CLI_OK)
         return rc;
 
-    log_info("p2: exFAT (the drag-and-drop ISO library)");
-    rc = proc_runl_quiet("mkfs.exfat", "-n", MKS_LABEL_P2, d->part[1], PROC_END);
+    log_info("p2: %s (the drag-and-drop ISO library)", plan->p2_fs);
+    rc = make_fs(plan->p2_fs, MKS_LABEL_P2, d->part[1]);
     if (rc != CLI_OK)
         return rc;
+
+    /* DESIGN Section 3: p3's encryption is the default, not a requirement.
+     * Plaintext means no keyslot to format and no mapper to open; the
+     * filesystem goes straight onto the partition, and the consequences were
+     * printed before any of this ran. */
+    if (plan->p3_plain) {
+        log_info("p3: %s, PLAINTEXT (no LUKS: --p3-plain)", plan->p3_fs);
+        rc = make_fs(plan->p3_fs, MKS_LABEL_P3, d->part[2]);
+        if (rc != CLI_OK)
+            return rc;
+        goto p4;
+    }
 
     /* p3's pbkdf2 keyslot, with the iteration count DESIGN Section 8 pins.
      * This is the one cryptsetup invocation whose every flag matters: the
      * loader's in-EFI unlock handles pbkdf2 and aes-xts-plain64 and nothing
      * else, so a default luksFormat here produces a partition the boot menu
      * can see and cannot open. */
-    log_info("p3: LUKS2 (pbkdf2, %s iterations) + ext4",
-             MKS_P3_PBKDF2_ITERATIONS);
+    log_info("p3: LUKS2 (pbkdf2, %s iterations) + %s",
+             MKS_P3_PBKDF2_ITERATIONS, plan->p3_fs);
     rc = proc_input_l(pass->buf, pass->len, "cryptsetup", "luksFormat",
                       "--type", "luks2",
                       "--pbkdf", "pbkdf2",
@@ -531,17 +634,19 @@ static cli_status make_filesystems(const mks_disk *d, const mks_pass *pass)
         return rc;
     }
     (void)snprintf(mapper_path, sizeof mapper_path, "/dev/mapper/%s", mapper);
-    rc = proc_runl_quiet("mkfs.ext4", "-q", "-L", MKS_LABEL_P3, mapper_path,
-                         PROC_END);
+    rc = make_fs(plan->p3_fs, MKS_LABEL_P3, mapper_path);
     if (rc != CLI_OK)
         return rc;
     rc = cleanup_pop();                    /* close the mapper */
     if (rc != CLI_OK)
         return rc;
 
+p4:
     /* p4 keeps LUKS2's stock argon2id, because it is unlocked by the Linux
      * kernel inside the UKI's initramfs, where memory-hardness is free
-     * (DESIGN Section 3). EFI-land never touches it. */
+     * (DESIGN Section 3). EFI-land never touches it. p4 is encrypted whether
+     * or not p3 is: it holds root and home, the loader never reads it, and
+     * --p3-plain is a statement about the UKI shelf alone. */
     log_info("p4: LUKS2 (argon2id, stock defaults) + ext4");
     rc = proc_input_l(pass->buf, pass->len, "cryptsetup", "luksFormat",
                       "--type", "luks2", "--batch-mode", d->part[3], "-",
@@ -625,10 +730,18 @@ static cli_status install_esp(const mks_disk *d, const char *mnt,
     return cleanup_pop();
 }
 
-/* p3: the UKI shelf and the private key (DESIGN Sections 3 and 7.5). */
+/* p3: the UKI shelf and the private key (DESIGN Sections 3 and 7.5).
+ *
+ * The plaintext variant differs in exactly two places, both stated in DESIGN
+ * Section 3: there is no mapper to open, and the MOK private key does NOT go
+ * on the stick. The second is the key model's invariant holding rather than
+ * bending: the private key lives encrypted or it does not live on the stick
+ * at all, so a plaintext shelf gets the public certificate and nothing else,
+ * and the private half is the user's to keep (--key-out, required for this
+ * flag). */
 static cli_status install_shelf(const cli_args *a, const mks_disk *d,
                                 const char *mnt, const mks_pass *pass,
-                                const mok_keys *keys)
+                                const mok_keys *keys, const fs_plan *plan)
 {
     char mapper[64];
     char mapper_path[MKS_PATH_MAX];
@@ -636,25 +749,34 @@ static cli_status install_shelf(const cli_args *a, const mks_disk *d,
     char dst[MKS_PATH_MAX];
     size_t n = cli_count(a, "uki");
     size_t i;
+    int mapped = 0;
     cli_status rc;
 
-    (void)snprintf(mapper, sizeof mapper, "airies-mkstick-p3-%d",
-                   (int)getpid());
-    rc = proc_input_l(pass->buf, pass->len, "cryptsetup", "open",
-                      d->part[2], mapper, "-", PROC_END);
-    if (rc != CLI_OK)
-        return rc;
-    rc = cleanup_push_crypt(mapper);
-    if (rc != CLI_OK) {
-        (void)proc_runl_quiet("cryptsetup", "close", mapper, PROC_END);
-        return rc;
-    }
-    (void)snprintf(mapper_path, sizeof mapper_path, "/dev/mapper/%s", mapper);
+    if (plan->p3_plain) {
+        rc = mount_at(d->part[2], mnt);
+        if (rc != CLI_OK)
+            return rc;
+    } else {
+        (void)snprintf(mapper, sizeof mapper, "airies-mkstick-p3-%d",
+                       (int)getpid());
+        rc = proc_input_l(pass->buf, pass->len, "cryptsetup", "open",
+                          d->part[2], mapper, "-", PROC_END);
+        if (rc != CLI_OK)
+            return rc;
+        rc = cleanup_push_crypt(mapper);
+        if (rc != CLI_OK) {
+            (void)proc_runl_quiet("cryptsetup", "close", mapper, PROC_END);
+            return rc;
+        }
+        mapped = 1;
+        (void)snprintf(mapper_path, sizeof mapper_path, "/dev/mapper/%s",
+                       mapper);
 
-    rc = mount_at(mapper_path, mnt);
-    if (rc != CLI_OK) {
-        (void)cleanup_pop();
-        return rc;
+        rc = mount_at(mapper_path, mnt);
+        if (rc != CLI_OK) {
+            (void)cleanup_pop();
+            return rc;
+        }
     }
 
     rc = util_join(ukidir, sizeof ukidir, mnt, MKS_P3_UKI_DIR);
@@ -683,14 +805,18 @@ static cli_status install_shelf(const cli_args *a, const mks_disk *d,
     /* The private key, at mode 0600, inside the LUKS volume and nowhere else
      * (DESIGN Section 7.5). This is the one copy that travels with the stick;
      * the signing appliance and a future `sign` run read it from here after
-     * unlocking p3 with the same passphrase the loader asks for. */
-    if (rc == CLI_OK) {
+     * unlocking p3 with the same passphrase the loader asks for.
+     *
+     * On a plaintext shelf this step does not happen at all. Writing the key
+     * here would put it on a partition anyone can read, which is the one
+     * thing the key model does not permit. */
+    if (rc == CLI_OK && !plan->p3_plain) {
         log_info("p3: MOK private key -> %s (0600, inside the LUKS volume)",
                  MKS_P3_KEY_NAME);
         rc = util_join(dst, sizeof dst, mnt, MKS_P3_KEY_NAME);
+        if (rc == CLI_OK)
+            rc = util_copy_file(keys->key, dst, 0600);
     }
-    if (rc == CLI_OK)
-        rc = util_copy_file(keys->key, dst, 0600);
     if (rc == CLI_OK)
         rc = util_join(dst, sizeof dst, mnt, MKS_P3_CERT_NAME);
     if (rc == CLI_OK)
@@ -698,15 +824,17 @@ static cli_status install_shelf(const cli_args *a, const mks_disk *d,
 
     if (rc != CLI_OK) {
         (void)cleanup_pop();               /* umount */
-        (void)cleanup_pop();               /* close */
+        if (mapped)
+            (void)cleanup_pop();           /* close */
         return rc;
     }
     rc = cleanup_pop();
     if (rc != CLI_OK) {
-        (void)cleanup_pop();
+        if (mapped)
+            (void)cleanup_pop();
         return rc;
     }
-    return cleanup_pop();
+    return mapped ? cleanup_pop() : CLI_OK;
 }
 
 /* p2: the reserved directory of DESIGN Section 6.2, with the blessed-artifact
@@ -746,6 +874,7 @@ static cli_status create_run(const cli_args *a)
     const char *cert_out = cli_value(a, "cert-out", NULL);
     const char *key_out = cli_value(a, "key-out", NULL);
     const int force = cli_flag(a, "force");
+    fs_plan plan_fs;
     char shim_path[MKS_PATH_MAX];
     char mm_path[MKS_PATH_MAX];
     char mm_name[SHIM_NEXT_STAGE_MAX];
@@ -767,6 +896,49 @@ static cli_status create_run(const cli_args *a)
     rc = mkstick_guid_selfcheck();
     if (rc != CLI_OK)
         return rc;
+
+    plan_fs.p3_plain = cli_flag(a, "p3-plain");
+    rc = fs_choose(a, "p2-fs", p2_implemented,
+                   sizeof p2_implemented / sizeof p2_implemented[0], "exfat",
+                   &plan_fs.p2_fs);
+    if (rc != CLI_OK)
+        return rc;
+    rc = fs_choose(a, "p3-fs", p3_implemented,
+                   sizeof p3_implemented / sizeof p3_implemented[0], "ext4",
+                   &plan_fs.p3_fs);
+    if (rc != CLI_OK)
+        return rc;
+
+    if (plan_fs.p3_plain) {
+        /* DESIGN Section 3 asks for the consequences to be stated at creation
+         * time rather than discovered later, and they are stated before the
+         * first byte is written, because the one that matters is a refusal:
+         * with no encrypted shelf the private key has nowhere on the stick to
+         * live, so it must have somewhere on the HOST to live or it dies with
+         * the temporary directory this command shreds on the way out, and the
+         * stick can never be given another signed UKI. */
+        if (key_out == NULL)
+            return set_error(CLI_ERR_USAGE,
+                             "--p3-plain leaves the MOK private key nowhere "
+                             "to live: p3 is the only encrypted place it may "
+                             "sit (DESIGN Section 7.5), so pass --key-out "
+                             "<dir> to keep it on this host, or drop "
+                             "--p3-plain");
+        cli_log_blank();
+        log_warn("--p3-plain: p3 will be PLAINTEXT. What that means:");
+        log_warn("  - no on-stick MOK private key, so NO SIGNING APPLIANCE on "
+                 "this stick;");
+        log_warn("  - blessing media and signing UKIs is external-host only, "
+                 "from --key-out;");
+        log_warn("  - the loader asks for no passphrase and hands no "
+                 "credential on, so the");
+        log_warn("    initramfs prompts for p4 itself;");
+        log_warn("  - integrity is unchanged (the UKI is still signed and "
+                 "shim still verifies it);");
+        log_warn("  - confidentiality of the UKI, its initramfs and the "
+                 "appliance is given up.");
+        cli_log_blank();
+    }
 
     for (i = 0; i < sizeof required_tools / sizeof required_tools[0]; i++) {
         if (!proc_exists(required_tools[i]))
@@ -880,7 +1052,7 @@ static cli_status create_run(const cli_args *a)
     if (rc != CLI_OK)
         goto out;
 
-    rc = make_filesystems(&disk, &pass);
+    rc = make_filesystems(&disk, &pass, &plan_fs);
     if (rc != CLI_OK)
         goto out;
 
@@ -905,7 +1077,7 @@ static cli_status create_run(const cli_args *a)
     if (rc != CLI_OK)
         goto out;
 
-    rc = install_shelf(a, &disk, mntdir, &pass, &keys);
+    rc = install_shelf(a, &disk, mntdir, &pass, &keys, &plan_fs);
     if (rc != CLI_OK)
         goto out;
 
@@ -967,6 +1139,10 @@ out:
         log_info("%s is ready.", disk.path);
         log_info("First boot with Secure Boot ON: shim launches MokManager; "
                  "enroll p1:/%s, reboot.", MKS_ESP_CERT_NAME);
+        if (plan_fs.p3_plain)
+            log_warn("p3 is PLAINTEXT: no signing appliance on this stick, "
+                     "and the only copy of the MOK private key is the one in "
+                     "%s.", key_out);
     }
     return rc;
 }
@@ -987,6 +1163,15 @@ const cli_cmd mks_cmd_create = {
     "p3's keyslot is pbkdf2 with a pinned iteration count because the loader's\n"
     "in-EFI unlock must open it; p4 keeps LUKS2's argon2id because Linux opens\n"
     "it. Both share one passphrase.\n"
+    "\n"
+    "--p3-plain drops the LUKS layer on p3 (Section 3). The stick then has no\n"
+    "on-stick private key and so no signing appliance, and the loader asks for\n"
+    "no passphrase; --key-out is required, because the key would otherwise have\n"
+    "nowhere to live. p4 stays encrypted either way.\n"
+    "\n"
+    "--p2-fs/--p3-fs accept the filesystems the loader can actually read today\n"
+    "(exfat for p2, ext4 for p3) and name the sanctioned-but-unwritten targets\n"
+    "of Section 9 in the refusal.\n"
     "\n"
     "Needs root (loop devices, device-mapper, mount).\n",
     create_run

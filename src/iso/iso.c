@@ -43,7 +43,7 @@ typedef struct {
     EFI_BLOCK_IO_PROTOCOL bio;
     EFI_BLOCK_IO_MEDIA    media;
     iso_device_path       path;
-    exfat_file            file;
+    fs_file               file;
     EFI_HANDLE            handle;
     UINT8                 in_use;
     UINT8                 connected;
@@ -96,10 +96,10 @@ static EFI_STATUS EFIAPI iso_read_blocks(EFI_BLOCK_IO_PROTOCOL *self,
     /* An ISO whose length is not a whole number of 2048-byte blocks still
      * advertises that last partial block, so serve the bytes that exist and
      * zero the rest rather than failing the read. */
-    avail = dev->file.size - off;
+    avail = fs_file_size(&dev->file) - off;
     if (avail > (uint64_t)size)
         avail = (uint64_t)size;
-    if (exfat_file_read(&dev->file, off, avail, buffer) != EXFAT_OK)
+    if (fs_file_read(&dev->file, off, avail, buffer) != FS_OK)
         return EFI_DEVICE_ERROR;
     if (avail < (uint64_t)size)
         memset((UINT8 *)buffer + avail, 0, (size_t)((uint64_t)size - avail));
@@ -128,7 +128,7 @@ static EFI_STATUS EFIAPI iso_flush_blocks(EFI_BLOCK_IO_PROTOCOL *self)
 
 /* ---- device lifecycle ---- */
 
-static void device_init(iso_device *dev, const exfat_dirent *file)
+static void device_init(iso_device *dev, uint64_t size)
 {
     EFI_GUID vendor_guid = AIRIES_ISO_MEDIA_GUID;
 
@@ -140,7 +140,7 @@ static void device_init(iso_device *dev, const exfat_dirent *file)
     dev->media.WriteCaching = FALSE;
     dev->media.BlockSize = ISO_BLOCK_SIZE;
     dev->media.IoAlign = 0;
-    dev->media.LastBlock = file->size / ISO_BLOCK_SIZE - 1;
+    dev->media.LastBlock = size / ISO_BLOCK_SIZE - 1;
 
     dev->bio.Revision = EFI_BLOCK_IO_PROTOCOL_REVISION;
     dev->bio.Media = &dev->media;
@@ -623,8 +623,8 @@ static EFI_STATUS chainload(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
  * device_teardown. It stays zero only when a previous device is still held by
  * a driver: that instance belongs to the earlier attempt, and tearing it down
  * from here would disconnect drivers this caller never connected. */
-static EFI_STATUS iso_open(EFI_SYSTEM_TABLE *st, exfat_vol *vol,
-                           const exfat_dirent *file, const CHAR16 **stage,
+static EFI_STATUS iso_open(EFI_SYSTEM_TABLE *st, fs_vol *vol,
+                           const fs_dirent *file, const CHAR16 **stage,
                            EFI_HANDLE *esp_handle, UINT8 *owned)
 {
     EFI_BOOT_SERVICES *bs = st->BootServices;
@@ -632,6 +632,7 @@ static EFI_STATUS iso_open(EFI_SYSTEM_TABLE *st, exfat_vol *vol,
     EFI_GUID dp_guid = EFI_DEVICE_PATH_PROTOCOL_GUID;
     EFI_HANDLE *before = (EFI_HANDLE *)0;
     UINTN before_n = 0;
+    uint64_t size;
     EFI_STATUS status;
 
     *esp_handle = (EFI_HANDLE)0;
@@ -642,16 +643,20 @@ static EFI_STATUS iso_open(EFI_SYSTEM_TABLE *st, exfat_vol *vol,
         *stage = L"previous virtual CD still held by a driver";
         return EFI_ACCESS_DENIED;
     }
-    if (file->size < ISO_BLOCK_SIZE) {
+    if (fs_file_open(vol, &g_dev.file, file) != FS_OK) {
+        *stage = L"opening the ISO on its volume";
+        return EFI_DEVICE_ERROR;
+    }
+    /* The open comes first because the size does: a directory entry carries
+     * one on exFAT and not on every filesystem (ext4 keeps it in the inode),
+     * so the byte count this device advertises is the opened file's. */
+    size = fs_file_size(&g_dev.file);
+    if (size < ISO_BLOCK_SIZE) {
         *stage = L"ISO is too small to be CD media";
         return EFI_UNSUPPORTED;
     }
-    if (exfat_file_open(vol, &g_dev.file, file) != EXFAT_OK) {
-        *stage = L"opening the ISO on the exFAT volume";
-        return EFI_DEVICE_ERROR;
-    }
 
-    device_init(&g_dev, file);
+    device_init(&g_dev, size);
     *owned = 1;
 
     *stage = L"publishing the virtual CD";
@@ -691,7 +696,7 @@ static EFI_STATUS iso_open(EFI_SYSTEM_TABLE *st, exfat_vol *vol,
 }
 
 EFI_STATUS iso_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
-                    exfat_vol *vol, const exfat_dirent *file,
+                    fs_vol *vol, const fs_dirent *file,
                     iso_boot_result *result)
 {
     EFI_BOOT_SERVICES *bs;
@@ -739,8 +744,8 @@ EFI_STATUS iso_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
     return status;
 }
 
-EFI_STATUS iso_survey_media(EFI_SYSTEM_TABLE *st, exfat_vol *vol,
-                            const exfat_dirent *file, iso_survey *out)
+EFI_STATUS iso_survey_media(EFI_SYSTEM_TABLE *st, fs_vol *vol,
+                            const fs_dirent *file, iso_survey *out)
 {
     EFI_BOOT_SERVICES *bs;
     EFI_HANDLE esp_handle = (EFI_HANDLE)0;

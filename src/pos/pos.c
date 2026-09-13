@@ -1,23 +1,23 @@
-/* The personal-OS path: passphrase -> p3 -> ext4 -> UKI -> credfs -> shim.
+/* The personal-OS path: passphrase -> p3 -> filesystem -> UKI -> credfs ->
+ * shim, with the passphrase step skipped on a plaintext shelf.
  * See pos.h for the contract and, in particular, for why the UKI is loaded by
  * device path off a filesystem this loader synthesizes.
  */
 
 #include <pos/pos.h>
 
-#include <efi/blockio.h>
 #include <efi/shimguid.h>
 
 #include <credfs/credfs.h>
 #include <crypto/crypto.h>
-#include <ext4/ext4.h>
+#include <discover/discover.h>
+#include <fs/fs.h>
 #include <luks/luks.h>
 #include <lib/string.h>
 #include <menu/menu.h>
-#include <part/partefi.h>
 
 /* p3 is one partition, but the scan is not told which one it is, so it takes
- * whatever LUKS2 volumes it finds. Four covers a stick built to DESIGN
+ * whatever shelf-role volumes it finds. Four covers a stick built to DESIGN
  * Section 3 (p3 and p4) with room for a second stick plugged in beside it. */
 #define POS_MAX_VOLS 4u
 
@@ -45,15 +45,10 @@
  * a hang. */
 #define POS_UKI_MAX ((uint64_t)512u << 20)
 
-/* Largest block size any firmware Block I/O instance we care about reports. */
-#define POS_PROBE_BUF 4096u
-
-/* Room for the longest name ext4 can hold, as CHAR16. The synthetic
- * filesystem reuses the UKI's own name, so an operator reading a failure line
- * sees the file they picked rather than a placeholder. */
+/* Room for the longest name a filesystem here can hold, as CHAR16. The
+ * synthetic filesystem reuses the UKI's own name, so an operator reading a
+ * failure line sees the file they picked rather than a placeholder. */
 #define POS_NAME_MAX 256u
-
-static const uint8_t luks2_magic[6] = { 'L', 'U', 'K', 'S', 0xba, 0xbe };
 
 static EFI_SYSTEM_TABLE *g_st;
 
@@ -78,10 +73,13 @@ static void out_dec(UINT64 v)
     out(&buf[i]);
 }
 
-/* ext4 filenames are bytes and the console wants CHAR16. Everything the
- * loader will find on p3 is ASCII by construction (mkstick writes those
- * names), so anything else is shown as '?' rather than guessed at. */
-static void name_to_ucs2(CHAR16 *dst, UINTN cap, const uint8_t *name,
+/* Directory-entry names arrive as UCS-2 from the registry, whatever the
+ * filesystem underneath stores (src/fs widens a byte-named driver's names on
+ * the way out). Everything the loader will find on p3 is ASCII by
+ * construction (mkstick writes those names), so anything else is shown as '?'
+ * rather than guessed at: a byte-widened UTF-8 name is not text, and a
+ * console line is the wrong place to find that out. */
+static void name_to_ucs2(CHAR16 *dst, UINTN cap, const uint16_t *name,
                          UINTN len)
 {
     UINTN i;
@@ -92,7 +90,7 @@ static void name_to_ucs2(CHAR16 *dst, UINTN cap, const uint8_t *name,
     dst[i] = 0;
 }
 
-static void out_name(const uint8_t *name, UINTN len)
+static void out_name(const uint16_t *name, UINTN len)
 {
     CHAR16 buf[64];
 
@@ -100,20 +98,31 @@ static void out_name(const uint8_t *name, UINTN len)
     out(buf);
 }
 
-/* ---- LUKS volumes found at scan time ---- */
-
+/* ---- shelf volumes found at scan time ----
+ *
+ * Two shapes, because DESIGN Section 3 makes p3's encryption the default
+ * rather than a requirement: a LUKS2 volume this loader can unlock, and a
+ * plaintext shelf carrying a filesystem the registry claimed. Everything
+ * downstream of the mount is identical; the difference is one prompt and one
+ * credential, and it is confined to pos_boot's opening moves. */
 typedef struct {
-    EFI_BLOCK_IO_PROTOCOL *bio;
-    luks_vol               vol;
+    discover_dev *dev;
+    const fs_ops *fs;        /* plaintext only: the driver that claimed it */
+    uint8_t       encrypted; /* a LUKS2 header sits at offset 0 */
+    uint8_t       usable;    /* encrypted: a pbkdf2 keyslot we can process;
+                                plaintext: a mountable volume with a UKI on
+                                it, checked at scan time because here, unlike
+                                the encrypted case, we CAN check */
+    luks_vol      vol;
     /* luks_open keeps views into this for the lifetime of vol, so it is
      * per-volume storage and not one shared scratch buffer. */
-    char                   json[LUKS_JSON_CAP];
-    uint8_t                usable;   /* has a pbkdf2 keyslot we can process */
-} pos_luks;
+    char          json[LUKS_JSON_CAP];
+} pos_shelf;
 
-static pos_luks g_luks[POS_MAX_VOLS];
-static UINTN    g_luks_n;
-static UINTN    g_luks_usable;
+static pos_shelf g_shelf[POS_MAX_VOLS];
+static UINTN     g_shelf_n;
+static UINTN     g_luks_usable;
+static UINTN     g_plain_usable;
 
 /* The secret, and the key it recovers. Both are file statics rather than
  * locals so that "everything that ever held key material" is two objects with
@@ -143,48 +152,15 @@ static void wipe_secrets(void)
 /* Decrypted-volume and filesystem state. Static because each carries a
  * multi-kilobyte cache and -Wstack-usage polices frames at 32 KB. */
 static luks_dev  g_dev;
-static ext4_vol  g_fs;
-static ext4_dir  g_dir_a;
-static ext4_dir  g_dir_b;
-static ext4_file g_file;
+static uint8_t   g_dev_open;   /* g_dev holds a cipher context to close */
+static fs_vol    g_fs;
+static fs_dir    g_dir_a;
+static fs_dir    g_dir_b;
+static fs_file   g_file;
 
-static ext4_dirent g_ukis[POS_MAX_UKIS];
-static menu_entry  g_uki_entries[POS_MAX_UKIS];
-static UINTN       g_uki_n;
-
-/* ---- Block I/O plumbing ---- */
-
-static int pos_bio_read(void *ctxv, uint64_t off, uint64_t len, void *buf)
-{
-    pos_luks *p = ctxv;
-    UINT32 bs = p->bio->Media->BlockSize;
-
-    /* LUKS metadata and the ext4 above it are read in whole 512-byte units,
-     * so an unaligned request here is a driver bug rather than a device
-     * condition, and is reported as such. */
-    if (bs == 0 || off % bs != 0 || len % bs != 0)
-        return -1;
-    if (p->bio->ReadBlocks(p->bio, p->bio->Media->MediaId, off / bs,
-                           (UINTN)len, buf) != EFI_SUCCESS)
-        return -1;
-    return 0;
-}
-
-/* Cheap first pass: is there a LUKS2 primary header here at all? Runs before
- * luks_open so that the common case (a firmware handle for something that is
- * not ours) costs one block read instead of a header parse and a SHA-256 over
- * the JSON area. */
-static BOOLEAN has_luks_magic(EFI_BLOCK_IO_PROTOCOL *bio)
-{
-    static UINT8 blk[POS_PROBE_BUF];
-    UINT32 bs = bio->Media->BlockSize;
-
-    if (bs == 0 || bs > POS_PROBE_BUF)
-        return FALSE;
-    if (bio->ReadBlocks(bio, bio->Media->MediaId, 0, bs, blk) != EFI_SUCCESS)
-        return FALSE;
-    return (BOOLEAN)(memcmp(blk, luks2_magic, sizeof luks2_magic) == 0);
-}
+static fs_dirent  g_ukis[POS_MAX_UKIS];
+static menu_entry g_uki_entries[POS_MAX_UKIS];
+static UINTN      g_uki_n;
 
 /* Does this volume have a keyslot this loader can actually process? DESIGN
  * Section 3 makes p3 pbkdf2 for exactly this reason; p4's argon2id slots are
@@ -207,52 +183,62 @@ static uint8_t has_pbkdf2_slot(const luks_vol *v)
     return 0;
 }
 
+/* Can this plaintext shelf actually serve a personal OS? Forward-declared
+ * because the answer is "mount it and look for a UKI", and the code that
+ * knows how to do that sits below with the rest of the filesystem walk. */
+static int plain_shelf_usable(discover_dev *dev, const fs_ops *ops);
+
 UINTN pos_scan(EFI_SYSTEM_TABLE *st)
 {
-    EFI_GUID bio_guid = EFI_BLOCK_IO_PROTOCOL_GUID;
-    EFI_HANDLE *handles = (EFI_HANDLE *)0;
-    UINTN count = 0;
-    UINTN i;
+    UINTN cursor = 0;
+    discover_dev *dev;
 
     g_st = st;
-    g_luks_n = 0;
+    g_shelf_n = 0;
     g_luks_usable = 0;
+    g_plain_usable = 0;
 
-    if (st->BootServices->LocateHandleBuffer(ByProtocol, &bio_guid,
-                                             (void *)0, &count,
-                                             &handles) != EFI_SUCCESS)
-        return 0;
+    /* The rows are src/discover's, classified once for the whole loader
+     * (DESIGN Section 9). DESIGN Section 3's filter decided which handles a
+     * shelf scan may look at; the LUKS2 magic on each row decides which of
+     * the two shapes below this one is. */
+    while (g_shelf_n < POS_MAX_VOLS &&
+           (dev = discover_next(PART_ROLE_SHELF, &cursor)) !=
+               (discover_dev *)0) {
+        pos_shelf *p = &g_shelf[g_shelf_n];
 
-    for (i = 0; i < count && g_luks_n < POS_MAX_VOLS; i++) {
-        EFI_BLOCK_IO_PROTOCOL *bio;
-        pos_luks *p = &g_luks[g_luks_n];
-
-        if (st->BootServices->HandleProtocol(handles[i], &bio_guid,
-                                             (void **)&bio) != EFI_SUCCESS)
-            continue;
-        if (!bio->Media->MediaPresent)
-            continue;
-        /* DESIGN Section 3 partition identification: when any airies-typed
-         * shelf partition exists, only those are considered; the LUKS magic
-         * probe below then confirms the contents. */
-        if (!part_scan_accept(st, handles[i], PART_ROLE_SHELF))
-            continue;
-        if (!has_luks_magic(bio))
-            continue;
-
-        p->bio = bio;
+        p->dev = dev;
+        p->fs = (const fs_ops *)0;
+        p->encrypted = dev->luks2;
         p->usable = 0;
-        if (luks_open(&p->vol, pos_bio_read, p, p->json,
-                      LUKS_JSON_CAP) != LUKS_OK)
+
+        if (dev->luks2) {
+            if (luks_open(&p->vol, discover_read, dev, p->json,
+                          LUKS_JSON_CAP) != LUKS_OK)
+                continue;
+            p->usable = has_pbkdf2_slot(&p->vol);
+            if (p->usable)
+                g_luks_usable++;
+            g_shelf_n++;
             continue;
-        p->usable = has_pbkdf2_slot(&p->vol);
-        if (p->usable)
-            g_luks_usable++;
-        g_luks_n++;
+        }
+
+        /* A plaintext shelf (DESIGN Section 3's --p3-plain). Unlike the
+         * encrypted case, its contents are readable right now, so the entry
+         * is offered only when there is something on it to boot: without the
+         * passphrase gate, "any ext4 volume in the machine" would otherwise
+         * put a Personal OS entry in the menu for somebody's data disk. */
+        if (dev->fs == (const fs_ops *)0)
+            continue;
+        if (!plain_shelf_usable(dev, dev->fs))
+            continue;
+        p->fs = dev->fs;
+        p->usable = 1;
+        g_plain_usable++;
+        g_shelf_n++;
     }
 
-    st->BootServices->FreePool(handles);
-    return g_luks_usable;
+    return g_luks_usable + g_plain_usable;
 }
 
 /* ---- unlock ---- */
@@ -277,13 +263,13 @@ static int unlock_any(UINTN *which)
     UINTN i;
 
     *which = 0;
-    for (i = 0; i < g_luks_n; i++) {
+    for (i = 0; i < g_shelf_n; i++) {
         uint32_t slot = 0;
         int rc;
 
-        if (!g_luks[i].usable)
+        if (!g_shelf[i].encrypted || !g_shelf[i].usable)
             continue;
-        rc = luks_unlock(&g_luks[i].vol, g_pass, (size_t)g_pass_len, &g_mk,
+        rc = luks_unlock(&g_shelf[i].vol, g_pass, (size_t)g_pass_len, &g_mk,
                          &slot);
         if (rc == LUKS_OK) {
             *which = i;
@@ -300,75 +286,27 @@ static int unlock_any(UINTN *which)
     return (other_err != LUKS_OK) ? other_err : LUKS_ERR_NOKEY;
 }
 
-/* ---- finding the UKI on the ext4 inside p3 ---- */
+/* ---- finding the UKI on the filesystem inside p3 ---- */
 
 /* Directory convention, fixed here and matched by mkstick (DESIGN Section 8):
  * the UKIs live in /uki. /EFI/Linux is accepted as a fallback because that is
  * where the Boot Loader Specification puts them, so a p3 populated by
  * `kernel-install` rather than by our tooling still boots. */
-static int ascii_lower(uint8_t c)
+static int name_ends_efi(const fs_dirent *e)
 {
-    return (c >= 'A' && c <= 'Z') ? c + ('a' - 'A') : c;
-}
-
-static int name_is(const ext4_dirent *e, const char *want)
-{
-    UINTN n = (UINTN)e->name_len;
-    UINTN i;
-
-    for (i = 0; i < n; i++) {
-        if (want[i] == '\0')
-            return 0;
-        if (ascii_lower(e->name[i]) != ascii_lower((uint8_t)want[i]))
-            return 0;
-    }
-    return want[i] == '\0';
-}
-
-static int name_ends_efi(const ext4_dirent *e)
-{
-    static const char suffix[] = ".efi";
-    UINTN n = sizeof(suffix) - 1u;
-    UINTN len = (UINTN)e->name_len;
-    UINTN i;
-
-    if (len < n + 1u) /* ".efi" on its own is a name, not a UKI */
+    /* ".efi" on its own is a name, not a UKI. */
+    if (e->name_len < 5u)
         return 0;
-    for (i = 0; i < n; i++) {
-        if (ascii_lower(e->name[len - n + i]) != (int)(uint8_t)suffix[i])
-            return 0;
-    }
-    return 1;
+    return fs_name_ends_ascii(e->name, ".efi");
 }
 
-/* Case-insensitive byte order, so the presented list does not depend on the
- * order the directory blocks happened to store the names in. */
-static int name_cmp(const ext4_dirent *a, const ext4_dirent *b)
+static int dir_find(fs_dir *in, const char *name, fs_dirent *found)
 {
-    UINTN la = (UINTN)a->name_len;
-    UINTN lb = (UINTN)b->name_len;
-    UINTN n = (la < lb) ? la : lb;
-    UINTN i;
-
-    for (i = 0; i < n; i++) {
-        int ca = ascii_lower(a->name[i]);
-        int cb = ascii_lower(b->name[i]);
-
-        if (ca != cb)
-            return (ca < cb) ? -1 : 1;
-    }
-    if (la == lb)
-        return 0;
-    return (la < lb) ? -1 : 1;
-}
-
-static int dir_find(ext4_dir *in, const char *name, ext4_dirent *found)
-{
-    ext4_dirent ent;
+    fs_dirent ent;
     int rc;
 
-    while ((rc = ext4_dir_next(in, &ent)) == 1) {
-        if (name_is(&ent, name)) {
+    while ((rc = fs_dir_next(in, &ent)) == 1) {
+        if (fs_name_eq_ascii(ent.name, name)) {
             memcpy(found, &ent, sizeof ent);
             return 1;
         }
@@ -377,33 +315,33 @@ static int dir_find(ext4_dir *in, const char *name, ext4_dirent *found)
 }
 
 /* Opens the directory the UKIs live in, leaving it in *d. Returns 1 when one
- * was found, 0 when neither convention is present, negative on an ext4
+ * was found, 0 when neither convention is present, negative on a filesystem
  * error. */
-static int open_uki_dir(ext4_dir *d)
+static int open_uki_dir(fs_dir *d)
 {
-    ext4_dirent ent;
+    fs_dirent ent;
     int rc;
 
-    if (ext4_dir_open_root(&g_fs, &g_dir_a) != EXT4_OK)
+    if (fs_dir_open_root(&g_fs, &g_dir_a) != FS_OK)
         return -1;
     rc = dir_find(&g_dir_a, "uki", &ent);
     if (rc == 1 && ent.is_dir)
-        return (ext4_dir_open(&g_fs, d, &ent) == EXT4_OK) ? 1 : -1;
+        return (fs_dir_open(&g_fs, d, &ent) == FS_OK) ? 1 : -1;
     if (rc < 0)
         return rc;
 
     /* Fallback: /EFI/Linux, the Boot Loader Specification's location. */
-    if (ext4_dir_open_root(&g_fs, &g_dir_a) != EXT4_OK)
+    if (fs_dir_open_root(&g_fs, &g_dir_a) != FS_OK)
         return -1;
     rc = dir_find(&g_dir_a, "EFI", &ent);
     if (rc != 1 || !ent.is_dir)
         return (rc < 0) ? rc : 0;
-    if (ext4_dir_open(&g_fs, &g_dir_b, &ent) != EXT4_OK)
+    if (fs_dir_open(&g_fs, &g_dir_b, &ent) != FS_OK)
         return -1;
     rc = dir_find(&g_dir_b, "Linux", &ent);
     if (rc != 1 || !ent.is_dir)
         return (rc < 0) ? rc : 0;
-    return (ext4_dir_open(&g_fs, d, &ent) == EXT4_OK) ? 1 : -1;
+    return (fs_dir_open(&g_fs, d, &ent) == FS_OK) ? 1 : -1;
 }
 
 /* Collects the regular *.efi files in the UKI directory, sorted by name.
@@ -416,8 +354,8 @@ static int open_uki_dir(ext4_dir *d)
  * copied out before the next open overwrites the iterator. */
 static int collect_ukis(void)
 {
-    ext4_dir *d = &g_dir_b;
-    ext4_dirent ent;
+    fs_dir *d = &g_dir_b;
+    fs_dirent ent;
     int rc;
 
     g_uki_n = 0;
@@ -425,7 +363,7 @@ static int collect_ukis(void)
     if (rc != 1)
         return rc;
 
-    while ((rc = ext4_dir_next(d, &ent)) == 1) {
+    while ((rc = fs_dir_next(d, &ent)) == 1) {
         UINTN j;
 
         if (!ent.is_regular || !name_ends_efi(&ent))
@@ -433,10 +371,14 @@ static int collect_ukis(void)
         if (g_uki_n >= POS_MAX_UKIS)
             break;
 
-        /* Insertion sort as they arrive; the list is at most a handful. */
+        /* Insertion sort as they arrive; the list is at most a handful.
+         * memmove rather than memcpy for the shift: the two elements are
+         * distinct and cannot overlap, but saying "shift one element up" with
+         * the routine that permits overlap costs nothing here and keeps
+         * -fanalyzer from having to prove it. */
         j = g_uki_n++;
-        while (j > 0 && name_cmp(&g_ukis[j - 1], &ent) > 0) {
-            memcpy(&g_ukis[j], &g_ukis[j - 1], sizeof ent);
+        while (j > 0 && fs_name_cmp(g_ukis[j - 1].name, ent.name) > 0) {
+            memmove(&g_ukis[j], &g_ukis[j - 1], sizeof ent);
             j--;
         }
         memcpy(&g_ukis[j], &ent, sizeof ent);
@@ -444,6 +386,45 @@ static int collect_ukis(void)
     if (rc < 0)
         return rc;
     return (g_uki_n > 0) ? 1 : 0;
+}
+
+/* Mount the shelf's filesystem through the registry rather than by naming a
+ * driver (DESIGN Section 9). `known` is the identification src/discover
+ * already made for a plaintext volume; the decrypted case has none, because
+ * nothing could read those bytes until a moment ago, so it identifies now. */
+static int mount_shelf(fs_read_fn read, void *ctx, const fs_ops *known)
+{
+    const fs_ops *ops = known;
+
+    if (ops == (const fs_ops *)0)
+        ops = fs_identify(read, ctx, FS_HINT_SHELF);
+    if (ops == (const fs_ops *)0)
+        return FS_ERR_BAD_SUPER;
+    return fs_mount(&g_fs, ops, read, ctx);
+}
+
+/* Scan-time question for a plaintext shelf: is there a UKI on it?
+ *
+ * Mounts, looks, and leaves nothing behind. The encrypted case cannot be
+ * asked this (its contents are unreadable until the user types the
+ * passphrase) and is offered on the header alone; here the answer is cheap
+ * and refusing to ask would put a Personal OS entry in the menu for any ext4
+ * volume that happens to be plugged in. */
+static int plain_shelf_usable(discover_dev *dev, const fs_ops *ops)
+{
+    int ok = 0;
+
+    if (mount_shelf(discover_read, dev, ops) == FS_OK)
+        ok = (collect_ukis() == 1);
+
+    /* A look, not a claim: pos_boot mounts for itself when the entry is
+     * picked, so nothing here stays live, and the caches go the same way the
+     * decrypted ones do. */
+    crypto_wipe(&g_fs, sizeof g_fs);
+    crypto_wipe(&g_dir_a, sizeof g_dir_a);
+    crypto_wipe(&g_dir_b, sizeof g_dir_b);
+    g_uki_n = 0;
+    return ok;
 }
 
 /* Which UKI to boot. One is booted without asking; several are offered,
@@ -518,7 +499,7 @@ static void resolve_load_ops(EFI_BOOT_SERVICES *bs, load_ops *ops)
  * has to be contiguous in memory before the call. Pages rather than pool
  * because the buffer is tens of megabytes and page-aligned is what every PE
  * loader wants to start from. */
-static EFI_STATUS read_uki(EFI_BOOT_SERVICES *bs, const ext4_dirent *ent,
+static EFI_STATUS read_uki(EFI_BOOT_SERVICES *bs, const fs_dirent *ent,
                            void **buf_out, UINT64 *size_out, UINTN *pages_out)
 {
     EFI_PHYSICAL_ADDRESS addr = 0;
@@ -533,9 +514,9 @@ static EFI_STATUS read_uki(EFI_BOOT_SERVICES *bs, const ext4_dirent *ent,
     *size_out = 0;
     *pages_out = 0;
 
-    if (ext4_file_open(&g_fs, &g_file, ent) != EXT4_OK)
+    if (fs_file_open(&g_fs, &g_file, ent) != FS_OK)
         return EFI_DEVICE_ERROR;
-    size = ext4_file_size(&g_file);
+    size = fs_file_size(&g_file);
     if (size == 0 || size > POS_UKI_MAX)
         return EFI_UNSUPPORTED;
 
@@ -550,7 +531,7 @@ static EFI_STATUS read_uki(EFI_BOOT_SERVICES *bs, const ext4_dirent *ent,
 
         if (n > POS_READ_CHUNK)
             n = POS_READ_CHUNK;
-        if (ext4_file_read(&g_file, done, n, buf + done) != EXT4_OK) {
+        if (fs_file_read(&g_file, done, n, buf + done) != FS_OK) {
             bs->FreePages(addr, pages);
             return EFI_DEVICE_ERROR;
         }
@@ -603,7 +584,7 @@ static CHAR16 g_uki_ucs2[POS_NAME_MAX];
 static CHAR16 g_extra_ucs2[POS_NAME_MAX + 16];
 static CHAR16 g_load_ucs2[POS_NAME_MAX + 2];
 
-static void build_names(const ext4_dirent *ent)
+static void build_names(const fs_dirent *ent)
 {
     static const CHAR16 suffix[] = L".extra.d";
     UINTN n;
@@ -621,8 +602,14 @@ static void build_names(const ext4_dirent *ent)
 }
 
 /* Publishes image + drop-in directory + credential. Returns the publish
- * status; on failure nothing is published and the caller falls back. */
-static EFI_STATUS publish_credfs(EFI_SYSTEM_TABLE *st, const ext4_dirent *ent,
+ * status; on failure nothing is published and the caller falls back.
+ *
+ * With no credential (a plaintext shelf: nothing was typed, so there is
+ * nothing to hand on) only the image is published. The filesystem is still
+ * worth publishing without it, because the device path it provides is what
+ * LoadImage wants; what the boot gives up is the handoff, exactly as DESIGN
+ * Section 3 says it does, and the initramfs prompts for p4 itself. */
+static EFI_STATUS publish_credfs(EFI_SYSTEM_TABLE *st, const fs_dirent *ent,
                                  void *buf, UINT64 size)
 {
     credfs_entry tree[3];
@@ -651,14 +638,14 @@ static EFI_STATUS publish_credfs(EFI_SYSTEM_TABLE *st, const ext4_dirent *ent,
     /* The one entry credfs_teardown wipes. */
     tree[2].secret = 1;
 
-    return credfs_publish(st, tree, 3);
+    return credfs_publish(st, tree, (g_cred_len != 0) ? 3u : 1u);
 }
 
 /* LoadImage/StartImage of the UKI, by device path off the credential
  * filesystem when there is one, from the buffer when there is not. See pos.h
  * for why the device path is what this whole step exists to obtain. */
 static EFI_STATUS launch_uki(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent,
-                             const ext4_dirent *ent, void *buf, UINT64 size,
+                             const fs_dirent *ent, void *buf, UINT64 size,
                              UINT8 *retain, pos_result *result)
 {
     EFI_BOOT_SERVICES *bs = st->BootServices;
@@ -807,6 +794,19 @@ static int prompt_and_unlock(UINTN *which)
     return LUKS_ERR_NOKEY;
 }
 
+const CHAR16 *pos_entry_label(void)
+{
+    /* The label is the promise the entry makes. An encrypted shelf will ask
+     * for a passphrase and a plaintext one will not, and a user who sees
+     * "encrypted" and is never asked has been told something false about
+     * where their kernel lives. */
+    if (g_luks_usable != 0)
+        return L"Personal OS (encrypted)";
+    if (g_plain_usable != 0)
+        return L"Personal OS (plaintext shelf)";
+    return L"Personal OS";
+}
+
 EFI_STATUS pos_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
                     pos_result *result)
 {
@@ -832,58 +832,90 @@ EFI_STATUS pos_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
     result->status = EFI_SUCCESS;
     result->advice = (const CHAR16 *)0;
 
-    if (g_luks_usable == 0) {
-        result->stage = L"looking for an unlockable LUKS2 volume";
+    if (g_luks_usable == 0 && g_plain_usable == 0) {
+        result->stage = L"looking for a UKI shelf";
         return EFI_NOT_FOUND;
     }
 
-    result->stage = L"unlocking the encrypted partition";
-    rc = prompt_and_unlock(&which);
-    if (rc != LUKS_OK) {
-        wipe_secrets();
-        if (rc == POS_CANCELLED) {
-            result->stage = L"passphrase prompt";
-            return EFI_ABORTED;
+    /* An unlockable encrypted shelf outranks a plaintext one. On a stick
+     * built to DESIGN Section 3 there is only ever one; where both are in the
+     * machine, the encrypted one is the one whose contents nobody else could
+     * have read, so it is the one this entry means. */
+    if (g_luks_usable != 0) {
+        result->stage = L"unlocking the encrypted partition";
+        rc = prompt_and_unlock(&which);
+        if (rc != LUKS_OK) {
+            wipe_secrets();
+            if (rc == POS_CANCELLED) {
+                result->stage = L"passphrase prompt";
+                return EFI_ABORTED;
+            }
+            if (rc == LUKS_ERR_NOKEY) {
+                result->advice = L"the passphrase did not open any keyslot.";
+                return EFI_ACCESS_DENIED;
+            }
+            if (rc == LUKS_ERR_IO) {
+                result->advice = L"the partition could not be read.";
+                return EFI_DEVICE_ERROR;
+            }
+            result->advice =
+                L"the volume is outside what this loader supports.";
+            return EFI_UNSUPPORTED;
         }
-        if (rc == LUKS_ERR_NOKEY) {
-            result->advice = L"the passphrase did not open any keyslot.";
-            return EFI_ACCESS_DENIED;
+
+        /* The passphrase has one more job than opening p3: it is also p4's
+         * (DESIGN Section 3 gives them one passphrase precisely so this
+         * handoff is "reuse the string the user already typed"). It travels
+         * on as the credential, so it is copied into the buffer credfs will
+         * serve and the buffer the user typed into dies right here, exactly
+         * as early as it did before the handoff existed. From this point the
+         * only live copy is g_cred, and credfs_teardown owns its wipe. */
+        memcpy(g_cred, g_pass, sizeof g_cred);
+        g_cred_len = g_pass_len;
+        crypto_wipe(g_pass, sizeof g_pass);
+        g_pass_len = 0;
+
+        result->stage = L"opening the decrypted volume";
+        if (luks_dev_open(&g_dev, &g_shelf[which].vol, &g_mk) != LUKS_OK) {
+            wipe_secrets();
+            return EFI_UNSUPPORTED;
         }
-        if (rc == LUKS_ERR_IO) {
-            result->advice = L"the partition could not be read.";
-            return EFI_DEVICE_ERROR;
+        g_dev_open = 1;
+        /* luks_dev_open has taken the key into its cipher context, so the
+         * copy here is dead from this point on. */
+        crypto_wipe(&g_mk, sizeof g_mk);
+
+        result->stage = L"mounting the filesystem inside it";
+        if (mount_shelf(luks_read, &g_dev, (const fs_ops *)0) != FS_OK) {
+            result->advice = L"the decrypted volume is not a filesystem this "
+                             L"loader can read.";
+            status = EFI_UNSUPPORTED;
+            goto out_close;
         }
-        result->advice = L"the volume is outside what this loader supports.";
-        return EFI_UNSUPPORTED;
-    }
+    } else {
+        /* DESIGN Section 3's plaintext shelf: no prompt, no credential, and
+         * the initramfs asks for p4 itself. Everything below this point is
+         * the same boot. */
+        pos_shelf *p = (pos_shelf *)0;
 
-    /* The passphrase has one more job than opening p3: it is also p4's
-     * (DESIGN Section 3 gives them one passphrase precisely so this handoff
-     * is "reuse the string the user already typed"). It travels on as the
-     * credential, so it is copied into the buffer credfs will serve and the
-     * buffer the user typed into dies right here, exactly as early as it did
-     * before the handoff existed. From this point the only live copy is
-     * g_cred, and credfs_teardown owns its wipe. */
-    memcpy(g_cred, g_pass, sizeof g_cred);
-    g_cred_len = g_pass_len;
-    crypto_wipe(g_pass, sizeof g_pass);
-    g_pass_len = 0;
+        for (which = 0; which < g_shelf_n; which++) {
+            if (!g_shelf[which].encrypted && g_shelf[which].usable) {
+                p = &g_shelf[which];
+                break;
+            }
+        }
+        if (p == (pos_shelf *)0) {
+            result->stage = L"looking for a UKI shelf";
+            return EFI_NOT_FOUND;
+        }
 
-    result->stage = L"opening the decrypted volume";
-    if (luks_dev_open(&g_dev, &g_luks[which].vol, &g_mk) != LUKS_OK) {
-        wipe_secrets();
-        return EFI_UNSUPPORTED;
-    }
-    /* luks_dev_open has taken the key into its cipher context, so the copy
-     * here is dead from this point on. */
-    crypto_wipe(&g_mk, sizeof g_mk);
-
-    result->stage = L"mounting the ext4 filesystem inside it";
-    if (ext4_mount(&g_fs, luks_read, &g_dev) != EXT4_OK) {
-        result->advice = L"the decrypted volume is not a filesystem this "
-                         L"loader can read.";
-        status = EFI_UNSUPPORTED;
-        goto out_close;
+        result->stage = L"mounting the plaintext UKI shelf";
+        if (mount_shelf(discover_read, p->dev, p->fs) != FS_OK) {
+            result->advice = L"the shelf is not a filesystem this loader can "
+                             L"read.";
+            status = EFI_UNSUPPORTED;
+            goto out_close;
+        }
     }
 
     result->stage = L"looking for a UKI";
@@ -940,7 +972,10 @@ out_close:
     crypto_wipe(&g_dir_a, sizeof g_dir_a);
     crypto_wipe(&g_dir_b, sizeof g_dir_b);
     crypto_wipe(&g_file, sizeof g_file);
-    luks_dev_close(&g_dev);
+    if (g_dev_open) {
+        luks_dev_close(&g_dev);
+        g_dev_open = 0;
+    }
     wipe_secrets();
     if (EFI_ERROR(status))
         result->status = status;

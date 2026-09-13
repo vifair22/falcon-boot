@@ -34,6 +34,7 @@
 #include <cli/mkstick/shimname.h>
 
 #include <exfat/exfat.h>
+#include <fs/fs.h>
 #include <luks/luks.h>
 #include <part/part.h>
 
@@ -184,6 +185,96 @@ static void check_luks(tally *t, const char *path, const gpt_part *p,
         }
     }
     disk_io_close(&io);
+}
+
+/* ---- p3 without LUKS (DESIGN Section 3's --p3-plain) ----
+ *
+ * Read through the loader's own filesystem registry, for the same reason the
+ * rest of this file uses the loader's parsers: the question is not "what does
+ * this partition hold" but "what will the boot menu make of it", and the only
+ * way to answer that is with the code that will be asked. */
+
+static const uint8_t luks2_magic[6] = { 'L', 'U', 'K', 'S', 0xba, 0xbe };
+
+static int shelf_is_luks(disk_io *io)
+{
+    uint8_t blk[512];
+
+    if (disk_io_read(io, 0, sizeof blk, blk) != 0)
+        return 0;
+    return memcmp(blk, luks2_magic, sizeof luks2_magic) == 0;
+}
+
+/* Counts what is in the UKI directory and reports the two facts that decide
+ * whether this shelf can boot anything: a *.efi to launch, and the private
+ * key NOT being here, which on a plaintext partition is a requirement rather
+ * than a detail (DESIGN Section 7.5). */
+static void check_plain_shelf(tally *t, disk_io *io)
+{
+    static fs_vol vol;
+    static fs_dir root;
+    static fs_dir uki;
+    fs_dirent ent;
+    const fs_ops *ops;
+    unsigned efis = 0;
+    int found_uki = 0;
+    int found_key = 0;
+    int rc;
+
+    /* Stated as a WARN rather than a pass: the stick works, and the user gave
+     * something up to get it. DESIGN Section 3 asks for that to be said out
+     * loud wherever the stick is described. */
+    note(t, "p3: PLAINTEXT (no signing appliance possible)");
+    note(t, "     blessing and UKI signing are external-host only, from the "
+            "--key-out copy");
+
+    ops = fs_identify(disk_io_read, io, FS_HINT_SHELF);
+    if (ops == NULL) {
+        check(t, 0, "no filesystem here that this loader recognises");
+        return;
+    }
+    rc = fs_mount(&vol, ops, disk_io_read, io);
+    if (rc != FS_OK) {
+        check(t, 0, "%s volume does not mount (fs_mount returned %d)",
+              ops->name, rc);
+        return;
+    }
+    check(t, 1, "%s volume mounts", fs_vol_name(&vol));
+
+    if (fs_dir_open_root(&vol, &root) != FS_OK) {
+        check(t, 0, "the root directory could not be read");
+        return;
+    }
+    while ((rc = fs_dir_next(&root, &ent)) == 1) {
+        if (ent.is_dir && fs_name_eq_ascii(ent.name, MKS_P3_UKI_DIR)) {
+            found_uki = (fs_dir_open(&vol, &uki, &ent) == FS_OK);
+            continue;
+        }
+        if (!ent.is_dir && fs_name_eq_ascii(ent.name, MKS_P3_KEY_NAME))
+            found_key = 1;
+    }
+    if (rc < 0)
+        check(t, 0, "reading the root directory failed (%d)", rc);
+
+    check(t, found_uki, "/%s present", MKS_P3_UKI_DIR);
+    if (found_uki) {
+        while ((rc = fs_dir_next(&uki, &ent)) == 1) {
+            if (ent.is_regular && fs_name_ends_ascii(ent.name, ".efi"))
+                efis++;
+        }
+        if (rc < 0)
+            check(t, 0, "reading /%s failed (%d)", MKS_P3_UKI_DIR, rc);
+        else
+            check(t, efis > 0, "%u *.efi image%s in /%s", efis,
+                  (efis == 1u) ? "" : "s", MKS_P3_UKI_DIR);
+    }
+
+    /* The one thing that must NOT be here. A private key on a partition
+     * anybody can read is the key model broken, not a configuration choice,
+     * so it is a failure however the stick was built. */
+    check(t, !found_key,
+          "no %s on the plaintext shelf (a private key here would be "
+          "readable by anyone holding the stick)", MKS_P3_KEY_NAME);
 }
 
 /* ---- p2: the exFAT ISO library ---- */
@@ -500,10 +591,28 @@ static cli_status status_run(const cli_args *a)
                      p->number);
             check_iso_library(&t, disk.path, p, disk.sector);
         } else if (gpt_guid_eq(p->type, airies_guid_shelf)) {
+            disk_io shelf_io;
+
             cli_log_blank();
-            log_info("p%u: the LUKS2 UKI shelf (DESIGN Sections 3, 5)",
-                     p->number);
-            check_luks(&t, disk.path, p, disk.sector, 1);
+            log_info("p%u: the UKI shelf (DESIGN Sections 3, 5)", p->number);
+            if (disk_io_open(&shelf_io, disk.path, p->start_lba * disk.sector,
+                             (p->end_lba - p->start_lba + 1u) * disk.sector)
+                != CLI_OK) {
+                check(&t, 0, "%s", cli_error_msg());
+            } else {
+                /* Which of the two shapes DESIGN Section 3 allows this is,
+                 * decided the same way the loader decides it: by looking for
+                 * the LUKS2 magic, not by trusting a flag somewhere. */
+                int encrypted = shelf_is_luks(&shelf_io);
+
+                if (encrypted) {
+                    disk_io_close(&shelf_io);
+                    check_luks(&t, disk.path, p, disk.sector, 1);
+                } else {
+                    check_plain_shelf(&t, &shelf_io);
+                    disk_io_close(&shelf_io);
+                }
+            }
         } else if (p->number == 4u) {
             cli_log_blank();
             log_info("p%u: LUKS2 root and home", p->number);

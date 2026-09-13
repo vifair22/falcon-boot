@@ -94,6 +94,13 @@ Makefiles.
   minimal UEFI headers live here too.
 - `src/exfat/` read-only exFAT driver, EFI-free (device access through a read
   callback) so it is testable off the firmware.
+- `src/fs/` the filesystem driver registry (DESIGN Section 9): one `fs_ops`
+  vtable over every read-only driver, opaque caller-allocated volume/dir/file
+  storage, unified dirents and status codes. Consumers select a driver through
+  it and never name one. EFI-free, like the drivers it wraps.
+- `src/discover/` the single device-discovery pass: enumerates the Block I/O
+  handles once, classifies each (media, GPT role, LUKS2 magic, filesystem
+  identification), and hands every consumer the same inventory.
 - `src/menu/` text menu over Simple Text Output/Input, plus the masked
   passphrase prompt (`prompt.c`, its own TU so "what has held the secret" has
   a one-file answer).

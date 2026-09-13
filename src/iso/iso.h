@@ -16,8 +16,8 @@
 #define AIRIES_ISO_H
 
 #include <efi/uefi.h>
-#include <exfat/exfat.h>
 #include <family/family.h>
+#include <fs/fs.h>
 
 /* Why a boot attempt ended, in words fit for the menu's status line. */
 typedef struct {
@@ -56,7 +56,7 @@ typedef struct {
  * result->status is the payload's own exit status. Any other return value is
  * the firmware status that ended the attempt, and result->stage names where. */
 EFI_STATUS iso_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
-                    exfat_vol *vol, const exfat_dirent *file,
+                    fs_vol *vol, const fs_dirent *file,
                     iso_boot_result *result);
 
 /* Looks inside the ISO without booting anything: builds the same virtual CD,
@@ -68,7 +68,7 @@ EFI_STATUS iso_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
  * NO_EFI/UNKNOWN), because a scan that cannot classify an ISO still has to
  * show the entry. The return value is the firmware status for the caller that
  * wants it; a scan may ignore it. */
-EFI_STATUS iso_survey_media(EFI_SYSTEM_TABLE *st, exfat_vol *vol,
-                            const exfat_dirent *file, iso_survey *out);
+EFI_STATUS iso_survey_media(EFI_SYSTEM_TABLE *st, fs_vol *vol,
+                            const fs_dirent *file, iso_survey *out);
 
 #endif /* AIRIES_ISO_H */

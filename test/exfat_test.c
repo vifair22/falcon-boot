@@ -16,6 +16,10 @@
  * snippets, no image either. Hand-written crypto checked only against itself
  * is worth nothing, so every primitive is pinned to FIPS/RFC/IEEE vectors.
  *
+ * The filesystem registry (src/fs): the seam between the drivers and their
+ * consumers, tested on synthetic volumes plus the ext4 fixture, so that
+ * dressing the drivers in one vtable cannot change what a consumer sees.
+ *
  * LUKS2 and ext4: fixture images that cryptsetup and mkfs.ext4 themselves
  * produced (tools/mk-test-luks.sh, tools/mk-test-ext4.sh), which is the only
  * evidence that these readers agree with the implementations that wrote the
@@ -54,6 +58,7 @@ int main(void)
     failed += run_json_tests();
     failed += run_luks_tests();
     failed += run_ext4_tests();
+    failed += run_fs_tests();
     failed += run_part_tests();
 
     printf("\ntotal failed: %d\n", failed);

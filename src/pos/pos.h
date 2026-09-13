@@ -60,16 +60,28 @@ typedef struct {
     const CHAR16 *advice;
 } pos_result;
 
-/* Probes every Block I/O handle for a LUKS2 header and records the ones this
- * loader could actually unlock, i.e. those with at least one pbkdf2 keyslot
- * (DESIGN Section 3: p3 is created that way precisely so EFI-land can open
- * it; p4's argon2id slots are recognised and skipped). Costs one block read
- * and one header parse per handle, and never asks for a passphrase, so it is
- * safe to run as part of the startup scan.
+/* Reads the shelf-role rows of the one device inventory (src/discover, DESIGN
+ * Section 9) and records the ones this loader could actually boot from:
  *
- * Returns how many unlockable volumes were found. Zero means the personal-OS
+ *   - an encrypted shelf, i.e. a LUKS2 volume with at least one pbkdf2
+ *     keyslot (DESIGN Section 3: p3 is created that way precisely so EFI-land
+ *     can open it; p4's argon2id slots are recognised and skipped). Its
+ *     contents are unreadable here, so the header is all that is judged;
+ *   - a plaintext shelf (Section 3's --p3-plain), which IS readable here, and
+ *     is therefore recorded only when a UKI is actually on it.
+ *
+ * Costs a header parse or a short directory walk per row, and never asks for
+ * a passphrase, so it is safe to run as part of the startup scan. Call
+ * discover_scan first: this reads its inventory rather than enumerating.
+ *
+ * Returns how many bootable shelves were found. Zero means the personal-OS
  * entry must not appear in the menu: there is nothing for it to open. */
 UINTN pos_scan(EFI_SYSTEM_TABLE *st);
+
+/* What the menu entry should say, which depends on what the scan found: an
+ * encrypted shelf prompts for a passphrase and a plaintext one does not.
+ * Meaningful only after pos_scan. */
+const CHAR16 *pos_entry_label(void);
 
 /* The entry's action, start to finish. Prompts, unlocks, mounts, reads and
  * launches; returns when the UKI exits or a stage fails.
