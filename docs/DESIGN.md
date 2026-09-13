@@ -661,9 +661,18 @@ than reimplementing cryptography or filesystem creation:
 
 ### 8.1 Blessed artifacts and the manifest (decided 2026-09-13)
 
-The bless output is always a **minimal UKI wrap** (sd-stub + kernel +
-embedded `.cmdline`, `.sbat` inherited from the stub), signed with the MOK
-key, never a bare signed bzImage. Two reasons, one forced and one earned:
+The bless output is always a **signed UKI wrap** (sd-stub + kernel +
+embedded `.cmdline` + **embedded `.initrd` by default**, `.sbat` inherited
+from the stub), never a bare signed bzImage. Embedding the ISO's initramfs
+costs p2 space (~100-250 MB per blessed ISO) but makes the entire blessed
+boot chain signed, which closes the unsigned-initrd residual of Section 7.5
+for blessed media outright; space is the cheapest resource on the stick.
+`--no-initrd` produces the kernel+cmdline-only wrap for space-constrained
+sticks, reopening that residual for the ISO's initrd read from p2 at boot
+(delivery mechanism for that thinner shape - likely sd-stub companion
+pickup via the Section 5.1 machinery - is an unspiked question; do not
+build it without verifying sd-stub's actual companion-initrd support).
+Two more reasons the wrap is a UKI, one forced and one earned:
 
 - Forced: the shim load path may enforce SBAT on everything it loads, and
   raw bzImages carry no `.sbat` (Section 7.6 spike).

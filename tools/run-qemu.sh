@@ -25,6 +25,19 @@
 #               drive the menu with "sendkey" through the monitor and assert
 #               on the log. Runs in the background is the caller's business;
 #               this still execs qemu.
+#
+# Env overrides, for booting something other than the rig's own fixtures
+# (this is how the mkstick acceptance run boots a stick the TOOL built, with
+# the MOK that RUN generated, rather than the rig's throwaway key):
+#   STICK_IMG   the --stick disk image      (default build/test-stick.img)
+#   MOK_VARS    the varstore template --secboot starts from
+#               (default build/mok-test/OVMF_VARS.secboot.mok.fd)
+#   VARS_FILE   the writable per-run varstore copy. Set it when MOK_VARS
+#               changes: the copy is only made when the destination is
+#               absent, so an existing build/OVMF_VARS.secboot.fd from an
+#               earlier run would silently supply the OLD MokList.
+#   SERIAL_LOG  --headless serial log        (default build/serial.log)
+#   MON_SOCK    --headless monitor socket    (default build/mon.sock)
 
 set -euo pipefail
 
@@ -41,12 +54,12 @@ EFI_BIN="$BUILD/bin/airies-boot.efi"
 
 CODE="$OVMF_DIR/OVMF_CODE.fd"
 VARS_SRC="$OVMF_DIR/OVMF_VARS.fd"
-VARS="$BUILD/OVMF_VARS.fd"
+VARS="${VARS_FILE:-$BUILD/OVMF_VARS.fd}"
 
 HEADLESS=0
 SECBOOT=0
 STICK=0
-STICK_IMG="$BUILD/test-stick.img"
+STICK_IMG="${STICK_IMG:-$BUILD/test-stick.img}"
 
 # Secure Boot chain inputs. Fedora's shim-x64 16.1 is the one the spike
 # recommends shipping (dual-signed by the MS 2011 and 2023 UEFI CAs, smallest
@@ -57,7 +70,7 @@ SHIM_BINS="$BUILD/shim/bins"
 SHIM_EFI="$SHIM_BINS/fedora-16.1-shimx64.efi"
 MM_EFI="$SHIM_BINS/fedora-16.1-mmx64.efi"
 EFI_SIGNED="$BUILD/bin/airies-boot-signed.efi"
-MOK_VARS="$BUILD/mok-test/OVMF_VARS.secboot.mok.fd"
+MOK_VARS="${MOK_VARS:-$BUILD/mok-test/OVMF_VARS.secboot.mok.fd}"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -69,7 +82,7 @@ while [[ $# -gt 0 ]]; do
         # (so shim itself passes db unmodified); only MOK has to be added, and
         # only for artifacts we signed ourselves.
         VARS_SRC="$MOK_VARS"
-        VARS="$BUILD/OVMF_VARS.secboot.fd"
+        VARS="${VARS_FILE:-$BUILD/OVMF_VARS.secboot.fd}"
         ESP="$BUILD/esp-secboot"
         shift
         ;;
@@ -159,11 +172,16 @@ fi
 
 CONSOLE=(-serial stdio)
 if [[ "$HEADLESS" -eq 1 ]]; then
-    rm -f "$BUILD/serial.log" "$BUILD/mon.sock"
+    # Overridable so two scripted runs (say a rig test and a mkstick
+    # acceptance run) can be in flight at once without overwriting each
+    # other's log or fighting over one monitor socket.
+    SERIAL_LOG="${SERIAL_LOG:-$BUILD/serial.log}"
+    MON_SOCK="${MON_SOCK:-$BUILD/mon.sock}"
+    rm -f "$SERIAL_LOG" "$MON_SOCK"
     CONSOLE=(
         -display none
-        -serial "file:$BUILD/serial.log"
-        -monitor "unix:$BUILD/mon.sock,server,nowait"
+        -serial "file:$SERIAL_LOG"
+        -monitor "unix:$MON_SOCK,server,nowait"
     )
 fi
 

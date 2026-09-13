@@ -51,12 +51,18 @@ static const family_desc g_families[] = {
       "iso-scan/filename=%ISO%", 0,
       FAMILY_TRI_UNKNOWN, FAMILY_TRI_YES },
 
+    /* exfat/dm both YES: measured on the archiso 2026.01.01 initramfs,
+     * which ships exfat.ko.zst, loop.ko.zst and dm-mod.ko.zst (bless-tool
+     * verification, 2026-09-13). */
     { FAMILY_ARCH, "Arch/archiso",
       "img_dev=%DEV% img_loop=%ISO%", 0,
-      FAMILY_TRI_UNKNOWN, FAMILY_TRI_UNKNOWN },
+      FAMILY_TRI_YES, FAMILY_TRI_YES },
 
+    /* archiso derivative with its own base directory; without the
+     * archisobasedir override the stock hook looks in /arch and finds
+     * nothing (bless-tool verification, 2026-09-13). */
     { FAMILY_SYSTEMRESCUE, "SystemRescue",
-      "img_dev=%DEV% img_loop=%ISO%", 0,
+      "img_dev=%DEV% img_loop=%ISO% archisobasedir=sysresccd", 0,
       FAMILY_TRI_UNKNOWN, FAMILY_TRI_UNKNOWN },
 
     /* memtest is a bare EFI binary: it needs no cmdline, no initramfs and no
@@ -136,6 +142,7 @@ static int probe_head_contains(const family_probe *p, const char *path,
  * The entry filenames have changed across archiso releases, so the candidate
  * list is the versions in circulation rather than one guess. */
 static const char *const g_loader_entries[] = {
+    "/loader/entries/01-archiso-linux.conf",
     "/loader/entries/01-archiso-x86_64-linux.conf",
     "/loader/entries/02-archiso-x86_64-speech-linux.conf",
     "/loader/entries/archiso-x86_64-linux.conf",

@@ -146,6 +146,7 @@ static void expect_family(const fake_file *files, size_t n, family_id id,
 #define LIVE_TMPL    "findiso=%ISO%"
 #define DRACUT_TMPL  "iso-scan/filename=%ISO%"
 #define ARCHISO_TMPL "img_dev=%DEV% img_loop=%ISO%"
+#define SYSRESC_TMPL ARCHISO_TMPL " archisobasedir=sysresccd"
 
 /* --------------------------------------------------------- one per family */
 
@@ -180,8 +181,8 @@ static void test_family_systemrescue(void **state)
     };
 
     (void)state;
-    expect_family(dir, 2, FAMILY_SYSTEMRESCUE, ARCHISO_TMPL);
-    expect_family(ver, 1, FAMILY_SYSTEMRESCUE, ARCHISO_TMPL);
+    expect_family(dir, 2, FAMILY_SYSTEMRESCUE, SYSRESC_TMPL);
+    expect_family(ver, 1, FAMILY_SYSTEMRESCUE, SYSRESC_TMPL);
 }
 
 static void test_family_casper(void **state)
@@ -361,10 +362,10 @@ static void test_family_systemrescue_beats_arch(void **state)
     };
 
     (void)state;
-    expect_family(layout, 4, FAMILY_SYSTEMRESCUE, ARCHISO_TMPL);
+    expect_family(layout, 4, FAMILY_SYSTEMRESCUE, SYSRESC_TMPL);
     /* Content fingerprint alone, with the Arch layout also present: the
      * sysresccd needle is checked first and wins. */
-    expect_family(content_only, 2, FAMILY_SYSTEMRESCUE, ARCHISO_TMPL);
+    expect_family(content_only, 2, FAMILY_SYSTEMRESCUE, SYSRESC_TMPL);
 }
 
 /* Ubuntu derivatives sometimes ship a /live directory of leftovers while

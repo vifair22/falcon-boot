@@ -63,6 +63,88 @@ SRCS := \
 OBJS := $(SRCS:src/%.c=build/$(VARIANT)/%.o)
 DEPS := $(OBJS:.o=.o.d)
 
+# ---- host tooling (DESIGN Section 8) ----
+#
+# src/cli is ordinary Linux userland C, built by the HOST compiler, and is no
+# part of the EFI link above: it is allowed a libc, it is allowed to fork and
+# exec, and it must never end up inside the loader. Same warning set as the
+# freestanding build, adapted for a hosted target: the stack protector and
+# stack-clash protection are ON here (there is a runtime to service them and
+# this code parses user input), where EFI-land has to switch them off.
+CC_HOST ?= gcc
+
+HOST_CFLAGS := -std=c11 -O2 -D_GNU_SOURCE \
+	-Wall -Wextra -Wpedantic -Wshadow -Wunused -Wdouble-promotion \
+	-Wformat=2 -Wformat-truncation \
+	-Wmissing-prototypes -Wstrict-prototypes \
+	-Wmissing-declarations -Wcast-align -Wcast-qual -Wnull-dereference \
+	-Wconversion -Wsign-conversion \
+	-fstack-protector-strong -fstack-clash-protection \
+	-Isrc
+
+HOST_LDFLAGS := -fstack-protector-strong
+
+# The tool itself.
+CLI_SRCS := \
+	src/cli/common/status.c \
+	src/cli/common/log.c \
+	src/cli/common/opt.c \
+	src/cli/common/proc.c \
+	src/cli/common/util.c \
+	src/cli/mkstick/main.c \
+	src/cli/mkstick/cleanup.c \
+	src/cli/mkstick/disk.c \
+	src/cli/mkstick/guid.c \
+	src/cli/mkstick/keys.c \
+	src/cli/mkstick/pass.c \
+	src/cli/mkstick/shimname.c \
+	src/cli/mkstick/create.c \
+	src/cli/mkstick/keygen.c \
+	src/cli/mkstick/inspect.c \
+	src/cli/mkstick/varstore.c
+
+# Loader modules reused verbatim by `mkstick status`. Every one of these is
+# EFI-free by construction (device access through a byte-read callback), which
+# is exactly what makes the inspection answer the question the boot menu will
+# ask rather than a second opinion about the same disk. src/lib/string.c is
+# NOT among them: its mem* definitions exist for the freestanding build, and
+# the host has a libc.
+CLI_SHARED_SRCS := \
+	src/part/part.c \
+	src/exfat/exfat.c \
+	src/luks/json.c \
+	src/luks/af.c \
+	src/luks/luks.c \
+	src/crypto/crypto.c \
+	src/crypto/sha256.c \
+	src/crypto/sha512.c \
+	src/crypto/hash.c \
+	src/crypto/hmac.c \
+	src/crypto/pbkdf2.c \
+	src/crypto/aes.c \
+	src/crypto/xts.c \
+	src/crypto/aesni.c
+
+SIGN_SRCS := \
+	src/cli/sign/main.c \
+	src/cli/sign/util.c \
+	src/cli/sign/isoprobe.c \
+	src/manifest/manifest.c \
+	src/manifest/manifest_write.c \
+	src/family/family.c \
+	src/crypto/sha256.c \
+	src/crypto/crypto.c
+
+HOST_SRCS := $(sort $(CLI_SRCS) $(CLI_SHARED_SRCS) $(SIGN_SRCS))
+HOST_OBJS := $(HOST_SRCS:src/%.c=build/host/%.o)
+HOST_DEPS := $(HOST_OBJS:.o=.o.d)
+MKSTICK := build/bin/airies-boot-mkstick
+MKSTICK_OBJS := $(sort $(CLI_SRCS) $(CLI_SHARED_SRCS))
+MKSTICK_OBJS := $(MKSTICK_OBJS:src/%.c=build/host/%.o)
+SIGN := build/bin/airies-boot-sign
+SIGN_STATIC := build/bin/airies-boot-sign-static
+SIGN_OBJS := $(SIGN_SRCS:src/%.c=build/host/%.o)
+
 # Test payload: a throwaway EFI application that goes inside the El Torito
 # ISO the rig boots (tools/mk-test-iso.sh). It is not part of the loader,
 # so it is built on its own and never linked into it.
@@ -94,11 +176,11 @@ SEMVER := $(shell cat release_version)
 # Repo-standard full version: SEMVER_YYYYMMDD.HHMM.TYPE.
 VERSION := $(SEMVER)_$(shell date +%Y%m%d.%H%M).$(VARIANT)
 
-.PHONY: all check-tools esp run run-secboot run-stick run-stick-secboot analyze \
-	sbat-check sign mok-test test-image test-iso test-stick test-uki \
+.PHONY: all cli check-tools esp run run-secboot run-stick run-stick-secboot \
+	analyze sbat-check sign mok-test test-image test-iso test-stick test-uki \
 	payload version-stamp clean
 
-all: $(EFI) compile_commands.json
+all: $(EFI) cli compile_commands.json
 
 $(EFI): $(OBJS)
 	@mkdir -p $(@D)
@@ -115,6 +197,35 @@ build/$(VARIANT)/%.o: src/%.c
 build/$(VARIANT)/crypto/aesni.o: CFLAGS += -maes
 
 -include $(DEPS)
+
+# ---- host tooling ----
+cli: $(MKSTICK) $(SIGN) $(SIGN_STATIC)
+
+$(MKSTICK): $(MKSTICK_OBJS)
+	@mkdir -p $(@D)
+	$(CC_HOST) $(HOST_LDFLAGS) -o $@ $(MKSTICK_OBJS)
+
+$(SIGN): $(SIGN_OBJS)
+	@mkdir -p $(@D)
+	$(CC_HOST) $(HOST_LDFLAGS) -o $@ $(SIGN_OBJS)
+
+# The appliance route (DESIGN Section 7.5) runs the sign tool inside a
+# minimal initramfs with no dynamic loader, so the same objects also link
+# static. One implementation, two link shapes.
+$(SIGN_STATIC): $(SIGN_OBJS)
+	@mkdir -p $(@D)
+	$(CC_HOST) $(HOST_LDFLAGS) -static -o $@ $(SIGN_OBJS)
+
+build/host/%.o: src/%.c
+	@mkdir -p $(@D)
+	$(CC_HOST) $(HOST_CFLAGS) -MMD -MF $@.d -c -o $@ $<
+
+# Same rule as the EFI build's, and for the same reason: -maes lets gcc emit
+# those instructions anywhere in the TU, so nothing but this object may carry
+# it, and the CPUID probe that gates the path lives in crypto.c without it.
+build/host/crypto/aesni.o: HOST_CFLAGS += -maes
+
+-include $(HOST_DEPS)
 
 payload: $(PAYLOAD)
 
@@ -154,6 +265,18 @@ CC_DB_ENTRIES := \
 	$(foreach s,$(SRCS),$(s):$(s:src/%.c=build/$(VARIANT)/%.o)) \
 	$(PAYLOAD_SRC):build/test/payload.o
 
+# src/cli gets its own entries with the HOST compiler and flags, so that clangd
+# stops offering it freestanding diagnostics and the mingw target it infers
+# from the cross-compiler's name.
+#
+# Only the src/cli sources, not CLI_SHARED_SRCS. The shared modules already
+# have an entry from the EFI build, and a database with two entries for one
+# file would make every consumer analyse it twice: tools/analyze.sh treats a
+# repeated finding as a new one, so the duplicate would show up as a
+# regression in code nobody touched.
+CC_DB_HOST_ENTRIES := \
+	$(foreach s,$(CLI_SRCS) src/cli/sign/main.c src/cli/sign/util.c src/cli/sign/isoprobe.c src/manifest/manifest.c src/manifest/manifest_write.c,$(s):$(s:src/%.c=build/host/%.o))
+
 compile_commands.json: Makefile
 	@echo '[' > $@
 	@for entry in $(CC_DB_ENTRIES); do \
@@ -169,6 +292,19 @@ compile_commands.json: Makefile
 		printf '    "file": "%s/%s"\n' '$(CURDIR)' "$$src" >> $@; \
 		printf '  },\n' >> $@; \
 	done
+	@for entry in $(CC_DB_HOST_ENTRIES); do \
+		src=$${entry%%:*}; \
+		obj=$${entry##*:}; \
+		extra=""; \
+		case "$$obj" in */crypto/aesni.o) extra=" -maes";; esac; \
+		printf '  {\n' >> $@; \
+		printf '    "directory": "%s",\n' '$(CURDIR)' >> $@; \
+		printf '    "command": "%s %s%s -MMD -MF %s.d -c -o %s %s/%s",\n' \
+			'$(CC_HOST)' '$(strip $(HOST_CFLAGS))' "$$extra" "$$obj" \
+			"$$obj" '$(CURDIR)' "$$src" >> $@; \
+		printf '    "file": "%s/%s"\n' '$(CURDIR)' "$$src" >> $@; \
+		printf '  },\n' >> $@; \
+	done
 	@sed -i '$$ s/,$$//' $@
 	@echo ']' >> $@
 
@@ -180,7 +316,8 @@ check-tools:
 	for t in x86_64-w64-mingw32-gcc; do \
 		command -v $$t >/dev/null 2>&1 || { echo "MISSING (required): $$t"; missing=1; }; \
 	done; \
-	for t in qemu-system-x86_64 cryptsetup sbsign mkfs.exfat mkfs.ext4; do \
+	for t in qemu-system-x86_64 sgdisk losetup openssl cryptsetup sbsign \
+	         mkfs.fat mkfs.exfat mkfs.ext4 bsdtar ukify; do \
 		command -v $$t >/dev/null 2>&1 || echo "missing (needed for host tooling / tests): $$t"; \
 	done; \
 	if [ $$missing -ne 0 ]; then echo "Required toolchain incomplete."; exit 1; fi; \
