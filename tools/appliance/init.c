@@ -972,7 +972,15 @@ static void teardown(int p2_mounted, int p3_mounted, int mapped)
 
 static void finish(int p2_mounted, int p3_mounted, int mapped)
 {
-    say("\nrebooting to the loader.\n");
+    char line[8];
+
+    /* The summary (or an error) is the last thing the user needs to read,
+     * and an immediate reboot snatches it off the screen. Waiting on Enter
+     * costs a keystroke; EOF (a dead console) falls through so a headless
+     * run still ends on its own. */
+    say("\npress Enter to reboot to the loader.\n");
+    (void)read_line(line, sizeof(line));
+    say("rebooting.\n");
     teardown(p2_mounted, p3_mounted, mapped);
     (void)sleep(1);
     (void)reboot(RB_AUTOBOOT);

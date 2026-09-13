@@ -375,8 +375,12 @@ SUMMARY1=$(grep -a "AIRIES-APPLIANCE-SUMMARY" "$CONSOLE_LOG" | tail -1)
 echo "   $SUMMARY1"
 [[ "$SUMMARY1" == *"signed=1 failed=0 skipped=1"* ]] ||
     fail "run 1 summary is '$SUMMARY1'"
+# The appliance now waits for Enter before rebooting so a human can read
+# the summary; the rig is that human here.
+wait_for "$CONSOLE_LOG" "press Enter to reboot" 60
+say_to_appliance ""
 
-wait_for "$CONSOLE_LOG" "rebooting to the loader" 60
+wait_for "$CONSOLE_LOG" "rebooting." 60
 echo "   appliance rebooted"
 
 # ---- run 2: idempotence, and a quit that signs nothing ----
@@ -421,7 +425,9 @@ seen_from "$RUN2_MARK" "AIRIES-APPLIANCE-SIGNED" &&
     fail "run 2 signed something after quit"
 echo "   quit confirmed nothing and signed nothing"
 
-wait_for_from "$CONSOLE_LOG" "$RUN2_MARK" "rebooting to the loader" 60
+wait_for_from "$CONSOLE_LOG" "$RUN2_MARK" "press Enter to reboot" 60
+say_to_appliance ""
+wait_for_from "$CONSOLE_LOG" "$RUN2_MARK" "rebooting." 60
 echo "   appliance rebooted"
 
 # Back at the loader menu, which is where a user would be. Nothing else to
