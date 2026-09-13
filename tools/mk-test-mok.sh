@@ -33,10 +33,22 @@ KEY=$OUT/airies-test-mok.key
 CRT=$OUT/airies-test-mok.crt
 CER=$OUT/airies-test-mok.cer
 VARS=$OUT/OVMF_VARS.secboot.mok.fd
+# The permissive-mode varstore (DESIGN Section 7.4): the same enrolled MOK,
+# plus the MokSBState byte MokManager would have written after the user ran
+# `mokutil --disable-validation`. Used with MOK_VARS= to prove the loader's
+# banner, notice and "everything boots" behaviour in that state.
+VARS_SB=$OUT/OVMF_VARS.secboot.moksb.fd
+MOKSB_JSON=$OUT/moksbstate.json
 
 # The owner GUID on a MokList entry is informational; shim's own vendor GUID
 # is what MokManager itself would stamp there.
 MOK_OWNER=605dab50-e046-4300-abb6-3dd810dd8b23
+# The vendor GUID every shim-owned EFI variable lives under. Numerically the
+# same value as MOK_OWNER above and named apart on purpose: that one is a
+# signature's owner field, this one is a variable namespace. Measured: neither
+# MokSBState nor MokSBStateRT exists under the MOK owner GUID that stamps
+# MokList signatures (c451ed2b-9694-45d3-baba-ed9f8988a389).
+SHIM_LOCK_GUID=605dab50-e046-4300-abb6-3dd810dd8b23
 
 mkdir -p "$OUT"
 
@@ -64,5 +76,41 @@ cp -f "$VARS_SRC" "$VARS"
 chmod u+w "$VARS"
 "$VENV/bin/virt-fw-vars" --inplace "$VARS" --add-mok "$MOK_OWNER" "$CRT"
 
+# Second varstore: same MokList, plus MokSBState. This is the same shortcut
+# the MokList injection above takes, for the same reason (MokManager's
+# confirmation screen is interactive by design and cannot be scripted), and it
+# skips exactly as little: shim still reads the variable and still makes its
+# own decision about it, which is what the rig then measures.
+#
+# The attribute mask is load-bearing, and getting it wrong fails silently.
+# MokSBState must be NON_VOLATILE|BOOTSERVICE_ACCESS (0x3) and must NOT carry
+# RUNTIME_ACCESS: shim deletes and ignores any MokSBState that the running OS
+# could have written, so a 0x7 mask produces a varstore that looks permissive
+# to a human reading it and boots fully enforcing. Measured both ways under
+# OVMF secboot with Fedora shim 16.1 on 2026-09-13; 0x3 yields MokSBStateRT
+# (0x6, volatile) beside it and unsigned images load, 0x7 yields neither
+# variable and unsigned images are refused.
+echo "== seeding a second varstore with MokSBState (validation disabled)"
+cat > "$MOKSB_JSON" <<EOF
+{
+  "version": 2,
+  "variables": [
+    {
+      "name": "MokSBState",
+      "guid": "$SHIM_LOCK_GUID",
+      "attr": 3,
+      "data": "01"
+    }
+  ]
+}
+EOF
+cp -f "$VARS" "$VARS_SB"
+chmod u+w "$VARS_SB"
+"$VENV/bin/virt-fw-vars" --inplace "$VARS_SB" --set-json "$MOKSB_JSON"
+
 echo "== ready:"
 ls -la "$OUT"
+echo
+echo "enforcing rig:  tools/run-qemu.sh --secboot"
+echo "permissive rig: MOK_VARS=$VARS_SB VARS_FILE=build/OVMF_VARS.secboot.moksb.fd \\"
+echo "                tools/run-qemu.sh --secboot"

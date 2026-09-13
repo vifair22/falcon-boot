@@ -328,7 +328,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *systab)
     line();
     report_var(u"SecureBoot         ", u"SecureBoot", &GUID_GLOBAL_VAR);
     report_var(u"SetupMode          ", u"SetupMode", &GUID_GLOBAL_VAR);
-    report_var(u"MokSBState         ", u"MokSBState", &GUID_MOK_VAR);
+    report_var(u"MokSBState         ", u"MokSBState", &GUID_SHIM_VAR);
     report_var(u"MokSBStateRT       ", u"MokSBStateRT", &GUID_SHIM_VAR);
 
     put(u"[protocols]");

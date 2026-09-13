@@ -31,7 +31,13 @@
 # the MOK that RUN generated, rather than the rig's throwaway key):
 #   STICK_IMG   the --stick disk image      (default build/test-stick.img)
 #   MOK_VARS    the varstore template --secboot starts from
-#               (default build/mok-test/OVMF_VARS.secboot.mok.fd)
+#               (default build/mok-test/OVMF_VARS.secboot.mok.fd).
+#               mk-test-mok.sh writes a second one beside it,
+#               OVMF_VARS.secboot.moksb.fd: the same enrolled MOK plus
+#               MokSBState, which is how permissive mode (DESIGN Section
+#               7.4) is booted. Point MOK_VARS at it, and VARS_FILE
+#               somewhere new, to get a machine where shim validates
+#               nothing.
 #   VARS_FILE   the writable per-run varstore copy. Set it when MOK_VARS
 #               changes: the copy is only made when the destination is
 #               absent, so an existing build/OVMF_VARS.secboot.fd from an

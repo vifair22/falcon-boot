@@ -352,7 +352,10 @@ static EFI_STATUS launch_uki(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent,
                 L"has enrolled.\r\nRe-bless the ISO with the MOK key that is "
                 L"enrolled here, enroll this\r\nstick's certificate with "
                 L"MokManager, or opt out of enforcement in\r\nfirmware setup "
-                L"(Secure Boot off) or with mokutil --disable-validation.";
+                L"(Secure Boot off) or with mokutil --disable-validation\r\n"
+                L"(also confirmed at MokManager). Both opt-outs are "
+                L"per-machine and cover\r\nevery unsigned EFI binary, not "
+                L"just this one.";
         }
         if (published && EFI_ERROR(credfs_teardown(bs)))
             *retain = 1;

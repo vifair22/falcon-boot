@@ -21,6 +21,10 @@
  * consumers, tested on synthetic volumes plus the ext4 fixture, so that
  * dressing the drivers in one vtable cannot change what a consumer sees.
  *
+ * The Secure Boot state reader (src/sb): its whole input is one runtime
+ * services function pointer, so a fake GetVariable reaches every state it can
+ * report, with no firmware and no image either.
+ *
  * LUKS2 and ext4: fixture images that cryptsetup and mkfs.ext4 themselves
  * produced (tools/mk-test-luks.sh, tools/mk-test-ext4.sh), which is the only
  * evidence that these readers agree with the implementations that wrote the
@@ -62,6 +66,7 @@ int main(void)
     failed += run_ext4_tests();
     failed += run_fs_tests();
     failed += run_part_tests();
+    failed += run_sb_tests();
 
     printf("\ntotal failed: %d\n", failed);
     return failed == 0 ? 0 : 1;

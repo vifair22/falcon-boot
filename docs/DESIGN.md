@@ -540,6 +540,20 @@ convenience to verify, with the host-tool path as the certain fallback.
 
 We ship no in-loader enforcement toggle. Rejected for the reasons in 7.3.
 
+Measured detail (Fedora shim 16.1 under OVMF secboot, 2026-09-13) that the
+loader's sb module depends on: the variable the loader reads is
+`MokSBStateRT`, not `MokSBState`. `MokSBState` (shim lock GUID, one byte,
+`NON_VOLATILE|BOOTSERVICE_ACCESS`) is the *request* MokManager writes; shim
+deletes and ignores any copy that carries `RUNTIME_ACCESS`, because the
+running OS could have written that one. Only after shim decides to honor
+the request does it publish the volatile `MokSBStateRT` mirror
+(`BOOTSERVICE_ACCESS|RUNTIME_ACCESS`). The mirror is therefore the only
+honest signal: reporting the request would announce permissive mode on a
+machine where shim had just refused it. Rig note: the varstore injection
+in tools/mk-test-mok.sh writes `MokSBState` with attribute mask 0x3; a
+0x7 copy produces a varstore that looks permissive to a human and boots
+fully enforcing.
+
 ### 7.5 Key model and signing
 
 The whole model rests on an asymmetry:
@@ -868,8 +882,11 @@ MOK), the loader-side blessed-boot path consumes the Section 8.1 manifest
 the menu), .img files boot as the second virtual-media flavor (real memtest86
 verified under SB ON), and the on-stick signing appliance blesses ISOs in
 QEMU end to end (unlock p3 read-only, per-ISO confirm, sign, manifest,
-reboot, idempotent second run). Remaining: step 9 (permissive-mode UX), step
-10 (real hardware), Windows injectors, Manual.md.
+reboot, idempotent second run). Step 9 (permissive-mode
+UX) is done: the MokSBState opt-in is proven in the rig (unsigned media
+boots with SB nominally on, banner and notice unmissable, refusals carry
+both doors consistently). Remaining: step 10 (real hardware / UAT),
+Windows injectors, Manual.md, and the falcon-boot rename during polish.
 
 1. OVMF hello-world: mingw PE loader that prints and reads a key. Proves
    toolchain + test rig. Then the **shim plumbing spike**, which gates several

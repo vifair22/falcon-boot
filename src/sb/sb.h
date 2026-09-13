@@ -58,7 +58,9 @@ int sb_state_read(EFI_RUNTIME_SERVICES *rt, sb_state *out);
 
 sb_mode sb_state_mode(const sb_state *s);
 
-/* Short banner label, e.g. L"SB: on (shim validation disabled)". Never NULL. */
+/* Short banner label, e.g. L"SB: on (shim validation DISABLED)". Never NULL,
+ * and never wider than 33 columns, so it still fits beside the title in the
+ * spec's guaranteed 80x25 mode. */
 const CHAR16 *sb_mode_label(sb_mode m);
 
 /* Nonzero when the mode must not slip past the user: Secure Boot looks on,

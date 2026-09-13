@@ -8,6 +8,22 @@
  *                           the user ran mokutil --disable-validation and
  *                           confirmed at MokManager. Absent is the normal,
  *                           validating case.
+ *
+ * Measured under OVMF secboot with Fedora shim 16.1, 2026-09-13, which is why
+ * the RT mirror rather than MokSBState itself is what this module reads:
+ *
+ *   MokSBState   written NV+BS (attr 0x3):  present here, value 1, and shim
+ *                honours it -> MokSBStateRT appears alongside it, attr 0x6
+ *                (BS+RT, volatile), value 1.
+ *   MokSBState   written NV+BS+RT (0x7):    shim DELETES it and keeps
+ *                validating; both names then read EFI_NOT_FOUND and the
+ *                banner correctly stays "SB: on".
+ *
+ * So MokSBState is the request and MokSBStateRT is shim's answer. Only the
+ * answer may be reported: a loader that read MokSBState would have told the
+ * user validation was off in exactly the case where shim had just refused it.
+ * Both names live under the shim lock GUID; the MOK owner GUID (c451ed2b-...)
+ * that stamps MokList entries carries neither (both read EFI_NOT_FOUND).
  */
 
 #include <sb/sb.h>
@@ -64,10 +80,12 @@ int sb_state_read(EFI_RUNTIME_SERVICES *rt, sb_state *out)
     out->secure_boot = read_bool_var(rt, L"SecureBoot", &global);
     out->setup_mode = read_bool_var(rt, L"SetupMode", &global);
 
-    /* Shim mirrors the boot-services-only MokSBState into MokSBStateRT so
-     * that it survives into runtime; the variable exists only on a machine
-     * where the user ran mokutil --disable-validation and confirmed it at
-     * MokManager, so absence is the ordinary validating case. */
+    /* Shim mirrors the boot-services-only MokSBState into MokSBStateRT once
+     * it has decided to honour it; the mirror exists only on a machine where
+     * the user ran mokutil --disable-validation and confirmed it at
+     * MokManager, so absence is the ordinary validating case. Reading the
+     * mirror rather than MokSBState is deliberate and measured: see the
+     * header comment for the case where the two disagree. */
     out->mok_sb_validation_disabled = read_bool_var(rt, L"MokSBStateRT",
                                                     &shim);
     return SB_OK;
@@ -102,7 +120,11 @@ const CHAR16 *sb_mode_label(sb_mode m)
     case SB_MODE_ON:
         return L"SB: on";
     case SB_MODE_ON_VALIDATION_DISABLED:
-        return L"SB: on (shim validation disabled)";
+        /* Shouted, because this is the one label whose meaning is the
+         * opposite of what the two words beside it suggest: Secure Boot
+         * reads as on, and nothing is being checked. 33 columns, which
+         * leaves the title room in the spec's minimum 80-column mode. */
+        return L"SB: on (shim validation DISABLED)";
     case SB_MODE_SETUP:
         return L"SB: setup mode";
     case SB_MODE_UNKNOWN:

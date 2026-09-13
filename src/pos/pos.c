@@ -665,7 +665,9 @@ static EFI_STATUS launch_uki(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent,
                 L"the UKI is not signed with an enrolled key. Sign it with "
                 L"the MOK key\r\nthis machine has enrolled, or opt out of "
                 L"enforcement in firmware setup\r\n(Secure Boot off) or with "
-                L"mokutil --disable-validation.";
+                L"mokutil --disable-validation (from Linux,\r\nconfirmed at "
+                L"MokManager). Both opt-outs are per-machine and cover\r\n"
+                L"every unsigned EFI binary, not just this one.";
         }
         /* DESIGN Section 5.1: a failed load zeroes the credential and tears
          * the filesystem down before the menu comes back. */

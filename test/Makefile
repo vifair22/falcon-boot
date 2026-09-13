@@ -23,6 +23,11 @@
 #   src/part/part.c      device access through a read callback; the firmware
 #                        half of that module is src/part/partefi.c, which is
 #                        EFI-only by nature and deliberately not built here
+#   src/sb/sb.c          reads three EFI variables through the runtime
+#                        services pointer it is handed, so a fake GetVariable
+#                        is the whole platform it needs. It is the one unit
+#                        here that includes the UEFI headers, which is why it
+#                        alone is compiled with -fshort-wchar (see below)
 #
 # Why src/lib/string.c is NOT compiled in: it defines memcpy, memmove, memset
 # and memcmp, which the freestanding EFI build needs because there is no libc,
@@ -112,6 +117,7 @@ TEST_SRCS := \
 	$(TEST_DIR)/luks_test.c \
 	$(TEST_DIR)/ext4_test.c \
 	$(TEST_DIR)/part_test.c \
+	$(TEST_DIR)/sb_test.c \
 	$(TEST_DIR)/fs_test.c \
 	$(TEST_DIR)/synth.c
 
@@ -124,6 +130,7 @@ UUT_SRCS := \
 	$(ROOT)/src/bless/blesscore.c \
 	$(ROOT)/src/ext4/ext4.c \
 	$(ROOT)/src/part/part.c \
+	$(ROOT)/src/sb/sb.c \
 	$(ROOT)/src/fs/fs.c \
 	$(ROOT)/src/crypto/crypto.c \
 	$(ROOT)/src/crypto/sha256.c \
@@ -139,7 +146,7 @@ UUT_SRCS := \
 	$(ROOT)/src/luks/luks.c
 
 # Filter for the coverage report, one alternative per unit above.
-COV_FILTER := .*/src/(exfat/exfat|cpio/cpio|family/family|manifest/[a-z_]+|bless/blesscore|ext4/ext4|part/part|fs/fs|crypto/[a-z0-9]+|luks/[a-z0-9]+)\.c$$
+COV_FILTER := .*/src/(exfat/exfat|cpio/cpio|family/family|manifest/[a-z_]+|bless/blesscore|ext4/ext4|part/part|fs/fs|sb/sb|crypto/[a-z0-9]+|luks/[a-z0-9]+)\.c$$
 
 OBJS := $(patsubst $(TEST_DIR)/%.c,$(OBJ)/%.o,$(TEST_SRCS)) \
 	$(patsubst $(ROOT)/src/%.c,$(OBJ)/uut/%.o,$(UUT_SRCS))
@@ -169,6 +176,16 @@ $(OBJ)/uut/%.o: $(ROOT)/src/%.c
 # and never enters it, and the vector tests that would compare the two skip
 # themselves there.
 $(OBJ)/uut/crypto/aesni.o: CFLAGS += -maes
+
+# CHAR16 is uint16_t and sb.c writes its variable names as L"..." literals,
+# which the freestanding build resolves with -fshort-wchar. The host compiler
+# defaults to a 32-bit wchar_t, so this object needs the same flag or those
+# literals are the wrong width. It is confined to this object exactly as -maes
+# is: the flag changes the ABI of wchar_t, and nothing else here wants that.
+# sb_test.c itself is built without it and uses u"..." literals, which are
+# 16-bit under either setting, so the test and the unit agree on the bytes
+# without agreeing on a compiler flag.
+$(OBJ)/uut/sb/sb.o: CFLAGS += -fshort-wchar
 
 -include $(DEPS)
 

@@ -456,7 +456,9 @@ static void boot_target(EFI_HANDLE image_handle, const menu_entry *entry,
             out(L"\r\nthe platform refused to load this payload. Bless the "
                 L"media with the\r\nsign tool, or opt out of enforcement in "
                 L"firmware setup (Secure Boot off)\r\nor with mokutil "
-                L"--disable-validation.\r\n");
+                L"--disable-validation (from Linux, confirmed at\r\n"
+                L"MokManager). Both opt-outs are per-machine and cover every "
+                L"unsigned\r\nEFI binary, not just this one.\r\n");
         }
     }
     out(L"\r\npress any key to return to the menu.\r\n");
@@ -555,8 +557,11 @@ static BOOLEAN boot_personal(EFI_HANDLE image_handle)
  * change without a reboot, and re-reading it per redraw would only invite the
  * misreading that this value gates anything. It does not (DESIGN Section
  * 7.3): it is a label. A relaxed-enforcement machine gets inverse video
- * because DESIGN Section 7.4 asks for that state to be unmissable. */
-static void banner_init(menu_banner *b, const CHAR16 *title)
+ * because DESIGN Section 7.4 asks for that state to be unmissable.
+ *
+ * The mode is returned so the one read serves both the banner and the notice
+ * below it, rather than either of them reading the variables a second time. */
+static sb_mode banner_init(menu_banner *b, const CHAR16 *title)
 {
     sb_state state;
     sb_mode mode;
@@ -566,12 +571,41 @@ static void banner_init(menu_banner *b, const CHAR16 *title)
     b->state_attr = EFI_TEXT_ATTR(EFI_LIGHTCYAN, EFI_BLACK);
 
     if (sb_state_read(g_st->RuntimeServices, &state) != SB_OK)
-        return;
+        return SB_MODE_UNKNOWN;
     mode = sb_state_mode(&state);
     b->state = sb_mode_label(mode);
     b->state_attr = sb_mode_needs_warning(mode)
                         ? EFI_TEXT_ATTR(EFI_YELLOW, EFI_RED)
                         : EFI_TEXT_ATTR(EFI_LIGHTGRAY, EFI_BLACK);
+    return mode;
+}
+
+/* What the banner's 33 columns cannot say (DESIGN Section 7.4): that the state
+ * is the machine's rather than the stick's, that it covers every unsigned EFI
+ * binary and not only what this loader launches, and how to put it back.
+ *
+ * Printed once, before the scan, so it is on screen for the whole slow part of
+ * startup; the menu's first redraw clears it, and that is the accepted trade.
+ * It deliberately does NOT wait for a keypress: the banner is the persistent
+ * carrier of the state, on every redraw and in warning colours, and making a
+ * user acknowledge a setting they themselves confirmed at MokManager would buy
+ * nothing that the banner does not already say.
+ *
+ * Nothing here reads back into a decision. The loader's behaviour is byte for
+ * byte the same in this state as outside it: shim is what stopped enforcing,
+ * and this function only explains that it did. */
+static void permissive_notice(sb_mode mode)
+{
+    if (!sb_mode_needs_warning(mode))
+        return;
+
+    out(L"\r\nshim signature validation is DISABLED on this machine "
+        L"(MokSBState).\r\n"
+        L"Every unsigned EFI binary runs here, not just this stick's; the "
+        L"setting\r\nlives in this machine's firmware, not on the stick, so "
+        L"other machines are\r\nunaffected. To undo it: mokutil "
+        L"--enable-validation from Linux, then\r\nconfirm at the MokManager "
+        L"screen on the next boot.\r\n\r\n");
 }
 
 EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
@@ -605,7 +639,8 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
         return EFI_OUT_OF_RESOURCES;
     }
 
-    banner_init(&banner, L"airies-boot " WIDEN(AIRIES_VERSION));
+    permissive_notice(banner_init(&banner,
+                                  L"airies-boot " WIDEN(AIRIES_VERSION)));
 
     /* One pass over the Block I/O handles for the whole loader (DESIGN
      * Section 9): media, role, LUKS2 magic and filesystem identification for

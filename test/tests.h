@@ -21,6 +21,7 @@ int run_luks_tests(void);
 int run_ext4_tests(void);
 int run_fs_tests(void);
 int run_part_tests(void);
+int run_sb_tests(void);
 
 /* Copies a UCS-2 filename into an ASCII buffer. Every character the tests use
  * is ASCII; anything outside that range is rendered '?' so a mismatch is
