@@ -19,7 +19,10 @@
 #            No busybox on this machine and none wanted: the test needs a
 #            program that lists a directory and powers off.
 #   stub     /usr/lib/systemd/boot/efi/linuxx64.efi.stub (systemd 261)
-#   cmdline  console=ttyS0, so the whole run lands in the rig's serial log.
+#   cmdline  console=ttyS0 console=tty0: serial for the headless rig, tty0
+#            last so /dev/console (what init prints to) is the SCREEN and a
+#            human watching the QEMU window sees the result; the kernel still
+#            mirrors its own messages to both.
 #
 # Usage: tools/mk-test-uki.sh
 # Env:   ARCH_ISO   source ISO (default: the vtoy-backup copy)
@@ -48,7 +51,7 @@ UKI_SIGNED="$OUT/fixture-uki-signed.efi"
 MOK_KEY=build/mok-test/airies-test-mok.key
 MOK_CRT=build/mok-test/airies-test-mok.crt
 
-CMDLINE="console=ttyS0,115200 panic=10 rd.systemd.unit=none"
+CMDLINE="console=ttyS0,115200 console=tty0 panic=10 rd.systemd.unit=none"
 
 for t in bsdtar cpio gcc ukify; do
     command -v "$t" >/dev/null 2>&1 || {

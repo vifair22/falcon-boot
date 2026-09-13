@@ -27,6 +27,7 @@
 #define _GNU_SOURCE
 
 #include <dirent.h>
+#include <stdarg.h>
 #include <fcntl.h>
 #include <stdio.h>
 #include <string.h>
@@ -53,6 +54,12 @@
  * explicitly does not apply here, so /dev is empty until we mount it. Without
  * this every print below goes to a closed descriptor and the run looks like a
  * hang. */
+/* Everything the fixture proves is asserted by grepping the rig's serial
+ * log, while a human doing UAT watches the QEMU window. The cmdline puts
+ * tty0 last, so /dev/console (fd 1 below) is the screen; g_serial carries
+ * the same bytes to ttyS0 so the headless assertions keep working. */
+static int g_serial = -1;
+
 static void open_console(void)
 {
     int fd;
@@ -61,29 +68,57 @@ static void open_console(void)
     (void)mount("devtmpfs", "/dev", "devtmpfs", 0, NULL);
 
     fd = open("/dev/console", O_RDWR);
-    if (fd < 0)
+    if (fd >= 0) {
+        (void)dup2(fd, 0);
+        (void)dup2(fd, 1);
+        (void)dup2(fd, 2);
+        if (fd > 2)
+            (void)close(fd);
+        setvbuf(stdout, NULL, _IONBF, 0);
+    }
+    g_serial = open("/dev/ttyS0", O_WRONLY | O_NOCTTY);
+}
+
+/* printf to both the console and the serial log; every line the fixture
+ * emits goes through here so the two audiences cannot diverge. */
+static void outf(const char *fmt, ...)
+{
+    char line[1024];
+    va_list ap;
+    int n;
+
+    va_start(ap, fmt);
+    n = vsnprintf(line, sizeof line, fmt, ap);
+    va_end(ap);
+    if (n < 0)
         return;
-    (void)dup2(fd, 0);
-    (void)dup2(fd, 1);
-    (void)dup2(fd, 2);
-    if (fd > 2)
-        (void)close(fd);
-    setvbuf(stdout, NULL, _IONBF, 0);
+    if ((size_t)n >= sizeof line)
+        n = (int)(sizeof line) - 1;
+    /* glibc marks write() warn_unused_result; a fixture print that fails
+     * has nowhere to report to, so the results are consumed explicitly. */
+    if (write(1, line, (size_t)n) < 0) { /* nothing to do */ }
+    if (g_serial >= 0 && write(g_serial, line, (size_t)n) < 0) {
+        /* nothing to do */
+    }
 }
 
 /* Prints the first `max` bytes of a credential with the unprintables escaped.
  * The fixture passphrase is not a secret, and seeing the exact bytes is how a
  * stray newline or a NUL terminator gets caught rather than guessed at. */
-static void print_bytes(const unsigned char *p, size_t n)
+static void format_bytes(const unsigned char *p, size_t n, char *out,
+                         size_t cap)
 {
     size_t i;
+    size_t w = 0;
 
-    for (i = 0; i < n; i++) {
-        if (p[i] >= 0x20 && p[i] < 0x7f)
-            putchar((int)p[i]);
-        else
-            printf("\\x%02x", p[i]);
+    for (i = 0; i < n && w + 5 < cap; i++) {
+        if (p[i] >= 0x20 && p[i] < 0x7f) {
+            out[w++] = (char)p[i];
+        } else {
+            w += (size_t)snprintf(out + w, cap - w, "\\x%02x", p[i]);
+        }
     }
+    out[w] = '\0';
 }
 
 static ssize_t read_file(const char *path, unsigned char *buf, size_t cap)
@@ -121,11 +156,11 @@ int main(void)
 
     open_console();
 
-    printf("\nAIRIES-UKI-INIT\n");
+    outf("\nAIRIES-UKI-INIT\n");
 
     d = opendir(CRED_DIR);
     if (!d) {
-        printf("AIRIES-CRED-DIR-MISSING %s\n", CRED_DIR);
+        outf("AIRIES-CRED-DIR-MISSING %s\n", CRED_DIR);
     } else {
         while ((e = readdir(d)) != NULL) {
             struct stat st;
@@ -137,17 +172,21 @@ int main(void)
             snprintf(path, sizeof path, "%s/%s", CRED_DIR, e->d_name);
             if (stat(path, &st) != 0)
                 st.st_size = -1;
-            printf("AIRIES-CRED-FILE %s %lld bytes\n", e->d_name,
-                   (long long)st.st_size);
+            outf("AIRIES-CRED-FILE %s %lld bytes\n", e->d_name,
+                 (long long)st.st_size);
 
             n = read_file(path, buf, sizeof buf);
             if (n < 0) {
-                printf("AIRIES-CRED-UNREADABLE %s\n", e->d_name);
+                outf("AIRIES-CRED-UNREADABLE %s\n", e->d_name);
                 continue;
             }
-            printf("AIRIES-CRED-HEAD %s [", e->d_name);
-            print_bytes(buf, (size_t)n < 64 ? (size_t)n : 64);
-            printf("]\n");
+            {
+                char shown[512];
+
+                format_bytes(buf, (size_t)n < 64 ? (size_t)n : 64,
+                             shown, sizeof shown);
+                outf("AIRIES-CRED-HEAD %s [%s]\n", e->d_name, shown);
+            }
 
             if (strcmp(e->d_name, CRED_NAME) == 0 &&
                 (size_t)n == strlen(EXPECT_PASS) &&
@@ -155,16 +194,21 @@ int main(void)
                 matched = 1;
         }
         (void)closedir(d);
-        printf("AIRIES-CRED-COUNT %d\n", found);
+        outf("AIRIES-CRED-COUNT %d\n", found);
     }
 
     if (matched)
-        printf("AIRIES-CRED-OK\n");
+        outf("AIRIES-CRED-OK\n");
     else
-        printf("AIRIES-CRED-FAIL\n");
+        outf("AIRIES-CRED-FAIL\n");
 
-    printf("AIRIES-UKI-DONE\n");
+    outf("AIRIES-UKI-DONE\n");
+    /* A human watching the QEMU window needs a moment to read the result;
+     * a headless run just costs six extra seconds. Announced so the pause
+     * reads as deliberate rather than a hang. */
+    outf("powering off in 6 seconds.\n");
     (void)fflush(stdout);
+    sleep(6);
     sync();
     /* Powering off rather than halting so the rig's QEMU exits on its own and
      * a headless run does not need a timeout to end. */
