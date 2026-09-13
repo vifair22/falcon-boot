@@ -96,6 +96,11 @@
 #define PASS_MAX     512u
 #define UNLOCK_TRIES 3
 
+/* The loader-delivered credential (DESIGN Section 5.1): sd-stub packs the
+ * companion file into the initramfs under this name; systemd would strip
+ * the .cred suffix on import, but this init reads the file itself. */
+#define CRED_FILE "cryptsetup.passphrase.cred"
+
 #define MAX_CANDIDATES 64u
 #define MAX_RECORDS    256u
 #define MANIFEST_MAX   (1u << 20)
@@ -543,6 +548,34 @@ static ssize_t read_secret(char *buf, size_t cap)
     return (ssize_t)len;
 }
 
+/* Reads a small file whole (the loader-delivered credential). Returns the
+ * byte count, 0 for empty, -1 when absent or unreadable; never an error the
+ * caller must act on, since the interactive prompt is the fallback. */
+static ssize_t read_file(const char *path, char *buf, size_t cap)
+{
+    int fd = open(path, O_RDONLY);
+    size_t len = 0;
+
+    if (fd < 0)
+        return -1;
+    for (;;) {
+        ssize_t n = read(fd, buf + len, cap - 1u - len);
+
+        if (n < 0) {
+            (void)close(fd);
+            return -1;
+        }
+        if (n == 0)
+            break;
+        len += (size_t)n;
+        if (len + 1u >= cap)
+            break;
+    }
+    (void)close(fd);
+    buf[len] = '\0';
+    return (ssize_t)len;
+}
+
 /* The confirmation prompt. Echoed on purpose: the user is meant to see the
  * word they are typing, because typing it is the whole ceremony. */
 static ssize_t read_line(char *buf, size_t cap)
@@ -758,8 +791,39 @@ int main(void)
      * The passphrase goes to cryptsetup down a pipe as --key-file -, so it
      * never appears in argv, in the environment, or in any file. --readonly
      * because the appliance has no business writing to the shelf: the key is
-     * read, the outputs go to p2. */
-    for (tries = 1; tries <= UNLOCK_TRIES; tries++) {
+     * read, the outputs go to p2.
+     *
+     * First attempt: the credential the loader delivered. The user already
+     * typed the passphrase once to reach the chooser, and the Section 5.1
+     * machinery hands it to every UKI the loader launches, this one
+     * included; asking again would be the double prompt the whole handoff
+     * design exists to remove. The interactive loop below stays as the
+     * fallback for a missing or stale credential (a buffer-load fallback
+     * launch delivers none), so a failed credential costs one message, not
+     * the session. */
+    {
+        ssize_t clen = read_file("/.extra/credentials/" CRED_FILE,
+                                 pass, sizeof(pass));
+
+        if (clen > 0) {
+            char *argv[] = {
+                (char *)"/usr/bin/cryptsetup", (char *)"open",
+                (char *)"--type", (char *)"luks2",
+                (char *)"--readonly",
+                (char *)"--key-file", (char *)"-",
+                parts.p3, (char *)MAPPER, NULL
+            };
+
+            say("unlocking p3 with the passphrase from the loader...\n");
+            if (run(argv, pass, (size_t)clen) == 0)
+                mapped = 1;
+            else
+                say("the delivered credential did not open p3; "
+                    "falling back to the prompt.\n");
+        }
+        explicit_bzero(pass, sizeof(pass));
+    }
+    for (tries = 1; !mapped && tries <= UNLOCK_TRIES; tries++) {
         char *argv[] = {
             (char *)"/usr/bin/cryptsetup", (char *)"open",
             (char *)"--type", (char *)"luks2",
