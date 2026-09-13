@@ -5,9 +5,10 @@
  * partition in the loader and a plain image file in host-side tests. Offsets
  * handed to the callback are always multiples of the volume's sector size.
  *
- * Scope for now is what the menu needs: mount, walk directories, read file
- * bytes at arbitrary offsets. The extent-map API (injection framework, DESIGN
- * Section 6.2) lands here later.
+ * Scope: mount, walk directories, read file bytes at arbitrary offsets, and
+ * resolve a file to the physical ranges backing it (the extent map the
+ * injection framework of DESIGN Section 6.2 rebuilds an ISO from after
+ * ExitBootServices).
  */
 
 #ifndef AIRIES_EXFAT_H
@@ -24,6 +25,8 @@ enum {
     EXFAT_ERR_CORRUPT    = -3, /* on-disk structure violates the spec */
     EXFAT_ERR_BAD_ARG    = -4,
     EXFAT_ERR_RANGE      = -5, /* read outside the file's valid data */
+    EXFAT_ERR_NOSPACE    = -6, /* caller's array too small; count says how
+                                  many entries were needed */
 };
 
 /* Read len bytes at byte offset off (volume-relative). Returns 0 on
@@ -104,5 +107,31 @@ int exfat_file_open(exfat_vol *v, exfat_file *f, const exfat_dirent *e);
 /* Reads len bytes at file offset off. Wholly inside the file or nothing:
  * a short read is never reported as success. */
 int exfat_file_read(exfat_file *f, uint64_t off, uint64_t len, void *buf);
+
+/* One physically contiguous run of a file, in BYTES and relative to the start
+ * of the volume, so a consumer needs the partition's own offset and nothing
+ * else about exFAT. */
+typedef struct {
+    uint64_t vol_off;
+    uint64_t len;
+} exfat_extent;
+
+/* Resolves a file to its ordered extents, coalescing clusters that happen to
+ * be adjacent on disk: a contiguous file yields exactly one extent however
+ * many clusters it spans.
+ *
+ * The extents cover the file's valid data length exactly, so their lengths
+ * sum to the size and the bytes they name are the file's bytes. The tail of
+ * the last cluster is therefore excluded; a consumer building a
+ * sector-granular mapping (a device-mapper table, DESIGN Section 6.2) rounds
+ * the final length up itself, which is safe because the slack is inside the
+ * allocation.
+ *
+ * Writes at most cap extents. *count always receives the number of extents
+ * the file actually has, so a cap-too-small call returns EXFAT_ERR_NOSPACE
+ * with the required size; out may be NULL when cap is 0, which is how a
+ * caller sizes its array first. */
+int exfat_file_extents(exfat_vol *v, const exfat_dirent *e,
+                       exfat_extent *out, size_t cap, size_t *count);
 
 #endif /* AIRIES_EXFAT_H */

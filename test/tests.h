@@ -8,6 +8,7 @@
 
 /* Each returns the number of failed tests, as cmocka_run_group_tests does. */
 int run_synth_tests(void);
+int run_file_tests(void);
 int run_fixture_tests(void);
 
 /* Copies a UCS-2 filename into an ASCII buffer. Every character the tests use

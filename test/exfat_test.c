@@ -28,6 +28,7 @@ int main(void)
     int failed = 0;
 
     failed += run_synth_tests();
+    failed += run_file_tests();
     failed += run_fixture_tests();
 
     printf("\ntotal failed: %d\n", failed);

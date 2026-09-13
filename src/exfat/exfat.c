@@ -344,6 +344,97 @@ int exfat_file_read(exfat_file *f, uint64_t off, uint64_t len, void *buf)
     return EXFAT_OK;
 }
 
+/* Append one extent, or just count it when the caller's array is full. The
+ * count is kept honest past the end of the array so a short call can report
+ * exactly how much room it needed. */
+static void extent_emit(exfat_extent *out, size_t cap, size_t *need,
+                        uint64_t off, uint64_t len)
+{
+    if (*need < cap) {
+        out[*need].vol_off = off;
+        out[*need].len = len;
+    }
+    (*need)++;
+}
+
+int exfat_file_extents(exfat_vol *v, const exfat_dirent *e,
+                       exfat_extent *out, size_t cap, size_t *count)
+{
+    uint64_t remaining;
+    uint64_t run_off = 0;
+    uint64_t run_len = 0;
+    uint32_t cb;
+    uint32_t cl;
+    size_t need = 0;
+
+    if (v == (void *)0 || e == (void *)0 || count == (void *)0)
+        return EXFAT_ERR_BAD_ARG;
+    if (out == (void *)0 && cap != 0)
+        return EXFAT_ERR_BAD_ARG;
+    if (e->is_dir)
+        return EXFAT_ERR_BAD_ARG;
+
+    *count = 0;
+    if (e->size == 0)
+        return EXFAT_OK; /* no allocation, no extents: not an error */
+    if (!cluster_valid(v, e->first_cluster))
+        return EXFAT_ERR_CORRUPT;
+
+    cb = cluster_bytes(v);
+    cl = e->first_cluster;
+
+    if (e->no_fat_chain) {
+        /* Contiguous allocation, which is what a file dropped onto a freshly
+         * formatted stick almost always is: one extent, no FAT reads at all.
+         * The far end is still validated, because a NoFatChain file whose
+         * size runs off the end of the heap is corruption we must not hand
+         * on as a mapping. */
+        uint64_t clusters = (e->size + cb - 1) / cb;
+        uint64_t last = (uint64_t)cl + clusters - 1;
+
+        if (last > 0xFFFFFFFFu || !cluster_valid(v, (uint32_t)last))
+            return EXFAT_ERR_CORRUPT;
+        extent_emit(out, cap, &need, cluster_off(v, cl), e->size);
+        *count = need;
+        return need <= cap ? EXFAT_OK : EXFAT_ERR_NOSPACE;
+    }
+
+    remaining = e->size;
+    while (remaining > 0) {
+        uint64_t off = cluster_off(v, cl);
+        uint64_t take = (remaining < cb) ? remaining : cb;
+        uint32_t next;
+        int rc;
+
+        /* Fragmentation is a property of the FAT chain, not of the file:
+         * neighbouring clusters merge into the run in progress and only a
+         * jump starts a new extent. */
+        if (run_len != 0 && run_off + run_len == off) {
+            run_len += take;
+        } else {
+            if (run_len != 0)
+                extent_emit(out, cap, &need, run_off, run_len);
+            run_off = off;
+            run_len = take;
+        }
+
+        remaining -= take;
+        if (remaining == 0)
+            break;
+
+        rc = next_cluster(v, cl, &next);
+        if (rc != EXFAT_OK)
+            return rc;
+        if (next == 0)
+            return EXFAT_ERR_CORRUPT; /* chain shorter than the size claims */
+        cl = next;
+    }
+    extent_emit(out, cap, &need, run_off, run_len);
+
+    *count = need;
+    return need <= cap ? EXFAT_OK : EXFAT_ERR_NOSPACE;
+}
+
 int exfat_dir_next(exfat_dir *d, exfat_dirent *out)
 {
     uint8_t ent[DIRENT_SIZE];

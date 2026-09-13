@@ -33,10 +33,14 @@ LDFLAGS := -nostdlib -shared -Wl,--subsystem,10 -e efi_main \
 
 SRCS := \
 	src/efi/main.c \
+	src/efi/sbat.c \
 	src/lib/string.c \
 	src/exfat/exfat.c \
 	src/iso/iso.c \
-	src/menu/menu.c
+	src/menu/menu.c \
+	src/sb/sb.c \
+	src/family/family.c \
+	src/cpio/cpio.c
 
 OBJS := $(SRCS:src/%.c=build/$(VARIANT)/%.o)
 DEPS := $(OBJS:.o=.o.d)
@@ -51,6 +55,16 @@ EFI := build/bin/airies-boot.efi
 ESP := build/esp
 TEST_IMG := build/test-exfat.img
 
+# Secure Boot rig artifacts. The key here is a throwaway that exists only to
+# make the SB-ON rig runnable: the product's key model is DESIGN Section 7.5
+# (private key encrypted on p3, signing done in Linux userland by the host
+# tooling of step 7), and none of this is any part of it. Everything lands
+# under build/ and nothing signs at runtime.
+MOK_DIR := build/mok-test
+MOK_KEY := $(MOK_DIR)/airies-test-mok.key
+MOK_CRT := $(MOK_DIR)/airies-test-mok.crt
+EFI_SIGNED := build/bin/airies-boot-signed.efi
+
 OVMF_DIR ?= /usr/share/edk2/OvmfX64
 OVMF_VARS := $(OVMF_DIR)/OVMF_VARS.fd
 
@@ -58,7 +72,8 @@ SEMVER := $(shell cat release_version)
 # Repo-standard full version: SEMVER_YYYYMMDD.HHMM.TYPE.
 VERSION := $(SEMVER)_$(shell date +%Y%m%d.%H%M).$(VARIANT)
 
-.PHONY: all check-tools esp run test-image test-iso payload version-stamp clean
+.PHONY: all check-tools esp run run-secboot sbat-check sign mok-test \
+	test-image test-iso payload version-stamp clean
 
 all: $(EFI) compile_commands.json
 
@@ -149,6 +164,37 @@ esp: $(EFI)
 
 run: $(EFI)
 	tools/run-qemu.sh
+
+# Fail the build loudly if the .sbat section did not survive the link. Without
+# it shim refuses the loader under Secure Boot with the same opaque
+# EFI_SECURITY_VIOLATION a bad signature gives, and the mistake is invisible
+# until someone turns Secure Boot on (src/efi/sbat.c has the details).
+sbat-check: $(EFI)
+	@$(CC:gcc=objdump) -h $(EFI) | grep -q '\.sbat' || { \
+		echo "ERROR: $(EFI) has no .sbat section; shim will refuse it" >&2; \
+		exit 1; }
+	@echo ".sbat section present:"
+	@$(CC:gcc=objdump) -s -j .sbat $(EFI) | sed -n '3,$$p'
+
+# Throwaway test MOK and a matching OVMF varstore. Test-rig scaffolding only.
+mok-test: $(MOK_KEY)
+
+$(MOK_KEY):
+	tools/mk-test-mok.sh
+
+# Sign the loader with the test MOK so shim will accept it as a second stage.
+# sbsign warns "data remaining: gaps between PE/COFF sections?" about our mingw
+# output; it says the same about Fedora's own gnu-efi binaries and both verify
+# under shim (docs/notes/shim-spike.md Section 5.2).
+sign: $(EFI_SIGNED)
+
+$(EFI_SIGNED): $(EFI) $(MOK_KEY)
+	@$(MAKE) --no-print-directory sbat-check
+	sbsign --key $(MOK_KEY) --cert $(MOK_CRT) --output $@ $(EFI)
+	@echo "signed with the TEST MOK; not a release artifact"
+
+run-secboot: $(EFI_SIGNED)
+	tools/run-qemu.sh --secboot
 
 # The fixture picks the payload ISO up if it is there, so build it first.
 test-image: test-iso

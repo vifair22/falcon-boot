@@ -57,6 +57,24 @@ uint32_t synth_cluster_bytes(const synth_vol *sv);
 uint8_t *synth_cluster(synth_vol *sv, uint32_t cl);
 void synth_fat_set(synth_vol *sv, uint32_t cl, uint32_t val);
 
+/* File content for the read tests.
+ *
+ * The byte a file holds at logical offset off is a hash of off rather than a
+ * constant or a counter, so every failure mode a byte compare is meant to
+ * catch actually changes the bytes: a cluster served out of chain order, a
+ * span copied from one sector too far, or a bounce-buffer offset that is off
+ * by one all produce values that cannot alias the expected ones. */
+uint8_t synth_pattern_byte(uint64_t off);
+void synth_pattern_fill(uint8_t *dst, uint64_t off, uint64_t len);
+
+/* Lays size bytes of that pattern over the n clusters in order: clusters[i]
+ * receives logical bytes [i * cluster_bytes, (i+1) * cluster_bytes). The list
+ * need not be ascending, which is the point for chained files. When chain_fat
+ * is nonzero the FAT is linked to match, the last entry marked end-of-chain;
+ * a contiguous (no_fat_chain) file passes 0 and leaves the FAT alone. */
+void synth_write_file(synth_vol *sv, const uint32_t *clusters, unsigned n,
+                      uint64_t size, int chain_fat);
+
 /* Individual directory entries, for tests that need a malformed set. */
 void synth_put_file(uint8_t *p, uint8_t sec_count, uint16_t attrs);
 void synth_put_stream(uint8_t *p, uint8_t flags, uint8_t name_len,

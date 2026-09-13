@@ -124,7 +124,9 @@ struct EFI_BOOT_SERVICES {
                                             void *SearchKey,
                                             UINTN *NoHandles,
                                             EFI_HANDLE **Buffer);
-    void *LocateProtocol;
+    EFI_STATUS (EFIAPI *LocateProtocol)(EFI_GUID *Protocol,
+                                        void *Registration,
+                                        void **Interface);
     /* Variadic {GUID*, interface*} pairs terminated by a NULL GUID. Passing
      * a NULL handle creates one, which is how the virtual CD gets a handle
      * of its own (DESIGN Section 6 stage 2). */
@@ -157,8 +159,14 @@ typedef struct {
     void *SetVirtualAddressMap;
     void *ConvertPointer;
 
-    /* Variables */
-    void *GetVariable;
+    /* Variables. GetVariable is UX-only in this loader (DESIGN Section 7.3):
+     * SecureBoot / SetupMode / MokSBState drive labels and messages, never
+     * enforcement. */
+    EFI_STATUS (EFIAPI *GetVariable)(CHAR16 *VariableName,
+                                     EFI_GUID *VendorGuid,
+                                     UINT32 *Attributes,
+                                     UINTN *DataSize,
+                                     void *Data);
     void *GetNextVariableName;
     void *SetVariable;
 

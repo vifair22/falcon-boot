@@ -22,7 +22,9 @@
 
 #include <fcntl.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 #include <exfat/exfat.h>
@@ -139,12 +141,15 @@ static int group_setup(void **state)
     return 0;
 }
 
+static void ref_close_all(void);
+
 static int group_teardown(void **state)
 {
     (void)state;
     if (img_fd >= 0)
         close(img_fd);
     img_fd = -1;
+    ref_close_all();
     return 0;
 }
 
@@ -385,6 +390,281 @@ static void test_fixture_read_failure_is_io(void **state)
     assert_int_equal(exfat_mount(&v, img_read, &bad_fd), EXFAT_ERR_IO);
 }
 
+/* ------------------------------------------------------ file contents */
+
+/* The reference copy of a file, produced by the kernel's own exFAT driver.
+ * Comparing against it is what makes these tests worth more than the
+ * synthetic ones: they prove the cluster walk lands on the same bytes a
+ * production implementation hands out, not merely on self-consistent ones. */
+typedef struct {
+    const char *path;   /* path inside the volume */
+    int         fd;     /* extracted reference copy, -1 until pulled out */
+    char        tmp[96];
+} ref_file;
+
+/* archlinux-fake.iso is the mandated 1 MiB target; its content is zeroes, so
+ * it proves lengths, offsets and error-free traversal but cannot catch a read
+ * that returns the right count of bytes from the wrong cluster.
+ * payload-test.iso is the real 8 MB El Torito image tools/mk-test-iso.sh
+ * builds, present only when that has been run: its content is structured, so
+ * a misplaced span changes the bytes. Both are checked when both exist. */
+static ref_file refs[] = {
+    { "archlinux-fake.iso", -1, { 0 } },
+    { "payload-test.iso",   -1, { 0 } },
+};
+#define REF_COUNT (sizeof(refs) / sizeof(refs[0]))
+
+/* Copies one file out of the image via a read-only loop mount. Everything
+ * happens inside one shell with a trap, so no mount and no mountpoint outlives
+ * this call even if the test binary dies immediately afterwards. sudo runs
+ * with -n: without passwordless sudo this fails fast instead of stalling a
+ * test run on a password prompt. */
+static int ref_open(ref_file *r)
+{
+    char cmd[1024];
+    int rc;
+
+    if (r->fd >= 0)
+        return r->fd;
+    if (r->tmp[0] != '\0')
+        return -1; /* already tried and failed */
+
+    snprintf(r->tmp, sizeof(r->tmp), "/tmp/airies-exfat-ref-%ld-%p.bin",
+             (long)getpid(), (const void *)r);
+    snprintf(cmd, sizeof(cmd),
+             "set -e; "
+             "mp=$(mktemp -d /tmp/airies-exfat-mnt-XXXXXX); "
+             "trap 'sudo -n umount \"$mp\" >/dev/null 2>&1; "
+             "rmdir \"$mp\" >/dev/null 2>&1' EXIT; "
+             "sudo -n mount -o ro,loop '%s' \"$mp\"; "
+             "sudo -n cat \"$mp/%s\" > '%s'",
+             FIXTURE_IMG, r->path, r->tmp);
+
+    rc = system(cmd);
+    if (rc == -1 || !WIFEXITED(rc) || WEXITSTATUS(rc) != 0)
+        return -1;
+    r->fd = open(r->tmp, O_RDONLY);
+    return r->fd;
+}
+
+static void ref_close_all(void)
+{
+    size_t i;
+
+    for (i = 0; i < REF_COUNT; i++) {
+        if (refs[i].fd >= 0)
+            close(refs[i].fd);
+        refs[i].fd = -1;
+        if (refs[i].tmp[0] != '\0')
+            (void)unlink(refs[i].tmp);
+        refs[i].tmp[0] = '\0';
+    }
+}
+
+/* Looks a name up in the root directory. Every file these tests compare lives
+ * there, so no path splitting is needed. */
+static int find_in_root(exfat_vol *v, const char *want, exfat_dirent *out)
+{
+    exfat_dir root;
+    exfat_dirent e;
+
+    assert_int_equal(exfat_dir_open_root(v, &root), EXFAT_OK);
+    while (exfat_dir_next(&root, &e) == 1) {
+        char name[PATH_MAX_T];
+
+        ucs2_to_ascii(e.name, name, sizeof(name));
+        if (strcmp(name, want) == 0) {
+            *out = e;
+            return 1;
+        }
+    }
+    return 0;
+}
+
+/* Reads through the driver and through pread, and asserts the two agree. */
+static void compare_span(exfat_file *f, int ref_fd, uint64_t off, uint64_t len,
+                         uint8_t *got, uint8_t *want)
+{
+    ssize_t n;
+
+    assert_int_equal(exfat_file_read(f, off, len, got), EXFAT_OK);
+    if (len == 0)
+        return;
+    n = pread(ref_fd, want, (size_t)len, (off_t)off);
+    assert_true(n == (ssize_t)len);
+    assert_memory_equal(got, want, (size_t)len);
+}
+
+/* Every byte of a real file, in one call. */
+static void test_fixture_file_read_whole_file(void **state)
+{
+    exfat_vol v;
+    size_t i;
+    unsigned checked = 0;
+
+    (void)state;
+    mount_fixture(&v);
+
+    for (i = 0; i < REF_COUNT; i++) {
+        exfat_dirent e;
+        exfat_file f;
+        uint8_t *got;
+        uint8_t *want;
+        int fd;
+
+        if (!find_in_root(&v, refs[i].path, &e))
+            continue; /* optional artifact, not in this image */
+        fd = ref_open(&refs[i]);
+        if (fd < 0) {
+            printf("  cannot extract %s (needs passwordless sudo), "
+                   "skipping it\n", refs[i].path);
+            continue;
+        }
+
+        assert_int_equal(exfat_file_open(&v, &f, &e), EXFAT_OK);
+        assert_true(f.size == e.size);
+        got = malloc((size_t)e.size);
+        want = malloc((size_t)e.size);
+        assert_non_null(got);
+        assert_non_null(want);
+        compare_span(&f, fd, 0, e.size, got, want);
+        free(got);
+        free(want);
+        checked++;
+    }
+
+    if (checked == 0)
+        skip();
+}
+
+/* 200 reads at pseudo-random offsets and lengths. The sequence is seeded with
+ * a constant so a failure is reproducible, and the offsets move both forward
+ * and backward, which exercises the chain cursor's resume and restart paths
+ * against a real allocation rather than a synthesised one. */
+static void test_fixture_file_read_random_spans(void **state)
+{
+    enum { SPANS = 200, SPAN_MAX = 64u * 1024u };
+    exfat_vol v;
+    size_t i;
+    unsigned checked = 0;
+
+    (void)state;
+    mount_fixture(&v);
+
+    for (i = 0; i < REF_COUNT; i++) {
+        exfat_dirent e;
+        exfat_file f;
+        uint8_t *got;
+        uint8_t *want;
+        uint64_t seed = 0x5EED1F7EDD1E5ull;
+        int fd;
+        unsigned k;
+
+        if (!find_in_root(&v, refs[i].path, &e))
+            continue;
+        fd = ref_open(&refs[i]);
+        if (fd < 0)
+            continue;
+
+        assert_int_equal(exfat_file_open(&v, &f, &e), EXFAT_OK);
+        assert_true(e.size > SPAN_MAX);
+        got = malloc(SPAN_MAX);
+        want = malloc(SPAN_MAX);
+        assert_non_null(got);
+        assert_non_null(want);
+
+        for (k = 0; k < SPANS; k++) {
+            uint64_t off;
+            uint64_t len;
+            uint64_t room;
+
+            /* Knuth's LCG: deterministic, and good enough to scatter the
+             * offsets across the file. */
+            seed = seed * 6364136223846793005ull + 1442695040888963407ull;
+            off = (seed >> 16) % e.size;
+            seed = seed * 6364136223846793005ull + 1442695040888963407ull;
+            room = e.size - off;
+            if (room > SPAN_MAX)
+                room = SPAN_MAX;
+            len = (seed >> 16) % (room + 1u);
+
+            compare_span(&f, fd, off, len, got, want);
+        }
+
+        free(got);
+        free(want);
+        checked++;
+    }
+
+    if (checked == 0)
+        skip();
+}
+
+/* The range contract holds on a real file too: the last byte is readable, one
+ * past it is not, and neither is a length that would run off the end. */
+static void test_fixture_file_read_range_guard(void **state)
+{
+    exfat_vol v;
+    exfat_dirent e;
+    exfat_file f;
+    uint8_t buf[64];
+
+    (void)state;
+    mount_fixture(&v);
+    assert_int_equal(find_in_root(&v, "archlinux-fake.iso", &e), 1);
+    assert_true(e.size == ISO_BYTES);
+    assert_int_equal(exfat_file_open(&v, &f, &e), EXFAT_OK);
+
+    assert_int_equal(exfat_file_read(&f, e.size - 1u, 1, buf), EXFAT_OK);
+    assert_int_equal(exfat_file_read(&f, e.size, 1, buf), EXFAT_ERR_RANGE);
+    assert_int_equal(exfat_file_read(&f, e.size, 0, buf), EXFAT_OK);
+    assert_int_equal(exfat_file_read(&f, e.size - 8u, 9, buf),
+                     EXFAT_ERR_RANGE);
+    assert_int_equal(exfat_file_read(&f, 0, e.size + 1u, buf),
+                     EXFAT_ERR_RANGE);
+}
+
+/* A directory entry is not a file, the mirror of
+ * test_fixture_open_file_as_dir_rejected. */
+static void test_fixture_open_dir_as_file_rejected(void **state)
+{
+    exfat_vol v;
+    exfat_dir root;
+    exfat_dirent e;
+    exfat_file f;
+    int found = 0;
+
+    (void)state;
+    mount_fixture(&v);
+    assert_int_equal(exfat_dir_open_root(&v, &root), EXFAT_OK);
+    while (exfat_dir_next(&root, &e) == 1) {
+        if (!e.is_dir)
+            continue;
+        found = 1;
+        assert_int_equal(exfat_file_open(&v, &f, &e), EXFAT_ERR_BAD_ARG);
+    }
+    assert_int_equal(found, 1);
+}
+
+/* A read that fails at the device must surface as EXFAT_ERR_IO, not as a
+ * buffer of whatever the caller passed in. */
+static void test_fixture_file_read_io_error(void **state)
+{
+    exfat_vol v;
+    exfat_dirent e;
+    exfat_file f;
+    uint8_t buf[512];
+    int bad_fd = -1;
+
+    (void)state;
+    mount_fixture(&v);
+    assert_int_equal(find_in_root(&v, "archlinux-fake.iso", &e), 1);
+    assert_int_equal(exfat_file_open(&v, &f, &e), EXFAT_OK);
+    /* Swap the descriptor out from under the mounted volume. */
+    v.read_ctx = &bad_fd;
+    assert_int_equal(exfat_file_read(&f, 0, sizeof(buf), buf), EXFAT_ERR_IO);
+}
+
 /* ------------------------------------------------------------------ run */
 
 int run_fixture_tests(void)
@@ -396,6 +676,11 @@ int run_fixture_tests(void)
         cmocka_unit_test(test_fixture_leaf_directory_terminates),
         cmocka_unit_test(test_fixture_open_file_as_dir_rejected),
         cmocka_unit_test(test_fixture_read_failure_is_io),
+        cmocka_unit_test(test_fixture_open_dir_as_file_rejected),
+        cmocka_unit_test(test_fixture_file_read_range_guard),
+        cmocka_unit_test(test_fixture_file_read_io_error),
+        cmocka_unit_test(test_fixture_file_read_whole_file),
+        cmocka_unit_test(test_fixture_file_read_random_spans),
     };
     int fd = open(FIXTURE_IMG, O_RDONLY);
 

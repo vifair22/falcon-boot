@@ -10,28 +10,67 @@ static void out(EFI_SYSTEM_TABLE *st, CHAR16 *s)
     st->ConOut->OutputString(st->ConOut, s);
 }
 
+/* Emit s starting at column col, clipped to the row so a long path cannot
+ * wrap and shift every row below it by one. Returns the column reached. */
+static UINTN put_clipped(EFI_SYSTEM_TABLE *st, const CHAR16 *s, UINTN col,
+                         UINTN cols)
+{
+    CHAR16 chunk[2] = { L'\0', L'\0' };
+    UINTN i = 0;
+
+    if (s == (void *)0)
+        return col;
+    while (s[i] != L'\0' && col < cols - 1) {
+        chunk[0] = s[i];
+        out(st, chunk);
+        i++;
+        col++;
+    }
+    return col;
+}
+
+/* Pad from col to the end of the row, erasing whatever was there before. */
+static void pad_row(EFI_SYSTEM_TABLE *st, UINTN col, UINTN cols)
+{
+    CHAR16 pad[2] = { L' ', L'\0' };
+
+    while (col < cols - 1) {
+        out(st, pad);
+        col++;
+    }
+}
+
 /* Overwrite one screen row with s, padding to width to erase leftovers. */
 static void draw_row(EFI_SYSTEM_TABLE *st, UINTN row, UINTN cols,
                      const CHAR16 *s)
 {
-    CHAR16 pad[2] = { L' ', L'\0' };
-    UINTN written = 0;
-
     st->ConOut->SetCursorPosition(st->ConOut, 0, row);
-    if (s != (void *)0) {
-        /* Bounded output: clip to the row so long paths cannot wrap and
-         * shift every row below by one. */
-        CHAR16 chunk[2] = { L'\0', L'\0' };
-        while (s[written] != L'\0' && written < cols - 1) {
-            chunk[0] = s[written];
-            out(st, chunk);
-            written++;
-        }
+    pad_row(st, put_clipped(st, s, 0, cols), cols);
+}
+
+/* Title in the menu's own colour, state suffix in whatever attribute the
+ * caller chose for it. */
+static void draw_banner(EFI_SYSTEM_TABLE *st, UINTN cols,
+                        const menu_banner *banner)
+{
+    UINTN title_attr = EFI_TEXT_ATTR(EFI_LIGHTCYAN, EFI_BLACK);
+    UINTN col;
+
+    st->ConOut->SetCursorPosition(st->ConOut, 0, 0);
+    st->ConOut->SetAttribute(st->ConOut, title_attr);
+    if (banner == (void *)0) {
+        pad_row(st, 0, cols);
+        return;
     }
-    while (written < cols - 1) {
-        out(st, pad);
-        written++;
+
+    col = put_clipped(st, banner->title, 0, cols);
+    if (banner->state != (void *)0) {
+        col = put_clipped(st, L"  ", col, cols);
+        st->ConOut->SetAttribute(st->ConOut, banner->state_attr);
+        col = put_clipped(st, banner->state, col, cols);
+        st->ConOut->SetAttribute(st->ConOut, title_attr);
     }
+    pad_row(st, col, cols);
 }
 
 static void screen_dims(EFI_SYSTEM_TABLE *st, UINTN *cols, UINTN *rows)
@@ -46,7 +85,7 @@ static void screen_dims(EFI_SYSTEM_TABLE *st, UINTN *cols, UINTN *rows)
     }
 }
 
-INTN menu_run(EFI_SYSTEM_TABLE *st, const CHAR16 *banner,
+INTN menu_run(EFI_SYSTEM_TABLE *st, const menu_banner *banner,
               const menu_entry *entries, UINTN count)
 {
     UINTN cols, rows, win, top = 0, sel = 0;
@@ -57,9 +96,7 @@ INTN menu_run(EFI_SYSTEM_TABLE *st, const CHAR16 *banner,
     st->ConOut->EnableCursor(st->ConOut, FALSE);
     st->ConOut->ClearScreen(st->ConOut);
 
-    st->ConOut->SetAttribute(st->ConOut,
-                             EFI_TEXT_ATTR(EFI_LIGHTCYAN, EFI_BLACK));
-    draw_row(st, 0, cols, banner);
+    draw_banner(st, cols, banner);
     st->ConOut->SetAttribute(st->ConOut,
                              EFI_TEXT_ATTR(EFI_DARKGRAY, EFI_BLACK));
     draw_row(st, rows - 1, cols,

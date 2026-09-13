@@ -7,6 +7,7 @@
 #include <efi/blockio.h>
 #include <efi/devpath.h>
 #include <efi/sfs.h>
+#include <efi/shimguid.h>
 #include <lib/string.h>
 
 /* El Torito lives on 2048-byte media; the firmware's partition driver only
@@ -276,6 +277,57 @@ static EFI_STATUS find_iso_esp(EFI_BOOT_SERVICES *bs, iso_device *dev,
 
 /* ---- chainload ---- */
 
+/* The load path of DESIGN Section 7.6, resolved per boot attempt.
+ *
+ * Preferring SHIM_IMAGE_LOADER over gBS->LoadImage is not about capability:
+ * the spike measured the two to be the same function on shim 16.x under
+ * Secure Boot, because shim patches the boot-services table in place. It is
+ * about intent and durability. Calling the protocol says which loader we
+ * meant, it keeps working if a future shim stops patching the table, and it
+ * is the interface upstream maintains.
+ *
+ * The fallback is not a weakening. With Secure Boot off there is nothing to
+ * verify and the firmware's LoadImage is the honest loader; with Secure Boot
+ * on and no shim in the chain the firmware's LoadImage is the enforcing one.
+ * Either way the decision is the platform's, never ours. */
+typedef struct {
+    EFI_STATUS (EFIAPI *LoadImage)(BOOLEAN, EFI_HANDLE,
+                                   EFI_DEVICE_PATH_PROTOCOL *, void *, UINTN,
+                                   EFI_HANDLE *);
+    EFI_STATUS (EFIAPI *StartImage)(EFI_HANDLE, UINTN *, CHAR16 **);
+    EFI_STATUS (EFIAPI *UnloadImage)(EFI_HANDLE);
+    /* Which of the two the members came from; the menu's failure line names
+     * it, which is the only way an operator can tell the paths apart. */
+    BOOLEAN via_shim;
+} load_ops;
+
+/* Resolved on every attempt rather than cached at startup: the loader has no
+ * startup hook of its own to hang it off, and one LocateProtocol per boot is
+ * not worth a cache that could go stale. */
+static void resolve_load_ops(EFI_BOOT_SERVICES *bs, load_ops *ops)
+{
+    EFI_GUID sil_guid = SHIM_IMAGE_LOADER_GUID;
+    SHIM_IMAGE_LOADER *sil = (SHIM_IMAGE_LOADER *)0;
+
+    ops->LoadImage = bs->LoadImage;
+    ops->StartImage = bs->StartImage;
+    ops->UnloadImage = bs->UnloadImage;
+    ops->via_shim = FALSE;
+
+    if (bs->LocateProtocol(&sil_guid, (void *)0, (void **)&sil) != EFI_SUCCESS)
+        return;
+    /* A protocol that is present but hollow is a shim we do not understand;
+     * the firmware's loader is the safe answer, not a null call. */
+    if (sil == (SHIM_IMAGE_LOADER *)0 || sil->LoadImage == (void *)0 ||
+        sil->StartImage == (void *)0 || sil->UnloadImage == (void *)0)
+        return;
+
+    ops->LoadImage = sil->LoadImage;
+    ops->StartImage = sil->StartImage;
+    ops->UnloadImage = sil->UnloadImage;
+    ops->via_shim = TRUE;
+}
+
 /* Appends the removable-media loader path to the ESP's own device path.
  * LoadImage is given a path, never a buffer: that is what makes the child's
  * LoadedImage->DeviceHandle the ISO's ESP (so a distro bootloader finds its
@@ -325,7 +377,10 @@ static EFI_STATUS chainload(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
     EFI_HANDLE child = (EFI_HANDLE)0;
     CHAR16 *exit_data = (CHAR16 *)0;
     UINTN exit_size = 0;
+    load_ops ops;
     EFI_STATUS status;
+
+    resolve_load_ops(bs, &ops);
 
     result->stage = L"reading the ISO ESP's device path";
     status = bs->HandleProtocol(esp_handle, &dp_guid, (void **)&esp_path);
@@ -337,22 +392,29 @@ static EFI_STATUS chainload(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
     if (EFI_ERROR(status))
         return status;
 
-    result->stage = L"LoadImage of \\EFI\\BOOT\\BOOTX64.EFI";
-    status = bs->LoadImage(FALSE, parent_image, load_path, (void *)0, 0,
+    /* SourceBuffer stays NULL on both paths: see build_load_path above for
+     * why the image is always named rather than handed over as bytes. */
+    result->stage = ops.via_shim
+                        ? L"LoadImage of \\EFI\\BOOT\\BOOTX64.EFI (shim)"
+                        : L"LoadImage of \\EFI\\BOOT\\BOOTX64.EFI (firmware)";
+    status = ops.LoadImage(FALSE, parent_image, load_path, (void *)0, 0,
                            &child);
     bs->FreePool(load_path);
     if (EFI_ERROR(status)) {
         /* A refusal under Secure Boot is the one failure that still leaves a
          * loaded image behind (spec 7.4): the platform read and relocated it,
          * then declined to run it. Unloading is the caller's job, and not
-         * doing it leaks the image on every refused entry. */
+         * doing it leaks the image on every refused entry. It has to be the
+         * unloader that matches the loader: shim tracks the images it loaded
+         * itself, so handing one of them to the firmware's UnloadImage would
+         * leave shim's bookkeeping behind. */
         if (status == EFI_SECURITY_VIOLATION && child != (EFI_HANDLE)0)
-            bs->UnloadImage(child);
+            ops.UnloadImage(child);
         return status;
     }
 
     result->stage = L"StartImage";
-    status = bs->StartImage(child, &exit_size, &exit_data);
+    status = ops.StartImage(child, &exit_size, &exit_data);
     /* StartImage unloads an application that returns, so the child handle is
      * gone either way; only its exit data is ours to release. */
     if (exit_data != (CHAR16 *)0)

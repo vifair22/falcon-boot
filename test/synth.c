@@ -41,6 +41,48 @@ uint8_t *synth_cluster(synth_vol *sv, uint32_t cl)
            ((uint64_t)(cl - 2u) << (sv->bps_shift + sv->spc_shift));
 }
 
+/* splitmix64's finaliser, truncated. Any cheap avalanche would do; what
+ * matters is that neighbouring offsets give unrelated bytes. */
+uint8_t synth_pattern_byte(uint64_t off)
+{
+    uint64_t x = off + 0x9E3779B97F4A7C15ull;
+
+    x ^= x >> 30;
+    x *= 0xBF58476D1CE4E5B9ull;
+    x ^= x >> 27;
+    x *= 0x94D049BB133111EBull;
+    x ^= x >> 31;
+    return (uint8_t)x;
+}
+
+void synth_pattern_fill(uint8_t *dst, uint64_t off, uint64_t len)
+{
+    uint64_t i;
+
+    for (i = 0; i < len; i++)
+        dst[i] = synth_pattern_byte(off + i);
+}
+
+void synth_write_file(synth_vol *sv, const uint32_t *clusters, unsigned n,
+                      uint64_t size, int chain_fat)
+{
+    uint32_t cb = synth_cluster_bytes(sv);
+    unsigned i;
+
+    for (i = 0; i < n; i++) {
+        uint64_t base = (uint64_t)i * cb;
+        uint64_t take = size > base ? size - base : 0;
+
+        if (take > cb)
+            take = cb;
+        if (take > 0)
+            synth_pattern_fill(synth_cluster(sv, clusters[i]), base, take);
+        if (chain_fat)
+            synth_fat_set(sv, clusters[i],
+                          i + 1u < n ? clusters[i + 1u] : 0xFFFFFFFFu);
+    }
+}
+
 void synth_init(synth_vol *sv, unsigned bps_shift, unsigned spc_shift,
                 uint32_t cluster_count)
 {

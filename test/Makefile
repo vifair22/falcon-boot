@@ -63,6 +63,7 @@ LDLIBS  := $(CMOCKA_LIBS)
 TEST_SRCS := \
 	$(TEST_DIR)/exfat_test.c \
 	$(TEST_DIR)/exfat_synth_test.c \
+	$(TEST_DIR)/exfat_file_test.c \
 	$(TEST_DIR)/exfat_fixture_test.c \
 	$(TEST_DIR)/synth.c
 
