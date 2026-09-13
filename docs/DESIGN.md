@@ -305,11 +305,24 @@ credential route fails.
 
 No host-side registration. The stages:
 
-1. **Scan.** At boot, the exFAT driver enumerates `*.iso` on p2. That listing is
-   the menu. Dropping a file on from any OS is the entire "add" workflow.
+1. **Scan.** At boot, the exFAT driver enumerates `*.iso` and `*.img` on p2.
+   That listing is the menu. Dropping a file on from any OS is the entire
+   "add" workflow.
 2. **Present as virtual media.** On selection, register an `EFI_BLOCK_IO`
-   (and `EFI_DISK_IO`) device whose reads are served from the ISO file's bytes
-   by the exFAT driver. Typed as a CD-ROM (2048-byte blocks).
+   (and `EFI_DISK_IO`) device whose reads are served from the file's bytes
+   by the exFAT driver. **Two media flavors, one publisher** (decision
+   2026-09-13): a `.iso` is typed as a CD-ROM (2048-byte blocks, El Torito
+   parsed by firmware, below); a `.img` is typed as a disk (512-byte
+   sectors), and the firmware's GPT/MBR partition path plus FAT driver
+   surface its ESP - or bind FAT directly for a partition-table-less
+   superfloppy image. Everything downstream (family/signature probing,
+   chainload, verification, teardown) is identical for both. `.img` means
+   raw bytes only: container formats (vhd/vdi/qcow2) are refused, since the
+   whole mechanism is "let firmware parse what it already knows." The
+   post-ExitBootServices media-finding story (6.1) applies to `.img`
+   exactly as to `.iso`; memtest-class images that need no backing media
+   after load are the degenerate happy case, and PassMark memtest86's
+   MS-signed binary boots verified under Secure Boot with no preparation.
 3. **Let firmware parse it.** `ConnectController` (recursive) on the virtual
    device. The UEFI spec mandates El Torito boot support for CD-ROM media: the
    firmware's *partition* driver recognizes the El Torito boot catalog and
