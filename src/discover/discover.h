@@ -11,7 +11,7 @@
  *
  * So the Block I/O handles are enumerated exactly once, at startup, and every
  * handle is classified there and then: is media present, which falcon role
- * does its GPT type GUID give it (Section 3), does it carry a LUKS2 header,
+ * does its GPT entry give it (Section 3), does it carry a LUKS2 header,
  * and which registered filesystem driver claims its bytes. Classification is
  * eager because it is cheap - a couple of sector reads per handle - and
  * mounting stays lazy, because mounting is not: each consumer mounts the rows
@@ -44,15 +44,18 @@ typedef struct discover_dev {
 
     uint8_t media_present;
     /* DESIGN Section 3's scan filter, evaluated once per role: "only
-     * falcon-typed partitions if any exist, everything otherwise". Both can
-     * be true on a machine with no falcon-typed partition at all, which is
-     * exactly the QEMU rig and any hand-made stick. */
+     * identified partitions if any exist, everything otherwise". Both can be
+     * true on a machine with no falcon partition at all, which is exactly the
+     * QEMU rig and any hand-made stick. */
     uint8_t accept[PART_ROLE_COUNT];
     uint8_t has_type;        /* type below was established */
     uint8_t luks2;           /* LUKS2 primary header magic at offset 0 */
 
-    EFI_GUID type;           /* GPT partition type GUID */
-    fs_hint  role;           /* the falcon role its type names, or
+    EFI_GUID type;           /* GPT partition type GUID. Reporting only: p2's
+                                type is Microsoft basic data and says nothing
+                                on its own (see src/part/part.h), so `role`
+                                below is the answer, never this field. */
+    fs_hint  role;           /* the falcon role its GPT entry names, or
                                 FS_HINT_NONE for anything else */
 
     /* The driver that claimed the PLAINTEXT bytes of this device, or NULL.

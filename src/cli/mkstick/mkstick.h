@@ -23,19 +23,31 @@
  * They are NOT a second source of truth: mkstick_guid_selfcheck() parses each
  * string back into the 16-byte on-disk form and compares it against the
  * loader's own constant at startup, so a typo here fails immediately and
- * loudly rather than producing a stick the loader cannot recognise. */
+ * loudly rather than producing a stick the loader cannot recognise.
+ *
+ * p2's type being Microsoft basic data, and p3's and p4's deliberately not
+ * being, is the asymmetry of DESIGN Section 3: p2 has to be visible to
+ * Windows (drag-and-drop, and the WinPE jump binary of Section 6.3), and p3
+ * and p4 have to be invisible to it, because Windows offers to format a
+ * basic-data partition it cannot read - which is what a LUKS volume is. */
 #define MKS_TYPE_ESP   "C12A7328-F81F-11D2-BA4B-00A0C93EC93B"
-#define MKS_TYPE_ISO   "F6B6D562-22C3-450A-87AA-0316039657D6"  /* p2, falcon */
+#define MKS_TYPE_ISO   "EBD0A0A2-B9E5-4433-87C0-68B6B72699C7"  /* p2, MS basic */
 #define MKS_TYPE_SHELF "9CB02E90-85F4-4AF7-9AF3-1F9D6A95FEAF"  /* p3, falcon */
 #define MKS_TYPE_LUKS  "CA7D7CCB-63ED-4C53-861C-1742536059CC"  /* p4, stock */
 
-/* Verifies the four strings above against src/part/part.h (and, for the two
- * standard types, against the values DESIGN Section 3 records). Called at the
- * top of every command that writes or reads a partition table. */
+/* Verifies the strings above against src/part/part.h (and, for the standard
+ * types, against the values DESIGN Section 3 records), and MKS_LABEL_P2
+ * against the name the loader looks for. Called at the top of every command
+ * that writes or reads a partition table. */
 cli_status mkstick_guid_selfcheck(void);
 
-/* Partition labels. Cosmetic, but they are what `lsblk` shows the user when
- * something has gone wrong, so they are worth being clear. */
+/* Partition names, written into the GPT entry's name field and shown by
+ * `lsblk` when something has gone wrong.
+ *
+ * MKS_LABEL_P2 IS NOT COSMETIC. p2 wears a type GUID the whole world shares,
+ * so its name is the other half of what identifies it to the loader
+ * (FALCON_PART_NAME_ISO in src/part/part.h, checked against this string at
+ * startup). Renaming p2 outside this tool makes its ISO library invisible. */
 #define MKS_LABEL_P1 "FALCON-ESP"
 #define MKS_LABEL_P2 "FALCON-ISO"
 #define MKS_LABEL_P3 "FALCON-UKI"

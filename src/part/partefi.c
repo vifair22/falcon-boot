@@ -143,12 +143,13 @@ static BOOLEAN dp_is_parent(const EFI_DEVICE_PATH_PROTOCOL *disk,
 
 /* ---- route 1: the PartitionInfo protocol ---- */
 
-static int type_from_partinfo(EFI_SYSTEM_TABLE *st, EFI_HANDLE h,
-                              EFI_GUID *out)
+static int ident_from_partinfo(EFI_SYSTEM_TABLE *st, EFI_HANDLE h,
+                               part_ident *out)
 {
     EFI_GUID pi_guid = EFI_PARTITION_INFO_PROTOCOL_GUID;
     EFI_PARTITION_INFO_PROTOCOL *pi = NULL;
-    const UINT8 *raw;
+    const UINT8 *ent;
+    unsigned k;
 
     if (st->BootServices->HandleProtocol(h, &pi_guid,
                                          (void **)&pi) != EFI_SUCCESS)
@@ -156,20 +157,27 @@ static int type_from_partinfo(EFI_SYSTEM_TABLE *st, EFI_HANDLE h,
     if (pi == NULL || pi->Type != PARTITION_TYPE_GPT)
         return PART_UNKNOWN;
 
-    /* The protocol structure is packed, so the GUID is copied from a computed
-     * byte offset rather than through &pi->Info.Gpt.PartitionTypeGUID: taking
-     * the address of a packed member is what the compiler rightly objects to,
-     * and the offset is the same ABI either way. */
-    raw = (const UINT8 *)pi;
-    memcpy(out, raw + offsetof(EFI_PARTITION_INFO_PROTOCOL, Info),
+    /* The protocol structure is packed, so both fields are copied from
+     * computed byte offsets rather than through &pi->Info.Gpt.<member>:
+     * taking the address of a packed member is what the compiler rightly
+     * objects to, and the offset is the same ABI either way. */
+    ent = (const UINT8 *)pi + offsetof(EFI_PARTITION_INFO_PROTOCOL, Info);
+    memcpy(out->type, ent + offsetof(EFI_PARTITION_ENTRY, PartitionTypeGUID),
            GPT_GUID_LEN);
+    /* Decoded unit by unit rather than memcpy'd, so this reads the same way
+     * src/part/part.c reads the same field off the disk; the entry the
+     * firmware hands over is a byte image of that entry. */
+    for (k = 0; k < GPT_NAME_LEN; k++)
+        out->name[k] = get_le16(ent +
+                                offsetof(EFI_PARTITION_ENTRY, PartitionName) +
+                                (size_t)k * 2u);
     return PART_OK;
 }
 
 /* ---- route 2: HARDDRIVE node plus the parent disk's GPT ---- */
 
-static int type_from_parent_gpt(EFI_SYSTEM_TABLE *st, EFI_HANDLE h,
-                                EFI_GUID *out)
+static int ident_from_parent_gpt(EFI_SYSTEM_TABLE *st, EFI_HANDLE h,
+                                 part_ident *out)
 {
     EFI_GUID dp_guid = EFI_DEVICE_PATH_PROTOCOL_GUID;
     EFI_GUID bio_guid = EFI_BLOCK_IO_PROTOCOL_GUID;
@@ -222,7 +230,8 @@ static int type_from_parent_gpt(EFI_SYSTEM_TABLE *st, EFI_HANDLE h,
         p = gpt_find_start(tbl, start);
         if (p == NULL)
             continue;
-        memcpy(out, p->type, GPT_GUID_LEN);
+        memcpy(out->type, p->type, GPT_GUID_LEN);
+        memcpy(out->name, p->name, sizeof out->name);
         rc = PART_OK;
     }
 
@@ -232,34 +241,45 @@ static int type_from_parent_gpt(EFI_SYSTEM_TABLE *st, EFI_HANDLE h,
 
 /* ---- public API ---- */
 
-int part_type_guid(EFI_SYSTEM_TABLE *st, EFI_HANDLE h, EFI_GUID *out)
+int part_identify(EFI_SYSTEM_TABLE *st, EFI_HANDLE h, part_ident *out)
 {
     int rc;
 
     if (st == NULL || h == NULL || out == NULL)
         return PART_UNKNOWN;
 
-    rc = type_from_partinfo(st, h, out);
+    rc = ident_from_partinfo(st, h, out);
     if (rc == PART_OK)
         return rc;
     /* PartitionInfo absent, or present and describing something other than a
      * GPT partition. Either way the device path still knows, and on an MBR
      * disk it is route 2 that says so authoritatively. */
-    return type_from_parent_gpt(st, h, out);
+    return ident_from_parent_gpt(st, h, out);
+}
+
+int part_type_guid(EFI_SYSTEM_TABLE *st, EFI_HANDLE h, EFI_GUID *out)
+{
+    part_ident id;
+    int rc;
+
+    if (out == NULL)
+        return PART_UNKNOWN;
+    rc = part_identify(st, h, &id);
+    if (rc != PART_OK)
+        return rc;
+    /* EFI_GUID and the on-disk entry share one byte layout, which is the
+     * whole reason the constants in part.h are byte arrays. */
+    memcpy(out, id.type, GPT_GUID_LEN);
+    return PART_OK;
 }
 
 static BOOLEAN is_role(EFI_SYSTEM_TABLE *st, EFI_HANDLE h, part_role role)
 {
-    const uint8_t *want = part_role_guid(role);
-    EFI_GUID got;
+    part_ident id;
 
-    if (want == NULL)
+    if (part_identify(st, h, &id) != PART_OK)
         return FALSE;
-    if (part_type_guid(st, h, &got) != PART_OK)
-        return FALSE;
-    /* EFI_GUID and the on-disk entry share one byte layout, which is the
-     * whole reason the constants in part.h are byte arrays. */
-    return (BOOLEAN)gpt_guid_eq((const uint8_t *)&got, want);
+    return (BOOLEAN)part_match_role(id.type, id.name, role);
 }
 
 BOOLEAN part_is_falcon_iso(EFI_SYSTEM_TABLE *st, EFI_HANDLE h)
@@ -304,8 +324,10 @@ BOOLEAN part_scan_accept(EFI_SYSTEM_TABLE *st, EFI_HANDLE h, part_role role)
 {
     if (st == NULL || (unsigned)role >= PART_ROLE_COUNT)
         return TRUE;
-    /* No falcon-typed partition in the machine: nothing to prefer, so the
-     * probe-everything behaviour the rig images rely on stands. */
+    /* Nothing identified for this role anywhere in the machine: nothing to
+     * prefer, so the probe-everything behaviour the rig images rely on
+     * stands. It is also the safety net under the identification rule - a
+     * stick we fail to recognise still boots, it is just not preferred. */
     if (!part_role_present(st, role))
         return TRUE;
     return is_role(st, h, role);

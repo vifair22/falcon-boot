@@ -39,9 +39,9 @@
  *     nothing here would use one), so the decrypted-key window cannot be
  *     reached from outside the machine.
  *
- * The partitions are identified by their falcon GPT type GUIDs through
- * src/part/part.c, the same parser the loader uses, so the appliance and the
- * loader cannot disagree about which partition is which. The manifest is read
+ * The partitions are identified out of the GPT through src/part/part.c, the
+ * same parser AND the same matcher (part_match_role) the loader uses, so the
+ * appliance and the loader cannot disagree about which partition is which. The manifest is read
  * through src/manifest/manifest.c, the same parser the loader will use, so
  * "already blessed" means here exactly what it will mean at the menu.
  *
@@ -314,12 +314,14 @@ static int looks_like_exfat(const char *node)
     return memcmp(vbr + 3, "EXFAT   ", 8) == 0;
 }
 
-/* Identification proper: the falcon type GUIDs of DESIGN Section 3, read out
- * of the primary GPT by the loader's own parser. Returns nonzero when both
- * partitions were found on one disk; a stick always has both on one disk, and
- * accepting a p2 from one device and a p3 from another would be a way to get
- * a key from one stick to bless media on somebody else's. */
-static int find_by_guid(const char *disk, stick_parts *out)
+/* Identification proper: DESIGN Section 3's rule (p3 by its falcon type GUID,
+ * p2 by Microsoft basic data plus the name FALCON-ISO), applied by the
+ * loader's own matcher over a GPT read by the loader's own parser. Returns
+ * nonzero when both partitions were found on one disk; a stick always has
+ * both on one disk, and accepting a p2 from one device and a p3 from another
+ * would be a way to get a key from one stick to bless media on somebody
+ * else's. */
+static int find_by_ident(const char *disk, stick_parts *out)
 {
     char node[NODE_MAX];
     gpt_part parts[128];
@@ -346,10 +348,10 @@ static int find_by_guid(const char *disk, stick_parts *out)
         return 0;
 
     for (i = 0; i < t.count; i++) {
-        if (gpt_guid_eq(parts[i].type, part_role_guid(PART_ROLE_ISO))) {
+        if (gpt_part_is_role(&parts[i], PART_ROLE_ISO)) {
             part_node(out->p2, sizeof(out->p2), disk, parts[i].number);
             have2 = 1;
-        } else if (gpt_guid_eq(parts[i].type, part_role_guid(PART_ROLE_SHELF))) {
+        } else if (gpt_part_is_role(&parts[i], PART_ROLE_SHELF)) {
             part_node(out->p3, sizeof(out->p3), disk, parts[i].number);
             have3 = 1;
         }
@@ -357,8 +359,8 @@ static int find_by_guid(const char *disk, stick_parts *out)
     return have2 && have3;
 }
 
-/* Fallback for a stick that predates the type GUIDs (and for the rig's older
- * fixtures): take the first exFAT partition as p2 and the first LUKS
+/* Fallback for a stick that predates this identification scheme (and for the
+ * rig's older fixtures): take the first exFAT partition as p2 and the first LUKS
  * partition as p3, on a disk that carries both. Content probing rather than
  * naming, and deliberately narrower than the loader's own fallback: this
  * program is about to ask for a passphrase, and the honest failure is "no
@@ -410,8 +412,8 @@ static int find_stick(stick_parts *out)
     while (!found && (e = readdir(d)) != NULL) {
         if (e->d_name[0] == '.' || skip_disk(e->d_name))
             continue;
-        if (find_by_guid(e->d_name, out)) {
-            say("stick: %s (falcon partition type GUIDs)\n", e->d_name);
+        if (find_by_ident(e->d_name, out)) {
+            say("stick: %s (falcon GPT identification)\n", e->d_name);
             found = 1;
         }
     }

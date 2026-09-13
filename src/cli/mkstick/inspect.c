@@ -110,6 +110,26 @@ static void guid_text(const uint8_t *g, char *out, size_t cap)
                    g[8], g[9], g[10], g[11], g[12], g[13], g[14], g[15]);
 }
 
+/* The GPT entry's name, rendered for a human. Lossy on purpose: it stops at
+ * the first NUL and turns anything outside printable ASCII into '?', so a
+ * hostile name off somebody's disk cannot scribble on this report. Nothing
+ * ever matches on the result - that is gpt_name_eq's job, over the raw
+ * units. */
+static void name_text(const gpt_part *p, char *out, size_t cap)
+{
+    size_t n = 0;
+    unsigned i;
+
+    for (i = 0; i < GPT_NAME_LEN && n + 1u < cap; i++) {
+        uint16_t u = p->name[i];
+
+        if (u == 0)
+            break;
+        out[n++] = (u >= 0x20u && u < 0x7Fu) ? (char)u : '?';
+    }
+    out[n] = '\0';
+}
+
 /* ---- p3 and p4: LUKS2 headers ---- */
 
 static const char *kdf_name(luks_kdf_type k)
@@ -503,14 +523,17 @@ out:
 
 /* ---- the command ---- */
 
-static const char *role_text(const uint8_t *type)
+/* p2 is named as well as typed, so this takes the whole entry: its Microsoft
+ * basic data type is shared with every Windows data partition and identifies
+ * nothing by itself (DESIGN Section 3). */
+static const char *role_text(const gpt_part *p)
 {
-    if (gpt_guid_eq(type, gpt_guid_esp))
-        return "EFI system partition";
-    if (gpt_guid_eq(type, falcon_guid_iso))
+    if (gpt_part_is_role(p, PART_ROLE_ISO))
         return "falcon ISO library";
-    if (gpt_guid_eq(type, falcon_guid_shelf))
+    if (gpt_part_is_role(p, PART_ROLE_SHELF))
         return "falcon UKI shelf";
+    if (gpt_guid_eq(p->type, gpt_guid_esp))
+        return "EFI system partition";
     return NULL;
 }
 
@@ -557,40 +580,49 @@ static cli_status status_run(const cli_args *a)
              table.count);
     for (i = 0; i < table.count; i++) {
         const gpt_part *p = &table.parts[i];
-        const char *role = role_text(p->type);
+        const char *role = role_text(p);
         char guid[40];
         char size[32];
         uint64_t bytes = (p->end_lba - p->start_lba + 1u) * disk.sector;
 
+        char name[GPT_NAME_LEN + 1u];
+
         guid_text(p->unique, guid, sizeof guid);
+        /* The name is reported for every partition, not just p2, because p2's
+         * name is now part of what identifies it: when the ISO library check
+         * below fails, the first question is what the name actually says. */
+        name_text(p, name, sizeof name);
         if (role != NULL)
-            check(&t, 1, "p%u  %-22s %10s  PARTUUID %s", p->number, role,
-                  util_format_size(bytes, size, sizeof size), guid);
+            check(&t, 1, "p%u  %-22s %10s  name %-12s PARTUUID %s", p->number,
+                  role, util_format_size(bytes, size, sizeof size), name,
+                  guid);
         else {
             char type[40];
 
             guid_text(p->type, type, sizeof type);
             check(&t, p->number == 4u,
-                  "p%u  %-22s %10s  PARTUUID %s", p->number,
+                  "p%u  %-22s %10s  name %-12s PARTUUID %s", p->number,
                   (p->number == 4u) ? "Linux LUKS (root)" : type,
-                  util_format_size(bytes, size, sizeof size), guid);
+                  util_format_size(bytes, size, sizeof size), name, guid);
         }
     }
     check(&t, gpt_has_role(&table, PART_ROLE_ISO),
-          "a falcon-typed ISO library is present (the loader matches on "
-          "this, not on 'any exFAT volume')");
+          "the ISO library is Microsoft-basic-data typed and named %s (the "
+          "loader matches on that pair, not on 'any exFAT volume'; the type "
+          "is what gets it a drive letter under Windows)", MKS_LABEL_P2);
     check(&t, gpt_has_role(&table, PART_ROLE_SHELF),
-          "a falcon-typed UKI shelf is present");
+          "a falcon-typed UKI shelf is present (an unrecognised type, so "
+          "Windows never offers to format it)");
 
     for (i = 0; i < table.count; i++) {
         const gpt_part *p = &table.parts[i];
 
-        if (gpt_guid_eq(p->type, falcon_guid_iso)) {
+        if (gpt_part_is_role(p, PART_ROLE_ISO)) {
             cli_log_blank();
             log_info("p%u: the exFAT ISO library (DESIGN Sections 6.2, 8.1)",
                      p->number);
             check_iso_library(&t, disk.path, p, disk.sector);
-        } else if (gpt_guid_eq(p->type, falcon_guid_shelf)) {
+        } else if (gpt_part_is_role(p, PART_ROLE_SHELF)) {
             disk_io shelf_io;
 
             cli_log_blank();

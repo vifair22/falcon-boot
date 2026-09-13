@@ -72,7 +72,7 @@ static void classify(EFI_SYSTEM_TABLE *st, discover_dev *d)
     d->luks2 = probe_luks(d);
     if (d->luks2)
         return;
-    /* The role hint is the GPT type's, not the scan filter's: the filter says
+    /* The role hint is the GPT entry's, not the scan filter's: the filter says
      * which handles a role may look at (and accepts everything when nothing
      * is stamped), while the hint says what this partition claims to be, and
      * only the second is a reason to try one driver before another. */

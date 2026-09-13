@@ -1,8 +1,9 @@
 /* falcon-boot: the firmware half of partition identification
  * (docs/DESIGN.md Section 3).
  *
- * Answers one question about a Block I/O handle: which GPT partition type
- * GUID does it carry? Two routes, tried in that order:
+ * Answers one question about a Block I/O handle: what does its GPT entry say
+ * it is - type GUID and partition name, since p2's identity needs both
+ * (part.h). Two routes, tried in that order:
  *
  *   1. EFI_PARTITION_INFO_PROTOCOL (UEFI 2.7+). The firmware already parsed
  *      the GPT to publish the handle and will simply hand us the entry.
@@ -40,29 +41,41 @@ enum {
                                 parent disk's GPT was unreadable or refused */
 };
 
-/* Writes the handle's partition type GUID and returns PART_OK, or leaves
- * *out untouched and returns one of the errors above. */
+/* What one handle's GPT entry says it is: the two fields part_match_role
+ * needs, and nothing else off the entry. */
+typedef struct {
+    uint8_t  type[GPT_GUID_LEN];
+    uint16_t name[GPT_NAME_LEN];   /* NUL-padded, not necessarily terminated */
+} part_ident;
+
+/* Fills *out and returns PART_OK, or leaves it untouched and returns one of
+ * the errors above. */
+int part_identify(EFI_SYSTEM_TABLE *st, EFI_HANDLE h, part_ident *out);
+
+/* The type GUID alone, for the inventory row src/discover keeps; identity
+ * questions go through part_match_role, never through this. */
 int part_type_guid(EFI_SYSTEM_TABLE *st, EFI_HANDLE h, EFI_GUID *out);
 
-/* Does this handle carry the falcon type GUID for p2 / p3? A handle whose
- * type cannot be established is not ours, so both answer FALSE for it. */
+/* Is this handle our p2 / p3, by the rule in part.h? A handle whose entry
+ * cannot be established is not ours, so both answer FALSE for it. */
 BOOLEAN part_is_falcon_iso(EFI_SYSTEM_TABLE *st, EFI_HANDLE h);
 BOOLEAN part_is_falcon_shelf(EFI_SYSTEM_TABLE *st, EFI_HANDLE h);
 
-/* Is any partition on any disk typed for this role? Enumerates every Block
- * I/O handle, so call it once per scan rather than per handle; the answer is
- * cached (see part_scan_reset). */
+/* Is any partition on any disk identified for this role? Enumerates every
+ * Block I/O handle, so call it once per scan rather than per handle; the
+ * answer is cached (see part_scan_reset). */
 BOOLEAN part_role_present(EFI_SYSTEM_TABLE *st, part_role role);
 
 /* THE scan filter, and the one call a scan loop needs. DESIGN Section 3's
  * rule in a single test:
  *
- *   - if any falcon-typed partition for this role exists anywhere, accept
- *     only those, so an internal disk's exFAT or LUKS2 volume can never be
+ *   - if any partition identified for this role exists anywhere, accept only
+ *     those, so an internal disk's exFAT or LUKS2 volume can never be
  *     mistaken for the stick's;
  *   - if none exists anywhere, accept everything, which is what keeps the
- *     QEMU rig images and any hand-made stick working until mkstick
- *     (Section 8) stamps the types.
+ *     QEMU rig images, any hand-made stick and any stick stamped by an
+ *     older mkstick working. This graceful degradation is what makes a
+ *     wrong identification guess survivable rather than fatal.
  *
  * The presence half is computed on the first call and cached, so this stays
  * one enumeration per role however many handles the loop walks. */

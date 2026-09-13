@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Build the premise-check disk: a GPT disk whose single partition carries the
-# falcon ISO type GUID and holds one real Windows install ISO.
+# Build the premise-check disk: a GPT disk whose single partition is stamped
+# the way p2 is stamped (Microsoft basic data, named FALCON-ISO) and holds one
+# real Windows install ISO.
 #
 # The premise being checked is the cheapest and most load-bearing one in the
 # whole Windows route: does a STOCK, unmodified Windows ISO reach WinPE at all
@@ -22,8 +23,11 @@ ISO="${1:-build/win-spike/win11.iso}"
 IMG=build/win-spike/premise-p2.img
 MNT=build/win-spike/premise-mnt
 
-# Frozen in src/part/part.h; the loader identifies p2 by this and nothing else.
-GUID_ISO=F6B6D562-22C3-450A-87AA-0316039657D6
+# Frozen in src/part/part.h. Microsoft basic data, so Windows gives p2 a drive
+# letter; the loader then tells it apart from any other basic-data volume by
+# the partition NAME below, and requires both (DESIGN Section 3, 2026-09-13).
+GUID_ISO=EBD0A0A2-B9E5-4433-87C0-68B6B72699C7
+NAME_ISO=FALCON-ISO
 
 [[ -f "$ISO" ]] || { echo "ERROR: $ISO not found" >&2; exit 1; }
 
@@ -34,14 +38,14 @@ rm -f "$IMG"
 truncate -s "${img_gib}G" "$IMG"
 mkdir -p "$MNT"
 
-sgdisk -n 1:1MiB:0 -t "1:$GUID_ISO" -c 1:"FALCON-ISO" "$IMG" >/dev/null
+sgdisk -n 1:1MiB:0 -t "1:$GUID_ISO" -c "1:$NAME_ISO" "$IMG" >/dev/null
 
 LOOP=$(sudo losetup --find --show --partscan "$IMG")
 trap 'sudo umount "$MNT" 2>/dev/null || true; \
       sudo losetup -d "$LOOP" 2>/dev/null || true' EXIT
 
 sudo udevadm settle 2>/dev/null || sleep 1
-sudo mkfs.exfat -L FALCON-ISO "${LOOP}p1" >/dev/null
+sudo mkfs.exfat -L "$NAME_ISO" "${LOOP}p1" >/dev/null
 sudo mount -o uid="$(id -u)",gid="$(id -g)" "${LOOP}p1" "$MNT"
 
 mkdir -p "$MNT/Windows"
@@ -53,4 +57,5 @@ sudo losetup -d "$LOOP"
 trap - EXIT
 rmdir "$MNT"
 
-echo "created $IMG (${img_gib} GiB, GPT, p2 type $GUID_ISO, Windows/win11.iso)"
+echo "created $IMG (${img_gib} GiB, GPT, p2 $GUID_ISO named $NAME_ISO,"
+echo "         Windows/win11.iso)"

@@ -9,12 +9,15 @@
 #include <part/part.h>
 #include <lib/string.h>
 
-/* The falcon type GUIDs, in on-disk byte order. The textual form and the
+/* The partition type GUIDs, in on-disk byte order. The textual form and the
  * reason these are frozen are in part.h; do not edit either copy. */
-const uint8_t falcon_guid_iso[GPT_GUID_LEN] = {
-    /* f6b6d562-22c3-450a-87aa-0316039657d6 */
-    0x62, 0xd5, 0xb6, 0xf6, 0xc3, 0x22, 0x0a, 0x45,
-    0x87, 0xaa, 0x03, 0x16, 0x03, 0x96, 0x57, 0xd6
+const uint8_t gpt_guid_msbasic[GPT_GUID_LEN] = {
+    /* ebd0a0a2-b9e5-4433-87c0-68b6b72699c7, Microsoft basic data: what p2
+     * wears so that Windows will give it a drive letter. Shared with every
+     * NTFS/exFAT data partition in the world, which is why matching p2 needs
+     * the partition name as well (part_match_role). */
+    0xa2, 0xa0, 0xd0, 0xeb, 0xe5, 0xb9, 0x33, 0x44,
+    0x87, 0xc0, 0x68, 0xb6, 0xb7, 0x26, 0x99, 0xc7
 };
 
 const uint8_t falcon_guid_shelf[GPT_GUID_LEN] = {
@@ -47,6 +50,7 @@ const uint8_t gpt_guid_esp[GPT_GUID_LEN] = {
 #define ENT_UNIQUE_GUID   16u
 #define ENT_START_LBA     32u
 #define ENT_END_LBA       40u
+#define ENT_NAME          56u   /* 36 UTF-16 units, to byte 127 */
 #define ENT_SIZE_MIN     128u   /* spec: 128 * 2^n */
 
 #define CRC32_INIT 0xFFFFFFFFu
@@ -89,16 +93,58 @@ int gpt_guid_eq(const uint8_t *a, const uint8_t *b)
     return memcmp(a, b, GPT_GUID_LEN) == 0;
 }
 
-const uint8_t *part_role_guid(part_role role)
+int gpt_name_eq(const uint16_t *name, const char *ascii)
+{
+    unsigned i;
+    int ended = 0;
+
+    if (name == NULL || ascii == NULL)
+        return 0;
+
+    /* All GPT_NAME_LEN units, every time: the field carries no terminator of
+     * its own, and the ASCII side is only read until its own NUL (the
+     * short-circuit and the conditional below are what keep this from
+     * stepping past it). */
+    for (i = 0; i < GPT_NAME_LEN; i++) {
+        uint16_t want;
+
+        if (!ended && ascii[i] == '\0')
+            ended = 1;
+        want = ended ? (uint16_t)0 : (uint16_t)(unsigned char)ascii[i];
+        if (name[i] != want)
+            return 0;
+    }
+    return 1;
+}
+
+const char *part_role_name(part_role role)
+{
+    if (role == PART_ROLE_ISO)
+        return FALCON_PART_NAME_ISO;
+    return NULL;
+}
+
+int part_match_role(const uint8_t *type, const uint16_t *name, part_role role)
 {
     switch (role) {
     case PART_ROLE_ISO:
-        return falcon_guid_iso;
+        /* Both halves, per part.h: the type is the world's and the name is
+         * ours, so neither identifies p2 on its own. */
+        if (!gpt_guid_eq(type, gpt_guid_msbasic))
+            return 0;
+        return gpt_name_eq(name, FALCON_PART_NAME_ISO);
     case PART_ROLE_SHELF:
-        return falcon_guid_shelf;
+        return gpt_guid_eq(type, falcon_guid_shelf);
     default:
-        return NULL;
+        return 0;
     }
+}
+
+int gpt_part_is_role(const gpt_part *p, part_role role)
+{
+    if (p == NULL)
+        return 0;
+    return part_match_role(p->type, p->name, role);
 }
 
 /* An all-zero type GUID marks an unused entry (spec 5.3.3); such entries are
@@ -204,6 +250,7 @@ int gpt_parse(gpt_table *t, gpt_read_fn read, void *ctx, uint32_t block_size)
              * leave to the reader (or to clang-tidy). */
             const uint8_t *e = sec + ((size_t)j * ent_size);
             gpt_part *p;
+            unsigned k;
 
             idx++;
             if (guid_is_zero(e + ENT_TYPE_GUID))
@@ -218,6 +265,13 @@ int gpt_parse(gpt_table *t, gpt_read_fn read, void *ctx, uint32_t block_size)
             memcpy(p->unique, e + ENT_UNIQUE_GUID, GPT_GUID_LEN);
             p->start_lba = get_le64(e + ENT_START_LBA);
             p->end_lba = get_le64(e + ENT_END_LBA);
+            /* The name is copied verbatim, terminator or not: identification
+             * is p2's half of DESIGN Section 3, and deciding what the units
+             * mean is gpt_name_eq's job, not the decoder's. Entirely inside
+             * the entry, since ENT_SIZE_MIN is 128 and the field ends at
+             * byte 127. */
+            for (k = 0; k < GPT_NAME_LEN; k++)
+                p->name[k] = get_le16(e + ENT_NAME + (size_t)k * 2u);
         }
     }
 
@@ -239,13 +293,12 @@ const gpt_part *gpt_find_start(const gpt_table *t, uint64_t start_lba)
 
 int gpt_has_role(const gpt_table *t, part_role role)
 {
-    const uint8_t *want = part_role_guid(role);
     uint32_t i;
 
-    if (t == NULL || want == NULL)
+    if (t == NULL)
         return 0;
     for (i = 0; i < t->count; i++) {
-        if (gpt_guid_eq(t->parts[i].type, want))
+        if (gpt_part_is_role(&t->parts[i], role))
             return 1;
     }
     return 0;

@@ -535,6 +535,9 @@ static cli_status write_partition_table(const mks_disk *d, const layout *l)
     ab_addf(&ab, "-t1:%s", MKS_TYPE_ESP);
     ab_addf(&ab, "-c1:%s", MKS_LABEL_P1);
 
+    /* p2's -c is not a label for the user's benefit: with a type GUID the
+     * whole world shares, the name is what tells the loader this partition is
+     * ours (DESIGN Section 3, and the selfcheck in guid.c). */
     ab_addf(&ab, "-n2:0:+%lluM", (unsigned long long)mib[1]);
     ab_addf(&ab, "-t2:%s", MKS_TYPE_ISO);
     ab_addf(&ab, "-c2:%s", MKS_LABEL_P2);

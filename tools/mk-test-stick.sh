@@ -10,6 +10,7 @@
 #
 #   p1  ESP   FAT32   64 MiB  shim -> mmx64.efi -> our loader as grubx64.efi
 #   p2  ISOs  exFAT   64 MiB  two fake ISOs, plus the real payload ISO if built
+#                             (basic-data typed, named FALCON-ISO: see below)
 #   p3  UKI   LUKS2   64 MiB  pbkdf2 keyslot, ext4 inside, /uki/*.efi
 #   p4  root  LUKS2   32 MiB  argon2id keyslot, deliberately empty
 #
@@ -147,13 +148,24 @@ truncate -s "${SIZE_MIB}M" "$IMG"
 # One MiB alignment throughout, which is both what real media wants and what
 # keeps every partition start a whole number of 4 KiB filesystem blocks.
 echo "== partitioning (GPT, four partitions per DESIGN Section 3)"
-# p2 and p3 carry the falcon type GUIDs the loader identifies them by; the
-# constants are frozen in src/part/part.h and must match it exactly. p1 keeps
-# the standard ESP type and p4 the standard Linux LUKS type (8309), which the
-# loader never matches on.
+# Identification per DESIGN Section 3, and the -c names are not decoration:
+#
+#   p2  Microsoft basic data (ebd0a0a2-...), named FALCON-ISO. The type is
+#       what makes Windows create a volume for it and give it a drive letter,
+#       without which drag-and-drop from a Windows host and the WinPE jump
+#       binary both have nothing to talk to; the NAME is then what tells the
+#       loader this basic-data partition is ours rather than somebody's data
+#       volume. The loader requires both.
+#   p3  the falcon UKI-shelf type, which no one else wears. Deliberately NOT
+#       basic data: Windows offers to format a basic-data partition it cannot
+#       read, and this one holds the stick's private key.
+#   p1  the standard ESP type; p4 the standard Linux LUKS type (8309), also
+#       unrecognised by Windows on purpose. The loader never matches p4.
+#
+# The constants are frozen in src/part/part.h and must match it exactly.
 sgdisk \
     -n 1:1MiB:+64MiB   -t 1:ef00 -c 1:"FALCON-ESP" \
-    -n 2:0:+64MiB      -t 2:F6B6D562-22C3-450A-87AA-0316039657D6 \
+    -n 2:0:+64MiB      -t 2:EBD0A0A2-B9E5-4433-87C0-68B6B72699C7 \
                        -c 2:"FALCON-ISO" \
     -n 3:0:+64MiB      -t 3:9CB02E90-85F4-4AF7-9AF3-1F9D6A95FEAF \
                        -c 3:"FALCON-UKI" \

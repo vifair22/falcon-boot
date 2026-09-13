@@ -1,5 +1,5 @@
-/* falcon-boot mkstick: the cross-check between the partition type GUIDs this
- * tool stamps and the ones src/part/part.h makes the loader look for.
+/* falcon-boot mkstick: the cross-check between what this tool stamps into a
+ * partition table and what src/part/part.h makes the loader look for.
  *
  * part.h stores each GUID as the 16-byte on-disk sequence; sgdisk takes the
  * textual form. Two spellings of one constant is exactly the kind of pair
@@ -10,6 +10,11 @@
  * written or read. It is the runtime form of a static assertion; it cannot be
  * a real one because the byte arrays are `extern const` objects, not
  * constant expressions.
+ *
+ * p2's PARTITION NAME is checked the same way and for a stronger reason: it
+ * is half of what identifies p2 (its type GUID is the world's), so a drift
+ * between MKS_LABEL_P2 and FALCON_PART_NAME_ISO produces a stick whose ISO
+ * library the loader silently declines to recognise.
  */
 
 #include <cli/mkstick/mkstick.h>
@@ -88,11 +93,33 @@ static cli_status check_one(const char *text, const uint8_t *expect,
     return CLI_OK;
 }
 
+/* The loader compares the GPT name field against its own string; this checks
+ * that the string we write is that one, spelt the same way. Case-sensitive,
+ * because gpt_name_eq is. */
+static cli_status check_iso_name(void)
+{
+    const char *want = part_role_name(PART_ROLE_ISO);
+
+    if (want == NULL || strcmp(MKS_LABEL_P2, want) != 0)
+        return set_error(CLI_ERR_INTERNAL,
+                         "p2 (ISO library): the partition name this tool "
+                         "writes ('%s') is not the one src/part/part.h makes "
+                         "the loader look for ('%s')",
+                         MKS_LABEL_P2, (want != NULL) ? want : "(none)");
+    return CLI_OK;
+}
+
 cli_status mkstick_guid_selfcheck(void)
 {
     cli_status rc;
 
-    rc = check_one(MKS_TYPE_ISO, falcon_guid_iso, "p2 (ISO library)");
+    /* p2 is the one partition whose type does not identify it: Microsoft
+     * basic data, so Windows gives it a drive letter (DESIGN Section 3). Both
+     * halves of its identity are therefore checked. */
+    rc = check_one(MKS_TYPE_ISO, gpt_guid_msbasic, "p2 (ISO library)");
+    if (rc != CLI_OK)
+        return rc;
+    rc = check_iso_name();
     if (rc != CLI_OK)
         return rc;
     rc = check_one(MKS_TYPE_SHELF, falcon_guid_shelf, "p3 (UKI shelf)");
