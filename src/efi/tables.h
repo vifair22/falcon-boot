@@ -1,4 +1,4 @@
-/* airies-boot: EFI table structures (UEFI spec 4.2-4.6).
+/* falcon-boot: EFI table structures (UEFI spec 4.2-4.6).
  *
  * The boot-services and runtime-services tables are transcribed in FULL and
  * in spec order, because every field is a pointer and one missing placeholder
@@ -7,8 +7,8 @@
  * upgrading one to a prototype later is a local edit.
  */
 
-#ifndef AIRIES_UEFI_TABLES_H
-#define AIRIES_UEFI_TABLES_H
+#ifndef FALCON_UEFI_TABLES_H
+#define FALCON_UEFI_TABLES_H
 
 #include <efi/types.h>
 #include <efi/textio.h>
@@ -243,4 +243,4 @@ typedef struct {
     EFI_CONFIGURATION_TABLE         *ConfigurationTable;
 } EFI_SYSTEM_TABLE;
 
-#endif /* AIRIES_UEFI_TABLES_H */
+#endif /* FALCON_UEFI_TABLES_H */

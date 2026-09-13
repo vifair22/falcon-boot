@@ -1,4 +1,4 @@
-/* airies-boot: PBKDF2 (RFC 8018 Section 5.2), HMAC PRF.
+/* falcon-boot: PBKDF2 (RFC 8018 Section 5.2), HMAC PRF.
  *
  * Purpose. Two uses, both in the LUKS2 unlock of p3 (DESIGN Sections 3, 5):
  * deriving the keyslot key from the typed passphrase (the expensive one,
@@ -20,8 +20,8 @@
  * each case rather than compiled in.
  */
 
-#ifndef AIRIES_CRYPTO_PBKDF2_H
-#define AIRIES_CRYPTO_PBKDF2_H
+#ifndef FALCON_CRYPTO_PBKDF2_H
+#define FALCON_CRYPTO_PBKDF2_H
 
 #include <stdint.h>
 #include <stddef.h>
@@ -35,4 +35,4 @@ int pbkdf2(const hash_desc *d, const void *pass, size_t pass_len,
            const void *salt, size_t salt_len, uint32_t iterations,
            uint8_t *out, size_t out_len);
 
-#endif /* AIRIES_CRYPTO_PBKDF2_H */
+#endif /* FALCON_CRYPTO_PBKDF2_H */

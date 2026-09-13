@@ -1,4 +1,4 @@
-/* airies-boot: hash-by-name dispatch for LUKS2 metadata.
+/* falcon-boot: hash-by-name dispatch for LUKS2 metadata.
  *
  * Purpose. A LUKS2 header names its hashes as strings ("sha256"), in four
  * independent places: the binary header's checksum algorithm, the keyslot's
@@ -22,8 +22,8 @@
  * pbkdf2.c, src/luks/luks.c and src/luks/af.c.
  */
 
-#ifndef AIRIES_CRYPTO_HASH_H
-#define AIRIES_CRYPTO_HASH_H
+#ifndef FALCON_CRYPTO_HASH_H
+#define FALCON_CRYPTO_HASH_H
 
 #include <stdint.h>
 #include <stddef.h>
@@ -67,4 +67,4 @@ void hash_init(hash_ctx *c, const hash_desc *d);
 void hash_update(hash_ctx *c, const void *data, size_t len);
 void hash_final(hash_ctx *c, uint8_t *out);
 
-#endif /* AIRIES_CRYPTO_HASH_H */
+#endif /* FALCON_CRYPTO_HASH_H */

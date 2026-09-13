@@ -1,4 +1,4 @@
-/* airies-boot-sign: bless an ISO (docs/DESIGN.md Sections 7.5, 8, 8.1).
+/* falcon-boot-sign: bless an ISO (docs/DESIGN.md Sections 7.5, 8, 8.1).
  *
  * Flow, in the order the steps depend on each other:
  *
@@ -46,7 +46,7 @@
  * so a missing systemd-boot is one clear message instead of a ukify traceback. */
 #define DEFAULT_STUB "/usr/lib/systemd/boot/efi/linuxx64.efi.stub"
 
-#define BLESSED_DIR "airies/blessed"
+#define BLESSED_DIR "falcon/blessed"
 
 /* Short registry ids for the manifest's family= field. DESIGN Section 8.1
  * spells the Arch one "arch", and the loader will match on these strings, so
@@ -136,7 +136,7 @@ static void usage(FILE *f)
     size_t i;
 
     (void)fprintf(f,
-"usage: airies-boot-sign <iso> --stick <dir> --key <mok.key> --cert <mok.crt>\n"
+"usage: falcon-boot-sign <iso> --stick <dir> --key <mok.key> --cert <mok.crt>\n"
 "\n"
 "Blesses an ISO for Secure Boot: wraps the ISO's kernel in a minimal UKI\n"
 "whose embedded cmdline points the distro's own initramfs back at the ISO\n"
@@ -154,7 +154,7 @@ static void usage(FILE *f)
 "                        booted kernel will see it (default: derived from\n"
 "                        where the ISO sits under --stick)\n"
 "  --dev <token>         what the family's cmdline should name p2 as, e.g.\n"
-"                        UUID=1234-ABCD or PARTLABEL=airies-isos (default:\n"
+"                        UUID=1234-ABCD or PARTLABEL=falcon-isos (default:\n"
 "                        the filesystem UUID of the device behind --stick)\n"
 "  --cmdline <string>    use this cmdline verbatim instead of the family\n"
 "                        template; required to bless an unknown family\n"
@@ -673,7 +673,7 @@ static int bless(const options *o)
             >= (int)sizeof(out_uki) ||
         snprintf(manifest_path, sizeof(manifest_path), "%s/manifest",
                  blessed_dir) >= (int)sizeof(manifest_path) ||
-        snprintf(work_dir, sizeof(work_dir), "%s/airies-sign-%ld", o->work,
+        snprintf(work_dir, sizeof(work_dir), "%s/falcon-sign-%ld", o->work,
                  (long)getpid()) >= (int)sizeof(work_dir) ||
         snprintf(work_kernel, sizeof(work_kernel), "%s/vmlinuz", work_dir)
             >= (int)sizeof(work_kernel) ||

@@ -1,4 +1,4 @@
-/* airies-boot: AES-XTS sector decryption, portable path and dispatch.
+/* falcon-boot: AES-XTS sector decryption, portable path and dispatch.
  * See xts.h.
  */
 

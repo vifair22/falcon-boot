@@ -1,4 +1,4 @@
-/* airies-boot: SHA-512 (FIPS 180-4). See sha512.h.
+/* falcon-boot: SHA-512 (FIPS 180-4). See sha512.h.
  *
  * Structurally the same transcription as sha256.c with 64-bit words, 80
  * rounds, different rotation amounts, and a 128-bit length field. The

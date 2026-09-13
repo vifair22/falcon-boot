@@ -1,4 +1,4 @@
-/* airies-boot: partition identification ABI (UEFI spec 13.18 and 10.3.5.1).
+/* falcon-boot: partition identification ABI (UEFI spec 13.18 and 10.3.5.1).
  *
  * Two firmware-facing pieces, both consumed and never produced by us:
  *
@@ -20,8 +20,8 @@
  * efi/types.h.
  */
 
-#ifndef AIRIES_UEFI_PARTINFO_H
-#define AIRIES_UEFI_PARTINFO_H
+#ifndef FALCON_UEFI_PARTINFO_H
+#define FALCON_UEFI_PARTINFO_H
 
 #include <efi/types.h>
 #include <efi/devpath.h>
@@ -41,7 +41,7 @@
 #pragma pack(1)
 
 /* GPT partition entry (spec Table 5-6). Exactly 128 bytes; the same layout
- * src/part/part.c decodes off the disk, which is why one set of airies GUID
+ * src/part/part.c decodes off the disk, which is why one set of falcon GUID
  * constants serves both routes. */
 typedef struct {
     EFI_GUID PartitionTypeGUID;
@@ -103,4 +103,4 @@ typedef struct {
 
 #pragma pack()
 
-#endif /* AIRIES_UEFI_PARTINFO_H */
+#endif /* FALCON_UEFI_PARTINFO_H */

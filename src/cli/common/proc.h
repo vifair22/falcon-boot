@@ -1,4 +1,4 @@
-/* airies-boot host tooling: running the system tools we deliberately do not
+/* falcon-boot host tooling: running the system tools we deliberately do not
  * reimplement (DESIGN Section 8).
  *
  * Every child is started with fork + execvp and an argv ARRAY. There is no
@@ -13,8 +13,8 @@
  * is a diagnosis.
  */
 
-#ifndef AIRIES_CLI_PROC_H
-#define AIRIES_CLI_PROC_H
+#ifndef FALCON_CLI_PROC_H
+#define FALCON_CLI_PROC_H
 
 #include <stddef.h>
 
@@ -60,4 +60,4 @@ cli_status proc_capture_l(char *out, size_t cap, size_t *len,
  * fails in the first second rather than after formatting three partitions. */
 int proc_exists(const char *prog);
 
-#endif /* AIRIES_CLI_PROC_H */
+#endif /* FALCON_CLI_PROC_H */

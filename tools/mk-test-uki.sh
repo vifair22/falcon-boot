@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# airies-boot: build the fixture Unified Kernel Image the rig boots
+# falcon-boot: build the fixture Unified Kernel Image the rig boots
 # (docs/DESIGN.md Sections 5.1, 10 and 11 step 6).
 #
 # Produces a real sd-stub UKI, because the thing under test is sd-stub's
@@ -48,8 +48,8 @@ INITRD="$OUT/fixture-initrd.cpio"
 UKI="$OUT/fixture-uki.efi"
 UKI_SIGNED="$OUT/fixture-uki-signed.efi"
 
-MOK_KEY=build/mok-test/airies-test-mok.key
-MOK_CRT=build/mok-test/airies-test-mok.crt
+MOK_KEY=build/mok-test/falcon-test-mok.key
+MOK_CRT=build/mok-test/falcon-test-mok.crt
 
 CMDLINE="console=ttyS0,115200 console=tty0 panic=10 rd.systemd.unit=none"
 
@@ -130,6 +130,6 @@ rm -rf "$WORK"
 
 echo
 echo "expected serial output once the loader launches it:"
-echo "  AIRIES-UKI-INIT"
-echo "  AIRIES-CRED-FILE cryptsetup.passphrase.cred 11 bytes"
-echo "  AIRIES-CRED-OK"
+echo "  FALCON-UKI-INIT"
+echo "  FALCON-CRED-FILE cryptsetup.passphrase.cred 11 bytes"
+echo "  FALCON-CRED-OK"

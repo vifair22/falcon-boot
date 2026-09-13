@@ -384,9 +384,9 @@ static void test_cpio_size_nested_tree(void **state)
     const cpio_entry ents[] = {
         { "hooks",                   NULL,  0,                CPIO_MODE_DIR  },
         { "hooks/local-top",         NULL,  0,                CPIO_MODE_DIR  },
-        { "hooks/local-top/airies",  hook,  sizeof(hook) - 1, CPIO_MODE_FILE },
-        { "airies",                  NULL,  0,                CPIO_MODE_DIR  },
-        { "airies/extents",          table, sizeof(table) - 1, CPIO_MODE_FILE},
+        { "hooks/local-top/falcon",  hook,  sizeof(hook) - 1, CPIO_MODE_FILE },
+        { "falcon",                  NULL,  0,                CPIO_MODE_DIR  },
+        { "falcon/extents",          table, sizeof(table) - 1, CPIO_MODE_FILE},
     };
 
     (void)state;
@@ -666,7 +666,7 @@ static void write_all(const char *path, const void *buf, size_t len)
  * not failed, when cpio is not installed, because CI must not depend on it. */
 static void test_cpio_roundtrip_optional(void **state)
 {
-    char dir[] = "/tmp/airies-cpio-XXXXXX";
+    char dir[] = "/tmp/falcon-cpio-XXXXXX";
     char arc[320];
     char root[320];
     char path[384];

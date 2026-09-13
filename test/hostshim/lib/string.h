@@ -16,8 +16,8 @@
  * use them, so nothing in the unit under test can reach them by accident.
  */
 
-#ifndef AIRIES_TEST_HOSTSHIM_LIB_STRING_H
-#define AIRIES_TEST_HOSTSHIM_LIB_STRING_H
+#ifndef FALCON_TEST_HOSTSHIM_LIB_STRING_H
+#define FALCON_TEST_HOSTSHIM_LIB_STRING_H
 
 #include <stdint.h>
 #include <stddef.h>
@@ -39,4 +39,4 @@ static inline uint64_t get_le64(const uint8_t *p)
     return (uint64_t)get_le32(p) | ((uint64_t)get_le32(p + 4) << 32);
 }
 
-#endif /* AIRIES_TEST_HOSTSHIM_LIB_STRING_H */
+#endif /* FALCON_TEST_HOSTSHIM_LIB_STRING_H */

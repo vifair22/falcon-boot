@@ -779,7 +779,7 @@ EFI_STATUS pos_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
                     pos_result *result)
 {
     EFI_BOOT_SERVICES *bs;
-    menu_banner banner = { L"airies-boot: which image?", (const CHAR16 *)0,
+    menu_banner banner = { L"falcon-boot: which image?", (const CHAR16 *)0,
                            0 };
     void *buf = (void *)0;
     UINT64 size = 0;

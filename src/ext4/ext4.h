@@ -1,4 +1,4 @@
-/* airies-boot: read-only ext4 (docs/DESIGN.md Sections 3, 9).
+/* falcon-boot: read-only ext4 (docs/DESIGN.md Sections 3, 9).
  *
  * Sibling of src/exfat/exfat.c and shaped the same way: freestanding, EFI-free,
  * all device access through a byte-addressed read callback, caller-allocated
@@ -64,8 +64,8 @@
  *     indirect block map (EXT4_ERR_UNSUPPORTED).
  */
 
-#ifndef AIRIES_EXT4_H
-#define AIRIES_EXT4_H
+#ifndef FALCON_EXT4_H
+#define FALCON_EXT4_H
 
 #include <stdint.h>
 #include <stddef.h>
@@ -196,4 +196,4 @@ int ext4_file_open_ino(ext4_vol *v, ext4_file *f, uint32_t ino);
 int ext4_file_read(ext4_file *f, uint64_t off, uint64_t len, void *buf);
 uint64_t ext4_file_size(const ext4_file *f);
 
-#endif /* AIRIES_EXT4_H */
+#endif /* FALCON_EXT4_H */

@@ -1,4 +1,4 @@
-/* airies-boot: ISO family detection and the descriptor registry
+/* falcon-boot: ISO family detection and the descriptor registry
  * (docs/DESIGN.md Section 6.2).
  *
  * Deliberately EFI-free, for the same reason the exFAT driver is: the probe
@@ -13,8 +13,8 @@
  * exists the templates are inert.
  */
 
-#ifndef AIRIES_FAMILY_H
-#define AIRIES_FAMILY_H
+#ifndef FALCON_FAMILY_H
+#define FALCON_FAMILY_H
 
 #include <stdint.h>
 #include <stddef.h>
@@ -102,4 +102,4 @@ const family_desc *family_by_id(family_id id);
 /* The whole registry, for callers that enumerate it (help text, tests). */
 const family_desc *family_table(size_t *count);
 
-#endif /* AIRIES_FAMILY_H */
+#endif /* FALCON_FAMILY_H */

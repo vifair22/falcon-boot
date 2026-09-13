@@ -1,4 +1,4 @@
-/* airies-boot: AES-128/256 block cipher, portable C (FIPS 197).
+/* falcon-boot: AES-128/256 block cipher, portable C (FIPS 197).
  *
  * Purpose. The block cipher under AES-XTS, which is how every byte of p3 is
  * encrypted: both the keyslot area (where the AF-split master key lives) and
@@ -25,8 +25,8 @@
  * a raw block operation.
  */
 
-#ifndef AIRIES_CRYPTO_AES_H
-#define AIRIES_CRYPTO_AES_H
+#ifndef FALCON_CRYPTO_AES_H
+#define FALCON_CRYPTO_AES_H
 
 #include <stdint.h>
 #include <stddef.h>
@@ -44,4 +44,4 @@ int  aes_setkey(aes_key *k, const uint8_t *key, size_t key_len);
 void aes_encrypt_block(const aes_key *k, const uint8_t *in, uint8_t *out);
 void aes_decrypt_block(const aes_key *k, const uint8_t *in, uint8_t *out);
 
-#endif /* AIRIES_CRYPTO_AES_H */
+#endif /* FALCON_CRYPTO_AES_H */

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# airies-boot: build the on-stick signing appliance as a UKI
+# falcon-boot: build the on-stick signing appliance as a UKI
 # (docs/DESIGN.md Section 7.5, build order step 8).
 #
 # Output:
@@ -17,7 +17,7 @@
 #   ukify        wraps the extracted kernel into a UKI
 #   sbsign       signs that wrap
 #
-# plus the portable `sign` tool itself as build/bin/airies-boot-sign-static.
+# plus the portable `sign` tool itself as build/bin/falcon-boot-sign-static.
 # That is the point of the static link: the appliance route and the host route
 # run the SAME implementation (DESIGN Section 8), not two that agree today.
 #
@@ -60,9 +60,9 @@ INITRD="$OUT/appliance-initrd.zst"
 UKI="$OUT/appliance-uki.efi"
 UKI_SIGNED="$OUT/appliance-uki-signed.efi"
 
-SIGN_STATIC=build/bin/airies-boot-sign-static
-MOK_KEY="${MOK_KEY:-build/mok-test/airies-test-mok.key}"
-MOK_CRT="${MOK_CRT:-build/mok-test/airies-test-mok.crt}"
+SIGN_STATIC=build/bin/falcon-boot-sign-static
+MOK_KEY="${MOK_KEY:-build/mok-test/falcon-test-mok.key}"
+MOK_CRT="${MOK_CRT:-build/mok-test/falcon-test-mok.crt}"
 
 # The rig's console is a second QEMU serial port (ttyS1); ttyS0 carries the
 # firmware and loader log, and the appliance needs a port it can READ from.
@@ -86,7 +86,7 @@ HOST_CFLAGS=(
     -Isrc
 )
 
-# src/part/part.c identifies p2 and p3 by the airies type GUIDs, and
+# src/part/part.c identifies p2 and p3 by the falcon type GUIDs, and
 # src/manifest/manifest.c decides what "already blessed" means. Both are the
 # loader's own modules, EFI-free by construction, linked here so the appliance
 # cannot disagree with the menu about either question.
@@ -310,7 +310,7 @@ ldconfig -r "$ROOT" 2>/dev/null || {
 }
 
 # The tool the whole appliance exists to run, and the stub it wraps with.
-cp "$SIGN_STATIC" "$ROOT/usr/bin/airies-boot-sign-static"
+cp "$SIGN_STATIC" "$ROOT/usr/bin/falcon-boot-sign-static"
 copy_to_root "$STUB"
 
 # ukify, at the path its shebang names.
@@ -348,12 +348,12 @@ printf 'root:x:0:\n' > "$ROOT/etc/group"
 # ukify reads /usr/lib/os-release to fill the .osrel section of everything it
 # builds, and refuses to run without it. On a host that file describes the
 # host; here it has to describe something, and the honest answer for a wrap
-# built on this stick is the stick. Nothing in airies-boot reads .osrel (the
+# built on this stick is the stick. Nothing in falcon-boot reads .osrel (the
 # loader labels entries from the manifest); sd-boot would show PRETTY_NAME.
 cat > "$ROOT/usr/lib/os-release" <<'OSREL'
-NAME="airies-boot blessed media"
-ID=airies-boot
-PRETTY_NAME="airies-boot blessed media"
+NAME="falcon-boot blessed media"
+ID=falcon-boot
+PRETTY_NAME="falcon-boot blessed media"
 OSREL
 
 # ---- pack ----
@@ -398,6 +398,6 @@ rm -rf "$WORK"
 
 echo
 echo "built in $(( $(date +%s) - START ))s"
-echo "stage it with:  airies-boot-mkstick create ... --uki $UKI"
+echo "stage it with:  falcon-boot-mkstick create ... --uki $UKI"
 echo "(mkstick signs it with the stick's own MOK and puts it on p3:/uki,"
 echo " where the loader offers it beside the personal OS image.)"

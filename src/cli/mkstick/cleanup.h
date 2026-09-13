@@ -1,9 +1,9 @@
-/* airies-boot mkstick: the unwind stack for kernel-visible resources.
+/* falcon-boot mkstick: the unwind stack for kernel-visible resources.
  *
  * Building a stick leaves three kinds of thing attached to the running
  * kernel: loop devices, device-mapper targets from `cryptsetup open`, and
  * mounts. Every one of them outlives this process if it is not released, and
- * a half-built stick that leaves /dev/mapper/airies-p3 behind is a stick that
+ * a half-built stick that leaves /dev/mapper/falcon-p3 behind is a stick that
  * cannot be rebuilt without the user knowing what cryptsetup is.
  *
  * So they go on a stack and come off in reverse order, on every exit path:
@@ -18,8 +18,8 @@
  * device attached is the worse failure, so the handler unwinds and exits.
  */
 
-#ifndef AIRIES_MKSTICK_CLEANUP_H
-#define AIRIES_MKSTICK_CLEANUP_H
+#ifndef FALCON_MKSTICK_CLEANUP_H
+#define FALCON_MKSTICK_CLEANUP_H
 
 #include <cli/common/status.h>
 
@@ -49,4 +49,4 @@ void cleanup_unwind_all(void);
  * believes it has finished. */
 unsigned cleanup_depth(void);
 
-#endif /* AIRIES_MKSTICK_CLEANUP_H */
+#endif /* FALCON_MKSTICK_CLEANUP_H */

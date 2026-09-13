@@ -1,4 +1,4 @@
-/* airies-boot mkstick: the constants the stick's layout is made of, in one
+/* falcon-boot mkstick: the constants the stick's layout is made of, in one
  * place, and the commands' entry points.
  *
  * Everything here is a contract with something outside this file: the loader
@@ -9,8 +9,8 @@
  * not boot.
  */
 
-#ifndef AIRIES_MKSTICK_H
-#define AIRIES_MKSTICK_H
+#ifndef FALCON_MKSTICK_H
+#define FALCON_MKSTICK_H
 
 #include <stdint.h>
 
@@ -25,8 +25,8 @@
  * loader's own constant at startup, so a typo here fails immediately and
  * loudly rather than producing a stick the loader cannot recognise. */
 #define MKS_TYPE_ESP   "C12A7328-F81F-11D2-BA4B-00A0C93EC93B"
-#define MKS_TYPE_ISO   "F6B6D562-22C3-450A-87AA-0316039657D6"  /* p2, airies */
-#define MKS_TYPE_SHELF "9CB02E90-85F4-4AF7-9AF3-1F9D6A95FEAF"  /* p3, airies */
+#define MKS_TYPE_ISO   "F6B6D562-22C3-450A-87AA-0316039657D6"  /* p2, falcon */
+#define MKS_TYPE_SHELF "9CB02E90-85F4-4AF7-9AF3-1F9D6A95FEAF"  /* p3, falcon */
 #define MKS_TYPE_LUKS  "CA7D7CCB-63ED-4C53-861C-1742536059CC"  /* p4, stock */
 
 /* Verifies the four strings above against src/part/part.h (and, for the two
@@ -36,19 +36,19 @@ cli_status mkstick_guid_selfcheck(void);
 
 /* Partition labels. Cosmetic, but they are what `lsblk` shows the user when
  * something has gone wrong, so they are worth being clear. */
-#define MKS_LABEL_P1 "AIRIES-ESP"
-#define MKS_LABEL_P2 "AIRIES-ISO"
-#define MKS_LABEL_P3 "AIRIES-UKI"
-#define MKS_LABEL_P4 "AIRIES-ROOT"
+#define MKS_LABEL_P1 "FALCON-ESP"
+#define MKS_LABEL_P2 "FALCON-ISO"
+#define MKS_LABEL_P3 "FALCON-UKI"
+#define MKS_LABEL_P4 "FALCON-ROOT"
 
 /* ---- on-stick paths (DESIGN Sections 4, 7.5 and 8.1) ---- */
 #define MKS_ESP_BOOT_DIR   "EFI/BOOT"
 #define MKS_ESP_SHIM_NAME  "BOOTX64.EFI"   /* removable-media default path */
-#define MKS_ESP_CERT_NAME  "airies-boot.cer"
+#define MKS_ESP_CERT_NAME  "falcon-boot.cer"
 #define MKS_P3_UKI_DIR     "uki"
-#define MKS_P3_KEY_NAME    "airies-mok.key"   /* mode 0600, LUKS-encrypted */
-#define MKS_P3_CERT_NAME   "airies-mok.crt"
-#define MKS_P2_BLESSED_DIR "airies/blessed"
+#define MKS_P3_KEY_NAME    "falcon-mok.key"   /* mode 0600, LUKS-encrypted */
+#define MKS_P3_CERT_NAME   "falcon-mok.crt"
+#define MKS_P2_BLESSED_DIR "falcon/blessed"
 
 /* p3's keyslot iteration count. DESIGN Section 8 pins this number: the in-EFI
  * PBKDF2 completes unlock-to-mount at 100k in 0.22 s under OVMF/KVM, so 200k
@@ -81,4 +81,4 @@ extern const cli_cmd mks_cmd_keygen;
 extern const cli_cmd mks_cmd_status;
 extern const cli_cmd mks_cmd_varstore;
 
-#endif /* AIRIES_MKSTICK_H */
+#endif /* FALCON_MKSTICK_H */

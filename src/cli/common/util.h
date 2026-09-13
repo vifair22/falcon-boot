@@ -1,11 +1,11 @@
-/* airies-boot host tooling: the small filesystem and parsing helpers the
+/* falcon-boot host tooling: the small filesystem and parsing helpers the
  * commands share. Nothing here is clever; it exists so that the command
  * bodies read as the sequence of steps they are, and so that "copy a file and
  * get the mode right" is written once rather than four times.
  */
 
-#ifndef AIRIES_CLI_UTIL_H
-#define AIRIES_CLI_UTIL_H
+#ifndef FALCON_CLI_UTIL_H
+#define FALCON_CLI_UTIL_H
 
 #include <stddef.h>
 #include <stdint.h>
@@ -47,4 +47,4 @@ int util_is_file(const char *path);
 int util_is_dir(const char *path);
 int util_is_block(const char *path);
 
-#endif /* AIRIES_CLI_UTIL_H */
+#endif /* FALCON_CLI_UTIL_H */

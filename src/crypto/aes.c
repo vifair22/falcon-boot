@@ -1,4 +1,4 @@
-/* airies-boot: AES-128/256, portable C (FIPS 197). See aes.h.
+/* falcon-boot: AES-128/256, portable C (FIPS 197). See aes.h.
  *
  * State layout follows FIPS 197 Section 3.4: the 16 input bytes fill the
  * state column by column, so s[i] is row i%4 of column i/4. Round keys are

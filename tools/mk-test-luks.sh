@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# airies-boot: build the LUKS2 fixtures the host test suite unlocks.
+# falcon-boot: build the LUKS2 fixtures the host test suite unlocks.
 #
 # src/luks is a from-scratch LUKS2 reader and src/crypto is hand-written
 # crypto. Neither is worth anything unless it agrees with cryptsetup, so the
@@ -9,7 +9,7 @@
 # Two images, because the loader has two distinct answers to give:
 #
 #   build/test-luks.img        48 MiB, LUKS2, aes-xts-plain64, --key-size 512,
-#                              one pbkdf2 keyslot, passphrase "airies-test".
+#                              one pbkdf2 keyslot, passphrase "falcon-test".
 #                              An ordinary ext4 filesystem inside it with two
 #                              known files, so the ext4 driver can be stacked
 #                              on luks_read exactly as the loader stacks it.
@@ -61,7 +61,7 @@ IMG=build/test-luks.img
 ARGON_IMG=build/test-luks-argon.img
 MANIFEST=build/test-luks.manifest
 REF=build/test-luks.ref64k
-PASS='airies-test'
+PASS='falcon-test'
 SIZE_MIB=48
 ARGON_SIZE_MIB=20
 REF_KIB=64
@@ -70,7 +70,7 @@ ARGON_ITER=4
 ARGON_MEM=65536
 
 # $$ keeps two concurrent runs from fighting over one device-mapper name.
-DM_NAME="airies-fixture-$$"
+DM_NAME="falcon-fixture-$$"
 MNT=
 DM_OPEN=0
 
@@ -111,14 +111,14 @@ printf '%s' "$PASS" | sudo cryptsetup luksFormat \
 printf '%s' "$PASS" | sudo cryptsetup open "$IMG" "$DM_NAME" --key-file -
 DM_OPEN=1
 
-sudo mkfs.ext4 -q -L AIRIES-LUKST "/dev/mapper/$DM_NAME"
+sudo mkfs.ext4 -q -L FALCON-LUKST "/dev/mapper/$DM_NAME"
 
 MNT=$(mktemp -d)
 sudo mount "/dev/mapper/$DM_NAME" "$MNT"
 sudo chown "$(id -u):$(id -g)" "$MNT" "$MNT/lost+found"
 
-printf 'airies-boot luks fixture: first known file.\n' > "$MNT/one.txt"
-printf 'airies-boot luks fixture: second known file, a little longer so the\n' \
+printf 'falcon-boot luks fixture: first known file.\n' > "$MNT/one.txt"
+printf 'falcon-boot luks fixture: second known file, a little longer so the\n' \
     > "$MNT/two.txt"
 printf 'two hashes cannot collide by being the same length.\n' >> "$MNT/two.txt"
 
@@ -143,7 +143,7 @@ OFFSET=$(sudo cryptsetup luksDump "$IMG" | sed -n 's/^\toffset: *\([0-9]*\).*/\1
 UUID=$(sudo cryptsetup luksUUID "$IMG")
 
 {
-    echo "# airies-boot LUKS2 fixture manifest"
+    echo "# falcon-boot LUKS2 fixture manifest"
     echo "# image: $IMG (${SIZE_MIB} MiB, luks2 aes-xts-plain64, key-size 512)"
     echo "# keyslot: pbkdf2, $PBKDF2_ITER iterations (LOW, fixture only)"
     echo "# passphrase: $PASS"

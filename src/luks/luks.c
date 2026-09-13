@@ -1,4 +1,4 @@
-/* airies-boot: read-only LUKS2 unlock. See luks.h.
+/* falcon-boot: read-only LUKS2 unlock. See luks.h.
  *
  * The binary header is 4096 bytes of big-endian fields followed by the JSON
  * metadata area, and the whole of it (header plus area, with the 64-byte

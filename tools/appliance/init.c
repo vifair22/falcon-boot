@@ -1,12 +1,12 @@
-/* airies-boot: the on-stick signing appliance's PID 1 (DESIGN Section 7.5,
+/* falcon-boot: the on-stick signing appliance's PID 1 (DESIGN Section 7.5,
  * build order step 8).
  *
  * The appliance is a signed UKI that boots under full Secure Boot, unlocks p3
  * with the user's passphrase, reads the MOK private key that lives there, has
  * the user mark the unsigned ISOs on p2 one by one and then confirm the marked
- * set as a whole, and hands each confirmed one to the SAME `airies-boot-sign`
+ * set as a whole, and hands each confirmed one to the SAME `falcon-boot-sign`
  * implementation the host route runs (here the static link,
- * /usr/bin/airies-boot-sign-static). Then it reboots. That is the whole
+ * /usr/bin/falcon-boot-sign-static). Then it reboots. That is the whole
  * program; there is no shell in this initramfs and nothing else to run.
  *
  * Why a C init rather than busybox: the appliance is the only place besides an
@@ -39,7 +39,7 @@
  *     nothing here would use one), so the decrypted-key window cannot be
  *     reached from outside the machine.
  *
- * The partitions are identified by their airies GPT type GUIDs through
+ * The partitions are identified by their falcon GPT type GUIDs through
  * src/part/part.c, the same parser the loader uses, so the appliance and the
  * loader cannot disagree about which partition is which. The manifest is read
  * through src/manifest/manifest.c, the same parser the loader will use, so
@@ -80,21 +80,21 @@
 
 #define P2_MNT   "/mnt/p2"
 #define P3_MNT   "/mnt/p3"
-#define MAPPER   "airies-p3"
+#define MAPPER   "falcon-p3"
 #define MAPPER_NODE "/dev/mapper/" MAPPER
 
 /* mkstick writes both of these to the root of the LUKS volume
  * (src/cli/mkstick/mkstick.h, MKS_P3_KEY_NAME / MKS_P3_CERT_NAME). */
-#define KEY_PATH  P3_MNT "/airies-mok.key"
-#define CERT_PATH P3_MNT "/airies-mok.crt"
+#define KEY_PATH  P3_MNT "/falcon-mok.key"
+#define CERT_PATH P3_MNT "/falcon-mok.crt"
 
-#define SIGN_TOOL "/usr/bin/airies-boot-sign-static"
+#define SIGN_TOOL "/usr/bin/falcon-boot-sign-static"
 #define STUB_PATH "/usr/lib/systemd/boot/efi/linuxx64.efi.stub"
 
-#define MANIFEST_PATH P2_MNT "/airies/blessed/manifest"
+#define MANIFEST_PATH P2_MNT "/falcon/blessed/manifest"
 
 /* Reserved directory of DESIGN Section 6.2; never a bless candidate. */
-#define RESERVED_DIR "airies"
+#define RESERVED_DIR "falcon"
 
 #define PASS_MAX     512u
 #define UNLOCK_TRIES 3
@@ -314,7 +314,7 @@ static int looks_like_exfat(const char *node)
     return memcmp(vbr + 3, "EXFAT   ", 8) == 0;
 }
 
-/* Identification proper: the airies type GUIDs of DESIGN Section 3, read out
+/* Identification proper: the falcon type GUIDs of DESIGN Section 3, read out
  * of the primary GPT by the loader's own parser. Returns nonzero when both
  * partitions were found on one disk; a stick always has both on one disk, and
  * accepting a p2 from one device and a p3 from another would be a way to get
@@ -362,7 +362,7 @@ static int find_by_guid(const char *disk, stick_parts *out)
  * partition as p3, on a disk that carries both. Content probing rather than
  * naming, and deliberately narrower than the loader's own fallback: this
  * program is about to ask for a passphrase, and the honest failure is "no
- * airies stick found", not a prompt aimed at some unrelated volume. */
+ * falcon stick found", not a prompt aimed at some unrelated volume. */
 static int find_by_content(const char *disk, stick_parts *out)
 {
     char dir[PATH_MAX];
@@ -411,7 +411,7 @@ static int find_stick(stick_parts *out)
         if (e->d_name[0] == '.' || skip_disk(e->d_name))
             continue;
         if (find_by_guid(e->d_name, out)) {
-            say("stick: %s (airies partition type GUIDs)\n", e->d_name);
+            say("stick: %s (falcon partition type GUIDs)\n", e->d_name);
             found = 1;
         }
     }
@@ -1014,14 +1014,14 @@ int main(void)
     early_mounts();
 
     say("\n"
-        "airies-boot signing appliance\n"
+        "falcon-boot signing appliance\n"
         "=============================\n"
         "Signs ISOs on p2 with the MOK private key that lives encrypted on p3.\n\n");
 
     load_modules();
 
     if (!find_stick(&parts)) {
-        say("ERROR: no airies stick found (need an exFAT p2 and a LUKS p3 on\n"
+        say("ERROR: no falcon stick found (need an exFAT p2 and a LUKS p3 on\n"
             "       one disk). Nothing was unlocked.\n");
         finish(0, 0, 0);
     }
@@ -1133,7 +1133,7 @@ int main(void)
 
     if (g_cand_n == 0) {
         say("\nnothing to sign: every ISO on p2 already has a fresh manifest\n"
-            "record. AIRIES-APPLIANCE-PENDING 0\n");
+            "record. FALCON-APPLIANCE-PENDING 0\n");
         finish(p2_mounted, p3_mounted, mapped);
     }
 
@@ -1141,7 +1141,7 @@ int main(void)
      * review prints and the order the batch signs in are all the same one. */
     qsort(g_cand, g_cand_n, sizeof(g_cand[0]), cand_cmp);
 
-    say("\nAIRIES-APPLIANCE-PENDING %zu\n", g_cand_n);
+    say("\nFALCON-APPLIANCE-PENDING %zu\n", g_cand_n);
 
     /* ---- mark, review, confirm, then the bless ----
      *
@@ -1155,7 +1155,7 @@ int main(void)
         size_t sel_n = selected_count();
         size_t done_n = 0;
 
-        say("\nAIRIES-APPLIANCE-SELECTED %zu\n", sel_n);
+        say("\nFALCON-APPLIANCE-SELECTED %zu\n", sel_n);
 
         for (i = 0; i < g_cand_n; i++) {
             char abs[PATH_MAX];
@@ -1198,17 +1198,17 @@ int main(void)
             /* One image failing is that image's problem: the rest of the batch
              * was vouched for too and still deserves to be signed. */
             if (rc == 0) {
-                say("      AIRIES-APPLIANCE-SIGNED %s\n", g_cand[i].rel);
+                say("      FALCON-APPLIANCE-SIGNED %s\n", g_cand[i].rel);
                 signed_n++;
             } else {
-                say("      AIRIES-APPLIANCE-FAILED %s (exit %d)\n",
+                say("      FALCON-APPLIANCE-FAILED %s (exit %d)\n",
                     g_cand[i].rel, rc);
                 failed_n++;
             }
         }
     }
 
-    say("\nsummary: AIRIES-APPLIANCE-SUMMARY signed=%zu failed=%zu skipped=%zu\n",
+    say("\nsummary: FALCON-APPLIANCE-SUMMARY signed=%zu failed=%zu skipped=%zu\n",
         signed_n, failed_n, skipped_n);
 
     finish(p2_mounted, p3_mounted, mapped);

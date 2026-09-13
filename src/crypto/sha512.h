@@ -1,4 +1,4 @@
-/* airies-boot: SHA-512 (FIPS 180-4 Section 6.4).
+/* falcon-boot: SHA-512 (FIPS 180-4 Section 6.4).
  *
  * Purpose. Header-hash generality for the LUKS2 unlock, not the primary
  * path. Evidence from this machine (cryptsetup 2.8.7): every default header
@@ -21,8 +21,8 @@
  * knowing which hash they hold.
  */
 
-#ifndef AIRIES_CRYPTO_SHA512_H
-#define AIRIES_CRYPTO_SHA512_H
+#ifndef FALCON_CRYPTO_SHA512_H
+#define FALCON_CRYPTO_SHA512_H
 
 #include <stdint.h>
 #include <stddef.h>
@@ -44,4 +44,4 @@ void sha512_update(sha512_ctx *c, const void *data, size_t len);
 void sha512_final(sha512_ctx *c, uint8_t *out);
 void sha512(const void *data, size_t len, uint8_t *out);
 
-#endif /* AIRIES_CRYPTO_SHA512_H */
+#endif /* FALCON_CRYPTO_SHA512_H */

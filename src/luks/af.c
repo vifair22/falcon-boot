@@ -1,4 +1,4 @@
-/* airies-boot: LUKS anti-forensic splitter, merge direction. See af.h. */
+/* falcon-boot: LUKS anti-forensic splitter, merge direction. See af.h. */
 
 #include <luks/af.h>
 #include <crypto/crypto.h>

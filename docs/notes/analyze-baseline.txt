@@ -1,4 +1,4 @@
-# airies-boot static analysis baseline.
+# falcon-boot static analysis baseline.
 #
 # src/cli/sign/util.c fd-leak x2: gcc's analyzer has no model for exec, so
 # the dup2 onto stdout/stderr in the forked child before execvp reads as a

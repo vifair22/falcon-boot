@@ -1,4 +1,4 @@
-/* airies-boot: PBKDF2 (RFC 8018 Section 5.2). See pbkdf2.h.
+/* falcon-boot: PBKDF2 (RFC 8018 Section 5.2). See pbkdf2.h.
  *
  * DK = T_1 || T_2 || ... , T_i = U_1 ^ U_2 ^ ... ^ U_c, where
  * U_1 = PRF(P, S || INT_BE32(i)) and U_j = PRF(P, U_{j-1}).

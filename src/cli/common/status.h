@@ -1,4 +1,4 @@
-/* airies-boot host tooling: status codes and the thread-local error buffer.
+/* falcon-boot host tooling: status codes and the thread-local error buffer.
  *
  * The repo's C error convention, in its hosted form: every function that can
  * fail returns a cli_status (OK is zero, errors negative), the function that
@@ -12,8 +12,8 @@
  * that costs nothing.
  */
 
-#ifndef AIRIES_CLI_STATUS_H
-#define AIRIES_CLI_STATUS_H
+#ifndef FALCON_CLI_STATUS_H
+#define FALCON_CLI_STATUS_H
 
 typedef enum {
     CLI_OK           =   0,
@@ -52,4 +52,4 @@ void        cli_error_clear(void);
 #define set_error(code, ...)       cli_set_error((code), __VA_ARGS__)
 #define set_error_errno(code, ...) cli_set_error_errno((code), __VA_ARGS__)
 
-#endif /* AIRIES_CLI_STATUS_H */
+#endif /* FALCON_CLI_STATUS_H */

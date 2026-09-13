@@ -1,4 +1,4 @@
-/* airies-boot-sign: the bless tool (docs/DESIGN.md Sections 7.5, 8 and 8.1).
+/* falcon-boot-sign: the bless tool (docs/DESIGN.md Sections 7.5, 8 and 8.1).
  *
  * Wraps an ISO's kernel in a minimal signed UKI so the ISO can boot with
  * Secure Boot validation left on, and records the fact in the p2 manifest.
@@ -23,8 +23,8 @@
  * anything a sibling tool already defines.
  */
 
-#ifndef AIRIES_CLI_SIGN_H
-#define AIRIES_CLI_SIGN_H
+#ifndef FALCON_CLI_SIGN_H
+#define FALCON_CLI_SIGN_H
 
 #include <stdint.h>
 #include <stddef.h>
@@ -69,7 +69,7 @@ typedef enum {
 } sgn_level;
 
 /* Diagnostics go to stderr at every level; stdout carries only the result,
- * so `airies-boot-sign ... | cat` stays parseable and 2>/dev/null stays
+ * so `falcon-boot-sign ... | cat` stays parseable and 2>/dev/null stays
  * quiet without losing the answer. */
 void sgn_log_set_level(sgn_level min);
 void sgn_log(sgn_level lvl, const char *fmt, ...)
@@ -156,4 +156,4 @@ int iso_view_extract(iso_view *v, const char *member, const char *dst);
  * of its candidates are present, and the error buffer says which. */
 const char *iso_kernel_path(iso_view *v, family_id id);
 
-#endif /* AIRIES_CLI_SIGN_H */
+#endif /* FALCON_CLI_SIGN_H */

@@ -382,8 +382,8 @@ feature, not by sentiment. Nothing in the loader changes with the choice.
 1. **Real MokManager enrollment on real firmware.** Everything above used a
    varstore-injected `MokList`. What is untested is the enrollment UX itself:
    shim launching MokManager on first boot, the user confirming
-   `airies-boot.cer`, the reboot, and the enrolled key persisting. Procedure:
-   build the ESP with our cert at `p1:/airies-boot.cer`, boot the secboot OVMF
+   `falcon-boot.cer`, the reboot, and the enrolled key persisting. Procedure:
+   build the ESP with our cert at `p1:/falcon-boot.cer`, boot the secboot OVMF
    with an unmodified varstore, drive MokManager interactively (it needs a
    display, so `run-qemu.sh` without `-display none`), enroll, reboot, and
    re-run the probe unmodified. It should reach the same output as 4.1. This is

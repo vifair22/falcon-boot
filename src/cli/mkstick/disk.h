@@ -1,4 +1,4 @@
-/* airies-boot mkstick: the target, whether it is a USB stick or an image file.
+/* falcon-boot mkstick: the target, whether it is a USB stick or an image file.
  *
  * One abstraction over two things that behave almost but not quite alike:
  *
@@ -16,8 +16,8 @@
  * is implemented here.
  */
 
-#ifndef AIRIES_MKSTICK_DISK_H
-#define AIRIES_MKSTICK_DISK_H
+#ifndef FALCON_MKSTICK_DISK_H
+#define FALCON_MKSTICK_DISK_H
 
 #include <stddef.h>
 #include <stdint.h>
@@ -85,4 +85,4 @@ cli_status disk_io_open(disk_io *io, const char *path, uint64_t base,
 void       disk_io_close(disk_io *io);
 int        disk_io_read(void *ctx, uint64_t off, uint64_t len, void *buf);
 
-#endif /* AIRIES_MKSTICK_DISK_H */
+#endif /* FALCON_MKSTICK_DISK_H */

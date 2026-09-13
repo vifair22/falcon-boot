@@ -1,4 +1,4 @@
-/* airies-boot mkstick: `varstore`, a TEST-RIG helper and nothing else.
+/* falcon-boot mkstick: `varstore`, a TEST-RIG helper and nothing else.
  *
  * Why it lives in this tool. Proving that a stick mkstick built actually
  * boots under Secure Boot means booting it in QEMU with our certificate in

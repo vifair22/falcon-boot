@@ -1,4 +1,4 @@
-/* airies-boot: LUKS anti-forensic splitter, merge direction only.
+/* falcon-boot: LUKS anti-forensic splitter, merge direction only.
  *
  * Purpose. A LUKS keyslot does not store the volume master key; it stores
  * the key expanded by the AF splitter into `stripes` blocks (4000 of them,
@@ -31,8 +31,8 @@
  * keyslot (DESIGN Section 8 puts all volume creation in Linux userland).
  */
 
-#ifndef AIRIES_LUKS_AF_H
-#define AIRIES_LUKS_AF_H
+#ifndef FALCON_LUKS_AF_H
+#define FALCON_LUKS_AF_H
 
 #include <stdint.h>
 #include <stddef.h>
@@ -66,4 +66,4 @@ int af_merge_stripe(af_merge_ctx *c, const uint8_t *stripe);
 int af_merge_final(af_merge_ctx *c, uint8_t *out);
 void af_merge_wipe(af_merge_ctx *c);
 
-#endif /* AIRIES_LUKS_AF_H */
+#endif /* FALCON_LUKS_AF_H */

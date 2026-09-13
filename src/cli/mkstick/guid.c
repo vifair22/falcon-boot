@@ -1,4 +1,4 @@
-/* airies-boot mkstick: the cross-check between the partition type GUIDs this
+/* falcon-boot mkstick: the cross-check between the partition type GUIDs this
  * tool stamps and the ones src/part/part.h makes the loader look for.
  *
  * part.h stores each GUID as the 16-byte on-disk sequence; sgdisk takes the
@@ -92,10 +92,10 @@ cli_status mkstick_guid_selfcheck(void)
 {
     cli_status rc;
 
-    rc = check_one(MKS_TYPE_ISO, airies_guid_iso, "p2 (ISO library)");
+    rc = check_one(MKS_TYPE_ISO, falcon_guid_iso, "p2 (ISO library)");
     if (rc != CLI_OK)
         return rc;
-    rc = check_one(MKS_TYPE_SHELF, airies_guid_shelf, "p3 (UKI shelf)");
+    rc = check_one(MKS_TYPE_SHELF, falcon_guid_shelf, "p3 (UKI shelf)");
     if (rc != CLI_OK)
         return rc;
     rc = check_one(MKS_TYPE_ESP, gpt_guid_esp, "p1 (EFI system partition)");

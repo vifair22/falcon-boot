@@ -1,4 +1,4 @@
-/* airies-boot: the fixture UKI's /init (docs/DESIGN.md Sections 5.1 and 10).
+/* falcon-boot: the fixture UKI's /init (docs/DESIGN.md Sections 5.1 and 10).
  *
  * The smallest program that can answer the one question step 6 of the build
  * order asks: did the passphrase the loader typed into a synthetic filesystem
@@ -36,8 +36,8 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-/* Must match AIRIES_TEST_PASS in tools/mk-test-stick.sh. */
-#define EXPECT_PASS "airies-test"
+/* Must match FALCON_TEST_PASS in tools/mk-test-stick.sh. */
+#define EXPECT_PASS "falcon-test"
 
 /* The name the whole chain turns on; see src/pos/pos.c for why it is this and
  * not something readable. */
@@ -156,11 +156,11 @@ int main(void)
 
     open_console();
 
-    outf("\nAIRIES-UKI-INIT\n");
+    outf("\nFALCON-UKI-INIT\n");
 
     d = opendir(CRED_DIR);
     if (!d) {
-        outf("AIRIES-CRED-DIR-MISSING %s\n", CRED_DIR);
+        outf("FALCON-CRED-DIR-MISSING %s\n", CRED_DIR);
     } else {
         while ((e = readdir(d)) != NULL) {
             struct stat st;
@@ -172,12 +172,12 @@ int main(void)
             snprintf(path, sizeof path, "%s/%s", CRED_DIR, e->d_name);
             if (stat(path, &st) != 0)
                 st.st_size = -1;
-            outf("AIRIES-CRED-FILE %s %lld bytes\n", e->d_name,
+            outf("FALCON-CRED-FILE %s %lld bytes\n", e->d_name,
                  (long long)st.st_size);
 
             n = read_file(path, buf, sizeof buf);
             if (n < 0) {
-                outf("AIRIES-CRED-UNREADABLE %s\n", e->d_name);
+                outf("FALCON-CRED-UNREADABLE %s\n", e->d_name);
                 continue;
             }
             {
@@ -185,7 +185,7 @@ int main(void)
 
                 format_bytes(buf, (size_t)n < 64 ? (size_t)n : 64,
                              shown, sizeof shown);
-                outf("AIRIES-CRED-HEAD %s [%s]\n", e->d_name, shown);
+                outf("FALCON-CRED-HEAD %s [%s]\n", e->d_name, shown);
             }
 
             if (strcmp(e->d_name, CRED_NAME) == 0 &&
@@ -194,15 +194,15 @@ int main(void)
                 matched = 1;
         }
         (void)closedir(d);
-        outf("AIRIES-CRED-COUNT %d\n", found);
+        outf("FALCON-CRED-COUNT %d\n", found);
     }
 
     if (matched)
-        outf("AIRIES-CRED-OK\n");
+        outf("FALCON-CRED-OK\n");
     else
-        outf("AIRIES-CRED-FAIL\n");
+        outf("FALCON-CRED-FAIL\n");
 
-    outf("AIRIES-UKI-DONE\n");
+    outf("FALCON-UKI-DONE\n");
     /* A human watching the QEMU window needs a moment to read the result;
      * a headless run just costs six extra seconds. Announced so the pause
      * reads as deliberate rather than a hang. */

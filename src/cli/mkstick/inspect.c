@@ -1,4 +1,4 @@
-/* airies-boot mkstick: `status`, read-only inspection of a stick.
+/* falcon-boot mkstick: `status`, read-only inspection of a stick.
  *
  * The point of this command is to answer "will the loader recognise this
  * stick, and why not" without booting anything. So it deliberately runs the
@@ -344,7 +344,7 @@ static void check_iso_library(tally *t, const char *path, const gpt_part *p,
     static exfat_dir dir;
     static exfat_dir sub;
     disk_io io;
-    exfat_dirent airies = { { 0 }, 0, 0, 0, 0, 0, 0 };
+    exfat_dirent falcon = { { 0 }, 0, 0, 0, 0, 0, 0 };
     exfat_dirent blessed;
     unsigned isos = 0;
     int rc;
@@ -373,12 +373,12 @@ static void check_iso_library(tally *t, const char *path, const gpt_part *p,
      * count is what tells the user whether the library is actually populated. */
     {
         exfat_dirent e;
-        int found_airies = 0;
+        int found_falcon = 0;
 
         while ((rc = exfat_dir_next(&dir, &e)) == 1) {
-            if (name_is(&e, "airies") && e.is_dir) {
-                airies = e;
-                found_airies = 1;
+            if (name_is(&e, "falcon") && e.is_dir) {
+                falcon = e;
+                found_falcon = 1;
             } else if (!e.is_dir && e.name_len > 4u &&
                        name_is_iso_suffix(&e)) {
                 isos++;
@@ -386,14 +386,14 @@ static void check_iso_library(tally *t, const char *path, const gpt_part *p,
         }
         if (rc < 0)
             check(t, 0, "reading the root directory failed (%d)", rc);
-        check(t, found_airies, "/%s present", "airies");
-        if (!found_airies) {
+        check(t, found_falcon, "/%s present", "falcon");
+        if (!found_falcon) {
             disk_io_close(&io);
             return;
         }
     }
 
-    if (exfat_dir_open(&vol, &sub, &airies) != 0 ||
+    if (exfat_dir_open(&vol, &sub, &falcon) != 0 ||
         find_child(&vol, &sub, "blessed", &blessed) != 1)
         check(t, 0, "/%s missing", MKS_P2_BLESSED_DIR);
     else
@@ -432,7 +432,7 @@ static void esp_file(tally *t, const char *mnt, const char *rel,
 
 static void status_check_esp(tally *t, mks_disk *d)
 {
-    char tmpl[] = "/tmp/airies-mkstick-esp.XXXXXX";
+    char tmpl[] = "/tmp/falcon-mkstick-esp.XXXXXX";
     char shim_path[MKS_PATH_MAX];
     char next_stage[SHIM_NEXT_STAGE_MAX];
     char mm_name[SHIM_NEXT_STAGE_MAX];
@@ -507,10 +507,10 @@ static const char *role_text(const uint8_t *type)
 {
     if (gpt_guid_eq(type, gpt_guid_esp))
         return "EFI system partition";
-    if (gpt_guid_eq(type, airies_guid_iso))
-        return "airies ISO library";
-    if (gpt_guid_eq(type, airies_guid_shelf))
-        return "airies UKI shelf";
+    if (gpt_guid_eq(type, falcon_guid_iso))
+        return "falcon ISO library";
+    if (gpt_guid_eq(type, falcon_guid_shelf))
+        return "falcon UKI shelf";
     return NULL;
 }
 
@@ -577,20 +577,20 @@ static cli_status status_run(const cli_args *a)
         }
     }
     check(&t, gpt_has_role(&table, PART_ROLE_ISO),
-          "an airies-typed ISO library is present (the loader matches on "
+          "a falcon-typed ISO library is present (the loader matches on "
           "this, not on 'any exFAT volume')");
     check(&t, gpt_has_role(&table, PART_ROLE_SHELF),
-          "an airies-typed UKI shelf is present");
+          "a falcon-typed UKI shelf is present");
 
     for (i = 0; i < table.count; i++) {
         const gpt_part *p = &table.parts[i];
 
-        if (gpt_guid_eq(p->type, airies_guid_iso)) {
+        if (gpt_guid_eq(p->type, falcon_guid_iso)) {
             cli_log_blank();
             log_info("p%u: the exFAT ISO library (DESIGN Sections 6.2, 8.1)",
                      p->number);
             check_iso_library(&t, disk.path, p, disk.sector);
-        } else if (gpt_guid_eq(p->type, airies_guid_shelf)) {
+        } else if (gpt_guid_eq(p->type, falcon_guid_shelf)) {
             disk_io shelf_io;
 
             cli_log_blank();

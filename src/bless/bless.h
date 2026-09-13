@@ -1,8 +1,8 @@
-/* airies-boot: blessed boot (docs/DESIGN.md Section 8.1).
+/* falcon-boot: blessed boot (docs/DESIGN.md Section 8.1).
  *
  * The path a menu entry takes when the ISO it names has been blessed: instead
  * of chainloading the ISO's own bootloader off a virtual CD (src/iso), the
- * loader launches the signed UKI wrap that `airies-boot-sign` built for it,
+ * loader launches the signed UKI wrap that `falcon-boot-sign` built for it,
  * whose embedded cmdline points the distro's initramfs back at the ISO file
  * on p2. That wrap is kernel + cmdline + initrd inside one signed PE, which
  * is what lets the ISO boot with Secure Boot validation left on: everything
@@ -24,19 +24,19 @@
  * 5.1, reused here without a credential), and the launch.
  */
 
-#ifndef AIRIES_BLESS_H
-#define AIRIES_BLESS_H
+#ifndef FALCON_BLESS_H
+#define FALCON_BLESS_H
 
 #include <efi/uefi.h>
 
 #include <bless/blesscore.h>
 #include <fs/fs.h>
 
-/* Where a bless lives on p2, matching `airies-boot-sign`'s BLESSED_DIR and
+/* Where a bless lives on p2, matching `falcon-boot-sign`'s BLESSED_DIR and
  * the reserved directory of DESIGN Section 6.2. Two components, walked one at
  * a time because the filesystem registry hands out directory iterators rather
  * than a path resolver. */
-#define BLESS_DIR_L1 "airies"
+#define BLESS_DIR_L1 "falcon"
 #define BLESS_DIR_L2 "blessed"
 #define BLESS_MANIFEST_NAME "manifest"
 
@@ -62,11 +62,11 @@ typedef struct {
 /* Forgets every record. Call before a rescan; bless_load appends. */
 void bless_reset(void);
 
-/* Reads /airies/blessed/manifest off one ISO-role volume and adds what it
+/* Reads /falcon/blessed/manifest off one ISO-role volume and adds what it
  * holds to the cache, tagged with that volume. Returns the number of records
  * added.
  *
- * Never fails: a volume with no /airies, no manifest, an unreadable one, or
+ * Never fails: a volume with no /falcon, no manifest, an unreadable one, or
  * one full of anything but manifest records adds nothing and is not an error
  * (DESIGN Section 8.1). The volume pointer is kept, so it must stay mounted
  * for as long as its entries can be booted, which on this loader means for
@@ -102,4 +102,4 @@ UINTN bless_dropped(void);
 EFI_STATUS bless_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
                       const bless_hit *hit, bless_result *result);
 
-#endif /* AIRIES_BLESS_H */
+#endif /* FALCON_BLESS_H */

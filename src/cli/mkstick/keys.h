@@ -1,4 +1,4 @@
-/* airies-boot mkstick: the MOK keypair and the signing calls.
+/* falcon-boot mkstick: the MOK keypair and the signing calls.
  *
  * DESIGN Section 7.5 in code form. The public cert travels (p1, for
  * enrollment); the private key does not travel in the clear and lands only
@@ -14,8 +14,8 @@
  * get it subtly wrong.
  */
 
-#ifndef AIRIES_MKSTICK_KEYS_H
-#define AIRIES_MKSTICK_KEYS_H
+#ifndef FALCON_MKSTICK_KEYS_H
+#define FALCON_MKSTICK_KEYS_H
 
 #include <cli/common/status.h>
 #include <cli/mkstick/disk.h>
@@ -29,7 +29,7 @@ typedef struct {
 
 /* Default subject CN. Overridable so a user with several sticks can tell
  * their enrolled MOK entries apart in MokManager. */
-#define MOK_DEFAULT_CN "airies-boot MOK"
+#define MOK_DEFAULT_CN "falcon-boot MOK"
 
 /* RSA-4096, ten years. Long-lived on purpose: a MOK entry is enrolled by hand
  * through a firmware UI, and an expiry that forces the user back through that
@@ -47,4 +47,4 @@ cli_status mok_generate(const mok_keys *k, const char *cn);
 /* sbsign in -> out. */
 cli_status mok_sign(const mok_keys *k, const char *in, const char *out);
 
-#endif /* AIRIES_MKSTICK_KEYS_H */
+#endif /* FALCON_MKSTICK_KEYS_H */

@@ -1,4 +1,4 @@
-/* airies-boot: the synthetic credential filesystem (docs/DESIGN.md Section
+/* falcon-boot: the synthetic credential filesystem (docs/DESIGN.md Section
  * 5.1).
  *
  * Purpose. Publish a small, read-only, in-RAM filesystem on a handle of its
@@ -32,8 +32,8 @@
  * let a second publish reuse an instance a firmware caller might still hold.
  */
 
-#ifndef AIRIES_CREDFS_H
-#define AIRIES_CREDFS_H
+#ifndef FALCON_CREDFS_H
+#define FALCON_CREDFS_H
 
 #include <efi/uefi.h>
 #include <efi/devpath.h>
@@ -92,4 +92,4 @@ EFI_STATUS credfs_load_path(EFI_BOOT_SERVICES *bs, const CHAR16 *path,
  * must not find a second filesystem's state behind the same pointers. */
 EFI_STATUS credfs_teardown(EFI_BOOT_SERVICES *bs);
 
-#endif /* AIRIES_CREDFS_H */
+#endif /* FALCON_CREDFS_H */

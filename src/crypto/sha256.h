@@ -1,4 +1,4 @@
-/* airies-boot: SHA-256 (FIPS 180-4 Section 6.2).
+/* falcon-boot: SHA-256 (FIPS 180-4 Section 6.2).
  *
  * Purpose. The workhorse hash of the LUKS2 unlock: it is the header
  * checksum algorithm, the PBKDF2 PRF for both the p3 keyslot and the digest
@@ -16,8 +16,8 @@
  * pbkdf2.c, src/luks/luks.c (header checksum) and src/luks/af.c.
  */
 
-#ifndef AIRIES_CRYPTO_SHA256_H
-#define AIRIES_CRYPTO_SHA256_H
+#ifndef FALCON_CRYPTO_SHA256_H
+#define FALCON_CRYPTO_SHA256_H
 
 #include <stdint.h>
 #include <stddef.h>
@@ -38,4 +38,4 @@ void sha256_update(sha256_ctx *c, const void *data, size_t len);
 void sha256_final(sha256_ctx *c, uint8_t *out);
 void sha256(const void *data, size_t len, uint8_t *out);
 
-#endif /* AIRIES_CRYPTO_SHA256_H */
+#endif /* FALCON_CRYPTO_SHA256_H */

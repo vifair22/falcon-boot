@@ -1,4 +1,4 @@
-/* airies-boot: Block I/O protocol (UEFI spec 13.9).
+/* falcon-boot: Block I/O protocol (UEFI spec 13.9).
  *
  * We are on both sides of this protocol: we consume it to reach the exFAT
  * partition, and we produce an instance of it for the virtual CD (DESIGN
@@ -8,8 +8,8 @@
  * must be real functions, and ours refuse writes.
  */
 
-#ifndef AIRIES_UEFI_BLOCKIO_H
-#define AIRIES_UEFI_BLOCKIO_H
+#ifndef FALCON_UEFI_BLOCKIO_H
+#define FALCON_UEFI_BLOCKIO_H
 
 #include <efi/types.h>
 
@@ -56,4 +56,4 @@ struct EFI_BLOCK_IO_PROTOCOL {
     EFI_STATUS (EFIAPI *FlushBlocks)(EFI_BLOCK_IO_PROTOCOL *This);
 };
 
-#endif /* AIRIES_UEFI_BLOCKIO_H */
+#endif /* FALCON_UEFI_BLOCKIO_H */

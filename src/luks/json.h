@@ -1,4 +1,4 @@
-/* airies-boot: a read-only, allocation-free JSON scanner for LUKS2
+/* falcon-boot: a read-only, allocation-free JSON scanner for LUKS2
  * metadata (docs/DESIGN.md Sections 3, 5, 9).
  *
  * Purpose. A LUKS2 header's second half is a JSON document: the keyslots,
@@ -40,8 +40,8 @@
  * a file of its own.
  */
 
-#ifndef AIRIES_LUKS_JSON_H
-#define AIRIES_LUKS_JSON_H
+#ifndef FALCON_LUKS_JSON_H
+#define FALCON_LUKS_JSON_H
 
 #include <stdint.h>
 #include <stddef.h>
@@ -124,4 +124,4 @@ int json_u64(const json_value *v, uint64_t *out);
  * decode of a string value. Writes at most cap bytes. */
 int json_b64(const json_value *v, uint8_t *out, size_t cap, size_t *out_len);
 
-#endif /* AIRIES_LUKS_JSON_H */
+#endif /* FALCON_LUKS_JSON_H */

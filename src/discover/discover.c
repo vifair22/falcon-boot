@@ -59,9 +59,9 @@ static void classify(EFI_SYSTEM_TABLE *st, discover_dev *d)
 
     d->has_type = (uint8_t)(part_type_guid(st, d->handle, &d->type) == PART_OK);
     d->role = FS_HINT_NONE;
-    if (part_is_airies_iso(st, d->handle))
+    if (part_is_falcon_iso(st, d->handle))
         d->role = FS_HINT_ISO;
-    else if (part_is_airies_shelf(st, d->handle))
+    else if (part_is_falcon_shelf(st, d->handle))
         d->role = FS_HINT_SHELF;
 
     d->luks2 = 0;

@@ -58,7 +58,7 @@ static const char g_vol_c[] = "a volume with no manifest";
 
 /* Two blessed ISOs in the exact shape DESIGN Section 8.1 documents. */
 static const char g_manifest[] =
-    "# airies-boot manifest\n"
+    "# falcon-boot manifest\n"
     "\n"
     "iso=Linux/archlinux-2026.01.01-x86_64.iso\n"
     "size=1538670592\n"

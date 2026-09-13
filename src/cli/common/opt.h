@@ -1,4 +1,4 @@
-/* airies-boot host tooling: command dispatch, whitelist option parsing and
+/* falcon-boot host tooling: command dispatch, whitelist option parsing and
  * context-sensitive help.
  *
  * The shape is the repo's CLI standard, and each piece of it is here for a
@@ -17,8 +17,8 @@
  *     answers the question instead of complaining that <target> is missing.
  */
 
-#ifndef AIRIES_CLI_OPT_H
-#define AIRIES_CLI_OPT_H
+#ifndef FALCON_CLI_OPT_H
+#define FALCON_CLI_OPT_H
 
 #include <stddef.h>
 
@@ -104,4 +104,4 @@ const char *cli_at(const cli_args *a, const char *name, size_t i);
 cli_status cli_dispatch(const cli_cmd *const *cmds, size_t ncmds,
                         const char *prog, int argc, char **argv);
 
-#endif /* AIRIES_CLI_OPT_H */
+#endif /* FALCON_CLI_OPT_H */

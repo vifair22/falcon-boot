@@ -1,4 +1,4 @@
-/* airies-boot: the firmware half of partition identification
+/* falcon-boot: the firmware half of partition identification
  * (docs/DESIGN.md Section 3).
  *
  * Answers one question about a Block I/O handle: which GPT partition type
@@ -24,8 +24,8 @@
  * a stick is parsed once per scan.
  */
 
-#ifndef AIRIES_PARTEFI_H
-#define AIRIES_PARTEFI_H
+#ifndef FALCON_PARTEFI_H
+#define FALCON_PARTEFI_H
 
 #include <efi/uefi.h>
 #include <part/part.h>
@@ -44,10 +44,10 @@ enum {
  * *out untouched and returns one of the errors above. */
 int part_type_guid(EFI_SYSTEM_TABLE *st, EFI_HANDLE h, EFI_GUID *out);
 
-/* Does this handle carry the airies type GUID for p2 / p3? A handle whose
+/* Does this handle carry the falcon type GUID for p2 / p3? A handle whose
  * type cannot be established is not ours, so both answer FALSE for it. */
-BOOLEAN part_is_airies_iso(EFI_SYSTEM_TABLE *st, EFI_HANDLE h);
-BOOLEAN part_is_airies_shelf(EFI_SYSTEM_TABLE *st, EFI_HANDLE h);
+BOOLEAN part_is_falcon_iso(EFI_SYSTEM_TABLE *st, EFI_HANDLE h);
+BOOLEAN part_is_falcon_shelf(EFI_SYSTEM_TABLE *st, EFI_HANDLE h);
 
 /* Is any partition on any disk typed for this role? Enumerates every Block
  * I/O handle, so call it once per scan rather than per handle; the answer is
@@ -57,7 +57,7 @@ BOOLEAN part_role_present(EFI_SYSTEM_TABLE *st, part_role role);
 /* THE scan filter, and the one call a scan loop needs. DESIGN Section 3's
  * rule in a single test:
  *
- *   - if any airies-typed partition for this role exists anywhere, accept
+ *   - if any falcon-typed partition for this role exists anywhere, accept
  *     only those, so an internal disk's exFAT or LUKS2 volume can never be
  *     mistaken for the stick's;
  *   - if none exists anywhere, accept everything, which is what keeps the
@@ -73,4 +73,4 @@ BOOLEAN part_scan_accept(EFI_SYSTEM_TABLE *st, EFI_HANDLE h, part_role role);
  * be judged against a stale picture of the machine. */
 void part_scan_reset(void);
 
-#endif /* AIRIES_PARTEFI_H */
+#endif /* FALCON_PARTEFI_H */

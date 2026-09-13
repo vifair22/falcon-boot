@@ -1,12 +1,12 @@
-/* airies-boot: Device Path protocol (UEFI spec 10.2, 10.3.5).
+/* falcon-boot: Device Path protocol (UEFI spec 10.2, 10.3.5).
  *
  * Device paths are byte-packed variable-length node streams: a node's Length
  * is a two-byte array rather than a UINT16 precisely because a node may sit
  * at an odd offset. Never read Length as a UINT16; use the accessors below.
  */
 
-#ifndef AIRIES_UEFI_DEVPATH_H
-#define AIRIES_UEFI_DEVPATH_H
+#ifndef FALCON_UEFI_DEVPATH_H
+#define FALCON_UEFI_DEVPATH_H
 
 #include <efi/types.h>
 
@@ -78,4 +78,4 @@ static inline UINTN dp_total_len(const EFI_DEVICE_PATH_PROTOCOL *dp)
     }
 }
 
-#endif /* AIRIES_UEFI_DEVPATH_H */
+#endif /* FALCON_UEFI_DEVPATH_H */

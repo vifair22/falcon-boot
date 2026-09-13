@@ -41,7 +41,7 @@ if [[ ! -f $KEYS/spike.key ]]; then
     echo "== generating throwaway spike MOK keypair"
     mkdir -p "$KEYS"
     openssl req -new -x509 -newkey rsa:2048 -nodes -days 3650 -sha256 \
-        -subj "/CN=airies-boot shim spike MOK/" \
+        -subj "/CN=falcon-boot shim spike MOK/" \
         -keyout "$KEYS/spike.key" -out "$KEYS/spike.crt" 2>/dev/null
     chmod 600 "$KEYS/spike.key"
 fi

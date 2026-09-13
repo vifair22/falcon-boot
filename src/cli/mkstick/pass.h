@@ -1,4 +1,4 @@
-/* airies-boot mkstick: acquiring the passphrase that p3 and p4 share.
+/* falcon-boot mkstick: acquiring the passphrase that p3 and p4 share.
  *
  * Two routes, both ending in the same bytes: a file (for scripted builds and
  * for the test rig) or an interactive double prompt with the terminal echo
@@ -20,8 +20,8 @@
  * process runs.
  */
 
-#ifndef AIRIES_MKSTICK_PASS_H
-#define AIRIES_MKSTICK_PASS_H
+#ifndef FALCON_MKSTICK_PASS_H
+#define FALCON_MKSTICK_PASS_H
 
 #include <stddef.h>
 
@@ -40,4 +40,4 @@ cli_status pass_acquire(mks_pass *p, const char *file);
 
 void pass_wipe(mks_pass *p);
 
-#endif /* AIRIES_MKSTICK_PASS_H */
+#endif /* FALCON_MKSTICK_PASS_H */

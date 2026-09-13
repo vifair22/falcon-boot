@@ -1,4 +1,4 @@
-/* airies-boot: the personal-OS boot path (docs/DESIGN.md Section 5).
+/* falcon-boot: the personal-OS boot path (docs/DESIGN.md Section 5).
  *
  * Purpose. One menu entry's worth of work: prompt for the passphrase, unlock
  * p3 (LUKS2, pbkdf2 keyslot), mount the read-only ext4 inside it, read the
@@ -44,8 +44,8 @@
  * launch, successful or not.
  */
 
-#ifndef AIRIES_POS_H
-#define AIRIES_POS_H
+#ifndef FALCON_POS_H
+#define FALCON_POS_H
 
 #include <efi/uefi.h>
 
@@ -95,4 +95,4 @@ const CHAR16 *pos_entry_label(void);
 EFI_STATUS pos_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
                     pos_result *result);
 
-#endif /* AIRIES_POS_H */
+#endif /* FALCON_POS_H */

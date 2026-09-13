@@ -262,12 +262,12 @@ static BOOLEAN is_role(EFI_SYSTEM_TABLE *st, EFI_HANDLE h, part_role role)
     return (BOOLEAN)gpt_guid_eq((const uint8_t *)&got, want);
 }
 
-BOOLEAN part_is_airies_iso(EFI_SYSTEM_TABLE *st, EFI_HANDLE h)
+BOOLEAN part_is_falcon_iso(EFI_SYSTEM_TABLE *st, EFI_HANDLE h)
 {
     return is_role(st, h, PART_ROLE_ISO);
 }
 
-BOOLEAN part_is_airies_shelf(EFI_SYSTEM_TABLE *st, EFI_HANDLE h)
+BOOLEAN part_is_falcon_shelf(EFI_SYSTEM_TABLE *st, EFI_HANDLE h)
 {
     return is_role(st, h, PART_ROLE_SHELF);
 }
@@ -304,7 +304,7 @@ BOOLEAN part_scan_accept(EFI_SYSTEM_TABLE *st, EFI_HANDLE h, part_role role)
 {
     if (st == NULL || (unsigned)role >= PART_ROLE_COUNT)
         return TRUE;
-    /* No airies-typed partition in the machine: nothing to prefer, so the
+    /* No falcon-typed partition in the machine: nothing to prefer, so the
      * probe-everything behaviour the rig images rely on stands. */
     if (!part_role_present(st, role))
         return TRUE;

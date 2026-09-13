@@ -1,4 +1,4 @@
-/* airies-boot-mkstick: the device-configuration tool of DESIGN Section 8.
+/* falcon-boot-mkstick: the device-configuration tool of DESIGN Section 8.
  *
  * Ordinary Linux userland C. It is allowed to shell out to sgdisk, mkfs.*,
  * cryptsetup, openssl and sbsign rather than reimplementing partitioning,
@@ -28,7 +28,7 @@ static const cli_cmd *const commands[] = {
 };
 
 static const char *const tagline =
-    "Build and inspect an airies-boot stick (docs/DESIGN.md Section 8).";
+    "Build and inspect a falcon-boot stick (docs/DESIGN.md Section 8).";
 
 static const char *const global_help =
     "  --verbose                    show every command this tool runs\n"
@@ -39,12 +39,12 @@ int main(int argc, char **argv)
 {
     cli_status rc;
 
-    cli_help_register("airies-boot-mkstick", tagline, commands,
+    cli_help_register("falcon-boot-mkstick", tagline, commands,
                       sizeof commands / sizeof commands[0], global_help);
     cleanup_init();
 
     rc = cli_dispatch(commands, sizeof commands / sizeof commands[0],
-                      "airies-boot-mkstick", argc - 1, argv + 1);
+                      "falcon-boot-mkstick", argc - 1, argv + 1);
     if (rc == CLI_OK)
         return 0;
 

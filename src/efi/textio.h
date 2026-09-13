@@ -1,10 +1,10 @@
-/* airies-boot: Simple Text Input/Output protocols (UEFI spec 12.3, 12.4).
+/* falcon-boot: Simple Text Input/Output protocols (UEFI spec 12.3, 12.4).
  * Only the members we call get real prototypes; the rest are typed void*
  * placeholders that exist purely to keep struct offsets ABI-correct.
  */
 
-#ifndef AIRIES_UEFI_TEXTIO_H
-#define AIRIES_UEFI_TEXTIO_H
+#ifndef FALCON_UEFI_TEXTIO_H
+#define FALCON_UEFI_TEXTIO_H
 
 #include <efi/types.h>
 
@@ -82,4 +82,4 @@ struct EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL {
 
 #define EFI_TEXT_ATTR(fg, bg) ((UINTN)((fg) | ((bg) << 4)))
 
-#endif /* AIRIES_UEFI_TEXTIO_H */
+#endif /* FALCON_UEFI_TEXTIO_H */

@@ -1,4 +1,4 @@
-/* airies-boot: AES-XTS on the AES-NI instruction set.
+/* falcon-boot: AES-XTS on the AES-NI instruction set.
  *
  * Purpose. The fast path behind xts.h. Reading the personal-OS UKI off p3
  * means decrypting tens of megabytes through AES-XTS before the menu can
@@ -36,8 +36,8 @@
  * so it does). Both hold on every platform this loader targets.
  */
 
-#ifndef AIRIES_CRYPTO_AESNI_H
-#define AIRIES_CRYPTO_AESNI_H
+#ifndef FALCON_CRYPTO_AESNI_H
+#define FALCON_CRYPTO_AESNI_H
 
 #include <stdint.h>
 #include <stddef.h>
@@ -68,4 +68,4 @@ void aesni_xts_encrypt(const aesni_sched *data_key,
                        const aesni_sched *tweak_key, uint64_t sector,
                        const uint8_t *in, uint8_t *out, size_t len);
 
-#endif /* AIRIES_CRYPTO_AESNI_H */
+#endif /* FALCON_CRYPTO_AESNI_H */

@@ -1,4 +1,4 @@
-/* airies-boot: HMAC (RFC 2104). See hmac.h. */
+/* falcon-boot: HMAC (RFC 2104). See hmac.h. */
 
 #include <crypto/hmac.h>
 #include <crypto/crypto.h>

@@ -1,4 +1,4 @@
-# airies-boot: host-side unit tests.
+# falcon-boot: host-side unit tests.
 #
 # Built with the NATIVE gcc, not the mingw cross-compiler. Every unit under
 # test here is deliberately EFI-free and reaches the outside world only

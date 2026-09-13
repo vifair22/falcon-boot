@@ -1,4 +1,4 @@
-/* airies-boot-sign: error buffer, logging, subprocess exec and file I/O.
+/* falcon-boot-sign: error buffer, logging, subprocess exec and file I/O.
  *
  * Nothing here is specific to blessing; it is the host-tooling floor the
  * repo's CLI conventions ask for (thread-local error buffer set by the
@@ -123,7 +123,7 @@ static int run_common(char *const argv[], int out_fd)
                 (void)close(out_fd);
         }
         execvp(argv[0], argv);
-        (void)fprintf(stderr, "airies-boot-sign: exec %s: %s\n", argv[0],
+        (void)fprintf(stderr, "falcon-boot-sign: exec %s: %s\n", argv[0],
                       strerror(errno));
         _exit(127);
     }
@@ -215,7 +215,7 @@ int sgn_run_capture(char *const argv[], char **out, size_t *len, size_t max)
             _exit(127);
         (void)close(fds[1]);
         execvp(argv[0], argv);
-        (void)fprintf(stderr, "airies-boot-sign: exec %s: %s\n", argv[0],
+        (void)fprintf(stderr, "falcon-boot-sign: exec %s: %s\n", argv[0],
                       strerror(errno));
         _exit(127);
     }

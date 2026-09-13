@@ -1,7 +1,7 @@
-/* Shared declarations for the airies-boot unit test binary. */
+/* Shared declarations for the falcon-boot unit test binary. */
 
-#ifndef AIRIES_TEST_TESTS_H
-#define AIRIES_TEST_TESTS_H
+#ifndef FALCON_TEST_TESTS_H
+#define FALCON_TEST_TESTS_H
 
 #include <stdint.h>
 #include <stddef.h>
@@ -28,4 +28,4 @@ int run_sb_tests(void);
  * visible in the assertion message rather than silently truncating. */
 void ucs2_to_ascii(const uint16_t *src, char *dst, size_t cap);
 
-#endif /* AIRIES_TEST_TESTS_H */
+#endif /* FALCON_TEST_TESTS_H */

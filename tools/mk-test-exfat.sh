@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# airies-boot: build the exFAT fixture the QEMU rig boots against.
+# falcon-boot: build the exFAT fixture the QEMU rig boots against.
 #
 # Produces build/test-exfat.img: a whole-device ("superfloppy") exFAT
 # filesystem with no partition table, which is what the loader's Block I/O
@@ -61,7 +61,7 @@ command -v mkfs.exfat >/dev/null 2>&1 || {
 mkdir -p build
 rm -f "$IMG"
 truncate -s "${SIZE_MIB}M" "$IMG"
-mkfs.exfat -n AIRIES-ISO "$IMG" >/dev/null
+mkfs.exfat -n FALCON-ISO "$IMG" >/dev/null
 
 MNT=$(mktemp -d)
 # Mount as the invoking user so the file creation below needs no further sudo.
@@ -131,7 +131,7 @@ fi
 
 sync
 
-echo "created $IMG (${SIZE_MIB} MiB, whole-device exFAT, label AIRIES-ISO)"
+echo "created $IMG (${SIZE_MIB} MiB, whole-device exFAT, label FALCON-ISO)"
 echo
 echo "listed by the loader (shown by folder; full paths here):"
 echo "  archlinux-fake.iso"
@@ -141,7 +141,7 @@ echo "  Linux/fedora-fake.iso"
 echo "  Linux/rescue/gparted-fake.iso"
 echo "  deep/a/b/justdeepenough-fake.iso"
 if [[ "$HAVE_PAYLOAD" -eq 1 ]]; then
-    echo "  payload-test.iso              (real, bootable: AIRIES-PAYLOAD-OK)"
+    echo "  payload-test.iso              (real, bootable: FALCON-PAYLOAD-OK)"
     echo "  deep/a/b/payload-nested.iso   (the same one, three folders down)"
 else
     echo

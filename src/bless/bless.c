@@ -87,7 +87,7 @@ static const CHAR16 *uki_display(const char *uki_name)
     return g_uki_ucs2;
 }
 
-/* ---- finding things under /airies/blessed ---- */
+/* ---- finding things under /falcon/blessed ---- */
 
 static int dir_find(fs_dir *in, const char *name, fs_dirent *found)
 {
@@ -103,10 +103,10 @@ static int dir_find(fs_dir *in, const char *name, fs_dirent *found)
     return rc; /* 0 = not found, negative = the driver's error */
 }
 
-/* Opens /airies/blessed on the volume, leaving it in *d. Returns 1 when it is
+/* Opens /falcon/blessed on the volume, leaving it in *d. Returns 1 when it is
  * there, 0 when it is not, negative on a filesystem error.
  *
- * g_dir_a is the scratch for the /airies level; the caller's *d is where the
+ * g_dir_a is the scratch for the /falcon level; the caller's *d is where the
  * walk ends up. Safe only because the dirent is copied out of the iterator
  * before the next open overwrites it, which dir_find guarantees. */
 static int open_blessed_dir(fs_vol *vol, fs_dir *d)
@@ -428,7 +428,7 @@ EFI_STATUS bless_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
      * to touch it, not a promise about the volume. */
     vol = (fs_vol *)(uintptr_t)hit->src;
 
-    result->stage = L"opening /airies/blessed";
+    result->stage = L"opening /falcon/blessed";
     if (open_blessed_dir(vol, &g_dir_b) != 1) {
         result->advice = L"the blessed directory is gone from this volume. "
                          L"Re-bless the ISO.";

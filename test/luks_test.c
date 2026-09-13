@@ -5,7 +5,7 @@
  * the kernel's dm-crypt while the volume is open:
  *
  *   build/test-luks.img        LUKS2, aes-xts-plain64, --key-size 512, one
- *                              pbkdf2 keyslot, passphrase "airies-test", an
+ *                              pbkdf2 keyslot, passphrase "falcon-test", an
  *                              ext4 filesystem inside. The shape DESIGN
  *                              Section 3 mandates for p3.
  *   build/test-luks-argon.img  LUKS2 with an argon2id keyslot and nothing
@@ -66,7 +66,7 @@
 #define LUKS_REF "build/test-luks.ref64k"
 #endif
 
-#define PASS       "airies-test"
+#define PASS       "falcon-test"
 #define PASS_LEN   (sizeof PASS - 1u)
 
 /* What cryptsetup 2.8.7 wrote, recorded so a silent change in its defaults
@@ -362,13 +362,13 @@ static void test_luks_unlock_wrong_passphrase(void **state)
 
     /* Off-by-one variants of the right passphrase, which is the closest an
      * attacker gets without the real one. */
-    assert_int_equal(luks_unlock(&v, "airies-tes", 10, &mk, &slot),
+    assert_int_equal(luks_unlock(&v, "falcon-tes", 10, &mk, &slot),
                      LUKS_ERR_NOKEY);
     assert_memory_equal(mk.key, zero, sizeof zero);
-    assert_int_equal(luks_unlock(&v, "airies-testt", 12, &mk, &slot),
+    assert_int_equal(luks_unlock(&v, "falcon-testt", 12, &mk, &slot),
                      LUKS_ERR_NOKEY);
     assert_memory_equal(mk.key, zero, sizeof zero);
-    assert_int_equal(luks_unlock(&v, "Airies-test", 11, &mk, &slot),
+    assert_int_equal(luks_unlock(&v, "Falcon-test", 11, &mk, &slot),
                      LUKS_ERR_NOKEY);
     assert_memory_equal(mk.key, zero, sizeof zero);
 

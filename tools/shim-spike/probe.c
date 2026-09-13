@@ -41,7 +41,7 @@
 __attribute__((section(".sbat"), used))
 static const char sbat_csv[] =
     "sbat,1,SBAT Version,sbat,1,https://github.com/rhboot/shim/blob/main/SBAT.md\n"
-    "airies-boot.spike,1,airies-boot,shim-spike-probe,0,https://git.airies.net/vifair22/airies-boot\n";
+    "falcon-boot.spike,1,falcon-boot,shim-spike-probe,0,https://git.airies.net/vifair22/falcon-boot\n";
 
 static EFI_SYSTEM_TABLE  *ST;
 static EFI_BOOT_SERVICES *BS;
@@ -430,7 +430,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *systab)
     BS->SetWatchdogTimer(0, 0, 0, 0);
 
     line();
-    put(u"=== airies-boot shim plumbing probe ===");
+    put(u"=== falcon-boot shim plumbing probe ===");
     line();
 
     put(u"firmware: ");

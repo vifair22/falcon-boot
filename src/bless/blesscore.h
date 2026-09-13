@@ -1,4 +1,4 @@
-/* airies-boot: the blessed-boot record cache (docs/DESIGN.md Section 8.1).
+/* falcon-boot: the blessed-boot record cache (docs/DESIGN.md Section 8.1).
  *
  * The half of the blessed-boot path that has no firmware in it: the records
  * read off p2's manifest, which volume each came from, and the Section 8.1
@@ -29,8 +29,8 @@
  * boot loader's job and the boot's security does not rest on the answer.
  */
 
-#ifndef AIRIES_BLESS_CORE_H
-#define AIRIES_BLESS_CORE_H
+#ifndef FALCON_BLESS_CORE_H
+#define FALCON_BLESS_CORE_H
 
 #include <stdint.h>
 #include <stddef.h>
@@ -131,4 +131,4 @@ bless_state bless_cache_lookup(const bless_cache *c, const void *src,
  * verified it; shim decides that at load time. */
 const uint16_t *bless_suffix(bless_state s);
 
-#endif /* AIRIES_BLESS_CORE_H */
+#endif /* FALCON_BLESS_CORE_H */

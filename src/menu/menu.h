@@ -1,10 +1,10 @@
-/* airies-boot: text menu over Simple Text Output/Input (DESIGN Section 9).
+/* falcon-boot: text menu over Simple Text Output/Input (DESIGN Section 9).
  * Presentation only: it renders entries and reports what the user picked;
  * acting on the selection is the caller's job.
  */
 
-#ifndef AIRIES_MENU_H
-#define AIRIES_MENU_H
+#ifndef FALCON_MENU_H
+#define FALCON_MENU_H
 
 #include <efi/uefi.h>
 
@@ -58,4 +58,4 @@ INTN menu_run(EFI_SYSTEM_TABLE *st, const menu_banner *banner,
 INTN menu_prompt_secret(EFI_SYSTEM_TABLE *st, const CHAR16 *prompt,
                         char *buf, UINTN cap);
 
-#endif /* AIRIES_MENU_H */
+#endif /* FALCON_MENU_H */

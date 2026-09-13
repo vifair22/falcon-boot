@@ -1,4 +1,4 @@
-/* airies-boot: shared crypto plumbing (docs/DESIGN.md Sections 5, 9).
+/* falcon-boot: shared crypto plumbing (docs/DESIGN.md Sections 5, 9).
  *
  * Purpose. The LUKS2 unlock of p3 is the one place in EFI-land where this
  * repo writes cryptography, and Section 9 fixes the scope: SHA-2, PBKDF2-HMAC
@@ -16,8 +16,8 @@
  * xts.h and is the only in-repo caller.
  */
 
-#ifndef AIRIES_CRYPTO_H
-#define AIRIES_CRYPTO_H
+#ifndef FALCON_CRYPTO_H
+#define FALCON_CRYPTO_H
 
 #include <stdint.h>
 #include <stddef.h>
@@ -60,4 +60,4 @@ int crypto_ct_eq(const void *a, const void *b, size_t n);
  */
 int crypto_has_aesni(void);
 
-#endif /* AIRIES_CRYPTO_H */
+#endif /* FALCON_CRYPTO_H */

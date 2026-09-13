@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# airies-boot: add a blessed ISO (and a stale one) to the test stick, so the
+# falcon-boot: add a blessed ISO (and a stale one) to the test stick, so the
 # rig can boot the blessed path end to end (docs/DESIGN.md Section 8.1).
 #
 # What this produces, on top of whatever tools/mk-test-stick.sh already put on
@@ -7,9 +7,9 @@
 #
 #   p2:/blessed-test.iso                an ISO carrying the fixture kernel and
 #                                       initramfs, blessed
-#   p2:/airies/blessed/blessed-test.uki the signed UKI wrap the real bless tool
+#   p2:/falcon/blessed/blessed-test.uki the signed UKI wrap the real bless tool
 #                                       built out of it
-#   p2:/airies/blessed/manifest         two records: the one above, plus a
+#   p2:/falcon/blessed/manifest         two records: the one above, plus a
 #                                       DELIBERATELY WRONG size for
 #                                       payload-test.iso
 #
@@ -21,7 +21,7 @@
 #                                         size it had when it was blessed
 #   archlinux-fake.iso                    no record at all
 #
-# The UKI is built by the REAL tool (build/bin/airies-boot-sign), not by a
+# The UKI is built by the REAL tool (build/bin/falcon-boot-sign), not by a
 # hand-rolled ukify call here: the thing under test on the loader side is that
 # what the bless tool writes is what the loader finds, so a fixture that wrote
 # it a second way would prove nothing about the pair.
@@ -41,7 +41,7 @@
 #
 # Usage: tools/mk-test-blessed-stick.sh
 # Env:   STICK_IMG  the stick to modify (default: build/test-stick.img)
-#        SIGN       the bless tool (default: build/bin/airies-boot-sign)
+#        SIGN       the bless tool (default: build/bin/falcon-boot-sign)
 #
 # Needs xorriso, sbsign/sbverify, ukify, losetup and passwordless sudo.
 
@@ -50,12 +50,12 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 STICK_IMG="${STICK_IMG:-build/test-stick.img}"
-SIGN="${SIGN:-build/bin/airies-boot-sign}"
+SIGN="${SIGN:-build/bin/falcon-boot-sign}"
 
 KERNEL=build/test/fixture-vmlinuz
 INITRD=build/test/fixture-initrd.cpio
-MOK_KEY=build/mok-test/airies-test-mok.key
-MOK_CRT=build/mok-test/airies-test-mok.crt
+MOK_KEY=build/mok-test/falcon-test-mok.key
+MOK_CRT=build/mok-test/falcon-test-mok.crt
 
 ISO=build/test-blessed.iso
 STAGE=build/test/blessed-isoroot
@@ -124,7 +124,7 @@ mkdir -p "$STAGE/$ISO_KERNEL_DIR"
 cp "$KERNEL" "$STAGE/$ISO_KERNEL"
 cp "$INITRD" "$STAGE/$ISO_KERNEL_DIR/initramfs-linux.img"
 rm -f "$ISO"
-xorriso -as mkisofs -r -J -V AIRIES_BLESSED -o "$ISO" "$STAGE" >/dev/null 2>&1
+xorriso -as mkisofs -r -J -V FALCON_BLESSED -o "$ISO" "$STAGE" >/dev/null 2>&1
 rm -rf "$STAGE"
 echo "   $ISO ($(stat -c%s "$ISO") bytes)"
 
@@ -153,8 +153,8 @@ echo "== bless (the real tool, the test MOK)"
     --kernel "$ISO_KERNEL" \
     --cmdline "$CMDLINE"
 
-MANIFEST="$MNT/airies/blessed/manifest"
-UKI="$MNT/airies/blessed/$UKI_NAME"
+MANIFEST="$MNT/falcon/blessed/manifest"
+UKI="$MNT/falcon/blessed/$UKI_NAME"
 
 [[ -f "$UKI" ]] || { echo "FAIL: $UKI was not written" >&2; exit 1; }
 sbverify --cert "$MOK_CRT" "$UKI" >/dev/null
@@ -217,18 +217,18 @@ Expected menu labels:
   archlinux-fake.iso ...                  (no record)
 
 Expected serial output, picking blessed-test.iso:
-  AIRIES-UKI-INIT
-  AIRIES-CRED-DIR-MISSING /.extra/credentials
-  AIRIES-CRED-FAIL
-  AIRIES-UKI-DONE
+  FALCON-UKI-INIT
+  FALCON-CRED-DIR-MISSING /.extra/credentials
+  FALCON-CRED-FAIL
+  FALCON-UKI-DONE
 then the machine powers off. The two CRED lines are the SUCCESS case here:
 the blessed path publishes the image and no credential (the wrap carries its
 own initrd and cmdline), so the fixture init finds no credential directory
-and says so. Reaching AIRIES-UKI-DONE means the wrap was loaded, verified by
+and says so. Reaching FALCON-UKI-DONE means the wrap was loaded, verified by
 shim under --secboot, started, and ran its initramfs.
 
 Expected serial output, picking payload-test.iso (the stale one):
-  AIRIES-PAYLOAD-OK
+  FALCON-PAYLOAD-OK
 i.e. exactly the ordinary ISO path, because a stale blessing boots as if it
 were not there at all. Nothing should mention the UKI.
 

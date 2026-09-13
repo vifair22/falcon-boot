@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# airies-boot: the signing appliance's acceptance run (DESIGN Section 7.5,
+# falcon-boot: the signing appliance's acceptance run (DESIGN Section 7.5,
 # build order step 8).
 #
 # Boots build/appliance/appliance-stick.img under OVMF with Secure Boot ON and
@@ -36,7 +36,7 @@
 # still driven the rig's usual way, by sendkey through the QEMU monitor.
 #
 # Usage: tools/appliance/run-appliance-proof.sh
-# Env:   AIRIES_TEST_PASS  the stick's passphrase (default "airies-test")
+# Env:   FALCON_TEST_PASS  the stick's passphrase (default "falcon-test")
 
 set -euo pipefail
 
@@ -52,10 +52,10 @@ CONSOLE="$OUT/console"          # $CONSOLE.in / $CONSOLE.out, the ttyS1 FIFOs
 CONSOLE_LOG="$OUT/appliance-console.log"
 MON="$OUT/mon.sock"
 
-PASS="${AIRIES_TEST_PASS:-airies-test}"
+PASS="${FALCON_TEST_PASS:-falcon-test}"
 
 # What tools/mk-test-appliance-stick.sh staged on p2, and what signing the
-# second of them must produce under airies/blessed.
+# second of them must produce under falcon/blessed.
 ROOT_ISO_NAME=arch-mini-root.iso
 FOLDER=Linux
 FOLDER_ISO_NAME=arch-mini-linux.iso
@@ -269,7 +269,7 @@ LOOP=$(sudo losetup --show -f -P "$IMG")
 sudo udevadm settle 2>/dev/null || sleep 1
 MNT=$(mktemp -d)
 sudo mount -o ro "${LOOP}p2" "$MNT"
-if [[ -f "$MNT/airies/blessed/manifest" ]]; then
+if [[ -f "$MNT/falcon/blessed/manifest" ]]; then
     sudo umount "$MNT"; rmdir "$MNT"; MNT=
     sudo losetup -d "$LOOP"; LOOP=
     echo "ERROR: $IMG already carries a manifest, so nothing on it is pending." >&2
@@ -305,15 +305,15 @@ echo "== run 1: drive the loader into the appliance"
 RUN1_MARK=$(size_of "$CONSOLE_LOG")
 enter_appliance
 
-wait_for "$CONSOLE_LOG" "airies-boot signing appliance" 180
+wait_for "$CONSOLE_LOG" "falcon-boot signing appliance" 180
 T_UP=$(date +%s%N)
 echo "   appliance is up"
 echo "   TIMING boot-to-console $(( (T_UP - T_LAUNCH) / 1000000 )) ms" \
      "(from the menu selection, so it includes the loader reading the image)"
 unlock_appliance "$RUN1_MARK"
 
-wait_for "$CONSOLE_LOG" "AIRIES-APPLIANCE-PENDING" 120
-PENDING1=$(grep -a "AIRIES-APPLIANCE-PENDING" "$CONSOLE_LOG" | tail -1)
+wait_for "$CONSOLE_LOG" "FALCON-APPLIANCE-PENDING" 120
+PENDING1=$(grep -a "FALCON-APPLIANCE-PENDING" "$CONSOLE_LOG" | tail -1)
 echo "   $PENDING1"
 [[ "$PENDING1" == *"PENDING 2"* ]] ||
     fail "run 1 should see both staged ISOs pending, got '$PENDING1'"
@@ -360,18 +360,18 @@ echo "   review shows exactly the one marked path; confirming"
 
 T_SIGN=$(date +%s%N)
 say_to_appliance "yes"
-wait_for_from "$CONSOLE_LOG" "$RUN1_MARK" "AIRIES-APPLIANCE-SELECTED 1" 60
-wait_for_from "$CONSOLE_LOG" "$RUN1_MARK" "AIRIES-APPLIANCE-SIGNED" 900
+wait_for_from "$CONSOLE_LOG" "$RUN1_MARK" "FALCON-APPLIANCE-SELECTED 1" 60
+wait_for_from "$CONSOLE_LOG" "$RUN1_MARK" "FALCON-APPLIANCE-SIGNED" 900
 echo "   TIMING bless $(( ($(date +%s%N) - T_SIGN) / 1000000 )) ms" \
      "(hash the ISO, extract the kernel, ukify, sbsign, record)"
 SIGNED1=$(tail -c "+$(( RUN1_MARK + 1 ))" "$CONSOLE_LOG" |
-          grep -a "AIRIES-APPLIANCE-SIGNED" | tail -1 | sed 's/\r$//')
+          grep -a "FALCON-APPLIANCE-SIGNED" | tail -1 | sed 's/\r$//')
 echo "  $SIGNED1"
 [[ "$SIGNED1" == *"$FOLDER/$FOLDER_ISO_NAME"* ]] ||
     fail "run 1 signed something other than the marked image: '$SIGNED1'"
 
-wait_for "$CONSOLE_LOG" "AIRIES-APPLIANCE-SUMMARY" 600
-SUMMARY1=$(grep -a "AIRIES-APPLIANCE-SUMMARY" "$CONSOLE_LOG" | tail -1)
+wait_for "$CONSOLE_LOG" "FALCON-APPLIANCE-SUMMARY" 600
+SUMMARY1=$(grep -a "FALCON-APPLIANCE-SUMMARY" "$CONSOLE_LOG" | tail -1)
 echo "   $SUMMARY1"
 [[ "$SUMMARY1" == *"signed=1 failed=0 skipped=1"* ]] ||
     fail "run 1 summary is '$SUMMARY1'"
@@ -390,12 +390,12 @@ echo "== run 2: same stick, second visit"
 RUN2_MARK=$(size_of "$CONSOLE_LOG")
 enter_appliance
 
-wait_for_from "$CONSOLE_LOG" "$RUN2_MARK" "airies-boot signing appliance" 180
+wait_for_from "$CONSOLE_LOG" "$RUN2_MARK" "falcon-boot signing appliance" 180
 unlock_appliance "$RUN2_MARK"
 
-wait_for_from "$CONSOLE_LOG" "$RUN2_MARK" "AIRIES-APPLIANCE-PENDING" 120
+wait_for_from "$CONSOLE_LOG" "$RUN2_MARK" "FALCON-APPLIANCE-PENDING" 120
 PENDING2=$(tail -c "+$(( RUN2_MARK + 1 ))" "$CONSOLE_LOG" |
-           grep -a "AIRIES-APPLIANCE-PENDING" | tail -1)
+           grep -a "FALCON-APPLIANCE-PENDING" | tail -1)
 echo "   $PENDING2"
 [[ "$PENDING2" == *"PENDING 1"* ]] ||
     fail "run 2 should have exactly one pending ISO left, got '$PENDING2'"
@@ -413,15 +413,15 @@ echo "   quitting at the selection prompt"
 say_to_appliance "quit"
 wait_for_from "$CONSOLE_LOG" "$RUN2_MARK" "leaving without signing anything" 60
 
-wait_for_from "$CONSOLE_LOG" "$RUN2_MARK" "AIRIES-APPLIANCE-SUMMARY" 120
+wait_for_from "$CONSOLE_LOG" "$RUN2_MARK" "FALCON-APPLIANCE-SUMMARY" 120
 SUMMARY2=$(tail -c "+$(( RUN2_MARK + 1 ))" "$CONSOLE_LOG" |
-           grep -a "AIRIES-APPLIANCE-SUMMARY" | tail -1)
+           grep -a "FALCON-APPLIANCE-SUMMARY" | tail -1)
 echo "   $SUMMARY2"
 [[ "$SUMMARY2" == *"signed=0 failed=0 skipped=1"* ]] ||
     fail "run 2 summary is '$SUMMARY2'"
-seen_from "$RUN2_MARK" "AIRIES-APPLIANCE-SELECTED" &&
+seen_from "$RUN2_MARK" "FALCON-APPLIANCE-SELECTED" &&
     fail "run 2 reported a confirmed selection though it was quit"
-seen_from "$RUN2_MARK" "AIRIES-APPLIANCE-SIGNED" &&
+seen_from "$RUN2_MARK" "FALCON-APPLIANCE-SIGNED" &&
     fail "run 2 signed something after quit"
 echo "   quit confirmed nothing and signed nothing"
 
@@ -449,16 +449,16 @@ P2_UUID=$(sudo blkid -s UUID -o value "${LOOP}p2")
 MNT=$(mktemp -d)
 sudo mount -o ro,uid="$(id -u)",gid="$(id -g)" "${LOOP}p2" "$MNT"
 
-UKI="$MNT/airies/blessed/$BLESSED_UKI"
+UKI="$MNT/falcon/blessed/$BLESSED_UKI"
 [[ -f "$UKI" ]] || fail "no $BLESSED_UKI on p2"
 echo "   wrap:     $BLESSED_UKI ($(stat -c%s "$UKI") bytes)"
 
 # One wrap and one record, because one image was confirmed. The unmarked one
 # and the run that was quit must have left nothing behind at all.
-WRAPS=$(find "$MNT/airies/blessed" -maxdepth 1 -name '*.uki' | wc -l)
+WRAPS=$(find "$MNT/falcon/blessed" -maxdepth 1 -name '*.uki' | wc -l)
 [[ "$WRAPS" == 1 ]] ||
-    fail "$WRAPS wraps under airies/blessed; exactly one image was confirmed"
-RECORDS=$(grep -ac '^iso=' "$MNT/airies/blessed/manifest" || true)
+    fail "$WRAPS wraps under falcon/blessed; exactly one image was confirmed"
+RECORDS=$(grep -ac '^iso=' "$MNT/falcon/blessed/manifest" || true)
 [[ "$RECORDS" == 1 ]] ||
     fail "$RECORDS manifest records; exactly one image was confirmed"
 echo "   exactly one wrap and one manifest record"
@@ -467,7 +467,7 @@ sbverify --cert "$CERT" "$UKI" >/dev/null 2>&1 ||
     fail "$BLESSED_UKI does not verify against $CERT"
 echo "   signature verifies against the stick's own MOK certificate"
 
-MAN="$MNT/airies/blessed/manifest"
+MAN="$MNT/falcon/blessed/manifest"
 [[ -f "$MAN" ]] || fail "no manifest on p2"
 REC_SHA=$(grep -a '^sha256=' "$MAN" | head -1 | cut -d= -f2)
 REC_SIZE=$(grep -a '^size=' "$MAN" | head -1 | cut -d= -f2)

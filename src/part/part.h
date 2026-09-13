@@ -1,4 +1,4 @@
-/* airies-boot: GPT partition identification (docs/DESIGN.md Section 3).
+/* falcon-boot: GPT partition identification (docs/DESIGN.md Section 3).
  *
  * Why this module exists. On real hardware the stick sits next to internal
  * disks that may well carry an exFAT volume and a LUKS2 volume of their own,
@@ -13,15 +13,15 @@
  * in src/part/partefi.c, which is the only half that cannot be host-tested.
  */
 
-#ifndef AIRIES_PART_H
-#define AIRIES_PART_H
+#ifndef FALCON_PART_H
+#define FALCON_PART_H
 
 #include <stdint.h>
 #include <stddef.h>
 
 #define GPT_GUID_LEN 16u
 
-/* ---- the airies partition type GUIDs ----
+/* ---- the falcon partition type GUIDs ----
  *
  * DO NOT CHANGE THESE VALUES. EVER.
  *
@@ -39,13 +39,13 @@
  *
  *   p1  EFI system partition  c12a7328-f81f-11d2-ba4b-00a0c93ec93b
  *       Standard. The firmware must recognise it to boot the stick at all,
- *       so it could never carry an airies type. The loader does not match on
+ *       so it could never carry a falcon type. The loader does not match on
  *       it either: it is already running off p1 by the time it looks.
  *   p4  Linux LUKS (root)     ca7d7ccb-63ed-4c53-861c-1742536059cc
  *       Standard, and the loader NEVER matches p4 at all, by design. EFI
  *       never mounts root; p4 is opened by the initramfs after the handoff
  *       of DESIGN Section 5.1, and the loader has no business finding it.
- *       A p4 with an airies type would only invite the loader to try.
+ *       A p4 with a falcon type would only invite the loader to try.
  *
  * Stored as the on-disk 16-byte sequence rather than as a textual GUID: the
  * GPT entry, the PartitionInfo protocol and EFI_GUID all use the same
@@ -53,8 +53,8 @@
  * byte array is comparable against every source without a conversion step,
  * and there is exactly one place each constant is written down.
  */
-extern const uint8_t airies_guid_iso[GPT_GUID_LEN];
-extern const uint8_t airies_guid_shelf[GPT_GUID_LEN];
+extern const uint8_t falcon_guid_iso[GPT_GUID_LEN];
+extern const uint8_t falcon_guid_shelf[GPT_GUID_LEN];
 extern const uint8_t gpt_guid_esp[GPT_GUID_LEN];
 
 /* Which of our partitions a scan is looking for. Used by the filter policy
@@ -112,7 +112,7 @@ typedef struct {
     uint8_t  unique[GPT_GUID_LEN];   /* unique partition GUID, i.e. PARTUUID;
                                         the tiebreaker DESIGN Section 3 keeps
                                         in the install manifest for the day
-                                        two airies sticks are plugged in */
+                                        two falcon sticks are plugged in */
 } gpt_part;
 
 /* Caller supplies the storage, as everywhere else in this loader: the parser
@@ -155,7 +155,7 @@ const gpt_part *gpt_find_start(const gpt_table *t, uint64_t start_lba);
 
 /* Nonzero when the table holds at least one partition of this role. Drives
  * the fallback rule of DESIGN Section 3: the loader restricts itself to
- * airies-typed partitions only when some exist. */
+ * falcon-typed partitions only when some exist. */
 int gpt_has_role(const gpt_table *t, part_role role);
 
-#endif /* AIRIES_PART_H */
+#endif /* FALCON_PART_H */

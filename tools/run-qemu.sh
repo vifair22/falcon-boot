@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# airies-boot QEMU + OVMF test rig (docs/DESIGN.md Section 10).
+# falcon-boot QEMU + OVMF test rig (docs/DESIGN.md Section 10).
 #
-# Stages build/bin/airies-boot.efi as the removable-media default loader on a
+# Stages build/bin/falcon-boot.efi as the removable-media default loader on a
 # vvfat-backed ESP and boots it under OVMF with a visible display window.
 # Serial output mirrors the firmware console for logging; OVMF's debug port
 # is captured to build/ovmf-debug.log.
@@ -56,7 +56,7 @@ OVMF_DIR="${OVMF_DIR:-/usr/share/edk2/OvmfX64}"
 QEMU_MEM="${QEMU_MEM:-512}"
 BUILD=build
 ESP="$BUILD/esp"
-EFI_BIN="$BUILD/bin/airies-boot.efi"
+EFI_BIN="$BUILD/bin/falcon-boot.efi"
 
 CODE="$OVMF_DIR/OVMF_CODE.fd"
 VARS_SRC="$OVMF_DIR/OVMF_VARS.fd"
@@ -75,7 +75,7 @@ STICK_IMG="${STICK_IMG:-$BUILD/test-stick.img}"
 SHIM_BINS="$BUILD/shim/bins"
 SHIM_EFI="$SHIM_BINS/fedora-16.1-shimx64.efi"
 MM_EFI="$SHIM_BINS/fedora-16.1-mmx64.efi"
-EFI_SIGNED="$BUILD/bin/airies-boot-signed.efi"
+EFI_SIGNED="$BUILD/bin/falcon-boot-signed.efi"
 MOK_VARS="${MOK_VARS:-$BUILD/mok-test/OVMF_VARS.secboot.mok.fd}"
 
 while [[ $# -gt 0 ]]; do
@@ -192,7 +192,7 @@ if [[ "$HEADLESS" -eq 1 ]]; then
 fi
 
 exec qemu-system-x86_64 \
-    -name airies-boot \
+    -name falcon-boot \
     -machine q35 \
     -m "$QEMU_MEM" \
     "${ACCEL[@]}" \

@@ -1,4 +1,4 @@
-# airies-boot
+# falcon-boot
 
 A single-purpose, auditable multi-boot loader for UEFI x64. A distilled Ventoy:
 drag-and-drop ISO booting plus a personal LUKS-backed OS booted via a UKI.
@@ -12,8 +12,8 @@ a rejected approach without re-reading why it was rejected. `README.md` is the
 short public summary of the same model.
 
 Status: pre-1.0 MVP. Build-order steps 1-7 are done (see docs/DESIGN.md
-Section 11 status header); host tools airies-boot-mkstick and
-airies-boot-sign exist and are proven end to end (a mkstick-created image
+Section 11 status header); host tools falcon-boot-mkstick and
+falcon-boot-sign exist and are proven end to end (a mkstick-created image
 boots Secure Boot ON with its own generated MOK and delivers the p4
 credential). Next: step 8 (signing appliance), step 9 (permissive-mode UX),
 step 10 (real hardware), plus the loader-side blessed-boot path consuming
@@ -129,6 +129,6 @@ Makefiles.
   OVMF (plain and secboot) is present on this machine.
 
 `make check-tools` verifies the toolchain. Objects land in
-`build/<variant>/<module>/`, the linked loader in `build/bin/airies-boot.efi`,
+`build/<variant>/<module>/`, the linked loader in `build/bin/falcon-boot.efi`,
 the staged ESP in `build/esp/`; `compile_commands.json` is regenerated at the
 repo root by the default target.

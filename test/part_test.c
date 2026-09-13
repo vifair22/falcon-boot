@@ -15,7 +15,7 @@
  *
  * One table written by sgdisk itself, on a plain sparse file with no loop
  * device and no sudo, is the evidence that the parser agrees with the
- * implementation that will actually stamp our sticks, airies type GUIDs
+ * implementation that will actually stamp our sticks, falcon type GUIDs
  * included. It skips cleanly when sgdisk is absent.
  */
 
@@ -182,7 +182,7 @@ static void build_gpt(tdisk *d, const tgeom *g, const tpart *parts, unsigned n)
     put_le32(hdr + 16, ref_crc32(hdr, g->hdr_size));
 }
 
-/* The airies stick's own layout, which is what every acceptance test here
+/* The falcon stick's own layout, which is what every acceptance test here
  * is ultimately checking the parser can read back. */
 static const uint8_t guid_linux_luks[GPT_GUID_LEN] = {
     /* ca7d7ccb-63ed-4c53-861c-1742536059cc, p4's standard type */
@@ -195,8 +195,8 @@ static void build_stick(tdisk *d)
     tgeom g;
     const tpart parts[] = {
         { gpt_guid_esp,       2048,  34815, 0 },
-        { airies_guid_iso,   34816,  67583, 1 },
-        { airies_guid_shelf, 67584, 100351, 2 },
+        { falcon_guid_iso,   34816,  67583, 1 },
+        { falcon_guid_shelf, 67584, 100351, 2 },
         { guid_linux_luks,  100352, 131038, 3 }
     };
 
@@ -225,7 +225,7 @@ static void ttable_init(ttable *tt, uint32_t cap)
  * with the reason attached, rather than silently making old sticks
  * unbootable. The expected bytes are transcribed independently from the
  * textual GUIDs in part.h rather than copied from part.c. */
-static void test_airies_guids_are_frozen(void **state)
+static void test_falcon_guids_are_frozen(void **state)
 {
     /* f6b6d562-22c3-450a-87aa-0316039657d6, mixed-endian on disk. */
     static const uint8_t iso[GPT_GUID_LEN] = {
@@ -244,23 +244,23 @@ static void test_airies_guids_are_frozen(void **state)
     };
 
     (void)state;
-    assert_memory_equal(airies_guid_iso, iso, GPT_GUID_LEN);
-    assert_memory_equal(airies_guid_shelf, shelf, GPT_GUID_LEN);
+    assert_memory_equal(falcon_guid_iso, iso, GPT_GUID_LEN);
+    assert_memory_equal(falcon_guid_shelf, shelf, GPT_GUID_LEN);
     assert_memory_equal(gpt_guid_esp, esp, GPT_GUID_LEN);
 
-    /* The two airies roles must never collide with each other or with a
+    /* The two falcon roles must never collide with each other or with a
      * standard type; a stick stamped with a duplicate would be ambiguous. */
-    assert_int_equal(gpt_guid_eq(airies_guid_iso, airies_guid_shelf), 0);
-    assert_int_equal(gpt_guid_eq(airies_guid_iso, gpt_guid_esp), 0);
-    assert_int_equal(gpt_guid_eq(airies_guid_shelf, guid_linux_luks), 0);
+    assert_int_equal(gpt_guid_eq(falcon_guid_iso, falcon_guid_shelf), 0);
+    assert_int_equal(gpt_guid_eq(falcon_guid_iso, gpt_guid_esp), 0);
+    assert_int_equal(gpt_guid_eq(falcon_guid_shelf, guid_linux_luks), 0);
 
-    assert_ptr_equal(part_role_guid(PART_ROLE_ISO), airies_guid_iso);
-    assert_ptr_equal(part_role_guid(PART_ROLE_SHELF), airies_guid_shelf);
+    assert_ptr_equal(part_role_guid(PART_ROLE_ISO), falcon_guid_iso);
+    assert_ptr_equal(part_role_guid(PART_ROLE_SHELF), falcon_guid_shelf);
     assert_null(part_role_guid((part_role)7));
 
-    assert_int_equal(gpt_guid_eq(airies_guid_iso, airies_guid_iso), 1);
-    assert_int_equal(gpt_guid_eq(NULL, airies_guid_iso), 0);
-    assert_int_equal(gpt_guid_eq(airies_guid_iso, NULL), 0);
+    assert_int_equal(gpt_guid_eq(falcon_guid_iso, falcon_guid_iso), 1);
+    assert_int_equal(gpt_guid_eq(NULL, falcon_guid_iso), 0);
+    assert_int_equal(gpt_guid_eq(falcon_guid_iso, NULL), 0);
 }
 
 /* The reference CRC used to stamp every synthetic table above is the one the
@@ -275,7 +275,7 @@ static void test_reference_crc32_is_ieee(void **state)
 
 /* ---- acceptance ---- */
 
-static void test_parse_airies_stick(void **state)
+static void test_parse_falcon_stick(void **state)
 {
     tdisk d;
     ttable tt;
@@ -295,11 +295,11 @@ static void test_parse_airies_stick(void **state)
     assert_int_equal(tt.t.parts[0].end_lba, 34815);
 
     assert_int_equal(tt.t.parts[1].number, 2);
-    assert_memory_equal(tt.t.parts[1].type, airies_guid_iso, GPT_GUID_LEN);
+    assert_memory_equal(tt.t.parts[1].type, falcon_guid_iso, GPT_GUID_LEN);
     assert_int_equal(tt.t.parts[1].start_lba, 34816);
 
     assert_int_equal(tt.t.parts[2].number, 3);
-    assert_memory_equal(tt.t.parts[2].type, airies_guid_shelf, GPT_GUID_LEN);
+    assert_memory_equal(tt.t.parts[2].type, falcon_guid_shelf, GPT_GUID_LEN);
     assert_int_equal(tt.t.parts[2].start_lba, 67584);
 
     assert_int_equal(tt.t.parts[3].number, 4);
@@ -336,7 +336,7 @@ static void test_find_by_start_lba(void **state)
     p = gpt_find_start(&tt.t, 34816);
     assert_non_null(p);
     assert_int_equal(p->number, 2);
-    assert_memory_equal(p->type, airies_guid_iso, GPT_GUID_LEN);
+    assert_memory_equal(p->type, falcon_guid_iso, GPT_GUID_LEN);
 
     assert_null(gpt_find_start(&tt.t, 34817));
     assert_null(gpt_find_start(&tt.t, 0));
@@ -380,7 +380,7 @@ static void test_sparse_entries_keep_numbers(void **state)
     tgeom g;
     const tpart parts[] = {
         { gpt_guid_esp,       2048, 34815, 0 },
-        { airies_guid_shelf, 67584, 100351, 4 }
+        { falcon_guid_shelf, 67584, 100351, 4 }
     };
 
     (void)state;
@@ -405,8 +405,8 @@ static void test_parse_4k_blocks(void **state)
     ttable tt;
     tgeom g;
     const tpart parts[] = {
-        { airies_guid_iso,   256, 4095, 0 },
-        { airies_guid_shelf, 4096, 8191, 1 }
+        { falcon_guid_iso,   256, 4095, 0 },
+        { falcon_guid_shelf, 4096, 8191, 1 }
     };
 
     (void)state;
@@ -417,8 +417,8 @@ static void test_parse_4k_blocks(void **state)
 
     assert_int_equal(gpt_parse(&tt.t, tdisk_read, &d, 4096), GPT_OK);
     assert_int_equal(tt.t.count, 2);
-    assert_memory_equal(tt.t.parts[0].type, airies_guid_iso, GPT_GUID_LEN);
-    assert_memory_equal(tt.t.parts[1].type, airies_guid_shelf, GPT_GUID_LEN);
+    assert_memory_equal(tt.t.parts[0].type, falcon_guid_iso, GPT_GUID_LEN);
+    assert_memory_equal(tt.t.parts[1].type, falcon_guid_shelf, GPT_GUID_LEN);
 
     tdisk_free(&d);
 }
@@ -438,7 +438,7 @@ static void test_table_truncation_is_flagged(void **state)
     assert_int_equal(gpt_parse(&tt.t, tdisk_read, &d, 512), GPT_OK);
     assert_int_equal(tt.t.count, 2);
     assert_int_equal(tt.t.truncated, 1);
-    assert_memory_equal(tt.t.parts[1].type, airies_guid_iso, GPT_GUID_LEN);
+    assert_memory_equal(tt.t.parts[1].type, falcon_guid_iso, GPT_GUID_LEN);
 
     tdisk_free(&d);
 }
@@ -473,7 +473,7 @@ static void test_backup_header_at_lba1_refused(void **state)
     tdisk d;
     ttable tt;
     tgeom g;
-    const tpart parts[] = { { airies_guid_iso, 2048, 34815, 0 } };
+    const tpart parts[] = { { falcon_guid_iso, 2048, 34815, 0 } };
 
     (void)state;
     tdisk_init(&d, 512);
@@ -540,7 +540,7 @@ static void test_unsupported_geometry(void **state)
     tdisk d;
     ttable tt;
     tgeom g;
-    const tpart parts[] = { { airies_guid_iso, 2048, 34815, 0 } };
+    const tpart parts[] = { { falcon_guid_iso, 2048, 34815, 0 } };
 
     (void)state;
     tdisk_init(&d, 512);
@@ -668,7 +668,7 @@ static void test_io_failure_sweep(void **state)
 /* ---- the sgdisk-written table ---- */
 
 /* Everything above is a table this file wrote. This one is a table gdisk
- * wrote, on a plain sparse file, with the airies type GUIDs stamped exactly
+ * wrote, on a plain sparse file, with the falcon type GUIDs stamped exactly
  * as tools/mk-test-stick.sh stamps them. It is the only check here that the
  * parser and the tool that makes our sticks agree about the bytes.
  */
@@ -706,7 +706,7 @@ static void test_sgdisk_written_table(void **state)
         return;
     }
 
-    snprintf(path, sizeof(path), "/tmp/airies-part-%ld.img", (long)getpid());
+    snprintf(path, sizeof(path), "/tmp/falcon-part-%ld.img", (long)getpid());
     fd = open(path, O_RDWR | O_CREAT | O_TRUNC, 0600);
     assert_true(fd >= 0);
     /* Sparse: nothing but the two GPTs is ever written. */
@@ -728,8 +728,8 @@ static void test_sgdisk_written_table(void **state)
     assert_int_equal(tt.t.truncated, 0);
 
     assert_memory_equal(tt.t.parts[0].type, gpt_guid_esp, GPT_GUID_LEN);
-    assert_memory_equal(tt.t.parts[1].type, airies_guid_iso, GPT_GUID_LEN);
-    assert_memory_equal(tt.t.parts[2].type, airies_guid_shelf, GPT_GUID_LEN);
+    assert_memory_equal(tt.t.parts[1].type, falcon_guid_iso, GPT_GUID_LEN);
+    assert_memory_equal(tt.t.parts[2].type, falcon_guid_shelf, GPT_GUID_LEN);
     assert_memory_equal(tt.t.parts[3].type, guid_linux_luks, GPT_GUID_LEN);
 
     assert_int_equal(tt.t.parts[0].start_lba, 2048);
@@ -758,7 +758,7 @@ static void test_unpartitioned_file_not_gpt(void **state)
     int fd;
 
     (void)state;
-    snprintf(path, sizeof(path), "/tmp/airies-raw-%ld.img", (long)getpid());
+    snprintf(path, sizeof(path), "/tmp/falcon-raw-%ld.img", (long)getpid());
     fd = open(path, O_RDWR | O_CREAT | O_TRUNC, 0600);
     assert_true(fd >= 0);
     assert_int_equal(ftruncate(fd, 1024 * 1024), 0);
@@ -774,9 +774,9 @@ static void test_unpartitioned_file_not_gpt(void **state)
 int run_part_tests(void)
 {
     const struct CMUnitTest tests[] = {
-        cmocka_unit_test(test_airies_guids_are_frozen),
+        cmocka_unit_test(test_falcon_guids_are_frozen),
         cmocka_unit_test(test_reference_crc32_is_ieee),
-        cmocka_unit_test(test_parse_airies_stick),
+        cmocka_unit_test(test_parse_falcon_stick),
         cmocka_unit_test(test_find_by_start_lba),
         cmocka_unit_test(test_foreign_disk_has_no_roles),
         cmocka_unit_test(test_sparse_entries_keep_numbers),

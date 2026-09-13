@@ -1,10 +1,10 @@
-/* airies-boot: UEFI status codes (the subset we act on).
+/* falcon-boot: UEFI status codes (the subset we act on).
  * Values are from UEFI spec Appendix D. Error codes set the high bit of
  * EFI_STATUS; EFI_ERROR() tests it via the sign of INTN.
  */
 
-#ifndef AIRIES_UEFI_STATUS_H
-#define AIRIES_UEFI_STATUS_H
+#ifndef FALCON_UEFI_STATUS_H
+#define FALCON_UEFI_STATUS_H
 
 #include <efi/types.h>
 
@@ -31,4 +31,4 @@
 
 #define EFI_ERROR(status) (((INTN)(status)) < 0)
 
-#endif /* AIRIES_UEFI_STATUS_H */
+#endif /* FALCON_UEFI_STATUS_H */

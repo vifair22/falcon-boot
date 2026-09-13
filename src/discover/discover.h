@@ -1,4 +1,4 @@
-/* airies-boot: device discovery (docs/DESIGN.md Section 9).
+/* falcon-boot: device discovery (docs/DESIGN.md Section 9).
  *
  * ONE pass, one inventory, every consumer reads it.
  *
@@ -10,7 +10,7 @@
  * missed for another, with nothing on screen to say so.
  *
  * So the Block I/O handles are enumerated exactly once, at startup, and every
- * handle is classified there and then: is media present, which airies role
+ * handle is classified there and then: is media present, which falcon role
  * does its GPT type GUID give it (Section 3), does it carry a LUKS2 header,
  * and which registered filesystem driver claims its bytes. Classification is
  * eager because it is cheap - a couple of sector reads per handle - and
@@ -22,8 +22,8 @@
  * look is judged against a current picture rather than a stale one.
  */
 
-#ifndef AIRIES_DISCOVER_H
-#define AIRIES_DISCOVER_H
+#ifndef FALCON_DISCOVER_H
+#define FALCON_DISCOVER_H
 
 #include <efi/uefi.h>
 #include <efi/blockio.h>
@@ -44,15 +44,15 @@ typedef struct discover_dev {
 
     uint8_t media_present;
     /* DESIGN Section 3's scan filter, evaluated once per role: "only
-     * airies-typed partitions if any exist, everything otherwise". Both can
-     * be true on a machine with no airies-typed partition at all, which is
+     * falcon-typed partitions if any exist, everything otherwise". Both can
+     * be true on a machine with no falcon-typed partition at all, which is
      * exactly the QEMU rig and any hand-made stick. */
     uint8_t accept[PART_ROLE_COUNT];
     uint8_t has_type;        /* type below was established */
     uint8_t luks2;           /* LUKS2 primary header magic at offset 0 */
 
     EFI_GUID type;           /* GPT partition type GUID */
-    fs_hint  role;           /* the airies role its type names, or
+    fs_hint  role;           /* the falcon role its type names, or
                                 FS_HINT_NONE for anything else */
 
     /* The driver that claimed the PLAINTEXT bytes of this device, or NULL.
@@ -84,4 +84,4 @@ discover_dev *discover_next(part_role role, UINTN *cursor);
  * reported as a read failure rather than fixed up. */
 int discover_read(void *ctx, uint64_t off, uint64_t len, void *buf);
 
-#endif /* AIRIES_DISCOVER_H */
+#endif /* FALCON_DISCOVER_H */

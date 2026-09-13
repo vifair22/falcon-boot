@@ -1,4 +1,4 @@
-/* airies-boot: read-only LUKS2 unlock (docs/DESIGN.md Sections 3, 5, 9).
+/* falcon-boot: read-only LUKS2 unlock (docs/DESIGN.md Sections 3, 5, 9).
  *
  * Purpose. Unlocks p3, the LUKS2+ext4 partition holding the personal-OS
  * UKI, the signing-appliance UKI and the encrypted MOK private key, and
@@ -29,8 +29,8 @@
  * that, the UKI load path of Section 5.
  */
 
-#ifndef AIRIES_LUKS_H
-#define AIRIES_LUKS_H
+#ifndef FALCON_LUKS_H
+#define FALCON_LUKS_H
 
 #include <stdint.h>
 #include <stddef.h>
@@ -167,4 +167,4 @@ void luks_dev_close(luks_dev *d);
  * exfat_mount or an ext4 mount as the read callback and its context. */
 int  luks_read(void *ctx, uint64_t off, uint64_t len, void *buf);
 
-#endif /* AIRIES_LUKS_H */
+#endif /* FALCON_LUKS_H */

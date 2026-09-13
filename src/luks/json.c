@@ -1,4 +1,4 @@
-/* airies-boot: read-only JSON scanner for LUKS2 metadata. See json.h.
+/* falcon-boot: read-only JSON scanner for LUKS2 metadata. See json.h.
  *
  * The one structural routine is value_at(): it recognises the value that
  * starts at a cursor, advances the cursor past the whole of it, and reports

@@ -1,4 +1,4 @@
-/* airies-boot mkstick: read a shim's compiled-in next-stage loader name out of
+/* falcon-boot mkstick: read a shim's compiled-in next-stage loader name out of
  * the shim binary itself (DESIGN Sections 4 and 8).
  *
  * Why this is not a constant. Shim launches one hard-coded filename as its
@@ -27,8 +27,8 @@
  * candidate listed rather than guessed past.
  */
 
-#ifndef AIRIES_MKSTICK_SHIMNAME_H
-#define AIRIES_MKSTICK_SHIMNAME_H
+#ifndef FALCON_MKSTICK_SHIMNAME_H
+#define FALCON_MKSTICK_SHIMNAME_H
 
 #include <stddef.h>
 
@@ -48,4 +48,4 @@ cli_status shim_next_stage_name(const char *shim_path, char *out, size_t cap);
  * boot. */
 cli_status shim_mokmanager_name(const char *shim_path, char *out, size_t cap);
 
-#endif /* AIRIES_MKSTICK_SHIMNAME_H */
+#endif /* FALCON_MKSTICK_SHIMNAME_H */

@@ -50,7 +50,7 @@
 /* A well-formed two-record manifest in the exact shape DESIGN Section 8.1
  * documents, trailing comments and all. */
 static const char g_two[] =
-    "# airies-boot manifest\n"
+    "# falcon-boot manifest\n"
     "\n"
     "iso=Linux/archlinux-2026.01.01-x86_64.iso   # path relative to p2 root\n"
     "size=1538670592                            # byte size at bless time\n"

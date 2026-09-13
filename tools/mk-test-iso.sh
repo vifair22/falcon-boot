@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# airies-boot: build the El Torito test ISO the loader's ISO path boots.
+# falcon-boot: build the El Torito test ISO the loader's ISO path boots.
 #
 # Produces build/test-payload.iso: the smallest thing that is still a real
 # EFI-bootable optical image, i.e. an ISO9660 volume whose El Torito boot
@@ -9,7 +9,7 @@
 # exercises.
 #
 # The payload inside is build/test/payload.efi (make payload), which prints
-# AIRIES-PAYLOAD-OK and returns, so one boot proves both the chainload and
+# FALCON-PAYLOAD-OK and returns, so one boot proves both the chainload and
 # the loader's teardown.
 #
 # Usage: tools/mk-test-iso.sh
@@ -54,7 +54,7 @@ rm -rf "$STAGE"
 # FAT16 at 8 MiB with one sector per cluster: at the default cluster size an
 # image this small lands below FAT16's 4085-cluster floor and mkfs refuses it.
 truncate -s "${FAT_MIB}M" "$FATIMG"
-mkfs.fat -F 16 -s 1 -n AIRIESESP "$FATIMG" >/dev/null
+mkfs.fat -F 16 -s 1 -n FALCONESP "$FATIMG" >/dev/null
 
 MNT=$(mktemp -d)
 sudo mount -o loop,uid="$(id -u)",gid="$(id -g)" "$FATIMG" "$MNT"
@@ -71,7 +71,7 @@ MNT=
 mkdir -p "$STAGE"
 cp "$FATIMG" "$STAGE/efiboot.img"
 xorriso -as mkisofs \
-    -V AIRIES_PAYLOAD \
+    -V FALCON_PAYLOAD \
     -e efiboot.img \
     -no-emul-boot \
     -o "$ISO" \
@@ -80,4 +80,4 @@ xorriso -as mkisofs \
 rm -rf "$STAGE"
 
 echo "created $ISO ($(stat -c %s "$ISO") bytes, El Torito EFI no-emulation)"
-echo "  payload: $PAYLOAD -> EFI/BOOT/BOOTX64.EFI (prints AIRIES-PAYLOAD-OK)"
+echo "  payload: $PAYLOAD -> EFI/BOOT/BOOTX64.EFI (prints FALCON-PAYLOAD-OK)"

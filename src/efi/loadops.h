@@ -1,4 +1,4 @@
-/* airies-boot: the shim-preferring image load path (DESIGN Section 7.6).
+/* falcon-boot: the shim-preferring image load path (DESIGN Section 7.6).
  *
  * One home for the resolver that three launch paths (ISO chainload, the
  * personal-OS UKI, blessed UKIs) previously carried as deliberate copies:
@@ -18,8 +18,8 @@
  * enforcing one. Either way the decision is the platform's, never ours.
  */
 
-#ifndef AIRIES_EFI_LOADOPS_H
-#define AIRIES_EFI_LOADOPS_H
+#ifndef FALCON_EFI_LOADOPS_H
+#define FALCON_EFI_LOADOPS_H
 
 #include <efi/uefi.h>
 
@@ -88,4 +88,4 @@ BOOLEAN load_ops_inner_load_blocked(EFI_SYSTEM_TABLE *st, const load_ops *ops);
  * type. Wrapped at 78 columns for the spec's guaranteed 80x25 mode. */
 const CHAR16 *load_ops_inner_load_advice(void);
 
-#endif /* AIRIES_EFI_LOADOPS_H */
+#endif /* FALCON_EFI_LOADOPS_H */

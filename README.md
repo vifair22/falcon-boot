@@ -1,4 +1,4 @@
-# airies-boot
+# falcon-boot
 
 A single-purpose, auditable multi-boot loader for UEFI x64. A distilled Ventoy.
 
@@ -16,7 +16,7 @@ ever.
 
 ## Security note
 
-airies-boot never weakens the machine's Secure Boot posture. It behaves
+falcon-boot never weakens the machine's Secure Boot posture. It behaves
 according to the firmware's Secure Boot state:
 
 - **Secure Boot ON:** it upholds it. Everything is chainloaded through the normal
@@ -64,7 +64,7 @@ OVMF. Host tooling additionally needs `cryptsetup`, `sbsign`, `mkfs.exfat`,
 
 ```sh
 make check-tools     # verify the toolchain is present
-make                 # build build/bin/airies-boot.efi (+ compile_commands.json)
+make                 # build build/bin/falcon-boot.efi (+ compile_commands.json)
 make test-image      # build the exFAT fixture the rig boots against
 make run             # boot it under QEMU/OVMF with a display window
 ```

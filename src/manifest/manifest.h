@@ -1,13 +1,13 @@
-/* airies-boot: the blessed-artifact manifest (docs/DESIGN.md Section 8.1).
+/* falcon-boot: the blessed-artifact manifest (docs/DESIGN.md Section 8.1).
  *
- * The manifest is the plain-ASCII index at p2:/airies/blessed/manifest that
+ * The manifest is the plain-ASCII index at p2:/falcon/blessed/manifest that
  * tells the loader which ISO on p2 has a signed UKI wrap standing behind it.
  * One block per blessed ISO:
  *
  *   iso=Linux/archlinux-2026.01.01-x86_64.iso   # path relative to p2 root
  *   size=1538670592                             # byte size at bless time
  *   sha256=<64 lowercase hex>                   # ISO hash at bless time
- *   uki=archlinux-2026.01.01-x86_64.uki         # file under /airies/blessed/
+ *   uki=archlinux-2026.01.01-x86_64.uki         # file under /falcon/blessed/
  *   family=arch                                 # registry id (Section 6.2)
  *
  * Deliberately EFI-free and allocator-free, for the same reason the exFAT
@@ -31,8 +31,8 @@
  * rendering half that only the bless tool (Section 8) needs.
  */
 
-#ifndef AIRIES_MANIFEST_H
-#define AIRIES_MANIFEST_H
+#ifndef FALCON_MANIFEST_H
+#define FALCON_MANIFEST_H
 
 #include <stdint.h>
 #include <stddef.h>
@@ -70,7 +70,7 @@ enum {
 /* One blessed ISO. Every string is NUL-terminated printable ASCII. */
 typedef struct {
     char     iso[MANIFEST_PATH_MAX];         /* path relative to the p2 root */
-    char     uki[MANIFEST_NAME_MAX];         /* file under /airies/blessed/ */
+    char     uki[MANIFEST_NAME_MAX];         /* file under /falcon/blessed/ */
     char     family[MANIFEST_FAMILY_MAX];    /* registry id, may be empty */
     char     sha256[MANIFEST_SHA256_HEX + 1u]; /* lowercase hex, or empty */
     uint64_t size;                           /* ISO size at bless time */
@@ -170,4 +170,4 @@ int manifest_upsert(manifest_record *recs, size_t *n, size_t cap,
 int manifest_render(const manifest_record *recs, size_t n,
                     char *out, size_t cap, size_t *used);
 
-#endif /* AIRIES_MANIFEST_H */
+#endif /* FALCON_MANIFEST_H */

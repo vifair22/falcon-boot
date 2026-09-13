@@ -1,9 +1,9 @@
-/* airies-boot: the .sbat section shim demands of its second stage.
+/* falcon-boot: the .sbat section shim demands of its second stage.
  *
  * DESIGN Section 9, measured in docs/notes/shim-spike.md Section 5.1: shim's
  * pe.c verify_sbat_section() returns EFI_SECURITY_VIOLATION when the image it
  * is about to start carries no .sbat section, because in_protocol is false on
- * shim's own second-stage load. So a correctly MOK-signed airies-boot.efi is
+ * shim's own second-stage load. So a correctly MOK-signed falcon-boot.efi is
  * still refused under Secure Boot if this section is missing, and the console
  * shows the same opaque refusal a bad signature gives. That is why this lives
  * in a file of its own with the reason written down rather than as one stray
@@ -25,7 +25,7 @@
  *   name,generation,vendor,package,version,url
  *
  * Field 2 is the generation, and it is the revocation lever: bump it only
- * when a released airies-boot has a security defect that must stop booting on
+ * when a released falcon-boot has a security defect that must stop booting on
  * machines whose SbatLevel is updated, and never for an ordinary release.
  * Field 5 is human-readable and tracks release_version; it carries no
  * enforcement weight, which is why it is a literal here rather than something
@@ -35,4 +35,4 @@
 __attribute__((section(".sbat"), used))
 static const char sbat_csv[] =
     "sbat,1,SBAT Version,sbat,1,https://github.com/rhboot/shim/blob/main/SBAT.md\n"
-    "airies-boot,1,airies,airies-boot,0.1.0,https://git.airies.net/vifair22/airies-boot\n";
+    "falcon-boot,1,falcon,falcon-boot,0.1.0,https://git.airies.net/vifair22/falcon-boot\n";

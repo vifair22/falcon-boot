@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# airies-boot: build the four-partition test stick the QEMU rig boots
+# falcon-boot: build the four-partition test stick the QEMU rig boots
 # (docs/DESIGN.md Sections 3 and 10).
 #
 # Produces build/test-stick.img: a REAL GPT disk with the Section 3 layout,
@@ -37,7 +37,7 @@
 #   --payload-uki  stage the small stand-in payload as /uki/personal.efi
 #                  instead of the sd-stub fixture UKI.
 #
-# Env: AIRIES_TEST_PASS  passphrase for p3 and p4 (default "airies-test").
+# Env: FALCON_TEST_PASS  passphrase for p3 and p4 (default "falcon-test").
 #
 # THIS IS RIG SCAFFOLDING. The product's stick is built by the host tooling of
 # DESIGN Section 8 (step 7), which generates a real MOK keypair and keeps the
@@ -53,7 +53,7 @@ cd "$(dirname "$0")/.."
 
 IMG=build/test-stick.img
 SIZE_MIB=256
-PASS="${AIRIES_TEST_PASS:-airies-test}"
+PASS="${FALCON_TEST_PASS:-falcon-test}"
 
 # DESIGN Section 3 mandates pbkdf2 on p3. The iteration count is pinned rather
 # than benchmarked: cryptsetup's own benchmark picks millions, which is seconds
@@ -64,11 +64,11 @@ P3_ITER=100000
 SHIM_BINS=build/shim/bins
 SHIM_EFI="$SHIM_BINS/fedora-16.1-shimx64.efi"
 MM_EFI="$SHIM_BINS/fedora-16.1-mmx64.efi"
-EFI_PLAIN=build/bin/airies-boot.efi
-EFI_SIGNED=build/bin/airies-boot-signed.efi
-MOK_KEY=build/mok-test/airies-test-mok.key
-MOK_CRT=build/mok-test/airies-test-mok.crt
-MOK_CER=build/mok-test/airies-test-mok.cer
+EFI_PLAIN=build/bin/falcon-boot.efi
+EFI_SIGNED=build/bin/falcon-boot-signed.efi
+MOK_KEY=build/mok-test/falcon-test-mok.key
+MOK_CRT=build/mok-test/falcon-test-mok.crt
+MOK_CER=build/mok-test/falcon-test-mok.cer
 PAYLOAD=build/test/payload.efi
 PAYLOAD_ISO=build/test-payload.iso
 FIXTURE_UKI=build/test/fixture-uki.efi
@@ -147,17 +147,17 @@ truncate -s "${SIZE_MIB}M" "$IMG"
 # One MiB alignment throughout, which is both what real media wants and what
 # keeps every partition start a whole number of 4 KiB filesystem blocks.
 echo "== partitioning (GPT, four partitions per DESIGN Section 3)"
-# p2 and p3 carry the airies type GUIDs the loader identifies them by; the
+# p2 and p3 carry the falcon type GUIDs the loader identifies them by; the
 # constants are frozen in src/part/part.h and must match it exactly. p1 keeps
 # the standard ESP type and p4 the standard Linux LUKS type (8309), which the
 # loader never matches on.
 sgdisk \
-    -n 1:1MiB:+64MiB   -t 1:ef00 -c 1:"AIRIES-ESP" \
+    -n 1:1MiB:+64MiB   -t 1:ef00 -c 1:"FALCON-ESP" \
     -n 2:0:+64MiB      -t 2:F6B6D562-22C3-450A-87AA-0316039657D6 \
-                       -c 2:"AIRIES-ISO" \
+                       -c 2:"FALCON-ISO" \
     -n 3:0:+64MiB      -t 3:9CB02E90-85F4-4AF7-9AF3-1F9D6A95FEAF \
-                       -c 3:"AIRIES-UKI" \
-    -n 4:0:+32MiB      -t 4:8309 -c 4:"AIRIES-ROOT" \
+                       -c 3:"FALCON-UKI" \
+    -n 4:0:+32MiB      -t 4:8309 -c 4:"FALCON-ROOT" \
     "$IMG" >/dev/null
 
 LOOP=$(sudo losetup --show -f -P "$IMG")
@@ -194,7 +194,7 @@ unmount_rw() {
 # rather than a vvfat directory: BOOTX64.EFI is Fedora's shim, and our loader
 # goes under grubx64.efi because that is the next-stage name compiled into it.
 echo "== p1: FAT32 ESP"
-sudo mkfs.fat -F 32 -n AIRIESESP "$P1" >/dev/null
+sudo mkfs.fat -F 32 -n FALCONESP "$P1" >/dev/null
 mount_rw "$P1"
 mkdir -p "$MNT/EFI/BOOT"
 if [[ "$UNSIGNED" -eq 1 ]]; then
@@ -206,14 +206,14 @@ else
     cp "$EFI_SIGNED" "$MNT/EFI/BOOT/grubx64.efi"
     # DESIGN Section 4: the public cert travels on p1 for enrollment. The
     # private key does not travel; it is not on this partition and never is.
-    [[ -f "$MOK_CER" ]] && cp "$MOK_CER" "$MNT/airies-boot.cer"
+    [[ -f "$MOK_CER" ]] && cp "$MOK_CER" "$MNT/falcon-boot.cer"
     echo "   shim -> mmx64.efi -> grubx64.efi (our signed loader)"
 fi
 unmount_rw
 
 # ---- p2: the exFAT ISO library ----
 echo "== p2: exFAT ISO library"
-sudo mkfs.exfat -n AIRIES-ISO "$P2" >/dev/null
+sudo mkfs.exfat -n FALCON-ISO "$P2" >/dev/null
 mount_rw "$P2"
 dd if=/dev/zero of="$MNT/archlinux-fake.iso" bs=1M count=1 status=none
 dd if=/dev/zero of="$MNT/systemrescue-fake.iso" bs=1M count=1 status=none
@@ -230,9 +230,9 @@ printf '%s' "$PASS" | sudo cryptsetup luksFormat \
     --pbkdf pbkdf2 --pbkdf-force-iterations "$P3_ITER" \
     --cipher aes-xts-plain64 --key-size 512 \
     --batch-mode "$P3" -
-MAPPER=airies-test-p3
+MAPPER=falcon-test-p3
 printf '%s' "$PASS" | sudo cryptsetup open "$P3" "$MAPPER" -
-sudo mkfs.ext4 -q -L AIRIES-UKI "/dev/mapper/$MAPPER"
+sudo mkfs.ext4 -q -L FALCON-UKI "/dev/mapper/$MAPPER"
 mount_rw_owned "/dev/mapper/$MAPPER"
 
 # The two UKIs. personal.efi is the one that must boot (signed with the
@@ -294,7 +294,7 @@ LOOP=
 
 echo
 echo "created $IMG (${SIZE_MIB} MiB, GPT, four partitions)"
-echo "  passphrase: $PASS  (override with AIRIES_TEST_PASS)"
+echo "  passphrase: $PASS  (override with FALCON_TEST_PASS)"
 echo
 echo "expected menu:"
 echo "  Personal OS (encrypted)       <- pinned first, from p3's pbkdf2 slot"

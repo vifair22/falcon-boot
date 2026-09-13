@@ -1,4 +1,4 @@
-/* airies-boot: virtual-media boot path (docs/DESIGN.md Section 6).
+/* falcon-boot: virtual-media boot path (docs/DESIGN.md Section 6).
  *
  * Presents a file living on the exFAT partition as a virtual block device,
  * lets the firmware's own drivers parse it, and chainloads the ESP they
@@ -15,8 +15,8 @@
  * module at step 4; the stages below are already separate for that reason.
  */
 
-#ifndef AIRIES_ISO_H
-#define AIRIES_ISO_H
+#ifndef FALCON_ISO_H
+#define FALCON_ISO_H
 
 #include <efi/uefi.h>
 #include <family/family.h>
@@ -93,4 +93,4 @@ EFI_STATUS iso_survey_media(EFI_SYSTEM_TABLE *st, fs_vol *vol,
                             const fs_dirent *file, iso_media_kind kind,
                             iso_survey *out);
 
-#endif /* AIRIES_ISO_H */
+#endif /* FALCON_ISO_H */

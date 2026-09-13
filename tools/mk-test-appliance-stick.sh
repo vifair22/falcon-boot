@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# airies-boot: build the stick the signing-appliance proof boots
+# falcon-boot: build the stick the signing-appliance proof boots
 # (docs/DESIGN.md Section 7.5, build order step 8).
 #
 # Unlike tools/mk-test-stick.sh, this one is built by the PRODUCT tool:
-# `airies-boot-mkstick create` partitions it, generates a real MOK keypair,
+# `falcon-boot-mkstick create` partitions it, generates a real MOK keypair,
 # signs the loader and both UKIs with it, and puts the private key on p3 inside
 # the LUKS volume. That matters for this proof specifically: the appliance's
 # whole job is to read that key and sign with it, so a rig that handed it a
@@ -19,7 +19,7 @@
 #                       loader's folder view (Section 6 stage 1) a real case,
 #                       and signing one leaves the other pending, which is what
 #                       the proof's second run reads back.
-#   p3  LUKS2+ext4  1G  airies-mok.key, /uki/appliance-uki.efi, /uki/fixture-uki.efi
+#   p3  LUKS2+ext4  1G  falcon-mok.key, /uki/appliance-uki.efi, /uki/fixture-uki.efi
 #   p4  LUKS2      rest untouched
 #
 # Outputs:
@@ -28,7 +28,7 @@
 #   build/appliance/OVMF_VARS.secboot.mok.fd     varstore trusting that cert
 #
 # Usage: tools/mk-test-appliance-stick.sh
-# Env:   AIRIES_TEST_PASS  p3/p4 passphrase (default "airies-test")
+# Env:   FALCON_TEST_PASS  p3/p4 passphrase (default "falcon-test")
 #
 # THIS IS RIG SCAFFOLDING in one respect only: the passphrase is a well-known
 # string and the varstore skips the interactive MokManager enrollment a real
@@ -45,7 +45,7 @@ CERT="$OUT/appliance-mok.crt"
 VARS="$OUT/OVMF_VARS.secboot.mok.fd"
 PASSFILE="$OUT/passphrase"
 
-PASS="${AIRIES_TEST_PASS:-airies-test}"
+PASS="${FALCON_TEST_PASS:-falcon-test}"
 
 # The pending library. One small archiso-layout ISO, staged twice under two
 # names: a 17 MiB fixture keeps the proof's signing leg to seconds instead of
@@ -61,10 +61,10 @@ FOLDER_ISO_NAME=arch-mini-linux.iso
 FIXTURE_KERNEL=build/test/fixture-vmlinuz
 FIXTURE_INITRD=build/test/fixture-initrd.cpio
 
-MKSTICK=build/bin/airies-boot-mkstick
+MKSTICK=build/bin/falcon-boot-mkstick
 APPLIANCE_UKI="$OUT/appliance-uki.efi"
 FIXTURE_UKI=build/test/fixture-uki.efi
-LOADER=build/bin/airies-boot.efi
+LOADER=build/bin/falcon-boot.efi
 SHIM_DIR=build/shim/bins
 
 LOOP=
@@ -132,7 +132,7 @@ sudo "$MKSTICK" create "$IMG" \
     --shim "$SHIM_DIR" \
     --loader "$LOADER" \
     "${UKI_ARGS[@]}" \
-    --cn "airies-boot appliance rig" \
+    --cn "falcon-boot appliance rig" \
     --cert-out "$CERT"
 sudo chown "$(id -u):$(id -g)" "$IMG" "$CERT"
 rm -f "$PASSFILE"
@@ -147,7 +147,7 @@ rm -rf "$MINI_STAGE" "$MINI_ISO"
 mkdir -p "$MINI_STAGE/arch/boot/x86_64"
 cp "$FIXTURE_KERNEL" "$MINI_STAGE/arch/boot/x86_64/vmlinuz-linux"
 cp "$FIXTURE_INITRD" "$MINI_STAGE/arch/boot/x86_64/initramfs-linux.img"
-xorriso -as mkisofs -r -J -V AIRIES_MINI -o "$MINI_ISO" "$MINI_STAGE" \
+xorriso -as mkisofs -r -J -V FALCON_MINI -o "$MINI_ISO" "$MINI_STAGE" \
     >/dev/null 2>&1
 rm -rf "$MINI_STAGE"
 echo "   $MINI_ISO ($(stat -c%s "$MINI_ISO") bytes)"
@@ -180,7 +180,7 @@ echo "== seeding a varstore that trusts this stick's MOK"
 
 echo
 echo "created $IMG"
-echo "  passphrase: $PASS  (override with AIRIES_TEST_PASS)"
+echo "  passphrase: $PASS  (override with FALCON_TEST_PASS)"
 echo "  cert:       $CERT"
 echo "  varstore:   $VARS"
 echo

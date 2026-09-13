@@ -36,7 +36,7 @@
  * same node for both flavors: firmware partition and filesystem drivers bind
  * on the Block I/O instance and what its media says, never on the shape of
  * the path above it. */
-#define AIRIES_ISO_MEDIA_GUID \
+#define FALCON_ISO_MEDIA_GUID \
     { 0x887579f6, 0x4287, 0x4bc4, \
       { 0x99, 0x92, 0x15, 0xa3, 0xb5, 0x61, 0xce, 0x63 } }
 
@@ -152,7 +152,7 @@ static EFI_STATUS EFIAPI iso_flush_blocks(EFI_BLOCK_IO_PROTOCOL *self)
 
 static void device_init(iso_device *dev, uint64_t size, UINT32 block_size)
 {
-    EFI_GUID vendor_guid = AIRIES_ISO_MEDIA_GUID;
+    EFI_GUID vendor_guid = FALCON_ISO_MEDIA_GUID;
 
     dev->media.MediaId = g_next_media_id++;
     /* True for both flavors and honest for both: the file can be deleted or

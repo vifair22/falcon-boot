@@ -1,4 +1,4 @@
-/* airies-boot: the one shim interface the loader speaks (DESIGN Section 7.6,
+/* falcon-boot: the one shim interface the loader speaks (DESIGN Section 7.6,
  * branch B), kept in its own header so the shim-specific surface is exactly
  * one file wide and easy to audit.
  *
@@ -19,8 +19,8 @@
  * Sections 2.2 and 4.1).
  */
 
-#ifndef AIRIES_SHIMGUID_H
-#define AIRIES_SHIMGUID_H
+#ifndef FALCON_SHIMGUID_H
+#define FALCON_SHIMGUID_H
 
 #include <efi/uefi.h>
 
@@ -50,4 +50,4 @@ typedef struct {
     EFI_STATUS (EFIAPI *UnloadImage)(EFI_HANDLE ImageHandle);
 } SHIM_IMAGE_LOADER;
 
-#endif /* AIRIES_SHIMGUID_H */
+#endif /* FALCON_SHIMGUID_H */

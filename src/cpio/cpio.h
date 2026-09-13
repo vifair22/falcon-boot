@@ -1,4 +1,4 @@
-/* airies-boot: newc cpio writer for initrd append (docs/DESIGN.md Section
+/* falcon-boot: newc cpio writer for initrd append (docs/DESIGN.md Section
  * 6.2).
  *
  * The injection path hands the kernel the ISO's own initrd with a segment of
@@ -17,8 +17,8 @@
  * needs no allocator and is testable on a host.
  */
 
-#ifndef AIRIES_CPIO_H
-#define AIRIES_CPIO_H
+#ifndef FALCON_CPIO_H
+#define FALCON_CPIO_H
 
 #include <stdint.h>
 #include <stddef.h>
@@ -62,4 +62,4 @@ int cpio_size(const cpio_entry *entries, size_t count, size_t *out_size);
 int cpio_write(const cpio_entry *entries, size_t count, void *buf,
                size_t cap, size_t *out_size);
 
-#endif /* AIRIES_CPIO_H */
+#endif /* FALCON_CPIO_H */

@@ -1,4 +1,4 @@
-/* airies-boot mkstick: `create`, the whole device-configuration flow of
+/* falcon-boot mkstick: `create`, the whole device-configuration flow of
  * DESIGN Section 8.
  *
  * What this command is. It turns a blank block device or image file into the
@@ -50,7 +50,7 @@
 #include <part/part.h>
 
 #define DEFAULT_SHIM_DIR   "build/shim/bins"
-#define DEFAULT_LOADER     "build/bin/airies-boot.efi"
+#define DEFAULT_LOADER     "build/bin/falcon-boot.efi"
 
 /* Every external tool this command needs, checked before the first byte is
  * written. Discovering that mkfs.exfat is missing after p1 has been formatted
@@ -78,7 +78,7 @@ static const cli_opt create_opts[] = {
     { "shim", CLI_OPT_VALUE, 0, "<dir>",
       "directory holding shimx64.efi and its MokManager" },
     { "loader", CLI_OPT_VALUE, 0, "<file>",
-      "the airies-boot.efi to sign and install" },
+      "the falcon-boot.efi to sign and install" },
     { "uki", CLI_OPT_VALUE, 1, "<file>",
       "a UKI to sign with the new MOK and stage on p3:/uki" },
     { "cn", CLI_OPT_VALUE, 0, "<name>",
@@ -508,7 +508,7 @@ static cli_status refuse_existing(const mks_disk *d, int force)
                      "--force to overwrite it",
                      d->path, table.count,
                      gpt_has_role(&table, PART_ROLE_SHELF)
-                         ? " and looks like an airies stick (its p3 holds the "
+                         ? " and looks like a falcon stick (its p3 holds the "
                            "only copy of that stick's MOK private key)"
                          : "");
 }
@@ -583,7 +583,7 @@ static cli_status make_filesystems(const mks_disk *d, const mks_pass *pass,
     cli_status rc;
 
     log_info("p1: FAT32 (the ESP the firmware boots)");
-    rc = proc_runl_quiet("mkfs.fat", "-F", "32", "-n", "AIRIESESP",
+    rc = proc_runl_quiet("mkfs.fat", "-F", "32", "-n", "FALCONESP",
                          d->part[0], PROC_END);
     if (rc != CLI_OK)
         return rc;
@@ -622,7 +622,7 @@ static cli_status make_filesystems(const mks_disk *d, const mks_pass *pass,
     if (rc != CLI_OK)
         return rc;
 
-    (void)snprintf(mapper, sizeof mapper, "airies-mkstick-p3-%d",
+    (void)snprintf(mapper, sizeof mapper, "falcon-mkstick-p3-%d",
                    (int)getpid());
     rc = proc_input_l(pass->buf, pass->len, "cryptsetup", "open",
                       d->part[2], mapper, "-", PROC_END);
@@ -654,7 +654,7 @@ p4:
     if (rc != CLI_OK)
         return rc;
 
-    (void)snprintf(mapper, sizeof mapper, "airies-mkstick-p4-%d",
+    (void)snprintf(mapper, sizeof mapper, "falcon-mkstick-p4-%d",
                    (int)getpid());
     rc = proc_input_l(pass->buf, pass->len, "cryptsetup", "open",
                       d->part[3], mapper, "-", PROC_END);
@@ -757,7 +757,7 @@ static cli_status install_shelf(const cli_args *a, const mks_disk *d,
         if (rc != CLI_OK)
             return rc;
     } else {
-        (void)snprintf(mapper, sizeof mapper, "airies-mkstick-p3-%d",
+        (void)snprintf(mapper, sizeof mapper, "falcon-mkstick-p3-%d",
                        (int)getpid());
         rc = proc_input_l(pass->buf, pass->len, "cryptsetup", "open",
                           d->part[2], mapper, "-", PROC_END);
@@ -879,7 +879,7 @@ static cli_status create_run(const cli_args *a)
     char mm_path[MKS_PATH_MAX];
     char mm_name[SHIM_NEXT_STAGE_MAX];
     char next_stage[SHIM_NEXT_STAGE_MAX];
-    char tmpdir[] = "/tmp/airies-mkstick.XXXXXX";
+    char tmpdir[] = "/tmp/falcon-mkstick.XXXXXX";
     char keydir[MKS_PATH_MAX];
     char mntdir[MKS_PATH_MAX];
     char signed_loader[MKS_PATH_MAX];
@@ -1064,7 +1064,7 @@ static cli_status create_run(const cli_args *a)
         goto out;
 
     rc = util_join(signed_loader, sizeof signed_loader, keydir,
-                   "airies-boot-signed.efi");
+                   "falcon-boot-signed.efi");
     if (rc != CLI_OK)
         goto out;
     log_info("signing the loader with the new MOK");
@@ -1149,7 +1149,7 @@ out:
 
 const cli_cmd mks_cmd_create = {
     "create",
-    "build a complete airies-boot stick on a block device or image file",
+    "build a complete falcon-boot stick on a block device or image file",
     "<target>",
     create_opts,
     sizeof create_opts / sizeof create_opts[0],

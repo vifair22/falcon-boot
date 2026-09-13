@@ -6,7 +6,7 @@
 #include <cli/common/log.h>
 
 static const cli_cmd        *g_topic;
-static const char           *g_prog = "airies-boot-tool";
+static const char           *g_prog = "falcon-boot-tool";
 static const char           *g_tagline = "";
 static const char           *g_global_help = "";
 static const cli_cmd *const *g_cmds;

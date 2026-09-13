@@ -1,4 +1,4 @@
-/* airies-boot: SHA-256 (FIPS 180-4). See sha256.h.
+/* falcon-boot: SHA-256 (FIPS 180-4). See sha256.h.
  *
  * A direct transcription of the standard, unrolled only far enough to keep
  * the message schedule in registers. No table beyond the 64 round constants

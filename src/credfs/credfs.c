@@ -21,7 +21,7 @@
 /* Identifies our synthetic filesystem in device paths. A vendor-defined media
  * node is the spec's answer for a device with no bus behind it; the ISO path
  * uses the same shape with a GUID of its own. */
-#define AIRIES_CREDFS_MEDIA_GUID \
+#define FALCON_CREDFS_MEDIA_GUID \
     { 0x2f1c9a64, 0x8d3e, 0x4a17, \
       { 0xb0, 0x5c, 0x9e, 0x41, 0x77, 0x2d, 0x6b, 0x8a } }
 
@@ -32,7 +32,7 @@
 
 /* Label the volume reports if anything asks. Cosmetic: nothing in the boot
  * path matches on it. */
-static const CHAR16 credfs_label[] = L"AIRIES-CRED";
+static const CHAR16 credfs_label[] = L"FALCON-CRED";
 
 /* What GetInfo calls the root directory. FAT drivers answer with the path
  * separator; no consumer in this loader's chain reads it. */
@@ -529,7 +529,7 @@ EFI_STATUS credfs_publish(EFI_SYSTEM_TABLE *st, const credfs_entry *entries,
 {
     EFI_GUID sfs_guid = EFI_SIMPLE_FILE_SYSTEM_PROTOCOL_GUID;
     EFI_GUID dp_guid = EFI_DEVICE_PATH_PROTOCOL_GUID;
-    EFI_GUID vendor_guid = AIRIES_CREDFS_MEDIA_GUID;
+    EFI_GUID vendor_guid = FALCON_CREDFS_MEDIA_GUID;
     EFI_STATUS status;
     UINTN i;
 

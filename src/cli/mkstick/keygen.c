@@ -1,4 +1,4 @@
-/* airies-boot mkstick: `keygen`, the MOK keypair on its own.
+/* falcon-boot mkstick: `keygen`, the MOK keypair on its own.
  *
  * `create` generates a keypair for the stick it builds. This command exists
  * for the other route DESIGN Section 7.5 describes: an external host the user
@@ -61,7 +61,7 @@ const cli_cmd mks_cmd_keygen = {
     keygen_opts,
     sizeof keygen_opts / sizeof keygen_opts[0],
     1, 1,
-    "Writes airies-mok.key (0600), airies-mok.crt (PEM) and airies-mok.cer\n"
+    "Writes falcon-mok.key (0600), falcon-mok.crt (PEM) and falcon-mok.cer\n"
     "(DER) into <dir>, which is created if it does not exist. Refuses to\n"
     "overwrite an existing key: replacing one orphans every signature already\n"
     "made with it.\n",

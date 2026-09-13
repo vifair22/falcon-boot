@@ -438,11 +438,11 @@ static int ref_open(ref_file *r)
     if (r->tmp[0] != '\0')
         return -1; /* already tried and failed */
 
-    snprintf(r->tmp, sizeof(r->tmp), "/tmp/airies-exfat-ref-%ld-%p.bin",
+    snprintf(r->tmp, sizeof(r->tmp), "/tmp/falcon-exfat-ref-%ld-%p.bin",
              (long)getpid(), (const void *)r);
     snprintf(cmd, sizeof(cmd),
              "set -e; "
-             "mp=$(mktemp -d /tmp/airies-exfat-mnt-XXXXXX); "
+             "mp=$(mktemp -d /tmp/falcon-exfat-mnt-XXXXXX); "
              "trap 'sudo -n umount \"$mp\" >/dev/null 2>&1; "
              "rmdir \"$mp\" >/dev/null 2>&1' EXIT; "
              "sudo -n mount -o ro,loop '%s' \"$mp\"; "

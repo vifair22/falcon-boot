@@ -1,4 +1,7 @@
-# airies-boot Design
+# falcon-boot Design
+
+falcon-boot (formerly airies-boot; renamed 2026-09-13 before first
+real-hardware enrollment).
 
 A single-purpose, auditable multi-boot loader for UEFI x64. A distilled Ventoy:
 drag-and-drop ISO booting, plus a first-class path for booting a personal
@@ -52,7 +55,7 @@ Explicitly deferred, not forgotten:
 
 ## 2. Secure Boot posture (read this first)
 
-**Governing principle: airies-boot must never weaken the machine's Secure Boot
+**Governing principle: falcon-boot must never weaken the machine's Secure Boot
 posture.** It behaves according to the firmware's current Secure Boot state:
 
 - **Secure Boot ON:** uphold it. The loader boots only payloads that verify
@@ -148,15 +151,15 @@ states at creation time rather than letting the user discover:
 **Partition identification (decision 2026-09-13).** The loader must not treat
 "any exFAT volume" as p2 or "any LUKS2 volume" as p3: on real hardware the
 stick sits next to internal disks that may carry both. mkstick creates every
-partition, so identification is by **GPT partition type GUID**: one airies
+partition, so identification is by **GPT partition type GUID**: one falcon
 GUID minted per role (p2 ISO library, p3 UKI shelf; p1 keeps the standard ESP
 type, p4 keeps the standard Linux dm-crypt type since only the initramfs
 touches it). The install manifest additionally records each partition's
-PARTUUID as a tiebreaker if two airies sticks are ever plugged in at once.
+PARTUUID as a tiebreaker if two falcon sticks are ever plugged in at once.
 The loader matches type GUIDs read from the GPT entry protocol (or by parsing
 the GPT itself off the parent BlockIO if the firmware's PartitionInfo is
 absent) and falls back to the current probe-everything behavior only when it
-finds no airies-typed partition at all, so the QEMU rig images keep working
+finds no falcon-typed partition at all, so the QEMU rig images keep working
 until mkstick (Section 8) exists to stamp them.
 
 
@@ -166,7 +169,7 @@ until mkstick (Section 8) exists to stamp them.
 p1:/EFI/BOOT/BOOTX64.EFI     Fedora shim-x64 16.1 (dual MS-signed, 2011+2023)
 p1:/EFI/BOOT/mmx64.efi       MokManager, shim's enrollment UI (Fedora naming)
 p1:/EFI/BOOT/grubx64.efi     OUR loader (see note on next-stage name)
-p1:/airies-boot.cer          our public cert, for first-boot enrollment
+p1:/falcon-boot.cer          our public cert, for first-boot enrollment
 ```
 
 Shim vendor decision (2026-09-12, spike data in `docs/notes/shim-spike.md`):
@@ -183,7 +186,7 @@ Boot chain under Secure Boot:
 2. Shim installs its verification protocol and loads its next-stage binary. It
    cannot verify our loader against db, so it consults MOK. On first boot MOK is
    empty for our key, so shim launches MokManager, which prompts the user to
-   enroll `airies-boot.cer`. After enrollment and reboot, shim verifies our
+   enroll `falcon-boot.cer`. After enrollment and reboot, shim verifies our
    loader against MOK. Passes.
 3. Our loader runs. For the ISO path it chainloads payloads without a signature
    requirement (Section 7). For the UKI path it loads only our-signed artifacts,
@@ -406,7 +409,7 @@ same interface.
 
 ## 7. Security model
 
-Governing principle (Section 2): airies-boot never weakens the machine's Secure
+Governing principle (Section 2): falcon-boot never weakens the machine's Secure
 Boot posture, and it never holds or uses a signing secret. All control over what
 is trusted rests with the user, exercised on a host they control or through the
 platform's own physical-presence mechanisms. It rests neither with us (the loader
@@ -727,7 +730,7 @@ EFI-land stays freestanding and lean. The device-configuration tooling is
 ordinary Linux userland C and is allowed to shell out to system tools rather
 than reimplementing cryptography or filesystem creation:
 
-- `airies-boot-mkstick` (or subcommands): partition (GPT), format p1 FAT32 and
+- `falcon-boot-mkstick` (or subcommands): partition (GPT), format p1 FAT32 and
   p2 exFAT (`mkfs.fat`, `mkfs.exfat`), and create p3/p4 via `cryptsetup
   luksFormat` with the correct KDF per partition (`--pbkdf pbkdf2` on p3,
   argon2id default on p4), then `mkfs.ext4` inside each. On p3, pin
@@ -749,7 +752,7 @@ than reimplementing cryptography or filesystem creation:
   handoff hook (Section 5.1) baked in, and build the signing-appliance UKI
   (Section 7.5): a minimal initramfs of busybox + cryptsetup + sbsign + the
   portable `sign` tool.
-- `airies-boot sign <iso>`: the bless step (Section 7.5). Extracts the ISO's
+- `falcon-boot sign <iso>`: the bless step (Section 7.5). Extracts the ISO's
   kernel and wraps it, per Section 8.1, into a minimal signed UKI whose
   embedded cmdline carries the derived `iso-scan`-style arguments; the ISO
   stays on p2 for its initramfs to find. Built as a **portable static
@@ -785,8 +788,8 @@ Two more reasons the wrap is a UKI, one forced and one earned:
 On-stick layout, under the reserved directory of Section 6.2:
 
 ```
-p2:/airies/blessed/<name>.uki      signed UKI wraps, one per blessed ISO
-p2:/airies/blessed/manifest        the manifest, plain ASCII text
+p2:/falcon/blessed/<name>.uki      signed UKI wraps, one per blessed ISO
+p2:/falcon/blessed/manifest        the manifest, plain ASCII text
 ```
 
 Manifest format: line-based records, `#` comments, one block per blessed
@@ -796,7 +799,7 @@ ISO, keys before the next `iso=` belong to the current block:
 iso=Linux/archlinux-2026.01.01-x86_64.iso   # path relative to p2 root
 size=1538670592                              # byte size at bless time
 sha256=<hex>                                 # ISO hash at bless time
-uki=archlinux-2026.01.01-x86_64.uki          # file under /airies/blessed/
+uki=archlinux-2026.01.01-x86_64.uki          # file under /falcon/blessed/
 family=arch                                  # registry id (Section 6.2)
 ```
 
@@ -922,11 +925,11 @@ Status (2026-09-13): steps 1-6 are DONE and proven in the QEMU rig, including
 the Secure Boot ON halves (shim plumbing spike results in Section 7.6 and
 docs/notes/shim-spike.md; personal-OS unlock, shim-verified UKI launch, and
 the sd-stub credential handoff in Sections 5/5.1). Partition identification
-per Section 3 is implemented (airies GPT type GUIDs, probe-everything
+per Section 3 is implemented (falcon GPT type GUIDs, probe-everything
 fallback for unstamped rigs). Step 4's injectors are the framework plus
 native-cmdline descriptors, per the plan; nothing consumes the cmdline
 templates until the bless path lands. Steps 7 and 8 are also
-done: the airies-boot-mkstick and airies-boot-sign host tools exist (a
+done: the falcon-boot-mkstick and falcon-boot-sign host tools exist (a
 mkstick-created stick boots Secure Boot ON end to end with its own generated
 MOK), the loader-side blessed-boot path consumes the Section 8.1 manifest
 (fresh boots the signed wrap, stale degrades to the ordinary path, labels in
@@ -969,7 +972,7 @@ Windows injectors, Manual.md, and the falcon-boot rename during polish.
    credential, p4 unlock (Section 5.1).
 7. Host tooling: `mkstick`, MOK keygen (private key onto p3, cert onto p1), shim
    install with correct next-stage naming, signing our loader/UKIs, and the
-   portable `airies-boot sign` tool for blessing media.
+   portable `falcon-boot sign` tool for blessing media.
 8. Signing appliance: minimal signing-appliance UKI (busybox + cryptsetup +
    sbsign + the portable `sign` tool), as a loader menu entry; unlock p3, per-ISO
    confirm, sign, stage manifest, reboot (Section 7.5).

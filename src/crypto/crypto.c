@@ -1,4 +1,4 @@
-/* airies-boot: shared crypto plumbing. See crypto.h. */
+/* falcon-boot: shared crypto plumbing. See crypto.h. */
 
 #include <crypto/crypto.h>
 #include <lib/string.h>

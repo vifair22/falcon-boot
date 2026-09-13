@@ -29,9 +29,9 @@ VENV=build/shim/venv
 OVMF_DIR="${OVMF_DIR:-/usr/share/edk2/OvmfX64}"
 VARS_SRC="$OVMF_DIR/OVMF_VARS.secboot.fd"
 
-KEY=$OUT/airies-test-mok.key
-CRT=$OUT/airies-test-mok.crt
-CER=$OUT/airies-test-mok.cer
+KEY=$OUT/falcon-test-mok.key
+CRT=$OUT/falcon-test-mok.crt
+CER=$OUT/falcon-test-mok.cer
 VARS=$OUT/OVMF_VARS.secboot.mok.fd
 # The permissive-mode varstore (DESIGN Section 7.4): the same enrolled MOK,
 # plus the MokSBState byte MokManager would have written after the user ran
@@ -55,7 +55,7 @@ mkdir -p "$OUT"
 if [[ ! -f $KEY ]]; then
     echo "== generating throwaway test MOK keypair (build/ only, never shipped)"
     openssl req -new -x509 -newkey rsa:2048 -nodes -days 3650 -sha256 \
-        -subj "/CN=airies-boot TEST MOK (throwaway)/" \
+        -subj "/CN=falcon-boot TEST MOK (throwaway)/" \
         -keyout "$KEY" -out "$CRT" 2>/dev/null
     chmod 600 "$KEY"
     # DER form, which is what MokManager wants when the enrollment UX is

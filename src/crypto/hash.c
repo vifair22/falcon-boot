@@ -1,4 +1,4 @@
-/* airies-boot: hash-by-name dispatch. See hash.h. */
+/* falcon-boot: hash-by-name dispatch. See hash.h. */
 
 #include <crypto/hash.h>
 #include <crypto/crypto.h>

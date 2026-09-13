@@ -9,15 +9,15 @@
 #include <part/part.h>
 #include <lib/string.h>
 
-/* The airies type GUIDs, in on-disk byte order. The textual form and the
+/* The falcon type GUIDs, in on-disk byte order. The textual form and the
  * reason these are frozen are in part.h; do not edit either copy. */
-const uint8_t airies_guid_iso[GPT_GUID_LEN] = {
+const uint8_t falcon_guid_iso[GPT_GUID_LEN] = {
     /* f6b6d562-22c3-450a-87aa-0316039657d6 */
     0x62, 0xd5, 0xb6, 0xf6, 0xc3, 0x22, 0x0a, 0x45,
     0x87, 0xaa, 0x03, 0x16, 0x03, 0x96, 0x57, 0xd6
 };
 
-const uint8_t airies_guid_shelf[GPT_GUID_LEN] = {
+const uint8_t falcon_guid_shelf[GPT_GUID_LEN] = {
     /* 9cb02e90-85f4-4af7-9af3-1f9d6a95feaf */
     0x90, 0x2e, 0xb0, 0x9c, 0xf4, 0x85, 0xf7, 0x4a,
     0x9a, 0xf3, 0x1f, 0x9d, 0x6a, 0x95, 0xfe, 0xaf
@@ -26,7 +26,7 @@ const uint8_t airies_guid_shelf[GPT_GUID_LEN] = {
 const uint8_t gpt_guid_esp[GPT_GUID_LEN] = {
     /* c12a7328-f81f-11d2-ba4b-00a0c93ec93b, the standard EFI system
      * partition type. Present so the tests can name it and so nobody is
-     * tempted to mint an airies GUID for p1. */
+     * tempted to mint a falcon GUID for p1. */
     0x28, 0x73, 0x2a, 0xc1, 0x1f, 0xf8, 0xd2, 0x11,
     0xba, 0x4b, 0x00, 0xa0, 0xc9, 0x3e, 0xc9, 0x3b
 };
@@ -93,9 +93,9 @@ const uint8_t *part_role_guid(part_role role)
 {
     switch (role) {
     case PART_ROLE_ISO:
-        return airies_guid_iso;
+        return falcon_guid_iso;
     case PART_ROLE_SHELF:
-        return airies_guid_shelf;
+        return falcon_guid_shelf;
     default:
         return NULL;
     }

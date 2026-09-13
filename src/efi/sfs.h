@@ -1,4 +1,4 @@
-/* airies-boot: Simple File System and File protocols (UEFI spec 13.4, 13.5).
+/* falcon-boot: Simple File System and File protocols (UEFI spec 13.4, 13.5).
  *
  * The ISO path uses this header mostly for its GUID: the firmware's FAT
  * driver publishes Simple File System on the ISO's embedded ESP, and that
@@ -9,8 +9,8 @@
  * start at byte zero needs a seek; everything else stays a placeholder.
  */
 
-#ifndef AIRIES_UEFI_SFS_H
-#define AIRIES_UEFI_SFS_H
+#ifndef FALCON_UEFI_SFS_H
+#define FALCON_UEFI_SFS_H
 
 #include <efi/types.h>
 
@@ -63,4 +63,4 @@ struct EFI_SIMPLE_FILE_SYSTEM_PROTOCOL {
                                     EFI_FILE_PROTOCOL **Root);
 };
 
-#endif /* AIRIES_UEFI_SFS_H */
+#endif /* FALCON_UEFI_SFS_H */

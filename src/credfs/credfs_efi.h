@@ -1,4 +1,4 @@
-/* airies-boot: the File Protocol surface a provider has to implement, plus
+/* falcon-boot: the File Protocol surface a provider has to implement, plus
  * the info structures it has to hand out (UEFI spec 13.5 and 13.6).
  *
  * Why this is not in src/efi/sfs.h. That header exists for the ISO path,
@@ -17,8 +17,8 @@
  * Naming and field order follow the specification, per src/efi/types.h.
  */
 
-#ifndef AIRIES_CREDFS_EFI_H
-#define AIRIES_CREDFS_EFI_H
+#ifndef FALCON_CREDFS_EFI_H
+#define FALCON_CREDFS_EFI_H
 
 #include <efi/sfs.h>
 #include <efi/types.h>
@@ -143,4 +143,4 @@ struct CREDFS_EFI_FILE_PROTOCOL {
 _Static_assert(sizeof(CREDFS_EFI_FILE_PROTOCOL) == sizeof(EFI_FILE_PROTOCOL),
                "the File Protocol has one ABI; sfs.h and this must agree");
 
-#endif /* AIRIES_CREDFS_EFI_H */
+#endif /* FALCON_CREDFS_EFI_H */

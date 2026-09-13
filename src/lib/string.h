@@ -1,4 +1,4 @@
-/* airies-boot: freestanding support routines.
+/* falcon-boot: freestanding support routines.
  *
  * The four mem* functions exist because gcc is entitled to lower struct
  * copies and initializers into calls to them even under -ffreestanding; a
@@ -7,8 +7,8 @@
  * console input share.
  */
 
-#ifndef AIRIES_LIB_H
-#define AIRIES_LIB_H
+#ifndef FALCON_LIB_H
+#define FALCON_LIB_H
 
 #include <stdint.h>
 #include <stddef.h>
@@ -44,4 +44,4 @@ static inline uint64_t get_le64(const uint8_t *p)
     return (uint64_t)get_le32(p) | ((uint64_t)get_le32(p + 4) << 32);
 }
 
-#endif /* AIRIES_LIB_H */
+#endif /* FALCON_LIB_H */

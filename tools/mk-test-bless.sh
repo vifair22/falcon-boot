@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# airies-boot: bless a real ISO with the test MOK and verify the result
+# falcon-boot: bless a real ISO with the test MOK and verify the result
 # (docs/DESIGN.md Sections 7.5, 8 and 8.1).
 #
-# Builds a scratch "p2" under build/ and runs airies-boot-sign against a real
+# Builds a scratch "p2" under build/ and runs falcon-boot-sign against a real
 # distro ISO, then checks the four things the bless is supposed to produce:
 #
-#   1. a signed UKI under <stick>/airies/blessed/ that sbverify accepts
+#   1. a signed UKI under <stick>/falcon/blessed/ that sbverify accepts
 #      against the test MOK certificate
 #   2. a .cmdline section inside that UKI carrying the rendered family
 #      template, with the ISO's path on p2 substituted in
@@ -27,7 +27,7 @@
 #
 # Usage: tools/mk-test-bless.sh [ISO]
 # Env:   ARCH_ISO   source ISO (default: the vtoy-backup copy)
-#        SIGN       the bless tool (default: build/bin/airies-boot-sign)
+#        SIGN       the bless tool (default: build/bin/falcon-boot-sign)
 #        STICK      scratch p2 (default: build/e2e-stick)
 
 set -euo pipefail
@@ -35,11 +35,11 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 ARCH_ISO="${1:-${ARCH_ISO:-/mnt/980pro/vtoy-backup/Linux/archlinux-2026.01.01-x86_64.iso}}"
-SIGN="${SIGN:-build/bin/airies-boot-sign}"
+SIGN="${SIGN:-build/bin/falcon-boot-sign}"
 STICK="${STICK:-build/e2e-stick}"
 
-MOK_KEY=build/mok-test/airies-test-mok.key
-MOK_CRT=build/mok-test/airies-test-mok.crt
+MOK_KEY=build/mok-test/falcon-test-mok.key
+MOK_CRT=build/mok-test/falcon-test-mok.crt
 
 for t in bsdtar ukify sbsign sbverify objcopy python3; do
     command -v "$t" >/dev/null 2>&1 || {
@@ -74,9 +74,9 @@ echo "== bless"
 "$SIGN" "$STICK/Linux/$ISO_NAME" \
     --stick "$STICK" --key "$MOK_KEY" --cert "$MOK_CRT"
 
-MANIFEST="$STICK/airies/blessed/manifest"
+MANIFEST="$STICK/falcon/blessed/manifest"
 UKI_NAME="$(sed -n 's/^uki=//p' "$MANIFEST" | tail -1)"
-UKI="$STICK/airies/blessed/$UKI_NAME"
+UKI="$STICK/falcon/blessed/$UKI_NAME"
 
 echo
 echo "== verify"
@@ -136,4 +136,4 @@ AFTER="$(grep -c '^iso=' "$MANIFEST")"
 echo "   record count unchanged: $AFTER"
 
 echo
-echo "OK. The blessed artifacts are under $STICK/airies/blessed/."
+echo "OK. The blessed artifacts are under $STICK/falcon/blessed/."

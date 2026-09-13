@@ -10,8 +10,8 @@
  * VBR Section 3.1, directory entries Section 6.x.
  */
 
-#ifndef AIRIES_TEST_SYNTH_H
-#define AIRIES_TEST_SYNTH_H
+#ifndef FALCON_TEST_SYNTH_H
+#define FALCON_TEST_SYNTH_H
 
 #include <stdint.h>
 #include <stddef.h>
@@ -92,4 +92,4 @@ unsigned synth_put_set(uint8_t *p, const char *name, uint16_t attrs,
 #define SYNTH_FLAG_ALLOC 0x01u
 #define SYNTH_FLAG_NOFAT 0x02u
 
-#endif /* AIRIES_TEST_SYNTH_H */
+#endif /* FALCON_TEST_SYNTH_H */

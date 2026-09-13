@@ -416,7 +416,7 @@ static void build_tree(synth_vol *sv)
     n = synth_put_set(root, "sub", SYNTH_ATTR_DIR,
                       (uint8_t)(SYNTH_FLAG_ALLOC | SYNTH_FLAG_NOFAT),
                       sub_cluster, cb);
-    n += synth_put_set(root + n * SYNTH_ENT, "airies.iso", 0,
+    n += synth_put_set(root + n * SYNTH_ENT, "falcon.iso", 0,
                        (uint8_t)(SYNTH_FLAG_ALLOC | SYNTH_FLAG_NOFAT),
                        file_cluster, cb);
     synth_put_end(root + n * SYNTH_ENT);
@@ -473,7 +473,7 @@ static void test_fs_exfat_through_vtable(void **state)
             memcpy(&dir_ent, &ent, sizeof ent);
             saw_dir = 1;
         } else {
-            assert_true(fs_name_eq_ascii(ent.name, "airies.iso"));
+            assert_true(fs_name_eq_ascii(ent.name, "falcon.iso"));
             /* exFAT has no device nodes: not a directory means a byte
              * stream, and the unified view says so. */
             assert_true(ent.is_regular);

@@ -1,4 +1,4 @@
-/* airies-boot: the filesystem driver registry (docs/DESIGN.md Section 9).
+/* falcon-boot: the filesystem driver registry (docs/DESIGN.md Section 9).
  *
  * One vtable over every read-only filesystem driver in the tree, so that a
  * consumer asks "what is on this volume" rather than naming exFAT or ext4,
@@ -50,8 +50,8 @@
  *    produced it.
  */
 
-#ifndef AIRIES_FS_H
-#define AIRIES_FS_H
+#ifndef FALCON_FS_H
+#define FALCON_FS_H
 
 #include <stdint.h>
 #include <stddef.h>
@@ -279,4 +279,4 @@ extern const fs_ops fs_ops_ext4;
 int fs_status_from_exfat(int rc);
 int fs_status_from_ext4(int rc);
 
-#endif /* AIRIES_FS_H */
+#endif /* FALCON_FS_H */

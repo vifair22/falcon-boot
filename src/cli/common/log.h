@@ -1,4 +1,4 @@
-/* airies-boot host tooling: leveled logging with the stream split the repo's
+/* falcon-boot host tooling: leveled logging with the stream split the repo's
  * CLI standard asks for.
  *
  * DEBUG and INFO are normal output and go to stdout; WARN and ERROR are
@@ -8,8 +8,8 @@
  * log as it is on a terminal.
  */
 
-#ifndef AIRIES_CLI_LOG_H
-#define AIRIES_CLI_LOG_H
+#ifndef FALCON_CLI_LOG_H
+#define FALCON_CLI_LOG_H
 
 #include <cli/common/status.h>
 
@@ -39,4 +39,4 @@ void cli_log_blank(void);
 /* Print the recorded error sentence, once, at the CLI boundary. */
 void cli_log_failure(cli_status code);
 
-#endif /* AIRIES_CLI_LOG_H */
+#endif /* FALCON_CLI_LOG_H */

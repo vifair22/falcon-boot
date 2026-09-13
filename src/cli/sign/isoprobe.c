@@ -1,4 +1,4 @@
-/* airies-boot-sign: reading an ISO without mounting it.
+/* falcon-boot-sign: reading an ISO without mounting it.
  *
  * The bless tool has to fingerprint an ISO's layout (DESIGN Section 6.2)
  * and pull one file out of it. Loop-mounting would need root, which the

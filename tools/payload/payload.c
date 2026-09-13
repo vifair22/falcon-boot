@@ -16,8 +16,8 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
 {
     (void)image_handle;
 
-    st->ConOut->OutputString(st->ConOut, L"\r\nAIRIES-PAYLOAD-OK\r\n");
+    st->ConOut->OutputString(st->ConOut, L"\r\nFALCON-PAYLOAD-OK\r\n");
     st->BootServices->Stall(2000000);
-    st->ConOut->OutputString(st->ConOut, L"AIRIES-PAYLOAD-EXIT\r\n");
+    st->ConOut->OutputString(st->ConOut, L"FALCON-PAYLOAD-EXIT\r\n");
     return EFI_SUCCESS;
 }

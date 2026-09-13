@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# airies-boot: build the two .img fixtures the disk flavor of the virtual
+# falcon-boot: build the two .img fixtures the disk flavor of the virtual
 # media path boots (docs/DESIGN.md Section 6 stage 2).
 #
 # Produces:
@@ -7,7 +7,7 @@
 #   build/test/payload-floppy.img   8 MiB, FAT16, no partition table at all
 #
 # Both carry the same EFI/BOOT/BOOTX64.EFI (build/test/payload.efi, from
-# `make payload`), which prints AIRIES-PAYLOAD-OK and returns. The pair exists
+# `make payload`), which prints FALCON-PAYLOAD-OK and returns. The pair exists
 # because the loader's ESP hunt has to work for both of the ways firmware
 # reaches a filesystem on a 512-byte-sector device: through its partition
 # driver (the GPT image), and by binding its FAT driver straight to the whole
@@ -69,7 +69,7 @@ truncate -s "${GPT_MIB}M" "$GPT_IMG"
 sgdisk --clear \
     --new=1:2048:0 \
     --typecode=1:ef00 \
-    --change-name=1:"AIRIES-TEST-ESP" \
+    --change-name=1:"FALCON-TEST-ESP" \
     "$GPT_IMG" >/dev/null
 
 # -P is what makes the kernel scan the partition table and create loopXp1.
@@ -81,7 +81,7 @@ LOOP=$(sudo losetup --find --show --partscan "$GPT_IMG")
 
 # One sector per cluster: at the default cluster size a partition this small
 # lands below FAT16's 4085-cluster floor and mkfs refuses it.
-sudo mkfs.fat -F 16 -s 1 -n AIRIESESP "${LOOP}p1" >/dev/null
+sudo mkfs.fat -F 16 -s 1 -n FALCONESP "${LOOP}p1" >/dev/null
 
 MNT=$(mktemp -d)
 sudo mount -o uid="$(id -u)",gid="$(id -g)" "${LOOP}p1" "$MNT"
@@ -100,7 +100,7 @@ LOOP=
 # to the virtual disk itself, which is the case the loader's ESP hunt finds
 # through the handle-set diff rather than through a partition child.
 truncate -s "${FLOPPY_MIB}M" "$FLOPPY_IMG"
-mkfs.fat -F 16 -s 1 -n AIRIESFLP "$FLOPPY_IMG" >/dev/null
+mkfs.fat -F 16 -s 1 -n FALCONFLP "$FLOPPY_IMG" >/dev/null
 
 MNT=$(mktemp -d)
 sudo mount -o loop,uid="$(id -u)",gid="$(id -g)" "$FLOPPY_IMG" "$MNT"
@@ -113,4 +113,4 @@ MNT=
 
 echo "created $GPT_IMG ($(stat -c %s "$GPT_IMG") bytes, GPT + one ESP)"
 echo "created $FLOPPY_IMG ($(stat -c %s "$FLOPPY_IMG") bytes, FAT16 superfloppy)"
-echo "  payload: $PAYLOAD -> EFI/BOOT/BOOTX64.EFI (prints AIRIES-PAYLOAD-OK)"
+echo "  payload: $PAYLOAD -> EFI/BOOT/BOOTX64.EFI (prints FALCON-PAYLOAD-OK)"

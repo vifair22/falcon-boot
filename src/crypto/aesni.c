@@ -1,4 +1,4 @@
-/* airies-boot: AES-XTS on AES-NI. See aesni.h.
+/* falcon-boot: AES-XTS on AES-NI. See aesni.h.
  *
  * BUILD REQUIREMENT: this translation unit alone needs -maes. The repo's
  * baseline CFLAGS must not carry it, because every other object would then

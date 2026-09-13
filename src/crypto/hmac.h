@@ -1,4 +1,4 @@
-/* airies-boot: HMAC (RFC 2104) over the hash descriptors.
+/* falcon-boot: HMAC (RFC 2104) over the hash descriptors.
  *
  * Purpose. The PRF underneath PBKDF2, which is the whole of the p3 keyslot
  * derivation and the LUKS2 digest verification.
@@ -19,8 +19,8 @@
  * through PBKDF2.
  */
 
-#ifndef AIRIES_CRYPTO_HMAC_H
-#define AIRIES_CRYPTO_HMAC_H
+#ifndef FALCON_CRYPTO_HMAC_H
+#define FALCON_CRYPTO_HMAC_H
 
 #include <stdint.h>
 #include <stddef.h>
@@ -54,4 +54,4 @@ void hmac_final(hmac_ctx *c, uint8_t *out);
 int  hmac(const hash_desc *d, const void *key, size_t key_len,
           const void *data, size_t len, uint8_t *out);
 
-#endif /* AIRIES_CRYPTO_HMAC_H */
+#endif /* FALCON_CRYPTO_HMAC_H */

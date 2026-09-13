@@ -1,4 +1,4 @@
-/* airies-boot: AES-XTS sector decryption (IEEE 1619), plain64 IV.
+/* falcon-boot: AES-XTS sector decryption (IEEE 1619), plain64 IV.
  *
  * Purpose. The mode LUKS2 encrypts p3 with, in both places the unlock
  * touches: the keyslot area, which holds the AF-split master key and is
@@ -30,8 +30,8 @@
  * src/luks.
  */
 
-#ifndef AIRIES_CRYPTO_XTS_H
-#define AIRIES_CRYPTO_XTS_H
+#ifndef FALCON_CRYPTO_XTS_H
+#define FALCON_CRYPTO_XTS_H
 
 #include <stdint.h>
 #include <stddef.h>
@@ -84,4 +84,4 @@ int  xts_impl(const xts_ctx *c);
  * machine this is developed on does. */
 int  xts_setkey_portable(xts_ctx *c, const uint8_t *key, size_t key_len);
 
-#endif /* AIRIES_CRYPTO_XTS_H */
+#endif /* FALCON_CRYPTO_XTS_H */

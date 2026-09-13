@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# airies-boot: build the ext4 fixture the host test suite reads.
+# falcon-boot: build the ext4 fixture the host test suite reads.
 #
 # Produces build/test-ext4.img: a 128 MiB whole-device ext4 filesystem made by
 # a stock `mkfs.ext4` and populated through the kernel's own driver, which is
@@ -60,7 +60,7 @@ cd "$(dirname "$0")/.."
 IMG=build/test-ext4.img
 MANIFEST=build/test-ext4.manifest
 BIGCOPY=build/test-ext4.bigfile
-LABEL=AIRIES-P3T
+LABEL=FALCON-P3T
 SIZE_MIB=128
 BIG_MIB=24
 BIG_CHUNK_MIB=2
@@ -98,7 +98,7 @@ sudo chown "$(id -u):$(id -g)" "$MNT" "$MNT/lost+found"
 
 # ---------------------------------------------------------------- contents
 
-echo "hello from airies-boot" > "$MNT/hello.txt"
+echo "hello from falcon-boot" > "$MNT/hello.txt"
 
 # Deterministic filler rather than urandom: the manifest pins a sha256 of
 # every sized file, and a fixture whose hashes changed on each rebuild would
@@ -108,7 +108,7 @@ echo "hello from airies-boot" > "$MNT/hello.txt"
 PATTERN="$MNT/.pattern"
 : > "$PATTERN"
 for _ in $(seq 1 1024); do
-    printf 'airies-boot ext4 fixture pattern.\n' >> "$PATTERN"
+    printf 'falcon-boot ext4 fixture pattern.\n' >> "$PATTERN"
 done
 
 mkdir -p "$MNT/sizes"
@@ -155,7 +155,7 @@ cmp "$BIGCOPY" "$MNT/big.bin"
 # ---------------------------------------------------------------- manifest
 
 {
-    echo "# airies-boot ext4 fixture manifest"
+    echo "# falcon-boot ext4 fixture manifest"
     echo "# image: $IMG (${SIZE_MIB} MiB, mkfs.ext4 defaults, label $LABEL)"
     echo "# columns: type TAB path TAB size TAB sha256"
     echo "# type: f regular, d directory, l symlink; sha256 is - unless f"

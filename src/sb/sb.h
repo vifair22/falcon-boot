@@ -1,4 +1,4 @@
-/* airies-boot: Secure Boot state, for UX only (docs/DESIGN.md Sections 7.3,
+/* falcon-boot: Secure Boot state, for UX only (docs/DESIGN.md Sections 7.3,
  * 7.4, 9).
  *
  * This module reads three EFI variables and says what they mean in words the
@@ -13,8 +13,8 @@
  * banner must render as normal rather than as an error.
  */
 
-#ifndef AIRIES_SB_H
-#define AIRIES_SB_H
+#ifndef FALCON_SB_H
+#define FALCON_SB_H
 
 #include <efi/uefi.h>
 
@@ -69,4 +69,4 @@ const CHAR16 *sb_mode_label(sb_mode m);
  * function grants no permission and changes nothing. */
 int sb_mode_needs_warning(sb_mode m);
 
-#endif /* AIRIES_SB_H */
+#endif /* FALCON_SB_H */

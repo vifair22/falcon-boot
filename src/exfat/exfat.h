@@ -1,4 +1,4 @@
-/* airies-boot: read-only exFAT (docs/DESIGN.md Sections 6, 9).
+/* falcon-boot: read-only exFAT (docs/DESIGN.md Sections 6, 9).
  *
  * Deliberately freestanding and EFI-free: all device access goes through a
  * byte-addressed read callback, so the same code mounts an EFI BlockIO
@@ -11,8 +11,8 @@
  * ExitBootServices).
  */
 
-#ifndef AIRIES_EXFAT_H
-#define AIRIES_EXFAT_H
+#ifndef FALCON_EXFAT_H
+#define FALCON_EXFAT_H
 
 #include <stdint.h>
 #include <stddef.h>
@@ -140,4 +140,4 @@ typedef struct {
 int exfat_file_extents(exfat_vol *v, const exfat_dirent *e,
                        exfat_extent *out, size_t cap, size_t *count);
 
-#endif /* AIRIES_EXFAT_H */
+#endif /* FALCON_EXFAT_H */

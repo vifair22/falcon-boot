@@ -1,4 +1,4 @@
-/* airies-boot: minimal UEFI base types.
+/* falcon-boot: minimal UEFI base types.
  *
  * We target x86_64-w64-mingw32, whose native calling convention IS the
  * Microsoft x64 ABI that UEFI mandates, so EFIAPI expands to nothing. If this
@@ -11,8 +11,8 @@
  * structs is ABI: never reorder, never remove, only annotate.
  */
 
-#ifndef AIRIES_UEFI_TYPES_H
-#define AIRIES_UEFI_TYPES_H
+#ifndef FALCON_UEFI_TYPES_H
+#define FALCON_UEFI_TYPES_H
 
 #include <stdint.h>
 #include <stddef.h>
@@ -53,4 +53,4 @@ typedef struct {
 #define FALSE ((BOOLEAN)0)
 #endif
 
-#endif /* AIRIES_UEFI_TYPES_H */
+#endif /* FALCON_UEFI_TYPES_H */

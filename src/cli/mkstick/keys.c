@@ -17,13 +17,13 @@ cli_status mok_paths(mok_keys *k, const char *dir)
     if (snprintf(k->dir, sizeof k->dir, "%s", dir) < 0)
         return set_error(CLI_ERR_RANGE, "key directory path too long");
 
-    rc = util_join(k->key, sizeof k->key, dir, "airies-mok.key");
+    rc = util_join(k->key, sizeof k->key, dir, "falcon-mok.key");
     if (rc != CLI_OK)
         return rc;
-    rc = util_join(k->crt, sizeof k->crt, dir, "airies-mok.crt");
+    rc = util_join(k->crt, sizeof k->crt, dir, "falcon-mok.crt");
     if (rc != CLI_OK)
         return rc;
-    rc = util_join(k->cer, sizeof k->cer, dir, "airies-mok.cer");
+    rc = util_join(k->cer, sizeof k->cer, dir, "falcon-mok.cer");
     return rc;
 }
 
