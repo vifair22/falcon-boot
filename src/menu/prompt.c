@@ -14,6 +14,7 @@
  * on its own from a real console, and treating it as a commit would make a
  * stray keystroke submit a half-typed passphrase. */
 #define CHAR_BACKSPACE 0x0008
+#define CHAR_TAB       0x0009
 #define CHAR_CR        0x000D
 
 static void out(EFI_SYSTEM_TABLE *st, const CHAR16 *s)
@@ -28,6 +29,11 @@ INTN menu_prompt_secret(EFI_SYSTEM_TABLE *st, const CHAR16 *prompt,
                         char *buf, UINTN cap)
 {
     UINTN len = 0;
+    /* systemd ask-password convention: Tab erases the asterisks already on
+     * screen and silences the rest of the entry, so an onlooker cannot even
+     * count the passphrase's length. Display state only - the buffer, the
+     * keys accepted, and every other behavior are identical either way. */
+    BOOLEAN silent = FALSE;
 
     if (st == (void *)0 || buf == (void *)0 || cap == 0)
         return -1;
@@ -63,6 +69,16 @@ INTN menu_prompt_secret(EFI_SYSTEM_TABLE *st, const CHAR16 *prompt,
             buf[len] = '\0';
             return (INTN)len;
         }
+        if (key.UnicodeChar == CHAR_TAB) {
+            if (!silent) {
+                UINTN i;
+
+                for (i = 0; i < len; i++)
+                    out(st, L"\b \b");
+                silent = TRUE;
+            }
+            continue;
+        }
         if (key.UnicodeChar == CHAR_BACKSPACE) {
             if (len > 0) {
                 len--;
@@ -70,7 +86,8 @@ INTN menu_prompt_secret(EFI_SYSTEM_TABLE *st, const CHAR16 *prompt,
                  * the way out: a passphrase retyped after a correction would
                  * otherwise leave its earlier tail sitting past len. */
                 buf[len] = '\0';
-                out(st, L"\b \b");
+                if (!silent)
+                    out(st, L"\b \b");
             }
             continue;
         }
@@ -82,7 +99,8 @@ INTN menu_prompt_secret(EFI_SYSTEM_TABLE *st, const CHAR16 *prompt,
         if (len + 1 >= cap)
             continue;
         buf[len++] = (char)key.UnicodeChar;
-        out(st, L"*");
+        if (!silent)
+            out(st, L"*");
     }
 
     /* WaitForEvent failed, which means the console is gone; treat it as a

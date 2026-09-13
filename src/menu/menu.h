@@ -47,6 +47,10 @@ INTN menu_run(EFI_SYSTEM_TABLE *st, const menu_banner *banner,
  * Non-ASCII keystrokes are ignored rather than rejected, because a refusal
  * message would be a keystroke-by-keystroke oracle for nothing.
  *
+ * Tab follows the systemd ask-password convention: it erases the asterisks
+ * already on screen and silences echo for the rest of the entry, so the
+ * passphrase's length is not on display. Editing keeps working unchanged.
+ *
  * Returns the number of bytes typed (0 is a legal answer, and the LUKS layer
  * will reject it like any wrong passphrase), or a negative value if the user
  * pressed ESC. On ESC the buffer is wiped before returning; on success the
