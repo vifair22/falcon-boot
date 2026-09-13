@@ -16,6 +16,7 @@ int run_family_tests(void);
 int run_isoprobe_tests(void);
 int run_wimext_tests(void);
 int run_prepcore_tests(void);
+int run_appliance_route_tests(void);
 int run_manifest_tests(void);
 int run_bless_tests(void);
 int run_prep_tests(void);

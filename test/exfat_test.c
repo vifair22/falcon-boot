@@ -67,6 +67,7 @@ int main(void)
     failed += run_isoprobe_tests();
     failed += run_wimext_tests();
     failed += run_prepcore_tests();
+    failed += run_appliance_route_tests();
     failed += run_manifest_tests();
     failed += run_bless_tests();
     failed += run_prep_tests();

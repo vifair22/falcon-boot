@@ -9,30 +9,49 @@
 #                                              for a hand-staged rig stick
 #
 # The appliance is a kernel plus an initramfs that contains one program of our
-# own (tools/appliance/init.c, PID 1) and the four programs the signing flow
-# shells out to:
+# own (tools/appliance/init.c, PID 1) and the programs the two flows shell out
+# to. Blessing (DESIGN Section 7.5):
 #
 #   cryptsetup   unlocks p3 so the MOK private key can be read
 #   bsdtar       lists and extracts the ISO (this is what `sign` reads with)
 #   ukify        wraps the extracted kernel into a UKI
 #   sbsign       signs that wrap
 #
+# and preparing Windows media (DESIGN Sections 6.3 and 6.3.1), which holds no
+# key and signs nothing:
+#
+#   7z             reads the UDF namespace. Windows install media keeps every
+#                  real file there and only a stub in ISO9660, so without this
+#                  such an ISO lists as almost empty and classifies as unknown
+#   wimlib-imagex  rewrites \sources\boot.wim: extract, update, optimize,
+#                  verify. The separately installed wimupdate/wimoptimize
+#                  names are aliases for its subcommands, so the one binary is
+#                  the whole dependency
+#   winjump.exe    not run here at all. It is the Win64 binary that replaces
+#                  WinPE's winpeshl.exe inside the patched image, and it is
+#                  staged beside the sign tool because that is the first place
+#                  src/cli/sign/prepare.c looks for it
+#
 # plus the portable `sign` tool itself as build/bin/falcon-boot-sign-static.
 # That is the point of the static link: the appliance route and the host route
 # run the SAME implementation (DESIGN Section 8), not two that agree today.
 #
-# Everything else in the image is closure: the shared libraries those four
-# programs need (walked with ldd), the Python runtime ukify is written in, and
-# the kernel modules Arch ships outside its vmlinuz (dm-crypt and exfat, plus
-# what modules.dep says they need). There is no shell, no network tooling, and
-# no package manager.
+# Everything else in the image is closure: the shared libraries those programs
+# need (walked with ldd), the Python runtime ukify is written in, and the
+# kernel modules Arch ships outside its vmlinuz (dm-crypt and exfat, plus what
+# modules.dep says they need). There is no shell, no network tooling, and no
+# package manager.
 #
-# What that costs, measured 2026-09-13 on this host: 79 MB of initramfs
-# uncompressed, 22 MB compressed, a 39 MB UKI next to a 17 MB kernel, and nine
-# seconds to build. The two large single items are the Python tree (16 MB) and
-# libicudata (32 MB), which libxml2 drags in behind libarchive; the ICU tables
-# are never read and the way to be rid of them is a libarchive built without
-# xar support, not a smaller Python. See the PYTHON note below.
+# What that costs, measured 2026-09-13 on this host: 83 MB of initramfs
+# uncompressed, 24 MB compressed, a 40 MB UKI next to a 17 MB kernel, and ten
+# seconds to build. Preparation's whole share of that is 3.5 MB raw and 1.3 MB
+# compressed: 7-Zip is 2.9 MB of it and libwim 0.4 MB, and the libstdc++ 7-Zip
+# needs was already in the image. That is the entire price of the Windows route
+# living on the stick rather than on a host. The two large single items are
+# still the Python tree (16 MB) and libicudata (32 MB), which libxml2 drags in
+# behind libarchive; the ICU tables are never read and the way to be rid of
+# them is a libarchive built without xar support, not a smaller Python. See the
+# PYTHON note below.
 #
 # Usage: tools/appliance/mk-appliance.sh
 # Env:
@@ -61,6 +80,7 @@ UKI="$OUT/appliance-uki.efi"
 UKI_SIGNED="$OUT/appliance-uki-signed.efi"
 
 SIGN_STATIC=build/bin/falcon-boot-sign-static
+WINJUMP=build/bin/winjump.exe
 MOK_KEY="${MOK_KEY:-build/mok-test/falcon-test-mok.key}"
 MOK_CRT="${MOK_CRT:-build/mok-test/falcon-test-mok.crt}"
 
@@ -83,17 +103,31 @@ HOST_CFLAGS=(
     -Wmissing-declarations -Wcast-align -Wcast-qual -Wnull-dereference
     -Wconversion -Wsign-conversion
     -fstack-protector-strong -fstack-clash-protection
-    -Isrc
+    -Isrc -Itools
 )
 
 # src/part/part.c identifies p2 and p3 by the falcon type GUIDs, and
 # src/manifest/manifest.c decides what "already blessed" means. Both are the
 # loader's own modules, EFI-free by construction, linked here so the appliance
 # cannot disagree with the menu about either question.
+#
+# The rest is how the survey tells Windows media from everything else:
+# src/cli/sign/isoprobe.c is the bless tool's own ISO reader (two helper
+# listings, unioned; no mount and no loop device) and src/family/family.c is
+# the registry it fingerprints against, so the queue an image lands in here is
+# the queue `falcon-boot-sign` will agree with when it is handed the file.
+# util.c and the two crypto units come along because isoprobe calls into them,
+# not as anything this program uses directly.
 INIT_SRCS=(
     tools/appliance/init.c
+    tools/appliance/route.c
     src/part/part.c
     src/manifest/manifest.c
+    src/family/family.c
+    src/cli/sign/isoprobe.c
+    src/cli/sign/util.c
+    src/crypto/sha256.c
+    src/crypto/crypto.c
 )
 
 # The programs `sign` execs, plus the interpreter ukify is written in. Order
@@ -102,6 +136,8 @@ BINARIES=(
     /usr/bin/cryptsetup
     /usr/bin/sbsign
     /usr/bin/bsdtar
+    /usr/bin/7z
+    /usr/bin/wimlib-imagex
 )
 
 # Wanted by name; their dependencies are resolved from the kernel's own
@@ -154,6 +190,11 @@ done
 }
 [[ -f "$SIGN_STATIC" ]] || {
     echo "ERROR: $SIGN_STATIC not built (run: make cli)" >&2
+    exit 1
+}
+[[ -f "$WINJUMP" ]] || {
+    echo "ERROR: $WINJUMP not built (run: make winjump). Without it the" >&2
+    echo "       appliance can survey Windows media but not prepare it." >&2
     exit 1
 }
 
@@ -312,6 +353,12 @@ ldconfig -r "$ROOT" 2>/dev/null || {
 # The tool the whole appliance exists to run, and the stub it wraps with.
 cp "$SIGN_STATIC" "$ROOT/usr/bin/falcon-boot-sign-static"
 copy_to_root "$STUB"
+
+# Beside the tool, because that is where src/cli/sign/prepare.c looks first
+# (find_winjump resolves /proc/self/exe and tries its directory). It is a PE
+# for WinPE to run, never anything this image executes.
+cp "$WINJUMP" "$ROOT/usr/bin/winjump.exe"
+chmod 0644 "$ROOT/usr/bin/winjump.exe"
 
 # ukify, at the path its shebang names.
 cp /usr/bin/ukify "$ROOT/usr/bin/ukify"

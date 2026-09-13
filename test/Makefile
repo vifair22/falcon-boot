@@ -111,7 +111,7 @@ CFLAGS := -std=c11 -O0 -g --coverage $(WARNS) \
 	-DLUKS_ARGON_IMG='"$(LUKS_ARGON_IMG)"' \
 	-DLUKS_MANIFEST='"$(LUKS_MANIFEST)"' \
 	-DLUKS_REF='"$(LUKS_REF)"' \
-	-I$(TEST_DIR)/hostshim -I$(ROOT)/src -I$(TEST_DIR) \
+	-I$(TEST_DIR)/hostshim -I$(ROOT)/src -I$(ROOT)/tools -I$(TEST_DIR) \
 	$(CMOCKA_CFLAGS)
 
 LDFLAGS := --coverage
@@ -128,6 +128,7 @@ TEST_SRCS := \
 	$(TEST_DIR)/isoprobe_test.c \
 	$(TEST_DIR)/wimext_test.c \
 	$(TEST_DIR)/prepcore_test.c \
+	$(TEST_DIR)/appliance_route_test.c \
 	$(TEST_DIR)/manifest_test.c \
 	$(TEST_DIR)/bless_test.c \
 	$(TEST_DIR)/prep_test.c \
@@ -169,16 +170,26 @@ UUT_SRCS := \
 	$(ROOT)/src/luks/af.c \
 	$(ROOT)/src/luks/luks.c
 
+# Not under src/, and the only unit here that is not: tools/appliance/route.c
+# is the on-stick appliance's half of the Windows auto-prep contract (DESIGN
+# Section 6.3.1), split out of tools/appliance/init.c for exactly the reason
+# blesscore is split out of bless.c. The rest of that program is PID 1 in an
+# initramfs and cannot be stood in for by a host process; this part is three
+# enums in and one out.
+APPL_SRCS := \
+	$(ROOT)/tools/appliance/route.c
+
 # Filter for the coverage report, one alternative per unit above.
 # src/cli/sign/util.c is deliberately absent: it is compiled in because
 # isoprobe.c calls into it, not as a unit under test here. Its subprocess
 # runners and file I/O are exercised by running the tool, and reporting them
 # as an untested unit would only depress a number that is supposed to mean
 # something.
-COV_FILTER := .*/src/(exfat/exfat|cpio/cpio|family/family|cli/sign/(isoprobe|wimext|prepcore)|manifest/[a-z_]+|bless/blesscore|ext4/ext4|part/part|fs/fs|sb/sb|crypto/[a-z0-9]+|luks/[a-z0-9]+)\.c$$|.*/src/iso/overlay\.h$$
+COV_FILTER := .*/src/(exfat/exfat|cpio/cpio|family/family|cli/sign/(isoprobe|wimext|prepcore)|manifest/[a-z_]+|bless/blesscore|ext4/ext4|part/part|fs/fs|sb/sb|crypto/[a-z0-9]+|luks/[a-z0-9]+)\.c$$|.*/src/iso/overlay\.h$$|.*/tools/appliance/route\.c$$
 
 OBJS := $(patsubst $(TEST_DIR)/%.c,$(OBJ)/%.o,$(TEST_SRCS)) \
-	$(patsubst $(ROOT)/src/%.c,$(OBJ)/uut/%.o,$(UUT_SRCS))
+	$(patsubst $(ROOT)/src/%.c,$(OBJ)/uut/%.o,$(UUT_SRCS)) \
+	$(patsubst $(ROOT)/tools/%.c,$(OBJ)/uut/tools/%.o,$(APPL_SRCS))
 DEPS := $(OBJS:.o=.o.d)
 
 .PHONY: all run coverage compile-db clean
@@ -199,7 +210,7 @@ compile-db: $(TEST_DIR)/compile_commands.json
 
 $(TEST_DIR)/compile_commands.json: $(TEST_DIR)/Makefile
 	@echo '[' > $@
-	@for src in $(TEST_SRCS) $(UUT_SRCS); do \
+	@for src in $(TEST_SRCS) $(UUT_SRCS) $(APPL_SRCS); do \
 		printf '  {\n' >> $@; \
 		printf '    "directory": "%s",\n' '$(TEST_DIR)' >> $@; \
 		printf '    "command": "%s %s -c %s",\n' \
@@ -215,6 +226,10 @@ $(OBJ)/%.o: $(TEST_DIR)/%.c
 	$(CC) $(CFLAGS) -MMD -MF $@.d -c -o $@ $<
 
 $(OBJ)/uut/%.o: $(ROOT)/src/%.c
+	@mkdir -p $(@D)
+	$(CC) $(CFLAGS) -MMD -MF $@.d -c -o $@ $<
+
+$(OBJ)/uut/tools/%.o: $(ROOT)/tools/%.c
 	@mkdir -p $(@D)
 	$(CC) $(CFLAGS) -MMD -MF $@.d -c -o $@ $<
 

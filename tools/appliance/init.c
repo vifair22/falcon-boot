@@ -1,13 +1,35 @@
-/* falcon-boot: the on-stick signing appliance's PID 1 (DESIGN Section 7.5,
- * build order step 8).
+/* falcon-boot: the on-stick signing appliance's PID 1 (DESIGN Sections 7.5
+ * and 6.3.1, build order step 8).
  *
- * The appliance is a signed UKI that boots under full Secure Boot, unlocks p3
- * with the user's passphrase, reads the MOK private key that lives there, has
- * the user mark the unsigned ISOs on p2 one by one and then confirm the marked
- * set as a whole, and hands each confirmed one to the SAME `falcon-boot-sign`
- * implementation the host route runs (here the static link,
- * /usr/bin/falcon-boot-sign-static). Then it reboots. That is the whole
- * program; there is no shell in this initramfs and nothing else to run.
+ * The appliance is a signed UKI that boots under full Secure Boot, surveys the
+ * ISO library on p2 and does two different things with the two halves of it,
+ * both through the SAME `falcon-boot-sign` implementation the host route runs
+ * (here the static link, /usr/bin/falcon-boot-sign-static). Then it reboots.
+ * That is the whole program; there is no shell in this initramfs and nothing
+ * else to run.
+ *
+ *   Windows media is PREPARED (DESIGN Sections 6.3 and 6.3.1). Every
+ *   unprepared Windows ISO on p2 is prepared in this one run, because the
+ *   reboot is the expensive part and batching is what makes dropping three
+ *   images cost one of them. Preparation signs nothing, holds no key and
+ *   prompts for nothing.
+ *
+ *   Everything else is BLESSED (DESIGN Section 7.5). p3 is unlocked, the MOK
+ *   private key that lives there is read, and the user marks the unsigned
+ *   ISOs one by one and then confirms the marked set as a whole.
+ *
+ * The two halves are ordered prepare-then-bless, and that ordering is load
+ * bearing rather than arbitrary: p3 is opened only if the bless half has
+ * something to do. An auto-prep boot (the loader launched this image because
+ * the user asked for a Windows ISO to be prepared) therefore decrypts no key
+ * and asks for no passphrase at all, and preparation works unchanged on a
+ * --p3-plain stick, which is what src/cli/sign/prepare.h promises.
+ *
+ * The appliance receives no instruction from the loader and looks for none.
+ * `FalconNextBoot` is the loader's variable and its whole lifecycle is the
+ * loader's (DESIGN Section 6.3.1: one component sets it and clears it);
+ * nothing here reads it, writes it or is steered by it. What this program
+ * does is decided entirely by what is on p2 when it looks.
  *
  * Why a C init rather than busybox: the appliance is the only place besides an
  * external host where the private key is ever decrypted, so the userland
@@ -20,6 +42,10 @@
  *     hands `sign` two PATHS under /mnt/p3 and `sign` hands them to sbsign.
  *     The key is read from the LUKS volume by the process that needs it and
  *     is never copied anywhere, least of all onto p2 (DESIGN Section 7.5).
+ *   - It never unlocks p3 for the preparation half. Preparation needs no
+ *     secret, so giving it one would widen the window the key is decrypted in
+ *     for nothing, and the smallness of that window is the reason the
+ *     appliance exists rather than a full OS (DESIGN Section 7.5).
  *   - The passphrase never appears in argv (it goes to cryptsetup on a pipe),
  *     never reaches a file, and is wiped from this process's memory as soon
  *     as the unlock returns. Core dumps are disabled at entry for the same
@@ -43,7 +69,10 @@
  * same parser AND the same matcher (part_match_role) the loader uses, so the
  * appliance and the loader cannot disagree about which partition is which. The manifest is read
  * through src/manifest/manifest.c, the same parser the loader will use, so
- * "already blessed" means here exactly what it will mean at the menu.
+ * "already blessed" means here exactly what it will mean at the menu. Each
+ * ISO is classified through src/cli/sign/isoprobe.c and src/family/family.c,
+ * which is the reader and the table `falcon-boot-sign` itself uses, so the
+ * survey cannot put an image in a queue the tool will then refuse it from.
  *
  * Built static by tools/appliance/mk-appliance.sh: it is PID 1 in an
  * initramfs whose dynamic loader exists for the other binaries, not for this
@@ -53,6 +82,11 @@
 /* _GNU_SOURCE comes from the host flag set in the Makefile (HOST_CFLAGS),
  * which mk-appliance.sh copies verbatim. */
 
+#include <appliance/route.h>
+
+#include <cli/sign/prepcore.h>
+#include <cli/sign/sign.h>
+#include <family/family.h>
 #include <manifest/manifest.h>
 #include <part/part.h>
 
@@ -70,6 +104,7 @@
 #include <sys/reboot.h>
 #include <sys/resource.h>
 #include <sys/stat.h>
+#include <sys/statvfs.h>
 #include <sys/syscall.h>
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -90,6 +125,18 @@
 
 #define SIGN_TOOL "/usr/bin/falcon-boot-sign-static"
 #define STUB_PATH "/usr/lib/systemd/boot/efi/linuxx64.efi.stub"
+
+/* What the preparation half needs from the image, checked by name so an
+ * appliance built without one of them says so once instead of failing per
+ * ISO with a message about the ISO. WIM_TOOL rewrites boot.wim; Z_TOOL is
+ * what reads the UDF namespace, and Windows media is UDF-only, so without it
+ * every Windows ISO on p2 would classify as an unknown Linux image and land
+ * in the wrong queue. WINJUMP_PATH is the file that replaces winpeshl.exe
+ * inside the patched image; it sits beside the sign tool because that is the
+ * first place src/cli/sign/prepare.c looks (find_winjump). */
+#define WIM_TOOL     "wimlib-imagex"
+#define Z_TOOL       "7z"
+#define WINJUMP_PATH "/usr/bin/winjump.exe"
 
 #define MANIFEST_PATH P2_MNT "/falcon/blessed/manifest"
 
@@ -607,14 +654,23 @@ static ssize_t read_line(char *buf, size_t cap)
 typedef struct {
     char           rel[MANIFEST_PATH_MAX];  /* path relative to the p2 root */
     uint64_t       size;
-    manifest_bless state;                   /* NONE or STALE; FRESH is skipped */
+    manifest_bless state;                   /* NONE or STALE; FRESH is done */
+    family_id      fam;
     int            selected;                /* marked by hand; never preset */
 } candidate;
 
 static manifest_record g_records[MAX_RECORDS];
 static size_t          g_record_n;
+/* The bless queue. Everything downstream of the selection ceremony works on
+ * this one, which is why it keeps the plain name it has always had. */
 static candidate       g_cand[MAX_CANDIDATES];
 static size_t          g_cand_n;
+/* The prepare queue: no marks, no ceremony, no key (DESIGN Section 6.3.1). */
+static candidate       g_prep[MAX_CANDIDATES];
+static size_t          g_prep_n;
+static size_t          g_done_prepared;
+static size_t          g_done_blessed;
+static size_t          g_unreadable;
 static char            g_manifest[MANIFEST_MAX];
 
 static void load_manifest(void)
@@ -649,23 +705,79 @@ static int ends_with_iso(const char *name)
     return n > 4u && strcasecmp(name + n - 4u, ".iso") == 0;
 }
 
-static void add_candidate(const char *rel, uint64_t size, manifest_bless st)
+/* Appends to one of the two queues. `what` names the queue in the overflow
+ * message, because "more than 64 pending ISOs" is a different problem
+ * depending on which half ran out. */
+static void add_to(candidate *q, size_t *n, const char *what, const char *rel,
+                   uint64_t size, manifest_bless st, family_id fam)
 {
-    if (g_cand_n >= MAX_CANDIDATES) {
-        say("note: more than %u pending ISOs; the rest are not listed\n",
-            (unsigned)MAX_CANDIDATES);
+    if (*n >= MAX_CANDIDATES) {
+        say("note: more than %u ISOs %s; the rest are not listed\n",
+            (unsigned)MAX_CANDIDATES, what);
         return;
     }
-    if (snprintf(g_cand[g_cand_n].rel, sizeof(g_cand[g_cand_n].rel), "%s",
-                 rel) >= (int)sizeof(g_cand[g_cand_n].rel)) {
+    if (snprintf(q[*n].rel, sizeof(q[*n].rel), "%s", rel) >=
+            (int)sizeof(q[*n].rel)) {
         say("note: skipping '%s': its path is too long for a manifest record\n",
             rel);
         return;
     }
-    g_cand[g_cand_n].size = size;
-    g_cand[g_cand_n].state = st;
-    g_cand[g_cand_n].selected = 0;
-    g_cand_n++;
+    q[*n].size = size;
+    q[*n].state = st;
+    q[*n].fam = fam;
+    q[*n].selected = 0;
+    (*n)++;
+}
+
+/* The family of one ISO, read the way `falcon-boot-sign` reads it: bsdtar
+ * over the ISO9660 namespace and 7-Zip over the UDF one, unioned into a
+ * listing, then src/family/family.c fingerprinted over that. Same reader and
+ * same table as the tool this program is about to hand the file to, so the
+ * survey cannot route an image into a queue the tool will then refuse it
+ * from. No mount and no loop device: src/cli/sign/isoprobe.c says in as many
+ * words why a tool that reads untrusted media should not be mounting it.
+ *
+ * Returns 0 and *out on success; -1 when nothing here could read the file as
+ * an ISO at all, with the reason already in the sign tool's error buffer. */
+static int classify(const char *abs, family_id *out)
+{
+    iso_view *v = NULL;
+    family_probe probe;
+
+    if (iso_view_open(abs, &v) != SGN_OK)
+        return -1;
+    iso_view_family_probe(v, &probe);
+    *out = family_detect(&probe)->id;
+    iso_view_close(v);
+    return 0;
+}
+
+/* A prepared record names files under p2:/falcon/prepared/<sha256>/, and the
+ * record is not evidence that they are still there: a folder emptied by hand,
+ * or a run interrupted before the manifest was written, both leave a record
+ * describing artifacts that do not exist. `falcon-boot-sign prepare` makes
+ * exactly this check before it agrees an ISO needs nothing
+ * (src/cli/sign/prepare.c); making it here too is what keeps "already
+ * prepared, skipping" from being a claim nobody verified, and what stops an
+ * ISO from being quietly dropped from the batch it belongs in. */
+static int sidecars_intact(const manifest_record *rec)
+{
+    size_t i;
+
+    if (rec == NULL || rec->splice_n == 0u)
+        return 0;
+    for (i = 0; i < rec->splice_n; i++) {
+        char path[PATH_MAX];
+        struct stat st;
+
+        if (snprintf(path, sizeof(path), "%s/%s/%s/%s", P2_MNT, PREP_DIR,
+                     rec->sha256, rec->splice[i].name) >= (int)sizeof(path))
+            return 0;
+        if (stat(path, &st) != 0 || !S_ISREG(st.st_mode) ||
+            (uint64_t)st.st_size != rec->splice[i].len)
+            return 0;
+    }
+    return 1;
 }
 
 /* Recursive walk of p2 looking for *.iso. `rel` is the path so far relative
@@ -708,12 +820,52 @@ static void walk(const char *abs, const char *rel, unsigned depth)
 
         {
             uint64_t size = (uint64_t)st.st_size;
+            const manifest_record *rec = NULL;
             manifest_bless state = manifest_lookup(g_records, g_record_n,
-                                                   child_rel, size, NULL);
+                                                   child_rel, size, &rec);
+            manifest_kind kind = (rec != NULL) ? rec->kind
+                                               : MANIFEST_KIND_BLESSED;
+            family_id fam = FAMILY_UNKNOWN;
 
-            if (state == MANIFEST_BLESS_FRESH)
-                continue;   /* already blessed, and the ISO has not changed */
-            add_candidate(child_rel, size, state);
+            if (classify(child_abs, &fam) != 0) {
+                /* Not a refusal to proceed, and not a silent drop either: an
+                 * unreadable file named .iso is offered to neither half,
+                 * because both would fail on it further in and with less to
+                 * say about why. */
+                say("  unreadable  /%s\n              %s\n", child_rel,
+                    sgn_error());
+                g_unreadable++;
+                continue;
+            }
+
+            switch (appl_route(state, kind, fam)) {
+            case APPL_JOB_DONE_PREPARED:
+                if (!sidecars_intact(rec)) {
+                    say("  prepared    /%s\n"
+                        "              the manifest says so, but the staged\n"
+                        "              files are missing or the wrong length;\n"
+                        "              preparing it again\n", child_rel);
+                    add_to(g_prep, &g_prep_n, "to prepare", child_rel, size,
+                           state, fam);
+                    break;
+                }
+                say("  prepared    /%s (already; skipping)\n", child_rel);
+                g_done_prepared++;
+                break;
+            case APPL_JOB_DONE_BLESSED:
+                say("  blessed     /%s (already; skipping)\n", child_rel);
+                g_done_blessed++;
+                break;
+            case APPL_JOB_PREPARE:
+                add_to(g_prep, &g_prep_n, "to prepare", child_rel, size,
+                       state, fam);
+                break;
+            case APPL_JOB_SIGN:
+            default:
+                add_to(g_cand, &g_cand_n, "to sign", child_rel, size, state,
+                       fam);
+                break;
+            }
         }
     }
     (void)closedir(d);
@@ -949,6 +1101,141 @@ static int choose_candidates(void)
     }
 }
 
+/* ---- the preparation half (DESIGN Sections 6.3 and 6.3.1) ----
+ *
+ * No marks, no review and no typed word, and that is the design rather than
+ * an omission. The bless ceremony exists because signing an image with the
+ * MOK key is the act of vouching for it, and the user has to be the one who
+ * does that. Preparation vouches for nothing: it holds no key, alters nothing
+ * the platform verifies (every component Secure Boot checks on Windows media
+ * is Microsoft-signed and untouched, Section 6.3), and only stages a patched
+ * copy of \sources\boot.wim beside the ISO. The confirmation for it already
+ * happened at the loader menu, one boot ago, and DESIGN Section 6.3.1 budgets
+ * exactly one for the whole batch.
+ */
+
+#define MIB (1024u * 1024u)
+
+/* Room left on p2, in bytes; 0 when it cannot be asked. Used only to make a
+ * failure legible, never to decide anything: a threshold here would be a
+ * guess about an image whose size is not known until wimlib has rewritten
+ * it, and prepare's own ENOSPC is the honest answer. */
+static uint64_t p2_free_bytes(void)
+{
+    struct statvfs s;
+
+    if (statvfs(P2_MNT, &s) != 0)
+        return 0;
+    return (uint64_t)s.f_bavail * (uint64_t)s.f_frsize;
+}
+
+/* Below this, a full stick is the likeliest explanation of a failure and is
+ * worth naming: DESIGN Section 6.3 measures preparation at about 1.2 GB of
+ * scratch plus the roughly 570 MB patched image it leaves behind. */
+#define PREP_TIGHT_BYTES ((uint64_t)2u << 30)
+
+/* Whether this image can prepare at all. A build that dropped one of these
+ * would otherwise fail per ISO with a message about the ISO; missing 7z is
+ * worse still, because Windows media is UDF-only and without a UDF reader it
+ * classifies as an unknown Linux image and lands in the wrong queue.
+ *
+ * PID 1 in an initramfs inherits no environment, so these lookups run against
+ * sgn_have_program's own "/usr/bin:/bin" fallback rather than against a PATH.
+ * That is where mk-appliance.sh stages both programs, and it is the head of
+ * the PATH every child gets (g_child_env), so the two agree; if the staging
+ * layout ever moves, this and that list move together. */
+static int prep_tools_present(void)
+{
+    int ok = 1;
+
+    if (!sgn_have_program(WIM_TOOL)) {
+        say("WARNING: %s is not in this appliance image, so no Windows ISO\n"
+            "         can be prepared on this stick.\n", WIM_TOOL);
+        ok = 0;
+    }
+    if (!sgn_have_program(Z_TOOL)) {
+        say("WARNING: %s is not in this appliance image. Windows install\n"
+            "         media keeps its files in the UDF namespace only, so\n"
+            "         without it such an ISO reads as empty and is listed\n"
+            "         below as unsigned Linux media rather than prepared.\n",
+            Z_TOOL);
+        ok = 0;
+    }
+    if (access(WINJUMP_PATH, R_OK) != 0) {
+        say("WARNING: %s is missing, so preparation has nothing to put in\n"
+            "         place of WinPE's shell.\n", WINJUMP_PATH);
+        ok = 0;
+    }
+    if (!ok)
+        say("         Rebuild the appliance with tools/appliance/"
+            "mk-appliance.sh.\n\n");
+    return ok;
+}
+
+/* Prepares every queued Windows image, in path order, reporting each. One
+ * image failing is that image's problem and the batch carries on: the reboot
+ * this run ends in is the expensive part, and abandoning the rest of the
+ * queue would charge the user another one per bad ISO. */
+static void prepare_batch(size_t *prepared_n, size_t *failed_n)
+{
+    size_t i;
+
+    say("\npreparing %zu Windows image%s. This signs nothing and needs no\n"
+        "key, so p3 stays locked for it.\n", g_prep_n,
+        (g_prep_n == 1u) ? "" : "s");
+    say("p2 has %llu MiB free.\n",
+        (unsigned long long)(p2_free_bytes() / MIB));
+    say("\nFALCON-APPLIANCE-PREP-PENDING %zu\n", g_prep_n);
+
+    for (i = 0; i < g_prep_n; i++) {
+        char abs[PATH_MAX];
+        char rel_arg[MANIFEST_PATH_MAX + 2u];
+        uint64_t before;
+        int rc;
+
+        /* The precision restates what add_to already guaranteed (the path
+         * fits the field, terminator included), spelled out so the bound is
+         * one the compiler checks rather than one a reader has to trust. */
+        (void)snprintf(abs, sizeof(abs), "%s/%.*s", P2_MNT,
+                       (int)(sizeof(g_prep[i].rel) - 1u), g_prep[i].rel);
+        (void)snprintf(rel_arg, sizeof(rel_arg), "/%.*s",
+                       (int)(sizeof(g_prep[i].rel) - 1u), g_prep[i].rel);
+
+        say("\n[%zu/%zu] /%s  (%llu MiB)\n", i + 1u, g_prep_n, g_prep[i].rel,
+            (unsigned long long)(g_prep[i].size / MIB));
+        if (g_prep[i].state == MANIFEST_BLESS_STALE)
+            say("      prepared earlier; the file has changed since\n");
+        say("      preparing; the tool's own progress follows.\n");
+
+        before = p2_free_bytes();
+        {
+            char *argv[] = {
+                (char *)SIGN_TOOL, (char *)"prepare",
+                abs,
+                (char *)"--stick", (char *)P2_MNT,
+                (char *)"--iso-path", rel_arg,
+                NULL
+            };
+
+            rc = run(argv, NULL, 0);
+        }
+        if (rc == 0) {
+            say("      FALCON-APPLIANCE-PREPARED %s\n", g_prep[i].rel);
+            (*prepared_n)++;
+            continue;
+        }
+        say("      FALCON-APPLIANCE-PREP-FAILED %s (exit %d)\n",
+            g_prep[i].rel, rc);
+        if (before < PREP_TIGHT_BYTES)
+            say("      p2 had %llu MiB free when this started, which is the\n"
+                "      first thing to check: one prepared image costs about\n"
+                "      600 MiB there and the run needs roughly 1.2 GiB more\n"
+                "      while it works.\n",
+                (unsigned long long)(before / MIB));
+        (*failed_n)++;
+    }
+}
+
 /* ---- teardown ---- */
 
 /* Unwound in the order that can actually succeed: p2 first (nothing else
@@ -990,45 +1277,25 @@ static void finish(int p2_mounted, int p3_mounted, int mapped)
         (void)pause();
 }
 
-/* ---- the flow ---- */
-
-int main(void)
+/* ---- the bless half (DESIGN Section 7.5) ----
+ *
+ * Everything that needs the key lives in here, and nothing calls it unless
+ * the survey found an image that needs one. Failures report and RETURN rather
+ * than rebooting: a preparation batch may already have succeeded, and its
+ * summary is still owed to the user.
+ *
+ * *mapped and *p3_mounted are set as each is opened, so the caller can unwind
+ * whatever this got as far as. sgn_arg launders the one const member that has
+ * to reach an execve argument vector; nothing writes through it.
+ */
+static void bless_half(const stick_parts *parts, int *mapped, int *p3_mounted,
+                       size_t *signed_n, size_t *failed_n, size_t *skipped_n)
 {
     char pass[PASS_MAX];
-    stick_parts parts;
     char dev[32];
     char dev_arg[48];
-    int mapped = 0;
-    int p3_mounted = 0;
-    int p2_mounted = 0;
     int tries;
     size_t i;
-    size_t signed_n = 0;
-    size_t failed_n = 0;
-    size_t skipped_n = 0;
-    struct rlimit no_core = { 0, 0 };
-
-    /* Before anything reads a passphrase: this process is about to hold one,
-     * and a core file would be a copy of it on whatever filesystem is current. */
-    (void)setrlimit(RLIMIT_CORE, &no_core);
-
-    console_open();
-    early_mounts();
-
-    say("\n"
-        "falcon-boot signing appliance\n"
-        "=============================\n"
-        "Signs ISOs on p2 with the MOK private key that lives encrypted on p3.\n\n");
-
-    load_modules();
-
-    if (!find_stick(&parts)) {
-        say("ERROR: no falcon stick found (need an exFAT p2 and a LUKS p3 on\n"
-            "       one disk). Nothing was unlocked.\n");
-        finish(0, 0, 0);
-    }
-    say("  p2 (ISO library): %s\n  p3 (UKI shelf):   %s\n\n",
-        parts.p2, parts.p3);
 
     /* ---- unlock p3 ----
      *
@@ -1055,25 +1322,25 @@ int main(void)
                 (char *)"--type", (char *)"luks2",
                 (char *)"--readonly",
                 (char *)"--key-file", (char *)"-",
-                parts.p3, (char *)MAPPER, NULL
+                sgn_arg(parts->p3), (char *)MAPPER, NULL
             };
 
             say("unlocking p3 with the passphrase from the loader...\n");
             if (run(argv, pass, (size_t)clen) == 0)
-                mapped = 1;
+                *mapped = 1;
             else
                 say("the delivered credential did not open p3; "
                     "falling back to the prompt.\n");
         }
         explicit_bzero(pass, sizeof(pass));
     }
-    for (tries = 1; !mapped && tries <= UNLOCK_TRIES; tries++) {
+    for (tries = 1; !*mapped && tries <= UNLOCK_TRIES; tries++) {
         char *argv[] = {
             (char *)"/usr/bin/cryptsetup", (char *)"open",
             (char *)"--type", (char *)"luks2",
             (char *)"--readonly",
             (char *)"--key-file", (char *)"-",
-            parts.p3, (char *)MAPPER, NULL
+            sgn_arg(parts->p3), (char *)MAPPER, NULL
         };
         ssize_t len;
         int rc;
@@ -1083,65 +1350,52 @@ int main(void)
         if (len <= 0) {
             say("no passphrase given; nothing was unlocked.\n");
             explicit_bzero(pass, sizeof(pass));
-            finish(0, 0, 0);
+            *skipped_n = g_cand_n;
+            return;
         }
         rc = run(argv, pass, (size_t)len);
         explicit_bzero(pass, sizeof(pass));
         if (rc == 0) {
-            mapped = 1;
+            *mapped = 1;
             break;
         }
         say("wrong passphrase (cryptsetup exit %d).\n", rc);
     }
-    if (!mapped) {
+    if (!*mapped) {
         say("\nout of attempts. p3 stays locked and no key was read.\n");
-        finish(0, 0, 0);
+        *skipped_n = g_cand_n;
+        return;
     }
     say("p3 unlocked (read-only).\n");
 
     if (mount(MAPPER_NODE, P3_MNT, "ext4", MS_RDONLY, NULL) != 0) {
         say("ERROR: mounting p3: %s\n", strerror(errno));
-        finish(0, 0, mapped);
+        *skipped_n = g_cand_n;
+        return;
     }
-    p3_mounted = 1;
+    *p3_mounted = 1;
 
     if (access(KEY_PATH, R_OK) != 0 || access(CERT_PATH, R_OK) != 0) {
         say("ERROR: no MOK keypair on p3 (%s / %s).\n"
-            "       A stick built with --p3-plain has no on-stick key and so\n"
-            "       no signing appliance; sign from a host instead.\n",
+            "       A stick built with --p3-plain has no on-stick key, so it\n"
+            "       cannot bless anything here; sign from a host instead.\n"
+            "       Preparing Windows media needs no key and is unaffected.\n",
             KEY_PATH, CERT_PATH);
-        finish(0, p3_mounted, mapped);
+        *skipped_n = g_cand_n;
+        return;
     }
     say("MOK keypair found on p3.\n");
 
-    if (mount(parts.p2, P2_MNT, "exfat", 0, NULL) != 0) {
-        say("ERROR: mounting p2: %s\n", strerror(errno));
-        finish(0, p3_mounted, mapped);
-    }
-    p2_mounted = 1;
-
-    if (exfat_uuid(parts.p2, dev, sizeof(dev)) != 0) {
+    /* Needed only by this half: it is the %DEV% the signed cmdline carries,
+     * and nothing in preparation has a cmdline to put it in. */
+    if (exfat_uuid(parts->p2, dev, sizeof(dev)) != 0) {
         say("ERROR: could not read p2's volume serial; the signed cmdline\n"
             "       would have no way to name the partition to boot from.\n");
-        finish(p2_mounted, p3_mounted, mapped);
+        *skipped_n = g_cand_n;
+        return;
     }
     (void)snprintf(dev_arg, sizeof(dev_arg), "UUID=%s", dev);
-    say("p2 volume: %s\n\n", dev_arg);
-
-    /* ---- what is pending ---- */
-
-    load_manifest();
-    walk(P2_MNT, "", 0);
-
-    if (g_cand_n == 0) {
-        say("\nnothing to sign: every ISO on p2 already has a fresh manifest\n"
-            "record. FALCON-APPLIANCE-PENDING 0\n");
-        finish(p2_mounted, p3_mounted, mapped);
-    }
-
-    /* Path order once, here, so the numbers the user types, the order the
-     * review prints and the order the batch signs in are all the same one. */
-    qsort(g_cand, g_cand_n, sizeof(g_cand[0]), cand_cmp);
+    say("p2 volume: %s\n", dev_arg);
 
     say("\nFALCON-APPLIANCE-PENDING %zu\n", g_cand_n);
 
@@ -1152,8 +1406,11 @@ int main(void)
      * unless both happened. */
     if (!choose_candidates()) {
         /* Nothing was vouched for, so every pending image is a skip. */
-        skipped_n = g_cand_n;
-    } else {
+        *skipped_n = g_cand_n;
+        return;
+    }
+
+    {
         size_t sel_n = selected_count();
         size_t done_n = 0;
 
@@ -1165,16 +1422,16 @@ int main(void)
             int rc;
 
             if (!g_cand[i].selected) {
-                skipped_n++;
+                (*skipped_n)++;
                 continue;
             }
             done_n++;
 
-            /* The precision restates what add_candidate already guaranteed
-             * (the path fits the field, terminator included). It is spelled
-             * out here because the bound is what keeps a p2 path from running
-             * off the end of either buffer, and a bound stated in the call is
-             * one the compiler checks rather than one a reader has to trust. */
+            /* The precision restates what add_to already guaranteed (the path
+             * fits the field, terminator included). It is spelled out here
+             * because the bound is what keeps a p2 path from running off the
+             * end of either buffer, and a bound stated in the call is one the
+             * compiler checks rather than one a reader has to trust. */
             (void)snprintf(abs, sizeof(abs), "%s/%.*s", P2_MNT,
                            (int)(sizeof(g_cand[i].rel) - 1u), g_cand[i].rel);
             (void)snprintf(rel_arg, sizeof(rel_arg), "/%.*s",
@@ -1201,17 +1458,102 @@ int main(void)
              * was vouched for too and still deserves to be signed. */
             if (rc == 0) {
                 say("      FALCON-APPLIANCE-SIGNED %s\n", g_cand[i].rel);
-                signed_n++;
+                (*signed_n)++;
             } else {
                 say("      FALCON-APPLIANCE-FAILED %s (exit %d)\n",
                     g_cand[i].rel, rc);
-                failed_n++;
+                (*failed_n)++;
             }
         }
     }
+}
 
-    say("\nsummary: FALCON-APPLIANCE-SUMMARY signed=%zu failed=%zu skipped=%zu\n",
-        signed_n, failed_n, skipped_n);
+/* ---- the flow ---- */
+
+int main(void)
+{
+    stick_parts parts;
+    int mapped = 0;
+    int p3_mounted = 0;
+    int p2_mounted = 0;
+    size_t prepared_n = 0;
+    size_t prep_failed_n = 0;
+    size_t signed_n = 0;
+    size_t failed_n = 0;
+    size_t skipped_n = 0;
+    struct rlimit no_core = { 0, 0 };
+
+    /* Before anything reads a passphrase: this process is about to hold one,
+     * and a core file would be a copy of it on whatever filesystem is current. */
+    (void)setrlimit(RLIMIT_CORE, &no_core);
+
+    console_open();
+    early_mounts();
+
+    say("\n"
+        "falcon-boot signing appliance\n"
+        "=============================\n"
+        "Prepares Windows install media so Setup can find its own ISO again,\n"
+        "and signs other ISOs with the MOK private key encrypted on p3.\n\n");
+
+    /* The sign tool's ISO reader is linked in here for the survey. Its own
+     * diagnostics are about listing a file, which is this program's plumbing
+     * rather than its output, so only warnings and errors reach the console.
+     * The tool's INFO-level progress during a real prepare or bless still
+     * does: that runs in a child process with its own threshold. */
+    sgn_log_set_level(SGN_LOG_WARN);
+
+    load_modules();
+
+    if (!find_stick(&parts)) {
+        say("ERROR: no falcon stick found (need an exFAT p2 and a LUKS p3 on\n"
+            "       one disk). Nothing was unlocked.\n");
+        finish(0, 0, 0);
+    }
+    say("  p2 (ISO library): %s\n  p3 (UKI shelf):   %s\n\n",
+        parts.p2, parts.p3);
+
+    /* ---- the survey ----
+     *
+     * p2 and nothing else. Every input the survey and the preparation half
+     * read lives there, so p3 is left alone until the bless half below has
+     * been shown to have work: an auto-prep boot (DESIGN Section 6.3.1) then
+     * decrypts no key and asks for no passphrase at all. */
+    if (mount(parts.p2, P2_MNT, "exfat", 0, NULL) != 0) {
+        say("ERROR: mounting p2: %s\n", strerror(errno));
+        finish(0, 0, 0);
+    }
+    p2_mounted = 1;
+
+    (void)prep_tools_present();
+
+    load_manifest();
+    say("surveying p2...\n");
+    walk(P2_MNT, "", 0);
+
+    /* Path order once, here, so the numbers the user types, the order the
+     * review prints and the order either batch runs in are all the same one. */
+    qsort(g_cand, g_cand_n, sizeof(g_cand[0]), cand_cmp);
+    qsort(g_prep, g_prep_n, sizeof(g_prep[0]), cand_cmp);
+
+    say("survey: %zu to prepare, %zu to sign, %zu already prepared,\n"
+        "        %zu already blessed, %zu unreadable\n",
+        g_prep_n, g_cand_n, g_done_prepared, g_done_blessed, g_unreadable);
+
+    /* Preparation first, and while p3 is still locked. */
+    if (g_prep_n > 0)
+        prepare_batch(&prepared_n, &prep_failed_n);
+
+    if (g_cand_n == 0)
+        say("\nnothing to sign: no ISO on p2 is waiting for the MOK key, so\n"
+            "p3 stays locked. FALCON-APPLIANCE-PENDING 0\n");
+    else
+        bless_half(&parts, &mapped, &p3_mounted, &signed_n, &failed_n,
+                   &skipped_n);
+
+    say("\nsummary: FALCON-APPLIANCE-SUMMARY prepared=%zu prep-failed=%zu "
+        "signed=%zu failed=%zu skipped=%zu\n",
+        prepared_n, prep_failed_n, signed_n, failed_n, skipped_n);
 
     finish(p2_mounted, p3_mounted, mapped);
     return 0;   /* not reached; finish() reboots */

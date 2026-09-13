@@ -22,6 +22,15 @@
 #   p3  LUKS2+ext4  1G  falcon-mok.key, /uki/appliance-uki.efi, /uki/fixture-uki.efi
 #   p4  LUKS2      rest untouched
 #
+# With FALCON_WIN_ISO set to a real Windows install ISO, that image is staged
+# on p2 as well, under /Windows, and p2 grows to hold it plus what preparation
+# needs (DESIGN Section 6.3: the roughly 600 MB sidecar it leaves behind and
+# about 1.2 GB of scratch while it works). That is what turns the proof's
+# Windows leg on. There is no synthetic stand-in for it: Microsoft builds this
+# media with `oscdimg -u1`, so every real file lives in the UDF namespace
+# only, and no ISO writer on this host writes UDF. A fixture that classified
+# as Windows without being Windows would prove the routing and nothing else.
+#
 # Outputs:
 #   build/appliance/appliance-stick.img          the stick
 #   build/appliance/appliance-mok.crt            the MOK cert mkstick generated
@@ -29,6 +38,7 @@
 #
 # Usage: tools/mk-test-appliance-stick.sh
 # Env:   FALCON_TEST_PASS  p3/p4 passphrase (default "falcon-test")
+#        FALCON_WIN_ISO    a Windows install ISO to stage on p2 (optional)
 #
 # THIS IS RIG SCAFFOLDING in one respect only: the passphrase is a well-known
 # string and the varstore skips the interactive MokManager enrollment a real
@@ -61,6 +71,22 @@ FOLDER_ISO_NAME=arch-mini-linux.iso
 FIXTURE_KERNEL=build/test/fixture-vmlinuz
 FIXTURE_INITRD=build/test/fixture-initrd.cpio
 
+# The Windows leg, off unless an ISO is named. Sizes are derived rather than
+# written down because the media varies: p2 has to hold the image itself, the
+# patched boot.wim preparation stages beside it, and the scratch wimlib works
+# in, and getting that wrong shows up as an ENOSPC three minutes into a rig
+# run rather than here.
+WIN_ISO="${FALCON_WIN_ISO:-}"
+WIN_FOLDER=Windows
+ISO_SIZE=2G
+TOTAL_SIZE=4G
+if [[ -n "$WIN_ISO" ]]; then
+    [[ -f "$WIN_ISO" ]] || { echo "ERROR: FALCON_WIN_ISO=$WIN_ISO is not a file" >&2; exit 1; }
+    WIN_GIB=$(( ($(stat -c%s "$WIN_ISO") + (1 << 30) - 1) / (1 << 30) ))
+    ISO_SIZE=$(( WIN_GIB + 4 ))G
+    TOTAL_SIZE=$(( WIN_GIB + 6 ))G
+fi
+
 MKSTICK=build/bin/falcon-boot-mkstick
 APPLIANCE_UKI="$OUT/appliance-uki.efi"
 FIXTURE_UKI=build/test/fixture-uki.efi
@@ -70,6 +96,22 @@ SHIM_DIR=build/shim/bins
 LOOP=
 MNT=
 
+# `losetup -d` is deferred while anything still holds the device and reports
+# success either way. Left fire-and-forget, the loop number is handed straight
+# back to whatever runs next - the acceptance run, usually - which then finds
+# it tearing down under its own partition scan. Waited out here instead.
+detach_loop() {
+    local l="$1" i
+
+    [[ -n "$l" ]] || return 0
+    for i in 1 2 3 4 5 6 7 8 9 10; do
+        sudo losetup -d "$l" 2>/dev/null || true
+        losetup -a 2>/dev/null | grep -q "^$l:" || return 0
+        sleep 0.5
+    done
+    echo "note: $l would not detach" >&2
+}
+
 cleanup() {
     if [[ -n "$MNT" ]]; then
         sudo umount "$MNT" 2>/dev/null || true
@@ -77,7 +119,7 @@ cleanup() {
         MNT=
     fi
     if [[ -n "$LOOP" ]]; then
-        sudo losetup -d "$LOOP" 2>/dev/null || true
+        detach_loop "$LOOP"
         LOOP=
     fi
     rm -f "$PASSFILE"
@@ -123,9 +165,9 @@ fi
 echo "== mkstick create"
 sudo "$MKSTICK" create "$IMG" \
     --force \
-    --size 4G \
+    --size "$TOTAL_SIZE" \
     --p1-size 64M \
-    --iso-size 2G \
+    --iso-size "$ISO_SIZE" \
     --p3-size 1G \
     --p4-size rest \
     --passphrase-file "$PASSFILE" \
@@ -166,12 +208,18 @@ sudo mount -o uid="$(id -u)",gid="$(id -g)" "${LOOP}p2" "$MNT"
 cp "$MINI_ISO" "$MNT/$ROOT_ISO_NAME"
 mkdir -p "$MNT/$FOLDER"
 cp "$MINI_ISO" "$MNT/$FOLDER/$FOLDER_ISO_NAME"
+if [[ -n "$WIN_ISO" ]]; then
+    echo "   staging $(basename "$WIN_ISO") ($(stat -c%s "$WIN_ISO") bytes);"
+    echo "   this is a real copy, so it takes as long as the disk takes"
+    mkdir -p "$MNT/$WIN_FOLDER"
+    cp "$WIN_ISO" "$MNT/$WIN_FOLDER/$(basename "$WIN_ISO")"
+fi
 sync
 ls -lR "$MNT"
 sudo umount "$MNT"
 rmdir "$MNT"
 MNT=
-sudo losetup -d "$LOOP"
+detach_loop "$LOOP"
 LOOP=
 
 # ---- the varstore ----
