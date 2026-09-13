@@ -124,6 +124,20 @@ Rationale per partition:
 
 p3 and p4 share the same passphrase (Section 5).
 
+**Partition identification (decision 2026-09-13).** The loader must not treat
+"any exFAT volume" as p2 or "any LUKS2 volume" as p3: on real hardware the
+stick sits next to internal disks that may carry both. mkstick creates every
+partition, so identification is by **GPT partition type GUID**: one airies
+GUID minted per role (p2 ISO library, p3 UKI shelf; p1 keeps the standard ESP
+type, p4 keeps the standard Linux dm-crypt type since only the initramfs
+touches it). The install manifest additionally records each partition's
+PARTUUID as a tiebreaker if two airies sticks are ever plugged in at once.
+The loader matches type GUIDs read from the GPT entry protocol (or by parsing
+the GPT itself off the parent BlockIO if the firmware's PartitionInfo is
+absent) and falls back to the current probe-everything behavior only when it
+finds no airies-typed partition at all, so the QEMU rig images keep working
+until mkstick (Section 8) exists to stamp them.
+
 
 ## 4. ESP contents and the Secure Boot chain
 
@@ -183,6 +197,25 @@ Flow:
 
 p3 and p4 share the passphrase precisely so this handoff is "reuse the string
 the user already typed." p4 is separate only so EFI never mounts root.
+
+**As built (2026-09-13, steps 1-5 of the flow above):** discovery, prompt,
+unlock, ext4 read, and the shim-verified launch all work end to end in the
+QEMU rig (0.22 s unlock at 100k pbkdf2 iterations). Two interim shapes remain
+until step 6 of the build order lands the handoff:
+
+- The UKI is currently launched from a **memory buffer** (`SourceBuffer`,
+  NULL device path), because a LUKS volume has no firmware-readable device
+  path. Shim verifies the buffer, so the trust chain is intact, but sd-stub
+  finds its `.extra.d` credential companions by scanning
+  `LoadedImage->DeviceHandle`, which a buffer load leaves NULL. Step 6
+  therefore switches this call to `LoadImage` **by device path off the
+  synthetic credential filesystem** of Section 5.1; the buffer shape then
+  survives only as the fallback for non-sd-stub images, if at all.
+- **UKI discovery convention (settled):** the loader looks in `/uki/` first,
+  then `/EFI/Linux/` (the Boot Loader Specification location, so a p3
+  populated by `kernel-install` still boots), taking regular files with a
+  case-insensitive `.efi` suffix, sorted by name; one match boots directly,
+  several are offered in a post-unlock chooser. mkstick stages to `/uki/`.
 
 ### 5.1 The handoff mechanism
 
@@ -591,8 +624,11 @@ than reimplementing cryptography or filesystem creation:
   `--pbkdf-force-iterations` to a value budgeted for our in-EFI PBKDF2
   implementation: cryptsetup's host-side benchmark would pick around 2M
   iterations, which is seconds of unlock time in unoptimized freestanding C.
-  Pick the number once the EFI implementation is measurable, and record it
-  here.
+  **Measured and decided (2026-09-13): mkstick pins `--pbkdf-force-iterations
+  200000`.** The in-EFI implementation completes the whole unlock-to-mount at
+  100k iterations in 0.22 s under OVMF/KVM, so 200k lands near half a second
+  with margin for slower firmware clocks, while cryptsetup's 2M default would
+  cost 3-6 s per unlock. Revisit only if real-hardware timing disagrees.
 - Install shim + MokManager + our loader + cert onto p1, naming our loader to
   match the shim's embedded next-stage path (Section 4).
 - Generate the MOK keypair; keep the private key encrypted on p3 (Section 7.5),
@@ -694,6 +730,14 @@ either the host or appliance route.
 
 
 ## 11. MVP build order
+
+Status (2026-09-13): steps 1-5 are DONE and proven in the QEMU rig, including
+the Secure Boot ON halves (shim plumbing spike results in Section 7.6 and
+docs/notes/shim-spike.md; personal-OS unlock and shim-verified UKI launch in
+Section 5). Step 4's injectors are the framework plus native-cmdline
+descriptors, per the plan; nothing consumes the cmdline templates until the
+bless path lands. Next: step 6. Remaining spike items inside step 1's list are
+folded into step 6 (sd-stub `.cred` verification) since the rest is done.
 
 1. OVMF hello-world: mingw PE loader that prints and reads a key. Proves
    toolchain + test rig. Then the **shim plumbing spike**, which gates several
