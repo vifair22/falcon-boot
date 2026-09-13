@@ -529,8 +529,9 @@ rest and out of the loader:
    - lists the pending unsigned ISOs and requires **per-ISO confirmation** (the
      explicit "I vouch for this" act, which also stops a dropped-in malicious ISO
      from being blessed silently),
-   - for each confirmed ISO, extracts the kernel, signs it with `sbsign`, and
-     stages the signed kernel plus the derived `iso-scan` cmdline in the manifest,
+   - for each confirmed ISO, extracts the kernel, wraps and signs it as a
+     minimal UKI with the derived `iso-scan` cmdline embedded, and stages it
+     plus its manifest record per Section 8.1,
    - reboots to the loader.
 
    The appliance makes the stick self-hosting for signing: a portable signed
@@ -640,18 +641,60 @@ than reimplementing cryptography or filesystem creation:
   (Section 7.5): a minimal initramfs of busybox + cryptsetup + sbsign + the
   portable `sign` tool.
 - `airies-boot sign <iso>`: the bless step (Section 7.5). Extracts the ISO's
-  kernel, signs it (EFI-stub / UKI) with the MOK key via `sbsign`, stages the
-  signed kernel plus the derived `iso-scan`-style cmdline in the manifest so the
-  loader boots the signed kernel directly while the ISO stays on p2 for its
-  initramfs to find. Built as a **portable static binary** so the identical
-  implementation runs both on an external host and inside the on-stick signing
-  appliance. Not needed when Secure Boot is off, and not needed for ISOs that
-  already ship their own MS-signed shim and find their own media. If the
-  step-1 spike (Sections 7.6, 11) shows the chosen load path enforces SBAT on
-  everything it loads, raw signed bzImages (which carry no `.sbat` section)
-  will be refused; in that case `sign` emits a minimal UKI wrap (stub +
-  kernel, `.sbat` inherited from the stub) instead of a bare signed kernel. A
-  tool detail, not an architecture change.
+  kernel and wraps it, per Section 8.1, into a minimal signed UKI whose
+  embedded cmdline carries the derived `iso-scan`-style arguments; the ISO
+  stays on p2 for its initramfs to find. Built as a **portable static
+  binary** so the identical implementation runs both on an external host and
+  inside the on-stick signing appliance. Not needed when Secure Boot is off,
+  and not needed for ISOs that already ship their own MS-signed shim and
+  find their own media.
+
+### 8.1 Blessed artifacts and the manifest (decided 2026-09-13)
+
+The bless output is always a **minimal UKI wrap** (sd-stub + kernel +
+embedded `.cmdline`, `.sbat` inherited from the stub), signed with the MOK
+key, never a bare signed bzImage. Two reasons, one forced and one earned:
+
+- Forced: the shim load path may enforce SBAT on everything it loads, and
+  raw bzImages carry no `.sbat` (Section 7.6 spike).
+- Earned: p2 is writable, unverified exFAT, so anything not covered by a
+  signature is attacker-editable with stick access. Embedding the cmdline in
+  the signed wrap means tampering with p2 cannot inject kernel arguments
+  into a blessed boot; the kernel + cmdline verify or the boot refuses.
+  (The initrd read off p2 remains unverified; that residual is recorded in
+  Section 7.5 and matches ordinary distro boots.)
+
+On-stick layout, under the reserved directory of Section 6.2:
+
+```
+p2:/airies/blessed/<name>.uki      signed UKI wraps, one per blessed ISO
+p2:/airies/blessed/manifest        the manifest, plain ASCII text
+```
+
+Manifest format: line-based records, `#` comments, one block per blessed
+ISO, keys before the next `iso=` belong to the current block:
+
+```
+iso=Linux/archlinux-2026.01.01-x86_64.iso   # path relative to p2 root
+size=1538670592                              # byte size at bless time
+sha256=<hex>                                 # ISO hash at bless time
+uki=archlinux-2026.01.01-x86_64.uki          # file under /airies/blessed/
+family=arch                                  # registry id (Section 6.2)
+```
+
+Loader behavior: a menu entry whose path matches a manifest record *and*
+whose current file size equals `size=` is labeled blessed and boots the
+named UKI (served to LoadImage through the synthetic-filesystem machinery
+of Section 5.1, since exFAT has no firmware device path; shim verifies as
+always). A size mismatch means the ISO changed after blessing: the entry is
+labeled stale-blessed and boots as if unblessed. The `sha256=` field is
+authoritative for the *bless tool* (re-bless detection and appliance
+listing); the loader deliberately checks only the size, because hashing a
+multi-GB ISO at menu time is not a boot loader's job, and the security of
+the boot does not rest on the manifest at all: everything the manifest can
+influence is either signed (the UKI) or already-unverified data an attacker
+could edit directly (the manifest itself, the initrd). Corrupt or absent
+manifest degrades to "nothing is blessed," never to an error.
 
 Shelling out to `cryptsetup`, `sbsign`, `mkfs.*`, `ukify` is the intended
 vendoring line: reimplementing argon2id, Authenticode PE signing, or ext4
