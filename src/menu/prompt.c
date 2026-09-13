@@ -25,6 +25,18 @@ static void out(EFI_SYSTEM_TABLE *st, const CHAR16 *s)
     st->ConOut->OutputString(st->ConOut, (CHAR16 *)(uintptr_t)s);
 }
 
+/* Blanks n columns from the cursor and returns the cursor to where it was:
+ * how both the hint and (via one column) an asterisk are unprinted. */
+static void erase_forward(EFI_SYSTEM_TABLE *st, UINTN n)
+{
+    UINTN i;
+
+    for (i = 0; i < n; i++)
+        out(st, L" ");
+    for (i = 0; i < n; i++)
+        out(st, L"\b");
+}
+
 INTN menu_prompt_secret(EFI_SYSTEM_TABLE *st, const CHAR16 *prompt,
                         char *buf, UINTN cap)
 {
@@ -34,6 +46,11 @@ INTN menu_prompt_secret(EFI_SYSTEM_TABLE *st, const CHAR16 *prompt,
      * count the passphrase's length. Display state only - the buffer, the
      * keys accepted, and every other behavior are identical either way. */
     BOOLEAN silent = FALSE;
+    /* The hint is shown dim after the prompt and erased on the first
+     * keystroke, exactly as systemd-ask-password does, so it never sits
+     * next to the asterisks pretending to be part of the passphrase. */
+    static const CHAR16 hint[] = L"(press TAB for no echo)";
+    BOOLEAN hint_shown = FALSE;
 
     if (st == (void *)0 || buf == (void *)0 || cap == 0)
         return -1;
@@ -42,6 +59,20 @@ INTN menu_prompt_secret(EFI_SYSTEM_TABLE *st, const CHAR16 *prompt,
     st->ConOut->EnableCursor(st->ConOut, TRUE);
     if (prompt != (void *)0)
         out(st, prompt);
+    {
+        INT32 attr = st->ConOut->Mode->Attribute;
+        UINTN i;
+
+        st->ConOut->SetAttribute(st->ConOut,
+                                 EFI_TEXT_ATTR(EFI_DARKGRAY, EFI_BLACK));
+        out(st, hint);
+        st->ConOut->SetAttribute(st->ConOut, (UINTN)attr);
+        /* Park the cursor back at the hint's first column so the first
+         * asterisk lands where the hint starts rather than after it. */
+        for (i = 0; hint[i] != L'\0'; i++)
+            out(st, L"\b");
+        hint_shown = TRUE;
+    }
 
     for (;;) {
         EFI_INPUT_KEY key;
@@ -70,6 +101,10 @@ INTN menu_prompt_secret(EFI_SYSTEM_TABLE *st, const CHAR16 *prompt,
             return (INTN)len;
         }
         if (key.UnicodeChar == CHAR_TAB) {
+            if (hint_shown) {
+                erase_forward(st, sizeof(hint) / sizeof(hint[0]) - 1);
+                hint_shown = FALSE;
+            }
             if (!silent) {
                 UINTN i;
 
@@ -98,6 +133,10 @@ INTN menu_prompt_secret(EFI_SYSTEM_TABLE *st, const CHAR16 *prompt,
             continue;
         if (len + 1 >= cap)
             continue;
+        if (hint_shown) {
+            erase_forward(st, sizeof(hint) / sizeof(hint[0]) - 1);
+            hint_shown = FALSE;
+        }
         buf[len++] = (char)key.UnicodeChar;
         if (!silent)
             out(st, L"*");
