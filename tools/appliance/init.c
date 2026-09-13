@@ -868,9 +868,9 @@ static int choose_candidates(void)
 {
     print_list();
     say("\nMark what you vouch for, then review it:\n"
-        "  <n>   toggle image n        all / none   mark every image / clear\n"
-        "  list  reprint the list      done         review the marked set\n"
-        "  quit  reboot without signing anything\n");
+        "  <n>       toggle image n      all, a / none, n  mark every / clear\n"
+        "  list, l   reprint the list    done, d           review the marked set\n"
+        "  quit, q   reboot without signing anything\n");
 
     for (;;) {
         char line[64];
@@ -883,7 +883,8 @@ static int choose_candidates(void)
         }
         /* An empty line is "done": it is what a user leans on Enter for, and
          * on an empty selection "done" only re-prompts, so it cannot sign. */
-        if (line[0] == '\0' || strcasecmp(line, "done") == 0) {
+        if (line[0] == '\0' || strcasecmp(line, "done") == 0 ||
+            strcasecmp(line, "d") == 0) {
             size_t n = selected_count();
             int r;
 
@@ -901,15 +902,15 @@ static int choose_candidates(void)
             }
             continue;
         }
-        if (strcasecmp(line, "quit") == 0) {
+        if (strcasecmp(line, "quit") == 0 || strcasecmp(line, "q") == 0) {
             say("leaving without signing anything.\n");
             return 0;
         }
-        if (strcasecmp(line, "list") == 0) {
+        if (strcasecmp(line, "list") == 0 || strcasecmp(line, "l") == 0) {
             print_list();
             continue;
         }
-        if (strcasecmp(line, "all") == 0) {
+        if (strcasecmp(line, "all") == 0 || strcasecmp(line, "a") == 0) {
             size_t i;
 
             for (i = 0; i < g_cand_n; i++)
@@ -919,7 +920,7 @@ static int choose_candidates(void)
                 g_cand_n);
             continue;
         }
-        if (strcasecmp(line, "none") == 0) {
+        if (strcasecmp(line, "none") == 0 || strcasecmp(line, "n") == 0) {
             size_t i;
 
             for (i = 0; i < g_cand_n; i++)
@@ -941,8 +942,8 @@ static int choose_candidates(void)
                 continue;
             }
         }
-        say("not understood: '%s'. Type an image number, or all, none, list,\n"
-            "done, quit.\n", line);
+        say("not understood: '%s'. Type an image number, or all (a),\n"
+            "none (n), list (l), done (d), quit (q).\n", line);
     }
 }
 
@@ -1007,9 +1008,7 @@ int main(void)
     say("\n"
         "airies-boot signing appliance\n"
         "=============================\n"
-        "Signs ISOs on p2 with the MOK private key that lives encrypted on p3.\n"
-        "No network. Nothing else runs in here. Nothing is signed that you did\n"
-        "not mark by hand and confirm.\n\n");
+        "Signs ISOs on p2 with the MOK private key that lives encrypted on p3.\n\n");
 
     load_modules();
 
