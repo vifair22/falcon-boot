@@ -222,8 +222,12 @@ static const ext4_file *efile_c(const fs_file *f)
 
 /* ---- the exFAT adapter ---- */
 
-/* What an exFAT dirent needs to be rebuilt from a unified one. */
+/* What an exFAT dirent needs to be rebuilt from a unified one. valid_len
+ * rides along because a sparse file's tail (valid..size) must read as
+ * zeros, and dropping it here would resurrect the truncation bug the
+ * driver just fixed via a different door. */
 typedef struct {
+    uint64_t valid_len;
     uint32_t first_cluster;
     uint8_t  no_fat_chain;
 } exfat_priv;
@@ -248,6 +252,7 @@ static void exfat_to_fs_dirent(const exfat_dirent *in, fs_dirent *out)
      * directory is a byte stream. */
     out->is_regular = (uint8_t)(in->is_dir ? 0 : 1);
 
+    p.valid_len = in->valid_len;
     p.first_cluster = in->first_cluster;
     p.no_fat_chain = in->no_fat_chain;
     memcpy(out->priv.b, &p, sizeof p);
@@ -263,6 +268,7 @@ static void fs_to_exfat_dirent(const fs_dirent *in, exfat_dirent *out)
      * would mean widening 512 bytes on every file open for nothing. */
     out->is_dir = in->is_dir;
     out->size = in->size;
+    out->valid_len = p.valid_len;
     out->first_cluster = p.first_cluster;
     out->no_fat_chain = p.no_fat_chain;
 }

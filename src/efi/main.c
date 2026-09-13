@@ -2,15 +2,16 @@
  *
  * Steps 2, 3 and 5 of the MVP build order (docs/DESIGN.md Section 11): take
  * the one device inventory src/discover builds (Section 9), enumerate *.iso
- * on the ISO-role volumes through the filesystem registry, present the text
- * menu, and hand the selection to whichever path owns it: the ISO path
- * (virtual CD + the platform's verifying LoadImage) or the personal-OS path
- * (passphrase, LUKS2, ext4, UKI). A boot attempt that fails, or a payload
- * that exits, comes back to the menu.
+ * and *.img on the ISO-role volumes through the filesystem registry, present
+ * the text menu, and hand the selection to whichever path owns it: the
+ * virtual-media path (Section 6's two flavors + the platform's verifying
+ * LoadImage) or the personal-OS path (passphrase, LUKS2, ext4, UKI). A boot
+ * attempt that fails, or a payload that exits, comes back to the menu.
  */
 
 #include <efi/uefi.h>
 #include <efi/blockio.h>
+#include <bless/bless.h>
 #include <discover/discover.h>
 #include <fs/fs.h>
 #include <iso/iso.h>
@@ -31,14 +32,15 @@
 #define SCAN_DEPTH_MAX 4u
 
 /* How many entries get looked inside before the menu appears. Each probe
- * builds a virtual CD, makes the firmware bind its partition and FAT drivers
- * to it and tears the whole thing down again, so the cost is bounded by a
- * constant rather than by how many ISOs someone dropped on the stick. The
- * rest are shown with an unprobed label, which is honest and instant. */
+ * builds a virtual medium, makes the firmware bind its partition and FAT
+ * drivers to it and tears the whole thing down again, so the cost is bounded
+ * by a constant rather than by how many images someone dropped on the stick.
+ * The rest are shown with an unprobed label, which is honest and instant. */
 #define PROBE_LIMIT 24u
 
-/* Label suffix budget: "  [Ubuntu install media, unsigned]" and friends. */
-#define SUFFIX_MAX 48u
+/* Label suffix budget: "  [Ubuntu install media, unsigned]  [blessed,
+ * stale]" and friends. */
+#define SUFFIX_MAX 72u
 
 static EFI_SYSTEM_TABLE *g_st;
 
@@ -110,13 +112,24 @@ static EFI_STATUS wait_key(EFI_INPUT_KEY *key)
     return g_st->ConIn->ReadKeyStroke(g_st->ConIn, key);
 }
 
-/* ---- ISO scan ---- */
+/* ---- image scan ---- */
 
 /* What booting an entry needs, which the menu's label alone cannot carry:
- * which mounted volume the file lives on and where on it. */
+ * which mounted volume the file lives on, where on it, and which of DESIGN
+ * Section 6's two media flavors its extension asked for. The kind is decided
+ * once, here at scan time, so the probe and the boot of one entry can never
+ * disagree about what the firmware is being handed.
+ *
+ * The blessing (DESIGN Section 8.1) is resolved once, while the labels are
+ * built, and carried here for the same reason: the lookup needs the entry's
+ * path relative to the volume root, and by the time the user picks something
+ * that label has a suffix appended to it. */
 typedef struct {
     UINTN vol;
     fs_dirent ent;
+    iso_media_kind kind;
+    bless_state bless;
+    bless_hit   hit;       /* valid only when bless != BLESS_NONE */
 } iso_target;
 
 typedef struct {
@@ -128,7 +141,7 @@ typedef struct {
 } iso_list;
 
 static void list_add(iso_list *list, const CHAR16 *prefix,
-                     const fs_dirent *ent)
+                     const fs_dirent *ent, iso_media_kind kind)
 {
     menu_entry *e;
     iso_target *t;
@@ -145,6 +158,10 @@ static void list_add(iso_list *list, const CHAR16 *prefix,
     memcpy(e->label, prefix, pl * sizeof(CHAR16));
     memcpy(e->label + pl, ent->name, (nl + 1) * sizeof(CHAR16));
     t->vol = list->cur_vol;
+    t->kind = kind;
+    /* Resolved in probe_entries, once the list is sorted and the label is
+     * still the bare path; NONE until then so a target is never half-filled. */
+    t->bless = BLESS_NONE;
     memcpy(&t->ent, ent, sizeof(*ent));
 }
 
@@ -177,7 +194,14 @@ static void scan_dir(fs_vol *vol, fs_dir *dir, CHAR16 *prefix,
             scan_dir(vol, &sub, prefix, depth + 1, list);
             prefix[pl] = 0;
         } else if (ucs2_ends_with(ent.name, u".iso")) {
-            list_add(list, prefix, &ent);
+            /* Both extensions come out of this one walk, and the extension is
+             * the whole decision: it says which shape the firmware is asked
+             * to parse, never what it is allowed to run (DESIGN Section 6
+             * stage 2). ucs2_ends_with is case-insensitive, so a stick
+             * written by Windows lists the same files. */
+            list_add(list, prefix, &ent, ISO_MEDIA_CD);
+        } else if (ucs2_ends_with(ent.name, u".img")) {
+            list_add(list, prefix, &ent, ISO_MEDIA_DISK);
         }
     }
 }
@@ -213,7 +237,7 @@ static void sort_list(iso_list *list)
 static fs_vol g_vols[MAX_VOLS];   /* ~4 KB of driver cache each */
 
 /* Walk the ISO-role rows of the one discovery inventory (DESIGN Section 9)
- * and scan each volume a filesystem driver claimed.
+ * and scan each volume a filesystem driver claimed for bootable images.
  *
  * Which rows those are is DESIGN Section 3's rule, applied once at discovery
  * time: if any partition in the machine carries the airies p2 type GUID, only
@@ -232,6 +256,7 @@ static void scan_all_volumes(iso_list *list, UINTN *vols_found)
     discover_dev *dev;
 
     *vols_found = 0;
+    bless_reset();
     while (*vols_found < MAX_VOLS &&
            (dev = discover_next(PART_ROLE_ISO, &cursor)) != (discover_dev *)0) {
         fs_vol *vol = &g_vols[*vols_found];
@@ -242,6 +267,12 @@ static void scan_all_volumes(iso_list *list, UINTN *vols_found)
             continue;
         list->cur_vol = *vols_found;
         (*vols_found)++;
+
+        /* p2's blessed-artifact manifest, read once per volume (DESIGN
+         * Section 8.1). A volume that has none simply contributes no
+         * records: it is not an error and nothing downstream branches on
+         * whether this found anything. */
+        bless_load(g_st, vol);
 
         if (fs_dir_open_root(vol, &root) != FS_OK)
             continue;
@@ -285,8 +316,10 @@ static void wbuf_ascii(wbuf *w, const char *s)
  * carries the same caveat where a user will actually read it.
  *
  * survey NULL means the entry was past PROBE_LIMIT and was never looked at. */
-static void suffix_build(CHAR16 *buf, UINTN cap, const iso_survey *survey)
+static void suffix_build(CHAR16 *buf, UINTN cap, const iso_survey *survey,
+                         bless_state bless)
 {
+    const CHAR16 *blessed = bless_suffix(bless);
     wbuf w = { buf, cap, 0 };
 
     wbuf_ucs2(&w, L"  [");
@@ -306,17 +339,25 @@ static void suffix_build(CHAR16 *buf, UINTN cap, const iso_survey *survey)
             wbuf_ucs2(&w, L"sig?");
     }
     wbuf_ucs2(&w, L"]");
+
+    /* DESIGN Section 8.1's label, appended rather than merged: the bracket
+     * above reports what is inside the medium, this one reports what the
+     * stick says stands behind it, and the two are found different ways. The
+     * module hands over the words; composing them is the menu's job. */
+    if (blessed != (const CHAR16 *)0)
+        wbuf_ucs2(&w, blessed);
 }
 
 /* Appends the suffix to the entry's path label. If the two cannot both fit,
  * the path is what loses characters: a truncated path is still recognisable,
  * whereas a truncated suffix would misstate what was found. */
-static void label_suffix(menu_entry *e, const iso_survey *survey)
+static void label_suffix(menu_entry *e, const iso_survey *survey,
+                         bless_state bless)
 {
     CHAR16 suffix[SUFFIX_MAX];
     UINTN sl, pl;
 
-    suffix_build(suffix, SUFFIX_MAX, survey);
+    suffix_build(suffix, SUFFIX_MAX, survey, bless);
     sl = ucs2_len(suffix);
     pl = ucs2_len(e->label);
     if (pl + sl + 1 > MENU_PATH_MAX)
@@ -339,7 +380,7 @@ static void probe_entries(iso_list *list)
 
     out(L"airies-boot: probing ");
     out_dec(probed);
-    out(L" ISO(s) for family and signature presence");
+    out(L" image(s) for family and signature presence");
     if (probed < list->count) {
         out(L" (");
         out_dec(list->count - probed);
@@ -348,15 +389,23 @@ static void probe_entries(iso_list *list)
     out(L"\r\n");
 
     for (i = 0; i < list->count; i++) {
+        iso_target *t = &list->targets[i];
         iso_survey survey;
 
+        /* Before label_suffix, because the lookup takes the entry's path and
+         * label_suffix is what turns that path into a decorated label. The
+         * cost is a string compare per record, so it runs for every entry
+         * rather than only the probed ones: PROBE_LIMIT exists to bound
+         * firmware work, and there is none here. */
+        t->bless = bless_lookup(&g_vols[t->vol], list->entries[i].label,
+                                t->ent.size, &t->hit);
+
         if (i >= probed) {
-            label_suffix(&list->entries[i], (const iso_survey *)0);
+            label_suffix(&list->entries[i], (const iso_survey *)0, t->bless);
             continue;
         }
-        iso_survey_media(g_st, &g_vols[list->targets[i].vol],
-                         &list->targets[i].ent, &survey);
-        label_suffix(&list->entries[i], &survey);
+        iso_survey_media(g_st, &g_vols[t->vol], &t->ent, t->kind, &survey);
+        label_suffix(&list->entries[i], &survey, t->bless);
         out(L".");
     }
     out(L"\r\n");
@@ -380,11 +429,11 @@ static void boot_target(EFI_HANDLE image_handle, const menu_entry *entry,
     out(L"\r\n\r\n");
 
     status = iso_boot(g_st, image_handle, &g_vols[target->vol],
-                      &target->ent, &result);
+                      &target->ent, target->kind, &result);
 
     g_st->ConOut->ClearScreen(g_st->ConOut);
     out(entry->label);
-    /* What the ISO's ESP turned out to be, reported after the fact because
+    /* What the medium's ESP turned out to be, reported after the fact because
      * the payload owns the screen in between. Informational only: no cmdline
      * or initrd decision is taken from it yet (DESIGN Section 6.2). */
     if (result.family != (const family_desc *)0) {
@@ -409,6 +458,54 @@ static void boot_target(EFI_HANDLE image_handle, const menu_entry *entry,
                 L"firmware setup (Secure Boot off)\r\nor with mokutil "
                 L"--disable-validation.\r\n");
         }
+    }
+    out(L"\r\npress any key to return to the menu.\r\n");
+}
+
+/* A blessed entry's action (DESIGN Section 8.1): the signed UKI wrap the
+ * bless tool built for this ISO is launched instead of the ISO's own
+ * bootloader, so the whole boot is covered by a signature the machine can
+ * verify.
+ *
+ * There is no fallback to boot_target here, and that is the point rather than
+ * an omission. The ordinary path chainloads the medium's own loader, which
+ * under Secure Boot is exactly what blessing the ISO existed to avoid; taking
+ * it after the blessed image was refused would turn "this is not signed with
+ * a key you enrolled" into a boot that quietly proceeded by another route,
+ * and the user would have no way to tell which one ran. The message says what
+ * to do about it and the menu comes back. A stale entry is a different case
+ * and never reaches here: it is dispatched to boot_target by name, because a
+ * stale blessing is one the user's own edit invalidated. */
+static void boot_blessed(EFI_HANDLE image_handle, const menu_entry *entry,
+                         iso_target *target)
+{
+    bless_result result = { L"starting", EFI_SUCCESS, (const CHAR16 *)0 };
+    EFI_STATUS status;
+
+    g_st->ConOut->ClearScreen(g_st->ConOut);
+    out(L"booting blessed: ");
+    out(entry->label);
+    out(L"\r\n\r\n");
+
+    status = bless_boot(g_st, image_handle, &target->hit, &result);
+
+    g_st->ConOut->ClearScreen(g_st->ConOut);
+    out(entry->label);
+    if (!EFI_ERROR(status)) {
+        out(L"\r\nthe blessed image exited, status ");
+        out_hex(result.status);
+        out(L"\r\n");
+    } else {
+        out(L"\r\nblessed boot failed while ");
+        out(result.stage);
+        out(L": ");
+        out_hex(result.status);
+        out(L"\r\n");
+    }
+    if (result.advice != (const CHAR16 *)0) {
+        out(L"\r\n");
+        out(result.advice);
+        out(L"\r\n");
     }
     out(L"\r\npress any key to return to the menu.\r\n");
 }
@@ -549,7 +646,13 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
             if (list.skipped != 0) {
                 out(L"note: ");
                 out_dec(list.skipped);
-                out(L" ISO(s) not shown (list full or path too long)\r\n");
+                out(L" image(s) not shown (list full or path too long)\r\n");
+            }
+            if (bless_dropped() != 0) {
+                out(L"note: ");
+                out_dec(bless_dropped());
+                out(L" blessed-artifact record(s) past the cap were not "
+                    L"read\r\n");
             }
             g_st->BootServices->FreePool(list.targets);
             g_st->BootServices->FreePool(display);
@@ -562,7 +665,14 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
         } else {
             UINTN idx = (UINTN)pick - pinned;
 
-            boot_target(image_handle, &list.entries[idx], &list.targets[idx]);
+            /* DESIGN Section 8.1: a fresh blessing boots the signed wrap, a
+             * stale one boots as if it were not blessed at all. */
+            if (list.targets[idx].bless == BLESS_FRESH)
+                boot_blessed(image_handle, &list.entries[idx],
+                             &list.targets[idx]);
+            else
+                boot_target(image_handle, &list.entries[idx],
+                            &list.targets[idx]);
         }
         wait_key(&key);
     }

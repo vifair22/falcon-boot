@@ -203,7 +203,9 @@ static void test_fixture_mount_geometry(void **state)
 static int is_optional(const char *path)
 {
     /* Copied in only when build/test-payload.iso has been built. */
-    return strcmp(path, "payload-test.iso") == 0;
+    return strcmp(path, "payload-test.iso") == 0 ||
+           strcmp(path, "payload-gpt.img") == 0 ||
+           strcmp(path, "payload-floppy.img") == 0;
 }
 
 static void test_fixture_tree(void **state)

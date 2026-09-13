@@ -344,7 +344,7 @@ static void check_iso_library(tally *t, const char *path, const gpt_part *p,
     static exfat_dir dir;
     static exfat_dir sub;
     disk_io io;
-    exfat_dirent airies = { { 0 }, 0, 0, 0, 0, 0 };
+    exfat_dirent airies = { { 0 }, 0, 0, 0, 0, 0, 0 };
     exfat_dirent blessed;
     unsigned isos = 0;
     int rc;

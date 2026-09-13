@@ -94,6 +94,7 @@ static void set_ent(exfat_dirent *e, uint32_t first, uint64_t size,
     e->no_fat_chain = no_fat_chain;
     e->first_cluster = first;
     e->size = size;
+    e->valid_len = size;
 }
 
 /* Mirrors synth_cluster's pointer maths in volume-offset terms, so an

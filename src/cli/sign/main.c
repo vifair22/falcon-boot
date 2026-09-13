@@ -122,7 +122,7 @@ static const opt_spec g_opts[] = {
     { "--kernel",        1 },
     { "--stub",          1 },
     { "--work",          1 },
-    { "--initrd",        0 },
+    { "--no-initrd",     0 },
     { "--dry-run",       0 },
     { "--verbose",       0 },
     { "--quiet",         0 },
@@ -163,10 +163,12 @@ static void usage(FILE *f)
 "                        table does not cover. A trailing * matches a suffix.\n"
 "  --cmdline-extra <s>   appended to the rendered cmdline\n"
 "  --stub <file>         sd-stub to wrap with (default: " DEFAULT_STUB ")\n"
-"  --initrd              also embed the ISO's initramfs in the signed wrap\n"
-"                        (off by default: Section 8.1 specifies kernel and\n"
-"                        cmdline only, and an embedded initrd costs the\n"
-"                        initramfs's size per blessed ISO)\n"
+"  --no-initrd           thin wrap: kernel and cmdline only. The default\n"
+"                        embeds the ISO's initramfs so the entire blessed\n"
+"                        boot chain is signed (DESIGN Section 8.1); the\n"
+"                        thin wrap trades that for the initramfs's size\n"
+"                        per blessed ISO and reopens the unsigned-initrd\n"
+"                        residual for this medium\n"
 "  --work <dir>          scratch directory (default: $TMPDIR or /tmp)\n"
 "  --dry-run             report what would be written and write nothing\n"
 "  --verbose, --quiet    lower or raise the diagnostic threshold\n"
@@ -188,6 +190,9 @@ static int parse_args(int argc, char **argv, options *o)
     int i;
 
     memset(o, 0, sizeof(*o));
+    /* Embedded initrd is the default (DESIGN Section 8.1): the whole blessed
+     * chain signed, --no-initrd as the space-over-coverage escape. */
+    o->embed_initrd = 1;
     o->stub = DEFAULT_STUB;
 
     for (i = 1; i < argc; i++) {
@@ -245,8 +250,8 @@ static int parse_args(int argc, char **argv, options *o)
             o->stub = argv[++i];
         } else if (strcmp(a, "--work") == 0) {
             o->work = argv[++i];
-        } else if (strcmp(a, "--initrd") == 0) {
-            o->embed_initrd = 1;
+        } else if (strcmp(a, "--no-initrd") == 0) {
+            o->embed_initrd = 0;
         } else if (strcmp(a, "--dry-run") == 0) {
             o->dry_run = 1;
         } else if (strcmp(a, "--verbose") == 0) {

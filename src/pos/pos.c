@@ -6,7 +6,7 @@
 
 #include <pos/pos.h>
 
-#include <efi/shimguid.h>
+#include <efi/loadops.h>
 
 #include <credfs/credfs.h>
 #include <crypto/crypto.h>
@@ -451,47 +451,6 @@ static INTN choose_uki(const menu_banner *banner)
 
 /* ---- the shim-verified load path (DESIGN Section 7.6) ---- */
 
-/* Deliberately a second copy of src/iso/iso.c's resolve_load_ops rather than a
- * shared helper. Sharing it would mean either exporting it from iso.h (making
- * the ISO module's public surface carry a facility that has nothing to do with
- * ISOs) or adding a module for twenty lines. Both cost more than the
- * duplication does, and the two copies cannot drift in a way that matters:
- * each is a straight-line read of one protocol, and the invariant they encode
- * (prefer shim's loader, fall back to the firmware's, never install our own)
- * is stated in DESIGN Section 7.6 and holds by review, not by a symbol. If a
- * third caller ever appears, promote it then. */
-typedef struct {
-    EFI_STATUS (EFIAPI *LoadImage)(BOOLEAN, EFI_HANDLE,
-                                   EFI_DEVICE_PATH_PROTOCOL *, void *, UINTN,
-                                   EFI_HANDLE *);
-    EFI_STATUS (EFIAPI *StartImage)(EFI_HANDLE, UINTN *, CHAR16 **);
-    EFI_STATUS (EFIAPI *UnloadImage)(EFI_HANDLE);
-    BOOLEAN via_shim;
-} load_ops;
-
-static void resolve_load_ops(EFI_BOOT_SERVICES *bs, load_ops *ops)
-{
-    EFI_GUID sil_guid = SHIM_IMAGE_LOADER_GUID;
-    SHIM_IMAGE_LOADER *sil = (SHIM_IMAGE_LOADER *)0;
-
-    ops->LoadImage = bs->LoadImage;
-    ops->StartImage = bs->StartImage;
-    ops->UnloadImage = bs->UnloadImage;
-    ops->via_shim = FALSE;
-
-    if (bs->LocateProtocol(&sil_guid, (void *)0, (void **)&sil) != EFI_SUCCESS)
-        return;
-    /* A protocol that is present but hollow is a shim we do not understand;
-     * the firmware's loader is the safe answer, not a null call. */
-    if (sil == (SHIM_IMAGE_LOADER *)0 || sil->LoadImage == (void *)0 ||
-        sil->StartImage == (void *)0 || sil->UnloadImage == (void *)0)
-        return;
-
-    ops->LoadImage = sil->LoadImage;
-    ops->StartImage = sil->StartImage;
-    ops->UnloadImage = sil->UnloadImage;
-    ops->via_shim = TRUE;
-}
 
 /* Reads the whole UKI into freshly allocated pages.
  *

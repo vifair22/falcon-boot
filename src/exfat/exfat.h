@@ -59,8 +59,12 @@ typedef struct {
     uint8_t  is_dir;
     uint8_t  no_fat_chain;       /* clusters are contiguous, FAT not used */
     uint32_t first_cluster;      /* 0 = no data allocated */
-    uint64_t size;               /* valid data length for files,
-                                    allocation length for directories */
+    uint64_t size;               /* DataLength: the file's length (spec
+                                    7.6.3); allocation length for dirs */
+    uint64_t valid_len;          /* ValidDataLength: bytes actually written,
+                                    <= size; the gap reads as zeros (a
+                                    sparse copy onto the stick produces
+                                    valid < size). == size for dirs. */
 } exfat_dirent;
 
 typedef struct {
@@ -86,7 +90,9 @@ typedef struct {
     exfat_vol *vol;
     uint32_t first_cluster;
     uint8_t  no_fat_chain;       /* contiguous: cluster N is first + N */
-    uint64_t size;               /* valid data length; reads past it fail */
+    uint64_t size;               /* DataLength; reads past it fail */
+    uint64_t valid_len;          /* bytes backed by the device; the tail up
+                                    to size is served as zeros, per spec */
 
     /* Chain cursor: cur_cluster is the cur_index'th cluster of the file. */
     uint32_t cur_cluster;

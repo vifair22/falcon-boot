@@ -1,22 +1,41 @@
-/* Virtual CD over an exFAT-backed ISO file, plus the chainload of the ESP
- * the firmware finds inside it. See src/iso/iso.h for the contract and
+/* Virtual media over an exFAT-backed image file, plus the chainload of the
+ * ESP the firmware finds inside it. See src/iso/iso.h for the contract and
  * docs/DESIGN.md Section 6 for why the firmware, not us, does the parsing.
+ *
+ * One publisher, two flavors (DESIGN Section 6 stage 2). The flavor is two
+ * numbers - the advertised block size and the file-size rule that follows
+ * from it - and nothing else: the device path node, the driver connect, the
+ * ESP hunt, the family/signature survey, the chainload and the teardown are
+ * one implementation shared by both. A .iso is published with 2048-byte
+ * blocks so the firmware's partition driver looks for an El Torito catalog;
+ * a .img is published with 512-byte sectors so the same driver's GPT/MBR path
+ * runs instead, or so the FAT driver binds the whole device for a
+ * partition-table-less superfloppy.
  */
 
 #include <iso/iso.h>
 #include <efi/blockio.h>
 #include <efi/devpath.h>
 #include <efi/sfs.h>
+#include <efi/loadops.h>
 #include <efi/shimguid.h>
 #include <family/family.h>
 #include <lib/string.h>
 
 /* El Torito lives on 2048-byte media; the firmware's partition driver only
  * looks for a boot catalog when the block size says CD-ROM. */
-#define ISO_BLOCK_SIZE 2048u
+#define ISO_CD_BLOCK_SIZE 2048u
+
+/* The sector size every GPT/MBR and FAT structure on a disk image is laid out
+ * against. Advertising anything else here would misalign the firmware's whole
+ * reading of the file. */
+#define ISO_DISK_BLOCK_SIZE 512u
 
 /* Identifies our synthetic media in device paths. A vendor-defined node is
- * the spec's answer for a device with no real bus behind it. */
+ * the spec's answer for a device with no real bus behind it, and it is the
+ * same node for both flavors: firmware partition and filesystem drivers bind
+ * on the Block I/O instance and what its media says, never on the shape of
+ * the path above it. */
 #define AIRIES_ISO_MEDIA_GUID \
     { 0x887579f6, 0x4287, 0x4bc4, \
       { 0x99, 0x92, 0x15, 0xa3, 0xb5, 0x61, 0xce, 0x63 } }
@@ -75,6 +94,7 @@ static EFI_STATUS EFIAPI iso_read_blocks(EFI_BLOCK_IO_PROTOCOL *self,
                                          UINTN size, void *buffer)
 {
     iso_device *dev = device_of(self);
+    UINTN bs = dev->media.BlockSize;
     uint64_t off;
     uint64_t avail;
 
@@ -84,18 +104,20 @@ static EFI_STATUS EFIAPI iso_read_blocks(EFI_BLOCK_IO_PROTOCOL *self,
         return EFI_SUCCESS;
     if (buffer == (void *)0)
         return EFI_INVALID_PARAMETER;
-    if (size % ISO_BLOCK_SIZE != 0)
+    if (size % bs != 0)
         return EFI_BAD_BUFFER_SIZE;
     if (lba > dev->media.LastBlock)
         return EFI_INVALID_PARAMETER;
 
-    off = (uint64_t)lba * ISO_BLOCK_SIZE;
-    if (size / ISO_BLOCK_SIZE - 1 > dev->media.LastBlock - lba)
+    off = (uint64_t)lba * bs;
+    if (size / bs - 1 > dev->media.LastBlock - lba)
         return EFI_INVALID_PARAMETER;
 
-    /* An ISO whose length is not a whole number of 2048-byte blocks still
+    /* A CD image whose length is not a whole number of 2048-byte blocks still
      * advertises that last partial block, so serve the bytes that exist and
-     * zero the rest rather than failing the read. */
+     * zero the rest rather than failing the read. A disk image cannot get
+     * here with a partial tail: iso_open refuses one outright, because a
+     * sector the firmware half-reads is a partition table it half-believes. */
     avail = fs_file_size(&dev->file) - off;
     if (avail > (uint64_t)size)
         avail = (uint64_t)size;
@@ -128,19 +150,25 @@ static EFI_STATUS EFIAPI iso_flush_blocks(EFI_BLOCK_IO_PROTOCOL *self)
 
 /* ---- device lifecycle ---- */
 
-static void device_init(iso_device *dev, uint64_t size)
+static void device_init(iso_device *dev, uint64_t size, UINT32 block_size)
 {
     EFI_GUID vendor_guid = AIRIES_ISO_MEDIA_GUID;
 
     dev->media.MediaId = g_next_media_id++;
+    /* True for both flavors and honest for both: the file can be deleted or
+     * replaced between boots exactly as a removable medium can be swapped.
+     * It is also what keeps the firmware's FAT driver willing to bind the
+     * whole device for a superfloppy image. */
     dev->media.RemovableMedia = TRUE;
     dev->media.MediaPresent = TRUE;
     dev->media.LogicalPartition = FALSE;
     dev->media.ReadOnly = TRUE;
     dev->media.WriteCaching = FALSE;
-    dev->media.BlockSize = ISO_BLOCK_SIZE;
+    /* The one field that carries the flavor: 2048 says "optical, go look for
+     * an El Torito catalog", 512 says "disk, go read a partition table". */
+    dev->media.BlockSize = block_size;
     dev->media.IoAlign = 0;
-    dev->media.LastBlock = size / ISO_BLOCK_SIZE - 1;
+    dev->media.LastBlock = size / block_size - 1;
 
     dev->bio.Revision = EFI_BLOCK_IO_PROTOCOL_REVISION;
     dev->bio.Media = &dev->media;
@@ -225,7 +253,13 @@ static BOOLEAN handle_in(EFI_HANDLE h, EFI_HANDLE *set, UINTN n)
     return FALSE;
 }
 
-/* Does this handle's device path start with our virtual CD's vendor node? */
+/* Does this handle's device path start with our virtual media's vendor node?
+ *
+ * "Starts with" covers both flavors and both binding shapes: a partition
+ * child carries our vendor node plus its own, and a superfloppy image whose
+ * FAT driver bound straight to our Block I/O handle carries our vendor node
+ * and nothing but the end node after it. Both compare equal over the prefix,
+ * which is all this asks. */
 static BOOLEAN is_our_child(EFI_BOOT_SERVICES *bs, iso_device *dev,
                             EFI_HANDLE h)
 {
@@ -240,11 +274,16 @@ static BOOLEAN is_our_child(EFI_BOOT_SERVICES *bs, iso_device *dev,
                             sizeof(dev->path.vendor)) == 0);
 }
 
-/* The ISO's ESP is whichever Simple File System handle appeared while we were
- * connecting drivers. Comparing handle sets is firmer than matching device
- * paths alone, because it does not depend on how the firmware's partition
- * driver chooses to name its children; the device path is then used only to
- * break ties if several handles appeared at once. */
+/* The medium's ESP is whichever Simple File System handle appeared while we
+ * were connecting drivers. Comparing handle sets is firmer than matching
+ * device paths alone, because it does not depend on how the firmware's
+ * partition driver chooses to name its children; the device path is then used
+ * only to break ties if several handles appeared at once.
+ *
+ * It is also what makes the superfloppy case work for free: a FAT driver that
+ * binds to our own handle rather than to a partition child installs the new
+ * Simple File System interface on a handle that was not in the before-set
+ * either, so the diff finds it the same way. */
 static EFI_STATUS find_iso_esp(EFI_BOOT_SERVICES *bs, iso_device *dev,
                                EFI_HANDLE *before, UINTN before_n,
                                EFI_HANDLE *out)
@@ -462,56 +501,6 @@ static iso_sig root_signature(EFI_FILE_PROTOCOL *root)
 
 /* ---- chainload ---- */
 
-/* The load path of DESIGN Section 7.6, resolved per boot attempt.
- *
- * Preferring SHIM_IMAGE_LOADER over gBS->LoadImage is not about capability:
- * the spike measured the two to be the same function on shim 16.x under
- * Secure Boot, because shim patches the boot-services table in place. It is
- * about intent and durability. Calling the protocol says which loader we
- * meant, it keeps working if a future shim stops patching the table, and it
- * is the interface upstream maintains.
- *
- * The fallback is not a weakening. With Secure Boot off there is nothing to
- * verify and the firmware's LoadImage is the honest loader; with Secure Boot
- * on and no shim in the chain the firmware's LoadImage is the enforcing one.
- * Either way the decision is the platform's, never ours. */
-typedef struct {
-    EFI_STATUS (EFIAPI *LoadImage)(BOOLEAN, EFI_HANDLE,
-                                   EFI_DEVICE_PATH_PROTOCOL *, void *, UINTN,
-                                   EFI_HANDLE *);
-    EFI_STATUS (EFIAPI *StartImage)(EFI_HANDLE, UINTN *, CHAR16 **);
-    EFI_STATUS (EFIAPI *UnloadImage)(EFI_HANDLE);
-    /* Which of the two the members came from; the menu's failure line names
-     * it, which is the only way an operator can tell the paths apart. */
-    BOOLEAN via_shim;
-} load_ops;
-
-/* Resolved on every attempt rather than cached at startup: the loader has no
- * startup hook of its own to hang it off, and one LocateProtocol per boot is
- * not worth a cache that could go stale. */
-static void resolve_load_ops(EFI_BOOT_SERVICES *bs, load_ops *ops)
-{
-    EFI_GUID sil_guid = SHIM_IMAGE_LOADER_GUID;
-    SHIM_IMAGE_LOADER *sil = (SHIM_IMAGE_LOADER *)0;
-
-    ops->LoadImage = bs->LoadImage;
-    ops->StartImage = bs->StartImage;
-    ops->UnloadImage = bs->UnloadImage;
-    ops->via_shim = FALSE;
-
-    if (bs->LocateProtocol(&sil_guid, (void *)0, (void **)&sil) != EFI_SUCCESS)
-        return;
-    /* A protocol that is present but hollow is a shim we do not understand;
-     * the firmware's loader is the safe answer, not a null call. */
-    if (sil == (SHIM_IMAGE_LOADER *)0 || sil->LoadImage == (void *)0 ||
-        sil->StartImage == (void *)0 || sil->UnloadImage == (void *)0)
-        return;
-
-    ops->LoadImage = sil->LoadImage;
-    ops->StartImage = sil->StartImage;
-    ops->UnloadImage = sil->UnloadImage;
-    ops->via_shim = TRUE;
-}
 
 /* Appends the removable-media loader path to the ESP's own device path.
  * LoadImage is given a path, never a buffer: that is what makes the child's
@@ -624,42 +613,56 @@ static EFI_STATUS chainload(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
  * a driver: that instance belongs to the earlier attempt, and tearing it down
  * from here would disconnect drivers this caller never connected. */
 static EFI_STATUS iso_open(EFI_SYSTEM_TABLE *st, fs_vol *vol,
-                           const fs_dirent *file, const CHAR16 **stage,
-                           EFI_HANDLE *esp_handle, UINT8 *owned)
+                           const fs_dirent *file, iso_media_kind kind,
+                           const CHAR16 **stage, EFI_HANDLE *esp_handle,
+                           UINT8 *owned)
 {
     EFI_BOOT_SERVICES *bs = st->BootServices;
     EFI_GUID bio_guid = EFI_BLOCK_IO_PROTOCOL_GUID;
     EFI_GUID dp_guid = EFI_DEVICE_PATH_PROTOCOL_GUID;
     EFI_HANDLE *before = (EFI_HANDLE *)0;
     UINTN before_n = 0;
+    UINT32 block_size = (kind == ISO_MEDIA_DISK) ? ISO_DISK_BLOCK_SIZE
+                                                 : ISO_CD_BLOCK_SIZE;
     uint64_t size;
     EFI_STATUS status;
 
     *esp_handle = (EFI_HANDLE)0;
     *owned = 0;
-    *stage = L"preparing the virtual CD";
+    *stage = L"preparing the virtual media";
 
     if (g_dev.in_use) {
-        *stage = L"previous virtual CD still held by a driver";
+        *stage = L"previous virtual media still held by a driver";
         return EFI_ACCESS_DENIED;
     }
     if (fs_file_open(vol, &g_dev.file, file) != FS_OK) {
-        *stage = L"opening the ISO on its volume";
+        *stage = L"opening the image on its volume";
         return EFI_DEVICE_ERROR;
     }
     /* The open comes first because the size does: a directory entry carries
      * one on exFAT and not on every filesystem (ext4 keeps it in the inode),
      * so the byte count this device advertises is the opened file's. */
     size = fs_file_size(&g_dev.file);
-    if (size < ISO_BLOCK_SIZE) {
-        *stage = L"ISO is too small to be CD media";
+    if (size < block_size) {
+        *stage = (kind == ISO_MEDIA_DISK)
+                     ? L"the .img is too small to be disk media"
+                     : L"the .iso is too small to be CD media";
+        return EFI_UNSUPPORTED;
+    }
+    /* A disk image is raw sectors or it is nothing. A file whose length is
+     * not a whole number of them is either truncated or a container format
+     * (vhd/vdi/qcow2), and DESIGN Section 6 stage 2 refuses those on purpose:
+     * the entire mechanism is "let the firmware parse what it already knows",
+     * and we do not translate anything on the way. */
+    if (kind == ISO_MEDIA_DISK && size % ISO_DISK_BLOCK_SIZE != 0) {
+        *stage = L"the .img is not a whole number of 512-byte sectors";
         return EFI_UNSUPPORTED;
     }
 
-    device_init(&g_dev, size);
+    device_init(&g_dev, size, block_size);
     *owned = 1;
 
-    *stage = L"publishing the virtual CD";
+    *stage = L"publishing the virtual media";
     status = bs->InstallMultipleProtocolInterfaces(
         &g_dev.handle,
         &bio_guid, &g_dev.bio,
@@ -676,17 +679,20 @@ static EFI_STATUS iso_open(EFI_SYSTEM_TABLE *st, fs_vol *vol,
     if (EFI_ERROR(status))
         return status;
 
-    /* The firmware's own partition driver parses El Torito and its FAT
-     * driver mounts the embedded ESP; we write no ISO9660 reader for this
-     * (DESIGN Section 6 stage 3). */
-    *stage = L"ConnectController on the virtual CD";
+    /* The firmware's own drivers do the parsing - El Torito for a CD, GPT/MBR
+     * (or nothing at all, for a superfloppy) for a disk - and its FAT driver
+     * mounts whatever ESP that produces. We write no ISO9660 and no partition
+     * reader for this (DESIGN Section 6 stage 3). Recursive, so the disk
+     * flavor's partition child gets its own FAT driver bound in the same
+     * call. */
+    *stage = L"ConnectController on the virtual media";
     /* Set before the call: a partial bind still leaves drivers attached, and
      * teardown must disconnect them. */
     g_dev.connected = 1;
     status = bs->ConnectController(g_dev.handle, (EFI_HANDLE *)0,
                                    (EFI_DEVICE_PATH_PROTOCOL *)0, TRUE);
     if (!EFI_ERROR(status)) {
-        *stage = L"finding the ISO's EFI System Partition";
+        *stage = L"finding the medium's EFI System Partition";
         status = find_iso_esp(bs, &g_dev, before, before_n, esp_handle);
     }
 
@@ -696,7 +702,7 @@ static EFI_STATUS iso_open(EFI_SYSTEM_TABLE *st, fs_vol *vol,
 }
 
 EFI_STATUS iso_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
-                    fs_vol *vol, const fs_dirent *file,
+                    fs_vol *vol, const fs_dirent *file, iso_media_kind kind,
                     iso_boot_result *result)
 {
     EFI_BOOT_SERVICES *bs;
@@ -713,7 +719,8 @@ EFI_STATUS iso_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
     result->status = EFI_SUCCESS;
     result->family = (const family_desc *)0;
 
-    status = iso_open(st, vol, file, &result->stage, &esp_handle, &owned);
+    status = iso_open(st, vol, file, kind, &result->stage, &esp_handle,
+                      &owned);
     if (!EFI_ERROR(status)) {
         EFI_FILE_PROTOCOL *root;
 
@@ -737,7 +744,7 @@ EFI_STATUS iso_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
     if (EFI_ERROR(teardown)) {
         /* Worth overriding a payload's own exit status: from here on the
          * loader refuses further ISO boots, and the user needs to know. */
-        result->stage = L"releasing the virtual CD";
+        result->stage = L"releasing the virtual media";
         result->status = teardown;
         return teardown;
     }
@@ -745,7 +752,8 @@ EFI_STATUS iso_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
 }
 
 EFI_STATUS iso_survey_media(EFI_SYSTEM_TABLE *st, fs_vol *vol,
-                            const fs_dirent *file, iso_survey *out)
+                            const fs_dirent *file, iso_media_kind kind,
+                            iso_survey *out)
 {
     EFI_BOOT_SERVICES *bs;
     EFI_HANDLE esp_handle = (EFI_HANDLE)0;
@@ -763,12 +771,14 @@ EFI_STATUS iso_survey_media(EFI_SYSTEM_TABLE *st, fs_vol *vol,
         return EFI_INVALID_PARAMETER;
 
     bs = st->BootServices;
-    status = iso_open(st, vol, file, &stage, &esp_handle, &owned);
+    status = iso_open(st, vol, file, kind, &stage, &esp_handle, &owned);
     if (EFI_ERROR(status)) {
         /* A medium the firmware found nothing bootable in: no El Torito
-         * catalog, or a catalog pointing at no ESP. Not an error worth
-         * showing, just an entry we cannot say anything about. */
-        if (status == EFI_NOT_FOUND)
+         * catalog, no partition table and no FAT, or one pointing at no ESP.
+         * EFI_UNSUPPORTED is the same answer one step earlier - a file we
+         * refused to publish as media surfaces no ESP either. Neither is an
+         * error worth showing, just an entry we cannot say anything about. */
+        if (status == EFI_NOT_FOUND || status == EFI_UNSUPPORTED)
             out->sig = ISO_SIG_NO_EFI;
     } else if (esp_open_root(bs, esp_handle, &root) == EFI_SUCCESS) {
         out->family = root_family(root);

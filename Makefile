@@ -34,6 +34,7 @@ LDFLAGS := -nostdlib -shared -Wl,--subsystem,10 -e efi_main \
 SRCS := \
 	src/efi/main.c \
 	src/efi/sbat.c \
+	src/efi/loadops.c \
 	src/lib/string.c \
 	src/exfat/exfat.c \
 	src/ext4/ext4.c \
@@ -60,7 +61,10 @@ SRCS := \
 	src/crypto/aesni.c \
 	src/luks/json.c \
 	src/luks/af.c \
-	src/luks/luks.c
+	src/luks/luks.c \
+	src/bless/bless.c \
+	src/bless/blesscore.c \
+	src/manifest/manifest.c
 
 OBJS := $(SRCS:src/%.c=build/$(VARIANT)/%.o)
 DEPS := $(OBJS:.o=.o.d)
@@ -180,9 +184,9 @@ SEMVER := $(shell cat release_version)
 # Repo-standard full version: SEMVER_YYYYMMDD.HHMM.TYPE.
 VERSION := $(SEMVER)_$(shell date +%Y%m%d.%H%M).$(VARIANT)
 
-.PHONY: all cli check-tools esp run run-secboot run-stick run-stick-secboot \
-	analyze sbat-check sign mok-test test-image test-iso test-stick test-uki \
-	payload version-stamp clean
+.PHONY: all cli appliance test-appliance-stick test-appliance check-tools esp run run-secboot run-stick run-stick-secboot \
+	analyze sbat-check sign mok-test test-image test-iso test-img test-stick \
+	test-uki payload version-stamp clean
 
 all: $(EFI) cli compile_commands.json
 
@@ -373,12 +377,17 @@ $(EFI_SIGNED): $(EFI) $(MOK_KEY)
 run-secboot: $(EFI_SIGNED)
 	tools/run-qemu.sh --secboot
 
-# The fixture picks the payload ISO up if it is there, so build it first.
-test-image: test-iso
+# The fixture picks the bootable images up if they are there, so build them
+# first: the El Torito ISO for the CD flavor, the GPT and superfloppy .img
+# pair for the disk flavor (DESIGN Section 6 stage 2).
+test-image: test-iso test-img
 	tools/mk-test-exfat.sh
 
 test-iso: $(PAYLOAD)
 	tools/mk-test-iso.sh
+
+test-img: $(PAYLOAD)
+	tools/mk-test-img.sh
 
 # The sd-stub UKI the credential handoff is tested against (DESIGN Section 5.1
 # and Section 11 step 6). It needs the test MOK, because the Secure Boot half
@@ -404,6 +413,25 @@ run-stick:
 
 run-stick-secboot:
 	tools/run-qemu.sh --stick --secboot
+
+
+# ---- signing appliance (DESIGN Section 7.5, build order step 8) ----
+APPLIANCE_UKI   := build/appliance/appliance-uki.efi
+APPLIANCE_STICK := build/appliance/appliance-stick.img
+
+# Embeds $(SIGN_STATIC), so the two routes of Section 7.5 run one
+# implementation. The test MOK is only for the optional signed copy; mkstick
+# signs the real one on its way onto p3.
+appliance: $(SIGN_STATIC) $(MOK_KEY)
+	tools/appliance/mk-appliance.sh
+
+# Built by the product tool: mkstick generates the MOK, signs both UKIs, and
+# puts the private key on p3 - the key the appliance then reads.
+test-appliance-stick: appliance $(MKSTICK) $(EFI) $(FIXTURE_UKI)
+	tools/mk-test-appliance-stick.sh
+
+test-appliance:
+	tools/appliance/run-appliance-proof.sh
 
 clean:
 	rm -rf build compile_commands.json

@@ -440,8 +440,10 @@ static void test_dir_next_after_end_is_not_sticky(void **state)
     synth_free(&sv);
 }
 
-/* Files report ValidDataLength (bytes actually written); directories report
- * DataLength (the whole allocation, which the entry stream fills). */
+/* Everything reports DataLength as its size (spec 7.6.3: that is the file's
+ * length); files additionally carry ValidDataLength, clamped to size, and
+ * the gap between the two reads as zeros. A sparse copy onto the stick is
+ * the case where they differ (fix of 2026-09-13). */
 static void test_dir_size_field_selection(void **state)
 {
     synth_vol sv;
@@ -470,8 +472,67 @@ static void test_dir_size_field_selection(void **state)
     assert_int_equal(exfat_dir_open_root(&v, &d), EXFAT_OK);
     assert_int_equal(drain(&d, NULL, ents, 4, &n), 0);
     assert_int_equal(n, 2);
-    assert_true(ents[0].size == 100);
+    assert_true(ents[0].size == 2048);
+    assert_true(ents[0].valid_len == 100);
     assert_true(ents[1].size == 2048);
+    assert_true(ents[1].valid_len == 2048);
+    synth_free(&sv);
+}
+
+/* The valid_len..size tail is served as zeros, never as the stale device
+ * bytes that sit in the allocated clusters. */
+static void test_file_sparse_tail_reads_zero(void **state)
+{
+    synth_vol sv;
+    exfat_vol v;
+    exfat_dir d;
+    exfat_dirent e;
+    exfat_file f;
+    uint8_t buf[192];
+    unsigned i;
+    uint8_t *p;
+
+    (void)state;
+    mount_std(&sv, &v, STD_SPC);
+    p = synth_cluster(&sv, 2);
+
+    /* One cluster of allocation (cluster 4), 128 bytes valid of 192 total;
+     * the cluster's bytes are a nonzero pattern so a leak is visible. */
+    memset(synth_cluster(&sv, 4), 0xAB, 512);
+    synth_put_file(p, 2, 0);
+    synth_put_stream(p + SYNTH_ENT, SYNTH_FLAG_ALLOC | SYNTH_FLAG_NOFAT,
+                     6, 4, 128, 192);
+    synth_put_name(p + 2 * SYNTH_ENT, "sparse", 6);
+    synth_put_end(p + 3 * SYNTH_ENT);
+
+    assert_int_equal(exfat_dir_open_root(&v, &d), EXFAT_OK);
+    assert_int_equal(exfat_dir_next(&d, &e), 1);
+    assert_true(e.size == 192 && e.valid_len == 128);
+    assert_int_equal(exfat_file_open(&v, &f, &e), EXFAT_OK);
+
+    /* Whole file: pattern up to valid_len, zeros to size. */
+    memset(buf, 0x55, sizeof(buf));
+    assert_int_equal(exfat_file_read(&f, 0, 192, buf), EXFAT_OK);
+    for (i = 0; i < 128; i++)
+        assert_true(buf[i] == 0xAB);
+    for (i = 128; i < 192; i++)
+        assert_true(buf[i] == 0x00);
+
+    /* A read wholly inside the tail touches the device not at all and is
+     * all zeros; one straddling the boundary splits correctly. */
+    memset(buf, 0x55, sizeof(buf));
+    assert_int_equal(exfat_file_read(&f, 130, 62, buf), EXFAT_OK);
+    for (i = 0; i < 62; i++)
+        assert_true(buf[i] == 0x00);
+    memset(buf, 0x55, sizeof(buf));
+    assert_int_equal(exfat_file_read(&f, 120, 16, buf), EXFAT_OK);
+    for (i = 0; i < 8; i++)
+        assert_true(buf[i] == 0xAB);
+    for (i = 8; i < 16; i++)
+        assert_true(buf[i] == 0x00);
+
+    /* Past DataLength still refuses. */
+    assert_int_equal(exfat_file_read(&f, 192, 1, buf), EXFAT_ERR_RANGE);
     synth_free(&sv);
 }
 
@@ -1130,6 +1191,7 @@ int run_synth_tests(void)
         cmocka_unit_test(test_dir_basic_walk),
         cmocka_unit_test(test_dir_next_after_end_is_not_sticky),
         cmocka_unit_test(test_dir_size_field_selection),
+        cmocka_unit_test(test_file_sparse_tail_reads_zero),
         cmocka_unit_test(test_dir_long_name_round_trip),
         cmocka_unit_test(test_dir_max_length_name),
         cmocka_unit_test(test_dir_short_secondary_count_skipped),

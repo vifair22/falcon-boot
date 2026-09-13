@@ -8,9 +8,10 @@
  * injection framework depends on, and the mkfs.exfat-produced fixture image
  * (which proves the driver agrees with a real implementation).
  *
- * cpio writer, family registry and the blessed-artifact manifest: all three
- * are EFI-free by construction, so they are unit-testable here with no
- * firmware and no image at all.
+ * cpio writer, family registry, the blessed-artifact manifest and the
+ * blessed-boot record cache that consumes it: all four are EFI-free by
+ * construction, so they are unit-testable here with no firmware and no image
+ * at all.
  *
  * crypto and the LUKS2 JSON scanner: published test vectors and embedded
  * snippets, no image either. Hand-written crypto checked only against itself
@@ -54,6 +55,7 @@ int main(void)
     failed += run_cpio_tests();
     failed += run_family_tests();
     failed += run_manifest_tests();
+    failed += run_bless_tests();
     failed += run_crypto_tests();
     failed += run_json_tests();
     failed += run_luks_tests();

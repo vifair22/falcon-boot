@@ -220,10 +220,20 @@ const family_desc *family_detect(const family_probe *p)
 
     /* memtest last: its fingerprints are the weakest, so anything with a real
      * base directory has already claimed the medium by now. */
+    /* The first four are memtest86+ (the GPL one, whose binary is a kernel
+     * image under /boot). The last two are what PassMark MemTest86's own USB
+     * image actually carries beside its BOOTX64.efi, read off
+     * memtest86-usb.img v10.x on 2026-09-13: mt86.png is its splash and
+     * blacklist.cfg its DIMM exclusion list, and no other family ships
+     * either. Without them that image classifies as unknown, because its ESP
+     * is a bare /EFI/BOOT with the loader under the removable-media default
+     * name rather than a memtest-shaped one. */
     if (probe_exists(p, "/boot/memtest") ||
         probe_exists(p, "/boot/memtest.bin") ||
         probe_exists(p, "/EFI/BOOT/memtest.efi") ||
-        probe_exists(p, "/memtest.efi"))
+        probe_exists(p, "/memtest.efi") ||
+        probe_exists(p, "/EFI/BOOT/mt86.png") ||
+        probe_exists(p, "/EFI/BOOT/blacklist.cfg"))
         return family_by_id(FAMILY_MEMTEST);
 
     return family_by_id(FAMILY_UNKNOWN);

@@ -78,6 +78,9 @@ static void set_ent(exfat_dirent *e, uint32_t first, uint64_t size,
     e->no_fat_chain = no_fat_chain;
     e->first_cluster = first;
     e->size = size;
+    /* Fully-written file: these tests exercise the read paths, and the
+     * sparse valid < size case has its own dedicated test. */
+    e->valid_len = size;
 }
 
 /* Volume byte offset of a cluster, mirroring synth_cluster's pointer maths so
@@ -367,6 +370,7 @@ static void test_file_read_unallocated_is_corrupt(void **state)
     memset(&f, 0, sizeof(f));
     f.vol = &v;
     f.size = 4096;
+    f.valid_len = 4096;
     f.first_cluster = 0;
     f.sec_buf_off = ~(uint64_t)0;
     assert_int_equal(exfat_file_read(&f, 0, 16, buf), EXFAT_ERR_CORRUPT);
@@ -572,6 +576,7 @@ static void test_file_contig_cluster_index_overflow(void **state)
     f.first_cluster = 0xFFFFFF00u;
     f.cur_cluster = 0xFFFFFF00u;
     f.size = (uint64_t)1 << 40;
+    f.valid_len = f.size;
     f.sec_buf_off = ~(uint64_t)0;
     /* Cluster index 0x100 puts the sum one past 0xFFFFFFFF. */
     assert_int_equal(exfat_file_read(&f, 0x100ull * 2048ull, 16, buf),
@@ -801,6 +806,7 @@ static void test_file_chain_invalid_cursor_is_corrupt(void **state)
     f.first_cluster = 1; /* reserved: never a real cluster */
     f.cur_cluster = 1;
     f.size = 4096;
+    f.valid_len = 4096;
     f.sec_buf_off = ~(uint64_t)0;
     /* Offset 1024 is cluster index 1, so the cursor has to hop and the hop
      * starts from the bad cluster. */

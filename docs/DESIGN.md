@@ -860,12 +860,16 @@ the sd-stub credential handoff in Sections 5/5.1). Partition identification
 per Section 3 is implemented (airies GPT type GUIDs, probe-everything
 fallback for unstamped rigs). Step 4's injectors are the framework plus
 native-cmdline descriptors, per the plan; nothing consumes the cmdline
-templates until the bless path lands. Step 7 is also done: the
-airies-boot-mkstick and airies-boot-sign host tools exist, and a
+templates until the bless path lands. Steps 7 and 8 are also
+done: the airies-boot-mkstick and airies-boot-sign host tools exist (a
 mkstick-created stick boots Secure Boot ON end to end with its own generated
-MOK. Next: the loader-side blessed-boot path (consume src/manifest per
-Section 8.1), then step 8 (signing appliance), step 9 (permissive-mode UX),
-step 10 (real hardware).
+MOK), the loader-side blessed-boot path consumes the Section 8.1 manifest
+(fresh boots the signed wrap, stale degrades to the ordinary path, labels in
+the menu), .img files boot as the second virtual-media flavor (real memtest86
+verified under SB ON), and the on-stick signing appliance blesses ISOs in
+QEMU end to end (unlock p3 read-only, per-ISO confirm, sign, manifest,
+reboot, idempotent second run). Remaining: step 9 (permissive-mode UX), step
+10 (real hardware), Windows injectors, Manual.md.
 
 1. OVMF hello-world: mingw PE loader that prints and reads a key. Proves
    toolchain + test rig. Then the **shim plumbing spike**, which gates several

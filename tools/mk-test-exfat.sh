@@ -13,11 +13,18 @@
 #   archlinux-fake.iso
 #   deep/a/b/justdeepenough-fake.iso
 #   systemrescue-fake.iso
+#   payload-floppy.img
+#   payload-gpt.img
+#   payload-test.iso
 #
-# The fake ISOs are zero-filled and exist only to be listed. If
-# build/test-payload.iso has been built (tools/mk-test-iso.sh), it is copied
-# in as payload-test.iso: that one is a real El Torito image and is the entry
-# the ISO boot path is tested against.
+# The fake ISOs are zero-filled and exist only to be listed. The real,
+# bootable entries are copied in when they have been built:
+#   payload-test.iso      tools/mk-test-iso.sh   El Torito, the CD flavor
+#   payload-gpt.img       tools/mk-test-img.sh   GPT + ESP, the disk flavor
+#   payload-floppy.img    tools/mk-test-img.sh   FAT16 superfloppy, no table
+# The three together are what proves DESIGN Section 6's "two media flavors,
+# one publisher": the same menu, the same probe and the same chainload over
+# all three of the ways firmware reaches an ESP inside a file.
 #
 # Usage: tools/mk-test-exfat.sh
 # Needs mkfs.exfat and passwordless sudo (loop mount).
@@ -75,12 +82,32 @@ mkiso deep/a/b/c/toodeep-fake.iso
 echo "not an ISO" > "$MNT/notaniso.txt"
 mkiso .hiddendir/hidden-fake.iso
 
-# The one bootable entry, when it has been built.
+# The bootable entries, each copied in only when it has been built. Their
+# absence is not an error: a fixture with none of them still exercises every
+# scanner rule above, which is why the rig can be run before the payload is.
 PAYLOAD_ISO=build/test-payload.iso
+PAYLOAD_GPT=build/test/payload-gpt.img
+PAYLOAD_FLOPPY=build/test/payload-floppy.img
 HAVE_PAYLOAD=0
+HAVE_IMG=0
+#
+# --sparse=never on every one of them, and it is load-bearing. A disk image is
+# built by truncate + mkfs, so most of it is a hole; a sparse-aware copy seeks
+# over those holes, and the kernel's exFAT driver then leaves the entry's
+# ValidDataLength at the last byte actually written while DataLength is the
+# full size. A reader that honours ValidDataLength (ours does) sees a file
+# that stops a few KB in, the firmware's FAT driver reads off the end of it,
+# and the image looks unbootable for a reason that has nothing to do with the
+# image. Writing every byte keeps the two lengths equal, which is what a real
+# drag-and-drop from a file manager produces.
 if [[ -f "$PAYLOAD_ISO" ]]; then
-    cp "$PAYLOAD_ISO" "$MNT/payload-test.iso"
+    cp --sparse=never "$PAYLOAD_ISO" "$MNT/payload-test.iso"
     HAVE_PAYLOAD=1
+fi
+if [[ -f "$PAYLOAD_GPT" && -f "$PAYLOAD_FLOPPY" ]]; then
+    cp --sparse=never "$PAYLOAD_GPT" "$MNT/payload-gpt.img"
+    cp --sparse=never "$PAYLOAD_FLOPPY" "$MNT/payload-floppy.img"
+    HAVE_IMG=1
 fi
 
 sync
@@ -97,11 +124,19 @@ if [[ "$HAVE_PAYLOAD" -eq 1 ]]; then
     echo "  payload-test.iso              (real, bootable: AIRIES-PAYLOAD-OK)"
 else
     echo
-    echo "note: build/test-payload.iso absent, so no bootable entry is in the"
-    echo "      fixture. Build it with: make test-iso"
+    echo "note: build/test-payload.iso absent, so no bootable ISO entry is in"
+    echo "      the fixture. Build it with: make test-iso"
+fi
+if [[ "$HAVE_IMG" -eq 1 ]]; then
+    echo "  payload-gpt.img               (real, bootable: GPT + ESP)"
+    echo "  payload-floppy.img            (real, bootable: FAT superfloppy)"
+else
+    echo
+    echo "note: the .img fixtures are absent, so the disk flavor has no"
+    echo "      bootable entry. Build them with: make test-img"
 fi
 echo
 echo "present but deliberately not listed:"
 echo "  deep/a/b/c/toodeep-fake.iso   (past the depth cap)"
-echo "  notaniso.txt                  (not a .iso)"
+echo "  notaniso.txt                  (neither a .iso nor a .img)"
 echo "  .hiddendir/hidden-fake.iso    (dot-prefixed directory)"

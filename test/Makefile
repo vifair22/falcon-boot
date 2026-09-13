@@ -10,6 +10,11 @@
 #   src/cpio/cpio.c      no allocator: the caller supplies the buffer
 #   src/family/family.c  filesystem access through two probe callbacks
 #   src/manifest/*.c     pure text in, records out; no I/O at all
+#   src/bless/blesscore.c the blessed-boot record cache; manifest bytes in,
+#                        a per-entry label and boot decision out. No I/O
+#                        either: the firmware half that reads the file and
+#                        launches the image is src/bless/bless.c and is not
+#                        built here
 #   src/crypto/*.c       no I/O at all; every context is caller-allocated
 #   src/luks/*.c         device access through a read callback
 #   src/ext4/ext4.c      device access through a read callback
@@ -101,6 +106,7 @@ TEST_SRCS := \
 	$(TEST_DIR)/cpio_test.c \
 	$(TEST_DIR)/family_test.c \
 	$(TEST_DIR)/manifest_test.c \
+	$(TEST_DIR)/bless_test.c \
 	$(TEST_DIR)/crypto_test.c \
 	$(TEST_DIR)/json_test.c \
 	$(TEST_DIR)/luks_test.c \
@@ -115,6 +121,7 @@ UUT_SRCS := \
 	$(ROOT)/src/family/family.c \
 	$(ROOT)/src/manifest/manifest.c \
 	$(ROOT)/src/manifest/manifest_write.c \
+	$(ROOT)/src/bless/blesscore.c \
 	$(ROOT)/src/ext4/ext4.c \
 	$(ROOT)/src/part/part.c \
 	$(ROOT)/src/fs/fs.c \
@@ -132,7 +139,7 @@ UUT_SRCS := \
 	$(ROOT)/src/luks/luks.c
 
 # Filter for the coverage report, one alternative per unit above.
-COV_FILTER := .*/src/(exfat/exfat|cpio/cpio|family/family|manifest/[a-z_]+|ext4/ext4|part/part|fs/fs|crypto/[a-z0-9]+|luks/[a-z0-9]+)\.c$$
+COV_FILTER := .*/src/(exfat/exfat|cpio/cpio|family/family|manifest/[a-z_]+|bless/blesscore|ext4/ext4|part/part|fs/fs|crypto/[a-z0-9]+|luks/[a-z0-9]+)\.c$$
 
 OBJS := $(patsubst $(TEST_DIR)/%.c,$(OBJ)/%.o,$(TEST_SRCS)) \
 	$(patsubst $(ROOT)/src/%.c,$(OBJ)/uut/%.o,$(UUT_SRCS))

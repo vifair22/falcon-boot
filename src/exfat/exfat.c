@@ -212,6 +212,7 @@ int exfat_file_open(exfat_vol *v, exfat_file *f, const exfat_dirent *e)
     f->first_cluster = e->first_cluster;
     f->no_fat_chain = e->no_fat_chain;
     f->size = e->size;
+    f->valid_len = (e->valid_len > e->size) ? e->size : e->valid_len;
     f->cur_cluster = e->first_cluster;
     f->cur_index = 0;
     f->sec_buf_off = OFF_INVALID;
@@ -309,6 +310,20 @@ int exfat_file_read(exfat_file *f, uint64_t off, uint64_t len, void *buf)
         return EXFAT_OK;
     if (f->first_cluster == 0)
         return EXFAT_ERR_CORRUPT;
+
+    /* The tail between ValidDataLength and DataLength was never written and
+     * the spec defines it to read as zeros; the device holds stale bytes
+     * there, so serving them would leak whatever previously occupied the
+     * clusters. Split the request: zeros for the tail, device for the rest. */
+    if (off + len > f->valid_len) {
+        uint64_t zeros = (off >= f->valid_len) ? len
+                                               : off + len - f->valid_len;
+
+        memset(dst + (len - zeros), 0, (size_t)zeros);
+        len -= zeros;
+        if (len == 0)
+            return EXFAT_OK;
+    }
 
     v = f->vol;
     cb = cluster_bytes(v);
@@ -479,9 +494,17 @@ int exfat_dir_next(exfat_dir *d, exfat_dirent *out)
         out->no_fat_chain = (ent[1] & FLAG_NO_FAT_CHAIN) != 0;
         name_len = ent[3];
         out->first_cluster = get_le32(ent + 20);
-        /* ValidDataLength for files (bytes actually written); DataLength
-         * for directories, whose entry stream fills the allocation. */
-        out->size = out->is_dir ? get_le64(ent + 24) : get_le64(ent + 8);
+        /* DataLength (offset 24) is the file's length; ValidDataLength
+         * (offset 8) is how much was actually written, and the spec says
+         * bytes between the two read as zeros. A sparse copy onto the
+         * stick produces valid < data, so reporting valid as the size
+         * truncated such files (found via a sparse-copied fixture image,
+         * 2026-09-13). A valid claim beyond data is corruption, clamped
+         * rather than propagated. */
+        out->size = get_le64(ent + 24);
+        out->valid_len = out->is_dir ? out->size : get_le64(ent + 8);
+        if (out->valid_len > out->size)
+            out->valid_len = out->size;
 
         /* Name entries: 15 UTF-16 units each (spec 6.7). */
         name_got = 0;
