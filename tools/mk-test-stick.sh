@@ -24,9 +24,18 @@
 # unsigned.efi identical but unsigned (the one shim must refuse). A non-.efi
 # decoy sits beside them so the discovery filter is exercised too.
 #
-# Usage: tools/mk-test-stick.sh [--unsigned]
-#   --unsigned   stage the unsigned loader as the shim next-stage and skip
-#                signing the UKI. For a plain-OVMF run when no test MOK exists.
+# What those two images ARE is the real sd-stub UKI from tools/mk-test-uki.sh
+# when it has been built, because step 6 of the build order tests the
+# passphrase handoff and only a genuine sd-stub can perform the pickup. The
+# old stand-in payload remains available behind --payload-uki for the cases
+# that only need "a PE the platform will judge" and want a 30 KB one.
+#
+# Usage: tools/mk-test-stick.sh [--unsigned] [--payload-uki]
+#   --unsigned     stage the unsigned loader as the shim next-stage and skip
+#                  signing the UKI. For a plain-OVMF run when no test MOK
+#                  exists.
+#   --payload-uki  stage the small stand-in payload as /uki/personal.efi
+#                  instead of the sd-stub fixture UKI.
 #
 # Env: AIRIES_TEST_PASS  passphrase for p3 and p4 (default "airies-test").
 #
@@ -62,9 +71,21 @@ MOK_CRT=build/mok-test/airies-test-mok.crt
 MOK_CER=build/mok-test/airies-test-mok.cer
 PAYLOAD=build/test/payload.efi
 PAYLOAD_ISO=build/test-payload.iso
+FIXTURE_UKI=build/test/fixture-uki.efi
+FIXTURE_UKI_SIGNED=build/test/fixture-uki-signed.efi
 
 UNSIGNED=0
-[[ "${1:-}" == "--unsigned" ]] && UNSIGNED=1
+PAYLOAD_UKI=0
+for arg in "$@"; do
+    case "$arg" in
+    --unsigned) UNSIGNED=1 ;;
+    --payload-uki) PAYLOAD_UKI=1 ;;
+    *)
+        echo "ERROR: unknown option $arg" >&2
+        exit 1
+        ;;
+    esac
+done
 
 LOOP=
 MAPPER=
@@ -126,10 +147,16 @@ truncate -s "${SIZE_MIB}M" "$IMG"
 # One MiB alignment throughout, which is both what real media wants and what
 # keeps every partition start a whole number of 4 KiB filesystem blocks.
 echo "== partitioning (GPT, four partitions per DESIGN Section 3)"
+# p2 and p3 carry the airies type GUIDs the loader identifies them by; the
+# constants are frozen in src/part/part.h and must match it exactly. p1 keeps
+# the standard ESP type and p4 the standard Linux LUKS type (8309), which the
+# loader never matches on.
 sgdisk \
     -n 1:1MiB:+64MiB   -t 1:ef00 -c 1:"AIRIES-ESP" \
-    -n 2:0:+64MiB      -t 2:0700 -c 2:"AIRIES-ISO" \
-    -n 3:0:+64MiB      -t 3:8309 -c 3:"AIRIES-UKI" \
+    -n 2:0:+64MiB      -t 2:F6B6D562-22C3-450A-87AA-0316039657D6 \
+                       -c 2:"AIRIES-ISO" \
+    -n 3:0:+64MiB      -t 3:9CB02E90-85F4-4AF7-9AF3-1F9D6A95FEAF \
+                       -c 3:"AIRIES-UKI" \
     -n 4:0:+32MiB      -t 4:8309 -c 4:"AIRIES-ROOT" \
     "$IMG" >/dev/null
 
@@ -208,18 +235,41 @@ printf '%s' "$PASS" | sudo cryptsetup open "$P3" "$MAPPER" -
 sudo mkfs.ext4 -q -L AIRIES-UKI "/dev/mapper/$MAPPER"
 mount_rw_owned "/dev/mapper/$MAPPER"
 
-# The UKI stand-in. Until step 6 builds a real sd-stub image, what matters is
-# that these bytes are a PE the platform will judge: signed with the enrolled
-# test MOK for the case that must boot, and byte-identical but unsigned for the
-# case shim must refuse.
+# The two UKIs. personal.efi is the one that must boot (signed with the
+# enrolled test MOK) and unsigned.efi is the same image without a signature,
+# which shim must refuse under Secure Boot.
+#
+# Default source is the sd-stub fixture UKI, because step 6 tests the
+# credential handoff and nothing but a real sd-stub performs the pickup. The
+# stand-in payload is kept behind --payload-uki (and is the automatic fallback
+# when the fixture has not been built) for the cases that only need a PE the
+# platform will judge.
+UKI_SRC="$FIXTURE_UKI"
+UKI_SRC_SIGNED="$FIXTURE_UKI_SIGNED"
+UKI_KIND="sd-stub fixture UKI"
+if [[ "$PAYLOAD_UKI" -eq 1 || ! -f "$FIXTURE_UKI" ]]; then
+    if [[ "$PAYLOAD_UKI" -eq 0 ]]; then
+        echo "note: $FIXTURE_UKI not built; using the stand-in payload" >&2
+        echo "      (run 'make test-uki' for the credential-handoff rig)" >&2
+    fi
+    UKI_SRC="$PAYLOAD"
+    UKI_SRC_SIGNED=
+    UKI_KIND="stand-in payload"
+fi
+
 mkdir -p "$MNT/uki"
 if [[ "$UNSIGNED" -eq 1 ]]; then
-    cp "$PAYLOAD" "$MNT/uki/personal.efi"
+    cp "$UKI_SRC" "$MNT/uki/personal.efi"
+elif [[ -n "$UKI_SRC_SIGNED" && -f "$UKI_SRC_SIGNED" ]]; then
+    # Already signed by the tool that built it; copying beats re-signing so the
+    # bytes under test are the bytes that tool emitted.
+    cp "$UKI_SRC_SIGNED" "$MNT/uki/personal.efi"
 else
     sbsign --key "$MOK_KEY" --cert "$MOK_CRT" \
-        --output "$MNT/uki/personal.efi" "$PAYLOAD" >/dev/null 2>&1
+        --output "$MNT/uki/personal.efi" "$UKI_SRC" >/dev/null 2>&1
 fi
-cp "$PAYLOAD" "$MNT/uki/unsigned.efi"
+cp "$UKI_SRC" "$MNT/uki/unsigned.efi"
+echo "   /uki populated from the $UKI_KIND"
 # Decoy: proves the discovery filter takes *.efi regular files and not
 # whatever else happens to be in the directory.
 echo "not a kernel image" > "$MNT/uki/README.txt"

@@ -198,19 +198,26 @@ Flow:
 p3 and p4 share the passphrase precisely so this handoff is "reuse the string
 the user already typed." p4 is separate only so EFI never mounts root.
 
-**As built (2026-09-13, steps 1-5 of the flow above):** discovery, prompt,
-unlock, ext4 read, and the shim-verified launch all work end to end in the
-QEMU rig (0.22 s unlock at 100k pbkdf2 iterations). Two interim shapes remain
-until step 6 of the build order lands the handoff:
+**As built (2026-09-13, the whole flow above):** discovery, prompt, unlock,
+ext4 read, the shim-verified launch, and the credential handoff all work end
+to end in the QEMU rig (0.22 s unlock at 100k pbkdf2 iterations; sd-stub
+delivered the credential from our synthetic filesystem under Secure Boot ON
+with zero initramfs modifications). Notes that survive from the build:
 
-- The UKI is currently launched from a **memory buffer** (`SourceBuffer`,
-  NULL device path), because a LUKS volume has no firmware-readable device
-  path. Shim verifies the buffer, so the trust chain is intact, but sd-stub
-  finds its `.extra.d` credential companions by scanning
-  `LoadedImage->DeviceHandle`, which a buffer load leaves NULL. Step 6
-  therefore switches this call to `LoadImage` **by device path off the
-  synthetic credential filesystem** of Section 5.1; the buffer shape then
-  survives only as the fallback for non-sd-stub images, if at all.
+- The UKI is launched **by device path off the synthetic credential
+  filesystem** (src/credfs). A `SourceBuffer` load survives only as a
+  loudly-warned fallback when the credfs publish fails; it is still
+  shim-verified but cannot deliver credentials.
+- The credential is named **`cryptsetup.passphrase.cred`** (systemd strips
+  the `.cred` suffix to form the credential name; `systemd-cryptsetup`
+  hardcodes `cryptsetup.passphrase`, and the generators write
+  `ImportCredential=cryptsetup.*` into every generated unit, so a stock
+  sd-encrypt initramfs consumes it with no hook). Content is raw passphrase
+  bytes, no trailing newline, no NUL.
+- What remains unproven by the rig: a full systemd initramfs actually
+  unlocking p4 from the credential (the fixture proves delivery, name, and
+  bytes; the consumption code path is verified by source reading of
+  systemd 261). First real-hardware boot closes that gap.
 - **UKI discovery convention (settled):** the loader looks in `/uki/` first,
   then `/EFI/Linux/` (the Boot Loader Specification location, so a p3
   populated by `kernel-install` still boots), taking regular files with a
@@ -244,12 +251,15 @@ touches persistent storage and is never world-readable. If
 `LoadImage`/`StartImage` fails, the loader zeroes the credential buffer and
 tears down the virtual filesystem before returning to the menu.
 
-To verify in the QEMU rig before this section is considered settled (step-1
-spike, Section 11): the exact `.extra.d` naming and pickup rules for our
-systemd version; that sd-stub accepts unauthenticated `.cred` files under
-Secure Boot (expected: accepted and measured into TPM PCR 12; credentials are
-data, not code); and that pickup works when the source device is our synthetic
-filesystem rather than a real ESP.
+All three open questions of this design are now VERIFIED in the QEMU rig
+(2026-09-13, systemd 261 sd-stub, shim 16.1): the `.extra.d` naming and
+pickup rules behave as documented; sd-stub accepts unauthenticated `.cred`
+files under Secure Boot ON (credentials are data, not code); and pickup
+works from our synthetic filesystem exactly as from a real ESP. Measured
+detail worth keeping: both the firmware and shim loaders size the image via
+`SetPosition(max)`/`GetPosition`, never `GetInfo`, and sd-stub enumerates
+`.extra.d` through directory `Read` one `EFI_FILE_INFO` record at a time -
+a synthetic filesystem must implement all of that surface.
 
 **Rejected: volatile EFI variable.** An earlier design stashed the passphrase
 in a volatile (`BOOTSERVICE_ACCESS | RUNTIME_ACCESS`, not `NON_VOLATILE`) EFI
@@ -774,13 +784,15 @@ either the host or appliance route.
 
 ## 11. MVP build order
 
-Status (2026-09-13): steps 1-5 are DONE and proven in the QEMU rig, including
+Status (2026-09-13): steps 1-6 are DONE and proven in the QEMU rig, including
 the Secure Boot ON halves (shim plumbing spike results in Section 7.6 and
-docs/notes/shim-spike.md; personal-OS unlock and shim-verified UKI launch in
-Section 5). Step 4's injectors are the framework plus native-cmdline
-descriptors, per the plan; nothing consumes the cmdline templates until the
-bless path lands. Next: step 6. Remaining spike items inside step 1's list are
-folded into step 6 (sd-stub `.cred` verification) since the rest is done.
+docs/notes/shim-spike.md; personal-OS unlock, shim-verified UKI launch, and
+the sd-stub credential handoff in Sections 5/5.1). Partition identification
+per Section 3 is implemented (airies GPT type GUIDs, probe-everything
+fallback for unstamped rigs). Step 4's injectors are the framework plus
+native-cmdline descriptors, per the plan; nothing consumes the cmdline
+templates until the bless path lands. Next: step 7 (host tooling; the bless
+manifest is specified in Section 8.1).
 
 1. OVMF hello-world: mingw PE loader that prints and reads a key. Proves
    toolchain + test rig. Then the **shim plumbing spike**, which gates several

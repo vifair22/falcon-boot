@@ -10,35 +10,38 @@
  * the shim load path. It writes no crypto and no filesystem code of its own,
  * and it is the only module in the loader that ever holds the passphrase.
  *
- * Security posture, because this path looks superficially like the thing the
- * ISO path forbids. The UKI is handed to LoadImage as a memory BUFFER rather
- * than as a device path, and that is correct here and only here:
+ * How the image is handed to LoadImage, and why that changed. A LUKS volume
+ * has no firmware-readable device path: that is the point of encrypting it,
+ * and it is why this path began life handing LoadImage a memory BUFFER while
+ * the ISO path named a device path. The buffer shape verified honestly (shim
+ * checks the bytes it is given against db + MOK + SBAT either way), but it
+ * left the started image's LoadedImage->DeviceHandle NULL, and sd-stub finds
+ * its companion credentials by scanning the directory next to the image on
+ * that device handle. No device, no handoff.
  *
- *   - A LUKS volume has no firmware-readable device path. That is the whole
- *     point of encrypting it; there is nothing for the firmware to open.
- *   - Verification is still entirely the platform's. Under Secure Boot the
- *     load goes through shim's image loader, which verifies the bytes in the
- *     buffer against db + MOK + SBAT before it will run them, and refuses
- *     with EFI_SECURITY_VIOLATION when they do not verify (measured, see
- *     docs/notes/shim-spike.md Section 4.2). With Secure Boot off the
- *     firmware's own LoadImage runs it unverified, which is what the platform
- *     means by Secure Boot being off.
- *   - The rule the ISO path follows ("name the image, never hand over bytes",
- *     src/iso/iso.c build_load_path) exists for a different reason: a device
- *     path is what gives the ISO's payload a LoadedImage->DeviceHandle
- *     pointing at the medium it came from, so a distro bootloader can find
- *     its own configuration. It is not a security rule, and applying it here
- *     would not make this path safer, only impossible.
+ * So this module now builds one: src/credfs publishes the UKI bytes and the
+ * credential as a synthetic read-only filesystem in RAM, and the UKI is
+ * loaded BY DEVICE PATH off it (DESIGN Sections 5 step 4 and 5.1). The buffer
+ * call survives only as the fallback for when that filesystem cannot be
+ * published, and it is reported on screen when it is taken, because a silent
+ * fallback is a personal OS that asks for the passphrase twice.
  *
- * So: do not "fix" this into a device-path load, and do not "simplify" the
- * ISO path into a buffer load. Neither change is the other's improvement.
- * DESIGN Section 5 step 4 specifies this shape.
+ * None of this is a security change, in either direction:
  *
- * Not in this module (DESIGN Section 11 step 6): the passphrase handoff to
- * the initramfs. Today the typed passphrase unlocks p3 and is then wiped;
- * the synthetic credential filesystem that carries it on to systemd-cryptsetup
- * for p4 is the next step, and is the only reason the passphrase would
- * outlive this call.
+ *   - Verification stays entirely the platform's. Both shapes go through the
+ *     shim-verified load path of Section 7.6, which refuses an image that does
+ *     not verify with EFI_SECURITY_VIOLATION (measured, docs/notes/
+ *     shim-spike.md Section 4.2) and permits everything when Secure Boot is
+ *     off. This module installs no security protocol and overrides nothing.
+ *   - The credential is DATA handed to an already-verified image, never code
+ *     and never a verification decision. Publishing a filesystem changes where
+ *     bytes come from, not what is allowed to run.
+ *
+ * This module is the only one in the loader that ever holds the passphrase,
+ * and now the only one that hands it on. Lifetime: the typed buffer is wiped
+ * the moment the unlock succeeds, having first been copied into the buffer
+ * credfs serves; credfs_teardown wipes that copy on every path out of the
+ * launch, successful or not.
  */
 
 #ifndef AIRIES_POS_H

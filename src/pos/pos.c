@@ -1,6 +1,6 @@
-/* The personal-OS path: passphrase -> p3 -> ext4 -> UKI -> shim. See pos.h
- * for the contract and, in particular, for why this path hands LoadImage a
- * buffer while the ISO path hands it a device path.
+/* The personal-OS path: passphrase -> p3 -> ext4 -> UKI -> credfs -> shim.
+ * See pos.h for the contract and, in particular, for why the UKI is loaded by
+ * device path off a filesystem this loader synthesizes.
  */
 
 #include <pos/pos.h>
@@ -8,11 +8,13 @@
 #include <efi/blockio.h>
 #include <efi/shimguid.h>
 
+#include <credfs/credfs.h>
 #include <crypto/crypto.h>
 #include <ext4/ext4.h>
 #include <luks/luks.h>
 #include <lib/string.h>
 #include <menu/menu.h>
+#include <part/partefi.h>
 
 /* p3 is one partition, but the scan is not told which one it is, so it takes
  * whatever LUKS2 volumes it finds. Four covers a stick built to DESIGN
@@ -45,6 +47,11 @@
 
 /* Largest block size any firmware Block I/O instance we care about reports. */
 #define POS_PROBE_BUF 4096u
+
+/* Room for the longest name ext4 can hold, as CHAR16. The synthetic
+ * filesystem reuses the UKI's own name, so an operator reading a failure line
+ * sees the file they picked rather than a placeholder. */
+#define POS_NAME_MAX 256u
 
 static const uint8_t luks2_magic[6] = { 'L', 'U', 'K', 'S', 0xba, 0xbe };
 
@@ -115,11 +122,22 @@ static char            g_pass[POS_PASS_MAX];
 static UINTN           g_pass_len;
 static luks_master_key g_mk;
 
+/* The copy that travels. Separate from g_pass so the buffer the user typed
+ * into can die as early as it always did (right after the unlock) while the
+ * secret still reaches the initramfs, and so that "the copy credfs serves"
+ * is one named object with one owner rather than an aliased pointer. credfs
+ * wipes it at teardown; wipe_secrets is the belt for every path that never
+ * got as far as publishing one. */
+static char            g_cred[POS_PASS_MAX];
+static UINTN           g_cred_len;
+
 static void wipe_secrets(void)
 {
     crypto_wipe(g_pass, sizeof g_pass);
+    crypto_wipe(g_cred, sizeof g_cred);
     crypto_wipe(&g_mk, sizeof g_mk);
     g_pass_len = 0;
+    g_cred_len = 0;
 }
 
 /* Decrypted-volume and filesystem state. Static because each carries a
@@ -213,6 +231,11 @@ UINTN pos_scan(EFI_SYSTEM_TABLE *st)
                                              (void **)&bio) != EFI_SUCCESS)
             continue;
         if (!bio->Media->MediaPresent)
+            continue;
+        /* DESIGN Section 3 partition identification: when any airies-typed
+         * shelf partition exists, only those are considered; the LUKS magic
+         * probe below then confirms the contents. */
+        if (!part_scan_accept(st, handles[i], PART_ROLE_SHELF))
             continue;
         if (!has_luks_magic(bio))
             continue;
@@ -544,31 +567,146 @@ static EFI_STATUS read_uki(EFI_BOOT_SERVICES *bs, const ext4_dirent *ent,
     return EFI_SUCCESS;
 }
 
-/* LoadImage/StartImage of the bytes we just read. See pos.h for why a buffer
- * is the right and only shape here, and why that is not the ISO path's rule
- * being bent. */
-static EFI_STATUS launch_uki(EFI_BOOT_SERVICES *bs, EFI_HANDLE parent,
-                             void *buf, UINT64 size, pos_result *result)
+/* ---- the synthetic credential filesystem (DESIGN Section 5.1) ---- */
+
+/* The credential's filename, which is not a choice.
+ *
+ * Four links, each one fixed by systemd (verified against 261.2 sources):
+ *
+ *   1. sd-stub collects `<image>.efi.extra.d/<name>.cred` and packs them into
+ *      a cpio it merges into the initrd at /.extra/credentials/
+ *      (systemd-stub(7), COMPANION FILES).
+ *   2. PID 1 imports that directory and DROPS the `.cred` suffix to get the
+ *      credential name (src/core/import-creds.c, import_credentials_boot).
+ *   3. every systemd-cryptsetup@ unit a generator writes carries
+ *      `ImportCredential=cryptsetup.*` (src/shared/generator.c,
+ *      generator_write_cryptsetup_unit_section), so anything under that prefix
+ *      reaches the unlock service without a crypttab or a custom hook.
+ *   4. systemd-cryptsetup asks for the passphrase with
+ *      `.credential = "cryptsetup.passphrase"` (src/cryptsetup/cryptsetup.c).
+ *
+ * So the file is named `cryptsetup.passphrase.cred` exactly. The name is
+ * global rather than per-volume, which is what this loader needs: p4 is
+ * unlocked by whatever unit the initramfs generates, and we do not get to
+ * know that unit's name from in here.
+ *
+ * The bytes are the passphrase and nothing else: no trailing newline. The
+ * consumer parses the credential with strv_parse_nulstr (ask-password-api.c),
+ * so every byte up to the first NUL is the passphrase, a newline included. */
+static const CHAR16 cred_file[] = L"cryptsetup.passphrase.cred";
+
+/* Built once per launch from the chosen UKI's own name: the image, the
+ * drop-in directory sd-stub derives from it, and the path LoadImage is given.
+ * Static because they are ours for the whole life of the published
+ * filesystem, which outlives the frame that filled them. */
+static CHAR16 g_uki_ucs2[POS_NAME_MAX];
+static CHAR16 g_extra_ucs2[POS_NAME_MAX + 16];
+static CHAR16 g_load_ucs2[POS_NAME_MAX + 2];
+
+static void build_names(const ext4_dirent *ent)
 {
+    static const CHAR16 suffix[] = L".extra.d";
+    UINTN n;
+
+    name_to_ucs2(g_uki_ucs2, POS_NAME_MAX, ent->name, ent->name_len);
+
+    /* The File Protocol path LoadImage resolves, absolute from our root. */
+    g_load_ucs2[0] = L'\\';
+    ucs2_copy(g_load_ucs2 + 1, POS_NAME_MAX + 1, g_uki_ucs2);
+
+    /* sd-stub appends exactly this to the image's file path node. */
+    n = ucs2_copy(g_extra_ucs2, POS_NAME_MAX, g_uki_ucs2);
+    ucs2_copy(g_extra_ucs2 + n,
+              sizeof(g_extra_ucs2) / sizeof(g_extra_ucs2[0]) - n, suffix);
+}
+
+/* Publishes image + drop-in directory + credential. Returns the publish
+ * status; on failure nothing is published and the caller falls back. */
+static EFI_STATUS publish_credfs(EFI_SYSTEM_TABLE *st, const ext4_dirent *ent,
+                                 void *buf, UINT64 size)
+{
+    credfs_entry tree[3];
+
+    build_names(ent);
+
+    tree[0].name = g_uki_ucs2;
+    tree[0].data = buf;
+    tree[0].size = size;
+    tree[0].parent = CREDFS_ROOT;
+    tree[0].is_dir = 0;
+    tree[0].secret = 0;
+
+    tree[1].name = g_extra_ucs2;
+    tree[1].data = (void *)0;
+    tree[1].size = 0;
+    tree[1].parent = CREDFS_ROOT;
+    tree[1].is_dir = 1;
+    tree[1].secret = 0;
+
+    tree[2].name = cred_file;
+    tree[2].data = g_cred;
+    tree[2].size = g_cred_len;
+    tree[2].parent = (UINTN)1; /* the drop-in directory above */
+    tree[2].is_dir = 0;
+    /* The one entry credfs_teardown wipes. */
+    tree[2].secret = 1;
+
+    return credfs_publish(st, tree, 3);
+}
+
+/* LoadImage/StartImage of the UKI, by device path off the credential
+ * filesystem when there is one, from the buffer when there is not. See pos.h
+ * for why the device path is what this whole step exists to obtain. */
+static EFI_STATUS launch_uki(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent,
+                             const ext4_dirent *ent, void *buf, UINT64 size,
+                             UINT8 *retain, pos_result *result)
+{
+    EFI_BOOT_SERVICES *bs = st->BootServices;
+    EFI_DEVICE_PATH_PROTOCOL *load_path = (EFI_DEVICE_PATH_PROTOCOL *)0;
     EFI_HANDLE child = (EFI_HANDLE)0;
     CHAR16 *exit_data = (CHAR16 *)0;
     UINTN exit_size = 0;
+    BOOLEAN published = FALSE;
     load_ops ops;
     EFI_STATUS status;
 
+    /* Set on the one path that leaves the UKI's pages published: see the
+     * caller, which owns the allocation. */
+    *retain = 0;
     resolve_load_ops(bs, &ops);
 
-    /* DevicePath NULL, SourceBuffer set. A consequence worth knowing before
-     * step 6 lands: the started image's LoadedImage->DeviceHandle is NULL,
-     * because there is no device behind these bytes. The stand-in payload
-     * does not care. A real sd-stub UKI does: its companion-credential pickup
-     * (DESIGN Section 5.1) scans the directory next to the image, which needs
-     * a device to scan. That is exactly what the synthetic filesystem of step
-     * 6 exists to provide, and it replaces this call's NULL device path. */
+    result->stage = L"publishing the credential filesystem";
+    status = publish_credfs(st, ent, buf, size);
+    if (!EFI_ERROR(status)) {
+        published = TRUE;
+        result->stage = L"naming the UKI on the credential filesystem";
+        status = credfs_load_path(bs, g_load_ucs2, &load_path);
+        if (EFI_ERROR(status)) {
+            credfs_teardown(bs);
+            published = FALSE;
+        }
+    }
+    if (!published) {
+        /* Loud, because the boot still works and the user is the only one who
+         * can tell that it worked differently: the initramfs will ask for the
+         * passphrase a second time. Not a security downgrade (the image is
+         * verified identically either way), just a broken handoff. */
+        out(L"warning: the credential filesystem could not be published;\r\n"
+            L"         booting from memory instead, so the initramfs will "
+            L"ask for the\r\n         passphrase again.\r\n\r\n");
+    }
+
+    /* Exactly one of DevicePath and SourceBuffer is set, which is what the
+     * spec asks for. With a device path the started image gets a
+     * LoadedImage->DeviceHandle pointing at our filesystem, which is what
+     * sd-stub scans for its `.extra.d` companions. */
     result->stage = ops.via_shim ? L"LoadImage of the UKI (shim)"
                                  : L"LoadImage of the UKI (firmware)";
-    status = ops.LoadImage(FALSE, parent, (EFI_DEVICE_PATH_PROTOCOL *)0, buf,
-                           (UINTN)size, &child);
+    status = ops.LoadImage(FALSE, parent, load_path,
+                           published ? (void *)0 : buf,
+                           published ? (UINTN)0 : (UINTN)size, &child);
+    if (load_path != (EFI_DEVICE_PATH_PROTOCOL *)0)
+        bs->FreePool(load_path);
     if (EFI_ERROR(status)) {
         /* A refusal under Secure Boot still leaves a loaded image behind
          * (spec 7.4): the platform read and relocated it, then declined to
@@ -583,6 +721,10 @@ static EFI_STATUS launch_uki(EFI_BOOT_SERVICES *bs, EFI_HANDLE parent,
                 L"enforcement in firmware setup\r\n(Secure Boot off) or with "
                 L"mokutil --disable-validation.";
         }
+        /* DESIGN Section 5.1: a failed load zeroes the credential and tears
+         * the filesystem down before the menu comes back. */
+        if (EFI_ERROR(credfs_teardown(bs)))
+            *retain = 1;
         return status;
     }
 
@@ -595,6 +737,18 @@ static EFI_STATUS launch_uki(EFI_BOOT_SERVICES *bs, EFI_HANDLE parent,
     /* The firmware arms a watchdog around a started image; disarm it again so
      * a long stay in the menu afterwards cannot reset the machine. */
     bs->SetWatchdogTimer(0, 0, 0, (CHAR16 *)0);
+
+    /* Reached only when the UKI returned instead of booting a kernel, which
+     * for a real sd-stub image means it failed. The credential dies here too;
+     * a teardown that could not uninstall leaves the module marked in use and
+     * the secret unwiped on purpose (see credfs_teardown), so the failure is
+     * worth naming rather than swallowing. */
+    if (EFI_ERROR(credfs_teardown(bs))) {
+        *retain = 1;
+        result->stage = L"releasing the credential filesystem";
+        result->status = EFI_ACCESS_DENIED;
+        return EFI_ACCESS_DENIED;
+    }
 
     result->stage = L"UKI exit";
     result->status = status;
@@ -662,6 +816,7 @@ EFI_STATUS pos_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
     void *buf = (void *)0;
     UINT64 size = 0;
     UINTN pages = 0;
+    UINT8 retain = 0;
     UINTN which = 0;
     UINTN chosen;
     INTN pick;
@@ -702,10 +857,15 @@ EFI_STATUS pos_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
         return EFI_UNSUPPORTED;
     }
 
-    /* The passphrase has done its one job for this step. Step 6 is where it
-     * stops dying here and starts travelling on to the initramfs through the
-     * synthetic credential filesystem (DESIGN Section 5.1); until then,
-     * holding it a moment longer buys nothing. */
+    /* The passphrase has one more job than opening p3: it is also p4's
+     * (DESIGN Section 3 gives them one passphrase precisely so this handoff
+     * is "reuse the string the user already typed"). It travels on as the
+     * credential, so it is copied into the buffer credfs will serve and the
+     * buffer the user typed into dies right here, exactly as early as it did
+     * before the handoff existed. From this point the only live copy is
+     * g_cred, and credfs_teardown owns its wipe. */
+    memcpy(g_cred, g_pass, sizeof g_cred);
+    g_cred_len = g_pass_len;
     crypto_wipe(g_pass, sizeof g_pass);
     g_pass_len = 0;
 
@@ -754,13 +914,21 @@ EFI_STATUS pos_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
     out_dec(size);
     out(L" bytes read; starting it.\r\n\r\n");
 
-    status = launch_uki(bs, parent_image, buf, size, result);
+    status = launch_uki(st, parent_image, &g_ukis[chosen], buf, size, &retain,
+                        result);
 
     /* The image is loaded and running from the firmware's own copy by now, so
      * these pages are ours to release whether it succeeded or not. Doing it
      * here rather than leaking on the failure path is what lets a user retry
-     * a refused entry without walking the machine out of memory. */
-    bs->FreePages((EFI_PHYSICAL_ADDRESS)(uintptr_t)buf, pages);
+     * a refused entry without walking the machine out of memory.
+     *
+     * The exception is a credential filesystem that could not be taken down:
+     * something still holds an interface into a filesystem whose one file IS
+     * this buffer, so it is leaked on purpose. Leaking tens of megabytes once,
+     * on a path that has already disabled further personal-OS boots, beats
+     * handing a live reader pages the firmware may reissue to somebody else. */
+    if (!retain)
+        bs->FreePages((EFI_PHYSICAL_ADDRESS)(uintptr_t)buf, pages);
 
 out_close:
     /* The filesystem caches hold plaintext read out of an encrypted volume.

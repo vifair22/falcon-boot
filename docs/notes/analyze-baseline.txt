@@ -126,4 +126,3 @@ tidy	src/ext4/ext4.c	bugprone-implicit-widening-of-multiplication-result	result 
 tidy	src/iso/iso.c	bugprone-implicit-widening-of-multiplication-result	performing an implicit widening conversion to type 'size_t' (aka 'unsigned long long') of a multiplication performed in type 'unsigned int'
 tidy	src/iso/iso.c	bugprone-implicit-widening-of-multiplication-result	result of multiplication in type 'unsigned int' is used as a pointer offset after an implicit widening conversion to type 'size_t'
 tidy	src/luks/luks.c	bugprone-implicit-widening-of-multiplication-result	performing an implicit widening conversion to type 'uint64_t' (aka 'unsigned long long') of a multiplication performed in type 'unsigned int'
-tidy	src/part/part.c	bugprone-implicit-widening-of-multiplication-result	result of multiplication in type 'uint32_t' (aka 'unsigned int') is used as a pointer offset after an implicit widening conversion to type 'size_t'

@@ -11,7 +11,7 @@ records the alternatives that were considered and rejected, so do not reintroduc
 a rejected approach without re-reading why it was rejected. `README.md` is the
 short public summary of the same model.
 
-Status: pre-1.0 MVP. Steps 1-5 of the build order in `docs/DESIGN.md` Section
+Status: pre-1.0 MVP. Steps 1-6 of the build order in `docs/DESIGN.md` Section
 11 are done, with one carve-out named below. The mingw PE toolchain and the
 QEMU/OVMF rig are proven; the shim question is settled (Fedora shim-x64 16.1,
 `SHIM_IMAGE_LOADER`, `docs/notes/shim-spike.md`) and the loader carries the
@@ -24,6 +24,13 @@ end to end: masked passphrase prompt, LUKS2 unlock of p3, read-only ext4
 inside, `/uki/*.efi` discovery (`/EFI/Linux` as fallback), and `LoadImage` of
 the image through the shim-verified path.
 
+The passphrase handoff (step 6) is in: `src/credfs` publishes a synthetic
+read-only filesystem carrying the UKI plus
+`<uki>.efi.extra.d/cryptsetup.passphrase.cred`, the UKI is loaded BY DEVICE
+PATH off it, and sd-stub packs the credential into the initrd where
+`systemd-cryptsetup` will find it. Proven with a real sd-stub UKI under both
+Secure Boot states.
+
 Proven headless under OVMF against `build/test-stick.img`, a real
 four-partition GPT disk (`make test-stick`, `make run-stick` /
 `run-stick-secboot`), with Secure Boot both off and on. Under Secure Boot on,
@@ -32,16 +39,13 @@ refuses an unsigned one with `EFI_SECURITY_VIOLATION` and an actionable
 message; the menu survives both. p4's argon2id keyslot is recognised and
 skipped without a second prompt.
 
-The carve-out and the next step are the same thing: **step 6, the passphrase
-handoff.** Today the typed passphrase unlocks p3 and is then wiped, so the
-personal OS boots but nothing carries the passphrase on to the initramfs for
-p4. Step 6 synthesizes the virtual credential filesystem of Section 5.1 so
-sd-stub packs it into the initrd and stock `systemd-cryptsetup` consumes it.
-That also replaces today's `LoadImage(SourceBuffer, DevicePath=NULL)` with a
-device-path load off that synthetic filesystem, which is what gives a real
-sd-stub UKI the non-NULL `LoadedImage->DeviceHandle` its `.extra.d` scan
-needs. Also still outstanding from step 4: the injection framework's runtime
-half (extent map and cpio append exist; per-family injectors do not).
+Next: **step 7, the host tooling** (`src/cli`, DESIGN Section 8): mkstick, the
+MOK keypair, the UKI build, and the `sign` bless tool. The carve-out still
+outstanding from step 4 is the injection framework's runtime half (extent map
+and cpio append exist; per-family injectors do not). The end of the handoff
+chain is also still proof-by-reading rather than proof-by-running: the fixture
+UKI shows the credential arriving in the initramfs, but nothing in the rig runs
+a systemd initramfs that actually unlocks p4 with it.
 
 ## Non-negotiable security invariants (DESIGN.md Section 7)
 
@@ -91,6 +95,11 @@ Makefiles.
   unlock, the ext4 inside, UKI discovery, and the shim-verified load. The only
   module that ever holds the passphrase. Glue over `src/luks` and `src/ext4`;
   it writes no crypto and no filesystem code.
+- `src/credfs/` the synthetic read-only filesystem the personal-OS path
+  publishes so the UKI can be loaded by device path and sd-stub can find the
+  passphrase credential beside it (DESIGN Section 5.1). Serves a caller-built
+  in-RAM tree; `credfs_efi.h` carries the File Protocol's full provider-side
+  surface, which `src/efi/sfs.h` deliberately stubs out on the consumer side.
 - `src/lib/` freestanding support routines: `mem*` and the UCS-2 helpers.
 - `src/cli/` host tooling (Linux userland C), arriving at step 7 of the build
   order. May shell out to `cryptsetup`, `sbsign`, `mkfs.*`, `ukify`. The `sign`
@@ -100,7 +109,9 @@ Makefiles.
 - `tools/` host scripts: the QEMU + OVMF rig (`run-qemu.sh`, with `--secboot`,
   `--stick` and `--headless`), the exFAT fixture builder (`mk-test-exfat.sh`),
   the El Torito payload ISO (`mk-test-iso.sh`), the throwaway test MOK
-  (`mk-test-mok.sh`), and the four-partition GPT test stick
+  (`mk-test-mok.sh`), the sd-stub fixture UKI the credential handoff is tested
+  against (`mk-test-uki.sh`, `make test-uki`, with its `/init` in
+  `tools/uki-init/`), and the four-partition GPT test stick
   (`mk-test-stick.sh`, `make test-stick`) that the personal-OS path needs.
   OVMF (plain and secboot) is present on this machine.
 

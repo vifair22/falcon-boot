@@ -12,6 +12,9 @@
 #   src/crypto/*.c       no I/O at all; every context is caller-allocated
 #   src/luks/*.c         device access through a read callback
 #   src/ext4/ext4.c      device access through a read callback
+#   src/part/part.c      device access through a read callback; the firmware
+#                        half of that module is src/part/partefi.c, which is
+#                        EFI-only by nature and deliberately not built here
 #
 # Why src/lib/string.c is NOT compiled in: it defines memcpy, memmove, memset
 # and memcmp, which the freestanding EFI build needs because there is no libc,
@@ -98,6 +101,7 @@ TEST_SRCS := \
 	$(TEST_DIR)/json_test.c \
 	$(TEST_DIR)/luks_test.c \
 	$(TEST_DIR)/ext4_test.c \
+	$(TEST_DIR)/part_test.c \
 	$(TEST_DIR)/synth.c
 
 UUT_SRCS := \
@@ -105,6 +109,7 @@ UUT_SRCS := \
 	$(ROOT)/src/cpio/cpio.c \
 	$(ROOT)/src/family/family.c \
 	$(ROOT)/src/ext4/ext4.c \
+	$(ROOT)/src/part/part.c \
 	$(ROOT)/src/crypto/crypto.c \
 	$(ROOT)/src/crypto/sha256.c \
 	$(ROOT)/src/crypto/sha512.c \
@@ -119,7 +124,7 @@ UUT_SRCS := \
 	$(ROOT)/src/luks/luks.c
 
 # Filter for the coverage report, one alternative per unit above.
-COV_FILTER := .*/src/(exfat/exfat|cpio/cpio|family/family|ext4/ext4|crypto/[a-z0-9]+|luks/[a-z0-9]+)\.c$$
+COV_FILTER := .*/src/(exfat/exfat|cpio/cpio|family/family|ext4/ext4|part/part|crypto/[a-z0-9]+|luks/[a-z0-9]+)\.c$$
 
 OBJS := $(patsubst $(TEST_DIR)/%.c,$(OBJ)/%.o,$(TEST_SRCS)) \
 	$(patsubst $(ROOT)/src/%.c,$(OBJ)/uut/%.o,$(UUT_SRCS))

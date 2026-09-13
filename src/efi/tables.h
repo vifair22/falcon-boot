@@ -101,23 +101,24 @@ struct EFI_BOOT_SERVICES {
     void *InstallConfigurationTable;
 
     /* Image */
-    /* The verifying load path of DESIGN Sections 2, 6 and 7. We never
+    /* The verifying load path of DESIGN Sections 2, 5, 6 and 7. We never
      * install a security override, so what boots is the platform's decision
-     * on both of the two shapes this call takes here:
+     * on both shapes this call takes here, and both are device-path loads:
      *
-     *   - ISO path (Section 6): DevicePath set, SourceBuffer NULL. The
-     *     firmware reads the image itself, which is also what gives the
-     *     payload a LoadedImage->DeviceHandle pointing at the ISO's ESP so a
-     *     distro bootloader can find its own configuration.
-     *   - UKI path (Section 5): SourceBuffer set, DevicePath NULL, because a
-     *     LUKS volume has no firmware-readable device path at all. The image
-     *     is still verified: the load goes through the shim-verified path of
-     *     Section 7.6, and shim verifies the bytes in the buffer against
-     *     db/MOK/SBAT before it will run them.
+     *   - ISO path (Section 6): the device path names the ISO's firmware-
+     *     mounted ESP, which also gives the payload a
+     *     LoadedImage->DeviceHandle so a distro bootloader can find its own
+     *     configuration.
+     *   - UKI path (Sections 5, 5.1): the device path names our synthetic
+     *     credential filesystem (src/credfs), which serves the UKI bytes
+     *     read off the encrypted p3 plus the .extra.d credential; sd-stub
+     *     needs that DeviceHandle to find its companion files. Shim
+     *     verifies what it reads off the synthetic device against
+     *     db/MOK/SBAT exactly as it would off a real one.
      *
-     * Neither shape is a relaxation, and neither may be "unified" into the
-     * other: the ISO path must name a device path to keep its DeviceHandle,
-     * and the UKI path has no device path to name. */
+     * A SourceBuffer load (DevicePath NULL) survives only as pos.c's
+     * loudly-warned fallback when the credfs publish fails; it is still
+     * shim-verified, but sd-stub credentials cannot work there. */
     EFI_STATUS (EFIAPI *LoadImage)(BOOLEAN BootPolicy,
                                    EFI_HANDLE ParentImageHandle,
                                    EFI_DEVICE_PATH_PROTOCOL *DevicePath,

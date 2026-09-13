@@ -15,6 +15,7 @@
 #include <iso/iso.h>
 #include <lib/string.h>
 #include <menu/menu.h>
+#include <part/partefi.h>
 #include <pos/pos.h>
 #include <sb/sb.h>
 
@@ -233,9 +234,13 @@ static void sort_list(iso_list *list)
 static exfat_vol g_vols[MAX_VOLS];   /* ~4 KB FAT cache each */
 static bio_ctx g_bio_ctx[MAX_VOLS];
 
-/* Probe every Block I/O handle for an exFAT volume and scan each hit.
- * MVP policy: any exFAT volume in sight contributes entries; matching our
- * own GPT layout by PARTUUID comes with the host tooling (step 7). */
+/* Probe Block I/O handles for an exFAT volume and scan each hit.
+ *
+ * Which handles get probed is DESIGN Section 3's rule, and part_scan_accept
+ * is that rule: if any partition in the machine carries the airies p2 type
+ * GUID, only those are looked at, so an internal disk's exFAT volume can
+ * never contribute entries; if none does, everything is looked at, which is
+ * what keeps the QEMU rig images working until mkstick stamps the types. */
 static void scan_all_volumes(iso_list *list, UINTN *vols_found)
 {
     EFI_GUID bio_guid = EFI_BLOCK_IO_PROTOCOL_GUID;
@@ -260,6 +265,8 @@ static void scan_all_volumes(iso_list *list, UINTN *vols_found)
                                                (void **)&bio) != EFI_SUCCESS)
             continue;
         if (!bio->Media->MediaPresent)
+            continue;
+        if (!part_scan_accept(g_st, handles[i], PART_ROLE_ISO))
             continue;
 
         ctx->bio = bio;

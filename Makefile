@@ -38,6 +38,9 @@ SRCS := \
 	src/exfat/exfat.c \
 	src/ext4/ext4.c \
 	src/iso/iso.c \
+	src/part/part.c \
+	src/part/partefi.c \
+	src/credfs/credfs.c \
 	src/menu/menu.c \
 	src/menu/prompt.c \
 	src/pos/pos.c \
@@ -81,6 +84,9 @@ MOK_KEY := $(MOK_DIR)/airies-test-mok.key
 MOK_CRT := $(MOK_DIR)/airies-test-mok.crt
 EFI_SIGNED := build/bin/airies-boot-signed.efi
 
+# The fixture UKI staged on p3 (tools/mk-test-uki.sh).
+FIXTURE_UKI := build/test/fixture-uki.efi
+
 OVMF_DIR ?= /usr/share/edk2/OvmfX64
 OVMF_VARS := $(OVMF_DIR)/OVMF_VARS.fd
 
@@ -88,9 +94,9 @@ SEMVER := $(shell cat release_version)
 # Repo-standard full version: SEMVER_YYYYMMDD.HHMM.TYPE.
 VERSION := $(SEMVER)_$(shell date +%Y%m%d.%H%M).$(VARIANT)
 
-.PHONY: all check-tools esp run run-secboot run-stick run-stick-secboot \
-	sbat-check sign mok-test test-image test-iso test-stick payload \
-	version-stamp clean
+.PHONY: all check-tools esp run run-secboot run-stick run-stick-secboot analyze \
+	sbat-check sign mok-test test-image test-iso test-stick test-uki \
+	payload version-stamp clean
 
 all: $(EFI) compile_commands.json
 
@@ -190,6 +196,11 @@ esp: $(EFI)
 run: $(EFI)
 	tools/run-qemu.sh
 
+# Static analysis gate: cppcheck + gcc -fanalyzer + clang-tidy, baseline
+# managed in docs/notes/analyze-baseline.txt (see docs/notes/analyze.md).
+analyze:
+	tools/analyze.sh
+
 # Fail the build loudly if the .sbat section did not survive the link. Without
 # it shim refuses the loader under Secure Boot with the same opaque
 # EFI_SECURITY_VIOLATION a bad signature gives, and the mistake is invisible
@@ -228,11 +239,20 @@ test-image: test-iso
 test-iso: $(PAYLOAD)
 	tools/mk-test-iso.sh
 
+# The sd-stub UKI the credential handoff is tested against (DESIGN Section 5.1
+# and Section 11 step 6). It needs the test MOK, because the Secure Boot half
+# of that test boots the SIGNED copy. The kernel comes out of an Arch ISO the
+# script reads and never writes; ARCH_ISO overrides where it looks.
+test-uki: $(FIXTURE_UKI)
+
+$(FIXTURE_UKI): tools/mk-test-uki.sh tools/uki-init/init.c $(MOK_KEY)
+	tools/mk-test-uki.sh
+
 # The four-partition stick the personal-OS path needs (DESIGN Section 3). It
 # wants the signed loader for p1's shim chain and the payload for p3's /uki,
 # so both are prerequisites; the script degrades to an unsigned stick on its
 # own if the test MOK is absent.
-test-stick: $(EFI_SIGNED) test-iso
+test-stick: $(EFI_SIGNED) test-iso test-uki
 	tools/mk-test-stick.sh
 
 # No prerequisite on $(TEST_STICK): rebuilding it needs sudo and takes seconds
