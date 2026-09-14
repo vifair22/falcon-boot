@@ -100,6 +100,19 @@ typedef struct {
  * the FAMILY_UNKNOWN descriptor, which is a real registry entry. */
 const family_desc *family_detect(const family_probe *p);
 
+/* Classifies a BARE EFI PAYLOAD - a .efi file on p2, which boots as itself
+ * (DESIGN Section 7.2) - from its file name alone.
+ *
+ * Separate from family_detect because there is nothing for that to work with:
+ * a payload is one PE with no filesystem around it, so the layout
+ * fingerprints above have no tree to ask about. The file name is the only
+ * evidence a bare payload carries, which makes this the weakest classifier in
+ * the module and deliberately so: it labels a menu entry and a report line,
+ * and nothing may branch on it. Never returns NULL.
+ *
+ * name is the base name, ASCII, with or without its extension. */
+const family_desc *family_detect_payload(const char *name);
+
 const family_desc *family_by_id(family_id id);
 
 /* The whole registry, for callers that enumerate it (help text, tests). */

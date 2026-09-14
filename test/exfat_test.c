@@ -65,6 +65,7 @@ int main(void)
     failed += run_cpio_tests();
     failed += run_family_tests();
     failed += run_isoprobe_tests();
+    failed += run_payload_tests();
     failed += run_wimext_tests();
     failed += run_prepcore_tests();
     failed += run_appliance_route_tests();

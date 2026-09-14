@@ -109,6 +109,30 @@ UINTN bless_dropped(void);
 EFI_STATUS bless_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
                       const bless_hit *hit, bless_result *result);
 
+/* Launches a BARE EFI PAYLOAD: a .efi file on p2 that boots as itself
+ * (DESIGN Section 7.2).
+ *
+ * Not a blessing, and it consults no manifest: there is no second artifact to
+ * point at, because the file the scan found IS the image the platform
+ * verifies. It lives here because the mechanism is identical to the blessed
+ * wrap's and must not be reinvented - the payload is read off exFAT, published
+ * on the synthetic filesystem of DESIGN Section 5.1 so it has a device path at
+ * all, and handed to the shim-verified load path of Section 7.6, which
+ * enforces when Secure Boot is on and permits when it is off.
+ *
+ * Nothing is verified here and nothing is relaxed. A payload the platform
+ * refuses comes back EFI_SECURITY_VIOLATION with the two doors named, one of
+ * which is signing the file itself, since that is what the platform is
+ * looking at.
+ *
+ * vol and file are the payload's volume and directory entry as the scan found
+ * them. Returns EFI_SUCCESS when the payload ran and returned, with
+ * result->status its exit status; any other value is the status that ended the
+ * attempt, result->stage naming where. */
+EFI_STATUS bless_payload_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
+                              fs_vol *vol, const fs_dirent *file,
+                              bless_result *result);
+
 /* Boots a PREPARED medium: the ISO itself, served with the byte map its
  * record asks for (DESIGN Sections 6.3 and 6.3.1).
  *

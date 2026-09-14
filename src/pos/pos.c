@@ -713,6 +713,13 @@ static EFI_STATUS launch_uki(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent,
         return status;
     }
 
+    /* The handoff, said out loud: a UKI decompressing its kernel draws
+     * nothing for a few seconds, and that silence is indistinguishable from
+     * this loader having hung unless the boundary is on screen. Pairs with
+     * the "the image exited" line main.c prints if it comes back. */
+    out(L"handing over to the image; everything below is its own output."
+        L"\r\n\r\n");
+
     result->stage = L"StartImage";
     status = ops.StartImage(child, &exit_size, &exit_data);
     /* StartImage unloads an application that returns, so the child handle is
@@ -982,7 +989,9 @@ EFI_STATUS pos_boot_pick(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
         goto out_close;
     out(L"\r\n");
     out_dec(size);
-    out(L" bytes read; starting it.\r\n\r\n");
+    /* "starting it" used to end this line; the handoff line at the launch
+     * itself says that now, and says it at the moment it becomes true. */
+    out(L" bytes read.\r\n\r\n");
 
     status = launch_uki(st, parent_image, &g_ukis[chosen], buf, size, &ops,
                         inner_blocked, &retain, result);

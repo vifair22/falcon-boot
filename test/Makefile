@@ -126,6 +126,7 @@ TEST_SRCS := \
 	$(TEST_DIR)/cpio_test.c \
 	$(TEST_DIR)/family_test.c \
 	$(TEST_DIR)/isoprobe_test.c \
+	$(TEST_DIR)/payload_test.c \
 	$(TEST_DIR)/wimext_test.c \
 	$(TEST_DIR)/prepcore_test.c \
 	$(TEST_DIR)/appliance_route_test.c \
@@ -147,6 +148,7 @@ UUT_SRCS := \
 	$(ROOT)/src/cpio/cpio.c \
 	$(ROOT)/src/family/family.c \
 	$(ROOT)/src/cli/sign/isoprobe.c \
+	$(ROOT)/src/cli/sign/payload.c \
 	$(ROOT)/src/cli/sign/wimext.c \
 	$(ROOT)/src/cli/sign/prepcore.c \
 	$(ROOT)/src/cli/sign/util.c \

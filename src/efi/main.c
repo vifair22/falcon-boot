@@ -132,10 +132,24 @@ static EFI_STATUS wait_key(EFI_INPUT_KEY *key)
  * stage 1 groups on, and it means the view needs no second copy of the path:
  * label[0..dir_len) is the folder, label + dir_len is the file name with its
  * suffix already on it. */
+/* What the extension asked the loader to do with the file, which is a coarser
+ * question than iso_media_kind's.
+ *
+ * MEDIA is a .iso or a .img: a virtual medium is published and the firmware's
+ * own drivers parse it (DESIGN Section 6), and `kind` says which shape.
+ * PAYLOAD is a .efi: a PE that boots as itself (DESIGN Section 7.2). There is
+ * no medium to publish and no El Torito to parse, so `kind` means nothing for
+ * one and nothing may read it. */
+typedef enum {
+    ENTRY_MEDIA = 0,
+    ENTRY_PAYLOAD
+} entry_shape;
+
 typedef struct {
     UINTN vol;
     fs_dirent ent;
-    iso_media_kind kind;
+    entry_shape shape;
+    iso_media_kind kind;   /* ENTRY_MEDIA only */
     /* Filled on every entry, including the ones no record names: the lookup
      * writes the whole hit either way, so "what does the stick say about this
      * entry" has one answer and not a flag beside it that could disagree. */
@@ -165,7 +179,8 @@ typedef struct {
 } iso_list;
 
 static void list_add(iso_list *list, const CHAR16 *prefix,
-                     const fs_dirent *ent, iso_media_kind kind)
+                     const fs_dirent *ent, entry_shape shape,
+                     iso_media_kind kind)
 {
     menu_entry *e;
     iso_target *t;
@@ -182,6 +197,7 @@ static void list_add(iso_list *list, const CHAR16 *prefix,
     memcpy(e->label, prefix, pl * sizeof(CHAR16));
     memcpy(e->label + pl, ent->name, (nl + 1) * sizeof(CHAR16));
     t->vol = list->cur_vol;
+    t->shape = shape;
     t->kind = kind;
     t->dir_len = pl;
     /* Resolved in probe_entries, once the list is sorted and the label is
@@ -225,14 +241,19 @@ static void scan_dir(fs_vol *vol, fs_dir *dir, CHAR16 *prefix,
             scan_dir(vol, &sub, prefix, depth + 1, list);
             prefix[pl] = 0;
         } else if (ucs2_ends_with(ent.name, u".iso")) {
-            /* Both extensions come out of this one walk, and the extension is
-             * the whole decision: it says which shape the firmware is asked
-             * to parse, never what it is allowed to run (DESIGN Section 6
-             * stage 2). ucs2_ends_with is case-insensitive, so a stick
-             * written by Windows lists the same files. */
-            list_add(list, prefix, &ent, ISO_MEDIA_CD);
+            /* All three extensions come out of this one walk, and the
+             * extension is the whole decision: it says what the file is
+             * offered to the firmware AS, never what the firmware is allowed
+             * to run (DESIGN Section 6 stage 2). ucs2_ends_with is
+             * case-insensitive, so a stick written by Windows lists the same
+             * files. */
+            list_add(list, prefix, &ent, ENTRY_MEDIA, ISO_MEDIA_CD);
         } else if (ucs2_ends_with(ent.name, u".img")) {
-            list_add(list, prefix, &ent, ISO_MEDIA_DISK);
+            list_add(list, prefix, &ent, ENTRY_MEDIA, ISO_MEDIA_DISK);
+        } else if (ucs2_ends_with(ent.name, u".efi")) {
+            /* A bare EFI payload (DESIGN Section 7.2): not media at all, so
+             * the media kind is the enum's zero and nothing reads it. */
+            list_add(list, prefix, &ent, ENTRY_PAYLOAD, ISO_MEDIA_CD);
         }
     }
 }
@@ -360,7 +381,8 @@ static void wbuf_ascii(wbuf *w, const char *s)
  *
  * survey NULL means the entry was past PROBE_LIMIT and was never looked at. */
 static void suffix_build(CHAR16 *buf, UINTN cap, const iso_survey *survey,
-                         const bless_hit *hit, family_id fam)
+                         const bless_hit *hit, family_id fam,
+                         entry_shape shape)
 {
     const CHAR16 *blessed = bless_suffix(hit, fam);
     wbuf w = { buf, cap, 0 };
@@ -372,7 +394,15 @@ static void suffix_build(CHAR16 *buf, UINTN cap, const iso_survey *survey,
         /* No ESP surfaced at all, so there is no family to name either. */
         wbuf_ucs2(&w, L"no efi");
     } else {
-        wbuf_ascii(&w, survey->family->name);
+        /* A payload's only fingerprint is its file name (family.h), so most
+         * of them classify as unknown. Saying what it IS beats repeating that
+         * the loader could not tell what it is; the signature half of the
+         * bracket is read from the file's own PE headers either way, and for
+         * a payload that half is the whole question. */
+        if (shape == ENTRY_PAYLOAD && survey->family->id == FAMILY_UNKNOWN)
+            wbuf_ucs2(&w, L"EFI payload");
+        else
+            wbuf_ascii(&w, survey->family->name);
         wbuf_ucs2(&w, L", ");
         if (survey->sig == ISO_SIG_PRESENT)
             wbuf_ucs2(&w, L"signed");
@@ -409,7 +439,7 @@ static void label_suffix(menu_entry *e, iso_target *t,
     CHAR16 suffix[SUFFIX_MAX];
     UINTN sl, pl;
 
-    suffix_build(suffix, SUFFIX_MAX, survey, &t->hit, t->fam);
+    suffix_build(suffix, SUFFIX_MAX, survey, &t->hit, t->fam, t->shape);
     sl = ucs2_len(suffix);
     pl = ucs2_len(e->label);
     if (pl + sl + 1 > MENU_PATH_MAX) {
@@ -421,6 +451,61 @@ static void label_suffix(menu_entry *e, iso_target *t,
     memcpy(e->label + pl, suffix, (sl + 1) * sizeof(CHAR16));
 }
 
+/* Enough of a PE for its data directory array; iso_pe_signature says what it
+ * does with less. */
+#define PAYLOAD_HEAD 1024u
+
+/* A file handle carries a multi-kilobyte driver cache, and this one is live
+ * only for the length of one header read; static for the reason every other
+ * buffer that size in this file is. */
+static fs_file g_payload_file;
+
+/* The two facts the menu labels with, for a bare EFI payload (DESIGN Section
+ * 7.2). The same two an ISO's survey reports, found the only way they can be
+ * found for a payload: the family from the file name, because a lone PE has
+ * no tree to fingerprint, and the signature from the file's own headers.
+ *
+ * Cheap on purpose, and not subject to PROBE_LIMIT: this is one short read off
+ * a volume that is already mounted, where an ISO's survey has to build a
+ * virtual medium and make the firmware bind and release drivers to it.
+ *
+ * *out is always filled in, so an unreadable payload is still an entry. */
+static void payload_survey(fs_vol *vol, const fs_dirent *ent, iso_survey *out)
+{
+    uint8_t head[PAYLOAD_HEAD];
+    char name[64];
+    UINT64 size;
+    UINT64 want = PAYLOAD_HEAD;
+    UINTN i = 0;
+
+    out->family = family_by_id(FAMILY_UNKNOWN);
+    out->sig = ISO_SIG_UNKNOWN;
+
+    while (ent->name[i] != 0 && i + 1 < sizeof(name)) {
+        CHAR16 c = ent->name[i];
+
+        /* A name with a character outside ASCII cannot match a fingerprint,
+         * and the classifier takes ASCII; substituting rather than refusing
+         * keeps the rest of the name usable for the ones that can. */
+        name[i] = (c < 0x80u) ? (char)c : '?';
+        i++;
+    }
+    name[i] = '\0';
+    out->family = family_detect_payload(name);
+
+    if (fs_file_open(vol, &g_payload_file, ent) != FS_OK)
+        return;
+    size = fs_file_size(&g_payload_file);
+    if (size < want)
+        want = size;
+    if (want == 0)
+        return;
+    memset(head, 0, sizeof(head));
+    if (fs_file_read(&g_payload_file, 0, want, head) != FS_OK)
+        return;
+    out->sig = iso_pe_signature(head, (UINTN)want);
+}
+
 /* Look inside the first PROBE_LIMIT ISOs and label every entry.
  *
  * This is the slow part of startup, so it says so: each probe makes the
@@ -428,18 +513,30 @@ static void label_suffix(menu_entry *e, iso_target *t,
  * pause with no explanation reads as a hang. */
 static void probe_entries(iso_list *list)
 {
-    UINTN probed = list->count < PROBE_LIMIT ? list->count : PROBE_LIMIT;
+    UINTN media = 0;
+    UINTN probed;
+    UINTN done = 0;
     UINTN i;
 
     if (list->count == 0)
         return;
 
+    /* The budget is spent on media only, and counted rather than taken as the
+     * first PROBE_LIMIT indices: a payload's survey is one short read off a
+     * volume that is already mounted, so it neither costs the budget anything
+     * nor may consume it. */
+    for (i = 0; i < list->count; i++) {
+        if (list->targets[i].shape == ENTRY_MEDIA)
+            media++;
+    }
+    probed = media < PROBE_LIMIT ? media : PROBE_LIMIT;
+
     out(L"falcon-boot: probing ");
     out_dec(probed);
     out(L" image(s) for family and signature presence");
-    if (probed < list->count) {
+    if (probed < media) {
         out(L" (");
-        out_dec(list->count - probed);
+        out_dec(media - probed);
         out(L" left unprobed)");
     }
     out(L"\r\n");
@@ -452,9 +549,16 @@ static void probe_entries(iso_list *list)
          * label_suffix is what turns that path into a decorated label. The
          * cost is a string compare per record, so it runs for every entry
          * rather than only the probed ones: PROBE_LIMIT exists to bound
-         * firmware work, and there is none here. */
-        (void)bless_lookup(&g_vols[t->vol], list->entries[i].label,
-                           t->ent.size, &t->hit);
+         * firmware work, and there is none here.
+         *
+         * Not for a payload, though, and not as an optimisation: no record
+         * can stand behind one (DESIGN Section 7.2). Blessing a payload signs
+         * the file itself, so there is no second artifact for a record to
+         * name, and a hand-written record that matched one could otherwise
+         * label it with a claim about an image that does not exist. */
+        if (t->shape == ENTRY_MEDIA)
+            (void)bless_lookup(&g_vols[t->vol], list->entries[i].label,
+                               t->ent.size, &t->hit);
 
         /* The next-boot marker is matched here for the same reason, and it is
          * the only window in which it can be: the value names a path on p2,
@@ -465,10 +569,18 @@ static void probe_entries(iso_list *list)
             bless_next_names(list->entries[i].label, g_next_path))
             g_next_idx = i;
 
-        if (i >= probed) {
+        if (t->shape == ENTRY_PAYLOAD) {
+            payload_survey(&g_vols[t->vol], &t->ent, &survey);
+            t->fam = survey.family->id;
+            t->probed = 1;
+            label_suffix(&list->entries[i], t, &survey);
+            continue;
+        }
+        if (done >= probed) {
             label_suffix(&list->entries[i], t, (const iso_survey *)0);
             continue;
         }
+        done++;
         iso_survey_media(g_st, &g_vols[t->vol], &t->ent, t->kind, &survey);
         t->fam = survey.family->id;
         t->probed = 1;
@@ -672,6 +784,27 @@ static void view_up(CHAR16 *cur, UINTN *cur_len)
 /* Boot the selection and report what came back. Both outcomes land here:
  * the payload returning (it exited, or never found its media) and a stage
  * failing outright. Neither is fatal to the loader. */
+/* One line about an exit status that has a known cause a user cannot guess,
+ * or NULL. Reporting only, on the path that has already come back to the
+ * menu: nothing here changes what was booted or how (DESIGN Section 7.3).
+ *
+ * EFI_TIMEOUT is the one worth writing down, because it cost an afternoon.
+ * Windows install media's \EFI\BOOT\BOOTX64.EFI is cdboot.efi, which draws
+ * "Press any key to boot from CD or DVD..." through GOP and returns
+ * EFI_TIMEOUT when no key arrives (DESIGN Section 6.3). Our console never
+ * sees that prompt, so the whole thing looks like an instant silent failure
+ * with a meaningless status. */
+static const CHAR16 *exit_note(EFI_STATUS status)
+{
+    if (status == EFI_TIMEOUT)
+        return L"that status is a payload that waited for a keypress and gave "
+               L"up. Windows\r\nmedia does exactly this: its boot stub draws "
+               L"\"press any key to boot from CD\"\r\non the graphics console, "
+               L"which this loader never sees. Boot it again and\r\npress a "
+               L"key while the screen looks empty.";
+    return (const CHAR16 *)0;
+}
+
 static void boot_target(EFI_HANDLE image_handle, const menu_entry *entry,
                         iso_target *target)
 {
@@ -700,6 +833,11 @@ static void boot_target(EFI_HANDLE image_handle, const menu_entry *entry,
         out(L"\r\nthe payload exited, status ");
         out_hex(result.status);
         out(L"\r\n");
+        if (exit_note(result.status) != (const CHAR16 *)0) {
+            out(L"\r\n");
+            out(exit_note(result.status));
+            out(L"\r\n");
+        }
     } else {
         out(L"\r\nboot failed while ");
         out(result.stage);
@@ -797,8 +935,63 @@ static void boot_prepared(EFI_HANDLE image_handle, const menu_entry *entry,
         out(L"\r\nthe payload exited, status ");
         out_hex(result.status);
         out(L"\r\n");
+        /* The likeliest place in the whole loader to meet EFI_TIMEOUT: a
+         * prepared entry is Windows media by construction. */
+        if (exit_note(result.status) != (const CHAR16 *)0) {
+            out(L"\r\n");
+            out(exit_note(result.status));
+            out(L"\r\n");
+        }
     } else {
         out(L"\r\nprepared boot failed while ");
+        out(result.stage);
+        out(L": ");
+        out_hex(result.status);
+        out(L"\r\n");
+    }
+    if (result.advice != (const CHAR16 *)0) {
+        out(L"\r\n");
+        out(result.advice);
+        out(L"\r\n");
+    }
+    out(L"\r\npress any key to return to the menu.\r\n");
+}
+
+/* A bare EFI payload's action (DESIGN Section 7.2): the .efi file on p2 is
+ * the image, so it is launched as itself through the shim-verified load path.
+ *
+ * No fallback and no second route, for the same reason boot_blessed has none:
+ * there is exactly one thing to run here and exactly one authority on whether
+ * it may. A refusal is the platform's answer and comes back with the two
+ * doors named, one of which is blessing the payload - which for this entry
+ * type means signing the user's own file. */
+static void boot_payload(EFI_HANDLE image_handle, const menu_entry *entry,
+                         iso_target *target)
+{
+    bless_result result = { L"starting", EFI_SUCCESS, (const CHAR16 *)0 };
+    EFI_STATUS status;
+
+    g_st->ConOut->ClearScreen(g_st->ConOut);
+    out(L"booting: ");
+    out(entry->label);
+    out(L"\r\n\r\n");
+
+    status = bless_payload_boot(g_st, image_handle, &g_vols[target->vol],
+                                &target->ent, &result);
+
+    g_st->ConOut->ClearScreen(g_st->ConOut);
+    out(entry->label);
+    if (!EFI_ERROR(status)) {
+        out(L"\r\nthe payload exited, status ");
+        out_hex(result.status);
+        out(L"\r\n");
+        if (exit_note(result.status) != (const CHAR16 *)0) {
+            out(L"\r\n");
+            out(exit_note(result.status));
+            out(L"\r\n");
+        }
+    } else {
+        out(L"\r\nboot failed while ");
         out(result.stage);
         out(L": ");
         out_hex(result.status);
@@ -1314,6 +1507,17 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
             /* The full-path label, not the row the user read: what is booted
              * and what is reported are both the flat entry. */
             UINTN idx = rows[sel].idx;
+
+            /* A payload is dispatched on its shape and never on a record,
+             * because none can name it (DESIGN Section 7.2): the file IS the
+             * image the platform verifies, so there is nothing for a manifest
+             * to point at and nothing for the blessed/prepared branch below
+             * to decide. */
+            if (list.targets[idx].shape == ENTRY_PAYLOAD) {
+                boot_payload(image_handle, &list.entries[idx],
+                             &list.targets[idx]);
+                break;
+            }
 
             /* One branch for the two kinds of record and for having neither
              * (DESIGN Sections 8.1 and 6.3.1). A fresh blessing boots the

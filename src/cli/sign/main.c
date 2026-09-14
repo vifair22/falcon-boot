@@ -29,6 +29,7 @@
 
 #include <cli/sign/sign.h>
 #include <cli/sign/manifestio.h>
+#include <cli/sign/payload.h>
 #include <cli/sign/prepare.h>
 
 #include <manifest/manifest.h>
@@ -116,7 +117,13 @@ static void usage(FILE *f)
 "file on p2, signs that wrap with the MOK key, and records it in the p2\n"
 "manifest (docs/DESIGN.md Sections 7.5, 8 and 8.1).\n"
 "\n"
-"  <iso>                 the ISO to bless\n"
+"A .efi or a .img takes the bare-payload path instead (Section 7.2): such a\n"
+"payload boots as itself, so the file on p2 IS what the platform verifies\n"
+"and it is signed in place. THAT MODIFIES YOUR FILE, which the tool states\n"
+"and names before it does it. Only --key, --cert and --dry-run apply there;\n"
+"there is no wrap to name and no manifest record to write.\n"
+"\n"
+"  <iso>                 the ISO, .efi or .img to bless\n"
 "  --stick <dir>         p2's mount point (or any directory to stage into)\n"
 "  --key <file>          MOK private key, PEM\n"
 "  --cert <file>         MOK certificate, PEM\n"
@@ -238,7 +245,12 @@ static int parse_args(int argc, char **argv, options *o)
         sgn_set_error(SGN_ERR_ARG, "no ISO given");
         return SGN_ERR_ARG;
     }
-    if (o->stick == NULL) {
+    /* A bare payload needs no --stick: nothing is staged beside it and no
+     * record is written, so there is no p2 for this tool to write into
+     * (DESIGN Section 7.2, and payload.h on why there is no record). It is
+     * still accepted, because the appliance passes it to every invocation. */
+    if (o->stick == NULL &&
+        sgn_payload_shape_of(o->iso) == SGN_PAYLOAD_NONE) {
         sgn_set_error(SGN_ERR_ARG, "--stick is required");
         return SGN_ERR_ARG;
     }
@@ -337,6 +349,37 @@ static int derive_uki_name(const options *o, char *out, size_t cap)
 }
 
 /* ------------------------------------------------------------ the bless */
+
+/* The bare-payload half of the bless verb (DESIGN Section 7.2). Same verb and
+ * same arguments, because it is the same act from the user's side: "make this
+ * thing on my stick bootable with Secure Boot left on". What differs is where
+ * the signature ends up, and that difference is exactly what the tool states
+ * before it acts, since here it lands in the user's own file. */
+static int bless_payload(const options *o)
+{
+    sgn_payload_opts p;
+
+    memset(&p, 0, sizeof(p));
+    p.path = o->iso;
+    p.key = o->key;
+    p.cert = o->cert;
+    p.work = o->work;
+    p.dry_run = o->dry_run;
+
+    /* Arguments that only mean something for the wrap path. Rejected rather
+     * than ignored: a user who passed --cmdline believes something about what
+     * is going to be built, and nothing here builds it. */
+    if (o->cmdline != NULL || o->cmdline_extra != NULL || o->kernel != NULL ||
+        o->name != NULL || o->iso_path != NULL || o->dev != NULL) {
+        sgn_set_error(SGN_ERR_ARG,
+                      "'%s' is a bare EFI payload: it is signed as it stands, "
+                      "so there is no UKI to name, no cmdline to embed and no "
+                      "kernel to wrap. Drop --cmdline/--cmdline-extra/"
+                      "--kernel/--name/--iso-path/--dev.", o->iso);
+        return SGN_ERR_ARG;
+    }
+    return sgn_payload_bless(&p);
+}
 
 static int bless(const options *o)
 {
@@ -739,7 +782,8 @@ int main(int argc, char **argv)
     sgn_log_set_level(o.verbose ? SGN_LOG_DEBUG
                                 : (o.quiet ? SGN_LOG_WARN : SGN_LOG_INFO));
 
-    rc = bless(&o);
+    rc = (sgn_payload_shape_of(o.iso) != SGN_PAYLOAD_NONE) ? bless_payload(&o)
+                                                           : bless(&o);
     if (rc != SGN_OK) {
         sgn_log(SGN_LOG_ERROR, "%s", sgn_error());
         return 1;

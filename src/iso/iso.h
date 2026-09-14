@@ -70,6 +70,20 @@ typedef struct {
     iso_sig            sig;
 } iso_survey;
 
+/* Signature presence read out of the head of a PE image: data directory 4,
+ * the certificate table, and whether its size field is nonzero.
+ *
+ * PRESENCE, never validity, exactly as iso_sig says. Exported because a bare
+ * EFI payload on p2 (DESIGN Section 7.2) is labelled with the same fact about
+ * a file the loader reads itself rather than about an ISO's default loader,
+ * and two implementations of "is there a certificate table" could only be two
+ * answers to it.
+ *
+ * buf is the first len bytes of the file; a kilobyte covers every PE header
+ * layout that matters. Returns ISO_SIG_UNKNOWN for anything that does not
+ * parse as a PE, which includes a read too short to decide. */
+iso_sig iso_pe_signature(const void *buf, UINTN len);
+
 /* Boots the medium, returning when its payload exits or a stage fails. The
  * virtual device is always torn down before returning, so a failed attempt
  * leaves the loader able to try another entry.

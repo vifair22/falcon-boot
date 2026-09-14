@@ -355,6 +355,80 @@ static void test_family_memtest(void **state)
                      FAMILY_TRI_NO);
 }
 
+/* PassMark's MemTest86 USB image, as it actually ships (read off
+ * memtest86-usb.img v10.x, 2026-09-13): every FAT volume inside it is a bare
+ * /EFI/BOOT with the loader under the removable-media default name, so the
+ * only fingerprints that reach it are the two files beside that loader. This
+ * is the tree the host tool sees when it mounts one of those volumes, and
+ * getting it wrong means the bless tool either refuses the image or blesses
+ * it as something it is not. */
+static void test_family_memtest_usb_image_volume(void **state)
+{
+    static const fake_file splash[] = {
+        { "/EFI", NULL },
+        { "/EFI/BOOT", NULL },
+        { "/EFI/BOOT/BOOTX64.EFI", NULL },
+        { "/EFI/BOOT/mt86.png", NULL },
+    };
+    static const fake_file blacklist[] = {
+        { "/EFI/BOOT/BOOTX64.EFI", NULL },
+        { "/EFI/BOOT/blacklist.cfg", NULL },
+    };
+    /* The same volume without either: a bare /EFI/BOOT is every removable
+     * medium ever made, so it must NOT classify as memtest on that alone. */
+    static const fake_file bare[] = {
+        { "/EFI", NULL },
+        { "/EFI/BOOT", NULL },
+        { "/EFI/BOOT/BOOTX64.EFI", NULL },
+    };
+
+    (void)state;
+    expect_family(splash, 4, FAMILY_MEMTEST, NULL);
+    expect_family(blacklist, 2, FAMILY_MEMTEST, NULL);
+    expect_family(bare, 3, FAMILY_UNKNOWN, NULL);
+}
+
+/* A bare .efi on p2 has no tree at all, so its file name is the whole
+ * evidence (DESIGN Section 7.2). The classifier is deliberately the weakest
+ * in the module and nothing may branch on it; what is pinned here is that it
+ * recognises the names memtest ships under, that it is case-insensitive
+ * because exFAT is, and above all that it claims nothing about a payload it
+ * does not recognise. */
+static void test_family_payload_by_name(void **state)
+{
+    (void)state;
+    assert_int_equal(family_detect_payload("memtest86.efi")->id,
+                     FAMILY_MEMTEST);
+    assert_int_equal(family_detect_payload("MemTest86.efi")->id,
+                     FAMILY_MEMTEST);
+    assert_int_equal(family_detect_payload("MEMTEST.EFI")->id,
+                     FAMILY_MEMTEST);
+    assert_int_equal(family_detect_payload("mt86.efi")->id, FAMILY_MEMTEST);
+    assert_int_equal(family_detect_payload("memtest")->id, FAMILY_MEMTEST);
+
+    assert_int_equal(family_detect_payload("Shell.efi")->id, FAMILY_UNKNOWN);
+    assert_int_equal(family_detect_payload("BOOTX64.EFI")->id,
+                     FAMILY_UNKNOWN);
+    assert_int_equal(family_detect_payload("")->id, FAMILY_UNKNOWN);
+    assert_int_equal(family_detect_payload("m")->id, FAMILY_UNKNOWN);
+    /* Total, like everything else in this module: no caller has an error
+     * path to write for a name it could not classify. */
+    assert_int_equal(family_detect_payload(NULL)->id, FAMILY_UNKNOWN);
+}
+
+/* The name classifier must not reach the fingerprint path or vice versa: a
+ * tree is classified by what is in it, a payload by what it is called, and an
+ * ISO called memtest.iso full of Arch is Arch. */
+static void test_family_payload_does_not_override_a_tree(void **state)
+{
+    static const fake_file arch[] = { { "/arch/version", NULL } };
+
+    (void)state;
+    expect_family(arch, 1, FAMILY_ARCH, "img_dev=%DEV% img_loop=%ISO%");
+    assert_int_equal(family_detect_payload("memtest-arch.efi")->id,
+                     FAMILY_MEMTEST);
+}
+
 static void test_family_unknown(void **state)
 {
     static const fake_file empty[] = { { "/unused", NULL } };
@@ -784,6 +858,9 @@ int run_family_tests(void)
         cmocka_unit_test(test_family_arch_loader_entry),
         cmocka_unit_test(test_family_arch_loader_entry_other_basedir),
         cmocka_unit_test(test_family_memtest),
+        cmocka_unit_test(test_family_memtest_usb_image_volume),
+        cmocka_unit_test(test_family_payload_by_name),
+        cmocka_unit_test(test_family_payload_does_not_override_a_tree),
         cmocka_unit_test(test_family_unknown),
         cmocka_unit_test(test_family_systemrescue_beats_arch),
         cmocka_unit_test(test_family_casper_beats_live),

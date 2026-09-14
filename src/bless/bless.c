@@ -73,17 +73,28 @@ static void ascii_to_ucs2(CHAR16 *dst, UINTN cap, const char *src)
     dst[i] = 0;
 }
 
-/* The UKI's name as the console and the synthetic filesystem both want it.
+/* The name of the image being launched, as the console and the synthetic
+ * filesystem both want it.
  *
- * One buffer, filled here and used by both, because the name printed while
- * the image is read must be the name the filesystem then serves: two
- * conversions of the same record could not disagree today, but the whole
- * point of naming the file on screen is that it is the file that was used. */
+ * One buffer, filled by one of the two setters below and used by both
+ * consumers, because the name printed while the image is read must be the
+ * name the filesystem then serves: two conversions of the same record could
+ * not disagree today, but the whole point of naming the file on screen is
+ * that it is the file that was used. */
 static CHAR16 g_uki_ucs2[BLESS_NAME_MAX];
 
-static const CHAR16 *uki_display(const char *uki_name)
+/* From a manifest record's uki=, which is ASCII by the format's own rule. */
+static const CHAR16 *set_name_ascii(const char *uki_name)
 {
     ascii_to_ucs2(g_uki_ucs2, BLESS_NAME_MAX, uki_name);
+    return g_uki_ucs2;
+}
+
+/* From a directory entry, which is already CHAR16: a bare EFI payload is
+ * named by the file on p2 and never by a record (DESIGN Section 7.2). */
+static const CHAR16 *set_name_ucs2(const CHAR16 *name)
+{
+    ucs2_copy(g_uki_ucs2, BLESS_NAME_MAX, name);
     return g_uki_ucs2;
 }
 
@@ -226,15 +237,15 @@ UINTN bless_dropped(void)
 
 /* ---- reading the wrap ---- */
 
-/* Reads the whole UKI into freshly allocated pages.
+/* Reads the whole image into freshly allocated pages.
  *
  * Whole, not streamed: LoadImage takes a buffer and a length, so the image has
  * to be contiguous in memory before the call. Pages rather than pool because
  * a blessed wrap carries an embedded initramfs (Section 8.1) and is hundreds
  * of megabytes, and page-aligned is what every PE loader wants to start from. */
-static EFI_STATUS read_uki(EFI_BOOT_SERVICES *bs, fs_vol *vol,
-                           const fs_dirent *ent, void **buf_out,
-                           UINT64 *size_out, UINTN *pages_out)
+static EFI_STATUS read_image(EFI_BOOT_SERVICES *bs, fs_vol *vol,
+                             const fs_dirent *ent, void **buf_out,
+                             UINT64 *size_out, UINTN *pages_out)
 {
     EFI_PHYSICAL_ADDRESS addr = 0;
     UINT64 size;
@@ -289,7 +300,8 @@ static EFI_STATUS read_uki(EFI_BOOT_SERVICES *bs, fs_vol *vol,
  * filesystem, which outlives the frame that filled it. */
 static CHAR16 g_load_ucs2[BLESS_NAME_MAX + 2];
 
-/* Publishes the image, and only the image.
+/* Publishes the image, and only the image, under the name already in
+ * g_uki_ucs2.
  *
  * No credential and no `<uki>.extra.d` directory: a blessed wrap carries its
  * own initrd and cmdline inside the signature (Section 8.1, amended), so
@@ -297,13 +309,12 @@ static CHAR16 g_load_ucs2[BLESS_NAME_MAX + 2];
  * synthetic filesystem is still what the launch is built on, for the reason
  * src/credfs exists at all: a device-path load is the only kind that gives
  * the started image a LoadedImage->DeviceHandle, and exFAT has no firmware
- * device path of its own to offer. */
-static EFI_STATUS publish_image(EFI_SYSTEM_TABLE *st, const char *uki_name,
-                                void *buf, UINT64 size)
+ * device path of its own to offer. That reason is what makes this the
+ * mechanism a bare EFI payload uses too (DESIGN Section 7.2): it lives on the
+ * same unreadable-to-firmware exFAT and needs the same device path. */
+static EFI_STATUS publish_image(EFI_SYSTEM_TABLE *st, void *buf, UINT64 size)
 {
     credfs_entry tree[1];
-
-    (void)uki_display(uki_name);
 
     /* The File Protocol path LoadImage resolves, absolute from our root. */
     g_load_ucs2[0] = L'\\';
@@ -319,15 +330,23 @@ static EFI_STATUS publish_image(EFI_SYSTEM_TABLE *st, const char *uki_name,
     return credfs_publish(st, tree, 1u);
 }
 
-/* LoadImage/StartImage of the wrap, by device path off the synthetic
- * filesystem when it could be published, from the buffer when it could not.
+/* LoadImage/StartImage of the image in g_uki_ucs2, by device path off the
+ * synthetic filesystem when it could be published, from the buffer when it
+ * could not.
+ *
+ * refused is the one line to print when the platform answers
+ * EFI_SECURITY_VIOLATION. It is a parameter because that is the only thing
+ * the two callers differ in: for a blessed wrap the image IS ours and the
+ * actionable half is the key, and for a bare payload the actionable half is
+ * that the file itself has not been signed yet.
  *
  * *retain is set on the one path that leaves the image's pages published: see
  * the caller, which owns the allocation. */
-static EFI_STATUS launch_uki(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent,
-                             const char *uki_name, void *buf, UINT64 size,
-                             const load_ops *opsp, BOOLEAN inner_blocked,
-                             UINT8 *retain, bless_result *result)
+static EFI_STATUS launch_image(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent,
+                               void *buf, UINT64 size,
+                               const load_ops *opsp, BOOLEAN inner_blocked,
+                               const CHAR16 *refused, UINT8 *retain,
+                               bless_result *result)
 {
     EFI_BOOT_SERVICES *bs = st->BootServices;
     EFI_DEVICE_PATH_PROTOCOL *load_path = (EFI_DEVICE_PATH_PROTOCOL *)0;
@@ -342,11 +361,11 @@ static EFI_STATUS launch_uki(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent,
      * it can be on screen for the whole of a read that takes a while. */
     *retain = 0;
 
-    result->stage = L"publishing the blessed image";
-    status = publish_image(st, uki_name, buf, size);
+    result->stage = L"publishing the image";
+    status = publish_image(st, buf, size);
     if (!EFI_ERROR(status)) {
         published = TRUE;
-        result->stage = L"naming the UKI on the synthetic filesystem";
+        result->stage = L"naming the image on the synthetic filesystem";
         status = credfs_load_path(bs, g_load_ucs2, &load_path);
         if (EFI_ERROR(status)) {
             credfs_teardown(bs);
@@ -361,8 +380,8 @@ static EFI_STATUS launch_uki(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent,
 
     /* Exactly one of DevicePath and SourceBuffer is set, which is what the
      * spec asks for. */
-    result->stage = ops.via_shim ? L"LoadImage of the blessed UKI (shim)"
-                                 : L"LoadImage of the blessed UKI (firmware)";
+    result->stage = ops.via_shim ? L"LoadImage of the image (shim)"
+                                 : L"LoadImage of the image (firmware)";
     status = ops.LoadImage(FALSE, parent, load_path,
                            published ? (void *)0 : buf,
                            published ? (UINTN)0 : (UINTN)size, &child);
@@ -375,24 +394,20 @@ static EFI_STATUS launch_uki(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent,
          * because shim tracks the images it loaded itself. */
         if (status == EFI_SECURITY_VIOLATION && child != (EFI_HANDLE)0)
             ops.UnloadImage(child);
-        if (status == EFI_SECURITY_VIOLATION) {
-            /* The blessed wording of the same refusal main.c reports for an
-             * unblessed ISO: here the image IS ours, so the actionable half
-             * is the key, not the blessing. */
-            result->advice =
-                L"the blessed image is not signed with a key this machine "
-                L"has enrolled.\r\nRe-bless the ISO with the MOK key that is "
-                L"enrolled here, enroll this\r\nstick's certificate with "
-                L"MokManager, or opt out of enforcement in\r\nfirmware setup "
-                L"(Secure Boot off) or with mokutil --disable-validation\r\n"
-                L"(also confirmed at MokManager). Both opt-outs are "
-                L"per-machine and cover\r\nevery unsigned EFI binary, not "
-                L"just this one.";
-        }
+        if (status == EFI_SECURITY_VIOLATION)
+            result->advice = refused;
         if (published && EFI_ERROR(credfs_teardown(bs)))
             *retain = 1;
         return status;
     }
+
+    /* The handoff, said out loud: everything after this call is somebody
+     * else's output, and a wrap that spends seconds decompressing a kernel
+     * before it draws anything is indistinguishable from a hang unless the
+     * boundary is on screen. Pairs with the "exited" line main.c prints if it
+     * comes back. */
+    out(L"handing over to the image; everything below is its own output."
+        L"\r\n\r\n");
 
     result->stage = L"StartImage";
     status = ops.StartImage(child, &exit_size, &exit_data);
@@ -415,12 +430,15 @@ static EFI_STATUS launch_uki(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent,
         return EFI_ACCESS_DENIED;
     }
 
-    result->stage = L"blessed UKI exit";
+    result->stage = L"image exit";
     result->status = status;
     /* A UKI that returns at all has failed (it should have left for a
      * kernel). In this state there is one overwhelming reason for it, the
      * loader knows it, and the stub's own message names shim without
-     * mentioning the setting that actually did it. */
+     * mentioning the setting that actually did it. A bare payload that
+     * returns has merely finished, and inner_blocked cannot be set for one:
+     * the predicate is about an image loading a PE of its own, which is what
+     * sd-stub does and what a self-contained payload by definition does not. */
     if (inner_blocked && EFI_ERROR(status))
         result->advice = load_ops_inner_load_advice();
     return EFI_SUCCESS;
@@ -488,10 +506,10 @@ EFI_STATUS bless_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
             L"\r\n         see the note after it exits.\r\n\r\n");
 
     out(L"reading ");
-    out(uki_display(hit->rec->uki));
+    out(set_name_ascii(hit->rec->uki));
     out(L" ");
     result->stage = L"reading the blessed image";
-    status = read_uki(bs, vol, &ent, &buf, &size, &pages);
+    status = read_image(bs, vol, &ent, &buf, &size, &pages);
     if (EFI_ERROR(status)) {
         if (status == EFI_UNSUPPORTED)
             result->advice = L"the blessed image is empty or implausibly "
@@ -500,10 +518,22 @@ EFI_STATUS bless_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
     }
     out(L"\r\n");
     out_dec(size);
-    out(L" bytes read; starting it.\r\n\r\n");
+    out(L" bytes read.\r\n\r\n");
 
-    status = launch_uki(st, parent_image, hit->rec->uki, buf, size, &ops,
-                        inner_blocked, &retain, result);
+    /* The blessed wording of the refusal main.c reports for an unblessed ISO:
+     * here the image IS ours, so the actionable half is the key, not the
+     * blessing. */
+    status = launch_image(st, parent_image, buf, size, &ops, inner_blocked,
+                          L"the blessed image is not signed with a key this "
+                          L"machine has enrolled.\r\nRe-bless the ISO with "
+                          L"the MOK key that is enrolled here, enroll this"
+                          L"\r\nstick's certificate with MokManager, or opt "
+                          L"out of enforcement in\r\nfirmware setup (Secure "
+                          L"Boot off) or with mokutil --disable-validation"
+                          L"\r\n(also confirmed at MokManager). Both opt-outs "
+                          L"are per-machine and cover\r\nevery unsigned EFI "
+                          L"binary, not just this one.",
+                          &retain, result);
 
     /* The image is loaded and running from the firmware's own copy by now, so
      * these pages are ours to release whether it succeeded or not. Doing it
@@ -514,6 +544,84 @@ EFI_STATUS bless_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
      * something still holds an interface into a filesystem whose one file IS
      * this buffer, so it is leaked on purpose rather than handing a live
      * reader pages the firmware may reissue to somebody else. */
+    if (!retain)
+        bs->FreePages((EFI_PHYSICAL_ADDRESS)(uintptr_t)buf, pages);
+
+    if (EFI_ERROR(status))
+        result->status = status;
+    return status;
+}
+
+/* ---- bare EFI payloads (DESIGN Section 7.2) ---- */
+
+EFI_STATUS bless_payload_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
+                              fs_vol *vol, const fs_dirent *file,
+                              bless_result *result)
+{
+    EFI_BOOT_SERVICES *bs;
+    void *buf = (void *)0;
+    UINT64 size = 0;
+    UINTN pages = 0;
+    UINT8 retain = 0;
+    load_ops ops;
+    EFI_STATUS status;
+
+    if (st == (EFI_SYSTEM_TABLE *)0 || result == (bless_result *)0)
+        return EFI_INVALID_PARAMETER;
+
+    g_st = st;
+    bs = st->BootServices;
+    result->stage = L"starting";
+    result->status = EFI_SUCCESS;
+    result->advice = (const CHAR16 *)0;
+
+    if (vol == (fs_vol *)0 || file == (const fs_dirent *)0)
+        return EFI_INVALID_PARAMETER;
+
+    st->ConOut->ClearScreen(st->ConOut);
+
+    /* No inner-load warning, and FALSE passed for it below rather than the
+     * platform's answer. load_ops_inner_load_blocked is about an image that
+     * loads a PE of its own through gBS->LoadImage, which is what sd-stub
+     * does with its kernel and what a self-contained payload by definition
+     * does not do; printing the UKI warning here would be a warning about a
+     * mechanism this entry never reaches. */
+    resolve_load_ops(bs, &ops);
+
+    out(L"reading ");
+    out(set_name_ucs2(file->name));
+    out(L" ");
+    result->stage = L"reading the payload";
+    status = read_image(bs, vol, file, &buf, &size, &pages);
+    if (EFI_ERROR(status)) {
+        if (status == EFI_UNSUPPORTED)
+            result->advice = L"this payload is empty or implausibly large for "
+                             L"an EFI binary.";
+        return status;
+    }
+    out(L"\r\n");
+    out_dec(size);
+    out(L" bytes read.\r\n\r\n");
+
+    /* The refusal wording that fits a payload: the file on p2 IS what the
+     * platform verified, so the door is signing that file, which is what
+     * blessing a payload does (DESIGN Section 7.2) - and it says so, because
+     * that bless is the one that writes to the user's own file. */
+    status = launch_image(st, parent_image, buf, size, &ops, FALSE,
+                          L"this EFI payload is not signed with a key this "
+                          L"machine has enrolled.\r\nBless it with the sign "
+                          L"tool, which signs the payload file ITSELF and so "
+                          L"changes\r\nit on the stick, or opt out of "
+                          L"enforcement in firmware setup (Secure Boot\r\noff) "
+                          L"or with mokutil --disable-validation (also "
+                          L"confirmed at\r\nMokManager). Both opt-outs are "
+                          L"per-machine and cover every unsigned EFI\r\n"
+                          L"binary, not just this one.",
+                          &retain, result);
+
+    /* Same ownership rule as the blessed path: the firmware has its own copy
+     * by now, so the pages go back unless a filesystem that serves them could
+     * not be taken down. */
     if (!retain)
         bs->FreePages((EFI_PHYSICAL_ADDRESS)(uintptr_t)buf, pages);
 

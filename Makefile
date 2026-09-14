@@ -138,12 +138,14 @@ SIGN_SRCS := \
 	src/cli/sign/util.c \
 	src/cli/sign/isoprobe.c \
 	src/cli/sign/manifestio.c \
+	src/cli/sign/payload.c \
 	src/cli/sign/wimext.c \
 	src/cli/sign/prepcore.c \
 	src/cli/sign/prepare.c \
 	src/manifest/manifest.c \
 	src/manifest/manifest_write.c \
 	src/family/family.c \
+	src/part/part.c \
 	src/crypto/sha256.c \
 	src/crypto/crypto.c
 
@@ -345,6 +347,7 @@ CC_DB_HOST_SRCS := $(CLI_SRCS) \
 	src/cli/sign/util.c \
 	src/cli/sign/isoprobe.c \
 	src/cli/sign/manifestio.c \
+	src/cli/sign/payload.c \
 	src/cli/sign/wimext.c \
 	src/cli/sign/prepcore.c \
 	src/cli/sign/prepare.c \

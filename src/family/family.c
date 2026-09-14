@@ -66,9 +66,12 @@ static const family_desc g_families[] = {
       FAMILY_TRI_UNKNOWN, FAMILY_TRI_UNKNOWN },
 
     /* memtest is a bare EFI binary: it needs no cmdline, no initramfs and no
-     * backing media once loaded, which is why DESIGN Section 6.2 lists it as
-     * the family that needs nothing. The initramfs columns are "no" in the
-     * literal sense that there is no initramfs to carry anything. */
+     * backing media once loaded, which is what the three columns below say.
+     * They do NOT say it needs no blessing. What the platform verifies for a
+     * bare payload is the payload itself, so Secure Boot wants a signature on
+     * it however self-contained it is (DESIGN Section 7.2, decided 2026-09-13
+     * after this family proved unbootable on a db with no Microsoft CA). That
+     * is the bless tool's business and not a column here. */
     { FAMILY_MEMTEST, "memtest",
       (void *)0, 0,
       FAMILY_TRI_NO, FAMILY_TRI_NO },
@@ -163,6 +166,58 @@ static int loader_entries_mention(const family_probe *p, const char *needle)
             return 1;
     }
     return 0;
+}
+
+/* ASCII case-insensitive "does hay contain needle", needle already lower
+ * case. The names this runs over are file names off exFAT, which is where the
+ * case comes from: the same binary ships as MemTest86.efi, memtest86.efi and
+ * MT86.EFI depending on who wrote the stick. */
+static int name_contains(const char *hay, const char *needle)
+{
+    size_t nl = cstr_len(needle);
+    size_t hl = cstr_len(hay);
+    size_t i, j;
+
+    if (nl == 0 || nl > hl)
+        return 0;
+    for (i = 0; i + nl <= hl; i++) {
+        for (j = 0; j < nl; j++) {
+            char c = hay[i + j];
+
+            if (c >= 'A' && c <= 'Z')
+                c = (char)(c + ('a' - 'A'));
+            if (c != needle[j])
+                break;
+        }
+        if (j == nl)
+            return 1;
+    }
+    return 0;
+}
+
+/* The names a memtest payload ships under. Both families spell it this way:
+ * memtest86+ builds memtest.efi/memtest86.efi, and PassMark's MemTest86 uses
+ * mt86 as its short form throughout its own media (mt86.png sits beside the
+ * loader inside the .img this was written for). */
+static const char *const g_memtest_names[] = { "memtest", "mt86" };
+
+const family_desc *family_detect_payload(const char *name)
+{
+    size_t i;
+
+    /* A bare payload has no tree to fingerprint, so the file name is the only
+     * evidence there is, and it is weak evidence: it is a label for the menu
+     * and for a report line, and nothing downstream may act on it. Every
+     * decision that matters about a payload - whether it may run - stays the
+     * platform's, and every decision the bless tool takes about one comes from
+     * the file's own PE headers rather than from here. */
+    if (name == (const char *)0)
+        return family_by_id(FAMILY_UNKNOWN);
+    for (i = 0; i < sizeof(g_memtest_names) / sizeof(g_memtest_names[0]); i++) {
+        if (name_contains(name, g_memtest_names[i]))
+            return family_by_id(FAMILY_MEMTEST);
+    }
+    return family_by_id(FAMILY_UNKNOWN);
 }
 
 const family_desc *family_by_id(family_id id)

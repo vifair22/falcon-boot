@@ -707,17 +707,10 @@ static const family_desc *media_family(EFI_BOOT_SERVICES *bs,
     return family_by_id(FAMILY_UNKNOWN);
 }
 
-/* Does the ISO's default loader carry a certificate table?
- *
- * Read the header, look at data directory 4, report whether its size field is
- * nonzero. That is the entire check, and it is deliberately the entire check:
- * a nonzero size says bytes claiming to be a signature are attached, nothing
- * about whose key signed them or whether the platform will accept them. The
- * answer feeds a menu label and nothing else. */
-static iso_sig root_signature(EFI_FILE_PROTOCOL *root)
+iso_sig iso_pe_signature(const void *buf, UINTN len)
 {
-    uint8_t head[PE_HEAD_MAX];
-    size_t got = 0;
+    const uint8_t *head = buf;
+    size_t got = (size_t)len;
     size_t pe;
     size_t opt;
     size_t nrva_off;
@@ -725,8 +718,8 @@ static iso_sig root_signature(EFI_FILE_PROTOCOL *root)
     uint16_t magic;
     uint32_t nrva;
 
-    if (probe_read(root, ISO_BOOT_PATH, 0, head, sizeof(head), &got) != 0)
-        return ISO_SIG_NO_EFI;
+    if (head == (const uint8_t *)0)
+        return ISO_SIG_UNKNOWN;
 
     /* From here on the file exists but does not parse, which is a different
      * fact from "no loader" and gets a different label. */
@@ -763,6 +756,20 @@ static iso_sig root_signature(EFI_FILE_PROTOCOL *root)
     return get_le32(head + opt + dir_off + DIR_SECURITY * 8u + 4u) != 0
                ? ISO_SIG_PRESENT
                : ISO_SIG_ABSENT;
+}
+
+/* Does the ISO's default loader carry a certificate table? The read is this
+ * function's half of the answer; the parse above is shared with the bare-EFI
+ * payload path, which asks the same question of a file on p2 (DESIGN Section
+ * 7.2) and must not get a second opinion about it. */
+static iso_sig root_signature(EFI_FILE_PROTOCOL *root)
+{
+    uint8_t head[PE_HEAD_MAX];
+    size_t got = 0;
+
+    if (probe_read(root, ISO_BOOT_PATH, 0, head, sizeof(head), &got) != 0)
+        return ISO_SIG_NO_EFI;
+    return iso_pe_signature(head, (UINTN)got);
 }
 
 /* ---- chainload ---- */
@@ -852,6 +859,20 @@ static EFI_STATUS chainload(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
             ops.UnloadImage(child);
         return status;
     }
+
+    /* The handoff, said out loud because everything after it is silence that
+     * belongs to somebody else. A payload may legitimately draw nothing for
+     * several seconds (a kernel before it claims the framebuffer), or draw
+     * only on a console we cannot see (Windows media's cdboot.efi puts its
+     * press-any-key prompt on GOP), and both look exactly like this loader
+     * having hung on the handoff. One line makes the silence attributable.
+     * It is the last thing printed before the screen stops being ours, and it
+     * pairs with the "the payload exited" line the caller prints if it comes
+     * back. */
+    st->ConOut->OutputString(st->ConOut,
+                             (CHAR16 *)(uintptr_t)
+                             L"handing over to the payload; everything below "
+                             L"is its own output.\r\n\r\n");
 
     result->stage = L"StartImage";
     status = ops.StartImage(child, &exit_size, &exit_data);
