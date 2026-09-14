@@ -33,6 +33,9 @@ for (( i = 0; i < ${#TEXT}; i++ )); do
         ',')       send comma;;
         '*')       send shift-8;;
         '>')       send shift-dot;;
+        '@')       send shift-2;;
+        '|')       send shift-backslash;;
+        '~')       send shift-grave_accent;;
         '"')       send shift-apostrophe;;
         *)         echo "mon-type: no key name for '$c'" >&2; exit 1;;
     esac
