@@ -21,8 +21,13 @@
 # FALCON_WIN_ISO set), both runs carry a second leg, the auto-prep contract of
 # DESIGN Section 6.3.1:
 #
-#   run 1  the survey routes the Windows image to the prepare queue, prepares
-#          it WITH p3 STILL LOCKED, and only then unlocks for the bless half.
+#   run 1  the survey routes the Windows image to the prepare queue, offers it
+#          at the PREPARE GATE (DESIGN Section 7.7: nothing pre-marked, a
+#          review that lists every path and states the cost, a typed "yes"),
+#          then prepares it WITH p3 STILL LOCKED and only then unlocks for the
+#          bless half. The gate is driven the long way round on purpose - mark,
+#          review, decline, review again, confirm - because "anything short of
+#          yes cancels" is the half of the gate a happy path never exercises.
 #          The ordering is asserted off the finished log, because "preparation
 #          needs no key" is the claim that makes an auto-prep boot cost the
 #          user no passphrase, and a summary alone would not catch its loss.
@@ -236,6 +241,14 @@ select_count() {
         grep -ac 'select>' || true
 }
 
+# The same, for the preparation gate. The two gates prompt with different
+# words (tools/appliance/init.c, gate_ui), which is what lets a reader of the
+# console - and this driver - tell which one is being answered.
+prepare_count() {
+    tail -c "+$(( ${1:-0} + 1 ))" "$CONSOLE_LOG" 2>/dev/null |
+        grep -ac 'prepare>' || true
+}
+
 # The loader hands the appliance the passphrase it already collected (DESIGN
 # Section 5.1), so the usual path reaches the pending list with no prompt at
 # all; the prompt is the fallback for a missing or stale credential. Which one
@@ -272,6 +285,19 @@ wait_select() {
         i=$(( i + 1 ))
     done
     fail "timed out after ${secs}s waiting for selection prompt #$want"
+}
+
+wait_prepare() {
+    local off="$1" want="$2" secs="${3:-120}" i=0
+
+    while (( i < secs * 10 )); do
+        if (( $(prepare_count "$off") >= want )); then
+            return 0
+        fi
+        sleep 0.1
+        i=$(( i + 1 ))
+    done
+    fail "timed out after ${secs}s waiting for prepare prompt #$want"
 }
 
 size_of() { stat -c%s "$1" 2>/dev/null || echo 0; }
@@ -482,6 +508,62 @@ if [[ -n "$WIN_REL" ]]; then
     wait_for_from "$CONSOLE_LOG" "$RUN1_MARK" "FALCON-APPLIANCE-PREP-PENDING 1" 120
     seen_from "$RUN1_MARK" "p3 stays locked for it" ||
         fail "the appliance did not say preparation leaves p3 locked"
+    # This stick carries both kinds of work, so the run must say so before the
+    # first gate: two operations asked about separately is confusing unless
+    # something names them.
+    seen_from "$RUN1_MARK" "Two kinds of work are waiting" ||
+        fail "a mixed run did not announce its two kinds of work"
+
+    # ---- the prepare gate (DESIGN Section 7.7) ----
+    #
+    # Preparation is a bless operation and passes the same gate as signing, so
+    # nothing may start before a marked set has been reviewed and confirmed.
+    # Every clause of that is asserted here, because the failure this replaces
+    # was an appliance that hashed two multi-gigabyte ISOs having asked
+    # nothing: an unanswered gate would otherwise look exactly like a fast rig.
+    WIN_BASE=$(basename "$WIN_REL")
+    wait_prepare "$RUN1_MARK" 1 120
+    seen_from "$RUN1_MARK" "Windows images that are not prepared yet:" ||
+        fail "the appliance did not print the prepare list"
+    seen_from "$RUN1_MARK" "[ ]  1  $WIN_BASE" ||
+        fail "the Windows image is not offered as unmarked image 1"
+    seen_from "$RUN1_MARK" "FALCON-APPLIANCE-PREP-SELECTED" &&
+        fail "a preparation batch was released before the gate was answered"
+    echo "   prepare gate is up with nothing pre-marked"
+
+    echo "   marking image 1 ($WIN_REL)"
+    say_to_appliance "1"
+    wait_for_from "$CONSOLE_LOG" "$RUN1_MARK" "[x]  1  $WIN_BASE" 60
+    wait_prepare "$RUN1_MARK" 2 60
+    say_to_appliance "done"
+    # The review has to state the cost BEFORE it is incurred: the path in
+    # full, the image's size, the batch total, and that it will take a while.
+    wait_for_from "$CONSOLE_LOG" "$RUN1_MARK" "GiB to hash and repack" 60
+    seen_from "$RUN1_MARK" "  /$WIN_REL" ||
+        fail "the prepare review did not print the image's full path"
+    seen_from "$RUN1_MARK" "take a while" ||
+        fail "the prepare review did not say the batch takes a while"
+    echo "   review:"
+    tail -c "+$(( RUN1_MARK + 1 ))" "$CONSOLE_LOG" |
+        awk '/^review: / { f = 1 } f { print }' | sed 's/\r$//; s/^/     /'
+
+    # Anything short of "yes" cancels, and must cost the marks nothing.
+    echo "   declining the review once"
+    say_to_appliance "no"
+    wait_for_from "$CONSOLE_LOG" "$RUN1_MARK" "not confirmed; back to the list" 60
+    seen_from "$RUN1_MARK" "FALCON-APPLIANCE-PREP-SELECTED" &&
+        fail "a declined review still released the preparation batch"
+
+    # The marks survived the decline, so the same "done" reaches the same
+    # review. Both lines are sent without waiting in between: the appliance's
+    # console is a byte stream it reads one character at a time, so the
+    # answers are consumed by the prompts in the order they were written.
+    wait_prepare "$RUN1_MARK" 3 60
+    echo "   reviewing again and confirming"
+    say_to_appliance "done"
+    say_to_appliance "yes"
+    wait_for_from "$CONSOLE_LOG" "$RUN1_MARK" "FALCON-APPLIANCE-PREP-SELECTED 1" 60
+
     echo "   preparing /$WIN_REL with p3 still locked; this takes minutes"
     T_PREP=$(date +%s%N)
     # Waited for by outcome rather than by clock: the work is proportional to
@@ -512,6 +594,11 @@ else
         fail "nothing Windows is on p2, so nothing should be queued to prepare"
     seen_from "$RUN1_MARK" "FALCON-APPLIANCE-PREP-PENDING" &&
         fail "a preparation batch was announced with nothing to prepare"
+    (( $(prepare_count "$RUN1_MARK") == 0 )) ||
+        fail "a prepare gate was opened with nothing to prepare"
+    echo "   no prepare gate, because nothing on p2 needs preparing"
+    echo "   NOTE: the prepare gate of DESIGN Section 7.7 is NOT exercised by"
+    echo "         this run. Rebuild with FALCON_WIN_ISO to cover it."
 fi
 
 unlock_appliance "$RUN1_MARK"
@@ -587,12 +674,12 @@ echo "   $SUMMARY1"
 # summary would not catch.
 before "$RUN1_MARK" "survey: " "p3 unlocked (read-only)"
 if [[ -n "$WIN_REL" ]]; then
-    [[ "$SUMMARY1" == *"prepared=1 prep-failed=0"* ]] ||
+    [[ "$SUMMARY1" == *"prepared=1 prep-failed=0 prep-skipped=0"* ]] ||
         fail "run 1 summary does not report the prepared image: '$SUMMARY1'"
     before "$RUN1_MARK" "FALCON-APPLIANCE-PREPARED" "p3 unlocked (read-only)"
     echo "   p3 was unlocked only after the preparation batch had finished"
 else
-    [[ "$SUMMARY1" == *"prepared=0 prep-failed=0"* ]] ||
+    [[ "$SUMMARY1" == *"prepared=0 prep-failed=0 prep-skipped=0"* ]] ||
         fail "run 1 summary claims preparation happened: '$SUMMARY1'"
     echo "   p3 was unlocked only after the survey, and nothing was prepared"
 fi

@@ -8,15 +8,23 @@
  * That is the whole program; there is no shell in this initramfs and nothing
  * else to run.
  *
- *   Windows media is PREPARED (DESIGN Sections 6.3 and 6.3.1). Every
- *   unprepared Windows ISO on p2 is prepared in this one run, because the
- *   reboot is the expensive part and batching is what makes dropping three
- *   images cost one of them. Preparation signs nothing, holds no key and
- *   prompts for nothing.
+ *   Windows media is PREPARED (DESIGN Sections 6.3 and 6.3.1). The whole
+ *   batch runs in one boot, because the reboot is the expensive part and
+ *   batching is what makes dropping three images cost one of them. The batch
+ *   is still released by one mark-review-confirm: DESIGN Section 7.7 makes
+ *   patching a bless operation and sends it through the same gate as signing.
+ *   Preparation signs nothing and holds no key.
  *
  *   Everything else is BLESSED (DESIGN Section 7.5). p3 is unlocked, the MOK
  *   private key that lives there is read, and the user marks the unsigned
  *   ISOs one by one and then confirms the marked set as a whole.
+ *
+ * Each half asks its own gate, immediately before the work that gate releases,
+ * so a mixed run proposes two operations in the order they will happen and the
+ * user can accept either without accepting the other. One combined review
+ * would put a minutes-long preparation batch between the signing "yes" and the
+ * signing, which is the opposite of Section 7.7's "at the moment of
+ * confirmation".
  *
  * The two halves are ordered prepare-then-bless, and that ordering is load
  * bearing rather than arbitrary: p3 is opened only if the bless half has
@@ -54,13 +62,14 @@
  *     to the shelf: the UKI wrap and the manifest record both land on p2. A
  *     read-only mapping means a bug in anything downstream cannot damage the
  *     one copy of the key.
- *   - Nothing is signed that the user did not mark by hand and then confirm.
- *     The per-image mark plus the typed "yes" over the reviewed list together
- *     ARE the "I vouch for these" act the design rests on: they are what stops
- *     an ISO someone dropped on the stick from being blessed because it
- *     happened to be sitting there. The list is never pre-marked, and the
- *     confirmation prints every path it is about to sign, so nothing can be
- *     swept in unseen (DESIGN Section 7.5, select-then-sign).
+ *   - Nothing is signed OR patched that the user did not mark by hand and then
+ *     confirm. The per-image mark plus the typed "yes" over the reviewed list
+ *     together ARE the "I vouch for these" act the design rests on: they are
+ *     what stops an ISO someone dropped on the stick from being blessed
+ *     because it happened to be sitting there. Neither list is ever
+ *     pre-marked, and each confirmation prints every path it is about to act
+ *     on, so nothing can be swept in unseen (DESIGN Section 7.5,
+ *     select-then-sign; Section 7.7, the same gate for patched media).
  *   - There is no network in this initramfs (no interface is brought up, and
  *     nothing here would use one), so the decrypted-key window cannot be
  *     reached from outside the machine.
@@ -777,8 +786,16 @@ static int exfat_uuid(const char *node, char *out, size_t cap)
 
 /* fork/exec with our own environment and, optionally, `in` on stdin. No
  * shell anywhere: every argument is passed as a vector, so nothing a file
- * name contains can become syntax. Returns the exit status, or -1. */
-static int run(char *const argv[], const char *in, size_t in_len)
+ * name contains can become syntax. Returns the exit status, or -1.
+ *
+ * `beat_s` non-zero makes the wait say, every that many seconds, that the
+ * child is still running. Only the preparation batch asks for it, and only
+ * because hashing a multi-gigabyte ISO off USB is minutes during which the
+ * tool has nothing to print and the machine is indistinguishable from a hung
+ * one. The line is indented to sit under that batch's per-image lines, which
+ * is the one place it appears. */
+static int run(char *const argv[], const char *in, size_t in_len,
+               unsigned beat_s)
 {
     int pipefd[2] = { -1, -1 };
     pid_t pid;
@@ -824,8 +841,29 @@ static int run(char *const argv[], const char *in, size_t in_len)
         }
         (void)close(pipefd[1]);
     }
-    if (waitpid(pid, &status, 0) < 0)
-        return -1;
+    if (beat_s == 0u) {
+        if (waitpid(pid, &status, 0) < 0)
+            return -1;
+    } else {
+        unsigned elapsed = 0;
+
+        for (;;) {
+            pid_t done = waitpid(pid, &status, WNOHANG);
+
+            if (done == pid)
+                break;
+            if (done < 0) {
+                if (errno == EINTR)
+                    continue;
+                return -1;
+            }
+            (void)usleep(1000u * 1000u);
+            elapsed++;
+            if (elapsed % beat_s == 0u)
+                say("      ... still working (%um%02us so far)\n",
+                    elapsed / 60u, elapsed % 60u);
+        }
+    }
     if (WIFEXITED(status))
         return WEXITSTATUS(status);
     return -1;
@@ -1140,10 +1178,57 @@ static void walk(const char *abs, const char *rel, unsigned depth)
  *
  * DESIGN Section 7.5 (select-then-sign, 2026-09-13): the user marks the images
  * one at a time, the whole marked set is shown back once, and only a typed
- * "yes" over that reviewed set starts any signing. The listing is grouped by
+ * "yes" over that reviewed set starts any work. The listing is grouped by
  * folder so it reads like the loader's own folder-view menu (Section 6 stage
  * 1); the grouping is presentation only, everything below still works on the
- * full p2-relative path. */
+ * full p2-relative path.
+ *
+ * ONE implementation serves both gates, because DESIGN Section 7.7 says the
+ * consent is the same act for signed media and for patched media: "what the
+ * review shows differs; that it is shown, and that the user says yes to it,
+ * does not". So the words the two gates differ in are data below, and the
+ * marking, the numbering, the grouping, the review and the typed word are
+ * code neither gate has its own copy of. */
+
+#define MIB (1024u * 1024u)
+
+/* The per-gate words, plus whether the review has a cost to state. */
+typedef struct {
+    const char *list_head;   /* header above the grouped listing */
+    const char *stale_note;  /* per-image, when the manifest record is stale */
+    const char *mark_lead;   /* the sentence introducing the key summary */
+    const char *prompt;      /* one word per gate, so the console (and the log)
+                              * says which gate is being answered */
+    const char *act;         /* imperative: "type 'yes' to <act> them" */
+    const char *acting;      /* gerund: "leaving without <acting> anything" */
+    const char *acted;       /* participle: "nothing was <acted>" */
+    const char *consent;     /* what saying yes means, printed over the yes */
+    int         show_cost;   /* the review states the batch's size and that it
+                              * will take a while, before it is incurred */
+} gate_ui;
+
+static const gate_ui g_bless_ui = {
+    "pending unsigned images",
+    "blessed earlier; the file has changed since",
+    "Mark what you vouch for, then review it:",
+    "select> ",
+    "sign", "signing", "signed",
+    "Signing these says you trust every one of them to run on this\n"
+    "machine with Secure Boot on.\n",
+    0
+};
+
+static const gate_ui g_prep_ui = {
+    "Windows images that are not prepared yet",
+    "prepared earlier; the file has changed since",
+    "Mark the ones you want prepared, then review them:",
+    "prepare> ",
+    "prepare", "preparing", "prepared",
+    "Preparing leaves your ISO byte for byte as the vendor published it:\n"
+    "the patched boot.wim is staged beside it. Nothing is signed and no\n"
+    "key is read, so p3 stays locked.\n",
+    1
+};
 
 /* The file name half of a p2-relative path. */
 static const char *base_of(const char *rel)
@@ -1185,30 +1270,30 @@ static int cand_cmp(const void *a, const void *b)
     return strcmp(base_of(x->rel), base_of(y->rel));
 }
 
-static size_t selected_count(void)
+static size_t selected_count(const candidate *q, size_t n)
 {
     size_t i;
-    size_t n = 0;
+    size_t sel = 0;
 
-    for (i = 0; i < g_cand_n; i++) {
-        if (g_cand[i].selected)
-            n++;
+    for (i = 0; i < n; i++) {
+        if (q[i].selected)
+            sel++;
     }
-    return n;
+    return sel;
 }
 
 /* One image's line. Printed on its own after a toggle so a dumb serial console
  * does not have to redraw the whole list for every keystroke. */
-static void print_item(size_t i)
+static void print_item(const candidate *q, size_t i, const gate_ui *ui)
 {
-    say("    [%c] %2zu  %s  (%llu MiB)\n", g_cand[i].selected ? 'x' : ' ',
-        i + 1u, base_of(g_cand[i].rel),
-        (unsigned long long)(g_cand[i].size / (1024u * 1024u)));
-    if (g_cand[i].state == MANIFEST_BLESS_STALE)
-        say("           blessed earlier; the file has changed since\n");
+    say("    [%c] %2zu  %s  (%llu MiB)\n", q[i].selected ? 'x' : ' ',
+        i + 1u, base_of(q[i].rel),
+        (unsigned long long)(q[i].size / MIB));
+    if (q[i].state == MANIFEST_BLESS_STALE)
+        say("           %s\n", ui->stale_note);
 }
 
-static void print_list(void)
+static void print_list(const candidate *q, size_t n, const gate_ui *ui)
 {
     char dir[MANIFEST_PATH_MAX];
     char cur[MANIFEST_PATH_MAX];
@@ -1216,9 +1301,9 @@ static void print_list(void)
     int have_cur = 0;
 
     cur[0] = '\0';
-    say("\npending unsigned images:\n\n");
-    for (i = 0; i < g_cand_n; i++) {
-        dir_of(dir, sizeof(dir), g_cand[i].rel);
+    say("\n%s:\n\n", ui->list_head);
+    for (i = 0; i < n; i++) {
+        dir_of(dir, sizeof(dir), q[i].rel);
         if (!have_cur || strcmp(dir, cur) != 0) {
             /* "/" for the root, "Linux/" for a folder: one shape, and the
              * trailing slash is what says "this is a folder, not an image". */
@@ -1226,7 +1311,7 @@ static void print_list(void)
             (void)snprintf(cur, sizeof(cur), "%s", dir);
             have_cur = 1;
         }
-        print_item(i);
+        print_item(q, i, ui);
     }
 }
 
@@ -1235,7 +1320,7 @@ static void print_list(void)
  * anything that is not a number. Deliberately strict: "2 " or "2y" is a typo,
  * and guessing what a typo meant is not a thing to do in front of a signing
  * key. */
-static int parse_index(const char *s, size_t *out)
+static int parse_index(const char *s, size_t n, size_t *out)
 {
     unsigned long v = 0;
     size_t i;
@@ -1246,7 +1331,7 @@ static int parse_index(const char *s, size_t *out)
         if (s[i] < '0' || s[i] > '9')
             return 0;
         v = v * 10u + (unsigned long)(s[i] - '0');
-        if (v > (unsigned long)g_cand_n)
+        if (v > (unsigned long)n)
             return -1;   /* keeps the accumulator from running away too */
     }
     if (v == 0u)
@@ -1255,22 +1340,58 @@ static int parse_index(const char *s, size_t *out)
     return 1;
 }
 
+/* A byte count as a GiB figure with one decimal. Integer arithmetic: a tenth
+ * of a gibibyte is all the precision the cost sentence needs, and a float in
+ * PID 1 buys nothing. */
+static void gib_str(char *out, size_t cap, uint64_t bytes)
+{
+    uint64_t tenths = (bytes * 10u) >> 30;
+
+    (void)snprintf(out, cap, "%llu.%llu", (unsigned long long)(tenths / 10u),
+                   (unsigned long long)(tenths % 10u));
+}
+
 /* The batch review. Prints every marked path in full and takes the one word
  * that authorises the batch. 1 = confirmed, 0 = back to the list (a typo must
- * not cost the marks), -1 = the console closed. */
-static int review(size_t n)
+ * not cost the marks), -1 = the console closed.
+ *
+ * A gate that states a cost states it HERE, over the list and before the yes,
+ * because the cost is part of what is being agreed to: preparation reads each
+ * image whole to hash it and then repacks its boot.wim, which on USB is
+ * minutes of a machine that looks idle. Measured on real hardware
+ * 2026-09-13: two Windows ISOs went straight into that with nothing asked and
+ * nothing said, and the run was indistinguishable from a hang. */
+static int review(const candidate *q, size_t n, size_t sel_n,
+                  const gate_ui *ui)
 {
     char answer[32];
+    uint64_t total = 0;
     size_t i;
 
-    say("\nreview: %zu image%s marked\n\n", n, (n == 1u) ? "" : "s");
-    for (i = 0; i < g_cand_n; i++) {
-        if (g_cand[i].selected)
-            say("  /%s\n", g_cand[i].rel);
+    say("\nreview: %zu image%s marked\n\n", sel_n, (sel_n == 1u) ? "" : "s");
+    for (i = 0; i < n; i++) {
+        if (!q[i].selected)
+            continue;
+        total += q[i].size;
+        if (ui->show_cost)
+            say("  /%s  (%llu MiB)\n", q[i].rel,
+                (unsigned long long)(q[i].size / MIB));
+        else
+            say("  /%s\n", q[i].rel);
     }
-    say("\nSigning these says you trust every one of them to run on this\n"
-        "machine with Secure Boot on.\n"
-        "type 'yes' to sign them, anything else to go back to the list: ");
+    say("\n%s", ui->consent);
+    if (ui->show_cost) {
+        char gib[32];
+
+        gib_str(gib, sizeof(gib), total);
+        say("It costs time: each image is read whole to hash it (the SHA-256\n"
+            "names the staged folder) and then has its boot.wim repacked.\n"
+            "That is %zu image%s, %s GiB to hash and repack. On USB it will\n"
+            "take a while - minutes per image, much of it with nothing new\n"
+            "on screen.\n", sel_n, (sel_n == 1u) ? "" : "s", gib);
+    }
+    say("type 'yes' to %s them, anything else to go back to the list: ",
+        ui->act);
     if (read_line(answer, sizeof(answer)) < 0)
         return -1;
     if (strcmp(answer, "yes") != 0) {
@@ -1280,84 +1401,83 @@ static int review(size_t n)
     return 1;
 }
 
-/* Runs the whole ceremony. Returns 1 when a reviewed set was confirmed, 0 when
- * the user left without vouching for anything. The marks live in
- * g_cand[].selected and start clear. */
-static int choose_candidates(void)
+/* Runs the whole ceremony over one queue. Returns 1 when a reviewed set was
+ * confirmed, 0 when the user left without vouching for anything. The marks
+ * live in q[].selected and start clear, for both gates: nothing is ever
+ * pre-marked (DESIGN Sections 7.5 and 7.7). */
+static int choose(candidate *q, size_t n, const gate_ui *ui)
 {
-    print_list();
-    say("\nMark what you vouch for, then review it:\n"
+    print_list(q, n, ui);
+    say("\n%s\n"
         "  <n>       toggle image n      all, a / none, n  mark every / clear\n"
         "  list, l   reprint the list    done, d           review the marked set\n"
-        "  quit, q   reboot without signing anything\n");
+        "  quit, q   reboot without %s anything\n", ui->mark_lead, ui->acting);
 
     for (;;) {
         char line[64];
         size_t idx;
 
-        say("select> ");
+        say("%s", ui->prompt);
         if (read_line(line, sizeof(line)) < 0) {
-            say("\nconsole closed; nothing was signed.\n");
+            say("\nconsole closed; nothing was %s.\n", ui->acted);
             return 0;
         }
         /* An empty line is "done": it is what a user leans on Enter for, and
-         * on an empty selection "done" only re-prompts, so it cannot sign. */
+         * on an empty selection "done" only re-prompts, so it cannot act. */
         if (line[0] == '\0' || strcasecmp(line, "done") == 0 ||
             strcasecmp(line, "d") == 0) {
-            size_t n = selected_count();
+            size_t sel = selected_count(q, n);
             int r;
 
-            if (n == 0) {
+            if (sel == 0) {
                 say("nothing is marked. Mark an image by number, or 'quit' to\n"
-                    "leave without signing.\n");
+                    "leave without %s.\n", ui->acting);
                 continue;
             }
-            r = review(n);
+            r = review(q, n, sel, ui);
             if (r > 0)
                 return 1;
             if (r < 0) {
-                say("\nconsole closed; nothing was signed.\n");
+                say("\nconsole closed; nothing was %s.\n", ui->acted);
                 return 0;
             }
             continue;
         }
         if (strcasecmp(line, "quit") == 0 || strcasecmp(line, "q") == 0) {
-            say("leaving without signing anything.\n");
+            say("leaving without %s anything.\n", ui->acting);
             return 0;
         }
         if (strcasecmp(line, "list") == 0 || strcasecmp(line, "l") == 0) {
-            print_list();
+            print_list(q, n, ui);
             continue;
         }
         if (strcasecmp(line, "all") == 0 || strcasecmp(line, "a") == 0) {
             size_t i;
 
-            for (i = 0; i < g_cand_n; i++)
-                g_cand[i].selected = 1;
-            print_list();
-            say("all %zu marked; the review lists every one, read it.\n",
-                g_cand_n);
+            for (i = 0; i < n; i++)
+                q[i].selected = 1;
+            print_list(q, n, ui);
+            say("all %zu marked; the review lists every one, read it.\n", n);
             continue;
         }
         if (strcasecmp(line, "none") == 0 || strcasecmp(line, "n") == 0) {
             size_t i;
 
-            for (i = 0; i < g_cand_n; i++)
-                g_cand[i].selected = 0;
-            print_list();
+            for (i = 0; i < n; i++)
+                q[i].selected = 0;
+            print_list(q, n, ui);
             continue;
         }
         {
-            int r = parse_index(line, &idx);
+            int r = parse_index(line, n, &idx);
 
             if (r > 0) {
-                g_cand[idx].selected = !g_cand[idx].selected;
-                print_item(idx);
+                q[idx].selected = !q[idx].selected;
+                print_item(q, idx, ui);
                 continue;
             }
             if (r < 0) {
-                say("there is no image %s; the list has %zu.\n", line,
-                    g_cand_n);
+                say("there is no image %s; the list has %zu.\n", line, n);
                 continue;
             }
         }
@@ -1366,20 +1486,30 @@ static int choose_candidates(void)
     }
 }
 
-/* ---- the preparation half (DESIGN Sections 6.3 and 6.3.1) ----
+/* ---- the preparation half (DESIGN Sections 6.3, 6.3.1 and 7.7) ----
  *
- * No marks, no review and no typed word, and that is the design rather than
- * an omission. The bless ceremony exists because signing an image with the
- * MOK key is the act of vouching for it, and the user has to be the one who
- * does that. Preparation vouches for nothing: it holds no key, alters nothing
- * the platform verifies (every component Secure Boot checks on Windows media
- * is Microsoft-signed and untouched, Section 6.3), and only stages a patched
- * copy of \sources\boot.wim beside the ISO. The confirmation for it already
- * happened at the loader menu, one boot ago, and DESIGN Section 6.3.1 budgets
- * exactly one for the whole batch.
+ * The batch is the unit of WORK and the gate is the unit of CONSENT, and both
+ * of those are in the design at once. Section 6.3.1 wants the appliance to
+ * prepare every unprepared Windows ISO in one boot, so dropping three images
+ * costs one reboot rather than three. Section 7.7 wants patching to pass
+ * through the same review-and-yes as signing, because it is the same act of
+ * authorising a modification to media the user did not produce: "what the
+ * review shows differs; that it is shown, and that the user says yes to it,
+ * does not."
+ *
+ * So the whole batch is released by ONE gate, and the gate is the bless one:
+ * nothing pre-marked, the user marks images, every path on screen at the
+ * moment of confirmation, a typed "yes" over the review.
+ *
+ * Regression it fixes, recorded because the reasoning that lost it was
+ * plausible: the earlier version treated "preparation vouches for nothing, it
+ * holds no key and the platform verifies nothing it touches" as a reason to
+ * skip the gate, and read the loader's prepare-offer as the confirmation. On
+ * real hardware 2026-09-13 that meant an appliance that booted and immediately
+ * began hashing two multi-gigabyte Windows ISOs, having asked nothing and said
+ * nothing about the cost. Needing no key is not the same thing as needing no
+ * consent.
  */
-
-#define MIB (1024u * 1024u)
 
 /* Room left on p2, in bytes; 0 when it cannot be asked. Used only to make a
  * failure legible, never to decide anything: a threshold here would be a
@@ -1437,26 +1567,40 @@ static int prep_tools_present(void)
     return ok;
 }
 
-/* Prepares every queued Windows image, in path order, reporting each. One
+/* How often the wait for one prepare says it is still going. The hash of a
+ * multi-gigabyte ISO is the longest stretch the tool itself has nothing to
+ * print during, and a console that has been silent for four minutes is what
+ * a hang looks like. Half a minute is often enough to read as alive and rare
+ * enough not to bury the tool's own lines. */
+#define PREP_BEAT_S 30u
+
+/* Prepares the marked Windows images, in path order, reporting each. One
  * image failing is that image's problem and the batch carries on: the reboot
  * this run ends in is the expensive part, and abandoning the rest of the
- * queue would charge the user another one per bad ISO. */
-static void prepare_batch(size_t *prepared_n, size_t *failed_n)
+ * queue would charge the user another one per bad ISO.
+ *
+ * Runs only over what the gate confirmed; an unmarked image is a skip, and is
+ * counted as one so the summary accounts for every image the survey found. */
+static void prepare_batch(size_t *prepared_n, size_t *failed_n,
+                          size_t *skipped_n)
 {
+    size_t sel_n = selected_count(g_prep, g_prep_n);
+    size_t done_n = 0;
     size_t i;
 
-    say("\npreparing %zu Windows image%s. This signs nothing and needs no\n"
-        "key, so p3 stays locked for it.\n", g_prep_n,
-        (g_prep_n == 1u) ? "" : "s");
-    say("p2 has %llu MiB free.\n",
-        (unsigned long long)(p2_free_bytes() / MIB));
-    say("\nFALCON-APPLIANCE-PREP-PENDING %zu\n", g_prep_n);
+    say("\nFALCON-APPLIANCE-PREP-SELECTED %zu\n", sel_n);
 
     for (i = 0; i < g_prep_n; i++) {
         char abs[PATH_MAX];
         char rel_arg[MANIFEST_PATH_MAX + 2u];
         uint64_t before;
         int rc;
+
+        if (!g_prep[i].selected) {
+            (*skipped_n)++;
+            continue;
+        }
+        done_n++;
 
         /* The precision restates what add_to already guaranteed (the path
          * fits the field, terminator included), spelled out so the bound is
@@ -1466,11 +1610,17 @@ static void prepare_batch(size_t *prepared_n, size_t *failed_n)
         (void)snprintf(rel_arg, sizeof(rel_arg), "/%.*s",
                        (int)(sizeof(g_prep[i].rel) - 1u), g_prep[i].rel);
 
-        say("\n[%zu/%zu] /%s  (%llu MiB)\n", i + 1u, g_prep_n, g_prep[i].rel,
+        say("\n[%zu/%zu] /%s  (%llu MiB)\n", done_n, sel_n, g_prep[i].rel,
             (unsigned long long)(g_prep[i].size / MIB));
         if (g_prep[i].state == MANIFEST_BLESS_STALE)
-            say("      prepared earlier; the file has changed since\n");
-        say("      preparing; the tool's own progress follows.\n");
+            say("      %s\n", g_prep_ui.stale_note);
+        /* Named phase by phase, because the two are minutes apart in cost and
+         * a user watching a still console needs to know which one it is in.
+         * The tool announces the repack; the hash it announces once and then
+         * has nothing to say for, which is what the beat below covers. */
+        say("      hashing %llu MiB, then repacking boot.wim; the tool's own\n"
+            "      progress follows. The hash is the long quiet part.\n",
+            (unsigned long long)(g_prep[i].size / MIB));
 
         before = p2_free_bytes();
         {
@@ -1482,7 +1632,7 @@ static void prepare_batch(size_t *prepared_n, size_t *failed_n)
                 NULL
             };
 
-            rc = run(argv, NULL, 0);
+            rc = run(argv, NULL, 0, PREP_BEAT_S);
         }
         if (rc == 0) {
             say("      FALCON-APPLIANCE-PREPARED %s\n", g_prep[i].rel);
@@ -1499,6 +1649,27 @@ static void prepare_batch(size_t *prepared_n, size_t *failed_n)
                 (unsigned long long)(before / MIB));
         (*failed_n)++;
     }
+}
+
+/* The gate, then the batch. Nothing here reads a key or touches p3, and the
+ * gate runs before the bless half for the same reason the batch does: an
+ * auto-prep boot must cost no passphrase (DESIGN Section 6.3.1). */
+static void prepare_half(size_t *prepared_n, size_t *failed_n,
+                         size_t *skipped_n)
+{
+    say("\n%zu Windows image%s on p2 %s not prepared yet. Preparing signs\n"
+        "nothing and needs no key, so p3 stays locked for it.\n",
+        g_prep_n, (g_prep_n == 1u) ? "" : "s",
+        (g_prep_n == 1u) ? "is" : "are");
+    say("p2 has %llu MiB free.\n",
+        (unsigned long long)(p2_free_bytes() / MIB));
+    say("\nFALCON-APPLIANCE-PREP-PENDING %zu\n", g_prep_n);
+
+    if (!choose(g_prep, g_prep_n, &g_prep_ui)) {
+        *skipped_n = g_prep_n;
+        return;
+    }
+    prepare_batch(prepared_n, failed_n, skipped_n);
 }
 
 /* ---- teardown ---- */
@@ -1518,7 +1689,7 @@ static void teardown(int p2_mounted, int p3_mounted, int mapped)
         char *argv[] = { (char *)"/usr/bin/cryptsetup", (char *)"close",
                          (char *)MAPPER, NULL };
 
-        if (run(argv, NULL, 0) != 0)
+        if (run(argv, NULL, 0, 0) != 0)
             say("note: could not close the p3 mapping\n");
     }
     sync();
@@ -1598,7 +1769,7 @@ static void bless_half(const stick_parts *parts, int *mapped, int *p3_mounted,
             };
 
             say("unlocking p3 with the passphrase from the loader...\n");
-            if (run(argv, pass, (size_t)clen) == 0)
+            if (run(argv, pass, (size_t)clen, 0) == 0)
                 *mapped = 1;
             else
                 say("the delivered credential did not open p3; "
@@ -1625,7 +1796,7 @@ static void bless_half(const stick_parts *parts, int *mapped, int *p3_mounted,
             *skipped_n = g_cand_n;
             return;
         }
-        rc = run(argv, pass, (size_t)len);
+        rc = run(argv, pass, (size_t)len, 0);
         explicit_bzero(pass, sizeof(pass));
         if (rc == 0) {
             *mapped = 1;
@@ -1676,14 +1847,14 @@ static void bless_half(const stick_parts *parts, int *mapped, int *p3_mounted,
      * DESIGN Section 7.5: the marks are the per-image vouch and the typed
      * "yes" over the reviewed set releases the batch. Nothing below runs
      * unless both happened. */
-    if (!choose_candidates()) {
+    if (!choose(g_cand, g_cand_n, &g_bless_ui)) {
         /* Nothing was vouched for, so every pending image is a skip. */
         *skipped_n = g_cand_n;
         return;
     }
 
     {
-        size_t sel_n = selected_count();
+        size_t sel_n = selected_count(g_cand, g_cand_n);
         size_t done_n = 0;
 
         say("\nFALCON-APPLIANCE-SELECTED %zu\n", sel_n);
@@ -1724,7 +1895,7 @@ static void bless_half(const stick_parts *parts, int *mapped, int *p3_mounted,
 
                 say("\n[%zu/%zu] /%s\n", done_n, sel_n, g_cand[i].rel);
                 say("      signing...\n");
-                rc = run(argv, NULL, 0);
+                rc = run(argv, NULL, 0, 0);
             }
             /* One image failing is that image's problem: the rest of the batch
              * was vouched for too and still deserves to be signed. */
@@ -1750,6 +1921,7 @@ int main(void)
     int p2_mounted = 0;
     size_t prepared_n = 0;
     size_t prep_failed_n = 0;
+    size_t prep_skipped_n = 0;
     size_t signed_n = 0;
     size_t failed_n = 0;
     size_t skipped_n = 0;
@@ -1813,9 +1985,20 @@ int main(void)
         "        %zu already blessed, %zu unreadable\n",
         g_prep_n, g_cand_n, g_done_prepared, g_done_blessed, g_unreadable);
 
+    /* A mixed run proposes two different operations, so it says so once,
+     * before the first gate, rather than leaving the user to work out why
+     * they are being asked twice. */
+    if (g_prep_n > 0 && g_cand_n > 0)
+        say("\nTwo kinds of work are waiting, and each is asked about on its\n"
+            "own: %zu Windows image%s to prepare (patched, never signed, no\n"
+            "key) and %zu image%s to sign with the MOK key on p3. Saying yes\n"
+            "to one is not saying yes to the other.\n",
+            g_prep_n, (g_prep_n == 1u) ? "" : "s",
+            g_cand_n, (g_cand_n == 1u) ? "" : "s");
+
     /* Preparation first, and while p3 is still locked. */
     if (g_prep_n > 0)
-        prepare_batch(&prepared_n, &prep_failed_n);
+        prepare_half(&prepared_n, &prep_failed_n, &prep_skipped_n);
 
     if (g_cand_n == 0)
         say("\nnothing to sign: no ISO on p2 is waiting for the MOK key, so\n"
@@ -1825,8 +2008,9 @@ int main(void)
                    &skipped_n);
 
     say("\nsummary: FALCON-APPLIANCE-SUMMARY prepared=%zu prep-failed=%zu "
-        "signed=%zu failed=%zu skipped=%zu\n",
-        prepared_n, prep_failed_n, signed_n, failed_n, skipped_n);
+        "prep-skipped=%zu signed=%zu failed=%zu skipped=%zu\n",
+        prepared_n, prep_failed_n, prep_skipped_n, signed_n, failed_n,
+        skipped_n);
 
     finish(p2_mounted, p3_mounted, mapped);
     return 0;   /* not reached; finish() reboots */

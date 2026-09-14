@@ -364,6 +364,19 @@ echo "   $SURVEY"
     fail "the Windows ISO was not routed to the prepare queue: '$SURVEY'"
 
 wait_for_from "$CONSOLE_LOG" "$CONSOLE_MARK" "FALCON-APPLIANCE-PREP-PENDING 1" 120
+
+# The prepare gate of DESIGN Section 7.7: the batch does not start until the
+# image has been marked, reviewed and confirmed. run-appliance-proof.sh is
+# where that gate is proved clause by clause; here it is simply answered, so
+# the chain this script exists to show can carry on.
+wait_for_from "$CONSOLE_LOG" "$CONSOLE_MARK" "Windows images that are not" 120
+echo "   prepare gate: marking the image, reviewing it and confirming"
+say_to_appliance "all"
+say_to_appliance "done"
+say_to_appliance "yes"
+wait_for_from "$CONSOLE_LOG" "$CONSOLE_MARK" \
+    "FALCON-APPLIANCE-PREP-SELECTED 1" 60
+
 echo "   preparing /$WIN_REL; this takes minutes and p3 is still locked"
 T_PREP=$(date +%s)
 PREP=
