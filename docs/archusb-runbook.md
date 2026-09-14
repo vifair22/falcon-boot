@@ -551,7 +551,7 @@ Three things about that, all of them checked rather than assumed:
 MODULES=()
 BINARIES=()
 FILES=()
-HOOKS=(base systemd microcode keyboard sd-vconsole modconf voyager-trim block sd-encrypt lvm2 filesystems fsck)
+HOOKS=(base systemd microcode keyboard sd-vconsole modconf voyager-trim block sd-encrypt lvm2 filesystems fsck falcon-credential)
 COMPRESSION="zstd"
 ```
 
@@ -560,13 +560,28 @@ present on the building machine - fatal for a stick meant to boot arbitrary
 hardware. Its absence is why this build works in a chroot at all. Do not add
 it back.
 
-**`systemd` and `sd-encrypt` are what make the credential handoff work**, and
-they are already there. DESIGN Section 5.1: sd-stub packs the credential into
-the initrd at `/.extra/credentials/`, the generators write
-`ImportCredential=cryptsetup.*` into every generated
-`systemd-cryptsetup@.service`, and stock `systemd-cryptsetup` consumes
-`cryptsetup.passphrase` with no hook of ours. No initramfs surgery is needed
-and none should be added.
+**`systemd` and `sd-encrypt` carry the credential into the initramfs**, and
+they are already there. `falcon-credential` is the one hook of ours, and it is
+what makes the credential actually get *used*; it is appended last because it
+only drops a unit override and depends on nothing.
+
+The earlier claim here - that stock `systemd-cryptsetup` consumes
+`cryptsetup.passphrase` with no hook of ours - was wrong, and was proved wrong
+on 2026-09-13. sd-stub does land the credential at
+`/.extra/credentials/cryptsetup.passphrase.cred`, but PID 1 files everything
+arriving by that route under `/run/credentials/@encrypted/`, because the ESP is
+untrusted and credentials delivered through it are expected to be
+`systemd-creds` blobs. The generated unit's `ImportCredential=cryptsetup.*`
+therefore tries to *decrypt* the plaintext passphrase, fails, and the service
+dies at step `CREDENTIALS` with `EINVAL` (status 243) - before
+`systemd-cryptsetup` runs at all, so not even the interactive fallback prompt
+happens. The symptom is a bare `Failed to start Cryptography Setup for
+cryptusb` and a drop into emergency mode.
+
+`tools/archusb/falcon-credential` clears `ImportCredential=` and names the file
+by path instead, taking the plaintext route. With it the unlock succeeds from
+the credential with no prompt. It is an install hook rather than a hand-edit of
+the initramfs precisely so that the next `mkinitcpio -P` keeps it.
 
 **`voyager-trim` stays exactly where it is in HOOKS**, ahead of `block`. See
 TRIM below; the reason is unchanged because p4 still stacks dm-crypt and LVM.
@@ -764,6 +779,7 @@ From `tools/archusb/`:
 | `sign-uki` | `/usr/local/bin/sign-uki` | 0755 |
 | `zz-sign-uki` | `/usr/lib/initcpio/post/zz-sign-uki` | 0755 |
 | `95-sign-uki.hook` | `/etc/pacman.d/hooks/95-sign-uki.hook` | 0644 |
+| `falcon-credential` | `/etc/initcpio/install/falcon-credential` | 0644 |
 | `linux.preset` | `/etc/mkinitcpio.d/linux.preset` | 0644 |
 | `voyager-trim` | `/etc/initcpio/install/voyager-trim` | 0755 |
 | `10-voyager-gtx-trim.rules` | `/etc/udev/rules.d/10-voyager-gtx-trim.rules` | 0644 |
@@ -1287,6 +1303,7 @@ A=<path to airies-boot>/tools/archusb
 install -Dm755 $A/sign-uki                  $T/usr/local/bin/sign-uki
 install -Dm755 $A/zz-sign-uki               $T/usr/lib/initcpio/post/zz-sign-uki
 install -Dm644 $A/95-sign-uki.hook          $T/etc/pacman.d/hooks/95-sign-uki.hook
+install -Dm644 $A/falcon-credential          $T/etc/initcpio/install/falcon-credential
 install -Dm644 $A/linux.preset              $T/etc/mkinitcpio.d/linux.preset
 install -Dm755 $A/voyager-trim              $T/etc/initcpio/install/voyager-trim
 install -Dm644 $A/10-voyager-gtx-trim.rules $T/etc/udev/rules.d/10-voyager-gtx-trim.rules

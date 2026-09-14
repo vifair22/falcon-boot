@@ -268,8 +268,9 @@ Flow:
    our key, so it passes shim verification honestly (via the shim-verified
    load path, Section 7.6). Full verification applies on this path.
 5. The UKI's sd-stub packs the credential into the initrd; the initramfs's
-   stock `systemd-cryptsetup` consumes it to unlock **p4** (LUKS2, argon2id)
-   and pivots into the real root.
+   `systemd-cryptsetup` consumes it to unlock **p4** (LUKS2, argon2id) and
+   pivots into the real root. Consuming it takes one small unit override in the
+   initramfs, for the reason recorded below.
 
 p3 and p4 share the passphrase precisely so this handoff is "reuse the string
 the user already typed." p4 is separate only so EFI never mounts root.
@@ -286,14 +287,40 @@ with zero initramfs modifications). Notes that survive from the build:
   shim-verified but cannot deliver credentials.
 - The credential is named **`cryptsetup.passphrase.cred`** (systemd strips
   the `.cred` suffix to form the credential name; `systemd-cryptsetup`
-  hardcodes `cryptsetup.passphrase`, and the generators write
-  `ImportCredential=cryptsetup.*` into every generated unit, so a stock
-  sd-encrypt initramfs consumes it with no hook). Content is raw passphrase
-  bytes, no trailing newline, no NUL.
-- What remains unproven by the rig: a full systemd initramfs actually
-  unlocking p4 from the credential (the fixture proves delivery, name, and
-  bytes; the consumption code path is verified by source reading of
-  systemd 261). First real-hardware boot closes that gap.
+  hardcodes `cryptsetup.passphrase`). Content is raw passphrase bytes, no
+  trailing newline, no NUL.
+- **The "no hook needed" claim was wrong, and a real initramfs disproved it
+  (2026-09-13).** Delivery was right; consumption was not. PID 1 files every
+  credential arriving from sd-stub under `/run/credentials/@encrypted/`, not
+  `@system`, because the ESP is untrusted and credentials delivered through it
+  are expected to be `systemd-creds` blobs. The generated unit's
+  `ImportCredential=cryptsetup.*` therefore tries to **decrypt** our plaintext
+  passphrase, fails, and the service dies at step `CREDENTIALS` with `EINVAL`
+  (status 243) - before `systemd-cryptsetup` runs at all, so not even the
+  interactive fallback prompt happens. The user-visible symptom is a bare
+  `Failed to start Cryptography Setup for <name>` into emergency mode.
+
+  The fix lives entirely on the OS side, not the loader side: a
+  `systemd-cryptsetup@.service` drop-in that clears `ImportCredential=` and
+  names the file by path, taking the plaintext route instead.
+
+  ```
+  [Service]
+  ImportCredential=
+  LoadCredential=cryptsetup.passphrase:/.extra/credentials/cryptsetup.passphrase.cred
+  ```
+
+  It ships as the `falcon-credential` mkinitcpio install hook
+  (`tools/archusb/falcon-credential`) rather than as a hand-edit, so
+  `mkinitcpio -P` after a kernel or systemd update keeps it. Measured: with the
+  drop-in the unlock succeeds from the credential with no prompt; without it
+  the unit cannot start.
+
+  Why the rig missed it: the fixture UKI proved delivery, name and bytes, but
+  its `/init` was a shell script, not systemd - so nothing ever exercised the
+  credential *import* path. Proof-by-reading of systemd 261 read the consumer
+  (`systemd-cryptsetup`) and not the gatekeeper (PID 1's credential filing).
+  A fixture that does not run the real consumer is not proof of consumption.
 - **UKI discovery convention (settled):** the loader looks in `/uki/` first,
   then `/EFI/Linux/` (the Boot Loader Specification location, so a p3
   populated by `kernel-install` still boots), taking regular files with a
@@ -1626,8 +1653,8 @@ was struck: Windows needs no injector, for the reason in Section 6.1.
 5. UKI path: read-only ext4 + LUKS2/pbkdf2/AES-XTS unlock of p3 + LoadImage the
    personal-OS UKI.
 6. Passphrase handoff: virtual credential filesystem synthesized by the
-   loader, sd-stub `.cred` pickup, stock `systemd-cryptsetup` consumes the
-   credential, p4 unlock (Section 5.1).
+   loader, sd-stub `.cred` pickup, `systemd-cryptsetup` consumes the credential
+   via the `falcon-credential` drop-in, p4 unlock (Section 5.1).
 7. Host tooling: `mkstick`, MOK keygen (private key onto p3, cert onto p1), shim
    install with correct next-stage naming, signing our loader/UKIs, and the
    portable `falcon-boot sign` tool for blessing media.
