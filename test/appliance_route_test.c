@@ -18,6 +18,13 @@
  *   the family  Windows is prepared, everything else is blessed, and that is
  *               the only thing the family decides here.
  *
+ *   payloads    a bare .efi or .img is blessed and never prepared, and what
+ *               makes one "already done" is our certificate inside it rather
+ *               than a record beside it (DESIGN Section 7.2). Both halves of
+ *               that are silent when wrong: a payload routed to the prepare
+ *               queue would be handed to a tool that refuses it, and one
+ *               wrongly called done is one the user never gets to sign.
+ *
  *   the kinds   a current record counts only when its kind is the kind this
  *               medium's own path produces. The crossed cases (a prepared
  *               record on Linux media, a blessed one on Windows media) name
@@ -163,6 +170,61 @@ static void test_route_fresh_wrong_kind_is_work(void **state)
                                     g_linux_families[i]), APPL_JOB_SIGN);
 }
 
+/* --------------------------------------------------- bare payloads */
+
+/* The set of names the appliance surveys has to be the set the loader lists
+ * (src/efi/main.c: *.iso, *.img, *.efi), and the split between the wrap path
+ * and the payload path inside that set is this one function. An appliance
+ * that disagreed with the menu here would leave a user looking at an entry it
+ * cannot offer to bless. */
+static void test_route_payload_shapes_are_the_loader_set(void **state)
+{
+    (void)state;
+    assert_int_equal(sgn_payload_shape_of("Other/Shell.efi"), SGN_PAYLOAD_EFI);
+    assert_int_equal(sgn_payload_shape_of("Other/memtest86-usb.img"),
+                     SGN_PAYLOAD_IMG);
+    assert_int_equal(sgn_payload_shape_of("Linux/arch.iso"), SGN_PAYLOAD_NONE);
+
+    /* The extension, not the name: an ISO whose name happens to contain the
+     * other extensions is still an ISO, and the case is the user's. */
+    assert_int_equal(sgn_payload_shape_of("efi-img.iso"), SGN_PAYLOAD_NONE);
+    assert_int_equal(sgn_payload_shape_of("BOOTX64.EFI"), SGN_PAYLOAD_EFI);
+}
+
+static void test_route_payload_is_never_prepared(void **state)
+{
+    static const appl_ours all[] = { APPL_OURS_UNKNOWN, APPL_OURS_NO,
+                                     APPL_OURS_YES };
+    size_t i;
+
+    (void)state;
+    /* Preparation rewrites boot.wim inside Windows install media and there is
+     * no such thing inside a PE. Pinned over every answer to the certificate
+     * question, because none of them is a reason to prepare anything. */
+    for (i = 0; i < sizeof(all) / sizeof(all[0]); i++) {
+        appl_job job = appl_route_payload(all[i]);
+
+        assert_int_not_equal(job, APPL_JOB_PREPARE);
+        assert_int_not_equal(job, APPL_JOB_DONE_PREPARED);
+    }
+}
+
+static void test_route_payload_done_is_our_certificate(void **state)
+{
+    (void)state;
+    /* The whole of "already done" for a payload: our exact certificate is in
+     * it. This is sgn_payload_signed_with's question and not a second one, so
+     * the queue and the tool cannot disagree about a file. */
+    assert_int_equal(appl_route_payload(APPL_OURS_YES), APPL_JOB_DONE_BLESSED);
+    assert_int_equal(appl_route_payload(APPL_OURS_NO), APPL_JOB_SIGN);
+
+    /* Unknown is the survey's state, while p3 still holds the certificate to
+     * ask with, and it must answer SIGN: offering a payload that turns out to
+     * carry our certificate costs a listing line and a tool run that signs
+     * nothing, and hiding one that does not costs a boot. */
+    assert_int_equal(appl_route_payload(APPL_OURS_UNKNOWN), APPL_JOB_SIGN);
+}
+
 /* ------------------------------------------- agreement with the tool */
 
 /* The appliance routes an image and `falcon-boot-sign prepare` then decides
@@ -217,6 +279,9 @@ int run_appliance_route_tests(void)
         cmocka_unit_test(test_route_stale_is_work_again),
         cmocka_unit_test(test_route_fresh_matching_kind_is_done),
         cmocka_unit_test(test_route_fresh_wrong_kind_is_work),
+        cmocka_unit_test(test_route_payload_shapes_are_the_loader_set),
+        cmocka_unit_test(test_route_payload_is_never_prepared),
+        cmocka_unit_test(test_route_payload_done_is_our_certificate),
         cmocka_unit_test(test_route_agrees_with_prep_lookup),
     };
 

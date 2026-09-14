@@ -15,7 +15,12 @@
 #   cryptsetup   unlocks p3 so the MOK private key can be read
 #   bsdtar       lists and extracts the ISO (this is what `sign` reads with)
 #   ukify        wraps the extracted kernel into a UKI
-#   sbsign       signs that wrap
+#   sbsign       signs that wrap, and appends to a bare payload
+#   sbverify     counts the signatures a bare payload carries before and after
+#                (DESIGN Section 7.2: blessing one must ADD ours and keep the
+#                vendor's, and the count is one of the three checks that says
+#                so). Only the payload path runs it, and it refuses up front
+#                without it rather than part way through
 #
 # and preparing Windows media (DESIGN Sections 6.3 and 6.3.1), which holds no
 # key and signs nothing:
@@ -38,9 +43,9 @@
 #
 # Everything else in the image is closure: the shared libraries those programs
 # need (walked with ldd), the Python runtime ukify is written in, and the
-# kernel modules Arch ships outside its vmlinuz (dm-crypt and exfat, plus what
-# modules.dep says they need). There is no shell, no network tooling, and no
-# package manager.
+# kernel modules Arch ships outside its vmlinuz (dm-crypt, exfat, loop and
+# vfat, plus what modules.dep says they need). There is no shell, no network
+# tooling, and no package manager.
 #
 # What that costs, measured 2026-09-13 on this host: 83 MB of initramfs
 # uncompressed, 24 MB compressed, a 40 MB UKI next to a 17 MB kernel, and ten
@@ -130,6 +135,10 @@ HOST_CFLAGS=(
 # the queue `falcon-boot-sign` will agree with when it is handed the file.
 # util.c and the two crypto units come along because isoprobe calls into them,
 # not as anything this program uses directly.
+# src/cli/sign/payload.c comes in for two answers the survey needs and must
+# not have its own version of: which file names are bare payloads, and whether
+# one already carries this stick's certificate (DESIGN Section 7.2). The
+# signing itself still happens in the tool, in its own process.
 INIT_SRCS=(
     tools/appliance/init.c
     tools/appliance/route.c
@@ -137,6 +146,7 @@ INIT_SRCS=(
     src/manifest/manifest.c
     src/family/family.c
     src/cli/sign/isoprobe.c
+    src/cli/sign/payload.c
     src/cli/sign/util.c
     src/crypto/sha256.c
     src/crypto/crypto.c
@@ -147,6 +157,7 @@ INIT_SRCS=(
 BINARIES=(
     /usr/bin/cryptsetup
     /usr/bin/sbsign
+    /usr/bin/sbverify
     /usr/bin/bsdtar
     /usr/bin/7z
     /usr/bin/wimlib-imagex
@@ -178,12 +189,28 @@ BINARIES=(
 # device-tree and cannot apply on x86; hid-multitouch is a touchpad and nothing
 # here needs a pointer.
 #
+# Write into a .img payload: blessing one signs the loader inside the image's
+# own filesystem, and src/cli/sign/payload.c does that through the kernel
+# rather than through mtools - a loop device configured for the partition's
+# byte range, mounted vfat. Neither driver is built in (CONFIG_BLK_DEV_LOOP=m,
+# CONFIG_VFAT_FS=m, read out of this kernel's own IKCONFIG), and vfat's
+# dependency on fat is resolved below rather than listed.
+#
+# What is deliberately NOT listed is the character sets that mount needs. A
+# vfat mount with no options loads the codepage and the I/O charset the kernel
+# was configured with, and a missing one fails the mount with a message about
+# a charset rather than about the image; here they are CONFIG_FAT_DEFAULT_
+# CODEPAGE=437 and CONFIG_FAT_DEFAULT_IOCHARSET="ascii", and both nls_cp437
+# and nls_ascii are BUILT IN on this kernel (they appear in modules.builtin,
+# not in modules.dep). Naming either would be a build failure by the rule
+# below, which is the resolver doing its job.
+#
 # Names are the ones modules.dep uses, hyphens and all, because the resolver
 # below looks them up literally rather than going through modprobe's aliasing.
 # Only list what is actually a module: the host controller (xhci-pci, xhci-hcd) and the SCSI disk layer
 # (sd_mod) are built into Arch's kernel and naming them here is a build
 # failure, correctly, since the same failure is what a typo deserves.
-MODULES=(dm-crypt exfat usb-storage uas i2c-hid i2c-hid-acpi)
+MODULES=(dm-crypt exfat loop vfat usb-storage uas i2c-hid i2c-hid-acpi)
 
 # PYTHON: ukify is a Python program, so the appliance carries an interpreter.
 # Everything here is dropped rather than kept: test suites, the GUI and REPL

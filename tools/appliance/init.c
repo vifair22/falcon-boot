@@ -19,6 +19,13 @@
  *   private key that lives there is read, and the user marks the unsigned
  *   ISOs one by one and then confirms the marked set as a whole.
  *
+ *   A bare EFI payload (a .efi, or a .img whose payload is one) is blessed
+ *   too, and it is the one bless that WRITES TO THE USER'S OWN FILE: the
+ *   payload boots as itself, so there is no wrap to put the signature in
+ *   instead (DESIGN Section 7.2). The review therefore names every file that
+ *   will be written to, inside a .img as well as outside one, in the sign
+ *   tool's own words, before the yes that releases it.
+ *
  * Each half asks its own gate, immediately before the work that gate releases,
  * so a mixed run proposes two operations in the order they will happen and the
  * user can accept either without accepting the other. One combined review
@@ -82,6 +89,10 @@
  * ISO is classified through src/cli/sign/isoprobe.c and src/family/family.c,
  * which is the reader and the table `falcon-boot-sign` itself uses, so the
  * survey cannot put an image in a queue the tool will then refuse it from.
+ * The set of file names the survey looks at is the LOADER's set (src/efi
+ * /main.c: *.iso, *.img, *.efi), because an appliance that disagreed with the
+ * menu about what counts as media would be unable to bless something the user
+ * can see and boot.
  *
  * Built static by tools/appliance/mk-appliance.sh: it is PID 1 in an
  * initramfs whose dynamic loader exists for the other binaries, not for this
@@ -93,6 +104,7 @@
 
 #include <appliance/route.h>
 
+#include <cli/sign/payload.h>
 #include <cli/sign/prepcore.h>
 #include <cli/sign/sign.h>
 #include <family/family.h>
@@ -173,9 +185,11 @@
 #define WALK_MAX_DEPTH 8
 
 /* Where the build script stages the kernel modules this flow needs. Arch's
- * kernel builds ext4 in but ships device-mapper and exFAT as modules, so the
- * appliance carries them rather than assuming: without dm-crypt there is no
- * unlock, and without exfat there is no p2.
+ * kernel builds ext4 in but ships device-mapper, exFAT, the loop driver and
+ * FAT as modules, so the appliance carries them rather than assuming: without
+ * dm-crypt there is no unlock, without exfat there is no p2, and without loop
+ * and vfat there is no way into the filesystem inside a .img payload, which
+ * is where src/cli/sign/payload.c has to write.
  *
  * The files are named NN-<module>.ko and loaded in name order, because that
  * order is a dependency order the build script computed from the kernel's own
@@ -784,6 +798,47 @@ static int exfat_uuid(const char *node, char *out, size_t cap)
 
 /* ---- running children ---- */
 
+/* Forwards a child's output to every console, one whole line at a time and
+ * with a prefix so it sits under the appliance's own lines. Whole lines
+ * because con_write's contract is one write per line; a line too long for the
+ * buffer is emitted in pieces rather than waited on. */
+static void echo_child(int fd, const char *prefix)
+{
+    char buf[512];
+    size_t len = 0;
+
+    for (;;) {
+        ssize_t n = read(fd, buf + len, sizeof(buf) - 1u - len);
+        size_t start = 0;
+        size_t i;
+
+        if (n < 0 && errno == EINTR)
+            continue;
+        if (n <= 0)
+            break;
+        len += (size_t)n;
+        for (i = 0; i < len; i++) {
+            if (buf[i] != '\n')
+                continue;
+            buf[i] = '\0';
+            say("%s%s\n", prefix, buf + start);
+            start = i + 1u;
+        }
+        if (start > 0u) {
+            memmove(buf, buf + start, len - start);
+            len -= start;
+        } else if (len + 1u >= sizeof(buf)) {
+            buf[len] = '\0';
+            say("%s%s\n", prefix, buf);
+            len = 0;
+        }
+    }
+    if (len > 0u) {
+        buf[len] = '\0';
+        say("%s%s\n", prefix, buf);
+    }
+}
+
 /* fork/exec with our own environment and, optionally, `in` on stdin. No
  * shell anywhere: every argument is passed as a vector, so nothing a file
  * name contains can become syntax. Returns the exit status, or -1.
@@ -793,16 +848,37 @@ static int exfat_uuid(const char *node, char *out, size_t cap)
  * because hashing a multi-gigabyte ISO off USB is minutes during which the
  * tool has nothing to print and the machine is indistinguishable from a hung
  * one. The line is indented to sit under that batch's per-image lines, which
- * is the one place it appears. */
+ * is the one place it appears.
+ *
+ * `echo` non-NULL routes the child's own output through say() with that
+ * prefix, instead of letting it inherit /dev/console. Only the payload path
+ * asks for it: what that child prints is the statement that this bless writes
+ * to the user's file and the report of what it wrote, and those have to reach
+ * the console the user is actually at. /dev/console is only ever one of them
+ * (see the console section above), and on a serial-only machine it is not the
+ * one the appliance's own prompts came out of.
+ *
+ * `in` and `echo` together would need both pipes pumped at once to be safe
+ * against a child that fills the output pipe before reading its input; no
+ * caller asks for both, and the input pipe is drained first below. */
 static int run(char *const argv[], const char *in, size_t in_len,
-               unsigned beat_s)
+               unsigned beat_s, const char *echo)
 {
     int pipefd[2] = { -1, -1 };
+    int outfd[2] = { -1, -1 };
     pid_t pid;
     int status = 0;
 
     if (in != NULL && pipe(pipefd) != 0) {
         say("ERROR: pipe: %s\n", strerror(errno));
+        return -1;
+    }
+    if (echo != NULL && pipe(outfd) != 0) {
+        say("ERROR: pipe: %s\n", strerror(errno));
+        if (in != NULL) {
+            (void)close(pipefd[0]);
+            (void)close(pipefd[1]);
+        }
         return -1;
     }
 
@@ -813,6 +889,10 @@ static int run(char *const argv[], const char *in, size_t in_len,
             (void)close(pipefd[0]);
             (void)close(pipefd[1]);
         }
+        if (echo != NULL) {
+            (void)close(outfd[0]);
+            (void)close(outfd[1]);
+        }
         return -1;
     }
     if (pid == 0) {
@@ -820,6 +900,14 @@ static int run(char *const argv[], const char *in, size_t in_len,
             (void)close(pipefd[1]);
             (void)dup2(pipefd[0], 0);
             (void)close(pipefd[0]);
+        }
+        if (echo != NULL) {
+            /* stderr as well as stdout: the tool's refusals are the half of
+             * its output a user most needs to see. */
+            (void)close(outfd[0]);
+            (void)dup2(outfd[1], 1);
+            (void)dup2(outfd[1], 2);
+            (void)close(outfd[1]);
         }
         (void)execve(argv[0], argv, g_child_env);
         /* execve only returns on failure, and the parent has no other way to
@@ -840,6 +928,11 @@ static int run(char *const argv[], const char *in, size_t in_len,
             off += (size_t)n;
         }
         (void)close(pipefd[1]);
+    }
+    if (echo != NULL) {
+        (void)close(outfd[1]);
+        echo_child(outfd[0], echo);
+        (void)close(outfd[0]);
     }
     if (beat_s == 0u) {
         if (waitpid(pid, &status, 0) < 0)
@@ -955,11 +1048,16 @@ static ssize_t read_line(char *buf, size_t cap)
 /* ---- the ISO survey ---- */
 
 typedef struct {
-    char           rel[MANIFEST_PATH_MAX];  /* path relative to the p2 root */
-    uint64_t       size;
-    manifest_bless state;                   /* NONE or STALE; FRESH is done */
-    family_id      fam;
-    int            selected;                /* marked by hand; never preset */
+    char              rel[MANIFEST_PATH_MAX]; /* path relative to the p2 root */
+    uint64_t          size;
+    manifest_bless    state;                /* NONE or STALE; FRESH is done */
+    family_id         fam;
+    /* NONE for an ISO. A payload is signed in place, which decides what the
+     * review has to disclose and which arguments the tool is given, so the
+     * shape travels with the candidate rather than being re-derived from the
+     * name at each of those points. */
+    sgn_payload_shape shape;
+    int               selected;             /* marked by hand; never preset */
 } candidate;
 
 static manifest_record g_records[MAX_RECORDS];
@@ -1009,13 +1107,14 @@ static int ends_with_iso(const char *name)
 }
 
 /* Appends to one of the two queues. `what` names the queue in the overflow
- * message, because "more than 64 pending ISOs" is a different problem
+ * message, because "more than 64 pending images" is a different problem
  * depending on which half ran out. */
 static void add_to(candidate *q, size_t *n, const char *what, const char *rel,
-                   uint64_t size, manifest_bless st, family_id fam)
+                   uint64_t size, manifest_bless st, family_id fam,
+                   sgn_payload_shape shape)
 {
     if (*n >= MAX_CANDIDATES) {
-        say("note: more than %u ISOs %s; the rest are not listed\n",
+        say("note: more than %u images %s; the rest are not listed\n",
             (unsigned)MAX_CANDIDATES, what);
         return;
     }
@@ -1028,6 +1127,7 @@ static void add_to(candidate *q, size_t *n, const char *what, const char *rel,
     q[*n].size = size;
     q[*n].state = st;
     q[*n].fam = fam;
+    q[*n].shape = shape;
     q[*n].selected = 0;
     (*n)++;
 }
@@ -1083,9 +1183,79 @@ static int sidecars_intact(const manifest_record *rec)
     return 1;
 }
 
-/* Recursive walk of p2 looking for *.iso. `rel` is the path so far relative
- * to the p2 root, which is the form the manifest records and the form `sign`
- * embeds in the signed cmdline. */
+/* One file's whole survey, split out because a payload and an ISO answer the
+ * two questions below differently and neither answer belongs in the walk.
+ *
+ * A payload is not read as an ISO: there is nothing in a PE or a FAT image
+ * for bsdtar to list, so classify() would report it unreadable and drop a
+ * perfectly blessable file. Its family is decided inside the tool, from the
+ * volumes inside the image, and only to refuse the families that boot
+ * something after the payload (sgn_payload_refusal).
+ *
+ * Nor is a payload looked up in the manifest. It has no record by design
+ * (DESIGN Section 7.2), so a lookup could only find one somebody wrote by
+ * hand, and honouring that would be treating an editable file as evidence
+ * about a signature. Whether it is already blessed is asked of the PE itself,
+ * later, where the certificate to ask with exists (payload_prefilter). */
+static void survey_file(const char *abs, const char *rel, uint64_t size)
+{
+    sgn_payload_shape shape = sgn_payload_shape_of(rel);
+    const manifest_record *rec = NULL;
+    manifest_bless state = MANIFEST_BLESS_NONE;
+    manifest_kind kind = MANIFEST_KIND_BLESSED;
+    family_id fam = FAMILY_UNKNOWN;
+    appl_job job;
+
+    if (shape != SGN_PAYLOAD_NONE) {
+        job = appl_route_payload(APPL_OURS_UNKNOWN);
+    } else {
+        state = manifest_lookup(g_records, g_record_n, rel, size, &rec);
+        if (rec != NULL)
+            kind = rec->kind;
+        if (classify(abs, &fam) != 0) {
+            /* Not a refusal to proceed, and not a silent drop either: an
+             * unreadable file named .iso is offered to neither half, because
+             * both would fail on it further in and with less to say about
+             * why. */
+            say("  unreadable  /%s\n              %s\n", rel, sgn_error());
+            g_unreadable++;
+            return;
+        }
+        job = appl_route(state, kind, fam);
+    }
+
+    switch (job) {
+    case APPL_JOB_DONE_PREPARED:
+        if (!sidecars_intact(rec)) {
+            say("  prepared    /%s\n"
+                "              the manifest says so, but the staged\n"
+                "              files are missing or the wrong length;\n"
+                "              preparing it again\n", rel);
+            add_to(g_prep, &g_prep_n, "to prepare", rel, size, state, fam,
+                   shape);
+            break;
+        }
+        say("  prepared    /%s (already; skipping)\n", rel);
+        g_done_prepared++;
+        break;
+    case APPL_JOB_DONE_BLESSED:
+        say("  blessed     /%s (already; skipping)\n", rel);
+        g_done_blessed++;
+        break;
+    case APPL_JOB_PREPARE:
+        add_to(g_prep, &g_prep_n, "to prepare", rel, size, state, fam, shape);
+        break;
+    case APPL_JOB_SIGN:
+    default:
+        add_to(g_cand, &g_cand_n, "to sign", rel, size, state, fam, shape);
+        break;
+    }
+}
+
+/* Recursive walk of p2 looking for what the loader's own scan lists: *.iso,
+ * *.img and *.efi (src/efi/main.c). `rel` is the path so far relative to the
+ * p2 root, which is the form the manifest records and the form `sign` embeds
+ * in the signed cmdline. */
 static void walk(const char *abs, const char *rel, unsigned depth)
 {
     DIR *d = opendir(abs);
@@ -1118,58 +1288,13 @@ static void walk(const char *abs, const char *rel, unsigned depth)
                 walk(child_abs, child_rel, depth + 1u);
             continue;
         }
-        if (!S_ISREG(st.st_mode) || !ends_with_iso(e->d_name))
+        if (!S_ISREG(st.st_mode))
+            continue;
+        if (!ends_with_iso(e->d_name) &&
+            sgn_payload_shape_of(e->d_name) == SGN_PAYLOAD_NONE)
             continue;
 
-        {
-            uint64_t size = (uint64_t)st.st_size;
-            const manifest_record *rec = NULL;
-            manifest_bless state = manifest_lookup(g_records, g_record_n,
-                                                   child_rel, size, &rec);
-            manifest_kind kind = (rec != NULL) ? rec->kind
-                                               : MANIFEST_KIND_BLESSED;
-            family_id fam = FAMILY_UNKNOWN;
-
-            if (classify(child_abs, &fam) != 0) {
-                /* Not a refusal to proceed, and not a silent drop either: an
-                 * unreadable file named .iso is offered to neither half,
-                 * because both would fail on it further in and with less to
-                 * say about why. */
-                say("  unreadable  /%s\n              %s\n", child_rel,
-                    sgn_error());
-                g_unreadable++;
-                continue;
-            }
-
-            switch (appl_route(state, kind, fam)) {
-            case APPL_JOB_DONE_PREPARED:
-                if (!sidecars_intact(rec)) {
-                    say("  prepared    /%s\n"
-                        "              the manifest says so, but the staged\n"
-                        "              files are missing or the wrong length;\n"
-                        "              preparing it again\n", child_rel);
-                    add_to(g_prep, &g_prep_n, "to prepare", child_rel, size,
-                           state, fam);
-                    break;
-                }
-                say("  prepared    /%s (already; skipping)\n", child_rel);
-                g_done_prepared++;
-                break;
-            case APPL_JOB_DONE_BLESSED:
-                say("  blessed     /%s (already; skipping)\n", child_rel);
-                g_done_blessed++;
-                break;
-            case APPL_JOB_PREPARE:
-                add_to(g_prep, &g_prep_n, "to prepare", child_rel, size,
-                       state, fam);
-                break;
-            case APPL_JOB_SIGN:
-            default:
-                add_to(g_cand, &g_cand_n, "to sign", child_rel, size, state,
-                       fam);
-                break;
-            }
-        }
+        survey_file(child_abs, child_rel, (uint64_t)st.st_size);
     }
     (void)closedir(d);
 }
@@ -1282,13 +1407,28 @@ static size_t selected_count(const candidate *q, size_t n)
     return sel;
 }
 
+/* A size a human reads at a glance. KiB below a mebibyte, because the library
+ * now holds bare payloads as well as images and a 900 KiB Shell.efi listed as
+ * "0 MiB" reads as an empty file. */
+static void size_str(char *out, size_t cap, uint64_t bytes)
+{
+    if (bytes < MIB)
+        (void)snprintf(out, cap, "%llu KiB",
+                       (unsigned long long)(bytes / 1024u));
+    else
+        (void)snprintf(out, cap, "%llu MiB",
+                       (unsigned long long)(bytes / MIB));
+}
+
 /* One image's line. Printed on its own after a toggle so a dumb serial console
  * does not have to redraw the whole list for every keystroke. */
 static void print_item(const candidate *q, size_t i, const gate_ui *ui)
 {
-    say("    [%c] %2zu  %s  (%llu MiB)\n", q[i].selected ? 'x' : ' ',
-        i + 1u, base_of(q[i].rel),
-        (unsigned long long)(q[i].size / MIB));
+    char size[32];
+
+    size_str(size, sizeof(size), q[i].size);
+    say("    [%c] %2zu  %s  (%s)\n", q[i].selected ? 'x' : ' ',
+        i + 1u, base_of(q[i].rel), size);
     if (q[i].state == MANIFEST_BLESS_STALE)
         say("           %s\n", ui->stale_note);
 }
@@ -1351,6 +1491,43 @@ static void gib_str(char *out, size_t cap, uint64_t bytes)
                    (unsigned long long)(tenths % 10u));
 }
 
+/* What blessing this payload will write to, in the sign tool's own words and
+ * before the yes that releases it (DESIGN Section 7.2).
+ *
+ * The words are the tool's rather than ours, and that is the point. --dry-run
+ * is the bless about to be confirmed minus the writes: it opens the image the
+ * same way and names every file inside it that would be written to, partition
+ * by partition. A sentence composed here would be a second description of
+ * what src/cli/sign/payload.c does, free to drift from it, and it could not
+ * name what is inside a .img without a second copy of that volume walk.
+ *
+ * The output is echoed through this program rather than left to the child's
+ * inherited console, because this is the statement the whole gate turns on
+ * and it has to arrive on the console the user is answering from.
+ *
+ * A refusal (a family whose boot runs something after the payload) surfaces
+ * here too, which is the right moment for it: before anything is vouched
+ * for. */
+static void payload_disclosure(const candidate *c)
+{
+    char abs[PATH_MAX];
+
+    (void)snprintf(abs, sizeof(abs), "%s/%.*s", P2_MNT,
+                   (int)(sizeof(c->rel) - 1u), c->rel);
+    {
+        char *argv[] = {
+            (char *)SIGN_TOOL, abs,
+            (char *)"--key", (char *)KEY_PATH,
+            (char *)"--cert", (char *)CERT_PATH,
+            (char *)"--dry-run", NULL
+        };
+
+        if (run(argv, NULL, 0, 0, "      ") != 0)
+            say("      the sign tool would not act on this file; confirming\n"
+                "      the set will fail on it and leave it as it is.\n");
+    }
+}
+
 /* The batch review. Prints every marked path in full and takes the one word
  * that authorises the batch. 1 = confirmed, 0 = back to the list (a typo must
  * not cost the marks), -1 = the console closed.
@@ -1366,6 +1543,7 @@ static int review(const candidate *q, size_t n, size_t sel_n,
 {
     char answer[32];
     uint64_t total = 0;
+    size_t payload_n = 0;
     size_t i;
 
     say("\nreview: %zu image%s marked\n\n", sel_n, (sel_n == 1u) ? "" : "s");
@@ -1373,13 +1551,31 @@ static int review(const candidate *q, size_t n, size_t sel_n,
         if (!q[i].selected)
             continue;
         total += q[i].size;
-        if (ui->show_cost)
-            say("  /%s  (%llu MiB)\n", q[i].rel,
-                (unsigned long long)(q[i].size / MIB));
-        else
+        if (ui->show_cost) {
+            char size[32];
+
+            size_str(size, sizeof(size), q[i].size);
+            say("  /%s  (%s)\n", q[i].rel, size);
+        } else {
             say("  /%s\n", q[i].rel);
+        }
+        if (q[i].shape != SGN_PAYLOAD_NONE) {
+            payload_n++;
+            payload_disclosure(&q[i]);
+        }
     }
     say("\n%s", ui->consent);
+    /* Said over the list and under the tool's own statement about each
+     * payload, because it is the difference between this gate and the two
+     * that came before it: an ISO is left untouched by its bless and a
+     * prepared image by its preparation, and these are not. */
+    if (payload_n > 0)
+        say("%zu of these %s a bare EFI payload, and blessing one WRITES TO\n"
+            "THAT FILE: the payload boots as itself, so there is nothing\n"
+            "beside it for the signature to go into. Everything that will be\n"
+            "written to is named above. Blessing an ISO is not like this; it\n"
+            "leaves the ISO exactly as it is.\n",
+            payload_n, (payload_n == 1u) ? "is" : "are");
     if (ui->show_cost) {
         char gib[32];
 
@@ -1632,7 +1828,7 @@ static void prepare_batch(size_t *prepared_n, size_t *failed_n,
                 NULL
             };
 
-            rc = run(argv, NULL, 0, PREP_BEAT_S);
+            rc = run(argv, NULL, 0, PREP_BEAT_S, NULL);
         }
         if (rc == 0) {
             say("      FALCON-APPLIANCE-PREPARED %s\n", g_prep[i].rel);
@@ -1689,7 +1885,7 @@ static void teardown(int p2_mounted, int p3_mounted, int mapped)
         char *argv[] = { (char *)"/usr/bin/cryptsetup", (char *)"close",
                          (char *)MAPPER, NULL };
 
-        if (run(argv, NULL, 0, 0) != 0)
+        if (run(argv, NULL, 0, 0, NULL) != 0)
             say("note: could not close the p3 mapping\n");
     }
     sync();
@@ -1720,6 +1916,63 @@ static void finish(int p2_mounted, int p3_mounted, int mapped)
         (void)pause();
 }
 
+/* "Already blessed" for a bare payload, applied to the queue the survey built.
+ *
+ * It is a property of the file rather than of a record: our exact certificate
+ * in the PE's certificate table, which is the tool's own idempotence rule
+ * (src/cli/sign/payload.h) rather than a second answer invented here. The
+ * survey cannot ask it, because the certificate that defines "ours" lives on
+ * p3 and p3 is still locked while p2 is walked. So it is asked once, here,
+ * between the unlock and the listing the user marks. Asking it earlier would
+ * mean reading a certificate from somewhere unencrypted and letting that
+ * decide what this stick signs with, which is a second and editable answer to
+ * a question p3 already answers.
+ *
+ * A .efi is asked directly. A payload inside a .img is not: the question
+ * lives inside the image, sgn_payload_signed_with takes a path, and reaching
+ * those paths means the volume walk payload.c already implements. Rather than
+ * a second copy of it, such an image keeps its place in the list and the tool
+ * answers per volume when it runs - it signs nothing there and says "already
+ * signed with this key, left alone", which reaches the console with the rest
+ * of its output. */
+static void payload_prefilter(void)
+{
+    uint8_t *der = NULL;
+    size_t der_len = 0;
+    size_t kept = 0;
+    size_t i;
+
+    if (sgn_payload_cert_der(CERT_PATH, &der, &der_len) != SGN_OK) {
+        say("note: %s could not be read as a certificate (%s), so no payload\n"
+            "      can be recognised as already carrying it.\n",
+            CERT_PATH, sgn_error());
+        return;
+    }
+
+    for (i = 0; i < g_cand_n; i++) {
+        appl_ours ours = APPL_OURS_UNKNOWN;
+
+        if (g_cand[i].shape == SGN_PAYLOAD_EFI) {
+            char abs[PATH_MAX];
+
+            (void)snprintf(abs, sizeof(abs), "%s/%.*s", P2_MNT,
+                           (int)(sizeof(g_cand[i].rel) - 1u), g_cand[i].rel);
+            ours = sgn_payload_signed_with(abs, der, der_len) ? APPL_OURS_YES
+                                                              : APPL_OURS_NO;
+        }
+        if (g_cand[i].shape != SGN_PAYLOAD_NONE &&
+            appl_route_payload(ours) == APPL_JOB_DONE_BLESSED) {
+            say("  blessed     /%s (already; this stick's certificate is in "
+                "it)\n", g_cand[i].rel);
+            g_done_blessed++;
+            continue;
+        }
+        g_cand[kept++] = g_cand[i];
+    }
+    g_cand_n = kept;
+    free(der);
+}
+
 /* ---- the bless half (DESIGN Section 7.5) ----
  *
  * Everything that needs the key lives in here, and nothing calls it unless
@@ -1737,8 +1990,11 @@ static void bless_half(const stick_parts *parts, int *mapped, int *p3_mounted,
     char pass[PASS_MAX];
     char dev[32];
     char dev_arg[48];
+    int need_dev = 0;
     int tries;
     size_t i;
+
+    dev_arg[0] = '\0';
 
     /* ---- unlock p3 ----
      *
@@ -1769,7 +2025,7 @@ static void bless_half(const stick_parts *parts, int *mapped, int *p3_mounted,
             };
 
             say("unlocking p3 with the passphrase from the loader...\n");
-            if (run(argv, pass, (size_t)clen, 0) == 0)
+            if (run(argv, pass, (size_t)clen, 0, NULL) == 0)
                 *mapped = 1;
             else
                 say("the delivered credential did not open p3; "
@@ -1796,7 +2052,7 @@ static void bless_half(const stick_parts *parts, int *mapped, int *p3_mounted,
             *skipped_n = g_cand_n;
             return;
         }
-        rc = run(argv, pass, (size_t)len, 0);
+        rc = run(argv, pass, (size_t)len, 0, NULL);
         explicit_bzero(pass, sizeof(pass));
         if (rc == 0) {
             *mapped = 1;
@@ -1829,16 +2085,30 @@ static void bless_half(const stick_parts *parts, int *mapped, int *p3_mounted,
     }
     say("MOK keypair found on p3.\n");
 
-    /* Needed only by this half: it is the %DEV% the signed cmdline carries,
-     * and nothing in preparation has a cmdline to put it in. */
-    if (exfat_uuid(parts->p2, dev, sizeof(dev)) != 0) {
-        say("ERROR: could not read p2's volume serial; the signed cmdline\n"
-            "       would have no way to name the partition to boot from.\n");
-        *skipped_n = g_cand_n;
+    payload_prefilter();
+    if (g_cand_n == 0) {
+        say("\nnothing left to sign: every payload on p2 already carries this\n"
+            "stick's certificate. FALCON-APPLIANCE-PENDING 0\n");
         return;
     }
-    (void)snprintf(dev_arg, sizeof(dev_arg), "UUID=%s", dev);
-    say("p2 volume: %s\n", dev_arg);
+
+    /* Needed only by the wrap path: it is the %DEV% the signed cmdline
+     * carries, and neither preparation nor a bare payload has a cmdline to
+     * put it in. A queue of payloads alone must not die on a volume serial
+     * nothing in it would use. */
+    for (i = 0; i < g_cand_n; i++)
+        need_dev |= (g_cand[i].shape == SGN_PAYLOAD_NONE);
+    if (need_dev) {
+        if (exfat_uuid(parts->p2, dev, sizeof(dev)) != 0) {
+            say("ERROR: could not read p2's volume serial; the signed cmdline\n"
+                "       would have no way to name the partition to boot "
+                "from.\n");
+            *skipped_n = g_cand_n;
+            return;
+        }
+        (void)snprintf(dev_arg, sizeof(dev_arg), "UUID=%s", dev);
+        say("p2 volume: %s\n", dev_arg);
+    }
 
     say("\nFALCON-APPLIANCE-PENDING %zu\n", g_cand_n);
 
@@ -1880,7 +2150,26 @@ static void bless_half(const stick_parts *parts, int *mapped, int *p3_mounted,
             (void)snprintf(rel_arg, sizeof(rel_arg), "/%.*s",
                            (int)(sizeof(g_cand[i].rel) - 1u), g_cand[i].rel);
 
-            {
+            say("\n[%zu/%zu] /%s\n", done_n, sel_n, g_cand[i].rel);
+            if (g_cand[i].shape != SGN_PAYLOAD_NONE) {
+                /* No --iso-path, --dev or --stub: there is no wrap to build,
+                 * so the tool rejects them rather than ignoring them
+                 * (src/cli/sign/main.c, bless_payload). Its output is echoed
+                 * for the same reason the review echoed the dry run - this is
+                 * the run that writes to the user's file, and what it did
+                 * belongs on the console that asked them about it. */
+                char *argv[] = {
+                    (char *)SIGN_TOOL,
+                    abs,
+                    (char *)"--stick", (char *)P2_MNT,
+                    (char *)"--key", (char *)KEY_PATH,
+                    (char *)"--cert", (char *)CERT_PATH,
+                    NULL
+                };
+
+                say("      signing it in place...\n");
+                rc = run(argv, NULL, 0, 0, "      ");
+            } else {
                 char *argv[] = {
                     (char *)SIGN_TOOL,
                     abs,
@@ -1893,9 +2182,8 @@ static void bless_half(const stick_parts *parts, int *mapped, int *p3_mounted,
                     NULL
                 };
 
-                say("\n[%zu/%zu] /%s\n", done_n, sel_n, g_cand[i].rel);
                 say("      signing...\n");
-                rc = run(argv, NULL, 0, 0);
+                rc = run(argv, NULL, 0, 0, NULL);
             }
             /* One image failing is that image's problem: the rest of the batch
              * was vouched for too and still deserves to be signed. */
@@ -1938,7 +2226,8 @@ int main(void)
         "falcon-boot signing appliance\n"
         "=============================\n"
         "Prepares Windows install media so Setup can find its own ISO again,\n"
-        "and signs other ISOs with the MOK private key encrypted on p3.\n\n");
+        "and signs everything else on p2 - ISOs, and the bare EFI payloads\n"
+        "beside them - with the MOK private key encrypted on p3.\n\n");
 
     /* The sign tool's ISO reader is linked in here for the survey. Its own
      * diagnostics are about listing a file, which is this program's plumbing
@@ -2001,7 +2290,7 @@ int main(void)
         prepare_half(&prepared_n, &prep_failed_n, &prep_skipped_n);
 
     if (g_cand_n == 0)
-        say("\nnothing to sign: no ISO on p2 is waiting for the MOK key, so\n"
+        say("\nnothing to sign: nothing on p2 is waiting for the MOK key, so\n"
             "p3 stays locked. FALCON-APPLIANCE-PENDING 0\n");
     else
         bless_half(&parts, &mapped, &p3_mounted, &signed_n, &failed_n,

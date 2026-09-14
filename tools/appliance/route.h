@@ -1,5 +1,5 @@
-/* falcon-boot: what the signing appliance owes one ISO it found on p2
- * (docs/DESIGN.md Sections 6.3.1 and 7.5).
+/* falcon-boot: what the signing appliance owes one file it found on p2
+ * (docs/DESIGN.md Sections 6.3.1, 7.2 and 7.5).
  *
  * The appliance's library is not one queue. A Windows image is *prepared*,
  * which signs nothing and needs no key (Section 6.3); everything else is
@@ -7,6 +7,11 @@
  * vouch. Deciding which of those an ISO wants is three inputs and no I/O, so
  * it lives here and is tested in test/appliance_route_test.c rather than
  * being read out of a booting machine.
+ *
+ * A bare EFI payload (.efi, .img) is a third thing the survey meets and only
+ * a second thing it can do: payloads are blessed and never prepared, and what
+ * "already done" means for one is a different question with a different
+ * answer. That is appl_route_payload below.
  *
  * The split is the same one src/bless draws between bless.c and blesscore.c,
  * and the same one src/cli/sign draws between prepare.c and prepcore.c: the
@@ -16,6 +21,7 @@
 #ifndef FALCON_APPLIANCE_ROUTE_H
 #define FALCON_APPLIANCE_ROUTE_H
 
+#include <cli/sign/payload.h>
 #include <family/family.h>
 #include <manifest/manifest.h>
 
@@ -53,5 +59,38 @@ appl_job appl_route(manifest_bless state, manifest_kind kind, family_id fam);
 /* Does this family's media get prepared rather than blessed? One predicate,
  * so "Windows is the prepared one" is written down once. */
 int appl_family_is_prepared(family_id fam);
+
+/* Whether a bare payload already carries the certificate this stick signs
+ * with. UNKNOWN is not a failure: that certificate lives on p3, and the
+ * survey walks p2 while p3 is still locked, so the question has an answer
+ * only once the bless half has opened it (and, for a payload inside a .img,
+ * only from inside the image, where the tool answers it per volume). */
+typedef enum {
+    APPL_OURS_UNKNOWN = -1,
+    APPL_OURS_NO      = 0,
+    APPL_OURS_YES     = 1
+} appl_ours;
+
+/* What the appliance owes one bare EFI payload (DESIGN Section 7.2).
+ *
+ * Two things separate this from appl_route above, and both are the same fact
+ * seen twice: a payload has no manifest record, because the file IS the
+ * artifact (src/cli/sign/payload.h says why writing one would be a second,
+ * editable source of truth about it).
+ *
+ *   - Nothing prepares a payload. Preparation rewrites boot.wim inside
+ *     Windows install media; there is no such thing inside a PE, and the
+ *     family that would have asked for it is refused by the tool with a
+ *     message rather than routed here.
+ *   - "Already done" is therefore not freshness. The only sense in which a
+ *     payload is blessed is that our exact certificate is already in its
+ *     certificate table, which is also the tool's own idempotence rule
+ *     (sgn_payload_signed_with), so the queue and the tool cannot disagree
+ *     about a file.
+ *
+ * UNKNOWN answers SIGN. Offering a payload that turns out to carry our
+ * certificate costs one line in the listing and a tool run that signs
+ * nothing; hiding one that does not carry it costs a boot. */
+appl_job appl_route_payload(appl_ours ours);
 
 #endif /* FALCON_APPLIANCE_ROUTE_H */

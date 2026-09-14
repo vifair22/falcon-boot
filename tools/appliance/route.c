@@ -1,4 +1,4 @@
-/* falcon-boot: the appliance's per-ISO routing decision. See route.h. */
+/* falcon-boot: the appliance's per-file routing decision. See route.h. */
 
 #include <appliance/route.h>
 
@@ -20,4 +20,9 @@ appl_job appl_route(manifest_bless state, manifest_kind kind, family_id fam)
          * work the family actually needs, which rewrites the record. */
     }
     return prepared_family ? APPL_JOB_PREPARE : APPL_JOB_SIGN;
+}
+
+appl_job appl_route_payload(appl_ours ours)
+{
+    return (ours == APPL_OURS_YES) ? APPL_JOB_DONE_BLESSED : APPL_JOB_SIGN;
 }
