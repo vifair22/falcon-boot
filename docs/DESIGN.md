@@ -840,6 +840,27 @@ conclude the preparation step failed.
   - *Unsigned, unblessed media* (memtest, older/niche rescue ISOs): refused, with
     an actionable message pointing at the two doors: bless it, or use the
     permissive opt-in (Section 7.4).
+  - *Bare EFI payloads* (`.efi` binaries, and `.img` images whose payload is
+    one, memtest being the example): these boot as themselves, so what the
+    platform verifies IS the file on p2. They are in scope for the menu and
+    for blessing (decision 2026-09-13, after memtest was found unbootable on
+    a machine whose db carries no Microsoft CA). An earlier comment in the
+    bless tool called memtest a family that "needs no blessing"; that was
+    right about cmdline and media injection, which it genuinely needs none
+    of, and wrong about signatures, which Secure Boot needs regardless of how
+    self-contained a payload is.
+
+    **Blessing these MODIFIES the user's file, and the tool says so before it
+    does** (decision 2026-09-13). That is a deliberate exception to the
+    property Windows preparation upholds, and the reason is mechanical rather
+    than philosophical: signing a PE appends a certificate, so the payload
+    grows, and there is no size-preserving splice to hide behind. For a
+    `.efi` the file is signed in place; for a `.img` the payload inside its
+    filesystem is. Both are the user's own media, the act is theirs to
+    authorise, and the review that authorises it names the file and states
+    plainly that it will be written to. Anything quieter would be worse: a
+    silent in-place modification is exactly the thing Section 7.7 exists to
+    prevent.
 - **Secure Boot ON, validation off (user opt-in, Section 7.4):** shim permits
   everything, so every ISO drag-and-drops with nothing signed, on that machine.
 
@@ -1531,6 +1552,17 @@ are (both measured 2026-09-13):
 
 
 ## 11. MVP build order
+
+A BLESSED ISO BOOTS ON REAL HARDWARE (2026-09-13): on that same laptop, the
+on-stick appliance blessed the Arch ISO and it booted all the way into the
+live environment under Secure Boot, on a machine that trusts nothing from
+Microsoft. That is the bless pipeline end to end outside the rig - appliance
+survey, MOK signing of the UKI wrap, shim verifying it against the enrolled
+MOK, and the iso-scan cmdline finding the medium after ExitBootServices.
+Windows preparation also completed on the same run. The appliance needed
+three hardware fixes to get there, all of them things the rig cannot test:
+USB storage modules, a console it can actually read, and a wait for the bus
+to enumerate.
 
 Step 10 (real hardware) is PARTLY DONE, measured 2026-09-13 on the user's
 laptop, whose db carries only their own certificate and no Microsoft CA:
