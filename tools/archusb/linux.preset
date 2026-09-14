@@ -1,0 +1,43 @@
+# Lands at: /etc/mkinitcpio.d/linux.preset   (mode 0644)
+#
+# ADAPTED from the Ventoy-era preset. Three changes:
+#
+# 1. default_uki moves from /boot/EFI/Linux/arch-usb.efi to /efi/uki/. p3 (the
+#    LUKS2 UKI shelf) is mounted at /efi, and the falcon loader looks in
+#    p3:/uki first, falling back to p3:/EFI/Linux (DESIGN Section 5). /uki is
+#    where mkstick stages, so it is the one that needs no explanation later.
+#
+# 2. default_image is DELETED. It existed only to feed the legacy-BIOS GRUB
+#    menuentry in ventoy_grub.cfg, which loaded /vmlinuz-linux and
+#    /initramfs-linux.img itself. falcon-boot is UEFI x64 only, so there is no
+#    BIOS entry and nothing reads a standalone initramfs. Dropping it saves
+#    roughly 75 MB on a 1 GB p3, which on this partition is not a rounding
+#    error.
+#
+# 3. ALL_kver is repointed but keeps its FORM, and that form still resolves.
+#    Checked rather than assumed, against the backup: no package owns
+#    /boot/vmlinuz-linux - Arch's linux package ships the kernel only at
+#    usr/lib/modules/<kver>/vmlinuz. The copy is maintained by mkinitcpio's own
+#    pacman script (/usr/share/libalpm/scripts/mkinitcpio, is_kernelcopy() and
+#    install_kernel()): when ALL_kver is an absolute path that NO package owns,
+#    the script installs the real kernel to it on every transaction that
+#    touches usr/lib/modules/*/vmlinuz. mkinitcpio then reads the version out
+#    of that file. So the idiom is supported, not a hack, and it works at the
+#    new path for the same reason it worked at the old one - /efi/vmlinuz-linux
+#    is likewise owned by nothing.
+#
+#    The trap it carries: the copy is only refreshed during a package
+#    transaction, and only if the target directory is reachable. If /efi is not
+#    mounted when the kernel is upgraded, the copy and the UKI both land on the
+#    root LV under a directory pacman silently creates, mkinitcpio reports
+#    success, sign-uki signs the file it was handed, and the loader goes on
+#    booting the stale UKI still sitting on p3. See the runbook's "/efi must be
+#    mounted, and nothing shouts if it is not".
+
+ALL_kver="/efi/vmlinuz-linux"
+PRESETS=('default')
+
+# UEFI: signed Unified Kernel Image, read off p3 and launched by the falcon
+# loader through the shim-verified load path (DESIGN Section 7.6).
+default_uki="/efi/uki/arch-usb.efi"
+default_options="--cmdline /etc/kernel/cmdline"

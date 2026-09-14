@@ -1,0 +1,80 @@
+#!/bin/sh
+# Lands at: /usr/local/bin/sign-uki   (mode 0755)
+#
+# Re-sign the UKI with the falcon-boot MOK key.
+#
+# ADAPTED from the Ventoy-era /usr/local/bin/sign-uki. Exactly four things
+# changed: the default UKI path, the key path, the cert path, and the wording
+# of the "key missing" hint. Everything below - strip before signing, sign a
+# copy, verify signature count AND signer subject, then an atomic mv within
+# one filesystem - is the original's logic with the original's comments,
+# because every one of those comments records a bug that was actually hit.
+#
+# Why the key moved. The sbctl db keystore is gone: this install no longer
+# carries the workstation's Secure Boot db private key. falcon-boot's mkstick
+# generates a MOK keypair and writes the PRIVATE half to the root of p3 (the
+# LUKS2 UKI shelf) at mode 0600, with the PEM certificate beside it (DESIGN
+# Sections 7.5 and 8; src/cli/mkstick/create.c, install_shelf). p3 is mounted
+# at /efi on the running system, so the key, the certificate and the UKI are
+# all on one filesystem - which is what keeps the final mv atomic, exactly as
+# it was when all three lived on the FAT /boot.
+#
+# The expected subject needed no edit at all: it is DERIVED FROM THE CERT and
+# never hardcoded. With mkstick's default CN it resolves to
+# "/CN=falcon-boot MOK"; if --cn was passed to mkstick it resolves to that.
+# A mismatch refuses to install the image, which is the direction to fail in.
+# Check the resolved value on the first run - it is the one thing here that
+# was not verified against a real falcon stick.
+#
+# One property that is new and worth knowing: the scratch names below do not
+# end in ".efi", and the loader enumerates p3:/uki for a case-insensitive
+# ".efi" suffix (DESIGN Section 5). A crash mid-sign therefore leaves litter,
+# never a half-written image in the boot menu.
+#
+# sbsign APPENDS a certificate entry; it never replaces one. Signing an already
+# signed UKI therefore leaves the old signature in place and the file grows by
+# one copy per kernel update. Firmware still boots it (any valid entry is
+# enough), which is why it went unnoticed. Strip first, so the UKI carries
+# exactly one signature: ours.
+#
+# sbattach --remove removes ONE entry per call, not the whole certificate
+# table, hence the loop rather than a single call.
+set -e
+UKI="${1:-/efi/uki/arch-usb.efi}"
+KEY=/efi/falcon-mok.key
+CRT=/efi/falcon-mok.crt
+[ -f "$UKI" ] || { echo "sign-uki: $UKI missing"; exit 1; }
+[ -f "$KEY" ] || { echo "sign-uki: MOK key missing (is /efi mounted?)"; exit 1; }
+
+sigcount() { sbverify --list "$1" 2>/dev/null | grep -c '^signature' || true; }
+
+# Same directory, so the final mv stays within one filesystem and the UKI is
+# never half-written: everything happens on the copy, and only a fully signed
+# and verified image is moved into place.
+tmp="$UKI.unsigned.$$"
+out="$UKI.signed.$$"
+trap 'rm -f "$tmp" "$out"' EXIT INT TERM
+cp "$UKI" "$tmp"
+
+n=$(sigcount "$tmp")
+i=0
+while [ "$n" -gt 0 ]; do
+    sbattach --remove "$tmp" >/dev/null 2>&1 || break
+    n=$(sigcount "$tmp")
+    i=$((i + 1))
+    [ "$i" -lt 16 ] || { echo "sign-uki: cannot strip signatures from $UKI"; exit 1; }
+done
+[ "$n" = 0 ] || { echo "sign-uki: $UKI still has $n signature(s) after stripping"; exit 1; }
+
+sbsign --key "$KEY" --cert "$CRT" --output "$out" "$tmp" >/dev/null
+
+# Verify before replacing the bootable image, not after.
+want=$(openssl x509 -in "$CRT" -noout -subject -nameopt compat 2>/dev/null \
+       | sed 's/^subject=[[:space:]]*//')
+got=$(sbverify --list "$out" 2>/dev/null | sed -n 's/^[[:space:]]*- subject:[[:space:]]*//p' | head -1)
+[ "$(sigcount "$out")" = 1 ] || { echo "sign-uki: expected exactly one signature"; exit 1; }
+[ -n "$want" ] && [ "$want" = "$got" ] || { echo "sign-uki: signed by '$got', not '$want'"; exit 1; }
+
+mv -f "$out" "$UKI"
+sync
+echo "sign-uki: signed $UKI (1 signature)"

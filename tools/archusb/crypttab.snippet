@@ -1,0 +1,60 @@
+# Lands at: /etc/crypttab   (one added line; the stock commented examples and
+#                            the "do not list your root here" note stay)
+#
+# NEW. There was no crypttab entry on the Ventoy-era install, because the only
+# encrypted volume was p4 and that is opened by the initramfs from
+# rd.luks.name= on the kernel cmdline, never from crypttab. p3 is new: it has
+# to be opened by the RUNNING system, late, so that kernel and mkinitcpio
+# updates regenerate the UKI in the place the loader actually reads.
+#
+# How it gets unlocked, given p3 and p4 share one passphrase.
+#
+# Not from the passphrase. The passphrase reaches the initramfs as an sd-stub
+# credential (DESIGN Section 5.1), systemd-cryptsetup consumes it to open p4,
+# and the initramfs is discarded at the pivot. Whether that credential is
+# still readable in the real root afterwards was NOT verified while writing
+# this - it depends on whether PID 1 materialises stub credentials under
+# /run/credentials/@system and whether that survives switch-root - so nothing
+# here is built on it. If you want to check, look for
+# /run/credentials/@system/cryptsetup.passphrase on a booted system; if it is
+# there, a simpler crypttab is possible and this keyfile can go.
+#
+# Instead: a second p3 keyslot holding a random keyfile that lives on the
+# already-decrypted root. This is the ordinary "unlock a secondary volume from
+# the encrypted root" pattern, it needs no passphrase and no prompt, and it
+# gives back exactly the property the old FAT /boot had - the shelf is simply
+# mounted, all the time, so every pacman hook just works.
+#
+# It gives away nothing. The keyfile sits inside a filesystem that is already
+# encrypted under the same passphrase that opens p3, so an attacker who can
+# read the keyfile has already opened the volume it unlocks. DESIGN Section
+# 7.5 names this concentration as an accepted residual; this does not add to
+# it.
+#
+# Create the slot with argon2id (cryptsetup's default - do NOT pass
+# --pbkdf pbkdf2 here) and 512 bits of entropy:
+#
+#     install -d -m700 /etc/cryptsetup-keys.d
+#     ( umask 077; head -c 64 /dev/urandom > /etc/cryptsetup-keys.d/cryptefi.key )
+#     cryptsetup luksAddKey /dev/disk/by-partuuid/<p3-partuuid> \
+#         /etc/cryptsetup-keys.d/cryptefi.key
+#
+# argon2id specifically, and this is checked against the loader rather than
+# assumed: src/luks/luks.c marks a keyslot usable only when its kdf type is
+# pbkdf2, and luks_unlock tries the passphrase against every usable slot,
+# returning LUKS_ERR_UNSUPPORTED_KDF only when none existed. So an argon2id
+# slot is skipped outright and costs the in-EFI unlock nothing, whereas a
+# second pbkdf2 slot at mkstick's 200000 iterations would make the loader burn
+# a full extra derivation on a slot it can never open. The keyfile has full
+# entropy, so the weaker-looking choice is also the free one.
+#
+# discard, for the same reason p4 has rd.luks.options=...=discard: without it
+# dm-crypt swallows every discard and fstrim on /efi does nothing.
+# nofail, so a p3 that will not open cannot hold up the boot.
+#
+# The device is addressed by LUKS UUID rather than PARTUUID to match the form
+# /etc/kernel/cmdline uses for p4. Read it with:
+#     cryptsetup luksUUID /dev/disk/by-partuuid/<p3-partuuid>
+
+# <name>       <device>                                     <password>                             <options>
+cryptefi       UUID=NEW_P3_LUKS_UUID                        /etc/cryptsetup-keys.d/cryptefi.key     luks,discard,nofail
