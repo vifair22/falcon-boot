@@ -777,6 +777,31 @@ we want falls out of deferring to shim, not from adding code.
 This is not a limit we impose; it is what Secure Boot means. An unsigned payload
 does not boot under Secure Boot, whether launched by us or directly.
 
+**Everything below about distro-signed media assumes the machine's db trusts
+the Microsoft UEFI CA.** That is the overwhelmingly common case and it is what
+makes "drag-and-drop just works" true, but it is an assumption about the
+machine, not a property of the stick, and it does not hold on a machine whose
+owner has enrolled only their own keys. Measured on real hardware
+(2026-09-13): on a laptop whose db carries only the user's own certificate,
+NO stock distro ISO boots, because what the firmware is asked to verify is
+that distro's own MS-signed shim. shim checks db (no Microsoft CA), then MOK
+(that vendor's key is not there), and refuses. Correctly.
+
+On such a machine the coverage inverts, and usefully so: **blessing is the
+only route, and it works**, because a blessed wrap is signed with the user's
+own MOK and shim verifies it against MOK independently of db. The stick's own
+chain (shim dual-signed with the user's db key, loader and UKIs MOK-signed)
+is unaffected, which is why the loader, the menu and the p3 unlock all work
+there while no unblessed ISO will start.
+
+The exception that cannot be blessed is **Windows install media**. Preparation
+(Section 6.3) signs nothing; the binary the firmware verifies is Microsoft's
+`bootmgfw.efi`, which we neither sign nor replace. On a machine without the
+Microsoft CA in db, Windows media therefore cannot boot under Secure Boot at
+all, and the honest answers are to enrol the Microsoft CA or to turn Secure
+Boot off for that job. The Manual must say so plainly rather than let a user
+conclude the preparation step failed.
+
 - **Secure Boot OFF:** every templated ISO drag-and-drops and boots. Nothing to
   uphold, nothing to sign.
 - **Secure Boot ON, validation on (default):**
@@ -1506,6 +1531,17 @@ are (both measured 2026-09-13):
 
 
 ## 11. MVP build order
+
+Step 10 (real hardware) is PARTLY DONE, measured 2026-09-13 on the user's
+laptop, whose db carries only their own certificate and no Microsoft CA:
+firmware verified the shim (dual-signed with that db key, see Section 4),
+shim launched MokManager unprompted, enrolling `falcon-boot.cer` from the ESP
+worked, the loader ran MOK-verified, the menu drew, and **p3 unlocked** - our
+own LUKS2 header parse, PBKDF2-HMAC-SHA256 and AES-XTS decrypt running on
+real firmware rather than OVMF. No ISO booted, which is correct and is the
+db-has-no-Microsoft-CA case now recorded in Section 7.2. Still unmeasured on
+hardware: a blessed wrap booting, the personal OS end to end (p4 was an empty
+container at the time), and the Windows path.
 
 Status (2026-09-13): steps 1-6 are DONE and proven in the QEMU rig, including
 the Secure Boot ON halves (shim plumbing spike results in Section 7.6 and
