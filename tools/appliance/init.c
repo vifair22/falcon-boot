@@ -656,7 +656,29 @@ static int find_by_content(const char *disk, stick_parts *out)
     return have2 && have3;
 }
 
-static int find_stick(stick_parts *out)
+/* Names every disk the kernel currently has, so a failure to find the stick
+ * says what WAS there. Without this the message is the same whether no bus
+ * driver loaded, the stick is genuinely absent, or its partitions are not
+ * ours, and those need different answers from the user. */
+static void say_block_devices(void)
+{
+    DIR *d = opendir("/sys/block");
+    struct dirent *e;
+    int n = 0;
+
+    if (d == NULL)
+        return;
+    while ((e = readdir(d)) != NULL) {
+        if (e->d_name[0] == '.' || skip_disk(e->d_name))
+            continue;
+        say("%s %s", n == 0 ? "       disks seen:" : ",", e->d_name);
+        n++;
+    }
+    (void)closedir(d);
+    say(n == 0 ? "       disks seen: none at all\n" : "\n");
+}
+
+static int find_stick_once(stick_parts *out)
 {
     DIR *d = opendir("/sys/block");
     struct dirent *e;
@@ -689,6 +711,44 @@ static int find_stick(stick_parts *out)
     }
     (void)closedir(d);
     return found;
+}
+
+/* The stick does not exist yet when this program starts. finit_module returns
+ * as soon as the module is in the kernel, not when the bus it drives has
+ * finished enumerating, and USB mass storage takes a second or more to probe,
+ * attach a SCSI device and publish /sys/block/sdX. There is no udev in here to
+ * wait on, so waiting is this loop.
+ *
+ * The rig never showed it: an emulated SATA disk is present before init runs,
+ * so a single pass always succeeded there and the race was invisible until the
+ * appliance met a real USB stick (2026-09-13) and reported no stick found.
+ *
+ * Bounded by wall clock rather than attempt count, for the same reason the
+ * same guard in src/winjump is: one pass costs whatever its slowest device
+ * costs, so a count expires in unpredictable real time. A stick that is
+ * genuinely absent should end in a legible message, not a hang, which is why
+ * this gives up at all.
+ */
+#define STICK_WAIT_MS 30000
+#define STICK_POLL_MS 250
+
+static int find_stick(stick_parts *out)
+{
+    unsigned waited = 0;
+    int said = 0;
+
+    for (;;) {
+        if (find_stick_once(out))
+            return 1;
+        if (waited >= STICK_WAIT_MS)
+            return 0;
+        if (!said) {
+            say("waiting for the stick to enumerate...\n");
+            said = 1;
+        }
+        (void)usleep(STICK_POLL_MS * 1000u);
+        waited += STICK_POLL_MS;
+    }
 }
 
 /* p2's volume serial, in the form blkid reports it, because that is what the
@@ -1720,6 +1780,7 @@ int main(void)
     if (!find_stick(&parts)) {
         say("ERROR: no falcon stick found (need an exFAT p2 and a LUKS p3 on\n"
             "       one disk). Nothing was unlocked.\n");
+        say_block_devices();
         finish(0, 0, 0);
     }
     say("  p2 (ISO library): %s\n  p3 (UKI shelf):   %s\n\n",
