@@ -49,9 +49,16 @@
 # Two serial ports, and the reason matters: ttyS0 is the rig's usual
 # write-only log (tools/run-qemu.sh --headless), which carries the firmware
 # and the loader. The appliance needs a console it can READ from, so this
-# script adds a second port as a pair of FIFOs and the appliance's cmdline
-# puts its console there (tools/appliance/mk-appliance.sh). The loader menu is
-# still driven the rig's usual way, by sendkey through the QEMU monitor.
+# script adds a second port as a pair of FIFOs, and ttyS1 is one of the
+# consoles the appliance opens (tools/appliance/init.c writes to all of them
+# and reads from whichever answers, so which console= came last on the cmdline
+# does not decide whether this drive works). The loader menu is still driven
+# the rig's usual way, by sendkey through the QEMU monitor.
+#
+# What this log does NOT carry is the output of the helper tools the appliance
+# runs: those inherit /dev/console, which the cmdline points at the screen so
+# a real machine shows its own progress. Only the appliance's own lines, the
+# ones asserted below, come down the serial port.
 #
 # Usage: tools/appliance/run-appliance-proof.sh
 # Env:   FALCON_TEST_PASS  the stick's passphrase (default "falcon-test")

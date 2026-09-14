@@ -84,12 +84,24 @@ WINJUMP=build/bin/winjump.exe
 MOK_KEY="${MOK_KEY:-build/mok-test/falcon-test-mok.key}"
 MOK_CRT="${MOK_CRT:-build/mok-test/falcon-test-mok.crt}"
 
-# The rig's console is a second QEMU serial port (ttyS1); ttyS0 carries the
-# firmware and loader log, and the appliance needs a port it can READ from.
-# A product build would drop ttyS1 and keep console=tty0 alone. loglevel=3
-# keeps kernel chatter from interleaving with the confirmation prompts, and
+# Both consoles are named because both are real places a user can be: tty0 is
+# the screen of the machine the stick is plugged into, ttyS1 is the port the
+# rig types into (ttyS0 carries the firmware and loader log, and is write-only
+# there). The appliance opens every console it can and reads from whichever
+# one answers (tools/appliance/init.c, the console section), so the ORDER of
+# these no longer decides whether its prompts can be answered - which it did
+# until 2026-09-13, when a laptop with no ttyS1 made /dev/console a dead
+# device and every prompt read EOF.
+#
+# Order still decides one thing: /dev/console is the LAST console= named, and
+# that is what the helper tools the appliance runs inherit for their own
+# output. tty0 is last so that output lands on the screen of a real machine;
+# on a machine with no video the kernel does not register tty0 and it falls
+# back to the serial port on its own.
+#
+# loglevel=3 keeps kernel chatter from interleaving with the prompts, and
 # panic=15 makes a panic end in a reboot rather than a hang nobody can exit.
-CMDLINE="${APPLIANCE_CMDLINE:-console=tty0 console=ttyS1,115200 quiet loglevel=3 panic=15}"
+CMDLINE="${APPLIANCE_CMDLINE:-console=ttyS1,115200 console=tty0 quiet loglevel=3 panic=15}"
 
 # Host flag set from the Makefile (HOST_CFLAGS), copied verbatim: /init is
 # ordinary Linux userland C and is held to exactly the same warnings as the
@@ -144,7 +156,34 @@ BINARIES=(
 # modules.dep below. dm-crypt alone pulls in five modules on this kernel
 # (encrypted-keys, trusted, asn1_encoder, tee), which is exactly the kind of
 # list that should not be maintained by hand.
-MODULES=(dm-crypt exfat)
+#
+# The appliance's hardware needs are exactly three: reach the stick, draw on a
+# screen, and read a keyboard. The rig can only ever test the middle one, since
+# QEMU hands the stick over as emulated SATA and the keyboard as PS/2, and both
+# of those drivers are built into the kernel. So the first and the third are
+# carried here on the strength of what a real machine looks like, not on the
+# strength of a green test run.
+#
+# Reach the stick: the rig's emulated SATA hid the gap until the appliance met
+# actual hardware (2026-09-13) and found no block device to survey. A falcon
+# stick is a USB stick by definition, so the bus it arrives on is not optional.
+# Both drivers are listed because which one claims a given bridge is the
+# bridge's choice, not ours.
+#
+# Read a keyboard: USB (usbhid, hid-generic) and PS/2 (i8042, atkbd) are built
+# in, but i2c-hid is not, and a great many modern laptops drive their built-in
+# keyboard over it. Without these the appliance would boot, print its prompts
+# perfectly, and ignore every keystroke - which looks exactly like the console
+# bug above and would send the next person chasing it again. i2c-hid-of is
+# device-tree and cannot apply on x86; hid-multitouch is a touchpad and nothing
+# here needs a pointer.
+#
+# Names are the ones modules.dep uses, hyphens and all, because the resolver
+# below looks them up literally rather than going through modprobe's aliasing.
+# Only list what is actually a module: the host controller (xhci-pci, xhci-hcd) and the SCSI disk layer
+# (sd_mod) are built into Arch's kernel and naming them here is a build
+# failure, correctly, since the same failure is what a typo deserves.
+MODULES=(dm-crypt exfat usb-storage uas i2c-hid i2c-hid-acpi)
 
 # PYTHON: ukify is a Python program, so the appliance carries an interpreter.
 # Everything here is dropped rather than kept: test suites, the GUI and REPL
