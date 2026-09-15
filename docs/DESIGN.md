@@ -311,7 +311,7 @@ with zero initramfs modifications). Notes that survive from the build:
   ```
 
   It ships as the `falcon-credential` mkinitcpio install hook
-  (`tools/archusb/falcon-credential`) rather than as a hand-edit, so
+  (the archusb repo, `install/falcon-credential`) rather than as a hand-edit, so
   `mkinitcpio -P` after a kernel or systemd update keeps it. Measured: with the
   drop-in the unlock succeeds from the credential with no prompt; without it
   the unit cannot start.
@@ -324,8 +324,13 @@ with zero initramfs modifications). Notes that survive from the build:
   Observed on real hardware 2026-09-15: p4 unlocked from the credential exactly
   as designed, and then p3's own `cryptefi` unit - which has a keyfile and needs
   no credential at all - died at `CREDENTIALS` before opening it, leaving `/efi`
-  unmounted behind a `nofail`. `tools/archusb/falcon-credential.conf` is the
+  unmounted behind a `nofail`. `install/falcon-credential.conf` is the
   real-root half.
+
+  Both files live in the **archusb** repo
+  (https://git.airies.net/vifair22/archusb), not here: they are configuration
+  of the install, not code in the loader. This section says why they are
+  needed; that repo is where they ship from.
 
   The general shape worth remembering: this credential is delivered once but
   lands somewhere two different systemd instances will read it, and the

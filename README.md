@@ -70,3 +70,8 @@ make run             # boot it under QEMU/OVMF with a display window
 ```
 
 See `docs/DESIGN.md` for architecture and the MVP build order.
+
+The personal OS this loader boots is a separate project:
+[archusb](https://git.airies.net/vifair22/archusb) holds the Arch install's
+build runbook, its installed configuration, and the OS-side half of the
+passphrase handoff described in DESIGN Section 5.1.

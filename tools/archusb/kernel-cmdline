@@ -1,1 +1,0 @@
-rd.luks.name=NEW_P4_LUKS_UUID=cryptusb rd.luks.options=NEW_P4_LUKS_UUID=discard root=/dev/mapper/vgusb-root rootfstype=ext4 rw fsck.repair=yes systemd.gpt_auto=0
