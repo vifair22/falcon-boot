@@ -164,6 +164,9 @@ static menu_entry g_uki_entries[POS_MAX_UKIS];
 /* 1 when the row came from .osrel rather than the filename, so the
  * disambiguation pass knows which rows are worth qualifying. */
 static int        g_uki_named[POS_MAX_UKIS];
+/* 1 when another entry carries the same label, so this row needs its filename
+ * appended. Computed for every row before any row is rewritten. */
+static int        g_uki_dup[POS_MAX_UKIS];
 static UINTN      g_uki_n;
 
 /* Does this volume have a keyslot this loader can actually process? DESIGN
@@ -568,19 +571,30 @@ static INTN choose_uki(const menu_banner *banner, pos_pick pick)
      * "Arch Linux", so a rollback copy beside the current one produces two
      * identical, unpickable rows. The filename is what actually differs, so it
      * is appended to every row whose label is not unique. Only to those: adding
-     * it everywhere would throw away the whole point of reading .osrel. */
+     * it everywhere would throw away the whole point of reading .osrel.
+     *
+     * TWO PASSES, and the split is not tidiness. Marking and rewriting in one
+     * loop compares later rows against labels earlier iterations have already
+     * rewritten: the first of a colliding pair gets its filename appended, and
+     * the second then matches nothing and is left bare. Measured in the rig on
+     * 2026-09-15 - "Test Linux (alpha.efi)" above a naked "Test Linux" - which
+     * is worse than leaving both alone, because it reads as though the two rows
+     * are different KINDS of thing. */
     for (i = 0; i < g_uki_n; i++) {
         UINTN j;
-        int dup = 0;
 
+        g_uki_dup[i] = 0;
         if (!g_uki_named[i])
             continue;               /* already showing its filename */
-        for (j = 0; j < g_uki_n && !dup; j++) {
+        for (j = 0; j < g_uki_n && !g_uki_dup[i]; j++) {
             if (j != i && ucs2_eq(g_uki_entries[i].label,
                                   g_uki_entries[j].label))
-                dup = 1;
+                g_uki_dup[i] = 1;
         }
-        if (!dup)
+    }
+
+    for (i = 0; i < g_uki_n; i++) {
+        if (!g_uki_dup[i])
             continue;
 
         {
