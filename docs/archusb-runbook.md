@@ -583,6 +583,26 @@ by path instead, taking the plaintext route. With it the unlock succeeds from
 the credential with no prompt. It is an install hook rather than a hand-edit of
 the initramfs precisely so that the next `mkinitcpio -P` keeps it.
 
+**It bites a second time after switch-root, and the initramfs hook does not
+cover that.** `/run/credentials/@encrypted/` is on `/run`, which is the same
+tmpfs before and after the pivot, so the credential is still sitting there when
+the real root's generators run. Every `systemd-cryptsetup@.service` that
+`systemd-cryptsetup-generator` writes from `/etc/crypttab` gets the same
+`ImportCredential=cryptsetup.*` and dies the same way - including `cryptefi`,
+which has a perfectly good keyfile it never gets as far as opening. Observed
+2026-09-15 on the laptop: a clean boot, p4 unlocked from the credential, and
+`/efi` silently not mounted behind `Failed to start Cryptography Setup for
+cryptefi`. `nofail` is why it is silent rather than fatal, and an unmounted
+`/efi` means the next `mkinitcpio -P` writes the UKI into a directory on the
+root filesystem instead of onto p3, so the stick keeps booting the old kernel.
+
+`tools/archusb/falcon-credential.conf` is the real-root half: the same
+`ImportCredential=` clear, installed into `/etc/systemd/system`. It deliberately
+does **not** add a `LoadCredential=`. Everything in this `/etc/crypttab` unlocks
+from a keyfile, and a `LoadCredential=` naming a file that is absent on a boot
+that did not come through the loader would fail the unit for a credential
+nothing in the real root needs.
+
 **`voyager-trim` stays exactly where it is in HOOKS**, ahead of `block`. See
 TRIM below; the reason is unchanged because p4 still stacks dm-crypt and LVM.
 
@@ -780,6 +800,7 @@ From `tools/archusb/`:
 | `zz-sign-uki` | `/usr/lib/initcpio/post/zz-sign-uki` | 0755 |
 | `95-sign-uki.hook` | `/etc/pacman.d/hooks/95-sign-uki.hook` | 0644 |
 | `falcon-credential` | `/etc/initcpio/install/falcon-credential` | 0644 |
+| `falcon-credential.conf` | `/etc/systemd/system/systemd-cryptsetup@.service.d/falcon-credential.conf` | 0644 |
 | `linux.preset` | `/etc/mkinitcpio.d/linux.preset` | 0644 |
 | `voyager-trim` | `/etc/initcpio/install/voyager-trim` | 0755 |
 | `10-voyager-gtx-trim.rules` | `/etc/udev/rules.d/10-voyager-gtx-trim.rules` | 0644 |
@@ -1304,6 +1325,7 @@ install -Dm755 $A/sign-uki                  $T/usr/local/bin/sign-uki
 install -Dm755 $A/zz-sign-uki               $T/usr/lib/initcpio/post/zz-sign-uki
 install -Dm644 $A/95-sign-uki.hook          $T/etc/pacman.d/hooks/95-sign-uki.hook
 install -Dm644 $A/falcon-credential          $T/etc/initcpio/install/falcon-credential
+install -Dm644 $A/falcon-credential.conf     $T/etc/systemd/system/systemd-cryptsetup@.service.d/falcon-credential.conf
 install -Dm644 $A/linux.preset              $T/etc/mkinitcpio.d/linux.preset
 install -Dm755 $A/voyager-trim              $T/etc/initcpio/install/voyager-trim
 install -Dm644 $A/10-voyager-gtx-trim.rules $T/etc/udev/rules.d/10-voyager-gtx-trim.rules

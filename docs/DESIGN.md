@@ -316,6 +316,22 @@ with zero initramfs modifications). Notes that survive from the build:
   drop-in the unlock succeeds from the credential with no prompt; without it
   the unit cannot start.
 
+  **The same failure recurs after switch-root, and needs its own copy of the
+  fix.** `/run` is one tmpfs across the pivot, so
+  `/run/credentials/@encrypted/cryptsetup.passphrase` is still present when the
+  real root's `systemd-cryptsetup-generator` runs, and every unit it writes from
+  `/etc/crypttab` inherits the same fatal `ImportCredential=cryptsetup.*`.
+  Observed on real hardware 2026-09-15: p4 unlocked from the credential exactly
+  as designed, and then p3's own `cryptefi` unit - which has a keyfile and needs
+  no credential at all - died at `CREDENTIALS` before opening it, leaving `/efi`
+  unmounted behind a `nofail`. `tools/archusb/falcon-credential.conf` is the
+  real-root half.
+
+  The general shape worth remembering: this credential is delivered once but
+  lands somewhere two different systemd instances will read it, and the
+  generator applies `ImportCredential=` to *every* crypttab entry rather than
+  only the one we meant. A fix scoped to the initramfs is half a fix.
+
   Why the rig missed it: the fixture UKI proved delivery, name and bytes, but
   its `/init` was a shell script, not systemd - so nothing ever exercised the
   credential *import* path. Proof-by-reading of systemd 261 read the consumer
