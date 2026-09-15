@@ -50,8 +50,21 @@ static int name_is(const uint8_t *field, const char *want)
     return 1;
 }
 
-/* Finds .osrel and hands back its file range. */
-static int find_osrel(const uint8_t *b, size_t len, size_t *off, size_t *size)
+/* Finds .osrel and hands back its file range.
+ *
+ * TWO lengths, and conflating them was a real bug (fixed 2026-09-15). `len` is
+ * how much of the file is in b; `total` is how long the file is. The headers
+ * and the section table must lie inside b, because they are read here. The
+ * SECTION CONTENT must not be required to: a caller that read only a header
+ * window is the normal case, and the whole point of returning a file range is
+ * that the caller then goes and reads it.
+ *
+ * Validating the section range against `len` made this function answer "no
+ * .osrel section" for every real UKI, whose .osrel sits ~130 KB in, behind a
+ * section table at byte 392. The loader fell back to filenames and looked like
+ * it simply had not been wired up. */
+static int find_osrel(const uint8_t *b, size_t len, size_t total,
+                      size_t *off, size_t *size)
 {
     uint32_t lfanew;
     uint16_t nsect, optsize;
@@ -90,7 +103,8 @@ static int find_osrel(const uint8_t *b, size_t len, size_t *off, size_t *size)
             continue;
         raw_size = rd32(s + SECT_RAWSIZE);
         raw_ptr = rd32(s + SECT_RAWPTR);
-        if (raw_ptr > len || raw_size > len - raw_ptr)
+        /* Against the FILE, not against the window. */
+        if (raw_ptr > total || raw_size > total - raw_ptr)
             return OSREL_ERR_NO_SECTION;
         if (raw_size == 0)
             return OSREL_ERR_NO_SECTION;
@@ -113,7 +127,8 @@ static int key_matches(const char *text, size_t len, size_t at, const char *key)
     return at + i < len && text[at + i] == '=';
 }
 
-int osrel_find(const void *buf, size_t len, size_t *off, size_t *size)
+int osrel_find(const void *buf, size_t len, size_t total,
+               size_t *off, size_t *size)
 {
     size_t o = 0, n = 0;
     int rc;
@@ -122,9 +137,9 @@ int osrel_find(const void *buf, size_t len, size_t *off, size_t *size)
         return OSREL_ERR_BAD_ARG;
     *off = 0;
     *size = 0;
-    if (buf == (const void *)0)
+    if (buf == (const void *)0 || total < len)
         return OSREL_ERR_BAD_ARG;
-    rc = find_osrel((const uint8_t *)buf, len, &o, &n);
+    rc = find_osrel((const uint8_t *)buf, len, total, &o, &n);
     if (rc != OSREL_OK)
         return rc;
     *off = o;
@@ -220,7 +235,8 @@ int osrel_label(const void *buf, size_t len, char *out, size_t cap)
     if (b == (const uint8_t *)0)
         return OSREL_ERR_BAD_ARG;
 
-    rc = find_osrel(b, len, &off, &size);
+    /* Whole-buffer caller: the window IS the file. */
+    rc = find_osrel(b, len, len, &off, &size);
     if (rc != OSREL_OK)
         return rc;
     text = (const char *)(b + off);

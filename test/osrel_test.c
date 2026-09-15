@@ -246,6 +246,64 @@ static void test_null_args(void **state)
     (void)state;
 }
 
+/* THE regression test for the shape every real UKI has: the section table is
+ * near the front and .osrel is far past any window a caller would read.
+ *
+ * The first cut validated the section's file range against the LENGTH OF THE
+ * BUFFER rather than the length of the file, so it answered "no .osrel
+ * section" for every real image and the loader showed filenames. It shipped,
+ * because the crafted PEs in these tests were 6.7 KB - smaller than the
+ * window - so their .osrel fell inside the buffer and the bug was invisible.
+ * A fixture smaller than the thing it stands in for proves nothing about it.
+ *
+ * Numbers from a real mkinitcpio UKI: section table at 392, .osrel at 130048,
+ * file 91 MB. */
+static void test_osrel_beyond_the_window(void **state)
+{
+    uint8_t img[IMG_MAX];
+    size_t off = 0, size = 0;
+    const size_t window = 512;      /* stands in for the loader's 8 KB read */
+    const size_t total = 130560;    /* stands in for the whole file */
+
+    (void)build_pe(img, ".osrel", "PRETTY_NAME=\"Arch Linux\"\n");
+    /* Point the section far outside the window, as ukify does. */
+    put32(img + SECT_AT + 40 + 20, 130048u);
+    put32(img + SECT_AT + 40 + 16, 512u);
+
+    assert_int_equal(osrel_find(img, window, total, &off, &size), OSREL_OK);
+    assert_int_equal(off, 130048u);
+    assert_int_equal(size, 512u);
+    (void)state;
+}
+
+/* The bound still has to bite against the FILE. A section claiming to start
+ * past the end of the image is refused, window or no window. */
+static void test_osrel_beyond_the_file(void **state)
+{
+    uint8_t img[IMG_MAX];
+    size_t off = 0, size = 0;
+
+    (void)build_pe(img, ".osrel", "PRETTY_NAME=\"Arch Linux\"\n");
+    put32(img + SECT_AT + 40 + 20, 130048u);
+    put32(img + SECT_AT + 40 + 16, 512u);
+
+    assert_int_equal(osrel_find(img, 512u, 4096u, &off, &size),
+                     OSREL_ERR_NO_SECTION);
+    (void)state;
+}
+
+/* total < len is a caller that does not know its own buffer. */
+static void test_osrel_total_below_len(void **state)
+{
+    uint8_t img[IMG_MAX];
+    size_t off = 0, size = 0;
+    size_t n = build_pe(img, ".osrel", "PRETTY_NAME=\"Arch\"\n");
+
+    assert_int_equal(osrel_find(img, n, n / 2u, &off, &size),
+                     OSREL_ERR_BAD_ARG);
+    (void)state;
+}
+
 int run_osrel_tests(void)
 {
     const struct CMUnitTest tests[] = {
@@ -265,6 +323,9 @@ int run_osrel_tests(void)
         cmocka_unit_test(test_raw_size_past_end),
         cmocka_unit_test(test_truncated_image),
         cmocka_unit_test(test_null_args),
+        cmocka_unit_test(test_osrel_beyond_the_window),
+        cmocka_unit_test(test_osrel_beyond_the_file),
+        cmocka_unit_test(test_osrel_total_below_len),
     };
 
     return cmocka_run_group_tests_name("osrel", tests, NULL, NULL);

@@ -62,11 +62,21 @@ int osrel_label(const void *buf, size_t len, char *out, size_t cap);
  *
  * Split out because the loader must not read a 90 MB UKI to draw a menu row.
  * It reads a small window off the front, calls this to learn where the section
- * is, then reads exactly that section. buf need only be long enough to cover
- * the headers and the section table; a window too short to decide is
- * OSREL_ERR_NOT_PE, which the caller treats as "no label" like any other
- * failure. */
-int osrel_find(const void *buf, size_t len, size_t *off, size_t *size);
+ * is, then reads exactly that section.
+ *
+ * `len` is how many bytes of the file are in buf; `total` is the file's real
+ * length. They differ for exactly the caller this exists for, and keeping them
+ * apart is the whole contract: the headers and section table are READ here and
+ * must be inside buf, while the section content is merely LOCATED and is
+ * expected to be outside it. A real UKI puts .osrel about 130 KB in behind a
+ * section table at byte 392, so a window of a few KB finds it and cannot
+ * contain it.
+ *
+ * Pass total == len when the whole file is in buf. total < len is
+ * OSREL_ERR_BAD_ARG; a window too short to decide is OSREL_ERR_NOT_PE, which
+ * the caller treats as "no label" like any other failure. */
+int osrel_find(const void *buf, size_t len, size_t total,
+               size_t *off, size_t *size);
 
 /* The key lookup on its own, over a raw os-release text. Exposed because it is
  * the half worth testing exhaustively, and because the appliance's own label

@@ -485,7 +485,8 @@ static int uki_osrel_label(const fs_dirent *ent, char *out, UINTN cap)
     have = fsize < (UINT64)UKI_HEAD_WINDOW ? fsize : (UINT64)UKI_HEAD_WINDOW;
     if (fs_file_read(&g_file, 0, have, g_uki_head) != FS_OK)
         return 0;
-    if (osrel_find(g_uki_head, (size_t)have, &off, &size) != OSREL_OK)
+    if (osrel_find(g_uki_head, (size_t)have, (size_t)fsize, &off, &size)
+            != OSREL_OK)
         return 0;
     if (size > UKI_OSREL_MAX)
         size = UKI_OSREL_MAX;
