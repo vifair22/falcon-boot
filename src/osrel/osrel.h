@@ -76,7 +76,14 @@ int osrel_label(const void *buf, size_t len, char *out, size_t cap);
  * OSREL_ERR_BAD_ARG; a window too short to decide is OSREL_ERR_NOT_PE, which
  * the caller treats as "no label" like any other failure. */
 int osrel_find(const void *buf, size_t len, size_t total,
-               size_t *off, size_t *size);
+               const char *section, size_t *off, size_t *size);
+
+/* The PE section carrying the kernel version, e.g. "7.2.6-arch2-1". ukify and
+ * mkinitcpio both write it, and sd-boot shows it beside the pretty name for
+ * exactly the reason it matters here: two UKIs of the same distro carry the
+ * same PRETTY_NAME and differ only by kernel. */
+#define OSREL_SECT_UNAME ".uname"
+#define OSREL_SECT_OSREL ".osrel"
 
 /* The key lookup on its own, over a raw os-release text. Exposed because it is
  * the half worth testing exhaustively, and because the appliance's own label

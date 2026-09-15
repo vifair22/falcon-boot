@@ -64,7 +64,7 @@ static int name_is(const uint8_t *field, const char *want)
  * section table at byte 392. The loader fell back to filenames and looked like
  * it simply had not been wired up. */
 static int find_osrel(const uint8_t *b, size_t len, size_t total,
-                      size_t *off, size_t *size)
+                      const char *want, size_t *off, size_t *size)
 {
     uint32_t lfanew;
     uint16_t nsect, optsize;
@@ -99,7 +99,7 @@ static int find_osrel(const uint8_t *b, size_t len, size_t total,
         const uint8_t *s = b + table + i * SECT_ENTRY;
         uint32_t raw_size, raw_ptr;
 
-        if (!name_is(s, ".osrel"))
+        if (!name_is(s, want))
             continue;
         raw_size = rd32(s + SECT_RAWSIZE);
         raw_ptr = rd32(s + SECT_RAWPTR);
@@ -128,18 +128,18 @@ static int key_matches(const char *text, size_t len, size_t at, const char *key)
 }
 
 int osrel_find(const void *buf, size_t len, size_t total,
-               size_t *off, size_t *size)
+               const char *section, size_t *off, size_t *size)
 {
     size_t o = 0, n = 0;
     int rc;
 
-    if (off == (size_t *)0 || size == (size_t *)0)
+    if (off == (size_t *)0 || size == (size_t *)0 || section == (const char *)0)
         return OSREL_ERR_BAD_ARG;
     *off = 0;
     *size = 0;
     if (buf == (const void *)0 || total < len)
         return OSREL_ERR_BAD_ARG;
-    rc = find_osrel((const uint8_t *)buf, len, total, &o, &n);
+    rc = find_osrel((const uint8_t *)buf, len, total, section, &o, &n);
     if (rc != OSREL_OK)
         return rc;
     *off = o;
@@ -236,7 +236,7 @@ int osrel_label(const void *buf, size_t len, char *out, size_t cap)
         return OSREL_ERR_BAD_ARG;
 
     /* Whole-buffer caller: the window IS the file. */
-    rc = find_osrel(b, len, len, &off, &size);
+    rc = find_osrel(b, len, len, OSREL_SECT_OSREL, &off, &size);
     if (rc != OSREL_OK)
         return rc;
     text = (const char *)(b + off);

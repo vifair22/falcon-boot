@@ -270,7 +270,7 @@ static void test_osrel_beyond_the_window(void **state)
     put32(img + SECT_AT + 40 + 20, 130048u);
     put32(img + SECT_AT + 40 + 16, 512u);
 
-    assert_int_equal(osrel_find(img, window, total, &off, &size), OSREL_OK);
+    assert_int_equal(osrel_find(img, window, total, ".osrel", &off, &size), OSREL_OK);
     assert_int_equal(off, 130048u);
     assert_int_equal(size, 512u);
     (void)state;
@@ -287,7 +287,7 @@ static void test_osrel_beyond_the_file(void **state)
     put32(img + SECT_AT + 40 + 20, 130048u);
     put32(img + SECT_AT + 40 + 16, 512u);
 
-    assert_int_equal(osrel_find(img, 512u, 4096u, &off, &size),
+    assert_int_equal(osrel_find(img, 512u, 4096u, ".osrel", &off, &size),
                      OSREL_ERR_NO_SECTION);
     (void)state;
 }
@@ -299,7 +299,7 @@ static void test_osrel_total_below_len(void **state)
     size_t off = 0, size = 0;
     size_t n = build_pe(img, ".osrel", "PRETTY_NAME=\"Arch\"\n");
 
-    assert_int_equal(osrel_find(img, n, n / 2u, &off, &size),
+    assert_int_equal(osrel_find(img, n, n / 2u, ".osrel", &off, &size),
                      OSREL_ERR_BAD_ARG);
     (void)state;
 }

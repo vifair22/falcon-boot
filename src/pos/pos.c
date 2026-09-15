@@ -167,6 +167,12 @@ static int        g_uki_named[POS_MAX_UKIS];
 /* 1 when another entry carries the same label, so this row needs its filename
  * appended. Computed for every row before any row is rewritten. */
 static int        g_uki_dup[POS_MAX_UKIS];
+/* The kernel version out of each image's .uname, empty when it has none. This
+ * is what separates two builds of one distro, and it is what a person actually
+ * wants to read: "Arch Linux 7.2.6-arch2-1" beside "Arch Linux 6.18.52-1-lts"
+ * says which is the LTS fallback; "(arch-usb.efi)" beside "(arch-lts.efi)"
+ * makes them guess. */
+static char       g_uki_uname[POS_MAX_UKIS][OSREL_LABEL_MAX];
 static UINTN      g_uki_n;
 
 /* Does this volume have a keyslot this loader can actually process? DESIGN
@@ -472,21 +478,14 @@ static int name_is_appliance(const fs_dirent *e)
 static UINT8 g_uki_head[UKI_HEAD_WINDOW];
 static UINT8 g_uki_osrel[UKI_OSREL_MAX];
 
-static int uki_osrel_label(const fs_dirent *ent, char *out, UINTN cap)
+/* Reads one named section into g_uki_osrel. Returns its length, or 0. The
+ * caller must have the file open on g_file. */
+static UINTN uki_section(const char *section, UINT64 fsize, UINT64 have)
 {
     size_t off = 0, size = 0;
-    UINT64 have, fsize;
 
-    out[0] = '\0';
-    if (fs_file_open(&g_fs, &g_file, ent) != FS_OK)
-        return 0;
-
-    fsize = fs_file_size(&g_file);
-    have = fsize < (UINT64)UKI_HEAD_WINDOW ? fsize : (UINT64)UKI_HEAD_WINDOW;
-    if (fs_file_read(&g_file, 0, have, g_uki_head) != FS_OK)
-        return 0;
-    if (osrel_find(g_uki_head, (size_t)have, (size_t)fsize, &off, &size)
-            != OSREL_OK)
+    if (osrel_find(g_uki_head, (size_t)have, (size_t)fsize, section,
+                   &off, &size) != OSREL_OK)
         return 0;
     if (size > UKI_OSREL_MAX)
         size = UKI_OSREL_MAX;
@@ -494,15 +493,62 @@ static int uki_osrel_label(const fs_dirent *ent, char *out, UINTN cap)
         return 0;
     if (fs_file_read(&g_file, (UINT64)off, (UINT64)size, g_uki_osrel) != FS_OK)
         return 0;
+    return (UINTN)size;
+}
 
-    if (osrel_value((const char *)g_uki_osrel, size, "PRETTY_NAME", out, cap)
-            == OSREL_OK)
-        return 1;
-    if (osrel_value((const char *)g_uki_osrel, size, "NAME", out, cap)
-            == OSREL_OK)
-        return 1;
+/* Reads the display name and the kernel version in one open.
+ *
+ * .uname is read even when it is not needed yet, because whether it IS needed
+ * depends on the OTHER entries: it is what separates two images of the same
+ * distro, and that is only known once every row has a label. One open per
+ * entry rather than two passes of I/O over the shelf. */
+static int uki_osrel_label(const fs_dirent *ent, char *out, UINTN cap,
+                           char *uname, UINTN ucap)
+{
+    UINT64 have, fsize;
+    UINTN n;
+    int named = 0;
+
     out[0] = '\0';
-    return 0;
+    uname[0] = '\0';
+    if (fs_file_open(&g_fs, &g_file, ent) != FS_OK)
+        return 0;
+
+    fsize = fs_file_size(&g_file);
+    have = fsize < (UINT64)UKI_HEAD_WINDOW ? fsize : (UINT64)UKI_HEAD_WINDOW;
+    if (fs_file_read(&g_file, 0, have, g_uki_head) != FS_OK)
+        return 0;
+
+    n = uki_section(OSREL_SECT_OSREL, fsize, have);
+    if (n != 0) {
+        if (osrel_value((const char *)g_uki_osrel, n, "PRETTY_NAME", out, cap)
+                == OSREL_OK)
+            named = 1;
+        else if (osrel_value((const char *)g_uki_osrel, n, "NAME", out, cap)
+                == OSREL_OK)
+            named = 1;
+    }
+    if (!named)
+        out[0] = '\0';
+
+    /* .uname is a bare version string, not KEY=value, so it is copied rather
+     * than parsed. Stops at the first byte that cannot be in one, which covers
+     * the trailing NUL and the newline some writers add. */
+    n = uki_section(OSREL_SECT_UNAME, fsize, have);
+    if (n != 0) {
+        UINTN i = 0;
+
+        while (i < n && i + 1u < ucap) {
+            char c = (char)g_uki_osrel[i];
+
+            if (c < 0x21 || c > 0x7E)
+                break;
+            uname[i] = c;
+            i++;
+        }
+        uname[i] = '\0';
+    }
+    return named;
 }
 
 static void ascii_to_ucs2(CHAR16 *dst, UINTN cap, const char *src)
@@ -525,6 +571,30 @@ static int ucs2_eq(const CHAR16 *a, const CHAR16 *b)
     while (a[i] != L'\0' && a[i] == b[i])
         i++;
     return a[i] == b[i];
+}
+
+/* Does another entry with the same label also carry the same kernel version?
+ * Then the version cannot separate them and the filename has to. Two copies of
+ * one UKI under different names is exactly that case, and it is the shape a
+ * rollback copy has. */
+static int uname_shared(UINTN i)
+{
+    UINTN j;
+
+    for (j = 0; j < g_uki_n; j++) {
+        UINTN k = 0;
+
+        if (j == i || !g_uki_dup[j])
+            continue;
+        if (!ucs2_eq(g_uki_entries[i].label, g_uki_entries[j].label))
+            continue;
+        while (g_uki_uname[i][k] != '\0' &&
+               g_uki_uname[i][k] == g_uki_uname[j][k])
+            k++;
+        if (g_uki_uname[i][k] == g_uki_uname[j][k])
+            return 1;
+    }
+    return 0;
 }
 
 /* Which UKI to boot. One is booted without asking; several are offered,
@@ -559,7 +629,8 @@ static INTN choose_uki(const menu_banner *banner, pos_pick pick)
         CHAR16 *row = g_uki_entries[i].label;
 
         memcpy(row, prefix, pl * sizeof(CHAR16));
-        if (uki_osrel_label(&g_ukis[i], label, sizeof label))
+        if (uki_osrel_label(&g_ukis[i], label, sizeof label,
+                            g_uki_uname[i], sizeof g_uki_uname[i]))
             ascii_to_ucs2(row + pl, MENU_PATH_MAX - pl, label);
         else
             name_to_ucs2(row + pl, MENU_PATH_MAX - pl,
@@ -594,23 +665,38 @@ static INTN choose_uki(const menu_banner *banner, pos_pick pick)
         }
     }
 
+    /* The kernel version is the qualifier worth showing, and the filename is
+     * the fallback when there is no .uname or two images somehow share one.
+     * "Arch Linux 7.2.6-arch2-1" beside "Arch Linux 6.18.52-1-lts" tells a
+     * person which row is the LTS fallback; "(arch-usb.efi)" beside
+     * "(arch-lts.efi)" only tells them the filenames differ, which they could
+     * already see. No brackets on the version: it reads as part of the name,
+     * which is what sd-boot shows too. */
     for (i = 0; i < g_uki_n; i++) {
+        UINTN at;
+
         if (!g_uki_dup[i])
             continue;
+        at = ucs2_len(g_uki_entries[i].label);
 
-        {
-            UINTN at = ucs2_len(g_uki_entries[i].label);
-
-            if (at + 3u < MENU_PATH_MAX) {
+        if (g_uki_uname[i][0] != '\0' && !uname_shared(i)) {
+            if (at + 2u < MENU_PATH_MAX) {
                 g_uki_entries[i].label[at++] = L' ';
-                g_uki_entries[i].label[at++] = L'(';
-                name_to_ucs2(g_uki_entries[i].label + at, MENU_PATH_MAX - at - 2u,
-                             g_ukis[i].name, g_ukis[i].name_len);
-                at = ucs2_len(g_uki_entries[i].label);
-                if (at + 2u < MENU_PATH_MAX) {
-                    g_uki_entries[i].label[at++] = L')';
-                    g_uki_entries[i].label[at] = L'\0';
-                }
+                ascii_to_ucs2(g_uki_entries[i].label + at,
+                              MENU_PATH_MAX - at, g_uki_uname[i]);
+            }
+            continue;
+        }
+
+        if (at + 3u < MENU_PATH_MAX) {
+            g_uki_entries[i].label[at++] = L' ';
+            g_uki_entries[i].label[at++] = L'(';
+            name_to_ucs2(g_uki_entries[i].label + at, MENU_PATH_MAX - at - 2u,
+                         g_ukis[i].name, g_ukis[i].name_len);
+            at = ucs2_len(g_uki_entries[i].label);
+            if (at + 2u < MENU_PATH_MAX) {
+                g_uki_entries[i].label[at++] = L')';
+                g_uki_entries[i].label[at] = L'\0';
             }
         }
     }
