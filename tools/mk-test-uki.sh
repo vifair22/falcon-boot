@@ -100,8 +100,13 @@ echo "   initrd: $INITRD ($(stat -c%s "$INITRD") bytes)"
 
 # ---- the UKI ----
 #
-# No .osrel and no .uname: sd-stub does not need them and a fixture that
-# carries less is a fixture with fewer ways to differ from the product.
+# No --os-release and no --uname is not the same as no sections: ukify 261
+# autodetects the version out of the kernel and copies the BUILD HOST's
+# /etc/os-release in, so this fixture carries .uname and a PRETTY_NAME of
+# "Arch Linux" whether or not we ask for them. Left alone deliberately, because
+# that is what the product's own UKIs carry too, but it does mean personal.efi
+# and unsigned.efi are a label COLLISION on the rig's shelf rather than the two
+# unlabelled rows the comment here used to claim.
 echo "== ukify build"
 ukify build \
     --linux="$KERNEL" \

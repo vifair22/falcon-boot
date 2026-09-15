@@ -23,7 +23,10 @@
 # /uki holds two images so both halves of the Secure Boot story are in one
 # fixture: personal.efi signed with the test MOK (the one that must boot) and
 # unsigned.efi identical but unsigned (the one shim must refuse). A non-.efi
-# decoy sits beside them so the discovery filter is exercised too.
+# decoy sits beside them so the discovery filter is exercised too. Beside those
+# sit the label fixtures from tools/mk-test-labels.sh, which test what the
+# chooser CALLS an image rather than what it loads; see that script for why the
+# two need separate fixtures.
 #
 # What those two images ARE is the real sd-stub UKI from tools/mk-test-uki.sh
 # when it has been built, because step 6 of the build order tests the
@@ -73,6 +76,7 @@ MOK_CER=build/mok-test/falcon-test-mok.cer
 PAYLOAD=build/test/payload.efi
 PAYLOAD_ISO=build/test-payload.iso
 FIXTURE_UKI=build/test/fixture-uki.efi
+WORK_LABELS=build/test/labels
 FIXTURE_UKI_SIGNED=build/test/fixture-uki-signed.efi
 
 UNSIGNED=0
@@ -282,6 +286,19 @@ else
 fi
 cp "$UKI_SRC" "$MNT/uki/unsigned.efi"
 echo "   /uki populated from the $UKI_KIND"
+
+# The label fixtures (tools/mk-test-labels.sh). personal.efi and unsigned.efi
+# test what the loader LOADS; these test what it CALLS things, which is a
+# separate path and was for a while a broken one. They are tiny, they do not
+# boot, and the chooser only appears when the shelf holds more than one image,
+# so staging them also keeps that screen on the default rig run.
+if [[ -x tools/mk-test-labels.sh ]] && command -v ukify >/dev/null; then
+    tools/mk-test-labels.sh "$WORK_LABELS" >/dev/null
+    cp "$WORK_LABELS"/*.efi "$MNT/uki/"
+    echo "   /uki label fixtures: $(ls "$WORK_LABELS" | tr '\n' ' ')"
+else
+    echo "   /uki label fixtures skipped (no ukify)" >&2
+fi
 # Decoy: proves the discovery filter takes *.efi regular files and not
 # whatever else happens to be in the directory.
 echo "not a kernel image" > "$MNT/uki/README.txt"
@@ -324,3 +341,15 @@ else
 fi
 echo "  Personal OS: unsigned.efi     (unsigned: refused under Secure Boot)"
 echo "  README.txt / decoy.bin        present, never offered"
+if [[ -d "$WORK_LABELS" ]]; then
+    echo
+    echo "expected chooser, in full (the pair above carry ukify's autodetected"
+    echo "\"Arch Linux\" too, so they join arch-b's group):"
+    echo "  Personal OS: Arch Linux 7.2.6-arch2-1   only holder of that kernel"
+    echo "  Personal OS: Arch Linux (arch-b.efi)    kernel shared with 2 below"
+    echo "  Personal OS: Arch Linux (personal.efi)  same"
+    echo "  Personal OS: Solo Linux 42              unique label: no qualifier"
+    echo "  Personal OS: Twin Linux (twin-a.efi)    kernel shared with twin-b"
+    echo "  Personal OS: Twin Linux (twin-b.efi)    same"
+    echo "  Personal OS: Arch Linux (unsigned.efi)  kernel shared with arch-b"
+fi
