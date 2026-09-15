@@ -760,6 +760,30 @@ and nothing about enforcement changes.
 its job. One component owns the marker's lifecycle, and it is the one that can
 both set and clear it.
 
+**Runtime access, so the booted OS can ask too (decision 2026-09-15).** The
+variable carries `RUNTIME_ACCESS` alongside `NON_VOLATILE` and
+`BOOTSERVICE_ACCESS`. efivarfs exposes only runtime-accessible variables, so
+without it nothing in Linux can see or write this one, and the reboot chooser
+in the personal OS (the archusb repo's `archusb-boot-next`) has no way to say
+"next time, boot that". With it, the chooser is a one-line `efivar` write and
+the loader's existing read-and-delete gives the one-shot semantics for free -
+no state on the stick, and no reset service to clear a marker afterwards.
+
+This grants nothing, and the reason is the sequence above rather than the
+attribute: the bytes are untrusted on the way back in, and what they name is
+**validated against the manifest before a single byte of it is acted on**. A
+root process that sets this can therefore only select among entries that
+already pass validation - exactly the authority UEFI's own `BootNext` hands to
+root, and `BootNext` is runtime-writable by design. Root on the personal OS can
+already rewrite anything on the stick it can mount; what it cannot do is forge
+a signature, and this does not help it.
+
+Stated as a constraint rather than a reassurance, because it is the kind of
+thing a later change breaks by accident: **any code path that acts on this
+value without validating it first is a local privilege escalation**, and it is
+runtime access that makes it one. The validation is not an optimisation to
+skip when the value "looks fine".
+
 **Sidecar layout: named by the source ISO's checksum (decision 2026-09-13).**
 Prepared artifacts live under the reserved directory of Section 6.2, in a
 folder named by the checksum of the ISO they were computed from

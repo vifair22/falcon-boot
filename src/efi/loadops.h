@@ -104,9 +104,12 @@ const CHAR16 *load_ops_inner_load_advice(void);
  * which is exactly what Section 5.1's rejected volatile-variable design did
  * not have.
  *
- * Nothing about enforcement changes: NVRAM is not the stick, this variable is
- * not read by anything but us, and what it names still has to survive
- * validation against the manifest before a single byte of it is acted on. */
+ * Nothing about enforcement changes: NVRAM is not the stick, and what it names
+ * still has to survive validation against the manifest before a single byte of
+ * it is acted on. That last clause is load-bearing rather than reassuring: the
+ * variable is runtime-accessible, so the booted OS can write it, and the
+ * validation is the only thing standing between "root asked for this" and
+ * "this ran". */
 #define LOADER_NEXT_BOOT_NAME L"FalconNextBoot"
 
 /* Reads the marker and DELETES it, in that order, unconditionally.
@@ -124,9 +127,10 @@ const CHAR16 *load_ops_inner_load_advice(void);
 UINTN loader_next_boot_take(EFI_SYSTEM_TABLE *st, void *buf, UINTN cap);
 
 /* Sets the marker to an ASCII path, or clears it when name is NULL or empty.
- * Non-volatile plus boot-services access: it must survive the reboot the
- * appliance performs, and nothing after ExitBootServices has any business
- * reading it. Returns the firmware's status. */
+ * Non-volatile so it survives the reboot the appliance performs, and
+ * runtime-accessible so a chooser in the booted OS can set it too; see the
+ * attribute definition in loadops.c for why that grants nothing. Returns the
+ * firmware's status. */
 EFI_STATUS loader_next_boot_set(EFI_SYSTEM_TABLE *st, const char *name);
 
 #endif /* FALCON_EFI_LOADOPS_H */
