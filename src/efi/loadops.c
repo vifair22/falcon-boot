@@ -164,3 +164,68 @@ const CHAR16 *load_ops_inner_load_advice(void)
            L"unaffected: that\r\nchainload is what disabling validation "
            L"bought, and it still works.";
 }
+
+/* ---- boot to firmware setup ---- */
+
+/* The global UEFI variable namespace, where OsIndications lives. Not ours, so
+ * it is spelled out here rather than reusing FALCON_VENDOR_GUID. */
+#define EFI_GLOBAL_VARIABLE_GUID \
+    { 0x8be4df61, 0x93ca, 0x11d2, \
+      { 0xaa, 0x0d, 0x00, 0xe0, 0x98, 0x03, 0x2b, 0x8c } }
+
+#define EFI_OS_INDICATIONS_BOOT_TO_FW_UI 0x0000000000000001ULL
+
+/* NV so it survives the reset, BS because we write it before
+ * ExitBootServices, RT because the spec defines this variable with runtime
+ * access and a firmware that finds the attributes changed may reject the
+ * write outright. */
+#define OS_INDICATIONS_ATTRS (EFI_VARIABLE_NON_VOLATILE | \
+                              EFI_VARIABLE_BOOTSERVICE_ACCESS | \
+                              EFI_VARIABLE_RUNTIME_ACCESS)
+
+static EFI_STATUS read_u64_var(EFI_SYSTEM_TABLE *st, CHAR16 *name,
+                               UINT64 *out)
+{
+    EFI_GUID g = EFI_GLOBAL_VARIABLE_GUID;
+    UINTN size = sizeof(UINT64);
+    UINT32 attrs = 0;
+
+    *out = 0;
+    return st->RuntimeServices->GetVariable(name, &g, &attrs, &size, out);
+}
+
+BOOLEAN fw_setup_available(EFI_SYSTEM_TABLE *st)
+{
+    UINT64 supported = 0;
+
+    if (st == (EFI_SYSTEM_TABLE *)0 || st->RuntimeServices == (void *)0)
+        return FALSE;
+    if (read_u64_var(st, L"OsIndicationsSupported", &supported) != EFI_SUCCESS)
+        return FALSE;
+    return (supported & EFI_OS_INDICATIONS_BOOT_TO_FW_UI) != 0 ? TRUE : FALSE;
+}
+
+BOOLEAN loader_boot_to_fw_setup(EFI_SYSTEM_TABLE *st)
+{
+    EFI_GUID g = EFI_GLOBAL_VARIABLE_GUID;
+    UINT64 cur = 0;
+
+    if (!fw_setup_available(st))
+        return FALSE;
+
+    /* A missing variable is not an error here: it means no indication is
+     * pending, which is the common case and a perfectly good starting value. */
+    (void)read_u64_var(st, L"OsIndications", &cur);
+    cur |= EFI_OS_INDICATIONS_BOOT_TO_FW_UI;
+
+    if (st->RuntimeServices->SetVariable(L"OsIndications", &g,
+                                         OS_INDICATIONS_ATTRS,
+                                         sizeof cur, &cur) != EFI_SUCCESS)
+        return FALSE;
+
+    st->RuntimeServices->ResetSystem(EfiResetWarm, EFI_SUCCESS, 0, (void *)0);
+    /* Only reached if the firmware refused to reset, which some do when a
+     * driver is holding things open. The caller says so; the indication is
+     * left set, because the next reboot by any means will still honour it. */
+    return FALSE;
+}

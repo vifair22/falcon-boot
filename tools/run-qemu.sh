@@ -49,7 +49,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-OVMF_DIR="${OVMF_DIR:-/usr/share/edk2/OvmfX64}"
+. "$(dirname "$0")/ovmf.sh"
 # Enough for the loader and the fixture; booting a real distro ISO wants more,
 # because its bootloader pulls a kernel and a large initramfs into memory
 # before ExitBootServices.
@@ -58,8 +58,8 @@ BUILD=build
 ESP="$BUILD/esp"
 EFI_BIN="$BUILD/bin/falcon-boot.efi"
 
-CODE="$OVMF_DIR/OVMF_CODE.fd"
-VARS_SRC="$OVMF_DIR/OVMF_VARS.fd"
+CODE=$(ovmf_find CODE plain || true)
+VARS_SRC=$(ovmf_find VARS plain || true)
 VARS="${VARS_FILE:-$BUILD/OVMF_VARS.fd}"
 
 HEADLESS=0
@@ -82,7 +82,7 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
     --secboot)
         SECBOOT=1
-        CODE="$OVMF_DIR/OVMF_CODE.secboot.fd"
+        CODE=$(ovmf_find CODE secboot || true)
         # Not the stock varstore: the one mk-test-mok.sh seeded with our test
         # MOK. The stock file is already enrolled with the MS and Red Hat keys
         # (so shim itself passes db unmodified); only MOK has to be added, and

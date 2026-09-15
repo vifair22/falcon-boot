@@ -5,6 +5,7 @@
  */
 
 #include <pos/pos.h>
+#include <osrel/osrel.h>
 
 #include <efi/loadops.h>
 
@@ -160,6 +161,9 @@ static fs_file   g_file;
 
 static fs_dirent  g_ukis[POS_MAX_UKIS];
 static menu_entry g_uki_entries[POS_MAX_UKIS];
+/* 1 when the row came from .osrel rather than the filename, so the
+ * disambiguation pass knows which rows are worth qualifying. */
+static int        g_uki_named[POS_MAX_UKIS];
 static UINTN      g_uki_n;
 
 /* Does this volume have a keyslot this loader can actually process? DESIGN
@@ -448,6 +452,77 @@ static int name_is_appliance(const fs_dirent *e)
     return 1;
 }
 
+/* ---- entry labels from .osrel (DESIGN Section 5) ---- */
+
+/* A UKI says what it is in its own .osrel section, which is where sd-boot
+ * reads the name it shows. Reading the same section means our menu agrees
+ * with sd-boot's, and ukify keeps it current without anyone maintaining a
+ * second copy of the name somewhere.
+ *
+ * Costs two small reads per entry, not a 90 MB one: a window off the front to
+ * find the section, then the section. UX only - every failure path leaves the
+ * filename in place, because a menu row that says "arch-usb.efi" is worse than
+ * one that says "Arch Linux" and far better than none. */
+#define UKI_HEAD_WINDOW 8192u
+#define UKI_OSREL_MAX   4096u
+
+static UINT8 g_uki_head[UKI_HEAD_WINDOW];
+static UINT8 g_uki_osrel[UKI_OSREL_MAX];
+
+static int uki_osrel_label(const fs_dirent *ent, char *out, UINTN cap)
+{
+    size_t off = 0, size = 0;
+    UINT64 have, fsize;
+
+    out[0] = '\0';
+    if (fs_file_open(&g_fs, &g_file, ent) != FS_OK)
+        return 0;
+
+    fsize = fs_file_size(&g_file);
+    have = fsize < (UINT64)UKI_HEAD_WINDOW ? fsize : (UINT64)UKI_HEAD_WINDOW;
+    if (fs_file_read(&g_file, 0, have, g_uki_head) != FS_OK)
+        return 0;
+    if (osrel_find(g_uki_head, (size_t)have, &off, &size) != OSREL_OK)
+        return 0;
+    if (size > UKI_OSREL_MAX)
+        size = UKI_OSREL_MAX;
+    if ((UINT64)off + (UINT64)size > fsize)
+        return 0;
+    if (fs_file_read(&g_file, (UINT64)off, (UINT64)size, g_uki_osrel) != FS_OK)
+        return 0;
+
+    if (osrel_value((const char *)g_uki_osrel, size, "PRETTY_NAME", out, cap)
+            == OSREL_OK)
+        return 1;
+    if (osrel_value((const char *)g_uki_osrel, size, "NAME", out, cap)
+            == OSREL_OK)
+        return 1;
+    out[0] = '\0';
+    return 0;
+}
+
+static void ascii_to_ucs2(CHAR16 *dst, UINTN cap, const char *src)
+{
+    UINTN i = 0;
+
+    while (src[i] != '\0' && i + 1u < cap) {
+        dst[i] = (CHAR16)(unsigned char)src[i];
+        i++;
+    }
+    dst[i] = L'\0';
+}
+
+/* Exact, not case-folded. Two rows that differ only in case are still two
+ * distinguishable rows on screen, and qualifying them would add noise. */
+static int ucs2_eq(const CHAR16 *a, const CHAR16 *b)
+{
+    UINTN i = 0;
+
+    while (a[i] != L'\0' && a[i] == b[i])
+        i++;
+    return a[i] == b[i];
+}
+
 /* Which UKI to boot. One is booted without asking; several are offered,
  * because on a stick built to DESIGN Section 7.5 the second one is the
  * signing appliance and picking for the user would be picking wrong half the
@@ -476,10 +551,53 @@ static INTN choose_uki(const menu_banner *banner, pos_pick pick)
     for (i = 0; i < g_uki_n; i++) {
         static const CHAR16 prefix[] = L"Personal OS: ";
         UINTN pl = sizeof(prefix) / sizeof(prefix[0]) - 1;
+        char label[OSREL_LABEL_MAX];
+        CHAR16 *row = g_uki_entries[i].label;
 
-        memcpy(g_uki_entries[i].label, prefix, pl * sizeof(CHAR16));
-        name_to_ucs2(g_uki_entries[i].label + pl, MENU_PATH_MAX - pl,
-                     g_ukis[i].name, g_ukis[i].name_len);
+        memcpy(row, prefix, pl * sizeof(CHAR16));
+        if (uki_osrel_label(&g_ukis[i], label, sizeof label))
+            ascii_to_ucs2(row + pl, MENU_PATH_MAX - pl, label);
+        else
+            name_to_ucs2(row + pl, MENU_PATH_MAX - pl,
+                         g_ukis[i].name, g_ukis[i].name_len);
+        g_uki_named[i] = (row[pl] != L'\0');
+    }
+
+    /* Two images that say the same thing about themselves are the common case,
+     * not the exotic one: every Arch UKI on the shelf carries PRETTY_NAME
+     * "Arch Linux", so a rollback copy beside the current one produces two
+     * identical, unpickable rows. The filename is what actually differs, so it
+     * is appended to every row whose label is not unique. Only to those: adding
+     * it everywhere would throw away the whole point of reading .osrel. */
+    for (i = 0; i < g_uki_n; i++) {
+        UINTN j;
+        int dup = 0;
+
+        if (!g_uki_named[i])
+            continue;               /* already showing its filename */
+        for (j = 0; j < g_uki_n && !dup; j++) {
+            if (j != i && ucs2_eq(g_uki_entries[i].label,
+                                  g_uki_entries[j].label))
+                dup = 1;
+        }
+        if (!dup)
+            continue;
+
+        {
+            UINTN at = ucs2_len(g_uki_entries[i].label);
+
+            if (at + 3u < MENU_PATH_MAX) {
+                g_uki_entries[i].label[at++] = L' ';
+                g_uki_entries[i].label[at++] = L'(';
+                name_to_ucs2(g_uki_entries[i].label + at, MENU_PATH_MAX - at - 2u,
+                             g_ukis[i].name, g_ukis[i].name_len);
+                at = ucs2_len(g_uki_entries[i].label);
+                if (at + 2u < MENU_PATH_MAX) {
+                    g_uki_entries[i].label[at++] = L')';
+                    g_uki_entries[i].label[at] = L'\0';
+                }
+            }
+        }
     }
     return menu_run(g_st, banner, g_uki_entries, g_uki_n);
 }

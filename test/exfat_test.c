@@ -80,6 +80,7 @@ int main(void)
     failed += run_iso_overlay_tests();
     failed += run_part_tests();
     failed += run_sb_tests();
+    failed += run_osrel_tests();
 
     printf("\ntotal failed: %d\n", failed);
     return failed == 0 ? 0 : 1;

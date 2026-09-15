@@ -26,8 +26,9 @@ cd "$(dirname "$0")/.."
 OUT=build/mok-test
 # The venv is shared with the shim spike's, since it is the same one tool.
 VENV=build/shim/venv
-OVMF_DIR="${OVMF_DIR:-/usr/share/edk2/OvmfX64}"
-VARS_SRC="$OVMF_DIR/OVMF_VARS.secboot.fd"
+. "$(dirname "$0")/ovmf.sh"
+VARS_SRC=$(ovmf_find VARS secboot) \
+    || { echo "ERROR: no OVMF varstore found (set OVMF_DIR)" >&2; exit 1; }
 
 KEY=$OUT/falcon-test-mok.key
 CRT=$OUT/falcon-test-mok.crt
@@ -74,6 +75,16 @@ fi
 echo "== seeding a varstore copy with the test MOK"
 cp -f "$VARS_SRC" "$VARS"
 chmod u+w "$VARS"
+
+# Some distros ship a varstore with Microsoft's PK/KEK/db already enrolled
+# (Gentoo's OVMF_VARS.secboot.fd); others ship only a blank one that comes up
+# in SETUP MODE (Arch's OVMF_VARS.4m.fd). A blank varstore is not a Secure Boot
+# test - nothing enforces, so every image loads and the run proves nothing -
+# so enroll into it when the PK is missing rather than silently testing air.
+if ! ovmf_vars_have_pk "$VENV/bin/virt-fw-vars" "$VARS"; then
+    echo "== varstore is in setup mode; enrolling Microsoft keys"
+    "$VENV/bin/virt-fw-vars" --inplace "$VARS" --enroll-microsoft >/dev/null
+fi
 "$VENV/bin/virt-fw-vars" --inplace "$VARS" --add-mok "$MOK_OWNER" "$CRT"
 
 # Second varstore: same MokList, plus MokSBState. This is the same shortcut

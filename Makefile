@@ -48,6 +48,7 @@ SRCS := \
 	src/menu/prompt.c \
 	src/pos/pos.c \
 	src/sb/sb.c \
+	src/osrel/osrel.c \
 	src/family/family.c \
 	src/cpio/cpio.c \
 	src/crypto/crypto.c \

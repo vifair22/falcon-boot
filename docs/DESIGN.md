@@ -1066,6 +1066,42 @@ in tools/mk-test-mok.sh writes `MokSBState` with attribute mask 0x3; a
 0x7 copy produces a varstore that looks permissive to a human and boots
 fully enforcing.
 
+**Getting to firmware setup (decision 2026-09-15).** Both sanctioned opt-outs
+above end at a screen the loader cannot draw, and until now the loader could
+only name it. The root menu therefore carries a **Reboot to firmware setup**
+row: it sets `OsIndications` bit 0,
+`EFI_OS_INDICATIONS_BOOT_TO_FW_UI`, and resets. The firmware clears the bit
+itself, exactly as it clears `BootNext`.
+
+This is not a third opt-out and it is not a relaxation. It changes no
+enforcement state, reads no policy and decides nothing: it delivers the user to
+the firmware's own UI, where the decision is made by a person standing at the
+machine - which is what "gated by physical presence" above already required.
+What it removes is not a security step but a guessing game, namely which key
+this vendor wants held at power-on, which differs on every machine a roaming
+stick visits.
+
+It earns its place because of one specific dead end. With validation disabled
+and Secure Boot still on, a UKI cannot boot at all
+(`load_ops_inner_load_blocked`, Section 7.6), and the advice the loader prints
+tells the user to go to firmware setup - advice they previously had no way to
+act on from where they were standing.
+
+Three constraints, because this row reboots the machine:
+
+- **Drawn only when the firmware advertises the capability** in
+  `OsIndicationsSupported`. A row that reboots into nothing is worse than no
+  row.
+- **Last on the root screen.** The menu opens with the first row selected, so
+  the top is where a mistimed Enter lands, and this is the one row where that
+  matters. Being the rarest thing anyone came for puts it at the bottom anyway.
+- **Confirmed**, with the reason on screen, and read-modify-write on
+  `OsIndications` so a pending capsule-update request from somebody else is not
+  silently dropped.
+
+Verified under OVMF 2026-09-15: the row appears, `n` returns to the menu, `y`
+resets and the firmware comes up on its setup entry.
+
 ### 7.5 Key model and signing
 
 The whole model rests on an asymmetry:

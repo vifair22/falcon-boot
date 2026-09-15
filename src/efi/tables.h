@@ -190,6 +190,16 @@ struct EFI_BOOT_SERVICES {
 #define EFI_VARIABLE_BOOTSERVICE_ACCESS 0x00000002u
 #define EFI_VARIABLE_RUNTIME_ACCESS     0x00000004u
 
+/* UEFI spec 8.5.1. Warm is the right one for "reboot into setup": the
+ * indication is already in non-volatile storage, and a cold reset would put
+ * the machine through a full power cycle for no benefit. */
+typedef enum {
+    EfiResetCold,
+    EfiResetWarm,
+    EfiResetShutdown,
+    EfiResetPlatformSpecific
+} EFI_RESET_TYPE;
+
 typedef struct {
     EFI_TABLE_HEADER Hdr;
 
@@ -207,10 +217,20 @@ typedef struct {
      * (DESIGN Section 7.3): SecureBoot / SetupMode / MokSBState drive labels
      * and messages, never enforcement.
      *
-     * SetVariable writes exactly one variable, FalconNextBoot, our own, whose
-     * whole lifecycle belongs to this loader (DESIGN Section 6.3.1 and the
-     * `loader` module of Section 9). Nothing the platform owns is written
-     * here, and no variable gates a load. */
+     * SetVariable writes two, and both are worth naming because the list
+     * must stay short and deliberate.
+     *
+     * FalconNextBoot is ours, and its whole lifecycle belongs to this loader
+     * (DESIGN Section 6.3.1 and the `loader` module of Section 9).
+     *
+     * OsIndications is the platform's, and is the one exception: setting
+     * EFI_OS_INDICATIONS_BOOT_TO_FW_UI asks the firmware to show its own
+     * settings UI on the next boot (Section 7.4). It is written only on an
+     * explicit menu selection, it changes no enforcement state, and the
+     * firmware clears it itself. Read-modify-write, because the other bits
+     * are somebody else's pending capsule updates.
+     *
+     * No variable gates a load, and nothing here decides what may run. */
     EFI_STATUS (EFIAPI *GetVariable)(CHAR16 *VariableName,
                                      EFI_GUID *VendorGuid,
                                      UINT32 *Attributes,
@@ -225,7 +245,13 @@ typedef struct {
 
     /* Miscellaneous */
     void *GetNextHighMonotonicCount;
-    void *ResetSystem;
+    /* Real prototype because we call it: the "reboot to firmware setup" row
+     * sets OsIndications and then resets, and a reset that went through a
+     * void* would be a call with an unchecked signature. */
+    void (EFIAPI *ResetSystem)(EFI_RESET_TYPE ResetType,
+                               EFI_STATUS ResetStatus,
+                               UINTN DataSize,
+                               void *ResetData);
 
     /* Capsule */
     void *UpdateCapsule;

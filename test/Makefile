@@ -139,6 +139,7 @@ TEST_SRCS := \
 	$(TEST_DIR)/ext4_test.c \
 	$(TEST_DIR)/part_test.c \
 	$(TEST_DIR)/sb_test.c \
+	$(TEST_DIR)/osrel_test.c \
 	$(TEST_DIR)/fs_test.c \
 	$(TEST_DIR)/iso_overlay_test.c \
 	$(TEST_DIR)/synth.c
@@ -158,6 +159,7 @@ UUT_SRCS := \
 	$(ROOT)/src/ext4/ext4.c \
 	$(ROOT)/src/part/part.c \
 	$(ROOT)/src/sb/sb.c \
+	$(ROOT)/src/osrel/osrel.c \
 	$(ROOT)/src/fs/fs.c \
 	$(ROOT)/src/crypto/crypto.c \
 	$(ROOT)/src/crypto/sha256.c \

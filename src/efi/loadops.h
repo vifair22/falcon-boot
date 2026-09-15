@@ -133,4 +133,36 @@ UINTN loader_next_boot_take(EFI_SYSTEM_TABLE *st, void *buf, UINTN cap);
  * firmware's status. */
 EFI_STATUS loader_next_boot_set(EFI_SYSTEM_TABLE *st, const char *name);
 
+/* ---- boot to the firmware's own settings UI (DESIGN Section 7.4) ----
+ *
+ * UEFI's own one-shot: OsIndications bit 0, EFI_OS_INDICATIONS_BOOT_TO_FW_UI,
+ * asks the firmware to show its settings UI on the next boot instead of
+ * booting anything. The firmware clears it, exactly as it clears BootNext.
+ *
+ * THIS CHANGES NO ENFORCEMENT STATE AND IS NOT A ROUTE AROUND ANY. It is the
+ * opposite: Secure Boot can only be turned off by a person standing at the
+ * machine in the firmware's own UI, and invariant 3 says that is the only
+ * legitimate way. This row does not make that decision, it delivers the user
+ * to the place where they can make it. What it removes is guessing which key
+ * this vendor wants held at power-on - which differs on every machine the
+ * stick visits, is the actual difficulty, and is not a security boundary.
+ *
+ * It earns its place because of one specific dead end: when validation is
+ * disabled with Secure Boot still on, a UKI cannot boot
+ * (load_ops_inner_load_blocked), and the advice we print says "go to firmware
+ * setup" to a user who has no way to get there from where they are standing. */
+
+/* TRUE when the firmware advertises EFI_OS_INDICATIONS_BOOT_TO_FW_UI in
+ * OsIndicationsSupported. Asked before the row is drawn rather than after it
+ * is picked: a menu entry that reboots into nothing is worse than no entry. */
+BOOLEAN fw_setup_available(EFI_SYSTEM_TABLE *st);
+
+/* Sets the bit and resets the machine. Does not return on success.
+ *
+ * Read-modify-write, because the other bits of OsIndications are pending
+ * capsule-update requests and clobbering one would silently drop somebody
+ * else's work. Returns FALSE when the variable could not be written or the
+ * reset did not happen, having already said why on screen. */
+BOOLEAN loader_boot_to_fw_setup(EFI_SYSTEM_TABLE *st);
+
 #endif /* FALCON_EFI_LOADOPS_H */

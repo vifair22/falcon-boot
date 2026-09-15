@@ -461,8 +461,10 @@ printf 'root:x:0:\n' > "$ROOT/etc/group"
 # ukify reads /usr/lib/os-release to fill the .osrel section of everything it
 # builds, and refuses to run without it. On a host that file describes the
 # host; here it has to describe something, and the honest answer for a wrap
-# built on this stick is the stick. Nothing in falcon-boot reads .osrel (the
-# loader labels entries from the manifest); sd-boot would show PRETTY_NAME.
+# built on this stick is the stick.
+#
+# falcon-boot reads .osrel to label menu entries (src/osrel), and so does
+# sd-boot, so this string is user-visible rather than decorative.
 cat > "$ROOT/usr/lib/os-release" <<'OSREL'
 NAME="falcon-boot blessed media"
 ID=falcon-boot
@@ -481,13 +483,27 @@ RAW=$(du -sb "$ROOT" | cut -f1)
 echo "   initramfs: $INITRD ($(stat -c%s "$INITRD") bytes compressed, $RAW raw)"
 
 # ---- the UKI ----
+#
+# --os-release is passed EXPLICITLY. Without it ukify falls back to the build
+# host's /usr/lib/os-release, and the appliance then carries whatever distro
+# built it: the first one built on the Gentoo workstation announced itself in
+# the loader menu as "Gentoo Linux", which is both wrong and the least useful
+# thing that entry could say. What it is does not depend on where it was made.
 echo "== ukify build"
+APPLIANCE_OSREL=$(mktemp)
+cat > "$APPLIANCE_OSREL" <<'OSREL'
+NAME="falcon-boot signing appliance"
+ID=falcon-boot-appliance
+PRETTY_NAME="falcon-boot signing appliance"
+OSREL
 ukify build \
     --linux="$KERNEL" \
     --initrd="$INITRD" \
     --cmdline="$CMDLINE" \
     --stub="$STUB" \
+    --os-release="@$APPLIANCE_OSREL" \
     --output="$UKI" >/dev/null
+rm -f "$APPLIANCE_OSREL"
 echo "   unsigned UKI: $UKI ($(stat -c%s "$UKI") bytes)"
 
 # ---- signature ----

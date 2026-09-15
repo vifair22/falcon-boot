@@ -607,10 +607,11 @@ static void probe_entries(iso_list *list)
 
 /* Every entry at one level, plus the one extra row the level can carry: ".."
  * below the root, the pinned personal-OS entry at it, never both. */
-#define VIEW_MAX (MAX_ISOS + 2u)
+#define VIEW_MAX (MAX_ISOS + 3u)
 
 typedef enum {
     VIEW_PERSONAL,   /* the pinned personal-OS entry; root screen only */
+    VIEW_FWSETUP,    /* reboot into the firmware's own settings UI */
     VIEW_UP,         /* leave the current folder */
     VIEW_DIR,        /* descend into the folder this row names */
     VIEW_IMAGE       /* boot flat entry idx */
@@ -746,6 +747,22 @@ static UINTN view_build(const iso_list *list, const CHAR16 *cur, UINTN cur_len,
         ucs2_copy(view[n].label, MENU_PATH_MAX, label + cur_len);
         rows[n].kind = VIEW_IMAGE;
         rows[n].idx = i;
+        n++;
+    }
+
+    /* LAST, and on the root screen only.
+     *
+     * Last is a safety property, not tidiness: menu_run opens with the first
+     * row selected, so a row placed at the top is what a mistimed Enter hits -
+     * and this row reboots the machine. It is also the rarest thing anyone
+     * came here to do, so the bottom is where it belongs on both counts.
+     *
+     * Drawn only when the firmware advertises the capability. Offering a row
+     * that reboots into nothing would be worse than not offering one. */
+    if (cur_len == 0 && n < VIEW_MAX && fw_setup_available(g_st)) {
+        rows[n].kind = VIEW_FWSETUP;
+        rows[n].idx = 0;
+        ucs2_copy(view[n].label, MENU_PATH_MAX, L"Reboot to firmware setup");
         n++;
     }
 
@@ -1222,6 +1239,41 @@ static BOOLEAN boot_plain_or_offer(EFI_HANDLE image_handle,
  * Returns TRUE when it left something on screen worth reading, which is what
  * decides whether the caller waits for a key. A cancelled prompt leaves
  * nothing, and making the user acknowledge their own ESC would be noise. */
+/* Confirm, set the indication, reset. Confirmed because it reboots the machine
+ * out from under whatever the user was doing, and the row sits one keypress
+ * away from entries that boot things.
+ *
+ * Nothing about enforcement changes here (DESIGN Section 7.4): this asks the
+ * firmware to show its own UI, where the user decides with physical presence.
+ * Returns FALSE when the user backed out or the firmware refused, so the
+ * caller redraws the menu. On success it does not return at all. */
+static BOOLEAN reboot_to_fw_setup(void)
+{
+    EFI_INPUT_KEY key;
+
+    g_st->ConOut->ClearScreen(g_st->ConOut);
+    out(L"Reboot into this machine's firmware setup?\r\n\r\n"
+        L"This changes nothing about what may run. It asks the firmware to "
+        L"show its own\r\nsettings screen on the next boot, which is where "
+        L"Secure Boot is turned on or\r\noff, by you, at the machine. The "
+        L"loader cannot and must not do that itself.\r\n\r\n"
+        L"Anything unsaved on this machine is lost.\r\n\r\n"
+        L"press y to reboot, any other key to go back.\r\n");
+    wait_key(&key);
+    if (key.UnicodeChar != L'y' && key.UnicodeChar != L'Y')
+        return FALSE;
+
+    out(L"\r\nrebooting...\r\n");
+    if (loader_boot_to_fw_setup(g_st))
+        return TRUE;   /* not reached: the call above resets the machine */
+
+    out(L"\r\nthe firmware refused the request, so nothing was changed.\r\n"
+        L"Use its own key at power-on instead.\r\n\r\n"
+        L"press any key for the menu.\r\n");
+    wait_key(&key);
+    return FALSE;
+}
+
 static BOOLEAN boot_personal(EFI_HANDLE image_handle)
 {
     pos_result result = { L"starting", EFI_SUCCESS, (const CHAR16 *)0 };
@@ -1542,6 +1594,10 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
             continue;
         case VIEW_PERSONAL:
             if (!boot_personal(image_handle))
+                continue;
+            break;
+        case VIEW_FWSETUP:
+            if (!reboot_to_fw_setup())
                 continue;
             break;
         case VIEW_IMAGE:
