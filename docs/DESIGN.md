@@ -784,6 +784,36 @@ value without validating it first is a local privilege escalation**, and it is
 runtime access that makes it one. The validation is not an optimisation to
 skip when the value "looks fine".
 
+**What the marker may name, and the reserved namespace (decision
+2026-09-15).** The value is a path on p2, matched against paths the scan found
+and never used to index anything. Acting on it is the same dispatch the menu
+performs (`bless_hit_action`), deliberately not a second policy: an entry that
+would chainload from the menu chainloads here, and one that would be offered
+preparation is offered it here. It previously accepted only prepared entries,
+which made sense while the loader was the only writer; it is not a rule worth
+keeping now that the booted OS can queue any entry the user could have picked
+by hand.
+
+One target is not a file. The personal OS is pinned into the menu rather than
+found by the scan, so naming it needs a value that cannot collide with a
+filename. Values beginning with **`:`** are reserved, and `:personal` is the
+first of them. The colon is load-bearing rather than decorative: exFAT forbids
+it in a filename, so no path the scan can build will ever land in the reserved
+namespace, and a reserved value can never shadow a real entry. `@personal` was
+considered and rejected for exactly that reason - a file called `@personal` is
+perfectly legal, and would have become silently unbootable.
+
+Reserved values are tested **before** the path lookup. A reserved value would
+never match a path anyway, but testing afterwards would report "not on the
+stick any more" for something that was never a file, which is a confusing way
+to say "unrecognised". A reserved value this build does not know is refused
+rather than looked up, so a marker written by a newer loader fails visibly
+instead of silently doing nothing.
+
+Reserved values are untrusted like any other. `:personal` grants nothing the
+menu does not: the entry prompts for the passphrase exactly as it would if the
+user had selected it by hand, so naming it skips a keypress and nothing else.
+
 **Sidecar layout: named by the source ISO's checksum (decision 2026-09-13).**
 Prepared artifacts live under the reserved directory of Section 6.2, in a
 folder named by the checksum of the ISO they were computed from

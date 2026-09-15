@@ -541,6 +541,54 @@ static void test_next_rule(void **state)
                                    WIN11_SIZE));
 }
 
+/* The reserved namespace. ':' is the load-bearing character: exFAT forbids it
+ * in a filename, so no path the scan builds can ever land in here. */
+static void test_next_reserved_personal(void **state)
+{
+    (void)state;
+    assert_true(bless_next_is_reserved(BLESS_NEXT_PERSONAL));
+    assert_true(bless_next_is_personal(BLESS_NEXT_PERSONAL));
+}
+
+/* A reserved value this build does not know is reserved but not personal, so
+ * the loader refuses it rather than looking it up as a path. */
+static void test_next_reserved_unknown(void **state)
+{
+    (void)state;
+    assert_true(bless_next_is_reserved(":whatever"));
+    assert_false(bless_next_is_personal(":whatever"));
+}
+
+/* Ordinary paths are not reserved, and neither is the '@personal' spelling
+ * that was considered and rejected: a file may legally be called that. Only a
+ * LEADING colon reserves, which keeps the rule checkable from one byte. */
+static void test_next_reserved_rejects_paths(void **state)
+{
+    (void)state;
+    assert_false(bless_next_is_reserved(WIN11_PATH));
+    assert_false(bless_next_is_reserved("Linux/arch.iso"));
+    assert_false(bless_next_is_reserved("@personal"));
+    assert_false(bless_next_is_personal("@personal"));
+    assert_false(bless_next_is_reserved(""));
+}
+
+/* Exact match, not a prefix. A prefix rule would make the namespace impossible
+ * to extend without silently rebinding older markers. */
+static void test_next_personal_is_exact(void **state)
+{
+    (void)state;
+    assert_false(bless_next_is_personal(":personalish"));
+    assert_false(bless_next_is_personal(":persona"));
+    assert_false(bless_next_is_personal(":"));
+}
+
+static void test_next_reserved_null_args(void **state)
+{
+    (void)state;
+    assert_false(bless_next_is_reserved(NULL));
+    assert_false(bless_next_is_personal(NULL));
+}
+
 int run_prep_tests(void)
 {
     const struct CMUnitTest tests[] = {
@@ -568,6 +616,11 @@ int run_prep_tests(void)
         cmocka_unit_test_setup(test_next_names, setup_cache),
         cmocka_unit_test_setup(test_next_names_non_ascii_path, setup_cache),
         cmocka_unit_test_setup(test_next_rule, setup_cache),
+        cmocka_unit_test_setup(test_next_reserved_personal, setup_cache),
+        cmocka_unit_test_setup(test_next_reserved_unknown, setup_cache),
+        cmocka_unit_test_setup(test_next_reserved_rejects_paths, setup_cache),
+        cmocka_unit_test_setup(test_next_personal_is_exact, setup_cache),
+        cmocka_unit_test_setup(test_next_reserved_null_args, setup_cache),
     };
 
     return cmocka_run_group_tests_name("prep", tests, NULL, NULL);

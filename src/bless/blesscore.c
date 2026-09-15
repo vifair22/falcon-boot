@@ -262,3 +262,25 @@ int bless_next_names(const uint16_t *path, const char *name)
         return 0;
     return manifest_path_eq(ascii, name);
 }
+
+int bless_next_is_reserved(const char *name)
+{
+    return name != (const char *)0 && name[0] == ':';
+}
+
+int bless_next_is_personal(const char *name)
+{
+    const char *want = BLESS_NEXT_PERSONAL;
+    size_t i;
+
+    if (name == (const char *)0)
+        return 0;
+    /* Exact match, not a prefix: ":personalish" is not this target, and
+     * treating it as one would make the reserved namespace impossible to
+     * extend without breaking older markers. */
+    for (i = 0; want[i] != '\0'; i++) {
+        if (name[i] != want[i])
+            return 0;
+    }
+    return name[i] == '\0';
+}

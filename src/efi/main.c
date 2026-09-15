@@ -1326,7 +1326,7 @@ static void permissive_notice(sb_mode mode)
  * The boot loop this design is against cannot form: the marker was deleted
  * before any of this ran, so every path below, including the ones that boot
  * and come back, leaves the machine with nothing to repeat. */
-static void next_boot_run(EFI_HANDLE image_handle, iso_list *list)
+static void next_boot_run(EFI_HANDLE image_handle, iso_list *list, UINTN pinned)
 {
     EFI_INPUT_KEY key;
     iso_target *t;
@@ -1340,6 +1340,26 @@ static void next_boot_run(EFI_HANDLE image_handle, iso_list *list)
         wait_key(&key);
         return;
     }
+    /* Reserved values first, because they can never match a path and testing
+     * them afterwards would report "not on the stick any more" for something
+     * that was never a file (DESIGN Section 6.3.1). */
+    if (bless_next_is_reserved(g_next_path)) {
+        if (bless_next_is_personal(g_next_path)) {
+            /* Exactly what selecting the pinned entry does, passphrase prompt
+             * included. Returns FALSE when the user backed out, and then there
+             * is nothing on screen worth acknowledging. */
+            if (!boot_personal(image_handle))
+                return;
+            wait_key(&key);
+            return;
+        }
+        out(L"the next-boot marker held a reserved value this loader does not "
+            L"know.\r\nIt has been cleared; nothing was booted from it."
+            L"\r\n\r\npress any key for the menu.\r\n");
+        wait_key(&key);
+        return;
+    }
+
     if (g_next_idx >= list->count) {
         out(L"the ISO this boot was supposed to start is not on the stick any "
             L"more.\r\nIt has been cleared; nothing was booted from it."
@@ -1348,19 +1368,41 @@ static void next_boot_run(EFI_HANDLE image_handle, iso_list *list)
         return;
     }
 
+    /* Boot it exactly as choosing it in the menu would, which is the whole
+     * definition of "next boot = this entry". The same three-way switch on
+     * bless_hit_action, deliberately not a second policy: an entry that would
+     * chainload from the menu chainloads here, and one that would be offered
+     * preparation is offered it here.
+     *
+     * This used to demand BLESS_ACT_OVERLAY and refuse anything else, because
+     * the only writer was the loader itself queueing an ISO it had just sent
+     * for preparation. That is no longer the only writer (Section 6.3.1: the
+     * marker is runtime-accessible, so a chooser in the booted OS sets it too),
+     * and "queued for preparation" is not a thing the marker records - it never
+     * held more than a path.
+     *
+     * The appliance-failed case is not lost, it moved: an unprepared Windows
+     * ISO now reaches boot_plain_or_offer, which offers to prepare it again.
+     * That is strictly more actionable than the message it replaces, which
+     * could only tell the user to go and select it a second time. */
     t = &list->targets[g_next_idx];
-    if (bless_hit_action(&t->hit) != BLESS_ACT_OVERLAY) {
-        out(list->entries[g_next_idx].label);
-        out(L"\r\n\r\nthis ISO was queued to boot after preparation, and it is "
-            L"still not\r\nprepared: the appliance did not finish, or it could "
-            L"not prepare this one.\r\nNothing was booted. Select it again to "
-            L"retry, or prepare it on a Linux\r\nhost with falcon-boot-sign."
-            L"\r\n\r\npress any key for the menu.\r\n");
-        wait_key(&key);
-        return;
+    switch (bless_hit_action(&t->hit)) {
+    case BLESS_ACT_UKI:
+        boot_blessed(image_handle, &list->entries[g_next_idx], t);
+        break;
+    case BLESS_ACT_OVERLAY:
+        boot_prepared(image_handle, &list->entries[g_next_idx], t);
+        break;
+    case BLESS_ACT_PLAIN:
+    default:
+        /* Returns FALSE when the user backed out of the offer, and then there
+         * is nothing on screen to acknowledge; the menu is the right next
+         * thing either way. */
+        if (!boot_plain_or_offer(image_handle, &list->entries[g_next_idx], t,
+                                 pinned))
+            return;
+        break;
     }
-
-    boot_prepared(image_handle, &list->entries[g_next_idx], t);
     wait_key(&key);
 }
 
@@ -1448,7 +1490,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
      * reboot (DESIGN Section 6.3.1). Falls through to the menu afterwards,
      * whether it booted, refused, or found nothing to boot. */
     if (g_next_path[0] != '\0' || g_next_bad)
-        next_boot_run(image_handle, &list);
+        next_boot_run(image_handle, &list, pinned);
 
     for (;;) {
         UINTN shown = view_build(&list, cur, cur_len, pinned, view, rows);

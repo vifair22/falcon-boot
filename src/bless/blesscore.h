@@ -235,4 +235,37 @@ int bless_next_decode(const void *buf, size_t len, char *out, size_t cap);
  * nothing else. */
 int bless_next_names(const uint16_t *path, const char *name);
 
+/* ---- reserved marker values (DESIGN Section 6.3.1) ----
+ *
+ * Everything above treats the marker as a path on p2. One target is not a file
+ * at all: the personal OS is a pinned menu entry, not something the scan found,
+ * so "boot straight back into the personal OS" needs a value that names it
+ * without naming a path.
+ *
+ * The leading ':' is what makes that unambiguous, and it is chosen rather than
+ * decorative: exFAT forbids ':' in a filename, so no file on p2 can ever
+ * produce a path containing one, and a reserved value can therefore never
+ * shadow a real entry. A '@' prefix would have read more nicely and been
+ * wrong - a file called "@personal" is perfectly legal and would have been
+ * silently unbootable.
+ *
+ * Reserved values are still UNTRUSTED input like any other marker value. This
+ * one grants nothing that the menu does not: the personal-OS entry prompts for
+ * the passphrase exactly as it would if the user had selected it by hand, so
+ * naming it skips a keypress and nothing else. */
+#define BLESS_NEXT_PERSONAL ":personal"
+
+/* Nonzero when the decoded marker names the personal-OS entry rather than a
+ * path. Callers must test this BEFORE matching against entry paths; a reserved
+ * value will never match one, but testing after would mean a stale marker
+ * reports "not on the stick any more", which is a confusing way to say
+ * "unrecognised". */
+int bless_next_is_personal(const char *name);
+
+/* Nonzero when the decoded marker is in the reserved namespace at all, i.e.
+ * begins with ':'. A reserved value this build does not recognise is a value
+ * from a newer loader or a typo, and either way it must be refused rather than
+ * looked up as a path. */
+int bless_next_is_reserved(const char *name);
+
 #endif /* FALCON_BLESS_CORE_H */
