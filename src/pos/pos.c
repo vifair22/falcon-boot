@@ -173,6 +173,10 @@ static int        g_uki_dup[POS_MAX_UKIS];
  * says which is the LTS fallback; "(arch-usb.efi)" beside "(arch-lts.efi)"
  * makes them guess. */
 static char       g_uki_uname[POS_MAX_UKIS][OSREL_LABEL_MAX];
+/* 1 when this row's qualifier is its kernel version, 0 when it is its
+ * filename. Like g_uki_dup, decided for every row before any row is rewritten;
+ * see the rendering pass for why that separation is load-bearing. */
+static int        g_uki_byver[POS_MAX_UKIS];
 static UINTN      g_uki_n;
 
 /* Does this volume have a keyslot this loader can actually process? DESIGN
@@ -521,11 +525,16 @@ static int uki_osrel_label(const fs_dirent *ent, char *out, UINTN cap,
 
     n = uki_section(OSREL_SECT_OSREL, fsize, have);
     if (n != 0) {
+        /* One condition rather than a chain, because both keys mean the same
+         * thing to us and the chain's two identical bodies read as an
+         * oversight. Short-circuit order IS the preference: PRETTY_NAME wins
+         * and NAME is only consulted when it did not answer. osrel_value
+         * empties out on failure, so the second call never sees a half-written
+         * first attempt. */
         if (osrel_value((const char *)g_uki_osrel, n, "PRETTY_NAME", out, cap)
-                == OSREL_OK)
-            named = 1;
-        else if (osrel_value((const char *)g_uki_osrel, n, "NAME", out, cap)
-                == OSREL_OK)
+                    == OSREL_OK ||
+            osrel_value((const char *)g_uki_osrel, n, "NAME", out, cap)
+                    == OSREL_OK)
             named = 1;
     }
     if (!named)
@@ -672,6 +681,20 @@ static INTN choose_uki(const menu_banner *banner, pos_pick pick)
      * "(arch-lts.efi)" only tells them the filenames differ, which they could
      * already see. No brackets on the version: it reads as part of the name,
      * which is what sd-boot shows too. */
+    /* DECIDE for every row, THEN rewrite. Same reason the marking pass above
+     * is separate, and the same bug if it is not: uname_shared() compares
+     * g_uki_entries[].label, and the rewrite below mutates exactly those. Fused
+     * into one loop, each row is compared against siblings that earlier
+     * iterations have already qualified, so the last member of a group matches
+     * nothing, looks unique, and is handed a kernel version it shares with the
+     * rows above it. Measured in the rig on 2026-09-15 with five label
+     * fixtures (tools/mk-test-labels.sh): "Twin Linux (twin-a.efi)" above
+     * "Twin Linux 9.9.9-twin", which claims the two are different kernels when
+     * they are the same image twice. */
+    for (i = 0; i < g_uki_n; i++)
+        g_uki_byver[i] = (g_uki_dup[i] && g_uki_uname[i][0] != '\0' &&
+                          !uname_shared(i));
+
     for (i = 0; i < g_uki_n; i++) {
         UINTN at;
 
@@ -679,7 +702,7 @@ static INTN choose_uki(const menu_banner *banner, pos_pick pick)
             continue;
         at = ucs2_len(g_uki_entries[i].label);
 
-        if (g_uki_uname[i][0] != '\0' && !uname_shared(i)) {
+        if (g_uki_byver[i]) {
             if (at + 2u < MENU_PATH_MAX) {
                 g_uki_entries[i].label[at++] = L' ';
                 ascii_to_ucs2(g_uki_entries[i].label + at,
