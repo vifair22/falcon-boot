@@ -40,6 +40,13 @@
  * shares one text column. */
 #define PAD_X 2u
 
+/* How far the list steps in from the block's edge, selection bar and all.
+ *
+ * The banner and the hint are chrome and sit against the edge; the entries
+ * are what the chrome is about, so they are indented under it. Without this
+ * the three share a single column and the screen has no hierarchy at all. */
+#define LIST_INDENT 2u
+
 /* Every screen row is composed here and then handed to the console in ONE
  * OutputString call.
  *
@@ -63,8 +70,10 @@ typedef struct {
     EFI_SYSTEM_TABLE *st;
     const menu_entry *entries;
     UINTN             count;
-    UINTN             left;      /* first column of the content box */
-    UINTN             width;     /* columns in the box */
+    UINTN             left;       /* first column of the content block */
+    UINTN             width;      /* columns in the block */
+    UINTN             list_left;  /* the block, stepped in by LIST_INDENT */
+    UINTN             list_width;
     UINTN             banner_row;
     UINTN             list_top;  /* first list row */
     UINTN             win;       /* list rows */
@@ -200,6 +209,17 @@ static void layout(menu_view *v)
     v->width = w;
     v->left = (cols - w) / 2u;
 
+    /* Symmetrical, so the bar's right edge steps in by as much as its left.
+     * A block too narrow to indent and still hold an inset row keeps the
+     * full width rather than collapsing to nothing. */
+    if (w > (UINTN)2u * LIST_INDENT + (UINTN)2u * PAD_X) {
+        v->list_left  = v->left + LIST_INDENT;
+        v->list_width = w - (UINTN)2u * LIST_INDENT;
+    } else {
+        v->list_left  = v->left;
+        v->list_width = w;
+    }
+
     /* What the margins leave, minus the chrome, is the most list the screen
      * can hold. A shorter list shrinks the block instead of padding it out;
      * a longer one fills the screen and scrolls, exactly as before. */
@@ -278,12 +298,12 @@ static void paint_slot(const menu_view *v, UINTN slot, UINTN top, UINTN sel)
             v->st->ConOut,
             idx == sel ? EFI_TEXT_ATTR(EFI_BLACK, EFI_LIGHTGRAY)
                        : EFI_TEXT_ATTR(EFI_LIGHTGRAY, EFI_BLACK));
-        draw_row(v->st, v->list_top + slot, v->left, v->width,
+        draw_row(v->st, v->list_top + slot, v->list_left, v->list_width,
                  v->entries[idx].label);
     } else {
         v->st->ConOut->SetAttribute(
             v->st->ConOut, EFI_TEXT_ATTR(EFI_LIGHTGRAY, EFI_BLACK));
-        draw_row(v->st, v->list_top + slot, v->left, v->width,
+        draw_row(v->st, v->list_top + slot, v->list_left, v->list_width,
                  (idx == 0) ? L"(no ISOs found on the exFAT partition)"
                             : (void *)0);
     }
