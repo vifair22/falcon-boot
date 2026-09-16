@@ -277,6 +277,14 @@ run: $(BIN)
 # rather than per module, so adding a unit to UUT_SRCS is enough to get it
 # reported.
 #
+# suspicious-hits: the corruption sweeps call the crypto inner loops hundreds
+# of millions of times, and gcovr treats any count past 2^32 as the symptom of
+# a known gcov bug (GCC 68080) and refuses the whole report. Here the counts
+# are real, so the threshold is raised rather than the check disabled:
+# ignoring the error instead makes gcovr report those lines as UNCOVERED,
+# which took src/crypto/sha256.c from 100% to 97% for a line the sweep runs
+# more than any other in the repo.
+#
 # Strict, unlike `run`. The image-backed suites skip when their fixtures are
 # absent and a skip is not a failure, which is right for a machine that cannot
 # build them (each needs mkfs and a loop mount, so each needs sudo) and wrong
@@ -289,6 +297,7 @@ coverage: run
 	@echo
 	@if command -v gcovr >/dev/null 2>&1; then \
 		gcovr --root $(ROOT) $(OBJ)/uut \
+			--gcov-suspicious-hits-threshold 1000000000000 \
 			--filter '$(COV_FILTER)' --txt --print-summary; \
 	else \
 		echo "gcovr not found, falling back to gcov"; \

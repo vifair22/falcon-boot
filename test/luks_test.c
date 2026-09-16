@@ -1266,6 +1266,526 @@ static void test_af_merge_guards(void **state)
 
 /* ------------------------------------------------------------------ run */
 
+
+/* ------------------------------------------------- corruption sweep */
+
+/* Flip metadata bytes and require the driver to answer rather than misbehave.
+ * src/luks/json.c earns its 96% from exactly this shape, and every uncovered
+ * line in luks.c is a refusal: the paths a tampered p3 takes, reached by
+ * reading the code and by nothing else.
+ *
+ * mem_img already holds a private copy of the first 512 KiB, so a flip is a
+ * write to it rather than a hook on the read path.
+ *
+ * What is swept, and what is not. The whole of the 4096-byte binary header,
+ * because the fields checked before the checksum (magic, version, hdr_size,
+ * the copy's own hdr_offset, the checksum algorithm name) are spread through
+ * it. Then the JSON text, but not the NUL padding that fills the area out to
+ * hdr_size: a flip there is caught by the checksum like any other and tells
+ * us nothing the header sweep has not already. Sweeping all 32 KiB with two
+ * masks costs 65536 parses and forty seconds of SHA-256 for that. */
+
+#define SEC_HDR_OFF 16384u      /* where cryptsetup put the second copy */
+
+typedef struct {
+    uint32_t off;
+    uint32_t len;
+} sweep_span;
+
+static sweep_span g_spans[2];
+static size_t     g_span_n;
+
+static int luks_status_known(int rc)
+{
+    switch (rc) {
+    case LUKS_OK:
+    case LUKS_ERR_IO:
+    case LUKS_ERR_BAD_HEADER:
+    case LUKS_ERR_CORRUPT:
+    case LUKS_ERR_BAD_ARG:
+    case LUKS_ERR_RANGE:
+    case LUKS_ERR_NOSPACE:
+    case LUKS_ERR_UNSUPPORTED:
+    case LUKS_ERR_UNSUPPORTED_KDF:
+    case LUKS_ERR_NOKEY:
+        return 1;
+    default:
+        return 0;
+    }
+}
+
+/* Parse as far as the metadata goes without deriving a key. */
+static int sweep_parse(luks_vol *v)
+{
+    luks_slot_info si;
+    size_t count = 0;
+    size_t i;
+    int rc;
+
+    rc = luks_open(v, mem_read, NULL, json_buf, sizeof json_buf);
+    if (rc != LUKS_OK) {
+        return rc;
+    }
+    rc = luks_slot_count(v, &count);
+    if (rc != LUKS_OK) {
+        return rc;
+    }
+    for (i = 0; i < count; i++) {
+        rc = luks_slot_at(v, i, &si);
+        if (rc != LUKS_OK) {
+            return rc;
+        }
+    }
+    return LUKS_OK;
+}
+
+static void sweep_spans_init(void)
+{
+    uint32_t json_len = 0;
+
+    while (json_len < 12288u && mem_img[4096u + json_len] != 0) {
+        json_len++;
+    }
+    assert_true(json_len > 200u);
+    g_spans[0].off = 0u;
+    g_spans[0].len = 4096u;
+    g_spans[1].off = 4096u;
+    g_spans[1].len = json_len;
+    g_span_n = 2;
+}
+
+/* Damage the primary copy alone, any single byte of it, and the volume must
+ * still open. That is the entire reason LUKS2 writes two headers: a rewrite
+ * interrupted by a power cut leaves one of them torn, and the reader is
+ * expected to notice and take the other.
+ *
+ * It also reaches a line no other test does. Until this existed nothing in
+ * the suite had ever made the secondary copy the one in use, so the selection
+ * that prefers it was cold. */
+static void test_luks_primary_damage_falls_back(void **state)
+{
+    static const uint8_t masks[] = { 0xffu, 0x01u };
+    luks_vol v;
+    size_t sp;
+    size_t m;
+    size_t checked = 0;
+    size_t fell_back = 0;
+
+    (void)state;
+    mem_reset();
+    sweep_spans_init();
+    assert_int_equal(sweep_parse(&v), LUKS_OK);
+    assert_int_equal(v.used_secondary, 0);   /* intact: the primary is used */
+
+    for (sp = 0; sp < g_span_n; sp++) {
+        uint32_t at;
+
+        for (at = g_spans[sp].off; at < g_spans[sp].off + g_spans[sp].len;
+             at++) {
+            for (m = 0; m < sizeof masks / sizeof masks[0]; m++) {
+                int rc;
+
+                mem_img[at] ^= masks[m];
+                rc = sweep_parse(&v);
+                mem_img[at] ^= masks[m];
+
+                if (rc != LUKS_OK) {
+                    fail_msg("primary flip 0x%02x at %u refused the volume "
+                             "(%d); the secondary copy should have carried "
+                             "it", (unsigned)masks[m], at, rc);
+                }
+                if (v.used_secondary != 0u) {
+                    fell_back++;
+                }
+                checked++;
+            }
+        }
+    }
+    assert_true(checked > 8000);
+    /* Most flips make the primary unusable and the secondary takes over. The
+     * ones that do not are bytes the format never reads back: the 64-byte
+     * checksum field holds a 32-byte SHA-256 digest, and check_header zeroes
+     * the whole field before hashing and compares only the digest, so a flip
+     * in the 32 bytes of slack behind it changes nothing. Requiring a
+     * fallback on every byte would be asserting that those bytes matter,
+     * which they do not. */
+    assert_true(fell_back > checked - 200u);
+
+    mem_reset();
+}
+
+/* Damage both copies at the same offset, which is the case the redundancy
+ * cannot absorb, and require a clean refusal rather than a best-effort
+ * interpretation of whichever fields survived. */
+static void test_luks_both_copies_corruption_sweep(void **state)
+{
+    static const uint8_t masks[] = { 0xffu, 0x01u };
+    luks_vol v;
+    size_t sp;
+    size_t m;
+    size_t swept = 0;
+    size_t refused = 0;
+
+    (void)state;
+    mem_reset();
+    sweep_spans_init();
+
+    for (sp = 0; sp < g_span_n; sp++) {
+        uint32_t at;
+
+        for (at = g_spans[sp].off; at < g_spans[sp].off + g_spans[sp].len;
+             at++) {
+            for (m = 0; m < sizeof masks / sizeof masks[0]; m++) {
+                int rc;
+
+                mem_img[at] ^= masks[m];
+                mem_img[SEC_HDR_OFF + at] ^= masks[m];
+                rc = sweep_parse(&v);
+                mem_img[at] ^= masks[m];
+                mem_img[SEC_HDR_OFF + at] ^= masks[m];
+
+                if (!luks_status_known(rc)) {
+                    fail_msg("flip 0x%02x at %u returned %d",
+                             (unsigned)masks[m], at, rc);
+                }
+                if (rc != LUKS_OK) {
+                    refused++;
+                }
+                swept++;
+            }
+        }
+    }
+
+    assert_true(swept > 8000);
+    /* Both copies carry a checksum over their whole hdr_size, so damaging
+     * the same byte in each is caught nearly every time. A run that refused
+     * only a handful would mean the flips never reached the parser. */
+    assert_true(refused > 8000);
+
+    mem_reset();
+    assert_int_equal(sweep_parse(&v), LUKS_OK);
+}
+
+/* Recompute a header copy's checksum in mem_img, so a test can damage the
+ * metadata the checksum covers and still have the parser look at it.
+ *
+ * Without this the whole of this driver below check_header is unreachable by
+ * corruption: the sum spans the binary header AND the JSON area, so a flipped
+ * byte anywhere in either comes back as a rejected copy and the JSON is never
+ * parsed at all. Measured: the two sweeps above, which do not refresh it,
+ * reach exactly one line the rest of the suite did not.
+ *
+ * Mirrors check_header: zero the 64-byte field, hash hdr_size bytes, write
+ * the digest back and leave the slack behind it zero. The fixture's algorithm
+ * is sha256; a fixture that used another would need this to follow
+ * HDR_OFF_CSUM_ALG the way the driver does. */
+#define HDR_CSUM_AT  448u
+#define HDR_CSUM_LEN 64u
+#define HDR_SEQID_AT 16u
+
+static void hdr_fix_csum(uint32_t base)
+{
+    sha256_ctx c;
+    uint8_t digest[SHA256_DIGEST_LEN];
+
+    memset(mem_img + base + HDR_CSUM_AT, 0, HDR_CSUM_LEN);
+    sha256_init(&c);
+    sha256_update(&c, mem_img + base, HDR_SIZE);
+    sha256_final(&c, digest);
+    memcpy(mem_img + base + HDR_CSUM_AT, digest, sizeof digest);
+}
+
+static uint64_t hdr_get_seqid(uint32_t base)
+{
+    const uint8_t *p = mem_img + base + HDR_SEQID_AT;
+    uint64_t v = 0;
+    size_t i;
+
+    for (i = 0; i < 8u; i++) {
+        v = (v << 8) | p[i];
+    }
+    return v;
+}
+
+static void hdr_put_seqid(uint32_t base, uint64_t val)
+{
+    uint8_t *p = mem_img + base + HDR_SEQID_AT;
+    size_t i;
+
+    for (i = 0; i < 8u; i++) {
+        p[i] = (uint8_t)(val >> (56u - 8u * i));
+    }
+}
+
+/* Two intact copies, the secondary carrying the higher sequence id. That is
+ * what a header rewrite looks like the instant after the second copy lands
+ * and before the first is updated, and the reader is required to prefer it.
+ *
+ * The sweeps above cannot produce this: damaging the primary leaves exactly
+ * one candidate, so the comparison that picks between two never runs. */
+static void test_luks_newer_secondary_wins(void **state)
+{
+    luks_vol v;
+    uint64_t primary_seq;
+
+    (void)state;
+    mem_reset();
+    assert_int_equal(sweep_parse(&v), LUKS_OK);
+    assert_int_equal(v.used_secondary, 0);
+
+    primary_seq = hdr_get_seqid(0u);
+    assert_true(primary_seq > 0u);
+    /* cryptsetup leaves both copies on the same id, so the fixture cannot
+     * show this without being edited. */
+    assert_int_equal(hdr_get_seqid(SEC_HDR_OFF), primary_seq);
+
+    hdr_put_seqid(SEC_HDR_OFF, primary_seq + 1u);
+    hdr_fix_csum(SEC_HDR_OFF);
+    assert_int_equal(sweep_parse(&v), LUKS_OK);
+    assert_int_equal(v.used_secondary, 1);
+    assert_int_equal(v.hdr_off, SEC_HDR_OFF);
+
+    /* And the other way, so the preference is on the id and not on being
+     * second. */
+    mem_reset();
+    hdr_put_seqid(SEC_HDR_OFF, primary_seq - 1u);
+    hdr_fix_csum(SEC_HDR_OFF);
+    assert_int_equal(sweep_parse(&v), LUKS_OK);
+    assert_int_equal(v.used_secondary, 0);
+
+    mem_reset();
+}
+
+/* The JSON sweep that the checksum otherwise hides. Both copies are damaged
+ * at the same offset and both checksums refreshed, so the parser sees the
+ * text as written and every refusal below check_header becomes reachable. */
+static void test_luks_json_corruption_sweep(void **state)
+{
+    static const uint8_t masks[] = { 0xffu, 0x20u, 0x01u };
+    luks_vol v;
+    uint32_t json_len;
+    uint32_t at;
+    size_t m;
+    size_t swept = 0;
+    size_t refused = 0;
+
+    (void)state;
+    mem_reset();
+    sweep_spans_init();
+    json_len = g_spans[1].len;
+
+    for (at = 0; at < json_len; at++) {
+        for (m = 0; m < sizeof masks / sizeof masks[0]; m++) {
+            int rc;
+
+            mem_img[LUKS_HDR_BIN + at] ^= masks[m];
+            mem_img[SEC_HDR_OFF + LUKS_HDR_BIN + at] ^= masks[m];
+            hdr_fix_csum(0u);
+            hdr_fix_csum(SEC_HDR_OFF);
+
+            rc = sweep_parse(&v);
+
+            if (!luks_status_known(rc)) {
+                fail_msg("json flip 0x%02x at %u returned %d",
+                         (unsigned)masks[m], at, rc);
+            }
+            if (rc != LUKS_OK) {
+                refused++;
+            }
+            swept++;
+
+            mem_reset();
+        }
+    }
+
+    assert_true(swept > 2000);
+    /* Most of the text is structure and key names, so most flips break
+     * something the parser or the metadata reader checks. */
+    assert_true(refused > 1000);
+
+    mem_reset();
+    assert_int_equal(sweep_parse(&v), LUKS_OK);
+}
+
+/* ------------------------------------------- directed metadata damage */
+
+/* Rewrite a run of the JSON text and refresh both checksums.
+ *
+ * find and repl must be the same length. That is not a convenience: the
+ * area's text is NUL-padded to json_size and every offset after the edit
+ * would otherwise move, so a same-length swap keeps the document the parser
+ * sees identical except for the bytes under test.
+ *
+ * Both copies, because the reader prefers whichever is intact and an edit to
+ * one alone is simply ignored. */
+static void json_patch(const char *find, const char *repl)
+{
+    char *text = (char *)mem_img + LUKS_HDR_BIN;
+    size_t flen = strlen(find);
+    char *at;
+
+    assert_int_equal(flen, strlen(repl));
+    at = strstr(text, find);
+    if (at == NULL) {
+        fail_msg("json_patch: '%s' is not in the fixture metadata", find);
+    }
+    memcpy(at, repl, flen);
+    memcpy(mem_img + SEC_HDR_OFF + LUKS_HDR_BIN, text, JSON_AREA);
+    hdr_fix_csum(0u);
+    hdr_fix_csum(SEC_HDR_OFF);
+}
+
+/* Every field try_slot reads before it derives anything, each renamed out of
+ * existence in turn.
+ *
+ * Renaming rather than deleting, again so the length holds. What is under
+ * test is that a keyslot missing any one of these is refused rather than
+ * read with a default, and that the refusal happens before a single round of
+ * PBKDF2: these cases run in microseconds, which is the evidence that the
+ * validation really is ahead of the derivation.
+ *
+ * Every one answers LUKS_ERR_UNSUPPORTED, whatever try_slot itself returned,
+ * and that is luks_unlock's triage rather than a loss of detail. A slot it
+ * could not read is not a slot that rejected the passphrase, so saw_usable
+ * stays clear, and with no usable slot left the volume is reported as one
+ * this loader cannot open. Answering NOKEY instead would send the user off to
+ * retype a passphrase against a keyslot that was never readable. */
+static void test_luks_keyslot_field_refusals(void **state)
+{
+    static const struct {
+        const char *find;
+        const char *repl;
+        int         want;
+    } cases[] = {
+        /* The slot's own type. */
+        { "\"type\":\"luks2\"", "\"type\":\"luksX\"", LUKS_ERR_UNSUPPORTED },
+        /* The whole kdf object, then the fields inside it. */
+        { "\"kdf\":{",        "\"kdX\":{",        LUKS_ERR_UNSUPPORTED },
+        { "\"iterations\":10000", "\"iteratioXs\":10000", LUKS_ERR_UNSUPPORTED },
+        { "\"salt\":\"z3btw2",  "\"salX\":\"z3btw2",  LUKS_ERR_UNSUPPORTED },
+        /* The af object and its fields. The splitter's own type matters:
+         * luks1 is the only expansion this reader undoes. */
+        { "\"af\":{",         "\"aX\":{",         LUKS_ERR_UNSUPPORTED },
+        { "\"type\":\"luks1\"", "\"type\":\"luksY\"", LUKS_ERR_UNSUPPORTED },
+        { "\"stripes\":4000", "\"stripeX\":4000", LUKS_ERR_UNSUPPORTED },
+        /* The area object: where the expansion is stored and how. */
+        { "\"area\":{",       "\"arXa\":{",       LUKS_ERR_UNSUPPORTED },
+        { "\"type\":\"raw\"",  "\"type\":\"rXw\"",  LUKS_ERR_UNSUPPORTED },
+        { "\"offset\":\"32768\"", "\"offseX\":\"32768\"", LUKS_ERR_UNSUPPORTED },
+        { "\"size\":\"258048\"",  "\"sizX\":\"258048\"",  LUKS_ERR_UNSUPPORTED },
+    };
+    size_t i;
+
+    (void)state;
+
+    for (i = 0; i < sizeof cases / sizeof cases[0]; i++) {
+        luks_vol v;
+        luks_master_key mk;
+        int rc;
+
+        mem_reset();
+        json_patch(cases[i].find, cases[i].repl);
+
+        assert_int_equal(luks_open(&v, mem_read, NULL, json_buf,
+                                   sizeof json_buf), LUKS_OK);
+        rc = luks_unlock(&v, PASS, PASS_LEN, &mk, NULL);
+        if (rc != cases[i].want) {
+            fail_msg("'%s' -> '%s' gave %d, want %d", cases[i].find,
+                     cases[i].repl, rc, cases[i].want);
+        }
+        crypto_wipe(&mk, sizeof mk);
+    }
+
+    mem_reset();
+}
+
+/* The digest object, which is what turns a recovered key into a verified one.
+ * Each of these costs a full derivation, because the digest is not consulted
+ * until try_slot has already undone the anti-forensic expansion. */
+static void test_luks_digest_field_refusals(void **state)
+{
+    static const struct {
+        const char *find;
+        const char *repl;
+        int         want;
+    } cases[] = {
+        { "\"iterations\":1000,", "\"iteratioXs\":1000,", LUKS_ERR_UNSUPPORTED },
+        { "\"salt\":\"GhIqV2",   "\"salX\":\"GhIqV2",   LUKS_ERR_UNSUPPORTED },
+        { "\"digest\":\"s21NP2", "\"digesX\":\"s21NP2", LUKS_ERR_UNSUPPORTED },
+        /* A digest that covers no segment describes a volume shape this
+         * reader does not handle, which is not the same answer as a wrong
+         * passphrase. */
+        { "\"segments\":[\"0\"]", "\"segmentX\":[\"0\"]",
+          LUKS_ERR_UNSUPPORTED },
+        /* A digest naming no keyslot at all: the key cannot be verified, and
+         * an unverifiable key must never open anything. */
+        { "\"keyslots\":[\"0\"],\"segments\"",
+          "\"keyslots\":[\"9\"],\"segments\"", LUKS_ERR_UNSUPPORTED },
+    };
+    size_t i;
+
+    (void)state;
+
+    for (i = 0; i < sizeof cases / sizeof cases[0]; i++) {
+        luks_vol v;
+        luks_master_key mk;
+        int rc;
+
+        mem_reset();
+        json_patch(cases[i].find, cases[i].repl);
+
+        assert_int_equal(luks_open(&v, mem_read, NULL, json_buf,
+                                   sizeof json_buf), LUKS_OK);
+        rc = luks_unlock(&v, PASS, PASS_LEN, &mk, NULL);
+        if (rc != cases[i].want) {
+            fail_msg("'%s' -> '%s' gave %d, want %d", cases[i].find,
+                     cases[i].repl, rc, cases[i].want);
+        }
+        crypto_wipe(&mk, sizeof mk);
+    }
+
+    mem_reset();
+}
+
+/* The segment description, which luks_dev_open turns into a decrypting
+ * reader. Damaged here the unlock still succeeds, because the master key is
+ * recovered and verified from the keyslot and the digest alone; it is opening
+ * the device that has to refuse. */
+/* The segment description, which is parsed during luks_open rather than when
+ * the decrypting reader is built.
+ *
+ * That ordering is the point of this test. luks_dev_open re-checks the sector
+ * size, and the check is unreachable through any metadata: parse_segment has
+ * already required a power of two that is a multiple of 512 and no larger
+ * than LUKS_MAX_SECTOR, so a volume that reaches luks_dev_open cannot carry a
+ * bad one. The second check stays because luks_dev_open is a public entry
+ * point that takes a caller-supplied luks_vol. */
+static void test_luks_segment_field_refusals(void **state)
+{
+    luks_vol v;
+
+    (void)state;
+
+    /* Not a power of two, and not a multiple of 512. Every offset the reader
+     * computes is a multiple of this, so it is checked where the volume is
+     * first described. */
+    mem_reset();
+    json_patch("\"sector_size\":4096", "\"sector_size\":4095");
+    assert_int_equal(luks_open(&v, mem_read, NULL, json_buf, sizeof json_buf),
+                     LUKS_ERR_UNSUPPORTED);
+
+    /* An encryption this reader does not implement. aes-xts-plain64 is the
+     * only one, and guessing at another would produce plausible-looking
+     * garbage rather than a refusal. */
+    mem_reset();
+    json_patch("\"encryption\":\"aes-xts-plain64\",\"sector_size\"",
+               "\"encryption\":\"aes-cbc-essiv64\",\"sector_size\"");
+    assert_int_equal(luks_open(&v, mem_read, NULL, json_buf, sizeof json_buf),
+                     LUKS_ERR_UNSUPPORTED);
+
+    mem_reset();
+}
+
 int run_luks_tests(void)
 {
     const struct CMUnitTest tests[] = {
@@ -1275,6 +1795,13 @@ int run_luks_tests(void)
         cmocka_unit_test(test_luks_unlock_wrong_passphrase),
         cmocka_unit_test(test_luks_read_matches_dm_crypt),
         cmocka_unit_test(test_luks_read_unaligned),
+        cmocka_unit_test(test_luks_primary_damage_falls_back),
+        cmocka_unit_test(test_luks_both_copies_corruption_sweep),
+        cmocka_unit_test(test_luks_newer_secondary_wins),
+        cmocka_unit_test(test_luks_json_corruption_sweep),
+        cmocka_unit_test(test_luks_keyslot_field_refusals),
+        cmocka_unit_test(test_luks_digest_field_refusals),
+        cmocka_unit_test(test_luks_segment_field_refusals),
         cmocka_unit_test(test_luks_secondary_header_fallback),
         cmocka_unit_test(test_luks_argon_slot_is_named_not_guessed),
         cmocka_unit_test(test_ext4_over_luks),
