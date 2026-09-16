@@ -814,11 +814,10 @@ static void view_up(CHAR16 *cur, UINTN *cur_len)
 static const CHAR16 *exit_note(EFI_STATUS status)
 {
     if (status == EFI_TIMEOUT)
-        return L"that status is a payload that waited for a keypress and gave "
-               L"up. Windows\r\nmedia does exactly this: its boot stub draws "
-               L"\"press any key to boot from CD\"\r\non the graphics console, "
-               L"which this loader never sees. Boot it again and\r\npress a "
-               L"key while the screen looks empty.";
+        return L"the payload waited for a keypress and gave up. Windows media "
+               L"draws\r\n\"press any key to boot from CD\" on the graphics "
+               L"console, which this loader\r\nnever sees. Boot it again and "
+               L"press a key while the screen looks empty.";
     return (const CHAR16 *)0;
 }
 
@@ -864,12 +863,10 @@ static void boot_target(EFI_HANDLE image_handle, const menu_entry *entry,
         if (result.status == EFI_SECURITY_VIOLATION) {
             /* DESIGN Section 7.2: the platform refused it, and the two ways
              * out are both the user's to take, not the loader's. */
-            out(L"\r\nthe platform refused to load this payload. Bless the "
-                L"media with the\r\nsign tool, or opt out of enforcement in "
-                L"firmware setup (Secure Boot off)\r\nor with mokutil "
-                L"--disable-validation (from Linux, confirmed at\r\n"
-                L"MokManager). Both opt-outs are per-machine and cover every "
-                L"unsigned\r\nEFI binary, not just this one.\r\n");
+            out(L"\r\nthe platform refused to load this payload.\r\n\r\n"
+                L"Bless the media with the sign tool, turn Secure Boot off in "
+                L"firmware\r\nsetup, or run mokutil --disable-validation "
+                L"from Linux.\r\n");
         }
     }
     out(L"\r\npress any key to return to the menu.\r\n");
@@ -1055,18 +1052,10 @@ static offer_choice offer_prepare(const menu_entry *entry, bless_prep prep)
             L"bytes.\r\n\r\n");
     else
         out(L"This Windows ISO has not been prepared.\r\n\r\n");
-    out(L"Windows Setup looks for its install source on the media it booted "
-        L"from, and\r\nthat media stops existing when Windows takes over from "
-        L"the firmware. The fix\r\nis a patched copy of the ISO's boot image, "
-        L"staged on the stick and served in\r\nits place: no key is used, "
-        L"nothing is signed, and the ISO itself is not\r\nmodified.\r\n\r\n"
-        L"Preparing boots the signing appliance, which prepares every "
-        L"unprepared\r\nWindows ISO on this stick and reboots once. This "
-        L"entry then boots straight\r\naway, now and every time after. Once "
-        L"per ISO, ever.\r\n\r\n"
-        L"Booting it unprepared reaches the Setup screen and then fails to "
-        L"find its\r\ninstall source; it is worth doing only to look "
-        L"around.\r\n\r\n");
+    out(L"Unprepared, Windows Setup starts and then cannot find its install "
+        L"source.\r\n\r\nPreparing boots the signing appliance, which "
+        L"prepares every unprepared\r\nWindows ISO on this stick and reboots "
+        L"once. Once per ISO.\r\n\r\n");
     out(L"  [p] prepare now (one reboot)   [b] boot unprepared   [esc] back"
         L"\r\n");
 
@@ -1253,11 +1242,6 @@ static BOOLEAN reboot_to_fw_setup(void)
 
     g_st->ConOut->ClearScreen(g_st->ConOut);
     out(L"Reboot into this machine's firmware setup?\r\n\r\n"
-        L"This changes nothing about what may run. It asks the firmware to "
-        L"show its own\r\nsettings screen on the next boot, which is where "
-        L"Secure Boot is turned on or\r\noff, by you, at the machine. The "
-        L"loader cannot and must not do that itself.\r\n\r\n"
-        L"Anything unsaved on this machine is lost.\r\n\r\n"
         L"press y to reboot, any other key to go back.\r\n");
     wait_key(&key);
     if (key.UnicodeChar != L'y' && key.UnicodeChar != L'Y')
@@ -1356,12 +1340,9 @@ static void permissive_notice(sb_mode mode)
         return;
 
     out(L"\r\nshim signature validation is DISABLED on this machine "
-        L"(MokSBState).\r\n"
-        L"Every unsigned EFI binary runs here, not just this stick's; the "
-        L"setting\r\nlives in this machine's firmware, not on the stick, so "
-        L"other machines are\r\nunaffected. To undo it: mokutil "
-        L"--enable-validation from Linux, then\r\nconfirm at the MokManager "
-        L"screen on the next boot.\r\n\r\n");
+        L"(MokSBState).\r\nEvery unsigned EFI binary runs here.\r\n\r\n"
+        L"To undo: mokutil --enable-validation from Linux, then confirm at "
+        L"MokManager\r\non the next boot.\r\n\r\n");
 }
 
 /* The one-shot's second half (DESIGN Section 6.3.1): the marker has already

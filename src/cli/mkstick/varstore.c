@@ -105,9 +105,7 @@ const cli_cmd mks_cmd_varstore = {
     varstore_opts,
     sizeof varstore_opts / sizeof varstore_opts[0],
     2, 2,
-    "Not part of building a stick. It exists so a QEMU run can skip the\n"
-    "interactive MokManager enrollment that a real machine does on first\n"
-    "boot; shim still performs every verification itself, so what such a run\n"
-    "measures is the real MOK load path.\n",
+    "Not part of building a stick. It lets a QEMU run skip the interactive\n"
+    "MokManager enrollment that a real machine does on first boot.\n",
     varstore_run
 };

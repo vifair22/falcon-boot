@@ -48,9 +48,8 @@ static cli_status keygen_run(const cli_args *a)
     log_info("%s  private key (mode 0600)", keys.key);
     log_info("%s  certificate, PEM: what sbsign takes", keys.crt);
     log_info("%s  certificate, DER: what MokManager enrolls", keys.cer);
-    log_warn("the PRIVATE key is now in an ordinary directory. DESIGN Section "
-             "7.5 keeps it encrypted on p3 for a reason; protecting this copy "
-             "is yours to do.");
+    log_warn("the private key is now in an ordinary directory; protecting "
+             "this copy is yours to do");
     return CLI_OK;
 }
 

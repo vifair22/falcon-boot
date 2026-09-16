@@ -151,18 +151,13 @@ const CHAR16 *load_ops_inner_load_advice(void)
     /* Deliberately says what the platform did, not what this loader decided:
      * nothing here is ours to change, and a message that implied otherwise
      * would send the user looking for a setting in the wrong program. */
-    return L"shim signature validation is disabled on this machine, and that "
-           L"is what\r\nstops this image: shim leaves the firmware's own "
-           L"LoadImage in place when it\r\nis not validating, and the "
-           L"firmware refuses the kernel inside a UKI while\r\nSecure Boot is "
-           L"still on. The loader cannot and must not work around that.\r\n"
-           L"\r\nEither re-enable validation (mokutil --enable-validation "
-           L"from Linux, then\r\nconfirm at MokManager on the next boot), "
-           L"which is the state blessed images\r\nare for; or turn Secure "
-           L"Boot off in firmware setup, where nothing verifies\r\nand "
-           L"everything starts. Booting an ISO the ordinary way is "
-           L"unaffected: that\r\nchainload is what disabling validation "
-           L"bought, and it still works.";
+    return L"shim signature validation is disabled, so shim left the "
+           L"firmware's own\r\nLoadImage in place, and the firmware refuses "
+           L"the kernel inside a UKI while\r\nSecure Boot is on.\r\n\r\n"
+           L"Re-enable validation (mokutil --enable-validation from Linux, "
+           L"then confirm\r\nat MokManager), or turn Secure Boot off in "
+           L"firmware setup. Booting an ISO\r\nthe ordinary way still "
+           L"works.";
 }
 
 /* ---- boot to firmware setup ---- */

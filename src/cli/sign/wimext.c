@@ -217,9 +217,8 @@ int wimext_locate(wimext_read_fn rd, void *ctx, uint64_t image_size,
     }
 
     sgn_set_error(SGN_ERR_FORMAT,
-                  "this %llu-byte WIM does not begin at any %u-byte boundary "
-                  "of the image: it is not stored as a plain sector-aligned "
-                  "extent, so it cannot be served through a byte-range splice",
+                  "this %llu-byte WIM begins at no %u-byte boundary of the "
+                  "image, so it cannot be served through a byte-range splice",
                   (unsigned long long)want_len, (unsigned)WIMEXT_ALIGN);
     return SGN_ERR_FORMAT;
 }

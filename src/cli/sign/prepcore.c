@@ -44,14 +44,10 @@ int prep_fits(uint64_t patched_len, uint64_t orig_len)
      * served over, which would corrupt the image Windows reads. */
     sgn_set_error(SGN_ERR_NOSPACE,
                   "the patched boot.wim is %llu bytes and the extent it must "
-                  "be served over is %llu (%llu too many). It is served as a "
-                  "byte-range substitution over the original's own extent, so "
-                  "it may be zero-padded up to that length but never exceed "
-                  "it. Retry with --recompress, which spends CPU on a full "
-                  "LZX repack and typically reclaims several megabytes more; "
-                  "if that still does not fit, this build's boot.wim has no "
-                  "repack margin left and the size-preserving shape does not "
-                  "apply to it.",
+                  "fit is %llu (%llu too many). Retry with --recompress, "
+                  "which does a full LZX repack and typically reclaims "
+                  "several megabytes more. If that still does not fit, this "
+                  "boot.wim has no repack margin left.",
                   (unsigned long long)patched_len,
                   (unsigned long long)orig_len,
                   (unsigned long long)over);

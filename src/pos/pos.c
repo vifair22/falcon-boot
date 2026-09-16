@@ -916,9 +916,9 @@ static EFI_STATUS launch_uki(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent,
          * can tell that it worked differently: the initramfs will ask for the
          * passphrase a second time. Not a security downgrade (the image is
          * verified identically either way), just a broken handoff. */
-        out(L"warning: the credential filesystem could not be published;\r\n"
-            L"         booting from memory instead, so the initramfs will "
-            L"ask for the\r\n         passphrase again.\r\n\r\n");
+        out(L"warning: the credential filesystem could not be published; "
+            L"booting from\r\n         memory instead. The initramfs will "
+            L"ask for the passphrase again.\r\n\r\n");
     }
 
     /* Exactly one of DevicePath and SourceBuffer is set, which is what the
@@ -941,12 +941,10 @@ static EFI_STATUS launch_uki(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent,
             ops.UnloadImage(child);
         if (status == EFI_SECURITY_VIOLATION) {
             result->advice =
-                L"the UKI is not signed with an enrolled key. Sign it with "
-                L"the MOK key\r\nthis machine has enrolled, or opt out of "
-                L"enforcement in firmware setup\r\n(Secure Boot off) or with "
-                L"mokutil --disable-validation (from Linux,\r\nconfirmed at "
-                L"MokManager). Both opt-outs are per-machine and cover\r\n"
-                L"every unsigned EFI binary, not just this one.";
+                L"the UKI is not signed with an enrolled key.\r\n\r\n"
+                L"Sign it with the MOK key this machine has enrolled, turn "
+                L"Secure Boot off\r\nin firmware setup, or run mokutil "
+                L"--disable-validation from Linux.";
         }
         /* DESIGN Section 5.1: a failed load zeroes the credential and tears
          * the filesystem down before the menu comes back. */
@@ -1194,11 +1192,9 @@ EFI_STATUS pos_boot_pick(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
         if (want == POS_PICK_APPLIANCE) {
             result->stage = L"looking for the signing appliance";
             result->advice =
-                L"no signing-appliance image is on this stick's shelf. A "
-                L"stick whose p3 was\r\ncreated plaintext has none by design "
-                L"(no on-stick private key), and one\r\nbuilt without the "
-                L"appliance UKI has none either. Prepare the ISO on a Linux"
-                L"\r\nhost with falcon-boot-sign instead.";
+                L"no signing-appliance image is on this stick's shelf.\r\n"
+                L"Prepare the ISO on a Linux host with falcon-boot-sign "
+                L"instead.";
             status = EFI_NOT_FOUND;
             goto out_close;
         }

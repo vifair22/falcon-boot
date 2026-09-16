@@ -525,14 +525,11 @@ EFI_STATUS bless_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
      * blessing. */
     status = launch_image(st, parent_image, buf, size, &ops, inner_blocked,
                           L"the blessed image is not signed with a key this "
-                          L"machine has enrolled.\r\nRe-bless the ISO with "
-                          L"the MOK key that is enrolled here, enroll this"
-                          L"\r\nstick's certificate with MokManager, or opt "
-                          L"out of enforcement in\r\nfirmware setup (Secure "
-                          L"Boot off) or with mokutil --disable-validation"
-                          L"\r\n(also confirmed at MokManager). Both opt-outs "
-                          L"are per-machine and cover\r\nevery unsigned EFI "
-                          L"binary, not just this one.",
+                          L"machine has enrolled.\r\n\r\nRe-bless the ISO "
+                          L"with the MOK key enrolled here, enroll this "
+                          L"stick's\r\ncertificate with MokManager, turn "
+                          L"Secure Boot off in firmware setup, or run\r\n"
+                          L"mokutil --disable-validation from Linux.",
                           &retain, result);
 
     /* The image is loaded and running from the firmware's own copy by now, so
@@ -609,14 +606,10 @@ EFI_STATUS bless_payload_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
      * that bless is the one that writes to the user's own file. */
     status = launch_image(st, parent_image, buf, size, &ops, FALSE,
                           L"this EFI payload is not signed with a key this "
-                          L"machine has enrolled.\r\nBless it with the sign "
-                          L"tool, which signs the payload file ITSELF and so "
-                          L"changes\r\nit on the stick, or opt out of "
-                          L"enforcement in firmware setup (Secure Boot\r\noff) "
-                          L"or with mokutil --disable-validation (also "
-                          L"confirmed at\r\nMokManager). Both opt-outs are "
-                          L"per-machine and cover every unsigned EFI\r\n"
-                          L"binary, not just this one.",
+                          L"machine has enrolled.\r\n\r\nBless it with the "
+                          L"sign tool, which rewrites the payload file itself; "
+                          L"or turn\r\nSecure Boot off in firmware setup, or "
+                          L"run mokutil --disable-validation\r\nfrom Linux.",
                           &retain, result);
 
     /* Same ownership rule as the blessed path: the firmware has its own copy
@@ -685,13 +678,11 @@ static const CHAR16 *prepared_advice(int rc)
 {
     switch (rc) {
     case BLESS_ERR_NOSPLICE:
-        return L"this ISO is recorded as prepared but its record carries no "
-               L"byte ranges,\r\nso preparing it did nothing. Prepare it "
-               L"again, or delete the record.";
+        return L"this ISO's record carries no byte ranges, so preparing it "
+               L"did nothing.\r\nPrepare it again, or delete the record.";
     case BLESS_ERR_SPLICES:
         return L"this ISO's record asks for more byte ranges than a medium "
-               L"may carry.\r\nIt was not written by a tool this loader "
-               L"understands; prepare the ISO again.";
+               L"may carry.\r\nPrepare the ISO again.";
     case BLESS_ERR_KIND:
     default:
         return L"this ISO's record does not describe prepared media. Prepare "
@@ -777,10 +768,8 @@ EFI_STATUS bless_prepared_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
         out(name);
         out(L"\r\n");
         result->advice = L"a file this ISO's preparation depends on is "
-                         L"missing from the stick,\r\nso the ISO was NOT "
-                         L"booted: Windows Setup would have come up and then "
-                         L"failed\r\nto find its install source, with nothing "
-                         L"on screen to say why. Prepare the\r\nISO again.";
+                         L"missing from the stick, so\r\nthe ISO was not "
+                         L"booted. Prepare it again.";
         return EFI_NOT_FOUND;
     }
 

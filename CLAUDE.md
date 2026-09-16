@@ -132,3 +132,35 @@ Makefiles.
 `build/<variant>/<module>/`, the linked loader in `build/bin/falcon-boot.efi`,
 the staged ESP in `build/esp/`; `compile_commands.json` is regenerated at the
 repo root by the default target.
+
+## Tone: no preaching
+
+This applies to everything with a reader: strings the loader prints, CLI
+output, docs, and the assistant's own replies in a session.
+
+State the fact. Stop. A reader who wants the reasoning opens `docs/DESIGN.md`,
+which is where the reasoning belongs.
+
+Cut:
+
+- Restating a security invariant at the point of use. "This changes nothing
+  about what may run", "the loader cannot and must not do that itself". The
+  invariants are in Section 7 and in this file. A prompt is not the place to
+  re-argue them.
+- Reassurance. "Nothing here decides what may run", "this is safe".
+- Consequences the reader already knows. "Anything unsaved is lost" before a
+  reboot.
+- Justifying the design to the person using it. Confidence needs no defence.
+
+Keep:
+
+- What is about to happen.
+- What the user must do.
+- What went wrong, and what to do about it.
+
+A confirmation is a question and its keys, not an essay:
+
+    Reboot into firmware setup? y to reboot, any other key to go back.
+
+Code comments are exempt. They argue, at length, for the next maintainer.
+That is the one audience that wants the reasoning inline.

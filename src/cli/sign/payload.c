@@ -985,13 +985,10 @@ static void announce_head(const char *path)
 static void announce_tail(void)
 {
     (void)printf(
-"  A bare EFI payload boots as itself, so what Secure Boot verifies is the\n"
-"  payload rather than anything staged beside it: there is no wrap to sign\n"
-"  instead. Signing APPENDS a certificate, so the payload grows and stops\n"
-"  being byte-identical to what its vendor published. Signatures it already\n"
-"  carries are KEPT (memtest ships with Microsoft's), so it goes on booting\n"
-"  wherever it boots today and gains this key's machines; nothing here\n"
-"  removes trust, it only adds yours.\n");
+"  A bare EFI payload boots as itself, so it is signed in place rather than\n"
+"  wrapped. Signing appends a certificate: the file grows and is no longer\n"
+"  byte-identical to what its vendor published. Signatures it already carries\n"
+"  are kept.\n");
     /* Said before it is done, and that has to hold when stdout is a pipe as
      * well as when it is a terminal: without this the helpers' own stderr
      * reaches the log first and the statement arrives after the act. */
@@ -1040,16 +1037,13 @@ const char *sgn_payload_refusal(family_id fam)
     case FAMILY_MEMTEST:
         return NULL;
     case FAMILY_WINDOWS:
-        return "Windows media, whose own boot chain is Microsoft-signed the "
-               "whole way down and needs no key of yours; replacing its "
-               "loader's signature would break the chain rather than extend "
-               "it. What Windows media needs from this tool is `prepare', not "
-               "a signature";
+        return "Windows media: its boot chain is Microsoft-signed the whole "
+               "way down, and replacing that signature would break it. Use "
+               "`prepare' instead";
     default:
-        return "media whose boot runs a kernel this would leave unsigned: "
-               "signing its loader would report success and still be refused. "
-               "Bless the .iso of the same release instead, which wraps the "
-               "kernel and its cmdline in one signed image";
+        return "media whose boot runs a kernel this would leave unsigned, so "
+               "signing the loader would report success and still be refused. "
+               "Bless the .iso of the same release instead";
     }
 }
 
