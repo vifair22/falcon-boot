@@ -51,6 +51,13 @@
 #ifndef EXT4_BIGFILE
 #define EXT4_BIGFILE "build/test-ext4.bigfile"
 #endif
+/* The same driver against a filesystem with metadata_csum off. It exists for
+ * the corruption sweep: with checksums on, every one of them is verified
+ * before the fields it covers are read, so a flipped byte returns
+ * EXT4_ERR_CSUM and the bounds checks behind it never run. */
+#ifndef EXT4_NOCSUM_IMG
+#define EXT4_NOCSUM_IMG "build/test-ext4-nocsum.img"
+#endif
 
 #define BIG_PATH  "/big.bin"
 #define MANY_PATH "/manydir"
@@ -62,6 +69,7 @@
 
 static int img_fd = -1;
 static int big_fd = -1;
+static int nocsum_fd = -1;
 
 /* ------------------------------------------------------------- plumbing */
 
@@ -1106,6 +1114,326 @@ static void test_ext4_io_failure_sweep(void **state)
 
 /* ------------------------------------------------------------------ run */
 
+/* ------------------------------------------------- corruption sweep */
+
+/* Flip one byte of the image on its way past the driver, and require the
+ * driver to answer rather than misbehave.
+ *
+ * Which bytes: the ones a clean workload actually reads, recorded on a first
+ * pass and swept on the second. Sweeping a guessed range would either miss
+ * the extent nodes and directory blocks (which live wherever mke2fs put them)
+ * or spend the whole test on 128 MiB of file data. The workload below
+ * deliberately never touches /big.bin, so the recorded set is metadata plus a
+ * few small files: the superblock, the descriptor table, the inode table
+ * blocks holding the inodes it visits, the extent tree and the directory
+ * blocks.
+ *
+ * What is asserted is the contract, not a particular status. Every entry
+ * point must return EXT4_OK or one of the negative codes; it must not read
+ * outside a caller's buffer (the asan build is what enforces that half), and
+ * a workload that still reports OK must still be walkable without crashing.
+ * A corrupted image that mounts cleanly is not a failure: metadata_csum
+ * covers the structures that matter, and plenty of bytes in the set are file
+ * data or padding where a flip is simply invisible. */
+
+#define SWEEP_MAX_RANGES 4096u
+/* Reads longer than this are bulk file data, not metadata. Skipping them is
+ * what keeps the sweep over structures worth corrupting; a flip in a data
+ * block is invisible by construction and would only buy runtime. */
+#define SWEEP_RANGE_MAX  4096u
+/* Runtime cap. Two masks per byte, so this is half as many bytes; the
+ * assertions below check the sweep actually reached that far rather than
+ * trusting the budget. */
+#define SWEEP_MAX_FLIPS  60000u
+
+typedef struct {
+    uint64_t off;
+    uint64_t len;
+} sweep_range;
+
+static sweep_range g_ranges[SWEEP_MAX_RANGES];
+static sweep_range g_uniq[SWEEP_MAX_RANGES];
+static size_t      g_range_n;
+static int         g_recording;
+
+static uint64_t    g_flip_off = ~(uint64_t)0;
+static uint8_t     g_flip_xor;
+
+/* Which image the sweep is running against; both go through img_read. */
+static int *g_sweep_fd = &img_fd;
+
+static int sweep_read(void *ctx, uint64_t off, uint64_t len, void *buf)
+{
+    int rc = img_read(ctx, off, len, buf);
+
+    if (g_recording && rc == 0 && g_range_n < SWEEP_MAX_RANGES) {
+        g_ranges[g_range_n].off = off;
+        g_ranges[g_range_n].len = len;
+        g_range_n++;
+    }
+    if (rc == 0 && g_flip_off >= off && g_flip_off < off + len) {
+        ((uint8_t *)buf)[g_flip_off - off] ^= g_flip_xor;
+    }
+    return rc;
+}
+
+/* Collapse the recorded reads to the distinct metadata ones. Every cache miss
+ * re-reads a block that is already in the list, so the raw recording repeats
+ * heavily; deduping is what turns tens of thousands of reads into the few
+ * dozen blocks the workload actually depends on. */
+static size_t sweep_unique(void)
+{
+    size_t n = 0;
+    size_t i;
+    size_t j;
+
+    for (i = 0; i < g_range_n; i++) {
+        if (g_ranges[i].len > SWEEP_RANGE_MAX) {
+            continue;
+        }
+        for (j = 0; j < n; j++) {
+            if (g_uniq[j].off == g_ranges[i].off &&
+                g_uniq[j].len == g_ranges[i].len) {
+                break;
+            }
+        }
+        if (j == n && n < SWEEP_MAX_RANGES) {
+            g_uniq[n++] = g_ranges[i];
+        }
+    }
+    return n;
+}
+
+/* Mount, walk the root, and read a few scattered spans of every regular file
+ * found. Returns the first non-OK status, or EXT4_OK if everything succeeded.
+ *
+ * Spans rather than whole files, and that is what makes /big.bin affordable:
+ * 24 MiB read end to end would swamp the recorded set with data blocks, but
+ * three 4 KiB spans at the start, middle and end force the extent walker to
+ * descend the interior node above its six extents. Without that descent the
+ * whole of extent_node_check and the index scan stay cold, because every
+ * other file on the fixture fits in the four slots of the inline root. */
+static int sweep_workload(void)
+{
+    static const unsigned span_div[] = { 0u, 2u, 1u };  /* 0, size/2, end */
+    ext4_vol v;
+    ext4_dir d;
+    ext4_dirent e;
+    uint8_t buf[4096];
+    int rc;
+
+    rc = ext4_mount(&v, sweep_read, g_sweep_fd);
+    if (rc != EXT4_OK) {
+        return rc;
+    }
+    rc = ext4_dir_open_root(&v, &d);
+    if (rc != EXT4_OK) {
+        return rc;
+    }
+    for (;;) {
+        ext4_file f;
+        uint64_t size;
+        size_t k;
+        int r = ext4_dir_next(&d, &e);
+
+        if (r < 0) {
+            return r;
+        }
+        if (r == 0) {
+            break;
+        }
+        if (!e.is_regular) {
+            continue;
+        }
+        rc = ext4_file_open(&v, &f, &e);
+        if (rc != EXT4_OK) {
+            return rc;
+        }
+        size = ext4_file_size(&f);
+        for (k = 0; k < sizeof span_div / sizeof span_div[0]; k++) {
+            uint64_t at;
+            uint64_t take;
+
+            if (size == 0) {
+                break;
+            }
+            at = (span_div[k] == 0u) ? 0u
+               : ((span_div[k] == 1u) ? size - 1u : size / 2u);
+            take = size - at;
+            if (take > sizeof buf) {
+                take = sizeof buf;
+            }
+            rc = ext4_file_read(&f, at, take, buf);
+            if (rc != EXT4_OK) {
+                return rc;
+            }
+        }
+    }
+    return EXT4_OK;
+}
+
+static int ext4_status_known(int rc)
+{
+    switch (rc) {
+    case EXT4_OK:
+    case EXT4_ERR_IO:
+    case EXT4_ERR_BAD_SUPER:
+    case EXT4_ERR_CORRUPT:
+    case EXT4_ERR_BAD_ARG:
+    case EXT4_ERR_RANGE:
+    case EXT4_ERR_UNSUPPORTED:
+    case EXT4_ERR_NEEDS_RECOVERY:
+    case EXT4_ERR_DIRTY:
+    case EXT4_ERR_CSUM:
+    case EXT4_ERR_INLINE:
+    case EXT4_ERR_SYMLINK:
+    case EXT4_ERR_HOLE:
+        return 1;
+    default:
+        return 0;
+    }
+}
+
+static void sweep_over(int *fd, size_t min_refused)
+{
+    static const uint8_t masks[] = { 0xffu, 0x01u };
+    size_t uniq;
+    size_t i;
+    size_t m;
+    size_t swept = 0;
+    size_t refused = 0;
+
+    g_sweep_fd = fd;
+
+    /* Pass one: record what a clean run reads. */
+    g_flip_off = ~(uint64_t)0;
+    g_range_n = 0;
+    g_recording = 1;
+    assert_int_equal(sweep_workload(), EXT4_OK);
+    g_recording = 0;
+    assert_true(g_range_n > 0);
+    assert_true(g_range_n < SWEEP_MAX_RANGES);  /* else the set is truncated */
+
+    uniq = sweep_unique();
+    assert_true(uniq > 0);
+
+    /* Pass two: flip each recorded byte in turn. */
+    for (i = 0; i < uniq && swept < SWEEP_MAX_FLIPS; i++) {
+        uint64_t at;
+
+        for (at = g_uniq[i].off; at < g_uniq[i].off + g_uniq[i].len; at++) {
+            if (swept >= SWEEP_MAX_FLIPS) {
+                break;
+            }
+            for (m = 0; m < sizeof masks / sizeof masks[0]; m++) {
+                int rc;
+
+                g_flip_off = at;
+                g_flip_xor = masks[m];
+                rc = sweep_workload();
+                if (!ext4_status_known(rc)) {
+                    fail_msg("flip 0x%02x at %llu returned %d",
+                             (unsigned)masks[m], (unsigned long long)at, rc);
+                }
+                if (rc != EXT4_OK) {
+                    refused++;
+                }
+                swept++;
+            }
+        }
+    }
+
+    g_flip_off = ~(uint64_t)0;
+
+    /* The sweep is only evidence if it actually bit. A run where nothing was
+     * ever refused would mean the flip never reached the driver. */
+    assert_true(swept > 10000);
+    assert_true(refused > min_refused);
+
+    /* And the uncorrupted image still works, so the refusals above were the
+     * corruption and not a harness that broke halfway through. */
+    assert_int_equal(sweep_workload(), EXT4_OK);
+}
+
+static void test_ext4_corruption_sweep(void **state)
+{
+    (void)state;
+    /* 7804 refusals of 33792 flips when this was written: with
+     * metadata_csum on, most of a metadata block is covered by a sum
+     * and a flip in it is caught. */
+    sweep_over(&img_fd, 4000u);
+}
+
+/* The same sweep with metadata_csum off, which is the only way most of this
+ * driver's structural validation is reachable at all: with checksums on the
+ * superblock, inode and extent-node sums are verified before the fields they
+ * cover are looked at, so a flipped byte never reaches the bounds check
+ * behind them. */
+static void test_ext4_corruption_sweep_nocsum(void **state)
+{
+    (void)state;
+    /* Far fewer refusals here, 419 of 31744 when this was written,
+     * and that is the point rather than a weakness: with nothing
+     * verifying the bytes, a flip is only caught when it breaks a
+     * structural rule the driver checks itself. Those checks are what
+     * this sweep is for, and they are unreachable on the image
+     * above. */
+    sweep_over(&nocsum_fd, 200u);
+    g_sweep_fd = &img_fd;
+}
+
+
+/* The handful of refusals that no corruption sweep reaches, because each
+ * needs a superblock that is internally consistent and wrong in one exact
+ * way rather than a byte flipped at random. */
+static void test_ext4_directed_refusals(void **state)
+{
+    ext4_vol v;
+    ext4_dir d;
+    ext4_file f;
+
+    (void)state;
+
+    /* An inode number outside the superblock's own count, through the public
+     * by-inode entry points. Nothing on a well-formed volume ever asks for
+     * one; a caller that computed it wrong is what this guards. */
+    assert_int_equal(ext4_mount(&v, img_read, &img_fd), EXT4_OK);
+    assert_int_equal(ext4_dir_open_ino(&v, &d, 0), EXT4_ERR_BAD_ARG);
+    assert_int_equal(ext4_file_open_ino(&v, &f, 0), EXT4_ERR_BAD_ARG);
+    assert_int_equal(ext4_dir_open_ino(&v, &d, 0xffffffffu),
+                     EXT4_ERR_BAD_ARG);
+    assert_int_equal(ext4_file_open_ino(&v, &f, 0xffffffffu),
+                     EXT4_ERR_BAD_ARG);
+
+    /* A superblock claiming more inodes than its groups can hold. The count
+     * and the group total are independent fields, so an inode can pass the
+     * check above and still land in a group past the end of the descriptor
+     * table; that is the one this reaches. Checksum refreshed, because the
+     * point is a consistent superblock telling a lie rather than a corrupt
+     * one. */
+    patch_reset();
+    sb_put32(0x00u, 0xffffff00u);          /* s_inodes_count */
+    sb_refresh_csum();
+    assert_int_equal(mount_patched(&v), EXT4_OK);
+    assert_int_equal(ext4_dir_open_ino(&v, &d, 0xfffffe00u),
+                     EXT4_ERR_CORRUPT);
+
+    /* 128-byte inodes, which is the one layout where i_extra_isize cannot
+     * reach i_checksum_hi and the inode checksum is the low sixteen bits
+     * alone. mke2fs has not defaulted to this for years and p3 does not use
+     * it, so the narrow branch is otherwise never taken. The inode sums on
+     * this image were computed for 256-byte inodes, so the read is expected
+     * to end in EXT4_ERR_CSUM: what is under test is the arithmetic that
+     * runs before the comparison, not the comparison. */
+    patch_reset();
+    sb_put16(SB_INODE_SIZE, 128u);
+    sb_refresh_csum();
+    assert_int_equal(mount_patched(&v), EXT4_OK);
+    assert_int_equal(ext4_dir_open_root(&v, &d), EXT4_ERR_CSUM);
+
+    patch_reset();
+}
+
 int run_ext4_tests(void)
 {
     const struct CMUnitTest tests[] = {
@@ -1120,6 +1448,9 @@ int run_ext4_tests(void)
         cmocka_unit_test(test_ext4_superblock_refusals),
         cmocka_unit_test(test_ext4_unclean_states),
         cmocka_unit_test(test_ext4_io_failure_sweep),
+        cmocka_unit_test(test_ext4_corruption_sweep),
+        cmocka_unit_test(test_ext4_corruption_sweep_nocsum),
+        cmocka_unit_test(test_ext4_directed_refusals),
     };
     int failed;
 
@@ -1144,7 +1475,22 @@ int run_ext4_tests(void)
         return 0;
     }
 
+    nocsum_fd = open(EXT4_NOCSUM_IMG, O_RDONLY);
+    if (nocsum_fd < 0) {
+        printf("\n[  SKIPPED ] ext4 fixture: %s not found.\n"
+               "             Rebuild with: tools/mk-test-ext4.sh\n",
+               EXT4_NOCSUM_IMG);
+        close(big_fd);
+        close(img_fd);
+        big_fd = -1;
+        img_fd = -1;
+        return test_skip_rc();
+    }
+
     failed = cmocka_run_group_tests_name("ext4", tests, NULL, NULL);
+
+    close(nocsum_fd);
+    nocsum_fd = -1;
 
     close(big_fd);
     close(img_fd);

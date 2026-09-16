@@ -498,6 +498,19 @@ static int extent_node_check(const ext4_vol *v, const ext4_inode *in,
     if (!in_inode && v->has_csum) {
         uint32_t tail = EXT_HDR_SIZE + EXT_ENT_SIZE * max;
 
+        /* Unreachable at every block size ext4 permits, and kept anyway.
+         *
+         * Reaching it needs a node that passed the bound above (tail <=
+         * avail) and still has no room for the four-byte sum (tail + 4 >
+         * avail), so avail - tail < 4. tail is 12 * (max + 1) and avail is
+         * the block size, and 1024, 2048 and 4096 leave remainders of 4, 8
+         * and 4 against 12: the largest tail that fits always leaves at
+         * least four bytes spare. No value of eh_max can land in the gap.
+         *
+         * It stays because the arithmetic that makes it dead is the block
+         * size's, not this function's, and a reader arriving here should
+         * find the reason rather than spend an afternoon building a node
+         * that triggers it. */
         if (tail + 4u > avail)
             return EXT4_ERR_CORRUPT;
         if (crc32c(in->csum_seed, node, tail) != get_le32(node + tail))

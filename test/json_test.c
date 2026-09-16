@@ -592,6 +592,9 @@ static void test_json_str(void **state)
     parse_ok("{\"plain\":\"hello\","
              "\"esc\":\"a\\\"b\\\\c\\/d\\be\\ff\\ng\\rh\\ti\","
              "\"uni\":\"\\u0041\\u00e9\\u20ac\","
+             /* Upper-case hex digits, which hex_val handles on a separate
+              * branch from lower-case and nothing else here reaches. */
+             "\"UNI\":\"\\u00E9\\u20AC\","
              "\"pair\":\"\\ud83d\\ude00\","
              "\"lone\":\"\\ud800x\"}", &root);
 
@@ -610,6 +613,12 @@ static void test_json_str(void **state)
     assert_int_equal(json_str(&v, buf, sizeof buf, &len), JSON_OK);
     assert_int_equal(len, 6);
     assert_memory_equal(buf, "A\xc3\xa9\xe2\x82\xac", 6);
+
+    /* The same two code points spelled with upper-case hex. */
+    assert_int_equal(json_get(&root, "UNI", &v), JSON_OK);
+    assert_int_equal(json_str(&v, buf, sizeof buf, &len), JSON_OK);
+    assert_int_equal(len, 5);
+    assert_memory_equal(buf, "\xc3\xa9\xe2\x82\xac", 5);
 
     /* A surrogate pair becomes one four-byte sequence. */
     assert_int_equal(json_get(&root, "pair", &v), JSON_OK);

@@ -184,6 +184,57 @@ fsck.ext4 -fn "$IMG" >/dev/null 2>&1 || {
     exit 1
 }
 
+# ---------------------------------------------- the checksum-free variant
+#
+# The same tree again with metadata_csum off, because with it on the driver's
+# structural validation is unreachable by corruption: every checksum is
+# verified before the fields it covers are looked at, so a flipped byte in a
+# superblock, an inode or an extent node comes back EXT4_ERR_CSUM and the
+# bounds checks behind it never run. Measured: the corruption sweep over the
+# csum image leaves the whole of the extent descent and most of ext4_mount's
+# field validation cold.
+#
+# Small, and with no big.bin: it exists to be corrupted, not to be read, and
+# the tree only has to be deep enough to own an extent tree with an interior
+# node. ^metadata_csum implies ^metadata_csum_seed, and mke2fs also wants
+# ^orphan_file, which writes an orphan inode list this driver refuses.
+NOCSUM_IMG=build/test-ext4-nocsum.img
+NOCSUM_MIB=32
+
+rm -f "$NOCSUM_IMG"
+truncate -s "${NOCSUM_MIB}M" "$NOCSUM_IMG"
+mkfs.ext4 -q -L "${LABEL}N" -O ^metadata_csum,^metadata_csum_seed,^orphan_file \
+    "$NOCSUM_IMG"
+
+NMNT=$(mktemp -d)
+sudo mount -o loop "$NOCSUM_IMG" "$NMNT"
+sudo chown "$(id -u):$(id -g)" "$NMNT"
+mkdir -p "$NMNT/sub" "$NMNT/.filler"
+# Same trick as big.bin above and for the same reason: a chunk, a sync, then a
+# filler flushed behind it so the allocator cannot extend the last extent. Six
+# chunks is past the four slots of the inline root, which is what forces an
+# interior node and with it the descent this fixture exists to corrupt.
+off=0
+while [[ "$off" -lt 14 ]]; do
+    dd if=/dev/urandom of="$NMNT/frag.bin" bs=512K skip=0 seek="$off" \
+        count=1 conv=notrunc status=none
+    sync
+    dd if=/dev/zero of="$NMNT/.filler/pad$off" bs=512K count=1 status=none
+    sync
+    off=$((off + 1))
+done
+rm -rf "$NMNT/.filler"
+printf 'small\n' > "$NMNT/small.txt"
+printf 'nested\n' > "$NMNT/sub/nested.txt"
+sync
+sudo umount "$NMNT"
+rmdir "$NMNT"
+
+fsck.ext4 -fn "$NOCSUM_IMG" >/dev/null 2>&1 || {
+    echo "ERROR: fsck reports the nocsum fixture is not clean" >&2
+    exit 1
+}
+
 nobj=$(grep -cv '^#' "$MANIFEST")
 nbig=$(debugfs -R "stat /big.bin" "$IMG" 2>/dev/null |
     sed -n '/^EXTENTS:/,$p' | tr ',' '\n' | grep -c '(') || nbig='?'
@@ -195,3 +246,7 @@ echo "  block size:        $(dumpe2fs -h "$IMG" 2>/dev/null |
     sed -n 's/^Block size: *//p')"
 echo "  /big.bin extents:  $nbig (interior node expected above 4)"
 echo "  /manydir entries:  $MANY_ENTRIES (htree; see debugfs -R 'htree_dump /manydir')"
+nfrag=$(debugfs -R "stat /frag.bin" "$NOCSUM_IMG" 2>/dev/null |
+    sed -n '/^EXTENTS:/,$p' | tr ',' '\n' | grep -c '(') || nfrag='?'
+echo "created $NOCSUM_IMG (${NOCSUM_MIB} MiB ext4, no metadata_csum)"
+echo "  /frag.bin extents: $nfrag (interior node expected above 4)"
