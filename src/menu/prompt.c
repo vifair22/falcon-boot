@@ -17,11 +17,18 @@
 #define CHAR_TAB       0x0009
 #define CHAR_CR        0x000D
 
+/* The prompt is a screen like any other and sits in the same block. The
+ * asterisks and the backspaces that follow go through the raw console, not
+ * through menu_out: they are cursor motion within a line the frame has
+ * already indented, and re-indenting them would fight it. */
 static void out(EFI_SYSTEM_TABLE *st, const CHAR16 *s)
 {
-    /* OutputString's parameter is mutable because the spec declares it so,
-     * not because the firmware writes to it; the round trip through
-     * uintptr_t is what keeps -Wcast-qual quiet about the spec's wart. */
+    menu_out(st, s);
+}
+
+/* Cursor motion and single glyphs, unframed on purpose; see out() above. */
+static void raw(EFI_SYSTEM_TABLE *st, const CHAR16 *s)
+{
     st->ConOut->OutputString(st->ConOut, (CHAR16 *)(uintptr_t)s);
 }
 
@@ -54,7 +61,7 @@ static void erase_back(EFI_SYSTEM_TABLE *st, UINTN n)
             buf[i * 3u + 2u] = L'\b';
         }
         buf[k * 3u] = L'\0';
-        out(st, buf);
+        raw(st, buf);
         n -= k;
     }
 }
@@ -134,7 +141,7 @@ INTN menu_prompt_secret(EFI_SYSTEM_TABLE *st, const CHAR16 *prompt,
                  * otherwise leave its earlier tail sitting past len. */
                 buf[len] = '\0';
                 if (!silent)
-                    out(st, L"\b \b");
+                    raw(st, L"\b \b");
             }
             continue;
         }
@@ -151,7 +158,7 @@ INTN menu_prompt_secret(EFI_SYSTEM_TABLE *st, const CHAR16 *prompt,
         }
         buf[len++] = (char)key.UnicodeChar;
         if (!silent)
-            out(st, L"*");
+            raw(st, L"*");
     }
 
     /* WaitForEvent failed, which means the console is gone; treat it as a

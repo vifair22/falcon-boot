@@ -55,10 +55,10 @@ static EFI_SYSTEM_TABLE *g_st;
 
 /* ---- console ---- */
 
+/* Inside the content block, like every other screen; see src/menu/menu.h. */
 static void out(const CHAR16 *s)
 {
-    /* Mutable parameter is the spec's wart, not ours; see src/efi/main.c. */
-    g_st->ConOut->OutputString(g_st->ConOut, (CHAR16 *)(uintptr_t)s);
+    menu_out(g_st, s);
 }
 
 static void out_dec(UINT64 v)
@@ -1204,7 +1204,7 @@ EFI_STATUS pos_boot_pick(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
     }
     chosen = (UINTN)pick;
 
-    st->ConOut->ClearScreen(st->ConOut);
+    menu_screen(st);
 
     /* The personal OS is a UKI, so it loads its kernel exactly the way a
      * blessed wrap does and is stopped by exactly the same platform state.

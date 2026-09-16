@@ -47,6 +47,30 @@
 
 static CHAR16 g_row[ROW_MAX];
 
+/* The content block, fixed for the run.
+ *
+ * It used to live in menu_run's locals, which meant the menu was the only
+ * screen that had one: the passphrase prompt, every confirmation and every
+ * error drew from column zero while the menu sat in a centred block, and on
+ * a wide console they did not look like the same program. The frame is
+ * module state now and menu_screen/menu_out draw inside it, so a caller gets
+ * the layout by writing text rather than by knowing about it.
+ *
+ * left/width are the block. text_col is where a line's first glyph goes,
+ * which is the block plus PAD_X. rows is the console height, kept so the
+ * menu can centre itself in it. */
+typedef struct {
+    UINTN left;
+    UINTN width;
+    UINTN text_col;
+    UINTN text_width;
+    UINTN rows;
+    UINTN col;          /* cursor column within the text area, for wrapping */
+    BOOLEAN ready;
+} menu_frame;
+
+static menu_frame g_frame;
+
 /* The console state and the resolved frame. Bundled because paint_slot is
  * called from two places and the alternative is a nine-argument function. */
 typedef struct {
@@ -173,6 +197,114 @@ static void screen_dims(EFI_SYSTEM_TABLE *st, UINTN *cols, UINTN *rows)
         *cols = ROW_MAX;
 }
 
+/* Fix the frame from the console size. Idempotent, and safe to call from any
+ * screen: menu_init sets it at startup, and anything that draws before that
+ * gets it on first use rather than drawing at column zero. */
+static void frame_ensure(EFI_SYSTEM_TABLE *st)
+{
+    UINTN cols;
+    UINTN rows;
+    UINTN w;
+
+    if (g_frame.ready) {
+        return;
+    }
+    screen_dims(st, &cols, &rows);
+
+    w = cols - (UINTN)2u * MARGIN_X;
+    if (w > WIDTH_MAX) {
+        w = WIDTH_MAX;
+    }
+    if (w > ROW_MAX - 1u) {
+        w = ROW_MAX - 1u;
+    }
+    g_frame.left = (cols - w) / 2u;
+    g_frame.width = w;
+    g_frame.text_col = g_frame.left + text_start(w);
+    g_frame.text_width = text_end(w) - text_start(w);
+    g_frame.rows = rows;
+    g_frame.col = 0;
+    g_frame.ready = TRUE;
+}
+
+/* Start a screen: clear it and park the cursor at the block's first text
+ * column. Everything written with menu_out lands inside the block from there.
+ *
+ * The row is a third of the way down rather than at the top margin, and that
+ * is the vertical half of the same problem the block solved horizontally. A
+ * menu centres itself, so a prompt or an error pinned to row one sat in a
+ * different place on the screen from the menu it replaced and the two did not
+ * read as one program. A third down puts a short screen, which is nearly all
+ * of them, at about the height a menu block sits at, while still leaving two
+ * thirds below for a long one to run into. */
+void menu_screen(EFI_SYSTEM_TABLE *st)
+{
+    UINTN row;
+
+    if (st == (void *)0) {
+        return;
+    }
+    frame_ensure(st);
+    row = g_frame.rows / 3u;
+    if (row < MARGIN_Y) {
+        row = MARGIN_Y;
+    }
+    st->ConOut->SetAttribute(st->ConOut,
+                             EFI_TEXT_ATTR(EFI_LIGHTGRAY, EFI_BLACK));
+    st->ConOut->ClearScreen(st->ConOut);
+    st->ConOut->SetCursorPosition(st->ConOut, g_frame.text_col, row);
+    g_frame.col = 0;
+}
+
+/* Write text inside the block, re-indenting after every line break and
+ * wrapping at the block's right edge.
+ *
+ * Wrapping is by character rather than by word. menu_out is called with
+ * fragments - a label, then a number, then the rest of a sentence - so a word
+ * can span several calls, and buffering one to break cleanly would mean a
+ * flush that a caller could forget and a message that could lose its last
+ * word. Clipping instead would silently truncate an error. At this block
+ * width the strings in this loader do not reach the margin anyway; the wrap
+ * is there so that one day a longer one stays readable rather than
+ * disappearing. */
+void menu_out(EFI_SYSTEM_TABLE *st, const CHAR16 *s)
+{
+    CHAR16 chunk[2] = { L'\0', L'\0' };
+    UINTN i = 0;
+
+    if (st == (void *)0 || s == (void *)0) {
+        return;
+    }
+    frame_ensure(st);
+
+    while (s[i] != L'\0') {
+        CHAR16 c = s[i];
+
+        if (c == L'\r') {
+            i++;                    /* the \n that follows does the work */
+            continue;
+        }
+        if (c == L'\n') {
+            out(st, L"\r\n");
+            st->ConOut->SetCursorPosition(st->ConOut, g_frame.text_col,
+                                          (UINTN)st->ConOut->Mode->CursorRow);
+            g_frame.col = 0;
+            i++;
+            continue;
+        }
+        if (g_frame.text_width != 0 && g_frame.col >= g_frame.text_width) {
+            out(st, L"\r\n");
+            st->ConOut->SetCursorPosition(st->ConOut, g_frame.text_col,
+                                          (UINTN)st->ConOut->Mode->CursorRow);
+            g_frame.col = 0;
+        }
+        chunk[0] = c;
+        out(st, chunk);
+        g_frame.col++;
+        i++;
+    }
+}
+
 /* Resolve the console size and the entry count into the content block.
  *
  * v->count must already be set: the block's height is how many entries there
@@ -180,17 +312,13 @@ static void screen_dims(EFI_SYSTEM_TABLE *st, UINTN *cols, UINTN *rows)
  * of the screen. */
 static void layout(menu_view *v)
 {
-    UINTN cols, rows, w, avail, list, block;
+    UINTN rows, w, avail, list, block;
 
-    screen_dims(v->st, &cols, &rows);
-
-    w = cols - (UINTN)2u * MARGIN_X;
-    if (w > WIDTH_MAX)
-        w = WIDTH_MAX;
-    if (w > ROW_MAX - 1u)
-        w = ROW_MAX - 1u;
+    frame_ensure(v->st);
+    w = g_frame.width;
+    rows = g_frame.rows;
     v->width = w;
-    v->left = (cols - w) / 2u;
+    v->left = g_frame.left;
 
     /* Symmetrical, so the bar's right edge steps in by as much as its left.
      * A block too narrow to indent and still hold an inset row keeps the
@@ -262,6 +390,11 @@ void menu_init(EFI_SYSTEM_TABLE *st)
 
     if (best >= 0 && best != st->ConOut->Mode->Mode)
         st->ConOut->SetMode(st->ConOut, (UINTN)best);
+
+    /* After the mode, never before: the frame is derived from the console
+     * size, and SetMode is what changes it. */
+    g_frame.ready = FALSE;
+    frame_ensure(st);
 }
 
 /* Paint one slot of the list window. slot is 0-based within the window; the

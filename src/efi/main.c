@@ -47,12 +47,13 @@ static EFI_SYSTEM_TABLE *g_st;
 
 EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st);
 
-/* OutputString takes a mutable string because the UEFI spec declares it so,
- * not because the firmware writes to it. The round trip through uintptr_t is
- * what keeps -Wcast-qual from flagging a wart that is the spec's, not ours. */
+/* Every line this file writes goes inside the content block src/menu owns,
+ * so a confirmation or an error sits where the menu sits instead of against
+ * the left edge of the console beside it. menu_out handles the indent, the
+ * re-indent after a line break and the wrap. */
 static void out(const CHAR16 *s)
 {
-    g_st->ConOut->OutputString(g_st->ConOut, (CHAR16 *)(uintptr_t)s);
+    menu_out(g_st, s);
 }
 
 static void out_hex(UINT64 v)
@@ -828,7 +829,7 @@ static void boot_target(EFI_HANDLE image_handle, const menu_entry *entry,
                                (const family_desc *)0 };
     EFI_STATUS status;
 
-    g_st->ConOut->ClearScreen(g_st->ConOut);
+    menu_screen(g_st);
     out(L"booting: ");
     out(entry->label);
     out(L"\r\n\r\n");
@@ -836,7 +837,7 @@ static void boot_target(EFI_HANDLE image_handle, const menu_entry *entry,
     status = iso_boot(g_st, image_handle, &g_vols[target->vol],
                       &target->ent, target->kind, &result);
 
-    g_st->ConOut->ClearScreen(g_st->ConOut);
+    menu_screen(g_st);
     out(entry->label);
     /* What the medium's ESP turned out to be, reported after the fact because
      * the payload owns the screen in between. Informational only: no cmdline
@@ -892,14 +893,14 @@ static void boot_blessed(EFI_HANDLE image_handle, const menu_entry *entry,
     bless_result result = { L"starting", EFI_SUCCESS, (const CHAR16 *)0 };
     EFI_STATUS status;
 
-    g_st->ConOut->ClearScreen(g_st->ConOut);
+    menu_screen(g_st);
     out(L"booting blessed: ");
     out(entry->label);
     out(L"\r\n\r\n");
 
     status = bless_boot(g_st, image_handle, &target->hit, &result);
 
-    g_st->ConOut->ClearScreen(g_st->ConOut);
+    menu_screen(g_st);
     out(entry->label);
     if (!EFI_ERROR(status)) {
         out(L"\r\nthe blessed image exited, status ");
@@ -934,7 +935,7 @@ static void boot_prepared(EFI_HANDLE image_handle, const menu_entry *entry,
     bless_result result = { L"starting", EFI_SUCCESS, (const CHAR16 *)0 };
     EFI_STATUS status;
 
-    g_st->ConOut->ClearScreen(g_st->ConOut);
+    menu_screen(g_st);
     out(L"booting prepared: ");
     out(entry->label);
     out(L"\r\n\r\n");
@@ -943,7 +944,7 @@ static void boot_prepared(EFI_HANDLE image_handle, const menu_entry *entry,
                                  &g_vols[target->vol], &target->ent,
                                  target->kind, &result);
 
-    g_st->ConOut->ClearScreen(g_st->ConOut);
+    menu_screen(g_st);
     out(entry->label);
     if (!EFI_ERROR(status)) {
         out(L"\r\nthe payload exited, status ");
@@ -985,7 +986,7 @@ static void boot_payload(EFI_HANDLE image_handle, const menu_entry *entry,
     bless_result result = { L"starting", EFI_SUCCESS, (const CHAR16 *)0 };
     EFI_STATUS status;
 
-    g_st->ConOut->ClearScreen(g_st->ConOut);
+    menu_screen(g_st);
     out(L"booting: ");
     out(entry->label);
     out(L"\r\n\r\n");
@@ -993,7 +994,7 @@ static void boot_payload(EFI_HANDLE image_handle, const menu_entry *entry,
     status = bless_payload_boot(g_st, image_handle, &g_vols[target->vol],
                                 &target->ent, &result);
 
-    g_st->ConOut->ClearScreen(g_st->ConOut);
+    menu_screen(g_st);
     out(entry->label);
     if (!EFI_ERROR(status)) {
         out(L"\r\nthe payload exited, status ");
@@ -1043,7 +1044,7 @@ typedef enum {
  * nobody picks it by accident. */
 static offer_choice offer_prepare(const menu_entry *entry, bless_prep prep)
 {
-    g_st->ConOut->ClearScreen(g_st->ConOut);
+    menu_screen(g_st);
     out(entry->label);
     out(L"\r\n\r\n");
     if (prep == BLESS_PREP_STALE)
@@ -1110,7 +1111,7 @@ static void launch_appliance(EFI_HANDLE image_handle, const menu_entry *entry,
     char path[MANIFEST_PATH_MAX];
     EFI_STATUS status;
 
-    g_st->ConOut->ClearScreen(g_st->ConOut);
+    menu_screen(g_st);
     out(entry->label);
     out(L"\r\n\r\n");
 
@@ -1240,7 +1241,7 @@ static BOOLEAN reboot_to_fw_setup(void)
 {
     EFI_INPUT_KEY key;
 
-    g_st->ConOut->ClearScreen(g_st->ConOut);
+    menu_screen(g_st);
     out(L"Reboot into this machine's firmware setup?\r\n\r\n"
         L"press y to reboot, any other key to go back.\r\n");
     wait_key(&key);
@@ -1263,7 +1264,7 @@ static BOOLEAN boot_personal(EFI_HANDLE image_handle)
     pos_result result = { L"starting", EFI_SUCCESS, (const CHAR16 *)0 };
     EFI_STATUS status;
 
-    g_st->ConOut->ClearScreen(g_st->ConOut);
+    menu_screen(g_st);
     out(pos_entry_label());
     out(L"\r\n\r\n");
 
@@ -1364,7 +1365,7 @@ static void next_boot_run(EFI_HANDLE image_handle, iso_list *list, UINTN pinned)
     EFI_INPUT_KEY key;
     iso_target *t;
 
-    g_st->ConOut->ClearScreen(g_st->ConOut);
+    menu_screen(g_st);
 
     if (g_next_bad) {
         out(L"note: the next-boot marker held something that is not a path on "
@@ -1540,7 +1541,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
                 view_up(cur, &cur_len);
                 continue;
             }
-            st->ConOut->ClearScreen(st->ConOut);
+            menu_screen(st);
             out(L"falcon-boot: returning to firmware.\r\n");
             if (vols == 0)
                 out(L"note: no readable ISO volume was found.\r\n");

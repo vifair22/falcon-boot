@@ -9,6 +9,7 @@
 
 #include <credfs/credfs.h>
 #include <lib/string.h>
+#include <menu/menu.h>
 
 /* Read granularity for the UKI, and how often the read says it is alive. A
  * 1 MiB request costs one directory-to-extent descent and a run of block
@@ -38,10 +39,10 @@ static fs_file g_file;
 
 /* ---- console ---- */
 
+/* Inside the content block, like every other screen; see src/menu/menu.h. */
 static void out(const CHAR16 *s)
 {
-    /* Mutable parameter is the spec's wart, not ours; see src/efi/main.c. */
-    g_st->ConOut->OutputString(g_st->ConOut, (CHAR16 *)(uintptr_t)s);
+    menu_out(g_st, s);
 }
 
 static void out_dec(UINT64 v)
@@ -490,7 +491,7 @@ EFI_STATUS bless_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
         return EFI_NOT_FOUND;
     }
 
-    st->ConOut->ClearScreen(st->ConOut);
+    menu_screen(st);
 
     /* Resolved and judged here rather than inside the launch so the warning
      * precedes the read: a blessed wrap carries its own initramfs and the
@@ -575,7 +576,7 @@ EFI_STATUS bless_payload_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
     if (vol == (fs_vol *)0 || file == (const fs_dirent *)0)
         return EFI_INVALID_PARAMETER;
 
-    st->ConOut->ClearScreen(st->ConOut);
+    menu_screen(st);
 
     /* No inner-load warning, and FALSE passed for it below rather than the
      * platform's answer. load_ops_inner_load_blocked is about an image that
@@ -773,7 +774,7 @@ EFI_STATUS bless_prepared_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
         return EFI_NOT_FOUND;
     }
 
-    st->ConOut->ClearScreen(st->ConOut);
+    menu_screen(st);
     out(L"booting prepared media; ");
     out_dec(ovl.n);
     out(L" byte range(s) served from the stick.\r\n\r\n");

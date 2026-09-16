@@ -33,6 +33,18 @@ typedef struct {
  * firmware handed it. */
 void menu_init(EFI_SYSTEM_TABLE *st);
 
+/* Every screen the loader draws, not only the menu, sits in one content
+ * block. These are how a caller outside this module gets it.
+ *
+ * menu_screen clears and parks the cursor at the block's first text column;
+ * menu_out writes inside it, re-indenting after each line break and wrapping
+ * at the right edge. A caller writes text and gets the layout, rather than
+ * knowing the layout and computing offsets. Before these existed the menu was
+ * the only screen with a frame and every prompt, confirmation and error drew
+ * from column zero beside it. */
+void menu_screen(EFI_SYSTEM_TABLE *st);
+void menu_out(EFI_SYSTEM_TABLE *st, const CHAR16 *s);
+
 /* Blocks until the user commits. Returns the selected entry index, or a
  * negative value if the user backed out (ESC). */
 INTN menu_run(EFI_SYSTEM_TABLE *st, const menu_banner *banner,
