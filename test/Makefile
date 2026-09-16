@@ -81,6 +81,7 @@ EXT4_IMG         ?= $(ROOT)/build/test-ext4.img
 EXT4_MANIFEST    ?= $(ROOT)/build/test-ext4.manifest
 EXT4_BIGFILE     ?= $(ROOT)/build/test-ext4.bigfile
 EXT4_NOCSUM_IMG  ?= $(ROOT)/build/test-ext4-nocsum.img
+ISOVIEW_IMG      ?= $(ROOT)/build/test-isoview.iso
 LUKS_IMG         ?= $(ROOT)/build/test-luks.img
 LUKS_ARGON_IMG   ?= $(ROOT)/build/test-luks-argon.img
 LUKS_MANIFEST    ?= $(ROOT)/build/test-luks.manifest
@@ -107,6 +108,7 @@ CFLAGS := -std=c11 -O0 -g --coverage $(WARNS) \
 	-DFIXTURE_IMG='"$(FIXTURE_IMG)"' \
 	-DEXT4_IMG='"$(EXT4_IMG)"' \
 	-DEXT4_NOCSUM_IMG='"$(EXT4_NOCSUM_IMG)"' \
+	-DISOVIEW_IMG='"$(ISOVIEW_IMG)"' \
 	-DEXT4_MANIFEST='"$(EXT4_MANIFEST)"' \
 	-DEXT4_BIGFILE='"$(EXT4_BIGFILE)"' \
 	-DLUKS_IMG='"$(LUKS_IMG)"' \

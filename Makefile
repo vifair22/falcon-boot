@@ -235,7 +235,7 @@ VERSION := $(SEMVER)_$(shell date +%Y%m%d.%H%M).$(VARIANT)
 
 .PHONY: all cli winjump appliance test-appliance-stick test-appliance check-tools esp run run-secboot run-stick run-stick-secboot \
 	analyze sbat-check sign mok-test test-image test-iso test-img test-stick \
-	test-fixtures test-ext4 test-luks \
+	test-fixtures test-ext4 test-luks test-isoview \
 	test-uki payload version-stamp clean
 
 all: $(EFI) cli winjump compile_commands.json
@@ -485,13 +485,19 @@ test-image: test-iso test-img
 # clean checkout ran 392 tests, reported green, and left src/ext4, src/luks
 # and src/luks/af at zero coverage. Run `make test-fixtures` once, then
 # `make -C test coverage`, and the same tree reports 449 tests and 93%.
-test-fixtures: test-image test-ext4 test-luks
+test-fixtures: test-image test-ext4 test-luks test-isoview
 
 test-ext4:
 	tools/mk-test-ext4.sh
 
 test-luks:
 	tools/mk-test-luks.sh
+
+# The odd one out: no sudo, because an ISO is built from a directory rather
+# than mounted. It is here anyway so one target still builds everything the
+# suite can read.
+test-isoview:
+	tools/mk-test-isoview.sh
 
 test-iso: $(PAYLOAD)
 	tools/mk-test-iso.sh

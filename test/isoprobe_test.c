@@ -40,9 +40,18 @@
 #include <cmocka.h>
 
 #include <string.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <fcntl.h>
 
 #include <cli/sign/sign.h>
 #include <cli/sign/isoprobe.h>
+#include <family/family.h>
+
+#ifndef ISOVIEW_IMG
+#define ISOVIEW_IMG "build/test-isoview.iso"
+#endif
 
 /* ------------------------------------------------------------ fixtures */
 
@@ -428,6 +437,165 @@ static void test_isoprobe_kernel_path_candidates_all_absent(void **state)
 
 /* ------------------------------------------------------------------ run */
 
+
+/* ------------------------------------------------- the real image */
+
+/* Everything above builds a view from listing text, which is right for the
+ * parsing and the union and covers none of the plumbing: spawning the two
+ * helpers, picking a 7-Zip binary from the three names it can have, building
+ * an extraction argv per namespace, reading a member back through a pipe and
+ * writing one out to a file. That is most of the module, and none of it can
+ * be reached without a real image and the real helpers.
+ *
+ * tools/mk-test-isoview.sh builds a 500 KB ISO for it. ISO9660 only: no
+ * xorriso here carries UDF support and neither genisoimage nor mkisofs is
+ * installed, but 7-Zip reads ISO9660 when an image has no UDF, so both
+ * helpers list this one and both reader paths run. */
+
+static void test_isoview_open_lists_both_readers(void **state)
+{
+    iso_view *v = NULL;
+    const char *match = NULL;
+
+    (void)state;
+    assert_int_equal(iso_view_open(ISOVIEW_IMG, &v), SGN_OK);
+    assert_non_null(v);
+
+    /* Both helpers ran and both produced entries, which is the whole reason
+     * the view is a union rather than one listing. */
+    assert_true(iso_view_count(v, ISO_READER_ISO9660) > 0);
+    assert_true(iso_view_count(v, ISO_READER_7Z) > 0);
+    assert_non_null(iso_view_udf_reader(v));
+
+    /* A name from the tree, resolved through the real listings rather than a
+     * crafted string. */
+    assert_true(iso_view_find(v, "/readme.txt", &match));
+    assert_non_null(match);
+
+    /* Case folding against a real namespace. */
+    match = NULL;
+    assert_true(iso_view_find(v, "/mixedcase/thing.txt", &match));
+    assert_non_null(match);
+
+    assert_false(iso_view_find(v, "/nothing/here.bin", &match));
+
+    iso_view_close(v);
+}
+
+static void test_isoview_open_refuses_a_missing_file(void **state)
+{
+    iso_view *v = (iso_view *)0x1;
+
+    (void)state;
+    assert_int_not_equal(iso_view_open("build/no-such-image.iso", &v), SGN_OK);
+    assert_int_not_equal(iso_view_open(NULL, &v), SGN_OK);
+    assert_int_not_equal(iso_view_open(ISOVIEW_IMG, NULL), SGN_OK);
+}
+
+/* Reading a member back through the helper's pipe, which is how the family
+ * fingerprints are matched without unpacking the image. */
+static void test_isoview_family_probe_reads_members(void **state)
+{
+    iso_view *v = NULL;
+    family_probe fp;
+    char buf[64];
+    size_t got = 0;
+
+    (void)state;
+    assert_int_equal(iso_view_open(ISOVIEW_IMG, &v), SGN_OK);
+
+    memset(&fp, 0, sizeof fp);
+    iso_view_family_probe(v, &fp);
+    assert_non_null(fp.exists);
+    assert_non_null(fp.read);
+
+    assert_true(fp.exists(fp.ctx, "/readme.txt") != 0);
+    assert_true(fp.exists(fp.ctx, "/arch/boot/x86_64/vmlinuz-linux") != 0);
+    assert_int_equal(fp.exists(fp.ctx, "/absent/file"), 0);
+
+    /* Known bytes, so this is a test of the pipe and not only of the exit
+     * status. */
+    memset(buf, 0, sizeof buf);
+    assert_int_equal(fp.read(fp.ctx, "/readme.txt", 0, buf, 27u, &got), 0);
+    assert_int_equal(got, 27u);
+    assert_memory_equal(buf, "falcon-boot isoview fixture", 27u);
+
+    /* At an offset, which is the case the reader has to skip forward for
+     * because a pipe cannot seek. */
+    memset(buf, 0, sizeof buf);
+    assert_int_equal(fp.read(fp.ctx, "/readme.txt", 7u, buf, 7u, &got), 0);
+    assert_int_equal(got, 7u);
+    assert_memory_equal(buf, "boot is", 7u);
+
+    /* Past the end is a short read rather than a failure. */
+    got = 1234u;
+    assert_int_equal(fp.read(fp.ctx, "/readme.txt", 1000u, buf, sizeof buf,
+                             &got), 0);
+    assert_int_equal(got, 0);
+
+    assert_int_not_equal(fp.read(fp.ctx, "/absent/file", 0, buf, 8u, &got), 0);
+
+    iso_view_close(v);
+}
+
+/* The kernel-path table against a tree that actually holds one. */
+static void test_isoview_kernel_path_found(void **state)
+{
+    iso_view *v = NULL;
+    const char *k;
+
+    (void)state;
+    assert_int_equal(iso_view_open(ISOVIEW_IMG, &v), SGN_OK);
+
+    k = iso_kernel_path(v, FAMILY_ARCH);
+    assert_non_null(k);
+
+    /* A family whose kernel this tree does not carry, and one with no
+     * kernel in the table at all. */
+    assert_null(iso_kernel_path(v, FAMILY_DEBIAN_CASPER));
+    assert_null(iso_kernel_path(v, FAMILY_WINDOWS));
+
+    iso_view_close(v);
+}
+
+static void test_isoview_size_and_extract(void **state)
+{
+    iso_view *v = NULL;
+    const char *match = NULL;
+    uint64_t size = 0;
+    char dst[] = "/tmp/falcon-isoview-XXXXXX";
+    int fd;
+    char buf[64];
+    ssize_t n;
+
+    (void)state;
+    assert_int_equal(iso_view_open(ISOVIEW_IMG, &v), SGN_OK);
+    assert_true(iso_view_find(v, "/readme.txt", &match));
+
+    /* 7-Zip's listing carries sizes; bsdtar's does not, so which namespace
+     * owns the entry decides whether this can answer at all. */
+    (void)iso_view_size(v, match, &size);
+
+    fd = mkstemp(dst);
+    assert_true(fd >= 0);
+    close(fd);
+
+    assert_int_equal(iso_view_extract(v, match, dst), SGN_OK);
+    fd = open(dst, O_RDONLY);
+    assert_true(fd >= 0);
+    memset(buf, 0, sizeof buf);
+    n = read(fd, buf, sizeof buf);
+    close(fd);
+    unlink(dst);
+    assert_int_equal(n, 28);
+    assert_memory_equal(buf, "falcon-boot isoview fixture\n", 28u);
+
+    /* A member the view never listed. */
+    assert_int_not_equal(iso_view_extract(v, "/absent/file", dst), SGN_OK);
+
+    iso_view_close(v);
+}
+
 int run_isoprobe_tests(void)
 {
     const struct CMUnitTest tests[] = {
@@ -450,6 +618,28 @@ int run_isoprobe_tests(void)
         cmocka_unit_test(test_isoprobe_kernel_path_candidates_all_absent),
     };
 
-    return cmocka_run_group_tests_name("ISO namespaces (bless tool)", tests,
-                                       NULL, NULL);
+    const struct CMUnitTest image_tests[] = {
+        cmocka_unit_test(test_isoview_open_lists_both_readers),
+        cmocka_unit_test(test_isoview_open_refuses_a_missing_file),
+        cmocka_unit_test(test_isoview_family_probe_reads_members),
+        cmocka_unit_test(test_isoview_kernel_path_found),
+        cmocka_unit_test(test_isoview_size_and_extract),
+    };
+    int failed;
+    int fd;
+
+    failed = cmocka_run_group_tests_name("ISO namespaces (bless tool)", tests,
+                                         NULL, NULL);
+
+    fd = open(ISOVIEW_IMG, O_RDONLY);
+    if (fd < 0) {
+        printf("\n[  SKIPPED ] ISO view fixture: %s not found.\n"
+               "             Build it with: tools/mk-test-isoview.sh "
+               "(needs xorriso).\n", ISOVIEW_IMG);
+        return failed + test_skip_rc();
+    }
+    close(fd);
+
+    return failed + cmocka_run_group_tests_name("ISO view (real image)",
+                                                image_tests, NULL, NULL);
 }
