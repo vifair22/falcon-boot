@@ -5,6 +5,29 @@
 
 #include <stdint.h>
 #include <stddef.h>
+#include <stdlib.h>
+
+/* What a fixture-backed suite returns when its image is absent.
+ *
+ * Zero by default, so `make -C test run` still succeeds on a machine that
+ * cannot build the images: mk-test-exfat.sh, mk-test-ext4.sh and
+ * mk-test-luks.sh each need mkfs and a loop mount, so each needs sudo, and a
+ * suite that cannot be run is not a suite that failed.
+ *
+ * That default is also how this tree reported green for a long time with four
+ * suites switched off and src/ext4, src/luks and src/luks/af at zero
+ * coverage, because nothing built the images and nothing said so louder than
+ * a printf. FALCON_TEST_STRICT=1 turns a skip into a failure. The coverage
+ * target sets it, since a coverage number measured with a quarter of the
+ * suite missing is worse than no number, and CI should set it too.
+ *
+ * Build the images with `make test-fixtures` from the repo root. */
+static inline int test_skip_rc(void)
+{
+    const char *s = getenv("FALCON_TEST_STRICT");
+
+    return (s != NULL && s[0] != '\0' && s[0] != '0') ? 1 : 0;
+}
 
 /* Each returns the number of failed tests, as cmocka_run_group_tests does. */
 int run_synth_tests(void);

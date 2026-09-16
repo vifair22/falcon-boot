@@ -1128,7 +1128,7 @@ int run_ext4_tests(void)
         printf("\n[  SKIPPED ] ext4 fixture: %s not found.\n"
                "             Build it with: tools/mk-test-ext4.sh "
                "(needs mkfs.ext4 and sudo).\n", EXT4_IMG);
-        return 0;
+        return test_skip_rc();
     }
     big_fd = open(EXT4_BIGFILE, O_RDONLY);
     if (big_fd < 0 || load_manifest() != 0) {

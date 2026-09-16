@@ -694,7 +694,7 @@ int run_fs_tests(void)
         printf("\n[  SKIPPED ] fs over ext4: %s not found.\n"
                "             Build it with: tools/mk-test-ext4.sh "
                "(needs mkfs.ext4 and sudo).\n", EXT4_IMG);
-        return failed;
+        return failed + test_skip_rc();
     }
     failed += cmocka_run_group_tests_name("fs/ext4", ext4_tests, NULL, NULL);
     close(ext4_fd);

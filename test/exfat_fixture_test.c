@@ -838,7 +838,7 @@ int run_fixture_tests(void)
                "(needs mkfs.exfat and sudo),\n"
                "             or point FIXTURE_IMG at an existing image.\n",
                FIXTURE_IMG);
-        return 0;
+        return test_skip_rc();
     }
     close(fd);
 

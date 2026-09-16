@@ -274,6 +274,15 @@ run: $(BIN)
 # honest number is the one worth gating on. build/uut is searched as a whole
 # rather than per module, so adding a unit to UUT_SRCS is enough to get it
 # reported.
+#
+# Strict, unlike `run`. The image-backed suites skip when their fixtures are
+# absent and a skip is not a failure, which is right for a machine that cannot
+# build them (each needs mkfs and a loop mount, so each needs sudo) and wrong
+# here: measured without them this tree reported 69% with src/ext4, src/luks
+# and src/luks/af at zero, and measured with them it reports 93%. A number
+# that swings 24 points on whether four suites ran is not a number to gate on.
+# `make test-fixtures` from the repo root builds them.
+coverage: export FALCON_TEST_STRICT = 1
 coverage: run
 	@echo
 	@if command -v gcovr >/dev/null 2>&1; then \

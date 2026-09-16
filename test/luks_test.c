@@ -1308,7 +1308,7 @@ int run_luks_tests(void)
         }
         img_fd = -1;
         argon_fd = -1;
-        return 0;
+        return test_skip_rc();
     }
 
     n = read(ref_fd, ref, sizeof ref);
@@ -1321,7 +1321,7 @@ int run_luks_tests(void)
         close(argon_fd);
         img_fd = -1;
         argon_fd = -1;
-        return 0;
+        return test_skip_rc();
     }
 
     failed = cmocka_run_group_tests_name("luks", tests, NULL, NULL);

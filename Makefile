@@ -235,6 +235,7 @@ VERSION := $(SEMVER)_$(shell date +%Y%m%d.%H%M).$(VARIANT)
 
 .PHONY: all cli winjump appliance test-appliance-stick test-appliance check-tools esp run run-secboot run-stick run-stick-secboot \
 	analyze sbat-check sign mok-test test-image test-iso test-img test-stick \
+	test-fixtures test-ext4 test-luks \
 	test-uki payload version-stamp clean
 
 all: $(EFI) cli winjump compile_commands.json
@@ -468,6 +469,29 @@ run-secboot: $(EFI_SIGNED)
 # pair for the disk flavor (DESIGN Section 6 stage 2).
 test-image: test-iso test-img
 	tools/mk-test-exfat.sh
+
+# The image-backed fixtures, together.
+#
+# These exist because the drivers they feed are from-scratch readers of
+# formats someone else writes, and the only evidence worth having is that they
+# agree with the implementation that produced the bytes: mkfs.exfat, mkfs.ext4
+# and cryptsetup. Each script needs passwordless sudo for a loop mount, which
+# is why they are a separate target rather than a prerequisite of the test
+# run: `make -C test run` has to work on a machine that cannot make them.
+#
+# The cost of that choice, which is what this target is for: the suites that
+# read these images SKIP when the images are absent, and a skipped cmocka
+# suite does not fail. Before this target existed nothing built them, so a
+# clean checkout ran 392 tests, reported green, and left src/ext4, src/luks
+# and src/luks/af at zero coverage. Run `make test-fixtures` once, then
+# `make -C test coverage`, and the same tree reports 449 tests and 93%.
+test-fixtures: test-image test-ext4 test-luks
+
+test-ext4:
+	tools/mk-test-ext4.sh
+
+test-luks:
+	tools/mk-test-luks.sh
 
 test-iso: $(PAYLOAD)
 	tools/mk-test-iso.sh
