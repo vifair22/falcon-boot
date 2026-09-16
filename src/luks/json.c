@@ -7,6 +7,32 @@
  * input can drive the loader off the end of its EFI stack. Every read of
  * the buffer is guarded against the length; there is no "we know a closing
  * quote is coming" anywhere in here.
+ *
+ * A note on the error returns below json_parse(), because coverage keeps
+ * finding them and they are not dead code by accident.
+ *
+ * json_parse validates the whole document before any accessor runs, and
+ * every json_value an accessor is given is a span inside what it validated.
+ * So the syntax errors in json_iter_next, json_obj_get, json_arr_get and
+ * json_str cannot fire on a value that came from a successful parse: a
+ * member separator it would reject is one value_at already rejected, and an
+ * escape json_str would refuse is one string_span already refused. They are
+ * unreachable in the sense that matters for a test and load-bearing in the
+ * sense that matters for the loader.
+ *
+ * They stay because the alternative is worse than untested code. This parser
+ * reads a blob off a USB stick before a passphrase has been checked, and the
+ * accessors are ordinary functions taking a caller-supplied json_value; a
+ * future caller that hand-builds one, or reuses a value across a second
+ * parse into the same buffer, gets a status code instead of a read past the
+ * end. Removing them would trade a line of coverage for that.
+ *
+ * The reachable refusals are all tested: a buffer ending on a backslash,
+ * base64 with a data character after the padding, and each of the three
+ * output bounds in json_str. The base64 "more than two padding characters"
+ * check is the other unreachable one, and for an arithmetic reason rather
+ * than an ordering one: padding is only accepted in the last two positions
+ * of the string, so the count cannot exceed two.
  */
 
 #include <luks/json.h>

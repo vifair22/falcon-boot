@@ -909,6 +909,58 @@ static void test_single_byte_corruption(void **state)
 
 /* ------------------------------------------------------------------ run */
 
+
+/* The refusals the corruption sweep cannot reach, because the LUKS2 metadata
+ * it sweeps contains no backslash and no base64 that survives a flip in the
+ * one shape needed. */
+static void test_json_directed_refusals(void **state)
+{
+    json_value root;
+    json_value v;
+    char small[2];
+    uint8_t out[8];
+    size_t n = 0;
+
+    (void)state;
+
+    /* A backslash as the last byte of the buffer. string_span has to notice
+     * that the escape it just started has nothing after it rather than read
+     * the byte past the end. */
+    assert_int_equal(json_parse("\"\\", 2, &root), JSON_ERR_SYNTAX);
+
+    /* Base64 with a data character after the padding. The position check
+     * allows '=' in the last two slots of a group, so "AB=C" gets past it
+     * and the run has to be refused for being out of order instead. */
+    assert_int_equal(json_parse("\"AB=C\"", 6, &root), JSON_OK);
+    assert_int_equal(json_b64(&root, out, sizeof out, &n), JSON_ERR_SYNTAX);
+
+    /* An output buffer too small for the unescaped string, including its
+     * terminator. */
+    assert_int_equal(json_parse("\"hello\"", 7, &root), JSON_OK);
+    assert_int_equal(json_str(&root, small, sizeof small, &n),
+                     JSON_ERR_NOSPACE);
+
+    /* And the same through a member, so the caller's cap is honoured
+     * wherever the value came from. */
+    parse_ok("{\"k\":\"a longer value\"}", &root);
+    assert_int_equal(json_get(&root, "k", &v), JSON_OK);
+    assert_int_equal(json_str(&v, small, sizeof small, &n),
+                     JSON_ERR_NOSPACE);
+
+    /* Running out of room on an ESCAPE rather than on a plain character.
+     * Separate branch, separate bound: the plain path checks before copying
+     * one byte, this one before copying the byte an escape decoded to. */
+    assert_int_equal(json_parse("\"\\n\\n\"", 6, &root), JSON_OK);
+    assert_int_equal(json_str(&root, small, sizeof small, &n),
+                     JSON_ERR_NOSPACE);
+
+    /* A \\uXXXX that decodes to more bytes than are left, which is the same
+     * bound again inside utf8_put: one code point can be four bytes. */
+    assert_int_equal(json_parse("\"\\u20ac\"", 8, &root), JSON_OK);
+    assert_int_equal(json_str(&root, small, sizeof small, &n),
+                     JSON_ERR_NOSPACE);
+}
+
 int run_json_tests(void)
 {
     const struct CMUnitTest tests[] = {
@@ -930,6 +982,7 @@ int run_json_tests(void)
         cmocka_unit_test(test_depth_cap),
         cmocka_unit_test(test_truncation_sweep),
         cmocka_unit_test(test_single_byte_corruption),
+        cmocka_unit_test(test_json_directed_refusals),
     };
 
     return cmocka_run_group_tests_name("luks json", tests, NULL, NULL);
