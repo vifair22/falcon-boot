@@ -1,0 +1,162 @@
+#!/usr/bin/env python3
+"""falcon-boot: collect every literal the user can read into one file.
+
+Written for the tone pass (CLAUDE.md, "Tone: no preaching"). Reviewing message
+text by grepping is hopeless once a message is split across six adjacent string
+literals with \\r\\n in the middle: what a person needs to judge is the
+PARAGRAPH, laid out the way the screen lays it out. This joins the literals,
+renders the escapes, and prints the result with its file and line.
+
+Comments are stripped first, so the prose in a block comment above a string
+does not come back as if it were the string.
+
+Usage: tools/dump-strings.py [OUT]     (default build/strings.txt)
+"""
+
+import os
+import re
+import sys
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+OUT = sys.argv[1] if len(sys.argv) > 1 else os.path.join(ROOT, 'build/strings.txt')
+
+# Literals that are plumbing rather than prose. A message the user reads has
+# words in it; these have structure in them.
+SKIP = re.compile(r'''^(
+      [\s%\-+*/=<>|&^~.,;:()\[\]{}#@!?0-9a-fA-FxX]*   # punctuation and hex
+    | %[0-9.\-+ #lhz]*[a-zA-Z]                        # a bare conversion
+    | [A-Za-z_][A-Za-z0-9_]*                          # a bare identifier
+    | \\\\.*                                          # a path
+    | \.[a-z]+                                        # a PE section name
+    | r | w | rb | wb | r\+ | w\+                     # fopen modes
+)$''', re.X)
+
+
+def strip_comments(src):
+    """Blank out comments, preserving line count and string literals."""
+    out, i, n = [], 0, len(src)
+    while i < n:
+        c = src[i]
+        if c == '"' or c == "'":
+            # A char literal is consumed and BLANKED: '"' and '\\'' would
+            # otherwise open a string that runs to the end of the function.
+            q = c
+            keep = (q == '"')
+            buf = [c]
+            i += 1
+            while i < n:
+                buf.append(src[i])
+                if src[i] == '\\':
+                    i += 1
+                    if i < n:
+                        buf.append(src[i])
+                        i += 1
+                    continue
+                if src[i] == q:
+                    i += 1
+                    break
+                i += 1
+            text = ''.join(buf)
+            out.append(text if keep
+                       else ''.join(ch if ch == '\n' else ' ' for ch in text))
+            continue
+        if src.startswith('/*', i):
+            j = src.find('*/', i + 2)
+            j = n if j < 0 else j + 2
+            out.append(''.join(ch if ch == '\n' else ' ' for ch in src[i:j]))
+            i = j
+            continue
+        if src.startswith('//', i):
+            j = src.find('\n', i)
+            j = n if j < 0 else j
+            out.append(' ' * (j - i))
+            i = j
+            continue
+        out.append(c)
+        i += 1
+    return ''.join(out)
+
+
+LIT = re.compile(r'(L?)"((?:[^"\\]|\\.)*)"')
+
+
+def unescape(s):
+    return (s.replace('\\r\\n', '\n').replace('\\n', '\n').replace('\\r', '')
+             .replace('\\t', '    ').replace('\\"', '"').replace("\\'", "'")
+             .replace('\\\\', '\\'))
+
+
+def runs(text):
+    """Adjacent literals, joined. Yields (line, wide, rendered)."""
+    out = []
+    cur, start, wide = None, 0, False
+    last_end = -1
+    for m in LIT.finditer(text):
+        between = text[last_end:m.start()] if last_end >= 0 else None
+        # Adjacent means nothing but whitespace (and line breaks) separates them.
+        if cur is not None and between is not None and between.strip() == '':
+            cur += m.group(2)
+        else:
+            if cur is not None:
+                out.append((text.count('\n', 0, start) + 1, wide, cur))
+            cur, start, wide = m.group(2), m.start(), m.group(1) == 'L'
+        last_end = m.end()
+    if cur is not None:
+        out.append((text.count('\n', 0, start) + 1, wide, cur))
+    return out
+
+
+def main():
+    files = []
+    for base, dirs, names in os.walk(os.path.join(ROOT, 'src')):
+        dirs.sort()
+        for name in sorted(names):
+            if name.endswith(('.c', '.h')):
+                files.append(os.path.join(base, name))
+
+    prose, short = [], []
+    for path in files:
+        src = strip_comments(open(path).read())
+        rel = os.path.relpath(path, ROOT)
+        for ln, wide, raw in runs(src):
+            if not raw.strip() or SKIP.match(raw):
+                continue
+            text = unescape(raw)
+            # Four words or more is the line between a message and a label.
+            # The tone rule only has anything to say about the former.
+            (prose if len(text.split()) >= 4 else short).append(
+                (len(text), rel, ln, wide, text))
+
+    prose.sort(key=lambda r: -r[0])
+    os.makedirs(os.path.dirname(OUT), exist_ok=True)
+    with open(OUT, 'w') as fh:
+        fh.write('falcon-boot user-facing strings\n')
+        fh.write('Generated by tools/dump-strings.py. Adjacent literals are '
+                 'joined and escapes\nrendered, so each block is one message as '
+                 'the screen lays it out.\n[W] marks a wide (L"...") string.\n')
+
+        fh.write('\n' + '=' * 78 + '\n')
+        fh.write('MESSAGES (4 words or more), longest first: %d\n' % len(prose))
+        fh.write('=' * 78 + '\n')
+        for n, rel, ln, wide, text in prose:
+            fh.write('\n%s %s:%d  (%d chars)\n' %
+                     ('[W]' if wide else '[ ]', rel, ln, n))
+            for line in text.split('\n'):
+                fh.write('      | %s\n' % line)
+
+        fh.write('\n\n' + '=' * 78 + '\n')
+        fh.write('LABELS AND FRAGMENTS (under 4 words): %d\n' % len(short))
+        fh.write('=' * 78 + '\n')
+        last = None
+        for n, rel, ln, wide, text in short:
+            if rel != last:
+                fh.write('\n' + rel + '\n')
+                last = rel
+            fh.write('  %s %-5d %s\n' %
+                     ('[W]' if wide else '[ ]', ln, text.replace('\n', ' / ')))
+
+    print('%d messages, %d labels, %d files -> %s' %
+          (len(prose), len(short), len(files), OUT))
+
+
+main()

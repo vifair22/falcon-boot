@@ -38,11 +38,9 @@ static cli_status validate(const mks_pass *p)
 
         if (c < 0x20u || c >= 0x7fu)
             return set_error(CLI_ERR_INVALID,
-                             "the passphrase must be printable ASCII: the "
-                             "loader's EFI console and a Linux prompt do not "
-                             "agree on the bytes for anything else, so a "
-                             "passphrase with byte 0x%02x in it would not "
-                             "unlock p3 from the boot menu", c);
+                             "the passphrase must be printable ASCII; byte "
+                             "0x%02x would not unlock p3 from the boot menu",
+                             c);
     }
     if (p->len < 8u)
         log_warn("the passphrase is %zu characters; it protects p4 (root and "

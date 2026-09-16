@@ -259,10 +259,8 @@ static int find_winjump(const options *o, char *out, size_t cap)
     }
 
     sgn_set_error(SGN_ERR_IO,
-                  "the WinPE jump binary was not found. It is what replaces "
-                  "winpeshl.exe inside the patched boot.wim, so preparation "
-                  "cannot proceed without it: build it with `make winjump` "
-                  "or pass --winjump <path to winjump.exe>.");
+                  "the WinPE jump binary was not found. Build it with "
+                  "`make winjump`, or pass --winjump <path to winjump.exe>.");
     return SGN_ERR_IO;
 }
 
@@ -648,11 +646,9 @@ static int prepare(const options *o)
 
     if (!sgn_have_program(WIMLIB)) {
         sgn_set_error(SGN_ERR_EXEC,
-                      "'" WIMLIB "' is not on PATH. It is what rewrites "
-                      "boot.wim, so it is a hard requirement for preparing "
-                      "Windows media (unlike 7z, which only reads it): "
-                      "install wimlib (app-arch/wimlib on Gentoo, wimtools on "
-                      "Debian) and try again.");
+                      "'" WIMLIB "' is not on PATH, and it is what rewrites "
+                      "boot.wim. Install wimlib (app-arch/wimlib on Gentoo, "
+                      "wimtools on Debian) and try again.");
         rc = SGN_ERR_EXEC;
         goto out;
     }
@@ -672,10 +668,8 @@ static int prepare(const options *o)
     if (fam->id != FAMILY_WINDOWS) {
         sgn_set_error(SGN_ERR_FORMAT,
                       "this ISO classifies as '%s', not Windows install "
-                      "media. Preparation patches WinPE's shell so Setup can "
-                      "re-mount its own ISO, which means nothing on any other "
-                      "medium; Linux media is handled by the bless path "
-                      "instead.%s", fam->name,
+                      "media. Preparation applies to Windows media only; "
+                      "Linux media takes the bless path.%s", fam->name,
                       (iso_view_udf_reader(view) == NULL)
                           ? " Note that 7z is not on PATH, so this ISO's UDF "
                             "namespace was not read, and Windows install "

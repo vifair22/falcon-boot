@@ -347,9 +347,8 @@ int iso_view_open(const char *path, iso_view **out)
     if (v->zbin == NULL) {
         sgn_log(SGN_LOG_WARN,
                 "7z is not on PATH, so only this image's ISO9660 namespace "
-                "can be read. UDF-only media (Windows install ISOs, which "
-                "oscdimg builds with a stub ISO9660 tree) will look empty; "
-                "install p7zip or 7-Zip to bless those.");
+                "can be read. UDF-only media (Windows install ISOs) looks "
+                "empty; install p7zip or 7-Zip to read it.");
     } else {
         argv[0] = sgn_arg(v->zbin);
         argv[1] = sgn_arg("l");

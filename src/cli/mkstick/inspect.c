@@ -608,8 +608,7 @@ static cli_status status_run(const cli_args *a)
     }
     check(&t, gpt_has_role(&table, PART_ROLE_ISO),
           "the ISO library is Microsoft-basic-data typed and named %s (the "
-          "loader matches on that pair, not on 'any exFAT volume'; the type "
-          "is what gets it a drive letter under Windows)", MKS_LABEL_P2);
+          "loader matches on that pair)", MKS_LABEL_P2);
     check(&t, gpt_has_role(&table, PART_ROLE_SHELF),
           "a falcon-typed UKI shelf is present (an unrecognised type, so "
           "Windows never offers to format it)");

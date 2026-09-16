@@ -923,10 +923,8 @@ static cli_status create_run(const cli_args *a)
         if (key_out == NULL)
             return set_error(CLI_ERR_USAGE,
                              "--p3-plain leaves the MOK private key nowhere "
-                             "to live: p3 is the only encrypted place it may "
-                             "sit (DESIGN Section 7.5), so pass --key-out "
-                             "<dir> to keep it on this host, or drop "
-                             "--p3-plain");
+                             "to live. Pass --key-out <dir> to keep it on "
+                             "this host, or drop --p3-plain");
         cli_log_blank();
         log_warn("--p3-plain: p3 will be PLAINTEXT. What that means:");
         log_warn("  - no on-stick MOK private key, so NO SIGNING APPLIANCE on "

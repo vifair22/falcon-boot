@@ -109,19 +109,16 @@ static void usage(FILE *f)
 "Two operations on one manifest (docs/DESIGN.md Section 8): bless signs Linux\n"
 "media so it boots with Secure Boot validation left on, prepare patches\n"
 "Windows install media so Setup can find its own ISO afterwards. `bless' is\n"
-"the default when no operation is named, so every existing invocation still\n"
-"means what it did. Run `falcon-boot-sign prepare --help' for that half.\n"
+"the default. Run `falcon-boot-sign prepare --help' for the other half.\n"
 "\n"
 "Blesses an ISO for Secure Boot: wraps the ISO's kernel in a minimal UKI\n"
 "whose embedded cmdline points the distro's own initramfs back at the ISO\n"
 "file on p2, signs that wrap with the MOK key, and records it in the p2\n"
 "manifest (docs/DESIGN.md Sections 7.5, 8 and 8.1).\n"
 "\n"
-"A .efi or a .img takes the bare-payload path instead (Section 7.2): such a\n"
-"payload boots as itself, so the file on p2 IS what the platform verifies\n"
-"and it is signed in place. THAT MODIFIES YOUR FILE, which the tool states\n"
-"and names before it does it. Only --key, --cert and --dry-run apply there;\n"
-"there is no wrap to name and no manifest record to write.\n"
+"A .efi or a .img takes the bare-payload path instead (Section 7.2): it is\n"
+"signed in place, which MODIFIES YOUR FILE. Only --key, --cert and --dry-run\n"
+"apply there.\n"
 "\n"
 "  <iso>                 the ISO, .efi or .img to bless\n"
 "  --stick <dir>         p2's mount point (or any directory to stage into)\n"
@@ -372,10 +369,9 @@ static int bless_payload(const options *o)
     if (o->cmdline != NULL || o->cmdline_extra != NULL || o->kernel != NULL ||
         o->name != NULL || o->iso_path != NULL || o->dev != NULL) {
         sgn_set_error(SGN_ERR_ARG,
-                      "'%s' is a bare EFI payload: it is signed as it stands, "
-                      "so there is no UKI to name, no cmdline to embed and no "
-                      "kernel to wrap. Drop --cmdline/--cmdline-extra/"
-                      "--kernel/--name/--iso-path/--dev.", o->iso);
+                      "'%s' is a bare EFI payload and is signed in place. "
+                      "Drop --cmdline/--cmdline-extra/--kernel/--name/"
+                      "--iso-path/--dev.", o->iso);
         return SGN_ERR_ARG;
     }
     return sgn_payload_bless(&p);
