@@ -661,6 +661,115 @@ static void test_fs_ext4_through_vtable(void **state)
     assert_true(entries > 0);
 }
 
+/* The rest of the ext4 vtable: opening a subdirectory from an entry rather
+ * than by root, and reading a file's bytes and size through the registry.
+ * The test above opens files and never reads one, which left three of the
+ * adapter's operations never called at all. */
+static void test_fs_ext4_descend_and_read(void **state)
+{
+    fs_vol vol;
+    fs_dir dir;
+    fs_dirent ent;
+    int rc;
+    int descended = 0;
+    int read_one = 0;
+
+    (void)state;
+
+    memset(&vol, 0, sizeof vol);
+    assert_int_equal(fs_mount(&vol, &fs_ops_ext4, ext4_img_read, NULL), FS_OK);
+    assert_int_equal(fs_dir_open_root(&vol, &dir), FS_OK);
+
+    while ((rc = fs_dir_next(&dir, &ent)) == 1) {
+        if (ent.is_dir && !descended) {
+            fs_dir sub;
+            fs_dirent sent;
+            int inner = 0;
+
+            /* fs_dir_open takes an entry, unlike fs_dir_open_root, and is
+             * the only way a consumer walks below the top of a volume. */
+            assert_int_equal(fs_dir_open(&vol, &sub, &ent), FS_OK);
+            while ((rc = fs_dir_next(&sub, &sent)) == 1) {
+                inner++;
+            }
+            assert_int_equal(rc, FS_OK);
+            (void)inner;   /* an empty subdirectory is still a walk */
+            descended = 1;
+            continue;
+        }
+        if (ent.is_regular && !read_one) {
+            fs_file file;
+            uint64_t size;
+            uint8_t buf[512];
+            uint64_t take;
+
+            assert_int_equal(fs_file_open(&vol, &file, &ent), FS_OK);
+
+            /* The size comes from the inode, which is why the dirent above
+             * reports zero and this does not. */
+            size = fs_file_size(&file);
+            if (size == 0) {
+                continue;          /* an empty file proves nothing here */
+            }
+            take = (size < sizeof buf) ? size : sizeof buf;
+            assert_int_equal(fs_file_read(&file, 0, take, buf), FS_OK);
+
+            /* Past the end is refused rather than served short. */
+            assert_int_not_equal(fs_file_read(&file, size, 1u, buf), FS_OK);
+            read_one = 1;
+        }
+    }
+    assert_int_equal(rc, FS_OK);
+    assert_true(descended);
+    assert_true(read_one);
+}
+
+
+/* The UCS-2 name helpers every consumer matches with. ASCII case folding on
+ * both sides, because the two namespaces of one image disagree about case and
+ * so do the fingerprints in src/family. */
+static void test_fs_name_helpers(void **state)
+{
+    static const uint16_t iso[]   = { 'A','r','c','h','.','I','S','O', 0 };
+    static const uint16_t other[] = { 'a','r','c','h','.','i','m','g', 0 };
+    static const uint16_t shortn[] = { 'a', 0 };
+    static const uint16_t empty[]  = { 0 };
+
+    (void)state;
+
+    /* Equality folds case and requires both sides to end together. */
+    assert_true(fs_name_eq_ascii(iso, "arch.iso"));
+    assert_true(fs_name_eq_ascii(iso, "ARCH.ISO"));
+    assert_false(fs_name_eq_ascii(iso, "arch.isox"));  /* ascii runs on */
+    assert_false(fs_name_eq_ascii(iso, "arch.is"));    /* name runs on */
+    assert_false(fs_name_eq_ascii(iso, "arch.isp"));   /* same length, one
+                                                          character differs */
+    assert_false(fs_name_eq_ascii(iso, "brch.iso"));   /* and at the front */
+    assert_false(fs_name_eq_ascii(iso, (const char *)0));
+    assert_false(fs_name_eq_ascii((const uint16_t *)0, "arch.iso"));
+
+    /* Suffix matching, which is how the menu picks .iso and .img out of a
+     * directory listing. */
+    assert_true(fs_name_ends_ascii(iso, ".iso"));
+    assert_true(fs_name_ends_ascii(iso, ".ISO"));
+    assert_false(fs_name_ends_ascii(iso, ".img"));     /* differs inside */
+    assert_false(fs_name_ends_ascii(shortn, ".iso"));  /* shorter than the
+                                                          suffix */
+    assert_false(fs_name_ends_ascii(iso, ""));         /* nothing is not a
+                                                          suffix of anything */
+    assert_false(fs_name_ends_ascii(iso, (const char *)0));
+    assert_false(fs_name_ends_ascii((const uint16_t *)0, ".iso"));
+
+    /* Ordering, which is what the menu sorts on. Folded, so case never
+     * decides. */
+    assert_true(fs_name_cmp(iso, other) > 0);          /* 's' after 'm' */
+    assert_true(fs_name_cmp(other, iso) < 0);
+    assert_int_equal(fs_name_cmp(iso, iso), 0);
+    assert_true(fs_name_cmp(shortn, iso) < 0);         /* prefix sorts first */
+    assert_true(fs_name_cmp(iso, shortn) > 0);
+    assert_int_equal(fs_name_cmp(empty, empty), 0);
+}
+
 int run_fs_tests(void)
 {
     const struct CMUnitTest tests[] = {
@@ -678,10 +787,12 @@ int run_fs_tests(void)
         cmocka_unit_test(test_fs_exfat_through_vtable),
         cmocka_unit_test(test_fs_exfat_extents_through_vtable),
         cmocka_unit_test(test_fs_unmounted_and_bad_args),
-        cmocka_unit_test(test_fs_failed_mount_leaves_no_vtable)
+        cmocka_unit_test(test_fs_failed_mount_leaves_no_vtable),
+        cmocka_unit_test(test_fs_name_helpers)
     };
     const struct CMUnitTest ext4_tests[] = {
-        cmocka_unit_test(test_fs_ext4_through_vtable)
+        cmocka_unit_test(test_fs_ext4_through_vtable),
+        cmocka_unit_test(test_fs_ext4_descend_and_read)
     };
     int failed;
 
