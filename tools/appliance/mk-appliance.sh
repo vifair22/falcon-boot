@@ -264,8 +264,21 @@ done
     exit 1
 }
 
-PYTHON=$(head -1 /usr/bin/ukify | sed 's|^#!||')
-[[ -x "$PYTHON" ]] || { echo "ERROR: ukify's interpreter $PYTHON is missing" >&2; exit 1; }
+# ukify's shebang names its interpreter, and the appliance copies that binary
+# in (see BINARIES below), so what is wanted is the real executable. A shebang
+# may name it through env - Arch ships "#!/usr/bin/env python3" - and env is a
+# launcher, not an interpreter: copying it into the appliance would put a
+# program there that looks up a PATH the appliance does not have.
+UKIFY=$(command -v ukify) || { echo "ERROR: ukify not on PATH" >&2; exit 1; }
+PYTHON=$(head -1 "$UKIFY" | sed 's|^#!||; s|^[[:space:]]*||')
+case "$PYTHON" in
+    */env\ *) PYTHON=$(command -v "${PYTHON#* }") ;;
+esac
+PYTHON=$(readlink -f "$PYTHON" 2>/dev/null)
+[[ -n "$PYTHON" && -x "$PYTHON" ]] || {
+    echo "ERROR: could not resolve ukify's interpreter from $UKIFY" >&2
+    exit 1
+}
 PY_VER=$("$PYTHON" -c 'import sys; print("python%d.%d" % sys.version_info[:2])')
 PY_LIB="/usr/lib/$PY_VER"
 [[ -d "$PY_LIB" ]] || { echo "ERROR: no standard library at $PY_LIB" >&2; exit 1; }
