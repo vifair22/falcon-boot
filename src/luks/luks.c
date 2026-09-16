@@ -53,9 +53,12 @@ static const uint8_t magic_secondary[HDR_MAGIC_LEN] = {
     'S', 'K', 'U', 'L', 0xbau, 0xbeu
 };
 
-/* Where a secondary header can legally sit, per cryptsetup's fixed ladder
- * of metadata sizes. Scanned only when the primary is unreadable, which is
- * the case the second copy exists for. */
+/* Where a secondary header can legally sit: cryptsetup's fixed ladder of
+ * metadata sizes (LUKS2_HDR2_OFFSETS), 16 KB doubling to 4 MB. The secondary
+ * always begins exactly one hdr_size past zero, so its offset and the
+ * primary's hdr_size are the same number; the ladder is scanned rather than
+ * computed because it is needed precisely when the primary is unreadable and
+ * its hdr_size therefore untrustworthy. */
 static const uint64_t secondary_offsets[] = {
     0x004000ull, 0x008000ull, 0x010000ull, 0x020000ull, 0x040000ull,
     0x080000ull, 0x100000ull, 0x200000ull, 0x400000ull
@@ -643,6 +646,20 @@ static int verify_digest(const json_value *digests, const json_value *name,
     return LUKS_ERR_CORRUPT;
 }
 
+/* Attempt one keyslot. LUKS_OK means the master key in *mk is verified
+ * against a digest; every other return leaves *mk wiped.
+ *
+ * Wipe discipline. salt, derived, stripe, sec, the XTS key schedule and the
+ * merge accumulator each hold passphrase-derived or master-key material, and
+ * each is wiped where it stops being needed rather than at a single exit.
+ * That is deliberate: this function has early returns above the streaming
+ * loop, and a wipe at the bottom would be skipped by every one of them.
+ *
+ * Timing. A wrong passphrase does exactly the same work as a right one, in
+ * the same order, right up to the digest comparison, which is the one place
+ * a secret is compared and is crypto_ct_eq. Nothing else here is
+ * constant-time and nothing else here needs to be: the JSON metadata and the
+ * keyslot layout are public, and which slot matched is not a secret. */
 static int try_slot(luks_vol *v, const json_value *name,
                     const json_value *slot, const json_value *digests,
                     const void *pass, size_t pass_len, luks_master_key *mk)
@@ -887,6 +904,24 @@ int luks_unlock(luks_vol *v, const void *pass, size_t pass_len,
          * slot in the same header may still be one we can open. */
     }
 
+    /* Triage, in precedence order, and it is a UX contract as much as a
+     * status code. src/pos turns each of these into a different thing on
+     * screen, so getting the precedence wrong would tell the user to do the
+     * wrong thing.
+     *
+     * saw_usable wins: at least one pbkdf2 slot was read, derived and
+     * digest-checked, and rejected this passphrase. That is a wrong
+     * passphrase and the user should retype it.
+     *
+     * saw_argon2 only if nothing was usable: every slot is memory-hard, so
+     * there is nothing here this loader can open however correct the
+     * passphrase is. This is p4, which mkstick deliberately formats with
+     * argon2id, and answering NOKEY would send the user to retype a
+     * passphrase that was never going to work.
+     *
+     * Otherwise the header parsed but held no slot of any recognised shape,
+     * which is a volume outside this driver's scope rather than a secret we
+     * failed to guess. */
     if (saw_usable) {
         return LUKS_ERR_NOKEY;
     }
@@ -964,6 +999,11 @@ int luks_read(void *ctx, uint64_t off, uint64_t len, void *buf)
     if (off + len < off) {
         return LUKS_ERR_RANGE;
     }
+    /* A segment whose JSON size is the string "dynamic" runs to the end of
+     * the device, so the header states no bound and there is nothing to check
+     * against. The read callback below is then the only thing that can refuse
+     * an over-long read, which is correct: it is the layer that knows how big
+     * the partition actually is. */
     if (!d->vol->seg_dynamic && d->vol->seg_size != 0u &&
         off + len > d->vol->seg_size) {
         return LUKS_ERR_RANGE;

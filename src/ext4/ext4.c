@@ -96,7 +96,25 @@
 #define INODE_FL_EXTENTS        0x00080000u
 #define INODE_FL_INLINE_DATA    0x10000000u
 
-/* Extent tree. */
+/* Extent tree.
+ *
+ * A node is a 12-byte ext4_extent_header followed by eh_max slots of 12 bytes
+ * each. Which struct a slot holds depends on eh_depth and nothing else: above
+ * zero they are ext4_extent_idx and point at child nodes, at zero they are
+ * ext4_extent and point at file data. All three structs are exactly 12 bytes,
+ * which is why one EXT_ENT_SIZE indexes both kinds; the EI_ and EE_ offsets
+ * below describe the same twelve bytes two different ways and must never be
+ * mixed.
+ *
+ * The root lives in the inode's 60-byte i_block, so it holds a header plus
+ * four slots. Every other node is a whole filesystem block.
+ *
+ * Depth is bounded because the kernel bounds it (EXT4_MAX_EXTENT_DEPTH). It
+ * is a generous bound rather than a tight one: with 4 KiB blocks a node holds
+ * 340 slots, so a depth-2 tree already addresses 4 * 340 * 340 extents of up
+ * to 32768 blocks each, far past the 2^32 logical blocks an extent can name.
+ * Anything deeper is corruption, and capping it is also what stops a cyclic
+ * tree from spinning the descent loop forever. */
 #define EXT_MAGIC               0xF30Au
 #define EXT_HDR_SIZE            12u
 #define EXT_ENT_SIZE            12u
@@ -215,7 +233,11 @@ static int group_desc(ext4_vol *v, uint32_t group, const uint8_t **out)
     if (v->gd_cache_group != group) {
         off = v->gdt_off + (uint64_t)group * v->desc_size;
         /* Descriptors are 32 or 64 bytes, so several share a 512-byte device
-         * block; the callback contract requires the aligned read. */
+         * block; the callback contract requires the aligned read.
+         *
+         * One sector always suffices: gdt_off is block-aligned, desc_size is
+         * a power of two no larger than 64 (checked at mount), and both 32
+         * and 64 divide 512, so a descriptor cannot straddle a sector. */
         {
             uint64_t sec = off & ~(uint64_t)511;
             uint8_t sector[512];
@@ -451,7 +473,13 @@ static int inode_read(ext4_vol *v, uint32_t ino, ext4_inode *out)
 }
 
 /* Validate an extent tree node in place. in_inode selects the 60-byte root,
- * which has no checksum tail of its own (the inode's checksum covers it). */
+ * which has no checksum tail of its own (the inode's checksum covers it).
+ *
+ * avail is how many bytes the node is allowed to occupy: 60 for the root, one
+ * filesystem block otherwise. Bounding eh_max against it is what stops a
+ * forged header from walking the entry loops off the end of the inode or the
+ * block, so this runs before any caller reads a single slot. A block node
+ * must also leave four bytes past its last slot for the checksum tail. */
 static int extent_node_check(const ext4_vol *v, const ext4_inode *in,
                              const uint8_t *node, uint32_t avail, int in_inode)
 {
@@ -480,7 +508,19 @@ static int extent_node_check(const ext4_vol *v, const ext4_inode *in,
 
 /* Map a logical block to its physical block, plus how many blocks follow it
  * contiguously. The resolved extent is cached in the inode, so a sequential
- * walk through a 90 MiB UKI costs one tree descent per extent, not per block. */
+ * walk through a 90 MiB UKI costs one tree descent per extent, not per block.
+ *
+ * Shape of the descent: start at the root in i_block, read eh_depth once, and
+ * take that many steps down, checking each node as it is read. Both loops are
+ * linear scans rather than binary searches. A node holds at most 340 slots and
+ * the cursor above makes the whole descent rare, so the branch-free scan is
+ * the cheaper thing to get right.
+ *
+ * Every exit that is not a real mapping is EXT4_ERR_HOLE, which the caller
+ * turns into a refusal: falling below the first indexed block, landing in the
+ * gap between two extents, and a preallocated extent whose contents are
+ * undefined. A read-only driver has nothing useful to return for any of them,
+ * and returning zeroes would be a lie about what is on disk. */
 static int extent_lookup(ext4_vol *v, ext4_inode *in, uint32_t lblk,
                          uint64_t *pblk, uint32_t *run)
 {
@@ -538,6 +578,10 @@ static int extent_lookup(ext4_vol *v, ext4_inode *in, uint32_t lblk,
         rc = extent_node_check(v, in, node, avail, in_inode);
         if (rc != EXT4_OK)
             return rc;
+        /* Each step down must drop the depth by exactly one. Without this a
+         * node pointing at itself, or at any node of equal or greater depth,
+         * would keep the loop descending until EXT_MAX_DEPTH saved it; the
+         * check turns that into an immediate, accurate answer. */
         if (get_le16(node + EH_DEPTH) != depth - 1u)
             return EXT4_ERR_CORRUPT;
         depth--;
@@ -590,6 +634,10 @@ static int dir_open_inode(ext4_vol *v, ext4_dir *d, uint32_t ino)
         return rc;
     if ((d->inode.mode & S_IFMT) != S_IFDIR)
         return EXT4_ERR_BAD_ARG;
+    /* Directory blocks are allocated whole, so i_size is always a multiple of
+     * the block size. The iterator relies on it: it bounds itself on i_size
+     * alone, so a ragged tail would let it walk a partial block and read
+     * rec_len out of whatever followed. */
     if (d->inode.size % v->block_size != 0)
         return EXT4_ERR_CORRUPT;
     return EXT4_OK;
@@ -793,7 +841,14 @@ uint64_t ext4_file_size(const ext4_file *f)
 
 /* Move run bytes from volume offset abs into dst. Whole blocks go straight to
  * the caller's buffer; only the ragged ends of an unaligned request pay for
- * the bounce buffer. */
+ * the bounce buffer.
+ *
+ * The split between this and ext4_file_read is one of coordinates. That one
+ * works in logical blocks and calls the extent tree, so it is where holes and
+ * tree descents happen; this one has a physical byte range already known to be
+ * contiguous, so it only has to satisfy the callback's 512-byte alignment
+ * contract. Keeping them apart is why a 90 MiB read copies through f->buf at
+ * most twice rather than once per extent. */
 static int file_read_span(ext4_file *f, uint64_t abs, uint64_t run,
                           uint8_t *dst)
 {

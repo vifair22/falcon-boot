@@ -2,64 +2,47 @@
 
 /* The frame.
  *
- * A margin is only worth drawing on a grid that covers the panel, which is
- * why menu_init takes the largest mode rather than a comfortable one. The
- * font is a fixed 8x19 cell whatever mode is set, so a smaller mode does not
- * make the text bigger; it makes the firmware's own console driver centre a
- * smaller grid and pad the rest itself. Measured under OVMF at 1280x800:
- * 80x25 leaves 320 pixels of firmware padding per side and 100x31 leaves
- * 240, next to which a six-column margin of ours is invisible. On the
- * largest mode there is no padding, and every pixel of black around the menu
- * is one this module put there.
+ * The console font is a fixed 8x19 cell in every mode, so a smaller mode does
+ * not enlarge the text; it makes the firmware's own console driver centre a
+ * smaller grid and pad the rest itself. Under OVMF at 1280x800 that padding
+ * is 320 pixels a side at 80x25 and 240 at 100x31, which is why menu_init
+ * takes the largest mode: only on that grid is the surrounding black ours to
+ * place.
  *
- * The content is then a BLOCK, sized by what it holds and centred in the
- * grid, rather than a layout stretched to the grid's corners. Stretching is
- * what put five entries at the top of a 42-row screen with the hint pinned
- * to the bottom of the panel. CHROME_ROWS is the block's fixed part: banner,
- * blank, blank, hint.
+ * Content is a block, CHROME_ROWS (banner, blank, blank, hint) plus its
+ * entries, centred in the grid rather than stretched to its corners.
+ * MARGIN_X and MARGIN_Y are the floor on how close it may come to an edge,
+ * and WIDTH_MAX caps its width because a 160-column row of entries is harder
+ * to scan than a 100-column one.
  *
- * MARGIN_X and MARGIN_Y are the floor on how close the block may come to an
- * edge, not the layout itself. WIDTH_MAX caps its width, because a
- * 160-column row of menu entries is harder to scan than a 100-column one.
- *
- * ClearScreen blanks everything on entry and nothing writes outside the
- * block afterwards, so the surround stays dark and the highlight bar stops
- * at the block. Redraws are cursor-repositioned overwrites, not ClearScreen,
- * to avoid flicker on slow console paths (serial mirrors). */
+ * ClearScreen blanks everything on entry and nothing writes outside the block
+ * afterwards, so the surround stays dark. Redraws are cursor-repositioned
+ * overwrites, not ClearScreen, to avoid flicker on slow console paths. */
 #define MARGIN_X    6u
 #define MARGIN_Y    1u
 #define WIDTH_MAX 100u
 #define CHROME_ROWS 4u
 
-/* Blank cells inside every row, before the text and after it.
- *
- * A row is padded to the block's full width so the selection bar covers it,
- * which put the first glyph of the selected entry hard against the bar's left
- * edge. The inset is what gives the bar something to lead with, and it
- * applies to the banner and the hint as well so every line in the block
- * shares one text column. */
+/* Blank cells at each end of every row. Rows are padded to the block's full
+ * width so the selection bar covers them, so without this the bar would start
+ * on the first glyph. Applied to banner and hint too, which carry no bar, so
+ * that all three share one text column. */
 #define PAD_X 2u
 
 /* How far the list steps in from the block's edge, selection bar and all.
- *
- * The banner and the hint are chrome and sit against the edge; the entries
- * are what the chrome is about, so they are indented under it. Without this
- * the three share a single column and the screen has no hierarchy at all. */
+ * Banner and hint are chrome and stay at the edge; the entries indent under
+ * them. */
 #define LIST_INDENT 2u
 
-/* Every screen row is composed here and then handed to the console in ONE
- * OutputString call.
+/* Every screen row is composed here and emitted in one OutputString.
  *
- * This is the whole reason the module has a buffer. The first version emitted
- * a two-CHAR16 string per character, padding included, which at the
- * spec-minimum 80x25 is about 1650 protocol calls to repaint a 21-row window.
- * Each one is a ConSplitter dispatch to every registered console, and on the
- * GOP-backed one an HII glyph lookup plus a single-cell blt into a
- * write-combining framebuffer. Composing first turns a row into one call.
+ * Emitting per character instead costs a call per column: ~1650 to repaint a
+ * 21-row window at 80x25, each one a ConSplitter dispatch to every registered
+ * console plus, on the GOP-backed one, an HII glyph lookup and a single-cell
+ * blt into a write-combining framebuffer.
  *
- * Sized well past any console mode worth setting; screen_dims clamps the
- * drawn width to it so a wider mode loses its rightmost columns rather than
- * its row composition. */
+ * Sized past any mode worth setting; screen_dims clamps the drawn width to it
+ * so a wider mode loses its rightmost columns rather than its composition. */
 #define ROW_MAX 512u
 
 static CHAR16 g_row[ROW_MAX];
@@ -253,21 +236,15 @@ void menu_init(EFI_SYSTEM_TABLE *st)
         st->ConOut->Mode == (void *)0)
         return;
 
-    /* Firmware boots in whatever mode it likes, usually the spec-minimum
-     * 80x25 even on a panel with room for several times that, and the loader
-     * took that as given. Mode 0 is 80x25 by spec and mode 1 is 80x50 when
-     * present; 2 and up are OEM-defined and are where the useful ones live.
+    /* Mode 0 is 80x25 by spec and mode 1 is 80x50 when present; 2 and up are
+     * OEM-defined and are where the useful ones live. Largest wins, rows
+     * first, because the block is a list and columns past WIDTH_MAX become
+     * gutter either way. The frame comment has why largest and not merely
+     * larger.
      *
-     * The largest mode wins, by rows first because the block that sits in it
-     * is a list and columns past WIDTH_MAX become gutter either way. Taking
-     * the largest is also what makes MARGIN_X mean anything; the frame
-     * comment at the top of this file has the measurement.
-     *
-     * Every step is allowed to fail and none of them is checked twice:
-     * QueryMode returns EFI_UNSUPPORTED for modes below MaxMode on firmware
-     * that miscounts, and SetMode can refuse a mode it just described. Either
-     * way the console keeps what it already had, which is a worse layout and
-     * not a broken one. */
+     * Every step may fail: QueryMode returns EFI_UNSUPPORTED for modes below
+     * MaxMode on firmware that miscounts, and SetMode can refuse a mode it
+     * just described. The console then keeps what it had. */
     for (i = 0; i < st->ConOut->Mode->MaxMode; i++) {
         UINTN c = 0;
         UINTN r = 0;
@@ -339,11 +316,8 @@ INTN menu_run(EFI_SYSTEM_TABLE *st, const menu_banner *banner,
     draw_banner(&v, banner);
     st->ConOut->SetAttribute(st->ConOut,
                              EFI_TEXT_ATTR(EFI_DARKGRAY, EFI_BLACK));
-    /* The legend is part of the hint rather than a header row because the
-     * per-entry label is easy to misread as a verdict, and the one place a
-     * user is looking when they read a label is this screen. "presence" is
-     * the whole claim: the menu never verifies anything, and neither does
-     * anything else in the loader (DESIGN Section 7.3).
+    /* "presence" is the whole claim; the menu verifies nothing (DESIGN
+     * Section 7.3).
      *
      * The two key words stay general because what they do is the caller's:
      * enter opens a folder or boots an image on the main menu and picks an
@@ -385,14 +359,13 @@ INTN menu_run(EFI_SYSTEM_TABLE *st, const menu_banner *banner,
 
         st->BootServices->WaitForEvent(1, &st->ConIn->WaitForKey, &i);
 
-        /* Drain the queue before painting again.
+        /* Drain the queue, then paint once.
          *
          * Firmware keyboard drivers auto-repeat into this queue, so a held
-         * arrow arrives as a dozen keystrokes. Servicing one per repaint is
-         * what made the highlight carry on moving after the key came up: the
-         * repaints, not the keys, were the backlog. Collapsing the run into
-         * a single paint also means a spurious WaitForKey signal, which
-         * leaves sel untouched, repaints nothing at all. */
+         * arrow arrives as a dozen keystrokes; one repaint each makes the
+         * repaints, not the keys, the backlog. Collapsing the run also means
+         * a spurious WaitForKey signal leaves sel untouched and paints
+         * nothing. */
         for (;;) {
             if (st->ConIn->ReadKeyStroke(st->ConIn, &key) != EFI_SUCCESS)
                 break; /* EFI_NOT_READY: the queue is empty */

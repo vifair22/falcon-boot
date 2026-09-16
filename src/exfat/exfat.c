@@ -8,7 +8,23 @@
 
 #define DIRENT_SIZE 32u
 
-/* Directory entry types (spec 6.2, with the in-use bit 0x80 set). */
+/* Directory entry types (spec 6.2, with the in-use bit 0x80 set).
+ *
+ * One file is not one 32-byte record but a SET of consecutive ones, and every
+ * reader has to reassemble it:
+ *
+ *   ENT_FILE    attributes, and SecondaryCount at offset 1: how many records
+ *               follow in this set.
+ *   ENT_STREAM  exactly one, immediately after. Carries FirstCluster,
+ *               DataLength, ValidDataLength, NameLength, and the NoFatChain
+ *               flag. This is where a file's actual identity lives.
+ *   ENT_NAME    ceil(NameLength / 15) of them, 15 UTF-16 units each, no
+ *               terminator and no length of their own.
+ *
+ * Nothing separates one set from the next except the type bytes, so a reader
+ * that loses sync mid-set reads a name fragment as a file. exfat_dir_next
+ * resynchronises by skipping to the next ENT_FILE rather than trying to
+ * repair the set. */
 #define ENT_END        0x00
 #define ENT_FILE       0x85
 #define ENT_STREAM     0xC0
@@ -119,6 +135,10 @@ static int next_cluster(exfat_vol *v, uint32_t cl, uint32_t *next)
     return EXFAT_OK;
 }
 
+/* The root has no directory entry anywhere, so nothing states its length: it
+ * ends where its FAT chain ends. ~0 is the sentinel that switches the
+ * iterator's bound off, leaving ENT_END or the end of the chain to stop it.
+ * Every other directory carries a DataLength and is bounded by it. */
 int exfat_dir_open_root(exfat_vol *v, exfat_dir *d)
 {
     if (v == (void *)0 || d == (void *)0)
@@ -164,9 +184,14 @@ static int dir_read_raw(exfat_dir *d, uint8_t out[DIRENT_SIZE])
     if (d->size != ~(uint64_t)0 && d->pos + DIRENT_SIZE > d->size)
         return 0;
 
+    /* cluster_pos is the file offset at which the current cluster began, so
+     * the difference is the offset within it. Tracking the base rather than a
+     * running remainder is what keeps this correct for a fragmented chain,
+     * where cluster n of the file is not cluster first + n on disk. */
     off_in_cluster = d->pos - d->cluster_pos;
     if (off_in_cluster == cb) {
-        /* Cluster boundary: advance. */
+        /* Cluster boundary: advance. NoFatChain means the next cluster is
+         * simply the next one on disk; otherwise it costs a FAT read. */
         if (d->no_fat_chain) {
             uint32_t next = d->cur_cluster + 1;
             if (!cluster_valid(v, next))
@@ -219,7 +244,15 @@ int exfat_file_open(exfat_vol *v, exfat_file *f, const exfat_dirent *e)
     return EXFAT_OK;
 }
 
-/* Resolve the index'th cluster of the file, moving the cached cursor. */
+/* Resolve the index'th cluster of the file, moving the cached cursor.
+ *
+ * A FAT chain is singly linked, so there is no way to step backwards: a seek
+ * to a lower index rewinds to the first cluster and walks forward again. That
+ * makes a backward seek O(index) FAT reads, which is acceptable only because
+ * every caller in the loader reads forward. A random-access consumer would
+ * want a cached cluster map instead.
+ *
+ * NoFatChain files have no chain to walk and answer in constant time. */
 static int file_cluster_at(exfat_file *f, uint64_t index, uint32_t *out)
 {
     exfat_vol *v = f->vol;
@@ -475,6 +508,11 @@ int exfat_dir_next(exfat_dir *d, exfat_dirent *out)
             return 0;
         if (ent[0] != ENT_FILE)
             continue; /* unused, bitmap, up-case, label, vendor, ... */
+        /* From here to the end of the loop body, every `continue` is a
+         * resync: the set is abandoned and scanning resumes at whatever
+         * record comes next, which will be skipped by this same test until
+         * the next ENT_FILE. That is why a malformed set costs its own
+         * entries and nothing else. */
 
         /* File directory entry (spec 6.4). */
         sec_count = ent[1];

@@ -9,6 +9,37 @@
  * resolve a file to the physical ranges backing it (the extent map the
  * injection framework of DESIGN Section 6.2 rebuilds an ISO from after
  * ExitBootServices).
+ *
+ * Structures never read, each a deliberate omission rather than an oversight:
+ *
+ *   Allocation bitmap. It says which clusters are free, which only matters to
+ *     a writer. Every file this driver reads is reached from a directory entry
+ *     set, never from the bitmap.
+ *   Up-case table. Names come back as the UTF-16 units on disk and comparison
+ *     is the caller's, so the table that defines exFAT's case folding is never
+ *     needed. Callers that want case-insensitive matching over ASCII do it
+ *     themselves; nothing in the loader matches non-ASCII names.
+ *   Second FAT. It exists only under TexFAT, which no removable media uses,
+ *     and VolumeFlags bit 0 (ActiveFat) is therefore not consulted either.
+ *   Volume label, vendor entries, and any other entry type. exfat_dir_next
+ *     skips everything that is not a File entry.
+ *
+ * Nothing is verified. exFAT defines a SetChecksum over each directory entry
+ * set (spec 6.4.2) and this driver does not check it, so a set with a
+ * corrupted name or size is reported as read rather than refused. That is a
+ * real difference from src/ext4, which verifies every metadata checksum it
+ * reads, and it is deliberate: this driver's volume is p2, the exFAT
+ * partition a user drags arbitrary ISO files onto, and nothing on it is
+ * trusted for anything. What may boot is decided by signature verification at
+ * load time (DESIGN Section 7), so a corrupt directory entry produces a
+ * failed or refused boot, never a trusted one. src/ext4 reads a volume the
+ * loader created and does hold to a checksum policy.
+ *
+ * VolumeFlags bits 1 and 2 (VolumeDirty, MediaFailure) are read but not
+ * acted on, for the same reason: this volume is expected to be dirty. It is
+ * mounted read-write by an OS and pulled out of a running machine, so
+ * refusing a dirty volume the way src/ext4 refuses a dirty p3 would mean
+ * refusing to list ISOs after any ungraceful eject.
  */
 
 #ifndef FALCON_EXFAT_H
