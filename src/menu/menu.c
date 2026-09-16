@@ -2,22 +2,34 @@
 
 /* The frame.
  *
- * Every draw used to run to the physical edge of the console on all four
- * sides, which reads as text that ran out of screen rather than as a layout.
- * MARGIN_X and MARGIN_Y are the cells kept clear around the content box;
- * ClearScreen blanks them once on entry and nothing writes there again, so
- * the highlight bar stops at the box and the gutter stays dark.
+ * A margin is only worth drawing on a grid that covers the panel, which is
+ * why menu_init takes the largest mode rather than a comfortable one. The
+ * font is a fixed 8x19 cell whatever mode is set, so a smaller mode does not
+ * make the text bigger; it makes the firmware's own console driver centre a
+ * smaller grid and pad the rest itself. Measured under OVMF at 1280x800:
+ * 80x25 leaves 320 pixels of firmware padding per side and 100x31 leaves
+ * 240, next to which a six-column margin of ours is invisible. On the
+ * largest mode there is no padding, and every pixel of black around the menu
+ * is one this module put there.
  *
- * WIDTH_MAX caps the box on a wide mode. A 120-column row of menu entries is
- * harder to scan than a 100-column one, and past the cap the surplus becomes
- * gutter with the box centred in it.
+ * The content is then a BLOCK, sized by what it holds and centred in the
+ * grid, rather than a layout stretched to the grid's corners. Stretching is
+ * what put five entries at the top of a 42-row screen with the hint pinned
+ * to the bottom of the panel. CHROME_ROWS is the block's fixed part: banner,
+ * blank, blank, hint.
  *
- * Rows, top to bottom: MARGIN_Y blank, banner, blank, the list window, blank,
- * hint, MARGIN_Y blank. Redraws are cursor-repositioned overwrites, not
- * ClearScreen, to avoid flicker on slow console paths (serial mirrors). */
-#define MARGIN_X  6u
-#define MARGIN_Y  1u
+ * MARGIN_X and MARGIN_Y are the floor on how close the block may come to an
+ * edge, not the layout itself. WIDTH_MAX caps its width, because a
+ * 160-column row of menu entries is harder to scan than a 100-column one.
+ *
+ * ClearScreen blanks everything on entry and nothing writes outside the
+ * block afterwards, so the surround stays dark and the highlight bar stops
+ * at the block. Redraws are cursor-repositioned overwrites, not ClearScreen,
+ * to avoid flicker on slow console paths (serial mirrors). */
+#define MARGIN_X    6u
+#define MARGIN_Y    1u
 #define WIDTH_MAX 100u
+#define CHROME_ROWS 4u
 
 /* Every screen row is composed here and then handed to the console in ONE
  * OutputString call.
@@ -144,10 +156,14 @@ static void screen_dims(EFI_SYSTEM_TABLE *st, UINTN *cols, UINTN *rows)
         *cols = ROW_MAX;
 }
 
-/* Resolve the console size into the content box and the row assignments. */
+/* Resolve the console size and the entry count into the content block.
+ *
+ * v->count must already be set: the block's height is how many entries there
+ * are, which is the whole point of sizing it here rather than at the edges
+ * of the screen. */
 static void layout(menu_view *v)
 {
-    UINTN cols, rows, w;
+    UINTN cols, rows, w, avail, list, block;
 
     screen_dims(v->st, &cols, &rows);
 
@@ -159,16 +175,27 @@ static void layout(menu_view *v)
     v->width = w;
     v->left = (cols - w) / 2u;
 
-    v->banner_row = MARGIN_Y;
-    v->list_top   = MARGIN_Y + 2u;          /* banner, then a blank row */
-    v->hint_row   = rows - MARGIN_Y - 1u;
-    v->win        = v->hint_row - 1u - v->list_top; /* blank above the hint */
+    /* What the margins leave, minus the chrome, is the most list the screen
+     * can hold. A shorter list shrinks the block instead of padding it out;
+     * a longer one fills the screen and scrolls, exactly as before. */
+    avail = rows - (UINTN)2u * MARGIN_Y;
+    list = (avail > CHROME_ROWS) ? avail - CHROME_ROWS : 1u;
+    if (v->count == 0)
+        list = 1u;               /* the "nothing found" row still needs one */
+    else if (v->count < list)
+        list = v->count;
+    v->win = list;
+
+    block = list + CHROME_ROWS;
+    v->banner_row = (rows - block) / 2u;
+    v->list_top   = v->banner_row + 2u;      /* banner, then a blank row */
+    v->hint_row   = v->list_top + list + 1u; /* blank, then the hint */
 }
 
-/* Modes past these are advertised by firmware on a large panel and drawn in a
- * font that needs a closer look than a boot menu should. */
-#define MODE_COLS_MAX 120u
-#define MODE_ROWS_MAX  45u
+/* Sanity rails only. Nothing real reaches these; they exist so a firmware
+ * reporting nonsense cannot hand layout() a grid it will subtract from. */
+#define MODE_COLS_MAX 400u
+#define MODE_ROWS_MAX 200u
 
 void menu_init(EFI_SYSTEM_TABLE *st)
 {
@@ -186,8 +213,12 @@ void menu_init(EFI_SYSTEM_TABLE *st)
      * took that as given. Mode 0 is 80x25 by spec and mode 1 is 80x50 when
      * present; 2 and up are OEM-defined and are where the useful ones live.
      *
-     * More rows wins, because this screen is a list; columns only break a
-     * tie. Every step is allowed to fail and none of them is checked twice:
+     * The largest mode wins, by rows first because the block that sits in it
+     * is a list and columns past WIDTH_MAX become gutter either way. Taking
+     * the largest is also what makes MARGIN_X mean anything; the frame
+     * comment at the top of this file has the measurement.
+     *
+     * Every step is allowed to fail and none of them is checked twice:
      * QueryMode returns EFI_UNSUPPORTED for modes below MaxMode on firmware
      * that miscounts, and SetMode can refuse a mode it just described. Either
      * way the console keeps what it already had, which is a worse layout and
