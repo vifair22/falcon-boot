@@ -770,6 +770,94 @@ static void test_fs_name_helpers(void **state)
     assert_int_equal(fs_name_cmp(empty, empty), 0);
 }
 
+
+/* Every arm of every guard on the public entry points.
+ *
+ * The bad-args test above passes a volume that never mounted, which is only
+ * ever the LAST arm of each `||`: the earlier ones are evaluated and found
+ * false and nothing exercises them as true. Lines stay at 100% and branches
+ * do not, which is precisely where an inverted test or a missing check sits
+ * unnoticed. Each arm here is reached on its own, with the arms before it
+ * valid. */
+static void test_fs_entry_guard_arms(void **state)
+{
+    fs_vol vol;
+    fs_dir dir;
+    fs_file file;
+    fs_dirent ent;
+    fs_extent runs[2];
+    size_t count = 1;
+    uint8_t narrow[8];
+    uint16_t wide[8];
+    synth_sb sb;
+
+    (void)state;
+    memset(&vol, 0, sizeof vol);
+    memset(&dir, 0, sizeof dir);
+    memset(&file, 0, sizeof file);
+    memset(&ent, 0, sizeof ent);
+
+    /* First arm: the container itself. Second arm: the output. The third,
+     * an unmounted volume, is what the test above already covers. */
+    assert_int_equal(fs_dir_open_root(NULL, &dir), FS_ERR_BAD_ARG);
+    assert_int_equal(fs_dir_open_root(&vol, NULL), FS_ERR_BAD_ARG);
+
+    assert_int_equal(fs_dir_open(NULL, &dir, &ent), FS_ERR_BAD_ARG);
+    assert_int_equal(fs_dir_open(&vol, NULL, &ent), FS_ERR_BAD_ARG);
+    assert_int_equal(fs_dir_open(&vol, &dir, NULL), FS_ERR_BAD_ARG);
+
+    assert_int_equal(fs_dir_next(NULL, &ent), FS_ERR_BAD_ARG);
+    assert_int_equal(fs_dir_next(&dir, NULL), FS_ERR_BAD_ARG);
+
+    assert_int_equal(fs_file_open(NULL, &file, &ent), FS_ERR_BAD_ARG);
+    assert_int_equal(fs_file_open(&vol, NULL, &ent), FS_ERR_BAD_ARG);
+    assert_int_equal(fs_file_open(&vol, &file, NULL), FS_ERR_BAD_ARG);
+
+    assert_int_equal(fs_file_read(NULL, 0, 512u, runs), FS_ERR_BAD_ARG);
+    assert_int_equal(fs_file_size(NULL), 0);
+
+    assert_int_equal(fs_extents(NULL, &ent, runs, 2, &count), FS_ERR_BAD_ARG);
+    assert_int_equal(fs_extents(&vol, NULL, runs, 2, &count), FS_ERR_BAD_ARG);
+    assert_int_equal(fs_extents(&vol, &ent, runs, 2, NULL), FS_ERR_BAD_ARG);
+
+    assert_string_equal(fs_vol_name(NULL), "none");
+    assert_false(fs_has_extents(NULL));
+
+    /* The name converters. Each refuses on its output and tolerates a NULL
+     * input by producing an empty result, which is a different thing and has
+     * its own arm. */
+    assert_int_equal(fs_name_to_bytes(wide, NULL, sizeof narrow), 0);
+    assert_int_equal(fs_name_to_bytes(wide, narrow, 0), 0);
+    narrow[0] = 0xffu;
+    assert_int_equal(fs_name_to_bytes(NULL, narrow, sizeof narrow), 0);
+    assert_int_equal(narrow[0], 0);          /* terminated, not left alone */
+
+    assert_int_equal(fs_name_from_bytes(narrow, 4u, NULL, sizeof wide), 0);
+    assert_int_equal(fs_name_from_bytes(narrow, 4u, wide, 0), 0);
+    wide[0] = 0xffffu;
+    assert_int_equal(fs_name_from_bytes(NULL, 4u, wide, sizeof wide /
+                                        sizeof wide[0]), 0);
+    assert_int_equal(wide[0], 0);
+
+    /* The boot signature is two bytes and the probe checks both. Only the
+     * first was ever wrong in a test, so the second arm never decided
+     * anything. */
+    synth_sb_init(&sb, 0);
+    memcpy(sb.buf + 3, "EXFAT   ", 8);
+    sb.buf[510] = 0x55;
+    sb.buf[511] = 0x00;                      /* first byte right, second not */
+    assert_null(fs_identify(synth_sb_read, &sb, FS_HINT_ISO));
+
+    sb.buf[510] = 0x00;
+    sb.buf[511] = 0xAA;                      /* and the other way round */
+    assert_null(fs_identify(synth_sb_read, &sb, FS_HINT_ISO));
+
+    sb.buf[510] = 0x55;
+    sb.buf[511] = 0xAA;
+    assert_ptr_equal(fs_identify(synth_sb_read, &sb, FS_HINT_ISO),
+                     &fs_ops_exfat);
+}
+
 int run_fs_tests(void)
 {
     const struct CMUnitTest tests[] = {
@@ -788,7 +876,8 @@ int run_fs_tests(void)
         cmocka_unit_test(test_fs_exfat_extents_through_vtable),
         cmocka_unit_test(test_fs_unmounted_and_bad_args),
         cmocka_unit_test(test_fs_failed_mount_leaves_no_vtable),
-        cmocka_unit_test(test_fs_name_helpers)
+        cmocka_unit_test(test_fs_name_helpers),
+        cmocka_unit_test(test_fs_entry_guard_arms)
     };
     const struct CMUnitTest ext4_tests[] = {
         cmocka_unit_test(test_fs_ext4_through_vtable),

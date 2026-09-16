@@ -282,6 +282,11 @@ static void test_sha_final_wipes_context(void **state)
 
     sha512_init(&c5);
     sha512_update(&c5, "abc", 3);
+    /* A zero-length update and a NULL buffer are both no-ops rather than
+     * errors, and they are separate arms of one guard. sha256 gets this from
+     * the split-update loop above; sha512's arm was never the deciding one. */
+    sha512_update(&c5, "ignored", 0);
+    sha512_update(&c5, NULL, 4u);
     sha512_final(&c5, out);
     assert_memory_equal(&c5, zero, sizeof c5);
 }

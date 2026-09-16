@@ -188,12 +188,32 @@ APPL_SRCS := \
 	$(ROOT)/tools/appliance/route.c
 
 # Filter for the coverage report, one alternative per unit above.
+#
 # src/cli/sign/util.c is deliberately absent: it is compiled in because
 # isoprobe.c calls into it, not as a unit under test here. Its subprocess
 # runners and file I/O are exercised by running the tool, and reporting them
 # as an untested unit would only depress a number that is supposed to mean
 # something.
-COV_FILTER := .*/src/(exfat/exfat|cpio/cpio|family/family|cli/sign/(isoprobe|wimext|prepcore)|manifest/[a-z_]+|bless/blesscore|ext4/ext4|part/part|fs/fs|sb/sb|crypto/[a-z0-9]+|luks/[a-z0-9]+)\.c$$|.*/src/iso/overlay\.h$$|.*/tools/appliance/route\.c$$
+#
+# src/osrel/osrel.c was missing from this list for a long time and nobody
+# noticed. It has nineteen tests of its own and reports 93% branches, so the
+# omission cost nothing but the number's honesty; a unit that is tested and
+# unreported is worse than one that is neither, because the total looks
+# complete. It is in now.
+#
+# src/cli/sign/payload.c is the harder case and is deliberately still out.
+# It is 611 lines of which roughly 150 are pure logic with a test file
+# already on them (PEM to DER, the PE certificate table, the "is it already
+# signed with this cert" check) and the rest is loop-mounting a FAT volume
+# out of an .img and shelling out to sbsign. Reported whole it comes to 23%,
+# which says nothing true about either half.
+#
+# The repo's own answer to this shape is a split, and it has been applied
+# twice already: src/bless/blesscore.c carries the logic while
+# src/bless/bless.c carries the firmware half, and src/cli/sign/prepcore.c
+# does the same for preparation. payload.c wants the same treatment, and
+# until it gets one this line is a known compromise rather than an oversight.
+COV_FILTER := .*/src/(exfat/exfat|cpio/cpio|family/family|osrel/osrel|cli/sign/(isoprobe|wimext|prepcore)|manifest/[a-z_]+|bless/blesscore|ext4/ext4|part/part|fs/fs|sb/sb|crypto/[a-z0-9]+|luks/[a-z0-9]+)\.c$$|.*/src/iso/overlay\.h$$|.*/tools/appliance/route\.c$$
 
 OBJS := $(patsubst $(TEST_DIR)/%.c,$(OBJ)/%.o,$(TEST_SRCS)) \
 	$(patsubst $(ROOT)/src/%.c,$(OBJ)/uut/%.o,$(UUT_SRCS)) \

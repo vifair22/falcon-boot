@@ -242,6 +242,12 @@ static void exfat_to_fs_dirent(const exfat_dirent *in, fs_dirent *out)
     size_t i;
 
     memset(out, 0, sizeof(*out));
+    /* The FS_NAME_MAX bound cannot decide the loop today and is kept anyway.
+     * exfat_dirent carries at most EXFAT_NAME_MAX units and both constants
+     * are 255, so the two conditions fail on the same iteration and only the
+     * first is ever the one that ends it. What it guards is out->name, which
+     * is FS_NAME_MAX + 1 units: if either limit moves and this is gone, a
+     * long exFAT name writes past the end of a unified dirent. */
     for (i = 0; i < len && i < FS_NAME_MAX; i++)
         out->name[i] = in->name[i];
     out->name[i] = 0;

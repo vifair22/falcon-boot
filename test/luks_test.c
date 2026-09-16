@@ -2054,6 +2054,114 @@ static void test_luks_dev_open_guards(void **state)
     mem_reset();
 }
 
+
+static void hdr_put_size(uint32_t base, uint64_t val)
+{
+    uint8_t *p = mem_img + base + 8u;   /* hdr_size, BE64 */
+    size_t i;
+
+    for (i = 0; i < 8u; i++) {
+        p[i] = (uint8_t)(val >> (56u - 8u * i));
+    }
+}
+
+/* Each arm of the multi-part guards, separately.
+ *
+ * The sweeps take whichever arm a random flip happens to reach, which for a
+ * three-part condition is usually the same one every time: lines stay covered
+ * and branches do not, and an arm that is never the deciding one is an arm
+ * that could be inverted without any test noticing.
+ *
+ * hdr_size is checked before the checksum is computed, which is what makes
+ * these edits cheap: the copy is rejected on the field itself and the sum
+ * over it is never reached, so there is nothing to refresh. */
+static void test_luks_guard_arms(void **state)
+{
+    luks_vol v;
+    static const uint64_t bad_sizes[] = {
+        0u,             /* not past the binary header */
+        LUKS_HDR_BIN,   /* exactly the header, so no JSON area at all */
+        16u * 1024u * 1024u,  /* past LUKS_MAX_HDR_SIZE */
+        16385u,         /* not a multiple of 512 */
+    };
+    static const unsigned bad_sectors[] = {
+        256u,           /* below the 512 floor */
+        1536u,          /* a multiple of 512 that is not a power of two */
+        4095u,          /* neither */
+    };
+    size_t i;
+
+    (void)state;
+
+    for (i = 0; i < sizeof bad_sizes / sizeof bad_sizes[0]; i++) {
+        mem_reset();
+        hdr_put_size(0u, bad_sizes[i]);
+        hdr_put_size(SEC_HDR_OFF, bad_sizes[i]);
+        if (luks_open(&v, mem_read, NULL, json_buf, sizeof json_buf)
+            != LUKS_ERR_BAD_HEADER) {
+            fail_msg("hdr_size %llu was not refused",
+                     (unsigned long long)bad_sizes[i]);
+        }
+    }
+
+    /* One copy at a time, so the other carries the volume. A header size the
+     * reader rejects is a torn copy like any other. */
+    mem_reset();
+    hdr_put_size(0u, 0u);
+    assert_int_equal(luks_open(&v, mem_read, NULL, json_buf, sizeof json_buf),
+                     LUKS_OK);
+    assert_int_equal(v.used_secondary, 1);
+
+    for (i = 0; i < sizeof bad_sectors / sizeof bad_sectors[0]; i++) {
+        char want[48];
+        char repl[48];
+
+        mem_reset();
+        snprintf(want, sizeof want, "\"sector_size\":4096");
+        snprintf(repl, sizeof repl, "\"sector_size\":%u", bad_sectors[i]);
+        json_patch(want, repl);
+        if (luks_open(&v, mem_read, NULL, json_buf, sizeof json_buf)
+            != LUKS_ERR_UNSUPPORTED) {
+            fail_msg("sector_size %u was not refused", bad_sectors[i]);
+        }
+    }
+
+    /* A kdf whose type is present but is not a string. kdf_of cannot name it,
+     * so the slot is reported as one this loader has no derivation for, the
+     * same answer p4's argon2id gets. That is the right end of the triage:
+     * the passphrase is not in question, and the user is told the volume
+     * cannot be opened here rather than sent to retype. */
+    mem_reset();
+    json_patch("\"kdf\":{\"type\":\"pbkdf2\"", "\"kdf\":{\"type\":12345678");
+    assert_int_equal(luks_open(&v, mem_read, NULL, json_buf, sizeof json_buf),
+                     LUKS_OK);
+    {
+        luks_master_key mk;
+
+        assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, &mk, NULL),
+                         LUKS_ERR_UNSUPPORTED_KDF);
+        crypto_wipe(&mk, sizeof mk);
+    }
+
+    /* A keyslot named by something that is not a decimal id, which the
+     * enumeration has to report without inventing a number. */
+    mem_reset();
+    json_patch("\"keyslots\":{\"0\":", "\"keyslots\":{\"zz\":");
+    assert_int_equal(luks_open(&v, mem_read, NULL, json_buf, sizeof json_buf),
+                     LUKS_OK);
+    {
+        luks_slot_info si;
+        size_t count = 0;
+
+        assert_int_equal(luks_slot_count(&v, &count), LUKS_OK);
+        assert_int_equal(count, 1);
+        assert_int_equal(luks_slot_at(&v, 0, &si), LUKS_OK);
+        assert_int_equal(si.id, 0);      /* unparseable falls back to 0 */
+    }
+
+    mem_reset();
+}
+
 int run_luks_tests(void)
 {
     const struct CMUnitTest tests[] = {
@@ -2074,6 +2182,7 @@ int run_luks_tests(void)
         cmocka_unit_test(test_luks_container_shape_refusals),
         cmocka_unit_test(test_luks_awkward_key_sizes),
         cmocka_unit_test(test_luks_dev_open_guards),
+        cmocka_unit_test(test_luks_guard_arms),
         cmocka_unit_test(test_luks_secondary_header_fallback),
         cmocka_unit_test(test_luks_argon_slot_is_named_not_guessed),
         cmocka_unit_test(test_ext4_over_luks),
