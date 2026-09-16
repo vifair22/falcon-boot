@@ -31,6 +31,15 @@
 #define WIDTH_MAX 100u
 #define CHROME_ROWS 4u
 
+/* Blank cells inside every row, before the text and after it.
+ *
+ * A row is padded to the block's full width so the selection bar covers it,
+ * which put the first glyph of the selected entry hard against the bar's left
+ * edge. The inset is what gives the bar something to lead with, and it
+ * applies to the banner and the hint as well so every line in the block
+ * shares one text column. */
+#define PAD_X 2u
+
 /* Every screen row is composed here and then handed to the console in ONE
  * OutputString call.
  *
@@ -88,13 +97,29 @@ static UINTN row_pad(UINTN col, UINTN w)
     return col;
 }
 
-/* Overwrite one row of the content box with s, padded to the box. One
- * OutputString. The right margin is what makes writing the last cell safe:
- * the box never reaches the final column, so nothing can auto-wrap. */
+/* Where the text in a row starts and where it must stop, leaving PAD_X clear
+ * at each end. A box too narrow to inset gives the text the whole row rather
+ * than nothing. */
+static UINTN text_end(UINTN w)
+{
+    return (w > (UINTN)2u * PAD_X) ? w - PAD_X : w;
+}
+
+static UINTN text_start(UINTN w)
+{
+    return (w > (UINTN)2u * PAD_X) ? PAD_X : 0u;
+}
+
+/* Overwrite one row of the content box with s, inset and padded to the box.
+ * One OutputString. The right margin is what makes writing the last cell
+ * safe: the box never reaches the final column, so nothing can auto-wrap. */
 static void draw_row(EFI_SYSTEM_TABLE *st, UINTN row, UINTN left, UINTN w,
                      const CHAR16 *s)
 {
-    row_pad(row_put(s, 0, w), w);
+    UINTN col = row_pad(0, text_start(w));
+
+    col = row_put(s, col, text_end(w));
+    row_pad(col, w);
     st->ConOut->SetCursorPosition(st->ConOut, left, row);
     out(st, g_row);
 }
@@ -118,15 +143,15 @@ static void draw_banner(const menu_view *v, const menu_banner *banner)
         return;
     }
 
-    col = row_put(banner->title, 0, w);
+    col = row_put(banner->title, row_pad(0, text_start(w)), text_end(w));
     g_row[col] = L'\0';
     out(st, g_row);
 
     if (banner->state != (void *)0) {
         UINTN seg = col;
 
-        col = row_put(L"  ", col, w);
-        col = row_put(banner->state, col, w);
+        col = row_put(L"  ", col, text_end(w));
+        col = row_put(banner->state, col, text_end(w));
         g_row[col] = L'\0';
         st->ConOut->SetAttribute(st->ConOut, banner->state_attr);
         /* The cursor is already parked at seg, so emitting the tail alone
