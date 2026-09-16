@@ -26,6 +26,13 @@ typedef struct {
     UINTN state_attr;         /* EFI_TEXT_ATTR value for the state segment */
 } menu_banner;
 
+/* Picks a console text mode. Called once, before anything is drawn.
+ *
+ * Separate from menu_run because SetMode clears the screen, and the loader
+ * shows several screens per run. Safe to skip: the console keeps whatever the
+ * firmware handed it. */
+void menu_init(EFI_SYSTEM_TABLE *st);
+
 /* Blocks until the user commits. Returns the selected entry index, or a
  * negative value if the user backed out (ESC). */
 INTN menu_run(EFI_SYSTEM_TABLE *st, const menu_banner *banner,

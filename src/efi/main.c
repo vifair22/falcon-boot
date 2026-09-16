@@ -1459,6 +1459,8 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
 
     st->BootServices->SetWatchdogTimer(0, 0, 0, (CHAR16 *)0);
     st->ConOut->Reset(st->ConOut, FALSE);
+    /* Before anything is drawn, and once: SetMode clears the screen. */
+    menu_init(st);
 
     /* The next-boot marker, first thing and before anything that can fail
      * (DESIGN Section 6.3.1). Reading it here rather than where it is acted on
