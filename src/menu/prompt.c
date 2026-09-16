@@ -29,13 +29,34 @@ static void out(EFI_SYSTEM_TABLE *st, const CHAR16 *s)
  * both console behaviors the spec permits: OVMF's backspace is destructive
  * (measured 2026-09-13: a bare \b wipes the glyph it crosses, which is why
  * the hint cannot be cursor-parked), and on a non-destructive console the
- * explicit space does the erasing. */
+ * explicit space does the erasing.
+ *
+ * Composed into one string per chunk rather than one OutputString per
+ * character, for the reason menu.c's row buffer exists: every call is a
+ * ConSplitter dispatch to every registered console. Erasing a long entry on
+ * Tab was the visible case.
+ *
+ * The buffer holds backspaces and spaces and never a passphrase byte, so it
+ * is outside the wiping discipline the rest of this file is under. */
+#define ERASE_CHUNK 64u
+
 static void erase_back(EFI_SYSTEM_TABLE *st, UINTN n)
 {
+    static CHAR16 buf[3u * ERASE_CHUNK + 1u];
     UINTN i;
 
-    for (i = 0; i < n; i++)
-        out(st, L"\b \b");
+    while (n != 0) {
+        UINTN k = (n < ERASE_CHUNK) ? n : ERASE_CHUNK;
+
+        for (i = 0; i < k; i++) {
+            buf[i * 3u]      = L'\b';
+            buf[i * 3u + 1u] = L' ';
+            buf[i * 3u + 2u] = L'\b';
+        }
+        buf[k * 3u] = L'\0';
+        out(st, buf);
+        n -= k;
+    }
 }
 
 INTN menu_prompt_secret(EFI_SYSTEM_TABLE *st, const CHAR16 *prompt,
@@ -100,10 +121,7 @@ INTN menu_prompt_secret(EFI_SYSTEM_TABLE *st, const CHAR16 *prompt,
                 hint_shown = FALSE;
             }
             if (!silent) {
-                UINTN i;
-
-                for (i = 0; i < len; i++)
-                    out(st, L"\b \b");
+                erase_back(st, len);
                 silent = TRUE;
             }
             continue;
