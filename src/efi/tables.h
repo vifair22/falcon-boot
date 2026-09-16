@@ -190,9 +190,16 @@ struct EFI_BOOT_SERVICES {
 #define EFI_VARIABLE_BOOTSERVICE_ACCESS 0x00000002u
 #define EFI_VARIABLE_RUNTIME_ACCESS     0x00000004u
 
-/* UEFI spec 8.5.1. Warm is the right one for "reboot into setup": the
- * indication is already in non-volatile storage, and a cold reset would put
- * the machine through a full power cycle for no benefit. */
+/* UEFI spec 8.5.1.
+ *
+ * "Reboot into setup" uses COLD, which is what sd-boot's reboot_into_firmware
+ * does. Warm reads better on paper - the indication is already in non-volatile
+ * storage, so a full power cycle buys nothing - and it works under OVMF. It
+ * did not work on a LENOVO 21EX005RUS, where OsIndicationsSupported advertises
+ * bit 0 and the machine came back to the loader instead of to setup. The spec
+ * leaves what a warm reset actually skips up to the platform, so "enough of a
+ * reset that BDS re-reads OsIndications" is not something it can be relied on
+ * to mean. Cold is the one every implementation agrees about. */
 typedef enum {
     EfiResetCold,
     EfiResetWarm,

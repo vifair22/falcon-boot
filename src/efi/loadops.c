@@ -218,7 +218,7 @@ BOOLEAN loader_boot_to_fw_setup(EFI_SYSTEM_TABLE *st)
                                          sizeof cur, &cur) != EFI_SUCCESS)
         return FALSE;
 
-    st->RuntimeServices->ResetSystem(EfiResetWarm, EFI_SUCCESS, 0, (void *)0);
+    st->RuntimeServices->ResetSystem(EfiResetCold, EFI_SUCCESS, 0, (void *)0);
     /* Only reached if the firmware refused to reset, which some do when a
      * driver is holding things open. The caller says so; the indication is
      * left set, because the next reboot by any means will still honour it. */
