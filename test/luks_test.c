@@ -1611,26 +1611,37 @@ static void test_luks_json_corruption_sweep(void **state)
 
 /* Rewrite a run of the JSON text and refresh both checksums.
  *
- * find and repl must be the same length. That is not a convenience: the
- * area's text is NUL-padded to json_size and every offset after the edit
- * would otherwise move, so a same-length swap keeps the document the parser
- * sees identical except for the bytes under test.
+ * Lengths need not match. The area is NUL-padded out to json_size, which is
+ * 12288 bytes against about 730 of text, so there is room to grow the
+ * document as well as edit it in place; the whole area is rewritten and
+ * re-padded either way.
  *
  * Both copies, because the reader prefers whichever is intact and an edit to
  * one alone is simply ignored. */
 static void json_patch(const char *find, const char *repl)
 {
+    static char rebuilt[JSON_AREA];
     char *text = (char *)mem_img + LUKS_HDR_BIN;
     size_t flen = strlen(find);
-    char *at;
+    size_t rlen = strlen(repl);
+    size_t head;
+    size_t tail;
+    const char *at = strstr(text, find);
 
-    assert_int_equal(flen, strlen(repl));
-    at = strstr(text, find);
     if (at == NULL) {
         fail_msg("json_patch: '%s' is not in the fixture metadata", find);
     }
-    memcpy(at, repl, flen);
-    memcpy(mem_img + SEC_HDR_OFF + LUKS_HDR_BIN, text, JSON_AREA);
+    head = (size_t)(at - text);
+    tail = strlen(text) - head - flen;
+    assert_true(head + rlen + tail < JSON_AREA);
+
+    memset(rebuilt, 0, sizeof rebuilt);
+    memcpy(rebuilt, text, head);
+    memcpy(rebuilt + head, repl, rlen);
+    memcpy(rebuilt + head + rlen, text + head + flen, tail);
+
+    memcpy(mem_img + LUKS_HDR_BIN, rebuilt, JSON_AREA);
+    memcpy(mem_img + SEC_HDR_OFF + LUKS_HDR_BIN, rebuilt, JSON_AREA);
     hdr_fix_csum(0u);
     hdr_fix_csum(SEC_HDR_OFF);
 }
@@ -1786,6 +1797,263 @@ static void test_luks_segment_field_refusals(void **state)
     mem_reset();
 }
 
+
+/* dm-crypt's iv_large_sectors, which changes how the IV is counted and so
+ * changes every sector this reader decrypts.
+ *
+ * No fixture carries it: cryptsetup only sets it on request, and a volume
+ * with it would decrypt to garbage under the wrong arithmetic without
+ * anything saying so. What is asserted is the arithmetic itself, by reading
+ * the same plaintext both ways: without the flag the IV advances by
+ * sector_size/512 per unit, with it the count is divided back down, so the
+ * two disagree and a volume read under the wrong one must not match
+ * dm-crypt's output. */
+static void test_luks_iv_large_sectors(void **state)
+{
+    luks_vol v;
+    luks_master_key mk;
+    luks_dev d;
+    static uint8_t plain[4096];
+    static uint8_t large[4096];
+
+    (void)state;
+
+    /* Baseline: the fixture as cryptsetup wrote it, which the reference
+     * plaintext from dm-crypt already pins elsewhere in this file. */
+    mem_reset();
+    assert_int_equal(luks_open(&v, mem_read, NULL, json_buf, sizeof json_buf),
+                     LUKS_OK);
+    assert_int_equal(v.seg_iv_large, 0);
+    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, &mk, NULL), LUKS_OK);
+    assert_int_equal(luks_dev_open(&d, &v, &mk), LUKS_OK);
+    assert_int_equal(luks_read(&d, 0, sizeof plain, plain), LUKS_OK);
+    luks_dev_close(&d);
+    assert_memory_equal(plain, ref, sizeof plain);
+    crypto_wipe(&mk, sizeof mk);
+
+    /* The same volume with the flag declared. Nothing else changes, so any
+     * difference in the output is the IV divisor and nothing else. */
+    mem_reset();
+    json_patch("\"sector_size\":4096",
+               "\"sector_size\":4096,\"flags\":[\"iv_large_sectors\"]");
+    assert_int_equal(luks_open(&v, mem_read, NULL, json_buf, sizeof json_buf),
+                     LUKS_OK);
+    assert_int_equal(v.seg_iv_large, 1);
+    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, &mk, NULL), LUKS_OK);
+    assert_int_equal(luks_dev_open(&d, &v, &mk), LUKS_OK);
+    assert_int_equal(luks_read(&d, 0, sizeof large, large), LUKS_OK);
+    luks_dev_close(&d);
+    crypto_wipe(&mk, sizeof mk);
+
+    /* Sector 0 has IV 0 either way, so the first unit is identical and the
+     * divisor only shows from the second onward. Asserting both halves is
+     * what makes this a test of the arithmetic rather than of the flag
+     * being read. */
+    assert_memory_equal(large, plain, 4096u);
+
+    mem_reset();
+    assert_int_equal(luks_open(&v, mem_read, NULL, json_buf, sizeof json_buf),
+                     LUKS_OK);
+    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, &mk, NULL), LUKS_OK);
+    assert_int_equal(luks_dev_open(&d, &v, &mk), LUKS_OK);
+    assert_int_equal(luks_read(&d, 4096u, sizeof plain, plain), LUKS_OK);
+    luks_dev_close(&d);
+    crypto_wipe(&mk, sizeof mk);
+
+    mem_reset();
+    json_patch("\"sector_size\":4096",
+               "\"sector_size\":4096,\"flags\":[\"iv_large_sectors\"]");
+    assert_int_equal(luks_open(&v, mem_read, NULL, json_buf, sizeof json_buf),
+                     LUKS_OK);
+    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, &mk, NULL), LUKS_OK);
+    assert_int_equal(luks_dev_open(&d, &v, &mk), LUKS_OK);
+    assert_int_equal(luks_read(&d, 4096u, sizeof large, large), LUKS_OK);
+    luks_dev_close(&d);
+    crypto_wipe(&mk, sizeof mk);
+
+    assert_memory_not_equal(large, plain, 4096u);
+
+    mem_reset();
+}
+
+/* Containers that are not containers. The metadata reader asks for
+ * "keyslots" and "digests" by name and then iterates whatever came back, so
+ * each has to refuse a value of the wrong shape rather than iterate it as an
+ * empty one.
+ *
+ * luks_open itself only needs the header and the segment, so it is the later
+ * calls that have to notice. Where a case does break luks_open the patch has
+ * damaged the document's structure rather than one member, and that is said
+ * explicitly below rather than left to the reader. */
+static void test_luks_container_shape_refusals(void **state)
+{
+    luks_vol v;
+    luks_master_key mk;
+    size_t count;
+
+    (void)state;
+
+    /* keyslots present but a string. The document is still well-formed and
+     * the segment is untouched, so the volume opens and the refusal lands
+     * where a slot is first asked for. */
+    mem_reset();
+    json_patch("\"keyslots\":{\"0\":{", "\"keyslots\":\"x\",\"spare\":{\"0\":{");
+    assert_int_equal(luks_open(&v, mem_read, NULL, json_buf, sizeof json_buf),
+                     LUKS_OK);
+    assert_int_equal(luks_slot_count(&v, &count), LUKS_ERR_CORRUPT);
+    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, &mk, NULL),
+                     LUKS_ERR_CORRUPT);
+    crypto_wipe(&mk, sizeof mk);
+
+    /* No keyslots member at all, under any name. */
+    mem_reset();
+    json_patch("\"keyslots\":{\"0\"", "\"keyslotX\":{\"0\"");
+    assert_int_equal(luks_open(&v, mem_read, NULL, json_buf, sizeof json_buf),
+                     LUKS_OK);
+    assert_int_equal(luks_slot_count(&v, &count), LUKS_ERR_CORRUPT);
+    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, &mk, NULL),
+                     LUKS_ERR_CORRUPT);
+    crypto_wipe(&mk, sizeof mk);
+
+    /* No digests member: a master key could be recovered from the keyslot
+     * and then never verified, which must not open anything. */
+    mem_reset();
+    json_patch("\"digests\":{", "\"digestX\":{");
+    assert_int_equal(luks_open(&v, mem_read, NULL, json_buf, sizeof json_buf),
+                     LUKS_OK);
+    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, &mk, NULL),
+                     LUKS_ERR_CORRUPT);
+    crypto_wipe(&mk, sizeof mk);
+
+    /* No segments member. This one does break luks_open, because the segment
+     * is the only part of the metadata it reads for itself. */
+    mem_reset();
+    json_patch("\"segments\":{\"0\"", "\"segmentX\":{\"0\"");
+    assert_int_equal(luks_open(&v, mem_read, NULL, json_buf, sizeof json_buf),
+                     LUKS_ERR_CORRUPT);
+
+    /* A root that is an array rather than an object. */
+    mem_reset();
+    json_patch("{\"keyslots\"", "[\"keyslots\"");
+    assert_true(luks_open(&v, mem_read, NULL, json_buf, sizeof json_buf)
+                != LUKS_OK);
+
+    mem_reset();
+}
+
+
+/* Key sizes that are legal to state and awkward to process.
+ *
+ * Everything in scope uses 64, which divides 512 exactly and is one of the
+ * two lengths XTS accepts, so three separate paths never run on any real
+ * volume: a stripe that straddles the boundary between two keyslot units, the
+ * anti-forensic merge's ragged last diffusion block, and the refusal when a
+ * declared area key is not an XTS key length at all. A header can say 48, so
+ * all three are reachable and none is tested by any volume cryptsetup would
+ * produce.
+ *
+ * None of these can end in LUKS_OK: 48 bytes of master key is not the key the
+ * digest was computed over. What is under test is that the arithmetic holds
+ * up on the way to finding that out rather than walking off a buffer. */
+static void test_luks_awkward_key_sizes(void **state)
+{
+    luks_vol v;
+    luks_master_key mk;
+    int rc;
+
+    (void)state;
+
+    /* 48 divides neither 512 nor the 32-byte SHA-256 digest, so a stripe
+     * spans two units and the merge's last diffusion block is a short one. */
+    mem_reset();
+    json_patch("\"type\":\"luks2\",\"key_size\":64",
+               "\"type\":\"luks2\",\"key_size\":48");
+    assert_int_equal(luks_open(&v, mem_read, NULL, json_buf, sizeof json_buf),
+                     LUKS_OK);
+    rc = luks_unlock(&v, PASS, PASS_LEN, &mk, NULL);
+    assert_true(rc == LUKS_ERR_UNSUPPORTED || rc == LUKS_ERR_NOKEY);
+    crypto_wipe(&mk, sizeof mk);
+
+    /* The area key is the one handed to XTS, which takes 32 or 64 and
+     * nothing else. Distinct from the keyslot's own key_size above, and
+     * conflating the two is exactly the bug the driver's comment warns
+     * about. */
+    mem_reset();
+    json_patch("\"encryption\":\"aes-xts-plain64\",\"key_size\":64",
+               "\"encryption\":\"aes-xts-plain64\",\"key_size\":48");
+    assert_int_equal(luks_open(&v, mem_read, NULL, json_buf, sizeof json_buf),
+                     LUKS_OK);
+    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, &mk, NULL),
+                     LUKS_ERR_UNSUPPORTED);
+    crypto_wipe(&mk, sizeof mk);
+
+    /* Past what the format can carry, so it is refused before any of the
+     * above is attempted. */
+    mem_reset();
+    json_patch("\"type\":\"luks2\",\"key_size\":64",
+               "\"type\":\"luks2\",\"key_size\":65");
+    assert_int_equal(luks_open(&v, mem_read, NULL, json_buf, sizeof json_buf),
+                     LUKS_OK);
+    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, &mk, NULL),
+                     LUKS_ERR_UNSUPPORTED);
+    crypto_wipe(&mk, sizeof mk);
+
+    mem_reset();
+}
+
+
+/* luks_dev_open's own checks on the volume and key it is handed.
+ *
+ * Unreachable through any metadata, and deliberately kept. parse_segment
+ * already requires a sector size that is a power of two, a multiple of 512
+ * and no larger than LUKS_MAX_SECTOR, and luks_unlock only ever reports a key
+ * whose length the keyslot declared; a volume that reached here through
+ * luks_open cannot carry either fault. But luks_dev_open is a public entry
+ * point that takes a caller-allocated luks_vol and luks_master_key, so what
+ * it guards against is a caller, not a disk. Reaching them means being that
+ * caller. */
+static void test_luks_dev_open_guards(void **state)
+{
+    luks_vol v;
+    luks_master_key mk;
+    luks_dev d;
+
+    (void)state;
+    mem_reset();
+    assert_int_equal(luks_open(&v, mem_read, NULL, json_buf, sizeof json_buf),
+                     LUKS_OK);
+    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, &mk, NULL), LUKS_OK);
+
+    assert_int_equal(luks_dev_open(NULL, &v, &mk), LUKS_ERR_BAD_ARG);
+    assert_int_equal(luks_dev_open(&d, NULL, &mk), LUKS_ERR_BAD_ARG);
+    assert_int_equal(luks_dev_open(&d, &v, NULL), LUKS_ERR_BAD_ARG);
+
+    /* A sector size the segment parser would never have accepted. */
+    {
+        uint32_t save = v.seg_sector_size;
+
+        v.seg_sector_size = 0u;
+        assert_int_equal(luks_dev_open(&d, &v, &mk), LUKS_ERR_CORRUPT);
+        v.seg_sector_size = LUKS_MAX_SECTOR * 2u;
+        assert_int_equal(luks_dev_open(&d, &v, &mk), LUKS_ERR_CORRUPT);
+        v.seg_sector_size = save;
+    }
+
+    /* A master key of a length XTS does not take. luks_unlock cannot report
+     * one, because a keyslot declaring 48 fails its digest long before the
+     * key is handed on. */
+    {
+        uint32_t save = mk.len;
+
+        mk.len = 48u;
+        assert_int_equal(luks_dev_open(&d, &v, &mk), LUKS_ERR_UNSUPPORTED);
+        mk.len = save;
+    }
+
+    crypto_wipe(&mk, sizeof mk);
+    mem_reset();
+}
+
 int run_luks_tests(void)
 {
     const struct CMUnitTest tests[] = {
@@ -1802,6 +2070,10 @@ int run_luks_tests(void)
         cmocka_unit_test(test_luks_keyslot_field_refusals),
         cmocka_unit_test(test_luks_digest_field_refusals),
         cmocka_unit_test(test_luks_segment_field_refusals),
+        cmocka_unit_test(test_luks_iv_large_sectors),
+        cmocka_unit_test(test_luks_container_shape_refusals),
+        cmocka_unit_test(test_luks_awkward_key_sizes),
+        cmocka_unit_test(test_luks_dev_open_guards),
         cmocka_unit_test(test_luks_secondary_header_fallback),
         cmocka_unit_test(test_luks_argon_slot_is_named_not_guessed),
         cmocka_unit_test(test_ext4_over_luks),
