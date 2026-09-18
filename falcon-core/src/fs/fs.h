@@ -76,8 +76,9 @@ enum {
     FS_ERR_INLINE         = -11, /* data lives in the inode; unsupported */
     FS_ERR_SYMLINK        = -12, /* not a byte stream to read */
     FS_ERR_HOLE           = -13, /* sparse hole or uninitialized extent */
-    FS_ERR_NO_CAPABILITY  = -14  /* the driver does not implement this call;
+    FS_ERR_NO_CAPABILITY  = -14, /* the driver does not implement this call;
                                     today that is `extents` and nothing else */
+    FS_ERR_NOT_FOUND      = -15  /* fs_lookup: no such path */
 };
 
 /* Read len bytes at byte offset off (volume-relative). Returns 0 on success,
@@ -243,6 +244,16 @@ uint64_t fs_file_size(const fs_file *f);
  * -1. For code that reads a file through a callback and has no business
  * knowing it came from a filesystem (falcon-core/src/trust/probe.c). */
 int fs_file_read_cb(void *file, uint64_t off, uint64_t len, void *buf);
+
+/* Resolves an absolute '/'-separated ASCII path from the root, one
+ * component at a time, each matched ASCII-case-insensitively (the way every
+ * consumer in the tree compares names, and what media written on Windows
+ * needs). scratch is the caller's directory iterator, reused per level so
+ * the walk needs no stack of them. FS_OK with *out the final component's
+ * dirent; FS_ERR_NOT_FOUND when a component is missing or a non-final one
+ * is not a directory; FS_ERR_BAD_ARG for "/" alone or a component longer
+ * than FS_NAME_MAX; any driver error as the driver reported it. */
+int fs_lookup(fs_vol *v, const char *path, fs_dir *scratch, fs_dirent *out);
 
 /* Nonzero when this volume's driver implements the extent map. */
 int fs_has_extents(const fs_vol *v);

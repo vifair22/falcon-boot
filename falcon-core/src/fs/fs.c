@@ -974,6 +974,60 @@ int fs_extents(fs_vol *v, const fs_dirent *e, fs_extent *out, size_t cap,
     return v->ops->extents(v, e, out, cap, count);
 }
 
+int fs_lookup(fs_vol *v, const char *path, fs_dir *scratch, fs_dirent *out)
+{
+    const char *p = path;
+    int have = 0;
+    int rc;
+
+    if (v == (fs_vol *)0 || path == (const char *)0 ||
+        scratch == (fs_dir *)0 || out == (fs_dirent *)0 ||
+        v->ops == (const fs_ops *)0)
+        return FS_ERR_BAD_ARG;
+    rc = fs_dir_open_root(v, scratch);
+    if (rc != FS_OK)
+        return rc;
+    for (;;) {
+        char comp[FS_NAME_MAX + 1];
+        size_t n = 0;
+        fs_dirent e;
+        int found = 0;
+
+        while (*p == '/')
+            p++;
+        if (*p == '\0')
+            break;
+        while (p[n] != '\0' && p[n] != '/') {
+            if (n >= FS_NAME_MAX)
+                return FS_ERR_BAD_ARG;
+            comp[n] = p[n];
+            n++;
+        }
+        comp[n] = '\0';
+        p += n;
+        if (have) {
+            if (!out->is_dir)
+                return FS_ERR_NOT_FOUND;
+            rc = fs_dir_open(v, scratch, out);
+            if (rc != FS_OK)
+                return rc;
+        }
+        while ((rc = fs_dir_next(scratch, &e)) == 1) {
+            if (fs_name_eq_ascii(e.name, comp)) {
+                found = 1;
+                break;
+            }
+        }
+        if (rc < 0)
+            return rc;
+        if (!found)
+            return FS_ERR_NOT_FOUND;
+        memcpy(out, &e, sizeof e);
+        have = 1;
+    }
+    return have ? FS_OK : FS_ERR_BAD_ARG;
+}
+
 const char *fs_vol_name(const fs_vol *v)
 {
     if (v == (const fs_vol *)0 || v->ops == (const fs_ops *)0)

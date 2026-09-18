@@ -68,6 +68,19 @@ printf 'deep\n' > "$TREE/nested/a/b/c/d/leaf.txt"
 printf 'spaced\n' > "$TREE/with space.txt"
 printf 'readme\n' > "$TREE/readme.txt"
 ln -s sizes/s1.bin "$TREE/link-to-s1"
+# A boot configuration, for falcon-core/src/media/bootfs.c: what the loader's
+# direct boot reads off an ISO. The initrd's size is not a multiple of 4 on
+# purpose; the kernel wants each appended archive 4-aligned.
+mkdir -p "$TREE/boot/grub"
+cat > "$TREE/boot/grub/grub.cfg" <<'CFG'
+set default=0
+menuentry "Fixture Live" {
+    linux /boot/vmlinuz boot=fixture quiet
+    initrd /boot/initrd.img
+}
+CFG
+head -c 5000 /dev/urandom > "$TREE/boot/vmlinuz"
+head -c 3001 /dev/urandom > "$TREE/boot/initrd.img"
 
 # The manifest of the tree as written, in Rock Ridge terms: every name as
 # typed. The Joliet and plain manifests are derived from the image itself by
@@ -134,6 +147,9 @@ manifest_from_image build/test-iso-plain.iso build/test-iso-plain.iso.manifest \
 # The driver drops the ";1" version suffix (ECMA-119 7.5.1); so does the
 # manifest, so the two name the same file the same way.
 sed -i 's/;1\t/\t/' build/test-iso-plain.iso.manifest
+# And the separator of an empty extension ("VMLINUZ."), as Linux's isofs
+# does, so a configuration's "vmlinuz" finds it.
+sed -i 's/\.\t/\t/' build/test-iso-plain.iso.manifest
 ln -s sizes/s1.bin "$TREE/link-to-s1"
 
 echo "== build/test-iso-deep.iso (Rock Ridge relocation + zisofs)"
