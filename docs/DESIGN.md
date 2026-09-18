@@ -991,7 +991,10 @@ its own media-finding. Everything else has a clean home above.
 - The loader never signs and never holds a private key (Section 7.5).
 - The loader reads `SecureBoot` / `SetupMode` / `MokSBState` only to drive UX
   (per-entry verification labels, actionable messages, a state banner), never to
-  change what is allowed to run. Enforcement is shim's job.
+  change what is allowed to run. Enforcement is shim's job. The same holds for
+  `db`, `dbx`, `MokListRT`, `MokListXRT` and `SbatLevelRT`, which it reads to
+  predict refusals (Section 7.8): a prediction is a label, never an input to a
+  boot path.
 - The Manual documents each Secure Boot state, how to bless media, and how to use
   the platform opt-out.
 
@@ -1313,6 +1316,223 @@ a typed "yes" over the review - applies to Windows patching exactly as it
 applies to signing. Patching is a bless operation and passes through the same
 gate. What the review *shows* differs (this entry will be patched, not
 signed); that it is shown, and that the user says yes to it, does not.
+
+### 7.8 Boot predictions (decided 2026-09-17)
+
+**The problem, measured.** On a Dell Latitude 5411 whose PK, KEK and db are
+the user's own sbctl keys and carry no Microsoft certificate, the menu
+labelled kubuntu, memtest and both Windows ISOs `signed`. All four were true
+and all four were refused. The label reported that a certificate table was
+present, which was the rule until now: the words described what was found
+on the medium and deliberately stopped short of a verdict. On a machine that
+trusts Microsoft that rule is harmless, because "signed" and "boots" nearly
+coincide. On a machine that does not, the label answers the wrong question
+and the user finds out by selecting every entry in turn. Section 7.2 already
+recorded the machine class; the menu had nothing to say about it.
+
+**The decision.** Each entry carries a *prediction* of whether the platform
+will accept it on this machine, computed from the same inputs shim uses:
+the image's certificate table, `db`, `dbx`, `MokListRT`, `MokListXRT` and
+`SbatLevelRT`. An entry predicted to be refused is drawn in yellow with a
+one-word reason. Nothing else changes: every entry stays selectable, and
+selecting one hands it to the shim-verified load path exactly as before.
+
+**Why this does not cross Section 7.3.** The prediction is a label. It is
+computed from public variables any OS can read, it is never consulted by
+any boot path, and a wrong prediction in either direction changes only what
+the screen says before shim answers. Structurally: the verdict type lives
+in the label builder and the details screen, and no function in `iso`,
+`bless`, `pos` or `loader` takes it as a parameter. A future change that
+passes a verdict into a boot path, or greys an entry out, or skips the
+confirm for a predicted refusal, is the Section 7.3 regression and is
+rejected here in advance. Greying out in particular was considered and
+rejected: it is the loader deciding what may run, and it would hide the
+platform's own refusal message, which is the most authoritative answer the
+user can get.
+
+**It is a prediction, not verification, and says so.** The loader performs
+no RSA or ECDSA operation and does not compare the signed Authenticode
+digest against the image. It matches certificates structurally (below). The
+consequences, all accepted:
+
+- A tampered image whose certificate table is intact predicts "boots" and is
+  then refused by shim. The refusal message covers it.
+- Only the first stage is predicted: the file the loader hands to
+  `LoadImage`. Kubuntu's shim trusting Canonical's grub, or an unblessed
+  Arch ISO's systemd-boot loading an unsigned kernel through the firmware's
+  own `LoadImage`, is out of reach. "Boots" means "the first file will
+  load", and the Manual says so.
+- **Yellow only on a positive finding.** Anything the loader cannot parse,
+  cannot read, or does not recognise produces no verdict and the entry keeps
+  its normal colour. A false yellow teaches the user to ignore yellow; a
+  missed prediction costs one refusal message, which is the status quo.
+
+#### Machine state: the banner
+
+The banner's state segment names what the machine trusts, so a row's reason
+can be read against it without opening firmware setup:
+
+    falcon-boot 0.1.0            Secure Boot: ON   Trusts: MOK, MS UEFI CA, +1
+
+- `MOK`: the certificate on this stick's p1 (`falcon-boot.cer`) is present
+  in `MokListRT`, compared byte for byte. Named once, as `MOK`, because that
+  is the word the Manual and the enrollment flow use.
+- `MS UEFI CA`: the Microsoft Corporation UEFI CA 2011 or the Microsoft UEFI
+  CA 2023 is in `db`. This is the third-party CA: distro shims, memtest,
+  vendor tools. It is what Dell's "Enable Microsoft UEFI CA" toggle adds.
+- `MS Windows`: the Microsoft Windows Production PCA 2011 or the Windows
+  UEFI CA 2023 is in `db`. Separate from the above because they are
+  separate certificates with separate owners' toggles, and the machine that
+  prompted this section is the case where a user might hold one and not the
+  other.
+- `+N`: certificates in `db` or `MokListRT` the loader does not recognise,
+  counted, not named. The user's own db key is one of these, as is shim's
+  vendor certificate (shim mirrors it into `MokListRT`, which is why
+  `mokutil --list-enrolled` shows `fedoraca` on a machine that never
+  enrolled it).
+
+Recognition is by SHA-256 of the certificate's DER, against constants for
+the four Microsoft certificates. Names are for display; matching (below)
+never uses the recognised name. The 2011/2023 split is deliberately absent
+from the banner: it matters only when one generation is revoked, and then
+the entry says `{REVOKED}`.
+
+Secure Boot off, setup mode, or unknown: the segment is the existing
+`sb_mode_label` text and no trust list is shown, because nothing is
+enforced and no entry gets a verdict. Validation disabled (`MokSBStateRT`):
+the existing shouted label, unchanged, for the same reason plus the one
+exception below.
+
+#### Entry rows
+
+    Kubuntu 26.04                [MS UEFI CA]
+    Windows 11 25H2              [MS Windows]   {UNTRUSTED}
+    Shell.efi                    [unsigned]     {NOT BLESSED}
+    Arch 2026.01                 [blessed]
+
+The bracket says who signed the first stage; the braces say why it is
+predicted to be refused and appear only then. The two tags sit in aligned
+columns and the name is what gets truncated when a row is short, for the
+reason `suffix_build` already gives: a truncated name is still
+recognisable, a truncated tag misstates what was found. The family name
+("Ubuntu install media") leaves the row and moves to the details screen;
+the file name already carries it for every family we detect, and the
+column is worth more to the signer.
+
+Bracket vocabulary: `[blessed]`, `[blessed, stale]`, `[unsigned]`, `[MS UEFI
+CA]`, `[MS Windows]`, `[MOK]` for a MOK-signed first stage that is not a
+bless (the personal OS, the appliance), `[?]` for an entry past
+`PROBE_LIMIT`, and otherwise the CN of the topmost certificate in the
+signer's chain, cut to 16 columns. `[not prepared]` stays as it is: it is a
+media-finding fact about Windows (Section 7.7), not a signature fact, and
+it never turns a row yellow. Yellow is reserved for "shim will refuse the
+first stage" so that it always answers one question.
+
+Reasons, exhaustive:
+
+| Reason | When | What the user does |
+|---|---|---|
+| `{UNTRUSTED}` | signed, and no signature chains to `db` or `MokListRT` | enrol the CA, or bless (not Windows) |
+| `{NOT BLESSED}` | no certificate table, no bless record | bless it, or the 7.4 opt-out |
+| `{BLESS STALE}` | the bless record is stale (8.1), so the ordinary path runs, and it predicts refused | re-bless |
+| `{REVOKED}` | a signer certificate or the image hash is in `dbx` or `MokListXRT`, or an SBAT generation is below `SbatLevelRT` | newer media |
+| `{VALIDATION OFF}` | a UKI entry (personal OS, fresh bless, appliance) with validation disabled (Section 7.4) | re-enable validation |
+
+Colours: an unselected predicted row is `EFI_YELLOW` on black. The selection
+bar is black on light gray, and yellow on light gray is unreadable, so a
+selected predicted row is black on `EFI_BROWN` (which firmware renders as
+dark yellow): the bar itself changes colour rather than the text on it.
+
+The details screen gains the evidence: for each certificate-table entry,
+the signer's subject CN, the chain walked, the anchor it reached and which
+list holds it (`db`, `MokListRT`), or the `dbx`/`MokListXRT`/SBAT entry that
+revoked it.
+
+#### Verdict rules
+
+Evaluated once per entry at menu build, only when the mode is Secure Boot
+on with validation on, except the `{VALIDATION OFF}` rule which applies only
+in that mode:
+
+1. The image evaluated is the first stage: the ISO's `\EFI\BOOT\BOOTX64.EFI`
+   (already read by the survey), a bare payload itself, or for a fresh bless
+   the wrap UKI. For the wrap only the PE headers and the certificate table
+   are read, a few KiB at the end of a ~250 MB file.
+2. The personal OS gets no signer evaluation: its UKI is on p3, which is not
+   unlocked until the entry is selected. It needs none. The loader is
+   MOK-signed and is running under Secure Boot with validation on, so the
+   MOK is enrolled, and the MOK is what signs the UKI. Only the
+   `{VALIDATION OFF}` rule applies to it.
+3. `{REVOKED}` if any top-level signature's chain contains a certificate
+   present in `dbx` or `MokListXRT`, or the image's Authenticode SHA-256 is
+   present in either as a hash entry, or any component in the image's
+   `.sbat` section carries a generation below the same component's line in
+   `SbatLevelRT`. Revocation is checked first because it wins in the
+   platform too: EDK2 and shim both reject on a `dbx` hit before consulting
+   `db`.
+4. Trusted if any top-level signature's chain reaches an anchor in `db` or
+   `MokListRT`, or the image's Authenticode hash is present in either as a
+   hash entry. Any one passing signature suffices, as in EDK2 and shim.
+5. Otherwise `{UNTRUSTED}` if a certificate table exists, `{NOT BLESSED}`
+   (or `{BLESS STALE}`) if it does not.
+6. A missing `.sbat` section is not a finding. Whether shim refuses it
+   depends on which list verified the image (Section 9's SBAT notes), and a
+   rule the loader cannot state exactly is a false yellow waiting to happen.
+
+The Authenticode hash is computed only for images up to 32 MiB. First
+stages are shims, systemd-boot, grub and bootmgr, all well under it; the
+cap exists so a 250 MB UKI never costs a full read to check a hash `dbx`
+will not contain.
+
+#### Certificate matching
+
+"Chains to an anchor" is structural, and the rule is fixed here so that it
+is the same in the parser, the tests and the Manual:
+
+- Only top-level `WIN_CERTIFICATE` entries of type `WIN_CERT_TYPE_PKCS_SIGNED_DATA`
+  count. Nested signatures (the `1.3.6.1.4.1.311.2.4.1` unauthenticated
+  attribute) are ignored, because neither EDK2 nor shim honours them.
+- Per entry: find the signer certificate in the SignedData certificate set
+  by the SignerInfo's issuer and serial. Walk upward through the set by
+  issuer name, at most 8 steps, stopping at a self-issued certificate or a
+  missing issuer.
+- A certificate `C` in that walk reaches anchor `A` if `A`'s DER equals
+  `C`'s, or `A`'s subject name equals `C`'s issuer name byte for byte AND,
+  where `C` has an Authority Key Identifier and `A` has a Subject Key
+  Identifier, the two are equal. The key-identifier condition is not
+  optional polish: every sbctl installation names its db certificate
+  `CN=Database Key`, the Dell carries two distinct ones, and a name-only
+  match would call anything signed by any sbctl key trusted on every sbctl
+  machine.
+- `db` and `MokListRT` entries are `EFI_SIGNATURE_LIST`s. `EFI_CERT_X509_GUID`
+  entries are anchors, `EFI_CERT_SHA256_GUID` entries are image hashes, and
+  every other type is skipped, not an error. `dbx` and `MokListXRT` are read
+  the same way.
+
+#### The parser is attack surface
+
+Every ISO dropped on p2 feeds its certificate table to this code, inside a
+MOK-signed binary, before anything is verified. It is held to the ext4 and
+LUKS standard: EFI-free over a buffer, a DER walker with explicit length
+checks at every level, a nesting cap, no allocation (it returns offsets into
+the caller's buffer), and a cmocka suite built on real fixtures (the stick's
+shim, a distro shim, a Windows `bootmgfw.efi`, sbctl and Microsoft
+certificates, the secboot OVMF varstore's `db`) plus a corruption sweep in
+the pattern of `test_ext4_corruption_sweep`. A malformed table produces no
+verdict, never a crash and never a yellow row.
+
+Rejected alternatives:
+
+- **Machine modes instead of per-entry verdicts** ("SB on with the MS CA and
+  our MOK", and so on). The question is per image, and "the MS CA" is two
+  certificates with two generations; the mode list either misses cases or
+  becomes the certificate list. The banner carries the machine facts,
+  rows carry the answer.
+- **Verifying signatures in the loader.** It would make the prediction
+  exact for tampered images and nothing else, at the cost of RSA in
+  EFI-land, and it is one step from the loader holding an opinion it might
+  one day act on. Shim is the verifier.
+- **Greying out or hiding predicted refusals.** Above.
 
 
 ## 8. Host tooling (userland, C)
@@ -1664,6 +1884,11 @@ are (both measured 2026-09-13):
   - `sb` - reads `SecureBoot` / `SetupMode` / `MokSBState` for UX only (per-entry
     verification labels, refusal messages, state banner). No enforcement logic
     and no signing; enforcement is shim's, signing is userland's (Section 7).
+  - `trust` - boot predictions (Section 7.8). EFI-free: the PE certificate
+    table walk, the DER/PKCS#7 reader, `EFI_SIGNATURE_LIST` and `SbatLevelRT`
+    parsing, and the pure verdict function over them. The firmware half (reading
+    the five variables once at startup) sits beside `sb`. Its output is read by
+    the menu's label builder and details screen and by nothing else.
   - `loader` - shim-verified load glue (Section 7.6; never relaxes
     verification and never signs, see Section 7), cmdline construction, and
     the virtual credential-filesystem handoff (Section 5.1). It also owns the
@@ -1818,3 +2043,16 @@ was struck: Windows needs no injector, for the reason in Section 6.1.
     requirements failure; whether a Windows ISO behaves the same under Secure
     Boot ON as the chain in Section 7.2 says it must; and Windows Setup
     reaching the install screen end to end.
+12. Boot predictions (Section 7.8, decided 2026-09-17). Internal order, each
+    piece testable before the next exists:
+    - `EFI_SIGNATURE_LIST` and `SbatLevelRT` parsers, tested against the
+      secboot OVMF varstore and the variables dumped from real machines;
+    - the DER/PKCS#7 reader and PE certificate-table walk, tested against the
+      fixture binaries named in 7.8, then the corruption sweep;
+    - the pure verdict function, table-tested over (image, stores) pairs that
+      reproduce the Dell's db: the stick's shim trusted, kubuntu and Windows
+      untrusted, `Shell.efi` not blessed, the blessed Arch wrap trusted;
+    - the firmware half: read the five variables once, next to `sb_state_read`;
+    - the banner trust list, then the row tags, colours and details screen;
+    - real hardware: the Dell (no Microsoft CA) and the Lenovo must each show
+      the prediction that matches what actually boots.
