@@ -1,0 +1,91 @@
+/* falcon-hook: the decisions, apart from the system calls that act on them.
+ *
+ * Everything here is pure: parsing /proc/cmdline, reading the efivarfs file,
+ * choosing which block devices to look at, and building the device-mapper
+ * table from the extent map. It is what the host tests exercise; hook.c is
+ * the sequence of mounts, reads and ioctls around it.
+ */
+
+#ifndef FALCON_HOOKCORE_H
+#define FALCON_HOOKCORE_H
+
+#include <stddef.h>
+#include <stdint.h>
+
+#include <media/extmap.h>
+
+/* The device-mapper device the hook creates. The name is what
+ * /dev/mapper/ shows; the uuid is what dm-aware udev rules key on. */
+#define HOOK_DM_NAME "falcon-iso"
+#define HOOK_DM_UUID "FALCON-ISO"
+
+/* Where the distro's own init is, unless the cmdline says otherwise. */
+#define HOOK_DEFAULT_INIT "/init"
+
+/* The argument that carries the distro's own rdinit= when the loader had to
+ * replace it with ours. */
+#define HOOK_INIT_ARG "falcon.init"
+
+/* The value of key= in a kernel cmdline, into out. 1 when found and it fit,
+ * 0 otherwise. The last occurrence wins, as the kernel's own parser has it.
+ * Quoted values ("key=\"a b\"") are unquoted. */
+int hook_cmdline_arg(const char *cmdline, size_t len, const char *key,
+                     char *out, size_t cap);
+
+/* efivarfs prefixes a variable's data with its 4-byte attributes. The data,
+ * or NULL when the file is too short to hold any. */
+const uint8_t *hook_efivar_data(const uint8_t *file, size_t len,
+                                size_t *data_len);
+
+/* Is a /sys/block name one that could be the stick? Whole disks only, and
+ * none of the virtual kinds: loop, ram, zram, dm, md, nbd, sr (a CD cannot
+ * hold a GPT that names p2), fd. */
+int hook_disk_candidate(const char *name);
+
+/* Parses "MAJ:MIN\n" as /sys/block/X/dev has it. 1 on success. */
+int hook_parse_devnum(const char *s, size_t len, uint32_t *maj, uint32_t *min);
+
+/* The DM_TABLE_LOAD argument: a struct dm_ioctl for HOOK_DM_NAME, read-only,
+ * followed by one linear target per extent, mapping the ISO's bytes in order
+ * onto the block device maj:min at base + extent offset. base is 0 when
+ * maj:min is the partition itself, which is how the hook maps: claiming the
+ * partition leaves the rest of the stick usable, where claiming the whole
+ * disk would make every partition on it unmountable. Mapping the whole disk
+ * (base = the partition's byte offset) is the fallback for a kernel that did
+ * not create partition devices.
+ *
+ * HOOK_ERR_RANGE when an extent or base is not whole 512-byte sectors (every
+ * extent but the last must be; the last is rounded up, which is safe because
+ * the tail of its last cluster belongs to the file). */
+enum {
+    HOOK_OK          = 0,
+    HOOK_ERR_BAD_ARG = -1,
+    HOOK_ERR_NOSPACE = -2,
+    HOOK_ERR_RANGE   = -3
+};
+
+int hook_dm_table(const extmap_hdr *hdr, const uint8_t *map, uint32_t maj,
+                  uint32_t min, uint64_t base, void *buf, size_t cap,
+                  size_t *len);
+
+/* The kernel's dev_t encoding of maj:min, as mknod takes it. */
+unsigned long hook_devnum(uint32_t maj, uint32_t min);
+
+/* A bare struct dm_ioctl for HOOK_DM_NAME in buf, for the commands that
+ * carry no payload (version, create, resume). */
+int hook_dm_header(void *buf, size_t cap, int with_uuid);
+
+/* The names udev would give an ISO9660 filesystem, from its Primary Volume
+ * Descriptor (the 2048 bytes at offset 32768): the volume label, encoded as
+ * udev encodes a by-label link name (anything outside [0-9A-Za-z#+-.:=@_]
+ * as \xHH, so a space is \x20), and the "UUID" blkid derives from the
+ * volume's modification date, or its creation date when that is unset, as
+ * YYYY-MM-DD-HH-mm-ss-cc. Either is left empty when the descriptor has
+ * none. 1 when pvd is a primary volume descriptor at all. */
+int hook_iso_names(const uint8_t *pvd, char *label, size_t label_cap,
+                   char *uuid, size_t uuid_cap);
+
+/* Bytes hook_dm_table needs for n extents. */
+size_t hook_dm_table_size(uint32_t n_extents);
+
+#endif /* FALCON_HOOKCORE_H */

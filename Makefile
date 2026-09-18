@@ -10,6 +10,8 @@
 #   falcon-appliance/  the on-stick signing appliance: PID 1 and the recipe
 #                      for the image it runs in
 #   falcon-winjump/    the WinPE jump binary, a Win64 console program
+#   falcon-hook/       the program appended to an ISO's initrd that rebuilds
+#                      the ISO as a block device (freestanding Linux x86-64)
 #
 # Each component's build.mk lists its own sources and targets. This file holds
 # what they share - toolchains, flag sets, the version stamp, the object
@@ -47,6 +49,7 @@ CORE_INC      := -Ifalcon-core/src
 EFI_INC       := -Ifalcon-efi/src
 CLI_INC       := -Ifalcon-cli/src
 APPLIANCE_INC := -Ifalcon-appliance/src
+HOOK_INC      := -Ifalcon-hook/src
 
 # ---- the freestanding EFI flavour ----
 CC := x86_64-w64-mingw32-gcc
@@ -202,7 +205,7 @@ TEST_CFLAGS := -std=c11 -O0 -g --coverage $(TEST_WARNS) \
 	-DSHIM_DIR='"$(SHIM_DIR)"' \
 	-DMEDIA_FIXTURE_DIR='"$(MEDIA_FIXTURE_DIR)"' \
 	-I$(TEST_SUPPORT)/hostshim $(CORE_INC) $(EFI_INC) $(CLI_INC) \
-	$(APPLIANCE_INC) -I$(TEST_SUPPORT) \
+	$(APPLIANCE_INC) $(HOOK_INC) -I$(TEST_SUPPORT) \
 	$(CMOCKA_CFLAGS)
 
 TEST_LDFLAGS := --coverage
@@ -229,8 +232,9 @@ include falcon-efi/build.mk
 include falcon-cli/build.mk
 include falcon-winjump/build.mk
 include falcon-appliance/build.mk
+include falcon-hook/build.mk
 
-TESTS := core efi cli appliance
+TESTS := core efi cli appliance hook
 TEST_BINS := $(TESTS:%=$(BIN)/falcon-%-test)
 
 # The coverage report's units: what the test binaries link as units under

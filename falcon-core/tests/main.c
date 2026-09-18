@@ -56,6 +56,7 @@ int main(void)
     failed += run_udf_tests();
     failed += run_media_fs_tests();
     failed += run_bootcfg_tests();
+    failed += run_extmap_tests();
     failed += run_fs_tests();
     failed += run_part_tests();
     failed += run_osrel_tests();
