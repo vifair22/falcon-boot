@@ -4,4 +4,3 @@
 *.efi
 *.img
 *.fd
-/test/compile_commands.json

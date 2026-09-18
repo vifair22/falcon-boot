@@ -16,13 +16,13 @@ patches `gBS->LoadImage` and `gBS->StartImage` in place, so a plain
 empirically below, under Secure Boot, on three vendors' shims.
 
 Everything here was produced on 2026-09-12 with the artifacts and scripts in
-`tools/shim-spike/`; `build/shim/` holds the downloads, staged ESPs and serial
+`falcon-efi/tools/shim-spike/`; `build/shim/` holds the downloads, staged ESPs and serial
 logs. Nothing in `src/` was touched.
 
 
 ## 1. Packages classified
 
-Pinned versions; `tools/shim-spike/fetch-shims.sh` re-fetches exactly these.
+Pinned versions; `falcon-efi/tools/shim-spike/fetch-shims.sh` re-fetches exactly these.
 
 | Tag | Package | URL | sha256 |
 | --- | --- | --- | --- |
@@ -77,7 +77,7 @@ is the one being retired on new hardware.
 
 ### 2.1 The GUID scan, and why presence alone is not evidence
 
-`tools/shim-spike/guidscan.py` greps a binary for the little-endian byte
+`falcon-efi/tools/shim-spike/guidscan.py` greps a binary for the little-endian byte
 encoding of a GUID and reports the section-relative offset of every hit.
 
 Run plainly, it says every shim contains `EFI_SECURITY_ARCH` and
@@ -145,15 +145,15 @@ The verifying `shim_load_image` in `loader-proto.c` only arrives in 16.0.
 
 ## 4. Runtime probe
 
-`tools/shim-spike/probe.c` is a freestanding mingw PE built with the root
-Makefile's flags (copied into `tools/shim-spike/Makefile`; no repo headers are
-shared, since `src/efi` is in flight). It is staged under each shim's own
+`falcon-efi/tools/shim-spike/probe.c` is a freestanding mingw PE built with the root
+Makefile's flags (copied into `falcon-efi/tools/shim-spike/Makefile`; no repo headers are
+shared, since `falcon-efi/src/efi` is in flight). It is staged under each shim's own
 second-stage name and reports the SecureBoot/SetupMode/MokSBState variables,
 `LocateProtocol` for the five GUIDs above, the boot-services pointers, and the
 result of `gBS->LoadImage` on three staged payloads.
 
-`tools/shim-spike/run-probe.sh VARIANT [plain|secboot]` stages the ESP and runs
-QEMU headless with a serial log. `tools/shim-spike/mok-setup.sh` builds the
+`falcon-efi/tools/shim-spike/run-probe.sh VARIANT [plain|secboot]` stages the ESP and runs
+QEMU headless with a serial log. `falcon-efi/tools/shim-spike/mok-setup.sh` builds the
 Secure Boot case.
 
 ### 4.1 Protocols and hooks observed
@@ -411,15 +411,15 @@ feature, not by sentiment. Nothing in the loader changes with the choice.
 ## 10. Reproducing
 
 ```sh
-tools/shim-spike/fetch-shims.sh                 # pinned downloads -> build/shim/bins
-make -C tools/shim-spike                        # build/shim/probe.efi
-make -C tools/shim-spike scan                   # static classification, Section 2
-tools/shim-spike/run-probe.sh none plain        # firmware baseline
-tools/shim-spike/run-probe.sh fedora-16.1 plain # Secure Boot off
-tools/shim-spike/mok-setup.sh                   # throwaway MOK + seeded varstore
+falcon-efi/tools/shim-spike/fetch-shims.sh                 # pinned downloads -> build/shim/bins
+make -C falcon-efi/tools/shim-spike                        # build/shim/probe.efi
+make -C falcon-efi/tools/shim-spike scan                   # static classification, Section 2
+falcon-efi/tools/shim-spike/run-probe.sh none plain        # firmware baseline
+falcon-efi/tools/shim-spike/run-probe.sh fedora-16.1 plain # Secure Boot off
+falcon-efi/tools/shim-spike/mok-setup.sh                   # throwaway MOK + seeded varstore
 TAG=-mok PROBE_BIN=build/shim/probe-mok.efi \
   VARS_TEMPLATE=build/shim/vars-template-mok.fd \
-  tools/shim-spike/run-probe.sh fedora-16.1 secboot
+  falcon-efi/tools/shim-spike/run-probe.sh fedora-16.1 secboot
 ```
 
 Serial logs land in `build/shim/log-<variant>-<fw><tag>.txt`. Each run starts
@@ -445,8 +445,8 @@ like neither, and the difference is the whole bug.
 
 ### 11.1 What the probe was extended with
 
-`tools/shim-spike/probe.c` gained three things, and
-`tools/shim-spike/moksb-setup.sh` (new) builds the varstore for the state:
+`falcon-efi/tools/shim-spike/probe.c` gained three things, and
+`falcon-efi/tools/shim-spike/moksb-setup.sh` (new) builds the varstore for the state:
 
 1. A **loader x source matrix**: `gBS->LoadImage` and
    `SHIM_IMAGE_LOADER->LoadImage`, each given a device path and each given a
@@ -555,7 +555,7 @@ then calls `SIL->UnloadImage` on the handle:
 
 So a loader that resolved `LoadImage` from one place and `UnloadImage` or
 `StartImage` from the other would crash the machine outright in two of the
-three states. `src/loader/loadops.c` never mixes them (one resolve, all three
+three states. `falcon-efi/src/loader/loadops.c` never mixes them (one resolve, all three
 members from the same source, used as a set), and `loadops.h` now says why
 that is a requirement rather than a tidiness.
 
@@ -598,7 +598,7 @@ SB-off row is the reason the Secure Boot term is needed at all -- the table is
 equally unhooked there and nothing is wrong, because the firmware's loader
 verifies nothing when Secure Boot is off.
 
-`src/bless` and `src/pos` each resolve once before reading the image, warn on
+`falcon-efi/src/bless` and `falcon-efi/src/pos` each resolve once before reading the image, warn on
 screen if blocked (before the read, which is the slow part), and attach
 `load_ops_inner_load_advice()` when the started image comes back with an
 error. Nothing reads the flag to decide whether to launch: doing that would be
@@ -640,16 +640,16 @@ own MOK, headless.
 ### 11.9 Reproducing
 
 ```sh
-make -C tools/shim-spike                        # build/shim/probe.efi
-tools/shim-spike/mok-setup.sh                   # enforcing varstore + payloads
-tools/shim-spike/moksb-setup.sh                 # validation-disabled varstore
-tools/shim-spike/run-probe.sh fedora-16.1 plain
+make -C falcon-efi/tools/shim-spike                        # build/shim/probe.efi
+falcon-efi/tools/shim-spike/mok-setup.sh                   # enforcing varstore + payloads
+falcon-efi/tools/shim-spike/moksb-setup.sh                 # validation-disabled varstore
+falcon-efi/tools/shim-spike/run-probe.sh fedora-16.1 plain
 TAG=-mok PROBE_BIN=build/shim/probe-mok.efi \
   VARS_TEMPLATE=build/shim/vars-template-mok.fd \
-  tools/shim-spike/run-probe.sh fedora-16.1 secboot
+  falcon-efi/tools/shim-spike/run-probe.sh fedora-16.1 secboot
 TAG=-moksb PROBE_BIN=build/shim/probe-mok.efi \
   VARS_TEMPLATE=build/shim/vars-template-moksb.fd \
-  tools/shim-spike/run-probe.sh fedora-16.1 secboot
+  falcon-efi/tools/shim-spike/run-probe.sh fedora-16.1 secboot
 ```
 
 The last two runs end in a `#GP` from 11.4 by design; everything above it is

@@ -282,7 +282,7 @@ delivered the credential from our synthetic filesystem under Secure Boot ON
 with zero initramfs modifications). Notes that survive from the build:
 
 - The UKI is launched **by device path off the synthetic credential
-  filesystem** (src/loader/credfs.c). A `SourceBuffer` load survives only as a
+  filesystem** (falcon-efi/src/loader/credfs.c). A `SourceBuffer` load survives only as a
   loudly-warned fallback when the credfs publish fails; it is still
   shim-verified but cannot deliver credentials.
 - The credential is named **`cryptsetup.passphrase.cred`** (systemd strips
@@ -602,7 +602,7 @@ publisher of Section 6 stage 2 grows:
 
 No WIM parsing, no UDF parsing and no Windows knowledge enters EFI-land. The
 loader applies a byte map that Linux userland computed. The single
-interposition point is `iso_read_blocks()` in `src/iso/iso.c`, because the
+interposition point is `iso_read_blocks()` in `falcon-efi/src/iso/iso.c`, because the
 entire read path is one `fs_file_read` call (Section 9).
 
 Reusability, recorded with its consequence rather than as a selling point:
@@ -671,7 +671,7 @@ components present, or it falsely reports that the machine fails the minimum
 hardware requirements.
 
 **Premise check: PROVEN (measured 2026-09-13, rig scripts in
-`tools/win-spike/`).** The cheapest and most load-bearing assumption of the
+`falcon-efi/tools/win-spike/`).** The cheapest and most load-bearing assumption of the
 whole route holds: a stock, **unmodified** Win11 25H2 ISO, sitting on a p2 that
 carries the falcon ISO type GUID, boots through the virtual CD we **already
 have**, with no loader changes, all the way to the Windows Setup GUI. Facts
@@ -1042,7 +1042,7 @@ Properties the user should know, and the Manual must state:
   validation is re-enabled. This is an upstream shim/sd-stub interaction, not
   ours to fix (Section 7.3); the loader detects the state before the slow
   image read, warns, and attaches actionable advice when the started image
-  fails (src/loader/loadops.c). **Windows media is the exception that keeps
+  fails (falcon-efi/src/loader/loadops.c). **Windows media is the exception that keeps
   working in this state** (Section 7.2): its chain is `db`-signed end to end
   and contains no UKI, so the opt-out costs it nothing.
 
@@ -1065,7 +1065,7 @@ the request does it publish the volatile `MokSBStateRT` mirror
 (`BOOTSERVICE_ACCESS|RUNTIME_ACCESS`). The mirror is therefore the only
 honest signal: reporting the request would announce permissive mode on a
 machine where shim had just refused it. Rig note: the varstore injection
-in tools/mk-test-mok.sh writes `MokSBState` with attribute mask 0x3; a
+in falcon-efi/tools/mk-test-mok.sh writes `MokSBState` with attribute mask 0x3; a
 0x7 copy produces a varstore that looks permissive to a human and boots
 fully enforcing.
 
@@ -1231,7 +1231,7 @@ from one source and be used as a set. shim's `shim_start_image()` and
 firmware pointers that are populated only under `secure_mode()`; in every
 non-enforcing state they are NULL and the forward is a call through zero
 (a measured #GP, machine down). Mixing `gBS` and `SHIM_IMAGE_LOADER`
-members is therefore a crash, not a style problem; src/loader/loadops.c
+members is therefore a crash, not a style problem; falcon-efi/src/loader/loadops.c
 resolves once and hands out the set.
 - **Branch C (last resort, still unbuilt, requires amending this document):**
   `shim_lock->Verify` plus our own PE loader. Not needed.
@@ -1787,7 +1787,7 @@ override sidecar instead, and the loader's job for such an entry is to publish
 the ISO with that byte map applied rather than to boot a signed wrap. The
 format had no way to say that, and worse than "no way" it had a silent one:
 the parser required `uki=` before a block became a record at all
-(`src/bless/manifest.c`, `block_flush`), so a Windows record written in the
+(`falcon-core/src/manifest/manifest.c`, `block_flush`), so a Windows record written in the
 old shape was **dropped without a word** rather than rejected. That was a
 format decision to make before the Windows path landed, not a bug in the
 parser, which was behaving exactly as this section had specified it.
@@ -1837,7 +1837,7 @@ are (both measured 2026-09-13):
 - **Language/ABI:** freestanding C11, MS x64 ABI, built to PE32+ directly with
   `x86_64-w64-mingw32-gcc`. No gnu-efi, no EDK2. We carry our own minimal UEFI
   headers (the protocols and GUIDs we actually use) under
-  `src/efi/`. This avoids gnu-efi's ELF-then-objcopy dance and its
+  `falcon-efi/src/efi/`. This avoids gnu-efi's ELF-then-objcopy dance and its
   `uefi_call_wrapper` cruft, which exist to solve problems mingw solved.
 - **Build:** Makefile-based. Full strict warning set per repo C standard, adapted
   for freestanding (`-ffreestanding -fno-stack-protector` where the environment
@@ -1891,34 +1891,41 @@ are (both measured 2026-09-13):
   for one purpose and missed for another; classification is eager (cheap
   per-handle reads), mounting stays lazy per consumer. Re-scan is the
   same single entry point run again.
-- **Modules** (named by their `src/` directory; the tree is grouped by layer
-  and by boot path, one level deep):
+- **Components and modules.** The repository is five components, each with
+  its own `src/`: `falcon-core` (the EFI-free libraries every other component
+  links), `falcon-efi` (this loader), `falcon-cli` (the host tools, Section 8),
+  `falcon-appliance` (the signing appliance, Section 7.5) and `falcon-winjump`
+  (Section 6.3). One non-recursive Makefile builds them all; CLAUDE.md has the
+  directory-by-directory map. The loader's modules, named by directory, with
+  the core modules they lean on:
   - `console` - text menu over Simple Text Output/Input. Lists ISOs, the personal-OS
     entry, and the signing-appliance entry (Section 7.5); shows per-entry
     verification labels and the Secure Boot state banner.
-  - `fs` - the driver registry above and its read-only drivers: `exfat.c`
+  - `fs` (core) - the driver registry above and its read-only drivers: `exfat.c`
     (file read + directory enumeration + extent map) and `ext4.c` (p3 only;
     constrained mkfs feature set at install).
-  - `luks` - LUKS2 header parse, pbkdf2, AES-XTS decrypt. Unlocks p3 only; the
+  - `luks` (core) - LUKS2 header parse, pbkdf2, AES-XTS decrypt. Unlocks p3 only; the
     module reads the UKI bytes off p3 and never exposes the p3 private key (that
     file is read by the signing appliance in userland, not by the loader).
   - `iso` - virtual BlockIO/DiskIO over an exFAT-backed image file; family
     detect; injection framework; and the override/append layer of Section 6.3.
-    That layer is one interposition in `iso_read_blocks()` (src/iso/iso.c),
+    That layer is one interposition in `iso_read_blocks()` (falcon-efi/src/iso/iso.c),
     which is the only place the whole read path touches the backing file: an
     ordered list of (offset, length, sidecar source) substitutions, plus an
     append region of virtual sectors past the end of the file. Pure data, and
     deliberately so - no format knowledge, no WIM or UDF parsing, no Windows
     knowledge in EFI-land. The byte map is computed by the bless tool on
     Linux and read from a sidecar on p2.
-  - `secboot` - `sb.c` reads `SecureBoot` / `SetupMode` / `MokSBState` for UX only (per-entry
-    verification labels, refusal messages, state banner). No enforcement logic
-    and no signing; enforcement is shim's, signing is userland's (Section 7).
-    The boot-prediction code (Section 7.8) joins it. EFI-free: the PE certificate
-    table walk, the DER/PKCS#7 reader, `EFI_SIGNATURE_LIST` and `SbatLevelRT`
-    parsing, and the pure verdict function over them. The firmware half (reading
-    the five variables once at startup) sits beside `sb.c`. Its output is read by
-    the menu's label builder and details screen and by nothing else.
+  - `secboot` - `sb.c` reads `SecureBoot` / `SetupMode` / `MokSBState` for UX
+    only (per-entry verification labels, refusal messages, state banner). No
+    enforcement logic and no signing; enforcement is shim's, signing is
+    userland's (Section 7). `trustefi.c` reads the five variables the boot
+    predictions (Section 7.8) judge against, once at startup.
+  - `trust` (core) - the boot predictions themselves, EFI-free: the PE
+    certificate table walk, the DER/PKCS#7 reader, `EFI_SIGNATURE_LIST` and
+    `SbatLevelRT` parsing, and the pure verdict function over them. Their
+    output is read by the menu's label builder and the refusal screen and by
+    nothing else.
   - `loader` - shim-verified load glue (Section 7.6; never relaxes
     verification and never signs, see Section 7), cmdline construction, and
     the virtual credential-filesystem handoff (Section 5.1). It also owns the
@@ -2074,8 +2081,9 @@ was struck: Windows needs no injector, for the reason in Section 6.1.
     Boot ON as the chain in Section 7.2 says it must; and Windows Setup
     reaching the install screen end to end.
 12. Boot predictions (Section 7.8, decided 2026-09-17). IMPLEMENTED
-    2026-09-17, everything below the last bullet: src/secboot (der, x509,
-    authenticode, siglist, trust, probe, trustefi) over a new src/pe that
+    2026-09-17, everything below the last bullet: falcon-core/src/trust
+    (der, x509, authenticode, siglist, trust, probe) and the variable reads in
+    falcon-efi/src/secboot/trustefi.c, over a new falcon-core/src/pe that
     osrel and the ISO survey now share. 28 new tests including a byte-flip
     sweep under ASan, the Authenticode hash checked against sbsign's digest
     for every fixture, and a real Fedora shim against the real Microsoft

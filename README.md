@@ -46,24 +46,18 @@ for the full model.
 ## Layout
 
 ```
-src/efi/      EFI entry point, .sbat, our own minimal UEFI headers
-src/loader/   shim-verified load path, synthetic credential filesystem
-src/console/  text menu and masked passphrase prompt
-src/disk/     GPT parsing and the one device-discovery pass
-src/fs/       filesystem registry and read-only exFAT / ext4 drivers
-src/luks/     LUKS2 unlock
-src/crypto/   SHA-2, HMAC, PBKDF2, AES-XTS
-src/pe/       PE/COFF header layout, shared by every reader of a PE
-src/secboot/  Secure Boot state and boot predictions, read for display only
-src/iso/      ISO path: virtual media, family detection, injection
-src/pos/      personal-OS path
-src/bless/    blessed path and its manifest
-src/lib/      freestanding support routines (mem*, UCS-2 helpers)
-src/cli/      host tools (mkstick, sign); never linked into the loader
-src/winjump/  WinPE jump binary
-tools/        host scripts: QEMU + OVMF rig, test-fixture builders
-docs/         DESIGN.md and (later) Manual.md
+falcon-core/       EFI-free libraries all the others link: crypto, the exFAT and
+                   ext4 drivers, LUKS2, GPT, the PE walker, boot predictions,
+                   the manifest, image readers
+falcon-efi/        the loader (UEFI x64 PE32+) and its QEMU/OVMF rig
+falcon-cli/        host tools: falcon-boot-mkstick, falcon-boot-sign
+falcon-appliance/  the on-stick signing appliance: PID 1 and its image recipe
+falcon-winjump/    the WinPE jump binary
+docs/              DESIGN.md and (later) Manual.md
 ```
+
+Each component has `src/`, `tests/` and `tools/` as it needs them, and a
+`build.mk` the root Makefile includes; it is one build, not five.
 
 ## Building
 
@@ -73,7 +67,10 @@ OVMF. Host tooling additionally needs `cryptsetup`, `sbsign`, `mkfs.exfat`,
 
 ```sh
 make check-tools     # verify the toolchain is present
-make                 # build build/bin/falcon-boot.efi (+ compile_commands.json)
+make                 # the loader, host tools and winjump into build/bin/
+make test            # every component's host tests
+make test-fixtures   # the images the image-backed tests read (needs sudo)
+make coverage        # the tests, strictly, with one coverage report
 make test-image      # build the exFAT fixture the rig boots against
 make run             # boot it under QEMU/OVMF with a display window
 ```

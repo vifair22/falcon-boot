@@ -34,11 +34,11 @@ a way for the two to disagree.
 All three stages take their flags from `compile_commands.json` rather than
 restating `CFLAGS`. That is deliberate: it is what keeps the analyzers seeing
 the same `-ffreestanding -fshort-wchar -mno-red-zone` world the loader is
-built in, and what carries `-maes` onto `src/crypto/aesni.c` and onto nothing
+built in, and what carries `-maes` onto `falcon-core/src/crypto/aesni.c` and onto nothing
 else. If the flags are wrong here, they are wrong in the build too. The script
 regenerates the database and `build/version.h` if either is missing.
 
-`tools/payload/payload.c` is excluded everywhere. It is a throwaway EFI
+`falcon-efi/tools/payload/payload.c` is excluded everywhere. It is a throwaway EFI
 application for the QEMU rig and is never linked into the loader.
 
 A missing analyzer is reported as `SKIP` and costs nothing: the script still
@@ -93,7 +93,7 @@ In order of preference:
    (`--inline-suppr` is on for cppcheck) but currently unused.
 
 Do not reach for a file-wide `-Wno-` on a gcc analyzer warning. The two
-`-Wanalyzer-null-dereference` hits are both in `src/iso/iso.c`, which parses
+`-Wanalyzer-null-dereference` hits are both in `falcon-efi/src/iso/iso.c`, which parses
 attacker-supplied media, and blinding that file to null-dereference analysis
 to silence two infeasible paths is a bad trade.
 
@@ -112,7 +112,7 @@ Baseline as of the first clean run: **27 entries, all triaged.**
 | tidy | 25 | 25 |
 
 - 26 of the 27 are false positives, each argued in the baseline's header.
-- **One is a real open finding**: `src/luks/luks.c:599`, `matched = 1` is a
+- **One is a real open finding**: `falcon-core/src/luks/luks.c:599`, `matched = 1` is a
   dead store, which makes the function tail's
   `return matched ? LUKS_ERR_NOKEY : LUKS_ERR_CORRUPT` a ternary that can only
   take one branch. cppcheck agrees independently (`unreadVariable`, visible
@@ -121,5 +121,5 @@ Baseline as of the first clean run: **27 entries, all triaged.**
 
 `CPPCHECK_ENABLE=style tools/analyze.sh cppcheck` widens cppcheck beyond the
 repo-standard set. It currently adds two findings: the `luks.c:599` dead store
-above and a `constParameterPointer` in `src/luks/af.c:88`. Not part of the
+above and a `constParameterPointer` in `falcon-core/src/luks/af.c:88`. Not part of the
 gate, useful to run occasionally.

@@ -17,14 +17,13 @@
 #
 # Disabled, with reasons:
 #
-#   misc-include-cleaner
-#       src/efi/uefi.h is a deliberate umbrella over the split EFI headers, so
-#       every spec typedef reached through it is "not directly included". 304
-#       findings, all of them that.
+#   misc-include-cleaner falcon-efi/src/efi/uefi.h is a deliberate umbrella over
+# the split EFI headers, so every spec typedef reached through it is "not
+# directly included". 304 findings, all of them that.
 #
-#   clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling
-#       Wants the C11 Annex K _s functions. Freestanding: there is no libc to
-#       provide them, and src/lib/string.c is the only mem* implementation.
+#   clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling Wants
+# the C11 Annex K _s functions. Freestanding: there is no libc to provide them,
+# and falcon-core/src/lib/string.c is the only mem* implementation.
 #
 #   bugprone-easily-swappable-parameters
 #       Stylistic, and unactionable for functions whose signature is dictated
@@ -44,9 +43,9 @@
 #       is how a const string reaches a non-const UEFI output parameter
 #       without tripping gcc -Wcast-qual, also in the standard CFLAGS.
 #
-#   misc-no-recursion
-#       src/efi/main.c scan_dir recurses on purpose; frame size is policed by
-#       -Wstack-usage=32768, which is the control that actually matters here.
+#   misc-no-recursion falcon-efi/src/efi/main.c scan_dir recurses on purpose;
+# frame size is policed by -Wstack-usage=32768, which is the control that
+# actually matters here.
 #
 #   clang-analyzer-optin.performance.Padding
 #       Struct field order follows the spec layout or reading order. Padding

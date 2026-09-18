@@ -127,8 +127,9 @@ if ! make -C "$ROOT" --no-print-directory compile_commands.json \
 		"using the existing one" >&2
 fi
 
-# Every loader source, absolute, from the database. tools/payload is excluded:
-# it is a throwaway test artifact that is never linked into the loader.
+# Every loader source, absolute, from the database. falcon-efi/tools/payload is
+# excluded: it is a throwaway test artifact that is never linked into the
+# loader.
 mapfile -t SOURCES < <(python3 -c '
 import json, sys
 for e in json.load(open(sys.argv[1])):
@@ -194,7 +195,7 @@ stage_cppcheck()
 		return 0
 	fi
 	# --project gives cppcheck the real -I set and the per-file -maes without
-	# restating them; --file-filter then drops tools/payload back out.
+	# restating them; --file-filter then drops falcon-efi/tools/payload back out.
 	# --check-level=exhaustive costs well under a second on this tree and
 	# removes the "limiting analysis of branches" caveat entirely.
 	cppcheck \

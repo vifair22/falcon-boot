@@ -518,7 +518,7 @@ not `\sources\boot.wim`. Anything we build must go through UDF.
 ### 6.1 Primary: Ventoy's shape, with all preparation moved to Linux bless time
 
 Reimplement the vtoyjump mechanism, but split it along our own line: everything
-that needs judgement happens in `src/cli` on Linux at bless time, and the loader
+that needs judgement happens in `falcon-cli` on Linux at bless time, and the loader
 only applies a data-driven byte map.
 
 **Why this one.** It is the only route that keeps a byte-identical ISO, needs no
@@ -546,7 +546,7 @@ loader. They are also reusable: the same two layers are what the "overlay a
 modified grub.cfg" idea in DESIGN Section 7.2 would need, should that ever get
 its own design discussion.
 
-**Bless side (Linux userland, `src/cli`).** For a Windows family ISO the bless
+**Bless side (Linux userland, `falcon-cli`).** For a Windows family ISO the bless
 tool:
 
 1. Locates `\sources\boot.wim` inside the ISO's UDF filesystem and records its

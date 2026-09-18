@@ -1,12 +1,12 @@
 # falcon-boot static analysis baseline.
 #
-# src/cli/sign/util.c fd-leak x3: gcc's analyzer has no model for exec, so
+# falcon-cli/src/sign/util.c fd-leak x3: gcc's analyzer has no model for exec, so
 # each dup2 onto a standard descriptor in the forked child before execvp
 # reads as a leak; the descriptor surviving the exec is the whole point. The
 # stdin one is the same pattern as the other two and arrived with it: wimlib's
 # update subcommand takes its command list on stdin and nowhere else, so the
 # prepare path needs a runner that redirects it. Identical pattern and
-# rationale as the scoped pragma in src/cli/common/proc.c.
+# rationale as the scoped pragma in falcon-cli/src/common/proc.c.
 #
 # Managed by tools/analyze.sh. Data lines below are tab separated:
 #
@@ -32,14 +32,14 @@
 # audited and every one multiplies a bounded index by a small compile-time
 # constant, in unsigned int, with no way to reach 2^32:
 #
-#   src/crypto/{aes,aesni,sha256,sha512}.c   19 entries. All `4u * i`,
+#   falcon-core/src/crypto/{aes,aesni,sha256,sha512}.c   19 entries. All `4u * i`,
 #       `16u * r` and friends where the index is a loop counter bounded by a
 #       literal (4, 8, 16, 64) or by nk <= 8. Fixed-size state arrays.
 #
-#   src/fs/exfat.c:503                    `2u * j`, j is a uint8_t bounded
+#   falcon-core/src/fs/exfat.c:503                    `2u * j`, j is a uint8_t bounded
 #       by take, which is clamped to 15 two lines earlier.
 #
-#   src/fs/ext4.c:516,526,550              `i * EXT_ENT_SIZE`, EXT_ENT_SIZE
+#   falcon-core/src/fs/ext4.c:516,526,550              `i * EXT_ENT_SIZE`, EXT_ENT_SIZE
 #       is 12 and i < entries. entries comes from a 16-bit on-disk field, so
 #       it is at most 65535 and the product is at most 786420. The bound that
 #       actually matters, entries against the buffer, is enforced by
@@ -47,15 +47,15 @@
 #       indexed (including the in-inode root, checked before the descent
 #       loop).
 #
-#   src/iso/iso.c:455,458                    `(DIR_SECURITY + 1u) * 8u` and
+#   falcon-efi/src/iso/iso.c:455,458                    `(DIR_SECURITY + 1u) * 8u` and
 #       `DIR_SECURITY * 8u`. Both operands are literals.
 #
-#   src/luks/luks.c:121                      the operand is the macro
+#   falcon-core/src/luks/luks.c:121                      the operand is the macro
 #       LUKS_MAX_HDR_SIZE, `(4u * 1024u * 1024u)`. A constant, compared
 #       against a uint64_t.
 #
 # ==========================================================================
-# 2. misc-use-internal-linkage, src/efi/main.c (1 entry)
+# 2. misc-use-internal-linkage, falcon-efi/src/efi/main.c (1 entry)
 # ==========================================================================
 #
 # `efi_main` has no declaration in a header and no in-tree caller, so the
@@ -64,7 +64,7 @@
 # one-line NOLINT at the definition if inline suppressions were in play.
 #
 # ==========================================================================
-# 3. clang-analyzer-deadcode.DeadStores, src/luks/luks.c (1 entry)
+# 3. clang-analyzer-deadcode.DeadStores, falcon-core/src/luks/luks.c (1 entry)
 # ==========================================================================
 #
 # OPEN FINDING, baselined so the gate is usable, NOT a false positive.
@@ -84,7 +84,7 @@
 # decision; remove this entry once it is resolved.
 #
 # ==========================================================================
-# 4. src/winjump/winjump.c, Win32 API idioms (3 entries)
+# 4. falcon-winjump/src/winjump.c, Win32 API idioms (3 entries)
 # ==========================================================================
 #
 # This is the only file in the tree that targets Windows userland rather than
@@ -106,30 +106,30 @@
 #       so the value is exactly right and the check simply does not model
 #       bitmask enums.
 
-fanalyzer	src/cli/sign/util.c	-Wanalyzer-fd-leak	leak of file descriptor 'dup2(fds[1], 1)' [CWE-775]
-fanalyzer	src/cli/sign/util.c	-Wanalyzer-fd-leak	leak of file descriptor 'dup2(out_fd, 1)' [CWE-775]
-tidy	src/crypto/aes.c	bugprone-implicit-widening-of-multiplication-result	result of multiplication in type 'unsigned int' is used as a pointer offset after an implicit widening conversion to type 'size_t'
-tidy	src/crypto/aes.c	bugprone-implicit-widening-of-multiplication-result	result of multiplication in type 'unsigned int' is used as a pointer offset after an implicit widening conversion to type 'size_t'
-tidy	src/crypto/aes.c	bugprone-implicit-widening-of-multiplication-result	result of multiplication in type 'unsigned int' is used as a pointer offset after an implicit widening conversion to type 'size_t'
-tidy	src/crypto/aes.c	bugprone-implicit-widening-of-multiplication-result	result of multiplication in type 'unsigned int' is used as a pointer offset after an implicit widening conversion to type 'size_t'
-tidy	src/crypto/aes.c	bugprone-implicit-widening-of-multiplication-result	result of multiplication in type 'unsigned int' is used as a pointer offset after an implicit widening conversion to type 'size_t'
-tidy	src/crypto/aes.c	bugprone-implicit-widening-of-multiplication-result	result of multiplication in type 'unsigned int' is used as a pointer offset after an implicit widening conversion to type 'size_t'
-tidy	src/crypto/aes.c	bugprone-implicit-widening-of-multiplication-result	result of multiplication in type 'unsigned int' is used as a pointer offset after an implicit widening conversion to type 'size_t'
-tidy	src/crypto/aes.c	bugprone-implicit-widening-of-multiplication-result	result of multiplication in type 'unsigned int' is used as a pointer offset after an implicit widening conversion to type 'size_t'
-tidy	src/crypto/aes.c	bugprone-implicit-widening-of-multiplication-result	result of multiplication in type 'unsigned int' is used as a pointer offset after an implicit widening conversion to type 'size_t'
-tidy	src/crypto/aesni.c	bugprone-implicit-widening-of-multiplication-result	result of multiplication in type 'unsigned int' is used as a pointer offset after an implicit widening conversion to type 'size_t'
-tidy	src/crypto/aesni.c	bugprone-implicit-widening-of-multiplication-result	result of multiplication in type 'unsigned int' is used as a pointer offset after an implicit widening conversion to type 'size_t'
-tidy	src/crypto/aesni.c	bugprone-implicit-widening-of-multiplication-result	result of multiplication in type 'unsigned int' is used as a pointer offset after an implicit widening conversion to type 'size_t'
-tidy	src/crypto/sha256.c	bugprone-implicit-widening-of-multiplication-result	result of multiplication in type 'unsigned int' is used as a pointer offset after an implicit widening conversion to type 'size_t'
-tidy	src/crypto/sha256.c	bugprone-implicit-widening-of-multiplication-result	result of multiplication in type 'unsigned int' is used as a pointer offset after an implicit widening conversion to type 'size_t'
-tidy	src/crypto/sha512.c	bugprone-implicit-widening-of-multiplication-result	result of multiplication in type 'unsigned int' is used as a pointer offset after an implicit widening conversion to type 'size_t'
-tidy	src/crypto/sha512.c	bugprone-implicit-widening-of-multiplication-result	result of multiplication in type 'unsigned int' is used as a pointer offset after an implicit widening conversion to type 'size_t'
-tidy	src/efi/main.c	misc-use-internal-linkage	function 'efi_main' can be made static to enforce internal linkage
-tidy	src/fs/exfat.c	bugprone-implicit-widening-of-multiplication-result	result of multiplication in type 'unsigned int' is used as a pointer offset after an implicit widening conversion to type 'size_t'
-tidy	src/fs/ext4.c	bugprone-implicit-widening-of-multiplication-result	result of multiplication in type 'unsigned int' is used as a pointer offset after an implicit widening conversion to type 'size_t'
-tidy	src/fs/ext4.c	bugprone-implicit-widening-of-multiplication-result	result of multiplication in type 'unsigned int' is used as a pointer offset after an implicit widening conversion to type 'size_t'
-tidy	src/fs/ext4.c	bugprone-implicit-widening-of-multiplication-result	result of multiplication in type 'unsigned int' is used as a pointer offset after an implicit widening conversion to type 'size_t'
-tidy	src/luks/luks.c	bugprone-implicit-widening-of-multiplication-result	performing an implicit widening conversion to type 'uint64_t' (aka 'unsigned long long') of a multiplication performed in type 'unsigned int'
-tidy	src/winjump/winjump.c	bugprone-reserved-identifier	declaration uses identifier '_UNICODE', which is a reserved identifier
-tidy	src/winjump/winjump.c	bugprone-reserved-identifier	declaration uses identifier '_WIN32_WINNT', which is a reserved identifier
-tidy	src/winjump/winjump.c	clang-analyzer-optin.core.EnumCastOutOfRange	The value '5' provided to the cast expression is not in the valid range of values for '_ATTACH_VIRTUAL_DISK_FLAG'
+fanalyzer	falcon-cli/src/sign/util.c	-Wanalyzer-fd-leak	leak of file descriptor 'dup2(fds[1], 1)' [CWE-775]
+fanalyzer	falcon-cli/src/sign/util.c	-Wanalyzer-fd-leak	leak of file descriptor 'dup2(out_fd, 1)' [CWE-775]
+tidy	falcon-core/src/crypto/aes.c	bugprone-implicit-widening-of-multiplication-result	result of multiplication in type 'unsigned int' is used as a pointer offset after an implicit widening conversion to type 'size_t'
+tidy	falcon-core/src/crypto/aes.c	bugprone-implicit-widening-of-multiplication-result	result of multiplication in type 'unsigned int' is used as a pointer offset after an implicit widening conversion to type 'size_t'
+tidy	falcon-core/src/crypto/aes.c	bugprone-implicit-widening-of-multiplication-result	result of multiplication in type 'unsigned int' is used as a pointer offset after an implicit widening conversion to type 'size_t'
+tidy	falcon-core/src/crypto/aes.c	bugprone-implicit-widening-of-multiplication-result	result of multiplication in type 'unsigned int' is used as a pointer offset after an implicit widening conversion to type 'size_t'
+tidy	falcon-core/src/crypto/aes.c	bugprone-implicit-widening-of-multiplication-result	result of multiplication in type 'unsigned int' is used as a pointer offset after an implicit widening conversion to type 'size_t'
+tidy	falcon-core/src/crypto/aes.c	bugprone-implicit-widening-of-multiplication-result	result of multiplication in type 'unsigned int' is used as a pointer offset after an implicit widening conversion to type 'size_t'
+tidy	falcon-core/src/crypto/aes.c	bugprone-implicit-widening-of-multiplication-result	result of multiplication in type 'unsigned int' is used as a pointer offset after an implicit widening conversion to type 'size_t'
+tidy	falcon-core/src/crypto/aes.c	bugprone-implicit-widening-of-multiplication-result	result of multiplication in type 'unsigned int' is used as a pointer offset after an implicit widening conversion to type 'size_t'
+tidy	falcon-core/src/crypto/aes.c	bugprone-implicit-widening-of-multiplication-result	result of multiplication in type 'unsigned int' is used as a pointer offset after an implicit widening conversion to type 'size_t'
+tidy	falcon-core/src/crypto/aesni.c	bugprone-implicit-widening-of-multiplication-result	result of multiplication in type 'unsigned int' is used as a pointer offset after an implicit widening conversion to type 'size_t'
+tidy	falcon-core/src/crypto/aesni.c	bugprone-implicit-widening-of-multiplication-result	result of multiplication in type 'unsigned int' is used as a pointer offset after an implicit widening conversion to type 'size_t'
+tidy	falcon-core/src/crypto/aesni.c	bugprone-implicit-widening-of-multiplication-result	result of multiplication in type 'unsigned int' is used as a pointer offset after an implicit widening conversion to type 'size_t'
+tidy	falcon-core/src/crypto/sha256.c	bugprone-implicit-widening-of-multiplication-result	result of multiplication in type 'unsigned int' is used as a pointer offset after an implicit widening conversion to type 'size_t'
+tidy	falcon-core/src/crypto/sha256.c	bugprone-implicit-widening-of-multiplication-result	result of multiplication in type 'unsigned int' is used as a pointer offset after an implicit widening conversion to type 'size_t'
+tidy	falcon-core/src/crypto/sha512.c	bugprone-implicit-widening-of-multiplication-result	result of multiplication in type 'unsigned int' is used as a pointer offset after an implicit widening conversion to type 'size_t'
+tidy	falcon-core/src/crypto/sha512.c	bugprone-implicit-widening-of-multiplication-result	result of multiplication in type 'unsigned int' is used as a pointer offset after an implicit widening conversion to type 'size_t'
+tidy	falcon-efi/src/efi/main.c	misc-use-internal-linkage	function 'efi_main' can be made static to enforce internal linkage
+tidy	falcon-core/src/fs/exfat.c	bugprone-implicit-widening-of-multiplication-result	result of multiplication in type 'unsigned int' is used as a pointer offset after an implicit widening conversion to type 'size_t'
+tidy	falcon-core/src/fs/ext4.c	bugprone-implicit-widening-of-multiplication-result	result of multiplication in type 'unsigned int' is used as a pointer offset after an implicit widening conversion to type 'size_t'
+tidy	falcon-core/src/fs/ext4.c	bugprone-implicit-widening-of-multiplication-result	result of multiplication in type 'unsigned int' is used as a pointer offset after an implicit widening conversion to type 'size_t'
+tidy	falcon-core/src/fs/ext4.c	bugprone-implicit-widening-of-multiplication-result	result of multiplication in type 'unsigned int' is used as a pointer offset after an implicit widening conversion to type 'size_t'
+tidy	falcon-core/src/luks/luks.c	bugprone-implicit-widening-of-multiplication-result	performing an implicit widening conversion to type 'uint64_t' (aka 'unsigned long long') of a multiplication performed in type 'unsigned int'
+tidy	falcon-winjump/src/winjump.c	bugprone-reserved-identifier	declaration uses identifier '_UNICODE', which is a reserved identifier
+tidy	falcon-winjump/src/winjump.c	bugprone-reserved-identifier	declaration uses identifier '_WIN32_WINNT', which is a reserved identifier
+tidy	falcon-winjump/src/winjump.c	clang-analyzer-optin.core.EnumCastOutOfRange	The value '5' provided to the cast expression is not in the valid range of values for '_ATTACH_VIRTUAL_DISK_FLAG'
