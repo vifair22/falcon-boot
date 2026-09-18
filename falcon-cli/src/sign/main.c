@@ -331,6 +331,75 @@ static int render_cmdline(const char *tmpl, const char *iso_arg,
     return SGN_OK;
 }
 
+/* The key of one kernel argument: everything before its '=', or the whole
+ * word. */
+static size_t arg_key_len(const char *w, size_t n)
+{
+    size_t k = 0;
+
+    while (k < n && w[k] != '=')
+        k++;
+    return k;
+}
+
+/* Appends each argument of frag to cmdline unless cmdline already carries an
+ * argument with the same key. The family fragment is what finds the ISO as a
+ * file; the ISO's own entry is what boots it, and where the two name the same
+ * thing (Gentoo's root=live:CDLABEL=) the ISO's own word is the one kept. */
+static int append_fragment(char *cmdline, size_t cap, const char *frag)
+{
+    const char *f = frag;
+
+    while (*f != '\0') {
+        const char *w;
+        size_t wl, kl;
+        const char *c = cmdline;
+        int dup = 0;
+        size_t have;
+
+        while (*f == ' ')
+            f++;
+        w = f;
+        while (*f != '\0' && *f != ' ')
+            f++;
+        wl = (size_t)(f - w);
+        if (wl == 0)
+            break;
+        kl = arg_key_len(w, wl);
+        while (*c != '\0') {
+            const char *x;
+            size_t xl;
+
+            while (*c == ' ')
+                c++;
+            x = c;
+            while (*c != '\0' && *c != ' ')
+                c++;
+            xl = (size_t)(c - x);
+            if (xl > 0 && arg_key_len(x, xl) == kl && memcmp(x, w, kl) == 0)
+                dup = 1;
+        }
+        if (dup)
+            continue;
+        have = strlen(cmdline);
+        if (have + (have ? 1u : 0u) + wl + 1u > cap) {
+            sgn_set_error(SGN_ERR_NOSPACE, "rendered cmdline exceeds %zu bytes",
+                          cap - 1u);
+            return SGN_ERR_NOSPACE;
+        }
+        if (have)
+            cmdline[have++] = ' ';
+        memcpy(cmdline + have, w, wl);
+        cmdline[have + wl] = '\0';
+    }
+    return SGN_OK;
+}
+
+/* The ISO's boot configuration, parsed once per bless. Static: the result
+ * is ~50 KB and the scratch 512 KB, neither of which belongs on a stack. */
+static bootcfg_result g_cfg;
+static char g_cfg_scratch[512u * 1024u];
+
 static int derive_uki_name(const options *o, char *out, size_t cap)
 {
     const char *base;
@@ -398,6 +467,11 @@ static int bless(const options *o)
     const family_desc *fam;
     const char *kernel_member = NULL;
     const char *initrd_member = NULL;
+    /* What the ISO's own boot configuration says to boot, when it says:
+     * the entry, and whether it is the file-boot (loopback) kind. */
+    const bootcfg_entry *entry = NULL;
+    int entry_loop = 0;
+    bootcfg_src cfg;
     char iso_arg[MANIFEST_PATH_MAX + 2u];
     char uki_name[MANIFEST_NAME_MAX];
     char cmdline[CMDLINE_MAX];
@@ -446,7 +520,28 @@ static int bless(const options *o)
     fam = family_detect(&probe);
     sgn_log(SGN_LOG_INFO, "family: %s (%s)", fam->name, sgn_family_slug(fam->id));
 
-    if (fam->id == FAMILY_UNKNOWN && o->cmdline == NULL) {
+    /* The ISO's own configuration (falcon-core/src/media/bootcfg.c): a
+     * loopback entry boots it as a file with the distro's own arguments;
+     * failing that, the CD entry is the base the family's fragment is
+     * added to. Neither is consulted under --cmdline, which is the user
+     * saying they know better. */
+    if (o->cmdline == NULL) {
+        iso_view_bootcfg_src(view, &cfg);
+        if (bootcfg_read(&cfg, BOOTCFG_LOOP, g_cfg_scratch,
+                         sizeof(g_cfg_scratch), &g_cfg) == BOOTCFG_OK) {
+            entry = &g_cfg.entry[g_cfg.pick];
+            entry_loop = 1;
+        } else if (fam->cmdline_template != NULL &&
+                   bootcfg_read(&cfg, BOOTCFG_CD, g_cfg_scratch,
+                                sizeof(g_cfg_scratch), &g_cfg) == BOOTCFG_OK) {
+            entry = &g_cfg.entry[g_cfg.pick];
+        }
+        if (entry != NULL)
+            sgn_log(SGN_LOG_INFO, "boot entry: '%s' from %s%s", entry->title,
+                    g_cfg.source, entry_loop ? " (boots as a file)" : "");
+    }
+
+    if (fam->id == FAMILY_UNKNOWN && o->cmdline == NULL && !entry_loop) {
         size_t count = 0;
         const family_desc *tab = family_table(&count);
         char known[512];
@@ -478,6 +573,13 @@ static int bless(const options *o)
         if (!iso_view_find(view, o->kernel, &kernel_member)) {
             sgn_set_error(SGN_ERR_FORMAT,
                           "--kernel '%s' is not in this ISO", o->kernel);
+            rc = SGN_ERR_FORMAT;
+            goto out;
+        }
+    } else if (entry != NULL) {
+        if (!iso_view_find(view, entry->kernel, &kernel_member)) {
+            sgn_set_error(SGN_ERR_FORMAT, "the ISO's boot entry names kernel "
+                          "%s, which is not in the ISO", entry->kernel);
             rc = SGN_ERR_FORMAT;
             goto out;
         }
@@ -518,6 +620,25 @@ static int bless(const options *o)
     if (o->cmdline != NULL) {
         rc = render_cmdline(o->cmdline, iso_arg, dev, o->iso, cmdline,
                             sizeof(cmdline));
+    } else if (entry != NULL) {
+        /* The entry's own arguments, ${iso_path} filled in for a loopback
+         * entry and dropped for a CD one; then, for a CD entry, the
+         * family's fragment for finding the file. */
+        if (bootcfg_render(entry, entry_loop ? iso_arg : NULL, cmdline,
+                           sizeof(cmdline)) != BOOTCFG_OK) {
+            sgn_set_error(SGN_ERR_NOSPACE, "the ISO's boot entry has a "
+                          "cmdline longer than %zu bytes", sizeof(cmdline) - 1u);
+            rc = SGN_ERR_NOSPACE;
+        } else if (!entry_loop) {
+            char frag[CMDLINE_MAX];
+
+            rc = render_cmdline(fam->cmdline_template, iso_arg, dev, o->iso,
+                                frag, sizeof(frag));
+            if (rc == SGN_OK)
+                rc = append_fragment(cmdline, sizeof(cmdline), frag);
+        } else {
+            rc = SGN_OK;
+        }
     } else if (fam->cmdline_template != NULL) {
         rc = render_cmdline(fam->cmdline_template, iso_arg, dev, o->iso,
                             cmdline, sizeof(cmdline));
@@ -623,7 +744,43 @@ static int bless(const options *o)
     if (rc != SGN_OK)
         goto cleanup;
 
-    if (o->embed_initrd) {
+    if (o->embed_initrd && entry != NULL && o->kernel == NULL &&
+        entry->n_initrd > 0) {
+        /* Every initrd the entry loads, in its order, one after the other:
+         * the kernel unpacks concatenated cpio archives in sequence, which
+         * is how a bootloader passes microcode ahead of the initramfs, and
+         * the wrap has one .initrd section to hold them. */
+        uint8_t i;
+
+        for (i = 0; i < entry->n_initrd; i++) {
+            char piece[PATH_MAX];
+
+            if (!iso_view_find(view, entry->initrd[i], &initrd_member)) {
+                sgn_set_error(SGN_ERR_FORMAT, "the ISO's boot entry names "
+                              "initrd %s, which is not in the ISO",
+                              entry->initrd[i]);
+                rc = SGN_ERR_FORMAT;
+                goto cleanup;
+            }
+            sgn_log(SGN_LOG_INFO, "extracting initramfs /%s", initrd_member);
+            if (i == 0) {
+                rc = iso_view_extract(view, initrd_member, work_initrd);
+            } else {
+                if (snprintf(piece, sizeof(piece), "%s.%u", work_initrd,
+                             (unsigned)i) >= (int)sizeof(piece)) {
+                    sgn_set_error(SGN_ERR_NOSPACE, "staging path too long");
+                    rc = SGN_ERR_NOSPACE;
+                    goto cleanup;
+                }
+                rc = iso_view_extract(view, initrd_member, piece);
+                if (rc == SGN_OK)
+                    rc = sgn_append_file(work_initrd, piece);
+                (void)unlink(piece);
+            }
+            if (rc != SGN_OK)
+                goto cleanup;
+        }
+    } else if (o->embed_initrd) {
         initrd_member = iso_initrd_path(view, fam->id, kernel_member);
         if (initrd_member == NULL) {
             rc = SGN_ERR_FORMAT;    /* iso_initrd_path set the message */

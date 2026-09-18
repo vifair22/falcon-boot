@@ -53,6 +53,7 @@ int run_ext4_tests(void);
 int run_media_fs_tests(void);
 int run_iso9660_tests(void);
 int run_udf_tests(void);
+int run_bootcfg_tests(void);
 int run_fs_tests(void);
 int run_iso_overlay_tests(void);
 int run_part_tests(void);

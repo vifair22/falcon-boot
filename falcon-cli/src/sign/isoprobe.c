@@ -557,6 +557,85 @@ void iso_view_family_probe(iso_view *v, family_probe *fp)
     fp->ctx = v;
 }
 
+/* ------------------------------------------------------------ bootcfg */
+
+static int cfg_read(void *ctx, const char *path, char *buf, size_t cap,
+                    size_t *len)
+{
+    iso_view *v = ctx;
+    const char *member = NULL;
+    fs_file *f = NULL;
+    uint64_t size;
+    int rc;
+
+    *len = 0;
+    if (v == NULL || v->vol == NULL || !iso_view_find(v, path, &member))
+        return 1;
+    if (member_open(v, member, &f) != SGN_OK)
+        return 1;
+    size = fs_file_size(f);
+    if (size > cap) {
+        free(f);
+        *len = (size_t)size;
+        return 1;
+    }
+    rc = fs_file_read(f, 0, size, buf);
+    free(f);
+    if (rc != FS_OK)
+        return 1;
+    *len = (size_t)size;
+    return 0;
+}
+
+/* The regular files directly inside dir, from the index. */
+static int cfg_list(void *ctx, const char *dir,
+                    int (*cb)(void *arg, const char *name), void *arg)
+{
+    iso_view *v = ctx;
+    const char *d = strip_leading(dir);
+    size_t dl = strlen(d), i;
+    int found = 0;
+
+    if (v == NULL || dl == 0)
+        return 1;
+    for (i = 0; i < v->n_entries; i++) {
+        const iso_entry *e = &v->entries[i];
+        const char *rest;
+
+        if (strlen(e->name) <= dl + 1u || !ci_eq(e->name, d, dl) ||
+            e->name[dl] != '/')
+            continue;
+        rest = e->name + dl + 1u;
+        if (strchr(rest, '/') != NULL)
+            continue;
+        found = 1;
+        if (e->is_dir)
+            continue;
+        if (cb(arg, rest) != 0)
+            break;
+    }
+    return found ? 0 : 1;
+}
+
+static int cfg_exists(void *ctx, const char *path)
+{
+    const iso_entry *e = find_entry((iso_view *)ctx, path);
+
+    /* Exact, not the directory-prefix sense iso_view_find allows. */
+    return e != NULL && !e->is_dir &&
+           strlen(e->name) == strlen(strip_leading(path));
+}
+
+void iso_view_bootcfg_src(iso_view *v, bootcfg_src *src)
+{
+    if (src == NULL)
+        return;
+    src->read = cfg_read;
+    src->list = cfg_list;
+    src->exists = cfg_exists;
+    src->ctx = v;
+}
+
 /* ------------------------------------------------------------ extract */
 
 int iso_view_extract(iso_view *v, const char *member, const char *dst)

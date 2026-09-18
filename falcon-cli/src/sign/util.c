@@ -407,6 +407,46 @@ int sgn_file_size(const char *path, uint64_t *out)
     return SGN_OK;
 }
 
+int sgn_append_file(const char *dst, const char *src)
+{
+    static char buf[1u << 16];
+    FILE *in, *out;
+    size_t n;
+    int rc = SGN_OK;
+
+    in = fopen(src, "rb");
+    if (in == NULL) {
+        sgn_set_error_errno(SGN_ERR_IO, "open '%s'", src);
+        return SGN_ERR_IO;
+    }
+    out = fopen(dst, "ab");
+    if (out == NULL) {
+        sgn_set_error_errno(SGN_ERR_IO, "open '%s' to append", dst);
+        (void)fclose(in);
+        return SGN_ERR_IO;
+    }
+    for (;;) {
+        n = fread(buf, 1, sizeof(buf), in);
+        if (n > 0 && fwrite(buf, 1, n, out) != n) {
+            sgn_set_error_errno(SGN_ERR_IO, "append to '%s'", dst);
+            rc = SGN_ERR_IO;
+            break;
+        }
+        if (n < sizeof(buf))
+            break;      /* end of file, or an error ferror reports below */
+    }
+    if (rc == SGN_OK && ferror(in)) {
+        sgn_set_error(SGN_ERR_IO, "read '%s'", src);
+        rc = SGN_ERR_IO;
+    }
+    (void)fclose(in);
+    if (fclose(out) != 0 && rc == SGN_OK) {
+        sgn_set_error_errno(SGN_ERR_IO, "close '%s'", dst);
+        rc = SGN_ERR_IO;
+    }
+    return rc;
+}
+
 int sgn_pad_file(const char *path, uint64_t len)
 {
     uint64_t have = 0;

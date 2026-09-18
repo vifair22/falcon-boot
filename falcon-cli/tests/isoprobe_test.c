@@ -287,6 +287,90 @@ static void test_isoview_arch_image(void **state)
     iso_view_close(v);
 }
 
+static int count_name(void *arg, const char *name)
+{
+    size_t *n = arg;
+
+    (void)name;
+    (*n)++;
+    return 0;
+}
+
+static int stop_at_first(void *arg, const char *name)
+{
+    size_t *n = arg;
+
+    (void)name;
+    (*n)++;
+    return 1;
+}
+
+/* The boot configuration callbacks over the index: exact existence, one
+ * directory level listed, whole files read or refused for size. */
+static void test_isoview_bootcfg_source(void **state)
+{
+    iso_view *v = NULL;
+    bootcfg_src src;
+    char buf[64];
+    size_t len = 0, n = 0;
+
+    (void)state;
+    assert_int_equal(iso_view_open(ISOVIEW_IMG, &v), SGN_OK);
+    iso_view_bootcfg_src(v, &src);
+    iso_view_bootcfg_src(v, NULL);
+
+    assert_true(src.exists(src.ctx, "/arch/boot/grub/grub.cfg"));
+    assert_true(src.exists(src.ctx, "/ARCH/BOOT/GRUB/GRUB.CFG"));
+    assert_false(src.exists(src.ctx, "/arch/boot"));        /* a directory */
+    assert_false(src.exists(src.ctx, "/arch/boot/grub/grub"));
+    assert_false(src.exists(src.ctx, "/nope"));
+
+    assert_int_equal(src.read(src.ctx, "/arch/boot/grub/grub.cfg", buf,
+                              sizeof buf, &len), 0);
+    assert_int_equal(len, 14);
+    assert_memory_equal(buf, "set timeout=5\n", 14);
+    assert_int_equal(src.read(src.ctx, "/arch/boot/grub/grub.cfg", buf, 4,
+                              &len), 1);
+    assert_int_equal(len, 14);                              /* too big */
+    assert_int_equal(src.read(src.ctx, "/nope", buf, sizeof buf, &len), 1);
+    assert_int_equal(src.read(src.ctx, "/arch", buf, sizeof buf, &len), 1);
+
+    /* One level: x86_64 holds two files, boot holds only directories. */
+    assert_int_equal(src.list(src.ctx, "/arch/boot/x86_64", count_name, &n), 0);
+    assert_int_equal(n, 2);
+    n = 0;
+    assert_int_equal(src.list(src.ctx, "/arch/boot", count_name, &n), 0);
+    assert_int_equal(n, 0);
+    n = 0;
+    assert_int_equal(src.list(src.ctx, "/arch/boot/x86_64", stop_at_first,
+                              &n), 0);
+    assert_int_equal(n, 1);
+    assert_int_equal(src.list(src.ctx, "/missing", count_name, &n), 1);
+    assert_int_equal(src.list(src.ctx, "/", count_name, &n), 1);
+
+    /* With nothing that boots, the parser says so. */
+    {
+        static char scratch[64 * 1024];
+        static bootcfg_result res;
+
+        assert_int_equal(bootcfg_read(&src, BOOTCFG_CD, scratch,
+                                      sizeof scratch, &res),
+                         BOOTCFG_ERR_NONE);
+    }
+    iso_view_close(v);
+
+    /* A view with no image behind it reads nothing. */
+    {
+        static const char *const paths[] = { "boot/grub/grub.cfg", NULL };
+
+        assert_int_equal(iso_view_from_paths(paths, NULL, &v), SGN_OK);
+        iso_view_bootcfg_src(v, &src);
+        assert_int_equal(src.read(src.ctx, "/boot/grub/grub.cfg", buf,
+                                  sizeof buf, &len), 1);
+        iso_view_close(v);
+    }
+}
+
 static void test_isoview_rock_ridge_and_udf(void **state)
 {
     char iso[512], img[512], big[512], ref[65], ours[65];
@@ -531,6 +615,7 @@ int run_isoprobe_tests(void)
     };
     const struct CMUnitTest image_tests[] = {
         cmocka_unit_test(test_isoview_arch_image),
+        cmocka_unit_test(test_isoview_bootcfg_source),
         cmocka_unit_test(test_isoview_rock_ridge_and_udf),
         cmocka_unit_test(test_isoview_refusals),
         cmocka_unit_test(test_isoview_corrupt_tree),

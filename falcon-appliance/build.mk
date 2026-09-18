@@ -23,6 +23,7 @@ APPLIANCE := falcon-appliance/src
 APPLIANCE_INIT_SRCS := $(addprefix $(APPLIANCE)/,main.c console.c stick.c \
 	run.c survey.c select.c prepare.c bless.c route.c) \
 	$(CORE_PART) $(CORE_MANIFEST) $(CORE)/media/family.c $(CORE_FS) \
+	$(CORE)/media/bootcfg.c \
 	$(addprefix $(CLI)/sign/,isoprobe.c payload.c util.c) \
 	$(CORE)/crypto/sha256.c $(CORE)/crypto/crypto.c
 

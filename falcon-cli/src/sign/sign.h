@@ -32,6 +32,7 @@
 #include <stddef.h>
 
 #include <media/family.h>
+#include <media/bootcfg.h>
 
 /* Status codes, repo convention: OK zero, errors negative. Every one of
  * these is paired with a message in the error buffer, set by whichever
@@ -143,6 +144,10 @@ int sgn_file_size(const char *path, uint64_t *out);
  */
 int sgn_pad_file(const char *path, uint64_t len);
 
+/* Appends the whole of src to dst. For the initrds a boot entry loads one
+ * after another, which the wrap carries as one concatenated section. */
+int sgn_append_file(const char *dst, const char *src);
+
 /* Removes a directory tree. Used only to take back a staging directory this
  * tool created moments earlier, so that a failed run leaves no half-written
  * prepared folder on p2; it refuses to descend more than a handful of levels
@@ -190,6 +195,11 @@ void iso_view_close(iso_view *v);
 /* The driver the view reads through: "udf", "iso9660", or "none" for a view
  * with no image behind it. For messages. */
 const char *iso_view_reader(const iso_view *v);
+
+/* Fills in a bootcfg_src backed by this view, so
+ * falcon-core/src/media/bootcfg.c reads the ISO's own boot configuration
+ * through the index. */
+void iso_view_bootcfg_src(iso_view *v, bootcfg_src *src);
 
 /* Fills in a family_probe backed by this view, so
  * falcon-core/src/media/family.c fingerprints a real ISO through the same two
