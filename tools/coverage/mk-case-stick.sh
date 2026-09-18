@@ -32,6 +32,7 @@
 #   ISO          the image to put on p2, under its own file name
 #   OUT          output path without the .img suffix
 #   --blessed    also produce OUT.blessed.img
+#   --reuse      keep an existing OUT.img and only (re)make the blessed copy
 #   --bless-arg  passed through to falcon-boot-sign (repeatable), e.g.
 #                --bless-arg --kernel --bless-arg 'boot/vmlinuz*'
 #
@@ -53,10 +54,12 @@ OUT=$2
 shift 2
 
 BLESSED=0
+REUSE=0
 BLESS_ARGS=()
 while [[ $# -gt 0 ]]; do
     case "$1" in
     --blessed) BLESSED=1; shift ;;
+    --reuse) REUSE=1; shift ;;
     --bless-arg)
         [[ $# -ge 2 ]] || { echo "ERROR: --bless-arg needs a value" >&2; exit 1; }
         BLESS_ARGS+=("$2")
@@ -70,9 +73,11 @@ SIGN=build/bin/falcon-boot-sign
 MOK_KEY=build/mok-test/falcon-test-mok.key
 MOK_CRT=build/mok-test/falcon-test-mok.crt
 
-# The serial console for a blessed boot. tty0 stays the last console so the
-# screenshot still shows the boot the way a user would see it.
-BLESS_CONSOLE="console=ttyS0,115200 console=tty0"
+# The serial console for a blessed boot. ttyS0 is LAST, because the last
+# console= is /dev/console: the initramfs's messages and its rescue shell go
+# there and nowhere else, and a harness that cannot read "could not find the
+# ISO" can only time out. The kernel still prints to both.
+BLESS_CONSOLE="console=tty0 console=ttyS0,115200"
 
 [[ -f "$ISO" ]] || { echo "ERROR: $ISO not found" >&2; exit 1; }
 for t in sgdisk mformat mkfs.exfat losetup; do
@@ -129,7 +134,9 @@ ISO_MIB=$(( ($(stat -c%s "$ISO") + 1048575) / 1048576 ))
 P2_MIB=$(( ISO_MIB + 512 ))
 SIZE_MIB=$(( 1 + 64 + P2_MIB + 1 ))
 
-rm -f "$IMG" "$OUT.blessed.img"
+rm -f "$OUT.blessed.img"
+if [[ "$REUSE" -eq 0 || ! -f "$IMG" ]]; then
+rm -f "$IMG"
 truncate -s "${SIZE_MIB}M" "$IMG"
 sgdisk \
     -n 1:1MiB:+64MiB -t 1:ef00 -c 1:"FALCON-ESP" \
@@ -146,6 +153,7 @@ mount_p2 "$IMG" --format
 cp "$ISO" "$MNT/$NAME"
 unmount_p2
 echo "   $IMG: $NAME on p2 (${P2_MIB} MiB)"
+fi
 
 [[ "$BLESSED" -eq 1 ]] || exit 0
 

@@ -87,9 +87,13 @@ QPID=
 finish() {   # finish VERDICT REASON
     local secs=$(( $(date +%s) - T0 ))
 
+    local what=""
+
     if [[ -S "$MON" ]]; then
         MON_SOCK="$MON" falcon-efi/tools/rig-shot.sh screen "$OUTDIR" \
             >/dev/null 2>&1 || true
+        [[ -f "$OUTDIR/screen.ppm" ]] &&
+            what=$(screen_kind "$OUTDIR/screen.ppm")
         rm -f "$OUTDIR/screen.ppm"
     fi
     if [[ -n "$QPID" ]]; then
@@ -98,9 +102,44 @@ finish() {   # finish VERDICT REASON
         QPID=
     fi
     rm -f "$MON" "$VARS"
-    printf '%s\t%s\t%s\n' "$1" "$2" "$secs" > "$RESULT"
-    printf '%s\t%s\t%s\n' "$1" "$2" "$secs"
+    local reason=$2
+    [[ "$1" != PASS && -n "$what" ]] && reason="$reason (screen: $what)"
+    printf '%s\t%s\t%s\n' "$1" "$reason" "$secs" > "$RESULT"
+    printf '%s\t%s\t%s\n' "$1" "$reason" "$secs"
     exit 0
+}
+
+# What the last frame looks like, in a word or two, for a failure's reason.
+# Never a verdict: a screen cannot say whether an OS found its media. It is
+# here because the one case with no serial and no network, Windows Setup,
+# otherwise reads as a bare timeout. Setup draws its dialogs on a
+# near-uniform deep purple (#1A0050 in 24H2 and 25H2).
+screen_kind() {   # screen_kind PPM
+    python3 - "$1" <<'PY' 2>/dev/null || true
+import sys
+d = open(sys.argv[1], 'rb').read()
+fields, i = [], 2
+while len(fields) < 3:
+    while d[i:i+1].isspace():
+        i += 1
+    j = i
+    while not d[j:j+1].isspace():
+        j += 1
+    fields.append(int(d[i:j]))
+    i = j
+w, h = fields[0], fields[1]
+px = d[i + 1:]
+def at(x, y):
+    o = 3 * (y * w + x)
+    return px[o], px[o + 1], px[o + 2]
+edge = [at(x, y) for x in (2, w // 2, w - 3) for y in (2, h - 3)]
+if all(abs(r - 0x1A) < 24 and g < 24 and abs(b - 0x50) < 32 for r, g, b in edge):
+    print('Windows Setup')
+    sys.exit()
+dark = sum(1 for k in range(0, len(px) - 2, 3 * 97) if max(px[k:k+3]) < 40)
+total = len(range(0, len(px) - 2, 3 * 97))
+print('text console' if dark > 0.8 * total else 'graphical')
+PY
 }
 trap 'finish ERROR "interrupted"' INT TERM
 
@@ -161,7 +200,9 @@ T1=$(date +%s)
 # Windows media asks for "any key to boot from CD". Enter takes each menu's
 # default entry, which is what a case means by booting the ISO, and it is
 # harmless to a kernel that is already running.
-NUDGE_EVERY=10
+# Every 2 s for the first 30: Windows' cdboot.efi gives up on its prompt
+# after about five seconds. Every 10 s after that, for slower menus.
+NUDGE_EVERY=2
 NUDGE_FOR=90
 next_nudge=$(( T1 + NUDGE_EVERY ))
 # FALCON_CASE_SHOTS=N keeps a screenshot every N seconds (shot-SECS.png), for
@@ -175,7 +216,11 @@ while (( $(date +%s) - T1 < TIMEOUT )); do
     now=$(date +%s)
     if (( now >= next_nudge && now - T1 <= NUDGE_FOR )); then
         echo "sendkey ret" | socat - UNIX-CONNECT:"$MON" >/dev/null 2>&1 || true
-        next_nudge=$(( now + NUDGE_EVERY ))
+        if (( now - T1 < 30 )); then
+            next_nudge=$(( now + NUDGE_EVERY ))
+        else
+            next_nudge=$(( now + 10 ))
+        fi
     fi
 
     if (( SHOTS > 0 && now >= next_shot )); then
@@ -186,6 +231,19 @@ while (( $(date +%s) - T1 < TIMEOUT )); do
     fi
 
     after=$(serial_text | tail -n +"$((MENU_LINES + 1))")
+
+    # The loader offers to prepare unprepared Windows media before booting
+    # it (DESIGN 6.3.1). The drop route means booting what is on the stick,
+    # so the answer is the offer's "boot unprepared" key, once.
+    if [[ -z "${offered:-}" ]] &&
+       grep -q 'boot unprepared' <<<"$after"; then
+        echo "sendkey b" | socat - UNIX-CONNECT:"$MON" >/dev/null 2>&1 || true
+        offered=1
+        # The handover to the payload starts now, not at the menu keypress:
+        # restart the fast nudges for cdboot's prompt.
+        T1=$now
+        next_nudge=$(( now + NUDGE_EVERY ))
+    fi
 
     if grep -q 'press any key to return to the menu' <<<"$after"; then
         why=$(grep -m1 -E 'failed while|exited, status|refused' <<<"$after" |
@@ -209,6 +267,6 @@ while (( $(date +%s) - T1 < TIMEOUT )); do
            grep -q .; then
         finish PASS "dhcp from the guest"
     fi
-    sleep 3
+    sleep 1
 done
 finish FAIL "no userland within ${TIMEOUT}s"

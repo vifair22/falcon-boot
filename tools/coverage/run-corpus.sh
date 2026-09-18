@@ -86,13 +86,22 @@ while IFS=$'\t' read -r id tier family sha file source; do
     blessable=1
     [[ "$family" == windows ]] && blessable=0
 
+    # A bless the sign tool refused is remembered beside the stick, so it is
+    # not retried every run; deleting the marker retries it.
     if [[ ! -f "$stick.img" || "$iso" -nt "$stick.img" ]]; then
         echo "== $id: building sticks"
+        rm -f "$stick.unblessable"
         args=()
         if has_route blessed && [[ $blessable -eq 1 ]]; then
             args+=(--blessed)
         fi
-        tools/coverage/mk-case-stick.sh "$iso" "$stick" "${args[@]}" || true
+        tools/coverage/mk-case-stick.sh "$iso" "$stick" "${args[@]}" ||
+            touch "$stick.unblessable"
+    elif has_route blessed && [[ $blessable -eq 1 && ! -f "$stick.blessed.img" &&
+                                 ! -f "$stick.unblessable" ]]; then
+        echo "== $id: blessing"
+        tools/coverage/mk-case-stick.sh "$iso" "$stick" --blessed --reuse ||
+            touch "$stick.unblessable"
     fi
 
     for st in $STATES; do
