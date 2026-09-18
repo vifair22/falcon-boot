@@ -169,7 +169,10 @@ the tree, so `#include <fs/exfat.h>` means one file wherever it is written.
 - `falcon-winjump/` the WinPE jump binary (DESIGN Section 6.3), a Win64
   console program.
 - `docs/` DESIGN.md (authoritative) and later Manual.md. `tools/` at the root
-  holds only what spans the repo: `analyze.sh`.
+  holds only what spans the repo: `analyze.sh`, and `coverage/`, the corpus
+  harness of docs/notes/coverage-roadmap.md (a pinned ISO manifest, one rig
+  stick per ISO, each booted under OVMF in three Secure Boot states and
+  judged from serial and a DHCP capture, rendered to `docs/coverage.md`).
 
 `make check-tools` verifies the toolchain. Objects land in
 `build/obj/<flavour>/<source path>.o` (flavours: `efi-release`, `host`,

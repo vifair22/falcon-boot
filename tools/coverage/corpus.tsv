@@ -1,0 +1,37 @@
+# falcon-boot coverage corpus (docs/notes/coverage-roadmap.md Section 2).
+#
+# One ISO per row, pinned by SHA-256. tools/coverage/corpus-fetch.sh fetches
+# and verifies them into $FALCON_CORPUS (default /mnt/falcon-corpus/corpus);
+# the harness boots each one and the scorecard reports it.
+#
+# Columns, tab-separated:
+#   id        short stable name; the scorecard row and the harness's file name
+#   tier      A, B or C (roadmap Section 2)
+#   family    what the ISO is, for the scorecard; not what family.c says
+#   sha256    of the file as published
+#   file      the name it is stored under in the corpus directory
+#   source    an https URL, or local:<note> for media with no stable public
+#             URL (Windows, a superseded snapshot); those are copied in by hand
+#             or with --local DIR and still verified against sha256
+#
+# Rows are added as a family is worked on. A row is removed only when its URL
+# dies and a successor is pinned in its place.
+debian-live-13.7	A	debian-live	040a44f35186321eb6cdaab52a8a2d06224fe6b77f6fbb9f1861ad89c14e17ec	debian-live-13.7.0-amd64-standard.iso	https://cdimage.debian.org/debian-cd/current-live/amd64/iso-hybrid/debian-live-13.7.0-amd64-standard.iso
+fedora-ws-44	A	fedora-live	1620295f6a00c27c3208f0c00b8ece4eab1ec69b9002152d97488bf26a426ddf	Fedora-Workstation-Live-44-1.7.x86_64.iso	https://dl.fedoraproject.org/pub/fedora/linux/releases/44/Workstation/x86_64/iso/Fedora-Workstation-Live-44-1.7.x86_64.iso
+ubuntu-26.04.1	A	casper	601e30fbf5d97759367c632e2c33630665039b7e2158fd068403da3ccf1bda1f	ubuntu-26.04.1-desktop-amd64.iso	https://releases.ubuntu.com/26.04/ubuntu-26.04.1-desktop-amd64.iso
+kubuntu-26.04	A	casper	95ce9cf68f13015b9a88bd1ef86fcf7eda77c99979fda48c69e28aa0a84f88ac	kubuntu-26.04-desktop-amd64.iso	https://cdimage.ubuntu.com/kubuntu/releases/26.04/release/kubuntu-26.04-desktop-amd64.iso
+mint-22.3	A	casper	a081ab202cfda17f6924128dbd2de8b63518ac0531bcfe3f1a1b88097c459bd4	linuxmint-22.3-cinnamon-64bit.iso	https://mirrors.edge.kernel.org/linuxmint/stable/22.3/linuxmint-22.3-cinnamon-64bit.iso
+opensuse-tw-20260916	A	suse-live	7a483e6c4a17eb1a118dcf6ddc098bbea07ac9bf0b60087faeefb6cb61e973c2	openSUSE-Tumbleweed-XFCE-Live-x86_64-Snapshot20260916-Media.iso	https://download.opensuse.org/tumbleweed/iso/openSUSE-Tumbleweed-XFCE-Live-x86_64-Snapshot20260916-Media.iso
+manjaro-26.1.0	A	manjaro	b4c94d45c0da1992dfa9c7f3fbfd1bd5ebbdebaaa61f994660e0304357eb029f	manjaro-gnome-26.1.0-260812-linux71.iso	https://download.manjaro.org/gnome/26.1.0/manjaro-gnome-26.1.0-260812-linux71.iso
+arch-2026.09.01	A	arch	be8458032f8105e60ee2a3067f950b6e3c007ee51b38dac50e8b48e765561c91	archlinux-2026.09.01-x86_64.iso	https://geo.mirror.pkgbuild.com/iso/2026.09.01/archlinux-2026.09.01-x86_64.iso
+arch-2026.01.01	A	arch	16502a7c18eed827ecead95c297d26f9f4bd57c4b3e4a8f4e2b88cf60e412d6f	archlinux-2026.01.01-x86_64.iso	https://archive.archlinux.org/iso/2026.01.01/archlinux-2026.01.01-x86_64.iso
+systemrescue-13.02	A	systemrescue	ad4d670b72859d887c7960142a9a9d36a3e50446694a035e254442f65d6e7572	systemrescue-13.02-amd64.iso	https://fastly-cdn.system-rescue.org/releases/13.02/systemrescue-13.02-amd64.iso
+kali-2026.2	A	debian-live	49e90e694d1b3dedd47f94afbe99dfdd5afb41c8462b638bbd332929769c773a	kali-linux-2026.2-live-amd64.iso	https://cdimage.kali.org/current/kali-linux-2026.2-live-amd64.iso
+clonezilla-3.3.3-15	A	debian-live	8d3b23d957b97b516e3f6ec30de2850387c8537cb911aa0fe3575fee9665296e	clonezilla-live-3.3.3-15-amd64.iso	https://downloads.sourceforge.net/project/clonezilla/clonezilla_live_stable/3.3.3-15/clonezilla-live-3.3.3-15-amd64.iso
+gentoo-min-20260913	A	gentoo	4f155acdffd6b9ea88c69a06a22fb4db1ca780d37fd11dd370510ec28a3ab546	install-amd64-minimal-20260913T163055Z.iso	https://distfiles.gentoo.org/releases/amd64/autobuilds/20260913T163055Z/install-amd64-minimal-20260913T163055Z.iso
+debian-netinst-13.7	B	debian-installer	a7ef94ac2fb9a7fec454552abd629b7cc9d5155c886165a45649f5ce6167e355	debian-13.7.0-amd64-netinst.iso	https://cdimage.debian.org/debian-cd/current/amd64/iso-cd/debian-13.7.0-amd64-netinst.iso
+alpine-ext-3.24.2	B	alpine	a22115a46a1bcd876234a6cd43797fe19f4acfc4512fb41ea64e16cc2ffb4d90	alpine-extended-3.24.2-x86_64.iso	https://dl-cdn.alpinelinux.org/alpine/v3.24/releases/x86_64/alpine-extended-3.24.2-x86_64.iso
+proxmox-ve-9.2-1	B	proxmox	4e88fe416df9b527624a175f24c9aa07c714d3332afb1ee3dbf3879573ef2c6c	proxmox-ve_9.2-1.iso	https://enterprise.proxmox.com/iso/proxmox-ve_9.2-1.iso
+gentoo-min-20260510	A	gentoo	64d0ec021276b899ed2e702d6dcfea3a05e6529ae91ffa4632fe0d36668430d3	gentoo-20260510T170106Z.iso	local:install-amd64-minimal-20260510T170106Z.iso, rotated off distfiles.gentoo.org; the image blessed and booted on 2026-09-18
+windows-11-25h2	A	windows	d141f6030fed50f75e2b03e1eb2e53646c4b21e5386047cb860af5223f102a32	windows-11-25h2.iso	local:Windows 11 25H2 x64 multi-edition, from Microsoft's download page (no stable URL)
+windows-server-2025	A	windows	854109e1f215a29fc3541188297a6ca97c8a8f0f8c4dd6236b78dfdf845bf75e	windows-server-2025.iso	local:Windows Server 2025 evaluation, from Microsoft's evaluation center (no stable URL)
