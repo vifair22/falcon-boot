@@ -2,9 +2,10 @@
  *
  * Wraps an ISO's kernel in a minimal signed UKI so the ISO can boot with
  * Secure Boot validation left on, and records the fact in the p2 manifest.
- * Ordinary Linux userland C: it shells out to bsdtar, 7-Zip, ukify and
- * sbsign rather than reimplementing ISO9660, UDF, PE assembly or
- * Authenticode, which is the vendoring line DESIGN Section 8.1 draws. It never reimplements
+ * Ordinary Linux userland C: it shells out to bsdtar, 7-Zip and sbsign
+ * rather than reimplementing ISO9660, UDF or Authenticode, which is the
+ * vendoring line DESIGN Section 8.1 draws. The UKI wrap itself is built here
+ * (uki.c), not by ukify: DESIGN Section 8.1 says why. It never reimplements
  * signing and it never holds anything but the key file the user pointed it
  * at, which stays the caller's problem to keep encrypted at rest.
  *

@@ -16,7 +16,6 @@
 #   bsdtar       lists and extracts the ISO (this is what `sign` reads with).
 #                Not the host's: mk-bsdtar.sh builds one without XAR support,
 #                which is what dragged libxml2 and ICU into the image
-#   ukify        wraps the extracted kernel into a UKI
 #   sbsign       signs that wrap, and appends to a bare payload
 #   sbverify     counts the signatures a bare payload carries before and after
 #                (DESIGN Section 7.2: blessing one must ADD ours and keep the
@@ -39,25 +38,25 @@
 #                  staged beside the sign tool because that is the first place
 #                  falcon-cli/src/sign/prepare.c looks for it
 #
-# plus the portable `sign` tool itself as build/bin/falcon-boot-sign-static.
-# That is the point of the static link: the appliance route and the host route
-# run the SAME implementation (DESIGN Section 8), not two that agree today.
+# plus the portable `sign` tool itself as build/bin/falcon-boot-sign-static,
+# which also builds the UKI wrap (falcon-cli/src/sign/uki.c) and the stub it
+# wraps with. That is the point of the static link: the appliance route and
+# the host route run the SAME implementation (DESIGN Section 8), not two that
+# agree today.
 #
 # Everything else in the image is closure: the shared libraries those programs
-# need (walked with ldd), the Python runtime ukify is written in, and the
-# kernel modules Arch ships outside its vmlinuz (dm-crypt, exfat, loop and
-# vfat, plus what modules.dep says they need). There is no shell, no network
-# tooling, and no package manager.
+# need (walked with ldd), and the kernel modules Arch ships outside its
+# vmlinuz (dm-crypt, exfat, loop and vfat, plus what modules.dep says they
+# need). There is no shell, no interpreter, no network tooling, and no
+# package manager.
 #
-# What that costs, measured 2026-09-13 on this host: 83 MB of initramfs
-# uncompressed, 24 MB compressed, a 40 MB UKI next to a 17 MB kernel, and ten
-# seconds to build. Preparation's whole share of that is 3.5 MB raw and 1.3 MB
-# compressed: 7-Zip is 2.9 MB of it and libwim 0.4 MB, and the libstdc++ 7-Zip
-# needs was already in the image. That is the entire price of the Windows route
-# living on the stick rather than on a host. The largest single item left is
-# the Python tree; see the PYTHON note below. libicudata (32 MB) used to be
-# larger still, pulled in by the host bsdtar's XAR support, until the image
-# got a bsdtar of its own (mk-bsdtar.sh).
+# What that costs, measured 2026-09-18 on this host: 27 MB of initramfs
+# uncompressed, 8.9 MB compressed, a 25.6 MB UKI of which 16.6 MB is the
+# kernel, and ten seconds to build. The Windows route's share is 7-Zip (3.5 MB
+# with its 7z.so) plus the libstdc++ only it needs (2.9 MB), and libwim
+# (0.4 MB). Before 2026-09-18 the initramfs was 97 MB: ukify's Python runtime
+# (33 MB) and the ICU tables behind the host bsdtar's XAR support (32 MB) are
+# what went.
 #
 # Usage: falcon-appliance/image/mk-appliance.sh
 # Env:
@@ -85,6 +84,7 @@ INITRD="$OUT/appliance-initrd.zst"
 UKI="$OUT/appliance-uki.efi"
 UKI_SIGNED="$OUT/appliance-uki-signed.efi"
 
+SIGN=build/bin/falcon-boot-sign
 SIGN_STATIC=build/bin/falcon-boot-sign-static
 BSDTAR=build/appliance/bsdtar
 WINJUMP=build/bin/winjump.exe
@@ -127,18 +127,6 @@ mapfile -t BINARIES < <(read_list "$IMAGE_DIR/programs.list")
 
 mapfile -t MODULES < <(read_list "$IMAGE_DIR/modules.list")
 
-# PYTHON: ukify is a Python program, so the appliance carries an interpreter.
-# Everything here is dropped rather than kept: test suites, the GUI and REPL
-# support, the documentation database, and anything that exists to install
-# more Python. The result is measured at the end of this script; if it ever
-# stops being a fraction of the kernel it sits next to, the conversation to
-# have is about a compiled ukify, not about trimming this list further.
-PY_PRUNE=(
-    test idlelib tkinter turtledemo pydoc_data ensurepip lib2to3 venv
-    __pycache__ sqlite3 dbm wsgiref xmlrpc zoneinfo curses asyncio
-    multiprocessing unittest distutils
-)
-
 WORK_MNT_ISO=
 WORK_MNT_SFS=
 
@@ -156,7 +144,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-for t in bsdtar cpio readelf ukify zstd sudo; do
+for t in bsdtar cpio readelf zstd sudo; do
     command -v "$t" >/dev/null 2>&1 || {
         echo "ERROR: $t not found" >&2
         exit 1
@@ -173,6 +161,10 @@ done
     echo "ERROR: $INIT not built (run: make appliance)" >&2
     exit 1
 }
+[[ -x "$SIGN" ]] || {
+    echo "ERROR: $SIGN not built (run: make cli)" >&2
+    exit 1
+}
 [[ -f "$SIGN_STATIC" ]] || {
     echo "ERROR: $SIGN_STATIC not built (run: make cli)" >&2
     exit 1
@@ -184,29 +176,6 @@ done
 [[ -f "$WINJUMP" ]] || {
     echo "ERROR: $WINJUMP not built (run: make winjump). Without it the" >&2
     echo "       appliance can survey Windows media but not prepare it." >&2
-    exit 1
-}
-
-# ukify's shebang names its interpreter, and the appliance copies that binary
-# in (see programs.list), so what is wanted is the real executable. A shebang
-# may name it through env - Arch ships "#!/usr/bin/env python3" - and env is a
-# launcher, not an interpreter: copying it into the appliance would put a
-# program there that looks up a PATH the appliance does not have.
-UKIFY=$(command -v ukify) || { echo "ERROR: ukify not on PATH" >&2; exit 1; }
-PYTHON=$(head -1 "$UKIFY" | sed 's|^#!||; s|^[[:space:]]*||')
-case "$PYTHON" in
-    */env\ *) PYTHON=$(command -v "${PYTHON#* }") ;;
-esac
-PYTHON=$(readlink -f "$PYTHON" 2>/dev/null)
-[[ -n "$PYTHON" && -x "$PYTHON" ]] || {
-    echo "ERROR: could not resolve ukify's interpreter from $UKIFY" >&2
-    exit 1
-}
-PY_VER=$("$PYTHON" -c 'import sys; print("python%d.%d" % sys.version_info[:2])')
-PY_LIB="/usr/lib/$PY_VER"
-[[ -d "$PY_LIB" ]] || { echo "ERROR: no standard library at $PY_LIB" >&2; exit 1; }
-PEFILE=$("$PYTHON" -c 'import pefile; print(pefile.__file__)' 2>/dev/null) || {
-    echo "ERROR: ukify needs the pefile module and it is not installed" >&2
     exit 1
 }
 
@@ -354,7 +323,7 @@ unwrap() {
 }
 
 LIBS=()
-for b in "${BINARIES[@]}" "$PYTHON"; do
+for b in "${BINARIES[@]}"; do
     t=$(unwrap "$b")
     if [[ -n "$t" ]]; then
         mkdir -p "$(dirname "$ROOT$b")"
@@ -371,7 +340,7 @@ for b in "${BINARIES[@]}" "$PYTHON"; do
         done
         continue
     fi
-    if [[ "$(head -c2 "$b")" == '#!' && "$b" != "$PYTHON" ]]; then
+    if [[ "$(head -c2 "$b")" == '#!' ]]; then
         echo "ERROR: $b is a script this builder cannot unwrap, and the" \
              "image has no shell to run it" >&2
         exit 1
@@ -395,13 +364,13 @@ done
 # ENOENT: bsdtar, 7z and cryptsetup all "missing" while plainly present. The
 # Gentoo host this was first built on has a real /lib64, which is why the
 # walk above was enough there.
-for b in "${BINARIES[@]}" "$PYTHON"; do
+for b in "${BINARIES[@]}"; do
     i=$(interp "$ROOT$b")
     if [[ -n "$i" && ! -e "$ROOT$i" ]]; then
         copy_to_root "$i"
     fi
 done
-echo "   binaries: ${#BINARIES[@]} + bsdtar + $PY_VER, libraries: ${#LIBS[@]}"
+echo "   binaries: ${#BINARIES[@]} + bsdtar, libraries: ${#LIBS[@]}"
 
 # The loader finds a library by SONAME through the cache, not by the path ldd
 # printed, and this image has no cache of the host's. Without one, a library
@@ -427,32 +396,6 @@ copy_to_root "$STUB"
 cp "$WINJUMP" "$ROOT/usr/bin/winjump.exe"
 chmod 0644 "$ROOT/usr/bin/winjump.exe"
 
-# ukify, with its shebang pointed at the interpreter resolved above. The sign
-# tool execs ukify directly, so the kernel reads that line, and Arch ships
-# "#!/usr/bin/env python3": an image without env (there is none, see the PYTHON
-# note) fails that exec with ENOENT. Gentoo's names python outright, which is
-# why a straight copy worked until the stick was rebuilt on Arch.
-{ printf '#!%s\n' "$PYTHON"; tail -n +2 "$UKIFY"; } > "$ROOT/usr/bin/ukify"
-chmod 0755 "$ROOT/usr/bin/ukify"
-
-# ---- the Python runtime ukify needs ----
-echo "== staging $PY_VER (ukify is a Python program)"
-mkdir -p "$ROOT$PY_LIB"
-EXCL=()
-for p in "${PY_PRUNE[@]}"; do
-    EXCL+=(--exclude="$p")
-done
-tar -C "$PY_LIB" -cf - "${EXCL[@]}" --exclude=site-packages . |
-    tar -C "$ROOT$PY_LIB" -xf -
-mkdir -p "$ROOT$PY_LIB/site-packages"
-cp "$PEFILE" "$ROOT$PY_LIB/site-packages/"
-# pefile's only dependency, a package of Windows ordinal tables.
-if [[ -d "$(dirname "$PEFILE")/ordlookup" ]]; then
-    cp -r "$(dirname "$PEFILE")/ordlookup" "$ROOT$PY_LIB/site-packages/"
-fi
-find "$ROOT$PY_LIB" -name '__pycache__' -type d -prune -exec rm -rf {} +
-echo "   python tree: $(du -sh "$ROOT$PY_LIB" | cut -f1)"
-
 # ---- the rest of the filesystem ----
 #
 # Mount points only. /init creates nothing it can avoid creating, but the
@@ -463,31 +406,17 @@ mkdir -p "$ROOT"/{dev,proc,sys,tmp,run,mnt/p2,mnt/p3,root,etc}
 printf 'root:x:0:0:root:/root:/bin/false\n' > "$ROOT/etc/passwd"
 printf 'root:x:0:\n' > "$ROOT/etc/group"
 
-# ukify reads /usr/lib/os-release to fill the .osrel section of everything it
-# builds, and refuses to run without it. On a host that file describes the
-# host; here it has to describe something, and the honest answer for a wrap
-# built on this stick is the stick.
-#
-# falcon-boot reads .osrel to label menu entries
-# (falcon-core/src/media/osrel.c), and so does sd-boot, so this string is
-# user-visible rather than decorative.
-cat > "$ROOT/usr/lib/os-release" <<'OSREL'
-NAME="falcon-boot blessed media"
-ID=falcon-boot
-PRETTY_NAME="falcon-boot blessed media"
-OSREL
-
 # ---- pack ----
 #
-# zstd because the initramfs is dominated by the Python tree and an extra
-# 30 MB of image is 30 MB of RAM at boot; the kernel this runs on has
-# CONFIG_RD_ZSTD (verified against the ISO kernel's own config).
+# zstd because every megabyte of image is a megabyte of RAM at boot; the
+# kernel this runs on has CONFIG_RD_ZSTD (verified against the ISO kernel's
+# own config).
+#
 # Every program the image can exec must find its interpreter IN the image:
 # the ELF loader it names, or the #! line of a script. Checked over /init and
 # the bin directories as staged rather than over the BINARIES list, so a
 # program that arrives some other way is held to it too, and through symlinks
-# resolved inside the image. Libraries and the Python tree's own scripts are
-# not exec'd and are not checked. This is the check that would have stopped
+# resolved inside the image. Libraries are not exec'd and are not checked. This is the check that would have stopped
 # the 2026-09-15 image before it reached a stick.
 echo "== checking every staged program's interpreter"
 bad=0
@@ -523,25 +452,26 @@ echo "   initramfs: $INITRD ($(stat -c%s "$INITRD") bytes compressed, $RAW raw)"
 
 # ---- the UKI ----
 #
-# --os-release is passed EXPLICITLY. Without it ukify falls back to the build
-# host's /usr/lib/os-release, and the appliance then carries whatever distro
-# built it: the first one built on the Gentoo workstation announced itself in
-# the loader menu as "Gentoo Linux", which is both wrong and the least useful
-# thing that entry could say. What it is does not depend on where it was made.
-echo "== ukify build"
+# Built by the sign tool's own UKI builder, the one that wraps every blessed
+# kernel, so the image and what it produces are laid out by one
+# implementation. The .osrel names what the image is, which does not depend on
+# where it was built: the first appliance, built with ukify's host default on
+# the Gentoo workstation, announced itself in the loader menu as "Gentoo
+# Linux".
+echo "== building the UKI"
 APPLIANCE_OSREL=$(mktemp)
 cat > "$APPLIANCE_OSREL" <<'OSREL'
 NAME="falcon-boot signing appliance"
 ID=falcon-boot-appliance
 PRETTY_NAME="falcon-boot signing appliance"
 OSREL
-ukify build \
-    --linux="$KERNEL" \
-    --initrd="$INITRD" \
-    --cmdline="$CMDLINE" \
-    --stub="$STUB" \
-    --os-release="@$APPLIANCE_OSREL" \
-    --output="$UKI" >/dev/null
+"$SIGN" uki \
+    --linux "$KERNEL" \
+    --initrd "$INITRD" \
+    --cmdline "$CMDLINE" \
+    --stub "$STUB" \
+    --os-release "$APPLIANCE_OSREL" \
+    --output "$UKI"
 rm -f "$APPLIANCE_OSREL"
 echo "   unsigned UKI: $UKI ($(stat -c%s "$UKI") bytes)"
 

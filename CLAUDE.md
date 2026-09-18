@@ -151,7 +151,8 @@ the tree, so `#include <fs/exfat.h>` means one file wherever it is written.
     whose findings are in `docs/notes/`.
 - `falcon-cli/` host tooling, Linux userland C never linked into the loader:
   `src/mkstick`, `src/sign`, and their shared `src/common`. May shell out to
-  `cryptsetup`, `sbsign`, `mkfs.*`, `ukify`. The sign tool is also linked
+  `cryptsetup`, `sbsign`, `mkfs.*`; it builds UKIs itself (`sign/uki.c`,
+  byte-identical to ukify). The sign tool is also linked
   static for the appliance.
 - `falcon-appliance/` the on-stick signing appliance. `src/` is PID 1, split
   by job (`appliance.h` has the map: `main`, `console`, `stick`, `run`,

@@ -673,7 +673,7 @@ say_to_appliance "yes"
 wait_for_from "$CONSOLE_LOG" "$RUN1_MARK" "FALCON-APPLIANCE-SELECTED 1" 60
 wait_for_from "$CONSOLE_LOG" "$RUN1_MARK" "FALCON-APPLIANCE-SIGNED" 900
 echo "   TIMING bless $(( ($(date +%s%N) - T_SIGN) / 1000000 )) ms" \
-     "(hash the ISO, extract the kernel, ukify, sbsign, record)"
+     "(hash the ISO, extract the kernel, wrap, sbsign, record)"
 SIGNED1=$(tail -c "+$(( RUN1_MARK + 1 ))" "$CONSOLE_LOG" |
           grep -a "FALCON-APPLIANCE-SIGNED" | tail -1 | sed 's/\r$//')
 echo "  $SIGNED1"

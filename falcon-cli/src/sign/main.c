@@ -7,8 +7,8 @@
  *   2. fingerprint it through falcon-core/src/media/family.c, over that listing
  *   3. find the family's kernel inside the ISO
  *   4. render the family's cmdline template with the ISO's path on p2
- *   5. extract the kernel, wrap it with ukify into a minimal UKI whose
- *      .cmdline is that string
+ *   5. extract the kernel, wrap it into a minimal UKI whose .cmdline is
+ *      that string (uki.c, laid out as ukify lays it out)
  *   6. sign the wrap with sbsign and the caller's MOK key
  *   7. hash the ISO and upsert its manifest record
  *
@@ -31,6 +31,7 @@
 #include <sign/manifestio.h>
 #include <sign/payload.h>
 #include <sign/prepare.h>
+#include <sign/uki.h>
 
 #include <manifest/manifest.h>
 
@@ -42,9 +43,7 @@
 
 #define CMDLINE_MAX 4096u
 
-/* ukify's own default, named here so --stub documents what it overrides and
- * so a missing systemd-boot is one clear message instead of a ukify traceback. */
-#define DEFAULT_STUB "/usr/lib/systemd/boot/efi/linuxx64.efi.stub"
+#define DEFAULT_STUB UKI_DEFAULT_STUB
 
 #define BLESSED_DIR SGN_BLESSED_DIR
 
@@ -404,16 +403,15 @@ static int bless(const options *o)
     int replaced = 0;
     int rc;
 
-    /* Every helper up front: a missing ukify three minutes into hashing a
-     * 5 GB ISO is a worse message than a missing ukify now. 7z is not in this
+    /* Every helper up front: a missing sbsign three minutes into hashing a
+     * 5 GB ISO is a worse message than a missing sbsign now. 7z is not in this
      * list because it is a soft dependency: without it Linux media still
      * blesses, and iso_view_open warns about the UDF namespace it could not
      * read rather than refusing the whole run. */
-    if (!sgn_have_program("bsdtar") || !sgn_have_program("ukify") ||
-        !sgn_have_program("sbsign")) {
+    if (!sgn_have_program("bsdtar") || !sgn_have_program("sbsign")) {
         sgn_set_error(SGN_ERR_EXEC,
-                      "need bsdtar, ukify and sbsign on PATH (bsdtar reads "
-                      "the ISO, ukify builds the UKI, sbsign signs it)");
+                      "need bsdtar and sbsign on PATH (bsdtar reads the ISO, "
+                      "sbsign signs the UKI)");
         return SGN_ERR_EXEC;
     }
     if (!sgn_file_exists(o->stub)) {
@@ -649,39 +647,17 @@ static int bless(const options *o)
     }
 
     {
-        char a_linux[PATH_MAX + 16];
-        char a_stub[PATH_MAX + 16];
-        char a_out[PATH_MAX + 16];
-        char a_initrd[PATH_MAX + 16];
-        char *a_cmdline;
-        char *argv[9];
-        size_t n = 0;
+        uki_spec spec;
 
-        a_cmdline = malloc(strlen(cmdline) + 16u);
-        if (a_cmdline == NULL) {
-            sgn_set_error(SGN_ERR_IO, "out of memory");
-            rc = SGN_ERR_IO;
-            goto cleanup;
-        }
-        (void)sprintf(a_cmdline, "--cmdline=%s", cmdline);
-        (void)snprintf(a_linux, sizeof(a_linux), "--linux=%s", work_kernel);
-        (void)snprintf(a_stub, sizeof(a_stub), "--stub=%s", o->stub);
-        (void)snprintf(a_out, sizeof(a_out), "--output=%s", work_uki);
-        (void)snprintf(a_initrd, sizeof(a_initrd), "--initrd=%s", work_initrd);
+        spec.stub = o->stub;
+        spec.kernel = work_kernel;
+        spec.initrd = o->embed_initrd ? work_initrd : NULL;
+        spec.cmdline = cmdline;
+        spec.osrel = UKI_BLESSED_OSREL;
+        spec.out = work_uki;
 
-        argv[n++] = sgn_arg("ukify");
-        argv[n++] = sgn_arg("build");
-        argv[n++] = a_linux;
-        argv[n++] = a_cmdline;
-        argv[n++] = a_stub;
-        if (o->embed_initrd)
-            argv[n++] = a_initrd;
-        argv[n++] = a_out;
-        argv[n] = NULL;
-
-        sgn_log(SGN_LOG_INFO, "ukify build");
-        rc = sgn_run(argv);
-        free(a_cmdline);
+        sgn_log(SGN_LOG_INFO, "building the UKI");
+        rc = uki_build(&spec);
         if (rc != SGN_OK)
             goto cleanup;
     }
@@ -740,6 +716,7 @@ typedef struct {
 
 static const sgn_command g_commands[] = {
     { "prepare", sgn_prepare_main },
+    { "uki",     sgn_uki_main },
 };
 
 int main(int argc, char **argv)

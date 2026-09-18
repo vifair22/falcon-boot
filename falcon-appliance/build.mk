@@ -44,10 +44,11 @@ $(APPLIANCE_BSDTAR): falcon-appliance/image/mk-bsdtar.sh
 # Embeds $(SIGN_STATIC), so the two routes of Section 7.5 run one
 # implementation, and $(WINJUMP), which is what preparation injects into a
 # Windows image (Section 6.3) and the one file of the prepare path the
-# appliance cannot fetch for itself. The test MOK is only for the optional
-# signed copy; mkstick signs the real one on its way onto p3.
-appliance: $(APPLIANCE_INIT) $(APPLIANCE_BSDTAR) $(SIGN_STATIC) $(WINJUMP) \
-		$(MOK_KEY)
+# appliance cannot fetch for itself. The image itself is wrapped by $(SIGN)'s
+# UKI builder, the one that wraps every blessed kernel. The test MOK is only
+# for the optional signed copy; mkstick signs the real one on its way onto p3.
+appliance: $(APPLIANCE_INIT) $(APPLIANCE_BSDTAR) $(SIGN) $(SIGN_STATIC) \
+		$(WINJUMP) $(MOK_KEY)
 	falcon-appliance/image/mk-appliance.sh
 
 # Built by the product tool: mkstick generates the MOK, signs both UKIs, and

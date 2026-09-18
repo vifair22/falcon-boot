@@ -17,10 +17,10 @@ MKSTICK_SRCS := $(CLI_COMMON) $(addprefix $(CLI)/mkstick/,main.c cleanup.c \
 MKSTICK_CORE := $(CORE_PART) $(CORE_FS) $(CORE_LUKS) $(CORE_CRYPTO)
 
 SIGN_SRCS := $(addprefix $(CLI)/sign/,main.c util.c isoprobe.c manifestio.c \
-	payload.c wimext.c prepcore.c prepare.c)
+	payload.c wimext.c prepcore.c prepare.c uki.c)
 
 SIGN_CORE := $(CORE_MANIFEST) $(CORE_MANIFEST_WRITE) $(CORE)/media/family.c \
-	$(CORE_PART) $(CORE)/crypto/sha256.c $(CORE)/crypto/crypto.c
+	$(CORE_PART) $(CORE_PE) $(CORE)/crypto/sha256.c $(CORE)/crypto/crypto.c
 
 HOST_SRCS += $(MKSTICK_SRCS) $(MKSTICK_CORE) $(SIGN_SRCS) $(SIGN_CORE)
 
@@ -57,8 +57,8 @@ test-isoview:
 # ---- tests ----
 #
 # The bless tool's logic, split out of the code that spawns helpers and loop
-# mounts: the ISO view, payload recognition, the WIM header reader and the
-# preparation decisions. util.c comes along because isoprobe calls into it,
+# mounts: the ISO view, payload recognition, the WIM header reader, the
+# preparation decisions and the UKI builder. util.c comes along because isoprobe calls into it,
 # not as a unit under test; its subprocess runners are exercised by running
 # the tool.
 #
@@ -71,11 +71,11 @@ test-isoview:
 # compromise rather than an oversight.
 
 CLI_TESTS := $(addprefix falcon-cli/tests/,main.c isoprobe_test.c \
-	payload_test.c wimext_test.c prepcore_test.c)
+	payload_test.c wimext_test.c prepcore_test.c uki_test.c)
 
 CLI_UUT := $(addprefix $(CLI)/sign/,isoprobe.c payload.c wimext.c prepcore.c \
-	util.c) $(CORE)/media/family.c $(CORE_MANIFEST) $(CORE_MANIFEST_WRITE) \
-	$(CORE_PART) \
+	uki.c util.c) $(CORE)/media/family.c $(CORE_MANIFEST) $(CORE_MANIFEST_WRITE) \
+	$(CORE_PART) $(CORE_PE) \
 	$(CORE)/crypto/sha256.c $(CORE)/crypto/crypto.c
 
 $(eval $(call test_bin,cli,$(CLI_TESTS) $(CLI_UUT)))

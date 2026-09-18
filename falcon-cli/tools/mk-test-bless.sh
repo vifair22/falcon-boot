@@ -41,7 +41,7 @@ STICK="${STICK:-build/e2e-stick}"
 MOK_KEY=build/mok-test/falcon-test-mok.key
 MOK_CRT=build/mok-test/falcon-test-mok.crt
 
-for t in bsdtar ukify sbsign sbverify objcopy python3; do
+for t in bsdtar sbsign sbverify objcopy python3; do
     command -v "$t" >/dev/null 2>&1 || {
         echo "ERROR: $t not found" >&2
         exit 1

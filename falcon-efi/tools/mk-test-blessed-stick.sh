@@ -43,7 +43,7 @@
 # Env:   STICK_IMG  the stick to modify (default: build/test-stick.img)
 #        SIGN       the bless tool (default: build/bin/falcon-boot-sign)
 #
-# Needs xorriso, sbsign/sbverify, ukify, losetup and passwordless sudo.
+# Needs xorriso, sbsign/sbverify, losetup and passwordless sudo.
 
 set -euo pipefail
 
@@ -91,7 +91,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-for t in xorriso losetup sbverify ukify bsdtar; do
+for t in xorriso losetup sbverify bsdtar; do
     command -v "$t" >/dev/null 2>&1 || {
         echo "ERROR: $t not found" >&2
         exit 1

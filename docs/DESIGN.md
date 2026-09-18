@@ -1606,7 +1606,7 @@ command, one confirmation gate, one manifest, two outputs. Consequences that
 land on this section:
 
 - **wimlib becomes a host-tooling dependency** (`app-arch/wimlib` on Gentoo),
-  joining `cryptsetup`, `sbsign`, `mkfs.*` and `ukify` on the intended
+  joining `cryptsetup`, `sbsign` and `mkfs.*` on the intended
   vendoring line described at the end of Section 8.1. The tool shells out to
   it; we no more reimplement LZX and solid WIM resources than we reimplement
   Authenticode.
@@ -1807,12 +1807,36 @@ A Windows record still carries `iso=`, `size=`, `sha256=` and
 `family=windows`, and still means what every other record means: the user
 authorised this entry to be booted differently.
 
-Shelling out to `cryptsetup`, `sbsign`, `mkfs.*`, `ukify`, `bsdtar`,
-`wimlib` and `7z` is the intended vendoring line: reimplementing argon2id,
-Authenticode PE signing, ext4 creation, WIM compression or a UDF reader
-in-repo would be madness for a config tool that runs on a full Linux box.
-The `sign` tool shells out to `sbsign`; it never reimplements signing, in
-either the host or appliance route.
+Shelling out to `cryptsetup`, `sbsign`, `mkfs.*`, `bsdtar`, `wimlib` and
+`7z` is the intended vendoring line: reimplementing argon2id, Authenticode PE
+signing, ext4 creation, WIM compression or a UDF reader in-repo would be
+madness for a config tool that runs on a full Linux box. The `sign` tool
+shells out to `sbsign`; it never reimplements signing, in either the host or
+appliance route.
+
+**`ukify` left that line (decision 2026-09-18).** The UKI wrap is built by the
+sign tool itself (`falcon-cli/src/sign/uki.c`). Two things moved it:
+
+- *The appliance is not a full Linux box.* ukify runs after p3 is unlocked,
+  inside the window the appliance exists to keep small, and it is a Python
+  program: it brought an interpreter and its standard library into that
+  window, about 33 MB of the 60 MB initramfs, for one job.
+- *The job is small.* Wrapping a kernel is appending sections to sd-stub and
+  updating a handful of header fields, a few hundred lines against the
+  `falcon-core/src/pe` reader the loader already uses. None of the items on
+  the line above are like that.
+
+The builder's contract is byte-identity with ukify 261 for the same inputs:
+the same section order and alignment, the same `.sbat` merge (stub, then
+kernel, then the `uki` generation line), the same NX_COMPAT rule and the same
+whitespace collapse of the cmdline. `falcon-cli/tools/cmp-ukify.sh` checks it
+over real kernels and is the check to repeat when systemd moves. One output
+difference is deliberate: a blessed wrap's `.osrel` is now a fixed "falcon-boot
+blessed media" rather than ukify's default of the building host's own
+os-release, so a wrap no longer depends on where it was blessed. `falcon-boot-sign
+uki` offers the same builder for images the tool does not bless; the
+appliance's own UKI is built with it. Test fixtures under `falcon-efi/tools`
+still call ukify, which is a development dependency only.
 
 Two of those are Windows-driven and differ in how hard a requirement they
 are (both measured 2026-09-13):
@@ -1849,7 +1873,8 @@ are (both measured 2026-09-13):
   array in the mingw build works; `objcopy --add-section` post-link does
   NOT produce a section shim accepts. Decide our SBAT component name and
   generation policy once and record them here; bumping the generation is
-  the revocation lever. UKIs get `.sbat` from sd-stub via `ukify` for free;
+  the revocation lever. UKIs get `.sbat` from sd-stub for free (the wrap
+  merges it, Section 8.1);
   images loaded through shim's hook (blessed kernels) are exempt from the
   requirement.
 - **Crypto in EFI:** LUKS2 unlock needs pbkdf2 and AES-XTS-512 sector
