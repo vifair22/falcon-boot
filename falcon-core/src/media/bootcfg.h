@@ -11,14 +11,18 @@
  *
  *   GRUB       grub.cfg and loopback.cfg: menuentry blocks with linux/initrd
  *              lines, set/assignment for variables, source, configfile and
- *              eval followed, submenus stepped into. Not a GRUB interpreter:
- *              of the conditions only [ -z "$v" ] and [ -n "$v" ] are
- *              evaluated (the rest read both branches), loops and function
- *              bodies are skipped, and a value GRUB computes at run time
- *              (search --set, probe --set, and anything assigned from one)
- *              marks the entry that uses it. An unset variable expands to
- *              nothing, as in GRUB. What it reads is the shape every
- *              distro's generated config has.
+ *              eval followed, submenus stepped into, a menuentry's own
+ *              arguments given to its body as $1, $2 and on. Not a GRUB
+ *              interpreter: of the conditions only [ -z "$v" ], [ -n "$v" ]
+ *              and string comparisons are evaluated (the rest read both
+ *              branches, and what such a branch assigns is unknown once it
+ *              ends); a for loop runs its body per word when the words are
+ *              known, while/until loops and function bodies are skipped;
+ *              and a value GRUB computes at run time (search --set, probe
+ *              --set, a glob, and anything assigned from one) marks the
+ *              entry that uses it. An unset variable expands to nothing, as
+ *              in GRUB. What it reads is the shape every distro's generated
+ *              config has.
  *   systemd-boot  loader/entries/NAME.conf: title, linux, initrd, options.
  *   isolinux   isolinux.cfg / syslinux.cfg: LABEL blocks with KERNEL or
  *              LINUX, APPEND (initrd= inside it) and INITRD, DEFAULT, and

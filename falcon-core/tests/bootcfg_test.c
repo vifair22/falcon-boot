@@ -401,29 +401,130 @@ static void test_bootcfg_opensuse(void **state)
 
 /* -------------------------------------- Manjaro: a menu built in loops */
 
+/* The shape of manjaro-gnome-26.1.0's boot/grub: grub.cfg gathers $kopts in
+ * a loop over quoted values, one of them assigned itself under a test this
+ * pass cannot decide; kernels.cfg decides whether any kernel exists with
+ * loops over globs, builds the cmdline in a loop over words, and hands it to
+ * each entry as its second argument, which the entry splits off its kernel
+ * word. */
 static const ff manjaro[] = {
     { "/boot/grub/grub.cfg",
+      "if [ -z \"${loaded}\" ]; then\n"
+      "    if [ \"${root}\" != \"hd96\" -a \"${iscd}\" != \"cd\" ]; then\n"
+      "        auto=\"${auto}\"\n"
+      "    fi\n"
+      "    source /boot/grub/variable.cfg\n"
+      "    loaded=true\n"
+      "fi\n"
+      "for kopt in \"${clinput}\" \"${bootlang}\" \"${auto}\"; do\n"
+      "    if [ -n \"${kopt}\" ]; then\n"
+      "        kopts=\"${kopts} ${kopt}\"\n"
+      "    fi\n"
+      "done\n"
+      "source /boot/grub/kernels.cfg\n" },
+    { "/boot/grub/variable.cfg",
+      "if [ -z \"${bootlang}\" ]; then\n"
+      "    bootlang=\"lang=en_US\"\n"
+      "fi\n" },
+    { "/boot/grub/kernels.cfg",
+      "for kk in /boot/vmlinu*-*64; do\n"
+      "if [ \"$kk\" != \"/boot/vmlinu*-*64\" ]; then\n"
+      "    have64=\"true\"\n"
+      "    if cpuid -l; then\n"
+      "        have_kernel=\"true\"\n"
+      "    fi\n"
+      "fi\n"
+      "done\n"
       "for kern in /boot/vmlinuz-*; do\n"
       "  menuentry \"$kern\" { linux $kern }\n"
       "done\n"
-      "menuentry \"Boot with open source drivers\" {\n"
-      "  linux /boot/vmlinuz-$kernel driver=free\n"
-      "  initrd /boot/initramfs-x86_64.img\n"
-      "}\n" },
+      "if [ \"${have_kernel}\" != \"true\" ]; then\n"
+      "    menuentry \"NO SUITABLE KERNELS AVAILABLE\" {echo $@\n"
+      "        sleep --interruptible 9999\n"
+      "    }\n"
+      "else\n"
+      "    title=\"\"\n"
+      "    for kopt in x86_64 $kopts  misobasedir=manjaro misolabel=MJ quiet; do\n"
+      "        if [ -n \"$title\" ] ; then\n"
+      "            title=\"$title $kopt\";\n"
+      "        else\n"
+      "            title=\"$kopt\";\n"
+      "        fi;\n"
+      "    done\n"
+      "    menuentry \"Boot with open source drivers\" --class=Manjaro.x86_64 \"$title\" {# set arguments above\n"
+      "        linux /boot/vmlinuz-$2 driver=free nouveau.modeset=1\n"
+      "        initrd /boot/amd_ucode.img /boot/intel_ucode.img /boot/initramfs-x86_64.img\n"
+      "    }\n"
+      "    menuentry \"Boot with proprietary drivers\" --class Manjaro.x86_64 \"$title\" {\n"
+      "        linux /boot/vmlinuz-$2 driver=nonfree\n"
+      "        initrd /boot/initramfs-x86_64.img\n"
+      "    }\n"
+      "fi\n"
+      "menuentry \"After\" { linux /boot/vmlinuz-x86_64 $2 }\n" },
     { "/boot/vmlinuz-x86_64", "" },
+    { "/boot/amd_ucode.img", "" },
+    { "/boot/intel_ucode.img", "" },
     { "/boot/initramfs-x86_64.img", "" },
 };
 
 static void test_bootcfg_manjaro(void **state)
 {
+    const bootcfg_entry *e;
+
     (void)state;
-    /* The loop is skipped whole, and the entry's kernel, built from a
-     * variable nobody set, names no file. Nothing to boot. */
-    assert_int_equal(run(manjaro, N(manjaro), BOOTCFG_CD, 1), BOOTCFG_ERR_NONE);
-    assert_int_equal(g_res.n, 1);
-    assert_string_equal(g_res.entry[0].kernel, "/boot/vmlinuz-");
-    /* Without the exists callback the parser cannot know; it picks it. */
-    assert_int_equal(run(manjaro, N(manjaro), BOOTCFG_CD, 0), BOOTCFG_OK);
+    assert_int_equal(run(manjaro, N(manjaro), BOOTCFG_CD, 1), BOOTCFG_OK);
+    /* The glob loop's entry, the guard's entry, the two real ones, and the
+     * one after the block. */
+    assert_int_equal(g_res.n, 5);
+    assert_true(g_res.entry[0].kernel_unresolved);
+    e = picked();
+    assert_string_equal(e->title, "Boot with open source drivers");
+    assert_string_equal(e->kernel, "/boot/vmlinuz-x86_64");
+    assert_int_equal(e->n_initrd, 3);
+    assert_string_equal(e->initrd[2], "/boot/initramfs-x86_64.img");
+    rendered(NULL, "lang=en_US misobasedir=manjaro misolabel=MJ quiet "
+                   "driver=free nouveau.modeset=1");
+    /* --class with its value as a separate word is still an option. */
+    assert_string_equal(g_res.entry[3].cmdline,
+                        "lang=en_US misobasedir=manjaro misolabel=MJ quiet "
+                        "driver=nonfree");
+    /* $2 is the entry's own: outside it, and in an entry without one, it is
+     * empty. */
+    assert_string_equal(g_res.entry[4].cmdline, "");
+}
+
+/* A loop over words the pass knows runs its body per word; a word it cannot
+ * know runs the body once more under an undecidable condition. */
+static const ff loops[] = {
+    { "/boot/grub/grub.cfg",
+      "search --set=dev --file /x\n"
+      "for w in a \"\" b; do\n"
+      "  acc=\"${acc}${w}\"\n"
+      "  for v in 1 2; do acc=\"${acc}${v}\"; done\n"
+      "done\n"
+      "menuentry \"one\" { linux /k acc=$acc }\n"
+      "for w in $dev; do known=no; done\n"
+      "menuentry \"two\" { linux /k $known }\n"
+      "for w in x; do\n"
+      "  echo \"done; for\" # done\n"
+      "  last=$w\n"
+      "done\n"
+      "menuentry \"three\" { linux /k last=$last }\n"
+      "for broken in a b\n"
+      "menuentry \"four\" { linux /k }\n" },
+    { "/k", "" },
+};
+
+static void test_bootcfg_loops(void **state)
+{
+    (void)state;
+    assert_int_equal(run(loops, N(loops), BOOTCFG_CD, 1), BOOTCFG_OK);
+    assert_string_equal(g_res.entry[0].cmdline, "acc=a12b12");
+    assert_false(g_res.entry[0].unresolved);
+    assert_true(g_res.entry[1].unresolved);
+    assert_string_equal(g_res.entry[2].cmdline, "last=x");
+    /* A for with no do/done is skipped to the end, as before. */
+    assert_int_equal(g_res.n, 3);
 }
 
 /* ------------------------------------------------------------ isolinux */
@@ -615,6 +716,7 @@ int run_bootcfg_tests(void)
         cmocka_unit_test(test_bootcfg_sysrescue),
         cmocka_unit_test(test_bootcfg_opensuse),
         cmocka_unit_test(test_bootcfg_manjaro),
+        cmocka_unit_test(test_bootcfg_loops),
         cmocka_unit_test(test_bootcfg_isolinux),
         cmocka_unit_test(test_bootcfg_quoting_and_initrds),
         cmocka_unit_test(test_bootcfg_refusals),

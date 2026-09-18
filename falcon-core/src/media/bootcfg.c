@@ -8,10 +8,12 @@
  * variable expansion are done properly, because they change what the kernel
  * sees; conditionals are stepped through (both branches read), because
  * entries sit inside `if` blocks that would be true on the machine that boots
- * them; loop and function bodies are skipped, because their text is a
- * template rather than an entry. What cannot be known without running GRUB
- * (a variable set by `search --set` or `probe --set`) stays unresolved and
- * marks the entry that used it.
+ * them; a for loop over words this pass knows is run, because Manjaro builds
+ * its cmdline in one; while/until and function bodies are skipped, because
+ * their text is a template rather than an entry. What cannot be known
+ * without running GRUB (a variable set by `search --set` or `probe --set`, a
+ * glob over the ISO's files) stays unresolved and marks the entry that used
+ * it.
  */
 
 #include <media/bootcfg.h>
@@ -21,13 +23,15 @@
 /* Bounds on what one ISO may make the parser do. */
 #define DEPTH_MAX     6u    /* nested source/configfile */
 #define FILES_MAX     24u   /* files read in total */
-#define VARS_MAX      48u
+#define VARS_MAX      64u
 #define VAR_NAME_MAX  32u
 #define VAR_VALUE_MAX 256u
 #define WORDS_MAX     160u  /* words in one command */
 #define WORD_MAX      512u  /* one word, after expansion */
 #define BLOCKS_MAX    32u   /* nested {} */
 #define SDBOOT_MAX    24u   /* loader entries considered */
+#define LOOP_ITER_MAX 32u   /* words one for loop runs its body for */
+#define POS_MAX       9u    /* a menuentry's $1..$9 */
 
 /* ---------------------------------------------------------- strings */
 
@@ -111,6 +115,11 @@ typedef struct {
     char    name[VAR_NAME_MAX];
     char    value[VAR_VALUE_MAX];
     uint8_t runtime;   /* computed by GRUB at run time: value unknowable */
+    /* Set inside a branch whose condition this pass could not decide: the
+     * value holds for the rest of that branch, and becomes unknowable when
+     * the branch is left (cond_leave). The number of conditions open at the
+     * assignment; 0 when the value is certain. */
+    uint8_t pending;
 } var;
 
 /* One open `if`: what the condition of the branch now being read came to,
@@ -198,6 +207,7 @@ static void var_set_rt(parser *p, const char *name, size_t nlen,
     }
     cpy(p->vars[i].value, VAR_VALUE_MAX, value, (uint8_t *)0);
     p->vars[i].runtime = runtime;
+    p->vars[i].pending = 0;
 }
 
 /* A variable this module sets itself, by a NUL-terminated name. */
@@ -410,6 +420,45 @@ static const char *grub_title(size_t nw)
     return "";
 }
 
+/* A menuentry's body sees its arguments as $1 (the title), $2 and on: the
+ * words that are not options. Manjaro passes its whole cmdline that way and
+ * writes "linux /boot/vmlinuz-$2". */
+static void menu_args(parser *p, size_t nw)
+{
+    size_t i;
+    unsigned k = 0;
+
+    for (i = 1; i < nw && k < POS_MAX; i++) {
+        const char *w = g_words[i];
+        char name[2];
+
+        if (w[0] == '-' && w[1] == '-') {
+            if (is_word(w, "--class") || is_word(w, "--id") ||
+                is_word(w, "--hotkey") || is_word(w, "--users"))
+                i++;
+            continue;
+        }
+        name[0] = (char)('1' + k);
+        name[1] = '\0';
+        var_set_rt(p, name, 1, w, g_wunres[i]);
+        k++;
+    }
+}
+
+static void menu_args_clear(parser *p)
+{
+    unsigned k;
+
+    for (k = 0; k < POS_MAX; k++) {
+        char name[2];
+
+        name[0] = (char)('1' + k);
+        name[1] = '\0';
+        if (var_get(p, name) != (const var *)0)
+            var_set_rt(p, name, 1, "", 0);
+    }
+}
+
 static void blk_push(parser *p, blk_kind k)
 {
     if (p->n_blk < BLOCKS_MAX)
@@ -433,8 +482,10 @@ static void blk_pop(parser *p)
         p->submenus--;
     if (k == BLK_SKIP && p->skips > 0)
         p->skips--;
-    if (k == BLK_MENU)
+    if (k == BLK_MENU) {
         p->cur = (bootcfg_entry *)0;
+        menu_args_clear(p);
+    }
 }
 
 /* Is every enclosing `if` branch possibly taken? A branch known false makes
@@ -509,6 +560,71 @@ static uint8_t cond_uncertain(const parser *p)
             return 1;
     }
     return 0;
+}
+
+/* NAME=VALUE in the current branch. Under a condition this pass could not
+ * decide, the value holds for the rest of the branch (an entry defined
+ * there sees it) and becomes unknowable once the branch is left, unless it
+ * changed nothing: a variable already holding VALUE, unset counting as
+ * empty, holds it either way (Manjaro's auto="${auto}"). */
+static void assign(parser *p, const char *name, size_t nlen,
+                   const char *value, uint8_t unres)
+{
+    char n[VAR_NAME_MAX];
+    const var *v;
+    size_t i;
+
+    if (nlen == 0 || nlen >= VAR_NAME_MAX)
+        return;
+    memcpy(n, name, nlen);
+    n[nlen] = '\0';
+    v = var_get(p, n);
+    if (!unres && cond_uncertain(p) &&
+        (v == (const var *)0 ? value[0] == '\0'
+                             : (!v->runtime && v->pending == 0 &&
+                                slen(v->value) == slen(value) &&
+                                memcmp(v->value, value, slen(value)) == 0)))
+        return;
+    var_set_rt(p, name, nlen, value, unres);
+    if (unres || !cond_uncertain(p))
+        return;
+    for (i = 0; i < p->n_vars; i++) {
+        if (ieq(p->vars[i].name, n))
+            p->vars[i].pending = (uint8_t)(p->n_conds < CONDS_MAX
+                                               ? p->n_conds : CONDS_MAX);
+    }
+}
+
+/* The branch of condition index m is being left (an elif, an else, a fi, or
+ * the end of a loop's unknown pass). What it assigned becomes unknowable if
+ * the branch was undecided; if it was known to run, the values stand, still
+ * pending on whatever undecided condition encloses them. */
+static void cond_leave(parser *p, size_t m, int popping)
+{
+    uint8_t undecided;
+    size_t i;
+
+    if (m >= CONDS_MAX)
+        return;
+    undecided = (uint8_t)(p->conds[m].state == COND_UNKNOWN);
+    for (i = 0; i < p->n_vars; i++) {
+        var *v = &p->vars[i];
+
+        if (v->pending <= m)
+            continue;
+        if (undecided) {
+            v->runtime = 1;
+            v->pending = 0;
+        } else if (popping) {
+            size_t k;
+
+            v->pending = 0;
+            for (k = 0; k < m; k++) {
+                if (p->conds[k].state == COND_UNKNOWN)
+                    v->pending = (uint8_t)m;
+            }
+        }
+    }
 }
 
 /* `--set=NAME` or `--set NAME` anywhere in a command marks NAME as a value
@@ -594,6 +710,8 @@ static void grub_command(parser *p, size_t nw, int opens, uint8_t unres,
                 cond *c = &p->conds[p->n_conds - 1u];
                 uint8_t st;
 
+                cond_leave(p, p->n_conds - 1u, 0);
+
                 if (c->taken) {
                     st = COND_FALSE;
                 } else if (is_word(w0, "else")) {
@@ -615,8 +733,10 @@ static void grub_command(parser *p, size_t nw, int opens, uint8_t unres,
             return;
         }
         if (is_word(w0, "fi")) {
-            if (p->n_conds > 0)
+            if (p->n_conds > 0) {
+                cond_leave(p, p->n_conds - 1u, 1);
                 p->n_conds--;
+            }
             return;
         }
         if (is_word(w0, "then"))
@@ -630,6 +750,7 @@ static void grub_command(parser *p, size_t nw, int opens, uint8_t unres,
         } else if (is_word(w0, "menuentry")) {
             blk_push(p, BLK_MENU);
             p->cur = entry_new(p, grub_title(nw));
+            menu_args(p, nw);
         } else if (is_word(w0, "submenu")) {
             blk_push(p, BLK_SUBMENU);
         } else {
@@ -660,14 +781,38 @@ static void grub_command(parser *p, size_t nw, int opens, uint8_t unres,
 
         if (is_word(w0, "linux") || is_word(w0, "linuxefi") ||
             is_word(w0, "linux16") || is_word(w0, "kernel")) {
-            size_t i;
+            size_t i, kl = 0;
+            const char *kw;
+
             if (nw < 2)
                 return;
+            kw = g_words[1];
             if (g_wunres[1])
                 e->kernel_unresolved = 1;
-            clean_path(g_words[1], e->kernel, sizeof e->kernel,
-                       &e->truncated);
+            /* An unquoted expansion splits into words in GRUB, so a kernel
+             * word with blanks in it is the path and then arguments
+             * ("/boot/vmlinuz-$2" on Manjaro). No kernel path has one. */
+            while (kw[kl] != '\0' && kw[kl] != ' ' && kw[kl] != '\t')
+                kl++;
+            {
+                char kp[BOOTCFG_PATH_MAX];
+                size_t c = kl < sizeof kp ? kl : sizeof kp - 1u;
+
+                memcpy(kp, kw, c);
+                kp[c] = '\0';
+                if (c < kl)
+                    e->truncated = 1;
+                clean_path(kp, e->kernel, sizeof e->kernel, &e->truncated);
+            }
             e->cmdline[0] = '\0';
+            while (kw[kl] == ' ' || kw[kl] == '\t')
+                kl++;
+            if (kw[kl] != '\0') {
+                app(e->cmdline, sizeof e->cmdline, kw + kl, slen(kw + kl),
+                    &e->truncated);
+                if (g_wunres[1])
+                    e->unresolved = 1;
+            }
             for (i = 2; i < nw; i++) {
                 const char *a = g_words[i];
                 int spaced = 0;
@@ -730,8 +875,7 @@ static void grub_command(parser *p, size_t nw, int opens, uint8_t unres,
         while (eq[n] != '\0' && eq[n] != '=')
             n++;
         if (eq[n] == '=')
-            var_set_rt(p, eq, n, eq + n + 1,
-                       (uint8_t)(unres | cond_uncertain(p)));
+            assign(p, eq, n, eq + n + 1, unres);
         return;
     }
     /* A bare assignment, "default=archlinux". */
@@ -743,9 +887,183 @@ static void grub_command(parser *p, size_t nw, int opens, uint8_t unres,
                 (w0[n] >= '0' && w0[n] <= '9') || w0[n] == '_'))
             n++;
         if (n > 0 && w0[n] == '=' && nw == 1)
-            var_set_rt(p, w0, n, w0 + n + 1,
-                       (uint8_t)(unres | cond_uncertain(p)));
+            assign(p, w0, n, w0 + n + 1, unres);
     }
+}
+
+/* ------------------------------------------------------------ for loops
+ *
+ * for NAME in WORDS; do BODY; done runs BODY once per word, the way GRUB
+ * does, when every word is a value this pass knows. A word it cannot know (a
+ * run-time value, or a glob over the ISO's files, which GRUB expands against
+ * a directory listing) runs BODY once more with NAME unknown and under an
+ * undecidable condition, so whatever the body assigns becomes unknown and an
+ * entry it builds from NAME is never picked. while and until loops are
+ * skipped whole, as before. */
+
+static int word_ch(char c)
+{
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+           (c >= '0' && c <= '9') || c == '_';
+}
+
+/* The bare word at s, if any: its length. */
+static size_t bare_word(const char *s, const char *end)
+{
+    size_t n = 0;
+
+    while (s + n < end && word_ch(s[n]))
+        n++;
+    return n;
+}
+
+static int bare_is(const char *s, size_t n, const char *kw)
+{
+    size_t kl = slen(kw);
+
+    return n == kl && memcmp(s, kw, n) == 0;
+}
+
+/* From s, the start of a loop body, finds the "done" that closes it,
+ * counting nested loops. Commands are skipped raw: quotes, escapes and
+ * comments are honoured so a "done" in a string does not count. Returns the
+ * position after "done" and sets *at to its start, or NULL when there is
+ * none. */
+static const char *find_done(const char *s, const char *end, const char **at)
+{
+    unsigned depth = 1;
+
+    while (s < end) {
+        size_t n;
+
+        while (s < end && (*s == ' ' || *s == '\t' || *s == '\r' ||
+                           *s == '\n' || *s == ';' || *s == '{' || *s == '}'))
+            s++;
+        if (s >= end)
+            break;
+        if (*s == '#') {
+            while (s < end && *s != '\n')
+                s++;
+            continue;
+        }
+        n = bare_word(s, end);
+        if (bare_is(s, n, "for") || bare_is(s, n, "while") ||
+            bare_is(s, n, "until")) {
+            depth++;
+        } else if (bare_is(s, n, "done")) {
+            if (--depth == 0) {
+                *at = s;
+                return s + n;
+            }
+        }
+        /* The rest of the command. */
+        while (s < end && *s != '\n' && *s != ';' && *s != '{' && *s != '}') {
+            if (*s == '"' || *s == '\'') {
+                char q = *s++;
+
+                while (s < end && *s != q) {
+                    if (q == '"' && *s == '\\' && s + 1 < end)
+                        s++;
+                    s++;
+                }
+                if (s < end)
+                    s++;
+                continue;
+            }
+            if (*s == '\\' && s + 1 < end)
+                s++;
+            s++;
+        }
+    }
+    return (const char *)0;
+}
+
+static int has_glob(const char *w)
+{
+    for (; *w != '\0'; w++) {
+        if (*w == '*' || *w == '?' || *w == '[')
+            return 1;
+    }
+    return 0;
+}
+
+static void grub_parse(parser *p, const char *buf, size_t len,
+                       unsigned depth);
+
+/* The loop whose "for NAME in WORDS" command is in g_words, with s just past
+ * it. Returns where parsing resumes, or NULL when this is not a loop this
+ * pass runs (no "do", no "done"), which leaves it to be skipped. */
+static const char *grub_for(parser *p, size_t nw, const char *s,
+                            const char *end, unsigned depth)
+{
+    const char *body, *body_end, *after;
+    char *words;
+    uint8_t unres[WORDS_MAX];
+    char name[VAR_NAME_MAX];
+    size_t i, used, nl, n;
+    unsigned iter = 0;
+    int unknown = 0;
+
+    if (nw < 3 || !ieq(g_words[2], "in") || g_wunres[1] ||
+        (nl = slen(g_words[1])) == 0 || nl >= VAR_NAME_MAX ||
+        depth + 1u >= DEPTH_MAX)
+        return (const char *)0;
+    while (s < end && (*s == ' ' || *s == '\t' || *s == '\r' ||
+                       *s == '\n' || *s == ';'))
+        s++;
+    n = bare_word(s, end);
+    if (!bare_is(s, n, "do"))
+        return (const char *)0;
+    body = s + n;
+    after = find_done(body, end, &body_end);
+    if (after == (const char *)0)
+        return (const char *)0;
+
+    /* The words and the name are copied out: the body's own commands reuse
+     * g_words. */
+    memcpy(name, g_words[1], nl + 1u);
+    used = p->used;
+    words = p->scratch + used;
+    for (i = 3; i < nw; i++) {
+        size_t wl = slen(g_words[i]);
+
+        if (p->used + wl + 1u > p->cap) {
+            p->used = used;
+            return (const char *)0;
+        }
+        memcpy(p->scratch + p->used, g_words[i], wl + 1u);
+        p->used += wl + 1u;
+        unres[i] = g_wunres[i];
+    }
+
+    for (i = 3; i < nw; i++) {
+        const char *w = words;
+
+        words += slen(w) + 1u;
+        if (unres[i] || has_glob(w)) {
+            unknown = 1;
+            continue;
+        }
+        /* An unquoted empty expansion is no word at all in GRUB. */
+        if (w[0] == '\0')
+            continue;
+        if (iter++ >= LOOP_ITER_MAX)
+            break;
+        var_set_rt(p, name, nl, w, 0);
+        grub_parse(p, body, (size_t)(body_end - body), depth + 1u);
+    }
+    if (unknown && p->n_conds < CONDS_MAX) {
+        cond *c = &p->conds[p->n_conds++];
+
+        c->state = COND_UNKNOWN;
+        c->taken = 0;
+        var_set_rt(p, name, nl, "", 1);
+        grub_parse(p, body, (size_t)(body_end - body), depth + 1u);
+        cond_leave(p, p->n_conds - 1u, 1);
+        p->n_conds--;
+    }
+    p->used = used;
+    return after;
 }
 
 /* Splits the buffer into commands. A command ends at a newline or ';',
@@ -800,6 +1118,15 @@ static void grub_parse(parser *p, const char *buf, size_t len,
 
                 s = grub_word(p, s, end, sink, sizeof sink, &unres, &trunc);
                 trunc = 1;
+            }
+        }
+        if (!opens && nw > 0 && is_word(g_words[0], "for") &&
+            p->skips == 0 && p->loops == 0 && cond_active(p)) {
+            const char *resume = grub_for(p, nw, s, end, depth);
+
+            if (resume != (const char *)0) {
+                s = resume;
+                continue;
             }
         }
         grub_command(p, nw, opens, unres, trunc, depth);
