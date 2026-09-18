@@ -113,7 +113,8 @@ a signed blessed wrap under Secure Boot, appended by the loader otherwise.
 - *Run it.* Build `ventoy.cpio` from Ventoy's source and supply the
   environment its hooks expect (the `ventoy_os_param` block, a
   `/dev/mapper/ventoy`). Fast coverage, maintained upstream. Costs:
-  - GPLv3. falcon-boot has no licence file today; this forces the choice.
+  - GPLv3. Settled 2026-09-18: falcon-boot is GPL-3.0-or-later, so this
+    is no longer a blocker.
   - Ventoy's "replace" mode copies its device over `/dev/sdX2`, which on our
     stick is p2, and its hooks assume Ventoy's disk layout. It would need an
     adaptation layer, and it would be signed into every blessed wrap, so we
@@ -304,8 +305,8 @@ Order of the appliance work, each shippable on its own:
 
 1. **The extent variable's layout**, and whether to make it Ventoy's
    `VentoyOsParam` so "Ventoy compatible" ISOs find themselves on our stick.
-2. **Licence.** The repo has none. Porting Ventoy's hook logic is learning
-   from GPLv3 code; running it is linking to it. Pick one before M4.
+2. **Licence.** Settled 2026-09-18: GPL-3.0-or-later (`LICENSE`), which
+   is compatible with learning from Ventoy's GPLv3 hooks or reusing them.
 3. **The `grub.cfg` overlay** (D3b), parked in DESIGN 7.2, only if D3a fails.
 4. **Where the corpus and harness live** (Unraid box, CI runner with KVM).
 

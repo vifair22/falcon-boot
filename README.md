@@ -81,3 +81,7 @@ The personal OS this loader boots is a separate project:
 [archusb](https://git.airies.net/vifair22/archusb) holds the Arch install's
 build runbook, its installed configuration, and the OS-side half of the
 passphrase handoff described in DESIGN Section 5.1.
+
+## Licence
+
+GPL-3.0-or-later. The full text is in `LICENSE`.
