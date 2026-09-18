@@ -1674,7 +1674,10 @@ static void test_luks_keyslot_field_refusals(void **state)
         /* The whole kdf object, then the fields inside it. */
         { "\"kdf\":{",        "\"kdX\":{",        LUKS_ERR_UNSUPPORTED },
         { "\"iterations\":10000", "\"iteratioXs\":10000", LUKS_ERR_UNSUPPORTED },
-        { "\"salt\":\"z3btw2",  "\"salX\":\"z3btw2",  LUKS_ERR_UNSUPPORTED },
+        /* Anchored on the field before it: the salt itself is random per
+         * fixture build (falcon-core/tools/mk-test-luks.sh). */
+        { "\"iterations\":10000,\"salt\":\"",
+          "\"iterations\":10000,\"salX\":\"", LUKS_ERR_UNSUPPORTED },
         /* The af object and its fields. The splitter's own type matters:
          * luks1 is the only expansion this reader undoes. */
         { "\"af\":{",         "\"aX\":{",         LUKS_ERR_UNSUPPORTED },
@@ -1722,8 +1725,11 @@ static void test_luks_digest_field_refusals(void **state)
         int         want;
     } cases[] = {
         { "\"iterations\":1000,", "\"iteratioXs\":1000,", LUKS_ERR_UNSUPPORTED },
-        { "\"salt\":\"GhIqV2",   "\"salX\":\"GhIqV2",   LUKS_ERR_UNSUPPORTED },
-        { "\"digest\":\"s21NP2", "\"digesX\":\"s21NP2", LUKS_ERR_UNSUPPORTED },
+        /* Anchored on neighbours and key names: the values are random per
+         * fixture build (falcon-core/tools/mk-test-luks.sh). */
+        { "\"iterations\":1000,\"salt\":\"",
+          "\"iterations\":1000,\"salX\":\"", LUKS_ERR_UNSUPPORTED },
+        { "\"digest\":\"", "\"digesX\":\"", LUKS_ERR_UNSUPPORTED },
         /* A digest that covers no segment describes a volume shape this
          * reader does not handle, which is not the same answer as a wrong
          * passphrase. */
