@@ -13,7 +13,9 @@
 # out to. Blessing (DESIGN Section 7.5):
 #
 #   cryptsetup   unlocks p3 so the MOK private key can be read
-#   bsdtar       lists and extracts the ISO (this is what `sign` reads with)
+#   bsdtar       lists and extracts the ISO (this is what `sign` reads with).
+#                Not the host's: mk-bsdtar.sh builds one without XAR support,
+#                which is what dragged libxml2 and ICU into the image
 #   ukify        wraps the extracted kernel into a UKI
 #   sbsign       signs that wrap, and appends to a bare payload
 #   sbverify     counts the signatures a bare payload carries before and after
@@ -52,11 +54,10 @@
 # seconds to build. Preparation's whole share of that is 3.5 MB raw and 1.3 MB
 # compressed: 7-Zip is 2.9 MB of it and libwim 0.4 MB, and the libstdc++ 7-Zip
 # needs was already in the image. That is the entire price of the Windows route
-# living on the stick rather than on a host. The two large single items are
-# still the Python tree (16 MB) and libicudata (32 MB), which libxml2 drags in
-# behind libarchive; the ICU tables are never read and the way to be rid of
-# them is a libarchive built without xar support, not a smaller Python. See the
-# PYTHON note below.
+# living on the stick rather than on a host. The largest single item left is
+# the Python tree; see the PYTHON note below. libicudata (32 MB) used to be
+# larger still, pulled in by the host bsdtar's XAR support, until the image
+# got a bsdtar of its own (mk-bsdtar.sh).
 #
 # Usage: falcon-appliance/image/mk-appliance.sh
 # Env:
@@ -85,6 +86,7 @@ UKI="$OUT/appliance-uki.efi"
 UKI_SIGNED="$OUT/appliance-uki-signed.efi"
 
 SIGN_STATIC=build/bin/falcon-boot-sign-static
+BSDTAR=build/appliance/bsdtar
 WINJUMP=build/bin/winjump.exe
 MOK_KEY="${MOK_KEY:-build/mok-test/falcon-test-mok.key}"
 MOK_CRT="${MOK_CRT:-build/mok-test/falcon-test-mok.crt}"
@@ -173,6 +175,10 @@ done
 }
 [[ -f "$SIGN_STATIC" ]] || {
     echo "ERROR: $SIGN_STATIC not built (run: make cli)" >&2
+    exit 1
+}
+[[ -x "$BSDTAR" ]] || {
+    echo "ERROR: $BSDTAR not built (run: make appliance)" >&2
     exit 1
 }
 [[ -f "$WINJUMP" ]] || {
@@ -373,6 +379,9 @@ for b in "${BINARIES[@]}" "$PYTHON"; do
     copy_to_root "$b"
     mapfile -t -O "${#LIBS[@]}" LIBS < <(closure "$b")
 done
+# The image's own bsdtar (mk-bsdtar.sh), at the path the sign tool looks in.
+cp "$BSDTAR" "$ROOT/usr/bin/bsdtar"
+mapfile -t -O "${#LIBS[@]}" LIBS < <(closure "$BSDTAR")
 mapfile -t LIBS < <(printf '%s\n' "${LIBS[@]}" | sort -u)
 for l in "${LIBS[@]}"; do
     copy_to_root "$l"
@@ -392,7 +401,7 @@ for b in "${BINARIES[@]}" "$PYTHON"; do
         copy_to_root "$i"
     fi
 done
-echo "   binaries: ${#BINARIES[@]} + $PY_VER, libraries: ${#LIBS[@]}"
+echo "   binaries: ${#BINARIES[@]} + bsdtar + $PY_VER, libraries: ${#LIBS[@]}"
 
 # The loader finds a library by SONAME through the cache, not by the path ldd
 # printed, and this image has no cache of the host's. Without one, a library

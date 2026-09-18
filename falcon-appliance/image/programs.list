@@ -9,7 +9,8 @@
 /usr/bin/sbverify        # counts a payload's signatures before and after, one
                          # of the three checks that blessing ADDED ours and
                          # kept the vendor's (DESIGN Section 7.2)
-/usr/bin/bsdtar          # lists and extracts the ISO (the sign tool's reader)
+# bsdtar is not listed: the image carries its own, built by mk-bsdtar.sh
+# without the XAR support that drags in libxml2 and ICU.
 #
 # Preparing Windows media, which holds no key and signs nothing:
 /usr/bin/7z              # reads the UDF namespace; Windows media keeps every

@@ -159,8 +159,11 @@ the tree, so `#include <fs/exfat.h>` means one file wherever it is written.
   auto-prep decision); the Makefile links it static as
   `build/bin/falcon-boot-appliance-init`. `image/` is the recipe for the UKI
   it runs in: `mk-appliance.sh` plus the image's contents as data,
-  `programs.list` and `modules.list`, each entry with its reason. The build
-  fails if any program the image can exec lacks its interpreter inside it.
+  `programs.list` and `modules.list`, each entry with its reason, and
+  `mk-bsdtar.sh`, which builds the image's own bsdtar from a pinned libarchive
+  tarball without the XAR support that would drag in libxml2 and ICU. The
+  build fails if any program the image can exec lacks its interpreter inside
+  it.
   `tools/` holds the QEMU proofs.
 - `falcon-winjump/` the WinPE jump binary (DESIGN Section 6.3), a Win64
   console program.

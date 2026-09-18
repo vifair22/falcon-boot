@@ -28,18 +28,26 @@ APPLIANCE_INIT_SRCS := $(addprefix $(APPLIANCE)/,main.c console.c stick.c \
 HOST_SRCS += $(APPLIANCE_INIT_SRCS)
 
 APPLIANCE_INIT := $(BIN)/falcon-boot-appliance-init
+APPLIANCE_BSDTAR := build/appliance/bsdtar
 APPLIANCE_INIT_OBJS := $(APPLIANCE_INIT_SRCS:%.c=$(HOST_OBJ)/%.o)
 
 $(APPLIANCE_INIT): $(APPLIANCE_INIT_OBJS)
 	@mkdir -p $(@D)
 	$(CC_HOST) $(HOST_LDFLAGS) -static -o $@ $(APPLIANCE_INIT_OBJS)
 
+# The image's bsdtar: libarchive from a pinned tarball, built without the XAR
+# support that links libxml2 and ICU (mk-bsdtar.sh says why). Rebuilt only
+# when the recipe changes, since the recipe holds the pin.
+$(APPLIANCE_BSDTAR): falcon-appliance/image/mk-bsdtar.sh
+	falcon-appliance/image/mk-bsdtar.sh
+
 # Embeds $(SIGN_STATIC), so the two routes of Section 7.5 run one
 # implementation, and $(WINJUMP), which is what preparation injects into a
 # Windows image (Section 6.3) and the one file of the prepare path the
 # appliance cannot fetch for itself. The test MOK is only for the optional
 # signed copy; mkstick signs the real one on its way onto p3.
-appliance: $(APPLIANCE_INIT) $(SIGN_STATIC) $(WINJUMP) $(MOK_KEY)
+appliance: $(APPLIANCE_INIT) $(APPLIANCE_BSDTAR) $(SIGN_STATIC) $(WINJUMP) \
+		$(MOK_KEY)
 	falcon-appliance/image/mk-appliance.sh
 
 # Built by the product tool: mkstick generates the MOK, signs both UKIs, and
