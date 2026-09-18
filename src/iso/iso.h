@@ -20,6 +20,7 @@
 
 #include <efi/uefi.h>
 #include <iso/family.h>
+#include <secboot/trust.h>
 #include <fs/fs.h>
 #include <iso/overlay.h>
 
@@ -68,6 +69,9 @@ typedef enum {
 typedef struct {
     const family_desc *family;  /* never NULL after iso_survey_media */
     iso_sig            sig;
+    /* The boot prediction for the default loader (DESIGN Section 7.8), or
+     * TRUST_NO_VERDICT. A label, like everything else in this struct. */
+    trust_result       trust;
 } iso_survey;
 
 /* Signature presence read out of the head of a PE image: data directory 4,
@@ -137,6 +141,6 @@ EFI_STATUS iso_boot_overlaid(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
  * wants it; a scan may ignore it. */
 EFI_STATUS iso_survey_media(EFI_SYSTEM_TABLE *st, fs_vol *vol,
                             const fs_dirent *file, iso_media_kind kind,
-                            iso_survey *out);
+                            const trust_stores *stores, iso_survey *out);
 
 #endif /* FALCON_ISO_H */

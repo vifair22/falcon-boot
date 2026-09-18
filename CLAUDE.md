@@ -117,8 +117,16 @@ the loader.
 - `src/luks/` LUKS2 header parse, keyslot unlock, AF merge. EFI-free.
 - `src/crypto/` SHA-256/512, HMAC, PBKDF2, AES-XTS (AES-NI with a portable
   fallback). EFI-free, the only crypto in EFI-land.
+- `src/pe/` PE/COFF header layout read from a file's bytes: optional-header
+  fields, data directories, sections. The one PE walker; the ISO survey, the
+  UKI labeller and the boot predictions all use it. EFI-free.
 - `src/secboot/` everything that reads platform trust state, for UX only:
-  `sb.c` (SecureBoot / SetupMode / MokSBStateRT).
+  `sb.c` (SecureBoot / SetupMode / MokSBStateRT) and the boot predictions
+  (DESIGN Section 7.8): `der.c`/`x509.c`/`authenticode.c` read an image's
+  signature block and Authenticode hash, `siglist.c` the db/dbx/MokList
+  stores and SBAT levels, `trust.c` the verdict, `probe.c` the glue over a
+  read callback, all EFI-free; `trustefi.c` reads the variables. A
+  prediction is a label and no boot path takes one.
 - `src/iso/` the ISO path (DESIGN Section 6): virtual media over a p2 file
   (`iso.c`, `overlay.h`), family detection (`family.c`), and the initrd cpio
   append of the injection framework (`cpio.c`).

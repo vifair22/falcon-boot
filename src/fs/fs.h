@@ -230,6 +230,11 @@ int fs_file_open(fs_vol *v, fs_file *f, const fs_dirent *e);
 int fs_file_read(fs_file *f, uint64_t off, uint64_t len, void *buf);
 uint64_t fs_file_size(const fs_file *f);
 
+/* fs_file_read in the shape of fs_read_fn, with an open fs_file as ctx: 0 or
+ * -1. For code that reads a file through a callback and has no business
+ * knowing it came from a filesystem (src/secboot/probe.c). */
+int fs_file_read_cb(void *file, uint64_t off, uint64_t len, void *buf);
+
 /* Nonzero when this volume's driver implements the extent map. */
 int fs_has_extents(const fs_vol *v);
 /* FS_ERR_NO_CAPABILITY when it does not; otherwise exactly the driver's

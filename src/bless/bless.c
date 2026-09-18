@@ -10,6 +10,7 @@
 #include <loader/credfs.h>
 #include <lib/string.h>
 #include <console/menu.h>
+#include <secboot/probe.h>
 
 /* Read granularity for the UKI, and how often the read says it is alive. A
  * 1 MiB request costs one directory-to-extent descent and a run of block
@@ -443,6 +444,28 @@ static EFI_STATUS launch_image(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent,
     if (inner_blocked && EFI_ERROR(status))
         result->advice = load_ops_inner_load_advice();
     return EFI_SUCCESS;
+}
+
+void bless_uki_trust(const bless_hit *hit, const trust_stores *stores,
+                     trust_result *out)
+{
+    fs_vol *vol;
+    fs_dirent ent;
+
+    if (out == (trust_result *)0)
+        return;
+    memset(out, 0, sizeof(*out));
+    if (stores == (const trust_stores *)0 || hit == (const bless_hit *)0 ||
+        hit->rec == (const manifest_record *)0 ||
+        hit->src == (const void *)0)
+        return;
+    /* The cache's const, as in bless_boot below. */
+    vol = (fs_vol *)(uintptr_t)hit->src;
+    if (open_blessed_dir(vol, &g_dir_b) != 1 ||
+        dir_find(&g_dir_b, hit->rec->uki, &ent) != 1 || ent.is_dir ||
+        fs_file_open(vol, &g_file, &ent) != FS_OK)
+        return;
+    trust_probe(stores, fs_file_read_cb, &g_file, fs_file_size(&g_file), out);
 }
 
 EFI_STATUS bless_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,

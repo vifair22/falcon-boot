@@ -1372,7 +1372,11 @@ consequences, all accepted:
 The banner's state segment names what the machine trusts, so a row's reason
 can be read against it without opening firmware setup:
 
-    falcon-boot 0.1.0            Secure Boot: ON   Trusts: MOK, MS UEFI CA, +1
+    falcon-boot 0.1.0  SB: on  trusts: MOK, MS UEFI CA, +1
+
+The wording follows the other states' labels (`SB: off`, `SB: setup mode`).
+When the title and this segment do not both fit, the title gives way: the
+state is what the user needs, and a clipped version string loses nothing.
 
 - `MOK`: the certificate on this stick's p1 (`falcon-boot.cer`) is present
   in `MokListRT`, compared byte for byte. Named once, as `MOK`, because that
@@ -1397,7 +1401,8 @@ never uses the recognised name. The 2011/2023 split is deliberately absent
 from the banner: it matters only when one generation is revoked, and then
 the entry says `{REVOKED}`.
 
-Secure Boot off, setup mode, or unknown: the segment is the existing
+`trusts: ?` when db could not be read (below), because the list would be a
+guess. Secure Boot off, setup mode, or unknown: the segment is the existing
 `sb_mode_label` text and no trust list is shown, because nothing is
 enforced and no entry gets a verdict. Validation disabled (`MokSBStateRT`):
 the existing shouted label, unchanged, for the same reason plus the one
@@ -1413,11 +1418,13 @@ exception below.
 The bracket says who signed the first stage; the braces say why it is
 predicted to be refused and appear only then. The two tags sit in aligned
 columns and the name is what gets truncated when a row is short, for the
-reason `suffix_build` already gives: a truncated name is still
+reason the old suffix builder gave: a truncated name is still
 recognisable, a truncated tag misstates what was found. The family name
-("Ubuntu install media") leaves the row and moves to the details screen;
-the file name already carries it for every family we detect, and the
-column is worth more to the signer.
+("Ubuntu install media") leaves the row; the ISO boot result screen
+already reports it, the file name carries it for every family we detect,
+and the column is worth more to the signer. The tags are separate fields
+of the row rather than text appended to the label, so the label stays the
+entry's path on p2 (which retired the old "suffix clipped the path" case).
 
 Bracket vocabulary: `[blessed]`, `[blessed, stale]`, `[unsigned]`, `[MS UEFI
 CA]`, `[MS Windows]`, `[MOK]` for a MOK-signed first stage that is not a
@@ -1443,10 +1450,21 @@ bar is black on light gray, and yellow on light gray is unreadable, so a
 selected predicted row is black on `EFI_BROWN` (which firmware renders as
 dark yellow): the bar itself changes colour rather than the text on it.
 
-The details screen gains the evidence: for each certificate-table entry,
-the signer's subject CN, the chain walked, the anchor it reached and which
-list holds it (`db`, `MokListRT`), or the `dbx`/`MokListXRT`/SBAT entry that
-revoked it.
+The evidence goes on the screen shown when the platform refuses an entry,
+which is where the question gets asked (there is no per-entry details
+screen): one line per certificate-table entry, `signer <- anchor (list)`,
+where the anchor is what the chain reached or, when nothing reached it,
+the known CA in it or the issuer it ends at, plus the list or SBAT entry
+that revoked it. Nothing is shown for an entry the prediction said nothing
+about.
+
+**Stores that could not be read.** db absent or unreadable, or MokListRT
+unreadable (absent just means nothing is enrolled), sets the stores
+incomplete. Incomplete stores never predict `{UNTRUSTED}` or `{NOT
+BLESSED}`: "nothing we could read trusts this" is not "nothing trusts
+this". `OK` and `REVOKED` are positive findings and still stand. dbx,
+MokListXRT and SbatLevelRT only ever add a refusal, so failing to read one
+costs a possible `{REVOKED}` and makes nothing else uncertain.
 
 #### Verdict rules
 
@@ -1497,13 +1515,23 @@ is the same in the parser, the tests and the Manual:
   issuer name, at most 8 steps, stopping at a self-issued certificate or a
   missing issuer.
 - A certificate `C` in that walk reaches anchor `A` if `A`'s DER equals
-  `C`'s, or `A`'s subject name equals `C`'s issuer name byte for byte AND,
-  where `C` has an Authority Key Identifier and `A` has a Subject Key
-  Identifier, the two are equal. The key-identifier condition is not
-  optional polish: every sbctl installation names its db certificate
-  `CN=Database Key`, the Dell carries two distinct ones, and a name-only
-  match would call anything signed by any sbctl key trusted on every sbctl
-  machine.
+  `C`'s. The top of the walk (the certificate whose issuer the signature does
+  not include) may also reach `A` by name: `A`'s subject equals `C`'s issuer
+  byte for byte AND, where `C` has an Authority Key Identifier and `A` has a
+  Subject Key Identifier, the two are equal. A certificate lower in the walk
+  is judged through its included issuer instead, never by name.
+- **A self-issued certificate reaches only an anchor that IS it.** This rule
+  was added after measuring the Dell (2026-09-17): sbctl's certificates carry
+  no extensions at all, so there is no key identifier to disambiguate them,
+  every one is named `CN=Database Key`, and that db holds two distinct ones.
+  Without the rule, anything signed by any sbctl key would read as trusted on
+  every sbctl machine. (The design previously leaned on key identifiers for
+  this; they do not exist on the certificates that need them.)
+- The accepted residual, pinned by the corruption sweep: a forged
+  certificate whose subject was altered but whose issuer still names an
+  identifier-less anchor matches by name and predicts "boots". Telling it
+  apart from a certificate that anchor really issued needs the signature
+  check the loader does not do; shim refuses it at load.
 - `db` and `MokListRT` entries are `EFI_SIGNATURE_LIST`s. `EFI_CERT_X509_GUID`
   entries are anchors, `EFI_CERT_SHA256_GUID` entries are image hashes, and
   every other type is skipped, not an error. `dbx` and `MokListXRT` are read
@@ -2045,8 +2073,17 @@ was struck: Windows needs no injector, for the reason in Section 6.1.
     requirements failure; whether a Windows ISO behaves the same under Secure
     Boot ON as the chain in Section 7.2 says it must; and Windows Setup
     reaching the install screen end to end.
-12. Boot predictions (Section 7.8, decided 2026-09-17). Internal order, each
-    piece testable before the next exists:
+12. Boot predictions (Section 7.8, decided 2026-09-17). IMPLEMENTED
+    2026-09-17, everything below the last bullet: src/secboot (der, x509,
+    authenticode, siglist, trust, probe, trustefi) over a new src/pe that
+    osrel and the ISO survey now share. 28 new tests including a byte-flip
+    sweep under ASan, the Authenticode hash checked against sbsign's digest
+    for every fixture, and a real Fedora shim against the real Microsoft
+    certificates. In the rig, every tag was confirmed against what shim then
+    did, under both a Microsoft db and a db holding one sbctl-shaped key. The
+    same code, run on the host against the Dell's own variables and every
+    boot file on the stick, gives exactly the manual analysis that prompted
+    the section. Internal order, each piece testable before the next exists:
     - `EFI_SIGNATURE_LIST` and `SbatLevelRT` parsers, tested against the
       secboot OVMF varstore and the variables dumped from real machines;
     - the DER/PKCS#7 reader and PE certificate-table walk, tested against the

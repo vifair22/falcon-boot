@@ -503,6 +503,13 @@ static void test_fs_exfat_through_vtable(void **state)
     assert_int_equal(fs_file_read(&file, synth_cluster_bytes(&sv),
                                  sizeof buf, buf), FS_ERR_RANGE);
 
+    /* The callback form reads the same bytes and folds every error to -1. */
+    memset(buf, 0, sizeof buf);
+    assert_int_equal(fs_file_read_cb(&file, 8, sizeof buf, buf), 0);
+    assert_memory_equal(buf, want, sizeof buf);
+    assert_int_equal(fs_file_read_cb(&file, synth_cluster_bytes(&sv),
+                                     sizeof buf, buf), -1);
+
     synth_free(&sv);
 }
 

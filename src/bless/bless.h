@@ -32,6 +32,7 @@
 #include <bless/blesscore.h>
 #include <fs/fs.h>
 #include <iso/iso.h>
+#include <secboot/trust.h>
 
 /* Where a bless lives on p2, matching `falcon-boot-sign`'s BLESSED_DIR and
  * the reserved directory of DESIGN Section 6.2. Two components, walked one at
@@ -92,6 +93,14 @@ bless_state bless_lookup(const fs_vol *vol, const CHAR16 *path,
 
 /* Records that were parsed but had nowhere to go (BLESS_MAX_RECORDS). */
 UINTN bless_dropped(void);
+
+/* The boot prediction for the wrap a fresh record names (DESIGN Section 7.8):
+ * its certificate table and .sbat, read off p2 without reading the image. The
+ * wrap is ~250 MB, well past TRUST_HASH_MAX, so no hash is taken and the
+ * verdict is the signer's. TRUST_NO_VERDICT on anything unusual. A label: the
+ * launch below neither takes nor reads it. */
+void bless_uki_trust(const bless_hit *hit, const trust_stores *stores,
+                     trust_result *out);
 
 /* Launches the blessed UKI the hit names.
  *

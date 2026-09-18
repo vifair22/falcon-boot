@@ -608,6 +608,11 @@ int fs_file_read(fs_file *f, uint64_t off, uint64_t len, void *buf)
     return f->ops->file_read(f, off, len, buf);
 }
 
+int fs_file_read_cb(void *file, uint64_t off, uint64_t len, void *buf)
+{
+    return fs_file_read((fs_file *)file, off, len, buf) == FS_OK ? 0 : -1;
+}
+
 uint64_t fs_file_size(const fs_file *f)
 {
     if (f == (const fs_file *)0 || f->ops == (const fs_ops *)0)

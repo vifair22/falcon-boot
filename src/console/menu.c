@@ -1,5 +1,7 @@
 #include <console/menu.h>
 
+#include <lib/string.h>
+
 /* The frame.
  *
  * The console font is a fixed 8x19 cell in every mode, so a smaller mode does
@@ -85,6 +87,8 @@ typedef struct {
     UINTN             list_top;  /* first list row */
     UINTN             win;       /* list rows */
     UINTN             hint_row;
+    UINTN             sig_w;     /* widest sig tag in this list */
+    UINTN             why_w;     /* widest why tag in this list */
 } menu_view;
 
 static void out(EFI_SYSTEM_TABLE *st, CHAR16 *s)
@@ -140,6 +144,57 @@ static void draw_row(EFI_SYSTEM_TABLE *st, UINTN row, UINTN left, UINTN w,
     out(st, g_row);
 }
 
+/* A name this narrow is where aligned tag columns stop being worth it. */
+#define NAME_MIN 12u
+
+/* One list row: the name, then the tag columns (DESIGN Section 7.8).
+ *
+ * Aligned when the row has room: every row's sig starts at the column the
+ * widest sig and why on this screen fix, so the tags read as columns. The
+ * NAME is what gets cut, never a tag: a clipped name is still recognisable,
+ * a clipped tag misstates what was found. When aligning would squeeze the
+ * name below NAME_MIN, each row places its own tags at the right edge
+ * instead, and only on a console too narrow for even that does the name win
+ * and the tags go. */
+static void draw_entry(const menu_view *v, UINTN row, const menu_entry *e)
+{
+    UINTN w = v->list_width;
+    UINTN start = text_start(w);
+    UINTN end = text_end(w);
+    UINTN sig = ucs2_len(e->sig);
+    UINTN why = ucs2_len(e->why);
+    UINTN cols = v->sig_w + (v->why_w != 0 ? 2u + v->why_w : 0u);
+    UINTN own = sig + (why != 0 ? 2u + why : 0u);
+    UINTN col = row_pad(0, start);
+
+    if (cols != 0 && end - start >= NAME_MIN + 2u + cols) {
+        UINTN tag_at = end - cols;
+
+        col = row_put(e->label, col, tag_at - 2u);
+        col = row_pad(col, tag_at);
+        col = row_put(e->sig, col, end);
+        if (why != 0) {
+            col = row_pad(col, tag_at + v->sig_w + 2u);
+            col = row_put(e->why, col, end);
+        }
+    } else if (own != 0 && end - start >= 1u + 2u + own) {
+        UINTN tag_at = end - own;
+
+        col = row_put(e->label, col, tag_at - 2u);
+        col = row_pad(col, tag_at);
+        col = row_put(e->sig, col, end);
+        if (why != 0) {
+            col = row_put(L"  ", col, end);
+            col = row_put(e->why, col, end);
+        }
+    } else {
+        col = row_put(e->label, col, end);
+    }
+    row_pad(col, w);
+    v->st->ConOut->SetCursorPosition(v->st->ConOut, v->list_left, row);
+    out(v->st, g_row);
+}
+
 /* Title in the menu's own colour, state suffix in whatever attribute the
  * caller chose for it. Three calls rather than one, because SetAttribute
  * applies to subsequent output and the two segments differ; the banner is
@@ -159,7 +214,19 @@ static void draw_banner(const menu_view *v, const menu_banner *banner)
         return;
     }
 
-    col = row_put(banner->title, row_pad(0, text_start(w)), text_end(w));
+    /* When both do not fit, the title gives way: the state is the part a
+     * user needs (DESIGN Section 7.4 wants it unmissable, 7.8 puts what the
+     * machine trusts in it), and a clipped version string loses nothing. */
+    {
+        UINTN end = text_end(w);
+        UINTN need = (banner->state != (void *)0)
+                         ? ucs2_len(banner->state) + 2u
+                         : 0u;
+
+        if (need < end - text_start(w))
+            end -= need;
+        col = row_put(banner->title, row_pad(0, text_start(w)), end);
+    }
     g_row[col] = L'\0';
     out(st, g_row);
 
@@ -404,12 +471,21 @@ static void paint_slot(const menu_view *v, UINTN slot, UINTN top, UINTN sel)
     UINTN idx = top + slot;
 
     if (idx < v->count) {
-        v->st->ConOut->SetAttribute(
-            v->st->ConOut,
-            idx == sel ? EFI_TEXT_ATTR(EFI_BLACK, EFI_LIGHTGRAY)
-                       : EFI_TEXT_ATTR(EFI_LIGHTGRAY, EFI_BLACK));
-        draw_row(v->st, v->list_top + slot, v->list_left, v->list_width,
-                 v->entries[idx].label);
+        const menu_entry *e = &v->entries[idx];
+        UINTN attr;
+
+        /* Caution is the whole row, not the tag. Selected, the bar itself
+         * turns: yellow text on the light-gray bar is unreadable, and black
+         * on brown (which firmware draws as dark yellow) is the same warning
+         * in a form that still reads. */
+        if (e->caution)
+            attr = (idx == sel) ? EFI_TEXT_ATTR(EFI_BLACK, EFI_BROWN)
+                                : EFI_TEXT_ATTR(EFI_YELLOW, EFI_BLACK);
+        else
+            attr = (idx == sel) ? EFI_TEXT_ATTR(EFI_BLACK, EFI_LIGHTGRAY)
+                                : EFI_TEXT_ATTR(EFI_LIGHTGRAY, EFI_BLACK);
+        v->st->ConOut->SetAttribute(v->st->ConOut, attr);
+        draw_entry(v, v->list_top + slot, e);
     } else {
         v->st->ConOut->SetAttribute(
             v->st->ConOut, EFI_TEXT_ATTR(EFI_LIGHTGRAY, EFI_BLACK));
@@ -440,6 +516,21 @@ INTN menu_run(EFI_SYSTEM_TABLE *st, const menu_banner *banner,
     v.entries = entries;
     v.count = count;
     layout(&v);
+    v.sig_w = 0;
+    v.why_w = 0;
+    {
+        UINTN i;
+
+        for (i = 0; i < count; i++) {
+            UINTN a = ucs2_len(entries[i].sig);
+            UINTN b = ucs2_len(entries[i].why);
+
+            if (a > v.sig_w)
+                v.sig_w = a;
+            if (b > v.why_w)
+                v.why_w = b;
+        }
+    }
 
     st->ConOut->EnableCursor(st->ConOut, FALSE);
     /* The one ClearScreen per screen, and what blanks the margins. Nothing
@@ -449,8 +540,8 @@ INTN menu_run(EFI_SYSTEM_TABLE *st, const menu_banner *banner,
     draw_banner(&v, banner);
     st->ConOut->SetAttribute(st->ConOut,
                              EFI_TEXT_ATTR(EFI_DARKGRAY, EFI_BLACK));
-    /* "presence" is the whole claim; the menu verifies nothing (DESIGN
-     * Section 7.3).
+    /* "expected" is the whole claim: the tags are a prediction and the
+     * platform decides at load time (DESIGN Section 7.8).
      *
      * The two key words stay general because what they do is the caller's:
      * enter opens a folder or boots an image on the main menu and picks an
@@ -459,7 +550,7 @@ INTN menu_run(EFI_SYSTEM_TABLE *st, const menu_banner *banner,
      * here would be wrong on the other screens. */
     draw_row(st, v.hint_row, v.left, v.width,
              count ? L"up/down select | enter choose | esc back | "
-                     L"[family, signature presence]"
+                     L"[signed by] {expected refusal}"
                    : L"no entries | esc back");
 
     for (;;) {

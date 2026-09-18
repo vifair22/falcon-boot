@@ -1,119 +1,12 @@
 #include <pos/osrel.h>
 
-/* Every offset below is checked against len before it is read. The bytes come
- * from inside the LUKS volume the user just unlocked, so this is not hostile
- * input in the way a p2 ISO is - but it is still a length-prefixed structure
- * walk in C, running before ExitBootServices, and "probably friendly" is not a
- * bounds check. */
+#include <pe/pe.h>
 
-#define DOS_MAGIC      0x5A4Du      /* "MZ" */
-#define PE_LFANEW_OFF  0x3Cu
-#define COFF_SECTIONS  6u           /* NumberOfSections, from the PE signature */
-#define COFF_OPTSIZE   20u          /* SizeOfOptionalHeader */
-#define COFF_SIZE      24u          /* signature + COFF header */
-#define SECT_ENTRY     40u
-#define SECT_NAME      8u
-#define SECT_RAWSIZE   16u
-#define SECT_RAWPTR    20u
-
-static uint16_t rd16(const uint8_t *p)
-{
-    return (uint16_t)((uint16_t)p[0] | ((uint16_t)p[1] << 8));
-}
-
-static uint32_t rd32(const uint8_t *p)
-{
-    return (uint32_t)p[0] | ((uint32_t)p[1] << 8) |
-           ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
-}
-
-/* Section names are 8 bytes, NUL-padded rather than NUL-terminated, so a name
- * that fills the field has no terminator at all. Compare the whole field. */
-static int name_is(const uint8_t *field, const char *want)
-{
-    size_t i;
-
-    for (i = 0; i < SECT_NAME; i++) {
-        char w = want[i] != '\0' ? want[i] : '\0';
-
-        if ((char)field[i] != w)
-            return 0;
-        if (w == '\0' && want[i] == '\0') {
-            /* Rest of the field must be padding. */
-            for (; i < SECT_NAME; i++) {
-                if (field[i] != 0)
-                    return 0;
-            }
-            return 1;
-        }
-    }
-    return 1;
-}
-
-/* Finds .osrel and hands back its file range.
- *
- * TWO lengths, and conflating them was a real bug (fixed 2026-09-15). `len` is
- * how much of the file is in b; `total` is how long the file is. The headers
- * and the section table must lie inside b, because they are read here. The
- * SECTION CONTENT must not be required to: a caller that read only a header
- * window is the normal case, and the whole point of returning a file range is
- * that the caller then goes and reads it.
- *
- * Validating the section range against `len` made this function answer "no
- * .osrel section" for every real UKI, whose .osrel sits ~130 KB in, behind a
- * section table at byte 392. The loader fell back to filenames and looked like
- * it simply had not been wired up. */
-static int find_osrel(const uint8_t *b, size_t len, size_t total,
-                      const char *want, size_t *off, size_t *size)
-{
-    uint32_t lfanew;
-    uint16_t nsect, optsize;
-    size_t table;
-    size_t i;
-
-    if (len < PE_LFANEW_OFF + 4u)
-        return OSREL_ERR_NOT_PE;
-    if (rd16(b) != DOS_MAGIC)
-        return OSREL_ERR_NOT_PE;
-
-    lfanew = rd32(b + PE_LFANEW_OFF);
-    /* lfanew is attacker-controlled in the general case, so it is bounded
-     * before it is added to anything. */
-    if (lfanew > len || len - lfanew < COFF_SIZE)
-        return OSREL_ERR_NOT_PE;
-    if (b[lfanew] != 'P' || b[lfanew + 1u] != 'E' ||
-        b[lfanew + 2u] != 0 || b[lfanew + 3u] != 0)
-        return OSREL_ERR_NOT_PE;
-
-    nsect = rd16(b + lfanew + COFF_SECTIONS);
-    optsize = rd16(b + lfanew + COFF_OPTSIZE);
-    table = (size_t)lfanew + COFF_SIZE + (size_t)optsize;
-    if (table > len)
-        return OSREL_ERR_NOT_PE;
-    /* Division rather than multiplication, so the bound cannot itself
-     * overflow on a large NumberOfSections. */
-    if ((size_t)nsect > (len - table) / SECT_ENTRY)
-        return OSREL_ERR_NOT_PE;
-
-    for (i = 0; i < (size_t)nsect; i++) {
-        const uint8_t *s = b + table + i * SECT_ENTRY;
-        uint32_t raw_size, raw_ptr;
-
-        if (!name_is(s, want))
-            continue;
-        raw_size = rd32(s + SECT_RAWSIZE);
-        raw_ptr = rd32(s + SECT_RAWPTR);
-        /* Against the FILE, not against the window. */
-        if (raw_ptr > total || raw_size > total - raw_ptr)
-            return OSREL_ERR_NO_SECTION;
-        if (raw_size == 0)
-            return OSREL_ERR_NO_SECTION;
-        *off = raw_ptr;
-        *size = raw_size;
-        return OSREL_OK;
-    }
-    return OSREL_ERR_NO_SECTION;
-}
+/* Every offset below is checked against len before it is read; the PE walk
+ * itself is src/pe's. The bytes come from inside the LUKS volume the user just
+ * unlocked, so this is not hostile input in the way a p2 ISO is - but it is
+ * still a length-prefixed structure walk in C, running before
+ * ExitBootServices, and "probably friendly" is not a bounds check. */
 
 static int key_matches(const char *text, size_t len, size_t at, const char *key)
 {
@@ -127,10 +20,15 @@ static int key_matches(const char *text, size_t len, size_t at, const char *key)
     return at + i < len && text[at + i] == '=';
 }
 
+/* The PE walk is src/pe's. What stays here is the mapping onto this module's
+ * codes, which predate it and which pos.c reports: anything about the headers
+ * or a section table past the window is "not a PE we recognise", and a
+ * section that is missing, empty or runs past the end of the file is "no
+ * section". */
 int osrel_find(const void *buf, size_t len, size_t total,
                const char *section, size_t *off, size_t *size)
 {
-    size_t o = 0, n = 0;
+    pe_hdr h;
     int rc;
 
     if (off == (size_t *)0 || size == (size_t *)0 || section == (const char *)0)
@@ -139,12 +37,12 @@ int osrel_find(const void *buf, size_t len, size_t total,
     *size = 0;
     if (buf == (const void *)0 || total < len)
         return OSREL_ERR_BAD_ARG;
-    rc = find_osrel((const uint8_t *)buf, len, total, section, &o, &n);
-    if (rc != OSREL_OK)
-        return rc;
-    *off = o;
-    *size = n;
-    return OSREL_OK;
+    if (pe_parse(buf, len, &h) != PE_OK)
+        return OSREL_ERR_NOT_PE;
+    rc = pe_find_section(&h, buf, total, section, off, size);
+    if (rc == PE_OK)
+        return OSREL_OK;
+    return rc == PE_ERR_SHORT ? OSREL_ERR_NOT_PE : OSREL_ERR_NO_SECTION;
 }
 
 int osrel_value(const char *text, size_t len, const char *key,
@@ -236,7 +134,7 @@ int osrel_label(const void *buf, size_t len, char *out, size_t cap)
         return OSREL_ERR_BAD_ARG;
 
     /* Whole-buffer caller: the window IS the file. */
-    rc = find_osrel(b, len, len, OSREL_SECT_OSREL, &off, &size);
+    rc = osrel_find(b, len, len, OSREL_SECT_OSREL, &off, &size);
     if (rc != OSREL_OK)
         return rc;
     text = (const char *)(b + off);

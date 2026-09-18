@@ -22,6 +22,8 @@
 #include <efi/shimguid.h>
 #include <iso/family.h>
 #include <lib/string.h>
+#include <pe/pe.h>
+#include <secboot/probe.h>
 
 /* El Torito lives on 2048-byte media; the firmware's partition driver only
  * looks for a boot catalog when the block size says CD-ROM. */
@@ -447,13 +449,6 @@ static EFI_STATUS collect_iso_volumes(EFI_BOOT_SERVICES *bs, iso_device *dev,
  * read with a single short read, and we say so rather than guess. */
 #define PE_HEAD_MAX 1024u
 
-/* Offsets inside the optional header, which is where PE32 and PE32+ differ:
- * the 64-bit form widens three fields, pushing NumberOfRvaAndSizes and the
- * directory array 16 bytes later (PE/COFF spec 3.4). */
-#define OPT_MAGIC_PE32   0x10bu
-#define OPT_MAGIC_PE32P  0x20bu
-#define DIR_SECURITY     4u     /* certificate table (Authenticode) */
-
 /* The probe's ctx is the ESP's root directory handle itself; there is no
  * per-probe state worth a wrapper struct. */
 static EFI_FILE_PROTOCOL *probe_root(void *ctx)
@@ -709,53 +704,23 @@ static const family_desc *media_family(EFI_BOOT_SERVICES *bs,
 
 iso_sig iso_pe_signature(const void *buf, UINTN len)
 {
-    const uint8_t *head = buf;
-    size_t got = (size_t)len;
-    size_t pe;
-    size_t opt;
-    size_t nrva_off;
-    size_t dir_off;
-    uint16_t magic;
-    uint32_t nrva;
-
-    if (head == (const uint8_t *)0)
-        return ISO_SIG_UNKNOWN;
+    pe_hdr h;
+    size_t entry;
+    uint32_t off, size;
+    int rc;
 
     /* From here on the file exists but does not parse, which is a different
      * fact from "no loader" and gets a different label. */
-    if (got < 0x40u || head[0] != 'M' || head[1] != 'Z')
+    if (buf == (const void *)0 || pe_parse(buf, (size_t)len, &h) != PE_OK)
         return ISO_SIG_UNKNOWN;
-    pe = (size_t)get_le32(head + 0x3c);
-    if (pe > got || got - pe < 24u + 2u)
-        return ISO_SIG_UNKNOWN;
-    if (memcmp(head + pe, "PE\0\0", 4) != 0)
-        return ISO_SIG_UNKNOWN;
-
-    opt = pe + 24u; /* signature (4) + COFF file header (20) */
-    magic = get_le16(head + opt);
-    if (magic == OPT_MAGIC_PE32P) {
-        nrva_off = 108u;
-        dir_off = 112u;
-    } else if (magic == OPT_MAGIC_PE32) {
-        nrva_off = 92u;
-        dir_off = 96u;
-    } else {
-        return ISO_SIG_UNKNOWN;
-    }
-
-    if (got - opt < nrva_off + 4u)
-        return ISO_SIG_UNKNOWN;
-    nrva = get_le32(head + opt + nrva_off);
+    rc = pe_dir(&h, buf, PE_DIR_SECURITY, &entry, &off, &size);
     /* An image with a short directory array simply has no certificate table
      * entry, which is an answer, not a parse failure. */
-    if (nrva <= DIR_SECURITY)
+    if (rc == PE_ERR_ABSENT)
         return ISO_SIG_ABSENT;
-    if (got - opt < dir_off + (DIR_SECURITY + 1u) * 8u)
+    if (rc != PE_OK)
         return ISO_SIG_UNKNOWN;
-
-    return get_le32(head + opt + dir_off + DIR_SECURITY * 8u + 4u) != 0
-               ? ISO_SIG_PRESENT
-               : ISO_SIG_ABSENT;
+    return size != 0 ? ISO_SIG_PRESENT : ISO_SIG_ABSENT;
 }
 
 /* Does the ISO's default loader carry a certificate table? The read is this
@@ -770,6 +735,39 @@ static iso_sig root_signature(EFI_FILE_PROTOCOL *root)
     if (probe_read(root, ISO_BOOT_PATH, 0, head, sizeof(head), &got) != 0)
         return ISO_SIG_NO_EFI;
     return iso_pe_signature(head, (UINTN)got);
+}
+
+/* The boot prediction for the default loader (DESIGN Section 7.8). Reads the
+ * whole file when it is small enough to hash, which for a first stage it
+ * always is; the read goes through the same virtual medium the chainload
+ * would, so it predicts about the bytes that would actually be loaded. */
+static int efi_file_read_cb(void *ctx, uint64_t off, uint64_t len, void *buf)
+{
+    EFI_FILE_PROTOCOL *f = ctx;
+    UINTN n = (UINTN)len;
+
+    if (EFI_ERROR(f->SetPosition(f, off)) || EFI_ERROR(f->Read(f, &n, buf)) ||
+        (uint64_t)n != len)
+        return -1;
+    return 0;
+}
+
+static void root_trust(EFI_FILE_PROTOCOL *root, const trust_stores *stores,
+                       trust_result *out)
+{
+    EFI_FILE_PROTOCOL *file;
+    UINT64 size = 0;
+
+    memset(out, 0, sizeof(*out));
+    if (stores == (const trust_stores *)0 ||
+        probe_open(root, ISO_BOOT_PATH, &file) != EFI_SUCCESS)
+        return;
+    /* Position all-ones is end of file (spec 13.5.13), so its position is
+     * the size, with no EFI_FILE_INFO buffer to size and allocate. */
+    if (!EFI_ERROR(file->SetPosition(file, ~(UINT64)0)) &&
+        !EFI_ERROR(file->GetPosition(file, &size)))
+        trust_probe(stores, efi_file_read_cb, file, size, out);
+    file->Close(file);
 }
 
 /* ---- chainload ---- */
@@ -1112,7 +1110,7 @@ EFI_STATUS iso_boot_overlaid(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
 
 EFI_STATUS iso_survey_media(EFI_SYSTEM_TABLE *st, fs_vol *vol,
                             const fs_dirent *file, iso_media_kind kind,
-                            iso_survey *out)
+                            const trust_stores *stores, iso_survey *out)
 {
     EFI_BOOT_SERVICES *bs;
     iso_volumes vols;
@@ -1126,6 +1124,7 @@ EFI_STATUS iso_survey_media(EFI_SYSTEM_TABLE *st, fs_vol *vol,
         return EFI_INVALID_PARAMETER;
     out->family = family_by_id(FAMILY_UNKNOWN);
     out->sig = ISO_SIG_UNKNOWN;
+    memset(&out->trust, 0, sizeof(out->trust));
     if (st == (void *)0 || vol == (void *)0 || file == (void *)0)
         return EFI_INVALID_PARAMETER;
 
@@ -1147,6 +1146,8 @@ EFI_STATUS iso_survey_media(EFI_SYSTEM_TABLE *st, fs_vol *vol,
     } else if (esp_open_root(bs, vols.vol[0], &root) == EFI_SUCCESS) {
         out->family = root_family(root);
         out->sig = root_signature(root);
+        if (out->sig == ISO_SIG_PRESENT || out->sig == ISO_SIG_ABSENT)
+            root_trust(root, stores, &out->trust);
         root->Close(root);
         /* Only a medium the bootable volume cannot describe pays for the
          * other volumes, so the common entry costs exactly what it did. */

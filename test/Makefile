@@ -86,6 +86,8 @@ LUKS_IMG         ?= $(ROOT)/build/test-luks.img
 LUKS_ARGON_IMG   ?= $(ROOT)/build/test-luks-argon.img
 LUKS_MANIFEST    ?= $(ROOT)/build/test-luks.manifest
 LUKS_REF         ?= $(ROOT)/build/test-luks.ref64k
+TRUST_DIR        ?= $(ROOT)/build/test-trust
+SHIM_DIR         ?= $(ROOT)/build/shim/bins
 
 # The repo's standard warning set, minus the flags that only mean something
 # for the freestanding EFI target (-ffreestanding, -fshort-wchar,
@@ -115,6 +117,8 @@ CFLAGS := -std=c11 -O0 -g --coverage $(WARNS) \
 	-DLUKS_ARGON_IMG='"$(LUKS_ARGON_IMG)"' \
 	-DLUKS_MANIFEST='"$(LUKS_MANIFEST)"' \
 	-DLUKS_REF='"$(LUKS_REF)"' \
+	-DTRUST_DIR='"$(TRUST_DIR)"' \
+	-DSHIM_DIR='"$(SHIM_DIR)"' \
 	-I$(TEST_DIR)/hostshim -I$(ROOT)/src -I$(ROOT)/tools -I$(TEST_DIR) \
 	$(CMOCKA_CFLAGS)
 
@@ -144,6 +148,8 @@ TEST_SRCS := \
 	$(TEST_DIR)/part_test.c \
 	$(TEST_DIR)/sb_test.c \
 	$(TEST_DIR)/osrel_test.c \
+	$(TEST_DIR)/pe_test.c \
+	$(TEST_DIR)/trust_test.c \
 	$(TEST_DIR)/fs_test.c \
 	$(TEST_DIR)/iso_overlay_test.c \
 	$(TEST_DIR)/synth.c
@@ -163,7 +169,14 @@ UUT_SRCS := \
 	$(ROOT)/src/fs/ext4.c \
 	$(ROOT)/src/disk/part.c \
 	$(ROOT)/src/secboot/sb.c \
+	$(ROOT)/src/secboot/der.c \
+	$(ROOT)/src/secboot/x509.c \
+	$(ROOT)/src/secboot/authenticode.c \
+	$(ROOT)/src/secboot/siglist.c \
+	$(ROOT)/src/secboot/trust.c \
+	$(ROOT)/src/secboot/probe.c \
 	$(ROOT)/src/pos/osrel.c \
+	$(ROOT)/src/pe/pe.c \
 	$(ROOT)/src/fs/fs.c \
 	$(ROOT)/src/crypto/crypto.c \
 	$(ROOT)/src/crypto/sha256.c \
@@ -213,7 +226,7 @@ APPL_SRCS := \
 # src/bless/bless.c carries the firmware half, and src/cli/sign/prepcore.c
 # does the same for preparation. payload.c wants the same treatment, and
 # until it gets one this line is a known compromise rather than an oversight.
-COV_FILTER := .*/src/(fs/(exfat|ext4|fs)|iso/(cpio|family)|pos/osrel|cli/sign/(isoprobe|wimext|prepcore)|bless/(manifest[a-z_]*|blesscore)|disk/part|secboot/sb|crypto/[a-z0-9]+|luks/[a-z0-9]+)\.c$$|.*/src/iso/overlay\.h$$|.*/tools/appliance/route\.c$$
+COV_FILTER := .*/src/(fs/(exfat|ext4|fs)|iso/(cpio|family)|pos/osrel|pe/pe|cli/sign/(isoprobe|wimext|prepcore)|bless/(manifest[a-z_]*|blesscore)|disk/part|secboot/[a-z0-9]+|crypto/[a-z0-9]+|luks/[a-z0-9]+)\.c$$|.*/src/iso/overlay\.h$$|.*/tools/appliance/route\.c$$
 
 OBJS := $(patsubst $(TEST_DIR)/%.c,$(OBJ)/%.o,$(TEST_SRCS)) \
 	$(patsubst $(ROOT)/src/%.c,$(OBJ)/uut/%.o,$(UUT_SRCS)) \

@@ -53,7 +53,8 @@ src/disk/     GPT parsing and the one device-discovery pass
 src/fs/       filesystem registry and read-only exFAT / ext4 drivers
 src/luks/     LUKS2 unlock
 src/crypto/   SHA-2, HMAC, PBKDF2, AES-XTS
-src/secboot/  Secure Boot state, read for display only
+src/pe/       PE/COFF header layout, shared by every reader of a PE
+src/secboot/  Secure Boot state and boot predictions, read for display only
 src/iso/      ISO path: virtual media, family detection, injection
 src/pos/      personal-OS path
 src/bless/    blessed path and its manifest

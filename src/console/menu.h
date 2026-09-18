@@ -9,9 +9,18 @@
 #include <efi/uefi.h>
 
 #define MENU_PATH_MAX 512u
+#define MENU_TAG_MAX  48u
 
+/* A row: its name, and two optional tag columns drawn right of it in aligned
+ * columns (DESIGN Section 7.8). `sig` says who signed what the entry boots;
+ * `why` says why the platform is expected to refuse it, and is set only
+ * together with `caution`, which draws the row in the caution colours. The
+ * menu renders them and knows nothing of what they mean. */
 typedef struct {
     CHAR16 label[MENU_PATH_MAX];
+    CHAR16 sig[MENU_TAG_MAX];
+    CHAR16 why[MENU_TAG_MAX];
+    UINT8  caution;
 } menu_entry;
 
 /* The banner is two segments so the Secure Boot state can be coloured apart

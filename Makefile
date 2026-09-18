@@ -44,6 +44,7 @@ SRCS := \
 	src/fs/exfat.c \
 	src/fs/ext4.c \
 	src/fs/fs.c \
+	src/pe/pe.c \
 	src/luks/json.c \
 	src/luks/af.c \
 	src/luks/luks.c \
@@ -57,6 +58,13 @@ SRCS := \
 	src/crypto/xts.c \
 	src/crypto/aesni.c \
 	src/secboot/sb.c \
+	src/secboot/der.c \
+	src/secboot/x509.c \
+	src/secboot/authenticode.c \
+	src/secboot/siglist.c \
+	src/secboot/trust.c \
+	src/secboot/probe.c \
+	src/secboot/trustefi.c \
 	src/iso/iso.c \
 	src/iso/family.c \
 	src/iso/cpio.c \
@@ -235,7 +243,7 @@ VERSION := $(SEMVER)_$(shell date +%Y%m%d.%H%M).$(VARIANT)
 
 .PHONY: all cli winjump appliance test-appliance-stick test-appliance check-tools esp run run-secboot run-stick run-stick-secboot \
 	analyze sbat-check sign mok-test test-image test-iso test-img test-stick \
-	test-fixtures test-ext4 test-luks test-isoview \
+	test-fixtures test-ext4 test-luks test-isoview test-trust \
 	test-uki payload version-stamp clean
 
 all: $(EFI) cli winjump compile_commands.json
@@ -485,7 +493,7 @@ test-image: test-iso test-img
 # clean checkout ran 392 tests, reported green, and left src/fs/ext4.c, src/luks
 # and src/luks/af at zero coverage. Run `make test-fixtures` once, then
 # `make -C test coverage`, and the same tree reports 449 tests and 93%.
-test-fixtures: test-image test-ext4 test-luks test-isoview
+test-fixtures: test-image test-ext4 test-luks test-isoview test-trust
 
 test-ext4:
 	tools/mk-test-ext4.sh
@@ -498,6 +506,12 @@ test-luks:
 # suite can read.
 test-isoview:
 	tools/mk-test-isoview.sh
+
+# The boot-prediction fixtures (DESIGN Section 7.8): certificates with known
+# relationships and the loader signed by each. No sudo; it signs the loader,
+# so it needs one built first.
+test-trust: $(EFI)
+	tools/mk-test-trust.sh
 
 test-iso: $(PAYLOAD)
 	tools/mk-test-iso.sh
