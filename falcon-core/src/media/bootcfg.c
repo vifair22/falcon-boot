@@ -1005,8 +1005,10 @@ static const char *grub_for(parser *p, size_t nw, const char *s,
     int unknown = 0;
 
     if (nw < 3 || !ieq(g_words[2], "in") || g_wunres[1] ||
-        (nl = slen(g_words[1])) == 0 || nl >= VAR_NAME_MAX ||
         depth + 1u >= DEPTH_MAX)
+        return (const char *)0;
+    nl = slen(g_words[1]);
+    if (nl == 0 || nl >= VAR_NAME_MAX)
         return (const char *)0;
     while (s < end && (*s == ' ' || *s == '\t' || *s == '\r' ||
                        *s == '\n' || *s == ';'))
