@@ -45,6 +45,7 @@
 #include <sign/isoprobe.h>
 
 #include <errno.h>
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -91,6 +92,7 @@ struct iso_view {
     char       *path;                   /* the ISO itself */
     char       *listing[ISO_READER_N];  /* helper output, chopped into lines */
     const char *zbin;                   /* 7-Zip binary, NULL when absent */
+    char        zbin_path[PATH_MAX];    /* zbin's storage when resolved here */
     iso_entry  *entries;
     size_t      n_entries;
     size_t      n_iso9660;              /* how many of those came from bsdtar */
@@ -266,18 +268,52 @@ int iso_listing_index(iso_view *v, char *text, iso_reader reader)
 
 /* The 7-Zip binary goes by three names depending on how it was packaged, and
  * all three of the builds in circulation carry the UDF handler. Tried in the
- * order of how likely each is to be the full build. */
+ * order of how likely each is to be the full build.
+ *
+ * Resolved to a full path and run by it, never by bare name: 7-Zip loads its
+ * format library (7z.so) from the directory in argv[0], so started as plain
+ * "7z" it looks for ./7z.so in whatever the current directory is, loads no
+ * formats, and answers "Cannot open the file as archive" for every image. A
+ * host whose 7z is a shell wrapper that execs the real binary by full path
+ * hides this; the appliance, which has no shell and stages the real binary,
+ * does not (seen on hardware 2026-09-18). */
 static const char *const g_zbins[] = { "7z", "7zz", "7za", NULL };
 
-static const char *pick_zbin(void)
+static const char *pick_zbin(char *buf, size_t cap)
 {
     size_t i;
 
     for (i = 0; g_zbins[i] != NULL; i++) {
-        if (sgn_have_program(g_zbins[i]))
-            return g_zbins[i];
+        if (sgn_which(g_zbins[i], buf, cap))
+            return buf;
     }
     return NULL;
+}
+
+int iso_udf_reader_ok(char *which, size_t cap)
+{
+    char path[PATH_MAX];
+    char *argv[3];
+    char *out = NULL;
+    size_t len = 0;
+    int ok = 0;
+
+    if (which != NULL && cap > 0u)
+        which[0] = '\0';
+    if (pick_zbin(path, sizeof(path)) == NULL)
+        return 0;
+    if (which != NULL && cap > 0u)
+        (void)snprintf(which, cap, "%s", path);
+
+    /* `7z i` lists the formats that loaded; the UDF handler is one row of
+     * that table, its name standing alone between runs of spaces. */
+    argv[0] = path;
+    argv[1] = sgn_arg("i");
+    argv[2] = NULL;
+    if (sgn_run_capture(argv, &out, &len, Z_LISTING_MAX) == SGN_OK)
+        ok = strstr(out, " Udf ") != NULL;
+    free(out);
+    return ok;
 }
 
 static iso_view *view_alloc(const char *path)
@@ -343,7 +379,7 @@ int iso_view_open(const char *path, iso_view **out)
     /* UDF. Listed second so that anything both namespaces carry keeps the
      * bsdtar entry, and with it the extraction path that has always been
      * used for Linux media. */
-    v->zbin = pick_zbin();
+    v->zbin = pick_zbin(v->zbin_path, sizeof(v->zbin_path));
     if (v->zbin == NULL) {
         sgn_log(SGN_LOG_WARN,
                 "7z is not on PATH, so only this image's ISO9660 namespace "

@@ -108,6 +108,11 @@ static inline char *sgn_arg(const char *s)
  * clear message instead of a failure three steps into the flow. */
 int sgn_have_program(const char *name);
 
+/* The same lookup, reporting where: the PATH entry it was found in, joined to
+ * the name, into out. 1 when found and it fits, 0 otherwise. For a program
+ * that has to be run by its full path, which 7-Zip does (isoprobe.c). */
+int sgn_which(const char *name, char *out, size_t cap);
+
 /* ------------------------------------------------------------ files */
 
 /* Streams the file through SHA-256 (falcon-core/src/crypto/sha256.c, the
@@ -189,6 +194,13 @@ void iso_view_close(iso_view *v);
  * available. Callers use it to tell "this image has no such file" apart from
  * "nothing here could read the namespace the file would be in". */
 const char *iso_view_udf_reader(const iso_view *v);
+
+/* Whether this system can read UDF at all: 7-Zip is found AND it loads its
+ * format library AND that library has the UDF handler. 1 or 0; `which`, when
+ * not NULL, receives the binary's path (empty when there is none). This is
+ * the check the appliance runs once at start, because a 7-Zip that is present
+ * but cannot load its formats fails per ISO with a message about the ISO. */
+int iso_udf_reader_ok(char *which, size_t cap);
 
 /* Fills in a family_probe backed by this view, so
  * falcon-core/src/media/family.c fingerprints a real ISO through the same two

@@ -45,6 +45,8 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <limits.h>
+#include <sys/stat.h>
 
 #include <sign/sign.h>
 #include <sign/isoprobe.h>
@@ -467,6 +469,9 @@ static void test_isoview_open_lists_both_readers(void **state)
     assert_true(iso_view_count(v, ISO_READER_ISO9660) > 0);
     assert_true(iso_view_count(v, ISO_READER_7Z) > 0);
     assert_non_null(iso_view_udf_reader(v));
+    /* By full path: 7-Zip finds its formats relative to argv[0], and the bare
+     * name loaded none in the appliance (2026-09-18). */
+    assert_int_equal(iso_view_udf_reader(v)[0], '/');
 
     /* A name from the tree, resolved through the real listings rather than a
      * crafted string. */
@@ -597,6 +602,99 @@ static void test_isoview_size_and_extract(void **state)
     iso_view_close(v);
 }
 
+/* ------------------------------------------------------------ 7-Zip lookup */
+
+/* A PATH holding only fake 7-Zips: shell scripts standing in for `7z i`, one
+ * whose format table has the UDF row and one whose table is empty, which is
+ * what a 7-Zip that could not load 7z.so prints. */
+static char g_fake_dir[64];
+static char *g_saved_path;
+
+static void fake_7z(const char *name, const char *table)
+{
+    char path[128];
+    FILE *f;
+
+    (void)snprintf(path, sizeof(path), "%s/%s", g_fake_dir, name);
+    f = fopen(path, "w");
+    assert_non_null(f);
+    (void)fprintf(f, "#!/bin/sh\nprintf 'Formats:\\n%s\\n'\n", table);
+    assert_int_equal(fclose(f), 0);
+    assert_int_equal(chmod(path, 0755), 0);
+}
+
+static int setup_fake_path(void **state)
+{
+    const char *p = getenv("PATH");
+
+    (void)state;
+    (void)snprintf(g_fake_dir, sizeof(g_fake_dir), "/tmp/falcon-7z.XXXXXX");
+    if (mkdtemp(g_fake_dir) == NULL)
+        return -1;
+    g_saved_path = strdup(p != NULL ? p : "/usr/bin:/bin");
+    return setenv("PATH", g_fake_dir, 1);
+}
+
+static int teardown_fake_path(void **state)
+{
+    char cmd[128];
+
+    (void)state;
+    (void)setenv("PATH", g_saved_path, 1);
+    free(g_saved_path);
+    (void)snprintf(cmd, sizeof(cmd), "rm -rf '%s'", g_fake_dir);
+    return system(cmd) == 0 ? 0 : -1;
+}
+
+static void test_which_reports_the_full_path(void **state)
+{
+    char out[PATH_MAX];
+    char want[PATH_MAX];
+    char tiny[4];
+
+    (void)state;
+    fake_7z("7zz", "");
+    (void)snprintf(want, sizeof(want), "%s/7zz", g_fake_dir);
+    assert_int_equal(sgn_which("7zz", out, sizeof(out)), 1);
+    assert_string_equal(out, want);
+    assert_int_equal(sgn_have_program("7zz"), 1);
+
+    /* A name with a slash is taken as the path itself. */
+    assert_int_equal(sgn_which(want, out, sizeof(out)), 1);
+    assert_string_equal(out, want);
+
+    assert_int_equal(sgn_which("no-such-program", out, sizeof(out)), 0);
+    assert_int_equal(sgn_which("7zz", tiny, sizeof(tiny)), 0);
+    assert_int_equal(sgn_which(want, tiny, sizeof(tiny)), 0);
+    assert_int_equal(sgn_which(NULL, out, sizeof(out)), 0);
+    assert_int_equal(sgn_which("7zz", NULL, 0), 0);
+    assert_int_equal(unlink(want), 0);
+}
+
+static void test_udf_reader_needs_the_udf_format(void **state)
+{
+    char which[PATH_MAX];
+    char want[PATH_MAX];
+
+    (void)state;
+    /* None at all. */
+    assert_int_equal(iso_udf_reader_ok(which, sizeof(which)), 0);
+    assert_string_equal(which, "");
+
+    /* Present, formats not loaded: the appliance's failure. */
+    fake_7z("7za", "");
+    (void)snprintf(want, sizeof(want), "%s/7za", g_fake_dir);
+    assert_int_equal(iso_udf_reader_ok(which, sizeof(which)), 0);
+    assert_string_equal(which, want);
+
+    /* Present and able to read UDF; 7z is preferred over 7za. */
+    fake_7z("7z", " 0  ....M.O...  Udf      udf iso img");
+    (void)snprintf(want, sizeof(want), "%s/7z", g_fake_dir);
+    assert_int_equal(iso_udf_reader_ok(which, sizeof(which)), 1);
+    assert_string_equal(which, want);
+    assert_int_equal(iso_udf_reader_ok(NULL, 0), 1);
+}
+
 int run_isoprobe_tests(void)
 {
     const struct CMUnitTest tests[] = {
@@ -626,11 +724,18 @@ int run_isoprobe_tests(void)
         cmocka_unit_test(test_isoview_kernel_path_found),
         cmocka_unit_test(test_isoview_size_and_extract),
     };
+    const struct CMUnitTest lookup_tests[] = {
+        cmocka_unit_test(test_which_reports_the_full_path),
+        cmocka_unit_test(test_udf_reader_needs_the_udf_format),
+    };
     int failed;
     int fd;
 
     failed = cmocka_run_group_tests_name("ISO namespaces (bless tool)", tests,
                                          NULL, NULL);
+    failed += cmocka_run_group_tests_name("7-Zip lookup (bless tool)",
+                                          lookup_tests, setup_fake_path,
+                                          teardown_fake_path);
 
     fd = open(ISOVIEW_IMG, O_RDONLY);
     if (fd < 0) {

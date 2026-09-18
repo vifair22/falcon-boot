@@ -332,13 +332,24 @@ int sgn_run_capture(char *const argv[], char **out, size_t *len, size_t max)
 
 int sgn_have_program(const char *name)
 {
+    char probe[PATH_MAX];
+
+    return sgn_which(name, probe, sizeof(probe));
+}
+
+int sgn_which(const char *name, char *out, size_t cap)
+{
     const char *path = getenv("PATH");
     const char *p;
 
-    if (name == NULL)
+    if (name == NULL || out == NULL || cap == 0u)
         return 0;
-    if (strchr(name, '/') != NULL)
-        return access(name, X_OK) == 0;
+    if (strchr(name, '/') != NULL) {
+        if (access(name, X_OK) != 0 || strlen(name) >= cap)
+            return 0;
+        memcpy(out, name, strlen(name) + 1u);
+        return 1;
+    }
     if (path == NULL)
         path = "/usr/bin:/bin";
     for (p = path; *p != '\0';) {
@@ -355,8 +366,10 @@ int sgn_have_program(const char *name)
             memcpy(probe, p, n);
             probe[n] = '/';
             memcpy(probe + n + 1u, name, name_len + 1u);
-            if (access(probe, X_OK) == 0)
+            if (access(probe, X_OK) == 0 && strlen(probe) < cap) {
+                memcpy(out, probe, strlen(probe) + 1u);
                 return 1;
+            }
         }
         if (end == NULL)
             break;

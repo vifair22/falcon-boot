@@ -516,6 +516,14 @@ echo "   TIMING boot-to-console $(( (T_UP - T_LAUNCH) / 1000000 )) ms" \
 # unlock_appliance is therefore not just a timeout convenience, it is the
 # order this proof expects to see.
 wait_for_from "$CONSOLE_LOG" "$RUN1_MARK" "surveying p2..." 120
+# The startup check of 7-Zip's UDF reader runs before the survey and speaks
+# only when it fails. Asserted here because nothing else in this proof needs
+# UDF: the stick carries no Windows media unless FALCON_WIN_ISO is set, and a
+# 7-Zip that loaded no formats reached real hardware (2026-09-18) with every
+# run of this proof passing. The helpers' own errors go to the screen, not to
+# this log, which is why that went unseen.
+seen_from "$RUN1_MARK" "cannot read UDF in this appliance image" &&
+    fail "the appliance's 7-Zip cannot read UDF"
 wait_for_from "$CONSOLE_LOG" "$RUN1_MARK" "survey: " 120
 SURVEY1=$(tail -c "+$(( RUN1_MARK + 1 ))" "$CONSOLE_LOG" |
           grep -a "^survey: " | tail -1 | sed 's/\r$//' || true)

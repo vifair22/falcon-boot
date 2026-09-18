@@ -71,10 +71,10 @@ int prep_tools_present(void)
             "         can be prepared on this stick.\n", WIM_TOOL);
         ok = 0;
     }
-    if (!sgn_have_program(Z_TOOL)) {
-        say("WARNING: %s is not in this appliance image. Windows install\n"
-            "         media keeps its files in the UDF namespace only, so\n"
-            "         without it such an ISO reads as empty and is listed\n"
+    if (!iso_udf_reader_ok(NULL, 0)) {
+        say("WARNING: %s cannot read UDF in this appliance image. Windows\n"
+            "         install media keeps its files in the UDF namespace\n"
+            "         only, so such an ISO reads as empty and is listed\n"
             "         below as unsigned Linux media rather than prepared.\n",
             Z_TOOL);
         ok = 0;
