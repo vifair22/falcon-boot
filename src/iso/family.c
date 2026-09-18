@@ -18,7 +18,7 @@
  * separates a stock archiso from a derivative that renamed the directory.
  */
 
-#include <family/family.h>
+#include <iso/family.h>
 #include <lib/string.h>
 
 /* Read window for the content fingerprints. Loader entries are a few hundred

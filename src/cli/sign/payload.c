@@ -48,8 +48,8 @@
 #include <cli/sign/sign.h>
 #include <cli/sign/payload.h>
 
-#include <family/family.h>
-#include <part/part.h>
+#include <iso/family.h>
+#include <disk/part.h>
 
 #include <errno.h>
 #include <fcntl.h>

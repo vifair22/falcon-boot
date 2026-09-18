@@ -1,4 +1,4 @@
-/* The synthetic credential filesystem. See src/credfs/credfs.h for the
+/* The synthetic credential filesystem. See src/loader/credfs.h for the
  * contract and docs/DESIGN.md Section 5.1 for why the personal-OS path needs
  * a device to load from at all.
  *
@@ -10,8 +10,8 @@
  * moment the better.
  */
 
-#include <credfs/credfs.h>
-#include <credfs/credfs_efi.h>
+#include <loader/credfs.h>
+#include <loader/credfs_efi.h>
 
 #include <crypto/crypto.h>
 #include <efi/devpath.h>

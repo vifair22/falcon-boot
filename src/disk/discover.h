@@ -17,7 +17,7 @@
  * mounting stays lazy, because mounting is not: each consumer mounts the rows
  * it cares about, when it cares about them.
  *
- * A rescan is this same entry point run again. It drops src/part's cached
+ * A rescan is this same entry point run again. It drops src/disk/part.c's cached
  * view of the machine first, so media the firmware enumerated after the first
  * look is judged against a current picture rather than a stale one.
  */
@@ -29,7 +29,7 @@
 #include <efi/blockio.h>
 
 #include <fs/fs.h>
-#include <part/part.h>
+#include <disk/part.h>
 
 /* Inventory cap. A machine with more than this many Block I/O handles is a
  * server with a disk shelf, not a laptop with a stick in it; the rows past
@@ -53,7 +53,7 @@ typedef struct discover_dev {
 
     EFI_GUID type;           /* GPT partition type GUID. Reporting only: p2's
                                 type is Microsoft basic data and says nothing
-                                on its own (see src/part/part.h), so `role`
+                                on its own (see src/disk/part.h), so `role`
                                 below is the answer, never this field. */
     fs_hint  role;           /* the falcon role its GPT entry names, or
                                 FS_HINT_NONE for anything else */

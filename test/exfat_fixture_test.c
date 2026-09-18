@@ -1,4 +1,4 @@
-/* Fixture-backed tests for src/exfat/exfat.c.
+/* Fixture-backed tests for src/fs/exfat.c.
  *
  * These run against build/test-exfat.img, the 256 MiB whole-device exFAT
  * volume tools/mk-test-exfat.sh produces with mkfs.exfat and the kernel's
@@ -27,7 +27,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
-#include <exfat/exfat.h>
+#include <fs/exfat.h>
 
 #ifndef FIXTURE_IMG
 #define FIXTURE_IMG "build/test-exfat.img"

@@ -6,7 +6,7 @@
  * shim-verified load path of Section 7.6.
  *
  * Where this sits. It is the module Section 9 calls `loader` for the UKI
- * half: glue over src/luks (unlock), src/ext4 (the filesystem inside) and
+ * half: glue over src/luks (unlock), src/fs/ext4.c (the filesystem inside) and
  * the shim load path. It writes no crypto and no filesystem code of its own,
  * and it is the only module in the loader that ever holds the passphrase.
  *
@@ -19,7 +19,7 @@
  * its companion credentials by scanning the directory next to the image on
  * that device handle. No device, no handoff.
  *
- * So this module now builds one: src/credfs publishes the UKI bytes and the
+ * So this module now builds one: src/loader/credfs.c publishes the UKI bytes and the
  * credential as a synthetic read-only filesystem in RAM, and the UKI is
  * loaded BY DEVICE PATH off it (DESIGN Sections 5 step 4 and 5.1). The buffer
  * call survives only as the fallback for when that filesystem cannot be
@@ -60,7 +60,7 @@ typedef struct {
     const CHAR16 *advice;
 } pos_result;
 
-/* Reads the shelf-role rows of the one device inventory (src/discover, DESIGN
+/* Reads the shelf-role rows of the one device inventory (src/disk/discover.c, DESIGN
  * Section 9) and records the ones this loader could actually boot from:
  *
  *   - an encrypted shelf, i.e. a LUKS2 volume with at least one pbkdf2

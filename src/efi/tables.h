@@ -110,7 +110,7 @@ struct EFI_BOOT_SERVICES {
      *     LoadedImage->DeviceHandle so a distro bootloader can find its own
      *     configuration.
      *   - UKI path (Sections 5, 5.1): the device path names our synthetic
-     *     credential filesystem (src/credfs), which serves the UKI bytes
+     *     credential filesystem (src/loader/credfs.c), which serves the UKI bytes
      *     read off the encrypted p3 plus the .extra.d credential; sd-stub
      *     needs that DeviceHandle to find its companion files. Shim
      *     verifies what it reads off the synthetic device against

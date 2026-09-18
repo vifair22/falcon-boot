@@ -6,7 +6,7 @@
  * callback so a read-only ext4 driver can sit on top of it without knowing
  * anything about encryption.
  *
- * Deliberately EFI-free, exactly like src/exfat: every device access goes
+ * Deliberately EFI-free, exactly like src/fs/exfat.c: every device access goes
  * through a read callback and every context is caller-allocated, so the same
  * object code runs in the loader and in a host test against volumes
  * cryptsetup itself created. Hand-written crypto that has not been checked

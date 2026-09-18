@@ -34,23 +34,19 @@ LDFLAGS := -nostdlib -shared -Wl,--subsystem,10 -e efi_main \
 SRCS := \
 	src/efi/main.c \
 	src/efi/sbat.c \
-	src/efi/loadops.c \
-	src/lib/string.c \
-	src/exfat/exfat.c \
-	src/ext4/ext4.c \
+	src/loader/loadops.c \
+	src/loader/credfs.c \
+	src/console/menu.c \
+	src/console/prompt.c \
+	src/disk/discover.c \
+	src/disk/part.c \
+	src/disk/partefi.c \
+	src/fs/exfat.c \
+	src/fs/ext4.c \
 	src/fs/fs.c \
-	src/discover/discover.c \
-	src/iso/iso.c \
-	src/part/part.c \
-	src/part/partefi.c \
-	src/credfs/credfs.c \
-	src/menu/menu.c \
-	src/menu/prompt.c \
-	src/pos/pos.c \
-	src/sb/sb.c \
-	src/osrel/osrel.c \
-	src/family/family.c \
-	src/cpio/cpio.c \
+	src/luks/json.c \
+	src/luks/af.c \
+	src/luks/luks.c \
 	src/crypto/crypto.c \
 	src/crypto/sha256.c \
 	src/crypto/sha512.c \
@@ -60,12 +56,16 @@ SRCS := \
 	src/crypto/aes.c \
 	src/crypto/xts.c \
 	src/crypto/aesni.c \
-	src/luks/json.c \
-	src/luks/af.c \
-	src/luks/luks.c \
+	src/secboot/sb.c \
+	src/iso/iso.c \
+	src/iso/family.c \
+	src/iso/cpio.c \
+	src/pos/pos.c \
+	src/pos/osrel.c \
 	src/bless/bless.c \
 	src/bless/blesscore.c \
-	src/manifest/manifest.c
+	src/bless/manifest.c \
+	src/lib/string.c
 
 OBJS := $(SRCS:src/%.c=build/$(VARIANT)/%.o)
 DEPS := $(OBJS:.o=.o.d)
@@ -117,9 +117,9 @@ CLI_SRCS := \
 # NOT among them: its mem* definitions exist for the freestanding build, and
 # the host has a libc.
 CLI_SHARED_SRCS := \
-	src/part/part.c \
-	src/exfat/exfat.c \
-	src/ext4/ext4.c \
+	src/disk/part.c \
+	src/fs/exfat.c \
+	src/fs/ext4.c \
 	src/fs/fs.c \
 	src/luks/json.c \
 	src/luks/af.c \
@@ -143,10 +143,10 @@ SIGN_SRCS := \
 	src/cli/sign/wimext.c \
 	src/cli/sign/prepcore.c \
 	src/cli/sign/prepare.c \
-	src/manifest/manifest.c \
-	src/manifest/manifest_write.c \
-	src/family/family.c \
-	src/part/part.c \
+	src/bless/manifest.c \
+	src/bless/manifest_write.c \
+	src/iso/family.c \
+	src/disk/part.c \
 	src/crypto/sha256.c \
 	src/crypto/crypto.c
 
@@ -353,8 +353,8 @@ CC_DB_HOST_SRCS := $(CLI_SRCS) \
 	src/cli/sign/wimext.c \
 	src/cli/sign/prepcore.c \
 	src/cli/sign/prepare.c \
-	src/manifest/manifest.c \
-	src/manifest/manifest_write.c
+	src/bless/manifest.c \
+	src/bless/manifest_write.c
 
 CC_DB_HOST_ENTRIES := \
 	$(foreach s,$(CC_DB_HOST_SRCS),$(s):$(s:src/%.c=build/host/%.o))
@@ -482,7 +482,7 @@ test-image: test-iso test-img
 # The cost of that choice, which is what this target is for: the suites that
 # read these images SKIP when the images are absent, and a skipped cmocka
 # suite does not fail. Before this target existed nothing built them, so a
-# clean checkout ran 392 tests, reported green, and left src/ext4, src/luks
+# clean checkout ran 392 tests, reported green, and left src/fs/ext4.c, src/luks
 # and src/luks/af at zero coverage. Run `make test-fixtures` once, then
 # `make -C test coverage`, and the same tree reports 449 tests and 93%.
 test-fixtures: test-image test-ext4 test-luks test-isoview

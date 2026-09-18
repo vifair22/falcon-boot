@@ -1,4 +1,4 @@
-/* Tests for src/part/part.c, the GPT parser behind partition identification
+/* Tests for src/disk/part.c, the GPT parser behind partition identification
  * (docs/DESIGN.md Section 3).
  *
  * Two kinds of table are used, for two different reasons.
@@ -33,7 +33,7 @@
 #include <string.h>
 #include <unistd.h>
 
-#include <part/part.h>
+#include <disk/part.h>
 
 /* ---- reference CRC-32 (IEEE 802.3 / zlib, reflected 0xEDB88320) ---- */
 

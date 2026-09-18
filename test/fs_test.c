@@ -39,8 +39,8 @@
 #include <string.h>
 #include <unistd.h>
 
-#include <exfat/exfat.h>
-#include <ext4/ext4.h>
+#include <fs/exfat.h>
+#include <fs/ext4.h>
 #include <fs/fs.h>
 
 /* The blob sizes are a compile-time contract with every registered driver;
@@ -177,7 +177,7 @@ static void test_fs_identify_nothing(void **state)
 
     /* Zeroed bytes are nobody's filesystem. This is the LUKS2 case as far as
      * the registry is concerned: an encrypted volume identifies as nothing,
-     * which is why src/discover does not even ask about one. */
+     * which is why src/disk/discover.c does not even ask about one. */
     synth_sb_init(&sb, 0);
     assert_null(fs_identify(synth_sb_read, &sb, FS_HINT_NONE));
     assert_null(fs_identify(synth_sb_read, &sb, FS_HINT_SHELF));
@@ -727,7 +727,7 @@ static void test_fs_ext4_descend_and_read(void **state)
 
 /* The UCS-2 name helpers every consumer matches with. ASCII case folding on
  * both sides, because the two namespaces of one image disagree about case and
- * so do the fingerprints in src/family. */
+ * so do the fingerprints in src/iso/family.c. */
 static void test_fs_name_helpers(void **state)
 {
     static const uint16_t iso[]   = { 'A','r','c','h','.','I','S','O', 0 };

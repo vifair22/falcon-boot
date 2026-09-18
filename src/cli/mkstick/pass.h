@@ -12,7 +12,7 @@
  * non-ASCII character in it would be accepted here and then fail to unlock
  * p3 from the loader with no explanation available at that point. Refusing it
  * at creation time is the only place the user can still do something about it.
- * src/menu/prompt.c enforces the same rule from the other side.
+ * src/console/prompt.c enforces the same rule from the other side.
  *
  * Lifetime: the bytes are wiped when the caller is done, and they never reach
  * a command line. cryptsetup gets them on stdin, which is why proc.h supports

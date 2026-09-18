@@ -48,7 +48,7 @@
 
 #include <appliance/route.h>
 #include <cli/sign/prepcore.h>
-#include <manifest/manifest.h>
+#include <bless/manifest.h>
 
 /* Every family the registry knows, so a new row added to family.c without a
  * thought for the appliance shows up here as an unrouted id rather than as a

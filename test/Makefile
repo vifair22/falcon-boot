@@ -6,9 +6,9 @@
 # unchanged in a host process; that is the whole reason they are shaped that
 # way (docs/DESIGN.md Sections 6 and 6.2).
 #
-#   src/exfat/exfat.c    device access through a read callback
-#   src/cpio/cpio.c      no allocator: the caller supplies the buffer
-#   src/family/family.c  filesystem access through two probe callbacks
+#   src/fs/exfat.c       device access through a read callback
+#   src/iso/cpio.c       no allocator: the caller supplies the buffer
+#   src/iso/family.c     filesystem access through two probe callbacks
 #   src/cli/sign/isoprobe.c the bless tool's view of an ISO. Host code, not
 #                        loader code, but EFI-free for the same reason and
 #                        testable for the same reason: the ISO9660 and UDF
@@ -17,7 +17,7 @@
 #                        process and no image are involved. src/cli/sign/util.c
 #                        comes with it as a dependency, not as a unit under
 #                        test
-#   src/manifest/*.c     pure text in, records out; no I/O at all
+#   src/bless/manifest*.c     pure text in, records out; no I/O at all
 #   src/bless/blesscore.c the blessed-boot record cache; manifest bytes in,
 #                        a per-entry label and boot decision out. No I/O
 #                        either: the firmware half that reads the file and
@@ -25,11 +25,11 @@
 #                        built here
 #   src/crypto/*.c       no I/O at all; every context is caller-allocated
 #   src/luks/*.c         device access through a read callback
-#   src/ext4/ext4.c      device access through a read callback
+#   src/fs/ext4.c        device access through a read callback
 #   src/fs/fs.c          the driver registry; the drivers it wraps are the
 #                        two above, so it is EFI-free for the same reasons
-#   src/part/part.c      device access through a read callback; the firmware
-#                        half of that module is src/part/partefi.c, which is
+#   src/disk/part.c      device access through a read callback; the firmware
+#                        half of that module is src/disk/partefi.c, which is
 #                        EFI-only by nature and deliberately not built here
 #   src/iso/overlay.h    the virtual-media override layer's address
 #                        arithmetic. Header-only and EFI-free on purpose (no
@@ -38,7 +38,7 @@
 #                        test TU that includes it is the only copy in this
 #                        binary. The firmware half is src/iso/iso.c and is
 #                        Block I/O all the way down, so it is not built here
-#   src/sb/sb.c          reads three EFI variables through the runtime
+#   src/secboot/sb.c     reads three EFI variables through the runtime
 #                        services pointer it is handed, so a fake GetVariable
 #                        is the whole platform it needs. It is the one unit
 #                        here that includes the UEFI headers, which is why it
@@ -149,21 +149,21 @@ TEST_SRCS := \
 	$(TEST_DIR)/synth.c
 
 UUT_SRCS := \
-	$(ROOT)/src/exfat/exfat.c \
-	$(ROOT)/src/cpio/cpio.c \
-	$(ROOT)/src/family/family.c \
+	$(ROOT)/src/fs/exfat.c \
+	$(ROOT)/src/iso/cpio.c \
+	$(ROOT)/src/iso/family.c \
 	$(ROOT)/src/cli/sign/isoprobe.c \
 	$(ROOT)/src/cli/sign/payload.c \
 	$(ROOT)/src/cli/sign/wimext.c \
 	$(ROOT)/src/cli/sign/prepcore.c \
 	$(ROOT)/src/cli/sign/util.c \
-	$(ROOT)/src/manifest/manifest.c \
-	$(ROOT)/src/manifest/manifest_write.c \
+	$(ROOT)/src/bless/manifest.c \
+	$(ROOT)/src/bless/manifest_write.c \
 	$(ROOT)/src/bless/blesscore.c \
-	$(ROOT)/src/ext4/ext4.c \
-	$(ROOT)/src/part/part.c \
-	$(ROOT)/src/sb/sb.c \
-	$(ROOT)/src/osrel/osrel.c \
+	$(ROOT)/src/fs/ext4.c \
+	$(ROOT)/src/disk/part.c \
+	$(ROOT)/src/secboot/sb.c \
+	$(ROOT)/src/pos/osrel.c \
 	$(ROOT)/src/fs/fs.c \
 	$(ROOT)/src/crypto/crypto.c \
 	$(ROOT)/src/crypto/sha256.c \
@@ -195,7 +195,7 @@ APPL_SRCS := \
 # as an untested unit would only depress a number that is supposed to mean
 # something.
 #
-# src/osrel/osrel.c was missing from this list for a long time and nobody
+# src/pos/osrel.c was missing from this list for a long time and nobody
 # noticed. It has nineteen tests of its own and reports 93% branches, so the
 # omission cost nothing but the number's honesty; a unit that is tested and
 # unreported is worse than one that is neither, because the total looks
@@ -213,7 +213,7 @@ APPL_SRCS := \
 # src/bless/bless.c carries the firmware half, and src/cli/sign/prepcore.c
 # does the same for preparation. payload.c wants the same treatment, and
 # until it gets one this line is a known compromise rather than an oversight.
-COV_FILTER := .*/src/(exfat/exfat|cpio/cpio|family/family|osrel/osrel|cli/sign/(isoprobe|wimext|prepcore)|manifest/[a-z_]+|bless/blesscore|ext4/ext4|part/part|fs/fs|sb/sb|crypto/[a-z0-9]+|luks/[a-z0-9]+)\.c$$|.*/src/iso/overlay\.h$$|.*/tools/appliance/route\.c$$
+COV_FILTER := .*/src/(fs/(exfat|ext4|fs)|iso/(cpio|family)|pos/osrel|cli/sign/(isoprobe|wimext|prepcore)|bless/(manifest[a-z_]*|blesscore)|disk/part|secboot/sb|crypto/[a-z0-9]+|luks/[a-z0-9]+)\.c$$|.*/src/iso/overlay\.h$$|.*/tools/appliance/route\.c$$
 
 OBJS := $(patsubst $(TEST_DIR)/%.c,$(OBJ)/%.o,$(TEST_SRCS)) \
 	$(patsubst $(ROOT)/src/%.c,$(OBJ)/uut/%.o,$(UUT_SRCS)) \
@@ -278,7 +278,7 @@ $(OBJ)/uut/crypto/aesni.o: CFLAGS += -maes
 # sb_test.c itself is built without it and uses u"..." literals, which are
 # 16-bit under either setting, so the test and the unit agree on the bytes
 # without agreeing on a compiler flag.
-$(OBJ)/uut/sb/sb.o: CFLAGS += -fshort-wchar
+$(OBJ)/uut/secboot/sb.o: CFLAGS += -fshort-wchar
 
 # util.c calls realpath(), which glibc declares only under _XOPEN_SOURCE or
 # _GNU_SOURCE; the tool's own build uses the latter. The rest of the suite
@@ -310,7 +310,7 @@ run: $(BIN)
 # Strict, unlike `run`. The image-backed suites skip when their fixtures are
 # absent and a skip is not a failure, which is right for a machine that cannot
 # build them (each needs mkfs and a loop mount, so each needs sudo) and wrong
-# here: measured without them this tree reported 69% with src/ext4, src/luks
+# here: measured without them this tree reported 69% with src/fs/ext4.c, src/luks
 # and src/luks/af at zero, and measured with them it reports 93%. A number
 # that swings 24 points on whether four suites ran is not a number to gate on.
 # `make test-fixtures` from the repo root builds them.

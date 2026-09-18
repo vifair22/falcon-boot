@@ -608,7 +608,7 @@ typedef struct {
     const char *slug;
 } family_slug;
 
-/* These live here rather than in src/family/family.h because nothing in the
+/* These live here rather than in src/iso/family.h because nothing in the
  * loader needs them until the blessed boot path reads the manifest, at which
  * point this table is what that path should be taught from. */
 static const family_slug g_slugs[] = {

@@ -1,4 +1,4 @@
-/* Synthetic-volume tests for src/exfat/exfat.c.
+/* Synthetic-volume tests for src/fs/exfat.c.
  *
  * Every volume here is built byte by byte in memory, which is the only way to
  * reach the driver's rejection paths: mkfs.exfat will not produce a bad boot
@@ -25,7 +25,7 @@
 #include <stdio.h>
 #include <string.h>
 
-#include <exfat/exfat.h>
+#include <fs/exfat.h>
 
 #define STD_BPS 9u
 #define STD_SPC 2u

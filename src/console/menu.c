@@ -1,4 +1,4 @@
-#include <menu/menu.h>
+#include <console/menu.h>
 
 /* The frame.
  *

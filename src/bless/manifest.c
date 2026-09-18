@@ -10,7 +10,7 @@
  * the wrong file, which is the one failure mode worth refusing outright.
  */
 
-#include <manifest/manifest.h>
+#include <bless/manifest.h>
 #include <lib/string.h>
 
 #define NUL ((void *)0)

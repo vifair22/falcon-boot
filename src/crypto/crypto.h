@@ -5,7 +5,7 @@
  * and AES-XTS *decrypt*, nothing else. This header holds the three things
  * every primitive here needs and nothing that belongs to one of them.
  *
- * Reasoning. The module is EFI-free on purpose, exactly like src/exfat: it
+ * Reasoning. The module is EFI-free on purpose, exactly like src/fs/exfat.c: it
  * touches no firmware service, allocates nothing, and every context is
  * caller-allocated. That is what lets the host test suite run the identical
  * object code the loader runs, against volumes cryptsetup itself created,

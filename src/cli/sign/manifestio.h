@@ -17,7 +17,7 @@
 
 #include <stddef.h>
 
-#include <manifest/manifest.h>
+#include <bless/manifest.h>
 
 /* How many records one manifest may hold in this build, and the largest file
  * the reader will take. 512 records at the field caps of manifest.h is well

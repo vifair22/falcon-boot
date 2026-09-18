@@ -23,7 +23,7 @@ ISO="${1:-build/win-spike/win11.iso}"
 IMG=build/win-spike/premise-p2.img
 MNT=build/win-spike/premise-mnt
 
-# Frozen in src/part/part.h. Microsoft basic data, so Windows gives p2 a drive
+# Frozen in src/disk/part.h. Microsoft basic data, so Windows gives p2 a drive
 # letter; the loader then tells it apart from any other basic-data volume by
 # the partition NAME below, and requires both (DESIGN Section 3, 2026-09-13).
 GUID_ISO=EBD0A0A2-B9E5-4433-87C0-68B6B72699C7

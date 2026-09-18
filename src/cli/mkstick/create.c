@@ -47,7 +47,7 @@
 #include <cli/mkstick/shimname.h>
 
 #include <fs/fs.h>
-#include <part/part.h>
+#include <disk/part.h>
 
 #define DEFAULT_SHIM_DIR   "build/shim/bins"
 #define DEFAULT_LOADER     "build/bin/falcon-boot.efi"

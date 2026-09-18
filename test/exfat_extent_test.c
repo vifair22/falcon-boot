@@ -47,7 +47,7 @@
 
 #include <string.h>
 
-#include <exfat/exfat.h>
+#include <fs/exfat.h>
 
 #define EX_BPS      9u      /* 512-byte sectors */
 #define EX_SPC      1u      /* 1024-byte clusters */

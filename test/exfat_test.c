@@ -27,7 +27,7 @@
  * consumers, tested on synthetic volumes plus the ext4 fixture, so that
  * dressing the drivers in one vtable cannot change what a consumer sees.
  *
- * The Secure Boot state reader (src/sb): its whole input is one runtime
+ * The Secure Boot state reader (src/secboot): its whole input is one runtime
  * services function pointer, so a fake GetVariable reaches every state it can
  * report, with no firmware and no image either.
  *

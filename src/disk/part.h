@@ -9,11 +9,11 @@
  * part_match_role below for why p2 is the odd one out and why both halves of
  * its rule are required.
  *
- * Deliberately EFI-free, like src/exfat: the disk is reached through a byte
+ * Deliberately EFI-free, like src/fs/exfat.c: the disk is reached through a byte
  * read callback, so the same parser runs over a firmware BlockIO handle in
  * the loader and over a plain image file in the host tests. The firmware
  * plumbing (PartitionInfo, device paths, handle enumeration) lives next door
- * in src/part/partefi.c, which is the only half that cannot be host-tested.
+ * in src/disk/partefi.c, which is the only half that cannot be host-tested.
  */
 
 #ifndef FALCON_PART_H
@@ -86,7 +86,7 @@ extern const uint8_t gpt_guid_esp[GPT_GUID_LEN];
 #define FALCON_PART_NAME_ISO "FALCON-ISO"
 
 /* Which of our partitions a scan is looking for. Used by the filter policy
- * below and by src/part/partefi.c; p1 and p4 have no role here on purpose. */
+ * below and by src/disk/partefi.c; p1 and p4 have no role here on purpose. */
 typedef enum {
     PART_ROLE_ISO   = 0,   /* p2, the exFAT ISO library */
     PART_ROLE_SHELF = 1    /* p3, the LUKS2 UKI shelf */
@@ -116,7 +116,7 @@ int gpt_guid_eq(const uint8_t *a, const uint8_t *b);
 int gpt_name_eq(const uint16_t *name, const char *ascii);
 
 /* THE identification rule of DESIGN Section 3, in one place so the firmware
- * side (src/part/partefi.c, off the PartitionInfo protocol) and the host side
+ * side (src/disk/partefi.c, off the PartitionInfo protocol) and the host side
  * (a parsed gpt_part) cannot drift apart:
  *
  *   p2  Microsoft basic data type AND the name FALCON-ISO. BOTH, because the

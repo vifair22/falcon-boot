@@ -6,7 +6,7 @@
  * "blessed" or "blessed but stale". src/bless/bless.c is the other half and
  * does the reading, the launching and the console work.
  *
- * Split for the same reason src/exfat and src/manifest are EFI-free: this is
+ * Split for the same reason src/fs/exfat.c and src/bless/manifest.c are EFI-free: this is
  * where the rule that decides what a user sees in the menu lives, and a rule
  * that can only be exercised by booting a machine is a rule nobody checks.
  * Everything here runs unchanged in a host process against a string literal.
@@ -38,9 +38,9 @@
 #include <stdint.h>
 #include <stddef.h>
 
-#include <family/family.h>
+#include <iso/family.h>
 #include <iso/overlay.h>
-#include <manifest/manifest.h>
+#include <bless/manifest.h>
 
 /* Status codes for the calls below that can fail, repo convention: OK zero,
  * errors negative. The lookups do not appear here; they are total. */

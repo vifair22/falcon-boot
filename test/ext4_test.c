@@ -1,4 +1,4 @@
-/* Fixture-backed tests for src/ext4/ext4.c.
+/* Fixture-backed tests for src/fs/ext4.c.
  *
  * These run against build/test-ext4.img, the 128 MiB ext4 filesystem
  * tools/mk-test-ext4.sh creates with a stock mkfs.ext4 and populates through
@@ -39,7 +39,7 @@
 #include <string.h>
 #include <unistd.h>
 
-#include <ext4/ext4.h>
+#include <fs/ext4.h>
 #include <crypto/sha256.h>
 
 #ifndef EXT4_IMG
@@ -235,7 +235,7 @@ static void walk(ext4_vol *v, ext4_dir *d, const char *prefix,
 /* --------------------------------------------------------- crc32c + sb */
 
 /* crc32c (Castagnoli), reflected, computed bitwise. Deliberately not the
- * nibble-table form src/ext4/ext4.c uses: a superblock patched with the
+ * nibble-table form src/fs/ext4.c uses: a superblock patched with the
  * driver's own checksum routine would pass the driver's own check even if
  * both were wrong the same way. This is 12 lines and independent. */
 static uint32_t crc32c_ref(uint32_t crc, const uint8_t *p, size_t n)
@@ -252,7 +252,7 @@ static uint32_t crc32c_ref(uint32_t crc, const uint8_t *p, size_t n)
     return crc;
 }
 
-/* Superblock field offsets, from src/ext4/ext4.c's own table. They are part
+/* Superblock field offsets, from src/fs/ext4.c's own table. They are part
  * of the on-disk format and cannot move. */
 #define SB_AT             1024u
 #define SB_LEN            1024u

@@ -46,15 +46,23 @@ for the full model.
 ## Layout
 
 ```
-src/efi/     EFI application glue plus our own minimal UEFI headers
-src/exfat/   read-only exFAT driver
-src/menu/    text menu over Simple Text Output/Input
-src/lib/     freestanding support routines (mem*, UCS-2 helpers)
-tools/       host scripts: QEMU + OVMF rig, test-fixture builders
-docs/        DESIGN.md and (later) Manual.md
+src/efi/      EFI entry point, .sbat, our own minimal UEFI headers
+src/loader/   shim-verified load path, synthetic credential filesystem
+src/console/  text menu and masked passphrase prompt
+src/disk/     GPT parsing and the one device-discovery pass
+src/fs/       filesystem registry and read-only exFAT / ext4 drivers
+src/luks/     LUKS2 unlock
+src/crypto/   SHA-2, HMAC, PBKDF2, AES-XTS
+src/secboot/  Secure Boot state, read for display only
+src/iso/      ISO path: virtual media, family detection, injection
+src/pos/      personal-OS path
+src/bless/    blessed path and its manifest
+src/lib/      freestanding support routines (mem*, UCS-2 helpers)
+src/cli/      host tools (mkstick, sign); never linked into the loader
+src/winjump/  WinPE jump binary
+tools/        host scripts: QEMU + OVMF rig, test-fixture builders
+docs/         DESIGN.md and (later) Manual.md
 ```
-
-Host configuration tooling lands under `src/cli/` at step 7 of the build order.
 
 ## Building
 

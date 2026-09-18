@@ -1,4 +1,4 @@
-/* Tests for src/sb/sb.c, the Secure Boot state reader (docs/DESIGN.md
+/* Tests for src/secboot/sb.c, the Secure Boot state reader (docs/DESIGN.md
  * Sections 7.3, 7.4).
  *
  * The module has no I/O of its own: everything it knows arrives through one
@@ -38,7 +38,7 @@
 
 #include <string.h>
 
-#include <sb/sb.h>
+#include <secboot/sb.h>
 
 /* 8be4df61-93ca-11d2-aa0d-00e098032b8c, and 605dab50-e046-4300-abb6-3dd810dd8b23.
  * Transcribed independently of sb.c's copies on purpose: a GUID that agrees

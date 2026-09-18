@@ -1,6 +1,6 @@
 /* Host shim for <lib/string.h>, used only by the unit tests.
  *
- * src/exfat/exfat.c includes <lib/string.h> for four mem* routines and the
+ * src/fs/exfat.c includes <lib/string.h> for four mem* routines and the
  * unaligned little-endian loads. In the freestanding EFI build those mem*
  * routines come from src/lib/string.c, because there is no libc. On the host
  * there is a libc, and linking src/lib/string.c in would define memcpy and

@@ -70,8 +70,8 @@ cli_status disk_partition_name(const char *base, unsigned n,
 /* ---- byte reads over a file or a partition of one ----
  *
  * Shaped exactly like gpt_read_fn / luks_read_fn / exfat_read_fn, which is
- * what lets `status` run the loader's own parsers (src/part, src/luks,
- * src/exfat) over an image file with no EFI anywhere in sight.
+ * what lets `status` run the loader's own parsers (src/disk/part.c, src/luks,
+ * src/fs/exfat.c) over an image file with no EFI anywhere in sight.
  */
 typedef struct {
     int      fd;

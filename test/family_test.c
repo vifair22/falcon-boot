@@ -1,4 +1,4 @@
-/* Tests for src/family/family.c, the ISO fingerprint-to-descriptor lookup of
+/* Tests for src/iso/family.c, the ISO fingerprint-to-descriptor lookup of
  * docs/DESIGN.md Section 6.2.
  *
  * The module reaches the filesystem only through two callbacks, so a whole
@@ -37,7 +37,7 @@
 
 #include <string.h>
 
-#include <family/family.h>
+#include <iso/family.h>
 
 /* ------------------------------------------------------------ fake tree */
 

@@ -4,7 +4,7 @@
  * docs/DESIGN.md Section 3 for why any of it exists.
  */
 
-#include <part/partefi.h>
+#include <disk/partefi.h>
 #include <efi/blockio.h>
 #include <efi/devpath.h>
 #include <efi/partinfo.h>
@@ -165,7 +165,7 @@ static int ident_from_partinfo(EFI_SYSTEM_TABLE *st, EFI_HANDLE h,
     memcpy(out->type, ent + offsetof(EFI_PARTITION_ENTRY, PartitionTypeGUID),
            GPT_GUID_LEN);
     /* Decoded unit by unit rather than memcpy'd, so this reads the same way
-     * src/part/part.c reads the same field off the disk; the entry the
+     * src/disk/part.c reads the same field off the disk; the entry the
      * firmware hands over is a byte image of that entry. */
     for (k = 0; k < GPT_NAME_LEN; k++)
         out->name[k] = get_le16(ent +

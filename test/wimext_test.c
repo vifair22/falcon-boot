@@ -8,7 +8,7 @@
  * are mostly about the refusals.
  *
  * Everything here runs against synthetic in-memory images through the read
- * callback the module takes, which is the same seam src/exfat and src/luks use
+ * callback the module takes, which is the same seam src/fs/exfat.c and src/luks use
  * and exists for the same reason: no ISO, no 7-Zip, no wimlib and no 7.7 GB
  * file is needed to exercise the parts that decide anything. The real media is
  * covered by running the tool; what is covered here is every path that leads

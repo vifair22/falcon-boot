@@ -6,7 +6,7 @@
  * caller's read callback, so the host tests drive it over a plain file.
  */
 
-#include <part/part.h>
+#include <disk/part.h>
 #include <lib/string.h>
 
 /* The partition type GUIDs, in on-disk byte order. The textual form and the
@@ -58,7 +58,7 @@ const uint8_t gpt_guid_esp[GPT_GUID_LEN] = {
 /* CRC-32 exactly as the GPT uses it (spec 5.3.1): the reflected IEEE 802.3 /
  * zlib polynomial 0xEDB88320, initial and final value 0xFFFFFFFF.
  *
- * This is NOT the CRC-32C (Castagnoli, reflected 0x82F63B78) that src/ext4
+ * This is NOT the CRC-32C (Castagnoli, reflected 0x82F63B78) that src/fs/ext4.c
  * checks its metadata with. The two share a name, a width and nothing else;
  * pointing either implementation at the other's data produces a confident
  * wrong answer, so neither may be "unified" with the other.

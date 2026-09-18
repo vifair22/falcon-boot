@@ -3,7 +3,7 @@
  * layouts spec 6.x, FAT semantics spec 4.1.
  */
 
-#include <exfat/exfat.h>
+#include <fs/exfat.h>
 #include <lib/string.h>
 
 #define DIRENT_SIZE 32u

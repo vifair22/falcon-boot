@@ -1,4 +1,4 @@
-/* Synthetic-volume tests for the file-read half of src/exfat/exfat.c:
+/* Synthetic-volume tests for the file-read half of src/fs/exfat.c:
  * exfat_file_open, exfat_file_read and the chain cursor behind them.
  *
  * Same approach as exfat_synth_test.c: the volume is built byte by byte in
@@ -38,7 +38,7 @@
 #include <stdio.h>
 #include <string.h>
 
-#include <exfat/exfat.h>
+#include <fs/exfat.h>
 
 #define CONTIG_BPS      9u
 #define CONTIG_SPC      2u     /* 2048-byte clusters */

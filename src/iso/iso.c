@@ -18,9 +18,9 @@
 #include <efi/blockio.h>
 #include <efi/devpath.h>
 #include <efi/sfs.h>
-#include <efi/loadops.h>
+#include <loader/loadops.h>
 #include <efi/shimguid.h>
-#include <family/family.h>
+#include <iso/family.h>
 #include <lib/string.h>
 
 /* El Torito lives on 2048-byte media; the firmware's partition driver only

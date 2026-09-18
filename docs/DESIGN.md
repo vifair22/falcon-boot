@@ -282,7 +282,7 @@ delivered the credential from our synthetic filesystem under Secure Boot ON
 with zero initramfs modifications). Notes that survive from the build:
 
 - The UKI is launched **by device path off the synthetic credential
-  filesystem** (src/credfs). A `SourceBuffer` load survives only as a
+  filesystem** (src/loader/credfs.c). A `SourceBuffer` load survives only as a
   loudly-warned fallback when the credfs publish fails; it is still
   shim-verified but cannot deliver credentials.
 - The credential is named **`cryptsetup.passphrase.cred`** (systemd strips
@@ -1042,7 +1042,7 @@ Properties the user should know, and the Manual must state:
   validation is re-enabled. This is an upstream shim/sd-stub interaction, not
   ours to fix (Section 7.3); the loader detects the state before the slow
   image read, warns, and attaches actionable advice when the started image
-  fails (src/efi/loadops.c). **Windows media is the exception that keeps
+  fails (src/loader/loadops.c). **Windows media is the exception that keeps
   working in this state** (Section 7.2): its chain is `db`-signed end to end
   and contains no UKI, so the opt-out costs it nothing.
 
@@ -1231,7 +1231,7 @@ from one source and be used as a set. shim's `shim_start_image()` and
 firmware pointers that are populated only under `secure_mode()`; in every
 non-enforcing state they are NULL and the forward is a call through zero
 (a measured #GP, machine down). Mixing `gBS` and `SHIM_IMAGE_LOADER`
-members is therefore a crash, not a style problem; src/efi/loadops.c
+members is therefore a crash, not a style problem; src/loader/loadops.c
 resolves once and hands out the set.
 - **Branch C (last resort, still unbuilt, requires amending this document):**
   `shim_lock->Verify` plus our own PE loader. Not needed.
@@ -1759,7 +1759,7 @@ override sidecar instead, and the loader's job for such an entry is to publish
 the ISO with that byte map applied rather than to boot a signed wrap. The
 format had no way to say that, and worse than "no way" it had a silent one:
 the parser required `uki=` before a block became a record at all
-(`src/manifest/manifest.c`, `block_flush`), so a Windows record written in the
+(`src/bless/manifest.c`, `block_flush`), so a Windows record written in the
 old shape was **dropped without a word** rather than rejected. That was a
 format decision to make before the Windows path landed, not a bug in the
 parser, which was behaving exactly as this section had specified it.
@@ -1863,12 +1863,14 @@ are (both measured 2026-09-13):
   for one purpose and missed for another; classification is eager (cheap
   per-handle reads), mounting stays lazy per consumer. Re-scan is the
   same single entry point run again.
-- **Modules:**
-  - `menu` - text menu over Simple Text Output/Input. Lists ISOs, the personal-OS
+- **Modules** (named by their `src/` directory; the tree is grouped by layer
+  and by boot path, one level deep):
+  - `console` - text menu over Simple Text Output/Input. Lists ISOs, the personal-OS
     entry, and the signing-appliance entry (Section 7.5); shows per-entry
     verification labels and the Secure Boot state banner.
-  - `exfat` - read-only exFAT, file read + directory enumeration + extent map.
-  - `ext4` - read-only ext4 (p3 only; constrained mkfs feature set at install).
+  - `fs` - the driver registry above and its read-only drivers: `exfat.c`
+    (file read + directory enumeration + extent map) and `ext4.c` (p3 only;
+    constrained mkfs feature set at install).
   - `luks` - LUKS2 header parse, pbkdf2, AES-XTS decrypt. Unlocks p3 only; the
     module reads the UKI bytes off p3 and never exposes the p3 private key (that
     file is read by the signing appliance in userland, not by the loader).
@@ -1881,13 +1883,13 @@ are (both measured 2026-09-13):
     deliberately so - no format knowledge, no WIM or UDF parsing, no Windows
     knowledge in EFI-land. The byte map is computed by the bless tool on
     Linux and read from a sidecar on p2.
-  - `sb` - reads `SecureBoot` / `SetupMode` / `MokSBState` for UX only (per-entry
+  - `secboot` - `sb.c` reads `SecureBoot` / `SetupMode` / `MokSBState` for UX only (per-entry
     verification labels, refusal messages, state banner). No enforcement logic
     and no signing; enforcement is shim's, signing is userland's (Section 7).
-  - `trust` - boot predictions (Section 7.8). EFI-free: the PE certificate
+    The boot-prediction code (Section 7.8) joins it. EFI-free: the PE certificate
     table walk, the DER/PKCS#7 reader, `EFI_SIGNATURE_LIST` and `SbatLevelRT`
     parsing, and the pure verdict function over them. The firmware half (reading
-    the five variables once at startup) sits beside `sb`. Its output is read by
+    the five variables once at startup) sits beside `sb.c`. Its output is read by
     the menu's label builder and details screen and by nothing else.
   - `loader` - shim-verified load glue (Section 7.6; never relaxes
     verification and never signs, see Section 7), cmdline construction, and

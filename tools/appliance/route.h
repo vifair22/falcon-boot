@@ -22,8 +22,8 @@
 #define FALCON_APPLIANCE_ROUTE_H
 
 #include <cli/sign/payload.h>
-#include <family/family.h>
-#include <manifest/manifest.h>
+#include <iso/family.h>
+#include <bless/manifest.h>
 
 typedef enum {
     APPL_JOB_PREPARE = 0,       /* Windows media with no usable record */
@@ -34,7 +34,7 @@ typedef enum {
 
 /* state and kind come from one manifest_lookup over the p2 manifest (kind is
  * read off the matched record, and is meaningless when state is NONE); fam
- * from src/family/family.c over the ISO itself.
+ * from src/iso/family.c over the ISO itself.
  *
  * The rule, stated once so the two halves cannot drift:
  *

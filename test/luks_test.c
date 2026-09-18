@@ -51,7 +51,7 @@
 #include <crypto/crypto.h>
 #include <crypto/hash.h>
 #include <crypto/sha256.h>
-#include <ext4/ext4.h>
+#include <fs/ext4.h>
 
 #ifndef LUKS_IMG
 #define LUKS_IMG "build/test-luks.img"

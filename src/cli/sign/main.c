@@ -4,7 +4,7 @@
  *
  *   1. list the ISO with bsdtar and 7-Zip, one namespace each (no mount,
  *      no root)
- *   2. fingerprint it through src/family/family.c, over that listing
+ *   2. fingerprint it through src/iso/family.c, over that listing
  *   3. find the family's kernel inside the ISO
  *   4. render the family's cmdline template with the ISO's path on p2
  *   5. extract the kernel, wrap it with ukify into a minimal UKI whose
@@ -32,7 +32,7 @@
 #include <cli/sign/payload.h>
 #include <cli/sign/prepare.h>
 
-#include <manifest/manifest.h>
+#include <bless/manifest.h>
 
 #include <limits.h>
 #include <stdio.h>

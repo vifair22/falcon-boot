@@ -36,10 +36,10 @@
 #       `16u * r` and friends where the index is a loop counter bounded by a
 #       literal (4, 8, 16, 64) or by nk <= 8. Fixed-size state arrays.
 #
-#   src/exfat/exfat.c:503                    `2u * j`, j is a uint8_t bounded
+#   src/fs/exfat.c:503                    `2u * j`, j is a uint8_t bounded
 #       by take, which is clamped to 15 two lines earlier.
 #
-#   src/ext4/ext4.c:516,526,550              `i * EXT_ENT_SIZE`, EXT_ENT_SIZE
+#   src/fs/ext4.c:516,526,550              `i * EXT_ENT_SIZE`, EXT_ENT_SIZE
 #       is 12 and i < entries. entries comes from a 16-bit on-disk field, so
 #       it is at most 65535 and the product is at most 786420. The bound that
 #       actually matters, entries against the buffer, is enforced by
@@ -126,10 +126,10 @@ tidy	src/crypto/sha256.c	bugprone-implicit-widening-of-multiplication-result	res
 tidy	src/crypto/sha512.c	bugprone-implicit-widening-of-multiplication-result	result of multiplication in type 'unsigned int' is used as a pointer offset after an implicit widening conversion to type 'size_t'
 tidy	src/crypto/sha512.c	bugprone-implicit-widening-of-multiplication-result	result of multiplication in type 'unsigned int' is used as a pointer offset after an implicit widening conversion to type 'size_t'
 tidy	src/efi/main.c	misc-use-internal-linkage	function 'efi_main' can be made static to enforce internal linkage
-tidy	src/exfat/exfat.c	bugprone-implicit-widening-of-multiplication-result	result of multiplication in type 'unsigned int' is used as a pointer offset after an implicit widening conversion to type 'size_t'
-tidy	src/ext4/ext4.c	bugprone-implicit-widening-of-multiplication-result	result of multiplication in type 'unsigned int' is used as a pointer offset after an implicit widening conversion to type 'size_t'
-tidy	src/ext4/ext4.c	bugprone-implicit-widening-of-multiplication-result	result of multiplication in type 'unsigned int' is used as a pointer offset after an implicit widening conversion to type 'size_t'
-tidy	src/ext4/ext4.c	bugprone-implicit-widening-of-multiplication-result	result of multiplication in type 'unsigned int' is used as a pointer offset after an implicit widening conversion to type 'size_t'
+tidy	src/fs/exfat.c	bugprone-implicit-widening-of-multiplication-result	result of multiplication in type 'unsigned int' is used as a pointer offset after an implicit widening conversion to type 'size_t'
+tidy	src/fs/ext4.c	bugprone-implicit-widening-of-multiplication-result	result of multiplication in type 'unsigned int' is used as a pointer offset after an implicit widening conversion to type 'size_t'
+tidy	src/fs/ext4.c	bugprone-implicit-widening-of-multiplication-result	result of multiplication in type 'unsigned int' is used as a pointer offset after an implicit widening conversion to type 'size_t'
+tidy	src/fs/ext4.c	bugprone-implicit-widening-of-multiplication-result	result of multiplication in type 'unsigned int' is used as a pointer offset after an implicit widening conversion to type 'size_t'
 tidy	src/iso/iso.c	bugprone-implicit-widening-of-multiplication-result	performing an implicit widening conversion to type 'size_t' (aka 'unsigned long long') of a multiplication performed in type 'unsigned int'
 tidy	src/iso/iso.c	bugprone-implicit-widening-of-multiplication-result	result of multiplication in type 'unsigned int' is used as a pointer offset after an implicit widening conversion to type 'size_t'
 tidy	src/luks/luks.c	bugprone-implicit-widening-of-multiplication-result	performing an implicit widening conversion to type 'uint64_t' (aka 'unsigned long long') of a multiplication performed in type 'unsigned int'

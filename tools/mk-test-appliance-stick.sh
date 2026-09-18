@@ -60,7 +60,7 @@ PASS="${FALCON_TEST_PASS:-falcon-test}"
 # The pending library. One small archiso-layout ISO, staged twice under two
 # names: a 17 MiB fixture keeps the proof's signing leg to seconds instead of
 # the minutes a 1.4 GiB distro ISO spends being hashed, and `sign` treats it as
-# the real thing (src/family/family.c fingerprints /arch/boot/x86_64, and
+# the real thing (src/iso/family.c fingerprints /arch/boot/x86_64, and
 # nothing here passes --kernel, so family detection runs for real).
 MINI_ISO="$OUT/arch-mini.iso"
 MINI_STAGE="$OUT/arch-mini-root"

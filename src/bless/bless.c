@@ -5,11 +5,11 @@
 
 #include <bless/bless.h>
 
-#include <efi/loadops.h>
+#include <loader/loadops.h>
 
-#include <credfs/credfs.h>
+#include <loader/credfs.h>
 #include <lib/string.h>
-#include <menu/menu.h>
+#include <console/menu.h>
 
 /* Read granularity for the UKI, and how often the read says it is alive. A
  * 1 MiB request costs one directory-to-extent descent and a run of block
@@ -39,7 +39,7 @@ static fs_file g_file;
 
 /* ---- console ---- */
 
-/* Inside the content block, like every other screen; see src/menu/menu.h. */
+/* Inside the content block, like every other screen; see src/console/menu.h. */
 static void out(const CHAR16 *s)
 {
     menu_out(g_st, s);
@@ -308,7 +308,7 @@ static CHAR16 g_load_ucs2[BLESS_NAME_MAX + 2];
  * own initrd and cmdline inside the signature (Section 8.1, amended), so
  * there is nothing to hand to it and nothing it needs to be told. The
  * synthetic filesystem is still what the launch is built on, for the reason
- * src/credfs exists at all: a device-path load is the only kind that gives
+ * src/loader/credfs.c exists at all: a device-path load is the only kind that gives
  * the started image a LoadedImage->DeviceHandle, and exFAT has no firmware
  * device path of its own to offer. That reason is what makes this the
  * mechanism a bare EFI payload uses too (DESIGN Section 7.2): it lives on the

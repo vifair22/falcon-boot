@@ -19,7 +19,7 @@
 
 /* ---- partition type GUIDs, in the textual form sgdisk takes ----
  *
- * These are the byte arrays of src/part/part.h written the other way round.
+ * These are the byte arrays of src/disk/part.h written the other way round.
  * They are NOT a second source of truth: mkstick_guid_selfcheck() parses each
  * string back into the 16-byte on-disk form and compares it against the
  * loader's own constant at startup, so a typo here fails immediately and
@@ -35,7 +35,7 @@
 #define MKS_TYPE_SHELF "9CB02E90-85F4-4AF7-9AF3-1F9D6A95FEAF"  /* p3, falcon */
 #define MKS_TYPE_LUKS  "CA7D7CCB-63ED-4C53-861C-1742536059CC"  /* p4, stock */
 
-/* Verifies the strings above against src/part/part.h (and, for the standard
+/* Verifies the strings above against src/disk/part.h (and, for the standard
  * types, against the values DESIGN Section 3 records), and MKS_LABEL_P2
  * against the name the loader looks for. Called at the top of every command
  * that writes or reads a partition table. */
@@ -46,7 +46,7 @@ cli_status mkstick_guid_selfcheck(void);
  *
  * MKS_LABEL_P2 IS NOT COSMETIC. p2 wears a type GUID the whole world shares,
  * so its name is the other half of what identifies it to the loader
- * (FALCON_PART_NAME_ISO in src/part/part.h, checked against this string at
+ * (FALCON_PART_NAME_ISO in src/disk/part.h, checked against this string at
  * startup). Renaming p2 outside this tool makes its ISO library invisible. */
 #define MKS_LABEL_P1 "FALCON-ESP"
 #define MKS_LABEL_P2 "FALCON-ISO"

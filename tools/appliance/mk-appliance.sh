@@ -123,14 +123,14 @@ HOST_CFLAGS=(
     -Isrc -Itools
 )
 
-# src/part/part.c identifies p2 and p3 by the falcon type GUIDs, and
-# src/manifest/manifest.c decides what "already blessed" means. Both are the
+# src/disk/part.c identifies p2 and p3 by the falcon type GUIDs, and
+# src/bless/manifest.c decides what "already blessed" means. Both are the
 # loader's own modules, EFI-free by construction, linked here so the appliance
 # cannot disagree with the menu about either question.
 #
 # The rest is how the survey tells Windows media from everything else:
 # src/cli/sign/isoprobe.c is the bless tool's own ISO reader (two helper
-# listings, unioned; no mount and no loop device) and src/family/family.c is
+# listings, unioned; no mount and no loop device) and src/iso/family.c is
 # the registry it fingerprints against, so the queue an image lands in here is
 # the queue `falcon-boot-sign` will agree with when it is handed the file.
 # util.c and the two crypto units come along because isoprobe calls into them,
@@ -142,9 +142,9 @@ HOST_CFLAGS=(
 INIT_SRCS=(
     tools/appliance/init.c
     tools/appliance/route.c
-    src/part/part.c
-    src/manifest/manifest.c
-    src/family/family.c
+    src/disk/part.c
+    src/bless/manifest.c
+    src/iso/family.c
     src/cli/sign/isoprobe.c
     src/cli/sign/payload.c
     src/cli/sign/util.c
@@ -476,7 +476,7 @@ printf 'root:x:0:\n' > "$ROOT/etc/group"
 # host; here it has to describe something, and the honest answer for a wrap
 # built on this stick is the stick.
 #
-# falcon-boot reads .osrel to label menu entries (src/osrel), and so does
+# falcon-boot reads .osrel to label menu entries (src/pos/osrel.c), and so does
 # sd-boot, so this string is user-visible rather than decorative.
 cat > "$ROOT/usr/lib/os-release" <<'OSREL'
 NAME="falcon-boot blessed media"

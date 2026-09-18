@@ -27,18 +27,18 @@
  * Nothing is verified. exFAT defines a SetChecksum over each directory entry
  * set (spec 6.4.2) and this driver does not check it, so a set with a
  * corrupted name or size is reported as read rather than refused. That is a
- * real difference from src/ext4, which verifies every metadata checksum it
+ * real difference from src/fs/ext4.c, which verifies every metadata checksum it
  * reads, and it is deliberate: this driver's volume is p2, the exFAT
  * partition a user drags arbitrary ISO files onto, and nothing on it is
  * trusted for anything. What may boot is decided by signature verification at
  * load time (DESIGN Section 7), so a corrupt directory entry produces a
- * failed or refused boot, never a trusted one. src/ext4 reads a volume the
+ * failed or refused boot, never a trusted one. src/fs/ext4.c reads a volume the
  * loader created and does hold to a checksum policy.
  *
  * VolumeFlags bits 1 and 2 (VolumeDirty, MediaFailure) are read but not
  * acted on, for the same reason: this volume is expected to be dirty. It is
  * mounted read-write by an OS and pulled out of a running machine, so
- * refusing a dirty volume the way src/ext4 refuses a dirty p3 would mean
+ * refusing a dirty volume the way src/fs/ext4.c refuses a dirty p3 would mean
  * refusing to list ISOs after any ungraceful eject.
  */
 

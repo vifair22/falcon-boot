@@ -5,7 +5,7 @@
  * deliberate omissions are argued in ext4.h; read that first.
  */
 
-#include <ext4/ext4.h>
+#include <fs/ext4.h>
 #include <lib/string.h>
 
 #define OFF_INVALID (~(uint64_t)0)

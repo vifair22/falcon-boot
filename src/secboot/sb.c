@@ -26,7 +26,7 @@
  * that stamps MokList entries carries neither (both read EFI_NOT_FOUND).
  */
 
-#include <sb/sb.h>
+#include <secboot/sb.h>
 
 /* 8be4df61-93ca-11d2-aa0d-00e098032b8c */
 #define EFI_GLOBAL_VARIABLE_GUID \

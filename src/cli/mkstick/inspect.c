@@ -2,8 +2,8 @@
  *
  * The point of this command is to answer "will the loader recognise this
  * stick, and why not" without booting anything. So it deliberately runs the
- * LOADER'S OWN parsers rather than a second opinion: src/part reads the GPT,
- * src/luks reads the LUKS2 headers, src/exfat reads p2. All three are
+ * LOADER'S OWN parsers rather than a second opinion: src/disk/part.c reads the GPT,
+ * src/luks reads the LUKS2 headers, src/fs/exfat.c reads p2. All three are
  * EFI-free by construction (every device access is a byte-read callback), so
  * the code that answers here is the code that will answer at boot. A separate
  * implementation could agree with the disk and still disagree with the
@@ -33,10 +33,10 @@
 #include <cli/mkstick/disk.h>
 #include <cli/mkstick/shimname.h>
 
-#include <exfat/exfat.h>
+#include <fs/exfat.h>
 #include <fs/fs.h>
 #include <luks/luks.h>
-#include <part/part.h>
+#include <disk/part.h>
 
 static const cli_opt status_opts[] = {
     { "no-esp", CLI_OPT_FLAG, 0, NULL,
@@ -676,7 +676,7 @@ const cli_cmd mks_cmd_status = {
     sizeof status_opts / sizeof status_opts[0],
     1, 1,
     "Read-only. The GPT, LUKS2 and exFAT checks are performed by the loader's\n"
-    "own parsers (src/part, src/luks, src/exfat), so they answer the question\n"
+    "own parsers (src/disk/part.c, src/luks, src/fs/exfat.c), so they answer the question\n"
     "the boot menu will ask. Listing p1 needs a read-only loop mount, and so\n"
     "needs root; --no-esp skips it.\n",
     status_run

@@ -21,8 +21,8 @@
 
 #include <fs/fs.h>
 
-#include <exfat/exfat.h>
-#include <ext4/ext4.h>
+#include <fs/exfat.h>
+#include <fs/ext4.h>
 #include <lib/string.h>
 
 /* The blobs must hold every registered driver's context. A driver that grows

@@ -555,7 +555,7 @@ then calls `SIL->UnloadImage` on the handle:
 
 So a loader that resolved `LoadImage` from one place and `UnloadImage` or
 `StartImage` from the other would crash the machine outright in two of the
-three states. `src/efi/loadops.c` never mixes them (one resolve, all three
+three states. `src/loader/loadops.c` never mixes them (one resolve, all three
 members from the same source, used as a set), and `loadops.h` now says why
 that is a requirement rather than a tidiness.
 

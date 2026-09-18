@@ -18,7 +18,7 @@
 #include <stdint.h>
 #include <stddef.h>
 
-#include <manifest/manifest.h>
+#include <bless/manifest.h>
 
 /* The reserved directory prepared sidecars live under, and the one file the
  * MVP patch shape stages there. Both are wire format: the loader resolves a

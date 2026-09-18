@@ -19,7 +19,7 @@
  * makes the same argument about not reimplementing a UDF reader in-repo).
  *
  * Deliberately EFI-free and I/O-free: every byte arrives through a read
- * callback, exactly as src/exfat and src/luks take their device access, so the
+ * callback, exactly as src/fs/exfat.c and src/luks take their device access, so the
  * scan and the comparison are exercised in test/wimext_test.c against synthetic
  * in-memory images with no ISO and no subprocess involved.
  */

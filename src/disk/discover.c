@@ -2,10 +2,10 @@
  * exists; this file is the mechanism.
  */
 
-#include <discover/discover.h>
+#include <disk/discover.h>
 
 #include <lib/string.h>
-#include <part/partefi.h>
+#include <disk/partefi.h>
 
 /* Largest block size any firmware Block I/O instance we care about reports,
  * and therefore the size of the one-block probe buffer. */

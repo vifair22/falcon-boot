@@ -18,7 +18,7 @@
  * testable off the firmware.
  *
  * THIS IS UX ONLY. Nothing here may influence what is loaded or verified, in
- * the same way src/sb reads Secure Boot state purely to print a banner
+ * the same way src/secboot reads Secure Boot state purely to print a banner
  * (DESIGN Section 7.3). A malformed section changes the text on the screen
  * and nothing else: every failure is OSREL_ERR_* and every caller falls back
  * to the filename rather than refusing the entry.

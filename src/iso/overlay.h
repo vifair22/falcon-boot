@@ -101,7 +101,7 @@ enum {
  * must outlive the published device; nothing is released here. It must not be
  * the image's own handle - the two streams interleave on every read, and a
  * single exFAT file cursor forced to seek backwards between them restarts the
- * FAT walk each time (src/exfat/exfat.h). iso.c refuses that case. */
+ * FAT walk each time (src/fs/exfat.h). iso.c refuses that case. */
 typedef struct {
     uint64_t iso_off;   /* VIRTUAL: first byte this entry replaces */
     uint64_t len;       /* bytes */

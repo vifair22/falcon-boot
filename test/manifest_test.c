@@ -1,4 +1,4 @@
-/* Tests for src/manifest, the blessed-artifact manifest of docs/DESIGN.md
+/* Tests for src/bless/manifest.c, the blessed-artifact manifest of docs/DESIGN.md
  * Section 8.1.
  *
  * The module is pure text in, records out, with no I/O of any kind, so the
@@ -51,7 +51,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include <manifest/manifest.h>
+#include <bless/manifest.h>
 
 #define CAP 16u
 

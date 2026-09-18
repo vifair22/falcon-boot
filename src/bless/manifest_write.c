@@ -14,7 +14,7 @@
  * test/manifest_test.c pins it.
  */
 
-#include <manifest/manifest.h>
+#include <bless/manifest.h>
 #include <lib/string.h>
 
 #define NUL ((void *)0)

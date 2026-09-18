@@ -5,17 +5,17 @@
  */
 
 #include <pos/pos.h>
-#include <osrel/osrel.h>
+#include <pos/osrel.h>
 
-#include <efi/loadops.h>
+#include <loader/loadops.h>
 
-#include <credfs/credfs.h>
+#include <loader/credfs.h>
 #include <crypto/crypto.h>
-#include <discover/discover.h>
+#include <disk/discover.h>
 #include <fs/fs.h>
 #include <luks/luks.h>
 #include <lib/string.h>
-#include <menu/menu.h>
+#include <console/menu.h>
 
 /* p3 is one partition, but the scan is not told which one it is, so it takes
  * whatever shelf-role volumes it finds. Four covers a stick built to DESIGN
@@ -55,7 +55,7 @@ static EFI_SYSTEM_TABLE *g_st;
 
 /* ---- console ---- */
 
-/* Inside the content block, like every other screen; see src/menu/menu.h. */
+/* Inside the content block, like every other screen; see src/console/menu.h. */
 static void out(const CHAR16 *s)
 {
     menu_out(g_st, s);
@@ -215,7 +215,7 @@ UINTN pos_scan(EFI_SYSTEM_TABLE *st)
     g_luks_usable = 0;
     g_plain_usable = 0;
 
-    /* The rows are src/discover's, classified once for the whole loader
+    /* The rows are src/disk/discover.c's, classified once for the whole loader
      * (DESIGN Section 9). DESIGN Section 3's filter decided which handles a
      * shelf scan may look at; the LUKS2 magic on each row decides which of
      * the two shapes below this one is. */
@@ -406,7 +406,7 @@ static int collect_ukis(void)
 }
 
 /* Mount the shelf's filesystem through the registry rather than by naming a
- * driver (DESIGN Section 9). `known` is the identification src/discover
+ * driver (DESIGN Section 9). `known` is the identification src/disk/discover.c
  * already made for a plaintext volume; the decrypted case has none, because
  * nothing could read those bytes until a moment ago, so it identifies now. */
 static int mount_shelf(fs_read_fn read, void *ctx, const fs_ops *known)

@@ -9,7 +9,7 @@
  *      the GPT to publish the handle and will simply hand us the entry.
  *   2. The handle's HARDDRIVE device path node gives the partition's starting
  *      LBA and names its parent disk (the path with that node removed); we
- *      then parse the parent's GPT ourselves through src/part/part.c and look
+ *      then parse the parent's GPT ourselves through src/disk/part.c and look
  *      the starting LBA up. This is what keeps older firmware working, and
  *      the QEMU rig exercises it, since OVMF's vvfat-backed disks and the
  *      loose image rigs do not present a GPT at all.
@@ -29,7 +29,7 @@
 #define FALCON_PARTEFI_H
 
 #include <efi/uefi.h>
-#include <part/part.h>
+#include <disk/part.h>
 
 /* Status codes, repo convention: OK zero, errors negative. */
 enum {
@@ -52,7 +52,7 @@ typedef struct {
  * the errors above. */
 int part_identify(EFI_SYSTEM_TABLE *st, EFI_HANDLE h, part_ident *out);
 
-/* The type GUID alone, for the inventory row src/discover keeps; identity
+/* The type GUID alone, for the inventory row src/disk/discover.c keeps; identity
  * questions go through part_match_role, never through this. */
 int part_type_guid(EFI_SYSTEM_TABLE *st, EFI_HANDLE h, EFI_GUID *out);
 

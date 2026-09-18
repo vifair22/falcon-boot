@@ -29,7 +29,7 @@
 #include <stdint.h>
 #include <stddef.h>
 
-#include <family/family.h>
+#include <iso/family.h>
 
 /* Status codes, repo convention: OK zero, errors negative. Every one of
  * these is paired with a message in the error buffer, set by whichever
@@ -188,7 +188,7 @@ void iso_view_close(iso_view *v);
  * "nothing here could read the namespace the file would be in". */
 const char *iso_view_udf_reader(const iso_view *v);
 
-/* Fills in a family_probe backed by this view, so src/family/family.c
+/* Fills in a family_probe backed by this view, so src/iso/family.c
  * fingerprints a real ISO through the same two callbacks the loader gives
  * it for a firmware-mounted ESP. */
 void iso_view_family_probe(iso_view *v, family_probe *fp);

@@ -1,7 +1,7 @@
-#include <efi/loadops.h>
+#include <loader/loadops.h>
 #include <efi/shimguid.h>
 
-#include <sb/sb.h>
+#include <secboot/sb.h>
 
 /* 50614485-081b-4b7c-8b54-2abeffdf2fb3: falcon-boot's own vendor GUID for EFI
  * variables. Ours alone, so nothing we write can collide with a platform or

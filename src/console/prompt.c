@@ -6,7 +6,7 @@
  * question with a one-file answer.
  */
 
-#include <menu/menu.h>
+#include <console/menu.h>
 #include <crypto/crypto.h>
 
 /* Control characters the console delivers in UnicodeChar with ScanCode 0

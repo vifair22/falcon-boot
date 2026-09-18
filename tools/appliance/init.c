@@ -81,12 +81,12 @@
  *     nothing here would use one), so the decrypted-key window cannot be
  *     reached from outside the machine.
  *
- * The partitions are identified out of the GPT through src/part/part.c, the
+ * The partitions are identified out of the GPT through src/disk/part.c, the
  * same parser AND the same matcher (part_match_role) the loader uses, so the
  * appliance and the loader cannot disagree about which partition is which. The manifest is read
- * through src/manifest/manifest.c, the same parser the loader will use, so
+ * through src/bless/manifest.c, the same parser the loader will use, so
  * "already blessed" means here exactly what it will mean at the menu. Each
- * ISO is classified through src/cli/sign/isoprobe.c and src/family/family.c,
+ * ISO is classified through src/cli/sign/isoprobe.c and src/iso/family.c,
  * which is the reader and the table `falcon-boot-sign` itself uses, so the
  * survey cannot put an image in a queue the tool will then refuse it from.
  * The set of file names the survey looks at is the LOADER's set (src/efi
@@ -107,9 +107,9 @@
 #include <cli/sign/payload.h>
 #include <cli/sign/prepcore.h>
 #include <cli/sign/sign.h>
-#include <family/family.h>
-#include <manifest/manifest.h>
-#include <part/part.h>
+#include <iso/family.h>
+#include <bless/manifest.h>
+#include <disk/part.h>
 
 #include <dirent.h>
 #include <errno.h>
@@ -1134,7 +1134,7 @@ static void add_to(candidate *q, size_t *n, const char *what, const char *rel,
 
 /* The family of one ISO, read the way `falcon-boot-sign` reads it: bsdtar
  * over the ISO9660 namespace and 7-Zip over the UDF one, unioned into a
- * listing, then src/family/family.c fingerprinted over that. Same reader and
+ * listing, then src/iso/family.c fingerprinted over that. Same reader and
  * same table as the tool this program is about to hand the file to, so the
  * survey cannot route an image into a queue the tool will then refuse it
  * from. No mount and no loop device: src/cli/sign/isoprobe.c says in as many

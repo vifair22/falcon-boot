@@ -15,7 +15,7 @@
  * suite that cannot be run is not a suite that failed.
  *
  * That default is also how this tree reported green for a long time with four
- * suites switched off and src/ext4, src/luks and src/luks/af at zero
+ * suites switched off and src/fs/ext4.c, src/luks and src/luks/af at zero
  * coverage, because nothing built the images and nothing said so louder than
  * a printf. FALCON_TEST_STRICT=1 turns a skip into a failure. The coverage
  * target sets it, since a coverage number measured with a quarter of the

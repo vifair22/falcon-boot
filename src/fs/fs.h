@@ -56,7 +56,7 @@
 #include <stdint.h>
 #include <stddef.h>
 
-#include <part/part.h>
+#include <disk/part.h>
 
 /* Status codes, repo convention: OK zero, errors negative. Each is the
  * meaning shared by whichever drivers can produce it; see fs.c for the
@@ -165,7 +165,7 @@ typedef struct fs_file {
 } fs_file;
 
 /* Which role's partition a driver is the primary answer for, and the value a
- * caller passes when it has no idea. The two role values are src/part's, so
+ * caller passes when it has no idea. The two role values are src/disk/part.c's, so
  * a discovery row's role and an identification hint are the same number. */
 typedef enum {
     FS_HINT_NONE  = -1,

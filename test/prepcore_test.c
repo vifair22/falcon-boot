@@ -37,7 +37,7 @@
 
 #include <cli/sign/sign.h>
 #include <cli/sign/prepcore.h>
-#include <manifest/manifest.h>
+#include <bless/manifest.h>
 
 /* The real numbers from the Win11 25H2 image (DESIGN Section 6.3), so the
  * rendered record below is the one this tool actually emits for it rather

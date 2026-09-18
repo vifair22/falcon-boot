@@ -19,7 +19,7 @@
 #define FALCON_ISO_H
 
 #include <efi/uefi.h>
-#include <family/family.h>
+#include <iso/family.h>
 #include <fs/fs.h>
 #include <iso/overlay.h>
 

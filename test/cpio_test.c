@@ -1,4 +1,4 @@
-/* Tests for src/cpio/cpio.c, the newc writer that builds the initrd segment
+/* Tests for src/iso/cpio.c, the newc writer that builds the initrd segment
  * the injection path appends (docs/DESIGN.md Section 6.2).
  *
  * The archive this module produces is parsed by the kernel's own unpacker at
@@ -23,7 +23,7 @@
  *   mtime      ours is 0, so the output is reproducible
  *   devminor   ours is 0; GNU writes the source filesystem's
  *   tail       GNU pads the file out to a 512-byte block, we stop at the
- *              trailer (src/cpio/cpio.c says why)
+ *              trailer (src/iso/cpio.c says why)
  *
  * Everything structural matched exactly: the magic, the field order and
  * widths, uppercase hex, mode values, nlink 2 for the directory and 1 for the
@@ -49,7 +49,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
-#include <cpio/cpio.h>
+#include <iso/cpio.h>
 
 #define HDR_LEN 110u
 #define BUF_MAX 8192u

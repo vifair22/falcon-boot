@@ -17,7 +17,7 @@ falcon-boot-sign exist and are proven end to end (a mkstick-created image
 boots Secure Boot ON with its own generated MOK and delivers the p4
 credential). Next: step 8 (signing appliance), step 9 (permissive-mode UX),
 step 10 (real hardware), plus the loader-side blessed-boot path consuming
-src/manifest (Section 8.1). Older status text follows for context: Steps 1-6 of the build order in `docs/DESIGN.md` Section
+src/bless/manifest.c (Section 8.1). Older status text follows for context: Steps 1-6 of the build order in `docs/DESIGN.md` Section
 11 are done, with one carve-out named below. The mingw PE toolchain and the
 QEMU/OVMF rig are proven; the shim question is settled (Fedora shim-x64 16.1,
 `SHIM_IMAGE_LOADER`, `docs/notes/shim-spike.md`) and the loader carries the
@@ -30,7 +30,7 @@ end to end: masked passphrase prompt, LUKS2 unlock of p3, read-only ext4
 inside, `/uki/*.efi` discovery (`/EFI/Linux` as fallback), and `LoadImage` of
 the image through the shim-verified path.
 
-The passphrase handoff (step 6) is in: `src/credfs` publishes a synthetic
+The passphrase handoff (step 6) is in: `src/loader/credfs.c` publishes a synthetic
 read-only filesystem carrying the UKI plus
 `<uki>.efi.extra.d/cryptsetup.passphrase.cred`, the UKI is loaded BY DEVICE
 PATH off it, and sd-stub packs the credential into the initrd where
@@ -89,35 +89,53 @@ See `docs/DESIGN.md` for full architecture. Quick orientation:
 One flat top-level Makefile builds everything; there are no per-directory
 Makefiles.
 
-- `src/efi/` EFI application entry point and glue: freestanding C11, MS x64 ABI,
-  built to PE32+ with `x86_64-w64-mingw32-gcc`. No gnu-efi, no EDK2. Our own
-  minimal UEFI headers live here too.
-- `src/exfat/` read-only exFAT driver, EFI-free (device access through a read
-  callback) so it is testable off the firmware.
-- `src/fs/` the filesystem driver registry (DESIGN Section 9): one `fs_ops`
-  vtable over every read-only driver, opaque caller-allocated volume/dir/file
-  storage, unified dirents and status codes. Consumers select a driver through
-  it and never name one. EFI-free, like the drivers it wraps.
-- `src/discover/` the single device-discovery pass: enumerates the Block I/O
-  handles once, classifies each (media, GPT role, LUKS2 magic, filesystem
-  identification), and hands every consumer the same inventory.
-- `src/menu/` text menu over Simple Text Output/Input, plus the masked
+`src/` is grouped by layer and by boot path, one level deep, headers next to
+their `.c` files. Everything outside `src/cli/` and `src/winjump/` links into
+the loader.
+
+- `src/efi/` the EFI application entry point (`main.c`), the `.sbat` section,
+  and our own minimal UEFI headers: freestanding C11, MS x64 ABI, built to
+  PE32+ with `x86_64-w64-mingw32-gcc`. No gnu-efi, no EDK2.
+- `src/loader/` the shim-verified load path (`loadops.c`, DESIGN Section 7.6)
+  and `credfs.c`, the synthetic read-only filesystem a UKI is published on so
+  it can be loaded by device path and sd-stub finds the passphrase credential
+  beside it (DESIGN Section 5.1). `credfs_efi.h` carries the File Protocol's
+  full provider-side surface, which `src/efi/sfs.h` deliberately stubs out on
+  the consumer side.
+- `src/console/` text menu over Simple Text Output/Input, plus the masked
   passphrase prompt (`prompt.c`, its own TU so "what has held the secret" has
   a one-file answer).
+- `src/disk/` GPT parsing (`part.c`, EFI-free; `partefi.c`, its firmware
+  half) and the single device-discovery pass (`discover.c`): enumerates the
+  Block I/O handles once, classifies each (media, GPT role, LUKS2 magic,
+  filesystem identification), and hands every consumer the same inventory.
+- `src/fs/` the filesystem driver registry (`fs.c`, DESIGN Section 9: one
+  `fs_ops` vtable, opaque caller-allocated storage, unified dirents and status
+  codes) and the read-only drivers only it calls, `exfat.c` and `ext4.c`.
+  Consumers select a driver through the registry and never name one. EFI-free
+  (device access through a read callback), so testable off the firmware.
+- `src/luks/` LUKS2 header parse, keyslot unlock, AF merge. EFI-free.
+- `src/crypto/` SHA-256/512, HMAC, PBKDF2, AES-XTS (AES-NI with a portable
+  fallback). EFI-free, the only crypto in EFI-land.
+- `src/secboot/` everything that reads platform trust state, for UX only:
+  `sb.c` (SecureBoot / SetupMode / MokSBStateRT).
+- `src/iso/` the ISO path (DESIGN Section 6): virtual media over a p2 file
+  (`iso.c`, `overlay.h`), family detection (`family.c`), and the initrd cpio
+  append of the injection framework (`cpio.c`).
 - `src/pos/` the personal-OS path (DESIGN Section 5): LUKS2 volume discovery,
-  unlock, the ext4 inside, UKI discovery, and the shim-verified load. The only
-  module that ever holds the passphrase. Glue over `src/luks` and `src/ext4`;
-  it writes no crypto and no filesystem code.
-- `src/credfs/` the synthetic read-only filesystem the personal-OS path
-  publishes so the UKI can be loaded by device path and sd-stub can find the
-  passphrase credential beside it (DESIGN Section 5.1). Serves a caller-built
-  in-RAM tree; `credfs_efi.h` carries the File Protocol's full provider-side
-  surface, which `src/efi/sfs.h` deliberately stubs out on the consumer side.
+  unlock, the ext4 inside, UKI discovery and naming (`osrel.c`), and the
+  shim-verified load. The only module that ever holds the passphrase. Glue
+  over `src/luks` and `src/fs`; it writes no crypto and no filesystem code.
+- `src/bless/` the blessed path (DESIGN Section 8.1): the manifest parser and
+  writer (`manifest.c`, `manifest_write.c`, shared with the host tool), the
+  record cache (`blesscore.c`, EFI-free) and the launch (`bless.c`).
 - `src/lib/` freestanding support routines: `mem*` and the UCS-2 helpers.
-- `src/cli/` host tooling (Linux userland C), arriving at step 7 of the build
-  order. May shell out to `cryptsetup`, `sbsign`, `mkfs.*`, `ukify`. The `sign`
-  tool is a portable static binary shared between the host and the on-stick
-  signing appliance.
+- `src/cli/` host tooling (Linux userland C, never linked into the loader):
+  `mkstick`, `sign`, and their shared `common`. May shell out to
+  `cryptsetup`, `sbsign`, `mkfs.*`, `ukify`. The `sign` tool is a portable
+  static binary shared between the host and the on-stick signing appliance.
+- `src/winjump/` the WinPE jump binary (DESIGN Section 6.3), a separate
+  Windows PE target.
 - `docs/` DESIGN.md (authoritative) and later Manual.md.
 - `tools/` host scripts: the QEMU + OVMF rig (`run-qemu.sh`, with `--secboot`,
   `--stick` and `--headless`), the exFAT fixture builder (`mk-test-exfat.sh`),

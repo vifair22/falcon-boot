@@ -1,6 +1,6 @@
 /* falcon-boot: read-only ext4 (docs/DESIGN.md Sections 3, 9).
  *
- * Sibling of src/exfat/exfat.c and shaped the same way: freestanding, EFI-free,
+ * Sibling of src/fs/exfat.c and shaped the same way: freestanding, EFI-free,
  * all device access through a byte-addressed read callback, caller-allocated
  * contexts, no allocator. The same code reads a decrypted p3 in the loader and
  * a plain image file in host-side tests.

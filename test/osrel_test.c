@@ -1,4 +1,4 @@
-/* .osrel label extraction (src/osrel). The parser walks a length-prefixed PE
+/* .osrel label extraction (src/pos/osrel.c). The parser walks a length-prefixed PE
  * structure, so most of what is worth testing here is what it does with a
  * malformed one: every failure must leave the caller's buffer empty and
  * return an error the caller turns into "use the filename". */
@@ -9,7 +9,7 @@
 #include <string.h>
 #include <cmocka.h>
 
-#include <osrel/osrel.h>
+#include <pos/osrel.h>
 #include "tests.h"
 
 /* A minimal PE32+ with one named section, built by hand so the tests can bend

@@ -3,13 +3,13 @@
 #
 # Produces build/test-ext4.img: a 128 MiB whole-device ext4 filesystem made by
 # a stock `mkfs.ext4` and populated through the kernel's own driver, which is
-# the point. src/ext4/ext4.c is a from-scratch reader; the only evidence worth
+# the point. src/fs/ext4.c is a from-scratch reader; the only evidence worth
 # having that it agrees with ext4 is that it agrees with the implementation
 # that wrote the bytes.
 #
 # 128 MiB is chosen deliberately. mke2fs picks a 1024-byte block at that size,
 # which is the one layout where s_first_data_block is 1 rather than 0 (the
-# superblock is block 1 and the group descriptor table block 2). src/ext4's
+# superblock is block 1 and the group descriptor table block 2). src/fs/ext4.c's
 # header calls that case out by name as the one the host tests must cover; p3
 # itself is ~1 GiB and gets 4096-byte blocks, which the arithmetic reduces to.
 #
@@ -176,7 +176,7 @@ sudo umount "$MNT"
 rmdir "$MNT"
 MNT=
 
-# A clean unmount is not cosmetic here: src/ext4/ext4.c refuses a filesystem
+# A clean unmount is not cosmetic here: src/fs/ext4.c refuses a filesystem
 # whose s_state is unclean or that carries the recover or orphan_present bits,
 # so an image left dirty would make every fixture test fail as EXT4_ERR_DIRTY.
 fsck.ext4 -fn "$IMG" >/dev/null 2>&1 || {

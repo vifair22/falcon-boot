@@ -41,7 +41,7 @@
 #pragma pack(1)
 
 /* GPT partition entry (spec Table 5-6). Exactly 128 bytes; the same layout
- * src/part/part.c decodes off the disk, which is why one set of falcon GUID
+ * src/disk/part.c decodes off the disk, which is why one set of falcon GUID
  * constants serves both routes. */
 typedef struct {
     EFI_GUID PartitionTypeGUID;

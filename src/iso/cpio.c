@@ -13,7 +13,7 @@
  * copy at boot.
  */
 
-#include <cpio/cpio.h>
+#include <iso/cpio.h>
 #include <lib/string.h>
 
 #define CPIO_MAGIC     "070701"

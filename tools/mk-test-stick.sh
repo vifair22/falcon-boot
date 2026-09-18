@@ -166,7 +166,7 @@ echo "== partitioning (GPT, four partitions per DESIGN Section 3)"
 #   p1  the standard ESP type; p4 the standard Linux LUKS type (8309), also
 #       unrecognised by Windows on purpose. The loader never matches p4.
 #
-# The constants are frozen in src/part/part.h and must match it exactly.
+# The constants are frozen in src/disk/part.h and must match it exactly.
 sgdisk \
     -n 1:1MiB:+64MiB   -t 1:ef00 -c 1:"FALCON-ESP" \
     -n 2:0:+64MiB      -t 2:EBD0A0A2-B9E5-4433-87C0-68B6B72699C7 \

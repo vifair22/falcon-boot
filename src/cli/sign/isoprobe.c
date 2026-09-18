@@ -24,7 +24,7 @@
  * still lists and every Linux family still blesses, so a missing 7z is a
  * warning naming what it costs rather than a refusal to run.
  *
- * The listing is also what lets src/family/family.c run here unchanged. It
+ * The listing is also what lets src/iso/family.c run here unchanged. It
  * reaches the filesystem through two callbacks precisely so the same
  * detection code can fingerprint a firmware-mounted ESP in the loader and a
  * helper's listing on a host, and this file is the second of those two
@@ -651,7 +651,7 @@ int iso_view_extract(iso_view *v, const char *member, const char *dst)
 
 /* Where each family keeps the kernel the bless wrap is built around.
  *
- * This table lives in the tool and not in src/family, on purpose. The
+ * This table lives in the tool and not in src/iso/family.c, on purpose. The
  * registry is the loader's data: it answers "what cmdline does this family
  * need", which the loader consumes at boot. Which file inside the ISO holds
  * the kernel is a question only the signing step ever asks, and answering

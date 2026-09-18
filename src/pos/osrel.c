@@ -1,4 +1,4 @@
-#include <osrel/osrel.h>
+#include <pos/osrel.h>
 
 /* Every offset below is checked against len before it is read. The bytes come
  * from inside the LUKS volume the user just unlocked, so this is not hostile

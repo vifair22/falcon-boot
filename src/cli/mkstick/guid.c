@@ -1,5 +1,5 @@
 /* falcon-boot mkstick: the cross-check between what this tool stamps into a
- * partition table and what src/part/part.h makes the loader look for.
+ * partition table and what src/disk/part.h makes the loader look for.
  *
  * part.h stores each GUID as the 16-byte on-disk sequence; sgdisk takes the
  * textual form. Two spellings of one constant is exactly the kind of pair
@@ -22,7 +22,7 @@
 #include <stdio.h>
 #include <string.h>
 
-#include <part/part.h>
+#include <disk/part.h>
 
 /* GPT type GUIDs are mixed-endian: the first three fields are stored
  * little-endian, the last two byte-for-byte as written. This is the same
@@ -88,7 +88,7 @@ static cli_status check_one(const char *text, const uint8_t *expect,
     if (!gpt_guid_eq(got, expect))
         return set_error(CLI_ERR_INTERNAL,
                          "%s: the type GUID this tool writes (%s) is not the "
-                         "one src/part/part.h makes the loader look for",
+                         "one src/disk/part.h makes the loader look for",
                          what, text);
     return CLI_OK;
 }
@@ -103,7 +103,7 @@ static cli_status check_iso_name(void)
     if (want == NULL || strcmp(MKS_LABEL_P2, want) != 0)
         return set_error(CLI_ERR_INTERNAL,
                          "p2 (ISO library): the partition name this tool "
-                         "writes ('%s') is not the one src/part/part.h makes "
+                         "writes ('%s') is not the one src/disk/part.h makes "
                          "the loader look for ('%s')",
                          MKS_LABEL_P2, (want != NULL) ? want : "(none)");
     return CLI_OK;

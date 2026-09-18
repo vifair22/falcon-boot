@@ -26,7 +26,7 @@
  *                inconsistent separators. Both are normalised to the one
  *                convention family.h specifies.
  *
- *   case         the fingerprints in src/family are written in each family's
+ *   case         the fingerprints in src/iso/family.c are written in each family's
  *                own case, and the two namespaces of a single image disagree
  *                about case with each other. Matching folds both sides.
  */
@@ -47,7 +47,7 @@
 
 #include <cli/sign/sign.h>
 #include <cli/sign/isoprobe.h>
-#include <family/family.h>
+#include <iso/family.h>
 
 #ifndef ISOVIEW_IMG
 #define ISOVIEW_IMG "build/test-isoview.iso"
@@ -303,7 +303,7 @@ static void test_isoprobe_size_absent_for_iso9660(void **state)
 /* ---------------------------------------------------------------- case */
 
 /* The two namespaces of one image disagree about case, and the fingerprints
- * in src/family are written in whichever case that family's media uses. Both
+ * in src/iso/family.c are written in whichever case that family's media uses. Both
  * directions have to fold. */
 static void test_isoprobe_case_insensitive_both_ways(void **state)
 {
