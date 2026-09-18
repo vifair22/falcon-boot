@@ -42,6 +42,8 @@
 
 #include <fs/exfat.h>
 #include <fs/ext4.h>
+#include <fs/iso9660.h>
+#include <fs/udf.h>
 #include <fs/fs.h>
 
 /* The blob sizes are a compile-time contract with every registered driver;
@@ -103,7 +105,7 @@ static void test_fs_registry_lookup(void **state)
 
     (void)state;
 
-    assert_int_equal(fs_driver_count(), 2);
+    assert_int_equal(fs_driver_count(), 4);
     for (i = 0; i < fs_driver_count(); i++)
         assert_non_null(fs_driver_at(i));
     assert_null(fs_driver_at(fs_driver_count()));
@@ -132,6 +134,23 @@ static void test_fs_registry_lookup(void **state)
      * injection framework needs; ext4 deliberately does not. */
     assert_non_null(exfat->extents);
     assert_null(ext4->extents);
+
+    /* The media drivers: no partition role, both with an extent map and a
+     * label, and UDF probed ahead of ISO9660 so a bridge disc is read
+     * through its complete side. */
+    assert_ptr_equal(fs_by_name("udf"), &fs_ops_udf);
+    assert_ptr_equal(fs_by_name("iso9660"), &fs_ops_iso9660);
+    assert_int_equal(fs_ops_udf.role, FS_HINT_NONE);
+    assert_int_equal(fs_ops_iso9660.role, FS_HINT_NONE);
+    assert_non_null(fs_ops_udf.extents);
+    assert_non_null(fs_ops_iso9660.extents);
+    assert_non_null(fs_ops_udf.label);
+    assert_non_null(fs_ops_iso9660.label);
+    assert_null(exfat->label);
+    assert_null(ext4->label);
+    assert_ptr_equal(fs_driver_at(2), &fs_ops_udf);
+    assert_ptr_equal(fs_driver_at(3), &fs_ops_iso9660);
+    assert_string_equal(fs_vol_label(NULL), "");
 }
 
 /* ---- probe order ---- */
@@ -279,6 +298,36 @@ static void test_fs_status_map_ext4_total(void **state)
                          want[i].unified);
     assert_int_equal(fs_status_from_ext4(1), 1);
     assert_int_equal(fs_status_from_ext4(-99), FS_ERR_CORRUPT);
+}
+
+static void test_fs_status_map_media_total(void **state)
+{
+    static const int iso[] = {
+        ISO9660_OK, ISO9660_ERR_IO, ISO9660_ERR_BAD_SUPER, ISO9660_ERR_CORRUPT,
+        ISO9660_ERR_BAD_ARG, ISO9660_ERR_RANGE, ISO9660_ERR_NOSPACE,
+        ISO9660_ERR_UNSUPPORTED, ISO9660_ERR_SYMLINK
+    };
+    static const int udf[] = {
+        UDF_OK, UDF_ERR_IO, UDF_ERR_BAD_SUPER, UDF_ERR_CORRUPT,
+        UDF_ERR_BAD_ARG, UDF_ERR_RANGE, UDF_ERR_NOSPACE,
+        UDF_ERR_UNSUPPORTED, UDF_ERR_SYMLINK
+    };
+    static const int want[] = {
+        FS_OK, FS_ERR_IO, FS_ERR_BAD_SUPER, FS_ERR_CORRUPT, FS_ERR_BAD_ARG,
+        FS_ERR_RANGE, FS_ERR_NOSPACE, FS_ERR_UNSUPPORTED, FS_ERR_SYMLINK
+    };
+    size_t i;
+
+    (void)state;
+
+    for (i = 0; i < sizeof want / sizeof want[0]; i++) {
+        assert_int_equal(fs_status_from_iso9660(iso[i]), want[i]);
+        assert_int_equal(fs_status_from_udf(udf[i]), want[i]);
+    }
+    assert_int_equal(fs_status_from_iso9660(1), 1);
+    assert_int_equal(fs_status_from_udf(1), 1);
+    assert_int_equal(fs_status_from_iso9660(-99), FS_ERR_CORRUPT);
+    assert_int_equal(fs_status_from_udf(-99), FS_ERR_CORRUPT);
 }
 
 /* Every negative value either driver's enum can hold must land on a distinct,
@@ -877,6 +926,7 @@ int run_fs_tests(void)
         cmocka_unit_test(test_fs_probe_rejects_partial_magic),
         cmocka_unit_test(test_fs_status_map_exfat_total),
         cmocka_unit_test(test_fs_status_map_ext4_total),
+        cmocka_unit_test(test_fs_status_map_media_total),
         cmocka_unit_test(test_fs_status_map_sweeps),
         cmocka_unit_test(test_fs_name_round_trip),
         cmocka_unit_test(test_fs_name_conversion_bounds),

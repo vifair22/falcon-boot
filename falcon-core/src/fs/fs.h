@@ -93,7 +93,8 @@ typedef int (*fs_read_fn)(void *ctx, uint64_t off, uint64_t len, void *buf);
 /* Opaque per-object storage, sized for the largest registered driver.
  *
  * 4352 = a 4 KiB sector/block cache plus 256 bytes of bookkeeping, which
- * covers every context in the tree today (the fattest is ext4_vol at 4248)
+ * covers every context in the tree today (the fattest is ext4_vol at 4248;
+ * udf_file, a 2 KiB block and 128 allocation descriptors, is about 3.6 KB)
  * with room for a driver that carries a slightly wider header. fs.c asserts
  * each driver fits; a future driver that wants more changes these numbers and
  * everything that declares one of these objects grows with it. */
@@ -199,6 +200,13 @@ typedef struct fs_ops {
      * injection framework that wants one only ever asks about p2. */
     int (*extents)(fs_vol *v, const fs_dirent *e, fs_extent *out, size_t cap,
                    size_t *count);
+
+    /* OPTIONAL. The volume's own name as the medium records it, ASCII, or
+     * NULL when the driver has none to give. An ISO's label is what a live
+     * initramfs finds its medium by (dracut's root=live:CDLABEL=, udev's
+     * by-label links), so the media drivers carry it; exFAT and ext4 have
+     * labels too and no caller that wants them. */
+    const char *(*label)(const fs_vol *v);
 } fs_ops;
 
 /* ---- the registry ---- */
@@ -247,6 +255,10 @@ int fs_extents(fs_vol *v, const fs_dirent *e, fs_extent *out, size_t cap,
  * and for `mkstick status`; nothing branches on it. */
 const char *fs_vol_name(const fs_vol *v);
 
+/* The volume's label (fs_ops::label), or "" when the driver has none or the
+ * volume is not mounted. Never NULL. */
+const char *fs_vol_label(const fs_vol *v);
+
 /* ---- name conversion at the edges ---- */
 
 /* Narrows a dirent name back to bytes. Units above 0xFF cannot have come from
@@ -277,6 +289,8 @@ int fs_name_cmp(const uint16_t *a, const uint16_t *b);
  * for the test group that proves each adapter's status mapping is total. */
 extern const fs_ops fs_ops_exfat;
 extern const fs_ops fs_ops_ext4;
+extern const fs_ops fs_ops_udf;
+extern const fs_ops fs_ops_iso9660;
 
 /* The mapping tables, for the same reason: a test enumerates every value of
  * each driver's enum and asserts it maps. An unmapped code maps to
@@ -284,5 +298,7 @@ extern const fs_ops fs_ops_ext4;
  * status without a row here degrades rather than lies. */
 int fs_status_from_exfat(int rc);
 int fs_status_from_ext4(int rc);
+int fs_status_from_iso9660(int rc);
+int fs_status_from_udf(int rc);
 
 #endif /* FALCON_FS_H */

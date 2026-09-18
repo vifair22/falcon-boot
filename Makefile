@@ -166,6 +166,7 @@ LUKS_MANIFEST    ?= $(CURDIR)/build/test-luks.manifest
 LUKS_REF         ?= $(CURDIR)/build/test-luks.ref64k
 TRUST_DIR        ?= $(CURDIR)/build/test-trust
 SHIM_DIR         ?= $(CURDIR)/build/shim/bins
+MEDIA_FIXTURE_DIR ?= $(CURDIR)/build
 
 # The repo's standard warning set, minus the flags that only mean something
 # for the freestanding EFI target (-ffreestanding, -fshort-wchar,
@@ -199,6 +200,7 @@ TEST_CFLAGS := -std=c11 -O0 -g --coverage $(TEST_WARNS) \
 	-DLUKS_REF='"$(LUKS_REF)"' \
 	-DTRUST_DIR='"$(TRUST_DIR)"' \
 	-DSHIM_DIR='"$(SHIM_DIR)"' \
+	-DMEDIA_FIXTURE_DIR='"$(MEDIA_FIXTURE_DIR)"' \
 	-I$(TEST_SUPPORT)/hostshim $(CORE_INC) $(EFI_INC) $(CLI_INC) \
 	$(APPLIANCE_INC) -I$(TEST_SUPPORT) \
 	$(CMOCKA_CFLAGS)
@@ -290,7 +292,8 @@ coverage: test
 # suite does not fail. Before this target existed nothing built them, so a
 # clean checkout ran 392 tests, reported green, and left the ext4 and LUKS
 # readers at zero coverage.
-test-fixtures: test-image test-ext4 test-luks test-isoview test-trust
+test-fixtures: test-image test-ext4 test-luks test-isoview test-trust \
+	test-iso9660 test-udf
 
 # Verify the toolchain before attempting a build. The EFI target needs the
 # mingw cross-gcc that emits PE32+ directly; the test rig and the host tooling

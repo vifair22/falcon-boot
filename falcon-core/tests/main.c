@@ -23,6 +23,11 @@
  * readers agree with the implementations that wrote the bytes. Both groups skip
  * cleanly when their image is absent.
  *
+ * ISO9660 and UDF (falcon-core/src/fs/iso9660.c, udf.c): synthetic images for
+ * the structures no tool writes, and fixtures xorriso, mkudffs and the
+ * kernel's UDF writer produced, walked through the registry against their
+ * manifests.
+ *
  * The PE walker and the boot predictions (falcon-core/src/pe,
  * falcon-core/src/trust): synthetic headers, plus certificates and images
  * falcon-core/tools/mk-test-trust.sh built with known relationships.
@@ -47,6 +52,9 @@ int main(void)
     failed += run_json_tests();
     failed += run_luks_tests();
     failed += run_ext4_tests();
+    failed += run_iso9660_tests();
+    failed += run_udf_tests();
+    failed += run_media_fs_tests();
     failed += run_fs_tests();
     failed += run_part_tests();
     failed += run_osrel_tests();

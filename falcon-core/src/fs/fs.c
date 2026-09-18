@@ -23,6 +23,8 @@
 
 #include <fs/exfat.h>
 #include <fs/ext4.h>
+#include <fs/iso9660.h>
+#include <fs/udf.h>
 #include <lib/string.h>
 
 /* The blobs must hold every registered driver's context. A driver that grows
@@ -34,6 +36,12 @@ _Static_assert(sizeof(exfat_file) <= FS_FILE_SIZE, "exfat_file exceeds FS_FILE_S
 _Static_assert(sizeof(ext4_vol) <= FS_VOL_SIZE, "ext4_vol exceeds FS_VOL_SIZE");
 _Static_assert(sizeof(ext4_dir) <= FS_DIR_SIZE, "ext4_dir exceeds FS_DIR_SIZE");
 _Static_assert(sizeof(ext4_file) <= FS_FILE_SIZE, "ext4_file exceeds FS_FILE_SIZE");
+_Static_assert(sizeof(iso9660_vol) <= FS_VOL_SIZE, "iso9660_vol exceeds FS_VOL_SIZE");
+_Static_assert(sizeof(iso9660_dir) <= FS_DIR_SIZE, "iso9660_dir exceeds FS_DIR_SIZE");
+_Static_assert(sizeof(iso9660_file) <= FS_FILE_SIZE, "iso9660_file exceeds FS_FILE_SIZE");
+_Static_assert(sizeof(udf_vol) <= FS_VOL_SIZE, "udf_vol exceeds FS_VOL_SIZE");
+_Static_assert(sizeof(udf_dir) <= FS_DIR_SIZE, "udf_dir exceeds FS_DIR_SIZE");
+_Static_assert(sizeof(udf_file) <= FS_FILE_SIZE, "udf_file exceeds FS_FILE_SIZE");
 
 /* The extent map's shape is shared rather than converted: exfat_extent and
  * fs_extent are the same two fields in the same order, and keeping them
@@ -41,6 +49,10 @@ _Static_assert(sizeof(ext4_file) <= FS_FILE_SIZE, "ext4_file exceeds FS_FILE_SIZ
  * directly instead of copying a potentially large run table twice. */
 _Static_assert(sizeof(fs_extent) == sizeof(exfat_extent),
                "fs_extent and exfat_extent must stay layout-compatible");
+_Static_assert(sizeof(fs_extent) == sizeof(iso9660_extent),
+               "fs_extent and iso9660_extent must stay layout-compatible");
+_Static_assert(sizeof(fs_extent) == sizeof(udf_extent),
+               "fs_extent and udf_extent must stay layout-compatible");
 
 /* ---- name helpers ---- */
 
@@ -197,6 +209,39 @@ int fs_status_from_ext4(int rc)
     return map_status(ext4_rows, sizeof ext4_rows / sizeof ext4_rows[0], rc);
 }
 
+static const status_row iso9660_rows[] = {
+    { ISO9660_ERR_IO,          FS_ERR_IO },
+    { ISO9660_ERR_BAD_SUPER,   FS_ERR_BAD_SUPER },
+    { ISO9660_ERR_CORRUPT,     FS_ERR_CORRUPT },
+    { ISO9660_ERR_BAD_ARG,     FS_ERR_BAD_ARG },
+    { ISO9660_ERR_RANGE,       FS_ERR_RANGE },
+    { ISO9660_ERR_NOSPACE,     FS_ERR_NOSPACE },
+    { ISO9660_ERR_UNSUPPORTED, FS_ERR_UNSUPPORTED },
+    { ISO9660_ERR_SYMLINK,     FS_ERR_SYMLINK }
+};
+
+static const status_row udf_rows[] = {
+    { UDF_ERR_IO,          FS_ERR_IO },
+    { UDF_ERR_BAD_SUPER,   FS_ERR_BAD_SUPER },
+    { UDF_ERR_CORRUPT,     FS_ERR_CORRUPT },
+    { UDF_ERR_BAD_ARG,     FS_ERR_BAD_ARG },
+    { UDF_ERR_RANGE,       FS_ERR_RANGE },
+    { UDF_ERR_NOSPACE,     FS_ERR_NOSPACE },
+    { UDF_ERR_UNSUPPORTED, FS_ERR_UNSUPPORTED },
+    { UDF_ERR_SYMLINK,     FS_ERR_SYMLINK }
+};
+
+int fs_status_from_iso9660(int rc)
+{
+    return map_status(iso9660_rows,
+                      sizeof iso9660_rows / sizeof iso9660_rows[0], rc);
+}
+
+int fs_status_from_udf(int rc)
+{
+    return map_status(udf_rows, sizeof udf_rows / sizeof udf_rows[0], rc);
+}
+
 /* ---- blob access ----
  *
  * The round trip through void * is what keeps -Wcast-align quiet about a cast
@@ -210,6 +255,30 @@ static exfat_file *xfile(fs_file *f) { return (exfat_file *)(void *)f->priv.b; }
 static const exfat_file *xfile_c(const fs_file *f)
 {
     return (const exfat_file *)(const void *)f->priv.b;
+}
+
+static iso9660_vol *ivol(fs_vol *v) { return (iso9660_vol *)(void *)v->priv.b; }
+static const iso9660_vol *ivol_c(const fs_vol *v)
+{
+    return (const iso9660_vol *)(const void *)v->priv.b;
+}
+static iso9660_dir *idir(fs_dir *d) { return (iso9660_dir *)(void *)d->priv.b; }
+static iso9660_file *ifile(fs_file *f) { return (iso9660_file *)(void *)f->priv.b; }
+static const iso9660_file *ifile_c(const fs_file *f)
+{
+    return (const iso9660_file *)(const void *)f->priv.b;
+}
+
+static udf_vol *uvol(fs_vol *v) { return (udf_vol *)(void *)v->priv.b; }
+static const udf_vol *uvol_c(const fs_vol *v)
+{
+    return (const udf_vol *)(const void *)v->priv.b;
+}
+static udf_dir *udir(fs_dir *d) { return (udf_dir *)(void *)d->priv.b; }
+static udf_file *ufile(fs_file *f) { return (udf_file *)(void *)f->priv.b; }
+static const udf_file *ufile_c(const fs_file *f)
+{
+    return (const udf_file *)(const void *)f->priv.b;
 }
 
 static ext4_vol *evol(fs_vol *v) { return (ext4_vol *)(void *)v->priv.b; }
@@ -363,7 +432,8 @@ const fs_ops fs_ops_exfat = {
     exfat_file_open_op,
     exfat_file_read_op,
     exfat_file_size_op,
-    exfat_extents_op
+    exfat_extents_op,
+    (const char *(*)(const fs_vol *))0
 };
 
 /* ---- the ext4 adapter ---- */
@@ -483,17 +553,280 @@ const fs_ops fs_ops_ext4 = {
     /* No extent map. DESIGN Section 9 makes this an optional capability, and
      * the one consumer that needs it (the ISO injection framework) only ever
      * asks about p2. Writing one for p3 would be code with no caller. */
-    (int (*)(fs_vol *, const fs_dirent *, fs_extent *, size_t, size_t *))0
+    (int (*)(fs_vol *, const fs_dirent *, fs_extent *, size_t, size_t *))0,
+    (const char *(*)(const fs_vol *))0
+};
+
+/* ---- the ISO9660 adapter ---- */
+
+/* What an ISO9660 dirent needs back: the first extent, and where its first
+ * record sits so a multi-extent file's later parts can be found again. */
+typedef struct {
+    uint32_t lba;
+    uint32_t rec_lba;
+    uint16_t rec_off;
+    uint8_t  parts;
+    uint8_t  compressed;
+} iso9660_priv;
+
+_Static_assert(sizeof(iso9660_priv) <= FS_DIRENT_PRIV_SIZE,
+               "iso9660 dirent private part exceeds FS_DIRENT_PRIV_SIZE");
+
+static void iso9660_to_fs_dirent(const iso9660_dirent *in, fs_dirent *out)
+{
+    iso9660_priv p;
+    size_t i;
+
+    memset(out, 0, sizeof(*out));
+    for (i = 0; i < in->name_len && i < FS_NAME_MAX; i++)
+        out->name[i] = in->name[i];
+    out->name[i] = 0;
+    out->name_len = (uint16_t)i;
+    out->size = in->size;
+    out->is_dir = in->is_dir;
+    out->is_regular = in->is_regular;
+
+    p.lba = in->lba;
+    p.rec_lba = in->rec_lba;
+    p.rec_off = in->rec_off;
+    p.parts = in->parts;
+    p.compressed = in->compressed;
+    memcpy(out->priv.b, &p, sizeof p);
+}
+
+static void fs_to_iso9660_dirent(const fs_dirent *in, iso9660_dirent *out)
+{
+    iso9660_priv p;
+
+    memcpy(&p, in->priv.b, sizeof p);
+    memset(out, 0, sizeof(*out));
+    out->is_dir = in->is_dir;
+    out->is_regular = in->is_regular;
+    out->size = in->size;
+    out->lba = p.lba;
+    out->rec_lba = p.rec_lba;
+    out->rec_off = p.rec_off;
+    out->parts = p.parts;
+    out->compressed = p.compressed;
+}
+
+static int iso9660_probe_op(fs_read_fn read, void *ctx)
+{
+    return fs_status_from_iso9660(iso9660_probe(read, ctx));
+}
+
+static int iso9660_mount_op(fs_vol *v, fs_read_fn read, void *ctx)
+{
+    return fs_status_from_iso9660(iso9660_mount(ivol(v), read, ctx));
+}
+
+static int iso9660_dir_open_root_op(fs_vol *v, fs_dir *d)
+{
+    return fs_status_from_iso9660(iso9660_dir_open_root(ivol(v), idir(d)));
+}
+
+static int iso9660_dir_open_op(fs_vol *v, fs_dir *d, const fs_dirent *e)
+{
+    iso9660_dirent de;
+
+    fs_to_iso9660_dirent(e, &de);
+    return fs_status_from_iso9660(iso9660_dir_open(ivol(v), idir(d), &de));
+}
+
+static int iso9660_dir_next_op(fs_dir *d, fs_dirent *out)
+{
+    iso9660_dirent de;
+    int rc = iso9660_dir_next(idir(d), &de);
+
+    if (rc == 1)
+        iso9660_to_fs_dirent(&de, out);
+    return fs_status_from_iso9660(rc);
+}
+
+static int iso9660_file_open_op(fs_vol *v, fs_file *f, const fs_dirent *e)
+{
+    iso9660_dirent de;
+
+    fs_to_iso9660_dirent(e, &de);
+    return fs_status_from_iso9660(iso9660_file_open(ivol(v), ifile(f), &de));
+}
+
+static int iso9660_file_read_op(fs_file *f, uint64_t off, uint64_t len,
+                                void *buf)
+{
+    return fs_status_from_iso9660(iso9660_file_read(ifile(f), off, len, buf));
+}
+
+static uint64_t iso9660_file_size_op(const fs_file *f)
+{
+    return ifile_c(f)->size;
+}
+
+static int iso9660_extents_op(fs_vol *v, const fs_dirent *e, fs_extent *out,
+                              size_t cap, size_t *count)
+{
+    iso9660_dirent de;
+
+    fs_to_iso9660_dirent(e, &de);
+    return fs_status_from_iso9660(
+        iso9660_file_extents(ivol(v), &de, (iso9660_extent *)(void *)out, cap,
+                             count));
+}
+
+static const char *iso9660_label_op(const fs_vol *v)
+{
+    return ivol_c(v)->label;
+}
+
+const fs_ops fs_ops_iso9660 = {
+    "iso9660",
+    FS_HINT_NONE,
+    iso9660_probe_op,
+    iso9660_mount_op,
+    iso9660_dir_open_root_op,
+    iso9660_dir_open_op,
+    iso9660_dir_next_op,
+    iso9660_file_open_op,
+    iso9660_file_read_op,
+    iso9660_file_size_op,
+    iso9660_extents_op,
+    iso9660_label_op
+};
+
+/* ---- the UDF adapter ---- */
+
+typedef struct {
+    uint32_t icb_lbn;
+} udf_priv;
+
+_Static_assert(sizeof(udf_priv) <= FS_DIRENT_PRIV_SIZE,
+               "udf dirent private part exceeds FS_DIRENT_PRIV_SIZE");
+
+static void udf_to_fs_dirent(const udf_dirent *in, fs_dirent *out)
+{
+    udf_priv p;
+    size_t i;
+
+    memset(out, 0, sizeof(*out));
+    for (i = 0; i < in->name_len && i < FS_NAME_MAX; i++)
+        out->name[i] = in->name[i];
+    out->name[i] = 0;
+    out->name_len = (uint16_t)i;
+    out->size = in->size;
+    out->is_dir = in->is_dir;
+    out->is_regular = in->is_regular;
+    p.icb_lbn = in->icb_lbn;
+    memcpy(out->priv.b, &p, sizeof p);
+}
+
+static void fs_to_udf_dirent(const fs_dirent *in, udf_dirent *out)
+{
+    udf_priv p;
+
+    memcpy(&p, in->priv.b, sizeof p);
+    memset(out, 0, sizeof(*out));
+    out->is_dir = in->is_dir;
+    out->is_regular = in->is_regular;
+    out->size = in->size;
+    out->icb_lbn = p.icb_lbn;
+}
+
+static int udf_probe_op(fs_read_fn read, void *ctx)
+{
+    return fs_status_from_udf(udf_probe(read, ctx));
+}
+
+static int udf_mount_op(fs_vol *v, fs_read_fn read, void *ctx)
+{
+    return fs_status_from_udf(udf_mount(uvol(v), read, ctx));
+}
+
+static int udf_dir_open_root_op(fs_vol *v, fs_dir *d)
+{
+    return fs_status_from_udf(udf_dir_open_root(uvol(v), udir(d)));
+}
+
+static int udf_dir_open_op(fs_vol *v, fs_dir *d, const fs_dirent *e)
+{
+    udf_dirent de;
+
+    fs_to_udf_dirent(e, &de);
+    return fs_status_from_udf(udf_dir_open(uvol(v), udir(d), &de));
+}
+
+static int udf_dir_next_op(fs_dir *d, fs_dirent *out)
+{
+    udf_dirent de;
+    int rc = udf_dir_next(udir(d), &de);
+
+    if (rc == 1)
+        udf_to_fs_dirent(&de, out);
+    return fs_status_from_udf(rc);
+}
+
+static int udf_file_open_op(fs_vol *v, fs_file *f, const fs_dirent *e)
+{
+    udf_dirent de;
+
+    fs_to_udf_dirent(e, &de);
+    return fs_status_from_udf(udf_file_open(uvol(v), ufile(f), &de));
+}
+
+static int udf_file_read_op(fs_file *f, uint64_t off, uint64_t len, void *buf)
+{
+    return fs_status_from_udf(udf_file_read(ufile(f), off, len, buf));
+}
+
+static uint64_t udf_file_size_op(const fs_file *f)
+{
+    return ufile_c(f)->size;
+}
+
+static int udf_extents_op(fs_vol *v, const fs_dirent *e, fs_extent *out,
+                          size_t cap, size_t *count)
+{
+    udf_dirent de;
+
+    fs_to_udf_dirent(e, &de);
+    return fs_status_from_udf(
+        udf_file_extents(uvol(v), &de, (udf_extent *)(void *)out, cap, count));
+}
+
+static const char *udf_label_op(const fs_vol *v)
+{
+    return uvol_c(v)->label;
+}
+
+const fs_ops fs_ops_udf = {
+    "udf",
+    FS_HINT_NONE,
+    udf_probe_op,
+    udf_mount_op,
+    udf_dir_open_root_op,
+    udf_dir_open_op,
+    udf_dir_next_op,
+    udf_file_open_op,
+    udf_file_read_op,
+    udf_file_size_op,
+    udf_extents_op,
+    udf_label_op
 };
 
 /* ---- the registry ---- */
 
 /* Probe order for a volume with no role hint. exFAT first because p2 is the
  * partition a stick has most of, and because its magic sits in the first
- * sector where ext4's is a kilobyte in. */
+ * sector where ext4's is a kilobyte in.
+ *
+ * The two media drivers come last, and UDF before ISO9660, because a bridge
+ * disc answers both and the UDF side is the complete one: Windows media's
+ * ISO9660 tree is a README and nothing else. A plain ISO9660 image has no
+ * NSR descriptor, so udf_probe passes it on. */
 static const fs_ops *const registry[] = {
     &fs_ops_exfat,
-    &fs_ops_ext4
+    &fs_ops_ext4,
+    &fs_ops_udf,
+    &fs_ops_iso9660
 };
 
 #define REGISTRY_N (sizeof registry / sizeof registry[0])
@@ -646,4 +979,15 @@ const char *fs_vol_name(const fs_vol *v)
     if (v == (const fs_vol *)0 || v->ops == (const fs_ops *)0)
         return "none";
     return v->ops->name;
+}
+
+const char *fs_vol_label(const fs_vol *v)
+{
+    const char *l;
+
+    if (v == (const fs_vol *)0 || v->ops == (const fs_ops *)0 ||
+        v->ops->label == (const char *(*)(const fs_vol *))0)
+        return "";
+    l = v->ops->label(v);
+    return l != (const char *)0 ? l : "";
 }
