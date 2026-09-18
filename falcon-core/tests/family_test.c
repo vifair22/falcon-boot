@@ -147,6 +147,9 @@ static void expect_family(const fake_file *files, size_t n, family_id id,
 #define DRACUT_TMPL  "iso-scan/filename=%ISO%"
 #define ARCHISO_TMPL "img_dev=%DEV% img_loop=%ISO%"
 #define SYSRESC_TMPL ARCHISO_TMPL " archisobasedir=sysresccd"
+#define GENTOO_TMPL  "dokeymap nodhcp root=live:CDLABEL=%LABEL% rd.live.dir=/ " \
+                     "rd.live.squashimg=image.squashfs cdroot " \
+                     "iso-scan/filename=%ISO%"
 
 /* --------------------------------------------------------- one per family */
 
@@ -272,6 +275,37 @@ static void test_family_fedora_dracut(void **state)
     /* dmsquash-live stacks on device-mapper by construction, so this one
      * column is known rather than unknown. */
     assert_int_equal(family_by_id(FAMILY_FEDORA_DRACUT)->initramfs_has_dm,
+                     FAMILY_TRI_YES);
+}
+
+/* The layout of the 20260510 minimal ISO: genkernel's names for the kernel
+ * and initramfs, dracut's squashfs at the root. The kernel alone is not
+ * enough; with the squashfs beside it, it is. */
+static void test_family_gentoo(void **state)
+{
+    static const fake_file full[] = {
+        { "/boot/gentoo", NULL },
+        { "/boot/gentoo.igz", NULL },
+        { "/image.squashfs", NULL },
+        { "/memtest.efi64", NULL },
+    };
+    static const fake_file igz[] = {
+        { "/boot/gentoo.igz", NULL },
+    };
+    static const fake_file kernel_and_squash[] = {
+        { "/boot/gentoo", NULL },
+        { "/image.squashfs", NULL },
+    };
+    static const fake_file kernel_only[] = {
+        { "/boot/gentoo", NULL },
+    };
+
+    (void)state;
+    expect_family(full, 4, FAMILY_GENTOO, GENTOO_TMPL);
+    expect_family(igz, 1, FAMILY_GENTOO, GENTOO_TMPL);
+    expect_family(kernel_and_squash, 2, FAMILY_GENTOO, GENTOO_TMPL);
+    expect_family(kernel_only, 1, FAMILY_UNKNOWN, NULL);
+    assert_int_equal(family_by_id(FAMILY_GENTOO)->initramfs_has_exfat,
                      FAMILY_TRI_YES);
 }
 
@@ -502,12 +536,13 @@ static void test_family_precedence_chain(void **state)
         { "/casper", NULL },
         { "/live", NULL },
         { "/LiveOS", NULL },
+        { "/boot/gentoo.igz", NULL },
         { "/arch", NULL },
         { "/boot/memtest", NULL },
     };
     static const family_id order[] = {
         FAMILY_WINDOWS, FAMILY_SYSTEMRESCUE, FAMILY_DEBIAN_CASPER,
-        FAMILY_DEBIAN_LIVE, FAMILY_FEDORA_DRACUT, FAMILY_ARCH,
+        FAMILY_DEBIAN_LIVE, FAMILY_FEDORA_DRACUT, FAMILY_GENTOO, FAMILY_ARCH,
         FAMILY_MEMTEST,
     };
     size_t skipped;
@@ -707,7 +742,7 @@ static void test_family_registry_round_trip(void **state)
 
     (void)state;
     assert_non_null(t);
-    assert_int_equal(count, 8);
+    assert_int_equal(count, 9);
 
     for (i = 0; i < count; i++) {
         /* Every row is reachable by its own id, and reachable as the same
@@ -777,9 +812,9 @@ static void test_family_strings_are_ascii(void **state)
     }
 }
 
-/* The only placeholders the header defines are %ISO% and %DEV%. A template
- * with %ISOFILE% or a stray '%' would be substituted wrongly by the consumer
- * and produce a cmdline that fails at boot with no diagnostic. */
+/* The only placeholders the header defines are %ISO%, %DEV% and %LABEL%. A
+ * template with %ISOFILE% or a stray '%' would be substituted wrongly by the
+ * consumer and produce a cmdline that fails at boot with no diagnostic. */
 static void test_family_templates_use_known_tokens(void **state)
 {
     size_t count = 0;
@@ -806,9 +841,9 @@ static void test_family_templates_use_known_tokens(void **state)
             /* An unpaired '%' is a malformed template. */
             assert_non_null(end);
             len = (size_t)(end - (s + j + 1));
-            assert_true(len == 3);
-            assert_true(memcmp(s + j + 1, "ISO", 3) == 0 ||
-                        memcmp(s + j + 1, "DEV", 3) == 0);
+            assert_true((len == 3 && (memcmp(s + j + 1, "ISO", 3) == 0 ||
+                                      memcmp(s + j + 1, "DEV", 3) == 0)) ||
+                        (len == 5 && memcmp(s + j + 1, "LABEL", 5) == 0));
             tokens++;
             j += len + 2u;
         }
@@ -858,6 +893,7 @@ int run_family_tests(void)
         cmocka_unit_test(test_family_arch_loader_entry),
         cmocka_unit_test(test_family_arch_loader_entry_other_basedir),
         cmocka_unit_test(test_family_memtest),
+        cmocka_unit_test(test_family_gentoo),
         cmocka_unit_test(test_family_memtest_usb_image_volume),
         cmocka_unit_test(test_family_payload_by_name),
         cmocka_unit_test(test_family_payload_does_not_override_a_tree),

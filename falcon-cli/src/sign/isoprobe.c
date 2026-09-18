@@ -720,6 +720,19 @@ static const char *const k_arch[] = {
 static const char *const k_systemrescue[] = {
     "/sysresccd/boot/x86_64/vmlinuz", NULL
 };
+static const char *const k_gentoo[] = {
+    "/boot/gentoo", NULL
+};
+
+/* Initramfs names that do not start with "initr". A family absent here keeps
+ * its initramfs beside the kernel under that prefix. */
+static const char *const i_gentoo[] = {
+    "/boot/gentoo.igz", NULL
+};
+
+static const kernel_row g_initrds[] = {
+    { FAMILY_GENTOO, i_gentoo },
+};
 
 static const kernel_row g_kernels[] = {
     { FAMILY_DEBIAN_CASPER, k_casper },
@@ -727,6 +740,7 @@ static const kernel_row g_kernels[] = {
     { FAMILY_FEDORA_DRACUT, k_fedora },
     { FAMILY_ARCH,          k_arch },
     { FAMILY_SYSTEMRESCUE,  k_systemrescue },
+    { FAMILY_GENTOO,        k_gentoo },
     /* FAMILY_MEMTEST is a bare EFI binary with no kernel to wrap, and it
      * needs no blessing: it boots with no cmdline and no backing media.
      * FAMILY_WINDOWS boots no Linux kernel at all. Both are absent rather
@@ -761,4 +775,107 @@ const char *iso_kernel_path(iso_view *v, family_id id)
                   "Linux kernel from the ISO, so blessing does not apply",
                   family_by_id(id)->name);
     return NULL;
+}
+
+const char *iso_initrd_path(iso_view *v, family_id id, const char *kernel)
+{
+    char guess[PATH_MAX];
+    const char *match = NULL;
+    const char *slash;
+    size_t dirlen;
+    size_t i;
+
+    if (v == NULL || kernel == NULL) {
+        sgn_set_error(SGN_ERR_INTERNAL, "iso_initrd_path: bad arguments");
+        return NULL;
+    }
+    for (i = 0; i < sizeof(g_initrds) / sizeof(g_initrds[0]); i++) {
+        size_t j;
+
+        if (g_initrds[i].id != id)
+            continue;
+        for (j = 0; g_initrds[i].paths[j] != NULL; j++) {
+            if (iso_view_find(v, g_initrds[i].paths[j], &match))
+                return match;
+        }
+    }
+
+    /* The kernel member is ISO-relative with no leading slash. */
+    slash = strrchr(kernel, '/');
+    dirlen = (slash != NULL) ? (size_t)(slash - kernel) : 0u;
+    if (snprintf(guess, sizeof(guess), "/%.*s/initr*", (int)dirlen, kernel) >=
+        (int)sizeof(guess)) {
+        sgn_set_error(SGN_ERR_NOSPACE, "initramfs path too long");
+        return NULL;
+    }
+    if (iso_view_find(v, guess, &match))
+        return match;
+    sgn_set_error(SGN_ERR_FORMAT,
+                  "no initramfs found next to the kernel in the ISO (looked "
+                  "for %s); --no-initrd builds the wrap without one", guess);
+    return NULL;
+}
+
+/* ------------------------------------------------------------ label */
+
+/* ECMA-119: the Primary Volume Descriptor is the first descriptor, at sector
+ * 16, type 1, "CD001"; the volume identifier is 32 d-characters at byte 40,
+ * padded with spaces. */
+#define PVD_OFF     (16u * 2048u)
+#define PVD_VOLID   40u
+#define PVD_VOLID_N 32u
+
+int iso_volume_label(const char *path, char *out, size_t cap)
+{
+    unsigned char pvd[PVD_VOLID + PVD_VOLID_N] = { 0 };
+    size_t n;
+    size_t i;
+    FILE *f;
+
+    if (path == NULL || out == NULL || cap == 0u) {
+        sgn_set_error(SGN_ERR_INTERNAL, "iso_volume_label: bad arguments");
+        return SGN_ERR_INTERNAL;
+    }
+    f = fopen(path, "rb");
+    if (f == NULL) {
+        sgn_set_error_errno(SGN_ERR_IO, "opening %s", path);
+        return SGN_ERR_IO;
+    }
+    n = 0;
+    if (fseek(f, (long)PVD_OFF, SEEK_SET) == 0)
+        n = fread(pvd, 1, sizeof(pvd), f);
+    (void)fclose(f);
+    if (n != sizeof(pvd) || pvd[0] != 1u || memcmp(pvd + 1, "CD001", 5) != 0) {
+        sgn_set_error(SGN_ERR_FORMAT, "%s has no ISO9660 volume descriptor",
+                      path);
+        return SGN_ERR_FORMAT;
+    }
+
+    n = PVD_VOLID_N;
+    while (n > 0u && (pvd[PVD_VOLID + n - 1u] == ' ' ||
+                      pvd[PVD_VOLID + n - 1u] == '\0'))
+        n--;
+    if (n == 0u) {
+        sgn_set_error(SGN_ERR_FORMAT, "%s has an empty volume label", path);
+        return SGN_ERR_FORMAT;
+    }
+    for (i = 0; i < n; i++) {
+        unsigned char c = pvd[PVD_VOLID + i];
+
+        if (!((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+              (c >= '0' && c <= '9') || c == '.' || c == '_' || c == '-')) {
+            sgn_set_error(SGN_ERR_FORMAT,
+                          "%s: volume label has a character a kernel cmdline "
+                          "cannot carry unescaped (0x%02x); pass --cmdline",
+                          path, c);
+            return SGN_ERR_FORMAT;
+        }
+    }
+    if (n >= cap) {
+        sgn_set_error(SGN_ERR_NOSPACE, "volume label too long");
+        return SGN_ERR_NOSPACE;
+    }
+    memcpy(out, pvd + PVD_VOLID, n);
+    out[n] = '\0';
+    return SGN_OK;
 }

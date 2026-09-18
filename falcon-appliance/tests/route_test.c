@@ -61,6 +61,7 @@ static const family_id g_linux_families[] = {
     FAMILY_ARCH,
     FAMILY_SYSTEMRESCUE,
     FAMILY_MEMTEST,
+    FAMILY_GENTOO,
 };
 
 #define LINUX_N (sizeof(g_linux_families) / sizeof(g_linux_families[0]))

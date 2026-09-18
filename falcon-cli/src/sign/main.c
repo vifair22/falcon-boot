@@ -271,8 +271,12 @@ static int parse_args(int argc, char **argv, options *o)
  * template is copied through, so a template gaining a third placeholder
  * fails loudly at boot rather than silently here. */
 static int render_cmdline(const char *tmpl, const char *iso_arg,
-                          const char *dev, char *out, size_t cap)
+                          const char *dev, const char *iso_file, char *out,
+                          size_t cap)
 {
+    char label[64];
+    int have_label = 0;
+
     size_t w = 0;
     size_t i = 0;
 
@@ -283,6 +287,17 @@ static int render_cmdline(const char *tmpl, const char *iso_arg,
         if (strncmp(tmpl + i, "%ISO%", 5) == 0) {
             sub = iso_arg;
             i += 5u;
+        } else if (strncmp(tmpl + i, "%LABEL%", 7) == 0) {
+            /* Read only when a template asks for it, and once. */
+            if (!have_label) {
+                int rc = iso_volume_label(iso_file, label, sizeof(label));
+
+                if (rc != SGN_OK)
+                    return rc;
+                have_label = 1;
+            }
+            sub = label;
+            i += 7u;
         } else if (strncmp(tmpl + i, "%DEV%", 5) == 0) {
             if (dev == NULL) {
                 sgn_set_error(SGN_ERR_ARG,
@@ -513,11 +528,11 @@ static int bless(const options *o)
     }
 
     if (o->cmdline != NULL) {
-        rc = render_cmdline(o->cmdline, iso_arg, dev, cmdline,
+        rc = render_cmdline(o->cmdline, iso_arg, dev, o->iso, cmdline,
                             sizeof(cmdline));
     } else if (fam->cmdline_template != NULL) {
-        rc = render_cmdline(fam->cmdline_template, iso_arg, dev, cmdline,
-                            sizeof(cmdline));
+        rc = render_cmdline(fam->cmdline_template, iso_arg, dev, o->iso,
+                            cmdline, sizeof(cmdline));
     } else {
         sgn_set_error(SGN_ERR_FORMAT,
                       "family '%s' has no cmdline template: it needs no "
@@ -621,23 +636,9 @@ static int bless(const options *o)
         goto cleanup;
 
     if (o->embed_initrd) {
-        char guess[PATH_MAX];
-        const char *slash = strrchr(kernel_member, '/');
-        size_t dirlen = (slash != NULL) ? (size_t)(slash - kernel_member) : 0;
-
-        /* The initramfs sits beside the kernel in every family in the table;
-         * the name varies, so this is a prefix match in that directory. */
-        if (snprintf(guess, sizeof(guess), "/%.*s/initr*", (int)dirlen,
-                     kernel_member) >= (int)sizeof(guess)) {
-            sgn_set_error(SGN_ERR_NOSPACE, "initramfs path too long");
-            rc = SGN_ERR_NOSPACE;
-            goto cleanup;
-        }
-        if (!iso_view_find(view, guess, &initrd_member)) {
-            sgn_set_error(SGN_ERR_FORMAT,
-                          "--initrd given but no initramfs found next to the "
-                          "kernel in the ISO");
-            rc = SGN_ERR_FORMAT;
+        initrd_member = iso_initrd_path(view, fam->id, kernel_member);
+        if (initrd_member == NULL) {
+            rc = SGN_ERR_FORMAT;    /* iso_initrd_path set the message */
             goto cleanup;
         }
         sgn_log(SGN_LOG_INFO, "extracting initramfs /%s", initrd_member);

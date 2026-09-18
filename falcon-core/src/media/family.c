@@ -12,6 +12,8 @@
  *   SystemRescue      /sysresccd       archiso with its own base directory
  *   memtest           /boot/memtest    no Linux userland at all
  *   Windows           /sources         install.wim or install.esd
+ *   Gentoo            /boot/gentoo.igz genkernel's names, kept when the live
+ *                                      media moved to dracut
  *
  * Where a layout check is ambiguous there is a content check behind it: the
  * systemd-boot entries archiso ships name their base directory, which is what
@@ -86,6 +88,17 @@ static const family_desc g_families[] = {
     { FAMILY_WINDOWS, "Windows install media",
       (void *)0, 0,
       FAMILY_TRI_NO, FAMILY_TRI_NO },
+
+    /* Gentoo's live media boots dracut's dmsquash-live, which finds its root
+     * by the ISO's volume label, and that label carries the release date
+     * (Gentoo-amd64-20260510), hence %LABEL% rather than a literal. The rest
+     * is the stock GRUB entry's cmdline, with iso-scan added to find the ISO
+     * as a file. exfat/dm both YES: measured on the 20260510 initramfs, which
+     * ships exfat.ko, loop.ko and dracut's iso-scan (2026-09-18). */
+    { FAMILY_GENTOO, "Gentoo",
+      "dokeymap nodhcp root=live:CDLABEL=%LABEL% rd.live.dir=/ "
+      "rd.live.squashimg=image.squashfs cdroot iso-scan/filename=%ISO%", 0,
+      FAMILY_TRI_YES, FAMILY_TRI_YES },
 };
 
 #define FAMILY_COUNT (sizeof(g_families) / sizeof(g_families[0]))
@@ -270,6 +283,12 @@ const family_desc *family_detect(const family_probe *p)
         probe_exists(p, "/LiveOS") ||
         probe_exists(p, "/images/pxeboot/vmlinuz"))
         return family_by_id(FAMILY_FEDORA_DRACUT);
+
+    /* genkernel's kernel and initramfs names, which Gentoo's catalyst kept
+     * when the live media moved to dracut. No other family uses them. */
+    if (probe_exists(p, "/boot/gentoo.igz") ||
+        (probe_exists(p, "/boot/gentoo") && probe_exists(p, "/image.squashfs")))
+        return family_by_id(FAMILY_GENTOO);
 
     if (probe_exists(p, "/arch/boot/x86_64/vmlinuz-linux") ||
         probe_exists(p, "/arch/version") ||

@@ -520,8 +520,13 @@ data/scripts dropped into a registry, never core surgery:
 
 MVP ships: family detection, the descriptor registry, extent-map computation,
 the cpio-append path, and native-cmdline injectors for the tested families
-(Debian/Ubuntu, Fedora, Arch, SystemRescue; memtest needs no ISO backing at
-all). Full runtime-injection payloads for the hard families are stubs behind the
+(Debian/Ubuntu, Fedora, Arch, SystemRescue, Gentoo; memtest needs no ISO
+backing at all). Gentoo's live media (dracut since 2025) finds its root by the
+ISO's volume label, which carries the release date, so its template uses a
+third placeholder, `%LABEL%`: the bless tool reads the label from the ISO's
+primary volume descriptor and refuses one with anything outside
+`[A-Za-z0-9._-]` rather than escaping it into a signed cmdline. Blessed Gentoo
+20260510 was booted end to end under QEMU from an exFAT disk (2026-09-18). Full runtime-injection payloads for the hard families are stubs behind the
 same interface.
 
 ### 6.3 Windows install media (decision 2026-09-13)

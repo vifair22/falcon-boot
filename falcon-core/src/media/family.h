@@ -34,6 +34,7 @@ typedef enum {
     FAMILY_SYSTEMRESCUE,    /* archiso-derived, its own base directory */
     FAMILY_MEMTEST,         /* memtest86+ / MemTest86 */
     FAMILY_WINDOWS,         /* Windows install media */
+    FAMILY_GENTOO,          /* Gentoo live media; dracut since 2025 */
 } family_id;
 
 /* Three-valued, because "we have not checked" and "no" lead to different
@@ -55,8 +56,10 @@ typedef struct {
     /* Cmdline fragment for the file-backed-ISO route, appended to whatever
      * cmdline the family already boots with. Placeholders, substituted by
      * the consumer (not by this module):
-     *   %ISO%  path of the ISO file on p2, as the target kernel sees it
-     *   %DEV%  device the ISO lives on, e.g. /dev/disk/by-label/...
+     *   %ISO%    path of the ISO file on p2, as the target kernel sees it
+     *   %DEV%    device the ISO lives on, e.g. /dev/disk/by-label/...
+     *   %LABEL%  the ISO's own volume label, for a family whose initramfs
+     *            finds its root by it (dracut's root=live:CDLABEL=)
      * NULL when the family needs no fragment at all. */
     const char *cmdline_template;
 

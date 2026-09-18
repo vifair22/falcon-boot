@@ -228,4 +228,18 @@ int iso_view_extract(iso_view *v, const char *member, const char *dst);
  * of its candidates are present, and the error buffer says which. */
 const char *iso_kernel_path(iso_view *v, family_id id);
 
+/* Where the initramfs that goes with `kernel` is: the family's own name for
+ * it when the family has one, else the first initr* beside the kernel, which
+ * is every other family in the table. NULL, with the error buffer set, when
+ * neither is in the ISO. */
+const char *iso_initrd_path(iso_view *v, family_id id, const char *kernel);
+
+/* The ISO9660 volume label (the Primary Volume Descriptor's volume
+ * identifier), trailing padding removed, into out. It goes into a signed
+ * cmdline as %LABEL%, so anything but [A-Za-z0-9._-] is refused rather than
+ * escaped: a label with a space in it would be a second kernel argument.
+ * SGN_ERR_FORMAT for no PVD or an unusable label, SGN_ERR_IO when the file
+ * cannot be read. */
+int iso_volume_label(const char *path, char *out, size_t cap);
+
 #endif /* FALCON_CLI_SIGN_H */

@@ -106,6 +106,18 @@ static const char k_arch_iso9660[] =
     "EFI/BOOT\n"
     "EFI/BOOT/BOOTx64.EFI\n";
 
+/* What bsdtar lists for the Gentoo 20260510 minimal ISO, trimmed: genkernel's
+ * kernel and initramfs names under /boot, dracut's squashfs at the root. */
+static const char k_gentoo_iso9660[] =
+    ".\n"
+    "boot\n"
+    "boot/gentoo\n"
+    "boot/gentoo.igz\n"
+    "boot/grub\n"
+    "boot/grub/grub.cfg\n"
+    "image.squashfs\n"
+    "memtest.efi64\n";
+
 /* ------------------------------------------------------------ helpers */
 
 static iso_view *open_listings(const char *iso9660, const char *udf)
@@ -473,6 +485,15 @@ static void test_isoview_open_lists_both_readers(void **state)
      * name loaded none in the appliance (2026-09-18). */
     assert_int_equal(iso_view_udf_reader(v)[0], '/');
 
+    /* xorriso's -V, read back from the PVD. */
+    {
+        char label[64];
+
+        assert_int_equal(iso_volume_label(ISOVIEW_IMG, label, sizeof(label)),
+                         SGN_OK);
+        assert_string_equal(label, "FALCON_ISOVIEW");
+    }
+
     /* A name from the tree, resolved through the real listings rather than a
      * crafted string. */
     assert_true(iso_view_find(v, "/readme.txt", &match));
@@ -602,6 +623,104 @@ static void test_isoview_size_and_extract(void **state)
     iso_view_close(v);
 }
 
+/* ------------------------------------------------------------ gentoo */
+
+static void test_isoprobe_gentoo_kernel_and_initrd(void **state)
+{
+    iso_view *v = open_listings(k_gentoo_iso9660, NULL);
+    family_probe probe;
+    const char *k;
+
+    (void)state;
+    iso_view_family_probe(v, &probe);
+    assert_int_equal(family_detect(&probe)->id, FAMILY_GENTOO);
+    k = iso_kernel_path(v, FAMILY_GENTOO);
+    assert_string_equal(k, "boot/gentoo");
+    /* Not initr*: the family's own name for it. */
+    assert_string_equal(iso_initrd_path(v, FAMILY_GENTOO, k),
+                        "boot/gentoo.igz");
+    assert_string_equal(sgn_family_slug(FAMILY_GENTOO), "gentoo");
+    iso_view_close(v);
+}
+
+static void test_isoprobe_initrd_beside_the_kernel(void **state)
+{
+    iso_view *v = open_listings(k_arch_iso9660, NULL);
+    iso_view *g = open_listings(k_gentoo_iso9660, NULL);
+
+    (void)state;
+    assert_string_equal(iso_initrd_path(v, FAMILY_ARCH,
+                                        "arch/boot/x86_64/vmlinuz-linux"),
+                        "arch/boot/x86_64/initramfs-linux.img");
+    /* A family with its own name that is missing falls back to initr*, and
+     * with neither there is an error that says where it looked. */
+    assert_null(iso_initrd_path(v, FAMILY_GENTOO, "boot/gentoo"));
+    assert_non_null(strstr(sgn_error(), "/boot/initr*"));
+    /* The kernel at the image root: the guess is the root. */
+    assert_null(iso_initrd_path(g, FAMILY_UNKNOWN, "vmlinuz"));
+    assert_non_null(strstr(sgn_error(), "//initr*"));
+    assert_null(iso_initrd_path(NULL, FAMILY_ARCH, "x"));
+    assert_null(iso_initrd_path(v, FAMILY_ARCH, NULL));
+    iso_view_close(v);
+    iso_view_close(g);
+}
+
+/* ------------------------------------------------------------ label */
+
+/* A file that is an ISO9660 image only as far as its first descriptor: 16
+ * empty sectors, then a PVD whose volume identifier is `label`. */
+static void write_pvd(const char *path, const char *label, int type)
+{
+    unsigned char pvd[2048];
+    FILE *f = fopen(path, "wb");
+    size_t n = strlen(label);
+    size_t i;
+
+    assert_non_null(f);
+    memset(pvd, 0, sizeof(pvd));
+    for (i = 0; i < 16u; i++)
+        assert_int_equal(fwrite(pvd, 1, sizeof(pvd), f), sizeof(pvd));
+    pvd[0] = (unsigned char)type;
+    memcpy(pvd + 1, "CD001", 5);
+    memset(pvd + 40, ' ', 32);
+    memcpy(pvd + 40, label, n > 32u ? 32u : n);
+    assert_int_equal(fwrite(pvd, 1, sizeof(pvd), f), sizeof(pvd));
+    assert_int_equal(fclose(f), 0);
+}
+
+static void test_isoprobe_volume_label(void **state)
+{
+    char path[] = "/tmp/falcon-pvd.XXXXXX";
+    char out[64];
+    char tiny[4];
+    int fd = mkstemp(path);
+
+    (void)state;
+    assert_true(fd >= 0);
+    close(fd);
+
+    write_pvd(path, "Gentoo-amd64-20260510", 1);
+    assert_int_equal(iso_volume_label(path, out, sizeof(out)), SGN_OK);
+    assert_string_equal(out, "Gentoo-amd64-20260510");
+    assert_int_equal(iso_volume_label(path, tiny, sizeof(tiny)),
+                     SGN_ERR_NOSPACE);
+
+    /* A space would be a second kernel argument in the signed cmdline. */
+    write_pvd(path, "Gentoo x rd.break", 1);
+    assert_int_equal(iso_volume_label(path, out, sizeof(out)), SGN_ERR_FORMAT);
+    write_pvd(path, "", 1);
+    assert_int_equal(iso_volume_label(path, out, sizeof(out)), SGN_ERR_FORMAT);
+    write_pvd(path, "LABEL", 2);            /* not the primary descriptor */
+    assert_int_equal(iso_volume_label(path, out, sizeof(out)), SGN_ERR_FORMAT);
+
+    assert_int_equal(truncate(path, 100), 0);
+    assert_int_equal(iso_volume_label(path, out, sizeof(out)), SGN_ERR_FORMAT);
+    unlink(path);
+    assert_int_equal(iso_volume_label(path, out, sizeof(out)), SGN_ERR_IO);
+    assert_int_equal(iso_volume_label(NULL, out, sizeof(out)),
+                     SGN_ERR_INTERNAL);
+}
+
 /* ------------------------------------------------------------ 7-Zip lookup */
 
 /* A PATH holding only fake 7-Zips: shell scripts standing in for `7z i`, one
@@ -715,6 +834,9 @@ int run_isoprobe_tests(void)
         cmocka_unit_test(test_isoprobe_reader_of_foreign_pointer),
         cmocka_unit_test(test_isoprobe_kernel_path_without_a_kernel),
         cmocka_unit_test(test_isoprobe_kernel_path_candidates_all_absent),
+        cmocka_unit_test(test_isoprobe_gentoo_kernel_and_initrd),
+        cmocka_unit_test(test_isoprobe_initrd_beside_the_kernel),
+        cmocka_unit_test(test_isoprobe_volume_label),
     };
 
     const struct CMUnitTest image_tests[] = {

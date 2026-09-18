@@ -633,6 +633,7 @@ static const family_slug g_slugs[] = {
     { FAMILY_SYSTEMRESCUE,  "systemrescue" },
     { FAMILY_MEMTEST,       "memtest" },
     { FAMILY_WINDOWS,       "windows" },
+    { FAMILY_GENTOO,        "gentoo" },
 };
 
 const char *sgn_family_slug(family_id id)
