@@ -59,6 +59,20 @@ void menu_out(EFI_SYSTEM_TABLE *st, const CHAR16 *s);
 INTN menu_run(EFI_SYSTEM_TABLE *st, const menu_banner *banner,
               const menu_entry *entries, UINTN count);
 
+/* Keys beyond enter that also commit a selection, for a caller with more
+ * than one way to act on an entry: `keys` lists them in lower case (either
+ * case is accepted), `hint` replaces the key line under the list. */
+typedef struct {
+    const CHAR16 *keys;
+    const CHAR16 *hint;
+} menu_keys;
+
+/* menu_run, with keys: *which receives the key that committed, L'\r' for
+ * enter or one of keys->keys in lower case. keys and which may be NULL. */
+INTN menu_run_keys(EFI_SYSTEM_TABLE *st, const menu_banner *banner,
+                   const menu_entry *entries, UINTN count,
+                   const menu_keys *keys, CHAR16 *which);
+
 /* Masked line editor, for the p3 passphrase (DESIGN Section 5 step 2).
  *
  * Lives in the menu module because it is console presentation and nothing

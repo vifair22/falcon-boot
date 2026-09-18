@@ -505,6 +505,30 @@ static void restore_console(EFI_SYSTEM_TABLE *st)
 INTN menu_run(EFI_SYSTEM_TABLE *st, const menu_banner *banner,
               const menu_entry *entries, UINTN count)
 {
+    return menu_run_keys(st, banner, entries, count, (const menu_keys *)0,
+                         (CHAR16 *)0);
+}
+
+/* Is c one of the extra commit keys, either case? */
+static BOOLEAN is_commit_key(const menu_keys *keys, CHAR16 c)
+{
+    const CHAR16 *k;
+
+    if (keys == (const menu_keys *)0 || keys->keys == (const CHAR16 *)0)
+        return FALSE;
+    if (c >= L'A' && c <= L'Z')
+        c = (CHAR16)(c - L'A' + L'a');
+    for (k = keys->keys; *k != 0; k++) {
+        if (*k == c)
+            return TRUE;
+    }
+    return FALSE;
+}
+
+INTN menu_run_keys(EFI_SYSTEM_TABLE *st, const menu_banner *banner,
+                   const menu_entry *entries, UINTN count,
+                   const menu_keys *keys, CHAR16 *which)
+{
     menu_view v;
     UINTN top = 0, sel = 0, painted = 0;
     /* Set whenever every slot has to be redrawn: the first paint, and any
@@ -549,9 +573,12 @@ INTN menu_run(EFI_SYSTEM_TABLE *st, const menu_banner *banner,
      * or the loader depending on where the caller is. Naming one of those
      * here would be wrong on the other screens. */
     draw_row(st, v.hint_row, v.left, v.width,
-             count ? L"up/down select | enter choose | esc back | "
-                     L"[signed by] {expected refusal}"
-                   : L"no entries | esc back");
+             !count ? L"no entries | esc back"
+             : (keys != (const menu_keys *)0 &&
+                keys->hint != (const CHAR16 *)0)
+                 ? keys->hint
+                 : L"up/down select | enter choose | esc back | "
+                   L"[signed by] {expected refusal}");
 
     for (;;) {
         UINTN i;
@@ -600,9 +627,15 @@ INTN menu_run(EFI_SYSTEM_TABLE *st, const menu_banner *banner,
             }
             if (count == 0)
                 continue;
-            if (key.UnicodeChar == L'\r') {
+            if (key.UnicodeChar == L'\r' ||
+                is_commit_key(keys, key.UnicodeChar)) {
                 /* Commit on the key as it is read, discarding whatever was
                  * typed behind it: the user chose an entry they could see. */
+                if (which != (CHAR16 *)0)
+                    *which = (key.UnicodeChar >= L'A' &&
+                              key.UnicodeChar <= L'Z')
+                                 ? (CHAR16)(key.UnicodeChar - L'A' + L'a')
+                                 : key.UnicodeChar;
                 restore_console(st);
                 return (INTN)sel;
             }

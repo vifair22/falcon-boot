@@ -16,6 +16,7 @@
 #include <discover/discover.h>
 #include <fs/fs.h>
 #include <iso/iso.h>
+#include <direct/direct.h>
 #include <lib/string.h>
 #include <console/menu.h>
 #include <pos/pos.h>
@@ -295,6 +296,9 @@ static void sort_list(iso_list *list)
  * walk that found it, and its reads go back through the volume it came
  * from. Hence the fixed pool rather than one reused mount. */
 static fs_vol g_vols[MAX_VOLS];   /* ~4 KB of driver cache each */
+/* The partition each volume is, for the direct boot's extent map: its
+ * handle's device path names the partition to Linux. */
+static discover_dev *g_vol_dev[MAX_VOLS];
 
 /* ---- the next-boot marker, as this file sees it (DESIGN Section 6.3.1) ----
  *
@@ -338,6 +342,7 @@ static void scan_all_volumes(iso_list *list, UINTN *vols_found)
         if (fs_mount(vol, dev->fs, discover_read, dev) != FS_OK)
             continue;
         list->cur_vol = *vols_found;
+        g_vol_dev[*vols_found] = dev;
         (*vols_found)++;
 
         /* p2's blessed-artifact manifest, read once per volume (DESIGN
@@ -1137,6 +1142,74 @@ static void boot_payload(EFI_HANDLE image_handle, const menu_entry *entry,
     out(L"\r\npress any key to return to the menu.\r\n");
 }
 
+/* ---- direct kernel boot (DESIGN Section 6.4) ---- */
+
+/* How an unblessed ISO is booted: its own loader through the firmware's
+ * drivers (DESIGN Section 6), or its kernel directly with falcon-hook
+ * (falcon-efi/src/direct). */
+typedef enum {
+    ROUTE_CHAIN = 0,
+    ROUTE_DIRECT
+} boot_route;
+
+/* Enter's route. Direct wherever the platform is not enforcing, since that
+ * is where an ISO's kernel loads without a blessing (docs/notes/coverage-
+ * roadmap.md W2 D1); its own loader where it is, since a distro's shim is
+ * what the platform trusts there. c and d pick either one explicitly. UX
+ * only: both routes load through the same verifying path. */
+static boot_route default_route(void)
+{
+    return g_mode == SB_MODE_ON ? ROUTE_CHAIN : ROUTE_DIRECT;
+}
+
+/* Returns FALSE when the ISO has no configuration entry to boot directly,
+ * with nothing drawn, so the caller chainloads instead. */
+static BOOLEAN boot_direct(EFI_HANDLE image_handle, const menu_entry *entry,
+                           iso_target *target)
+{
+    direct_result result;
+    discover_dev *dev = g_vol_dev[target->vol];
+    EFI_STATUS status;
+
+    menu_screen(g_st);
+    out(L"booting: ");
+    out(entry->label);
+    out(L"\r\n\r\n");
+
+    status = direct_boot(g_st, image_handle, &g_vols[target->vol],
+                         dev->handle, dev->bio->Media->BlockSize,
+                         &target->ent, &result);
+    if (EFI_ERROR(status) && result.no_entry)
+        return FALSE;
+
+    menu_screen(g_st);
+    out(entry->label);
+    if (result.title[0] != '\0') {
+        out(L"\r\nentry: ");
+        out_ascii(result.title);
+    }
+    if (!EFI_ERROR(status)) {
+        out(L"\r\nthe kernel exited, status ");
+        out_hex(result.status);
+        out(L"\r\n");
+    } else {
+        out(L"\r\ndirect boot failed while ");
+        out(result.stage);
+        out(L": ");
+        out_hex(result.status);
+        out(L"\r\n");
+    }
+    if (result.advice != (const CHAR16 *)0) {
+        out(L"\r\n");
+        out(result.advice);
+        out(L"\r\n");
+    }
+    out(L"\r\npress c on the entry to boot the ISO's own loader instead."
+        L"\r\n");
+    out(L"\r\npress any key to return to the menu.\r\n");
+    return TRUE;
+}
+
 /* ---- offering preparation (DESIGN Section 6.3.1) ---- */
 
 typedef enum {
@@ -1293,7 +1366,7 @@ static void launch_appliance(EFI_HANDLE image_handle, const menu_entry *entry,
  * acknowledging, which is the same contract boot_personal has. */
 static BOOLEAN boot_plain_or_offer(EFI_HANDLE image_handle,
                                    const menu_entry *entry, iso_target *t,
-                                   UINTN pinned)
+                                   UINTN pinned, boot_route route)
 {
     bless_prep prep;
 
@@ -1325,6 +1398,12 @@ static BOOLEAN boot_plain_or_offer(EFI_HANDLE image_handle,
             break;
         }
     }
+    /* Windows media has no kernel to start; a .img is a disk, not a CD, and
+     * is left to the firmware's own partition drivers. */
+    if (route == ROUTE_DIRECT && t->kind == ISO_MEDIA_CD &&
+        t->fam != FAMILY_WINDOWS &&
+        boot_direct(image_handle, entry, t))
+        return TRUE;
     boot_target(image_handle, entry, t);
     return TRUE;
 }
@@ -1596,7 +1675,7 @@ static void next_boot_run(EFI_HANDLE image_handle, iso_list *list, UINTN pinned)
          * is nothing on screen to acknowledge; the menu is the right next
          * thing either way. */
         if (!boot_plain_or_offer(image_handle, &list->entries[g_next_idx], t,
-                                 pinned))
+                                 pinned, default_route()))
             return;
         break;
     }
@@ -1695,8 +1774,19 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
         next_boot_run(image_handle, &list, pinned);
 
     for (;;) {
+        /* c and d choose the route for an ISO row; on any other row they
+         * act as enter. */
+        static const menu_keys keys = {
+            L"cd",
+            L"enter boot | c ISO loader | d direct | esc back | "
+            L"[signed by] {refusal}"
+        };
         UINTN shown = view_build(&list, cur, cur_len, pinned, view, rows);
-        INTN pick = menu_run(st, &banner, view, shown);
+        CHAR16 which = L'\r';
+        INTN pick = menu_run_keys(st, &banner, view, shown, &keys, &which);
+        boot_route route = which == L'c'   ? ROUTE_CHAIN
+                           : which == L'd' ? ROUTE_DIRECT
+                                           : default_route();
         EFI_INPUT_KEY key;
         UINTN sel;
 
@@ -1775,6 +1865,15 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
              * again rather than a chainload into a dead Setup. */
             switch (bless_hit_action(&list.targets[idx].hit)) {
             case BLESS_ACT_UKI:
+                /* c or d on a blessed row boots the ISO itself, the way it
+                 * would boot unblessed; enter boots the blessing. */
+                if (which == L'c' || which == L'd') {
+                    if (!boot_plain_or_offer(image_handle, &list.entries[idx],
+                                             &list.targets[idx], pinned,
+                                             route))
+                        continue;
+                    break;
+                }
                 boot_blessed(image_handle, &list.entries[idx],
                              &list.targets[idx]);
                 break;
@@ -1785,7 +1884,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
             case BLESS_ACT_PLAIN:
             default:
                 if (!boot_plain_or_offer(image_handle, &list.entries[idx],
-                                         &list.targets[idx], pinned))
+                                         &list.targets[idx], pinned, route))
                     continue;
                 break;
             }

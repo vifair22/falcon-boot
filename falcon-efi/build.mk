@@ -25,6 +25,12 @@ EFI_SRCS := \
 	$(EFI_SRC)/iso/iso.c \
 	$(CORE)/media/family.c \
 	$(CORE)/media/cpio.c \
+	$(EFI_SRC)/direct/direct.c \
+	$(CORE)/media/bootcfg.c \
+	$(CORE)/media/bootfs.c \
+	$(CORE)/media/hookcmd.c \
+	$(CORE)/media/extmap.c \
+	$(HOOK_BLOB) \
 	$(EFI_SRC)/pos/pos.c \
 	$(CORE)/media/osrel.c \
 	$(EFI_SRC)/bless/bless.c \

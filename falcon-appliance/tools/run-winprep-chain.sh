@@ -300,7 +300,7 @@ exec 3> "$CONSOLE.in"
 # The firmware start line is the boot counter for the whole run.
 BOOT_MARK="BdsDxe: starting Boot0001"
 wait_for_from "$SERIAL0" 0 "$BOOT_MARK" 120
-wait_for_from "$SERIAL0" 0 "up/down select" 180
+wait_for_from "$SERIAL0" 0 "esc back" 180
 BOOTS_AT_MENU=$(count_from "$SERIAL0" 0 "$BOOT_MARK")
 (( BOOTS_AT_MENU == 1 )) ||
     fail "expected exactly one firmware start before the menu, saw $BOOTS_AT_MENU"
@@ -466,7 +466,7 @@ BOOTS_NOW=$(count_from "$SERIAL0" 0 "$BOOT_MARK")
 echo "   firmware start #2 in the same qemu pid $QEMU_PID: a genuine reboot"
 
 wait_for_from "$SERIAL0" "$MARK_REBOOT" "booting prepared: " 300
-seen_from "$SERIAL0" "$MARK_REBOOT" "up/down select" &&
+seen_from "$SERIAL0" "$MARK_REBOOT" "esc back" &&
     fail "the menu was drawn before the queued entry booted"
 echo "   the menu was NOT drawn: the marker booted the entry directly"
 

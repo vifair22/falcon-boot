@@ -133,6 +133,22 @@ UINTN loader_next_boot_take(EFI_SYSTEM_TABLE *st, void *buf, UINTN cap);
  * firmware's status. */
 EFI_STATUS loader_next_boot_set(EFI_SYSTEM_TABLE *st, const char *name);
 
+/* ---- the ISO extent map (DESIGN Section 6.4) ----
+ *
+ * FalconIsoMap, the variable falcon-hook reads from efivarfs to rebuild the
+ * ISO as a block device (falcon-core/src/media/extmap.h has the layout). Set
+ * immediately before a direct boot starts the kernel and deleted if the
+ * kernel comes back, so a later boot of anything else never sees a stale map.
+ *
+ * Volatile: it describes where one file sits on p2 at the moment of one boot,
+ * and nothing about it should outlive a power cycle. Runtime-accessible,
+ * because efivarfs shows the booted kernel only runtime variables, and that
+ * reader is the whole point. The hook checks what it reads against the disk it
+ * finds (partition GUID, start, block size), so a value some other writer put
+ * there maps nothing the hook would not refuse. */
+EFI_STATUS loader_isomap_set(EFI_SYSTEM_TABLE *st, const void *map, UINTN len);
+void loader_isomap_clear(EFI_SYSTEM_TABLE *st);
+
 /* ---- boot to the firmware's own settings UI (DESIGN Section 7.4) ----
  *
  * UEFI's own one-shot: OsIndications bit 0, EFI_OS_INDICATIONS_BOOT_TO_FW_UI,

@@ -1,6 +1,7 @@
 #include <loader/loadops.h>
 #include <efi/shimguid.h>
 
+#include <media/extmap.h>
 #include <secboot/sb.h>
 
 /* 50614485-081b-4b7c-8b54-2abeffdf2fb3: falcon-boot's own vendor GUID for EFI
@@ -144,6 +145,41 @@ EFI_STATUS loader_next_boot_set(EFI_SYSTEM_TABLE *st, const char *name)
     return rt->SetVariable((CHAR16 *)(uintptr_t)LOADER_NEXT_BOOT_NAME, &vendor,
                            FALCON_NEXT_BOOT_ATTRS, len,
                            (void *)(uintptr_t)name);
+}
+
+/* Volatile and runtime-accessible; see loader_isomap_set in loadops.h. */
+#define FALCON_ISOMAP_ATTRS (EFI_VARIABLE_BOOTSERVICE_ACCESS | \
+                             EFI_VARIABLE_RUNTIME_ACCESS)
+#define ISOMAP_WIDEN_(s) L##s
+#define ISOMAP_WIDEN(s) ISOMAP_WIDEN_(s)
+#define FALCON_ISOMAP_NAME ISOMAP_WIDEN(FALCON_EXTMAP_VAR)
+
+EFI_STATUS loader_isomap_set(EFI_SYSTEM_TABLE *st, const void *map, UINTN len)
+{
+    EFI_GUID vendor = FALCON_EXTMAP_GUID_INIT;
+    EFI_RUNTIME_SERVICES *rt;
+
+    if (st == (EFI_SYSTEM_TABLE *)0 || map == (const void *)0 || len == 0)
+        return EFI_INVALID_PARAMETER;
+    rt = st->RuntimeServices;
+    if (rt == (EFI_RUNTIME_SERVICES *)0 || rt->SetVariable == (void *)0)
+        return EFI_UNSUPPORTED;
+    return rt->SetVariable((CHAR16 *)(uintptr_t)FALCON_ISOMAP_NAME, &vendor,
+                           FALCON_ISOMAP_ATTRS, len, (void *)(uintptr_t)map);
+}
+
+void loader_isomap_clear(EFI_SYSTEM_TABLE *st)
+{
+    EFI_GUID vendor = FALCON_EXTMAP_GUID_INIT;
+    EFI_RUNTIME_SERVICES *rt;
+
+    if (st == (EFI_SYSTEM_TABLE *)0)
+        return;
+    rt = st->RuntimeServices;
+    if (rt == (EFI_RUNTIME_SERVICES *)0 || rt->SetVariable == (void *)0)
+        return;
+    (void)rt->SetVariable((CHAR16 *)(uintptr_t)FALCON_ISOMAP_NAME, &vendor,
+                          FALCON_ISOMAP_ATTRS, 0, (void *)0);
 }
 
 const CHAR16 *load_ops_inner_load_advice(void)

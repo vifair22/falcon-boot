@@ -178,7 +178,7 @@ serial_text() {
 # ---- the menu ----
 for ((i = 0; i < MENU_WAIT; i++)); do
     alive || finish ERROR "qemu exited before the menu ($(tail -c 200 "$OUTDIR/qemu.log" | tr '\n\t' '  '))"
-    if serial_text | grep -q 'up/down select'; then
+    if serial_text | grep -q 'esc back'; then
         break
     fi
     sleep 1

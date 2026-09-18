@@ -22,6 +22,7 @@ typedef struct EFI_DEVICE_PATH_PROTOCOL {
 
 /* Node types and subtypes (spec Table 10.x); only the ones we build. */
 #define MEDIA_DEVICE_PATH               0x04
+#define MEDIA_HARDDRIVE_DP              0x01
 #define MEDIA_VENDOR_DP                 0x03
 #define MEDIA_FILEPATH_DP               0x04
 #define END_DEVICE_PATH_TYPE            0x7F
@@ -32,6 +33,15 @@ typedef struct {
     EFI_GUID                 Guid;
     /* Vendor-defined data may follow; ours carries none. */
 } VENDOR_DEVICE_PATH;
+
+/* The Hard Drive media node (spec 10.3.5.1), as offsets rather than a struct:
+ * its UINT64 fields sit at 8 and 16 behind a 4-byte header and a UINT32, and
+ * the node is 42 bytes, so no C layout matches it without packing. */
+#define HD_DP_LEN            42u
+#define HD_DP_OFF_START       8u   /* PartitionStart, LBA */
+#define HD_DP_OFF_SIG        24u   /* PartitionSignature[16] */
+#define HD_DP_OFF_SIGTYPE    41u   /* SignatureType */
+#define HD_DP_SIGTYPE_GUID    2u
 
 static inline UINT16 dp_node_len(const EFI_DEVICE_PATH_PROTOCOL *node)
 {
