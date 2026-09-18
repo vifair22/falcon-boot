@@ -180,3 +180,49 @@ int osrel_label(const void *buf, size_t len, char *out, size_t cap)
     }
     return OSREL_OK;
 }
+
+static int is_digit(char c)
+{
+    return c >= '0' && c <= '9';
+}
+
+int osrel_vercmp(const char *a, const char *b)
+{
+    if (a == (const char *)0 || b == (const char *)0)
+        return (a != (const char *)0) - (b != (const char *)0);
+
+    while (*a != '\0' && *b != '\0') {
+        if (is_digit(*a) && is_digit(*b)) {
+            const char *ea, *eb;
+            size_t la, lb, i;
+
+            /* Leading zeros carry no value; after them, the longer run of
+             * digits is the larger number, and equal lengths compare as
+             * strings. No conversion, so no run is too long to compare. */
+            while (*a == '0')
+                a++;
+            while (*b == '0')
+                b++;
+            for (ea = a; is_digit(*ea); ea++)
+                ;
+            for (eb = b; is_digit(*eb); eb++)
+                ;
+            la = (size_t)(ea - a);
+            lb = (size_t)(eb - b);
+            if (la != lb)
+                return la < lb ? -1 : 1;
+            for (i = 0; i < la; i++) {
+                if (a[i] != b[i])
+                    return (unsigned char)a[i] < (unsigned char)b[i] ? -1 : 1;
+            }
+            a = ea;
+            b = eb;
+            continue;
+        }
+        if (*a != *b)
+            return (unsigned char)*a < (unsigned char)*b ? -1 : 1;
+        a++;
+        b++;
+    }
+    return (*a != '\0') - (*b != '\0');
+}

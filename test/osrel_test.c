@@ -304,9 +304,32 @@ static void test_osrel_total_below_len(void **state)
     (void)state;
 }
 
+/* Kernel version order, as the chooser uses it to put the newest first. */
+static void test_vercmp(void **state)
+{
+    (void)state;
+    assert_true(osrel_vercmp("7.2.6-arch2-1", "6.18.52-1-lts") > 0);
+    assert_true(osrel_vercmp("6.18.52-1-lts", "7.2.6-arch2-1") < 0);
+    assert_true(osrel_vercmp("6.10.1", "6.9.12") > 0);
+    assert_true(osrel_vercmp("6.9", "6.10") < 0);
+    assert_true(osrel_vercmp("7.2.6-arch2-1", "7.2.6-arch10-1") < 0);
+    assert_true(osrel_vercmp("6.18.2-arch2-1", "6.18.2-arch2-1") == 0);
+    assert_true(osrel_vercmp("6.018", "6.18") == 0);
+    assert_true(osrel_vercmp("6.18", "6.018") == 0);
+    assert_true(osrel_vercmp("6.18", "6.18.1") < 0);
+    assert_true(osrel_vercmp("6.18.1", "6.18") > 0);
+    assert_true(osrel_vercmp("6.18-lts", "6.18-arch") > 0);
+    assert_true(osrel_vercmp("99999999999999999999999", "1") > 0);
+    assert_true(osrel_vercmp("", "") == 0);
+    assert_true(osrel_vercmp(NULL, "1") < 0);
+    assert_true(osrel_vercmp("1", NULL) > 0);
+    assert_true(osrel_vercmp(NULL, NULL) == 0);
+}
+
 int run_osrel_tests(void)
 {
     const struct CMUnitTest tests[] = {
+        cmocka_unit_test(test_vercmp),
         cmocka_unit_test(test_pretty_name_wins),
         cmocka_unit_test(test_appliance_label),
         cmocka_unit_test(test_name_and_version_fallback),

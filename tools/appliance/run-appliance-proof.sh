@@ -192,6 +192,20 @@ wait_for_from() {
 # True when a pattern has appeared in the appliance console since a byte
 # offset. The console is a serial line, so every line ends CR LF; -F keeps the
 # brackets and slashes in the patterns below literal.
+# seen_from for a whole line: true only when a line of the console log, CR
+# stripped, IS pat. The appliance's folder headers are lines of their own
+# ("  Linux/"), while the loader's menu, which OVMF also mirrors onto this
+# port, carries the same folder name inside a longer, escape-laden row; a
+# substring match cannot tell the two apart and failed run 2 on the loader's
+# screen rather than on anything the appliance printed.
+seen_line_from() {
+    local off="$1" pat="$2"
+
+    tail -c "+$(( off + 1 ))" "$CONSOLE_LOG" 2>/dev/null |
+        awk -v pat="$pat" '{ sub(/\r$/, "") } $0 == pat { found = 1 }
+                           END { exit !found }'
+}
+
 seen_from() {
     local off="$1" pat="$2"
 
@@ -343,17 +357,21 @@ enter_appliance() {
     sleep 1
     send_keys "$PASS"
 
-    # One UKI boots without a chooser; two or more are offered, and on this
-    # stick the second one is the appliance (src/pos/pos.c says so in as many
-    # words). Which row it lands on is the loader's business, so the row is
-    # read back out of the screen rather than assumed.
+    # One UKI boots without a chooser; two or more are offered. Rows are
+    # labelled from each image's .osrel (src/pos/osrel.c), so the appliance
+    # is found by the name it gives itself, not by its file name, and the
+    # chooser puts it LAST (src/pos/pos.c, uki_before), which is asserted
+    # here: a stick whose chooser opens on the appliance boots it on Enter.
     if wait_for_from "$SERIAL0" "$mark" "Personal OS: " 60; then
         sleep 1
         entries=$(tail -c "+$(( mark + 1 ))" "$SERIAL0" |
-                  grep -ao 'Personal OS: [A-Za-z0-9_.-]*' | awk '!seen[$0]++')
-        idx=$(printf '%s\n' "$entries" | grep -n 'appliance-uki.efi' | cut -d: -f1)
+                  grep -ao 'Personal OS: [A-Za-z0-9_.() -]*[A-Za-z0-9_.)]' |
+                  awk '!seen[$0]++')
+        idx=$(printf '%s\n' "$entries" | grep -n 'signing appliance' | cut -d: -f1)
         [[ -n "$idx" ]] || fail "the appliance is not in the loader's UKI chooser"
-        echo "   chooser: appliance-uki.efi is entry $idx of $(printf '%s\n' "$entries" | wc -l)"
+        [[ "$idx" -eq "$(printf '%s\n' "$entries" | wc -l)" ]] ||
+            fail "the appliance is row $idx, not the last row of the chooser"
+        echo "   chooser: the appliance is entry $idx of $(printf '%s\n' "$entries" | wc -l) (last)"
         for (( i = 1; i < idx; i++ )); do
             mon "sendkey down"
             sleep 0.1
@@ -616,7 +634,7 @@ echo "   $PENDING1"
 wait_select "$RUN1_MARK" 1 60
 seen_from "$RUN1_MARK" "pending unsigned images:" ||
     fail "the appliance did not print the pending list"
-seen_from "$RUN1_MARK" "  $FOLDER/" ||
+seen_line_from "$RUN1_MARK" "  $FOLDER/" ||
     fail "no '$FOLDER/' folder header: the listing is not grouped by folder"
 seen_from "$RUN1_MARK" "[ ]  1  $ROOT_ISO_NAME" ||
     fail "the root ISO is not listed as unmarked image 1"
@@ -735,7 +753,7 @@ seen_from "$RUN2_MARK" "blessed     /$FOLDER/$FOLDER_ISO_NAME (already; skipping
     fail "run 2 did not report the blessed ISO as a visible skip"
 seen_from "$RUN2_MARK" "]  1  $FOLDER_ISO_NAME" &&
     fail "the blessed ISO is still listed as pending"
-seen_from "$RUN2_MARK" "  $FOLDER/" &&
+seen_line_from "$RUN2_MARK" "  $FOLDER/" &&
     fail "the '$FOLDER/' header survived though its only image is blessed"
 seen_from "$RUN2_MARK" "[ ]  1  $ROOT_ISO_NAME" ||
     fail "the still-unsigned root ISO is not the one pending image"

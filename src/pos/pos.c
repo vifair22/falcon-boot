@@ -606,6 +606,48 @@ static int uname_shared(UINTN i)
     return 0;
 }
 
+/* Chooser order (DESIGN Section 5): the newest kernel first, because the row
+ * the menu opens on is the one Enter boots and that should be the image a
+ * user wants nearly every time; the signing appliance always last, because it
+ * is never what an ordinary boot is for. Between two images without a .uname,
+ * and between two with the same one, the shelf's own order stands. */
+static int uki_before(UINTN a, UINTN b)
+{
+    int app_a = name_is_appliance(&g_ukis[a]);
+    int app_b = name_is_appliance(&g_ukis[b]);
+
+    if (app_a != app_b)
+        return app_b;
+    if (g_uki_uname[a][0] != '\0' && g_uki_uname[b][0] != '\0')
+        return osrel_vercmp(g_uki_uname[a], g_uki_uname[b]) > 0;
+    return g_uki_uname[a][0] != '\0' && g_uki_uname[b][0] == '\0';
+}
+
+/* Swaps two chooser rows across every array that is indexed by row at this
+ * point. The dup and byver flags are not among them: they are decided after
+ * the sort, from the sorted rows. Static temporaries because a menu_entry is
+ * over a kilobyte. */
+static void uki_swap(UINTN a, UINTN b)
+{
+    static fs_dirent d;
+    static menu_entry e;
+    static char u[OSREL_LABEL_MAX];
+    int n;
+
+    d = g_ukis[a];
+    g_ukis[a] = g_ukis[b];
+    g_ukis[b] = d;
+    e = g_uki_entries[a];
+    g_uki_entries[a] = g_uki_entries[b];
+    g_uki_entries[b] = e;
+    memcpy(u, g_uki_uname[a], sizeof u);
+    memcpy(g_uki_uname[a], g_uki_uname[b], sizeof u);
+    memcpy(g_uki_uname[b], u, sizeof u);
+    n = g_uki_named[a];
+    g_uki_named[a] = g_uki_named[b];
+    g_uki_named[b] = n;
+}
+
 /* Which UKI to boot. One is booted without asking; several are offered,
  * because on a stick built to DESIGN Section 7.5 the second one is the
  * signing appliance and picking for the user would be picking wrong half the
@@ -645,6 +687,14 @@ static INTN choose_uki(const menu_banner *banner, pos_pick pick)
             name_to_ucs2(row + pl, MENU_PATH_MAX - pl,
                          g_ukis[i].name, g_ukis[i].name_len);
         g_uki_named[i] = (row[pl] != L'\0');
+    }
+
+    /* Stable insertion sort: a handful of rows, and ties keep shelf order. */
+    for (i = 1; i < g_uki_n; i++) {
+        UINTN j;
+
+        for (j = i; j > 0 && uki_before(j, j - 1u); j--)
+            uki_swap(j, j - 1u);
     }
 
     /* Two images that say the same thing about themselves are the common case,

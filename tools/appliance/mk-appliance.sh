@@ -241,7 +241,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-for t in bsdtar cpio gcc ukify zstd sudo; do
+for t in bsdtar cpio gcc readelf ukify zstd sudo; do
     command -v "$t" >/dev/null 2>&1 || {
         echo "ERROR: $t not found" >&2
         exit 1
@@ -404,14 +404,75 @@ closure() {
         sed -n -e 's/.*=> \(\/[^ ]*\).*/\1/p' -e 's/^[[:space:]]*\(\/[^ ]*\) (0x.*/\1/p'
 }
 
+# The ELF interpreter a program asks the kernel for (PT_INTERP), or nothing
+# for a file that is not a dynamic ELF. Tolerant on purpose: it is also asked
+# about scripts, and under pipefail readelf refusing one would end the build.
+interp() {
+    { readelf -l "$1" 2>/dev/null || true; } |
+        sed -n 's/.*Requesting program interpreter: \(\/[^]]*\)\].*/\1/p'
+}
+
+# What a one-line exec wrapper runs: a script of the form
+#   #!/bin/sh
+#   exec /abs/path "$@"
+# prints /abs/path. Anything else prints nothing. Arch's 7zip package ships
+# /usr/bin/7z as exactly this (exec /usr/lib/7zip/7z), and there is no shell
+# in the image to run it, so the program a wrapper execs is staged AT the
+# wrapper's path instead, with the shared objects from its own directory
+# beside it: 7-Zip finds 7z.so next to argv[0], not next to the resolved
+# executable, so a symlink runs but loads no formats and reports every ISO as
+# "Cannot open the file as archive" (measured 2026-09-17). The Gentoo host
+# this was first built on ships the real program at /usr/bin/7z, which is why
+# a plain copy used to be enough.
+unwrap() {
+    [[ "$(head -c2 "$1")" == '#!' ]] || return 0
+    sed -n 's/^exec \(\/[^ "]*\) "\$@"$/\1/p' "$1" | head -n1
+}
+
 LIBS=()
 for b in "${BINARIES[@]}" "$PYTHON"; do
+    t=$(unwrap "$b")
+    if [[ -n "$t" ]]; then
+        mkdir -p "$(dirname "$ROOT$b")"
+        cp -L "$t" "$ROOT$b"
+        mapfile -t -O "${#LIBS[@]}" LIBS < <(closure "$t")
+        # The wrapped program's own directory is its private library
+        # directory, dlopened at run time where ldd cannot see it, so its
+        # shared objects come too, beside the staged program, with their
+        # closure.
+        for so in "$(dirname "$t")"/*.so; do
+            [[ -e "$so" ]] || continue
+            cp -L "$so" "$(dirname "$ROOT$b")/"
+            mapfile -t -O "${#LIBS[@]}" LIBS < <(closure "$so")
+        done
+        continue
+    fi
+    if [[ "$(head -c2 "$b")" == '#!' && "$b" != "$PYTHON" ]]; then
+        echo "ERROR: $b is a script this builder cannot unwrap, and the" \
+             "image has no shell to run it" >&2
+        exit 1
+    fi
     copy_to_root "$b"
     mapfile -t -O "${#LIBS[@]}" LIBS < <(closure "$b")
 done
 mapfile -t LIBS < <(printf '%s\n' "${LIBS[@]}" | sort -u)
 for l in "${LIBS[@]}"; do
     copy_to_root "$l"
+done
+
+# The dynamic loader, at the path each binary NAMES (PT_INTERP), which is not
+# necessarily the path ldd prints. On Arch /lib64 is a symlink into /usr, so
+# ldd reports /usr/lib64/ld-linux-x86-64.so.2 while every binary asks the
+# kernel for /lib64/ld-linux-x86-64.so.2. Staging only the former built an
+# image (2026-09-15) in which every dynamic program failed to exec with
+# ENOENT: bsdtar, 7z and cryptsetup all "missing" while plainly present. The
+# Gentoo host this was first built on has a real /lib64, which is why the
+# walk above was enough there.
+for b in "${BINARIES[@]}" "$PYTHON"; do
+    i=$(interp "$ROOT$b")
+    if [[ -n "$i" && ! -e "$ROOT$i" ]]; then
+        copy_to_root "$i"
+    fi
 done
 echo "   binaries: ${#BINARIES[@]} + $PY_VER, libraries: ${#LIBS[@]}"
 
@@ -439,8 +500,12 @@ copy_to_root "$STUB"
 cp "$WINJUMP" "$ROOT/usr/bin/winjump.exe"
 chmod 0644 "$ROOT/usr/bin/winjump.exe"
 
-# ukify, at the path its shebang names.
-cp /usr/bin/ukify "$ROOT/usr/bin/ukify"
+# ukify, with its shebang pointed at the interpreter resolved above. The sign
+# tool execs ukify directly, so the kernel reads that line, and Arch ships
+# "#!/usr/bin/env python3": an image without env (there is none, see the PYTHON
+# note) fails that exec with ENOENT. Gentoo's names python outright, which is
+# why a straight copy worked until the stick was rebuilt on Arch.
+{ printf '#!%s\n' "$PYTHON"; tail -n +2 "$UKIFY"; } > "$ROOT/usr/bin/ukify"
 chmod 0755 "$ROOT/usr/bin/ukify"
 
 # ---- the Python runtime ukify needs ----
@@ -489,6 +554,39 @@ OSREL
 # zstd because the initramfs is dominated by the Python tree and an extra
 # 30 MB of image is 30 MB of RAM at boot; the kernel this runs on has
 # CONFIG_RD_ZSTD (verified against the ISO kernel's own config).
+# Every program the image can exec must find its interpreter IN the image:
+# the ELF loader it names, or the #! line of a script. Checked over /init and
+# the bin directories as staged rather than over the BINARIES list, so a
+# program that arrives some other way is held to it too, and through symlinks
+# resolved inside the image. Libraries and the Python tree's own scripts are
+# not exec'd and are not checked. This is the check that would have stopped
+# the 2026-09-15 image before it reached a stick.
+echo "== checking every staged program's interpreter"
+bad=0
+while IFS= read -r -d '' f; do
+    if [[ -L "$f" ]]; then
+        t=$(readlink "$f")
+        [[ "$t" == /* ]] && t="$ROOT$t" || t="$(dirname "$f")/$t"
+        if [[ ! -e "$t" ]]; then
+            echo "ERROR: ${f#"$ROOT"} points at ${t#"$ROOT"}, which is not in" \
+                 "the image" >&2
+            bad=1
+            continue
+        fi
+        f="$t"
+    fi
+    i=$(interp "$f")
+    if [[ -z "$i" && "$(head -c2 "$f")" == '#!' ]]; then
+        i=$(head -n1 "$f" | sed 's/^#![[:space:]]*\([^[:space:]]*\).*/\1/')
+    fi
+    if [[ -n "$i" && ! -e "$ROOT$i" ]]; then
+        echo "ERROR: ${f#"$ROOT"} needs $i, which is not in the image" >&2
+        bad=1
+    fi
+done < <(find "$ROOT/init" "$ROOT"/{bin,sbin,usr/bin,usr/sbin} \
+              \( -type f -perm -u+x -o -type l \) -print0)
+[[ $bad -eq 0 ]] || exit 1
+
 echo "== packing the initramfs"
 ( cd "$ROOT" && find . -mindepth 1 -printf '%P\n' | LC_ALL=C sort |
     cpio --quiet -o -H newc --owner=+0:+0 ) | zstd -q -19 -T0 -f -o "$INITRD"

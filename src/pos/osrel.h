@@ -91,4 +91,11 @@ int osrel_find(const void *buf, size_t len, size_t total,
 int osrel_value(const char *text, size_t len, const char *key,
                 char *out, size_t cap);
 
+/* Orders two kernel version strings (.uname values), the way `sort -V` would
+ * for the shapes kernels use: a run of digits compares as a number, anything
+ * else byte by byte. Returns <0, 0 or >0 as a sorts before, with or after b.
+ * "7.2.6-arch2-1" sorts after "6.18.52-1-lts", and "6.10" after "6.9", which
+ * a plain string compare gets backwards. */
+int osrel_vercmp(const char *a, const char *b);
+
 #endif /* FALCON_OSREL_H */
