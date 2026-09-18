@@ -2,9 +2,9 @@
  *
  * Flow, in the order the steps depend on each other:
  *
- *   1. list the ISO with bsdtar and 7-Zip, one namespace each (no mount,
- *      no root)
- *   2. fingerprint it through falcon-core/src/media/family.c, over that listing
+ *   1. index the ISO with falcon-core's ISO9660/UDF readers (no mount, no
+ *      root, no helper process)
+ *   2. fingerprint it through falcon-core/src/media/family.c, over that index
  *   3. find the family's kernel inside the ISO
  *   4. render the family's cmdline template with the ISO's path on p2
  *   5. extract the kernel, wrap it into a minimal UKI whose .cmdline is
@@ -418,15 +418,12 @@ static int bless(const options *o)
     int replaced = 0;
     int rc;
 
-    /* Every helper up front: a missing sbsign three minutes into hashing a
-     * 5 GB ISO is a worse message than a missing sbsign now. 7z is not in this
-     * list because it is a soft dependency: without it Linux media still
-     * blesses, and iso_view_open warns about the UDF namespace it could not
-     * read rather than refusing the whole run. */
-    if (!sgn_have_program("bsdtar") || !sgn_have_program("sbsign")) {
+    /* The one helper, up front: a missing sbsign three minutes into hashing
+     * a 5 GB ISO is a worse message than a missing sbsign now. The ISO is
+     * read in process (isoprobe.c), so nothing else is needed. */
+    if (!sgn_have_program("sbsign")) {
         sgn_set_error(SGN_ERR_EXEC,
-                      "need bsdtar and sbsign on PATH (bsdtar reads the ISO, "
-                      "sbsign signs the UKI)");
+                      "need sbsign on PATH (it signs the UKI)");
         return SGN_ERR_EXEC;
     }
     if (!sgn_file_exists(o->stub)) {
@@ -455,15 +452,6 @@ static int bless(const options *o)
         char known[512];
         size_t w = 0;
         size_t i;
-        /* An image whose files are all in UDF lists as very nearly empty
-         * without a reader for that namespace, and "matches no known family"
-         * would then be true of the listing and false of the medium. Say
-         * which it is. */
-        const char *udf_hint =
-            (iso_view_udf_reader(view) == NULL)
-                ? " Note that 7z is not on PATH, so this ISO's UDF namespace "
-                  "was not read; Windows install media looks empty without it."
-                : "";
 
         for (i = 0; i < count; i++) {
             int k;
@@ -481,7 +469,7 @@ static int bless(const options *o)
                       "cmdline template to derive its boot arguments from. "
                       "Known families: %s. Pass --cmdline '<arguments>' and "
                       "--kernel <path-in-iso> to bless it anyway with "
-                      "arguments you supply.%s", known, udf_hint);
+                      "arguments you supply.", known);
         rc = SGN_ERR_FORMAT;
         goto out;
     }

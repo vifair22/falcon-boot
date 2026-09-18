@@ -20,7 +20,8 @@ SIGN_SRCS := $(addprefix $(CLI)/sign/,main.c util.c isoprobe.c manifestio.c \
 	payload.c wimext.c prepcore.c prepare.c uki.c)
 
 SIGN_CORE := $(CORE_MANIFEST) $(CORE_MANIFEST_WRITE) $(CORE)/media/family.c \
-	$(CORE_PART) $(CORE_PE) $(CORE)/crypto/sha256.c $(CORE)/crypto/crypto.c
+	$(CORE_PART) $(CORE_PE) $(CORE_FS) $(CORE)/crypto/sha256.c \
+	$(CORE)/crypto/crypto.c
 
 HOST_SRCS += $(MKSTICK_SRCS) $(MKSTICK_CORE) $(SIGN_SRCS) $(SIGN_CORE)
 
@@ -75,7 +76,7 @@ CLI_TESTS := $(addprefix falcon-cli/tests/,main.c isoprobe_test.c \
 
 CLI_UUT := $(addprefix $(CLI)/sign/,isoprobe.c payload.c wimext.c prepcore.c \
 	uki.c util.c) $(CORE)/media/family.c $(CORE_MANIFEST) $(CORE_MANIFEST_WRITE) \
-	$(CORE_PART) $(CORE_PE) \
+	$(CORE_PART) $(CORE_PE) $(CORE_FS) \
 	$(CORE)/crypto/sha256.c $(CORE)/crypto/crypto.c
 
 $(eval $(call test_bin,cli,$(CLI_TESTS) $(CLI_UUT)))

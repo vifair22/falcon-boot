@@ -1,35 +1,28 @@
-/* Tests for falcon-cli/src/sign/isoprobe.c, the bless tool's view of an ISO.
+/* Tests for the bless tool's ISO view (falcon-cli/src/sign/isoprobe.c).
  *
- * The view is the union of two listings, one per namespace: bsdtar's, which
- * is ISO9660 plus Rock Ridge, and 7-Zip's, which is UDF on any image that has
- * one. Microsoft builds Windows install media with `oscdimg -u1 -udfver102`,
- * whose ISO9660 side is a stub holding one README while every real file lives
- * only in UDF, so a view that consults one namespace classifies that medium as
- * unknown. That is the bug these tests pin.
+ * The view indexes an ISO with falcon-core's ISO9660 and UDF drivers and
+ * answers the questions the bless and prepare flows ask: does this path
+ * exist (for falcon-core/src/media/family.c), which member is the kernel,
+ * how long is a member, and what are its bytes. The drivers themselves are
+ * tested in falcon-core; what is pinned here is the view's own behaviour.
  *
- * Everything here goes through iso_view_from_listings, which builds the view
- * from listing text instead of from a helper process. That is deliberate: the
- * parts worth testing are the parsing of two unrelated output formats, the
- * union, and the case folding, none of which need a subprocess or a
- * multi-gigabyte image to exercise, and all of which are where the sharp
- * edges are.
+ *   lookup     the matching family.h specifies: absolute paths, case folded
+ *              on both sides (Rock Ridge keeps the author's case, oscdimg's
+ *              UDF names are lower case), a directory matched on a component
+ *              boundary, a trailing '*' as a suffix wildcard. Tested on views
+ *              built from path lists, which need no image.
  *
- * Three things are pinned:
+ *   tables     the kernel and initramfs tables resolve against what an ISO
+ *              actually holds, and say why when they cannot.
  *
- *   namespaces   a UDF-only tree is found, an ISO9660-only tree is found, and
- *                a name in both resolves to the ISO9660 entry, because that is
- *                the reader every Linux image has always been extracted with
- *                and the union must not change which one is used.
+ *   images     the fixtures falcon-core/tools and falcon-cli/tools build: an
+ *              Arch-shaped ISO9660 image, the Rock Ridge fixture with its
+ *              symlink, and the UDF fixture. Opening, family probing with
+ *              content fingerprints, sizes, extraction byte for byte, and the
+ *              refusals (not an ISO, a symlink, a corrupt directory).
  *
- *   parsing      7-Zip's -slt output is records of "key = value" lines and
- *                only the Path key names an entry; bsdtar's is bare paths with
- *                inconsistent separators. Both are normalised to the one
- *                convention family.h specifies.
- *
- *   case         the fingerprints in falcon-core/src/media/family.c are written
- *                in each family's own case, and the two namespaces of a single
- *                image disagree about case with each other. Matching folds both
- *                sides.
+ *   label      the PVD's volume label, which goes into a signed cmdline and
+ *              is refused rather than escaped when a cmdline cannot carry it.
  */
 
 #include "tests.h"
@@ -40,652 +33,417 @@
 #include <stdint.h>
 #include <cmocka.h>
 
-#include <string.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <unistd.h>
 #include <fcntl.h>
 #include <limits.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include <sys/stat.h>
+#include <unistd.h>
 
 #include <sign/sign.h>
 #include <sign/isoprobe.h>
 #include <media/family.h>
+#include <crypto/sha256.h>
 
 #ifndef ISOVIEW_IMG
 #define ISOVIEW_IMG "build/test-isoview.iso"
 #endif
+#ifndef MEDIA_FIXTURE_DIR
+#define MEDIA_FIXTURE_DIR "build"
+#endif
 
-/* ------------------------------------------------------------ fixtures */
+/* ------------------------------------------------------------ lookup */
 
-/* What bsdtar prints for a Windows image built by oscdimg: the image root and
- * the one file the ISO9660 stub carries. This is the whole bug in four
- * lines. */
-static const char k_win_iso9660[] =
-    ".\n"
-    "README.TXT\n";
+/* A Windows install medium's layout, as oscdimg writes it: lower case. */
+static const char *const g_windows[] = {
+    "autorun.inf", "boot/", "boot/bcd", "efi/", "efi/boot/",
+    "efi/boot/bootx64.efi", "efi/microsoft/boot/bcd", "setup.exe",
+    "sources/", "sources/boot.wim", "sources/install.wim", NULL
+};
 
-/* What 7-Zip -ba -slt prints for the same image, trimmed to the entries that
- * matter and keeping the surrounding properties so the parser is tested
- * against the real record shape rather than a list of paths. oscdimg writes
- * the UDF names in lower case; the ISO9660 stub beside them is upper. */
-static const char k_win_udf[] =
-    "Path = autorun.inf\n"
-    "Folder = -\n"
-    "Size = 128\n"
-    "Packed Size = 2048\n"
-    "\n"
-    "Path = efi\n"
-    "Folder = +\n"
-    "Size = \n"
-    "\n"
-    "Path = efi/microsoft/boot/bcd\n"
-    "Folder = -\n"
-    "Size = 16384\n"
-    "\n"
-    "Path = sources\n"
-    "Folder = +\n"
-    "\n"
-    "Path = sources/install.wim\n"
-    "Folder = -\n"
-    "Size = 5749051392\n"
-    "\n"
-    "Path = sources/boot.wim\n"
-    "Folder = -\n"
-    "Size = 576716800\n";
+static const char *const g_casper[] = {
+    "/casper/", "/casper/vmlinuz", "/casper/initrd", "/casper/filesystem.squashfs",
+    "/.disk/info", "/boot/grub/grub.cfg", "/EFI/BOOT/BOOTX64.EFI", NULL
+};
 
-static const char k_arch_iso9660[] =
-    ".\n"
-    "arch\n"
-    "arch/boot\n"
-    "arch/boot/x86_64\n"
-    "arch/boot/x86_64/initramfs-linux.img\n"
-    "arch/boot/x86_64/vmlinuz-linux\n"
-    "arch/version\n"
-    "EFI\n"
-    "EFI/BOOT\n"
-    "EFI/BOOT/BOOTx64.EFI\n";
-
-/* What bsdtar lists for the Gentoo 20260510 minimal ISO, trimmed: genkernel's
- * kernel and initramfs names under /boot, dracut's squashfs at the root. */
-static const char k_gentoo_iso9660[] =
-    ".\n"
-    "boot\n"
-    "boot/gentoo\n"
-    "boot/gentoo.igz\n"
-    "boot/grub\n"
-    "boot/grub/grub.cfg\n"
-    "image.squashfs\n"
-    "memtest.efi64\n";
-
-/* ------------------------------------------------------------ helpers */
-
-static iso_view *open_listings(const char *iso9660, const char *udf)
+static void test_isoprobe_windows_layout(void **state)
 {
     iso_view *v = NULL;
-
-    assert_int_equal(iso_view_from_listings(iso9660, udf, &v), SGN_OK);
-    assert_non_null(v);
-    return v;
-}
-
-/* ------------------------------------------------------------ the bug */
-
-static void test_isoprobe_udf_only_windows(void **state)
-{
-    iso_view *v = open_listings(k_win_iso9660, k_win_udf);
-    const char *match = NULL;
     family_probe probe;
+    const char *match = NULL;
+    uint64_t size = 99;
 
     (void)state;
-
-    /* Before the fix the view held README.TXT and nothing else. */
-    assert_int_equal(iso_view_count(v, ISO_READER_ISO9660), 1u);
-    assert_int_equal(iso_view_count(v, ISO_READER_7Z), 6u);
-
-    assert_true(iso_view_find(v, "/sources/install.wim", &match));
-    assert_string_equal(match, "sources/install.wim");
-    assert_int_equal(iso_view_reader_of(v, match), ISO_READER_7Z);
-
+    assert_int_equal(iso_view_from_paths(g_windows, NULL, &v), SGN_OK);
+    assert_int_equal(iso_view_entries(v), 11);
+    assert_string_equal(iso_view_reader(v), "none");
     iso_view_family_probe(v, &probe);
     assert_int_equal(family_detect(&probe)->id, FAMILY_WINDOWS);
+    /* Upper case asked, lower case recorded. */
+    assert_true(iso_view_find(v, "/SOURCES/INSTALL.WIM", &match));
+    assert_string_equal(match, "sources/install.wim");
+    assert_true(iso_view_size(v, match, &size));
+    assert_int_equal(size, 0);
+    /* A directory has no size, and a foreign pointer names nothing. */
+    assert_true(iso_view_find(v, "/sources", &match));
+    assert_false(iso_view_size(v, match, &size));
+    assert_false(iso_view_size(v, "sources/boot.wim", &size));
     iso_view_close(v);
 }
 
-/* The ISO9660-only path is the one that worked before and must be untouched:
- * same listing, no UDF namespace at all, same answer. */
-static void test_isoprobe_iso9660_only_still_classifies(void **state)
+static void test_isoprobe_casper_layout(void **state)
 {
-    iso_view *v = open_listings(k_arch_iso9660, NULL);
+    static const uint64_t sizes[] = { 0, 1234, 55, 7, 1, 2, 3 };
+    iso_view *v = NULL;
     family_probe probe;
-
-    (void)state;
-    assert_int_equal(iso_view_count(v, ISO_READER_7Z), 0u);
-    assert_null(iso_view_udf_reader(v));
-
-    iso_view_family_probe(v, &probe);
-    assert_int_equal(family_detect(&probe)->id, FAMILY_ARCH);
-    assert_string_equal(iso_kernel_path(v, FAMILY_ARCH),
-                        "arch/boot/x86_64/vmlinuz-linux");
-    iso_view_close(v);
-}
-
-/* A hybrid image lists the same tree twice. The ISO9660 entry must win, so
- * that adding the UDF pass cannot move a Linux image onto the other reader. */
-static void test_isoprobe_iso9660_wins_when_both_have_it(void **state)
-{
-    static const char udf[] =
-        "Path = arch/boot/x86_64/vmlinuz-linux\n"
-        "Folder = -\n";
-    iso_view *v = open_listings(k_arch_iso9660, udf);
-    const char *match = NULL;
-
-    (void)state;
-    assert_true(iso_view_find(v, "/arch/boot/x86_64/vmlinuz-linux", &match));
-    assert_int_equal(iso_view_reader_of(v, match), ISO_READER_ISO9660);
-    iso_view_close(v);
-}
-
-/* ------------------------------------------------------------- parsing */
-
-/* Only the Path key names an entry. Every other property is a value that can
- * contain anything at all, including something shaped like a path. */
-static void test_isoprobe_slt_reads_only_path_properties(void **state)
-{
-    static const char udf[] =
-        "Path = sources/install.wim\n"
-        "Folder = -\n"
-        "Comment = Path = not/an/entry\n"
-        "Method = Copy\n"
-        "\n"
-        "Path = sources/boot.wim\n"
-        "Folder = -\n";
-    iso_view *v = open_listings(NULL, udf);
-
-    (void)state;
-    assert_int_equal(iso_view_count(v, ISO_READER_7Z), 2u);
-    assert_false(iso_view_find(v, "/not/an/entry", NULL));
-    assert_true(iso_view_find(v, "/sources/boot.wim", NULL));
-    iso_view_close(v);
-}
-
-/* Separators: a leading '/', a leading "./", a trailing '/' on a directory and
- * a CRLF line ending all mean the same entry. None of the four is a name. */
-static void test_isoprobe_normalises_separators(void **state)
-{
-    static const char tar[] =
-        ".\n"
-        "./casper/\r\n"
-        "/casper/vmlinuz\n"
-        "\n"
-        "/\n";
-    iso_view *v = open_listings(tar, NULL);
-    const char *match = NULL;
-
-    (void)state;
-    assert_int_equal(iso_view_count(v, ISO_READER_ISO9660), 2u);
-    assert_true(iso_view_find(v, "/casper", &match));
-    assert_string_equal(match, "casper");
-    assert_true(iso_view_find(v, "/casper/vmlinuz", &match));
-    assert_string_equal(match, "casper/vmlinuz");
-    iso_view_close(v);
-}
-
-/* A listing whose final line has no newline still names its last entry. */
-static void test_isoprobe_unterminated_last_line(void **state)
-{
-    iso_view *v = open_listings("casper\ncasper/vmlinuz", NULL);
-
-    (void)state;
-    assert_int_equal(iso_view_count(v, ISO_READER_ISO9660), 2u);
-    assert_true(iso_view_find(v, "/casper/vmlinuz", NULL));
-    iso_view_close(v);
-}
-
-/* ---------------------------------------------------------------- size */
-
-/* Preparation needs the byte length the ISO's own directory entry records, so
- * that the range it locates and serves is the one the filesystem describes
- * rather than whatever the extractor happened to produce. 7-Zip prints it as a
- * property of the record above it. */
-static void test_isoprobe_size_from_the_udf_listing(void **state)
-{
-    iso_view *v = open_listings(k_win_iso9660, k_win_udf);
-    const char *match = NULL;
-    uint64_t size = 1;
-
-    (void)state;
-    assert_true(iso_view_find(v, "/sources/boot.wim", &match));
-    assert_true(iso_view_size(v, match, &size));
-    assert_int_equal(size, 576716800u);
-
-    assert_true(iso_view_find(v, "/sources/install.wim", &match));
-    assert_true(iso_view_size(v, match, &size));
-    assert_int_equal(size, 5749051392u);
-    iso_view_close(v);
-}
-
-/* "Packed Size" is the cluster-rounded allocation, not the file length, and a
- * prefix match on "Size = " would silently take it for the wrong entry. A
- * directory's empty Size leaves that entry with none at all. */
-static void test_isoprobe_size_ignores_packed_and_empty(void **state)
-{
-    static const char udf[] =
-        "Path = sources/boot.wim\n"
-        "Folder = -\n"
-        "Size = 593121462\n"
-        "Packed Size = 593123328\n"
-        "\n"
-        "Path = efi\n"
-        "Folder = +\n"
-        "Size = \n"
-        "Packed Size = \n";
-    iso_view *v = open_listings(NULL, udf);
     const char *match = NULL;
     uint64_t size = 0;
+    uint8_t buf[8];
+    size_t got = 9;
 
     (void)state;
-    assert_true(iso_view_find(v, "/sources/boot.wim", &match));
+    assert_int_equal(iso_view_from_paths(g_casper, sizes, &v), SGN_OK);
+    iso_view_family_probe(v, &probe);
+    assert_int_equal(family_detect(&probe)->id, FAMILY_DEBIAN_CASPER);
+    assert_string_equal(iso_kernel_path(v, FAMILY_DEBIAN_CASPER),
+                        "casper/vmlinuz");
+    assert_string_equal(iso_initrd_path(v, FAMILY_DEBIAN_CASPER,
+                                        "casper/vmlinuz"), "casper/initrd");
+    assert_true(iso_view_find(v, "/casper/vmlinuz", &match));
     assert_true(iso_view_size(v, match, &size));
-    assert_int_equal(size, 593121462u);
-
-    assert_true(iso_view_find(v, "/efi", &match));
-    size = 42;
-    assert_false(iso_view_size(v, match, &size));
-    assert_int_equal(size, 0);
+    assert_int_equal(size, 1234);
+    /* No image behind the view: content is unreadable, never invented. */
+    assert_int_equal(probe.read(probe.ctx, "/.disk/info", 0, buf, sizeof buf,
+                                &got), 1);
+    assert_int_equal(got, 0);
+    assert_int_equal(iso_view_extract(v, match, "/dev/null"), SGN_ERR_FORMAT);
     iso_view_close(v);
 }
 
-/* bsdtar lists names and no sizes, so an ISO9660 entry answers "no length
- * here" rather than zero-as-a-length, and the caller has to say which. */
-static void test_isoprobe_size_absent_for_iso9660(void **state)
+static void test_isoprobe_matching_rules(void **state)
 {
-    iso_view *v = open_listings(k_arch_iso9660, NULL);
-    const char *match = NULL;
-    uint64_t size = 7;
-
-    (void)state;
-    assert_true(iso_view_find(v, "/arch/boot/x86_64/vmlinuz-linux", &match));
-    assert_false(iso_view_size(v, match, &size));
-    assert_int_equal(size, 0);
-
-    assert_false(iso_view_size(v, "not-a-member-pointer", &size));
-    assert_false(iso_view_size(NULL, match, &size));
-    assert_false(iso_view_size(v, match, NULL));
-    iso_view_close(v);
-}
-
-/* ---------------------------------------------------------------- case */
-
-/* The two namespaces of one image disagree about case, and the fingerprints in
- * falcon-core/src/media/family.c are written in whichever case that family's
- * media uses. Both directions have to fold. */
-static void test_isoprobe_case_insensitive_both_ways(void **state)
-{
-    static const char tar[] = "SOURCES\nSOURCES/INSTALL.WIM\n";
-    static const char udf[] = "Path = efi/microsoft/boot/bcd\n";
-    iso_view *v = open_listings(tar, udf);
-
-    (void)state;
-    /* lower-case fingerprint against an upper-case ISO9660 name */
-    assert_true(iso_view_find(v, "/sources/install.wim", NULL));
-    /* upper-case query against a lower-case UDF name */
-    assert_true(iso_view_find(v, "/EFI/Microsoft/Boot/BCD", NULL));
-    assert_false(iso_view_find(v, "/sources/install.esd", NULL));
-    iso_view_close(v);
-}
-
-/* A query for a bare directory matches on a path component boundary and never
- * on a bare prefix, or "/live" would match "/livecd-something". */
-static void test_isoprobe_directory_matches_on_component_boundary(void **state)
-{
-    iso_view *v = open_listings("livecd-tools/readme\nlive/vmlinuz-6.1\n",
-                                NULL);
-
-    (void)state;
-    assert_true(iso_view_find(v, "/live", NULL));
-    assert_false(iso_view_find(v, "/liv", NULL));
-    iso_view_close(v);
-}
-
-/* The trailing '*' the per-family kernel table uses for versioned names. */
-static void test_isoprobe_wildcard_suffix(void **state)
-{
-    iso_view *v = open_listings("live\nlive/vmlinuz-6.1.0-40-amd64\n", NULL);
+    static const char *const paths[] = {
+        "./live/vmlinuz-6.12.107+deb13-amd64", "livecd-thing/x", "Arch/Boot/x",
+        "EFI/BOOT/", "", NULL
+    };
+    iso_view *v = NULL;
     const char *match = NULL;
 
     (void)state;
-    assert_false(iso_view_find(v, "/live/vmlinuz", NULL));
+    assert_int_equal(iso_view_from_paths(paths, NULL, &v), SGN_OK);
+    /* Case folds in both directions. */
+    assert_true(iso_view_find(v, "/arch/boot/x", NULL));
+    assert_true(iso_view_find(v, "/ARCH/BOOT/X", NULL));
+    assert_true(iso_view_find(v, "/efi/boot", &match));
+    assert_string_equal(match, "EFI/BOOT");
+    /* A directory matches on a component boundary: "/live" is not
+     * "/livecd-thing", though "/live" is a parent of the kernel. */
+    assert_true(iso_view_find(v, "/live", &match));
+    assert_string_equal(match, "live/vmlinuz-6.12.107+deb13-amd64");
+    assert_false(iso_view_find(v, "/livec", NULL));
+    /* The wildcard is a suffix match and hands back the concrete name. */
     assert_true(iso_view_find(v, "/live/vmlinuz*", &match));
-    assert_string_equal(match, "live/vmlinuz-6.1.0-40-amd64");
-    assert_string_equal(iso_kernel_path(v, FAMILY_DEBIAN_LIVE), match);
-    iso_view_close(v);
-}
-
-/* ------------------------------------------------------------- degrade */
-
-/* Whether the UDF namespace was read at all is a separate question from
- * whether a file was found in it, because the bless flow reports the two
- * differently: one is "this ISO has no such file", the other is "nothing here
- * could read the namespace that file would be in". */
-static void test_isoprobe_udf_reader_reported(void **state)
-{
-    iso_view *with = open_listings(NULL, "Path = sources/install.wim\n");
-    iso_view *without = open_listings(k_arch_iso9660, NULL);
-
-    (void)state;
-    assert_non_null(iso_view_udf_reader(with));
-    assert_null(iso_view_udf_reader(without));
-    assert_null(iso_view_udf_reader(NULL));
-    iso_view_close(with);
-    iso_view_close(without);
-}
-
-/* An empty view is a legal one: it answers no and does not crash. A view with
- * no image behind it reports content as unreadable rather than inventing it,
- * which family.h defines as a fingerprint that does not match. */
-static void test_isoprobe_empty_and_null(void **state)
-{
-    iso_view *v = open_listings(NULL, NULL);
-    family_probe probe;
-    uint8_t buf[16];
-    size_t got = 1;
-
-    (void)state;
-    assert_int_equal(iso_view_count(v, ISO_READER_ISO9660), 0u);
-    assert_false(iso_view_find(v, "/anything", NULL));
-    assert_false(iso_view_find(NULL, "/anything", NULL));
-    assert_false(iso_view_find(v, NULL, NULL));
-    /* A bare "/" and a bare "*" name nothing, and must not match everything. */
+    assert_string_equal(match, "live/vmlinuz-6.12.107+deb13-amd64");
+    assert_string_equal(iso_kernel_path(v, FAMILY_DEBIAN_LIVE),
+                        "live/vmlinuz-6.12.107+deb13-amd64");
+    assert_false(iso_view_find(v, "/zzz*", NULL));
+    /* Nothing asked, nothing found. */
     assert_false(iso_view_find(v, "/", NULL));
     assert_false(iso_view_find(v, "*", NULL));
-    assert_int_equal(family_detect(NULL)->id, FAMILY_UNKNOWN);
-
-    iso_view_family_probe(v, &probe);
-    assert_int_equal(probe.read(probe.ctx, "/whatever", 0, buf, sizeof(buf),
-                                &got), 1);
-    assert_int_equal(got, 0u);
-    assert_int_equal(iso_view_extract(v, "sources/install.wim", "/dev/null"),
-                     SGN_ERR_INTERNAL);
+    assert_false(iso_view_find(v, NULL, &match));
+    assert_null(match);
+    assert_false(iso_view_find(NULL, "/x", NULL));
     iso_view_close(v);
     iso_view_close(NULL);
+
+    assert_int_equal(iso_view_from_paths(NULL, NULL, &v), SGN_ERR_INTERNAL);
+    assert_int_equal(iso_view_entries(NULL), 0);
+    assert_string_equal(iso_view_reader(NULL), "none");
 }
 
-/* A member pointer the view never handed out has no reader, and the answer is
- * the one that preserves the behaviour from before UDF existed. */
-static void test_isoprobe_reader_of_foreign_pointer(void **state)
+/* ------------------------------------------------------------ tables */
+
+static void test_isoprobe_kernel_table_refusals(void **state)
 {
-    iso_view *v = open_listings(NULL, "Path = sources/install.wim\n");
+    static const char *const paths[] = { "arch/boot/x86_64/other", NULL };
+    iso_view *v = NULL;
 
     (void)state;
-    assert_int_equal(iso_view_reader_of(v, "sources/install.wim"),
-                     ISO_READER_ISO9660);
-    assert_int_equal(iso_view_reader_of(v, NULL), ISO_READER_ISO9660);
-    assert_int_equal(iso_view_reader_of(NULL, "x"), ISO_READER_ISO9660);
-    iso_view_close(v);
-}
-
-/* The families with no kernel to wrap say so, and say which family they are,
- * rather than reporting a missing file. */
-static void test_isoprobe_kernel_path_without_a_kernel(void **state)
-{
-    iso_view *v = open_listings(k_win_iso9660, k_win_udf);
-
-    (void)state;
+    assert_int_equal(iso_view_from_paths(paths, NULL, &v), SGN_OK);
+    /* A family with a row whose candidates are all absent. */
+    assert_null(iso_kernel_path(v, FAMILY_ARCH));
+    assert_non_null(strstr(sgn_error(), "no kernel found"));
+    /* A family with no row: it boots no Linux kernel. */
     assert_null(iso_kernel_path(v, FAMILY_WINDOWS));
-    assert_int_equal(sgn_error_code(), SGN_ERR_FORMAT);
+    assert_non_null(strstr(sgn_error(), "no kernel to wrap"));
     assert_null(iso_kernel_path(NULL, FAMILY_ARCH));
+    /* No initramfs beside the kernel. */
+    assert_null(iso_initrd_path(v, FAMILY_ARCH, "arch/boot/x86_64/other"));
+    assert_non_null(strstr(sgn_error(), "no initramfs"));
+    assert_null(iso_initrd_path(v, FAMILY_ARCH, NULL));
     iso_view_close(v);
 }
 
-/* A family whose kernel table row exists but whose candidates are all absent
- * is a different failure from a family with no row at all. */
-static void test_isoprobe_kernel_path_candidates_all_absent(void **state)
+static void test_isoprobe_gentoo_names(void **state)
 {
-    iso_view *v = open_listings("casper\ncasper/filesystem.squashfs\n", NULL);
-
-    (void)state;
-    assert_null(iso_kernel_path(v, FAMILY_DEBIAN_CASPER));
-    assert_int_equal(sgn_error_code(), SGN_ERR_FORMAT);
-    iso_view_close(v);
-}
-
-/* ------------------------------------------------------------------ run */
-
-
-/* ------------------------------------------------- the real image */
-
-/* Everything above builds a view from listing text, which is right for the
- * parsing and the union and covers none of the plumbing: spawning the two
- * helpers, picking a 7-Zip binary from the three names it can have, building
- * an extraction argv per namespace, reading a member back through a pipe and
- * writing one out to a file. That is most of the module, and none of it can
- * be reached without a real image and the real helpers.
- *
- * falcon-cli/tools/mk-test-isoview.sh builds a 500 KB ISO for it. ISO9660 only:
- * no xorriso here carries UDF support and neither genisoimage nor mkisofs is
- * installed, but 7-Zip reads ISO9660 when an image has no UDF, so both helpers
- * list this one and both reader paths run. */
-
-static void test_isoview_open_lists_both_readers(void **state)
-{
-    iso_view *v = NULL;
-    const char *match = NULL;
-
-    (void)state;
-    assert_int_equal(iso_view_open(ISOVIEW_IMG, &v), SGN_OK);
-    assert_non_null(v);
-
-    /* Both helpers ran and both produced entries, which is the whole reason
-     * the view is a union rather than one listing. */
-    assert_true(iso_view_count(v, ISO_READER_ISO9660) > 0);
-    assert_true(iso_view_count(v, ISO_READER_7Z) > 0);
-    assert_non_null(iso_view_udf_reader(v));
-    /* By full path: 7-Zip finds its formats relative to argv[0], and the bare
-     * name loaded none in the appliance (2026-09-18). */
-    assert_int_equal(iso_view_udf_reader(v)[0], '/');
-
-    /* xorriso's -V, read back from the PVD. */
-    {
-        char label[64];
-
-        assert_int_equal(iso_volume_label(ISOVIEW_IMG, label, sizeof(label)),
-                         SGN_OK);
-        assert_string_equal(label, "FALCON_ISOVIEW");
-    }
-
-    /* A name from the tree, resolved through the real listings rather than a
-     * crafted string. */
-    assert_true(iso_view_find(v, "/readme.txt", &match));
-    assert_non_null(match);
-
-    /* Case folding against a real namespace. */
-    match = NULL;
-    assert_true(iso_view_find(v, "/mixedcase/thing.txt", &match));
-    assert_non_null(match);
-
-    assert_false(iso_view_find(v, "/nothing/here.bin", &match));
-
-    iso_view_close(v);
-}
-
-static void test_isoview_open_refuses_a_missing_file(void **state)
-{
-    iso_view *v = (iso_view *)0x1;
-
-    (void)state;
-    assert_int_not_equal(iso_view_open("build/no-such-image.iso", &v), SGN_OK);
-    assert_int_not_equal(iso_view_open(NULL, &v), SGN_OK);
-    assert_int_not_equal(iso_view_open(ISOVIEW_IMG, NULL), SGN_OK);
-}
-
-/* Reading a member back through the helper's pipe, which is how the family
- * fingerprints are matched without unpacking the image. */
-static void test_isoview_family_probe_reads_members(void **state)
-{
-    iso_view *v = NULL;
-    family_probe fp;
-    char buf[64];
-    size_t got = 0;
-
-    (void)state;
-    assert_int_equal(iso_view_open(ISOVIEW_IMG, &v), SGN_OK);
-
-    memset(&fp, 0, sizeof fp);
-    iso_view_family_probe(v, &fp);
-    assert_non_null(fp.exists);
-    assert_non_null(fp.read);
-
-    assert_true(fp.exists(fp.ctx, "/readme.txt") != 0);
-    assert_true(fp.exists(fp.ctx, "/arch/boot/x86_64/vmlinuz-linux") != 0);
-    assert_int_equal(fp.exists(fp.ctx, "/absent/file"), 0);
-
-    /* Known bytes, so this is a test of the pipe and not only of the exit
-     * status. */
-    memset(buf, 0, sizeof buf);
-    assert_int_equal(fp.read(fp.ctx, "/readme.txt", 0, buf, 27u, &got), 0);
-    assert_int_equal(got, 27u);
-    assert_memory_equal(buf, "falcon-boot isoview fixture", 27u);
-
-    /* At an offset, which is the case the reader has to skip forward for
-     * because a pipe cannot seek. */
-    memset(buf, 0, sizeof buf);
-    assert_int_equal(fp.read(fp.ctx, "/readme.txt", 7u, buf, 7u, &got), 0);
-    assert_int_equal(got, 7u);
-    assert_memory_equal(buf, "boot is", 7u);
-
-    /* Past the end is a short read rather than a failure. */
-    got = 1234u;
-    assert_int_equal(fp.read(fp.ctx, "/readme.txt", 1000u, buf, sizeof buf,
-                             &got), 0);
-    assert_int_equal(got, 0);
-
-    assert_int_not_equal(fp.read(fp.ctx, "/absent/file", 0, buf, 8u, &got), 0);
-
-    iso_view_close(v);
-}
-
-/* The kernel-path table against a tree that actually holds one. */
-static void test_isoview_kernel_path_found(void **state)
-{
+    static const char *const paths[] = {
+        "boot/gentoo", "boot/gentoo.igz", "image.squashfs", NULL
+    };
     iso_view *v = NULL;
     const char *k;
 
     (void)state;
-    assert_int_equal(iso_view_open(ISOVIEW_IMG, &v), SGN_OK);
-
-    k = iso_kernel_path(v, FAMILY_ARCH);
-    assert_non_null(k);
-
-    /* A family whose kernel this tree does not carry, and one with no
-     * kernel in the table at all. */
-    assert_null(iso_kernel_path(v, FAMILY_DEBIAN_CASPER));
-    assert_null(iso_kernel_path(v, FAMILY_WINDOWS));
-
+    assert_int_equal(iso_view_from_paths(paths, NULL, &v), SGN_OK);
+    k = iso_kernel_path(v, FAMILY_GENTOO);
+    assert_string_equal(k, "boot/gentoo");
+    assert_string_equal(iso_initrd_path(v, FAMILY_GENTOO, k),
+                        "boot/gentoo.igz");
     iso_view_close(v);
 }
 
-static void test_isoview_size_and_extract(void **state)
+/* ------------------------------------------------------------ images */
+
+static int fixture_path(char *out, size_t cap, const char *name)
+{
+    return snprintf(out, cap, "%s/%s", MEDIA_FIXTURE_DIR, name) < (int)cap;
+}
+
+static void sha_file(const char *path, char *hex)
+{
+    static uint8_t buf[1u << 16];
+    static const char digits[] = "0123456789abcdef";
+    sha256_ctx c;
+    uint8_t h[32];
+    FILE *f = fopen(path, "rb");
+    size_t n;
+    int i;
+
+    assert_non_null(f);
+    sha256_init(&c);
+    while ((n = fread(buf, 1, sizeof buf, f)) > 0)
+        sha256_update(&c, buf, n);
+    fclose(f);
+    sha256_final(&c, h);
+    for (i = 0; i < 32; i++) {
+        hex[2 * i] = digits[h[i] >> 4];
+        hex[2 * i + 1] = digits[h[i] & 15u];
+    }
+    hex[64] = '\0';
+}
+
+static void test_isoview_arch_image(void **state)
 {
     iso_view *v = NULL;
-    const char *match = NULL;
+    family_probe probe;
+    const char *k = NULL;
     uint64_t size = 0;
-    char dst[] = "/tmp/falcon-isoview-XXXXXX";
-    int fd;
     char buf[64];
-    ssize_t n;
+    size_t got = 0;
+    char dst[] = "/tmp/falcon-isoview.XXXXXX";
+    int fd;
+    FILE *f;
 
     (void)state;
     assert_int_equal(iso_view_open(ISOVIEW_IMG, &v), SGN_OK);
-    assert_true(iso_view_find(v, "/readme.txt", &match));
+    assert_string_equal(iso_view_reader(v), "iso9660");
+    iso_view_family_probe(v, &probe);
+    assert_int_equal(family_detect(&probe)->id, FAMILY_ARCH);
 
-    /* 7-Zip's listing carries sizes; bsdtar's does not, so which namespace
-     * owns the entry decides whether this can answer at all. */
-    (void)iso_view_size(v, match, &size);
+    k = iso_kernel_path(v, FAMILY_ARCH);
+    assert_string_equal(k, "arch/boot/x86_64/vmlinuz-linux");
+    assert_true(iso_view_size(v, k, &size));
+    assert_int_equal(size, 20 + 96 * 1024);
 
+    /* The family callback reads content: offsets, short reads, past-end. */
+    assert_int_equal(probe.read(probe.ctx, "/readme.txt", 0, buf, 11, &got), 0);
+    assert_int_equal(got, 11);
+    assert_memory_equal(buf, "falcon-boot", 11);
+    assert_int_equal(probe.read(probe.ctx, "/readme.txt", 7, buf, sizeof buf,
+                                &got), 0);
+    assert_int_equal(got, 28 - 7);
+    assert_int_equal(probe.read(probe.ctx, "/readme.txt", 500, buf, 4, &got),
+                     0);
+    assert_int_equal(got, 0);
+    assert_int_equal(probe.read(probe.ctx, "/nope", 0, buf, 4, &got), 1);
+    assert_int_equal(probe.read(probe.ctx, "/arch", 0, buf, 4, &got), 1);
+
+    /* Extraction, byte for byte. */
     fd = mkstemp(dst);
     assert_true(fd >= 0);
     close(fd);
-
-    assert_int_equal(iso_view_extract(v, match, dst), SGN_OK);
-    fd = open(dst, O_RDONLY);
-    assert_true(fd >= 0);
-    memset(buf, 0, sizeof buf);
-    n = read(fd, buf, sizeof buf);
-    close(fd);
+    assert_true(iso_view_find(v, "/MixedCase/Thing.TXT", &k));
+    assert_int_equal(iso_view_extract(v, k, dst), SGN_OK);
+    f = fopen(dst, "rb");
+    assert_non_null(f);
+    got = fread(buf, 1, sizeof buf, f);
+    fclose(f);
+    assert_int_equal(got, 17);
+    assert_memory_equal(buf, "mixed case entry\n", 17);
+    /* A destination that cannot be created. */
+    assert_int_equal(iso_view_extract(v, k, "/nonexistent-dir/x"), SGN_ERR_IO);
+    assert_int_equal(iso_view_extract(v, NULL, dst), SGN_ERR_INTERNAL);
     unlink(dst);
-    assert_int_equal(n, 28);
-    assert_memory_equal(buf, "falcon-boot isoview fixture\n", 28u);
-
-    /* A member the view never listed. */
-    assert_int_not_equal(iso_view_extract(v, "/absent/file", dst), SGN_OK);
-
     iso_view_close(v);
 }
 
-/* ------------------------------------------------------------ gentoo */
-
-static void test_isoprobe_gentoo_kernel_and_initrd(void **state)
+static void test_isoview_rock_ridge_and_udf(void **state)
 {
-    iso_view *v = open_listings(k_gentoo_iso9660, NULL);
-    family_probe probe;
-    const char *k;
+    char iso[512], img[512], big[512], ref[65], ours[65];
+    char dst[] = "/tmp/falcon-isoview.XXXXXX";
+    iso_view *v = NULL;
+    const char *m = NULL;
+    uint64_t size = 0;
+    int fd;
 
     (void)state;
-    iso_view_family_probe(v, &probe);
-    assert_int_equal(family_detect(&probe)->id, FAMILY_GENTOO);
-    k = iso_kernel_path(v, FAMILY_GENTOO);
-    assert_string_equal(k, "boot/gentoo");
-    /* Not initr*: the family's own name for it. */
-    assert_string_equal(iso_initrd_path(v, FAMILY_GENTOO, k),
-                        "boot/gentoo.igz");
-    assert_string_equal(sgn_family_slug(FAMILY_GENTOO), "gentoo");
+    assert_true(fixture_path(iso, sizeof iso, "test-iso-rr.iso"));
+    assert_int_equal(iso_view_open(iso, &v), SGN_OK);
+    assert_string_equal(iso_view_reader(v), "iso9660");
+    assert_true(iso_view_entries(v) > 400);
+    /* A Rock Ridge symlink is found, and refused as a member to read. */
+    assert_true(iso_view_find(v, "/link-to-s1", &m));
+    assert_int_equal(iso_view_extract(v, m, "/dev/null"), SGN_ERR_FORMAT);
+    assert_non_null(strstr(sgn_error(), "symlink"));
+    iso_view_close(v);
+
+    /* The UDF fixture: a fragmented big.bin extracted whole. */
+    assert_true(fixture_path(img, sizeof img, "test-udf.img"));
+    assert_true(fixture_path(big, sizeof big, "test-udf.bigfile"));
+    assert_int_equal(iso_view_open(img, &v), SGN_OK);
+    assert_string_equal(iso_view_reader(v), "udf");
+    assert_true(iso_view_find(v, "/BIG.BIN", &m));
+    assert_true(iso_view_size(v, m, &size));
+    assert_int_equal(size, 24u * 131072u);
+    fd = mkstemp(dst);
+    assert_true(fd >= 0);
+    close(fd);
+    assert_int_equal(iso_view_extract(v, m, dst), SGN_OK);
+    sha_file(dst, ours);
+    sha_file(big, ref);
+    assert_string_equal(ours, ref);
+    unlink(dst);
     iso_view_close(v);
 }
 
-static void test_isoprobe_initrd_beside_the_kernel(void **state)
+static void test_isoview_refusals(void **state)
 {
-    iso_view *v = open_listings(k_arch_iso9660, NULL);
-    iso_view *g = open_listings(k_gentoo_iso9660, NULL);
+    char p[512];
+    iso_view *v = (iso_view *)&v;
 
     (void)state;
-    assert_string_equal(iso_initrd_path(v, FAMILY_ARCH,
-                                        "arch/boot/x86_64/vmlinuz-linux"),
-                        "arch/boot/x86_64/initramfs-linux.img");
-    /* A family with its own name that is missing falls back to initr*, and
-     * with neither there is an error that says where it looked. */
-    assert_null(iso_initrd_path(v, FAMILY_GENTOO, "boot/gentoo"));
-    assert_non_null(strstr(sgn_error(), "/boot/initr*"));
-    /* The kernel at the image root: the guess is the root. */
-    assert_null(iso_initrd_path(g, FAMILY_UNKNOWN, "vmlinuz"));
-    assert_non_null(strstr(sgn_error(), "//initr*"));
-    assert_null(iso_initrd_path(NULL, FAMILY_ARCH, "x"));
-    assert_null(iso_initrd_path(v, FAMILY_ARCH, NULL));
+    assert_int_equal(iso_view_open("/nonexistent.iso", &v), SGN_ERR_IO);
+    assert_null(v);
+    assert_int_equal(iso_view_open(NULL, &v), SGN_ERR_INTERNAL);
+    assert_int_equal(iso_view_open("/x", NULL), SGN_ERR_INTERNAL);
+    assert_int_equal(iso_view_open_cb(NULL, NULL, "x", &v), SGN_ERR_INTERNAL);
+
+    /* An ext4 image: a filesystem, but not media. */
+    assert_true(fixture_path(p, sizeof p, "test-ext4.img"));
+    if (access(p, R_OK) == 0) {
+        assert_int_equal(iso_view_open(p, &v), SGN_ERR_FORMAT);
+        assert_non_null(strstr(sgn_error(), "not an ISO9660 or UDF"));
+    }
+    /* UDF 2.50: recognised, refused, and the message says why. */
+    assert_true(fixture_path(p, sizeof p, "test-udf-250.img"));
+    assert_int_equal(iso_view_open(p, &v), SGN_ERR_FORMAT);
+    assert_non_null(strstr(sgn_error(), "feature"));
+}
+
+/* A corrupt directory, through the callback seam: the Arch-shaped image in
+ * memory with one byte of a subdirectory's first record broken. */
+static uint8_t *g_img;
+static size_t g_img_len;
+
+static int mem_read(void *ctx, uint64_t off, uint64_t len, void *buf)
+{
+    (void)ctx;
+    if (off + len > g_img_len)
+        return -1;
+    memcpy(buf, g_img + off, (size_t)len);
+    return 0;
+}
+
+static void test_isoview_corrupt_tree(void **state)
+{
+    FILE *f;
+    iso_view *v = NULL;
+    struct stat st;
+    uint32_t root, lba = 0;
+    uint8_t *r;
+
+    (void)state;
+    assert_int_equal(stat(ISOVIEW_IMG, &st), 0);
+    g_img_len = (size_t)st.st_size;
+    g_img = malloc(g_img_len);
+    assert_non_null(g_img);
+    f = fopen(ISOVIEW_IMG, "rb");
+    assert_non_null(f);
+    assert_int_equal(fread(g_img, 1, g_img_len, f), g_img_len);
+    fclose(f);
+
+    assert_int_equal(iso_view_open_cb(mem_read, NULL, "mem", &v), SGN_OK);
     iso_view_close(v);
-    iso_view_close(g);
+
+    /* Find the root's first real entry and make its record overrun the
+     * block: the index must refuse the tree, not skip the entry. */
+    root = (uint32_t)g_img[16 * 2048 + 156 + 2] |
+           ((uint32_t)g_img[16 * 2048 + 156 + 3] << 8) |
+           ((uint32_t)g_img[16 * 2048 + 156 + 4] << 16);
+    r = g_img + (size_t)root * 2048;
+    r += r[0];                  /* past "." */
+    r += r[0];                  /* past ".." */
+    lba = r[0];
+    r[0] = 255;
+    r[32] = 250;
+    assert_int_equal(iso_view_open_cb(mem_read, NULL, "mem", &v),
+                     SGN_ERR_FORMAT);
+    assert_non_null(strstr(sgn_error(), "corrupt"));
+    (void)lba;
+
+    /* Nothing at all readable. */
+    g_img_len = 100;
+    assert_int_equal(iso_view_open_cb(mem_read, NULL, "mem", &v),
+                     SGN_ERR_FORMAT);
+    free(g_img);
+    g_img = NULL;
 }
 
 /* ------------------------------------------------------------ label */
 
-/* A file that is an ISO9660 image only as far as its first descriptor: 16
- * empty sectors, then a PVD whose volume identifier is `label`. */
+/* A minimal ISO9660 image in a file: PVD at 16 with the given label and
+ * descriptor type, a terminator at 17, and a root directory at 18. */
 static void write_pvd(const char *path, const char *label, int type)
 {
-    unsigned char pvd[2048];
-    FILE *f = fopen(path, "wb");
-    size_t n = strlen(label);
-    size_t i;
+    static uint8_t img[20 * 2048];
+    uint8_t *d = img + 16 * 2048;
+    uint8_t *root = img + 18 * 2048;
+    FILE *f;
 
+    memset(img, 0, sizeof img);
+    d[0] = (uint8_t)type;
+    memcpy(d + 1, "CD001", 5);
+    d[6] = 1;
+    memset(d + 40, ' ', 32);
+    memcpy(d + 40, label, strlen(label));
+    d[128] = 0x00;
+    d[129] = 0x08;              /* logical block size 2048, little half */
+    d[156] = 34;
+    d[156 + 2] = 18;
+    d[156 + 11] = 0x08;         /* root length 2048 */
+    d[156 + 25] = 2;
+    d[156 + 32] = 1;
+    img[17 * 2048] = 255;
+    memcpy(img + 17 * 2048 + 1, "CD001", 5);
+    root[0] = 34;
+    root[2] = 18;
+    root[11] = 0x08;
+    root[25] = 2;
+    root[32] = 1;
+    f = fopen(path, "wb");
     assert_non_null(f);
-    memset(pvd, 0, sizeof(pvd));
-    for (i = 0; i < 16u; i++)
-        assert_int_equal(fwrite(pvd, 1, sizeof(pvd), f), sizeof(pvd));
-    pvd[0] = (unsigned char)type;
-    memcpy(pvd + 1, "CD001", 5);
-    memset(pvd + 40, ' ', 32);
-    memcpy(pvd + 40, label, n > 32u ? 32u : n);
-    assert_int_equal(fwrite(pvd, 1, sizeof(pvd), f), sizeof(pvd));
-    assert_int_equal(fclose(f), 0);
+    assert_int_equal(fwrite(img, 1, sizeof img, f), sizeof img);
+    fclose(f);
 }
 
 static void test_isoprobe_volume_label(void **state)
@@ -721,153 +479,87 @@ static void test_isoprobe_volume_label(void **state)
                      SGN_ERR_INTERNAL);
 }
 
-/* ------------------------------------------------------------ 7-Zip lookup */
-
-/* A PATH holding only fake 7-Zips: shell scripts standing in for `7z i`, one
- * whose format table has the UDF row and one whose table is empty, which is
- * what a 7-Zip that could not load 7z.so prints. */
-static char g_fake_dir[64];
-static char *g_saved_path;
-
-static void fake_7z(const char *name, const char *table)
-{
-    char path[128];
-    FILE *f;
-
-    (void)snprintf(path, sizeof(path), "%s/%s", g_fake_dir, name);
-    f = fopen(path, "w");
-    assert_non_null(f);
-    (void)fprintf(f, "#!/bin/sh\nprintf 'Formats:\\n%s\\n'\n", table);
-    assert_int_equal(fclose(f), 0);
-    assert_int_equal(chmod(path, 0755), 0);
-}
-
-static int setup_fake_path(void **state)
-{
-    const char *p = getenv("PATH");
-
-    (void)state;
-    (void)snprintf(g_fake_dir, sizeof(g_fake_dir), "/tmp/falcon-7z.XXXXXX");
-    if (mkdtemp(g_fake_dir) == NULL)
-        return -1;
-    g_saved_path = strdup(p != NULL ? p : "/usr/bin:/bin");
-    return setenv("PATH", g_fake_dir, 1);
-}
-
-static int teardown_fake_path(void **state)
-{
-    char cmd[128];
-
-    (void)state;
-    (void)setenv("PATH", g_saved_path, 1);
-    free(g_saved_path);
-    (void)snprintf(cmd, sizeof(cmd), "rm -rf '%s'", g_fake_dir);
-    return system(cmd) == 0 ? 0 : -1;
-}
+/* ------------------------------------------------------------ PATH lookup */
 
 static void test_which_reports_the_full_path(void **state)
 {
-    char out[PATH_MAX];
-    char want[PATH_MAX];
-    char tiny[4];
+    char dir[] = "/tmp/falcon-which.XXXXXX";
+    char prog[PATH_MAX], out[PATH_MAX], tiny[4];
+    char *saved;
+    const char *p = getenv("PATH");
+    FILE *f;
 
     (void)state;
-    fake_7z("7zz", "");
-    (void)snprintf(want, sizeof(want), "%s/7zz", g_fake_dir);
-    assert_int_equal(sgn_which("7zz", out, sizeof(out)), 1);
-    assert_string_equal(out, want);
-    assert_int_equal(sgn_have_program("7zz"), 1);
+    assert_non_null(mkdtemp(dir));
+    saved = strdup(p != NULL ? p : "/usr/bin:/bin");
+    (void)snprintf(prog, sizeof prog, "%s/fake-tool", dir);
+    f = fopen(prog, "w");
+    assert_non_null(f);
+    (void)fprintf(f, "#!/bin/sh\n");
+    fclose(f);
+    assert_int_equal(chmod(prog, 0755), 0);
+    assert_int_equal(setenv("PATH", dir, 1), 0);
 
+    assert_int_equal(sgn_which("fake-tool", out, sizeof(out)), 1);
+    assert_string_equal(out, prog);
+    assert_int_equal(sgn_have_program("fake-tool"), 1);
     /* A name with a slash is taken as the path itself. */
-    assert_int_equal(sgn_which(want, out, sizeof(out)), 1);
-    assert_string_equal(out, want);
-
+    assert_int_equal(sgn_which(prog, out, sizeof(out)), 1);
+    assert_string_equal(out, prog);
     assert_int_equal(sgn_which("no-such-program", out, sizeof(out)), 0);
-    assert_int_equal(sgn_which("7zz", tiny, sizeof(tiny)), 0);
-    assert_int_equal(sgn_which(want, tiny, sizeof(tiny)), 0);
+    assert_int_equal(sgn_which("fake-tool", tiny, sizeof(tiny)), 0);
+    assert_int_equal(sgn_which(prog, tiny, sizeof(tiny)), 0);
     assert_int_equal(sgn_which(NULL, out, sizeof(out)), 0);
-    assert_int_equal(sgn_which("7zz", NULL, 0), 0);
-    assert_int_equal(unlink(want), 0);
-}
+    assert_int_equal(sgn_which("fake-tool", NULL, 0), 0);
 
-static void test_udf_reader_needs_the_udf_format(void **state)
-{
-    char which[PATH_MAX];
-    char want[PATH_MAX];
-
-    (void)state;
-    /* None at all. */
-    assert_int_equal(iso_udf_reader_ok(which, sizeof(which)), 0);
-    assert_string_equal(which, "");
-
-    /* Present, formats not loaded: the appliance's failure. */
-    fake_7z("7za", "");
-    (void)snprintf(want, sizeof(want), "%s/7za", g_fake_dir);
-    assert_int_equal(iso_udf_reader_ok(which, sizeof(which)), 0);
-    assert_string_equal(which, want);
-
-    /* Present and able to read UDF; 7z is preferred over 7za. */
-    fake_7z("7z", " 0  ....M.O...  Udf      udf iso img");
-    (void)snprintf(want, sizeof(want), "%s/7z", g_fake_dir);
-    assert_int_equal(iso_udf_reader_ok(which, sizeof(which)), 1);
-    assert_string_equal(which, want);
-    assert_int_equal(iso_udf_reader_ok(NULL, 0), 1);
+    (void)setenv("PATH", saved, 1);
+    free(saved);
+    unlink(prog);
+    rmdir(dir);
 }
 
 int run_isoprobe_tests(void)
 {
     const struct CMUnitTest tests[] = {
-        cmocka_unit_test(test_isoprobe_udf_only_windows),
-        cmocka_unit_test(test_isoprobe_iso9660_only_still_classifies),
-        cmocka_unit_test(test_isoprobe_iso9660_wins_when_both_have_it),
-        cmocka_unit_test(test_isoprobe_slt_reads_only_path_properties),
-        cmocka_unit_test(test_isoprobe_normalises_separators),
-        cmocka_unit_test(test_isoprobe_unterminated_last_line),
-        cmocka_unit_test(test_isoprobe_size_from_the_udf_listing),
-        cmocka_unit_test(test_isoprobe_size_ignores_packed_and_empty),
-        cmocka_unit_test(test_isoprobe_size_absent_for_iso9660),
-        cmocka_unit_test(test_isoprobe_case_insensitive_both_ways),
-        cmocka_unit_test(test_isoprobe_directory_matches_on_component_boundary),
-        cmocka_unit_test(test_isoprobe_wildcard_suffix),
-        cmocka_unit_test(test_isoprobe_udf_reader_reported),
-        cmocka_unit_test(test_isoprobe_empty_and_null),
-        cmocka_unit_test(test_isoprobe_reader_of_foreign_pointer),
-        cmocka_unit_test(test_isoprobe_kernel_path_without_a_kernel),
-        cmocka_unit_test(test_isoprobe_kernel_path_candidates_all_absent),
-        cmocka_unit_test(test_isoprobe_gentoo_kernel_and_initrd),
-        cmocka_unit_test(test_isoprobe_initrd_beside_the_kernel),
+        cmocka_unit_test(test_isoprobe_windows_layout),
+        cmocka_unit_test(test_isoprobe_casper_layout),
+        cmocka_unit_test(test_isoprobe_matching_rules),
+        cmocka_unit_test(test_isoprobe_kernel_table_refusals),
+        cmocka_unit_test(test_isoprobe_gentoo_names),
         cmocka_unit_test(test_isoprobe_volume_label),
-    };
-
-    const struct CMUnitTest image_tests[] = {
-        cmocka_unit_test(test_isoview_open_lists_both_readers),
-        cmocka_unit_test(test_isoview_open_refuses_a_missing_file),
-        cmocka_unit_test(test_isoview_family_probe_reads_members),
-        cmocka_unit_test(test_isoview_kernel_path_found),
-        cmocka_unit_test(test_isoview_size_and_extract),
-    };
-    const struct CMUnitTest lookup_tests[] = {
         cmocka_unit_test(test_which_reports_the_full_path),
-        cmocka_unit_test(test_udf_reader_needs_the_udf_format),
     };
+    const struct CMUnitTest image_tests[] = {
+        cmocka_unit_test(test_isoview_arch_image),
+        cmocka_unit_test(test_isoview_rock_ridge_and_udf),
+        cmocka_unit_test(test_isoview_refusals),
+        cmocka_unit_test(test_isoview_corrupt_tree),
+    };
+    static const char *const need[] = {
+        "test-iso-rr.iso", "test-udf.img", "test-udf.bigfile",
+        "test-udf-250.img",
+    };
+    char p[512];
     int failed;
-    int fd;
+    size_t i;
 
-    failed = cmocka_run_group_tests_name("ISO namespaces (bless tool)", tests,
+    failed = cmocka_run_group_tests_name("ISO view (bless tool)", tests,
                                          NULL, NULL);
-    failed += cmocka_run_group_tests_name("7-Zip lookup (bless tool)",
-                                          lookup_tests, setup_fake_path,
-                                          teardown_fake_path);
-
-    fd = open(ISOVIEW_IMG, O_RDONLY);
-    if (fd < 0) {
+    if (access(ISOVIEW_IMG, R_OK) != 0) {
         printf("\n[  SKIPPED ] ISO view fixture: %s not found.\n"
                "             Build it with: make test-isoview (needs xorriso).\n",
                ISOVIEW_IMG);
         return failed + test_skip_rc();
     }
-    close(fd);
-
-    return failed + cmocka_run_group_tests_name("ISO view (real image)",
+    for (i = 0; i < sizeof need / sizeof need[0]; i++) {
+        (void)snprintf(p, sizeof p, "%s/%s", MEDIA_FIXTURE_DIR, need[i]);
+        if (access(p, R_OK) != 0) {
+            printf("\n[  SKIPPED ] ISO view: %s not found.\n"
+                   "             Build it with: make test-iso9660 test-udf\n",
+                   p);
+            return failed + test_skip_rc();
+        }
+    }
+    return failed + cmocka_run_group_tests_name("ISO view (real images)",
                                                 image_tests, NULL, NULL);
 }

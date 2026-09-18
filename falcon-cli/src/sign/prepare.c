@@ -669,12 +669,7 @@ static int prepare(const options *o)
         sgn_set_error(SGN_ERR_FORMAT,
                       "this ISO classifies as '%s', not Windows install "
                       "media. Preparation applies to Windows media only; "
-                      "Linux media takes the bless path.%s", fam->name,
-                      (iso_view_udf_reader(view) == NULL)
-                          ? " Note that 7z is not on PATH, so this ISO's UDF "
-                            "namespace was not read, and Windows install "
-                            "media looks empty without it."
-                          : "");
+                      "Linux media takes the bless path.", fam->name);
         rc = SGN_ERR_FORMAT;
         goto out;
     }
@@ -690,10 +685,9 @@ static int prepare(const options *o)
     }
     if (!iso_view_size(view, member, &wim_len) || wim_len == 0) {
         sgn_set_error(SGN_ERR_FORMAT,
-                      "the ISO listing gave no length for /%s, so the byte "
-                      "range to replace cannot be established. This needs the "
-                      "UDF listing (7z); the ISO9660 reader lists names "
-                      "without sizes.", member);
+                      "the ISO's directory entry gives no length for /%s, so "
+                      "the byte range to replace cannot be established.",
+                      member);
         rc = SGN_ERR_FORMAT;
         goto out;
     }

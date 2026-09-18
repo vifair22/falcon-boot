@@ -53,9 +53,7 @@ static uint64_t p2_free_bytes(void)
 #define PREP_TIGHT_BYTES ((uint64_t)2u << 30)
 
 /* Whether this image can prepare at all. A build that dropped one of these
- * would otherwise fail per ISO with a message about the ISO; missing 7z is
- * worse still, because Windows media is UDF-only and without a UDF reader it
- * classifies as an unknown Linux image and lands in the wrong queue.
+ * would otherwise fail per ISO with a message about the ISO.
  *
  * PID 1 in an initramfs inherits no environment, so these lookups run against
  * sgn_have_program's own "/usr/bin:/bin" fallback rather than against a PATH.
@@ -69,14 +67,6 @@ int prep_tools_present(void)
     if (!sgn_have_program(WIM_TOOL)) {
         say("WARNING: %s is not in this appliance image, so no Windows ISO\n"
             "         can be prepared on this stick.\n", WIM_TOOL);
-        ok = 0;
-    }
-    if (!iso_udf_reader_ok(NULL, 0)) {
-        say("WARNING: %s cannot read UDF in this appliance image. Windows\n"
-            "         install media keeps its files in the UDF namespace\n"
-            "         only, so such an ISO reads as empty and is listed\n"
-            "         below as unsigned Linux media rather than prepared.\n",
-            Z_TOOL);
         ok = 0;
     }
     if (access(WINJUMP_PATH, R_OK) != 0) {

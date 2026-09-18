@@ -89,9 +89,9 @@ static void add_to(candidate *q, size_t *n, const char *what, const char *rel,
     (*n)++;
 }
 
-/* The family of one ISO, read the way `falcon-boot-sign` reads it: bsdtar over
- * the ISO9660 namespace and 7-Zip over the UDF one, unioned into a listing,
- * then falcon-core/src/media/family.c fingerprinted over that. Same reader and
+/* The family of one ISO, read the way `falcon-boot-sign` reads it: indexed by
+ * falcon-core's ISO9660/UDF readers (falcon-cli/src/sign/isoprobe.c), then
+ * falcon-core/src/media/family.c fingerprinted over that. Same reader and
  * same table as the tool this program is about to hand the file to, so the
  * survey cannot route an image into a queue the tool will then refuse it from.
  * No mount and no loop device: falcon-cli/src/sign/isoprobe.c says in as many
@@ -144,7 +144,7 @@ static int sidecars_intact(const manifest_record *rec)
  * two questions below differently and neither answer belongs in the walk.
  *
  * A payload is not read as an ISO: there is nothing in a PE or a FAT image
- * for bsdtar to list, so classify() would report it unreadable and drop a
+ * for the ISO readers to index, so classify() would report it unreadable and drop a
  * perfectly blessable file. Its family is decided inside the tool, from the
  * volumes inside the image, and only to refuse the families that boot
  * something after the payload (sgn_payload_refusal).

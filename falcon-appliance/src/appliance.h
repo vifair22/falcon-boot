@@ -37,14 +37,12 @@
 
 /* What the preparation half needs from the image, checked by name so an
  * appliance built without one of them says so once instead of failing per
- * ISO with a message about the ISO. WIM_TOOL rewrites boot.wim; Z_TOOL is
- * what reads the UDF namespace, and Windows media is UDF-only, so without it
- * every Windows ISO on p2 would classify as an unknown Linux image and land
- * in the wrong queue. WINJUMP_PATH is the file that replaces winpeshl.exe
- * inside the patched image; it sits beside the sign tool because that is the
- * first place falcon-cli/src/sign/prepare.c looks (find_winjump). */
+ * ISO with a message about the ISO. WIM_TOOL rewrites boot.wim. WINJUMP_PATH
+ * is the file that replaces winpeshl.exe inside the patched image; it sits
+ * beside the sign tool because that is the first place
+ * falcon-cli/src/sign/prepare.c looks (find_winjump). Reading the ISO needs
+ * nothing from the image: the sign tool reads ISO9660 and UDF in process. */
 #define WIM_TOOL     "wimlib-imagex"
-#define Z_TOOL       "7z"
 #define WINJUMP_PATH "/usr/bin/winjump.exe"
 
 #define MANIFEST_PATH P2_MNT "/falcon/blessed/manifest"

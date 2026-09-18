@@ -13,15 +13,16 @@ APPLIANCE := falcon-appliance/src
 # manifest parser the loader uses, so the appliance cannot disagree with the
 # menu about which partition is which or what "already blessed" means; and the
 # bless tool's ISO reader, family table and payload rules, so the survey
-# cannot put an image in a queue the tool will refuse it from. util.c and the
-# two crypto units come along because isoprobe calls into them.
+# cannot put an image in a queue the tool will refuse it from. util.c, the
+# two crypto units and the filesystem drivers come along because isoprobe
+# calls into them.
 #
 # Ordinary Linux userland, held to the same host flags as falcon-cli, and
 # linked static: it is PID 1 in an initramfs whose dynamic loader exists for
 # the other programs, not for this one.
 APPLIANCE_INIT_SRCS := $(addprefix $(APPLIANCE)/,main.c console.c stick.c \
 	run.c survey.c select.c prepare.c bless.c route.c) \
-	$(CORE_PART) $(CORE_MANIFEST) $(CORE)/media/family.c \
+	$(CORE_PART) $(CORE_MANIFEST) $(CORE)/media/family.c $(CORE_FS) \
 	$(addprefix $(CLI)/sign/,isoprobe.c payload.c util.c) \
 	$(CORE)/crypto/sha256.c $(CORE)/crypto/crypto.c
 

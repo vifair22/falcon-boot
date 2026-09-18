@@ -2,9 +2,10 @@
  *
  * Wraps an ISO's kernel in a minimal signed UKI so the ISO can boot with
  * Secure Boot validation left on, and records the fact in the p2 manifest.
- * Ordinary Linux userland C: it shells out to bsdtar, 7-Zip and sbsign
- * rather than reimplementing ISO9660, UDF or Authenticode, which is the
- * vendoring line DESIGN Section 8.1 draws. The UKI wrap itself is built here
+ * Ordinary Linux userland C. It reads ISOs with falcon-core's own ISO9660
+ * and UDF drivers, the ones the loader uses (DESIGN Section 6.4), and shells
+ * out to sbsign rather than reimplementing Authenticode signing, which is
+ * the vendoring line DESIGN Section 8.1 draws. The UKI wrap itself is built here
  * (uki.c), not by ukify: DESIGN Section 8.1 says why. It never reimplements
  * signing and it never holds anything but the key file the user pointed it
  * at, which stays the caller's problem to keep encrypted at rest.
@@ -104,13 +105,13 @@ static inline char *sgn_arg(const char *s)
     return (char *)(uintptr_t)s;
 }
 
-/* Is this program on PATH? Checked up front so a missing bsdtar is one
+/* Is this program on PATH? Checked up front so a missing sbsign is one
  * clear message instead of a failure three steps into the flow. */
 int sgn_have_program(const char *name);
 
 /* The same lookup, reporting where: the PATH entry it was found in, joined to
  * the name, into out. 1 when found and it fits, 0 otherwise. For a program
- * that has to be run by its full path, which 7-Zip does (isoprobe.c). */
+ * that has to be run by its full path. */
 int sgn_which(const char *name, char *out, size_t cap);
 
 /* ------------------------------------------------------------ files */
@@ -179,39 +180,25 @@ int sgn_fs_uuid_for_path(const char *path, char *out, size_t cap);
 
 typedef struct iso_view iso_view;
 
-/* Opens the ISO by listing it: bsdtar for the ISO9660/Rock Ridge namespace,
- * 7-Zip for the UDF one, and the view is the union. No mount, no loop device
- * and no root: the listing is the directory tree, and individual members are
- * extracted on demand by whichever helper listed them.
- *
- * 7-Zip is a soft dependency. Without it the ISO9660 half still lists, which
- * is every Linux image in full; what is lost is UDF-only media, and open logs
- * a warning saying so. */
+/* Opens the ISO and indexes its whole tree with falcon-core's ISO9660 and UDF
+ * drivers (DESIGN Section 6.4), through the filesystem registry, which reads
+ * a bridge disc through its UDF side. No mount, no loop device, no root and
+ * no helper process: members are read in process on demand. */
 int iso_view_open(const char *path, iso_view **out);
 void iso_view_close(iso_view *v);
 
-/* Which helper read this image's UDF namespace, or NULL when none was
- * available. Callers use it to tell "this image has no such file" apart from
- * "nothing here could read the namespace the file would be in". */
-const char *iso_view_udf_reader(const iso_view *v);
-
-/* Whether this system can read UDF at all: 7-Zip is found AND it loads its
- * format library AND that library has the UDF handler. 1 or 0; `which`, when
- * not NULL, receives the binary's path (empty when there is none). This is
- * the check the appliance runs once at start, because a 7-Zip that is present
- * but cannot load its formats fails per ISO with a message about the ISO. */
-int iso_udf_reader_ok(char *which, size_t cap);
+/* The driver the view reads through: "udf", "iso9660", or "none" for a view
+ * with no image behind it. For messages. */
+const char *iso_view_reader(const iso_view *v);
 
 /* Fills in a family_probe backed by this view, so
  * falcon-core/src/media/family.c fingerprints a real ISO through the same two
  * callbacks the loader gives it for a firmware-mounted ESP. */
 void iso_view_family_probe(iso_view *v, family_probe *fp);
 
-/* The byte length the ISO's own directory entry records for a member, as the
- * UDF listing reported it. Nonzero when the entry carried one; the ISO9660
- * reader lists names without sizes, so a member that came from there answers
- * zero and the caller must say so rather than assume. The member pointer must
- * be one iso_view_find handed out. */
+/* The byte length the ISO's own directory entry records for a member. 1 with
+ * *out set for a file, 0 for a directory, for a member pointer iso_view_find
+ * did not hand out, and in a view with no sizes behind it. */
 int iso_view_size(const iso_view *v, const char *member, uint64_t *out);
 
 /* Does the member exist? Paths are absolute and '/'-separated as

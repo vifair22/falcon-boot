@@ -1,101 +1,70 @@
 /* falcon-boot-sign: reading an ISO without mounting it.
  *
- * The bless tool has to fingerprint an ISO's layout (DESIGN Section 6.2)
- * and pull one file out of it. Loop-mounting would need root, which the
- * on-stick signing appliance has but a user blessing an ISO on their own
- * laptop should not need, and which would put a mount of untrusted media
- * into a tool whose whole job is to be the careful step. So the ISO is read
- * by listing it with a helper that already speaks the filesystem, exactly as
- * DESIGN Section 8.1's vendoring line asks: one listing up front becomes the
- * directory tree, and members are extracted on demand.
+ * The bless tool has to fingerprint an ISO's layout (DESIGN Section 6.2) and
+ * pull files out of it. Loop-mounting would need root, which a user blessing
+ * an ISO on their own laptop should not need, and would put a mount of
+ * untrusted media into a tool whose whole job is to be the careful step.
  *
- * Two helpers, because one namespace is not the whole image. bsdtar speaks
- * ISO9660 and Rock Ridge, which is the entire tree of every Linux image here
- * and the reason it stays the primary reader. It does not speak UDF, and
- * Microsoft builds Windows install media with `oscdimg -u1 -udfver102`: the
- * ISO9660 side of that image is a stub holding one ~135-byte /README.TXT and
- * every real file (/sources/install.wim, /efi/microsoft/boot/bcd) exists only
- * in the UDF namespace. Listed with bsdtar alone, Windows media looks like an
- * almost-empty filesystem and classifies as unknown. 7-Zip does speak UDF, so
- * the view is the union of both listings, each entry remembering which helper
- * can extract it. This is the host-side twin of the loader's own UDF fix.
+ * So the ISO is read in process by falcon-core's own ISO9660 and UDF drivers
+ * (DESIGN Section 6.4), through the filesystem registry: the same code the
+ * loader reads an ISO with at boot, which makes "what the sign tool found"
+ * and "what the loader will find" one answer rather than two. Before this the
+ * tool listed the image with bsdtar for ISO9660 and 7-Zip for UDF and unioned
+ * the two listings; both helpers are gone from the bless path.
  *
- * 7-Zip is a soft dependency, not a hard one: without it the ISO9660 half
- * still lists and every Linux family still blesses, so a missing 7z is a
- * warning naming what it costs rather than a refusal to run.
+ * One name space, the registry's choice. A Windows install image is a UDF
+ * bridge disc whose ISO9660 side is a stub with one README, and the registry
+ * probes UDF before ISO9660 for exactly that reason; a Linux image has no UDF
+ * and is read through Rock Ridge.
  *
- * The listing is also what lets falcon-core/src/media/family.c run here
- * unchanged. It reaches the filesystem through two callbacks precisely so the
- * same detection code can fingerprint a firmware-mounted ESP in the loader and
- * a helper's listing on a host, and this file is the second of those two
- * bindings.
+ * The tree is walked once at open and indexed: every entry's path (relative
+ * to the root, no leading slash), its size and the dirent the driver needs to
+ * open it again. Lookups are then string matches over the index, which is
+ * what falcon-core/src/media/family.c's exists() and the kernel table want.
  *
- * Path convention, and the case landmine. family.h specifies absolute,
- * '/'-separated, ASCII, no trailing slash, matched case-insensitively, and
- * its fingerprints are written in the case each family's own media uses. No
- * two readers agree on that case or on the separators: bsdtar prints paths
- * relative to the image root with no leading slash and directories sometimes
- * with a trailing one, 7-Zip prints the UDF name, and on an oscdimg image the
- * UDF name is all lower case ("efi/microsoft/boot/bcd") while the ISO9660
- * stub beside it is all upper. So every comparison here folds both sides and
- * normalises the separators of both, rather than trusting either.
+ * Path convention: family.h specifies absolute, '/'-separated, ASCII, no
+ * trailing slash, matched case-insensitively. Rock Ridge names keep the
+ * author's case and oscdimg's UDF names are lower case, so every comparison
+ * here folds both sides.
  */
 
 #include <sign/sign.h>
 #include <sign/isoprobe.h>
 
+#include <fs/fs.h>
+
 #include <errno.h>
+#include <fcntl.h>
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
-/* A bsdtar listing is a few hundred kilobytes even for a bloated 5 GB desktop
- * ISO (the kubuntu 26.04 image on this machine lists 758 entries). A megabyte
- * is room for two orders of magnitude more; past that something is wrong
- * with the image and stopping is better than growing. */
-#define LISTING_MAX (4u << 20)
-
-/* 7-Zip's -slt listing spends about ten lines and 250 bytes per entry where
- * bsdtar spends one line and a path, so the same entry budget costs roughly
- * forty times the bytes: the Windows 11 25H2 image lists 1069 entries in
- * 255 KB. The cap is raised to match rather than shared, so that a large
- * image is not rejected purely for the verbosity of the reader. */
-#define Z_LISTING_MAX (32u << 20)
-
-/* Content fingerprints read the head of a small text file (family.c asks
- * for 1 KB of a loader entry). Nothing legitimate needs more, and the cap
- * keeps a malicious ISO from making the tool buffer a gigabyte. */
+/* Content fingerprints read the head of a small text file (family.c asks for
+ * 1 KB of a loader entry). Nothing legitimate needs more. */
 #define MEMBER_MAX (4u << 20)
 
-/* Every -slt property line is "key = value"; only this key names an entry. */
-#define Z_PATH_KEY "Path = "
+/* How deep the index walk descends. Deep-directory relocation lets Rock Ridge
+ * go past ISO9660's eight levels; no medium in the corpus goes past twelve. */
+#define WALK_DEPTH_MAX 32u
 
-/* The one other property worth keeping: the byte length the ISO's own
- * directory entry records. Preparation needs it to know how long a range it
- * has to locate and serve (DESIGN Section 6.3), and taking it from the
- * listing rather than from the extracted copy is what makes "the length
- * agrees with the directory entry" a real check rather than a tautology.
- * Matched at the start of the line so that "Packed Size = ", which is the
- * cluster-rounded allocation and not the file length, cannot be mistaken
- * for it. */
-#define Z_SIZE_KEY "Size = "
+/* How many entries an image may hold before the index gives up. The largest
+ * medium in the corpus holds about 1400. */
+#define ENTRIES_MAX 200000u
 
 typedef struct {
-    char      *name;      /* into the owning listing buffer, normalised */
-    uint64_t   size;      /* directory-entry length, when the reader gave one */
-    iso_reader reader;    /* which helper can extract it */
-    uint8_t    has_size;
+    char     *name;     /* heap, normalised: no leading or trailing '/' */
+    uint64_t  size;
+    uint8_t   is_dir;
+    fs_dirent ent;      /* for reopening; unused in a view with no volume */
 } iso_entry;
 
 struct iso_view {
-    char       *path;                   /* the ISO itself */
-    char       *listing[ISO_READER_N];  /* helper output, chopped into lines */
-    const char *zbin;                   /* 7-Zip binary, NULL when absent */
-    char        zbin_path[PATH_MAX];    /* zbin's storage when resolved here */
+    int         fd;                     /* -1 for a view with no image */
+    fs_vol     *vol;                    /* NULL for a view with no image */
     iso_entry  *entries;
     size_t      n_entries;
-    size_t      n_iso9660;              /* how many of those came from bsdtar */
     size_t      cap;
 };
 
@@ -104,9 +73,6 @@ static char lower_ascii(char c)
     return (c >= 'A' && c <= 'Z') ? (char)(c + ('a' - 'A')) : c;
 }
 
-/* ASCII case-insensitive comparison of n bytes. The media we fingerprint
- * are case-insensitive by nature (ISO9660, UDF and the UEFI File Protocol
- * all), and all of it is ASCII by construction. */
 static int ci_eq(const char *a, const char *b, size_t n)
 {
     size_t i;
@@ -118,8 +84,6 @@ static int ci_eq(const char *a, const char *b, size_t n)
     return 1;
 }
 
-/* Strips the leading separators family.h puts on every query path, and the
- * "./" prefix a listing tool may put on every entry of its own. */
 static const char *strip_leading(const char *p)
 {
     for (;;) {
@@ -132,191 +96,118 @@ static const char *strip_leading(const char *p)
     }
 }
 
-/* ------------------------------------------------------------ listings */
+/* ------------------------------------------------------------ the index */
 
-/* Normalises one raw listing line in place into the convention above: no
- * leading separator, no trailing one, no CR. Returns NULL when the line
- * names nothing, which is the "." bsdtar prints for the image root, the
- * blank lines 7-Zip puts between records, and a line that was all
- * separators. */
-static char *normalise_entry(char *line, size_t n)
+static int entries_push(iso_view *v, const char *name, uint64_t size,
+                        uint8_t is_dir, const fs_dirent *ent)
 {
-    size_t lead;
+    iso_entry *e;
 
-    while (n > 0 && (line[n - 1u] == '\r' || line[n - 1u] == '/'))
-        line[--n] = '\0';
-    lead = (size_t)(strip_leading(line) - line);
-    line += lead;
-    n -= lead;
-    if (n == 0 || (n == 1u && line[0] == '.'))
-        return NULL;
-    return line;
-}
-
-static int entries_push(iso_view *v, char *name, iso_reader reader)
-{
+    if (v->n_entries >= ENTRIES_MAX) {
+        sgn_set_error(SGN_ERR_FORMAT, "the ISO holds more than %u entries",
+                      ENTRIES_MAX);
+        return SGN_ERR_FORMAT;
+    }
     if (v->n_entries == v->cap) {
         size_t cap = (v->cap == 0) ? 256u : v->cap * 2u;
         iso_entry *bigger = realloc(v->entries, cap * sizeof(*bigger));
 
         if (bigger == NULL) {
-            sgn_set_error(SGN_ERR_IO, "out of memory indexing the ISO listing");
+            sgn_set_error(SGN_ERR_IO, "out of memory indexing the ISO");
             return SGN_ERR_IO;
         }
         v->entries = bigger;
         v->cap = cap;
     }
-    v->entries[v->n_entries].name = name;
-    v->entries[v->n_entries].reader = reader;
-    v->entries[v->n_entries].size = 0;
-    v->entries[v->n_entries].has_size = 0;
+    e = &v->entries[v->n_entries];
+    memset(e, 0, sizeof(*e));
+    e->name = strdup(name);
+    if (e->name == NULL) {
+        sgn_set_error(SGN_ERR_IO, "out of memory indexing the ISO");
+        return SGN_ERR_IO;
+    }
+    e->size = size;
+    e->is_dir = is_dir;
+    if (ent != NULL)
+        e->ent = *ent;
     v->n_entries++;
     return SGN_OK;
 }
 
-/* Decimal, whole string, no sign and no overflow. Anything else means the
- * property was not a plain byte count (7-Zip prints an empty Size for a
- * directory), and the entry simply keeps no size. */
-static int parse_u64(const char *s, uint64_t *out)
+/* Depth-first over the mounted volume. The path buffer is extended in place
+ * and restored on the way out; each level's iterator is on the heap because
+ * it carries a driver's block cache. */
+static int index_dir(iso_view *v, fs_dir *d, char *path, size_t cap,
+                     unsigned depth)
 {
-    uint64_t v = 0;
-    size_t digits = 0;
-    size_t i = 0;
+    fs_dirent e;
+    int rc;
 
-    while (s[i] >= '0' && s[i] <= '9') {
-        unsigned d = (unsigned)(s[i] - '0');
+    while ((rc = fs_dir_next(d, &e)) == 1) {
+        char name[FS_NAME_MAX * 3u + 1u];
+        size_t pl = strlen(path);
+        size_t nl;
+        int w;
 
-        if (v > (UINT64_MAX - d) / 10u)
-            return 0;
-        v = v * 10u + d;
-        digits++;
-        i++;
-    }
-    if (digits == 0)
-        return 0;
-    /* A CRLF listing leaves the carriage return on the value; nothing else
-     * may follow the number. */
-    while (s[i] == '\r' || s[i] == ' ' || s[i] == '\t')
-        i++;
-    if (s[i] != '\0')
-        return 0;
-    *out = v;
-    return 1;
-}
-
-/* Chops one helper's output into NUL-terminated lines in place and indexes
- * the entries it names. text stays owned by the view: every stored name is a
- * pointer into it.
- *
- * For 7-Zip the interesting lines are the "Path = " properties of the -slt
- * record format. No ISO9660 or UDF name can carry the newline that would let
- * some other property forge one, so a line-oriented scan is exact rather than
- * a heuristic. */
-int iso_listing_index(iso_view *v, char *text, iso_reader reader)
-{
-    size_t i = 0;
-
-    if (v == NULL || text == NULL)
-        return SGN_ERR_INTERNAL;
-
-    while (text[i] != '\0') {
-        char *line = text + i;
-        size_t n;
-
-        while (text[i] != '\0' && text[i] != '\n')
-            i++;
-        n = (size_t)(text + i - line);
-        if (text[i] == '\n')
-            text[i++] = '\0';
-
-        if (reader == ISO_READER_7Z) {
-            if (n >= sizeof(Z_SIZE_KEY) - 1u &&
-                memcmp(line, Z_SIZE_KEY, sizeof(Z_SIZE_KEY) - 1u) == 0) {
-                uint64_t sz = 0;
-                iso_entry *last;
-
-                /* Properties belong to the record above them, and only to one
-                 * this pass just indexed: an entry the other reader supplied
-                 * has no business acquiring a size from this listing. */
-                if (v->n_entries == 0)
-                    continue;
-                last = &v->entries[v->n_entries - 1u];
-                if (last->reader != reader || last->has_size)
-                    continue;
-                if (parse_u64(line + sizeof(Z_SIZE_KEY) - 1u, &sz)) {
-                    last->size = sz;
-                    last->has_size = 1;
-                }
-                continue;
-            }
-            if (n < sizeof(Z_PATH_KEY) - 1u ||
-                memcmp(line, Z_PATH_KEY, sizeof(Z_PATH_KEY) - 1u) != 0)
-                continue;
-            line += sizeof(Z_PATH_KEY) - 1u;
-            n -= sizeof(Z_PATH_KEY) - 1u;
+        nl = fs_name_to_bytes(e.name, (uint8_t *)name, sizeof(name));
+        if (nl == 0 || memchr(name, '/', nl) != NULL)
+            continue;   /* no name a path can carry */
+        w = snprintf(path + pl, cap - pl, "%s%s", pl ? "/" : "", name);
+        if (w < 0 || (size_t)w >= cap - pl) {
+            path[pl] = '\0';
+            sgn_set_error(SGN_ERR_FORMAT, "a path in the ISO is too long");
+            return SGN_ERR_FORMAT;
         }
-        line = normalise_entry(line, n);
-        if (line == NULL)
-            continue;
-        if (entries_push(v, line, reader) != SGN_OK)
-            return SGN_ERR_IO;
+        rc = entries_push(v, path, e.size, e.is_dir, &e);
+        if (rc != SGN_OK)
+            return rc;
+        if (e.is_dir && depth + 1u < WALK_DEPTH_MAX) {
+            fs_dir *sub = malloc(sizeof(*sub));
+
+            if (sub == NULL) {
+                sgn_set_error(SGN_ERR_IO, "out of memory indexing the ISO");
+                return SGN_ERR_IO;
+            }
+            rc = fs_dir_open(v->vol, sub, &e);
+            if (rc == FS_OK) {
+                rc = index_dir(v, sub, path, cap, depth + 1u);
+            } else {
+                sgn_set_error(SGN_ERR_FORMAT, "the ISO's directory '%s' "
+                              "cannot be read (status %d)", path, rc);
+                rc = SGN_ERR_FORMAT;
+            }
+            free(sub);
+            if (rc != SGN_OK)
+                return rc;
+        }
+        path[pl] = '\0';
+    }
+    if (rc < 0) {
+        sgn_set_error(SGN_ERR_FORMAT, "the ISO's directory tree is corrupt "
+                      "(%s status %d)", fs_vol_name(v->vol), rc);
+        return SGN_ERR_FORMAT;
     }
     return SGN_OK;
 }
 
-/* ------------------------------------------------------------ open */
-
-/* The 7-Zip binary goes by three names depending on how it was packaged, and
- * all three of the builds in circulation carry the UDF handler. Tried in the
- * order of how likely each is to be the full build.
- *
- * Resolved to a full path and run by it, never by bare name: 7-Zip loads its
- * format library (7z.so) from the directory in argv[0], so started as plain
- * "7z" it looks for ./7z.so in whatever the current directory is, loads no
- * formats, and answers "Cannot open the file as archive" for every image. A
- * host whose 7z is a shell wrapper that execs the real binary by full path
- * hides this; the appliance, which has no shell and stages the real binary,
- * does not (seen on hardware 2026-09-18). */
-static const char *const g_zbins[] = { "7z", "7zz", "7za", NULL };
-
-static const char *pick_zbin(char *buf, size_t cap)
+static int fd_read(void *ctx, uint64_t off, uint64_t len, void *buf)
 {
-    size_t i;
+    int fd = *(const int *)ctx;
+    uint8_t *p = buf;
 
-    for (i = 0; g_zbins[i] != NULL; i++) {
-        if (sgn_which(g_zbins[i], buf, cap))
-            return buf;
+    while (len > 0) {
+        ssize_t n = pread(fd, p, (size_t)len, (off_t)off);
+
+        if (n <= 0)
+            return -1;
+        p += n;
+        off += (uint64_t)n;
+        len -= (uint64_t)n;
     }
-    return NULL;
+    return 0;
 }
 
-int iso_udf_reader_ok(char *which, size_t cap)
-{
-    char path[PATH_MAX];
-    char *argv[3];
-    char *out = NULL;
-    size_t len = 0;
-    int ok = 0;
-
-    if (which != NULL && cap > 0u)
-        which[0] = '\0';
-    if (pick_zbin(path, sizeof(path)) == NULL)
-        return 0;
-    if (which != NULL && cap > 0u)
-        (void)snprintf(which, cap, "%s", path);
-
-    /* `7z i` lists the formats that loaded; the UDF handler is one row of
-     * that table, its name standing alone between runs of spaces. */
-    argv[0] = path;
-    argv[1] = sgn_arg("i");
-    argv[2] = NULL;
-    if (sgn_run_capture(argv, &out, &len, Z_LISTING_MAX) == SGN_OK)
-        ok = strstr(out, " Udf ") != NULL;
-    free(out);
-    return ok;
-}
-
-static iso_view *view_alloc(const char *path)
+static iso_view *view_alloc(void)
 {
     iso_view *v = calloc(1, sizeof(*v));
 
@@ -324,22 +215,93 @@ static iso_view *view_alloc(const char *path)
         sgn_set_error(SGN_ERR_IO, "out of memory");
         return NULL;
     }
-    if (path != NULL) {
-        v->path = strdup(path);
-        if (v->path == NULL) {
-            free(v);
-            sgn_set_error(SGN_ERR_IO, "out of memory");
-            return NULL;
-        }
-    }
+    v->fd = -1;
     return v;
+}
+
+/* Mounts through the registry and indexes the whole tree into v. The volume
+ * keeps ctx for every later read, so ctx must live as long as v does. */
+static int view_index(iso_view *v, fs_read_fn read, void *ctx,
+                      const char *what)
+{
+    const fs_ops *ops;
+    fs_dir *root;
+    char *path;
+    int rc;
+
+    v->vol = malloc(sizeof(*v->vol));
+    root = malloc(sizeof(*root));
+    path = malloc(PATH_MAX);
+    if (v->vol == NULL || root == NULL || path == NULL) {
+        sgn_set_error(SGN_ERR_IO, "out of memory");
+        rc = SGN_ERR_IO;
+        goto out;
+    }
+
+    ops = fs_identify(read, ctx, FS_HINT_NONE);
+    if (ops == NULL || (ops != &fs_ops_udf && ops != &fs_ops_iso9660)) {
+        sgn_set_error(SGN_ERR_FORMAT, "'%s' is not an ISO9660 or UDF image",
+                      what);
+        rc = SGN_ERR_FORMAT;
+        goto out;
+    }
+    rc = fs_mount(v->vol, ops, read, ctx);
+    if (rc != FS_OK) {
+        sgn_set_error(SGN_ERR_FORMAT, "'%s': the %s volume cannot be read "
+                      "(status %d)%s", what, ops->name, rc,
+                      rc == FS_ERR_UNSUPPORTED
+                          ? "; it uses a feature this reader does not have"
+                          : "");
+        rc = SGN_ERR_FORMAT;
+        goto out;
+    }
+    if (fs_dir_open_root(v->vol, root) != FS_OK) {
+        sgn_set_error(SGN_ERR_FORMAT, "'%s': the root directory cannot be "
+                      "read", what);
+        rc = SGN_ERR_FORMAT;
+        goto out;
+    }
+    path[0] = '\0';
+    rc = index_dir(v, root, path, PATH_MAX, 0);
+    if (rc == SGN_OK && v->n_entries == 0) {
+        sgn_set_error(SGN_ERR_FORMAT, "'%s' contains no files", what);
+        rc = SGN_ERR_FORMAT;
+    }
+    if (rc == SGN_OK)
+        sgn_log(SGN_LOG_DEBUG, "indexed %zu entries in %s (%s)",
+                v->n_entries, what, ops->name);
+out:
+    free(root);
+    free(path);
+    return rc;
+}
+
+int iso_view_open_cb(fs_read_fn read, void *ctx, const char *what,
+                     iso_view **out)
+{
+    iso_view *v;
+    int rc;
+
+    if (read == NULL || out == NULL) {
+        sgn_set_error(SGN_ERR_INTERNAL, "iso_view_open: bad arguments");
+        return SGN_ERR_INTERNAL;
+    }
+    *out = NULL;
+    v = view_alloc();
+    if (v == NULL)
+        return SGN_ERR_IO;
+    rc = view_index(v, read, ctx, what != NULL ? what : "the image");
+    if (rc != SGN_OK) {
+        iso_view_close(v);
+        return rc;
+    }
+    *out = v;
+    return SGN_OK;
 }
 
 int iso_view_open(const char *path, iso_view **out)
 {
     iso_view *v;
-    char *argv[10];
-    size_t len = 0;
     int rc;
 
     if (path == NULL || out == NULL) {
@@ -347,122 +309,53 @@ int iso_view_open(const char *path, iso_view **out)
         return SGN_ERR_INTERNAL;
     }
     *out = NULL;
-    if (!sgn_file_exists(path)) {
-        sgn_set_error(SGN_ERR_IO, "no such ISO: '%s'", path);
-        return SGN_ERR_IO;
-    }
-
-    v = view_alloc(path);
+    v = view_alloc();
     if (v == NULL)
         return SGN_ERR_IO;
-
-    /* ISO9660 and Rock Ridge. A failure here is not fatal on its own: an
-     * image can legitimately carry nothing but a stub in this namespace, and
-     * the UDF pass below is the one that will name its files. */
-    argv[0] = sgn_arg("bsdtar");
-    argv[1] = sgn_arg("-tf");
-    argv[2] = v->path;
-    argv[3] = NULL;
-    if (sgn_run_capture(argv, &v->listing[ISO_READER_ISO9660], &len,
-                        LISTING_MAX) == SGN_OK && len > 0) {
-        rc = iso_listing_index(v, v->listing[ISO_READER_ISO9660],
-                               ISO_READER_ISO9660);
-        if (rc != SGN_OK) {
-            iso_view_close(v);
-            return rc;
-        }
-    } else {
-        sgn_log(SGN_LOG_DEBUG, "bsdtar listed no ISO9660 tree in %s", path);
-    }
-    v->n_iso9660 = v->n_entries;
-
-    /* UDF. Listed second so that anything both namespaces carry keeps the
-     * bsdtar entry, and with it the extraction path that has always been
-     * used for Linux media. */
-    v->zbin = pick_zbin(v->zbin_path, sizeof(v->zbin_path));
-    if (v->zbin == NULL) {
-        sgn_log(SGN_LOG_WARN,
-                "7z is not on PATH, so only this image's ISO9660 namespace "
-                "can be read. UDF-only media (Windows install ISOs) looks "
-                "empty; install p7zip or 7-Zip to read it.");
-    } else {
-        argv[0] = sgn_arg(v->zbin);
-        argv[1] = sgn_arg("l");
-        argv[2] = sgn_arg("-ba");   /* no banner, no summary: records only */
-        argv[3] = sgn_arg("-slt");  /* one "key = value" per line */
-        argv[4] = sgn_arg("-bd");   /* no progress indicator on stderr */
-        argv[5] = sgn_arg("--");
-        argv[6] = v->path;
-        argv[7] = NULL;
-        len = 0;
-        if (sgn_run_capture(argv, &v->listing[ISO_READER_7Z], &len,
-                            Z_LISTING_MAX) == SGN_OK && len > 0) {
-            rc = iso_listing_index(v, v->listing[ISO_READER_7Z],
-                                   ISO_READER_7Z);
-            if (rc != SGN_OK) {
-                iso_view_close(v);
-                return rc;
-            }
-        } else {
-            sgn_log(SGN_LOG_DEBUG, "%s listed nothing in %s", v->zbin, path);
-        }
-    }
-
-    if (v->n_entries == 0) {
+    v->fd = open(path, O_RDONLY | O_CLOEXEC);
+    if (v->fd < 0) {
+        sgn_set_error_errno(SGN_ERR_IO, "opening ISO '%s'", path);
         iso_view_close(v);
-        sgn_set_error(SGN_ERR_FORMAT,
-                      "'%s' contains no files in either the ISO9660 or the "
-                      "UDF namespace; not an ISO?", path);
-        return SGN_ERR_FORMAT;
+        return SGN_ERR_IO;
     }
-    sgn_log(SGN_LOG_DEBUG, "listed %zu entries in %s (%zu ISO9660, %zu UDF)",
-            v->n_entries, path, v->n_iso9660, v->n_entries - v->n_iso9660);
+    /* The descriptor lives in the view, and its address is the context the
+     * mounted volume reads through for as long as the view is open. */
+    rc = view_index(v, fd_read, &v->fd, path);
+    if (rc != SGN_OK) {
+        iso_view_close(v);
+        return rc;
+    }
     *out = v;
     return SGN_OK;
 }
 
-int iso_view_from_listings(const char *iso9660, const char *udf,
-                           iso_view **out)
+int iso_view_from_paths(const char *const *paths, const uint64_t *sizes,
+                        iso_view **out)
 {
     iso_view *v;
-    int rc;
+    size_t i;
 
-    if (out == NULL)
+    if (paths == NULL || out == NULL)
         return SGN_ERR_INTERNAL;
     *out = NULL;
-    v = view_alloc(NULL);
+    v = view_alloc();
     if (v == NULL)
         return SGN_ERR_IO;
+    for (i = 0; paths[i] != NULL; i++) {
+        const char *p = strip_leading(paths[i]);
+        size_t n = strlen(p);
+        int rc;
 
-    if (iso9660 != NULL) {
-        v->listing[ISO_READER_ISO9660] = strdup(iso9660);
-        if (v->listing[ISO_READER_ISO9660] == NULL) {
-            iso_view_close(v);
-            sgn_set_error(SGN_ERR_IO, "out of memory");
-            return SGN_ERR_IO;
-        }
-        rc = iso_listing_index(v, v->listing[ISO_READER_ISO9660],
-                               ISO_READER_ISO9660);
+        if (n == 0)
+            continue;
+        rc = entries_push(v, p, sizes != NULL ? sizes[i] : 0,
+                          (uint8_t)(p[n - 1u] == '/'), NULL);
         if (rc != SGN_OK) {
             iso_view_close(v);
             return rc;
         }
-    }
-    v->n_iso9660 = v->n_entries;
-
-    if (udf != NULL) {
-        v->zbin = g_zbins[0];
-        v->listing[ISO_READER_7Z] = strdup(udf);
-        if (v->listing[ISO_READER_7Z] == NULL) {
-            iso_view_close(v);
-            sgn_set_error(SGN_ERR_IO, "out of memory");
-            return SGN_ERR_IO;
-        }
-        rc = iso_listing_index(v, v->listing[ISO_READER_7Z], ISO_READER_7Z);
-        if (rc != SGN_OK) {
-            iso_view_close(v);
-            return rc;
-        }
+        if (p[n - 1u] == '/')
+            v->entries[v->n_entries - 1u].name[n - 1u] = '\0';
     }
     *out = v;
     return SGN_OK;
@@ -474,32 +367,29 @@ void iso_view_close(iso_view *v)
 
     if (v == NULL)
         return;
-    for (i = 0; i < (size_t)ISO_READER_N; i++)
-        free(v->listing[i]);
+    for (i = 0; i < v->n_entries; i++)
+        free(v->entries[i].name);
     free(v->entries);
-    free(v->path);
+    free(v->vol);
+    if (v->fd >= 0)
+        close(v->fd);
     free(v);
 }
 
-const char *iso_view_udf_reader(const iso_view *v)
+const char *iso_view_reader(const iso_view *v)
 {
-    return (v != NULL) ? v->zbin : NULL;
+    return (v != NULL && v->vol != NULL) ? fs_vol_name(v->vol) : "none";
 }
 
-size_t iso_view_count(const iso_view *v, iso_reader reader)
+size_t iso_view_entries(const iso_view *v)
 {
-    if (v == NULL)
-        return 0;
-    return (reader == ISO_READER_ISO9660) ? v->n_iso9660
-                                          : v->n_entries - v->n_iso9660;
+    return (v != NULL) ? v->n_entries : 0;
 }
 
 /* ------------------------------------------------------------ lookup */
 
-/* Does entry name query, or something inside it? The second half is what
- * makes a query for a directory work when the listing only enumerates its
- * contents; family.c asks about bare directories ("/casper", "/arch") more
- * often than about files. */
+/* Does entry name query, or something inside it? The second half keeps a
+ * query for a directory working in a view built from file paths alone. */
 static int entry_matches(const char *entry, const char *query, size_t qlen)
 {
     size_t elen = strlen(entry);
@@ -511,24 +401,22 @@ static int entry_matches(const char *entry, const char *query, size_t qlen)
     return elen == qlen || entry[qlen] == '/';
 }
 
-int iso_view_find(iso_view *v, const char *path, const char **match)
+static const iso_entry *find_entry(const iso_view *v, const char *path)
 {
     const char *q;
     size_t qlen;
     size_t i;
     int wild;
 
-    if (match != NULL)
-        *match = NULL;
     if (v == NULL || path == NULL)
-        return 0;
+        return NULL;
     q = strip_leading(path);
     qlen = strlen(q);
     wild = (qlen > 0 && q[qlen - 1u] == '*');
     if (wild)
         qlen--;
     if (qlen == 0)
-        return 0;
+        return NULL;
 
     for (i = 0; i < v->n_entries; i++) {
         const char *e = v->entries[i].name;
@@ -539,77 +427,80 @@ int iso_view_find(iso_view *v, const char *path, const char **match)
         } else if (!entry_matches(e, q, qlen)) {
             continue;
         }
-        if (match != NULL)
-            *match = e;
-        return 1;
+        return &v->entries[i];
     }
-    return 0;
+    return NULL;
 }
 
-/* Which helper can extract this member. Every member handed out by
- * iso_view_find is a pointer into the entry table, so identity answers it
- * exactly; a pointer from anywhere else is a caller bug, and bsdtar is the
- * answer that preserves the behaviour this tool had before UDF existed. */
-iso_reader iso_view_reader_of(const iso_view *v, const char *member)
+int iso_view_find(iso_view *v, const char *path, const char **match)
+{
+    const iso_entry *e = find_entry(v, path);
+
+    if (match != NULL)
+        *match = (e != NULL) ? e->name : NULL;
+    return e != NULL;
+}
+
+/* The entry a member pointer came from. Members handed out by iso_view_find
+ * are entry names, so identity answers exactly; a pointer from anywhere else
+ * finds nothing. */
+static const iso_entry *entry_of(const iso_view *v, const char *member)
 {
     size_t i;
 
     if (v == NULL || member == NULL)
-        return ISO_READER_ISO9660;
+        return NULL;
     for (i = 0; i < v->n_entries; i++) {
         if (v->entries[i].name == member)
-            return v->entries[i].reader;
+            return &v->entries[i];
     }
-    return ISO_READER_ISO9660;
+    return NULL;
 }
 
 int iso_view_size(const iso_view *v, const char *member, uint64_t *out)
 {
-    size_t i;
+    const iso_entry *e = entry_of(v, member);
 
     if (out != NULL)
         *out = 0;
-    if (v == NULL || member == NULL || out == NULL)
+    if (e == NULL || out == NULL || e->is_dir)
         return 0;
-    for (i = 0; i < v->n_entries; i++) {
-        if (v->entries[i].name != member)
-            continue;
-        if (!v->entries[i].has_size)
-            return 0;
-        *out = v->entries[i].size;
-        return 1;
-    }
-    return 0;
+    *out = e->size;
+    return 1;
 }
 
-/* Fills argv with the command that writes one member to stdout. 7-Zip needs
- * -spd so a member whose name happens to contain a glob character is matched
- * literally rather than as a pattern, and both readers are given "--" or an
- * option-terminating form so an image path starting with '-' stays a path. */
-static void member_argv(iso_view *v, iso_reader reader, const char *member,
-                        char *argv[10])
+/* Opens a member for reading. SGN_ERR_FORMAT for a directory, a symlink or a
+ * file the driver refuses (a zisofs-compressed one); the caller's message
+ * names the member. */
+static int member_open(iso_view *v, const char *member, fs_file **out)
 {
-    size_t i = 0;
+    const iso_entry *e = entry_of(v, member);
+    fs_file *f;
+    int rc;
 
-    if (reader == ISO_READER_7Z && v->zbin != NULL) {
-        argv[i++] = sgn_arg(v->zbin);
-        argv[i++] = sgn_arg("x");
-        argv[i++] = sgn_arg("-so");
-        argv[i++] = sgn_arg("-ba");
-        argv[i++] = sgn_arg("-bd");
-        argv[i++] = sgn_arg("-spd");
-        argv[i++] = sgn_arg("--");
-        argv[i++] = v->path;
-        argv[i++] = sgn_arg(member);
-    } else {
-        argv[i++] = sgn_arg("bsdtar");
-        argv[i++] = sgn_arg("-x");
-        argv[i++] = sgn_arg("-O");
-        argv[i++] = sgn_arg("-f");
-        argv[i++] = v->path;
-        argv[i++] = sgn_arg(member);
+    *out = NULL;
+    if (e == NULL || v->vol == NULL || e->is_dir) {
+        sgn_set_error(SGN_ERR_FORMAT, "'%s' is not a file in the ISO",
+                      member != NULL ? member : "(null)");
+        return SGN_ERR_FORMAT;
     }
-    argv[i] = NULL;
+    f = malloc(sizeof(*f));
+    if (f == NULL) {
+        sgn_set_error(SGN_ERR_IO, "out of memory");
+        return SGN_ERR_IO;
+    }
+    rc = fs_file_open(v->vol, f, &e->ent);
+    if (rc != FS_OK) {
+        free(f);
+        sgn_set_error(SGN_ERR_FORMAT, "'%s' cannot be read from the ISO "
+                      "(status %d)%s", member, rc,
+                      rc == FS_ERR_SYMLINK ? ": it is a symlink" :
+                      rc == FS_ERR_UNSUPPORTED ? ": it is stored compressed"
+                                               : "");
+        return SGN_ERR_FORMAT;
+    }
+    *out = f;
+    return SGN_OK;
 }
 
 /* ------------------------------------------------------------ probe */
@@ -624,39 +515,36 @@ static int probe_read(void *ctx, const char *path, uint64_t off, void *buf,
 {
     iso_view *v = ctx;
     const char *member = NULL;
-    char *argv[10];
-    char *data = NULL;
-    size_t dlen = 0;
-    size_t take;
-    int rc;
+    fs_file *f = NULL;
+    uint64_t size, take;
 
     if (got != NULL)
         *got = 0;
-    /* A view built from listings alone (iso_view_from_listings) has no image
-     * behind it, so it answers layout questions and never content ones. An
-     * unreadable fingerprint is a fingerprint that does not match, which is
-     * exactly what family.h asks this callback to report. */
-    if (v == NULL || v->path == NULL)
+    /* A view with no image behind it answers layout questions and never
+     * content ones: an unreadable fingerprint is one that does not match. */
+    if (v == NULL || v->vol == NULL)
         return 1;
     if (!iso_view_find(v, path, &member) || member == NULL)
         return 1;
-
-    member_argv(v, iso_view_reader_of(v, member), member, argv);
-    rc = sgn_run_capture(argv, &data, &dlen, MEMBER_MAX);
-    if (rc != SGN_OK)
+    if (member_open(v, member, &f) != SGN_OK)
         return 1;
-
-    if (off >= (uint64_t)dlen) {
-        free(data);
+    size = fs_file_size(f);
+    if (size > MEMBER_MAX)
+        size = MEMBER_MAX;
+    if (off >= size) {
+        free(f);
         return 0;   /* past end of file: zero bytes, not an error */
     }
-    take = dlen - (size_t)off;
+    take = size - off;
     if (take > len)
         take = len;
-    memcpy(buf, data + off, take);
-    free(data);
+    if (fs_file_read(f, off, take, buf) != FS_OK) {
+        free(f);
+        return 1;
+    }
+    free(f);
     if (got != NULL)
-        *got = take;
+        *got = (size_t)take;
     return 0;
 }
 
@@ -673,14 +561,57 @@ void iso_view_family_probe(iso_view *v, family_probe *fp)
 
 int iso_view_extract(iso_view *v, const char *member, const char *dst)
 {
-    char *argv[10];
+    static uint8_t buf[1u << 20];
+    fs_file *f = NULL;
+    uint64_t size, off = 0;
+    FILE *out;
+    int rc;
 
-    if (v == NULL || v->path == NULL || member == NULL || dst == NULL) {
+    if (v == NULL || member == NULL || dst == NULL) {
         sgn_set_error(SGN_ERR_INTERNAL, "iso_view_extract: bad arguments");
         return SGN_ERR_INTERNAL;
     }
-    member_argv(v, iso_view_reader_of(v, member), member, argv);
-    return sgn_run_to_file(argv, dst);
+    rc = member_open(v, member, &f);
+    if (rc != SGN_OK)
+        return rc;
+    out = fopen(dst, "wb");
+    if (out == NULL) {
+        free(f);
+        sgn_set_error_errno(SGN_ERR_IO, "creating %s", dst);
+        return SGN_ERR_IO;
+    }
+    size = fs_file_size(f);
+    while (off < size) {
+        uint64_t n = size - off;
+
+        if (n > sizeof(buf))
+            n = sizeof(buf);
+        rc = fs_file_read(f, off, n, buf);
+        if (rc != FS_OK) {
+            (void)fclose(out);
+            (void)unlink(dst);
+            free(f);
+            sgn_set_error(SGN_ERR_FORMAT, "reading '%s' from the ISO failed "
+                          "at byte %llu (status %d)", member,
+                          (unsigned long long)off, rc);
+            return SGN_ERR_FORMAT;
+        }
+        if (fwrite(buf, 1, (size_t)n, out) != (size_t)n) {
+            (void)fclose(out);
+            (void)unlink(dst);
+            free(f);
+            sgn_set_error_errno(SGN_ERR_IO, "writing %s", dst);
+            return SGN_ERR_IO;
+        }
+        off += n;
+    }
+    free(f);
+    if (fclose(out) != 0) {
+        (void)unlink(dst);
+        sgn_set_error_errno(SGN_ERR_IO, "writing %s", dst);
+        return SGN_ERR_IO;
+    }
+    return SGN_OK;
 }
 
 /* ------------------------------------------------------ kernel paths */
@@ -695,11 +626,7 @@ int iso_view_extract(iso_view *v, const char *member, const char *dst)
  * module for no one's benefit.
  *
  * Candidates are tried in order; a trailing '*' matches any suffix, which
- * is what Debian live images need since their kernel carries the version.
- * Verification status per row is in the sign tool's section of the report
- * and in docs/notes when it lands: the Arch and Ubuntu rows are checked
- * against real media on this machine, the rest are from the families'
- * published layouts and are marked as such. */
+ * is what Debian live images need since their kernel carries the version. */
 typedef struct {
     family_id          id;
     const char *const *paths;
@@ -818,49 +745,48 @@ const char *iso_initrd_path(iso_view *v, family_id id, const char *kernel)
 
 /* ------------------------------------------------------------ label */
 
-/* ECMA-119: the Primary Volume Descriptor is the first descriptor, at sector
- * 16, type 1, "CD001"; the volume identifier is 32 d-characters at byte 40,
- * padded with spaces. */
-#define PVD_OFF     (16u * 2048u)
-#define PVD_VOLID   40u
-#define PVD_VOLID_N 32u
-
 int iso_volume_label(const char *path, char *out, size_t cap)
 {
-    unsigned char pvd[PVD_VOLID + PVD_VOLID_N] = { 0 };
-    size_t n;
-    size_t i;
-    FILE *f;
+    fs_vol *vol;
+    const char *label;
+    size_t n, i;
+    int fd, rc;
 
     if (path == NULL || out == NULL || cap == 0u) {
         sgn_set_error(SGN_ERR_INTERNAL, "iso_volume_label: bad arguments");
         return SGN_ERR_INTERNAL;
     }
-    f = fopen(path, "rb");
-    if (f == NULL) {
+    fd = open(path, O_RDONLY | O_CLOEXEC);
+    if (fd < 0) {
         sgn_set_error_errno(SGN_ERR_IO, "opening %s", path);
         return SGN_ERR_IO;
     }
-    n = 0;
-    if (fseek(f, (long)PVD_OFF, SEEK_SET) == 0)
-        n = fread(pvd, 1, sizeof(pvd), f);
-    (void)fclose(f);
-    if (n != sizeof(pvd) || pvd[0] != 1u || memcmp(pvd + 1, "CD001", 5) != 0) {
+    vol = malloc(sizeof(*vol));
+    if (vol == NULL) {
+        close(fd);
+        sgn_set_error(SGN_ERR_IO, "out of memory");
+        return SGN_ERR_IO;
+    }
+    /* The ISO9660 driver by name, not the registry's pick: the label a live
+     * initramfs looks for (dracut's CDLABEL=, udev's by-label) is the
+     * Primary Volume Descriptor's, even on a disc that also carries UDF. */
+    rc = fs_mount(vol, &fs_ops_iso9660, fd_read, &fd);
+    if (rc != FS_OK) {
+        free(vol);
+        close(fd);
         sgn_set_error(SGN_ERR_FORMAT, "%s has no ISO9660 volume descriptor",
                       path);
         return SGN_ERR_FORMAT;
     }
-
-    n = PVD_VOLID_N;
-    while (n > 0u && (pvd[PVD_VOLID + n - 1u] == ' ' ||
-                      pvd[PVD_VOLID + n - 1u] == '\0'))
-        n--;
+    label = fs_vol_label(vol);
+    n = strlen(label);
+    rc = SGN_OK;
     if (n == 0u) {
         sgn_set_error(SGN_ERR_FORMAT, "%s has an empty volume label", path);
-        return SGN_ERR_FORMAT;
+        rc = SGN_ERR_FORMAT;
     }
-    for (i = 0; i < n; i++) {
-        unsigned char c = pvd[PVD_VOLID + i];
+    for (i = 0; rc == SGN_OK && i < n; i++) {
+        unsigned char c = (unsigned char)label[i];
 
         if (!((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
               (c >= '0' && c <= '9') || c == '.' || c == '_' || c == '-')) {
@@ -868,14 +794,18 @@ int iso_volume_label(const char *path, char *out, size_t cap)
                           "%s: volume label has a character a kernel cmdline "
                           "cannot carry unescaped (0x%02x); pass --cmdline",
                           path, c);
-            return SGN_ERR_FORMAT;
+            rc = SGN_ERR_FORMAT;
         }
     }
-    if (n >= cap) {
+    if (rc == SGN_OK && n >= cap) {
         sgn_set_error(SGN_ERR_NOSPACE, "volume label too long");
-        return SGN_ERR_NOSPACE;
+        rc = SGN_ERR_NOSPACE;
     }
-    memcpy(out, pvd + PVD_VOLID, n);
-    out[n] = '\0';
-    return SGN_OK;
+    if (rc == SGN_OK) {
+        memcpy(out, label, n);
+        out[n] = '\0';
+    }
+    free(vol);
+    close(fd);
+    return rc;
 }
