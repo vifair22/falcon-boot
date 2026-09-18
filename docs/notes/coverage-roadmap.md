@@ -1,0 +1,333 @@
+# Coverage roadmap (2026-09-18)
+
+Goal: boot what Ventoy boots, without giving up what makes falcon-boot worth
+using over it (verified boot kept intact, no enforcement relaxed in the
+loader, a coverage matrix that is tested rather than reported).
+
+The product promise: **Secure Boot off, drag, drop, boot anything. Secure
+Boot on, drag, drop, bless, boot.** The architecture that follows from it is
+decided in `docs/DESIGN.md` Section 6.4 and the appliance revision in Section
+7.5 (both 2026-09-18); this file is the plan, the alternatives and the
+milestones. The evidence base is `docs/notes/ventoy-survey.md`.
+
+## 1. Where we actually are
+
+| Media | SB off | SB on, db has MS CA | SB on, own keys only |
+|---|---|---|---|
+| Linux, blessed (6 families) | boots | boots | boots |
+| Linux, not blessed | kernel starts, media lost | kernel starts (MS-signed distros), media lost | refused |
+| Windows install, prepared | boots | boots | refused (bootmgr is MS-signed) |
+| Bare EFI payloads, memtest | boots | boots if MS-signed, else bless | bless |
+| Everything else (BSD, ESXi, WinPE, IMG distros, ChromeOS) | untested | untested | refused unless blessed |
+
+Two things in that table matter more than the rest:
+
+- **With Secure Boot off, an unblessed Linux ISO does not boot today.** The
+  loader chainloads the ISO's own GRUB, which passes the stock cmdline, and
+  the kernel loses its media at `ExitBootServices` (DESIGN 6.1). DESIGN 7.2's
+  "SB off: every templated ISO boots" describes a path that is not built:
+  nothing in the loader boots an ISO's kernel directly or appends a cpio.
+- **Every Linux boot goes through one per-ISO act (bless) and one per-family
+  row (a cmdline template).** Both are human work that grows with the ISO
+  count. That is the scaling problem this roadmap is about.
+
+## 2. What "coverage" has to mean
+
+Ventoy's "1300+ tested" is a list of user reports. Ours should be a number a
+machine produced.
+
+- **Corpus.** A pinned list of ISOs (URL + SHA-256): distrowatch's top 50,
+  every family in the survey, the Windows editions, the common rescue and
+  hypervisor media. About 150 images, 300-400 GB; lives on the Unraid box,
+  not the stick.
+- **Harness.** For each ISO x each boot state (SB off, SB on with MS CA, SB on
+  own keys) x each route (drag-and-drop, prepared, blessed): build a rig stick,
+  boot under OVMF, and decide pass/fail from the serial console. Linux passes
+  when the live system reaches userland (`console=ttyS0` appended, markers
+  such as systemd's "Reached target" or a login prompt); Windows when Setup's
+  first screen is up (screenshot + a known-pixel check, already done by hand
+  on 2026-09-13).
+- **Scorecard.** A generated `docs/coverage.md` per release: rows are ISOs,
+  columns are state x route, cells are PASS / FAIL / REFUSED-BY-DESIGN. A
+  regression is a cell that went red.
+
+Targets, stated so they can be failed:
+
+| Tier | What | Target |
+|---|---|---|
+| A | distrowatch top 30, current Windows 10/11/Server, the top 10 rescue/utility ISOs | 100% SB off, 95% SB on (bless allowed) |
+| B | every Linux family in the Ventoy survey | 90% SB off |
+| C | long tail, BSD, hypervisors, IMG distros | tracked, no target |
+
+## 3. The walls, and the path through each
+
+### W1. The media vanishes after ExitBootServices (Linux)
+
+This is where Ventoy's code lives. Three strategies, in the order they scale.
+
+**L1: cmdline families (what we have).** A registry row per family telling
+the stock initramfs to find the ISO file itself (`iso-scan/filename=`,
+`findiso=`, `img_loop=`, `from=`, ...). Clean: no code of ours runs in the
+target. Limits, measured by the survey:
+
+- about 25 families have such an option; the long tail and every installer
+  (Debian d-i, Proxmox, Alpine, most of Anaconda's variants) do not;
+- every one needs the initramfs to mount **exFAT**, which RHEL-family kernels
+  and others do not carry. This is a per-ISO precondition we do not check.
+
+L1 stays as the preferred route where it works. It will not reach Tier B.
+
+**L2: a generic device hook ("falcon-hook"), the scalable core.** Recreate
+the ISO as a block device before the distro's init looks for its media, and
+let the distro find it the way it finds a real CD. Mechanism:
+
+1. A small static binary plus a shell stub in a cpio segment appended to the
+   distro's own initrd.
+2. The ISO's extents on the stick. **Delivered by the loader at boot in a
+   volatile EFI variable**, not baked in: the loader already computes the
+   extent map to serve the virtual CD, the variable survives the ISO being
+   moved or rewritten, and it needs no re-bless. The hook reads it from
+   efivarfs.
+3. A device-mapper linear target (or, for a contiguous file, a loop device
+   with an offset) over the **raw partition**, not over a mounted exFAT. This
+   removes the exFAT dependency entirely; it needs `dm-mod` or `loop`, which
+   live initramfs carry because they use them for their own squashfs and
+   overlay.
+4. The device carries the ISO's own ISO9660 label and UUID, so udev's
+   `by-label` / `by-uuid` links appear. Most initramfs find their media by
+   label or by scanning block devices (dracut `CDLABEL=`, casper, live-boot,
+   archiso `archisolabel=`), so for them the hook needs **no per-distro code
+   at all**. That is Ventoy's `hook/default` route, and it is the one that
+   scales.
+5. For the rest, a per-family "nudge": the minimum edit that points the
+   distro's init at the device. This is where Ventoy's 58 hook directories
+   are knowledge we can learn from (below).
+
+Where the hook runs is a delivery question (W2), not a hook question: inside
+a signed blessed wrap under Secure Boot, appended by the loader otherwise.
+
+**L3: take Ventoy's per-distro knowledge.** Two ways, not exclusive:
+
+- *Port it.* Read each Ventoy hook, write the equivalent nudge for
+  falcon-hook, prove it in the harness. Slow, clean, and ours.
+- *Run it.* Build `ventoy.cpio` from Ventoy's source and supply the
+  environment its hooks expect (the `ventoy_os_param` block, a
+  `/dev/mapper/ventoy`). Fast coverage, maintained upstream. Costs:
+  - GPLv3. falcon-boot has no licence file today; this forces the choice.
+  - Ventoy's "replace" mode copies its device over `/dev/sdX2`, which on our
+    stick is p2, and its hooks assume Ventoy's disk layout. It would need an
+    adaptation layer, and it would be signed into every blessed wrap, so we
+    would be vouching for code we did not write.
+
+  Recommendation: port, and use Ventoy's hooks as the specification and the
+  test oracle ("Ventoy boots it, the harness shows we do not, read its hook").
+
+**Side benefit.** If the variable falcon-hook reads is laid out as Ventoy's
+`VentoyOsParam` (GUID 77772020-...), the ISOs that ship "Ventoy compatible"
+support find themselves on our stick with no work from us.
+
+### W2. Getting a kernel to run with our cmdline and our initrd
+
+Under each Secure Boot state there is a different answer.
+
+**D1: direct kernel boot from the loader (SB off, and SB on with validation
+off).** The loader reads the kernel and initrd out of the ISO, appends the
+falcon-hook cpio, and `LoadImage`s the kernel through the shim-verified path
+with the family cmdline:
+
+- publish kernel + combined initrd on the existing synthetic filesystem
+  (`falcon-efi/src/loader/credfs.c`) and pass `initrd=` in LoadOptions, which
+  every EFI-stub kernel understands; or install the
+  `LINUX_EFI_INITRD_MEDIA_GUID` LoadFile2 protocol (kernels 5.8+);
+- works where UKIs cannot: with validation off, sd-stub's `gBS->LoadImage`
+  fails (DESIGN 7.4), but our loader's shim-protocol load does not involve
+  sd-stub;
+- this is the **true drag-and-drop route**: no bless, no key, no appliance
+  reboot, for everyone who runs with Secure Boot off, which is most Ventoy
+  users.
+
+It needs **an ISO9660 + Rock Ridge reader** (and UDF, for Windows) in
+`falcon-core`, because Linux kernels live in the ISO9660 tree and firmware
+only publishes the El Torito FAT image. Decided (DESIGN 6.4): same class of
+code as the exFAT and ext4 drivers the loader already runs over
+attacker-writable media, held to the same host tests and corruption sweeps.
+
+- *Fallback if the reader proves unworkable:* **prepared Linux media.** The
+  appliance extracts kernel + initrd to a sidecar on p2 (no signing, no key)
+  and the loader boots the sidecar. Keeps parsing in userland at the cost of
+  a prepare-and-reboot per ISO, which breaks the promise; a fallback only.
+
+**D2: blessing (SB on, any db).** What we have: a signed UKI whose initrd is
+the distro's plus falcon-hook, with the cmdline embedded. The only route on a
+machine with only its owner's keys, and the reliable one everywhere. Changes:
+
+- embed falcon-hook in every wrap, so blessing stops depending on the family
+  having a cmdline option;
+- check at bless time that what the hook needs (`dm-mod` or `loop`) is in the
+  initramfs or the kernel, and refuse with the reason otherwise;
+- **bless from the menu** (decided, DESIGN 7.5): a key on a `{NOT BLESSED}`
+  row blesses that ISO, one key blesses everything new; the loader confirms,
+  hands the appliance the list, and boots the chosen entry when it returns.
+
+**D3: key-less Secure Boot for MS-signed distros (spikes).** On a machine
+whose db has the Microsoft CA, a stock Ubuntu/Fedora/Debian/openSUSE ISO
+carries an MS-signed shim that trusts its own vendor's kernel. If we can get
+that chain to run our cmdline and initrd, those distros boot verified with no
+blessing at all. Two candidates, each a spike before any design:
+
+- *D3a, shim second-stage arguments.* `LoadImage` the ISO's own shim with
+  LoadOptions naming its kernel as the second stage and carrying our cmdline;
+  the kernel is verified by the ISO's shim against its vendor cert; our
+  initrd arrives through LoadFile2. Unknowns: whether shim passes the rest of
+  LoadOptions through, and whether it accepts a kernel with no `.sbat`.
+- *D3b, the `grub.cfg` overlay DESIGN 7.2 parked.* Offline, the appliance
+  writes a modified `grub.cfg` (cmdline plus an initrd line for falcon-hook)
+  and the loader serves it through the byte-range overlay built for Windows
+  (DESIGN 6.3). Config files are unverified under Secure Boot anyway, but this
+  is injecting into another vendor's trust chain, which DESIGN asked to
+  discuss first. Needs ISO9660/Joliet/UDF directory-record rewriting, done
+  offline in userland.
+
+If both spikes fail, D2 covers these distros; D3 is a convenience, not a gap.
+
+### W3. Per-family knowledge does not scale
+
+Answered by L2: most families need zero rows once the device carries the
+right label. What is left:
+
+- **Detection** by fingerprint in `falcon-core/src/media/family.c`, which
+  only needs a row when a family needs a nudge or a cmdline;
+- **kernel/initrd locations**: instead of a per-family table, parse the ISO's
+  own boot configuration (GRUB `linux`/`initrd` lines, `loader/entries`,
+  isolinux `KERNEL`/`APPEND`) to find the kernel, initrd and default cmdline.
+  In userland for bless and prepare; in the loader only if the ISO9660
+  decision above goes that way. This is also how Ventoy finds kernels, and it
+  retires the kernel table in `falcon-cli/src/sign/isoprobe.c` to a fallback.
+
+### W4. Not Linux
+
+| Shape | Path | Size | Priority |
+|---|---|---|---|
+| Windows install (10/11/Server) | WIM surgery moves into the loader (decided, DESIGN 6.4): LZX/XPRESS decompression of the metadata resource, the rebuilt resource served through the overlay, UDF records redirected; then Win11 LabConfig/BypassNRO and unattend in winjump | L | Tier A |
+| WinPE rescue (Hiren's, Strelec, DLC) | the same loader patch, choosing the shell from `SYSTEM\Setup\CmdLine` in the WIM's hive, several WIMs per ISO | M on top | Tier A |
+| VMware ESXi | test as a plain chainload; mboot loads everything into RAM | S | Tier B |
+| memtest, `.efi`, bare payloads | done | - | - |
+| Proxmox, TrueNAS SCALE, Alpine, XCP-ng installers | L2 falcon-hook with a nudge each; XCP-ng also needs Xen multiboot2, which a UKI cannot express | M each, XCP-ng L | Tier B |
+| IMG distros (LibreELEC, Batocera, OpenWrt), ChromeOS Flex | `.img` is already served as a disk; they need L2 against a disk image instead of an ISO | M-L | Tier C |
+| FreeBSD family | per-release GEOM module or md-root trick, and an unsigned `loader.efi` to bless | L | Tier C |
+| NetBSD, OpenBSD, illumos | Ventoy does not either | - | out |
+
+## 4. When the primary path does not scale, the fallback
+
+| Wall | Primary | Falls back to | Switch when |
+|---|---|---|---|
+| Media finding | L2 label-matching device hook | L3 per-family nudges ported from Ventoy | harness shows a family FAIL with L2 alone |
+| exFAT in initramfs | not needed (raw-partition dm/loop) | L1 cmdline where dm/loop are also missing | a family has neither |
+| Kernel location | parse the ISO's own boot config | per-family table (today's) | a config is too dynamic to parse |
+| Drag-and-drop, SB off | D1 direct boot, ISO9660 reader in core | prepared Linux media (sidecar) | the reader proves unworkable |
+| Windows | WIM surgery in the loader | today's appliance preparation (built, proven) | a Windows build the loader cannot patch |
+| Verified boot, MS-signed distros | D3a shim second stage | D3b grub.cfg overlay, then D2 bless | spike fails |
+| Verified boot, anything | D2 bless with falcon-hook | nothing; SB off or the platform opt-out | - |
+| Hook knowledge | port Ventoy's hooks | run Ventoy's cpio behind an adapter (GPLv3) | port rate cannot keep up with the corpus |
+
+## 5. Phases
+
+```mermaid
+graph LR
+  R[ISO9660/UDF reader in core] --> M2
+  R --> A[appliance slimming]
+  M0[M0 harness + corpus] --> M1[M1 falcon-hook + variable]
+  M1 --> M2[M2 D1 direct boot]
+  M1 --> M3[M3 bless embeds hook]
+  M2 --> M4[M4 family breadth via harness]
+  M3 --> M4
+  M0 --> M5[M5 D3 spikes]
+  R --> M6[M6 Windows in the loader]
+```
+
+- **M0, measure (first, because everything else is judged by it).** Corpus
+  manifest, QEMU harness, scorecard generator, run against today's build.
+  Exit: a scorecard exists and today's six families show PASS blessed.
+- **M1, falcon-hook.** The loader publishes the extent variable; the hook
+  builds the device from it with the ISO's label; runs from a hand-built
+  initrd in the rig. Exit: an unmodified Debian live and Fedora live ISO find
+  their media through the hook alone, no cmdline row.
+- **M2, drag-and-drop with SB off.** ISO9660 reader in `falcon-core` (or the
+  sidecar alternative), direct kernel boot via credfs, boot-config parsing
+  for the kernel and cmdline. Exit: Tier A Linux PASS under SB off with no
+  preparation of any kind.
+- **M3, bless at scale, smooth enough that permissive is not missed.** Wraps
+  embed falcon-hook; bless-time dm/loop check; the loader menu blesses one ISO
+  from its `{NOT BLESSED}` row or everything new with one key, confirms, and
+  returns to the ISO the user picked. The irreducible cost is one reboot the
+  first time an ISO is touched (signing needs userland, invariant 1); every
+  boot after is instant. Exit: Tier A Linux PASS under SB on, own keys only,
+  and dropping a new ISO to a booted live desktop is one confirmation and one
+  automatic reboot.
+- **M4, breadth.** Harness-driven: take the red cells, read Ventoy's hook,
+  write the nudge, re-run. Exit: Tier B at 90% SB off.
+- **M5, D3 spikes.** Two days each, write-up in `docs/notes/`, design only if
+  one works. Independent of M1-M4.
+- **M6, Windows in the loader.** WIM surgery at boot (needs the UDF reader),
+  then winjump parity (Win11 bypass, unattend) and WinPE shells, ESXi test.
+  Appliance preparation stays until this passes the scorecard.
+
+## 6. The appliance under this model
+
+Decided 2026-09-18 (DESIGN 7.5). It keeps only what needs the private key:
+
+- **Consent in the loader.** Bless one ISO from its row, or everything new
+  with one key; the loader confirms, unlocks p3, and boots the appliance with
+  the passphrase and the path list as credentials. The appliance signs that
+  list with no UI of its own, sets `FalconNextBoot`, reboots, and the loader
+  boots the entry the user picked.
+- **No media work.** Windows preparation and the p2 survey leave it.
+- **Userland: our one static binary plus `sbsign`.** The key is read from
+  p3 with `falcon-core`'s LUKS2 + ext4 into a memfd passed to sbsign as
+  `/dev/fd/N`; ISOs are read with `falcon-core`'s ISO9660/UDF reader. Gone:
+  cryptsetup, dm-crypt, bsdtar, 7-Zip, libstdc++, wimlib, the separate init.
+  Left: kernel, the binary, sbsign + libcrypto, exFAT and vfat modules;
+  about 20 MB, 6-8 MB with a custom kernel (not planned: Arch's kernel boots
+  on any laptop and costs nothing to maintain).
+
+Order of the appliance work, each shippable on its own:
+
+1. key read via `falcon-core` LUKS2/ext4 + memfd (drops cryptsetup);
+2. sign tool on the `falcon-core` ISO9660 reader (drops bsdtar; 7-Zip goes
+   with the UDF reader);
+3. bless-from-menu: the loader UI, the credential list, the non-interactive
+   appliance, the return via `FalconNextBoot`;
+4. Windows preparation removed once the loader's WIM patch passes the
+   scorecard (drops wimlib and winjump from the image).
+
+## 7. Still open
+
+1. **The extent variable's layout**, and whether to make it Ventoy's
+   `VentoyOsParam` so "Ventoy compatible" ISOs find themselves on our stick.
+2. **Licence.** The repo has none. Porting Ventoy's hook logic is learning
+   from GPLv3 code; running it is linking to it. Pick one before M4.
+3. **The `grub.cfg` overlay** (D3b), parked in DESIGN 7.2, only if D3a fails.
+4. **Where the corpus and harness live** (Unraid box, CI runner with KVM).
+
+## 8. Enforcement-off (permissive) mode: build on demand, not scheduled
+
+Discussed and set aside 2026-09-18. An install-time mode where the loader,
+after shim verifies it, installs its own EFI Security2 override and chainloads
+downstream regardless of signature, the way Ventoy does. It would be a
+deliberate, MOK-bound exception to invariants 2 and 3, gated by physical
+presence: the mode is baked into the signed loader, switching it regenerates
+the MOK so the user re-enrolls at MokManager, and unlike Ventoy it would not
+lie to the OS about MokSBState or dbx.
+
+Not scheduled, because smooth blessing (M3) removes the friction case and
+firmware Secure Boot off serves the coverage escape hatch. Its unique
+territory is narrow: a user who wants to boot unsigned media, cannot or will
+not disable Secure Boot in firmware (BitLocker/TPM PCR stability, a BIOS that
+hides or locks the toggle), and will enroll a MOK. Real, but small.
+
+It stays a decision on the shelf rather than a plan because it is loader-local
+and changes no on-disk format, so it can be added whenever a user actually
+asks with no rework. If built: an mkstick `--permissive` flag, the mode bound
+to the MOK identity, DESIGN 7.4 rewritten to make it a first-class mode, and
+one spike on whether the override must persist past StartImage for the
+personal-OS UKI's inner LoadImage to succeed (DESIGN 7.4's UKI limitation).

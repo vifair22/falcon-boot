@@ -436,7 +436,10 @@ No host-side registration. The stages:
    firmware's *partition* driver recognizes the El Torito boot catalog and
    surfaces the ISO's embedded EFI System Partition image, which the
    firmware's FAT driver then mounts. No ISO9660 *filesystem* driver is
-   involved or required, and **we do not write an ISO9660 reader.** Fallback
+   involved or required, and **we do not write an ISO9660 reader.**
+   (Superseded 2026-09-18 by Section 6.4: a Linux kernel lives in the ISO9660
+   tree, and direct kernel boot needs it. The El Torito route stays how the
+   ISO's own loader is chainloaded.) Fallback
    kept in pocket for ISOs with a defective El Torito entry: present the
    isohybrid as a 512-byte-sector disk instead and let the firmware's GPT/MBR
    partition path find the same embedded ESP.
@@ -543,6 +546,10 @@ is up. That is one boot-time byte patch and one user-mode executable, and no
 injection framework at all.
 
 **Mechanism (Ventoy's shape, with all preparation moved to Linux bless time).**
+*Superseded 2026-09-18 by Section 6.4: the WIM patch moves into the loader and
+is applied at boot. The mechanism below (the jump binary, VirtDisk, which
+image to patch, the measurements) stands; where the patch is computed does
+not.*
 
 - Stock WinPE already ships every component this needs, all Microsoft-signed
   and present in *both* images of the Win11 25H2 `boot.wim` (measured):
@@ -722,6 +729,11 @@ end to end.
 
 #### 6.3.1 Automatic on-stick preparation and the next-boot handoff (decision 2026-09-13)
 
+*Preparation in the appliance is superseded 2026-09-18 by Section 6.4 (the
+loader patches `boot.wim` at boot). The `FalconNextBoot` handoff below
+survives and gains a second user: after a bless the appliance returns and the
+loader boots the entry the user picked (Section 7.5).*
+
 Preparation is not a host errand. The user drops a Windows ISO and selects it;
 the loader detects that it is unprepared, says so, and offers to prepare it.
 Accepting boots the signing appliance, which patches the ISO, stages the
@@ -836,6 +848,76 @@ p2 per prepared Windows ISO, which is the padded `boot.wim` of the
 size-preserving patch shape above.
 
 
+### 6.4 Coverage model: the loader does the runtime media work (decision 2026-09-18)
+
+The product promise, in the user's words: **with Secure Boot off, drag, drop,
+boot anything; with Secure Boot on, drag, drop, bless, boot.** Everything in
+this subsection follows from holding the design to that, and the evidence
+behind it is `docs/notes/ventoy-survey.md` (what Ventoy supports and how) and
+`docs/notes/coverage-roadmap.md` (the plan, the alternatives and the
+milestones).
+
+**The rule that replaces the old split.** The loader does all *runtime*
+media work; the signing appliance does only what needs the private key
+(Section 7.5, revised the same day). Before this decision the line was "no
+parsing of dropped media in the trusted binary", and it was not a principled
+line: the loader already parses attacker-writable exFAT on p2, ext4 inside
+LUKS, and X.509 and PKCS#7 out of every PE it predicts (Section 7.8). Media
+parsers are acceptable in the loader on the terms those already meet: they
+live in `falcon-core`, EFI-free, host-tested, with corruption sweeps and
+fuzzing, and they only ever read.
+
+What that puts in the loader, each a milestone in the roadmap:
+
+- **A read-only ISO9660 (+ Rock Ridge) and UDF reader in `falcon-core`**,
+  registered in the filesystem registry like exFAT and ext4. This reverses
+  stage 3's "we do not write an ISO9660 reader": that was right while nothing
+  needed a file out of the ISO's tree, and a Linux kernel lives there, not in
+  the El Torito image the firmware publishes. The sign tool uses the same
+  reader, which retires bsdtar and 7-Zip from the bless path.
+- **Boot-config parsing**: the ISO's own GRUB, systemd-boot and isolinux
+  configuration, to find the kernel, the initrd and the default cmdline. The
+  per-family kernel table in the sign tool becomes the fallback.
+- **Direct kernel boot**: the loader boots an ISO's kernel itself, through
+  the same shim-verified load path as everything else (Section 7.6), with the
+  kernel and initrd published on the synthetic filesystem of Section 5.1 and
+  `initrd=` in the load options. No sd-stub is involved, so this also works
+  where UKIs cannot, with validation disabled (Section 7.4).
+- **The generic device hook ("falcon-hook")**: a cpio segment appended to
+  the distro's own initrd, which rebuilds the ISO as a block device over the
+  raw partition (device-mapper linear, or loop with an offset for a
+  contiguous file) carrying the ISO's own label, before the distro's init
+  looks for its media. It needs no exFAT support in the target initramfs,
+  which the cmdline families of Section 6.1 do. The ISO's extents reach it in
+  a volatile EFI variable the loader sets at boot, computed by the extent
+  map the virtual CD already uses, so a moved or rewritten ISO needs nothing
+  redone. Per-family cmdline templates stay the preferred route where a
+  family has one; the hook is what reaches the rest, with per-family nudges
+  learned from Ventoy's hooks where label matching alone is not enough.
+- **Windows WIM surgery at boot**, reversing the rejection recorded in
+  Section 8: the loader patches `boot.wim` as it serves it, the way Ventoy
+  does, instead of the appliance preparing a sidecar. Both objections
+  recorded there were weighed again and did not survive the new rule: the
+  parsing objection is the one this subsection answers, and the churn
+  objection (every Windows fix is a newly signed loader) is accepted as the
+  price of Windows being drag-drop-boot in every Secure Boot state. The
+  patched WIM is not something Secure Boot verifies and `bootmgfw.efi` stays
+  Microsoft-signed, so Windows needs neither blessing nor the appliance on
+  any machine whose db trusts the Microsoft CA.
+
+What it does not change: the four invariants of Section 7, checked the way
+Section 7.7 checks the patched path. The loader still never signs and holds
+no key; every image still goes through the shim-verified load path, so under
+Secure Boot a kernel the platform does not trust is still refused; nothing
+here relaxes enforcement; the key stays on p3. Under Secure Boot the
+direct-boot route boots only what verifies, which in practice is a blessed
+wrap, and that is the "bless" in the promise.
+
+**Status: decided, not built.** Until the milestones land, Section 7.2's
+Secure Boot OFF row describes the target rather than the stick: today an
+unblessed Linux ISO chainloads its own GRUB, keeps its stock cmdline, and
+loses its media at `ExitBootServices` in every Secure Boot state.
+
 ## 7. Security model
 
 Governing principle (Section 2): falcon-boot never weakens the machine's Secure
@@ -909,7 +991,8 @@ all, and the honest answers are to enrol the Microsoft CA or to turn Secure
 Boot off for that job. The Manual must say so plainly rather than let a user
 conclude the preparation step failed.
 
-- **Secure Boot OFF:** every templated ISO drag-and-drops and boots. Nothing to
+- **Secure Boot OFF:** (target of Section 6.4; not yet true of the build)
+  every templated ISO drag-and-drops and boots. Nothing to
   uphold, nothing to sign.
 - **Secure Boot ON, validation on (default):**
   - *Distro ISOs shipping their own MS-signed shim* (Ubuntu, Fedora, Debian,
@@ -1186,6 +1269,35 @@ one implementation.
   to the stick can swap the initrd and get code execution in that boot. This
   matches the status quo of ordinary distro boots; stated for honesty.
 
+**The appliance's role, revised (decision 2026-09-18).** With Section 6.4 the
+loader does all runtime media work, and the appliance keeps only what needs
+the private key. The flow above changes in three ways:
+
+- **Consent moves to the loader's menu.** The user blesses one ISO from its
+  row (a key on a `{NOT BLESSED}` row, Section 7.8) or presses one key to
+  bless everything new, and confirms there. The loader, which has to unlock
+  p3 anyway to load the appliance, boots it with the passphrase and the list
+  of paths as credentials on the synthetic filesystem of Section 5.1. The
+  appliance signs exactly that list, sets `FalconNextBoot` and reboots, and
+  the loader boots the entry the user picked. One reboot, no second UI. The
+  list never touches disk, so nothing written to p2 can add to it; it is as
+  trustworthy as the loader, which is the trust anchor already. This reverses
+  Section 6.3.1's "the appliance receives no instruction from the loader",
+  which was right while the loader had no bless UI. The appliance still
+  refuses a path that is not a file on p2 and prints each one as it signs.
+- **Windows preparation and the p2 survey leave it.** Both were runtime media
+  work; the loader already knows every file on p2 and which rows need a
+  blessing.
+- **Its userland collapses to our code plus `sbsign`.** The MOK key is read
+  out of p3 with `falcon-core`'s own LUKS2 and ext4 code, the code the loader
+  unlocks p3 with, into a memory-only file handed to `sbsign` as `/dev/fd/N`,
+  so the key never reaches a filesystem, not even tmpfs; that retires
+  cryptsetup and dm-crypt. ISOs are read with `falcon-core`'s ISO9660/UDF
+  reader, retiring bsdtar, 7-Zip and libstdc++; Windows leaving retires
+  wimlib. PID 1 and the sign tool become one static binary. What remains is
+  the kernel, that binary, `sbsign` and its libcrypto, and the exFAT and vfat
+  modules to write p2.
+
 ### 7.6 Load-path plumbing (verified by the shim spike, 2026-09-12/13)
 
 The firmware's native `LoadImage` verifies against db/dbx only; it knows
@@ -1276,7 +1388,9 @@ paragraph buried in the ISO path:
   vendor's own chain can find its media. No signature is involved anywhere.
 
 What they share is the point: both are the user deliberately authorising a
-modification to media they own, both are computed in Linux userland by a tool
+modification to media they own (since 2026-09-18 the Windows patch is
+computed by the loader at boot, Section 6.4, and the rest of this paragraph
+holds unchanged for it), both are computed in Linux userland by a tool
 the user runs, and neither changes what the platform will enforce.
 
 **The four invariants hold on the patched path, checked one at a time**,
@@ -1641,7 +1755,8 @@ land on this section:
   design rather than a deferred option: 23-106 MB peak RSS, roughly 1.2 GB of
   scratch space, and seconds of CPU for a full repack.
 
-- **Rejected: do the WIM surgery at boot time, in the loader, the way Ventoy
+- **Reversed 2026-09-18 (Section 6.4); kept for the record: rejected, do the
+  WIM surgery at boot time, in the loader, the way Ventoy
   does** (decompress the WIM metadata, parse the `SYSTEM` registry hive to find
   the configured PE shell, rebuild the resource, recompute the SHA-1 hashes,
   all inside the bootloader). Estimated at 2500-3500 lines of new freestanding
@@ -2133,3 +2248,16 @@ was struck: Windows needs no injector, for the reason in Section 6.1.
     - the banner trust list, then the row tags, colours and details screen;
     - real hardware: the Dell (no Microsoft CA) and the Lenovo must each show
       the prediction that matches what actually boots.
+13. Coverage (Section 6.4, decided 2026-09-18). Milestones, their exit
+    criteria and the alternatives if a path does not scale are in
+    `docs/notes/coverage-roadmap.md`; in order:
+    - M0: the ISO corpus, the QEMU harness and the generated scorecard;
+    - the ISO9660/UDF reader in `falcon-core`, used first by the sign tool;
+    - M1: falcon-hook and the extent variable;
+    - M2: direct kernel boot and boot-config parsing (SB off drag-and-drop);
+    - M3: bless from the menu, the slimmed appliance, wraps carrying
+      falcon-hook (SB on drag-drop-bless-boot);
+    - M4: family breadth, driven by the scorecard;
+    - Windows WIM surgery in the loader, and winjump parity (Win11 bypass,
+      unattend, WinPE shells);
+    - M5: spikes for key-less Secure Boot on MS-signed distros.
