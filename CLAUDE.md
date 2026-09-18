@@ -153,9 +153,15 @@ the tree, so `#include <fs/exfat.h>` means one file wherever it is written.
   `src/mkstick`, `src/sign`, and their shared `src/common`. May shell out to
   `cryptsetup`, `sbsign`, `mkfs.*`, `ukify`. The sign tool is also linked
   static for the appliance.
-- `falcon-appliance/` the on-stick signing appliance: PID 1 in `src/`, the
-  recipe for the UKI it runs in in `image/` (`mk-appliance.sh`), and its QEMU
-  proofs in `tools/`.
+- `falcon-appliance/` the on-stick signing appliance. `src/` is PID 1, split
+  by job (`appliance.h` has the map: `main`, `console`, `stick`, `run`,
+  `survey`, `select`, `prepare`, `bless`, and `route`, the host-tested
+  auto-prep decision); the Makefile links it static as
+  `build/bin/falcon-boot-appliance-init`. `image/` is the recipe for the UKI
+  it runs in: `mk-appliance.sh` plus the image's contents as data,
+  `programs.list` and `modules.list`, each entry with its reason. The build
+  fails if any program the image can exec lacks its interpreter inside it.
+  `tools/` holds the QEMU proofs.
 - `falcon-winjump/` the WinPE jump binary (DESIGN Section 6.3), a Win64
   console program.
 - `docs/` DESIGN.md (authoritative) and later Manual.md. `tools/` at the root

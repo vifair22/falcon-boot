@@ -98,7 +98,7 @@ HOST_CFLAGS := -std=c11 -O2 -D_GNU_SOURCE \
 	-Wmissing-declarations -Wcast-align -Wcast-qual -Wnull-dereference \
 	-Wconversion -Wsign-conversion \
 	-fstack-protector-strong -fstack-clash-protection \
-	$(CLI_INC) $(CORE_INC)
+	$(APPLIANCE_INC) $(CLI_INC) $(CORE_INC)
 
 HOST_LDFLAGS := -fstack-protector-strong
 

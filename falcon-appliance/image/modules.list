@@ -1,0 +1,58 @@
+# The kernel modules the appliance needs, by name. Their dependencies are
+# resolved from the kernel's own modules.dep by mk-appliance.sh: dm-crypt alone
+# pulls in five modules on this kernel (encrypted-keys, trusted, asn1_encoder,
+# tee), which is exactly the kind of list that should not be maintained by
+# hand.
+#
+# The appliance's hardware needs are exactly three: reach the stick, draw on a
+# screen, and read a keyboard. The rig can only ever test the middle one, since
+# QEMU hands the stick over as emulated SATA and the keyboard as PS/2, and both
+# of those drivers are built into the kernel. So the first and the third are
+# carried here on the strength of what a real machine looks like, not on the
+# strength of a green test run.
+#
+# Reach the stick: the rig's emulated SATA hid the gap until the appliance met
+# actual hardware (2026-09-13) and found no block device to survey. A falcon
+# stick is a USB stick by definition, so the bus it arrives on is not optional.
+# Both drivers are listed because which one claims a given bridge is the
+# bridge's choice, not ours.
+#
+# Read a keyboard: USB (usbhid, hid-generic) and PS/2 (i8042, atkbd) are built
+# in, but i2c-hid is not, and a great many modern laptops drive their built-in
+# keyboard over it. Without these the appliance would boot, print its prompts
+# perfectly, and ignore every keystroke - which looks exactly like the console
+# trap falcon-appliance/src/console.c describes, and would send the next person
+# chasing that again. i2c-hid-of is device-tree and cannot apply on x86;
+# hid-multitouch is a touchpad and nothing here needs a pointer.
+#
+# Write into a .img payload: blessing one signs the loader inside the image's
+# own filesystem, and falcon-cli/src/sign/payload.c does that through the kernel
+# rather than through mtools - a loop device configured for the partition's
+# byte range, mounted vfat. Neither driver is built in (CONFIG_BLK_DEV_LOOP=m,
+# CONFIG_VFAT_FS=m, read out of this kernel's own IKCONFIG), and vfat's
+# dependency on fat is resolved below rather than listed.
+#
+# What is deliberately NOT listed is the character sets that mount needs. A
+# vfat mount with no options loads the codepage and the I/O charset the kernel
+# was configured with, and a missing one fails the mount with a message about
+# a charset rather than about the image; here they are CONFIG_FAT_DEFAULT_
+# CODEPAGE=437 and CONFIG_FAT_DEFAULT_IOCHARSET="ascii", and both nls_cp437
+# and nls_ascii are BUILT IN on this kernel (they appear in modules.builtin,
+# not in modules.dep). Naming either would be a build failure by the rule
+# in mk-appliance.sh, which is the resolver doing its job.
+#
+# Names are the ones modules.dep uses, hyphens and all, because the resolver
+# looks them up literally rather than going through modprobe's aliasing.
+# Only list what is actually a module: the host controller (xhci-pci,
+# xhci-hcd) and the SCSI disk layer (sd_mod) are built into Arch's kernel and
+# naming them here is a build failure, correctly, since the same failure is
+# what a typo deserves.
+
+dm-crypt        # the p3 unlock
+exfat           # p2
+loop            # into a .img payload's filesystem
+vfat            #   ... and the FAT inside it
+usb-storage     # the stick itself, whichever driver its bridge picks
+uas
+i2c-hid         # laptop keyboards on i2c
+i2c-hid-acpi

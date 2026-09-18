@@ -1,0 +1,18 @@
+# The programs the appliance's two flows shell out to (DESIGN Sections 7.5,
+# 6.3 and 6.3.1), staged with their library closure by mk-appliance.sh. The
+# Python interpreter ukify is written in is found from ukify itself and is not
+# listed.
+#
+# Blessing:
+/usr/bin/cryptsetup      # unlocks p3 so the MOK private key can be read
+/usr/bin/sbsign          # signs the UKI wrap, and appends to a bare payload
+/usr/bin/sbverify        # counts a payload's signatures before and after, one
+                         # of the three checks that blessing ADDED ours and
+                         # kept the vendor's (DESIGN Section 7.2)
+/usr/bin/bsdtar          # lists and extracts the ISO (the sign tool's reader)
+#
+# Preparing Windows media, which holds no key and signs nothing:
+/usr/bin/7z              # reads the UDF namespace; Windows media keeps every
+                         # real file there and only a stub in ISO9660
+/usr/bin/wimlib-imagex   # rewrites \sources\boot.wim: extract, update,
+                         # optimize, verify

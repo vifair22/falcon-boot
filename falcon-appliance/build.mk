@@ -6,12 +6,40 @@
 APPLIANCE_UKI   := build/appliance/appliance-uki.efi
 APPLIANCE_STICK := build/appliance/appliance-stick.img
 
+APPLIANCE := falcon-appliance/src
+
+# PID 1, one program split by job (falcon-appliance/src/appliance.h has the
+# map), plus what it links from the other components: the GPT matcher and the
+# manifest parser the loader uses, so the appliance cannot disagree with the
+# menu about which partition is which or what "already blessed" means; and the
+# bless tool's ISO reader, family table and payload rules, so the survey
+# cannot put an image in a queue the tool will refuse it from. util.c and the
+# two crypto units come along because isoprobe calls into them.
+#
+# Ordinary Linux userland, held to the same host flags as falcon-cli, and
+# linked static: it is PID 1 in an initramfs whose dynamic loader exists for
+# the other programs, not for this one.
+APPLIANCE_INIT_SRCS := $(addprefix $(APPLIANCE)/,main.c console.c stick.c \
+	run.c survey.c select.c prepare.c bless.c route.c) \
+	$(CORE_PART) $(CORE_MANIFEST) $(CORE)/media/family.c \
+	$(addprefix $(CLI)/sign/,isoprobe.c payload.c util.c) \
+	$(CORE)/crypto/sha256.c $(CORE)/crypto/crypto.c
+
+HOST_SRCS += $(APPLIANCE_INIT_SRCS)
+
+APPLIANCE_INIT := $(BIN)/falcon-boot-appliance-init
+APPLIANCE_INIT_OBJS := $(APPLIANCE_INIT_SRCS:%.c=$(HOST_OBJ)/%.o)
+
+$(APPLIANCE_INIT): $(APPLIANCE_INIT_OBJS)
+	@mkdir -p $(@D)
+	$(CC_HOST) $(HOST_LDFLAGS) -static -o $@ $(APPLIANCE_INIT_OBJS)
+
 # Embeds $(SIGN_STATIC), so the two routes of Section 7.5 run one
 # implementation, and $(WINJUMP), which is what preparation injects into a
 # Windows image (Section 6.3) and the one file of the prepare path the
 # appliance cannot fetch for itself. The test MOK is only for the optional
 # signed copy; mkstick signs the real one on its way onto p3.
-appliance: $(SIGN_STATIC) $(WINJUMP) $(MOK_KEY)
+appliance: $(APPLIANCE_INIT) $(SIGN_STATIC) $(WINJUMP) $(MOK_KEY)
 	falcon-appliance/image/mk-appliance.sh
 
 # Built by the product tool: mkstick generates the MOK, signs both UKIs, and

@@ -9,7 +9,7 @@
 #                                              for a hand-staged rig stick
 #
 # The appliance is a kernel plus an initramfs that contains one program of our
-# own (falcon-appliance/src/init.c, PID 1) and the programs the two flows shell
+# own (falcon-appliance/src, PID 1) and the programs the two flows shell
 # out to. Blessing (DESIGN Section 7.5):
 #
 #   cryptsetup   unlocks p3 so the MOK private key can be read
@@ -93,7 +93,7 @@ MOK_CRT="${MOK_CRT:-build/mok-test/falcon-test-mok.crt}"
 # the screen of the machine the stick is plugged into, ttyS1 is the port the rig
 # types into (ttyS0 carries the firmware and loader log, and is write-only
 # there). The appliance opens every console it can and reads from whichever one
-# answers (falcon-appliance/src/init.c, the console section), so the ORDER of
+# answers (falcon-appliance/src/console.c), so the ORDER of
 # these no longer decides whether its prompts can be answered - which it did
 # until 2026-09-13, when a laptop with no ttyS1 made /dev/console a dead device
 # and every prompt read EOF.
@@ -108,109 +108,22 @@ MOK_CRT="${MOK_CRT:-build/mok-test/falcon-test-mok.crt}"
 # panic=15 makes a panic end in a reboot rather than a hang nobody can exit.
 CMDLINE="${APPLIANCE_CMDLINE:-console=ttyS1,115200 console=tty0 quiet loglevel=3 panic=15}"
 
-# Host flag set from the Makefile (HOST_CFLAGS), copied verbatim: /init is
-# ordinary Linux userland C and is held to exactly the same warnings as the
-# rest of falcon-cli. -static because it is PID 1 in an initramfs; the dynamic
-# loader in here exists for the other four programs, not for this one.
-HOST_CFLAGS=(
-    -std=c11 -O2 -D_GNU_SOURCE
-    -Wall -Wextra -Wpedantic -Wshadow -Wunused -Wdouble-promotion
-    -Wformat=2 -Wformat-truncation
-    -Wmissing-prototypes -Wstrict-prototypes
-    -Wmissing-declarations -Wcast-align -Wcast-qual -Wnull-dereference
-    -Wconversion -Wsign-conversion
-    -fstack-protector-strong -fstack-clash-protection
-    -Ifalcon-core/src -Ifalcon-cli/src -Ifalcon-appliance/src
-)
+# PID 1, built by the Makefile (falcon-appliance/build.mk) from
+# falcon-appliance/src with the repo's host flag set and linked static: the
+# dynamic loader in this image exists for the other programs, not for this one.
+INIT=build/bin/falcon-boot-appliance-init
 
-# falcon-core/src/part/part.c identifies p2 and p3 by the falcon type GUIDs, and
-# falcon-core/src/manifest/manifest.c decides what "already blessed" means. Both
-# are the loader's own modules, EFI-free by construction, linked here so the
-# appliance cannot disagree with the menu about either question.
-#
-# The rest is how the survey tells Windows media from everything else:
-# falcon-cli/src/sign/isoprobe.c is the bless tool's own ISO reader (two helper
-# listings, unioned; no mount and no loop device) and
-# falcon-core/src/media/family.c is the registry it fingerprints against, so the
-# queue an image lands in here is the queue `falcon-boot-sign` will agree with
-# when it is handed the file. util.c and the two crypto units come along because
-# isoprobe calls into them, not as anything this program uses directly.
-# falcon-cli/src/sign/payload.c comes in for two answers the survey needs and
-# must not have its own version of: which file names are bare payloads, and
-# whether one already carries this stick's certificate (DESIGN Section 7.2). The
-# signing itself still happens in the tool, in its own process.
-INIT_SRCS=(
-    falcon-appliance/src/init.c
-    falcon-appliance/src/route.c
-    falcon-core/src/part/part.c
-    falcon-core/src/manifest/manifest.c
-    falcon-core/src/media/family.c
-    falcon-cli/src/sign/isoprobe.c
-    falcon-cli/src/sign/payload.c
-    falcon-cli/src/sign/util.c
-    falcon-core/src/crypto/sha256.c
-    falcon-core/src/crypto/crypto.c
-)
+# The image's contents are data beside this script: the programs `sign`
+# execs (programs.list) and the kernel modules the flow needs by name
+# (modules.list). Each file says why every entry is there. One entry per
+# line; '#' starts a comment.
+IMAGE_DIR=falcon-appliance/image
+read_list() {
+    sed -e 's/#.*//' -e 's/[[:space:]]*$//' -e '/^$/d' "$1"
+}
+mapfile -t BINARIES < <(read_list "$IMAGE_DIR/programs.list")
 
-# The programs `sign` execs, plus the interpreter ukify is written in. Order
-# does not matter; the closure walk below takes them as a set.
-BINARIES=(
-    /usr/bin/cryptsetup
-    /usr/bin/sbsign
-    /usr/bin/sbverify
-    /usr/bin/bsdtar
-    /usr/bin/7z
-    /usr/bin/wimlib-imagex
-)
-
-# Wanted by name; their dependencies are resolved from the kernel's own
-# modules.dep below. dm-crypt alone pulls in five modules on this kernel
-# (encrypted-keys, trusted, asn1_encoder, tee), which is exactly the kind of
-# list that should not be maintained by hand.
-#
-# The appliance's hardware needs are exactly three: reach the stick, draw on a
-# screen, and read a keyboard. The rig can only ever test the middle one, since
-# QEMU hands the stick over as emulated SATA and the keyboard as PS/2, and both
-# of those drivers are built into the kernel. So the first and the third are
-# carried here on the strength of what a real machine looks like, not on the
-# strength of a green test run.
-#
-# Reach the stick: the rig's emulated SATA hid the gap until the appliance met
-# actual hardware (2026-09-13) and found no block device to survey. A falcon
-# stick is a USB stick by definition, so the bus it arrives on is not optional.
-# Both drivers are listed because which one claims a given bridge is the
-# bridge's choice, not ours.
-#
-# Read a keyboard: USB (usbhid, hid-generic) and PS/2 (i8042, atkbd) are built
-# in, but i2c-hid is not, and a great many modern laptops drive their built-in
-# keyboard over it. Without these the appliance would boot, print its prompts
-# perfectly, and ignore every keystroke - which looks exactly like the console
-# bug above and would send the next person chasing it again. i2c-hid-of is
-# device-tree and cannot apply on x86; hid-multitouch is a touchpad and nothing
-# here needs a pointer.
-#
-# Write into a .img payload: blessing one signs the loader inside the image's
-# own filesystem, and falcon-cli/src/sign/payload.c does that through the kernel
-# rather than through mtools - a loop device configured for the partition's
-# byte range, mounted vfat. Neither driver is built in (CONFIG_BLK_DEV_LOOP=m,
-# CONFIG_VFAT_FS=m, read out of this kernel's own IKCONFIG), and vfat's
-# dependency on fat is resolved below rather than listed.
-#
-# What is deliberately NOT listed is the character sets that mount needs. A
-# vfat mount with no options loads the codepage and the I/O charset the kernel
-# was configured with, and a missing one fails the mount with a message about
-# a charset rather than about the image; here they are CONFIG_FAT_DEFAULT_
-# CODEPAGE=437 and CONFIG_FAT_DEFAULT_IOCHARSET="ascii", and both nls_cp437
-# and nls_ascii are BUILT IN on this kernel (they appear in modules.builtin,
-# not in modules.dep). Naming either would be a build failure by the rule
-# below, which is the resolver doing its job.
-#
-# Names are the ones modules.dep uses, hyphens and all, because the resolver
-# below looks them up literally rather than going through modprobe's aliasing.
-# Only list what is actually a module: the host controller (xhci-pci, xhci-hcd) and the SCSI disk layer
-# (sd_mod) are built into Arch's kernel and naming them here is a build
-# failure, correctly, since the same failure is what a typo deserves.
-MODULES=(dm-crypt exfat loop vfat usb-storage uas i2c-hid i2c-hid-acpi)
+mapfile -t MODULES < <(read_list "$IMAGE_DIR/modules.list")
 
 # PYTHON: ukify is a Python program, so the appliance carries an interpreter.
 # Everything here is dropped rather than kept: test suites, the GUI and REPL
@@ -241,7 +154,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-for t in bsdtar cpio gcc readelf ukify zstd sudo; do
+for t in bsdtar cpio readelf ukify zstd sudo; do
     command -v "$t" >/dev/null 2>&1 || {
         echo "ERROR: $t not found" >&2
         exit 1
@@ -252,6 +165,10 @@ for b in "${BINARIES[@]}"; do
 done
 [[ -f "$STUB" ]] || {
     echo "ERROR: sd-stub not found at $STUB (install systemd-boot)" >&2
+    exit 1
+}
+[[ -x "$INIT" ]] || {
+    echo "ERROR: $INIT not built (run: make appliance)" >&2
     exit 1
 }
 [[ -f "$SIGN_STATIC" ]] || {
@@ -265,7 +182,7 @@ done
 }
 
 # ukify's shebang names its interpreter, and the appliance copies that binary
-# in (see BINARIES below), so what is wanted is the real executable. A shebang
+# in (see programs.list), so what is wanted is the real executable. A shebang
 # may name it through env - Arch ships "#!/usr/bin/env python3" - and env is a
 # launcher, not an interpreter: copying it into the appliance would put a
 # program there that looks up a PATH the appliance does not have.
@@ -375,8 +292,9 @@ done
 cleanup
 
 # ---- /init ----
-echo "== building /init"
-gcc "${HOST_CFLAGS[@]}" -static -o "$ROOT/init" "${INIT_SRCS[@]}"
+echo "== staging /init"
+cp "$INIT" "$ROOT/init"
+chmod 0755 "$ROOT/init"
 echo "   init: $(stat -c%s "$ROOT/init") bytes (static)"
 
 # ---- the programs the flow shells out to, with their library closure ----

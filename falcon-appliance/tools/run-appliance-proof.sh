@@ -55,10 +55,10 @@
 # log (falcon-efi/tools/run-qemu.sh --headless), which carries the firmware and
 # the loader. The appliance needs a console it can READ from, so this script
 # adds a second port as a pair of FIFOs, and ttyS1 is one of the consoles the
-# appliance opens (falcon-appliance/src/init.c writes to all of them and reads
-# from whichever answers, so which console= came last on the cmdline does not
-# decide whether this drive works). The loader menu is still driven the rig's
-# usual way, by sendkey through the QEMU monitor.
+# appliance opens (falcon-appliance/src/console.c writes to all of them and
+# reads from whichever answers, so which console= came last on the cmdline does
+# not decide whether this drive works). The loader menu is still driven the
+# rig's usual way, by sendkey through the QEMU monitor.
 #
 # What this log does NOT carry is the output of the helper tools the appliance
 # runs: those inherit /dev/console, which the cmdline points at the screen so
@@ -256,7 +256,7 @@ select_count() {
 }
 
 # The same, for the preparation gate. The two gates prompt with different words
-# (falcon-appliance/src/init.c, gate_ui), which is what lets a reader of the
+# (falcon-appliance/src/select.c, gate_ui), which is what lets a reader of the
 # console - and this driver - tell which one is being answered.
 prepare_count() {
     tail -c "+$(( ${1:-0} + 1 ))" "$CONSOLE_LOG" 2>/dev/null |
