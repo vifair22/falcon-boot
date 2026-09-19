@@ -201,12 +201,79 @@ static void test_hook_dm_table(void **state)
     assert_int_equal(hook_dm_header(g_tab, 10, 1), HOOK_ERR_BAD_ARG);
 }
 
+/* The names the hook gives the device: the PVD's volume identifier, trimmed
+ * and udev-encoded, and libblkid's UUID from the modification date, else
+ * the creation date. */
+static void pvd_init(uint8_t *pvd, const char *label)
+{
+    size_t n = strlen(label);
+
+    memset(pvd, 0, 2048);
+    pvd[0] = 1;
+    memcpy(pvd + 1, "CD001", 5);
+    memset(pvd + 40, ' ', 32);
+    memcpy(pvd + 40, label, n);
+    memset(pvd + 813, '0', 16);
+    memset(pvd + 830, '0', 16);
+}
+
+static void test_hook_iso_names(void **state)
+{
+    static uint8_t pvd[2048];
+    char label[64], uuid[32];
+
+    (void)state;
+    pvd_init(pvd, "Fedora-WS-Live-44");
+    memcpy(pvd + 830, "2026091817094300", 16);
+    assert_true(hook_iso_names(pvd, label, sizeof label, uuid, sizeof uuid));
+    assert_string_equal(label, "Fedora-WS-Live-44");
+    assert_string_equal(uuid, "2026-09-18-17-09-43-00");
+
+    /* No modification date: the creation date. Neither: no UUID. */
+    pvd_init(pvd, "d-live 13.7.0 st amd64");
+    memcpy(pvd + 813, "2025010203040506", 16);
+    assert_true(hook_iso_names(pvd, label, sizeof label, uuid, sizeof uuid));
+    assert_string_equal(label, "d-live\\x2013.7.0\\x20st\\x20amd64");
+    assert_string_equal(uuid, "2025-01-02-03-04-05-06");
+    memset(pvd + 813, 0, 16);
+    assert_true(hook_iso_names(pvd, label, sizeof label, uuid, sizeof uuid));
+    assert_string_equal(uuid, "");
+    /* A UUID buffer too small for one is left empty. */
+    memcpy(pvd + 813, "2025010203040506", 16);
+    assert_true(hook_iso_names(pvd, label, sizeof label, uuid, 22));
+    assert_string_equal(uuid, "");
+
+    /* The label stops at the buffer rather than half an escape. */
+    assert_true(hook_iso_names(pvd, label, 9, uuid, sizeof uuid));
+    assert_string_equal(label, "d-live");
+    assert_true(hook_iso_names(pvd, label, 4, uuid, sizeof uuid));
+    assert_string_equal(label, "d-l");
+    /* A full-width identifier with no padding. */
+    pvd_init(pvd, "ABCDEFGHIJKLMNOPQRSTUVWXYZ012345");
+    assert_true(hook_iso_names(pvd, label, sizeof label, uuid, sizeof uuid));
+    assert_string_equal(label, "ABCDEFGHIJKLMNOPQRSTUVWXYZ012345");
+
+    /* Not a PVD, and bad arguments. */
+    pvd[0] = 2;
+    assert_false(hook_iso_names(pvd, label, sizeof label, uuid, sizeof uuid));
+    assert_string_equal(label, "");
+    pvd[0] = 1;
+    pvd[1] = 'X';
+    assert_false(hook_iso_names(pvd, label, sizeof label, uuid, sizeof uuid));
+    assert_false(hook_iso_names(NULL, label, sizeof label, uuid, sizeof uuid));
+    assert_false(hook_iso_names(pvd, NULL, sizeof label, uuid, sizeof uuid));
+    assert_false(hook_iso_names(pvd, label, 0, uuid, sizeof uuid));
+    assert_false(hook_iso_names(pvd, label, sizeof label, NULL, sizeof uuid));
+    assert_false(hook_iso_names(pvd, label, sizeof label, uuid, 0));
+}
+
 int run_hookcore_tests(void)
 {
     const struct CMUnitTest tests[] = {
         cmocka_unit_test(test_hook_cmdline),
         cmocka_unit_test(test_hook_efivar_and_names),
         cmocka_unit_test(test_hook_dm_table),
+        cmocka_unit_test(test_hook_iso_names),
     };
 
     return cmocka_run_group_tests_name("falcon-hook", tests, NULL, NULL);
