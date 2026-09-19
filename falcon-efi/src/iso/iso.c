@@ -15,6 +15,7 @@
 
 #include <iso/iso.h>
 #include <iso/overlay.h>
+#include <iso/bstrace.h>
 #include <efi/blockio.h>
 #include <efi/devpath.h>
 #include <efi/sfs.h>
@@ -279,8 +280,8 @@ static void device_init(iso_device *dev, uint64_t image_size,
     dev->bio.WriteBlocks = iso_write_blocks;
     dev->bio.FlushBlocks = iso_flush_blocks;
 
-    dev->path.vendor.Header.Type = MEDIA_DEVICE_PATH;
-    dev->path.vendor.Header.SubType = MEDIA_VENDOR_DP;
+    dev->path.vendor.Header.Type = 0x01;     /* HARDWARE_DEVICE_PATH */
+    dev->path.vendor.Header.SubType = 0x04;  /* HW_VENDOR_DP */
     dp_set_node_len(&dev->path.vendor.Header,
                     (UINT16)sizeof(dev->path.vendor));
     dev->path.vendor.Guid = vendor_guid;
@@ -886,6 +887,14 @@ static EFI_STATUS chainload(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
     EFI_STATUS status;
 
     resolve_load_ops(bs, &ops);
+    /* TRACE EXPERIMENT: shim is not enforcing; start the payload as a
+     * firmware image so a payload that loads drivers has native parents. */
+    if (ops.table_unhooked) {
+        ops.LoadImage = bs->LoadImage;
+        ops.StartImage = bs->StartImage;
+        ops.UnloadImage = bs->UnloadImage;
+        ops.via_shim = FALSE;
+    }
 
     result->stage = L"reading the ISO ESP's device path";
     status = bs->HandleProtocol(esp_handle, &dp_guid, (void **)&esp_path);
@@ -934,7 +943,11 @@ static EFI_STATUS chainload(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
 
     result->stage = L"StartImage";
     shim_lock_hide(bs);
+    bstrace_image(st, child);
+    bstrace_blockio(st);
+    bstrace_on(st);
     status = ops.StartImage(child, &exit_size, &exit_data);
+    bstrace_off(st);
     shim_lock_restore(bs);
     /* StartImage unloads an application that returns, so the child handle is
      * gone either way; only its exit data is ours to release. */

@@ -23,6 +23,7 @@ EFI_SRCS := \
 	$(CORE_TRUST) \
 	$(EFI_SRC)/secboot/trustefi.c \
 	$(EFI_SRC)/iso/iso.c \
+	$(EFI_SRC)/iso/bstrace.c \
 	$(CORE)/media/family.c \
 	$(CORE)/media/cpio.c \
 	$(EFI_SRC)/direct/direct.c \
