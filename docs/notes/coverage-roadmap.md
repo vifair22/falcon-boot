@@ -87,8 +87,12 @@ harness measures now is `docs/coverage.md`:
   the hook (depmod when the initramfs ships no modules.dep, and a nudge for
   antiX's USB/CD-only scan). The Tier C misses: Hiren's bootmgr page-faults
   on firmware that write-protects loader pages, as a bare CD with no
-  falcon-boot in the chain (which is why it is Tier C); FreeBSD has no hook
-  and loses its media as any chainload does. Blessed Alpine and Kali pass in all three states now that
+  falcon-boot in the chain (which is why it is Tier C); FreeBSD's loader and
+  kernel run since the ESXi fixes (DESIGN 7.6) and it stops at mountroot
+  with no cd9660 device, which is Section 6.1's media problem on a system
+  falcon-hook cannot serve: the hook is a Linux initramfs mechanism. The
+  BSD-based firewall installers (pfSense, OPNsense) would measure the same
+  gap. Blessed Alpine and Kali pass in all three states now that
   the loader hands a wrap its map as a credential.
 - **M4**: the three Tier B installers boot direct with Secure Boot off, each
   through a different gap the hook now closes. Alpine's kernel has no
