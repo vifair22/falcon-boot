@@ -11,6 +11,16 @@ records the alternatives that were considered and rejected, so do not reintroduc
 a rejected approach without re-reading why it was rejected. `README.md` is the
 short public summary of the same model.
 
+Coverage (docs/notes/coverage-roadmap.md, 2026-09-18): M0-M2 are done. The
+corpus harness and scorecard exist (`docs/coverage.md`); falcon-core reads
+ISO9660/Rock Ridge/Joliet and UDF and an ISO's own GRUB, systemd-boot and
+isolinux configuration; falcon-hook rebuilds the ISO as a device-mapper
+device inside the distro's initramfs; and with Secure Boot off the loader
+boots an unblessed Linux ISO's kernel directly (Enter; `c` chainloads its own
+loader, `d` forces direct), and blessed wraps carry the hook too. Next on
+that roadmap: the rest of M3 (bless from the menu, the bless-time dm check)
+and M4 (Tier B installers).
+
 Status: pre-1.0 MVP. Build-order steps 1-7 are done (see docs/DESIGN.md
 Section 11 status header); host tools falcon-boot-mkstick and
 falcon-boot-sign exist and are proven end to end (a mkstick-created image
@@ -86,7 +96,7 @@ is by design; it is not a gap to close.
 
 See `docs/DESIGN.md` for full architecture. Quick orientation:
 
-The repository is five components, each with its own `src/`, `tests/` and
+The repository is six components, each with its own `src/`, `tests/` and
 `tools/`, built by one non-recursive Makefile: the root `Makefile` holds the
 shared toolchains, flags, test runner and compile database, and `include`s a
 `build.mk` from each component. There is one make invocation and one
@@ -101,9 +111,10 @@ the tree, so `#include <fs/exfat.h>` means one file wherever it is written.
     fallback); the only crypto in the loader.
   - `fs/` the filesystem driver registry (`fs.c`, DESIGN Section 9: one
     `fs_ops` vtable, opaque caller-allocated storage, unified dirents and
-    status codes) and the read-only drivers only it calls, `exfat.c` and
-    `ext4.c`. Consumers select a driver through the registry and never name
-    one.
+    status codes) and the read-only drivers only it calls, `exfat.c`,
+    `ext4.c`, `iso9660.c` (Rock Ridge, Joliet) and `udf.c`. Consumers select
+    a driver through the registry and never name one; `fs_lookup` resolves a
+    path.
   - `luks/` LUKS2 header parse, keyslot unlock, AF merge.
   - `part/` GPT parsing and falcon partition identification.
   - `pe/` PE/COFF header layout read from a file's bytes; the one PE walker.
@@ -113,7 +124,10 @@ the tree, so `#include <fs/exfat.h>` means one file wherever it is written.
     `probe` the glue over a read callback. A prediction is a label and no boot
     path takes one.
   - `media/` what an image is: family detection (`family.c`), the initrd cpio
-    writer (`cpio.c`), `.osrel`/`.uname` reading (`osrel.c`).
+    writer (`cpio.c`), `.osrel`/`.uname` reading (`osrel.c`), an ISO's own
+    boot configuration (`bootcfg.c`, read through `bootfs.c` over a mounted
+    image), the extent map handed to falcon-hook (`extmap.c`) and the hooked
+    boot's cmdline (`hookcmd.c`).
   - `manifest/` the blessed-artifact manifest parser and writer (DESIGN
     Section 8.1), shared by the loader and the sign tool.
   - `lib/` freestanding `mem*` and UCS-2 helpers; `string.c` is linked into
@@ -144,6 +158,10 @@ the tree, so `#include <fs/exfat.h>` means one file wherever it is written.
     file (DESIGN Section 6), the personal OS (Section 5; the only module that
     ever holds the passphrase, glue over core's `luks` and `fs`), and blessed
     media (Section 8.1; `blesscore.c` is its EFI-free, tested half).
+  - `direct/` direct kernel boot of an ISO (DESIGN Section 6.4): kernel and
+    initrds read with core's ISO drivers, falcon-hook appended, the extent
+    map set, the initrd served over LoadFile2, the kernel loaded through
+    `loadops`.
   - `tools/` the QEMU + OVMF rig (`run-qemu.sh`, with `--secboot`, `--stick`
     and `--headless`; `ovmf.sh`; `rig-shot.sh`), its fixtures (the payload
     ISO and images, the throwaway test MOK, the sd-stub fixture UKI with its
@@ -168,15 +186,24 @@ the tree, so `#include <fs/exfat.h>` means one file wherever it is written.
   `tools/` holds the QEMU proofs.
 - `falcon-winjump/` the WinPE jump binary (DESIGN Section 6.3), a Win64
   console program.
+- `falcon-hook/` the program the loader appends to an ISO's initrd (DESIGN
+  Section 6.4): freestanding static x86-64 Linux, no libc (`src/sys.c` is its
+  system calls and startup). It runs as `rdinit=`, reads the extent map from
+  efivarfs, maps the ISO read-only with dm-linear as
+  `/dev/mapper/falcon-iso` under the ISO's label, and execs the distro's
+  init. `src/hookcore.c` is its host-tested half; the loader embeds the
+  stripped binary as a generated C array. `tools/run-hook-rig.sh` boots it
+  under QEMU without the loader.
 - `docs/` DESIGN.md (authoritative) and later Manual.md. `tools/` at the root
   holds only what spans the repo: `analyze.sh`, and `coverage/`, the corpus
   harness of docs/notes/coverage-roadmap.md (a pinned ISO manifest, one rig
   stick per ISO, each booted under OVMF in three Secure Boot states and
-  judged from serial and a DHCP capture, rendered to `docs/coverage.md`).
+  judged from serial, a DHCP capture and the media read after the kernel
+  starts, rendered to `docs/coverage.md`).
 
 `make check-tools` verifies the toolchain. Objects land in
 `build/obj/<flavour>/<source path>.o` (flavours: `efi-release`, `host`,
-`winjump`, `test`), binaries in `build/bin/` (the loader is
+`winjump`, `hook`, `test`), binaries in `build/bin/` (the loader is
 `build/bin/falcon-boot.efi`), fixtures and rig artifacts in `build/`.
 `make test` runs every component's test binary, `make coverage` runs them
 strictly and reports over all of them, `make test-fixtures` builds the images

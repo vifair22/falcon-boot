@@ -879,10 +879,15 @@ What that puts in the loader, each a milestone in the roadmap:
   configuration, to find the kernel, the initrd and the default cmdline. The
   per-family kernel table in the sign tool becomes the fallback.
 - **Direct kernel boot**: the loader boots an ISO's kernel itself, through
-  the same shim-verified load path as everything else (Section 7.6), with the
-  kernel and initrd published on the synthetic filesystem of Section 5.1 and
-  `initrd=` in the load options. No sd-stub is involved, so this also works
-  where UKIs cannot, with validation disabled (Section 7.4).
+  the same shim-verified load path as everything else (Section 7.6), from a
+  buffer, with the cmdline in its load options and the initrd served over
+  the `LINUX_EFI_INITRD_MEDIA_GUID` LoadFile2 protocol. Built that way rather
+  than on the synthetic filesystem of Section 5.1 with `initrd=`: LoadFile2
+  needs no filesystem and no path, and every kernel in the corpus is newer
+  than 5.8, where the EFI stub gained it. `initrd=` on the synthetic
+  filesystem stays the fallback for an older kernel if the corpus ever shows
+  one. No sd-stub is involved, so this also works where UKIs cannot, with
+  validation disabled (Section 7.4).
 - **The generic device hook ("falcon-hook")**: a cpio segment appended to
   the distro's own initrd, which rebuilds the ISO as a block device over the
   raw partition (device-mapper linear, or loop with an offset for a
@@ -913,10 +918,16 @@ here relaxes enforcement; the key stays on p3. Under Secure Boot the
 direct-boot route boots only what verifies, which in practice is a blessed
 wrap, and that is the "bless" in the promise.
 
-**Status: decided, not built.** Until the milestones land, Section 7.2's
-Secure Boot OFF row describes the target rather than the stick: today an
-unblessed Linux ISO chainloads its own GRUB, keeps its stock cmdline, and
-loses its media at `ExitBootServices` in every Secure Boot state.
+**Status (2026-09-18): the Linux half is built; Windows WIM surgery is
+not.** The ISO9660/UDF reader, boot-config parsing, falcon-hook and direct
+kernel boot are in, and blessed wraps carry falcon-hook too, built from the
+ISO's own CD entry (the loader sets the extent variable around a blessed
+boot as it does around a direct one). Measured under OVMF by the coverage
+harness (`docs/coverage.md`): every Tier A Linux ISO on hand boots
+unmodified with Secure Boot off (Enter boots direct; `c` chainloads the
+ISO's own loader, `d` forces direct), and blessed in all three Secure Boot
+states. Windows still needs the appliance's preparation (Section 6.3), and
+the installer ISOs of Tier B do not yet find their media through the hook.
 
 ## 7. Security model
 

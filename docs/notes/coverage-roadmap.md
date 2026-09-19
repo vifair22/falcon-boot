@@ -10,6 +10,39 @@ decided in `docs/DESIGN.md` Section 6.4 and the appliance revision in Section
 7.5 (both 2026-09-18); this file is the plan, the alternatives and the
 milestones. The evidence base is `docs/notes/ventoy-survey.md`.
 
+## Status (2026-09-18, after M0-M2)
+
+M0, M1 and M2 are done, and M3's first item came with them. The table in
+Section 1 is the starting point this plan was written against; what the
+harness measures now is `docs/coverage.md`:
+
+| Media | SB off | SB on, db has MS CA | SB on, own keys only |
+|---|---|---|---|
+| Tier A Linux (13 ISOs on hand), drop | boots, direct | chainloads, media lost | refused |
+| Tier A Linux, blessed | boots | boots | boots |
+| Tier B installers (Debian netinst, Alpine, Proxmox) | media lost | media lost | refused / media lost |
+| Windows install, unprepared | Setup cannot find its source | same | refused |
+
+- **M0**: corpus manifest, harness (serial, DHCP, and the media a direct
+  boot reads after the kernel starts), scorecard. The exit's premise did not
+  hold: before this work only Arch and Gentoo passed blessed. Debian live
+  failed in its initramfs and casper could never pass, because Ubuntu 26.04's
+  initramfs has no exFAT driver to find the ISO file with. Both pass now,
+  through the hook.
+- **M1**: falcon-hook and `FalconIsoMap` (own GUID, versioned layout). Exit
+  met in the rig and then by the loader.
+- **M2**: direct kernel boot, with boot-config parsing for GRUB (including
+  for loops and menuentry arguments, for Manjaro), systemd-boot and
+  isolinux. Exit met: all 13 Tier A Linux ISOs on hand pass with Secure Boot
+  off and no preparation. Kali is not on hand: its live ISO is distributed
+  by torrent only.
+- **M3, first item, done early**: every wrap embeds falcon-hook with the CD
+  entry's cmdline, which is what fixed blessed casper. Still to do: the
+  bless-time dm/loop check, and blessing from the menu.
+- **M4** starts from the three Tier B installers, which boot direct and then
+  do not look at `/dev/mapper/falcon-iso` (Debian's cdrom-detect, Alpine's
+  nlplug-findfs, Proxmox's own ISO scan).
+
 ## 1. Where we actually are
 
 | Media | SB off | SB on, db has MS CA | SB on, own keys only |
@@ -303,8 +336,11 @@ Order of the appliance work, each shippable on its own:
 
 ## 7. Still open
 
-1. **The extent variable's layout**, and whether to make it Ventoy's
-   `VentoyOsParam` so "Ventoy compatible" ISOs find themselves on our stick.
+1. **The extent variable's layout.** Settled 2026-09-18: our own,
+   `FalconIsoMap` under its own GUID, versioned (`FLCNXT01`, layout in
+   `falcon-core/src/media/extmap.h`), not Ventoy's `VentoyOsParam`. A
+   "Ventoy compatible" ISO finds its media through the hook's device and
+   label like any other.
 2. **Licence.** Settled 2026-09-18: GPL-3.0-or-later (`LICENSE`), which
    is compatible with learning from Ventoy's GPLv3 hooks or reusing them.
 3. **The `grub.cfg` overlay** (D3b), parked in DESIGN 7.2, only if D3a fails.
