@@ -319,6 +319,22 @@ static void test_hook_nudges(void **state)
     assert_non_null(strstr(out, "for i in /sys/block/dm* /sys/block/loop* "
                                 "/sys/block/hd* /sys/block/sr* "
                                 "/sys/block/scd*"));
+
+    /* antiX (MX 25.2's /init, verbatim), and the patched line must not
+     * match again. */
+    {
+        static const char antix[] =
+            "        if ! find_boot_file \"$files\" \"$BOOT_MP\" \"$BOOT_ID\" "
+            "\"$BOOT_RETRY\"; then\n";
+
+        assert_string_equal(n[1].what, "antix");
+        assert_int_equal(hook_patch(antix, sizeof antix - 1u, n[1].find,
+                                    n[1].replace, out, sizeof out, &len), 1);
+        out[len] = '\0';
+        assert_non_null(strstr(out, "\"${BOOT_ID:-name=/dev/mapper/"
+                                    "falcon-iso}\" \"$BOOT_RETRY\""));
+        assert_null(strstr(out, n[1].find));
+    }
 }
 
 static void test_hook_premounts_and_packages(void **state)

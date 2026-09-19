@@ -197,6 +197,37 @@ static char *g_modules[] = {
     "loop", "isofs", (char *)0
 };
 
+/* An initramfs that ships its modules without modules.dep and builds it in
+ * its own init (antiX, MX Linux: `depmod` near the top of its /init) leaves
+ * modprobe resolving nothing when the hook runs first. Build it the same
+ * way, once, with the initramfs's own depmod. */
+static void ensure_depmod(char **envp)
+{
+    static char uts[6u * HOOK_UTS_FIELD];
+    static char dep[128];
+    static char *const dargv[] = { (char *)(uintptr_t)"depmod",
+                                   (char *)(uintptr_t)"-a", (char *)0 };
+    long pid;
+    int status = 0;
+
+    if (sys_uname(uts) < 0)
+        return;
+    dep[0] = '\0';
+    cat(dep, sizeof dep, "/lib/modules/");
+    cat(dep, sizeof dep, uts + 2u * HOOK_UTS_FIELD);
+    cat(dep, sizeof dep, "/modules.dep");
+    if (sys_exists(dep) == 0 || sys_exists("/sbin/depmod") != 0)
+        return;
+    pid = sys_fork();
+    if (pid == 0) {
+        (void)sys_execve("/sbin/depmod", dargv, envp);
+        sys_exit(127);
+    }
+    if (pid > 0)
+        (void)sys_wait(pid, &status);
+    LOG("built modules.dep with /sbin/depmod");
+}
+
 static void load_modules(char **envp)
 {
     static const char *const where[] = {
@@ -204,6 +235,8 @@ static void load_modules(char **envp)
         "/usr/bin/modprobe", (const char *)0
     };
     size_t i;
+
+    ensure_depmod(envp);
 
     for (i = 0; where[i] != (const char *)0; i++) {
         long pid;

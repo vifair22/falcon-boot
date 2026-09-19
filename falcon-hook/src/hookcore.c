@@ -334,6 +334,15 @@ static const hook_nudge g_nudges[] = {
       "for i in /sys/block/hd* /sys/block/sr* ",
       "for i in /sys/block/dm* /sys/block/loop* /sys/block/hd* "
       "/sys/block/sr* " },
+    /* antiX's live init (MX Linux) scans only USB and CD devices for
+     * antiX/linuxfs by default, and a dm device is neither. Its boot-file
+     * search takes a device outright (bdev=, BOOT_ID=name=...); this makes
+     * the ISO's device that search's default, and a bdev= on the cmdline
+     * still wins. */
+    { "antix", "/init",
+      "find_boot_file \"$files\" \"$BOOT_MP\" \"$BOOT_ID\"",
+      "find_boot_file \"$files\" \"$BOOT_MP\" "
+      "\"${BOOT_ID:-name=/dev/mapper/falcon-iso}\"" },
 };
 
 const hook_nudge *hook_nudges(size_t *count)
