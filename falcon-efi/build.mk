@@ -167,7 +167,7 @@ run-stick-secboot:
 # the virtual-media override arithmetic (a header, included by its test), and
 # the Secure Boot state reader, whose whole platform is one GetVariable.
 
-EFI_TESTS := $(addprefix falcon-efi/tests/,main.c bless_test.c prep_test.c \
+EFI_TESTS := $(addprefix falcon-efi/tests/,main.c bless_test.c next_test.c \
 	iso_overlay_test.c sb_test.c)
 
 EFI_UUT := $(EFI_SRC)/bless/blesscore.c $(EFI_SRC)/secboot/sb.c \

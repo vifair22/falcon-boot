@@ -30,7 +30,7 @@ typedef struct {
     EFI_STATUS    status;
     /* Set when the media is not one this path can patch (no boot.wim, not
      * LZX, no winpeshl.exe), before anything was served: the caller's cue
-     * to offer the appliance's preparation instead. */
+     * to boot it as it is. */
     UINT8         unpatchable;
     const CHAR16 *advice;
 } win_result;

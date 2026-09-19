@@ -1273,7 +1273,7 @@ EFI_STATUS pos_boot_pick(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
             result->stage = L"looking for the signing appliance";
             result->advice =
                 L"no signing-appliance image is on this stick's shelf.\r\n"
-                L"Prepare the ISO on a Linux host with falcon-boot-sign "
+                L"Bless the ISO on a Linux host with falcon-boot-sign "
                 L"instead.";
             status = EFI_NOT_FOUND;
             goto out_close;

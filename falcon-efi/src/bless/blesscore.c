@@ -113,107 +113,26 @@ bless_action bless_hit_action(const bless_hit *h)
 {
     const manifest_record *r = hit_rec(h);
 
+    /* A prepared record is one an older appliance wrote for Windows media,
+     * which the loader now patches itself as it boots it (DESIGN 6.4): it
+     * boots as if the record were not there. */
     if (h == (const bless_hit *)0 || r == (const manifest_record *)0 ||
-        h->state != BLESS_FRESH)
+        h->state != BLESS_FRESH || r->kind != MANIFEST_KIND_BLESSED)
         return BLESS_ACT_PLAIN;
-    if (r->kind == MANIFEST_KIND_PREPARED)
-        return BLESS_ACT_OVERLAY;
     return BLESS_ACT_UKI;
 }
 
-bless_prep bless_prep_state(const bless_hit *h, family_id fam)
-{
-    const manifest_record *r = hit_rec(h);
-
-    if (h == (const bless_hit *)0)
-        return BLESS_PREP_NA;
-    if (r != (const manifest_record *)0 &&
-        r->kind == MANIFEST_KIND_PREPARED) {
-        return (h->state == BLESS_FRESH) ? BLESS_PREP_READY : BLESS_PREP_STALE;
-    }
-    /* A blessed record on Windows media is not a preparation and must not be
-     * reported as a missing one: it is a record the user's own tooling wrote,
-     * and offering to prepare over it would be the loader second-guessing it.
-     * The bless tool is what refuses to write that combination. */
-    if (r != (const manifest_record *)0)
-        return BLESS_PREP_NA;
-    return (fam == FAMILY_WINDOWS) ? BLESS_PREP_ABSENT : BLESS_PREP_NA;
-}
-
-const uint16_t *bless_suffix(const bless_hit *h, family_id fam)
+const uint16_t *bless_suffix(const bless_hit *h)
 {
     /* Two leading spaces, matching the survey suffix the same label already
      * carries, so an entry reads "...iso  [arch, signed]  [blessed]". */
     static const uint16_t blessed[] = u"  [blessed]";
     static const uint16_t blessed_stale[] = u"  [blessed, stale]";
-    static const uint16_t prepared[] = u"  [prepared]";
-    static const uint16_t prepared_stale[] = u"  [prepared, stale]";
-    static const uint16_t unprepared[] = u"  [not prepared]";
-    const manifest_record *r;
+    const manifest_record *r = hit_rec(h);
 
-    if (h == (const bless_hit *)0)
+    if (r == (const manifest_record *)0 || r->kind != MANIFEST_KIND_BLESSED)
         return (const uint16_t *)0;
-    r = hit_rec(h);
-    if (r != (const manifest_record *)0 && r->kind == MANIFEST_KIND_BLESSED)
-        return (h->state == BLESS_FRESH) ? blessed : blessed_stale;
-
-    switch (bless_prep_state(h, fam)) {
-    case BLESS_PREP_READY:
-        return prepared;
-    case BLESS_PREP_STALE:
-        return prepared_stale;
-    case BLESS_PREP_ABSENT:
-        return unprepared;
-    case BLESS_PREP_NA:
-    default:
-        return (const uint16_t *)0;
-    }
-}
-
-/* ---- the byte map ---- */
-
-/* The splices a prepared record may ask for: the size-preserving shape needs
- * one, and four was the overlay's own cap when this was written. The overlay
- * grew for the loader's in-memory Windows patch (falcon-efi/src/win); a record
- * off the stick keeps the smaller bound. */
-#define PREPARED_SPLICE_MAX 4u
-
-int bless_prepared_overlay(const manifest_record *r, iso_overlay *out)
-{
-    size_t i;
-
-    if (r == (const manifest_record *)0 || out == (iso_overlay *)0)
-        return BLESS_ERR_BAD_ARG;
-
-    for (i = 0; i < ISO_MAX_OVERRIDES; i++) {
-        out->ovl[i].iso_off = 0;
-        out->ovl[i].len = 0;
-        out->ovl[i].src = (fs_file *)0;
-        out->ovl[i].src_off = 0;
-        out->ovl[i].mem = (const uint8_t *)0;
-    }
-    out->n = 0;
-    /* No append region: the MVP patch shape is size-preserving (Section 6.3)
-     * and the manifest format has no key that could ask for one, so a set
-     * built from a record can never extend the medium. */
-    out->extra = 0;
-
-    if (r->kind != MANIFEST_KIND_PREPARED)
-        return BLESS_ERR_KIND;
-    if (r->splice_n == 0)
-        return BLESS_ERR_NOSPLICE;
-    if ((size_t)r->splice_n > PREPARED_SPLICE_MAX)
-        return BLESS_ERR_SPLICES;
-
-    for (i = 0; i < (size_t)r->splice_n; i++) {
-        out->ovl[i].iso_off = r->splice[i].iso_off;
-        out->ovl[i].len = r->splice[i].len;
-        /* The sidecar IS the replacement, whole: Section 8.1's splice names a
-         * file, not a range inside one. */
-        out->ovl[i].src_off = 0;
-    }
-    out->n = (size_t)r->splice_n;
-    return BLESS_OK;
+    return (h->state == BLESS_FRESH) ? blessed : blessed_stale;
 }
 
 /* ---- the next-boot marker ---- */

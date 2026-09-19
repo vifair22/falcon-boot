@@ -46,7 +46,7 @@ int run_util_tests(void);
 int run_appliance_route_tests(void);
 int run_manifest_tests(void);
 int run_bless_tests(void);
-int run_prep_tests(void);
+int run_next_tests(void);
 int run_crypto_tests(void);
 int run_json_tests(void);
 int run_luks_tests(void);

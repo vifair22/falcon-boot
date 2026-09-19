@@ -103,7 +103,7 @@ UINTN loader_next_boot_take(EFI_SYSTEM_TABLE *st, void *buf, UINTN cap)
                              &vendor, (UINT32 *)0, &size, buf);
 
     /* DELETE FIRST. Everything after this point may fail - the value may be
-     * junk, the entry may not be on the stick, preparation may not have
+     * junk, the entry may not be on the stick, the blessing may not have
      * happened - and every one of those failures has to end at the menu
      * rather than at another attempt to do the same thing. Deleting before a
      * single byte is believed is what makes a boot loop unrepresentable

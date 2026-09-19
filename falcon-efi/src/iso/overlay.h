@@ -1,18 +1,18 @@
-/* falcon-boot: the virtual-media override layer (DESIGN Sections 6.3 and 9).
+/* falcon-boot: the virtual-media override layer (DESIGN Sections 6.3, 6.4
+ * and 9).
  *
- * A prepared medium keeps its bytes untouched on p2. What changes is the VIEW
+ * A patched medium keeps its bytes untouched on p2. What changes is the VIEW
  * the loader publishes of it: named byte ranges of the virtual image are
- * answered from a sidecar file staged elsewhere on p2 instead of from the
- * image, and the medium may run PAST the end of the image file into virtual
- * sectors that exist only in the sidecar. Ventoy calls the two halves
+ * answered from memory the loader holds (or from another p2 file) instead of
+ * from the image, and the medium may run PAST the end of the image file into
+ * virtual sectors that exist only in the override. Ventoy calls the two halves
  * "override chunks" and "virt chunks"; DESIGN 6.3 calls them the override list
  * and the append region.
  *
  * This header is the whole of the address arithmetic, and it is deliberately
  * everything the layer knows: it is pure data with no format knowledge at all.
- * No WIM parsing, no UDF parsing, no Windows knowledge enters EFI-land
- * (DESIGN Section 9, `iso` module). The byte map is computed by the bless tool
- * in Linux userland and read from p2; the loader applies it.
+ * No WIM or UDF knowledge enters this layer: the byte map is computed by
+ * falcon-efi/src/win with falcon-core's wim and udf, and applied here.
  *
  * Two reasons it is a header rather than a .c, both worth stating:
  *

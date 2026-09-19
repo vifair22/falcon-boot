@@ -28,9 +28,6 @@
  * The deliberate non-check is the hash. Section 8.1 has the loader compare
  * size only, because hashing a multi-gigabyte ISO to draw a menu is not a
  * boot loader's job and the boot's security does not rest on the answer.
- * That rule covers BOTH kinds of record: a prepared one carries a sha256=
- * too, and it is read only as the NAME of the sidecar folder (Section 6.3.1),
- * never recomputed over the ISO.
  */
 
 #ifndef FALCON_BLESS_CORE_H
@@ -48,9 +45,6 @@
 enum {
     BLESS_OK           =  0,
     BLESS_ERR_BAD_ARG  = -1,
-    BLESS_ERR_KIND     = -2,  /* asked of a record of the other kind */
-    BLESS_ERR_NOSPLICE = -3,  /* a prepared record with no byte map at all */
-    BLESS_ERR_SPLICES  = -4,  /* more splices than one medium may carry */
     BLESS_ERR_VALUE    = -5   /* the next-boot marker is not a usable path */
 };
 
@@ -138,40 +132,22 @@ bless_state bless_cache_lookup(const bless_cache *c, const void *src,
                                const uint16_t *path, uint64_t cur_size,
                                bless_hit *out);
 
-/* ---- what a hit means (DESIGN Sections 8.1 and 6.3.1) ---- */
+/* ---- what a hit means (DESIGN Section 8.1) ---- */
 
 /* Which launch path a matched entry takes.
  *
  * Stated once, here, rather than re-derived from state and kind at each call
- * site, because the two ways of getting it wrong are both silent: chainloading
- * media the user blessed precisely to avoid chainloading, or serving a Windows
- * ISO without the byte map that makes Setup able to find its install source.
- *
- * STALE is PLAIN for both kinds, which is Section 8.1's rule extended to the
- * second kind for the same reason it holds for the first: the artifacts were
- * computed from bytes the file no longer has. */
+ * site, because getting it wrong is silent: chainloading media the user
+ * blessed precisely to avoid chainloading. STALE is PLAIN, Section 8.1's
+ * rule: the wrap was built from bytes the file no longer has. A record of
+ * the prepared kind, left by an appliance from before the loader patched
+ * Windows media itself (Section 6.4), is PLAIN too. */
 typedef enum {
     BLESS_ACT_PLAIN   = 0,  /* boot the medium as it sits on p2 */
-    BLESS_ACT_UKI     = 1,  /* fresh blessed record: launch the signed wrap */
-    BLESS_ACT_OVERLAY = 2   /* fresh prepared record: serve it with its map */
+    BLESS_ACT_UKI     = 1   /* fresh blessed record: launch the signed wrap */
 } bless_action;
 
 bless_action bless_hit_action(const bless_hit *h);
-
-/* Where a Windows entry stands with respect to preparation (Section 6.3.1).
- *
- * `fam` is what the ISO survey found inside the medium, or FAMILY_UNKNOWN when
- * the entry was never probed. An unprobed entry with a fresh record is still
- * READY: the record says what it is, and the survey is only needed to notice
- * media that has NO record, which is the one answer the record cannot give. */
-typedef enum {
-    BLESS_PREP_NA = 0,   /* nothing to prepare, or nothing known to prepare */
-    BLESS_PREP_READY,    /* a fresh prepared record stands behind it */
-    BLESS_PREP_STALE,    /* a prepared record, but the ISO changed since */
-    BLESS_PREP_ABSENT    /* Windows media and no prepared record at all */
-} bless_prep;
-
-bless_prep bless_prep_state(const bless_hit *h, family_id fam);
 
 /* The label suffix for a hit, or NULL when the entry has earned none.
  *
@@ -180,30 +156,8 @@ bless_prep bless_prep_state(const bless_hit *h, family_id fam);
  * survey labels do (DESIGN Section 9): it reports what was found on the
  * stick, never a verdict about what will be allowed to run. "blessed" means
  * a manifest record names a signed wrap for this ISO, not that anything
- * verified it; shim decides that at load time. "prepared" means a byte map
- * for it is staged on the stick, and nothing about Windows media is verified
- * by anyone here in the first place (Section 6.3: every component the platform
- * checks stays Microsoft-signed and untouched). */
-const uint16_t *bless_suffix(const bless_hit *h, family_id fam);
-
-/* ---- the byte map a prepared record asks for (DESIGN Section 6.3) ---- */
-
-/* Turns a prepared record's splice list into an override set.
- *
- * One entry per splice, in the record's own order: the whole sidecar replaces
- * `len` bytes at `iso_off`, so src_off is zero. Every src is left NULL,
- * because opening files is the caller's side of the line and this module has
- * no filesystem.
- *
- * What is NOT checked here: ordering, overlap, range against the medium, and
- * whether each sidecar actually holds the bytes it promises. That is
- * iso_overlay_check's, which the boot path runs as a fail-closed gate with the
- * files open; a second implementation of the same rule could only be a second
- * answer to it. What IS checked is what cannot be represented at all: a
- * record of the wrong kind, a record with no splices (a preparation that did
- * nothing, which would serve the ISO unaltered under a label promising
- * otherwise), and more splices than one medium may carry. */
-int bless_prepared_overlay(const manifest_record *r, iso_overlay *out);
+ * verified it; shim decides that at load time. */
+const uint16_t *bless_suffix(const bless_hit *h);
 
 /* ---- the next-boot marker (DESIGN Section 6.3.1) ---- */
 

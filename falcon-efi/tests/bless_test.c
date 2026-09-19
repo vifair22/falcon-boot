@@ -468,9 +468,7 @@ static void test_bless_null_args(void **state)
                      BLESS_NONE);
 }
 
-/* The menu appends these verbatim, so the exact text is the contract. The
- * prepared vocabulary is exercised in prep_test.c, beside the rest of the
- * Section 6.3.1 logic it belongs to. */
+/* The menu appends these verbatim, so the exact text is the contract. */
 static void test_bless_suffix(void **state)
 {
     bless_hit hit;
@@ -481,18 +479,18 @@ static void test_bless_suffix(void **state)
 
     (void)look(&g_cache, g_vol_a, "Linux/archlinux-2026.01.01-x86_64.iso",
                1538670592u, &hit);
-    ucs2_to_ascii(bless_suffix(&hit, FAMILY_ARCH), buf, sizeof(buf));
+    ucs2_to_ascii(bless_suffix(&hit), buf, sizeof(buf));
     assert_string_equal(buf, "  [blessed]");
 
     (void)look(&g_cache, g_vol_a, "Linux/archlinux-2026.01.01-x86_64.iso",
                1u, &hit);
-    ucs2_to_ascii(bless_suffix(&hit, FAMILY_ARCH), buf, sizeof(buf));
+    ucs2_to_ascii(bless_suffix(&hit), buf, sizeof(buf));
     assert_string_equal(buf, "  [blessed, stale]");
 
     /* Nothing to append for an ordinary entry, so the caller appends
      * nothing rather than an empty pair of brackets. */
     (void)look(&g_cache, g_vol_a, "nothing-blesses-this.iso", 1u, &hit);
-    assert_null(bless_suffix(&hit, FAMILY_ARCH));
+    assert_null(bless_suffix(&hit));
 }
 
 int run_bless_tests(void)
