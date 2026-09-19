@@ -17,6 +17,7 @@
 #include <fs/fs.h>
 #include <iso/iso.h>
 #include <direct/direct.h>
+#include <manifest/blesslist.h>
 #include <lib/string.h>
 #include <console/menu.h>
 #include <pos/pos.h>
@@ -1368,6 +1369,160 @@ static void launch_appliance(EFI_HANDLE image_handle, const menu_entry *entry,
     out(L"\r\npress any key to return to the menu.\r\n");
 }
 
+/* ---- blessing from the menu (DESIGN Section 7.5) ---- */
+
+/* What the appliance can bless from here: an ISO that is not Windows media
+ * (Windows is prepared, not blessed) and has no fresh blessing already. An
+ * unprobed ISO counts; the sign tool refuses what it cannot wrap. */
+static BOOLEAN blessable(const iso_target *t)
+{
+    if (t->shape != ENTRY_MEDIA || t->kind != ISO_MEDIA_CD)
+        return FALSE;
+    if (t->fam == FAMILY_WINDOWS)
+        return FALSE;
+    return bless_hit_action(&t->hit) != BLESS_ACT_UKI ? TRUE : FALSE;
+}
+
+/* The list handed to the appliance. Static: it must outlive the launch, and
+ * it is tens of kilobytes. */
+static char g_bless_list[BLESSLIST_MAX];
+
+/* How many paths the confirmation names before summarising the rest, so it
+ * fits the spec's guaranteed 25 rows. */
+#define BLESS_SHOW_MAX 12u
+
+/* b on a row (one image) or a anywhere (every blessable image): confirm,
+ * then boot the signing appliance with the list and the passphrase as
+ * credentials. The next-boot marker names the row the user was on, so the
+ * reboot the appliance ends with lands on it, blessed.
+ *
+ * pick is the flat index of the row the key was pressed on, or MAX_ISOS when
+ * it was not an image row. Returns TRUE when something is on screen worth a
+ * keypress. */
+static BOOLEAN bless_from_menu(EFI_HANDLE image_handle, const iso_list *list,
+                               UINTN pick, BOOLEAN all, UINTN pinned)
+{
+    pos_result result = { L"starting", EFI_SUCCESS, (const CHAR16 *)0 };
+    char path[MANIFEST_PATH_MAX];
+    char next[MANIFEST_PATH_MAX];
+    EFI_INPUT_KEY key;
+    EFI_STATUS status;
+    UINTN len = 0, count = 0, i;
+
+    next[0] = '\0';
+    menu_screen(g_st);
+    for (i = 0; i < list->count; i++) {
+        if ((all ? FALSE : i != pick) || !blessable(&list->targets[i]))
+            continue;
+        if (!entry_path_ascii(&list->entries[i], path, sizeof path) ||
+            blesslist_add(g_bless_list, sizeof g_bless_list, &len, path) !=
+                BLESSLIST_OK) {
+            out(L"cannot be listed for the appliance (not plain ASCII, or too"
+                L" long): ");
+            out(list->entries[i].label);
+            out(L"\r\n");
+            continue;
+        }
+        if (i == pick)
+            memcpy(next, path, sizeof next);
+        count++;
+    }
+    if (count == 0) {
+        if (all)
+            out(L"Nothing new to bless.\r\n");
+        else if (pick < list->count &&
+                 bless_hit_action(&list->targets[pick].hit) == BLESS_ACT_UKI)
+            out(L"This image is already blessed.\r\n");
+        else
+            out(L"Only a Linux or other non-Windows .iso is blessed. Windows "
+                L"media is prepared\r\ninstead: select it and press "
+                L"enter.\r\n");
+        out(L"\r\npress any key to return to the menu.\r\n");
+        return TRUE;
+    }
+
+    out(L"Bless ");
+    out_dec(count);
+    out(count == 1 ? L" image" : L" images");
+    out(L" with the key on p3:\r\n\r\n");
+    {
+        UINTN pos = 0, shown = 0;
+        char line[MANIFEST_PATH_MAX];
+
+        while (shown < BLESS_SHOW_MAX &&
+               blesslist_next(g_bless_list, len, &pos, line, sizeof line) ==
+                   1) {
+            out(L"  /");
+            out_ascii(line);
+            out(L"\r\n");
+            shown++;
+        }
+        if (count > shown) {
+            out(L"  ... and ");
+            out_dec(count - shown);
+            out(L" more\r\n");
+        }
+    }
+    out(count == 1 ? L"\r\nThe signing appliance signs it and reboots"
+                   : L"\r\nThe signing appliance signs them and reboots");
+    if (next[0] != '\0') {
+        out(L" into /");
+        out_ascii(next);
+    }
+    out(L".\r\n\r\ny to bless, any other key to go back.\r\n");
+    if (EFI_ERROR(wait_key(&key)) ||
+        (key.UnicodeChar != L'y' && key.UnicodeChar != L'Y'))
+        return FALSE;
+
+    menu_screen(g_st);
+    if (pinned == 0) {
+        out(L"the signing appliance lives on this stick's encrypted shelf, and "
+            L"no shelf\r\nthis loader can open is in sight. Bless on a Linux "
+            L"host with\r\nfalcon-boot-sign instead.\r\n");
+        out(L"\r\npress any key to return to the menu.\r\n");
+        return TRUE;
+    }
+    if (next[0] != '\0') {
+        status = loader_next_boot_set(g_st, next);
+        if (EFI_ERROR(status)) {
+            out(L"the next-boot marker could not be written (");
+            out_hex(status);
+            out(L"); the images are still blessed, and the menu comes back "
+                L"after the\r\nreboot.\r\n\r\n");
+        }
+    }
+    out(L"starting the signing appliance.\r\n\r\n");
+
+    pos_set_bless_list(g_bless_list, len);
+    status = pos_boot_pick(g_st, image_handle, POS_PICK_APPLIANCE, &result);
+    pos_set_bless_list((const void *)0, 0);
+    /* Reached only when the appliance did not reboot: the marker names a
+     * blessing that did not happen. */
+    (void)loader_next_boot_set(g_st, (const char *)0);
+
+    if (status == EFI_ABORTED)
+        return FALSE;
+    out(L"\r\n");
+    if (!EFI_ERROR(status)) {
+        out(L"the appliance exited without rebooting, status ");
+        out_hex(result.status);
+        out(L"\r\n");
+    } else {
+        out(L"the signing appliance could not be started while ");
+        out(result.stage);
+        out(L": ");
+        out_hex(result.status);
+        out(L"\r\n");
+    }
+    if (result.advice != (const CHAR16 *)0) {
+        out(L"\r\n");
+        out(result.advice);
+        out(L"\r\n");
+    }
+    out(L"\r\npress any key to return to the menu.\r\n");
+    return TRUE;
+}
+
 /* An entry with nothing fresh on the stick behind it. Either it is Windows
  * media that wants preparing, in which case the offer comes first, or it is
  * the ordinary chainload this loader has always done.
@@ -1784,12 +1939,12 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
         next_boot_run(image_handle, &list, pinned);
 
     for (;;) {
-        /* c and d choose the route for an ISO row; on any other row they
-         * act as enter. */
+        /* c and d choose the route for an ISO row, b and a bless; on any
+         * other row c, d and b act as enter. */
         static const menu_keys keys = {
-            L"cd",
-            L"enter boot | c ISO loader | d direct | esc back | "
-            L"[signed by] {refusal}"
+            L"cdba",
+            L"enter boot | c chain | d direct | b bless | a bless new | "
+            L"esc back"
         };
         UINTN shown = view_build(&list, cur, cur_len, pinned, view, rows);
         CHAR16 which = L'\r';
@@ -1835,6 +1990,17 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
         }
 
         sel = (UINTN)pick;
+        /* b blesses the image row it is pressed on (on any other row it acts
+         * as enter); a blesses everything new from wherever it is pressed. */
+        if (which == L'a' ||
+            (which == L'b' && rows[sel].kind == VIEW_IMAGE)) {
+            if (bless_from_menu(image_handle, &list,
+                                rows[sel].kind == VIEW_IMAGE ? rows[sel].idx
+                                                             : MAX_ISOS,
+                                which == L'a' ? TRUE : FALSE, pinned))
+                wait_key(&key);
+            continue;
+        }
         switch (rows[sel].kind) {
         case VIEW_UP:
             view_up(cur, &cur_len);

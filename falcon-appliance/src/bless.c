@@ -53,8 +53,9 @@ static ssize_t read_file(const char *path, char *buf, size_t cap)
  * whatever this got as far as. sgn_arg launders the one const member that has
  * to reach an execve argument vector; nothing writes through it.
  */
-void bless_half(const stick_parts *parts, int *mapped, int *p3_mounted,
-                       size_t *signed_n, size_t *failed_n, size_t *skipped_n)
+void bless_half(const stick_parts *parts, int confirmed, int *mapped,
+                int *p3_mounted, size_t *signed_n, size_t *failed_n,
+                size_t *skipped_n)
 {
     char pass[PASS_MAX];
     char dev[32];
@@ -186,7 +187,16 @@ void bless_half(const stick_parts *parts, int *mapped, int *p3_mounted,
      * DESIGN Section 7.5: the marks are the per-image vouch and the typed
      * "yes" over the reviewed set releases the batch. Nothing below runs
      * unless both happened. */
-    if (!choose(g_cand, g_cand_n, &g_bless_ui)) {
+    if (confirmed) {
+        /* The consent was given in the loader's menu, over exactly this
+         * list (DESIGN Section 7.5, revised): printed again here so the
+         * console says what is being signed as it is signed. */
+        say("\nconfirmed in the loader's menu:\n");
+        for (i = 0; i < g_cand_n; i++) {
+            g_cand[i].selected = 1;
+            say("  /%s\n", g_cand[i].rel);
+        }
+    } else if (!choose(g_cand, g_cand_n, &g_bless_ui)) {
         /* Nothing was vouched for, so every pending image is a skip. */
         *skipped_n = g_cand_n;
         return;

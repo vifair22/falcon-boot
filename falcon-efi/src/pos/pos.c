@@ -15,6 +15,7 @@
 #include <fs/fs.h>
 #include <luks/luks.h>
 #include <lib/string.h>
+#include <manifest/blesslist.h>
 #include <console/menu.h>
 
 /* p3 is one partition, but the scan is not told which one it is, so it takes
@@ -897,10 +898,23 @@ static void build_names(const fs_dirent *ent)
  * worth publishing without it, because the device path it provides is what
  * LoadImage wants; what the boot gives up is the handoff, exactly as DESIGN
  * Section 3 says it does, and the initramfs prompts for p4 itself. */
+#define LIST_W_(s) L##s
+#define LIST_W(s) LIST_W_(s)
+static const CHAR16 list_file[] = LIST_W(BLESSLIST_CRED);
+static const void *g_list;
+static UINTN       g_list_len;
+
+void pos_set_bless_list(const void *data, UINTN len)
+{
+    g_list = (data != (const void *)0 && len != 0) ? data : (const void *)0;
+    g_list_len = (g_list != (const void *)0) ? len : 0;
+}
+
 static EFI_STATUS publish_credfs(EFI_SYSTEM_TABLE *st, const fs_dirent *ent,
                                  void *buf, UINT64 size)
 {
-    credfs_entry tree[3];
+    credfs_entry tree[4];
+    UINTN n = 2;
 
     build_names(ent);
 
@@ -918,15 +932,29 @@ static EFI_STATUS publish_credfs(EFI_SYSTEM_TABLE *st, const fs_dirent *ent,
     tree[1].is_dir = 1;
     tree[1].secret = 0;
 
-    tree[2].name = cred_file;
-    tree[2].data = g_cred;
-    tree[2].size = g_cred_len;
-    tree[2].parent = (UINTN)1; /* the drop-in directory above */
-    tree[2].is_dir = 0;
-    /* The one entry credfs_teardown wipes. */
-    tree[2].secret = 1;
-
-    return credfs_publish(st, tree, (g_cred_len != 0) ? 3u : 1u);
+    if (g_cred_len != 0) {
+        tree[n].name = cred_file;
+        tree[n].data = g_cred;
+        tree[n].size = g_cred_len;
+        tree[n].parent = (UINTN)1; /* the drop-in directory above */
+        tree[n].is_dir = 0;
+        /* The one entry credfs_teardown wipes. */
+        tree[n].secret = 1;
+        n++;
+    }
+    if (g_list_len != 0) {
+        /* credfs serves the bytes and never writes them; the cast is the
+         * entry type's, which is shared with the secret it does wipe. */
+        tree[n].name = list_file;
+        tree[n].data = (void *)(uintptr_t)g_list;
+        tree[n].size = g_list_len;
+        tree[n].parent = (UINTN)1;
+        tree[n].is_dir = 0;
+        tree[n].secret = 0;
+        n++;
+    }
+    /* Nothing to hand on: the image alone, as DESIGN Section 3 has it. */
+    return credfs_publish(st, tree, (n > 2u) ? n : 1u);
 }
 
 /* LoadImage/StartImage of the UKI, by device path off the credential

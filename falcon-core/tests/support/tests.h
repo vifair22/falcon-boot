@@ -58,6 +58,7 @@ int run_bootcfg_tests(void);
 int run_extmap_tests(void);
 int run_hookcmd_tests(void);
 int run_bootfs_tests(void);
+int run_blesslist_tests(void);
 int run_hookcore_tests(void);
 int run_fs_tests(void);
 int run_iso_overlay_tests(void);

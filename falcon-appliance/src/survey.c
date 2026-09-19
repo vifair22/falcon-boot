@@ -154,7 +154,7 @@ static int sidecars_intact(const manifest_record *rec)
  * hand, and honouring that would be treating an editable file as evidence
  * about a signature. Whether it is already blessed is asked of the PE itself,
  * later, where the certificate to ask with exists (payload_prefilter). */
-static void survey_file(const char *abs, const char *rel, uint64_t size)
+void survey_file(const char *abs, const char *rel, uint64_t size)
 {
     sgn_payload_shape shape = sgn_payload_shape_of(rel);
     const manifest_record *rec = NULL;

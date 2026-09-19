@@ -225,7 +225,15 @@ LOOP=
 
 # ---- the varstore ----
 echo "== seeding a varstore that trusts this stick's MOK"
-"$MKSTICK" varstore "$CERT" "$VARS"
+# Gentoo ships an enrolled OVMF_VARS.secboot.fd; Arch ships none, and there the
+# rig's own Microsoft-enrolled varstore (falcon-efi/tools/mk-test-mok.sh) is
+# the template.
+TEMPLATE=()
+if [[ ! -f "${OVMF_DIR:-/usr/share/edk2/OvmfX64}/OVMF_VARS.secboot.fd" &&
+      -f build/mok-test/OVMF_VARS.secboot.mok.fd ]]; then
+    TEMPLATE=(--template build/mok-test/OVMF_VARS.secboot.mok.fd)
+fi
+"$MKSTICK" varstore "${TEMPLATE[@]}" "$CERT" "$VARS"
 
 echo
 echo "created $IMG"

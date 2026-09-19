@@ -40,11 +40,14 @@
  * and asks for no passphrase at all, and preparation works unchanged on a
  * --p3-plain stick, which is what falcon-cli/src/sign/prepare.h promises.
  *
- * The appliance receives no instruction from the loader and looks for none.
- * `FalconNextBoot` is the loader's variable and its whole lifecycle is the
- * loader's (DESIGN Section 6.3.1: one component sets it and clears it);
- * nothing here reads it, writes it or is steered by it. What this program
- * does is decided entirely by what is on p2 when it looks.
+ * One instruction comes from the loader, and only one: the bless list
+ * (list.c). When the user blesses from the loader's menu, the paths they
+ * confirmed there arrive as a credential beside the passphrase, and this
+ * program signs exactly those, with no UI of its own, and reboots (DESIGN
+ * Section 7.5, revised 2026-09-18). Without a list it is the interactive
+ * appliance described above. `FalconNextBoot` stays the loader's variable
+ * and its whole lifecycle the loader's (DESIGN Section 6.3.1: one component
+ * sets it and clears it); nothing here reads it or writes it.
  *
  * Why a C init rather than busybox: the appliance is the only place besides an
  * external host where the private key is ever decrypted, so the userland
@@ -205,9 +208,20 @@ static void teardown(int p2_mounted, int p3_mounted, int mapped)
     sync();
 }
 
-static void finish(int p2_mounted, int p3_mounted, int mapped)
+static void finish(int p2_mounted, int p3_mounted, int mapped, int wait)
 {
     char line[8];
+
+    /* A run the loader asked for that went as asked has nothing left to
+     * read: the reboot is the next step the user is waiting for. */
+    if (!wait) {
+        say("\nrebooting to the loader.\n");
+        teardown(p2_mounted, p3_mounted, mapped);
+        (void)sleep(2);
+        (void)reboot(RB_AUTOBOOT);
+        for (;;)
+            (void)pause();
+    }
 
     /* The summary (or an error) is the last thing the user needs to read, and
      * an immediate reboot snatches it off the screen. Waiting on Enter costs a
@@ -258,6 +272,7 @@ int main(void)
     int mapped = 0;
     int p3_mounted = 0;
     int p2_mounted = 0;
+    int listed = 0;
     size_t prepared_n = 0;
     size_t prep_failed_n = 0;
     size_t prep_skipped_n = 0;
@@ -293,7 +308,7 @@ int main(void)
         say("ERROR: no falcon stick found (need an exFAT p2 and a LUKS p3 on\n"
             "       one disk). Nothing was unlocked.\n");
         say_block_devices();
-        finish(0, 0, 0);
+        finish(0, 0, 0, 1);
     }
     say("  p2 (ISO library): %s\n  p3 (UKI shelf):   %s\n\n",
         parts.p2, parts.p3);
@@ -306,15 +321,25 @@ int main(void)
      * decrypts no key and asks for no passphrase at all. */
     if (mount(parts.p2, P2_MNT, "exfat", 0, NULL) != 0) {
         say("ERROR: mounting p2: %s\n", strerror(errno));
-        finish(0, 0, 0);
+        finish(0, 0, 0, 1);
     }
     p2_mounted = 1;
 
     (void)prep_tools_present();
 
     load_manifest();
-    say("surveying p2...\n");
-    walk(P2_MNT, "", 0);
+    listed = bless_list_survey();
+    if (!listed) {
+        say("surveying p2...\n");
+        walk(P2_MNT, "", 0);
+    } else if (g_prep_n > 0) {
+        /* The menu never lists Windows media for blessing; one that arrives
+         * anyway is not prepared behind the user's back. */
+        say("note: %zu listed image(s) are Windows media, which is prepared "
+            "rather than\n      blessed; select it in the menu to prepare "
+            "it.\n", g_prep_n);
+        g_prep_n = 0;
+    }
 
     /* Path order once, here, so the numbers the user types, the order the
      * review prints and the order either batch runs in are all the same one. */
@@ -344,7 +369,7 @@ int main(void)
         say("\nnothing to sign: nothing on p2 is waiting for the MOK key, so\n"
             "p3 stays locked. FALCON-APPLIANCE-PENDING 0\n");
     else
-        bless_half(&parts, &mapped, &p3_mounted, &signed_n, &failed_n,
+        bless_half(&parts, listed, &mapped, &p3_mounted, &signed_n, &failed_n,
                    &skipped_n);
 
     say("\nsummary: FALCON-APPLIANCE-SUMMARY prepared=%zu prep-failed=%zu "
@@ -352,6 +377,7 @@ int main(void)
         prepared_n, prep_failed_n, prep_skipped_n, signed_n, failed_n,
         skipped_n);
 
-    finish(p2_mounted, p3_mounted, mapped);
+    finish(p2_mounted, p3_mounted, mapped,
+           !listed || failed_n != 0 || skipped_n != 0 || prep_failed_n != 0);
     return 0;   /* not reached; finish() reboots */
 }

@@ -21,7 +21,7 @@ APPLIANCE := falcon-appliance/src
 # linked static: it is PID 1 in an initramfs whose dynamic loader exists for
 # the other programs, not for this one.
 APPLIANCE_INIT_SRCS := $(addprefix $(APPLIANCE)/,main.c console.c stick.c \
-	run.c survey.c select.c prepare.c bless.c route.c) \
+	run.c survey.c select.c prepare.c bless.c list.c route.c) \
 	$(CORE_PART) $(CORE_MANIFEST) $(CORE)/media/family.c $(CORE_FS) \
 	$(CORE)/media/bootcfg.c \
 	$(addprefix $(CLI)/sign/,isoprobe.c payload.c util.c) \

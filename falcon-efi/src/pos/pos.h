@@ -127,4 +127,10 @@ EFI_STATUS pos_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
 EFI_STATUS pos_boot_pick(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
                          pos_pick want, pos_result *result);
 
+/* A second credential for the next launch: the bless list the menu built
+ * (falcon-core/src/manifest/blesslist.h), published beside the passphrase as
+ * BLESSLIST_CRED in the image's drop-in directory. data must stay valid until
+ * the launch returns; NULL or len 0 clears it. Not a secret, and not wiped. */
+void pos_set_bless_list(const void *data, UINTN len);
+
 #endif /* FALCON_POS_H */

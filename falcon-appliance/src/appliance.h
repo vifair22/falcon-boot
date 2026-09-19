@@ -161,6 +161,13 @@ int run(char *const argv[], const char *in, size_t in_len, unsigned beat_s,
 /* survey.c: p2 against the manifest */
 void load_manifest(void);
 void walk(const char *abs, const char *rel, unsigned depth);
+/* One file, as the walk would see it: into a queue, or reported as done. */
+void survey_file(const char *abs, const char *rel, uint64_t size);
+
+/* list.c: the bless list the loader delivered (falcon-core/src/manifest/
+ * blesslist.h). 1 when there was one, with every acceptable path on it
+ * surveyed; 0 when there was none, which is the interactive appliance. */
+int bless_list_survey(void);
 void payload_prefilter(void);
 
 /* select.c: the pending lists and their gates */
@@ -173,7 +180,10 @@ void prepare_half(size_t *prepared_n, size_t *failed_n, size_t *skipped_n);
 int prep_tools_present(void);
 
 /* bless.c: the bless half */
-void bless_half(const stick_parts *parts, int *mapped, int *p3_mounted,
-                size_t *signed_n, size_t *failed_n, size_t *skipped_n);
+/* confirmed: the loader's menu already asked (the list came from there), so
+ * the queue is signed as it stands, without the mark-and-review. */
+void bless_half(const stick_parts *parts, int confirmed, int *mapped,
+                int *p3_mounted, size_t *signed_n, size_t *failed_n,
+                size_t *skipped_n);
 
 #endif /* FALCON_APPLIANCE_H */

@@ -1287,10 +1287,17 @@ the private key. The flow above changes in three ways:
 - **Consent moves to the loader's menu.** The user blesses one ISO from its
   row (a key on a `{NOT BLESSED}` row, Section 7.8) or presses one key to
   bless everything new, and confirms there. The loader, which has to unlock
-  p3 anyway to load the appliance, boots it with the passphrase and the list
-  of paths as credentials on the synthetic filesystem of Section 5.1. The
-  appliance signs exactly that list, sets `FalconNextBoot` and reboots, and
-  the loader boots the entry the user picked. One reboot, no second UI. The
+  p3 anyway to load the appliance, sets `FalconNextBoot` to the entry the
+  user picked and boots the appliance with the passphrase and the list of
+  paths as credentials on the synthetic filesystem of Section 5.1
+  (`falcon.bless.cred`, format in `falcon-core/src/manifest/blesslist.h`).
+  The appliance signs exactly that list and reboots, and the loader boots the
+  entry the user picked. One reboot, no second UI. The marker stays the
+  loader's to set and clear, as Section 6.3.1 has it for preparation, so the
+  appliance never writes an EFI variable. Built 2026-09-18: `b` on a row
+  blesses that image, `a` blesses everything new, and
+  `falcon-appliance/tools/run-bless-chain.sh` proves the round trip under
+  Secure Boot. Without a list the appliance is the interactive one above. The
   list never touches disk, so nothing written to p2 can add to it; it is as
   trustworthy as the loader, which is the trust anchor already. This reverses
   Section 6.3.1's "the appliance receives no instruction from the loader",

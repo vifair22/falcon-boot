@@ -17,9 +17,9 @@ ISO9660/Rock Ridge/Joliet and UDF and an ISO's own GRUB, systemd-boot and
 isolinux configuration; falcon-hook rebuilds the ISO as a device-mapper
 device inside the distro's initramfs; and with Secure Boot off the loader
 boots an unblessed Linux ISO's kernel directly (Enter; `c` chainloads its own
-loader, `d` forces direct), and blessed wraps carry the hook too. Next on
-that roadmap: the rest of M3 (bless from the menu, the bless-time dm check)
-and M4 (Tier B installers).
+loader, `d` forces direct), and blessed wraps carry the hook too. `b` on a
+row or `a` for everything new blesses from the menu through the appliance.
+Next on that roadmap: M4 (Tier B installers).
 
 Status: pre-1.0 MVP. Build-order steps 1-7 are done (see docs/DESIGN.md
 Section 11 status header); host tools falcon-boot-mkstick and

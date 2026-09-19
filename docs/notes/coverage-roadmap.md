@@ -36,9 +36,15 @@ harness measures now is `docs/coverage.md`:
   isolinux. Exit met: all 13 Tier A Linux ISOs on hand pass with Secure Boot
   off and no preparation. Kali is not on hand: its live ISO is distributed
   by torrent only.
-- **M3, first item, done early**: every wrap embeds falcon-hook with the CD
-  entry's cmdline, which is what fixed blessed casper. Still to do: the
-  bless-time dm/loop check, and blessing from the menu.
+- **M3**: every wrap embeds falcon-hook with the CD entry's cmdline, which
+  is what fixed blessed casper; blessing from the menu is in (`b` on a row,
+  `a` for everything new, one confirmation, the list handed to the appliance
+  as a credential, one reboot back into the chosen entry;
+  `falcon-appliance/tools/run-bless-chain.sh`). The bless-time dm/loop check
+  is deferred: it needs the sign tool to decompress every initramfs format,
+  and no corpus distro lacks dm-mod. It comes back when the harness shows one
+  that does. The exit's "dropping a new ISO to a booted live desktop" leg is
+  hardware work.
 - **M4** starts from the three Tier B installers, which boot direct and then
   do not look at `/dev/mapper/falcon-iso` (Debian's cdrom-detect, Alpine's
   nlplug-findfs, Proxmox's own ISO scan).
