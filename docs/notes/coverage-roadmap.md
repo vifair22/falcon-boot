@@ -404,7 +404,9 @@ Order of the appliance work, each shippable on its own:
 2. **Licence.** Settled 2026-09-18: GPL-3.0-or-later (`LICENSE`), which
    is compatible with learning from Ventoy's GPLv3 hooks or reusing them.
 3. **The `grub.cfg` overlay** (D3b): decided 2026-09-19, built and merged.
-4. **Where the corpus and harness live** (Unraid box, CI runner with KVM).
+4. **Where the corpus and harness live**: decided 2026-09-19, on the big
+   CI runner (with KVM). Until it is set up they run here, off the NVMe
+   subvolume.
 
 ## 8. Enforcement-off (permissive) mode: build on demand, not scheduled
 

@@ -116,8 +116,16 @@ Known limits:
    patched in by hand boots as a bare CD, so the trigger is two shims in one
    chain (ours, 16.x, then the ISO's), most likely the ISO's GRUB reaching
    our shim's shim_lock protocol instead of its own, so its own shim never
-   sees the loader participate. Not pursued: the fix would have the loader
-   juggle shim's protocols mid-chain. MX boots blessed in every state.
+   sees the loader participate. Confirmed, fixed and merged (2026-09-19,
+   `spike/shim-lock`): the loader uninstalls the SHIM_LOCK
+   instances already installed for the length of an ISO payload's run and
+   puts them back when it returns, so the ISO's GRUB finds its own shim's.
+   MX then passes (SB on with the Microsoft CA, drop); the other fourteen
+   cells that start through the same path (the D3b set, Windows 11 and
+   Server 2025, Fedora, Rocky, Alma) still pass, and Windows 11 with
+   Secure Boot off too. The user decided to merge it: the loader touches
+   shim's protocols only to step out of the way, and the verifier the
+   ISO's GRUB then finds is its own vendor's.
 4. The coverage harness counts media read after a "starting" line as the
    kernel's. D3b's line says "handing ... to the ISO's own GRUB" instead,
    because GRUB reads the kernel and initrds after it; D3b cases are judged

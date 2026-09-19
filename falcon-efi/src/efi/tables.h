@@ -88,9 +88,15 @@ struct EFI_BOOT_SERVICES {
     void *CheckEvent;
 
     /* Protocol handler */
-    void *InstallProtocolInterface;
+    /* InterfaceType 0 is EFI_NATIVE_INTERFACE, the only one there is. */
+    EFI_STATUS (EFIAPI *InstallProtocolInterface)(EFI_HANDLE *Handle,
+                                                  EFI_GUID *Protocol,
+                                                  UINT32 InterfaceType,
+                                                  void *Interface);
     void *ReinstallProtocolInterface;
-    void *UninstallProtocolInterface;
+    EFI_STATUS (EFIAPI *UninstallProtocolInterface)(EFI_HANDLE Handle,
+                                                    EFI_GUID *Protocol,
+                                                    void *Interface);
     EFI_STATUS (EFIAPI *HandleProtocol)(EFI_HANDLE Handle,
                                         EFI_GUID *Protocol,
                                         void **Interface);
