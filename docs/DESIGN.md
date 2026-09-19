@@ -1275,8 +1275,8 @@ rest and out of the loader:
 1. **External host** the user controls, running the `sign` tool (Section 8). The
    key can additionally sit behind a passphrase or a hardware token there. Right
    for a portable signed toolkit built and maintained from a home machine.
-2. **On-stick signing appliance.** A minimal UKI (busybox + cryptsetup + sbsign +
-   the portable `sign` tool), built and signed by us so it boots under full
+2. **On-stick signing appliance.** A minimal UKI (our static PID 1, sbsign and
+   the portable `sign` tool; the first design had busybox and cryptsetup), built and signed by us so it boots under full
    Secure Boot, with no network and no purpose beyond signing. It is a boot entry
    in the loader menu. On selection it:
    - boots (our-signed UKI, passes Secure Boot),
@@ -1356,9 +1356,10 @@ the private key. The flow above changes in three ways:
   interactive appliance, which only blesses.
 - **Its userland collapses to our code plus `sbsign`.** The MOK key is read
   out of p3 with `falcon-core`'s own LUKS2 and ext4 code, the code the loader
-  unlocks p3 with, into a memory-only file handed to `sbsign` as `/dev/fd/N`,
-  so the key never reaches a filesystem, not even tmpfs; that retires
-  cryptsetup and dm-crypt. ISOs are read with `falcon-core`'s ISO9660/UDF
+  unlocks p3 with, into a memory-only file handed to `sbsign` as
+  `/proc/self/fd/N`, so the key never reaches a filesystem, not even tmpfs;
+  that retires cryptsetup and dm-crypt (done 2026-09-19,
+  `falcon-appliance/src/shelf.c`). ISOs are read with `falcon-core`'s ISO9660/UDF
   reader, retiring bsdtar, 7-Zip and libstdc++; Windows leaving retires
   wimlib. PID 1 and the sign tool become one static binary. What remains is
   the kernel, that binary, `sbsign` and its libcrypto, and the exFAT and vfat
@@ -1777,7 +1778,7 @@ than reimplementing cryptography or filesystem creation:
   MOK key via `sbsign`.
 - Build/stage the personal-OS UKI (via `ukify` or equivalent) with our initramfs
   handoff hook (Section 5.1) baked in, and build the signing-appliance UKI
-  (Section 7.5): a minimal initramfs of busybox + cryptsetup + sbsign + the
+  (Section 7.5): a minimal initramfs of our static PID 1, sbsign and the
   portable `sign` tool.
 - `falcon-boot sign <iso>`: the bless step (Section 7.5). Extracts the ISO's
   kernel and wraps it, per Section 8.1, into a minimal signed UKI whose
@@ -2194,8 +2195,8 @@ was struck: Windows needs no injector, for the reason in Section 6.1.
 7. Host tooling: `mkstick`, MOK keygen (private key onto p3, cert onto p1), shim
    install with correct next-stage naming, signing our loader/UKIs, and the
    portable `falcon-boot sign` tool for blessing media.
-8. Signing appliance: minimal signing-appliance UKI (busybox + cryptsetup +
-   sbsign + the portable `sign` tool), as a loader menu entry; unlock p3, per-ISO
+8. Signing appliance: minimal signing-appliance UKI (our static PID 1, sbsign
+   and the portable `sign` tool), as a loader menu entry; unlock p3, per-ISO
    confirm, sign, stage manifest, reboot (Section 7.5).
 9. Permissive-mode UX: detect `MokSBState`, banner, and guidance to the platform
    opt-out (Section 7.4).

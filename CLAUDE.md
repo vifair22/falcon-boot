@@ -29,47 +29,18 @@ trusts Microsoft: the loader patches its boot.wim in memory as the virtual CD
 serves it (falcon-winjump in place of winpeshl.exe), and Setup finds its
 source through the ISO winjump attaches from Windows.
 
-Status: pre-1.0 MVP. Build-order steps 1-7 are done (see docs/DESIGN.md
-Section 11 status header); host tools falcon-boot-mkstick and
-falcon-boot-sign exist and are proven end to end (a mkstick-created image
-boots Secure Boot ON with its own generated MOK and delivers the p4
-credential). Next: step 8 (signing appliance), step 9 (permissive-mode UX),
-step 10 (real hardware), plus the loader-side blessed-boot path consuming
-falcon-core/src/manifest/manifest.c (Section 8.1). Older status text follows for context: Steps 1-6 of the build order in `docs/DESIGN.md` Section
-11 are done, with one carve-out named below. The mingw PE toolchain and the
-QEMU/OVMF rig are proven; the shim question is settled (Fedora shim-x64 16.1,
-`SHIM_IMAGE_LOADER`, `docs/notes/shim-spike.md`) and the loader carries the
-`.sbat` section that needs. The loader enumerates `*.iso` from exFAT into a
-text menu labelled with family and signature presence, boots an entry through
-the platform's verifying `LoadImage` of the ISO's `\EFI\BOOT\BOOTX64.EFI`,
-and shows the Secure Boot state banner. The personal-OS entry is pinned at the
-top of the menu when a pbkdf2-capable LUKS2 volume is in sight, and it works
-end to end: masked passphrase prompt, LUKS2 unlock of p3, read-only ext4
-inside, `/uki/*.efi` discovery (`/EFI/Linux` as fallback), and `LoadImage` of
-the image through the shim-verified path.
-
-The passphrase handoff (step 6) is in: `falcon-efi/src/loader/credfs.c` publishes a synthetic
-read-only filesystem carrying the UKI plus
-`<uki>.efi.extra.d/cryptsetup.passphrase.cred`, the UKI is loaded BY DEVICE
-PATH off it, and sd-stub packs the credential into the initrd where
-`systemd-cryptsetup` will find it. Proven with a real sd-stub UKI under both
-Secure Boot states.
-
-Proven headless under OVMF against `build/test-stick.img`, a real
-four-partition GPT disk (`make test-stick`, `make run-stick` /
-`run-stick-secboot`), with Secure Boot both off and on. Under Secure Boot on,
-shim verifies the MOK-signed image read out of the encrypted partition and
-refuses an unsigned one with `EFI_SECURITY_VIOLATION` and an actionable
-message; the menu survives both. p4's argon2id keyslot is recognised and
-skipped without a second prompt.
-
-Next: **step 7, the host tooling** (`falcon-cli`, DESIGN Section 8): mkstick, the
-MOK keypair, the UKI build, and the `sign` bless tool. The carve-out still
-outstanding from step 4 is the injection framework's runtime half (extent map
-and cpio append exist; per-family injectors do not). The end of the handoff
-chain is also still proof-by-reading rather than proof-by-running: the fixture
-UKI shows the credential arriving in the initramfs, but nothing in the rig runs
-a systemd initramfs that actually unlocks p4 with it.
+Status: pre-1.0 MVP. Build-order steps 1-9 are done and step 10 (real
+hardware) is partly done; `docs/DESIGN.md` Section 11's status header is the
+record. The loader, the personal-OS path with its passphrase handoff (the
+UKI published on `credfs` with `<uki>.efi.extra.d/cryptsetup.passphrase.cred`
+beside it, which sd-stub packs into the initrd), mkstick, the sign tool and
+the signing appliance all exist and are proven in the QEMU/OVMF rig under
+both Secure Boot states (`make test-stick`, `make run-stick` /
+`run-stick-secboot`, `falcon-appliance/tools/`). Measured on real hardware
+(2026-09-13): shim/MOK enrollment, the p3 unlock, and a blessed Arch ISO
+booting under Secure Boot on a machine that trusts nothing from Microsoft.
+Still unmeasured on hardware: the personal OS end to end, Windows, and
+D3a/D3b.
 
 ## Non-negotiable security invariants (DESIGN.md Section 7)
 
@@ -192,16 +163,15 @@ the tree, so `#include <fs/exfat.h>` means one file wherever it is written.
   static for the appliance.
 - `falcon-appliance/` the on-stick signing appliance. `src/` is PID 1, split
   by job (`appliance.h` has the map: `main`, `console`, `stick`, `run`,
-  `survey`, `list`, `select`, `bless`, and `route`, the host-tested decision
-  of what each file on p2 is owed). It blesses and nothing else: Windows
+  `survey`, `list`, `select`, `shelf` (p3 read in process with core's LUKS2
+  and ext4, the keypair handed on as sealed memfds), `bless`, and `route`,
+  the host-tested decision of what each file on p2 is owed). It blesses and nothing else: Windows
   media is reported and left alone, since the loader patches it at boot. The
   Makefile links it static as
   `build/bin/falcon-boot-appliance-init`. `image/` is the recipe for the UKI
   it runs in: `mk-appliance.sh` plus the image's contents as data,
-  `programs.list` and `modules.list`, each entry with its reason, and
-  `mk-bsdtar.sh`, which builds the image's own bsdtar from a pinned libarchive
-  tarball without the XAR support that would drag in libxml2 and ICU. The
-  build fails if any program the image can exec lacks its interpreter inside
+  `programs.list` (`sbsign`, `sbverify`) and `modules.list`, each entry
+  with its reason. The build fails if any program the image can exec lacks its interpreter inside
   it.
   `tools/` holds the QEMU proofs.
 - `falcon-winjump/` the WinPE jump binary (DESIGN Section 6.3), a Win64
@@ -211,7 +181,8 @@ the tree, so `#include <fs/exfat.h>` means one file wherever it is written.
 - `falcon-hook/` the program the loader appends to an ISO's initrd (DESIGN
   Section 6.4): freestanding static x86-64 Linux, no libc (`src/sys.c` is its
   system calls and startup). It runs as `rdinit=`, reads the extent map from
-  the initrd (a direct boot) or efivarfs (a blessed wrap), maps the ISO
+  the initrd (a direct boot, or the credential sd-stub packs beside a
+  blessed wrap) or efivarfs (an older wrap), maps the ISO
   read-only with dm-linear as `/dev/mapper/falcon-iso` under the ISO's label
   (a loop device when the kernel has no dm and the ISO is contiguous;
   `src/dimod.c` brings loop in from a Debian installer ISO's own pool), makes

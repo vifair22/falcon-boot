@@ -382,7 +382,9 @@ Decided 2026-09-18 (DESIGN 7.5). It keeps only what needs the private key:
 
 Order of the appliance work, each shippable on its own:
 
-1. key read via `falcon-core` LUKS2/ext4 + memfd (drops cryptsetup);
+1. key read via `falcon-core` LUKS2/ext4 + memfd (drops cryptsetup). Done
+   2026-09-19 (`falcon-appliance/src/shelf.c`): the initramfs is 15 MB raw,
+   4.8 MB compressed;
 2. sign tool on the `falcon-core` ISO9660 reader (drops bsdtar; 7-Zip goes
    with the UDF reader);
 3. bless-from-menu: the loader UI, the credential list, the non-interactive
