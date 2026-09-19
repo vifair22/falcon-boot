@@ -12,6 +12,10 @@
 # directories named with --local (searched in order, by file name) and then
 # verified like anything else; without a match they are reported and skipped.
 #
+# Rows whose source is torrent:<url> name a .torrent (Kali's live ISO is
+# published no other way). aria2c fetches it into NAME.torrent.d beside the
+# corpus, without seeding, and the file is then verified like anything else.
+#
 # A verified file is recorded in NAME.sha256-ok beside it (the hash, and the
 # file's size and mtime), so a re-run does not rehash a hundred gigabytes to
 # find nothing to do. A file whose size or mtime moved is hashed again.
@@ -122,6 +126,23 @@ while IFS=$'\t' read -r id tier family sha file source; do
         fi
         echo "== $id: copying from $found"
         cp "$found" "$dst.part"
+        ;;
+    torrent:*)
+        echo "== $id: fetching by torrent ($tier, $family)"
+        command -v aria2c >/dev/null ||
+            { echo "   aria2c is not installed" >&2; rc=1; continue; }
+        tdir="$dst.torrent.d"
+        mkdir -p "$tdir"
+        if ! aria2c --seed-time=0 --follow-torrent=mem --dir="$tdir" \
+                --summary-interval=60 --console-log-level=warn \
+                "${source#torrent:}" ||
+           [[ ! -f "$tdir/$file" ]]; then
+            echo "   torrent fetch failed; $tdir kept for resume" >&2
+            rc=1
+            continue
+        fi
+        mv -f "$tdir/$file" "$dst.part"
+        rm -rf "$tdir"
         ;;
     https://*)
         echo "== $id: downloading ($tier, $family)"
