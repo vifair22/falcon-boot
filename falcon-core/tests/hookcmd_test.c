@@ -104,6 +104,52 @@ static void test_hookcmd_refusals(void **state)
                      HOOKCMD_ERR_NOSPACE);
 }
 
+static int has(const unsigned char *buf, size_t len, const void *needle,
+               size_t n)
+{
+    size_t i;
+
+    for (i = 0; i + n <= len; i++) {
+        if (memcmp(buf + i, needle, n) == 0)
+            return 1;
+    }
+    return 0;
+}
+
+/* The archive: exactly the size promised, the directory then the
+ * executable, and refusals. */
+static void test_hookcmd_archive(void **state)
+{
+    static const unsigned char bin[] = { 0x7f, 'E', 'L', 'F', 1, 2, 3 };
+    static unsigned char buf[1024];
+    size_t need = hookcmd_archive_size(sizeof bin), len = 0;
+
+    (void)state;
+    assert_true(need > 0 && need <= sizeof buf && (need & 3u) == 0);
+    assert_int_equal(hookcmd_archive(bin, sizeof bin, buf, sizeof buf, &len),
+                     HOOKCMD_OK);
+    assert_int_equal(len, need);
+    assert_memory_equal(buf, "070701", 6);
+    /* newc header: mode at 14, 8 hex digits. */
+    assert_memory_equal(buf + 14, "000041ED", 8);
+    assert_memory_equal(buf + 110, "falcon", 7);
+    assert_true(has(buf, len, "falcon/hook", 12));
+    assert_true(has(buf, len, "000081ED", 8));
+    assert_true(has(buf, len, bin, sizeof bin));
+    assert_true(has(buf, len, "TRAILER!!!", 10));
+
+    assert_int_equal(hookcmd_archive(bin, sizeof bin, buf, need - 1u, &len),
+                     HOOKCMD_ERR_NOSPACE);
+    assert_int_equal(hookcmd_archive(NULL, sizeof bin, buf, sizeof buf, &len),
+                     HOOKCMD_ERR_BAD_ARG);
+    assert_int_equal(hookcmd_archive(bin, 0, buf, sizeof buf, &len),
+                     HOOKCMD_ERR_BAD_ARG);
+    assert_int_equal(hookcmd_archive(bin, sizeof bin, NULL, sizeof buf, &len),
+                     HOOKCMD_ERR_BAD_ARG);
+    assert_int_equal(hookcmd_archive(bin, sizeof bin, buf, sizeof buf, NULL),
+                     HOOKCMD_ERR_BAD_ARG);
+}
+
 int run_hookcmd_tests(void)
 {
     const struct CMUnitTest tests[] = {
@@ -112,6 +158,7 @@ int run_hookcmd_tests(void)
         cmocka_unit_test(test_hookcmd_live_boot_nudge),
         cmocka_unit_test(test_hookcmd_before_init_args),
         cmocka_unit_test(test_hookcmd_refusals),
+        cmocka_unit_test(test_hookcmd_archive),
     };
 
     return cmocka_run_group_tests_name("hookcmd", tests, NULL, NULL);

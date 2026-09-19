@@ -1019,3 +1019,64 @@ int sgn_fs_uuid_for_path(const char *path, char *out, size_t cap)
                   path, dev_real);
     return SGN_ERR_IO;
 }
+
+int sgn_append_bytes(const char *path, const void *data, size_t len)
+{
+    FILE *out = fopen(path, "ab");
+
+    if (out == NULL) {
+        sgn_set_error_errno(SGN_ERR_IO, "open '%s' to append", path);
+        return SGN_ERR_IO;
+    }
+    if (len > 0 && fwrite(data, 1, len, out) != len) {
+        sgn_set_error_errno(SGN_ERR_IO, "append to '%s'", path);
+        (void)fclose(out);
+        return SGN_ERR_IO;
+    }
+    if (fclose(out) != 0) {
+        sgn_set_error_errno(SGN_ERR_IO, "close '%s'", path);
+        return SGN_ERR_IO;
+    }
+    return SGN_OK;
+}
+
+int sgn_pad4_file(const char *path)
+{
+    static const uint8_t zeros[4] = { 0, 0, 0, 0 };
+    struct stat st;
+
+    if (stat(path, &st) != 0) {
+        sgn_set_error_errno(SGN_ERR_IO, "stat '%s'", path);
+        return SGN_ERR_IO;
+    }
+    if ((st.st_size & 3) == 0)
+        return SGN_OK;
+    return sgn_append_bytes(path, zeros, (size_t)(4 - (st.st_size & 3)));
+}
+
+int sgn_cmdline_insert(char *cmdline, size_t cap, const char *extra)
+{
+    size_t have = strlen(cmdline), el = strlen(extra), at = have, i;
+    const char *p = cmdline;
+
+    while ((p = strstr(p, "--")) != NULL) {
+        if ((p == cmdline || p[-1] == ' ') && (p[2] == ' ' || p[2] == '\0')) {
+            at = (size_t)(p - cmdline);
+            break;
+        }
+        p += 2;
+    }
+    if (have + el + 2u > cap)
+        return SGN_ERR_NOSPACE;
+    if (at == have) {
+        if (have > 0)
+            cmdline[have++] = ' ';
+        memcpy(cmdline + have, extra, el + 1u);
+        return SGN_OK;
+    }
+    memmove(cmdline + at + el + 1u, cmdline + at, have - at + 1u);
+    for (i = 0; i < el; i++)
+        cmdline[at + i] = extra[i];
+    cmdline[at + el] = ' ';
+    return SGN_OK;
+}

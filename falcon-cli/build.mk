@@ -20,7 +20,7 @@ SIGN_SRCS := $(addprefix $(CLI)/sign/,main.c util.c isoprobe.c manifestio.c \
 	payload.c wimext.c prepcore.c prepare.c uki.c)
 
 SIGN_CORE := $(CORE_MANIFEST) $(CORE_MANIFEST_WRITE) $(CORE)/media/family.c \
-	$(CORE)/media/bootcfg.c \
+	$(CORE)/media/bootcfg.c $(CORE)/media/hookcmd.c $(CORE)/media/cpio.c \
 	$(CORE_PART) $(CORE_PE) $(CORE_FS) $(CORE)/crypto/sha256.c \
 	$(CORE)/crypto/crypto.c
 
@@ -30,7 +30,10 @@ MKSTICK := $(BIN)/falcon-boot-mkstick
 MKSTICK_OBJS := $(patsubst %.c,$(HOST_OBJ)/%.o,$(sort $(MKSTICK_SRCS) $(MKSTICK_CORE)))
 SIGN := $(BIN)/falcon-boot-sign
 SIGN_STATIC := $(BIN)/falcon-boot-sign-static
-SIGN_OBJS := $(patsubst %.c,$(HOST_OBJ)/%.o,$(SIGN_SRCS) $(SIGN_CORE))
+# The hook rides in every wrap (falcon-hook/build.mk makes the array), kept
+# out of SIGN_CORE so the analyzers never read a generated file.
+SIGN_OBJS := $(patsubst %.c,$(HOST_OBJ)/%.o,$(SIGN_SRCS) $(SIGN_CORE) \
+	$(HOOK_BLOB))
 
 cli: $(MKSTICK) $(SIGN) $(SIGN_STATIC)
 
@@ -73,7 +76,7 @@ test-isoview:
 # compromise rather than an oversight.
 
 CLI_TESTS := $(addprefix falcon-cli/tests/,main.c isoprobe_test.c \
-	payload_test.c wimext_test.c prepcore_test.c uki_test.c)
+	payload_test.c wimext_test.c prepcore_test.c uki_test.c util_test.c)
 
 CLI_UUT := $(addprefix $(CLI)/sign/,isoprobe.c payload.c wimext.c prepcore.c \
 	uki.c util.c) $(CORE)/media/family.c $(CORE)/media/bootcfg.c \

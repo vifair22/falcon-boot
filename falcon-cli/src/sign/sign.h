@@ -148,6 +148,19 @@ int sgn_pad_file(const char *path, uint64_t len);
  * after another, which the wrap carries as one concatenated section. */
 int sgn_append_file(const char *dst, const char *src);
 
+/* Appends len bytes to path, creating it when it does not exist. */
+int sgn_append_bytes(const char *path, const void *data, size_t len);
+
+/* Pads path with zeros to a multiple of 4 bytes, the alignment the kernel
+ * wants between concatenated initrd archives. */
+int sgn_pad4_file(const char *path);
+
+/* Adds extra to the kernel's half of cmdline (cap bytes): at the end, or
+ * before a "--" word, since the kernel hands what follows one to init
+ * (Mint's entry ends "quiet splash --"). SGN_ERR_NOSPACE when it does not
+ * fit, with cmdline untouched. */
+int sgn_cmdline_insert(char *cmdline, size_t cap, const char *extra);
+
 /* Removes a directory tree. Used only to take back a staging directory this
  * tool created moments earlier, so that a failed run leaves no half-written
  * prepared folder on p2; it refuses to descend more than a handful of levels

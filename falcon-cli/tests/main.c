@@ -5,7 +5,8 @@
  * UDF listings and the case folding over both, built from listing text, plus
  * one real image for the plumbing. Payload recognition and the PE certificate
  * table (payload.c), the WIM header reader (wimext.c), the preparation
- * decisions (prepcore.c) and the UKI builder (uki.c).
+ * decisions (prepcore.c), the UKI builder (uki.c) and the initrd and
+ * cmdline helpers of util.c.
  */
 
 #include "tests.h"
@@ -21,6 +22,7 @@ int main(void)
     failed += run_wimext_tests();
     failed += run_prepcore_tests();
     failed += run_uki_tests();
+    failed += run_util_tests();
 
     printf("\nfalcon-cli: total failed: %d\n", failed);
     return failed == 0 ? 0 : 1;

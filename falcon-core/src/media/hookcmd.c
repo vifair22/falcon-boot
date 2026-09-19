@@ -2,6 +2,7 @@
 
 #include <media/hookcmd.h>
 
+#include <media/cpio.h>
 #include <lib/string.h>
 
 /* One nudge: when the cmdline carries `when` as a whole word, `add` is
@@ -151,4 +152,47 @@ int hookcmd_build(const char *base, char *out, size_t cap)
             return rc;
     }
     return added ? HOOKCMD_OK : put_additions(base, out, cap, &o);
+}
+
+/* Directory, then the executable: the kernel's unpacker creates only what
+ * an archive names. */
+static void archive_entries(cpio_entry *e, const void *bin, size_t bin_len)
+{
+    e[0].path = "falcon";
+    e[0].data = (const void *)0;
+    e[0].len = 0;
+    e[0].mode = CPIO_MODE_DIR;
+    e[1].path = "falcon/hook";
+    e[1].data = bin;
+    e[1].len = bin_len;
+    e[1].mode = 0100755u;
+}
+
+size_t hookcmd_archive_size(size_t bin_len)
+{
+    /* cpio_size only measures, but it refuses data NULL with a length. */
+    static const unsigned char any = 0;
+    cpio_entry e[2];
+    size_t n = 0;
+
+    archive_entries(e, &any, bin_len);
+    if (cpio_size(e, 2, &n) != CPIO_OK)
+        return 0;
+    return n;
+}
+
+int hookcmd_archive(const void *bin, size_t bin_len, void *buf, size_t cap,
+                    size_t *len)
+{
+    cpio_entry e[2];
+    int rc;
+
+    if (bin == (const void *)0 || bin_len == 0 || buf == (void *)0 ||
+        len == (size_t *)0)
+        return HOOKCMD_ERR_BAD_ARG;
+    archive_entries(e, bin, bin_len);
+    rc = cpio_write(e, 2, buf, cap, len);
+    if (rc == CPIO_ERR_NOSPACE)
+        return HOOKCMD_ERR_NOSPACE;
+    return rc == CPIO_OK ? HOOKCMD_OK : HOOKCMD_ERR_BAD_ARG;
 }

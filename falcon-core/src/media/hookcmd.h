@@ -26,6 +26,7 @@
 #define FALCON_HOOKCMD_H
 
 #include <stddef.h>
+#include <stdint.h>
 
 enum {
     HOOKCMD_OK          = 0,
@@ -36,6 +37,14 @@ enum {
 /* Where the hook sits in the initramfs, and the device it makes. */
 #define HOOKCMD_HOOK_PATH  "/falcon/hook"
 #define HOOKCMD_DEVICE     "/dev/mapper/falcon-iso"
+
+/* The newc archive that carries the hook, to append after the entry's own
+ * initrds (each padded to 4 bytes): /falcon, and /falcon/hook with the given
+ * bytes, executable. hookcmd_archive_size is its length; hookcmd_archive
+ * writes it into buf. HOOKCMD_ERR_NOSPACE when cap is short. */
+size_t hookcmd_archive_size(size_t bin_len);
+int hookcmd_archive(const void *bin, size_t bin_len, void *buf, size_t cap,
+                    size_t *len);
 
 /* Builds the hooked cmdline from base (the ISO entry's own arguments,
  * space-separated) into out. */

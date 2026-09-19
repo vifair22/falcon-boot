@@ -34,6 +34,7 @@
 #include <sign/uki.h>
 
 #include <manifest/manifest.h>
+#include <media/hookcmd.h>
 
 #include <limits.h>
 #include <stdio.h>
@@ -63,6 +64,7 @@ typedef struct {
     const char *stub;
     const char *work;
     int         embed_initrd;
+    int         hook;           /* wrap falcon-hook in with the CD entry */
     int         dry_run;
     int         verbose;
     int         quiet;
@@ -89,6 +91,7 @@ static const opt_spec g_opts[] = {
     { "--stub",          1 },
     { "--work",          1 },
     { "--no-initrd",     0 },
+    { "--no-hook",       0 },
     { "--dry-run",       0 },
     { "--verbose",       0 },
     { "--quiet",         0 },
@@ -111,9 +114,10 @@ static void usage(FILE *f)
 "the default. Run `falcon-boot-sign prepare --help' for the other half.\n"
 "\n"
 "Blesses an ISO for Secure Boot: wraps the ISO's kernel in a minimal UKI\n"
-"whose embedded cmdline points the distro's own initramfs back at the ISO\n"
-"file on p2, signs that wrap with the MOK key, and records it in the p2\n"
-"manifest (docs/DESIGN.md Sections 7.5, 8 and 8.1).\n"
+"with the cmdline and initrds of the ISO's own CD boot entry and\n"
+"falcon-hook appended, which rebuilds the ISO as a device before the\n"
+"distro looks for its media; signs that wrap with the MOK key, and records\n"
+"it in the p2 manifest (docs/DESIGN.md Sections 6.4, 7.5, 8 and 8.1).\n"
 "\n"
 "A .efi or a .img takes the bare-payload path instead (Section 7.2): it is\n"
 "signed in place, which MODIFIES YOUR FILE. Only --key, --cert and --dry-run\n"
@@ -137,7 +141,7 @@ static void usage(FILE *f)
 "  --kernel <path>       the kernel inside the ISO, overriding the per-family\n"
 "                        table; required alongside --cmdline for a family the\n"
 "                        table does not cover. A trailing * matches a suffix.\n"
-"  --cmdline-extra <s>   appended to the rendered cmdline\n"
+"  --cmdline-extra <s>   added to the rendered cmdline, before a \"--\"\n"
 "  --stub <file>         sd-stub to wrap with (default: " DEFAULT_STUB ")\n"
 "  --no-initrd           thin wrap: kernel and cmdline only. The default\n"
 "                        embeds the ISO's initramfs so the entire blessed\n"
@@ -145,6 +149,10 @@ static void usage(FILE *f)
 "                        thin wrap trades that for the initramfs's size\n"
 "                        per blessed ISO and reopens the unsigned-initrd\n"
 "                        residual for this medium\n"
+"  --no-hook             leave falcon-hook out and point the initramfs at\n"
+"                        the ISO file instead: the ISO's loopback entry, or\n"
+"                        the family's cmdline template. Needs the initramfs\n"
+"                        to read p2's filesystem\n"
 "  --work <dir>          scratch directory (default: $TMPDIR or /tmp)\n"
 "  --dry-run             report what would be written and write nothing\n"
 "  --verbose, --quiet    lower or raise the diagnostic threshold\n"
@@ -169,6 +177,7 @@ static int parse_args(int argc, char **argv, options *o)
     /* Embedded initrd is the default (DESIGN Section 8.1): the whole blessed
      * chain signed, --no-initrd as the space-over-coverage escape. */
     o->embed_initrd = 1;
+    o->hook = 1;
     o->stub = DEFAULT_STUB;
 
     for (i = 1; i < argc; i++) {
@@ -228,6 +237,8 @@ static int parse_args(int argc, char **argv, options *o)
             o->work = argv[++i];
         } else if (strcmp(a, "--no-initrd") == 0) {
             o->embed_initrd = 0;
+        } else if (strcmp(a, "--no-hook") == 0) {
+            o->hook = 0;
         } else if (strcmp(a, "--dry-run") == 0) {
             o->dry_run = 1;
         } else if (strcmp(a, "--verbose") == 0) {
@@ -460,6 +471,37 @@ static int bless_payload(const options *o)
     return sgn_payload_bless(&p);
 }
 
+/* The hook, as make embeds it (falcon-hook/build.mk). */
+extern const unsigned char falcon_hook_bin[];
+extern const size_t falcon_hook_bin_len;
+
+/* Pads the staged initrd to 4 bytes and appends the hook's archive. */
+static int append_hook(const char *initrd)
+{
+    size_t cap = hookcmd_archive_size(falcon_hook_bin_len), len = 0;
+    uint8_t *buf;
+    int rc;
+
+    buf = cap != 0 ? malloc(cap) : NULL;
+    if (buf == NULL) {
+        sgn_set_error(SGN_ERR_NOSPACE, "no memory for the hook's archive");
+        return SGN_ERR_NOSPACE;
+    }
+    if (hookcmd_archive(falcon_hook_bin, falcon_hook_bin_len, buf, cap,
+                        &len) != HOOKCMD_OK) {
+        free(buf);
+        sgn_set_error(SGN_ERR_FORMAT, "the hook's archive could not be built");
+        return SGN_ERR_FORMAT;
+    }
+    rc = sgn_pad4_file(initrd);
+    if (rc == SGN_OK)
+        rc = sgn_append_bytes(initrd, buf, len);
+    free(buf);
+    if (rc == SGN_OK)
+        sgn_log(SGN_LOG_INFO, "appended falcon-hook (%zu bytes)", len);
+    return rc;
+}
+
 static int bless(const options *o)
 {
     iso_view *view = NULL;
@@ -471,6 +513,10 @@ static int bless(const options *o)
      * the entry, and whether it is the file-boot (loopback) kind. */
     const bootcfg_entry *entry = NULL;
     int entry_loop = 0;
+    /* The CD entry, booted through falcon-hook: the loader publishes the
+     * ISO's extents at boot and the hook rebuilds the CD from them. Needs
+     * the initrd in the wrap and the entry's own kernel. */
+    int hooked = 0;
     bootcfg_src cfg;
     char iso_arg[MANIFEST_PATH_MAX + 2u];
     char uki_name[MANIFEST_NAME_MAX];
@@ -527,8 +573,13 @@ static int bless(const options *o)
      * saying they know better. */
     if (o->cmdline == NULL) {
         iso_view_bootcfg_src(view, &cfg);
-        if (bootcfg_read(&cfg, BOOTCFG_LOOP, g_cfg_scratch,
+        if (o->hook && o->embed_initrd && o->kernel == NULL &&
+            bootcfg_read(&cfg, BOOTCFG_CD, g_cfg_scratch,
                          sizeof(g_cfg_scratch), &g_cfg) == BOOTCFG_OK) {
+            entry = &g_cfg.entry[g_cfg.pick];
+            hooked = 1;
+        } else if (bootcfg_read(&cfg, BOOTCFG_LOOP, g_cfg_scratch,
+                                sizeof(g_cfg_scratch), &g_cfg) == BOOTCFG_OK) {
             entry = &g_cfg.entry[g_cfg.pick];
             entry_loop = 1;
         } else if (fam->cmdline_template != NULL &&
@@ -538,10 +589,13 @@ static int bless(const options *o)
         }
         if (entry != NULL)
             sgn_log(SGN_LOG_INFO, "boot entry: '%s' from %s%s", entry->title,
-                    g_cfg.source, entry_loop ? " (boots as a file)" : "");
+                    g_cfg.source,
+                    hooked       ? " (boots through falcon-hook)"
+                    : entry_loop ? " (boots as a file)" : "");
     }
 
-    if (fam->id == FAMILY_UNKNOWN && o->cmdline == NULL && !entry_loop) {
+    if (fam->id == FAMILY_UNKNOWN && o->cmdline == NULL && !entry_loop &&
+        !hooked) {
         size_t count = 0;
         const family_desc *tab = family_table(&count);
         char known[512];
@@ -620,6 +674,20 @@ static int bless(const options *o)
     if (o->cmdline != NULL) {
         rc = render_cmdline(o->cmdline, iso_arg, dev, o->iso, cmdline,
                             sizeof(cmdline));
+    } else if (hooked) {
+        /* The CD entry's own arguments and what the hook adds to them
+         * (falcon-core/src/media/hookcmd.c), the same cmdline a direct boot
+         * from the loader gets. */
+        char base[CMDLINE_MAX];
+
+        if (bootcfg_render(entry, NULL, base, sizeof(base)) != BOOTCFG_OK ||
+            hookcmd_build(base, cmdline, sizeof(cmdline)) != HOOKCMD_OK) {
+            sgn_set_error(SGN_ERR_NOSPACE, "the ISO's boot entry has a "
+                          "cmdline longer than %zu bytes", sizeof(cmdline) - 1u);
+            rc = SGN_ERR_NOSPACE;
+        } else {
+            rc = SGN_OK;
+        }
     } else if (entry != NULL) {
         /* The entry's own arguments, ${iso_path} filled in for a loopback
          * entry and dropped for a CD one; then, for a CD entry, the
@@ -653,15 +721,11 @@ static int bless(const options *o)
     if (rc != SGN_OK)
         goto out;
 
-    if (o->cmdline_extra != NULL) {
-        size_t have = strlen(cmdline);
-
-        if (snprintf(cmdline + have, sizeof(cmdline) - have, " %s",
-                     o->cmdline_extra) >= (int)(sizeof(cmdline) - have)) {
-            sgn_set_error(SGN_ERR_NOSPACE, "cmdline too long with --cmdline-extra");
-            rc = SGN_ERR_NOSPACE;
-            goto out;
-        }
+    if (o->cmdline_extra != NULL &&
+        sgn_cmdline_insert(cmdline, sizeof(cmdline), o->cmdline_extra) != SGN_OK) {
+        sgn_set_error(SGN_ERR_NOSPACE, "cmdline too long with --cmdline-extra");
+        rc = SGN_ERR_NOSPACE;
+        goto out;
     }
     sgn_log(SGN_LOG_INFO, "cmdline: %s", cmdline);
 
@@ -745,13 +809,20 @@ static int bless(const options *o)
         goto cleanup;
 
     if (o->embed_initrd && entry != NULL && o->kernel == NULL &&
-        entry->n_initrd > 0) {
-        /* Every initrd the entry loads, in its order, one after the other:
+        (entry->n_initrd > 0 || hooked)) {
+        /* Every initrd the entry loads, in its order, one after the other,
+         * each padded to 4 bytes as a bootloader concatenating them does:
          * the kernel unpacks concatenated cpio archives in sequence, which
          * is how a bootloader passes microcode ahead of the initramfs, and
-         * the wrap has one .initrd section to hold them. */
+         * the wrap has one .initrd section to hold them. The hook's own
+         * archive goes last. */
         uint8_t i;
 
+        if (entry->n_initrd == 0) {
+            rc = sgn_append_bytes(work_initrd, "", 0);
+            if (rc != SGN_OK)
+                goto cleanup;
+        }
         for (i = 0; i < entry->n_initrd; i++) {
             char piece[PATH_MAX];
 
@@ -774,9 +845,16 @@ static int bless(const options *o)
                 }
                 rc = iso_view_extract(view, initrd_member, piece);
                 if (rc == SGN_OK)
+                    rc = sgn_pad4_file(work_initrd);
+                if (rc == SGN_OK)
                     rc = sgn_append_file(work_initrd, piece);
                 (void)unlink(piece);
             }
+            if (rc != SGN_OK)
+                goto cleanup;
+        }
+        if (hooked) {
+            rc = append_hook(work_initrd);
             if (rc != SGN_OK)
                 goto cleanup;
         }

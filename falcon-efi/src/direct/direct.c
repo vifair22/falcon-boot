@@ -9,7 +9,6 @@
 #include <console/menu.h>
 
 #include <media/bootfs.h>
-#include <media/cpio.h>
 #include <media/extmap.h>
 #include <media/hookcmd.h>
 #include <lib/string.h>
@@ -182,21 +181,13 @@ static UINT64 align4(UINT64 v)
 static EFI_STATUS build_initrd(EFI_BOOT_SERVICES *bs, const bootcfg_entry *e,
                                pages *p, UINT8 **out, UINT64 *size)
 {
-    static const cpio_entry hook[2] = {
-        { "falcon", (const void *)0, 0, CPIO_MODE_DIR },
-        { "falcon/hook", (const void *)0, 0, 0100755u },
-    };
-    cpio_entry ent[2];
     UINT64 isz[BOOTCFG_INITRD_MAX];
     UINT64 total = 0, off = 0;
-    size_t csize = 0, wrote = 0;
+    size_t csize = hookcmd_archive_size(falcon_hook_bin_len), wrote = 0;
     UINT8 *buf;
     UINTN i;
 
-    memcpy(ent, hook, sizeof ent);
-    ent[1].data = falcon_hook_bin;
-    ent[1].len = falcon_hook_bin_len;
-    if (cpio_size(ent, 2, &csize) != CPIO_OK)
+    if (csize == 0)
         return EFI_LOAD_ERROR;
 
     for (i = 0; i < e->n_initrd; i++) {
@@ -220,8 +211,8 @@ static EFI_STATUS build_initrd(EFI_BOOT_SERVICES *bs, const bootcfg_entry *e,
         while ((off & 3u) != 0)
             buf[off++] = 0;
     }
-    if (cpio_write(ent, 2, buf + off, (size_t)(total - off), &wrote) !=
-        CPIO_OK) {
+    if (hookcmd_archive(falcon_hook_bin, falcon_hook_bin_len, buf + off,
+                        (size_t)(total - off), &wrote) != HOOKCMD_OK) {
         pages_put(bs, p);
         return EFI_LOAD_ERROR;
     }
@@ -298,6 +289,22 @@ static EFI_STATUS build_map(EFI_BOOT_SERVICES *bs, fs_vol *p2,
         return EFI_LOAD_ERROR;
     *len = (UINTN)mlen;
     return EFI_SUCCESS;
+}
+
+EFI_STATUS direct_map_set(EFI_SYSTEM_TABLE *st, fs_vol *p2,
+                          EFI_HANDLE p2_handle, UINT32 block_size,
+                          const fs_dirent *iso)
+{
+    direct_result r;
+    UINTN len = 0;
+    EFI_STATUS status;
+
+    r.advice = (const CHAR16 *)0;
+    status = build_map(st->BootServices, p2, p2_handle, block_size, iso, &len,
+                       &r);
+    if (EFI_ERROR(status))
+        return status;
+    return loader_isomap_set(st, g_map, len);
 }
 
 /* Reads the configuration and settles the cmdline. */

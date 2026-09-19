@@ -1017,7 +1017,17 @@ static void boot_blessed(EFI_HANDLE image_handle, const menu_entry *entry,
     out(entry->label);
     out(L"\r\n\r\n");
 
+    /* A wrap the sign tool built with falcon-hook in its initrd finds the
+     * ISO through the extent map, as a direct boot does; an older wrap
+     * ignores it. Failing to set it is left to the hook to report. */
+    {
+        discover_dev *dev = g_vol_dev[target->vol];
+
+        (void)direct_map_set(g_st, &g_vols[target->vol], dev->handle,
+                             dev->bio->Media->BlockSize, &target->ent);
+    }
     status = bless_boot(g_st, image_handle, &target->hit, &result);
+    loader_isomap_clear(g_st);
 
     menu_screen(g_st);
     out(entry->label);
