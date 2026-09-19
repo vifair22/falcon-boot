@@ -299,19 +299,53 @@ static void test_split_worst_case_fits(void **state)
         { 200, 10, &side_b, 0 },
         { 300, 10, &side_a, 20 },
         { 400, 10, &side_b, 20 },
+        { 500, 10, &side_a, 40 },
+        { 600, 10, &side_b, 40 },
+        { 700, 10, &side_a, 60 },
+        { 800, 10, &side_b, 60 },
     };
     iso_overlay o;
     iso_segment seg[ISO_MAX_SEGMENTS];
     size_t n;
 
     (void)state;
-    assert_int_equal(ISO_MAX_OVERRIDES, 4);
-    build(&o, rows, 4, 0);
-    /* Starts before the first and ends after the last: four overrides and five
-     * image gaps. */
+    assert_int_equal(ISO_MAX_OVERRIDES, 8);
+    build(&o, rows, 8, 0);
+    /* Starts before the first and ends after the last: eight overrides and
+     * nine image gaps. */
     n = split_ok(&o, 1u << 20, 0, 1000, seg);
-    assert_int_equal(n, 9);
+    assert_int_equal(n, 17);
     assert_int_equal(n, ISO_MAX_SEGMENTS);
+}
+
+/* Bytes the loader computed (the Windows patch) route by pointer, with the
+ * offset into them, and pass the source check without a sidecar size. */
+static void test_split_memory_source(void **state)
+{
+    static const uint8_t mem[64] = { 1, 2, 3 };
+    iso_overlay o;
+    iso_segment seg[ISO_MAX_SEGMENTS];
+    uint64_t sizes[1] = { 64 };
+    size_t n;
+
+    (void)state;
+    memset(&o, 0, sizeof o);
+    o.n = 1;
+    o.ovl[0].iso_off = 4096;
+    o.ovl[0].len = 32;
+    o.ovl[0].mem = mem;
+    o.ovl[0].src_off = 16;
+    assert_int_equal(iso_overlay_check(&o, 8192, sizes), ISO_OVL_OK);
+    n = split_ok(&o, 8192, 4096 + 8, 100, seg);
+    assert_int_equal(n, 2);
+    assert_ptr_equal(seg[0].mem, mem);
+    assert_null(seg[0].src);
+    assert_int_equal(seg[0].src_off, 24);
+    assert_null(seg[1].mem);
+    assert_int_equal(seg[1].src_off, 4096 + 32);
+    /* Neither a sidecar nor memory: refused. */
+    o.ovl[0].mem = NULL;
+    assert_int_equal(iso_overlay_check(&o, 8192, sizes), ISO_OVL_ERR_SOURCE);
 }
 
 /* A cap smaller than the cut needs is refused rather than truncated: a short
@@ -695,6 +729,7 @@ int run_iso_overlay_tests(void)
         cmocka_unit_test(test_split_spans_two),
         cmocka_unit_test(test_split_adjacent_overrides),
         cmocka_unit_test(test_split_worst_case_fits),
+        cmocka_unit_test(test_split_memory_source),
         cmocka_unit_test(test_split_nospace),
         cmocka_unit_test(test_split_zero_length),
         cmocka_unit_test(test_split_past_media_end),

@@ -66,7 +66,7 @@
  * value into a static device instance, and the split below is O(entries) per
  * block read. A number that cannot grow without someone re-reading this
  * comment is the point. */
-#define ISO_MAX_OVERRIDES 4u
+#define ISO_MAX_OVERRIDES 8u
 
 /* Worst case segments a single request can be cut into: every override
  * contributes at most one segment and at most one gap before it, plus a
@@ -108,6 +108,11 @@ typedef struct {
     uint64_t len;       /* bytes */
     fs_file *src;       /* the sidecar these bytes come from */
     uint64_t src_off;   /* SIDECAR: where in it they start */
+    /* Or bytes the loader computed at boot (the Windows patch of
+     * falcon-core/src/wim/wim.h): mem is used when src is NULL, and src_off
+     * is then an offset into it. The caller owns the memory for as long as
+     * the device is published. */
+    const uint8_t *mem;
 } iso_override;
 
 /* The whole modified view of one medium.
@@ -134,8 +139,9 @@ typedef struct {
 typedef struct {
     uint64_t virt_off;  /* VIRTUAL: where this piece starts */
     uint64_t len;
-    fs_file *src;       /* NULL = serve from the image */
-    uint64_t src_off;   /* IMAGE when src is NULL, else SIDECAR */
+    fs_file *src;       /* NULL = serve from the image (or from mem) */
+    uint64_t src_off;   /* IMAGE when both are NULL, else SIDECAR or MEMORY */
+    const uint8_t *mem; /* non-NULL = serve from these bytes */
 } iso_segment;
 
 /* The medium's size in the virtual address space, given the image file's size
@@ -223,7 +229,7 @@ static inline int iso_overlay_check(const iso_overlay *ovl, uint64_t media_size,
             return ISO_OVL_ERR_ORDER;
         prev_end = e->iso_off + e->len;
 
-        if (e->src == NULL)
+        if (e->src == NULL && e->mem == NULL)
             return ISO_OVL_ERR_SOURCE;
         if (e->len > UINT64_MAX - e->src_off)
             return ISO_OVL_ERR_SOURCE;
@@ -301,6 +307,7 @@ static inline int iso_overlay_split(const iso_overlay *ovl, uint64_t media_size,
             if (take > left)
                 take = left;
             out[n].src = e->src;
+            out[n].mem = e->mem;
             out[n].src_off = e->src_off + skip;
         } else {
             /* Image bytes, running up to the next override's start (or to the
@@ -309,6 +316,7 @@ static inline int iso_overlay_split(const iso_overlay *ovl, uint64_t media_size,
             if (i < ovl->n && ovl->ovl[i].iso_off - cur < take)
                 take = ovl->ovl[i].iso_off - cur;
             out[n].src = NULL;
+            out[n].mem = NULL;
             out[n].src_off = cur;
         }
 

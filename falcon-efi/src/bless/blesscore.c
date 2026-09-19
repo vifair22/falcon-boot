@@ -172,6 +172,12 @@ const uint16_t *bless_suffix(const bless_hit *h, family_id fam)
 
 /* ---- the byte map ---- */
 
+/* The splices a prepared record may ask for: the size-preserving shape needs
+ * one, and four was the overlay's own cap when this was written. The overlay
+ * grew for the loader's in-memory Windows patch (falcon-efi/src/win); a record
+ * off the stick keeps the smaller bound. */
+#define PREPARED_SPLICE_MAX 4u
+
 int bless_prepared_overlay(const manifest_record *r, iso_overlay *out)
 {
     size_t i;
@@ -184,6 +190,7 @@ int bless_prepared_overlay(const manifest_record *r, iso_overlay *out)
         out->ovl[i].len = 0;
         out->ovl[i].src = (fs_file *)0;
         out->ovl[i].src_off = 0;
+        out->ovl[i].mem = (const uint8_t *)0;
     }
     out->n = 0;
     /* No append region: the MVP patch shape is size-preserving (Section 6.3)
@@ -195,7 +202,7 @@ int bless_prepared_overlay(const manifest_record *r, iso_overlay *out)
         return BLESS_ERR_KIND;
     if (r->splice_n == 0)
         return BLESS_ERR_NOSPLICE;
-    if ((size_t)r->splice_n > ISO_MAX_OVERRIDES)
+    if ((size_t)r->splice_n > PREPARED_SPLICE_MAX)
         return BLESS_ERR_SPLICES;
 
     for (i = 0; i < (size_t)r->splice_n; i++) {

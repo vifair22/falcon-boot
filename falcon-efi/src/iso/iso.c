@@ -198,7 +198,9 @@ static EFI_STATUS EFIAPI iso_read_blocks(EFI_BLOCK_IO_PROTOCOL *self,
     for (i = 0; i < nseg; i++) {
         UINT8 *dst = (UINT8 *)buffer + (seg[i].virt_off - off);
 
-        if (seg[i].src == (fs_file *)0) {
+        if (seg[i].mem != (const uint8_t *)0) {
+            memcpy(dst, seg[i].mem + seg[i].src_off, (UINTN)seg[i].len);
+        } else if (seg[i].src == (fs_file *)0) {
             EFI_STATUS status = read_image(dev, seg[i].src_off, seg[i].len,
                                            dst);
 
@@ -990,6 +992,13 @@ static EFI_STATUS iso_open(EFI_SYSTEM_TABLE *st, fs_vol *vol,
             return EFI_UNSUPPORTED;
         }
         for (i = 0; i < ovl->n; i++) {
+            /* Bytes the loader computed itself are as long as it says:
+             * nothing on the stick decides their length. */
+            if (ovl->ovl[i].src == (fs_file *)0 &&
+                ovl->ovl[i].mem != (const uint8_t *)0) {
+                src_sizes[i] = ovl->ovl[i].src_off + ovl->ovl[i].len;
+                continue;
+            }
             if (ovl->ovl[i].src == (fs_file *)0) {
                 *stage = overlay_reason(ISO_OVL_ERR_SOURCE);
                 return EFI_INVALID_PARAMETER;
