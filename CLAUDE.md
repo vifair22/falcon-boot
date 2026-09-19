@@ -11,7 +11,7 @@ records the alternatives that were considered and rejected, so do not reintroduc
 a rejected approach without re-reading why it was rejected. `README.md` is the
 short public summary of the same model.
 
-Coverage (docs/notes/coverage-roadmap.md, 2026-09-18): M0-M2 are done. The
+Coverage (docs/notes/coverage-roadmap.md, 2026-09-19): M0-M6 are done. The
 corpus harness and scorecard exist (`docs/coverage.md`); falcon-core reads
 ISO9660/Rock Ridge/Joliet and UDF and an ISO's own GRUB, systemd-boot and
 isolinux configuration; falcon-hook rebuilds the ISO as a device-mapper
@@ -21,7 +21,11 @@ loader, `d` forces direct); with it on, through the ISO's own shim when the
 kernel carries `.sbat` (Fedora; `docs/notes/d3-spike.md`). Blessed wraps
 carry the hook too. `b` on a
 row or `a` for everything new blesses from the menu through the appliance.
-Next on that roadmap: M4 (Tier B installers).
+The Tier B installers (Debian netinst, Alpine, Proxmox) boot direct through
+the hook's fallbacks. A stock Windows ISO boots in every state whose db
+trusts Microsoft: the loader patches its boot.wim in memory as the virtual CD
+serves it (falcon-winjump in place of winpeshl.exe), and Setup finds its
+source through the ISO winjump attaches from Windows.
 
 Status: pre-1.0 MVP. Build-order steps 1-7 are done (see docs/DESIGN.md
 Section 11 status header); host tools falcon-boot-mkstick and
@@ -109,14 +113,16 @@ the tree, so `#include <fs/exfat.h>` means one file wherever it is written.
   here knows about firmware: device access goes through a read callback and
   every buffer is the caller's, which is what lets the loader, the host tools
   and the appliance run one implementation and the host tests exercise it.
-  - `crypto/` SHA-256/512, HMAC, PBKDF2, AES-XTS (AES-NI with a portable
-    fallback); the only crypto in the loader.
+  - `crypto/` SHA-1 (WIM stream names only), SHA-256/512, HMAC, PBKDF2,
+    AES-XTS (AES-NI with a portable fallback); the only crypto in the loader.
   - `fs/` the filesystem driver registry (`fs.c`, DESIGN Section 9: one
     `fs_ops` vtable, opaque caller-allocated storage, unified dirents and
     status codes) and the read-only drivers only it calls, `exfat.c`,
     `ext4.c`, `iso9660.c` (Rock Ridge, Joliet) and `udf.c`. Consumers select
     a driver through the registry and never name one; `fs_lookup` resolves a
-    path.
+    path. `udf.c` also carries the few record edits the Windows patch needs
+    (a File Entry's extents, a Partition Descriptor's length, an anchor),
+    applied to caller buffers, never to media.
   - `luks/` LUKS2 header parse, keyslot unlock, AF merge.
   - `part/` GPT parsing and falcon partition identification.
   - `pe/` PE/COFF header layout read from a file's bytes; the one PE walker.
@@ -130,6 +136,9 @@ the tree, so `#include <fs/exfat.h>` means one file wherever it is written.
     boot configuration (`bootcfg.c`, read through `bootfs.c` over a mounted
     image), the extent map handed to falcon-hook (`extmap.c`) and the hooked
     boot's cmdline (`hookcmd.c`).
+  - `wim/` LZX decompression and the WIM reader, plus the boot.wim patch
+    (`wim_patch_build`): a new header and a tail appended after the
+    original's end, the original bytes untouched.
   - `manifest/` the blessed-artifact manifest parser and writer (DESIGN
     Section 8.1), shared by the loader and the sign tool.
   - `lib/` freestanding `mem*` and UCS-2 helpers; `string.c` is linked into
@@ -164,6 +173,10 @@ the tree, so `#include <fs/exfat.h>` means one file wherever it is written.
     initrds read with core's ISO drivers, falcon-hook appended, the extent
     map set, the initrd served over LoadFile2, the kernel loaded through
     `loadops`.
+  - `win/` Windows install media patched at boot (`winpatch.c`, DESIGN
+    Section 6.4): boot.wim read from the ISO's UDF tree, patched with core's
+    `wim`, and served through the virtual CD's override layer
+    (`iso/overlay.h`, which takes memory sources as well as p2 files).
   - `tools/` the QEMU + OVMF rig (`run-qemu.sh`, with `--secboot`, `--stick`
     and `--headless`; `ovmf.sh`; `rig-shot.sh`), its fixtures (the payload
     ISO and images, the throwaway test MOK, the sd-stub fixture UKI with its
@@ -187,7 +200,9 @@ the tree, so `#include <fs/exfat.h>` means one file wherever it is written.
   it.
   `tools/` holds the QEMU proofs.
 - `falcon-winjump/` the WinPE jump binary (DESIGN Section 6.3), a Win64
-  console program.
+  console program. The loader embeds its stripped build as a generated C
+  array. It links static (`-static`) because WinPE has no `libssp-0.dll`, and
+  a missing import kills it before its first log line.
 - `falcon-hook/` the program the loader appends to an ISO's initrd (DESIGN
   Section 6.4): freestanding static x86-64 Linux, no libc (`src/sys.c` is its
   system calls and startup). It runs as `rdinit=`, reads the extent map from

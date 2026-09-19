@@ -10,9 +10,10 @@ decided in `docs/DESIGN.md` Section 6.4 and the appliance revision in Section
 7.5 (both 2026-09-18); this file is the plan, the alternatives and the
 milestones. The evidence base is `docs/notes/ventoy-survey.md`.
 
-## Status (2026-09-18, after M0-M2)
+## Status (2026-09-19, after M0-M6)
 
-M0, M1 and M2 are done, and M3's first item came with them. The table in
+M0 through M6 are built; the breadth work of M4 and M6's parity items go on.
+The table in
 Section 1 is the starting point this plan was written against; what the
 harness measures now is `docs/coverage.md`:
 
@@ -20,8 +21,9 @@ harness measures now is `docs/coverage.md`:
 |---|---|---|---|
 | Tier A Linux (13 ISOs on hand), drop | boots, direct | chainloads, media lost | refused |
 | Tier A Linux, blessed | boots | boots | boots |
-| Tier B installers (Debian netinst, Alpine, Proxmox) | media lost | media lost | refused / media lost |
-| Windows install, unprepared | Setup cannot find its source | same | refused |
+| Tier B installers (Debian netinst, Alpine, Proxmox) | boots, direct | media lost | refused / media lost |
+| Fedora, drop | boots, direct | boots, through its own shim | refused |
+| Windows install, unprepared | boots, patched in the loader | same | refused |
 
 - **M0**: corpus manifest, harness (serial, DHCP, and the media a direct
   boot reads after the kernel starts), scorecard. The exit's premise did not
@@ -52,6 +54,15 @@ harness measures now is `docs/coverage.md`:
   the loader checks first and chainloads them. D3b (the ISO's GRUB with a
   configuration we write) would reach the rest; it is written up for the
   discussion DESIGN 7.2 asked for, not built.
+- **M6**: the loader patches a Windows ISO's boot.wim as it serves it
+  (DESIGN 6.4 has the shape). Windows 11 25H2 and Server 2025 reach Setup
+  with Secure Boot off and on (Microsoft CA), and Setup reads its install source through
+  the ISO winjump attaches from Windows. The harness judges that directly:
+  once Setup's screen is up it opens Setup's console and copies
+  `\sources\install.*` to nul, which reads the stick only if Windows has
+  the ISO. winjump now links static: WinPE has no `libssp-0.dll`, and the
+  missing import killed it before its first log line. Parity (Win11
+  requirement bypass, unattend, WinPE-based rescue media, ESXi) is next.
 - **M4**: the three Tier B installers boot direct with Secure Boot off, each
   through a different gap the hook now closes. Alpine's kernel has no
   efivarfs and no dm-mod: a direct boot now carries the extent map in the

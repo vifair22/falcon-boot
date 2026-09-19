@@ -918,8 +918,7 @@ here relaxes enforcement; the key stays on p3. Under Secure Boot the
 direct-boot route boots only what verifies, which in practice is a blessed
 wrap, and that is the "bless" in the promise.
 
-**Status (2026-09-18): the Linux half is built; Windows WIM surgery is
-not.** The ISO9660/UDF reader, boot-config parsing, falcon-hook and direct
+**Status (2026-09-19): built, Linux and Windows.** The ISO9660/UDF reader, boot-config parsing, falcon-hook and direct
 kernel boot are in, and blessed wraps carry falcon-hook too, built from the
 ISO's own CD entry (the loader sets the extent variable around a blessed
 boot as it does around a direct one). Measured under OVMF by the coverage
@@ -933,8 +932,28 @@ of the ISO's own pool where the initramfs has neither, and a short table of
 per-distro nudges (roadmap M4). With Secure Boot on, Enter takes the same
 route through the ISO's own shim when the kernel carries SBAT metadata
 (Fedora), which boots it with no blessing wherever db trusts the Microsoft
-CA (`docs/notes/d3-spike.md`); other kernels chainload as before. Windows
-still needs the appliance's preparation (Section 6.3).
+CA (`docs/notes/d3-spike.md`); other kernels chainload as before.
+
+Windows (roadmap M6) boots from a stock ISO with nothing prepared. When Enter
+lands on a Windows row, the loader reads `\sources\boot.wim` out of the ISO's
+UDF tree, patches it in memory (`falcon-core/src/wim`), and serves the ISO
+through the virtual CD with the patch laid over it (`falcon-efi/src/win`).
+The patch is Ventoy's shape, so nothing of the original moves. The jump
+binary, its configuration, a new boot-image metadata resource and a new
+lookup table go after the WIM's end, uncompressed, and only the 208-byte
+header changes in place. In the new metadata, System32's child list is a
+sorted copy in which `winpeshl.exe` names the jump binary's stream and
+`winpeshl_orig.exe` and `falcon-winjump.cfg` are added. On the UDF side,
+boot.wim's File Entry gains an extent over blocks past the ISO's end, the
+Partition Descriptors grow to cover them, and a copy of the anchor goes at
+the new last block. Every one of those is an override of whole blocks, from
+memory. Measured under OVMF: Windows 11 25H2 and Server 2025 reach Setup
+with Secure Boot off and on (Microsoft CA), and Setup reads `install.wim` through the ISO that
+winjump attached from Windows. bootmgr, winload and the kernel are served
+byte for byte, so the platform verifies Microsoft's signatures as it would
+from a DVD. An ISO the loader cannot patch (no boot.wim, not LZX, no
+winpeshl.exe) falls back to the appliance's preparation offer (Section
+6.3.1).
 
 ## 7. Security model
 
