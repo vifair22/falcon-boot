@@ -130,6 +130,12 @@ typedef struct {
     char          source[BOOTCFG_PATH_MAX];   /* the file it was read from */
 } bootcfg_result;
 
+/* Where GRUB's configuration sits on a CD, in the order bootcfg looks:
+ * NULL-terminated. For a caller that needs the file GRUB reads even when the
+ * entry came from another format (MX's GRUB entries name their kernel
+ * through a run-time variable, so its CD entry is the isolinux one). */
+const char *const *bootcfg_grub_cd_paths(void);
+
 /* Reads the ISO's configuration for one kind of boot. scratch holds the
  * config files as they are parsed (several at once, while a source is
  * followed); 256 KiB is ample for every medium in the corpus.

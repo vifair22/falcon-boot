@@ -754,6 +754,25 @@ static void test_bootcfg_render(void **state)
     assert_false(bootcfg_takes_iso_path(&e));
 }
 
+/* The list D3b falls back on for the file GRUB reads: grub.cfg paths only,
+ * the common one first. */
+static void test_bootcfg_grub_cd_paths(void **state)
+{
+    const char *const *p = bootcfg_grub_cd_paths();
+    size_t n = 0;
+
+    (void)state;
+    assert_non_null(p);
+    assert_string_equal(p[0], "/boot/grub/grub.cfg");
+    for (; p[n] != NULL; n++) {
+        size_t l = strlen(p[n]);
+
+        assert_true(l > 9);
+        assert_string_equal(p[n] + l - 9, "/grub.cfg");
+    }
+    assert_true(n >= 2);
+}
+
 int run_bootcfg_tests(void)
 {
     const struct CMUnitTest tests[] = {
@@ -771,6 +790,7 @@ int run_bootcfg_tests(void)
         cmocka_unit_test(test_bootcfg_refusals),
         cmocka_unit_test(test_bootcfg_limits),
         cmocka_unit_test(test_bootcfg_render),
+        cmocka_unit_test(test_bootcfg_grub_cd_paths),
     };
 
     return cmocka_run_group_tests_name("bootcfg", tests, NULL, NULL);

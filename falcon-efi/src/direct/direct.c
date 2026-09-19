@@ -612,22 +612,31 @@ EFI_STATUS direct_grub_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent,
     if (EFI_ERROR(status))
         goto out;
 
-    /* Only a GRUB configuration, read from one contiguous file this driver
-     * can place: the bytes replaced are that file's. */
+    /* The file replaced is the grub.cfg the ISO's GRUB reads: the one the
+     * entry came from when it is one, else the first GRUB looks for (the
+     * entry's kernel and initrds are the same files whichever format named
+     * them). It has to be one contiguous file this driver can place. */
     status = EFI_UNSUPPORTED;
     r->no_entry = 1;
     r->stage = L"locating the ISO's grub.cfg";
+    if (e->loop)
+        goto out;
     {
         const char *s = g_cfg.source;
+        const char *const *gp = bootcfg_grub_cd_paths();
         UINTN n = 0;
+        int found;
 
         while (s[n] != '\0')
             n++;
-        if (n < 9 || memcmp(s + n - 9, "/grub.cfg", 9) != 0 || e->loop)
+        found = n >= 9 && memcmp(s + n - 9, "/grub.cfg", 9) == 0 &&
+                fs_lookup(&g_isovol, s, &g_lookdir, &cfg_ent) == FS_OK;
+        for (; !found && *gp != (const char *)0; gp++)
+            found = fs_lookup(&g_isovol, *gp, &g_lookdir, &cfg_ent) == FS_OK;
+        if (!found)
             goto out;
     }
-    if (fs_lookup(&g_isovol, g_cfg.source, &g_lookdir, &cfg_ent) != FS_OK ||
-        cfg_ent.is_dir || cfg_ent.size == 0 || cfg_ent.size > GRUBCFG_MAX ||
+    if (cfg_ent.is_dir || cfg_ent.size == 0 || cfg_ent.size > GRUBCFG_MAX ||
         fs_extents(&g_isovol, &cfg_ent, cfg_ext, 2, &next) != FS_OK ||
         next != 1 || cfg_ext[0].len != cfg_ent.size)
         goto out;
@@ -652,11 +661,15 @@ EFI_STATUS direct_grub_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent,
         goto out;
     }
 
+    /* A grub.cfg too short to hold ours (Alpine's is 182 bytes) leaves
+     * nothing this route can serve. */
     r->stage = L"writing the grub.cfg";
     if (grubcfg_write(e, g_hooked, iso->size / 512u,
                       ((UINT64)hook_len + 511u) / 512u, (size_t)cfg_ent.size,
-                      (char *)cfg, (size_t)cfg_ent.size) != GRUBCFG_OK)
+                      (char *)cfg, (size_t)cfg_ent.size) != GRUBCFG_OK) {
+        status = EFI_UNSUPPORTED;
         goto out;
+    }
 
     ovl.ovl[0].iso_off = cfg_ext[0].vol_off;
     ovl.ovl[0].len = cfg_ent.size;

@@ -1544,6 +1544,11 @@ static const char *const g_grub_cd[] = {
     "/boot/grub/grub.cfg", "/boot/grub2/grub.cfg", "/EFI/BOOT/grub.cfg",
     "/boot/grub/x86_64-efi/grub.cfg", (const char *)0
 };
+const char *const *bootcfg_grub_cd_paths(void)
+{
+    return g_grub_cd;
+}
+
 static const char *const g_grub_loop[] = {
     "/boot/grub/loopback.cfg", "/boot/grub2/loopback.cfg", (const char *)0
 };
