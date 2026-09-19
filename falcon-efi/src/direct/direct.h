@@ -46,9 +46,20 @@ typedef struct {
  * is its exit status); any other value is the status that ended the attempt,
  * with result->stage naming where. Everything published for the attempt (the
  * variable, the LoadFile2 handle, the buffers) is gone again on return. */
+/* How the kernel is started. KERNEL loads it through load_ops, which is
+ * what boots it with Secure Boot off. ISO_SHIM loads the ISO's own shim
+ * instead, which verifies the kernel against its vendor's certificate: on a
+ * machine whose db trusts the Microsoft CA, a stock distro ISO boots with
+ * Secure Boot on and no blessing (docs/notes/coverage-roadmap.md W2 D3a). */
+typedef enum {
+    DIRECT_VIA_KERNEL = 0,
+    DIRECT_VIA_ISO_SHIM
+} direct_via;
+
 EFI_STATUS direct_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent, fs_vol *p2,
                        EFI_HANDLE p2_handle, UINT32 block_size,
-                       const fs_dirent *iso, direct_result *result);
+                       const fs_dirent *iso, direct_via via,
+                       direct_result *result);
 
 /* Sets FalconIsoMap for iso without booting anything: for a blessed wrap,
  * whose initrd carries falcon-hook too (falcon-cli/src/sign/main.c). The

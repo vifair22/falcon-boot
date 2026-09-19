@@ -45,6 +45,13 @@ harness measures now is `docs/coverage.md`:
   and no corpus distro lacks dm-mod. It comes back when the harness shows one
   that does. The exit's "dropping a new ISO to a booted live desktop" leg is
   hardware work.
+- **M5**: D3a is built and measured (`docs/notes/d3-spike.md`): the ISO's
+  own shim, with the kernel as its second stage, boots Fedora with Secure
+  Boot on and no blessing where db trusts the Microsoft CA. Every other
+  corpus kernel lacks the `.sbat` section shim demands of what it loads, so
+  the loader checks first and chainloads them. D3b (the ISO's GRUB with a
+  configuration we write) would reach the rest; it is written up for the
+  discussion DESIGN 7.2 asked for, not built.
 - **M4**: the three Tier B installers boot direct with Secure Boot off, each
   through a different gap the hook now closes. Alpine's kernel has no
   efivarfs and no dm-mod: a direct boot now carries the extent map in the

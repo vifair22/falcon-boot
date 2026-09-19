@@ -6,8 +6,10 @@
 #include <efi/loadedimage.h>
 #include <efi/loadfile2.h>
 #include <loader/loadops.h>
+#include <loader/credfs.h>
 #include <console/menu.h>
 
+#include <pe/pe.h>
 #include <media/bootfs.h>
 #include <media/extmap.h>
 #include <media/hookcmd.h>
@@ -34,7 +36,17 @@ static extmap_extent g_mext[EXTMAP_MAX_EXTENTS];
 static UINT8 g_map[EXTMAP_HDR_LEN + EXTMAP_MAX_EXTENTS * EXTMAP_EXT_LEN];
 static char g_cmd[BOOTCFG_CMDLINE_MAX];
 static char g_hooked[BOOTCFG_CMDLINE_MAX + 128u];
-static CHAR16 g_opts[BOOTCFG_CMDLINE_MAX + 128u];
+static CHAR16 g_opts[BOOTCFG_CMDLINE_MAX + 160u];
+
+/* The ISO's own shim, for DIRECT_VIA_ISO_SHIM (direct.h), and the names the
+ * two files have on the synthetic filesystem it is loaded from. The kernel
+ * sits beside it because shim reads its second stage from the device it was
+ * itself loaded from. */
+#define ISO_SHIM_PATH "/EFI/BOOT/BOOTX64.EFI"
+static const CHAR16 g_shim_name[] = L"shimx64.efi";
+static const CHAR16 g_shim_load[] = L"\\shimx64.efi";
+static const CHAR16 g_kernel_name[] = L"vmlinuz";
+static const CHAR16 g_kernel_arg[] = L"\\vmlinuz ";
 
 /* The LoadFile2 provider and the one initrd it serves. The device path is the
  * single vendor node the kernel's stub looks for, then the end node. */
@@ -344,15 +356,18 @@ static EFI_STATUS pick_entry(direct_result *r, const bootcfg_entry **out,
 
 EFI_STATUS direct_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent, fs_vol *p2,
                        EFI_HANDLE p2_handle, UINT32 block_size,
-                       const fs_dirent *iso, direct_result *r)
+                       const fs_dirent *iso, direct_via via,
+                       direct_result *r)
 {
     EFI_BOOT_SERVICES *bs = st->BootServices;
     EFI_GUID li_guid = EFI_LOADED_IMAGE_PROTOCOL_GUID;
     EFI_LOADED_IMAGE_PROTOCOL *li;
     const bootcfg_entry *e;
-    pages kp = { 0, 0 }, ip = { 0, 0 };
-    UINT8 *kernel = (UINT8 *)0, *initrd = (UINT8 *)0;
-    UINT64 ksize = 0, isize = 0;
+    pages kp = { 0, 0 }, ip = { 0, 0 }, sp = { 0, 0 };
+    UINT8 *kernel = (UINT8 *)0, *initrd = (UINT8 *)0, *shim = (UINT8 *)0;
+    UINT64 ksize = 0, isize = 0, ssize = 0;
+    EFI_DEVICE_PATH_PROTOCOL *shim_path = (EFI_DEVICE_PATH_PROTOCOL *)0;
+    BOOLEAN published = FALSE;
     UINTN map_len = 0, exit_size = 0, i;
     CHAR16 *exit_data = (CHAR16 *)0;
     char *scratch = (char *)0;
@@ -393,6 +408,30 @@ EFI_STATUS direct_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent, fs_vol *p2,
     status = build_initrd(bs, e, map_len, &ip, &initrd, &isize);
     if (EFI_ERROR(status))
         goto out;
+    if (via == DIRECT_VIA_ISO_SHIM) {
+        pe_hdr ph;
+        size_t so = 0, sl = 0;
+
+        /* Shim runs a second stage only if it carries SBAT metadata (shim
+         * 15.7 and later, under Secure Boot). Fedora's kernels do; Debian's
+         * and Ubuntu's do not, because there GRUB is the second stage and
+         * checks the kernel through shim's verify protocol instead. A kernel
+         * without it is not this route's to boot: the caller chainloads. */
+        r->stage = L"checking the kernel for SBAT metadata";
+        if (pe_parse(kernel, (size_t)ksize, &ph) != PE_OK ||
+            pe_find_section(&ph, kernel, (size_t)ksize, ".sbat", &so, &sl) !=
+                PE_OK) {
+            r->no_entry = 1;
+            status = EFI_UNSUPPORTED;
+            goto out;
+        }
+        r->stage = L"reading the ISO's shim";
+        status = read_whole(bs, ISO_SHIM_PATH, &sp, &shim, &ssize);
+        if (status == EFI_NOT_FOUND)
+            r->no_entry = 1;
+        if (EFI_ERROR(status))
+            goto out;
+    }
 
     r->stage = L"setting FalconIsoMap";
     status = loader_isomap_set(st, g_map, map_len);
@@ -404,10 +443,42 @@ EFI_STATUS direct_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent, fs_vol *p2,
         goto out;
 
     resolve_load_ops(bs, &ops);
-    r->stage = ops.via_shim ? L"LoadImage of the kernel (shim)"
-                            : L"LoadImage of the kernel (firmware)";
-    status = ops.LoadImage(FALSE, parent, (EFI_DEVICE_PATH_PROTOCOL *)0,
-                           kernel, (UINTN)ksize, &child);
+    if (via == DIRECT_VIA_ISO_SHIM) {
+        /* The ISO's shim, by device path off the synthetic filesystem, with
+         * the kernel beside it: shim verifies it against its vendor's
+         * certificate and runs it as its second stage, named first in the
+         * load options with the cmdline after it. */
+        credfs_entry tree[2];
+
+        tree[0].name = g_shim_name;
+        tree[0].data = shim;
+        tree[0].size = ssize;
+        tree[0].parent = CREDFS_ROOT;
+        tree[0].is_dir = 0;
+        tree[0].secret = 0;
+        tree[1].name = g_kernel_name;
+        tree[1].data = kernel;
+        tree[1].size = ksize;
+        tree[1].parent = CREDFS_ROOT;
+        tree[1].is_dir = 0;
+        tree[1].secret = 0;
+        r->stage = L"publishing the ISO's shim and kernel";
+        status = credfs_publish(st, tree, 2);
+        if (EFI_ERROR(status))
+            goto out;
+        published = TRUE;
+        status = credfs_load_path(bs, g_shim_load, &shim_path);
+        if (EFI_ERROR(status))
+            goto out;
+        r->stage = L"LoadImage of the ISO's shim";
+        status = ops.LoadImage(FALSE, parent, shim_path, (void *)0, 0,
+                               &child);
+    } else {
+        r->stage = ops.via_shim ? L"LoadImage of the kernel (shim)"
+                                : L"LoadImage of the kernel (firmware)";
+        status = ops.LoadImage(FALSE, parent, (EFI_DEVICE_PATH_PROTOCOL *)0,
+                               kernel, (UINTN)ksize, &child);
+    }
     if (EFI_ERROR(status)) {
         /* A refused image is still loaded (spec 7.4), and only the loader
          * that loaded it may unload it (falcon-efi/src/loader/loadops.h). */
@@ -424,6 +495,17 @@ EFI_STATUS direct_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent, fs_vol *p2,
         ops.UnloadImage(child);
         status = EFI_LOAD_ERROR;
         goto out;
+    }
+    if (via == DIRECT_VIA_ISO_SHIM) {
+        /* Shifted right by the second stage's name, in place. */
+        UINTN k = 0, len;
+
+        for (len = 0; g_opts[len] != 0; len++)
+            ;
+        while (g_kernel_arg[k] != 0)
+            k++;
+        memmove(g_opts + k, g_opts, (len + 1u) * sizeof(CHAR16));
+        memcpy(g_opts, g_kernel_arg, k * sizeof(CHAR16));
     }
     for (i = 0; g_opts[i] != 0; i++)
         ;
@@ -450,6 +532,11 @@ EFI_STATUS direct_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent, fs_vol *p2,
     status = EFI_SUCCESS;
 
 out:
+    if (shim_path != (EFI_DEVICE_PATH_PROTOCOL *)0)
+        bs->FreePool(shim_path);
+    if (published)
+        (void)credfs_teardown(bs);
+    pages_put(bs, &sp);
     initrd_withdraw(bs);
     loader_isomap_clear(st);
     pages_put(bs, &ip);

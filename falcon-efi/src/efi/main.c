@@ -1163,14 +1163,15 @@ typedef enum {
     ROUTE_DIRECT
 } boot_route;
 
-/* Enter's route. Direct wherever the platform is not enforcing, since that
- * is where an ISO's kernel loads without a blessing (docs/notes/coverage-
- * roadmap.md W2 D1); its own loader where it is, since a distro's shim is
- * what the platform trusts there. c and d pick either one explicitly. UX
- * only: both routes load through the same verifying path. */
+/* Enter's route: direct, in every state. Where the platform is not
+ * enforcing the kernel is loaded as it is (docs/notes/coverage-roadmap.md
+ * W2 D1); where it is, through the ISO's own shim, which is what the
+ * platform trusts there and which verifies the distro's kernel (D3a). c and
+ * d pick a route explicitly. UX only: every route loads through the same
+ * verifying path. */
 static boot_route default_route(void)
 {
-    return g_mode == SB_MODE_ON ? ROUTE_CHAIN : ROUTE_DIRECT;
+    return ROUTE_DIRECT;
 }
 
 /* Returns FALSE when the ISO has no configuration entry to boot directly,
@@ -1189,7 +1190,10 @@ static BOOLEAN boot_direct(EFI_HANDLE image_handle, const menu_entry *entry,
 
     status = direct_boot(g_st, image_handle, &g_vols[target->vol],
                          dev->handle, dev->bio->Media->BlockSize,
-                         &target->ent, &result);
+                         &target->ent,
+                         g_mode == SB_MODE_ON ? DIRECT_VIA_ISO_SHIM
+                                              : DIRECT_VIA_KERNEL,
+                         &result);
     if (EFI_ERROR(status) && result.no_entry)
         return FALSE;
 

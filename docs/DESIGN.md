@@ -930,8 +930,11 @@ states. The Tier B installers (Debian netinst, Alpine, Proxmox) boot direct
 too, through the hook's fallbacks: the extent map carried in the initrd, a
 loop device where the kernel has no device-mapper, a module package read out
 of the ISO's own pool where the initramfs has neither, and a short table of
-per-distro nudges (roadmap M4). Windows still needs the appliance's
-preparation (Section 6.3).
+per-distro nudges (roadmap M4). With Secure Boot on, Enter takes the same
+route through the ISO's own shim when the kernel carries SBAT metadata
+(Fedora), which boots it with no blessing wherever db trusts the Microsoft
+CA (`docs/notes/d3-spike.md`); other kernels chainload as before. Windows
+still needs the appliance's preparation (Section 6.3).
 
 ## 7. Security model
 

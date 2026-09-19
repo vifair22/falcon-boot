@@ -17,7 +17,9 @@ ISO9660/Rock Ridge/Joliet and UDF and an ISO's own GRUB, systemd-boot and
 isolinux configuration; falcon-hook rebuilds the ISO as a device-mapper
 device inside the distro's initramfs; and with Secure Boot off the loader
 boots an unblessed Linux ISO's kernel directly (Enter; `c` chainloads its own
-loader, `d` forces direct), and blessed wraps carry the hook too. `b` on a
+loader, `d` forces direct); with it on, through the ISO's own shim when the
+kernel carries `.sbat` (Fedora; `docs/notes/d3-spike.md`). Blessed wraps
+carry the hook too. `b` on a
 row or `a` for everything new blesses from the menu through the appliance.
 Next on that roadmap: M4 (Tier B installers).
 
