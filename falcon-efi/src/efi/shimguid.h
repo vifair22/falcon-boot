@@ -24,6 +24,13 @@
 
 #include <efi/uefi.h>
 
+/* shim's verify protocol, which every distro's signed GRUB asks to check
+ * the kernel it loads. Only ever located, never called, by this loader
+ * (falcon-efi/src/iso/iso.c hides ours while an ISO's own chain runs). */
+#define SHIM_LOCK_GUID \
+    { 0x605dab50, 0xe046, 0x4300, \
+      { 0xab, 0xb6, 0x3d, 0xd8, 0x10, 0xdd, 0x8b, 0x23 } }
+
 #define SHIM_IMAGE_LOADER_GUID \
     { 0x1f492041, 0xfadb, 0x4e59, \
       { 0x9e, 0x57, 0x7c, 0xaf, 0xe7, 0x3a, 0x55, 0xab } }

@@ -814,6 +814,64 @@ static EFI_STATUS build_load_path(EFI_BOOT_SERVICES *bs,
     return EFI_SUCCESS;
 }
 
+/* ---- our shim's verify protocol, out of the way of the ISO's ----
+ *
+ * An ISO's own chain is its shim, then its signed GRUB, and GRUB asks "a"
+ * SHIM_LOCK to verify the kernel: LocateProtocol, which answers with the
+ * first instance installed. Under this loader that is the stick's shim,
+ * installed before the ISO's shim ran. A shim 15.x (MX Linux 25.2 ships
+ * one) records that its loader verified the kernel only when its own
+ * protocol is asked, and halts the machine at ExitBootServices otherwise
+ * ("Bootloader has not verified loaded image. System is compromised.").
+ *
+ * So for the length of the payload's run, the instances already installed
+ * are uninstalled, and put back exactly as they were when it returns. The
+ * ISO's shim then installs the only one there is, which is the one its GRUB
+ * finds. Nothing gets easier to run: a GRUB that finds no SHIM_LOCK under
+ * Secure Boot refuses its kernel, and the one it finds is its own vendor's,
+ * which the platform verified against db before any of this ran. With
+ * Secure Boot off shim installs none and there is nothing to hide.
+ */
+#define SHIM_LOCK_HIDE_MAX 4u
+static EFI_HANDLE g_lock_h[SHIM_LOCK_HIDE_MAX];
+static void      *g_lock_if[SHIM_LOCK_HIDE_MAX];
+static UINTN      g_lock_n;
+
+static void shim_lock_hide(EFI_BOOT_SERVICES *bs)
+{
+    EFI_GUID guid = SHIM_LOCK_GUID;
+    EFI_HANDLE *hs = (EFI_HANDLE *)0;
+    UINTN n = 0, i;
+
+    g_lock_n = 0;
+    if (bs->LocateHandleBuffer(ByProtocol, &guid, (void *)0, &n, &hs) !=
+        EFI_SUCCESS)
+        return;
+    for (i = 0; i < n && g_lock_n < SHIM_LOCK_HIDE_MAX; i++) {
+        void *iface = (void *)0;
+
+        if (bs->HandleProtocol(hs[i], &guid, &iface) != EFI_SUCCESS ||
+            bs->UninstallProtocolInterface(hs[i], &guid, iface) !=
+                EFI_SUCCESS)
+            continue;
+        g_lock_h[g_lock_n] = hs[i];
+        g_lock_if[g_lock_n] = iface;
+        g_lock_n++;
+    }
+    bs->FreePool(hs);
+}
+
+static void shim_lock_restore(EFI_BOOT_SERVICES *bs)
+{
+    EFI_GUID guid = SHIM_LOCK_GUID;
+    UINTN i;
+
+    for (i = 0; i < g_lock_n; i++)
+        (void)bs->InstallProtocolInterface(&g_lock_h[i], &guid, 0u,
+                                           g_lock_if[i]);
+    g_lock_n = 0;
+}
+
 static EFI_STATUS chainload(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
                             EFI_HANDLE esp_handle, iso_boot_result *result)
 {
@@ -875,7 +933,9 @@ static EFI_STATUS chainload(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
                              L"is its own output.\r\n\r\n");
 
     result->stage = L"StartImage";
+    shim_lock_hide(bs);
     status = ops.StartImage(child, &exit_size, &exit_data);
+    shim_lock_restore(bs);
     /* StartImage unloads an application that returns, so the child handle is
      * gone either way; only its exit data is ours to release. */
     if (exit_data != (CHAR16 *)0)
@@ -899,6 +959,7 @@ static EFI_STATUS chainload(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
  * device_teardown. It stays zero only when a previous device is still held by
  * a driver: that instance belongs to the earlier attempt, and tearing it down
  * from here would disconnect drivers this caller never connected. */
+
 /* Why the override set is refused, in words the user can act on. This data
  * comes off a writable exFAT partition, so "the modified view on your stick is
  * wrong, and here is how" is the message that matters; a single "bad overlay"
