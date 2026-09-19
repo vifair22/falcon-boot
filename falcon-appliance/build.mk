@@ -21,33 +21,26 @@ APPLIANCE := falcon-appliance/src
 # linked static: it is PID 1 in an initramfs whose dynamic loader exists for
 # the other programs, not for this one.
 APPLIANCE_INIT_SRCS := $(addprefix $(APPLIANCE)/,main.c console.c stick.c \
-	run.c survey.c select.c bless.c list.c route.c) \
-	$(CORE_PART) $(CORE_MANIFEST) $(CORE)/media/family.c $(CORE_FS) \
+	run.c survey.c select.c shelf.c bless.c list.c route.c) \
+	$(CORE_PART) $(CORE_MANIFEST) $(CORE)/media/family.c $(CORE_FS) $(CORE_LUKS) \
 	$(CORE)/media/bootcfg.c \
 	$(addprefix $(CLI)/sign/,isoprobe.c payload.c util.c) \
-	$(CORE)/crypto/sha256.c $(CORE)/crypto/crypto.c
+	$(CORE_CRYPTO)
 
 HOST_SRCS += $(APPLIANCE_INIT_SRCS)
 
 APPLIANCE_INIT := $(BIN)/falcon-boot-appliance-init
-APPLIANCE_BSDTAR := build/appliance/bsdtar
 APPLIANCE_INIT_OBJS := $(APPLIANCE_INIT_SRCS:%.c=$(HOST_OBJ)/%.o)
 
 $(APPLIANCE_INIT): $(APPLIANCE_INIT_OBJS)
 	@mkdir -p $(@D)
 	$(CC_HOST) $(HOST_LDFLAGS) -static -o $@ $(APPLIANCE_INIT_OBJS)
 
-# The image's bsdtar: libarchive from a pinned tarball, built without the XAR
-# support that links libxml2 and ICU (mk-bsdtar.sh says why). Rebuilt only
-# when the recipe changes, since the recipe holds the pin.
-$(APPLIANCE_BSDTAR): falcon-appliance/image/mk-bsdtar.sh
-	falcon-appliance/image/mk-bsdtar.sh
-
 # Embeds $(SIGN_STATIC), so the two routes of Section 7.5 run one
 # implementation. The image itself is wrapped by $(SIGN)'s UKI builder, the
 # one that wraps every blessed kernel. The test MOK is only for the optional
 # signed copy; mkstick signs the real one on its way onto p3.
-appliance: $(APPLIANCE_INIT) $(APPLIANCE_BSDTAR) $(SIGN) $(SIGN_STATIC) \
+appliance: $(APPLIANCE_INIT) $(SIGN) $(SIGN_STATIC) \
 		$(MOK_KEY)
 	falcon-appliance/image/mk-appliance.sh
 

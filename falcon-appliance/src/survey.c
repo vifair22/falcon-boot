@@ -214,10 +214,10 @@ void payload_prefilter(void)
     size_t kept = 0;
     size_t i;
 
-    if (sgn_payload_cert_der(CERT_PATH, &der, &der_len) != SGN_OK) {
-        say("note: %s could not be read as a certificate (%s), so no payload\n"
-            "      can be recognised as already carrying it.\n",
-            CERT_PATH, sgn_error());
+    if (sgn_payload_cert_der(g_keys.cert, &der, &der_len) != SGN_OK) {
+        say("note: the MOK certificate could not be read (%s), so no\n"
+            "      payload can be recognised as already carrying it.\n",
+            sgn_error());
         return;
     }
 

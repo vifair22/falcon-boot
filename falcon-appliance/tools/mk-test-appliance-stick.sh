@@ -123,9 +123,9 @@ fi
 mkdir -p "$OUT"
 rm -f "$IMG"
 
-# The passphrase reaches mkstick in a file rather than on its command line,
-# for the same reason the appliance pipes it to cryptsetup: an argument vector
-# is world-readable through /proc while the process runs.
+# The passphrase reaches mkstick in a file rather than on its command line:
+# an argument vector is world-readable through /proc while the process
+# runs.
 umask 077
 printf '%s' "$PASS" > "$PASSFILE"
 

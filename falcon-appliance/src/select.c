@@ -167,8 +167,8 @@ static void payload_disclosure(const candidate *c)
     {
         char *argv[] = {
             (char *)SIGN_TOOL, abs,
-            (char *)"--key", (char *)KEY_PATH,
-            (char *)"--cert", (char *)CERT_PATH,
+            (char *)"--key", g_keys.key,
+            (char *)"--cert", g_keys.cert,
             (char *)"--dry-run", NULL
         };
 

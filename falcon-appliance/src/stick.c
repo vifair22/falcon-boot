@@ -34,7 +34,7 @@ static void part_node(char *out, size_t cap, const char *disk, uint32_t number)
 }
 
 /* Block devices that cannot be the stick: no loopback, no ramdisk, no
- * device-mapper node (that is our own mapping once p3 is open), no optical
+ * device-mapper node (never the stick itself), no optical
  * drive. Everything else gets a GPT read. */
 static int skip_disk(const char *name)
 {

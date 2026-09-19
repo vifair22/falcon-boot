@@ -4,8 +4,9 @@
  * (the flow, early setup, teardown), console.c (every console, and reading
  * from them), stick.c (finding p2 and p3), run.c (the helper programs),
  * survey.c (p2 against the manifest), list.c (the bless list the loader
- * delivered), select.c (the pending list and its gate), bless.c (the work),
- * route.c (what each file is owed, host-tested). main.c carries the design
+ * delivered), select.c (the pending list and its gate), shelf.c (the MOK
+ * keypair off p3, read in process), bless.c (the work), route.c (what each
+ * file is owed, host-tested). main.c carries the design
  * notes for the whole program.
  */
 
@@ -23,15 +24,6 @@
 /* ---- fixed layout of this initramfs and of the stick ---- */
 
 #define P2_MNT   "/mnt/p2"
-#define P3_MNT   "/mnt/p3"
-#define MAPPER   "falcon-p3"
-#define MAPPER_NODE "/dev/mapper/" MAPPER
-
-/* mkstick writes both of these to the root of the LUKS volume
- * (falcon-cli/src/mkstick/mkstick.h, MKS_P3_KEY_NAME / MKS_P3_CERT_NAME). */
-#define KEY_PATH  P3_MNT "/falcon-mok.key"
-#define CERT_PATH P3_MNT "/falcon-mok.crt"
-
 #define SIGN_TOOL "/usr/bin/falcon-boot-sign-static"
 #define STUB_PATH "/usr/lib/systemd/boot/efi/linuxx64.efi.stub"
 
@@ -58,11 +50,11 @@
 #define WALK_MAX_DEPTH 8
 
 /* Where the build script stages the kernel modules this flow needs. Arch's
- * kernel builds ext4 in but ships device-mapper, exFAT, the loop driver and
- * FAT as modules, so the appliance carries them rather than assuming: without
- * dm-crypt there is no unlock, without exfat there is no p2, and without loop
- * and vfat there is no way into the filesystem inside a .img payload, which
- * is where falcon-cli/src/sign/payload.c has to write.
+ * kernel ships exFAT, the loop driver and FAT as modules, so the appliance
+ * carries them rather than assuming: without exfat there is no p2, and
+ * without loop and vfat there is no way into the filesystem inside a .img
+ * payload, which is where falcon-cli/src/sign/payload.c has to write. p3
+ * needs none: it is decrypted in process (shelf.c).
  *
  * The files are named NN-<module>.ko and loaded in name order, because that
  * order is a dependency order the build script computed from the kernel's own
@@ -141,11 +133,36 @@ int choose(candidate *q, size_t n);
 size_t selected_count(const candidate *q, size_t n);
 int cand_cmp(const void *a, const void *b);
 
+/* shelf.c: p3 through falcon-core's LUKS2 and ext4, nothing mapped or
+ * mounted. The keypair is handed on as two sealed, inheritable memfds, named
+ * to the sign tool by the /proc/self/fd paths in key and cert. */
+enum {
+    SHELF_OK       = 0,
+    SHELF_ERR      = -1,
+    SHELF_NOT_LUKS = -2,   /* p3 is not a LUKS2 volume this reader takes */
+    SHELF_WRONG    = -3,   /* no keyslot opened with that passphrase */
+    SHELF_NO_KEY   = -4    /* unlocked, but no MOK keypair on it */
+};
+typedef struct {
+    int  key_fd;
+    int  cert_fd;
+    char key[32];
+    char cert[32];
+} shelf_keys;
+int shelf_open(const char *p3);
+int shelf_unlock(const void *pass, size_t len);
+int shelf_keypair(shelf_keys *k);
+void shelf_keys_close(shelf_keys *k);
+void shelf_close(void);
+
 /* bless.c: the work */
+/* The keypair while the bless half runs; its paths are what select.c and
+ * survey.c hand the sign tool too. */
+extern shelf_keys g_keys;
 /* confirmed: the loader's menu already asked (the list came from there), so
- * the queue is signed as it stands, without the mark-and-review. */
-void bless_half(const stick_parts *parts, int confirmed, int *mapped,
-                int *p3_mounted, size_t *signed_n, size_t *failed_n,
-                size_t *skipped_n);
+ * the queue is signed as it stands, without the mark-and-review. Everything
+ * it opens on p3 is closed again before it returns. */
+void bless_half(const stick_parts *parts, int confirmed, size_t *signed_n,
+                size_t *failed_n, size_t *skipped_n);
 
 #endif /* FALCON_APPLIANCE_H */

@@ -1,10 +1,9 @@
 # The programs the appliance's bless flow shells out to (DESIGN Section 7.5),
 # staged with their library closure by mk-appliance.sh.
 #
-/usr/bin/cryptsetup      # unlocks p3 so the MOK private key can be read
 /usr/bin/sbsign          # signs the UKI wrap, and appends to a bare payload
 /usr/bin/sbverify        # counts a payload's signatures before and after, one
                          # of the three checks that blessing ADDED ours and
                          # kept the vendor's (DESIGN Section 7.2)
-# bsdtar is not listed: the image carries its own, built by mk-bsdtar.sh
-# without the XAR support that drags in libxml2 and ICU.
+# Neither cryptsetup nor bsdtar: p3 is opened and ISOs are read in process
+# with falcon-core (falcon-appliance/src/shelf.c, the sign tool's isoview).

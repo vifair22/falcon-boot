@@ -47,31 +47,40 @@ static ssize_t read_file(const char *path, char *buf, size_t cap)
  * Everything that needs the key lives in here, and nothing calls it unless
  * the survey found an image that needs one. Failures report and RETURN rather
  * than rebooting: the summary, and the wait for Enter over it, are still owed
- * to the user.
- *
- * *mapped and *p3_mounted are set as each is opened, so the caller can unwind
- * whatever this got as far as. sgn_arg launders the one const member that has
- * to reach an execve argument vector; nothing writes through it.
+ * to the user. Whatever was opened on p3 is closed again on every return
+ * (sign_all does the work between the two).
  */
-void bless_half(const stick_parts *parts, int confirmed, int *mapped,
-                int *p3_mounted, size_t *signed_n, size_t *failed_n,
-                size_t *skipped_n)
+shelf_keys g_keys = { -1, -1, "", "" };
+
+static void sign_all(const stick_parts *parts, int confirmed,
+                     size_t *signed_n, size_t *failed_n, size_t *skipped_n);
+
+/* One attempt with pass. 1 when p3 opened, 0 when the passphrase was
+ * wrong, -1 when p3 cannot be opened at all (said why). */
+static int try_unlock(const char *pass, size_t len)
+{
+    int rc = shelf_unlock(pass, len);
+
+    if (rc == SHELF_OK)
+        return 1;
+    if (rc == SHELF_WRONG)
+        return 0;
+    say("ERROR: p3's volume could not be read after unlocking it.\n");
+    return -1;
+}
+
+void bless_half(const stick_parts *parts, int confirmed, size_t *signed_n,
+                size_t *failed_n, size_t *skipped_n)
 {
     char pass[PASS_MAX];
-    char dev[32];
-    char dev_arg[48];
-    int need_dev = 0;
+    int opened = 0;
     int tries;
-    size_t i;
-
-    dev_arg[0] = '\0';
+    int rc;
 
     /* ---- unlock p3 ----
      *
-     * The passphrase goes to cryptsetup down a pipe as --key-file -, so it
-     * never appears in argv, in the environment, or in any file. --readonly
-     * because the appliance has no business writing to the shelf: the key is
-     * read, the outputs go to p2.
+     * In process, with falcon-core's LUKS2 (shelf.c): the passphrase never
+     * leaves this program's memory and is wiped after each attempt.
      *
      * First attempt: the credential the loader delivered. The user already
      * typed the passphrase once to reach the chooser, and the Section 5.1
@@ -81,78 +90,76 @@ void bless_half(const stick_parts *parts, int confirmed, int *mapped,
      * fallback for a missing or stale credential (a buffer-load fallback
      * launch delivers none), so a failed credential costs one message, not
      * the session. */
+    rc = shelf_open(parts->p3);
+    if (rc != SHELF_OK) {
+        say("ERROR: p3 (%s) is not a LUKS2 volume this appliance can open;\n"
+            "       nothing was unlocked.\n", parts->p3);
+        *skipped_n = g_cand_n;
+        return;
+    }
     {
         ssize_t clen = read_file("/.extra/credentials/" CRED_FILE,
                                  pass, sizeof(pass));
 
         if (clen > 0) {
-            char *argv[] = {
-                (char *)"/usr/bin/cryptsetup", (char *)"open",
-                (char *)"--type", (char *)"luks2",
-                (char *)"--readonly",
-                (char *)"--key-file", (char *)"-",
-                sgn_arg(parts->p3), (char *)MAPPER, NULL
-            };
-
             say("unlocking p3 with the passphrase from the loader...\n");
-            if (run(argv, pass, (size_t)clen, NULL) == 0)
-                *mapped = 1;
-            else
+            opened = try_unlock(pass, (size_t)clen);
+            if (opened == 0)
                 say("the delivered credential did not open p3; "
                     "falling back to the prompt.\n");
         }
         explicit_bzero(pass, sizeof(pass));
     }
-    for (tries = 1; !*mapped && tries <= UNLOCK_TRIES; tries++) {
-        char *argv[] = {
-            (char *)"/usr/bin/cryptsetup", (char *)"open",
-            (char *)"--type", (char *)"luks2",
-            (char *)"--readonly",
-            (char *)"--key-file", (char *)"-",
-            sgn_arg(parts->p3), (char *)MAPPER, NULL
-        };
+    for (tries = 1; opened == 0 && tries <= UNLOCK_TRIES; tries++) {
         ssize_t len;
-        int rc;
 
         say("passphrase for p3 (attempt %d of %d): ", tries, UNLOCK_TRIES);
         len = read_secret(pass, sizeof(pass));
         if (len <= 0) {
             say("no passphrase given; nothing was unlocked.\n");
             explicit_bzero(pass, sizeof(pass));
+            shelf_close();
             *skipped_n = g_cand_n;
             return;
         }
-        rc = run(argv, pass, (size_t)len, NULL);
+        opened = try_unlock(pass, (size_t)len);
         explicit_bzero(pass, sizeof(pass));
-        if (rc == 0) {
-            *mapped = 1;
-            break;
-        }
-        say("wrong passphrase (cryptsetup exit %d).\n", rc);
+        if (opened == 0)
+            say("wrong passphrase.\n");
     }
-    if (!*mapped) {
-        say("\nout of attempts. p3 stays locked and no key was read.\n");
+    if (opened != 1) {
+        if (opened == 0)
+            say("\nout of attempts. p3 stays locked and no key was read.\n");
+        shelf_close();
         *skipped_n = g_cand_n;
         return;
     }
     say("p3 unlocked (read-only).\n");
 
-    if (mount(MAPPER_NODE, P3_MNT, "ext4", MS_RDONLY, NULL) != 0) {
-        say("ERROR: mounting p3: %s\n", strerror(errno));
-        *skipped_n = g_cand_n;
-        return;
-    }
-    *p3_mounted = 1;
-
-    if (access(KEY_PATH, R_OK) != 0 || access(CERT_PATH, R_OK) != 0) {
-        say("ERROR: no MOK keypair on p3 (%s / %s).\n"
+    if (shelf_keypair(&g_keys) != SHELF_OK) {
+        say("ERROR: no MOK keypair on p3 (falcon-mok.key / falcon-mok.crt).\n"
             "       A stick built with --p3-plain has no on-stick key, so it\n"
-            "       cannot bless anything here; sign from a host instead.\n",
-            KEY_PATH, CERT_PATH);
+            "       cannot bless anything here; sign from a host instead.\n");
+        shelf_close();
         *skipped_n = g_cand_n;
         return;
     }
     say("MOK keypair found on p3.\n");
+
+    sign_all(parts, confirmed, signed_n, failed_n, skipped_n);
+    shelf_keys_close(&g_keys);
+    shelf_close();
+}
+
+static void sign_all(const stick_parts *parts, int confirmed,
+                     size_t *signed_n, size_t *failed_n, size_t *skipped_n)
+{
+    char dev[32];
+    char dev_arg[48];
+    int need_dev = 0;
+    size_t i;
+
+    dev_arg[0] = '\0';
 
     payload_prefilter();
     if (g_cand_n == 0) {
@@ -239,8 +246,8 @@ void bless_half(const stick_parts *parts, int confirmed, int *mapped,
                     (char *)SIGN_TOOL,
                     abs,
                     (char *)"--stick", (char *)P2_MNT,
-                    (char *)"--key", (char *)KEY_PATH,
-                    (char *)"--cert", (char *)CERT_PATH,
+                    (char *)"--key", g_keys.key,
+                    (char *)"--cert", g_keys.cert,
                     NULL
                 };
 
@@ -251,8 +258,8 @@ void bless_half(const stick_parts *parts, int confirmed, int *mapped,
                     (char *)SIGN_TOOL,
                     abs,
                     (char *)"--stick", (char *)P2_MNT,
-                    (char *)"--key", (char *)KEY_PATH,
-                    (char *)"--cert", (char *)CERT_PATH,
+                    (char *)"--key", g_keys.key,
+                    (char *)"--cert", g_keys.cert,
                     (char *)"--iso-path", rel_arg,
                     (char *)"--dev", dev_arg,
                     (char *)"--stub", (char *)STUB_PATH,

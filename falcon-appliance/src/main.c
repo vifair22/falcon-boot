@@ -44,22 +44,23 @@
  *
  * What this program must never do, and the reasons, so nobody "improves" it:
  *
- *   - It never signs anything itself and never touches the key bytes. It
- *     hands `sign` two PATHS under /mnt/p3 and `sign` hands them to sbsign.
- *     The key is read from the LUKS volume by the process that needs it and
- *     is never copied anywhere, least of all onto p2 (DESIGN Section 7.5).
+ *   - It never signs anything itself. It reads the keypair off the LUKS
+ *     volume into two sealed memfds (shelf.c) and hands `sign` their
+ *     /proc/self/fd paths, which `sign` hands to sbsign. The key is never on
+ *     a disk, never in a file anyone can open after this program ends, and
+ *     least of all on p2 (DESIGN Section 7.5).
  *   - It never unlocks p3 when nothing is pending. A run with nothing to sign
  *     has no use for the key, so decrypting it would widen the window it is
  *     decrypted in for nothing, and the smallness of that window is the
  *     reason the appliance exists rather than a full OS (DESIGN Section 7.5).
- *   - The passphrase never appears in argv (it goes to cryptsetup on a pipe),
- *     never reaches a file, and is wiped from this process's memory as soon
- *     as the unlock returns. Core dumps are disabled at entry for the same
- *     reason.
- *   - p3 is unlocked and mounted READ-ONLY. Nothing in the signing flow writes
- *     to the shelf: the UKI wrap and the manifest record both land on p2. A
- *     read-only mapping means a bug in anything downstream cannot damage the
- *     one copy of the key.
+ *   - The passphrase never leaves this process: p3 is unlocked in process
+ *     with falcon-core's LUKS2, the passphrase is never in argv or a file,
+ *     and it is wiped from memory as soon as each attempt returns. Core dumps
+ *     are disabled at entry for the same reason.
+ *   - p3 is only ever READ. It is opened O_RDONLY and walked with core's
+ *     ext4 reader; no device-mapper node or mount exists for anything else
+ *     to write through. Nothing in the signing flow writes to the shelf: the
+ *     UKI wrap and the manifest record both land on p2.
  *   - Nothing is signed that the user did not mark by hand and then confirm
  *     (here, or in the loader's menu for a bless list). The per-image mark
  *     plus the typed "yes" over the reviewed list together ARE the "I vouch
@@ -120,7 +121,6 @@ static void early_mounts(void)
     (void)mkdir("/run", 0755);
     (void)mkdir("/mnt", 0755);
     (void)mkdir(P2_MNT, 0755);
-    (void)mkdir(P3_MNT, 0755);
 
     (void)mount("proc", "/proc", "proc", 0, NULL);
     (void)mount("sysfs", "/sys", "sysfs", 0, NULL);
@@ -128,8 +128,6 @@ static void early_mounts(void)
      * nothing a signing run produces before the signature exists should be
      * able to outlive the run on persistent storage. */
     (void)mount("tmpfs", "/tmp", "tmpfs", 0, "mode=1777");
-    /* cryptsetup keeps its device locks here and warns loudly without it. */
-    (void)mkdir("/run/cryptsetup", 0700);
 }
 
 static void load_modules(void)
@@ -175,28 +173,17 @@ static void load_modules(void)
 
 /* ---- teardown ---- */
 
-/* Unwound in the order that can actually succeed: p2 first (nothing else
- * depends on it), then p3's mount, then the mapping that carried it. A
- * failure here is reported and pressed on with, because the next step is a
- * reboot either way and leaving the user staring at a half-closed stick
- * helps nobody. */
-static void teardown(int p2_mounted, int p3_mounted, int mapped)
+/* p3 is closed by the bless half itself (shelf.c keeps nothing mapped or
+ * mounted), so p2 is all there is to unwind. A failure here is reported and
+ * pressed on with, because the next step is a reboot either way. */
+static void teardown(int p2_mounted)
 {
     if (p2_mounted && umount(P2_MNT) != 0)
         say("note: could not unmount p2: %s\n", strerror(errno));
-    if (p3_mounted && umount(P3_MNT) != 0)
-        say("note: could not unmount p3: %s\n", strerror(errno));
-    if (mapped) {
-        char *argv[] = { (char *)"/usr/bin/cryptsetup", (char *)"close",
-                         (char *)MAPPER, NULL };
-
-        if (run(argv, NULL, 0, NULL) != 0)
-            say("note: could not close the p3 mapping\n");
-    }
     sync();
 }
 
-static void finish(int p2_mounted, int p3_mounted, int mapped, int wait)
+static void finish(int p2_mounted, int wait)
 {
     char line[8];
 
@@ -204,7 +191,7 @@ static void finish(int p2_mounted, int p3_mounted, int mapped, int wait)
      * read: the reboot is the next step the user is waiting for. */
     if (!wait) {
         say("\nrebooting to the loader.\n");
-        teardown(p2_mounted, p3_mounted, mapped);
+        teardown(p2_mounted);
         (void)sleep(2);
         (void)reboot(RB_AUTOBOOT);
         for (;;)
@@ -225,7 +212,7 @@ static void finish(int p2_mounted, int p3_mounted, int mapped, int wait)
         (void)sleep(30);
     }
     say("rebooting.\n");
-    teardown(p2_mounted, p3_mounted, mapped);
+    teardown(p2_mounted);
     (void)sleep(1);
     (void)reboot(RB_AUTOBOOT);
     for (;;)
@@ -257,8 +244,6 @@ static void finish(int p2_mounted, int p3_mounted, int mapped, int wait)
 int main(void)
 {
     stick_parts parts;
-    int mapped = 0;
-    int p3_mounted = 0;
     int p2_mounted = 0;
     int listed = 0;
     size_t signed_n = 0;
@@ -292,7 +277,7 @@ int main(void)
         say("ERROR: no falcon stick found (need an exFAT p2 and a LUKS p3 on\n"
             "       one disk). Nothing was unlocked.\n");
         say_block_devices();
-        finish(0, 0, 0, 1);
+        finish(0, 1);
     }
     say("  p2 (ISO library): %s\n  p3 (UKI shelf):   %s\n\n",
         parts.p2, parts.p3);
@@ -303,7 +288,7 @@ int main(void)
      * something to sign. */
     if (mount(parts.p2, P2_MNT, "exfat", 0, NULL) != 0) {
         say("ERROR: mounting p2: %s\n", strerror(errno));
-        finish(0, 0, 0, 1);
+        finish(0, 1);
     }
     p2_mounted = 1;
 
@@ -325,13 +310,11 @@ int main(void)
     if (g_cand_n == 0)
         say("\nnothing to sign; p3 stays locked. FALCON-APPLIANCE-PENDING 0\n");
     else
-        bless_half(&parts, listed, &mapped, &p3_mounted, &signed_n, &failed_n,
-                   &skipped_n);
+        bless_half(&parts, listed, &signed_n, &failed_n, &skipped_n);
 
     say("\nsummary: FALCON-APPLIANCE-SUMMARY signed=%zu failed=%zu "
         "skipped=%zu\n", signed_n, failed_n, skipped_n);
 
-    finish(p2_mounted, p3_mounted, mapped,
-           !listed || failed_n != 0 || skipped_n != 0);
+    finish(p2_mounted, !listed || failed_n != 0 || skipped_n != 0);
     return 0;   /* not reached; finish() reboots */
 }

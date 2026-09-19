@@ -12,16 +12,16 @@
 # own (falcon-appliance/src, PID 1) and the programs blessing shells out to
 # (DESIGN Section 7.5):
 #
-#   cryptsetup   unlocks p3 so the MOK private key can be read
-#   bsdtar       lists and extracts the ISO (this is what `sign` reads with).
-#                Not the host's: mk-bsdtar.sh builds one without XAR support,
-#                which is what dragged libxml2 and ICU into the image
-#   sbsign       signs that wrap, and appends to a bare payload
+#   sbsign       signs the UKI wrap, and appends to a bare payload
 #   sbverify     counts the signatures a bare payload carries before and after
 #                (DESIGN Section 7.2: blessing one must ADD ours and keep the
 #                vendor's, and the count is one of the three checks that says
 #                so). Only the payload path runs it, and it refuses up front
 #                without it rather than part way through
+#
+# p3 is opened in process with falcon-core's LUKS2 and ext4
+# (falcon-appliance/src/shelf.c), and ISOs are read with its ISO9660 and UDF
+# drivers, so neither cryptsetup nor bsdtar is in the image.
 #
 # plus the portable `sign` tool itself as build/bin/falcon-boot-sign-static,
 # which also builds the UKI wrap (falcon-cli/src/sign/uki.c) and the stub it
@@ -31,8 +31,7 @@
 #
 # Everything else in the image is closure: the shared libraries those programs
 # need (walked with ldd), and the kernel modules Arch ships outside its
-# vmlinuz (dm-crypt, exfat, loop and vfat, plus what modules.dep says they
-# need). There is no shell, no interpreter, no network tooling, and no
+# vmlinuz (exfat, loop and vfat, plus what modules.dep says they need). There is no shell, no interpreter, no network tooling, and no
 # package manager.
 #
 # What that costs, measured 2026-09-19 on this host: 19 MB of initramfs
@@ -72,7 +71,6 @@ UKI_SIGNED="$OUT/appliance-uki-signed.efi"
 
 SIGN=build/bin/falcon-boot-sign
 SIGN_STATIC=build/bin/falcon-boot-sign-static
-BSDTAR=build/appliance/bsdtar
 MOK_KEY="${MOK_KEY:-build/mok-test/falcon-test-mok.key}"
 MOK_CRT="${MOK_CRT:-build/mok-test/falcon-test-mok.crt}"
 
@@ -154,10 +152,6 @@ done
     echo "ERROR: $SIGN_STATIC not built (run: make cli)" >&2
     exit 1
 }
-[[ -x "$BSDTAR" ]] || {
-    echo "ERROR: $BSDTAR not built (run: make appliance)" >&2
-    exit 1
-}
 
 START=$(date +%s)
 mkdir -p "$OUT"
@@ -185,11 +179,10 @@ echo "   kernel: $KERNEL ($(stat -c%s "$KERNEL") bytes, $KVER)"
 
 # ---- kernel modules ----
 #
-# Arch builds ext4 into its vmlinuz but ships device-mapper and exFAT as
-# modules, so the appliance cannot unlock p3 or mount p2 without carrying
-# them. They live in the ISO's squashfs rather than in its initramfs (which
-# has no dm-crypt: archiso never unlocks anything), hence the two read-only
-# loop mounts. Decompressed here so /init needs nothing from the kernel beyond
+# Arch ships exFAT, loop and vfat as modules, so the appliance cannot mount
+# p2 or reach into a .img payload without carrying them. They live in the
+# ISO's squashfs rather than in its initramfs, hence the two read-only loop
+# mounts. Decompressed here so /init needs nothing from the kernel beyond
 # finit_module; the module signature is inside the .ko and survives, which is
 # what lets these load on a kernel that came up under Secure Boot.
 echo "== extracting kernel modules from $(basename "$ARCH_ISO")"
@@ -294,9 +287,6 @@ for b in "${BINARIES[@]}"; do
     copy_to_root "$b"
     mapfile -t -O "${#LIBS[@]}" LIBS < <(closure "$b")
 done
-# The image's own bsdtar (mk-bsdtar.sh), at the path the sign tool looks in.
-cp "$BSDTAR" "$ROOT/usr/bin/bsdtar"
-mapfile -t -O "${#LIBS[@]}" LIBS < <(closure "$BSDTAR")
 mapfile -t LIBS < <(printf '%s\n' "${LIBS[@]}" | sort -u)
 for l in "${LIBS[@]}"; do
     copy_to_root "$l"

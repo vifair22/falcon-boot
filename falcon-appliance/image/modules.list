@@ -1,8 +1,7 @@
 # The kernel modules the appliance needs, by name. Their dependencies are
-# resolved from the kernel's own modules.dep by mk-appliance.sh: dm-crypt alone
-# pulls in five modules on this kernel (encrypted-keys, trusted, asn1_encoder,
-# tee), which is exactly the kind of list that should not be maintained by
-# hand.
+# resolved from the kernel's own modules.dep by mk-appliance.sh, which is
+# exactly the kind of list that should not be maintained by hand. No
+# device-mapper: p3 is decrypted in process (falcon-appliance/src/shelf.c).
 #
 # The appliance's hardware needs are exactly three: reach the stick, draw on a
 # screen, and read a keyboard. The rig can only ever test the middle one, since
@@ -48,7 +47,6 @@
 # naming them here is a build failure, correctly, since the same failure is
 # what a typo deserves.
 
-dm-crypt        # the p3 unlock
 exfat           # p2
 loop            # into a .img payload's filesystem
 vfat            #   ... and the FAT inside it
