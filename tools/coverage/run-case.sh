@@ -33,6 +33,15 @@
 #            that neither prints to serial nor brings up a network
 #            (Clonezilla stops at its own menu).
 #
+#   setup    Windows Setup has neither serial nor a network that says
+#            anything about its media, and its first screen comes up with or
+#            without an install source. So once the screen is Setup's, the
+#            harness opens its console (Shift+F10) and copies
+#            \sources\install.* from every drive letter Windows might have
+#            given the ISO to nul. That reads the stick only if Windows
+#            itself has the ISO attached, which is exactly what Setup needs;
+#            past MEDIA_MIB the case passes.
+#
 #   screen   a screenshot is always taken at the end, for a human reading a
 #            FAIL. It never decides a verdict.
 #
@@ -130,7 +139,8 @@ finish() {   # finish VERDICT REASON
 # Never a verdict: a screen cannot say whether an OS found its media. It is
 # here because the one case with no serial and no network, Windows Setup,
 # otherwise reads as a bare timeout. Setup draws its dialogs on a
-# near-uniform deep purple (#1A0050 in 24H2 and 25H2).
+# near-uniform background: deep purple (#1A0050) in Windows 11 24H2 and 25H2,
+# navy (#001940) in Server 2025.
 screen_kind() {   # screen_kind PPM
     python3 - "$1" <<'PY' 2>/dev/null || true
 import sys
@@ -150,9 +160,11 @@ def at(x, y):
     o = 3 * (y * w + x)
     return px[o], px[o + 1], px[o + 2]
 edge = [at(x, y) for x in (2, w // 2, w - 3) for y in (2, h - 3)]
-if all(abs(r - 0x1A) < 24 and g < 24 and abs(b - 0x50) < 32 for r, g, b in edge):
-    print('Windows Setup')
-    sys.exit()
+for sr, sg, sb in ((0x1A, 0x00, 0x50), (0x00, 0x19, 0x40)):
+    if all(abs(r - sr) < 24 and abs(g - sg) < 24 and abs(b - sb) < 32
+           for r, g, b in edge):
+        print('Windows Setup')
+        sys.exit()
 dark = sum(1 for k in range(0, len(px) - 2, 3 * 97) if max(px[k:k+3]) < 40)
 total = len(range(0, len(px) - 2, 3 * 97))
 print('text console' if dark > 0.8 * total else 'graphical')
@@ -229,6 +241,32 @@ stick_read() {
         tr -d '\r' | awk '/^stick:/ { f = 1 } f && /^Read:/ { print $2; exit }'
 }
 media_base=
+media_what="its media after the kernel started"
+
+# Types a line into the guest through the monitor, then Enter. Only the
+# characters the Setup probe uses are mapped.
+type_line() {   # type_line TEXT
+    local s=$1 c k i
+    for (( i = 0; i < ${#s}; i++ )); do
+        c=${s:i:1}
+        case "$c" in
+            [a-z0-9]) k=$c ;;
+            [A-Z]) k="shift-${c,,}" ;;
+            ' ') k=spc ;;  '.') k=dot ;;  '\') k=backslash ;;
+            ':') k=shift-semicolon ;;  '*') k=shift-8 ;;
+            '%') k=shift-5 ;;  '(') k=shift-9 ;;  ')') k=shift-0 ;;
+            '/') k=slash ;;
+            *) continue ;;
+        esac
+        echo "sendkey $k" | socat - UNIX-CONNECT:"$MON" >/dev/null 2>&1 || true
+    done
+    echo "sendkey ret" | socat - UNIX-CONNECT:"$MON" >/dev/null 2>&1 || true
+}
+# The Setup probe (the "setup" signal above): looked for every SETUP_EVERY
+# seconds once the payload has the machine, run once.
+SETUP_EVERY=10
+next_setup=$(( T1 + 30 ))
+setup_probe=
 
 # FALCON_CASE_SHOTS=N keeps a screenshot every N seconds (shot-SECS.png), for
 # reading a failure the serial log cannot show: a graphical boot menu, a
@@ -270,6 +308,15 @@ while (( $(date +%s) - T1 < TIMEOUT )); do
         next_nudge=$(( now + NUDGE_EVERY ))
     fi
 
+    # The loader patching boot.wim in memory takes a moment before it hands
+    # over, so the fast nudges for cdboot's prompt restart when it does.
+    if [[ -z "${patched:-}" ]] &&
+       grep -q 'boot.wim patched in memory' <<<"$after"; then
+        patched=1
+        T1=$now
+        next_nudge=$(( now + NUDGE_EVERY ))
+    fi
+
     if grep -q 'press any key to return to the menu' <<<"$after"; then
         why=$(grep -m1 -E 'failed while|exited, status|refused' <<<"$after" |
               sed 's/^[[:space:]]*//' | cut -c1-120)
@@ -291,6 +338,22 @@ while (( $(date +%s) - T1 < TIMEOUT )); do
     if grep -q -E "$gave_up" <<<"$after"; then
         finish FAIL "initramfs gave up: $(grep -m1 -E "$gave_up" <<<"$after" | sed 's/^[[:space:]]*//' | cut -c1-100)"
     fi
+    if [[ -z "$setup_probe" && -z "$media_base" ]] && (( now >= next_setup )); then
+        next_setup=$(( now + SETUP_EVERY ))
+        MON_SOCK="$MON" falcon-efi/tools/rig-shot.sh setup "$OUTDIR" \
+            >/dev/null 2>&1 || true
+        if [[ -f "$OUTDIR/setup.ppm" &&
+              "$(screen_kind "$OUTDIR/setup.ppm")" == 'Windows Setup' ]]; then
+            setup_probe=1
+            echo "sendkey shift-f10" | socat - UNIX-CONNECT:"$MON" >/dev/null 2>&1 || true
+            sleep 5
+            media_base=$(stick_read)
+            media_base=${media_base:-0}
+            media_what="install.* through the ISO attached in Windows"
+            type_line 'for %d in (D E F G H I) do copy /b %d:\sources\install.* nul'
+        fi
+        rm -f "$OUTDIR"/setup.ppm "$OUTDIR"/setup.png
+    fi
     if [[ -z "$media_base" ]] && grep -q '^ *starting ' <<<"$after"; then
         media_base=$(stick_read)
         media_base=${media_base:-0}
@@ -299,7 +362,7 @@ while (( $(date +%s) - T1 < TIMEOUT )); do
         media_now=$(stick_read)
         if [[ -n "$media_now" ]] &&
            (( (media_now - media_base) / 1048576 >= MEDIA_MIB )); then
-            finish PASS "read $(( (media_now - media_base) / 1048576 )) MiB of its media after the kernel started"
+            finish PASS "read $(( (media_now - media_base) / 1048576 )) MiB of $media_what"
         fi
     fi
     if [[ -s "$PCAP" ]] &&
