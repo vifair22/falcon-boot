@@ -1,23 +1,15 @@
-/* falcon-boot: the on-stick signing appliance's PID 1 (DESIGN Sections 7.5
- * and 6.3.1, build order step 8).
+/* falcon-boot: the on-stick signing appliance's PID 1 (DESIGN Section 7.5,
+ * build order step 8).
  *
  * The appliance is a signed UKI that boots under full Secure Boot, surveys the
- * ISO library on p2 and does two different things with the two halves of it,
- * both through the SAME `falcon-boot-sign` implementation the host route runs
- * (here the static link, /usr/bin/falcon-boot-sign-static). Then it reboots.
- * That is the whole program; there is no shell in this initramfs and nothing
- * else to run.
+ * ISO library on p2 and blesses what the user vouches for, through the SAME
+ * `falcon-boot-sign` implementation the host route runs (here the static
+ * link, /usr/bin/falcon-boot-sign-static). Then it reboots. That is the whole
+ * program; there is no shell in this initramfs and nothing else to run.
  *
- *   Windows media is PREPARED (DESIGN Sections 6.3 and 6.3.1). The whole
- *   batch runs in one boot, because the reboot is the expensive part and
- *   batching is what makes dropping three images cost one of them. The batch
- *   is still released by one mark-review-confirm: DESIGN Section 7.7 makes
- *   patching a bless operation and sends it through the same gate as signing.
- *   Preparation signs nothing and holds no key.
- *
- *   Everything else is BLESSED (DESIGN Section 7.5). p3 is unlocked, the MOK
- *   private key that lives there is read, and the user marks the unsigned
- *   ISOs one by one and then confirms the marked set as a whole.
+ *   An ISO is BLESSED (DESIGN Section 7.5). p3 is unlocked, the MOK private
+ *   key that lives there is read, and the user marks the unsigned ISOs one by
+ *   one and then confirms the marked set as a whole.
  *
  *   A bare EFI payload (a .efi, or a .img whose payload is one) is blessed
  *   too, and it is the one bless that WRITES TO THE USER'S OWN FILE: the
@@ -26,19 +18,15 @@
  *   will be written to, inside a .img as well as outside one, in the sign
  *   tool's own words, before the yes that releases it.
  *
- * Each half asks its own gate, immediately before the work that gate releases,
- * so a mixed run proposes two operations in the order they will happen and the
- * user can accept either without accepting the other. One combined review
- * would put a minutes-long preparation batch between the signing "yes" and the
- * signing, which is the opposite of Section 7.7's "at the moment of
- * confirmation".
+ *   Windows install media is owed nothing. The loader patches its boot.wim in
+ *   memory as it boots it (DESIGN Section 6.4), so the survey reports it and
+ *   leaves it alone. Until 2026-09-19 the appliance had a second half that
+ *   PREPARED such media, staging a patched boot.wim on p2 without the key;
+ *   the loader's patch replaced it.
  *
- * The two halves are ordered prepare-then-bless, and that ordering is load
- * bearing rather than arbitrary: p3 is opened only if the bless half has
- * something to do. An auto-prep boot (the loader launched this image because
- * the user asked for a Windows ISO to be prepared) therefore decrypts no key
- * and asks for no passphrase at all, and preparation works unchanged on a
- * --p3-plain stick, which is what falcon-cli/src/sign/prepare.h promises.
+ * The survey reads p2 alone, and p3 is opened only once it has found
+ * something to sign. A run with nothing pending decrypts no key and asks for
+ * no passphrase.
  *
  * One instruction comes from the loader, and only one: the bless list
  * (list.c). When the user blesses from the loader's menu, the paths they
@@ -60,10 +48,10 @@
  *     hands `sign` two PATHS under /mnt/p3 and `sign` hands them to sbsign.
  *     The key is read from the LUKS volume by the process that needs it and
  *     is never copied anywhere, least of all onto p2 (DESIGN Section 7.5).
- *   - It never unlocks p3 for the preparation half. Preparation needs no
- *     secret, so giving it one would widen the window the key is decrypted in
- *     for nothing, and the smallness of that window is the reason the
- *     appliance exists rather than a full OS (DESIGN Section 7.5).
+ *   - It never unlocks p3 when nothing is pending. A run with nothing to sign
+ *     has no use for the key, so decrypting it would widen the window it is
+ *     decrypted in for nothing, and the smallness of that window is the
+ *     reason the appliance exists rather than a full OS (DESIGN Section 7.5).
  *   - The passphrase never appears in argv (it goes to cryptsetup on a pipe),
  *     never reaches a file, and is wiped from this process's memory as soon
  *     as the unlock returns. Core dumps are disabled at entry for the same
@@ -72,14 +60,14 @@
  *     to the shelf: the UKI wrap and the manifest record both land on p2. A
  *     read-only mapping means a bug in anything downstream cannot damage the
  *     one copy of the key.
- *   - Nothing is signed OR patched that the user did not mark by hand and then
- *     confirm. The per-image mark plus the typed "yes" over the reviewed list
- *     together ARE the "I vouch for these" act the design rests on: they are
- *     what stops an ISO someone dropped on the stick from being blessed
- *     because it happened to be sitting there. Neither list is ever
- *     pre-marked, and each confirmation prints every path it is about to act
- *     on, so nothing can be swept in unseen (DESIGN Section 7.5,
- *     select-then-sign; Section 7.7, the same gate for patched media).
+ *   - Nothing is signed that the user did not mark by hand and then confirm
+ *     (here, or in the loader's menu for a bless list). The per-image mark
+ *     plus the typed "yes" over the reviewed list together ARE the "I vouch
+ *     for these" act the design rests on: they are what stops an ISO someone
+ *     dropped on the stick from being blessed because it happened to be
+ *     sitting there. The list is never pre-marked, and the confirmation
+ *     prints every path it is about to act on, so nothing can be swept in
+ *     unseen (DESIGN Section 7.5, select-then-sign).
  *   - There is no network in this initramfs (no interface is brought up, and
  *     nothing here would use one), so the decrypted-key window cannot be
  *     reached from outside the machine.
@@ -202,7 +190,7 @@ static void teardown(int p2_mounted, int p3_mounted, int mapped)
         char *argv[] = { (char *)"/usr/bin/cryptsetup", (char *)"close",
                          (char *)MAPPER, NULL };
 
-        if (run(argv, NULL, 0, 0, NULL) != 0)
+        if (run(argv, NULL, 0, NULL) != 0)
             say("note: could not close the p3 mapping\n");
     }
     sync();
@@ -273,9 +261,6 @@ int main(void)
     int p3_mounted = 0;
     int p2_mounted = 0;
     int listed = 0;
-    size_t prepared_n = 0;
-    size_t prep_failed_n = 0;
-    size_t prep_skipped_n = 0;
     size_t signed_n = 0;
     size_t failed_n = 0;
     size_t skipped_n = 0;
@@ -291,15 +276,14 @@ int main(void)
     say("\n"
         "falcon-boot signing appliance\n"
         "=============================\n"
-        "Prepares Windows install media so Setup can find its own ISO again,\n"
-        "and signs everything else on p2 - ISOs, and the bare EFI payloads\n"
-        "beside them - with the MOK private key encrypted on p3.\n\n");
+        "Signs what is on p2 - ISOs, and the bare EFI payloads beside them -\n"
+        "with the MOK private key encrypted on p3.\n\n");
 
     /* The sign tool's ISO reader is linked in here for the survey. Its own
      * diagnostics are about listing a file, which is this program's plumbing
      * rather than its output, so only warnings and errors reach the console.
-     * The tool's INFO-level progress during a real prepare or bless still
-     * does: that runs in a child process with its own threshold. */
+     * The tool's INFO-level progress during a real bless still does: that
+     * runs in a child process with its own threshold. */
     sgn_log_set_level(SGN_LOG_WARN);
 
     load_modules();
@@ -315,69 +299,39 @@ int main(void)
 
     /* ---- the survey ----
      *
-     * p2 and nothing else. Every input the survey and the preparation half
-     * read lives there, so p3 is left alone until the bless half below has
-     * been shown to have work: an auto-prep boot (DESIGN Section 6.3.1) then
-     * decrypts no key and asks for no passphrase at all. */
+     * p2 and nothing else. p3 is left alone until the survey has found
+     * something to sign. */
     if (mount(parts.p2, P2_MNT, "exfat", 0, NULL) != 0) {
         say("ERROR: mounting p2: %s\n", strerror(errno));
         finish(0, 0, 0, 1);
     }
     p2_mounted = 1;
 
-    (void)prep_tools_present();
-
     load_manifest();
     listed = bless_list_survey();
     if (!listed) {
         say("surveying p2...\n");
         walk(P2_MNT, "", 0);
-    } else if (g_prep_n > 0) {
-        /* The menu never lists Windows media for blessing; one that arrives
-         * anyway is not prepared behind the user's back. */
-        say("note: %zu listed image(s) are Windows media, which is prepared "
-            "rather than\n      blessed; select it in the menu to prepare "
-            "it.\n", g_prep_n);
-        g_prep_n = 0;
     }
 
     /* Path order once, here, so the numbers the user types, the order the
-     * review prints and the order either batch runs in are all the same one. */
+     * review prints and the order the batch runs in are all the same one. */
     qsort(g_cand, g_cand_n, sizeof(g_cand[0]), cand_cmp);
-    qsort(g_prep, g_prep_n, sizeof(g_prep[0]), cand_cmp);
 
-    say("survey: %zu to prepare, %zu to sign, %zu already prepared,\n"
-        "        %zu already blessed, %zu unreadable\n",
-        g_prep_n, g_cand_n, g_done_prepared, g_done_blessed, g_unreadable);
-
-    /* A mixed run proposes two different operations, so it says so once,
-     * before the first gate, rather than leaving the user to work out why
-     * they are being asked twice. */
-    if (g_prep_n > 0 && g_cand_n > 0)
-        say("\nTwo kinds of work are waiting, and each is asked about on its\n"
-            "own: %zu Windows image%s to prepare (patched, never signed, no\n"
-            "key) and %zu image%s to sign with the MOK key on p3. Saying yes\n"
-            "to one is not saying yes to the other.\n",
-            g_prep_n, (g_prep_n == 1u) ? "" : "s",
-            g_cand_n, (g_cand_n == 1u) ? "" : "s");
-
-    /* Preparation first, and while p3 is still locked. */
-    if (g_prep_n > 0)
-        prepare_half(&prepared_n, &prep_failed_n, &prep_skipped_n);
+    say("survey: %zu to sign, %zu already blessed, %zu Windows, "
+        "%zu unreadable\n", g_cand_n, g_done_blessed, g_windows,
+        g_unreadable);
 
     if (g_cand_n == 0)
-        say("\nnothing to sign: nothing on p2 is waiting for the MOK key, so\n"
-            "p3 stays locked. FALCON-APPLIANCE-PENDING 0\n");
+        say("\nnothing to sign; p3 stays locked. FALCON-APPLIANCE-PENDING 0\n");
     else
         bless_half(&parts, listed, &mapped, &p3_mounted, &signed_n, &failed_n,
                    &skipped_n);
 
-    say("\nsummary: FALCON-APPLIANCE-SUMMARY prepared=%zu prep-failed=%zu "
-        "prep-skipped=%zu signed=%zu failed=%zu skipped=%zu\n",
-        prepared_n, prep_failed_n, prep_skipped_n, signed_n, failed_n,
-        skipped_n);
+    say("\nsummary: FALCON-APPLIANCE-SUMMARY signed=%zu failed=%zu "
+        "skipped=%zu\n", signed_n, failed_n, skipped_n);
 
     finish(p2_mounted, p3_mounted, mapped,
-           !listed || failed_n != 0 || skipped_n != 0 || prep_failed_n != 0);
+           !listed || failed_n != 0 || skipped_n != 0);
     return 0;   /* not reached; finish() reboots */
 }

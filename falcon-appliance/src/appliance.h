@@ -3,10 +3,10 @@
  * The appliance is PID 1 in an initramfs, one program split by job: main.c
  * (the flow, early setup, teardown), console.c (every console, and reading
  * from them), stick.c (finding p2 and p3), run.c (the helper programs),
- * survey.c (p2 against the manifest), select.c (the pending lists and the
- * gate each passes), prepare.c and bless.c (the two halves), route.c (the
- * auto-prep decision, host-tested). main.c carries the design notes for the
- * whole program.
+ * survey.c (p2 against the manifest), list.c (the bless list the loader
+ * delivered), select.c (the pending list and its gate), bless.c (the work),
+ * route.c (what each file is owed, host-tested). main.c carries the design
+ * notes for the whole program.
  */
 
 #ifndef FALCON_APPLIANCE_H
@@ -34,16 +34,6 @@
 
 #define SIGN_TOOL "/usr/bin/falcon-boot-sign-static"
 #define STUB_PATH "/usr/lib/systemd/boot/efi/linuxx64.efi.stub"
-
-/* What the preparation half needs from the image, checked by name so an
- * appliance built without one of them says so once instead of failing per
- * ISO with a message about the ISO. WIM_TOOL rewrites boot.wim. WINJUMP_PATH
- * is the file that replaces winpeshl.exe inside the patched image; it sits
- * beside the sign tool because that is the first place
- * falcon-cli/src/sign/prepare.c looks (find_winjump). Reading the ISO needs
- * nothing from the image: the sign tool reads ISO9660 and UDF in process. */
-#define WIM_TOOL     "wimlib-imagex"
-#define WINJUMP_PATH "/usr/bin/winjump.exe"
 
 #define MANIFEST_PATH P2_MNT "/falcon/blessed/manifest"
 
@@ -106,40 +96,17 @@ typedef struct {
 
 #define MIB ((uint64_t)1 << 20)
 
-/* The per-gate words, plus whether the review has a cost to state. */
-typedef struct {
-    const char *list_head;   /* header above the grouped listing */
-    const char *stale_note;  /* per-image, when the manifest record is stale */
-    const char *mark_lead;   /* the sentence introducing the key summary */
-    const char *prompt;      /* one word per gate, so the console (and the log)
-                              * says which gate is being answered */
-    const char *act;         /* imperative: "type 'yes' to <act> them" */
-    const char *acting;      /* gerund: "leaving without <acting> anything" */
-    const char *acted;       /* participle: "nothing was <acted>" */
-    const char *consent;     /* what saying yes means, printed over the yes */
-    int         show_cost;   /* the review states the batch's size and that it
-                              * will take a while, before it is incurred */
-} gate_ui;
-
 /* ---- survey state (survey.c) ---- */
 
 extern manifest_record g_records[MAX_RECORDS];
 extern size_t          g_record_n;
-/* The bless queue. Everything downstream of the selection ceremony works on
- * this one, which is why it keeps the plain name it has always had. */
+/* The bless queue, which everything downstream of the survey works on. */
 extern candidate       g_cand[MAX_CANDIDATES];
 extern size_t          g_cand_n;
-/* The prepare queue: no marks, no ceremony, no key (DESIGN Section 6.3.1). */
-extern candidate       g_prep[MAX_CANDIDATES];
-extern size_t          g_prep_n;
-extern size_t          g_done_prepared;
 extern size_t          g_done_blessed;
+extern size_t          g_windows;       /* Windows media: nothing to bless */
 extern size_t          g_unreadable;
 extern char            g_manifest[MANIFEST_MAX];
-
-/* The two gates' words (select.c). */
-extern const gate_ui g_bless_ui;
-extern const gate_ui g_prep_ui;
 
 /* ---- functions one module calls in another ---- */
 
@@ -155,8 +122,7 @@ void say_block_devices(void);
 int exfat_uuid(const char *node, char *out, size_t cap);
 
 /* run.c: the helper programs */
-int run(char *const argv[], const char *in, size_t in_len, unsigned beat_s,
-        const char *echo);
+int run(char *const argv[], const char *in, size_t in_len, const char *echo);
 
 /* survey.c: p2 against the manifest */
 void load_manifest(void);
@@ -170,16 +136,12 @@ void survey_file(const char *abs, const char *rel, uint64_t size);
 int bless_list_survey(void);
 void payload_prefilter(void);
 
-/* select.c: the pending lists and their gates */
-int choose(candidate *q, size_t n, const gate_ui *ui);
+/* select.c: the pending list and its gate */
+int choose(candidate *q, size_t n);
 size_t selected_count(const candidate *q, size_t n);
 int cand_cmp(const void *a, const void *b);
 
-/* prepare.c: the preparation half */
-void prepare_half(size_t *prepared_n, size_t *failed_n, size_t *skipped_n);
-int prep_tools_present(void);
-
-/* bless.c: the bless half */
+/* bless.c: the work */
 /* confirmed: the loader's menu already asked (the list came from there), so
  * the queue is signed as it stands, without the mark-and-review. */
 void bless_half(const stick_parts *parts, int confirmed, int *mapped,

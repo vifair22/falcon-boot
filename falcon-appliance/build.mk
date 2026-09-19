@@ -21,7 +21,7 @@ APPLIANCE := falcon-appliance/src
 # linked static: it is PID 1 in an initramfs whose dynamic loader exists for
 # the other programs, not for this one.
 APPLIANCE_INIT_SRCS := $(addprefix $(APPLIANCE)/,main.c console.c stick.c \
-	run.c survey.c select.c prepare.c bless.c list.c route.c) \
+	run.c survey.c select.c bless.c list.c route.c) \
 	$(CORE_PART) $(CORE_MANIFEST) $(CORE)/media/family.c $(CORE_FS) \
 	$(CORE)/media/bootcfg.c \
 	$(addprefix $(CLI)/sign/,isoprobe.c payload.c util.c) \
@@ -44,13 +44,11 @@ $(APPLIANCE_BSDTAR): falcon-appliance/image/mk-bsdtar.sh
 	falcon-appliance/image/mk-bsdtar.sh
 
 # Embeds $(SIGN_STATIC), so the two routes of Section 7.5 run one
-# implementation, and $(WINJUMP), which is what preparation injects into a
-# Windows image (Section 6.3) and the one file of the prepare path the
-# appliance cannot fetch for itself. The image itself is wrapped by $(SIGN)'s
-# UKI builder, the one that wraps every blessed kernel. The test MOK is only
-# for the optional signed copy; mkstick signs the real one on its way onto p3.
+# implementation. The image itself is wrapped by $(SIGN)'s UKI builder, the
+# one that wraps every blessed kernel. The test MOK is only for the optional
+# signed copy; mkstick signs the real one on its way onto p3.
 appliance: $(APPLIANCE_INIT) $(APPLIANCE_BSDTAR) $(SIGN) $(SIGN_STATIC) \
-		$(WINJUMP) $(MOK_KEY)
+		$(MOK_KEY)
 	falcon-appliance/image/mk-appliance.sh
 
 # Built by the product tool: mkstick generates the MOK, signs both UKIs, and
@@ -66,8 +64,7 @@ test-appliance:
 # ---- tests ----
 #
 # PID 1 in an initramfs cannot be stood in for by a host process; route.c,
-# its half of the Windows auto-prep contract (DESIGN Section 6.3.1), is split
-# out for exactly that reason.
+# what each file on p2 is owed, is split out for exactly that reason.
 
 APPLIANCE_TESTS := falcon-appliance/tests/main.c \
 	falcon-appliance/tests/route_test.c
@@ -75,8 +72,8 @@ APPLIANCE_TESTS := falcon-appliance/tests/main.c \
 APPLIANCE_UUT := falcon-appliance/src/route.c
 
 # The routing test checks route.c's answers against the bless tool's own
-# payload and preparation decisions, so it links those, and what they link.
-# They are falcon-cli's units and are reported there.
+# payload rules, so it links those, and what they link. They are falcon-cli's
+# units and are reported there.
 APPLIANCE_TEST_DEPS := $(CLI_UUT)
 
 $(eval $(call test_bin,appliance,$(APPLIANCE_TESTS) $(APPLIANCE_UUT) $(APPLIANCE_TEST_DEPS)))

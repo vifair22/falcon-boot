@@ -71,13 +71,6 @@ static void echo_child(int fd, const char *prefix)
  * shell anywhere: every argument is passed as a vector, so nothing a file
  * name contains can become syntax. Returns the exit status, or -1.
  *
- * `beat_s` non-zero makes the wait say, every that many seconds, that the
- * child is still running. Only the preparation batch asks for it, and only
- * because hashing a multi-gigabyte ISO off USB is minutes during which the
- * tool has nothing to print and the machine is indistinguishable from a hung
- * one. The line is indented to sit under that batch's per-image lines, which
- * is the one place it appears.
- *
  * `echo` non-NULL routes the child's own output through say() with that
  * prefix, instead of letting it inherit /dev/console. Only the payload path
  * asks for it: what that child prints is the statement that this bless writes
@@ -89,8 +82,7 @@ static void echo_child(int fd, const char *prefix)
  * `in` and `echo` together would need both pipes pumped at once to be safe
  * against a child that fills the output pipe before reading its input; no
  * caller asks for both, and the input pipe is drained first below. */
-int run(char *const argv[], const char *in, size_t in_len,
-               unsigned beat_s, const char *echo)
+int run(char *const argv[], const char *in, size_t in_len, const char *echo)
 {
     int pipefd[2] = { -1, -1 };
     int outfd[2] = { -1, -1 };
@@ -162,29 +154,8 @@ int run(char *const argv[], const char *in, size_t in_len,
         echo_child(outfd[0], echo);
         (void)close(outfd[0]);
     }
-    if (beat_s == 0u) {
-        if (waitpid(pid, &status, 0) < 0)
-            return -1;
-    } else {
-        unsigned elapsed = 0;
-
-        for (;;) {
-            pid_t done = waitpid(pid, &status, WNOHANG);
-
-            if (done == pid)
-                break;
-            if (done < 0) {
-                if (errno == EINTR)
-                    continue;
-                return -1;
-            }
-            (void)usleep(1000u * 1000u);
-            elapsed++;
-            if (elapsed % beat_s == 0u)
-                say("      ... still working (%um%02us so far)\n",
-                    elapsed / 60u, elapsed % 60u);
-        }
-    }
+    if (waitpid(pid, &status, 0) < 0)
+        return -1;
     if (WIFEXITED(status))
         return WEXITSTATUS(status);
     return -1;

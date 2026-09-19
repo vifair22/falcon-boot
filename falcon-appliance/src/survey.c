@@ -4,7 +4,6 @@
 
 #include <route.h>
 
-#include <sign/prepcore.h>
 #include <sign/sign.h>
 
 #include <dirent.h>
@@ -24,10 +23,8 @@ manifest_record g_records[MAX_RECORDS];
 size_t          g_record_n;
 candidate       g_cand[MAX_CANDIDATES];
 size_t          g_cand_n;
-candidate       g_prep[MAX_CANDIDATES];
-size_t          g_prep_n;
-size_t          g_done_prepared;
 size_t          g_done_blessed;
+size_t          g_windows;
 size_t          g_unreadable;
 char            g_manifest[MANIFEST_MAX];
 
@@ -63,16 +60,13 @@ static int ends_with_iso(const char *name)
     return n > 4u && strcasecmp(name + n - 4u, ".iso") == 0;
 }
 
-/* Appends to one of the two queues. `what` names the queue in the overflow
- * message, because "more than 64 pending images" is a different problem
- * depending on which half ran out. */
-static void add_to(candidate *q, size_t *n, const char *what, const char *rel,
-                   uint64_t size, manifest_bless st, family_id fam,
-                   sgn_payload_shape shape)
+/* Appends to the bless queue. */
+static void add_to(candidate *q, size_t *n, const char *rel, uint64_t size,
+                   manifest_bless st, family_id fam, sgn_payload_shape shape)
 {
     if (*n >= MAX_CANDIDATES) {
-        say("note: more than %u images %s; the rest are not listed\n",
-            (unsigned)MAX_CANDIDATES, what);
+        say("note: more than %u images to sign; the rest are not listed\n",
+            (unsigned)MAX_CANDIDATES);
         return;
     }
     if (snprintf(q[*n].rel, sizeof(q[*n].rel), "%s", rel) >=
@@ -93,7 +87,7 @@ static void add_to(candidate *q, size_t *n, const char *what, const char *rel,
  * falcon-core's ISO9660/UDF readers (falcon-cli/src/sign/isoprobe.c), then
  * falcon-core/src/media/family.c fingerprinted over that. Same reader and
  * same table as the tool this program is about to hand the file to, so the
- * survey cannot route an image into a queue the tool will then refuse it from.
+ * survey cannot queue an image the tool will then refuse.
  * No mount and no loop device: falcon-cli/src/sign/isoprobe.c says in as many
  * words why a tool that reads untrusted media should not be mounting it.
  *
@@ -110,34 +104,6 @@ static int classify(const char *abs, family_id *out)
     *out = family_detect(&probe)->id;
     iso_view_close(v);
     return 0;
-}
-
-/* A prepared record names files under p2:/falcon/prepared/<sha256>/, and the
- * record is not evidence that they are still there: a folder emptied by hand,
- * or a run interrupted before the manifest was written, both leave a record
- * describing artifacts that do not exist. `falcon-boot-sign prepare` makes
- * exactly this check before it agrees an ISO needs nothing
- * (falcon-cli/src/sign/prepare.c); making it here too is what keeps "already
- * prepared, skipping" from being a claim nobody verified, and what stops an
- * ISO from being quietly dropped from the batch it belongs in. */
-static int sidecars_intact(const manifest_record *rec)
-{
-    size_t i;
-
-    if (rec == NULL || rec->splice_n == 0u)
-        return 0;
-    for (i = 0; i < rec->splice_n; i++) {
-        char path[PATH_MAX];
-        struct stat st;
-
-        if (snprintf(path, sizeof(path), "%s/%s/%s/%s", P2_MNT, PREP_DIR,
-                     rec->sha256, rec->splice[i].name) >= (int)sizeof(path))
-            return 0;
-        if (stat(path, &st) != 0 || !S_ISREG(st.st_mode) ||
-            (uint64_t)st.st_size != rec->splice[i].len)
-            return 0;
-    }
-    return 1;
 }
 
 /* One file's whole survey, split out because a payload and an ISO answer the
@@ -159,7 +125,6 @@ void survey_file(const char *abs, const char *rel, uint64_t size)
     sgn_payload_shape shape = sgn_payload_shape_of(rel);
     const manifest_record *rec = NULL;
     manifest_bless state = MANIFEST_BLESS_NONE;
-    manifest_kind kind = MANIFEST_KIND_BLESSED;
     family_id fam = FAMILY_UNKNOWN;
     appl_job job;
 
@@ -167,44 +132,35 @@ void survey_file(const char *abs, const char *rel, uint64_t size)
         job = appl_route_payload(APPL_OURS_UNKNOWN);
     } else {
         state = manifest_lookup(g_records, g_record_n, rel, size, &rec);
-        if (rec != NULL)
-            kind = rec->kind;
+        /* A prepared record an older appliance left names a patched boot.wim,
+         * not a wrap; it is no evidence this ISO was blessed. */
+        if (rec != NULL && rec->kind != MANIFEST_KIND_BLESSED)
+            state = MANIFEST_BLESS_NONE;
         if (classify(abs, &fam) != 0) {
             /* Not a refusal to proceed, and not a silent drop either: an
-             * unreadable file named .iso is offered to neither half, because
-             * both would fail on it further in and with less to say about
-             * why. */
+             * unreadable file named .iso is not offered, because the tool
+             * would fail on it further in and with less to say about why. */
             say("  unreadable  /%s\n              %s\n", rel, sgn_error());
             g_unreadable++;
             return;
         }
-        job = appl_route(state, kind, fam);
+        job = appl_route(state, fam);
     }
 
     switch (job) {
-    case APPL_JOB_DONE_PREPARED:
-        if (!sidecars_intact(rec)) {
-            say("  prepared    /%s\n"
-                "              the manifest says so, but the staged\n"
-                "              files are missing or the wrong length;\n"
-                "              preparing it again\n", rel);
-            add_to(g_prep, &g_prep_n, "to prepare", rel, size, state, fam,
-                   shape);
-            break;
-        }
-        say("  prepared    /%s (already; skipping)\n", rel);
-        g_done_prepared++;
-        break;
     case APPL_JOB_DONE_BLESSED:
         say("  blessed     /%s (already; skipping)\n", rel);
         g_done_blessed++;
         break;
-    case APPL_JOB_PREPARE:
-        add_to(g_prep, &g_prep_n, "to prepare", rel, size, state, fam, shape);
+    case APPL_JOB_BOOTS_AS_IS:
+        say("  windows     /%s\n"
+            "              Windows media boots as it is; nothing to bless\n",
+            rel);
+        g_windows++;
         break;
     case APPL_JOB_SIGN:
     default:
-        add_to(g_cand, &g_cand_n, "to sign", rel, size, state, fam, shape);
+        add_to(g_cand, &g_cand_n, rel, size, state, fam, shape);
         break;
     }
 }

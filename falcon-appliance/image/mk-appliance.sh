@@ -9,8 +9,8 @@
 #                                              for a hand-staged rig stick
 #
 # The appliance is a kernel plus an initramfs that contains one program of our
-# own (falcon-appliance/src, PID 1) and the programs the two flows shell
-# out to. Blessing (DESIGN Section 7.5):
+# own (falcon-appliance/src, PID 1) and the programs blessing shells out to
+# (DESIGN Section 7.5):
 #
 #   cryptsetup   unlocks p3 so the MOK private key can be read
 #   bsdtar       lists and extracts the ISO (this is what `sign` reads with).
@@ -22,21 +22,6 @@
 #                vendor's, and the count is one of the three checks that says
 #                so). Only the payload path runs it, and it refuses up front
 #                without it rather than part way through
-#
-# and preparing Windows media (DESIGN Sections 6.3 and 6.3.1), which holds no
-# key and signs nothing:
-#
-#   7z             reads the UDF namespace. Windows install media keeps every
-#                  real file there and only a stub in ISO9660, so without this
-#                  such an ISO lists as almost empty and classifies as unknown
-#   wimlib-imagex  rewrites \sources\boot.wim: extract, update, optimize,
-#                  verify. The separately installed wimupdate/wimoptimize
-#                  names are aliases for its subcommands, so the one binary is
-#                  the whole dependency
-#   winjump.exe    not run here at all. It is the Win64 binary that replaces
-#                  WinPE's winpeshl.exe inside the patched image, and it is
-#                  staged beside the sign tool because that is the first place
-#                  falcon-cli/src/sign/prepare.c looks for it
 #
 # plus the portable `sign` tool itself as build/bin/falcon-boot-sign-static,
 # which also builds the UKI wrap (falcon-cli/src/sign/uki.c) and the stub it
@@ -50,13 +35,14 @@
 # need). There is no shell, no interpreter, no network tooling, and no
 # package manager.
 #
-# What that costs, measured 2026-09-18 on this host: 27 MB of initramfs
-# uncompressed, 8.9 MB compressed, a 25.6 MB UKI of which 16.6 MB is the
-# kernel, and ten seconds to build. The Windows route's share is 7-Zip (3.5 MB
-# with its 7z.so) plus the libstdc++ only it needs (2.9 MB), and libwim
-# (0.4 MB). Before 2026-09-18 the initramfs was 97 MB: ukify's Python runtime
-# (33 MB) and the ICU tables behind the host bsdtar's XAR support (32 MB) are
-# what went.
+# What that costs, measured 2026-09-19 on this host: 19 MB of initramfs
+# uncompressed, 6.2 MB compressed, a 22.9 MB UKI of which 16.6 MB is the
+# kernel, and under ten seconds to build. The day before it was 27 MB: the
+# Windows preparation route (7-Zip with its 7z.so, the libstdc++ only it
+# needed, and libwim) went when the loader took over patching Windows media
+# (DESIGN Section 6.4). Before 2026-09-18 the initramfs was 97 MB: ukify's
+# Python runtime (33 MB) and the ICU tables behind the host bsdtar's XAR
+# support (32 MB) are what went.
 #
 # Usage: falcon-appliance/image/mk-appliance.sh
 # Env:
@@ -87,7 +73,6 @@ UKI_SIGNED="$OUT/appliance-uki-signed.efi"
 SIGN=build/bin/falcon-boot-sign
 SIGN_STATIC=build/bin/falcon-boot-sign-static
 BSDTAR=build/appliance/bsdtar
-WINJUMP=build/bin/winjump.exe
 MOK_KEY="${MOK_KEY:-build/mok-test/falcon-test-mok.key}"
 MOK_CRT="${MOK_CRT:-build/mok-test/falcon-test-mok.crt}"
 
@@ -171,11 +156,6 @@ done
 }
 [[ -x "$BSDTAR" ]] || {
     echo "ERROR: $BSDTAR not built (run: make appliance)" >&2
-    exit 1
-}
-[[ -f "$WINJUMP" ]] || {
-    echo "ERROR: $WINJUMP not built (run: make winjump). Without it the" >&2
-    echo "       appliance can survey Windows media but not prepare it." >&2
     exit 1
 }
 
@@ -305,44 +285,10 @@ interp() {
         sed -n 's/.*Requesting program interpreter: \(\/[^]]*\)\].*/\1/p'
 }
 
-# What a one-line exec wrapper runs: a script of the form
-#   #!/bin/sh
-#   exec /abs/path "$@"
-# prints /abs/path. Anything else prints nothing. Arch's 7zip package ships
-# /usr/bin/7z as exactly this (exec /usr/lib/7zip/7z), and there is no shell
-# in the image to run it, so the program a wrapper execs is staged AT the
-# wrapper's path instead, with the shared objects from its own directory
-# beside it: 7-Zip finds 7z.so next to argv[0], not next to the resolved
-# executable, so a symlink runs but loads no formats and reports every ISO as
-# "Cannot open the file as archive" (measured 2026-09-17). The Gentoo host
-# this was first built on ships the real program at /usr/bin/7z, which is why
-# a plain copy used to be enough.
-unwrap() {
-    [[ "$(head -c2 "$1")" == '#!' ]] || return 0
-    sed -n 's/^exec \(\/[^ "]*\) "\$@"$/\1/p' "$1" | head -n1
-}
-
 LIBS=()
 for b in "${BINARIES[@]}"; do
-    t=$(unwrap "$b")
-    if [[ -n "$t" ]]; then
-        mkdir -p "$(dirname "$ROOT$b")"
-        cp -L "$t" "$ROOT$b"
-        mapfile -t -O "${#LIBS[@]}" LIBS < <(closure "$t")
-        # The wrapped program's own directory is its private library
-        # directory, dlopened at run time where ldd cannot see it, so its
-        # shared objects come too, beside the staged program, with their
-        # closure.
-        for so in "$(dirname "$t")"/*.so; do
-            [[ -e "$so" ]] || continue
-            cp -L "$so" "$(dirname "$ROOT$b")/"
-            mapfile -t -O "${#LIBS[@]}" LIBS < <(closure "$so")
-        done
-        continue
-    fi
     if [[ "$(head -c2 "$b")" == '#!' ]]; then
-        echo "ERROR: $b is a script this builder cannot unwrap, and the" \
-             "image has no shell to run it" >&2
+        echo "ERROR: $b is a script, and the image has no shell to run it" >&2
         exit 1
     fi
     copy_to_root "$b"
@@ -361,7 +307,7 @@ done
 # ldd reports /usr/lib64/ld-linux-x86-64.so.2 while every binary asks the
 # kernel for /lib64/ld-linux-x86-64.so.2. Staging only the former built an
 # image (2026-09-15) in which every dynamic program failed to exec with
-# ENOENT: bsdtar, 7z and cryptsetup all "missing" while plainly present. The
+# ENOENT: bsdtar and cryptsetup both "missing" while plainly present. The
 # Gentoo host this was first built on has a real /lib64, which is why the
 # walk above was enough there.
 for b in "${BINARIES[@]}"; do
@@ -389,12 +335,6 @@ ldconfig -r "$ROOT" 2>/dev/null || {
 # The tool the whole appliance exists to run, and the stub it wraps with.
 cp "$SIGN_STATIC" "$ROOT/usr/bin/falcon-boot-sign-static"
 copy_to_root "$STUB"
-
-# Beside the tool, because that is where falcon-cli/src/sign/prepare.c looks
-# first (find_winjump resolves /proc/self/exe and tries its directory). It is a
-# PE for WinPE to run, never anything this image executes.
-cp "$WINJUMP" "$ROOT/usr/bin/winjump.exe"
-chmod 0644 "$ROOT/usr/bin/winjump.exe"
 
 # ---- the rest of the filesystem ----
 #

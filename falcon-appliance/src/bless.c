@@ -1,4 +1,4 @@
-/* falcon-boot appliance: the bless half. */
+/* falcon-boot appliance: the bless itself. */
 
 #include "appliance.h"
 
@@ -42,12 +42,12 @@ static ssize_t read_file(const char *path, char *buf, size_t cap)
  * the terminal's own, so it appears on the console being typed at and not on
  * the others; only what this program prints goes everywhere. */
 
-/* ---- the bless half (DESIGN Section 7.5) ----
+/* ---- the bless (DESIGN Section 7.5) ----
  *
  * Everything that needs the key lives in here, and nothing calls it unless
  * the survey found an image that needs one. Failures report and RETURN rather
- * than rebooting: a preparation batch may already have succeeded, and its
- * summary is still owed to the user.
+ * than rebooting: the summary, and the wait for Enter over it, are still owed
+ * to the user.
  *
  * *mapped and *p3_mounted are set as each is opened, so the caller can unwind
  * whatever this got as far as. sgn_arg launders the one const member that has
@@ -95,7 +95,7 @@ void bless_half(const stick_parts *parts, int confirmed, int *mapped,
             };
 
             say("unlocking p3 with the passphrase from the loader...\n");
-            if (run(argv, pass, (size_t)clen, 0, NULL) == 0)
+            if (run(argv, pass, (size_t)clen, NULL) == 0)
                 *mapped = 1;
             else
                 say("the delivered credential did not open p3; "
@@ -122,7 +122,7 @@ void bless_half(const stick_parts *parts, int confirmed, int *mapped,
             *skipped_n = g_cand_n;
             return;
         }
-        rc = run(argv, pass, (size_t)len, 0, NULL);
+        rc = run(argv, pass, (size_t)len, NULL);
         explicit_bzero(pass, sizeof(pass));
         if (rc == 0) {
             *mapped = 1;
@@ -147,8 +147,7 @@ void bless_half(const stick_parts *parts, int confirmed, int *mapped,
     if (access(KEY_PATH, R_OK) != 0 || access(CERT_PATH, R_OK) != 0) {
         say("ERROR: no MOK keypair on p3 (%s / %s).\n"
             "       A stick built with --p3-plain has no on-stick key, so it\n"
-            "       cannot bless anything here; sign from a host instead.\n"
-            "       Preparing Windows media needs no key and is unaffected.\n",
+            "       cannot bless anything here; sign from a host instead.\n",
             KEY_PATH, CERT_PATH);
         *skipped_n = g_cand_n;
         return;
@@ -163,8 +162,7 @@ void bless_half(const stick_parts *parts, int confirmed, int *mapped,
     }
 
     /* Needed only by the wrap path: it is the %DEV% the signed cmdline
-     * carries, and neither preparation nor a bare payload has a cmdline to
-     * put it in. A queue of payloads alone must not die on a volume serial
+     * carries, and a bare payload has no cmdline to put it in. A queue of payloads alone must not die on a volume serial
      * nothing in it would use. */
     for (i = 0; i < g_cand_n; i++)
         need_dev |= (g_cand[i].shape == SGN_PAYLOAD_NONE);
@@ -196,7 +194,7 @@ void bless_half(const stick_parts *parts, int confirmed, int *mapped,
             g_cand[i].selected = 1;
             say("  /%s\n", g_cand[i].rel);
         }
-    } else if (!choose(g_cand, g_cand_n, &g_bless_ui)) {
+    } else if (!choose(g_cand, g_cand_n)) {
         /* Nothing was vouched for, so every pending image is a skip. */
         *skipped_n = g_cand_n;
         return;
@@ -247,7 +245,7 @@ void bless_half(const stick_parts *parts, int confirmed, int *mapped,
                 };
 
                 say("      signing it in place...\n");
-                rc = run(argv, NULL, 0, 0, "      ");
+                rc = run(argv, NULL, 0, "      ");
             } else {
                 char *argv[] = {
                     (char *)SIGN_TOOL,
@@ -262,7 +260,7 @@ void bless_half(const stick_parts *parts, int confirmed, int *mapped,
                 };
 
                 say("      signing...\n");
-                rc = run(argv, NULL, 0, 0, NULL);
+                rc = run(argv, NULL, 0, NULL);
             }
             /* One image failing is that image's problem: the rest of the batch
              * was vouched for too and still deserves to be signed. */
