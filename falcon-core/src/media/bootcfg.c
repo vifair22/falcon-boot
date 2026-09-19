@@ -251,6 +251,20 @@ static void file_release(parser *p, const char *buf, size_t len)
         p->used -= len + 1u;
 }
 
+/* Runs of '/' as one, in place: GRUB and syslinux read "/boot//nix/x" as
+ * "/boot/nix/x" (NixOS writes the former), and a file lookup need not. */
+static void squash_slashes(char *s)
+{
+    size_t r = 0, w = 0;
+
+    for (; s[r] != '\0'; r++) {
+        if (s[r] == '/' && w > 0 && s[w - 1u] == '/')
+            continue;
+        s[w++] = s[r];
+    }
+    s[w] = '\0';
+}
+
 /* "(hd0,gpt2)/boot/x" and "($root)/boot/x" are "/boot/x"; a relative path
  * gets its leading slash. */
 static void clean_path(const char *in, char *out, size_t cap, uint8_t *trunc)
@@ -267,6 +281,7 @@ static void clean_path(const char *in, char *out, size_t cap, uint8_t *trunc)
     if (*s != '/')
         app(out, cap, "/", 1, trunc);
     app(out, cap, s, slen(s), trunc);
+    squash_slashes(out);
 }
 
 /* ---------------------------------------------------------------- GRUB */
@@ -1305,6 +1320,7 @@ static void iso_path_join(parser *p, const char *in, size_t n, char *out,
         app(out, cap, "/", 1, trunc);
     }
     app(out, cap, in, n, trunc);
+    squash_slashes(out);
 }
 
 static void isolinux_parse(parser *p, const char *buf, size_t len,

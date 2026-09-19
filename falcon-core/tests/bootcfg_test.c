@@ -617,6 +617,27 @@ static void test_bootcfg_isolinux(void **state)
     assert_string_equal(g_res.entry[3].initrd[0], "/isolinux/initrd2.gz");
 }
 
+/* NixOS's isolinux.cfg writes its store paths after a doubled slash. */
+static const ff nixos[] = {
+    { "/isolinux/isolinux.cfg",
+      "DEFAULT boot\n"
+      "LABEL boot\n"
+      "LINUX /boot//nix/store/abc-linux/bzImage\n"
+      "APPEND init=/nix/store/def-system/init root=fstab\n"
+      "INITRD /boot//nix/store/ghi-initrd/initrd\n" },
+    { "/boot/nix/store/abc-linux/bzImage", "" },
+    { "/boot/nix/store/ghi-initrd/initrd", "" },
+};
+
+static void test_bootcfg_doubled_slashes(void **state)
+{
+    (void)state;
+    assert_int_equal(run(nixos, N(nixos), BOOTCFG_CD, 1), BOOTCFG_OK);
+    assert_string_equal(picked()->kernel, "/boot/nix/store/abc-linux/bzImage");
+    assert_string_equal(picked()->initrd[0],
+                        "/boot/nix/store/ghi-initrd/initrd");
+}
+
 /* ---------------------------------------------------- Alpine, quoting */
 
 static const ff alpine[] = {
@@ -786,6 +807,7 @@ int run_bootcfg_tests(void)
         cmocka_unit_test(test_bootcfg_loops),
         cmocka_unit_test(test_bootcfg_proxmox),
         cmocka_unit_test(test_bootcfg_isolinux),
+        cmocka_unit_test(test_bootcfg_doubled_slashes),
         cmocka_unit_test(test_bootcfg_quoting_and_initrds),
         cmocka_unit_test(test_bootcfg_refusals),
         cmocka_unit_test(test_bootcfg_limits),
