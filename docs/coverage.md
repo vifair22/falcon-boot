@@ -21,9 +21,9 @@ Loader: 0.1.0_20260918.2318.release, 0.1.0_20260919.0127.release, 0.1.0_20260919
 
 | tier | ISOs run | SB off, drop | target | SB on, MS CA | target | SB on, own keys |
 |---|---|---|---|---|---|---|
-| A | 22 | 21/22 (95%) | 100% | 21/22 (95%) | 95% | 18/22 (81%) |
+| A | 21 | 21/21 (100%) | 100% | 21/21 (100%) | 95% | 18/21 (85%) |
 | B | 9 | 9/9 (100%) | 90% | 9/9 (100%) | - | 9/9 (100%) |
-| C | 3 | 2/3 (66%) | - | 0/3 (0%) | - | 0/3 (0%) |
+| C | 4 | 2/4 (50%) | - | 0/4 (0%) | - | 0/4 (0%) |
 
 ## Matrix
 
@@ -42,7 +42,7 @@ Loader: 0.1.0_20260918.2318.release, 0.1.0_20260919.0127.release, 0.1.0_20260919
 | kali-2026.2 | A | debian-live | PASS | FAIL | PASS | REFUSED | REFUSED | PASS | REFUSED | REFUSED | PASS |
 | clonezilla-3.3.3-15 | A | debian-live | PASS | FAIL | PASS | FAIL | FAIL | PASS | REFUSED | REFUSED | PASS |
 | gentoo-min-20260913 | A | gentoo | PASS | FAIL | PASS | REFUSED | REFUSED | PASS | REFUSED | REFUSED | PASS |
-| hbcd-pe-1.0.8 | A | windows-pe | FAIL | FAIL | UNBLESSABLE | FAIL | FAIL | UNBLESSABLE | REFUSED | REFUSED | UNBLESSABLE |
+| hbcd-pe-1.0.8 | C | windows-pe | FAIL | FAIL | UNBLESSABLE | FAIL | FAIL | UNBLESSABLE | REFUSED | REFUSED | UNBLESSABLE |
 | gparted-1.8.1-6 | A | debian-live | PASS | FAIL | PASS | PASS | FAIL | PASS | REFUSED | REFUSED | PASS |
 | cachyos-260809 | A | arch | PASS | FAIL | PASS | REFUSED | REFUSED | PASS | REFUSED | REFUSED | PASS |
 | mx-25.2 | A | antix | PASS | FAIL | PASS | PASS | FAIL | PASS | REFUSED | REFUSED | PASS |

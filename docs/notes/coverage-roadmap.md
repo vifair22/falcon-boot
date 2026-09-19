@@ -155,7 +155,7 @@ Targets, stated so they can be failed:
 
 | Tier | What | Target |
 |---|---|---|
-| A | distrowatch top 30, current Windows 10/11/Server, the top 10 rescue/utility ISOs | 100% SB off, 95% SB on where db trusts the Microsoft CA (bless allowed) |
+| A | distrowatch top 30, current Windows 10/11/Server, the top 10 CURRENT rescue/utility ISOs | 100% SB off, 95% SB on where db trusts the Microsoft CA (bless allowed) |
 | B | every Linux family in the Ventoy survey | 90% SB off |
 | C | long tail, BSD, hypervisors, IMG distros | tracked, no target |
 
