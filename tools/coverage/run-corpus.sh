@@ -69,6 +69,12 @@ has_route() { [[ " $ROUTES " == *" $1 "* ]]; }
 mkdir -p "$STICKS" "$RUNS"
 VERSION=$(sed -n 's/.*FALCON_VERSION "\(.*\)".*/\1/p' build/version.h 2>/dev/null)
 
+# The loader and the sign tool under test are the tree's: both are built
+# first, so neither a stale signed loader nor a sign tool carrying an older
+# falcon-hook can be what the corpus measures.
+make --no-print-directory -s sign build/bin/falcon-boot-sign >/dev/null
+VERSION=$(sed -n 's/.*FALCON_VERSION "\(.*\)".*/\1/p' build/version.h 2>/dev/null)
+
 # ---- sticks ----
 CASES=()
 while IFS=$'\t' read -r id tier family sha file source; do
@@ -128,10 +134,6 @@ while IFS=$'\t' read -r id tier family sha file source; do
     done
 done < "$MANIFEST"
 
-# The loader under test is the tree's: build and sign it first, so a stale
-# signed copy can never be what the corpus measures.
-make --no-print-directory -s sign >/dev/null
-VERSION=$(sed -n 's/.*FALCON_VERSION "\(.*\)".*/\1/p' build/version.h 2>/dev/null)
 
 shopt -s nullglob
 STAGE=("$STICKS"/*.img)
