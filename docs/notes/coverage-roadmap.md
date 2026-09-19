@@ -116,7 +116,8 @@ harness measures now is `docs/coverage.md`:
 | Linux, not blessed | kernel starts, media lost | kernel starts (MS-signed distros), media lost | refused |
 | Windows install, prepared | boots | boots | refused (bootmgr is MS-signed) |
 | Bare EFI payloads, memtest | boots | boots if MS-signed, else bless | bless |
-| Everything else (BSD, ESXi, WinPE, IMG distros, ChromeOS) | untested | untested | refused unless blessed |
+| BSD (FreeBSD, OPNsense, pfSense) | kernel boots, medium missing until M7 | same | refused: their loaders are unsigned |
+| Everything else (ESXi, WinPE, IMG distros, ChromeOS) | untested | untested | refused unless blessed |
 
 Two things in that table matter more than the rest:
 
@@ -373,6 +374,17 @@ graph LR
   write the nudge, re-run. Exit: Tier B at 90% SB off.
 - **M5, D3 spikes.** Two days each, write-up in `docs/notes/`, design only if
   one works. Independent of M1-M4.
+- **M7, BSD first class (decided 2026-09-19).** A FreeBSD ISO's loader and
+  kernel already run; what is missing is the medium after ExitBootServices,
+  which falcon-hook cannot give a system with no Linux initramfs. The route
+  is the ISO as a memory disk, proven end to end on FreeBSD 15.1 the day it
+  was decided (`docs/notes/bsd-route.md`): a second synthetic device carrying
+  the ISO as a file the loader can read, four settings patched into the ISO's
+  `/boot/defaults/loader.conf`, and a memory guard, since the image is copied
+  into RAM. Ventoy's per-version GEOM module is the fallback if the memory
+  cost proves to matter. Exit: FreeBSD, OPNsense and pfSense boot to their
+  installers with Secure Boot off. Secure Boot for BSD is separate: their
+  loaders are unsigned and blessing signs a Linux kernel.
 - **M6, Windows in the loader.** WIM surgery at boot (needs the UDF reader),
   then winjump parity (Win11 bypass, unattend) and WinPE shells, ESXi test.
   Appliance preparation stays until this passes the scorecard (it passed;

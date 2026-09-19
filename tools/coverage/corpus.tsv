@@ -55,3 +55,5 @@ windows-server-2025	A	windows	854109e1f215a29fc3541188297a6ca97c8a8f0f8c4dd6236b
 esxi-7.0u3l	C	esxi	486d3d0cd394a1540d0f1560d887234e58308d3fbda40d74fe88c66fca08e85b	VMware-VMvisor-Installer-7.0U3l-21424296.x86_64.iso	local:VMware ESXi 7.0U3l installer, supplied by the user (Broadcom portal, login required)
 esxi-8.0u3	C	esxi	05ce214069a3e23265881fbd7a949fb93a99aa13059c6cac31920196e97ba4a1	VMware-VMvisor-Installer-8.0U3-24022510.x86_64.iso	local:VMware ESXi 8.0U3 installer, supplied by the user (Broadcom portal, login required)
 macrium-rescue-8.0	A	windows-pe	c328301f5f6fdf162f8ad0ef352cf6add1000c50932d514069eb7cd897437351	MacriumRescue.iso	local:Macrium Reflect Free 8.0 rescue media (WinRE 10 2004), supplied by the user
+opnsense-25.1	C	freebsd	e4c178840ab1017bf80097424da76d896ef4183fe10696e92f288d0641475871	OPNsense-25.1-dvd-amd64.iso	local:OPNsense 25.1 dvd image, decompressed from the project's .bz2 by the user
+pfsense-plus-24.06b7	C	freebsd	6e08216183c50da1601bd69c49ffcb66a0c998ca4352f7b811b4025499597fa5	pfSense-plus-installer-24.06-BETA7-amd64-20240614-1949.iso	local:pfSense Plus 24.06-BETA7 installer, supplied by the user (Netgate account needed)
