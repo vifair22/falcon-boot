@@ -295,19 +295,6 @@ while (( $(date +%s) - T1 < TIMEOUT )); do
 
     after=$(serial_text | tail -n +"$((MENU_LINES + 1))")
 
-    # The loader offers to prepare unprepared Windows media before booting
-    # it (DESIGN 6.3.1). The drop route means booting what is on the stick,
-    # so the answer is the offer's "boot unprepared" key, once.
-    if [[ -z "${offered:-}" ]] &&
-       grep -q 'boot unprepared' <<<"$after"; then
-        echo "sendkey b" | socat - UNIX-CONNECT:"$MON" >/dev/null 2>&1 || true
-        offered=1
-        # The handover to the payload starts now, not at the menu keypress:
-        # restart the fast nudges for cdboot's prompt.
-        T1=$now
-        next_nudge=$(( now + NUDGE_EVERY ))
-    fi
-
     # The loader patching boot.wim in memory takes a moment before it hands
     # over, so the fast nudges for cdboot's prompt restart when it does.
     if [[ -z "${patched:-}" ]] &&

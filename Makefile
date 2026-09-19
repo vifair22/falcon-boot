@@ -314,7 +314,7 @@ check-tools:
 		command -v $$t >/dev/null 2>&1 || echo "missing (needed for host tooling / tests): $$t"; \
 	done; \
 	command -v 7z >/dev/null 2>&1 || command -v 7zz >/dev/null 2>&1 || \
-		echo "missing (bless reads UDF media with it; without it Windows ISOs classify as unknown): 7z"; \
+		echo "missing (mk-test-isoview.sh cross-checks its UDF fixture with it): 7z"; \
 	if [ $$missing -ne 0 ]; then echo "Required toolchain incomplete."; exit 1; fi; \
 	echo "Toolchain OK."
 

@@ -38,7 +38,8 @@ enum {
  * device it makes. A direct boot carries the map in the initrd, which needs
  * no efivarfs in the target kernel (Alpine builds it as a module its
  * initramfs lacks); a blessed wrap's initrd was built before the ISO's
- * extents were known, so there the hook falls back to FalconIsoMap. */
+ * extents were known, so there the loader hands the map over as a
+ * credential beside the wrap (HOOKCMD_MAP_CRED) and in FalconIsoMap. */
 #define HOOKCMD_HOOK_PATH  "/falcon/hook"
 #define HOOKCMD_MAP_PATH   "/falcon/map"
 /* Where a blessed wrap's copy lands: the loader publishes the map beside
