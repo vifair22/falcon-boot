@@ -47,29 +47,69 @@ refused, as it is when chainloaded; blessing is the route there.
 Decision taken with the result: this is Enter's route under Secure Boot
 (Section 6.4 menu keys unchanged: `c` chainloads, `d` forces direct).
 
-## D3b: the ISO's GRUB as shim's second stage, with a configuration we write
+## D3b: the ISO's own chain, with a grub.cfg of ours (spike, 2026-09-19)
 
-Not built. It is the route that reaches the distros D3a cannot: publish the
-ISO's shim, its signed `grubx64.efi`, the kernel, our combined initrd and a
-`grub.cfg` of ours on the synthetic filesystem; shim verifies GRUB, GRUB
-verifies the kernel through shim's protocol, and our configuration names our
-cmdline and initrd. Neither a configuration file nor an initrd is verified
-under Secure Boot on any distro today, so nothing it does is outside what the
-platform already permits, and it needs no ISO rewriting (the synthetic
-filesystem is the loader's own).
+Built on the `spike/d3b` branch and measured; not merged. DESIGN 7.2 parked
+configuration injection into another vendor's trust chain for discussion,
+and that discussion is still owed. What it does and what it measured:
 
-It stays unbuilt because DESIGN 7.2 parked configuration injection into
-another vendor's trust chain for discussion, and that discussion has not
-happened. Two questions for it:
+**The shape the write-up proposed does not work.** It had the loader publish
+the ISO's shim, its signed GRUB and the rest on the synthetic filesystem.
+GRUB reads files through its own drivers over Block I/O, not through Simple
+File System, so from a handle that only has the latter it finds no disk and
+no configuration. The shape that works serves the ISO itself as the virtual
+CD, as a chainload does, with two overrides and no ISO record changed:
 
-1. Is serving our own `grub.cfg` to a distro's signed GRUB acceptable, given
-   that it is what GRUB's own design expects a configuration to be (unsigned,
-   editable at the prompt), or is it the kind of relaxation Section 7.3 rules
-   out? It changes what the kernel is told, never what may run.
-2. Each distro's signed GRUB finds its configuration differently (an embedded
-   prefix, a `search --file` for a marker, a memdisk). The loader would need
-   one small table of where each looks, measured per distro, the same way the
-   hook's nudges are.
+1. The bytes of the grub.cfg the ISO's default entry came from
+   (`bootcfg_result.source`) are replaced in place by one of ours, exactly
+   as long, padded with a comment (`falcon-core/src/media/grubcfg.c`). It
+   names the entry's own kernel and initrds and the hooked cmdline.
+2. falcon-hook's archive, with the extent map in it, is served past the
+   ISO's end, and our grub.cfg names it as one more initrd with a GRUB
+   blocklist: `initrd <the ISO's initrds> ($root)SECTOR+COUNT`.
 
-Measured cost if agreed: one more credfs layout in `direct.c` and a GRUB
-configuration writer in falcon-core (the inverse of `bootcfg.c`'s reader).
+The platform verifies the ISO's shim against db, shim verifies GRUB, GRUB
+verifies the kernel through shim's protocol. The configuration and the
+initrds are verified by nobody, on any distro, which is GRUB's design.
+Nothing that runs is changed: only what the kernel is told, and what is in
+its initramfs.
+
+Proven first with no loader code: a copy of Debian live 13.7 with its
+`/boot/grub/grub.cfg` overwritten in place and a hook-only cpio appended,
+booted as a plain CD under Secure Boot with the Microsoft keys, ran
+falcon-hook as rdinit (`Run /falcon/hook as init process`) and reached a
+login prompt.
+
+Then in the loader (`direct_grub_boot` in `falcon-efi/src/direct/direct.c`),
+as Enter's route under Secure Boot when D3a cannot run the kernel (no
+`.sbat`). Measured, harness `ms` state, drop route, stock unblessed ISOs:
+
+| ISO | before | with D3b |
+|---|---|---|
+| debian-live-13.7 | FAIL | PASS (dhcp; auto-login console on screen) |
+| debian-netinst-13.7 | FAIL | PASS (dhcp) |
+| ubuntu-26.04.1 | FAIL | PASS (dhcp) |
+| kubuntu-26.04 | FAIL | PASS (dhcp) |
+| mint-22.3 | FAIL | PASS (dhcp) |
+| opensuse-tw-20260916 | FAIL | PASS (dhcp) |
+| proxmox-ve-9.2-1 | FAIL | PASS (dhcp) |
+| clonezilla-3.3.3-15 | FAIL | boots to its own UI; the harness has no signal for it |
+| kali-2026.2 | REFUSED | REFUSED (its kernel is not signed for its shim) |
+| fedora-ws-44 | PASS (D3a) | PASS (D3a, unchanged) |
+
+Arch, Manjaro, Gentoo, SystemRescue and Alpine carry no Microsoft-signed
+shim, so no route through their own chain exists; blessing stays theirs.
+
+Questions for the discussion, beyond DESIGN 7.2's:
+
+1. The grub.cfg replaced is the file bootcfg read the default entry from.
+   A distro whose signed GRUB reads a different file first (an embedded
+   prefix pointing elsewhere) would ignore ours and boot as a chainload
+   does; none in the corpus did.
+2. The replacement must fit in the original's length. Every corpus
+   grub.cfg is kilobytes; ours is a few hundred bytes plus the cmdline.
+3. The coverage harness counts media read after a "starting" line as the
+   kernel's. D3b's line says "handing ... to the ISO's own GRUB" instead,
+   because GRUB reads the kernel and initrds after it; D3b cases are judged
+   by DHCP, serial or the screen.
+

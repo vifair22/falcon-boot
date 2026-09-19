@@ -1149,6 +1149,12 @@ static BOOLEAN boot_direct(EFI_HANDLE image_handle, const menu_entry *entry,
                          g_mode == SB_MODE_ON ? DIRECT_VIA_ISO_SHIM
                                               : DIRECT_VIA_KERNEL,
                          &result);
+    /* D3a needs a kernel shim will run as its second stage; the rest go
+     * through the ISO's own GRUB with our configuration (D3b). */
+    if (EFI_ERROR(status) && result.no_entry && g_mode == SB_MODE_ON)
+        status = direct_grub_boot(g_st, image_handle, &g_vols[target->vol],
+                                  dev->handle, dev->bio->Media->BlockSize,
+                                  &target->ent, &result);
     if (EFI_ERROR(status) && result.no_entry)
         return FALSE;
 
