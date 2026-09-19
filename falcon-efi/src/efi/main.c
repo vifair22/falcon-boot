@@ -1021,14 +1021,21 @@ static void boot_blessed(EFI_HANDLE image_handle, const menu_entry *entry,
 
     /* A wrap the sign tool built with falcon-hook in its initrd finds the
      * ISO through the extent map, as a direct boot does; an older wrap
-     * ignores it. Failing to set it is left to the hook to report. */
+     * ignores it. It goes out twice: as FalconIsoMap, and as a credential
+     * beside the wrap for a kernel with no efivarfs (Alpine's). Failing to
+     * build it is left to the hook to report. */
     {
         discover_dev *dev = g_vol_dev[target->vol];
+        const UINT8 *map = (const UINT8 *)0;
+        UINTN map_len = 0;
 
         (void)direct_map_set(g_st, &g_vols[target->vol], dev->handle,
-                             dev->bio->Media->BlockSize, &target->ent);
+                             dev->bio->Media->BlockSize, &target->ent, &map,
+                             &map_len);
+        bless_set_map(map, map_len);
     }
     status = bless_boot(g_st, image_handle, &target->hit, &result);
+    bless_set_map((const UINT8 *)0, 0);
     loader_isomap_clear(g_st);
 
     menu_screen(g_st);

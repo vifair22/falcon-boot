@@ -63,9 +63,14 @@ EFI_STATUS direct_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent, fs_vol *p2,
 
 /* Sets FalconIsoMap for iso without booting anything: for a blessed wrap,
  * whose initrd carries falcon-hook too (falcon-cli/src/sign/main.c). The
- * caller clears it with loader_isomap_clear if the image comes back. */
+ * caller clears it with loader_isomap_clear if the image comes back.
+ *
+ * The map's bytes come back in *map and *len too (either may be NULL), for
+ * the wrap's credential drop-in: a kernel without efivarfs never sees the
+ * variable (bless_set_map). They stay valid until the next call. */
 EFI_STATUS direct_map_set(EFI_SYSTEM_TABLE *st, fs_vol *p2,
                           EFI_HANDLE p2_handle, UINT32 block_size,
-                          const fs_dirent *iso);
+                          const fs_dirent *iso, const UINT8 **map,
+                          UINTN *len);
 
 #endif /* FALCON_DIRECT_H */

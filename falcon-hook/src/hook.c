@@ -788,10 +788,14 @@ int hook_main(int argc, char **argv, char **envp)
                                     sizeof init))
         cat(init, sizeof init, HOOK_DEFAULT_INIT);
 
-    /* The map the loader put in the initrd (a direct boot), else the one
-     * it published in FalconIsoMap (a blessed wrap, built before the ISO's
-     * extents were known). */
+    /* The map the loader put in the initrd (a direct boot), else the copy
+     * sd-stub packed beside a blessed wrap's initrd, else the one it
+     * published in FalconIsoMap (a blessed wrap from a loader older than
+     * the credential; the wrap was built before the ISO's extents were
+     * known). */
     n = read_file(HOOKCMD_MAP_PATH, g_map, sizeof g_map);
+    if (n <= 0)
+        n = read_file(HOOKCMD_MAP_CRED, g_map, sizeof g_map);
     if (n > 0) {
         data = g_map;
         dlen = (size_t)n;

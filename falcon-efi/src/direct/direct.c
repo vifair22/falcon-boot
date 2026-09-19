@@ -308,18 +308,27 @@ static EFI_STATUS build_map(EFI_BOOT_SERVICES *bs, fs_vol *p2,
 
 EFI_STATUS direct_map_set(EFI_SYSTEM_TABLE *st, fs_vol *p2,
                           EFI_HANDLE p2_handle, UINT32 block_size,
-                          const fs_dirent *iso)
+                          const fs_dirent *iso, const UINT8 **map,
+                          UINTN *len)
 {
     direct_result r;
-    UINTN len = 0;
+    UINTN n = 0;
     EFI_STATUS status;
 
+    if (map != (const UINT8 **)0)
+        *map = (const UINT8 *)0;
+    if (len != (UINTN *)0)
+        *len = 0;
     r.advice = (const CHAR16 *)0;
-    status = build_map(st->BootServices, p2, p2_handle, block_size, iso, &len,
+    status = build_map(st->BootServices, p2, p2_handle, block_size, iso, &n,
                        &r);
     if (EFI_ERROR(status))
         return status;
-    return loader_isomap_set(st, g_map, len);
+    if (map != (const UINT8 **)0)
+        *map = g_map;
+    if (len != (UINTN *)0)
+        *len = n;
+    return loader_isomap_set(st, g_map, n);
 }
 
 /* Reads the configuration and settles the cmdline. */

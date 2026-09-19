@@ -286,9 +286,24 @@ static CHAR16 g_load_ucs2[BLESS_NAME_MAX + 2];
  * no firmware device path of its own to offer. That reason is what makes this
  * the mechanism a bare EFI payload uses too (DESIGN Section 7.2): it lives on
  * the same unreadable-to-firmware exFAT and needs the same device path. */
+static const UINT8 *g_map;
+static UINTN g_map_len;
+static CHAR16 g_extra_ucs2[BLESS_NAME_MAX + 16];
+
+void bless_set_map(const UINT8 *map, UINTN len)
+{
+    g_map = (map != (const UINT8 *)0 && len != 0) ? map : (const UINT8 *)0;
+    g_map_len = (g_map != (const UINT8 *)0) ? len : 0;
+}
+
+/* With a map set (bless_set_map), <image>.extra.d/falcon-map.cred is
+ * published beside the image. */
 static EFI_STATUS publish_image(EFI_SYSTEM_TABLE *st, void *buf, UINT64 size)
 {
-    credfs_entry tree[1];
+    static const CHAR16 suffix[] = L".extra.d";
+    static const CHAR16 map_file[] = L"falcon-map.cred";
+    credfs_entry tree[3];
+    UINTN n;
 
     /* The File Protocol path LoadImage resolves, absolute from our root. */
     g_load_ucs2[0] = L'\\';
@@ -300,8 +315,26 @@ static EFI_STATUS publish_image(EFI_SYSTEM_TABLE *st, void *buf, UINT64 size)
     tree[0].parent = CREDFS_ROOT;
     tree[0].is_dir = 0;
     tree[0].secret = 0;
+    if (g_map == (const UINT8 *)0)
+        return credfs_publish(st, tree, 1u);
 
-    return credfs_publish(st, tree, 1u);
+    /* sd-stub appends exactly this to the image's file path node. */
+    n = ucs2_copy(g_extra_ucs2, BLESS_NAME_MAX, g_uki_ucs2);
+    ucs2_copy(g_extra_ucs2 + n,
+              sizeof(g_extra_ucs2) / sizeof(g_extra_ucs2[0]) - n, suffix);
+    tree[1].name = g_extra_ucs2;
+    tree[1].data = (void *)0;
+    tree[1].size = 0;
+    tree[1].parent = CREDFS_ROOT;
+    tree[1].is_dir = 1;
+    tree[1].secret = 0;
+    tree[2].name = map_file;
+    tree[2].data = (void *)(uintptr_t)g_map;
+    tree[2].size = g_map_len;
+    tree[2].parent = (UINTN)1;
+    tree[2].is_dir = 0;
+    tree[2].secret = 0;
+    return credfs_publish(st, tree, 3u);
 }
 
 /* LoadImage/StartImage of the image in g_uki_ucs2, by device path off the
@@ -559,6 +592,8 @@ EFI_STATUS bless_payload_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
     load_ops ops;
     EFI_STATUS status;
 
+    /* A payload has no initrd for a map to land in. */
+    bless_set_map((const UINT8 *)0, 0);
     if (st == (EFI_SYSTEM_TABLE *)0 || result == (bless_result *)0)
         return EFI_INVALID_PARAMETER;
 

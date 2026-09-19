@@ -113,6 +113,13 @@ void bless_uki_trust(const bless_hit *hit, const trust_stores *stores,
 EFI_STATUS bless_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
                       const bless_hit *hit, bless_result *result);
 
+/* The ISO's extent map (falcon-core/src/media/extmap.h) for the next
+ * bless_boot to publish beside the wrap as <uki>.extra.d/falcon-map.cred,
+ * which sd-stub packs into the initrd at /.extra/credentials/ where
+ * falcon-hook looks for it. NULL clears it. Not secret: it says where a
+ * file sits on p2. The bytes must outlive the boot. */
+void bless_set_map(const UINT8 *map, UINTN len);
+
 /* Launches a BARE EFI PAYLOAD: a .efi file on p2 that boots as itself
  * (DESIGN Section 7.2).
  *

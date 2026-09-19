@@ -41,6 +41,10 @@ enum {
  * extents were known, so there the hook falls back to FalconIsoMap. */
 #define HOOKCMD_HOOK_PATH  "/falcon/hook"
 #define HOOKCMD_MAP_PATH   "/falcon/map"
+/* Where a blessed wrap's copy lands: the loader publishes the map beside
+ * the wrap as <uki>.extra.d/falcon-map.cred and sd-stub packs it into the
+ * initrd here (falcon-efi/src/bless/bless.h, bless_set_map). */
+#define HOOKCMD_MAP_CRED   "/.extra/credentials/falcon-map.cred"
 #define HOOKCMD_DEVICE     "/dev/mapper/falcon-iso"
 
 /* The newc archive that carries the hook, to append after the entry's own
