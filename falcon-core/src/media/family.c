@@ -296,6 +296,13 @@ const family_desc *family_detect(const family_probe *p)
         loader_entries_mention(p, "archisobasedir="))
         return family_by_id(FAMILY_ARCH);
 
+    /* A Linux medium with no row of its own can carry memtest86+ as a menu
+     * extra (NixOS ships /boot/memtest.bin beside its kernel). Its live
+     * root says it is not a memtest medium; it stays unknown, which the
+     * sign tool and the loader boot from its own configuration. */
+    if (probe_exists(p, "/nix-store.squashfs"))
+        return family_by_id(FAMILY_UNKNOWN);
+
     /* memtest last: its fingerprints are the weakest, so anything with a real
      * base directory has already claimed the medium by now. */
     /* The first four are memtest86+ (the GPL one, whose binary is a kernel

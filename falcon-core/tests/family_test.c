@@ -389,6 +389,19 @@ static void test_family_memtest(void **state)
                      FAMILY_TRI_NO);
 }
 
+/* NixOS's minimal ISO, as it ships (26.05): memtest86+ is a menu extra
+ * beside a Linux live root, not the medium. */
+static void test_family_memtest_extra_on_nixos(void **state)
+{
+    static const fake_file n[] = {
+        { "/boot/memtest.bin", NULL },
+        { "/nix-store.squashfs", NULL },
+    };
+
+    (void)state;
+    expect_family(n, 2, FAMILY_UNKNOWN, NULL);
+}
+
 /* PassMark's MemTest86 USB image, as it actually ships (read off
  * memtest86-usb.img v10.x, 2026-09-13): every FAT volume inside it is a bare
  * /EFI/BOOT with the loader under the removable-media default name, so the
@@ -893,6 +906,7 @@ int run_family_tests(void)
         cmocka_unit_test(test_family_arch_loader_entry),
         cmocka_unit_test(test_family_arch_loader_entry_other_basedir),
         cmocka_unit_test(test_family_memtest),
+        cmocka_unit_test(test_family_memtest_extra_on_nixos),
         cmocka_unit_test(test_family_gentoo),
         cmocka_unit_test(test_family_memtest_usb_image_volume),
         cmocka_unit_test(test_family_payload_by_name),
