@@ -86,15 +86,11 @@ void sgn_log(sgn_level lvl, const char *fmt, ...)
  *
  * sgn_run           child stdout discarded, stderr inherited
  * sgn_run_to_file   child stdout written to path (created/truncated)
- * sgn_run_stdin     child stdin read from path, stdout discarded. wimlib's
- *                   update takes its command list on stdin and nowhere else,
- *                   which is the only reason this shape exists.
  * sgn_run_capture   child stdout collected into *out (malloc'd, NUL
  *                   terminated, caller frees), capped at max bytes
  */
 int sgn_run(char *const argv[]);
 int sgn_run_to_file(char *const argv[], const char *path);
-int sgn_run_stdin(char *const argv[], const char *path);
 int sgn_run_capture(char *const argv[], char **out, size_t *len, size_t max);
 
 /* execvp takes char *const argv[], not const char *const argv[]: a POSIX
@@ -136,14 +132,6 @@ int sgn_file_exists(const char *path);
 /* Size of a regular file. SGN_ERR_IO when it is not one. */
 int sgn_file_size(const char *path, uint64_t *out);
 
-/* Grows a file to exactly len bytes, the tail reading as zeroes. This is the
- * zero-padding of DESIGN Section 6.3: a WIM self-describes its length in its
- * header and ignores whatever follows, so the patched image is padded back to
- * the byte length of the extent it will be served over. Never shrinks: a
- * shorter target is a caller bug and is refused rather than truncating a WIM.
- */
-int sgn_pad_file(const char *path, uint64_t len);
-
 /* Appends the whole of src to dst. For the initrds a boot entry loads one
  * after another, which the wrap carries as one concatenated section. */
 int sgn_append_file(const char *dst, const char *src);
@@ -160,12 +148,6 @@ int sgn_pad4_file(const char *path);
  * (Mint's entry ends "quiet splash --"). SGN_ERR_NOSPACE when it does not
  * fit, with cmdline untouched. */
 int sgn_cmdline_insert(char *cmdline, size_t cap, const char *extra);
-
-/* Removes a directory tree. Used only to take back a staging directory this
- * tool created moments earlier, so that a failed run leaves no half-written
- * prepared folder on p2; it refuses to descend more than a handful of levels
- * and never follows a symlink out of the tree. */
-int sgn_rm_rf(const char *path);
 
 /* The last component of a path, or the whole string when there is none. */
 const char *sgn_base_name(const char *p);

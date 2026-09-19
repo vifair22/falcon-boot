@@ -17,7 +17,7 @@ MKSTICK_SRCS := $(CLI_COMMON) $(addprefix $(CLI)/mkstick/,main.c cleanup.c \
 MKSTICK_CORE := $(CORE_PART) $(CORE_FS) $(CORE_LUKS) $(CORE_CRYPTO)
 
 SIGN_SRCS := $(addprefix $(CLI)/sign/,main.c util.c isoprobe.c manifestio.c \
-	payload.c wimext.c prepcore.c prepare.c uki.c)
+	payload.c uki.c)
 
 SIGN_CORE := $(CORE_MANIFEST) $(CORE_MANIFEST_WRITE) $(CORE)/media/family.c \
 	$(CORE)/media/bootcfg.c $(CORE)/media/hookcmd.c $(CORE)/media/cpio.c \
@@ -62,24 +62,22 @@ test-isoview:
 # ---- tests ----
 #
 # The bless tool's logic, split out of the code that spawns helpers and loop
-# mounts: the ISO view, payload recognition, the WIM header reader, the
-# preparation decisions and the UKI builder. util.c comes along because isoprobe calls into it,
-# not as a unit under test; its subprocess runners are exercised by running
+# mounts: the ISO view, payload recognition and the UKI builder. util.c
+# comes along because isoprobe calls into it, not as a unit under test; its subprocess runners are exercised by running
 # the tool.
 #
 # payload.c is compiled in and deliberately left out of the coverage report:
 # about 150 of its 611 lines are pure logic with tests on them, and the rest
 # is loop-mounting a FAT volume out of an .img and shelling out to sbsign.
 # Reported whole it comes to 23%, which says nothing true about either half.
-# The repo's answer to that shape is a split (blesscore.c beside bless.c,
-# prepcore.c beside prepare.c), and until payload.c gets one this is a known
+# The repo's answer to that shape is a split (blesscore.c beside bless.c),
+# and until payload.c gets one this is a known
 # compromise rather than an oversight.
 
 CLI_TESTS := $(addprefix falcon-cli/tests/,main.c isoprobe_test.c \
-	payload_test.c wimext_test.c prepcore_test.c uki_test.c util_test.c)
+	payload_test.c uki_test.c util_test.c)
 
-CLI_UUT := $(addprefix $(CLI)/sign/,isoprobe.c payload.c wimext.c prepcore.c \
-	uki.c util.c) $(CORE)/media/family.c $(CORE)/media/bootcfg.c \
+CLI_UUT := $(addprefix $(CLI)/sign/,isoprobe.c payload.c uki.c util.c) $(CORE)/media/family.c $(CORE)/media/bootcfg.c \
 	$(CORE_MANIFEST) $(CORE_MANIFEST_WRITE) \
 	$(CORE_PART) $(CORE_PE) $(CORE_FS) \
 	$(CORE)/crypto/sha256.c $(CORE)/crypto/crypto.c

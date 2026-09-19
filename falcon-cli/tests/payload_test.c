@@ -163,9 +163,9 @@ static void test_payload_refusal_allows_only_self_contained(void **state)
     }
 
     /* Windows is refused for its own reason and says so: its chain is
-     * Microsoft-signed the whole way down, and what it wants from this tool
-     * is preparation. */
-    assert_non_null(strstr(sgn_payload_refusal(FAMILY_WINDOWS), "prepare"));
+     * Microsoft-signed the whole way down, and it boots as it is. */
+    assert_non_null(strstr(sgn_payload_refusal(FAMILY_WINDOWS),
+                           "boots as it is"));
 }
 
 /* ------------------------------------------------------------ the cert */

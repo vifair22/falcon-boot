@@ -39,8 +39,6 @@ int run_cpio_tests(void);
 int run_family_tests(void);
 int run_isoprobe_tests(void);
 int run_payload_tests(void);
-int run_wimext_tests(void);
-int run_prepcore_tests(void);
 int run_uki_tests(void);
 int run_util_tests(void);
 int run_appliance_route_tests(void);

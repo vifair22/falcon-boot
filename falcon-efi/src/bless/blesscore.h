@@ -136,12 +136,12 @@ bless_state bless_cache_lookup(const bless_cache *c, const void *src,
 
 /* Which launch path a matched entry takes.
  *
- * Stated once, here, rather than re-derived from state and kind at each call
+ * Stated once, here, rather than re-derived from the state at each call
  * site, because getting it wrong is silent: chainloading media the user
  * blessed precisely to avoid chainloading. STALE is PLAIN, Section 8.1's
  * rule: the wrap was built from bytes the file no longer has. A record of
- * the prepared kind, left by an appliance from before the loader patched
- * Windows media itself (Section 6.4), is PLAIN too. */
+ * the retired prepared kind never gets this far: the manifest parser skips
+ * it, so its ISO has no hit at all. */
 typedef enum {
     BLESS_ACT_PLAIN   = 0,  /* boot the medium as it sits on p2 */
     BLESS_ACT_UKI     = 1   /* fresh blessed record: launch the signed wrap */

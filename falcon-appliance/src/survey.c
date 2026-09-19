@@ -123,7 +123,6 @@ static int classify(const char *abs, family_id *out)
 void survey_file(const char *abs, const char *rel, uint64_t size)
 {
     sgn_payload_shape shape = sgn_payload_shape_of(rel);
-    const manifest_record *rec = NULL;
     manifest_bless state = MANIFEST_BLESS_NONE;
     family_id fam = FAMILY_UNKNOWN;
     appl_job job;
@@ -131,11 +130,7 @@ void survey_file(const char *abs, const char *rel, uint64_t size)
     if (shape != SGN_PAYLOAD_NONE) {
         job = appl_route_payload(APPL_OURS_UNKNOWN);
     } else {
-        state = manifest_lookup(g_records, g_record_n, rel, size, &rec);
-        /* A prepared record an older appliance left names a patched boot.wim,
-         * not a wrap; it is no evidence this ISO was blessed. */
-        if (rec != NULL && rec->kind != MANIFEST_KIND_BLESSED)
-            state = MANIFEST_BLESS_NONE;
+        state = manifest_lookup(g_records, g_record_n, rel, size, NULL);
         if (classify(abs, &fam) != 0) {
             /* Not a refusal to proceed, and not a silent drop either: an
              * unreadable file named .iso is not offered, because the tool

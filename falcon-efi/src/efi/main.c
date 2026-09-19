@@ -397,7 +397,6 @@ static const CHAR16 *why_refused(const iso_target *t, BOOLEAN uki)
 {
     const manifest_record *r = t->hit.rec;
     BOOLEAN stale = (r != (const manifest_record *)0 &&
-                     r->kind == MANIFEST_KIND_BLESSED &&
                      t->hit.state == BLESS_STALE) ? TRUE : FALSE;
 
     if (g_mode == SB_MODE_ON_VALIDATION_DISABLED)

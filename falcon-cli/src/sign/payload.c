@@ -1038,8 +1038,8 @@ const char *sgn_payload_refusal(family_id fam)
         return NULL;
     case FAMILY_WINDOWS:
         return "Windows media: its boot chain is Microsoft-signed the whole "
-               "way down, and replacing that signature would break it. Use "
-               "`prepare' instead";
+               "way down, and replacing that signature would break it. It "
+               "boots as it is; nothing to bless";
     default:
         return "media whose boot runs a kernel this would leave unsigned, so "
                "signing the loader would report success and still be refused. "

@@ -12,7 +12,7 @@
  * chain is Microsoft-signed throughout, so there is no kernel to wrap and no
  * artifact for the appliance to leave on p2. The appliance used to PREPARE
  * such media (a patched boot.wim staged beside the ISO); that half is gone,
- * and a record an older appliance left for it is not counted as a bless.
+ * and the manifest parser skips a record an older appliance left for it.
  *
  * A bare EFI payload (.efi, .img) is the other thing the survey meets, and
  * what "already done" means for one is a different question with a different

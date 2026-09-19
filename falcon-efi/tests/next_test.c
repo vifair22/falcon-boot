@@ -1,7 +1,7 @@
 /* Tests for the next-boot marker half of falcon-efi/src/bless/blesscore.c
  * (docs/DESIGN.md Section 6.3.1), and for what a record of the retired
  * prepared kind means to the loader now that it patches Windows media itself
- * (Section 6.4).
+ * (Section 6.4): the manifest parser skips it, so its ISO boots plain.
  *
  * The marker is NVRAM, writable by anything with boot services on that
  * machine and by something that has never seen this stick. It is decoded,
@@ -70,7 +70,7 @@ static void widen(uint16_t *dst, size_t cap, const char *src)
 /* ------------------------------------------------- a retired prepared record */
 
 /* It boots as if it were not there, with no label: the loader patches the
- * ISO itself as it serves it. */
+ * ISO itself as it serves it. The blessed record beside it is unaffected. */
 static void test_prepared_record_is_plain(void **state)
 {
     uint16_t wide[512];
@@ -78,11 +78,18 @@ static void test_prepared_record_is_plain(void **state)
 
     (void)state;
     widen(wide, sizeof(wide) / sizeof(wide[0]), WIN11_PATH);
-    (void)bless_cache_lookup(&g_cache, g_vol, wide, WIN11_SIZE, &hit);
+    assert_int_equal(bless_cache_lookup(&g_cache, g_vol, wide, WIN11_SIZE,
+                                        &hit), BLESS_NONE);
     assert_int_equal(bless_hit_action(&hit), BLESS_ACT_PLAIN);
     assert_null(bless_suffix(&hit));
     assert_null(bless_suffix(NULL));
     assert_int_equal(bless_hit_action(NULL), BLESS_ACT_PLAIN);
+
+    widen(wide, sizeof(wide) / sizeof(wide[0]), "Linux/arch.iso");
+    assert_int_equal(bless_cache_lookup(&g_cache, g_vol, wide, 1538670592u,
+                                        &hit), BLESS_FRESH);
+    assert_int_equal(bless_hit_action(&hit), BLESS_ACT_UKI);
+    assert_non_null(bless_suffix(&hit));
 }
 
 /* ------------------------------------------------------- the next-boot value */

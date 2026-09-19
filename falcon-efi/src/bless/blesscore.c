@@ -99,9 +99,7 @@ bless_state bless_cache_lookup(const bless_cache *c, const void *src,
 
 /* ---- what a hit means ---- */
 
-/* The record behind a hit, or NULL when there is none. Every rule below reads
- * the kind through this, so "no record" and "a record of a kind nobody knows"
- * cannot take different paths by accident. */
+/* The record behind a hit, or NULL when there is none. */
 static const manifest_record *hit_rec(const bless_hit *h)
 {
     if (h == (const bless_hit *)0 || h->state == BLESS_NONE)
@@ -113,11 +111,7 @@ bless_action bless_hit_action(const bless_hit *h)
 {
     const manifest_record *r = hit_rec(h);
 
-    /* A prepared record is one an older appliance wrote for Windows media,
-     * which the loader now patches itself as it boots it (DESIGN 6.4): it
-     * boots as if the record were not there. */
-    if (h == (const bless_hit *)0 || r == (const manifest_record *)0 ||
-        h->state != BLESS_FRESH || r->kind != MANIFEST_KIND_BLESSED)
+    if (r == (const manifest_record *)0 || h->state != BLESS_FRESH)
         return BLESS_ACT_PLAIN;
     return BLESS_ACT_UKI;
 }
@@ -130,7 +124,7 @@ const uint16_t *bless_suffix(const bless_hit *h)
     static const uint16_t blessed_stale[] = u"  [blessed, stale]";
     const manifest_record *r = hit_rec(h);
 
-    if (r == (const manifest_record *)0 || r->kind != MANIFEST_KIND_BLESSED)
+    if (r == (const manifest_record *)0)
         return (const uint16_t *)0;
     return (h->state == BLESS_FRESH) ? blessed : blessed_stale;
 }

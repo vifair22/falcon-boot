@@ -1,4 +1,4 @@
-/* Manifest file I/O shared by the bless and prepare paths. See manifestio.h. */
+/* Manifest file I/O for the bless path. See manifestio.h. */
 
 #include <sign/sign.h>
 #include <sign/manifestio.h>
@@ -34,7 +34,7 @@ int sgn_manifest_load(const char *path, manifest_record *recs, size_t cap,
     }
     *n = 0;
 
-    /* An absent manifest is the first bless or prepare on this stick, not an
+    /* An absent manifest is the first bless on this stick, not an
      * error; a corrupt one degrades to the records that did parse, which is
      * the same rule the loader follows (DESIGN Section 8.1). */
     if (!sgn_file_exists(path))

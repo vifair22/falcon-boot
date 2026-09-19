@@ -4,9 +4,8 @@
  * The ISO view (falcon-cli/src/sign/isoprobe.c): the union of the ISO9660 and
  * UDF listings and the case folding over both, built from listing text, plus
  * one real image for the plumbing. Payload recognition and the PE certificate
- * table (payload.c), the WIM header reader (wimext.c), the preparation
- * decisions (prepcore.c), the UKI builder (uki.c) and the initrd and
- * cmdline helpers of util.c.
+ * table (payload.c), the UKI builder (uki.c) and the initrd and cmdline
+ * helpers of util.c.
  */
 
 #include "tests.h"
@@ -19,8 +18,6 @@ int main(void)
 
     failed += run_isoprobe_tests();
     failed += run_payload_tests();
-    failed += run_wimext_tests();
-    failed += run_prepcore_tests();
     failed += run_uki_tests();
     failed += run_util_tests();
 

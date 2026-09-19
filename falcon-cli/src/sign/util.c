@@ -93,14 +93,13 @@ void sgn_log(sgn_level lvl, const char *fmt, ...)
 
 /* ------------------------------------------------------------ exec */
 
-/* Common half of the runners: fork, point the child's stdout at out_fd and
- * its stdin at in_fd (either may be -1 to leave that descriptor alone), exec,
- * and wait.
+/* Common half of the runners: fork, point the child's stdout at out_fd
+ * (-1 to leave it alone), exec, and wait.
  *
  * execvp rather than a shell: the whole point is that no argument is ever
  * parsed by anything, so a path with a space, a quote or a semicolon in it
  * is just a path. */
-static int run_common_io(char *const argv[], int out_fd, int in_fd)
+static int run_common_io(char *const argv[], int out_fd)
 {
     pid_t pid;
     int status = 0;
@@ -122,12 +121,6 @@ static int run_common_io(char *const argv[], int out_fd, int in_fd)
                 _exit(127);
             if (out_fd != STDOUT_FILENO)
                 (void)close(out_fd);
-        }
-        if (in_fd >= 0) {
-            if (dup2(in_fd, STDIN_FILENO) < 0)
-                _exit(127);
-            if (in_fd != STDIN_FILENO)
-                (void)close(in_fd);
         }
         execvp(argv[0], argv);
         (void)fprintf(stderr, "falcon-boot-sign: exec %s: %s\n", argv[0],
@@ -163,31 +156,8 @@ int sgn_run(char *const argv[])
         sgn_set_error_errno(SGN_ERR_IO, "open /dev/null");
         return SGN_ERR_IO;
     }
-    rc = run_common_io(argv, devnull, -1);
+    rc = run_common_io(argv, devnull);
     (void)close(devnull);
-    return rc;
-}
-
-int sgn_run_stdin(char *const argv[], const char *path)
-{
-    int devnull;
-    int in_fd;
-    int rc;
-
-    in_fd = open(path, O_RDONLY | O_CLOEXEC);
-    if (in_fd < 0) {
-        sgn_set_error_errno(SGN_ERR_IO, "open '%s' for read", path);
-        return SGN_ERR_IO;
-    }
-    devnull = open("/dev/null", O_WRONLY | O_CLOEXEC);
-    if (devnull < 0) {
-        sgn_set_error_errno(SGN_ERR_IO, "open /dev/null");
-        (void)close(in_fd);
-        return SGN_ERR_IO;
-    }
-    rc = run_common_io(argv, devnull, in_fd);
-    (void)close(devnull);
-    (void)close(in_fd);
     return rc;
 }
 
@@ -200,7 +170,7 @@ int sgn_run_to_file(char *const argv[], const char *path)
         sgn_set_error_errno(SGN_ERR_IO, "open '%s' for write", path);
         return SGN_ERR_IO;
     }
-    rc = run_common_io(argv, fd, -1);
+    rc = run_common_io(argv, fd);
     if (close(fd) < 0 && rc == SGN_OK) {
         sgn_set_error_errno(SGN_ERR_IO, "close '%s'", path);
         rc = SGN_ERR_IO;
@@ -445,126 +415,6 @@ int sgn_append_file(const char *dst, const char *src)
         rc = SGN_ERR_IO;
     }
     return rc;
-}
-
-int sgn_pad_file(const char *path, uint64_t len)
-{
-    uint64_t have = 0;
-    int rc;
-    int fd;
-
-    rc = sgn_file_size(path, &have);
-    if (rc != SGN_OK)
-        return rc;
-    if (have == len)
-        return SGN_OK;
-    if (have > len) {
-        sgn_set_error(SGN_ERR_INTERNAL,
-                      "refusing to truncate '%s' from %llu to %llu bytes",
-                      path, (unsigned long long)have,
-                      (unsigned long long)len);
-        return SGN_ERR_INTERNAL;
-    }
-
-    fd = open(path, O_WRONLY | O_CLOEXEC);
-    if (fd < 0) {
-        sgn_set_error_errno(SGN_ERR_IO, "open '%s' to pad", path);
-        return SGN_ERR_IO;
-    }
-    /* ftruncate past the end, which POSIX defines as reading back zeroes.
-     * That leaves a sparse tail on a filesystem that supports one, so the
-     * padding costs no writes here; the loader serves the range and reads the
-     * zeroes exactly as if they had been written. */
-    if (ftruncate(fd, (off_t)len) < 0) {
-        sgn_set_error_errno(SGN_ERR_IO, "pad '%s' to %llu bytes", path,
-                            (unsigned long long)len);
-        (void)close(fd);
-        return SGN_ERR_IO;
-    }
-    if (fsync(fd) < 0) {
-        sgn_set_error_errno(SGN_ERR_IO, "fsync '%s'", path);
-        (void)close(fd);
-        return SGN_ERR_IO;
-    }
-    if (close(fd) < 0) {
-        sgn_set_error_errno(SGN_ERR_IO, "close '%s'", path);
-        return SGN_ERR_IO;
-    }
-    return SGN_OK;
-}
-
-/* Bounded on purpose. Every tree this removes is one the tool built two
- * function calls ago and is at most two levels deep; a depth limit turns a
- * symlink loop or a path this code did not create into a refusal rather than
- * an unbounded walk, and the caller is never asking it to clean up anything
- * it did not make. */
-#define RM_MAX_DEPTH 4
-
-static int rm_rf_depth(const char *path, int depth)
-{
-    DIR *d;
-    struct dirent *ent;
-    struct stat st;
-    int rc = SGN_OK;
-
-    if (lstat(path, &st) != 0) {
-        if (errno == ENOENT)
-            return SGN_OK;
-        sgn_set_error_errno(SGN_ERR_IO, "lstat '%s'", path);
-        return SGN_ERR_IO;
-    }
-    if (!S_ISDIR(st.st_mode)) {
-        if (unlink(path) != 0 && errno != ENOENT) {
-            sgn_set_error_errno(SGN_ERR_IO, "unlink '%s'", path);
-            return SGN_ERR_IO;
-        }
-        return SGN_OK;
-    }
-    if (depth >= RM_MAX_DEPTH) {
-        sgn_set_error(SGN_ERR_IO,
-                      "'%s' is deeper than this cleanup will descend", path);
-        return SGN_ERR_IO;
-    }
-
-    d = opendir(path);
-    if (d == NULL) {
-        sgn_set_error_errno(SGN_ERR_IO, "opendir '%s'", path);
-        return SGN_ERR_IO;
-    }
-    while ((ent = readdir(d)) != NULL) {
-        char child[PATH_MAX];
-
-        if (strcmp(ent->d_name, ".") == 0 || strcmp(ent->d_name, "..") == 0)
-            continue;
-        if (snprintf(child, sizeof(child), "%s/%s", path, ent->d_name) >=
-            (int)sizeof(child)) {
-            sgn_set_error(SGN_ERR_NOSPACE, "path too long under '%s'", path);
-            rc = SGN_ERR_NOSPACE;
-            break;
-        }
-        rc = rm_rf_depth(child, depth + 1);
-        if (rc != SGN_OK)
-            break;
-    }
-    (void)closedir(d);
-    if (rc != SGN_OK)
-        return rc;
-
-    if (rmdir(path) != 0 && errno != ENOENT) {
-        sgn_set_error_errno(SGN_ERR_IO, "rmdir '%s'", path);
-        return SGN_ERR_IO;
-    }
-    return SGN_OK;
-}
-
-int sgn_rm_rf(const char *path)
-{
-    if (path == NULL || path[0] == '\0' || strcmp(path, "/") == 0) {
-        sgn_set_error(SGN_ERR_INTERNAL, "sgn_rm_rf: refusing '%s'",
-                      (path != NULL) ? path : "(null)");
-        return SGN_ERR_INTERNAL;
-    }
-    return rm_rf_depth(path, 0);
 }
 
 /* ------------------------------------------------------------ paths */

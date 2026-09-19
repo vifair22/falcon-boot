@@ -2,11 +2,9 @@
  *
  * The one bless that WRITES TO THE USER'S FILE, and the reason is mechanical
  * rather than a change of policy. A bare payload boots as itself, so the image
- * the platform verifies IS the file on p2; there is no wrap to build and no
- * byte map to stage beside it. Signing a PE appends a certificate, so the
- * payload grows, and no size-preserving splice exists to hide behind the way
- * Windows preparation has one. The tool therefore says what it is about to do,
- * names the file, and does it.
+ * the platform verifies IS the file on p2; there is no wrap to build beside
+ * it. Signing a PE appends a certificate, so the payload grows. The tool
+ * therefore says what it is about to do, names the file, and does it.
  *
  * Two shapes, decided by the extension:
  *
@@ -80,14 +78,13 @@ typedef struct {
  * original payload exactly as it was.
  *
  * NO MANIFEST RECORD is written, for either shape. A record exists to point
- * the loader at a SECOND artifact (the signed wrap of a blessed ISO, the byte
- * map of a prepared one) and to say whether that artifact still matches the
- * file beside it. A payload has no second artifact: the file is the artifact,
- * the loader boots it whether or not anything names it, and the one fact a
- * record could carry - that it is signed - the loader already reads out of the
- * file's own PE headers when it labels the entry. A record would be a second,
- * editable, and therefore disagreeable source of truth about a fact the
- * artifact carries itself.
+ * the loader at a SECOND artifact (the signed wrap of a blessed ISO) and to
+ * say whether that artifact still matches the file beside it. A payload has
+ * no second artifact: the file is the artifact, the loader boots it whether
+ * or not anything names it, and the one fact a record could carry - that it
+ * is signed - the loader already reads out of the file's own PE headers when
+ * it labels the entry. A record would be a second, editable, and therefore
+ * disagreeable source of truth about a fact the artifact carries itself.
  *
  * A refusal to write anything is SGN_ERR_*; SGN_OK covers both "signed it" and
  * "it was already signed with this key", which are distinguished on stdout. */

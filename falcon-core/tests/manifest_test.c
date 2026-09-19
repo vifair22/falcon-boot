@@ -30,13 +30,11 @@
  *                blessed ISO that will not boot blessed or, worse, one ISO
  *                booting another's signed cmdline.
  *
- * The kind= extension adds a fifth, which is really the first one again from
- * a different direction: per-kind validity. A prepared record has no uki= and
- * must still become a record (the old one-rule-for-everyone parser dropped it
- * without a word), a blessed one must still be refused without it, an absent
- * kind= must still mean blessed so every manifest written before the key
- * existed keeps parsing, and a splice list that is too long, too short of
- * fields, or attached to the wrong kind must cost the record.
+ * A fifth is the first again from a different direction: the retired
+ * prepared kind. Sticks an older appliance wrote still carry kind=prepared
+ * records with splice= lines and no uki=. Each must be skipped whole, and
+ * must cost nothing to the blessed records around it, or a stick that still
+ * holds one stops booting its blessed ISOs blessed.
  */
 
 #include "tests.h"
@@ -191,96 +189,77 @@ static void test_manifest_keys_before_first_iso(void **state)
     assert_string_equal(r[0].uki, "a.uki");
 }
 
-/* ------------------------------------------------------------- kinds */
+/* ------------------------------------------------- the retired kind */
 
-/* The shape a prepared Windows ISO gets, per DESIGN Sections 6.3 and 8.1:
- * no uki= anywhere, a hash that doubles as the sidecar folder's name, and a
- * byte map. Under the pre-kind parser this block produced nothing at all. */
-static const char g_prepared[] =
+/* A prepared record as an appliance from before DESIGN Section 6.4 wrote it,
+ * between two blessed ones: no uki= anywhere, a hash that named the sidecar
+ * folder, and a byte map. */
+static const char g_with_prepared[] =
+    "iso=Linux/arch.iso\n"
+    "size=1538670592\n"
+    "uki=arch.uki\n"
+    "family=arch\n"
+    "\n"
     "iso=Windows/Win11_25H2_x64.iso\n"
     "kind=prepared\n"
     "size=7218589696\n"
     "sha256=3333333333333333333333333333333333333333333333333333333333333333\n"
     "splice=22095872:593121462:boot.wim\n"
-    "family=windows\n";
+    "splice=0:2048:catalog.bin\n"
+    "family=windows\n"
+    "\n"
+    "iso=Linux/fedora.iso\n"
+    "size=2400000000\n"
+    "uki=fedora.uki\n"
+    "family=fedora\n";
 
-static void test_manifest_prepared_record(void **state)
+static void test_manifest_prepared_record_is_skipped(void **state)
 {
     manifest_record r[CAP];
+    size_t n = 99;
 
     (void)state;
-    assert_int_equal(parse_ok(g_prepared, r, CAP), 1);
-    assert_int_equal(r[0].kind, MANIFEST_KIND_PREPARED);
-    assert_string_equal(r[0].iso, "Windows/Win11_25H2_x64.iso");
-    assert_true(r[0].size == 7218589696u);
-    assert_int_equal(r[0].has_sha256, 1);
-    assert_string_equal(r[0].family, "windows");
-    /* No uki, and that is the whole point: the record exists anyway. */
-    assert_string_equal(r[0].uki, "");
-    assert_int_equal(r[0].splice_n, 1);
-    assert_true(r[0].splice[0].iso_off == 22095872u);
-    assert_true(r[0].splice[0].len == 593121462u);
-    assert_string_equal(r[0].splice[0].name, "boot.wim");
+    /* Parses without failing, returns the two blessed records and not the
+     * prepared one, and the lookup finds nothing for the Windows ISO. */
+    assert_int_equal(manifest_parse(g_with_prepared, strlen(g_with_prepared),
+                                    r, CAP, &n), MANIFEST_OK);
+    assert_int_equal(n, 2);
+    assert_string_equal(r[0].iso, "Linux/arch.iso");
+    assert_string_equal(r[0].uki, "arch.uki");
+    assert_string_equal(r[1].iso, "Linux/fedora.iso");
+    assert_string_equal(r[1].uki, "fedora.uki");
+    assert_int_equal(manifest_lookup(r, n, "Windows/Win11_25H2_x64.iso",
+                                     7218589696u, NULL), MANIFEST_BLESS_NONE);
+    assert_int_equal(manifest_lookup(r, n, "Linux/fedora.iso", 2400000000u,
+                                     NULL), MANIFEST_BLESS_FRESH);
+
+    /* Retired whatever the key order and case, and even when it carries a
+     * uki= a hand edit left in it. */
+    assert_int_equal(parse_ok("iso=a.iso\nsize=1\nuki=a.uki\n"
+                              "KIND=Prepared\n", r, CAP), 0);
+    assert_int_equal(parse_ok("iso=a.iso\nsplice=0:4:x.bin\nsize=1\n"
+                              "uki=a.uki\n", r, CAP), 0);
+    /* A malformed splice= is retired the same way, not a parse failure. */
+    assert_int_equal(parse_ok("iso=a.iso\nkind=prepared\nsize=1\n"
+                              "splice=nonsense\n"
+                              "iso=b.iso\nsize=2\nuki=b.uki\n", r, CAP), 1);
+    assert_string_equal(r[0].iso, "b.iso");
 }
 
-static void test_manifest_absent_kind_is_blessed(void **state)
+static void test_manifest_kind_blessed_and_unknown(void **state)
 {
     manifest_record r[CAP];
 
     (void)state;
-    /* Back-compatibility, stated as a test because it is the reason the key
-     * is optional: every manifest written before kind= existed must parse to
-     * exactly what it parsed to then. */
+    /* Absent means blessed, and so does spelling it out, in any case. */
     assert_int_equal(parse_ok(g_two, r, CAP), 2);
-    assert_int_equal(r[0].kind, MANIFEST_KIND_BLESSED);
-    assert_int_equal(r[1].kind, MANIFEST_KIND_BLESSED);
-    assert_int_equal(r[0].splice_n, 0);
-
-    /* Spelled out, and spelled out in the wrong case, mean the same thing.
-     * Hand-edited files come from three operating systems. */
     assert_int_equal(parse_ok("iso=a.iso\nkind=blessed\nsize=1\nuki=a.uki\n",
                               r, CAP), 1);
-    assert_int_equal(r[0].kind, MANIFEST_KIND_BLESSED);
-    assert_int_equal(parse_ok("iso=a.iso\nKIND=Prepared\nsize=1\n"
-                              "sha256=" SHA_A "\n", r, CAP), 1);
-    assert_int_equal(r[0].kind, MANIFEST_KIND_PREPARED);
-}
-
-static void test_manifest_kind_validity_is_per_kind(void **state)
-{
-    manifest_record r[CAP];
-
-    (void)state;
-    /* A prepared record needs no uki and must not be dropped for lacking
-     * one; a blessed record still is. */
-    assert_int_equal(parse_ok("iso=a.iso\nkind=prepared\nsize=1\n"
-                              "sha256=" SHA_A "\n", r, CAP), 1);
+    assert_int_equal(parse_ok("iso=a.iso\nKind=BLESSED\nsize=1\nuki=a.uki\n",
+                              r, CAP), 1);
+    /* Blessed still needs its uki. */
     assert_int_equal(parse_ok("iso=a.iso\nkind=blessed\nsize=1\n"
                               "sha256=" SHA_A "\n", r, CAP), 0);
-
-    /* sha256= names the prepared folder, so a prepared record without a
-     * usable one has nowhere to resolve its splices and is dropped. A
-     * blessed record with the same mangled hash survives, because nothing
-     * reads it. */
-    assert_int_equal(parse_ok("iso=a.iso\nkind=prepared\nsize=1\n", r, CAP), 0);
-    assert_int_equal(parse_ok("iso=a.iso\nkind=prepared\nsize=1\n"
-                              "sha256=zzz\n", r, CAP), 0);
-    assert_int_equal(parse_ok("iso=a.iso\nsize=1\nuki=a.uki\nsha256=zzz\n",
-                              r, CAP), 1);
-
-    /* Both kinds still need the keys neither can do without. */
-    assert_int_equal(parse_ok("iso=a.iso\nkind=prepared\n"
-                              "sha256=" SHA_A "\n", r, CAP), 0);
-    assert_int_equal(parse_ok("iso=\nkind=prepared\nsize=1\n"
-                              "sha256=" SHA_A "\n", r, CAP), 0);
-
-    /* A splice on a blessed record is a contradiction: there is no byte map
-     * to apply it to, so it is malformed rather than ignored. The key order
-     * must not matter, since kind= may arrive after the splice. */
-    assert_int_equal(parse_ok("iso=a.iso\nsize=1\nuki=a.uki\n"
-                              "splice=0:4:x.bin\n", r, CAP), 0);
-    assert_int_equal(parse_ok("iso=a.iso\nsplice=0:4:x.bin\nsize=1\n"
-                              "kind=prepared\nsha256=" SHA_A "\n", r, CAP), 1);
 
     /* A kind nobody knows is a record nobody should act on. */
     assert_int_equal(parse_ok("iso=a.iso\nkind=frobnicated\nsize=1\n"
@@ -290,109 +269,6 @@ static void test_manifest_kind_validity_is_per_kind(void **state)
     /* "blessedish" must not match on a prefix. */
     assert_int_equal(parse_ok("iso=a.iso\nkind=blessedish\nsize=1\n"
                               "uki=a.uki\n", r, CAP), 0);
-}
-
-static void test_manifest_splices(void **state)
-{
-    char text[4096];
-    manifest_record r[CAP];
-    size_t w;
-    size_t i;
-    size_t n;
-
-    (void)state;
-    /* Several splices, in file order, which is the order a byte map has to
-     * be applied in. */
-    assert_int_equal(parse_ok("iso=a.iso\nkind=prepared\nsize=99\n"
-                              "sha256=" SHA_A "\n"
-                              "splice=0:1:first.bin\n"
-                              "splice=4096:2048:second.bin\n", r, CAP), 1);
-    assert_int_equal(r[0].splice_n, 2);
-    assert_true(r[0].splice[0].len == 1u);
-    assert_string_equal(r[0].splice[1].name, "second.bin");
-    assert_true(r[0].splice[1].iso_off == 4096u);
-
-    /* Exactly at the cap, then one past it. The record is dropped whole at
-     * one past: an ISO served with part of its byte map applied is worse
-     * than one served with none of it. */
-    w = (size_t)snprintf(text, sizeof(text),
-                         "iso=a.iso\nkind=prepared\nsize=99\nsha256=" SHA_A
-                         "\n");
-    for (i = 0; i < MANIFEST_SPLICE_MAX; i++)
-        w += (size_t)snprintf(text + w, sizeof(text) - w,
-                              "splice=%u:16:p%u.bin\n", (unsigned)(i * 16u),
-                              (unsigned)i);
-    assert_int_equal(parse_ok(text, r, CAP), 1);
-    assert_int_equal(r[0].splice_n, MANIFEST_SPLICE_MAX);
-    assert_string_equal(r[0].splice[MANIFEST_SPLICE_MAX - 1u].name, "p7.bin");
-
-    (void)snprintf(text + w, sizeof(text) - w, "splice=999:16:over.bin\n");
-    assert_int_equal(parse_ok(text, r, CAP), 0);
-
-    /* The longest name the field holds, and one byte more. */
-    w = (size_t)snprintf(text, sizeof(text),
-                         "iso=a.iso\nkind=prepared\nsize=99\nsha256=" SHA_A
-                         "\nsplice=0:16:");
-    for (i = 0; i < MANIFEST_SPLICE_NAME_MAX - 1u; i++)
-        text[w + i] = 'n';
-    text[w + i] = '\n';
-    assert_int_equal(manifest_parse(text, w + i + 1u, r, CAP, &n),
-                     MANIFEST_OK);
-    assert_int_equal(n, 1);
-    assert_int_equal(strlen(r[0].splice[0].name), MANIFEST_SPLICE_NAME_MAX - 1u);
-
-    text[w + MANIFEST_SPLICE_NAME_MAX - 1u] = 'n';
-    text[w + MANIFEST_SPLICE_NAME_MAX] = '\n';
-    assert_int_equal(manifest_parse(text, w + MANIFEST_SPLICE_NAME_MAX + 1u,
-                                    r, CAP, &n), MANIFEST_OK);
-    assert_int_equal(n, 0);
-}
-
-static void test_manifest_bad_splices_skipped(void **state)
-{
-    static const char *const bad[] = {
-        "splice=22095872\n",                  /* no colon at all */
-        "splice=22095872:593121462\n",        /* only one colon */
-        "splice=\n",                          /* nothing whatever */
-        "splice=0:16:\n",                     /* empty name */
-        "splice=x:16:a.bin\n",                /* offset is not a number */
-        "splice=0:sixteen:a.bin\n",           /* length is not a number */
-        "splice=0x10:16:a.bin\n",             /* nor is hex */
-        "splice=-1:16:a.bin\n",
-        "splice=:16:a.bin\n",                 /* empty offset */
-        "splice=0::a.bin\n",                  /* empty length */
-        "splice=0:0:a.bin\n",                 /* nothing to serve */
-        /* 2^63, one past what either number may hold. */
-        "splice=9223372036854775808:16:a.bin\n",
-        "splice=0:9223372036854775808:a.bin\n",
-        "splice=99999999999999999999999999:16:a.bin\n",
-        /* In range separately, past it added together: the end offset is
-         * what a consumer computes, so the pair is bounded here. */
-        "splice=9223372036854775807:1:a.bin\n",
-        "splice=9223372036854775800:8:a.bin\n",
-        /* A name the loader could not compare as bytes. */
-        "splice=0:16:caf\xC3\xA9.bin\n",
-    };
-    char text[512];
-    manifest_record r[CAP];
-    size_t i;
-
-    (void)state;
-    for (i = 0; i < sizeof(bad) / sizeof(bad[0]); i++) {
-        (void)snprintf(text, sizeof(text),
-                       "iso=a.iso\nkind=prepared\nsize=99\nsha256=" SHA_A
-                       "\n%s", bad[i]);
-        assert_int_equal(parse_ok(text, r, CAP), 0);
-    }
-
-    /* The boundary that is still legal: the end offset lands exactly on
-     * MANIFEST_SIZE_MAX. */
-    assert_int_equal(parse_ok("iso=a.iso\nkind=prepared\nsize=99\n"
-                              "sha256=" SHA_A "\n"
-                              "splice=9223372036854775799:8:a.bin\n",
-                              r, CAP), 1);
-    assert_true(r[0].splice[0].iso_off + r[0].splice[0].len
-                == MANIFEST_SIZE_MAX);
 }
 
 /* ------------------------------------------------------- bad records */
@@ -863,150 +739,6 @@ static void test_manifest_writer_rejections(void **state)
     assert_true(r.size == 0);
 }
 
-/* The prepared kind through the writer and back. Two records of different
- * kinds in one file, because that is what a stick with both Linux and Windows
- * media holds and the kinds must not contaminate each other across the
- * render. */
-static void test_manifest_prepared_round_trip(void **state)
-{
-    manifest_record in[3];
-    manifest_record out[CAP];
-    char text[4096];
-    size_t used = 0;
-    size_t n = 0;
-
-    (void)state;
-    fill(&in[0], "Linux/arch.iso", 1538670592u, "arch.uki", "arch", SHA_A);
-    fill(&in[1], "Windows/Win11.iso", 7218589696u, "", "windows", SHA_B);
-    in[1].kind = MANIFEST_KIND_PREPARED;
-    in[1].splice_n = 2;
-    in[1].splice[0].iso_off = 22095872u;
-    in[1].splice[0].len = 593121462u;
-    (void)snprintf(in[1].splice[0].name, sizeof(in[1].splice[0].name),
-                   "%s", "boot.wim");
-    in[1].splice[1].iso_off = 0;
-    in[1].splice[1].len = 2048u;
-    (void)snprintf(in[1].splice[1].name, sizeof(in[1].splice[1].name),
-                   "%s", "catalog.bin");
-    /* A prepared record with no byte map at all is degenerate but
-     * representable, and the round trip must not invent one. */
-    fill(&in[2], "Windows/Server.iso", 5u, "", "", SHA_A);
-    in[2].kind = MANIFEST_KIND_PREPARED;
-
-    assert_int_equal(manifest_render(in, 3, text, sizeof(text), &used),
-                     MANIFEST_OK);
-    assert_int_equal(manifest_parse(text, used, out, CAP, &n), MANIFEST_OK);
-    assert_int_equal(n, 3);
-
-    assert_int_equal(out[0].kind, MANIFEST_KIND_BLESSED);
-    assert_string_equal(out[0].uki, "arch.uki");
-    assert_int_equal(out[0].splice_n, 0);
-
-    assert_int_equal(out[1].kind, MANIFEST_KIND_PREPARED);
-    assert_string_equal(out[1].iso, "Windows/Win11.iso");
-    assert_string_equal(out[1].uki, "");
-    assert_string_equal(out[1].sha256, SHA_B);
-    assert_true(out[1].size == 7218589696u);
-    assert_int_equal(out[1].splice_n, 2);
-    assert_true(out[1].splice[0].iso_off == 22095872u);
-    assert_true(out[1].splice[0].len == 593121462u);
-    assert_string_equal(out[1].splice[0].name, "boot.wim");
-    assert_true(out[1].splice[1].iso_off == 0);
-    assert_true(out[1].splice[1].len == 2048u);
-    assert_string_equal(out[1].splice[1].name, "catalog.bin");
-
-    assert_int_equal(out[2].kind, MANIFEST_KIND_PREPARED);
-    assert_int_equal(out[2].splice_n, 0);
-    assert_string_equal(out[2].family, "");
-
-    /* A file with no prepared record in it must come out in the shape an
-     * older reader already understands: no kind= key anywhere. */
-    assert_int_equal(manifest_render(in, 1, text, sizeof(text), &used),
-                     MANIFEST_OK);
-    assert_true(used < sizeof(text));
-    text[used] = '\0';
-    assert_null(strstr(text, "kind="));
-}
-
-static void test_manifest_prepared_record_valid(void **state)
-{
-    manifest_record r;
-
-    (void)state;
-    fill(&r, "w.iso", 1, "", "windows", SHA_A);
-    r.kind = MANIFEST_KIND_PREPARED;
-    assert_true(manifest_record_valid(&r));
-
-    /* A prepared record's hash names its folder, so it is required here in a
-     * way it never is on a blessed one. */
-    r.has_sha256 = 0;
-    assert_false(manifest_record_valid(&r));
-
-    /* A uki on a prepared record round-trips and is tolerated; a splice on a
-     * blessed one has nothing to apply to and is not. */
-    fill(&r, "w.iso", 1, "leftover.uki", "windows", SHA_A);
-    r.kind = MANIFEST_KIND_PREPARED;
-    assert_true(manifest_record_valid(&r));
-
-    fill(&r, "a.iso", 1, "a.uki", "arch", SHA_A);
-    r.splice_n = 1;
-    r.splice[0].len = 4;
-    (void)snprintf(r.splice[0].name, sizeof(r.splice[0].name), "%s", "x.bin");
-    assert_false(manifest_record_valid(&r));
-
-    /* A kind the format does not define cannot be written, the same way it
-     * cannot be read. Nothing in the tool produces one; the writer is the
-     * last place a stray cast could be caught. */
-    fill(&r, "w.iso", 1, "", "windows", SHA_A);
-    r.kind = (manifest_kind)99;
-    assert_false(manifest_record_valid(&r));
-}
-
-static void test_manifest_splice_writer_rejections(void **state)
-{
-    manifest_record r;
-    char text[4096];
-    size_t used = 0;
-
-    (void)state;
-    /* Every shape the parser refuses, refused on the way out too, so a
-     * record that cannot be read back never reaches the stick. */
-    fill(&r, "w.iso", 1, "", "windows", SHA_A);
-    r.kind = MANIFEST_KIND_PREPARED;
-    r.splice_n = 1;
-    r.splice[0].iso_off = 0;
-    r.splice[0].len = 16;
-    (void)snprintf(r.splice[0].name, sizeof(r.splice[0].name), "%s", "x.bin");
-    assert_true(manifest_record_valid(&r));
-
-    r.splice_n = MANIFEST_SPLICE_MAX + 1u;
-    assert_false(manifest_record_valid(&r));
-    r.splice_n = 1;
-
-    r.splice[0].len = 0;
-    assert_false(manifest_record_valid(&r));
-    r.splice[0].len = 16;
-
-    r.splice[0].iso_off = MANIFEST_SIZE_MAX - 15u;
-    assert_false(manifest_record_valid(&r));
-    r.splice[0].iso_off = 0;
-
-    /* The two bytes the format itself cannot carry, in a splice name. */
-    (void)snprintf(r.splice[0].name, sizeof(r.splice[0].name), "%s", "x#.bin");
-    assert_false(manifest_record_valid(&r));
-    (void)snprintf(r.splice[0].name, sizeof(r.splice[0].name), "%s", "x\n.bin");
-    assert_false(manifest_record_valid(&r));
-    (void)snprintf(r.splice[0].name, sizeof(r.splice[0].name), "%s", "");
-    assert_false(manifest_record_valid(&r));
-    memset(r.splice[0].name, 'n', sizeof(r.splice[0].name));
-    assert_false(manifest_record_valid(&r));
-
-    /* And render refuses the whole file for it, as it does for every other
-     * unrepresentable record. */
-    assert_int_equal(manifest_render(&r, 1, text, sizeof(text), &used),
-                     MANIFEST_ERR_BAD_RECORD);
-}
-
 static void test_manifest_upsert_replaces_in_place(void **state)
 {
     manifest_record recs[CAP];
@@ -1113,11 +845,8 @@ int run_manifest_tests(void)
         cmocka_unit_test(test_manifest_whitespace_and_unknown_keys),
         cmocka_unit_test(test_manifest_no_trailing_newline),
         cmocka_unit_test(test_manifest_keys_before_first_iso),
-        cmocka_unit_test(test_manifest_prepared_record),
-        cmocka_unit_test(test_manifest_absent_kind_is_blessed),
-        cmocka_unit_test(test_manifest_kind_validity_is_per_kind),
-        cmocka_unit_test(test_manifest_splices),
-        cmocka_unit_test(test_manifest_bad_splices_skipped),
+        cmocka_unit_test(test_manifest_prepared_record_is_skipped),
+        cmocka_unit_test(test_manifest_kind_blessed_and_unknown),
         cmocka_unit_test(test_manifest_missing_keys_skipped),
         cmocka_unit_test(test_manifest_bad_size_skipped),
         cmocka_unit_test(test_manifest_non_ascii_path_skipped),
@@ -1135,9 +864,6 @@ int run_manifest_tests(void)
         cmocka_unit_test(test_manifest_render_empty_and_bounds),
         cmocka_unit_test(test_manifest_record_valid),
         cmocka_unit_test(test_manifest_writer_rejections),
-        cmocka_unit_test(test_manifest_prepared_round_trip),
-        cmocka_unit_test(test_manifest_prepared_record_valid),
-        cmocka_unit_test(test_manifest_splice_writer_rejections),
         cmocka_unit_test(test_manifest_upsert_replaces_in_place),
         cmocka_unit_test(test_manifest_upsert_bounds),
         cmocka_unit_test(test_manifest_rebless_cycle),

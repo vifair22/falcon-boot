@@ -2,8 +2,7 @@
  *
  * The manifest is the plain-ASCII index at p2:/falcon/blessed/manifest that
  * tells the loader which ISO on p2 the user has authorised to boot
- * differently. One block per ISO. Two kinds of record, distinguished by the
- * optional kind= key:
+ * differently. One block per ISO:
  *
  *   iso=Linux/archlinux-2026.01.01-x86_64.iso   # path relative to p2 root
  *   size=1538670592                             # byte size at bless time
@@ -11,20 +10,15 @@
  *   uki=archlinux-2026.01.01-x86_64.uki         # file under /falcon/blessed/
  *   family=arch                                 # registry id (Section 6.2)
  *
- *   iso=Windows/Win11_25H2_x64.iso
- *   kind=prepared                               # absent means blessed
- *   size=7218589696
- *   sha256=<64 lowercase hex>                   # also names the sidecar dir
- *   splice=22095872:593121462:boot.wim          # repeatable, see below
- *   family=windows
+ * Each record names a signed UKI wrap standing behind the ISO.
  *
- * A blessed record names a signed UKI wrap standing behind the ISO. A
- * prepared record names no wrap at all: the ISO is served with a byte map
- * applied (Section 6.3), each splice replacing a byte range of the virtual
- * ISO with the contents of a file staged under p2:/falcon/prepared/<sha256>/.
- * That folder is derived from the record's own sha256=, which is why a
- * prepared record must carry one and why there is no separate location key:
- * the link between an ISO and its artifacts is intrinsic (Section 6.3.1).
+ * A retired second kind still turns up on sticks an older appliance wrote:
+ * kind=prepared, with splice=<offset>:<length>:<file> lines and no uki=,
+ * naming a patched boot.wim staged under p2:/falcon/prepared/<sha256>/ for
+ * Windows media. The loader now patches that media itself as it boots it
+ * (Section 6.4), so such a block is skipped whole, as a malformed one is, and
+ * the records around it parse as usual. The next bless rewrites the file
+ * without it.
  *
  * Deliberately EFI-free and allocator-free, for the same reason the exFAT
  * driver and the family registry are: the reader runs in the loader against a
@@ -77,62 +71,22 @@ enum {
 #define MANIFEST_FAMILY_MAX  32u
 #define MANIFEST_SHA256_HEX  64u
 
-/* A splice's replacement file, resolved inside the record's prepared folder.
- * A bare file name, never a path: the folder is the whole namespace, and the
- * names in it are minted by the bless tool rather than by a user, so 63
- * characters is generous rather than tight. */
-#define MANIFEST_SPLICE_NAME_MAX 64u
-
-/* How many splices one prepared record may carry.
- *
- * Eight, and the number is a headroom argument rather than a measurement.
- * The MVP patch shape of Section 6.3 is size-preserving whole-file
- * substitution, so the expected count is exactly one: the patched boot.wim
- * over the original's extent. The fallback shape in the same section (delta
- * plus UDF surgery) rewrites a handful of descriptors instead, which is where
- * the rest of the headroom goes. The cap has to exist at all because the
- * record is fixed-size and parsed from attacker-editable exFAT; keeping it
- * small keeps the record near a kilobyte, which is what lets the loader hold
- * a few dozen of them in one static array. */
-#define MANIFEST_SPLICE_MAX 8u
-
 /* Largest size= a record may carry. INT64_MAX rather than UINT64_MAX: no
  * file is that large, every host API that will ever report this size returns
  * it in an off_t, and capping here means no caller has to think about what
  * happens when the value is converted to a signed type. */
 #define MANIFEST_SIZE_MAX ((uint64_t)0x7FFFFFFFFFFFFFFFu)
 
-/* What a record authorises. BLESSED is zero on purpose: a zeroed record is a
- * blessed one, which is the same rule the format states for an absent kind=
- * key, so no caller can disagree with the parser by forgetting to set it. */
-typedef enum {
-    MANIFEST_KIND_BLESSED  = 0,  /* boots the named UKI wrap */
-    MANIFEST_KIND_PREPARED = 1,  /* serves the ISO with the splices applied */
-} manifest_kind;
-
-/* One byte-range substitution in the virtual ISO's address space. Both
- * numbers are decimal in the file and bounded by MANIFEST_SIZE_MAX, and the
- * end offset (iso_off + len) is bounded by it too, so a consumer may add them
- * without checking for wrap. */
-typedef struct {
-    uint64_t iso_off;                        /* byte offset in the ISO */
-    uint64_t len;                            /* bytes replaced, never zero */
-    char     name[MANIFEST_SPLICE_NAME_MAX]; /* file in the prepared folder */
-} manifest_splice;
-
 /* One authorised ISO. Every string is NUL-terminated printable ASCII.
- * Fixed-size by design, splice list included: this struct is filled in the
- * loader from a buffer the exFAT driver handed over, where there is no
- * allocator to reach for and no partial record worth keeping. */
+ * Fixed-size by design: this struct is filled in the loader from a buffer
+ * the exFAT driver handed over, where there is no allocator to reach for and
+ * no partial record worth keeping. */
 typedef struct {
     char     iso[MANIFEST_PATH_MAX];         /* path relative to the p2 root */
     char     uki[MANIFEST_NAME_MAX];         /* file under /falcon/blessed/ */
     char     family[MANIFEST_FAMILY_MAX];    /* registry id, may be empty */
     char     sha256[MANIFEST_SHA256_HEX + 1u]; /* lowercase hex, or empty */
     uint64_t size;                           /* ISO size at bless time */
-    manifest_splice splice[MANIFEST_SPLICE_MAX];
-    manifest_kind kind;                      /* BLESSED when kind= is absent */
-    uint8_t  splice_n;                       /* splices in use, PREPARED only */
     uint8_t  has_sha256;                     /* 0 when the field was absent */
 } manifest_record;
 
@@ -162,37 +116,19 @@ typedef enum {
  *     ignored, since they belong to no block.
  *   - Blank lines and lines with no '=' are ignored.
  *
- * A record is skipped, not an error, when: it has no usable size=
- * (non-numeric, or above MANIFEST_SIZE_MAX); any value is too long for its
- * field; any value contains a byte outside printable ASCII; kind= names
- * something other than the two kinds; or it fails its own kind's rule below.
- * The printable-ASCII rule is why the loader can compare paths as bytes at
- * all, and it means an ISO whose name is not ASCII cannot be blessed: see
- * manifest_path_from_ucs2.
+ * A record is skipped, not an error, when: it has no iso=, no usable size=
+ * (non-numeric, or above MANIFEST_SIZE_MAX) or no uki=; any value is too
+ * long for its field; any value contains a byte outside printable ASCII; or
+ * kind= is present and says anything but "blessed". The printable-ASCII rule
+ * is why the loader can compare paths as bytes at all, and it means an ISO
+ * whose name is not ASCII cannot be blessed: see manifest_path_from_ucs2.
  *
- * Validity is per kind, because the two kinds name different artifacts and
- * one global rule could only be the intersection or the union of the two:
- *
- *   blessed    needs iso=, size= and uki=, and must carry no splice=. A
- *              splice on a blessed record is a contradiction (there is
- *              nothing to serve it over), so it drops the record rather than
- *              being ignored the way an unknown key is.
- *   prepared   needs iso=, size= and sha256=, and never needs uki=: there is
- *              no wrap. sha256= is required because it is what names the
- *              /falcon/prepared/<sha256>/ folder the splices resolve inside.
+ * A retired prepared record (kind=prepared, or any splice= line) is skipped
+ * whole in the same way, and never costs the records around it.
  *
  * A malformed sha256= is dropped on its own (has_sha256 stays 0) rather than
- * costing the record, because the loader does not read that field on a
- * blessed record and the bless tool recomputes the hash anyway. On a prepared
- * record the same drop then fails the kind's rule, which is the right answer
- * for a different reason: a prepared record without a usable hash cannot say
- * where its artifacts are.
- *
- * A splice= is malformed, and so drops the record, when it is not exactly
- * three colon-separated fields, when either number is not decimal or exceeds
- * MANIFEST_SIZE_MAX, when len is zero, when iso_off + len would exceed
- * MANIFEST_SIZE_MAX, when the name is empty or too long, or when the record
- * already holds MANIFEST_SPLICE_MAX of them. */
+ * costing the record, because the loader does not read that field and the
+ * bless tool recomputes the hash anyway. */
 int manifest_parse(const void *buf, size_t len,
                    manifest_record *out, size_t cap, size_t *count);
 
@@ -226,8 +162,7 @@ int manifest_path_from_ucs2(const uint16_t *src, char *dst, size_t cap);
 /* ---- writer half, manifest_write.c; not linked into the loader ---- */
 
 /* Can this record be written out and read back unchanged? Enforces the same
- * rules manifest_parse enforces, per kind and splice list included, plus the
- * two the format itself imposes: no '#' (it would become a comment) and no
+ * rules manifest_parse enforces, plus the two the format itself imposes: no '#' (it would become a comment) and no
  * newline (it would split the record). Nonzero when the record is
  * representable. */
 int manifest_record_valid(const manifest_record *r);
@@ -242,11 +177,6 @@ int manifest_upsert(manifest_record *recs, size_t *n, size_t cap,
 /* Renders records to ASCII text, ready to write to p2. *used receives the
  * byte count (no terminating NUL is written or counted; pass cap larger than
  * the expected output if you want to NUL-terminate it yourself).
- *
- * kind= is emitted only for a prepared record. That is the point of the key
- * being optional: a stick that carries no prepared media gets a file byte for
- * byte in the shape every earlier version of this tool wrote, which an
- * earlier loader still reads correctly.
  *
  * This is a rewrite from the parsed records, so any comment the previous
  * file carried beyond the header this emits is lost. Accepted deliberately:

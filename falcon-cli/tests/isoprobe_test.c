@@ -1,7 +1,7 @@
 /* Tests for the bless tool's ISO view (falcon-cli/src/sign/isoprobe.c).
  *
  * The view indexes an ISO with falcon-core's ISO9660 and UDF drivers and
- * answers the questions the bless and prepare flows ask: does this path
+ * answers the questions the bless flow asks: does this path
  * exist (for falcon-core/src/media/family.c), which member is the kernel,
  * how long is a member, and what are its bytes. The drivers themselves are
  * tested in falcon-core; what is pinned here is the view's own behaviour.

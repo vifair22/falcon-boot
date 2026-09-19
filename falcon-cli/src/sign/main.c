@@ -30,7 +30,6 @@
 #include <sign/sign.h>
 #include <sign/manifestio.h>
 #include <sign/payload.h>
-#include <sign/prepare.h>
 #include <sign/uki.h>
 
 #include <manifest/manifest.h>
@@ -106,12 +105,6 @@ static void usage(FILE *f)
 
     (void)fprintf(f,
 "usage: falcon-boot-sign [bless] <iso> --stick <dir> --key <mok.key> --cert <mok.crt>\n"
-"       falcon-boot-sign prepare <iso> --stick <dir>\n"
-"\n"
-"Two operations on one manifest (docs/DESIGN.md Section 8): bless signs Linux\n"
-"media so it boots with Secure Boot validation left on, prepare patches\n"
-"Windows install media so Setup can find its own ISO afterwards. `bless' is\n"
-"the default. Run `falcon-boot-sign prepare --help' for the other half.\n"
 "\n"
 "Blesses an ISO for Secure Boot: wraps the ISO's kernel in a minimal UKI\n"
 "with the cmdline and initrds of the ISO's own CD boot entry and\n"
@@ -929,19 +922,18 @@ out:
     return rc;
 }
 
-/* Operation dispatch. One verb, optional, and only because the tool had a
- * bare-positional shape before preparation existed: `falcon-boot-sign x.iso
- * ...` has always meant bless, and scripts and the appliance both spell it
- * that way, so an absent verb keeps meaning that. A verb is recognised only in
- * the first position, which is what keeps an ISO that happens to be named
- * "prepare" from being one. */
+/* Operation dispatch. The verb is optional because the tool had a
+ * bare-positional shape before any other verb existed: `falcon-boot-sign
+ * x.iso ...` has always meant bless, and scripts and the appliance both spell
+ * it that way, so an absent verb keeps meaning that. A verb is recognised only
+ * in the first position, which is what keeps an ISO that happens to be named
+ * "uki" from being one. */
 typedef struct {
     const char *name;
     int (*run)(int argc, char **argv);
 } sgn_command;
 
 static const sgn_command g_commands[] = {
-    { "prepare", sgn_prepare_main },
     { "uki",     sgn_uki_main },
 };
 
