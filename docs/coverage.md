@@ -10,14 +10,14 @@ Routes: **drop** is Enter on an unblessed image (whatever the loader does
 by default), **chain** boots the ISO's own EFI loader, **bless** is Enter
 on an image blessed with the sign tool.
 
-Loader: 0.1.0_20260918.2318.release, 0.1.0_20260919.0127.release, 0.1.0_20260919.0138.release, 0.1.0_20260919.0153.release, 0.1.0_20260919.0206.release, 0.1.0_20260919.0207.release, 0.1.0_20260919.0258.release, 0.1.0_20260919.0400.release, 0.1.0_20260919.1059.release
+Loader: 0.1.0_20260918.2318.release, 0.1.0_20260919.0127.release, 0.1.0_20260919.0138.release, 0.1.0_20260919.0153.release, 0.1.0_20260919.0207.release, 0.1.0_20260919.0258.release, 0.1.0_20260919.0400.release, 0.1.0_20260919.1059.release, 0.1.0_20260919.1203.release
 
 ## Summary
 
 | tier | ISOs run | SB off, drop | target | SB on, any route (both columns) | target |
 |---|---|---|---|---|---|
 | A | 21 | 20/21 (95%) | 100% | 18/21 (85%) | 95% |
-| B | 9 | 9/9 (100%) | 90% | 8/9 (88%) | - |
+| B | 9 | 9/9 (100%) | 90% | 9/9 (100%) | - |
 | C | 1 | 0/1 (0%) | - | 0/1 (0%) | - |
 
 ## Matrix
@@ -43,12 +43,12 @@ Loader: 0.1.0_20260918.2318.release, 0.1.0_20260919.0127.release, 0.1.0_20260919
 | mx-25.2 | A | antix | PASS | FAIL | PASS | FAIL | FAIL | PASS | REFUSED | REFUSED | PASS |
 | popos-24.04-20 | A | casper | PASS | PASS | PASS | REFUSED | REFUSED | PASS | REFUSED | REFUSED | PASS |
 | debian-netinst-13.7 | B | debian-installer | PASS | FAIL | PASS | PASS | FAIL | PASS | REFUSED | REFUSED | PASS |
-| alpine-ext-3.24.2 | B | alpine | PASS | FAIL | PASS | FAIL | REFUSED | PASS | REFUSED | REFUSED | PASS |
+| alpine-ext-3.24.2 | B | alpine | PASS | FAIL | PASS | REFUSED | REFUSED | PASS | REFUSED | REFUSED | PASS |
 | proxmox-ve-9.2-1 | B | proxmox | PASS | FAIL | PASS | PASS | FAIL | PASS | REFUSED | REFUSED | PASS |
 | rocky-boot-10.2 | B | anaconda | PASS | FAIL | PASS | PASS | FAIL | PASS | REFUSED | REFUSED | PASS |
 | alma-boot-10.2 | B | anaconda | PASS | FAIL | PASS | PASS | FAIL | PASS | REFUSED | REFUSED | PASS |
 | void-base-20250202 | B | void | PASS | FAIL | PASS | REFUSED | REFUSED | PASS | REFUSED | REFUSED | PASS |
-| nixos-min-26.05 | B | nixos | PASS | FAIL | UNBLESSABLE | REFUSED | REFUSED | UNBLESSABLE | REFUSED | REFUSED | UNBLESSABLE |
+| nixos-min-26.05 | B | nixos | PASS | FAIL | PASS | REFUSED | REFUSED | PASS | REFUSED | REFUSED | PASS |
 | leap-agama-16.0 | B | suse-installer | PASS | FAIL | PASS | PASS | FAIL | PASS | REFUSED | REFUSED | PASS |
 | truenas-25.10.7 | B | truenas | PASS | FAIL | PASS | REFUSED | REFUSED | PASS | REFUSED | REFUSED | PASS |
 | freebsd-bootonly-15.1 | C | freebsd | FAIL | FAIL | UNBLESSABLE | REFUSED | REFUSED | UNBLESSABLE | REFUSED | REFUSED | UNBLESSABLE |
@@ -94,7 +94,6 @@ Loader: 0.1.0_20260918.2318.release, 0.1.0_20260919.0127.release, 0.1.0_20260919
 | debian-netinst-13.7 | off | chain | FAIL | no userland within 300s (screen: graphical) |
 | debian-netinst-13.7 | ms | chain | FAIL | no userland within 300s (screen: graphical) |
 | alpine-ext-3.24.2 | off | chain | FAIL | no userland within 300s (screen: text console) |
-| alpine-ext-3.24.2 | ms | drop | FAIL | back at the menu: the kernel exited, status 0x0 (screen: text console) |
 | proxmox-ve-9.2-1 | off | chain | FAIL | no userland within 300s (screen: text console) |
 | proxmox-ve-9.2-1 | ms | chain | FAIL | no userland within 300s (screen: text console) |
 | rocky-boot-10.2 | off | chain | FAIL | no userland within 300s (screen: text console) |

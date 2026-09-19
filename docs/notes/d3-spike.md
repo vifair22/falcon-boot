@@ -109,7 +109,16 @@ Known limits:
    does; none in the corpus did.
 2. The replacement must fit in the original's length. Every corpus
    grub.cfg is kilobytes; ours is a few hundred bytes plus the cmdline.
-3. The coverage harness counts media read after a "starting" line as the
+3. An ISO that ships an older shim (15.x) does not survive D3b under ours:
+   MX 25.2's GRUB boots our configuration and its kernel starts, then its
+   shim halts at ExitBootServices ("Bootloader has not verified loaded
+   image. System is compromised."). The same ISO with the same grub.cfg
+   patched in by hand boots as a bare CD, so the trigger is two shims in one
+   chain (ours, 16.x, then the ISO's), most likely the ISO's GRUB reaching
+   our shim's shim_lock protocol instead of its own, so its own shim never
+   sees the loader participate. Not pursued: the fix would have the loader
+   juggle shim's protocols mid-chain. MX boots blessed in every state.
+4. The coverage harness counts media read after a "starting" line as the
    kernel's. D3b's line says "handing ... to the ISO's own GRUB" instead,
    because GRUB reads the kernel and initrds after it; D3b cases are judged
    by DHCP, serial or the screen.
