@@ -66,6 +66,16 @@ harness measures now is `docs/coverage.md`:
   `p2:/falcon/windows.cfg` (DESIGN 6.4), proven on a VM with no TPM.
   WinPE-based rescue media (Hiren's) is in the corpus; ESXi is not, since
   its ISO needs a Broadcom login.
+- **M4 breadth (2026-09-19)**: the corpus grew to 31 ISOs (Kali by
+  torrent, and twelve more families: Hiren's PE, GParted, CachyOS, MX,
+  Pop!_OS, Rocky, Alma, Void, NixOS, Leap 16 Agama, TrueNAS, FreeBSD).
+  Secure Boot off, drop: Tier A 20/21, Tier B 9/9. MX needed two fixes in
+  the hook (depmod when the initramfs ships no modules.dep, and a nudge for
+  antiX's USB/CD-only scan). The misses: Hiren's bootmgr page-faults under
+  this OVMF even as a bare CD with no falcon-boot in the chain, so the rig
+  cannot judge it; FreeBSD (Tier C) has no hook and loses its media as any
+  chainload does. Blessed Alpine and Kali pass in all three states now that
+  the loader hands a wrap its map as a credential.
 - **M4**: the three Tier B installers boot direct with Secure Boot off, each
   through a different gap the hook now closes. Alpine's kernel has no
   efivarfs and no dm-mod: a direct boot now carries the extent map in the

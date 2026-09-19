@@ -10,21 +10,22 @@ Routes: **drop** is Enter on an unblessed image (whatever the loader does
 by default), **chain** boots the ISO's own EFI loader, **bless** is Enter
 on an image blessed with the sign tool.
 
-Loader: 0.1.0_20260918.1853.release, 0.1.0_20260918.2029.release, 0.1.0_20260918.2051.release
+Loader: 0.1.0_20260918.2318.release, 0.1.0_20260919.0127.release, 0.1.0_20260919.0138.release, 0.1.0_20260919.0153.release, 0.1.0_20260919.0206.release, 0.1.0_20260919.0207.release, 0.1.0_20260919.0258.release, 0.1.0_20260919.0400.release
 
 ## Summary
 
 | tier | ISOs run | SB off, drop | target | SB on, any route (both columns) | target |
 |---|---|---|---|---|---|
-| A | 15 | 13/15 (86%) | 100% | 13/15 (86%) | 95% |
-| B | 3 | 0/3 (0%) | 90% | 0/3 (0%) | - |
+| A | 21 | 20/21 (95%) | 100% | 18/21 (85%) | 95% |
+| B | 9 | 9/9 (100%) | 90% | 8/9 (88%) | - |
+| C | 1 | 0/1 (0%) | - | 0/1 (0%) | - |
 
 ## Matrix
 
 | ISO | tier | family | SB off drop | SB off chain | SB off bless | SB on, MS CA drop | SB on, MS CA chain | SB on, MS CA bless | SB on, own keys drop | SB on, own keys chain | SB on, own keys bless |
 |---|---|---|---|---|---|---|---|---|---|---|---|
 | debian-live-13.7 | A | debian-live | PASS | FAIL | PASS | FAIL | FAIL | PASS | REFUSED | REFUSED | PASS |
-| fedora-ws-44 | A | fedora-live | PASS | FAIL | PASS | FAIL | FAIL | PASS | REFUSED | REFUSED | PASS |
+| fedora-ws-44 | A | fedora-live | PASS | FAIL | PASS | PASS | FAIL | PASS | REFUSED | REFUSED | PASS |
 | ubuntu-26.04.1 | A | casper | PASS | FAIL | PASS | FAIL | FAIL | PASS | REFUSED | REFUSED | PASS |
 | kubuntu-26.04 | A | casper | PASS | FAIL | PASS | FAIL | FAIL | PASS | REFUSED | REFUSED | PASS |
 | mint-22.3 | A | casper | PASS | FAIL | PASS | FAIL | FAIL | PASS | REFUSED | REFUSED | PASS |
@@ -33,15 +34,27 @@ Loader: 0.1.0_20260918.1853.release, 0.1.0_20260918.2029.release, 0.1.0_20260918
 | arch-2026.09.01 | A | arch | PASS | FAIL | PASS | REFUSED | REFUSED | PASS | REFUSED | REFUSED | PASS |
 | arch-2026.01.01 | A | arch | PASS | FAIL | PASS | REFUSED | REFUSED | PASS | REFUSED | REFUSED | PASS |
 | systemrescue-13.02 | A | systemrescue | PASS | FAIL | PASS | REFUSED | REFUSED | PASS | REFUSED | REFUSED | PASS |
-| kali-2026.2 | A | debian-live | - | - | - | - | - | - | - | - | - |
+| kali-2026.2 | A | debian-live | PASS | FAIL | PASS | REFUSED | REFUSED | PASS | REFUSED | REFUSED | PASS |
 | clonezilla-3.3.3-15 | A | debian-live | PASS | FAIL | PASS | FAIL | FAIL | PASS | REFUSED | REFUSED | PASS |
 | gentoo-min-20260913 | A | gentoo | PASS | FAIL | PASS | REFUSED | REFUSED | PASS | REFUSED | REFUSED | PASS |
-| debian-netinst-13.7 | B | debian-installer | FAIL | FAIL | FAIL | FAIL | FAIL | FAIL | REFUSED | REFUSED | FAIL |
-| alpine-ext-3.24.2 | B | alpine | FAIL | FAIL | FAIL | REFUSED | REFUSED | FAIL | REFUSED | REFUSED | FAIL |
-| proxmox-ve-9.2-1 | B | proxmox | FAIL | FAIL | FAIL | FAIL | FAIL | FAIL | REFUSED | REFUSED | FAIL |
+| hbcd-pe-1.0.8 | A | windows-pe | FAIL | FAIL | UNBLESSABLE | FAIL | FAIL | UNBLESSABLE | REFUSED | REFUSED | UNBLESSABLE |
+| gparted-1.8.1-6 | A | debian-live | PASS | FAIL | PASS | FAIL | FAIL | PASS | REFUSED | REFUSED | PASS |
+| cachyos-260809 | A | arch | PASS | FAIL | PASS | REFUSED | REFUSED | PASS | REFUSED | REFUSED | PASS |
+| mx-25.2 | A | antix | PASS | FAIL | PASS | FAIL | FAIL | PASS | REFUSED | REFUSED | PASS |
+| popos-24.04-20 | A | casper | PASS | PASS | PASS | REFUSED | REFUSED | PASS | REFUSED | REFUSED | PASS |
+| debian-netinst-13.7 | B | debian-installer | PASS | FAIL | PASS | FAIL | FAIL | PASS | REFUSED | REFUSED | PASS |
+| alpine-ext-3.24.2 | B | alpine | PASS | FAIL | PASS | REFUSED | REFUSED | PASS | REFUSED | REFUSED | PASS |
+| proxmox-ve-9.2-1 | B | proxmox | PASS | FAIL | PASS | FAIL | FAIL | PASS | REFUSED | REFUSED | PASS |
+| rocky-boot-10.2 | B | anaconda | PASS | FAIL | PASS | PASS | FAIL | PASS | REFUSED | REFUSED | PASS |
+| alma-boot-10.2 | B | anaconda | PASS | FAIL | PASS | PASS | FAIL | PASS | REFUSED | REFUSED | PASS |
+| void-base-20250202 | B | void | PASS | FAIL | PASS | REFUSED | REFUSED | PASS | REFUSED | REFUSED | PASS |
+| nixos-min-26.05 | B | nixos | PASS | FAIL | UNBLESSABLE | REFUSED | REFUSED | UNBLESSABLE | REFUSED | REFUSED | UNBLESSABLE |
+| leap-agama-16.0 | B | suse-installer | PASS | FAIL | PASS | FAIL | FAIL | PASS | REFUSED | REFUSED | PASS |
+| truenas-25.10.7 | B | truenas | PASS | FAIL | PASS | REFUSED | REFUSED | PASS | REFUSED | REFUSED | PASS |
+| freebsd-bootonly-15.1 | C | freebsd | FAIL | FAIL | UNBLESSABLE | REFUSED | REFUSED | UNBLESSABLE | REFUSED | REFUSED | UNBLESSABLE |
 | gentoo-min-20260510 | A | gentoo | PASS | FAIL | PASS | REFUSED | REFUSED | PASS | REFUSED | REFUSED | PASS |
-| windows-11-25h2 | A | windows | FAIL | FAIL | N/A | FAIL | FAIL | N/A | REFUSED | REFUSED | N/A |
-| windows-server-2025 | A | windows | FAIL | FAIL | N/A | FAIL | FAIL | N/A | REFUSED | REFUSED | N/A |
+| windows-11-25h2 | A | windows | PASS | FAIL | N/A | PASS | FAIL | N/A | REFUSED | REFUSED | N/A |
+| windows-server-2025 | A | windows | PASS | FAIL | N/A | PASS | FAIL | N/A | REFUSED | REFUSED | N/A |
 
 ## Failures
 
@@ -51,7 +64,6 @@ Loader: 0.1.0_20260918.1853.release, 0.1.0_20260918.2029.release, 0.1.0_20260918
 | debian-live-13.7 | ms | drop | FAIL | no userland within 300s (screen: text console) |
 | debian-live-13.7 | ms | chain | FAIL | no userland within 300s (screen: text console) |
 | fedora-ws-44 | off | chain | FAIL | no userland within 300s (screen: text console) |
-| fedora-ws-44 | ms | drop | FAIL | no userland within 300s (screen: text console) |
 | fedora-ws-44 | ms | chain | FAIL | no userland within 300s (screen: text console) |
 | ubuntu-26.04.1 | off | chain | FAIL | no userland within 300s (screen: text console) |
 | ubuntu-26.04.1 | ms | drop | FAIL | no userland within 300s (screen: text console) |
@@ -69,36 +81,44 @@ Loader: 0.1.0_20260918.1853.release, 0.1.0_20260918.2029.release, 0.1.0_20260918
 | arch-2026.09.01 | off | chain | FAIL | back at the menu: the payload exited, status 0x8000000000000002 (screen: text console) |
 | arch-2026.01.01 | off | chain | FAIL | back at the menu: the payload exited, status 0x8000000000000002 (screen: text console) |
 | systemrescue-13.02 | off | chain | FAIL | no userland within 300s (screen: graphical) |
+| kali-2026.2 | off | chain | FAIL | no userland within 300s (screen: text console) |
 | clonezilla-3.3.3-15 | off | chain | FAIL | no userland within 300s (screen: graphical) |
 | clonezilla-3.3.3-15 | ms | drop | FAIL | no userland within 300s (screen: text console) |
 | clonezilla-3.3.3-15 | ms | chain | FAIL | no userland within 300s (screen: text console) |
 | gentoo-min-20260913 | off | chain | FAIL | no userland within 300s (screen: graphical) |
-| debian-netinst-13.7 | off | drop | FAIL | no userland within 300s (screen: graphical) |
+| hbcd-pe-1.0.8 | off | drop | FAIL | no userland within 300s (screen: text console) |
+| hbcd-pe-1.0.8 | off | chain | FAIL | no userland within 300s (screen: text console) |
+| hbcd-pe-1.0.8 | ms | drop | FAIL | no userland within 300s (screen: text console) |
+| hbcd-pe-1.0.8 | ms | chain | FAIL | no userland within 300s (screen: text console) |
+| gparted-1.8.1-6 | off | chain | FAIL | no userland within 300s (screen: graphical) |
+| gparted-1.8.1-6 | ms | drop | FAIL | no userland within 300s (screen: text console) |
+| gparted-1.8.1-6 | ms | chain | FAIL | no userland within 300s (screen: text console) |
+| cachyos-260809 | off | chain | FAIL | no userland within 300s (screen: text console) |
+| mx-25.2 | off | chain | FAIL | no userland within 300s (screen: graphical) |
+| mx-25.2 | ms | drop | FAIL | no userland within 300s (screen: graphical) |
+| mx-25.2 | ms | chain | FAIL | no userland within 300s (screen: graphical) |
 | debian-netinst-13.7 | off | chain | FAIL | no userland within 300s (screen: graphical) |
-| debian-netinst-13.7 | off | bless | FAIL | no userland within 300s (screen: graphical) |
 | debian-netinst-13.7 | ms | drop | FAIL | no userland within 300s (screen: graphical) |
 | debian-netinst-13.7 | ms | chain | FAIL | no userland within 300s (screen: graphical) |
-| debian-netinst-13.7 | ms | bless | FAIL | no userland within 300s (screen: graphical) |
-| debian-netinst-13.7 | own | bless | FAIL | no userland within 300s (screen: graphical) |
-| alpine-ext-3.24.2 | off | drop | FAIL | no userland within 300s (screen: text console) |
 | alpine-ext-3.24.2 | off | chain | FAIL | no userland within 300s (screen: text console) |
-| alpine-ext-3.24.2 | off | bless | FAIL | no userland within 300s (screen: text console) |
-| alpine-ext-3.24.2 | ms | bless | FAIL | no userland within 300s (screen: text console) |
-| alpine-ext-3.24.2 | own | bless | FAIL | no userland within 300s (screen: text console) |
-| proxmox-ve-9.2-1 | off | drop | FAIL | no userland within 300s (screen: text console) |
 | proxmox-ve-9.2-1 | off | chain | FAIL | no userland within 300s (screen: text console) |
-| proxmox-ve-9.2-1 | off | bless | FAIL | no userland within 300s (screen: text console) |
 | proxmox-ve-9.2-1 | ms | drop | FAIL | no userland within 300s (screen: text console) |
 | proxmox-ve-9.2-1 | ms | chain | FAIL | no userland within 300s (screen: text console) |
-| proxmox-ve-9.2-1 | ms | bless | FAIL | no userland within 300s (screen: text console) |
-| proxmox-ve-9.2-1 | own | bless | FAIL | no userland within 300s (screen: text console) |
+| rocky-boot-10.2 | off | chain | FAIL | no userland within 300s (screen: text console) |
+| rocky-boot-10.2 | ms | chain | FAIL | no userland within 300s (screen: text console) |
+| alma-boot-10.2 | off | chain | FAIL | no userland within 300s (screen: text console) |
+| alma-boot-10.2 | ms | chain | FAIL | no userland within 300s (screen: text console) |
+| void-base-20250202 | off | chain | FAIL | no userland within 300s (screen: text console) |
+| nixos-min-26.05 | off | chain | FAIL | no userland within 300s (screen: text console) |
+| leap-agama-16.0 | off | chain | FAIL | no userland within 300s (screen: text console) |
+| leap-agama-16.0 | ms | drop | FAIL | no userland within 300s (screen: text console) |
+| leap-agama-16.0 | ms | chain | FAIL | no userland within 300s (screen: text console) |
+| truenas-25.10.7 | off | chain | FAIL | no userland within 300s (screen: graphical) |
+| freebsd-bootonly-15.1 | off | drop | FAIL | no userland within 300s (screen: text console) |
+| freebsd-bootonly-15.1 | off | chain | FAIL | no userland within 300s (screen: text console) |
 | gentoo-min-20260510 | off | chain | FAIL | no userland within 300s (screen: graphical) |
-| windows-11-25h2 | off | drop | FAIL | no userland within 300s (screen: Windows Setup) |
 | windows-11-25h2 | off | chain | FAIL | no userland within 300s (screen: Windows Setup) |
-| windows-11-25h2 | ms | drop | FAIL | no userland within 300s (screen: Windows Setup) |
 | windows-11-25h2 | ms | chain | FAIL | no userland within 300s (screen: Windows Setup) |
-| windows-server-2025 | off | drop | FAIL | no userland within 300s (screen: graphical) |
-| windows-server-2025 | off | chain | FAIL | no userland within 300s (screen: graphical) |
-| windows-server-2025 | ms | drop | FAIL | no userland within 300s (screen: graphical) |
-| windows-server-2025 | ms | chain | FAIL | no userland within 300s (screen: graphical) |
+| windows-server-2025 | off | chain | FAIL | no userland within 300s (screen: Windows Setup) |
+| windows-server-2025 | ms | chain | FAIL | no userland within 300s (screen: Windows Setup) |
 
