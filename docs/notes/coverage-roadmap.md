@@ -83,12 +83,12 @@ harness measures now is `docs/coverage.md`:
 - **M4 breadth (2026-09-19)**: the corpus grew to 31 ISOs (Kali by
   torrent, and twelve more families: Hiren's PE, GParted, CachyOS, MX,
   Pop!_OS, Rocky, Alma, Void, NixOS, Leap 16 Agama, TrueNAS, FreeBSD).
-  Secure Boot off, drop: Tier A 20/21, Tier B 9/9. MX needed two fixes in
+  Secure Boot off, drop: Tier A 21/21, Tier B 9/9. MX needed two fixes in
   the hook (depmod when the initramfs ships no modules.dep, and a nudge for
-  antiX's USB/CD-only scan). The misses: Hiren's bootmgr page-faults under
-  this OVMF even as a bare CD with no falcon-boot in the chain, so the rig
-  cannot judge it; FreeBSD (Tier C) has no hook and loses its media as any
-  chainload does. Blessed Alpine and Kali pass in all three states now that
+  antiX's USB/CD-only scan). The Tier C misses: Hiren's bootmgr page-faults
+  on firmware that write-protects loader pages, as a bare CD with no
+  falcon-boot in the chain (which is why it is Tier C); FreeBSD has no hook
+  and loses its media as any chainload does. Blessed Alpine and Kali pass in all three states now that
   the loader hands a wrap its map as a credential.
 - **M4**: the three Tier B installers boot direct with Secure Boot off, each
   through a different gap the hook now closes. Alpine's kernel has no
