@@ -21,6 +21,8 @@ typedef struct EFI_DEVICE_PATH_PROTOCOL {
 } EFI_DEVICE_PATH_PROTOCOL;
 
 /* Node types and subtypes (spec Table 10.x); only the ones we build. */
+#define HARDWARE_DEVICE_PATH            0x01
+#define HW_VENDOR_DP                    0x04
 #define MEDIA_DEVICE_PATH               0x04
 #define MEDIA_HARDDRIVE_DP              0x01
 #define MEDIA_VENDOR_DP                 0x03
