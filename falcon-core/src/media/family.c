@@ -85,7 +85,7 @@ static const family_desc g_families[] = {
      * the post-ExitBootServices media problem the hook exists for does not
      * arise. Whatever Windows does need happens before the firmware ever runs
      * and is not this field. */
-    { FAMILY_WINDOWS, "Windows install media",
+    { FAMILY_WINDOWS, "Windows media",
       (void *)0, 0,
       FAMILY_TRI_NO, FAMILY_TRI_NO },
 
@@ -260,6 +260,14 @@ const family_desc *family_detect(const family_probe *p)
      * there is no ordering subtlety to get wrong later. */
     if (probe_exists(p, "/sources/install.wim") ||
         probe_exists(p, "/sources/install.esd"))
+        return family_by_id(FAMILY_WINDOWS);
+    /* WinPE media with no install image (Macrium Reflect's rescue disc,
+     * PE-based toolkits): the same boot.wim behind Microsoft's boot manager,
+     * which the loader patches the same way (DESIGN 6.4) so winjump attaches
+     * the ISO for whatever the PE keeps outside its boot image. */
+    if (probe_exists(p, "/sources/boot.wim") &&
+        (probe_exists(p, "/bootmgr") ||
+         probe_exists(p, "/EFI/Microsoft/Boot/BCD")))
         return family_by_id(FAMILY_WINDOWS);
 
     /* SystemRescue before Arch: it is archiso underneath, and its media can

@@ -33,7 +33,7 @@ typedef enum {
     FAMILY_ARCH,            /* archiso */
     FAMILY_SYSTEMRESCUE,    /* archiso-derived, its own base directory */
     FAMILY_MEMTEST,         /* memtest86+ / MemTest86 */
-    FAMILY_WINDOWS,         /* Windows install media */
+    FAMILY_WINDOWS,         /* Windows install and WinPE media */
     FAMILY_GENTOO,          /* Gentoo live media; dracut since 2025 */
 } family_id;
 

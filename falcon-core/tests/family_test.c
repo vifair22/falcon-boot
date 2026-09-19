@@ -207,6 +207,27 @@ static void test_family_windows_only_on_the_udf_volume(void **state)
     expect_family(udf, 7, FAMILY_WINDOWS, NULL);
 }
 
+/* WinPE with no install image: Macrium Reflect 8's rescue disc, as its UDF
+ * volume spells it. A boot.wim alone is not enough; the boot manager beside
+ * it is what says Windows. */
+static void test_family_winpe(void **state)
+{
+    static const fake_file macrium[] = {
+        { "/bootmgr", NULL },
+        { "/EFI/Microsoft/Boot/BCD", NULL },
+        { "/sources", NULL },
+        { "/sources/boot.wim", NULL },
+    };
+    static const fake_file wim_only[] = {
+        { "/sources", NULL },
+        { "/sources/boot.wim", NULL },
+    };
+
+    (void)state;
+    expect_family(macrium, 4, FAMILY_WINDOWS, NULL);
+    expect_family(wim_only, 2, FAMILY_UNKNOWN, NULL);
+}
+
 static void test_family_systemrescue(void **state)
 {
     static const fake_file dir[] = {
@@ -898,6 +919,7 @@ int run_family_tests(void)
     const struct CMUnitTest tests[] = {
         cmocka_unit_test(test_family_windows),
         cmocka_unit_test(test_family_windows_only_on_the_udf_volume),
+        cmocka_unit_test(test_family_winpe),
         cmocka_unit_test(test_family_systemrescue),
         cmocka_unit_test(test_family_casper),
         cmocka_unit_test(test_family_debian_live),
