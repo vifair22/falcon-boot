@@ -729,10 +729,14 @@ end to end.
 
 #### 6.3.1 Automatic on-stick preparation and the next-boot handoff (decision 2026-09-13)
 
-*Preparation in the appliance is superseded 2026-09-18 by Section 6.4 (the
-loader patches `boot.wim` at boot). The `FalconNextBoot` handoff below
-survives and gains a second user: after a bless the appliance returns and the
-loader boots the entry the user picked (Section 7.5).*
+*Superseded by Section 6.4: the loader patches `boot.wim` at boot. On-stick
+preparation was removed on 2026-09-19 with everything that served it (the
+appliance's preparation half, `falcon-boot-sign prepare`, the sidecars under
+`p2:/falcon/prepared/`, the `kind=prepared` record of Section 8.1). What this
+section says about preparation, batching and sidecars is the record of that
+design. The `FalconNextBoot` handoff below still applies, and gains a second
+user: after a bless the appliance returns and the loader boots the entry the
+user picked (Section 7.5).*
 
 Preparation is not a host errand. The user drops a Windows ISO and selects it;
 the loader detects that it is unprepared, says so, and offers to prepare it.
@@ -952,8 +956,7 @@ with Secure Boot off and on (Microsoft CA), and Setup reads `install.wim` throug
 winjump attached from Windows. bootmgr, winload and the kernel are served
 byte for byte, so the platform verifies Microsoft's signatures as it would
 from a DVD. An ISO the loader cannot patch (no boot.wim, not LZX, no
-winpeshl.exe) falls back to the appliance's preparation offer (Section
-6.3.1).
+winpeshl.exe) boots as it is.
 
 ## 7. Security model
 
@@ -1020,13 +1023,13 @@ chain (shim dual-signed with the user's db key, loader and UKIs MOK-signed)
 is unaffected, which is why the loader, the menu and the p3 unlock all work
 there while no unblessed ISO will start.
 
-The exception that cannot be blessed is **Windows install media**. Preparation
-(Section 6.3) signs nothing; the binary the firmware verifies is Microsoft's
+The exception that cannot be blessed is **Windows install media**. The
+loader's patch (Section 6.4) signs nothing; the binary the firmware verifies is Microsoft's
 `bootmgfw.efi`, which we neither sign nor replace. On a machine without the
 Microsoft CA in db, Windows media therefore cannot boot under Secure Boot at
 all, and the honest answers are to enrol the Microsoft CA or to turn Secure
 Boot off for that job. The Manual must say so plainly rather than let a user
-conclude the preparation step failed.
+conclude the patch failed.
 
 - **Secure Boot OFF:** (target of Section 6.4; not yet true of the build)
   every templated ISO drag-and-drops and boots. Nothing to
@@ -1079,9 +1082,10 @@ conclude the preparation step failed.
 
     **Blessing these MODIFIES the user's file, and the tool says so before it
     does** (decision 2026-09-13). That is a deliberate exception to the
-    property Windows preparation upholds, and the reason is mechanical rather
-    than philosophical: signing a PE appends a certificate, so the payload
-    grows, and there is no size-preserving splice to hide behind. For a
+    property the Windows patch upholds (the ISO is never written), and the
+    reason is mechanical rather than philosophical: signing a PE appends a
+    certificate, so the payload grows, and there is nothing beside it to put
+    the signature in. For a
     `.efi` the file is signed in place; for a `.img` the payload inside its
     filesystem is. Both are the user's own media, the act is theirs to
     authorise, and the review that authorises it names the file and states
@@ -1274,10 +1278,10 @@ rest and out of the loader:
    - for each selected ISO, extracts the kernel, wraps and signs it as a
      minimal UKI with the derived `iso-scan` cmdline embedded, and stages it
      plus its manifest record per Section 8.1,
-   - for a Windows ISO, *prepares* rather than signs it (the patch of
-     Section 6.3, no key involved), which is why the appliance carries wimlib;
-     the appliance is also entered automatically for this case, and the
-     handoff back is Section 6.3.1,
+   - for a Windows ISO, *prepared* rather than signed it (the patch of
+     Section 6.3, no key involved) until 2026-09-19, when preparation was
+     removed because Section 6.4 moved the patch into the loader; the
+     appliance now reports Windows media and leaves it alone,
    - reboots to the loader.
 
    The appliance makes the stick self-hosting for signing: a portable signed
@@ -1319,7 +1323,7 @@ the private key. The flow above changes in three ways:
   (`falcon.bless.cred`, format in `falcon-core/src/manifest/blesslist.h`).
   The appliance signs exactly that list and reboots, and the loader boots the
   entry the user picked. One reboot, no second UI. The marker stays the
-  loader's to set and clear, as Section 6.3.1 has it for preparation, so the
+  loader's to set and clear, as Section 6.3.1 has it, so the
   appliance never writes an EFI variable. Built 2026-09-18: `b` on a row
   blesses that image, `a` blesses everything new, and
   `falcon-appliance/tools/run-bless-chain.sh` proves the round trip under
@@ -1331,7 +1335,8 @@ the private key. The flow above changes in three ways:
   refuses a path that is not a file on p2 and prints each one as it signs.
 - **Windows preparation and the p2 survey leave it.** Both were runtime media
   work; the loader already knows every file on p2 and which rows need a
-  blessing.
+  blessing. Preparation left on 2026-09-19; the survey remains for the
+  interactive appliance, which only blesses.
 - **Its userland collapses to our code plus `sbsign`.** The MOK key is read
   out of p3 with `falcon-core`'s own LUKS2 and ext4 code, the code the loader
   unlocks p3 with, into a memory-only file handed to `sbsign` as `/dev/fd/N`,
@@ -1470,8 +1475,8 @@ is **never modified**. It stays byte-identical to what the vendor published
 and stays SHA-256 verifiable against the vendor's published hash, which
 matters most for precisely the family whose users are most likely to be
 checking. The patch exists only in the bytes the loader serves for that one
-boot, lives in a sidecar file beside the manifest, and is inert on any machine
-that boots the same ISO some other way.
+boot, computed in memory by the loader (Section 6.4), and is inert on any
+machine that boots the same ISO some other way.
 
 **Consent is the same act for both.** The per-ISO review-and-yes of Section
 7.5 - nothing pre-marked, every path on screen at the moment of confirmation,
@@ -1593,9 +1598,9 @@ Bracket vocabulary: `[blessed]`, `[blessed, stale]`, `[unsigned]`, `[MS UEFI
 CA]`, `[MS Windows]`, `[MOK]` for a MOK-signed first stage that is not a
 bless (the personal OS, the appliance), `[?]` for an entry past
 `PROBE_LIMIT`, and otherwise the CN of the topmost certificate in the
-signer's chain, cut to 16 columns. `[not prepared]` stays as it is: it is a
-media-finding fact about Windows (Section 7.7), not a signature fact, and
-it never turns a row yellow. Yellow is reserved for "shim will refuse the
+signer's chain, cut to 16 columns. (`[not prepared]`, a media-finding fact
+about Windows rather than a signature fact, left with preparation on
+2026-09-19.) Yellow is reserved for "shim will refuse the
 first stage" so that it always answers one question.
 
 Reasons, exhaustive:
@@ -1768,6 +1773,11 @@ than reimplementing cryptography or filesystem creation:
 command, one confirmation gate, one manifest, two outputs. Consequences that
 land on this section:
 
+*The bullets below on wimlib and on-stick preparation are superseded: Section
+6.4 moved the patch into the loader, and preparation was removed on
+2026-09-19. wimlib is now needed only to build the WIM test fixture
+(`falcon-core/tools/mk-test-wim.sh`).*
+
 - **wimlib becomes a host-tooling dependency** (`app-arch/wimlib` on Gentoo),
   joining `cryptsetup`, `sbsign` and `mkfs.*` on the intended
   vendoring line described at the end of Section 8.1. The tool shells out to
@@ -1869,14 +1879,10 @@ On-stick layout, under the reserved directory of Section 6.2:
 ```
 p2:/falcon/blessed/<name>.uki      signed UKI wraps, one per blessed ISO
 p2:/falcon/blessed/manifest        the manifest, plain ASCII text
-p2:/falcon/prepared/<sha256>/      prepared-media sidecars, one folder per
-                                   prepared Windows ISO, named by the source
-                                   ISO's checksum (Section 6.3.1)
 ```
 
 Manifest format: line-based records, `#` comments, one block per authorised
-ISO, keys before the next `iso=` belong to the current block. Two kinds of
-record, told apart by the optional `kind=` key:
+ISO, keys before the next `iso=` belong to the current block:
 
 ```
 iso=Linux/archlinux-2026.01.01-x86_64.iso   # path relative to p2 root
@@ -1884,49 +1890,23 @@ size=1538670592                              # byte size at bless time
 sha256=<hex>                                 # ISO hash at bless time
 uki=archlinux-2026.01.01-x86_64.uki          # file under /falcon/blessed/
 family=arch                                  # registry id (Section 6.2)
-
-iso=Windows/Win11_25H2_x64.iso
-kind=prepared                                # absent means blessed
-size=7218589696
-sha256=<hex>                                 # also names the sidecar folder
-splice=22095872:593121462:boot.wim           # repeatable, at most 8
-family=windows
 ```
 
-**`kind=` is optional and its absence means `blessed` (decided 2026-09-13).**
-That is the whole reason it is optional: every manifest written before the
-key existed carries only blessed records, so an older file parses unchanged
-and an older reader still reads a file this tool writes, provided the stick
-carries no prepared media. `falcon-boot-sign` emits the key only on a
-prepared record, for the same reason. A `kind=` naming neither value drops
-the record, rather than falling back to blessed: a kind nobody knows is a
-record nobody should act on.
+A record needs `iso=`, `size=` and `uki=`. A `kind=` key, if present, must
+say `blessed`; any other value drops the record, since a kind nobody knows is
+a record nobody should act on.
 
-Validity is **per kind**, not one rule for every record:
-
-- `kind=blessed` needs `iso=`, `size=` and `uki=`, and must carry no
-  `splice=`. Unchanged from the shape above. A splice here is a
-  contradiction (there is no byte map to apply it over) and so is malformed
-  rather than ignored.
-- `kind=prepared` needs `iso=`, `size=` and `sha256=`, and never needs
-  `uki=`: a prepared ISO has no wrap to boot. `sha256=` is required because
-  it is what names `/falcon/prepared/<sha256>/` (Section 6.3.1), so a
-  prepared record without one cannot say where its artifacts are. There is
-  deliberately no separate location key; the link stays intrinsic.
-
-`splice=<iso_off>:<len>:<name>` is the override list of Section 6.3 written
-down: replace `len` bytes at `iso_off` of the virtual ISO with the contents
-of `<name>`, a file inside that record's prepared folder. Both numbers are
-decimal bytes, and both are bounded the way `size=` is, end offset
-(`iso_off + len`) included, so the loader may add them without checking for
-wrap. The key repeats, up to **eight** per record: the MVP patch shape is one
-whole-file substitution, the delta-plus-UDF-surgery fallback of Section 6.3
-is a handful of descriptor patches, and a bound has to exist at all because
-the record is fixed-size and parsed from attacker-editable exFAT. A record
-whose splice list is malformed in any way (a missing field, a non-decimal or
-overflowing number, a zero length, an empty or overlong name, a ninth splice)
-is dropped whole rather than partially applied: an ISO served with half its
-byte map is worse than one served with none of it.
+**Retired: prepared records (removed 2026-09-19).** From 2026-09-13 to
+2026-09-19 a second kind existed for Windows media prepared on the stick
+(Section 6.3.1): `kind=prepared`, no `uki=`, and `splice=<iso_off>:<len>:<name>`
+lines naming a patched `boot.wim` under `p2:/falcon/prepared/<sha256>/`. The
+loader patches Windows media itself now (Section 6.4). A stick an older
+appliance wrote may still carry such a record, so the parser skips any block
+with `kind=prepared` or a `splice=` line whole, as it skips a malformed one,
+and the records around it parse unchanged: the stick's blessed ISOs keep
+booting blessed and the Windows ISO boots as if it had no record. The next
+bless rewrites the file without it. The sidecar folders are inert and may be
+deleted by hand.
 
 Unknown keys stay ignored, as they always have, so a later version may add
 one without invalidating today's files.
@@ -1944,32 +1924,6 @@ the boot does not rest on the manifest at all: everything the manifest can
 influence is either signed (the UKI) or already-unverified data an attacker
 could edit directly (the manifest itself, the initrd). Corrupt or absent
 manifest degrades to "nothing is blessed," never to an error.
-
-**The Windows record: how the decision above was reached (settled
-2026-09-13).** A patched Windows ISO (Section 6.3) has no UKI. It has an
-override sidecar instead, and the loader's job for such an entry is to publish
-the ISO with that byte map applied rather than to boot a signed wrap. The
-format had no way to say that, and worse than "no way" it had a silent one:
-the parser required `uki=` before a block became a record at all
-(`falcon-core/src/manifest/manifest.c`, `block_flush`), so a Windows record written in the
-old shape was **dropped without a word** rather than rejected. That was a
-format decision to make before the Windows path landed, not a bug in the
-parser, which was behaving exactly as this section had specified it.
-
-Two candidates were weighed. The chosen one is the `kind=` key above,
-defaulting to the current UKI shape when absent so existing manifests keep
-parsing. The rejected one was relaxing the requirement to "`uki=` **or** a
-patch key" and letting whichever key is present say what the record is: it
-needs no new key, but it infers the record's meaning from which optional keys
-survived parsing, so a mistyped or dropped `splice=` silently demotes a
-Windows record to a blessed one with no UKI, and every consumer has to
-re-derive the kind for itself. An explicit key states it once, which is what
-keeps the loader from implementing half the rule. The constraints both
-candidates had to meet are met: the parser stays total over its input, and an
-unusable record stays a degradation (skipped, uncounted) and never an error.
-A Windows record still carries `iso=`, `size=`, `sha256=` and
-`family=windows`, and still means what every other record means: the user
-authorised this entry to be booted differently.
 
 Shelling out to `cryptsetup`, `sbsign`, `mkfs.*`, `bsdtar`, `wimlib` and
 `7z` is the intended vendoring line: reimplementing argon2id, Authenticode PE
@@ -2005,9 +1959,9 @@ still call ukify, which is a development dependency only.
 Two of those are Windows-driven and differ in how hard a requirement they
 are (both measured 2026-09-13):
 
-- **`wimlib`** (`app-arch/wimlib`) is required to prepare Windows media at
-  all: it is what rewrites `boot.wim`. The appliance image carries it
-  (Section 6.3.1).
+- **`wimlib`** (`app-arch/wimlib`) was required to prepare Windows media:
+  it rewrote `boot.wim`. Preparation was removed on 2026-09-19 (Section
+  6.4), and wimlib now only builds the WIM test fixture.
 - **`7z`** is a **soft** dependency of the bless tool, and the reason is
   worth stating because it is not obvious. `bsdtar` reads ISO 9660 and Rock
   Ridge but not UDF, and Microsoft builds install media with `oscdimg -u1`,

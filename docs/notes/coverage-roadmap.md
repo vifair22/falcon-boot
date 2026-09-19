@@ -338,7 +338,8 @@ graph LR
   one works. Independent of M1-M4.
 - **M6, Windows in the loader.** WIM surgery at boot (needs the UDF reader),
   then winjump parity (Win11 bypass, unattend) and WinPE shells, ESXi test.
-  Appliance preparation stays until this passes the scorecard.
+  Appliance preparation stays until this passes the scorecard (it passed;
+  preparation was removed 2026-09-19).
 
 ## 6. The appliance under this model
 
@@ -350,6 +351,11 @@ Decided 2026-09-18 (DESIGN 7.5). It keeps only what needs the private key:
   list with no UI of its own, sets `FalconNextBoot`, reboots, and the loader
   boots the entry the user picked.
 - **No media work.** Windows preparation and the p2 survey leave it.
+  Preparation was removed on 2026-09-19: the appliance, the sign tool's
+  `prepare`, the sidecars and the `kind=prepared` record are gone, and the
+  manifest parser skips an old prepared record. The survey stays for the
+  interactive appliance, which only blesses and reports Windows media as
+  booting as it is.
 - **Userland: our one static binary plus `sbsign`.** The key is read from
   p3 with `falcon-core`'s LUKS2 + ext4 into a memfd passed to sbsign as
   `/dev/fd/N`; ISOs are read with `falcon-core`'s ISO9660/UDF reader. Gone:
@@ -366,7 +372,9 @@ Order of the appliance work, each shippable on its own:
 3. bless-from-menu: the loader UI, the credential list, the non-interactive
    appliance, the return via `FalconNextBoot`;
 4. Windows preparation removed once the loader's WIM patch passes the
-   scorecard (drops wimlib and winjump from the image).
+   scorecard (drops wimlib and winjump from the image). Done 2026-09-19,
+   after M6; 7-Zip and its libstdc++ left the image with it (19 MB raw,
+   6.2 MB compressed).
 
 ## 7. Still open
 
