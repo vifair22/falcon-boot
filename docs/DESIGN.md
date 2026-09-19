@@ -1440,34 +1440,33 @@ procedures are in `docs/notes/shim-spike.md` Section 9.
 Note the ISO path does not depend on any of this: a distro ISO's inner shim
 is MS-signed and passes db through the firmware's own `LoadImage` natively.
 
-### 7.7 Two kinds of authorised modification: signed media and patched media
+### 7.7 Two kinds of modification: signed media and media patched at boot
 
-With Windows in scope (Sections 1 and 6.3), falcon-boot supports **two** kinds
-of user-authorised modification of media the user did not produce. They are
-peers, and that is why this is a section of the security model rather than a
-paragraph buried in the ISO path:
+falcon-boot makes **two** kinds of modification to media the user did not
+produce. They are peers, and that is why this is a section of the security
+model rather than a paragraph buried in the ISO path:
 
 - **Signed media (blessing, Section 7.5).** We sign a vendor's kernel with the
   user's MOK and boot that signed wrap instead of the vendor's own chain.
-- **Patched media (Windows, Section 6.3).** We serve altered bytes of a
-  vendor's image - a user-mode executable inside `boot.wim` - so that the
-  vendor's own chain can find its media. No signature is involved anywhere.
+- **Media patched at boot (Section 6.4).** The loader serves altered bytes of
+  a vendor's image for one boot, so that the vendor's own chain can find its
+  media: a user-mode executable inside Windows' `boot.wim`, or a Linux ISO's
+  `grub.cfg` and an extra initrd for its own signed GRUB (D3b). No signature
+  is involved anywhere.
 
-What they share is the point: both are the user deliberately authorising a
-modification to media they own (since 2026-09-18 the Windows patch is
-computed by the loader at boot, Section 6.4, and the rest of this paragraph
-holds unchanged for it), both are computed in Linux userland by a tool
-the user runs, and neither changes what the platform will enforce.
+Neither changes what the platform will enforce. They differ in what they
+leave behind, which is what decides how each is authorised (below).
 
 **The four invariants hold on the patched path, checked one at a time**,
 because a new capability is exactly the moment that check is worth writing
 down rather than assuming:
 
-1. *The loader verifies; it never signs.* The Windows path performs no signing
-   operation at all and needs no private key.
+1. *The loader verifies; it never signs.* The patched path performs no
+   signing operation at all and needs no private key.
 2. *Enforcement is the platform's, never the loader's.* Untouched.
-   `bootmgfw.efi` is launched through the same verifying load path as any
-   other ISO payload and passes `db` on its own Microsoft signature.
+   `bootmgfw.efi`, or the ISO's shim, is launched through the same verifying
+   load path as any other ISO payload and passes `db` on its own Microsoft
+   signature; everything after it is verified by the vendor's own chain.
 3. *No mechanism that relaxes signature enforcement exists in the loader.* The
    override and append layers serve bytes. They cannot make an image verify
    that would not otherwise have verified, and they are not reachable by
@@ -1475,8 +1474,8 @@ down rather than assuming:
    `VTOY_SECURE_BOOT_POLICY` bypass, which is a real enforcement relaxation,
    is rejected here as it is everywhere else in this document; we never need
    it for Windows.)
-4. *The private MOK key stays encrypted on p3 and never travels.* The Windows
-   path never reads it and does not care that it exists (Section 8).
+4. *The private MOK key stays encrypted on p3 and never travels.* The
+   patched path never reads it and does not care that it exists (Section 8).
 
 **The honest asymmetry, stated loudly on purpose.** A signature is *visible*:
 the platform sees it, refuses it when it is wrong, and anyone can inspect the
@@ -1495,12 +1494,16 @@ checking. The patch exists only in the bytes the loader serves for that one
 boot, computed in memory by the loader (Section 6.4), and is inert on any
 machine that boots the same ISO some other way.
 
-**Consent is the same act for both.** The per-ISO review-and-yes of Section
-7.5 - nothing pre-marked, every path on screen at the moment of confirmation,
-a typed "yes" over the review - applies to Windows patching exactly as it
-applies to signing. Patching is a bless operation and passes through the same
-gate. What the review *shows* differs (this entry will be patched, not
-signed); that it is shown, and that the user says yes to it, does not.
+**Authorisation follows what is left behind (decided 2026-09-19).** Signing
+keeps the review-and-yes of Section 7.5 (nothing pre-marked, every path on
+screen, a typed "yes"), because a blessing lasts and extends trust: the wrap
+boots under Secure Boot on every machine that trusts the user's MOK, from then
+on. A patch made at boot needs no consent step beyond selecting the entry. It
+lasts one boot, is written nowhere, extends no trust, and leaves the ISO
+byte-identical; the platform verifies the same vendor-signed binaries it would
+from a DVD. A confirmation on every such boot would be friction without
+protection. Until 2026-09-19 the Windows patch went through the signing gate,
+because the appliance computed it offline and wrote it to the stick.
 
 ### 7.8 Boot predictions (decided 2026-09-17)
 
