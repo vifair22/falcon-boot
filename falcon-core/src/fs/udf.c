@@ -758,3 +758,247 @@ int udf_dir_next(udf_dir *d, udf_dirent *out)
         return 1;
     }
 }
+
+/* ---- edits ---- */
+
+static void put_le16(uint8_t *p, uint16_t v)
+{
+    p[0] = (uint8_t)v;
+    p[1] = (uint8_t)(v >> 8);
+}
+
+static void put_le32(uint8_t *p, uint32_t v)
+{
+    p[0] = (uint8_t)v;
+    p[1] = (uint8_t)(v >> 8);
+    p[2] = (uint8_t)(v >> 16);
+    p[3] = (uint8_t)(v >> 24);
+}
+
+static void put_le64(uint8_t *p, uint64_t v)
+{
+    put_le32(p, (uint32_t)v);
+    put_le32(p + 4, (uint32_t)(v >> 32));
+}
+
+/* The tag's CRC over crc_len body bytes, then its checksum. */
+static void tag_seal(uint8_t *d, uint16_t crc_len)
+{
+    uint8_t sum = 0;
+    unsigned i;
+
+    put_le16(d + 10, crc_len);
+    put_le16(d + 8, crc_itu(d + 16, crc_len));
+    for (i = 0; i < 16u; i++) {
+        if (i != 4u)
+            sum = (uint8_t)(sum + d[i]);
+    }
+    d[4] = sum;
+}
+
+static int name_is_ascii(const uint16_t *name, uint16_t len, const char *s,
+                         size_t n)
+{
+    size_t i;
+
+    if (len != n)
+        return 0;
+    for (i = 0; i < n; i++) {
+        uint16_t a = name[i], b = (uint16_t)(unsigned char)s[i];
+
+        if (a >= 'A' && a <= 'Z')
+            a = (uint16_t)(a - 'A' + 'a');
+        if (b >= 'A' && b <= 'Z')
+            b = (uint16_t)(b - 'A' + 'a');
+        if (a != b)
+            return 0;
+    }
+    return 1;
+}
+
+int udf_lookup(udf_vol *v, const char *path, udf_dirent *out)
+{
+    static udf_dir d;
+    const char *p = path;
+    int have = 0, rc;
+
+    if (v == (udf_vol *)0 || path == (const char *)0 ||
+        out == (udf_dirent *)0)
+        return UDF_ERR_BAD_ARG;
+    rc = udf_dir_open_root(v, &d);
+    if (rc != UDF_OK)
+        return rc;
+    for (;;) {
+        size_t n = 0;
+        int found = 0;
+
+        while (*p == '/')
+            p++;
+        if (*p == '\0')
+            break;
+        while (p[n] != '\0' && p[n] != '/')
+            n++;
+        if (have) {
+            if (!out->is_dir)
+                return UDF_ERR_NOT_FOUND;
+            rc = udf_dir_open(v, &d, out);
+            if (rc != UDF_OK)
+                return rc;
+        }
+        while ((rc = udf_dir_next(&d, out)) == 1) {
+            if (name_is_ascii(out->name, out->name_len, p, n)) {
+                found = 1;
+                break;
+            }
+        }
+        if (rc < 0)
+            return rc;
+        if (!found)
+            return UDF_ERR_NOT_FOUND;
+        have = 1;
+        p += n;
+    }
+    return have ? UDF_OK : UDF_ERR_BAD_ARG;
+}
+
+int udf_pd_blocks(udf_vol *v, uint32_t out[2], size_t *count)
+{
+    uint8_t *b;
+    uint32_t seq_len[2], seq_loc[2];
+    size_t s;
+    int rc;
+
+    if (v == (udf_vol *)0 || out == (uint32_t *)0 || count == (size_t *)0)
+        return UDF_ERR_BAD_ARG;
+    *count = 0;
+    b = v->scratch;
+    v->scratch_off = NO_CACHE;
+    rc = read_abs(v, 256u, b, (uint64_t *)0);
+    if (rc != UDF_OK)
+        return rc;
+    if (tag_check(b, BS, 256u) != (int)TAG_AVDP)
+        return UDF_ERR_BAD_SUPER;
+    seq_len[0] = get_le32(b + 16);
+    seq_loc[0] = get_le32(b + 20);
+    seq_len[1] = get_le32(b + 24);
+    seq_loc[1] = get_le32(b + 28);
+    for (s = 0; s < 2u; s++) {
+        uint32_t n = seq_len[s] / BS, i;
+
+        if (n > VDS_BLOCKS_MAX)
+            n = VDS_BLOCKS_MAX;
+        for (i = 0; i < n; i++) {
+            int tag;
+
+            rc = read_abs(v, (uint64_t)seq_loc[s] + i, b, (uint64_t *)0);
+            if (rc != UDF_OK)
+                return rc;
+            tag = tag_check(b, BS, seq_loc[s] + i);
+            if (tag == (int)TAG_TD || tag < 0)
+                break;
+            if (tag == (int)TAG_PD) {
+                out[(*count)++] = seq_loc[s] + i;
+                break;
+            }
+        }
+    }
+    return *count != 0 ? UDF_OK : UDF_ERR_CORRUPT;
+}
+
+int udf_pd_set_length(uint8_t *blk, uint32_t loc, uint32_t len)
+{
+    if (blk == (uint8_t *)0)
+        return UDF_ERR_BAD_ARG;
+    if (tag_check(blk, BS, loc) != (int)TAG_PD)
+        return UDF_ERR_CORRUPT;
+    put_le32(blk + 192, len);
+    tag_seal(blk, get_le16(blk + 10));
+    return UDF_OK;
+}
+
+int udf_fe_append(uint8_t *blk, uint32_t loc, uint64_t add, uint32_t lbn,
+                  uint32_t *moved)
+{
+    uint32_t base, l_ea, l_ad, adsz, n, last_raw, last_len, rem, i;
+    uint64_t info, blocks = 0;
+    uint16_t flags;
+    unsigned kind;
+    uint8_t *ads, *last;
+    int tag, efe;
+
+    if (blk == (uint8_t *)0 || moved == (uint32_t *)0 || add == 0)
+        return UDF_ERR_BAD_ARG;
+    tag = tag_check(blk, BS, loc);
+    if (tag != (int)TAG_FE && tag != (int)TAG_EFE)
+        return UDF_ERR_CORRUPT;
+    efe = tag == (int)TAG_EFE;
+    base = efe ? 216u : 176u;
+    l_ea = get_le32(blk + (efe ? 208u : 168u));
+    l_ad = get_le32(blk + (efe ? 212u : 172u));
+    if (get_le16(blk + 20) != 4u || l_ea > BS || l_ad > BS ||
+        base + l_ea + l_ad > BS)
+        return UDF_ERR_UNSUPPORTED;
+    flags = get_le16(blk + 34);
+    kind = flags & 7u;
+    if (kind > 1u)
+        return UDF_ERR_UNSUPPORTED;
+    adsz = kind == 0u ? 8u : 16u;
+    if (l_ad == 0 || l_ad % adsz != 0)
+        return UDF_ERR_UNSUPPORTED;
+    n = l_ad / adsz;
+    ads = blk + base + l_ea;
+    for (i = 0; i < n; i++) {
+        uint32_t raw = get_le32(ads + (size_t)i * adsz);
+
+        /* Only recorded extents, and no continuation to another block. */
+        if ((raw >> 30) != 0 || (raw & 0x3fffffffu) == 0)
+            return UDF_ERR_UNSUPPORTED;
+    }
+    last = ads + (size_t)(n - 1u) * adsz;
+    last_raw = get_le32(last);
+    last_len = last_raw & 0x3fffffffu;
+    rem = last_len % BS;
+    if ((uint64_t)rem + add > 0x3fffffffu - BS)
+        return UDF_ERR_UNSUPPORTED;
+    info = get_le64(blk + 56);
+
+    if (last_len == rem) {
+        /* The whole last extent is a partial block: it moves entirely, and
+         * the new extent takes its descriptor's place. */
+        n--;
+    } else {
+        put_le32(last, last_len - rem);
+        if (base + l_ea + l_ad + adsz > BS)
+            return UDF_ERR_NOSPACE;
+    }
+    last = ads + (size_t)n * adsz;
+    memset(last, 0, adsz);
+    put_le32(last, (uint32_t)(rem + add));
+    put_le32(last + 4, lbn);
+    if (kind == 1u)
+        put_le16(last + 8, get_le16(ads + 8));   /* same partition */
+    n++;
+    l_ad = n * adsz;
+    put_le32(blk + (efe ? 212u : 172u), l_ad);
+    put_le64(blk + 56, info + add);
+    if (efe)
+        put_le64(blk + 64, get_le64(blk + 64) + add);
+    for (i = 0; i < n; i++)
+        blocks += ((get_le32(ads + (size_t)i * adsz) & 0x3fffffffu) + BS - 1u) / BS;
+    put_le64(blk + (efe ? 72u : 64u), blocks);
+    memset(ads + l_ad, 0, BS - base - l_ea - l_ad);
+    tag_seal(blk, (uint16_t)(base + l_ea + l_ad - 16u));
+    *moved = rem;
+    return UDF_OK;
+}
+
+int udf_avdp_at(uint8_t *blk, uint32_t loc)
+{
+    if (blk == (uint8_t *)0)
+        return UDF_ERR_BAD_ARG;
+    if (tag_check(blk, BS, ~(uint32_t)0) != (int)TAG_AVDP)
+        return UDF_ERR_CORRUPT;
+    put_le32(blk + 12, loc);
+    tag_seal(blk, get_le16(blk + 10));
+    return UDF_OK;
+}

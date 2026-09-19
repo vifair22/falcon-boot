@@ -9,6 +9,8 @@
  * the document that defines it.
  *
  * Provenance of every expected value below, and how it was confirmed:
+ *   SHA-1                 FIPS 180-2 Appendix A, and the same padding
+ *                         boundaries as SHA-256 (it names WIM streams).
  *   SHA-256, SHA-512      FIPS 180-4 / the standard one- and two-block
  *                         examples, plus lengths chosen to straddle the
  *                         padding boundary (55/56 for a 64-byte block,
@@ -53,6 +55,7 @@
 #include <string.h>
 
 #include <crypto/crypto.h>
+#include <crypto/sha1.h>
 #include <crypto/hash.h>
 #include <crypto/hmac.h>
 #include <crypto/pbkdf2.h>
@@ -178,6 +181,18 @@ static const hash_vec sha512_vecs[] = {
       "9ecbb152f58f130a407c8830604b70ca" },
 };
 
+/* FIPS 180-2 Appendix A, and the 55/56 and 63/64 padding boundaries. */
+static const hash_vec sha1_vecs[] = {
+    { "abc", "abc", 0, "a9993e364706816aba3e25717850c26c9cd0d89d" },
+    { "empty", "", 0, "da39a3ee5e6b4b0d3255bfef95601890afd80709" },
+    { "two-block", "abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq",
+      0, "84983e441c3bd26ebaae4aa1f95129e5e54670f1" },
+    { "55 x 'a'", NULL, 55, "c1c8bbdc22796e28c0e15163d20899b65621d65a" },
+    { "56 x 'a'", NULL, 56, "c2db330f6083854c99d4b5bfb6e8f29f201be699" },
+    { "63 x 'a'", NULL, 63, "03f09f5b158a7a8cdad920bddc29b81c18a551f5" },
+    { "64 x 'a'", NULL, 64, "0098ba824b5c16427bd7a1122a5a442a25ec644d" },
+};
+
 #define MSG_MAX 256
 
 static size_t vec_msg(const hash_vec *v, uint8_t *buf)
@@ -206,6 +221,31 @@ static void test_sha256_vectors(void **state)
         size_t n = vec_msg(v, msg);
 
         sha256(msg, n, out);
+        assert_hex(out, sizeof out, v->want);
+    }
+}
+
+static void test_sha1_vectors(void **state)
+{
+    uint8_t msg[MSG_MAX];
+    uint8_t out[SHA1_DIGEST_LEN];
+    size_t i;
+
+    (void)state;
+    for (i = 0; i < sizeof sha1_vecs / sizeof sha1_vecs[0]; i++) {
+        const hash_vec *v = &sha1_vecs[i];
+        size_t n = vec_msg(v, msg);
+        sha1_ctx c;
+        size_t k;
+
+        sha1(msg, n, out);
+        assert_hex(out, sizeof out, v->want);
+        /* The same bytes one at a time. */
+        sha1_init(&c);
+        for (k = 0; k < n; k++)
+            sha1_update(&c, msg + k, 1);
+        sha1_update(&c, NULL, 0);
+        sha1_final(&c, out);
         assert_hex(out, sizeof out, v->want);
     }
 }
@@ -977,6 +1017,7 @@ static void test_crypto_wipe(void **state)
 int run_crypto_tests(void)
 {
     const struct CMUnitTest tests[] = {
+        cmocka_unit_test(test_sha1_vectors),
         cmocka_unit_test(test_sha256_vectors),
         cmocka_unit_test(test_sha512_vectors),
         cmocka_unit_test(test_sha_incremental_split),

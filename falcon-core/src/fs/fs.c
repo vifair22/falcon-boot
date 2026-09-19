@@ -228,7 +228,8 @@ static const status_row udf_rows[] = {
     { UDF_ERR_RANGE,       FS_ERR_RANGE },
     { UDF_ERR_NOSPACE,     FS_ERR_NOSPACE },
     { UDF_ERR_UNSUPPORTED, FS_ERR_UNSUPPORTED },
-    { UDF_ERR_SYMLINK,     FS_ERR_SYMLINK }
+    { UDF_ERR_SYMLINK,     FS_ERR_SYMLINK },
+    { UDF_ERR_NOT_FOUND,   FS_ERR_NOT_FOUND }
 };
 
 int fs_status_from_iso9660(int rc)

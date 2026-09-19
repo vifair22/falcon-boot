@@ -8,7 +8,7 @@
 
 CORE := falcon-core/src
 
-CORE_CRYPTO   := $(addprefix $(CORE)/crypto/,crypto.c sha256.c sha512.c \
+CORE_CRYPTO   := $(addprefix $(CORE)/crypto/,crypto.c sha1.c sha256.c sha512.c \
 	hash.c hmac.c pbkdf2.c aes.c xts.c aesni.c)
 CORE_FS       := $(addprefix $(CORE)/fs/,exfat.c ext4.c iso9660.c udf.c fs.c)
 CORE_LUKS     := $(addprefix $(CORE)/luks/,json.c af.c luks.c)
@@ -18,6 +18,7 @@ CORE_TRUST    := $(addprefix $(CORE)/trust/,der.c x509.c authenticode.c \
 	siglist.c trust.c probe.c)
 CORE_MEDIA    := $(addprefix $(CORE)/media/,family.c cpio.c osrel.c bootcfg.c \
 	extmap.c hookcmd.c bootfs.c)
+CORE_WIM      := $(addprefix $(CORE)/wim/,lzx.c wim.c)
 CORE_MANIFEST := $(CORE)/manifest/manifest.c $(CORE)/manifest/blesslist.c
 CORE_MANIFEST_WRITE := $(CORE)/manifest/manifest_write.c
 
@@ -45,6 +46,11 @@ test-iso9660:
 test-udf:
 	falcon-core/tools/mk-test-udf.sh
 
+# The WIM wim_test.c reads and patches: wimlib writes it LZX-compressed with
+# a boot image, the shape of Windows install media's boot.wim.
+test-wim:
+	falcon-core/tools/mk-test-wim.sh
+
 test-luks:
 	falcon-core/tools/mk-test-luks.sh
 
@@ -54,7 +60,8 @@ test-luks:
 test-trust: $(EFI)
 	falcon-core/tools/mk-test-trust.sh
 
-.PHONY: test-image test-ext4 test-luks test-trust test-iso9660 test-udf
+.PHONY: test-image test-ext4 test-luks test-trust test-iso9660 test-udf \
+	test-wim
 
 # ---- tests ----
 
@@ -62,11 +69,12 @@ CORE_TESTS := $(addprefix falcon-core/tests/,main.c \
 	exfat_synth_test.c exfat_file_test.c exfat_extent_test.c \
 	exfat_fixture_test.c cpio_test.c family_test.c manifest_test.c \
 	crypto_test.c json_test.c luks_test.c ext4_test.c fs_test.c \
-	iso9660_test.c udf_test.c media_fs_test.c bootcfg_test.c extmap_test.c \
-	hookcmd_test.c bootfs_test.c blesslist_test.c part_test.c osrel_test.c \
-	pe_test.c trust_test.c)
+	iso9660_test.c udf_test.c udfedit_test.c media_fs_test.c bootcfg_test.c extmap_test.c \
+	hookcmd_test.c bootfs_test.c blesslist_test.c wim_test.c part_test.c \
+	osrel_test.c pe_test.c trust_test.c)
 
 CORE_UUT := $(CORE_CRYPTO) $(CORE_FS) $(CORE_LUKS) $(CORE_PART) $(CORE_PE) \
+	$(CORE_WIM) \
 	$(CORE_TRUST) $(CORE_MEDIA) $(CORE_MANIFEST) $(CORE_MANIFEST_WRITE)
 
 $(eval $(call test_bin,core,$(CORE_TESTS) $(CORE_UUT)))

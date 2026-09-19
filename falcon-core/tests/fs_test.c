@@ -324,6 +324,7 @@ static void test_fs_status_map_media_total(void **state)
         assert_int_equal(fs_status_from_iso9660(iso[i]), want[i]);
         assert_int_equal(fs_status_from_udf(udf[i]), want[i]);
     }
+    assert_int_equal(fs_status_from_udf(UDF_ERR_NOT_FOUND), FS_ERR_NOT_FOUND);
     assert_int_equal(fs_status_from_iso9660(1), 1);
     assert_int_equal(fs_status_from_udf(1), 1);
     assert_int_equal(fs_status_from_iso9660(-99), FS_ERR_CORRUPT);

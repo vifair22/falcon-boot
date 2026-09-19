@@ -39,7 +39,8 @@ enum {
     UDF_ERR_RANGE       = -5,
     UDF_ERR_NOSPACE     = -6,
     UDF_ERR_UNSUPPORTED = -7,
-    UDF_ERR_SYMLINK     = -8
+    UDF_ERR_SYMLINK     = -8,
+    UDF_ERR_NOT_FOUND   = -9  /* udf_lookup: no such path */
 };
 
 typedef int (*udf_read_fn)(void *ctx, uint64_t off, uint64_t len, void *buf);
@@ -124,5 +125,39 @@ int udf_file_read(udf_file *f, uint64_t off, uint64_t len, void *buf);
  * has no physical runs to report and is UDF_ERR_UNSUPPORTED. */
 int udf_file_extents(udf_vol *v, const udf_dirent *e, udf_extent *out,
                      size_t cap, size_t *count);
+
+/* ---- edits: a modified view of an image, for a server of its blocks ----
+ *
+ * The loader serves Windows install media with boot.wim longer than it is
+ * on the disc (falcon-core/src/wim/wim.h): the File Entry has to describe the
+ * longer file and the partition has to reach the blocks appended past the
+ * image's end. These rewrite the blocks concerned in the caller's buffer and
+ * re-seal their descriptor tags; nothing is written to the image. */
+
+/* The dirent at an absolute '/'-separated path, names compared
+ * ASCII-case-insensitively. UDF_ERR_NOT_FOUND when absent. */
+int udf_lookup(udf_vol *v, const char *path, udf_dirent *out);
+
+/* The absolute block numbers of the Partition Descriptor in the main and the
+ * reserve Volume Descriptor Sequence, as many as there are (up to 2). */
+int udf_pd_blocks(udf_vol *v, uint32_t out[2], size_t *count);
+
+/* A Partition Descriptor block (recorded at absolute block loc) given a new
+ * partition length in blocks. */
+int udf_pd_set_length(uint8_t *blk, uint32_t loc, uint32_t len);
+
+/* A File Entry block (recorded at partition block loc) extended by add bytes
+ * stored from partition block lbn on. A non-final extent must be whole
+ * blocks, so the bytes of the file's last partial block move to the start of
+ * the new extent: *moved says how many (the caller serves them there, ahead
+ * of the added ones). The File Entry must carry its descriptors itself (no
+ * continuation extents) and have room for one more. */
+int udf_fe_append(uint8_t *blk, uint32_t loc, uint64_t add, uint32_t lbn,
+                  uint32_t *moved);
+
+/* The Anchor Volume Descriptor Pointer (read from block 256) re-tagged for
+ * absolute block loc: UDF looks for a second anchor at the medium's last
+ * block, which moves when blocks are appended. */
+int udf_avdp_at(uint8_t *blk, uint32_t loc);
 
 #endif /* FALCON_UDF_H */

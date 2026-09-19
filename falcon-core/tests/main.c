@@ -54,12 +54,14 @@ int main(void)
     failed += run_ext4_tests();
     failed += run_iso9660_tests();
     failed += run_udf_tests();
+    failed += run_udfedit_tests();
     failed += run_media_fs_tests();
     failed += run_bootcfg_tests();
     failed += run_extmap_tests();
     failed += run_hookcmd_tests();
     failed += run_bootfs_tests();
     failed += run_blesslist_tests();
+    failed += run_wim_tests();
     failed += run_fs_tests();
     failed += run_part_tests();
     failed += run_osrel_tests();
