@@ -72,11 +72,14 @@ harness measures now is `docs/coverage.md`:
   ISO. Still open: a PE whose shell comes from `SYSTEM\Setup\CmdLine`
   rather than winpeshl.exe (Hiren's is one, but its bootmgr faults under
   this OVMF even as a bare CD). ESXi 7.0U3l and 8.0U3 (user-supplied) boot
-  as a bare CD but not under the stick's chain: VMware's own loader fails
-  at "image_load: Invalid parameter" loading its ISO9660 driver or mboot,
-  most likely because shim 16 has replaced gBS->LoadImage by then. Working
-  around that means the loader undoing shim's hook, which is a design
-  decision, not taken.
+  with Secure Boot off after two fixes traced on 8.0U3 (DESIGN 7.6): the
+  virtual CD's device path root is a hardware vendor node, and an ISO
+  payload is loaded by the firmware when shim is not enforcing, so a
+  payload that loads a driver of its own has firmware images to work with.
+  With Secure Boot on they still fail: shim has hooked the table by then,
+  every image in ESXi's chain is shim-made, and the firmware's
+  ConnectController faults on one. Only bypassing shim's hook would fix
+  that, which the invariants rule out.
 - **M4 breadth (2026-09-19)**: the corpus grew to 31 ISOs (Kali by
   torrent, and twelve more families: Hiren's PE, GParted, CachyOS, MX,
   Pop!_OS, Rocky, Alma, Void, NixOS, Leap 16 Agama, TrueNAS, FreeBSD).

@@ -10,15 +10,15 @@ Routes: **drop** is Enter on an unblessed image (whatever the loader does
 by default), **chain** boots the ISO's own EFI loader, **bless** is Enter
 on an image blessed with the sign tool.
 
-Loader: 0.1.0_20260918.2318.release, 0.1.0_20260919.0127.release, 0.1.0_20260919.0138.release, 0.1.0_20260919.0153.release, 0.1.0_20260919.0207.release, 0.1.0_20260919.0258.release, 0.1.0_20260919.0400.release, 0.1.0_20260919.1203.release, 0.1.0_20260919.1349.release, 0.1.0_20260919.1428.release
+Loader: 0.1.0_20260918.2318.release, 0.1.0_20260919.0127.release, 0.1.0_20260919.0153.release, 0.1.0_20260919.0207.release, 0.1.0_20260919.0258.release, 0.1.0_20260919.0400.release, 0.1.0_20260919.1203.release, 0.1.0_20260919.1349.release, 0.1.0_20260919.1428.release, 0.1.0_20260919.1606.release, 0.1.0_20260919.1633.release
 
 ## Summary
 
 | tier | ISOs run | SB off, drop | target | SB on, any route (both columns) | target |
 |---|---|---|---|---|---|
-| A | 22 | 21/22 (95%) | 100% | 18/22 (81%) | 95% |
+| A | 22 | 20/22 (90%) | 100% | 18/22 (81%) | 95% |
 | B | 9 | 9/9 (100%) | 90% | 9/9 (100%) | - |
-| C | 3 | 0/3 (0%) | - | 0/3 (0%) | - |
+| C | 3 | 2/3 (66%) | - | 0/3 (0%) | - |
 
 ## Matrix
 
@@ -31,7 +31,7 @@ Loader: 0.1.0_20260918.2318.release, 0.1.0_20260919.0127.release, 0.1.0_20260919
 | mint-22.3 | A | casper | PASS | FAIL | PASS | PASS | FAIL | PASS | REFUSED | REFUSED | PASS |
 | opensuse-tw-20260916 | A | suse-live | PASS | FAIL | PASS | PASS | FAIL | PASS | REFUSED | REFUSED | PASS |
 | manjaro-26.1.0 | A | manjaro | PASS | FAIL | PASS | REFUSED | REFUSED | PASS | REFUSED | REFUSED | PASS |
-| arch-2026.09.01 | A | arch | PASS | FAIL | PASS | REFUSED | REFUSED | PASS | REFUSED | REFUSED | PASS |
+| arch-2026.09.01 | A | arch | FAIL | - | PASS | REFUSED | REFUSED | PASS | REFUSED | REFUSED | PASS |
 | arch-2026.01.01 | A | arch | PASS | FAIL | PASS | REFUSED | REFUSED | PASS | REFUSED | REFUSED | PASS |
 | systemrescue-13.02 | A | systemrescue | PASS | FAIL | PASS | REFUSED | REFUSED | PASS | REFUSED | REFUSED | PASS |
 | kali-2026.2 | A | debian-live | PASS | FAIL | PASS | REFUSED | REFUSED | PASS | REFUSED | REFUSED | PASS |
@@ -55,8 +55,8 @@ Loader: 0.1.0_20260918.2318.release, 0.1.0_20260919.0127.release, 0.1.0_20260919
 | gentoo-min-20260510 | A | gentoo | PASS | FAIL | PASS | REFUSED | REFUSED | PASS | REFUSED | REFUSED | PASS |
 | windows-11-25h2 | A | windows | PASS | FAIL | N/A | PASS | FAIL | N/A | REFUSED | REFUSED | N/A |
 | windows-server-2025 | A | windows | PASS | FAIL | N/A | PASS | FAIL | N/A | REFUSED | REFUSED | N/A |
-| esxi-7.0u3l | C | esxi | FAIL | FAIL | UNBLESSABLE | FAIL | FAIL | UNBLESSABLE | REFUSED | REFUSED | UNBLESSABLE |
-| esxi-8.0u3 | C | esxi | FAIL | FAIL | UNBLESSABLE | FAIL | FAIL | UNBLESSABLE | REFUSED | REFUSED | UNBLESSABLE |
+| esxi-7.0u3l | C | esxi | PASS | PASS | UNBLESSABLE | FAIL | FAIL | UNBLESSABLE | REFUSED | REFUSED | UNBLESSABLE |
+| esxi-8.0u3 | C | esxi | PASS | PASS | UNBLESSABLE | FAIL | FAIL | UNBLESSABLE | REFUSED | REFUSED | UNBLESSABLE |
 | macrium-rescue-8.0 | A | windows-pe | PASS | PASS | UNBLESSABLE | PASS | PASS | UNBLESSABLE | REFUSED | REFUSED | UNBLESSABLE |
 
 ## Failures
@@ -72,11 +72,11 @@ Loader: 0.1.0_20260918.2318.release, 0.1.0_20260919.0127.release, 0.1.0_20260919
 | kubuntu-26.04 | off | chain | FAIL | no userland within 300s (screen: text console) |
 | kubuntu-26.04 | ms | chain | FAIL | no userland within 300s (screen: text console) |
 | mint-22.3 | off | chain | FAIL | no userland within 300s (screen: text console) |
-| mint-22.3 | ms | chain | FAIL | no userland within 300s (screen: text console) |
-| opensuse-tw-20260916 | off | chain | FAIL | no userland within 300s (screen: graphical) |
-| opensuse-tw-20260916 | ms | chain | FAIL | no userland within 300s (screen: text console) |
-| manjaro-26.1.0 | off | chain | FAIL | no userland within 300s (screen: graphical) |
-| arch-2026.09.01 | off | chain | FAIL | back at the menu: the payload exited, status 0x8000000000000002 (screen: text console) |
+| mint-22.3 | ms | chain | FAIL | the guest powered off or reset |
+| opensuse-tw-20260916 | off | chain | FAIL | the guest powered off or reset |
+| opensuse-tw-20260916 | ms | chain | FAIL | the guest powered off or reset |
+| manjaro-26.1.0 | off | chain | FAIL | the guest powered off or reset |
+| arch-2026.09.01 | off | drop | FAIL | the guest powered off or reset |
 | arch-2026.01.01 | off | chain | FAIL | back at the menu: the payload exited, status 0x8000000000000002 (screen: text console) |
 | systemrescue-13.02 | off | chain | FAIL | no userland within 300s (screen: graphical) |
 | kali-2026.2 | off | chain | FAIL | no userland within 300s (screen: text console) |
@@ -114,12 +114,8 @@ Loader: 0.1.0_20260918.2318.release, 0.1.0_20260919.0127.release, 0.1.0_20260919
 | windows-11-25h2 | ms | chain | FAIL | no userland within 300s (screen: Windows Setup) |
 | windows-server-2025 | off | chain | FAIL | no userland within 300s (screen: Windows Setup) |
 | windows-server-2025 | ms | chain | FAIL | no userland within 300s (screen: Windows Setup) |
-| esxi-7.0u3l | off | drop | FAIL | back at the menu: the payload exited, status 0x8000000000000002 (screen: text console) |
-| esxi-7.0u3l | off | chain | FAIL | back at the menu: the payload exited, status 0x8000000000000002 (screen: text console) |
 | esxi-7.0u3l | ms | drop | FAIL | no userland within 300s (screen: text console) |
 | esxi-7.0u3l | ms | chain | FAIL | no userland within 300s (screen: text console) |
-| esxi-8.0u3 | off | drop | FAIL | back at the menu: the payload exited, status 0x8000000000000002 (screen: text console) |
-| esxi-8.0u3 | off | chain | FAIL | back at the menu: the payload exited, status 0x8000000000000002 (screen: text console) |
-| esxi-8.0u3 | ms | drop | FAIL | back at the menu: the payload exited, status 0x800000000000000e (screen: text console) |
-| esxi-8.0u3 | ms | chain | FAIL | back at the menu: the payload exited, status 0x800000000000000e (screen: text console) |
+| esxi-8.0u3 | ms | drop | FAIL | no userland within 300s (screen: text console) |
+| esxi-8.0u3 | ms | chain | FAIL | no userland within 300s (screen: text console) |
 
