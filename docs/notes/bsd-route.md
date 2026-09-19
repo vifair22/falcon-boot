@@ -80,13 +80,40 @@ too, and a machine may have several. Candidates, in preference order:
 
 Option 1 is the plan.
 
-## Secure Boot
+## Secure Boot: blessing a BSD ISO (part 2 of M7)
 
-Out of scope for M7 and tracked separately. FreeBSD's `loader.efi` is unsigned,
-so under Secure Boot the platform refuses it, exactly as it refuses Arch's.
-Blessing signs a Linux kernel and does not apply. The route, if it is ever
-wanted, is signing the ISO's own `loader.efi` with the user's MOK and serving
-that, which is new machinery in the sign tool and the loader.
+FreeBSD's `loader.efi` is unsigned, so under Secure Boot the platform refuses
+it exactly as it refuses Arch's. Blessing today signs a Linux kernel into a
+UKI wrap, which has nothing to wrap here. The BSD form of the same act is:
+the sign tool takes the ISO's own `loader.efi`, signs it with the user's MOK,
+and the loader launches that signed copy with the patched ISO served beside
+it. One reboot per ISO, the same ceremony as any other blessing.
+
+What it needs:
+
+- **The sign tool**: read `/boot/loader.efi` out of the ISO with falcon-core's
+  ISO9660 reader, sign it with `sbsign` the way a bare payload is signed
+  (falcon-cli/src/sign/payload.c already signs PE images in place), and write
+  it to `p2:/falcon/blessed/<iso>.efi` with a manifest record naming it. The
+  record's existing shape fits: the artifact to launch is a field the blessed
+  path already has.
+- **The loader**: on a blessed BSD entry, publish the virtual CD and the FAT
+  device as M7's part 1 does, then start the signed loader instead of the
+  ISO's own.
+- **A measurement first**: FreeBSD's loader works out its own device
+  (`currdev`) from the device it was loaded from. Started off the synthetic
+  filesystem of Section 5.1, which has no Block I/O, it may not find one and
+  may need the virtual CD named to it instead. The alternative is patching the
+  signed bytes into the El Torito image the ISO already carries (2 MB FAT,
+  ~650 KB used, so a signature's worth of growth fits, at the cost of a FAT
+  directory and chain edit in the served bytes). Measure before choosing.
+
+**What blessing a BSD ISO means, stated plainly**: the user's key vouches for
+the ISO's loader, and that loader then loads a kernel and modules that nothing
+verifies. That is FreeBSD's own design, not something this adds, but it is a
+weaker chain than a blessed Linux wrap, where the signature covers the kernel
+and its initramfs together. DESIGN Section 7.7 gets a row for it when it is
+built.
 
 ## Corpus
 

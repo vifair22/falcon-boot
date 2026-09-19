@@ -382,9 +382,11 @@ graph LR
   the ISO as a file the loader can read, four settings patched into the ISO's
   `/boot/defaults/loader.conf`, and a memory guard, since the image is copied
   into RAM. Ventoy's per-version GEOM module is the fallback if the memory
-  cost proves to matter. Exit: FreeBSD, OPNsense and pfSense boot to their
-  installers with Secure Boot off. Secure Boot for BSD is separate: their
-  loaders are unsigned and blessing signs a Linux kernel.
+  cost proves to matter. Part 2 is blessing for BSD, added for completeness
+  on 2026-09-19: the sign tool signs the ISO's own `loader.efi` with the
+  user's MOK and the loader starts that, since a UKI wrap has no Linux kernel
+  to wrap here. Exit: FreeBSD, OPNsense and pfSense boot to their installers
+  with Secure Boot off, and blessed with it on in both states.
 - **M6, Windows in the loader.** WIM surgery at boot (needs the UDF reader),
   then winjump parity (Win11 bypass, unattend) and WinPE shells, ESXi test.
   Appliance preparation stays until this passes the scorecard (it passed;
