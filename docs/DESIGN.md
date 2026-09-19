@@ -619,10 +619,8 @@ entire read path is one `fs_file_read` call (Section 9).
 
 Reusability, recorded with its consequence rather than as a selling point:
 these are exactly the two layers the "overlay a modified `grub.cfg`" idea
-parked in Section 7.2 would need. Building them for Windows makes that idea
-mechanically possible and does nothing else. It still requires its own design
-discussion before anyone uses it there; a primitive existing is not
-authorisation to use it.
+of Section 7.2 needed. That idea was discussed and adopted on 2026-09-19
+(D3b, Section 7.2), and uses both layers from memory the loader computes.
 
 **Patch shape: size-preserving whole-file substitution (MVP choice).** Two
 shapes were measured.
@@ -1058,11 +1056,19 @@ conclude the patch failed.
     verify and launch the kernel and then usually *fail* to find its squashfs
     and drop to an emergency shell (Section 6.1). Under Secure Boot ON,
     blessing is the reliable route to a live desktop; this route is "verified
-    launch, best-effort media," and the Manual must not oversell it. (A
-    gray-area future idea, deliberately not designed here: overlay a modified
-    `grub.cfg` in the bytes the virtual CD serves. Config files are unverified
-    data even under Secure Boot, but injecting cmdline into another vendor's
-    trust chain deserves its own design discussion before anyone builds it.)
+    launch, best-effort media," and the Manual must not oversell it.
+    *Superseded for Enter's default 2026-09-19 (Section 6.4, D3a and D3b):*
+    the loader now boots such an ISO through that same chain with our cmdline
+    and falcon-hook. Where the kernel carries `.sbat`, the ISO's shim runs it
+    as its second stage (D3a); otherwise the ISO is served with its
+    `grub.cfg`'s bytes replaced by one of ours and the hook's archive past its
+    end, and the ISO's own signed GRUB boots it (D3b). Decided 2026-09-19:
+    serving our own configuration to another vendor's signed GRUB is
+    acceptable. It changes what the kernel is told and what is in its
+    initramfs, never what may run; GRUB's configuration is unverified by
+    GRUB's own design on every distro. Measurements are in
+    `docs/notes/d3-spike.md`. The route stays best-effort for an ISO whose
+    GRUB reads a different configuration first.
   - *User-blessed media:* the reliable route. The bless step (Section 7.5)
     extracts the ISO's kernel and signs it with the MOK key, so the loader boots
     that signed kernel directly with our `iso-scan`-style cmdline and initrd

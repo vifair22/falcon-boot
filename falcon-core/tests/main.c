@@ -59,6 +59,7 @@ int main(void)
     failed += run_bootcfg_tests();
     failed += run_extmap_tests();
     failed += run_hookcmd_tests();
+    failed += run_grubcfg_tests();
     failed += run_bootfs_tests();
     failed += run_blesslist_tests();
     failed += run_wim_tests();

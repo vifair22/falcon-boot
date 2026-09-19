@@ -13,6 +13,8 @@
 #include <media/bootfs.h>
 #include <media/extmap.h>
 #include <media/hookcmd.h>
+#include <media/grubcfg.h>
+#include <iso/iso.h>
 #include <lib/string.h>
 
 /* The hook, as make embeds it (falcon-hook/build.mk). */
@@ -550,6 +552,150 @@ out:
     loader_isomap_clear(st);
     pages_put(bs, &ip);
     pages_put(bs, &kp);
+    if (scratch != (char *)0)
+        bs->FreePool(scratch);
+    if (EFI_ERROR(status))
+        r->status = status;
+    return status;
+}
+
+/* ---- D3b: the ISO's own GRUB with a configuration of ours ---- */
+
+/* The file GRUB reads, no larger than this: the one piece of the medium
+ * that is replaced wholesale, in memory. */
+#define GRUBCFG_MAX ((UINTN)256u * 1024u)
+#define ISO_BLOCK 2048u
+
+static fs_dir g_lookdir;
+
+EFI_STATUS direct_grub_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent,
+                            fs_vol *p2, EFI_HANDLE p2_handle,
+                            UINT32 block_size, const fs_dirent *iso,
+                            direct_result *r)
+{
+    EFI_BOOT_SERVICES *bs = st->BootServices;
+    const bootcfg_entry *e;
+    pages cp = { 0, 0 }, hp = { 0, 0 };
+    UINT8 *cfg = (UINT8 *)0, *hook = (UINT8 *)0;
+    UINTN map_len = 0;
+    size_t hook_len = 0, hook_cap, next = 0;
+    UINT64 hook_blocks;
+    char *scratch = (char *)0;
+    fs_dirent cfg_ent;
+    fs_extent cfg_ext[2];
+    iso_overlay ovl;
+    iso_boot_result ir = { L"starting", EFI_SUCCESS,
+                           (const family_desc *)0 };
+    EFI_STATUS status;
+    UINTN i;
+
+    r->stage = L"opening the ISO";
+    r->status = EFI_SUCCESS;
+    r->no_entry = 1;
+    r->title[0] = '\0';
+    r->advice = (const CHAR16 *)0;
+    memset(&ovl, 0, sizeof ovl);
+
+    /* The hook's archive goes after the ISO's last byte, which is a block
+     * boundary on every medium the virtual CD serves. */
+    if (iso->size % ISO_BLOCK != 0)
+        return r->status = EFI_UNSUPPORTED;
+    if (fs_file_open(p2, &g_iso, iso) != FS_OK)
+        return r->status = EFI_DEVICE_ERROR;
+    r->stage = L"reading the ISO's filesystem";
+    if (EFI_ERROR(mount_iso()))
+        return r->status = EFI_UNSUPPORTED;
+    if (bs->AllocatePool(EfiLoaderData, CFG_SCRATCH, (void **)&scratch) !=
+        EFI_SUCCESS)
+        return r->status = EFI_OUT_OF_RESOURCES;
+    status = pick_entry(r, &e, scratch);
+    if (EFI_ERROR(status))
+        goto out;
+
+    /* Only a GRUB configuration, read from one contiguous file this driver
+     * can place: the bytes replaced are that file's. */
+    status = EFI_UNSUPPORTED;
+    r->no_entry = 1;
+    r->stage = L"locating the ISO's grub.cfg";
+    {
+        const char *s = g_cfg.source;
+        UINTN n = 0;
+
+        while (s[n] != '\0')
+            n++;
+        if (n < 9 || memcmp(s + n - 9, "/grub.cfg", 9) != 0 || e->loop)
+            goto out;
+    }
+    if (fs_lookup(&g_isovol, g_cfg.source, &g_lookdir, &cfg_ent) != FS_OK ||
+        cfg_ent.is_dir || cfg_ent.size == 0 || cfg_ent.size > GRUBCFG_MAX ||
+        fs_extents(&g_isovol, &cfg_ent, cfg_ext, 2, &next) != FS_OK ||
+        next != 1 || cfg_ext[0].len != cfg_ent.size)
+        goto out;
+
+    status = build_map(bs, p2, p2_handle, block_size, iso, &map_len, r);
+    if (EFI_ERROR(status))
+        goto out;
+
+    r->stage = L"building the hook's archive";
+    hook_cap = hookcmd_archive_size(falcon_hook_bin_len, map_len);
+    hook_blocks = ((UINT64)hook_cap + ISO_BLOCK - 1u) / ISO_BLOCK;
+    hook = pages_get(bs, &hp, hook_blocks * ISO_BLOCK);
+    cfg = pages_get(bs, &cp, cfg_ent.size);
+    if (hook == (UINT8 *)0 || cfg == (UINT8 *)0) {
+        status = EFI_OUT_OF_RESOURCES;
+        goto out;
+    }
+    memset(hook, 0, (UINTN)(hook_blocks * ISO_BLOCK));
+    if (hookcmd_archive(falcon_hook_bin, falcon_hook_bin_len, g_map, map_len,
+                        hook, hook_cap, &hook_len) != HOOKCMD_OK) {
+        status = EFI_LOAD_ERROR;
+        goto out;
+    }
+
+    r->stage = L"writing the grub.cfg";
+    if (grubcfg_write(e, g_hooked, iso->size / 512u,
+                      ((UINT64)hook_len + 511u) / 512u, (size_t)cfg_ent.size,
+                      (char *)cfg, (size_t)cfg_ent.size) != GRUBCFG_OK)
+        goto out;
+
+    ovl.ovl[0].iso_off = cfg_ext[0].vol_off;
+    ovl.ovl[0].len = cfg_ent.size;
+    ovl.ovl[0].mem = cfg;
+    ovl.ovl[1].iso_off = iso->size;
+    ovl.ovl[1].len = hook_blocks * ISO_BLOCK;
+    ovl.ovl[1].mem = hook;
+    ovl.n = 2;
+    ovl.extra = hook_blocks * ISO_BLOCK;
+
+    /* From here the ISO has a configuration this route can serve; a
+     * failure is a real one. */
+    r->no_entry = 0;
+    r->stage = L"setting FalconIsoMap";
+    status = loader_isomap_set(st, g_map, map_len);
+    if (EFI_ERROR(status))
+        goto out;
+
+    /* Not "starting": GRUB reads the kernel and initrds after this line,
+     * and the coverage harness counts media read after "starting" as the
+     * kernel's (tools/coverage/run-case.sh). */
+    menu_out(st, L"handing ");
+    {
+        CHAR16 t[BOOTCFG_TITLE_MAX];
+
+        for (i = 0; r->title[i] != '\0'; i++)
+            t[i] = (CHAR16)(unsigned char)r->title[i];
+        t[i] = 0;
+        menu_out(st, t);
+    }
+    menu_out(st, L" to the ISO's own GRUB\r\n");
+    status = iso_boot_overlaid(st, parent, p2, iso, ISO_MEDIA_CD, &ovl, &ir);
+    r->stage = ir.stage;
+    r->status = ir.status;
+
+out:
+    loader_isomap_clear(st);
+    pages_put(bs, &cp);
+    pages_put(bs, &hp);
     if (scratch != (char *)0)
         bs->FreePool(scratch);
     if (EFI_ERROR(status))

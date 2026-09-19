@@ -18,7 +18,9 @@ isolinux configuration; falcon-hook rebuilds the ISO as a device-mapper
 device inside the distro's initramfs; and with Secure Boot off the loader
 boots an unblessed Linux ISO's kernel directly (Enter; `c` chainloads its own
 loader, `d` forces direct); with it on, through the ISO's own shim when the
-kernel carries `.sbat` (Fedora; `docs/notes/d3-spike.md`). Blessed wraps
+kernel carries `.sbat` (Fedora, Rocky, Alma; D3a), else through the ISO's own
+signed GRUB with a grub.cfg of ours served in its place and falcon-hook as a
+blocklist initrd past the ISO's end (D3b; `docs/notes/d3-spike.md`). Blessed wraps
 carry the hook too. `b` on a
 row or `a` for everything new blesses from the menu through the appliance.
 The Tier B installers (Debian netinst, Alpine, Proxmox) boot direct through
@@ -135,7 +137,8 @@ the tree, so `#include <fs/exfat.h>` means one file wherever it is written.
     writer (`cpio.c`), `.osrel`/`.uname` reading (`osrel.c`), an ISO's own
     boot configuration (`bootcfg.c`, read through `bootfs.c` over a mounted
     image), the extent map handed to falcon-hook (`extmap.c`) and the hooked
-    boot's cmdline (`hookcmd.c`).
+    boot's cmdline (`hookcmd.c`), and the grub.cfg D3b serves in place of
+    an ISO's own (`grubcfg.c`).
   - `wim/` LZX decompression and the WIM reader, plus the boot.wim patch
     (`wim_patch_build`): a new header and a tail appended after the
     original's end, the original bytes untouched.

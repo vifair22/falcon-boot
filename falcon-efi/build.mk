@@ -32,6 +32,7 @@ EFI_SRCS := \
 	$(CORE)/media/bootcfg.c \
 	$(CORE)/media/bootfs.c \
 	$(CORE)/media/hookcmd.c \
+	$(CORE)/media/grubcfg.c \
 	$(CORE)/media/extmap.c \
 	$(HOOK_BLOB) \
 	$(EFI_SRC)/pos/pos.c \

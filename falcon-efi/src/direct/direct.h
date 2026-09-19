@@ -73,4 +73,15 @@ EFI_STATUS direct_map_set(EFI_SYSTEM_TABLE *st, fs_vol *p2,
                           const fs_dirent *iso, const UINT8 **map,
                           UINTN *len);
 
+/* D3b (docs/notes/d3-spike.md): boots iso through its own loader chain
+ * (its shim, its signed GRUB) with its grub.cfg's bytes replaced by one of
+ * ours (falcon-core/src/media/grubcfg.h) and falcon-hook's archive served
+ * past the ISO's end as one more initrd. For Secure Boot on, where the
+ * kernel carries no .sbat and D3a cannot start it. result->no_entry as
+ * direct_boot's: nothing this route can serve, chainload instead. */
+EFI_STATUS direct_grub_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent,
+                            fs_vol *p2, EFI_HANDLE p2_handle,
+                            UINT32 block_size, const fs_dirent *iso,
+                            direct_result *r);
+
 #endif /* FALCON_DIRECT_H */

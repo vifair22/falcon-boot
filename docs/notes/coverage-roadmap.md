@@ -51,9 +51,12 @@ harness measures now is `docs/coverage.md`:
   own shim, with the kernel as its second stage, boots Fedora with Secure
   Boot on and no blessing where db trusts the Microsoft CA. Every other
   corpus kernel lacks the `.sbat` section shim demands of what it loads, so
-  the loader checks first and chainloads them. D3b (the ISO's GRUB with a
-  configuration we write) would reach the rest; it is written up for the
-  discussion DESIGN 7.2 asked for, not built.
+  the loader checks first. D3b reaches most of the rest: the ISO's own
+  signed GRUB with a grub.cfg of ours served in place of its own, and
+  falcon-hook's archive as a blocklist initrd past the ISO's end. Merged
+  2026-09-19 after the DESIGN 7.2 discussion; with Secure Boot on (MS CA)
+  it turned Debian live and netinst, Ubuntu, Kubuntu, Mint, openSUSE and
+  Proxmox from FAIL to PASS with no blessing.
 - **M6**: the loader patches a Windows ISO's boot.wim as it serves it
   (DESIGN 6.4 has the shape). Windows 11 25H2 and Server 2025 reach Setup
   with Secure Boot off and on (Microsoft CA), and Setup reads its install source through
@@ -398,7 +401,7 @@ Order of the appliance work, each shippable on its own:
    label like any other.
 2. **Licence.** Settled 2026-09-18: GPL-3.0-or-later (`LICENSE`), which
    is compatible with learning from Ventoy's GPLv3 hooks or reusing them.
-3. **The `grub.cfg` overlay** (D3b), parked in DESIGN 7.2, only if D3a fails.
+3. **The `grub.cfg` overlay** (D3b): decided 2026-09-19, built and merged.
 4. **Where the corpus and harness live** (Unraid box, CI runner with KVM).
 
 ## 8. Enforcement-off (permissive) mode: build on demand, not scheduled
