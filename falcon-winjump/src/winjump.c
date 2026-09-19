@@ -9,9 +9,10 @@
  * is no inbox CLI for that (diskpart is VHD/VHDX only, Mount-DiskImage is
  * PowerShell and WinPE has none), which is why this executable exists.
  *
- * Bless time replaces \Windows\System32\winpeshl.exe inside the ISO's
- * boot.wim with this binary, keeps the original as winpeshl_orig.exe, and
- * drops falcon-winjump.cfg beside both. At run time we attach the ISO and
+ * The loader replaces \Windows\System32\winpeshl.exe inside the ISO's
+ * boot.wim with this binary as it serves the ISO (falcon-efi/src/win), keeps
+ * the original as winpeshl_orig.exe, and puts falcon-winjump.cfg beside
+ * both. At run time we attach the ISO and
  * then run the original shell, so Setup proceeds exactly as it would have.
  *
  * Two constraints are Microsoft's, not ours:

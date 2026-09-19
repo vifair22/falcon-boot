@@ -228,12 +228,12 @@ endef
 
 # ---- the components ----
 include falcon-core/build.mk
-# Before the loader: it embeds the hook, and its source list is expanded as
-# it is read.
+# Before the loader: it embeds the hook and the WinPE jump binary, and its
+# source list is expanded as it is read.
 include falcon-hook/build.mk
+include falcon-winjump/build.mk
 include falcon-efi/build.mk
 include falcon-cli/build.mk
-include falcon-winjump/build.mk
 include falcon-appliance/build.mk
 
 TESTS := core efi cli appliance hook

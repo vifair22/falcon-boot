@@ -26,6 +26,9 @@ EFI_SRCS := \
 	$(CORE)/media/family.c \
 	$(CORE)/media/cpio.c \
 	$(EFI_SRC)/direct/direct.c \
+	$(EFI_SRC)/win/winpatch.c \
+	$(CORE_WIM) \
+	$(WINJUMP_BLOB) \
 	$(CORE)/media/bootcfg.c \
 	$(CORE)/media/bootfs.c \
 	$(CORE)/media/hookcmd.c \

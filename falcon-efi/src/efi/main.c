@@ -17,6 +17,7 @@
 #include <fs/fs.h>
 #include <iso/iso.h>
 #include <direct/direct.h>
+#include <win/winpatch.h>
 #include <manifest/blesslist.h>
 #include <lib/string.h>
 #include <console/menu.h>
@@ -1225,6 +1226,54 @@ static BOOLEAN boot_direct(EFI_HANDLE image_handle, const menu_entry *entry,
     return TRUE;
 }
 
+/* ---- Windows, patched at boot (DESIGN Sections 6.3 and 6.4) ---- */
+
+static BOOLEAN entry_path_ascii(const menu_entry *e, char *out_path,
+                                UINTN cap);
+
+/* Returns FALSE when the media is not one the loader can patch, with
+ * nothing served, so the caller offers the appliance's preparation. */
+static BOOLEAN boot_windows(EFI_HANDLE image_handle, const menu_entry *entry,
+                            iso_target *target)
+{
+    win_result result;
+    char path[MANIFEST_PATH_MAX];
+    EFI_STATUS status;
+
+    if (!entry_path_ascii(entry, path, sizeof path))
+        return FALSE;
+    menu_screen(g_st);
+    out(L"booting: ");
+    out(entry->label);
+    out(L"\r\n\r\n");
+    status = win_patched_boot(g_st, image_handle, &g_vols[target->vol],
+                              &target->ent, path, &result);
+    if (EFI_ERROR(status) && result.unpatchable)
+        return FALSE;
+
+    menu_screen(g_st);
+    out(entry->label);
+    if (!EFI_ERROR(status)) {
+        out(L"\r\nthe payload exited, status ");
+        out_hex(result.status);
+        out(L"\r\n");
+        if (exit_note(result.status) != (const CHAR16 *)0) {
+            out(L"\r\n");
+            out(exit_note(result.status));
+            out(L"\r\n");
+        }
+    } else {
+        out(L"\r\nboot failed while ");
+        out(result.stage);
+        out(L": ");
+        out_hex(result.status);
+        out(L"\r\n");
+    }
+    refusal_evidence(status, result.status, &target->trust);
+    out(L"\r\npress any key to return to the menu.\r\n");
+    return TRUE;
+}
+
 /* ---- offering preparation (DESIGN Section 6.3.1) ---- */
 
 typedef enum {
@@ -1556,6 +1605,11 @@ static BOOLEAN boot_plain_or_offer(EFI_HANDLE image_handle,
 
     prep = bless_prep_state(&t->hit, t->fam);
     if (prep == BLESS_PREP_ABSENT || prep == BLESS_PREP_STALE) {
+        /* The loader patches boot.wim itself as it serves it; the
+         * appliance's preparation is what is left for media it cannot. c
+         * boots the ISO as it is. */
+        if (route != ROUTE_CHAIN && boot_windows(image_handle, entry, t))
+            return TRUE;
         switch (offer_prepare(entry, prep)) {
         case OFFER_PREPARE:
             launch_appliance(image_handle, entry, pinned);

@@ -35,8 +35,12 @@ WINJUMP_CFLAGS := -std=c11 -O2 \
 
 # VirtDisk.dll is the whole point; advapi32 supplies the token calls that
 # AttachVirtualDisk's privilege requirement needs. Both are inbox in WinPE
-# (measured in the 25H2 boot.wim), as are kernel32 and msvcrt.
-WINJUMP_LDFLAGS := -fstack-protector-strong -Wl,--no-insert-timestamp
+# (measured in the 25H2 boot.wim), as are kernel32 and the UCRT the
+# api-ms-win-crt imports resolve to. libssp-0.dll, which the stack protector
+# otherwise imports, is not, and a missing import kills the process before
+# its first log line: -static links it (and libgcc) in, and leaves the
+# system DLLs as imports.
+WINJUMP_LDFLAGS := -fstack-protector-strong -static -Wl,--no-insert-timestamp
 WINJUMP_LIBS := -lvirtdisk -ladvapi32
 
 winjump: $(WINJUMP)
@@ -50,3 +54,22 @@ $(WINJUMP_OBJ)/%.o: %.c
 	$(CC) $(WINJUMP_CFLAGS) -MMD -MF $@.d -c -o $@ $<
 
 .PHONY: winjump
+
+# The loader's copy (falcon-efi/src/win): stripped, as a C array, the way
+# falcon-hook/build.mk carries the hook, so the jump binary the loader
+# installs in boot.wim is always this build's.
+WINJUMP_STRIPPED := build/gen/winjump-stripped.exe
+WINJUMP_BLOB := build/gen/winjump_blob.c
+
+$(WINJUMP_STRIPPED): $(WINJUMP)
+	@mkdir -p $(@D)
+	$(CC:gcc=strip) -s -o $@ $<
+
+$(WINJUMP_BLOB): $(WINJUMP_STRIPPED)
+	@mkdir -p $(@D)
+	@{ echo '/* generated from $(WINJUMP) by make; do not edit */'; \
+	   echo '#include <stddef.h>'; \
+	   xxd -i -n falcon_winjump_bin $< | \
+	   sed -e 's/^unsigned char/const unsigned char/' \
+	       -e 's/^unsigned int falcon_winjump_bin_len/const size_t falcon_winjump_bin_len/'; \
+	} > $@
