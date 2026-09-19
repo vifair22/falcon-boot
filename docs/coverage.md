@@ -10,15 +10,15 @@ Routes: **drop** is Enter on an unblessed image (whatever the loader does
 by default), **chain** boots the ISO's own EFI loader, **bless** is Enter
 on an image blessed with the sign tool.
 
-Loader: 0.1.0_20260918.2318.release, 0.1.0_20260919.0127.release, 0.1.0_20260919.0138.release, 0.1.0_20260919.0153.release, 0.1.0_20260919.0207.release, 0.1.0_20260919.0258.release, 0.1.0_20260919.0400.release, 0.1.0_20260919.1059.release, 0.1.0_20260919.1203.release
+Loader: 0.1.0_20260918.2318.release, 0.1.0_20260919.0127.release, 0.1.0_20260919.0138.release, 0.1.0_20260919.0153.release, 0.1.0_20260919.0207.release, 0.1.0_20260919.0258.release, 0.1.0_20260919.0400.release, 0.1.0_20260919.1203.release, 0.1.0_20260919.1349.release, 0.1.0_20260919.1428.release
 
 ## Summary
 
 | tier | ISOs run | SB off, drop | target | SB on, any route (both columns) | target |
 |---|---|---|---|---|---|
-| A | 21 | 20/21 (95%) | 100% | 18/21 (85%) | 95% |
+| A | 22 | 21/22 (95%) | 100% | 18/22 (81%) | 95% |
 | B | 9 | 9/9 (100%) | 90% | 9/9 (100%) | - |
-| C | 1 | 0/1 (0%) | - | 0/1 (0%) | - |
+| C | 3 | 0/3 (0%) | - | 0/3 (0%) | - |
 
 ## Matrix
 
@@ -40,7 +40,7 @@ Loader: 0.1.0_20260918.2318.release, 0.1.0_20260919.0127.release, 0.1.0_20260919
 | hbcd-pe-1.0.8 | A | windows-pe | FAIL | FAIL | UNBLESSABLE | FAIL | FAIL | UNBLESSABLE | REFUSED | REFUSED | UNBLESSABLE |
 | gparted-1.8.1-6 | A | debian-live | PASS | FAIL | PASS | PASS | FAIL | PASS | REFUSED | REFUSED | PASS |
 | cachyos-260809 | A | arch | PASS | FAIL | PASS | REFUSED | REFUSED | PASS | REFUSED | REFUSED | PASS |
-| mx-25.2 | A | antix | PASS | FAIL | PASS | FAIL | FAIL | PASS | REFUSED | REFUSED | PASS |
+| mx-25.2 | A | antix | PASS | FAIL | PASS | PASS | FAIL | PASS | REFUSED | REFUSED | PASS |
 | popos-24.04-20 | A | casper | PASS | PASS | PASS | REFUSED | REFUSED | PASS | REFUSED | REFUSED | PASS |
 | debian-netinst-13.7 | B | debian-installer | PASS | FAIL | PASS | PASS | FAIL | PASS | REFUSED | REFUSED | PASS |
 | alpine-ext-3.24.2 | B | alpine | PASS | FAIL | PASS | REFUSED | REFUSED | PASS | REFUSED | REFUSED | PASS |
@@ -55,6 +55,9 @@ Loader: 0.1.0_20260918.2318.release, 0.1.0_20260919.0127.release, 0.1.0_20260919
 | gentoo-min-20260510 | A | gentoo | PASS | FAIL | PASS | REFUSED | REFUSED | PASS | REFUSED | REFUSED | PASS |
 | windows-11-25h2 | A | windows | PASS | FAIL | N/A | PASS | FAIL | N/A | REFUSED | REFUSED | N/A |
 | windows-server-2025 | A | windows | PASS | FAIL | N/A | PASS | FAIL | N/A | REFUSED | REFUSED | N/A |
+| esxi-7.0u3l | C | esxi | FAIL | FAIL | UNBLESSABLE | FAIL | FAIL | UNBLESSABLE | REFUSED | REFUSED | UNBLESSABLE |
+| esxi-8.0u3 | C | esxi | FAIL | FAIL | UNBLESSABLE | FAIL | FAIL | UNBLESSABLE | REFUSED | REFUSED | UNBLESSABLE |
+| macrium-rescue-8.0 | A | windows-pe | PASS | PASS | UNBLESSABLE | PASS | PASS | UNBLESSABLE | REFUSED | REFUSED | UNBLESSABLE |
 
 ## Failures
 
@@ -89,7 +92,6 @@ Loader: 0.1.0_20260918.2318.release, 0.1.0_20260919.0127.release, 0.1.0_20260919
 | gparted-1.8.1-6 | ms | chain | FAIL | no userland within 300s (screen: text console) |
 | cachyos-260809 | off | chain | FAIL | no userland within 300s (screen: text console) |
 | mx-25.2 | off | chain | FAIL | no userland within 300s (screen: graphical) |
-| mx-25.2 | ms | drop | FAIL | no userland within 300s (screen: graphical) |
 | mx-25.2 | ms | chain | FAIL | no userland within 300s (screen: graphical) |
 | debian-netinst-13.7 | off | chain | FAIL | no userland within 300s (screen: graphical) |
 | debian-netinst-13.7 | ms | chain | FAIL | no userland within 300s (screen: graphical) |
@@ -112,4 +114,12 @@ Loader: 0.1.0_20260918.2318.release, 0.1.0_20260919.0127.release, 0.1.0_20260919
 | windows-11-25h2 | ms | chain | FAIL | no userland within 300s (screen: Windows Setup) |
 | windows-server-2025 | off | chain | FAIL | no userland within 300s (screen: Windows Setup) |
 | windows-server-2025 | ms | chain | FAIL | no userland within 300s (screen: Windows Setup) |
+| esxi-7.0u3l | off | drop | FAIL | back at the menu: the payload exited, status 0x8000000000000002 (screen: text console) |
+| esxi-7.0u3l | off | chain | FAIL | back at the menu: the payload exited, status 0x8000000000000002 (screen: text console) |
+| esxi-7.0u3l | ms | drop | FAIL | no userland within 300s (screen: text console) |
+| esxi-7.0u3l | ms | chain | FAIL | no userland within 300s (screen: text console) |
+| esxi-8.0u3 | off | drop | FAIL | back at the menu: the payload exited, status 0x8000000000000002 (screen: text console) |
+| esxi-8.0u3 | off | chain | FAIL | back at the menu: the payload exited, status 0x8000000000000002 (screen: text console) |
+| esxi-8.0u3 | ms | drop | FAIL | back at the menu: the payload exited, status 0x800000000000000e (screen: text console) |
+| esxi-8.0u3 | ms | chain | FAIL | back at the menu: the payload exited, status 0x800000000000000e (screen: text console) |
 

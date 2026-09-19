@@ -67,8 +67,16 @@ harness measures now is `docs/coverage.md`:
   missing import killed it before its first log line. Parity: the Win11
   requirement bypass and an unattend file are options in
   `p2:/falcon/windows.cfg` (DESIGN 6.4), proven on a VM with no TPM.
-  WinPE-based rescue media (Hiren's) is in the corpus; ESXi is not, since
-  its ISO needs a Broadcom login.
+  WinPE media is patched too (a boot.wim behind bootmgr classifies as
+  Windows): Macrium Reflect 8's rescue disc passes, and winjump attaches its
+  ISO. Still open: a PE whose shell comes from `SYSTEM\Setup\CmdLine`
+  rather than winpeshl.exe (Hiren's is one, but its bootmgr faults under
+  this OVMF even as a bare CD). ESXi 7.0U3l and 8.0U3 (user-supplied) boot
+  as a bare CD but not under the stick's chain: VMware's own loader fails
+  at "image_load: Invalid parameter" loading its ISO9660 driver or mboot,
+  most likely because shim 16 has replaced gBS->LoadImage by then. Working
+  around that means the loader undoing shim's hook, which is a design
+  decision, not taken.
 - **M4 breadth (2026-09-19)**: the corpus grew to 31 ISOs (Kali by
   torrent, and twelve more families: Hiren's PE, GParted, CachyOS, MX,
   Pop!_OS, Rocky, Alma, Void, NixOS, Leap 16 Agama, TrueNAS, FreeBSD).
