@@ -926,8 +926,12 @@ boot as it does around a direct one). Measured under OVMF by the coverage
 harness (`docs/coverage.md`): every Tier A Linux ISO on hand boots
 unmodified with Secure Boot off (Enter boots direct; `c` chainloads the
 ISO's own loader, `d` forces direct), and blessed in all three Secure Boot
-states. Windows still needs the appliance's preparation (Section 6.3), and
-the installer ISOs of Tier B do not yet find their media through the hook.
+states. The Tier B installers (Debian netinst, Alpine, Proxmox) boot direct
+too, through the hook's fallbacks: the extent map carried in the initrd, a
+loop device where the kernel has no device-mapper, a module package read out
+of the ISO's own pool where the initramfs has neither, and a short table of
+per-distro nudges (roadmap M4). Windows still needs the appliance's
+preparation (Section 6.3).
 
 ## 7. Security model
 

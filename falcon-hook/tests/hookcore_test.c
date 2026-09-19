@@ -267,6 +267,92 @@ static void test_hook_iso_names(void **state)
     assert_false(hook_iso_names(pvd, label, sizeof label, uuid, 0));
 }
 
+static void test_hook_patch(void **state)
+{
+    static const char text[] = "a\nfor x in ONE TWO; do\nb\n";
+    char out[64];
+    size_t len = 0;
+
+    (void)state;
+    assert_int_equal(hook_patch(text, sizeof text - 1u, "ONE ", "ZERO ONE ",
+                                out, sizeof out, &len), 1);
+    assert_int_equal(len, sizeof text - 1u + 5u);
+    assert_memory_equal(out, "a\nfor x in ZERO ONE TWO; do\nb\n", len);
+    /* Already patched, or nothing to patch: left alone. */
+    assert_int_equal(hook_patch(out, len, "ONE ", "ZERO ONE ", out, sizeof out,
+                                &len), 0);
+    assert_int_equal(hook_patch(text, sizeof text - 1u, "THREE", "X", out,
+                                sizeof out, &len), 0);
+    assert_int_equal(hook_patch(text, sizeof text - 1u, "ONE ", "ZERO ONE ",
+                                out, 10, &len), HOOK_ERR_NOSPACE);
+    assert_int_equal(hook_patch(text, 2, "ONE", "X", out, sizeof out, &len),
+                     0);
+    assert_int_equal(hook_patch(NULL, 1, "a", "b", out, sizeof out, &len),
+                     HOOK_ERR_BAD_ARG);
+    assert_int_equal(hook_patch(text, 1, "a", "b", out, sizeof out, NULL),
+                     HOOK_ERR_BAD_ARG);
+}
+
+/* Each nudge against the line it was written for, as the distro ships it. */
+static void test_hook_nudges(void **state)
+{
+    static const char pve[] =
+        "        for try in $(seq 1 9); do\n"
+        "            for i in /sys/block/hd* /sys/block/sr* /sys/block/scd* "
+        "/sys/block/sd* /sys/block/nvme*; do\n";
+    static char out[512];
+    const hook_nudge *n;
+    size_t count = 0, len = 0, i;
+
+    (void)state;
+    n = hook_nudges(&count);
+    assert_true(count >= 1);
+    for (i = 0; i < count; i++) {
+        assert_non_null(n[i].what);
+        assert_true(n[i].path[0] == '/');
+        assert_null(strstr(n[i].find, n[i].replace));
+    }
+    assert_string_equal(n[0].what, "proxmox");
+    assert_int_equal(hook_patch(pve, sizeof pve - 1u, n[0].find,
+                                n[0].replace, out, sizeof out, &len), 1);
+    out[len] = '\0';
+    assert_non_null(strstr(out, "for i in /sys/block/dm* /sys/block/loop* "
+                                "/sys/block/hd* /sys/block/sr* "
+                                "/sys/block/scd*"));
+}
+
+static void test_hook_premounts_and_packages(void **state)
+{
+    static const char rel[] = "6.12.107+deb13-amd64";
+    const hook_premount *p;
+    size_t count = 0;
+
+    (void)state;
+    p = hook_premounts(&count);
+    assert_true(count >= 1);
+    assert_string_equal(p[0].dir, "/cdrom");
+    assert_true(p[0].marker[0] == '/');
+
+    assert_true(hook_module_package(
+        "loop-modules-6.12.107+deb13-amd64-di_6.12.107-1_amd64.udeb", rel,
+        "loop-modules-"));
+    /* Another kernel's package, another module's, not a udeb. */
+    assert_false(hook_module_package(
+        "loop-modules-6.12.99+deb13-amd64-di_6.12.99-1_amd64.udeb", rel,
+        "loop-modules-"));
+    assert_false(hook_module_package(
+        "md-modules-6.12.107+deb13-amd64-di_6.12.107-1_amd64.udeb", rel,
+        "loop-modules-"));
+    assert_false(hook_module_package(
+        "loop-modules-6.12.107+deb13-amd64-di_6.12.107-1_amd64.deb", rel,
+        "loop-modules-"));
+    assert_false(hook_module_package("loop-modules-", rel, "loop-modules-"));
+    assert_false(hook_module_package("x", "", "x"));
+    assert_false(hook_module_package(NULL, rel, "a"));
+    assert_false(hook_module_package("a", NULL, "a"));
+    assert_false(hook_module_package("a", rel, NULL));
+}
+
 int run_hookcore_tests(void)
 {
     const struct CMUnitTest tests[] = {
@@ -274,6 +360,9 @@ int run_hookcore_tests(void)
         cmocka_unit_test(test_hook_efivar_and_names),
         cmocka_unit_test(test_hook_dm_table),
         cmocka_unit_test(test_hook_iso_names),
+        cmocka_unit_test(test_hook_patch),
+        cmocka_unit_test(test_hook_nudges),
+        cmocka_unit_test(test_hook_premounts_and_packages),
     };
 
     return cmocka_run_group_tests_name("falcon-hook", tests, NULL, NULL);

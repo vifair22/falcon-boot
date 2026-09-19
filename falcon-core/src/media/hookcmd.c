@@ -154,9 +154,10 @@ int hookcmd_build(const char *base, char *out, size_t cap)
     return added ? HOOKCMD_OK : put_additions(base, out, cap, &o);
 }
 
-/* Directory, then the executable: the kernel's unpacker creates only what
- * an archive names. */
-static void archive_entries(cpio_entry *e, const void *bin, size_t bin_len)
+/* Directory, then the executable, then the map: the kernel's unpacker
+ * creates only what an archive names. Returns how many entries there are. */
+static size_t archive_entries(cpio_entry *e, const void *bin, size_t bin_len,
+                              const void *map, size_t map_len)
 {
     e[0].path = "falcon";
     e[0].data = (const void *)0;
@@ -166,32 +167,41 @@ static void archive_entries(cpio_entry *e, const void *bin, size_t bin_len)
     e[1].data = bin;
     e[1].len = bin_len;
     e[1].mode = 0100755u;
+    if (map == (const void *)0 || map_len == 0)
+        return 2;
+    e[2].path = "falcon/map";
+    e[2].data = map;
+    e[2].len = map_len;
+    e[2].mode = CPIO_MODE_FILE;
+    return 3;
 }
 
-size_t hookcmd_archive_size(size_t bin_len)
+size_t hookcmd_archive_size(size_t bin_len, size_t map_len)
 {
     /* cpio_size only measures, but it refuses data NULL with a length. */
     static const unsigned char any = 0;
-    cpio_entry e[2];
-    size_t n = 0;
+    cpio_entry e[3];
+    size_t n = 0, count;
 
-    archive_entries(e, &any, bin_len);
-    if (cpio_size(e, 2, &n) != CPIO_OK)
+    count = archive_entries(e, &any, bin_len,
+                            map_len != 0 ? &any : (const void *)0, map_len);
+    if (cpio_size(e, count, &n) != CPIO_OK)
         return 0;
     return n;
 }
 
-int hookcmd_archive(const void *bin, size_t bin_len, void *buf, size_t cap,
-                    size_t *len)
+int hookcmd_archive(const void *bin, size_t bin_len, const void *map,
+                    size_t map_len, void *buf, size_t cap, size_t *len)
 {
-    cpio_entry e[2];
+    cpio_entry e[3];
+    size_t count;
     int rc;
 
     if (bin == (const void *)0 || bin_len == 0 || buf == (void *)0 ||
-        len == (size_t *)0)
+        len == (size_t *)0 || (map == (const void *)0 && map_len != 0))
         return HOOKCMD_ERR_BAD_ARG;
-    archive_entries(e, bin, bin_len);
-    rc = cpio_write(e, 2, buf, cap, len);
+    count = archive_entries(e, bin, bin_len, map, map_len);
+    rc = cpio_write(e, count, buf, cap, len);
     if (rc == CPIO_ERR_NOSPACE)
         return HOOKCMD_ERR_NOSPACE;
     return rc == CPIO_OK ? HOOKCMD_OK : HOOKCMD_ERR_BAD_ARG;

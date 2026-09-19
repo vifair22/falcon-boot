@@ -45,9 +45,19 @@ harness measures now is `docs/coverage.md`:
   and no corpus distro lacks dm-mod. It comes back when the harness shows one
   that does. The exit's "dropping a new ISO to a booted live desktop" leg is
   hardware work.
-- **M4** starts from the three Tier B installers, which boot direct and then
-  do not look at `/dev/mapper/falcon-iso` (Debian's cdrom-detect, Alpine's
-  nlplug-findfs, Proxmox's own ISO scan).
+- **M4**: the three Tier B installers boot direct with Secure Boot off, each
+  through a different gap the hook now closes. Alpine's kernel has no
+  efivarfs and no dm-mod: a direct boot now carries the extent map in the
+  initrd (`/falcon/map`), and the hook falls back to a read-only loop device
+  when the ISO is one contiguous run. Proxmox scans only
+  `/sys/block/{hd,sr,scd,sd,nvme}*`: a nudge adds `dm*` to that glob in its
+  `/init` (the table in `falcon-hook/src/hookcore.c`). The Debian installer
+  has neither dm-mod nor loop: the hook reads
+  `loop-modules-<release>-di_*.udeb` out of the ISO's own pool, unpacks it
+  with the installer's `udpkg`, loads loop, and mounts the ISO at `/cdrom`,
+  which `cdrom-detect` accepts as found. The exit's 90% is of a Tier B of
+  three; widening Tier B is the next step, and blessed Alpine still needs a
+  map that does not come through efivarfs.
 
 ## 1. Where we actually are
 

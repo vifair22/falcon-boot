@@ -511,6 +511,33 @@ static int word_empty(const parser *p, const char *v)
     return v[0] == '\0';
 }
 
+/* [ OP ARG ] for the unary tests this pass can answer. */
+static uint8_t cond_unary(parser *p, const char *op, const char *arg)
+{
+    int empty = word_empty(p, arg);
+
+    if (ieq(op, "-z"))
+        return empty ? COND_TRUE : COND_FALSE;
+    if (ieq(op, "-n"))
+        return empty ? COND_FALSE : COND_TRUE;
+    /* A file on the medium: the one thing about the boot environment this
+     * pass can ask, when the provider can answer. GRUB resolves a bare name
+     * against $root, which on a CD is the ISO's root (Proxmox gates its
+     * automated installer on one). */
+    if ((ieq(op, "-f") || ieq(op, "-e")) &&
+        p->src->exists != (int (*)(void *, const char *))0 &&
+        !ieq(arg, BOOTCFG_ISO_TOKEN)) {
+        char path[BOOTCFG_PATH_MAX];
+        uint8_t trunc = 0;
+
+        clean_path(arg, path, sizeof path, &trunc);
+        if (trunc)
+            return (uint8_t)COND_UNKNOWN;
+        return p->src->exists(p->src->ctx, path) ? COND_TRUE : COND_FALSE;
+    }
+    return (uint8_t)COND_UNKNOWN;
+}
+
 static uint8_t cond_eval(parser *p, size_t first, size_t nw)
 {
     size_t i;
@@ -522,14 +549,13 @@ static uint8_t cond_eval(parser *p, size_t first, size_t nw)
         if (g_wunres[i])
             return (uint8_t)COND_UNKNOWN;
     }
-    if (nw - first == 4u) {
-        int empty = word_empty(p, g_words[first + 2u]);
+    if (nw - first == 4u)
+        return cond_unary(p, g_words[first + 1u], g_words[first + 2u]);
+    if (nw - first == 5u && ieq(g_words[first + 1u], "!")) {
+        uint8_t c = cond_unary(p, g_words[first + 2u], g_words[first + 3u]);
 
-        if (ieq(g_words[first + 1u], "-z"))
-            return empty ? COND_TRUE : COND_FALSE;
-        if (ieq(g_words[first + 1u], "-n"))
-            return empty ? COND_FALSE : COND_TRUE;
-        return (uint8_t)COND_UNKNOWN;
+        return c == COND_UNKNOWN ? c
+               : (c == COND_TRUE ? (uint8_t)COND_FALSE : (uint8_t)COND_TRUE);
     }
     if (nw - first == 5u) {
         const char *a = g_words[first + 1u], *op = g_words[first + 2u];

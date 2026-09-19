@@ -30,13 +30,16 @@
 
 #include "sys.h"
 #include "hookcore.h"
+#include "dimod.h"
 
 #include <media/extmap.h>
+#include <media/hookcmd.h>
 #include <part/part.h>
 #include <lib/string.h>
 
 #include <linux/ioctl.h>
 #include <linux/dm-ioctl.h>
+#include <linux/loop.h>
 
 /* How long the disk gets to appear: USB enumeration on real hardware is
  * seconds, and a stick behind a hub is more. */
@@ -191,7 +194,7 @@ static char *g_modules[] = {
     "dm_mod", "ahci", "sd_mod", "usb_storage", "uas", "xhci_pci",
     "xhci_hcd", "ehci_pci", "ohci_pci", "uhci_hcd", "nvme", "virtio_blk",
     "virtio_scsi", "virtio_pci", "sdhci_pci", "mmc_block", "efivarfs",
-    (char *)0
+    "loop", "isofs", (char *)0
 };
 
 static void load_modules(char **envp)
@@ -637,6 +640,125 @@ static int dm_build(const extmap_hdr *h, const uint8_t *map, uint32_t maj,
     return 1;
 }
 
+/* No device-mapper (Alpine's initramfs has loop and no dm-mod): an ISO in
+ * one piece, which is how a copy onto a stick with room lands, is a loop
+ * device at its offset over the same partition, read-only. A fragmented one
+ * has no such form and is left to fail as it would have. */
+static int loop_build(const extmap_hdr *h, const uint8_t *map, uint32_t maj,
+                      uint32_t min, uint64_t base)
+{
+    static const char part[] = "/dev/.falcon-part";
+    struct loop_info64 info;
+    extmap_extent e;
+    char node[40];
+    long ctl, num, lfd, bfd, rc;
+
+    if (h->n_extents != 1) {
+        LOGN("no device-mapper, and the ISO is in pieces: ", h->n_extents);
+        return 0;
+    }
+    extmap_extent_at(map, 0, &e);
+    ctl = sys_open("/dev/loop-control", HOOK_O_RDWR | HOOK_O_CLOEXEC, 0);
+    if (ctl < 0) {
+        LOG("no loop devices in this kernel or initramfs either");
+        return 0;
+    }
+    num = sys_ioctl((int)ctl, LOOP_CTL_GET_FREE, (void *)0);
+    (void)sys_close((int)ctl);
+    if (num < 0) {
+        LOGN("no free loop device: ", num);
+        return 0;
+    }
+    node[0] = '\0';
+    cat(node, sizeof node, "/dev/loop");
+    cat_dec(node, sizeof node, num);
+    (void)sys_mknod(node, HOOK_S_IFBLK | 0600, hook_devnum(7u, (uint32_t)num));
+    lfd = sys_open(node, HOOK_O_RDONLY | HOOK_O_CLOEXEC, 0);
+    (void)sys_mknod(part, HOOK_S_IFBLK | 0600, hook_devnum(maj, min));
+    bfd = sys_open(part, HOOK_O_RDONLY | HOOK_O_CLOEXEC, 0);
+    (void)sys_unlink(part);
+    if (lfd < 0 || bfd < 0) {
+        LOG("the loop device or the stick could not be opened");
+        if (lfd >= 0)
+            (void)sys_close((int)lfd);
+        if (bfd >= 0)
+            (void)sys_close((int)bfd);
+        return 0;
+    }
+    rc = sys_ioctl((int)lfd, LOOP_SET_FD, (void *)(uintptr_t)bfd);
+    if (rc >= 0) {
+        memset(&info, 0, sizeof info);
+        info.lo_offset = base + e.offset;
+        info.lo_sizelimit = h->iso_size;
+        info.lo_flags = LO_FLAGS_READ_ONLY;
+        rc = sys_ioctl((int)lfd, LOOP_SET_STATUS64, &info);
+        if (rc < 0)
+            (void)sys_ioctl((int)lfd, LOOP_CLR_FD, (void *)0);
+    }
+    (void)sys_close((int)bfd);
+    (void)sys_close((int)lfd);
+    if (rc < 0) {
+        LOGN("setting up the loop device failed: ", rc);
+        return 0;
+    }
+    make_names(7u, (uint32_t)num);
+    LOG2("the ISO is ", node);
+    return 1;
+}
+
+/* The pre-mounts of falcon-hook/src/hookcore.c: the ISO mounted where an
+ * initramfs that looks there first will find it. */
+static void apply_premounts(const char *node)
+{
+    size_t count = 0, i;
+    const hook_premount *p = hook_premounts(&count);
+
+    for (i = 0; i < count; i++) {
+        long rc;
+
+        if (sys_exists(p[i].marker) != 0)
+            continue;
+        (void)sys_mkdir(p[i].dir, 0755);
+        rc = sys_mount(node, p[i].dir, "iso9660", 1ul /* MS_RDONLY */,
+                       (const void *)0);
+        if (rc < 0)
+            LOGN("could not mount the ISO for the installer: ", rc);
+        else
+            LOG2("mounted the ISO for ", p[i].what);
+    }
+}
+
+/* The table in falcon-hook/src/hookcore.c, applied to the initramfs the
+ * distro is about to run. */
+static char g_text[256u * 1024u];
+static char g_patched[256u * 1024u + 512u];
+
+static void apply_nudges(void)
+{
+    size_t count = 0, i, out = 0;
+    const hook_nudge *n = hook_nudges(&count);
+
+    for (i = 0; i < count; i++) {
+        long len = read_file(n[i].path, g_text, sizeof g_text);
+        long fd;
+
+        if (len <= 0 || (size_t)len >= sizeof g_text)
+            continue;
+        if (hook_patch(g_text, (size_t)len, n[i].find, n[i].replace,
+                       g_patched, sizeof g_patched, &out) != 1)
+            continue;
+        fd = sys_open(n[i].path, HOOK_O_WRONLY | HOOK_O_TRUNC |
+                      HOOK_O_CLOEXEC, 0);
+        if (fd < 0 || sys_write((int)fd, g_patched, out) != (long)out) {
+            LOG2("could not nudge ", n[i].what);
+        } else {
+            LOG2("nudged ", n[i].what);
+        }
+        if (fd >= 0)
+            (void)sys_close((int)fd);
+    }
+}
+
 /* ---- the whole ---- */
 
 static uint8_t g_map[MAP_FILE_CAP];
@@ -666,17 +788,26 @@ int hook_main(int argc, char **argv, char **envp)
                                     sizeof init))
         cat(init, sizeof init, HOOK_DEFAULT_INIT);
 
-    mount_one(M_EFIVARS);
-    n = read_file("/sys/firmware/efi/efivars/" FALCON_EXTMAP_VAR "-"
-                  FALCON_EXTMAP_GUID_STR, g_map, sizeof g_map);
-    if (n <= 0 && !g_mounted[M_EFIVARS]) {
-        /* efivarfs may be a module; load drivers first and try again. */
-        load_modules(envp);
+    /* The map the loader put in the initrd (a direct boot), else the one
+     * it published in FalconIsoMap (a blessed wrap, built before the ISO's
+     * extents were known). */
+    n = read_file(HOOKCMD_MAP_PATH, g_map, sizeof g_map);
+    if (n > 0) {
+        data = g_map;
+        dlen = (size_t)n;
+    } else {
         mount_one(M_EFIVARS);
         n = read_file("/sys/firmware/efi/efivars/" FALCON_EXTMAP_VAR "-"
                       FALCON_EXTMAP_GUID_STR, g_map, sizeof g_map);
+        if (n <= 0 && !g_mounted[M_EFIVARS]) {
+            /* efivarfs may be a module; load drivers first and try again. */
+            load_modules(envp);
+            mount_one(M_EFIVARS);
+            n = read_file("/sys/firmware/efi/efivars/" FALCON_EXTMAP_VAR "-"
+                          FALCON_EXTMAP_GUID_STR, g_map, sizeof g_map);
+        }
+        data = hook_efivar_data(g_map, n > 0 ? (size_t)n : 0u, &dlen);
     }
-    data = hook_efivar_data(g_map, n > 0 ? (size_t)n : 0u, &dlen);
     if (data == (const uint8_t *)0 || extmap_decode(data, dlen, &h) != EXTMAP_OK) {
         LOG("no ISO map from the loader; handing over unchanged");
     } else {
@@ -695,8 +826,24 @@ int hook_main(int argc, char **argv, char **envp)
                 LOG("no partition device; mapping over the whole disk");
                 base = h.part_lba * block;
             }
-            if (dm_build(&h, data, maj, min, base))
+            int built = dm_build(&h, data, maj, min, base);
+
+            if (built) {
                 LOG("/dev/mapper/" HOOK_DM_NAME " is the ISO");
+            } else {
+                built = loop_build(&h, data, maj, min, base);
+                /* Neither driver in this initramfs: the ISO's own package
+                 * pool may carry loop for this kernel. */
+                if (!built && dimod_bring("loop-modules-", "loop", &h, data,
+                                          maj, min, base, envp)) {
+                    LOG("loaded loop from the ISO's own packages");
+                    built = loop_build(&h, data, maj, min, base);
+                }
+            }
+            if (built) {
+                apply_nudges();
+                apply_premounts("/dev/mapper/" HOOK_DM_NAME);
+            }
         }
     }
 

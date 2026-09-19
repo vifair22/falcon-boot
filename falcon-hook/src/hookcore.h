@@ -88,4 +88,49 @@ int hook_iso_names(const uint8_t *pvd, char *label, size_t label_cap,
 /* Bytes hook_dm_table needs for n extents. */
 size_t hook_dm_table_size(uint32_t n_extents);
 
+/* ---- nudges (docs/notes/coverage-roadmap.md M4) ----
+ *
+ * Some initramfs scripts look for their media by a list of device names that
+ * a device-mapper device is not on. Where the script can be taught with one
+ * textual change, the hook makes it in the initramfs (writable, and not yet
+ * running) before handing over: the kind of per-family hook Ventoy carries,
+ * kept to a table of exact substitutions so each one is visible and tested.
+ *
+ * A nudge applies when path exists and contains find; find is replaced once
+ * by replace. A file that already contains replace is left alone. */
+typedef struct {
+    const char *what;      /* for the log */
+    const char *path;      /* in the initramfs */
+    const char *find;
+    const char *replace;
+} hook_nudge;
+
+/* The table, and its length. */
+const hook_nudge *hook_nudges(size_t *count);
+
+/* An initramfs that looks for its medium mounted at a fixed place first
+ * (the Debian installer's cdrom-detect: "Is a cdrom already mounted? If so,
+ * assume it's the right one"). When marker exists, the hook mounts the ISO
+ * there, read-only, before handing over. */
+typedef struct {
+    const char *what;
+    const char *marker;    /* a file only that initramfs has */
+    const char *dir;       /* where it looks */
+} hook_premount;
+
+const hook_premount *hook_premounts(size_t *count);
+
+/* The package that carries a missing block driver, for an initramfs that
+ * can unpack the distro's own packages (the Debian installer's udpkg): its
+ * file name is prefix, the running kernel's release, then middle, and it
+ * ends in suffix. 1 when name is one, for that release. */
+int hook_module_package(const char *name, const char *release,
+                        const char *prefix);
+
+/* One substitution: text (len bytes) with the first find replaced by
+ * replace, into out. 1 when it was made, 0 when find is absent or replace is
+ * already present (nothing to do), HOOK_ERR_NOSPACE when out is short. */
+int hook_patch(const char *text, size_t len, const char *find,
+               const char *replace, char *out, size_t cap, size_t *out_len);
+
 #endif /* FALCON_HOOKCORE_H */

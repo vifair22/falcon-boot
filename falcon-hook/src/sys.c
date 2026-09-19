@@ -77,6 +77,16 @@ long sys_mknod(const char *path, int mode, unsigned long dev)
     return SC(__NR_mknodat, AT_FDCWD, path, mode, dev, 0, 0);
 }
 
+long sys_uname(void *buf)
+{
+    return SC(__NR_uname, buf, 0, 0, 0, 0, 0);
+}
+
+long sys_unlink(const char *path)
+{
+    return SC(__NR_unlinkat, AT_FDCWD, path, 0, 0, 0, 0);
+}
+
 long sys_symlink(const char *target, const char *path)
 {
     return SC(__NR_symlinkat, target, AT_FDCWD, path, 0, 0, 0);

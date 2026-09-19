@@ -122,12 +122,12 @@ static void test_hookcmd_archive(void **state)
 {
     static const unsigned char bin[] = { 0x7f, 'E', 'L', 'F', 1, 2, 3 };
     static unsigned char buf[1024];
-    size_t need = hookcmd_archive_size(sizeof bin), len = 0;
+    size_t need = hookcmd_archive_size(sizeof bin, 0), len = 0;
 
     (void)state;
     assert_true(need > 0 && need <= sizeof buf && (need & 3u) == 0);
-    assert_int_equal(hookcmd_archive(bin, sizeof bin, buf, sizeof buf, &len),
-                     HOOKCMD_OK);
+    assert_int_equal(hookcmd_archive(bin, sizeof bin, NULL, 0, buf,
+                                     sizeof buf, &len), HOOKCMD_OK);
     assert_int_equal(len, need);
     assert_memory_equal(buf, "070701", 6);
     /* newc header: mode at 14, 8 hex digits. */
@@ -138,16 +138,36 @@ static void test_hookcmd_archive(void **state)
     assert_true(has(buf, len, bin, sizeof bin));
     assert_true(has(buf, len, "TRAILER!!!", 10));
 
-    assert_int_equal(hookcmd_archive(bin, sizeof bin, buf, need - 1u, &len),
-                     HOOKCMD_ERR_NOSPACE);
-    assert_int_equal(hookcmd_archive(NULL, sizeof bin, buf, sizeof buf, &len),
-                     HOOKCMD_ERR_BAD_ARG);
-    assert_int_equal(hookcmd_archive(bin, 0, buf, sizeof buf, &len),
-                     HOOKCMD_ERR_BAD_ARG);
-    assert_int_equal(hookcmd_archive(bin, sizeof bin, NULL, sizeof buf, &len),
-                     HOOKCMD_ERR_BAD_ARG);
-    assert_int_equal(hookcmd_archive(bin, sizeof bin, buf, sizeof buf, NULL),
-                     HOOKCMD_ERR_BAD_ARG);
+    assert_int_equal(hookcmd_archive(bin, sizeof bin, NULL, 0, buf,
+                                     need - 1u, &len), HOOKCMD_ERR_NOSPACE);
+    assert_int_equal(hookcmd_archive(NULL, sizeof bin, NULL, 0, buf,
+                                     sizeof buf, &len), HOOKCMD_ERR_BAD_ARG);
+    assert_int_equal(hookcmd_archive(bin, 0, NULL, 0, buf, sizeof buf,
+                                     &len), HOOKCMD_ERR_BAD_ARG);
+    assert_int_equal(hookcmd_archive(bin, sizeof bin, NULL, 0, NULL,
+                                     sizeof buf, &len), HOOKCMD_ERR_BAD_ARG);
+    assert_int_equal(hookcmd_archive(bin, sizeof bin, NULL, 0, buf,
+                                     sizeof buf, NULL), HOOKCMD_ERR_BAD_ARG);
+}
+
+/* With the map: a third entry, the bytes as given, and a map length with no
+ * map is refused. */
+static void test_hookcmd_archive_map(void **state)
+{
+    static const unsigned char bin[] = { 0x7f, 'E', 'L', 'F' };
+    static const unsigned char map[] = "FLCNXT01-map-bytes";
+    static unsigned char buf[1024];
+    size_t need = hookcmd_archive_size(sizeof bin, sizeof map), len = 0;
+
+    (void)state;
+    assert_true(need > hookcmd_archive_size(sizeof bin, 0));
+    assert_int_equal(hookcmd_archive(bin, sizeof bin, map, sizeof map, buf,
+                                     sizeof buf, &len), HOOKCMD_OK);
+    assert_int_equal(len, need);
+    assert_true(has(buf, len, "falcon/map", 11));
+    assert_true(has(buf, len, map, sizeof map));
+    assert_int_equal(hookcmd_archive(bin, sizeof bin, NULL, 4, buf,
+                                     sizeof buf, &len), HOOKCMD_ERR_BAD_ARG);
 }
 
 int run_hookcmd_tests(void)
@@ -159,6 +179,7 @@ int run_hookcmd_tests(void)
         cmocka_unit_test(test_hookcmd_before_init_args),
         cmocka_unit_test(test_hookcmd_refusals),
         cmocka_unit_test(test_hookcmd_archive),
+        cmocka_unit_test(test_hookcmd_archive_map),
     };
 
     return cmocka_run_group_tests_name("hookcmd", tests, NULL, NULL);

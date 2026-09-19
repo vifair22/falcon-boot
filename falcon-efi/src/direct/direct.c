@@ -176,14 +176,16 @@ static UINT64 align4(UINT64 v)
 }
 
 /* The entry's initrds, each padded to 4 bytes as a boot loader concatenating
- * them does, then the hook's archive. The kernel's unpacker takes the
+ * them does, then the hook's archive with the extent map in it. The kernel's unpacker takes the
  * concatenation as one initramfs, later archives overlaying earlier ones. */
 static EFI_STATUS build_initrd(EFI_BOOT_SERVICES *bs, const bootcfg_entry *e,
-                               pages *p, UINT8 **out, UINT64 *size)
+                               UINTN map_len, pages *p, UINT8 **out,
+                               UINT64 *size)
 {
     UINT64 isz[BOOTCFG_INITRD_MAX];
     UINT64 total = 0, off = 0;
-    size_t csize = hookcmd_archive_size(falcon_hook_bin_len), wrote = 0;
+    size_t csize = hookcmd_archive_size(falcon_hook_bin_len, map_len);
+    size_t wrote = 0;
     UINT8 *buf;
     UINTN i;
 
@@ -211,8 +213,9 @@ static EFI_STATUS build_initrd(EFI_BOOT_SERVICES *bs, const bootcfg_entry *e,
         while ((off & 3u) != 0)
             buf[off++] = 0;
     }
-    if (hookcmd_archive(falcon_hook_bin, falcon_hook_bin_len, buf + off,
-                        (size_t)(total - off), &wrote) != HOOKCMD_OK) {
+    if (hookcmd_archive(falcon_hook_bin, falcon_hook_bin_len, g_map, map_len,
+                        buf + off, (size_t)(total - off), &wrote) !=
+        HOOKCMD_OK) {
         pages_put(bs, p);
         return EFI_LOAD_ERROR;
     }
@@ -387,7 +390,7 @@ EFI_STATUS direct_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent, fs_vol *p2,
     if (EFI_ERROR(status))
         goto out;
     r->stage = L"reading the initrd";
-    status = build_initrd(bs, e, &ip, &initrd, &isize);
+    status = build_initrd(bs, e, map_len, &ip, &initrd, &isize);
     if (EFI_ERROR(status))
         goto out;
 

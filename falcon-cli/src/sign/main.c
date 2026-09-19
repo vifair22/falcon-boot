@@ -478,7 +478,7 @@ extern const size_t falcon_hook_bin_len;
 /* Pads the staged initrd to 4 bytes and appends the hook's archive. */
 static int append_hook(const char *initrd)
 {
-    size_t cap = hookcmd_archive_size(falcon_hook_bin_len), len = 0;
+    size_t cap = hookcmd_archive_size(falcon_hook_bin_len, 0), len = 0;
     uint8_t *buf;
     int rc;
 
@@ -487,7 +487,9 @@ static int append_hook(const char *initrd)
         sgn_set_error(SGN_ERR_NOSPACE, "no memory for the hook's archive");
         return SGN_ERR_NOSPACE;
     }
-    if (hookcmd_archive(falcon_hook_bin, falcon_hook_bin_len, buf, cap,
+    /* No map: a wrap is built before the ISO's extents are known, and the
+     * loader publishes them in FalconIsoMap at boot. */
+    if (hookcmd_archive(falcon_hook_bin, falcon_hook_bin_len, NULL, 0, buf, cap,
                         &len) != HOOKCMD_OK) {
         free(buf);
         sgn_set_error(SGN_ERR_FORMAT, "the hook's archive could not be built");

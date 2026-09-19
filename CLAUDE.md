@@ -189,11 +189,14 @@ the tree, so `#include <fs/exfat.h>` means one file wherever it is written.
 - `falcon-hook/` the program the loader appends to an ISO's initrd (DESIGN
   Section 6.4): freestanding static x86-64 Linux, no libc (`src/sys.c` is its
   system calls and startup). It runs as `rdinit=`, reads the extent map from
-  efivarfs, maps the ISO read-only with dm-linear as
-  `/dev/mapper/falcon-iso` under the ISO's label, and execs the distro's
-  init. `src/hookcore.c` is its host-tested half; the loader embeds the
-  stripped binary as a generated C array. `tools/run-hook-rig.sh` boots it
-  under QEMU without the loader.
+  the initrd (a direct boot) or efivarfs (a blessed wrap), maps the ISO
+  read-only with dm-linear as `/dev/mapper/falcon-iso` under the ISO's label
+  (a loop device when the kernel has no dm and the ISO is contiguous;
+  `src/dimod.c` brings loop in from a Debian installer ISO's own pool), makes
+  the per-distro nudges and pre-mounts in `src/hookcore.c`'s tables, and
+  execs the distro's init. `src/hookcore.c` is its host-tested half; the
+  loader embeds the stripped binary as a generated C array.
+  `tools/run-hook-rig.sh` boots it under QEMU without the loader.
 - `docs/` DESIGN.md (authoritative) and later Manual.md. `tools/` at the root
   holds only what spans the repo: `analyze.sh`, and `coverage/`, the corpus
   harness of docs/notes/coverage-roadmap.md (a pinned ISO manifest, one rig

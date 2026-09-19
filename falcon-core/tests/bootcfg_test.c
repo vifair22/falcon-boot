@@ -527,6 +527,54 @@ static void test_bootcfg_loops(void **state)
     assert_int_equal(g_res.n, 3);
 }
 
+/* ------------------------------ Proxmox: an entry gated on a file */
+
+/* The shape of proxmox-ve 9.2's boot/grub/grub.cfg: the automated installer
+ * first, but only when auto-installer-mode.toml is on the medium; otherwise
+ * the graphical one, and the automated entry again further down under the
+ * negated test. */
+static const ff pve_cfg =
+    { "/boot/grub/grub.cfg",
+      "if [ -f auto-installer-mode.toml ]; then\n"
+      "    menuentry 'Install Proxmox VE (Automated)' {\n"
+      "        linux /boot/linux26 ro quiet proxmox-start-auto-installer\n"
+      "        initrd /boot/initrd.img\n"
+      "    }\n"
+      "fi\n"
+      "menuentry 'Install Proxmox VE (Graphical)' {\n"
+      "    linux /boot/linux26 ro quiet splash=silent\n"
+      "    initrd /boot/initrd.img\n"
+      "}\n"
+      "submenu 'Advanced Options' {\n"
+      "    if [ ! -f auto-installer-mode.toml ]; then\n"
+      "        menuentry 'Install Proxmox VE (Automated)' {\n"
+      "            linux /boot/linux26 ro proxmox-start-auto-installer\n"
+      "        }\n"
+      "    fi\n"
+      "}\n" };
+
+static void test_bootcfg_proxmox(void **state)
+{
+    const ff plain[] = { pve_cfg, { "/boot/linux26", "" },
+                         { "/boot/initrd.img", "" } };
+    const ff automated[] = { pve_cfg, { "/boot/linux26", "" },
+                             { "/boot/initrd.img", "" },
+                             { "/auto-installer-mode.toml", "x" } };
+
+    (void)state;
+    assert_int_equal(run(plain, N(plain), BOOTCFG_CD, 1), BOOTCFG_OK);
+    assert_string_equal(picked()->title, "Install Proxmox VE (Graphical)");
+    assert_int_equal(g_res.n, 2);   /* the gated one is not read at all */
+
+    assert_int_equal(run(automated, N(automated), BOOTCFG_CD, 1), BOOTCFG_OK);
+    assert_string_equal(picked()->title, "Install Proxmox VE (Automated)");
+    assert_int_equal(g_res.n, 2);
+
+    /* With no way to ask, both branches are read, as before. */
+    assert_int_equal(run(plain, N(plain), BOOTCFG_CD, 0), BOOTCFG_OK);
+    assert_string_equal(picked()->title, "Install Proxmox VE (Automated)");
+}
+
 /* ------------------------------------------------------------ isolinux */
 
 static const ff isolinux[] = {
@@ -717,6 +765,7 @@ int run_bootcfg_tests(void)
         cmocka_unit_test(test_bootcfg_opensuse),
         cmocka_unit_test(test_bootcfg_manjaro),
         cmocka_unit_test(test_bootcfg_loops),
+        cmocka_unit_test(test_bootcfg_proxmox),
         cmocka_unit_test(test_bootcfg_isolinux),
         cmocka_unit_test(test_bootcfg_quoting_and_initrds),
         cmocka_unit_test(test_bootcfg_refusals),

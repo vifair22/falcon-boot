@@ -29,6 +29,10 @@ long sys_umount(const char *dst);
 long sys_mkdir(const char *path, int mode);
 long sys_mknod(const char *path, int mode, unsigned long dev);
 long sys_symlink(const char *target, const char *path);
+long sys_unlink(const char *path);
+/* struct utsname: six fields of 65 bytes; the release is the third. */
+long sys_uname(void *buf);
+#define HOOK_UTS_FIELD 65u
 /* 0 when path exists (faccessat F_OK), -errno otherwise. */
 long sys_exists(const char *path);
 long sys_getdents64(int fd, void *buf, size_t n);

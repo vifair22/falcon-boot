@@ -322,3 +322,100 @@ int hook_iso_names(const uint8_t *pvd, char *label, size_t label_cap,
     }
     return 1;
 }
+
+/* ---- nudges ---- */
+
+static const hook_nudge g_nudges[] = {
+    /* Proxmox VE's installer initrd scans /sys/block/{hd,sr,scd,sd,nvme}*
+     * for its ISO and never a dm-* (its /init, "searching for block device
+     * containing the ISO"). Its kernel has dm-mod built in, so the device
+     * exists; the scan only has to look at it. */
+    { "proxmox", "/init",
+      "for i in /sys/block/hd* /sys/block/sr* ",
+      "for i in /sys/block/dm* /sys/block/loop* /sys/block/hd* "
+      "/sys/block/sr* " },
+};
+
+const hook_nudge *hook_nudges(size_t *count)
+{
+    if (count != (size_t *)0)
+        *count = sizeof g_nudges / sizeof g_nudges[0];
+    return g_nudges;
+}
+
+static size_t find_at(const char *text, size_t len, const char *pat,
+                      size_t pl)
+{
+    size_t i;
+
+    if (pl == 0 || pl > len)
+        return (size_t)-1;
+    for (i = 0; i + pl <= len; i++) {
+        if (memcmp(text + i, pat, pl) == 0)
+            return i;
+    }
+    return (size_t)-1;
+}
+
+int hook_patch(const char *text, size_t len, const char *find,
+               const char *replace, char *out, size_t cap, size_t *out_len)
+{
+    size_t fl, rl, at;
+
+    if (text == (const char *)0 || find == (const char *)0 ||
+        replace == (const char *)0 || out == (char *)0 ||
+        out_len == (size_t *)0)
+        return HOOK_ERR_BAD_ARG;
+    fl = slen(find);
+    rl = slen(replace);
+    if (find_at(text, len, replace, rl) != (size_t)-1)
+        return 0;
+    at = find_at(text, len, find, fl);
+    if (at == (size_t)-1)
+        return 0;
+    if (len - fl + rl > cap)
+        return HOOK_ERR_NOSPACE;
+    memcpy(out, text, at);
+    memcpy(out + at, replace, rl);
+    memcpy(out + at + rl, text + at + fl, len - at - fl);
+    *out_len = len - fl + rl;
+    return 1;
+}
+
+/* ---- pre-mounts and module packages ---- */
+
+static const hook_premount g_premounts[] = {
+    /* debian-installer's cdrom-detect.postinst takes a mounted /cdrom as the
+     * installation medium; its list-devices finds CDs by udev properties a
+     * loop or dm device does not carry. */
+    { "debian-installer", "/var/lib/dpkg/info/cdrom-detect.postinst",
+      "/cdrom" },
+};
+
+const hook_premount *hook_premounts(size_t *count)
+{
+    if (count != (size_t *)0)
+        *count = sizeof g_premounts / sizeof g_premounts[0];
+    return g_premounts;
+}
+
+int hook_module_package(const char *name, const char *release,
+                        const char *prefix)
+{
+    static const char mid[] = "-di_";
+    static const char suf[] = ".udeb";
+    size_t nl, pl, rl, ml = sizeof mid - 1u, sl = sizeof suf - 1u;
+
+    if (name == (const char *)0 || release == (const char *)0 ||
+        prefix == (const char *)0)
+        return 0;
+    nl = slen(name);
+    pl = slen(prefix);
+    rl = slen(release);
+    if (rl == 0 || nl < pl + rl + ml + sl)
+        return 0;
+    return memcmp(name, prefix, pl) == 0 &&
+           memcmp(name + pl, release, rl) == 0 &&
+           memcmp(name + pl + rl, mid, ml) == 0 &&
+           memcmp(name + nl - sl, suf, sl) == 0;
+}

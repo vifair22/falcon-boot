@@ -34,17 +34,24 @@ enum {
     HOOKCMD_ERR_NOSPACE = -2
 };
 
-/* Where the hook sits in the initramfs, and the device it makes. */
+/* Where the hook sits in the initramfs, the extent map beside it, and the
+ * device it makes. A direct boot carries the map in the initrd, which needs
+ * no efivarfs in the target kernel (Alpine builds it as a module its
+ * initramfs lacks); a blessed wrap's initrd was built before the ISO's
+ * extents were known, so there the hook falls back to FalconIsoMap. */
 #define HOOKCMD_HOOK_PATH  "/falcon/hook"
+#define HOOKCMD_MAP_PATH   "/falcon/map"
 #define HOOKCMD_DEVICE     "/dev/mapper/falcon-iso"
 
 /* The newc archive that carries the hook, to append after the entry's own
- * initrds (each padded to 4 bytes): /falcon, and /falcon/hook with the given
- * bytes, executable. hookcmd_archive_size is its length; hookcmd_archive
- * writes it into buf. HOOKCMD_ERR_NOSPACE when cap is short. */
-size_t hookcmd_archive_size(size_t bin_len);
-int hookcmd_archive(const void *bin, size_t bin_len, void *buf, size_t cap,
-                    size_t *len);
+ * initrds (each padded to 4 bytes): /falcon, /falcon/hook with the given
+ * bytes, executable, and /falcon/map with the encoded extent map when map is
+ * not NULL (falcon-core/src/media/extmap.h). hookcmd_archive_size is its
+ * length; hookcmd_archive writes it into buf. HOOKCMD_ERR_NOSPACE when cap is
+ * short. */
+size_t hookcmd_archive_size(size_t bin_len, size_t map_len);
+int hookcmd_archive(const void *bin, size_t bin_len, const void *map,
+                    size_t map_len, void *buf, size_t cap, size_t *len);
 
 /* Builds the hooked cmdline from base (the ISO entry's own arguments,
  * space-separated) into out. */
