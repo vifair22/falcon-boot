@@ -36,6 +36,11 @@ RUNS = os.path.join(ROOT, 'build', 'coverage', 'runs')
 STATES = [('off', 'SB off'), ('ms', 'SB on, MS CA'), ('own', 'SB on, own keys')]
 ROUTE_ORDER = ['dnd', 'chain', 'blessed']
 ROUTE_NAMES = {'dnd': 'drop', 'chain': 'chain', 'blessed': 'bless'}
+# Headline: Secure Boot off, and Secure Boot on where db trusts the Microsoft
+# CA, which is the overwhelmingly common machine. Secure Boot on with only the
+# user's own keys is reported beside them without a target: media whose only
+# signature is Microsoft's cannot boot there at all (DESIGN 7.2), so holding
+# one number to both machines would only ever measure that.
 TARGETS = {'A': (100, 95), 'B': (90, None), 'C': (None, None)}
 
 
@@ -94,6 +99,11 @@ def main():
     w('by default), **chain** boots the ISO\'s own EFI loader, **bless** is Enter')
     w('on an image blessed with the sign tool.')
     w('')
+    w('The headline columns are Secure Boot off and Secure Boot on where db')
+    w('trusts the Microsoft CA. Secure Boot on with only the stick owner\'s')
+    w('keys is reported beside them, without a target: media signed only by')
+    w('Microsoft cannot boot on such a machine at all (DESIGN 7.2).')
+    w('')
 
     head = ['ISO', 'tier', 'family']
     for st, name in STATES:
@@ -107,7 +117,8 @@ def main():
         cells = [r['id'], r['tier'], r['family']]
         any_result = False
         off_ok = False
-        on_ok = True
+        ms_ok = False
+        own_ok = False
         for st, _ in STATES:
             state_ok = False
             for rt in routes:
@@ -127,27 +138,33 @@ def main():
             if st == 'off':
                 off_ok = any((result(r['id'], 'off', rt) or {}).get('verdict')
                              == 'PASS' for rt in ('dnd',))
-            elif not state_ok:
-                on_ok = False
+            elif st == 'ms':
+                ms_ok = state_ok
+            elif st == 'own':
+                own_ok = state_ok
         table.append('| ' + ' | '.join(cells) + ' |')
         if any_result:
-            t = tally.setdefault(r['tier'], [0, 0, 0])
+            t = tally.setdefault(r['tier'], [0, 0, 0, 0])
             t[0] += 1
             t[1] += 1 if off_ok else 0
-            t[2] += 1 if on_ok else 0
+            t[2] += 1 if ms_ok else 0
+            t[3] += 1 if own_ok else 0
 
     w('Loader: ' + (', '.join(sorted(loaders)) if loaders else 'none recorded'))
     w('')
     w('## Summary')
     w('')
-    w('| tier | ISOs run | SB off, drop | target | SB on, any route (both columns) | target |')
-    w('|---|---|---|---|---|---|')
+    w('| tier | ISOs run | SB off, drop | target | SB on, MS CA | target | '
+      'SB on, own keys |')
+    w('|---|---|---|---|---|---|---|')
     for tier in sorted(tally):
-        n, off, on = tally[tier]
-        toff, ton = TARGETS.get(tier, (None, None))
-        w('| %s | %d | %d/%d (%d%%) | %s | %d/%d (%d%%) | %s |' % (
-            tier, n, off, n, 100 * off // n, '%d%%' % toff if toff else '-',
-            on, n, 100 * on // n, '%d%%' % ton if ton else '-'))
+        n, off, ms, own = tally[tier]
+        toff, tms = TARGETS.get(tier, (None, None))
+        w('| %s | %d | %d/%d (%d%%) | %s | %d/%d (%d%%) | %s | %d/%d (%d%%) |'
+          % (tier, n, off, n, 100 * off // n,
+             '%d%%' % toff if toff else '-',
+             ms, n, 100 * ms // n, '%d%%' % tms if tms else '-',
+             own, n, 100 * own // n))
     w('')
     w('## Matrix')
     w('')

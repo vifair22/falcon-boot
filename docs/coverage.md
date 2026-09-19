@@ -10,15 +10,20 @@ Routes: **drop** is Enter on an unblessed image (whatever the loader does
 by default), **chain** boots the ISO's own EFI loader, **bless** is Enter
 on an image blessed with the sign tool.
 
+The headline columns are Secure Boot off and Secure Boot on where db
+trusts the Microsoft CA. Secure Boot on with only the stick owner's
+keys is reported beside them, without a target: media signed only by
+Microsoft cannot boot on such a machine at all (DESIGN 7.2).
+
 Loader: 0.1.0_20260918.2318.release, 0.1.0_20260919.0127.release, 0.1.0_20260919.0153.release, 0.1.0_20260919.0207.release, 0.1.0_20260919.0258.release, 0.1.0_20260919.0400.release, 0.1.0_20260919.1203.release, 0.1.0_20260919.1349.release, 0.1.0_20260919.1428.release, 0.1.0_20260919.1606.release, 0.1.0_20260919.1633.release, 0.1.0_20260919.1640.release
 
 ## Summary
 
-| tier | ISOs run | SB off, drop | target | SB on, any route (both columns) | target |
-|---|---|---|---|---|---|
-| A | 22 | 21/22 (95%) | 100% | 18/22 (81%) | 95% |
-| B | 9 | 9/9 (100%) | 90% | 9/9 (100%) | - |
-| C | 3 | 2/3 (66%) | - | 0/3 (0%) | - |
+| tier | ISOs run | SB off, drop | target | SB on, MS CA | target | SB on, own keys |
+|---|---|---|---|---|---|---|
+| A | 22 | 21/22 (95%) | 100% | 21/22 (95%) | 95% | 18/22 (81%) |
+| B | 9 | 9/9 (100%) | 90% | 9/9 (100%) | - | 9/9 (100%) |
+| C | 3 | 2/3 (66%) | - | 0/3 (0%) | - | 0/3 (0%) |
 
 ## Matrix
 

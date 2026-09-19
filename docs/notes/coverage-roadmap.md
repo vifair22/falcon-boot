@@ -143,13 +143,19 @@ machine produced.
   on 2026-09-13).
 - **Scorecard.** A generated `docs/coverage.md` per release: rows are ISOs,
   columns are state x route, cells are PASS / FAIL / REFUSED-BY-DESIGN. A
-  regression is a cell that went red.
+  regression is a cell that went red. The headline is Secure Boot off and
+  Secure Boot on where db trusts the Microsoft CA; Secure Boot on with only
+  the owner's keys is reported beside them without a target (decided
+  2026-09-19). Media signed only by Microsoft cannot boot on such a machine
+  at all (DESIGN 7.2), and the population that enrolls a MOK but refuses
+  Microsoft's CA is small, so one number across both machines would measure
+  that choice rather than this loader.
 
 Targets, stated so they can be failed:
 
 | Tier | What | Target |
 |---|---|---|
-| A | distrowatch top 30, current Windows 10/11/Server, the top 10 rescue/utility ISOs | 100% SB off, 95% SB on (bless allowed) |
+| A | distrowatch top 30, current Windows 10/11/Server, the top 10 rescue/utility ISOs | 100% SB off, 95% SB on where db trusts the Microsoft CA (bless allowed) |
 | B | every Linux family in the Ventoy survey | 90% SB off |
 | C | long tail, BSD, hypervisors, IMG distros | tracked, no target |
 
