@@ -38,7 +38,13 @@
  * the spec's answer for a device with no real bus behind it, and it is the
  * same node for both flavors: firmware partition and filesystem drivers bind
  * on the Block I/O instance and what its media says, never on the shape of
- * the path above it. */
+ * the path above it.
+ *
+ * It is a HARDWARE vendor node (VenHw), not a media one. A payload that finds
+ * its CD drive by cutting its own path back to the hardware part, the way a
+ * real CD's PciRoot/Pci/Sata/CDROM becomes PciRoot/Pci/Sata, is left with
+ * nothing under a media root: VMware ESXi's loader does exactly that and
+ * failed with "get_boot_device: Not found" (traced 2026-09-19). */
 #define FALCON_ISO_MEDIA_GUID \
     { 0x887579f6, 0x4287, 0x4bc4, \
       { 0x99, 0x92, 0x15, 0xa3, 0xb5, 0x61, 0xce, 0x63 } }
@@ -279,8 +285,8 @@ static void device_init(iso_device *dev, uint64_t image_size,
     dev->bio.WriteBlocks = iso_write_blocks;
     dev->bio.FlushBlocks = iso_flush_blocks;
 
-    dev->path.vendor.Header.Type = MEDIA_DEVICE_PATH;
-    dev->path.vendor.Header.SubType = MEDIA_VENDOR_DP;
+    dev->path.vendor.Header.Type = HARDWARE_DEVICE_PATH;
+    dev->path.vendor.Header.SubType = HW_VENDOR_DP;
     dp_set_node_len(&dev->path.vendor.Header,
                     (UINT16)sizeof(dev->path.vendor));
     dev->path.vendor.Guid = vendor_guid;
@@ -897,13 +903,44 @@ static EFI_STATUS chainload(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
     if (EFI_ERROR(status))
         return status;
 
+    /* Shim is here but not enforcing (Secure Boot off, or MokSBState off):
+     * the payload is loaded by the firmware, as a firmware image. An image
+     * shim's loader protocol created is not one to the firmware, and a
+     * payload that loads and connects a driver of its own (VMware ESXi's
+     * loader and its ISO9660 driver) then fails: the firmware's LoadImage
+     * refuses a parent it did not load, and its ConnectController faults on
+     * the driver (traced 2026-09-19). Nothing about what may run changes:
+     * with shim not enforcing, neither loader verifies anything the other
+     * would refuse, except that the firmware still enforces db when Secure
+     * Boot is on and only shim's validation is off. That refusal is answered
+     * the way this loader always answered that state, with shim's loader,
+     * which is the user's MokSBState choice honoured. */
+    status = EFI_NOT_FOUND;   /* not loaded yet */
+    if (ops.via_shim && ops.table_unhooked) {
+        result->stage = L"LoadImage of \\EFI\\BOOT\\BOOTX64.EFI (firmware)";
+        status = bs->LoadImage(FALSE, parent_image, load_path, (void *)0, 0,
+                               &child);
+        if (status == EFI_SUCCESS) {
+            ops.LoadImage = bs->LoadImage;
+            ops.StartImage = bs->StartImage;
+            ops.UnloadImage = bs->UnloadImage;
+            ops.via_shim = FALSE;
+        } else {
+            if (status == EFI_SECURITY_VIOLATION && child != (EFI_HANDLE)0)
+                bs->UnloadImage(child);
+            child = (EFI_HANDLE)0;
+        }
+    }
+
     /* SourceBuffer stays NULL on both paths: see build_load_path above for
      * why the image is always named rather than handed over as bytes. */
-    result->stage = ops.via_shim
-                        ? L"LoadImage of \\EFI\\BOOT\\BOOTX64.EFI (shim)"
-                        : L"LoadImage of \\EFI\\BOOT\\BOOTX64.EFI (firmware)";
-    status = ops.LoadImage(FALSE, parent_image, load_path, (void *)0, 0,
-                           &child);
+    if (status != EFI_SUCCESS) {
+        result->stage = ops.via_shim
+                            ? L"LoadImage of \\EFI\\BOOT\\BOOTX64.EFI (shim)"
+                            : L"LoadImage of \\EFI\\BOOT\\BOOTX64.EFI (firmware)";
+        status = ops.LoadImage(FALSE, parent_image, load_path, (void *)0, 0,
+                               &child);
+    }
     bs->FreePool(load_path);
     if (EFI_ERROR(status)) {
         /* A refusal under Secure Boot is the one failure that still leaves a

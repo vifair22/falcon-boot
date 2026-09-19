@@ -1408,6 +1408,23 @@ we launch cannot load its own inner PE" from it AND Secure Boot being on
 Detection reads the live table, not `MokSBStateRT`: it detects the mechanism
 that breaks, not one cause of it.
 
+**An ISO payload is loaded by the firmware when shim is not enforcing**
+(decided 2026-09-19, traced on VMware ESXi 8.0U3). An image shim's loader
+created is not an image to the firmware, and a payload that loads and
+connects a UEFI driver of its own hits that: ESXi's loader loads VMware's
+ISO9660 driver and connects it to the CD, and the firmware's `LoadImage`
+refused a parent it had not loaded (`EFI_INVALID_PARAMETER`) while its
+`ConnectController` faulted inside DxeCore on a shim-loaded driver. So
+`falcon-efi/src/iso/iso.c` loads the payload with `gBS->LoadImage` when
+`resolve_load_ops()` reports `table_unhooked`, which is shim saying it is not
+enforcing. Nothing about what may run changes: in that state neither loader
+verifies what the other would refuse. The one asymmetry is Secure Boot on
+with `MokSBState` off, where the firmware still enforces db; that refusal is
+answered by loading through shim's loader as before, which is the user's
+platform opt-out honoured rather than overridden. Everything else in the
+loader (blessed wraps, the personal OS, the appliance) keeps shim's loader
+in every state, because those are MOK-signed images that need it.
+
 **Pairing rule** (measured, notes Section 11.4): the three members of a
 resolved load path - `LoadImage`, `StartImage`, `UnloadImage` - must come
 from one source and be used as a set. shim's `shim_start_image()` and
