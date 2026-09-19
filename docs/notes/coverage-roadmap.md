@@ -61,8 +61,11 @@ harness measures now is `docs/coverage.md`:
   once Setup's screen is up it opens Setup's console and copies
   `\sources\install.*` to nul, which reads the stick only if Windows has
   the ISO. winjump now links static: WinPE has no `libssp-0.dll`, and the
-  missing import killed it before its first log line. Parity (Win11
-  requirement bypass, unattend, WinPE-based rescue media, ESXi) is next.
+  missing import killed it before its first log line. Parity: the Win11
+  requirement bypass and an unattend file are options in
+  `p2:/falcon/windows.cfg` (DESIGN 6.4), proven on a VM with no TPM.
+  WinPE-based rescue media (Hiren's) is in the corpus; ESXi is not, since
+  its ISO needs a Broadcom login.
 - **M4**: the three Tier B installers boot direct with Secure Boot off, each
   through a different gap the hook now closes. Alpine's kernel has no
   efivarfs and no dm-mod: a direct boot now carries the extent map in the

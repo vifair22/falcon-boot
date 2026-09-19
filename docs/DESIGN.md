@@ -958,6 +958,17 @@ byte for byte, so the platform verifies Microsoft's signatures as it would
 from a DVD. An ISO the loader cannot patch (no boot.wim, not LZX, no
 winpeshl.exe) boots as it is.
 
+The user's Windows options live on the stick, not in the loader:
+`p2:/falcon/windows.cfg`, read by winjump from the volume it found the ISO
+on. `win11_bypass=1` sets the LabConfig keys Setup reads before it judges
+the machine (TPM, Secure Boot, RAM, CPU, storage), and `unattend=<path>`
+names an answer file relative to the stick's root, which winjump copies to
+`X:\` and names in `HKLM\SYSTEM\Setup\UnattendFile`. Ventoy's BypassNRO has
+no key: it has to reach the installed system's registry, which an answer
+file does without a process outliving Setup. Measured on a VM with no TPM:
+stock, Setup stops at the requirements screen; with both options it goes
+from the product key straight to disk selection.
+
 ## 7. Security model
 
 Governing principle (Section 2): falcon-boot never weakens the machine's Secure
