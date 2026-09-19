@@ -19,8 +19,8 @@
 #
 # Usage: tools/coverage/run-corpus.sh [options] [ID...]
 #   --states "off ms own"     which Secure Boot states (default all three)
-#   --routes "dnd blessed"    which routes (default dnd blessed; chain once
-#                             the loader has the key, M2)
+#   --routes "dnd blessed"    which routes (default dnd blessed; chain, the
+#                             ISO's own loader, on request)
 #   --jobs N                  cases in flight at once (default 3; each takes
 #                             FALCON_CASE_MEM, 4 GiB by default)
 #   --timeout S               seconds from the keypress to a verdict (300)
@@ -127,6 +127,11 @@ while IFS=$'\t' read -r id tier family sha file source; do
         done
     done
 done < "$MANIFEST"
+
+# The loader under test is the tree's: build and sign it first, so a stale
+# signed copy can never be what the corpus measures.
+make --no-print-directory -s sign >/dev/null
+VERSION=$(sed -n 's/.*FALCON_VERSION "\(.*\)".*/\1/p' build/version.h 2>/dev/null)
 
 shopt -s nullglob
 STAGE=("$STICKS"/*.img)

@@ -24,6 +24,15 @@
 #            kernel prints only to the screen. The NIC has no option ROM, so
 #            the firmware cannot PXE-boot and fake one.
 #
+#   media    on a direct boot the loader prints "starting <entry>" as it
+#            hands over to the kernel. What the guest reads from the stick
+#            after that line is the OS reading its media: an initramfs that
+#            never found the ISO reads next to nothing, a live system that
+#            mounted its root from it reads hundreds of megabytes. Past
+#            MEDIA_MIB the case passes. This is what judges a live system
+#            that neither prints to serial nor brings up a network
+#            (Clonezilla stops at its own menu).
+#
 #   screen   a screenshot is always taken at the end, for a human reading a
 #            FAIL. It never decides a verdict.
 #
@@ -41,6 +50,8 @@
 #   TIMEOUT  seconds from the keypress to a verdict (default 300)
 #
 # The result file is one line: VERDICT<TAB>REASON<TAB>SECONDS.
+# Env: FALCON_CASE_MEM, FALCON_CASE_CPUS, FALCON_CASE_SHOTS and
+# FALCON_CASE_LINGER, each described where it is read.
 
 set -euo pipefail
 
@@ -89,6 +100,12 @@ finish() {   # finish VERDICT REASON
 
     local what=""
 
+    # FALCON_CASE_LINGER=N keeps a passing guest running N more seconds
+    # before the final screenshot, so the screen shows what the verdict
+    # stood on (a desktop, a login prompt) rather than the moment of it.
+    if [[ "$1" == PASS && "${FALCON_CASE_LINGER:-0}" -gt 0 ]] && alive; then
+        sleep "$FALCON_CASE_LINGER"
+    fi
     if [[ -S "$MON" ]]; then
         MON_SOCK="$MON" falcon-efi/tools/rig-shot.sh screen "$OUTDIR" \
             >/dev/null 2>&1 || true
@@ -205,6 +222,14 @@ T1=$(date +%s)
 NUDGE_EVERY=2
 NUDGE_FOR=90
 next_nudge=$(( T1 + NUDGE_EVERY ))
+# Bytes read from the stick so far, from the monitor (0 when it cannot say).
+MEDIA_MIB=64
+stick_read() {
+    echo "info blockstats" | socat - UNIX-CONNECT:"$MON" 2>/dev/null |
+        tr -d '\r' | awk '/^stick:/ { f = 1 } f && /^Read:/ { print $2; exit }'
+}
+media_base=
+
 # FALCON_CASE_SHOTS=N keeps a screenshot every N seconds (shot-SECS.png), for
 # reading a failure the serial log cannot show: a graphical boot menu, a
 # kernel that prints only to the screen.
@@ -259,8 +284,23 @@ while (( $(date +%s) - T1 < TIMEOUT )); do
     if grep -q -E 'Kernel panic - not syncing' <<<"$after"; then
         finish FAIL "$(grep -m1 'Kernel panic' <<<"$after" | cut -c1-120)"
     fi
-    if grep -q -E 'emergency shell|Entering emergency mode|You are in emergency mode|dracut-initqueue.*timeout|\(initramfs\)|Cannot find root' <<<"$after"; then
-        finish FAIL "initramfs gave up: $(grep -m1 -E 'emergency|timeout|initramfs|Cannot find' <<<"$after" | cut -c1-100)"
+    # The reason quotes the line that matched, not the first line with a
+    # similar word in it ("unpack rootfs image as initramfs" is in every
+    # boot).
+    gave_up='emergency shell|Entering emergency mode|You are in emergency mode|dracut-initqueue.*timeout|\(initramfs\)|Cannot find root'
+    if grep -q -E "$gave_up" <<<"$after"; then
+        finish FAIL "initramfs gave up: $(grep -m1 -E "$gave_up" <<<"$after" | sed 's/^[[:space:]]*//' | cut -c1-100)"
+    fi
+    if [[ -z "$media_base" ]] && grep -q '^ *starting ' <<<"$after"; then
+        media_base=$(stick_read)
+        media_base=${media_base:-0}
+    fi
+    if [[ -n "$media_base" ]]; then
+        media_now=$(stick_read)
+        if [[ -n "$media_now" ]] &&
+           (( (media_now - media_base) / 1048576 >= MEDIA_MIB )); then
+            finish PASS "read $(( (media_now - media_base) / 1048576 )) MiB of its media after the kernel started"
+        fi
     fi
     if [[ -s "$PCAP" ]] &&
        tcpdump -nr "$PCAP" 'udp and src port 68 and dst port 67' 2>/dev/null |
