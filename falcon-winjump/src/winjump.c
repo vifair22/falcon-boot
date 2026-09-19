@@ -50,11 +50,32 @@
 #define LOG_PATH        L"X:\\falcon-winjump.log"
 #define CFG_NAME        L"falcon-winjump.cfg"
 #define DEFAULT_SHELL   L"winpeshl_orig.exe"
+/* The user's own options, on the stick beside their ISOs rather than in the
+ * loader: <root>\falcon\windows.cfg on the volume the ISO was found on. */
+#define STICK_CFG       L"falcon\\windows.cfg"
+/* Where a chosen unattend file is copied, so Setup still has it after the
+ * stick's drive letter moves; Setup copies it into the install itself. */
+#define UNATTEND_COPY   L"X:\\falcon-unattend.xml"
 
 struct cfg {
     char iso[MAX_PATH];       /* ISO path relative to a volume root */
     unsigned long long size;  /* its exact byte length, 0 if unspecified */
     char shell[MAX_PATH];     /* original shell, empty for the default */
+};
+
+/* p2:\falcon\windows.cfg, every key optional:
+ *
+ *   win11_bypass=1          Setup skips Windows 11's TPM, Secure Boot, RAM,
+ *                           CPU and storage checks (the LabConfig keys)
+ *   unattend=<path>         an answer file, relative to the stick's root,
+ *                           that Setup runs with
+ *
+ * Ventoy's BypassNRO is absent on purpose: it has to reach the INSTALLED
+ * system's registry, which Ventoy does with a process that outlives Setup and
+ * waits for it. An unattend file does the same job without one. */
+struct stick_opts {
+    int win11_bypass;
+    char unattend[MAX_PATH];
 };
 
 static void __attribute__((format(__MINGW_PRINTF_FORMAT, 1, 2)))
@@ -153,19 +174,17 @@ static void trim(char *s)
         s[--n] = '\0';
 }
 
-/* Dead-simple ASCII key=value, one per line, '#' comments. Written by the
- * bless tool, read only here; it never has to survive a user editing it. */
-static BOOL read_cfg(const wchar_t *dir, struct cfg *cfg)
+typedef void (*kv_fn)(void *ctx, const char *key, const char *value);
+
+/* Dead-simple ASCII key=value, one per line, '#' comments. FALSE when the
+ * file cannot be read; what is in it is the caller's business. */
+static BOOL read_kv(const wchar_t *path, kv_fn fn, void *ctx)
 {
-    wchar_t path[MAX_PATH];
     char buf[4096];
     HANDLE h;
     DWORD got = 0;
     char *line;
     char *next;
-
-    if (swprintf(path, MAX_PATH, L"%ls%ls", dir, CFG_NAME) < 0)
-        return FALSE;
 
     h = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING,
                     FILE_ATTRIBUTE_NORMAL, NULL);
@@ -174,7 +193,7 @@ static BOOL read_cfg(const wchar_t *dir, struct cfg *cfg)
         return FALSE;
     }
     if (!ReadFile(h, buf, sizeof buf - 1, &got, NULL)) {
-        jlog("cfg: read failed, err=%lu", GetLastError());
+        jlog("cfg: read of %ls failed, err=%lu", path, GetLastError());
         CloseHandle(h);
         return FALSE;
     }
@@ -195,17 +214,35 @@ static BOOL read_cfg(const wchar_t *dir, struct cfg *cfg)
         if (eq == NULL)
             continue;
         *eq++ = '\0';
-
-        if (strcmp(line, "iso") == 0) {
-            lstrcpynA(cfg->iso, eq, MAX_PATH);
-        } else if (strcmp(line, "shell") == 0) {
-            lstrcpynA(cfg->shell, eq, MAX_PATH);
-        } else if (strcmp(line, "size") == 0) {
-            cfg->size = strtoull(eq, NULL, 10);
-        } else {
-            jlog("cfg: ignoring unknown key '%s'", line);
-        }
+        fn(ctx, line, eq);
     }
+    return TRUE;
+}
+
+static void cfg_key(void *ctx, const char *key, const char *value)
+{
+    struct cfg *cfg = ctx;
+
+    if (strcmp(key, "iso") == 0)
+        lstrcpynA(cfg->iso, value, MAX_PATH);
+    else if (strcmp(key, "shell") == 0)
+        lstrcpynA(cfg->shell, value, MAX_PATH);
+    else if (strcmp(key, "size") == 0)
+        cfg->size = strtoull(value, NULL, 10);
+    else
+        jlog("cfg: ignoring unknown key '%s'", key);
+}
+
+/* falcon-winjump.cfg beside this binary. Written by the loader, read only
+ * here; it never has to survive a user editing it. */
+static BOOL read_cfg(const wchar_t *dir, struct cfg *cfg)
+{
+    wchar_t path[MAX_PATH];
+
+    if (swprintf(path, MAX_PATH, L"%ls%ls", dir, CFG_NAME) < 0)
+        return FALSE;
+    if (!read_kv(path, cfg_key, cfg))
+        return FALSE;
 
     if (cfg->iso[0] == '\0') {
         jlog("cfg: no iso= key");
@@ -469,6 +506,110 @@ static BOOL attach_iso(const wchar_t *path)
     return TRUE;
 }
 
+/* ---- the user's options (p2:\\falcon\\windows.cfg) ---- */
+
+static void opt_key(void *ctx, const char *key, const char *value)
+{
+    struct stick_opts *o = ctx;
+
+    if (strcmp(key, "win11_bypass") == 0)
+        o->win11_bypass = (strcmp(value, "1") == 0 ||
+                           strcmp(value, "yes") == 0 ||
+                           strcmp(value, "true") == 0);
+    else if (strcmp(key, "unattend") == 0)
+        lstrcpynA(o->unattend, value, MAX_PATH);
+    else
+        jlog("options: ignoring unknown key '%s'", key);
+}
+
+/* Setup reads HKLM\\SYSTEM\\Setup\\LabConfig before it judges the machine;
+ * the names are Microsoft's, documented only by use. */
+static void win11_bypass(void)
+{
+    static const wchar_t *const names[] = {
+        L"BypassTPMCheck", L"BypassSecureBootCheck", L"BypassRAMCheck",
+        L"BypassCPUCheck", L"BypassStorageCheck"
+    };
+    HKEY key;
+    DWORD one = 1;
+    LSTATUS rc;
+    size_t i;
+
+    rc = RegCreateKeyExW(HKEY_LOCAL_MACHINE, L"SYSTEM\\Setup\\LabConfig", 0,
+                         NULL, REG_OPTION_NON_VOLATILE, KEY_SET_VALUE, NULL,
+                         &key, NULL);
+    if (rc != ERROR_SUCCESS) {
+        jlog("options: cannot create LabConfig, rc=%ld", (long)rc);
+        return;
+    }
+    for (i = 0; i < sizeof names / sizeof names[0]; i++) {
+        rc = RegSetValueExW(key, names[i], 0, REG_DWORD, (const BYTE *)&one,
+                            sizeof one);
+        if (rc != ERROR_SUCCESS)
+            jlog("options: setting %ls failed, rc=%ld", names[i], (long)rc);
+    }
+    RegCloseKey(key);
+    jlog("options: Windows 11 requirement checks bypassed");
+}
+
+/* HKLM\\SYSTEM\\Setup\\UnattendFile is where Setup looks for an answer
+ * file before it looks anywhere else. */
+static void use_unattend(const wchar_t *root, const char *rel)
+{
+    wchar_t tail[MAX_PATH];
+    wchar_t src[MAX_PATH];
+    HKEY key;
+    LSTATUS rc;
+
+    if (!widen_relative(rel, tail, MAX_PATH) ||
+        swprintf(src, MAX_PATH, L"%ls%ls", root, tail) < 0)
+        return;
+    if (!CopyFileW(src, UNATTEND_COPY, FALSE)) {
+        jlog("options: cannot copy %ls, err=%lu", src, GetLastError());
+        return;
+    }
+    rc = RegCreateKeyExW(HKEY_LOCAL_MACHINE, L"SYSTEM\\Setup", 0, NULL,
+                         REG_OPTION_NON_VOLATILE, KEY_SET_VALUE, NULL, &key,
+                         NULL);
+    if (rc == ERROR_SUCCESS) {
+        rc = RegSetValueExW(key, L"UnattendFile", 0, REG_SZ,
+                            (const BYTE *)UNATTEND_COPY,
+                            (DWORD)sizeof UNATTEND_COPY);
+        RegCloseKey(key);
+    }
+    if (rc != ERROR_SUCCESS) {
+        jlog("options: cannot set UnattendFile, rc=%ld", (long)rc);
+        return;
+    }
+    jlog("options: unattend %ls", src);
+}
+
+/* The options file on the volume the ISO was found on. Absent is the
+ * ordinary case and changes nothing. */
+static void apply_stick_options(const wchar_t *iso)
+{
+    struct stick_opts o;
+    wchar_t root[4];
+    wchar_t path[MAX_PATH];
+
+    memset(&o, 0, sizeof o);
+    if (wcslen(iso) < 3 || iso[1] != L':' || iso[2] != L'\\')
+        return;
+    lstrcpynW(root, iso, 4);
+    if (swprintf(path, MAX_PATH, L"%ls%ls", root, STICK_CFG) < 0)
+        return;
+    if (GetFileAttributesW(path) == INVALID_FILE_ATTRIBUTES) {
+        jlog("options: no %ls", path);
+        return;
+    }
+    if (!read_kv(path, opt_key, &o))
+        return;
+    if (o.win11_bypass)
+        win11_bypass();
+    if (o.unattend[0] != '\0')
+        use_unattend(root, o.unattend);
+}
+
 /*
  * Run the shell we displaced.
  *
@@ -540,9 +681,10 @@ int main(void)
      * media still has Shift+F10 and this log, and is worth a great deal more
      * than a machine that reboots without a shell. */
     if (enable_manage_volume() && read_cfg(dir, &cfg) &&
-        find_iso(&cfg, iso, MAX_PATH))
+        find_iso(&cfg, iso, MAX_PATH)) {
         (void)attach_iso(iso);
-    else
+        apply_stick_options(iso);
+    } else
         jlog("winjump: attach skipped; launching the original shell anyway");
 
     return launch_shell(dir, &cfg);
