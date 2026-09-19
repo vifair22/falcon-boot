@@ -87,7 +87,10 @@ it exactly as it refuses Arch's. Blessing today signs a Linux kernel into a
 UKI wrap, which has nothing to wrap here. The BSD form of the same act is:
 the sign tool takes the ISO's own `loader.efi`, signs it with the user's MOK,
 and the loader launches that signed copy with the patched ISO served beside
-it. One reboot per ISO, the same ceremony as any other blessing.
+it. The ceremony is the one every blessing uses and it batches the same way:
+`b` blesses the row, `a` blesses every unblessed ISO on the stick, the
+appliance signs the whole list in one run, and the machine reboots once.
+Signing happens there, never in the loader, because the key lives on p3.
 
 What it needs:
 
