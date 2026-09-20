@@ -224,6 +224,11 @@ that is not the one the loader boots from.
 A, B and C touch no boot path and add no firmware call. D is where regression
 risk lives.
 
+Stages A, B and C are done and measured: `media/eltorito.c` (14 tests),
+`fs/fat.c` (11 tests across all three widths) and `media/medium.c` (6 tests).
+Each was checked against the corpus rather than against the fixtures alone,
+and Section 11 records what those runs found.
+
 | stage | what | new | touched |
 | --- | --- | --- | --- |
 | A | `media/eltorito.c`, boot catalog parser | ~200 + tests | 0 |
@@ -307,3 +312,39 @@ carried for one use.
    optional and the media drivers carry it, so the answer is likely "the
    chosen volume's", but falcon-hook finds its medium by label and that path
    must not change spelling.
+
+## 11. What stages A to C measured against the corpus
+
+Each stage was run over all 36 corpus ISOs rather than trusting its fixtures,
+for the reason Section 4 gives. Recorded here because two of the three runs
+changed something.
+
+**11.1 El Torito (stage A).** The parser was diffed against an independent
+implementation over every medium: identical on all 72 entries. Section 4 is
+that survey, and 4.4 and 4.5 came out of it before any code was written.
+
+**11.2 FAT (stage B).** Every corpus ISO's boot image mounts and lists:
+`mounted=36 failed=0`, FAT12, FAT16 and FAT32, Windows and pfSense and
+openSUSE and Arch among them. That is the first time falcon-core has read the
+volume the firmware boots from.
+
+**11.3 The volume set (stage C).** `medium_open` over all 36: nothing
+unmounted, and `/EFI/BOOT/BOOTX64.EFI` resolvable through the boot volume on
+every single one, which is the file the chainload is handed and the file the
+signature and trust probes read. Windows media yields three volumes
+(`udf + iso9660 + boot`) and classifies from the UDF one, which is the
+precedence rule of Section 6 doing its job on the medium that needs it.
+Thirty of the 36 classify to a known family; the six that do not are the two
+ESXi installers and the four Tier B installers that have no fingerprint in
+`family.c` today, which is unchanged from what the firmware path reports.
+
+**11.4 A pre-existing mislabel, surfaced by 11.3 and not introduced by it.**
+Manjaro and MX classify as `memtest`. Neither has a layout fingerprint in
+`family.c`, so both fall through to the last-resort memtest check, and both
+ship `/boot/memtest` - the memtest86+ kernel image a distro bundles beside
+itself rather than as its identity. `family_detect` over the same ISO9660
+tree gives the same answer today, so stage D changes nothing here; it is
+recorded so the label is not read as a regression when the scorecard is
+diffed. Both media pass `off drop` regardless, because the direct path takes
+its cmdline from the ISO's own GRUB configuration rather than from the
+family template.

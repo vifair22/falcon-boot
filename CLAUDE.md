@@ -97,7 +97,9 @@ the tree, so `#include <fs/exfat.h>` means one file wherever it is written.
   - `fs/` the filesystem driver registry (`fs.c`, DESIGN Section 9: one
     `fs_ops` vtable, opaque caller-allocated storage, unified dirents and
     status codes) and the read-only drivers only it calls, `exfat.c`,
-    `ext4.c`, `iso9660.c` (Rock Ridge, Joliet) and `udf.c`. Consumers select
+    `ext4.c`, `fat.c` (FAT12/16/32 with long names; one driver, since the
+    width is derived from the cluster count and only the FAT entry read
+    differs), `iso9660.c` (Rock Ridge, Joliet) and `udf.c`. Consumers select
     a driver through the registry and never name one; `fs_lookup` resolves a
     path. `udf.c` also carries the few record edits the Windows patch needs
     (a File Entry's extents, a Partition Descriptor's length, an anchor),
@@ -116,7 +118,12 @@ the tree, so `#include <fs/exfat.h>` means one file wherever it is written.
     image), the extent map handed to falcon-hook (`extmap.c`) and the hooked
     boot's cmdline (`hookcmd.c`), the grub.cfg D3b serves in place of
     an ISO's own (`grubcfg.c`) and the two edits that make a BSD medium boot
-    itself as a memory disk (`bsdmd.c`).
+    itself as a memory disk (`bsdmd.c`). `eltorito.c` reads a medium's boot
+    catalog and `medium.c` assembles what a medium holds into a set of
+    mounted volumes (UDF, then ISO9660, then the El Torito boot image) over
+    one read callback, which is the job the firmware's ConnectController does
+    today and the per-platform boundary a BIOS build would need
+    (docs/notes/iso-reader-route.md).
   - `wim/` LZX decompression and the WIM reader, plus the boot.wim patch
     (`wim_patch_build`): a new header and a tail appended after the
     original's end, the original bytes untouched.
