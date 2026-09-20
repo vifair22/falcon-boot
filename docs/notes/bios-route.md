@@ -307,6 +307,13 @@ ISO's own tree instead. Checked 2026-09-19: the phrase appears in falcon-efi
 only, in `iso/iso.c` comments describing what the firmware does on our
 behalf, and nowhere in falcon-core.
 
+Net-new and missed by the table above: a FAT12/16/32 driver. The stage table
+assumes falcon-core reads everything a BIOS build would ask it to, and it does
+not read FAT, which is what p1 is and what the El Torito boot image is on
+Windows and FreeBSD media. `iso-reader-route.md` costs it at ~800 lines and
+takes it for a reason that pays under UEFI as well, so a BIOS build inherits
+it rather than funding it. If that work is not taken first, add it to S1.
+
 ## 7. Risks, in the order they matter
 
 **7.1 The `INT 13h` resident is a spike, not an estimate.** The ~1,000 above
