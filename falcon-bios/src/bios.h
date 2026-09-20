@@ -114,6 +114,19 @@ void bios_screen_puts(const char *s);
 void bios_screen_clear(void);
 void bios_screen_at(uint8_t row, uint8_t col);
 
+/* One character of a UCS-2 name as this build can print it.
+ *
+ * Written with an if rather than a conditional expression because the two
+ * arms of one are promoted to int and the result then narrows on the way
+ * back into a char, which is implementation-defined and which clang-tidy is
+ * right to say so about. */
+static inline char bios_ascii(uint16_t c, char fallback)
+{
+    if (c < 0x80u)
+        return (char)c;
+    return fallback;
+}
+
 /* Blocks. Returns one of BIOS_KEY_* for the keys a menu needs, or the ASCII
  * character otherwise. */
 int bios_getkey(void);

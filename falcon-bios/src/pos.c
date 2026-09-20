@@ -148,7 +148,7 @@ static void put_name(const uint16_t *name)
 
     one[1] = '\0';
     for (i = 0; name[i] != 0; i++) {
-        one[0] = name[i] < 0x80u ? (char)name[i] : '?';
+        one[0] = bios_ascii(name[i], '?');
         put(one);
     }
 }

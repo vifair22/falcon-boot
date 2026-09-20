@@ -5,9 +5,11 @@ BIOS-capable falcon-boot actually cost", written down because the answer that
 had been assumed is wrong and the right answer is cheap enough to be asked
 again.
 
-Since then a first slice exists (2026-09-20): `falcon-bios/` with three
-stages, the switch to long mode, the real-mode thunk and a menu, plus
-`run-qemu.sh --bios`. It boots under SeaBIOS and reads its own boot sector
+Since then it is built (2026-09-20): `falcon-bios/` boots all five of the
+routes Section 4 describes - a Linux ISO directly with falcon-hook, an ISO's
+own bootloader through a resident INT 13h handler, the personal OS unwrapped
+out of its UKI, BSD media as their own memory disk, and Windows with its
+`boot.wim` patched in memory. It boots under SeaBIOS and reads its own boot sector
 back through the BIOS from 64-bit code:
 
     falcon-bios: entering long mode
@@ -30,7 +32,8 @@ callback whose other end is INT 13h, identifying p2 and p3 by DESIGN Section
 3's own rules. It is the menu's data.
 
 All five of Section 5.3's assembly jobs are done: the MBR, the mode switch,
-the thunk, the jump into a loaded kernel, and the resident's prologue. The thunk is the one that mattered most, because everything
+the thunk, the jump into a loaded kernel, and the resident's prologue. So are
+all five of Section 4's boot routes. The thunk is the one that mattered most, because everything
 above it is C. Section 6a records what the ISO reader work had already built,
 and Section 6b the third stage that took the size ceiling off.
 
@@ -592,12 +595,33 @@ after two rounds of screenshotting a loader that scrolls its error away in
 under a second. A handler that cannot be single-stepped can still be made to
 say what it did.
 
-**What is left.** S3, Windows. Its patched `boot.wim` appends a tail past the
-ISO's end that is measured in megabytes, which is more conventional memory
-than there is; the overlay would have to be backed by extended memory and
-served with `INT 15h` AH=87h block moves, which the handler can call as
-readily as it calls AH=42h but which needs a GDT of its own in the block.
-That, and nothing else, is what remains of Section 7.1's spike.
+**Windows (S3), and the far side of a megabyte.** Its patched `boot.wim`
+appends a tail past the ISO's end measured in megabytes, which is more
+conventional memory than a machine has to give. So an override can also name
+a physical address instead of a segment, and the handler asks the BIOS to
+move those bytes with `INT 15h` AH=87h - the one service that has always been
+able to reach memory real mode cannot address. It reads six descriptors; the
+handler writes two of them and the BIOS fills the rest.
+
+The computation is `falcon-efi/src/win/winpatch.c`'s, over the same
+falcon-core: the Partition Descriptors and `boot.wim`'s File Entry grow to
+reach the appended blocks, the WIM's first 208 bytes are replaced, and the
+tail carries the jump binary, its configuration, the new metadata and the new
+lookup table. Four of those are a CD sector each and fit the handler's own
+pool; the tail does not, and goes above 64 MB.
+
+It works. Windows 11 25H2 Setup comes up, and the handler served the appended
+region 217 times on the way - which is the part that matters, because Setup's
+first screen looks the same whether the patch took or not. Those 217 passes
+are `bootmgr` and `winload` reading metadata that exists only in the patched
+WIM.
+
+**One bug, and it is the same shape as the CR4 one below.** The heap that
+holds the patch takes the highest usable run it can find, and the first
+attempt took one near 3 GB on a 4 GB machine - outside the gigabyte
+`lmode.S` maps. The first store triple faulted. Under UEFI the firmware maps
+what it allocates; here the loader maps a gigabyte and everything it writes
+has to be inside it.
 
 ## 6e. The personal OS, and one bit nobody sets (2026-09-20)
 

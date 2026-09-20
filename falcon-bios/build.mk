@@ -63,10 +63,10 @@ BIOS_S2_CSRCS := $(addprefix $(BIOS)/,load3.c disk.c console.c) $(CORE_LIBC)
 # what the third stage was for: under stage 2's 33 KB ceiling this had to be
 # one driver called by name.
 BIOS_S3_CSRCS := $(addprefix $(BIOS)/,main.c scan.c pos.c prompt.c linux.c \
-	vcd.c vcdcore.c bsd.c \
+	vcd.c vcdcore.c bsd.c win.c heap.c \
 	e820.c disk.c console.c) \
 	$(CORE_PART) $(CORE_FS) $(CORE_MEDIA) $(CORE_PE) $(CORE_CRYPTO) \
-	$(CORE_LUKS) $(CORE_LIBC)
+	$(CORE_LUKS) $(CORE_WIM) $(CORE_LIBC)
 BIOS_S2_COBJS := $(patsubst %.c,$(BIOS_OBJ)/%.o,$(BIOS_S2_CSRCS))
 BIOS_S3_COBJS := $(patsubst %.c,$(BIOS_OBJ)/%.o,$(BIOS_S3_CSRCS))
 BIOS_CSRCS := $(sort $(BIOS_S2_CSRCS) $(BIOS_S3_CSRCS))
@@ -158,14 +158,19 @@ $(BIOS_STAGE2): $(BIOS_STAGE2_OBJS) $(BIOS)/bios.ld
 # object the UEFI loader embeds: falcon-hook runs in the initramfs and does
 # not know which firmware started the kernel.
 BIOS_HOOK_OBJ := $(BIOS_OBJ)/$(HOOK_BLOB).o
+BIOS_WINJUMP_OBJ := $(BIOS_OBJ)/$(WINJUMP_BLOB).o
 
 $(BIOS_HOOK_OBJ): $(HOOK_BLOB)
 	@mkdir -p $(@D)
 	$(CC_HOST) $(BIOS_CFLAGS) -c -o $@ $<
 
+$(BIOS_WINJUMP_OBJ): $(WINJUMP_BLOB)
+	@mkdir -p $(@D)
+	$(CC_HOST) $(BIOS_CFLAGS) -c -o $@ $<
+
 BIOS_STAGE3_OBJS := $(BIOS_OBJ)/$(BIOS)/stage3.o $(BIOS_OBJ)/$(BIOS)/vcdres.o \
 	$(BIOS_S3_COBJS) \
-	$(BIOS_HOOK_OBJ)
+	$(BIOS_HOOK_OBJ) $(BIOS_WINJUMP_OBJ)
 
 $(BIOS_STAGE3): $(BIOS_STAGE3_OBJS) $(BIOS)/bios.ld
 	@mkdir -p $(@D)

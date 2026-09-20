@@ -68,6 +68,8 @@ vcd_blob_start:
 	.long   0
 	.org    VCD_OFF_OVER
 	.space  (VCD_MAX_OVER_ASM * VCD_OV_LEN)
+	.org    VCD_OFF_MOVEGDT
+	.space  48
 	.org    VCD_OFF_RUNS
 	.space  (VCD_MAX_RUNS_ASM * VCD_RUN_LEN)
 	.org    VCD_OFF_SPEC
@@ -324,6 +326,9 @@ ov_hit:
 	movl    $16, %eax
 6:	movl    %eax, %edx
 
+	testw   $VCD_OV_EXT, 10(%si)
+	jnz     ov_ext
+
 	/* The source: the override's segment, advanced 128 paragraphs for
 	 * every sector of it already served. */
 	movl    %ebx, %eax
@@ -349,6 +354,77 @@ ov_hit:
 	popw    %di
 	popw    %si
 	popl    %ecx
+	jmp     advance
+
+/* ---- an override the far side of a megabyte ----
+ *
+ * Windows is the only thing that needs this: its patched boot.wim appends a
+ * tail measured in megabytes, which is more conventional memory than a
+ * machine has to give. Real mode cannot address it, so the BIOS is asked to
+ * move it instead - INT 15h AH=87h, which is the one service that has always
+ * been able to. It reads six descriptors; the second and third are the
+ * source and the destination and are the only ones this writes.
+ *
+ * EDX is the pass count and SI the entry. */
+ov_ext:
+	pushl   %ecx
+	pushw   %di
+
+	/* EAX: the source, the override's physical address advanced by what
+	 * has already been served out of it. */
+	movl    %ebx, %eax
+	subl    (%si), %eax
+	shll    $11, %eax            /* CD sectors to bytes */
+	addl    12(%si), %eax
+
+	/* ECX: the destination, which is a segment and an offset until it is
+	 * a linear address. */
+	movzwl  %di, %ecx
+	shll    $4, %ecx
+	movzwl  %cs:(VCD_OFF_DAP + 4), %ebp
+	addl    %ebp, %ecx
+
+	/* EBP: bytes this pass. AH=87h counts words and CX is sixteen bits,
+	 * so 64 KB is its limit; sixteen CD sectors is half that. */
+	movl    %edx, %ebp
+	shll    $11, %ebp
+
+	/* The source descriptor, then the destination, in the shape a
+	 * protected-mode segment descriptor has: limit, then the base in
+	 * three pieces with an access byte wedged between them. */
+	pushl   %ebp
+	decl    %ebp
+	movw    %bp, %cs:(VCD_OFF_MOVEGDT + 16)
+	movw    %bp, %cs:(VCD_OFF_MOVEGDT + 24)
+	popl    %ebp
+	movw    %ax, %cs:(VCD_OFF_MOVEGDT + 18)
+	movw    %cx, %cs:(VCD_OFF_MOVEGDT + 26)
+	movb    $0x93, %cs:(VCD_OFF_MOVEGDT + 21)
+	movb    $0x93, %cs:(VCD_OFF_MOVEGDT + 29)
+	movb    $0, %cs:(VCD_OFF_MOVEGDT + 22)
+	movb    $0, %cs:(VCD_OFF_MOVEGDT + 30)
+	shrl    $16, %eax
+	movb    %al, %cs:(VCD_OFF_MOVEGDT + 20)
+	movb    %ah, %cs:(VCD_OFF_MOVEGDT + 23)
+	shrl    $16, %ecx
+	movb    %cl, %cs:(VCD_OFF_MOVEGDT + 28)
+	movb    %ch, %cs:(VCD_OFF_MOVEGDT + 31)
+
+	pushw   %es
+	pushw   %si
+	pushw   %cs
+	popw    %es
+	movw    $VCD_OFF_MOVEGDT, %si
+	movl    %ebp, %ecx
+	shrl    $1, %ecx             /* words, which is what AH=87h counts */
+	movb    $0x87, %ah
+	int     $0x15
+	popw    %si
+	popw    %es
+
+	popw    %di
+	popl    %ecx
+	jc      read_fail
 	jmp     advance
 
 find_run_start:

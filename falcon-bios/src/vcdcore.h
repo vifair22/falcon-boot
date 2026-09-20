@@ -36,8 +36,9 @@
  * from the disk. This is what `iso/overlay.h` is under UEFI, and it is what
  * makes a medium bootable that is not bootable as it lies on the stick:
  * media/bsdmd.c's two edits are what need it first (DESIGN Section 6.4), and
- * they are a directory record and a settings block, so four is generous. */
-#define VCD_MAX_OVERRIDES 4u
+ * Windows needs five: two Partition Descriptors, boot.wim's File Entry, its
+ * patched header, and the tail appended past the ISO's end. */
+#define VCD_MAX_OVERRIDES 8u
 
 /* The medium's declared size is rounded up to this many CD sectors, and the
  * sectors past the image's own end read as zeros.
@@ -63,10 +64,19 @@ typedef struct {
     uint64_t disk_lba;  /* where they are, in the disk's own sector units */
 } vcd_run;
 
+/* An override's bytes are either in conventional memory, where the handler
+ * copies them itself, or above a megabyte, where they are out of real mode's
+ * reach and the BIOS moves them with INT 15h AH=87h. The second exists for
+ * Windows: its patched boot.wim appends a tail measured in megabytes, which
+ * is more conventional memory than a machine has to give. */
+#define VCD_OVER_EXT 1u   /* bytes are at `phys`, not in segment `seg` */
+
 typedef struct {
     uint32_t cd_lba;   /* first CD sector served from memory */
     uint32_t n_cd;     /* how many */
-    uint16_t seg;      /* real-mode segment of n_cd * 2048 bytes */
+    uint16_t seg;      /* real-mode segment, when not VCD_OVER_EXT */
+    uint16_t flags;
+    uint32_t phys;     /* physical address, when VCD_OVER_EXT */
 } vcd_override;
 
 typedef struct {
@@ -87,6 +97,7 @@ enum {
     VCD_FROM_MEMORY   = 1,   /* vcd_span only: served by an override */
     VCD_FROM_ZERO     = 2,   /* vcd_span only: past the image, inside the
                                 medium, so it reads as zeros */
+    VCD_FROM_EXTENDED = 3,   /* vcd_span only: an override above a megabyte */
     VCD_ERR_BAD_ARG   = -1,
     VCD_ERR_ALIGN     = -2,  /* an extent is not a whole number of CD sectors */
     VCD_ERR_TOO_MANY  = -3,  /* more runs than the handler will scan */
@@ -128,14 +139,29 @@ int vcd_locate(const vcd_map *m, uint32_t cd_lba, uint32_t want,
  * that runs off the end of the medium or overlaps one already added. */
 int vcd_override_add(vcd_map *m, uint32_t cd_lba, uint32_t n_cd, uint16_t seg);
 
+/* The same, for bytes above a megabyte. `phys` is their physical address,
+ * which the handler hands to the BIOS rather than addressing itself. */
+int vcd_override_add_ext(vcd_map *m, uint32_t cd_lba, uint32_t n_cd,
+                         uint32_t phys);
+
+/* Grows the medium by `extra` CD sectors, so an override may cover ground
+ * the image itself does not.
+ *
+ * Windows is why: its patched boot.wim is longer than the original, and the
+ * difference is served past the ISO's last sector. The medium a BIOS sees is
+ * the ISO plus that, which is what its UDF descriptors are rewritten to say.
+ */
+int vcd_extend(vcd_map *m, uint32_t extra);
+
 /* How the next stretch of a read is served, which is the first thing the
  * handler asks of each pass.
  *
  * VCD_FROM_MEMORY with *seg set and *n_cd sectors from an override,
+ * VCD_FROM_EXTENDED with *phys set for one above a megabyte,
  * VCD_FROM_ZERO for *n_cd sectors of the medium's tail padding, or VCD_OK
  * with *n_cd sectors that come from the disk and stop short of the next
  * override. Nonzero and negative past the end of the medium. */
 int vcd_span(const vcd_map *m, uint32_t cd_lba, uint32_t want,
-             uint16_t *seg, uint32_t *n_cd);
+             uint16_t *seg, uint32_t *phys, uint32_t *n_cd);
 
 #endif /* FALCON_BIOS_VCDCORE_H */

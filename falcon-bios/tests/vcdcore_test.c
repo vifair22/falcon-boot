@@ -130,6 +130,7 @@ static void test_tail_padding(void **state)
     vcd_extent ext = { 0, 8u << 20 };
     vcd_map m;
     uint16_t seg = 0;
+    uint32_t phys = 0;
     uint32_t n = 0;
     uint64_t iso = (uint64_t)1000u * 2048u + 2048u;   /* 1001 CD sectors */
 
@@ -142,21 +143,21 @@ static void test_tail_padding(void **state)
 
     /* A disk read stops at the image's end rather than running into the
      * padding, because the handler issues one BIOS call per pass. */
-    assert_int_equal(vcd_span(&m, 996, 8, &seg, &n), VCD_OK);
+    assert_int_equal(vcd_span(&m, 996, 8, &seg, &phys, &n), VCD_OK);
     assert_int_equal(n, 5);
 
     /* And the padding reads as zeros. */
-    assert_int_equal(vcd_span(&m, 1001, 8, &seg, &n), VCD_FROM_ZERO);
+    assert_int_equal(vcd_span(&m, 1001, 8, &seg, &phys, &n), VCD_FROM_ZERO);
     assert_int_equal(n, 8);
-    assert_int_equal(vcd_span(&m, 1020, 8, &seg, &n), VCD_FROM_ZERO);
+    assert_int_equal(vcd_span(&m, 1020, 8, &seg, &phys, &n), VCD_FROM_ZERO);
     assert_int_equal(n, 8);
 
     /* The sector AT the declared size answers too, because that is the one
      * FreeBSD's loader asked for. */
-    assert_int_equal(vcd_span(&m, 1024, 1, &seg, &n), VCD_FROM_ZERO);
+    assert_int_equal(vcd_span(&m, 1024, 1, &seg, &phys, &n), VCD_FROM_ZERO);
 
     /* A block past that is not a sector at all. */
-    assert_int_not_equal(vcd_span(&m, 1024 + 64, 1, &seg, &n),
+    assert_int_not_equal(vcd_span(&m, 1024 + 64, 1, &seg, &phys, &n),
                          VCD_FROM_ZERO);
 
     /* An override may not be placed in the padding: there is nothing there
@@ -251,6 +252,7 @@ static void test_overrides(void **state)
     vcd_extent ext = { 0, 8u << 20 };
     vcd_map m;
     uint16_t seg = 0;
+    uint32_t phys = 0;
     uint32_t n = 0;
 
     (void)state;
@@ -259,29 +261,29 @@ static void test_overrides(void **state)
     assert_int_equal((int)m.n_over, 0);
 
     /* With none, a read is bounded only by what was asked for. */
-    assert_int_equal(vcd_span(&m, 0, 64, &seg, &n), VCD_OK);
+    assert_int_equal(vcd_span(&m, 0, 64, &seg, &phys, &n), VCD_OK);
     assert_int_equal(n, 64);
 
     assert_int_equal(vcd_override_add(&m, 100, 2, 0x8000u), VCD_OK);
 
     /* A read that starts before one stops short of it, so the handler never
      * issues a BIOS call that spans the two. */
-    assert_int_equal(vcd_span(&m, 90, 64, &seg, &n), VCD_OK);
+    assert_int_equal(vcd_span(&m, 90, 64, &seg, &phys, &n), VCD_OK);
     assert_int_equal(n, 10);
 
     /* A read that starts inside one comes from memory. */
-    assert_int_equal(vcd_span(&m, 100, 64, &seg, &n), VCD_FROM_MEMORY);
+    assert_int_equal(vcd_span(&m, 100, 64, &seg, &phys, &n), VCD_FROM_MEMORY);
     assert_int_equal(n, 2);
     assert_int_equal(seg, 0x8000);
 
     /* And from the right part of it: the second sector is 128 paragraphs
      * further in. */
-    assert_int_equal(vcd_span(&m, 101, 64, &seg, &n), VCD_FROM_MEMORY);
+    assert_int_equal(vcd_span(&m, 101, 64, &seg, &phys, &n), VCD_FROM_MEMORY);
     assert_int_equal(n, 1);
     assert_int_equal(seg, 0x8080);
 
     /* Past it is the disk again. */
-    assert_int_equal(vcd_span(&m, 102, 64, &seg, &n), VCD_OK);
+    assert_int_equal(vcd_span(&m, 102, 64, &seg, &phys, &n), VCD_OK);
     assert_int_equal(n, 64);
 
     /* Overlapping is refused: two answers for one sector is not something
@@ -294,12 +296,61 @@ static void test_overrides(void **state)
     assert_int_equal(vcd_override_add(&m, 200, 1, 0x9000u), VCD_OK);
     assert_int_equal(vcd_override_add(&m, 300, 1, 0xA000u), VCD_OK);
     assert_int_equal(vcd_override_add(&m, 400, 1, 0xB000u), VCD_OK);
-    assert_int_equal(vcd_override_add(&m, 500, 1, 0xC000u), VCD_ERR_TOO_MANY);
+    assert_int_equal(vcd_override_add(&m, 500, 1, 0xC000u), VCD_OK);
+    assert_int_equal(vcd_override_add(&m, 600, 1, 0xD000u), VCD_OK);
+    assert_int_equal(vcd_override_add(&m, 700, 1, 0xE000u), VCD_OK);
+    assert_int_equal(vcd_override_add(&m, 800, 1, 0xF000u), VCD_OK);
+    assert_int_equal(vcd_override_add(&m, 900, 1, 0x1000u), VCD_ERR_TOO_MANY);
 
     /* The nearest override above is the one a read stops at, not the first
      * in the table. */
-    assert_int_equal(vcd_span(&m, 250, 1000, &seg, &n), VCD_OK);
+    assert_int_equal(vcd_span(&m, 250, 1000, &seg, &phys, &n), VCD_OK);
     assert_int_equal(n, 50);
+}
+
+static void test_extended_override_and_extend(void **state)
+{
+    /* What Windows needs: the medium grows past the image, and the sectors
+     * it grew by are served from memory above a megabyte, which real mode
+     * cannot address and the BIOS has to move. */
+    vcd_extent ext = { 0, 8u << 20 };
+    vcd_map m;
+    uint16_t seg = 0;
+    uint32_t phys = 0;
+    uint32_t n = 0;
+
+    (void)state;
+    assert_int_equal(vcd_build(&m, &ext, 1, PART_LBA, 512u, 8u << 20,
+                               0xE0u, 0x80u), VCD_OK);
+    assert_int_equal(m.n_real, 4096);
+
+    /* Nothing may be placed past the image until the medium says it is
+     * there. */
+    assert_int_equal(vcd_override_add_ext(&m, 4096, 8, 0x4000000u),
+                     VCD_ERR_BAD_ARG);
+
+    assert_int_equal(vcd_extend(&m, 8), VCD_OK);
+    assert_int_equal(m.n_real, 4104);
+    assert_int_equal(vcd_override_add_ext(&m, 4096, 8, 0x4000000u), VCD_OK);
+
+    /* The appended sectors come from the physical address, offset by how
+     * far into the override they are. */
+    assert_int_equal(vcd_span(&m, 4096, 64, &seg, &phys, &n),
+                     VCD_FROM_EXTENDED);
+    assert_int_equal(n, 8);
+    assert_int_equal((int)phys, 0x4000000);
+
+    assert_int_equal(vcd_span(&m, 4098, 64, &seg, &phys, &n),
+                     VCD_FROM_EXTENDED);
+    assert_int_equal(n, 6);
+    assert_int_equal((int)phys, 0x4000000 + 2 * 2048);
+
+    /* A disk read below it still stops at its edge. */
+    assert_int_equal(vcd_span(&m, 4090, 64, &seg, &phys, &n), VCD_OK);
+    assert_int_equal(n, 6);
+
+    /* And the padding past the extended medium still reads as zeros. */
+    assert_int_equal(vcd_span(&m, 4104, 8, &seg, &phys, &n), VCD_FROM_ZERO);
 }
 
 int run_vcdcore_tests(void)
@@ -315,6 +366,7 @@ int run_vcdcore_tests(void)
         cmocka_unit_test(test_bad_args),
         cmocka_unit_test(test_sector_size_is_the_disks_own),
         cmocka_unit_test(test_overrides),
+        cmocka_unit_test(test_extended_override_and_extend),
     };
 
     return cmocka_run_group_tests_name("falcon-bios", tests, NULL, NULL);

@@ -26,10 +26,20 @@
 #include <media/eltorito.h>
 #include <lib/string.h>
 
-/* The blob, as vcd.S lays it out. Copied, never called where it is linked:
- * stage 3 is above a megabyte and real mode cannot reach it. */
+/* The blob, as vcdres.S lays it out. Copied, never called where it is
+ * linked: stage 3 is above a megabyte and real mode cannot reach it.
+ *
+ * Its length is taken through integers rather than by subtracting the two
+ * symbols, because they are two declared objects and the difference of
+ * pointers into different objects is undefined however true the arithmetic
+ * is. The linker knows they bracket one section; C does not. */
 extern const unsigned char vcd_blob_start[];
 extern const unsigned char vcd_blob_end[];
+
+static size_t vcd_blob_len(void)
+{
+    return (size_t)((uintptr_t)vcd_blob_end - (uintptr_t)vcd_blob_start);
+}
 
 /* How many kilobytes of conventional memory the BIOS says there are, and
  * the vector this loader takes over. */
@@ -52,6 +62,11 @@ static struct {
 } g_pending[VCD_MAX_OVERRIDES];
 static unsigned g_n_pending;
 
+/* The appended region, when there is one: bytes above a megabyte served past
+ * the ISO's own end, which the medium has to be grown to hold. */
+static uint32_t g_append_phys;
+static uint32_t g_append_cd;
+
 static vcd_extent g_ext[VCD_MAX_RUNS + 8u];
 static fs_extent  g_fsext[VCD_MAX_RUNS + 8u];
 static uint8_t    g_sector[2048];
@@ -62,6 +77,17 @@ void vcd_overlay_reset(void)
 {
     g_pool_used = 0;
     g_n_pending = 0;
+    g_append_phys = 0;
+    g_append_cd = 0;
+}
+
+int vcd_overlay_append(uint32_t phys, uint32_t n_cd)
+{
+    if (phys == 0 || n_cd == 0 || g_append_cd != 0)
+        return -1;
+    g_append_phys = phys;
+    g_append_cd = n_cd;
+    return 0;
 }
 
 int vcd_overlay(fs_file *isofile, uint64_t iso_off, const void *bytes,
@@ -270,7 +296,7 @@ int vcd_chainload(bios_disk *d, fs_vol *p2, const gpt_part *p2part,
         return -1;
     }
     at = (uint8_t *)(uintptr_t)((uint32_t)seg * 16u);
-    memcpy(at, vcd_blob_start, (size_t)(vcd_blob_end - vcd_blob_start));
+    memcpy(at, vcd_blob_start, vcd_blob_len());
 
     /* Its state. The previous vector first, because every call the handler
      * does not answer and every read it does go through it. */
@@ -292,6 +318,17 @@ int vcd_chainload(bios_disk *d, fs_vol *p2, const gpt_part *p2part,
         memcpy(r + 4, &g_map.run[i].n_cd, 4);
         memcpy(r + 8, &g_map.run[i].disk_lba, 8);
     }
+    /* The appended region first, because the medium has to say it is there
+     * before anything may be placed in it. */
+    if (g_append_cd != 0) {
+        if (vcd_extend(&g_map, g_append_cd) != VCD_OK ||
+            vcd_override_add_ext(&g_map, g_map.n_real - g_append_cd,
+                                 g_append_cd, g_append_phys) != VCD_OK) {
+            put("  the appended blocks do not fit the medium\n");
+            return -1;
+        }
+    }
+
     /* The overlay: its bytes into the pool behind the resident, and the
      * table the handler scans before every pass. */
     if (g_pool_used > 0)
@@ -316,6 +353,8 @@ int vcd_chainload(bios_disk *d, fs_vol *p2, const gpt_part *p2part,
         memcpy(o, &g_map.over[i].cd_lba, 4);
         memcpy(o + 4, &g_map.over[i].n_cd, 4);
         memcpy(o + 8, &g_map.over[i].seg, 2);
+        memcpy(o + 10, &g_map.over[i].flags, 2);
+        memcpy(o + 12, &g_map.over[i].phys, 4);
     }
 
     write_spec(at + VCD_OFF_SPEC, e, load_seg);
@@ -332,7 +371,7 @@ int vcd_chainload(bios_disk *d, fs_vol *p2, const gpt_part *p2part,
     put("  serving the medium on drive ");
     put_hex(VCD_DRIVE);
     put(" from ");
-    put_hex((uint32_t)seg * 16u);
+    put_hex((uint64_t)seg * 16u);
     put("\n  boot image at CD sector ");
     put_hex(e->lba);
     put(", ");

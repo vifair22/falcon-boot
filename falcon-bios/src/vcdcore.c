@@ -111,7 +111,8 @@ int vcd_locate(const vcd_map *m, uint32_t cd_lba, uint32_t want,
     return VCD_ERR_BAD_ARG;
 }
 
-int vcd_override_add(vcd_map *m, uint32_t cd_lba, uint32_t n_cd, uint16_t seg)
+static int override_add(vcd_map *m, uint32_t cd_lba, uint32_t n_cd,
+                        uint16_t seg, uint16_t flags, uint32_t phys)
 {
     uint32_t i;
 
@@ -132,19 +133,45 @@ int vcd_override_add(vcd_map *m, uint32_t cd_lba, uint32_t n_cd, uint16_t seg)
     m->over[m->n_over].cd_lba = cd_lba;
     m->over[m->n_over].n_cd = n_cd;
     m->over[m->n_over].seg = seg;
+    m->over[m->n_over].flags = flags;
+    m->over[m->n_over].phys = phys;
     m->n_over++;
     return VCD_OK;
 }
 
+int vcd_override_add(vcd_map *m, uint32_t cd_lba, uint32_t n_cd, uint16_t seg)
+{
+    return override_add(m, cd_lba, n_cd, seg, 0, 0);
+}
+
+int vcd_override_add_ext(vcd_map *m, uint32_t cd_lba, uint32_t n_cd,
+                         uint32_t phys)
+{
+    return override_add(m, cd_lba, n_cd, 0, (uint16_t)VCD_OVER_EXT, phys);
+}
+
+int vcd_extend(vcd_map *m, uint32_t extra)
+{
+    if (m == (vcd_map *)0 || extra == 0)
+        return VCD_ERR_BAD_ARG;
+    if (extra > 0xFFFFFFFFu - m->n_real)
+        return VCD_ERR_BAD_ARG;
+    m->n_real += extra;
+    m->n_cd = (m->n_real + VCD_PAD - 1u) / VCD_PAD * VCD_PAD;
+    m->n_limit = m->n_cd + VCD_PAD;
+    return VCD_OK;
+}
+
 int vcd_span(const vcd_map *m, uint32_t cd_lba, uint32_t want,
-             uint16_t *seg, uint32_t *n_cd)
+             uint16_t *seg, uint32_t *phys, uint32_t *n_cd)
 {
     uint32_t gap;
     uint32_t i;
 
     if (m == (const vcd_map *)0 || seg == (uint16_t *)0 ||
-        n_cd == (uint32_t *)0 || want == 0)
+        phys == (uint32_t *)0 || n_cd == (uint32_t *)0 || want == 0)
         return VCD_ERR_BAD_ARG;
+    *phys = 0;
     if (cd_lba >= m->n_limit)
         return VCD_ERR_BAD_ARG;
 
@@ -162,11 +189,16 @@ int vcd_span(const vcd_map *m, uint32_t cd_lba, uint32_t want,
         const vcd_override *o = &m->over[i];
 
         if (cd_lba >= o->cd_lba && cd_lba < o->cd_lba + o->n_cd) {
-            uint32_t have = o->cd_lba + o->n_cd - cd_lba;
+            uint32_t into = cd_lba - o->cd_lba;
+            uint32_t have = o->n_cd - into;
 
-            *seg = (uint16_t)(o->seg + (uint16_t)((cd_lba - o->cd_lba) *
-                                                  (VCD_CD_SECTOR / 16u)));
             *n_cd = have < want ? have : want;
+            if ((o->flags & VCD_OVER_EXT) != 0) {
+                *phys = o->phys + into * VCD_CD_SECTOR;
+                return VCD_FROM_EXTENDED;
+            }
+            *seg = (uint16_t)(o->seg +
+                              (uint16_t)(into * (VCD_CD_SECTOR / 16u)));
             return VCD_FROM_MEMORY;
         }
         /* Not in it, but possibly in the way: a disk read may not run into

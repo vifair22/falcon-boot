@@ -40,4 +40,13 @@ int vcd_overlay(fs_file *isofile, uint64_t iso_off, const void *bytes,
                 uint32_t len);
 void vcd_overlay_reset(void);
 
+/* Serves `n_cd` CD sectors past the ISO's own end from `phys`, which is a
+ * physical address above a megabyte: the medium grows by that much and the
+ * handler has the BIOS move the bytes with INT 15h AH=87h.
+ *
+ * Windows needs it and nothing else does: its patched boot.wim is longer
+ * than the original, and the difference is tens of megabytes, which is more
+ * conventional memory than a machine has to give. */
+int vcd_overlay_append(uint32_t phys, uint32_t n_cd);
+
 #endif /* FALCON_BIOS_VCD_H */

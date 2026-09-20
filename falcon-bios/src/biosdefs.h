@@ -175,13 +175,19 @@
 #define VCD_OFF_DAP      0x0010   /* 16 bytes: the packet we re-issue with */
 #define VCD_OFF_END      0x0020   /* word: the handler's two scratch slots */
 #define VCD_OFF_GAP      0x0024   /* dword */
-#define VCD_OFF_OVER     0x0030   /* 4 overrides of 16: lba, count, segment */
+/* An override is lba(4) count(4) segment(2) flags(2) phys(4). */
+#define VCD_OFF_OVER     0x0030   /* 8 overrides of 16 bytes */
 #define VCD_OV_LEN       16
-#define VCD_MAX_OVER_ASM 4
-#define VCD_OFF_RUNS     0x0070   /* 64 runs of 16 bytes */
+#define VCD_OV_EXT       1        /* flags bit: bytes are at phys */
+#define VCD_MAX_OVER_ASM 8
+
+/* The six descriptors INT 15h AH=87h reads to move bytes the far side of a
+ * megabyte. Only the second and third are ours; the BIOS fills the rest. */
+#define VCD_OFF_MOVEGDT  0x00B0   /* 48 bytes */
+#define VCD_OFF_RUNS     0x0100   /* 64 runs of 16 bytes */
 #define VCD_RUN_LEN      16
 #define VCD_MAX_RUNS_ASM 64
-#define VCD_OFF_SPEC     0x0470   /* 20 bytes: the El Torito status packet */
+#define VCD_OFF_SPEC     0x0500   /* 20 bytes: the El Torito status packet */
 
 /* The launch stub and what it needs. It is inside the resident for the one
  * reason that matters: it copies the medium's boot image to where El Torito
@@ -189,12 +195,12 @@
  * the gate, the thunk, the code doing the copying. A stub anywhere else
  * would be overwriting itself. Here it is in memory the BIOS has been told
  * does not exist, so nothing it copies can reach it. */
-#define VCD_OFF_LSRC     0x0490   /* word: segment the image is staged at */
-#define VCD_OFF_LDST     0x0492   /* word: segment it belongs at */
-#define VCD_OFF_LLEN     0x0494   /* word: bytes */
-#define VCD_OFF_LDRIVE   0x0496   /* byte: what to hand over in DL */
-#define VCD_OFF_LAUNCH   0x04A0
-#define VCD_OFF_CODE     0x04E0
+#define VCD_OFF_LSRC     0x0520   /* word: segment the image is staged at */
+#define VCD_OFF_LDST     0x0522   /* word: segment it belongs at */
+#define VCD_OFF_LLEN     0x0524   /* word: bytes */
+#define VCD_OFF_LDRIVE   0x0526   /* byte: what to hand over in DL */
+#define VCD_OFF_LAUNCH   0x0530
+#define VCD_OFF_CODE     0x0570
 
 /* The resident is one 4 KB block; the twelve kilobytes after it are the
  * overlay pool, the bytes an override serves. Sixteen kilobytes is what the

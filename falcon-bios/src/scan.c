@@ -24,6 +24,7 @@
 #include <linux.h>
 #include <vcd.h>
 #include <bsd.h>
+#include <win.h>
 
 #include <fs/fs.h>
 #include <media/medium.h>
@@ -289,21 +290,6 @@ int scan_iso(fs_vol *p2, const gpt_part *p2part, const fs_dirent *ent,
     const family_desc *fam;
     int rc;
 
-    /* BSD media first, because they boot by a third route and nothing about
-     * a Linux boot entry applies to them: the medium is served with two
-     * bytes changed and its own loader mounts root from a memory disk
-     * (bsd.c, DESIGN Section 6.4). `not_bsd` says the medium is not one this
-     * applies to, which is a cue to carry on rather than a failure. */
-    {
-        int not_bsd = 1;
-
-        if (p2part != (const gpt_part *)0) {
-            (void)bsd_boot(g_disk, p2, p2part, ent, &not_bsd);
-            if (!not_bsd)
-                return -1;
-        }
-    }
-
     if (fs_file_open(p2, &g_iso, ent) != FS_OK) {
         put("  the image would not open\n");
         return -1;
@@ -338,6 +324,35 @@ int scan_iso(fs_vol *p2, const gpt_part *p2part, const fs_dirent *ent,
     put("  family: ");
     put(fam != (const family_desc *)0 ? fam->name : "unrecognised");
     put("\n");
+
+    /* Two families boot by routes that have nothing to do with a Linux boot
+     * entry, so they are dispatched on the fingerprint rather than on the
+     * configuration, exactly as the UEFI loader does. Each reports that the
+     * medium is not one it applies to, which is a cue to carry on here
+     * rather than a failure. */
+    if (fam != (const family_desc *)0 && p2part != (const gpt_part *)0) {
+        if (fam->id == FAMILY_BSD) {
+            int not_bsd = 1;
+
+            (void)bsd_boot(g_disk, p2, p2part, ent, &not_bsd);
+            if (!not_bsd)
+                return -1;
+        } else if (fam->id == FAMILY_WINDOWS) {
+            int unpatchable = 1;
+            char rel[BOOTCFG_PATH_MAX];
+            size_t k;
+
+            for (k = 0; k + 1u < sizeof rel && ent->name[k] != 0; k++)
+                rel[k] = bios_ascii(ent->name[k], '_');
+            rel[k] = '\0';
+            (void)win_boot(g_disk, p2, p2part, ent, rel, &unpatchable);
+            if (!unpatchable)
+                return -1;
+            /* Windows media with nothing to patch still boots: its own
+             * bootloader off the served medium. */
+            return scan_chain(g_disk, p2, p2part, ent);
+        }
+    }
 
     bootfs_src(&g_bctx, cfgvol, &g_src);
     rc = bootcfg_read(&g_src, BOOTCFG_CD, g_scratch, sizeof g_scratch, &g_cfg);

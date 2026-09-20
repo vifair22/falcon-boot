@@ -122,7 +122,7 @@ static void put_name(const uint16_t *name)
     size_t i;
 
     for (i = 0; name[i] != 0; i++)
-        bios_putc(name[i] < 0x80u ? (char)name[i] : '?');
+        bios_putc(bios_ascii(name[i], '?'));
 }
 
 /* The same, to the screen and serial together. */
@@ -133,7 +133,7 @@ static void screen_name(const uint16_t *name)
 
     buf[1] = '\0';
     for (i = 0; name[i] != 0; i++) {
-        buf[0] = name[i] < 0x80u ? (char)name[i] : '?';
+        buf[0] = bios_ascii(name[i], '?');
         bios_screen_puts(buf);
     }
 }
