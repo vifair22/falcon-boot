@@ -19,8 +19,7 @@
 #
 # Usage: tools/coverage/run-corpus.sh [options] [ID...]
 #   --states "off ms own"     which Secure Boot states (default all three)
-#   --routes "dnd blessed"    which routes (default dnd blessed; chain, the
-#                             ISO's own loader, on request)
+#   --routes "dnd chain blessed"  which routes (default all three)
 #   --jobs N                  cases in flight at once (default 3; each takes
 #                             FALCON_CASE_MEM, 4 GiB by default)
 #   --timeout S               seconds from the keypress to a verdict (300)
@@ -38,7 +37,14 @@ STICKS=build/coverage/sticks
 RUNS=build/coverage/runs
 
 STATES="off ms own"
-ROUTES="dnd blessed"
+# All three by default.
+#
+# chain was on request only, which meant it had no baseline, and that showed:
+# when the survey moved off the firmware the only way to argue the chainload
+# was unaffected was to diff the functions on it, because there was no run to
+# compare against. It is the route that still uses the firmware's volumes, so
+# it is the one most worth watching.
+ROUTES="dnd chain blessed"
 JOBS=3
 TIMEOUT=300
 FORCE=0

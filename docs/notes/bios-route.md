@@ -300,19 +300,33 @@ Unchanged entirely: falcon-hook, falcon-winjump, `wim/`, `udf/`, `iso9660/`,
 `extmap`, `bootcfg`, `cpio`. That is 18.3k of core plus 2.6k of hook and
 winjump earning their keep.
 
-Net-new in falcon-core regardless of stage: El Torito boot catalog parsing.
-There is none today, because under UEFI the firmware's own partition driver
-walks the catalog and publishes the boot image as a volume, so we read the
-ISO's own tree instead. Checked 2026-09-19: the phrase appears in falcon-efi
-only, in `iso/iso.c` comments describing what the firmware does on our
-behalf, and nowhere in falcon-core.
+## 6a. What the ISO reader work already built (2026-09-20)
 
-Net-new and missed by the table above: a FAT12/16/32 driver. The stage table
-assumes falcon-core reads everything a BIOS build would ask it to, and it does
-not read FAT, which is what p1 is and what the El Torito boot image is on
-Windows and FreeBSD media. `iso-reader-route.md` costs it at ~800 lines and
-takes it for a reason that pays under UEFI as well, so a BIOS build inherits
-it rather than funding it. If that work is not taken first, add it to S1.
+The table above was written on 2026-09-19. The next day's work
+(`iso-reader-route.md`) built three of the things it counts as net-new, for
+UEFI reasons, and they are in falcon-core and corpus-proven:
+
+| what S1 needed | state |
+| --- | --- |
+| El Torito boot catalog parsing (~200) | `media/eltorito.c`, 14 tests, agrees with an independent implementation on all 72 entries across 37 corpus ISOs |
+| a FAT12/16/32 driver (uncosted above, and needed for p1) | `fs/fat.c`, 11 tests per width, mounts the boot image of all 37 |
+| the read callback as the per-platform boundary | `media/medium.c` assembles a medium's volumes over one callback and walks a GPT; the UEFI survey already runs on it |
+
+That last one was Section 1's central claim, and the part of it that was not
+yet true. It is now: under UEFI the callback is an `fs_file` on p2, and
+nothing below `medium_open` can tell what is on the other end of it.
+
+So S1's falcon-core half is done, and about 1,000 lines of the estimate with
+it. What remains in S1 is genuinely BIOS-only and mostly the part the note
+was already least sure of: the MBR stage 1, the mode switch, the real-mode
+thunk, `INT 13h`/`10h`/`16h` behind the callback, the menu's shared half, and
+the resident virtual-CD hook that Section 7.1 calls a spike rather than an
+estimate.
+
+Section 7.2's risk is unchanged and is now the dominant one: the assembly is
+outside every analyzer the project gates on, and the repository still has
+none. Section 7.3, the breaking stick-layout change, is still the decision
+that has to be taken by a person rather than measured.
 
 ## 7. Risks, in the order they matter
 
