@@ -411,16 +411,72 @@ static void test_family_memtest(void **state)
 }
 
 /* NixOS's minimal ISO, as it ships (26.05): memtest86+ is a menu extra
- * beside a Linux live root, not the medium. */
+ * beside a Linux live root, not the medium.
+ *
+ * This asserted FAMILY_UNKNOWN while NixOS was special-cased into one purely
+ * to keep the memtest last resort off it. It has a row now, which says the
+ * same thing about the medium without the medium having to be nameless, and
+ * the memtest extra still must not claim it. */
 static void test_family_memtest_extra_on_nixos(void **state)
 {
     static const fake_file n[] = {
         { "/boot/memtest.bin", NULL },
         { "/nix-store.squashfs", NULL },
     };
+    static const fake_file installer[] = {
+        { "/boot/memtest.bin", NULL },
+        { "/EFI", NULL },
+        { "/EFI/nixos-installer-image", NULL },
+    };
 
     (void)state;
-    expect_family(n, 2, FAMILY_UNKNOWN, NULL);
+    expect_family(n, 2, FAMILY_NIXOS, NULL);
+    expect_family(installer, 3, FAMILY_NIXOS, NULL);
+}
+
+/* The other four media that had no row and so read as unknown or as memtest.
+ * Each fingerprint is the one its own tooling writes. */
+static void test_family_installer_media(void **state)
+{
+    static const fake_file alpine[] = {
+        { "/.alpine-release", NULL },
+        { "/apks", NULL },
+        { "/apks/.boot_repository", NULL },
+    };
+    static const fake_file deb[] = {
+        { "/.disk", NULL },
+        { "/.disk/base_installable", NULL },
+        { "/.disk/cd_type", NULL },
+    };
+    static const fake_file pve[] = {
+        { "/.pve-cd-id.txt", NULL },
+        { "/boot", NULL },
+        { "/boot/memtest", NULL },
+    };
+    static const fake_file esxi[] = {
+        { "/B.B00", NULL },
+        { "/BOOT.CFG", NULL },
+        { "/.DISCINFO", NULL },
+    };
+
+    (void)state;
+    expect_family(alpine, 3, FAMILY_ALPINE, NULL);
+    expect_family(deb, 3, FAMILY_DEBIAN_INSTALLER, NULL);
+    /* Proxmox ships /boot/memtest too, so this also pins the ordering. */
+    expect_family(pve, 3, FAMILY_PROXMOX, NULL);
+    expect_family(esxi, 3, FAMILY_ESXI, NULL);
+}
+
+/* BOOT.CFG on its own is a name another medium could plausibly use, so the
+ * ESXi fingerprint needs both halves. */
+static void test_family_esxi_needs_both_halves(void **state)
+{
+    static const fake_file half[] = {
+        { "/BOOT.CFG", NULL },
+    };
+
+    (void)state;
+    expect_family(half, 1, FAMILY_UNKNOWN, NULL);
 }
 
 /* PassMark's MemTest86 USB image, as it actually ships (read off
@@ -796,7 +852,7 @@ static void test_family_registry_round_trip(void **state)
 
     (void)state;
     assert_non_null(t);
-    assert_int_equal(count, 12);
+    assert_int_equal(count, 17);
 
     for (i = 0; i < count; i++) {
         /* Every row is reachable by its own id, and reachable as the same
@@ -949,6 +1005,8 @@ int run_family_tests(void)
         cmocka_unit_test(test_family_arch_loader_entry_other_basedir),
         cmocka_unit_test(test_family_memtest),
         cmocka_unit_test(test_family_memtest_extra_on_nixos),
+        cmocka_unit_test(test_family_installer_media),
+        cmocka_unit_test(test_family_esxi_needs_both_halves),
         cmocka_unit_test(test_family_gentoo),
         cmocka_unit_test(test_family_memtest_usb_image_volume),
         cmocka_unit_test(test_family_payload_by_name),

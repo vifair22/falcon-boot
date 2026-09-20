@@ -92,6 +92,41 @@ static const family_desc g_families[] = {
       (void *)0, 0,
       FAMILY_TRI_UNKNOWN, FAMILY_TRI_UNKNOWN },
 
+    /* The five below are labels and nothing more, and every behaviour column
+     * is deliberately the same as the unknown row's.
+     *
+     * needs_injection has no consumer anywhere in the tree, and
+     * cmdline_template is read only by the sign tool, never by the loader's
+     * direct path. All five bless today through the hooked path, which takes
+     * its arguments from the ISO's own boot configuration and does not look
+     * at a family at all, so an invented fragment here would change what a
+     * blessed UKI carries with nothing measured behind it. They are rows so
+     * that the menu stops calling them unknown; the columns stay empty until
+     * a medium turns up that needs otherwise. */
+    { FAMILY_ALPINE, "Alpine",
+      (void *)0, 0,
+      FAMILY_TRI_UNKNOWN, FAMILY_TRI_UNKNOWN },
+
+    { FAMILY_DEBIAN_INSTALLER, "Debian installer",
+      (void *)0, 0,
+      FAMILY_TRI_UNKNOWN, FAMILY_TRI_UNKNOWN },
+
+    { FAMILY_NIXOS, "NixOS",
+      (void *)0, 0,
+      FAMILY_TRI_UNKNOWN, FAMILY_TRI_UNKNOWN },
+
+    { FAMILY_PROXMOX, "Proxmox VE",
+      (void *)0, 0,
+      FAMILY_TRI_UNKNOWN, FAMILY_TRI_UNKNOWN },
+
+    /* ESXi is the one of the five that boots no Linux kernel at all, like
+     * Windows media. It is absent from the sign tool's kernel table for that
+     * reason, so blessing refuses it by name instead of by "matches no known
+     * family", which is a better sentence about the same outcome. */
+    { FAMILY_ESXI, "VMware ESXi",
+      (void *)0, 0,
+      FAMILY_TRI_NO, FAMILY_TRI_NO },
+
     /* memtest is a bare EFI binary: it needs no cmdline, no initramfs and no
      * backing media once loaded, which is what the three columns below say.
      * They do NOT say it needs no blessing. What the platform verifies for a
@@ -346,10 +381,32 @@ const family_desc *family_detect(const family_probe *p)
         loader_entries_mention(p, "archisobasedir="))
         return family_by_id(FAMILY_ARCH);
 
-    /* A Linux medium with no row of its own can carry memtest86+ as a menu
-     * extra (NixOS ships /boot/memtest.bin beside its kernel). Its live
-     * root says it is not a memtest medium; it stays unknown, which the
-     * sign tool and the loader boot from its own configuration. */
+    /* Each of these ships something the memtest last resort below would
+     * otherwise claim, or nothing distinctive at all, and each was reading
+     * as unknown or as memtest before it had a row. NixOS is the clearest
+     * case: it carries /boot/memtest.bin beside its own kernel, and used to
+     * be special-cased into an explicit "unknown" purely to keep the memtest
+     * check off it. A real fingerprint says the same thing better. */
+    if (probe_exists(p, "/.alpine-release") ||
+        probe_exists(p, "/apks/.boot_repository"))
+        return family_by_id(FAMILY_ALPINE);
+
+    if (probe_exists(p, "/.disk/base_installable"))
+        return family_by_id(FAMILY_DEBIAN_INSTALLER);
+
+    if (probe_exists(p, "/EFI/nixos-installer-image") ||
+        probe_exists(p, "/nix-store.squashfs"))
+        return family_by_id(FAMILY_NIXOS);
+
+    if (probe_exists(p, "/.pve-cd-id.txt"))
+        return family_by_id(FAMILY_PROXMOX);
+
+    /* ESXi's tree is its module list in 8.3 upper case: B.B00 is the
+     * bootloader and BOOT.CFG the module manifest. Both together, because
+     * BOOT.CFG alone is a name another medium could plausibly use. */
+    if (probe_exists(p, "/B.B00") && probe_exists(p, "/BOOT.CFG"))
+        return family_by_id(FAMILY_ESXI);
+
     /* Both of these are checked before the memtest last resort below, and
      * that ordering is the whole point of the rows: each ships
      * /boot/memtest, the memtest86+ kernel image a distro bundles beside
@@ -361,9 +418,6 @@ const family_desc *family_detect(const family_probe *p)
     if (probe_exists(p, "/antiX/linuxfs") ||
         (probe_exists(p, "/antiX") && probe_exists(p, "/antiX/vmlinuz")))
         return family_by_id(FAMILY_ANTIX);
-
-    if (probe_exists(p, "/nix-store.squashfs"))
-        return family_by_id(FAMILY_UNKNOWN);
 
     /* memtest last: its fingerprints are the weakest, so anything with a real
      * base directory has already claimed the medium by now. */

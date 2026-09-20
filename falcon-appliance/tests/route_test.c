@@ -32,7 +32,7 @@
 #include <route.h>
 #include <manifest/manifest.h>
 
-/* Every family the registry knows but Windows, so a new row added to
+/* Every family the registry knows but Windows and ESXi, so a new row added to
  * family.c without a thought for the appliance shows up here as an unrouted
  * id rather than as a surprise queue at boot. BSD is here: what it is signed
  * for is its own loader rather than a wrap, but the appliance's answer to
@@ -49,6 +49,10 @@ static const family_id g_linux_families[] = {
     FAMILY_BSD,
     FAMILY_MANJARO,
     FAMILY_ANTIX,
+    FAMILY_ALPINE,
+    FAMILY_DEBIAN_INSTALLER,
+    FAMILY_NIXOS,
+    FAMILY_PROXMOX,
 };
 
 #define LINUX_N (sizeof(g_linux_families) / sizeof(g_linux_families[0]))
@@ -66,12 +70,18 @@ static void test_route_windows_boots_as_is(void **state)
     /* A record naming Windows media, current or not, describes nothing the
      * appliance could have produced; none of the three states is a reason to
      * queue it or to count it as blessed. */
-    for (i = 0; i < sizeof(all) / sizeof(all[0]); i++)
+    for (i = 0; i < sizeof(all) / sizeof(all[0]); i++) {
         assert_int_equal(appl_route(all[i], FAMILY_WINDOWS),
                          APPL_JOB_BOOTS_AS_IS);
+        /* ESXi for a different reason, same answer: a UKI wraps a Linux
+         * kernel and an ESXi medium has none, so a queued job could only
+         * ever fail in front of the user. */
+        assert_int_equal(appl_route(all[i], FAMILY_ESXI),
+                         APPL_JOB_BOOTS_AS_IS);
+    }
 }
 
-static void test_route_only_windows_boots_as_is(void **state)
+static void test_route_only_windows_and_esxi_boot_as_is(void **state)
 {
     size_t i;
     size_t n = 0;
@@ -83,11 +93,12 @@ static void test_route_only_windows_boots_as_is(void **state)
                                         g_linux_families[i]),
                              APPL_JOB_BOOTS_AS_IS);
 
-    /* The list above must stay the registry's, minus Windows: a family added
-     * to family.c and not to it would go untested here and unnoticed. */
-    assert_int_equal(n, LINUX_N + 1u);
+    /* The list above must stay the registry's, minus Windows and ESXi: a
+     * family added to family.c and not to it would go untested here and
+     * unnoticed. */
+    assert_int_equal(n, LINUX_N + 2u);
     for (i = 0; i < n; i++) {
-        if (tab[i].id == FAMILY_WINDOWS)
+        if (tab[i].id == FAMILY_WINDOWS || tab[i].id == FAMILY_ESXI)
             continue;
         assert_int_not_equal(appl_route(MANIFEST_BLESS_NONE, tab[i].id),
                              APPL_JOB_BOOTS_AS_IS);
@@ -172,7 +183,7 @@ int run_appliance_route_tests(void)
 {
     const struct CMUnitTest tests[] = {
         cmocka_unit_test(test_route_windows_boots_as_is),
-        cmocka_unit_test(test_route_only_windows_boots_as_is),
+        cmocka_unit_test(test_route_only_windows_and_esxi_boot_as_is),
         cmocka_unit_test(test_route_unrecorded_is_signed),
         cmocka_unit_test(test_route_stale_is_signed_again),
         cmocka_unit_test(test_route_fresh_is_done),

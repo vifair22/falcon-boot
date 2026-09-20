@@ -38,6 +38,11 @@ typedef enum {
     FAMILY_BSD,             /* FreeBSD and its derivatives; one loader */
     FAMILY_MANJARO,         /* archiso-derived, manjaro-tools, own basedir */
     FAMILY_ANTIX,           /* antiX and MX; own /antiX tree, not live-boot */
+    FAMILY_ALPINE,          /* Alpine; apk repo on the medium, modloop */
+    FAMILY_DEBIAN_INSTALLER,/* debian-installer netinst, not a live image */
+    FAMILY_NIXOS,           /* NixOS installer media */
+    FAMILY_PROXMOX,         /* Proxmox VE installer */
+    FAMILY_ESXI,            /* VMware ESXi; boots no Linux kernel */
 } family_id;
 
 /* Three-valued, because "we have not checked" and "no" lead to different

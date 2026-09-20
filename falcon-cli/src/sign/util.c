@@ -527,6 +527,11 @@ static const family_slug g_slugs[] = {
     { FAMILY_BSD,           "bsd" },
     { FAMILY_MANJARO,       "manjaro" },
     { FAMILY_ANTIX,         "antix" },
+    { FAMILY_ALPINE,        "alpine" },
+    { FAMILY_DEBIAN_INSTALLER, "debian-installer" },
+    { FAMILY_NIXOS,         "nixos" },
+    { FAMILY_PROXMOX,       "proxmox" },
+    { FAMILY_ESXI,          "esxi" },
 };
 
 const char *sgn_family_slug(family_id id)
