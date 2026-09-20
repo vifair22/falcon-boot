@@ -469,6 +469,21 @@ Order of the appliance work, each shippable on its own:
    on any machine without the rig's OVMF varstore. A harness that runs in one
    place is a harness whose dependencies are unknown.
 
+5. **Which toolchain the analysis gate answers to.** Open, and it matters
+   now that there are two. `docs/notes/analyze-baseline.txt` was generated
+   against a workstation's analyzers; binhost-builder's container is older
+   (cppcheck 2.17 against 2.21, clang-tidy LLVM 19 against 22, gcc 14 against
+   16), so `tools/analyze.sh` there reports a different set and its exit
+   status is not comparable. Measured 2026-09-20: the difference is entirely
+   in test files and long-standing code, and the container is clean on every
+   file the ISO reader work touched, so nothing is being hidden today.
+
+   The choice is to regenerate the baseline against the container, which
+   makes the gate as reproducible as `make test` and the corpus now are and
+   leaves a workstation run reporting noise, or to keep the workstation as
+   the authority and say so in `docs/notes/analyze.md`. Not decided; do not
+   let a container run's exit status gate anything until it is.
+
 ## 8. Enforcement-off (permissive) mode: build on demand, not scheduled
 
 Discussed and set aside 2026-09-18. An install-time mode where the loader,
