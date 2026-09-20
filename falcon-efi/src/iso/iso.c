@@ -22,6 +22,7 @@
 #include <efi/shimguid.h>
 #include <media/family.h>
 #include <media/bootfs.h>
+#include <media/medium.h>
 #include <lib/string.h>
 #include <pe/pe.h>
 #include <trust/probe.h>
@@ -596,17 +597,6 @@ static int file_read_at(EFI_FILE_PROTOCOL *file, uint64_t off, void *buf,
     return 0;
 }
 
-static int probe_read(void *ctx, const char *path, uint64_t off, void *buf,
-                      size_t len, size_t *got)
-{
-    EFI_FILE_PROTOCOL *file;
-
-    *got = 0;
-    if (probe_open(ctx, path, &file) != EFI_SUCCESS)
-        return -1;
-    return file_read_at(file, off, buf, len, got);
-}
-
 static int probe_read_ci(void *ctx, const char *path, uint64_t off, void *buf,
                          size_t len, size_t *got)
 {
@@ -730,53 +720,6 @@ iso_sig iso_pe_signature(const void *buf, UINTN len)
     if (rc != PE_OK)
         return ISO_SIG_UNKNOWN;
     return size != 0 ? ISO_SIG_PRESENT : ISO_SIG_ABSENT;
-}
-
-/* Does the ISO's default loader carry a certificate table? The read is this
- * function's half of the answer; the parse above is shared with the bare-EFI
- * payload path, which asks the same question of a file on p2 (DESIGN Section
- * 7.2) and must not get a second opinion about it. */
-static iso_sig root_signature(EFI_FILE_PROTOCOL *root)
-{
-    uint8_t head[PE_HEAD_MAX];
-    size_t got = 0;
-
-    if (probe_read(root, ISO_BOOT_PATH, 0, head, sizeof(head), &got) != 0)
-        return ISO_SIG_NO_EFI;
-    return iso_pe_signature(head, (UINTN)got);
-}
-
-/* The boot prediction for the default loader (DESIGN Section 7.8). Reads the
- * whole file when it is small enough to hash, which for a first stage it
- * always is; the read goes through the same virtual medium the chainload
- * would, so it predicts about the bytes that would actually be loaded. */
-static int efi_file_read_cb(void *ctx, uint64_t off, uint64_t len, void *buf)
-{
-    EFI_FILE_PROTOCOL *f = ctx;
-    UINTN n = (UINTN)len;
-
-    if (EFI_ERROR(f->SetPosition(f, off)) || EFI_ERROR(f->Read(f, &n, buf)) ||
-        (uint64_t)n != len)
-        return -1;
-    return 0;
-}
-
-static void root_trust(EFI_FILE_PROTOCOL *root, const trust_stores *stores,
-                       trust_result *out)
-{
-    EFI_FILE_PROTOCOL *file;
-    UINT64 size = 0;
-
-    memset(out, 0, sizeof(*out));
-    if (stores == (const trust_stores *)0 ||
-        probe_open(root, ISO_BOOT_PATH, &file) != EFI_SUCCESS)
-        return;
-    /* Position all-ones is end of file (spec 13.5.13), so its position is
-     * the size, with no EFI_FILE_INFO buffer to size and allocate. */
-    if (!EFI_ERROR(file->SetPosition(file, ~(UINT64)0)) &&
-        !EFI_ERROR(file->GetPosition(file, &size)))
-        trust_probe(stores, efi_file_read_cb, file, size, out);
-    file->Close(file);
 }
 
 /* ---- chainload ---- */
@@ -1250,52 +1193,79 @@ EFI_STATUS iso_boot_overlaid_served(EFI_SYSTEM_TABLE *st,
     return status;
 }
 
-/* The medium's own filesystem, fingerprinted with falcon-core's drivers.
+/* ---- the survey ----
  *
- * root_family and media_family above ask the volumes the FIRMWARE mounted,
- * which is the right source for a medium that publishes its own filesystem
- * to it, and no source at all for one that does not: a CD whose only name
- * space is ISO9660 surfaces nothing but its El Torito boot image, and on
- * FreeBSD media that image is a 1.6 MB FAT volume holding the loader and
- * nothing else. Such a medium can only ever be "unknown" to the firmware,
- * which is why this exists and why it runs only when the firmware's answer
- * was unknown: every medium that classifies from a mounted volume pays
- * nothing for it.
+ * The menu's label for a medium: what family it is, whether its default
+ * loader carries a signature, and what the boot predictions make of it.
  *
- * The handles are static for the same reason every other one here is: they
- * are kilobytes each and the loader has no heap worth putting them on. They
- * are used only inside this call.
+ * None of it goes near the firmware. Before this the survey published a
+ * virtual block device, made the firmware bind its partition and filesystem
+ * drivers to it, read four files back through EFI_FILE_PROTOCOL and tore the
+ * whole thing down, once per entry at menu-draw time. Now falcon-core opens
+ * the image file on p2 and answers from it (docs/notes/iso-reader-route.md).
+ *
+ * Three things follow, and they are the reason for the work rather than a
+ * side effect:
+ *
+ *   - no ConnectController per entry, which is the firmware call the ESXi
+ *     work already found faults in some implementations;
+ *   - no case-folding retry. That existed because EDK2's UDF driver matches
+ *     case-sensitively; fs_lookup does not, so one spelling finds the file on
+ *     every medium;
+ *   - no PROBE_LIMIT. The cap existed because each probe cost a device
+ *     publish and teardown. Reading a few files off p2 does not.
+ *
+ * What still asks the firmware is the chainload, and only the chainload:
+ * LoadImage is handed a device path to a volume the platform mounted itself,
+ * which is DESIGN Section 7.2 and is not something a medium falcon-core
+ * parsed could satisfy. select_boot_volume and the probe helpers above stay
+ * for it.
+ *
+ * The objects are static because they are about 22 KB together and the
+ * loader has no heap worth putting them on. The medium in particular MUST
+ * NOT be a local: its mounted volumes hold the addresses of offset shims
+ * inside it (falcon-core/src/media/medium.h).
  */
-static fs_file   g_probe_file;
-static fs_vol    g_probe_vol;
-static bootfs_ctx g_probe_ctx;
+static medium     g_survey_medium;
+static fs_file    g_survey_file;
+static bootfs_ctx g_survey_ctx;
 
-static const family_desc *core_family(fs_vol *vol, const fs_dirent *file)
+/* The medium's default loader, opened on whichever volume carries it.
+ *
+ * The El Torito boot image first, because that is where it lives on optical
+ * media, then every other volume: a .img has no boot image and keeps its
+ * loader on whatever partition is the ESP. Returns 0 when no volume has one,
+ * which is an answer about the medium rather than a failure. */
+static int survey_open_loader(medium *m, fs_file *f, uint64_t *size)
 {
-    family_probe probe;
+    unsigned i;
+    unsigned n = medium_count(m);
+    fs_vol *boot = medium_boot_vol(m);
 
-    if (fs_file_open(vol, &g_probe_file, file) != FS_OK)
-        return family_by_id(FAMILY_UNKNOWN);
-    if (fs_mount(&g_probe_vol, &fs_ops_iso9660, fs_file_read_cb,
-                 &g_probe_file) != FS_OK &&
-        fs_mount(&g_probe_vol, &fs_ops_udf, fs_file_read_cb,
-                 &g_probe_file) != FS_OK)
-        return family_by_id(FAMILY_UNKNOWN);
-    bootfs_probe(&g_probe_ctx, &g_probe_vol, &probe);
-    return family_detect(&probe);
+    for (i = 0; i <= n; i++) {
+        fs_vol *v = (i == 0) ? boot : medium_vol_at(m, i - 1u);
+        fs_dir scratch;
+        fs_dirent ent;
+
+        if (v == (fs_vol *)0 || (i > 0 && v == boot))
+            continue;
+        if (fs_lookup(v, ISO_BOOT_PATH, &scratch, &ent) != FS_OK)
+            continue;
+        if (ent.is_dir || fs_file_open(v, f, &ent) != FS_OK)
+            continue;
+        *size = fs_file_size(f);
+        return 1;
+    }
+    return 0;
 }
 
 EFI_STATUS iso_survey_media(EFI_SYSTEM_TABLE *st, fs_vol *vol,
                             const fs_dirent *file, iso_media_kind kind,
                             const trust_stores *stores, iso_survey *out)
 {
-    EFI_BOOT_SERVICES *bs;
-    iso_volumes vols;
-    EFI_FILE_PROTOCOL *root;
-    const CHAR16 *stage;
-    UINT8 owned = 0;
-    EFI_STATUS status;
-    EFI_STATUS teardown;
+    fs_file loader;
+    uint64_t loader_size = 0;
+    unsigned i;
 
     if (out == (void *)0)
         return EFI_INVALID_PARAMETER;
@@ -1305,43 +1275,58 @@ EFI_STATUS iso_survey_media(EFI_SYSTEM_TABLE *st, fs_vol *vol,
     if (st == (void *)0 || vol == (void *)0 || file == (void *)0)
         return EFI_INVALID_PARAMETER;
 
-    bs = st->BootServices;
-    /* No overlay, ever. The menu draws a label per entry and publishes a
-     * device per entry to do it; overrides answer no question a label asks,
-     * and making the survey pay for reading and validating a byte map would
-     * put that cost on every entry on the stick at menu-draw time. */
-    status = iso_open(st, vol, file, kind, (const iso_overlay *)0, &stage,
-                      &vols, &owned);
-    if (EFI_ERROR(status)) {
-        /* A medium the firmware found nothing bootable in: no El Torito
-         * catalog, no partition table and no FAT, or one pointing at no ESP.
-         * EFI_UNSUPPORTED is the same answer one step earlier - a file we
-         * refused to publish as media surfaces no ESP either. Neither is an
-         * error worth showing, just an entry we cannot say anything about. */
-        if (status == EFI_NOT_FOUND || status == EFI_UNSUPPORTED)
-            out->sig = ISO_SIG_NO_EFI;
-    } else if (esp_open_root(bs, vols.vol[0], &root) == EFI_SUCCESS) {
-        out->family = root_family(root);
-        out->sig = root_signature(root);
-        if (out->sig == ISO_SIG_PRESENT || out->sig == ISO_SIG_ABSENT)
-            root_trust(root, stores, &out->trust);
-        root->Close(root);
-        /* Only a medium the bootable volume cannot describe pays for the
-         * other volumes, so the common entry costs exactly what it did. */
-        if (out->family->id == FAMILY_UNKNOWN)
-            out->family = media_family(bs, &vols, 1);
+    /* The flavour is a hint to the FIRMWARE about how to parse a published
+     * device (iso.h), and there is no published device here: medium_open
+     * works out what the bytes are. */
+    (void)kind;
+
+    if (fs_file_open(vol, &g_survey_file, file) != FS_OK)
+        return EFI_NOT_FOUND;
+    if (medium_open(&g_survey_medium, fs_file_read_cb, &g_survey_file,
+                    fs_file_size(&g_survey_file)) != MEDIUM_OK) {
+        /* Nothing on it we can read. Not an error worth showing, just an
+         * entry we cannot say anything about. */
+        out->sig = ISO_SIG_NO_EFI;
+        return EFI_SUCCESS;
     }
 
-    if (owned) {
-        teardown = device_teardown(bs, &g_dev);
-        if (EFI_ERROR(teardown))
-            status = teardown;
+    /* Every volume, in the precedence order medium_open put them in, until
+     * one classifies. The boot image is included rather than skipped: it is
+     * what the firmware path fingerprints first today, and leaving it out
+     * would be a behaviour change with nothing measured behind it. */
+    for (i = 0; i < medium_count(&g_survey_medium); i++) {
+        family_probe probe;
+        const family_desc *fam;
+
+        bootfs_probe(&g_survey_ctx, medium_vol_at(&g_survey_medium, i),
+                     &probe);
+        fam = family_detect(&probe);
+        if (fam->id != FAMILY_UNKNOWN) {
+            out->family = fam;
+            break;
+        }
     }
 
-    /* Last, with the virtual device gone and the image file our own again:
-     * the medium's filesystem read by falcon-core rather than by the
-     * firmware's drivers. See core_family. */
-    if (out->family->id == FAMILY_UNKNOWN && kind == ISO_MEDIA_CD)
-        out->family = core_family(vol, file);
-    return status;
+    if (!survey_open_loader(&g_survey_medium, &loader, &loader_size)) {
+        out->sig = ISO_SIG_NO_EFI;
+        return EFI_SUCCESS;
+    }
+    {
+        uint8_t head[PE_HEAD_MAX];
+        uint64_t want = loader_size < sizeof head ? loader_size
+                                                  : (uint64_t)sizeof head;
+
+        if (want == 0 || fs_file_read(&loader, 0, want, head) != FS_OK)
+            out->sig = ISO_SIG_UNKNOWN;
+        else
+            out->sig = iso_pe_signature(head, (UINTN)want);
+    }
+    /* The prediction reads the whole file, which for a first stage is always
+     * small enough to hash, and reads it through the same volume the label
+     * came from. */
+    if (stores != (const trust_stores *)0 &&
+        (out->sig == ISO_SIG_PRESENT || out->sig == ISO_SIG_ABSENT))
+        trust_probe(stores, fs_file_read_cb, &loader, loader_size,
+                    &out->trust);
+    return EFI_SUCCESS;
 }

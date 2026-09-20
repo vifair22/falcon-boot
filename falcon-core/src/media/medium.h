@@ -40,8 +40,12 @@
  *   3. The El Torito boot image, and only for questions about the boot image.
  *      It is where /EFI/BOOT/BOOTX64.EFI actually lives.
  *
- * A medium that is none of those (a .img holding a bare FAT or exFAT volume,
- * say) gets one volume identified by the registry at offset zero.
+ * A medium that is none of those is a disk image rather than a CD, and is
+ * tried two more ways: its GPT, mounting whatever each partition turns out
+ * to hold, and failing that the whole image as one filesystem. Both shapes
+ * are real, and both are what the loader's disk flavour serves: mkstick's
+ * own test images are a GPT with an EFI system partition and a FAT16
+ * superfloppy with no partition table at all.
  */
 
 #ifndef FALCON_MEDIUM_H
@@ -72,7 +76,8 @@ typedef enum {
     MEDIUM_VOL_ISO9660 = 0,  /* the primary tree, in whichever name space */
     MEDIUM_VOL_UDF     = 1,
     MEDIUM_VOL_BOOT    = 2,  /* the El Torito boot image */
-    MEDIUM_VOL_WHOLE   = 3   /* not an ISO: one filesystem filling the medium */
+    MEDIUM_VOL_WHOLE   = 3,  /* not an ISO: one filesystem filling the medium */
+    MEDIUM_VOL_PART    = 4   /* a partition of a partitioned image */
 } medium_vol_kind;
 
 /* The offset shim. Each volume reads through one of these, which turns a

@@ -32,6 +32,7 @@
 #define ISO_RR   "build/test-iso-rr.iso"
 #define ISO_PLAIN "build/test-iso-plain.iso"
 #define IMG_FAT12 "build/test-fat12.img"
+#define IMG_GPT   "build/test/payload-gpt.img"
 
 /* The medium is ~17 KB and must not move once opened, which is exactly the
  * reason it is a static here rather than a local. */
@@ -220,6 +221,43 @@ static void test_medium_offset_shim(void **state)
     fclose(big);
 }
 
+/* A partitioned disk image. Nothing mounts at offset zero and there is no
+ * boot catalog, so the GPT is what answers, and the partition it finds is at
+ * a nonzero base like an El Torito image is. This is the shape the loader's
+ * disk flavour serves and the one the firmware's partition driver finds
+ * today. */
+static void test_medium_gpt_image(void **state)
+{
+    fs_vol *v;
+    fs_dir d;
+    fs_dirent ent;
+    int found = 0;
+
+    (void)state;
+    if (!have(IMG_GPT)) {
+        print_message("  (no GPT fixture; build with make test-image)\n");
+        return;
+    }
+    g_fp = open_img(IMG_GPT);
+    assert_int_equal(medium_open(&g_m, img_read, g_fp, file_size(g_fp)),
+                     MEDIUM_OK);
+    assert_true(medium_count(&g_m) >= 1u);
+    assert_int_equal((int)medium_kind_at(&g_m, 0), (int)MEDIUM_VOL_PART);
+    /* A partition does not start at byte zero, so this also says the base
+     * reached the volume rather than being computed and dropped. */
+    assert_true(medium_base_at(&g_m, 0) > 0);
+
+    v = medium_vol_at(&g_m, 0);
+    assert_non_null(v);
+    assert_int_equal(fs_dir_open_root(v, &d), FS_OK);
+    while (fs_dir_next(&d, &ent) == 1) {
+        found = 1;
+        break;
+    }
+    assert_int_equal(found, 1);
+    fclose(g_fp);
+}
+
 /* A file that is an image of nothing is an ordinary answer, not damage. */
 static void test_medium_nothing(void **state)
 {
@@ -260,6 +298,7 @@ int run_medium_tests(void)
         cmocka_unit_test(test_medium_reads_through_volume),
         cmocka_unit_test(test_medium_whole_image),
         cmocka_unit_test(test_medium_offset_shim),
+        cmocka_unit_test(test_medium_gpt_image),
         cmocka_unit_test(test_medium_nothing),
         cmocka_unit_test(test_medium_arg_errors),
     };

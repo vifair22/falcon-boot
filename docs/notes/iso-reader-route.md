@@ -236,12 +236,29 @@ and Section 11 records what those runs found.
 | C | `media/medium.c`, the volume set | ~250 + tests | 0 |
 | D | `iso_survey_media` moves onto `medium` | ~100 | ~300 removed |
 
-Stage D deletes, rather than rewrites: `esp_open_root`, `probe_open`,
-`probe_open_ci`, `probe_exists`, `probe_exists_ci`, `probe_read`,
-`probe_read_ci`, `path_to_ucs2`, `path_fold_lower`, `root_family`,
-`root_signature`, `root_trust`, `efi_file_read_cb`, `media_family`, and
-`core_family` itself, which becomes the whole survey rather than its tail.
-`PROBE_LIMIT` goes with them, or rises by an order of magnitude.
+**That deletion list was wrong, and the correction is worth keeping.** It
+assumed every firmware probe helper existed only for the survey. Two of them
+do not:
+
+- `select_boot_volume` is on the CHAINLOAD path, deciding which of the
+  firmware's volumes gets handed to `LoadImage`, and it reaches
+  `esp_open_root` and `probe_exists`, which reach `probe_open`, `probe_root`
+  and `path_to_ucs2`.
+- `media_family` fills `iso_boot_result.family`, the "family: X" line the
+  menu prints after a chainload returns. It reaches `root_family`, which
+  reaches `probe_exists_ci` and `probe_read_ci`, which reach `probe_open_ci`,
+  `path_fold_lower` and `file_read_at`.
+
+So stage D removes four functions, not fifteen: `root_signature`,
+`root_trust`, `efi_file_read_cb` and `probe_read`, plus `core_family`, which
+becomes the whole survey rather than its tail. `PROBE_LIMIT` rises from 24 to
+256.
+
+The win was never the deletion count. It is that the survey no longer
+publishes a block device, no longer calls `ConnectController`, and no longer
+needs a case-folding retry, because `fs_lookup` matches
+ASCII-case-insensitively where EDK2's UDF driver does not. The helpers that
+remain are the firmware's half of a boot, which Section 2 always said stays.
 
 Stage B's fixture follows the pattern of `falcon-core/tools/mk-test-exfat.sh`
 and its siblings: a `mkfs.vfat` image built by the Makefile, with FAT12, FAT16

@@ -32,6 +32,8 @@ EFI_SRCS := \
 	$(WINJUMP_BLOB) \
 	$(CORE)/media/bootcfg.c \
 	$(CORE)/media/bootfs.c \
+	$(CORE)/media/eltorito.c \
+	$(CORE)/media/medium.c \
 	$(CORE)/media/hookcmd.c \
 	$(CORE)/media/grubcfg.c \
 	$(CORE)/media/bsdmd.c \

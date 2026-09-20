@@ -5,6 +5,7 @@
 
 #include <media/eltorito.h>
 #include <fs/iso9660.h>
+#include <part/part.h>
 #include <fs/udf.h>
 #include <lib/string.h>
 
@@ -110,6 +111,62 @@ static void add_boot_volumes(medium *m)
     }
 }
 
+/* The partitions of a disk image, mounted with whatever each turns out to
+ * hold.
+ *
+ * Only reached when nothing mounted at offset zero and there was no boot
+ * catalog, which means the medium is a disk image rather than a CD. The
+ * loader's disk flavour serves exactly this: mkstick's test images are a GPT
+ * with an EFI system partition and, separately, a FAT16 superfloppy with no
+ * table at all, and the firmware's partition driver is what finds the first
+ * one today.
+ *
+ * Two block sizes are tried because a GPT header sits at LBA 1 and which byte
+ * that is depends on the block size the image was made with. 512 first, since
+ * that is what every image in the tree uses.
+ *
+ * Partitions are taken in table order and the set is capped by
+ * MEDIUM_MAX_VOLS, so a disk with more partitions than that yields a prefix.
+ * Nothing here looks at partition type GUIDs: what matters is whether a
+ * driver can read it, and part.c's role matching is about identifying THIS
+ * stick's partitions, which is a different question. */
+static void add_partition_volumes(medium *m)
+{
+    static const uint32_t block_sizes[] = { 512u, 4096u };
+    gpt_part parts[MEDIUM_MAX_VOLS];
+    gpt_table t;
+    size_t b;
+
+    for (b = 0; b < sizeof block_sizes / sizeof block_sizes[0]; b++) {
+        uint32_t bs = block_sizes[b];
+        uint32_t i;
+
+        t.parts = parts;
+        t.cap = MEDIUM_MAX_VOLS;
+        t.count = 0;
+        t.truncated = 0;
+        if (gpt_parse(&t, m->read, m->ctx, bs) != GPT_OK)
+            continue;
+        for (i = 0; i < t.count && m->n < MEDIUM_MAX_VOLS; i++) {
+            uint64_t base = parts[i].start_lba * (uint64_t)bs;
+            medium_src probe;
+            const fs_ops *ops;
+
+            if (m->size != 0 && base >= m->size)
+                continue;
+            probe.parent = m->read;
+            probe.parent_ctx = m->ctx;
+            probe.base = base;
+            ops = fs_identify(medium_src_read, &probe, FS_HINT_NONE);
+            if (ops == (const fs_ops *)0)
+                continue;
+            (void)add_vol(m, ops, base, MEDIUM_VOL_PART);
+        }
+        if (m->n > 0)
+            return;
+    }
+}
+
 int medium_open(medium *m, fs_read_fn read, void *ctx, uint64_t size)
 {
     unsigned i;
@@ -130,10 +187,11 @@ int medium_open(medium *m, fs_read_fn read, void *ctx, uint64_t size)
     (void)try_vol(m, &fs_ops_iso9660, 0, MEDIUM_VOL_ISO9660);
     add_boot_volumes(m);
 
-    /* Not an ISO at all: a .img holding one filesystem, which is what the
-     * disk flavour of the virtual medium serves. Only asked when neither
-     * name space nor a catalog turned anything up, so an ISO never pays for
-     * it. */
+    /* Not an ISO at all. A disk image is either partitioned or a
+     * superfloppy; both are asked about only when neither name space nor a
+     * catalog turned anything up, so an ISO never pays for either. */
+    if (m->n == 0)
+        add_partition_volumes(m);
     if (m->n == 0) {
         medium_src probe;
         const fs_ops *ops;

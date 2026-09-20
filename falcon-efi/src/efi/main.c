@@ -38,12 +38,20 @@
 #define MAX_VOLS  4u
 #define SCAN_DEPTH_MAX 4u
 
-/* How many entries get looked inside before the menu appears. Each probe
- * builds a virtual medium, makes the firmware bind its partition and FAT
- * drivers to it and tears the whole thing down again, so the cost is bounded
- * by a constant rather than by how many images someone dropped on the stick.
- * The rest are shown with an unprobed label, which is honest and instant. */
-#define PROBE_LIMIT 24u
+/* How many entries get looked inside before the menu appears.
+ *
+ * This was 24, and the number was the firmware's price rather than ours: a
+ * probe used to publish a virtual medium, make the firmware bind its
+ * partition and filesystem drivers to it, and tear the whole thing down
+ * again, once per entry. Since the survey moved onto falcon-core
+ * (docs/notes/iso-reader-route.md) a probe is a handful of reads off p2, so
+ * the cap is no longer paying for anything.
+ *
+ * It is raised rather than removed, because the cost is still linear in the
+ * number of images and a stick can hold a great many. This bounds the
+ * pathological case and nothing else; the rest are shown with an unprobed
+ * label, which is honest and instant. */
+#define PROBE_LIMIT 256u
 
 static EFI_SYSTEM_TABLE *g_st;
 
