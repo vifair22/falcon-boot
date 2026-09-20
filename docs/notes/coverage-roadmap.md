@@ -469,20 +469,18 @@ Order of the appliance work, each shippable on its own:
    on any machine without the rig's OVMF varstore. A harness that runs in one
    place is a harness whose dependencies are unknown.
 
-5. **Which toolchain the analysis gate answers to.** Open, and it matters
-   now that there are two. `docs/notes/analyze-baseline.txt` was generated
-   against a workstation's analyzers; binhost-builder's container is older
-   (cppcheck 2.17 against 2.21, clang-tidy LLVM 19 against 22, gcc 14 against
-   16), so `tools/analyze.sh` there reports a different set and its exit
-   status is not comparable. Measured 2026-09-20: the difference is entirely
-   in test files and long-standing code, and the container is clean on every
-   file the ISO reader work touched, so nothing is being hidden today.
+5. **Which toolchain the analysis gate answers to**: settled 2026-09-20, the
+   harness container on binhost-builder, which pins cppcheck 2.17, clang-tidy
+   LLVM 19 and gcc 14. `docs/notes/analyze-baseline.txt` Section 0 says so and
+   `docs/notes/analyze.md` says how to run it. The baseline was regenerated
+   there and the gate passes: 44 entries, all in `src/`.
 
-   The choice is to regenerate the baseline against the container, which
-   makes the gate as reproducible as `make test` and the corpus now are and
-   leaves a workstation run reporting noise, or to keep the workstation as
-   the authority and say so in `docs/notes/analyze.md`. Not decided; do not
-   let a container run's exit status gate anything until it is.
+   Fixing it turned up a trap worth not repeating. `tools/analyze.sh` keeps
+   test sources out of the gate by matching the substring `/src/` in an
+   absolute path, and the harness used to mount the tree at `/src`, so every
+   path matched. The gate linted the whole test suite and reported 403
+   findings, 357 of them in `tests/` and 131 of them clang parse errors
+   rather than findings. The mount is `/work` now.
 
 ## 8. Enforcement-off (permissive) mode: build on demand, not scheduled
 

@@ -4,7 +4,16 @@
 #
 # Wraps `docker run` with the four things the harness needs and nothing else:
 # /dev/kvm, privileged (mk-case-stick.sh calls `sudo losetup`), the repository
-# at /src and the corpus read-only at /corpus.
+# at /work and the corpus read-only at /corpus.
+#
+# /work, not /src, and the name is load-bearing. tools/analyze.sh keeps test
+# sources out of the gate by matching the substring "/src/" against each
+# absolute path from the compile database, which is how the repository's
+# own src/ directories are recognised. Mounting the tree at /src made every
+# path in it match, so the gate silently linted the whole test suite: 357 of
+# 403 findings in a run here were test files that were never meant to be in
+# it. Any mount point whose name collides with a directory the tree uses
+# would do the same.
 #
 # With no command it runs the full corpus. Any other command runs in the same
 # environment, which is what makes `harness.sh make test` and
@@ -71,10 +80,10 @@ fi
 # Sharing /dev lets the container see every device on the box. It is already
 # --privileged, so this widens nothing that was closed; it is listed here as
 # what it is rather than buried.
-MOUNTS=(-v "$REPO:/src" -v "$CORPUS:/corpus:ro" -v /dev:/dev)
+MOUNTS=(-v "$REPO:/work" -v "$CORPUS:/corpus:ro" -v /dev:/dev)
 if [[ -n $BUILD_DIR ]]; then
     mkdir -p "$BUILD_DIR"
-    MOUNTS+=(-v "$BUILD_DIR:/src/build")
+    MOUNTS+=(-v "$BUILD_DIR:/work/build")
 fi
 
 # Interactive only when there is a terminal, so the same line works from a
@@ -89,5 +98,5 @@ exec docker run --rm "${TTY[@]}" \
     --privileged --device /dev/kvm \
     "${MOUNTS[@]}" \
     -e FALCON_CORPUS=/corpus \
-    -w /src \
+    -w /work \
     "$IMAGE" "${CMD[@]}"

@@ -117,7 +117,12 @@ RUN set -eu; \
 
 # Where harness.sh mounts things. Declared so a `docker run` that forgets one
 # fails on an empty directory instead of writing into the image.
-VOLUME ["/src", "/corpus"]
-WORKDIR /src
+#
+# /work rather than /src: tools/analyze.sh recognises the repository's own
+# src/ directories by matching "/src/" in an absolute path, and a tree
+# mounted at /src makes every path match, which puts the whole test suite
+# into a gate built to exclude it. harness.sh says more.
+VOLUME ["/work", "/corpus"]
+WORKDIR /work
 
 CMD ["/bin/bash"]

@@ -12,6 +12,22 @@ tools/analyze.sh --strict         # ignore the baseline; every finding fails
 tools/analyze.sh --update-baseline
 ```
 
+## Run it in the harness container
+
+The baseline is only meaningful beside a fixed set of analyzer versions, so
+the gate answers to one environment (decided 2026-09-20, recorded in
+`docs/notes/analyze-baseline.txt` Section 0):
+
+```sh
+tools/coverage/harness.sh -- tools/analyze.sh
+tools/coverage/harness.sh -- tools/analyze.sh --update-baseline
+```
+
+A workstation run still works and is still worth doing while editing, but it
+will disagree, because its analyzers are newer and report a different set.
+Judge a finding on the code, not on which machine surfaced it, and do not
+rewrite the baseline from a workstation run.
+
 Raw analyzer output lands in `build/analyze/<stage>.log`, which is where to
 look for a full `-fanalyzer` event trace. The whole directory is a throwaway;
 the script wipes it on every run.

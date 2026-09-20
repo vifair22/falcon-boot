@@ -1,5 +1,34 @@
 # falcon-boot static analysis baseline.
 #
+# ==========================================================================
+# 0. Which toolchain this file answers to
+# ==========================================================================
+#
+# binhost-builder's harness container, and only it. Decided 2026-09-20.
+#
+# The gate compares a run against this file, so the file is only meaningful
+# next to a fixed set of analyzer versions. The container pins them
+# (tools/coverage/Dockerfile: Debian trixie, cppcheck 2.17, clang-tidy LLVM
+# 19, gcc 14), which is the same reason the corpus and `make test` moved
+# there: a result nobody else can reproduce is not evidence. Regenerate with
+#
+#     tools/coverage/harness.sh -- tools/analyze.sh --update-baseline
+#
+# A run on a workstation will disagree, because its analyzers are newer and
+# report a different set. That is expected and is not a reason to rewrite
+# this file from one; the previous baseline was generated that way and held
+# 28 entries against this run's 44, almost all of the difference being
+# bugprone-narrowing-conversions that LLVM 22 no longer emits.
+#
+# One trap, recorded because it cost a cycle. tools/analyze.sh keeps test
+# sources out of the gate by looking for the substring "/src/" in each
+# absolute path from the compile database. The harness used to mount the
+# tree at /src, so every path matched and the gate linted the whole test
+# suite: 403 entries, 357 of them in tests/ and 131 of them clang parse
+# errors rather than findings. The mount is /work now
+# (tools/coverage/harness.sh) and the numbers below are what the gate was
+# always meant to report.
+#
 # falcon-cli/src/sign/util.c fd-leak x3: gcc's analyzer has no model for exec, so
 # each dup2 onto a standard descriptor in the forked child before execvp
 # reads as a leak; the descriptor surviving the exec is the whole point.
@@ -22,7 +51,7 @@
 # does not describe a defect. Do not add one without reading the code.
 #
 # ==========================================================================
-# 1. bugprone-implicit-widening-of-multiplication-result (23 entries)
+# 1. bugprone-implicit-widening-of-multiplication-result (21 entries)
 # ==========================================================================
 #
 # The check stays enabled (see .clang-tidy) because it is the one that would
@@ -107,6 +136,13 @@
 fanalyzer	falcon-cli/src/sign/util.c	-Wanalyzer-fd-leak	leak of file descriptor 'dup2(fds[1], 1)' [CWE-775]
 fanalyzer	falcon-cli/src/sign/util.c	-Wanalyzer-fd-leak	leak of file descriptor 'dup2(out_fd, 1)' [CWE-775]
 fanalyzer	falcon-cli/src/sign/util.c	-Wanalyzer-fd-leak	leak of file descriptor 'dup2(out_fd, 1)' [CWE-775]
+fanalyzer	falcon-core/src/crypto/sha256.c	-Wanalyzer-use-of-uninitialized-value	use of uninitialized value 'w[<unknown>]' [CWE-457]
+fanalyzer	falcon-core/src/crypto/sha512.c	-Wanalyzer-use-of-uninitialized-value	use of uninitialized value 'w[<unknown>]' [CWE-457]
+tidy	falcon-cli/src/mkstick/inspect.c	bugprone-narrowing-conversions	narrowing conversion from 'int' to signed type 'char' is implementation-defined
+tidy	falcon-cli/src/sign/isoprobe.c	bugprone-narrowing-conversions	narrowing conversion from 'int' to signed type 'char' is implementation-defined
+tidy	falcon-cli/src/sign/isoprobe.c	bugprone-narrowing-conversions	narrowing conversion from 'int' to signed type 'char' is implementation-defined
+tidy	falcon-cli/src/sign/payload.c	bugprone-narrowing-conversions	narrowing conversion from 'int' to signed type 'char' is implementation-defined
+tidy	falcon-cli/src/sign/payload.c	bugprone-narrowing-conversions	narrowing conversion from 'int' to signed type 'char' is implementation-defined
 tidy	falcon-core/src/crypto/aes.c	bugprone-implicit-widening-of-multiplication-result	result of multiplication in type 'unsigned int' is used as a pointer offset after an implicit widening conversion to type 'size_t'
 tidy	falcon-core/src/crypto/aes.c	bugprone-implicit-widening-of-multiplication-result	result of multiplication in type 'unsigned int' is used as a pointer offset after an implicit widening conversion to type 'size_t'
 tidy	falcon-core/src/crypto/aes.c	bugprone-implicit-widening-of-multiplication-result	result of multiplication in type 'unsigned int' is used as a pointer offset after an implicit widening conversion to type 'size_t'
@@ -127,8 +163,53 @@ tidy	falcon-core/src/fs/exfat.c	bugprone-implicit-widening-of-multiplication-res
 tidy	falcon-core/src/fs/ext4.c	bugprone-implicit-widening-of-multiplication-result	result of multiplication in type 'unsigned int' is used as a pointer offset after an implicit widening conversion to type 'size_t'
 tidy	falcon-core/src/fs/ext4.c	bugprone-implicit-widening-of-multiplication-result	result of multiplication in type 'unsigned int' is used as a pointer offset after an implicit widening conversion to type 'size_t'
 tidy	falcon-core/src/fs/ext4.c	bugprone-implicit-widening-of-multiplication-result	result of multiplication in type 'unsigned int' is used as a pointer offset after an implicit widening conversion to type 'size_t'
+tidy	falcon-core/src/fs/udf.c	bugprone-narrowing-conversions	narrowing conversion from 'int' to signed type 'char' is implementation-defined
+tidy	falcon-core/src/fs/udf.c	bugprone-narrowing-conversions	narrowing conversion from 'int' to signed type 'char' is implementation-defined
 tidy	falcon-core/src/luks/luks.c	bugprone-implicit-widening-of-multiplication-result	performing an implicit widening conversion to type 'uint64_t' (aka 'unsigned long long') of a multiplication performed in type 'unsigned int'
-tidy	falcon-efi/src/efi/main.c	misc-use-internal-linkage	function 'efi_main' can be made static to enforce internal linkage
+tidy	falcon-core/src/manifest/blesslist.c	bugprone-narrowing-conversions	narrowing conversion from 'int' to signed type 'char' is implementation-defined
+tidy	falcon-core/src/manifest/blesslist.c	bugprone-narrowing-conversions	narrowing conversion from 'int' to signed type 'char' is implementation-defined
+tidy	falcon-core/src/manifest/manifest.c	bugprone-narrowing-conversions	narrowing conversion from 'int' to signed type 'char' is implementation-defined
+tidy	falcon-core/src/manifest/manifest.c	bugprone-narrowing-conversions	narrowing conversion from 'int' to signed type 'char' is implementation-defined
+tidy	falcon-core/src/media/bootcfg.c	bugprone-narrowing-conversions	narrowing conversion from 'int' to signed type 'char' is implementation-defined
+tidy	falcon-core/src/media/bootcfg.c	bugprone-narrowing-conversions	narrowing conversion from 'int' to signed type 'char' is implementation-defined
+tidy	falcon-core/src/media/bootcfg.c	clang-analyzer-core.NullDereference	Array access (from variable 'buf') results in a null pointer dereference
+tidy	falcon-core/src/trust/x509.c	bugprone-narrowing-conversions	narrowing conversion from 'int' to signed type 'char' is implementation-defined
+tidy	falcon-efi/src/efi/main.c	bugprone-narrowing-conversions	narrowing conversion from 'int' to signed type 'char' is implementation-defined
 tidy	falcon-winjump/src/winjump.c	bugprone-reserved-identifier	declaration uses identifier '_UNICODE', which is a reserved identifier
-tidy	falcon-winjump/src/winjump.c	bugprone-reserved-identifier	declaration uses identifier '_WIN32_WINNT', which is a reserved identifier
 tidy	falcon-winjump/src/winjump.c	clang-analyzer-optin.core.EnumCastOutOfRange	The value '5' provided to the cast expression is not in the valid range of values for '_ATTACH_VIRTUAL_DISK_FLAG'
+
+# ==========================================================================
+# 6. bugprone-narrowing-conversions (15 entries)
+# ==========================================================================
+#
+# One pattern, repeated: an ASCII case fold written as
+#
+#     (char)(c + ('a' - 'A'))
+#
+# in bootcfg.c, isoprobe.c, payload.c, manifest.c, blesslist.c, udf.c,
+# x509.c, inspect.c and main.c. The cast is already explicit and the operand
+# is already known to be an upper-case letter, so the value is in range by
+# construction; the check objects to int arithmetic reaching a char at all.
+# LLVM 19 reports it, LLVM 22 does not, which is most of why this baseline
+# is larger than the one it replaced.
+#
+# ==========================================================================
+# 7. clang-analyzer-core.NullDereference, falcon-core/src/media/bootcfg.c
+# ==========================================================================
+#
+# `buf = p->scratch + p->used` then `buf[n] = '\0'`. The analyzer cannot
+# prove the caller's scratch pointer is non-null and so treats the offset as
+# a null dereference. Every caller in the tree passes a real array; the
+# parser never allocates and never takes ownership of one, which is the
+# convention DESIGN Section 9 sets for the whole of falcon-core.
+#
+# ==========================================================================
+# 8. -Wanalyzer-use-of-uninitialized-value, sha256.c and sha512.c
+# ==========================================================================
+#
+# The message schedule `w[]` is filled by a loop immediately before it is
+# read, and gcc's analyzer will not follow the loop far enough to see it.
+# The same false positive appeared in falcon-core/src/fs/fat.c while it was
+# being written; there it was cheaper to write the code so the analyzer
+# could follow it than to baseline it. Here the loops are the published SHA
+# schedules and are not worth rearranging around a tool.
