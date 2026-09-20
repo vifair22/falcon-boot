@@ -62,8 +62,11 @@ BIOS_S2_CSRCS := $(addprefix $(BIOS)/,load3.c disk.c console.c) $(CORE_LIBC)
 # Stage 3 takes the filesystem registry and the whole media layer, which is
 # what the third stage was for: under stage 2's 33 KB ceiling this had to be
 # one driver called by name.
-BIOS_S3_CSRCS := $(addprefix $(BIOS)/,main.c scan.c e820.c disk.c console.c) \
-	$(CORE_PART) $(CORE_FS) $(CORE_MEDIA) $(CORE_PE) $(CORE_LIBC)
+BIOS_S3_CSRCS := $(addprefix $(BIOS)/,main.c scan.c pos.c prompt.c linux.c \
+	vcd.c vcdcore.c bsd.c \
+	e820.c disk.c console.c) \
+	$(CORE_PART) $(CORE_FS) $(CORE_MEDIA) $(CORE_PE) $(CORE_CRYPTO) \
+	$(CORE_LUKS) $(CORE_LIBC)
 BIOS_S2_COBJS := $(patsubst %.c,$(BIOS_OBJ)/%.o,$(BIOS_S2_CSRCS))
 BIOS_S3_COBJS := $(patsubst %.c,$(BIOS_OBJ)/%.o,$(BIOS_S3_CSRCS))
 BIOS_CSRCS := $(sort $(BIOS_S2_CSRCS) $(BIOS_S3_CSRCS))
@@ -72,15 +75,28 @@ $(BIOS_OBJ)/%.o: %.c
 	@mkdir -p $(@D)
 	$(CC_HOST) $(BIOS_CFLAGS) -MMD -MF $@.d -c -o $@ $<
 
+# AES-NI, this object only, as in the other two flavours (root Makefile). It
+# needs the instructions it is named for and the SSE registers they use, so
+# the three flags that forbid those come back out for it and nothing else.
+# The CPUID probe that gates the path is in crypto.c, built with the baseline
+# flags precisely so it cannot fault on the CPUs it exists to detect.
+$(BIOS_OBJ)/falcon-core/src/crypto/aesni.o: BIOS_CFLAGS := \
+	$(filter-out -mno-sse -mno-mmx -mgeneral-regs-only,$(BIOS_CFLAGS)) -maes
+
 # --no-warn-rwx-segments: the output is a flat image loaded by a jump, with
 # one segment holding code and data together. There is nothing to separate
 # them into and nothing that would enforce it if there were.
 BIOS_LDFLAGS := -m64 -nostdlib -static -no-pie -Wl,--build-id=none \
 	-Wl,--no-warn-rwx-segments -Wl,-T,$(BIOS)/bios.ld
 
+# -MMD on the assembly too, and it is not a nicety: every address in this
+# component is a macro in biosdefs.h, and an object that kept an old one
+# builds and links and then reads the wrong byte of memory. It cost a
+# chainload that rebooted the machine and a drive number that came back as
+# the last interrupt vector.
 $(BIOS_OBJ)/%.o: %.S
 	@mkdir -p $(@D)
-	$(CC_HOST) $(BIOS_ASFLAGS) -o $@ $<
+	$(CC_HOST) $(BIOS_ASFLAGS) -MMD -MF $@.d -o $@ $<
 
 BIOS_STAGE1 := $(BIN)/falcon-bios-stage1.bin
 BIOS_STAGE2 := $(BIN)/falcon-bios-stage2.bin
@@ -122,8 +138,8 @@ $(BIOS_STAGE2): $(BIOS_STAGE2_OBJS) $(BIOS)/bios.ld
 	@# The gate has to land where biosdefs.h says it does, because stage 3
 	@# reaches it by address and shares no symbol with it. A section that
 	@# moved would be stage 3 calling into whatever is at 0x7400 instead.
-	@for pair in gate_entry:7e08 thunk_regs:7e10 thunk_vector:7e30 \
-	            gate_drive:7e31; do \
+	@for pair in gate_entry:7e08 gate_boot16:7e10 thunk_regs:7e20 \
+	            thunk_vector:7e40 gate_drive:7e41 gate_target:7e48; do \
 		sym=$${pair%%:*}; want=$${pair##*:}; \
 		got=$$(nm $@.elf | awk -v s="$$sym" '$$3 == s { print $$1 }'); \
 		if [ "$$got" != "000000000000$$want" ]; then \
@@ -138,13 +154,34 @@ $(BIOS_STAGE2): $(BIOS_STAGE2_OBJS) $(BIOS)/bios.ld
 # its size. It is read in by stage 2 after paging is on and never runs below
 # a megabyte, so it holds no real-mode code at all and reaches the BIOS
 # through the gate.
-BIOS_STAGE3_OBJS := $(BIOS_OBJ)/$(BIOS)/stage3.o $(BIOS_S3_COBJS)
+# The hook's blob, which is generated (falcon-hook/build.mk) and is the same
+# object the UEFI loader embeds: falcon-hook runs in the initramfs and does
+# not know which firmware started the kernel.
+BIOS_HOOK_OBJ := $(BIOS_OBJ)/$(HOOK_BLOB).o
+
+$(BIOS_HOOK_OBJ): $(HOOK_BLOB)
+	@mkdir -p $(@D)
+	$(CC_HOST) $(BIOS_CFLAGS) -c -o $@ $<
+
+BIOS_STAGE3_OBJS := $(BIOS_OBJ)/$(BIOS)/stage3.o $(BIOS_OBJ)/$(BIOS)/vcdres.o \
+	$(BIOS_S3_COBJS) \
+	$(BIOS_HOOK_OBJ)
 
 $(BIOS_STAGE3): $(BIOS_STAGE3_OBJS) $(BIOS)/bios.ld
 	@mkdir -p $(@D)
 	$(CC_HOST) $(BIOS_LDFLAGS) -Wl,-Ttext,0x100000 -Wl,-e,stage3_entry \
 		-o $@.elf $(BIOS_STAGE3_OBJS)
 	objcopy -O binary -j .text $@.elf $@
+	@# The resident has to fit the conventional memory it takes, which is
+	@# VCD_BYTES and is what the BIOS data area is told it no longer has.
+	@s=$$(nm $@.elf | awk '$$3 == "vcd_blob_start" { print $$1 }'); \
+	e=$$(nm $@.elf | awk '$$3 == "vcd_blob_end" { print $$1 }'); \
+	n=$$(( 0x$$e - 0x$$s )); \
+	if [ "$$n" -gt 4096 ]; then \
+		echo "ERROR: the INT 13h resident is $$n bytes, past VCD_BYTES"; \
+		echo "       raise VCD_BYTES in falcon-bios/src/biosdefs.h"; \
+		exit 1; \
+	fi
 	@sz=$$(stat -c %s $@); \
 	max=$$(($(STAGE3_MAX_SECTORS_CHECK) * 512)); \
 	if [ "$$sz" -gt "$$max" ]; then \
@@ -154,6 +191,20 @@ $(BIOS_STAGE3): $(BIOS_STAGE3_OBJS) $(BIOS)/bios.ld
 	fi
 
 bios: $(BIOS_STAGE1) $(BIOS_STAGE2) $(BIOS_STAGE3)
+
+# ---- tests ----
+#
+# The image is not in `all` or `test`, but this is: vcdcore.c is ordinary
+# host C with no BIOS in it, and it holds the arithmetic the one part of the
+# tree with no analyzer over it copies (Section 7.2). Testing it is the
+# whole point of having written it separately.
+BIOS_TESTS := $(addprefix falcon-bios/tests/,main.c vcdcore_test.c)
+BIOS_UUT := $(BIOS)/vcdcore.c
+
+$(eval $(call test_bin,bios,$(BIOS_TESTS) $(BIOS_UUT)))
+
+ALL_TEST_SRCS += $(BIOS_TESTS)
+ALL_UUT_SRCS  += $(BIOS_UUT)
 
 # A disk image the rig boots: stage 1 in the MBR, stage 2 in the sectors
 # stage 1 reads. Nothing else yet, which is why it is a test artifact and not

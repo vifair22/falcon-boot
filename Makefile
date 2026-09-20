@@ -50,6 +50,7 @@ EFI_INC       := -Ifalcon-efi/src
 CLI_INC       := -Ifalcon-cli/src
 APPLIANCE_INC := -Ifalcon-appliance/src
 HOOK_INC      := -Ifalcon-hook/src
+BIOS_INC      := -Ifalcon-bios/src
 
 # ---- the freestanding EFI flavour ----
 CC := x86_64-w64-mingw32-gcc
@@ -205,7 +206,7 @@ TEST_CFLAGS := -std=c11 -O0 -g --coverage $(TEST_WARNS) \
 	-DSHIM_DIR='"$(SHIM_DIR)"' \
 	-DMEDIA_FIXTURE_DIR='"$(MEDIA_FIXTURE_DIR)"' \
 	-I$(TEST_SUPPORT)/hostshim $(CORE_INC) $(EFI_INC) $(CLI_INC) \
-	$(APPLIANCE_INC) $(HOOK_INC) -I$(TEST_SUPPORT) \
+	$(APPLIANCE_INC) $(HOOK_INC) $(BIOS_INC) -I$(TEST_SUPPORT) \
 	$(CMOCKA_CFLAGS)
 
 TEST_LDFLAGS := --coverage
@@ -236,12 +237,13 @@ include falcon-efi/build.mk
 include falcon-cli/build.mk
 include falcon-appliance/build.mk
 
-# Not in `all` and not in `test`: an unfinished route behind a decision
-# nobody has taken (docs/notes/bios-route.md Section 7.3). `make bios` is
-# opt-in.
+# The freestanding image is not in `all`: an unfinished route behind a
+# decision nobody has taken (docs/notes/bios-route.md Section 7.3), so
+# `make bios` is opt-in. Its host-testable C is in `test` like everything
+# else, because it is ordinary C and is the half that can be checked.
 include falcon-bios/build.mk
 
-TESTS := core efi cli appliance hook
+TESTS := core efi cli appliance hook bios
 TEST_BINS := $(TESTS:%=$(BIN)/falcon-%-test)
 
 # The coverage report's units: what the test binaries link as units under
@@ -347,6 +349,12 @@ CC_DB_EFI := $(foreach s,$(EFI_SRCS) $(PAYLOAD_SRC),$(s):$(EFI_OBJ)/$(s:.c=.o))
 CC_DB_HOST := $(foreach s,$(filter-out $(EFI_SRCS),$(sort $(HOST_SRCS))),$(s):$(HOST_OBJ)/$(s:.c=.o))
 CC_DB_WINJUMP := $(foreach s,$(WINJUMP_SRCS),$(s):$(WINJUMP_OBJ)/$(s:.c=.o))
 CC_DB_TEST := $(foreach s,$(sort $(ALL_TEST_SRCS) $(TEST_SUPPORT_SRCS)),$(s):$(TEST_OBJ)/$(s:.c=.o))
+# falcon-bios's own C. The falcon-core it links is already entered under the
+# loader's flags, so only what lives in falcon-bios/src is added here; without
+# it, a component's worth of C would sit outside cppcheck, -fanalyzer and
+# clang-tidy, which is the one thing Section 7.2 of the BIOS note says not to
+# let happen.
+CC_DB_BIOS := $(foreach s,$(filter falcon-bios/%,$(sort $(BIOS_CSRCS))),$(s):$(BIOS_OBJ)/$(s:.c=.o))
 
 # $(call cc_db_emit,<entries>,<compiler>,<flags>)
 define cc_db_emit
@@ -368,6 +376,7 @@ endef
 compile_commands.json: Makefile $(wildcard falcon-*/build.mk)
 	@echo '[' > $@
 	$(call cc_db_emit,$(CC_DB_EFI),$(CC),$(EFI_CFLAGS))
+	$(call cc_db_emit,$(CC_DB_BIOS),$(CC_HOST),$(BIOS_CFLAGS))
 	$(call cc_db_emit,$(CC_DB_HOST),$(CC_HOST),$(HOST_CFLAGS))
 	$(call cc_db_emit,$(CC_DB_WINJUMP),$(CC),$(WINJUMP_CFLAGS))
 	$(call cc_db_emit,$(CC_DB_TEST),$(CC_HOST),$(TEST_CFLAGS))

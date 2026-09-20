@@ -95,9 +95,11 @@
  */
 #define GATE_ADDR       STAGE2_LOAD
 #define GATE_THUNK      (GATE_ADDR + 0x08)   /* jmp thunk_bios */
-#define GATE_REGS       (GATE_ADDR + 0x10)   /* the register block */
-#define GATE_VECTOR     (GATE_ADDR + 0x30)   /* the interrupt to raise */
-#define GATE_DRIVE      (GATE_ADDR + 0x31)   /* the drive we booted from */
+#define GATE_BOOT16     (GATE_ADDR + 0x10)   /* jmp boot16, and never back */
+#define GATE_REGS       (GATE_ADDR + 0x20)   /* the register block */
+#define GATE_VECTOR     (GATE_ADDR + 0x40)   /* the interrupt to raise */
+#define GATE_DRIVE      (GATE_ADDR + 0x41)   /* the drive to hand over in DL */
+#define GATE_TARGET     (GATE_ADDR + 0x48)   /* where boot16 lands: off, seg */
 
 /* Where a structure the BIOS itself reads or writes has to live.
  *
@@ -149,9 +151,66 @@
  * The stack is above it and nothing else is below the stack. */
 #define STAGE3_MAX_MEM  (STAGE3_STACK - STAGE3_LOAD - 0x10000)
 
+/* ---- the virtual CD's resident (bios-route.md Section 7.1) ----
+ *
+ * One paragraph-aligned block in conventional memory, taken by shrinking
+ * what the BIOS data area says the machine has, which is how MEMDISK and
+ * every other loader of this shape keeps a chainloaded bootloader from
+ * landing on it.
+ *
+ * The block is data first and code second, at fixed offsets, so the handler
+ * can reach its own state with a CS override and does not care what segment
+ * it was copied to. The offsets are here, `.org` places them in vcd.S, and
+ * the build checks the two agree.
+ */
+#define VCD_OFF_OLDINT13 0x0000   /* far pointer to the previous handler */
+#define VCD_OFF_DRIVE    0x0004   /* byte: the drive we answer for */
+#define VCD_OFF_PHYS     0x0005   /* byte: the drive the runs are on */
+#define VCD_OFF_NRUNS    0x0006   /* word */
+#define VCD_OFF_PERCD    0x0008   /* word: disk sectors per CD sector */
+#define VCD_OFF_NCD      0x000A   /* dword: CD sectors in the medium */
+#define VCD_OFF_NOVER    0x000E   /* word: how many overrides */
+#define VCD_OFF_NREAL    0x0028   /* dword: sectors the runs hold */
+#define VCD_OFF_NLIMIT   0x002C   /* dword: the last it answers for */
+#define VCD_OFF_DAP      0x0010   /* 16 bytes: the packet we re-issue with */
+#define VCD_OFF_END      0x0020   /* word: the handler's two scratch slots */
+#define VCD_OFF_GAP      0x0024   /* dword */
+#define VCD_OFF_OVER     0x0030   /* 4 overrides of 16: lba, count, segment */
+#define VCD_OV_LEN       16
+#define VCD_MAX_OVER_ASM 4
+#define VCD_OFF_RUNS     0x0070   /* 64 runs of 16 bytes */
+#define VCD_RUN_LEN      16
+#define VCD_MAX_RUNS_ASM 64
+#define VCD_OFF_SPEC     0x0470   /* 20 bytes: the El Torito status packet */
+
+/* The launch stub and what it needs. It is inside the resident for the one
+ * reason that matters: it copies the medium's boot image to where El Torito
+ * says it goes, which is 0x7C00, and everything from there up is stage 2 -
+ * the gate, the thunk, the code doing the copying. A stub anywhere else
+ * would be overwriting itself. Here it is in memory the BIOS has been told
+ * does not exist, so nothing it copies can reach it. */
+#define VCD_OFF_LSRC     0x0490   /* word: segment the image is staged at */
+#define VCD_OFF_LDST     0x0492   /* word: segment it belongs at */
+#define VCD_OFF_LLEN     0x0494   /* word: bytes */
+#define VCD_OFF_LDRIVE   0x0496   /* byte: what to hand over in DL */
+#define VCD_OFF_LAUNCH   0x04A0
+#define VCD_OFF_CODE     0x04E0
+
+/* The resident is one 4 KB block; the twelve kilobytes after it are the
+ * overlay pool, the bytes an override serves. Sixteen kilobytes is what the
+ * BIOS data area is told the machine no longer has. */
+#define VCD_OVER_OFF     0x1000
+#define VCD_OVER_MAX_CD  6        /* 12 KB, in CD sectors */
+#define VCD_BYTES        0x4000   /* 16 KB, which is what the BDA loses */
+#define VCD_CD_BYTES     2048     /* a CD sector, and what AH=48h reports */
+
+#define VCD_STAGE_ADDR   0x00020000
+
 /* Stage 3's stack. Above the image and below anything a payload is loaded
- * into; the identity map covers a gigabyte, so this is an ordinary address. */
-#define STAGE3_STACK    0x00300000
+ * into (KERNEL_ADDR is 16 MB); the identity map covers a gigabyte, so this
+ * is an ordinary address. Everything between STAGE3_LOAD and here is stage
+ * 3's to use, which is what STAGE3_MAX_MEM bounds. */
+#define STAGE3_STACK    0x00800000
 
 /* COM1 and 115200 8N1. The divisor is 115200 / 115200 = 1.
  *

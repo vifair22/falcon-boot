@@ -21,6 +21,8 @@
 	.section .text.stage2, "ax"
 	.globl  stage2_start
 	.globl  gate_entry
+	.globl  gate_boot16
+	.globl  gate_target
 	.globl  thunk_regs
 	.globl  thunk_vector
 	.globl  gate_drive
@@ -28,6 +30,7 @@
 	.globl  puts_rm
 	.extern lmode_enter
 	.extern stage3_load
+	.extern boot16
 	.extern lmode_entry
 
 /* ---- the gate (biosdefs.h, GATE_*) ----
@@ -58,19 +61,28 @@ stage2_start:
 	.code64
 gate_entry:
 	jmp     thunk_bios           /* GATE_THUNK */
-	.code16
 
 	.org    0x10
+gate_boot16:
+	jmp     boot16               /* GATE_BOOT16, and never back */
+	.code16
+
+	.org    0x20
 thunk_regs:
 	.space  32                   /* GATE_REGS */
 
-	.org    0x30
+	.org    0x40
 thunk_vector:
 	.byte   0                    /* GATE_VECTOR */
 gate_drive:
 	.byte   0                    /* GATE_DRIVE */
 
-	.org    0x40
+	.org    0x48
+gate_target:
+	.word   0                    /* GATE_TARGET: offset, then segment */
+	.word   0
+
+	.org    0x50
 stage2_begin:
 	movb    %dl, drive
 

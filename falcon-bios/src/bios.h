@@ -58,6 +58,44 @@ static inline void thunk_bios(void)
 
 #define BIOS_FLAG_CARRY 0x0001u
 
+/* ---- absolute low memory ----
+ *
+ * The interrupt vector table and the BIOS data area are at addresses the
+ * firmware fixed decades ago, and a loader reads and writes them directly.
+ * Through inline asm rather than a cast pointer because a compiler is
+ * entitled to assume a dereference near zero is a null-pointer bug and warns
+ * that it is one; saying it in asm says instead that the address is the
+ * point. */
+static inline uint16_t peek16(uint32_t addr)
+{
+    uint16_t v;
+
+    __asm__ __volatile__("movw (%1), %0"
+                         : "=r"(v) : "r"((uintptr_t)addr) : "memory");
+    return v;
+}
+
+static inline void poke16(uint32_t addr, uint16_t v)
+{
+    __asm__ __volatile__("movw %0, (%1)"
+                         : : "r"(v), "r"((uintptr_t)addr) : "memory");
+}
+
+static inline uint32_t peek32(uint32_t addr)
+{
+    uint32_t v;
+
+    __asm__ __volatile__("movl (%1), %0"
+                         : "=r"(v) : "r"((uintptr_t)addr) : "memory");
+    return v;
+}
+
+static inline void poke32(uint32_t addr, uint32_t v)
+{
+    __asm__ __volatile__("movl %0, (%1)"
+                         : : "r"(v), "r"((uintptr_t)addr) : "memory");
+}
+
 /* ---- console ---- */
 
 /* Serial. Always on: it is what the rig reads and what a machine with no

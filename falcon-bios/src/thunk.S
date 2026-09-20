@@ -268,3 +268,77 @@ ivt_desc:
 	.balign 8
 saved_rsp:
 	.quad   0
+
+/* ---- the descent that does not come back ----
+ *
+ * Chainloading means handing the machine to a sixteen-bit program: an ISO's
+ * own bootloader, read off the medium and placed where the El Torito record
+ * says. Everything above is done at that point, so this is the thunk's
+ * descent with the ascent removed and a far jump in place of the interrupt.
+ *
+ * It is separate from thunk_bios rather than a flag on it because the two
+ * differ in what they are for, not in how they work: one borrows the
+ * processor and gives it back, and this one gives it away. A shared routine
+ * with a "come back?" argument would put the most delicate code in the tree
+ * behind a branch.
+ *
+ * Reached through the gate at GATE_BOOT16. GATE_TARGET holds where to land,
+ * offset then segment, and GATE_DRIVE the number to hand over in DL, which
+ * is how the program about to run knows which drive it came off.
+ */
+	.code64
+	.globl  boot16
+boot16:
+	cli
+	ljmp    *boot16_to32(%rip)
+
+	.code32
+boot16_32:
+	movw    $SEL_DATA16, %ax
+	movw    %ax, %ds
+	movw    %ax, %es
+	movw    %ax, %ss
+	movw    %ax, %fs
+	movw    %ax, %gs
+
+	movl    %cr0, %eax
+	andl    $0x7FFFFFFF, %eax    /* paging off, and long mode with it */
+	movl    %eax, %cr0
+
+	movl    $0xC0000080, %ecx
+	rdmsr
+	andl    $0xFFFFFEFF, %eax    /* EFER.LME off */
+	wrmsr
+
+	ljmp    $SEL_CODE16, $boot16_16
+
+	.code16
+boot16_16:
+	movl    %cr0, %eax
+	andl    $0xFFFFFFFE, %eax    /* CR0.PE */
+	movl    %eax, %cr0
+
+	ljmp    $0, $boot16_real
+
+boot16_real:
+	xorw    %ax, %ax
+	movw    %ax, %ds
+	movw    %ax, %es
+	movw    %ax, %ss
+	movw    %ax, %fs
+	movw    %ax, %gs
+	movw    $0x7000, %sp
+
+	lidt    ivt_desc
+
+	/* DL is the contract: a bootloader reads the drive it was started
+	 * from out of it and has no other way to know. */
+	movb    GATE_DRIVE, %dl
+	sti
+	ljmp    *GATE_TARGET
+
+	.balign 8
+	.code64
+boot16_to32:
+	.long   boot16_32
+	.word   SEL_CODE32

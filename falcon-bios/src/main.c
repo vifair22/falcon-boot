@@ -22,6 +22,7 @@
 #include <bios.h>
 
 #include <scan.h>
+#include <pos.h>
 #include <e820.h>
 
 #include <part/part.h>
@@ -54,6 +55,16 @@ static fs_vol   g_p2;
 static fs_dir   g_p2_dir;
 static int      g_p2_mounted;
 
+/* p2's own GPT entry and the block size it was read with: between them they
+ * are what names the partition to falcon-hook, which has to find the same
+ * one from Linux (DESIGN Section 6.4). */
+static const gpt_part *g_p2_part;
+static uint32_t        g_p2_block;
+
+/* p3 and the disk it is on, for the personal-OS row (DESIGN Section 5). */
+static const gpt_part *g_p3_part;
+static bios_disk      *g_p3_disk;
+
 /* What the menu draws. The names are kept rather than re-read, because
  * re-walking the directory to redraw a row would mean a thunk call per
  * sector per keystroke. */
@@ -70,6 +81,10 @@ typedef struct {
 
 static menu_row g_rows[MENU_MAX];
 static unsigned g_row_count;
+
+/* Whether the menu has a personal-OS row, which it does when p3 opened as a
+ * LUKS2 volume. One row, always last, as under UEFI. */
+static int g_pos_row;
 
 static int part_read(void *ctx, uint64_t off, uint64_t len, void *buf)
 {
@@ -159,10 +174,8 @@ static void menu_draw(unsigned selected)
     bios_screen_clear();
     bios_screen_puts("falcon-boot (BIOS)\n\n");
 
-    if (g_row_count == 0) {
+    if (g_row_count == 0 && !g_pos_row)
         bios_screen_puts("  no bootable images on p2\n");
-        return;
-    }
     for (i = 0; i < g_row_count; i++) {
         bios_screen_puts(i == selected ? "  > " : "    ");
         screen_name(g_rows[i].name);
@@ -170,12 +183,18 @@ static void menu_draw(unsigned selected)
         screen_dec(g_rows[i].size / 1048576u);
         bios_screen_puts(" MiB\n");
     }
-    bios_screen_puts("\n  up and down to move, enter to select\n");
+    if (g_pos_row) {
+        bios_screen_puts(selected == g_row_count ? "  > " : "    ");
+        bios_screen_puts("Personal OS (p3)\n");
+    }
+    bios_screen_puts("\n  up and down to move, enter to boot,"
+                     " c to chainload\n");
 }
 
 static void menu_run(void)
 {
     unsigned selected = 0;
+    unsigned rows = g_row_count + (g_pos_row ? 1u : 0u);
 
     for (;;) {
         int key;
@@ -184,8 +203,28 @@ static void menu_run(void)
         key = bios_getkey();
         if (key == BIOS_KEY_UP && selected > 0)
             selected--;
-        else if (key == BIOS_KEY_DOWN && selected + 1u < g_row_count)
+        else if (key == BIOS_KEY_DOWN && selected + 1u < rows)
             selected++;
+        else if (key == BIOS_KEY_ENTER && g_pos_row &&
+                 selected == g_row_count) {
+            bios_screen_puts("\n  Personal OS\n");
+            (void)pos_run(g_p3_disk, g_p3_part);
+        }
+        else if (key == 'c' && g_row_count > 0 && selected < g_row_count) {
+            /* The medium's own bootloader, through the resident handler.
+             * Same key as the UEFI menu's, for the same job. */
+            bios_screen_puts("\n  ");
+            screen_name(g_rows[selected].name);
+            bios_screen_puts("\n");
+            if (!g_p2_mounted) {
+                bios_screen_puts("  p2 is not mounted\n");
+                return;
+            }
+            (void)scan_chain(g_p2_src.disk, &g_p2, g_p2_part,
+                             &g_rows[selected].ent);
+            bios_screen_puts("\n  press a key\n");
+            (void)bios_getkey();
+        }
         else if (key == BIOS_KEY_ENTER && g_row_count > 0) {
             bios_screen_puts("\n  ");
             screen_name(g_rows[selected].name);
@@ -194,7 +233,8 @@ static void menu_run(void)
                 bios_screen_puts("  p2 is not mounted\n");
                 return;
             }
-            (void)scan_iso(&g_p2, &g_rows[selected].ent);
+            (void)scan_iso(&g_p2, g_p2_part, &g_rows[selected].ent,
+                           g_p2_block);
             bios_screen_puts("\n  loading a kernel is the next stage of the"
                              " route; press a key\n");
             (void)bios_getkey();
@@ -283,7 +323,16 @@ static void show_partitions(bios_disk *d)
         bios_puts("\n");
     }
 
-    /* The one the menu is built from. */
+    /* The one the menu is built from, and the one the personal-OS row needs.
+     * Both are identified by DESIGN Section 3's rules, asked of falcon-core's
+     * own matcher. */
+    for (i = 0; i < t.count; i++) {
+        if (gpt_part_is_role(&g_parts[i], PART_ROLE_SHELF)) {
+            g_p3_part = &g_parts[i];
+            g_p3_disk = d;
+            break;
+        }
+    }
     for (i = 0; i < t.count; i++) {
         if (gpt_part_is_role(&g_parts[i], PART_ROLE_ISO)) {
             scan_iso_partition(d, &g_parts[i]);
@@ -307,6 +356,9 @@ static void scan_iso_partition(bios_disk *d, const gpt_part *p)
 
     g_p2_src.disk = d;
     g_p2_src.base = p->start_lba * (uint64_t)d->sector_size;
+    g_p2_part = p;
+    g_p2_block = d->sector_size;
+    scan_disk(d);
 
     ops = fs_identify(part_read, &g_p2_src, FS_HINT_NONE);
     if (ops == (const fs_ops *)0) {
@@ -395,6 +447,11 @@ void bios_main(uint8_t drive)
         show_first_sector(&g_second, "second");
         show_partitions(&g_second);
     }
+
+    /* The personal-OS row, if p3 is there and is LUKS2. Asked once, before
+     * the menu draws, because the answer does not change. */
+    if (g_p3_part != (const gpt_part *)0)
+        g_pos_row = pos_probe(g_p3_disk, g_p3_part);
 
     bios_puts("falcon-bios: done\n");
     menu_run();

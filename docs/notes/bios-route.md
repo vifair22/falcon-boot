@@ -29,8 +29,8 @@ That is `part.c` and `exfat.c` from falcon-core, unmodified, over a read
 callback whose other end is INT 13h, identifying p2 and p3 by DESIGN Section
 3's own rules. It is the menu's data.
 
-Three of Section 5.3's five assembly jobs are done: the MBR, the mode switch
-and the thunk. The thunk is the one that mattered most, because everything
+All five of Section 5.3's assembly jobs are done: the MBR, the mode switch,
+the thunk, the jump into a loaded kernel, and the resident's prologue. The thunk is the one that mattered most, because everything
 above it is C. Section 6a records what the ISO reader work had already built,
 and Section 6b the third stage that took the size ceiling off.
 
@@ -451,6 +451,187 @@ What the third stage buys is that size stops being a design input. The
 filesystem registry, the ISO reader, `medium.c` and a boot path all fit, and
 `main.c`'s note that it calls `exfat.c` directly because the registry would
 not fit is no longer true.
+
+## 6c. A kernel boots (2026-09-20)
+
+falcon-bios boots a stock Arch ISO's kernel and initramfs under SeaBIOS, from
+a real falcon stick, over INT 13h. The whole chain, and every layer of it is
+falcon-core except the first:
+
+    INT 13h  ->  part.c: the GPT, p2 identified by DESIGN Section 3's rules
+             ->  fs.c: p2 mounted by fs_identify, not named
+             ->  fs_file_read_cb: the .iso as a stream of bytes
+             ->  medium.c: ISO9660 and the El Torito boot image
+             ->  bootfs/bootcfg: the ISO's own systemd-boot entry
+             ->  linux.c: the 64-bit entry of the x86 boot protocol
+
+and it arrives at archiso's rescue shell, having unpacked a 234 MB
+initramfs, because nothing has told it where its medium is. That is the next
+piece and it is already written: falcon-hook and the extent map (DESIGN
+Section 6.4), which the UEFI loader appends to the same initramfs for the
+same reason.
+
+**Why the 64-bit entry.** The loader is already in long mode with paging on,
+which is the state the protocol asks for; the 16-bit entry would mean going
+back down through the thunk and handing over there. The cost is the four
+things the protocol requires at the jump, each of which fails silently if it
+is wrong: everything inside the identity map (a gigabyte here, which bounds
+where the kernel and initrd may go), interrupts off, %rsi holding the zero
+page, and a GDT whose code selector is 0x10 and data 0x18. falcon-bios's own
+GDT has code64 at 0x08, because nothing had an opinion until now, so
+`linux.c` builds a second GDT for the handoff.
+
+**Where things go.** The zero page at 0x10000 and the command line at
+0x20000, the addresses every BIOS loader has used since LILO, which is the
+useful property: a kernel's decompressor is known not to land on them. The
+kernel at 16 MB, above everything the loader occupies and aligned as a
+relocatable kernel requires. The initrd is not fixed: it is placed from the
+E820 map, as high as `initrd_addr_max` and the identity map allow, because it
+is the one object whose size is not known until it is read.
+
+**One bug worth recording**, because it reads as a wrong file rather than a
+wrong offset: the first read was one sector. `setup_sects` is at 0x1F1,
+inside the boot sector, but the "HdrS" magic that says the header is a header
+is at 0x202, which is past it. The loader reported a stock Arch kernel as
+"not a bzImage".
+
+**A decision taken here.** The loader appends
+`console=ttyS0,115200 console=tty0` to every cmdline. This build is
+serial-first from its first instruction - stage 1 brings COM1 up before it
+reads anything, because a machine with no usable video is the machine a BIOS
+route exists to reach - and a kernel printing only to a screen that is not
+there would break that where it matters most. tty0 is last so the kernel's
+log goes to serial while the interactive console stays on the screen. The
+UEFI loader does not do this and should not; whether the BIOS one should is
+open.
+
+## 6d. The chainload, and the resident (2026-09-20)
+
+Section 7.1 called the resident INT 13h handler a spike rather than an
+estimate and said to time-box one before believing any other number. It is
+written, and it works: falcon-bios chainloads a stock Arch ISO's own
+ISOLINUX from a real falcon stick under SeaBIOS. ISOLINUX draws its menu,
+counts down, and loads the kernel and initramfs, and every one of those reads
+is served out of the ISO file on exFAT on p2 by a handler in conventional
+memory.
+
+    falcon-bios:   serving the medium on drive 0xe0 from 0x9ec00
+    falcon-bios:   boot image at CD sector 0x73, 1 run(s)
+    falcon-bios:   handing over
+
+    ISOLINUX 6.04 6.04-pre3-3-g05ac953c  Copyright (C) 1994-2015 H. Peter Anvin
+    Loading /arch/boot/x86_64/vmlinuz-linux... ok
+    Loading /arch/boot/x86_64/initramfs-linux.img...
+
+**What made it tractable** was refusing to write it in assembly. Section 5.3
+says the assembly is transport and every decision is C, and that is what
+kept this to 250 lines of `.S`: `vcdcore.c` turns the ISO's extents on p2
+into a table of runs - stretches that are contiguous on the physical disk -
+and the handler does a linear scan, one multiply, one add, and re-issues the
+read to the physical drive through the vector it replaced. `vcdcore.c` is
+ordinary host C with eight tests over it, and it is the first thing in
+`falcon-bios/` that `make test` covers.
+
+**Where the resident lives.** A chainloaded bootloader believes it owns
+memory below a megabyte: ISOLINUX relocates itself, GRUB's core image
+decompresses into it, `bootmgr` uses most of it. The only region any of them
+will leave alone is one the BIOS says is not there, so the word at 0x413 -
+how many kilobytes of conventional memory the machine has - is lowered by
+four and the handler lives in the four kilobytes that just stopped existing.
+MEMDISK has done this since 2001 and nothing else works.
+
+**The bug that shaped the design.** El Torito puts a no-emulation boot image
+at 0x7C00, and stage 2 starts 512 bytes above that: the gate, the thunk, and
+the code doing the copying are all inside what the image lands on. The first
+attempt rebooted the machine. So stage 3 stages the image at 0x20000 and the
+last thing this loader runs is a stub inside the resident, which is in memory
+the BIOS no longer admits to having and so cannot be overwritten by what it
+copies.
+
+**And one that was a build bug, not a code bug.** Every address in this
+component is a macro in `biosdefs.h`, and the assembly rule had no `-MMD`.
+An object that kept an old `GATE_DRIVE` assembled, linked, and read the wrong
+byte of memory; the symptom was a drive number that came back as the last
+interrupt vector raised. The rule tracks headers now.
+
+**The overlay, and BSD (S5).** The handler scans a short table of CD sector
+ranges before every pass: sectors in one are served from conventional memory
+rather than from the disk, and a read that would run into one stops at its
+edge, because the handler issues one BIOS call per pass. That is what
+`iso/overlay.h` is under UEFI, and it is what makes a medium bootable that is
+not bootable as it lies on the stick. `media/bsdmd.c`'s two edits - the
+directory record naming the ISO as a file inside itself, and the `md_image`
+settings over `loader.conf`'s comment block - are a few hundred bytes and fit
+it directly, so S5 is the same two edits over the same core code as the UEFI
+route, laid over a different medium.
+
+It works: FreeBSD 15.1's loader reads both edits, loads the whole 521 MB
+medium off the virtual CD as a memory disk in about a minute, and the
+installer comes up.
+
+**The medium has to be padded, and that took two measurements.** A BIOS
+caller reads in fixed-size chunks and the last one runs past the end of an
+image whose length is not a multiple of that chunk:
+
+    /FALCONBS.IMG;1 c0: Read 8 sector(s) from 266920 to 0x6b63c (0x7563c): 0x4
+    error reading '/FALCONBS.IMG;1': input/output error
+
+The medium is 266,927 CD sectors and the loader asked for 266,920 through
+266,927. A pressed CD is padded to a whole number of blocks and answers, so
+this one is too: the declared size rounds up to 64 sectors and the padding
+reads as zeros.
+
+With that in, the same loader read the sector AT the declared size, 266,944
+of 266,944, and the second refusal cost the boot as the first had. So the
+medium answers for one padding block past what it says it has. Being
+permissive there costs nothing and a caller that has run off the end gets
+zeros rather than an error it was not written to handle.
+
+Both were found by making the handler print the sector it refused to COM1,
+after two rounds of screenshotting a loader that scrolls its error away in
+under a second. A handler that cannot be single-stepped can still be made to
+say what it did.
+
+**What is left.** S3, Windows. Its patched `boot.wim` appends a tail past the
+ISO's end that is measured in megabytes, which is more conventional memory
+than there is; the overlay would have to be backed by extended memory and
+served with `INT 15h` AH=87h block moves, which the handler can call as
+readily as it calls AH=42h but which needs a GDT of its own in the block.
+That, and nothing else, is what remains of Section 7.1's spike.
+
+## 6e. The personal OS, and one bit nobody sets (2026-09-20)
+
+Section 4.4's route works: the passphrase opens p3 with falcon-core's LUKS2,
+ext4 mounts inside it, the shelf's images list, and the one chosen is
+unwrapped rather than chainloaded - `.linux` is a plain bzImage and boots by
+4.2's route, `.initrd` and `.cmdline` come out of the same PE. The fixture
+UKI's own init reports the credential arriving:
+
+    FALCON-CRED-FILE cryptsetup.passphrase.cred 11 bytes
+    FALCON-CRED-HEAD cryptsetup.passphrase.cred [falcon-test]
+    FALCON-CRED-OK
+
+which is the p4 unlock with no second prompt, surviving the port. sd-stub's
+contribution is a cpio placing the passphrase at `/.extra/credentials/`, and
+`media/cpio.c` writes it here directly.
+
+**CR4.OSFXSR, which firmware has always set for us.** The first attempt reset
+the machine the instant the passphrase opened the volume, with nothing on the
+serial line but the menu drawing a second time. falcon-core's AES-NI path is
+the only translation unit in this build compiled with SSE at all, and long
+mode had been entered with CR4 holding PAE and nothing else: the first XMM
+instruction raised #UD, and with no IDT that is a triple fault. Two bits in
+`lmode.S` fix it.
+
+It is worth naming because of what it says about the port generally. The same
+falcon-core has run under UEFI for months and never needed this, because
+firmware sets those bits before a loader ever runs. A BIOS build inherits
+nothing; everything the environment used to provide has to be provided.
+
+**And one that was the same shape.** An ext4 directory entry carries no size -
+`fs.c` says so where it builds one, and the consumer is meant to open the file
+and ask - so taking the size from the entry read zero bytes of every image and
+reported that none of them was a UKI.
 
 ## 7. Risks, in the order they matter
 

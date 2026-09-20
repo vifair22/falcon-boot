@@ -133,13 +133,25 @@ a20_ok:
 	addw    $8, %di
 	loop    2b
 
-	/* ---- 3. PAE ----
+	/* ---- 3. PAE, and the SSE state bits ----
 	 *
-	 * Long mode has no non-PAE paging. Setting LME below without this is
+	 * Long mode has no non-PAE paging. Setting LME below without PAE is
 	 * one of the ways to triple fault at the jump rather than at the
-	 * instruction that was actually wrong. */
+	 * instruction that was actually wrong.
+	 *
+	 * OSFXSR and OSXMMEXCPT are here for one translation unit:
+	 * falcon-core's AES-NI path, which is the only thing in this build
+	 * compiled with SSE at all (the root Makefile gives crypto/aesni.c
+	 * -maes and takes -mno-sse back off it). Without these bits the first
+	 * XMM instruction it executes raises #UD, and with no IDT that is a
+	 * triple fault. It cost a personal-OS boot that reset the machine the
+	 * moment the passphrase opened the volume, with nothing on the serial
+	 * line but the menu drawing again.
+	 *
+	 * Firmware sets them before a UEFI loader ever runs, which is why the
+	 * same falcon-core has never needed this said anywhere else. */
 	movl    %cr4, %eax
-	orl     $(1 << 5), %eax      /* CR4.PAE */
+	orl     $((1 << 5) | (1 << 9) | (1 << 10)), %eax
 	movl    %eax, %cr4
 
 	/* ---- 4. EFER.LME ----
