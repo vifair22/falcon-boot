@@ -11,10 +11,14 @@ records the alternatives that were considered and rejected, so do not reintroduc
 a rejected approach without re-reading why it was rejected. `README.md` is the
 short public summary of the same model.
 
-Coverage (docs/notes/coverage-roadmap.md, 2026-09-19): M0-M6 are done. The
-corpus harness and scorecard exist (`docs/coverage.md`); falcon-core reads
-ISO9660/Rock Ridge/Joliet and UDF and an ISO's own GRUB, systemd-boot and
-isolinux configuration; falcon-hook rebuilds the ISO as a device-mapper
+Coverage (docs/notes/coverage-roadmap.md, 2026-09-20): M0-M7 are done. The
+corpus harness and scorecard exist (`docs/coverage.md`), and both run in a
+container on binhost-builder rather than on a workstation. falcon-core reads
+ISO9660/Rock Ridge/Joliet, UDF, FAT12/16/32 and an ISO's own GRUB,
+systemd-boot and isolinux configuration, and assembles a medium's volumes
+itself (`media/medium.c`), which is what the menu's survey now uses instead
+of publishing a block device and asking the firmware
+(docs/notes/iso-reader-route.md); falcon-hook rebuilds the ISO as a device-mapper
 device inside the distro's initramfs; and with Secure Boot off the loader
 boots an unblessed Linux ISO's kernel directly (Enter; `c` chainloads its own
 loader, `d` forces direct); with it on, through the ISO's own shim when the

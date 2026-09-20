@@ -15,13 +15,13 @@ trusts the Microsoft CA. Secure Boot on with only the stick owner's
 keys is reported beside them, without a target: media signed only by
 Microsoft cannot boot on such a machine at all (DESIGN 7.2).
 
-Loader: 0.1.0_20260920.0432.release, 0.1.0_20260920.0504.release
+Loader: 0.1.0_20260920.0648.release
 
 ## Summary
 
 | tier | ISOs run | SB off, drop | target | SB on, MS CA | target | SB on, own keys |
 |---|---|---|---|---|---|---|
-| A | 21 | 18/21 (85%) | 100% | 19/21 (90%) | 95% | 18/21 (85%) |
+| A | 22 | 19/22 (86%) | 100% | 20/22 (90%) | 95% | 19/22 (86%) |
 | B | 9 | 9/9 (100%) | 90% | 9/9 (100%) | - | 9/9 (100%) |
 | C | 6 | 5/6 (83%) | - | 2/6 (33%) | - | 1/6 (16%) |
 
@@ -65,6 +65,7 @@ Loader: 0.1.0_20260920.0432.release, 0.1.0_20260920.0504.release
 | macrium-rescue-8.0 | A | windows-pe | PASS | UNBLESSABLE | PASS | UNBLESSABLE | REFUSED | UNBLESSABLE |
 | opnsense-25.1 | C | freebsd | FAIL | FAIL | FAIL | FAIL | FAIL | FAIL |
 | pfsense-plus-24.06b7 | C | freebsd | PASS | PASS | FAIL | FAIL | FAIL | FAIL |
+| bazzite-stable | A | bazzite | PASS | PASS | FAIL | PASS | FAIL | PASS |
 
 ## Failures
 
@@ -116,4 +117,6 @@ Loader: 0.1.0_20260920.0432.release, 0.1.0_20260920.0504.release
 | pfsense-plus-24.06b7 | ms | bless | FAIL | back at the menu: blessed boot failed while LoadImage of the image (shim): 0x8000000000000003 (screen: text console) |
 | pfsense-plus-24.06b7 | own | drop | FAIL | back at the menu: the memory-disk boot failed while LoadImage of \EFI\BOOT\BOOTX64.EFI (shim): 0x80000 (screen: text console) |
 | pfsense-plus-24.06b7 | own | bless | FAIL | back at the menu: blessed boot failed while LoadImage of the image (shim): 0x8000000000000003 (screen: text console) |
+| bazzite-stable | ms | drop | FAIL | no userland within 300s (screen: text console) |
+| bazzite-stable | own | drop | FAIL | back at the menu: direct boot failed while LoadImage of \EFI\BOOT\BOOTX64.EFI (shim): 0x80000000000000 (screen: text console) |
 

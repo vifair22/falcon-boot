@@ -224,10 +224,11 @@ that is not the one the loader boots from.
 A, B and C touch no boot path and add no firmware call. D is where regression
 risk lives.
 
-Stages A, B and C are done and measured: `media/eltorito.c` (14 tests),
-`fs/fat.c` (11 tests across all three widths) and `media/medium.c` (6 tests).
-Each was checked against the corpus rather than against the fixtures alone,
-and Section 11 records what those runs found.
+All four stages are done and measured: `media/eltorito.c` (14 tests),
+`fs/fat.c` (11 tests across all three widths), `media/medium.c` (7 tests) and
+the survey itself. Each was checked against the corpus rather than against
+the fixtures alone; Section 11 records what those runs found and Section 8
+records the acceptance run.
 
 | stage | what | new | touched |
 | --- | --- | --- | --- |
@@ -265,33 +266,38 @@ and its siblings: a `mkfs.vfat` image built by the Makefile, with FAT12, FAT16
 and FAT32 variants so the cluster-size and root-directory differences between
 them are each covered rather than assumed.
 
-## 8. The acceptance test
+## 8. The acceptance test, and its result
 
 `tools/coverage/run-corpus.sh` over the full corpus, with `docs/coverage.md`
 diffed against the version generated before stage D. The survey's job is to
 produce a label, so the test is that every label is the same or better, and
 that no cell's route or verdict moves.
 
-Two specific rows to watch, because they are the ones the firmware currently
-answers differently from core:
+**Run 2026-09-20 against the baseline at d869309:**
 
-- **Windows**, where `select_boot_volume` and the UDF case-folding retry are
-  both load-bearing today. Core picks UDF by rule instead.
-- **FreeBSD, pfSense, OPNsense**, which classify through `core_family` today
-  and so should be unchanged by construction. If they move, the new path is
-  not equivalent to the old fallback.
+    unchanged cells: 216   improved: 0   regressed: 0
+    new rows: bazzite-stable
 
-A third row worth watching for a different reason: **OPNsense**, whose section
-header is the one medium in the corpus that would break a platform-ID-keyed
-parser (Section 4.5). It classifies today and must still classify after.
+Not one cell moved. The survey no longer publishes a block device, no longer
+calls `ConnectController` and no longer reads anything through
+`EFI_FILE_PROTOCOL`, and the scorecard is byte-identical apart from the row
+that was added to the corpus in the same session.
 
-The corpus can be read from this laptop while its NVMe is unlocked, which is
-how Section 4 was measured. That is not the same as the harness having a home:
-one copy on one roaming machine's encrypted internal disk is what the decision
-of 2026-09-19 moves to Docker on the Gentoo buildhost. Stages A to C need
-none of it. Stage D should not be called done on a run that cannot be
-repeated.
+The rows that were worth watching, because they are the ones the firmware
+answered differently from core:
 
+- **Windows**, where `select_boot_volume` and the UDF case-folding retry were
+  both load-bearing. Core picks UDF by the rule in Section 6 and `fs_lookup`
+  is case-insensitive, so neither workaround is needed on the label path.
+  Unchanged.
+- **FreeBSD, pfSense, OPNsense**, which classified through `core_family`
+  before and so should be unchanged by construction. They are.
+- **OPNsense** specifically, the one medium in the corpus that would break a
+  platform-ID-keyed El Torito parser (Section 4.5). Unchanged.
+
+Both runs were made on binhost-builder in the harness container, which is
+what makes the comparison mean anything: the same toolchain, the same OVMF,
+the same corpus verified by SHA-256.
 ## 9. Risks
 
 **9.1 A FAT driver is a real driver.** ~800 lines under the 80% coverage gate
