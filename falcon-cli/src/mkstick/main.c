@@ -21,6 +21,7 @@
 #include <mkstick/mkstick.h>
 
 static const cli_cmd *const commands[] = {
+    &mks_cmd_bios,
     &mks_cmd_create,
     &mks_cmd_keygen,
     &mks_cmd_status,

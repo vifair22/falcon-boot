@@ -334,6 +334,34 @@ existing sticks would have to be remade. It is a migration decision, not a
 line count, and it is the reason this cannot be added purely loader-side the
 way Section 8 of the roadmap can.
 
+**5.4 is wrong about the migration (2026-09-20).** The second sentence does
+not follow from the first, and the number that settles it was never looked
+up. A GPT declares its first usable sector at 34 (one protective MBR, one
+header, 32 blocks of a 128-entry array) and mkstick aligns every partition to
+2048. The 2014 sectors in between - 1007 KiB - are unallocated on every
+falcon stick that has ever been written, and stage 2 at 32 KiB and stage 3 at
+512 KiB both fit inside them with room to spare. So there is no migration:
+the sectors are already free, and adding the BIOS route to an existing stick
+is a write to space nobody owns. Checked against the author's own stick,
+which additionally still carried 444 KiB of a previous loader's core image in
+exactly that gap, put there by exactly this mechanism.
+
+What the EF02 partition is actually for, then, is bookkeeping and not
+reachability: nothing reads it, because stage 1 goes to a fixed LBA and never
+parses a table. It stops a later gdisk or parted seeing the gap as free. It
+is therefore optional (`mkstick bios --reserve`), and declining it means an
+install never writes the partition table at all, which is the only step with
+any risk in it. Slot 5, so p1..p4 keep the numbers DESIGN Section 3 and the
+install manifest use.
+
+The one real code change was in `falcon-bios/src/biosdefs.h`: `STAGE2_LBA`
+was 1, which is correct for the rig's raw image and is the GPT header on a
+stick. It is 34 now, and the rig image moved with it so that what the
+coverage harness boots sits at the offsets real media uses.
+
+See `falcon-cli/src/mkstick/bioscore.h` for the arithmetic and `bios.c` for
+the install.
+
 ## 6. Scope
 
 Staged, so the first stage is the product as described in Section 3 and
@@ -680,7 +708,15 @@ place none of those tools reach. That is a larger change to the project's
 character than the line count suggests, and it is why 5.3 draws the C/assembly
 line where it does: the assembly should be transport and nothing else.
 
-**7.3 The stick layout change is a migration.** See 5.4.
+**7.3 The stick layout change is a migration.** Withdrawn 2026-09-20: there
+is no migration. See 5.4, which was wrong, and `mkstick bios`, which installs
+onto a stick that already exists without remaking anything on it.
+
+What remains of this risk is smaller and is a reachability question rather
+than a layout one. Installing stage 1 makes a stick bootable on machines that
+ignore it today, and a BIOS machine has no Secure Boot, no shim and no db, so
+the BIOS route has no blessed path and cannot have one. That is why the
+install is opt-in and is not part of `mkstick create`: somebody asks for it.
 
 **7.4 A second platform is a second coverage matrix.** `docs/coverage.md`
 scores each corpus ISO in three Secure Boot states. BIOS adds a fourth cell

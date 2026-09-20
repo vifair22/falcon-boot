@@ -1,10 +1,10 @@
 # falcon-bios: the BIOS loader (docs/notes/bios-route.md).
 #
-# Not built by `all`, and that is deliberate: this is an unfinished route
-# behind a decision nobody has taken (Section 7.3, the BIOS boot partition is
-# a breaking stick-layout change). `make bios` builds it, `make test-bios-img`
-# makes a disk image the rig can boot, and neither is on the path of a normal
-# build or of `make test`.
+# Not built by `all`, and that is deliberate: the route is opt-in, installed
+# onto a stick by `mkstick bios` rather than by every `mkstick create`
+# (Section 7.3). `make bios` builds it, `make test-bios-img` makes a disk
+# image the rig can boot, and neither is on the path of a normal build or of
+# `make test`.
 #
 # Two images rather than one, linked at the addresses biosdefs.h fixes: the
 # BIOS puts stage 1 at 0x7C00 and stage 1 puts stage 2 at 0x7E00. Real-mode
@@ -30,6 +30,7 @@ BIOS_OBJ := $(OBJ)/bios
 # name is the one failure in this file that would look like a hardware fault.
 BIOS_DEF = $(shell sed -n 's/^\#define[ \t]*$(1)[ \t]*\([0-9]*\).*/\1/p' \
 	$(BIOS)/biosdefs.h | head -1)
+STAGE2_LBA_CHECK := $(call BIOS_DEF,STAGE2_LBA)
 STAGE2_SECTORS_CHECK := $(call BIOS_DEF,STAGE2_SECTORS)
 STAGE3_MAX_SECTORS_CHECK := $(call BIOS_DEF,STAGE3_MAX_SECTORS)
 STAGE3_LBA_CHECK := $(shell echo $$(( $(call BIOS_DEF,STAGE2_LBA) + \
@@ -211,25 +212,27 @@ $(eval $(call test_bin,bios,$(BIOS_TESTS) $(BIOS_UUT)))
 ALL_TEST_SRCS += $(BIOS_TESTS)
 ALL_UUT_SRCS  += $(BIOS_UUT)
 
-# A disk image the rig boots: stage 1 in the MBR, stage 2 in the sectors
-# stage 1 reads. Nothing else yet, which is why it is a test artifact and not
-# something mkstick produces.
+# A disk image the rig boots: stage 1 in the MBR, stage 2 and stage 3 in the
+# sectors stage 1 reads. No partition table, so it is not a stick; the point
+# of it is that the OFFSETS are the stick's. STAGE2_LBA is 34 because that is
+# where the gap after a GPT's entry array starts, and the rig boots the same
+# bytes at the same LBAs that `mkstick bios` writes to real media.
 BIOS_IMG := build/test-bios.img
 
 $(BIOS_IMG): $(BIOS_STAGE1) $(BIOS_STAGE2) $(BIOS_STAGE3)
 	@mkdir -p $(@D)
 	dd if=/dev/zero of=$@ bs=1M count=4 status=none
 	dd if=$(BIOS_STAGE1) of=$@ conv=notrunc status=none
-	dd if=$(BIOS_STAGE2) of=$@ bs=512 seek=1 conv=notrunc status=none
+	dd if=$(BIOS_STAGE2) of=$@ bs=512 seek=$(STAGE2_LBA_CHECK) \
+		conv=notrunc status=none
 	dd if=$(BIOS_STAGE3) of=$@ bs=512 seek=$(STAGE3_LBA_CHECK) \
 		conv=notrunc status=none
-	@echo "   $@ (stage 1 in the MBR, stage 2 from LBA 1, stage 3 from LBA $(STAGE3_LBA_CHECK))"
+	@echo "   $@ (stage 1 in the MBR, stage 2 from LBA $(STAGE2_LBA_CHECK), stage 3 from LBA $(STAGE3_LBA_CHECK))"
 
-# A second disk with a real GPT on it. The boot image is a raw stage 1 and
-# stage 2 with no partition table (Section 5.4: BIOS boot from a GPT stick
-# needs a BIOS boot partition, which is the breaking layout change this route
-# is still waiting on a decision for), so a partition table has to come from
-# somewhere for falcon-core to read one through INT 13h.
+# A second disk with a real GPT on it, for the half of the loader that reads
+# a partition table through INT 13h. It carries no stages: `mkstick bios`
+# is what puts them on a GPT disk, and falcon-cli/tests covers that
+# arithmetic without needing a disk at all.
 BIOS_GPT_IMG := build/test-bios-gpt.img
 
 $(BIOS_GPT_IMG):

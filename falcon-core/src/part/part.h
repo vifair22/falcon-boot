@@ -187,6 +187,19 @@ typedef struct {
     uint32_t  cap;
     uint32_t  count;
     uint8_t   truncated;
+
+    /* The header's usable range (spec Table 5-5), filled by gpt_parse.
+     *
+     * Not about partitions at all, which is why it sits beside them rather
+     * than inside a gpt_part: it is what the disk says may be partitioned,
+     * and the interesting number is the space OUTSIDE it. first_usable is
+     * normally 34 (one protective MBR, one header, 32 blocks of entry
+     * array), while the first partition is aligned to 2048, and the sectors
+     * in between belong to nobody. That gap is where falcon-bios' stages go
+     * (falcon-cli/src/mkstick/bioscore.h), so the tool that writes them has
+     * to read this rather than assume the usual numbers. */
+    uint64_t  first_usable;
+    uint64_t  last_usable;
 } gpt_table;
 
 /* Parses the PRIMARY GPT at LBA 1 of the disk reachable through `read`.

@@ -8,7 +8,7 @@ CLI_COMMON := $(addprefix $(CLI)/common/,status.c log.c opt.c proc.c util.c)
 
 MKSTICK_SRCS := $(CLI_COMMON) $(addprefix $(CLI)/mkstick/,main.c cleanup.c \
 	disk.c guid.c keys.c pass.c shimname.c create.c keygen.c inspect.c \
-	varstore.c)
+	varstore.c bios.c bioscore.c)
 
 # The core modules `mkstick status` reuses verbatim. Every one is EFI-free by
 # construction (device access through a byte-read callback), which is exactly
@@ -75,9 +75,11 @@ test-isoview:
 # compromise rather than an oversight.
 
 CLI_TESTS := $(addprefix falcon-cli/tests/,main.c isoprobe_test.c \
-	payload_test.c uki_test.c util_test.c)
+	payload_test.c uki_test.c util_test.c bioscore_test.c)
 
-CLI_UUT := $(addprefix $(CLI)/sign/,isoprobe.c payload.c uki.c util.c) $(CORE)/media/family.c $(CORE)/media/bootcfg.c \
+CLI_UUT := $(addprefix $(CLI)/sign/,isoprobe.c payload.c uki.c util.c) \
+	$(CLI)/mkstick/bioscore.c \
+	$(CORE)/media/family.c $(CORE)/media/bootcfg.c \
 	$(CORE_MANIFEST) $(CORE_MANIFEST_WRITE) \
 	$(CORE_PART) $(CORE_PE) $(CORE_FS) \
 	$(CORE)/crypto/sha256.c $(CORE)/crypto/crypto.c

@@ -36,11 +36,21 @@
 
 /* The sector stage 2 starts at, and how many it occupies.
  *
- * LBA 1 because stage 1 is LBA 0 and nothing else may live between them:
- * stage 1 reads a fixed range rather than looking anything up, which is what
- * keeps it inside 512 bytes. The count is the cap, not the size; the image
- * is padded to it so a short stage 2 still reads cleanly. */
-#define STAGE2_LBA      1
+ * 34, and the number is the GPT's, not ours. On a falcon stick LBA 0 is the
+ * protective MBR (stage 1), LBA 1 is the GPT header and LBA 2..33 are the
+ * 128-entry partition array; 34 is the first sector the header declares
+ * usable, and the first partition is aligned to 2048. The 2014 sectors
+ * between them belong to nobody, which is where the stages that do not fit
+ * in a boot sector live. Writing stage 2 at LBA 1 would land it on the GPT
+ * header.
+ *
+ * Stage 1 reads a fixed range rather than looking anything up, which is what
+ * keeps it inside 512 bytes, so this is a compile-time constant on both
+ * sides: falcon-cli/src/mkstick/bioscore.c takes the same number and places
+ * the stages where stage 1 will go looking for them. The count is the cap,
+ * not the size; the image is padded to it so a short stage 2 still reads
+ * cleanly. */
+#define STAGE2_LBA      34
 /* 32 KB, which puts the end of stage 2 at 0xFE00: inside the segment it is
  * addressed through, and clear of the page tables now that they are at
  * 0x80000. A single INT 13h transfer may not cross a 64 KB boundary and this

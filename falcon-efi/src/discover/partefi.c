@@ -46,7 +46,7 @@ static int part_bio_read(void *ctxv, uint64_t off, uint64_t len, void *buf)
 /* ---- caches, all reset together by part_scan_reset ---- */
 
 static gpt_part g_disk_parts[PART_MAX_ENTRIES];
-static gpt_table g_disk_table = { g_disk_parts, PART_MAX_ENTRIES, 0, 0 };
+static gpt_table g_disk_table = { g_disk_parts, PART_MAX_ENTRIES, 0, 0, 0, 0 };
 static EFI_HANDLE g_disk_handle;             /* NULL: nothing parsed yet */
 static int g_disk_rc = GPT_ERR_BAD_ARG;
 

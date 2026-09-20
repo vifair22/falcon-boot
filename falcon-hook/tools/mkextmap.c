@@ -42,7 +42,7 @@ static uint8_t g_buf[EXTMAP_HDR_LEN + EXTMAP_MAX_EXTENTS * EXTMAP_EXT_LEN];
 
 int main(int argc, char **argv)
 {
-    gpt_table t = { g_parts, 128, 0, 0 };
+    gpt_table t = { g_parts, 128, 0, 0, 0, 0 };
     const gpt_part *p2 = NULL;
     fs_dirent e;
     extmap_hdr h;

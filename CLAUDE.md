@@ -212,12 +212,17 @@ the tree, so `#include <fs/exfat.h>` means one file wherever it is written.
   loader embeds the stripped binary as a generated C array.
   `tools/run-hook-rig.sh` boots it under QEMU without the loader.
 - `falcon-bios/` the BIOS loader (docs/notes/bios-route.md). The image is
-  opt-in and not built by `all`, because the route is still undecided: BIOS
-  boot from a GPT stick needs a BIOS boot partition, which is a breaking
-  stick-layout change nobody has taken (bios-route.md Section 7.3). Its
-  host-testable C is in `make test` and in `compile_commands.json` like
-  everything else. `make bios` builds it and `make test-bios-img` makes a
-  disk the rig boots with `falcon-efi/tools/run-qemu.sh --bios`.
+  opt-in and not built by `all`, and so is putting it on a stick: `mkstick
+  bios <target>` installs it, `mkstick create` does not. A BIOS machine has
+  no Secure Boot, no shim and no db, so this route has no blessed path and
+  installing it changes what a stick can reach (bios-route.md Section 7.3).
+  It is NOT a layout change: stage 1 goes in the 440 bytes of boot code at
+  the head of LBA 0 and stages 2 and 3 into the 2014 sectors a GPT leaves
+  between its entry array and the first 2048-aligned partition, which are
+  unallocated on every stick already written. Its host-testable C is in
+  `make test` and in `compile_commands.json` like everything else. `make
+  bios` builds it and `make test-bios-img` makes a disk the rig boots with
+  `falcon-efi/tools/run-qemu.sh --bios`.
 
   Three stages, because stage 2 is linked where real mode and long mode agree
   on what an address means and so cannot exceed about 33 KB. `src/boot.S` is

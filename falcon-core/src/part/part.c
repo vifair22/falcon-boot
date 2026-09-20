@@ -39,6 +39,8 @@ const uint8_t gpt_guid_esp[GPT_GUID_LEN] = {
 #define HDR_HEADER_SIZE   12u
 #define HDR_HEADER_CRC32  16u
 #define HDR_MY_LBA        24u
+#define HDR_FIRST_USABLE  40u
+#define HDR_LAST_USABLE   48u
 #define HDR_ENTRY_LBA     72u
 #define HDR_ENTRY_COUNT   80u
 #define HDR_ENTRY_SIZE    84u
@@ -175,6 +177,8 @@ int gpt_parse(gpt_table *t, gpt_read_fn read, void *ctx, uint32_t block_size)
 
     t->count = 0;
     t->truncated = 0;
+    t->first_usable = 0;
+    t->last_usable = 0;
 
     /* The primary header is always LBA 1, whatever the block size. */
     if (read(ctx, block_size, block_size, sec) != 0)
@@ -199,6 +203,9 @@ int gpt_parse(gpt_table *t, gpt_read_fn read, void *ctx, uint32_t block_size)
      * agree with. Either way it does not describe this disk's primary table. */
     if (get_le64(sec + HDR_MY_LBA) != 1u)
         return GPT_ERR_NOT_GPT;
+
+    t->first_usable = get_le64(sec + HDR_FIRST_USABLE);
+    t->last_usable = get_le64(sec + HDR_LAST_USABLE);
 
     ent_lba = get_le64(sec + HDR_ENTRY_LBA);
     ent_count = get_le32(sec + HDR_ENTRY_COUNT);

@@ -559,6 +559,14 @@ static void test_parse_falcon_stick(void **state)
     assert_int_equal(tt.t.count, 4);
     assert_int_equal(tt.t.truncated, 0);
 
+    /* The usable range is not about partitions, and the space OUTSIDE it is
+     * what `mkstick bios` writes into: first usable 34 with the first
+     * partition at 2048 is the 2014-sector gap the BIOS stages live in
+     * (falcon-cli/src/mkstick/bioscore.h). */
+    assert_int_equal(tt.t.first_usable, 34);
+    assert_int_equal(tt.t.last_usable, TDISK_BLOCKS - 34u);
+    assert_true(tt.t.first_usable < tt.t.parts[0].start_lba);
+
     assert_int_equal(tt.t.parts[0].number, 1);
     assert_memory_equal(tt.t.parts[0].type, gpt_guid_esp, GPT_GUID_LEN);
     assert_int_equal(tt.t.parts[0].start_lba, 2048);
@@ -1016,6 +1024,12 @@ static void test_sgdisk_written_table(void **state)
     assert_int_equal(tt.t.parts[0].start_lba, 2048);
     assert_int_equal(tt.t.parts[1].start_lba, 34816);
     assert_int_equal(tt.t.parts[2].start_lba, 67584);
+
+    /* Off a table sgdisk wrote, not one we built: 34 usable against a first
+     * partition at 2048 is the gap on every real stick, and it is the number
+     * `mkstick bios` measures its install against. */
+    assert_int_equal(tt.t.first_usable, 34);
+    assert_true(tt.t.last_usable > tt.t.first_usable);
 
     /* The whole point of the change of 2026-09-13: sgdisk's -c lands in the
      * name field the parser reads, so the identification rule holds over a

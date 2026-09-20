@@ -89,6 +89,7 @@ cli_status mkstick_guid_selfcheck(void);
 #define MKS_ALIGN ((uint64_t)1024 * 1024)
 
 /* ---- the commands ---- */
+extern const cli_cmd mks_cmd_bios;
 extern const cli_cmd mks_cmd_create;
 extern const cli_cmd mks_cmd_keygen;
 extern const cli_cmd mks_cmd_status;
