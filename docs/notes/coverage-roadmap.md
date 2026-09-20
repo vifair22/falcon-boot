@@ -116,7 +116,7 @@ harness measures now is `docs/coverage.md`:
 | Linux, not blessed | kernel starts, media lost | kernel starts (MS-signed distros), media lost | refused |
 | Windows install, prepared | boots | boots | refused (bootmgr is MS-signed) |
 | Bare EFI payloads, memtest | boots | boots if MS-signed, else bless | bless |
-| BSD (FreeBSD, OPNsense, pfSense) | kernel boots, medium missing until M7 | same | refused: their loaders are unsigned |
+| BSD (FreeBSD, OPNsense, pfSense) | boots to its installer, the ISO loaded as a memory disk (M7); refused above what the loader can stage below 4 GB | same | refused: their loaders are unsigned, until M7 part 2 |
 | Everything else (ESXi, WinPE, IMG distros, ChromeOS) | untested | untested | refused unless blessed |
 
 Two things in that table matter more than the rest:
@@ -377,16 +377,22 @@ graph LR
 - **M7, BSD first class (decided 2026-09-19).** A FreeBSD ISO's loader and
   kernel already run; what is missing is the medium after ExitBootServices,
   which falcon-hook cannot give a system with no Linux initramfs. The route
-  is the ISO as a memory disk, proven end to end on FreeBSD 15.1 the day it
-  was decided (`docs/notes/bsd-route.md`): a second synthetic device carrying
-  the ISO as a file the loader can read, four settings patched into the ISO's
-  `/boot/defaults/loader.conf`, and a memory guard, since the image is copied
-  into RAM. Ventoy's per-version GEOM module is the fallback if the memory
-  cost proves to matter. Part 2 is blessing for BSD, added for completeness
+  is the ISO as a memory disk, and part 1 is **built and measured**
+  (`docs/notes/bsd-route.md`): the medium is served with one ISO9660
+  directory record added so it contains itself as a file, the four
+  `md_image_*` settings written over its `/boot/defaults/loader.conf`, and a
+  memory guard that asks the firmware for the allocation FreeBSD's loader is
+  about to want. No second device and no Lua patch: the design that needed
+  both was dropped the same day, because `md_image_name` would have had to
+  name a device index nothing can predict. FreeBSD 15.1 PASSes through the
+  harness and pfSense Plus 24.06 reaches its installer; OPNsense 25.1's
+  2.2 GB DVD exceeds what FreeBSD's loader can stage below 4 GB and is
+  refused by the guard. Ventoy's per-version GEOM module stays the fallback
+  for images that large. Part 2 is blessing for BSD, added for completeness
   on 2026-09-19: the sign tool signs the ISO's own `loader.efi` with the
   user's MOK and the loader starts that, since a UKI wrap has no Linux kernel
-  to wrap here. Exit: FreeBSD, OPNsense and pfSense boot to their installers
-  with Secure Boot off, and blessed with it on in both states.
+  to wrap here. Exit: FreeBSD and pfSense boot to their installers with
+  Secure Boot off, and blessed with it on in both states.
 - **M6, Windows in the loader.** WIM surgery at boot (needs the UDF reader),
   then winjump parity (Win11 bypass, unattend) and WinPE shells, ESXi test.
   Appliance preparation stays until this passes the scorecard (it passed;

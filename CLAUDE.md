@@ -27,7 +27,11 @@ The Tier B installers (Debian netinst, Alpine, Proxmox) boot direct through
 the hook's fallbacks. A stock Windows ISO boots in every state whose db
 trusts Microsoft: the loader patches its boot.wim in memory as the virtual CD
 serves it (falcon-winjump in place of winpeshl.exe), and Setup finds its
-source through the ISO winjump attaches from Windows.
+source through the ISO winjump attaches from Windows. BSD media (M7 part 1)
+boots with Secure Boot off by a third route: the served ISO gains one
+directory record naming itself as a file and the md_image settings in its
+loader.conf, so FreeBSD's own loader mounts root from a memory disk
+(docs/notes/bsd-route.md).
 
 Status: pre-1.0 MVP. Build-order steps 1-9 are done and step 10 (real
 hardware) is partly done; `docs/DESIGN.md` Section 11's status header is the
@@ -108,8 +112,9 @@ the tree, so `#include <fs/exfat.h>` means one file wherever it is written.
     writer (`cpio.c`), `.osrel`/`.uname` reading (`osrel.c`), an ISO's own
     boot configuration (`bootcfg.c`, read through `bootfs.c` over a mounted
     image), the extent map handed to falcon-hook (`extmap.c`) and the hooked
-    boot's cmdline (`hookcmd.c`), and the grub.cfg D3b serves in place of
-    an ISO's own (`grubcfg.c`).
+    boot's cmdline (`hookcmd.c`), the grub.cfg D3b serves in place of
+    an ISO's own (`grubcfg.c`) and the two edits that make a BSD medium boot
+    itself as a memory disk (`bsdmd.c`).
   - `wim/` LZX decompression and the WIM reader, plus the boot.wim patch
     (`wim_patch_build`): a new header and a tail appended after the
     original's end, the original bytes untouched.
@@ -139,6 +144,9 @@ the tree, so `#include <fs/exfat.h>` means one file wherever it is written.
     handles once, classifies each, and hands every consumer one inventory.
   - `secboot/` Secure Boot state for UX (`sb.c`) and the variable reads the
     boot predictions judge against (`trustefi.c`).
+  - `bsd/` BSD media served as its own memory disk (Section 6.4; M7):
+    the two byte edits core computes, laid over the virtual CD, and the
+    memory check FreeBSD's staging area needs.
   - `iso/`, `pos/`, `bless/` the three boot paths: virtual media over a p2
     file (DESIGN Section 6), the personal OS (Section 5; the only module that
     ever holds the passphrase, glue over core's `luks` and `fs`), and blessed

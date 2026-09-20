@@ -920,7 +920,7 @@ here relaxes enforcement; the key stays on p3. Under Secure Boot the
 direct-boot route boots only what verifies, which in practice is a blessed
 wrap, and that is the "bless" in the promise.
 
-**Status (2026-09-19): built, Linux and Windows.** The ISO9660/UDF reader, boot-config parsing, falcon-hook and direct
+**Status (2026-09-19): built, Linux, Windows and BSD.** The ISO9660/UDF reader, boot-config parsing, falcon-hook and direct
 kernel boot are in, and blessed wraps carry falcon-hook too, built from the
 ISO's own CD entry (the loader sets the extent variable around a blessed
 boot as it does around a direct one). Measured under OVMF by the coverage
@@ -966,6 +966,28 @@ no key: it has to reach the installed system's registry, which an answer
 file does without a process outliving Setup. Measured on a VM with no TPM:
 stock, Setup stops at the requirements screen; with both options it goes
 from the product key straight to disk selection.
+
+BSD media (roadmap M7) takes a third route, because a FreeBSD kernel loses
+the virtual CD exactly as a Linux one does and has no initramfs for
+falcon-hook to ride in. What it has instead is a loader that will load a file
+into RAM as a memory disk and mount root from it, which needs no kernel module
+and nothing per release. The file is the ISO, and the loader reads it out of
+the ISO: one ISO9660 directory record is added naming a file whose extent is
+LBA 0 and whose length is the whole image, and the four `md_image_*` settings
+are written over the opening comment block of the medium's
+`/boot/defaults/loader.conf`, padded back to the length they replaced. Both
+are byte ranges served through the same override layer Windows uses, so
+nothing on p2 is written and no ISO9660 length changes
+(`falcon-core/src/media/bsdmd.c`, `falcon-efi/src/bsd`).
+
+The cost is RAM, and it has a ceiling that is FreeBSD's rather than ours: the
+staged image has to sit in one run below 4 GB, which is as far as the amd64
+kernel's first page tables reach. The loader asks for that allocation and
+gives it straight back before it serves anything, and says plainly when the
+machine cannot give it. Measured under OVMF with Secure Boot off: FreeBSD
+15.1 and pfSense Plus 24.06 reach their installers with their networks up;
+OPNsense 25.1's 2.2 GB DVD is refused, by us before the boot rather than by
+FreeBSD's loader in the middle of it (`docs/notes/bsd-route.md`).
 
 ## 7. Security model
 

@@ -48,7 +48,7 @@ static const family_id g_linux_families[] = {
 
 #define LINUX_N (sizeof(g_linux_families) / sizeof(g_linux_families[0]))
 
-/* ------------------------------------------------------------ Windows */
+/* ------------------------------------------------- Windows and BSD */
 
 static void test_route_windows_boots_as_is(void **state)
 {
@@ -64,6 +64,10 @@ static void test_route_windows_boots_as_is(void **state)
     for (i = 0; i < sizeof(all) / sizeof(all[0]); i++)
         assert_int_equal(appl_route(all[i], FAMILY_WINDOWS),
                          APPL_JOB_BOOTS_AS_IS);
+    /* BSD, for the reason route.c gives: nothing to wrap until M7 part 2. */
+    for (i = 0; i < sizeof(all) / sizeof(all[0]); i++)
+        assert_int_equal(appl_route(all[i], FAMILY_BSD),
+                         APPL_JOB_BOOTS_AS_IS);
 }
 
 static void test_route_only_windows_boots_as_is(void **state)
@@ -78,11 +82,12 @@ static void test_route_only_windows_boots_as_is(void **state)
                                         g_linux_families[i]),
                              APPL_JOB_BOOTS_AS_IS);
 
-    /* The list above must stay the registry's, minus Windows: a family added
-     * to family.c and not to it would go untested here and unnoticed. */
-    assert_int_equal(n, LINUX_N + 1u);
+    /* The list above must stay the registry's, minus the two families the
+     * appliance is owed nothing for: a family added to family.c and not to
+     * it would go untested here and unnoticed. */
+    assert_int_equal(n, LINUX_N + 2u);
     for (i = 0; i < n; i++) {
-        if (tab[i].id == FAMILY_WINDOWS)
+        if (tab[i].id == FAMILY_WINDOWS || tab[i].id == FAMILY_BSD)
             continue;
         assert_int_not_equal(appl_route(MANIFEST_BLESS_NONE, tab[i].id),
                              APPL_JOB_BOOTS_AS_IS);

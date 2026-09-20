@@ -27,7 +27,7 @@ derivatives (pfSense, OPNsense) ship their own kernels whose module ABI does
 not match stock FreeBSD's. That is a build pipeline and a per-release
 treadmill, which is what this project's coverage model exists to avoid.
 
-## The route taken: the ISO as a memory disk
+## The route taken: the ISO as a memory disk, read from itself
 
 FreeBSD's loader can load an arbitrary file as a memory disk and boot from it.
 No kernel module, nothing per-version, and it works on every derivative that
@@ -35,50 +35,96 @@ still has FreeBSD's loader:
 
     md_image_load="YES"
     md_image_type="md_image"
-    md_image_name="<device>:/falcon-iso.img"
+    md_image_name="<path>"
     vfs.root.mountfrom="cd9660:/dev/md0"
 
-**Measured end to end on 2026-09-19** with FreeBSD 15.1's bootonly ISO under
-OVMF, Secure Boot off: with those four lines patched into the ISO's
-`/boot/defaults/loader.conf` and the ISO itself present as a file on a second
-disk, the loader printed `Loading configured modules... disk0p1:/iso.img` and
-the installer came up on its Welcome screen, root mounted from `/dev/md0`.
+The file it loads is the ISO, and the path it loads it from is **inside the
+ISO**: one directory record is added to the medium naming a file whose extent
+is LBA 0 and whose length is the whole image, so the ISO contains itself, and
+the loader reads it off the same virtual CD it booted from. Two byte edits,
+both served through the overlay the virtual CD already has
+(falcon-efi/src/iso/overlay.h), so nothing on p2 is written:
 
-What the loader needs from us, then:
+1. **The record**, appended into the free bytes at the end of the root
+   directory's extent, or /boot's if the root is full. No record moves, no
+   length changes. `falcon-core/src/media/bsdmd.c`, `bsdmd_record`.
+2. **The four settings**, written over the opening comment block of the ISO's
+   `/boot/defaults/loader.conf` and padded back to exactly the length they
+   replaced, the same in-place trick D3b uses for `grub.cfg`. That block is
+   442 bytes on FreeBSD, pfSense and OPNsense alike and the settings are 114.
+   `/boot/loader.conf` is the wrong file: a few hundred bytes with no comment
+   block to spend. `bsdmd_config`.
 
-1. **A device it can read the ISO from.** It reads msdosfs, and p2 is exFAT, so
-   the loader publishes a second synthetic Block I/O device: a GPT with one
-   FAT32 partition holding one file, whose data is the ISO's extents on p2,
-   served the way the virtual CD serves them. Measured: a whole-disk FAT is NOT
-   enough, the loader probes filesystems only inside partitions (`lsdev` showed
-   `disk0` with nothing under it); with a GPT it showed `disk0p1: EFI` and read
-   the file.
-2. **The four settings above, patched into the served ISO.** The same in-place
-   byte patch D3b uses for `grub.cfg`: `/boot/defaults/loader.conf` is ~10 KB
-   and opens with ~440 bytes of comments, which is room enough.
-   `/boot/loader.conf` is only 116 bytes, so it is not the one to patch.
-3. **A memory guard.** The image is copied into RAM by the loader, so the boot
-   needs free memory of the ISO's size plus the kernel's own needs: about
-   550 MB for FreeBSD bootonly, 1.4 GB for pfSense, 2.2 GB for OPNsense. The
-   loader checks the memory map before it offers this route and says so plainly
-   when there is not enough, rather than letting the loader die mid-copy.
+The loader's half is `falcon-efi/src/bsd/bsd.c`, reached from the menu for a
+`FAMILY_BSD` medium on Enter.
 
-## Open question: naming the device
+### The route first designed, and why it was dropped
 
-`md_image_name` needs a loader device name (`disk0p1`), and that index is the
-loader's enumeration order, which we cannot predict: the real stick is a disk
-too, and a machine may have several. Candidates, in preference order:
+The first version published a **second Block I/O device**: a synthetic GPT
+with one FAT32 partition whose single file was the ISO, served from p2 the way
+the virtual CD serves it. Measured working on 2026-09-19, and dropped the same
+day. `md_image_name` needs a loader device name (`disk0p1`), that index is the
+loader's enumeration order, and nothing here can predict it: the real stick is
+a disk too and a machine may have several. Escaping that meant patching the
+ISO's Lua to search `disk0p1`..`disk7p1`, which is a second in-place patch of
+a file that differs across FreeBSD 13, 14, 15 and every derivative. Reading
+the file off `currdev` needs no device name at all, and no second device.
 
-1. Patch a Lua file (FreeBSD 13+ ships `/boot/lua`) to try `disk0p1` through
-   `disk7p1` until one has `/falcon-iso.img`, then set `md_image_name`. Costs
-   one more in-place patch and keeps the config declarative.
-2. Add a file to `/boot/loader.conf.d/` instead of patching defaults: the
-   directory exists and is empty, so a directory record fits in its extent's
-   spare bytes. Same naming problem, but a cleaner place to write.
-3. Have the loader publish the FAT device so it sorts first. Not controllable:
-   the order is the firmware's.
+Also measured on the way: FreeBSD's loader probes filesystems only inside
+partitions, so a bare FAT volume with no partition table is invisible to it
+(`lsdev` showed `disk0` with nothing under it; with a GPT, `disk0p1: EFI`).
+That is why the dropped route needed a whole GPT rather than a superfloppy.
 
-Option 1 is the plan.
+### The name carries its ISO9660 version
+
+`ls /` at the loader prompt shows `FALCONBS.IMG;1` beside the Rock Ridge names
+of everything else on the medium: the added record has no Rock Ridge name, so
+the loader matches its ISO name verbatim, `;1` included. `md_image_name`
+without the `;1` does not resolve ("can't find '/FALCONBS.IMG'"). The name in
+`bsdmd.h` carries it.
+
+## Measured
+
+Under OVMF, Secure Boot off, 2026-09-19. The first three by hand with the
+edits applied to a copy of the ISO; FreeBSD again through the real loader and
+the coverage harness (`tools/coverage/run-case.sh ... off dnd`), which judged
+it PASS on the guest's DHCP request 32 seconds after the keypress.
+
+| medium | size | result |
+|---|---|---|
+| FreeBSD 15.1 bootonly | 521 MB | PASS, 32 s: `md0: Preloaded image </FALCONBS.IMG;1>`, installer up, DHCP from the guest |
+| pfSense Plus 24.06-BETA7 | 1369 MB | PASS: same preload, `Welcome to pfSense!` and its installer's first question on serial |
+| OPNsense 25.1 dvd | 2114 MB | refused by the memory guard in 5 s, before anything was served |
+
+pfSense puts its installer on the serial console and leaves an error about
+the daemon it cannot reach on the VGA one. That is pfSense, not this route: a
+control run of the stock ISO as a plain CD, with no falcon-boot in the picture
+at all, reaches the same two consoles saying the same two things. It is why
+`run-case.sh` reads a BSD installer's prompt as proof of userland, the way it
+already reads a getty's: these installers never bring up the network by
+themselves, so the DHCP signal that judges a Linux live image never fires.
+
+## The memory ceiling, which is FreeBSD's
+
+The image is copied into the loader's staging area, and that area has to live
+under 4 GB because that is as far as the amd64 kernel's first page tables
+reach (`stand/efi/loader/copy.c`, `get_staging_max`: 1 GB with `copy_staging`
+enabled, 4 GB without). The staging area also holds the kernel and its
+modules, and ends with 8 MB of slop for the kernel's earliest allocations.
+
+OPNsense's 2.2 GB DVD does not fit and cannot be made to: it failed with 4 GB
+and with 8 GB of guest RAM, with QEMU's below-4G window raised from its
+default 2.75 GB to 3.5 GB, and with `exec="copy_staging disable"` added to the
+patched settings. The image is simply too large for what has to be one
+contiguous run below 4 GB once the firmware has taken its share.
+
+So the loader checks before it serves anything, by doing what FreeBSD's loader
+will do: `AllocatePages(AllocateMaxAddress, ...)` for the image's size plus
+192 MB below 4 GB, and an immediate `FreePages`. An allocation IS the
+question; an estimate from the memory map would have to model the firmware's
+own fragmentation. When it fails the user is told, in those words, and told to
+press `c` for the ISO's own loader, rather than watching the boot die halfway
+through a copy with a message only FreeBSD's source explains.
 
 ## Secure Boot: blessing a BSD ISO (part 2 of M7)
 
@@ -100,16 +146,16 @@ What it needs:
   it to `p2:/falcon/blessed/<iso>.efi` with a manifest record naming it. The
   record's existing shape fits: the artifact to launch is a field the blessed
   path already has.
-- **The loader**: on a blessed BSD entry, publish the virtual CD and the FAT
-  device as M7's part 1 does, then start the signed loader instead of the
-  ISO's own.
+- **The loader**: on a blessed BSD entry, publish the virtual CD with the two
+  edits as part 1 does, then start the signed loader instead of the ISO's own.
 - **A measurement first**: FreeBSD's loader works out its own device
-  (`currdev`) from the device it was loaded from. Started off the synthetic
-  filesystem of Section 5.1, which has no Block I/O, it may not find one and
-  may need the virtual CD named to it instead. The alternative is patching the
-  signed bytes into the El Torito image the ISO already carries (2 MB FAT,
-  ~650 KB used, so a signature's worth of growth fits, at the cost of a FAT
-  directory and chain edit in the served bytes). Measure before choosing.
+  (`currdev`) from the device it was loaded from, and this route now depends
+  on `currdev` being the medium, because that is where `md_image_name`
+  resolves. Started off the synthetic filesystem of Section 5.1, which has no
+  Block I/O, it may not find one. The alternative is patching the signed bytes
+  into the El Torito image the ISO already carries (2 MB FAT, ~650 KB used, so
+  a signature's worth of growth fits, at the cost of a FAT directory and chain
+  edit in the served bytes). Measure before choosing.
 
 **What blessing a BSD ISO means, stated plainly**: the user's key vouches for
 the ISO's loader, and that loader then loads a kernel and modules that nothing

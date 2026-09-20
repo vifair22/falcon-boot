@@ -14,6 +14,9 @@
  *   Windows           /sources         install.wim or install.esd
  *   Gentoo            /boot/gentoo.igz genkernel's names, kept when the live
  *                                      media moved to dracut
+ *   FreeBSD           /boot/kernel/kernel  plus /boot/defaults/loader.conf;
+ *                                      pfSense, OPNsense, GhostBSD and
+ *                                      TrueNAS all keep both
  *
  * Where a layout check is ambiguous there is a content check behind it: the
  * systemd-boot entries archiso ships name their base directory, which is what
@@ -99,6 +102,16 @@ static const family_desc g_families[] = {
       "dokeymap nodhcp root=live:CDLABEL=%LABEL% rd.live.dir=/ "
       "rd.live.squashimg=image.squashfs cdroot iso-scan/filename=%ISO%", 0,
       FAMILY_TRI_YES, FAMILY_TRI_YES },
+
+    /* No cmdline and no injection, and for the same reason the Windows row
+     * gives: the injection column means the extent-map/device-mapper hook of
+     * DESIGN Section 6.2, which is a Linux initramfs mechanism. FreeBSD has
+     * no initramfs, so it needs the other answer entirely - the medium loaded
+     * into RAM by the ISO's own loader before the kernel starts
+     * (falcon-efi/src/bsd, docs/notes/bsd-route.md). */
+    { FAMILY_BSD, "FreeBSD family",
+      (void *)0, 0,
+      FAMILY_TRI_NO, FAMILY_TRI_NO },
 };
 
 #define FAMILY_COUNT (sizeof(g_families) / sizeof(g_families[0]))
@@ -272,6 +285,13 @@ const family_desc *family_detect(const family_probe *p)
 
     /* SystemRescue before Arch: it is archiso underneath, and its media can
      * carry archiso's loader entries while its base directory is its own. */
+    /* Before the Linux layouts, because none of them can match a medium
+     * with a FreeBSD loader on it and this pair is unambiguous: the kernel
+     * and the defaults file its loader reads. */
+    if (probe_exists(p, "/boot/kernel/kernel") &&
+        probe_exists(p, "/boot/defaults/loader.conf"))
+        return family_by_id(FAMILY_BSD);
+
     if (probe_exists(p, "/sysresccd") ||
         probe_exists(p, "/sysresccd/version") ||
         loader_entries_mention(p, "archisobasedir=sysresccd"))

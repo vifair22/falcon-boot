@@ -35,6 +35,7 @@ typedef enum {
     FAMILY_MEMTEST,         /* memtest86+ / MemTest86 */
     FAMILY_WINDOWS,         /* Windows install and WinPE media */
     FAMILY_GENTOO,          /* Gentoo live media; dracut since 2025 */
+    FAMILY_BSD,             /* FreeBSD and its derivatives; one loader */
 } family_id;
 
 /* Three-valued, because "we have not checked" and "no" lead to different

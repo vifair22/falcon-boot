@@ -21,6 +21,7 @@
 #include <loader/loadops.h>
 #include <efi/shimguid.h>
 #include <media/family.h>
+#include <media/bootfs.h>
 #include <lib/string.h>
 #include <pe/pe.h>
 #include <trust/probe.h>
@@ -1215,6 +1216,41 @@ EFI_STATUS iso_boot_overlaid(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
     return status;
 }
 
+/* The medium's own filesystem, fingerprinted with falcon-core's drivers.
+ *
+ * root_family and media_family above ask the volumes the FIRMWARE mounted,
+ * which is the right source for a medium that publishes its own filesystem
+ * to it, and no source at all for one that does not: a CD whose only name
+ * space is ISO9660 surfaces nothing but its El Torito boot image, and on
+ * FreeBSD media that image is a 1.6 MB FAT volume holding the loader and
+ * nothing else. Such a medium can only ever be "unknown" to the firmware,
+ * which is why this exists and why it runs only when the firmware's answer
+ * was unknown: every medium that classifies from a mounted volume pays
+ * nothing for it.
+ *
+ * The handles are static for the same reason every other one here is: they
+ * are kilobytes each and the loader has no heap worth putting them on. They
+ * are used only inside this call.
+ */
+static fs_file   g_probe_file;
+static fs_vol    g_probe_vol;
+static bootfs_ctx g_probe_ctx;
+
+static const family_desc *core_family(fs_vol *vol, const fs_dirent *file)
+{
+    family_probe probe;
+
+    if (fs_file_open(vol, &g_probe_file, file) != FS_OK)
+        return family_by_id(FAMILY_UNKNOWN);
+    if (fs_mount(&g_probe_vol, &fs_ops_iso9660, fs_file_read_cb,
+                 &g_probe_file) != FS_OK &&
+        fs_mount(&g_probe_vol, &fs_ops_udf, fs_file_read_cb,
+                 &g_probe_file) != FS_OK)
+        return family_by_id(FAMILY_UNKNOWN);
+    bootfs_probe(&g_probe_ctx, &g_probe_vol, &probe);
+    return family_detect(&probe);
+}
+
 EFI_STATUS iso_survey_media(EFI_SYSTEM_TABLE *st, fs_vol *vol,
                             const fs_dirent *file, iso_media_kind kind,
                             const trust_stores *stores, iso_survey *out)
@@ -1267,5 +1303,11 @@ EFI_STATUS iso_survey_media(EFI_SYSTEM_TABLE *st, fs_vol *vol,
         if (EFI_ERROR(teardown))
             status = teardown;
     }
+
+    /* Last, with the virtual device gone and the image file our own again:
+     * the medium's filesystem read by falcon-core rather than by the
+     * firmware's drivers. See core_family. */
+    if (out->family->id == FAMILY_UNKNOWN && kind == ISO_MEDIA_CD)
+        out->family = core_family(vol, file);
     return status;
 }

@@ -4,3 +4,6 @@
 *.efi
 *.img
 *.fd
+
+# Claude Code worktrees: session state, never part of the tree.
+/.claude/worktrees/

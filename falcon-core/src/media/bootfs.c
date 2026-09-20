@@ -86,6 +86,42 @@ static int src_exists(void *vctx, const char *path)
            !ctx->ent.is_dir && ctx->ent.is_regular;
 }
 
+/* family_detect's exists: a directory counts, unlike bootcfg's, because a
+ * layout fingerprint is usually a directory ("/casper", "/live"). */
+static int probe_exists(void *vctx, const char *path)
+{
+    bootfs_ctx *ctx = vctx;
+
+    return fs_lookup(ctx->vol, path, &ctx->walk, &ctx->ent) == FS_OK;
+}
+
+static int probe_read(void *vctx, const char *path, uint64_t off, void *buf,
+                      size_t len, size_t *got)
+{
+    bootfs_ctx *ctx = vctx;
+    uint64_t size;
+
+    *got = 0;
+    if (bootfs_open(ctx, path, &ctx->file, &size) != FS_OK)
+        return -1;
+    if (off >= size)
+        return 0;
+    if (size - off < (uint64_t)len)
+        len = (size_t)(size - off);
+    if (len != 0 && fs_file_read(&ctx->file, off, len, buf) != FS_OK)
+        return -1;
+    *got = len;
+    return 0;
+}
+
+void bootfs_probe(bootfs_ctx *ctx, fs_vol *vol, family_probe *probe)
+{
+    ctx->vol = vol;
+    probe->exists = probe_exists;
+    probe->read = probe_read;
+    probe->ctx = ctx;
+}
+
 void bootfs_src(bootfs_ctx *ctx, fs_vol *vol, bootcfg_src *src)
 {
     ctx->vol = vol;

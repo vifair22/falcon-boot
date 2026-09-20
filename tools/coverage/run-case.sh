@@ -315,6 +315,16 @@ while (( $(date +%s) - T1 < TIMEOUT )); do
     if grep -q -E '[a-zA-Z0-9-]+ login: *$|^[a-zA-Z0-9-]+ login:' <<<"$after"; then
         finish PASS "login prompt on serial"
     fi
+    # A BSD installer asking a question is the same evidence a login prompt
+    # is: userland, running off the root it mounted. It is worth its own
+    # line because these installers never bring up the network by
+    # themselves, so the DHCP signal below never fires for them, and pfSense
+    # puts the installer on the serial console while the VGA one shows an
+    # error about the daemon it cannot reach.
+    if grep -q -E 'Console type \[|Welcome to pfSense!|Welcome to OPNsense' \
+            <<<"$after"; then
+        finish PASS "the BSD installer is up on serial"
+    fi
     if grep -q -E 'Kernel panic - not syncing' <<<"$after"; then
         finish FAIL "$(grep -m1 'Kernel panic' <<<"$after" | cut -c1-120)"
     fi

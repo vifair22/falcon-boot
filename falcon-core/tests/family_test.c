@@ -768,6 +768,26 @@ static void test_family_lying_read_callback(void **state)
 
 /* ------------------------------------------------------------- registry */
 
+/* A FreeBSD medium: its kernel and the defaults file its loader reads. The
+ * pair is what pfSense, OPNsense, GhostBSD and TrueNAS all keep, and no Linux
+ * layout in the table can match it. */
+static void test_family_bsd(void **state)
+{
+    static const fake_file both[] = {
+        { "/boot/kernel/kernel", NULL },
+        { "/boot/defaults/loader.conf", NULL },
+    };
+    static const fake_file kernel_only[] = {
+        { "/boot/kernel/kernel", NULL },
+    };
+
+    (void)state;
+    expect_family(both, 2, FAMILY_BSD, NULL);
+    /* Half the fingerprint is not the fingerprint. */
+    expect_family(kernel_only, 1, FAMILY_UNKNOWN, NULL);
+    assert_int_equal(family_by_id(FAMILY_BSD)->needs_injection, 0);
+}
+
 static void test_family_registry_round_trip(void **state)
 {
     size_t count = 0;
@@ -776,7 +796,7 @@ static void test_family_registry_round_trip(void **state)
 
     (void)state;
     assert_non_null(t);
-    assert_int_equal(count, 9);
+    assert_int_equal(count, 10);
 
     for (i = 0; i < count; i++) {
         /* Every row is reachable by its own id, and reachable as the same
@@ -943,6 +963,7 @@ int run_family_tests(void)
         cmocka_unit_test(test_family_unreadable_fingerprint),
         cmocka_unit_test(test_family_fingerprint_shorter_than_needle),
         cmocka_unit_test(test_family_lying_read_callback),
+        cmocka_unit_test(test_family_bsd),
         cmocka_unit_test(test_family_registry_round_trip),
         cmocka_unit_test(test_family_strings_are_ascii),
         cmocka_unit_test(test_family_templates_use_known_tokens),

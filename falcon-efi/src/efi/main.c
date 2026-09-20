@@ -17,6 +17,7 @@
 #include <fs/fs.h>
 #include <iso/iso.h>
 #include <direct/direct.h>
+#include <bsd/bsd.h>
 #include <win/winpatch.h>
 #include <manifest/blesslist.h>
 #include <lib/string.h>
@@ -1186,6 +1187,48 @@ static BOOLEAN boot_direct(EFI_HANDLE image_handle, const menu_entry *entry,
     return TRUE;
 }
 
+/* ---- BSD media, served as its own memory disk (docs/notes/bsd-route.md) ---- */
+
+/* Returns FALSE when the medium is not one this route applies to, with
+ * nothing served, so the caller chainloads instead. */
+static BOOLEAN boot_bsd(EFI_HANDLE image_handle, const menu_entry *entry,
+                        iso_target *target)
+{
+    bsd_result result;
+    EFI_STATUS status;
+
+    menu_screen(g_st);
+    out(L"booting: ");
+    out(entry->label);
+    out(L"\r\n\r\n");
+
+    status = bsd_boot(g_st, image_handle, &g_vols[target->vol],
+                      &target->ent, &result);
+    if (EFI_ERROR(status) && result.not_bsd)
+        return FALSE;
+
+    menu_screen(g_st);
+    out(entry->label);
+    if (!EFI_ERROR(status)) {
+        out(L"\r\nthe ISO's loader exited, status ");
+        out_hex(result.status);
+        out(L"\r\n");
+    } else {
+        out(L"\r\nthe memory-disk boot failed while ");
+        out(result.stage);
+        out(L": ");
+        out_hex(result.status);
+        out(L"\r\n");
+    }
+    if (result.advice != (const CHAR16 *)0) {
+        out(L"\r\n");
+        out(result.advice);
+        out(L"\r\n");
+    }
+    out(L"\r\npress any key to return to the menu.\r\n");
+    return TRUE;
+}
+
 /* ---- Windows, patched at boot (DESIGN Sections 6.3 and 6.4) ---- */
 
 static BOOLEAN entry_path_ascii(const menu_entry *e, char *out_path,
@@ -1247,15 +1290,16 @@ static BOOLEAN entry_path_ascii(const menu_entry *e, char *out_path, UINTN cap)
 
 /* ---- blessing from the menu (DESIGN Section 7.5) ---- */
 
-/* What the appliance can bless from here: an ISO that is not Windows media
- * (the loader patches Windows as it boots it) and has no fresh blessing
- * already. An
+/* What the appliance can bless from here: an ISO that is neither Windows
+ * media (the loader patches Windows as it boots it) nor BSD media (nothing
+ * to wrap until roadmap M7 part 2; falcon-appliance/src/route.c says the
+ * same thing at the other end), and has no fresh blessing already. An
  * unprobed ISO counts; the sign tool refuses what it cannot wrap. */
 static BOOLEAN blessable(const iso_target *t)
 {
     if (t->shape != ENTRY_MEDIA || t->kind != ISO_MEDIA_CD)
         return FALSE;
-    if (t->fam == FAMILY_WINDOWS)
+    if (t->fam == FAMILY_WINDOWS || t->fam == FAMILY_BSD)
         return FALSE;
     return bless_hit_action(&t->hit) != BLESS_ACT_UKI ? TRUE : FALSE;
 }
@@ -1425,8 +1469,14 @@ static BOOLEAN boot_plain(EFI_HANDLE image_handle, const menu_entry *entry,
         return TRUE;
     /* Windows media has no kernel to start; a .img is a disk, not a CD, and
      * is left to the firmware's own partition drivers. */
+    /* A FreeBSD medium has no Linux kernel to start and no initramfs for
+     * falcon-hook to ride in, so its route is the memory disk its own
+     * loader can mount root from. */
+    if (route != ROUTE_CHAIN && t->fam == FAMILY_BSD &&
+        t->kind == ISO_MEDIA_CD && boot_bsd(image_handle, entry, t))
+        return TRUE;
     if (route == ROUTE_DIRECT && t->kind == ISO_MEDIA_CD &&
-        t->fam != FAMILY_WINDOWS &&
+        t->fam != FAMILY_WINDOWS && t->fam != FAMILY_BSD &&
         boot_direct(image_handle, entry, t))
         return TRUE;
     boot_target(image_handle, entry, t);
