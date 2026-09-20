@@ -16,6 +16,12 @@
 #
 # Rows are added as a family is worked on. A row is removed only when its URL
 # dies and a successor is pinned in its place.
+#
+# A few upstreams publish only a rolling name (bazzite), so the URL serves a
+# different image once they cut a release and the pinned hash stops matching.
+# That is the behaviour we want rather than a defect: corpus-fetch.sh refuses
+# the new image loudly instead of quietly measuring something else, and the
+# row is re-pinned deliberately.
 debian-live-13.7	A	debian-live	040a44f35186321eb6cdaab52a8a2d06224fe6b77f6fbb9f1861ad89c14e17ec	debian-live-13.7.0-amd64-standard.iso	https://cdimage.debian.org/debian-cd/current-live/amd64/iso-hybrid/debian-live-13.7.0-amd64-standard.iso
 fedora-ws-44	A	fedora-live	1620295f6a00c27c3208f0c00b8ece4eab1ec69b9002152d97488bf26a426ddf	Fedora-Workstation-Live-44-1.7.x86_64.iso	https://dl.fedoraproject.org/pub/fedora/linux/releases/44/Workstation/x86_64/iso/Fedora-Workstation-Live-44-1.7.x86_64.iso
 ubuntu-26.04.1	A	casper	601e30fbf5d97759367c632e2c33630665039b7e2158fd068403da3ccf1bda1f	ubuntu-26.04.1-desktop-amd64.iso	https://releases.ubuntu.com/26.04/ubuntu-26.04.1-desktop-amd64.iso
@@ -57,3 +63,4 @@ esxi-8.0u3	C	esxi	05ce214069a3e23265881fbd7a949fb93a99aa13059c6cac31920196e97ba4
 macrium-rescue-8.0	A	windows-pe	c328301f5f6fdf162f8ad0ef352cf6add1000c50932d514069eb7cd897437351	MacriumRescue.iso	local:Macrium Reflect Free 8.0 rescue media (WinRE 10 2004), supplied by the user
 opnsense-25.1	C	freebsd	e4c178840ab1017bf80097424da76d896ef4183fe10696e92f288d0641475871	OPNsense-25.1-dvd-amd64.iso	local:OPNsense 25.1 dvd image, decompressed from the project's .bz2 by the user
 pfsense-plus-24.06b7	C	freebsd	6e08216183c50da1601bd69c49ffcb66a0c998ca4352f7b811b4025499597fa5	pfSense-plus-installer-24.06-BETA7-amd64-20240614-1949.iso	local:pfSense Plus 24.06-BETA7 installer, supplied by the user (Netgate account needed)
+bazzite-stable	A	bazzite	9c8d06cd8e57f2274678edeb14b4b13a79b8117c70571a65199919a66305b5c7	bazzite-stable-amd64.iso	https://download.bazzite.gg/bazzite-stable-amd64.iso
