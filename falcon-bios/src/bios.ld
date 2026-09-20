@@ -29,6 +29,16 @@ SECTIONS
         *(.text*)
         *(.rodata*)
         *(.data*)
+
+        /* .bss goes in the image, zero-filled, rather than being left for a
+         * runtime to clear. There is no runtime: stage 2 is read off the
+         * disk by stage 1 and jumped to. Putting it inside this output
+         * section rather than its own is what makes it PROGBITS, so the
+         * zeros are in the file and `objcopy -j .text` carries them. The
+         * cost is disk sectors, which STAGE2_SECTORS bounds and the build
+         * checks. */
+        *(.bss*)
+        *(COMMON)
     }
 
     /* Nothing may reach the output but the one loadable section. A real-mode
@@ -36,7 +46,6 @@ SECTIONS
      * pushes the 0x55AA signature past byte 510, fails in ways that look
      * like hardware faults. */
     /DISCARD/ : {
-        *(.bss*)
         *(.comment)
         *(.note*)
         *(.eh_frame*)

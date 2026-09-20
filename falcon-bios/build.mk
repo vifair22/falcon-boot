@@ -26,6 +26,32 @@ BIOS := falcon-bios/src
 BIOS_OBJ := $(OBJ)/bios
 
 BIOS_ASFLAGS := -m64 -c -Wa,--fatal-warnings -I$(BIOS) $(CORE_INC)
+
+# The C half. Freestanding and 64-bit, with the repo warning set.
+#
+# -mno-red-zone, -mno-sse and -mgeneral-regs-only are not style: the red zone
+# is only safe where something guarantees interrupts will not land under the
+# stack pointer, and nothing here does; and the mode switch enables neither
+# SSE nor the FPU, so a compiler that decided to use either would fault on an
+# instruction nobody wrote. -fno-pie because nothing relocates this and the
+# link addresses are fixed by biosdefs.h.
+BIOS_CFLAGS := -std=c11 -O2 -ffreestanding -fno-stack-protector \
+	-fno-pie -fno-asynchronous-unwind-tables -fno-unwind-tables \
+	-mno-red-zone -mno-sse -mno-mmx -mgeneral-regs-only \
+	-Wall -Wextra -Wpedantic -Wshadow -Wunused -Wdouble-promotion \
+	-Wformat=2 -Wmissing-prototypes -Wstrict-prototypes \
+	-Wmissing-declarations -Wcast-align -Wcast-qual -Wnull-dereference \
+	-Wconversion -Wsign-conversion \
+	-I$(BIOS) $(CORE_INC)
+
+BIOS_CSRCS := $(addprefix $(BIOS)/,main.c disk.c console.c) \
+	$(CORE_PART) $(CORE_LIBC)
+BIOS_COBJS := $(patsubst %.c,$(BIOS_OBJ)/%.o,$(BIOS_CSRCS))
+
+$(BIOS_OBJ)/%.o: %.c
+	@mkdir -p $(@D)
+	$(CC_HOST) $(BIOS_CFLAGS) -MMD -MF $@.d -c -o $@ $<
+
 BIOS_LDFLAGS := -m64 -nostdlib -static -no-pie -Wl,--build-id=none \
 	-Wl,-T,$(BIOS)/bios.ld
 
@@ -47,14 +73,14 @@ $(BIOS_STAGE1): $(BIOS_OBJ)/$(BIOS)/boot.o $(BIOS)/bios.ld
 	fi
 
 BIOS_STAGE2_OBJS := $(BIOS_OBJ)/$(BIOS)/stage2.o $(BIOS_OBJ)/$(BIOS)/lmode.o \
-	$(BIOS_OBJ)/$(BIOS)/thunk.o
+	$(BIOS_OBJ)/$(BIOS)/thunk.o $(BIOS_COBJS)
 
 $(BIOS_STAGE2): $(BIOS_STAGE2_OBJS) $(BIOS)/bios.ld
 	@mkdir -p $(@D)
 	$(CC_HOST) $(BIOS_LDFLAGS) -Wl,-Ttext,0x7E00 -Wl,-e,stage2_start -o $@.elf $(BIOS_STAGE2_OBJS)
 	objcopy -O binary -j .text $@.elf $@
 	@sz=$$(stat -c %s $@); \
-	max=$$((16 * 512)); \
+	max=$$((32 * 512)); \
 	if [ "$$sz" -gt "$$max" ]; then \
 		echo "ERROR: $@ is $$sz bytes, past the $$max stage 1 reads"; \
 		echo "       raise STAGE2_SECTORS in falcon-bios/src/biosdefs.h"; \
@@ -75,6 +101,21 @@ $(BIOS_IMG): $(BIOS_STAGE1) $(BIOS_STAGE2)
 	dd if=$(BIOS_STAGE2) of=$@ bs=512 seek=1 conv=notrunc status=none
 	@echo "   $@ (stage 1 in the MBR, stage 2 from LBA 1)"
 
-test-bios-img: $(BIOS_IMG)
+# A second disk with a real GPT on it. The boot image is a raw stage 1 and
+# stage 2 with no partition table (Section 5.4: BIOS boot from a GPT stick
+# needs a BIOS boot partition, which is the breaking layout change this route
+# is still waiting on a decision for), so a partition table has to come from
+# somewhere for falcon-core to read one through INT 13h.
+BIOS_GPT_IMG := build/test-bios-gpt.img
+
+$(BIOS_GPT_IMG):
+	@mkdir -p $(@D)
+	dd if=/dev/zero of=$@ bs=1M count=16 status=none
+	sgdisk -Z $@ >/dev/null 2>&1 || true
+	sgdisk -n 1:2048:+4M -t 1:EF00 -c 1:FALCON-ESP $@ >/dev/null
+	sgdisk -n 2:0:+4M -t 2:0700 -c 2:FALCON-ISO $@ >/dev/null
+	@echo "   $@ (GPT, two partitions)"
+
+test-bios-img: $(BIOS_IMG) $(BIOS_GPT_IMG)
 
 .PHONY: bios test-bios-img

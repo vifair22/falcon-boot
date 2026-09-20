@@ -35,7 +35,7 @@
  * keeps it inside 512 bytes. The count is the cap, not the size; the image
  * is padded to it so a short stage 2 still reads cleanly. */
 #define STAGE2_LBA      1
-#define STAGE2_SECTORS  16
+#define STAGE2_SECTORS  32
 
 /* The long-mode page tables, and why they are at fixed addresses.
  *

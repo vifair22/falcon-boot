@@ -20,9 +20,7 @@
 	.globl  putc
 	.globl  puts_rm
 	.extern lmode_enter
-	.extern thunk_bios
-	.extern thunk_vector
-	.extern thunk_regs
+	.extern bios_main
 	.extern lmode_entry
 
 stage2_start:
@@ -56,58 +54,12 @@ stage2_start:
 /* The first code in this project to run in 64-bit mode. It prints, which is
  * the only claim it is making, and halts. */
 stage2_64:
-	movq    $msg_in64, %rsi
-	call    puts64
-
-	/* Read the boot sector back, from 64-bit code, through the BIOS.
-	 * Nothing else proves the thunk: the processor has to go all the way
-	 * down to real mode, let the firmware touch the disk, and come back
-	 * with the answer and its own state intact. The sector read is the
-	 * one this machine booted from, so its last two bytes are known. */
-	movq    $msg_thunk, %rsi
-	call    puts64
-
-	/* The disk address packet, where real mode can reach it. */
-	movb    $16, dap(%rip)
-	movb    $0, dap + 1(%rip)
-	movw    $1, dap + 2(%rip)          /* one sector */
-	movw    $sector, dap + 4(%rip)     /* offset */
-	movw    $0, dap + 6(%rip)          /* segment */
-	movq    $0, dap + 8(%rip)          /* LBA 0: the boot sector */
-
-	movl    $0x4200, thunk_regs(%rip)          /* ah=42 */
-	movzbl  drive(%rip), %eax
-	movl    %eax, thunk_regs + 12(%rip)        /* dl = drive */
-	movl    $dap, thunk_regs + 16(%rip)        /* ds:si -> packet */
-	movw    $0, thunk_regs + 24(%rip)          /* es */
-	movb    $0x13, thunk_vector(%rip)
-	call    thunk_bios
-
-	/* Carry means the BIOS refused. */
-	movw    thunk_regs + 28(%rip), %ax
-	testw   $1, %ax
-	jnz     thunk_failed
-
-	movw    sector + 510(%rip), %ax
-	cmpw    $0xAA55, %ax
-	jne     thunk_bad
-
-	movq    $msg_thunk_ok, %rsi
-	call    puts64
-	jmp     thunk_end
-
-thunk_failed:
-	movq    $msg_thunk_cf, %rsi
-	call    puts64
-	jmp     thunk_end
-thunk_bad:
-	movq    $msg_thunk_sig, %rsi
-	call    puts64
-
-thunk_end:
-	movq    $msg_done, %rsi
-	call    puts64
-halt64:
+	/* Into C, with the drive the BIOS handed us. Everything decidable
+	 * lives up there (Section 5.3), and this is the last thing the
+	 * assembly decides. */
+	movzbl  drive(%rip), %edi
+	call    bios_main
+halt64:halt64:
 	hlt
 	jmp     halt64
 
