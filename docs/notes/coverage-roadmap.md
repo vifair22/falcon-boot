@@ -465,3 +465,28 @@ asks with no rework. If built: an mkstick `--permissive` flag, the mode bound
 to the MOK identity, DESIGN 7.4 rewritten to make it a first-class mode, and
 one spike on whether the override must persist past StartImage for the
 personal-OS UKI's inner LoadImage to succeed (DESIGN 7.4's UKI limitation).
+
+## 9. BIOS mode: costed on demand, not scheduled
+
+Scoped 2026-09-19, written up in `docs/notes/bios-route.md`. A BIOS-capable
+falcon-boot had been given up on because it was believed to mean two
+codebases. It does not: falcon-core's 18,675 lines are EFI-free already, and
+the read callback plus the `fs_ops` vtable are the per-platform boundary the
+idea was reaching for, already drawn and already proven by the host tests,
+the CLI tools and the appliance. What a BIOS build adds is roughly 5,300
+lines in a new `falcon-bios/`, of which 700 to 800 are assembly, plus about
+1,050 lines touched elsewhere.
+
+What it cannot add is any of Section 7's security model. BIOS has no Secure
+Boot, no shim and no Authenticode, so `secboot/`, `bless/`, the trust column
+and the appliance are absent rather than ported, and the personal OS boots
+unverified. It is a different, smaller product sharing a core library.
+
+Not scheduled, for the reason the reach is thin: BIOS-only machines are
+pre-2012 and CSM is gone from new firmware, and nobody has asked. Unlike
+Section 8 it is not purely loader-local, because BIOS boot from a GPT stick
+needs a BIOS boot partition, which is a breaking layout change and a remake
+of every existing stick. The two risks that would decide it are the resident
+`INT 13h` hook (a spike, not an estimate) and the fact that assembly sits
+outside `-fanalyzer`, cppcheck, clang-tidy and the coverage gate, in a
+repository that has none today.
