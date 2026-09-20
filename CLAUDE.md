@@ -211,18 +211,40 @@ the tree, so `#include <fs/exfat.h>` means one file wherever it is written.
   execs the distro's init. `src/hookcore.c` is its host-tested half; the
   loader embeds the stripped binary as a generated C array.
   `tools/run-hook-rig.sh` boots it under QEMU without the loader.
-- `falcon-bios/` the BIOS loader (docs/notes/bios-route.md), opt-in and not
-  built by `all` or exercised by `make test`: the route is undecided because
-  BIOS boot from a GPT stick needs a BIOS boot partition, which is a breaking
-  stick-layout change. `src/boot.S` is the 512-byte MBR stage 1 (COM1 up
-  first, then `INT 13h` AH=42h to read stage 2) and `src/stage2.S` the real-
-  mode second stage; `src/biosdefs.h` is the one place the load addresses are
+- `falcon-bios/` the BIOS loader (docs/notes/bios-route.md). The image is
+  opt-in and not built by `all`, because the route is still undecided: BIOS
+  boot from a GPT stick needs a BIOS boot partition, which is a breaking
+  stick-layout change nobody has taken (bios-route.md Section 7.3). Its
+  host-testable C is in `make test` and in `compile_commands.json` like
+  everything else. `make bios` builds it and `make test-bios-img` makes a
+  disk the rig boots with `falcon-efi/tools/run-qemu.sh --bios`.
+
+  Three stages, because stage 2 is linked where real mode and long mode agree
+  on what an address means and so cannot exceed about 33 KB. `src/boot.S` is
+  the 512-byte MBR; `src/stage2.S`, `src/lmode.S` and `src/thunk.S` reach
+  long mode and keep what has to stay reachable from real mode (the thunk,
+  and the gate at the head of stage 2 that publishes it at a fixed address);
+  `src/load3.c` reads stage 3 in and jumps. Stage 3 links at a megabyte and
+  holds the loader proper. `src/biosdefs.h` is the one place every address is
   written, which is why the assembly is preprocessed gas `.S` rather than
-  NASM. `make bios` builds it, `make test-bios-img` makes a disk the rig
-  boots with `falcon-efi/tools/run-qemu.sh --bios`. It shares falcon-core
-  unchanged: the read callback is the per-platform boundary, and `medium.c`,
-  `fat.c` and `eltorito.c` were built for UEFI and are what a BIOS build
-  would have needed anyway.
+  NASM, and why the assembly rule tracks headers.
+
+  All five of Section 4's boot routes work: `src/linux.c` takes the x86 boot
+  protocol's 64-bit entry (falcon-hook and its extent map appended as the
+  UEFI loader appends them); `src/vcdres.S` is the resident INT 13h handler
+  that serves an ISO as a CD, with `src/vcdcore.c` its host-tested half and
+  `src/vcd.c` its installation; `src/pos.c` unwraps a UKI out of p3 rather
+  than chainloading it, rebuilding sd-stub's credential cpio itself;
+  `src/bsd.c` lays `media/bsdmd.c`'s two edits over the served medium; and
+  `src/win.c` patches boot.wim with core's `wim`, serving the appended tail
+  from extended memory through INT 15h AH=87h. `src/heap.c` is the one
+  allocator, for that tail alone.
+
+  It shares falcon-core unchanged: the read callback is the per-platform
+  boundary. What a BIOS build had to provide that firmware used to is the
+  thing to remember here - `lmode.S` sets CR4.OSFXSR because falcon-core's
+  AES-NI path needs it, and nothing may be written outside the gigabyte
+  `lmode.S` identity maps.
 - `docs/` DESIGN.md (authoritative) and later Manual.md. `tools/` at the root
   holds only what spans the repo: `analyze.sh`, and `coverage/`, the corpus
   harness of docs/notes/coverage-roadmap.md (a pinned ISO manifest, one rig
