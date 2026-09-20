@@ -796,7 +796,7 @@ static void test_family_registry_round_trip(void **state)
 
     (void)state;
     assert_non_null(t);
-    assert_int_equal(count, 10);
+    assert_int_equal(count, 12);
 
     for (i = 0; i < count; i++) {
         /* Every row is reachable by its own id, and reachable as the same

@@ -525,6 +525,8 @@ static const family_slug g_slugs[] = {
     { FAMILY_WINDOWS,       "windows" },
     { FAMILY_GENTOO,        "gentoo" },
     { FAMILY_BSD,           "bsd" },
+    { FAMILY_MANJARO,       "manjaro" },
+    { FAMILY_ANTIX,         "antix" },
 };
 
 const char *sgn_family_slug(family_id id)

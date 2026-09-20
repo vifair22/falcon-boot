@@ -338,13 +338,20 @@ Thirty of the 36 classify to a known family; the six that do not are the two
 ESXi installers and the four Tier B installers that have no fingerprint in
 `family.c` today, which is unchanged from what the firmware path reports.
 
-**11.4 A pre-existing mislabel, surfaced by 11.3 and not introduced by it.**
-Manjaro and MX classify as `memtest`. Neither has a layout fingerprint in
-`family.c`, so both fall through to the last-resort memtest check, and both
+**11.4 A pre-existing mislabel, surfaced by 11.3 and then fixed.** Manjaro
+and MX classified as `memtest`. Neither had a layout fingerprint in
+`family.c`, so both fell through to the last-resort memtest check, and both
 ship `/boot/memtest` - the memtest86+ kernel image a distro bundles beside
 itself rather than as its identity. `family_detect` over the same ISO9660
-tree gives the same answer today, so stage D changes nothing here; it is
-recorded so the label is not read as a regression when the scorecard is
-diffed. Both media pass `off drop` regardless, because the direct path takes
-its cmdline from the ISO's own GRUB configuration rather than from the
-family template.
+tree answered the same way before any of this work, so it was never a stage
+D regression.
+
+Fixed by giving each the row it was missing: `FAMILY_MANJARO`
+(`/manjaro/x86_64`, or `/.miso` beside `/manjaro`) and `FAMILY_ANTIX`
+(`/antiX/linuxfs`), both checked before the memtest last resort. The
+behaviour columns are deliberately unchanged from what memtest gave them,
+because both media already booted direct and blessed in every Secure Boot
+state with no cmdline fragment: `needs_injection` has no consumer in the
+tree at all, and `cmdline_template` is read only by the sign tool, so a
+fragment invented here would change what a blessed UKI carries for no
+measured reason. The label is now right and nothing else moved.

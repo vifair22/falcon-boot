@@ -47,6 +47,8 @@ static const family_id g_linux_families[] = {
     FAMILY_MEMTEST,
     FAMILY_GENTOO,
     FAMILY_BSD,
+    FAMILY_MANJARO,
+    FAMILY_ANTIX,
 };
 
 #define LINUX_N (sizeof(g_linux_families) / sizeof(g_linux_families[0]))

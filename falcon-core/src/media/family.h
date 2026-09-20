@@ -36,6 +36,8 @@ typedef enum {
     FAMILY_WINDOWS,         /* Windows install and WinPE media */
     FAMILY_GENTOO,          /* Gentoo live media; dracut since 2025 */
     FAMILY_BSD,             /* FreeBSD and its derivatives; one loader */
+    FAMILY_MANJARO,         /* archiso-derived, manjaro-tools, own basedir */
+    FAMILY_ANTIX,           /* antiX and MX; own /antiX tree, not live-boot */
 } family_id;
 
 /* Three-valued, because "we have not checked" and "no" lead to different

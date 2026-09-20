@@ -70,6 +70,28 @@ static const family_desc g_families[] = {
       "img_dev=%DEV% img_loop=%ISO% archisobasedir=sysresccd", 0,
       FAMILY_TRI_UNKNOWN, FAMILY_TRI_UNKNOWN },
 
+    /* Another archiso derivative, built by manjaro-tools, whose hook reads
+     * misobasedir rather than archisobasedir and whose tree is /manjaro.
+     *
+     * No cmdline fragment, and that is measured rather than unfinished: a
+     * Manjaro ISO boots direct and blesses in every Secure Boot state with
+     * nothing added, because falcon-hook publishes the medium under its own
+     * label and the stock hook finds it there. The column stays empty until
+     * a medium turns up that needs one. Before this row existed the medium
+     * classified as memtest, on the strength of the /boot/memtest image
+     * Manjaro ships beside itself. */
+    { FAMILY_MANJARO, "Manjaro",
+      (void *)0, 0,
+      FAMILY_TRI_UNKNOWN, FAMILY_TRI_UNKNOWN },
+
+    /* antiX and MX. Neither is live-boot nor casper: the tree is /antiX and
+     * the initrd finds linuxfs in it by searching mounted media, which is
+     * why no fragment is needed here either. Same measurement and same
+     * history as Manjaro above, including the memtest misread. */
+    { FAMILY_ANTIX, "antiX/MX",
+      (void *)0, 0,
+      FAMILY_TRI_UNKNOWN, FAMILY_TRI_UNKNOWN },
+
     /* memtest is a bare EFI binary: it needs no cmdline, no initramfs and no
      * backing media once loaded, which is what the three columns below say.
      * They do NOT say it needs no blessing. What the platform verifies for a
@@ -328,6 +350,18 @@ const family_desc *family_detect(const family_probe *p)
      * extra (NixOS ships /boot/memtest.bin beside its kernel). Its live
      * root says it is not a memtest medium; it stays unknown, which the
      * sign tool and the loader boot from its own configuration. */
+    /* Both of these are checked before the memtest last resort below, and
+     * that ordering is the whole point of the rows: each ships
+     * /boot/memtest, the memtest86+ kernel image a distro bundles beside
+     * itself, and without a fingerprint of their own they matched it. */
+    if (probe_exists(p, "/manjaro/x86_64") ||
+        (probe_exists(p, "/.miso") && probe_exists(p, "/manjaro")))
+        return family_by_id(FAMILY_MANJARO);
+
+    if (probe_exists(p, "/antiX/linuxfs") ||
+        (probe_exists(p, "/antiX") && probe_exists(p, "/antiX/vmlinuz")))
+        return family_by_id(FAMILY_ANTIX);
+
     if (probe_exists(p, "/nix-store.squashfs"))
         return family_by_id(FAMILY_UNKNOWN);
 
