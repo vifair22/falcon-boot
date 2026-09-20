@@ -482,6 +482,14 @@ Order of the appliance work, each shippable on its own:
    findings, 357 of them in `tests/` and 131 of them clang parse errors
    rather than findings. The mount is `/work` now.
 
+6. **How many cases to run at once.** Settled by measurement rather than
+   preference: keep `--jobs` low. At 10 a Kali blessed case panicked in the
+   guest with "Attempted to kill init", then passed when run on its own and
+   passed in a different Secure Boot state off the same stick. Disk
+   contention starves a guest into a failure that reads exactly like a
+   product bug, and one flaky cell costs more to chase than the whole run
+   saves. `run-corpus.sh` says so at the option.
+
 ## 8. Enforcement-off (permissive) mode: build on demand, not scheduled
 
 Discussed and set aside 2026-09-18. An install-time mode where the loader,

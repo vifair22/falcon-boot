@@ -21,7 +21,14 @@
 #   --states "off ms own"     which Secure Boot states (default all three)
 #   --routes "dnd chain blessed"  which routes (default all three)
 #   --jobs N                  cases in flight at once (default 3; each takes
-#                             FALCON_CASE_MEM, 4 GiB by default)
+#                             FALCON_CASE_MEM, 4 GiB by default). KEEP IT
+#                             LOW. Measured 2026-09-20: at --jobs 10 a Kali
+#                             blessed case panicked in the guest with
+#                             "Attempted to kill init", passed on its own,
+#                             and passed in another Secure Boot state off the
+#                             same stick. Disk contention starves a guest
+#                             into failures that read as product bugs, and a
+#                             flaky cell is worse than a slow run.
 #   --timeout S               seconds from the keypress to a verdict (300)
 #   --force                   rerun cases that already have a result
 #   --no-scorecard            leave docs/coverage.md alone
