@@ -78,6 +78,81 @@
 #define SEL_CODE16      0x20
 #define SEL_DATA16      0x28
 
+/* ---- the gate ----
+ *
+ * The fixed addresses stage 3 reaches the BIOS through. Stage 3 is linked
+ * separately and above a megabyte; it shares no symbol with the assembly and
+ * cannot, because the thunk drops to real mode and real mode has twenty
+ * address bits. So the thunk stays in stage 2 and stage 2 publishes a way in
+ * at an address both halves can write down.
+ *
+ * The head of stage 2 is that address. It is fixed already - stage 1 loads
+ * stage 2 at STAGE2_LOAD and jumps there - so the gate costs nothing to
+ * place, and the entry stage 1 jumps to is a jump over it. Anywhere else
+ * would be a second address to keep true, and the one at 0x7400 that this
+ * was first written at was worse than that: below stage 2's load address, so
+ * it could not be in stage 2's image at all.
+ */
+#define GATE_ADDR       STAGE2_LOAD
+#define GATE_THUNK      (GATE_ADDR + 0x08)   /* jmp thunk_bios */
+#define GATE_REGS       (GATE_ADDR + 0x10)   /* the register block */
+#define GATE_VECTOR     (GATE_ADDR + 0x30)   /* the interrupt to raise */
+#define GATE_DRIVE      (GATE_ADDR + 0x31)   /* the drive we booted from */
+
+/* Where a structure the BIOS itself reads or writes has to live.
+ *
+ * The bounce buffer covers data, but a disk address packet and a drive
+ * parameter block are addressed the same way and the same twenty bits apply
+ * to them. A static in stage 3 is above a megabyte, so real mode truncates
+ * its address to sixteen bits and the BIOS reads whatever is at the result.
+ * That failure is quiet: INT 13h returns carry, and the loader reports a
+ * disk that will not read.
+ *
+ * In the low 64 KB, not merely below a megabyte, because the thunk hands the
+ * BIOS a pointer as DS:SI with DS zero: anything above 0xFFFF is truncated
+ * to its bottom sixteen bits and the BIOS reads a different address entirely.
+ * 0x1000 is above the interrupt vector table and the BIOS data area and
+ * below everything this loader places. */
+#define BIOS_SCRATCH    0x00001000
+#define DAP_ADDR        (BIOS_SCRATCH + 0x00)   /* 16 bytes */
+#define DRIVEPARM_ADDR  (BIOS_SCRATCH + 0x40)   /* 30 bytes */
+#define E820_ADDR       (BIOS_SCRATCH + 0x80)   /* 24 bytes, one entry */
+
+/* ---- where a Linux payload goes (bios-route.md Section 4.2) ----
+ *
+ * The zero page and the command line at the addresses every BIOS loader has
+ * used for them since LILO, which is the useful property: a kernel's
+ * decompressor is known not to land on them. The kernel itself at 16 MB,
+ * which is above everything this loader occupies and 2 MB aligned, as a
+ * relocatable kernel's preferred address must be. The initrd is not fixed:
+ * it is placed from the memory map, as high as the kernel will accept it,
+ * because it is the one object whose size is not known until it is read. */
+#define ZEROPAGE_ADDR   0x00010000
+#define CMDLINE_ADDR    0x00020000
+#define KERNEL_ADDR     0x01000000
+
+#define STAGE3_LOAD     0x100000
+#define STAGE3_LBA      (STAGE2_LBA + STAGE2_SECTORS)
+/* 512 KB, which is far more than the loader needs and costs only the sectors
+ * actually read: stage 2 reads the size out of the header stage 3 starts
+ * with rather than reading the cap. */
+#define STAGE3_MAX_SECTORS 1024
+
+/* Stage 3 begins with a header rather than code, so stage 2 can read one
+ * sector, learn how long the rest is, and read exactly that. The alternative
+ * is a build step that patches a sector count into stage 2, which is a second
+ * place the size is written and a second place it can be wrong. */
+#define STAGE3_MAGIC    0x33534F42   /* "BOS3" */
+#define STAGE3_HDR      16           /* magic, two lengths, room to grow */
+
+/* How far above STAGE3_LOAD stage 3 may occupy, image and .bss together.
+ * The stack is above it and nothing else is below the stack. */
+#define STAGE3_MAX_MEM  (STAGE3_STACK - STAGE3_LOAD - 0x10000)
+
+/* Stage 3's stack. Above the image and below anything a payload is loaded
+ * into; the identity map covers a gigabyte, so this is an ordinary address. */
+#define STAGE3_STACK    0x00300000
+
 /* COM1 and 115200 8N1. The divisor is 115200 / 115200 = 1.
  *
  * Serial rather than INT 10h for anything a test reads: the rig captures it

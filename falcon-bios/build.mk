@@ -25,6 +25,16 @@
 BIOS := falcon-bios/src
 BIOS_OBJ := $(OBJ)/bios
 
+# The layout numbers the rules need, read out of biosdefs.h rather than
+# written a second time here. A stage placed at an LBA the header does not
+# name is the one failure in this file that would look like a hardware fault.
+BIOS_DEF = $(shell sed -n 's/^\#define[ \t]*$(1)[ \t]*\([0-9]*\).*/\1/p' \
+	$(BIOS)/biosdefs.h | head -1)
+STAGE2_SECTORS_CHECK := $(call BIOS_DEF,STAGE2_SECTORS)
+STAGE3_MAX_SECTORS_CHECK := $(call BIOS_DEF,STAGE3_MAX_SECTORS)
+STAGE3_LBA_CHECK := $(shell echo $$(( $(call BIOS_DEF,STAGE2_LBA) + \
+	$(call BIOS_DEF,STAGE2_SECTORS) )))
+
 BIOS_ASFLAGS := -m64 -c -Wa,--fatal-warnings -I$(BIOS) $(CORE_INC)
 
 # The C half. Freestanding and 64-bit, with the repo warning set.
@@ -44,16 +54,29 @@ BIOS_CFLAGS := -std=c11 -O2 -ffreestanding -fno-stack-protector \
 	-Wconversion -Wsign-conversion \
 	-I$(BIOS) $(CORE_INC)
 
-BIOS_CSRCS := $(addprefix $(BIOS)/,main.c disk.c console.c) \
-	$(CORE_PART) $(CORE)/fs/exfat.c $(CORE_LIBC)
-BIOS_COBJS := $(patsubst %.c,$(BIOS_OBJ)/%.o,$(BIOS_CSRCS))
+# Two sets, because there are two links. console.c and disk.c are in both:
+# they are a few hundred bytes each, they reach the BIOS through the gate at
+# a fixed address rather than through a symbol, and duplicating them is
+# cheaper than a call gate for every line of output.
+BIOS_S2_CSRCS := $(addprefix $(BIOS)/,load3.c disk.c console.c) $(CORE_LIBC)
+# Stage 3 takes the filesystem registry and the whole media layer, which is
+# what the third stage was for: under stage 2's 33 KB ceiling this had to be
+# one driver called by name.
+BIOS_S3_CSRCS := $(addprefix $(BIOS)/,main.c scan.c e820.c disk.c console.c) \
+	$(CORE_PART) $(CORE_FS) $(CORE_MEDIA) $(CORE_PE) $(CORE_LIBC)
+BIOS_S2_COBJS := $(patsubst %.c,$(BIOS_OBJ)/%.o,$(BIOS_S2_CSRCS))
+BIOS_S3_COBJS := $(patsubst %.c,$(BIOS_OBJ)/%.o,$(BIOS_S3_CSRCS))
+BIOS_CSRCS := $(sort $(BIOS_S2_CSRCS) $(BIOS_S3_CSRCS))
 
 $(BIOS_OBJ)/%.o: %.c
 	@mkdir -p $(@D)
 	$(CC_HOST) $(BIOS_CFLAGS) -MMD -MF $@.d -c -o $@ $<
 
+# --no-warn-rwx-segments: the output is a flat image loaded by a jump, with
+# one segment holding code and data together. There is nothing to separate
+# them into and nothing that would enforce it if there were.
 BIOS_LDFLAGS := -m64 -nostdlib -static -no-pie -Wl,--build-id=none \
-	-Wl,-T,$(BIOS)/bios.ld
+	-Wl,--no-warn-rwx-segments -Wl,-T,$(BIOS)/bios.ld
 
 $(BIOS_OBJ)/%.o: %.S
 	@mkdir -p $(@D)
@@ -61,6 +84,7 @@ $(BIOS_OBJ)/%.o: %.S
 
 BIOS_STAGE1 := $(BIN)/falcon-bios-stage1.bin
 BIOS_STAGE2 := $(BIN)/falcon-bios-stage2.bin
+BIOS_STAGE3 := $(BIN)/falcon-bios-stage3.bin
 
 $(BIOS_STAGE1): $(BIOS_OBJ)/$(BIOS)/boot.o $(BIOS)/bios.ld
 	@mkdir -p $(@D)
@@ -73,33 +97,77 @@ $(BIOS_STAGE1): $(BIOS_OBJ)/$(BIOS)/boot.o $(BIOS)/bios.ld
 	fi
 
 BIOS_STAGE2_OBJS := $(BIOS_OBJ)/$(BIOS)/stage2.o $(BIOS_OBJ)/$(BIOS)/lmode.o \
-	$(BIOS_OBJ)/$(BIOS)/thunk.o $(BIOS_COBJS)
+	$(BIOS_OBJ)/$(BIOS)/thunk.o $(BIOS_S2_COBJS)
 
 $(BIOS_STAGE2): $(BIOS_STAGE2_OBJS) $(BIOS)/bios.ld
 	@mkdir -p $(@D)
 	$(CC_HOST) $(BIOS_LDFLAGS) -Wl,-Ttext,0x7E00 -Wl,-e,stage2_start -o $@.elf $(BIOS_STAGE2_OBJS)
 	objcopy -O binary -j .text $@.elf $@
 	@sz=$$(stat -c %s $@); \
-	max=$$((64 * 512)); \
+	max=$$(($(STAGE2_SECTORS_CHECK) * 512)); \
 	if [ "$$sz" -gt "$$max" ]; then \
 		echo "ERROR: $@ is $$sz bytes, past the $$max stage 1 reads"; \
 		echo "       raise STAGE2_SECTORS in falcon-bios/src/biosdefs.h"; \
 		exit 1; \
 	fi
+	@# Stage 2 has no loader: stage 1 reads it off the disk and jumps to
+	@# it, so nothing clears its .bss. Empty is the only safe size, and a
+	@# static added to a stage 2 source is how it would stop being empty.
+	@bss=$$(size -A $@.elf | awk '$$1 == ".bss" { print $$2 }'); \
+	if [ "$${bss:-0}" -ne 0 ]; then \
+		echo "ERROR: stage 2 has a $$bss byte .bss, and nothing zeroes it"; \
+		echo "       give the static an initialiser, or move it to stage 3"; \
+		exit 1; \
+	fi
+	@# The gate has to land where biosdefs.h says it does, because stage 3
+	@# reaches it by address and shares no symbol with it. A section that
+	@# moved would be stage 3 calling into whatever is at 0x7400 instead.
+	@for pair in gate_entry:7e08 thunk_regs:7e10 thunk_vector:7e30 \
+	            gate_drive:7e31; do \
+		sym=$${pair%%:*}; want=$${pair##*:}; \
+		got=$$(nm $@.elf | awk -v s="$$sym" '$$3 == s { print $$1 }'); \
+		if [ "$$got" != "000000000000$$want" ]; then \
+			echo "ERROR: $$sym is at $$got, not $$want"; \
+			echo "       falcon-bios/src/biosdefs.h GATE_* and the"; \
+			echo "       gate block in stage2.S disagree"; \
+			exit 1; \
+		fi; \
+	done
 
-bios: $(BIOS_STAGE1) $(BIOS_STAGE2)
+# Stage 3: the loader proper, linked at a megabyte where nothing constrains
+# its size. It is read in by stage 2 after paging is on and never runs below
+# a megabyte, so it holds no real-mode code at all and reaches the BIOS
+# through the gate.
+BIOS_STAGE3_OBJS := $(BIOS_OBJ)/$(BIOS)/stage3.o $(BIOS_S3_COBJS)
+
+$(BIOS_STAGE3): $(BIOS_STAGE3_OBJS) $(BIOS)/bios.ld
+	@mkdir -p $(@D)
+	$(CC_HOST) $(BIOS_LDFLAGS) -Wl,-Ttext,0x100000 -Wl,-e,stage3_entry \
+		-o $@.elf $(BIOS_STAGE3_OBJS)
+	objcopy -O binary -j .text $@.elf $@
+	@sz=$$(stat -c %s $@); \
+	max=$$(($(STAGE3_MAX_SECTORS_CHECK) * 512)); \
+	if [ "$$sz" -gt "$$max" ]; then \
+		echo "ERROR: $@ is $$sz bytes, past the $$max stage 2 will read"; \
+		echo "       raise STAGE3_MAX_SECTORS in falcon-bios/src/biosdefs.h"; \
+		exit 1; \
+	fi
+
+bios: $(BIOS_STAGE1) $(BIOS_STAGE2) $(BIOS_STAGE3)
 
 # A disk image the rig boots: stage 1 in the MBR, stage 2 in the sectors
 # stage 1 reads. Nothing else yet, which is why it is a test artifact and not
 # something mkstick produces.
 BIOS_IMG := build/test-bios.img
 
-$(BIOS_IMG): $(BIOS_STAGE1) $(BIOS_STAGE2)
+$(BIOS_IMG): $(BIOS_STAGE1) $(BIOS_STAGE2) $(BIOS_STAGE3)
 	@mkdir -p $(@D)
 	dd if=/dev/zero of=$@ bs=1M count=4 status=none
 	dd if=$(BIOS_STAGE1) of=$@ conv=notrunc status=none
 	dd if=$(BIOS_STAGE2) of=$@ bs=512 seek=1 conv=notrunc status=none
-	@echo "   $@ (stage 1 in the MBR, stage 2 from LBA 1)"
+	dd if=$(BIOS_STAGE3) of=$@ bs=512 seek=$(STAGE3_LBA_CHECK) \
+		conv=notrunc status=none
+	@echo "   $@ (stage 1 in the MBR, stage 2 from LBA 1, stage 3 from LBA $(STAGE3_LBA_CHECK))"
 
 # A second disk with a real GPT on it. The boot image is a raw stage 1 and
 # stage 2 with no partition table (Section 5.4: BIOS boot from a GPT stick

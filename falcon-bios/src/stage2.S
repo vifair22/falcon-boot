@@ -1,15 +1,18 @@
-/* falcon-bios stage 2, first slice (docs/notes/bios-route.md Section 6).
+/* falcon-bios stage 2 (docs/notes/bios-route.md Section 6).
  *
  * Entered by stage 1 in 16-bit real mode at STAGE2_LOAD with DL holding the
- * drive the machine booted from. This slice exists to prove the chain: the
- * toolchain (gas .S, the linker script, the `bios` build flavour), the
- * handoff from stage 1, and the drive number surviving it.
+ * drive the machine booted from. Its whole job is to reach long mode and read
+ * stage 3 in: A20 and the mode switch (lmode.S), the real-mode thunk
+ * (thunk.S), and then C, which reads stage 3 off the same disk and jumps to
+ * it (load3.c).
  *
- * What goes here next, in the order Section 6 stages it: A20, the mode
- * switch, the real-mode thunk, INT 13h/10h/16h behind falcon-core's read
- * callback, and then the menu. Everything decidable moves to C as soon as
- * there is a C environment to decide it in, which is Section 5.3's rule and
- * the reason this file is not allowed to grow.
+ * What stays resident of stage 2 afterwards is the thunk and the gate at the
+ * head of this file, because those are the parts that have to be reachable
+ * from real mode and stage 3 is not.
+ *
+ * Everything decidable moves to C as soon as there is a C environment to
+ * decide it in, which is Section 5.3's rule and the reason this file is not
+ * allowed to grow.
  */
 
 #include "biosdefs.h"
@@ -17,13 +20,58 @@
 	.code16
 	.section .text.stage2, "ax"
 	.globl  stage2_start
+	.globl  gate_entry
+	.globl  thunk_regs
+	.globl  thunk_vector
+	.globl  gate_drive
 	.globl  putc
 	.globl  puts_rm
 	.extern lmode_enter
-	.extern bios_main
+	.extern stage3_load
 	.extern lmode_entry
 
+/* ---- the gate (biosdefs.h, GATE_*) ----
+ *
+ * Stage 1 jumps to STAGE2_LOAD, so the head of stage 2 is an address stage 3
+ * can be told about without anyone keeping a second number true. What is at
+ * it is a jump over the gate; what follows is the gate.
+ *
+ * .org gives each field the offset biosdefs.h says it has, and the build
+ * checks the linked addresses against the header, so the two sides agree by
+ * construction. A field that moved without the header moving would be stage 3
+ * calling into the middle of the register block.
+ *
+ * The register block lives here rather than with the thunk that uses it for
+ * the same reason the gate does: it has to be at an address that can be
+ * written down, and it has to be below a megabyte, because real mode is what
+ * fills it in. */
 stage2_start:
+	jmp     stage2_begin
+
+	.org    0x08
+	/* .code64, and it matters: the only caller is stage 3, in long mode.
+	 * Assembled in the .code16 this file opens with, gas emits a 16-bit
+	 * relative jump, and a processor in long mode reads the same opcode as
+	 * a 32-bit one - taking two bytes of .org padding as the top half of
+	 * the displacement and jumping somewhere that is not this program. It
+	 * cost a reboot loop with no output past the first line of stage 3. */
+	.code64
+gate_entry:
+	jmp     thunk_bios           /* GATE_THUNK */
+	.code16
+
+	.org    0x10
+thunk_regs:
+	.space  32                   /* GATE_REGS */
+
+	.org    0x30
+thunk_vector:
+	.byte   0                    /* GATE_VECTOR */
+gate_drive:
+	.byte   0                    /* GATE_DRIVE */
+
+	.org    0x40
+stage2_begin:
 	movb    %dl, drive
 
 	movw    $msg_hello, %si
@@ -56,9 +104,15 @@ stage2_start:
 stage2_64:
 	/* Into C, with the drive the BIOS handed us. Everything decidable
 	 * lives up there (Section 5.3), and this is the last thing the
-	 * assembly decides. */
+	 * assembly decides.
+	 *
+	 * What C does with it is read stage 3 off the same disk and jump to
+	 * it. Stage 2 stops here: what stays resident of it is the thunk and
+	 * the gate, because those are the parts that have to be reachable
+	 * from real mode. */
+	movq    $0x7C00, %rsp
 	movzbl  drive(%rip), %edi
-	call    bios_main
+	call    stage3_load
 halt64:halt64:
 	hlt
 	jmp     halt64

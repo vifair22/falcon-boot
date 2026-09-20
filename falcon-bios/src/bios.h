@@ -19,6 +19,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "biosdefs.h"
+
 /* ---- the thunk (falcon-bios/src/thunk.S) ----
  *
  * The register block IS the interface, because nothing else survives the
@@ -41,11 +43,18 @@ typedef struct {
     uint16_t pad1;
 } bios_regs;
 
-extern bios_regs thunk_regs;
-extern uint8_t   thunk_vector;
+/* Reached at the fixed addresses biosdefs.h names rather than by symbol,
+ * because stage 3 is linked separately and above a megabyte, and the thunk
+ * cannot be linked into it: real mode has twenty address bits. Both stages
+ * therefore say the same thing here and neither needs to know which it is. */
+#define thunk_regs   (*(volatile bios_regs *)(uintptr_t)GATE_REGS)
+#define thunk_vector (*(volatile uint8_t *)(uintptr_t)GATE_VECTOR)
+#define bios_boot_drive (*(volatile uint8_t *)(uintptr_t)GATE_DRIVE)
 
-/* Raises thunk_vector with thunk_regs, and writes the result back into it. */
-void thunk_bios(void);
+static inline void thunk_bios(void)
+{
+    ((void (*)(void))(uintptr_t)GATE_THUNK)();
+}
 
 #define BIOS_FLAG_CARRY 0x0001u
 

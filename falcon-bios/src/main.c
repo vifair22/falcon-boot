@@ -9,7 +9,10 @@
  * callback whose other end is INT 13h, with not one line of falcon-core
  * changed to allow it.
  *
- * The menu, the ISO scan and the boot paths come next and are mostly already
+ * It runs as stage 3, read in above a megabyte by stage 2 and reaching the
+ * BIOS back down through the gate; nothing here is size-constrained.
+ *
+ * The ISO scan and the boot paths come next and are mostly already
  * written: `medium.c` assembles a medium's volumes over the same callback,
  * `bootcfg.c` reads an ISO's own boot configuration, and falcon-hook ports
  * untouched because it runs in the initramfs and has no opinion about
@@ -18,8 +21,11 @@
 
 #include <bios.h>
 
+#include <scan.h>
+#include <e820.h>
+
 #include <part/part.h>
-#include <fs/exfat.h>
+#include <fs/fs.h>
 #include <lib/string.h>
 
 /* The drive the BIOS booted from, and the second one the rig attaches. Both
@@ -43,18 +49,23 @@ typedef struct {
     uint64_t   base;
 } part_src;
 
-static part_src  g_p2_src;
-static exfat_vol g_p2;
-static exfat_dir g_p2_dir;
+static part_src g_p2_src;
+static fs_vol   g_p2;
+static fs_dir   g_p2_dir;
+static int      g_p2_mounted;
 
 /* What the menu draws. The names are kept rather than re-read, because
  * re-walking the directory to redraw a row would mean a thunk call per
  * sector per keystroke. */
 #define MENU_MAX 32u
 
+/* The dirent is kept whole rather than just the name, because opening the
+ * file wants it back and re-walking the directory to find it again would be
+ * a thunk call per sector per selection. */
 typedef struct {
-    uint16_t name[64];
-    uint64_t size;
+    uint16_t  name[64];
+    uint64_t  size;
+    fs_dirent ent;
 } menu_row;
 
 static menu_row g_rows[MENU_MAX];
@@ -176,11 +187,17 @@ static void menu_run(void)
         else if (key == BIOS_KEY_DOWN && selected + 1u < g_row_count)
             selected++;
         else if (key == BIOS_KEY_ENTER && g_row_count > 0) {
-            bios_screen_puts("\n  selected: ");
+            bios_screen_puts("\n  ");
             screen_name(g_rows[selected].name);
-            bios_screen_puts("\n  booting a payload is the next stage of the"
-                             " route; nothing to do yet\n");
-            return;
+            bios_screen_puts("\n");
+            if (!g_p2_mounted) {
+                bios_screen_puts("  p2 is not mounted\n");
+                return;
+            }
+            (void)scan_iso(&g_p2, &g_rows[selected].ent);
+            bios_screen_puts("\n  loading a kernel is the next stage of the"
+                             " route; press a key\n");
+            (void)bios_getkey();
         }
     }
 }
@@ -277,34 +294,41 @@ static void show_partitions(bios_disk *d)
 
 /* Mount the falcon ISO partition and list what the menu would show.
  *
- * exfat.c is called directly rather than through the filesystem registry,
- * because linking fs.c pulls in every driver it knows and stage 2 has 32 KB.
- * A real BIOS loader loads a third stage above a megabyte and uses the
- * registry like everything else; this is the same driver either way. */
+ * Through the registry, which identifies the filesystem rather than being
+ * told it: p2 is exFAT today by DESIGN Section 3, and nothing here says so.
+ * That was not possible in stage 2, where linking fs.c meant linking every
+ * driver it knows and there were 33 KB for all of it. */
 static void scan_iso_partition(bios_disk *d, const gpt_part *p)
 {
-    exfat_dirent e;
+    const fs_ops *ops;
+    fs_dirent e;
     unsigned shown = 0;
     int rc;
 
     g_p2_src.disk = d;
     g_p2_src.base = p->start_lba * (uint64_t)d->sector_size;
 
-    if (exfat_mount(&g_p2, part_read, &g_p2_src) != EXFAT_OK) {
-        bios_puts("falcon-bios:   p2 did not mount as exFAT\n");
+    ops = fs_identify(part_read, &g_p2_src, FS_HINT_NONE);
+    if (ops == (const fs_ops *)0) {
+        bios_puts("falcon-bios:   no driver claimed p2\n");
         return;
     }
-    bios_puts("falcon-bios:   p2 mounted, ");
-    bios_put_dec(g_p2.cluster_count);
-    bios_puts(" clusters of ");
-    bios_put_dec((uint64_t)1u << (g_p2.bps_shift + g_p2.spc_shift));
-    bios_puts(" bytes\n");
+    if (fs_mount(&g_p2, ops, part_read, &g_p2_src) != FS_OK) {
+        bios_puts("falcon-bios:   p2 would not mount\n");
+        return;
+    }
+    g_p2_mounted = 1;
+    bios_puts("falcon-bios:   p2 mounted as ");
+    bios_puts(fs_vol_name(&g_p2));
+    bios_puts(", label ");
+    bios_puts(fs_vol_label(&g_p2));
+    bios_puts("\n");
 
-    if (exfat_dir_open_root(&g_p2, &g_p2_dir) != EXFAT_OK) {
+    if (fs_dir_open_root(&g_p2, &g_p2_dir) != FS_OK) {
         bios_puts("falcon-bios:   p2 root unreadable\n");
         return;
     }
-    while ((rc = exfat_dir_next(&g_p2_dir, &e)) == 1) {
+    while ((rc = fs_dir_next(&g_p2_dir, &e)) == 1) {
         if (e.is_dir || !is_image(e.name))
             continue;
         bios_puts("falcon-bios:     ");
@@ -320,6 +344,7 @@ static void scan_iso_partition(bios_disk *d, const gpt_part *p)
                 g_rows[g_row_count].name[k] = e.name[k];
             g_rows[g_row_count].name[k] = 0;
             g_rows[g_row_count].size = e.size;
+            g_rows[g_row_count].ent = e;
             g_row_count++;
         }
         shown++;
@@ -331,9 +356,35 @@ static void scan_iso_partition(bios_disk *d, const gpt_part *p)
     bios_puts(" bootable image(s) on p2\n");
 }
 
+/* The memory map, which the loader needs to place an initrd and the kernel
+ * needs because by the time it runs the call that answers is gone. */
+static void show_memory(void)
+{
+    unsigned n = e820_read();
+    unsigned i;
+    uint64_t usable = 0;
+
+    if (n == 0) {
+        bios_puts("falcon-bios: no E820 memory map\n");
+        return;
+    }
+    for (i = 0; i < n; i++) {
+        const e820_entry *e = e820_at(i);
+
+        if (e != (const e820_entry *)0 && e->type == E820_USABLE)
+            usable += e->len;
+    }
+    bios_puts("falcon-bios: ");
+    bios_put_dec(n);
+    bios_puts(" E820 entries, ");
+    bios_put_dec(usable / 1048576u);
+    bios_puts(" MiB usable\n");
+}
+
 void bios_main(uint8_t drive)
 {
     bios_puts("falcon-bios: C is running in long mode\n");
+    show_memory();
 
     if (!bios_disk_probe(&g_boot, drive))
         bios_puts("falcon-bios: the boot drive did not answer AH=48h\n");

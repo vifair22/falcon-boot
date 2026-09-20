@@ -26,19 +26,34 @@ SECTIONS
     .text : {
         *(.text.stage1)
         *(.text.stage2)
+        *(.text.stage3hdr)
         *(.text*)
         *(.rodata*)
         *(.data*)
 
-        /* .bss goes in the image, zero-filled, rather than being left for a
-         * runtime to clear. There is no runtime: stage 2 is read off the
-         * disk by stage 1 and jumped to. Putting it inside this output
-         * section rather than its own is what makes it PROGBITS, so the
-         * zeros are in the file and `objcopy -j .text` carries them. The
-         * cost is disk sectors, which STAGE2_SECTORS bounds and the build
-         * checks. */
+        /* The end of what objcopy carries, and what stage 3's header
+         * declares its file length to be. */
+        . = ALIGN(8);
+        stage3_image_end = .;
+    }
+
+    /* .bss is NOT in the image.
+     *
+     * It was, at first, because there is no runtime to clear it: stage 1
+     * reads stage 2 off the disk and jumps to it. But stage 3 has its own
+     * loader - stage 2 - and megabytes of buffers it has no reason to carry
+     * on disk, so stage 3's header declares a memory size as well as a file
+     * size and stage 2 zeroes the difference.
+     *
+     * Stage 1 does no such thing, so stage 2 must have an empty .bss. The
+     * build checks that rather than trusting it: a static added to a stage 2
+     * source would otherwise start life holding whatever the BIOS left at
+     * that address. */
+    .bss (NOLOAD) : {
         *(.bss*)
         *(COMMON)
+        . = ALIGN(8);
+        stage3_bss_end = .;
     }
 
     /* Nothing may reach the output but the one loadable section. A real-mode

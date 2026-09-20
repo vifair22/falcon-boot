@@ -29,23 +29,27 @@
 #define BOUNCE_ADDR   0x90000u
 #define BOUNCE_BYTES  0x8000u   /* 32 KiB */
 
-/* The disk address packet INT 13h AH=42h reads. It has to be somewhere real
- * mode can reach, which a static in stage 2 is. */
-static struct {
+/* The disk address packet INT 13h AH=42h reads, at the fixed low address
+ * biosdefs.h names rather than as a static.
+ *
+ * A static was reachable while this file only ever ran in stage 2, which is
+ * below a megabyte; the same file links into stage 3, which is not, and real
+ * mode truncated the address to sixteen bits and handed the BIOS whatever
+ * was there. Every read returned carry. */
+typedef struct {
     uint8_t  size;
     uint8_t  reserved;
     uint16_t sectors;
     uint16_t offset;
     uint16_t segment;
     uint64_t lba;
-} g_dap;
+} bios_dap;
 
-/* INT 13h AH=48h, the drive parameters. Same reachability rule. */
-/* Not volatile. The BIOS writes it, but it does so inside thunk_bios,
- * which is an external call the compiler already has to assume clobbers
- * memory. volatile would only cost a cast qualifier the warning set
- * rejects. */
-static struct {
+/* INT 13h AH=48h, the drive parameters. Same reachability rule.
+ *
+ * Not volatile. The BIOS writes it, but it does so inside thunk_bios, which
+ * is a call the compiler already has to assume clobbers memory. */
+typedef struct {
     uint16_t size;
     uint16_t flags;
     uint32_t cylinders;
@@ -53,7 +57,10 @@ static struct {
     uint32_t sectors_per_track;
     uint64_t total_sectors;
     uint16_t bytes_per_sector;
-} g_params;
+} bios_driveparm;
+
+#define g_dap    (*(bios_dap *)(uintptr_t)DAP_ADDR)
+#define g_params (*(bios_driveparm *)(uintptr_t)DRIVEPARM_ADDR)
 
 static int read_sectors(const bios_disk *d, uint64_t lba, uint16_t count)
 {
@@ -66,7 +73,7 @@ static int read_sectors(const bios_disk *d, uint64_t lba, uint16_t count)
 
     thunk_regs.eax = 0x4200u;              /* AH=42h, extended read */
     thunk_regs.edx = d->drive;
-    thunk_regs.esi = (uint32_t)(uintptr_t)&g_dap;
+    thunk_regs.esi = (uint32_t)DAP_ADDR;
     thunk_regs.es = 0;
     thunk_vector = 0x13;
     thunk_bios();
@@ -128,7 +135,7 @@ int bios_disk_probe(bios_disk *d, uint8_t drive)
 
     thunk_regs.eax = 0x4800u;              /* AH=48h, drive parameters */
     thunk_regs.edx = drive;
-    thunk_regs.esi = (uint32_t)(uintptr_t)&g_params;
+    thunk_regs.esi = (uint32_t)DRIVEPARM_ADDR;
     thunk_regs.es = 0;
     thunk_vector = 0x13;
     thunk_bios();

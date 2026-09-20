@@ -5,8 +5,8 @@ BIOS-capable falcon-boot actually cost", written down because the answer that
 had been assumed is wrong and the right answer is cheap enough to be asked
 again.
 
-Since then a first slice exists (2026-09-20): `falcon-bios/` with stage 1,
-stage 2, the switch to long mode and the real-mode thunk, plus
+Since then a first slice exists (2026-09-20): `falcon-bios/` with three
+stages, the switch to long mode, the real-mode thunk and a menu, plus
 `run-qemu.sh --bios`. It boots under SeaBIOS and reads its own boot sector
 back through the BIOS from 64-bit code:
 
@@ -31,7 +31,8 @@ callback whose other end is INT 13h, identifying p2 and p3 by DESIGN Section
 
 Three of Section 5.3's five assembly jobs are done: the MBR, the mode switch
 and the thunk. The thunk is the one that mattered most, because everything
-above it is C. Section 6a records what the ISO reader work had already built.
+above it is C. Section 6a records what the ISO reader work had already built,
+and Section 6b the third stage that took the size ceiling off.
 
 Reproduce it with:
 
@@ -392,6 +393,64 @@ Section 7.2's risk is unchanged and is now the dominant one: the assembly is
 outside every analyzer the project gates on, and the repository still has
 none. Section 7.3, the breaking stick-layout change, is still the decision
 that has to be taken by a person rather than measured.
+
+## 6b. The third stage (2026-09-20)
+
+Stage 2 reached 28.3 KB of a ceiling it does not get to choose. Linked at
+`STAGE2_LOAD` (0x7E00), it has to be addressable in both real mode and long
+mode, which means it has to fit below the end of the first 64 KB segment:
+about 33 KB, with the menu and one filesystem driver in it and the ISO reader
+and a boot path still to come. Raising `STAGE2_SECTORS` does not help. The
+answer the note predicted is the one taken.
+
+There are now three:
+
+| stage | where | what |
+| --- | --- | --- |
+| 1 | 0x7C00, one sector | the MBR: bring COM1 up, read stage 2 in with `INT 13h` AH=42h |
+| 2 | 0x7E00, up to 32 KB | A20, the mode switch, the thunk, and C that reads stage 3 in and jumps to it. 5.2 KB |
+| 3 | 0x100000, up to 512 KB | the loader: falcon-core, the scan, the menu. 26.5 KB |
+
+Stage 3 is self-describing: it begins with a sixteen-byte header holding a
+magic and its own length, so stage 2 reads one sector, learns the length and
+reads exactly the rest. The alternative is a build step that patches a sector
+count into stage 2, which is a second place the size is written and a second
+place it can be wrong.
+
+**The gate.** Stage 3 lives above a megabyte and the thunk cannot follow it
+there, because the thunk drops to real mode and real mode has twenty address
+bits. So the thunk stays in stage 2, and stage 2 publishes a way into it at
+an address both halves can write down: the head of stage 2 itself, which is
+fixed already. `stage2_start` is a jump over the gate; the gate is a jump
+into the thunk plus the register block the thunk reads. `biosdefs.h` names
+the four offsets, `stage2.S` places them with `.org`, and the build checks
+the linked addresses against the header, so a field that moved without the
+header moving fails the build rather than the boot.
+
+Two bugs in this, both of the kind Section 7.2 is about:
+
+- The gate's `jmp thunk_bios` sits at the top of `stage2.S`, which opens in
+  `.code16`. Assembled as a 16-bit relative jump and executed in long mode,
+  the same opcode is a 32-bit one: the processor took two bytes of `.org`
+  padding as the top half of the displacement. A reboot loop with no output
+  past stage 3's first line.
+- `disk.c`'s disk address packet and drive parameter block were statics. That
+  was reachable while the file only linked into stage 2; in stage 3 they are
+  above a megabyte, and the thunk hands the BIOS a pointer as DS:SI with DS
+  zero, so the address was truncated to sixteen bits and the BIOS read
+  somewhere else. Every read returned carry, and the loader reported a disk
+  that would not read. They are now at a fixed address in the low 64 KB
+  (`BIOS_SCRATCH`), which is the same rule as the bounce buffer and was
+  always the rule; the statics only happened to satisfy it.
+
+Neither is a mistake a C compiler makes, and neither would have been found by
+anything the repository gates on. Both were found by printing characters at
+the failure and reading the QEMU monitor.
+
+What the third stage buys is that size stops being a design input. The
+filesystem registry, the ISO reader, `medium.c` and a boot path all fit, and
+`main.c`'s note that it calls `exfat.c` directly because the registry would
+not fit is no longer true.
 
 ## 7. Risks, in the order they matter
 

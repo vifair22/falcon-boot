@@ -93,8 +93,6 @@
 .endm
 	.code64
 	.globl  thunk_bios
-	.globl  thunk_vector
-	.globl  thunk_regs
 
 /* void thunk_bios(void): issues INT thunk_vector with the registers in
  * thunk_regs, and writes the returned registers back into it. */
@@ -270,24 +268,3 @@ ivt_desc:
 	.balign 8
 saved_rsp:
 	.quad   0
-
-	.globl  thunk_vector
-thunk_vector:
-	.byte   0
-
-	/* eax ebx ecx edx esi edi es flags, in that order, 32 bits each
-	 * except es and flags which are 16 and padded. The caller writes what
-	 * the BIOS call wants and reads what it returned out of the same
-	 * place. */
-	.balign 4
-thunk_regs:
-	.long   0    /*  0: eax */
-	.long   0    /*  4: ebx */
-	.long   0    /*  8: ecx */
-	.long   0    /* 12: edx */
-	.long   0    /* 16: esi */
-	.long   0    /* 20: edi */
-	.word   0    /* 24: es */
-	.word   0    /* 26: padding */
-	.word   0    /* 28: flags */
-	.word   0    /* 30: padding */
