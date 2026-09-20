@@ -22,11 +22,11 @@
 
 /* Where the BIOS is asked to put things.
  *
- * Below one megabyte, above the 0x9FC00 the extended BIOS data area tends to
- * start at on a real machine, and clear of stage 2 and the page tables. One
- * track's worth: enough that a sequential read is not one interrupt per
- * sector, small enough to be certain it fits. */
-#define BOUNCE_ADDR   0x20000u
+ * Below one megabyte, so real mode can reach it; above stage 2's window and
+ * the page tables; and below the 0x9FC00 where the extended BIOS data area
+ * tends to start on a real machine. 32 KB is enough that a sequential read
+ * is not one interrupt per sector and small enough to be sure it fits. */
+#define BOUNCE_ADDR   0x90000u
 #define BOUNCE_BYTES  0x8000u   /* 32 KiB */
 
 /* The disk address packet INT 13h AH=42h reads. It has to be somewhere real

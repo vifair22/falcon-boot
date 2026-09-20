@@ -39,6 +39,58 @@
 	.extern gdt_desc
 
 	.section .text.stage2, "ax"
+
+/* A debug mark that preserves everything. Writing one from the middle of a
+ * mode switch is how the last three bugs in this file were found, and the
+ * reason it saves and restores rather than using a scratch register is that
+ * two of those bugs WERE a marker clobbering one. */
+.macro MARK ch
+	pushfq
+	pushq   %rax
+	pushq   %rdx
+	movw    $0x3FD, %dx
+9901:	inb     %dx, %al
+	testb   $0x20, %al
+	jz      9901b
+	movw    $0x3F8, %dx
+	movb    $\ch, %al
+	outb    %al, %dx
+	popq    %rdx
+	popq    %rax
+	popfq
+.endm
+
+.macro MARK32 ch
+	pushfl
+	pushl   %eax
+	pushl   %edx
+	movw    $0x3FD, %dx
+9903:	inb     %dx, %al
+	testb   $0x20, %al
+	jz      9903b
+	movw    $0x3F8, %dx
+	movb    $\ch, %al
+	outb    %al, %dx
+	popl    %edx
+	popl    %eax
+	popfl
+.endm
+
+.macro MARK16 ch
+	pushfw
+	pushw   %ax
+	pushw   %dx
+	movw    $0x3FD, %dx
+9902:	inb     %dx, %al
+	testb   $0x20, %al
+	jz      9902b
+	movw    $0x3F8, %dx
+	movb    $\ch, %al
+	outb    %al, %dx
+	popw    %dx
+	popw    %ax
+	popfw
+.endm
 	.code64
 	.globl  thunk_bios
 	.globl  thunk_vector

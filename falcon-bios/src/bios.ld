@@ -19,8 +19,8 @@
 
 SECTIONS
 {
-    /* 0x7C00 for stage 1, overridden on the stage 2 link. The build passes
-     * -Ttext, so this is the default rather than the decision. */
+    /* 0x7C00 for stage 1, 0x10000 for stage 2. The build passes -Ttext, so
+     * this is only the default. */
     . = 0x7C00;
 
     .text : {

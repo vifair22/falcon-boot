@@ -21,11 +21,17 @@
 
 /* Where stage 2 is loaded, immediately above stage 1.
  *
- * The usable low memory on a PC is roughly 0x00500 to 0x9FBFF, with the
- * interrupt vector table and the BIOS data area below it and the extended
- * BIOS data area at the top. 0x7E00 upward is the conventional place for a
- * second stage because it is contiguous with the sector the BIOS already
- * loaded, and it leaves the stack room below 0x7C00. */
+ * Still 0x7E00, and staying there is a decision rather than inertia. Stage 2
+ * holds both 16-bit and 64-bit code, and the two disagree about what an
+ * address means: real mode reaches it as an offset inside a 64 KB segment,
+ * long mode as a linear address. Linking at 0x7E00 with a segment of zero is
+ * the one arrangement where both readings are the same number, and it lasts
+ * as long as stage 2 ends below 0xFFFF.
+ *
+ * What that costs is a ceiling of about 33 KB, which is why the page tables
+ * and the bounce buffer moved out of the way rather than stage 2 moving up.
+ * When it is no longer enough the answer is a third stage loaded above a
+ * megabyte and entered after paging, not a bigger stage 2. */
 #define STAGE2_LOAD     0x7E00
 
 /* The sector stage 2 starts at, and how many it occupies.
@@ -35,23 +41,27 @@
  * keeps it inside 512 bytes. The count is the cap, not the size; the image
  * is padded to it so a short stage 2 still reads cleanly. */
 #define STAGE2_LBA      1
-#define STAGE2_SECTORS  32
+/* 32 KB, which puts the end of stage 2 at 0xFE00: inside the segment it is
+ * addressed through, and clear of the page tables now that they are at
+ * 0x80000. A single INT 13h transfer may not cross a 64 KB boundary and this
+ * one does not. */
+#define STAGE2_SECTORS  64
 
 /* The long-mode page tables, and why they are at fixed addresses.
  *
  * There is no allocator in real mode and nothing else is using this memory:
- * 0x10000 upward is clear of the boot sector, of stage 2 at 0x7E00, and of
- * the stack below 0x7C00, and it is well under the 0x9FC00 where the
- * extended BIOS data area starts on a typical machine. Three pages is all
- * long mode needs to start: one PML4, one page-directory pointer table, and
- * one page directory whose entries are 2 MB pages.
+ * 0x80000 is above stage 2's 64 KB window, above the bounce buffer, and
+ * still well under the 0x9FC00 where the extended BIOS data area starts on a
+ * typical machine. Three pages is all long mode needs to start: one PML4,
+ * one page-directory pointer table, and one page directory whose entries are
+ * 2 MB pages.
  *
  * One gigabyte is mapped, identity. That covers every address real-mode
  * firmware can hand back and every address a payload is staged at before the
  * kernel takes over, and it costs exactly one page of directory entries. */
-#define PML4_ADDR       0x10000
-#define PDPT_ADDR       0x11000
-#define PD_ADDR         0x12000
+#define PML4_ADDR       0x80000
+#define PDPT_ADDR       0x81000
+#define PD_ADDR         0x82000
 #define IDENTITY_MAP    0x40000000    /* 1 GiB */
 #define PAGE_2M         0x200000
 

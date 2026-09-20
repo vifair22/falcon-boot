@@ -45,7 +45,7 @@ BIOS_CFLAGS := -std=c11 -O2 -ffreestanding -fno-stack-protector \
 	-I$(BIOS) $(CORE_INC)
 
 BIOS_CSRCS := $(addprefix $(BIOS)/,main.c disk.c console.c) \
-	$(CORE_PART) $(CORE_LIBC)
+	$(CORE_PART) $(CORE)/fs/exfat.c $(CORE_LIBC)
 BIOS_COBJS := $(patsubst %.c,$(BIOS_OBJ)/%.o,$(BIOS_CSRCS))
 
 $(BIOS_OBJ)/%.o: %.c
@@ -80,7 +80,7 @@ $(BIOS_STAGE2): $(BIOS_STAGE2_OBJS) $(BIOS)/bios.ld
 	$(CC_HOST) $(BIOS_LDFLAGS) -Wl,-Ttext,0x7E00 -Wl,-e,stage2_start -o $@.elf $(BIOS_STAGE2_OBJS)
 	objcopy -O binary -j .text $@.elf $@
 	@sz=$$(stat -c %s $@); \
-	max=$$((32 * 512)); \
+	max=$$((64 * 512)); \
 	if [ "$$sz" -gt "$$max" ]; then \
 		echo "ERROR: $@ is $$sz bytes, past the $$max stage 1 reads"; \
 		echo "       raise STAGE2_SECTORS in falcon-bios/src/biosdefs.h"; \

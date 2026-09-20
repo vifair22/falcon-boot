@@ -15,11 +15,39 @@ back through the BIOS from 64-bit code:
     falcon-bios: reading LBA 0 through the BIOS from long mode
     falcon-bios: thunk ok, boot sector signature 0xAA55
 
+And then, booted against a real four-partition falcon stick:
+
+    falcon-bios:   GPT with 4 partition(s)
+    falcon-bios:     p2  LBA 133120..264191  [falcon p2]
+    falcon-bios:     p3  LBA 264192..395263  [falcon p3]
+    falcon-bios:   p2 mounted, 15872 clusters of 4096 bytes
+    falcon-bios:     archlinux-fake.iso  1048576 bytes
+    falcon-bios:     systemrescue-fake.iso  1048576 bytes
+    falcon-bios:     payload-test.iso  8765440 bytes
+
+That is `part.c` and `exfat.c` from falcon-core, unmodified, over a read
+callback whose other end is INT 13h, identifying p2 and p3 by DESIGN Section
+3's own rules. It is the menu's data.
+
 Three of Section 5.3's five assembly jobs are done: the MBR, the mode switch
-and the thunk. The thunk is the one that matters most, because everything
-above it can be C: a read callback is now a small wrapper over INT 13h, and
-falcon-core plugs into it unchanged. Section 6a records what the ISO reader
-work had already built.
+and the thunk. The thunk is the one that mattered most, because everything
+above it is C. Section 6a records what the ISO reader work had already built.
+
+Reproduce it with:
+
+    make test-stick ARCH_ISO=<any Linux ISO>
+    make test-bios-img
+    falcon-efi/tools/run-qemu.sh --bios --headless \
+        -drive format=raw,file=build/test-bios.img \
+        -drive format=raw,file=build/test-stick.img
+
+What is left in S1 is the menu itself, the ISO scan's depth and filter rules
+(`falcon-efi/src/efi/main.c` has them and they are not EFI-shaped), the boot
+paths, and the resident INT 13h hook of Section 7.1, which is still a spike
+rather than an estimate. The ceiling stage 2 is now up against is its own:
+about 33 KB, because it is linked where real mode and long mode agree on what
+an address means. Past that the answer is a third stage above a megabyte,
+entered after paging, not a bigger stage 2.
 
 The route is still undecided, and Section 7.3 is why: BIOS boot from a GPT
 stick needs a BIOS boot partition, which remakes every stick already written.
