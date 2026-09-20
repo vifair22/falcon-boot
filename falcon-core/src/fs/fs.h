@@ -302,6 +302,7 @@ extern const fs_ops fs_ops_exfat;
 extern const fs_ops fs_ops_ext4;
 extern const fs_ops fs_ops_udf;
 extern const fs_ops fs_ops_iso9660;
+extern const fs_ops fs_ops_fat;
 
 /* The mapping tables, for the same reason: a test enumerates every value of
  * each driver's enum and asserts it maps. An unmapped code maps to
@@ -311,5 +312,6 @@ int fs_status_from_exfat(int rc);
 int fs_status_from_ext4(int rc);
 int fs_status_from_iso9660(int rc);
 int fs_status_from_udf(int rc);
+int fs_status_from_fat(int rc);
 
 #endif /* FALCON_FS_H */

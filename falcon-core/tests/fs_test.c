@@ -44,6 +44,7 @@
 #include <fs/ext4.h>
 #include <fs/iso9660.h>
 #include <fs/udf.h>
+#include <fs/fat.h>
 #include <fs/fs.h>
 
 /* The blob sizes are a compile-time contract with every registered driver;
@@ -105,7 +106,7 @@ static void test_fs_registry_lookup(void **state)
 
     (void)state;
 
-    assert_int_equal(fs_driver_count(), 4);
+    assert_int_equal(fs_driver_count(), 5);
     for (i = 0; i < fs_driver_count(); i++)
         assert_non_null(fs_driver_at(i));
     assert_null(fs_driver_at(fs_driver_count()));
@@ -123,6 +124,15 @@ static void test_fs_registry_lookup(void **state)
      * and p3). */
     assert_int_equal(exfat->role, FS_HINT_ISO);
     assert_int_equal(ext4->role, FS_HINT_SHELF);
+
+    /* FAT is in the table and is nobody's role: p1 is vfat but the
+     * loader never reaches it through the registry, and an El Torito
+     * boot image has no partition role at all. */
+    assert_ptr_equal(fs_by_name("fat"), &fs_ops_fat);
+    assert_int_equal(fs_ops_fat.role, FS_HINT_NONE);
+    /* "fat" and "exfat" are different filesystems and different
+     * drivers; a lookup for one must never answer with the other. */
+    assert_ptr_not_equal(fs_by_name("fat"), &fs_ops_exfat);
 
     assert_null(fs_by_name("btrfs"));
     assert_null(fs_by_name(NULL));
@@ -320,10 +330,23 @@ static void test_fs_status_map_media_total(void **state)
 
     (void)state;
 
+    /* FAT has no symlink status: the format has no such thing, so its row
+     * list is the same set minus that one. */
+    static const int fat[] = {
+        FAT_OK, FAT_ERR_IO, FAT_ERR_NOT_FAT, FAT_ERR_CORRUPT,
+        FAT_ERR_BAD_ARG, FAT_ERR_RANGE, FAT_ERR_NOSPACE,
+        FAT_ERR_UNSUPPORTED
+    };
+
     for (i = 0; i < sizeof want / sizeof want[0]; i++) {
         assert_int_equal(fs_status_from_iso9660(iso[i]), want[i]);
         assert_int_equal(fs_status_from_udf(udf[i]), want[i]);
     }
+    for (i = 0; i < sizeof fat / sizeof fat[0]; i++)
+        assert_int_equal(fs_status_from_fat(fat[i]), want[i]);
+    /* An unmapped code degrades to the conservative answer rather than
+     * passing a driver's private number through as an fs status. */
+    assert_int_equal(fs_status_from_fat(-99), FS_ERR_CORRUPT);
     assert_int_equal(fs_status_from_udf(UDF_ERR_NOT_FOUND), FS_ERR_NOT_FOUND);
     assert_int_equal(fs_status_from_iso9660(1), 1);
     assert_int_equal(fs_status_from_udf(1), 1);

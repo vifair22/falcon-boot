@@ -62,6 +62,7 @@ int main(void)
     failed += run_grubcfg_tests();
     failed += run_bsdmd_tests();
     failed += run_eltorito_tests();
+    failed += run_fat_tests();
     failed += run_bootfs_tests();
     failed += run_blesslist_tests();
     failed += run_wim_tests();

@@ -298,7 +298,7 @@ coverage: test
 # suite does not fail. Before this target existed nothing built them, so a
 # clean checkout ran 392 tests, reported green, and left the ext4 and LUKS
 # readers at zero coverage.
-test-fixtures: test-image test-ext4 test-luks test-isoview test-trust \
+test-fixtures: test-image test-ext4 test-fat test-luks test-isoview test-trust \
 	test-iso9660 test-udf test-wim
 
 # Verify the toolchain before attempting a build. The EFI target needs the

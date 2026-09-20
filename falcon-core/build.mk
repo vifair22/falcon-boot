@@ -10,7 +10,7 @@ CORE := falcon-core/src
 
 CORE_CRYPTO   := $(addprefix $(CORE)/crypto/,crypto.c sha1.c sha256.c sha512.c \
 	hash.c hmac.c pbkdf2.c aes.c xts.c aesni.c)
-CORE_FS       := $(addprefix $(CORE)/fs/,exfat.c ext4.c iso9660.c udf.c fs.c)
+CORE_FS       := $(addprefix $(CORE)/fs/,exfat.c ext4.c fat.c iso9660.c udf.c fs.c)
 CORE_LUKS     := $(addprefix $(CORE)/luks/,json.c af.c luks.c)
 CORE_PART     := $(CORE)/part/part.c
 CORE_PE       := $(CORE)/pe/pe.c
@@ -37,6 +37,12 @@ test-image: test-iso test-img
 test-ext4:
 	falcon-core/tools/mk-test-ext4.sh
 
+# FAT12/16/32, one image each: the type is derived from the cluster count
+# rather than recorded, so each width needs its own volume to read.
+# No sudo and no loop device; mtools writes into the image directly.
+test-fat:
+	falcon-core/tools/mk-test-fat.sh
+
 # The media fixtures (DESIGN Section 6.4): ISO9660 in its three name spaces
 # plus Rock Ridge relocation from xorriso (no sudo), and UDF from mkudffs and
 # the kernel's writer (sudo, for the loop mount).
@@ -60,7 +66,7 @@ test-luks:
 test-trust: $(EFI)
 	falcon-core/tools/mk-test-trust.sh
 
-.PHONY: test-image test-ext4 test-luks test-trust test-iso9660 test-udf \
+.PHONY: test-image test-ext4 test-fat test-luks test-trust test-iso9660 test-udf \
 	test-wim
 
 # ---- tests ----
@@ -70,7 +76,7 @@ CORE_TESTS := $(addprefix falcon-core/tests/,main.c \
 	exfat_fixture_test.c cpio_test.c family_test.c manifest_test.c \
 	crypto_test.c json_test.c luks_test.c ext4_test.c fs_test.c \
 	iso9660_test.c udf_test.c udfedit_test.c media_fs_test.c bootcfg_test.c extmap_test.c \
-	hookcmd_test.c grubcfg_test.c bsdmd_test.c eltorito_test.c bootfs_test.c blesslist_test.c wim_test.c part_test.c \
+	hookcmd_test.c grubcfg_test.c bsdmd_test.c eltorito_test.c fat_test.c bootfs_test.c blesslist_test.c wim_test.c part_test.c \
 	osrel_test.c pe_test.c trust_test.c)
 
 CORE_UUT := $(CORE_CRYPTO) $(CORE_FS) $(CORE_LUKS) $(CORE_PART) $(CORE_PE) \
