@@ -6,13 +6,19 @@
 # Serial output mirrors the firmware console for logging; OVMF's debug port
 # is captured to build/ovmf-debug.log.
 #
-# Usage: falcon-efi/tools/run-qemu.sh [--secboot] [--stick] [--headless]
+# Usage: falcon-efi/tools/run-qemu.sh [--secboot|--bios] [--stick] [--headless]
 #                                     [qemu args...]
 #   --secboot   Secure Boot OVMF, with the real chain staged: shim as the
 #               removable-media default loader, our SIGNED loader under the
 #               next-stage name shim has compiled in, and a varstore that
 #               trusts the test MOK. Needs `make sign` first (which needs
 #               falcon-efi/tools/mk-test-mok.sh). See the SECBOOT block below.
+#   --bios      SeaBIOS instead of OVMF: no pflash, no varstore, no Secure
+#               Boot, and the machine boots whatever is in the first drive's
+#               MBR. For falcon-bios work (docs/notes/bios-route.md); it
+#               refuses to combine with --secboot, which has no meaning on a
+#               platform with no db. Nothing about the UEFI paths changes.
+#
 #   --stick     boot build/test-stick.img and nothing else: no vvfat ESP, no
 #               separate exFAT fixture, just the one raw disk with a real GPT on
 #               it (falcon-efi/tools/mk-test-stick.sh). This is the shape the
@@ -93,6 +99,10 @@ while [[ $# -gt 0 ]]; do
         ESP="$BUILD/esp-secboot"
         shift
         ;;
+    --bios)
+        BIOS=1
+        shift
+        ;;
     --stick)
         STICK=1
         shift
@@ -107,7 +117,16 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-[[ -f "$CODE" ]] || { echo "ERROR: OVMF not found at $CODE (set OVMF_DIR)" >&2; exit 1; }
+if [[ "${BIOS:-0}" -eq 1 && "$SECBOOT" -eq 1 ]]; then
+    echo "ERROR: --bios and --secboot are exclusive: a BIOS machine has no db," \
+         "no shim and nothing to enforce (docs/notes/bios-route.md Section 3)" >&2
+    exit 1
+fi
+
+# OVMF is only needed when the firmware is OVMF.
+if [[ "${BIOS:-0}" -ne 1 ]]; then
+    [[ -f "$CODE" ]] || { echo "ERROR: OVMF not found at $CODE (set OVMF_DIR)" >&2; exit 1; }
+fi
 
 # In stick mode the disk image already carries its own ESP and its own copy of
 # the shim chain, so none of the vvfat staging below applies. The only thing
@@ -137,6 +156,12 @@ elif [[ "$SECBOOT" -eq 1 ]]; then
     cp "$SHIM_EFI" "$ESP/EFI/BOOT/BOOTX64.EFI"
     cp "$MM_EFI" "$ESP/EFI/BOOT/mmx64.efi"
     cp "$EFI_SIGNED" "$ESP/EFI/BOOT/grubx64.efi"
+elif [[ "${BIOS:-0}" -eq 1 ]]; then
+    # Nothing to stage. A BIOS machine has no ESP to put a loader in: it
+    # boots whatever is in the first drive's MBR, so what runs is whatever
+    # the caller attached. falcon-boot.efi is a UEFI artifact and requiring
+    # it here would make the BIOS rig depend on a build it never uses.
+    :
 else
     [[ -f "$EFI_BIN" ]] || { echo "ERROR: $EFI_BIN not built (run make first)" >&2; exit 1; }
     mkdir -p "$ESP/EFI/BOOT"
@@ -161,7 +186,11 @@ chmod u+w "$VARS"
 # partition. That one is optional: without it the loader boots and finds no
 # volume, which is itself a case worth being able to run.
 DRIVES=()
-if [[ "$STICK" -eq 1 ]]; then
+if [[ "${BIOS:-0}" -eq 1 ]]; then
+    # Only what the caller passed after the options, plus the stick when
+    # asked for one. There is no ESP to synthesise.
+    [[ "$STICK" -eq 1 ]] && DRIVES=(-drive "format=raw,file=$STICK_IMG")
+elif [[ "$STICK" -eq 1 ]]; then
     DRIVES=(-drive "format=raw,file=$STICK_IMG")
 else
     DRIVES=(-drive "format=raw,file=fat:rw:$ESP")
@@ -192,15 +221,25 @@ if [[ "$HEADLESS" -eq 1 ]]; then
     )
 fi
 
+# SeaBIOS takes no pflash and writes no debug port, and i440fx is the machine
+# a BIOS-era target actually looks like; q35 is a UEFI-era chipset and SeaBIOS
+# on it is a combination nobody ships.
+FIRMWARE=(
+    -machine q35
+    -drive if=pflash,format=raw,readonly=on,file="$CODE"
+    -drive if=pflash,format=raw,file="$VARS"
+    -debugcon file:"$BUILD/ovmf-debug.log" -global isa-debugcon.iobase=0x402
+)
+if [[ "${BIOS:-0}" -eq 1 ]]; then
+    FIRMWARE=(-machine pc)
+fi
+
 exec qemu-system-x86_64 \
     -name falcon-boot \
-    -machine q35 \
+    "${FIRMWARE[@]}" \
     -m "$QEMU_MEM" \
     "${ACCEL[@]}" \
-    -drive if=pflash,format=raw,readonly=on,file="$CODE" \
-    -drive if=pflash,format=raw,file="$VARS" \
     "${DRIVES[@]}" \
     -net none \
     "${CONSOLE[@]}" \
-    -debugcon file:"$BUILD/ovmf-debug.log" -global isa-debugcon.iobase=0x402 \
     "$@"
