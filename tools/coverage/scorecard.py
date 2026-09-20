@@ -33,7 +33,11 @@ ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..')
 MANIFEST = os.path.join(ROOT, 'tools', 'coverage', 'corpus.tsv')
 RUNS = os.path.join(ROOT, 'build', 'coverage', 'runs')
 
-STATES = [('off', 'SB off'), ('ms', 'SB on, MS CA'), ('own', 'SB on, own keys')]
+STATES = [('off', 'SB off'), ('ms', 'SB on, MS CA'), ('own', 'SB on, own keys'),
+          # Not a Secure Boot state: a BIOS machine has no db and no shim
+          # (docs/notes/bios-route.md Section 3), so it is reported beside
+          # the three rather than among them, and its blessed cell is N/A.
+          ('bios', 'BIOS')]
 ROUTE_ORDER = ['dnd', 'chain', 'blessed']
 ROUTE_NAMES = {'dnd': 'drop', 'chain': 'chain', 'blessed': 'bless'}
 # Headline: Secure Boot off, and Secure Boot on where db trusts the Microsoft
@@ -99,6 +103,9 @@ def main():
     w('by default), **chain** boots the ISO\'s own EFI loader, **bless** is Enter')
     w('on an image blessed with the sign tool.')
     w('')
+    w('BIOS is a fourth column and not a Secure Boot state: that machine has')
+    w('no db and no shim, so it has no blessed cell and nothing to refuse.')
+    w('')
     w('The headline columns are Secure Boot off and Secure Boot on where db')
     w('trusts the Microsoft CA. Secure Boot on with only the stick owner\'s')
     w('keys is reported beside them, without a target: media signed only by')
@@ -119,6 +126,7 @@ def main():
         off_ok = False
         ms_ok = False
         own_ok = False
+        bios_ok = False
         for st, _ in STATES:
             state_ok = False
             for rt in routes:
@@ -142,29 +150,36 @@ def main():
                 ms_ok = state_ok
             elif st == 'own':
                 own_ok = state_ok
+            elif st == 'bios':
+                # Same rule as SB off: the drop route is the product's
+                # default, and the headline is what it does.
+                bios_ok = (result(r['id'], 'bios', 'dnd') or {}).get(
+                    'verdict') == 'PASS' 
         table.append('| ' + ' | '.join(cells) + ' |')
         if any_result:
-            t = tally.setdefault(r['tier'], [0, 0, 0, 0])
+            t = tally.setdefault(r['tier'], [0, 0, 0, 0, 0])
             t[0] += 1
             t[1] += 1 if off_ok else 0
             t[2] += 1 if ms_ok else 0
             t[3] += 1 if own_ok else 0
+            t[4] += 1 if bios_ok else 0
 
     w('Loader: ' + (', '.join(sorted(loaders)) if loaders else 'none recorded'))
     w('')
     w('## Summary')
     w('')
     w('| tier | ISOs run | SB off, drop | target | SB on, MS CA | target | '
-      'SB on, own keys |')
-    w('|---|---|---|---|---|---|---|')
+      'SB on, own keys | BIOS, drop |')
+    w('|---|---|---|---|---|---|---|---|')
     for tier in sorted(tally):
-        n, off, ms, own = tally[tier]
+        n, off, ms, own, bios = tally[tier]
         toff, tms = TARGETS.get(tier, (None, None))
-        w('| %s | %d | %d/%d (%d%%) | %s | %d/%d (%d%%) | %s | %d/%d (%d%%) |'
+        w('| %s | %d | %d/%d (%d%%) | %s | %d/%d (%d%%) | %s | %d/%d (%d%%) '
+          '| %d/%d (%d%%) |'
           % (tier, n, off, n, 100 * off // n,
              '%d%%' % toff if toff else '-',
              ms, n, 100 * ms // n, '%d%%' % tms if tms else '-',
-             own, n, 100 * own // n))
+             own, n, 100 * own // n, bios, n, 100 * bios // n))
     w('')
     w('## Matrix')
     w('')
