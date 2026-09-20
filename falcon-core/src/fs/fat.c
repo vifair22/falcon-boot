@@ -108,11 +108,36 @@ static int fat_byte(fat_vol *v, uint64_t off, uint8_t *out)
     return FAT_OK;
 }
 
+/* n consecutive FAT bytes, each through the cache.
+ *
+ * The buffer is cleared first, which is not defensive padding: gcc
+ * -fanalyzer cannot follow the loop well enough to see that a successful
+ * return has filled every byte, and it reports b[1] as uninitialized at the
+ * caller's get_le32. Clearing here is cheaper than baselining a warning on
+ * the one function in this driver that decides which cluster comes next, and
+ * a partially filled buffer is never read anyway: every caller checks the
+ * status first. */
+static int fat_bytes(fat_vol *v, uint64_t off, unsigned n, uint8_t b[4])
+{
+    unsigned i;
+
+    b[0] = 0;
+    b[1] = 0;
+    b[2] = 0;
+    b[3] = 0;
+    for (i = 0; i < n; i++) {
+        int rc = fat_byte(v, off + i, &b[i]);
+
+        if (rc != FAT_OK)
+            return rc;
+    }
+    return FAT_OK;
+}
+
 /* The FAT entry for a cluster, widened to 32 bits. */
 static int fat_entry(fat_vol *v, uint32_t cluster, uint32_t *out)
 {
     uint8_t b[4];
-    uint64_t off;
     int rc;
 
     if (cluster < CLUSTER_MIN || cluster >= v->clusters + CLUSTER_MIN)
@@ -120,37 +145,28 @@ static int fat_entry(fat_vol *v, uint32_t cluster, uint32_t *out)
 
     switch (v->type) {
     case FAT_TYPE_12:
-        off = (uint64_t)cluster + (cluster / 2u);
-        rc = fat_byte(v, off, &b[0]);
-        if (rc != FAT_OK)
-            return rc;
-        rc = fat_byte(v, off + 1u, &b[1]);
+        /* One and a half bytes per entry, so the pair holding this one
+         * starts at cluster + cluster/2. */
+        rc = fat_bytes(v, (uint64_t)cluster + (cluster / 2u), 2u, b);
         if (rc != FAT_OK)
             return rc;
         /* An even cluster takes the low twelve bits of the pair, an odd one
          * the high twelve: two entries share the middle byte. */
         if ((cluster & 1u) != 0)
-            *out = (uint32_t)(((uint32_t)b[1] << 4) | ((uint32_t)b[0] >> 4));
+            *out = ((uint32_t)b[1] << 4) | ((uint32_t)b[0] >> 4);
         else
-            *out = (uint32_t)(((uint32_t)(b[1] & 0x0Fu) << 8) | b[0]);
+            *out = ((uint32_t)(b[1] & 0x0Fu) << 8) | (uint32_t)b[0];
         return FAT_OK;
     case FAT_TYPE_16:
-        off = (uint64_t)cluster * 2u;
-        rc = fat_byte(v, off, &b[0]);
+        rc = fat_bytes(v, (uint64_t)cluster * 2u, 2u, b);
         if (rc != FAT_OK)
             return rc;
-        rc = fat_byte(v, off + 1u, &b[1]);
-        if (rc != FAT_OK)
-            return rc;
-        *out = (uint32_t)((uint32_t)b[0] | ((uint32_t)b[1] << 8));
+        *out = (uint32_t)b[0] | ((uint32_t)b[1] << 8);
         return FAT_OK;
     default:
-        off = (uint64_t)cluster * 4u;
-        for (unsigned i = 0; i < 4u; i++) {
-            rc = fat_byte(v, off + i, &b[i]);
-            if (rc != FAT_OK)
-                return rc;
-        }
+        rc = fat_bytes(v, (uint64_t)cluster * 4u, 4u, b);
+        if (rc != FAT_OK)
+            return rc;
         /* The top four bits are reserved and are not part of the number. */
         *out = get_le32(b) & 0x0FFFFFFFu;
         return FAT_OK;
@@ -533,7 +549,12 @@ static int lfn_chars(const uint8_t *e, uint16_t *acc, uint16_t *acc_len)
         unsigned i;
 
         for (i = 0; i < count; i++, n++) {
-            uint16_t c = get_le16(e + off + i * 2u);
+            /* The index arithmetic is done in size_t rather than unsigned.
+             * Nothing here can overflow (count is at most six and the runs
+             * are fixed), but this file parses attacker-supplied media and
+             * the check that flags the narrow form is kept on across the
+             * repository for exactly that class of code. */
+            uint16_t c = get_le16(e + off + (size_t)i * 2u);
 
             /* 0x0000 terminates the name, 0xFFFF pads after it. */
             if (c == 0 || c == 0xFFFFu) {
