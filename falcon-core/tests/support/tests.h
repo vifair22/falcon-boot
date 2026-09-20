@@ -58,6 +58,7 @@ int run_extmap_tests(void);
 int run_hookcmd_tests(void);
 int run_grubcfg_tests(void);
 int run_bsdmd_tests(void);
+int run_eltorito_tests(void);
 int run_bootfs_tests(void);
 int run_blesslist_tests(void);
 int run_wim_tests(void);

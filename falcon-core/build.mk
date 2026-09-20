@@ -17,7 +17,7 @@ CORE_PE       := $(CORE)/pe/pe.c
 CORE_TRUST    := $(addprefix $(CORE)/trust/,der.c x509.c authenticode.c \
 	siglist.c trust.c probe.c)
 CORE_MEDIA    := $(addprefix $(CORE)/media/,family.c cpio.c osrel.c bootcfg.c \
-	extmap.c hookcmd.c bootfs.c grubcfg.c bsdmd.c)
+	extmap.c hookcmd.c bootfs.c grubcfg.c bsdmd.c eltorito.c)
 CORE_WIM      := $(addprefix $(CORE)/wim/,lzx.c wim.c)
 CORE_MANIFEST := $(CORE)/manifest/manifest.c $(CORE)/manifest/blesslist.c
 CORE_MANIFEST_WRITE := $(CORE)/manifest/manifest_write.c
@@ -70,7 +70,7 @@ CORE_TESTS := $(addprefix falcon-core/tests/,main.c \
 	exfat_fixture_test.c cpio_test.c family_test.c manifest_test.c \
 	crypto_test.c json_test.c luks_test.c ext4_test.c fs_test.c \
 	iso9660_test.c udf_test.c udfedit_test.c media_fs_test.c bootcfg_test.c extmap_test.c \
-	hookcmd_test.c grubcfg_test.c bsdmd_test.c bootfs_test.c blesslist_test.c wim_test.c part_test.c \
+	hookcmd_test.c grubcfg_test.c bsdmd_test.c eltorito_test.c bootfs_test.c blesslist_test.c wim_test.c part_test.c \
 	osrel_test.c pe_test.c trust_test.c)
 
 CORE_UUT := $(CORE_CRYPTO) $(CORE_FS) $(CORE_LUKS) $(CORE_PART) $(CORE_PE) \
