@@ -60,6 +60,13 @@
  * that eventually runs there will name the other. */
 #define SEL_CODE64      0x08
 #define SEL_DATA64      0x10
+/* The descriptors the thunk needs on the way down to real mode and back.
+ * A 32-bit code segment (L=0, D=1) to leave long mode through, and a 16-bit
+ * code and data pair whose 64 KB limits are what real mode expects to find
+ * cached in the segment registers after CR0.PE is cleared. */
+#define SEL_CODE32      0x18
+#define SEL_CODE16      0x20
+#define SEL_DATA16      0x28
 
 /* COM1 and 115200 8N1. The divisor is 115200 / 115200 = 1.
  *

@@ -46,7 +46,8 @@ $(BIOS_STAGE1): $(BIOS_OBJ)/$(BIOS)/boot.o $(BIOS)/bios.ld
 		exit 1; \
 	fi
 
-BIOS_STAGE2_OBJS := $(BIOS_OBJ)/$(BIOS)/stage2.o $(BIOS_OBJ)/$(BIOS)/lmode.o
+BIOS_STAGE2_OBJS := $(BIOS_OBJ)/$(BIOS)/stage2.o $(BIOS_OBJ)/$(BIOS)/lmode.o \
+	$(BIOS_OBJ)/$(BIOS)/thunk.o
 
 $(BIOS_STAGE2): $(BIOS_STAGE2_OBJS) $(BIOS)/bios.ld
 	@mkdir -p $(@D)

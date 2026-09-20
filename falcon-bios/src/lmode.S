@@ -221,7 +221,21 @@ gdt:
 	.quad   0x00AF9A000000FFFF
 	/* data64: present, ring 0, data, writable */
 	.quad   0x00CF92000000FFFF
+	/* code32: present, ring 0, code, 32-bit (D=1, L=0). The step out of
+	 * long mode goes through this one: paging cannot be turned off from a
+	 * 64-bit segment. */
+	.quad   0x00CF9A000000FFFF
+	/* code16 and data16: 64 KB limits, byte granular. Real mode uses
+	 * whatever limit was cached in the segment register when PE was
+	 * cleared, so these are what make the return to real mode land with
+	 * segments that behave. */
+	.quad   0x008F9A000000FFFF
+	.quad   0x008F92000000FFFF
 gdt_end:
+
+	/* The GDT is needed by the thunk too, so its descriptor is shared
+	 * rather than duplicated. */
+	.globl  gdt_desc
 
 	.balign 4
 gdt_desc:
