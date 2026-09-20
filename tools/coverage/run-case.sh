@@ -218,6 +218,32 @@ fi
 # The menu has drawn its footer; give the key queue drain a moment so the
 # keypress is not swallowed with the firmware's auto-repeat backlog.
 sleep 2
+
+# Move to the image row before pressing anything.
+#
+# The stick carries one image, but not always on the first row: a blessed
+# stick also has a /falcon directory, and whether that sorts above or below
+# the image is the alphabet's business (it sits above FreeBSD-15.1 and below
+# archlinux-2026.01.01). The selected row is the one the menu draws in
+# reverse video, so it can be read off the raw serial and the cursor walked
+# down until it is the image.
+selected_row() {
+    [[ -f "$SERIAL" ]] || return 0
+    # The last reverse-video run, up to the escape that ends it.
+    # Everything between the escape that turns reverse video on and the next
+    # escape of any kind, which is the one that turns it off again.
+    printf '%s' "$(sed -e 's/\x1b\[30m\x1b\[47m/\n@ROW@/g' "$SERIAL" |
+                   grep '@ROW@' | tail -n 1 |
+                   sed -e 's/.*@ROW@//' -e 's/\x1b\[[0-9;=?]*[A-Za-z]//' \
+                       -e 's/\x1b.*//' -e 's/^ *//' -e 's/ *$//')"
+}
+for ((i = 0; i < 8; i++)); do
+    row=$(selected_row)
+    [[ "$row" == *.iso* || "$row" == *.img* ]] && break
+    echo "sendkey down" | socat - UNIX-CONNECT:"$MON" >/dev/null
+    sleep 1
+done
+
 MENU_LINES=$(serial_text | wc -l)
 echo "sendkey $KEY" | socat - UNIX-CONNECT:"$MON" >/dev/null
 T1=$(date +%s)

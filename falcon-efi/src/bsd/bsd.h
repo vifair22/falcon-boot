@@ -28,6 +28,7 @@
 
 #include <efi/uefi.h>
 #include <fs/fs.h>
+#include <bless/bless.h>
 
 typedef struct {
     const CHAR16 *stage;    /* what was being attempted */
@@ -45,5 +46,20 @@ typedef struct {
  * or an error with *result filled in. */
 EFI_STATUS bsd_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
                     fs_vol *vol, const fs_dirent *file, bsd_result *result);
+
+/* The same, starting the blessed loader the hit names instead of the
+ * medium's own (roadmap M7 part 2).
+ *
+ * Blessing a BSD medium signs the medium's own loader.efi with the user's
+ * MOK, because there is no Linux kernel and no initramfs for a UKI to wrap.
+ * The medium is still published with the two edits, because that signed
+ * loader reads its kernel and its memory disk from it.
+ *
+ * *bres carries the launch's own outcome, in the words boot_blessed already
+ * prints. Returns what bless_boot returned. */
+EFI_STATUS bsd_boot_blessed(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
+                            fs_vol *vol, const fs_dirent *file,
+                            const bless_hit *hit, bless_result *bres,
+                            bsd_result *result);
 
 #endif /* FALCON_BSD_H */

@@ -113,6 +113,27 @@ void bless_uki_trust(const bless_hit *hit, const trust_stores *stores,
 EFI_STATUS bless_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
                       const bless_hit *hit, bless_result *result);
 
+/* The same launch, with the image named to the platform as load_path instead
+ * of being published on the synthetic filesystem.
+ *
+ * One caller: a blessed BSD medium (falcon-efi/src/bsd). What is signed there
+ * is a copy of the medium's own loader, and that loader works out the device
+ * it came from and reads its kernel, its configuration and its memory disk
+ * from it. Published on a filesystem with no Block I/O behind it, it finds
+ * nothing and stops at "Failed to find bootable partition"; named as the
+ * medium's own \EFI\BOOT\BOOTX64.EFI, it finds the medium, which is where
+ * those files are.
+ *
+ * The bytes handed to LoadImage are still the signed copy off p2, and those
+ * are what the platform verifies. The path only says which device the
+ * started image should treat as its own.
+ *
+ * load_path NULL is exactly bless_boot. */
+EFI_STATUS bless_boot_as(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
+                         const bless_hit *hit,
+                         EFI_DEVICE_PATH_PROTOCOL *load_path,
+                         bless_result *result);
+
 /* The ISO's extent map (falcon-core/src/media/extmap.h) for the next
  * bless_boot to publish beside the wrap as <uki>.extra.d/falcon-map.cred,
  * which sd-stub packs into the initrd at /.extra/credentials/ where

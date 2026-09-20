@@ -404,7 +404,11 @@ static int append_fragment(char *cmdline, size_t cap, const char *frag)
 static bootcfg_result g_cfg;
 static char g_cfg_scratch[512u * 1024u];
 
-static int derive_uki_name(const options *o, char *out, size_t cap)
+/* The artifact's file name under BLESSED_DIR. ext is ".uki" for a wrap and
+ * ".efi" for a signed loader, because what stands behind the ISO is not the
+ * same kind of thing for every family. */
+static int derive_uki_name(const options *o, char *out, size_t cap,
+                           const char *ext)
 {
     const char *base;
     size_t n;
@@ -422,13 +426,13 @@ static int derive_uki_name(const options *o, char *out, size_t cap)
     n = strlen(base);
     if (n > 4u && strcmp(base + n - 4u, ".iso") == 0)
         n -= 4u;
-    if (n + 5u > cap) {
+    if (n + strlen(ext) + 1u > cap) {
         sgn_set_error(SGN_ERR_NOSPACE,
                       "the ISO's name is too long for a UKI name; use --name");
         return SGN_ERR_NOSPACE;
     }
     memcpy(out, base, n);
-    memcpy(out + n, ".uki", 5u);
+    memcpy(out + n, ext, strlen(ext) + 1u);
     return SGN_OK;
 }
 
@@ -497,6 +501,166 @@ static int append_hook(const char *initrd)
     return rc;
 }
 
+/* ---- blessing a BSD medium (docs/notes/bsd-route.md, M7 part 2) ---- */
+
+/* The file inside the medium that the platform will be asked to run. Every
+ * FreeBSD derivative keeps its loader here; it is also what the ISO's El
+ * Torito boot image carries as \EFI\BOOT\BOOTX64.EFI. */
+#define BSD_LOADER_MEMBER "/boot/loader.efi"
+
+/* Blessing a BSD medium is signing the medium's own loader.
+ *
+ * There is no wrap to build, because a UKI wraps a Linux kernel and its
+ * initramfs and a FreeBSD medium has neither: the kernel is loaded by that
+ * loader, from the medium, after the platform has already decided whether the
+ * loader may run. So the artifact standing behind the ISO is a signed copy of
+ * /boot/loader.efi, and the loader publishes the medium beside it with the
+ * memory-disk edits of M7 part 1 (falcon-efi/src/bsd).
+ *
+ * What the user's key vouches for is therefore narrower than a Linux wrap,
+ * where the signature covers the kernel and its initramfs together. That is
+ * FreeBSD's own design rather than something this adds; DESIGN Section 7.7
+ * says it in the terms the user sees.
+ */
+static int bless_bsd(const options *o, iso_view *view, const family_desc *fam)
+{
+    const char *member = NULL;
+    char efi_name[MANIFEST_NAME_MAX];
+    char iso_arg[MANIFEST_PATH_MAX + 2u];
+    char blessed_dir[PATH_MAX];
+    char out_efi[PATH_MAX];
+    char manifest_path[PATH_MAX];
+    char work_dir[PATH_MAX];
+    char work_loader[PATH_MAX];
+    char hex[65];
+    uint8_t digest[32];
+    uint64_t size = 0;
+    manifest_record rec;
+    int replaced = 0;
+    int rc;
+
+    if (!iso_view_find(view, BSD_LOADER_MEMBER, &member) || member == NULL) {
+        sgn_set_error(SGN_ERR_FORMAT,
+                      "this medium has no " BSD_LOADER_MEMBER ", so there is "
+                      "nothing to sign for it");
+        return SGN_ERR_FORMAT;
+    }
+    sgn_log(SGN_LOG_INFO, "loader: /%s", member);
+    /* Said rather than refused, because the caller is usually a script that
+     * passes the same arguments for every medium: nothing here builds a
+     * cmdline, since the kernel is chosen by the loader being signed. */
+    if (o->cmdline_extra != NULL)
+        sgn_log(SGN_LOG_INFO, "--cmdline-extra ignored: this medium takes no "
+                              "kernel arguments from us");
+
+    rc = sgn_derive_iso_path(o->iso, o->stick, o->iso_path, iso_arg,
+                             sizeof(iso_arg));
+    if (rc != SGN_OK)
+        return rc;
+    rc = derive_uki_name(o, efi_name, sizeof(efi_name), ".efi");
+    if (rc != SGN_OK)
+        return rc;
+
+    if (snprintf(blessed_dir, sizeof(blessed_dir), "%s/" BLESSED_DIR,
+                 o->stick) >= (int)sizeof(blessed_dir) ||
+        snprintf(out_efi, sizeof(out_efi), "%s/%s", blessed_dir, efi_name)
+            >= (int)sizeof(out_efi) ||
+        snprintf(manifest_path, sizeof(manifest_path), "%s/manifest",
+                 blessed_dir) >= (int)sizeof(manifest_path) ||
+        snprintf(work_dir, sizeof(work_dir), "%s/falcon-sign-%ld", o->work,
+                 (long)getpid()) >= (int)sizeof(work_dir) ||
+        snprintf(work_loader, sizeof(work_loader), "%s/loader.efi", work_dir)
+            >= (int)sizeof(work_loader)) {
+        sgn_set_error(SGN_ERR_NOSPACE, "the staging paths are too long");
+        return SGN_ERR_NOSPACE;
+    }
+
+    sgn_log(SGN_LOG_INFO, "hashing %s...", o->iso);
+    rc = sgn_sha256_file(o->iso, digest, &size);
+    if (rc != SGN_OK)
+        return rc;
+    sgn_hex32(digest, hex);
+
+    memset(&rec, 0, sizeof(rec));
+    rc = sgn_field_copy(rec.iso, sizeof(rec.iso), iso_arg + 1,
+                        "the ISO's path");
+    if (rc == SGN_OK)
+        rc = sgn_field_copy(rec.uki, sizeof(rec.uki), efi_name,
+                            "the artifact's name");
+    if (rc == SGN_OK)
+        rc = sgn_field_copy(rec.family, sizeof(rec.family),
+                            sgn_family_slug(fam->id), "the family id");
+    if (rc != SGN_OK)
+        return rc;
+    memcpy(rec.sha256, hex, sizeof(rec.sha256));
+    rec.has_sha256 = 1;
+    rec.size = size;
+
+    if (!manifest_record_valid(&rec)) {
+        sgn_set_error(SGN_ERR_FORMAT,
+                      "the record for this ISO cannot be written to the "
+                      "manifest: its path or name carries a '#' or a "
+                      "non-ASCII byte. Rename the file, or pass --iso-path "
+                      "and --name.");
+        return SGN_ERR_FORMAT;
+    }
+
+    if (o->dry_run) {
+        (void)printf("would write %s\n", out_efi);
+        (void)printf("would record in %s:\n", manifest_path);
+        (void)printf("iso=%s\nsize=%llu\nsha256=%s\nuki=%s\nfamily=%s\n",
+                     rec.iso, (unsigned long long)rec.size, rec.sha256,
+                     rec.uki, rec.family);
+        return SGN_OK;
+    }
+
+    rc = sgn_mkdir_p(blessed_dir);
+    if (rc == SGN_OK)
+        rc = sgn_mkdir_p(work_dir);
+    if (rc != SGN_OK)
+        return rc;
+
+    sgn_log(SGN_LOG_INFO, "extracting the loader");
+    rc = iso_view_extract(view, member, work_loader);
+    if (rc != SGN_OK)
+        goto cleanup;
+
+    {
+        char *argv[9];
+
+        argv[0] = sgn_arg("sbsign");
+        argv[1] = sgn_arg("--key");
+        argv[2] = sgn_arg(o->key);
+        argv[3] = sgn_arg("--cert");
+        argv[4] = sgn_arg(o->cert);
+        argv[5] = sgn_arg("--output");
+        argv[6] = out_efi;
+        argv[7] = work_loader;
+        argv[8] = NULL;
+
+        sgn_log(SGN_LOG_INFO, "sbsign");
+        rc = sgn_run(argv);
+        if (rc != SGN_OK)
+            goto cleanup;
+    }
+
+    rc = sgn_manifest_update(manifest_path, &rec, &replaced);
+    if (rc != SGN_OK)
+        goto cleanup;
+
+    (void)printf("blessed %s\n", rec.iso);
+    (void)printf("  loader   %s\n", out_efi);
+    (void)printf("  size     %llu\n", (unsigned long long)rec.size);
+    (void)printf("  sha256   %s\n", rec.sha256);
+    (void)printf("  manifest %s (%s)\n", manifest_path,
+                 replaced ? "record replaced" : "record added");
+
+cleanup:
+    (void)unlink(work_loader);
+    (void)rmdir(work_dir);
+    return rc;
+}
+
 static int bless(const options *o)
 {
     iso_view *view = NULL;
@@ -541,12 +705,6 @@ static int bless(const options *o)
                       "need sbsign on PATH (it signs the UKI)");
         return SGN_ERR_EXEC;
     }
-    if (!sgn_file_exists(o->stub)) {
-        sgn_set_error(SGN_ERR_IO,
-                      "sd-stub not found at '%s'; install systemd-boot or "
-                      "pass --stub", o->stub);
-        return SGN_ERR_IO;
-    }
     if (!sgn_file_exists(o->key) || !sgn_file_exists(o->cert)) {
         sgn_set_error(SGN_ERR_IO, "MOK key or certificate not found ('%s', "
                       "'%s')", o->key, o->cert);
@@ -560,6 +718,24 @@ static int bless(const options *o)
     iso_view_family_probe(view, &probe);
     fam = family_detect(&probe);
     sgn_log(SGN_LOG_INFO, "family: %s (%s)", fam->name, sgn_family_slug(fam->id));
+
+    /* A BSD medium is signed, not wrapped, so it never needs sd-stub and
+     * takes none of what follows. --cmdline or --kernel means the user is
+     * describing a Linux wrap, and is left to the path that builds one. */
+    if (fam->id == FAMILY_BSD && o->cmdline == NULL && o->kernel == NULL) {
+        rc = bless_bsd(o, view, fam);
+        goto out;
+    }
+
+    /* Checked here rather than with sbsign above because only a wrap needs
+     * it, and the family is what says whether this is one. */
+    if (!sgn_file_exists(o->stub)) {
+        sgn_set_error(SGN_ERR_IO,
+                      "sd-stub not found at '%s'; install systemd-boot or "
+                      "pass --stub", o->stub);
+        rc = SGN_ERR_IO;
+        goto out;
+    }
 
     /* The ISO's own configuration (falcon-core/src/media/bootcfg.c): a
      * loopback entry boots it as a file with the distro's own arguments;
@@ -647,7 +823,7 @@ static int bless(const options *o)
                              sizeof(iso_arg));
     if (rc != SGN_OK)
         goto out;
-    rc = derive_uki_name(o, uki_name, sizeof(uki_name));
+    rc = derive_uki_name(o, uki_name, sizeof(uki_name), ".uki");
     if (rc != SGN_OK)
         goto out;
 

@@ -1019,12 +1019,41 @@ static void boot_blessed(EFI_HANDLE image_handle, const menu_entry *entry,
     out(entry->label);
     out(L"\r\n\r\n");
 
-    /* A wrap the sign tool built with falcon-hook in its initrd finds the
-     * ISO through the extent map, as a direct boot does; an older wrap
-     * ignores it. It goes out twice: as FalconIsoMap, and as a credential
-     * beside the wrap for a kernel with no efivarfs (Alpine's). Failing to
-     * build it is left to the hook to report. */
-    {
+    /* Which artifact stands behind the ISO is the family's answer, and the
+     * family here is the loader's own from the survey, never the manifest's
+     * field: the manifest is editable, and this decides how the boot is
+     * staged. What may RUN is the platform's decision on either route. */
+    if (!target->probed) {
+        iso_survey survey;
+
+        iso_survey_media(g_st, &g_vols[target->vol], &target->ent,
+                         target->kind, &g_stores, &survey);
+        target->fam = survey.family->id;
+        target->probed = 1;
+    }
+
+    if (target->fam == FAMILY_BSD) {
+        /* No extent map: the hook is a Linux mechanism, and this medium
+         * finds itself through the memory disk instead. */
+        bsd_result bres;
+
+        status = bsd_boot_blessed(g_st, image_handle, &g_vols[target->vol],
+                                  &target->ent, &target->hit, &result, &bres);
+        if (EFI_ERROR(status) && bres.not_bsd) {
+            /* The medium could not be served the memory-disk way, so the
+             * blessed loader would come up with no root to mount. Say what
+             * went wrong there rather than reporting a launch that never
+             * happened. */
+            result.stage = bres.stage;
+            result.status = bres.status;
+            result.advice = bres.advice;
+        }
+    } else {
+        /* A wrap the sign tool built with falcon-hook in its initrd finds the
+         * ISO through the extent map, as a direct boot does; an older wrap
+         * ignores it. It goes out twice: as FalconIsoMap, and as a credential
+         * beside the wrap for a kernel with no efivarfs (Alpine's). Failing to
+         * build it is left to the hook to report. */
         discover_dev *dev = g_vol_dev[target->vol];
         const UINT8 *map = (const UINT8 *)0;
         UINTN map_len = 0;
@@ -1033,9 +1062,9 @@ static void boot_blessed(EFI_HANDLE image_handle, const menu_entry *entry,
                              dev->bio->Media->BlockSize, &target->ent, &map,
                              &map_len);
         bless_set_map(map, map_len);
+        status = bless_boot(g_st, image_handle, &target->hit, &result);
+        bless_set_map((const UINT8 *)0, 0);
     }
-    status = bless_boot(g_st, image_handle, &target->hit, &result);
-    bless_set_map((const UINT8 *)0, 0);
     loader_isomap_clear(g_st);
 
     menu_screen(g_st);
@@ -1290,16 +1319,15 @@ static BOOLEAN entry_path_ascii(const menu_entry *e, char *out_path, UINTN cap)
 
 /* ---- blessing from the menu (DESIGN Section 7.5) ---- */
 
-/* What the appliance can bless from here: an ISO that is neither Windows
- * media (the loader patches Windows as it boots it) nor BSD media (nothing
- * to wrap until roadmap M7 part 2; falcon-appliance/src/route.c says the
- * same thing at the other end), and has no fresh blessing already. An
+/* What the appliance can bless from here: an ISO that is not Windows media
+ * (the loader patches Windows as it boots it) and has no fresh blessing
+ * already. An
  * unprobed ISO counts; the sign tool refuses what it cannot wrap. */
 static BOOLEAN blessable(const iso_target *t)
 {
     if (t->shape != ENTRY_MEDIA || t->kind != ISO_MEDIA_CD)
         return FALSE;
-    if (t->fam == FAMILY_WINDOWS || t->fam == FAMILY_BSD)
+    if (t->fam == FAMILY_WINDOWS)
         return FALSE;
     return bless_hit_action(&t->hit) != BLESS_ACT_UKI ? TRUE : FALSE;
 }

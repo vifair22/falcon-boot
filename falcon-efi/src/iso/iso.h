@@ -130,6 +130,48 @@ EFI_STATUS iso_boot_overlaid(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
                              iso_media_kind kind, const iso_overlay *ovl,
                              iso_boot_result *result);
 
+/* The device path of \EFI\BOOT\BOOTX64.EFI on the medium's boot volume,
+ * from the pool; the caller frees it. Valid only while the medium is
+ * published.
+ *
+ * It exists for one caller: a blessed BSD medium starts a signed copy of the
+ * medium's own loader, held on p2, and that loader has to believe it came
+ * from the medium, because the medium is where it reads its kernel and its
+ * memory disk from. The bytes are named to the platform as this path while
+ * being handed over as a buffer (DESIGN Section 6.4). */
+EFI_STATUS iso_boot_path(EFI_BOOT_SERVICES *bs, EFI_HANDLE esp_handle,
+                         EFI_DEVICE_PATH_PROTOCOL **out);
+
+/* What runs while the medium is published, when it is not the medium's own
+ * \EFI\BOOT\BOOTX64.EFI. esp_handle is the medium's boot volume, for
+ * iso_boot_path above. Sets result->stage and result->status the way the
+ * chainload does. */
+typedef EFI_STATUS (*iso_served_fn)(void *ctx, EFI_SYSTEM_TABLE *st,
+                                    EFI_HANDLE parent_image,
+                                    EFI_HANDLE esp_handle,
+                                    iso_boot_result *result);
+
+/* The same publish, with the caller deciding what to start.
+ *
+ * It exists for one case: a blessed BSD medium (DESIGN Section 6.4), where
+ * the image the platform verifies is a signed copy of the ISO's own loader
+ * held on p2, and the medium still has to be published beside it, because
+ * that is where that loader reads its kernel and its memory disk from. The
+ * callback runs with the device published and the firmware's drivers bound to
+ * it, and everything is torn down afterwards exactly as it is for a
+ * chainload.
+ *
+ * Nothing about verification changes: what the callback starts goes through
+ * the same shim-verified load path as everything else, and this module never
+ * sees the image. */
+EFI_STATUS iso_boot_overlaid_served(EFI_SYSTEM_TABLE *st,
+                                    EFI_HANDLE parent_image, fs_vol *vol,
+                                    const fs_dirent *file,
+                                    iso_media_kind kind,
+                                    const iso_overlay *ovl,
+                                    iso_served_fn served, void *ctx,
+                                    iso_boot_result *result);
+
 /* Looks inside the medium without booting anything: builds the same virtual
  * device, lets the firmware surface the ESP, reads the two facts the menu
  * labels with, and tears the device down again. Nothing is loaded and nothing

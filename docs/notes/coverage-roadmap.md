@@ -116,7 +116,7 @@ harness measures now is `docs/coverage.md`:
 | Linux, not blessed | kernel starts, media lost | kernel starts (MS-signed distros), media lost | refused |
 | Windows install, prepared | boots | boots | refused (bootmgr is MS-signed) |
 | Bare EFI payloads, memtest | boots | boots if MS-signed, else bless | bless |
-| BSD (FreeBSD, OPNsense, pfSense) | boots to its installer, the ISO loaded as a memory disk (M7); refused above what the loader can stage below 4 GB | same | refused: their loaders are unsigned, until M7 part 2 |
+| BSD (FreeBSD, OPNsense, pfSense) | boots to its installer, the ISO loaded as a memory disk (M7); refused above what the loader can stage below 4 GB | blessed: the medium's own loader signed with the MOK | same |
 | Everything else (ESXi, WinPE, IMG distros, ChromeOS) | untested | untested | refused unless blessed |
 
 Two things in that table matter more than the rest:
@@ -388,11 +388,14 @@ graph LR
   harness and pfSense Plus 24.06 reaches its installer; OPNsense 25.1's
   2.2 GB DVD exceeds what FreeBSD's loader can stage below 4 GB and is
   refused by the guard. Ventoy's per-version GEOM module stays the fallback
-  for images that large. Part 2 is blessing for BSD, added for completeness
-  on 2026-09-19: the sign tool signs the ISO's own `loader.efi` with the
-  user's MOK and the loader starts that, since a UKI wrap has no Linux kernel
-  to wrap here. Exit: FreeBSD and pfSense boot to their installers with
-  Secure Boot off, and blessed with it on in both states.
+  for images that large. **Part 2, blessing for BSD, is built and measured**:
+  the sign tool signs the ISO's own `loader.efi` with the user's MOK, since a
+  UKI wrap has no Linux kernel to wrap here, and the loader starts that
+  signed copy with the medium published beside it and named to the platform
+  as the medium's own loader, which is what lets FreeBSD work out its device
+  (`docs/notes/bsd-route.md`). FreeBSD 15.1 PASSes blessed in both Secure
+  Boot states, in 22 and 23 seconds. Exit: met for FreeBSD and pfSense;
+  OPNsense's DVD is out of reach by RAM rather than by mechanism.
 - **M6, Windows in the loader.** WIM surgery at boot (needs the UDF reader),
   then winjump parity (Win11 bypass, unattend) and WinPE shells, ESXi test.
   Appliance preparation stays until this passes the scorecard (it passed;

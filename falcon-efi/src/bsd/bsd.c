@@ -69,8 +69,17 @@ static BOOLEAN staging_fits(EFI_BOOT_SERVICES *bs, UINT64 size)
     return TRUE;
 }
 
-EFI_STATUS bsd_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
-                    fs_vol *vol, const fs_dirent *file, bsd_result *result)
+/* The medium published with the two edits, and something started against it.
+ *
+ * served is what runs with the device up: NULL for the medium's own loader,
+ * which is what iso_boot_overlaid does by itself, and the blessed launch
+ * otherwise. Everything before that point is the same work either way, and
+ * saying it twice is how the two would drift.
+ */
+static EFI_STATUS bsd_run(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
+                          fs_vol *vol, const fs_dirent *file,
+                          iso_served_fn served, void *ctx,
+                          const CHAR16 *handoff, bsd_result *result)
 {
     EFI_BOOT_SERVICES *bs = st->BootServices;
     bsdmd_record_edit rec;
@@ -167,9 +176,9 @@ EFI_STATUS bsd_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
     /* Not "starting": the ISO's loader reads the whole medium out of the
      * virtual CD after this line, and the coverage harness counts media read
      * after "starting" as the kernel's (tools/coverage/run-case.sh). */
-    menu_out(st, L"handing the ISO to its own loader, as a memory disk\r\n");
-    status = iso_boot_overlaid(st, parent_image, vol, file, ISO_MEDIA_CD,
-                               &ovl, &ir);
+    menu_out(st, handoff);
+    status = iso_boot_overlaid_served(st, parent_image, vol, file,
+                                      ISO_MEDIA_CD, &ovl, served, ctx, &ir);
     result->stage = ir.stage;
     result->status = ir.status;
 
@@ -181,4 +190,64 @@ out:
     if (EFI_ERROR(status))
         result->status = status;
     return status;
+}
+
+EFI_STATUS bsd_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
+                    fs_vol *vol, const fs_dirent *file, bsd_result *result)
+{
+    return bsd_run(st, parent_image, vol, file, (iso_served_fn)0, (void *)0,
+                   L"handing the ISO to its own loader, as a memory disk\r\n",
+                   result);
+}
+
+/* ---- the blessed launch ---- */
+
+typedef struct {
+    const bless_hit *hit;
+    bless_result    *bres;
+} blessed_ctx;
+
+static EFI_STATUS serve_blessed(void *ctx, EFI_SYSTEM_TABLE *st,
+                                EFI_HANDLE parent_image,
+                                EFI_HANDLE esp_handle,
+                                iso_boot_result *ir)
+{
+    blessed_ctx *c = (blessed_ctx *)ctx;
+    EFI_DEVICE_PATH_PROTOCOL *path = (EFI_DEVICE_PATH_PROTOCOL *)0;
+    EFI_STATUS status;
+
+    /* The signed loader is named to the platform as the medium's own
+     * \\EFI\\BOOT\\BOOTX64.EFI, which is what makes the medium the device
+     * it believes it came from: FreeBSD's loader works currdev out from
+     * there, and everything it then reads - its Lua, its kernel, the memory
+     * disk - is on that medium. Its BYTES are the signed copy off p2, and
+     * those are what the platform verifies. Measured 2026-09-19: published
+     * on the synthetic filesystem instead, the same loader gets as far as
+     * "Failed to find bootable partition" and stops. */
+    ir->stage = L"naming the blessed loader as the medium's";
+    status = iso_boot_path(st->BootServices, esp_handle, &path);
+    if (EFI_ERROR(status))
+        return status;
+    status = bless_boot_as(st, parent_image, c->hit, path, c->bres);
+    st->BootServices->FreePool(path);
+
+    /* The medium's result fields are what iso.c reports about the launch;
+     * the caller reads the blessed ones out of *bres. */
+    ir->stage = c->bres->stage;
+    ir->status = c->bres->status;
+    return status;
+}
+
+EFI_STATUS bsd_boot_blessed(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
+                            fs_vol *vol, const fs_dirent *file,
+                            const bless_hit *hit, bless_result *bres,
+                            bsd_result *result)
+{
+    blessed_ctx ctx;
+
+    ctx.hit = hit;
+    ctx.bres = bres;
+    return bsd_run(st, parent_image, vol, file, serve_blessed, &ctx,
+                   L"handing the ISO to its blessed loader, as a memory "
+                   L"disk\r\n", result);
 }

@@ -27,10 +27,11 @@ The Tier B installers (Debian netinst, Alpine, Proxmox) boot direct through
 the hook's fallbacks. A stock Windows ISO boots in every state whose db
 trusts Microsoft: the loader patches its boot.wim in memory as the virtual CD
 serves it (falcon-winjump in place of winpeshl.exe), and Setup finds its
-source through the ISO winjump attaches from Windows. BSD media (M7 part 1)
-boots with Secure Boot off by a third route: the served ISO gains one
-directory record naming itself as a file and the md_image settings in its
-loader.conf, so FreeBSD's own loader mounts root from a memory disk
+source through the ISO winjump attaches from Windows. BSD media (M7) boots by a third
+route: the served ISO gains one directory record naming itself as a file and
+the md_image settings in its loader.conf, so FreeBSD's own loader mounts root
+from a memory disk. Blessing it signs that loader with the MOK and starts the
+signed copy with the medium named to the platform as its device
 (docs/notes/bsd-route.md).
 
 Status: pre-1.0 MVP. Build-order steps 1-9 are done and step 10 (real

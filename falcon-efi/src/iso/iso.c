@@ -821,6 +821,22 @@ static EFI_STATUS build_load_path(EFI_BOOT_SERVICES *bs,
     return EFI_SUCCESS;
 }
 
+EFI_STATUS iso_boot_path(EFI_BOOT_SERVICES *bs, EFI_HANDLE esp_handle,
+                         EFI_DEVICE_PATH_PROTOCOL **out)
+{
+    EFI_GUID dp_guid = EFI_DEVICE_PATH_PROTOCOL_GUID;
+    EFI_DEVICE_PATH_PROTOCOL *esp_path;
+    EFI_STATUS status;
+
+    if (bs == (EFI_BOOT_SERVICES *)0 || out == (EFI_DEVICE_PATH_PROTOCOL **)0)
+        return EFI_INVALID_PARAMETER;
+    *out = (EFI_DEVICE_PATH_PROTOCOL *)0;
+    status = bs->HandleProtocol(esp_handle, &dp_guid, (void **)&esp_path);
+    if (EFI_ERROR(status))
+        return status;
+    return build_load_path(bs, esp_path, out);
+}
+
 /* ---- our shim's verify protocol, out of the way of the ISO's ----
  *
  * An ISO's own chain is its shim, then its signed GRUB, and GRUB asks "a"
@@ -1176,6 +1192,18 @@ EFI_STATUS iso_boot_overlaid(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
                              iso_media_kind kind, const iso_overlay *ovl,
                              iso_boot_result *result)
 {
+    return iso_boot_overlaid_served(st, parent_image, vol, file, kind, ovl,
+                                    (iso_served_fn)0, (void *)0, result);
+}
+
+EFI_STATUS iso_boot_overlaid_served(EFI_SYSTEM_TABLE *st,
+                                    EFI_HANDLE parent_image, fs_vol *vol,
+                                    const fs_dirent *file,
+                                    iso_media_kind kind,
+                                    const iso_overlay *ovl,
+                                    iso_served_fn served, void *ctx,
+                                    iso_boot_result *result)
+{
     EFI_BOOT_SERVICES *bs;
     iso_volumes vols;
     UINT8 owned = 0;
@@ -1191,7 +1219,13 @@ EFI_STATUS iso_boot_overlaid(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
     result->family = (const family_desc *)0;
 
     status = iso_open(st, vol, file, kind, ovl, &result->stage, &vols, &owned);
-    if (!EFI_ERROR(status)) {
+    if (!EFI_ERROR(status) && served != (iso_served_fn)0) {
+        /* The caller's image, with the medium published beside it. No
+         * media_family here: the caller already knows what this medium is,
+         * which is why it is starting something other than the medium's own
+         * loader. */
+        status = served(ctx, st, parent_image, vols.vol[0], result);
+    } else if (!EFI_ERROR(status)) {
         /* Detection is reported, never acted on. It runs before the chainload
          * only so the answer exists while the volumes are still mounted; the
          * load path below is byte-for-byte what it was without it, and no

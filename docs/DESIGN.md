@@ -1490,9 +1490,18 @@ model rather than a paragraph buried in the ISO path:
   user's MOK and boot that signed wrap instead of the vendor's own chain.
 - **Media patched at boot (Section 6.4).** The loader serves altered bytes of
   a vendor's image for one boot, so that the vendor's own chain can find its
-  media: a user-mode executable inside Windows' `boot.wim`, or a Linux ISO's
-  `grub.cfg` and an extra initrd for its own signed GRUB (D3b). No signature
-  is involved anywhere.
+  media: a user-mode executable inside Windows' `boot.wim`, a Linux ISO's
+  `grub.cfg` and an extra initrd for its own signed GRUB (D3b), or a BSD
+  medium's own loader configuration and one directory record, so that its
+  loader mounts the medium out of RAM. No signature is involved anywhere.
+
+A blessed BSD medium is both at once, and is the one case where the signature
+covers less than a Linux blessing does. What is signed is the medium's own
+`loader.efi`, because a UKI wraps a kernel and an initramfs and a FreeBSD
+medium has neither; that loader then reads a kernel and modules off the
+medium, which nothing verifies. That is FreeBSD's own design rather than
+something this adds, and the medium is still served patched, so both halves of
+this section apply to it. It is named here rather than left to be inferred.
 
 Neither changes what the platform will enforce. They differ in what they
 leave behind, which is what decides how each is authorised (below).

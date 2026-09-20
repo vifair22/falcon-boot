@@ -126,43 +126,63 @@ own fragmentation. When it fails the user is told, in those words, and told to
 press `c` for the ISO's own loader, rather than watching the boot die halfway
 through a copy with a message only FreeBSD's source explains.
 
-## Secure Boot: blessing a BSD ISO (part 2 of M7)
+## Secure Boot: blessing a BSD ISO (part 2 of M7, built 2026-09-19)
 
 FreeBSD's `loader.efi` is unsigned, so under Secure Boot the platform refuses
 it exactly as it refuses Arch's. Blessing today signs a Linux kernel into a
-UKI wrap, which has nothing to wrap here. The BSD form of the same act is:
-the sign tool takes the ISO's own `loader.efi`, signs it with the user's MOK,
-and the loader launches that signed copy with the patched ISO served beside
-it. The ceremony is the one every blessing uses and it batches the same way:
-`b` blesses the row, `a` blesses every unblessed ISO on the stick, the
-appliance signs the whole list in one run, and the machine reboots once.
-Signing happens there, never in the loader, because the key lives on p3.
+UKI wrap, which has nothing to wrap here: a UKI carries a kernel and its
+initramfs, and a FreeBSD medium has neither to give. The BSD form of the same
+act is to sign the medium's own loader:
 
-What it needs:
+- **The sign tool** reads `/boot/loader.efi` out of the ISO with falcon-core's
+  ISO9660 reader, signs it with `sbsign` and the user's MOK, and writes it to
+  `p2:/falcon/blessed/<iso>.efi` with an ordinary manifest record naming it
+  (`family=bsd`). No sd-stub, no cmdline, no initramfs: `--cmdline-extra` is
+  ignored and said to be, because nothing here chooses kernel arguments.
+- **The loader** publishes the medium with M7 part 1's two edits and starts
+  the signed copy in place of the medium's own loader. The ceremony is the one
+  every blessing uses and it batches the same way: `b` blesses the row, `a`
+  blesses every unblessed ISO on the stick, the appliance signs the whole list
+  in one run, and the machine reboots once. Signing happens there, never in
+  the loader, because the key lives on p3.
 
-- **The sign tool**: read `/boot/loader.efi` out of the ISO with falcon-core's
-  ISO9660 reader, sign it with `sbsign` the way a bare payload is signed
-  (falcon-cli/src/sign/payload.c already signs PE images in place), and write
-  it to `p2:/falcon/blessed/<iso>.efi` with a manifest record naming it. The
-  record's existing shape fits: the artifact to launch is a field the blessed
-  path already has.
-- **The loader**: on a blessed BSD entry, publish the virtual CD with the two
-  edits as part 1 does, then start the signed loader instead of the ISO's own.
-- **A measurement first**: FreeBSD's loader works out its own device
-  (`currdev`) from the device it was loaded from, and this route now depends
-  on `currdev` being the medium, because that is where `md_image_name`
-  resolves. Started off the synthetic filesystem of Section 5.1, which has no
-  Block I/O, it may not find one. The alternative is patching the signed bytes
-  into the El Torito image the ISO already carries (2 MB FAT, ~650 KB used, so
-  a signature's worth of growth fits, at the cost of a FAT directory and chain
-  edit in the served bytes). Measure before choosing.
+### The measurement that decided how it is launched
+
+A blessed artifact is normally published on the synthetic filesystem of
+Section 5.1 and loaded from there by device path. Measured 2026-09-19, that
+does not work here: the signed loader starts, the platform having verified
+it, and then stops at
+
+    Failed to find bootable partition
+    ERROR: cannot open /boot/lua/loader.lua: invalid argument.
+
+FreeBSD's `find_currdev` (stand/efi/loader/main.c) works out the device the
+loader came from, and it has no global scan of block devices: it tries
+`rootdev`, the boot manager's own `Boot####` device path, the partitions of
+the boot device, and then the handle its image was loaded from and that
+handle's ancestors. The synthetic filesystem has no Block I/O behind it and
+no ancestors, so every one of those comes up empty. It is also why the
+unblessed route works without any of this: there the image IS the medium's
+own loader, loaded off the medium.
+
+So the blessed loader is named to the platform as the medium's own
+`\EFI\BOOT\BOOTX64.EFI` (`iso_boot_path`) while its BYTES are handed over
+as a buffer, the signed copy read off p2 (`bless_boot_as`). The spec allows
+both a FilePath and a SourceBuffer; the firmware resolves the path to a
+DeviceHandle without reading it. What the platform verifies is the buffer,
+which is the signed image; the path only says which device the started image
+should treat as its own. Measured: `Load Device: VenHw(...)/CDROM(0x1)`,
+`Setting currdev to cd0`, the memory disk loads and the installer comes up.
+
+**Measured, blessed**, FreeBSD 15.1 through the harness: PASS in 23 s with
+Secure Boot on and only the user's MOK trusted, and again with the Microsoft
+CA present.
 
 **What blessing a BSD ISO means, stated plainly**: the user's key vouches for
 the ISO's loader, and that loader then loads a kernel and modules that nothing
 verifies. That is FreeBSD's own design, not something this adds, but it is a
 weaker chain than a blessed Linux wrap, where the signature covers the kernel
-and its initramfs together. DESIGN Section 7.7 gets a row for it when it is
-built.
+and its initramfs together.
 
 ## Corpus
 

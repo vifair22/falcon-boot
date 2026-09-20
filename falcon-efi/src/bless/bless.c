@@ -351,16 +351,18 @@ static EFI_STATUS publish_image(EFI_SYSTEM_TABLE *st, void *buf, UINT64 size)
  * the caller, which owns the allocation. */
 static EFI_STATUS launch_image(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent,
                                void *buf, UINT64 size,
+                               EFI_DEVICE_PATH_PROTOCOL *named,
                                const load_ops *opsp, BOOLEAN inner_blocked,
                                const CHAR16 *refused, UINT8 *retain,
                                bless_result *result)
 {
     EFI_BOOT_SERVICES *bs = st->BootServices;
-    EFI_DEVICE_PATH_PROTOCOL *load_path = (EFI_DEVICE_PATH_PROTOCOL *)0;
+    EFI_DEVICE_PATH_PROTOCOL *load_path = named;
     EFI_HANDLE child = (EFI_HANDLE)0;
     CHAR16 *exit_data = (CHAR16 *)0;
     UINTN exit_size = 0;
     BOOLEAN published = FALSE;
+    BOOLEAN own_path = FALSE;
     load_ops ops = *opsp;
     EFI_STATUS status;
 
@@ -368,15 +370,22 @@ static EFI_STATUS launch_image(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent,
      * it can be on screen for the whole of a read that takes a while. */
     *retain = 0;
 
-    result->stage = L"publishing the image";
-    status = publish_image(st, buf, size);
-    if (!EFI_ERROR(status)) {
-        published = TRUE;
-        result->stage = L"naming the image on the synthetic filesystem";
-        status = credfs_load_path(bs, g_load_ucs2, &load_path);
-        if (EFI_ERROR(status)) {
-            credfs_teardown(bs);
-            published = FALSE;
+    /* A caller that named the image has said where the started image should
+     * believe it came from, and the synthetic filesystem would only get in
+     * the way of that (bless_boot_as). */
+    if (named == (EFI_DEVICE_PATH_PROTOCOL *)0) {
+        result->stage = L"publishing the image";
+        status = publish_image(st, buf, size);
+        if (!EFI_ERROR(status)) {
+            published = TRUE;
+            own_path = TRUE;
+            result->stage = L"naming the image on the synthetic filesystem";
+            status = credfs_load_path(bs, g_load_ucs2, &load_path);
+            if (EFI_ERROR(status)) {
+                credfs_teardown(bs);
+                published = FALSE;
+                own_path = FALSE;
+            }
         }
     }
     /* A buffer load is a complete fallback here, unlike on the personal-OS
@@ -385,14 +394,18 @@ static EFI_STATUS launch_image(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent,
      * only to find companions this wrap does not have. Same verification
      * either way, which is the only property that must not move. */
 
-    /* Exactly one of DevicePath and SourceBuffer is set, which is what the
-     * spec asks for. */
+    /* On the ordinary path exactly one of DevicePath and SourceBuffer is set,
+     * which is what the spec asks for. A named image sets both on purpose:
+     * the buffer is what is loaded and verified, and the path is only what
+     * the started image is told it came from (spec 7.4 permits a FilePath
+     * beside a SourceBuffer, and the firmware resolves it to the
+     * DeviceHandle without reading it). */
     result->stage = ops.via_shim ? L"LoadImage of the image (shim)"
                                  : L"LoadImage of the image (firmware)";
     status = ops.LoadImage(FALSE, parent, load_path,
                            published ? (void *)0 : buf,
                            published ? (UINTN)0 : (UINTN)size, &child);
-    if (load_path != (EFI_DEVICE_PATH_PROTOCOL *)0)
+    if (own_path && load_path != (EFI_DEVICE_PATH_PROTOCOL *)0)
         bs->FreePool(load_path);
     if (EFI_ERROR(status)) {
         /* A refusal under Secure Boot still leaves a loaded image behind
@@ -476,6 +489,15 @@ void bless_uki_trust(const bless_hit *hit, const trust_stores *stores,
 EFI_STATUS bless_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
                       const bless_hit *hit, bless_result *result)
 {
+    return bless_boot_as(st, parent_image, hit,
+                         (EFI_DEVICE_PATH_PROTOCOL *)0, result);
+}
+
+EFI_STATUS bless_boot_as(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
+                         const bless_hit *hit,
+                         EFI_DEVICE_PATH_PROTOCOL *load_path,
+                         bless_result *result)
+{
     EFI_BOOT_SERVICES *bs;
     fs_vol *vol;
     fs_dirent ent;
@@ -552,7 +574,8 @@ EFI_STATUS bless_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
     /* The blessed wording of the refusal main.c reports for an unblessed ISO:
      * here the image IS ours, so the actionable half is the key, not the
      * blessing. */
-    status = launch_image(st, parent_image, buf, size, &ops, inner_blocked,
+    status = launch_image(st, parent_image, buf, size, load_path, &ops,
+                          inner_blocked,
                           L"the blessed image is not signed with a key this "
                           L"machine has enrolled.\r\n\r\nRe-bless the ISO "
                           L"with the MOK key enrolled here, enroll this "
@@ -635,7 +658,8 @@ EFI_STATUS bless_payload_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
      * platform verified, so the door is signing that file, which is what
      * blessing a payload does (DESIGN Section 7.2) - and it says so, because
      * that bless is the one that writes to the user's own file. */
-    status = launch_image(st, parent_image, buf, size, &ops, FALSE,
+    status = launch_image(st, parent_image, buf, size,
+                          (EFI_DEVICE_PATH_PROTOCOL *)0, &ops, FALSE,
                           L"this EFI payload is not signed with a key this "
                           L"machine has enrolled.\r\n\r\nBless it with the "
                           L"sign tool, which rewrites the payload file itself; "
