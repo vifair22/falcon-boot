@@ -41,7 +41,25 @@ Reproduce it with:
         -drive format=raw,file=build/test-bios.img \
         -drive format=raw,file=build/test-stick.img
 
-What is left in S1 is the menu itself, the ISO scan's depth and filter rules
+There is a menu, too, driven by real keystrokes through the QEMU monitor the
+way the UEFI rig's tests are:
+
+    falcon-boot (BIOS)
+
+        archlinux-fake.iso   1 MiB
+      > systemrescue-fake.iso   1 MiB
+        payload-test.iso   8 MiB
+
+      up and down to move, enter to select
+
+Screen and keyboard are INT 10h and INT 16h through the thunk, one call per
+character, which is slow and is the right trade: the alternative is a VGA
+driver and a PS/2 driver of our own, and neither would work on a machine
+whose firmware is doing something unusual.
+
+What is left in S1 is the shared menu model (open question 2, and the moment
+to move it is when this build boots something, not before), the ISO scan's
+depth and filter rules
 (`falcon-efi/src/efi/main.c` has them and they are not EFI-shaped), the boot
 paths, and the resident INT 13h hook of Section 7.1, which is still a spike
 rather than an estimate. The ceiling stage 2 is now up against is its own:

@@ -47,6 +47,19 @@ static part_src  g_p2_src;
 static exfat_vol g_p2;
 static exfat_dir g_p2_dir;
 
+/* What the menu draws. The names are kept rather than re-read, because
+ * re-walking the directory to redraw a row would mean a thunk call per
+ * sector per keystroke. */
+#define MENU_MAX 32u
+
+typedef struct {
+    uint16_t name[64];
+    uint64_t size;
+} menu_row;
+
+static menu_row g_rows[MENU_MAX];
+static unsigned g_row_count;
+
 static int part_read(void *ctx, uint64_t off, uint64_t len, void *buf)
 {
     const part_src *p = ctx;
@@ -84,6 +97,92 @@ static void put_name(const uint16_t *name)
 
     for (i = 0; name[i] != 0; i++)
         bios_putc(name[i] < 0x80u ? (char)name[i] : '?');
+}
+
+/* The same, to the screen and serial together. */
+static void screen_name(const uint16_t *name)
+{
+    char buf[2];
+    size_t i;
+
+    buf[1] = '\0';
+    for (i = 0; name[i] != 0; i++) {
+        buf[0] = name[i] < 0x80u ? (char)name[i] : '?';
+        bios_screen_puts(buf);
+    }
+}
+
+static void screen_dec(uint64_t v)
+{
+    char buf[21];
+    char one[2];
+    size_t n = 0;
+
+    one[1] = '\0';
+    if (v == 0) {
+        bios_screen_puts("0");
+        return;
+    }
+    while (v > 0 && n < sizeof buf) {
+        buf[n++] = (char)('0' + (unsigned)(v % 10u));
+        v /= 10u;
+    }
+    while (n > 0) {
+        one[0] = buf[--n];
+        bios_screen_puts(one);
+    }
+}
+
+/* The menu of DESIGN Section 6 stage 1, as much of it as a BIOS build has
+ * so far: the images found on p2, one per row, and a selection that moves.
+ *
+ * The model belongs in falcon-core eventually, shared with the EFI menu
+ * (bios-route.md open question 2). It is not moved yet, because moving
+ * working code that real hardware has booted, for the benefit of a platform
+ * that cannot boot anything yet, is the wrong order. When this build boots a
+ * payload, that is the moment. */
+static void menu_draw(unsigned selected)
+{
+    unsigned i;
+
+    bios_screen_clear();
+    bios_screen_puts("falcon-boot (BIOS)\n\n");
+
+    if (g_row_count == 0) {
+        bios_screen_puts("  no bootable images on p2\n");
+        return;
+    }
+    for (i = 0; i < g_row_count; i++) {
+        bios_screen_puts(i == selected ? "  > " : "    ");
+        screen_name(g_rows[i].name);
+        bios_screen_puts("   ");
+        screen_dec(g_rows[i].size / 1048576u);
+        bios_screen_puts(" MiB\n");
+    }
+    bios_screen_puts("\n  up and down to move, enter to select\n");
+}
+
+static void menu_run(void)
+{
+    unsigned selected = 0;
+
+    for (;;) {
+        int key;
+
+        menu_draw(selected);
+        key = bios_getkey();
+        if (key == BIOS_KEY_UP && selected > 0)
+            selected--;
+        else if (key == BIOS_KEY_DOWN && selected + 1u < g_row_count)
+            selected++;
+        else if (key == BIOS_KEY_ENTER && g_row_count > 0) {
+            bios_screen_puts("\n  selected: ");
+            screen_name(g_rows[selected].name);
+            bios_screen_puts("\n  booting a payload is the next stage of the"
+                             " route; nothing to do yet\n");
+            return;
+        }
+    }
 }
 static bios_disk g_boot;
 static bios_disk g_second;
@@ -213,6 +312,16 @@ static void scan_iso_partition(bios_disk *d, const gpt_part *p)
         bios_puts("  ");
         bios_put_dec(e.size);
         bios_puts(" bytes\n");
+        if (g_row_count < MENU_MAX) {
+            size_t k;
+
+            for (k = 0; k + 1u < sizeof g_rows[0].name / sizeof(uint16_t) &&
+                        e.name[k] != 0; k++)
+                g_rows[g_row_count].name[k] = e.name[k];
+            g_rows[g_row_count].name[k] = 0;
+            g_rows[g_row_count].size = e.size;
+            g_row_count++;
+        }
         shown++;
     }
     if (rc < 0)
@@ -237,6 +346,7 @@ void bios_main(uint8_t drive)
     }
 
     bios_puts("falcon-bios: done\n");
+    menu_run();
     for (;;)
         __asm__ __volatile__("hlt");
 }

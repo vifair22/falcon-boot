@@ -51,8 +51,30 @@ void thunk_bios(void);
 
 /* ---- console ---- */
 
+/* Serial. Always on: it is what the rig reads and what a machine with no
+ * usable video still has. */
 void bios_putc(char c);
 void bios_puts(const char *s);
+
+/* The screen and the keyboard, through the BIOS. Both are one thunk call
+ * per character, which is slow and is the right trade for a menu: the
+ * alternative is a VGA driver and a PS/2 driver of our own, and neither
+ * would work on a machine whose firmware is doing something unusual.
+ *
+ * bios_screen_puts writes to both the screen and serial, so a caller does
+ * not choose and a log and a display never disagree. */
+void bios_screen_puts(const char *s);
+void bios_screen_clear(void);
+void bios_screen_at(uint8_t row, uint8_t col);
+
+/* Blocks. Returns one of BIOS_KEY_* for the keys a menu needs, or the ASCII
+ * character otherwise. */
+int bios_getkey(void);
+
+#define BIOS_KEY_UP     0x100
+#define BIOS_KEY_DOWN   0x101
+#define BIOS_KEY_ENTER  0x00D
+#define BIOS_KEY_ESC    0x01B
 void bios_put_hex64(uint64_t v);
 void bios_put_dec(uint64_t v);
 
