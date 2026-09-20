@@ -205,7 +205,12 @@ the tree, so `#include <fs/exfat.h>` means one file wherever it is written.
   harness of docs/notes/coverage-roadmap.md (a pinned ISO manifest, one rig
   stick per ISO, each booted under OVMF in three Secure Boot states and
   judged from serial, a DHCP capture and the media read after the kernel
-  starts, rendered to `docs/coverage.md`).
+  starts, rendered to `docs/coverage.md`). `coverage/Dockerfile` is the
+  environment it runs in and `coverage/harness.sh` runs anything inside it
+  (`harness.sh make test`, `harness.sh` alone for the corpus), which is how
+  the measurement stops being tied to one machine's installed packages. It
+  needs `--privileged` and the host's `/dev` because stick building calls
+  `losetup -P`.
 
 `make check-tools` verifies the toolchain. Objects land in
 `build/obj/<flavour>/<source path>.o` (flavours: `efi-release`, `host`,

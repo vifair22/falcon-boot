@@ -453,9 +453,21 @@ Order of the appliance work, each shippable on its own:
 2. **Licence.** Settled 2026-09-18: GPL-3.0-or-later (`LICENSE`), which
    is compatible with learning from Ventoy's GPLv3 hooks or reusing them.
 3. **The `grub.cfg` overlay** (D3b): decided 2026-09-19, built and merged.
-4. **Where the corpus and harness live**: decided 2026-09-19, on the big
-   CI runner (with KVM). Until it is set up they run here, off the NVMe
-   subvolume.
+4. **Where the corpus and harness live**: settled 2026-09-19, on
+   `binhost-builder` (i9-10900, 20 threads, 62 GB, bare metal with
+   `/dev/kvm`), in the container `tools/coverage/Dockerfile` defines and
+   `tools/coverage/harness.sh` runs. The corpus is at `/srv/falcon/corpus`,
+   all 36 rows verified against `corpus.tsv` after the copy rather than
+   trusting the stamp files rsync brought with them. The box is already a
+   registered GitLab runner, so the same image is what a corpus pipeline
+   stage would use.
+
+   Moving it found three things that had been true only on the laptop: the
+   root Makefile takes `CMOCKA_LIBS` from `pkg-config` and degrades to an
+   empty variable rather than an error, the `xxd` embed step does the same,
+   and `mk-test-trust.sh` ended with an unguarded `ls` that failed the target
+   on any machine without the rig's OVMF varstore. A harness that runs in one
+   place is a harness whose dependencies are unknown.
 
 ## 8. Enforcement-off (permissive) mode: build on demand, not scheduled
 

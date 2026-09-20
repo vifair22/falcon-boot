@@ -123,4 +123,11 @@ if command -v virt-fw-vars >/dev/null && [ -f "$VARS" ]; then
 fi
 
 echo "test-trust: $(ls "$OUT" | wc -l) files in $OUT"
-ls "$OUT/ms" 2>/dev/null | sed 's/^/  ms\//'
+
+# Guarded rather than `ls ... 2>/dev/null`, which hides the message and keeps
+# the status: ls still exits 2, it is the last command here, and so the whole
+# target failed on every machine without the rig's varstore even though all
+# thirteen fixtures had been written. Found on binhost-builder 2026-09-19.
+if [ -d "$OUT/ms" ]; then
+    ls "$OUT/ms" | sed 's/^/  ms\//'
+fi
