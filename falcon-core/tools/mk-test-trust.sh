@@ -40,7 +40,17 @@ cd "$(dirname "$0")/../.."
 
 OUT=build/test-trust
 PE=build/bin/falcon-boot.efi
-VARS=build/OVMF_VARS.secboot.fd
+
+# Where the real-world set's Microsoft certificates are extracted from.
+#
+# mk-test-mok.sh's varstore is preferred because a script in this repository
+# produces it on demand, and it carries Microsoft's PK/KEK/db whether or not
+# the distro's pristine varstore did. build/OVMF_VARS.secboot.fd is the older
+# source and stays as the fallback, but it is a side effect of having run the
+# interactive rig at some point, so a fresh machine never has it and the
+# real-world group silently never ran there.
+VARS=build/mok-test/OVMF_VARS.secboot.mok.fd
+[ -f "$VARS" ] || VARS=build/OVMF_VARS.secboot.fd
 
 for t in openssl sbsign; do
     command -v "$t" >/dev/null || { echo "ERROR: $t not found" >&2; exit 1; }

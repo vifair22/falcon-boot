@@ -89,12 +89,29 @@ states_prepare() {
         blank=$(ovmf_find VARS plain)
         cp -f "$blank" "$OWN_VARS"
         chmod u+w "$OWN_VARS"
-        virt-fw-vars --inplace "$OWN_VARS" --no-microsoft \
+        # Errors are NOT swallowed here, and the result is checked.
+        #
+        # This started as `>/dev/null 2>&1`, which is a dangerous place for it:
+        # the varstore is copied from a blank one first, so any failure leaves
+        # a SETUP MODE varstore in place, and setup mode enforces nothing.
+        # Every case in the `own` column would then pass and the column would
+        # measure air. Found 2026-09-19 porting the harness to a machine whose
+        # virt-firmware was old enough to reject --secure-boot.
+        if ! virt-fw-vars --inplace "$OWN_VARS" --no-microsoft \
             --set-pk "$OWN_OWNER_GUID" "$OWN_CRT" \
             --add-kek "$OWN_OWNER_GUID" "$OWN_CRT" \
             --add-db "$OWN_OWNER_GUID" "$OWN_CRT" \
             --add-mok "$MOK_OWNER_GUID" "$MOK_CRT_STATES" \
-            --secure-boot >/dev/null 2>&1
+            --secure-boot >/dev/null; then
+            echo "ERROR: virt-fw-vars could not build the own-keys varstore" >&2
+            rm -f "$OWN_VARS"
+            return 1
+        fi
+        if ! ovmf_vars_have_pk virt-fw-vars "$OWN_VARS"; then
+            echo "ERROR: $OWN_VARS has no PK; it would boot in setup mode" >&2
+            rm -f "$OWN_VARS"
+            return 1
+        fi
     fi
     if [[ ! -f "$SHIM_DUAL" || "$SHIM_SRC" -nt "$SHIM_DUAL" ||
           "$OWN_CRT" -nt "$SHIM_DUAL" ]]; then

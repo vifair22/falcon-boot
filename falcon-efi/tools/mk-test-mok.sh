@@ -16,8 +16,9 @@
 # itself, so what the rig then measures is the real MOK load path. Testing the
 # enrollment UX is a separate, interactive job (DESIGN Section 11 step 10).
 #
-# Deps: openssl, and python3 virt-firmware in a venv this script creates
-# (no system pip). Idempotent: existing artifacts are left alone.
+# Deps: openssl, and virt-firmware's virt-fw-vars - from PATH when the
+# environment packages it, otherwise from a venv this script creates (no
+# system pip). Idempotent: existing artifacts are left alone.
 
 set -euo pipefail
 
@@ -64,10 +65,21 @@ if [[ ! -f $KEY ]]; then
     openssl x509 -in "$CRT" -outform DER -out "$CER"
 fi
 
-if [[ ! -x $VENV/bin/virt-fw-vars ]]; then
-    echo "== creating venv for virt-firmware"
-    python3 -m venv "$VENV"
-    "$VENV/bin/pip" -q install virt-firmware
+# A packaged virt-fw-vars when the environment has one, a venv otherwise.
+#
+# The venv exists so a workstation needs no system pip, which is the right
+# default and stays the fallback. It is the wrong thing to insist on in the
+# harness container, which installs Debian's python3-virt-firmware precisely
+# so the rig needs no network and no pip at setup time; building a venv there
+# would download a second copy of a tool already on PATH.
+VFV=$(command -v virt-fw-vars || true)
+if [[ -z $VFV ]]; then
+    if [[ ! -x $VENV/bin/virt-fw-vars ]]; then
+        echo "== creating venv for virt-firmware"
+        python3 -m venv "$VENV"
+        "$VENV/bin/pip" -q install virt-firmware
+    fi
+    VFV=$VENV/bin/virt-fw-vars
 fi
 
 # Rebuilt from the pristine varstore every time, so a re-run cannot stack
@@ -81,11 +93,11 @@ chmod u+w "$VARS"
 # in SETUP MODE (Arch's OVMF_VARS.4m.fd). A blank varstore is not a Secure Boot
 # test - nothing enforces, so every image loads and the run proves nothing -
 # so enroll into it when the PK is missing rather than silently testing air.
-if ! ovmf_vars_have_pk "$VENV/bin/virt-fw-vars" "$VARS"; then
+if ! ovmf_vars_have_pk "$VFV" "$VARS"; then
     echo "== varstore is in setup mode; enrolling Microsoft keys"
-    "$VENV/bin/virt-fw-vars" --inplace "$VARS" --enroll-microsoft >/dev/null
+    "$VFV" --inplace "$VARS" --enroll-microsoft >/dev/null
 fi
-"$VENV/bin/virt-fw-vars" --inplace "$VARS" --add-mok "$MOK_OWNER" "$CRT"
+"$VFV" --inplace "$VARS" --add-mok "$MOK_OWNER" "$CRT"
 
 # Second varstore: same MokList, plus MokSBState. This is the same shortcut
 # the MokList injection above takes, for the same reason (MokManager's
@@ -117,7 +129,7 @@ cat > "$MOKSB_JSON" <<EOF
 EOF
 cp -f "$VARS" "$VARS_SB"
 chmod u+w "$VARS_SB"
-"$VENV/bin/virt-fw-vars" --inplace "$VARS_SB" --set-json "$MOKSB_JSON"
+"$VFV" --inplace "$VARS_SB" --set-json "$MOKSB_JSON"
 
 echo "== ready:"
 ls -la "$OUT"
