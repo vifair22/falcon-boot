@@ -31,8 +31,9 @@ source through the ISO winjump attaches from Windows. BSD media (M7) boots by a 
 route: the served ISO gains one directory record naming itself as a file and
 the md_image settings in its loader.conf, so FreeBSD's own loader mounts root
 from a memory disk. Blessing it signs that loader with the MOK and starts the
-signed copy with the medium named to the platform as its device
-(docs/notes/bsd-route.md).
+signed copy with the medium named to the platform as its device: FreeBSD
+passes in every Secure Boot state, pfSense only with it off, since shim will
+not parse pfSense's loader at all (docs/notes/bsd-route.md).
 
 Status: pre-1.0 MVP. Build-order steps 1-9 are done and step 10 (real
 hardware) is partly done; `docs/DESIGN.md` Section 11's status header is the

@@ -15,7 +15,7 @@ trusts the Microsoft CA. Secure Boot on with only the stick owner's
 keys is reported beside them, without a target: media signed only by
 Microsoft cannot boot on such a machine at all (DESIGN 7.2).
 
-Loader: 0.1.0_20260918.2318.release, 0.1.0_20260919.0127.release, 0.1.0_20260919.0153.release, 0.1.0_20260919.0207.release, 0.1.0_20260919.0258.release, 0.1.0_20260919.0400.release, 0.1.0_20260919.1203.release, 0.1.0_20260919.1349.release, 0.1.0_20260919.1428.release, 0.1.0_20260919.1606.release, 0.1.0_20260919.1633.release, 0.1.0_20260919.1640.release
+Loader: 0.1.0_20260918.2318.release, 0.1.0_20260919.0127.release, 0.1.0_20260919.0153.release, 0.1.0_20260919.0207.release, 0.1.0_20260919.0258.release, 0.1.0_20260919.0400.release, 0.1.0_20260919.1203.release, 0.1.0_20260919.1349.release, 0.1.0_20260919.1428.release, 0.1.0_20260919.1606.release, 0.1.0_20260919.1633.release, 0.1.0_20260919.1640.release, 0.1.0_20260919.2102.release
 
 ## Summary
 
@@ -23,7 +23,7 @@ Loader: 0.1.0_20260918.2318.release, 0.1.0_20260919.0127.release, 0.1.0_20260919
 |---|---|---|---|---|---|---|
 | A | 21 | 21/21 (100%) | 100% | 21/21 (100%) | 95% | 18/21 (85%) |
 | B | 9 | 9/9 (100%) | 90% | 9/9 (100%) | - | 9/9 (100%) |
-| C | 4 | 2/4 (50%) | - | 0/4 (0%) | - | 0/4 (0%) |
+| C | 6 | 4/6 (66%) | - | 1/6 (16%) | - | 1/6 (16%) |
 
 ## Matrix
 
@@ -56,13 +56,15 @@ Loader: 0.1.0_20260918.2318.release, 0.1.0_20260919.0127.release, 0.1.0_20260919
 | nixos-min-26.05 | B | nixos | PASS | FAIL | PASS | REFUSED | REFUSED | PASS | REFUSED | REFUSED | PASS |
 | leap-agama-16.0 | B | suse-installer | PASS | FAIL | PASS | PASS | FAIL | PASS | REFUSED | REFUSED | PASS |
 | truenas-25.10.7 | B | truenas | PASS | FAIL | PASS | REFUSED | REFUSED | PASS | REFUSED | REFUSED | PASS |
-| freebsd-bootonly-15.1 | C | freebsd | FAIL | FAIL | UNBLESSABLE | REFUSED | REFUSED | UNBLESSABLE | REFUSED | REFUSED | UNBLESSABLE |
+| freebsd-bootonly-15.1 | C | freebsd | PASS | FAIL | PASS | REFUSED | REFUSED | PASS | REFUSED | REFUSED | PASS |
 | gentoo-min-20260510 | A | gentoo | PASS | FAIL | PASS | REFUSED | REFUSED | PASS | REFUSED | REFUSED | PASS |
 | windows-11-25h2 | A | windows | PASS | FAIL | N/A | PASS | FAIL | N/A | REFUSED | REFUSED | N/A |
 | windows-server-2025 | A | windows | PASS | FAIL | N/A | PASS | FAIL | N/A | REFUSED | REFUSED | N/A |
 | esxi-7.0u3l | C | esxi | PASS | PASS | UNBLESSABLE | FAIL | FAIL | UNBLESSABLE | REFUSED | REFUSED | UNBLESSABLE |
 | esxi-8.0u3 | C | esxi | PASS | PASS | UNBLESSABLE | FAIL | FAIL | UNBLESSABLE | REFUSED | REFUSED | UNBLESSABLE |
 | macrium-rescue-8.0 | A | windows-pe | PASS | PASS | UNBLESSABLE | PASS | PASS | UNBLESSABLE | REFUSED | REFUSED | UNBLESSABLE |
+| opnsense-25.1 | C | freebsd | FAIL | - | FAIL | FAIL | - | FAIL | FAIL | - | FAIL |
+| pfsense-plus-24.06b7 | C | freebsd | PASS | - | PASS | FAIL | - | FAIL | FAIL | - | FAIL |
 
 ## Failures
 
@@ -112,7 +114,6 @@ Loader: 0.1.0_20260918.2318.release, 0.1.0_20260919.0127.release, 0.1.0_20260919
 | leap-agama-16.0 | off | chain | FAIL | no userland within 300s (screen: text console) |
 | leap-agama-16.0 | ms | chain | FAIL | no userland within 300s (screen: text console) |
 | truenas-25.10.7 | off | chain | FAIL | no userland within 300s (screen: graphical) |
-| freebsd-bootonly-15.1 | off | drop | FAIL | no userland within 300s (screen: text console) |
 | freebsd-bootonly-15.1 | off | chain | FAIL | no userland within 300s (screen: text console) |
 | gentoo-min-20260510 | off | chain | FAIL | no userland within 300s (screen: graphical) |
 | windows-11-25h2 | off | chain | FAIL | no userland within 300s (screen: Windows Setup) |
@@ -123,4 +124,14 @@ Loader: 0.1.0_20260918.2318.release, 0.1.0_20260919.0127.release, 0.1.0_20260919
 | esxi-7.0u3l | ms | chain | FAIL | no userland within 300s (screen: text console) |
 | esxi-8.0u3 | ms | drop | FAIL | no userland within 300s (screen: text console) |
 | esxi-8.0u3 | ms | chain | FAIL | no userland within 300s (screen: text console) |
+| opnsense-25.1 | off | drop | FAIL | back at the menu: the memory-disk boot failed while checking memory for the image: 0x8000000000000009 (screen: text console) |
+| opnsense-25.1 | off | bless | FAIL | back at the menu: blessed boot failed while checking memory for the image: 0x8000000000000009 (screen: text console) |
+| opnsense-25.1 | ms | drop | FAIL | back at the menu: the memory-disk boot failed while checking memory for the image: 0x8000000000000009 (screen: text console) |
+| opnsense-25.1 | ms | bless | FAIL | back at the menu: blessed boot failed while checking memory for the image: 0x8000000000000009 (screen: text console) |
+| opnsense-25.1 | own | drop | FAIL | back at the menu: the memory-disk boot failed while checking memory for the image: 0x8000000000000009 (screen: text console) |
+| opnsense-25.1 | own | bless | FAIL | back at the menu: blessed boot failed while checking memory for the image: 0x8000000000000009 (screen: text console) |
+| pfsense-plus-24.06b7 | ms | drop | FAIL | back at the menu: the memory-disk boot failed while LoadImage of \EFI\BOOT\BOOTX64.EFI (shim): 0x8000000000000003 (screen: text console) |
+| pfsense-plus-24.06b7 | ms | bless | FAIL | back at the menu: blessed boot failed while LoadImage of the image (shim): 0x8000000000000003 (screen: text console) |
+| pfsense-plus-24.06b7 | own | drop | FAIL | back at the menu: the memory-disk boot failed while LoadImage of \EFI\BOOT\BOOTX64.EFI (shim): 0x8000000000000003 (screen: text console) |
+| pfsense-plus-24.06b7 | own | bless | FAIL | back at the menu: blessed boot failed while LoadImage of the image (shim): 0x8000000000000003 (screen: text console) |
 

@@ -116,7 +116,7 @@ harness measures now is `docs/coverage.md`:
 | Linux, not blessed | kernel starts, media lost | kernel starts (MS-signed distros), media lost | refused |
 | Windows install, prepared | boots | boots | refused (bootmgr is MS-signed) |
 | Bare EFI payloads, memtest | boots | boots if MS-signed, else bless | bless |
-| BSD (FreeBSD, OPNsense, pfSense) | boots to its installer, the ISO loaded as a memory disk (M7); refused above what the loader can stage below 4 GB | blessed: the medium's own loader signed with the MOK | same |
+| BSD (FreeBSD, OPNsense, pfSense) | boots to its installer, the ISO loaded as a memory disk (M7); refused above what the loader can stage below 4 GB | blessed: the medium's own loader signed with the MOK, where shim will parse it | same |
 | Everything else (ESXi, WinPE, IMG distros, ChromeOS) | untested | untested | refused unless blessed |
 
 Two things in that table matter more than the rest:
@@ -393,9 +393,14 @@ graph LR
   UKI wrap has no Linux kernel to wrap here, and the loader starts that
   signed copy with the medium published beside it and named to the platform
   as the medium's own loader, which is what lets FreeBSD work out its device
-  (`docs/notes/bsd-route.md`). FreeBSD 15.1 PASSes blessed in both Secure
-  Boot states, in 22 and 23 seconds. Exit: met for FreeBSD and pfSense;
-  OPNsense's DVD is out of reach by RAM rather than by mechanism.
+  (`docs/notes/bsd-route.md`). Exit, measured through the harness rather
+  than asserted: **met for FreeBSD**, which PASSes unblessed with Secure Boot
+  off and blessed in all three states. **Partly met for pfSense**, which
+  PASSes both routes with Secure Boot off and cannot boot with it on at all:
+  shim refuses its `loader.efi` with `EFI_UNSUPPORTED` over a zero-length
+  section, before any signature is considered, so blessing cannot help.
+  **Not met for OPNsense**, whose 2.2 GB DVD exceeds what FreeBSD's loader
+  can stage below 4 GB; the guard refuses it in 5 seconds in every state.
 - **M6, Windows in the loader.** WIM surgery at boot (needs the UDF reader),
   then winjump parity (Win11 bypass, unattend) and WinPE shells, ESXi test.
   Appliance preparation stays until this passes the scorecard (it passed;

@@ -205,6 +205,11 @@ EFI_STATUS bsd_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
 typedef struct {
     const bless_hit *hit;
     bless_result    *bres;
+    /* Whether the launch was reached at all. Everything before it fails with
+     * the MEDIUM's result filled in and the blessed one still saying
+     * "starting", and reporting that is how a memory guard's refusal came
+     * out as "blessed boot failed while starting: 0x0". */
+    UINT8            launched;
 } blessed_ctx;
 
 static EFI_STATUS serve_blessed(void *ctx, EFI_SYSTEM_TABLE *st,
@@ -215,6 +220,8 @@ static EFI_STATUS serve_blessed(void *ctx, EFI_SYSTEM_TABLE *st,
     blessed_ctx *c = (blessed_ctx *)ctx;
     EFI_DEVICE_PATH_PROTOCOL *path = (EFI_DEVICE_PATH_PROTOCOL *)0;
     EFI_STATUS status;
+
+    c->launched = 1;
 
     /* The signed loader is named to the platform as the medium's own
      * \\EFI\\BOOT\\BOOTX64.EFI, which is what makes the medium the device
@@ -244,10 +251,20 @@ EFI_STATUS bsd_boot_blessed(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
                             bsd_result *result)
 {
     blessed_ctx ctx;
+    EFI_STATUS status;
 
     ctx.hit = hit;
     ctx.bres = bres;
-    return bsd_run(st, parent_image, vol, file, serve_blessed, &ctx,
-                   L"handing the ISO to its blessed loader, as a memory "
-                   L"disk\r\n", result);
+    ctx.launched = 0;
+    status = bsd_run(st, parent_image, vol, file, serve_blessed, &ctx,
+                     L"handing the ISO to its blessed loader, as a memory "
+                     L"disk\r\n", result);
+    /* The medium could not be served, so nothing was launched: the blessed
+     * result the caller reports has to carry what actually stopped it. */
+    if (!ctx.launched) {
+        bres->stage = result->stage;
+        bres->status = result->status;
+        bres->advice = result->advice;
+    }
+    return status;
 }

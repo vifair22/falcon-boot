@@ -85,16 +85,21 @@ without the `;1` does not resolve ("can't find '/FALCONBS.IMG'"). The name in
 
 ## Measured
 
-Under OVMF, Secure Boot off, 2026-09-19. The first three by hand with the
-edits applied to a copy of the ISO; FreeBSD again through the real loader and
-the coverage harness (`tools/coverage/run-case.sh ... off dnd`), which judged
-it PASS on the guest's DHCP request 32 seconds after the keypress.
+Under OVMF through the coverage harness (`tools/coverage/run-corpus.sh`),
+2026-09-19, against loader 0.1.0_20260919.2102:
 
-| medium | size | result |
-|---|---|---|
-| FreeBSD 15.1 bootonly | 521 MB | PASS, 32 s: `md0: Preloaded image </FALCONBS.IMG;1>`, installer up, DHCP from the guest |
-| pfSense Plus 24.06-BETA7 | 1369 MB | PASS: same preload, `Welcome to pfSense!` and its installer's first question on serial |
-| OPNsense 25.1 dvd | 2114 MB | refused by the memory guard in 5 s, before anything was served |
+| medium | size | SB off | SB on, MS CA | SB on, own keys |
+|---|---|---|---|---|
+| FreeBSD 15.1 bootonly | 521 MB | PASS 24 s | REFUSED | REFUSED |
+| FreeBSD 15.1, blessed | | PASS 25 s | PASS 22 s | PASS 22 s |
+| pfSense Plus 24.06-BETA7 | 1369 MB | PASS 98 s | FAIL | FAIL |
+| pfSense Plus, blessed | | PASS 96 s | FAIL | FAIL |
+| OPNsense 25.1 dvd | 2114 MB | refused by the guard, 5 s | same | same |
+
+REFUSED is the designed answer for an unblessed BSD medium with Secure Boot
+on: its loader is unsigned and the platform declines it
+(`EFI_SECURITY_VIOLATION`). Blessing is the route for that state, and it
+works.
 
 pfSense puts its installer on the serial console and leaves an error about
 the daemon it cannot reach on the VGA one. That is pfSense, not this route: a
@@ -103,6 +108,26 @@ at all, reaches the same two consoles saying the same two things. It is why
 `run-case.sh` reads a BSD installer's prompt as proof of userland, the way it
 already reads a getty's: these installers never bring up the network by
 themselves, so the DHCP signal that judges a Linux live image never fires.
+
+## pfSense under Secure Boot: shim will not parse its loader
+
+pfSense fails in both Secure Boot states, drop-and-boot and blessed alike,
+with `EFI_UNSUPPORTED` from `LoadImage`. It is not a signature problem and
+blessing does not help, because shim never gets as far as the signature.
+
+Its `/boot/loader.efi` carries a section named `set_Xfic` with
+`SizeOfRawData` 0 and `PointerToRawData` 0, while its characteristics
+(`0xc0000040`) claim initialized data. shim's PE verifier refuses an image
+like that outright. FreeBSD 15.1's own loader has no such section, which is
+why it parses and gets as far as being refused on its signature.
+
+With Secure Boot off the firmware's loader accepts the same bytes, which is
+what the firmware-first path in `bless_boot_as` and in the chainload is for
+(`falcon-efi/src/iso/iso.c`), and both pfSense cases PASS there. With Secure
+Boot on, shim is the only path and there is nothing to do about it here:
+rewriting a vendor's PE headers to get past a verifier is not a thing this
+loader does. The doors are the platform ones, Secure Boot off or
+`mokutil --disable-validation`.
 
 ## The memory ceiling, which is FreeBSD's
 
@@ -174,9 +199,11 @@ which is the signed image; the path only says which device the started image
 should treat as its own. Measured: `Load Device: VenHw(...)/CDROM(0x1)`,
 `Setting currdev to cd0`, the memory disk loads and the installer comes up.
 
-**Measured, blessed**, FreeBSD 15.1 through the harness: PASS in 23 s with
-Secure Boot on and only the user's MOK trusted, and again with the Microsoft
-CA present.
+**Measured, blessed**, FreeBSD 15.1 through the harness: PASS in every
+Secure Boot state, 22 s with only the user's MOK trusted and 22 s with the
+Microsoft CA present as well. pfSense is blessed by the same code and PASSes
+with Secure Boot off; under Secure Boot on it is stopped by shim before its
+signature is looked at, for the reason above.
 
 **What blessing a BSD ISO means, stated plainly**: the user's key vouches for
 the ISO's loader, and that loader then loads a kernel and modules that nothing

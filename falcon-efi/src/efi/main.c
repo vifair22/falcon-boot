@@ -1034,20 +1034,12 @@ static void boot_blessed(EFI_HANDLE image_handle, const menu_entry *entry,
 
     if (target->fam == FAMILY_BSD) {
         /* No extent map: the hook is a Linux mechanism, and this medium
-         * finds itself through the memory disk instead. */
+         * finds itself through the memory disk instead. A failure to serve
+         * the medium is reported in *result by bsd_boot_blessed itself. */
         bsd_result bres;
 
         status = bsd_boot_blessed(g_st, image_handle, &g_vols[target->vol],
                                   &target->ent, &target->hit, &result, &bres);
-        if (EFI_ERROR(status) && bres.not_bsd) {
-            /* The medium could not be served the memory-disk way, so the
-             * blessed loader would come up with no root to mount. Say what
-             * went wrong there rather than reporting a launch that never
-             * happened. */
-            result.stage = bres.stage;
-            result.status = bres.status;
-            result.advice = bres.advice;
-        }
     } else {
         /* A wrap the sign tool built with falcon-hook in its initrd finds the
          * ISO through the extent map, as a direct boot does; an older wrap

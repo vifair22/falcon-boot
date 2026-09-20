@@ -400,11 +400,39 @@ static EFI_STATUS launch_image(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent,
      * the started image is told it came from (spec 7.4 permits a FilePath
      * beside a SourceBuffer, and the firmware resolves it to the
      * DeviceHandle without reading it). */
-    result->stage = ops.via_shim ? L"LoadImage of the image (shim)"
-                                 : L"LoadImage of the image (firmware)";
-    status = ops.LoadImage(FALSE, parent, load_path,
-                           published ? (void *)0 : buf,
-                           published ? (UINTN)0 : (UINTN)size, &child);
+
+    /* Shim is here but not enforcing: load through the firmware, exactly as
+     * falcon-efi/src/iso/iso.c's chainload does and for the reason argued
+     * there. It matters for a blessed image too, which is what was missing
+     * until 2026-09-19: shim's loader refuses pfSense's loader.efi with
+     * EFI_UNSUPPORTED whatever key it carries, so a blessed BSD medium that
+     * the firmware runs perfectly well could not start at all, Secure Boot
+     * off included. */
+    status = EFI_NOT_FOUND;   /* not loaded yet */
+    if (ops.via_shim && ops.table_unhooked) {
+        result->stage = L"LoadImage of the image (firmware)";
+        status = bs->LoadImage(FALSE, parent, load_path,
+                               published ? (void *)0 : buf,
+                               published ? (UINTN)0 : (UINTN)size, &child);
+        if (status == EFI_SUCCESS) {
+            ops.LoadImage = bs->LoadImage;
+            ops.StartImage = bs->StartImage;
+            ops.UnloadImage = bs->UnloadImage;
+            ops.via_shim = FALSE;
+        } else {
+            if (status == EFI_SECURITY_VIOLATION && child != (EFI_HANDLE)0)
+                bs->UnloadImage(child);
+            child = (EFI_HANDLE)0;
+        }
+    }
+
+    if (status != EFI_SUCCESS) {
+        result->stage = ops.via_shim ? L"LoadImage of the image (shim)"
+                                     : L"LoadImage of the image (firmware)";
+        status = ops.LoadImage(FALSE, parent, load_path,
+                               published ? (void *)0 : buf,
+                               published ? (UINTN)0 : (UINTN)size, &child);
+    }
     if (own_path && load_path != (EFI_DEVICE_PATH_PROTOCOL *)0)
         bs->FreePool(load_path);
     if (EFI_ERROR(status)) {
