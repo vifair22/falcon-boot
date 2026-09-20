@@ -136,6 +136,11 @@ static void wr32(uint8_t *p, unsigned off, uint32_t v)
     p[off + 3u] = (uint8_t)((v >> 24) & 0xFFu);
 }
 
+static uint64_t align4(uint64_t v)
+{
+    return (v + 3u) & ~(uint64_t)3u;
+}
+
 static void say(const char *s)
 {
     bios_puts("falcon-bios: ");
@@ -338,9 +343,22 @@ int linux_boot(const linux_object *kernel, const linux_object *initrd,
     cmd[cmdlen] = '\0';
 
     /* The initrds, concatenated, as high as the kernel will take them: the
-     * low end of memory is where everything else already is. */
+     * low end of memory is where everything else already is.
+     *
+     * EACH ONE IS PADDED TO FOUR BYTES, and it is not a detail. The kernel's
+     * unpacker walks a concatenation of archives and expects every segment
+     * to begin aligned; a segment that starts one byte late is read as a
+     * corrupt header. Debian's initrd is 113,383,147 bytes, so appending
+     * falcon-hook straight onto it gave
+     *
+     *   Initramfs unpacking failed: invalid magic at start of compressed
+     *   archive
+     *
+     * and a kernel with no root. Arch's happens to be a multiple of four,
+     * which is why that medium got further and looked like a different bug.
+     * falcon-efi/src/direct/direct.c has always padded; this did not. */
     for (i = 0; i < n_initrd; i++)
-        initrd_len += initrd[i].size;
+        initrd_len += align4(initrd[i].size);
     if (initrd_len > 0) {
         initrd_max = rd32(g_setup, HDR_INITRD_ADDR_MAX);
         if (initrd_max == 0)
@@ -359,11 +377,17 @@ int linux_boot(const linux_object *kernel, const linux_object *initrd,
             uint64_t at = initrd_at;
 
             for (i = 0; i < n_initrd; i++) {
+                uint64_t pad = align4(initrd[i].size) - initrd[i].size;
+
                 if (load_object(&initrd[i], 0, initrd[i].size, at) != 0) {
                     say("an initrd would not read");
                     return -1;
                 }
                 at += initrd[i].size;
+                if (pad != 0) {
+                    memset((void *)(uintptr_t)at, 0, (size_t)pad);
+                    at += pad;
+                }
             }
         }
     }

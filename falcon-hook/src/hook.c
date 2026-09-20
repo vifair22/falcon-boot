@@ -189,9 +189,19 @@ static long read_file(const char *path, void *buf, size_t cap)
 /* What the stick and the mapping need, by the names every distro kernel
  * uses. Built in on some kernels and absent on others; modprobe -a loads
  * what it finds and the failures are no business of ours. */
+/* -q so a module this initramfs does not carry is not an error.
+ *
+ * ata_piix and its neighbours are here for the BIOS route: this list was
+ * written for UEFI-era machines, where the disk is always AHCI, and a
+ * BIOS-era one is exactly the machine likely to sit behind a PIIX or ICH
+ * IDE controller instead. Without them /sys/block is still empty when the
+ * scan runs - the hook is pre-udev, so nothing else loads them - and the
+ * stick's partition "never appears" though it is right there. Measured
+ * 2026-09-20 on QEMU's i440fx, which is what a BIOS target looks like. */
 static char *g_modules[] = {
     "modprobe", "-q", "-a",
-    "dm_mod", "ahci", "sd_mod", "usb_storage", "uas", "xhci_pci",
+    "dm_mod", "ahci", "ata_piix", "ata_generic", "pata_acpi", "libata",
+    "sd_mod", "usb_storage", "uas", "xhci_pci",
     "xhci_hcd", "ehci_pci", "ohci_pci", "uhci_hcd", "nvme", "virtio_blk",
     "virtio_scsi", "virtio_pci", "sdhci_pci", "mmc_block", "efivarfs",
     "loop", "isofs", (char *)0
