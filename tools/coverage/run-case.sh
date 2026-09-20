@@ -50,10 +50,12 @@
 # and ERROR for a harness problem (QEMU would not start, the menu never came).
 #
 # Usage: tools/coverage/run-case.sh STICK STATE ROUTE OUTDIR [TIMEOUT]
-#   STATE    off | ms | own   (tools/coverage/states.sh)
+#   STATE    off | ms | own | bios   (tools/coverage/states.sh)
 #   ROUTE    dnd      Enter on the image row: whatever the loader does by
 #                     default with an unblessed image
-#            chain    the chainload key: the ISO's own EFI loader (M2)
+#            chain    the chainload key: the ISO's own EFI loader (M2), or
+#                     under bios its own BIOS loader through the resident
+#                     INT 13h handler
 #            blessed  Enter on a blessed image row
 #   OUTDIR   receives serial.log, net.pcap, screen.png and result
 #   TIMEOUT  seconds from the keypress to a verdict (default 300)
@@ -93,7 +95,7 @@ VARS="$OUTDIR/vars.fd"
 RESULT="$OUTDIR/result"
 rm -f "$SERIAL" "$PCAP" "$MON" "$RESULT" "$OUTDIR/screen.png"
 
-state_firmware "$STATE" "$VARS"   # sets STATE_CODE/SECURE, copies the vars
+state_firmware "$STATE" "$VARS"   # sets STATE_CODE/SECURE/BIOS, copies vars
 
 # The Secure Boot builds of OVMF keep their variable store behind SMM, and
 # refuse to run without it; the plain build has no such requirement.
@@ -101,6 +103,23 @@ MACHINE=(-machine q35)
 if [[ "$STATE_SECURE" -eq 1 ]]; then
     MACHINE=(-machine q35,smm=on
              -global driver=cfi.pflash01,property=secure,value=on)
+fi
+
+# What the guest boots from. Under OVMF that is the firmware in pflash and the
+# stick as the only disk; under SeaBIOS there is no pflash at all, and
+# falcon-bios comes off a second disk that is first in the boot order
+# (states.sh says why the stick is not that disk). i440fx rather than q35,
+# because q35 is a UEFI-era chipset and SeaBIOS on it is a combination nobody
+# ships.
+FIRMWARE=(-drive if=pflash,format=raw,readonly=on,file="$STATE_CODE"
+          -drive if=pflash,format=raw,file="$VARS")
+DRIVES=(-drive if=none,id=stick,format=raw,file="$STICK",snapshot=on
+        -device ahci,id=ahci -device ide-hd,drive=stick,bus=ahci.0)
+if [[ "$STATE_BIOS" -eq 1 ]]; then
+    MACHINE=(-machine pc)
+    FIRMWARE=()
+    DRIVES=(-drive "format=raw,file=build/test-bios.img,snapshot=on"
+            -drive "format=raw,file=$STICK,snapshot=on")
 fi
 
 QPID=
@@ -182,10 +201,8 @@ qemu-system-x86_64 \
     -name "falcon-case" \
     "${MACHINE[@]}" \
     -enable-kvm -cpu host -m "$MEM" -smp "$CPUS" \
-    -drive if=pflash,format=raw,readonly=on,file="$STATE_CODE" \
-    -drive if=pflash,format=raw,file="$VARS" \
-    -drive if=none,id=stick,format=raw,file="$STICK",snapshot=on \
-    -device ahci,id=ahci -device ide-hd,drive=stick,bus=ahci.0 \
+    "${FIRMWARE[@]}" \
+    "${DRIVES[@]}" \
     -netdev user,id=net0 \
     -device e1000e,netdev=net0,romfile= \
     -object filter-dump,id=dump0,netdev=net0,file="$PCAP" \
@@ -207,7 +224,9 @@ serial_text() {
 # ---- the menu ----
 for ((i = 0; i < MENU_WAIT; i++)); do
     alive || finish ERROR "qemu exited before the menu ($(tail -c 200 "$OUTDIR/qemu.log" | tr '\n\t' '  '))"
-    if serial_text | grep -q 'esc back'; then
+    # Either loader's footer: the UEFI menu ends with its key legend, and
+    # falcon-bios with its own (falcon-bios/src/main.c).
+    if serial_text | grep -qE 'esc back|enter to boot'; then
         break
     fi
     sleep 1
@@ -237,12 +256,17 @@ selected_row() {
                    sed -e 's/.*@ROW@//' -e 's/\x1b\[[0-9;=?]*[A-Za-z]//' \
                        -e 's/\x1b.*//' -e 's/^ *//' -e 's/ *$//')"
 }
-for ((i = 0; i < 8; i++)); do
-    row=$(selected_row)
-    [[ "$row" == *.iso* || "$row" == *.img* ]] && break
-    echo "sendkey down" | socat - UNIX-CONNECT:"$MON" >/dev/null
-    sleep 1
-done
+# Not under bios: falcon-bios draws its selection with "> " rather than
+# reverse video, and a case stick gives it exactly one row, which is the one
+# already selected.
+if [[ "$STATE_BIOS" -eq 0 ]]; then
+    for ((i = 0; i < 8; i++)); do
+        row=$(selected_row)
+        [[ "$row" == *.iso* || "$row" == *.img* ]] && break
+        echo "sendkey down" | socat - UNIX-CONNECT:"$MON" >/dev/null
+        sleep 1
+    done
+fi
 
 MENU_LINES=$(serial_text | wc -l)
 echo "sendkey $KEY" | socat - UNIX-CONNECT:"$MON" >/dev/null

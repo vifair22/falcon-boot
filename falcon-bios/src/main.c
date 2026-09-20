@@ -222,7 +222,7 @@ static void menu_run(void)
             }
             (void)scan_chain(g_p2_src.disk, &g_p2, g_p2_part,
                              &g_rows[selected].ent);
-            bios_screen_puts("\n  press a key\n");
+            bios_screen_puts("\npress any key to return to the menu.\n");
             (void)bios_getkey();
         }
         else if (key == BIOS_KEY_ENTER && g_row_count > 0) {
@@ -235,8 +235,11 @@ static void menu_run(void)
             }
             (void)scan_iso(&g_p2, g_p2_part, &g_rows[selected].ent,
                            g_p2_block);
-            bios_screen_puts("\n  loading a kernel is the next stage of the"
-                             " route; press a key\n");
+            /* Only reached when the boot did not happen: every route that
+             * works hands the machine over and does not return. The wording
+             * is the UEFI loader's, so a reader and the coverage harness
+             * both meet one sentence rather than two. */
+            bios_screen_puts("\npress any key to return to the menu.\n");
             (void)bios_getkey();
         }
     }

@@ -1,7 +1,7 @@
 # falcon-boot: the Secure Boot states the coverage harness boots under,
 # sourced by tools/coverage/run-case.sh and tools/coverage/stage-loader.sh.
 #
-# The three scorecard columns of docs/notes/coverage-roadmap.md Section 2:
+# The scorecard columns of docs/notes/coverage-roadmap.md Section 2:
 #
 #   off  plain OVMF, blank varstore. Nothing verifies anything.
 #   ms   Secure Boot OVMF, Microsoft's KEK and both UEFI CAs in db, the test
@@ -14,9 +14,22 @@
 #        which is what sbctl did to the real stick's shim. The test MOK is in
 #        MokList, as it would be after enrollment.
 #
-# All three boot the same stick with the same shim: a dual-signed one, which
+# Those three boot the same stick with the same shim: a dual-signed one, which
 # the ms firmware accepts on Microsoft's signature and the own firmware on the
 # rig's. An extra signature changes nothing the Authenticode hash covers.
+#
+#   bios SeaBIOS, and not a Secure Boot state at all: there is no pflash, no
+#        varstore, no db and no shim (docs/notes/bios-route.md Section 3). It
+#        is a fourth column because a BIOS machine shares nothing with the
+#        other three, which Section 7.4 of that note says is the cost of a
+#        second platform.
+#
+#        The stick is the second drive, not the first. A case stick has no
+#        BIOS boot partition, because whether a falcon stick should have one
+#        is the layout decision Section 7.3 is still waiting on; the rig
+#        boots falcon-bios from build/test-bios.img instead and reads the
+#        stick from it. That measures every route without pre-empting the
+#        decision.
 
 . falcon-efi/tools/ovmf.sh
 
@@ -124,10 +137,21 @@ states_prepare() {
 }
 
 # Sets STATE_CODE and STATE_SECURE (1 when the firmware needs SMM and a
-# secure flash), and copies the state's varstore to DEST, which the run may
-# then write to freely.
+# secure flash), STATE_BIOS (1 for the SeaBIOS column, which has neither),
+# and copies the state's varstore to DEST, which the run may then write to
+# freely.
 state_firmware() {   # state_firmware STATE DEST
+    STATE_BIOS=0
     case "$1" in
+    bios)
+        STATE_CODE=
+        STATE_SECURE=0
+        STATE_BIOS=1
+        [[ -f build/test-bios.img ]] || {
+            echo "ERROR: build/test-bios.img missing (run make test-bios-img)" >&2
+            return 1; }
+        return 0
+        ;;
     off)
         STATE_CODE=$(ovmf_find CODE plain)
         STATE_SECURE=0
@@ -148,7 +172,7 @@ state_firmware() {   # state_firmware STATE DEST
         cp -f "$OWN_VARS" "$2"
         ;;
     *)
-        echo "ERROR: unknown state $1 (off, ms, own)" >&2
+        echo "ERROR: unknown state $1 (off, ms, own, bios)" >&2
         return 1
         ;;
     esac

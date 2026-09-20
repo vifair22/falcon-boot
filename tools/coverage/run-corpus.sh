@@ -18,7 +18,9 @@
 # scorecard prints the loader version each case ran against.
 #
 # Usage: tools/coverage/run-corpus.sh [options] [ID...]
-#   --states "off ms own"     which Secure Boot states (default all three)
+#   --states "off ms own"     which states (default the three Secure Boot
+#                             ones; `bios` is the SeaBIOS column and is not
+#                             one of them, so it is asked for by name)
 #   --routes "dnd chain blessed"  which routes (default all three)
 #   --jobs N                  cases in flight at once (default 3; each takes
 #                             FALCON_CASE_MEM, 4 GiB by default). KEEP IT
@@ -126,6 +128,15 @@ while IFS=$'\t' read -r id tier family sha file source; do
     for st in $STATES; do
         for rt in $ROUTES; do
             out="$RUNS/$id/$st-$rt"
+            # Blessing is a Secure Boot act: it signs an image with the MOK so
+            # shim will load it. A BIOS machine has no shim and enforces
+            # nothing, so the column has no blessed cell to fill.
+            if [[ "$st" == bios && "$rt" == blessed ]]; then
+                mkdir -p "$out"
+                printf 'N/A\tno blessed route on a BIOS machine\t0\n' \
+                    > "$out/result"
+                continue
+            fi
             if [[ "$rt" == blessed ]]; then
                 if [[ $blessable -eq 0 ]]; then
                     mkdir -p "$out"
@@ -147,6 +158,15 @@ while IFS=$'\t' read -r id tier family sha file source; do
     done
 done < "$MANIFEST"
 
+
+# falcon-bios is what the bios column boots; the sticks carry only the ISO.
+case " $STATES " in
+*" bios "*)
+    echo "== building falcon-bios"
+    make bios test-bios-img >/dev/null || {
+        echo "ERROR: make bios test-bios-img failed" >&2; exit 1; }
+    ;;
+esac
 
 shopt -s nullglob
 STAGE=("$STICKS"/*.img)
