@@ -11,6 +11,11 @@
 # code is position dependent and nothing relocates it, so link address and run
 # address have to agree.
 #
+# Assembled as x86-64 even though most of it runs in 16-bit real mode. gas
+# takes .code16 inside an ELF64 object perfectly well and only changes how it
+# encodes instructions; what an i386 object cannot do is carry the relocations
+# the .code64 half needs, so one stage holding both modes has to be ELF64.
+#
 # The assembly is gas .S, preprocessed, so biosdefs.h is the single place the
 # addresses are written (Section 5.2). It is also the one part of the tree
 # outside every analyzer the project gates on, which is Section 7.2's risk and
@@ -20,8 +25,8 @@
 BIOS := falcon-bios/src
 BIOS_OBJ := $(OBJ)/bios
 
-BIOS_ASFLAGS := -m32 -c -Wa,--fatal-warnings -I$(BIOS) $(CORE_INC)
-BIOS_LDFLAGS := -m32 -nostdlib -static -no-pie -Wl,--build-id=none \
+BIOS_ASFLAGS := -m64 -c -Wa,--fatal-warnings -I$(BIOS) $(CORE_INC)
+BIOS_LDFLAGS := -m64 -nostdlib -static -no-pie -Wl,--build-id=none \
 	-Wl,-T,$(BIOS)/bios.ld
 
 $(BIOS_OBJ)/%.o: %.S
@@ -41,9 +46,11 @@ $(BIOS_STAGE1): $(BIOS_OBJ)/$(BIOS)/boot.o $(BIOS)/bios.ld
 		exit 1; \
 	fi
 
-$(BIOS_STAGE2): $(BIOS_OBJ)/$(BIOS)/stage2.o $(BIOS)/bios.ld
+BIOS_STAGE2_OBJS := $(BIOS_OBJ)/$(BIOS)/stage2.o $(BIOS_OBJ)/$(BIOS)/lmode.o
+
+$(BIOS_STAGE2): $(BIOS_STAGE2_OBJS) $(BIOS)/bios.ld
 	@mkdir -p $(@D)
-	$(CC_HOST) $(BIOS_LDFLAGS) -Wl,-Ttext,0x7E00 -Wl,-e,stage2_start -o $@.elf $<
+	$(CC_HOST) $(BIOS_LDFLAGS) -Wl,-Ttext,0x7E00 -Wl,-e,stage2_start -o $@.elf $(BIOS_STAGE2_OBJS)
 	objcopy -O binary -j .text $@.elf $@
 	@sz=$$(stat -c %s $@); \
 	max=$$((16 * 512)); \

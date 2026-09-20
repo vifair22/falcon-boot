@@ -37,6 +37,30 @@
 #define STAGE2_LBA      1
 #define STAGE2_SECTORS  16
 
+/* The long-mode page tables, and why they are at fixed addresses.
+ *
+ * There is no allocator in real mode and nothing else is using this memory:
+ * 0x10000 upward is clear of the boot sector, of stage 2 at 0x7E00, and of
+ * the stack below 0x7C00, and it is well under the 0x9FC00 where the
+ * extended BIOS data area starts on a typical machine. Three pages is all
+ * long mode needs to start: one PML4, one page-directory pointer table, and
+ * one page directory whose entries are 2 MB pages.
+ *
+ * One gigabyte is mapped, identity. That covers every address real-mode
+ * firmware can hand back and every address a payload is staged at before the
+ * kernel takes over, and it costs exactly one page of directory entries. */
+#define PML4_ADDR       0x10000
+#define PDPT_ADDR       0x11000
+#define PD_ADDR         0x12000
+#define IDENTITY_MAP    0x40000000    /* 1 GiB */
+#define PAGE_2M         0x200000
+
+/* GDT selectors, in the order lmode.S lays the descriptors out. Shared
+ * because the far jump that activates long mode names one of them and the C
+ * that eventually runs there will name the other. */
+#define SEL_CODE64      0x08
+#define SEL_DATA64      0x10
+
 /* COM1 and 115200 8N1. The divisor is 115200 / 115200 = 1.
  *
  * Serial rather than INT 10h for anything a test reads: the rig captures it
