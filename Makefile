@@ -236,6 +236,11 @@ include falcon-efi/build.mk
 include falcon-cli/build.mk
 include falcon-appliance/build.mk
 
+# Not in `all` and not in `test`: an unfinished route behind a decision
+# nobody has taken (docs/notes/bios-route.md Section 7.3). `make bios` is
+# opt-in.
+include falcon-bios/build.mk
+
 TESTS := core efi cli appliance hook
 TEST_BINS := $(TESTS:%=$(BIN)/falcon-%-test)
 
