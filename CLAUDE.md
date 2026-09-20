@@ -211,6 +211,18 @@ the tree, so `#include <fs/exfat.h>` means one file wherever it is written.
   execs the distro's init. `src/hookcore.c` is its host-tested half; the
   loader embeds the stripped binary as a generated C array.
   `tools/run-hook-rig.sh` boots it under QEMU without the loader.
+- `falcon-bios/` the BIOS loader (docs/notes/bios-route.md), opt-in and not
+  built by `all` or exercised by `make test`: the route is undecided because
+  BIOS boot from a GPT stick needs a BIOS boot partition, which is a breaking
+  stick-layout change. `src/boot.S` is the 512-byte MBR stage 1 (COM1 up
+  first, then `INT 13h` AH=42h to read stage 2) and `src/stage2.S` the real-
+  mode second stage; `src/biosdefs.h` is the one place the load addresses are
+  written, which is why the assembly is preprocessed gas `.S` rather than
+  NASM. `make bios` builds it, `make test-bios-img` makes a disk the rig
+  boots with `falcon-efi/tools/run-qemu.sh --bios`. It shares falcon-core
+  unchanged: the read callback is the per-platform boundary, and `medium.c`,
+  `fat.c` and `eltorito.c` were built for UEFI and are what a BIOS build
+  would have needed anyway.
 - `docs/` DESIGN.md (authoritative) and later Manual.md. `tools/` at the root
   holds only what spans the repo: `analyze.sh`, and `coverage/`, the corpus
   harness of docs/notes/coverage-roadmap.md (a pinned ISO manifest, one rig

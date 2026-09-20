@@ -1,10 +1,20 @@
 # BIOS mode: the scope, measured against the tree (2026-09-19)
 
-Not decided and not built. No spike has been run and no code exists. This is
-the scoping study behind the question "what would a BIOS-capable falcon-boot
-actually cost", written down because the answer that had been assumed is
-wrong, and because the right answer is cheap enough that it will be asked
+Not decided. This began as the scoping study behind "what would a
+BIOS-capable falcon-boot actually cost", written down because the answer that
+had been assumed is wrong and the right answer is cheap enough to be asked
 again.
+
+Since then a first slice exists (2026-09-20): `falcon-bios/` with stage 1 and
+stage 2, and `run-qemu.sh --bios`. It boots under SeaBIOS and prints the
+drive it was handed. What that proves is the toolchain and nothing else,
+which was the point of building it first: gas `.S` against a preprocessed
+header, a link script placing each stage where it runs, a build flavour, and
+a rig. Section 6a records what the ISO reader work had already built.
+
+The route is still undecided, and Section 7.3 is why: BIOS boot from a GPT
+stick needs a BIOS boot partition, which remakes every stick already written.
+Nothing in `falcon-bios/` is on the path of `all` or of `make test`.
 
 Read `coverage-roadmap.md` Section 8 for the shape this note is in: a
 decision on the shelf, costed, so it can be taken whenever somebody wants it
