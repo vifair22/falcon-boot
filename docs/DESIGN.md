@@ -2178,6 +2178,14 @@ are (both measured 2026-09-13):
 
 ## 11. MVP build order
 
+MEASURED ON REAL HARDWARE (2026-09-20), UEFI, each with Secure Boot on and
+off: the personal OS end to end (p3 unlock, the UKI launched, p4 unlocked
+from the credential with no second prompt), a blessed Linux ISO, and a stock
+Windows ISO through the boot.wim patch. The bless flow ran from the menu
+unattended (`b`/`a`, the appliance signs, `BootNext` returns to the stick,
+the ISO boots; Section 6.3.1). Still unmeasured on hardware: D3a/D3b, and the
+BIOS loader.
+
 A BLESSED ISO BOOTS ON REAL HARDWARE (2026-09-13): on that same laptop, the
 on-stick appliance blessed the Arch ISO and it booted all the way into the
 live environment under Secure Boot, on a machine that trusts nothing from

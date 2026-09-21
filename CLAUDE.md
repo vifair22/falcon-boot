@@ -49,8 +49,10 @@ both Secure Boot states (`make test-stick`, `make run-stick` /
 `run-stick-secboot`, `falcon-appliance/tools/`). Measured on real hardware
 (2026-09-13): shim/MOK enrollment, the p3 unlock, and a blessed Arch ISO
 booting under Secure Boot on a machine that trusts nothing from Microsoft.
-Still unmeasured on hardware: the personal OS end to end, Windows, and
-D3a/D3b.
+Measured on real hardware (2026-09-20), UEFI with Secure Boot on and off:
+the personal OS end to end, blessed Linux ISOs (blessed from the menu, with
+`BootNext` back to the stick) and a stock Windows ISO. Still unmeasured on
+hardware: D3a/D3b and the BIOS loader.
 
 ## Non-negotiable security invariants (DESIGN.md Section 7)
 
