@@ -144,6 +144,11 @@ int bios_getkey(void);
 
 /* Resets the machine. Does not return. */
 __attribute__((noreturn)) void bios_reboot(void);
+
+/* The end of every failure the loader cannot go on from: `why` on the
+ * screen and on serial, then a key, then a reset. Never a halt, which on a
+ * machine with no serial cable looks exactly like a hang. Does not return. */
+__attribute__((noreturn)) void bios_fatal(const char *why);
 void bios_put_hex64(uint64_t v);
 void bios_put_dec(uint64_t v);
 

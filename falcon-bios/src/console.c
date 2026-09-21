@@ -273,3 +273,12 @@ __attribute__((noreturn)) void bios_reboot(void)
     for (;;)
         __asm__ __volatile__("hlt");
 }
+
+__attribute__((noreturn)) void bios_fatal(const char *why)
+{
+    bios_screen_puts("\nfalcon-bios: ");
+    bios_screen_puts(why);
+    bios_screen_puts("\npress any key to reboot.\n");
+    (void)bios_getkey();
+    bios_reboot();
+}

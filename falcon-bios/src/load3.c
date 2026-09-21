@@ -16,17 +16,13 @@
 
 #include <lib/string.h>
 
-static void die(const char *why)
+static __attribute__((noreturn)) void die(const char *why)
 {
-    bios_puts("falcon-bios: ");
-    bios_puts(why);
-    bios_puts("\n");
-    for (;;)
-        __asm__ __volatile__("hlt");
+    bios_fatal(why);
 }
 
 /* Entered from stage2.S in long mode with the drive the BIOS booted from.
- * Does not return: either stage 3 runs or this halts. */
+ * Does not return: either stage 3 runs or the machine resets. */
 void stage3_load(uint8_t drive);
 
 void stage3_load(uint8_t drive)
@@ -42,8 +38,11 @@ void stage3_load(uint8_t drive)
      * linked separately and shares no symbol with the assembly. */
     bios_boot_drive = drive;
 
+    /* A drive that does not answer is left at 512-byte sectors, which is
+     * what a stick is, and what stage 3 assumes too; the read below is
+     * what decides whether that was right. */
     if (!bios_disk_probe(&d, drive))
-        die("the boot drive did not answer AH=48h");
+        bios_puts("falcon-bios: the boot drive did not answer AH=48h\n");
 
     base = (uint64_t)STAGE3_LBA * d.sector_size;
     if (bios_disk_read(&d, base, d.sector_size, (void *)(uintptr_t)hdr) != 0)
