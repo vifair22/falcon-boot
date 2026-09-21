@@ -1,7 +1,8 @@
 # falcon-boot
 
-A single-purpose, auditable multi-boot loader for UEFI x64. A distilled Ventoy:
-drag-and-drop ISO booting plus a personal LUKS-backed OS booted via a UKI.
+A single-purpose, auditable multi-boot loader for x86-64 UEFI, with an opt-in
+BIOS loader. A distilled Ventoy: drag-and-drop ISO booting plus a personal
+LUKS-backed OS booted via a UKI.
 
 ## Read this first
 
@@ -10,6 +11,12 @@ before proposing or changing any architecture. It argues its decisions and
 records the alternatives that were considered and rejected, so do not reintroduce
 a rejected approach without re-reading why it was rejected. `README.md` is the
 short public summary of the same model.
+
+DESIGN Section 12 draws every boot route of both loaders, traced from the
+code, from power-on to the booted system standing on its own. A change to a
+route (its order, a fallthrough, what it hands over, what stays resident)
+updates its diagram in the same commit. Section 12 is where a route's shape
+is looked up before its code is read.
 
 Coverage (docs/notes/coverage-roadmap.md, 2026-09-20): M0-M7 are done. The
 corpus harness and scorecard exist (`docs/coverage.md`), and both run in a

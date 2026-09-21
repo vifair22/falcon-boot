@@ -1,35 +1,41 @@
 # falcon-boot
 
-A single-purpose, auditable multi-boot loader for UEFI x64. A distilled Ventoy.
+A single-purpose, auditable multi-boot loader for x86-64 UEFI, with an
+opt-in BIOS loader alongside. A distilled Ventoy.
 
 - **Drag-and-drop ISO booting.** Copy an `.iso` onto the stick's exFAT
   partition from any OS; it appears in the boot menu and boots. No registration
-  step.
+  step. Linux ISOs boot their own kernel with a small hook that maps the ISO
+  back into place for the distro to find; Windows install ISOs boot stock,
+  patched in memory as they are served; FreeBSD boots from a memory disk of
+  its own ISO.
 - **Personal encrypted OS.** Boots a Unified Kernel Image off a LUKS2+ext4
   partition; its initramfs unlocks the real root/home and pivots in, all from a
   single passphrase prompt.
 - **Secure Boot upheld.** Chains through Fedora's MS-signed shim and never
   weakens the machine's Secure Boot posture. See the security note below.
 
-Scope is deliberately narrow: UEFI x64 only. No BIOS and no 32-bit UEFI,
-ever.
+Scope is deliberately narrow: x86-64 only, no 32-bit UEFI. The BIOS loader
+is opt-in (`make bios`, `falcon-boot-mkstick bios`): a BIOS machine has no
+Secure Boot, so on that route nothing is verified and nothing needs
+blessing.
 
 ## Security note
 
 falcon-boot never weakens the machine's Secure Boot posture. It behaves
 according to the firmware's Secure Boot state:
 
-- **Secure Boot ON:** it upholds it. Everything is chainloaded through the normal
+- **Secure Boot ON:** it upholds it. Everything is loaded through the normal
   verifying path (via shim); only payloads that verify against the trust chain
-  boot, and unsigned media is refused, exactly as if booted directly. It does not
-  install any override or disable verification.
+  boot, and an unsigned kernel is refused, exactly as if booted directly. It
+  does not install any override or disable verification.
 - **Secure Boot OFF:** there is nothing to uphold, so any ISO boots.
 
-Under Secure Boot ON, distro ISOs that ship their own MS-signed shim (Ubuntu,
-Fedora, Debian, recent Arch, ...) drag-and-drop and launch fully verified,
-though whether the live environment finds its media afterwards is up to that
-distro's own initramfs. The reliable route is blessing media with your own
-key: it boots under full Secure Boot with media-finding included, either from
+Under Secure Boot ON, on a machine whose db trusts Microsoft, distro ISOs
+that ship their own MS-signed shim boot fully verified through that shim or
+through their own signed GRUB, with the hook appended so the live system
+finds its media; stock Windows ISOs boot too. The route that works on any
+machine is blessing media with your own key: it boots under full Secure Boot with media-finding included, either from
 an external host or from the stick's own minimal signing appliance, so the key
 never leaves encrypted storage and never enters the loader. If you
 want the classic "boot anything" experience, you opt in through the platform's
@@ -46,18 +52,21 @@ for the full model.
 ## Layout
 
 ```
-falcon-core/       EFI-free libraries all the others link: crypto, the exFAT and
-                   ext4 drivers, LUKS2, GPT, the PE walker, boot predictions,
-                   the manifest, image readers
-falcon-efi/        the loader (UEFI x64 PE32+) and its QEMU/OVMF rig
+falcon-core/       firmware-free libraries all the others link: crypto, the
+                   exFAT, ext4, FAT, ISO9660 and UDF drivers, LUKS2, GPT, the
+                   PE walker, boot predictions, WIM, the manifest, media logic
+falcon-efi/        the UEFI loader (x64 PE32+) and its QEMU/OVMF rig
+falcon-bios/       the BIOS loader: a three-stage MBR chain into long mode
 falcon-cli/        host tools: falcon-boot-mkstick, falcon-boot-sign
 falcon-appliance/  the on-stick signing appliance: PID 1 and its image recipe
-falcon-winjump/    the WinPE jump binary
-docs/              DESIGN.md and (later) Manual.md
+falcon-winjump/    the WinPE program that attaches a Windows ISO for Setup
+falcon-hook/       the initrd program that maps an ISO for a Linux distro
+docs/              DESIGN.md (the design; Section 12 draws every boot route),
+                   Manual.md (the operator's reference), notes/
 ```
 
 Each component has `src/`, `tests/` and `tools/` as it needs them, and a
-`build.mk` the root Makefile includes; it is one build, not five.
+`build.mk` the root Makefile includes; it is one build, not seven.
 
 ## Building
 
@@ -73,6 +82,8 @@ make test-fixtures   # the images the image-backed tests read (needs sudo)
 make coverage        # the tests, strictly, with one coverage report
 make test-image      # build the exFAT fixture the rig boots against
 make run             # boot it under QEMU/OVMF with a display window
+make bios            # the BIOS loader's stages
+make test-bios-img   # a disk the rig boots with run-qemu.sh --bios
 ```
 
 See `docs/DESIGN.md` for architecture and the MVP build order.

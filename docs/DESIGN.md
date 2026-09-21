@@ -3,9 +3,10 @@
 falcon-boot (formerly airies-boot; renamed 2026-09-13 before first
 real-hardware enrollment).
 
-A single-purpose, auditable multi-boot loader for UEFI x64. A distilled Ventoy:
-drag-and-drop ISO booting, plus a first-class path for booting a personal
-LUKS-backed OS via a Unified Kernel Image.
+A single-purpose, auditable multi-boot loader for x86-64: UEFI first, with a
+BIOS loader alongside. A distilled Ventoy: drag-and-drop ISO booting, plus a
+first-class path for booting a personal LUKS-backed OS via a Unified Kernel
+Image. Section 12 draws every route both loaders take.
 
 Status: pre-1.0 MVP. This document is the source of truth for architecture and
 scope. It is written to be read cold, months from now, by the person who has to
@@ -16,7 +17,9 @@ change it.
 
 ### In scope (MVP)
 
-1. UEFI x64 firmware only. No BIOS/CSM and no IA32, ever (see Non-goals).
+1. UEFI x64 firmware, and x86-64 BIOS through a separate, opt-in loader
+   (`falcon-bios/`; decision 2026-09-20, below). No IA32, ever (see
+   Non-goals).
 2. Drag-and-drop ISO booting from an exFAT partition, Ventoy-style: copy an
    `.iso` onto the stick from any OS, it appears in the menu, it boots. No
    host-side registration step. (When Secure Boot is ON, unsigned media that does
@@ -40,16 +43,25 @@ change it.
    everything it leans on inside `boot.wim` is undocumented or
    version-dependent and Microsoft can change it in any build. That cost was
    weighed and accepted, not overlooked.
+6. **BIOS (decision 2026-09-20).** Moved out of the non-goals once
+   `docs/notes/bios-route.md` measured what it costs. It was set aside on
+   the belief that it meant a second loader with the logic written twice.
+   It does not: falcon-core is firmware-free and takes a read callback, so a
+   BIOS loader supplies INT 13h where the UEFI loader supplies Block I/O and
+   shares everything above it. The micro-OS considered as the alternative
+   is rejected in that note (it would boot payloads outside `LoadImage`,
+   the one place anything is verified). A BIOS machine has no Secure Boot,
+   so on that route nothing is verified, nothing is blessed and the
+   appliance has no job; Section 7's invariants are vacuous there, not
+   upheld. It is opt-in for that reason: `make bios` builds it and
+   `mkstick bios` installs it into the gap in front of p1, with no layout
+   change (Section 12.3).
 
 ### Non-goals
 
-Rejected, not deferred (decisions 2026-09-12):
+Rejected, not deferred (decisions 2026-09-12; BIOS was on this list until
+2026-09-20, item 6 above):
 
-- BIOS / legacy boot. It has no Secure Boot story, it requires a parallel
-  real-mode loader stack that shares almost nothing with the EFI code, and
-  the hardware is dying out. If it is ever revisited, the recorded approach
-  is a minimal BIOS chain that starts a small Linux which then kexecs
-  targets - not a port of this loader.
 - IA32 (32-bit UEFI). Effectively extinct: it existed on the 2013-2015
   Atom tablet class and is rarer in the wild today than BIOS-only machines.
   Not worth the dual-arch discipline tax on the whole codebase.
@@ -361,16 +373,18 @@ through **sd-stub's companion-credential pickup**:
 - The loader never writes real storage, so the credential is not staged on
   disk. The loader synthesizes a small **virtual read-only filesystem** in RAM
   (the same virtual-device machinery the ISO path already needs, Section 6)
-  containing the UKI bytes read off p3 plus `<uki>.efi.extra.d/p4.cred`, and
+  containing the UKI bytes read off p3 plus
+  `<uki>.efi.extra.d/cryptsetup.passphrase.cred`, and
   calls `LoadImage` with that device path.
-- `systemd-cryptsetup` natively consumes credentials (`cryptsetup.passphrase`),
-  so the initramfs needs no custom hook, only a systemd-based initramfs
-  (mkinitcpio `systemd` hooks). That is a build-time property of the UKI,
-  which we build (Section 8).
+- `systemd-cryptsetup` consumes credentials (`cryptsetup.passphrase`), given
+  a systemd-based initramfs and the `falcon-credential` drop-in Section 5
+  describes (the stock `ImportCredential=` cannot read a plaintext
+  credential). Both are build-time properties of the UKI.
 
 Lifetime and exposure: the credential exists only in RAM (the virtual
 filesystem evaporates at `ExitBootServices`; the cpio copy lives inside the
-initramfs), is root-only, and is discarded when the initramfs pivots. It never
+initramfs), is root-only, and stays under `/run/credentials/` across the
+pivot, which is why the real root needs the drop-in too (Section 5). It never
 touches persistent storage and is never world-readable. If
 `LoadImage`/`StartImage` fails, the loader zeroes the credential buffer and
 tears down the virtual filesystem before returning to the menu.
@@ -908,12 +922,14 @@ What that puts in the loader, each a milestone in the roadmap:
   raw partition (device-mapper linear, or loop with an offset for a
   contiguous file) carrying the ISO's own label, before the distro's init
   looks for its media. It needs no exFAT support in the target initramfs,
-  which the cmdline families of Section 6.1 do. The ISO's extents reach it in
-  a volatile EFI variable the loader sets at boot, computed by the extent
-  map the virtual CD already uses, so a moved or rewritten ISO needs nothing
-  redone. Per-family cmdline templates stay the preferred route where a
-  family has one; the hook is what reaches the rest, with per-family nudges
-  learned from Ventoy's hooks where label matching alone is not enough.
+  which the cmdline families of Section 6.1 do. The ISO's extents are
+  computed at boot, so a moved or rewritten ISO needs nothing redone. They
+  reach the hook in the initrd itself (`/falcon/map`) on a direct boot, as a
+  credential sd-stub packs beside a blessed wrap, or, for wraps older than
+  that credential, in a volatile EFI variable (Section 12.4). Per-family
+  cmdline templates stay the preferred route where a family has one; the
+  hook is what reaches the rest, with per-family nudges learned from
+  Ventoy's hooks where label matching alone is not enough.
 - **Windows WIM surgery at boot**, reversing the rejection recorded in
   Section 8: the loader patches `boot.wim` as it serves it, the way Ventoy
   does, instead of the appliance preparing a sidecar. Both objections
@@ -947,7 +963,9 @@ of the ISO's own pool where the initramfs has neither, and a short table of
 per-distro nudges (roadmap M4). With Secure Boot on, Enter takes the same
 route through the ISO's own shim when the kernel carries SBAT metadata
 (Fedora), which boots it with no blessing wherever db trusts the Microsoft
-CA (`docs/notes/d3-spike.md`); other kernels chainload as before.
+CA (`docs/notes/d3-spike.md`); other kernels go through the ISO's own
+signed GRUB with our grub.cfg (D3b), and chainload only when that cannot
+apply either (Section 12.2.2).
 
 Windows (roadmap M6) boots from a stock ISO with nothing prepared. When Enter
 lands on a Windows row, the loader reads `\sources\boot.wim` out of the ISO's
@@ -1105,11 +1123,13 @@ conclude the patch failed.
     `docs/notes/d3-spike.md`. The route stays best-effort for an ISO whose
     GRUB reads a different configuration first.
   - *User-blessed media:* the reliable route. The bless step (Section 7.5)
-    extracts the ISO's kernel and signs it with the MOK key, so the loader boots
-    that signed kernel directly with our `iso-scan`-style cmdline and initrd
-    injection, media-finding included. Works for signed and unsigned ISOs alike.
-    Blessing runs either on an external host the user controls or on the on-stick
-    signing appliance; both keep the private key encrypted and out of the loader.
+    wraps the ISO's kernel, its initrds and falcon-hook in a UKI signed with
+    the MOK key, with the hooked cmdline built from the ISO's own CD entry
+    (Section 12.2.6), media-finding included. The `iso-scan`-style templates
+    remain for an ISO whose wrap cannot carry the hook. Works for signed and
+    unsigned ISOs alike. Blessing runs either on an external host the user
+    controls or on the on-stick signing appliance; both keep the private key
+    encrypted and out of the loader.
   - *Windows install media:* verified with **no blessing and nothing signed by
     us**, because a Windows ISO's `\EFI\BOOT\BOOTX64.EFI` is Microsoft's own
     `bootmgfw.efi` and everything downstream of it is Microsoft-signed
@@ -1842,9 +1862,9 @@ than reimplementing cryptography or filesystem creation:
   (Section 7.5): a minimal initramfs of our static PID 1, sbsign and the
   portable `sign` tool.
 - `falcon-boot sign <iso>`: the bless step (Section 7.5). Extracts the ISO's
-  kernel and wraps it, per Section 8.1, into a minimal signed UKI whose
-  embedded cmdline carries the derived `iso-scan`-style arguments; the ISO
-  stays on p2 for its initramfs to find. Built as a **portable static
+  kernel and wraps it, per Section 8.1, into a minimal signed UKI with its
+  initrds and falcon-hook, whose embedded cmdline is the ISO's own CD entry
+  plus the hook's arguments; the ISO stays on p2 for the hook to map. Built as a **portable static
   binary** so the identical implementation runs both on an external host and
   inside the on-stick signing appliance. Not needed when Secure Boot is off,
   and not needed for ISOs that already ship their own MS-signed shim and
@@ -2351,3 +2371,821 @@ was struck: Windows needs no injector, for the reason in Section 6.1.
     - Windows WIM surgery in the loader, and winjump parity (Win11 bypass,
       unattend, WinPE shells);
     - M5: spikes for key-less Secure Boot on MS-signed distros.
+
+
+## 12. Boot flows
+
+Every route both loaders take, from power-on to the point where the booted
+system stands on its own: Linux has found its medium and mounted root,
+Windows Setup has found its install source, FreeBSD has mounted root from
+its memory disk. Where a route never gets there through us, the diagram says
+where it stops and why.
+
+Traced from the code (2026-09-21, at `0c00a62`), not from the notes. The
+notes in `docs/notes/` record how each route was reached and stay the
+history; where they and this section disagree, this section is the design.
+A change to a route changes its diagram in the same commit.
+
+The three-letter names are the route codes the loaders draw on screen
+(Manual Section 1). Diagrams name functions so a reader can land in the code;
+line numbers are left out because they would be stale within a week.
+
+### 12.1 The stick, as the loaders see it
+
+| region | holds | read by |
+|---|---|---|
+| LBA 0, bytes 0-439 | BIOS stage 1 (`falcon-bios/src/boot.S`) | a BIOS |
+| LBA 0, bytes 440-511 | disk signature, protective MBR entry, `0x55AA` | everything; `mkstick bios` keeps them |
+| LBA 1-33 | GPT header and 128-entry array | both loaders, falcon-hook, the appliance |
+| LBA 34-97 | BIOS stage 2, 64 sectors | stage 1 |
+| LBA 98-1121 | BIOS stage 3, at most 1024 sectors; its header gives the length | stage 2 (`load3.c`) |
+| LBA 1122-2047 | unused | |
+| p1 `FALCON-ESP` | FAT32 ESP: shim as `EFI\BOOT\BOOTX64.EFI`, MokManager, falcon-boot as `grubx64.efi`, `falcon-boot.cer` | UEFI firmware, shim |
+| p2 `FALCON-ISO` | exFAT: the media, `falcon/blessed/`, the manifest, `falcon/windows.cfg` | both loaders, falcon-hook (as raw extents), winjump, the appliance |
+| p3 | LUKS2 + ext4: UKIs in `/uki`, the MOK key pair | both loaders, the appliance |
+| p4 | LUKS2: the personal OS's LVM (root, home) | the personal OS's initramfs |
+
+The BIOS stages live in the gap a GPT leaves between its entry array and the
+first 2048-aligned partition, so installing them changes no partition
+(Section 12.3.1). p2 is identified by the Microsoft basic-data type plus the
+GPT name `FALCON-ISO`, p3 by the falcon shelf type GUID
+(`falcon-core/src/part/part.c`, `part_match_role`); p1 and p4 have no role
+either loader needs.
+
+### 12.2 UEFI
+
+#### 12.2.1 Power-on to the menu
+
+```mermaid
+flowchart TD
+    FW["Firmware<br/>verifies BOOTX64.EFI (shim) against db"] --> SHIM["shim<br/>verifies grubx64.efi (falcon-boot) against db / MokList"]
+    SHIM --> MAIN["efi_main<br/>watchdog off, largest text mode"]
+    MAIN --> NB["loader_next_boot_take<br/>read and delete FalconNextBoot"]
+    NB --> POOLS{"survey, view and<br/>target pools allocated?"}
+    POOLS -- no --> OOM["out of memory<br/>return to firmware"]
+    POOLS -- yes --> TRUST["trust_stores_load<br/>db, dbx, MokListRT, MokListXRT,<br/>SbatLevelRT, falcon-boot.cer"]
+    TRUST --> SB["banner_init / sb_state_read<br/>SecureBoot, SetupMode, MokSBStateRT<br/>to g_mode"]
+    SB --> DISC["discover_scan<br/>every Block I/O handle, GPT role per partition"]
+    DISC --> POSS["pos_scan<br/>p3 LUKS2 with a pbkdf2 keyslot:<br/>the pinned Personal OS row"]
+    POSS --> VOLS["scan_all_volumes, up to 4 p2 volumes<br/>fs_mount, bless_load (manifest), survey_volume"]
+    VOLS --> PROBE["probe_entries<br/>medium_open, family_detect,<br/>the loader's PE signature, trust_probe: row tags"]
+    PROBE --> PEND{"next-boot marker<br/>pending?"}
+    PEND -- yes --> NBR["next_boot_run<br/>boot the named entry as Enter would"]
+    NBR --> MENU
+    PEND -- no --> MENU["menu"]
+```
+
+`g_mode` is what every later decision reads. It is `ON` only when SecureBoot
+is 1 and MokSBStateRT is not; validation disabled, setup mode and unreadable
+variables are all treated as not enforcing. The survey runs on falcon-core
+alone (`media/medium.c` over the p2 file): nothing is published to the
+firmware to build the menu.
+
+The only failure before the menu is the pool allocation. A missing p2 or p3
+gives a shorter menu, not an error.
+
+#### 12.2.2 The menu and route selection
+
+Rows are the Personal OS (first, when p3 qualifies), the survey's folders and
+images, and Firmware Setup (last, when the firmware supports booting to its
+UI). Keys: up and down, Enter, `c` (chainload), `d` (direct), `b` (bless this
+row), `a` (bless everything new), Escape (up a folder; at the root, exit to
+the firmware).
+
+```mermaid
+flowchart TD
+    ROW{"row, key"}
+    ROW -- "Personal OS" --> POS[POS]
+    ROW -- "a, or b on an image" --> YES{"y to confirm"}
+    YES -- y --> APP[APP]
+    ROW -- "Firmware Setup" --> FWS["OsIndications, reset"]
+    ROW -- ".efi, any key" --> EFI[EFI]
+    ROW -- "image, Enter / c / d" --> BL{"fresh blessing<br/>and Enter?"}
+    BL -- "yes, BSD" --> BLB[BLB]
+    BL -- "yes, other" --> BLS[BLS]
+    BL -- no --> C{"c?"}
+    C -- "yes, .img" --> IMG[IMG]
+    C -- "yes, .iso" --> CHN[CHN]
+    C -- no --> W{"Windows CD,<br/>ASCII path?"}
+    W -- "yes, patched" --> WIN[WIN]
+    W -- "unpatchable" --> CHN
+    W -- no --> B{"BSD CD?"}
+    B -- "yes, edits fit" --> BSD[BSD]
+    B -- "not_bsd" --> CHN
+    B -- no --> K{".iso?"}
+    K -- ".img" --> IMG
+    K -- ".iso" --> M{"g_mode is ON?"}
+    M -- no --> DIR[DIR]
+    DIR -- "no_entry" --> CHN
+    M -- yes --> D3A[D3A]
+    D3A -- "no_entry" --> D3B[D3B]
+    D3B -- "no_entry" --> CHN
+```
+
+`boot_plain` (`falcon-efi/src/efi/main.c`) runs the tests in this order.
+`d` and Enter are the same on an unblessed row; `c` and `d` on a blessed row
+skip the blessing.
+
+A route falls through only while it has not yet committed. Each one keeps a
+flag, set at the start and cleared once it has decided the medium is its own:
+
+| flag | route | still set when |
+|---|---|---|
+| `unpatchable` | WIN | no UDF, no `boot.wim`, the WIM does not parse, the patch does not build; also a non-ASCII path, which skips WIN before it draws |
+| `not_bsd` | BSD | no ISO9660, `/boot/defaults/loader.conf` not one extent of at least 1 KiB, no room for the directory record |
+| `no_entry` | DIR, D3A | no ISO9660 or UDF, no CD boot entry; for D3A also no `.sbat` in the kernel, no `\EFI\BOOT\BOOTX64.EFI` in the ISO |
+| `no_entry` | D3B | the ISO is not whole 2048-byte blocks, the entry is a loopback one, no `grub.cfg`, it is not one extent of at most 256 KiB, ours does not fit in its length |
+
+A failure after the flag is cleared is reported and returns to the menu; it
+does not fall through. `BLS` and `BLB` never fall through at all.
+
+#### 12.2.3 Shared machinery
+
+| piece | where | what it is |
+|---|---|---|
+| load ops | `loader/loadops.c`, `resolve_load_ops` | shim's `SHIM_IMAGE_LOADER` LoadImage/StartImage when shim is present, the firmware's otherwise. `table_unhooked` means shim is present but not enforcing; the chainload and `launch_image` then try the firmware's LoadImage first, since shim's own loader refuses some images the firmware accepts (pfSense's loader). `direct_boot` always uses shim's. |
+| credfs | `loader/credfs.c` | a read-only Simple File System on a vendor-media device path, served from the loader's buffers. Lets an image be loaded by device path (so it has a DeviceHandle to read siblings from) without a real volume. |
+| LoadFile2 initrd | `direct/direct.c`, `initrd_publish` | the Linux initrd media GUID handle the kernel's EFI stub pulls its initrd from. |
+| virtual CD | `iso/iso.c`, `iso_open` | Block I/O over the p2 file: 2048-byte blocks for an ISO, 512 for an `.img`, read-only, `VenHw` device path. `ConnectController` lets the firmware's El Torito and FAT drivers mount the boot image. |
+| overlay | `iso/overlay.h`, `iso_read_blocks` | memory ranges laid over the virtual CD's reads, and an append region past the ISO's end. Each read is split at overlay boundaries. |
+| extent map | `direct/direct.c`, `build_map`; `falcon-core/src/media/extmap.c` | p2's partition GUID and start LBA, the block size, the ISO's size and its extents on p2. falcon-hook rebuilds the ISO from it. |
+| `FalconIsoMap` | `loadops.c`, `loader_isomap_set` | the extent map as a volatile boot-and-runtime variable. Cleared if the boot returns to the menu, not otherwise. falcon-hook's last source, for wraps older than the map credential. |
+| SHIM_LOCK hide | `iso/iso.c`, `shim_lock_hide` | the stick shim's SHIM_LOCK is uninstalled for the length of a chainload, so the ISO's GRUB finds its own shim's. Only `chainload` does this: CHN, IMG, D3B, WIN, BSD. |
+
+Everything above is a boot-services object and is gone at
+ExitBootServices, except `FalconIsoMap`.
+
+#### 12.2.4 POS: the personal OS
+
+```mermaid
+sequenceDiagram
+    actor U as User
+    participant L as falcon-boot
+    participant FC as falcon-core
+    participant S as shim
+    participant K as sd-stub, kernel
+    participant I as initramfs (systemd)
+    U->>L: Enter on Personal OS
+    L->>U: masked passphrase prompt
+    U->>L: passphrase (3 tries, Escape backs out)
+    L->>FC: luks_unlock p3 (PBKDF2, AES-XTS), luks_dev_open, fs_mount ext4
+    FC-->>L: /uki/*.efi, else /EFI/Linux/*.efi
+    L->>U: chooser (skipped for one image)
+    L->>L: read the UKI into pages
+    L->>L: credfs: uki.efi, uki.efi.extra.d/cryptsetup.passphrase.cred
+    L->>S: LoadImage by credfs device path
+    S-->>L: verified against db / MokList when enforcing
+    L->>K: StartImage
+    K->>K: sd-stub packs extra.d/*.cred into /.extra/credentials/
+    K->>K: .initrd plus that cpio served over LoadFile2, kernel loaded, ExitBootServices
+    K->>I: initramfs
+    I->>I: falcon-credential drop-in: LoadCredential from /.extra/credentials/cryptsetup.passphrase.cred
+    I->>I: systemd-cryptsetup opens p4 as cryptusb, lvm2 activates vgusb
+    Note over I: root /dev/mapper/vgusb-root mounted, switch-root
+```
+
+The OS half (the drop-in, the cmdline naming p4 and root) is the archusb
+repository's; Section 5 says why the drop-in exists.
+
+Resident at handoff: credfs and sd-stub's LoadFile2, both boot-services. On
+failure: a wrong passphrase retries, any other unlock error stops; a refused
+UKI tears down credfs, wipes the credential and prints the refusal evidence.
+
+#### 12.2.5 APP: the signing appliance
+
+```mermaid
+sequenceDiagram
+    actor U as User
+    participant L as falcon-boot
+    participant S as shim
+    participant A as appliance PID 1
+    participant F as Firmware
+    U->>L: a, or b on a row
+    L->>U: the list, y to confirm
+    L->>F: FalconNextBoot = the entry, BootNext = this stick
+    L->>L: unlock p3 as POS does, pick appliance*.efi
+    L->>L: credfs: uki, passphrase .cred, falcon.bless.cred (the list)
+    L->>S: LoadImage by path (MOK-signed), StartImage
+    S->>A: sd-stub, kernel, /init = falcon-boot-appliance-init
+    A->>A: modules, find the stick (30 s), mount p2 (exFAT), read the manifest
+    A->>A: survey only the listed paths
+    A->>A: shelf_open p3 read-only in process (core LUKS2, ext4) with the passphrase .cred
+    A->>A: MOK key and cert into sealed memfds
+    A->>A: falcon-boot-sign-static per ISO: /falcon/blessed/, manifest
+    A->>F: reboot
+    F->>L: BootNext: the stick again
+    L->>L: loader_next_boot_take, next_boot_run: boot_blessed (BLS or BLB)
+```
+
+The appliance never stands on its own; it ends in a reboot into the route
+it just made possible. Picked from the Personal OS chooser instead, it runs
+with no list and asks. If it returns without rebooting, the loader clears the
+marker and `BootNext`.
+
+#### 12.2.6 BLS: a blessed wrap
+
+The wrap is built by `falcon-boot-sign` (`falcon-cli/src/sign`): sd-stub, the
+ISO's kernel, a `.initrd` of the ISO's initrds with the falcon-hook cpio
+appended (no map; the map is not known until boot), and the cmdline
+`hookcmd_build` gives the ISO's CD entry, signed with the MOK.
+
+```mermaid
+sequenceDiagram
+    participant L as falcon-boot
+    participant S as shim
+    participant K as sd-stub, kernel
+    participant H as falcon-hook
+    participant D as distro init
+    L->>L: direct_map_set: the extent map, FalconIsoMap
+    L->>L: read /falcon/blessed/uki from p2
+    L->>L: credfs: uki, uki.extra.d/falcon-map.cred
+    L->>S: LoadImage by credfs path
+    S-->>L: verified against MokList
+    L->>K: StartImage
+    K->>K: falcon-map.cred packed, .initrd served over LoadFile2, ExitBootServices
+    K->>H: rdinit=/falcon/hook
+    H->>H: map from /.extra/credentials/falcon-map.cred
+    H->>D: /dev/mapper/falcon-iso under the ISO's label (12.4)
+    Note over D: the distro finds its medium, mounts root
+```
+
+A map that fails to build is not fatal: the wrap boots, and the hook falls
+back to `FalconIsoMap` or hands over unchanged. Under validation disabled
+with Secure Boot on, the firmware refuses sd-stub's inner kernel load; the
+loader predicts that and warns before starting.
+
+#### 12.2.7 BLB: a blessed BSD medium
+
+The same edits and virtual CD as BSD (12.2.12), but the loader started is the
+MOK-signed copy of the medium's loader from `/falcon/blessed/`.
+
+```mermaid
+sequenceDiagram
+    participant L as falcon-boot
+    participant F as Firmware / shim
+    participant B as FreeBSD loader
+    participant K as FreeBSD kernel
+    L->>L: bsd_run: directory record, loader.conf settings, staging check
+    L->>F: virtual CD with the two overrides, ConnectController
+    L->>L: read the signed loader from /falcon/blessed/
+    L->>F: LoadImage, FilePath = the medium's EFI\BOOT\BOOTX64.EFI, SourceBuffer = the signed copy
+    F-->>L: verified against MokList, DeviceHandle = the medium
+    L->>B: StartImage
+    B->>B: currdev cd0, loader.conf with md_image settings
+    B->>B: FALCONBS.IMG read whole through the virtual CD, kernel, ExitBootServices
+    B->>K: md image preloaded
+    Note over K: root cd9660 from /dev/md0
+```
+
+Passing both FilePath and SourceBuffer is what makes the signed copy start
+with the medium as its device. No other route does it. The kernel and
+modules are FreeBSD's loader's to verify, and it does not.
+
+#### 12.2.8 EFI: a bare `.efi` on p2
+
+`boot_payload` reads the file, publishes it alone on credfs, and loads it by
+path (firmware first when shim is not enforcing, else shim), then starts it.
+The payload is the target; nothing follows. No extent map, no initrd, no
+fallback.
+
+#### 12.2.9 DIR: direct kernel boot
+
+Taken when `g_mode` is not `ON`: Secure Boot off, validation disabled, setup
+mode or unknown.
+
+```mermaid
+sequenceDiagram
+    participant L as falcon-boot
+    participant FC as falcon-core
+    participant S as shim
+    participant K as kernel (EFI stub)
+    participant H as falcon-hook
+    participant D as distro init
+    L->>FC: open the ISO on p2, mount ISO9660 (Rock Ridge), else UDF
+    FC-->>L: bootcfg_read CD: the ISO's GRUB, systemd-boot or isolinux entry
+    L->>L: hookcmd_build: entry cmdline + rdinit=/falcon/hook (+ nudges)
+    L->>L: build_map, read the kernel
+    L->>L: initrd = ISO initrds (4-byte padded) + cpio of /falcon/hook, /falcon/map
+    L->>L: FalconIsoMap set, LoadFile2 initrd published
+    L->>S: LoadImage from buffer
+    S-->>L: loaded (not verified: shim is not enforcing)
+    L->>K: StartImage, LoadOptions = the cmdline
+    K->>L: initrd over LoadFile2
+    K->>K: ExitBootServices
+    K->>H: rdinit=/falcon/hook
+    H->>H: map from /falcon/map
+    H->>D: /dev/mapper/falcon-iso (12.4)
+    Note over D: the distro finds its medium, mounts root
+```
+
+On failure after the entry is chosen (too many fragments, LoadImage refused,
+out of memory): an error screen with "press c", and no automatic fallback.
+If the kernel returns, the initrd is withdrawn and `FalconIsoMap` cleared.
+
+#### 12.2.10 D3A: the ISO's own shim, then its kernel
+
+Taken when `g_mode` is `ON` and the kernel carries `.sbat`.
+
+```mermaid
+sequenceDiagram
+    participant L as falcon-boot
+    participant S as stick shim
+    participant IS as the ISO's shim
+    participant K as kernel
+    participant H as falcon-hook
+    participant D as distro init
+    L->>L: as DIR: entry, cmdline, map, kernel, initrd with /falcon/map
+    L->>L: kernel has .sbat, read /EFI/BOOT/BOOTX64.EFI from the ISO's tree
+    L->>L: FalconIsoMap, LoadFile2 initrd
+    L->>L: credfs: shimx64.efi, vmlinuz
+    L->>S: LoadImage shimx64.efi by credfs path
+    S-->>L: verified against db (needs the Microsoft UEFI CA)
+    L->>IS: StartImage, load options "vmlinuz" + the cmdline
+    IS->>IS: reads vmlinuz from its DeviceHandle (credfs), checks vendor cert and SBAT
+    IS->>K: start
+    K->>L: initrd over LoadFile2
+    K->>K: ExitBootServices
+    K->>H: rdinit=/falcon/hook, map from /falcon/map
+    H->>D: /dev/mapper/falcon-iso (12.4)
+    Note over D: the distro finds its medium, mounts root
+```
+
+The ISO's shim comes from the ISO9660/UDF tree, not from the El Torito
+image; they are normally the same file. Whether shim strips the leading
+`vmlinuz` before the kernel sees the options is unmeasured
+(`docs/notes/d3-spike.md`).
+
+#### 12.2.11 D3B: the ISO's own GRUB, with our grub.cfg
+
+Taken when `g_mode` is `ON` and D3A said `no_entry`.
+
+```mermaid
+sequenceDiagram
+    participant L as falcon-boot
+    participant F as Firmware
+    participant S as stick shim
+    participant IS as the ISO's shim
+    participant G as the ISO's GRUB
+    participant K as kernel
+    participant H as falcon-hook
+    L->>L: grub.cfg: one extent, at most 256 KiB, not a loopback entry
+    L->>L: build_map, hook cpio with /falcon/map in 2048-byte blocks
+    L->>L: grubcfg_write: same length as the original, comment-padded
+    L->>L: overlay: our cfg at its offset, hook blocks appended past the ISO's end
+    L->>L: FalconIsoMap
+    L->>F: virtual CD, ConnectController (El Torito, FAT)
+    L->>S: LoadImage EFI\BOOT\BOOTX64.EFI off the boot image
+    S-->>L: verified against db
+    L->>L: hide the stick shim's SHIM_LOCK
+    L->>IS: StartImage
+    IS->>G: verified, started
+    G->>F: reads through the virtual CD: our cfg, kernel, initrds
+    G->>F: initrd ($root)N+M: the hook blocks past the end
+    G->>K: kernel verified through the ISO shim's SHIM_LOCK
+    K->>K: ExitBootServices, the virtual CD is gone
+    K->>H: rdinit=/falcon/hook, map from /falcon/map
+    Note over H: 12.4 onward, as DIR
+```
+
+Our cfg is:
+
+```
+set timeout=0
+set default=0
+menuentry 'falcon-boot' {
+    linux <kernel> <hooked cmdline>
+    initrd <the entry's initrds> ($root)<iso_size/512>+<hook sectors>
+}
+```
+
+Best-effort by design (Section 7.2): a GRUB whose embedded prefix reads a
+different configuration first, or sets `$root` to a partition rather than
+the CD, never sees ours.
+
+#### 12.2.12 BSD: a BSD medium as its own memory disk
+
+```mermaid
+sequenceDiagram
+    participant L as falcon-boot
+    participant FC as falcon-core
+    participant F as Firmware / shim
+    participant B as FreeBSD loader
+    participant K as FreeBSD kernel
+    L->>FC: mount ISO9660, /boot/defaults/loader.conf (one extent, 1 KiB or more)
+    L->>FC: bsdmd_record: a FALCONBS.IMG record in free bytes of / or /boot, extent 0, length = the ISO
+    L->>L: staging check: ISO + 192 MiB below 4 GiB
+    L->>FC: bsdmd_config over the file's opening comment block
+    Note right of FC: md_image_load, md_image_type, md_image_name,<br/>vfs.root.mountfrom=cd9660:/dev/md0
+    L->>F: virtual CD with the two overrides, ConnectController
+    L->>F: chainload loader.efi (SHIM_LOCK hidden)
+    F->>B: start
+    B->>B: currdev cd0, reads the edited loader.conf
+    B->>B: FALCONBS.IMG read whole as md_image, kernel, ExitBootServices
+    B->>K: md image preloaded
+    Note over K: root cd9660 from /dev/md0
+```
+
+`loader.efi` is unsigned, so this route is refused under Secure Boot; BLB is
+the Secure Boot route. The file edited is `/boot/defaults/loader.conf`, not
+`/boot/loader.conf`, which a medium may not have.
+
+#### 12.2.13 WIN: Windows install media
+
+```mermaid
+sequenceDiagram
+    participant L as falcon-boot
+    participant FC as falcon-core
+    participant F as Firmware / shim
+    participant M as bootmgr, winload
+    participant W as winjump (WinPE)
+    participant ST as Setup
+    L->>FC: udf_mount, /sources/boot.wim, wim_open
+    L->>FC: wim_patch_build: new header, tail appended
+    Note right of FC: winpeshl.exe = winjump, winpeshl_orig.exe,<br/>falcon-winjump.cfg: iso=path, size=bytes
+    L->>FC: UDF: File Entry extended, anchor copied to the new end, Partition Descriptor lengths
+    L->>F: virtual CD with the overrides and the append, ConnectController
+    L->>F: chainload EFI\BOOT\BOOTX64.EFI (SHIM_LOCK hidden)
+    F-->>L: verified against db (Microsoft Windows CA)
+    F->>M: start
+    M->>F: BCD, boot.sdi, boot.wim through the virtual CD's UDF
+    M->>M: boot.wim into a RAM disk, ExitBootServices, NT kernel
+    M->>W: smss runs winpeshl.exe
+    W->>W: find_iso: every drive letter, path and exact size, 30 s
+    W->>W: OpenVirtualDisk, AttachVirtualDisk (read-only, permanent)
+    W->>W: falcon\windows.cfg: LabConfig bypass, unattend
+    W->>ST: winpeshl_orig.exe
+    Note over ST: install.wim found on the attached CD
+```
+
+Microsoft's binaries are served byte for byte and verified by the platform;
+the patched WIM is not something Secure Boot verifies (Section 7.7). WinPE
+sees p2 through its own `exfat.sys`, which is how winjump finds the file.
+Every winjump failure still starts the original shell, logged to
+`X:\falcon-winjump.log`.
+
+#### 12.2.14 CHN and IMG: the medium's own loader
+
+```mermaid
+sequenceDiagram
+    participant L as falcon-boot
+    participant F as Firmware
+    participant S as shim
+    participant P as the medium's loader
+    L->>F: virtual CD (2048) or disk (512, .img), ConnectController
+    F-->>L: volumes: El Torito boot image, or the image's ESP
+    L->>L: select_boot_volume: the one with EFI\BOOT\BOOTX64.EFI
+    L->>S: LoadImage by device path
+    L->>L: hide SHIM_LOCK
+    L->>P: StartImage
+    P->>F: reads through the virtual device
+    P->>P: ExitBootServices: the virtual device is gone
+```
+
+This route never makes a Linux live medium stand on its own: nothing is
+appended and nothing carries a map, so an initramfs looking for its CD after
+ExitBootServices finds nothing (Section 6.1). It exists for media that need
+nothing after load (memtest-class images, WinPE in its RAM disk) and as the
+fallback when the routes above cannot read the medium.
+
+#### 12.2.15 Failure paths
+
+Every route returns to the dispatcher on failure. The screen says what
+failed and at which step, the advice, and on a Secure Boot refusal the
+evidence (who signed the image, which list decided); then "press any key to
+return to the menu". Cancelling a prompt returns without the key.
+
+Nothing in the UEFI loader halts. It leaves only three ways: a route that
+started its target, Escape at the root (back to the firmware's next boot
+option), and the confirmed Firmware Setup reset. A console that stops
+answering `WaitForEvent` is treated as Escape, so the menu unwinds to the
+firmware rather than spinning.
+
+### 12.3 BIOS
+
+#### 12.3.1 The boot area
+
+Stage 1 goes in the 440 bytes of boot code in LBA 0; the partition table
+behind it is kept. Stages 2 and 3 go in LBA 34-1121 (12.1). `mkstick bios`
+(`falcon-cli/src/mkstick/bios.c`) backs up LBA 0 and the gap first, checks
+the gap is free, zeroes it, writes stage 2 and stage 3, and writes LBA 0
+last, so an interrupted install leaves the old LBA 0 in place. A falcon
+stage 1 in front of a half-written stage 2 fails its `BOS2` check and says
+so rather than running it.
+
+#### 12.3.2 Power-on to the menu
+
+```mermaid
+flowchart TD
+    BIOS["BIOS<br/>LBA 0 to 0x7C00, DL = boot drive"] --> S1["Stage 1, boot.S (real mode)<br/>segments 0, SP 0x7C00, COM1 up"]
+    S1 --> RD{"INT 13h AH=42h<br/>LBA 34, 64 sectors to 0x7E00<br/>3 tries, AH=00h reset between"}
+    RD -- fails --> F1["fail: reason, key, jump to FFFF:0"]
+    RD -- ok --> MG{"0x7E04 holds BOS2?"}
+    MG -- no --> F1
+    MG -- yes --> S2["Stage 2, stage2.S at 0x7E00 (real mode)"]
+    S2 --> CPU{"cpu_check<br/>CPUID: long mode, PAE, FXSR"}
+    CPU -- no --> FR["fatal_rm: reason, key, reset"]
+    CPU -- yes --> MEM{"mem_check<br/>BDA 0x413 at least 608 KiB"}
+    MEM -- no --> FR
+    MEM -- yes --> A20{"A20: INT 15h 2401, else port 0x92<br/>verified by wraparound"}
+    A20 -- closed --> FR
+    A20 -- open --> PT["lmode.S<br/>page tables at 0x80000, 1 GiB identity map<br/>CR4 PAE, OSFXSR, OSXMMEXCPT; EFER.LME; PG+PE"]
+    PT --> LM["long mode, stage2_64<br/>fault_install: IDT, 32 vectors"]
+    LM --> L3["stage3_load, load3.c<br/>AH=48h sector size, header at LBA 98 to 1 MiB"]
+    L3 --> H3{"BOS3, length and<br/>memory in bounds?"}
+    H3 -- no --> BF["bios_fatal: reason, key, reset"]
+    H3 -- yes --> S3["read stage 3, zero its .bss<br/>call 0x100010, RSP 0x800000"]
+    S3 --> BM["bios_main<br/>E820, boot disk, GPT: p2, p3"]
+    BM --> P2["p2: fs_mount (exFAT), survey_volume (.iso, .img)"]
+    P2 --> P3["pos_probe: p3 is LUKS2?"]
+    P3 --> MENU["menu"]
+```
+
+Stage 2 is linked at 0x7E00 and stays there: the thunk and the IDT in it are
+used by stage 3 for the rest of the boot. Its head is a gate at fixed
+addresses, because stage 3 is linked separately and shares no symbols with
+it:
+
+| address | field |
+|---|---|
+| 0x7E00 | `jmp stage2_begin` |
+| 0x7E04 | `BOS2`, what stage 1 checks |
+| 0x7E08 | `jmp thunk_bios`: C calls a BIOS interrupt through here |
+| 0x7E10 | `jmp boot16`: the one-way drop to real mode a chainload takes |
+| 0x7E20 | the register block, 32 bytes |
+| 0x7E40 | the interrupt vector |
+| 0x7E41 | the boot drive |
+| 0x7E48 | the real-mode target of `boot16`, offset then segment |
+
+`build.mk` checks every one against `nm` output.
+
+#### 12.3.3 The thunk: a BIOS call from long mode
+
+Stage 3 runs in long mode, and the BIOS runs only in real mode. Every disk
+read, every character on screen and every key goes through this round trip.
+
+```mermaid
+sequenceDiagram
+    participant C as stage 3 C (long mode)
+    participant T as thunk.S (stage 2)
+    participant B as BIOS (real mode)
+    C->>T: register block and vector written, call 0x7E08
+    T->>T: save registers and RSP, patch the vector into the INT
+    T->>T: 32-bit compatibility segment, paging off, EFER.LME off
+    T->>T: 16-bit segment, PE off, far jump into real mode
+    T->>T: segments 0, SP 0x7000, lidt the real-mode IVT
+    T->>B: registers loaded, sti, int N, cli
+    B-->>T: results, carry flag
+    T->>T: registers written back to the block
+    T->>T: lgdt, PE on, 32-bit, CR3 0x80000, LME on, PG on
+    T->>T: 64-bit, RSP restored, lidt idt_desc
+    T-->>C: return
+```
+
+Buffers the BIOS reads into must be addressable from real mode with DS and
+ES at 0, so a disk read lands in the bounce buffer at 0x90000 (32 KiB) and
+is copied up; the packet is at 0x1000. Services used: INT 13h AH=42h and
+AH=48h, INT 10h (cursor, scroll, character, teletype), INT 16h AH=00h,
+INT 15h E820. INT 15h AH=87h is used only by the resident CD handler, from
+real mode.
+
+#### 12.3.4 Memory map
+
+| range | what | lifetime |
+|---|---|---|
+| 0x0000-0x03FF | real-mode IVT; INT 13h hooked by a chainload | permanent |
+| 0x0400-0x04FF | BDA; 0x413 is conventional memory in KiB, lowered 16 by a chainload | permanent |
+| 0x1000-0x10FF | disk packet, drive parameters, E820 slot | per call |
+| below 0x7000 | real-mode stack during a thunk | per call |
+| 0x7000-0x7BFF | stage 2's long-mode stack | until stage 3 |
+| 0x7C00-0x7DFF | stage 1; later the chainloaded boot image | stage 1 dies at the jump |
+| 0x7E00-0xFDFF | stage 2 (64 sectors; 9 KiB used): gate, thunk, GDT, IDT, fault reporting | until the target starts |
+| 0x10000-0x10FFF | Linux zero page | handed to the kernel |
+| 0x20000 | Linux cmdline; or the staged El Torito boot image (up to 63 KiB) on a chainload | handed over |
+| 0x80000-0x82FFF | PML4, PDPT, PD | whole loader |
+| 0x90000-0x97FFF | bounce buffer | every read |
+| BDA top - 16 KiB | the resident CD handler: data, runs, El Torito packet, launch stub at +0x530, handler at +0x570, overlay pool at +0x1000 | permanent after a chainload |
+| 0x100000 | stage 3: 16-byte header, entry at +0x10, then its image and `.bss` (at most 0x6F0000 together) | whole loader |
+| 0x7F0000-0x7FFFFF | stage 3 stack, RSP from 0x800000 | whole loader |
+| 0x1000000 | the kernel's protected-mode part (aligned up; `pref_address` for a non-relocatable kernel) | handed to the kernel |
+| highest fit below 1 GiB | the initrds, placed from E820 | handed to the kernel |
+| highest fit in 64 MiB-1 GiB | `heap.c`: the patched boot.wim tail | through the chainload, served by AH=87h |
+| 1 GiB | end of the identity map; nothing may be written above it | |
+
+`mem_check` refuses a machine whose EBDA reaches below 0x98000, because the
+page tables and the bounce buffer are there. The fixed addresses are in
+`falcon-bios/src/biosdefs.h`, except the bounce buffer (`disk.c`) and that
+floor (`stage2.S`).
+
+#### 12.3.5 The menu and route selection
+
+Rows are the survey's folders and images, then Personal OS last at the root
+when p3 is LUKS2. Keys: up and down, Enter, `c` (chainload), `r` (reboot),
+Escape (up a folder). There is no Secure Boot, no shim and no blessing, so
+five routes.
+
+```mermaid
+flowchart TD
+    ROW{"row, key"}
+    ROW -- "Personal OS" --> POS[POS]
+    ROW -- "r" --> RB["bios_reboot"]
+    ROW -- "c on an image" --> CHN[CHN]
+    ROW -- "Enter on an image" --> MED["scan_iso<br/>medium_open, family_detect"]
+    MED --> B{"BSD?"}
+    B -- "yes, edits fit" --> BSD[BSD]
+    B -- "not_bsd" --> BC
+    B -- no --> W{"Windows?"}
+    W -- "yes, patched" --> WIN[WIN]
+    W -- "unpatchable" --> CHN
+    W -- no --> BC{"CD boot entry?"}
+    BC -- yes --> DIR[DIR]
+    BC -- no --> STOP["message, key, menu<br/>(c chainloads)"]
+```
+
+Unlike the UEFI loader, a BSD medium that is not one the memory-disk route
+applies to falls to the Linux entry lookup, and `DIR` with no entry stops
+rather than chainloading.
+
+#### 12.3.6 DIR: direct kernel boot
+
+```mermaid
+sequenceDiagram
+    participant L as stage 3
+    participant B as BIOS (thunk)
+    participant K as kernel
+    participant H as falcon-hook
+    participant D as distro init
+    L->>B: read the ISO on p2 through falcon-core (medium_open, bootcfg_read CD)
+    L->>L: build_map (block size from AH=48h), hook cpio /falcon/hook + /falcon/map
+    L->>L: hookcmd_build + console=ttyS0,115200 console=tty0
+    L->>L: linuxcore_geometry: boot protocol 2.12+, 64-bit entry, load address
+    L->>B: kernel's protected-mode part to 16 MiB, in 64 KiB chunks
+    L->>L: cmdline to 0x20000
+    L->>B: initrds, hook last, 4-byte padded, at e820_place_high below 1 GiB
+    L->>L: zero page at 0x10000: setup header, loader type 0xFF, E820 as the BIOS gave it
+    L->>K: own GDT, lretq to load_at + 0x200, RSI = zero page (long mode, never real mode again)
+    K->>H: rdinit=/falcon/hook, map from /falcon/map
+    H->>D: /dev/mapper/falcon-iso (12.4)
+    Note over D: the distro finds its medium, mounts root
+```
+
+The map is carried only in the initrd; a BIOS has no variable store. Nothing
+is resident at handoff: the IVT and BDA are untouched. A map that cannot be
+built (too many fragments) boots without the hook, and the kernel is left to
+find its medium itself.
+
+#### 12.3.7 POS: the personal OS
+
+A UKI is a PE image for UEFI's sd-stub, which cannot run under a BIOS. The
+loader unwraps it instead and does sd-stub's credential packing itself.
+
+```mermaid
+sequenceDiagram
+    actor U as User
+    participant L as stage 3
+    participant FC as falcon-core
+    participant K as kernel
+    participant I as initramfs (systemd)
+    U->>L: Enter on Personal OS
+    L->>U: masked passphrase (INT 16h)
+    L->>FC: luks_unlock p3, luks_dev_open, fs_mount ext4
+    FC-->>L: /uki/*.efi (at most 16)
+    L->>U: chooser
+    L->>FC: pe_parse: .linux, .initrd, .cmdline
+    L->>L: cpio .extra/credentials/cryptsetup.passphrase.cred, after .initrd
+    L->>K: linux_boot with the UKI's cmdline unchanged (as DIR, without the hook)
+    K->>I: initramfs
+    I->>I: falcon-credential drop-in, systemd-cryptsetup opens p4, lvm2
+    Note over I: root /dev/mapper/vgusb-root mounted, switch-root
+```
+
+The initramfs sees exactly what sd-stub would have given it. AES-NI in
+`luks_unlock` is why `lmode.S` sets CR4.OSFXSR: UEFI firmware sets it, a
+BIOS leaves it clear, and the first SSE instruction would fault.
+
+#### 12.3.8 CHN: the resident virtual CD
+
+```mermaid
+sequenceDiagram
+    participant L as stage 3
+    participant R as resident INT 13h handler
+    participant B as BIOS
+    participant P as the medium's boot image
+    L->>L: El Torito catalog: the BIOS entry, no emulation only
+    L->>L: vcd_build: runs of CD sectors contiguous on p2
+    L->>B: boot image (up to 63 KiB) staged at 0x20000
+    L->>L: BDA 0x413 lowered 16 KiB, handler, runs, overlay pool copied there
+    L->>L: IVT[0x13] = the handler, gate target = its launch stub
+    L->>L: call 0x7E10 (boot16): long mode to real mode, one way
+    L->>R: launch stub: image copied to 07C0:0000, DL = 0xE0
+    R->>P: jump
+    P->>R: INT 13h on 0xE0: AH=41h, 42h, 48h, 4Bh
+    R->>R: overlay first, else the run, re-issued to the real drive
+    R->>B: INT 13h on the stick
+    P->>P: isolinux / GRUB / cdboot / etfsboot load their next stage
+```
+
+Other drives pass through to the previous handler. Writes fail. Reads past
+the medium's end up to 64 sectors of padding return zeros.
+
+Unlike UEFI's virtual CD, this one outlives the handoff: anything that keeps
+reading through INT 13h keeps working, including bootmgr and winload, which
+drop back to real mode for each read. A protected-mode kernel that does not
+call the BIOS loses it, so a Linux live ISO chainloaded here has no hook and
+no map and finds its medium only if its initramfs can do so unaided.
+
+#### 12.3.9 WIN: Windows install media
+
+The same patch as the UEFI route (12.2.13), computed by the same falcon-core
+code; only the serving differs.
+
+```mermaid
+sequenceDiagram
+    participant L as stage 3
+    participant R as resident handler
+    participant M as bootmgr, winload
+    participant W as winjump (WinPE)
+    participant ST as Setup
+    L->>L: udf_mount, boot.wim, wim_open, wim_patch_build
+    L->>L: heap.c: the tail in 64 MiB-1 GiB, at E820's highest fit
+    L->>L: UDF edits into the overlay pool, the tail as an append past the end
+    L->>R: CHN (12.3.8), etfsboot at 07C0:0000
+    R->>M: bootmgr
+    M->>R: BCD, boot.sdi, boot.wim
+    R->>R: tail blocks copied down with INT 15h AH=87h
+    M->>M: RAM disk, NT kernel, the handler is no longer called
+    M->>W: winpeshl.exe = winjump
+    W->>W: find_iso, AttachVirtualDisk, windows.cfg
+    W->>ST: winpeshl_orig.exe
+    Note over ST: install.wim found on the attached CD
+```
+
+#### 12.3.10 BSD: a BSD medium as its own memory disk
+
+The same two edits as the UEFI route (12.2.12), laid into the resident's
+overlay pool. The staging check looks for one usable E820 run below 4 GiB
+holding the ISO plus 192 MiB. The settings add
+`console="comconsole,vidconsole"`. FreeBSD's `cdboot` loads `/boot/loader`
+through the handler, the loader reads `FALCONBS.IMG;1` whole through it (the
+zero padding past the end is what lets it read the last block), and the
+kernel mounts root from `/dev/md0`.
+
+#### 12.3.11 Failure paths
+
+No failure halts, because on a machine with no serial cable a halt is a
+hang.
+
+| where | what happens |
+|---|---|
+| stage 1 | reason on screen and serial, a key, `jmp FFFF:0` |
+| stage 2, real mode (`fatal_rm`) | no long mode, EBDA too low, A20 closed: reason, a key, reset |
+| stage 2 and 3, long mode (`bios_fatal`) | stage 3 missing or malformed, or `stage 3 returned`: reason, a key, reset |
+| a processor exception (`idt.S`, `fault.c`) | vector and name, RIP, error code, CR2 for a page fault, through `bios_fatal`; a second fault while reporting resets at once |
+| a route | message, "press any key to return to the menu" |
+| the POS | wrong passphrase, no `/uki`, no images: message, secrets wiped, back to the menu |
+
+A reset is port 0xCF9, then the 8042's reset line, then an empty IDT and a
+fault, which triple-faults any processor. The window between entering long
+mode and `fault_install` has no IDT.
+
+### 12.4 falcon-hook to root
+
+Shared by DIR, D3A, D3B and BLS on UEFI and DIR on BIOS. It runs as PID 1
+from `rdinit=/falcon/hook` before the distro's init.
+
+```mermaid
+sequenceDiagram
+    participant H as falcon-hook
+    participant KN as kernel
+    participant D as distro init
+    H->>KN: mount proc, sysfs, devtmpfs
+    H->>H: the init to exec: falcon.init=, else /init
+    H->>H: map: /falcon/map, else /.extra/credentials/falcon-map.cred, else FalconIsoMap in efivarfs
+    H->>KN: the initramfs's own modprobe: dm_mod, storage and USB drivers, loop, isofs
+    H->>KN: poll /sys/block (30 s) for the disk whose GPT has p2's GUID and start LBA
+    alt device-mapper
+        H->>KN: dm-linear, one read-only target per extent: /dev/mapper/falcon-iso
+    else no dm, ISO contiguous
+        H->>KN: read-only loop over the partition with offset and limit
+    else neither
+        H->>H: loop module unpacked from the ISO's own /pool, then loop
+    end
+    H->>H: by-label and by-uuid links from the ISO's volume descriptor
+    H->>H: fork: re-announce the device to udev once udevd is up (dm only)
+    H->>H: per-distro nudges to /init, premounts (/cdrom for debian-installer)
+    H->>D: execve, the kernel's arguments passed through
+    Note over D: the distro finds its medium its own way, mounts root
+```
+
+Every failure is logged to `/dev/kmsg` and the distro's init runs anyway.
+
+How each family then finds its root on the device the hook made:
+
+| family | mechanism |
+|---|---|
+| archiso | `archisolabel=`, through the by-label link |
+| dracut live (Fedora, Rocky, Alma) | `root=live:CDLABEL=`, by label once udev has been told about the device |
+| casper (Ubuntu and flavours) | its own scan of block devices |
+| live-boot (Debian live) | `live-media=/dev/mapper/falcon-iso`, added to the cmdline, since its scan skips dm devices |
+| Proxmox, antiX, MX | their `/init` patched to look at the device |
+| debian-installer | the ISO premounted at `/cdrom` |
+| Alpine | loop, then its own scan |

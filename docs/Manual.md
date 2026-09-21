@@ -29,7 +29,7 @@ route's handoff. The cases are listed in Section 1.3.
 | `BLS` | a blessed wrap: the MOK-signed UKI built for a Linux ISO | Enter on a blessed row |
 | `BLB` | a blessed BSD medium: its loader, MOK-signed, started with the medium as its device | Enter on a blessed BSD row |
 | `EFI` | a bare `.efi` file on p2, launched as itself | Enter on a `.efi` row |
-| `DIR` | direct kernel boot: the ISO's kernel and initrds with falcon-hook appended | Enter or `d` on a Linux ISO, Secure Boot off |
+| `DIR` | direct kernel boot: the ISO's kernel and initrds with falcon-hook appended | Enter or `d` on a Linux ISO, Secure Boot not enforcing (off, validation disabled, setup mode) |
 | `D3A` | the ISO's own shim, which loads the distro's signed kernel | Enter or `d` on a Linux ISO whose kernel carries `.sbat`, Secure Boot on |
 | `D3B` | the ISO's own signed GRUB, with our grub.cfg served in place of its own | Enter or `d` on a Linux ISO whose kernel has no `.sbat`, Secure Boot on |
 | `WIN` | Windows install media, boot.wim patched in memory as it is served | Enter or `d` on a Windows ISO |
@@ -61,14 +61,18 @@ chosen.
 
 | loader | shown first | then | when |
 |---|---|---|---|
-| UEFI | `D3A` | `D3B` | the ISO's kernel has no `.sbat`, so its shim would not run it |
-| UEFI | `DIR`, `D3A` or `D3B` | `CHN` | no boot entry in the ISO's configuration the loader can take |
+| UEFI | `D3A` | `D3B` | the ISO's kernel has no `.sbat`, so its shim would not run it; also no boot entry the loader can take, or no shim on the ISO |
+| UEFI | `DIR` or `D3B` | `CHN` | no boot entry in the ISO's configuration the loader can take, or (`D3B`) its grub.cfg cannot be replaced in place |
 | both | `WIN` | `CHN` | Windows media with nothing to patch |
-| UEFI | `BSD` | `DIR`, `D3A`/`D3B`, or `CHN` | the medium is not one the memory-disk route applies to |
+| UEFI | `BSD` | `CHN` | the medium is not one the memory-disk route applies to |
 | BIOS | `BSD` | `DIR` | as above |
 
 On the BIOS loader, `DIR` with no boot entry it can take stops with a
 message rather than falling through; `c` on the row chainloads.
 
+A route falls through only before it has committed to the medium. A
+failure after that is reported on screen and the key returns to the menu.
+
 A code seen on an error screen names the route that failed, which is the
-first thing to report with it.
+first thing to report with it. `docs/DESIGN.md` Section 12 draws each
+route.
