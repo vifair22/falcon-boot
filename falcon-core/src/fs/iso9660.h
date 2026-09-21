@@ -121,7 +121,11 @@ typedef struct {
     iso9660_vol *vol;
     uint32_t lba;
     uint32_t len;
-    uint32_t pos;               /* byte offset into the directory extent */
+    /* Byte offset into the directory extent. 64 bits although len is 32:
+     * the walk steps to the end of the last block, which for a len within a
+     * block of 4 GiB is 2^32, and a 32-bit pos wrapped there to 0 and walked
+     * the directory again, forever. */
+    uint64_t pos;
     uint64_t buf_off;           /* volume byte offset cached, ~0 invalid */
     uint8_t  buf[ISO9660_BLOCK];
 } iso9660_dir;

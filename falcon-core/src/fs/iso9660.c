@@ -386,14 +386,14 @@ static int next_record(iso9660_dir *d, const uint8_t **rec, uint32_t *rec_lba,
 
         if (d->pos >= d->len)
             return 0;
-        blk = d->pos / BLK;
-        off = d->pos % BLK;
+        blk = (uint32_t)(d->pos / BLK);
+        off = (uint32_t)(d->pos % BLK);
         rc = read_block(d->vol, (uint64_t)d->lba + blk, d->buf, &d->buf_off);
         if (rc != ISO9660_OK)
             return rc;
         rl = d->buf[off];
         if (rl == 0) {
-            d->pos = (blk + 1u) * BLK;
+            d->pos = ((uint64_t)blk + 1u) * BLK;
             continue;
         }
         if (rl < REC_MIN || off + rl > BLK || 33u + d->buf[off + 32] > rl)

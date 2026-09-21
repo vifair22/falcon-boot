@@ -42,6 +42,18 @@ static int img_read(void *ctx, uint64_t off, uint64_t len, void *buf)
     return 0;
 }
 
+/* img, then zeros to any offset: a volume far larger than the buffer, for
+ * a walk that has to reach an offset the buffer does not cover. */
+static int sparse_read(void *ctx, uint64_t off, uint64_t len, void *buf)
+{
+    (void)ctx;
+    if (off >= sizeof img) {
+        memset(buf, 0, (size_t)len);
+        return 0;
+    }
+    return img_read(ctx, off, len, buf);
+}
+
 static void put16b(uint8_t *p, uint16_t v)
 {
     p[0] = (uint8_t)v;
@@ -346,6 +358,20 @@ static void test_iso_record_shapes(void **state)
     mount_root();
     fail_off = 20 * B;
     assert_int_equal(iso9660_dir_next(&d, &e), ISO9660_ERR_IO);
+    fail_off = ~(uint64_t)0;
+
+    /* A directory extent a block short of 4 GiB, on a volume big enough to
+     * hold it, with its last block zero. The step past that block reaches
+     * 2^32, where a 32-bit offset wrapped to the directory's start and the
+     * walk began again with "A", forever. Started at the last block rather
+     * than walked to it, which would be two million reads. */
+    p = fresh(NULL, 0);
+    rec(p, 30, 1, 0, "A", 1, NULL, 0);
+    mount_root();
+    v.read = sparse_read;
+    d.len = 0xFFFFFFFFu;
+    d.pos = (uint64_t)0xFFFFFFFFu / B * B;
+    assert_int_equal(iso9660_dir_next(&d, &e), 0);
 }
 
 static void test_iso_names(void **state)
