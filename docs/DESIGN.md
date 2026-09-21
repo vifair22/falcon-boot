@@ -2183,8 +2183,10 @@ off: the personal OS end to end (p3 unlock, the UKI launched, p4 unlocked
 from the credential with no second prompt), a blessed Linux ISO, and a stock
 Windows ISO through the boot.wim patch. The bless flow ran from the menu
 unattended (`b`/`a`, the appliance signs, `BootNext` returns to the stick,
-the ISO boots; Section 6.3.1). Still unmeasured on hardware: D3a/D3b, and the
-BIOS loader.
+the ISO boots; Section 6.3.1). On a second machine whose db trusts
+Microsoft, with Secure Boot on and the ISOs unblessed: D3a booted Fedora
+Workstation 44, and D3b booted Kubuntu 26.04 (its kernel carries no `.sbat`).
+Still unmeasured on hardware: the BIOS loader.
 
 A BLESSED ISO BOOTS ON REAL HARDWARE (2026-09-13): on that same laptop, the
 on-stick appliance blessed the Arch ISO and it booted all the way into the
