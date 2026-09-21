@@ -21,6 +21,7 @@
 	.section .text.stage2, "ax"
 	.globl  stage2_start
 	.globl  gate_entry
+	.globl  gate_magic
 	.globl  gate_boot16
 	.globl  gate_target
 	.globl  thunk_regs
@@ -50,6 +51,10 @@
  * fills it in. */
 stage2_start:
 	jmp     stage2_begin
+
+	.org    0x04
+gate_magic:
+	.long   STAGE2_MAGIC         /* GATE_MAGIC */
 
 	.org    0x08
 	/* .code64, and it matters: the only caller is stage 3, in long mode.

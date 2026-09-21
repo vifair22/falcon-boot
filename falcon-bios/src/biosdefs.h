@@ -56,6 +56,11 @@
  * 0x80000. A single INT 13h transfer may not cross a 64 KB boundary and this
  * one does not. */
 #define STAGE2_SECTORS  64
+/* "BOS2", at GATE_MAGIC: what stage 1 checks before it jumps, so sectors
+ * that are not stage 2 (a stick whose gap was written over, a disk with
+ * 4 KiB sectors that put LBA 34 somewhere else) stop with a message rather
+ * than running whatever was read. */
+#define STAGE2_MAGIC    0x32534F42
 
 /* The long-mode page tables, and why they are at fixed addresses.
  *
@@ -104,6 +109,7 @@
  * it could not be in stage 2's image at all.
  */
 #define GATE_ADDR       STAGE2_LOAD
+#define GATE_MAGIC      (GATE_ADDR + 0x04)   /* STAGE2_MAGIC, for stage 1 */
 #define GATE_THUNK      (GATE_ADDR + 0x08)   /* jmp thunk_bios */
 #define GATE_BOOT16     (GATE_ADDR + 0x10)   /* jmp boot16, and never back */
 #define GATE_REGS       (GATE_ADDR + 0x20)   /* the register block */

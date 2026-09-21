@@ -140,7 +140,8 @@ $(BIOS_STAGE2): $(BIOS_STAGE2_OBJS) $(BIOS)/bios.ld
 	@# The gate has to land where biosdefs.h says it does, because stage 3
 	@# reaches it by address and shares no symbol with it. A section that
 	@# moved would be stage 3 calling into whatever is at 0x7400 instead.
-	@for pair in gate_entry:7e08 gate_boot16:7e10 thunk_regs:7e20 \
+	@for pair in gate_magic:7e04 gate_entry:7e08 gate_boot16:7e10 \
+	            thunk_regs:7e20 \
 	            thunk_vector:7e40 gate_drive:7e41 gate_target:7e48; do \
 		sym=$${pair%%:*}; want=$${pair##*:}; \
 		got=$$(nm $@.elf | awk -v s="$$sym" '$$3 == s { print $$1 }'); \

@@ -62,10 +62,27 @@ _start:
 	movl    $STAGE2_LBA, 8(%si)
 	movl    $0, 12(%si)
 
-	movb    $0x42, %ah
+	/* Three tries, with a drive reset between them. A USB stick behind
+	 * a BIOS's mass-storage emulation can fail its first read while the
+	 * emulation is still settling, and a reset is what the BIOS's own
+	 * boot code does about it. */
+	movw    $3, %di
+1:	movb    $0x42, %ah
 	movb    boot_drive, %dl
 	int     $0x13
-	jc      read_failed
+	jnc     2f
+	xorb    %ah, %ah             /* AH=00h, reset the drive */
+	movb    boot_drive, %dl
+	int     $0x13
+	decw    %di
+	jnz     1b
+	movw    $msg_readfail, %si
+	jmp     fail
+
+	/* Something was read; make sure it is stage 2 before running it. */
+2:	cmpl    $STAGE2_MAGIC, (GATE_MAGIC)
+	movw    $msg_notstage2, %si
+	jne     fail
 
 	movw    $msg_jump, %si
 	call    serial_puts
@@ -74,15 +91,30 @@ _start:
 	movb    boot_drive, %dl
 	ljmp    $0, $STAGE2_LOAD
 
-read_failed:
-	movw    $msg_readfail, %si
+/* si = the reason. On serial and on the screen, then a key, then the reset
+ * vector. Never a halt: on a machine with no serial cable that is a hang. */
+fail:
 	call    serial_puts
-	/* No retry. A stage 2 that cannot be read is a stick that wants
-	 * remaking, and spinning here is more use to somebody with a serial
-	 * cable than a reboot loop would be. */
-halt:
-	hlt
-	jmp     halt
+	call    screen_puts
+	movw    $msg_key, %si
+	call    serial_puts
+	call    screen_puts
+	xorb    %ah, %ah
+	int     $0x16                /* wait for a key */
+	ljmp    $0xFFFF, $0x0000
+
+/* si = NUL-terminated string, through INT 10h teletype. Preserves si. */
+screen_puts:
+	pushw   %si
+1:	lodsb
+	testb   %al, %al
+	jz      2f
+	movb    $0x0E, %ah
+	movw    $0x0007, %bx         /* page 0, light grey */
+	int     $0x10
+	jmp     1b
+2:	popw    %si
+	ret
 
 /* ---- COM1, polled ----
  *
@@ -157,6 +189,18 @@ msg_jump:
 	.asciz  "falcon-bios: stage 2\r\n"
 msg_readfail:
 	.asciz  "falcon-bios: stage 2 unreadable (INT 13h AH=42h failed)\r\n"
+msg_notstage2:
+	.asciz  "falcon-bios: LBA 34 does not hold stage 2\r\n"
+msg_key:
+	.asciz  "press any key to reboot.\r\n"
+
+	/* Stage 1 is written into the 440 bytes of boot code ahead of the
+	 * disk signature and the protective MBR's partition table, which
+	 * mkstick leaves as they are. Anything past 440 would be written over
+	 * the table, or not written at all. gas refuses to move .org
+	 * backwards, so if the code above ever passes 440 this line is where
+	 * the build stops. */
+	.org    _start + 440
 
 	/* The signature the BIOS looks for, at the last two bytes of the
 	 * sector. The assertion is the point: if anything above grows past
