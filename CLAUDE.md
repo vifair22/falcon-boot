@@ -262,7 +262,10 @@ the tree, so `#include <fs/exfat.h>` means one file wherever it is written.
   AES-NI path needs it, and nothing may be written outside the gigabyte
   `lmode.S` identity maps.
 - `docs/` DESIGN.md (authoritative) and later Manual.md. `tools/` at the root
-  holds only what spans the repo: `analyze.sh`, and `coverage/`, the corpus
+  holds only what spans the repo: `analyze.sh`; `arch-iso.sh`, sourced by
+  the three scripts that take a kernel out of the rig's Arch ISO, which
+  default to the copy on this stick's p2 (mounted read-only for the run
+  when it is not already; `ARCH_ISO` overrides); and `coverage/`, the corpus
   harness of docs/notes/coverage-roadmap.md (a pinned ISO manifest, one rig
   stick per ISO, each booted under OVMF in three Secure Boot states and
   judged from serial, a DHCP capture and the media read after the kernel

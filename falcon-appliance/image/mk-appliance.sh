@@ -45,7 +45,9 @@
 #
 # Usage: falcon-appliance/image/mk-appliance.sh
 # Env:
-#   ARCH_ISO      kernel and module source (default: the vtoy-backup copy)
+#   ARCH_ISO      kernel and module source (default: the one on this
+#                 stick's p2, mounted read-only if it is not already;
+#                 tools/arch-iso.sh)
 #   APPLIANCE_CMDLINE  kernel cmdline baked into the signed image
 #   MOK_KEY/MOK_CRT    test MOK for the optional signed copy
 #
@@ -56,7 +58,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")/../.."
 
-ARCH_ISO="${ARCH_ISO:-/mnt/980pro/vtoy-backup/Linux/archlinux-2026.01.01-x86_64.iso}"
+. tools/arch-iso.sh
 ISO_KERNEL_PATH=arch/boot/x86_64/vmlinuz-linux
 ISO_SFS_PATH=arch/x86_64/airootfs.sfs
 STUB=/usr/lib/systemd/boot/efi/linuxx64.efi.stub
@@ -124,8 +126,10 @@ cleanup() {
         rmdir "$WORK_MNT_ISO" 2>/dev/null || true
         WORK_MNT_ISO=
     fi
+    arch_iso_release
 }
 trap cleanup EXIT
+arch_iso_resolve
 
 for t in bsdtar cpio readelf zstd sudo; do
     command -v "$t" >/dev/null 2>&1 || {

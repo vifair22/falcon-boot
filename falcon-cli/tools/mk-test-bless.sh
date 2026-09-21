@@ -26,7 +26,8 @@
 # Everything here lands under build/ and the source ISO is READ ONLY.
 #
 # Usage: falcon-cli/tools/mk-test-bless.sh [ISO]
-# Env:   ARCH_ISO   source ISO (default: the vtoy-backup copy)
+# Env:   ARCH_ISO   source ISO (default: the one on this stick's p2;
+#                   tools/arch-iso.sh)
 #        SIGN       the bless tool (default: build/bin/falcon-boot-sign)
 #        STICK      scratch p2 (default: build/e2e-stick)
 
@@ -34,7 +35,9 @@ set -euo pipefail
 
 cd "$(dirname "$0")/../.."
 
-ARCH_ISO="${1:-${ARCH_ISO:-/mnt/980pro/vtoy-backup/Linux/archlinux-2026.01.01-x86_64.iso}}"
+. tools/arch-iso.sh
+trap arch_iso_release EXIT
+ARCH_ISO="${1:-${ARCH_ISO:-}}"
 SIGN="${SIGN:-build/bin/falcon-boot-sign}"
 STICK="${STICK:-build/e2e-stick}"
 
@@ -51,6 +54,7 @@ done
     echo "ERROR: $SIGN not built (see the cli target in the Makefile)" >&2
     exit 1
 }
+arch_iso_resolve
 [[ -f "$ARCH_ISO" ]] || {
     echo "ERROR: $ARCH_ISO not found (pass one as an argument)" >&2
     exit 1

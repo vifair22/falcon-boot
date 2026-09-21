@@ -25,7 +25,8 @@
 #            mirrors its own messages to both.
 #
 # Usage: falcon-efi/tools/mk-test-uki.sh
-# Env:   ARCH_ISO   source ISO (default: the vtoy-backup copy)
+# Env:   ARCH_ISO   source ISO (default: the one on this stick's p2;
+#                   tools/arch-iso.sh)
 #        UKI_KERNEL pre-extracted kernel, skips the ISO entirely
 #
 # THIS IS RIG SCAFFOLDING. The product's UKI is built by the host tooling of
@@ -37,7 +38,8 @@ set -euo pipefail
 
 cd "$(dirname "$0")/../.."
 
-ARCH_ISO="${ARCH_ISO:-/mnt/980pro/vtoy-backup/Linux/archlinux-2026.01.01-x86_64.iso}"
+. tools/arch-iso.sh
+trap arch_iso_release EXIT
 ISO_KERNEL_PATH=arch/boot/x86_64/vmlinuz-linux
 STUB=/usr/lib/systemd/boot/efi/linuxx64.efi.stub
 
@@ -74,6 +76,7 @@ mkdir -p "$WORK/root/dev"
 # scratch directory keeps the one write anywhere near the ISO on our side of
 # the fence.
 if [[ ! -f "$KERNEL" ]]; then
+    arch_iso_resolve
     [[ -f "$ARCH_ISO" ]] || {
         echo "ERROR: $ARCH_ISO not found (set ARCH_ISO or UKI_KERNEL)" >&2
         exit 1
