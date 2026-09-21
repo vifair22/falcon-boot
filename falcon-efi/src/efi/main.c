@@ -1642,6 +1642,12 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
     st->ConOut->Reset(st->ConOut, FALSE);
     /* Before anything is drawn, and once: SetMode clears the screen. */
     menu_init(st);
+    /* Startup is a screen like any other. Everything below draws with out(),
+     * and without this the first line of it landed wherever Reset left the
+     * cursor - column zero, row zero - while every screen that replaced it
+     * sat in the centred block, so the loader did not look like one program
+     * until the menu appeared. */
+    menu_screen(st);
 
     /* The next-boot marker, first thing and before anything that can fail
      * (DESIGN Section 6.3.1). Reading it here rather than where it is acted on
