@@ -719,32 +719,67 @@ int fat_file_read(fat_file *f, uint64_t off, uint64_t len, void *buf)
     if (f->first_cluster < CLUSTER_MIN)
         return FAT_ERR_CORRUPT;
 
+    /* Whole sectors go to the device as one read per run of clusters that
+     * sit next to each other on disk, not one read per sector. The
+     * difference is the whole cost on a real machine: firmware Block I/O over
+     * USB has no cache and a millisecond or more per request, and hashing a
+     * medium's 1 MiB BOOTX64.EFI out of its El Torito image a sector at a
+     * time was 2048 of them per entry, which is most of what the menu's
+     * startup probe spent (measured 2026-09-20 on the archusb stick: about
+     * 9,700 of 10,250 reads across seven images). Only the partial sectors
+     * at either end still go through the bounce buffer. */
     while (len > 0) {
         uint32_t index = (uint32_t)(off / v->cluster_size);
         uint32_t in_cluster = (uint32_t)(off % v->cluster_size);
         uint32_t cluster;
         uint64_t sector;
         uint32_t in_sector = in_cluster % v->sector_size;
-        uint64_t take = v->sector_size - in_sector;
+        uint64_t take;
+        uint64_t whole;
         int rc = file_cluster(f, index, &cluster);
 
         if (rc != FAT_OK)
             return rc;
         sector = cluster_sector(v, cluster) + in_cluster / v->sector_size;
-        if (take > len)
-            take = len;
 
-        if (in_sector == 0 && take == v->sector_size) {
-            /* Whole sector, straight into the caller's buffer. */
-            rc = read_sector(v, sector, dst);
-            if (rc != FAT_OK)
-                return rc;
-        } else {
+        if (in_sector != 0 || len < v->sector_size) {
+            take = v->sector_size - in_sector;
+            if (take > len)
+                take = len;
             rc = read_sector(v, sector, f->buf);
             if (rc != FAT_OK)
                 return rc;
             memcpy(dst, f->buf + in_sector, (size_t)take);
+            dst += take;
+            off += take;
+            len -= take;
+            continue;
         }
+
+        /* Sector-aligned from here: the rest of this cluster, then each
+         * following cluster for as long as the chain's next is the next one
+         * on disk. Stepping the cursor one cluster at a time is what the loop
+         * would do anyway, so a run that ends at a gap costs nothing extra;
+         * the next pass starts from the cursor it left. */
+        whole = len - len % v->sector_size;
+        take = v->cluster_size - in_cluster;
+        if (take > whole)
+            take = whole;
+        while (take < whole) {
+            uint32_t next;
+
+            rc = file_cluster(f, index + 1u, &next);
+            if (rc != FAT_OK)
+                return rc;
+            if (next != cluster + 1u)
+                break;
+            cluster = next;
+            index++;
+            take += (whole - take < v->cluster_size) ? whole - take
+                                                     : v->cluster_size;
+        }
+        if (v->read(v->read_ctx, sector * v->sector_size, take, dst) != 0)
+            return FAT_ERR_IO;
         dst += take;
         off += take;
         len -= take;

@@ -33,6 +33,7 @@
 #define IMG32 "build/test-fat32.img"
 
 #define BIG_SIZE (100u * 1024u)
+#define FRAG_SIZE (60u * 1024u)
 
 typedef struct {
     const char *path;
@@ -56,6 +57,25 @@ static int img_read(void *ctx, uint64_t off, uint64_t len, void *buf)
     if (fseek(f, (long)off, SEEK_SET) != 0)
         return -1;
     return fread(buf, 1, (size_t)len, f) == len ? 0 : -1;
+}
+
+/* Reads that land in the data region, counted. Walking a chain also reads
+ * FAT sectors, and how many depends on the FAT cache rather than on the file
+ * read being tested, so those are left out: what is asserted is how many
+ * requests the file's own bytes cost. */
+typedef struct {
+    FILE    *fp;
+    uint64_t data_off;
+    unsigned data_reads;
+} counted;
+
+static int counted_read(void *ctx, uint64_t off, uint64_t len, void *buf)
+{
+    counted *c = ctx;
+
+    if (off >= c->data_off)
+        c->data_reads++;
+    return img_read(c->fp, off, len, buf);
 }
 
 static FILE *open_img(const char *path)
@@ -288,6 +308,108 @@ static void test_fat_read_unaligned(void **state)
     }
 }
 
+/* One device read per run of clusters that sit together on disk, not one per
+ * sector: the startup probe hashes a 1 MiB loader out of an El Torito image
+ * this way, and on firmware Block I/O every request costs a millisecond or
+ * more. frag.bin is built in two pieces (falcon-core/tools/mk-test-fat.sh),
+ * so it also checks that a run stops at the gap rather than reading on into
+ * whatever lies past it. */
+static void test_fat_read_coalesced(void **state)
+{
+    static const struct {
+        const char *name;
+        uint32_t    size;
+        unsigned    mod;
+        size_t      min_extents;
+    } files[] = {
+        { "big.bin",  BIG_SIZE,  251u, 1u },
+        { "frag.bin", FRAG_SIZE, 241u, 2u },
+    };
+    size_t i, k;
+
+    (void)state;
+    for (i = 0; i < FIXTURE_N; i++) {
+        for (k = 0; k < sizeof files / sizeof files[0]; k++) {
+            counted c;
+            fat_vol v;
+            fat_file f;
+            fat_dirent e;
+            fat_extent ext[32];
+            size_t n = 0;
+            unsigned char *buf = malloc(files[k].size);
+            uint32_t j;
+
+            assert_non_null(buf);
+            c.fp = open_img(g_fixtures[i].path);
+            c.data_off = 0;
+            c.data_reads = 0;
+            assert_int_equal(fat_mount(&v, counted_read, &c), FAT_OK);
+            c.data_off = (uint64_t)v.data_off_sectors * v.sector_size;
+            assert_int_equal(find_in_root(&v, files[k].name, &e), 1);
+            assert_int_equal(e.size, files[k].size);
+            assert_int_equal(fat_file_extents(&v, &e, ext, 32, &n), FAT_OK);
+            assert_true(n >= files[k].min_extents);
+            assert_int_equal(fat_file_open(&v, &f, &e), FAT_OK);
+
+            c.data_reads = 0;
+            memset(buf, 0xAA, files[k].size);
+            assert_int_equal(fat_file_read(&f, 0, files[k].size, buf),
+                             FAT_OK);
+            assert_int_equal(c.data_reads, n);
+            for (j = 0; j < files[k].size; j++)
+                assert_int_equal(buf[j], (unsigned char)(j % files[k].mod));
+            free(buf);
+            fclose(c.fp);
+        }
+    }
+}
+
+/* Reads that start or end inside a sector and cross frag.bin's gap: the
+ * bounced edges and the coalesced middle have to meet without a byte lost or
+ * repeated on either side of it. */
+static void test_fat_read_across_gap(void **state)
+{
+    static const uint32_t before[] = { 1u, 700u, 2048u, 5000u };
+    static const uint32_t lens[] = { 2u, 1500u, 4096u, 9001u };
+    size_t i, a, b;
+
+    (void)state;
+    for (i = 0; i < FIXTURE_N; i++) {
+        fat_vol v;
+        fat_file f;
+        fat_dirent e;
+        fat_extent ext[32];
+        size_t n = 0;
+        uint32_t gap;
+        unsigned char buf[9001];
+
+        g_fp = open_img(g_fixtures[i].path);
+        assert_int_equal(fat_mount(&v, img_read, g_fp), FAT_OK);
+        assert_int_equal(find_in_root(&v, "frag.bin", &e), 1);
+        assert_int_equal(fat_file_extents(&v, &e, ext, 32, &n), FAT_OK);
+        assert_true(n >= 2u);
+        gap = (uint32_t)ext[0].len;       /* file offset of the first gap */
+        assert_int_equal(fat_file_open(&v, &f, &e), FAT_OK);
+
+        for (a = 0; a < sizeof before / sizeof before[0]; a++) {
+            for (b = 0; b < sizeof lens / sizeof lens[0]; b++) {
+                uint32_t off = gap - before[a];
+                uint32_t len = lens[b];
+                uint32_t j;
+
+                if (off + len > FRAG_SIZE)
+                    continue;
+                memset(buf, 0, sizeof buf);
+                assert_int_equal(fat_file_read(&f, off, len, buf), FAT_OK);
+                for (j = 0; j < len; j++)
+                    assert_int_equal(buf[j],
+                                     (unsigned char)((off + j) % 241u));
+            }
+        }
+        fclose(g_fp);
+    }
+}
+
 static void test_fat_nested_directory(void **state)
 {
     size_t i;
@@ -441,6 +563,8 @@ int run_fat_tests(void)
         cmocka_unit_test(test_fat_read_small_file),
         cmocka_unit_test(test_fat_read_multi_cluster),
         cmocka_unit_test(test_fat_read_unaligned),
+        cmocka_unit_test(test_fat_read_coalesced),
+        cmocka_unit_test(test_fat_read_across_gap),
         cmocka_unit_test(test_fat_nested_directory),
         cmocka_unit_test(test_fat_extents),
         cmocka_unit_test(test_fat_through_registry),

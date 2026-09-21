@@ -27,8 +27,12 @@
 #   sub/                    a subdirectory
 #   sub/nested.txt          reached by opening a directory dirent
 #   sub/deeper/leaf.txt     two levels, so fs_lookup has something to resolve
+#   frag.bin                in two pieces on disk: copied into the hole a
+#                           deleted spacer left, with blocker.bin in the way,
+#                           so a read that runs across clusters has to stop
+#                           at the gap
 #
-# Deps: mkfs.vfat (dosfstools) and mmd/mcopy (mtools). No sudo and no loop
+# Deps: mkfs.vfat (dosfstools) and mmd/mcopy/mdel (mtools). No sudo and no loop
 # device: mtools writes into the image file directly, which is also why this
 # fixture builds in a container that mk-test-ext4.sh could not.
 
@@ -39,7 +43,7 @@ cd "$(dirname "$0")/../.."
 OUT=build
 mkdir -p "$OUT"
 
-for t in mkfs.vfat mmd mcopy; do
+for t in mkfs.vfat mmd mcopy mdel; do
     command -v "$t" >/dev/null || { echo "ERROR: $t not found" >&2; exit 1; }
 done
 
@@ -65,6 +69,20 @@ with open(sys.argv[1], 'wb') as f:
     f.write(bytes((i % 251) for i in range(n)))
 PY
 
+# 60 KiB in a pattern of its own (n % 241), so a read that ran on past the gap
+# into blocker.bin or the spacer's old clusters shows up as wrong bytes. The
+# spacer is 16 KiB, smaller than frag.bin, so the copy fills the hole and
+# continues past blocker.bin. 60 KiB is whole sectors, so a whole-file read has
+# no bounced tail and its read count is exactly its run count.
+python3 - "$W/frag.bin" <<'PY'
+import sys
+n = 60 * 1024
+with open(sys.argv[1], 'wb') as f:
+    f.write(bytes((i % 241) for i in range(n)))
+PY
+head -c 16384 /dev/zero > "$W/spacer.bin"
+head -c 16384 /dev/zero > "$W/blocker.bin"
+
 build_one()
 {
     local img=$1 fat=$2 size_kib=$3 spc=$4
@@ -85,6 +103,20 @@ build_one()
     MTOOLS_SKIP_CHECK=1 mcopy -i "$img" "$W/big.bin" ::/big.bin
     MTOOLS_SKIP_CHECK=1 mcopy -i "$img" "$W/nested.txt" ::/sub/nested.txt
     MTOOLS_SKIP_CHECK=1 mcopy -i "$img" "$W/leaf.txt" ::/sub/deeper/leaf.txt
+    MTOOLS_SKIP_CHECK=1 mcopy -i "$img" "$W/spacer.bin" ::/spacer.bin
+    MTOOLS_SKIP_CHECK=1 mcopy -i "$img" "$W/blocker.bin" ::/blocker.bin
+    MTOOLS_SKIP_CHECK=1 mdel -i "$img" ::/spacer.bin
+    if [[ "$fat" == 32 ]]; then
+        # FAT32 alone has FSInfo, and mtools allocates from its next-free
+        # hint, which points past the hole. 0xFFFFFFFF is the spec's
+        # "unknown", so the search starts at the lowest cluster and finds it.
+        local fsi
+        fsi=$(od -An -tu2 -j48 -N2 "$img" | tr -d ' ')
+        printf '\xff\xff\xff\xff' |
+            dd of="$img" bs=1 seek=$((fsi * 512 + 492)) conv=notrunc \
+               status=none
+    fi
+    MTOOLS_SKIP_CHECK=1 mcopy -i "$img" "$W/frag.bin" ::/frag.bin
 
     echo "   $img  FAT$fat, $spc sector(s) per cluster"
 }
