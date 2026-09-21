@@ -259,6 +259,14 @@ the tree, so `#include <fs/exfat.h>` means one file wherever it is written.
   from extended memory through INT 15h AH=87h. `src/heap.c` is the one
   allocator, for that tail alone.
 
+  No failure ends in a halt, which on a machine with no serial cable is a
+  hang: it ends in `bios_fatal` (`fatal_rm` before there is C), the reason
+  on screen and serial, a key, then a reset. Stage 2 asks CPUID for long
+  mode and the BDA whether the EBDA reaches memory it writes before it
+  tries long mode, and `src/idt.S` gives long mode an IDT, so a processor
+  exception is reported through the same path (`src/fault.c`) rather than
+  triple faulting.
+
   It shares falcon-core unchanged: the read callback is the per-platform
   boundary. What a BIOS build had to provide that firmware used to is the
   thing to remember here - `lmode.S` sets CR4.OSFXSR because falcon-core's
