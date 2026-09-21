@@ -114,6 +114,12 @@ void bios_screen_puts(const char *s);
 void bios_screen_clear(void);
 void bios_screen_at(uint8_t row, uint8_t col);
 
+/* The route a boot is taking, as a short code (docs/Manual.md, "Route
+ * codes"), in the screen's top right corner. Redrawn after every clear and
+ * every line, since teletype output scrolls it away; also written to serial
+ * once. code must outlive the boot (a literal). Null stops drawing it. */
+void bios_screen_mode(const char *code);
+
 /* One character of a UCS-2 name as this build can print it.
  *
  * Written with an if rather than a conditional expression because the two

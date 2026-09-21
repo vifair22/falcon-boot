@@ -74,6 +74,14 @@ typedef struct {
 
 static menu_frame g_frame;
 
+/* The route code menu_mode set, or null. A string literal: callers pass
+ * constants, and holding the pointer is what lets menu_screen put the code
+ * back after a module clears the screen under it. */
+static const CHAR16 *g_mode;
+
+/* Longer than any code, so a copy is never cut short. */
+#define MODE_CODE_MAX 7u
+
 /* The console state and the resolved frame. Bundled because paint_slot is
  * called from two places and the alternative is a nine-argument function. */
 typedef struct {
@@ -295,6 +303,41 @@ static void frame_ensure(EFI_SYSTEM_TABLE *st)
     g_frame.ready = TRUE;
 }
 
+/* The route code in the block's top right corner, one row above the first
+ * line of text so a long label on that line cannot run into it.
+ *
+ * It is drawn around the cursor rather than through it: a caller part way
+ * through a line of menu_out, or a boot path that falls through to the next
+ * one and redraws the code, must find the cursor where it left it. Every code
+ * is the same width, so a redraw overwrites the last one completely. */
+static void mode_draw(EFI_SYSTEM_TABLE *st)
+{
+    UINTN col = (UINTN)st->ConOut->Mode->CursorColumn;
+    UINTN row = (UINTN)st->ConOut->Mode->CursorRow;
+    UINTN top = g_frame.rows / 3u;
+    CHAR16 code[MODE_CODE_MAX + 1u];
+    UINTN len;
+
+    if (g_mode == (const CHAR16 *)0) {
+        return;
+    }
+    if (top < MARGIN_Y) {
+        top = MARGIN_Y;
+    }
+    len = ucs2_copy(code, MODE_CODE_MAX + 1u, g_mode);
+    if (top == 0u || len > g_frame.text_width) {
+        return;
+    }
+    st->ConOut->SetCursorPosition(st->ConOut,
+                                  g_frame.text_col + g_frame.text_width - len,
+                                  top - 1u);
+    st->ConOut->SetAttribute(st->ConOut, EFI_TEXT_ATTR(EFI_WHITE, EFI_BLACK));
+    out(st, code);
+    st->ConOut->SetAttribute(st->ConOut,
+                             EFI_TEXT_ATTR(EFI_LIGHTGRAY, EFI_BLACK));
+    st->ConOut->SetCursorPosition(st->ConOut, col, row);
+}
+
 /* Start a screen: clear it and park the cursor at the block's first text
  * column. Everything written with menu_out lands inside the block from there.
  *
@@ -322,6 +365,16 @@ void menu_screen(EFI_SYSTEM_TABLE *st)
     st->ConOut->ClearScreen(st->ConOut);
     st->ConOut->SetCursorPosition(st->ConOut, g_frame.text_col, row);
     g_frame.col = 0;
+    mode_draw(st);
+}
+
+void menu_mode(EFI_SYSTEM_TABLE *st, const CHAR16 *code)
+{
+    g_mode = code;
+    if (st != (void *)0 && code != (const CHAR16 *)0) {
+        frame_ensure(st);
+        mode_draw(st);
+    }
 }
 
 /* Write text inside the block, re-indenting after every line break and

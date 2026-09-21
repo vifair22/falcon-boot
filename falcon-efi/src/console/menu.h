@@ -54,6 +54,12 @@ void menu_init(EFI_SYSTEM_TABLE *st);
 void menu_screen(EFI_SYSTEM_TABLE *st);
 void menu_out(EFI_SYSTEM_TABLE *st, const CHAR16 *s);
 
+/* The route a boot is taking, as a short code (docs/Manual.md, "Route
+ * codes"), drawn in the block's top right corner now and by every
+ * menu_screen after it, so a module that clears the screen does not lose it.
+ * code must outlive the boot (a literal). Null stops drawing it. */
+void menu_mode(EFI_SYSTEM_TABLE *st, const CHAR16 *code);
+
 /* Blocks until the user commits. Returns the selected entry index, or a
  * negative value if the user backed out (ESC). */
 INTN menu_run(EFI_SYSTEM_TABLE *st, const menu_banner *banner,

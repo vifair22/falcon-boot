@@ -244,6 +244,8 @@ static void menu_run(void)
         int key;
         unsigned vi;
 
+        /* Back at the menu, the last boot's route is over. */
+        bios_screen_mode((const char *)0);
         menu_draw(selected, rows);
         key = bios_getkey();
         vi = view_index(selected);
@@ -266,6 +268,7 @@ static void menu_run(void)
             selected = 0;
         } else if (key == BIOS_KEY_ENTER && g_cur_len == 0u && g_pos_row &&
                    selected + 1u == rows) {
+            bios_screen_mode("POS");
             bios_screen_puts("\n  Personal OS\n");
             (void)pos_run(g_p3_disk, g_p3_part);
         } else if (vi != VIEW_MAX && g_view[vi].kind == SURVEY_ROW_FILE &&

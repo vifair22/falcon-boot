@@ -51,8 +51,9 @@ both Secure Boot states (`make test-stick`, `make run-stick` /
 booting under Secure Boot on a machine that trusts nothing from Microsoft.
 Measured on real hardware (2026-09-20), UEFI with Secure Boot on and off:
 the personal OS end to end, blessed Linux ISOs (blessed from the menu, with
-`BootNext` back to the stick) and a stock Windows ISO. Still unmeasured on
-hardware: D3a/D3b and the BIOS loader.
+`BootNext` back to the stick), a stock Windows ISO, and with Secure Boot on
+D3a (an unblessed Fedora) and D3b (an unblessed Kubuntu). Still unmeasured on
+hardware: the BIOS loader.
 
 ## Non-negotiable security invariants (DESIGN.md Section 7)
 
@@ -263,7 +264,8 @@ the tree, so `#include <fs/exfat.h>` means one file wherever it is written.
   thing to remember here - `lmode.S` sets CR4.OSFXSR because falcon-core's
   AES-NI path needs it, and nothing may be written outside the gigabyte
   `lmode.S` identity maps.
-- `docs/` DESIGN.md (authoritative) and later Manual.md. `tools/` at the root
+- `docs/` DESIGN.md (authoritative) and Manual.md (the operator's reference:
+  the route codes so far). `tools/` at the root
   holds only what spans the repo: `analyze.sh`; `arch-iso.sh`, sourced by
   the three scripts that take a kernel out of the rig's Arch ISO, which
   default to the copy on this stick's p2 (mounted read-only for the run

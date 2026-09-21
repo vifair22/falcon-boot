@@ -334,6 +334,7 @@ int scan_iso(fs_vol *p2, const gpt_part *p2part, const fs_dirent *ent,
         if (fam->id == FAMILY_BSD) {
             int not_bsd = 1;
 
+            bios_screen_mode("BSD");
             (void)bsd_boot(g_disk, p2, p2part, ent, &not_bsd);
             if (!not_bsd)
                 return -1;
@@ -345,6 +346,7 @@ int scan_iso(fs_vol *p2, const gpt_part *p2part, const fs_dirent *ent,
             for (k = 0; k + 1u < sizeof rel && ent->name[k] != 0; k++)
                 rel[k] = bios_ascii(ent->name[k], '_');
             rel[k] = '\0';
+            bios_screen_mode("WIN");
             (void)win_boot(g_disk, p2, p2part, ent, rel, &unpatchable);
             if (!unpatchable)
                 return -1;
@@ -377,6 +379,7 @@ int scan_iso(fs_vol *p2, const gpt_part *p2part, const fs_dirent *ent,
     put(g_cfg.entry[g_cfg.pick].cmdline);
     put("\n");
 
+    bios_screen_mode("DIR");
     return boot_entry(&g_cfg.entry[g_cfg.pick], p2, p2part, ent, block_size);
 }
 
@@ -391,6 +394,7 @@ int scan_chain(bios_disk *d, fs_vol *p2, const gpt_part *p2part,
         put("  the image would not open\n");
         return -1;
     }
+    bios_screen_mode("CHN");
     return vcd_chainload(d, p2, p2part, ent, &g_iso);
 }
 

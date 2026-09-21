@@ -98,6 +98,59 @@ void bios_screen_at(uint8_t row, uint8_t col)
     thunk_bios();
 }
 
+/* The route code; empty draws nothing. Initialised to something other than
+ * zero on purpose: this file is linked into stage 2 as well, which nothing
+ * loads and so nothing clears, and a zero initialiser would put the pointer
+ * in a .bss the build refuses (falcon-bios/build.mk). In .data it is on the
+ * disk with the code. */
+static const char k_mode_none[] = "";
+static const char *g_mode = k_mode_none;
+
+/* The code right-aligned on row 0, two columns in from the edge as the menu's
+ * text is from the left. AH=09h writes a character without moving the
+ * cursor, so the cursor is read first and put back after: the next line of
+ * teletype output has to land where it would have. */
+static void mode_draw(void)
+{
+    uint32_t saved;
+    size_t len = 0;
+    size_t i;
+
+    while (g_mode[len] != '\0')
+        len++;
+    if (len == 0 || len > 70u)
+        return;
+
+    thunk_regs.eax = 0x0300u;          /* AH=03h, read cursor position */
+    thunk_regs.ebx = 0;                /* page 0 */
+    thunk_vector = 0x10;
+    thunk_bios();
+    saved = thunk_regs.edx;            /* DH row, DL column */
+
+    for (i = 0; i < len; i++) {
+        bios_screen_at(0, (uint8_t)(78u - len + i));
+        thunk_regs.eax = 0x0900u | (uint8_t)g_mode[i]; /* AH=09h, write */
+        thunk_regs.ebx = 0x000Fu;      /* page 0, white on black */
+        thunk_regs.ecx = 1;            /* once */
+        thunk_vector = 0x10;
+        thunk_bios();
+    }
+    bios_screen_at((uint8_t)((saved >> 8) & 0xFFu), (uint8_t)(saved & 0xFFu));
+}
+
+void bios_screen_mode(const char *code)
+{
+    if (code == (const char *)0) {
+        g_mode = k_mode_none;
+        return;
+    }
+    g_mode = code;
+    bios_puts("  route ");
+    bios_puts(code);
+    bios_puts("\n");
+    mode_draw();
+}
+
 void bios_screen_clear(void)
 {
     thunk_regs.eax = 0x0600u;          /* AH=06h, scroll up; AL=0 clears */
@@ -107,6 +160,7 @@ void bios_screen_clear(void)
     thunk_vector = 0x10;
     thunk_bios();
     bios_screen_at(0, 0);
+    mode_draw();
 }
 
 static void screen_putc(char c)
@@ -119,17 +173,23 @@ static void screen_putc(char c)
 
 void bios_screen_puts(const char *s)
 {
+    int line = 0;
+
     if (s == (const char *)0)
         return;
     while (*s != '\0') {
         if (*s == '\n') {
             screen_putc('\r');
             bios_putc('\r');
+            line = 1;
         }
         screen_putc(*s);
         bios_putc(*s);
         s++;
     }
+    /* A line break may have scrolled the screen and the code with it. */
+    if (line)
+        mode_draw();
 }
 
 int bios_getkey(void)

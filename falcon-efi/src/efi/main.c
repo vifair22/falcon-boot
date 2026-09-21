@@ -813,6 +813,7 @@ static void boot_target(EFI_HANDLE image_handle, const CHAR16 *label,
                                (const family_desc *)0 };
     EFI_STATUS status;
 
+    menu_mode(g_st, target->kind == ISO_MEDIA_DISK ? L"IMG" : L"CHN");
     menu_screen(g_st);
     out(L"booting: ");
     out(label);
@@ -895,6 +896,7 @@ static void boot_blessed(EFI_HANDLE image_handle, const CHAR16 *label,
         target->fam = survey.family->id;
         target->probed = 1;
     }
+    menu_mode(g_st, target->fam == FAMILY_BSD ? L"BLB" : L"BLS");
 
     if (target->fam == FAMILY_BSD) {
         /* No extent map: the hook is a Linux mechanism, and this medium
@@ -959,6 +961,7 @@ static void boot_payload(EFI_HANDLE image_handle, const CHAR16 *label,
     bless_result result = { L"starting", EFI_SUCCESS, (const CHAR16 *)0 };
     EFI_STATUS status;
 
+    menu_mode(g_st, L"EFI");
     menu_screen(g_st);
     out(L"booting: ");
     out(label);
@@ -1024,6 +1027,7 @@ static BOOLEAN boot_direct(EFI_HANDLE image_handle, const CHAR16 *label,
     discover_dev *dev = g_vol_dev[target->vol];
     EFI_STATUS status;
 
+    menu_mode(g_st, g_mode == SB_MODE_ON ? L"D3A" : L"DIR");
     menu_screen(g_st);
     out(L"booting: ");
     out(label);
@@ -1037,10 +1041,12 @@ static BOOLEAN boot_direct(EFI_HANDLE image_handle, const CHAR16 *label,
                          &result);
     /* D3a needs a kernel shim will run as its second stage; the rest go
      * through the ISO's own GRUB with our configuration (D3b). */
-    if (EFI_ERROR(status) && result.no_entry && g_mode == SB_MODE_ON)
+    if (EFI_ERROR(status) && result.no_entry && g_mode == SB_MODE_ON) {
+        menu_mode(g_st, L"D3B");
         status = direct_grub_boot(g_st, image_handle, &g_vols[target->vol],
                                   dev->handle, dev->bio->Media->BlockSize,
                                   &target->ent, &result);
+    }
     if (EFI_ERROR(status) && result.no_entry)
         return FALSE;
 
@@ -1082,6 +1088,7 @@ static BOOLEAN boot_bsd(EFI_HANDLE image_handle, const CHAR16 *label,
     bsd_result result;
     EFI_STATUS status;
 
+    menu_mode(g_st, L"BSD");
     menu_screen(g_st);
     out(L"booting: ");
     out(label);
@@ -1130,6 +1137,7 @@ static BOOLEAN boot_windows(EFI_HANDLE image_handle, const CHAR16 *label,
 
     if (!entry_path_ascii(label, path, sizeof path))
         return FALSE;
+    menu_mode(g_st, L"WIN");
     menu_screen(g_st);
     out(L"booting: ");
     out(label);
@@ -1305,6 +1313,7 @@ static BOOLEAN bless_from_menu(EFI_HANDLE image_handle, const iso_list *list,
         out(L"); after signing the machine\r\nboots whatever is first in "
             L"the firmware's boot order.\r\n\r\n");
     }
+    menu_mode(g_st, L"APP");
     out(L"starting the signing appliance.\r\n\r\n");
 
     pos_set_bless_list(g_bless_list, len);
@@ -1421,6 +1430,7 @@ static BOOLEAN boot_personal(EFI_HANDLE image_handle)
     pos_result result = { L"starting", EFI_SUCCESS, (const CHAR16 *)0 };
     EFI_STATUS status;
 
+    menu_mode(g_st, L"POS");
     menu_screen(g_st);
     out(pos_entry_label());
     out(L"\r\n\r\n");
@@ -1743,14 +1753,22 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
             L"enter boot | c chain | d direct | b bless | a bless new | "
             L"esc back"
         };
-        UINTN shown = view_build(&list, cur, cur_len, pinned, view, rows);
+        UINTN shown;
         CHAR16 which = L'\r';
-        INTN pick = menu_run_keys(st, &banner, view, shown, &keys, &which);
-        boot_route route = which == L'c'   ? ROUTE_CHAIN
-                           : which == L'd' ? ROUTE_DIRECT
-                                           : default_route();
+        INTN pick;
+        boot_route route;
         EFI_INPUT_KEY key;
         UINTN sel;
+
+        /* Whatever route the last boot took, it is over: back at the menu,
+         * a later screen (a confirmation, a folder's error) must not carry
+         * its code. */
+        menu_mode(st, (const CHAR16 *)0);
+        shown = view_build(&list, cur, cur_len, pinned, view, rows);
+        pick = menu_run_keys(st, &banner, view, shown, &keys, &which);
+        route = which == L'c'   ? ROUTE_CHAIN
+                : which == L'd' ? ROUTE_DIRECT
+                                : default_route();
 
         if (pick < 0) {
             /* ESC is "back": out of the folder while there is one to leave,

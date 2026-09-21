@@ -37,6 +37,12 @@ VARIANT ?= release
 # The component files below define targets before `all` is reached.
 .DEFAULT_GOAL := all
 
+# A recipe that fails after writing its target must not leave it behind.
+# Several recipes check what they just built (falcon-bios's stage size and
+# .bss guards) and exit 1; without this the rejected file stays, is newer
+# than its inputs, and the next make passes without running the check.
+.DELETE_ON_ERROR:
+
 OBJ := build/obj
 BIN := build/bin
 
