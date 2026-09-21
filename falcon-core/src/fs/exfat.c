@@ -55,6 +55,18 @@ static int cluster_valid(const exfat_vol *v, uint32_t cl)
 }
 
 /* Volume byte offset of a data cluster (heap starts at cluster 2). */
+/* Could the heap hold this many bytes at all? A size is read from the
+ * medium and a FAT chain can loop, so a chain walk bounded only by the size
+ * is bounded by nothing. Refused sizes are ones no chain on this volume can
+ * be long enough to carry, which caps every walk at cluster_count steps.
+ * Divided rather than rounded up, which would wrap near 2^64. */
+static int size_fits(const exfat_vol *v, uint64_t size)
+{
+    uint32_t cb = cluster_bytes(v);
+
+    return size / cb + (size % cb != 0 ? 1u : 0u) <= v->cluster_count;
+}
+
 static uint64_t cluster_off(const exfat_vol *v, uint32_t cl)
 {
     return ((uint64_t)v->cluster_heap_offset << v->bps_shift) +
@@ -159,6 +171,8 @@ int exfat_dir_open(exfat_vol *v, exfat_dir *d, const exfat_dirent *e)
         return EXFAT_ERR_BAD_ARG;
     if (e->first_cluster != 0 && !cluster_valid(v, e->first_cluster))
         return EXFAT_ERR_CORRUPT;
+    if (!size_fits(v, e->size))
+        return EXFAT_ERR_CORRUPT;
     memset(d, 0, sizeof(*d));
     d->vol = v;
     d->first_cluster = e->first_cluster;
@@ -183,6 +197,11 @@ static int dir_read_raw(exfat_dir *d, uint8_t out[DIRENT_SIZE])
         return 0; /* empty directory */
     if (d->size != ~(uint64_t)0 && d->pos + DIRENT_SIZE > d->size)
         return 0;
+    /* The root's size is unbounded, so this is what stops a root whose
+     * chain loops; a subdirectory's size is bounded by the heap but can
+     * still be far past the limit. */
+    if (d->pos >= EXFAT_DIR_MAX)
+        return EXFAT_ERR_CORRUPT;
 
     /* cluster_pos is the file offset at which the current cluster began, so
      * the difference is the offset within it. Tracking the base rather than a
@@ -230,6 +249,8 @@ int exfat_file_open(exfat_vol *v, exfat_file *f, const exfat_dirent *e)
     if (e->is_dir)
         return EXFAT_ERR_BAD_ARG;
     if (e->size != 0 && !cluster_valid(v, e->first_cluster))
+        return EXFAT_ERR_CORRUPT;
+    if (!size_fits(v, e->size))
         return EXFAT_ERR_CORRUPT;
 
     memset(f, 0, sizeof(*f));
@@ -425,7 +446,7 @@ int exfat_file_extents(exfat_vol *v, const exfat_dirent *e,
     *count = 0;
     if (e->size == 0)
         return EXFAT_OK; /* no allocation, no extents: not an error */
-    if (!cluster_valid(v, e->first_cluster))
+    if (!cluster_valid(v, e->first_cluster) || !size_fits(v, e->size))
         return EXFAT_ERR_CORRUPT;
 
     cb = cluster_bytes(v);

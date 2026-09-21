@@ -926,6 +926,35 @@ static void test_dir_fat_bad_cluster_is_corrupt(void **state)
     synth_free(&sv);
 }
 
+/* The root's cluster names itself as the next, and holds nothing but
+ * unused entries, so no end marker is ever met. The root states no size,
+ * so before the cap nothing stopped this walk. */
+static void test_dir_root_loop_is_corrupt(void **state)
+{
+    synth_vol sv;
+    exfat_vol v;
+    exfat_dir d;
+    exfat_dirent e;
+    uint8_t *p;
+    uint32_t i;
+    int rc;
+
+    (void)state;
+    synth_init(&sv, STD_BPS, STD_SPC, STD_CLUSTERS);
+    assert_int_equal(exfat_mount(&v, synth_read, &sv), EXFAT_OK);
+    synth_fat_set(&sv, 2, 2);
+    p = synth_cluster(&sv, 2);
+    for (i = 0; i < synth_cluster_bytes(&sv); i += SYNTH_ENT) {
+        memset(p + i, 0, SYNTH_ENT);
+        p[i] = FILLER_TYPE;
+    }
+    assert_int_equal(exfat_dir_open_root(&v, &d), EXFAT_OK);
+    while ((rc = exfat_dir_next(&d, &e)) == 1)
+        ;
+    assert_int_equal(rc, EXFAT_ERR_CORRUPT);
+    synth_free(&sv);
+}
+
 static void test_dir_fat_out_of_range_is_corrupt(void **state)
 {
     synth_vol sv;
@@ -1204,6 +1233,7 @@ int run_synth_tests(void)
         cmocka_unit_test(test_dir_set_spans_cluster_boundary),
         cmocka_unit_test(test_dir_fat_eof_ends_walk),
         cmocka_unit_test(test_dir_fat_bad_cluster_is_corrupt),
+        cmocka_unit_test(test_dir_root_loop_is_corrupt),
         cmocka_unit_test(test_dir_fat_out_of_range_is_corrupt),
         cmocka_unit_test(test_dir_no_fat_chain_is_contiguous),
         cmocka_unit_test(test_dir_no_fat_chain_past_last_cluster),

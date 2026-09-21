@@ -847,6 +847,46 @@ static void test_extents_nofat_size_overflow_rejected(void **state)
     synth_free(&sv);
 }
 
+/* A chain that loops, 10 -> 11 -> 10, under a size that claims the whole
+ * heap. The walk is bounded only by the size, and the size by nothing
+ * until it had to fit the heap: DataLength near 2^64 walked the loop
+ * forever. Past the heap it is refused before any FAT read; at the heap it
+ * is walked, cluster_count steps at most, and ends. */
+static void test_extents_chain_loop_bounded(void **state)
+{
+    synth_vol sv;
+    exfat_vol v;
+    exfat_dirent e;
+    exfat_file f;
+    static const uint32_t cls[2] = { 10u, 11u };
+    uint64_t heap;
+    size_t count = 99;
+    int rc;
+
+    (void)state;
+    mount_vol(&sv, &v);
+    heap = (uint64_t)sv.cluster_count * synth_cluster_bytes(&sv);
+    synth_write_file(&sv, cls, 2u, 2ull * EX_CB, 1);
+    synth_fat_set(&sv, 11u, 10u);
+
+    set_ent(&e, cls[0], ~(uint64_t)0, 0u);
+    assert_int_equal(exfat_file_extents(&v, &e, NULL, 0, &count),
+                     EXFAT_ERR_CORRUPT);
+    assert_int_equal(exfat_file_open(&v, &f, &e), EXFAT_ERR_CORRUPT);
+    set_ent(&e, cls[0], heap + 1u, 0u);
+    assert_int_equal(exfat_file_extents(&v, &e, NULL, 0, &count),
+                     EXFAT_ERR_CORRUPT);
+    assert_int_equal(exfat_file_open(&v, &f, &e), EXFAT_ERR_CORRUPT);
+
+    set_ent(&e, cls[0], heap, 0u);
+    count = 0;
+    rc = exfat_file_extents(&v, &e, NULL, 0, &count);
+    assert_true(rc == EXFAT_OK || rc == EXFAT_ERR_NOSPACE);
+    assert_true(count > 0);
+    assert_int_equal(exfat_file_open(&v, &f, &e), EXFAT_OK);
+    synth_free(&sv);
+}
+
 /* ------------------------------------------------------------------ run */
 
 int run_extent_tests(void)
@@ -874,6 +914,7 @@ int run_extent_tests(void)
         cmocka_unit_test(test_extents_nofat_past_heap),
         cmocka_unit_test(test_extents_chain_io_error),
         cmocka_unit_test(test_extents_nofat_size_overflow_rejected),
+        cmocka_unit_test(test_extents_chain_loop_bounded),
     };
 
     return cmocka_run_group_tests_name("exfat extents", tests, NULL, NULL);
