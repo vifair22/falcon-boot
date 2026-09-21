@@ -278,7 +278,7 @@ static int boot_entry(const bootcfg_entry *e, fs_vol *p2,
     }
 
     put("  starting the kernel\n");
-    return linux_boot(&kernel, g_obj, i, cmd);
+    return linux_boot(&kernel, g_obj, i, cmd, (void (*)(void))0);
 }
 
 int scan_iso(fs_vol *p2, const gpt_part *p2part, const fs_dirent *ent,

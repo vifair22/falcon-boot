@@ -215,7 +215,7 @@ static void enter_kernel(uint64_t entry, uint64_t zeropage)
 }
 
 int linux_boot(const linux_object *kernel, const linux_object *initrd,
-               unsigned n_initrd, const char *cmdline)
+               unsigned n_initrd, const char *cmdline, void (*last)(void))
 {
     uint8_t *zp = (uint8_t *)(uintptr_t)ZEROPAGE_ADDR;
     char *cmd = (char *)(uintptr_t)CMDLINE_ADDR;
@@ -369,6 +369,8 @@ int linux_boot(const linux_object *kernel, const linux_object *initrd,
     bios_puts(cmd);
     bios_puts("\nfalcon-bios: entering the kernel\n");
 
+    if (last != (void (*)(void))0)
+        last();
     enter_kernel(load_at + ENTRY64_OFFSET, ZEROPAGE_ADDR);
     return -1;
 }

@@ -233,6 +233,25 @@ int bios_getkey(void)
     return (int)ascii;
 }
 
+/* The ring's bounds are in the BDA at 0x480 and 0x482, as offsets from
+ * 0x400, on every machine since the AT; a pair that does not describe a
+ * buffer inside the data area gets the PC's fixed 0x41E-0x43E instead. The
+ * head and tail are left alone: the ring is empty when they are equal, and
+ * it was, or the passphrase prompt would still be reading. */
+void bios_key_buffer_wipe(void)
+{
+    uint16_t start = peek16(0x480u);
+    uint16_t end = peek16(0x482u);
+    uint32_t a;
+
+    if (start < 0x1Eu || end <= start || end > 0x100u) {
+        start = 0x1Eu;
+        end = 0x3Eu;
+    }
+    for (a = 0x400u + start; a < 0x400u + end; a += 2u)
+        poke16(a, 0);
+}
+
 /* ---- reset ----
  *
  * Three ways, each tried only if the one before it did not take. The reset

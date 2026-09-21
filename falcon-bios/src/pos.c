@@ -88,6 +88,7 @@ static void wipe_secrets(void)
     g_pass_len = 0;
     memset(&g_mk, 0, sizeof g_mk);
     memset(g_credcpio, 0, sizeof g_credcpio);
+    bios_key_buffer_wipe();
     luks_dev_close(&g_dev);
 }
 
@@ -323,7 +324,12 @@ static int boot_uki(const fs_dirent *uki)
                     : "the initramfs will ask for its own\n");
 
     put("  starting the kernel\n");
-    return linux_boot(&kernel, initrd, n_initrd, g_cmdline);
+    /* wipe_secrets as linux_boot's last act: the kernel, the initrd and
+     * the credential cpio are all read through p3 or out of g_credcpio,
+     * so none of it can go before they are copied, and after the jump
+     * nothing of this loader runs to do it. The one copy that survives is
+     * the credential inside the initrd, which is what it is for. */
+    return linux_boot(&kernel, initrd, n_initrd, g_cmdline, wipe_secrets);
 }
 
 /* A failure the user has to read: the menu redraws the screen as soon as

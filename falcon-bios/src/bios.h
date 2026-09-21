@@ -137,6 +137,12 @@ static inline char bios_ascii(uint16_t c, char fallback)
  * character otherwise. */
 int bios_getkey(void);
 
+/* Zeroes the BIOS's keyboard ring buffer. INT 16h hands a key over by
+ * moving the ring's head past it, not by erasing it, so after a passphrase
+ * the last fifteen or so of its characters are still in the BIOS data area
+ * for anything that reads low memory. */
+void bios_key_buffer_wipe(void);
+
 #define BIOS_KEY_UP     0x100
 #define BIOS_KEY_DOWN   0x101
 #define BIOS_KEY_ENTER  0x00D

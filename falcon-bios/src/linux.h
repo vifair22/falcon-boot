@@ -26,8 +26,13 @@ typedef struct {
  *
  * `initrd` may be several objects; they are concatenated in order, which is
  * what the kernel expects of a multi-initrd boot and what lets falcon-hook be
- * appended to whatever the ISO already carries. */
+ * appended to whatever the ISO already carries.
+ *
+ * `last`, when not NULL, runs after every object has been read and copied
+ * into place and before the jump, which is the one moment a caller holding
+ * secrets can let go of them: the reads are done, and nothing of this loader
+ * runs again. */
 int linux_boot(const linux_object *kernel, const linux_object *initrd,
-               unsigned n_initrd, const char *cmdline);
+               unsigned n_initrd, const char *cmdline, void (*last)(void));
 
 #endif /* FALCON_BIOS_LINUX_H */
