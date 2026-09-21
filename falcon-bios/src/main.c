@@ -31,16 +31,23 @@
 #include <lib/ucs2.h>
 #include <media/survey.h>
 
-/* The drive the BIOS booted from, and the second one the rig attaches. Both
- * are asked about, because "did the callback work" and "does falcon-core
- * read a real partition table through it" are different questions and a
- * single disk cannot answer both: the boot disk here is a raw image with no
- * partition table at all. */
+/* The drive the BIOS booted from, and one other. Both are asked about,
+ * because the rig's default image (make test-bios-img) boots a raw disk with
+ * no partition table and puts the falcon partitions on the second one. On a
+ * real machine the other drive is the internal disk, and nothing on it may
+ * stand in for the stick's own p2 or p3; claim_roles is where that is
+ * decided. */
+#define DRIVE_FIRST  0x80u
 #define DRIVE_SECOND 0x81u
 
 /* Caller-allocated, as everywhere in falcon-core, and static rather than on
- * the stack because stage 3's stack is 64 KB (biosdefs.h, STAGE3_STACK). */
-static gpt_part g_parts[16];
+ * the stack because stage 3's stack is 64 KB (biosdefs.h, STAGE3_STACK).
+ * One array per disk: g_p2_part and g_p3_part point into these for the life
+ * of the loader, so a second parse into the same array would change which
+ * partition they name. */
+#define PARTS_MAX 16u
+static gpt_part g_parts[PARTS_MAX];
+static gpt_part g_parts_other[PARTS_MAX];
 
 /* The ISO partition, once found, and the offset shim that turns a
  * disk-relative callback into a partition-relative one. Same shape as
@@ -285,7 +292,7 @@ static void menu_run(void)
 }
 
 static bios_disk g_boot;
-static bios_disk g_second;
+static bios_disk g_other;
 static uint8_t g_sector[512];
 
 /* Defined below, beside the exFAT state it uses. */
@@ -324,14 +331,16 @@ static const char *gpt_error(int rc)
     }
 }
 
-static void show_partitions(bios_disk *d)
+/* Parses and prints one disk's partitions into `parts`. The count, 0 when
+ * there is no table. */
+static uint32_t show_partitions(bios_disk *d, gpt_part *parts)
 {
     gpt_table t;
     uint32_t i;
     int rc;
 
-    t.parts = g_parts;
-    t.cap = (uint32_t)(sizeof g_parts / sizeof g_parts[0]);
+    t.parts = parts;
+    t.cap = PARTS_MAX;
     t.count = 0;
     t.truncated = 0;
 
@@ -340,7 +349,7 @@ static void show_partitions(bios_disk *d)
         bios_puts("falcon-bios:   no partition table: ");
         bios_puts(gpt_error(rc));
         bios_puts("\n");
-        return;
+        return 0;
     }
 
     bios_puts("falcon-bios:   GPT with ");
@@ -352,34 +361,46 @@ static void show_partitions(bios_disk *d)
 
     for (i = 0; i < t.count; i++) {
         bios_puts("falcon-bios:     p");
-        bios_put_dec(g_parts[i].number);
+        bios_put_dec(parts[i].number);
         bios_puts("  LBA ");
-        bios_put_dec(g_parts[i].start_lba);
+        bios_put_dec(parts[i].start_lba);
         bios_puts("..");
-        bios_put_dec(g_parts[i].end_lba);
+        bios_put_dec(parts[i].end_lba);
         /* The roles DESIGN Section 3 identifies, asked of falcon-core's own
          * matcher rather than of a GUID comparison written again here. */
-        if (gpt_part_is_role(&g_parts[i], PART_ROLE_ISO))
+        if (gpt_part_is_role(&parts[i], PART_ROLE_ISO))
             bios_puts("  [falcon p2]");
-        else if (gpt_part_is_role(&g_parts[i], PART_ROLE_SHELF))
+        else if (gpt_part_is_role(&parts[i], PART_ROLE_SHELF))
             bios_puts("  [falcon p3]");
         bios_puts("\n");
     }
+    return t.count;
+}
 
-    /* The one the menu is built from, and the one the personal-OS row needs.
-     * Both are identified by DESIGN Section 3's rules, asked of falcon-core's
-     * own matcher. */
-    for (i = 0; i < t.count; i++) {
-        if (gpt_part_is_role(&g_parts[i], PART_ROLE_SHELF)) {
-            g_p3_part = &g_parts[i];
-            g_p3_disk = d;
-            break;
+/* The one the menu is built from, and the one the personal-OS row needs,
+ * each taken from the first disk that has it: the boot disk is asked first,
+ * so a machine's internal disk fills a role only when the disk it booted
+ * from does not. Both are identified by DESIGN Section 3's rules, asked of
+ * falcon-core's own matcher. */
+static void claim_roles(bios_disk *d, gpt_part *parts, uint32_t n)
+{
+    uint32_t i;
+
+    if (g_p3_part == (const gpt_part *)0) {
+        for (i = 0; i < n; i++) {
+            if (gpt_part_is_role(&parts[i], PART_ROLE_SHELF)) {
+                g_p3_part = &parts[i];
+                g_p3_disk = d;
+                break;
+            }
         }
     }
-    for (i = 0; i < t.count; i++) {
-        if (gpt_part_is_role(&g_parts[i], PART_ROLE_ISO)) {
-            scan_iso_partition(d, &g_parts[i]);
-            break;
+    if (g_p2_part == (const gpt_part *)0) {
+        for (i = 0; i < n; i++) {
+            if (gpt_part_is_role(&parts[i], PART_ROLE_ISO)) {
+                scan_iso_partition(d, &parts[i]);
+                break;
+            }
         }
     }
 }
@@ -479,11 +500,13 @@ void bios_main(uint8_t drive)
     if (!bios_disk_probe(&g_boot, drive))
         bios_puts("falcon-bios: the boot drive did not answer AH=48h\n");
     show_first_sector(&g_boot, "boot");
-    show_partitions(&g_boot);
+    claim_roles(&g_boot, g_parts, show_partitions(&g_boot, g_parts));
 
-    if (bios_disk_probe(&g_second, DRIVE_SECOND)) {
-        show_first_sector(&g_second, "second");
-        show_partitions(&g_second);
+    if (bios_disk_probe(&g_other,
+                        drive == DRIVE_FIRST ? DRIVE_SECOND : DRIVE_FIRST)) {
+        show_first_sector(&g_other, "other");
+        claim_roles(&g_other, g_parts_other,
+                    show_partitions(&g_other, g_parts_other));
     }
 
     /* The personal-OS row, if p3 is there and is LUKS2. Asked once, before
