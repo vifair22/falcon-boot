@@ -56,6 +56,11 @@ change it.
    upheld. It is opt-in for that reason: `make bios` builds it and
    `mkstick bios` installs it into the gap in front of p1, with no layout
    change (Section 12.3).
+7. **A stationary build (decision 2026-09-21).** Each loader built a second
+   time with only the personal-OS route and a way out to the machine's
+   other systems, for installing on a machine's own disk as its boot
+   loader. Chosen at compile time, so the stick's parsers are not in it at
+   all. Section 13.
 
 ### Non-goals
 
@@ -225,6 +230,13 @@ whatever is stamped on them.
   p1 keeps the standard ESP type, which the firmware must recognise to boot the
   stick at all. The loader never matches p4 in any case; only the initramfs
   touches it.
+
+**The boot disk's shelf wins (decision 2026-09-21).** When the disk a loader
+booted from carries a shelf, it is the only shelf considered; another disk's
+is considered only when the boot disk has none. A falcon stick in a machine
+with a falcon internal disk (Section 13) then boots its own OS, and one
+passphrase never opens the wrong one. Section 13.3 has the rule and why it
+is exclusive rather than an order.
 
 
 ## 4. ESP contents and the Secure Boot chain
@@ -2381,7 +2393,8 @@ was struck: Windows needs no injector, for the reason in Section 6.1.
 
 ## 12. Boot flows
 
-Every route both loaders take, from power-on to the point where the booted
+Every route both loaders take, the stationary build's included (12.5),
+from power-on to the point where the booted
 system stands on its own: Linux has found its medium and mounted root,
 Windows Setup has found its install source, FreeBSD has mounted root from
 its memory disk. Where a route never gets there through us, the diagram says
@@ -3209,3 +3222,256 @@ How each family then finds its root on the device the hook made:
 | Proxmox, antiX, MX | their `/init` patched to look at the device |
 | debian-installer | the ISO premounted at `/cdrom` |
 | Alpine | loop, then its own scan |
+
+### 12.5 The stationary build
+
+Section 13's second build of each loader. Its POS route is the stick's
+(12.2.4, 12.3.7); what is new is how it gets there and the routes out to
+the machine's other systems.
+
+#### 12.5.1 UEFI
+
+```mermaid
+flowchart TD
+    FW["Firmware<br/>boot entry for \EFI\falcon\shimx64.efi"] --> SHIM["shim<br/>verifies grubx64.efi (falcon-boot-pos) against db / MokList"]
+    SHIM --> MAIN["efi_main (main_pos.c)"]
+    MAIN --> DISC["discover_scan"]
+    DISC --> POSS["pos_scan<br/>only the boot disk's shelf, if it has one (13.3)"]
+    POSS --> OTH["other systems<br/>BootOrder entries but BootCurrent; ESPs with bootmgfw.efi and no entry"]
+    OTH --> SH{"shelf found?"}
+    SH -- yes --> PR["passphrase prompt<br/>Escape to the list"]
+    SH -- no --> LIST
+    PR -- "unlocked" --> POS["POS (12.2.4)"]
+    PR -- "Escape, or 3 wrong" --> LIST{"list"}
+    POS -- "fails" --> LIST
+    LIST -- "Personal OS" --> PR
+    LIST -- "firmware entry" --> NXT["NXT: BootNext = Boot####, reset"]
+    LIST -- "ESP row" --> ESP["ESP: LoadImage by device path<br/>through loadops"]
+    LIST -- "Firmware Setup" --> FWS["OsIndications, reset"]
+    ESP -- "refused or returned" --> LIST
+```
+
+`NXT` leaves falcon entirely: the firmware boots the entry on the next
+start as though falcon had not run, and for a Windows sealed with BitLocker
+that is the point (13.4). Nothing falcon did survives the reset except that
+`BootNext` has been consumed. `ESP` is a chainload, the stick's CHN without
+the virtual CD: the target is a real file on a real ESP, so there is nothing
+to serve and nothing to hide.
+
+#### 12.5.2 BIOS
+
+```mermaid
+flowchart TD
+    S12["stages 1 and 2, as 12.3.2"] --> BM["bios_main (main_pos.c)<br/>E820, boot disk, GPT: the shelf"]
+    BM --> P3["pos_probe: the boot disk's shelf is LUKS2?"]
+    P3 --> OTH["other disks, BDA 0x475<br/>LBA 0 ends in 0x55AA"]
+    OTH --> SH{"shelf found?"}
+    SH -- yes --> PR["passphrase prompt (INT 16h)<br/>Escape to the list"]
+    SH -- no --> LIST
+    PR -- "unlocked" --> POS["POS (12.3.7)"]
+    PR -- "Escape, or 3 wrong" --> LIST{"list"}
+    POS -- "fails" --> LIST
+    LIST -- "Personal OS" --> PR
+    LIST -- "r" --> RB["bios_reboot"]
+    LIST -- "a disk" --> MBR["MBR: LBA 0 to 0x7C00, DL = that drive<br/>boot16: real mode, jump 0000:7C00"]
+    MBR --> WIN["the disk's own MBR code<br/>active partition's boot sector, bootmgr"]
+```
+
+Nothing is resident at either handoff: no INT 13h or INT 15h hook exists in
+this build, so the other disk's boot code finds the IVT, the BDA and the
+memory map as the BIOS left them.
+
+
+## 13. The stationary build (decided 2026-09-21)
+
+Status (2026-09-21): designed, not built. Section 12.5 draws its routes.
+
+A falcon loader installed on a machine's internal disk, as that machine's
+boot loader, rather than on a stick. It boots the personal OS off a shelf on
+the same disk, and hands the machine to whatever else is installed on it:
+typically a second internal disk carrying an ordinary Windows install. It is
+a second build of each loader, chosen at compile time, not a mode of the
+stick's.
+
+### 13.1 Why a build and not an option
+
+The stick's loader carries everything drag-and-drop needs: ISO9660, UDF and
+exFAT readers, the WIM reader and LZX decompressor, the boot.wim patch, the
+virtual CD and its overlay, the bless flow, the boot predictions (a DER,
+X.509 and Authenticode parser), and two embedded binaries (falcon-winjump
+and falcon-hook). Section 7.8 already names the parsers as attack surface. A
+machine that only ever boots its own OS reaches none of it, and a runtime
+switch that hid the menu would still ship all of it, reachable by anything
+that can put bytes in front of the loader.
+
+So the stationary build links less, and what it does not link it cannot
+run. That is the argument for it, more than the size: the answer to "what
+can this loader do" is its source list, and that list is short enough to
+read.
+
+It is a separate link, not `#ifdef`s through the shared code. `pos` on both
+loaders is already self-contained (UEFI `pos_scan`/`pos_boot`, BIOS
+`pos_probe`/`pos_run`); what differs is the entry point, which is a second,
+small file per loader beside the stick's `main.c`. No module the two builds
+share changes shape between them.
+
+| | stick build | stationary build |
+|---|---|---|
+| UEFI image | `falcon-boot.efi` | `falcon-boot-pos.efi` |
+| UEFI links | everything in Section 9 | `efi/`, `loader/`, `console/`, `discover/`, `sb.c`, `pos/`, the other-systems module (13.4); core's `crypto`, `luks`, `fs` (ext4), `part`, `lib` |
+| UEFI leaves out | | `iso/`, `direct/`, `bsd/`, `win/`, `bless/`, `trustefi.c`, the survey, `trust/`, `media/`, `wim/`, `manifest/`, falcon-winjump, falcon-hook |
+| BIOS stage 3 | `main.c` | `main_pos.c` |
+| BIOS links | everything in `falcon-bios/` | `pos.c`, `linux.c`, the MBR chain (13.4); core as UEFI |
+| BIOS leaves out | | `vcd.c`, `vcdres.S`, `scan.c`, `win.c`, `bsd.c`, `heap.c`: nothing is ever resident |
+| stages 1 and 2 | | unchanged, the same binaries |
+| version type | `release` | `pos-release`, so a screen photo says which build it is |
+
+`make pos` builds both, and `all` builds neither, as with `make bios`.
+
+### 13.2 Layout
+
+```
+p1  ESP        FAT32    the machine's ESP; falcon in \EFI\falcon\
+p2  UKI shelf  LUKS2 -> ext4    UKIs in /uki, the MOK key pair, pbkdf2 keyslot
+p3  root+home  LUKS2 -> LVM     the OS's own, opened by its initramfs
+```
+
+The stick's layout without its ISO library. Nothing in either loader
+matches a partition by number: the shelf is found by the falcon shelf type
+GUID (Section 3), so it is the shelf here at p2 exactly as it is at p3 on a
+stick, and the root is never matched at all. The layout needs no change to
+identification. The shelf keeps its pbkdf2 keyslot for Section 3's reason,
+and the root's argon2id slot is the OS's business.
+
+p1 is the machine's ordinary ESP: shim, MokManager, the loader as
+`grubx64.efi` and the public cert in `\EFI\falcon\` (shim loads its next
+stage from its own directory), named by a firmware boot entry of its own.
+Not `\EFI\BOOT\BOOTX64.EFI`: the removable-media path is the firmware's
+fallback, and a stationary loader is a named entry like any other OS's.
+
+For BIOS the stages go where they go on a stick, stage 1 in LBA 0's boot
+code and stages 2 and 3 in LBA 34-1121, which a GPT with a 128-entry array
+and its first partition at 2048 leaves free.
+
+**Installed by hand, for now.** There is no `mkstick` mode for this: the
+disk is the machine's, and a tool that partitions it is a tool that can
+destroy an OS the user meant to keep. The Manual carries the procedure
+(partition types, the shelf's GUID, the ESP's files and boot entry, the BIOS
+stages written at `biosdefs.h`'s LBAs, MOK enrollment). Kernel updates are
+the OS's: the shelf mounted at `/efi` and a hook that builds and signs the
+UKI with the MOK key on it, as the personal OS on the stick already does.
+
+The MOK private key lives on the stationary shelf, under LUKS: invariant 4
+is kept on the same terms as on a stick.
+
+### 13.3 The boot disk's shelf wins
+
+A machine with a stationary install and a falcon stick plugged in has two
+shelves, and both are the personal OS of somebody's. The rule, for **both
+builds**: when the disk the loader was booted from carries a shelf, that
+shelf is the only one considered; the others are considered only when the
+boot disk has none. The stick's loader boots the stick's OS, the internal
+disk's boots the machine's.
+
+Exclusive rather than first-in-order, because `pos` tries one passphrase
+against every candidate shelf (`unlock_any`, Section 5): with an order, the
+passphrase for the machine, mistyped into the stick's, would boot the other
+OS without a word. Exclusive, one passphrase has one meaning.
+
+- UEFI: the boot disk is the loader's own `LoadedImage->DeviceHandle` with
+  its last (partition) node removed, compared against each shelf's device
+  path. A shelf whose device path cannot be compared (no device path on the
+  handle) is treated as not on the boot disk.
+- BIOS: already so. `claim_roles` asks the boot disk first and takes one
+  shelf (fix `b007efb`).
+
+The rig and any stick nobody stamped still get Section 3's probe-everything
+fallback, unchanged: the rule narrows only when roles were identified.
+
+### 13.4 The other operating systems
+
+The screen offers the machine's other systems, on the assumption the
+motivating case makes: a second internal disk with an ordinary install,
+typically Windows, whose boot loader is not on falcon's ESP. The loader
+starts them and does not look inside them.
+
+**UEFI: `NXT`, the firmware's own entry through `BootNext`.** Every active,
+not hidden, boot-category (`LOAD_OPTION_CATEGORY_BOOT`) entry in
+`BootOrder` except `BootCurrent` (falcon's own) is a row, labelled with its
+description. Choosing one writes `BootNext` and resets, and the firmware
+boots it as if falcon had never run. The write is the one Section 6.3.1
+already makes to return to the stick (`loader_boot_next_self`), in the same
+class and with the same attributes.
+
+Not a chainload, and BitLocker is why. BitLocker with a TPM on a Secure Boot
+machine seals to PCR 7, which records the authorities that verified the
+boot. bootmgfw started through shim is verified under a different chain than
+bootmgfw started by the firmware, PCR 7 differs, and Windows asks for its
+recovery key. `BootNext` leaves the measured boot exactly what Windows
+sealed against. It also costs nothing extra to generalize: another distro,
+a vendor recovery partition and a network boot entry are rows by the same
+code.
+
+The load-option parse (attributes, description, file path length, taken
+out of a variable's bytes) is host-tested, in the pattern of `blesscore.c`.
+
+**UEFI: `ESP`, a chainload, when there is no entry.** Other disks' ESPs
+carrying `\EFI\Microsoft\Boot\bootmgfw.efi` and no firmware entry naming it
+(a disk moved in, an NVRAM reset on firmware that does not regenerate
+entries) get a row, and it is loaded by device path through `loadops`, the
+shim-verified path, like any other launch. The row says so, since this is
+the route BitLocker will object to.
+
+**BIOS: `MBR`, the other disk's LBA 0.** Every BIOS disk (the BDA's count
+at 0x475) other than the boot disk whose LBA 0 ends in `0x55AA` is a row.
+Choosing one reads that sector to 0x7C00, sets DL to that drive, and drops
+to real mode through `boot16`, the one-way exit CHN already takes. With no
+resident in this build the IVT is as the BIOS left it. Windows 7 and later
+boot from 0x81 as they are. If one is measured that insists on 0x80, the
+answer is a drive swap in a small resident INT 13h hook (GRUB's
+`drivemap`), added then; it is not built ahead of the need.
+
+BIOS machines are taken to be in the standard configuration, with no TPM
+sealing: the BIOS measured falcon's MBR into PCR 4, not Windows', and
+nothing on BIOS can hand that back.
+
+### 13.5 The screen
+
+It opens at the passphrase prompt for the boot disk's shelf, with Escape to
+the list. There is no menu first, because the machine's own OS is what it
+is for; and no default and no timeout, because booting the personal OS needs
+a person at the keyboard anyway.
+
+- **The prompt.** Three tries, as Section 5. More than one UKI on the shelf
+  is a chooser after the unlock, as it is on a stick.
+- **The list.** The personal OS, the other systems (13.4), Firmware Setup
+  where the firmware supports it (UEFI), Reboot (BIOS `r`). Every failure
+  lands here after its message and a key.
+- **No shelf.** Straight to the list.
+
+An unattended reboot, Windows Update's included, stops at the prompt. That
+was weighed and accepted (13.6).
+
+### 13.6 Considered and rejected
+
+- **A runtime option on the stick's loader.** It hides the code without
+  removing it (13.1).
+- **Chainloading bootmgfw by default.** BitLocker recovery on every boot of
+  a sealed Windows (13.4). Kept only as the fallback for a disk the firmware
+  has no entry for.
+- **A config file for a default and a timeout.** On the shelf it cannot
+  work: the shelf is sealed until the passphrase is typed, and a default
+  matters exactly when nobody is there to type it. (LUKS2 as used here also
+  gives confidentiality, not integrity: AES-XTS with no dm-integrity lets a
+  modified ciphertext through as scrambled plaintext.) On the ESP it can
+  only choose among routes already allowed, so it is harmless, but it
+  answers a need nobody has on a machine whose main OS needs a person at
+  the keyboard. Remembering the last choice in an EFI variable was
+  rejected with it, and on BIOS it would have meant the loader writing to a
+  disk.
+- **An `mkstick install` mode.** Deferred, not rejected. A tool that lays
+  out a machine's disk has to be trusted with a disk it did not create; the
+  hand procedure comes first, and a tool may follow it once the procedure
+  has been done on a few machines.
+- **A drive swap for BIOS chains by default.** Built when a Windows is
+  measured that needs it (13.4), not before.
