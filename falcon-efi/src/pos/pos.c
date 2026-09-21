@@ -162,6 +162,24 @@ static fs_dir    g_dir_a;
 static fs_dir    g_dir_b;
 static fs_file   g_file;
 
+/* The filesystem caches hold plaintext read out of an encrypted volume. It
+ * is not key material, so nothing turns on it, but leaving fragments of p3
+ * sitting in memory for whatever boots next is not a thing to do by
+ * omission. The LUKS device holds the volume key's schedule, which is.
+ * crypto_wipe rather than memset because these are exactly the dead-buffer
+ * stores an optimiser is entitled to drop. Safe to call twice. */
+static void wipe_shelf(void)
+{
+    crypto_wipe(&g_fs, sizeof g_fs);
+    crypto_wipe(&g_dir_a, sizeof g_dir_a);
+    crypto_wipe(&g_dir_b, sizeof g_dir_b);
+    crypto_wipe(&g_file, sizeof g_file);
+    if (g_dev_open) {
+        luks_dev_close(&g_dev);
+        g_dev_open = 0;
+    }
+}
+
 static fs_dirent  g_ukis[POS_MAX_UKIS];
 static menu_entry g_uki_entries[POS_MAX_UKIS];
 /* 1 when the row came from .osrel rather than the filename, so the
@@ -1318,6 +1336,13 @@ EFI_STATUS pos_boot_pick(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
      * itself says that now, and says it at the moment it becomes true. */
     out(L" bytes read.\r\n\r\n");
 
+    /* p3 is done with: the UKI is in `buf`, and nothing after this reads
+     * the shelf. The key schedule and the plaintext caches go now rather
+     * than at out_close, because a boot that works never gets there. What
+     * the launch still needs is the credential, which credfs wipes itself
+     * (credfs.h, Lifetime). */
+    wipe_shelf();
+
     status = launch_uki(st, parent_image, &g_ukis[chosen], buf, size, &ops,
                         inner_blocked, &retain, result);
 
@@ -1335,19 +1360,7 @@ EFI_STATUS pos_boot_pick(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
         bs->FreePages((EFI_PHYSICAL_ADDRESS)(uintptr_t)buf, pages);
 
 out_close:
-    /* The filesystem caches hold plaintext read out of an encrypted volume.
-     * It is not key material, so nothing turns on it, but leaving fragments
-     * of p3 sitting in firmware pool memory for whatever boots next is not a
-     * thing to do by omission. crypto_wipe rather than memset because these
-     * are exactly the dead-buffer stores an optimiser is entitled to drop. */
-    crypto_wipe(&g_fs, sizeof g_fs);
-    crypto_wipe(&g_dir_a, sizeof g_dir_a);
-    crypto_wipe(&g_dir_b, sizeof g_dir_b);
-    crypto_wipe(&g_file, sizeof g_file);
-    if (g_dev_open) {
-        luks_dev_close(&g_dev);
-        g_dev_open = 0;
-    }
+    wipe_shelf();
     wipe_secrets();
     if (EFI_ERROR(status))
         result->status = status;

@@ -72,8 +72,27 @@ static struct {
     UINTN                           entry_n;
     credfs_handle                   handles[CREDFS_MAX_OPEN];
     EFI_HANDLE                      handle;
+    EFI_EVENT                       ebs;      /* set when a secret is served */
     UINT8                           in_use;
 } g_fs;
+
+/* The secrets' last wipe on a boot that works. Runs at ExitBootServices,
+ * where nothing may be allocated or freed and nothing of ours runs again, so
+ * it writes and does nothing else. Whoever read the credential (sd-stub) has
+ * packed its own copy into the initrd by now, and no file handle into this
+ * filesystem outlives boot services, so there is no reader left to serve
+ * zeroes to. */
+static void EFIAPI credfs_ebs_wipe(EFI_EVENT event, void *context)
+{
+    UINTN i;
+
+    (void)event;
+    (void)context;
+    for (i = 0; i < g_fs.entry_n; i++) {
+        if (g_fs.entries[i].secret && g_fs.entries[i].data != (void *)0)
+            crypto_wipe(g_fs.entries[i].data, (size_t)g_fs.entries[i].size);
+    }
+}
 
 /* ---- tree helpers ---- */
 
@@ -573,6 +592,21 @@ EFI_STATUS credfs_publish(EFI_SYSTEM_TABLE *st, const credfs_entry *entries,
         g_fs.entry_n = 0;
         return status;
     }
+
+    /* A secret on a filesystem the boot never comes back to tear down would
+     * otherwise be in the loader's memory when the OS takes it over. A
+     * firmware that will not create the event costs that wipe and nothing
+     * else, so the publish stands. */
+    g_fs.ebs = (EFI_EVENT)0;
+    for (i = 0; i < count; i++) {
+        if (entries[i].secret) {
+            if (EFI_ERROR(st->BootServices->CreateEvent(
+                    EVT_SIGNAL_EXIT_BOOT_SERVICES, TPL_CALLBACK,
+                    credfs_ebs_wipe, (void *)0, &g_fs.ebs)))
+                g_fs.ebs = (EFI_EVENT)0;
+            break;
+        }
+    }
     return EFI_SUCCESS;
 }
 
@@ -649,7 +683,12 @@ EFI_STATUS credfs_teardown(EFI_BOOT_SERVICES *bs)
     }
 
     /* One wipe site for the credential copy, on every path out of the launch
-     * (DESIGN Section 5.1). */
+     * that comes back (DESIGN Section 5.1); credfs_ebs_wipe is the one for
+     * the path that does not, and is not needed past this. */
+    if (g_fs.ebs != (EFI_EVENT)0) {
+        bs->CloseEvent(g_fs.ebs);
+        g_fs.ebs = (EFI_EVENT)0;
+    }
     for (i = 0; i < g_fs.entry_n; i++) {
         if (g_fs.entries[i].secret && g_fs.entries[i].data != (void *)0)
             crypto_wipe(g_fs.entries[i].data, (size_t)g_fs.entries[i].size);

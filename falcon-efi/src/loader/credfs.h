@@ -25,11 +25,15 @@
  * changes is where the bytes come from.
  *
  * Lifetime. RAM only; nothing here is ever written to storage. Entries marked
- * secret are wiped by credfs_teardown, which is the single wipe site for the
- * credential copy (DESIGN Section 5.1: "if LoadImage/StartImage fails, the
- * loader zeroes the credential buffer and tears down the virtual
- * filesystem"). Teardown is also what releases the handle, and it refuses to
- * let a second publish reuse an instance a firmware caller might still hold.
+ * secret are wiped by credfs_teardown when the image comes back (DESIGN
+ * Section 5.1: "if LoadImage/StartImage fails, the loader zeroes the
+ * credential buffer and tears down the virtual filesystem"), and at
+ * ExitBootServices when it does not: a publish that carries a secret also
+ * registers a notification there, because a boot that succeeds never
+ * returns to teardown, and the credential's last reader (sd-stub) is done
+ * with it before the kernel exits boot services. Teardown is also what
+ * releases the handle, and it refuses to let a second publish reuse an
+ * instance a firmware caller might still hold.
  */
 
 #ifndef FALCON_CREDFS_H

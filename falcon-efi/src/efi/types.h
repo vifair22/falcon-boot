@@ -41,6 +41,12 @@ typedef void     *EFI_EVENT;
 typedef UINT64    EFI_LBA;
 typedef UINTN     EFI_TPL;
 
+/* An event's notification function, and the two values CreateEvent takes
+ * for the one kind of event the loader creates (UEFI 2.10 Section 7.1). */
+typedef void (EFIAPI *EFI_EVENT_NOTIFY)(EFI_EVENT Event, void *Context);
+#define EVT_SIGNAL_EXIT_BOOT_SERVICES 0x00000201u
+#define TPL_CALLBACK                  ((EFI_TPL)8)
+
 typedef struct {
     UINT32 Data1;
     UINT16 Data2;

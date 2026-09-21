@@ -78,13 +78,18 @@ struct EFI_BOOT_SERVICES {
     EFI_STATUS (EFIAPI *FreePool)(void *Buffer);
 
     /* Event and timer */
-    void *CreateEvent;
+    /* Typed for the one event the loader creates: a notification at
+     * ExitBootServices, which is the last moment code of ours runs on a
+     * boot that does not come back (loader/credfs.c). */
+    EFI_STATUS (EFIAPI *CreateEvent)(UINT32 Type, EFI_TPL NotifyTpl,
+                                     EFI_EVENT_NOTIFY NotifyFunction,
+                                     void *NotifyContext, EFI_EVENT *Event);
     void *SetTimer;
     EFI_STATUS (EFIAPI *WaitForEvent)(UINTN NumberOfEvents,
                                       EFI_EVENT *Event,
                                       UINTN *Index);
     void *SignalEvent;
-    void *CloseEvent;
+    EFI_STATUS (EFIAPI *CloseEvent)(EFI_EVENT Event);
     void *CheckEvent;
 
     /* Protocol handler */
