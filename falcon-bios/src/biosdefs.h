@@ -235,5 +235,11 @@
  * usable video is exactly the machine this route exists for. */
 #define SERIAL_PORT     0x3F8
 #define SERIAL_DIVISOR  1
+/* How many reads of the line status register to wait for the transmitter
+ * before writing anyway: about a microsecond each, against 87 for one
+ * character at 115200. Only a UART that is present and never empties runs it
+ * out, and every stage bounds its wait by it (stage 1 by the 16 bits it has),
+ * because COM1 is a log and must not be able to stop a boot. */
+#define SERIAL_SPINS    65536
 
 #endif /* FALCON_BIOSDEFS_H */

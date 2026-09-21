@@ -28,10 +28,28 @@ static inline void outb(uint16_t port, uint8_t v)
     __asm__ __volatile__("outb %0, %1" : : "a"(v), "Nd"(port));
 }
 
+/* How long to wait for the transmitter, in reads of the line status
+ * register: about a microsecond each, so tens of milliseconds, against the
+ * 87 microseconds one character takes at 115200. A port that reads back all
+ * ones (nothing there) passes at once; one that never empties is a UART
+ * that is present and not working, and after the first timeout it is
+ * written to without waiting, since waiting on it is all that could hang. */
+#define THRE_SPINS 65536u
+
+/* Nonzero until the port has timed out once. Initialised rather than zero
+ * for the reason g_mode below is: stage 2 has no .bss. */
+static uint8_t g_com_live = 1;
+
 void bios_putc(char c)
 {
-    while ((inb((uint16_t)(COM1 + 5u)) & LSR_THRE) == 0)
-        ;
+    uint32_t n;
+
+    for (n = 0; g_com_live && n < THRE_SPINS; n++) {
+        if ((inb((uint16_t)(COM1 + 5u)) & LSR_THRE) != 0)
+            break;
+    }
+    if (n == THRE_SPINS)
+        g_com_live = 0;
     outb(COM1, (uint8_t)c);
 }
 

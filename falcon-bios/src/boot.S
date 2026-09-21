@@ -114,7 +114,7 @@ serial_init:
 	popw    %ax
 	ret
 
-/* si = NUL-terminated string. Clobbers nothing the caller can see. */
+/* si = NUL-terminated string. Clobbers bx and cx. */
 serial_puts:
 	pushw   %ax
 	pushw   %dx
@@ -123,11 +123,13 @@ serial_puts:
 	testb   %al, %al
 	jz      2f
 	movb    %al, %bl
-3:	movw    $(SERIAL_PORT + 5), %dx
-	inb     %dx, %al
+	movw    $0xFFFF, %cx         /* SERIAL_SPINS, in 16 bits */
+	movw    $(SERIAL_PORT + 5), %dx
+3:	inb     %dx, %al
 	testb   $0x20, %al           /* transmitter holding register empty */
-	jz      3b
-	movw    $SERIAL_PORT, %dx
+	jnz     4f
+	loop    3b
+4:	movw    $SERIAL_PORT, %dx
 	movb    %bl, %al
 	outb    %al, %dx
 	jmp     1b

@@ -129,46 +129,41 @@ halt64:halt64:
 	hlt
 	jmp     halt64
 
-/* al = byte. */
+/* al = byte. The wait is bounded as putc's is. */
 putc64:
 	pushq   %rax
 	pushq   %rbx
+	pushq   %rcx
 	pushq   %rdx
 	movb    %al, %bl
-1:	movw    $(SERIAL_PORT + 5), %dx
-	inb     %dx, %al
+	cmpb    $0, com_live(%rip)
+	je      2f
+	movl    $SERIAL_SPINS, %ecx
+	movw    $(SERIAL_PORT + 5), %dx
+1:	inb     %dx, %al
 	testb   $0x20, %al
-	jz      1b
-	movw    $SERIAL_PORT, %dx
+	jnz     2f
+	loop    1b
+	movb    $0, com_live(%rip)
+2:	movw    $SERIAL_PORT, %dx
 	movb    %bl, %al
 	outb    %al, %dx
 	popq    %rdx
+	popq    %rcx
 	popq    %rbx
 	popq    %rax
 	ret
 
-/* rsi = NUL-terminated string. The port writes are identical to the 16-bit
- * versions above; only the registers holding the pointer are wider. */
+/* rsi = NUL-terminated string. */
 puts64:
 	pushq   %rax
-	pushq   %rbx
-	pushq   %rdx
 	pushq   %rsi
 1:	lodsb
 	testb   %al, %al
-	jz      3f
-	movb    %al, %bl
-2:	movw    $(SERIAL_PORT + 5), %dx
-	inb     %dx, %al
-	testb   $0x20, %al
-	jz      2b
-	movw    $SERIAL_PORT, %dx
-	movb    %bl, %al
-	outb    %al, %dx
+	jz      2f
+	call    putc64
 	jmp     1b
-3:	popq    %rsi
-	popq    %rdx
-	popq    %rbx
+2:	popq    %rsi
 	popq    %rax
 	ret
 
@@ -213,23 +208,40 @@ puts_rm:
 	popw    %ax
 	ret
 
-/* al = byte. Stage 1 has already initialised the port. */
+/* al = byte. Stage 1 has already initialised the port.
+ *
+ * The wait for the transmitter is bounded, and a port that times out once
+ * is written to without waiting from then on: a UART that is present and
+ * never empties is the one thing that could stop the boot here, and COM1
+ * is a log, not a requirement. A port with nothing behind it reads all ones
+ * and passes at once. */
 putc:
 	pushw   %ax
 	pushw   %bx
+	pushl   %ecx
 	pushw   %dx
 	movb    %al, %bl
-1:	movw    $(SERIAL_PORT + 5), %dx
-	inb     %dx, %al
+	cmpb    $0, com_live
+	je      2f
+	movl    $SERIAL_SPINS, %ecx
+	movw    $(SERIAL_PORT + 5), %dx
+1:	inb     %dx, %al
 	testb   $0x20, %al
-	jz      1b
-	movw    $SERIAL_PORT, %dx
+	jnz     2f
+	addr32 loop 1b
+	movb    $0, com_live
+2:	movw    $SERIAL_PORT, %dx
 	movb    %bl, %al
 	outb    %al, %dx
 	popw    %dx
+	popl    %ecx
 	popw    %bx
 	popw    %ax
 	ret
+
+/* Nonzero until COM1 has timed out once. */
+com_live:
+	.byte   1
 
 drive:
 	.byte   0
