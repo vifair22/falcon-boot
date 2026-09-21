@@ -20,7 +20,9 @@
 #include <bsd/bsd.h>
 #include <win/winpatch.h>
 #include <manifest/blesslist.h>
+#include <media/survey.h>
 #include <lib/string.h>
+#include <lib/ucs2.h>
 #include <console/menu.h>
 #include <pos/pos.h>
 #include <trust/probe.h>
@@ -36,7 +38,6 @@
 
 #define MAX_ISOS  128u
 #define MAX_VOLS  4u
-#define SCAN_DEPTH_MAX 4u
 
 /* How many entries get looked inside before the menu appears.
  *
@@ -163,10 +164,22 @@ typedef enum {
 } entry_shape;
 
 typedef struct {
+    /* Copied once out of the survey entry this target was built from, and
+     * never written again. The survey is core's (media/survey.c) and knows
+     * nothing of boot paths; these are the four fields the boot paths ask
+     * for by name, at fifty-odd call sites that would otherwise all have to
+     * reach through to it. */
     UINTN vol;
     fs_dirent ent;
     entry_shape shape;
     iso_media_kind kind;   /* ENTRY_MEDIA only */
+
+    /* The tag columns of DESIGN Section 7.8, which the view copies onto a
+     * row when it draws one. Here rather than beside the label because the
+     * label is the survey's. */
+    CHAR16 sig[MENU_TAG_MAX];
+    CHAR16 why[MENU_TAG_MAX];
+    UINT8  caution;
     /* Filled on every entry, including the ones no record names: the lookup
      * writes the whole hit either way, so "what does the stick say about this
      * entry" has one answer and not a flag beside it that could disagree. */
@@ -187,119 +200,49 @@ typedef struct {
     trust_result trust;
 } iso_target;
 
+/* The survey holds the labels and the walk's findings; targets hold what
+ * booting one needs. Parallel by index, and the survey is sorted before a
+ * single target is filled, which is the order survey_sort insists on. */
 typedef struct {
-    menu_entry *entries;   /* pool-allocated, MAX_ISOS */
-    iso_target *targets;   /* pool-allocated, parallel to entries */
+    survey_list  survey;
+    survey_entry *storage;  /* pool-allocated, MAX_ISOS */
+    iso_target  *targets;   /* pool-allocated, parallel to survey.entries */
     UINTN count;
-    UINTN skipped;         /* found but over MAX_ISOS or path too long */
-    UINTN cur_vol;         /* volume the walk in progress is reading */
 } iso_list;
 
-static void list_add(iso_list *list, const CHAR16 *prefix,
-                     const fs_dirent *ent, entry_shape shape,
-                     iso_media_kind kind)
+/* The label of a flat entry: the survey's, not a second copy. */
+static const CHAR16 *entry_label(const iso_list *list, UINTN i)
 {
-    menu_entry *e;
-    iso_target *t;
-    UINTN pl = ucs2_len(prefix);
-    UINTN nl = ucs2_len(ent->name);
-
-    if (list->count >= MAX_ISOS || pl + nl + 1 > MENU_PATH_MAX) {
-        list->skipped++;
-        return;
-    }
-    e = &list->entries[list->count];
-    t = &list->targets[list->count];
-    list->count++;
-    memcpy(e->label, prefix, pl * sizeof(CHAR16));
-    memcpy(e->label + pl, ent->name, (nl + 1) * sizeof(CHAR16));
-    t->vol = list->cur_vol;
-    t->shape = shape;
-    t->kind = kind;
-    t->dir_len = pl;
-    /* Resolved in probe_entries, once the list is sorted and the label is
-     * still the bare path; empty until then so a target is never
-     * half-filled. */
-    t->hit.rec = (const manifest_record *)0;
-    t->hit.src = (const void *)0;
-    t->hit.state = BLESS_NONE;
-    t->fam = FAMILY_UNKNOWN;
-    t->probed = 0;
-    memset(&t->trust, 0, sizeof(t->trust));
-    e->sig[0] = 0;
-    e->why[0] = 0;
-    e->caution = 0;
-    memcpy(&t->ent, ent, sizeof(*ent));
+    return list->survey.entries[i].label;
 }
 
-/* Depth-first walk. Frames carry a directory iterator (~4.5 KB); depth is
- * capped so worst-case stack stays a few tens of KB. */
-static void scan_dir(fs_vol *vol, fs_dir *dir, CHAR16 *prefix,
-                     UINTN depth, iso_list *list)
+/* One target per surveyed entry, after the sort. The four shape fields are
+ * copied across; everything the probe pass fills starts empty, so a target is
+ * never half-filled. */
+static void targets_build(iso_list *list)
 {
-    fs_dirent ent;
+    UINTN i;
 
-    while (fs_dir_next(dir, &ent) == 1) {
-        if (ent.name[0] == u'.')
-            continue; /* dotfiles and trash dirs */
+    list->count = (UINTN)list->survey.count;
+    for (i = 0; i < list->count; i++) {
+        const survey_entry *se = &list->survey.entries[i];
+        iso_target *t = &list->targets[i];
 
-        if (ent.is_dir) {
-            fs_dir sub;
-            UINTN pl = ucs2_len(prefix);
-            UINTN nl = ucs2_len(ent.name);
-
-            if (depth + 1 >= SCAN_DEPTH_MAX)
-                continue;
-            if (pl + nl + 2 > MENU_PATH_MAX)
-                continue;
-            if (fs_dir_open(vol, &sub, &ent) != FS_OK)
-                continue;
-            /* Extend prefix in place; restore on the way out. */
-            memcpy(prefix + pl, ent.name, nl * sizeof(CHAR16));
-            prefix[pl + nl] = u'/';
-            prefix[pl + nl + 1] = 0;
-            scan_dir(vol, &sub, prefix, depth + 1, list);
-            prefix[pl] = 0;
-        } else if (ucs2_ends_with(ent.name, u".iso")) {
-            /* All three extensions come out of this one walk, and the
-             * extension is the whole decision: it says what the file is
-             * offered to the firmware AS, never what the firmware is allowed
-             * to run (DESIGN Section 6 stage 2). ucs2_ends_with is
-             * case-insensitive, so a stick written by Windows lists the same
-             * files. */
-            list_add(list, prefix, &ent, ENTRY_MEDIA, ISO_MEDIA_CD);
-        } else if (ucs2_ends_with(ent.name, u".img")) {
-            list_add(list, prefix, &ent, ENTRY_MEDIA, ISO_MEDIA_DISK);
-        } else if (ucs2_ends_with(ent.name, u".efi")) {
-            /* A bare EFI payload (DESIGN Section 7.2): not media at all, so
-             * the media kind is the enum's zero and nothing reads it. */
-            list_add(list, prefix, &ent, ENTRY_PAYLOAD, ISO_MEDIA_CD);
-        }
-    }
-}
-
-/* Labels and boot targets are parallel arrays, so every move here moves
- * both; a sort that forgets the second boots the wrong ISO. */
-static void sort_list(iso_list *list)
-{
-    UINTN i, j;
-
-    for (i = 1; i < list->count; i++) {
-        menu_entry key;
-        iso_target key_target;
-
-        memcpy(&key, &list->entries[i], sizeof(key));
-        memcpy(&key_target, &list->targets[i], sizeof(key_target));
-        j = i;
-        while (j > 0 &&
-               ucs2_casecmp(list->entries[j - 1].label, key.label) > 0) {
-            memcpy(&list->entries[j], &list->entries[j - 1], sizeof(key));
-            memcpy(&list->targets[j], &list->targets[j - 1],
-                   sizeof(key_target));
-            j--;
-        }
-        memcpy(&list->entries[j], &key, sizeof(key));
-        memcpy(&list->targets[j], &key_target, sizeof(key_target));
+        t->vol = (UINTN)se->vol;
+        memcpy(&t->ent, &se->ent, sizeof(t->ent));
+        t->shape = (se->shape == SURVEY_SHAPE_PAYLOAD) ? ENTRY_PAYLOAD
+                                                       : ENTRY_MEDIA;
+        t->kind = (se->media == SURVEY_MEDIA_DISK) ? ISO_MEDIA_DISK
+                                                   : ISO_MEDIA_CD;
+        t->hit.rec = (const manifest_record *)0;
+        t->hit.src = (const void *)0;
+        t->hit.state = BLESS_NONE;
+        t->fam = FAMILY_UNKNOWN;
+        t->probed = 0;
+        memset(&t->trust, 0, sizeof(t->trust));
+        t->sig[0] = 0;
+        t->why[0] = 0;
+        t->caution = 0;
     }
 }
 
@@ -337,8 +280,6 @@ static UINT8 g_next_bad;                     /* a value we would not decode */
  * inventory row already says what claimed the bytes. */
 static void scan_all_volumes(iso_list *list, UINTN *vols_found)
 {
-    static fs_dir root;         /* ~4.4 KB: keep off the stack */
-    static CHAR16 prefix[MENU_PATH_MAX];
     UINTN cursor = 0;
     discover_dev *dev;
 
@@ -352,9 +293,7 @@ static void scan_all_volumes(iso_list *list, UINTN *vols_found)
             continue;
         if (fs_mount(vol, dev->fs, discover_read, dev) != FS_OK)
             continue;
-        list->cur_vol = *vols_found;
         g_vol_dev[*vols_found] = dev;
-        (*vols_found)++;
 
         /* p2's blessed-artifact manifest, read once per volume (DESIGN
          * Section 8.1). A volume that has none simply contributes no
@@ -362,10 +301,11 @@ static void scan_all_volumes(iso_list *list, UINTN *vols_found)
          * whether this found anything. */
         bless_load(g_st, vol);
 
-        if (fs_dir_open_root(vol, &root) != FS_OK)
-            continue;
-        prefix[0] = 0;
-        scan_dir(vol, &root, prefix, 0, list);
+        /* .efi as well as .iso and .img: a bare EFI payload boots as itself
+         * here (DESIGN Section 7.2). falcon-bios asks for the first two
+         * only. */
+        (void)survey_volume(&list->survey, vol, *vols_found);
+        (*vols_found)++;
     }
 }
 
@@ -438,12 +378,12 @@ static const CHAR16 *why_refused(const iso_target *t, BOOLEAN uki)
  * ("signed", "unsigned"), which is all the older labels ever claimed.
  *
  * survey NULL means the entry was past PROBE_LIMIT and was never looked at. */
-static void tags_build(menu_entry *e, iso_target *t, const iso_survey *survey)
+static void tags_build(iso_target *t, const iso_survey *survey)
 {
     const CHAR16 *state = bless_suffix(&t->hit);
     BOOLEAN uki = (bless_hit_action(&t->hit) == BLESS_ACT_UKI) ? TRUE : FALSE;
     const CHAR16 *why;
-    wbuf w = { e->sig, MENU_TAG_MAX, 0 };
+    wbuf w = { t->sig, MENU_TAG_MAX, 0 };
 
     if (uki)
         bless_uki_trust(&t->hit, &g_stores, &t->trust);
@@ -479,11 +419,11 @@ static void tags_build(menu_entry *e, iso_target *t, const iso_survey *survey)
     }
 
     why = why_refused(t, uki);
-    e->why[0] = 0;
-    e->caution = 0;
+    t->why[0] = 0;
+    t->caution = 0;
     if (why != (const CHAR16 *)0) {
-        ucs2_copy(e->why, MENU_TAG_MAX, why);
-        e->caution = 1;
+        ucs2_copy(t->why, MENU_TAG_MAX, why);
+        t->caution = 1;
     }
 }
 
@@ -601,7 +541,7 @@ static void probe_entries(iso_list *list)
          * name, and a hand-written record that matched one could otherwise
          * label it with a claim about an image that does not exist. */
         if (t->shape == ENTRY_MEDIA)
-            (void)bless_lookup(&g_vols[t->vol], list->entries[i].label,
+            (void)bless_lookup(&g_vols[t->vol], entry_label(list, i),
                                t->ent.size, &t->hit);
 
         /* The next-boot marker is matched here, once, with the rest of the
@@ -610,18 +550,18 @@ static void probe_entries(iso_list *list)
          * against a path the scan found is also the only use the value ever
          * gets - nothing indexes anything with it (DESIGN Section 6.3.1). */
         if (g_next_idx >= MAX_ISOS && g_next_path[0] != '\0' &&
-            bless_next_names(list->entries[i].label, g_next_path))
+            bless_next_names(entry_label(list, i), g_next_path))
             g_next_idx = i;
 
         if (t->shape == ENTRY_PAYLOAD) {
             payload_survey(&g_vols[t->vol], &t->ent, &survey);
             t->fam = survey.family->id;
             t->probed = 1;
-            tags_build(&list->entries[i], t, &survey);
+            tags_build(t, &survey);
             continue;
         }
         if (done >= probed) {
-            tags_build(&list->entries[i], t, (const iso_survey *)0);
+            tags_build(t, (const iso_survey *)0);
             continue;
         }
         done++;
@@ -629,7 +569,7 @@ static void probe_entries(iso_list *list)
                          &survey);
         t->fam = survey.family->id;
         t->probed = 1;
-        tags_build(&list->entries[i], t, &survey);
+        tags_build(t, &survey);
         out(L".");
     }
     out(L"\r\n");
@@ -670,50 +610,10 @@ typedef struct {
     UINTN     idx;   /* flat list index; VIEW_DIR (a member) and VIEW_IMAGE */
 } view_row;
 
-/* Does this entry live at or below the folder on screen? Exact comparison,
- * not the case-insensitive one the sort uses: both strings were assembled by
- * the same walk out of the same directory names, so here a difference in case
- * is a difference in directory. Reads stay inside the label buffer because
- * cur_len is always shorter than it, and the first NUL in a shorter label
- * mismatches a prefix character that is never NUL. */
-static BOOLEAN under_cur(const CHAR16 *label, const CHAR16 *cur, UINTN cur_len)
-{
-    UINTN i;
-
-    for (i = 0; i < cur_len; i++) {
-        if (label[i] != cur[i])
-            return FALSE;
-    }
-    return TRUE;
-}
-
-/* Length of the next path component of an entry below the current folder:
- * label[cur_len..] up to the '/' that ends it. The walk terminates every
- * directory prefix with '/', so for an entry whose dir_len exceeds cur_len
- * that separator is always there. */
-static UINTN comp_len(const CHAR16 *label, UINTN cur_len)
-{
-    UINTN n = 0;
-
-    while (label[cur_len + n] != u'/' && label[cur_len + n] != 0)
-        n++;
-    return n;
-}
-
-/* Is an existing folder row the same folder as the cl characters at p? The
- * row's label is the name with its '/' on the end, and a component never
- * contains one, so a shorter row mismatches at its separator rather than
- * running off its terminator. */
-static BOOLEAN dir_row_is(const CHAR16 *row, const CHAR16 *p, UINTN cl)
-{
-    UINTN i;
-
-    for (i = 0; i < cl; i++) {
-        if (row[i] != p[i])
-            return FALSE;
-    }
-    return row[cl] == u'/';
-}
+/* Scratch for one folder screen's worth of core rows, translated into the
+ * loader's own kinds by view_build. Static because a view_row carries a full
+ * path and VIEW_MAX of them is a stack this loader does not have. */
+static survey_row g_view_rows[VIEW_MAX];
 
 /* The ".." row doubles as the only place the current folder is named. The
  * rows under it are file names, so the path has to be somewhere, and the
@@ -733,9 +633,9 @@ static void up_label(CHAR16 *dst, const CHAR16 *cur)
  * other row (folders, "..", the personal OS, firmware setup) starts with none.
  * Set on every row, because the view array is pool memory rewritten per
  * folder and a stale tag would draw on the row that inherited its slot. */
-static void row_tags(menu_entry *row, const menu_entry *from)
+static void row_tags(menu_entry *row, const iso_target *from)
 {
-    if (from == (const menu_entry *)0) {
+    if (from == (const iso_target *)0) {
         row->sig[0] = 0;
         row->why[0] = 0;
         row->caution = 0;
@@ -765,7 +665,7 @@ static UINTN view_build(const iso_list *list, const CHAR16 *cur, UINTN cur_len,
             rows[n].kind = VIEW_PERSONAL;
             rows[n].idx = 0;
             ucs2_copy(view[n].label, MENU_PATH_MAX, pos_entry_label());
-            row_tags(&view[n], (const menu_entry *)0);
+            row_tags(&view[n], (const iso_target *)0);
             /* The personal OS is a UKI, the one thing the permissive state
              * cannot boot (DESIGN Section 7.4); in every other state the
              * running loader is proof its MOK is enrolled (Section 7.8). */
@@ -779,47 +679,30 @@ static UINTN view_build(const iso_list *list, const CHAR16 *cur, UINTN cur_len,
         rows[n].kind = VIEW_UP;
         rows[n].idx = 0;
         up_label(view[n].label, cur);
-        row_tags(&view[n], (const menu_entry *)0);
+        row_tags(&view[n], (const iso_target *)0);
         n++;
     }
 
-    for (i = 0; i < list->count && n < VIEW_MAX; i++) {
-        const CHAR16 *label = list->entries[i].label;
-        UINTN cl;
+    /* The folders and the files, from falcon-core: the walk that found them
+     * and the arithmetic that groups them are one implementation now
+     * (media/survey.c). What stays here is what a row MEANS, which is why
+     * the kinds are translated rather than passed through. */
+    j = survey_view(&list->survey, cur, cur_len, g_view_rows,
+                    (n < VIEW_MAX) ? (VIEW_MAX - n) : 0u);
+    for (i = 0; i < j && n < VIEW_MAX; i++) {
+        UINTN idx = (UINTN)g_view_rows[i].index;
 
-        if (list->targets[i].dir_len <= cur_len ||
-            !under_cur(label, cur, cur_len))
-            continue;
-        cl = comp_len(label, cur_len);
-        for (j = 0; j < n; j++) {
-            if (rows[j].kind == VIEW_DIR &&
-                dir_row_is(view[j].label, label + cur_len, cl))
-                break;
+        ucs2_copy(view[n].label, MENU_PATH_MAX, g_view_rows[i].label);
+        if (g_view_rows[i].kind == SURVEY_ROW_DIR) {
+            rows[n].kind = VIEW_DIR;
+            row_tags(&view[n], (const iso_target *)0);
+        } else {
+            rows[n].kind = VIEW_IMAGE;
+            /* The tags come along, so a folder screen shows the same
+             * columns the root would. */
+            row_tags(&view[n], &list->targets[idx]);
         }
-        if (j < n)
-            continue;   /* a sibling already put this folder on screen */
-        memcpy(view[n].label, label + cur_len, cl * sizeof(CHAR16));
-        view[n].label[cl] = u'/';
-        view[n].label[cl + 1] = 0;
-        row_tags(&view[n], (const menu_entry *)0);
-        rows[n].kind = VIEW_DIR;
-        rows[n].idx = i;
-        n++;
-    }
-
-    for (i = 0; i < list->count && n < VIEW_MAX; i++) {
-        const CHAR16 *label = list->entries[i].label;
-
-        if (list->targets[i].dir_len != cur_len ||
-            !under_cur(label, cur, cur_len))
-            continue;
-        /* From dir_len on, the label is the file name, and the tags come
-         * along from the flat list, so the folder screen shows the same
-         * columns the flat list would. */
-        ucs2_copy(view[n].label, MENU_PATH_MAX, label + cur_len);
-        row_tags(&view[n], &list->entries[i]);
-        rows[n].kind = VIEW_IMAGE;
-        rows[n].idx = i;
+        rows[n].idx = idx;
         n++;
     }
 
@@ -836,38 +719,11 @@ static UINTN view_build(const iso_list *list, const CHAR16 *cur, UINTN cur_len,
         rows[n].kind = VIEW_FWSETUP;
         rows[n].idx = 0;
         ucs2_copy(view[n].label, MENU_PATH_MAX, L"Reboot to firmware setup");
-        row_tags(&view[n], (const menu_entry *)0);
+        row_tags(&view[n], (const iso_target *)0);
         n++;
     }
 
     return n;
-}
-
-/* Descend. The row's label is the folder name with its separator already on
- * it, which is exactly what the path wants appended; the length test cannot
- * fire, because the path this name was taken from fit in the same buffer. */
-static void view_enter(CHAR16 *cur, UINTN *cur_len, const CHAR16 *row)
-{
-    UINTN n = ucs2_len(row);
-
-    if (*cur_len + n + 1 > MENU_PATH_MAX)
-        return;
-    memcpy(cur + *cur_len, row, (n + 1) * sizeof(CHAR16));
-    *cur_len += n;
-}
-
-/* Up one level: drop the last component, its separator with it. */
-static void view_up(CHAR16 *cur, UINTN *cur_len)
-{
-    UINTN n = *cur_len;
-
-    if (n == 0)
-        return;
-    n--;                                  /* the trailing '/' */
-    while (n > 0 && cur[n - 1] != u'/')
-        n--;
-    cur[n] = 0;
-    *cur_len = n;
 }
 
 /* ---- entry point ---- */
@@ -950,7 +806,7 @@ static void refusal_evidence(EFI_STATUS status, EFI_STATUS detail,
     }
 }
 
-static void boot_target(EFI_HANDLE image_handle, const menu_entry *entry,
+static void boot_target(EFI_HANDLE image_handle, const CHAR16 *label,
                         iso_target *target)
 {
     iso_boot_result result = { L"starting", EFI_SUCCESS,
@@ -959,14 +815,14 @@ static void boot_target(EFI_HANDLE image_handle, const menu_entry *entry,
 
     menu_screen(g_st);
     out(L"booting: ");
-    out(entry->label);
+    out(label);
     out(L"\r\n\r\n");
 
     status = iso_boot(g_st, image_handle, &g_vols[target->vol],
                       &target->ent, target->kind, &result);
 
     menu_screen(g_st);
-    out(entry->label);
+    out(label);
     /* What the medium's ESP turned out to be, reported after the fact because
      * the payload owns the screen in between. Informational only: no cmdline
      * or initrd decision is taken from it yet (DESIGN Section 6.2). */
@@ -1016,7 +872,7 @@ static void boot_target(EFI_HANDLE image_handle, const menu_entry *entry,
  * to do about it and the menu comes back. A stale entry is a different case
  * and never reaches here: it is dispatched to boot_target by name, because a
  * stale blessing is one the user's own edit invalidated. */
-static void boot_blessed(EFI_HANDLE image_handle, const menu_entry *entry,
+static void boot_blessed(EFI_HANDLE image_handle, const CHAR16 *label,
                          iso_target *target)
 {
     bless_result result = { L"starting", EFI_SUCCESS, (const CHAR16 *)0 };
@@ -1024,7 +880,7 @@ static void boot_blessed(EFI_HANDLE image_handle, const menu_entry *entry,
 
     menu_screen(g_st);
     out(L"booting blessed: ");
-    out(entry->label);
+    out(label);
     out(L"\r\n\r\n");
 
     /* Which artifact stands behind the ISO is the family's answer, and the
@@ -1068,7 +924,7 @@ static void boot_blessed(EFI_HANDLE image_handle, const menu_entry *entry,
     loader_isomap_clear(g_st);
 
     menu_screen(g_st);
-    out(entry->label);
+    out(label);
     if (!EFI_ERROR(status)) {
         out(L"\r\nthe blessed image exited, status ");
         out_hex(result.status);
@@ -1097,7 +953,7 @@ static void boot_blessed(EFI_HANDLE image_handle, const menu_entry *entry,
  * it may. A refusal is the platform's answer and comes back with the two
  * doors named, one of which is blessing the payload - which for this entry
  * type means signing the user's own file. */
-static void boot_payload(EFI_HANDLE image_handle, const menu_entry *entry,
+static void boot_payload(EFI_HANDLE image_handle, const CHAR16 *label,
                          iso_target *target)
 {
     bless_result result = { L"starting", EFI_SUCCESS, (const CHAR16 *)0 };
@@ -1105,14 +961,14 @@ static void boot_payload(EFI_HANDLE image_handle, const menu_entry *entry,
 
     menu_screen(g_st);
     out(L"booting: ");
-    out(entry->label);
+    out(label);
     out(L"\r\n\r\n");
 
     status = bless_payload_boot(g_st, image_handle, &g_vols[target->vol],
                                 &target->ent, &result);
 
     menu_screen(g_st);
-    out(entry->label);
+    out(label);
     if (!EFI_ERROR(status)) {
         out(L"\r\nthe payload exited, status ");
         out_hex(result.status);
@@ -1161,7 +1017,7 @@ static boot_route default_route(void)
 
 /* Returns FALSE when the ISO has no configuration entry to boot directly,
  * with nothing drawn, so the caller chainloads instead. */
-static BOOLEAN boot_direct(EFI_HANDLE image_handle, const menu_entry *entry,
+static BOOLEAN boot_direct(EFI_HANDLE image_handle, const CHAR16 *label,
                            iso_target *target)
 {
     direct_result result;
@@ -1170,7 +1026,7 @@ static BOOLEAN boot_direct(EFI_HANDLE image_handle, const menu_entry *entry,
 
     menu_screen(g_st);
     out(L"booting: ");
-    out(entry->label);
+    out(label);
     out(L"\r\n\r\n");
 
     status = direct_boot(g_st, image_handle, &g_vols[target->vol],
@@ -1189,7 +1045,7 @@ static BOOLEAN boot_direct(EFI_HANDLE image_handle, const menu_entry *entry,
         return FALSE;
 
     menu_screen(g_st);
-    out(entry->label);
+    out(label);
     if (result.title[0] != '\0') {
         out(L"\r\nentry: ");
         out_ascii(result.title);
@@ -1220,7 +1076,7 @@ static BOOLEAN boot_direct(EFI_HANDLE image_handle, const menu_entry *entry,
 
 /* Returns FALSE when the medium is not one this route applies to, with
  * nothing served, so the caller chainloads instead. */
-static BOOLEAN boot_bsd(EFI_HANDLE image_handle, const menu_entry *entry,
+static BOOLEAN boot_bsd(EFI_HANDLE image_handle, const CHAR16 *label,
                         iso_target *target)
 {
     bsd_result result;
@@ -1228,7 +1084,7 @@ static BOOLEAN boot_bsd(EFI_HANDLE image_handle, const menu_entry *entry,
 
     menu_screen(g_st);
     out(L"booting: ");
-    out(entry->label);
+    out(label);
     out(L"\r\n\r\n");
 
     status = bsd_boot(g_st, image_handle, &g_vols[target->vol],
@@ -1237,7 +1093,7 @@ static BOOLEAN boot_bsd(EFI_HANDLE image_handle, const menu_entry *entry,
         return FALSE;
 
     menu_screen(g_st);
-    out(entry->label);
+    out(label);
     if (!EFI_ERROR(status)) {
         out(L"\r\nthe ISO's loader exited, status ");
         out_hex(result.status);
@@ -1260,23 +1116,23 @@ static BOOLEAN boot_bsd(EFI_HANDLE image_handle, const menu_entry *entry,
 
 /* ---- Windows, patched at boot (DESIGN Sections 6.3 and 6.4) ---- */
 
-static BOOLEAN entry_path_ascii(const menu_entry *e, char *out_path,
+static BOOLEAN entry_path_ascii(const CHAR16 *label, char *out_path,
                                 UINTN cap);
 
 /* Returns FALSE when the media is not one the loader can patch, with
  * nothing served, so the caller boots it as it is. */
-static BOOLEAN boot_windows(EFI_HANDLE image_handle, const menu_entry *entry,
+static BOOLEAN boot_windows(EFI_HANDLE image_handle, const CHAR16 *label,
                             iso_target *target)
 {
     win_result result;
     char path[MANIFEST_PATH_MAX];
     EFI_STATUS status;
 
-    if (!entry_path_ascii(entry, path, sizeof path))
+    if (!entry_path_ascii(label, path, sizeof path))
         return FALSE;
     menu_screen(g_st);
     out(L"booting: ");
-    out(entry->label);
+    out(label);
     out(L"\r\n\r\n");
     status = win_patched_boot(g_st, image_handle, &g_vols[target->vol],
                               &target->ent, path, &result);
@@ -1284,7 +1140,7 @@ static BOOLEAN boot_windows(EFI_HANDLE image_handle, const menu_entry *entry,
         return FALSE;
 
     menu_screen(g_st);
-    out(entry->label);
+    out(label);
     if (!EFI_ERROR(status)) {
         out(L"\r\nthe payload exited, status ");
         out_hex(result.status);
@@ -1311,9 +1167,9 @@ static BOOLEAN boot_windows(EFI_HANDLE image_handle, const menu_entry *entry,
 /* The entry's path on p2, as ASCII. The flat list's label IS that path: the
  * tags are separate columns (DESIGN Section 7.8) and nothing appends to it.
  * FALSE for a path the manifest's ASCII form cannot carry. */
-static BOOLEAN entry_path_ascii(const menu_entry *e, char *out_path, UINTN cap)
+static BOOLEAN entry_path_ascii(const CHAR16 *label, char *out_path, UINTN cap)
 {
-    return (manifest_path_from_ucs2(e->label, out_path, cap) == MANIFEST_OK)
+    return (manifest_path_from_ucs2(label, out_path, cap) == MANIFEST_OK)
                ? TRUE : FALSE;
 }
 
@@ -1363,12 +1219,12 @@ static BOOLEAN bless_from_menu(EFI_HANDLE image_handle, const iso_list *list,
     for (i = 0; i < list->count; i++) {
         if ((all ? FALSE : i != pick) || !blessable(&list->targets[i]))
             continue;
-        if (!entry_path_ascii(&list->entries[i], path, sizeof path) ||
+        if (!entry_path_ascii(entry_label(list, i), path, sizeof path) ||
             blesslist_add(g_bless_list, sizeof g_bless_list, &len, path) !=
                 BLESSLIST_OK) {
             out(L"cannot be listed for the appliance (not plain ASCII, or too"
                 L" long): ");
-            out(list->entries[i].label);
+            out(entry_label(list, i));
             out(L"\r\n");
             continue;
         }
@@ -1477,7 +1333,7 @@ static BOOLEAN bless_from_menu(EFI_HANDLE image_handle, const iso_list *list,
  *
  * Returns TRUE: something is on screen worth acknowledging, the same
  * contract boot_personal has. */
-static BOOLEAN boot_plain(EFI_HANDLE image_handle, const menu_entry *entry,
+static BOOLEAN boot_plain(EFI_HANDLE image_handle, const CHAR16 *label,
                           iso_target *t, boot_route route)
 {
     /* An entry past PROBE_LIMIT was never looked inside, so nothing yet knows
@@ -1493,7 +1349,7 @@ static BOOLEAN boot_plain(EFI_HANDLE image_handle, const menu_entry *entry,
     }
 
     if (route != ROUTE_CHAIN && t->fam == FAMILY_WINDOWS &&
-        t->kind == ISO_MEDIA_CD && boot_windows(image_handle, entry, t))
+        t->kind == ISO_MEDIA_CD && boot_windows(image_handle, label, t))
         return TRUE;
     /* Windows media has no kernel to start; a .img is a disk, not a CD, and
      * is left to the firmware's own partition drivers. */
@@ -1501,13 +1357,13 @@ static BOOLEAN boot_plain(EFI_HANDLE image_handle, const menu_entry *entry,
      * falcon-hook to ride in, so its route is the memory disk its own
      * loader can mount root from. */
     if (route != ROUTE_CHAIN && t->fam == FAMILY_BSD &&
-        t->kind == ISO_MEDIA_CD && boot_bsd(image_handle, entry, t))
+        t->kind == ISO_MEDIA_CD && boot_bsd(image_handle, label, t))
         return TRUE;
     if (route == ROUTE_DIRECT && t->kind == ISO_MEDIA_CD &&
         t->fam != FAMILY_WINDOWS && t->fam != FAMILY_BSD &&
-        boot_direct(image_handle, entry, t))
+        boot_direct(image_handle, label, t))
         return TRUE;
-    boot_target(image_handle, entry, t);
+    boot_target(image_handle, label, t);
     return TRUE;
 }
 
@@ -1753,11 +1609,11 @@ static void next_boot_run(EFI_HANDLE image_handle, iso_list *list)
     t = &list->targets[g_next_idx];
     switch (bless_hit_action(&t->hit)) {
     case BLESS_ACT_UKI:
-        boot_blessed(image_handle, &list->entries[g_next_idx], t);
+        boot_blessed(image_handle, entry_label(list, g_next_idx), t);
         break;
     case BLESS_ACT_PLAIN:
     default:
-        (void)boot_plain(image_handle, &list->entries[g_next_idx], t,
+        (void)boot_plain(image_handle, entry_label(list, g_next_idx), t,
                          default_route());
         break;
     }
@@ -1766,7 +1622,7 @@ static void next_boot_run(EFI_HANDLE image_handle, iso_list *list)
 
 EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
 {
-    iso_list list = { (void *)0, (void *)0, 0, 0, 0 };
+    iso_list list;
     menu_entry *view = (menu_entry *)0;
     menu_banner banner;
     /* The folder on screen, '/'-terminated, empty at the volume root, and the
@@ -1806,12 +1662,12 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
     }
 
     /* Two label arrays, because the flat list and the screen are no longer the
-     * same thing: the scan's full-path labels stay as they are for the whole
+     * same thing: the survey's full-path labels stay as they are for the whole
      * run (the bless lookup, the boot banner and every index into targets
      * depend on that), and the folder view writes its own rows beside them. */
     if (st->BootServices->AllocatePool(EfiLoaderData,
-                                       MAX_ISOS * sizeof(menu_entry),
-                                       (void **)&list.entries)
+                                       MAX_ISOS * sizeof(survey_entry),
+                                       (void **)&list.storage)
         != EFI_SUCCESS ||
         st->BootServices->AllocatePool(EfiLoaderData,
                                        VIEW_MAX * sizeof(menu_entry),
@@ -1824,6 +1680,10 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
         out(L"falcon-boot: out of memory\r\n");
         return EFI_OUT_OF_RESOURCES;
     }
+    /* .efi as well as media: a bare EFI payload boots as itself here
+     * (DESIGN Section 7.2). */
+    survey_init(&list.survey, list.storage, MAX_ISOS,
+                SURVEY_ACCEPT_ISO | SURVEY_ACCEPT_IMG | SURVEY_ACCEPT_EFI);
 
     /* Before the banner, which names what the stores trust, and before the
      * probes, which predict against them (DESIGN Section 7.8). */
@@ -1845,7 +1705,8 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
     scan_all_volumes(&list, &vols);
     /* Sort first: probing appends to the labels, and sorting after that would
      * order the list by what was found rather than by path. */
-    sort_list(&list);
+    survey_sort(&list.survey);
+    targets_build(&list);
     probe_entries(&list);
 
     /* The queued entry, if there was one, boots here: before the menu is ever
@@ -1876,7 +1737,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
             /* ESC is "back": out of the folder while there is one to leave,
              * out of the loader at the root. */
             if (cur_len != 0) {
-                view_up(cur, &cur_len);
+                survey_up(cur, &cur_len);
                 continue;
             }
             menu_screen(st);
@@ -1889,9 +1750,9 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
                 out(L" block device(s) past the inventory cap were not "
                     L"looked at\r\n");
             }
-            if (list.skipped != 0) {
+            if (list.survey.skipped != 0) {
                 out(L"note: ");
-                out_dec(list.skipped);
+                out_dec(list.survey.skipped);
                 out(L" image(s) not shown (list full or path too long)\r\n");
             }
             if (bless_dropped() != 0) {
@@ -1902,7 +1763,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
             }
             g_st->BootServices->FreePool(list.targets);
             g_st->BootServices->FreePool(view);
-            g_st->BootServices->FreePool(list.entries);
+            g_st->BootServices->FreePool(list.storage);
             return EFI_SUCCESS;
         }
 
@@ -1920,10 +1781,10 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
         }
         switch (rows[sel].kind) {
         case VIEW_UP:
-            view_up(cur, &cur_len);
+            survey_up(cur, &cur_len);
             continue;
         case VIEW_DIR:
-            view_enter(cur, &cur_len, view[sel].label);
+            (void)survey_enter(cur, &cur_len, view[sel].label);
             continue;
         case VIEW_PERSONAL:
             if (!boot_personal(image_handle))
@@ -1945,7 +1806,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
              * to point at and nothing for the blessed branch below
              * to decide. */
             if (list.targets[idx].shape == ENTRY_PAYLOAD) {
-                boot_payload(image_handle, &list.entries[idx],
+                boot_payload(image_handle, entry_label(&list, idx),
                              &list.targets[idx]);
                 break;
             }
@@ -1958,16 +1819,16 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
                 /* c or d on a blessed row boots the ISO itself, the way it
                  * would boot unblessed; enter boots the blessing. */
                 if (which == L'c' || which == L'd') {
-                    (void)boot_plain(image_handle, &list.entries[idx],
+                    (void)boot_plain(image_handle, entry_label(&list, idx),
                                      &list.targets[idx], route);
                     break;
                 }
-                boot_blessed(image_handle, &list.entries[idx],
+                boot_blessed(image_handle, entry_label(&list, idx),
                              &list.targets[idx]);
                 break;
             case BLESS_ACT_PLAIN:
             default:
-                (void)boot_plain(image_handle, &list.entries[idx],
+                (void)boot_plain(image_handle, entry_label(&list, idx),
                                  &list.targets[idx], route);
                 break;
             }

@@ -28,6 +28,8 @@
 #include <part/part.h>
 #include <fs/fs.h>
 #include <lib/string.h>
+#include <lib/ucs2.h>
+#include <media/survey.h>
 
 /* The drive the BIOS booted from, and the second one the rig attaches. Both
  * are asked about, because "did the callback work" and "does falcon-core
@@ -52,7 +54,6 @@ typedef struct {
 
 static part_src g_p2_src;
 static fs_vol   g_p2;
-static fs_dir   g_p2_dir;
 static int      g_p2_mounted;
 
 /* p2's own GPT entry and the block size it was read with: between them they
@@ -65,22 +66,24 @@ static uint32_t        g_p2_block;
 static const gpt_part *g_p3_part;
 static bios_disk      *g_p3_disk;
 
-/* What the menu draws. The names are kept rather than re-read, because
- * re-walking the directory to redraw a row would mean a thunk call per
- * sector per keystroke. */
-#define MENU_MAX 32u
+/* What the menu draws, from falcon-core's survey (media/survey.c): the same
+ * walk, extension rule, sort and folder view the UEFI loader uses. The
+ * results are kept rather than re-read, because re-walking to redraw a row
+ * would mean a thunk call per sector per keystroke.
+ *
+ * ISO and IMG only: nothing on a BIOS machine runs a PE, so the .efi rows
+ * the UEFI menu offers would be rows that cannot boot. */
+#define MENU_MAX 64u
+/* The core rows, plus "..", plus the personal-OS row. */
+#define VIEW_MAX (MENU_MAX + 2u)
 
-/* The dirent is kept whole rather than just the name, because opening the
- * file wants it back and re-walking the directory to find it again would be
- * a thunk call per sector per selection. */
-typedef struct {
-    uint16_t  name[64];
-    uint64_t  size;
-    fs_dirent ent;
-} menu_row;
+static survey_entry g_entries[MENU_MAX];
+static survey_list  g_survey;
+static survey_row   g_view[VIEW_MAX];
 
-static menu_row g_rows[MENU_MAX];
-static unsigned g_row_count;
+/* Where the menu is. Empty at p2's root. */
+static uint16_t g_cur[SURVEY_PATH_MAX];
+static size_t   g_cur_len;
 
 /* Whether the menu has a personal-OS row, which it does when p3 opened as a
  * LUKS2 volume. One row, always last, as under UEFI. */
@@ -93,28 +96,6 @@ static int part_read(void *ctx, uint64_t off, uint64_t len, void *buf)
     if (off > ~(uint64_t)0 - p->base)
         return -1;
     return bios_disk_read(p->disk, p->base + off, len, buf);
-}
-
-/* Is this name one the menu would show? The rule is DESIGN Section 6's and
- * is asked here only of the extension, because the depth cap and the dotfile
- * filter belong with the scan rather than with this demonstration. */
-static int is_image(const uint16_t *name)
-{
-    size_t n = 0;
-    uint16_t c3, c2, c1;
-
-    while (name[n] != 0)
-        n++;
-    if (n < 5u)
-        return 0;
-    if (name[n - 4u] != (uint16_t)'.')
-        return 0;
-    c3 = name[n - 3u] | 0x20u;
-    c2 = name[n - 2u] | 0x20u;
-    c1 = name[n - 1u] | 0x20u;
-    if (c3 == 'i' && c2 == 's' && c1 == 'o')
-        return 1;
-    return c3 == 'i' && c2 == 'm' && c1 == 'g';
 }
 
 static void put_name(const uint16_t *name)
@@ -159,91 +140,144 @@ static void screen_dec(uint64_t v)
     }
 }
 
-/* The menu of DESIGN Section 6 stage 1, as much of it as a BIOS build has
- * so far: the images found on p2, one per row, and a selection that moves.
+/* The menu of DESIGN Section 6 stage 1. The rows a folder holds come from
+ * falcon-core (media/survey.c), so this platform and the UEFI one cannot
+ * disagree about what is on a stick; what stays here is what a row means and
+ * how it is drawn.
  *
- * The model belongs in falcon-core eventually, shared with the EFI menu
- * (bios-route.md open question 2). It is not moved yet, because moving
- * working code that real hardware has booted, for the benefit of a platform
- * that cannot boot anything yet, is the wrong order. When this build boots a
- * payload, that is the moment. */
-static void menu_draw(unsigned selected)
+ * Row order, and it matters: ".." when there is one, then the folders and
+ * files the survey found, then the personal OS LAST on the root screen. Last
+ * because the menu opens with the first row selected, and the personal-OS
+ * row prompts for a passphrase. */
+static unsigned g_view_count;
+static int      g_up_row;      /* row 0 leaves the current folder */
+
+static unsigned view_refresh(void)
+{
+    size_t n;
+
+    g_up_row = (g_cur_len != 0u);
+    n = survey_view(&g_survey, g_cur, g_cur_len, g_view, VIEW_MAX);
+    g_view_count = (unsigned)n;
+    return g_view_count + (unsigned)g_up_row +
+           ((g_cur_len == 0u && g_pos_row) ? 1u : 0u);
+}
+
+/* Which survey row a screen row is, or VIEW_MAX for one that is not. */
+static unsigned view_index(unsigned selected)
+{
+    unsigned base = (unsigned)g_up_row;
+
+    if (selected < base || selected - base >= g_view_count)
+        return VIEW_MAX;
+    return selected - base;
+}
+
+static void menu_draw(unsigned selected, unsigned rows)
 {
     unsigned i;
+    unsigned base = (unsigned)g_up_row;
 
     bios_screen_clear();
     bios_screen_puts("falcon-boot (BIOS)\n\n");
 
-    if (g_row_count == 0 && !g_pos_row)
+    if (rows == 0)
         bios_screen_puts("  no bootable images on p2\n");
-    for (i = 0; i < g_row_count; i++) {
-        bios_screen_puts(i == selected ? "  > " : "    ");
-        screen_name(g_rows[i].name);
-        bios_screen_puts("   ");
-        screen_dec(g_rows[i].size / 1048576u);
-        bios_screen_puts(" MiB\n");
+
+    if (g_up_row) {
+        bios_screen_puts(selected == 0 ? "  > " : "    ");
+        bios_screen_puts("..  (now in /");
+        screen_name(g_cur);
+        bios_screen_puts(")\n");
     }
-    if (g_pos_row) {
-        bios_screen_puts(selected == g_row_count ? "  > " : "    ");
+    for (i = 0; i < g_view_count; i++) {
+        bios_screen_puts(selected == base + i ? "  > " : "    ");
+        screen_name(g_view[i].label);
+        if (g_view[i].kind == SURVEY_ROW_FILE) {
+            bios_screen_puts("   ");
+            screen_dec(g_survey.entries[g_view[i].index].ent.size / 1048576u);
+            bios_screen_puts(" MiB");
+        }
+        bios_screen_puts("\n");
+    }
+    if (g_cur_len == 0u && g_pos_row) {
+        bios_screen_puts(selected == base + g_view_count ? "  > " : "    ");
         bios_screen_puts("Personal OS (p3)\n");
     }
     bios_screen_puts("\n  up and down to move, enter to boot,"
-                     " c to chainload\n");
+                     " c to chainload");
+    if (g_up_row)
+        bios_screen_puts(", esc back");
+    bios_screen_puts("\n");
+}
+
+/* The one place a chosen file is named and handed to a boot path. Returns
+ * with the machine still ours only when the boot did not happen: every route
+ * that works hands it over and does not come back. */
+static void boot_row(unsigned vi, int chain)
+{
+    const survey_entry *e = &g_survey.entries[g_view[vi].index];
+
+    bios_screen_puts("\n  ");
+    screen_name(e->label);
+    bios_screen_puts("\n");
+    if (!g_p2_mounted) {
+        bios_screen_puts("  p2 is not mounted\n");
+        return;
+    }
+    if (chain)
+        (void)scan_chain(g_p2_src.disk, &g_p2, g_p2_part, &e->ent);
+    else
+        (void)scan_iso(&g_p2, g_p2_part, &e->ent, g_p2_block);
+    /* The wording is the UEFI loader's, so a reader and the coverage harness
+     * both meet one sentence rather than two. */
+    bios_screen_puts("\npress any key to return to the menu.\n");
+    (void)bios_getkey();
 }
 
 static void menu_run(void)
 {
     unsigned selected = 0;
-    unsigned rows = g_row_count + (g_pos_row ? 1u : 0u);
+    unsigned rows = view_refresh();
 
     for (;;) {
         int key;
+        unsigned vi;
 
-        menu_draw(selected);
+        menu_draw(selected, rows);
         key = bios_getkey();
-        if (key == BIOS_KEY_UP && selected > 0)
+        vi = view_index(selected);
+
+        if (key == BIOS_KEY_UP && selected > 0) {
             selected--;
-        else if (key == BIOS_KEY_DOWN && selected + 1u < rows)
+        } else if (key == BIOS_KEY_DOWN && selected + 1u < rows) {
             selected++;
-        else if (key == BIOS_KEY_ENTER && g_pos_row &&
-                 selected == g_row_count) {
+        } else if (g_up_row && (key == BIOS_KEY_ESC ||
+                                (key == BIOS_KEY_ENTER && selected == 0))) {
+            /* Esc anywhere in a folder, or enter on the ".." row: one way
+             * out, two ways to ask for it. */
+            survey_up(g_cur, &g_cur_len);
+            rows = view_refresh();
+            selected = 0;
+        } else if (key == BIOS_KEY_ENTER && vi != VIEW_MAX &&
+                   g_view[vi].kind == SURVEY_ROW_DIR) {
+            (void)survey_enter(g_cur, &g_cur_len, g_view[vi].label);
+            rows = view_refresh();
+            selected = 0;
+        } else if (key == BIOS_KEY_ENTER && g_cur_len == 0u && g_pos_row &&
+                   selected + 1u == rows) {
             bios_screen_puts("\n  Personal OS\n");
             (void)pos_run(g_p3_disk, g_p3_part);
-        }
-        else if (key == 'c' && g_row_count > 0 && selected < g_row_count) {
-            /* The medium's own bootloader, through the resident handler.
-             * Same key as the UEFI menu's, for the same job. */
-            bios_screen_puts("\n  ");
-            screen_name(g_rows[selected].name);
-            bios_screen_puts("\n");
-            if (!g_p2_mounted) {
-                bios_screen_puts("  p2 is not mounted\n");
-                return;
-            }
-            (void)scan_chain(g_p2_src.disk, &g_p2, g_p2_part,
-                             &g_rows[selected].ent);
-            bios_screen_puts("\npress any key to return to the menu.\n");
-            (void)bios_getkey();
-        }
-        else if (key == BIOS_KEY_ENTER && g_row_count > 0) {
-            bios_screen_puts("\n  ");
-            screen_name(g_rows[selected].name);
-            bios_screen_puts("\n");
-            if (!g_p2_mounted) {
-                bios_screen_puts("  p2 is not mounted\n");
-                return;
-            }
-            (void)scan_iso(&g_p2, g_p2_part, &g_rows[selected].ent,
-                           g_p2_block);
-            /* Only reached when the boot did not happen: every route that
-             * works hands the machine over and does not return. The wording
-             * is the UEFI loader's, so a reader and the coverage harness
-             * both meet one sentence rather than two. */
-            bios_screen_puts("\npress any key to return to the menu.\n");
-            (void)bios_getkey();
+        } else if (vi != VIEW_MAX && g_view[vi].kind == SURVEY_ROW_FILE &&
+                   (key == BIOS_KEY_ENTER || key == 'c')) {
+            /* The medium's own bootloader on 'c', through the resident
+             * handler. Same key as the UEFI menu's, for the same job. */
+            boot_row(vi, key == 'c');
+            rows = view_refresh();
         }
     }
 }
+
 static bios_disk g_boot;
 static bios_disk g_second;
 static uint8_t g_sector[512];
@@ -353,9 +387,7 @@ static void show_partitions(bios_disk *d)
 static void scan_iso_partition(bios_disk *d, const gpt_part *p)
 {
     const fs_ops *ops;
-    fs_dirent e;
-    unsigned shown = 0;
-    int rc;
+    size_t i;
 
     g_p2_src.disk = d;
     g_p2_src.base = p->start_lba * (uint64_t)d->sector_size;
@@ -379,36 +411,33 @@ static void scan_iso_partition(bios_disk *d, const gpt_part *p)
     bios_puts(fs_vol_label(&g_p2));
     bios_puts("\n");
 
-    if (fs_dir_open_root(&g_p2, &g_p2_dir) != FS_OK) {
+    survey_init(&g_survey, g_entries, MENU_MAX,
+                SURVEY_ACCEPT_ISO | SURVEY_ACCEPT_IMG);
+    if (survey_volume(&g_survey, &g_p2, 0) != 0) {
         bios_puts("falcon-bios:   p2 root unreadable\n");
         return;
     }
-    while ((rc = fs_dir_next(&g_p2_dir, &e)) == 1) {
-        if (e.is_dir || !is_image(e.name))
-            continue;
-        bios_puts("falcon-bios:     ");
-        put_name(e.name);
-        bios_puts("  ");
-        bios_put_dec(e.size);
-        bios_puts(" bytes\n");
-        if (g_row_count < MENU_MAX) {
-            size_t k;
+    survey_sort(&g_survey);
 
-            for (k = 0; k + 1u < sizeof g_rows[0].name / sizeof(uint16_t) &&
-                        e.name[k] != 0; k++)
-                g_rows[g_row_count].name[k] = e.name[k];
-            g_rows[g_row_count].name[k] = 0;
-            g_rows[g_row_count].size = e.size;
-            g_rows[g_row_count].ent = e;
-            g_row_count++;
-        }
-        shown++;
+    /* The whole path, not the name: a stick with its images in Linux/ and
+     * Windows/ is the normal case, and a serial log that printed bare names
+     * could not tell two fedora.iso apart. */
+    for (i = 0; i < g_survey.count; i++) {
+        bios_puts("falcon-bios:     ");
+        put_name(g_survey.entries[i].label);
+        bios_puts("  ");
+        bios_put_dec(g_survey.entries[i].ent.size);
+        bios_puts(" bytes\n");
     }
-    if (rc < 0)
-        bios_puts("falcon-bios:   the root directory ended badly\n");
     bios_puts("falcon-bios:   ");
-    bios_put_dec(shown);
-    bios_puts(" bootable image(s) on p2\n");
+    bios_put_dec(g_survey.count);
+    bios_puts(" bootable image(s) on p2");
+    if (g_survey.skipped != 0u) {
+        bios_puts(", ");
+        bios_put_dec(g_survey.skipped);
+        bios_puts(" past the cap");
+    }
+    bios_puts("\n");
 }
 
 /* The memory map, which the loader needs to place an initrd and the kernel

@@ -3,6 +3,7 @@
 #include <efi/loadedimage.h>
 #include <efi/sfs.h>
 #include <lib/string.h>
+#include <lib/ucs2.h>
 
 /* d719b2cb-3d3a-4596-a3bc-dad00e67656f: db and dbx */
 #define IMAGE_SECURITY_DATABASE_GUID \

@@ -729,9 +729,15 @@ recurring cost of keeping the cell green is not.
    from new firmware. The study says the cost is ~5,300 lines rather than a
    second product; it does not say the reach is worth it. Nobody has asked
    for it yet.
-2. **Where the shared menu model lives** once it comes out of
-   `falcon-efi/src/console`. `falcon-core/src/ui/` is the obvious answer and
-   would be the first core module that is not a parser.
+2. **Where the shared menu model lives.** Answered 2026-09-20, and the
+   question aimed slightly wrong: `falcon-efi/src/console` is presentation
+   and belongs where it is. What had to move was the survey - the directory
+   walk, the extension rule, the sort and the folder view - which sat in
+   `falcon-efi/src/efi/main.c` and so was unreachable from here. It is
+   `falcon-core/src/media/survey.c` now, beside `medium.c`, and both loaders
+   build their menus from it. Found the hard way: falcon-bios had its own
+   flat root-only scan, which showed an empty menu on a stick whose ISOs sit
+   in `Linux/` and `Windows/`.
 3. **Whether S1 alone is a coherent release.** Chainload-only means Tier B
    installers and anything needing the hook do not find their media, which is
    the wall `coverage-roadmap.md` W1 exists for. S1 plus S2 may be the real

@@ -67,7 +67,7 @@ BIOS_S3_CSRCS := $(addprefix $(BIOS)/,main.c scan.c pos.c prompt.c linux.c \
 	vcd.c vcdcore.c bsd.c win.c heap.c \
 	e820.c disk.c console.c) \
 	$(CORE_PART) $(CORE_FS) $(CORE_MEDIA) $(CORE_PE) $(CORE_CRYPTO) \
-	$(CORE_LUKS) $(CORE_WIM) $(CORE_LIBC)
+	$(CORE_LUKS) $(CORE_WIM) $(CORE_LIBC) $(CORE_UCS2)
 BIOS_S2_COBJS := $(patsubst %.c,$(BIOS_OBJ)/%.o,$(BIOS_S2_CSRCS))
 BIOS_S3_COBJS := $(patsubst %.c,$(BIOS_OBJ)/%.o,$(BIOS_S3_CSRCS))
 BIOS_CSRCS := $(sort $(BIOS_S2_CSRCS) $(BIOS_S3_CSRCS))

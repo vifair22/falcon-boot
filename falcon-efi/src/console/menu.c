@@ -1,6 +1,7 @@
 #include <console/menu.h>
 
 #include <lib/string.h>
+#include <lib/ucs2.h>
 
 /* The frame.
  *

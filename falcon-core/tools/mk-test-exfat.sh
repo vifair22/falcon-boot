@@ -83,7 +83,7 @@ mkiso Linux/ubuntu-fake.iso
 mkiso Linux/fedora-fake.iso
 mkiso Linux/rescue/gparted-fake.iso
 
-# Depth cap (SCAN_DEPTH_MAX in falcon-efi/src/efi/main.c): the walk enters
+# Depth cap (SURVEY_DEPTH_MAX in falcon-core/src/media/survey.h): the walk enters
 # directories at depth 1..3, so files in deep/a/b are the last ones still listed
 # and anything under deep/a/b/c is never reached. deep/ and deep/a/ hold nothing
 # but the next folder, which is the folder view's "only subfolders here" case.

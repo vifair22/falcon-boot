@@ -12,7 +12,7 @@
 HOOK := falcon-hook/src
 
 HOOK_SRCS := $(addprefix $(HOOK)/,sys.c hookcore.c hook.c dimod.c) \
-	$(CORE)/media/extmap.c $(CORE)/fs/iso9660.c $(CORE_PART) $(CORE_LIBC)
+	$(CORE)/media/extmap.c $(CORE)/fs/iso9660.c $(CORE_PART) $(CORE_LIBC) $(CORE_UCS2)
 
 HOOK_OBJ := $(OBJ)/hook
 

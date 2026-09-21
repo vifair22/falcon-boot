@@ -17,6 +17,7 @@
 #include <efi/devpath.h>
 #include <efi/sfs.h>
 #include <lib/string.h>
+#include <lib/ucs2.h>
 
 /* Identifies our synthetic filesystem in device paths. A vendor-defined media
  * node is the spec's answer for a device with no bus behind it; the ISO path

@@ -38,13 +38,14 @@ EFI_SRCS := \
 	$(CORE)/media/grubcfg.c \
 	$(CORE)/media/bsdmd.c \
 	$(CORE)/media/extmap.c \
+	$(CORE)/media/survey.c \
 	$(HOOK_BLOB) \
 	$(EFI_SRC)/pos/pos.c \
 	$(CORE)/media/osrel.c \
 	$(EFI_SRC)/bless/bless.c \
 	$(EFI_SRC)/bless/blesscore.c \
 	$(CORE_MANIFEST) \
-	$(CORE_LIBC)
+	$(CORE_LIBC) $(CORE_UCS2)
 
 EFI_OBJS := $(EFI_SRCS:%.c=$(EFI_OBJ)/%.o)
 

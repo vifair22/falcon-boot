@@ -9,6 +9,7 @@
 
 #include <loader/credfs.h>
 #include <lib/string.h>
+#include <lib/ucs2.h>
 #include <console/menu.h>
 #include <trust/probe.h>
 

@@ -122,7 +122,10 @@ the tree, so `#include <fs/exfat.h>` means one file wherever it is written.
     image), the extent map handed to falcon-hook (`extmap.c`) and the hooked
     boot's cmdline (`hookcmd.c`), the grub.cfg D3b serves in place of
     an ISO's own (`grubcfg.c`) and the two edits that make a BSD medium boot
-    itself as a memory disk (`bsdmd.c`). `eltorito.c` reads a medium's boot
+    itself as a memory disk (`bsdmd.c`). `survey.c` is what a menu is built
+    from: the directory walk over a mounted volume, the extension rule, the
+    sort and the folder view. Both loaders use it, so neither can have its
+    own idea of what is on a stick. `eltorito.c` reads a medium's boot
     catalog and `medium.c` assembles what a medium holds into a set of
     mounted volumes (UDF, then ISO9660, then the El Torito boot image) over
     one read callback, which is the job the firmware's ConnectController does
@@ -133,8 +136,10 @@ the tree, so `#include <fs/exfat.h>` means one file wherever it is written.
     original's end, the original bytes untouched.
   - `manifest/` the blessed-artifact manifest parser and writer (DESIGN
     Section 8.1), shared by the loader and the sign tool.
-  - `lib/` freestanding `mem*` and UCS-2 helpers; `string.c` is linked into
-    the loader only, since every hosted build has a libc.
+  - `lib/` the freestanding `mem*` (`string.c`, linked into the loader
+    flavours only, since every hosted build has a libc) and the UCS-2
+    helpers (`ucs2.c`, linked into every flavour including the hosted
+    ones, which is what lets host-tested core code handle a filename).
   - `tests/` the core test suite, plus `tests/support/` (`tests.h`, `synth`,
     and `hostshim/`, which answers `<lib/string.h>` with libc) that every
     component's tests link. `tools/` builds the fixtures: exFAT, ext4, LUKS2,
