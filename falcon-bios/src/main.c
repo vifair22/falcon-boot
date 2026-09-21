@@ -39,8 +39,7 @@
 #define DRIVE_SECOND 0x81u
 
 /* Caller-allocated, as everywhere in falcon-core, and static rather than on
- * the stack because the stack in this environment is the 30 KB below the
- * boot sector. */
+ * the stack because stage 3's stack is 64 KB (biosdefs.h, STAGE3_STACK). */
 static gpt_part g_parts[16];
 
 /* The ISO partition, once found, and the offset shim that turns a

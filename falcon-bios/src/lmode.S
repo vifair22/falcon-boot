@@ -99,10 +99,10 @@ a20_ok:
 	 * this comment existed: `info registers` showed CS=f000 with CR0 still
 	 * 0x10, in the middle of what looked like a perfectly good loop.
 	 *
-	 * ES = 0x1000 puts linear 0x10000 at offset 0, and all three tables
-	 * are 12 KB, so one segment covers the lot: PML4 at ES:0x0000, PDPT at
-	 * ES:0x1000, PD at ES:0x2000. Every offset below is 16-bit and inside
-	 * the limit. */
+	 * ES = PML4_ADDR >> 4 (0x8000) puts the tables at offset 0, and all
+	 * three are 12 KB, so one segment covers the lot: PML4 at ES:0x0000,
+	 * PDPT at ES:0x1000, PD at ES:0x2000. Every offset below is 16-bit and
+	 * inside the limit. */
 	movl    $PML4_ADDR, %eax
 	movl    %eax, %cr3           /* CR3 is linear; only the writes are segmented */
 	movw    $(PML4_ADDR >> 4), %ax

@@ -957,10 +957,10 @@ static EFI_STATUS chainload(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
  * a driver: that instance belongs to the earlier attempt, and tearing it down
  * from here would disconnect drivers this caller never connected. */
 
-/* Why the override set is refused, in words the user can act on. This data
- * comes off a writable exFAT partition, so "the modified view on your stick is
- * wrong, and here is how" is the message that matters; a single "bad overlay"
- * would send someone reading hex. */
+/* Why the override set is refused, in words the user can act on. The set is
+ * computed from bytes off a writable exFAT partition, so "the modified view
+ * of this medium is wrong, and here is how" is the message that matters; a
+ * single "bad overlay" would send someone reading hex. */
 static const CHAR16 *overlay_reason(int rc)
 {
     switch (rc) {

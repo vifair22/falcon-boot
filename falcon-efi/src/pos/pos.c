@@ -842,7 +842,8 @@ static EFI_STATUS read_uki(EFI_BOOT_SERVICES *bs, const fs_dirent *ent,
 
 /* The credential's filename, which is not a choice.
  *
- * Four links, each one fixed by systemd (verified against 261.2 sources):
+ * Four links, each one fixed by systemd (verified against 261.2 sources) or
+ * by the drop-in the third one needs:
  *
  *   1. sd-stub collects `<image>.efi.extra.d/<name>.cred` and packs them into
  *      a cpio it merges into the initrd at /.extra/credentials/
@@ -851,8 +852,13 @@ static EFI_STATUS read_uki(EFI_BOOT_SERVICES *bs, const fs_dirent *ent,
  *      credential name (src/core/import-creds.c, import_credentials_boot).
  *   3. every systemd-cryptsetup@ unit a generator writes carries
  *      `ImportCredential=cryptsetup.*` (src/shared/generator.c,
- *      generator_write_cryptsetup_unit_section), so anything under that prefix
- *      reaches the unlock service without a crypttab or a custom hook.
+ *      generator_write_cryptsetup_unit_section). That import cannot deliver
+ *      ours: PID 1 files a credential arriving from sd-stub under
+ *      @encrypted and the import tries to decrypt plaintext, so the unit
+ *      dies with status 243. The personal OS carries a drop-in that clears
+ *      it and names the file with LoadCredential= instead (DESIGN Section 5,
+ *      archusb's falcon-credential). The name below is what that drop-in
+ *      loads.
  *   4. systemd-cryptsetup asks for the passphrase with
  *      `.credential = "cryptsetup.passphrase"` (src/cryptsetup/cryptsetup.c).
  *

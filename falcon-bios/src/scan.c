@@ -160,14 +160,6 @@ static const char *kind_name(medium_vol_kind k)
     }
 }
 
-/* Open what the entry names and hand it to the boot protocol.
- *
- * The cmdline is rendered without an ISO path, which is the honest state of
- * this route rather than an oversight: finding the medium is falcon-hook's
- * job (DESIGN Section 6.4), the hook is not appended yet, and a cmdline
- * carrying ${iso_path} with nothing behind it would be worse than one that
- * says plainly it has no media. The kernel will start and its initramfs will
- * not find a root. That is the next piece of the route. */
 /* Where the ISO sits on p2, encoded for the hook (DESIGN Section 6.4).
  *
  * The UEFI loader reads the partition's GUID and first LBA out of the Hard
@@ -203,6 +195,14 @@ static size_t build_map(fs_vol *p2, const gpt_part *part, const fs_dirent *iso,
     return mlen;
 }
 
+/* Open what the entry names and hand it to the boot protocol.
+ *
+ * The cmdline is rendered without an ISO path: finding the medium is
+ * falcon-hook's job (DESIGN Section 12.4), and it is told where the ISO is
+ * by the extent map in its own cpio, appended after the entry's initrds.
+ * A map that cannot be built (too many fragments, no GPT entry) boots the
+ * entry without the hook rather than not at all, and says so; the kernel
+ * then finds its medium by its own means or not. */
 static int boot_entry(const bootcfg_entry *e, fs_vol *p2,
                       const gpt_part *p2part, const fs_dirent *iso,
                       uint32_t block_size)

@@ -39,11 +39,14 @@
  *  - SIDECAR: a staged file on p2, its own space entirely, reached only
  *    through an override entry's src_off.
  *
- * UNTRUSTED INPUT. The override set is read from p2, which is a writable
- * exFAT partition anybody can edit. iso_overlay_check is a fail-closed gate,
- * not a sanity check: an invalid set is refused outright rather than partially
- * honoured, because the alternative is serving attacker-chosen bytes inside a
- * medium the user believes is the ISO they dropped on.
+ * UNTRUSTED INPUT. The override set is computed at boot (the Windows patch
+ * in falcon-efi/src/win, D3b's grub.cfg and hook in src/direct, the BSD
+ * edits in src/bsd), and every one of those computations reads its input
+ * off p2, a writable exFAT partition anybody can edit. iso_overlay_check is
+ * a fail-closed gate, not a sanity check: an invalid set is refused
+ * outright rather than partially honoured, because the alternative is
+ * serving attacker-shaped bytes inside a medium the user believes is the
+ * ISO they dropped on.
  */
 
 #ifndef FALCON_ISO_OVERLAY_H
@@ -56,16 +59,14 @@
 
 /* How many substitutions one medium may carry.
  *
- * The MVP Windows shape (DESIGN 6.3, size-preserving whole-file substitution)
- * needs exactly ONE: the padded \sources\boot.wim, a single contiguous byte
- * range, with no ISO 9660 or UDF metadata rewritten at all. The two extensions
- * already named in DESIGN - patching the El Torito catalog to skip the
- * press-any-key prompt, and the parked "overlay a modified grub.cfg" idea -
- * are one entry each. Four is that plus a spare, and it is a BOUND rather than
- * a capacity target: the set comes off a writable partition, it is copied by
- * value into a static device instance, and the split below is O(entries) per
- * block read. A number that cannot grow without someone re-reading this
- * comment is the point. */
+ * The largest set today is Windows (DESIGN Section 12.2.13): one or two
+ * Partition Descriptors, boot.wim's File Entry and its header, and the
+ * appended tail, five at most. D3b and BSD use two each. Eight is that
+ * plus room, and it is a BOUND rather than a capacity target: the set is
+ * computed from attacker-editable bytes, it is copied by value into a
+ * static device instance, and the split below is O(entries) per block
+ * read. A number that cannot grow without someone re-reading this comment
+ * is the point. */
 #define ISO_MAX_OVERRIDES 8u
 
 /* Worst case segments a single request can be cut into: every override
@@ -75,9 +76,9 @@
 #define ISO_MAX_SEGMENTS (2u * ISO_MAX_OVERRIDES + 1u)
 
 /* Status codes, repo convention: OK zero, errors negative. They are kept
- * distinct rather than collapsed into one "bad set" because this data is
- * attacker-editable and the refusal message has to tell the user which of
- * these the file on their stick actually is. */
+ * distinct rather than collapsed into one "bad set" because the set is
+ * derived from attacker-editable bytes and the refusal message has to say
+ * which of these it is. */
 enum {
     ISO_OVL_OK          =  0,
     ISO_OVL_ERR_BAD_ARG = -1,  /* null argument, or a request that wraps */

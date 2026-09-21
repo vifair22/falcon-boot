@@ -13,9 +13,10 @@
  * itself, GRUB's core image decompresses into it, bootmgr uses most of it.
  * The only region it will leave alone is one the BIOS says is not there. So
  * the word at 0x413 - how many kilobytes of conventional memory the machine
- * has, which every one of them reads - is lowered by four, and the resident
- * lives in the four kilobytes that just stopped existing. MEMDISK has done
- * this since 2001 and it is the only thing that works.
+ * has, which every one of them reads - is lowered by sixteen (VCD_BYTES), and
+ * the resident lives in the sixteen kilobytes that just stopped existing:
+ * its code and tables in the first four, the overlay pool in the rest.
+ * MEMDISK has done this since 2001 and it is the only thing that works.
  */
 
 #include <bios.h>

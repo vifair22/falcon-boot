@@ -270,8 +270,8 @@ static UINT8 g_next_bad;                     /* a value we would not decode */
  * and scan each volume a filesystem driver claimed for bootable images.
  *
  * Which rows those are is DESIGN Section 3's rule, applied once at discovery
- * time: if any partition in the machine carries the falcon p2 type GUID, only
- * those are offered here, so an internal disk's exFAT volume can never
+ * time: if any partition in the machine is a falcon p2 (the basic-data type
+ * named FALCON-ISO, part_match_role), only those are offered here, so an internal disk's exFAT volume can never
  * contribute entries; if none does, everything is, which is what keeps the
  * QEMU rig images working until mkstick stamps the types.
  *
@@ -442,8 +442,8 @@ static fs_file g_payload_file;
  * no tree to fingerprint, and the signature from the file's own headers.
  *
  * Cheap on purpose, and not subject to PROBE_LIMIT: this is one short read off
- * a volume that is already mounted, where an ISO's survey has to build a
- * virtual medium and make the firmware bind and release drivers to it.
+ * a volume that is already mounted, where an ISO's survey assembles the
+ * medium's volumes in falcon-core and reads its boot configuration.
  *
  * *out is always filled in, so an unreadable payload is still an entry. */
 static void payload_survey(fs_vol *vol, const fs_dirent *ent, iso_survey *out)
@@ -491,9 +491,9 @@ static void payload_survey(fs_vol *vol, const fs_dirent *ent, iso_survey *out)
 
 /* Look inside the first PROBE_LIMIT ISOs and label every entry.
  *
- * This is the slow part of startup, so it says so: each probe makes the
- * firmware bind drivers to a synthetic CD and release them again, and a quiet
- * pause with no explanation reads as a hang. */
+ * This is the slow part of startup, so it says so: each probe reads the
+ * medium's descriptors and boot configuration off p2, and on a stick with
+ * many images a quiet pause with no explanation reads as a hang. */
 static void probe_entries(iso_list *list)
 {
     UINTN media = 0;
@@ -1359,8 +1359,8 @@ static BOOLEAN boot_plain(EFI_HANDLE image_handle, const CHAR16 *label,
                           iso_target *t, boot_route route)
 {
     /* An entry past PROBE_LIMIT was never looked inside, so nothing yet knows
-     * whether it is Windows media. Looking now costs one virtual-media publish
-     * and teardown, on an explicit user action rather than at draw time. */
+     * whether it is Windows media. Looking now costs one survey of the
+     * medium, on an explicit user action rather than at draw time. */
     if (!t->probed) {
         iso_survey survey;
 

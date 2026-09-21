@@ -9,7 +9,7 @@
 #include <stdint.h>
 
 /* Takes the highest usable run of at least `want` bytes between 64 MB and
- * 4 GB, from the E820 map. 0 when there is no such run; the caller says so
+ * the end of the identity map (1 GB), from the E820 map. 0 when there is no such run; the caller says so
  * and does not go on. */
 int heap_open(uint64_t want);
 

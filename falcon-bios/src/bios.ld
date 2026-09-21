@@ -19,7 +19,7 @@
 
 SECTIONS
 {
-    /* 0x7C00 for stage 1, 0x10000 for stage 2. The build passes -Ttext, so
+    /* 0x7C00 for stage 1, 0x7E00 for stage 2. The build passes -Ttext, so
      * this is only the default. */
     . = 0x7C00;
 

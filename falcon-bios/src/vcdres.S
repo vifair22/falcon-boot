@@ -22,17 +22,23 @@
  * places each one at that offset, and the build checks the two agree. Every
  * jump within the block is relative and needs no such care.
  *
- * THE BLOCK:
+ * THE BLOCK (biosdefs.h has every offset; these are the landmarks):
  *
  *   0x0000  the previous INT 13h vector, which every call we do not answer
  *           jumps to and every read we do answer goes through
  *   0x0004  the drive we answer for, and the physical drive behind it
- *   0x0006  the run count, the disk sectors per CD sector, the medium size
+ *   0x0006  the run count, the disk sectors per CD sector, the medium size,
+ *           the override count
  *   0x0010  our own disk address packet: the caller's may not be touched,
  *           because a caller may reuse it
- *   0x0024  the El Torito status packet AH=4Bh returns
- *   0x0040  the runs, as vcdcore.c built them
- *   0x0440  this code
+ *   0x0020  scratch, and the real and padded sector counts
+ *   0x0030  the overrides
+ *   0x00B0  the descriptor table INT 15h AH=87h reads
+ *   0x0100  the runs, as vcdcore.c built them
+ *   0x0500  the El Torito status packet AH=4Bh returns
+ *   0x0520  the launch stub's arguments, then the stub at 0x0530
+ *   0x0570  the handler
+ *   0x1000  the overlay pool, outside the blob, to the end of the 16 KB
  */
 
 #include "biosdefs.h"
