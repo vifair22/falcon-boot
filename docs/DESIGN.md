@@ -387,7 +387,13 @@ initramfs), is root-only, and stays under `/run/credentials/` across the
 pivot, which is why the real root needs the drop-in too (Section 5). It never
 touches persistent storage and is never world-readable. If
 `LoadImage`/`StartImage` fails, the loader zeroes the credential buffer and
-tears down the virtual filesystem before returning to the menu.
+tears down the virtual filesystem before returning to the menu. If the boot
+succeeds, the loader's copy is zeroed at `ExitBootServices` by a
+notification the credential filesystem registers when it serves a secret,
+after sd-stub has packed its own; the LUKS key schedule and p3's plaintext
+caches are released once the UKI is read, before it starts. The BIOS loader
+does the same from `linux_boot`'s last act, and also clears the BIOS
+keyboard ring the passphrase was typed through (Section 12.3.7).
 
 All three open questions of this design are now VERIFIED in the QEMU rig
 (2026-09-13, systemd 261 sd-stub, shim 16.1): the `.extra.d` naming and
