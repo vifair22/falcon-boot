@@ -104,7 +104,7 @@ typedef int (*ext4_read_fn)(void *ctx, uint64_t off, uint64_t len, void *buf);
  * is 64 bits and comes from the medium, and extents can map every logical
  * block of it onto the same few physical ones, so the size alone bounds
  * nothing useful. 256 MiB of entries is millions of names. */
-#define EXT4_DIR_MAX   (256u * 1024u * 1024u)
+#define EXT4_DIR_MAX   0x10000000u   /* 256 MiB */
 #define EXT4_ROOT_INO  2u
 
 typedef struct {

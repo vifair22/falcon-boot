@@ -69,7 +69,7 @@ typedef int (*exfat_read_fn)(void *ctx, uint64_t off, uint64_t len,
 #define EXFAT_NAME_MAX   255u    /* UTF-16 units, spec limit */
 /* The largest directory the specification allows (256 MiB). The root
  * states no size, so a walk past this is a chain that loops. */
-#define EXFAT_DIR_MAX    (256u * 1024u * 1024u)
+#define EXFAT_DIR_MAX    0x10000000u   /* 256 MiB */
 
 typedef struct {
     exfat_read_fn read;
