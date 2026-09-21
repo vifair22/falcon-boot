@@ -662,7 +662,15 @@ INTN menu_run_keys(EFI_SYSTEM_TABLE *st, const menu_banner *banner,
         }
         painted = sel;
 
-        st->BootServices->WaitForEvent(1, &st->ConIn->WaitForKey, &i);
+        /* A failed wait means there is no console input to wait on, and
+         * the read below would then spin on EFI_NOT_READY forever. Backing
+         * out is what ESC does, which on the main menu hands the machine
+         * back to the firmware's next boot option. */
+        if (st->BootServices->WaitForEvent(1, &st->ConIn->WaitForKey, &i) !=
+            EFI_SUCCESS) {
+            restore_console(st);
+            return -1;
+        }
 
         /* Drain the queue, then paint once.
          *
