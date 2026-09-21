@@ -326,6 +326,18 @@ static int boot_uki(const fs_dirent *uki)
     return linux_boot(&kernel, initrd, n_initrd, g_cmdline);
 }
 
+/* A failure the user has to read: the menu redraws the screen as soon as
+ * pos_run returns, so without the wait the message is gone before it can be
+ * read. Backing out returns without it. */
+static int fail(const char *msg)
+{
+    put(msg);
+    wipe_secrets();
+    put("\n  press any key to return to the menu.\n");
+    (void)bios_getkey();
+    return -1;
+}
+
 int pos_run(bios_disk *d, const gpt_part *p3)
 {
     const fs_ops *ops;
@@ -333,10 +345,8 @@ int pos_run(bios_disk *d, const gpt_part *p3)
     unsigned sel = 0;
     int rc;
 
-    if (!pos_probe(d, p3)) {
-        put("  p3 is not a LUKS2 volume\n");
-        return -1;
-    }
+    if (!pos_probe(d, p3))
+        return fail("  p3 is not a LUKS2 volume\n");
 
     if (prompt_passphrase("passphrase", g_pass, sizeof g_pass,
                           &g_pass_len) != 0) {
@@ -347,42 +357,28 @@ int pos_run(bios_disk *d, const gpt_part *p3)
     rc = luks_unlock(&g_vol, g_pass, g_pass_len, &g_mk, &slot);
     if (rc != LUKS_OK) {
         if (rc == LUKS_ERR_NOKEY)
-            put("  that passphrase does not open p3\n");
-        else if (rc == LUKS_ERR_UNSUPPORTED_KDF)
-            put("  p3's keyslots use a KDF this loader cannot run\n");
-        else
-            put("  p3 would not unlock\n");
-        wipe_secrets();
-        return -1;
+            return fail("  that passphrase does not open p3\n");
+        if (rc == LUKS_ERR_UNSUPPORTED_KDF)
+            return fail("  p3's keyslots use a KDF this loader cannot"
+                        " run\n");
+        return fail("  p3 would not unlock\n");
     }
-    if (luks_dev_open(&g_dev, &g_vol, &g_mk) != LUKS_OK) {
-        put("  p3 unlocked but would not open\n");
-        wipe_secrets();
-        return -1;
-    }
+    if (luks_dev_open(&g_dev, &g_vol, &g_mk) != LUKS_OK)
+        return fail("  p3 unlocked but would not open\n");
 
     ops = fs_identify(luks_read, &g_dev, FS_HINT_NONE);
     if (ops == (const fs_ops *)0 ||
-        fs_mount(&g_fs, ops, luks_read, &g_dev) != FS_OK) {
-        put("  nothing inside p3 mounted\n");
-        wipe_secrets();
-        return -1;
-    }
+        fs_mount(&g_fs, ops, luks_read, &g_dev) != FS_OK)
+        return fail("  nothing inside p3 mounted\n");
     put("  p3 open, ");
     put(fs_vol_name(&g_fs));
     put("\n");
 
-    if (open_uki_dir() != 0) {
-        put("  p3 has no image directory\n");
-        wipe_secrets();
-        return -1;
-    }
+    if (open_uki_dir() != 0)
+        return fail("  p3 has no image directory\n");
     list_ukis();
-    if (g_uki_count == 0) {
-        put("  p3 holds no images\n");
-        wipe_secrets();
-        return -1;
-    }
+    if (g_uki_count == 0)
+        return fail("  p3 holds no images\n");
 
     for (;;) {
         unsigned i;
@@ -409,6 +405,7 @@ int pos_run(bios_disk *d, const gpt_part *p3)
             put_name(g_ukis[sel].name);
             put("\n");
             (void)boot_uki(&g_ukis[sel]);
+            put("\n  press any key to return to the list.\n");
             (void)bios_getkey();
         }
     }
