@@ -100,6 +100,11 @@ typedef int (*ext4_read_fn)(void *ctx, uint64_t off, uint64_t len, void *buf);
  * where s_first_data_block is not zero. */
 #define EXT4_BLOCK_MAX 4096u
 #define EXT4_NAME_MAX  255u   /* bytes, format limit */
+/* How far a directory walk goes before it is refused as unsupported. i_size
+ * is 64 bits and comes from the medium, and extents can map every logical
+ * block of it onto the same few physical ones, so the size alone bounds
+ * nothing useful. 256 MiB of entries is millions of names. */
+#define EXT4_DIR_MAX   (256u * 1024u * 1024u)
 #define EXT4_ROOT_INO  2u
 
 typedef struct {

@@ -750,6 +750,8 @@ int ext4_dir_next(ext4_dir *d, ext4_dirent *out)
 
         if (d->pos + DE_NAME > d->inode.size)
             return 0;
+        if (d->pos >= EXT4_DIR_MAX)
+            return EXT4_ERR_UNSUPPORTED;
 
         lblk = (uint32_t)(d->pos / bs);
         in_block = (uint32_t)(d->pos % bs);

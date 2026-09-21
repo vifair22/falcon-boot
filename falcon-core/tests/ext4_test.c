@@ -1432,6 +1432,20 @@ static void test_ext4_directed_refusals(void **state)
     assert_int_equal(ext4_dir_open_root(&v, &d), EXT4_ERR_CSUM);
 
     patch_reset();
+
+    /* A directory whose i_size runs to 2^40 and a walk that has reached the
+     * cap. Set on the iterator rather than written into an inode, since the
+     * cap is the iterator's and an inode edit would need its checksum redone.
+     * Past it the walk stops rather than reading on toward 2^40. */
+    assert_int_equal(ext4_mount(&v, img_read, &img_fd), EXT4_OK);
+    assert_int_equal(ext4_dir_open_root(&v, &d), EXT4_OK);
+    d.inode.size = (uint64_t)1 << 40;
+    d.pos = EXT4_DIR_MAX;
+    {
+        ext4_dirent e;
+
+        assert_int_equal(ext4_dir_next(&d, &e), EXT4_ERR_UNSUPPORTED);
+    }
 }
 
 int run_ext4_tests(void)
