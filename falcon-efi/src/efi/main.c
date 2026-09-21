@@ -1410,8 +1410,10 @@ static BOOLEAN reboot_to_fw_setup(void)
     menu_screen(g_st);
     out(L"Reboot into this machine's firmware setup?\r\n\r\n"
         L"press y to reboot, any other key to go back.\r\n");
-    wait_key(&key);
-    if (key.UnicodeChar != L'y' && key.UnicodeChar != L'Y')
+    /* A console that cannot deliver a key is a "no": the key is not read
+     * on failure, and a reset is not something to do on stack contents. */
+    if (EFI_ERROR(wait_key(&key)) ||
+        (key.UnicodeChar != L'y' && key.UnicodeChar != L'Y'))
         return FALSE;
 
     out(L"\r\nrebooting...\r\n");
