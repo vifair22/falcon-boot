@@ -146,8 +146,10 @@ DRIVES=(-drive if=none,id=stick,format=raw,file="$STICK",snapshot=on
 if [[ "$STATE_BIOS" -eq 1 ]]; then
     MACHINE=(-machine pc)
     FIRMWARE=()
+    # The stick keeps its id: stick_read finds it by that name, and the
+    # Windows Setup probe judges by what is read from it.
     DRIVES=(-drive "format=raw,file=build/test-bios.img,snapshot=on"
-            -drive "format=raw,file=$STICK,snapshot=on")
+            -drive "id=stick,format=raw,file=$STICK,snapshot=on")
 fi
 
 QPID=
@@ -315,9 +317,16 @@ NUDGE_FOR=90
 next_nudge=$(( T1 + NUDGE_EVERY ))
 # Bytes read from the stick so far, from the monitor (0 when it cannot say).
 MEDIA_MIB=64
+# Both of QEMU's layouts: 10.x prints "stick: rd_bytes=N ..." on one line,
+# 11.x a table under "stick:" whose Read: row starts with the bytes. The
+# harness container ships the first and a workstation may have the second.
 stick_read() {
     echo "info blockstats" | socat - UNIX-CONNECT:"$MON" 2>/dev/null |
-        tr -d '\r' | awk '/^stick:/ { f = 1 } f && /^Read:/ { print $2; exit }'
+        tr -d '\r' |
+        awk '/^stick:/ { if (match($0, /rd_bytes=[0-9]+/)) {
+                             print substr($0, RSTART + 9, RLENGTH - 9); exit }
+                         f = 1; next }
+             f && /^Read:/ { print $2; exit }'
 }
 media_base=
 media_what="its media after the kernel started"
@@ -461,8 +470,10 @@ done
 # and listing the disk it found, while serial stayed empty for 300s. The
 # reason says which entry, so the next reader does not have to rediscover
 # that.
+# `|| true`: no such line is the common case under pipefail, and set -e
+# would turn it into an ERROR instead of the FAIL below.
 started=$(grep -m1 '^ *starting ' <<<"$(serial_text | tail -n +"$((MENU_LINES + 1))")" |
-          sed 's/^[[:space:]]*starting //' | cut -c1-80)
+          sed 's/^[[:space:]]*starting //' | cut -c1-80 || true)
 if [[ -n "$started" ]]; then
     finish FAIL "no userland on serial within ${TIMEOUT}s after starting $started"
 fi
