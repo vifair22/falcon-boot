@@ -43,4 +43,39 @@ uint64_t e820_place_high(uint64_t size, uint64_t align, uint64_t low,
 uint64_t e820_place_in(const e820_entry *map, unsigned n, uint64_t size,
                        uint64_t align, uint64_t low, uint64_t high);
 
+/* A stretch of memory the loader leaves in use behind it when it hands the
+ * machine over: the resident CD handler, and the Windows route's patched
+ * tail (vcd.c). */
+typedef struct {
+    uint64_t base;
+    uint64_t len;
+} e820_range;
+
+/* The most reserved ranges e820_carve takes. */
+#define E820_CARVE_MAX 4u
+
+/* The map a chainloaded loader should see: `in` with every range in `res`
+ * taken out of the usable memory it overlaps and reported as reserved in
+ * its place. Entries that are not usable pass through unchanged, and the
+ * order of `in` is kept, so each usable entry becomes up to one piece more
+ * per range than it was.
+ *
+ * Why: a chainloaded bootmgr or kernel allocates from the E820 map, and the
+ * memory this loader leaves in use behind it has to be absent from that map
+ * or it will be handed out. MEMDISK does the same.
+ *
+ * 0 with *n_out set, or -1 on a bad argument or when `out` has no room for
+ * the result. */
+int e820_carve(const e820_entry *in, unsigned n, const e820_range *res,
+               unsigned n_res, e820_entry *out, unsigned cap,
+               unsigned *n_out);
+
+/* INT 15h AX=E801's answer for memory above 16 MB is one contiguous count of
+ * 64 KB blocks, so it cannot describe a hole. This is the count that stops
+ * short of the lowest range in `res` that reaches above 16 MB, or 0xFFFF
+ * (no limit) when none does. A range between 1 and 16 MB would need the
+ * other half of E801's answer capped too; nothing reserves one, and vcd.c
+ * refuses a range there. */
+uint16_t e820_e801_cap(const e820_range *res, unsigned n_res);
+
 #endif /* FALCON_BIOS_E820_H */

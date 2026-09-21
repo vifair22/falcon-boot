@@ -239,11 +239,14 @@ the tree, so `#include <fs/exfat.h>` means one file wherever it is written.
   halves with no BIOS in them are `vcdcore.c` (the virtual CD's run and
   overlay arithmetic), `linuxcore.c` (the addresses the x86 boot protocol is
   handed, and the four-byte padding between concatenated initrds) and
-  `e820_place_in` (which picks an initrd's address out of a memory map the
-  test writes). All three fail silently on a real machine, which is why they
-  are separate from the code that does the writing. `make
-  bios` builds it and `make test-bios-img` makes a disk the rig boots with
-  `falcon-efi/tools/run-qemu.sh --bios`.
+  `e820.c`'s arithmetic (`e820_place_in` picks an initrd's address out of a
+  memory map the test writes; `e820_carve` is the map a chainloaded loader
+  is handed, with what the loader leaves behind taken out). All three fail
+  silently on a real machine, which is why they are separate from the code
+  that does the writing. `make bios` builds it, `make test-bios-img` makes
+  a disk the rig boots with `falcon-efi/tools/run-qemu.sh --bios`, and
+  `make test-bios-probe` makes the medium that checks the resident's INT 15h
+  half from real mode (`tools/memprobe.S`).
 
   Three stages, because stage 2 is linked where real mode and long mode agree
   on what an address means and so cannot exceed about 33 KB. `src/boot.S` is
@@ -258,8 +261,9 @@ the tree, so `#include <fs/exfat.h>` means one file wherever it is written.
   All five of Section 4's boot routes work: `src/linux.c` takes the x86 boot
   protocol's 64-bit entry (falcon-hook and its extent map appended as the
   UEFI loader appends them); `src/vcdres.S` is the resident INT 13h handler
-  that serves an ISO as a CD, with `src/vcdcore.c` its host-tested half and
-  `src/vcd.c` its installation; `src/pos.c` unwraps a UKI out of p3 rather
+  that serves an ISO as a CD, and the INT 15h half that keeps the memory it
+  leaves behind out of the map the medium is handed, with `src/vcdcore.c`
+  and `e820_carve` its host-tested halves and `src/vcd.c` its installation; `src/pos.c` unwraps a UKI out of p3 rather
   than chainloading it, rebuilding sd-stub's credential cpio itself;
   `src/bsd.c` lays `media/bsdmd.c`'s two edits over the served medium; and
   `src/win.c` patches boot.wim with core's `wim`, serving the appended tail

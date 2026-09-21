@@ -14,8 +14,9 @@
 int heap_open(uint64_t want);
 
 /* A page-aligned block, or NULL when the run is exhausted. There is no free:
- * one of these boots happens at a time, and the memory it holds is memory
- * the payload will find already accounted for in the map it is handed. */
+ * one of these boots happens at a time. What of it the handler serves after
+ * the handoff is taken out of the map the payload is handed (vcd.c, the
+ * appended region), so the payload does not allocate over it. */
 void *heap_alloc(uint64_t n);
 
 /* The physical address of a pointer heap_alloc returned, which is what an

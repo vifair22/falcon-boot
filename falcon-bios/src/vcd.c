@@ -22,6 +22,7 @@
 #include <bios.h>
 #include <vcd.h>
 #include <vcdcore.h>
+#include <e820.h>
 
 #include <fs/fs.h>
 #include <media/eltorito.h>
@@ -46,6 +47,15 @@ static size_t vcd_blob_len(void)
  * the vector this loader takes over. */
 #define BDA_MEMSIZE 0x413
 #define IVT_INT13   (0x13u * 4u)
+#define IVT_INT15   (0x15u * 4u)
+
+/* The bounce buffer and everything below it are stage 3's until the jump,
+ * so the resident may not start under its end (biosdefs.h: the floor
+ * mem_check holds the EBDA to). */
+#define RESIDENT_FLOOR 0x98000u
+
+/* The memory map the resident answers E820 with. */
+static e820_entry g_carved[VCD_E820_MAX];
 
 static vcd_map    g_map;
 
@@ -67,6 +77,9 @@ static unsigned g_n_pending;
  * the ISO's own end, which the medium has to be grown to hold. */
 static uint32_t g_append_phys;
 static uint32_t g_append_cd;
+
+static unsigned g_n_carved;
+static uint16_t g_e801_cap;
 
 static vcd_extent g_ext[VCD_MAX_RUNS + 8u];
 static fs_extent  g_fsext[VCD_MAX_RUNS + 8u];
@@ -204,6 +217,8 @@ static uint16_t resident_segment(void)
      * believe, and taking memory from it would be worse than refusing. */
     if (have < 256u || have <= want)
         return 0;
+    if ((uint32_t)(have - want) * 1024u < RESIDENT_FLOOR)
+        return 0;
     return (uint16_t)((uint32_t)(have - want) * 1024u / 16u);
 }
 
@@ -331,6 +346,35 @@ int vcd_chainload(bios_disk *d, fs_vol *p2, const gpt_part *p2part,
         }
     }
 
+    /* The memory map a chainloaded loader will allocate from, with what
+     * stays in use behind the handoff taken out of it: this block, and the
+     * appended region the handler serves from extended memory. The BDA
+     * hides the block from a caller that asks it; this hides both from one
+     * that asks E820 or E801, which is what bootmgr and a kernel ask. */
+    {
+        e820_range keep[2];
+        unsigned n_keep = 0;
+        const e820_entry *first = e820_at(0);
+
+        keep[n_keep].base = (uint64_t)seg * 16u;
+        keep[n_keep].len = VCD_BYTES;
+        n_keep++;
+        if (g_append_cd != 0) {
+            keep[n_keep].base = g_append_phys;
+            keep[n_keep].len = (uint64_t)g_append_cd * VCD_CD_BYTES;
+            n_keep++;
+        }
+        g_n_carved = 0;
+        if (first != (const e820_entry *)0 &&
+            e820_carve(first, e820_count(), keep, n_keep, g_carved,
+                       VCD_E820_MAX, &g_n_carved) != 0) {
+            put("  the memory map is too long to hand on with the handler's"
+                " memory taken out\n");
+            return -1;
+        }
+        g_e801_cap = e820_e801_cap(keep, n_keep);
+    }
+
     /* The resident, in memory the BIOS is about to be told it does not
      * have. */
     at = (uint8_t *)(uintptr_t)((uint32_t)seg * 16u);
@@ -373,6 +417,21 @@ int vcd_chainload(bios_disk *d, fs_vol *p2, const gpt_part *p2part,
         memcpy(o + 12, &g_map.over[i].phys, 4);
     }
 
+    /* The INT 15h half: the vector it chains to, the map, the ceiling. */
+    old_vector = peek32(IVT_INT15);
+    memcpy(at + VCD_OFF_OLDINT15, &old_vector, 4);
+    at[VCD_OFF_NE820] = (uint8_t)(g_n_carved & 0xFFu);
+    at[VCD_OFF_NE820 + 1u] = (uint8_t)(g_n_carved >> 8);
+    at[VCD_OFF_E801CAP] = (uint8_t)(g_e801_cap & 0xFFu);
+    at[VCD_OFF_E801CAP + 1u] = (uint8_t)(g_e801_cap >> 8);
+    for (i = 0; i < g_n_carved; i++) {
+        uint8_t *m = at + VCD_OFF_E820 + i * VCD_E820_LEN;
+
+        memcpy(m, &g_carved[i].base, 8);
+        memcpy(m + 8, &g_carved[i].len, 8);
+        memcpy(m + 16, &g_carved[i].type, 4);
+    }
+
     write_spec(at + VCD_OFF_SPEC, e, load_seg);
 
     /* What the launch stub moves, and where to. */
@@ -398,6 +457,7 @@ int vcd_chainload(bios_disk *d, fs_vol *p2, const gpt_part *p2part,
      * hooked, the machine is about to be somebody else's. */
     take_conventional_memory(seg);
     poke32(IVT_INT13, ((uint32_t)seg << 16) | (uint32_t)VCD_OFF_CODE);
+    poke32(IVT_INT15, ((uint32_t)seg << 16) | (uint32_t)VCD_OFF_CODE15);
 
     /* Out through the stub, not straight to the boot image: what boot16
      * lands on has to still be there after the image is placed. */

@@ -2963,12 +2963,12 @@ real mode.
 | 0x20000 | Linux cmdline; or the staged El Torito boot image (up to 63 KiB) on a chainload | handed over |
 | 0x80000-0x82FFF | PML4, PDPT, PD | whole loader |
 | 0x90000-0x97FFF | bounce buffer | every read |
-| BDA top - 16 KiB | the resident CD handler: data, runs, El Torito packet, launch stub at +0x530, handler at +0x570, overlay pool at +0x1000 | permanent after a chainload |
+| BDA top - 16 KiB | the resident CD handler: data, runs, El Torito packet, launch stub at +0x530, INT 13h entry at +0x570, INT 15h entry at +0xA00, carved E820 map at +0xB00, overlay pool at +0x1000; never below 0x98000 | permanent after a chainload; reserved in the map it hands on |
 | 0x100000 | stage 3: 16-byte header, entry at +0x10, then its image and `.bss` (at most 0x6F0000 together) | whole loader |
 | 0x7F0000-0x7FFFFF | stage 3 stack, RSP from 0x800000 | whole loader |
 | 0x1000000 | the kernel's protected-mode part (aligned up; `pref_address` for a non-relocatable kernel) | handed to the kernel |
 | highest fit below 1 GiB | the initrds, placed from E820 | handed to the kernel |
-| highest fit in 64 MiB-1 GiB | `heap.c`: the patched boot.wim tail | through the chainload, served by AH=87h |
+| highest fit in 64 MiB-1 GiB | `heap.c`: the patched boot.wim tail | through the chainload, served by AH=87h; the appended part reserved in the map it hands on |
 | 1 GiB | end of the identity map; nothing may be written above it | |
 
 `mem_check` refuses a machine whose EBDA reaches below 0x98000, because the
@@ -3073,19 +3073,33 @@ sequenceDiagram
     L->>L: El Torito catalog: the BIOS entry, no emulation only
     L->>L: vcd_build: runs of CD sectors contiguous on p2
     L->>B: boot image (up to 63 KiB) staged at 0x20000
-    L->>L: BDA 0x413 lowered 16 KiB, handler, runs, overlay pool copied there
-    L->>L: IVT[0x13] = the handler, gate target = its launch stub
+    L->>L: handler, runs, overlay pool, carved E820 map copied to the BDA's top 16 KiB
+    L->>L: BDA 0x413 lowered 16 KiB, IVT[0x13] and IVT[0x15] = the handler
+    L->>L: gate target = its launch stub
     L->>L: call 0x7E10 (boot16): long mode to real mode, one way
     L->>R: launch stub: image copied to 07C0:0000, DL = 0xE0
     R->>P: jump
     P->>R: INT 13h on 0xE0: AH=41h, 42h, 48h, 4Bh
     R->>R: overlay first, else the run, re-issued to the real drive
     R->>B: INT 13h on the stick
+    P->>R: INT 15h E820, E801
+    R-->>P: the carved map, E801 held below the appended region
     P->>P: isolinux / GRUB / cdboot / etfsboot load their next stage
 ```
 
 Other drives pass through to the previous handler. Writes fail. Reads past
 the medium's end up to 64 sectors of padding return zeros.
+
+What stays in use behind the handoff is hidden from what comes next. The
+BDA's lowered count hides the handler's 16 KiB from anything that asks for
+conventional memory. The INT 15h half hides it, and the appended region the
+handler serves from extended memory (Windows' tail, 12.3.9), from anything
+that asks for the map: it answers E820 from a copy of the BIOS's map with
+both ranges carved out as reserved (`e820_carve`, host tested), caps E801's
+count of 64 KiB blocks above 16 MiB below the appended region, and passes
+every other INT 15h call, the handler's own AH=87h included, to the BIOS.
+The rig checks it with `make test-bios-probe`, a medium whose boot image
+prints the map it is handed (`falcon-bios/tools/memprobe.S`).
 
 Unlike UEFI's virtual CD, this one outlives the handoff: anything that keeps
 reading through INT 13h keeps working, including bootmgr and winload, which

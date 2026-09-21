@@ -200,6 +200,14 @@
 /* The six descriptors INT 15h AH=87h reads to move bytes the far side of a
  * megabyte. Only the second and third are ours; the BIOS fills the rest. */
 #define VCD_OFF_MOVEGDT  0x00B0   /* 48 bytes */
+
+/* The INT 15h half (DESIGN Section 12.3.8): the vector it chains to, how many
+ * entries of the memory map it answers E820 with (0: it answers none and the
+ * BIOS answers them all), and the ceiling on E801's count of 64 KB blocks
+ * above 16 MB. */
+#define VCD_OFF_OLDINT15 0x00E0   /* far pointer to the previous handler */
+#define VCD_OFF_NE820    0x00E4   /* word */
+#define VCD_OFF_E801CAP  0x00E6   /* word */
 #define VCD_OFF_RUNS     0x0100   /* 64 runs of 16 bytes */
 #define VCD_RUN_LEN      16
 #define VCD_MAX_RUNS_ASM 64
@@ -218,7 +226,18 @@
 #define VCD_OFF_LAUNCH   0x0530
 #define VCD_OFF_CODE     0x0570
 
-/* The resident is one 4 KB block; the twelve kilobytes after it are the
+/* The INT 15h entry, and the memory map it answers with: the BIOS's own,
+ * with the resident and anything it serves from extended memory carved out
+ * of it (e820_carve). Twenty-byte entries, the form without ACPI 3.0's
+ * attributes word, which every caller accepts. 64 of them is what fits the
+ * block, and a real map is a few dozen at most. */
+#define VCD_OFF_CODE15   0x0A00
+#define VCD_OFF_E820     0x0B00
+#define VCD_E820_LEN     20
+#define VCD_E820_MAX     64
+
+/* The resident is one 4 KB block, its memory map filling the last of it;
+ * the twelve kilobytes after it are the
  * overlay pool, the bytes an override serves. Sixteen kilobytes is what the
  * BIOS data area is told the machine no longer has. */
 #define VCD_OVER_OFF     0x1000

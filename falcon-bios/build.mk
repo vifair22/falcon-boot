@@ -252,4 +252,23 @@ $(BIOS_GPT_IMG):
 
 test-bios-img: $(BIOS_IMG) $(BIOS_GPT_IMG)
 
-.PHONY: bios test-bios-img
+# A medium whose boot image reports the memory map it is handed
+# (falcon-bios/tools/memprobe.S): chainloaded off a rig stick's p2, it is
+# the check on the resident's INT 15h half, which no host test reaches.
+BIOS_PROBE_BIN := build/memprobe.bin
+BIOS_PROBE_ISO := build/memprobe.iso
+
+$(BIOS_PROBE_BIN): $(BIOS_OBJ)/falcon-bios/tools/memprobe.o $(BIOS)/bios.ld
+	@mkdir -p $(@D)
+	$(CC_HOST) $(BIOS_LDFLAGS) -Wl,-Ttext,0 -Wl,-e,_start -o $@.elf $<
+	objcopy -O binary -j .text $@.elf $@
+
+$(BIOS_PROBE_ISO): $(BIOS_PROBE_BIN)
+	@mkdir -p $@.root
+	cp -f $< $@.root/memprobe.bin
+	xorriso -as mkisofs -quiet -o $@ -V MEMPROBE -b memprobe.bin \
+		-no-emul-boot -boot-load-size 4 $@.root
+
+test-bios-probe: $(BIOS_PROBE_ISO)
+
+.PHONY: bios test-bios-img test-bios-probe

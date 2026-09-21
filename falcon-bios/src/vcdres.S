@@ -76,6 +76,12 @@ vcd_blob_start:
 	.space  (VCD_MAX_OVER_ASM * VCD_OV_LEN)
 	.org    VCD_OFF_MOVEGDT
 	.space  48
+	.org    VCD_OFF_OLDINT15
+	.long   0
+	.org    VCD_OFF_NE820
+	.word   0
+	.org    VCD_OFF_E801CAP
+	.word   0
 	.org    VCD_OFF_RUNS
 	.space  (VCD_MAX_RUNS_ASM * VCD_RUN_LEN)
 	.org    VCD_OFF_SPEC
@@ -609,5 +615,82 @@ fail:
 	orw     $0x0001, 6(%bp)
 	popw    %bp
 	iret
+
+/* ---- INT 15h: the memory map ----
+ *
+ * What a chainloaded bootmgr or kernel allocates from is the map E820 hands
+ * it, and this block, and on Windows the patched tail above 64 MB that the
+ * read path above serves with AH=87h, are memory it must not be handed. The
+ * BDA hides the block from anything that asks for conventional memory; this
+ * hides both from anything that asks for the map. MEMDISK has done the same
+ * since 2001.
+ *
+ * It decides nothing. vcd.c builds the map (e820.c's e820_carve, host
+ * tested) and the E801 ceiling, and this hands them out: the E820 entry
+ * EBX names, and E801's answer from the BIOS with its count above 16 MB
+ * stopped short of the tail. Everything else, AH=87h from the read path
+ * above included, goes to the BIOS as if this were not here. */
+	.org    VCD_OFF_CODE15
+	.globl  vcd_entry15
+vcd_entry15:
+	cmpw    $0xE801, %ax
+	je      e801_capped
+	cmpl    $0x0000E820, %eax
+	jne     1f
+	cmpl    $0x534D4150, %edx    /* "SMAP": the caller asked for this map */
+	jne     1f
+	cmpw    $0, %cs:VCD_OFF_NE820
+	jne     e820_next
+1:	ljmp    *%cs:VCD_OFF_OLDINT15
+
+/* EBX is the index of the entry wanted, 0 to start; it comes back as the
+ * next one, or 0 after the last, which is how every caller knows to stop. */
+e820_next:
+	cmpl    $VCD_E820_LEN, %ecx
+	jb      e820_bad
+	movzwl  %cs:VCD_OFF_NE820, %eax
+	cmpl    %eax, %ebx
+	jae     e820_bad
+	pushw   %ds
+	pushl   %esi
+	pushw   %di
+	imull   $VCD_E820_LEN, %ebx, %esi
+	addw    $VCD_OFF_E820, %si
+	pushw   %cs
+	popw    %ds
+	movw    $(VCD_E820_LEN / 2), %cx
+	cld
+	rep movsw
+	popw    %di
+	popl    %esi
+	popw    %ds
+	incl    %ebx
+	cmpl    %eax, %ebx
+	jb      2f
+	xorl    %ebx, %ebx
+2:	movl    $0x534D4150, %eax
+	movl    $VCD_E820_LEN, %ecx
+	jmp     succeed
+e820_bad:
+	movb    $0x86, %ah
+	jmp     fail
+
+/* E801: the BIOS's answer, with the count of 64 KB blocks above 16 MB in BX
+ * and DX held to the ceiling. The flags come back from the BIOS's iret into
+ * ours, the way the read path's AH=42h call gets them. */
+e801_capped:
+	pushfw
+	lcall   *%cs:VCD_OFF_OLDINT15
+	jc      fail
+	cmpw    %cs:VCD_OFF_E801CAP, %bx
+	jbe     3f
+	movw    %cs:VCD_OFF_E801CAP, %bx
+3:	cmpw    %cs:VCD_OFF_E801CAP, %dx
+	jbe     succeed
+	movw    %cs:VCD_OFF_E801CAP, %dx
+	jmp     succeed
+
+	.org    VCD_OFF_E820
+	.space  (VCD_E820_MAX * VCD_E820_LEN)
 
 vcd_blob_end:

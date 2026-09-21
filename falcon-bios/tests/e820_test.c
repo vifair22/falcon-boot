@@ -17,6 +17,7 @@
 #include <cmocka.h>
 
 #include <e820.h>
+#include <string.h>
 
 #define MIB (1024ull * 1024ull)
 
@@ -111,6 +112,133 @@ static void test_place_picks_the_highest_that_fits(void **state)
     assert_true(at >= 0x00100000ull && at < 0x20000000ull);
 }
 
+/* ---- carving what the loader leaves behind out of the map ---- */
+
+#define KIB 1024ull
+
+/* The chainload's shape: the resident at the top of conventional memory,
+ * the Windows tail high in extended memory. Each usable entry they fall in
+ * is cut around them, the reserved pieces are reported in its place, and
+ * the entries that were never usable are untouched. */
+static void test_carve_splits_usable(void **state)
+{
+    const e820_range res[] = {
+        { 256ull * MIB, 8ull * MIB },            /* given out of order */
+        { 0x9BC00ull,   16ull * KIB }
+    };
+    e820_entry out[16];
+    unsigned n = 99;
+
+    (void)state;
+    memset(out, 0, sizeof out);
+    assert_int_equal(e820_carve(g_simple, SIMPLE_N, res, 2, out, 16, &n), 0);
+    /* The resident ends where the first entry does, so that one has no
+     * usable tail: two pieces, the two reserved entries, three pieces. */
+    assert_int_equal(n, 7);
+
+    assert_int_equal(out[0].base, 0);
+    assert_int_equal(out[0].len, 0x9BC00ull);
+    assert_int_equal(out[0].type, E820_USABLE);
+    assert_int_equal(out[1].base, 0x9BC00ull);
+    assert_int_equal(out[1].len, 16ull * KIB);
+    assert_int_equal(out[1].type, E820_RESERVED);
+    assert_int_equal(out[2].base, 0x9FC00ull);
+    assert_int_equal(out[2].type, E820_RESERVED);   /* was reserved already */
+    assert_int_equal(out[3].base, 0xF0000ull);
+
+    assert_int_equal(out[4].base, 1ull * MIB);
+    assert_int_equal(out[4].len, 255ull * MIB);
+    assert_int_equal(out[4].type, E820_USABLE);
+    assert_int_equal(out[5].base, 256ull * MIB);
+    assert_int_equal(out[5].len, 8ull * MIB);
+    assert_int_equal(out[5].type, E820_RESERVED);
+    assert_int_equal(out[6].base, 264ull * MIB);
+    assert_int_equal(out[6].len, 2048ull * MIB - 264ull * MIB);
+    assert_int_equal(out[6].type, E820_USABLE);
+    assert_int_equal(out[7].type, 0);   /* nothing past the count is written */
+}
+
+/* A range that ends exactly where a usable entry does, one that starts at
+ * its base, and one that is not in usable memory at all. No zero-length
+ * pieces, and nothing reported over memory that was never usable. */
+static void test_carve_edges(void **state)
+{
+    const e820_range res[] = {
+        { 0x00000ull,  4ull * KIB },            /* at the base */
+        { 0x9EC00ull,  4ull * KIB },            /* flush with the end */
+        { 0xF0000ull,  4ull * KIB }             /* inside a reserved entry */
+    };
+    e820_entry out[16];
+    unsigned n = 0;
+
+    (void)state;
+    memset(out, 0, sizeof out);
+    assert_int_equal(e820_carve(g_simple, SIMPLE_N, res, 3, out, 16, &n), 0);
+    assert_int_equal(n, 6);
+    assert_int_equal(out[0].type, E820_RESERVED);
+    assert_int_equal(out[0].base, 0);
+    assert_int_equal(out[1].type, E820_USABLE);
+    assert_int_equal(out[1].base, 4ull * KIB);
+    assert_int_equal(out[1].len, 0x9EC00ull - 4ull * KIB);
+    assert_int_equal(out[2].type, E820_RESERVED);
+    assert_int_equal(out[2].base, 0x9EC00ull);
+    assert_int_equal(out[3].base, 0x9FC00ull);
+    assert_int_equal(out[4].base, 0xF0000ull);
+    assert_int_equal(out[4].len, 0x10000ull);
+    assert_int_equal(out[5].base, 1ull * MIB);
+    assert_int_equal(out[5].len, 2047ull * MIB);
+}
+
+/* No room is a refusal, not a truncated map: a map with a range missing
+ * would hand out exactly the memory this exists to protect. */
+static void test_carve_refusals(void **state)
+{
+    const e820_range res[] = { { 0x9BC00ull, 16ull * KIB } };
+    const e820_range many[E820_CARVE_MAX + 1u] = { { 0, 1 } };
+    e820_entry out[16];
+    unsigned n = 7;
+
+    (void)state;
+    assert_int_equal(e820_carve(g_simple, SIMPLE_N, res, 1, out, 4, &n), -1);
+    assert_int_equal(n, 0);
+    assert_int_equal(e820_carve(g_simple, SIMPLE_N, res, 1, out, 5, &n), 0);
+    assert_int_equal(n, 5);
+    assert_int_equal(e820_carve(g_simple, SIMPLE_N, many, E820_CARVE_MAX + 1u,
+                                out, 16, &n), -1);
+    assert_int_equal(e820_carve((const e820_entry *)0, 1, res, 1, out, 16,
+                                &n), -1);
+    assert_int_equal(e820_carve(g_simple, SIMPLE_N, res, 1,
+                                (e820_entry *)0, 16, &n), -1);
+    assert_int_equal(e820_carve(g_simple, SIMPLE_N, res, 1, out, 16,
+                                (unsigned *)0), -1);
+
+    /* Nothing to carve is the map as it was. */
+    assert_int_equal(e820_carve(g_simple, SIMPLE_N, (const e820_range *)0, 0,
+                                out, 16, &n), 0);
+    assert_int_equal(n, SIMPLE_N);
+}
+
+/* E801 counts 64 KB blocks above 16 MB as one run, so it stops short of the
+ * lowest range above 16 MB, and a range below it changes nothing. */
+static void test_e801_cap(void **state)
+{
+    const e820_range tail[] = {
+        { 0x9BC00ull, 16ull * KIB },
+        { 512ull * MIB, 8ull * MIB },
+        { 256ull * MIB, 8ull * MIB }
+    };
+    const e820_range low[] = { { 0x9BC00ull, 16ull * KIB } };
+    const e820_range straddle[] = { { 15ull * MIB, 2ull * MIB } };
+    const e820_range huge[] = { { 8192ull * MIB, MIB } };
+
+    (void)state;
+    assert_int_equal(e820_e801_cap(tail, 3), (256u - 16u) * 16u);
+    assert_int_equal(e820_e801_cap(low, 1), 0xFFFFu);
+    assert_int_equal(e820_e801_cap(straddle, 1), 0);
+    assert_int_equal(e820_e801_cap(huge, 1), 0xFFFFu);
+    assert_int_equal(e820_e801_cap((const e820_range *)0, 0), 0xFFFFu);
+}
+
 int run_e820_tests(void)
 {
     const struct CMUnitTest tests[] = {
@@ -118,6 +246,10 @@ int run_e820_tests(void)
         cmocka_unit_test(test_place_aligns_down),
         cmocka_unit_test(test_place_refusals),
         cmocka_unit_test(test_place_picks_the_highest_that_fits),
+        cmocka_unit_test(test_carve_splits_usable),
+        cmocka_unit_test(test_carve_edges),
+        cmocka_unit_test(test_carve_refusals),
+        cmocka_unit_test(test_e801_cap),
     };
 
     return cmocka_run_group_tests_name("bios e820", tests, NULL, NULL);
