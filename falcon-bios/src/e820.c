@@ -84,25 +84,25 @@ const e820_entry *e820_at(unsigned i)
     return &g_map[i];
 }
 
-uint64_t e820_place_high(uint64_t size, uint64_t align, uint64_t low,
-                         uint64_t high)
+uint64_t e820_place_in(const e820_entry *map, unsigned n, uint64_t size,
+                       uint64_t align, uint64_t low, uint64_t high)
 {
     uint64_t best = 0;
     unsigned i;
 
-    if (size == 0 || align == 0)
+    if (map == (const e820_entry *)0 || size == 0 || align == 0)
         return 0;
 
-    for (i = 0; i < g_count; i++) {
+    for (i = 0; i < n; i++) {
         uint64_t start;
         uint64_t end;
         uint64_t at;
 
-        if (g_map[i].type != E820_USABLE)
+        if (map[i].type != E820_USABLE)
             continue;
 
-        start = g_map[i].base;
-        end = g_map[i].base + g_map[i].len;   /* exclusive */
+        start = map[i].base;
+        end = map[i].base + map[i].len;   /* exclusive */
         if (start < low)
             start = low;
         if (end > high)
@@ -119,4 +119,12 @@ uint64_t e820_place_high(uint64_t size, uint64_t align, uint64_t low,
             best = at;
     }
     return best;
+}
+
+/* The cached map, which is the only one the loader has. Split from the line
+ * above it so the arithmetic can be handed a map a test wrote. */
+uint64_t e820_place_high(uint64_t size, uint64_t align, uint64_t low,
+                         uint64_t high)
+{
+    return e820_place_in(g_map, g_count, size, align, low, high);
 }

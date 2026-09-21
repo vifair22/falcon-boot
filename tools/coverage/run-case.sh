@@ -95,6 +95,34 @@ VARS="$OUTDIR/vars.fd"
 RESULT="$OUTDIR/result"
 rm -f "$SERIAL" "$PCAP" "$MON" "$RESULT" "$OUTDIR/screen.png"
 
+# Every exit writes a verdict, including the ones nobody planned.
+#
+# This script runs under `set -e`, so any command that fails on its way to
+# the verdict took it out with no result file and a stale mon.sock beside
+# it. The scorecard then had no cell to render and the corpus showed a
+# silent gap - which is what two ESXi cases did, twice, while the loader's
+# own serial said it had behaved correctly. A cell reading ERROR with an
+# exit status is a defect somebody can chase; a missing cell has to be
+# noticed first.
+#
+# Installed here, the moment RESULT has a name, and deliberately NOT written
+# in terms of finish(): the failures worth catching include the ones that
+# happen before finish has been defined. finish writes RESULT before it
+# exits, so the guard is what keeps this from firing a second verdict over
+# a real one.
+on_exit() {
+    local rc=$?
+
+    trap - EXIT
+    [[ -f "$RESULT" ]] && exit "$rc"
+    [[ -n "${QPID:-}" ]] && kill "$QPID" 2>/dev/null
+    rm -f "$MON" "${VARS:-}" 2>/dev/null
+    printf 'ERROR\texited %s before reaching a verdict\t%s\n' "$rc" \
+        "$(( $(date +%s) - ${T0:-$(date +%s)} ))" > "$RESULT"
+    exit "$rc"
+}
+trap on_exit EXIT
+
 state_firmware "$STATE" "$VARS"   # sets STATE_CODE/SECURE/BIOS, copies vars
 
 # The Secure Boot builds of OVMF keep their variable store behind SMM, and
@@ -190,6 +218,7 @@ print('text console' if dark > 0.8 * total else 'graphical')
 PY
 }
 trap 'finish ERROR "interrupted"' INT TERM
+
 
 # QEMU writes its snapshot overlay beside TMPDIR; keep it on the same volume
 # as build/ rather than in a RAM-backed /tmp that a 5 GB guest write would
@@ -419,4 +448,22 @@ while (( $(date +%s) - T1 < TIMEOUT )); do
     fi
     sleep 1
 done
+# The loader prints "starting <entry>" as it hands over, so a timeout after
+# one is a different thing from a timeout before it: the payload was
+# launched and then said nothing this harness can read.
+#
+# That is usually not a defect. The harness reads serial and DHCP; a
+# blessed wrap carries console=ttyS0 because mk-case-stick.sh puts it there,
+# and falcon-bios appends it to a direct boot itself, but a direct or chained
+# boot under UEFI runs the ISO's OWN cmdline and many of them write to the
+# screen alone. Clonezilla's default entry is "Clonezilla live (VGA
+# 800x600)": measured 2026-09-20, its screenshot shows ocs-scan-disk running
+# and listing the disk it found, while serial stayed empty for 300s. The
+# reason says which entry, so the next reader does not have to rediscover
+# that.
+started=$(grep -m1 '^ *starting ' <<<"$(serial_text | tail -n +"$((MENU_LINES + 1))")" |
+          sed 's/^[[:space:]]*starting //' | cut -c1-80)
+if [[ -n "$started" ]]; then
+    finish FAIL "no userland on serial within ${TIMEOUT}s after starting $started"
+fi
 finish FAIL "no userland within ${TIMEOUT}s"

@@ -36,4 +36,11 @@ const e820_entry *e820_at(unsigned i);
 uint64_t e820_place_high(uint64_t size, uint64_t align, uint64_t low,
                          uint64_t high);
 
+/* The same, over a map the caller supplies rather than the cached one. The
+ * loader only ever has one map; this exists so the arithmetic that picks an
+ * initrd's address can be tested against maps a machine would be awkward to
+ * arrange. */
+uint64_t e820_place_in(const e820_entry *map, unsigned n, uint64_t size,
+                       uint64_t align, uint64_t low, uint64_t high);
+
 #endif /* FALCON_BIOS_E820_H */

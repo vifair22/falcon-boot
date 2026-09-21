@@ -111,6 +111,18 @@ def main():
     w('keys is reported beside them, without a target: media signed only by')
     w('Microsoft cannot boot on such a machine at all (DESIGN 7.2).')
     w('')
+    w('A cell reading "no userland on serial ... after starting <entry>" is a')
+    w('measurement limit and not necessarily a failure. This harness reads')
+    w('the serial console and a DHCP capture. A blessed wrap carries')
+    w('console=ttyS0 because mk-case-stick.sh puts it there, and falcon-bios')
+    w('appends it to a direct boot itself; a direct or chained boot under')
+    w('UEFI runs the ISO\'s own cmdline, and an entry that writes to the')
+    w('screen alone leaves both signals empty. Clonezilla is the worked')
+    w('example (2026-09-20): its default entry is "Clonezilla live (VGA')
+    w('800x600)", the screenshot beside the FAIL shows ocs-scan-disk running')
+    w('and listing the disk it found, and serial stayed empty for 300s. Read')
+    w('the screenshot before believing one of these.')
+    w('')
 
     head = ['ISO', 'tier', 'family']
     for st, name in STATES:

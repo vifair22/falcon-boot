@@ -132,10 +132,34 @@
 #       do. Both flags are mandatory for an ISO attach (DESIGN Section 6.3),
 #       so the value is exactly right and the check simply does not model
 #       bitmask enums.
+#
+# ==========================================================================
+# 5. -Wanalyzer-out-of-bounds in wbuf_ucs2 (1 entry)
+# ==========================================================================
+#
+# falcon-efi/src/efi/main.c, the copy loop behind every menu tag:
+#
+#     while (*s != 0 && w->len + 1 < w->cap)
+#         w->buf[w->len++] = *s++;
+#
+# The analyzer reports a two-byte read past the end of the literal L"[" in
+# tags_build. It cannot happen: *s is tested before each read and s advances
+# only inside the body, so a two-unit literal is read exactly twice, at [0]
+# and at the terminator. The write is bounded by the same condition, which
+# leaves w->len <= cap - 1 for the terminating store.
+#
+# It is a path-length artifact. The trace gcc prints is sixty steps long,
+# from efi_main through banner_init, scan_all_volumes, targets_build,
+# probe_entries, out_dec, payload_survey and tags_build before it reaches
+# the loop, and the analyzer has lost the literal's extent by the end of it.
+# It appeared when the survey moved into falcon-core (media/survey.c) and
+# the call graph in front of the loop changed shape; the loop itself has not
+# been touched.
 
 fanalyzer	falcon-cli/src/sign/util.c	-Wanalyzer-fd-leak	leak of file descriptor 'dup2(fds[1], 1)' [CWE-775]
 fanalyzer	falcon-cli/src/sign/util.c	-Wanalyzer-fd-leak	leak of file descriptor 'dup2(out_fd, 1)' [CWE-775]
 fanalyzer	falcon-cli/src/sign/util.c	-Wanalyzer-fd-leak	leak of file descriptor 'dup2(out_fd, 1)' [CWE-775]
+fanalyzer	falcon-efi/src/efi/main.c	-Wanalyzer-out-of-bounds	buffer over-read [CWE-126]
 fanalyzer	falcon-core/src/crypto/sha256.c	-Wanalyzer-use-of-uninitialized-value	use of uninitialized value 'w[<unknown>]' [CWE-457]
 fanalyzer	falcon-core/src/crypto/sha512.c	-Wanalyzer-use-of-uninitialized-value	use of uninitialized value 'w[<unknown>]' [CWE-457]
 tidy	falcon-cli/src/mkstick/inspect.c	bugprone-narrowing-conversions	narrowing conversion from 'int' to signed type 'char' is implementation-defined

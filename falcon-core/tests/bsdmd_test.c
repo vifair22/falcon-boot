@@ -247,7 +247,7 @@ static void test_bsdmd_config(void **state)
     /* Every line up to, but not including, the first that is neither blank
      * nor a comment. */
     block = (size_t)(strstr(g_head, "exec=") - g_head);
-    assert_int_equal(bsdmd_config("/FALCONBS.IMG;1", g_head,
+    assert_int_equal(bsdmd_config("/FALCONBS.IMG;1", NULL, g_head,
                                   strlen(g_head), out, sizeof out, &len),
                      BSDMD_OK);
     assert_int_equal(len, block);
@@ -258,26 +258,74 @@ static void test_bsdmd_config(void **state)
     assert_int_equal(out[len - 2u], ' ');
 }
 
+/* The console setting falcon-bios asks for and falcon-efi does not: a BIOS
+ * machine publishes no console of its own, so without it FreeBSD's installer
+ * draws to the screen alone and the serial log an automated run reads stays
+ * empty. */
+static void test_bsdmd_config_console(void **state)
+{
+    static const char want[] =
+        "md_image_load=\"YES\"\n"
+        "md_image_type=\"md_image\"\n"
+        "md_image_name=\"/FALCONBS.IMG;1\"\n"
+        "vfs.root.mountfrom=\"cd9660:/dev/md0\"\n"
+        "console=\"comconsole,vidconsole\"\n";
+    char out[BSDMD_CFG_MAX];
+    uint32_t len = 0;
+    size_t block;
+
+    (void)state;
+    block = (size_t)(strstr(g_head, "exec=") - g_head);
+    assert_int_equal(bsdmd_config("/FALCONBS.IMG;1", "comconsole,vidconsole",
+                                  g_head, strlen(g_head), out, sizeof out,
+                                  &len), BSDMD_OK);
+    /* Still exactly the block it overwrote: the file's length never changes,
+     * whatever is written into it. */
+    assert_int_equal(len, block);
+    assert_memory_equal(out, want, strlen(want));
+    assert_int_equal(out[strlen(want)], '#');
+    assert_int_equal(out[len - 1u], '\n');
+
+    /* A block with room for the settings but not for the console line is
+     * refused rather than truncated: a half-written setting would be a
+     * loader.conf FreeBSD parses into something nobody meant. */
+    {
+        char head[160];
+        size_t n = strlen(want) - strlen("console=\"comconsole,vidconsole\"\n")
+                   + 8u;
+        size_t i;
+
+        for (i = 0; i + 1u < n && i + 1u < sizeof head; i++)
+            head[i] = '#';
+        head[i++] = '\n';
+        head[i] = '\0';
+        assert_int_equal(bsdmd_config("/FALCONBS.IMG;1",
+                                      "comconsole,vidconsole", head, i, out,
+                                      sizeof out, &len), BSDMD_ERR_NO_ROOM);
+    }
+}
+
 static void test_bsdmd_config_errors(void **state)
 {
     char out[BSDMD_CFG_MAX];
     uint32_t len = 0;
 
     (void)state;
-    assert_int_equal(bsdmd_config(NULL, g_head, strlen(g_head), out,
+    assert_int_equal(bsdmd_config(NULL, NULL, g_head, strlen(g_head), out,
                                   sizeof out, &len), BSDMD_ERR_ARG);
-    assert_int_equal(bsdmd_config("/x;1", NULL, 10, out, sizeof out, &len),
-                     BSDMD_ERR_ARG);
-    assert_int_equal(bsdmd_config("/x;1", g_head, strlen(g_head), NULL,
+    assert_int_equal(bsdmd_config("/x;1", NULL, NULL, 10, out, sizeof out,
+                                  &len), BSDMD_ERR_ARG);
+    assert_int_equal(bsdmd_config("/x;1", NULL, g_head, strlen(g_head), NULL,
                                   sizeof out, &len), BSDMD_ERR_ARG);
-    assert_int_equal(bsdmd_config("/x;1", g_head, strlen(g_head), out,
+    assert_int_equal(bsdmd_config("/x;1", NULL, g_head, strlen(g_head), out,
                                   sizeof out, NULL), BSDMD_ERR_ARG);
     /* A file that opens with a setting has nothing that may be overwritten. */
-    assert_int_equal(bsdmd_config("/x;1", "kernel=\"kernel\"\n", 16, out,
-                                  sizeof out, &len), BSDMD_ERR_NO_ROOM);
-    /* A comment block too short to hold the settings. */
-    assert_int_equal(bsdmd_config("/FALCONBS.IMG;1", "# short\nx=1\n", 12,
+    assert_int_equal(bsdmd_config("/x;1", NULL, "kernel=\"kernel\"\n", 16,
                                   out, sizeof out, &len), BSDMD_ERR_NO_ROOM);
+    /* A comment block too short to hold the settings. */
+    assert_int_equal(bsdmd_config("/FALCONBS.IMG;1", NULL, "# short\nx=1\n",
+                                  12, out, sizeof out, &len),
+                     BSDMD_ERR_NO_ROOM);
 }
 
 int run_bsdmd_tests(void)
@@ -288,6 +336,7 @@ int run_bsdmd_tests(void)
         cmocka_unit_test(test_bsdmd_record_no_room),
         cmocka_unit_test(test_bsdmd_record_errors),
         cmocka_unit_test(test_bsdmd_config),
+        cmocka_unit_test(test_bsdmd_config_console),
         cmocka_unit_test(test_bsdmd_config_errors),
     };
 

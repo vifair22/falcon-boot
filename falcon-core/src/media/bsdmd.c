@@ -275,7 +275,8 @@ static size_t comment_block(const char *head, size_t len)
     }
 }
 
-int bsdmd_config(const char *path, const char *head, size_t head_len,
+int bsdmd_config(const char *path, const char *console,
+                 const char *head, size_t head_len,
                  char *out, size_t cap, uint32_t *len_out)
 {
     size_t size;
@@ -296,6 +297,11 @@ int bsdmd_config(const char *path, const char *head, size_t head_len,
               "md_image_name=\"");
     puts_(&w, path);
     puts_(&w, "\"\nvfs.root.mountfrom=\"cd9660:/dev/md0\"\n");
+    if (console != (const char *)0) {
+        puts_(&w, "console=\"");
+        puts_(&w, console);
+        puts_(&w, "\"\n");
+    }
 
     /* The rest of the block's length: a comment the parser skips, ending in
      * a newline, so the file is exactly as long as it was. */

@@ -100,7 +100,20 @@ int bsdmd_record(uint64_t iso_size, bsdmd_read_fn read, void *ctx,
  * block it replaces, padded with a comment, and *len_out says how long that
  * is. path is what bsdmd_record returned.
  */
-int bsdmd_config(const char *path, const char *head, size_t head_len,
+/* `console` is the value for loader.conf's console setting, or NULL to write
+ * none.
+ *
+ * The two loaders pass different things, and the difference is the platform's
+ * rather than ours. Under UEFI the firmware publishes a console that
+ * FreeBSD's EFI loader inherits, so the installer already talks on whatever
+ * the machine has and naming one here would override the firmware's choice.
+ * A BIOS machine publishes nothing: FreeBSD's BIOS loader defaults to
+ * vidconsole, the installer draws to the screen alone, and a serial log -
+ * which is the only thing an automated run can read - stays empty.
+ * falcon-bios therefore asks for "comconsole,vidconsole" and falcon-efi for
+ * nothing. */
+int bsdmd_config(const char *path, const char *console,
+                 const char *head, size_t head_len,
                  char *out, size_t cap, uint32_t *len_out);
 
 #endif /* FALCON_BSDMD_H */

@@ -64,6 +64,7 @@ BIOS_S2_CSRCS := $(addprefix $(BIOS)/,load3.c disk.c console.c) $(CORE_LIBC)
 # what the third stage was for: under stage 2's 33 KB ceiling this had to be
 # one driver called by name.
 BIOS_S3_CSRCS := $(addprefix $(BIOS)/,main.c scan.c pos.c prompt.c linux.c \
+	linuxcore.c \
 	vcd.c vcdcore.c bsd.c win.c heap.c \
 	e820.c disk.c console.c) \
 	$(CORE_PART) $(CORE_FS) $(CORE_MEDIA) $(CORE_PE) $(CORE_CRYPTO) \
@@ -200,12 +201,15 @@ bios: $(BIOS_STAGE1) $(BIOS_STAGE2) $(BIOS_STAGE3)
 
 # ---- tests ----
 #
-# The image is not in `all` or `test`, but this is: vcdcore.c is ordinary
-# host C with no BIOS in it, and it holds the arithmetic the one part of the
-# tree with no analyzer over it copies (Section 7.2). Testing it is the
-# whole point of having written it separately.
-BIOS_TESTS := $(addprefix falcon-bios/tests/,main.c vcdcore_test.c)
-BIOS_UUT := $(BIOS)/vcdcore.c
+# The image is not in `all` or `test`, but these are: three halves of ordinary
+# host C with no BIOS in them, holding the arithmetic the one part of the tree
+# with no analyzer over it depends on (Section 7.2). Testing them is the whole
+# point of having written them separately - and two have already been wrong
+# once, in a way the machine did not report: an unpadded initrd read as a
+# corrupt archive, and a kernel placed past the identity map triple-faulted.
+BIOS_TESTS := $(addprefix falcon-bios/tests/,main.c vcdcore_test.c \
+	linuxcore_test.c e820_test.c)
+BIOS_UUT := $(BIOS)/vcdcore.c $(BIOS)/linuxcore.c $(BIOS)/e820.c
 
 $(eval $(call test_bin,bios,$(BIOS_TESTS) $(BIOS_UUT)))
 

@@ -4,9 +4,12 @@
  * insists on: the decisions. The assembly is transport and is exercised by
  * booting it under SeaBIOS (falcon-efi/tools/run-qemu.sh --bios), and the
  * rest of the C is a thin layer over BIOS interrupts that only exist on a
- * machine. What is left is the arithmetic the virtual CD's INT 13h handler
- * copies, and that is exactly the part with no analyzer over it, so it is
- * worked out in C and checked here.
+ * machine. What is left is the arithmetic: the virtual CD's INT 13h handler
+ * (vcdcore), the addresses the x86 boot protocol is handed and the padding
+ * between concatenated initrds (linuxcore), and the placement that chooses
+ * an initrd's address out of the BIOS memory map (e820). Every one of them
+ * fails silently on a real machine, and the assembly around them is the part
+ * of this repository no analyzer reads.
  */
 
 #include "tests.h"
@@ -15,7 +18,11 @@
 
 int main(void)
 {
-    int failed = run_vcdcore_tests();
+    int failed = 0;
+
+    failed += run_vcdcore_tests();
+    failed += run_linuxcore_tests();
+    failed += run_e820_tests();
 
     printf("\nfalcon-bios: total failed: %d\n", failed);
     return failed == 0 ? 0 : 1;

@@ -225,7 +225,13 @@ the tree, so `#include <fs/exfat.h>` means one file wherever it is written.
   the head of LBA 0 and stages 2 and 3 into the 2014 sectors a GPT leaves
   between its entry array and the first 2048-aligned partition, which are
   unallocated on every stick already written. Its host-testable C is in
-  `make test` and in `compile_commands.json` like everything else. `make
+  `make test` and in `compile_commands.json` like everything else: the three
+  halves with no BIOS in them are `vcdcore.c` (the virtual CD's run and
+  overlay arithmetic), `linuxcore.c` (the addresses the x86 boot protocol is
+  handed, and the four-byte padding between concatenated initrds) and
+  `e820_place_in` (which picks an initrd's address out of a memory map the
+  test writes). All three fail silently on a real machine, which is why they
+  are separate from the code that does the writing. `make
   bios` builds it and `make test-bios-img` makes a disk the rig boots with
   `falcon-efi/tools/run-qemu.sh --bios`.
 

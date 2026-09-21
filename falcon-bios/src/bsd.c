@@ -25,6 +25,12 @@
 #include <media/bsdmd.h>
 #include <lib/string.h>
 
+/* What loader.conf names as the console. A BIOS machine publishes none of
+ * its own, so without this FreeBSD's installer draws to the screen alone
+ * and a serial log - the only thing an automated run reads - stays empty.
+ * Both, not comconsole alone: somebody watching the screen should still
+ * see the installer. */
+#define BSD_CONSOLE "comconsole,vidconsole"
 /* The file whose opening comments the settings are written over. The ISO's
  * own /boot/loader.conf is read after this one and would win, but it is a
  * few hundred bytes with no comment block to spend, and nothing in these
@@ -139,7 +145,8 @@ int bsd_boot(bios_disk *d, fs_vol *p2, const gpt_part *p2part,
         return -1;
     }
 
-    if (bsdmd_config(g_path, g_head, sizeof g_head, g_cfg, sizeof g_cfg,
+    if (bsdmd_config(g_path, BSD_CONSOLE, g_head, sizeof g_head,
+                     g_cfg, sizeof g_cfg,
                      &cfg_len) != BSDMD_OK) {
         put("  this ISO's loader.conf has no comment block long enough to"
             " hold the memory-disk settings\n");

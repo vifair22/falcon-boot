@@ -156,7 +156,8 @@ static EFI_STATUS bsd_run(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
         status = EFI_OUT_OF_RESOURCES;
         goto out;
     }
-    if (bsdmd_config(path, head, (size_t)head_len, cfg, BSDMD_CFG_MAX,
+    if (bsdmd_config(path, (const char *)0, head, (size_t)head_len,
+                     cfg, BSDMD_CFG_MAX,
                      &cfg_len) != BSDMD_OK) {
         result->advice = L"this ISO's loader.conf has no comment block long "
                          L"enough to hold the memory-disk settings.";
