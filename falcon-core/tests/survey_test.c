@@ -12,6 +12,7 @@
  * wrong extension. Skipped with a message when the image is absent.
  */
 
+#include "synth.h"
 #include "tests.h"
 
 #include <stdarg.h>
@@ -387,6 +388,44 @@ static void test_accept_mask(void **state)
     assert_false(found("archlinux-fake.iso"));
 }
 
+/* A root holding forty directory entries that each name the root itself,
+ * and one image. Every level of the walk sees the same forty, so the depth
+ * cap alone let it open 40 + 40^2 + 40^3 directories. The budget stops it
+ * at SURVEY_DIR_BUDGET, and what was found before then is kept. */
+static void test_walk_self_reference_budget(void **state)
+{
+    static fs_vol vol;
+    synth_vol sv;
+    const fs_ops *ops;
+    uint8_t *p;
+    unsigned i;
+
+    (void)state;
+    synth_init(&sv, 9, 3, 64);
+    p = synth_cluster(&sv, 2);
+    for (i = 0; i < 40; i++) {
+        char nm[8];
+
+        snprintf(nm, sizeof nm, "d%02u", i);
+        p += 32u * synth_put_set(p, nm, SYNTH_ATTR_DIR, SYNTH_FLAG_ALLOC, 2,
+                                 synth_cluster_bytes(&sv));
+    }
+    p += 32u * synth_put_set(p, "x.iso", 0, SYNTH_FLAG_ALLOC, 3, 1);
+    synth_put_end(p);
+
+    ops = fs_identify(synth_read, &sv, FS_HINT_NONE);
+    assert_non_null(ops);
+    assert_int_equal(fs_mount(&vol, ops, synth_read, &sv), FS_OK);
+    survey_init(&g_list, g_entries, TEST_ENTRIES, SURVEY_ACCEPT_ISO);
+    assert_int_equal(survey_volume(&g_list, &vol, 0), 0);
+    assert_int_equal(g_list.dirs_left, 0);
+    /* Every directory opened lists its own x.iso, so the list is full
+     * long before the walk returns to the root's. */
+    assert_int_equal(g_list.count, TEST_ENTRIES);
+    assert_true(found("d00/d00/d00/x.iso"));
+    synth_free(&sv);
+}
+
 int run_survey_tests(void)
 {
     const struct CMUnitTest tests[] = {
@@ -396,6 +435,7 @@ int run_survey_tests(void)
         cmocka_unit_test(test_sort_is_case_insensitive),
         cmocka_unit_test(test_view_bounds),
         cmocka_unit_test(test_no_storage),
+        cmocka_unit_test(test_walk_self_reference_budget),
         cmocka_unit_test_setup_teardown(test_walk_fixture, fixture_setup,
                                         fixture_teardown),
         cmocka_unit_test_setup_teardown(test_accept_mask, fixture_setup,

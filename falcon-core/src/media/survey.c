@@ -22,6 +22,8 @@ void survey_init(survey_list *l, survey_entry *storage, size_t cap,
     l->accept = accept;
     l->prefix[0] = 0;
     l->cur_vol = 0;
+    l->entries_left = 0;
+    l->dirs_left = 0;
 }
 
 static void list_add(survey_list *l, const fs_dirent *ent,
@@ -74,9 +76,11 @@ static void walk(survey_list *l, fs_vol *vol, fs_dir *dir, size_t depth)
 {
     fs_dirent ent;
 
-    while (fs_dir_next(dir, &ent) == 1) {
+    while (l->entries_left > 0u && fs_dir_next(dir, &ent) == 1) {
         survey_shape shape;
         survey_media media;
+
+        l->entries_left--;
 
         if (ent.name[0] == (uint16_t)'.')
             continue;   /* dotfiles, and the trash directories that follow */
@@ -91,6 +95,9 @@ static void walk(survey_list *l, fs_vol *vol, fs_dir *dir, size_t depth)
             /* The name, its separator and the terminator. */
             if (pl + nl + 2u > SURVEY_PATH_MAX)
                 continue;
+            if (l->dirs_left == 0u)
+                continue;
+            l->dirs_left--;
             if (fs_dir_open(vol, &sub, &ent) != FS_OK)
                 continue;
             /* Extended in place, restored on the way out: one buffer, not
@@ -118,6 +125,8 @@ int survey_volume(survey_list *l, fs_vol *vol, size_t vol_index)
 
     l->cur_vol = vol_index;
     l->prefix[0] = 0;
+    l->entries_left = SURVEY_ENTRY_BUDGET;
+    l->dirs_left = SURVEY_DIR_BUDGET;
     walk(l, vol, &root, 0);
     l->prefix[0] = 0;
     return 0;

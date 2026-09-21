@@ -27,6 +27,16 @@
  * below it to grow into. */
 #define SURVEY_DEPTH_MAX 4u
 
+/* How much one volume's walk may read: entries produced, and directories
+ * opened. Depth alone bounds nothing useful, because a directory entry can
+ * name the directory it is in or an ancestor, and N such entries cost about
+ * N^4 reads at this depth. These are far past what a stick filled by hand
+ * holds. Past the directory budget the walk still lists files in the
+ * directories it has open but opens no more; past the entry budget it stops.
+ * Either way it keeps what it found. */
+#define SURVEY_ENTRY_BUDGET 65536u
+#define SURVEY_DIR_BUDGET   1024u
+
 /* What the extension asked for. MEDIA is a .iso or .img: a virtual medium is
  * published and something else parses it (DESIGN Section 6). PAYLOAD is a
  * .efi: a PE that boots as itself (Section 7.2), where `media` means nothing.
@@ -84,6 +94,8 @@ typedef struct {
     uint16_t      prefix[SURVEY_PATH_MAX];
 
     size_t        cur_vol;   /* the volume the walk in progress is reading */
+    size_t        entries_left;  /* this volume's budget, see above */
+    size_t        dirs_left;
 } survey_list;
 
 void survey_init(survey_list *l, survey_entry *storage, size_t cap,
