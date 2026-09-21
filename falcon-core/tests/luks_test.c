@@ -1007,6 +1007,17 @@ static void test_luks_keyslot_refusals(void **state)
     assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, &mk, NULL),
                      LUKS_ERR_UNSUPPORTED);
 
+    /* One past the cap, refused before any derivation runs. Run, 2^32 of
+     * them would hold the machine for over an hour on a slow CPU. */
+    assert_int_equal(open_sub(&v, "\"iterations\":10000",
+                              "\"iterations\":16777217"), LUKS_OK);
+    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, &mk, NULL),
+                     LUKS_ERR_UNSUPPORTED);
+    assert_int_equal(open_sub(&v, "\"iterations\":10000",
+                              "\"iterations\":4294967295"), LUKS_OK);
+    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, &mk, NULL),
+                     LUKS_ERR_UNSUPPORTED);
+
     /* No keyslots member at all. luks_open does not look at the keyslots, so
      * this is not noticed until an unlock is attempted, which is the right
      * division: a volume whose segment is intact can still be described in
@@ -1115,6 +1126,14 @@ static void test_luks_digest_refusals(void **state)
      * which the digest's own value is a prefix of. */
     assert_int_equal(open_sub(&v, "\"iterations\":1000,\"salt\"",
                               "\"iterations\":0,\"salt\""),
+                     LUKS_OK);
+    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, &mk, NULL),
+                     LUKS_ERR_UNSUPPORTED);
+
+    /* And one past the cap on the digest, where the count is run once per
+     * candidate key rather than once per passphrase. */
+    assert_int_equal(open_sub(&v, "\"iterations\":1000,\"salt\"",
+                              "\"iterations\":16777217,\"salt\""),
                      LUKS_OK);
     assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, &mk, NULL),
                      LUKS_ERR_UNSUPPORTED);

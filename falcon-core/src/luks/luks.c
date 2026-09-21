@@ -614,6 +614,9 @@ static int verify_digest(const json_value *digests, const json_value *name,
         if (rc != LUKS_OK) {
             return rc;
         }
+        if (iters > LUKS_MAX_ITERATIONS) {
+            return LUKS_ERR_UNSUPPORTED;
+        }
         rc = obj_b64(&dobj, "salt", salt, sizeof salt, &salt_len);
         if (rc != LUKS_OK) {
             return rc;
@@ -700,6 +703,9 @@ static int try_slot(luks_vol *v, const json_value *name,
     rc = obj_u32(&kdf, "iterations", 0xffffffffu, &iters);
     if (rc != LUKS_OK) {
         return rc;
+    }
+    if (iters > LUKS_MAX_ITERATIONS) {
+        return LUKS_ERR_UNSUPPORTED;
     }
     rc = obj_b64(&kdf, "salt", salt, sizeof salt, &salt_len);
     if (rc != LUKS_OK) {

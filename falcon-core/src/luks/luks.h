@@ -62,6 +62,12 @@ typedef int (*luks_read_fn)(void *ctx, uint64_t off, uint64_t len, void *buf);
 #define LUKS_MAX_SALT      64u       /* the format's fixed salt field */
 #define LUKS_MAX_DIGEST    64u
 #define LUKS_MAX_SECTOR    4096u     /* largest segment sector_size seen */
+/* A PBKDF2 count above this is refused as unsupported rather than run. The
+ * count comes from the medium, and 2^32 of them is over an hour per keyslot
+ * on a slow machine with nothing on screen to say why. mkstick budgets 200000
+ * and cryptsetup's two-second benchmark on a fast CPU lands in the low
+ * millions, so this is far above anything a real volume carries. */
+#define LUKS_MAX_ITERATIONS (1u << 24)
 #define LUKS_KEYSLOT_UNIT  512u      /* keyslot areas are always 512-based */
 
 /* A JSON area this size covers cryptsetup's 12 KB default with room to
