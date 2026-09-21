@@ -462,6 +462,15 @@ Order of the appliance work, each shippable on its own:
    registered GitLab runner, so the same image is what a corpus pipeline
    stage would use.
 
+   The ISOs moved again on 2026-09-20, to the Unraid server FS1
+   (`/mnt/cache/isos/falcon-corpus`, all 37 rows verified against
+   `corpus.tsv` on arrival), and `/srv/falcon/corpus` on binhost-builder is
+   now a read-only NFS mount of that folder. The harness mounts the corpus
+   read-only into its container anyway, so nothing there changed; what did is
+   that `corpus-fetch.sh` cannot write through the mount, so a new row is
+   fetched on FS1 itself or into the share over SMB. The laptop's NVMe copy
+   is gone.
+
    Moving it found three things that had been true only on the laptop: the
    root Makefile takes `CMOCKA_LIBS` from `pkg-config` and degrades to an
    empty variable rather than an error, the `xxd` embed step does the same,

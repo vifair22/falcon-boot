@@ -1,7 +1,7 @@
 # falcon-boot coverage corpus (docs/notes/coverage-roadmap.md Section 2).
 #
 # One ISO per row, pinned by SHA-256. tools/coverage/corpus-fetch.sh fetches
-# and verifies them into $FALCON_CORPUS (default /mnt/falcon-corpus/corpus);
+# and verifies them into $FALCON_CORPUS (default /srv/falcon/corpus);
 # the harness boots each one and the scorecard reports it.
 #
 # Columns, tab-separated:

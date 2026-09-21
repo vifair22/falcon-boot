@@ -35,7 +35,7 @@ while [[ $# -gt 0 && "$1" != "--" ]]; do INITRDS+=("$1"); shift; done
 [[ "${1:-}" == "--" ]] || { echo "ERROR: missing -- CMDLINE" >&2; exit 1; }
 CMDLINE=${2:-}
 
-CORPUS="${FALCON_CORPUS:-/mnt/falcon-corpus/corpus}"
+CORPUS="${FALCON_CORPUS:-/srv/falcon/corpus}"
 FILE=$(awk -F'\t' -v id="$ID" '$1 == id { print $5 }' tools/coverage/corpus.tsv)
 [[ -n "$FILE" ]] || { echo "ERROR: $ID is not in the corpus" >&2; exit 1; }
 ISO="$CORPUS/$FILE"

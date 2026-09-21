@@ -22,7 +22,7 @@
 #
 # Usage: tools/coverage/corpus-fetch.sh [--local DIR]... [ID...]
 #   ID      fetch only these rows (default: every row)
-# Env:   FALCON_CORPUS  corpus directory (default /mnt/falcon-corpus/corpus)
+# Env:   FALCON_CORPUS  corpus directory (default /srv/falcon/corpus)
 #
 # Exit status: 0 when every requested row is present and verified, 1
 # otherwise.
@@ -32,7 +32,7 @@ set -euo pipefail
 cd "$(dirname "$0")/../.."
 
 MANIFEST=tools/coverage/corpus.tsv
-CORPUS="${FALCON_CORPUS:-/mnt/falcon-corpus/corpus}"
+CORPUS="${FALCON_CORPUS:-/srv/falcon/corpus}"
 
 LOCAL_DIRS=()
 WANT=()

@@ -34,14 +34,14 @@
 #   --timeout S               seconds from the keypress to a verdict (300)
 #   --force                   rerun cases that already have a result
 #   --no-scorecard            leave docs/coverage.md alone
-# Env: FALCON_CORPUS  corpus directory (default /mnt/falcon-corpus/corpus)
+# Env: FALCON_CORPUS  corpus directory (default /srv/falcon/corpus)
 
 set -euo pipefail
 
 cd "$(dirname "$0")/../.."
 
 MANIFEST=tools/coverage/corpus.tsv
-CORPUS="${FALCON_CORPUS:-/mnt/falcon-corpus/corpus}"
+CORPUS="${FALCON_CORPUS:-/srv/falcon/corpus}"
 STICKS=build/coverage/sticks
 RUNS=build/coverage/runs
 
