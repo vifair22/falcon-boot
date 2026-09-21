@@ -225,6 +225,62 @@ static EFI_STATUS read_u64_var(EFI_SYSTEM_TABLE *st, CHAR16 *name,
     return st->RuntimeServices->GetVariable(name, &g, &attrs, &size, out);
 }
 
+/* ---- come back to this stick after the appliance ---- */
+
+/* BootNext is two bytes in the global namespace, with the attributes the spec
+ * gives it; a firmware that finds them changed may refuse the write. */
+#define BOOT_NEXT_ATTRS OS_INDICATIONS_ATTRS
+
+EFI_STATUS loader_boot_next_self(EFI_SYSTEM_TABLE *st)
+{
+    static const CHAR16 hex[] = L"0123456789ABCDEF";
+    EFI_GUID g = EFI_GLOBAL_VARIABLE_GUID;
+    CHAR16 option[9] = L"Boot0000";
+    UINT16 current = 0;
+    UINTN size = sizeof current;
+    UINT8 probe = 0;
+    EFI_STATUS status;
+    UINTN i;
+
+    if (st == (EFI_SYSTEM_TABLE *)0 || st->RuntimeServices == (void *)0)
+        return EFI_INVALID_PARAMETER;
+
+    status = st->RuntimeServices->GetVariable(L"BootCurrent", &g,
+                                              (UINT32 *)0, &size, &current);
+    if (EFI_ERROR(status))
+        return status;
+    if (size != sizeof current)
+        return EFI_NOT_FOUND;
+
+    /* Boot#### is upper-case hex by spec, and firmware matches it as a string.
+     *
+     * The option has to exist to be worth naming. A one-time pick from some
+     * firmware's boot menu runs as a transient option that is gone by the
+     * time anyone reads BootCurrent, and a BootNext naming it is ignored,
+     * which lands on the boot order anyway; saying so to the caller is the
+     * only difference, and it is the one the user needs. */
+    for (i = 0; i < 4u; i++)
+        option[4u + i] = hex[(current >> (12u - 4u * i)) & 0xFu];
+    size = sizeof probe;
+    status = st->RuntimeServices->GetVariable(option, &g, (UINT32 *)0, &size,
+                                              &probe);
+    if (status != EFI_SUCCESS && status != EFI_BUFFER_TOO_SMALL)
+        return EFI_NOT_FOUND;
+
+    return st->RuntimeServices->SetVariable(L"BootNext", &g, BOOT_NEXT_ATTRS,
+                                            sizeof current, &current);
+}
+
+void loader_boot_next_clear(EFI_SYSTEM_TABLE *st)
+{
+    EFI_GUID g = EFI_GLOBAL_VARIABLE_GUID;
+
+    if (st == (EFI_SYSTEM_TABLE *)0 || st->RuntimeServices == (void *)0)
+        return;
+    (void)st->RuntimeServices->SetVariable(L"BootNext", &g, BOOT_NEXT_ATTRS,
+                                           0, (void *)0);
+}
+
 BOOLEAN fw_setup_available(EFI_SYSTEM_TABLE *st)
 {
     UINT64 supported = 0;

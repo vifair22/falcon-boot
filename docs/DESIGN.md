@@ -779,6 +779,19 @@ and nothing about enforcement changes.
 its job. One component owns the marker's lifecycle, and it is the one that can
 both set and clear it.
 
+**The reboot comes back to the stick: `BootNext` (decision 2026-09-20).**
+The appliance reboots with `RB_AUTOBOOT`, which follows the firmware's boot
+order. A stick reached through a one-time boot pick is not in it, so the
+reboot landed on the internal disk and the marker waited, unread, until the
+stick next booted and then fired unasked. Before launching the appliance the
+loader therefore sets `BootNext` to `BootCurrent`, the option this boot came
+through, and clears it again if the appliance returns without rebooting. The
+firmware deletes `BootNext` when it acts on it, so this is a one-shot of the
+platform's own kind. When there is no `BootCurrent`, or the option it names is
+gone (some firmware runs a boot-menu pick as a transient option), nothing is
+written and the loader says the reboot will follow the boot order. The
+appliance still writes no EFI variable; both are the loader's.
+
 **Runtime access, so the booted OS can ask too (decision 2026-09-15).** The
 variable carries `RUNTIME_ACCESS` alongside `NON_VOLATILE` and
 `BOOTSERVICE_ACCESS`. efivarfs exposes only runtime-accessible variables, so

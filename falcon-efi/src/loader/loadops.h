@@ -133,6 +133,23 @@ UINTN loader_next_boot_take(EFI_SYSTEM_TABLE *st, void *buf, UINTN cap);
  * firmware's status. */
 EFI_STATUS loader_next_boot_set(EFI_SYSTEM_TABLE *st, const char *name);
 
+/* ---- the appliance's reboot comes back here (DESIGN Section 6.3.1) ----
+ *
+ * The appliance reboots with the kernel's RB_AUTOBOOT, which follows the
+ * firmware's boot order, and a stick reached through a one-time boot pick is
+ * not in it: the reboot would land on the internal disk and the marker set
+ * above would sit unread until the stick next booted, then fire. BootNext
+ * pointed at BootCurrent sends that one reboot back to the entry this boot
+ * came through.
+ *
+ * loader_boot_next_self returns EFI_NOT_FOUND when there is no BootCurrent,
+ * or when the option it names no longer exists (a transient one-time pick);
+ * nothing is written then. loader_boot_next_clear undoes it for a launch
+ * that came back without rebooting, so an unrelated reboot later does not
+ * return here. The firmware deletes BootNext itself when it acts on it. */
+EFI_STATUS loader_boot_next_self(EFI_SYSTEM_TABLE *st);
+void loader_boot_next_clear(EFI_SYSTEM_TABLE *st);
+
 /* ---- the ISO extent map (DESIGN Section 6.4) ----
  *
  * FalconIsoMap, the variable falcon-hook reads from efivarfs to rebuild the

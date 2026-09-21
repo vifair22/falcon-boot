@@ -564,7 +564,7 @@ INTN menu_run_keys(EFI_SYSTEM_TABLE *st, const menu_banner *banner,
 
     draw_banner(&v, banner);
     st->ConOut->SetAttribute(st->ConOut,
-                             EFI_TEXT_ATTR(EFI_DARKGRAY, EFI_BLACK));
+                             EFI_TEXT_ATTR(EFI_LIGHTGRAY, EFI_BLACK));
     /* "expected" is the whole claim: the tags are a prediction and the
      * platform decides at load time (DESIGN Section 7.8).
      *

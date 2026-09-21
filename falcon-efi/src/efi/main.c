@@ -1212,6 +1212,7 @@ static BOOLEAN bless_from_menu(EFI_HANDLE image_handle, const iso_list *list,
     char next[MANIFEST_PATH_MAX];
     EFI_INPUT_KEY key;
     EFI_STATUS status;
+    EFI_STATUS back;
     UINTN len = 0, count = 0, i;
 
     next[0] = '\0';
@@ -1295,14 +1296,26 @@ static BOOLEAN bless_from_menu(EFI_HANDLE image_handle, const iso_list *list,
                 L"after the\r\nreboot.\r\n\r\n");
         }
     }
+    /* With or without a marker: the appliance's reboot has to land here
+     * either way, since that is where the blessed image boots from. */
+    back = loader_boot_next_self(g_st);
+    if (EFI_ERROR(back)) {
+        out(L"note: no boot entry for this stick to return to (");
+        out_hex(back);
+        out(L"); after signing the machine\r\nboots whatever is first in "
+            L"the firmware's boot order.\r\n\r\n");
+    }
     out(L"starting the signing appliance.\r\n\r\n");
 
     pos_set_bless_list(g_bless_list, len);
     status = pos_boot_pick(g_st, image_handle, POS_PICK_APPLIANCE, &result);
     pos_set_bless_list((const void *)0, 0);
     /* Reached only when the appliance did not reboot: the marker names a
-     * blessing that did not happen. */
+     * blessing that did not happen, and BootNext a reboot that did not
+     * either. */
     (void)loader_next_boot_set(g_st, (const char *)0);
+    if (!EFI_ERROR(back))
+        loader_boot_next_clear(g_st);
 
     if (status == EFI_ABORTED)
         return FALSE;
