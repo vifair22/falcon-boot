@@ -227,7 +227,7 @@ static void boot_row(unsigned vi, int chain)
     if (chain)
         (void)scan_chain(g_p2_src.disk, &g_p2, g_p2_part, &e->ent);
     else
-        (void)scan_iso(&g_p2, g_p2_part, &e->ent, g_p2_block);
+        (void)scan_iso(&g_p2, g_p2_part, &e->ent, e->label, g_p2_block);
     /* The wording is the UEFI loader's, so a reader and the coverage harness
      * both meet one sentence rather than two. */
     bios_screen_puts("\npress any key to return to the menu.\n");

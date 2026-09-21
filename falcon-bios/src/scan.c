@@ -33,6 +33,7 @@
 #include <media/family.h>
 #include <media/extmap.h>
 #include <media/hookcmd.h>
+#include <manifest/manifest.h>
 #include <part/part.h>
 #include <lib/string.h>
 
@@ -281,7 +282,7 @@ static int boot_entry(const bootcfg_entry *e, fs_vol *p2,
 }
 
 int scan_iso(fs_vol *p2, const gpt_part *p2part, const fs_dirent *ent,
-             uint32_t block_size)
+             const uint16_t *path, uint32_t block_size)
 {
     unsigned i;
     unsigned n;
@@ -340,12 +341,20 @@ int scan_iso(fs_vol *p2, const gpt_part *p2part, const fs_dirent *ent,
                 return -1;
         } else if (fam->id == FAMILY_WINDOWS) {
             int unpatchable = 1;
-            char rel[BOOTCFG_PATH_MAX];
-            size_t k;
+            char rel[MANIFEST_PATH_MAX];
 
-            for (k = 0; k + 1u < sizeof rel && ent->name[k] != 0; k++)
-                rel[k] = bios_ascii(ent->name[k], '_');
-            rel[k] = '\0';
+            /* The whole path from p2's root, not the file's name: winjump
+             * looks for exactly this under every drive letter, and an ISO
+             * in a folder is not at the root of any of them. Converted by
+             * the rule the UEFI loader and the manifest use, so a path it
+             * cannot carry is refused here rather than turned into one
+             * winjump will never find. */
+            if (manifest_path_from_ucs2(path, rel, sizeof rel) !=
+                MANIFEST_OK) {
+                put("  the ISO's path is not plain ASCII, so Windows could"
+                    " not find it again;\n  booting it unpatched\n");
+                return scan_chain(g_disk, p2, p2part, ent);
+            }
             bios_screen_mode("WIN");
             (void)win_boot(g_disk, p2, p2part, ent, rel, &unpatchable);
             if (!unpatchable)
