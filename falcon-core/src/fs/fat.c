@@ -404,7 +404,11 @@ static int dir_sector(fat_dir *d, uint32_t *in_sector)
             return 0;
         sector = (uint64_t)v->root_off_sectors + d->pos / v->sector_size;
     } else {
-        uint32_t index = d->pos / v->cluster_size;
+        uint32_t index;
+
+        if (d->pos >= FAT_DIR_MAX)
+            return FAT_ERR_CORRUPT;
+        index = d->pos / v->cluster_size;
 
         if (index != d->chain_index) {
             uint32_t cluster;

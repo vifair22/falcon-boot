@@ -123,6 +123,52 @@ static int find_in_root(fat_vol *v, const char *want, fat_dirent *out)
     return find_in_dir(v, &d, want, out);
 }
 
+/* The FAT32 fixture with a few byte ranges laid over it, for a structure
+ * mkfs.vfat will not write. */
+#define PATCH_MAX 3u
+
+typedef struct {
+    uint64_t off;
+    uint32_t len;
+    const uint8_t *bytes;
+} patch;
+
+typedef struct {
+    FILE *fp;
+    patch p[PATCH_MAX];
+    size_t n;
+} patched;
+
+static int patched_read(void *ctx, uint64_t off, uint64_t len, void *buf)
+{
+    patched *pt = ctx;
+    size_t i;
+
+    if (img_read(pt->fp, off, len, buf) != 0)
+        return -1;
+    for (i = 0; i < pt->n; i++) {
+        const patch *p = &pt->p[i];
+        uint64_t lo = p->off > off ? p->off : off;
+        uint64_t hi = p->off + p->len < off + len ? p->off + p->len
+                                                  : off + len;
+
+        if (lo < hi)
+            memcpy((uint8_t *)buf + (lo - off), p->bytes + (lo - p->off),
+                   (size_t)(hi - lo));
+    }
+    return 0;
+}
+
+static uint32_t le16_at(const uint8_t *b, size_t at)
+{
+    return (uint32_t)b[at] | (uint32_t)b[at + 1] << 8;
+}
+
+static uint32_t le32_at(const uint8_t *b, size_t at)
+{
+    return le16_at(b, at) | le16_at(b, at + 2) << 16;
+}
+
 /* ---- the tests, each run once per width ---- */
 
 /* The width is derived from the cluster count, not recorded. If this is wrong
@@ -533,6 +579,55 @@ static void test_fat_rejects_non_fat(void **state)
     fclose(f);
 }
 
+/* A FAT32 root directory whose one cluster names itself as the next, full
+ * of deleted entries so the walk never meets an end marker. The chain is a
+ * loop, and before the cap the walk followed it forever: at mount, since
+ * the label is read from the root, with nothing on screen. */
+static void test_fat_looping_directory(void **state)
+{
+    static uint8_t deleted[FAT_MAX_SECTOR];
+    uint8_t bpb[512];
+    uint8_t link[4];
+    uint32_t bps, spc, fat_sz, root, i;
+    uint64_t fat_off, data_off;
+    patched pt;
+    fat_vol v;
+    fat_dir d;
+    fat_dirent e;
+    int rc;
+
+    (void)state;
+    memset(&pt, 0, sizeof pt);
+    pt.fp = open_img(IMG32);
+    assert_int_equal(img_read(pt.fp, 0, sizeof bpb, bpb), 0);
+    bps = le16_at(bpb, 0x0B);
+    spc = bpb[0x0D];
+    fat_sz = le32_at(bpb, 0x24);
+    root = le32_at(bpb, 0x2C);
+    assert_true(bps * spc <= sizeof deleted);
+    fat_off = (uint64_t)le16_at(bpb, 0x0E) * bps;
+    data_off = fat_off + (uint64_t)bpb[0x10] * fat_sz * bps;
+
+    for (i = 0; i < 4; i++)
+        link[i] = (uint8_t)(root >> (8u * i));
+    for (i = 0; i < bps * spc; i += 32u)
+        deleted[i] = 0xE5;
+
+    pt.p[0] = (patch){ fat_off + (uint64_t)root * 4u, 4u, link };
+    pt.p[1] = (patch){ fat_off + (uint64_t)fat_sz * bps + (uint64_t)root * 4u,
+                       4u, link };
+    pt.p[2] = (patch){ data_off + (uint64_t)(root - 2u) * spc * bps,
+                       bps * spc, deleted };
+    pt.n = 3;
+
+    assert_int_equal(fat_mount(&v, patched_read, &pt), FAT_OK);
+    assert_int_equal(fat_dir_open_root(&v, &d), FAT_OK);
+    while ((rc = fat_dir_next(&d, &e)) == 1)
+        ;
+    assert_int_equal(rc, FAT_ERR_CORRUPT);
+    fclose(pt.fp);
+}
+
 static void test_fat_arg_errors(void **state)
 {
     fat_vol v;
@@ -570,6 +665,7 @@ int run_fat_tests(void)
         cmocka_unit_test(test_fat_through_registry),
         cmocka_unit_test(test_fat_rejects_non_fat),
         cmocka_unit_test(test_fat_arg_errors),
+        cmocka_unit_test(test_fat_looping_directory),
     };
     FILE *f = fopen(IMG12, "rb");
 

@@ -84,6 +84,10 @@ typedef int (*fat_read_fn)(void *ctx, uint64_t off, uint64_t len, void *buf);
 
 /* A long file name is at most 255 UCS-2 units (20 LFN entries of 13). */
 #define FAT_NAME_MAX 255u
+/* The most a directory may hold: 65536 entries of 32 bytes, the limit
+ * the specification sets. A walk past it is a cluster chain that loops,
+ * which would otherwise be walked forever. */
+#define FAT_DIR_MAX (65536u * 32u)
 
 typedef enum {
     FAT_TYPE_12 = 12,
