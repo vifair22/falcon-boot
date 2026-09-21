@@ -62,7 +62,8 @@ typedef enum {
     LINUXCORE_ERR_SETUP_LONG  = -6,  /* setup longer than the cap given */
     LINUXCORE_ERR_NO_KERNEL   = -7,  /* all setup and no kernel */
     LINUXCORE_ERR_NOT_RELOC   = -8,  /* fixed, and names no address */
-    LINUXCORE_ERR_NO_ROOM     = -9   /* wants more than the identity map */
+    LINUXCORE_ERR_NO_ROOM     = -9,  /* wants more than the identity map */
+    LINUXCORE_ERR_TOO_LOW     = -10  /* fixed, below where a kernel may go */
 } linuxcore_status;
 
 typedef struct {
@@ -78,7 +79,9 @@ typedef struct {
 /* Reads the geometry out of `setup` (at least 1024 bytes of the kernel's
  * start) for a kernel of `file_len` bytes, refusing every shape this loader
  * cannot boot. `pref_load` is where a relocatable kernel is placed before
- * alignment, `map_end` one past the last byte the loader has mapped, and
+ * alignment and the lowest address any kernel may take, since everything
+ * below it is the loader's own; `map_end` one past the last byte the loader
+ * has mapped, and
  * `setup_cap` the buffer the caller will read the setup into. */
 linuxcore_status linuxcore_geometry(const uint8_t *setup, size_t setup_len,
                                     uint64_t file_len, uint64_t pref_load,

@@ -117,6 +117,9 @@ static const char *geom_error(linuxcore_status rc)
         return "the kernel is not relocatable and names no address";
     case LINUXCORE_ERR_NO_ROOM:
         return "the kernel wants more memory than this loader maps";
+    case LINUXCORE_ERR_TOO_LOW:
+        return "the kernel is not relocatable and its address is this"
+               " loader's own memory";
     case LINUXCORE_ERR_ARG:
     case LINUXCORE_OK:
         break;

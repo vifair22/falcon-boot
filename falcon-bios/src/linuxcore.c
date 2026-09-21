@@ -103,6 +103,10 @@ linuxcore_status linuxcore_geometry(const uint8_t *setup, size_t setup_len,
         out->load_at = rd64(setup, HDR_PREF_ADDRESS);
         if (out->load_at == 0)
             return LINUXCORE_ERR_NOT_RELOC;
+        /* The classic fixed address is 1 MiB, which is where stage 3 is
+         * running: loading there overwrites the code doing the loading. */
+        if (out->load_at < pref_load)
+            return LINUXCORE_ERR_TOO_LOW;
     } else {
         out->load_at = (pref_load + align - 1u) & ~(align - 1u);
     }

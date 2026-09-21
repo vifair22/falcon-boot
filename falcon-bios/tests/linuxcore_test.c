@@ -127,6 +127,15 @@ static void test_geometry_fixed_address(void **state)
      * refused rather than guessed at. */
     wr64(HDR_PREF_ADDRESS, 0);
     assert_int_equal(geom(8u * 1024u * 1024u, &g), LINUXCORE_ERR_NOT_RELOC);
+
+    /* ... and one whose address is below the floor, here the classic
+     * 1 MiB, is refused: that is where stage 3 runs. The floor itself is
+     * the lowest address taken. */
+    wr64(HDR_PREF_ADDRESS, 0x00100000ull);
+    assert_int_equal(geom(8u * 1024u * 1024u, &g), LINUXCORE_ERR_TOO_LOW);
+    wr64(HDR_PREF_ADDRESS, PREF_LOAD);
+    assert_int_equal(geom(8u * 1024u * 1024u, &g), LINUXCORE_OK);
+    assert_int_equal(g.load_at, PREF_LOAD);
 }
 
 /* The initrd ceiling is the kernel's, clamped to what the loader mapped.
