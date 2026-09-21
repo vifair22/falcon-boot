@@ -31,6 +31,7 @@
 	.globl  fatal_rm
 	.extern lmode_enter
 	.extern stage3_load
+	.extern fault_install
 	.extern boot16
 	.extern lmode_entry
 
@@ -136,6 +137,7 @@ stage2_64:
 	 * the gate, because those are the parts that have to be reachable
 	 * from real mode. */
 	movq    $0x7C00, %rsp
+	call    fault_install        /* before anything that can fault */
 	movzbl  drive(%rip), %edi
 	call    stage3_load
 halt64:halt64:

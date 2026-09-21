@@ -59,7 +59,8 @@ BIOS_CFLAGS := -std=c11 -O2 -ffreestanding -fno-stack-protector \
 # they are a few hundred bytes each, they reach the BIOS through the gate at
 # a fixed address rather than through a symbol, and duplicating them is
 # cheaper than a call gate for every line of output.
-BIOS_S2_CSRCS := $(addprefix $(BIOS)/,load3.c disk.c console.c) $(CORE_LIBC)
+BIOS_S2_CSRCS := $(addprefix $(BIOS)/,load3.c disk.c console.c fault.c) \
+	$(CORE_LIBC)
 # Stage 3 takes the filesystem registry and the whole media layer, which is
 # what the third stage was for: under stage 2's 33 KB ceiling this had to be
 # one driver called by name.
@@ -115,7 +116,7 @@ $(BIOS_STAGE1): $(BIOS_OBJ)/$(BIOS)/boot.o $(BIOS)/bios.ld
 	fi
 
 BIOS_STAGE2_OBJS := $(BIOS_OBJ)/$(BIOS)/stage2.o $(BIOS_OBJ)/$(BIOS)/lmode.o \
-	$(BIOS_OBJ)/$(BIOS)/thunk.o $(BIOS_S2_COBJS)
+	$(BIOS_OBJ)/$(BIOS)/thunk.o $(BIOS_OBJ)/$(BIOS)/idt.o $(BIOS_S2_COBJS)
 
 $(BIOS_STAGE2): $(BIOS_STAGE2_OBJS) $(BIOS)/bios.ld
 	@mkdir -p $(@D)

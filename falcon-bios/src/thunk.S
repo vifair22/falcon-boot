@@ -37,6 +37,7 @@
 #include "biosdefs.h"
 
 	.extern gdt_desc
+	.extern idt_desc
 
 	.section .text.stage2, "ax"
 
@@ -243,6 +244,11 @@ thunk_back64:
 	movw    %ax, %gs
 
 	movq    saved_rsp(%rip), %rsp
+
+	/* The IDT back, over the vector table loaded on the way down; without
+	 * it an exception after the first BIOS call would read a gate out of
+	 * the vector table and reset the machine (idt.S). */
+	lidt    idt_desc(%rip)
 
 	popfq
 	popq    %r15
