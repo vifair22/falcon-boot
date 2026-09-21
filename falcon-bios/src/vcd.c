@@ -186,10 +186,16 @@ static void write_spec(uint8_t *at, const elt_entry *e, uint16_t load_seg)
     at[0x0F] = (uint8_t)(e->sectors >> 8);
 }
 
-/* Lowers what the BIOS data area says the machine has, and returns the
- * segment of the block that just stopped existing. 0 when the machine will
- * not give it up. */
-static uint16_t take_conventional_memory(void)
+/* The segment of the block at the top of conventional memory the resident
+ * will live in, without taking it yet. 0 when the machine cannot give it up.
+ *
+ * Asked for, then taken separately (take_conventional_memory) at the point
+ * past which nothing can fail. Everything between can refuse, and a refusal
+ * that had already lowered the BDA would leave the machine sixteen
+ * kilobytes shorter for the rest of its uptime, once per attempt. Writing
+ * the block before the BDA admits it is gone is safe: nothing of this
+ * loader's lives up there, and nothing else runs until the handoff. */
+static uint16_t resident_segment(void)
 {
     uint16_t have = peek16(BDA_MEMSIZE);
     uint16_t want = (uint16_t)(VCD_BYTES / 1024u);
@@ -198,9 +204,12 @@ static uint16_t take_conventional_memory(void)
      * believe, and taking memory from it would be worse than refusing. */
     if (have < 256u || have <= want)
         return 0;
-    have = (uint16_t)(have - want);
-    poke16(BDA_MEMSIZE, have);
-    return (uint16_t)((uint32_t)have * 1024u / 16u);
+    return (uint16_t)((uint32_t)(have - want) * 1024u / 16u);
+}
+
+static void take_conventional_memory(uint16_t seg)
+{
+    poke16(BDA_MEMSIZE, (uint16_t)((uint32_t)seg * 16u / 1024u));
 }
 
 int vcd_chainload(bios_disk *d, fs_vol *p2, const gpt_part *p2part,
@@ -290,12 +299,40 @@ int vcd_chainload(bios_disk *d, fs_vol *p2, const gpt_part *p2part,
         }
     }
 
-    /* The resident, in memory the BIOS has been told it does not have. */
-    seg = take_conventional_memory();
+    /* Where the resident will live. Not taken until the end. */
+    seg = resident_segment();
     if (seg == 0) {
         put("  this machine will not give up the memory the handler needs\n");
         return -1;
     }
+
+    /* The map finished before any of it is copied: the appended region
+     * grows the medium, and the resident has to be handed the size it ends
+     * up, not the size it started. The appended region goes first because
+     * the medium has to say it is there before anything may be placed in
+     * it. */
+    if (g_append_cd != 0) {
+        if (vcd_extend(&g_map, g_append_cd) != VCD_OK ||
+            vcd_override_add_ext(&g_map, g_map.n_real - g_append_cd,
+                                 g_append_cd, g_append_phys) != VCD_OK) {
+            put("  the appended blocks do not fit the medium\n");
+            return -1;
+        }
+    }
+    for (i = 0; i < g_n_pending; i++) {
+        uint16_t pool_seg = (uint16_t)(seg + (VCD_OVER_OFF / 16u) +
+                                       g_pending[i].pool_at *
+                                       (VCD_CD_BYTES / 16u));
+
+        if (vcd_override_add(&g_map, g_pending[i].cd_lba,
+                             g_pending[i].n_cd, pool_seg) != VCD_OK) {
+            put("  an overlay does not fit the medium\n");
+            return -1;
+        }
+    }
+
+    /* The resident, in memory the BIOS is about to be told it does not
+     * have. */
     at = (uint8_t *)(uintptr_t)((uint32_t)seg * 16u);
     memcpy(at, vcd_blob_start, vcd_blob_len());
 
@@ -319,33 +356,11 @@ int vcd_chainload(bios_disk *d, fs_vol *p2, const gpt_part *p2part,
         memcpy(r + 4, &g_map.run[i].n_cd, 4);
         memcpy(r + 8, &g_map.run[i].disk_lba, 8);
     }
-    /* The appended region first, because the medium has to say it is there
-     * before anything may be placed in it. */
-    if (g_append_cd != 0) {
-        if (vcd_extend(&g_map, g_append_cd) != VCD_OK ||
-            vcd_override_add_ext(&g_map, g_map.n_real - g_append_cd,
-                                 g_append_cd, g_append_phys) != VCD_OK) {
-            put("  the appended blocks do not fit the medium\n");
-            return -1;
-        }
-    }
-
     /* The overlay: its bytes into the pool behind the resident, and the
      * table the handler scans before every pass. */
     if (g_pool_used > 0)
         memcpy(at + VCD_OVER_OFF, g_pool,
                (size_t)g_pool_used * VCD_CD_BYTES);
-    for (i = 0; i < g_n_pending; i++) {
-        uint16_t pool_seg = (uint16_t)(seg + (VCD_OVER_OFF / 16u) +
-                                       g_pending[i].pool_at *
-                                       (VCD_CD_BYTES / 16u));
-
-        if (vcd_override_add(&g_map, g_pending[i].cd_lba,
-                             g_pending[i].n_cd, pool_seg) != VCD_OK) {
-            put("  an overlay does not fit the medium\n");
-            return -1;
-        }
-    }
     at[VCD_OFF_NOVER] = (uint8_t)(g_map.n_over & 0xFFu);
     at[VCD_OFF_NOVER + 1u] = (uint8_t)(g_map.n_over >> 8);
     for (i = 0; i < g_map.n_over; i++) {
@@ -379,8 +394,9 @@ int vcd_chainload(bios_disk *d, fs_vol *p2, const gpt_part *p2part,
     put_hex(g_map.n_runs);
     put(" run(s)\n  handing over\n");
 
-    /* From here nothing may fail: the vector is hooked, the machine is about
-     * to be somebody else's. */
+    /* From here nothing may fail: the memory is taken, the vector is
+     * hooked, the machine is about to be somebody else's. */
+    take_conventional_memory(seg);
     poke32(IVT_INT13, ((uint32_t)seg << 16) | (uint32_t)VCD_OFF_CODE);
 
     /* Out through the stub, not straight to the boot image: what boot16
