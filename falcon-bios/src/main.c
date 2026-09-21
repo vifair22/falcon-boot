@@ -208,7 +208,7 @@ static void menu_draw(unsigned selected, unsigned rows)
                      " c to chainload");
     if (g_up_row)
         bios_screen_puts(", esc back");
-    bios_screen_puts("\n");
+    bios_screen_puts(", r to reboot\n");
 }
 
 /* The one place a chosen file is named and handed to a boot path. Returns
@@ -271,6 +271,10 @@ static void menu_run(void)
             bios_screen_mode("POS");
             bios_screen_puts("\n  Personal OS\n");
             (void)pos_run(g_p3_disk, g_p3_part);
+        } else if (key == 'r') {
+            /* The one way out of a menu with nothing on it to boot, and on
+             * a board whose keyboard controller ignores Ctrl-Alt-Del. */
+            bios_reboot();
         } else if (vi != VIEW_MAX && g_view[vi].kind == SURVEY_ROW_FILE &&
                    (key == BIOS_KEY_ENTER || key == 'c')) {
             /* The medium's own bootloader on 'c', through the resident

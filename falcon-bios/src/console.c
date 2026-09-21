@@ -214,3 +214,44 @@ int bios_getkey(void)
     }
     return (int)ascii;
 }
+
+/* ---- reset ----
+ *
+ * Three ways, each tried only if the one before it did not take. The reset
+ * control register at 0xCF9 is every chipset since the ICH, and the 8042's
+ * pulse line is what came before it and what most boards still wire up.
+ * Neither is certain on a given board, and the last way is: an IDT with no
+ * entries turns the breakpoint into a triple fault, which the processor
+ * answers with a reset of its own.
+ */
+
+/* Port 0x80 is the POST code port. A write to it takes about a microsecond
+ * on every board and does nothing else, which makes it a delay that does
+ * not depend on how fast the processor is. */
+static void io_delay(uint32_t n)
+{
+    while (n-- > 0)
+        outb(0x80u, 0);
+}
+
+__attribute__((noreturn)) void bios_reboot(void)
+{
+    static const struct __attribute__((packed)) {
+        uint16_t limit;
+        uint64_t base;
+    } no_idt = { 0, 0 };
+    uint32_t i;
+
+    outb(0xCF9u, 0x02u);
+    outb(0xCF9u, 0x06u);        /* full reset */
+    io_delay(500000u);
+
+    for (i = 0; i < 100000u && (inb(0x64u) & 0x02u) != 0; i++)
+        ;                       /* the 8042's input buffer, until it is empty */
+    outb(0x64u, 0xFEu);         /* pulse the reset line */
+    io_delay(500000u);
+
+    __asm__ __volatile__("lidt %0\n\tint3" : : "m"(no_idt));
+    for (;;)
+        __asm__ __volatile__("hlt");
+}

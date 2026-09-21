@@ -141,6 +141,9 @@ int bios_getkey(void);
 #define BIOS_KEY_DOWN   0x101
 #define BIOS_KEY_ENTER  0x00D
 #define BIOS_KEY_ESC    0x01B
+
+/* Resets the machine. Does not return. */
+__attribute__((noreturn)) void bios_reboot(void);
 void bios_put_hex64(uint64_t v);
 void bios_put_dec(uint64_t v);
 
