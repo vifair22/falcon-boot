@@ -25,7 +25,7 @@
 	.section .text.stage2, "ax"
 	.globl  lmode_enter
 	.globl  lmode_entry
-	.extern puts_rm
+	.extern fatal_rm
 
 /* Far-jumps to *lmode_entry in 64-bit mode. Does not return. */
 lmode_enter:
@@ -77,10 +77,7 @@ lmode_enter:
 	cmpw    $0x1234, %ax
 	je      a20_ok
 	movw    $msg_a20, %si
-	call    puts_rm
-a20_dead:
-	hlt
-	jmp     a20_dead
+	jmp     fatal_rm
 a20_ok:
 
 	/* ---- 2. The page tables ----
