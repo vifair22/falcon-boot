@@ -227,6 +227,39 @@ $(BIOS_STAGE3): $(BIOS_STAGE3_OBJS) $(BIOS)/bios.ld
 
 bios: $(BIOS_STAGE1) $(BIOS_STAGE2) $(BIOS_STAGE3)
 
+# The stationary build's stage 3 (docs/DESIGN.md Section 13): the personal
+# OS and another disk's own boot code, and nothing else. Stages 1 and 2 are
+# the stick's, byte for byte; this is only a different image at LBA 98. No
+# resident, no ISO scan, and so neither falcon-hook blob, which only scan.c
+# appends. fs/ is the whole registry for the reason falcon-efi/build.mk
+# gives for the UEFI build.
+BIOS_POS_S3_CSRCS := $(addprefix $(BIOS)/,main_pos.c pos.c prompt.c screen.c \
+	linux.c linuxcore.c mbr.c e820.c disk.c console.c) \
+	$(CORE_PART) $(CORE_FS) $(CORE_PE) $(CORE_CRYPTO) $(CORE_LUKS) \
+	$(CORE)/media/cpio.c $(CORE)/media/osrel.c $(CORE)/media/shelf.c \
+	$(CORE_LIBC) $(CORE_UCS2) $(CORE_TUI)
+BIOS_POS_S3_COBJS := $(patsubst %.c,$(BIOS_OBJ)/%.o,$(BIOS_POS_S3_CSRCS))
+BIOS_CSRCS := $(sort $(BIOS_CSRCS) $(BIOS_POS_S3_CSRCS))
+
+$(BIOS_OBJ)/$(BIOS)/main_pos.o: build/version.h
+
+BIOS_POS_STAGE3 := $(BIN)/falcon-bios-pos-stage3.bin
+BIOS_POS_STAGE3_OBJS := $(BIOS_OBJ)/$(BIOS)/stage3.o $(BIOS_POS_S3_COBJS)
+
+$(BIOS_POS_STAGE3): $(BIOS_POS_STAGE3_OBJS) $(BIOS)/bios.ld
+	@mkdir -p $(@D)
+	$(CC_HOST) $(BIOS_LDFLAGS) -Wl,-Ttext,0x100000 -Wl,-e,stage3_entry \
+		-o $@.elf $(BIOS_POS_STAGE3_OBJS) $(BIOS_LIBGCC)
+	objcopy -O binary -j .text $@.elf $@
+	@sz=$$(stat -c %s $@); \
+	max=$$(($(STAGE3_MAX_SECTORS_CHECK) * 512)); \
+	if [ "$$sz" -gt "$$max" ]; then \
+		echo "ERROR: $@ is $$sz bytes, past the $$max stage 2 will read"; \
+		exit 1; \
+	fi
+
+bios-pos: $(BIOS_STAGE1) $(BIOS_STAGE2) $(BIOS_POS_STAGE3)
+
 # ---- tests ----
 #
 # The image is not in `all` or `test`, but these are: three halves of ordinary
@@ -297,4 +330,4 @@ $(BIOS_PROBE_ISO): $(BIOS_PROBE_BIN)
 
 test-bios-probe: $(BIOS_PROBE_ISO)
 
-.PHONY: bios test-bios-img test-bios-probe
+.PHONY: bios bios-pos test-bios-img test-bios-probe

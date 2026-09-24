@@ -187,7 +187,7 @@ $(EFI_POS_SIGNED): $(EFI_POS) $(MOK_KEY)
 	sbsign --key $(MOK_KEY) --cert $(MOK_CRT) --output $@ $(EFI_POS)
 	@echo "signed with the TEST MOK; not a release artifact"
 
-pos: $(EFI_POS)
+pos: $(EFI_POS) bios-pos
 
 run-secboot: $(EFI_SIGNED)
 	falcon-efi/tools/run-qemu.sh --secboot

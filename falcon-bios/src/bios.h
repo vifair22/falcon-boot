@@ -66,6 +66,15 @@ static inline void thunk_bios(void)
  * entitled to assume a dereference near zero is a null-pointer bug and warns
  * that it is one; saying it in asm says instead that the address is the
  * point. */
+static inline uint8_t peek8(uint32_t addr)
+{
+    uint8_t v;
+
+    __asm__ __volatile__("movb (%1), %0"
+                         : "=q"(v) : "r"((uintptr_t)addr) : "memory");
+    return v;
+}
+
 static inline uint16_t peek16(uint32_t addr)
 {
     uint16_t v;

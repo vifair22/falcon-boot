@@ -3089,7 +3089,7 @@ sequenceDiagram
     L->>L: linux_probe: the kernel's width from its setup header
     L->>L: build_map (block size from AH=48h), hook cpio /falcon/hook + /falcon/map, the hook of the kernel's width
     L->>L: hookcmd_build + console=ttyS0,115200 console=tty0
-    L->>L: linuxcore_geometry: boot protocol 2.12+, load address; a 64-bit kernel needs CPUID's long mode
+    L->>L: linuxcore_geometry: boot protocol 2.12+, load address, and a 64-bit kernel needs CPUID long mode
     L->>B: kernel's protected-mode part to 16 MiB, in 64 KiB chunks
     L->>L: cmdline to 0x20000
     L->>B: initrds, hook last, 4-byte padded, at e820_place_high below initrd_addr_max
@@ -3125,7 +3125,7 @@ sequenceDiagram
     L->>U: chooser, shelf_label's rows (one image boots without asking)
     L->>FC: pe_parse: .linux, .initrd, .cmdline
     L->>L: cpio .extra/credentials/cryptsetup.passphrase.cred, after .initrd
-    L->>K: linux_boot with the UKI's cmdline unchanged (as DIR, without the hook); a 64-bit UKI needs long mode
+    L->>K: linux_boot with the UKI's cmdline unchanged (as DIR, without the hook), and a 64-bit UKI needs long mode
     K->>I: initramfs
     I->>I: falcon-credential drop-in, systemd-cryptsetup opens p4, lvm2
     Note over I: root /dev/mapper/vgusb-root mounted, switch-root
@@ -3322,33 +3322,35 @@ is not drawn.
 
 ```mermaid
 flowchart TD
-    S12["stages 1 and 2, as 12.3.2"] --> BM["bios_main (main_pos.c)<br/>E820, boot disk, GPT: the shelf"]
-    BM --> P3["pos_probe: the boot disk's shelf is LUKS2?"]
-    P3 --> OTH["other disks, BDA 0x475<br/>LBA 0 ends in 0x55AA"]
-    OTH --> SH{"shelf found?"}
+    S12["stages 1 and 2, as 12.3.2"] --> BM["bios_main (main_pos.c)<br/>e820_read"]
+    BM --> DSK["scan_disks: every drive the BDA counts (0x475)<br/>its GPT, and whether LBA 0 ends in 0x55AA"]
+    DSK --> P3["pick_shelf: the boot disk's shelf if pos_probe opens it,<br/>else the first other disk's that does"]
+    P3 --> SH{"shelf found?"}
     SH -- yes --> PR["passphrase prompt (INT 16h)<br/>Escape to the list"]
     SH -- no --> LIST
     PR -- "unlocked" --> POS["POS (12.3.7)"]
     PR -- "Escape, or 3 wrong" --> LIST{"list"}
     POS -- "fails" --> LIST
     LIST -- "Personal OS" --> PR
-    LIST -- "r" --> RB["bios_reboot"]
-    LIST -- "a disk" --> MBR["MBR: LBA 0 to 0x7C00, DL = that drive<br/>boot16: real mode, jump 0000:7C00"]
+    LIST -- "Escape" --> RF["INT 18h, else bios_reboot"]
+    LIST -- "a disk" --> MBR["MBR (mbr.c): LBA 0 to 0x7C00, DL = that drive<br/>boot16: real mode, jump 0000:7C00"]
+    MBR -- "unreadable, no 0x55AA" --> LIST
     MBR --> WIN["the disk's own MBR code<br/>active partition's boot sector, bootmgr"]
 ```
 
 Nothing is resident at either handoff: no INT 13h or INT 15h hook exists in
 this build, so the other disk's boot code finds the IVT, the BDA and the
-memory map as the BIOS left them.
+memory map as the BIOS left them. A disk row is every drive but the boot
+drive whose LBA 0 carries the boot signature.
 
 
 ## 13. The stationary build (decided 2026-09-21)
 
-Status (2026-09-24): the UEFI build exists and is rig-proven: POS, NXT and
-Firmware Setup (`make pos`, `falcon-boot-pos.efi`). The boot-disk rule
-(13.3) is in the stick's UEFI loader too. Not built yet: the ESP chainload
-(13.4, after NXT is measured on hardware) and the BIOS build. Section 12.5
-draws what exists.
+Status (2026-09-24): both builds exist and are rig-proven (`make pos`):
+`falcon-boot-pos.efi` with POS, NXT and Firmware Setup, and
+`falcon-bios-pos-stage3.bin` with POS and MBR. The boot-disk rule (13.3) is
+in both stick loaders too. Not built yet: the ESP chainload (13.4, after NXT
+is measured on hardware). Section 12.5 draws what exists.
 
 A falcon loader installed on a machine's internal disk, as that machine's
 boot loader, rather than on a stick. It boots the personal OS off a shelf on
@@ -3385,8 +3387,8 @@ share changes shape between them.
 | UEFI entry | `efi/main.c` | `efi/main_pos.c` |
 | UEFI links | everything in Section 9 | `efi/sbat_pos.c`, `loader/`, `console/`, `discover/`, `sb.c`, `pos/`, `nxt/` (13.4); core's `crypto`, `luks`, `fs` (ext4), `part`, `tui`, `media/shelf.c` (the chooser's rows), `lib` |
 | UEFI leaves out | | `iso/`, `direct/`, `bsd/`, `win/`, `bless/`, `trustefi.c`, `trust/`, the rest of `media/` (the survey included), `wim/`, `manifest/`, falcon-winjump, falcon-hook |
-| BIOS stage 3 | `main.c` | `main_pos.c` |
-| BIOS links | everything in `falcon-bios/` | `pos.c`, `linux.c`, `screen.c`, `prompt.c`, `console.c`, `disk.c`, the MBR chain (13.4); core as UEFI |
+| BIOS stage 3 | `main.c`, `falcon-bios-stage3.bin` | `main_pos.c`, `falcon-bios-pos-stage3.bin` (116 KB against 288 KB) |
+| BIOS links | everything in `falcon-bios/` | `pos.c`, `linux.c`, `linuxcore.c`, `e820.c`, `screen.c`, `prompt.c`, `console.c`, `disk.c`, `mbr.c` (13.4); core as UEFI, plus `media/cpio.c` for the credential |
 | BIOS leaves out | | `vcd.c`, `vcdres.S`, `scan.c`, `win.c`, `bsd.c`, `heap.c`: nothing is ever resident, and neither falcon-hook blob is linked, since only `scan.c` appends one |
 | stages 1 and 2 | | unchanged, the same binaries |
 | version type | `release` | `pos-release`, so a screen photo says which build it is |
@@ -3443,7 +3445,8 @@ partitioning tool later puts a partition over the stages.
 disk is the machine's, and a tool that partitions it is a tool that can
 destroy an OS the user meant to keep. The Manual carries the procedure
 (partition types, the shelf's GUID, the ESP's files and boot entry, the BIOS
-stages written at `biosdefs.h`'s LBAs, MOK enrollment). Kernel updates are
+stages written at `biosdefs.h`'s LBAs, with `falcon-bios-pos-stage3.bin`
+as stage 3, MOK enrollment). Kernel updates are
 the OS's: the shelf mounted at `/efi` and a hook that builds and signs the
 UKI with the MOK key on it, as the personal OS on the stick already does.
 
@@ -3474,8 +3477,10 @@ OS without a word. Exclusive, one passphrase has one meaning.
   (2026-09-24): two falcon disks with different passphrases, each booted
   first in turn, accept only their own; the loader before the rule opened
   the second disk's shelf with the second disk's passphrase.
-- BIOS: already so. `claim_roles` asks the boot disk first and takes one
-  shelf (fix `b007efb`).
+- BIOS: the stick build's `claim_roles` asks the boot disk first (fix
+  `b007efb`) and takes a shelf only when `pos_probe` opens it; the
+  stationary build's `pick_shelf` is the same rule over every disk the BDA
+  counts.
 
 The rig and any stick nobody stamped still get Section 3's probe-everything
 fallback, unchanged: the rule narrows only when roles were identified.
@@ -3519,8 +3524,10 @@ entries) get a row, and it is loaded by device path through `loadops`, the
 shim-verified path, like any other launch. The row says so, since this is
 the route BitLocker will object to.
 
-**BIOS: `MBR`, the other disk's LBA 0.** Every BIOS disk (the BDA's count
+**BIOS: `MBR`, the other disk's LBA 0 (`mbr.c`).** Every BIOS disk (the BDA's count
 at 0x475) other than the boot disk whose LBA 0 ends in `0x55AA` is a row.
+Measured in the rig (2026-09-24): chaining drive 0x81, a falcon-bios stick,
+started its own stages, which reported booting from 0x81.
 Choosing one reads that sector to 0x7C00, sets DL to that drive, and drops
 to real mode through `boot16`, the one-way exit CHN already takes. With no
 resident in this build the IVT is as the BIOS left it. Windows 7 and later
@@ -3542,7 +3549,8 @@ a person at the keyboard anyway.
 - **The prompt.** Three tries, as Section 5. More than one UKI on the shelf
   is a chooser after the unlock, as it is on a stick.
 - **The list.** The personal OS, the other systems (13.4), Firmware Setup
-  where the firmware supports it (UEFI), Reboot (BIOS `r`). Every failure
+  where the firmware supports it (UEFI). Escape leaves to the firmware (on
+  BIOS, INT 18h). Every failure
   lands here after its message and a key.
 - **No shelf.** Straight to the list.
 

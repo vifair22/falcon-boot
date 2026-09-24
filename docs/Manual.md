@@ -94,11 +94,14 @@ A code seen on an error screen names the route that failed, which is the
 first thing to report with it. `docs/DESIGN.md` Section 12 draws each
 route.
 
-### 1.4 Stationary build (UEFI)
+### 1.4 Stationary build
 
-`falcon-boot-pos.efi`, the build for a machine's own disk (`docs/DESIGN.md`
-Section 13). It opens at the passphrase prompt; Escape there goes to the
-list.
+The build for a machine's own disk (`docs/DESIGN.md` Section 13):
+`falcon-boot-pos.efi` for UEFI, and `falcon-bios-pos-stage3.bin` as stage 3
+behind the stick's stages 1 and 2 for BIOS. Either opens at the passphrase
+prompt; Escape there goes to the list.
+
+UEFI:
 
 | code | route | reached by |
 |---|---|---|
@@ -107,3 +110,13 @@ list.
 
 Every entry the firmware's own boot menu offers is a row (active, not
 hidden, boot category), except the one this boot came through.
+
+BIOS:
+
+| code | route | reached by |
+|---|---|---|
+| `POS` | personal OS, as on the stick, from the boot disk's shelf | the prompt it opens at, or the Personal OS row |
+| `MBR` | another disk's own boot code, started from 0x7C00 with DL naming that disk | its row, `Disk 0x81` and so on |
+
+Every BIOS disk but the boot disk whose first sector carries the boot
+signature is a row.

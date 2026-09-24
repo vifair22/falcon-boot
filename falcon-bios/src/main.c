@@ -513,14 +513,17 @@ static uint32_t show_partitions(bios_disk *d, gpt_part *parts)
  * each taken from the first disk that has it: the boot disk is asked first,
  * so a machine's internal disk fills a role only when the disk it booted
  * from does not. Both are identified by DESIGN Section 3's rules, asked of
- * falcon-core's own matcher. */
+ * falcon-core's own matcher. A shelf counts only when it opens as LUKS2
+ * (DESIGN Section 13.3, as the UEFI loader has it): one on the boot disk
+ * that does not must not keep another disk's from being offered. */
 static void claim_roles(bios_disk *d, gpt_part *parts, uint32_t n)
 {
     uint32_t i;
 
     if (g_p3_part == (const gpt_part *)0) {
         for (i = 0; i < n; i++) {
-            if (gpt_part_is_role(&parts[i], PART_ROLE_SHELF)) {
+            if (gpt_part_is_role(&parts[i], PART_ROLE_SHELF) &&
+                pos_probe(d, &parts[i])) {
                 g_p3_part = &parts[i];
                 g_p3_disk = d;
                 break;

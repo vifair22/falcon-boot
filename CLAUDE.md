@@ -265,7 +265,10 @@ the tree, so `#include <fs/exfat.h>` means one file wherever it is written.
   that does the writing. `make bios` builds it, `make test-bios-img` makes
   a disk the rig boots with `falcon-efi/tools/run-qemu.sh --bios`, and
   `make test-bios-probe` makes the medium that checks the resident's INT 15h
-  half from real mode (`tools/memprobe.S`).
+  half from real mode (`tools/memprobe.S`). `make bios-pos` (part of `make
+  pos`) links the stationary build's stage 3 (DESIGN Section 13) from
+  `src/main_pos.c`: the personal OS and `src/mbr.c`, another disk's own
+  boot code started from 0x7C00, with nothing resident.
 
   It is i686 code in flat 32-bit protected mode, paging off, and one image
   runs on every processor from the Pentium Pro on (docs/notes/bios-route.md
