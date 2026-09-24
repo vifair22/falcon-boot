@@ -215,6 +215,11 @@ $(FIXTURE_UKI): falcon-efi/tools/mk-test-uki.sh \
 test-stick: $(EFI_SIGNED) test-iso test-uki
 	falcon-efi/tools/mk-test-stick.sh
 
+# A disk laid out as the Manual's stationary install (Section 2), made by
+# following that procedure; the rig boots it under both firmwares.
+test-station: $(EFI_POS_SIGNED) bios-pos test-uki cli
+	falcon-efi/tools/mk-test-station.sh
+
 # No prerequisite on $(TEST_STICK): rebuilding it needs sudo and takes seconds
 # of cryptsetup, so it stays an explicit `make test-stick`. The rig says so if
 # the image is missing.
@@ -224,7 +229,7 @@ run-stick:
 run-stick-secboot:
 	falcon-efi/tools/run-qemu.sh --stick --secboot
 
-.PHONY: pos sbat-check-pos sbat-check payload esp run mok-test sign run-secboot test-iso \
+.PHONY: pos test-station sbat-check-pos sbat-check payload esp run mok-test sign run-secboot test-iso \
 	test-img test-uki test-stick run-stick run-stick-secboot
 
 # ---- tests ----

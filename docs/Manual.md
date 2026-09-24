@@ -120,3 +120,128 @@ BIOS:
 
 Every BIOS disk but the boot disk whose first sector carries the boot
 signature is a row.
+
+## 2. Installing the stationary build by hand
+
+The stationary build (`docs/DESIGN.md` Section 13) is a machine's own boot
+loader on its internal disk. There is no tool for this install: every step
+below is run by hand, from a Linux live system, against a disk whose
+contents are about to be replaced. Read the whole section before the first
+command. `/dev/X` stands for the target disk and `/dev/X1`..`/dev/X3` for its
+partitions (`/dev/nvme0n1p1` and so on for NVMe).
+
+### 2.1 What it needs
+
+| item | where it comes from |
+|---|---|
+| `falcon-boot-pos.efi`, `falcon-bios-pos-stage3.bin` | `make pos` |
+| `falcon-bios-stage1.bin`, `falcon-bios-stage2.bin` | `make bios`; the stick's, unchanged |
+| `falcon-boot-mkstick` | `make`; used here only for `keygen` and `bios` |
+| Fedora shim 16.1 and its MokManager | `falcon-efi/tools/shim-spike/fetch-shims.sh`, into `build/shim/bins/` |
+| a MOK key pair | an existing one, or `falcon-boot-mkstick keygen <dir>` |
+
+One MOK pair can serve several machines; each machine enrolls its
+certificate once.
+
+### 2.2 Layout
+
+| part | type GUID | size | holds |
+|---|---|---|---|
+| p1 | `C12A7328-F81F-11D2-BA4B-00A0C93EC93B` (ESP) | 512 MiB | shim, MokManager, the loader |
+| p2 | `9CB02E90-85F4-4AF7-9AF3-1F9D6A95FEAF` (falcon shelf) | 1 GiB | LUKS2, pbkdf2 keyslot, ext4: `/uki/*.efi`, the MOK pair |
+| p3 | `CA7D7CCB-63ED-4C53-861C-1742536059CC` (Linux LUKS) | the rest | LUKS2, the OS's root |
+
+The shelf is found by its type GUID, never by its number. The first
+partition must start at LBA 2048: the BIOS stages live in the sectors
+before it.
+
+```sh
+sgdisk -Z /dev/X
+sgdisk -n 1:2048:+512M -t 1:EF00 -c 1:ESP \
+       -n 2:0:+1G -t 2:9CB02E90-85F4-4AF7-9AF3-1F9D6A95FEAF -c 2:FALCON-UKI \
+       -n 3:0:0 -t 3:CA7D7CCB-63ED-4C53-861C-1742536059CC -c 3:root /dev/X
+mkfs.fat -F 32 -n ESP /dev/X1
+```
+
+### 2.3 The shelf
+
+pbkdf2 with the pinned iteration count, because the loader unlocks it
+(DESIGN Section 3). The passphrase must be the root's too: it is handed to
+the initramfs, which opens p3 with it.
+
+```sh
+cryptsetup luksFormat --type luks2 --pbkdf pbkdf2 \
+    --pbkdf-force-iterations 200000 /dev/X2
+cryptsetup open /dev/X2 shelf
+mkfs.ext4 -L FALCON-UKI /dev/mapper/shelf
+mkdir -p /mnt/shelf
+mount /dev/mapper/shelf /mnt/shelf
+mkdir /mnt/shelf/uki
+install -m 0600 falcon-mok.key /mnt/shelf/
+install -m 0644 falcon-mok.crt /mnt/shelf/
+```
+
+The OS mounts the shelf at `/efi`, and its kernel hook builds the UKI into
+`/efi/uki/` and signs it with the MOK pair there. The archusb repository
+has the hook, the initramfs's credential drop-in, and the cmdline that
+names p3 and root; the loader's half of the handoff is DESIGN Section 5.1.
+
+### 2.4 The root
+
+Default LUKS2 (argon2id), the same passphrase, and whatever the OS puts
+inside. The loader never touches it.
+
+```sh
+cryptsetup luksFormat --type luks2 /dev/X3
+```
+
+### 2.5 UEFI
+
+Shim loads its next stage and MokManager from its own directory, so all
+three go in `\EFI\falcon\`, and the firmware gets an entry of its own
+rather than the removable-media path.
+
+```sh
+mkdir -p /mnt/esp
+mount /dev/X1 /mnt/esp
+mkdir -p /mnt/esp/EFI/falcon
+cp build/shim/bins/fedora-16.1-shimx64.efi /mnt/esp/EFI/falcon/shimx64.efi
+cp build/shim/bins/fedora-16.1-mmx64.efi   /mnt/esp/EFI/falcon/mmx64.efi
+sbsign --key falcon-mok.key --cert falcon-mok.crt \
+       --output /mnt/esp/EFI/falcon/grubx64.efi build/bin/falcon-boot-pos.efi
+efibootmgr --create --disk /dev/X --part 1 --label falcon \
+           --loader '\EFI\falcon\shimx64.efi'
+mokutil --import falcon-mok.cer
+```
+
+`mokutil --import` asks for a one-time password; the next boot stops in
+MokManager, where Enroll MOK and that password finish the enrollment.
+`falcon-mok.cer` is the DER form `keygen` writes beside the pair
+(`openssl x509 -in falcon-mok.crt -outform DER -out falcon-mok.cer`
+makes it from the PEM).
+
+A Windows install on another disk needs nothing: its firmware entry,
+Windows Boot Manager, is a row (`NXT`, Section 1.4).
+
+### 2.6 BIOS
+
+Stages 1 and 2 are the stick's, stage 3 is the stationary one. `--reserve`
+claims the gap as a BIOS boot partition named `FALCON-BIOS`, so no
+partitioning tool later puts a partition over the stages.
+
+`--reserve` rewrites the partition table, so nothing on the disk may be
+mounted:
+
+```sh
+umount /mnt/esp /mnt/shelf
+cryptsetup close shelf
+falcon-boot-mkstick bios --reserve \
+    --stage1 build/bin/falcon-bios-stage1.bin \
+    --stage2 build/bin/falcon-bios-stage2.bin \
+    --stage3 build/bin/falcon-bios-pos-stage3.bin \
+    --backup lba0-gap.bak /dev/X
+```
+
+The backup is LBA 0 and the gap as they were; `--remove --backup
+lba0-gap.bak` puts them back. A second disk with its own boot code is a
+row (`MBR`, Section 1.4).

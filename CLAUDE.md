@@ -207,7 +207,9 @@ the tree, so `#include <fs/exfat.h>` means one file wherever it is written.
   - `tools/` the QEMU + OVMF rig (`run-qemu.sh`, with `--secboot`, `--stick`
     and `--headless`; `ovmf.sh`; `rig-shot.sh`), its fixtures (the payload
     ISO and images, the throwaway test MOK, the sd-stub fixture UKI with its
-    `/init` in `uki-init/`, the four-partition test stick) and the two spikes
+    `/init` in `uki-init/`, the four-partition test stick, and
+    `mk-test-station.sh`, a disk made by following the Manual's stationary
+    install procedure, `make test-station`) and the two spikes
     whose findings are in `docs/notes/`.
 - `falcon-cli/` host tooling, Linux userland C never linked into the loader:
   `src/mkstick`, `src/sign`, and their shared `src/common`. May shell out to

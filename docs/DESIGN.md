@@ -3349,8 +3349,11 @@ drive whose LBA 0 carries the boot signature.
 Status (2026-09-24): both builds exist and are rig-proven (`make pos`):
 `falcon-boot-pos.efi` with POS, NXT and Firmware Setup, and
 `falcon-bios-pos-stage3.bin` with POS and MBR. The boot-disk rule (13.3) is
-in both stick loaders too. Not built yet: the ESP chainload (13.4, after NXT
-is measured on hardware). Section 12.5 draws what exists.
+in both stick loaders too. `make test-station` builds a disk by following
+the Manual's hand procedure (Manual Section 2); the personal OS boots off it
+with its credential under OVMF with Secure Boot on and under SeaBIOS. Not
+built yet: the ESP chainload (13.4, after NXT is measured on hardware).
+Section 12.5 draws what exists.
 
 A falcon loader installed on a machine's internal disk, as that machine's
 boot loader, rather than on a stick. It boots the personal OS off a shelf on
