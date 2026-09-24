@@ -50,7 +50,7 @@
 # and ERROR for a harness problem (QEMU would not start, the menu never came).
 #
 # Usage: tools/coverage/run-case.sh STICK STATE ROUTE OUTDIR [TIMEOUT]
-#   STATE    off | ms | own | bios   (tools/coverage/states.sh)
+#   STATE    off | ms | own | bios | bios32   (tools/coverage/states.sh)
 #   ROUTE    dnd      Enter on the image row: whatever the loader does by
 #                     default with an unblessed image
 #            chain    the chainload key: the ISO's own EFI loader (M2), or
@@ -231,7 +231,7 @@ T0=$(date +%s)
 qemu-system-x86_64 \
     -name "falcon-case" \
     "${MACHINE[@]}" \
-    -enable-kvm -cpu host -m "$MEM" -smp "$CPUS" \
+    -enable-kvm -cpu "$STATE_CPU" -m "$MEM" -smp "$CPUS" \
     "${FIRMWARE[@]}" \
     "${DRIVES[@]}" \
     -netdev user,id=net0 \

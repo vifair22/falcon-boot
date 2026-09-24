@@ -131,7 +131,7 @@ while IFS=$'\t' read -r id tier family sha file source; do
             # Blessing is a Secure Boot act: it signs an image with the MOK so
             # shim will load it. A BIOS machine has no shim and enforces
             # nothing, so the column has no blessed cell to fill.
-            if [[ "$st" == bios && "$rt" == blessed ]]; then
+            if [[ "$st" == bios* && "$rt" == blessed ]]; then
                 mkdir -p "$out"
                 printf 'N/A\tno blessed route on a BIOS machine\t0\n' \
                     > "$out/result"
@@ -161,7 +161,7 @@ done < "$MANIFEST"
 
 # falcon-bios is what the bios column boots; the sticks carry only the ISO.
 case " $STATES " in
-*" bios "*)
+*" bios "*|*" bios32 "*)
     echo "== building falcon-bios"
     make bios test-bios-img >/dev/null || {
         echo "ERROR: make bios test-bios-img failed" >&2; exit 1; }
