@@ -685,6 +685,20 @@ nothing; everything the environment used to provide has to be provided.
 and ask - so taking the size from the entry read zero bytes of every image and
 reported that none of them was a UKI.
 
+## 6f. First real hardware (2026-09-23)
+
+An ASUS VivoBook 14 (8th-gen Intel, CSM legacy boot) booted a stick written
+with `sgdisk -Z -n 1:2048:0 -t 1:0700` and `mkstick bios`, and falcon-bios
+reached its menu. That is stages 1 to 3 outside SeaBIOS: the firmware booted
+a protective MBR whose `0xEE` entry has no active flag, stage 1 and stage 2
+read through AH=42h, long mode came up, the thunk served stage 3's reads, and
+the console drew. The stick carried no falcon partitions and no ISOs, so none
+of Section 4's routes ran; every route is still unmeasured on hardware.
+
+The machine also answered part of a question the study had not asked: a CSM
+of this era does not require the active flag. Older BIOSes are the open case
+(the Win2k/XP-era hardware that would need a 32-bit stage 3 as well).
+
 ## 7. Risks, in the order they matter
 
 **7.1 The `INT 13h` resident is a spike, not an estimate.** The ~1,000 above

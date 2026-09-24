@@ -59,8 +59,9 @@ booting under Secure Boot on a machine that trusts nothing from Microsoft.
 Measured on real hardware (2026-09-20), UEFI with Secure Boot on and off:
 the personal OS end to end, blessed Linux ISOs (blessed from the menu, with
 `BootNext` back to the stick), a stock Windows ISO, and with Secure Boot on
-D3a (an unblessed Fedora) and D3b (an unblessed Kubuntu). Still unmeasured on
-hardware: the BIOS loader.
+D3a (an unblessed Fedora) and D3b (an unblessed Kubuntu). Measured on real
+hardware (2026-09-23), BIOS through CSM: falcon-bios stages 1 to 3 reaching
+its menu. Still unmeasured on hardware: every BIOS boot route.
 
 ## Non-negotiable security invariants (DESIGN.md Section 7)
 
