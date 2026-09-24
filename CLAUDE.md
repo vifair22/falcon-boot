@@ -1,7 +1,7 @@
 # falcon-boot
 
 A single-purpose, auditable multi-boot loader for x86-64 UEFI, with an opt-in
-BIOS loader. A distilled Ventoy: drag-and-drop ISO booting plus a personal
+BIOS loader that is i686 and so runs on 32-bit machines too. A distilled Ventoy: drag-and-drop ISO booting plus a personal
 LUKS-backed OS booted via a UKI.
 
 ## Read this first
@@ -61,8 +61,11 @@ the personal OS end to end, blessed Linux ISOs (blessed from the menu, with
 `BootNext` back to the stick), a stock Windows ISO, and with Secure Boot on
 D3a (an unblessed Fedora) and D3b (an unblessed Kubuntu). Measured on real
 hardware (2026-09-23), BIOS through CSM: the personal OS end to end, p4
-unlocked from the credential with no second prompt. Still unmeasured on
-hardware: the other four BIOS routes.
+unlocked from the credential with no second prompt. Measured on real
+hardware (2026-09-24), BIOS: the 32-bit stick (docs/notes/stick32.md) to its
+Arch Linux 32 personal OS on a Windows 7 era machine. Still unmeasured on
+hardware: the other four BIOS routes, and any route on a processor without
+a 64-bit mode.
 
 ## Non-negotiable security invariants (DESIGN.md Section 7)
 

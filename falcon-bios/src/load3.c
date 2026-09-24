@@ -21,7 +21,7 @@ static __attribute__((noreturn)) void die(const char *why)
     bios_fatal(why);
 }
 
-/* Entered from stage2.S in long mode with the drive the BIOS booted from.
+/* Entered from stage2.S in 32-bit protected mode with the drive the BIOS booted from.
  * Does not return: either stage 3 runs or the machine resets. */
 void stage3_load(uint8_t drive);
 

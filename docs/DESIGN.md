@@ -3,8 +3,8 @@
 falcon-boot (formerly airies-boot; renamed 2026-09-13 before first
 real-hardware enrollment).
 
-A single-purpose, auditable multi-boot loader for x86-64: UEFI first, with a
-BIOS loader alongside. A distilled Ventoy: drag-and-drop ISO booting, plus a
+A single-purpose, auditable multi-boot loader for x86: 64-bit UEFI first,
+with a BIOS loader alongside that runs on 32-bit processors as well. A distilled Ventoy: drag-and-drop ISO booting, plus a
 first-class path for booting a personal LUKS-backed OS via a Unified Kernel
 Image. Section 12 draws every route both loaders take.
 
@@ -17,8 +17,10 @@ change it.
 
 ### In scope (MVP)
 
-1. UEFI x64 firmware, and x86-64 BIOS through a separate, opt-in loader
-   (`falcon-bios/`; decision 2026-09-20, below). No IA32, ever (see
+1. UEFI x64 firmware, and x86 BIOS through a separate, opt-in loader
+   (`falcon-bios/`; decision 2026-09-20, below). The BIOS loader is i686
+   and runs on every processor from the Pentium Pro on, booting 32-bit and
+   64-bit kernels (decision 2026-09-24, item 6). No IA32 UEFI, ever (see
    Non-goals).
 2. Drag-and-drop ISO booting from an exFAT partition, Ventoy-style: copy an
    `.iso` onto the stick from any OS, it appears in the menu, it boots. No
@@ -55,7 +57,12 @@ change it.
    appliance has no job; Section 7's invariants are vacuous there, not
    upheld. It is opt-in for that reason: `make bios` builds it and
    `mkstick bios` installs it into the gap in front of p1, with no layout
-   change (Section 12.3).
+   change (Section 12.3). Widened 2026-09-24 to machines with no 64-bit
+   mode: the loader moved from long mode to i686 protected mode, asks CPUID
+   for what a newer processor adds, and appends a falcon-hook of the
+   kernel's width, so one image serves both (bios-route.md Section 6h). A
+   second stick carries 32-bit ISOs and a 32-bit personal OS for those
+   machines (docs/notes/stick32.md).
 7. **A stationary build (decision 2026-09-21).** Each loader built a second
    time with only the personal-OS route and a way out to the machine's
    other systems, for installing on a machine's own disk as its boot
@@ -69,7 +76,8 @@ Rejected, not deferred (decisions 2026-09-12; BIOS was on this list until
 
 - IA32 (32-bit UEFI). Effectively extinct: it existed on the 2013-2015
   Atom tablet class and is rarer in the wild today than BIOS-only machines.
-  Not worth the dual-arch discipline tax on the whole codebase.
+  Not worth a second UEFI loader. A 32-bit processor under a BIOS is in
+  scope (item 1); what is rejected is 32-bit UEFI firmware.
 
 Explicitly deferred, not forgotten:
 - ISOs that need Ventoy's runtime driver injection to boot. The injection
@@ -949,7 +957,10 @@ What that puts in the loader, each a milestone in the roadmap:
   computed at boot, so a moved or rewritten ISO needs nothing redone. They
   reach the hook in the initrd itself (`/falcon/map`) on a direct boot, as a
   credential sd-stub packs beside a blessed wrap, or, for wraps older than
-  that credential, in a volatile EFI variable (Section 12.4). Per-family
+  that credential, in a volatile EFI variable (Section 12.4). It is built
+  at two widths from one source, x86-64 and i686: the UEFI loader appends
+  the x86-64 one, and falcon-bios whichever the kernel's setup header asks
+  for (Section 12.3.6). Per-family
   cmdline templates stay the preferred route where a family has one; the
   hook is what reaches the rest, with per-family nudges learned from
   Ventoy's hooks where label matching alone is not enough.
@@ -2248,7 +2259,7 @@ Windows 11 and the personal OS still pass. The 32-bit stick
 Linux 32 personal OS end to end with the credential handoff, and its ISOs.
 On hardware (2026-09-24), a Windows 7 era machine in BIOS mode booted the
 32-bit stick to its personal OS. Unmeasured on hardware: a processor
-without a 64-bit mode.
+without a 64-bit mode, and the 32-bit stick's ISOs.
 
 A BLESSED ISO BOOTS ON REAL HARDWARE (2026-09-13): on that same laptop, the
 on-stick appliance blessed the Arch ISO and it booted all the way into the
@@ -2442,7 +2453,7 @@ line numbers are left out because they would be stale within a week.
 | LBA 1-33 | GPT header and 128-entry array | both loaders, falcon-hook, the appliance |
 | LBA 34-97 | BIOS stage 2, 64 sectors | stage 1 |
 | LBA 98-1121 | BIOS stage 3, at most 1024 sectors; its header gives the length | stage 2 (`load3.c`) |
-| LBA 1122-2047 | unused | |
+| LBA 1122-2047 | unused; inside the `FALCON-BIOS` EF02 partition (LBA 34-2047) when `mkstick bios --reserve` made one | |
 | p1 `FALCON-ESP` | FAT32 ESP: shim as `EFI\BOOT\BOOTX64.EFI`, MokManager, falcon-boot as `grubx64.efi`, `falcon-boot.cer` | UEFI firmware, shim |
 | p2 `FALCON-ISO` | exFAT: the media, `falcon/blessed/`, the manifest, `falcon/windows.cfg` | both loaders, falcon-hook (as raw extents), winjump, the appliance |
 | p3 | LUKS2 + ext4: UKIs in `/uki`, the MOK key pair | both loaders, the appliance |
@@ -3228,7 +3239,10 @@ protected mode and `fault_install` has no IDT.
 ### 12.4 falcon-hook to root
 
 Shared by DIR, D3A, D3B and BLS on UEFI and DIR on BIOS. It runs as PID 1
-from `rdinit=/falcon/hook` before the distro's init.
+from `rdinit=/falcon/hook` before the distro's init, as the binary of the
+kernel's width: `falcon-hook` (x86-64) everywhere a 64-bit kernel boots,
+`falcon-hook32` (i686) under a 32-bit kernel, which only falcon-bios boots.
+The two differ only in `falcon-hook/src/sys.c`.
 
 ```mermaid
 sequenceDiagram
@@ -3272,7 +3286,9 @@ How each family then finds its root on the device the hook made:
 
 Section 13's second build of each loader. Its POS route is the stick's
 (12.2.4, 12.3.7); what is new is how it gets there and the routes out to
-the machine's other systems.
+the machine's other systems. The UEFI build exists and 12.5.1 is traced
+from its code; the BIOS build is not built yet (Section 13's status), so
+12.5.2 is its design.
 
 #### 12.5.1 UEFI
 
@@ -3390,10 +3406,10 @@ ISO9660 and UDF are linked, and `discover_scan` runs their identification
 over every device. Only ext4 is ever mounted. Splitting the registry per
 driver removes them.
 
-The BIOS build is i686, as the stick's falcon-bios is (Section 12.3,
+The BIOS build will be i686, as the stick's falcon-bios is (Section 12.3,
 bios-route.md 6h), so the same image serves a 32-bit machine: its POS boots
-a kernel of either width, and the chooser refuses a 64-bit one on a
-processor without long mode.
+a kernel of either width through `linux.c`, which refuses a 64-bit one on a
+processor without long mode once it is chosen, as on the stick.
 
 ### 13.2 Layout
 

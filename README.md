@@ -1,7 +1,8 @@
 # falcon-boot
 
 A single-purpose, auditable multi-boot loader for x86-64 UEFI, with an
-opt-in BIOS loader alongside. A distilled Ventoy.
+opt-in BIOS loader alongside that also runs on 32-bit machines. A distilled
+Ventoy.
 
 - **Drag-and-drop ISO booting.** Copy an `.iso` onto the stick's exFAT
   partition from any OS; it appears in the boot menu and boots. No registration
@@ -15,10 +16,14 @@ opt-in BIOS loader alongside. A distilled Ventoy.
 - **Secure Boot upheld.** Chains through Fedora's MS-signed shim and never
   weakens the machine's Secure Boot posture. See the security note below.
 
-Scope is deliberately narrow: x86-64 only, no 32-bit UEFI. The BIOS loader
-is opt-in (`make bios`, `falcon-boot-mkstick bios`): a BIOS machine has no
-Secure Boot, so on that route nothing is verified and nothing needs
-blessing.
+Scope is deliberately narrow: the UEFI loader is x86-64 only, with no
+32-bit UEFI. The BIOS loader is opt-in (`make bios`, `falcon-boot-mkstick
+bios`): a BIOS machine has no Secure Boot, so on that route nothing is
+verified and nothing needs blessing. It is i686 code and runs on any
+processor from the Pentium Pro on, booting 32-bit and 64-bit kernels, and
+takes what a newer processor adds (SSE, AES-NI) by asking CPUID at run
+time. `docs/notes/stick32.md` builds a stick for machines with no 64-bit
+mode.
 
 ## Security note
 
@@ -72,7 +77,8 @@ Each component has `src/`, `tests/` and `tools/` as it needs them, and a
 
 Requires `x86_64-w64-mingw32-gcc`, and for testing `qemu-system-x86_64` with
 OVMF. Host tooling additionally needs `cryptsetup`, `sbsign`, `mkfs.exfat`,
-`mkfs.ext4`.
+`mkfs.ext4`. `make bios` and falcon-hook's i686 build need the host gcc's
+32-bit libgcc (`gcc-multilib` on Debian), and the BIOS rig needs SeaBIOS.
 
 ```sh
 make check-tools     # verify the toolchain is present

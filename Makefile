@@ -1,4 +1,4 @@
-# falcon-boot: one repository, five components, one non-recursive build.
+# falcon-boot: one repository, seven components, one non-recursive build.
 #
 #   falcon-core/       EFI-free libraries every other component links: crypto,
 #                      the filesystem drivers, LUKS2, GPT, the PE walker, the
@@ -11,7 +11,10 @@
 #                      for the image it runs in
 #   falcon-winjump/    the WinPE jump binary, a Win64 console program
 #   falcon-hook/       the program appended to an ISO's initrd that rebuilds
-#                      the ISO as a block device (freestanding Linux x86-64)
+#                      the ISO as a block device (freestanding Linux, built
+#                      at two widths: x86-64 and i686)
+#   falcon-bios/       the opt-in BIOS loader: i686, flat 32-bit protected
+#                      mode, three stages; not in `all` (`make bios`)
 #
 # Each component's build.mk lists its own sources and targets. This file holds
 # what they share - toolchains, flag sets, the version stamp, the object
@@ -24,6 +27,8 @@
 #   efi-$(VARIANT)  freestanding mingw, linked into the loader
 #   host            hosted Linux, linked into the host tools
 #   winjump         hosted mingw, linked into winjump.exe
+#   hook, hook32    freestanding static Linux, x86-64 and i686: falcon-hook
+#   bios            freestanding i686: falcon-bios's three stages
 #   test            hosted Linux at -O0 with --coverage, linked into the tests
 #
 # The same falcon-core source is compiled in up to three flavours, which is
