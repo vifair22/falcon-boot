@@ -13,6 +13,11 @@
 #   source    an https URL, or local:<note> for media with no stable public
 #             URL (Windows, a superseded snapshot); those are copied in by hand
 #             or with --local DIR and still verified against sha256
+#   arch      optional: i686 for a 32-bit ISO, absent for x86_64. A 32-bit
+#             ISO runs in the BIOS columns only (the UEFI loader is x86-64
+#             and has no blessed route to offer it), and a 64-bit one is not
+#             run in bios32, the Pentium III column, where its kernel is
+#             refused by design (docs/notes/bios-route.md Section 6h)
 #
 # Rows are added as a family is worked on. A row is removed only when its URL
 # dies and a successor is pinned in its place.
@@ -64,3 +69,6 @@ macrium-rescue-8.0	A	windows-pe	c328301f5f6fdf162f8ad0ef352cf6add1000c50932d5140
 opnsense-25.1	C	freebsd	e4c178840ab1017bf80097424da76d896ef4183fe10696e92f288d0641475871	OPNsense-25.1-dvd-amd64.iso	local:OPNsense 25.1 dvd image, decompressed from the project's .bz2 by the user
 pfsense-plus-24.06b7	C	freebsd	6e08216183c50da1601bd69c49ffcb66a0c998ca4352f7b811b4025499597fa5	pfSense-plus-installer-24.06-BETA7-amd64-20240614-1949.iso	local:pfSense Plus 24.06-BETA7 installer, supplied by the user (Netgate account needed)
 bazzite-stable	A	bazzite	9c8d06cd8e57f2274678edeb14b4b13a79b8117c70571a65199919a66305b5c7	bazzite-stable-amd64.iso	https://download.bazzite.gg/bazzite-stable-amd64.iso
+alpine-std-x86-3.24.2	B	alpine	deb7d2fbd0749c7ff1bdfeb9d2541da6d611a902869ea1d16881a7acd5f85eee	alpine-standard-3.24.2-x86.iso	https://dl-cdn.alpinelinux.org/alpine/v3.24/releases/x86/alpine-standard-3.24.2-x86.iso	i686
+archlinux32-2024.07.10	A	arch	5f16c0f006a096c62dedc7d33d24d4e7721e07d7e26b3be902bef77c8da3482b	archlinux32-2024.07.10-i686.iso	https://mirror.archlinux32.org/archisos/archlinux32-2024.07.10-i686.iso	i686
+debian-netinst-12.15-i386	B	debian-installer	71506f6fa501d4ad50d0835666f5102e9c9b090123ca2668b995a911009c0a69	debian-12.15.0-i386-netinst.iso	https://cdimage.debian.org/cdimage/archive/12.15.0/i386/iso-cd/debian-12.15.0-i386-netinst.iso	i686
