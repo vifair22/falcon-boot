@@ -103,6 +103,19 @@ static void wr32(uint8_t *p, unsigned off, uint32_t v)
     p[off + 3u] = (uint8_t)((v >> 24) & 0xFFu);
 }
 
+int linux_probe(const linux_object *kernel, int *is_64)
+{
+    linux_geom geom;
+
+    if (kernel == (const linux_object *)0 || is_64 == (int *)0 ||
+        kernel->read(kernel->ctx, 0, 1024, g_setup) != 0 ||
+        linuxcore_geometry(g_setup, 1024u, kernel->size, KERNEL_ADDR,
+                           ADDR_END, sizeof g_setup, &geom) != LINUXCORE_OK)
+        return -1;
+    *is_64 = geom.is_64;
+    return 0;
+}
+
 int linux_cpu_is_64(void)
 {
     unsigned a = 0;

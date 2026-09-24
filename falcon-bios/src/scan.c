@@ -35,11 +35,16 @@
 #include <part/part.h>
 #include <lib/string.h>
 
-/* The hook, as make embeds it (falcon-hook/build.mk). The same binary the
- * UEFI loader appends, for the same reason: it runs in the initramfs and has
- * no opinion about which firmware started the kernel. */
+/* The hook, as make embeds it (falcon-hook/build.mk), in both widths. The
+ * x86-64 one is the binary the UEFI loader appends, for the same reason: it
+ * runs in the initramfs and has no opinion about which firmware started the
+ * kernel. It does have to be the kernel's width, and this loader boots
+ * 32-bit kernels too (bios-route.md Section 6h), so the i686 build rides
+ * along and the kernel's own header decides which one goes. */
 extern const unsigned char falcon_hook_bin[];
 extern const size_t falcon_hook_bin_len;
+extern const unsigned char falcon_hook32_bin[];
+extern const size_t falcon_hook32_bin_len;
 
 /* All of it .bss, which stage 2 zeroes and the image does not carry: this is
  * about 600 KB of iterators and scratch and there is one survey at a time.
@@ -203,6 +208,7 @@ static int boot_entry(const bootcfg_entry *e, fs_vol *p2,
     size_t map_len = 0;
     size_t wrote = 0;
     unsigned i;
+    int is_64 = 1;
 
     r->stage = "reading the kernel";
     if (e->kernel_unresolved) {
@@ -218,6 +224,10 @@ static int boot_entry(const bootcfg_entry *e, fs_vol *p2,
     kernel.read = fs_file_read_cb;
     kernel.ctx = &g_kernel;
     kernel.size = size;
+    /* A header that will not read leaves the 64-bit hook in place, and
+     * linux_boot refuses the kernel with the reason a moment later. */
+    (void)linux_probe(&kernel, &is_64);
+    log_str("kernel width: ", is_64 ? "64-bit" : "32-bit");
 
     r->stage = "reading the initrd";
     for (i = 0; i < e->n_initrd && i < BOOTCFG_INITRD_MAX; i++) {
@@ -242,8 +252,10 @@ static int boot_entry(const bootcfg_entry *e, fs_vol *p2,
         map_len = build_map(p2, p2part, iso, block_size);
 
     if (map_len > 0 &&
-        hookcmd_archive(falcon_hook_bin, falcon_hook_bin_len, g_map, map_len,
-                        g_archive, sizeof g_archive, &wrote) == HOOKCMD_OK &&
+        hookcmd_archive(is_64 ? falcon_hook_bin : falcon_hook32_bin,
+                        is_64 ? falcon_hook_bin_len : falcon_hook32_bin_len,
+                        g_map, map_len, g_archive, sizeof g_archive,
+                        &wrote) == HOOKCMD_OK &&
         hookcmd_build(g_cmd, g_hooked, sizeof g_hooked) == HOOKCMD_OK) {
         g_archive_src.at = g_archive;
         g_archive_src.len = wrote;

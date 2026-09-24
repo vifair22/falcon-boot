@@ -171,13 +171,20 @@ $(BIOS_STAGE2): $(BIOS_STAGE2_OBJS) $(BIOS)/bios.ld
 # its size. It is read in by stage 2 after paging is on and never runs below
 # a megabyte, so it holds no real-mode code at all and reaches the BIOS
 # through the gate.
-# The hook's blob, which is generated (falcon-hook/build.mk) and is the same
-# object the UEFI loader embeds: falcon-hook runs in the initramfs and does
-# not know which firmware started the kernel.
+# The hook's blobs, which are generated (falcon-hook/build.mk). The x86-64
+# one is the same object the UEFI loader embeds: falcon-hook runs in the
+# initramfs and does not know which firmware started the kernel. The i686 one
+# is for the 32-bit kernels only this loader boots, and scan.c appends
+# whichever matches the kernel.
 BIOS_HOOK_OBJ := $(BIOS_OBJ)/$(HOOK_BLOB).o
+BIOS_HOOK32_OBJ := $(BIOS_OBJ)/$(HOOK32_BLOB).o
 BIOS_WINJUMP_OBJ := $(BIOS_OBJ)/$(WINJUMP_BLOB).o
 
 $(BIOS_HOOK_OBJ): $(HOOK_BLOB)
+	@mkdir -p $(@D)
+	$(CC_HOST) $(BIOS_CFLAGS) -c -o $@ $<
+
+$(BIOS_HOOK32_OBJ): $(HOOK32_BLOB)
 	@mkdir -p $(@D)
 	$(CC_HOST) $(BIOS_CFLAGS) -c -o $@ $<
 
@@ -187,7 +194,7 @@ $(BIOS_WINJUMP_OBJ): $(WINJUMP_BLOB)
 
 BIOS_STAGE3_OBJS := $(BIOS_OBJ)/$(BIOS)/stage3.o $(BIOS_OBJ)/$(BIOS)/vcdres.o \
 	$(BIOS_S3_COBJS) \
-	$(BIOS_HOOK_OBJ) $(BIOS_WINJUMP_OBJ)
+	$(BIOS_HOOK_OBJ) $(BIOS_HOOK32_OBJ) $(BIOS_WINJUMP_OBJ)
 
 $(BIOS_STAGE3): $(BIOS_STAGE3_OBJS) $(BIOS)/bios.ld
 	@mkdir -p $(@D)

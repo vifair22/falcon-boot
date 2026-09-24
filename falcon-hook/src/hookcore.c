@@ -179,11 +179,16 @@ size_t hook_dm_table_size(uint32_t n_extents)
     return sizeof(struct dm_ioctl) + (size_t)n_extents * SPEC_SIZE;
 }
 
+/* In 64 bits whatever the width, then narrowed: the top half only exists
+ * where unsigned long is 64 bits, and an i686 kernel's mknodat reads the
+ * 32-bit encoding that is the bottom half. */
 unsigned long hook_devnum(uint32_t maj, uint32_t min)
 {
-    return (unsigned long)((min & 0xffu) | ((maj & 0xfffu) << 8) |
-                           ((unsigned long)(min & ~0xffu) << 12) |
-                           ((unsigned long)(maj & ~0xfffu) << 32));
+    uint64_t dev = (uint64_t)(min & 0xffu) | ((uint64_t)(maj & 0xfffu) << 8) |
+                   ((uint64_t)(min & ~0xffu) << 12) |
+                   ((uint64_t)(maj & ~0xfffu) << 32);
+
+    return (unsigned long)dev;
 }
 
 int hook_dm_table(const extmap_hdr *hdr, const uint8_t *map, uint32_t maj,

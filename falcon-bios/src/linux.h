@@ -44,4 +44,10 @@ const char *linux_why(void);
  * 32-bit one does not. */
 int linux_cpu_is_64(void);
 
+/* Reads the kernel's setup header and says whether it is a 64-bit kernel,
+ * before anything is placed: the falcon-hook that rides in its initrd has to
+ * be its width. 0 when the header could be read and *is_64 is set, nonzero
+ * otherwise (linux_boot then refuses it with its reason). */
+int linux_probe(const linux_object *kernel, int *is_64);
+
 #endif /* FALCON_BIOS_LINUX_H */
