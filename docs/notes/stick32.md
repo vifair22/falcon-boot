@@ -103,4 +103,15 @@ what was typed and hands the same string on for p4.
 - Alpine 3.24.2 x86 and Arch Linux 32 2024.07.10 off p2, direct: the kernel
   read as 32-bit, the i686 falcon-hook appended, a login prompt each.
 
-Not yet measured: any of it on a real 32-bit machine.
+## Measured on hardware (2026-09-24)
+
+A Windows 7 era machine, BIOS mode, booted the stick to the personal OS.
+The retry after a wrong passphrase ran its asterisks off the text area: the
+attempt-2 prompt is 80 characters with its TAB hint, the 80x25 screen's text
+area was 64 columns, and the echo did not follow the wrap. Fixed the same
+day in `falcon-bios/src/screen.c` (the echo and its erase wrap, a backspace
+climbs back over a wrap) and `falcon-core/src/tui/tui.c` (an 80-column
+console gets a one-column margin, so 74 columns of text).
+
+Not yet measured on hardware: the ISOs, and a processor without a 64-bit
+mode.

@@ -58,6 +58,7 @@ static size_t len_of(const uint16_t *s)
 void tui_frame_init(tui_frame *f, size_t cols, size_t rows)
 {
     size_t w;
+    size_t margin;
 
     /* The frame spends four rows and 2 * TUI_MARGIN_X columns, so the floor
      * is what keeps the list window from collapsing on a console that
@@ -69,7 +70,8 @@ void tui_frame_init(tui_frame *f, size_t cols, size_t rows)
     if (cols > TUI_ROW_MAX)
         cols = TUI_ROW_MAX;
 
-    w = cols - (size_t)2u * TUI_MARGIN_X;
+    margin = (cols <= TUI_NARROW_COLS) ? TUI_MARGIN_X_NARROW : TUI_MARGIN_X;
+    w = cols - (size_t)2u * margin;
     if (w > TUI_WIDTH_MAX)
         w = TUI_WIDTH_MAX;
     if (w > TUI_ROW_MAX - 1u)

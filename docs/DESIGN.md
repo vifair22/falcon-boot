@@ -2246,7 +2246,9 @@ with a Pentium III (the harness's `bios32` column) Alpine x86 and Arch Linux
 Windows 11 and the personal OS still pass. The 32-bit stick
 (docs/notes/stick32.md), booted read-only on the same Pentium III: its Arch
 Linux 32 personal OS end to end with the credential handoff, and its ISOs.
-Unmeasured on hardware: any 32-bit machine.
+On hardware (2026-09-24), a Windows 7 era machine in BIOS mode booted the
+32-bit stick to its personal OS. Unmeasured on hardware: a processor
+without a 64-bit mode.
 
 A BLESSED ISO BOOTS ON REAL HARDWARE (2026-09-13): on that same laptop, the
 on-stick appliance blessed the Arch ISO and it booted all the way into the
