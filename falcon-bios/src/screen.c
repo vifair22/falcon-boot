@@ -215,7 +215,7 @@ static void mode_draw(void)
 
     if (g_mode == (const char *)0)
         return;
-    while (g_mode[len] != '\0' && len < TUI_MODE_CODE_MAX)
+    while (len < TUI_MODE_CODE_MAX && g_mode[len] != '\0')
         len++;
     if (!tui_mode_at(&g_frame, len, &row, &col))
         return;

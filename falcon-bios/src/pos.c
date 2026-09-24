@@ -238,7 +238,7 @@ static void handoff(void)
 static int boot_uki(const fs_dirent *uki, boot_result *r)
 {
     linux_object kernel;
-    linux_object initrd[2];
+    linux_object initrd[2] = { { 0 } };
     unsigned n_initrd = 0;
     pe_hdr hdr;
     size_t loff = 0;

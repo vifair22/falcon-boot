@@ -346,7 +346,7 @@ int linux_boot(const linux_object *kernel, const linux_object *initrd,
      * which is why that medium got further and looked like a different bug.
      * falcon-efi/src/direct/direct.c has always padded; this did not. */
     {
-        uint64_t sizes[BOOTCFG_INITRD_MAX + 1u];
+        uint64_t sizes[BOOTCFG_INITRD_MAX + 1u] = { 0 };
 
         for (i = 0; i < n_initrd && i <= BOOTCFG_INITRD_MAX; i++)
             sizes[i] = initrd[i].size;

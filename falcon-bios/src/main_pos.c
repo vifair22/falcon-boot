@@ -109,7 +109,7 @@ static int claim_shelf(disk_row *row)
 {
     uint32_t i;
 
-    for (i = 0; i < row->nparts; i++) {
+    for (i = 0; i < row->nparts && i < PARTS_MAX; i++) {
         if (!gpt_part_is_role(&row->parts[i], PART_ROLE_SHELF))
             continue;
         if (pos_probe(&row->disk, &row->parts[i])) {
@@ -156,7 +156,8 @@ static void pick_shelf(void)
 {
     unsigned i;
 
-    if (g_boot_idx < g_ndisks && claim_shelf(&g_disks[g_boot_idx]))
+    if (g_boot_idx < g_ndisks && g_boot_idx < DISKS_MAX &&
+        claim_shelf(&g_disks[g_boot_idx]))
         return;
     for (i = 0; i < g_ndisks; i++) {
         if (i != g_boot_idx && claim_shelf(&g_disks[i]))
