@@ -153,7 +153,12 @@ Rationale per partition:
 - **p4 root+home, argon2id.** p4 is unlocked by the *Linux* kernel inside the
   UKI's initramfs, where argon2id is fine, so it keeps the strong default. p4 is
   a separate partition from p3 purely so that EFI-land never has to understand or
-  mount the real root filesystem. EFI touches p3 only.
+  mount the real root filesystem. EFI touches p3 only. The default is tuned by
+  cryptsetup on the machine that builds the stick, up to a gibibyte and four
+  threads, which a 2002 laptop's initramfs cannot run; a stick for machines
+  like that is made with `mkstick create --p4-kdf-memory <KiB>`, which caps
+  the memory, pins the time cost at 4 and uses one thread
+  (docs/notes/stick32.md).
 
 p3 and p4 share the same passphrase (Section 5).
 
@@ -2238,8 +2243,10 @@ I686 IN THE RIG (2026-09-24): falcon-bios is i686 in 32-bit protected mode
 and promotes at run time (docs/notes/bios-route.md Section 6h). On SeaBIOS
 with a Pentium III (the harness's `bios32` column) Alpine x86 and Arch Linux
 32 boot direct with the i686 falcon-hook; on the host CPU Arch x86_64,
-Windows 11 and the personal OS still pass. Unmeasured on hardware: any
-32-bit machine.
+Windows 11 and the personal OS still pass. The 32-bit stick
+(docs/notes/stick32.md), booted read-only on the same Pentium III: its Arch
+Linux 32 personal OS end to end with the credential handoff, and its ISOs.
+Unmeasured on hardware: any 32-bit machine.
 
 A BLESSED ISO BOOTS ON REAL HARDWARE (2026-09-13): on that same laptop, the
 on-stick appliance blessed the Arch ISO and it booted all the way into the

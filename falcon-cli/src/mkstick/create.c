@@ -92,7 +92,10 @@ static const cli_opt create_opts[] = {
     { "p2-fs", CLI_OPT_VALUE, 0, "<fs>",
       "filesystem for p2 (default exfat)" },
     { "p3-fs", CLI_OPT_VALUE, 0, "<fs>",
-      "filesystem for p3 (default ext4)" }
+      "filesystem for p3 (default ext4)" },
+    { "p4-kdf-memory", CLI_OPT_VALUE, 0, "<KiB>",
+      "cap p4's argon2id memory and use one thread, for a machine with little "
+      "RAM (default: cryptsetup's own tuning)" }
 };
 
 /* ---- filesystem choices (DESIGN Section 9) ----
@@ -163,7 +166,32 @@ typedef struct {
     int         p3_plain;
     const char *p2_fs;
     const char *p3_fs;
+    const char *p4_kdf_memory;   /* KiB, validated; NULL for the default */
 } fs_plan;
+
+/* --p4-kdf-memory, checked before anything is written: a whole number of
+ * KiB from argon2's floor to 4 GiB. */
+static cli_status kdf_memory_choose(const cli_args *a, const char **out)
+{
+    const char *v = cli_value(a, "p4-kdf-memory", NULL);
+    unsigned long n = 0;
+    size_t i;
+
+    *out = NULL;
+    if (v == NULL)
+        return CLI_OK;
+    for (i = 0; v[i] != '\0'; i++) {
+        if (v[i] < '0' || v[i] > '9' || i >= 7u)
+            return set_error(CLI_ERR_USAGE, "--p4-kdf-memory %s: a whole "
+                             "number of KiB, 8192 to 4194304", v);
+        n = n * 10u + (unsigned long)(v[i] - '0');
+    }
+    if (i == 0 || n < 8192u || n > 4194304u)
+        return set_error(CLI_ERR_USAGE, "--p4-kdf-memory %s: a whole number "
+                         "of KiB, 8192 to 4194304", v);
+    *out = v;
+    return CLI_OK;
+}
 
 /* ---- a small argv builder, because sgdisk's arguments are computed ---- */
 
@@ -645,15 +673,37 @@ static cli_status make_filesystems(const mks_disk *d, const mks_pass *pass,
         return rc;
 
 p4:
-    /* p4 keeps LUKS2's stock argon2id, because it is unlocked by the Linux
-     * kernel inside the UKI's initramfs, where memory-hardness is free
-     * (DESIGN Section 3). EFI-land never touches it. p4 is encrypted whether
-     * or not p3 is: it holds root and home, the loader never reads it, and
-     * --p3-plain is a statement about the UKI shelf alone. */
-    log_info("p4: LUKS2 (argon2id, stock defaults) + ext4");
-    rc = proc_input_l(pass->buf, pass->len, "cryptsetup", "luksFormat",
-                      "--type", "luks2", "--batch-mode", d->part[3], "-",
-                      PROC_END);
+    /* p4 keeps LUKS2's argon2id, because it is unlocked by the Linux kernel
+     * inside the UKI's initramfs (DESIGN Section 3). EFI-land never touches
+     * it. p4 is encrypted whether or not p3 is: it holds root and home, the
+     * loader never reads it, and --p3-plain is a statement about the UKI
+     * shelf alone.
+     *
+     * Stock argon2id is tuned on THIS host, which can be up to a gibibyte
+     * and four threads: memory-hardness is free on the machine that made
+     * the stick and impossible on a 2002 laptop with 256 MB, whose initramfs
+     * then fails to open p4 without a word. --p4-kdf-memory caps it for a
+     * stick meant for machines like that (docs/notes/bios-route.md Section
+     * 6h), and pins the time cost as well: cryptsetup would tune that on
+     * this host too, and an old processor is twenty times slower than the
+     * one the tuning ran on. Four passes over the capped memory is seconds
+     * there. */
+    if (plan->p4_kdf_memory != NULL) {
+        log_info("p4: LUKS2 (argon2id, %s KiB, time cost %s, one thread) + "
+                 "ext4", plan->p4_kdf_memory, MKS_P4_LOWMEM_ITERATIONS);
+        rc = proc_input_l(pass->buf, pass->len, "cryptsetup", "luksFormat",
+                          "--type", "luks2", "--batch-mode",
+                          "--pbkdf", "argon2id",
+                          "--pbkdf-memory", plan->p4_kdf_memory,
+                          "--pbkdf-parallel", "1",
+                          "--pbkdf-force-iterations", MKS_P4_LOWMEM_ITERATIONS,
+                          d->part[3], "-", PROC_END);
+    } else {
+        log_info("p4: LUKS2 (argon2id, stock defaults) + ext4");
+        rc = proc_input_l(pass->buf, pass->len, "cryptsetup", "luksFormat",
+                          "--type", "luks2", "--batch-mode", d->part[3], "-",
+                          PROC_END);
+    }
     if (rc != CLI_OK)
         return rc;
 
@@ -901,6 +951,9 @@ static cli_status create_run(const cli_args *a)
         return rc;
 
     plan_fs.p3_plain = cli_flag(a, "p3-plain");
+    rc = kdf_memory_choose(a, &plan_fs.p4_kdf_memory);
+    if (rc != CLI_OK)
+        return rc;
     rc = fs_choose(a, "p2-fs", p2_implemented,
                    sizeof p2_implemented / sizeof p2_implemented[0], "exfat",
                    &plan_fs.p2_fs);

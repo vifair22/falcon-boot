@@ -805,6 +805,13 @@ out of scope.
 | Windows 11 25H2 | | PASS |
 | the personal OS fixture (a 64-bit UKI) | refused, as above, after the unlock and chooser | PASS, FALCON-CRED-OK |
 
+**The 32-bit stick.** docs/notes/stick32.md is the second stick, built and
+booted: Arch Linux 32 as its personal OS and 32-bit ISOs on p2, read-only in
+QEMU on a Pentium III with 512 MB, to a login prompt each way. Building it
+found the one thing the loader's side could not: `mkstick create`'s stock
+argon2id on p4 is tuned on the building host and cannot run on an old
+machine, hence `mkstick create --p4-kdf-memory`.
+
 ## 7. Risks, in the order they matter
 
 **7.1 The `INT 13h` resident is a spike, not an estimate.** The ~1,000 above
