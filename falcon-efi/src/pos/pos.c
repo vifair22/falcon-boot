@@ -790,6 +790,8 @@ EFI_STATUS pos_boot_pick(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
     BOOLEAN inner_blocked = FALSE;
     load_ops ops;
     EFI_STATUS status = EFI_SUCCESS;
+    /* Static for -Wstack-usage: a dirent carries a full name. */
+    static fs_dirent launched;
 
     if (st == (void *)0 || result == (void *)0)
         return EFI_INVALID_PARAMETER;
@@ -945,11 +947,17 @@ EFI_STATUS pos_boot_pick(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
      * the shelf. The key schedule and the plaintext caches go now rather
      * than at out_close, because a boot that works never gets there. What
      * the launch still needs is the credential, which credfs wipes itself
-     * (credfs.h, Lifetime). */
+     * (credfs.h, Lifetime), and the image's directory entry, whose name
+     * credfs publishes it under. The entry is copied out first: wipe_shelf
+     * zeroes the whole image list, and a launch handed the wiped entry
+     * publishes an empty name, which credfs refuses, so the UKI boots from
+     * memory without its credential and the initramfs asks again. */
+    launched = g_images.uki[chosen].ent;
     wipe_shelf();
 
-    status = launch_uki(st, parent_image, &g_images.uki[chosen].ent, buf, size, &ops,
+    status = launch_uki(st, parent_image, &launched, buf, size, &ops,
                         inner_blocked, &retain, result);
+    crypto_wipe(&launched, sizeof launched);
 
     /* The image is loaded and running from the firmware's own copy by now, so
      * these pages are ours to release whether it succeeded or not. Doing it
