@@ -118,9 +118,12 @@ the tree, so `#include <fs/exfat.h>` means one file wherever it is written.
     status codes) and the read-only drivers only it calls, `exfat.c`,
     `ext4.c`, `fat.c` (FAT12/16/32 with long names; one driver, since the
     width is derived from the cluster count and only the FAT entry read
-    differs), `iso9660.c` (Rock Ridge, Joliet) and `udf.c`. Consumers select
-    a driver through the registry and never name one; `fs_lookup` resolves a
-    path. `udf.c` also carries the few record edits the Windows patch needs
+    differs), `iso9660.c` (Rock Ridge, Joliet) and `udf.c`. Each driver's
+    adapter to the vtable is its own file (`fs_<driver>.c`), and the table
+    is one a build picks: `fs_reg_all.c` everywhere, `fs_reg_ext4.c` in the
+    stationary build (`CORE_FS_EXT4`), which is how that build links ext4
+    alone. Consumers select a driver through the registry and never name
+    one; `fs_lookup` resolves a path. `udf.c` also carries the few record edits the Windows patch needs
     (a File Entry's extents, a Partition Descriptor's length, an anchor),
     applied to caller buffers, never to media.
   - `luks/` LUKS2 header parse, keyslot unlock, AF merge.

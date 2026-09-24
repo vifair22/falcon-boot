@@ -231,11 +231,10 @@ bios: $(BIOS_STAGE1) $(BIOS_STAGE2) $(BIOS_STAGE3)
 # OS and another disk's own boot code, and nothing else. Stages 1 and 2 are
 # the stick's, byte for byte; this is only a different image at LBA 98. No
 # resident, no ISO scan, and so neither falcon-hook blob, which only scan.c
-# appends. fs/ is the whole registry for the reason falcon-efi/build.mk
-# gives for the UEFI build.
+# appends. fs/ is ext4 alone, as in the UEFI build.
 BIOS_POS_S3_CSRCS := $(addprefix $(BIOS)/,main_pos.c pos.c prompt.c screen.c \
 	linux.c linuxcore.c mbr.c e820.c disk.c console.c) \
-	$(CORE_PART) $(CORE_FS) $(CORE_PE) $(CORE_CRYPTO) $(CORE_LUKS) \
+	$(CORE_PART) $(CORE_FS_EXT4) $(CORE_PE) $(CORE_CRYPTO) $(CORE_LUKS) \
 	$(CORE)/media/cpio.c $(CORE)/media/osrel.c $(CORE)/media/shelf.c \
 	$(CORE_LIBC) $(CORE_UCS2) $(CORE_TUI)
 BIOS_POS_S3_COBJS := $(patsubst %.c,$(BIOS_OBJ)/%.o,$(BIOS_POS_S3_CSRCS))

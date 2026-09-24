@@ -65,9 +65,8 @@ $(EFI_OBJ)/$(EFI_SRC)/efi/main.o: build/version.h
 # answer to what it can do, and Section 13.1 is the argument. Not in `all`:
 # `make pos` builds it.
 #
-# fs/ is the whole registry for now, because fs.c names every driver in one
-# table; only ext4 is ever mounted here, but the others are linked and run
-# by discover_scan's identification pass.
+# fs/ is ext4 alone (CORE_FS_EXT4): the only filesystem this build mounts,
+# and so the only one discover_scan's identification pass probes for.
 EFI_POS_SRCS := \
 	$(EFI_SRC)/efi/main_pos.c \
 	$(EFI_SRC)/efi/sbat_pos.c \
@@ -79,7 +78,7 @@ EFI_POS_SRCS := \
 	$(EFI_SRC)/discover/discover.c \
 	$(CORE_PART) \
 	$(EFI_SRC)/discover/partefi.c \
-	$(CORE_FS) \
+	$(CORE_FS_EXT4) \
 	$(CORE_PE) \
 	$(CORE_LUKS) \
 	$(CORE_CRYPTO) \

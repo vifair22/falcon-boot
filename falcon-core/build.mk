@@ -10,7 +10,11 @@ CORE := falcon-core/src
 
 CORE_CRYPTO   := $(addprefix $(CORE)/crypto/,crypto.c sha1.c sha256.c sha512.c \
 	hash.c hmac.c pbkdf2.c aes.c xts.c aesni.c)
-CORE_FS       := $(addprefix $(CORE)/fs/,exfat.c ext4.c fat.c iso9660.c udf.c fs.c)
+CORE_FS       := $(addprefix $(CORE)/fs/,exfat.c ext4.c fat.c iso9660.c udf.c fs.c \
+	fs_exfat.c fs_ext4.c fs_fat.c fs_iso9660.c fs_udf.c fs_reg_all.c)
+# The stationary build's (DESIGN Section 13): ext4 and its adapter, and a
+# registry that names nothing else.
+CORE_FS_EXT4  := $(addprefix $(CORE)/fs/,ext4.c fs.c fs_ext4.c fs_reg_ext4.c)
 CORE_LUKS     := $(addprefix $(CORE)/luks/,json.c af.c luks.c)
 CORE_PART     := $(CORE)/part/part.c
 CORE_PE       := $(CORE)/pe/pe.c

@@ -2145,7 +2145,10 @@ are (both measured 2026-09-13):
   from Linux userland, never written by the loader. Drivers sit behind a
   common vtable (decision 2026-09-13): `fs_ops {name, probe, mount,
   dir_open_root, dir_open, dir_next, file_open, file_read, extents}` over
-  the shared byte-read callback, registered in a static table. `extents` is
+  the shared byte-read callback, registered in a static table (one adapter
+  file per driver, `fs_<driver>.c`, and a table a build picks:
+  `fs_reg_all.c`, or `fs_reg_ext4.c` for the stationary build, Section
+  13.1). `extents` is
   an **optional capability**: the injection framework needs file-to-LBA
   resolution on p2, and a driver that cannot provide it (btrfs CoW and
   compression can make "the file's raw LBAs" not exist) still serves the
@@ -3388,9 +3391,9 @@ share changes shape between them.
 |---|---|---|
 | UEFI image | `falcon-boot.efi` | `falcon-boot-pos.efi` |
 | UEFI entry | `efi/main.c` | `efi/main_pos.c` |
-| UEFI links | everything in Section 9 | `efi/sbat_pos.c`, `loader/`, `console/`, `discover/`, `sb.c`, `pos/`, `nxt/` (13.4); core's `crypto`, `luks`, `fs` (ext4), `part`, `tui`, `media/shelf.c` (the chooser's rows), `lib` |
-| UEFI leaves out | | `iso/`, `direct/`, `bsd/`, `win/`, `bless/`, `trustefi.c`, `trust/`, the rest of `media/` (the survey included), `wim/`, `manifest/`, falcon-winjump, falcon-hook |
-| BIOS stage 3 | `main.c`, `falcon-bios-stage3.bin` | `main_pos.c`, `falcon-bios-pos-stage3.bin` (116 KB against 288 KB) |
+| UEFI links | everything in Section 9 | `efi/sbat_pos.c`, `loader/`, `console/`, `discover/`, `sb.c`, `pos/`, `nxt/` (13.4); core's `crypto`, `luks`, `fs` (ext4 only), `part`, `tui`, `media/shelf.c` (the chooser's rows), `lib` |
+| UEFI leaves out | | `iso/`, `direct/`, `bsd/`, `win/`, `bless/`, `trustefi.c`, `trust/`, the rest of `media/` (the survey included), `wim/`, `manifest/`, the exFAT, FAT, ISO9660 and UDF drivers, falcon-winjump, falcon-hook |
+| BIOS stage 3 | `main.c`, `falcon-bios-stage3.bin` | `main_pos.c`, `falcon-bios-pos-stage3.bin` (80 KB against 288 KB) |
 | BIOS links | everything in `falcon-bios/` | `pos.c`, `linux.c`, `linuxcore.c`, `e820.c`, `screen.c`, `prompt.c`, `console.c`, `disk.c`, `mbr.c` (13.4); core as UEFI, plus `media/cpio.c` for the credential |
 | BIOS leaves out | | `vcd.c`, `vcdres.S`, `scan.c`, `win.c`, `bsd.c`, `heap.c`: nothing is ever resident, and neither falcon-hook blob is linked, since only `scan.c` appends one |
 | stages 1 and 2 | | unchanged, the same binaries |
@@ -3405,13 +3408,13 @@ shim's status, without naming the signer. The chooser lists every UKI the
 shelf holds, an appliance image included, which a hand install does not
 put there.
 
-One exception to "what it does not link it cannot run", owed a fix: core's
-`fs.c` names every filesystem driver in one registry, so exFAT, FAT,
-ISO9660 and UDF are linked, and `discover_scan` runs their identification
-over every device. Only ext4 is ever mounted. Splitting the registry per
-driver removes them.
+Its filesystem registry is ext4 alone (`CORE_FS_EXT4`: `fs_reg_ext4.c`
+names one driver, and each driver's adapter is its own file), so the
+exFAT, FAT, ISO9660 and UDF parsers are not linked and `discover_scan`'s
+identification pass probes every device for ext4 and nothing else. With
+that, UEFI is 123 KB and BIOS stage 3 80 KB.
 
-The BIOS build will be i686, as the stick's falcon-bios is (Section 12.3,
+The BIOS build is i686, as the stick's falcon-bios is (Section 12.3,
 bios-route.md 6h), so the same image serves a 32-bit machine: its POS boots
 a kernel of either width through `linux.c`, which refuses a 64-bit one on a
 processor without long mode once it is chosen, as on the stick.
