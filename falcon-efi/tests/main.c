@@ -7,6 +7,8 @@
  * (falcon-efi/src/iso/overlay.h). The Secure Boot state reader
  * (falcon-efi/src/secboot/sb.c): its whole input is one runtime services
  * function pointer, so a fake GetVariable reaches every state it can report.
+ * The stationary build's boot-entry parsing (falcon-efi/src/nxt/nxtcore.c):
+ * NVRAM bytes in, a row or a refusal out.
  */
 
 #include "tests.h"
@@ -21,6 +23,7 @@ int main(void)
     failed += run_next_tests();
     failed += run_iso_overlay_tests();
     failed += run_sb_tests();
+    failed += run_nxt_tests();
 
     printf("\nfalcon-efi: total failed: %d\n", failed);
     return failed == 0 ? 0 : 1;

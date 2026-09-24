@@ -3282,7 +3282,7 @@ flowchart TD
     SHIM --> MAIN["efi_main (main_pos.c)"]
     MAIN --> DISC["discover_scan"]
     DISC --> POSS["pos_scan<br/>only the boot disk's shelf, if it has one (13.3)"]
-    POSS --> OTH["other systems<br/>BootOrder entries but BootCurrent; ESPs with bootmgfw.efi and no entry"]
+    POSS --> OTH["nxt_scan<br/>BootOrder's offered entries but BootCurrent"]
     OTH --> SH{"shelf found?"}
     SH -- yes --> PR["passphrase prompt<br/>Escape to the list"]
     SH -- no --> LIST
@@ -3291,17 +3291,16 @@ flowchart TD
     POS -- "fails" --> LIST
     LIST -- "Personal OS" --> PR
     LIST -- "firmware entry" --> NXT["NXT: BootNext = Boot####, reset"]
-    LIST -- "ESP row" --> ESP["ESP: LoadImage by device path<br/>through loadops"]
+    NXT -- "BootNext refused" --> LIST
     LIST -- "Firmware Setup" --> FWS["OsIndications, reset"]
-    ESP -- "refused or returned" --> LIST
+    LIST -- "Escape" --> OUT["return to firmware"]
 ```
 
 `NXT` leaves falcon entirely: the firmware boots the entry on the next
 start as though falcon had not run, and for a Windows sealed with BitLocker
 that is the point (13.4). Nothing falcon did survives the reset except that
-`BootNext` has been consumed. `ESP` is a chainload, the stick's CHN without
-the virtual CD: the target is a real file on a real ESP, so there is nothing
-to serve and nothing to hide.
+`BootNext` has been consumed. The `ESP` route of 13.4 is not built yet and
+is not drawn.
 
 #### 12.5.2 BIOS
 
@@ -3329,9 +3328,11 @@ memory map as the BIOS left them.
 
 ## 13. The stationary build (decided 2026-09-21)
 
-Status (2026-09-24): designed; the boot-disk rule (13.3) is built into the
-stick's UEFI loader, where it applies too. Section 12.5 draws the build's
-routes.
+Status (2026-09-24): the UEFI build exists and is rig-proven: POS, NXT and
+Firmware Setup (`make pos`, `falcon-boot-pos.efi`). The boot-disk rule
+(13.3) is in the stick's UEFI loader too. Not built yet: the ESP chainload
+(13.4, after NXT is measured on hardware) and the BIOS build. Section 12.5
+draws what exists.
 
 A falcon loader installed on a machine's internal disk, as that machine's
 boot loader, rather than on a stick. It boots the personal OS off a shelf on
@@ -3365,15 +3366,29 @@ share changes shape between them.
 | | stick build | stationary build |
 |---|---|---|
 | UEFI image | `falcon-boot.efi` | `falcon-boot-pos.efi` |
-| UEFI links | everything in Section 9 | `efi/`, `loader/`, `console/`, `discover/`, `sb.c`, `pos/`, the other-systems module (13.4); core's `crypto`, `luks`, `fs` (ext4), `part`, `tui`, `media/shelf.c` (the chooser's rows), `lib` |
+| UEFI entry | `efi/main.c` | `efi/main_pos.c` |
+| UEFI links | everything in Section 9 | `efi/sbat_pos.c`, `loader/`, `console/`, `discover/`, `sb.c`, `pos/`, `nxt/` (13.4); core's `crypto`, `luks`, `fs` (ext4), `part`, `tui`, `media/shelf.c` (the chooser's rows), `lib` |
 | UEFI leaves out | | `iso/`, `direct/`, `bsd/`, `win/`, `bless/`, `trustefi.c`, `trust/`, the rest of `media/` (the survey included), `wim/`, `manifest/`, falcon-winjump, falcon-hook |
 | BIOS stage 3 | `main.c` | `main_pos.c` |
 | BIOS links | everything in `falcon-bios/` | `pos.c`, `linux.c`, `screen.c`, `prompt.c`, `console.c`, `disk.c`, the MBR chain (13.4); core as UEFI |
 | BIOS leaves out | | `vcd.c`, `vcdres.S`, `scan.c`, `win.c`, `bsd.c`, `heap.c`: nothing is ever resident, and neither falcon-hook blob is linked, since only `scan.c` appends one |
 | stages 1 and 2 | | unchanged, the same binaries |
 | version type | `release` | `pos-release`, so a screen photo says which build it is |
+| SBAT component | `falcon-boot` | `falcon-boot-pos`, its own generation: a revocation for a parser this build does not link must not stop it booting |
 
 `make pos` builds both, and `all` builds neither, as with `make bios`.
+
+No boot predictions (Section 7.8) are linked, so no row carries a trust
+tag and the key line has no legend; a UKI shim refuses is reported with
+shim's status, without naming the signer. The chooser lists every UKI the
+shelf holds, an appliance image included, which a hand install does not
+put there.
+
+One exception to "what it does not link it cannot run", owed a fix: core's
+`fs.c` names every filesystem driver in one registry, so exFAT, FAT,
+ISO9660 and UDF are linked, and `discover_scan` runs their identification
+over every device. Only ext4 is ever mounted. Splitting the registry per
+driver removes them.
 
 The BIOS build is i686, as the stick's falcon-bios is (Section 12.3,
 bios-route.md 6h), so the same image serves a 32-bit machine: its POS boots
@@ -3474,9 +3489,14 @@ a vendor recovery partition and a network boot entry are rows by the same
 code.
 
 The load-option parse (attributes, description, file path length, taken
-out of a variable's bytes) is host-tested, in the pattern of `blesscore.c`.
+out of a variable's bytes) is host-tested, in the pattern of `blesscore.c`:
+`nxt/nxtcore.c`, with `nxt/nxt.c` its firmware half. The BootNext write is
+`loadops.c`'s `loader_boot_next_set`, the one `loader_boot_next_self` now
+makes too. Measured in the rig (2026-09-24): the row for a second disk's
+firmware entry set BootNext, and after the reset the firmware started that
+disk's `BOOTX64.EFI`.
 
-**UEFI: `ESP`, a chainload, when there is no entry.** Other disks' ESPs
+**UEFI: `ESP`, a chainload, when there is no entry (not built yet).** Other disks' ESPs
 carrying `\EFI\Microsoft\Boot\bootmgfw.efi` and no firmware entry naming it
 (a disk moved in, an NVRAM reset on firmware that does not regenerate
 entries) get a row, and it is loaded by device path through `loadops`, the

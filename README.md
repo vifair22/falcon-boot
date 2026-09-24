@@ -84,6 +84,7 @@ make test-image      # build the exFAT fixture the rig boots against
 make run             # boot it under QEMU/OVMF with a display window
 make bios            # the BIOS loader's stages
 make test-bios-img   # a disk the rig boots with run-qemu.sh --bios
+make pos             # the stationary build, falcon-boot-pos.efi (DESIGN 13)
 ```
 
 See `docs/DESIGN.md` for architecture and the MVP build order.

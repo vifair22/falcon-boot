@@ -150,6 +150,14 @@ EFI_STATUS loader_next_boot_set(EFI_SYSTEM_TABLE *st, const char *name);
 EFI_STATUS loader_boot_next_self(EFI_SYSTEM_TABLE *st);
 void loader_boot_next_clear(EFI_SYSTEM_TABLE *st);
 
+/* BootNext set to a named option, for the stationary build's NXT route
+ * (DESIGN Section 13.4): the firmware boots Boot<option> on the next start
+ * as it would from its own boot menu. The same write as
+ * loader_boot_next_self, with the option chosen by the user rather than
+ * read from BootCurrent. EFI_NOT_FOUND when Boot<option> does not exist;
+ * nothing is written then. */
+EFI_STATUS loader_boot_next_set(EFI_SYSTEM_TABLE *st, UINT16 option);
+
 /* ---- the ISO extent map (DESIGN Section 6.4) ----
  *
  * FalconIsoMap, the variable falcon-hook reads from efivarfs to rebuild the

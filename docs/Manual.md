@@ -78,3 +78,17 @@ failure after that is reported on screen and the key returns to the menu.
 A code seen on an error screen names the route that failed, which is the
 first thing to report with it. `docs/DESIGN.md` Section 12 draws each
 route.
+
+### 1.4 Stationary build (UEFI)
+
+`falcon-boot-pos.efi`, the build for a machine's own disk (`docs/DESIGN.md`
+Section 13). It opens at the passphrase prompt; Escape there goes to the
+list.
+
+| code | route | reached by |
+|---|---|---|
+| `POS` | personal OS, as on the stick, from the boot disk's shelf | the prompt it opens at, or the Personal OS row |
+| `NXT` | a firmware boot entry: BootNext is set to it and the machine restarts | its row, labelled with the entry's own description |
+
+Every entry the firmware's own boot menu offers is a row (active, not
+hidden, boot category), except the one this boot came through.

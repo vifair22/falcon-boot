@@ -166,7 +166,12 @@ the tree, so `#include <fs/exfat.h>` means one file wherever it is written.
 - `falcon-efi/` the loader: freestanding C11, MS x64 ABI, built to PE32+ with
   `x86_64-w64-mingw32-gcc`. No gnu-efi, no EDK2.
   - `efi/` the entry point (`main.c`), the `.sbat` section, our own minimal
-    UEFI headers.
+    UEFI headers; and the stationary build's entry point and `.sbat`
+    (`main_pos.c`, `sbat_pos.c`; DESIGN Section 13), linked with its own
+    source list by `make pos` into `falcon-boot-pos.efi`, not by `all`.
+  - `nxt/` the stationary build's route to the firmware's other boot
+    entries (NXT, BootNext and a reset): `nxtcore.c` parses BootOrder and
+    Boot#### and is host-tested, `nxt.c` reads the variables.
   - `loader/` the shim-verified load path (`loadops.c`, DESIGN Section 7.6)
     and `credfs.c`, the synthetic read-only filesystem a UKI is published on
     so it can be loaded by device path and sd-stub finds the passphrase

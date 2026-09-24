@@ -59,6 +59,48 @@ $(EFI): $(EFI_OBJS)
 
 $(EFI_OBJ)/$(EFI_SRC)/efi/main.o: build/version.h
 
+# The stationary build (docs/DESIGN.md Section 13): the personal OS and the
+# firmware's other boot entries, and nothing else. A separate link rather
+# than a mode, so what it leaves out it cannot run; the list below is the
+# answer to what it can do, and Section 13.1 is the argument. Not in `all`:
+# `make pos` builds it.
+#
+# fs/ is the whole registry for now, because fs.c names every driver in one
+# table; only ext4 is ever mounted here, but the others are linked and run
+# by discover_scan's identification pass.
+EFI_POS_SRCS := \
+	$(EFI_SRC)/efi/main_pos.c \
+	$(EFI_SRC)/efi/sbat_pos.c \
+	$(EFI_SRC)/loader/loadops.c \
+	$(EFI_SRC)/loader/credfs.c \
+	$(EFI_SRC)/console/menu.c \
+	$(EFI_SRC)/console/prompt.c \
+	$(CORE_TUI) \
+	$(EFI_SRC)/discover/discover.c \
+	$(CORE_PART) \
+	$(EFI_SRC)/discover/partefi.c \
+	$(CORE_FS) \
+	$(CORE_PE) \
+	$(CORE_LUKS) \
+	$(CORE_CRYPTO) \
+	$(EFI_SRC)/secboot/sb.c \
+	$(EFI_SRC)/pos/pos.c \
+	$(CORE)/media/osrel.c \
+	$(CORE)/media/shelf.c \
+	$(EFI_SRC)/nxt/nxt.c \
+	$(EFI_SRC)/nxt/nxtcore.c \
+	$(CORE_LIBC) $(CORE_UCS2)
+
+EFI_POS_OBJS := $(EFI_POS_SRCS:%.c=$(EFI_OBJ)/%.o)
+
+EFI_POS := $(BIN)/falcon-boot-pos.efi
+
+$(EFI_POS): $(EFI_POS_OBJS)
+	@mkdir -p $(@D)
+	$(CC) $(EFI_LDFLAGS) -o $@ $(EFI_POS_OBJS)
+
+$(EFI_OBJ)/$(EFI_SRC)/efi/main_pos.o: build/version.h
+
 # Fail the build loudly if the .sbat section did not survive the link. Without
 # it shim refuses the loader under Secure Boot with the same opaque
 # EFI_SECURITY_VIOLATION a bad signature gives, and the mistake is invisible
@@ -70,6 +112,13 @@ sbat-check: $(EFI)
 		exit 1; }
 	@echo ".sbat section present:"
 	@$(CC:gcc=objdump) -s -j .sbat $(EFI) | sed -n '3,$$p'
+
+sbat-check-pos: $(EFI_POS)
+	@$(CC:gcc=objdump) -h $(EFI_POS) | grep -q '\.sbat' || { \
+		echo "ERROR: $(EFI_POS) has no .sbat section; shim will refuse it" >&2; \
+		exit 1; }
+	@echo ".sbat section present:"
+	@$(CC:gcc=objdump) -s -j .sbat $(EFI_POS) | sed -n '3,$$p'
 
 # ---- the rig (docs/DESIGN.md Section 10) ----
 
@@ -131,6 +180,15 @@ $(EFI_SIGNED): $(EFI) $(MOK_KEY)
 	sbsign --key $(MOK_KEY) --cert $(MOK_CRT) --output $@ $(EFI)
 	@echo "signed with the TEST MOK; not a release artifact"
 
+EFI_POS_SIGNED := $(BIN)/falcon-boot-pos-signed.efi
+
+$(EFI_POS_SIGNED): $(EFI_POS) $(MOK_KEY)
+	@$(MAKE) --no-print-directory sbat-check-pos
+	sbsign --key $(MOK_KEY) --cert $(MOK_CRT) --output $@ $(EFI_POS)
+	@echo "signed with the TEST MOK; not a release artifact"
+
+pos: $(EFI_POS)
+
 run-secboot: $(EFI_SIGNED)
 	falcon-efi/tools/run-qemu.sh --secboot
 
@@ -166,7 +224,7 @@ run-stick:
 run-stick-secboot:
 	falcon-efi/tools/run-qemu.sh --stick --secboot
 
-.PHONY: sbat-check payload esp run mok-test sign run-secboot test-iso \
+.PHONY: pos sbat-check-pos sbat-check payload esp run mok-test sign run-secboot test-iso \
 	test-img test-uki test-stick run-stick run-stick-secboot
 
 # ---- tests ----
@@ -176,9 +234,10 @@ run-stick-secboot:
 # the Secure Boot state reader, whose whole platform is one GetVariable.
 
 EFI_TESTS := $(addprefix falcon-efi/tests/,main.c bless_test.c next_test.c \
-	iso_overlay_test.c sb_test.c)
+	iso_overlay_test.c sb_test.c nxt_test.c)
 
 EFI_UUT := $(EFI_SRC)/bless/blesscore.c $(EFI_SRC)/secboot/sb.c \
+	$(EFI_SRC)/nxt/nxtcore.c \
 	$(CORE_MANIFEST) $(CORE)/media/family.c
 
 $(eval $(call test_bin,efi,$(EFI_TESTS) $(EFI_UUT)))

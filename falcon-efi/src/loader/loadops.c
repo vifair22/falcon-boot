@@ -231,16 +231,44 @@ static EFI_STATUS read_u64_var(EFI_SYSTEM_TABLE *st, CHAR16 *name,
  * gives it; a firmware that finds them changed may refuse the write. */
 #define BOOT_NEXT_ATTRS OS_INDICATIONS_ATTRS
 
-EFI_STATUS loader_boot_next_self(EFI_SYSTEM_TABLE *st)
+EFI_STATUS loader_boot_next_set(EFI_SYSTEM_TABLE *st, UINT16 option)
 {
     static const CHAR16 hex[] = L"0123456789ABCDEF";
     EFI_GUID g = EFI_GLOBAL_VARIABLE_GUID;
-    CHAR16 option[9] = L"Boot0000";
-    UINT16 current = 0;
-    UINTN size = sizeof current;
+    CHAR16 name[9] = L"Boot0000";
+    UINTN size;
     UINT8 probe = 0;
     EFI_STATUS status;
     UINTN i;
+
+    if (st == (EFI_SYSTEM_TABLE *)0 || st->RuntimeServices == (void *)0)
+        return EFI_INVALID_PARAMETER;
+
+    /* Boot#### is upper-case hex by spec, and firmware matches it as a string.
+     *
+     * The option has to exist to be worth naming. A one-time pick from some
+     * firmware's boot menu runs as a transient option that is gone by the
+     * time anyone reads BootCurrent, and a BootNext naming it is ignored,
+     * which lands on the boot order anyway; saying so to the caller is the
+     * only difference, and it is the one the user needs. */
+    for (i = 0; i < 4u; i++)
+        name[4u + i] = hex[(option >> (12u - 4u * i)) & 0xFu];
+    size = sizeof probe;
+    status = st->RuntimeServices->GetVariable(name, &g, (UINT32 *)0, &size,
+                                              &probe);
+    if (status != EFI_SUCCESS && status != EFI_BUFFER_TOO_SMALL)
+        return EFI_NOT_FOUND;
+
+    return st->RuntimeServices->SetVariable(L"BootNext", &g, BOOT_NEXT_ATTRS,
+                                            sizeof option, &option);
+}
+
+EFI_STATUS loader_boot_next_self(EFI_SYSTEM_TABLE *st)
+{
+    EFI_GUID g = EFI_GLOBAL_VARIABLE_GUID;
+    UINT16 current = 0;
+    UINTN size = sizeof current;
+    EFI_STATUS status;
 
     if (st == (EFI_SYSTEM_TABLE *)0 || st->RuntimeServices == (void *)0)
         return EFI_INVALID_PARAMETER;
@@ -251,24 +279,7 @@ EFI_STATUS loader_boot_next_self(EFI_SYSTEM_TABLE *st)
         return status;
     if (size != sizeof current)
         return EFI_NOT_FOUND;
-
-    /* Boot#### is upper-case hex by spec, and firmware matches it as a string.
-     *
-     * The option has to exist to be worth naming. A one-time pick from some
-     * firmware's boot menu runs as a transient option that is gone by the
-     * time anyone reads BootCurrent, and a BootNext naming it is ignored,
-     * which lands on the boot order anyway; saying so to the caller is the
-     * only difference, and it is the one the user needs. */
-    for (i = 0; i < 4u; i++)
-        option[4u + i] = hex[(current >> (12u - 4u * i)) & 0xFu];
-    size = sizeof probe;
-    status = st->RuntimeServices->GetVariable(option, &g, (UINT32 *)0, &size,
-                                              &probe);
-    if (status != EFI_SUCCESS && status != EFI_BUFFER_TOO_SMALL)
-        return EFI_NOT_FOUND;
-
-    return st->RuntimeServices->SetVariable(L"BootNext", &g, BOOT_NEXT_ATTRS,
-                                            sizeof current, &current);
+    return loader_boot_next_set(st, current);
 }
 
 void loader_boot_next_clear(EFI_SYSTEM_TABLE *st)
