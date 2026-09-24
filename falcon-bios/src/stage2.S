@@ -1,10 +1,10 @@
 /* falcon-bios stage 2 (docs/notes/bios-route.md Section 6).
  *
  * Entered by stage 1 in 16-bit real mode at STAGE2_LOAD with DL holding the
- * drive the machine booted from. Its whole job is to reach long mode and read
- * stage 3 in: A20 and the mode switch (lmode.S), the real-mode thunk
- * (thunk.S), and then C, which reads stage 3 off the same disk and jumps to
- * it (load3.c).
+ * drive the machine booted from. Its whole job is to reach 32-bit protected
+ * mode and read stage 3 in: A20 and the mode switch (pmode.S), the real-mode
+ * thunk (thunk.S), and then C, which reads stage 3 off the same disk and
+ * jumps to it (load3.c).
  *
  * What stays resident of stage 2 afterwards is the thunk and the gate at the
  * head of this file, because those are the parts that have to be reachable
@@ -29,11 +29,11 @@
 	.globl  gate_drive
 	.globl  putc
 	.globl  fatal_rm
-	.extern lmode_enter
+	.extern pmode_enter
 	.extern stage3_load
 	.extern fault_install
 	.extern boot16
-	.extern lmode_entry
+	.extern pmode_entry
 
 /* ---- the gate (biosdefs.h, GATE_*) ----
  *
@@ -58,13 +58,13 @@ gate_magic:
 	.long   STAGE2_MAGIC         /* GATE_MAGIC */
 
 	.org    0x08
-	/* .code64, and it matters: the only caller is stage 3, in long mode.
-	 * Assembled in the .code16 this file opens with, gas emits a 16-bit
-	 * relative jump, and a processor in long mode reads the same opcode as
-	 * a 32-bit one - taking two bytes of .org padding as the top half of
-	 * the displacement and jumping somewhere that is not this program. It
-	 * cost a reboot loop with no output past the first line of stage 3. */
-	.code64
+	/* .code32, and it matters: the only caller is stage 3, in protected
+	 * mode. Assembled in the .code16 this file opens with, gas emits a
+	 * 16-bit relative jump, and a 32-bit processor reads the same opcode
+	 * with a 32-bit displacement - taking two bytes of .org padding as its
+	 * top half and jumping somewhere that is not this program. It cost a
+	 * reboot loop with no output past the first line of stage 3. */
+	.code32
 gate_entry:
 	jmp     thunk_bios           /* GATE_THUNK */
 
@@ -105,29 +105,25 @@ stage2_begin:
 	movw    $msg_crlf, %si
 	call    puts
 
-	/* What long mode needs of the machine, asked before it is tried.
-	 * These are the two decisions that cannot wait for C, because what
-	 * happens without them is not an error but a fault in real mode:
-	 * the BIOS's own handler for it returns to the faulting instruction,
-	 * and the machine sits on "entering long mode" forever. */
+	/* What protected mode and the loader's code need of the machine,
+	 * asked before it is tried. These are the two decisions that cannot
+	 * wait for C, because what happens without them is not an error but a
+	 * fault in real mode: the BIOS's own handler for it returns to the
+	 * faulting instruction, and the machine sits there forever. */
 	call    cpu_check
 	call    mem_check
 
-	/* Into long mode, and never back. Everything past the jump is a place
-	 * C can run, which is Section 5.3's rule: the assembly is transport,
-	 * and every decision belongs above it. */
-	movw    $msg_lmode, %si
+	/* Into protected mode, and never back. Everything past the jump is a
+	 * place C can run, which is Section 5.3's rule: the assembly is
+	 * transport, and every decision belongs above it. */
+	movw    $msg_pmode, %si
 	call    puts
 
-	movl    $stage2_64, %eax
-	movl    %eax, lmode_entry
-	movl    $0, lmode_entry + 4
-	jmp     lmode_enter
+	movl    $stage2_32, pmode_entry
+	jmp     pmode_enter
 
-	.code64
-/* The first code in this project to run in 64-bit mode. It prints, which is
- * the only claim it is making, and halts. */
-stage2_64:
+	.code32
+stage2_32:
 	/* Into C, with the drive the BIOS handed us. Everything decidable
 	 * lives up there (Section 5.3), and this is the last thing the
 	 * assembly decides.
@@ -136,51 +132,15 @@ stage2_64:
 	 * it. Stage 2 stops here: what stays resident of it is the thunk and
 	 * the gate, because those are the parts that have to be reachable
 	 * from real mode. */
-	movq    $0x7C00, %rsp
+	movl    $0x7C00, %esp
 	call    fault_install        /* before anything that can fault */
-	movzbl  drive(%rip), %edi
+	movzbl  drive, %eax
+	subl    $12, %esp            /* 16-byte aligned at the call */
+	pushl   %eax
 	call    stage3_load
-halt64:halt64:
+halt32:
 	hlt
-	jmp     halt64
-
-/* al = byte. The wait is bounded as putc's is. */
-putc64:
-	pushq   %rax
-	pushq   %rbx
-	pushq   %rcx
-	pushq   %rdx
-	movb    %al, %bl
-	cmpb    $0, com_live(%rip)
-	je      2f
-	movl    $SERIAL_SPINS, %ecx
-	movw    $(SERIAL_PORT + 5), %dx
-1:	inb     %dx, %al
-	testb   $0x20, %al
-	jnz     2f
-	loop    1b
-	movb    $0, com_live(%rip)
-2:	movw    $SERIAL_PORT, %dx
-	movb    %bl, %al
-	outb    %al, %dx
-	popq    %rdx
-	popq    %rcx
-	popq    %rbx
-	popq    %rax
-	ret
-
-/* rsi = NUL-terminated string. */
-puts64:
-	pushq   %rax
-	pushq   %rsi
-1:	lodsb
-	testb   %al, %al
-	jz      2f
-	call    putc64
-	jmp     1b
-2:	popq    %rsi
-	popq    %rax
-	ret
+	jmp     halt32
 
 	.code16
 
@@ -225,12 +185,12 @@ puts_rm:
 
 /* ---- what the machine has to have ----
  *
- * A processor without long mode takes #GP at the first control register
- * write lmode.S makes. PAE and FXSR are asked about as well because
- * lmode.S sets both bits in CR4, and every processor with long mode has
- * them, so asking costs nothing and names the right reason if one ever
- * does not. The ID flag test comes first because CPUID itself is #UD on a
- * processor too old to have it.
+ * The loader is built for i686 (the Pentium Pro and everything since), and
+ * the one instruction that build uses and a Pentium does not have is CMOV,
+ * so CMOV is what is asked for: a processor without it would take #UD
+ * somewhere in C and report it as a fault, which names the wrong thing.
+ * CPUID is asked for first because CPUID itself is #UD on a processor too
+ * old to have it, and pmode.S asks it about SSE afterwards.
  */
 cpu_check:
 	pushfl
@@ -245,28 +205,17 @@ cpu_check:
 	popfl
 	xorl    %ecx, %eax
 	jz      1f
-	movl    $0x80000000, %eax
-	cpuid
-	cmpl    $0x80000001, %eax
-	jb      1f
-	movl    $0x80000001, %eax
-	cpuid
-	btl     $29, %edx            /* LM */
-	jnc     1f
 	movl    $1, %eax
 	cpuid
-	btl     $6, %edx             /* PAE */
-	jnc     1f
-	btl     $24, %edx            /* FXSR */
+	btl     $15, %edx            /* CMOV */
 	jnc     1f
 	ret
-1:	movw    $msg_no64, %si
+1:	movw    $msg_old_cpu, %si
 	jmp     fatal_rm
 
 /* The BDA's count of conventional memory, in KiB (0x413). What the BIOS
  * keeps for itself, the EBDA mostly, sits between that and 640 KiB, and
- * the page tables at PML4_ADDR and the disk bounce buffer below 0x98000 are
- * written without asking. On nearly every machine the count is 639; a
+ * the disk bounce buffer below 0x98000 is written without asking. On nearly every machine the count is 639; a
  * board whose EBDA reaches below 608 would have its own data overwritten,
  * and fail somewhere inside the next BIOS call. */
 mem_check:
@@ -381,30 +330,12 @@ msg_drive:
 	.asciz  "falcon-bios: boot drive 0x"
 msg_crlf:
 	.asciz  "\r\n"
-msg_lmode:
-	.asciz  "falcon-bios: entering long mode\r\n"
-msg_no64:
-	.asciz  "falcon-bios: this processor has no 64-bit mode, which this loader needs\r\n"
+msg_pmode:
+	.asciz  "falcon-bios: entering protected mode\r\n"
+msg_old_cpu:
+	.asciz  "falcon-bios: this processor is older than a Pentium Pro, which this loader needs\r\n"
 msg_lowmem:
 	.asciz  "falcon-bios: the BIOS keeps memory below 608 KiB that this loader uses\r\n"
 msg_key:
 	.asciz  "press any key to reboot.\r\n"
-msg_in64:
-	.asciz  "falcon-bios: running in 64-bit long mode\r\n"
-msg_thunk:
-	.asciz  "falcon-bios: reading LBA 0 through the BIOS from long mode\r\n"
-msg_thunk_ok:
-	.asciz  "falcon-bios: thunk ok, boot sector signature 0xAA55\r\n"
-msg_thunk_cf:
-	.asciz  "falcon-bios: thunk returned carry: the BIOS refused the read\r\n"
-msg_thunk_sig:
-	.asciz  "falcon-bios: thunk returned, but the sector is not a boot sector\r\n"
-msg_done:
-	.asciz  "falcon-bios: stage 2 reached its end, halting\r\n"
 
-	.balign 4
-dap:
-	.space  16
-	.balign 16
-sector:
-	.space  512

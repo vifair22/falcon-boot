@@ -160,6 +160,7 @@ static int path_ok(const char *p, size_t n)
 static int check_entry(const cpio_entry *e, size_t *name_len)
 {
     size_t nl;
+    uint64_t len;
 
     if (e->path == (void *)0)
         return CPIO_ERR_BAD_ARG;
@@ -170,7 +171,11 @@ static int check_entry(const cpio_entry *e, size_t *name_len)
         return CPIO_ERR_BAD_ARG;
     if ((e->mode & MODE_TYPE_MASK) == MODE_TYPE_DIR && e->len != 0)
         return CPIO_ERR_BAD_ARG;
-    if ((uint64_t)nl + 1u > FIELD_MAX || (uint64_t)e->len > FIELD_MAX)
+    /* In 64 bits, through a variable: where size_t is 32 bits wide the
+     * length can never exceed the field, and comparing it directly is a
+     * comparison the compiler rightly calls always false. */
+    len = e->len;
+    if ((uint64_t)nl + 1u > FIELD_MAX || len > FIELD_MAX)
         return CPIO_ERR_RANGE;
 
     *name_len = nl;

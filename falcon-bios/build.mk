@@ -11,10 +11,11 @@
 # code is position dependent and nothing relocates it, so link address and run
 # address have to agree.
 #
-# Assembled as x86-64 even though most of it runs in 16-bit real mode. gas
-# takes .code16 inside an ELF64 object perfectly well and only changes how it
-# encodes instructions; what an i386 object cannot do is carry the relocations
-# the .code64 half needs, so one stage holding both modes has to be ELF64.
+# Everything is i686: 16-bit real-mode code and 32-bit protected-mode code in
+# ELF32 objects, which gas takes perfectly well with .code16 and .code32. One
+# image runs on every processor from the Pentium Pro on; what a newer one
+# adds (SSE, AES-NI) is switched on by asking CPUID at run time, not by a
+# second build (docs/notes/bios-route.md Section 6h).
 #
 # The assembly is gas .S, preprocessed, so biosdefs.h is the single place the
 # addresses are written (Section 5.2). It is also the one part of the tree
@@ -36,19 +37,19 @@ STAGE3_MAX_SECTORS_CHECK := $(call BIOS_DEF,STAGE3_MAX_SECTORS)
 STAGE3_LBA_CHECK := $(shell echo $$(( $(call BIOS_DEF,STAGE2_LBA) + \
 	$(call BIOS_DEF,STAGE2_SECTORS) )))
 
-BIOS_ASFLAGS := -m64 -c -Wa,--fatal-warnings -I$(BIOS) $(CORE_INC)
+BIOS_ASFLAGS := -m32 -c -Wa,--fatal-warnings -I$(BIOS) $(CORE_INC)
 
-# The C half. Freestanding and 64-bit, with the repo warning set.
+# The C half. Freestanding and i686, with the repo warning set.
 #
-# -mno-red-zone, -mno-sse and -mgeneral-regs-only are not style: the red zone
-# is only safe where something guarantees interrupts will not land under the
-# stack pointer, and nothing here does; and the mode switch enables neither
-# SSE nor the FPU, so a compiler that decided to use either would fault on an
+# -march=i686 is the floor the loader runs on (stage2.S checks for its CMOV
+# before protected mode). -mno-sse and -mgeneral-regs-only are not style:
+# the mode switch enables SSE only on a processor that has it, and never the
+# x87, so a compiler that decided to use either would fault on an
 # instruction nobody wrote. -fno-pie because nothing relocates this and the
 # link addresses are fixed by biosdefs.h.
 BIOS_CFLAGS := -std=c11 -O2 -ffreestanding -fno-stack-protector \
 	-fno-pie -fno-asynchronous-unwind-tables -fno-unwind-tables \
-	-mno-red-zone -mno-sse -mno-mmx -mgeneral-regs-only \
+	-m32 -march=i686 -mno-sse -mno-mmx -mgeneral-regs-only \
 	-Wall -Wextra -Wpedantic -Wshadow -Wunused -Wdouble-promotion \
 	-Wformat=2 -Wmissing-prototypes -Wstrict-prototypes \
 	-Wmissing-declarations -Wcast-align -Wcast-qual -Wnull-dereference \
@@ -84,16 +85,23 @@ $(BIOS_OBJ)/$(BIOS)/main.o: build/version.h
 
 # AES-NI, this object only, as in the other two flavours (root Makefile). It
 # needs the instructions it is named for and the SSE registers they use, so
-# the three flags that forbid those come back out for it and nothing else.
+# the three flags that forbid those come back out for it and nothing else,
+# and SSE2 goes in, which i686 does not imply and every AES-NI processor has.
 # The CPUID probe that gates the path is in crypto.c, built with the baseline
 # flags precisely so it cannot fault on the CPUs it exists to detect.
 $(BIOS_OBJ)/falcon-core/src/crypto/aesni.o: BIOS_CFLAGS := \
-	$(filter-out -mno-sse -mno-mmx -mgeneral-regs-only,$(BIOS_CFLAGS)) -maes
+	$(filter-out -mno-sse -mno-mmx -mgeneral-regs-only,$(BIOS_CFLAGS)) \
+	-msse2 -maes
 
 # --no-warn-rwx-segments: the output is a flat image loaded by a jump, with
 # one segment holding code and data together. There is nothing to separate
 # them into and nothing that would enforce it if there were.
-BIOS_LDFLAGS := -m64 -nostdlib -static -no-pie -Wl,--build-id=none \
+# 64-bit division and shifts in i686 code are calls into libgcc
+# (__udivdi3 and its siblings); -nostdlib drops it, so it goes back in by
+# name, after the objects that need it.
+BIOS_LIBGCC := $(shell $(CC_HOST) -m32 -print-libgcc-file-name)
+
+BIOS_LDFLAGS := -m32 -nostdlib -static -no-pie -Wl,--build-id=none \
 	-Wl,--no-warn-rwx-segments -Wl,-T,$(BIOS)/bios.ld
 
 # -MMD on the assembly too, and it is not a nicety: every address in this
@@ -119,12 +127,13 @@ $(BIOS_STAGE1): $(BIOS_OBJ)/$(BIOS)/boot.o $(BIOS)/bios.ld
 		exit 1; \
 	fi
 
-BIOS_STAGE2_OBJS := $(BIOS_OBJ)/$(BIOS)/stage2.o $(BIOS_OBJ)/$(BIOS)/lmode.o \
+BIOS_STAGE2_OBJS := $(BIOS_OBJ)/$(BIOS)/stage2.o $(BIOS_OBJ)/$(BIOS)/pmode.o \
 	$(BIOS_OBJ)/$(BIOS)/thunk.o $(BIOS_OBJ)/$(BIOS)/idt.o $(BIOS_S2_COBJS)
 
 $(BIOS_STAGE2): $(BIOS_STAGE2_OBJS) $(BIOS)/bios.ld
 	@mkdir -p $(@D)
-	$(CC_HOST) $(BIOS_LDFLAGS) -Wl,-Ttext,0x7E00 -Wl,-e,stage2_start -o $@.elf $(BIOS_STAGE2_OBJS)
+	$(CC_HOST) $(BIOS_LDFLAGS) -Wl,-Ttext,0x7E00 -Wl,-e,stage2_start -o $@.elf $(BIOS_STAGE2_OBJS) \
+		$(BIOS_LIBGCC)
 	objcopy -O binary -j .text $@.elf $@
 	@sz=$$(stat -c %s $@); \
 	max=$$(($(STAGE2_SECTORS_CHECK) * 512)); \
@@ -150,7 +159,7 @@ $(BIOS_STAGE2): $(BIOS_STAGE2_OBJS) $(BIOS)/bios.ld
 	            thunk_vector:7e40 gate_drive:7e41 gate_target:7e48; do \
 		sym=$${pair%%:*}; want=$${pair##*:}; \
 		got=$$(nm $@.elf | awk -v s="$$sym" '$$3 == s { print $$1 }'); \
-		if [ "$$got" != "000000000000$$want" ]; then \
+		if [ -z "$$got" ] || [ $$((16#$$got)) -ne $$((16#$$want)) ]; then \
 			echo "ERROR: $$sym is at $$got, not $$want"; \
 			echo "       falcon-bios/src/biosdefs.h GATE_* and the"; \
 			echo "       gate block in stage2.S disagree"; \
@@ -162,13 +171,20 @@ $(BIOS_STAGE2): $(BIOS_STAGE2_OBJS) $(BIOS)/bios.ld
 # its size. It is read in by stage 2 after paging is on and never runs below
 # a megabyte, so it holds no real-mode code at all and reaches the BIOS
 # through the gate.
-# The hook's blob, which is generated (falcon-hook/build.mk) and is the same
-# object the UEFI loader embeds: falcon-hook runs in the initramfs and does
-# not know which firmware started the kernel.
+# The hook's blobs, which are generated (falcon-hook/build.mk). The x86-64
+# one is the same object the UEFI loader embeds: falcon-hook runs in the
+# initramfs and does not know which firmware started the kernel. The i686 one
+# is for the 32-bit kernels only this loader boots, and scan.c appends
+# whichever matches the kernel.
 BIOS_HOOK_OBJ := $(BIOS_OBJ)/$(HOOK_BLOB).o
+BIOS_HOOK32_OBJ := $(BIOS_OBJ)/$(HOOK32_BLOB).o
 BIOS_WINJUMP_OBJ := $(BIOS_OBJ)/$(WINJUMP_BLOB).o
 
 $(BIOS_HOOK_OBJ): $(HOOK_BLOB)
+	@mkdir -p $(@D)
+	$(CC_HOST) $(BIOS_CFLAGS) -c -o $@ $<
+
+$(BIOS_HOOK32_OBJ): $(HOOK32_BLOB)
 	@mkdir -p $(@D)
 	$(CC_HOST) $(BIOS_CFLAGS) -c -o $@ $<
 
@@ -178,12 +194,12 @@ $(BIOS_WINJUMP_OBJ): $(WINJUMP_BLOB)
 
 BIOS_STAGE3_OBJS := $(BIOS_OBJ)/$(BIOS)/stage3.o $(BIOS_OBJ)/$(BIOS)/vcdres.o \
 	$(BIOS_S3_COBJS) \
-	$(BIOS_HOOK_OBJ) $(BIOS_WINJUMP_OBJ)
+	$(BIOS_HOOK_OBJ) $(BIOS_HOOK32_OBJ) $(BIOS_WINJUMP_OBJ)
 
 $(BIOS_STAGE3): $(BIOS_STAGE3_OBJS) $(BIOS)/bios.ld
 	@mkdir -p $(@D)
 	$(CC_HOST) $(BIOS_LDFLAGS) -Wl,-Ttext,0x100000 -Wl,-e,stage3_entry \
-		-o $@.elf $(BIOS_STAGE3_OBJS)
+		-o $@.elf $(BIOS_STAGE3_OBJS) $(BIOS_LIBGCC)
 	objcopy -O binary -j .text $@.elf $@
 	@# The resident has to fit the conventional memory it takes, which is
 	@# VCD_BYTES and is what the BIOS data area is told it no longer has.

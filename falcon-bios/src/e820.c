@@ -2,8 +2,8 @@
  * (docs/notes/bios-route.md Section 4.2).
  *
  * The kernel needs this and cannot get it itself: by the time it runs, the
- * BIOS call that answers is gone, because the machine is in long mode and
- * real mode is where INT 15h lives. Every BIOS loader therefore reads the
+ * BIOS call that answers is gone, because the machine is in protected mode
+ * and real mode is where INT 15h lives. Every BIOS loader therefore reads the
  * map and hands it over in the zero page, and Linux has taken it that way
  * since 2.4.
  *

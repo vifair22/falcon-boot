@@ -299,6 +299,10 @@ build matrix, the test matrix and the coverage gate permanently, in exchange
 for avoiding a long-to-real-mode thunk that is perhaps 200 lines nastier than
 a protected-to-real one. Pay the 200 lines once. One core build, AES-NI kept.
 
+*Reversed 2026-09-24 (Section 6h).* The premise was that every machine the
+route would meet has long mode. The goal it now serves is XP-era hardware,
+and much of that has none.
+
 **5.2 gas `.S`, not NASM.** `.S` is preprocessed, so one header can carry the
 GDT selector values, struct offsets and memory-layout constants for both the
 C and the assembly side instead of duplicating them. It also rides the
@@ -732,6 +736,81 @@ Measured in the rig: the UEFI loader's menu, prompt and chooser are
 byte-identical in screendumps before and after the move, and under SeaBIOS
 the personal OS (FALCON-CRED-OK), a direct Arch boot and Windows 11 Setup
 all pass behind the new screens.
+
+## 6h. i686, and promotion at run time (2026-09-24)
+
+The goal: a falcon stick that boots ISOs on Windows 2000 and XP era machines,
+the ones that can boot from USB at all. A BIOS too old to offer USB boot is
+out of scope; one that can is in. Much of that hardware is a Pentium III, a
+Pentium M or an Athlon XP, none of which has long mode, and 5.1's loader
+stopped at its CPUID check on all of them. The plan is two sticks, the
+256 GB one for x86-64 under UEFI and BIOS and a 128 GB one for 32-bit ISOs
+and a 32-bit personal OS, and one loader on both.
+
+**One loader, not two.** The loader is i686 code in flat 32-bit protected
+mode with paging off, and nothing else. What a newer processor adds is taken
+by asking CPUID at run time, in three places:
+
+- `pmode.S` turns on the SSE state (CR4.OSFXSR, OSXMMEXCPT) only when CPUID
+  reports FXSR and SSE, because the CR4 write itself faults where they are
+  missing;
+- falcon-core's AES path already chose AES-NI by CPUID, so a Pentium III
+  unlocks p3 on the portable path and a modern machine on AES-NI, from the
+  same image;
+- `linux.c` asks for long mode only when the kernel is 64-bit, and refuses a
+  64-bit kernel on a processor without it with a sentence, where it would
+  otherwise die in its own decompressor with "starting" still on screen.
+
+Long mode itself buys a BIOS loader nothing. Every object the loader places
+goes below 4 GiB, which is where the boot protocol, the BIOS's AH=87h and
+the initrd ceilings want them anyway, and the boot protocol's 32-bit entry
+starts a 64-bit kernel exactly as it starts a 32-bit one (the kernel enters
+long mode itself). So the change made the loader smaller as well as wider:
+the page tables, the identity map and the long-to-real half of the thunk
+are gone, and the thunk that remains is the protected-to-real one 5.1 said
+was 200 lines easier.
+
+What 5.1 feared, a second falcon-core flavour doubling the build and test
+matrix, did not arrive in that form. falcon-core compiles clean as
+freestanding i686 under the full warning set after three changes, all of
+them real: a WIM offset compared before it is narrowed (it would otherwise
+wrap into the metadata on 32 bits), a lookup length proven to fit `size_t`,
+and `aesni.c` no longer pulling in the hosted `<stdlib.h>` through the SSE
+headers. The i686 BIOS build links all of core, so it is the check that
+keeps core clean at that width. Running core's host tests as i686 as well
+needs 32-bit glibc and cmocka on the build host, and is left for the
+harness container.
+
+**The edges that are width-specific**, and nothing else is:
+
+- `falcon-hook/src/sys.c`: `int $0x80` system calls, O_LARGEFILE, pread64's
+  split offset and an i386 `_start`, beside the x86-64 ones. The hook is
+  built twice (`falcon-hook`, `falcon-hook32`) from otherwise the same
+  source, and falcon-bios embeds both and appends the one the kernel's
+  setup header says it needs (`linux_probe`, xloadflags bit 0).
+- falcon-bios itself, which has only one width now.
+
+The UEFI loader is untouched: it is x86-64 UEFI only, and 32-bit UEFI is
+out of scope.
+
+**Measured in the rig** (SeaBIOS; `bios32` is the new harness column, QEMU's
+`pentium3` model: no long mode, no SSE2, no AES-NI):
+
+| ISO | bios32 (Pentium III) | bios (host CPU) |
+|---|---|---|
+| Alpine 3.24.2 x86, direct | PASS | |
+| Alpine 3.24.2 x86, chain | FAIL, as 64-bit Alpine does in `bios` | |
+| Arch Linux 32 2024.07.10, direct | PASS | PASS |
+| Arch x86_64 2026.01.01, direct | refused: "the kernel is 64-bit and this processor has no 64-bit mode" | PASS |
+| Windows 11 25H2 | | PASS |
+| the personal OS fixture (a 64-bit UKI) | refused, as above, after the unlock and chooser | PASS, FALCON-CRED-OK |
+
+**The 32-bit stick.** docs/notes/stick32.md is the second stick, built and
+booted: Arch Linux 32 as its personal OS and 32-bit ISOs on p2, read-only in
+QEMU on a Pentium III with 512 MB, to a login prompt each way. Building it
+found the one thing the loader's side could not: `mkstick create`'s stock
+argon2id on p4 is tuned on the building host and cannot run on an old
+machine, hence `mkstick create --p4-kdf-memory`.
 
 ## 7. Risks, in the order they matter
 

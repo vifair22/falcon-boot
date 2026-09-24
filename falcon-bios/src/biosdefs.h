@@ -22,16 +22,16 @@
 /* Where stage 2 is loaded, immediately above stage 1.
  *
  * Still 0x7E00, and staying there is a decision rather than inertia. Stage 2
- * holds both 16-bit and 64-bit code, and the two disagree about what an
+ * holds both 16-bit and 32-bit code, and the two disagree about what an
  * address means: real mode reaches it as an offset inside a 64 KB segment,
- * long mode as a linear address. Linking at 0x7E00 with a segment of zero is
- * the one arrangement where both readings are the same number, and it lasts
- * as long as stage 2 ends below 0xFFFF.
+ * protected mode as a linear address. Linking at 0x7E00 with a segment of
+ * zero is the one arrangement where both readings are the same number, and
+ * it lasts as long as stage 2 ends below 0xFFFF.
  *
- * What that costs is a ceiling of about 33 KB, which is why the page tables
- * and the bounce buffer moved out of the way rather than stage 2 moving up.
- * When it is no longer enough the answer is a third stage loaded above a
- * megabyte and entered after paging, not a bigger stage 2. */
+ * What that costs is a ceiling of about 33 KB, which is why the bounce
+ * buffer moved out of the way rather than stage 2 moving up. When it is no
+ * longer enough the answer is a third stage loaded above a megabyte, not a
+ * bigger stage 2. */
 #define STAGE2_LOAD     0x7E00
 
 /* The sector stage 2 starts at, and how many it occupies.
@@ -52,9 +52,8 @@
  * cleanly. */
 #define STAGE2_LBA      34
 /* 32 KB, which puts the end of stage 2 at 0xFE00: inside the segment it is
- * addressed through, and clear of the page tables now that they are at
- * 0x80000. A single INT 13h transfer may not cross a 64 KB boundary and this
- * one does not. */
+ * addressed through. A single INT 13h transfer may not cross a 64 KB boundary
+ * and this one does not. */
 #define STAGE2_SECTORS  64
 /* "BOS2", at GATE_MAGIC: what stage 1 checks before it jumps, so sectors
  * that are not stage 2 (a stick whose gap was written over, a disk with
@@ -62,36 +61,29 @@
  * than running whatever was read. */
 #define STAGE2_MAGIC    0x32534F42
 
-/* The long-mode page tables, and why they are at fixed addresses.
+/* Where the loader runs: flat 32-bit protected mode, paging off, so a
+ * linear address is a physical one (docs/notes/bios-route.md Section 6h).
  *
- * There is no allocator in real mode and nothing else is using this memory:
- * 0x80000 is above stage 2's 64 KB window, above the bounce buffer, and
- * still well under the 0x9FC00 where the extended BIOS data area starts on a
- * typical machine. Three pages is all long mode needs to start: one PML4,
- * one page-directory pointer table, and one page directory whose entries are
- * 2 MB pages.
+ * The whole loader is i686 code, which is what lets one image boot the
+ * machines this route exists for as well as the ones it was first written
+ * on. What a newer processor has, it gets by asking rather than by a second
+ * build: stage 2 turns the SSE state on when CPUID says there is SSE, and
+ * falcon-core's AES path uses AES-NI when CPUID says there is AES-NI. Long
+ * mode buys a BIOS loader nothing: every object it places goes below 4 GiB,
+ * which is where the boot protocol and the BIOS want them anyway.
  *
- * One gigabyte is mapped, identity. That covers every address real-mode
- * firmware can hand back and every address a payload is staged at before the
- * kernel takes over, and it costs exactly one page of directory entries. */
-#define PML4_ADDR       0x80000
-#define PDPT_ADDR       0x81000
-#define PD_ADDR         0x82000
-#define IDENTITY_MAP    0x40000000    /* 1 GiB */
-#define PAGE_2M         0x200000
+ * ADDR_END is the end of what the loader can address, and so the ceiling on
+ * where anything is placed. C only: the assembler has no 64-bit constants. */
+#define ADDR_END        0x100000000ull
 
-/* GDT selectors, in the order lmode.S lays the descriptors out. Shared
- * because the far jump that activates long mode names one of them and the C
- * that eventually runs there will name the other. */
-#define SEL_CODE64      0x08
-#define SEL_DATA64      0x10
-/* The descriptors the thunk needs on the way down to real mode and back.
- * A 32-bit code segment (L=0, D=1) to leave long mode through, and a 16-bit
- * code and data pair whose 64 KB limits are what real mode expects to find
- * cached in the segment registers after CR0.PE is cleared. */
-#define SEL_CODE32      0x18
-#define SEL_CODE16      0x20
-#define SEL_DATA16      0x28
+/* GDT selectors, in the order pmode.S lays the descriptors out. A flat
+ * 32-bit code and data pair for the loader, and a 16-bit code and data pair
+ * whose 64 KB limits are what real mode expects to find cached in the
+ * segment registers when the thunk clears CR0.PE. */
+#define SEL_CODE32      0x08
+#define SEL_DATA32      0x10
+#define SEL_CODE16      0x18
+#define SEL_DATA16      0x20
 
 /* ---- the gate ----
  *
@@ -248,9 +240,8 @@
 #define VCD_STAGE_ADDR   0x00020000
 
 /* Stage 3's stack. Above the image and below anything a payload is loaded
- * into (KERNEL_ADDR is 16 MB); the identity map covers a gigabyte, so this
- * is an ordinary address. Everything between STAGE3_LOAD and here is stage
- * 3's to use, which is what STAGE3_MAX_MEM bounds. */
+ * into (KERNEL_ADDR is 16 MB). Everything between STAGE3_LOAD and here is
+ * stage 3's to use, which is what STAGE3_MAX_MEM bounds. */
 #define STAGE3_STACK    0x00800000
 
 /* COM1 and 115200 8N1. The divisor is 115200 / 115200 = 1.

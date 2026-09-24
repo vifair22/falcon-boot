@@ -59,11 +59,11 @@ static void put_str(char *buf, size_t cap, size_t *n, const char *s)
 }
 
 /* Called from fault_common with the stack realigned. Never returns. */
-__attribute__((noreturn)) void bios_fault(uint64_t vec, uint64_t err,
-                                          uint64_t rip, uint64_t cr2);
+__attribute__((noreturn)) void bios_fault(uint32_t vec, uint32_t err,
+                                          uint32_t eip);
 
-__attribute__((noreturn)) void bios_fault(uint64_t vec, uint64_t err,
-                                          uint64_t rip, uint64_t cr2)
+__attribute__((noreturn)) void bios_fault(uint32_t vec, uint32_t err,
+                                          uint32_t eip)
 {
     char line[160];
     size_t n = 0;
@@ -76,13 +76,9 @@ __attribute__((noreturn)) void bios_fault(uint64_t vec, uint64_t err,
         put_str(line, sizeof line, &n, k_vectors[vec]);
         put_str(line, sizeof line, &n, ")");
     }
-    put_str(line, sizeof line, &n, "\n  rip 0x");
-    put_hex(line, sizeof line, &n, rip);
+    put_str(line, sizeof line, &n, "\n  eip 0x");
+    put_hex(line, sizeof line, &n, eip);
     put_str(line, sizeof line, &n, ", error 0x");
     put_hex(line, sizeof line, &n, err);
-    if (vec == 14u) {
-        put_str(line, sizeof line, &n, ", address 0x");
-        put_hex(line, sizeof line, &n, cr2);
-    }
     bios_fatal(line);
 }

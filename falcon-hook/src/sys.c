@@ -1,4 +1,14 @@
-/* falcon-hook: startup and system calls, x86-64 Linux. See sys.h. */
+/* falcon-hook: startup and system calls, x86 Linux, in either width. See
+ * sys.h.
+ *
+ * The hook is built twice, x86-64 and i686, because it runs inside the
+ * booted kernel's initramfs and has to be the kernel's width: falcon-bios
+ * boots 32-bit kernels as well as 64-bit ones (docs/notes/bios-route.md
+ * Section 6h). Everything above this file is the same source for both. What
+ * differs is how a system call is made and how the process starts, and each
+ * of those is one short block below; <asm/unistd.h> gives the right numbers
+ * for whichever width the compiler is targeting.
+ */
 
 #include "sys.h"
 
@@ -6,6 +16,8 @@
 
 #define AT_FDCWD (-100)
 #define SIGCHLD  17
+
+#if defined(__x86_64__)
 
 static long sc6(long n, long a, long b, long c, long d, long e, long f)
 {
@@ -21,6 +33,34 @@ static long sc6(long n, long a, long b, long c, long d, long e, long f)
                      : "rcx", "r11", "memory");
     return ret;
 }
+
+/* Opening a file larger than 2 GiB is ordinary on x86-64. */
+#define O_LARGE 0
+
+#elif defined(__i386__)
+
+/* int $0x80 with the arguments in ebx, ecx, edx, esi, edi. A sixth would go
+ * in ebp, which the compiler will not hand over as an operand; nothing here
+ * makes a call with six, so f is required to be zero rather than carried. */
+static long sc6(long n, long a, long b, long c, long d, long e, long f)
+{
+    long ret;
+
+    (void)f;
+    __asm__ volatile("int $0x80"
+                     : "=a"(ret)
+                     : "a"(n), "b"(a), "c"(b), "d"(c), "S"(d), "D"(e)
+                     : "memory");
+    return ret;
+}
+
+/* O_LARGEFILE, which a 32-bit process has to ask for or an ISO past 2 GiB
+ * fails to open with EOVERFLOW. */
+#define O_LARGE 0100000
+
+#else
+#error "falcon-hook is built for x86-64 and i686 only"
+#endif
 
 #define SC(n, a, b, c, d, e, f) \
     sc6((long)(n), (long)(a), (long)(b), (long)(c), (long)(d), (long)(e), \
@@ -38,12 +78,18 @@ long sys_write(int fd, const void *buf, size_t n)
 
 long sys_pread(int fd, void *buf, size_t n, uint64_t off)
 {
+#if defined(__i386__)
+    /* The offset in two registers, low half first. */
+    return SC(__NR_pread64, fd, buf, n, (uint32_t)off, (uint32_t)(off >> 32),
+              0);
+#else
     return SC(__NR_pread64, fd, buf, n, off, 0, 0);
+#endif
 }
 
 long sys_open(const char *path, int flags, int mode)
 {
-    return SC(__NR_openat, AT_FDCWD, path, flags, mode, 0, 0);
+    return SC(__NR_openat, AT_FDCWD, path, flags | O_LARGE, mode, 0, 0);
 }
 
 long sys_close(int fd)
@@ -135,7 +181,8 @@ void sys_exit(int code)
 
 /* The process entry point: the kernel starts PID 1 here with argc, argv and
  * envp on the stack. The stack is realigned for the C call, and nothing
- * returns from it. */
+ * returns from it. The pointer to them travels in rdi on x86-64 and on the
+ * stack on i686, which is each ABI's first argument. */
 void hook_start(long *sp) __attribute__((used, noreturn));
 
 void hook_start(long *sp)
@@ -147,6 +194,7 @@ void hook_start(long *sp)
     sys_exit(hook_main(argc, argv, envp));
 }
 
+#if defined(__x86_64__)
 __asm__(".text\n"
         ".globl _start\n"
         "_start:\n"
@@ -155,3 +203,15 @@ __asm__(".text\n"
         "    and $-16, %rsp\n"
         "    call hook_start\n"
         "    ud2\n");
+#else
+__asm__(".text\n"
+        ".globl _start\n"
+        "_start:\n"
+        "    xor %ebp, %ebp\n"
+        "    mov %esp, %eax\n"
+        "    and $-16, %esp\n"
+        "    sub $12, %esp\n"
+        "    push %eax\n"
+        "    call hook_start\n"
+        "    ud2\n");
+#endif

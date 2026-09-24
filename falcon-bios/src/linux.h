@@ -40,4 +40,14 @@ int linux_boot(const linux_object *kernel, const linux_object *initrd,
  * stop; NULL before any failure. */
 const char *linux_why(void);
 
+/* Whether the processor has long mode, which a 64-bit kernel needs and a
+ * 32-bit one does not. */
+int linux_cpu_is_64(void);
+
+/* Reads the kernel's setup header and says whether it is a 64-bit kernel,
+ * before anything is placed: the falcon-hook that rides in its initrd has to
+ * be its width. 0 when the header could be read and *is_64 is set, nonzero
+ * otherwise (linux_boot then refuses it with its reason). */
+int linux_probe(const linux_object *kernel, int *is_64);
+
 #endif /* FALCON_BIOS_LINUX_H */

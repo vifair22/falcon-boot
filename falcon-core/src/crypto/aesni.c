@@ -22,6 +22,16 @@
 #include <crypto/crypto.h>
 #include <lib/string.h>
 
+/* The SSE headers include mm_malloc.h, and through it the hosted C
+ * library's <stdlib.h>, for _mm_malloc, which nothing here calls. This file
+ * is built freestanding in every flavour, and an i686 build on a host
+ * without 32-bit libc headers stops at that include; the 64-bit builds only
+ * got past it because the host's own headers happen to fit. Claiming the
+ * header already included keeps it out for both compilers (GCC's guard,
+ * then clang's). */
+#define _MM_MALLOC_H_INCLUDED   /* NOLINT(bugprone-reserved-identifier) */
+#define __MM_MALLOC_H           /* NOLINT(bugprone-reserved-identifier) */
+
 #include <wmmintrin.h>
 #include <emmintrin.h>
 

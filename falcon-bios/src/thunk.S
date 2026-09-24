@@ -1,32 +1,27 @@
 /* falcon-bios: the real-mode thunk (docs/notes/bios-route.md Section 5.3,
- * job 3 of the five, and Section 5.1's "200 lines nastier" that buying one
- * core build was worth paying).
+ * job 3 of the five).
  *
- * Calls a BIOS interrupt from 64-bit long mode and comes back. Everything the
- * loader wants from the firmware is behind one of these: INT 13h for disk,
- * INT 10h for the screen, INT 16h for the keyboard. falcon-core's read
- * callback is a thin C wrapper over the first.
+ * Calls a BIOS interrupt from 32-bit protected mode and comes back.
+ * Everything the loader wants from the firmware is behind one of these:
+ * INT 13h for disk, INT 10h for the screen's mode and cursor, INT 16h for the
+ * keyboard, INT 15h for the memory map. falcon-core's read callback is a thin
+ * C wrapper over the first.
  *
- * WHY THIS EXISTS AT ALL. The BIOS is 16-bit real-mode code. Long mode cannot
- * call it, and there is no firmware-independent way to ask a PC BIOS for a
- * disk sector. So the processor goes all the way down and all the way back
- * up, per call. It is the price of Section 5.1's decision to have one
- * falcon-core build rather than a 32-bit flavour, and it is paid here once.
+ * WHY THIS EXISTS AT ALL. The BIOS is 16-bit real-mode code. Protected mode
+ * cannot call it, and there is no firmware-independent way to ask a PC BIOS
+ * for a disk sector. So the processor goes down and back up, per call.
  *
  * THE DESCENT, and every step is required:
  *
- *   long mode -> a 32-bit code segment, because paging cannot be turned off
- *                from a 64-bit one
- *             -> paging off, which clears EFER.LMA and leaves long mode
- *             -> EFER.LME off, so nothing tries to re-enter it
- *             -> a 16-bit code segment, so the limits cached in the segment
- *                registers are the 64 KB real mode expects
- *             -> CR0.PE off
- *             -> a far jump with a real-mode segment, and the IVT restored
+ *   protected mode -> a 16-bit code segment, so the limits cached in the
+ *                     segment registers are the 64 KB real mode expects
+ *                  -> CR0.PE off
+ *                  -> a far jump with a real-mode segment, and the IVT
+ *                     restored
  *
- * and the ascent is the same in reverse. What survives the round trip is the
- * register block below and nothing else: no stack, no pointer, nothing that
- * assumes an address above a megabyte.
+ * and the ascent is the same in reverse. It was twice as long when the loader
+ * ran in long mode (Section 6h): paging and EFER.LME had to come off and go
+ * back on around every call.
  *
  * THE REGISTER BLOCK IS THE INTERFACE. The caller fills it, calls
  * thunk_bios with the vector in `thunk_vector`, and reads the results back
@@ -42,25 +37,9 @@
 	.section .text.stage2, "ax"
 
 /* A debug mark that preserves everything. Writing one from the middle of a
- * mode switch is how the last three bugs in this file were found, and the
- * reason it saves and restores rather than using a scratch register is that
- * two of those bugs WERE a marker clobbering one. */
-.macro MARK ch
-	pushfq
-	pushq   %rax
-	pushq   %rdx
-	movw    $0x3FD, %dx
-9901:	inb     %dx, %al
-	testb   $0x20, %al
-	jz      9901b
-	movw    $0x3F8, %dx
-	movb    $\ch, %al
-	outb    %al, %dx
-	popq    %rdx
-	popq    %rax
-	popfq
-.endm
-
+ * mode switch is how the worst bugs in this file were found, and the reason
+ * it saves and restores rather than using a scratch register is that two of
+ * those bugs WERE a marker clobbering one. */
 .macro MARK32 ch
 	pushfl
 	pushl   %eax
@@ -92,34 +71,35 @@
 	popw    %ax
 	popfw
 .endm
-	.code64
+
+	.code32
 	.globl  thunk_bios
 
 /* void thunk_bios(void): issues INT thunk_vector with the registers in
- * thunk_regs, and writes the returned registers back into it. */
+ * thunk_regs, and writes the returned registers back into it. Preserves
+ * what the i386 System V ABI says a callee preserves. */
 thunk_bios:
-	pushq   %rbx
-	pushq   %rbp
-	pushq   %r12
-	pushq   %r13
-	pushq   %r14
-	pushq   %r15
-	pushfq
+	pushl   %ebx
+	pushl   %esi
+	pushl   %edi
+	pushl   %ebp
+	pushfl
 
-	/* The 64-bit stack pointer cannot survive in a 16-bit world, so it is
+	/* The 32-bit stack pointer cannot survive in a 16-bit world, so it is
 	 * parked at a fixed low address and picked up on the way back. */
-	movq    %rsp, saved_rsp(%rip)
+	movl    %esp, saved_esp
 
 	/* Patch the vector into the int instruction in the real-mode body
 	 * below. A table of 256 stubs would be the alternative; this is one
-	 * byte and the code is identity mapped and writable. */
-	movzbl  thunk_vector(%rip), %eax
-	movb    %al, real_int_op + 1(%rip)
+	 * byte, and with paging off nothing makes the code read-only. */
+	movzbl  thunk_vector, %eax
+	movb    %al, real_int_op + 1
 
-	ljmp    *thunk_to32(%rip)
+	cli
+	ljmp    $SEL_CODE16, $thunk_16
 
-	.code32
-thunk_32:
+	.code16
+thunk_16:
 	movw    $SEL_DATA16, %ax
 	movw    %ax, %ds
 	movw    %ax, %es
@@ -127,27 +107,9 @@ thunk_32:
 	movw    %ax, %fs
 	movw    %ax, %gs
 
-	/* Paging off. This is the instruction that leaves long mode: with
-	 * CR0.PG clear the processor clears EFER.LMA by itself. */
-	movl    %cr0, %eax
-	andl    $0x7FFFFFFF, %eax
-	movl    %eax, %cr0
-
-	/* CR3 is reloaded on the way back up, so nothing needs saving, but
-	 * LME has to go or the next CR0.PG would re-enter long mode at a
-	 * moment of the processor's choosing rather than ours. */
-	movl    $0xC0000080, %ecx
-	rdmsr
-	andl    $0xFFFFFEFF, %eax    /* EFER.LME off */
-	wrmsr
-
-	ljmp    $SEL_CODE16, $thunk_16
-
-	.code16
-thunk_16:
-	/* Protection off. The segment registers keep the 64 KB limits loaded
-	 * from the 16-bit descriptors above, which is what makes the next far
-	 * jump land in a working real mode. */
+	/* Protection off. The segment registers keep the 64 KB limits just
+	 * loaded from the 16-bit descriptors, which is what makes the next
+	 * far jump land in a working real mode. */
 	movl    %cr0, %eax
 	andl    $0xFFFFFFFE, %eax
 	movl    %eax, %cr0
@@ -163,8 +125,8 @@ thunk_real:
 	movw    %ax, %gs
 	movw    $0x7000, %sp         /* below stage 2, above nothing we use */
 
-	/* The interrupt vector table, which long mode replaced with an IDT.
-	 * Base 0, limit 0x3FF: the shape the BIOS put there at power on. */
+	/* The interrupt vector table, which protected mode replaced with an
+	 * IDT. Base 0, limit 0x3FF: the shape the BIOS put there at power on. */
 	lidt    ivt_desc
 
 	/* The caller's registers. DS is loaded last because everything up to
@@ -199,7 +161,7 @@ real_int_op:
 	popw    %ax
 	movw    %ax, 16(%si)         /* the caller's si, as returned */
 	popw    %ax
-	movw    %ax, 28(%si)         /* flags, for the carry bit */
+	movw    %ax, 28(%si)         /* flags: carry, and zero for INT 16h */
 
 	/* ---- back up ---- */
 	cli
@@ -213,57 +175,26 @@ real_int_op:
 
 	.code32
 thunk_back32:
-	movw    $SEL_DATA64, %ax
+	movw    $SEL_DATA32, %ax
 	movw    %ax, %ds
 	movw    %ax, %es
 	movw    %ax, %ss
 	movw    %ax, %fs
 	movw    %ax, %gs
 
-	movl    $PML4_ADDR, %eax
-	movl    %eax, %cr3
-
-	movl    $0xC0000080, %ecx
-	rdmsr
-	orl     $(1 << 8), %eax      /* EFER.LME */
-	wrmsr
-
-	movl    %cr0, %eax
-	orl     $(1 << 31), %eax     /* CR0.PG, and LMA comes back with it */
-	movl    %eax, %cr0
-
-	ljmp    $SEL_CODE64, $thunk_back64
-
-	.code64
-thunk_back64:
-	movw    $SEL_DATA64, %ax
-	movw    %ax, %ds
-	movw    %ax, %es
-	movw    %ax, %ss
-	movw    %ax, %fs
-	movw    %ax, %gs
-
-	movq    saved_rsp(%rip), %rsp
+	movl    saved_esp, %esp
 
 	/* The IDT back, over the vector table loaded on the way down; without
 	 * it an exception after the first BIOS call would read a gate out of
 	 * the vector table and reset the machine (idt.S). */
-	lidt    idt_desc(%rip)
+	lidt    idt_desc
 
-	popfq
-	popq    %r15
-	popq    %r14
-	popq    %r13
-	popq    %r12
-	popq    %rbp
-	popq    %rbx
+	popfl
+	popl    %ebp
+	popl    %edi
+	popl    %esi
+	popl    %ebx
 	ret
-
-	.balign 8
-/* The far pointer the first jump takes: offset then selector. */
-thunk_to32:
-	.long   thunk_32
-	.word   SEL_CODE32
 
 	.balign 4
 /* Real mode's interrupt vector table, as the BIOS left it. */
@@ -271,9 +202,9 @@ ivt_desc:
 	.word   0x3FF
 	.long   0
 
-	.balign 8
-saved_rsp:
-	.quad   0
+	.balign 4
+saved_esp:
+	.long   0
 
 /* ---- the descent that does not come back ----
  *
@@ -292,14 +223,14 @@ saved_rsp:
  * offset then segment, and GATE_DRIVE the number to hand over in DL, which
  * is how the program about to run knows which drive it came off.
  */
-	.code64
+	.code32
 	.globl  boot16
 boot16:
 	cli
-	ljmp    *boot16_to32(%rip)
+	ljmp    $SEL_CODE16, $boot16_16
 
-	.code32
-boot16_32:
+	.code16
+boot16_16:
 	movw    $SEL_DATA16, %ax
 	movw    %ax, %ds
 	movw    %ax, %es
@@ -307,19 +238,6 @@ boot16_32:
 	movw    %ax, %fs
 	movw    %ax, %gs
 
-	movl    %cr0, %eax
-	andl    $0x7FFFFFFF, %eax    /* paging off, and long mode with it */
-	movl    %eax, %cr0
-
-	movl    $0xC0000080, %ecx
-	rdmsr
-	andl    $0xFFFFFEFF, %eax    /* EFER.LME off */
-	wrmsr
-
-	ljmp    $SEL_CODE16, $boot16_16
-
-	.code16
-boot16_16:
 	movl    %cr0, %eax
 	andl    $0xFFFFFFFE, %eax    /* CR0.PE */
 	movl    %eax, %cr0
@@ -342,9 +260,3 @@ boot16_real:
 	movb    GATE_DRIVE, %dl
 	sti
 	ljmp    *GATE_TARGET
-
-	.balign 8
-	.code64
-boot16_to32:
-	.long   boot16_32
-	.word   SEL_CODE32

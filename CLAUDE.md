@@ -224,8 +224,9 @@ the tree, so `#include <fs/exfat.h>` means one file wherever it is written.
   array. It links static (`-static`) because WinPE has no `libssp-0.dll`, and
   a missing import kills it before its first log line.
 - `falcon-hook/` the program the loader appends to an ISO's initrd (DESIGN
-  Section 6.4): freestanding static x86-64 Linux, no libc (`src/sys.c` is its
-  system calls and startup). It runs as `rdinit=`, reads the extent map from
+  Section 6.4): freestanding static Linux, no libc, built twice, x86-64
+  (`falcon-hook`) and i686 (`falcon-hook32`) from the same source: `src/sys.c`
+  is its system calls and startup, and the only file that knows the width. It runs as `rdinit=`, reads the extent map from
   the initrd (a direct boot, or the credential sd-stub packs beside a
   blessed wrap) or efivarfs (an older wrap), maps the ISO
   read-only with dm-linear as `/dev/mapper/falcon-iso` under the ISO's label
@@ -233,7 +234,8 @@ the tree, so `#include <fs/exfat.h>` means one file wherever it is written.
   `src/dimod.c` brings loop in from a Debian installer ISO's own pool), makes
   the per-distro nudges and pre-mounts in `src/hookcore.c`'s tables, and
   execs the distro's init. `src/hookcore.c` is its host-tested half; the
-  loader embeds the stripped binary as a generated C array.
+  loaders embed the stripped binaries as generated C arrays (the UEFI loader
+  the x86-64 one, falcon-bios both, appending whichever matches the kernel).
   `tools/run-hook-rig.sh` boots it under QEMU without the loader.
 - `falcon-bios/` the BIOS loader (docs/notes/bios-route.md). The image is
   opt-in and not built by `all`, and so is putting it on a stick: `mkstick
@@ -257,18 +259,27 @@ the tree, so `#include <fs/exfat.h>` means one file wherever it is written.
   `make test-bios-probe` makes the medium that checks the resident's INT 15h
   half from real mode (`tools/memprobe.S`).
 
-  Three stages, because stage 2 is linked where real mode and long mode agree
-  on what an address means and so cannot exceed about 33 KB. `src/boot.S` is
-  the 512-byte MBR; `src/stage2.S`, `src/lmode.S` and `src/thunk.S` reach
-  long mode and keep what has to stay reachable from real mode (the thunk,
-  and the gate at the head of stage 2 that publishes it at a fixed address);
+  It is i686 code in flat 32-bit protected mode, paging off, and one image
+  runs on every processor from the Pentium Pro on (docs/notes/bios-route.md
+  Section 6h): what a newer processor adds is taken by asking CPUID at run
+  time, not by a second build. `pmode.S` switches the SSE state on only when
+  CPUID reports SSE, falcon-core's AES path picks AES-NI by CPUID, and a
+  64-bit kernel is refused with a sentence on a processor without long mode.
+
+  Three stages, because stage 2 is linked where real mode and protected mode
+  agree on what an address means and so cannot exceed about 33 KB.
+  `src/boot.S` is the 512-byte MBR; `src/stage2.S`, `src/pmode.S` and
+  `src/thunk.S` reach protected mode and keep what has to stay reachable
+  from real mode (the thunk, and the gate at the head of stage 2 that
+  publishes it at a fixed address);
   `src/load3.c` reads stage 3 in and jumps. Stage 3 links at a megabyte and
   holds the loader proper. `src/biosdefs.h` is the one place every address is
   written, which is why the assembly is preprocessed gas `.S` rather than
   NASM, and why the assembly rule tracks headers.
 
   All five of Section 4's boot routes work: `src/linux.c` takes the x86 boot
-  protocol's 64-bit entry (falcon-hook and its extent map appended as the
+  protocol's 32-bit entry, which boots 64-bit and 32-bit kernels alike
+  (falcon-hook of the kernel's width and its extent map appended as the
   UEFI loader appends them); `src/vcdres.S` is the resident INT 13h handler
   that serves an ISO as a CD, and the INT 15h half that keeps the memory it
   leaves behind out of the map the medium is handed, with `src/vcdcore.c`
@@ -281,11 +292,11 @@ the tree, so `#include <fs/exfat.h>` means one file wherever it is written.
 
   No failure ends in a halt, which on a machine with no serial cable is a
   hang: it ends in `bios_fatal` (`fatal_rm` before there is C), the reason
-  on screen and serial, a key, then a reset. Stage 2 asks CPUID for long
-  mode and the BDA whether the EBDA reaches memory it writes before it
-  tries long mode, and `src/idt.S` gives long mode an IDT, so a processor
-  exception is reported through the same path (`src/fault.c`) rather than
-  triple faulting.
+  on screen and serial, a key, then a reset. Stage 2 asks CPUID for CMOV
+  (the i686 floor) and the BDA whether the EBDA reaches memory it writes
+  before it enters protected mode, and `src/idt.S` gives protected mode an
+  IDT, so a processor exception is reported through the same path
+  (`src/fault.c`) rather than triple faulting.
 
   Stage 3 draws every screen through `src/screen.c`, the UEFI console's
   calls one for one (`screen_page` is `menu_screen`, `screen_menu` is
@@ -298,10 +309,12 @@ the tree, so `#include <fs/exfat.h>` means one file wherever it is written.
   <stage>" and the advice.
 
   It shares falcon-core unchanged: the read callback is the per-platform
-  boundary. What a BIOS build had to provide that firmware used to is the
-  thing to remember here - `lmode.S` sets CR4.OSFXSR because falcon-core's
-  AES-NI path needs it, and nothing may be written outside the gigabyte
-  `lmode.S` identity maps.
+  boundary, and core compiles clean as i686 because this build links all of
+  it at that width. What a BIOS build had to provide that firmware used to
+  is the thing to remember here - `pmode.S` sets CR4.OSFXSR because
+  falcon-core's AES-NI path needs it, and nothing is placed at or above
+  4 GiB (`ADDR_END`), since paging is off. The coverage harness judges it in
+  two columns, `bios` (the host CPU) and `bios32` (a Pentium III).
 - `docs/` DESIGN.md (authoritative) and Manual.md (the operator's reference:
   the route codes so far). `tools/` at the root
   holds only what spans the repo: `analyze.sh`; `arch-iso.sh`, sourced by

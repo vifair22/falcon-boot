@@ -2,8 +2,9 @@
  * writes in it (linux.c does those).
  *
  * Here because every number in it is a chance to hand the kernel an address
- * it cannot use, and the failures do not say so: a kernel loaded over the
- * end of the identity map triple-faults, and an initrd segment that starts
+ * it cannot use, and the failures do not say so: a kernel loaded past the
+ * end of what the loader can address triple-faults, and an initrd segment
+ * that starts
  * one byte short of a 4-byte boundary produces
  *
  *   Initramfs unpacking failed: invalid magic at start of compressed archive
@@ -45,7 +46,7 @@
 #define HDR_JUMP_LEN         0x201  /* u8 */
 
 #define HDRS_MAGIC     0x53726448u  /* "HdrS" */
-#define XLF_KERNEL_64  0x0001u      /* the 64-bit entry exists */
+#define XLF_KERNEL_64  0x0001u      /* a 64-bit kernel */
 
 /* The protocol version below which this loader declines rather than guesses.
  * 2.12 is where xloadflags and init_size are both present and settled;
@@ -58,11 +59,10 @@ typedef enum {
     LINUXCORE_ERR_TOO_SMALL   = -2,  /* not even a setup header long */
     LINUXCORE_ERR_NOT_BZIMAGE = -3,  /* no 0xAA55, or no "HdrS" */
     LINUXCORE_ERR_VERSION     = -4,  /* older than LINUXCORE_MIN_VERSION */
-    LINUXCORE_ERR_NO_64       = -5,  /* no 64-bit entry point */
     LINUXCORE_ERR_SETUP_LONG  = -6,  /* setup longer than the cap given */
     LINUXCORE_ERR_NO_KERNEL   = -7,  /* all setup and no kernel */
     LINUXCORE_ERR_NOT_RELOC   = -8,  /* fixed, and names no address */
-    LINUXCORE_ERR_NO_ROOM     = -9,  /* wants more than the identity map */
+    LINUXCORE_ERR_NO_ROOM     = -9,  /* wants more than the loader reaches */
     LINUXCORE_ERR_TOO_LOW     = -10  /* fixed, below where a kernel may go */
 } linuxcore_status;
 
@@ -74,6 +74,7 @@ typedef struct {
     uint64_t initrd_max;   /* highest byte an initrd may occupy */
     uint32_t cmdline_cap;  /* including the terminator */
     uint16_t version;
+    uint8_t  is_64;        /* a 64-bit kernel (xloadflags) */
 } linux_geom;
 
 /* Reads the geometry out of `setup` (at least 1024 bytes of the kernel's
@@ -81,7 +82,7 @@ typedef struct {
  * cannot boot. `pref_load` is where a relocatable kernel is placed before
  * alignment and the lowest address any kernel may take, since everything
  * below it is the loader's own; `map_end` one past the last byte the loader
- * has mapped, and
+ * can address, and
  * `setup_cap` the buffer the caller will read the setup into. */
 linuxcore_status linuxcore_geometry(const uint8_t *setup, size_t setup_len,
                                     uint64_t file_len, uint64_t pref_load,

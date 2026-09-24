@@ -1,24 +1,29 @@
 /* falcon-bios: booting a Linux kernel directly
  * (docs/notes/bios-route.md Section 4.2).
  *
- * The 64-bit entry of the x86 boot protocol, which is the one route into a
- * kernel that does not require going back to real mode. The loader is already
- * in long mode with paging on, which is exactly the state the protocol asks
- * for, so the handoff is: read the setup header out of the image, load the
- * protected-mode half somewhere it will accept, fill in a zero page, and
- * jump.
+ * The 32-bit entry of the x86 boot protocol, which is the one route into a
+ * kernel that does not require going back to real mode, and the one every
+ * kernel has: a 64-bit kernel enters at code32_start exactly as a 32-bit one
+ * does and switches to long mode itself. The loader is already in flat
+ * 32-bit protected mode with paging off, which is exactly the state the
+ * protocol asks for, so the handoff is: read the setup header out of the
+ * image, load the protected-mode half somewhere it will accept, fill in a
+ * zero page, and jump. (It took the 64-bit entry while the loader ran in
+ * long mode, and could not boot a 32-bit kernel at all; bios-route.md
+ * Section 6h.)
  *
  * WHAT THE PROTOCOL REQUIRES AT THE JUMP, and every one of these is a way to
  * fail silently if it is wrong:
  *
- *   - 64-bit mode, paging on, with the kernel, the initrd, the zero page and
- *     the command line all inside the identity map. Ours is a gigabyte
- *     (biosdefs.h IDENTITY_MAP), which bounds where any of them may go.
+ *   - 32-bit protected mode, paging off, with the kernel, the initrd, the
+ *     zero page and the command line all below 4 GiB (biosdefs.h,
+ *     ADDR_END), which bounds where any of them may go.
  *   - interrupts off, and no interrupt handler expected to survive.
- *   - a GDT whose code selector is 0x10 and data selector 0x18. Ours is not:
- *     falcon-bios puts code64 at 0x08 because nothing had an opinion until
- *     now. So a second, handoff GDT is built for the jump.
- *   - %rsi holding the zero page.
+ *   - a GDT whose code selector is 0x10 and data selector 0x18, both flat
+ *     4 GiB, and CS, DS, ES and SS loaded with them. Ours is not laid out
+ *     that way: falcon-bios puts its code at 0x08. So a second, handoff GDT
+ *     is built for the jump.
+ *   - %esi holding the zero page, and %ebp, %edi and %ebx zero.
  *
  * WHAT THE ZERO PAGE IS. The first 0x1F1 bytes are fields the boot loader
  * fills in and the kernel reads; from 0x1F1 to the end of the setup header
@@ -37,6 +42,8 @@
 
 #include <lib/string.h>
 
+#include <cpuid.h>
+
 /* Setup header offsets, from the kernel's Documentation/arch/x86/boot.rst.
  * Offsets into the boot sector, which is also where they sit in the zero
  * page: the header is copied across at the same address. */
@@ -44,9 +51,6 @@
 #define LOADFLAG_LOADED_HIGH 0x01u
 #define LOADFLAG_CAN_USE_HEAP 0x80u
 #define LOADER_TYPE_UNKNOWN 0xFFu         /* no id assigned to falcon-boot */
-
-/* The entry point sits this far into the loaded protected-mode kernel. */
-#define ENTRY64_OFFSET      0x200
 
 /* One boot sector plus the setup sectors, read before anything else so the
  * header can be consulted. The protocol caps setup at 64 sectors. */
@@ -63,13 +67,13 @@ static uint8_t g_setup[65u * 512u];
 static uint64_t g_gdt[4] __attribute__((aligned(16))) = {
     0,
     0,
-    0x00AF9A000000FFFFu,   /* 0x10: code64, L=1 */
-    0x00CF92000000FFFFu    /* 0x18: data64 */
+    0x00CF9A000000FFFFull,   /* 0x10: code32, flat 4 GiB */
+    0x00CF92000000FFFFull    /* 0x18: data32, flat 4 GiB */
 };
 
 static struct __attribute__((packed)) {
     uint16_t limit;
-    uint64_t base;
+    uint32_t base;
 } g_gdtr;
 
 static uint8_t rd8(const uint8_t *p, unsigned off)
@@ -99,6 +103,35 @@ static void wr32(uint8_t *p, unsigned off, uint32_t v)
     p[off + 3u] = (uint8_t)((v >> 24) & 0xFFu);
 }
 
+int linux_probe(const linux_object *kernel, int *is_64)
+{
+    linux_geom geom;
+
+    if (kernel == (const linux_object *)0 || is_64 == (int *)0 ||
+        kernel->read(kernel->ctx, 0, 1024, g_setup) != 0 ||
+        linuxcore_geometry(g_setup, 1024u, kernel->size, KERNEL_ADDR,
+                           ADDR_END, sizeof g_setup, &geom) != LINUXCORE_OK)
+        return -1;
+    *is_64 = geom.is_64;
+    return 0;
+}
+
+int linux_cpu_is_64(void)
+{
+    unsigned a = 0;
+    unsigned b = 0;
+    unsigned c = 0;
+    unsigned d = 0;
+
+    /* stage2.S has required CPUID, so the leaf-0x80000000 probe cannot
+     * fault; a processor without extended leaves answers below 0x80000001. */
+    if (__get_cpuid(0x80000000u, &a, &b, &c, &d) == 0 || a < 0x80000001u)
+        return 0;
+    if (__get_cpuid(0x80000001u, &a, &b, &c, &d) == 0)
+        return 0;
+    return (d & (1u << 29)) != 0;   /* LM */
+}
+
 /* What each refusal means, in the loader's voice. Separate from the codes so
  * linuxcore stays free of strings and a test can name a status. */
 static const char *geom_error(linuxcore_status rc)
@@ -109,14 +142,13 @@ static const char *geom_error(linuxcore_status rc)
         return "the kernel has no setup header; it is not a bzImage";
     case LINUXCORE_ERR_VERSION:
         return "the kernel's boot protocol is older than this loader supports";
-    case LINUXCORE_ERR_NO_64:       return "the kernel has no 64-bit entry point";
     case LINUXCORE_ERR_SETUP_LONG:
         return "the kernel's setup is longer than the protocol allows";
     case LINUXCORE_ERR_NO_KERNEL:   return "the kernel is all setup and no kernel";
     case LINUXCORE_ERR_NOT_RELOC:
         return "the kernel is not relocatable and names no address";
     case LINUXCORE_ERR_NO_ROOM:
-        return "the kernel wants more memory than this loader maps";
+        return "the kernel wants more memory than this loader can address";
     case LINUXCORE_ERR_TOO_LOW:
         return "the kernel is not relocatable and its address is this"
                " loader's own memory";
@@ -195,31 +227,35 @@ static int load_object(const linux_object *o, uint64_t from, uint64_t len,
  * handoff itself, and it is the fifth and last of Section 5.3's assembly
  * jobs, written here as inline asm because it is six instructions and
  * separating them from the values they use would help nobody. */
-static void enter_kernel(uint64_t entry, uint64_t zeropage)
+static void enter_kernel(uint32_t entry, uint32_t zeropage)
 {
     g_gdtr.limit = (uint16_t)(sizeof g_gdt - 1u);
-    g_gdtr.base = (uint64_t)(uintptr_t)g_gdt;
+    g_gdtr.base = (uint32_t)(uintptr_t)g_gdt;
 
+    /* Nothing is declared clobbered because nothing comes back: after the
+     * last jump this loader no longer exists, and the registers the
+     * protocol names are set by hand. */
     __asm__ __volatile__(
         "cli\n\t"
         "lgdt   %[gdtr]\n\t"
-        /* The data selectors first: a far return reloads CS, and after it
-         * nothing here runs again. */
+        /* CS first, through a far jump to the next instruction, then the
+         * data selectors: the protocol wants all four loaded from the
+         * handoff GDT, not merely present in it. */
+        "ljmp   $0x10, $1f\n"
+        "1:\n\t"
         "movw   $0x18, %%ax\n\t"
         "movw   %%ax, %%ds\n\t"
         "movw   %%ax, %%es\n\t"
         "movw   %%ax, %%ss\n\t"
         "movw   %%ax, %%fs\n\t"
         "movw   %%ax, %%gs\n\t"
-        /* A far return is the only way to load CS in 64-bit mode short of
-         * an interrupt return; push the selector and the target and take
-         * it. RSI carries the zero page, which is the whole ABI. */
-        "pushq  $0x10\n\t"
-        "pushq  %[entry]\n\t"
-        "lretq\n\t"
+        "xorl   %%ebp, %%ebp\n\t"
+        "xorl   %%edi, %%edi\n\t"
+        "xorl   %%ebx, %%ebx\n\t"
+        "jmp    *%[entry]\n\t"
         :
-        : [gdtr] "m"(g_gdtr), [entry] "r"(entry), "S"(zeropage)
-        : "rax", "memory");
+        : [gdtr] "m"(g_gdtr), [entry] "d"(entry), "S"(zeropage)
+        : "memory");
     for (;;)
         __asm__ __volatile__("hlt");
 }
@@ -254,9 +290,16 @@ int linux_boot(const linux_object *kernel, const linux_object *initrd,
     /* Every check and every address is linuxcore's, so the one place this
      * can be got wrong is host-tested. */
     rc = linuxcore_geometry(g_setup, 1024u, kernel->size, KERNEL_ADDR,
-                            IDENTITY_MAP, sizeof g_setup, &geom);
+                            ADDR_END, sizeof g_setup, &geom);
     if (rc != LINUXCORE_OK) {
         say(geom_error(rc));
+        return -1;
+    }
+    /* Asked here rather than found out: a 64-bit kernel on a processor
+     * without long mode dies in its own decompressor, before it can print
+     * anything, and the screen keeps saying "starting". */
+    if (geom.is_64 && !linux_cpu_is_64()) {
+        say("the kernel is 64-bit and this processor has no 64-bit mode");
         return -1;
     }
     setup_len = geom.setup_len;
@@ -381,6 +424,6 @@ int linux_boot(const linux_object *kernel, const linux_object *initrd,
 
     if (last != (void (*)(void))0)
         last();
-    enter_kernel(load_at + ENTRY64_OFFSET, ZEROPAGE_ADDR);
+    enter_kernel((uint32_t)load_at, ZEROPAGE_ADDR);
     return -1;
 }

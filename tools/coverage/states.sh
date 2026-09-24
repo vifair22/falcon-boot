@@ -30,6 +30,12 @@
 #        boots falcon-bios from build/test-bios.img instead and reads the
 #        stick from it. That measures every route without pre-empting the
 #        decision.
+#
+#   bios32 the bios column on a Pentium III (QEMU's pentium3 model): no long
+#        mode, no SSE2, no AES-NI. The floor falcon-bios runs on
+#        (docs/notes/bios-route.md Section 6h), and the column the 32-bit
+#        ISOs are judged in. A 64-bit ISO there fails by design, with the
+#        loader saying why.
 
 . falcon-efi/tools/ovmf.sh
 
@@ -137,16 +143,18 @@ states_prepare() {
 }
 
 # Sets STATE_CODE and STATE_SECURE (1 when the firmware needs SMM and a
-# secure flash), STATE_BIOS (1 for the SeaBIOS column, which has neither),
-# and copies the state's varstore to DEST, which the run may then write to
-# freely.
+# secure flash), STATE_BIOS (1 for the SeaBIOS columns, which have neither),
+# STATE_CPU (the QEMU CPU model), and copies the state's varstore to DEST,
+# which the run may then write to freely.
 state_firmware() {   # state_firmware STATE DEST
     STATE_BIOS=0
+    STATE_CPU=host
     case "$1" in
-    bios)
+    bios|bios32)
         STATE_CODE=
         STATE_SECURE=0
         STATE_BIOS=1
+        [[ "$1" == bios32 ]] && STATE_CPU=pentium3
         [[ -f build/test-bios.img ]] || {
             echo "ERROR: build/test-bios.img missing (run make test-bios-img)" >&2
             return 1; }
