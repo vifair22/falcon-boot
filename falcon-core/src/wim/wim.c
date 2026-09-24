@@ -435,7 +435,8 @@ int wim_patch_build(const wim_info *w, const uint8_t *lookup,
     meta_view v;
     size_t root, win, sys32, pe, off, next, end, list_start, list_end;
     size_t meta_off, meta_new_len, lk_off, entries, i, meta_seen = 0;
-    size_t cfg_off, dlen;
+    size_t cfg_off, dlen, lk_len;
+    uint64_t start;
     uint8_t jump_hash[WIM_HASH_LEN], meta_hash[WIM_HASH_LEN];
     uint8_t cfg_hash[WIM_HASH_LEN];
     uint8_t *nm, *lk;
@@ -451,6 +452,13 @@ int wim_patch_build(const wim_info *w, const uint8_t *lookup,
         return WIM_ERR_BAD_ARG;
     v.m = meta;
     v.len = meta_len;
+
+    /* The lookup table is in the caller's memory, so on a platform where
+     * size_t is narrower than the WIM's 64-bit fields a length past it
+     * cannot be one the caller holds. */
+    if (w->lookup.orig > (uint64_t)SIZE_MAX)
+        return WIM_ERR_NOSPACE;
+    lk_len = (size_t)w->lookup.orig;
 
     /* The tree: security data, then the root dentry at its aligned end. */
     if (meta_len < 8u)
@@ -471,7 +479,12 @@ int wim_patch_build(const wim_info *w, const uint8_t *lookup,
         return rc;
 
     /* The list to copy: System32's children, up to its end marker. */
-    list_start = (size_t)ld64(meta + sys32 + 16);
+    /* Compared before it is narrowed: on an i686 build a value past the
+     * metadata would otherwise wrap into it and be walked as a list. */
+    start = ld64(meta + sys32 + 16);
+    if (start > meta_len)
+        return WIM_ERR_CORRUPT;
+    list_start = (size_t)start;
     off = list_start;
     for (;;) {
         rc = dentry_at(&v, off, &next, &end);
@@ -488,8 +501,8 @@ int wim_patch_build(const wim_info *w, const uint8_t *lookup,
     meta_new_len = align8(meta_len) + (list_end - list_start) + dlen + 8u;
     cfg_off = align8(jump_len);
     meta_off = cfg_off + align8(cfg_len);
-    if (cap < meta_off + meta_new_len + w->lookup.orig +
-                  (size_t)2u * WIM_LOOKUP_LEN)
+    if ((uint64_t)cap < (uint64_t)meta_off + meta_new_len + lk_len +
+                            (uint64_t)2u * WIM_LOOKUP_LEN)
         return WIM_ERR_NOSPACE;
 
     /* [jump][cfg][metadata][lookup table], after the original's last
@@ -557,8 +570,8 @@ int wim_patch_build(const wim_info *w, const uint8_t *lookup,
      * jump binary's added. Metadata entries are in image order. */
     lk_off = meta_off + meta_new_len;
     lk = tail + lk_off;
-    memcpy(lk, lookup, w->lookup.orig);
-    entries = w->lookup.orig / WIM_LOOKUP_LEN;
+    memcpy(lk, lookup, lk_len);
+    entries = lk_len / WIM_LOOKUP_LEN;
     for (i = 0; i < entries; i++) {
         wim_lookup_entry(lookup, i, &r, (uint32_t *)0, (uint8_t *)0);
         if ((r.flags & WIM_RES_METADATA) == 0)
@@ -580,7 +593,7 @@ int wim_patch_build(const wim_info *w, const uint8_t *lookup,
                      jump_hash);
     put_stream_entry(lk + (size_t)(entries + 1u) * WIM_LOOKUP_LEN,
                      w->file_size + cfg_off, cfg_len, cfg_hash);
-    *tail_len = lk_off + w->lookup.orig + (size_t)2u * WIM_LOOKUP_LEN;
+    *tail_len = lk_off + lk_len + (size_t)2u * WIM_LOOKUP_LEN;
 
     /* The header: the new lookup table and boot metadata; no integrity
      * table, since the tail is not covered by it. */
