@@ -693,7 +693,15 @@ reached its menu. That is stages 1 to 3 outside SeaBIOS: the firmware booted
 a protective MBR whose `0xEE` entry has no active flag, stage 1 and stage 2
 read through AH=42h, long mode came up, the thunk served stage 3's reads, and
 the console drew. The stick carried no falcon partitions and no ISOs, so none
-of Section 4's routes ran; every route is still unmeasured on hardware.
+of Section 4's routes ran.
+
+The same day, Section 4.4 ran on hardware: an ASUS TP410UAR (VivoBook Flip
+14, i5-8250U) booted the full falcon stick through CSM, with the internal
+SATA disk as the other drive. The passphrase opened p3, the UKI was
+unwrapped and its kernel entered by the 64-bit entry, and the booted system
+has no `/sys/firmware/efi`. The initrd logged `Received untrusted
+credentials: cryptsetup.passphrase` and p4 unlocked from it with no second
+prompt. The other four routes are still unmeasured on hardware.
 
 The machine also answered part of a question the study had not asked: a CSM
 of this era does not require the active flag. Older BIOSes are the open case

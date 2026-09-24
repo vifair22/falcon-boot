@@ -2228,8 +2228,11 @@ Workstation 44, and D3b booted Kubuntu 26.04 (its kernel carries no `.sbat`).
 MEASURED ON REAL HARDWARE (2026-09-23), BIOS through CSM: falcon-bios stages
 1 to 3 reached the menu on an ASUS VivoBook 14 (8th-gen Intel), booting a
 protective MBR with no active flag (`docs/notes/bios-route.md` Section 6f).
-The stick held no falcon partitions, so no BIOS boot route has run on
-hardware yet.
+The same day, on an ASUS TP410UAR through CSM, the personal OS booted end to
+end over BIOS: p3 unlocked, the UKI unwrapped, p4 unlocked from the
+credential with no second prompt. Still unmeasured on hardware: the other
+four BIOS routes (a direct Linux ISO, an ISO's own loader through the
+virtual CD, BSD, Windows).
 
 A BLESSED ISO BOOTS ON REAL HARDWARE (2026-09-13): on that same laptop, the
 on-stick appliance blessed the Arch ISO and it booted all the way into the
