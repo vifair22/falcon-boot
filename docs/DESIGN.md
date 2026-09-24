@@ -2234,6 +2234,13 @@ credential with no second prompt. Still unmeasured on hardware: the other
 four BIOS routes (a direct Linux ISO, an ISO's own loader through the
 virtual CD, BSD, Windows).
 
+I686 IN THE RIG (2026-09-24): falcon-bios is i686 in 32-bit protected mode
+and promotes at run time (docs/notes/bios-route.md Section 6h). On SeaBIOS
+with a Pentium III (the harness's `bios32` column) Alpine x86 and Arch Linux
+32 boot direct with the i686 falcon-hook; on the host CPU Arch x86_64,
+Windows 11 and the personal OS still pass. Unmeasured on hardware: any
+32-bit machine.
+
 A BLESSED ISO BOOTS ON REAL HARDWARE (2026-09-13): on that same laptop, the
 on-stick appliance blessed the Arch ISO and it booted all the way into the
 live environment under Secure Boot, on a machine that trusts nothing from
@@ -2909,23 +2916,35 @@ flowchart TD
     RD -- ok --> MG{"0x7E04 holds BOS2?"}
     MG -- no --> F1
     MG -- yes --> S2["Stage 2, stage2.S at 0x7E00 (real mode)"]
-    S2 --> CPU{"cpu_check<br/>CPUID: long mode, PAE, FXSR"}
+    S2 --> CPU{"cpu_check<br/>CPUID, CMOV (the i686 floor)"}
     CPU -- no --> FR["fatal_rm: reason, key, reset"]
     CPU -- yes --> MEM{"mem_check<br/>BDA 0x413 at least 608 KiB"}
     MEM -- no --> FR
     MEM -- yes --> A20{"A20: INT 15h 2401, else port 0x92<br/>verified by wraparound"}
     A20 -- closed --> FR
-    A20 -- open --> PT["lmode.S<br/>page tables at 0x80000, 1 GiB identity map<br/>CR4 PAE, OSFXSR, OSXMMEXCPT; EFER.LME; PG+PE"]
-    PT --> LM["long mode, stage2_64<br/>fault_install: IDT, 32 vectors"]
-    LM --> L3["stage3_load, load3.c<br/>AH=48h sector size, header at LBA 98 to 1 MiB"]
+    A20 -- open --> SSE{"CPUID: FXSR and SSE?"}
+    SSE -- yes --> OSX["CR4 OSFXSR, OSXMMEXCPT"]
+    SSE -- no --> PE
+    OSX --> PE["pmode.S<br/>flat GDT, CR0.PE, paging off"]
+    PE --> PM["32-bit protected mode, stage2_32<br/>fault_install: IDT, 32 vectors"]
+    PM --> L3["stage3_load, load3.c<br/>AH=48h sector size, header at LBA 98 to 1 MiB"]
     L3 --> H3{"BOS3, length and<br/>memory in bounds?"}
     H3 -- no --> BF["bios_fatal: reason, key, reset"]
-    H3 -- yes --> S3["read stage 3, zero its .bss<br/>call 0x100010, RSP 0x800000"]
+    H3 -- yes --> S3["read stage 3, zero its .bss<br/>call 0x100010, ESP 0x800000"]
     S3 --> BM["bios_main<br/>E820, boot disk, GPT: p2, p3"]
     BM --> P2["p2: fs_mount (exFAT), survey_volume (.iso, .img)"]
     P2 --> P3["pos_probe: p3 is LUKS2?"]
-    P3 --> MENU["menu"]
+    P3 --> SI["screen_init: 80x25 text, VGA memory"]
+    SI --> MENU["menu"]
 ```
+
+The whole loader is i686 code in flat 32-bit protected mode, and one image
+runs on every processor from the Pentium Pro on. What a newer processor
+adds is taken by asking CPUID, not by a second build: the SSE state above,
+AES-NI in falcon-core's AES path, and long mode, which only a 64-bit kernel
+needs and 12.3.6 checks for. Paging stays off, so everything the loader
+places is below 4 GiB (`ADDR_END`). docs/notes/bios-route.md Section 6h has
+why this replaced long mode.
 
 Stage 2 is linked at 0x7E00 and stays there: the thunk and the IDT in it are
 used by stage 3 for the rest of the boot. Its head is a gate at fixed
@@ -2945,26 +2964,26 @@ it:
 
 `build.mk` checks every one against `nm` output.
 
-#### 12.3.3 The thunk: a BIOS call from long mode
+#### 12.3.3 The thunk: a BIOS call from protected mode
 
-Stage 3 runs in long mode, and the BIOS runs only in real mode. Every disk
-read, every character on screen and every key goes through this round trip.
+Stage 3 runs in 32-bit protected mode, and the BIOS runs only in real mode.
+Every disk read, every cursor move and every key goes through this round
+trip.
 
 ```mermaid
 sequenceDiagram
-    participant C as stage 3 C (long mode)
+    participant C as stage 3 C (protected mode)
     participant T as thunk.S (stage 2)
     participant B as BIOS (real mode)
     C->>T: register block and vector written, call 0x7E08
-    T->>T: save registers and RSP, patch the vector into the INT
-    T->>T: 32-bit compatibility segment, paging off, EFER.LME off
+    T->>T: save registers and ESP, patch the vector into the INT
     T->>T: 16-bit segment, PE off, far jump into real mode
     T->>T: segments 0, SP 0x7000, lidt the real-mode IVT
     T->>B: registers loaded, sti, int N, cli
-    B-->>T: results, carry flag
+    B-->>T: results, flags (carry, zero)
     T->>T: registers written back to the block
-    T->>T: lgdt, PE on, 32-bit, CR3 0x80000, LME on, PG on
-    T->>T: 64-bit, RSP restored, lidt idt_desc
+    T->>T: lgdt, PE on, far jump to the 32-bit segment
+    T->>T: data segments, ESP restored, lidt idt_desc
     T-->>C: return
 ```
 
@@ -2986,53 +3005,55 @@ resident CD handler, from real mode.
 | 0x0400-0x04FF | BDA; 0x413 is conventional memory in KiB, lowered 16 by a chainload | permanent |
 | 0x1000-0x10FF | disk packet, drive parameters, E820 slot | per call |
 | below 0x7000 | real-mode stack during a thunk | per call |
-| 0x7000-0x7BFF | stage 2's long-mode stack | until stage 3 |
+| 0x7000-0x7BFF | stage 2's protected-mode stack | until stage 3 |
 | 0x7C00-0x7DFF | stage 1; later the chainloaded boot image | stage 1 dies at the jump |
-| 0x7E00-0xFDFF | stage 2 (64 sectors; 9 KiB used): gate, thunk, GDT, IDT, fault reporting | until the target starts |
+| 0x7E00-0xFDFF | stage 2 (64 sectors; 8 KiB used): gate, thunk, GDT, IDT, fault reporting | until the target starts |
 | 0x10000-0x10FFF | Linux zero page | handed to the kernel |
 | 0x20000 | Linux cmdline; or the staged El Torito boot image (up to 63 KiB) on a chainload | handed over |
-| 0x80000-0x82FFF | PML4, PDPT, PD | whole loader |
 | 0x90000-0x97FFF | bounce buffer | every read |
 | BDA top - 16 KiB | the resident CD handler: data, runs, El Torito packet, launch stub at +0x530, INT 13h entry at +0x570, INT 15h entry at +0xA00, carved E820 map at +0xB00, overlay pool at +0x1000; never below 0x98000 | permanent after a chainload; reserved in the map it hands on |
 | 0x100000 | stage 3: 16-byte header, entry at +0x10, then its image and `.bss` (at most 0x6F0000 together) | whole loader |
-| 0x7F0000-0x7FFFFF | stage 3 stack, RSP from 0x800000 | whole loader |
+| 0xB8000-0xB8F9F | VGA text memory, the 80x25 screen stage 3 draws | whole loader |
+| 0x7F0000-0x7FFFFF | stage 3 stack, ESP from 0x800000 | whole loader |
 | 0x1000000 | the kernel's protected-mode part (aligned up; `pref_address` for a non-relocatable kernel) | handed to the kernel |
-| highest fit below 1 GiB | the initrds, placed from E820 | handed to the kernel |
-| highest fit in 64 MiB-1 GiB | `heap.c`: the patched boot.wim tail | through the chainload, served by AH=87h; the appended part reserved in the map it hands on |
-| 1 GiB | end of the identity map; nothing may be written above it | |
+| highest fit below the kernel's `initrd_addr_max` | the initrds, placed from E820 | handed to the kernel |
+| highest fit in 64 MiB-4 GiB | `heap.c`: the patched boot.wim tail | through the chainload, served by AH=87h; the appended part reserved in the map it hands on |
+| 4 GiB | `ADDR_END`: paging is off, so nothing is placed above it | |
 
 `mem_check` refuses a machine whose EBDA reaches below 0x98000, because the
-page tables and the bounce buffer are there. The fixed addresses are in
+bounce buffer is there. The fixed addresses are in
 `falcon-bios/src/biosdefs.h`, except the bounce buffer (`disk.c`) and that
 floor (`stage2.S`).
 
 #### 12.3.5 The menu and route selection
 
-Rows are the survey's folders and images, then Personal OS last at the root
-when p3 is LUKS2. Keys: up and down, Enter, `c` (chainload), `r` (reboot),
-Escape (up a folder). There is no Secure Boot, no shim and no blessing, so
-five routes.
+The menu is the UEFI loader's (12.2), drawn from the same layout
+(`falcon-core/src/tui`): Personal OS first at the root when p3 is LUKS2,
+".." first in a folder, then the survey's folders and images. Keys: up and
+down, Enter, `c` (chainload), `d` (direct), Escape (up a folder, or at the
+root INT 18h, which hands the machine back to the BIOS; a reset if it
+returns). There is no Secure Boot, no shim and no blessing, so five routes,
+dispatched in `boot_plain`'s order as on UEFI.
 
 ```mermaid
 flowchart TD
     ROW{"row, key"}
     ROW -- "Personal OS" --> POS[POS]
-    ROW -- "r" --> RB["bios_reboot"]
+    ROW -- "Escape at the root" --> FW["INT 18h"]
     ROW -- "c on an image" --> CHN[CHN]
-    ROW -- "Enter on an image" --> MED["scan_iso<br/>medium_open, family_detect"]
-    MED --> B{"BSD?"}
-    B -- "yes, edits fit" --> BSD[BSD]
-    B -- "not_bsd" --> BC
-    B -- no --> W{"Windows?"}
+    ROW -- "Enter or d on an image" --> MED["scan_family<br/>medium_open, family_detect"]
+    MED --> W{"Windows?"}
     W -- "yes, patched" --> WIN[WIN]
-    W -- "unpatchable" --> CHN
-    W -- no --> BC{"CD boot entry?"}
-    BC -- yes --> DIR[DIR]
-    BC -- no --> STOP["message, key, menu<br/>(c chainloads)"]
+    W -- "unpatchable, or a path winjump cannot carry" --> CHN
+    W -- no --> B{"BSD?"}
+    B -- "yes, edits fit" --> BSD[BSD]
+    B -- "not_bsd" --> DIR
+    B -- no --> DIR[DIR]
+    DIR -- "no CD boot entry" --> STOP["direct boot failed while reading<br/>the ISO's boot configuration<br/>(c chainloads)"]
 ```
 
 Unlike the UEFI loader, a BSD medium that is not one the memory-disk route
-applies to falls to the Linux entry lookup, and `DIR` with no entry stops
+applies to goes on to the direct boot, and `DIR` with no entry stops
 rather than chainloading.
 
 #### 12.3.6 DIR: direct kernel boot
@@ -3045,14 +3066,16 @@ sequenceDiagram
     participant H as falcon-hook
     participant D as distro init
     L->>B: read the ISO on p2 through falcon-core (medium_open, bootcfg_read CD)
-    L->>L: build_map (block size from AH=48h), hook cpio /falcon/hook + /falcon/map
+    L->>L: linux_probe: the kernel's width from its setup header
+    L->>L: build_map (block size from AH=48h), hook cpio /falcon/hook + /falcon/map, the hook of the kernel's width
     L->>L: hookcmd_build + console=ttyS0,115200 console=tty0
-    L->>L: linuxcore_geometry: boot protocol 2.12+, 64-bit entry, load address
+    L->>L: linuxcore_geometry: boot protocol 2.12+, load address; a 64-bit kernel needs CPUID's long mode
     L->>B: kernel's protected-mode part to 16 MiB, in 64 KiB chunks
     L->>L: cmdline to 0x20000
-    L->>B: initrds, hook last, 4-byte padded, at e820_place_high below 1 GiB
+    L->>B: initrds, hook last, 4-byte padded, at e820_place_high below initrd_addr_max
     L->>L: zero page at 0x10000: setup header, loader type 0xFF, E820 as the BIOS gave it
-    L->>K: own GDT, lretq to load_at + 0x200, RSI = zero page (long mode, never real mode again)
+    L->>L: "starting <entry>" on screen
+    L->>K: own GDT (0x10, 0x18), jump to code32_start, ESI = zero page (32-bit entry, either width)
     K->>H: rdinit=/falcon/hook, map from /falcon/map
     H->>D: /dev/mapper/falcon-iso (12.4)
     Note over D: the distro finds its medium, mounts root
@@ -3076,21 +3099,23 @@ sequenceDiagram
     participant K as kernel
     participant I as initramfs (systemd)
     U->>L: Enter on Personal OS
-    L->>U: masked passphrase (INT 16h)
+    L->>U: masked passphrase (INT 16h), three attempts
     L->>FC: luks_unlock p3, luks_dev_open, fs_mount ext4
-    FC-->>L: /uki/*.efi (at most 16)
-    L->>U: chooser
+    FC-->>L: shelf_collect: /uki or /EFI/Linux, *.efi (at most 8)
+    L->>U: chooser, shelf_label's rows (one image boots without asking)
     L->>FC: pe_parse: .linux, .initrd, .cmdline
     L->>L: cpio .extra/credentials/cryptsetup.passphrase.cred, after .initrd
-    L->>K: linux_boot with the UKI's cmdline unchanged (as DIR, without the hook)
+    L->>K: linux_boot with the UKI's cmdline unchanged (as DIR, without the hook); a 64-bit UKI needs long mode
     K->>I: initramfs
     I->>I: falcon-credential drop-in, systemd-cryptsetup opens p4, lvm2
     Note over I: root /dev/mapper/vgusb-root mounted, switch-root
 ```
 
 The initramfs sees exactly what sd-stub would have given it. AES-NI in
-`luks_unlock` is why `lmode.S` sets CR4.OSFXSR: UEFI firmware sets it, a
-BIOS leaves it clear, and the first SSE instruction would fault.
+`luks_unlock` is why `pmode.S` sets CR4.OSFXSR when CPUID reports SSE: UEFI
+firmware sets it, a BIOS leaves it clear, and the first SSE instruction
+would fault. A processor without AES-NI unlocks on falcon-core's portable
+AES path, slower and otherwise the same.
 
 #### 12.3.8 CHN: the resident virtual CD
 
@@ -3106,7 +3131,7 @@ sequenceDiagram
     L->>L: handler, runs, overlay pool, carved E820 map copied to the BDA's top 16 KiB
     L->>L: BDA 0x413 lowered 16 KiB, IVT[0x13] and IVT[0x15] = the handler
     L->>L: gate target = its launch stub
-    L->>L: call 0x7E10 (boot16): long mode to real mode, one way
+    L->>L: call 0x7E10 (boot16): protected mode to real mode, one way
     L->>R: launch stub: image copied to 07C0:0000, DL = 0xE0
     R->>P: jump
     P->>R: INT 13h on 0xE0: AH=41h, 42h, 48h, 4Bh
@@ -3150,7 +3175,7 @@ sequenceDiagram
     participant W as winjump (WinPE)
     participant ST as Setup
     L->>L: udf_mount, boot.wim, wim_open, wim_patch_build
-    L->>L: heap.c: the tail in 64 MiB-1 GiB, at E820's highest fit
+    L->>L: heap.c: the tail in 64 MiB-4 GiB, at E820's highest fit
     L->>L: UDF edits into the overlay pool, the tail as an append past the end
     L->>R: CHN (12.3.8), etfsboot at 07C0:0000
     R->>M: bootmgr
@@ -3181,15 +3206,15 @@ hang.
 | where | what happens |
 |---|---|
 | stage 1 | reason on screen and serial, a key, `jmp FFFF:0` |
-| stage 2, real mode (`fatal_rm`) | no long mode, EBDA too low, A20 closed: reason, a key, reset |
-| stage 2 and 3, long mode (`bios_fatal`) | stage 3 missing or malformed, or `stage 3 returned`: reason, a key, reset |
-| a processor exception (`idt.S`, `fault.c`) | vector and name, RIP, error code, CR2 for a page fault, through `bios_fatal`; a second fault while reporting resets at once |
+| stage 2, real mode (`fatal_rm`) | older than i686 (no CMOV), EBDA too low, A20 closed: reason, a key, reset |
+| stage 2 and 3, protected mode (`bios_fatal`) | stage 3 missing or malformed, or `stage 3 returned`: reason, a key, reset |
+| a processor exception (`idt.S`, `fault.c`) | vector and name, EIP, error code, through `bios_fatal`; a second fault while reporting resets at once |
 | a route | message, "press any key to return to the menu" |
 | the POS | wrong passphrase, no `/uki`, no images: message, secrets wiped, back to the menu |
 
 A reset is port 0xCF9, then the 8042's reset line, then an empty IDT and a
-fault, which triple-faults any processor. The window between entering long
-mode and `fault_install` has no IDT.
+fault, which triple-faults any processor. The window between entering
+protected mode and `fault_install` has no IDT.
 
 ### 12.4 falcon-hook to root
 

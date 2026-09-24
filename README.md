@@ -56,7 +56,7 @@ falcon-core/       firmware-free libraries all the others link: crypto, the
                    exFAT, ext4, FAT, ISO9660 and UDF drivers, LUKS2, GPT, the
                    PE walker, boot predictions, WIM, the manifest, media logic
 falcon-efi/        the UEFI loader (x64 PE32+) and its QEMU/OVMF rig
-falcon-bios/       the BIOS loader: a three-stage MBR chain into long mode
+falcon-bios/       the BIOS loader: a three-stage MBR chain into i686 protected mode
 falcon-cli/        host tools: falcon-boot-mkstick, falcon-boot-sign
 falcon-appliance/  the on-stick signing appliance: PID 1 and its image recipe
 falcon-winjump/    the WinPE program that attaches a Windows ISO for Setup
