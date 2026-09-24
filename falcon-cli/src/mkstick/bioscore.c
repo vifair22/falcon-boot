@@ -167,6 +167,13 @@ int bioscore_is_installed(const uint8_t *mbr, const uint8_t *stage1)
     return memcmp(mbr, stage1, BIOS_MBR_CODE_LEN) == 0;
 }
 
+int bioscore_is_reserve(const gpt_part *p)
+{
+    if (p == NULL)
+        return 0;
+    return p->number == BIOS_BOOT_SLOT && gpt_name_eq(p->name, BIOS_BOOT_NAME);
+}
+
 bioscore_status bioscore_backup_header(uint8_t *out, uint32_t sector_bytes,
                                        uint64_t gap_lba, uint64_t gap_sectors)
 {

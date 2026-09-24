@@ -234,8 +234,7 @@ static cli_status survey(bios_dev *dev, const mks_disk *d,
          * covers the gap precisely because the stages go there, so a second
          * run with --reserve already applied must measure against the first
          * REAL partition and not against itself. */
-        if (parts[i].number == BIOS_BOOT_SLOT &&
-            gpt_name_eq(parts[i].name, BIOS_BOOT_NAME)) {
+        if (bioscore_is_reserve(&parts[i])) {
             out->have_ours = 1;
             continue;
         }
