@@ -25,9 +25,17 @@
 /* The frame's rules. MARGIN_X and MARGIN_Y are the floor on how close the
  * block may come to an edge; WIDTH_MAX caps its width because a 160-column
  * row of entries is harder to scan than a 100-column one. CHROME_ROWS is a
- * menu's banner, the blank under it, the blank over the hint, and the hint. */
-#define TUI_MARGIN_X    6u
-#define TUI_MARGIN_Y    1u
+ * menu's banner, the blank under it, the blank over the hint, and the hint.
+ *
+ * On a console of NARROW_COLS or fewer the margin is MARGIN_X_NARROW
+ * instead. Six columns a side is a border on a 100-column console and a
+ * fifth of an 80-column one, which is every BIOS screen: there it left 64
+ * columns of text, and the personal OS's retry prompt, 80 characters with
+ * its TAB hint, did not fit a line. */
+#define TUI_MARGIN_X        6u
+#define TUI_MARGIN_X_NARROW 1u
+#define TUI_NARROW_COLS     80u
+#define TUI_MARGIN_Y        1u
 #define TUI_WIDTH_MAX   100u
 #define TUI_CHROME_ROWS 4u
 

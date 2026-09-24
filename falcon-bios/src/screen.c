@@ -37,6 +37,12 @@ static tui_frame g_frame;
 static size_t g_cur_row;
 static size_t g_cur_col;
 static size_t g_wrap;         /* glyphs on this line, for wrapping */
+/* Rows the current line has wrapped onto since its last line break, so a
+ * backspace at the start of one knows there is more of the same line above
+ * it. The passphrase prompt is what needs this: its retry line is longer
+ * than an 80-column screen's text area, and its echo and erase run across
+ * the wrap. */
+static size_t g_cont;
 
 /* The route code screen_mode set, or NULL. */
 static const char *g_mode;
@@ -238,6 +244,7 @@ void screen_page(void)
     g_cur_row = tui_page_row(&g_frame);
     g_cur_col = g_frame.text_col;
     g_wrap = 0;
+    g_cont = 0;
     ser_goto(g_cur_row, g_cur_col);
     mode_draw();
     hw_cursor_at(g_cur_row, g_cur_col);
@@ -257,12 +264,34 @@ static void out_unit(uint16_t c)
         return;                         /* the \n that follows does the work */
     if (c == '\n') {
         newline();
+        g_cont = 0;
         return;
     }
-    if (g_frame.text_width != 0 && g_wrap >= g_frame.text_width)
+    if (g_frame.text_width != 0 && g_wrap >= g_frame.text_width) {
         newline();
+        g_cont++;
+    }
     glyph(c);
     g_wrap++;
+}
+
+/* One step back, across a wrap when the line has one: to the last text
+ * column of the row above. Serial gets the move as a cursor position, since
+ * a terminal's own backspace stops at its left edge. */
+static void back_unit(void)
+{
+    if (g_wrap > 0) {
+        g_wrap--;
+        g_cur_col--;
+    } else if (g_cont > 0 && g_cur_row > 0 && g_frame.text_width != 0) {
+        g_cont--;
+        g_cur_row--;
+        g_wrap = g_frame.text_width - 1u;
+        g_cur_col = g_frame.text_col + g_wrap;
+    } else {
+        return;
+    }
+    ser_goto(g_cur_row, g_cur_col);
 }
 
 void screen_out(const char *s)
@@ -301,16 +330,10 @@ void screen_raw(const char *s)
     if (s == (const char *)0)
         return;
     for (; *s != '\0'; s++) {
-        if (*s == '\b') {
-            if (g_cur_col > 0)
-                g_cur_col--;
-            if (g_wrap > 0)
-                g_wrap--;
-            bios_putc('\b');
-            continue;
-        }
-        glyph((uint16_t)(unsigned char)*s);
-        g_wrap++;
+        if (*s == '\b')
+            back_unit();
+        else
+            out_unit((uint16_t)(unsigned char)*s);
     }
     hw_cursor_at(g_cur_row, g_cur_col);
 }

@@ -33,8 +33,9 @@ void screen_out(const char *s);
 void screen_out16(const uint16_t *s);
 void screen_out_dec(uint64_t v);
 
-/* Glyphs and backspaces at the cursor, with no framing: the passphrase
- * prompt's echo. */
+/* Glyphs and backspaces at the cursor: the passphrase prompt's echo. Glyphs
+ * wrap as screen_out's do, and a backspace at the start of a wrapped row
+ * goes back to the end of the row above. */
 void screen_raw(const char *s);
 
 /* The route code (docs/Manual.md, "Route codes"), drawn at the block's top

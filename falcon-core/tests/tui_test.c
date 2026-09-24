@@ -2,8 +2,9 @@
  *
  * The numbers here are the screens both loaders draw. 80x25 is the mode
  * every console has and the only one falcon-bios uses, so its block is
- * pinned exactly: a change that moved it would move both loaders' screens,
- * and this is where that shows up before a rig run does.
+ * pinned exactly, narrow margin and all: a change that moved it would move
+ * both loaders' screens, and this is where that shows up before a rig run
+ * does.
  */
 
 #include "tests.h"
@@ -51,17 +52,33 @@ static void test_frame_80x25(void **state)
 
     (void)state;
     tui_frame_init(&f, 80, 25);
-    assert_int_equal(f.width, 68);
-    assert_int_equal(f.left, 6);
-    assert_int_equal(f.text_col, 8);
-    assert_int_equal(f.text_width, 64);
+    assert_int_equal(f.width, 78);
+    assert_int_equal(f.left, 1);
+    assert_int_equal(f.text_col, 3);
+    assert_int_equal(f.text_width, 74);
     assert_int_equal(f.rows, 25);
     assert_int_equal(tui_page_row(&f), 8);
 
     assert_true(tui_mode_at(&f, 3, &row, &col));
     assert_int_equal(row, 7);
-    assert_int_equal(col, 69);
-    assert_false(tui_mode_at(&f, 65, &row, &col));
+    assert_int_equal(col, 74);
+    assert_false(tui_mode_at(&f, 75, &row, &col));
+}
+
+/* The narrow margin stops at 80 columns: one more and the frame is the
+ * wide one's again, six a side. */
+static void test_frame_narrow_boundary(void **state)
+{
+    tui_frame f;
+
+    (void)state;
+    tui_frame_init(&f, 81, 25);
+    assert_int_equal(f.width, 69);
+    assert_int_equal(f.left, 6);
+    tui_frame_init(&f, 100, 31);
+    assert_int_equal(f.width, 88);
+    assert_int_equal(f.left, 6);
+    assert_int_equal(f.text_width, 84);
 }
 
 static void test_frame_wide_is_capped(void **state)
@@ -83,7 +100,7 @@ static void test_frame_nonsense_is_80x25(void **state)
 
     (void)state;
     tui_frame_init(&f, 0, 0);
-    assert_int_equal(f.left, 6);
+    assert_int_equal(f.left, 1);
     assert_int_equal(f.rows, 25);
     tui_frame_init(&f, 39, 50);
     assert_int_equal(f.rows, 25);
@@ -111,10 +128,10 @@ static void test_menu_short_list(void **state)
     (void)state;
     tui_frame_init(&f, 80, 25);
     tui_menu_layout(&f, 3, &m);
-    assert_int_equal(m.left, 6);
-    assert_int_equal(m.width, 68);
-    assert_int_equal(m.list_left, 8);
-    assert_int_equal(m.list_width, 64);
+    assert_int_equal(m.left, 1);
+    assert_int_equal(m.width, 78);
+    assert_int_equal(m.list_left, 3);
+    assert_int_equal(m.list_width, 74);
     assert_int_equal(m.win, 3);
     assert_int_equal(m.banner_row, 9);
     assert_int_equal(m.list_top, 11);
@@ -301,6 +318,7 @@ int run_tui_tests(void)
 {
     const struct CMUnitTest tests[] = {
         cmocka_unit_test(test_frame_80x25),
+        cmocka_unit_test(test_frame_narrow_boundary),
         cmocka_unit_test(test_frame_wide_is_capped),
         cmocka_unit_test(test_frame_nonsense_is_80x25),
         cmocka_unit_test(test_frame_past_row_max),
