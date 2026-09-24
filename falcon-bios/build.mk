@@ -42,14 +42,18 @@ BIOS_ASFLAGS := -m32 -c -Wa,--fatal-warnings -I$(BIOS) $(CORE_INC)
 # The C half. Freestanding and i686, with the repo warning set.
 #
 # -march=i686 is the floor the loader runs on (stage2.S checks for its CMOV
-# before protected mode). -mno-sse and -mgeneral-regs-only are not style:
+# before protected mode). -mtune=generic because -march=i686 alone also
+# schedules for a Pentium Pro, which cost the p3 unlock 6% on a current
+# processor (233 ms against 220 in a benchmark of luks_unlock); tuning
+# changes no instruction the floor lacks. -mno-sse and -mgeneral-regs-only
+# are not style:
 # the mode switch enables SSE only on a processor that has it, and never the
 # x87, so a compiler that decided to use either would fault on an
 # instruction nobody wrote. -fno-pie because nothing relocates this and the
 # link addresses are fixed by biosdefs.h.
 BIOS_CFLAGS := -std=c11 -O2 -ffreestanding -fno-stack-protector \
 	-fno-pie -fno-asynchronous-unwind-tables -fno-unwind-tables \
-	-m32 -march=i686 -mno-sse -mno-mmx -mgeneral-regs-only \
+	-m32 -march=i686 -mtune=generic -mno-sse -mno-mmx -mgeneral-regs-only \
 	-Wall -Wextra -Wpedantic -Wshadow -Wunused -Wdouble-promotion \
 	-Wformat=2 -Wmissing-prototypes -Wstrict-prototypes \
 	-Wmissing-declarations -Wcast-align -Wcast-qual -Wnull-dereference \
