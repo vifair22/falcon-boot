@@ -215,6 +215,31 @@ static void test_backup_header(void **state)
                      BIOSCORE_ERR_ARG);
 }
 
+/* The reservation is slot 5 by name, and nothing else: `mkstick status` and
+ * `mkstick bios` both ask this, so what one makes the other recognises. */
+static void test_is_reserve(void **state)
+{
+    gpt_part p;
+    const char *name = BIOS_BOOT_NAME;
+    size_t i;
+
+    (void)state;
+    memset(&p, 0, sizeof p);
+    for (i = 0; name[i] != '\0'; i++)
+        p.name[i] = (uint16_t)(unsigned char)name[i];
+    p.number = BIOS_BOOT_SLOT;
+    assert_true(bioscore_is_reserve(&p));
+
+    p.number = 4u;
+    assert_false(bioscore_is_reserve(&p));
+
+    p.number = BIOS_BOOT_SLOT;
+    p.name[0] = (uint16_t)'X';
+    assert_false(bioscore_is_reserve(&p));
+
+    assert_false(bioscore_is_reserve((const gpt_part *)0));
+}
+
 static void test_strerror(void **state)
 {
     (void)state;
@@ -231,6 +256,7 @@ int run_bioscore_tests(void)
         cmocka_unit_test(test_check_gap),
         cmocka_unit_test(test_splice),
         cmocka_unit_test(test_backup_header),
+        cmocka_unit_test(test_is_reserve),
         cmocka_unit_test(test_strerror),
     };
 

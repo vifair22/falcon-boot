@@ -30,6 +30,7 @@
 #include <common/log.h>
 #include <common/proc.h>
 #include <common/util.h>
+#include <mkstick/bioscore.h>
 #include <mkstick/cleanup.h>
 #include <mkstick/disk.h>
 #include <mkstick/shimname.h>
@@ -548,6 +549,7 @@ static cli_status status_run(const cli_args *a)
     cli_status rc;
     int gpt_rc;
     uint32_t i;
+    uint32_t reserved = 0;
 
     memset(&t, 0, sizeof t);
 
@@ -576,9 +578,15 @@ static cli_status status_run(const cli_args *a)
 
     cli_log_blank();
     log_info("GPT (DESIGN Section 3)");
-    if (table.count != MKS_PARTS)
+    /* `mkstick bios --reserve`'s partition over the gap is this tool's own
+     * and not one of the four, so it is not counted against them. */
+    for (i = 0; i < table.count; i++) {
+        if (bioscore_is_reserve(&table.parts[i]))
+            reserved++;
+    }
+    if (table.count - reserved != MKS_PARTS)
         note(&t, "%u partitions, not the four DESIGN Section 3 describes",
-             table.count);
+             table.count - reserved);
     for (i = 0; i < table.count; i++) {
         const gpt_part *p = &table.parts[i];
         const char *role = role_text(p);
@@ -597,6 +605,10 @@ static cli_status status_run(const cli_args *a)
             check(&t, 1, "p%u  %-22s %10s  name %-12s PARTUUID %s", p->number,
                   role, util_format_size(bytes, size, sizeof size), name,
                   guid);
+        else if (bioscore_is_reserve(p))
+            check(&t, 1, "p%u  %-22s %10s  name %-12s PARTUUID %s", p->number,
+                  "falcon-bios's gap", util_format_size(bytes, size, sizeof size),
+                  name, guid);
         else {
             char type[40];
 

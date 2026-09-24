@@ -24,6 +24,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <part/part.h>
+
 #define BIOS_SECTOR_BYTES 512u
 
 /* The split of LBA 0. Bytes 0..439 are boot code; 440..443 are the disk
@@ -105,6 +107,12 @@ bioscore_status bioscore_splice_mbr(const uint8_t *cur, const uint8_t *stage1,
 
 /* Nonzero when this LBA 0 already carries this stage 1. */
 int bioscore_is_installed(const uint8_t *mbr, const uint8_t *stage1);
+
+/* Nonzero when this GPT entry is the reservation `mkstick bios --reserve`
+ * makes over the gap: slot BIOS_BOOT_SLOT, named BIOS_BOOT_NAME. The one
+ * definition, so the command that makes it and the status report that reads
+ * it back cannot disagree about what it looks like. */
+int bioscore_is_reserve(const gpt_part *p);
 
 /* ---- the backup a write is preceded by ----
  *
