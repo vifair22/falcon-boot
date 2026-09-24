@@ -207,14 +207,14 @@ static void test_geometry_refusals(void **state)
     assert_int_equal(geom(17u * 512u, &g), LINUXCORE_ERR_NO_KERNEL);
     assert_int_equal(geom(17u * 512u + 1u, &g), LINUXCORE_OK);
 
-    /* Wants more than the loader maps: init_size is the number that
+    /* Wants more than the loader can address: init_size is the number that
      * matters, not the image's length. The kernel lands at 16 MiB and the
-     * map ends at 1 GiB, so 0x3F000000 reaches the last mapped byte exactly
-     * and one more does not fit. */
+     * loader's reach ends at 4 GiB, so 0xFF000000 reaches the last byte
+     * exactly and one more does not fit. */
     good_setup();
-    wr32(HDR_INIT_SIZE, 0x3F000000u);
+    wr32(HDR_INIT_SIZE, 0xFF000000u);
     assert_int_equal(geom(1 << 20, &g), LINUXCORE_OK);
-    wr32(HDR_INIT_SIZE, 0x3F000001u);
+    wr32(HDR_INIT_SIZE, 0xFF000001u);
     assert_int_equal(geom(1 << 20, &g), LINUXCORE_ERR_NO_ROOM);
 }
 
