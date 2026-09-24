@@ -127,11 +127,21 @@ static const char *geom_error(linuxcore_status rc)
     return "the kernel's setup header makes no sense";
 }
 
+/* Why the last linux_boot failed, for the caller's screen; serial gets it
+ * here as it happens. */
+static const char *g_why;
+
 static void say(const char *s)
 {
+    g_why = s;
     bios_puts("falcon-bios: ");
     bios_puts(s);
     bios_puts("\n");
+}
+
+const char *linux_why(void)
+{
+    return g_why;
 }
 
 /* Copies the E820 map into the zero page, in the 20-byte form the protocol

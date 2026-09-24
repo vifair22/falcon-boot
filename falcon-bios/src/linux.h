@@ -21,8 +21,9 @@ typedef struct {
 } linux_object;
 
 /* Loads kernel and initrds, fills the zero page, and jumps. Does not return
- * on success. Returns nonzero with a message already printed when the kernel
- * is one this loader will not boot, or when something would not fit.
+ * on success. Returns nonzero when the kernel is one this loader will not
+ * boot, or when something would not fit, with the reason in linux_why() and
+ * on serial.
  *
  * `initrd` may be several objects; they are concatenated in order, which is
  * what the kernel expects of a multi-initrd boot and what lets falcon-hook be
@@ -34,5 +35,9 @@ typedef struct {
  * runs again. */
 int linux_boot(const linux_object *kernel, const linux_object *initrd,
                unsigned n_initrd, const char *cmdline, void (*last)(void));
+
+/* The reason the last linux_boot returned, as a sentence without its full
+ * stop; NULL before any failure. */
+const char *linux_why(void);
 
 #endif /* FALCON_BIOS_LINUX_H */

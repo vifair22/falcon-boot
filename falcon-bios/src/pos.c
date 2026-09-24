@@ -32,24 +32,28 @@
 #include <pos.h>
 #include <prompt.h>
 #include <linux.h>
+#include <screen.h>
 
 #include <part/part.h>
 #include <fs/fs.h>
 #include <luks/luks.h>
 #include <pe/pe.h>
+#include <crypto/crypto.h>
 #include <media/cpio.h>
+#include <media/shelf.h>
 #include <lib/string.h>
 
-/* Where the shelf keeps its images, and the credential beside one
- * (DESIGN Section 5.1). */
-#define UKI_DIR      "uki"
+/* The credential beside the image (DESIGN Section 5.1). */
 #define CRED_DIR     ".extra"
 #define CRED_SUBDIR  ".extra/credentials"
 #define CRED_FILE    "cryptsetup.passphrase.cred"
 #define CRED_PATH    CRED_SUBDIR "/" CRED_FILE
 
-#define POS_MAX_UKIS 16u
 #define PASS_MAX     256u
+
+/* Wrong-passphrase retries before the attempt gives up, as the UEFI
+ * loader's (falcon-efi/src/pos/pos.c, POS_ATTEMPTS). */
+#define POS_ATTEMPTS 3u
 /* Enough of a PE to hold its headers and section table. */
 #define PE_HDR_MAX   8192u
 
@@ -63,13 +67,17 @@ static luks_vol  g_vol;
 static luks_dev  g_dev;
 static char      g_json[LUKS_JSON_CAP];
 static fs_vol    g_fs;
-static fs_dir    g_dir;
-static fs_dir    g_scratch;
 static fs_file   g_file;
 static int       g_opened;
+static int       g_dev_open;
 
-static fs_dirent g_ukis[POS_MAX_UKIS];
-static unsigned  g_uki_count;
+/* The images on the shelf and what the chooser calls them, from the same
+ * module the UEFI loader's chooser uses (falcon-core/src/media/shelf.h). */
+static shelf_list g_images;
+static const uint16_t *g_rows[SHELF_MAX];
+
+/* What linux_boot is handed, summed, for the line the handoff prints. */
+static uint64_t g_read;
 
 static uint8_t g_pehdr[PE_HDR_MAX];
 static uint8_t g_credcpio[PASS_MAX + 1024u];
@@ -82,17 +90,26 @@ static size_t g_pass_len;
 
 static luks_master_key g_mk;
 
+/* Everything the unlock produced: the passphrase and the key, the
+ * credential, the keyboard ring the passphrase was typed through, and the
+ * plaintext caches read out of p3. crypto_wipe rather than memset because
+ * these are exactly the dead-buffer stores an optimiser is entitled to drop.
+ * Safe to call twice. */
 static void wipe_secrets(void)
 {
-    memset(g_pass, 0, sizeof g_pass);
+    crypto_wipe(g_pass, sizeof g_pass);
     g_pass_len = 0;
-    memset(&g_mk, 0, sizeof g_mk);
-    memset(g_credcpio, 0, sizeof g_credcpio);
+    crypto_wipe(&g_mk, sizeof g_mk);
+    crypto_wipe(g_credcpio, sizeof g_credcpio);
     bios_key_buffer_wipe();
-    luks_dev_close(&g_dev);
+    shelf_wipe(&g_images);
+    crypto_wipe(&g_fs, sizeof g_fs);
+    crypto_wipe(&g_file, sizeof g_file);
+    if (g_dev_open) {
+        luks_dev_close(&g_dev);
+        g_dev_open = 0;
+    }
 }
-
-static void put(const char *s) { bios_screen_puts(s); }
 
 static int part_read(void *ctx, uint64_t off, uint64_t len, void *buf)
 {
@@ -112,46 +129,6 @@ int pos_probe(bios_disk *d, const gpt_part *p3)
     g_opened = luks_open(&g_vol, part_read, &g_src, g_json, sizeof g_json) ==
                LUKS_OK;
     return g_opened;
-}
-
-/* The shelf's UKI directory, which DESIGN Section 5.1 puts at /uki. */
-static int open_uki_dir(void)
-{
-    fs_dirent ent;
-
-    if (fs_dir_open_root(&g_fs, &g_scratch) != FS_OK)
-        return -1;
-    while (fs_dir_next(&g_scratch, &ent) == 1) {
-        if (ent.is_dir && fs_name_eq_ascii(ent.name, UKI_DIR))
-            return fs_dir_open(&g_fs, &g_dir, &ent) == FS_OK ? 0 : -1;
-    }
-    /* No /uki: the images may be at the root. */
-    return fs_dir_open_root(&g_fs, &g_dir) == FS_OK ? 0 : -1;
-}
-
-static void list_ukis(void)
-{
-    fs_dirent ent;
-
-    g_uki_count = 0;
-    while (fs_dir_next(&g_dir, &ent) == 1) {
-        if (ent.is_dir || !fs_name_ends_ascii(ent.name, ".efi"))
-            continue;
-        if (g_uki_count < POS_MAX_UKIS)
-            g_ukis[g_uki_count++] = ent;
-    }
-}
-
-static void put_name(const uint16_t *name)
-{
-    char one[2];
-    size_t i;
-
-    one[1] = '\0';
-    for (i = 0; name[i] != 0; i++) {
-        one[0] = bios_ascii(name[i], '?');
-        put(one);
-    }
 }
 
 /* The credential sd-stub would have packed, as the cpio it would have made.
@@ -204,11 +181,26 @@ typedef struct {
 static sect_src g_linux_src;
 static sect_src g_initrd_src;
 
+/* The UEFI loader's read says it is alive with a dot per 8 MiB, so a 60 MiB
+ * image draws a short line rather than a pause that reads as a hang; the
+ * sections are read here, so the dots are drawn here. */
+#define POS_DOT_EVERY ((uint64_t)8u << 20)
+
+static uint64_t g_done;
+static uint64_t g_dot_at;
+
 static int sect_read(void *ctx, uint64_t off, uint64_t len, void *buf)
 {
     const sect_src *s = ctx;
 
-    return fs_file_read(s->f, s->base + off, len, buf) == FS_OK ? 0 : -1;
+    if (fs_file_read(s->f, s->base + off, len, buf) != FS_OK)
+        return -1;
+    g_done += len;
+    while (g_done >= g_dot_at) {
+        screen_out(".");
+        g_dot_at += POS_DOT_EVERY;
+    }
+    return 0;
 }
 
 typedef struct {
@@ -228,7 +220,21 @@ static int mem_read(void *ctx, uint64_t off, uint64_t len, void *buf)
     return 0;
 }
 
-static int boot_uki(const fs_dirent *uki)
+/* The moment every read is done and nothing of this loader will run again:
+ * the lines the UEFI loader prints at the same point, then the wipe. */
+static void handoff(void)
+{
+    screen_out("\n");
+    screen_out_dec(g_read);
+    screen_out(" bytes read.\n\n");
+    screen_out("handing over to the image; everything below is its own "
+               "output.\n\n");
+    wipe_secrets();
+}
+
+/* Unwraps the chosen UKI and boots its kernel. Returns only on failure, with
+ * r->stage and r->advice set. */
+static int boot_uki(const fs_dirent *uki, boot_result *r)
 {
     linux_object kernel;
     linux_object initrd[2];
@@ -243,28 +249,26 @@ static int boot_uki(const fs_dirent *uki)
     size_t credlen;
     uint64_t total;
     size_t want;
+    unsigned i;
 
+    r->stage = "reading the UKI";
     /* The size comes from the open file, not from the directory entry: an
      * ext4 entry carries no size (falcon-core/src/fs/fs.c says so where it
      * builds one), and reading zero bytes and then asking whether they are a
      * PE answers "that is not a UKI" about every image on the shelf. */
-    if (fs_file_open(&g_fs, &g_file, uki) != FS_OK) {
-        put("  the image would not open\n");
+    if (fs_file_open(&g_fs, &g_file, uki) != FS_OK)
         return -1;
-    }
     total = fs_file_size(&g_file);
     want = total < sizeof g_pehdr ? (size_t)total : sizeof g_pehdr;
-    if (want == 0 || fs_file_read(&g_file, 0, want, g_pehdr) != FS_OK) {
-        put("  the image would not read\n");
+    if (want == 0 || fs_file_read(&g_file, 0, want, g_pehdr) != FS_OK)
         return -1;
-    }
     if (pe_parse(g_pehdr, want, &hdr) != PE_OK) {
-        put("  that is not a UKI\n");
+        r->advice = "the image is not a PE file, so it is not a UKI.";
         return -1;
     }
     if (pe_find_section(&hdr, g_pehdr, (size_t)total, ".linux",
                         &loff, &llen) != PE_OK || llen == 0) {
-        put("  the image has no .linux section; it is not a UKI\n");
+        r->advice = "the image has no .linux section, so it is not a UKI.";
         return -1;
     }
     (void)pe_find_section(&hdr, g_pehdr, (size_t)total, ".initrd",
@@ -291,21 +295,15 @@ static int boot_uki(const fs_dirent *uki)
      * what the sign tool put there and what the UKI is. */
     g_cmdline[0] = '\0';
     if (clen > 0 && clen < sizeof g_cmdline) {
-        if (fs_file_read(&g_file, coff, clen, g_cmdline) != FS_OK) {
-            put("  the cmdline section would not read\n");
+        if (fs_file_read(&g_file, coff, clen, g_cmdline) != FS_OK)
             return -1;
-        }
         g_cmdline[clen] = '\0';
         /* The section is NUL-padded by ukify; stop at the first one. */
-        {
-            size_t i;
-
-            for (i = 0; i < clen; i++) {
-                if (g_cmdline[i] == '\0')
-                    break;
-            }
-            g_cmdline[i] = '\0';
+        for (i = 0; i < clen; i++) {
+            if (g_cmdline[i] == '\0')
+                break;
         }
+        g_cmdline[i] = '\0';
     }
 
     credlen = build_credential();
@@ -316,106 +314,161 @@ static int boot_uki(const fs_dirent *uki)
         initrd[n_initrd].ctx = &g_credsrc;
         initrd[n_initrd].size = credlen;
         n_initrd++;
-        put("  passphrase credential packed, ");
-    } else {
-        put("  no passphrase credential: ");
+        bios_puts("falcon-bios: passphrase credential packed\n");
+    } else if (g_pass_len > 0) {
+        screen_out("warning: the passphrase credential could not be packed."
+                   "\n         The initramfs will ask for the passphrase "
+                   "again.\n\n");
     }
-    put(credlen > 0 ? "p4 unlocks without a second prompt\n"
-                    : "the initramfs will ask for its own\n");
 
-    put("  starting the kernel\n");
-    /* wipe_secrets as linux_boot's last act: the kernel, the initrd and
-     * the credential cpio are all read through p3 or out of g_credcpio,
-     * so none of it can go before they are copied, and after the jump
-     * nothing of this loader runs to do it. The one copy that survives is
-     * the credential inside the initrd, which is what it is for. */
-    return linux_boot(&kernel, initrd, n_initrd, g_cmdline, wipe_secrets);
-}
+    g_read = kernel.size;
+    for (i = 0; i < n_initrd; i++)
+        g_read += initrd[i].size;
+    g_done = 0;
+    g_dot_at = POS_DOT_EVERY;
 
-/* A failure the user has to read: the menu redraws the screen as soon as
- * pos_run returns, so without the wait the message is gone before it can be
- * read. Backing out returns without it. */
-static int fail(const char *msg)
-{
-    put(msg);
-    wipe_secrets();
-    put("\n  press any key to return to the menu.\n");
-    (void)bios_getkey();
+    r->stage = "starting the kernel";
+    /* handoff as linux_boot's last act: the kernel, the initrd and the
+     * credential cpio are all read through p3 or out of g_credcpio, so none
+     * of it can go before they are copied, and after the jump nothing of
+     * this loader runs to do it. The one copy that survives is the
+     * credential inside the initrd, which is what it is for. */
+    (void)linux_boot(&kernel, initrd, n_initrd, g_cmdline, handoff);
+    boot_result_advise(r, linux_why(), (const char *)0);
     return -1;
 }
 
-int pos_run(bios_disk *d, const gpt_part *p3)
+/* Prompt, retry, and report, as the UEFI loader does. LUKS_OK, POS_ABORTED
+ * for escape, or the LUKS status to report. */
+static int prompt_and_unlock(void)
+{
+    unsigned attempt;
+
+    for (attempt = 0; attempt < POS_ATTEMPTS; attempt++) {
+        uint32_t slot = 0;
+        int rc;
+
+        screen_out("passphrase for the encrypted partition");
+        if (attempt > 0) {
+            screen_out(" (attempt ");
+            screen_out_dec(attempt + 1u);
+            screen_out(" of ");
+            screen_out_dec(POS_ATTEMPTS);
+            screen_out(")");
+        }
+        screen_out(": ");
+
+        if (prompt_passphrase(g_pass, sizeof g_pass, &g_pass_len) != 0)
+            return POS_ABORTED;
+
+        screen_out("unlocking...\n");
+        rc = luks_unlock(&g_vol, g_pass, g_pass_len, &g_mk, &slot);
+        if (rc == LUKS_OK)
+            return LUKS_OK;
+        if (rc != LUKS_ERR_NOKEY)
+            return rc;      /* not something a retype fixes */
+        crypto_wipe(g_pass, sizeof g_pass);
+        g_pass_len = 0;
+        screen_out("wrong passphrase.\n\n");
+    }
+    return LUKS_ERR_NOKEY;
+}
+
+/* Two or more images are offered; one is booted without asking. */
+static int choose_uki(void)
+{
+    static const screen_banner banner = {
+        u"falcon-boot: which image?", (const uint16_t *)0, 0
+    };
+    /* The UEFI chooser's key line, less the legend for the trust tags,
+     * which a BIOS machine has nothing to predict with. */
+    static const uint16_t hint[] = u"up/down select | enter choose | esc back";
+    size_t i;
+
+    if (g_images.n == 1)
+        return 0;
+    shelf_label(&g_images, &g_fs);
+    for (i = 0; i < g_images.n; i++)
+        g_rows[i] = g_images.uki[i].label;
+    return screen_menu(&banner, g_rows, g_images.n, (const char *)0, hint,
+                       (int *)0);
+}
+
+const uint16_t *pos_entry_label(void)
+{
+    return u"Personal OS (encrypted)";
+}
+
+int pos_run(bios_disk *d, const gpt_part *p3, boot_result *r)
 {
     const fs_ops *ops;
-    uint32_t slot = 0;
-    unsigned sel = 0;
+    const fs_dirent *uki;
+    int pick;
     int rc;
 
-    if (!pos_probe(d, p3))
-        return fail("  p3 is not a LUKS2 volume\n");
+    boot_result_init(r);
+    if (!pos_probe(d, p3)) {
+        r->stage = "looking for a UKI shelf";
+        return -1;
+    }
 
-    if (prompt_passphrase("passphrase", g_pass, sizeof g_pass,
-                          &g_pass_len) != 0) {
+    r->stage = "unlocking the encrypted partition";
+    rc = prompt_and_unlock();
+    if (rc != LUKS_OK) {
+        wipe_secrets();
+        if (rc == POS_ABORTED) {
+            r->stage = "passphrase prompt";
+            return POS_ABORTED;
+        }
+        if (rc == LUKS_ERR_NOKEY)
+            r->advice = "the passphrase did not open any keyslot.";
+        else if (rc == LUKS_ERR_IO)
+            r->advice = "the partition could not be read.";
+        else
+            r->advice = "the volume is outside what this loader supports.";
+        return -1;
+    }
+
+    r->stage = "opening the decrypted volume";
+    if (luks_dev_open(&g_dev, &g_vol, &g_mk) != LUKS_OK) {
+        wipe_secrets();
+        return -1;
+    }
+    g_dev_open = 1;
+    /* luks_dev_open has taken the key into its cipher context, so the copy
+     * here is dead from this point on. */
+    crypto_wipe(&g_mk, sizeof g_mk);
+
+    r->stage = "mounting the filesystem inside it";
+    ops = fs_identify(luks_read, &g_dev, FS_HINT_SHELF);
+    if (ops == (const fs_ops *)0 ||
+        fs_mount(&g_fs, ops, luks_read, &g_dev) != FS_OK) {
+        r->advice = "the decrypted volume is not a filesystem this loader "
+                    "can read.";
         wipe_secrets();
         return -1;
     }
 
-    rc = luks_unlock(&g_vol, g_pass, g_pass_len, &g_mk, &slot);
-    if (rc != LUKS_OK) {
-        if (rc == LUKS_ERR_NOKEY)
-            return fail("  that passphrase does not open p3\n");
-        if (rc == LUKS_ERR_UNSUPPORTED_KDF)
-            return fail("  p3's keyslots use a KDF this loader cannot"
-                        " run\n");
-        return fail("  p3 would not unlock\n");
-    }
-    if (luks_dev_open(&g_dev, &g_vol, &g_mk) != LUKS_OK)
-        return fail("  p3 unlocked but would not open\n");
-
-    ops = fs_identify(luks_read, &g_dev, FS_HINT_NONE);
-    if (ops == (const fs_ops *)0 ||
-        fs_mount(&g_fs, ops, luks_read, &g_dev) != FS_OK)
-        return fail("  nothing inside p3 mounted\n");
-    put("  p3 open, ");
-    put(fs_vol_name(&g_fs));
-    put("\n");
-
-    if (open_uki_dir() != 0)
-        return fail("  p3 has no image directory\n");
-    list_ukis();
-    if (g_uki_count == 0)
-        return fail("  p3 holds no images\n");
-
-    for (;;) {
-        unsigned i;
-        int key;
-
-        bios_screen_clear();
-        put("falcon-boot (BIOS)  personal OS\n\n");
-        for (i = 0; i < g_uki_count; i++) {
-            put(i == sel ? "  > " : "    ");
-            put_name(g_ukis[i].name);
-            put("\n");
-        }
-        put("\n  up and down to move, enter to boot, escape to go back\n");
-
-        key = bios_getkey();
-        if (key == BIOS_KEY_UP && sel > 0)
-            sel--;
-        else if (key == BIOS_KEY_DOWN && sel + 1u < g_uki_count)
-            sel++;
-        else if (key == BIOS_KEY_ESC)
-            break;
-        else if (key == BIOS_KEY_ENTER) {
-            put("\n  ");
-            put_name(g_ukis[sel].name);
-            put("\n");
-            (void)boot_uki(&g_ukis[sel]);
-            put("\n  press any key to return to the list.\n");
-            (void)bios_getkey();
-        }
+    r->stage = "looking for a UKI";
+    if (shelf_collect(&g_images, &g_fs) != 1) {
+        r->advice = "no *.efi image was found in /uki or /EFI/Linux.";
+        wipe_secrets();
+        return -1;
     }
 
+    pick = choose_uki();
+    if (pick < 0) {
+        r->stage = "choosing an image";
+        wipe_secrets();
+        return POS_ABORTED;
+    }
+    uki = &g_images.uki[pick].ent;
+
+    screen_page();
+    screen_out("reading ");
+    screen_out16(uki->name);
+    screen_out(" ");
+    rc = boot_uki(uki, r);
     wipe_secrets();
-    return -1;
+    return rc;
 }

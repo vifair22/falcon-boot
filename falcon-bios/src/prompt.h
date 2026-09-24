@@ -6,9 +6,9 @@
 #include <stddef.h>
 
 /* Reads a line with a masked echo into out (NUL-terminated, at most cap-1
- * characters). 0 when something was typed, nonzero when the user pressed
- * escape or entered nothing. The caller owns the buffer and is the one that
- * must wipe it. */
-int prompt_passphrase(const char *label, char *out, size_t cap, size_t *len);
+ * characters) and its length into *len, at the cursor: the caller has
+ * written the prompt. 0 when the user pressed enter, whatever they typed,
+ * including nothing; -1 for escape, with out wiped. */
+int prompt_passphrase(char *out, size_t cap, size_t *len);
 
 #endif /* FALCON_BIOS_PROMPT_H */

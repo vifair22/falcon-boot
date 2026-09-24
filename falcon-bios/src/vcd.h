@@ -4,6 +4,7 @@
 #define FALCON_BIOS_VCD_H
 
 #include <bios.h>
+#include <result.h>
 #include <fs/fs.h>
 #include <part/part.h>
 
@@ -18,11 +19,11 @@
  * p2 volume, loads the medium's own boot image where El Torito says, and
  * hands the machine to it. Does not return on success.
  *
- * Returns nonzero with a message already printed when the medium cannot be
- * served: no BIOS boot image in its catalog, or an ISO in more pieces on p2
- * than the handler will scan. */
+ * Returns nonzero with *r filled in when the medium cannot be served: no
+ * BIOS boot image in its catalog, or an ISO in more pieces on p2 than the
+ * handler will scan. What it hands over is logged to serial. */
 int vcd_chainload(bios_disk *d, fs_vol *p2, const gpt_part *p2part,
-                  const fs_dirent *iso, fs_file *isofile);
+                  const fs_dirent *iso, fs_file *isofile, boot_result *r);
 
 /* Serves `len` bytes at `iso_off` from memory rather than from the disk when
  * the medium is next chainloaded. This is iso/overlay.h's job under UEFI and

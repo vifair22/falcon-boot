@@ -19,6 +19,7 @@
 #include <bios.h>
 #include <bsd.h>
 #include <vcd.h>
+#include <screen.h>
 #include <e820.h>
 
 #include <fs/fs.h>
@@ -57,8 +58,6 @@ static char    g_head[CONF_HEAD];
 static char    g_cfg[BSDMD_CFG_MAX];
 static char    g_path[BSDMD_PATH_MAX];
 
-static void put(const char *s) { bios_screen_puts(s); }
-
 /* bsdmd_record reads the medium; this is the same file, already open. */
 static int iso_read(void *ctx, uint64_t off, uint64_t len, void *buf)
 {
@@ -92,7 +91,7 @@ static int staging_fits(uint64_t iso_size)
 }
 
 int bsd_boot(bios_disk *d, fs_vol *p2, const gpt_part *p2part,
-             const fs_dirent *iso, int *not_bsd)
+             const fs_dirent *iso, boot_result *r, int *not_bsd)
 {
     bsdmd_record_edit rec;
     fs_dirent conf;
@@ -103,13 +102,13 @@ int bsd_boot(bios_disk *d, fs_vol *p2, const gpt_part *p2part,
     if (not_bsd != (int *)0)
         *not_bsd = 1;
 
-    if (fs_file_open(p2, &g_iso, iso) != FS_OK) {
-        put("  the image would not open\n");
+    r->stage = "opening the ISO";
+    if (fs_file_open(p2, &g_iso, iso) != FS_OK)
         return -1;
-    }
     /* Named, not identified: a medium this route applies to is an ISO9660
      * one and the registry would just as happily claim its UDF tree, which
      * is not where loader.conf is looked up from. */
+    r->stage = "reading the ISO's filesystem";
     if (fs_mount(&g_isovol, &fs_ops_iso9660, fs_file_read_cb,
                  &g_iso) != FS_OK)
         return -1;
@@ -117,6 +116,7 @@ int bsd_boot(bios_disk *d, fs_vol *p2, const gpt_part *p2part,
     /* Where the settings go, and how much room there is for them. The file
      * has to be one contiguous run so a single override can replace its
      * head, which every medium met writes it as. */
+    r->stage = "locating the ISO's loader.conf";
     if (fs_lookup(&g_isovol, LOADER_CONF, &g_dir, &conf) != FS_OK ||
         conf.is_dir || conf.size < CONF_HEAD ||
         fs_extents(&g_isovol, &conf, &conf_ext, 1, &next) != FS_OK ||
@@ -126,10 +126,11 @@ int bsd_boot(bios_disk *d, fs_vol *p2, const gpt_part *p2part,
         fs_file_read(&g_conf, 0, CONF_HEAD, g_head) != FS_OK)
         return -1;
 
+    r->stage = "placing the memory-disk record";
     if (bsdmd_record(iso->size, iso_read, (void *)0, &rec, g_path,
                      sizeof g_path) != BSDMD_OK) {
-        put("  this ISO has no free bytes in its root or /boot directory"
-            " for the record this route adds\n");
+        r->advice = "this ISO has no free bytes in its root or /boot "
+                    "directory for the record this route adds.";
         return -1;
     }
 
@@ -138,31 +139,38 @@ int bsd_boot(bios_disk *d, fs_vol *p2, const gpt_part *p2part,
     if (not_bsd != (int *)0)
         *not_bsd = 0;
 
+    r->stage = "checking memory for the image";
     if (!staging_fits(iso->size)) {
-        put("  this machine has too little memory below 4 GB to hold the"
-            " image, which is where the loader has to put it. Press c to"
-            " boot the ISO's own loader instead.\n");
+        r->advice = "this machine has too little memory below 4 GB to hold "
+                    "the image, which is where FreeBSD's loader has to put "
+                    "it. Press c to boot the ISO's own loader instead.";
         return -1;
     }
 
+    r->stage = "writing the loader settings";
     if (bsdmd_config(g_path, BSD_CONSOLE, g_head, sizeof g_head,
                      g_cfg, sizeof g_cfg,
                      &cfg_len) != BSDMD_OK) {
-        put("  this ISO's loader.conf has no comment block long enough to"
-            " hold the memory-disk settings\n");
+        r->advice = "this ISO's loader.conf has no comment block long "
+                    "enough to hold the memory-disk settings.";
         return -1;
     }
 
+    r->stage = "placing the medium's edits";
     vcd_overlay_reset();
     if (vcd_overlay(&g_iso, rec.off, rec.bytes, rec.len) != 0 ||
         vcd_overlay(&g_iso, conf_ext.vol_off, g_cfg, cfg_len) != 0) {
-        put("  the medium's edits do not fit the overlay\n");
         vcd_overlay_reset();
         return -1;
     }
 
-    put("  serving the medium as its own memory disk at ");
-    put(g_path);
-    put("\n");
-    return vcd_chainload(d, p2, p2part, iso, &g_iso);
+    bios_puts("falcon-bios: serving the medium as its own memory disk at ");
+    bios_puts(g_path);
+    bios_puts("\n");
+    /* Not "starting", for the reason the UEFI route gives: the ISO's loader
+     * reads the whole medium out of the virtual CD after this line, and the
+     * coverage harness counts media read after "starting" as the kernel's
+     * (tools/coverage/run-case.sh). */
+    screen_out("handing the ISO to its own loader, as a memory disk\n");
+    return vcd_chainload(d, p2, p2part, iso, &g_iso, r);
 }

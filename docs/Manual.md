@@ -12,8 +12,9 @@ screen, and in that time the screen still shows the loader's last message.
 The route code says which boot path is running during that wait.
 
 The code is three characters, drawn in white at the top right of the text
-block: on the UEFI loader, one row above the block's first line; on the BIOS
-loader, row 0 of the screen. It appears as soon as the route is chosen and
+block, one row above the block's first line. Both loaders draw every screen
+from one layout (`falcon-core/src/tui`), so it sits in the same place on
+either. It appears as soon as the route is chosen and
 before the handoff message, stays through any screen the route draws (the
 passphrase prompt, an error), and is removed on return to the menu.
 
@@ -54,8 +55,9 @@ loader has five of the routes.
 | `BSD` | a BSD medium served as its own memory disk | Enter on a BSD ISO |
 | `CHN` | the ISO's own bootloader off the resident virtual CD | `c` on an ISO, or a fallback |
 
-The BIOS loader also writes `route <code>` to serial (COM1) when a route is
-chosen.
+The BIOS loader mirrors its screen to serial (COM1) as the ANSI sequences
+OVMF's terminal sends for the UEFI loader, so the code is on serial for
+either loader, drawn where it is on the screen.
 
 ### 1.3 Fallthrough
 

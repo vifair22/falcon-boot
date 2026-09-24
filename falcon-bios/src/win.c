@@ -26,6 +26,7 @@
 #include <bios.h>
 #include <win.h>
 #include <vcd.h>
+#include <screen.h>
 #include <heap.h>
 
 #include <fs/fs.h>
@@ -48,8 +49,6 @@ static uint8_t  g_pd[2][BLK];
 static uint8_t  g_hdr[WIM_HDR_LEN];
 static char     g_cfg[512];
 static udf_extent g_ext[UDF_MAX_EXTENTS];
-
-static void put(const char *s) { bios_screen_puts(s); }
 
 static int wim_rd(void *ctx, uint64_t off, uint64_t len, void *buf)
 {
@@ -99,7 +98,8 @@ static size_t make_cfg(const char *rel, uint64_t size)
 }
 
 int win_boot(bios_disk *d, fs_vol *p2, const gpt_part *p2part,
-             const fs_dirent *iso, const char *iso_rel, int *unpatchable)
+             const fs_dirent *iso, const char *iso_rel, boot_result *r,
+             int *unpatchable)
 {
     udf_dirent we;
     wim_info w;
@@ -121,12 +121,14 @@ int win_boot(bios_disk *d, fs_vol *p2, const gpt_part *p2part,
     if (unpatchable != (int *)0)
         *unpatchable = 1;
 
+    r->stage = "opening the ISO";
     if (iso->size % BLK != 0)
         return -1;
     iso_blocks = (uint32_t)(iso->size / BLK);
 
     if (fs_file_open(p2, &g_iso, iso) != FS_OK)
         return -1;
+    r->stage = "reading the ISO's UDF tree";
     if (udf_mount(&g_uv, fs_file_read_cb, &g_iso) != UDF_OK ||
         udf_lookup(&g_uv, "/sources/boot.wim", &we) != UDF_OK ||
         udf_file_open(&g_uv, &g_wim, &we) != UDF_OK ||
@@ -135,6 +137,7 @@ int win_boot(bios_disk *d, fs_vol *p2, const gpt_part *p2part,
         next == 0 || g_ext[0].len < WIM_HDR_LEN)
         return -1;
 
+    r->stage = "reading boot.wim";
     if (wim_open(wim_rd, (void *)0, we.size, &w) != WIM_OK)
         return -1;
 
@@ -150,11 +153,12 @@ int win_boot(bios_disk *d, fs_vol *p2, const gpt_part *p2part,
 
     /* Everything the patch needs at once, so a run that is big enough is
      * found once rather than discovered to be too small halfway through. */
+    r->stage = "reserving memory for the patch";
     heap_reset();
     if (!heap_open((uint64_t)w.lookup.orig + w.boot_meta.orig +
                    (uint64_t)tail_cap + 4u * (uint64_t)BLK + 0x10000u)) {
-        put("  this machine has too little memory above 64 MB to patch"
-            " boot.wim\n");
+        r->advice = "this machine has too little memory above 64 MB to "
+                    "patch boot.wim.";
         return -1;
     }
     lookup = heap_alloc(w.lookup.orig);
@@ -162,69 +166,62 @@ int win_boot(bios_disk *d, fs_vol *p2, const gpt_part *p2part,
     app = heap_alloc((uint64_t)BLK + tail_cap + 2u * (uint64_t)BLK);
     if (lookup == (uint8_t *)0 || meta == (uint8_t *)0 ||
         app == (uint8_t *)0) {
-        put("  there is not enough memory to patch boot.wim\n");
+        r->advice = "there is not enough memory to patch boot.wim.";
         return -1;
     }
 
+    r->stage = "reading boot.wim";
     if (wim_rd((void *)0, w.lookup.offset, w.lookup.orig, lookup) != 0 ||
         wim_read_resource(&w, wim_rd, (void *)0, &w.boot_meta, meta,
-                          (size_t)w.boot_meta.orig, g_scratch) != WIM_OK) {
-        put("  boot.wim's metadata would not read\n");
+                          (size_t)w.boot_meta.orig, g_scratch) != WIM_OK)
         return -1;
-    }
 
     /* The tail is built one block into the append buffer: the old partial
      * last block goes in front of it once the File Entry says how long that
      * is. A block of slack at the end holds the zero padding, and one more
      * the anchor. */
+    r->stage = "patching boot.wim";
     if (wim_patch_build(&w, lookup, meta, (size_t)w.boot_meta.orig,
                         falcon_winjump_bin, falcon_winjump_bin_len, g_cfg,
                         cfg_len, g_hdr, app + BLK, tail_cap,
                         &tail_len) != WIM_OK) {
-        put("  boot.wim is not one this loader can patch\n");
+        r->advice = "boot.wim is not one this loader can patch.";
         return -1;
     }
 
+    r->stage = "rewriting boot.wim's UDF entry";
     if (fs_file_read(&g_iso, ((uint64_t)g_uv.part_start + we.icb_lbn) * BLK,
                      BLK, g_fe) != FS_OK ||
         udf_fe_append(g_fe, we.icb_lbn, tail_len,
-                      iso_blocks - g_uv.part_start, &moved) != UDF_OK) {
-        put("  boot.wim's UDF entry cannot be lengthened\n");
+                      iso_blocks - g_uv.part_start, &moved) != UDF_OK)
         return -1;
-    }
     memmove(app + moved, app + BLK, tail_len);
     if (moved != 0 &&
-        udf_file_read(&g_wim, we.size - moved, moved, app) != UDF_OK) {
-        put("  boot.wim's last block would not read\n");
+        udf_file_read(&g_wim, we.size - moved, moved, app) != UDF_OK)
         return -1;
-    }
     app_len = ((uint64_t)moved + tail_len + BLK - 1u) / BLK * BLK;
     memset(app + moved + tail_len, 0, (size_t)(app_len - moved - tail_len));
     app_blocks = (uint32_t)(app_len / BLK) + 1u;
+    r->stage = "rewriting the UDF partition";
     if (fs_file_read(&g_iso, (uint64_t)256u * BLK, BLK,
                      app + app_len) != FS_OK ||
-        udf_avdp_at(app + app_len, iso_blocks + app_blocks - 1u) != UDF_OK) {
-        put("  the medium's UDF anchor cannot be moved\n");
+        udf_avdp_at(app + app_len, iso_blocks + app_blocks - 1u) != UDF_OK)
         return -1;
-    }
 
-    if (udf_pd_blocks(&g_uv, pd, &npd) != UDF_OK) {
-        put("  the medium's UDF partition cannot be lengthened\n");
+    if (udf_pd_blocks(&g_uv, pd, &npd) != UDF_OK)
         return -1;
-    }
     for (i = 0; i < npd; i++) {
         if (fs_file_read(&g_iso, (uint64_t)pd[i] * BLK, BLK,
                          g_pd[i]) != FS_OK ||
             udf_pd_set_length(g_pd[i], pd[i],
                               iso_blocks + app_blocks - g_uv.part_start) !=
-                UDF_OK) {
-            put("  the medium's UDF partition cannot be lengthened\n");
+                UDF_OK)
             return -1;
-        }
     }
 
     /* The four small edits go in the handler's own pool; the appended blocks
      * stay where they are and the BIOS moves them. */
+    r->stage = "placing the medium's edits";
     vcd_overlay_reset();
     for (i = 0; i < npd; i++) {
         if (vcd_overlay(&g_iso, (uint64_t)pd[i] * BLK, g_pd[i], BLK) != 0)
@@ -237,18 +234,14 @@ int win_boot(bios_disk *d, fs_vol *p2, const gpt_part *p2part,
     if (vcd_overlay_append(heap_phys(app), app_blocks) != 0)
         goto no_room;
 
-    put("  boot.wim patched in memory, ");
-    {
-        char n[24];
-
-        n[put_dec(n, (uint64_t)app_blocks * BLK / 1024u)] = '\0';
-        put(n);
-    }
-    put(" KiB appended\n");
-    return vcd_chainload(d, p2, p2part, iso, &g_iso);
+    bios_puts("falcon-bios: boot.wim patched in memory, ");
+    bios_put_dec((uint64_t)app_blocks * BLK / 1024u);
+    bios_puts(" KiB appended\n");
+    screen_out("booting with boot.wim patched in memory\n\n");
+    r->stage = "booting";
+    return vcd_chainload(d, p2, p2part, iso, &g_iso, r);
 
 no_room:
-    put("  the medium's edits do not fit the overlay\n");
     vcd_overlay_reset();
     return -1;
 }

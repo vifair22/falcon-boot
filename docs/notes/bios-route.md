@@ -59,7 +59,8 @@ way the UEFI rig's tests are:
 Screen and keyboard are INT 10h and INT 16h through the thunk, one call per
 character, which is slow and is the right trade: the alternative is a VGA
 driver and a PS/2 driver of our own, and neither would work on a machine
-whose firmware is doing something unusual.
+whose firmware is doing something unusual. (Superseded for the screen by
+Section 6g: stage 3 writes VGA text memory, which needs no driver.)
 
 What is left in S1 is the shared menu model (open question 2, and the moment
 to move it is when this build boots something, not before), the ISO scan's
@@ -685,6 +686,53 @@ nothing; everything the environment used to provide has to be provided.
 and ask - so taking the size from the entry read zero bytes of every image and
 reported that none of them was a UKI.
 
+## 6f. First real hardware (2026-09-23)
+
+An ASUS VivoBook 14 (8th-gen Intel, CSM legacy boot) booted a stick written
+with `sgdisk -Z -n 1:2048:0 -t 1:0700` and `mkstick bios`, and falcon-bios
+reached its menu. That is stages 1 to 3 outside SeaBIOS: the firmware booted
+a protective MBR whose `0xEE` entry has no active flag, stage 1 and stage 2
+read through AH=42h, long mode came up, the thunk served stage 3's reads, and
+the console drew. The stick carried no falcon partitions and no ISOs, so none
+of Section 4's routes ran.
+
+The same day, Section 4.4 ran on hardware: an ASUS TP410UAR (VivoBook Flip
+14, i5-8250U) booted the full falcon stick through CSM, with the internal
+SATA disk as the other drive. The passphrase opened p3, the UKI was
+unwrapped and its kernel entered by the 64-bit entry, and the booted system
+has no `/sys/firmware/efi`. The initrd logged `Received untrusted
+credentials: cryptsetup.passphrase` and p4 unlocked from it with no second
+prompt. The other four routes are still unmeasured on hardware.
+
+The machine also answered part of a question the study had not asked: a CSM
+of this era does not require the active flag. Older BIOSes are the open case
+(the Win2k/XP-era hardware that would need a 32-bit stage 3 as well).
+
+## 6g. One screen (2026-09-24)
+
+falcon-bios drew its own screens: a hand-written menu with "  > " markers,
+a sentence for a key hint, every route's progress on screen as it happened,
+failures worded wherever they were found. It worked, and it did not look or
+read like the UEFI loader, because the UEFI loader's conventions lived only
+in its code. One of the differences was a defect: `linux.c` reported a
+kernel it would not boot on serial only, so a machine with no serial cable
+showed "starting the kernel" and then the menu, with no reason between.
+
+Now both loaders draw from one layout, `falcon-core/src/tui` (the UEFI
+console's frame, block and row composition, moved rather than copied), and
+falcon-bios draws through `src/screen.c`, which is `console/menu.c`'s calls
+one for one. Cells go into VGA text memory directly: teletype output cannot
+colour a cell, and AH=09h can but costs a thunk round trip per character.
+Serial gets the ANSI sequences OVMF's terminal sends for the same calls,
+which is what let tools/coverage/run-case.sh drop both of its BIOS special
+cases. The personal-OS chooser's rows moved to core too
+(`media/shelf.c`), since falcon-bios had been showing bare file names.
+
+Measured in the rig: the UEFI loader's menu, prompt and chooser are
+byte-identical in screendumps before and after the move, and under SeaBIOS
+the personal OS (FALCON-CRED-OK), a direct Arch boot and Windows 11 Setup
+all pass behind the new screens.
+
 ## 7. Risks, in the order they matter
 
 **7.1 The `INT 13h` resident is a spike, not an estimate.** The ~1,000 above
@@ -742,6 +790,7 @@ recurring cost of keeping the cell green is not.
    installers and anything needing the hook do not find their media, which is
    the wall `coverage-roadmap.md` W1 exists for. S1 plus S2 may be the real
    minimum.
-4. **What the menu says about verification.** A BIOS build has no trust
-   column and no blessed state. It should say so once, plainly, rather than
-   showing a UEFI menu with the security half missing.
+4. **What the menu says about verification.** Answered 2026-09-24 (Section
+   6g): the banner's state segment, where the UEFI menu says "SB: off" or
+   what the machine trusts, says "BIOS", and the rows carry no tag columns.
+   Once, in the place the UEFI loader says it.

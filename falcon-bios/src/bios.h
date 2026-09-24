@@ -103,22 +103,10 @@ static inline void poke32(uint32_t addr, uint32_t v)
 void bios_putc(char c);
 void bios_puts(const char *s);
 
-/* The screen and the keyboard, through the BIOS. Both are one thunk call
- * per character, which is slow and is the right trade for a menu: the
- * alternative is a VGA driver and a PS/2 driver of our own, and neither
- * would work on a machine whose firmware is doing something unusual.
- *
- * bios_screen_puts writes to both the screen and serial, so a caller does
- * not choose and a log and a display never disagree. */
+/* Teletype output to the screen and serial together, for bios_fatal: the one
+ * screen stage 2 can draw, since it has no layout to draw with. Stage 3
+ * draws everything else through screen.h. */
 void bios_screen_puts(const char *s);
-void bios_screen_clear(void);
-void bios_screen_at(uint8_t row, uint8_t col);
-
-/* The route a boot is taking, as a short code (docs/Manual.md, "Route
- * codes"), in the screen's top right corner. Redrawn after every clear and
- * every line, since teletype output scrolls it away; also written to serial
- * once. code must outlive the boot (a literal). Null stops drawing it. */
-void bios_screen_mode(const char *code);
 
 /* One character of a UCS-2 name as this build can print it.
  *
