@@ -12,63 +12,81 @@ on an image blessed with the sign tool.
 
 BIOS is a fourth column and not a Secure Boot state: that machine has
 no db and no shim, so it has no blessed cell and nothing to refuse.
+BIOS, Pentium III is the same machine without a 64-bit mode, and is
+where the 32-bit ISOs are judged; they are N/A under UEFI, whose loader
+is x86-64, and the 64-bit ISOs are N/A there.
 
 The headline columns are Secure Boot off and Secure Boot on where db
 trusts the Microsoft CA. Secure Boot on with only the stick owner's
 keys is reported beside them, without a target: media signed only by
 Microsoft cannot boot on such a machine at all (DESIGN 7.2).
 
-Loader: 0.1.0_20260920.0816.release, 0.1.0_20260920.0859.release, 0.1.0_20260920.1824.release
+A cell reading "no userland on serial ... after starting <entry>" is a
+measurement limit and not necessarily a failure. This harness reads
+the serial console and a DHCP capture. A blessed wrap carries
+console=ttyS0 because mk-case-stick.sh puts it there, and falcon-bios
+appends it to a direct boot itself; a direct or chained boot under
+UEFI runs the ISO's own cmdline, and an entry that writes to the
+screen alone leaves both signals empty. Clonezilla is the worked
+example (2026-09-20): its default entry is "Clonezilla live (VGA
+800x600)", the screenshot beside the FAIL shows ocs-scan-disk running
+and listing the disk it found, and serial stayed empty for 300s. Read
+the screenshot before believing one of these.
+
+Loader: 0.1.0_20260920.0816.release, 0.1.0_20260920.0859.release, 0.1.0_20260920.1824.release, 0.1.0_20260924.1655.release
 
 ## Summary
 
-| tier | ISOs run | SB off, drop | target | SB on, MS CA | target | SB on, own keys | BIOS, drop |
-|---|---|---|---|---|---|---|---|
-| A | 22 | 19/22 (86%) | 100% | 20/22 (90%) | 95% | 19/22 (86%) | 20/22 (90%) |
-| B | 9 | 9/9 (100%) | 90% | 9/9 (100%) | - | 9/9 (100%) | 9/9 (100%) |
-| C | 6 | 5/6 (83%) | - | 2/6 (33%) | - | 1/6 (16%) | 1/6 (16%) |
+| tier | ISOs run | SB off, drop | target | SB on, MS CA | target | SB on, own keys | BIOS, drop | BIOS, Pentium III, drop |
+|---|---|---|---|---|---|---|---|---|
+| A | 23 | 19/22 (86%) | 100% | 20/22 (90%) | 95% | 19/22 (86%) | 21/23 (91%) | 1/1 (100%) |
+| B | 11 | 9/9 (100%) | 90% | 9/9 (100%) | - | 9/9 (100%) | 11/11 (100%) | 2/2 (100%) |
+| C | 6 | 5/6 (83%) | - | 2/6 (33%) | - | 1/6 (16%) | 1/6 (16%) | - |
 
 ## Matrix
 
-| ISO | tier | family | SB off drop | SB off chain | SB off bless | SB on, MS CA drop | SB on, MS CA chain | SB on, MS CA bless | SB on, own keys drop | SB on, own keys chain | SB on, own keys bless | BIOS drop | BIOS chain | BIOS bless |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| debian-live-13.7 | A | debian-live | PASS | FAIL | PASS | PASS | FAIL | PASS | FAIL | FAIL | PASS | PASS | FAIL | - |
-| fedora-ws-44 | A | fedora-live | PASS | FAIL | PASS | PASS | FAIL | PASS | REFUSED | REFUSED | PASS | PASS | FAIL | - |
-| ubuntu-26.04.1 | A | casper | PASS | FAIL | PASS | PASS | FAIL | PASS | FAIL | FAIL | PASS | PASS | FAIL | - |
-| kubuntu-26.04 | A | casper | PASS | FAIL | PASS | PASS | FAIL | PASS | FAIL | FAIL | PASS | PASS | FAIL | - |
-| mint-22.3 | A | casper | PASS | FAIL | PASS | PASS | FAIL | PASS | FAIL | FAIL | PASS | PASS | FAIL | - |
-| opensuse-tw-20260916 | A | suse-live | PASS | FAIL | PASS | PASS | FAIL | PASS | FAIL | FAIL | PASS | PASS | FAIL | - |
-| manjaro-26.1.0 | A | manjaro | PASS | FAIL | PASS | FAIL | FAIL | PASS | FAIL | FAIL | PASS | PASS | FAIL | - |
-| arch-2026.09.01 | A | arch | PASS | FAIL | PASS | REFUSED | REFUSED | PASS | REFUSED | REFUSED | PASS | PASS | FAIL | - |
-| arch-2026.01.01 | A | arch | PASS | FAIL | PASS | REFUSED | REFUSED | PASS | REFUSED | REFUSED | PASS | PASS | FAIL | - |
-| systemrescue-13.02 | A | systemrescue | PASS | FAIL | PASS | REFUSED | REFUSED | PASS | REFUSED | REFUSED | PASS | PASS | FAIL | - |
-| kali-2026.2 | A | debian-live | PASS | FAIL | PASS | REFUSED | REFUSED | PASS | FAIL | FAIL | PASS | PASS | FAIL | - |
-| clonezilla-3.3.3-15 | A | debian-live | FAIL | FAIL | PASS | FAIL | FAIL | PASS | FAIL | FAIL | PASS | PASS | FAIL | - |
-| gentoo-min-20260913 | A | gentoo | PASS | FAIL | PASS | FAIL | FAIL | PASS | FAIL | FAIL | PASS | PASS | FAIL | - |
-| hbcd-pe-1.0.8 | C | windows-pe | PASS | PASS | UNBLESSABLE | PASS | PASS | UNBLESSABLE | REFUSED | REFUSED | UNBLESSABLE | PASS | PASS | - |
-| gparted-1.8.1-6 | A | debian-live | PASS | FAIL | PASS | PASS | FAIL | PASS | FAIL | FAIL | PASS | PASS | FAIL | - |
-| cachyos-260809 | A | arch | PASS | FAIL | PASS | FAIL | FAIL | PASS | FAIL | FAIL | PASS | PASS | FAIL | - |
-| mx-25.2 | A | antix | PASS | FAIL | PASS | PASS | FAIL | PASS | FAIL | FAIL | PASS | PASS | FAIL | - |
-| popos-24.04-20 | A | casper | PASS | PASS | PASS | FAIL | FAIL | PASS | FAIL | FAIL | PASS | PASS | PASS | - |
-| debian-netinst-13.7 | B | debian-installer | PASS | FAIL | PASS | PASS | FAIL | PASS | FAIL | FAIL | PASS | PASS | FAIL | - |
-| alpine-ext-3.24.2 | B | alpine | PASS | FAIL | PASS | REFUSED | REFUSED | PASS | REFUSED | REFUSED | PASS | PASS | FAIL | - |
-| proxmox-ve-9.2-1 | B | proxmox | PASS | FAIL | PASS | PASS | FAIL | PASS | FAIL | FAIL | PASS | PASS | FAIL | - |
-| rocky-boot-10.2 | B | anaconda | PASS | FAIL | PASS | PASS | FAIL | PASS | REFUSED | REFUSED | PASS | PASS | FAIL | - |
-| alma-boot-10.2 | B | anaconda | PASS | FAIL | PASS | PASS | FAIL | PASS | REFUSED | REFUSED | PASS | PASS | FAIL | - |
-| void-base-20250202 | B | void | PASS | FAIL | PASS | REFUSED | REFUSED | PASS | REFUSED | REFUSED | PASS | PASS | FAIL | - |
-| nixos-min-26.05 | B | nixos | PASS | FAIL | PASS | FAIL | FAIL | PASS | FAIL | FAIL | PASS | PASS | FAIL | - |
-| leap-agama-16.0 | B | suse-installer | PASS | FAIL | PASS | PASS | FAIL | PASS | FAIL | FAIL | PASS | PASS | FAIL | - |
-| truenas-25.10.7 | B | truenas | PASS | FAIL | PASS | FAIL | FAIL | PASS | FAIL | FAIL | PASS | PASS | FAIL | - |
-| freebsd-bootonly-15.1 | C | freebsd | PASS | PASS | PASS | FAIL | FAIL | PASS | FAIL | FAIL | PASS | FAIL | FAIL | - |
-| gentoo-min-20260510 | A | gentoo | PASS | FAIL | PASS | FAIL | FAIL | PASS | FAIL | FAIL | PASS | PASS | FAIL | - |
-| windows-11-25h2 | A | windows | FAIL | FAIL | N/A | FAIL | FAIL | N/A | REFUSED | REFUSED | N/A | FAIL | FAIL | - |
-| windows-server-2025 | A | windows | FAIL | FAIL | N/A | FAIL | FAIL | N/A | REFUSED | REFUSED | N/A | FAIL | FAIL | - |
-| esxi-7.0u3l | C | esxi | PASS | PASS | UNBLESSABLE | FAIL | FAIL | UNBLESSABLE | REFUSED | REFUSED | UNBLESSABLE | - | PASS | - |
-| esxi-8.0u3 | C | esxi | PASS | PASS | UNBLESSABLE | FAIL | FAIL | UNBLESSABLE | REFUSED | REFUSED | UNBLESSABLE | - | PASS | - |
-| macrium-rescue-8.0 | A | windows-pe | PASS | PASS | UNBLESSABLE | PASS | PASS | UNBLESSABLE | REFUSED | REFUSED | UNBLESSABLE | PASS | PASS | - |
-| opnsense-25.1 | C | freebsd | FAIL | FAIL | FAIL | FAIL | FAIL | FAIL | FAIL | FAIL | FAIL | FAIL | FAIL | - |
-| pfsense-plus-24.06b7 | C | freebsd | PASS | FAIL | PASS | FAIL | FAIL | FAIL | FAIL | FAIL | FAIL | FAIL | FAIL | - |
-| bazzite-stable | A | bazzite | PASS | FAIL | PASS | FAIL | FAIL | PASS | FAIL | FAIL | PASS | PASS | FAIL | - |
+| ISO | tier | family | SB off drop | SB off chain | SB off bless | SB on, MS CA drop | SB on, MS CA chain | SB on, MS CA bless | SB on, own keys drop | SB on, own keys chain | SB on, own keys bless | BIOS drop | BIOS chain | BIOS bless | BIOS, Pentium III drop | BIOS, Pentium III chain | BIOS, Pentium III bless |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| debian-live-13.7 | A | debian-live | PASS | FAIL | PASS | PASS | FAIL | PASS | FAIL | FAIL | PASS | PASS | FAIL | - | N/A | N/A | N/A |
+| fedora-ws-44 | A | fedora-live | PASS | FAIL | PASS | PASS | FAIL | PASS | REFUSED | REFUSED | PASS | PASS | FAIL | - | N/A | N/A | N/A |
+| ubuntu-26.04.1 | A | casper | PASS | FAIL | PASS | PASS | FAIL | PASS | FAIL | FAIL | PASS | PASS | FAIL | - | N/A | N/A | N/A |
+| kubuntu-26.04 | A | casper | PASS | FAIL | PASS | PASS | FAIL | PASS | FAIL | FAIL | PASS | PASS | FAIL | - | N/A | N/A | N/A |
+| mint-22.3 | A | casper | PASS | FAIL | PASS | PASS | FAIL | PASS | FAIL | FAIL | PASS | PASS | FAIL | - | N/A | N/A | N/A |
+| opensuse-tw-20260916 | A | suse-live | PASS | FAIL | PASS | PASS | FAIL | PASS | FAIL | FAIL | PASS | PASS | FAIL | - | N/A | N/A | N/A |
+| manjaro-26.1.0 | A | manjaro | PASS | FAIL | PASS | FAIL | FAIL | PASS | FAIL | FAIL | PASS | PASS | FAIL | - | N/A | N/A | N/A |
+| arch-2026.09.01 | A | arch | PASS | FAIL | PASS | REFUSED | REFUSED | PASS | REFUSED | REFUSED | PASS | PASS | FAIL | - | N/A | N/A | N/A |
+| arch-2026.01.01 | A | arch | PASS | FAIL | PASS | REFUSED | REFUSED | PASS | REFUSED | REFUSED | PASS | PASS | FAIL | - | N/A | N/A | N/A |
+| systemrescue-13.02 | A | systemrescue | PASS | FAIL | PASS | REFUSED | REFUSED | PASS | REFUSED | REFUSED | PASS | PASS | FAIL | - | N/A | N/A | N/A |
+| kali-2026.2 | A | debian-live | PASS | FAIL | PASS | REFUSED | REFUSED | PASS | FAIL | FAIL | PASS | PASS | FAIL | - | N/A | N/A | N/A |
+| clonezilla-3.3.3-15 | A | debian-live | FAIL | FAIL | PASS | FAIL | FAIL | PASS | FAIL | FAIL | PASS | PASS | FAIL | - | N/A | N/A | N/A |
+| gentoo-min-20260913 | A | gentoo | PASS | FAIL | PASS | FAIL | FAIL | PASS | FAIL | FAIL | PASS | PASS | FAIL | - | N/A | N/A | N/A |
+| hbcd-pe-1.0.8 | C | windows-pe | PASS | PASS | UNBLESSABLE | PASS | PASS | UNBLESSABLE | REFUSED | REFUSED | UNBLESSABLE | PASS | PASS | - | N/A | N/A | N/A |
+| gparted-1.8.1-6 | A | debian-live | PASS | FAIL | PASS | PASS | FAIL | PASS | FAIL | FAIL | PASS | PASS | FAIL | - | N/A | N/A | N/A |
+| cachyos-260809 | A | arch | PASS | FAIL | PASS | FAIL | FAIL | PASS | FAIL | FAIL | PASS | PASS | FAIL | - | N/A | N/A | N/A |
+| mx-25.2 | A | antix | PASS | FAIL | PASS | PASS | FAIL | PASS | FAIL | FAIL | PASS | PASS | FAIL | - | N/A | N/A | N/A |
+| popos-24.04-20 | A | casper | PASS | PASS | PASS | FAIL | FAIL | PASS | FAIL | FAIL | PASS | PASS | PASS | - | N/A | N/A | N/A |
+| debian-netinst-13.7 | B | debian-installer | PASS | FAIL | PASS | PASS | FAIL | PASS | FAIL | FAIL | PASS | PASS | FAIL | - | N/A | N/A | N/A |
+| alpine-ext-3.24.2 | B | alpine | PASS | FAIL | PASS | REFUSED | REFUSED | PASS | REFUSED | REFUSED | PASS | PASS | FAIL | - | N/A | N/A | N/A |
+| proxmox-ve-9.2-1 | B | proxmox | PASS | FAIL | PASS | PASS | FAIL | PASS | FAIL | FAIL | PASS | PASS | FAIL | - | N/A | N/A | N/A |
+| rocky-boot-10.2 | B | anaconda | PASS | FAIL | PASS | PASS | FAIL | PASS | REFUSED | REFUSED | PASS | PASS | FAIL | - | N/A | N/A | N/A |
+| alma-boot-10.2 | B | anaconda | PASS | FAIL | PASS | PASS | FAIL | PASS | REFUSED | REFUSED | PASS | PASS | FAIL | - | N/A | N/A | N/A |
+| void-base-20250202 | B | void | PASS | FAIL | PASS | REFUSED | REFUSED | PASS | REFUSED | REFUSED | PASS | PASS | FAIL | - | N/A | N/A | N/A |
+| nixos-min-26.05 | B | nixos | PASS | FAIL | PASS | FAIL | FAIL | PASS | FAIL | FAIL | PASS | PASS | FAIL | - | N/A | N/A | N/A |
+| leap-agama-16.0 | B | suse-installer | PASS | FAIL | PASS | PASS | FAIL | PASS | FAIL | FAIL | PASS | PASS | FAIL | - | N/A | N/A | N/A |
+| truenas-25.10.7 | B | truenas | PASS | FAIL | PASS | FAIL | FAIL | PASS | FAIL | FAIL | PASS | PASS | FAIL | - | N/A | N/A | N/A |
+| freebsd-bootonly-15.1 | C | freebsd | PASS | PASS | PASS | FAIL | FAIL | PASS | FAIL | FAIL | PASS | FAIL | FAIL | - | N/A | N/A | N/A |
+| gentoo-min-20260510 | A | gentoo | PASS | FAIL | PASS | FAIL | FAIL | PASS | FAIL | FAIL | PASS | PASS | FAIL | - | N/A | N/A | N/A |
+| windows-11-25h2 | A | windows | FAIL | FAIL | N/A | FAIL | FAIL | N/A | REFUSED | REFUSED | N/A | FAIL | FAIL | - | N/A | N/A | N/A |
+| windows-server-2025 | A | windows | FAIL | FAIL | N/A | FAIL | FAIL | N/A | REFUSED | REFUSED | N/A | FAIL | FAIL | - | N/A | N/A | N/A |
+| esxi-7.0u3l | C | esxi | PASS | PASS | UNBLESSABLE | FAIL | FAIL | UNBLESSABLE | REFUSED | REFUSED | UNBLESSABLE | - | PASS | - | N/A | N/A | N/A |
+| esxi-8.0u3 | C | esxi | PASS | PASS | UNBLESSABLE | FAIL | FAIL | UNBLESSABLE | REFUSED | REFUSED | UNBLESSABLE | - | PASS | - | N/A | N/A | N/A |
+| macrium-rescue-8.0 | A | windows-pe | PASS | PASS | UNBLESSABLE | PASS | PASS | UNBLESSABLE | REFUSED | REFUSED | UNBLESSABLE | PASS | PASS | - | N/A | N/A | N/A |
+| opnsense-25.1 | C | freebsd | FAIL | FAIL | FAIL | FAIL | FAIL | FAIL | FAIL | FAIL | FAIL | FAIL | FAIL | - | N/A | N/A | N/A |
+| pfsense-plus-24.06b7 | C | freebsd | PASS | FAIL | PASS | FAIL | FAIL | FAIL | FAIL | FAIL | FAIL | FAIL | FAIL | - | N/A | N/A | N/A |
+| bazzite-stable | A | bazzite | PASS | FAIL | PASS | FAIL | FAIL | PASS | FAIL | FAIL | PASS | PASS | FAIL | - | N/A | N/A | N/A |
+| alpine-std-x86-3.24.2 | B | alpine | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | PASS | FAIL | N/A | PASS | FAIL | N/A |
+| archlinux32-2024.07.10 | A | arch | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | PASS | FAIL | N/A | PASS | FAIL | N/A |
+| debian-netinst-12.15-i386 | B | debian-installer | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | PASS | FAIL | N/A | PASS | FAIL | N/A |
 
 ## Failures
 
@@ -242,4 +260,10 @@ Loader: 0.1.0_20260920.0816.release, 0.1.0_20260920.0859.release, 0.1.0_20260920
 | bazzite-stable | own | drop | FAIL | back at the menu: direct boot failed while LoadImage of \EFI\BOOT\BOOTX64.EFI (shim): 0x80000000000000 (screen: text console) |
 | bazzite-stable | own | chain | FAIL | back at the menu: direct boot failed while LoadImage of \EFI\BOOT\BOOTX64.EFI (shim): 0x80000000000000 (screen: text console) |
 | bazzite-stable | bios | chain | FAIL | no userland within 300s (screen: text console) |
+| alpine-std-x86-3.24.2 | bios | chain | FAIL | no userland within 300s (screen: text console) |
+| alpine-std-x86-3.24.2 | bios32 | chain | FAIL | no userland within 300s (screen: text console) |
+| archlinux32-2024.07.10 | bios | chain | FAIL | no userland within 300s (screen: text console) |
+| archlinux32-2024.07.10 | bios32 | chain | FAIL | no userland within 300s (screen: text console) |
+| debian-netinst-12.15-i386 | bios | chain | FAIL | no userland within 300s (screen: graphical) |
+| debian-netinst-12.15-i386 | bios32 | chain | FAIL | no userland within 300s (screen: graphical) |
 

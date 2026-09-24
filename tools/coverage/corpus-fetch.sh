@@ -90,7 +90,7 @@ verify() {
 
 rc=0
 seen=0
-while IFS=$'\t' read -r id tier family sha file source; do
+while IFS=$'\t' read -r id tier family sha file source arch; do
     [[ -z "$id" || "$id" == \#* ]] && continue
     wanted "$id" || continue
     seen=$((seen + 1))

@@ -19,8 +19,9 @@
 #
 # Usage: tools/coverage/run-corpus.sh [options] [ID...]
 #   --states "off ms own"     which states (default the three Secure Boot
-#                             ones; `bios` is the SeaBIOS column and is not
-#                             one of them, so it is asked for by name)
+#                             ones; `bios` and `bios32` are the SeaBIOS
+#                             columns and are not among them, so they are
+#                             asked for by name)
 #   --routes "dnd chain blessed"  which routes (default all three)
 #   --jobs N                  cases in flight at once (default 3; each takes
 #                             FALCON_CASE_MEM, 4 GiB by default). KEEP IT
@@ -92,7 +93,7 @@ VERSION=$(sed -n 's/.*FALCON_VERSION "\(.*\)".*/\1/p' build/version.h 2>/dev/nul
 
 # ---- sticks ----
 CASES=()
-while IFS=$'\t' read -r id tier family sha file source; do
+while IFS=$'\t' read -r id tier family sha file source arch; do
     [[ -z "$id" || "$id" == \#* ]] && continue
     wanted "$id" || continue
     iso="$CORPUS/$file"
@@ -106,6 +107,10 @@ while IFS=$'\t' read -r id tier family sha file source; do
     # Microsoft's signature (DESIGN Section 6.3), so it has no blessed route.
     blessable=1
     [[ "$family" == windows ]] && blessable=0
+    # A 32-bit ISO boots in the BIOS columns only (corpus.tsv, arch), and
+    # blessing is a UEFI act.
+    arch=${arch:-x86_64}
+    [[ "$arch" == i686 ]] && blessable=0
 
     # A bless the sign tool refused is remembered beside the stick, so it is
     # not retried every run; deleting the marker retries it.
@@ -134,6 +139,20 @@ while IFS=$'\t' read -r id tier family sha file source; do
             if [[ "$st" == bios* && "$rt" == blessed ]]; then
                 mkdir -p "$out"
                 printf 'N/A\tno blessed route on a BIOS machine\t0\n' \
+                    > "$out/result"
+                continue
+            fi
+            # Width: the UEFI loader is x86-64, and the Pentium III column
+            # has no long mode for a 64-bit kernel.
+            if [[ "$arch" == i686 && "$st" != bios* ]]; then
+                mkdir -p "$out"
+                printf 'N/A\ta 32-bit ISO; the UEFI loader is x86-64\t0\n' \
+                    > "$out/result"
+                continue
+            fi
+            if [[ "$arch" != i686 && "$st" == bios32 ]]; then
+                mkdir -p "$out"
+                printf 'N/A\ta 64-bit ISO on a processor without long mode\t0\n' \
                     > "$out/result"
                 continue
             fi

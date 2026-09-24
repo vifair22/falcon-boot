@@ -798,12 +798,18 @@ out of scope.
 
 | ISO | bios32 (Pentium III) | bios (host CPU) |
 |---|---|---|
-| Alpine 3.24.2 x86, direct | PASS | |
-| Alpine 3.24.2 x86, chain | FAIL, as 64-bit Alpine does in `bios` | |
+| Alpine 3.24.2 x86, direct | PASS | PASS |
+| Alpine 3.24.2 x86, chain | FAIL, as 64-bit Alpine does in `bios` | FAIL |
 | Arch Linux 32 2024.07.10, direct | PASS | PASS |
+| Debian 12.15 i386 netinst, direct | PASS | PASS |
 | Arch x86_64 2026.01.01, direct | refused: "the kernel is 64-bit and this processor has no 64-bit mode" | PASS |
 | Windows 11 25H2 | | PASS |
 | the personal OS fixture (a 64-bit UKI) | refused, as above, after the unlock and chooser | PASS, FALCON-CRED-OK |
+
+The three 32-bit ISOs are corpus rows (corpus.tsv's `arch` column, i686),
+and docs/coverage.md carries the bios32 column beside bios (run on
+binhost-builder, 2026-09-24). Chain fails in both BIOS columns for most of
+the corpus, 64-bit and 32-bit alike, so it is not a width problem.
 
 **The 32-bit stick.** docs/notes/stick32.md is the second stick, built and
 booted: Arch Linux 32 as its personal OS and 32-bit ISOs on p2, read-only in

@@ -37,7 +37,10 @@ STATES = [('off', 'SB off'), ('ms', 'SB on, MS CA'), ('own', 'SB on, own keys'),
           # Not a Secure Boot state: a BIOS machine has no db and no shim
           # (docs/notes/bios-route.md Section 3), so it is reported beside
           # the three rather than among them, and its blessed cell is N/A.
-          ('bios', 'BIOS')]
+          ('bios', 'BIOS'),
+          # The same on a Pentium III: no long mode, so the 32-bit ISOs
+          # (corpus.tsv, arch) and nothing else.
+          ('bios32', 'BIOS, Pentium III')]
 ROUTE_ORDER = ['dnd', 'chain', 'blessed']
 ROUTE_NAMES = {'dnd': 'drop', 'chain': 'chain', 'blessed': 'bless'}
 # Headline: Secure Boot off, and Secure Boot on where db trusts the Microsoft
@@ -105,6 +108,9 @@ def main():
     w('')
     w('BIOS is a fourth column and not a Secure Boot state: that machine has')
     w('no db and no shim, so it has no blessed cell and nothing to refuse.')
+    w('BIOS, Pentium III is the same machine without a 64-bit mode, and is')
+    w('where the 32-bit ISOs are judged; they are N/A under UEFI, whose loader')
+    w('is x86-64, and the 64-bit ISOs are N/A there.')
     w('')
     w('The headline columns are Secure Boot off and Secure Boot on where db')
     w('trusts the Microsoft CA. Secure Boot on with only the stick owner\'s')
@@ -135,12 +141,15 @@ def main():
     for r in rows:
         cells = [r['id'], r['tier'], r['family']]
         any_result = False
-        off_ok = False
-        ms_ok = False
-        own_ok = False
-        bios_ok = False
+        # Per column: did the row pass, and does the column apply to it.
+        # A column whose every result for this row is N/A (a 32-bit ISO
+        # under UEFI, a 64-bit one on the Pentium III) is left out of that
+        # column's denominator rather than counted as a failure.
+        ok = {}
+        applies = {}
         for st, _ in STATES:
             state_ok = False
+            verdicts = []
             for rt in routes:
                 res = result(r['id'], st, rt)
                 if res is None:
@@ -150,48 +159,49 @@ def main():
                 if res['loader']:
                     loaders.add(res['loader'])
                 v = res['verdict']
+                verdicts.append(v)
                 cells.append(v)
                 if v == 'PASS':
                     state_ok = True
                 if v in ('FAIL', 'ERROR') or (v == 'REFUSED' and rt == 'blessed'):
                     fails.append((r['id'], st, rt, v, res['reason']))
-            if st == 'off':
-                off_ok = any((result(r['id'], 'off', rt) or {}).get('verdict')
-                             == 'PASS' for rt in ('dnd',))
-            elif st == 'ms':
-                ms_ok = state_ok
-            elif st == 'own':
-                own_ok = state_ok
-            elif st == 'bios':
-                # Same rule as SB off: the drop route is the product's
-                # default, and the headline is what it does.
-                bios_ok = (result(r['id'], 'bios', 'dnd') or {}).get(
-                    'verdict') == 'PASS' 
+            applies[st] = not verdicts or any(v != 'N/A' for v in verdicts)
+            if st in ('off', 'bios', 'bios32'):
+                # SB off and both BIOS columns headline the drop route: it
+                # is the product's default, and the headline is what it does.
+                ok[st] = (result(r['id'], st, 'dnd') or {}).get(
+                    'verdict') == 'PASS'
+            else:
+                ok[st] = state_ok
         table.append('| ' + ' | '.join(cells) + ' |')
         if any_result:
-            t = tally.setdefault(r['tier'], [0, 0, 0, 0, 0])
-            t[0] += 1
-            t[1] += 1 if off_ok else 0
-            t[2] += 1 if ms_ok else 0
-            t[3] += 1 if own_ok else 0
-            t[4] += 1 if bios_ok else 0
+            t = tally.setdefault(r['tier'], {'n': 0})
+            t['n'] += 1
+            for st, _ in STATES:
+                if applies[st]:
+                    c = t.setdefault(st, [0, 0])
+                    c[0] += 1 if ok[st] else 0
+                    c[1] += 1
 
     w('Loader: ' + (', '.join(sorted(loaders)) if loaders else 'none recorded'))
     w('')
     w('## Summary')
     w('')
     w('| tier | ISOs run | SB off, drop | target | SB on, MS CA | target | '
-      'SB on, own keys | BIOS, drop |')
-    w('|---|---|---|---|---|---|---|---|')
+      'SB on, own keys | BIOS, drop | BIOS, Pentium III, drop |')
+    w('|---|---|---|---|---|---|---|---|---|')
+    def frac(t, st):
+        passed, n = t.get(st, (0, 0))
+        return '%d/%d (%d%%)' % (passed, n, 100 * passed // n) if n else '-'
+
     for tier in sorted(tally):
-        n, off, ms, own, bios = tally[tier]
+        t = tally[tier]
         toff, tms = TARGETS.get(tier, (None, None))
-        w('| %s | %d | %d/%d (%d%%) | %s | %d/%d (%d%%) | %s | %d/%d (%d%%) '
-          '| %d/%d (%d%%) |'
-          % (tier, n, off, n, 100 * off // n,
+        w('| %s | %d | %s | %s | %s | %s | %s | %s | %s |'
+          % (tier, t['n'], frac(t, 'off'),
              '%d%%' % toff if toff else '-',
-             ms, n, 100 * ms // n, '%d%%' % tms if tms else '-',
-             own, n, 100 * own // n, bios, n, 100 * bios // n))
+             frac(t, 'ms'), '%d%%' % tms if tms else '-',
+             frac(t, 'own'), frac(t, 'bios'), frac(t, 'bios32')))
     w('')
     w('## Matrix')
     w('')
