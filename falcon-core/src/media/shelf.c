@@ -289,13 +289,17 @@ void shelf_label(shelf_list *s, fs_vol *fs)
         shelf_uki *u = &s->uki[i];
 
         memcpy(u->label, prefix, pl * sizeof(uint16_t));
-        if (uki_osrel_label(s, fs, &u->ent, label, sizeof label, u->uname,
-                            sizeof u->uname))
+        /* named is whether .osrel answered, not whether the row has text:
+         * a row showing its file name is already as specific as it gets,
+         * and qualifying it would print the name twice. */
+        u->named = (uint8_t)uki_osrel_label(s, fs, &u->ent, label,
+                                            sizeof label, u->uname,
+                                            sizeof u->uname);
+        if (u->named)
             ascii_to_ucs2(u->label + pl, SHELF_LABEL_MAX - pl, label);
         else
             name_to_ucs2(u->label + pl, SHELF_LABEL_MAX - pl, u->ent.name,
                          u->ent.name_len);
-        u->named = (u->label[pl] != 0);
     }
 
     /* Stable insertion sort: a handful of rows, and ties keep shelf order. A
