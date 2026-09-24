@@ -81,6 +81,13 @@ BOOLEAN part_role_present(EFI_SYSTEM_TABLE *st, part_role role);
  * one enumeration per role however many handles the loop walks. */
 BOOLEAN part_scan_accept(EFI_SYSTEM_TABLE *st, EFI_HANDLE h, part_role role);
 
+/* Do two handles sit on the same disk? Both must be partitions (a HARDDRIVE
+ * node in their device path), and the paths before those nodes must be
+ * byte-identical, which is dp_is_parent's test applied to two children
+ * rather than a parent and a child. Anything that cannot be compared (no
+ * device path, no HARDDRIVE node) answers FALSE. */
+BOOLEAN part_same_disk(EFI_SYSTEM_TABLE *st, EFI_HANDLE a, EFI_HANDLE b);
+
 /* Drops the cached presence answers and the cached disk table. Call before a
  * rescan; media the firmware enumerated after our first look would otherwise
  * be judged against a stale picture of the machine. */

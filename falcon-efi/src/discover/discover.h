@@ -58,6 +58,10 @@ typedef struct discover_dev {
                                 below is the answer, never this field. */
     fs_hint  role;           /* the falcon role its GPT entry names, or
                                 FS_HINT_NONE for anything else */
+    uint8_t  boot_disk;      /* a partition of the disk the loader itself
+                                was started from (DESIGN Section 3, "the
+                                boot disk's shelf wins"); 0 when that could
+                                not be established either way */
 
     /* The driver that claimed the PLAINTEXT bytes of this device, or NULL.
      * NULL for an encrypted volume by construction: a LUKS2 volume's bytes
@@ -67,8 +71,10 @@ typedef struct discover_dev {
     const fs_ops *fs;
 } discover_dev;
 
-/* Enumerates and classifies. Safe to call again; the inventory is rebuilt. */
-void discover_scan(EFI_SYSTEM_TABLE *st);
+/* Enumerates and classifies. Safe to call again; the inventory is rebuilt.
+ * image is the loader's own image handle: its LoadedImage->DeviceHandle is
+ * what each row's boot_disk is judged against. */
+void discover_scan(EFI_SYSTEM_TABLE *st, EFI_HANDLE image);
 
 UINTN discover_count(void);
 /* Handles seen after the inventory filled up. Nonzero means the machine had

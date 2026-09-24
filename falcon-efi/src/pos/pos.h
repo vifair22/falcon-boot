@@ -72,6 +72,9 @@ typedef struct {
  *   - a plaintext shelf (Section 3's --p3-plain), which IS readable here, and
  *     is therefore recorded only when a UKI is actually on it.
  *
+ * Only the boot disk's shelves are recorded when it has a usable one; the
+ * other disks' are looked at only when it has none (DESIGN Section 13.3).
+ *
  * Costs a header parse or a short directory walk per row, and never asks for
  * a passphrase, so it is safe to run as part of the startup scan. Call
  * discover_scan first: this reads its inventory rather than enumerating.

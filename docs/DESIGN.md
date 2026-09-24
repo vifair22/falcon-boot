@@ -237,10 +237,10 @@ whatever is stamped on them.
   touches it.
 
 **The boot disk's shelf wins (decision 2026-09-21).** When the disk a loader
-booted from carries a shelf, it is the only shelf considered; another disk's
-is considered only when the boot disk has none. A falcon stick in a machine
-with a falcon internal disk (Section 13) then boots its own OS, and one
-passphrase never opens the wrong one. Section 13.3 has the rule and why it
+booted from carries a usable shelf, only that disk's shelves are
+considered; another disk's are considered only when the boot disk has none.
+A falcon stick in a machine with a falcon internal disk (Section 13) then
+boots its own OS, and one passphrase never opens the wrong one. Section 13.3 has the rule and why it
 is exclusive rather than an order.
 
 
@@ -2469,7 +2469,7 @@ flowchart TD
     POOLS -- yes --> TRUST["trust_stores_load<br/>db, dbx, MokListRT, MokListXRT,<br/>SbatLevelRT, falcon-boot.cer"]
     TRUST --> SB["banner_init / sb_state_read<br/>SecureBoot, SetupMode, MokSBStateRT<br/>to g_mode"]
     SB --> DISC["discover_scan<br/>every Block I/O handle, GPT role per partition"]
-    DISC --> POSS["pos_scan<br/>p3 LUKS2 with a pbkdf2 keyslot:<br/>the pinned Personal OS row"]
+    DISC --> POSS["pos_scan<br/>p3 LUKS2 with a pbkdf2 keyslot, the boot disk's first<br/>(others only when it has none): the pinned Personal OS row"]
     POSS --> VOLS["scan_all_volumes, up to 4 p2 volumes<br/>fs_mount, bless_load (manifest), survey_volume"]
     VOLS --> PROBE["probe_entries<br/>medium_open, family_detect,<br/>the loader's PE signature, trust_probe: row tags"]
     PROBE --> PEND{"next-boot marker<br/>pending?"}
@@ -3329,7 +3329,9 @@ memory map as the BIOS left them.
 
 ## 13. The stationary build (decided 2026-09-21)
 
-Status (2026-09-21): designed, not built. Section 12.5 draws its routes.
+Status (2026-09-24): designed; the boot-disk rule (13.3) is built into the
+stick's UEFI loader, where it applies too. Section 12.5 draws the build's
+routes.
 
 A falcon loader installed on a machine's internal disk, as that machine's
 boot loader, rather than on a stick. It boots the personal OS off a shelf on
@@ -3363,15 +3365,20 @@ share changes shape between them.
 | | stick build | stationary build |
 |---|---|---|
 | UEFI image | `falcon-boot.efi` | `falcon-boot-pos.efi` |
-| UEFI links | everything in Section 9 | `efi/`, `loader/`, `console/`, `discover/`, `sb.c`, `pos/`, the other-systems module (13.4); core's `crypto`, `luks`, `fs` (ext4), `part`, `lib` |
-| UEFI leaves out | | `iso/`, `direct/`, `bsd/`, `win/`, `bless/`, `trustefi.c`, the survey, `trust/`, `media/`, `wim/`, `manifest/`, falcon-winjump, falcon-hook |
+| UEFI links | everything in Section 9 | `efi/`, `loader/`, `console/`, `discover/`, `sb.c`, `pos/`, the other-systems module (13.4); core's `crypto`, `luks`, `fs` (ext4), `part`, `tui`, `media/shelf.c` (the chooser's rows), `lib` |
+| UEFI leaves out | | `iso/`, `direct/`, `bsd/`, `win/`, `bless/`, `trustefi.c`, `trust/`, the rest of `media/` (the survey included), `wim/`, `manifest/`, falcon-winjump, falcon-hook |
 | BIOS stage 3 | `main.c` | `main_pos.c` |
-| BIOS links | everything in `falcon-bios/` | `pos.c`, `linux.c`, the MBR chain (13.4); core as UEFI |
-| BIOS leaves out | | `vcd.c`, `vcdres.S`, `scan.c`, `win.c`, `bsd.c`, `heap.c`: nothing is ever resident |
+| BIOS links | everything in `falcon-bios/` | `pos.c`, `linux.c`, `screen.c`, `prompt.c`, `console.c`, `disk.c`, the MBR chain (13.4); core as UEFI |
+| BIOS leaves out | | `vcd.c`, `vcdres.S`, `scan.c`, `win.c`, `bsd.c`, `heap.c`: nothing is ever resident, and neither falcon-hook blob is linked, since only `scan.c` appends one |
 | stages 1 and 2 | | unchanged, the same binaries |
 | version type | `release` | `pos-release`, so a screen photo says which build it is |
 
 `make pos` builds both, and `all` builds neither, as with `make bios`.
+
+The BIOS build is i686, as the stick's falcon-bios is (Section 12.3,
+bios-route.md 6h), so the same image serves a 32-bit machine: its POS boots
+a kernel of either width, and the chooser refuses a 64-bit one on a
+processor without long mode.
 
 ### 13.2 Layout
 
@@ -3396,7 +3403,10 @@ fallback, and a stationary loader is a named entry like any other OS's.
 
 For BIOS the stages go where they go on a stick, stage 1 in LBA 0's boot
 code and stages 2 and 3 in LBA 34-1121, which a GPT with a 128-entry array
-and its first partition at 2048 leaves free.
+and its first partition at 2048 leaves free. That gap is claimed as a BIOS
+boot partition (type `21686148-6449-6E6F-744E-656564454649`, named
+`FALCON-BIOS`, LBA 34-2047), as `mkstick bios` claims it on a stick, so no
+partitioning tool later puts a partition over the stages.
 
 **Installed by hand, for now.** There is no `mkstick` mode for this: the
 disk is the machine's, and a tool that partitions it is a tool that can
@@ -3413,9 +3423,10 @@ is kept on the same terms as on a stick.
 
 A machine with a stationary install and a falcon stick plugged in has two
 shelves, and both are the personal OS of somebody's. The rule, for **both
-builds**: when the disk the loader was booted from carries a shelf, that
-shelf is the only one considered; the others are considered only when the
-boot disk has none. The stick's loader boots the stick's OS, the internal
+builds**: when the disk the loader was booted from carries a usable shelf
+(a LUKS2 volume with a pbkdf2 keyslot, or a plaintext one with a UKI on
+it), only that disk's shelves are considered; the others are considered
+only when the boot disk has none. The stick's loader boots the stick's OS, the internal
 disk's boots the machine's.
 
 Exclusive rather than first-in-order, because `pos` tries one passphrase
@@ -3423,10 +3434,15 @@ against every candidate shelf (`unlock_any`, Section 5): with an order, the
 passphrase for the machine, mistyped into the stick's, would boot the other
 OS without a word. Exclusive, one passphrase has one meaning.
 
-- UEFI: the boot disk is the loader's own `LoadedImage->DeviceHandle` with
-  its last (partition) node removed, compared against each shelf's device
-  path. A shelf whose device path cannot be compared (no device path on the
-  handle) is treated as not on the boot disk.
+- UEFI: `discover_scan` marks each row `boot_disk` when it and the
+  loader's own `LoadedImage->DeviceHandle` are partitions of one disk: the
+  device paths in front of their HARDDRIVE nodes are byte-identical
+  (`part_same_disk`, `partefi.c`). `pos_scan` then takes the boot disk's
+  rows, and the others only when those gave it nothing. A handle whose path
+  cannot be compared is not on the boot disk. Measured in the rig
+  (2026-09-24): two falcon disks with different passphrases, each booted
+  first in turn, accept only their own; the loader before the rule opened
+  the second disk's shelf with the second disk's passphrase.
 - BIOS: already so. `claim_roles` asks the boot disk first and takes one
   shelf (fix `b007efb`).
 

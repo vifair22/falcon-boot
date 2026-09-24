@@ -6,6 +6,7 @@
 
 #include <lib/string.h>
 #include <discover/partefi.h>
+#include <efi/loadedimage.h>
 
 /* Largest block size any firmware Block I/O instance we care about reports,
  * and therefore the size of the one-block probe buffer. */
@@ -79,10 +80,26 @@ static void classify(EFI_SYSTEM_TABLE *st, discover_dev *d)
     d->fs = fs_identify(discover_read, d, d->role);
 }
 
-void discover_scan(EFI_SYSTEM_TABLE *st)
+/* The partition the loader was read from, or NULL. Under shim that is still
+ * our own ESP: shim loads its next stage from its own device. */
+static EFI_HANDLE boot_device(EFI_SYSTEM_TABLE *st, EFI_HANDLE image)
+{
+    EFI_GUID li_guid = EFI_LOADED_IMAGE_PROTOCOL_GUID;
+    EFI_LOADED_IMAGE_PROTOCOL *li = (EFI_LOADED_IMAGE_PROTOCOL *)0;
+
+    if (image == (EFI_HANDLE)0 ||
+        st->BootServices->HandleProtocol(image, &li_guid, (void **)&li) !=
+            EFI_SUCCESS ||
+        li == (EFI_LOADED_IMAGE_PROTOCOL *)0)
+        return (EFI_HANDLE)0;
+    return li->DeviceHandle;
+}
+
+void discover_scan(EFI_SYSTEM_TABLE *st, EFI_HANDLE image)
 {
     EFI_GUID bio_guid = EFI_BLOCK_IO_PROTOCOL_GUID;
     EFI_HANDLE *handles = (EFI_HANDLE *)0;
+    EFI_HANDLE boot = (EFI_HANDLE)0;
     UINTN count = 0;
     UINTN i;
 
@@ -97,6 +114,7 @@ void discover_scan(EFI_SYSTEM_TABLE *st)
     if (st->BootServices->LocateHandleBuffer(ByProtocol, &bio_guid, (void *)0,
                                              &count, &handles) != EFI_SUCCESS)
         return;
+    boot = boot_device(st, image);
 
     for (i = 0; i < count; i++) {
         EFI_BLOCK_IO_PROTOCOL *bio;
@@ -114,6 +132,9 @@ void discover_scan(EFI_SYSTEM_TABLE *st)
         d->handle = handles[i];
         d->bio = bio;
         classify(st, d);
+        if (boot != (EFI_HANDLE)0)
+            d->boot_disk =
+                (uint8_t)(part_same_disk(st, handles[i], boot) ? 1 : 0);
         g_count++;
     }
 

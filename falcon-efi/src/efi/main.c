@@ -1725,7 +1725,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
     /* One pass over the Block I/O handles for the whole loader (DESIGN
      * Section 9): media, role, LUKS2 magic and filesystem identification for
      * every device, before any consumer looks at one. */
-    discover_scan(st);
+    discover_scan(st, image_handle);
 
     /* Header probe only: it reads a block and parses metadata, and never asks
      * for a passphrase, so the entry's presence costs the user nothing and

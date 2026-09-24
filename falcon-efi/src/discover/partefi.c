@@ -141,6 +141,30 @@ static BOOLEAN dp_is_parent(const EFI_DEVICE_PATH_PROTOCOL *disk,
     return (BOOLEAN)(memcmp(disk, part, prefix_len) == 0);
 }
 
+BOOLEAN part_same_disk(EFI_SYSTEM_TABLE *st, EFI_HANDLE a, EFI_HANDLE b)
+{
+    EFI_GUID dp_guid = EFI_DEVICE_PATH_PROTOCOL_GUID;
+    EFI_DEVICE_PATH_PROTOCOL *da = NULL;
+    EFI_DEVICE_PATH_PROTOCOL *db = NULL;
+    UINTN la = 0;
+    UINTN lb = 0;
+
+    if (st == NULL || a == NULL || b == NULL)
+        return FALSE;
+    if (st->BootServices->HandleProtocol(a, &dp_guid,
+                                         (void **)&da) != EFI_SUCCESS ||
+        st->BootServices->HandleProtocol(b, &dp_guid,
+                                         (void **)&db) != EFI_SUCCESS)
+        return FALSE;
+    if (hd_node(da, &la) == NULL || hd_node(db, &lb) == NULL)
+        return FALSE;
+    /* A zero-length prefix is a partition node with no disk in front of
+     * it, which says nothing about where it is. */
+    if (la == 0 || la != lb)
+        return FALSE;
+    return (BOOLEAN)(memcmp(da, db, la) == 0);
+}
+
 /* ---- route 1: the PartitionInfo protocol ---- */
 
 static int ident_from_partinfo(EFI_SYSTEM_TABLE *st, EFI_HANDLE h,

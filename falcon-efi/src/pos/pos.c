@@ -209,15 +209,12 @@ static uint8_t has_pbkdf2_slot(const luks_vol *v)
  * knows how to do that sits below with the rest of the filesystem walk. */
 static int plain_shelf_usable(discover_dev *dev, const fs_ops *ops);
 
-UINTN pos_scan(EFI_SYSTEM_TABLE *st)
+/* One pass of pos_scan over the shelf-role rows: those on the boot disk
+ * when boot is 1, the rest when it is 0. Appends to g_shelf. */
+static void scan_shelves(uint8_t boot)
 {
     UINTN cursor = 0;
     discover_dev *dev;
-
-    g_st = st;
-    g_shelf_n = 0;
-    g_luks_usable = 0;
-    g_plain_usable = 0;
 
     /* The rows are falcon-efi/src/discover/discover.c's, classified once for
      * the whole loader (DESIGN Section 9). DESIGN Section 3's filter decided
@@ -228,6 +225,8 @@ UINTN pos_scan(EFI_SYSTEM_TABLE *st)
                (discover_dev *)0) {
         pos_shelf *p = &g_shelf[g_shelf_n];
 
+        if (dev->boot_disk != boot)
+            continue;
         p->dev = dev;
         p->fs = (const fs_ops *)0;
         p->encrypted = dev->luks2;
@@ -257,6 +256,27 @@ UINTN pos_scan(EFI_SYSTEM_TABLE *st)
         p->usable = 1;
         g_plain_usable++;
         g_shelf_n++;
+    }
+}
+
+UINTN pos_scan(EFI_SYSTEM_TABLE *st)
+{
+    g_st = st;
+    g_shelf_n = 0;
+    g_luks_usable = 0;
+    g_plain_usable = 0;
+
+    /* The boot disk's shelf wins, and exclusively (DESIGN Section 13.3):
+     * unlock_any tries one passphrase against every recorded shelf, so a
+     * second disk's shelf left in the list would let the passphrase for one
+     * OS, typed at the other's prompt, boot the wrong one without a word.
+     * Other disks are looked at only when the boot disk has nothing usable,
+     * which is also the whole of the rig and any machine whose firmware
+     * gave the loader no device path to compare. */
+    scan_shelves(1);
+    if (g_luks_usable + g_plain_usable == 0) {
+        g_shelf_n = 0;
+        scan_shelves(0);
     }
 
     return g_luks_usable + g_plain_usable;
