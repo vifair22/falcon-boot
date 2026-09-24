@@ -2971,9 +2971,12 @@ sequenceDiagram
 Buffers the BIOS reads into must be addressable from real mode with DS and
 ES at 0, so a disk read lands in the bounce buffer at 0x90000 (32 KiB) and
 is copied up; the packet is at 0x1000. Services used: INT 13h AH=42h and
-AH=48h, INT 10h (cursor, scroll, character, teletype), INT 16h AH=00h,
-INT 15h E820. INT 15h AH=87h is used only by the resident CD handler, from
-real mode.
+AH=48h, INT 10h (the 80x25 text mode, cursor shape and position, and
+teletype for stages 1 and 2 and `bios_fatal`), INT 16h AH=00h and AH=01h,
+INT 15h E820, and INT 18h when Escape at the root menu hands the machine
+back. Stage 3 writes the screen's cells into VGA text memory at 0xB8000
+directly (falcon-bios/src/screen.c). INT 15h AH=87h is used only by the
+resident CD handler, from real mode.
 
 #### 12.3.4 Memory map
 

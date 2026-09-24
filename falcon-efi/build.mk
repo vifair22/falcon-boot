@@ -12,6 +12,7 @@ EFI_SRCS := \
 	$(EFI_SRC)/loader/credfs.c \
 	$(EFI_SRC)/console/menu.c \
 	$(EFI_SRC)/console/prompt.c \
+	$(CORE_TUI) \
 	$(EFI_SRC)/discover/discover.c \
 	$(CORE_PART) \
 	$(EFI_SRC)/discover/partefi.c \
@@ -42,6 +43,7 @@ EFI_SRCS := \
 	$(HOOK_BLOB) \
 	$(EFI_SRC)/pos/pos.c \
 	$(CORE)/media/osrel.c \
+	$(CORE)/media/shelf.c \
 	$(EFI_SRC)/bless/bless.c \
 	$(EFI_SRC)/bless/blesscore.c \
 	$(CORE_MANIFEST) \

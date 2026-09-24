@@ -2,6 +2,7 @@
 
 #include <lib/string.h>
 #include <lib/ucs2.h>
+#include <tui/tui.h>
 
 /* The frame.
  *
@@ -12,43 +13,22 @@
  * takes the largest mode: only on that grid is the surrounding black ours to
  * place.
  *
- * Content is a block, CHROME_ROWS (banner, blank, blank, hint) plus its
- * entries, centred in the grid rather than stretched to its corners.
- * MARGIN_X and MARGIN_Y are the floor on how close it may come to an edge,
- * and WIDTH_MAX caps its width because a 160-column row of entries is harder
- * to scan than a 100-column one.
+ * The block itself - where it sits, how wide it is, where a menu's banner,
+ * list and hint go - is falcon-core/src/tui, which falcon-bios draws from
+ * too, so the two loaders' screens are the same cell for cell. What stays
+ * here is getting those cells onto a Simple Text Output console.
  *
  * ClearScreen blanks everything on entry and nothing writes outside the block
  * afterwards, so the surround stays dark. Redraws are cursor-repositioned
  * overwrites, not ClearScreen, to avoid flicker on slow console paths. */
-#define MARGIN_X    6u
-#define MARGIN_Y    1u
-#define WIDTH_MAX 100u
-#define CHROME_ROWS 4u
-
-/* Blank cells at each end of every row. Rows are padded to the block's full
- * width so the selection bar covers them, so without this the bar would start
- * on the first glyph. Applied to banner and hint too, which carry no bar, so
- * that all three share one text column. */
-#define PAD_X 2u
-
-/* How far the list steps in from the block's edge, selection bar and all.
- * Banner and hint are chrome and stay at the edge; the entries indent under
- * them. */
-#define LIST_INDENT 2u
 
 /* Every screen row is composed here and emitted in one OutputString.
  *
  * Emitting per character instead costs a call per column: ~1650 to repaint a
  * 21-row window at 80x25, each one a ConSplitter dispatch to every registered
  * console plus, on the GOP-backed one, an HII glyph lookup and a single-cell
- * blt into a write-combining framebuffer.
- *
- * Sized past any mode worth setting; screen_dims clamps the drawn width to it
- * so a wider mode loses its rightmost columns rather than its composition. */
-#define ROW_MAX 512u
-
-static CHAR16 g_row[ROW_MAX];
+ * blt into a write-combining framebuffer. */
+static CHAR16 g_row[TUI_ROW_MAX];
 
 /* The content block, fixed for the run.
  *
@@ -57,17 +37,9 @@ static CHAR16 g_row[ROW_MAX];
  * error drew from column zero while the menu sat in a centred block, and on
  * a wide console they did not look like the same program. The frame is
  * module state now and menu_screen/menu_out draw inside it, so a caller gets
- * the layout by writing text rather than by knowing about it.
- *
- * left/width are the block. text_col is where a line's first glyph goes,
- * which is the block plus PAD_X. rows is the console height, kept so the
- * menu can centre itself in it. */
+ * the layout by writing text rather than by knowing about it. */
 typedef struct {
-    UINTN left;
-    UINTN width;
-    UINTN text_col;
-    UINTN text_width;
-    UINTN rows;
+    tui_frame f;
     UINTN col;          /* cursor column within the text area, for wrapping */
     BOOLEAN ready;
 } menu_frame;
@@ -79,23 +51,13 @@ static menu_frame g_frame;
  * back after a module clears the screen under it. */
 static const CHAR16 *g_mode;
 
-/* Longer than any code, so a copy is never cut short. */
-#define MODE_CODE_MAX 7u
-
-/* The console state and the resolved frame. Bundled because paint_slot is
+/* The console state and the resolved layout. Bundled because paint_slot is
  * called from two places and the alternative is a nine-argument function. */
 typedef struct {
     EFI_SYSTEM_TABLE *st;
     const menu_entry *entries;
     UINTN             count;
-    UINTN             left;       /* first column of the content block */
-    UINTN             width;      /* columns in the block */
-    UINTN             list_left;  /* the block, stepped in by LIST_INDENT */
-    UINTN             list_width;
-    UINTN             banner_row;
-    UINTN             list_top;  /* first list row */
-    UINTN             win;       /* list rows */
-    UINTN             hint_row;
+    tui_menu          m;
     UINTN             sig_w;     /* widest sig tag in this list */
     UINTN             why_w;     /* widest why tag in this list */
 } menu_view;
@@ -105,103 +67,26 @@ static void out(EFI_SYSTEM_TABLE *st, CHAR16 *s)
     st->ConOut->OutputString(st->ConOut, s);
 }
 
-/* Append s into g_row at col, clipped to w so a long path cannot wrap and
- * shift every row below it by one. Returns the column reached. */
-static UINTN row_put(const CHAR16 *s, UINTN col, UINTN w)
+/* Put the composed row at (left, row). One OutputString. The block never
+ * reaches the final column, so writing its last cell cannot auto-wrap. */
+static void emit_row(EFI_SYSTEM_TABLE *st, UINTN row, UINTN left)
 {
-    if (s == (void *)0)
-        return col;
-    while (*s != L'\0' && col < w)
-        g_row[col++] = *s++;
-    return col;
-}
-
-/* Fill g_row from col to w with spaces, erasing whatever the row held
- * before, and terminate. Returns the column reached. */
-static UINTN row_pad(UINTN col, UINTN w)
-{
-    while (col < w)
-        g_row[col++] = L' ';
-    g_row[col] = L'\0';
-    return col;
-}
-
-/* Where the text in a row starts and where it must stop, leaving PAD_X clear
- * at each end. A box too narrow to inset gives the text the whole row rather
- * than nothing. */
-static UINTN text_end(UINTN w)
-{
-    return (w > (UINTN)2u * PAD_X) ? w - PAD_X : w;
-}
-
-static UINTN text_start(UINTN w)
-{
-    return (w > (UINTN)2u * PAD_X) ? PAD_X : 0u;
-}
-
-/* Overwrite one row of the content box with s, inset and padded to the box.
- * One OutputString. The right margin is what makes writing the last cell
- * safe: the box never reaches the final column, so nothing can auto-wrap. */
-static void draw_row(EFI_SYSTEM_TABLE *st, UINTN row, UINTN left, UINTN w,
-                     const CHAR16 *s)
-{
-    UINTN col = row_pad(0, text_start(w));
-
-    col = row_put(s, col, text_end(w));
-    row_pad(col, w);
     st->ConOut->SetCursorPosition(st->ConOut, left, row);
     out(st, g_row);
 }
 
-/* A name this narrow is where aligned tag columns stop being worth it. */
-#define NAME_MIN 12u
+static void draw_row(EFI_SYSTEM_TABLE *st, UINTN row, UINTN left, UINTN w,
+                     const CHAR16 *s)
+{
+    tui_row_text(g_row, w, s);
+    emit_row(st, row, left);
+}
 
-/* One list row: the name, then the tag columns (DESIGN Section 7.8).
- *
- * Aligned when the row has room: every row's sig starts at the column the
- * widest sig and why on this screen fix, so the tags read as columns. The
- * NAME is what gets cut, never a tag: a clipped name is still recognisable,
- * a clipped tag misstates what was found. When aligning would squeeze the
- * name below NAME_MIN, each row places its own tags at the right edge
- * instead, and only on a console too narrow for even that does the name win
- * and the tags go. */
 static void draw_entry(const menu_view *v, UINTN row, const menu_entry *e)
 {
-    UINTN w = v->list_width;
-    UINTN start = text_start(w);
-    UINTN end = text_end(w);
-    UINTN sig = ucs2_len(e->sig);
-    UINTN why = ucs2_len(e->why);
-    UINTN cols = v->sig_w + (v->why_w != 0 ? 2u + v->why_w : 0u);
-    UINTN own = sig + (why != 0 ? 2u + why : 0u);
-    UINTN col = row_pad(0, start);
-
-    if (cols != 0 && end - start >= NAME_MIN + 2u + cols) {
-        UINTN tag_at = end - cols;
-
-        col = row_put(e->label, col, tag_at - 2u);
-        col = row_pad(col, tag_at);
-        col = row_put(e->sig, col, end);
-        if (why != 0) {
-            col = row_pad(col, tag_at + v->sig_w + 2u);
-            col = row_put(e->why, col, end);
-        }
-    } else if (own != 0 && end - start >= 1u + 2u + own) {
-        UINTN tag_at = end - own;
-
-        col = row_put(e->label, col, tag_at - 2u);
-        col = row_pad(col, tag_at);
-        col = row_put(e->sig, col, end);
-        if (why != 0) {
-            col = row_put(L"  ", col, end);
-            col = row_put(e->why, col, end);
-        }
-    } else {
-        col = row_put(e->label, col, end);
-    }
-    row_pad(col, w);
-    v->st->ConOut->SetCursorPosition(v->st->ConOut, v->list_left, row);
-    out(v->st, g_row);
+    tui_row_entry(g_row, v->m.list_width, e->label, e->sig, e->why,
+                  v->sig_w, v->why_w);
+    emit_row(v->st, row, v->m.list_left);
 }
 
 /* Title in the menu's own colour, state suffix in whatever attribute the
@@ -211,66 +96,47 @@ static void draw_entry(const menu_view *v, UINTN row, const menu_entry *e)
 static void draw_banner(const menu_view *v, const menu_banner *banner)
 {
     EFI_SYSTEM_TABLE *st = v->st;
-    UINTN title_attr = EFI_TEXT_ATTR(EFI_LIGHTCYAN, EFI_BLACK);
-    UINTN w = v->width;
-    UINTN col;
+    UINTN at = 0;
+    UINTN end = 0;
+    CHAR16 keep;
 
-    st->ConOut->SetCursorPosition(st->ConOut, v->left, v->banner_row);
-    st->ConOut->SetAttribute(st->ConOut, title_attr);
+    st->ConOut->SetCursorPosition(st->ConOut, v->m.left, v->m.banner_row);
+    st->ConOut->SetAttribute(st->ConOut, TUI_ATTR_TITLE);
     if (banner == (void *)0) {
-        row_pad(0, w);
+        tui_row_text(g_row, v->m.width, (const CHAR16 *)0);
         out(st, g_row);
         return;
     }
 
-    /* When both do not fit, the title gives way: the state is the part a
-     * user needs (DESIGN Section 7.4 wants it unmissable, 7.8 puts what the
-     * machine trusts in it), and a clipped version string loses nothing. */
-    {
-        UINTN end = text_end(w);
-        UINTN need = (banner->state != (void *)0)
-                         ? ucs2_len(banner->state) + 2u
-                         : 0u;
-
-        if (need < end - text_start(w))
-            end -= need;
-        col = row_put(banner->title, row_pad(0, text_start(w)), end);
-    }
-    g_row[col] = L'\0';
+    tui_row_banner(g_row, v->m.width, banner->title, banner->state, &at,
+                   &end);
+    /* The cursor is left where each run ends, so emitting the next run
+     * alone continues the row rather than restarting it. */
+    keep = g_row[at];
+    g_row[at] = 0;
     out(st, g_row);
-
-    if (banner->state != (void *)0) {
-        UINTN seg = col;
-
-        col = row_put(L"  ", col, text_end(w));
-        col = row_put(banner->state, col, text_end(w));
-        g_row[col] = L'\0';
+    g_row[at] = keep;
+    if (end > at) {
+        keep = g_row[end];
+        g_row[end] = 0;
         st->ConOut->SetAttribute(st->ConOut, banner->state_attr);
-        /* The cursor is already parked at seg, so emitting the tail alone
-         * continues the row rather than restarting it. */
-        out(st, g_row + seg);
-        st->ConOut->SetAttribute(st->ConOut, title_attr);
+        out(st, g_row + at);
+        st->ConOut->SetAttribute(st->ConOut, TUI_ATTR_TITLE);
+        g_row[end] = keep;
     }
-    row_pad(col, w);
-    out(st, g_row + col);
+    out(st, g_row + end);
 }
 
-/* The frame spends four rows and 2 * MARGIN_X columns, so the floor here is
- * what keeps the list window from collapsing on a mode that reports
- * something absurd. 80x25 is guaranteed to exist, so falling back to it is
- * always an option. */
+/* The console's size, or 0x0 when the firmware will not say, which
+ * tui_frame_init takes as the spec-guaranteed 80x25. */
 static void screen_dims(EFI_SYSTEM_TABLE *st, UINTN *cols, UINTN *rows)
 {
     if (st->ConOut->QueryMode(st->ConOut,
                               (UINTN)st->ConOut->Mode->Mode,
-                              cols, rows) != EFI_SUCCESS ||
-        *cols < 40 || *rows < 12) {
-        /* Spec-guaranteed minimum mode. */
-        *cols = 80;
-        *rows = 25;
+                              cols, rows) != EFI_SUCCESS) {
+        *cols = 0;
+        *rows = 0;
     }
-    if (*cols > ROW_MAX)
-        *cols = ROW_MAX;
 }
 
 /* Fix the frame from the console size. Idempotent, and safe to call from any
@@ -280,31 +146,17 @@ static void frame_ensure(EFI_SYSTEM_TABLE *st)
 {
     UINTN cols;
     UINTN rows;
-    UINTN w;
 
     if (g_frame.ready) {
         return;
     }
     screen_dims(st, &cols, &rows);
-
-    w = cols - (UINTN)2u * MARGIN_X;
-    if (w > WIDTH_MAX) {
-        w = WIDTH_MAX;
-    }
-    if (w > ROW_MAX - 1u) {
-        w = ROW_MAX - 1u;
-    }
-    g_frame.left = (cols - w) / 2u;
-    g_frame.width = w;
-    g_frame.text_col = g_frame.left + text_start(w);
-    g_frame.text_width = text_end(w) - text_start(w);
-    g_frame.rows = rows;
+    tui_frame_init(&g_frame.f, cols, rows);
     g_frame.col = 0;
     g_frame.ready = TRUE;
 }
 
-/* The route code in the block's top right corner, one row above the first
- * line of text so a long label on that line cannot run into it.
+/* The route code, where tui_mode_at puts it.
  *
  * It is drawn around the cursor rather than through it: a caller part way
  * through a line of menu_out, or a boot path that falls through to the next
@@ -314,56 +166,38 @@ static void mode_draw(EFI_SYSTEM_TABLE *st)
 {
     UINTN col = (UINTN)st->ConOut->Mode->CursorColumn;
     UINTN row = (UINTN)st->ConOut->Mode->CursorRow;
-    UINTN top = g_frame.rows / 3u;
-    CHAR16 code[MODE_CODE_MAX + 1u];
+    CHAR16 code[TUI_MODE_CODE_MAX + 1u];
+    UINTN at_row;
+    UINTN at_col;
     UINTN len;
 
     if (g_mode == (const CHAR16 *)0) {
         return;
     }
-    if (top < MARGIN_Y) {
-        top = MARGIN_Y;
-    }
-    len = ucs2_copy(code, MODE_CODE_MAX + 1u, g_mode);
-    if (top == 0u || len > g_frame.text_width) {
+    len = ucs2_copy(code, TUI_MODE_CODE_MAX + 1u, g_mode);
+    if (!tui_mode_at(&g_frame.f, len, &at_row, &at_col)) {
         return;
     }
-    st->ConOut->SetCursorPosition(st->ConOut,
-                                  g_frame.text_col + g_frame.text_width - len,
-                                  top - 1u);
-    st->ConOut->SetAttribute(st->ConOut, EFI_TEXT_ATTR(EFI_WHITE, EFI_BLACK));
+    st->ConOut->SetCursorPosition(st->ConOut, at_col, at_row);
+    st->ConOut->SetAttribute(st->ConOut, TUI_ATTR_MODE);
     out(st, code);
-    st->ConOut->SetAttribute(st->ConOut,
-                             EFI_TEXT_ATTR(EFI_LIGHTGRAY, EFI_BLACK));
+    st->ConOut->SetAttribute(st->ConOut, TUI_ATTR_TEXT);
     st->ConOut->SetCursorPosition(st->ConOut, col, row);
 }
 
 /* Start a screen: clear it and park the cursor at the block's first text
- * column. Everything written with menu_out lands inside the block from there.
- *
- * The row is a third of the way down rather than at the top margin, and that
- * is the vertical half of the same problem the block solved horizontally. A
- * menu centres itself, so a prompt or an error pinned to row one sat in a
- * different place on the screen from the menu it replaced and the two did not
- * read as one program. A third down puts a short screen, which is nearly all
- * of them, at about the height a menu block sits at, while still leaving two
- * thirds below for a long one to run into. */
+ * column, on tui_page_row. Everything written with menu_out lands inside the
+ * block from there. */
 void menu_screen(EFI_SYSTEM_TABLE *st)
 {
-    UINTN row;
-
     if (st == (void *)0) {
         return;
     }
     frame_ensure(st);
-    row = g_frame.rows / 3u;
-    if (row < MARGIN_Y) {
-        row = MARGIN_Y;
-    }
-    st->ConOut->SetAttribute(st->ConOut,
-                             EFI_TEXT_ATTR(EFI_LIGHTGRAY, EFI_BLACK));
+    st->ConOut->SetAttribute(st->ConOut, TUI_ATTR_TEXT);
     st->ConOut->ClearScreen(st->ConOut);
-    st->ConOut->SetCursorPosition(st->ConOut, g_frame.text_col, row);
+    st->ConOut->SetCursorPosition(st->ConOut, g_frame.f.text_col,
+                                  tui_page_row(&g_frame.f));
     g_frame.col = 0;
     mode_draw(st);
 }
@@ -407,15 +241,15 @@ void menu_out(EFI_SYSTEM_TABLE *st, const CHAR16 *s)
         }
         if (c == L'\n') {
             out(st, L"\r\n");
-            st->ConOut->SetCursorPosition(st->ConOut, g_frame.text_col,
+            st->ConOut->SetCursorPosition(st->ConOut, g_frame.f.text_col,
                                           (UINTN)st->ConOut->Mode->CursorRow);
             g_frame.col = 0;
             i++;
             continue;
         }
-        if (g_frame.text_width != 0 && g_frame.col >= g_frame.text_width) {
+        if (g_frame.f.text_width != 0 && g_frame.col >= g_frame.f.text_width) {
             out(st, L"\r\n");
-            st->ConOut->SetCursorPosition(st->ConOut, g_frame.text_col,
+            st->ConOut->SetCursorPosition(st->ConOut, g_frame.f.text_col,
                                           (UINTN)st->ConOut->Mode->CursorRow);
             g_frame.col = 0;
         }
@@ -426,51 +260,8 @@ void menu_out(EFI_SYSTEM_TABLE *st, const CHAR16 *s)
     }
 }
 
-/* Resolve the console size and the entry count into the content block.
- *
- * v->count must already be set: the block's height is how many entries there
- * are, which is the whole point of sizing it here rather than at the edges
- * of the screen. */
-static void layout(menu_view *v)
-{
-    UINTN rows, w, avail, list, block;
-
-    frame_ensure(v->st);
-    w = g_frame.width;
-    rows = g_frame.rows;
-    v->width = w;
-    v->left = g_frame.left;
-
-    /* Symmetrical, so the bar's right edge steps in by as much as its left.
-     * A block too narrow to indent and still hold an inset row keeps the
-     * full width rather than collapsing to nothing. */
-    if (w > (UINTN)2u * LIST_INDENT + (UINTN)2u * PAD_X) {
-        v->list_left  = v->left + LIST_INDENT;
-        v->list_width = w - (UINTN)2u * LIST_INDENT;
-    } else {
-        v->list_left  = v->left;
-        v->list_width = w;
-    }
-
-    /* What the margins leave, minus the chrome, is the most list the screen
-     * can hold. A shorter list shrinks the block instead of padding it out;
-     * a longer one fills the screen and scrolls, exactly as before. */
-    avail = rows - (UINTN)2u * MARGIN_Y;
-    list = (avail > CHROME_ROWS) ? avail - CHROME_ROWS : 1u;
-    if (v->count == 0)
-        list = 1u;               /* the "nothing found" row still needs one */
-    else if (v->count < list)
-        list = v->count;
-    v->win = list;
-
-    block = list + CHROME_ROWS;
-    v->banner_row = (rows - block) / 2u;
-    v->list_top   = v->banner_row + 2u;      /* banner, then a blank row */
-    v->hint_row   = v->list_top + list + 1u; /* blank, then the hint */
-}
-
 /* Sanity rails only. Nothing real reaches these; they exist so a firmware
- * reporting nonsense cannot hand layout() a grid it will subtract from. */
+ * reporting nonsense cannot hand the layout a grid it will subtract from. */
 #define MODE_COLS_MAX 400u
 #define MODE_ROWS_MAX 200u
 
@@ -487,7 +278,7 @@ void menu_init(EFI_SYSTEM_TABLE *st)
 
     /* Mode 0 is 80x25 by spec and mode 1 is 80x50 when present; 2 and up are
      * OEM-defined and are where the useful ones live. Largest wins, rows
-     * first, because the block is a list and columns past WIDTH_MAX become
+     * first, because the block is a list and columns past TUI_WIDTH_MAX become
      * gutter either way. The frame comment has why largest and not merely
      * larger.
      *
@@ -526,33 +317,21 @@ static void paint_slot(const menu_view *v, UINTN slot, UINTN top, UINTN sel)
 
     if (idx < v->count) {
         const menu_entry *e = &v->entries[idx];
-        UINTN attr;
 
-        /* Caution is the whole row, not the tag. Selected, the bar itself
-         * turns: yellow text on the light-gray bar is unreadable, and black
-         * on brown (which firmware draws as dark yellow) is the same warning
-         * in a form that still reads. */
-        if (e->caution)
-            attr = (idx == sel) ? EFI_TEXT_ATTR(EFI_BLACK, EFI_BROWN)
-                                : EFI_TEXT_ATTR(EFI_YELLOW, EFI_BLACK);
-        else
-            attr = (idx == sel) ? EFI_TEXT_ATTR(EFI_BLACK, EFI_LIGHTGRAY)
-                                : EFI_TEXT_ATTR(EFI_LIGHTGRAY, EFI_BLACK);
-        v->st->ConOut->SetAttribute(v->st->ConOut, attr);
-        draw_entry(v, v->list_top + slot, e);
+        v->st->ConOut->SetAttribute(v->st->ConOut,
+                                    tui_entry_attr(e->caution, idx == sel));
+        draw_entry(v, v->m.list_top + slot, e);
     } else {
-        v->st->ConOut->SetAttribute(
-            v->st->ConOut, EFI_TEXT_ATTR(EFI_LIGHTGRAY, EFI_BLACK));
-        draw_row(v->st, v->list_top + slot, v->list_left, v->list_width,
-                 (idx == 0) ? L"(no ISOs found on the exFAT partition)"
-                            : (void *)0);
+        v->st->ConOut->SetAttribute(v->st->ConOut, TUI_ATTR_TEXT);
+        draw_row(v->st, v->m.list_top + slot, v->m.list_left,
+                 v->m.list_width,
+                 (idx == 0) ? tui_list_empty : (const CHAR16 *)0);
     }
 }
 
 static void restore_console(EFI_SYSTEM_TABLE *st)
 {
-    st->ConOut->SetAttribute(st->ConOut,
-                             EFI_TEXT_ATTR(EFI_LIGHTGRAY, EFI_BLACK));
+    st->ConOut->SetAttribute(st->ConOut, TUI_ATTR_TEXT);
     st->ConOut->EnableCursor(st->ConOut, TRUE);
 }
 
@@ -593,7 +372,8 @@ INTN menu_run_keys(EFI_SYSTEM_TABLE *st, const menu_banner *banner,
     v.st = st;
     v.entries = entries;
     v.count = count;
-    layout(&v);
+    frame_ensure(st);
+    tui_menu_layout(&g_frame.f, count, &v.m);
     v.sig_w = 0;
     v.why_w = 0;
     {
@@ -616,23 +396,16 @@ INTN menu_run_keys(EFI_SYSTEM_TABLE *st, const menu_banner *banner,
     st->ConOut->ClearScreen(st->ConOut);
 
     draw_banner(&v, banner);
-    st->ConOut->SetAttribute(st->ConOut,
-                             EFI_TEXT_ATTR(EFI_LIGHTGRAY, EFI_BLACK));
-    /* "expected" is the whole claim: the tags are a prediction and the
-     * platform decides at load time (DESIGN Section 7.8).
-     *
-     * The two key words stay general because what they do is the caller's:
-     * enter opens a folder or boots an image on the main menu and picks an
-     * image in the personal-OS chooser, and esc leaves a folder, the chooser
-     * or the loader depending on where the caller is. Naming one of those
-     * here would be wrong on the other screens. */
-    draw_row(st, v.hint_row, v.left, v.width,
-             !count ? L"no entries | esc back"
+    st->ConOut->SetAttribute(st->ConOut, TUI_ATTR_TEXT);
+    /* "expected" is the whole claim of the default hint: the tags are a
+     * prediction and the platform decides at load time (DESIGN Section
+     * 7.8). */
+    draw_row(st, v.m.hint_row, v.m.left, v.m.width,
+             !count ? tui_hint_empty
              : (keys != (const menu_keys *)0 &&
                 keys->hint != (const CHAR16 *)0)
                  ? keys->hint
-                 : L"up/down select | enter choose | esc back | "
-                   L"[signed by] {expected refusal}");
+                 : tui_hint_default);
 
     for (;;) {
         UINTN i;
@@ -641,17 +414,11 @@ INTN menu_run_keys(EFI_SYSTEM_TABLE *st, const menu_banner *banner,
         /* Keep the selection inside the window before painting. Scrolling
          * changes what every slot shows, so it is the one case that still
          * costs a whole repaint. */
-        if (sel < top) {
-            top = sel;
+        if (tui_menu_scroll(&top, sel, v.m.win))
             full = TRUE;
-        }
-        if (sel >= top + v.win) {
-            top = sel - v.win + 1;
-            full = TRUE;
-        }
 
         if (full) {
-            for (i = 0; i < v.win; i++)
+            for (i = 0; i < v.m.win; i++)
                 paint_slot(&v, i, top, sel);
             full = FALSE;
         } else if (painted != sel) {

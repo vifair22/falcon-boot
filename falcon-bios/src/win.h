@@ -4,6 +4,7 @@
 #define FALCON_BIOS_WIN_H
 
 #include <bios.h>
+#include <result.h>
 #include <fs/fs.h>
 #include <part/part.h>
 
@@ -11,10 +12,11 @@
  * medium, and chainloads it. `iso_rel` is the ISO's path as Windows will see
  * it on p2, which is what falcon-winjump is told to attach.
  *
- * Returns 0 only when it did not boot. `*unpatchable` is set when the medium
- * is not Windows install media at all, which is a cue to chainload it
- * plainly rather than a failure. */
+ * Returns only when it did not boot, with *r filled in. `*unpatchable` is
+ * set when the medium is not Windows install media at all, which is a cue to
+ * chainload it plainly rather than a failure. */
 int win_boot(bios_disk *d, fs_vol *p2, const gpt_part *p2part,
-             const fs_dirent *iso, const char *iso_rel, int *unpatchable);
+             const fs_dirent *iso, const char *iso_rel, boot_result *r,
+             int *unpatchable);
 
 #endif /* FALCON_BIOS_WIN_H */

@@ -53,7 +53,7 @@ BIOS_CFLAGS := -std=c11 -O2 -ffreestanding -fno-stack-protector \
 	-Wformat=2 -Wmissing-prototypes -Wstrict-prototypes \
 	-Wmissing-declarations -Wcast-align -Wcast-qual -Wnull-dereference \
 	-Wconversion -Wsign-conversion \
-	-I$(BIOS) $(CORE_INC)
+	-I$(BIOS) $(CORE_INC) -Ibuild
 
 # Two sets, because there are two links. console.c and disk.c are in both:
 # they are a few hundred bytes each, they reach the BIOS through the gate at
@@ -64,12 +64,12 @@ BIOS_S2_CSRCS := $(addprefix $(BIOS)/,load3.c disk.c console.c fault.c) \
 # Stage 3 takes the filesystem registry and the whole media layer, which is
 # what the third stage was for: under stage 2's 33 KB ceiling this had to be
 # one driver called by name.
-BIOS_S3_CSRCS := $(addprefix $(BIOS)/,main.c scan.c pos.c prompt.c linux.c \
+BIOS_S3_CSRCS := $(addprefix $(BIOS)/,main.c scan.c pos.c prompt.c screen.c linux.c \
 	linuxcore.c \
 	vcd.c vcdcore.c bsd.c win.c heap.c \
 	e820.c disk.c console.c) \
 	$(CORE_PART) $(CORE_FS) $(CORE_MEDIA) $(CORE_PE) $(CORE_CRYPTO) \
-	$(CORE_LUKS) $(CORE_WIM) $(CORE_LIBC) $(CORE_UCS2) \
+	$(CORE_LUKS) $(CORE_WIM) $(CORE_LIBC) $(CORE_UCS2) $(CORE_TUI) \
 	$(CORE)/manifest/manifest.c
 BIOS_S2_COBJS := $(patsubst %.c,$(BIOS_OBJ)/%.o,$(BIOS_S2_CSRCS))
 BIOS_S3_COBJS := $(patsubst %.c,$(BIOS_OBJ)/%.o,$(BIOS_S3_CSRCS))
@@ -78,6 +78,9 @@ BIOS_CSRCS := $(sort $(BIOS_S2_CSRCS) $(BIOS_S3_CSRCS))
 $(BIOS_OBJ)/%.o: %.c
 	@mkdir -p $(@D)
 	$(CC_HOST) $(BIOS_CFLAGS) -MMD -MF $@.d -c -o $@ $<
+
+# The banner names the build, as the UEFI loader's does.
+$(BIOS_OBJ)/$(BIOS)/main.o: build/version.h
 
 # AES-NI, this object only, as in the other two flavours (root Makefile). It
 # needs the instructions it is named for and the SSE registers they use, so

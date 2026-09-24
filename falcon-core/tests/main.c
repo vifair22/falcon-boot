@@ -42,6 +42,7 @@ int main(void)
     int failed = 0;
 
     failed += run_survey_tests();
+    failed += run_tui_tests();
     failed += run_synth_tests();
     failed += run_file_tests();
     failed += run_extent_tests();

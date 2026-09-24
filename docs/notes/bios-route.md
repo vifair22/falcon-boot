@@ -59,7 +59,8 @@ way the UEFI rig's tests are:
 Screen and keyboard are INT 10h and INT 16h through the thunk, one call per
 character, which is slow and is the right trade: the alternative is a VGA
 driver and a PS/2 driver of our own, and neither would work on a machine
-whose firmware is doing something unusual.
+whose firmware is doing something unusual. (Superseded for the screen by
+Section 6g: stage 3 writes VGA text memory, which needs no driver.)
 
 What is left in S1 is the shared menu model (open question 2, and the moment
 to move it is when this build boots something, not before), the ISO scan's
@@ -707,6 +708,31 @@ The machine also answered part of a question the study had not asked: a CSM
 of this era does not require the active flag. Older BIOSes are the open case
 (the Win2k/XP-era hardware that would need a 32-bit stage 3 as well).
 
+## 6g. One screen (2026-09-24)
+
+falcon-bios drew its own screens: a hand-written menu with "  > " markers,
+a sentence for a key hint, every route's progress on screen as it happened,
+failures worded wherever they were found. It worked, and it did not look or
+read like the UEFI loader, because the UEFI loader's conventions lived only
+in its code. One of the differences was a defect: `linux.c` reported a
+kernel it would not boot on serial only, so a machine with no serial cable
+showed "starting the kernel" and then the menu, with no reason between.
+
+Now both loaders draw from one layout, `falcon-core/src/tui` (the UEFI
+console's frame, block and row composition, moved rather than copied), and
+falcon-bios draws through `src/screen.c`, which is `console/menu.c`'s calls
+one for one. Cells go into VGA text memory directly: teletype output cannot
+colour a cell, and AH=09h can but costs a thunk round trip per character.
+Serial gets the ANSI sequences OVMF's terminal sends for the same calls,
+which is what let tools/coverage/run-case.sh drop both of its BIOS special
+cases. The personal-OS chooser's rows moved to core too
+(`media/shelf.c`), since falcon-bios had been showing bare file names.
+
+Measured in the rig: the UEFI loader's menu, prompt and chooser are
+byte-identical in screendumps before and after the move, and under SeaBIOS
+the personal OS (FALCON-CRED-OK), a direct Arch boot and Windows 11 Setup
+all pass behind the new screens.
+
 ## 7. Risks, in the order they matter
 
 **7.1 The `INT 13h` resident is a spike, not an estimate.** The ~1,000 above
@@ -764,6 +790,7 @@ recurring cost of keeping the cell green is not.
    installers and anything needing the hook do not find their media, which is
    the wall `coverage-roadmap.md` W1 exists for. S1 plus S2 may be the real
    minimum.
-4. **What the menu says about verification.** A BIOS build has no trust
-   column and no blessed state. It should say so once, plainly, rather than
-   showing a UEFI menu with the security half missing.
+4. **What the menu says about verification.** Answered 2026-09-24 (Section
+   6g): the banner's state segment, where the UEFI menu says "SB: off" or
+   what the machine trusts, says "BIOS", and the rows carry no tag columns.
+   Once, in the place the UEFI loader says it.

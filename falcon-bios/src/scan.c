@@ -23,8 +23,7 @@
 #include <scan.h>
 #include <linux.h>
 #include <vcd.h>
-#include <bsd.h>
-#include <win.h>
+#include <screen.h>
 
 #include <fs/fs.h>
 #include <media/medium.h>
@@ -33,7 +32,6 @@
 #include <media/family.h>
 #include <media/extmap.h>
 #include <media/hookcmd.h>
-#include <manifest/manifest.h>
 #include <part/part.h>
 #include <lib/string.h>
 
@@ -73,10 +71,6 @@ static char g_scratch[512u * 1024u];
  * and leaves the interactive console on the screen. */
 #define CONSOLE_ARGS " console=ttyS0,115200 console=tty0"
 
-/* The disk p2 is on, which the BSD route needs to install its handler and
- * nothing else here does. Set by scan_iso's caller through scan_disk. */
-static bios_disk   *g_disk;
-
 static fs_file      g_kernel;
 static fs_file      g_initrd[BOOTCFG_INITRD_MAX];
 /* One more than the entry's initrds: the last is the hook's archive. */
@@ -109,29 +103,6 @@ static int mem_read(void *ctx, uint64_t off, uint64_t len, void *buf)
     return 0;
 }
 
-static void put(const char *s)         { bios_screen_puts(s); }
-
-static void put_dec(uint64_t v)
-{
-    char buf[21];
-    char one[2];
-    size_t n = 0;
-
-    one[1] = '\0';
-    if (v == 0) {
-        put("0");
-        return;
-    }
-    while (v > 0 && n < sizeof buf) {
-        buf[n++] = (char)('0' + (unsigned)(v % 10u));
-        v /= 10u;
-    }
-    while (n > 0) {
-        one[0] = buf[--n];
-        put(one);
-    }
-}
-
 /* Appends to a NUL-terminated buffer. 0 on success, nonzero when it would
  * not fit; nothing is written in that case, because half a kernel argument
  * is worse than none. */
@@ -161,6 +132,27 @@ static const char *kind_name(medium_vol_kind k)
     }
 }
 
+/* Serial only: what the screen does not say, for a log. */
+static void log_str(const char *a, const char *b)
+{
+    bios_puts("falcon-bios:   ");
+    bios_puts(a);
+    bios_puts(b);
+    bios_puts("\n");
+}
+
+/* The title the handoff names, copied out of the entry being booted. */
+static const char *g_title;
+
+/* The line the UEFI loader prints as it starts a kernel, printed here at the
+ * same moment: every read done, nothing of this loader left to run. */
+static void dir_handoff(void)
+{
+    screen_out("starting ");
+    screen_out(g_title);
+    screen_out("\n");
+}
+
 /* Where the ISO sits on p2, encoded for the hook (DESIGN Section 6.4).
  *
  * The UEFI loader reads the partition's GUID and first LBA out of the Hard
@@ -181,11 +173,8 @@ static size_t build_map(fs_vol *p2, const gpt_part *part, const fs_dirent *iso,
     hdr.block_size = block_size;
     hdr.iso_size = iso->size;
 
-    if (fs_extents(p2, iso, g_ext, EXTMAP_MAX_EXTENTS, &n) != FS_OK) {
-        put("  the ISO is in more pieces on p2 than the hook can be told"
-            " about\n");
+    if (fs_extents(p2, iso, g_ext, EXTMAP_MAX_EXTENTS, &n) != FS_OK)
         return 0;
-    }
     for (i = 0; i < n; i++) {
         g_mext[i].offset = g_ext[i].vol_off;
         g_mext[i].length = g_ext[i].len;
@@ -206,7 +195,7 @@ static size_t build_map(fs_vol *p2, const gpt_part *part, const fs_dirent *iso,
  * then finds its medium by its own means or not. */
 static int boot_entry(const bootcfg_entry *e, fs_vol *p2,
                       const gpt_part *p2part, const fs_dirent *iso,
-                      uint32_t block_size)
+                      uint32_t block_size, boot_result *r)
 {
     linux_object kernel;
     char *cmd = g_cmd;
@@ -215,26 +204,26 @@ static int boot_entry(const bootcfg_entry *e, fs_vol *p2,
     size_t wrote = 0;
     unsigned i;
 
+    r->stage = "reading the kernel";
     if (e->kernel_unresolved) {
-        put("  the entry names its kernel through a value only GRUB could"
-            " compute\n");
+        r->advice = "the entry names its kernel through a value only GRUB "
+                    "could compute.";
         return -1;
     }
     if (bootfs_open(&g_bctx, e->kernel, &g_kernel, &size) != FS_OK) {
-        put("  the kernel is not on the medium: ");
-        put(e->kernel);
-        put("\n");
+        boot_result_advise(r, "the entry's kernel is not on the medium: ",
+                           e->kernel);
         return -1;
     }
     kernel.read = fs_file_read_cb;
     kernel.ctx = &g_kernel;
     kernel.size = size;
 
+    r->stage = "reading the initrd";
     for (i = 0; i < e->n_initrd && i < BOOTCFG_INITRD_MAX; i++) {
         if (bootfs_open(&g_bctx, e->initrd[i], &g_initrd[i], &size) != FS_OK) {
-            put("  an initrd is not on the medium: ");
-            put(e->initrd[i]);
-            put("\n");
+            boot_result_advise(r, "the entry's initrd is not on the medium: ",
+                               e->initrd[i]);
             return -1;
         }
         g_obj[i].read = fs_file_read_cb;
@@ -242,10 +231,9 @@ static int boot_entry(const bootcfg_entry *e, fs_vol *p2,
         g_obj[i].size = size;
     }
 
-    if (bootcfg_render(e, (const char *)0, g_cmd, sizeof g_cmd) != BOOTCFG_OK) {
-        put("  the cmdline does not fit\n");
+    r->stage = "building the cmdline";
+    if (bootcfg_render(e, (const char *)0, g_cmd, sizeof g_cmd) != BOOTCFG_OK)
         return -1;
-    }
 
     /* The hook, and the map that tells it where the ISO is. Without them the
      * kernel starts and its initramfs has no medium to find, which is what
@@ -264,150 +252,118 @@ static int boot_entry(const bootcfg_entry *e, fs_vol *p2,
         g_obj[i].size = wrote;
         i++;
         cmd = g_hooked;
-        put("  falcon-hook appended, ");
-        put_dec(wrote);
-        put(" bytes\n");
+        bios_puts("falcon-bios:   falcon-hook appended, ");
+        bios_put_dec(wrote);
+        bios_puts(" bytes\n");
     } else {
-        put("  no hook: this kernel will have to find its own medium\n");
+        screen_out("warning: falcon-hook cannot be told where this ISO is on "
+                   "the stick,\n         so the kernel has to find its "
+                   "medium by itself.\n\n");
     }
 
     if (append(cmd, cmd == g_cmd ? sizeof g_cmd : sizeof g_hooked,
-               CONSOLE_ARGS) != 0) {
-        put("  the cmdline does not fit\n");
+               CONSOLE_ARGS) != 0)
         return -1;
-    }
+    log_str("cmdline: ", cmd);
 
-    put("  starting the kernel\n");
-    return linux_boot(&kernel, g_obj, i, cmd, (void (*)(void))0);
+    r->stage = "starting the kernel";
+    g_title = e->title;
+    (void)linux_boot(&kernel, g_obj, i, cmd, dir_handoff);
+    boot_result_advise(r, linux_why(), (const char *)0);
+    return -1;
 }
 
-int scan_iso(fs_vol *p2, const gpt_part *p2part, const fs_dirent *ent,
-             const uint16_t *path, uint32_t block_size)
+/* The medium's volumes and its own filesystem, which is what the family
+ * fingerprint and the boot configuration are read from: the boot image is a
+ * FAT volume holding a loader, and fingerprinting that would name the loader
+ * rather than the distribution. NULL when there is none. */
+static fs_vol *open_medium(fs_vol *p2, const fs_dirent *ent, boot_result *r)
 {
     unsigned i;
     unsigned n;
-    fs_vol *cfgvol;
-    family_probe probe;
-    const family_desc *fam;
-    int rc;
 
-    if (fs_file_open(p2, &g_iso, ent) != FS_OK) {
-        put("  the image would not open\n");
-        return -1;
-    }
+    r->stage = "opening the ISO";
+    if (fs_file_open(p2, &g_iso, ent) != FS_OK)
+        return (fs_vol *)0;
 
-    if (medium_open(&g_medium, fs_file_read_cb, &g_iso, ent->size) != 0) {
-        put("  nothing on the medium mounted\n");
-        return -1;
-    }
+    r->stage = "reading the ISO's filesystem";
+    if (medium_open(&g_medium, fs_file_read_cb, &g_iso, ent->size) != 0)
+        return (fs_vol *)0;
 
     n = medium_count(&g_medium);
-    put("  ");
-    put_dec(n);
-    put(" volume(s):");
+    bios_puts("falcon-bios:   ");
+    bios_put_dec(n);
+    bios_puts(" volume(s):");
     for (i = 0; i < n; i++) {
-        put(i == 0 ? " " : ", ");
-        put(kind_name(medium_kind_at(&g_medium, i)));
+        bios_puts(i == 0 ? " " : ", ");
+        bios_puts(kind_name(medium_kind_at(&g_medium, i)));
     }
-    put("\n");
+    bios_puts("\n");
+    return n > 0 ? medium_vol_at(&g_medium, 0) : (fs_vol *)0;
+}
 
-    /* The medium's own filesystem, which is what family_detect wants: the
-     * boot image is a FAT volume holding a loader, and fingerprinting that
-     * would name the loader rather than the distribution. */
-    cfgvol = medium_count(&g_medium) > 0 ? medium_vol_at(&g_medium, 0) : (fs_vol *)0;
-    if (cfgvol == (fs_vol *)0) {
-        put("  no filesystem to read a configuration from\n");
-        return -1;
-    }
+const family_desc *scan_family(fs_vol *p2, const fs_dirent *ent)
+{
+    boot_result r;
+    family_probe probe;
+    const family_desc *fam;
+    fs_vol *cfgvol;
 
+    boot_result_init(&r);
+    cfgvol = open_medium(p2, ent, &r);
+    if (cfgvol == (fs_vol *)0)
+        return (const family_desc *)0;
     bootfs_probe(&g_bctx, cfgvol, &probe);
     fam = family_detect(&probe);
-    put("  family: ");
-    put(fam != (const family_desc *)0 ? fam->name : "unrecognised");
-    put("\n");
+    log_str("family: ", fam != (const family_desc *)0 ? fam->name
+                                                       : "unrecognised");
+    return fam;
+}
 
-    /* Two families boot by routes that have nothing to do with a Linux boot
-     * entry, so they are dispatched on the fingerprint rather than on the
-     * configuration, exactly as the UEFI loader does. Each reports that the
-     * medium is not one it applies to, which is a cue to carry on here
-     * rather than a failure. */
-    if (fam != (const family_desc *)0 && p2part != (const gpt_part *)0) {
-        if (fam->id == FAMILY_BSD) {
-            int not_bsd = 1;
+int scan_direct(fs_vol *p2, const gpt_part *p2part, const fs_dirent *ent,
+                uint32_t block_size, boot_result *r)
+{
+    const bootcfg_entry *e;
+    fs_vol *cfgvol;
+    size_t i;
 
-            bios_screen_mode("BSD");
-            (void)bsd_boot(g_disk, p2, p2part, ent, &not_bsd);
-            if (!not_bsd)
-                return -1;
-        } else if (fam->id == FAMILY_WINDOWS) {
-            int unpatchable = 1;
-            char rel[MANIFEST_PATH_MAX];
+    cfgvol = open_medium(p2, ent, r);
+    if (cfgvol == (fs_vol *)0)
+        return -1;
 
-            /* The whole path from p2's root, not the file's name: winjump
-             * looks for exactly this under every drive letter, and an ISO
-             * in a folder is not at the root of any of them. Converted by
-             * the rule the UEFI loader and the manifest use, so a path it
-             * cannot carry is refused here rather than turned into one
-             * winjump will never find. */
-            if (manifest_path_from_ucs2(path, rel, sizeof rel) !=
-                MANIFEST_OK) {
-                put("  the ISO's path is not plain ASCII, so Windows could"
-                    " not find it again;\n  booting it unpatched\n");
-                return scan_chain(g_disk, p2, p2part, ent);
-            }
-            bios_screen_mode("WIN");
-            (void)win_boot(g_disk, p2, p2part, ent, rel, &unpatchable);
-            if (!unpatchable)
-                return -1;
-            /* Windows media with nothing to patch still boots: its own
-             * bootloader off the served medium. */
-            return scan_chain(g_disk, p2, p2part, ent);
-        }
-    }
-
+    r->stage = "reading the ISO's boot configuration";
     bootfs_src(&g_bctx, cfgvol, &g_src);
-    rc = bootcfg_read(&g_src, BOOTCFG_CD, g_scratch, sizeof g_scratch, &g_cfg);
-    if (rc != BOOTCFG_OK || g_cfg.pick >= BOOTCFG_ENTRIES_MAX) {
-        put("  no boot entry this loader would take\n");
+    if (bootcfg_read(&g_src, BOOTCFG_CD, g_scratch, sizeof g_scratch,
+                     &g_cfg) != BOOTCFG_OK ||
+        g_cfg.pick >= BOOTCFG_ENTRIES_MAX) {
+        r->advice = "the ISO has no boot entry this loader can take.";
         return -1;
     }
+    e = &g_cfg.entry[g_cfg.pick];
+    for (i = 0; i + 1u < sizeof r->title && e->title[i] != '\0'; i++)
+        r->title[i] = e->title[i];
+    r->title[i] = '\0';
 
-    put("  config: ");
-    put(g_cfg.source);
-    put("\n  entry:  ");
-    put(g_cfg.entry[g_cfg.pick].title);
-    put("\n  kernel: ");
-    put(g_cfg.entry[g_cfg.pick].kernel);
-    put("\n");
-    for (i = 0; i < g_cfg.entry[g_cfg.pick].n_initrd; i++) {
-        put("  initrd: ");
-        put(g_cfg.entry[g_cfg.pick].initrd[i]);
-        put("\n");
-    }
-    put("  cmdline: ");
-    put(g_cfg.entry[g_cfg.pick].cmdline);
-    put("\n");
+    log_str("config: ", g_cfg.source);
+    log_str("entry:  ", e->title);
+    log_str("kernel: ", e->kernel);
+    for (i = 0; i < e->n_initrd; i++)
+        log_str("initrd: ", e->initrd[i]);
 
-    bios_screen_mode("DIR");
-    return boot_entry(&g_cfg.entry[g_cfg.pick], p2, p2part, ent, block_size);
+    return boot_entry(e, p2, p2part, ent, block_size, r);
 }
 
 int scan_chain(bios_disk *d, fs_vol *p2, const gpt_part *p2part,
-               const fs_dirent *ent)
+               const fs_dirent *ent, boot_result *r)
 {
+    r->stage = "finding p2's GPT entry";
     if (p2part == (const gpt_part *)0) {
-        put("  p2 has no GPT entry, so the medium cannot be served\n");
+        r->advice = "the ISO's partition has no GPT entry this loader can "
+                    "serve it from.";
         return -1;
     }
-    if (fs_file_open(p2, &g_iso, ent) != FS_OK) {
-        put("  the image would not open\n");
+    r->stage = "opening the ISO";
+    if (fs_file_open(p2, &g_iso, ent) != FS_OK)
         return -1;
-    }
-    bios_screen_mode("CHN");
-    return vcd_chainload(d, p2, p2part, ent, &g_iso);
-}
-
-void scan_disk(bios_disk *d)
-{
-    g_disk = d;
+    return vcd_chainload(d, p2, p2part, ent, &g_iso, r);
 }

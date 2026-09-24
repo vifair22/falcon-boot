@@ -18,6 +18,7 @@
 #include <lib/ucs2.h>
 #include <manifest/blesslist.h>
 #include <console/menu.h>
+#include <media/shelf.h>
 
 /* p3 is one partition, but the scan is not told which one it is, so it takes
  * whatever shelf-role volumes it finds. Four covers a stick built to DESIGN
@@ -33,8 +34,6 @@
  * and there is nothing to rate-limit here: an attacker holding the stick
  * grinds the header offline, not through this prompt. */
 #define POS_ATTEMPTS 3u
-
-#define POS_MAX_UKIS 8u
 
 /* Read granularity for the UKI, and how often the read says it is alive. A
  * 1 MiB request costs one extent-tree descent and a run of block reads; the
@@ -158,9 +157,11 @@ static void wipe_secrets(void)
 static luks_dev  g_dev;
 static uint8_t   g_dev_open;   /* g_dev holds a cipher context to close */
 static fs_vol    g_fs;
-static fs_dir    g_dir_a;
-static fs_dir    g_dir_b;
 static fs_file   g_file;
+
+/* The images on the shelf, their chooser labels, and the directory and
+ * section caches that found them (falcon-core/src/media/shelf.h). */
+static shelf_list g_images;
 
 /* The filesystem caches hold plaintext read out of an encrypted volume. It
  * is not key material, so nothing turns on it, but leaving fragments of p3
@@ -171,8 +172,7 @@ static fs_file   g_file;
 static void wipe_shelf(void)
 {
     crypto_wipe(&g_fs, sizeof g_fs);
-    crypto_wipe(&g_dir_a, sizeof g_dir_a);
-    crypto_wipe(&g_dir_b, sizeof g_dir_b);
+    shelf_wipe(&g_images);
     crypto_wipe(&g_file, sizeof g_file);
     if (g_dev_open) {
         luks_dev_close(&g_dev);
@@ -180,25 +180,8 @@ static void wipe_shelf(void)
     }
 }
 
-static fs_dirent  g_ukis[POS_MAX_UKIS];
-static menu_entry g_uki_entries[POS_MAX_UKIS];
-/* 1 when the row came from .osrel rather than the filename, so the
- * disambiguation pass knows which rows are worth qualifying. */
-static int        g_uki_named[POS_MAX_UKIS];
-/* 1 when another entry carries the same label, so this row needs its filename
- * appended. Computed for every row before any row is rewritten. */
-static int        g_uki_dup[POS_MAX_UKIS];
-/* The kernel version out of each image's .uname, empty when it has none. This
- * is what separates two builds of one distro, and it is what a person actually
- * wants to read: "Arch Linux 7.2.6-arch2-1" beside "Arch Linux 6.18.52-1-lts"
- * says which is the LTS fallback; "(arch-usb.efi)" beside "(arch-lts.efi)"
- * makes them guess. */
-static char       g_uki_uname[POS_MAX_UKIS][OSREL_LABEL_MAX];
-/* 1 when this row's qualifier is its kernel version, 0 when it is its
- * filename. Like g_uki_dup, decided for every row before any row is rewritten;
- * see the rendering pass for why that separation is load-bearing. */
-static int        g_uki_byver[POS_MAX_UKIS];
-static UINTN      g_uki_n;
+/* The chooser's rows, filled from g_images' labels. */
+static menu_entry g_uki_entries[SHELF_MAX];
 
 /* Does this volume have a keyslot this loader can actually process? DESIGN
  * Section 3 makes p3 pbkdf2 for exactly this reason; p4's argon2id slots are
@@ -324,108 +307,6 @@ static int unlock_any(UINTN *which)
     return (other_err != LUKS_OK) ? other_err : LUKS_ERR_NOKEY;
 }
 
-/* ---- finding the UKI on the filesystem inside p3 ---- */
-
-/* Directory convention, fixed here and matched by mkstick (DESIGN Section 8):
- * the UKIs live in /uki. /EFI/Linux is accepted as a fallback because that is
- * where the Boot Loader Specification puts them, so a p3 populated by
- * `kernel-install` rather than by our tooling still boots. */
-static int name_ends_efi(const fs_dirent *e)
-{
-    /* ".efi" on its own is a name, not a UKI. */
-    if (e->name_len < 5u)
-        return 0;
-    return fs_name_ends_ascii(e->name, ".efi");
-}
-
-static int dir_find(fs_dir *in, const char *name, fs_dirent *found)
-{
-    fs_dirent ent;
-    int rc;
-
-    while ((rc = fs_dir_next(in, &ent)) == 1) {
-        if (fs_name_eq_ascii(ent.name, name)) {
-            memcpy(found, &ent, sizeof ent);
-            return 1;
-        }
-    }
-    return rc; /* 0 = not found, negative = the driver's error */
-}
-
-/* Opens the directory the UKIs live in, leaving it in *d. Returns 1 when one
- * was found, 0 when neither convention is present, negative on a filesystem
- * error. */
-static int open_uki_dir(fs_dir *d)
-{
-    fs_dirent ent;
-    int rc;
-
-    if (fs_dir_open_root(&g_fs, &g_dir_a) != FS_OK)
-        return -1;
-    rc = dir_find(&g_dir_a, "uki", &ent);
-    if (rc == 1 && ent.is_dir)
-        return (fs_dir_open(&g_fs, d, &ent) == FS_OK) ? 1 : -1;
-    if (rc < 0)
-        return rc;
-
-    /* Fallback: /EFI/Linux, the Boot Loader Specification's location. */
-    if (fs_dir_open_root(&g_fs, &g_dir_a) != FS_OK)
-        return -1;
-    rc = dir_find(&g_dir_a, "EFI", &ent);
-    if (rc != 1 || !ent.is_dir)
-        return (rc < 0) ? rc : 0;
-    if (fs_dir_open(&g_fs, &g_dir_b, &ent) != FS_OK)
-        return -1;
-    rc = dir_find(&g_dir_b, "Linux", &ent);
-    if (rc != 1 || !ent.is_dir)
-        return (rc < 0) ? rc : 0;
-    return (fs_dir_open(&g_fs, d, &ent) == FS_OK) ? 1 : -1;
-}
-
-/* Collects the regular *.efi files in the UKI directory, sorted by name.
- * Anything else in there (the decoy the fixture drops in, a README, a
- * subdirectory) is skipped rather than offered: a menu entry that cannot be a
- * kernel is worse than no entry.
- *
- * g_dir_b is both open_uki_dir's scratch for the /EFI level and the directory
- * it finally leaves open; that is safe only because every dirent it acts on is
- * copied out before the next open overwrites the iterator. */
-static int collect_ukis(void)
-{
-    fs_dir *d = &g_dir_b;
-    fs_dirent ent;
-    int rc;
-
-    g_uki_n = 0;
-    rc = open_uki_dir(d);
-    if (rc != 1)
-        return rc;
-
-    while ((rc = fs_dir_next(d, &ent)) == 1) {
-        UINTN j;
-
-        if (!ent.is_regular || !name_ends_efi(&ent))
-            continue;
-        if (g_uki_n >= POS_MAX_UKIS)
-            break;
-
-        /* Insertion sort as they arrive; the list is at most a handful.
-         * memmove rather than memcpy for the shift: the two elements are
-         * distinct and cannot overlap, but saying "shift one element up" with
-         * the routine that permits overlap costs nothing here and keeps
-         * -fanalyzer from having to prove it. */
-        j = g_uki_n++;
-        while (j > 0 && fs_name_cmp(g_ukis[j - 1].name, ent.name) > 0) {
-            memmove(&g_ukis[j], &g_ukis[j - 1], sizeof ent);
-            j--;
-        }
-        memcpy(&g_ukis[j], &ent, sizeof ent);
-    }
-    if (rc < 0)
-        return rc;
-    return (g_uki_n > 0) ? 1 : 0;
-}
-
 /* Mount the shelf's filesystem through the registry rather than by naming a
  * driver (DESIGN Section 9). `known` is the identification
  * falcon-efi/src/discover/discover.c already made for a plaintext volume; the
@@ -454,220 +335,14 @@ static int plain_shelf_usable(discover_dev *dev, const fs_ops *ops)
     int ok = 0;
 
     if (mount_shelf(discover_read, dev, ops) == FS_OK)
-        ok = (collect_ukis() == 1);
+        ok = (shelf_collect(&g_images, &g_fs) == 1);
 
     /* A look, not a claim: pos_boot mounts for itself when the entry is
      * picked, so nothing here stays live, and the caches go the same way the
      * decrypted ones do. */
     crypto_wipe(&g_fs, sizeof g_fs);
-    crypto_wipe(&g_dir_a, sizeof g_dir_a);
-    crypto_wipe(&g_dir_b, sizeof g_dir_b);
-    g_uki_n = 0;
+    shelf_wipe(&g_images);
     return ok;
-}
-
-/* The signing appliance, by name (pos.h, POS_APPLIANCE_PREFIX). Case-folded
- * ASCII compare over the raw UCS-2 name: mkstick writes these names and they
- * are ASCII by construction, so a name that is not cannot be the appliance. */
-static int name_is_appliance(const fs_dirent *e)
-{
-    static const char want[] = POS_APPLIANCE_PREFIX;
-    UINTN i;
-
-    if (e->name_len + 1u < sizeof want)
-        return 0;
-    for (i = 0; i + 1u < sizeof want; i++) {
-        uint16_t c = e->name[i];
-
-        if (c >= u'A' && c <= u'Z')
-            c = (uint16_t)(c + (u'a' - u'A'));
-        if (c != (uint16_t)(unsigned char)want[i])
-            return 0;
-    }
-    return 1;
-}
-
-/* ---- entry labels from .osrel (DESIGN Section 5) ---- */
-
-/* A UKI says what it is in its own .osrel section, which is where sd-boot
- * reads the name it shows. Reading the same section means our menu agrees
- * with sd-boot's, and ukify keeps it current without anyone maintaining a
- * second copy of the name somewhere.
- *
- * Costs two small reads per entry, not a 90 MB one: a window off the front to
- * find the section, then the section. UX only - every failure path leaves the
- * filename in place, because a menu row that says "arch-usb.efi" is worse than
- * one that says "Arch Linux" and far better than none. */
-#define UKI_HEAD_WINDOW 8192u
-#define UKI_OSREL_MAX   4096u
-
-static UINT8 g_uki_head[UKI_HEAD_WINDOW];
-static UINT8 g_uki_osrel[UKI_OSREL_MAX];
-
-/* Reads one named section into g_uki_osrel. Returns its length, or 0. The
- * caller must have the file open on g_file. */
-static UINTN uki_section(const char *section, UINT64 fsize, UINT64 have)
-{
-    size_t off = 0, size = 0;
-
-    if (osrel_find(g_uki_head, (size_t)have, (size_t)fsize, section,
-                   &off, &size) != OSREL_OK)
-        return 0;
-    if (size > UKI_OSREL_MAX)
-        size = UKI_OSREL_MAX;
-    if ((UINT64)off + (UINT64)size > fsize)
-        return 0;
-    if (fs_file_read(&g_file, (UINT64)off, (UINT64)size, g_uki_osrel) != FS_OK)
-        return 0;
-    return (UINTN)size;
-}
-
-/* Reads the display name and the kernel version in one open.
- *
- * .uname is read even when it is not needed yet, because whether it IS needed
- * depends on the OTHER entries: it is what separates two images of the same
- * distro, and that is only known once every row has a label. One open per
- * entry rather than two passes of I/O over the shelf. */
-static int uki_osrel_label(const fs_dirent *ent, char *out, UINTN cap,
-                           char *uname, UINTN ucap)
-{
-    UINT64 have, fsize;
-    UINTN n;
-    int named = 0;
-
-    out[0] = '\0';
-    uname[0] = '\0';
-    if (fs_file_open(&g_fs, &g_file, ent) != FS_OK)
-        return 0;
-
-    fsize = fs_file_size(&g_file);
-    have = fsize < (UINT64)UKI_HEAD_WINDOW ? fsize : (UINT64)UKI_HEAD_WINDOW;
-    if (fs_file_read(&g_file, 0, have, g_uki_head) != FS_OK)
-        return 0;
-
-    n = uki_section(OSREL_SECT_OSREL, fsize, have);
-    if (n != 0) {
-        /* One condition rather than a chain, because both keys mean the same
-         * thing to us and the chain's two identical bodies read as an
-         * oversight. Short-circuit order IS the preference: PRETTY_NAME wins
-         * and NAME is only consulted when it did not answer. osrel_value
-         * empties out on failure, so the second call never sees a half-written
-         * first attempt. */
-        if (osrel_value((const char *)g_uki_osrel, n, "PRETTY_NAME", out, cap)
-                    == OSREL_OK ||
-            osrel_value((const char *)g_uki_osrel, n, "NAME", out, cap)
-                    == OSREL_OK)
-            named = 1;
-    }
-    if (!named)
-        out[0] = '\0';
-
-    /* .uname is a bare version string, not KEY=value, so it is copied rather
-     * than parsed. Stops at the first byte that cannot be in one, which covers
-     * the trailing NUL and the newline some writers add. */
-    n = uki_section(OSREL_SECT_UNAME, fsize, have);
-    if (n != 0) {
-        UINTN i = 0;
-
-        while (i < n && i + 1u < ucap) {
-            char c = (char)g_uki_osrel[i];
-
-            if (c < 0x21 || c > 0x7E)
-                break;
-            uname[i] = c;
-            i++;
-        }
-        uname[i] = '\0';
-    }
-    return named;
-}
-
-static void ascii_to_ucs2(CHAR16 *dst, UINTN cap, const char *src)
-{
-    UINTN i = 0;
-
-    while (src[i] != '\0' && i + 1u < cap) {
-        dst[i] = (CHAR16)(unsigned char)src[i];
-        i++;
-    }
-    dst[i] = L'\0';
-}
-
-/* Exact, not case-folded. Two rows that differ only in case are still two
- * distinguishable rows on screen, and qualifying them would add noise. */
-static int ucs2_eq(const CHAR16 *a, const CHAR16 *b)
-{
-    UINTN i = 0;
-
-    while (a[i] != L'\0' && a[i] == b[i])
-        i++;
-    return a[i] == b[i];
-}
-
-/* Does another entry with the same label also carry the same kernel version?
- * Then the version cannot separate them and the filename has to. Two copies of
- * one UKI under different names is exactly that case, and it is the shape a
- * rollback copy has. */
-static int uname_shared(UINTN i)
-{
-    UINTN j;
-
-    for (j = 0; j < g_uki_n; j++) {
-        UINTN k = 0;
-
-        if (j == i || !g_uki_dup[j])
-            continue;
-        if (!ucs2_eq(g_uki_entries[i].label, g_uki_entries[j].label))
-            continue;
-        while (g_uki_uname[i][k] != '\0' &&
-               g_uki_uname[i][k] == g_uki_uname[j][k])
-            k++;
-        if (g_uki_uname[i][k] == g_uki_uname[j][k])
-            return 1;
-    }
-    return 0;
-}
-
-/* Chooser order (DESIGN Section 5): the newest kernel first, because the row
- * the menu opens on is the one Enter boots and that should be the image a
- * user wants nearly every time; the signing appliance always last, because it
- * is never what an ordinary boot is for. Between two images without a .uname,
- * and between two with the same one, the shelf's own order stands. */
-static int uki_before(UINTN a, UINTN b)
-{
-    int app_a = name_is_appliance(&g_ukis[a]);
-    int app_b = name_is_appliance(&g_ukis[b]);
-
-    if (app_a != app_b)
-        return app_b;
-    if (g_uki_uname[a][0] != '\0' && g_uki_uname[b][0] != '\0')
-        return osrel_vercmp(g_uki_uname[a], g_uki_uname[b]) > 0;
-    return g_uki_uname[a][0] != '\0' && g_uki_uname[b][0] == '\0';
-}
-
-/* Swaps two chooser rows across every array that is indexed by row at this
- * point. The dup and byver flags are not among them: they are decided after
- * the sort, from the sorted rows. Static temporaries because a menu_entry is
- * over a kilobyte. */
-static void uki_swap(UINTN a, UINTN b)
-{
-    static fs_dirent d;
-    static menu_entry e;
-    static char u[OSREL_LABEL_MAX];
-    int n;
-
-    d = g_ukis[a];
-    g_ukis[a] = g_ukis[b];
-    g_ukis[b] = d;
-    e = g_uki_entries[a];
-    g_uki_entries[a] = g_uki_entries[b];
-    g_uki_entries[b] = e;
-    memcpy(u, g_uki_uname[a], sizeof u);
-    memcpy(g_uki_uname[a], g_uki_uname[b], sizeof u);
-    memcpy(g_uki_uname[b], u, sizeof u);
-    n = g_uki_named[a];
-    g_uki_named[a] = g_uki_named[b];
-    g_uki_named[b] = n;
 }
 
 /* Which UKI to boot. One is booted without asking; several are offered,
@@ -685,117 +360,27 @@ static INTN choose_uki(const menu_banner *banner, pos_pick pick)
     UINTN i;
 
     if (pick == POS_PICK_APPLIANCE) {
-        for (i = 0; i < g_uki_n; i++) {
-            if (name_is_appliance(&g_ukis[i]))
+        for (i = 0; i < g_images.n; i++) {
+            if (shelf_is_appliance(&g_images.uki[i].ent))
                 return (INTN)i;
         }
         return -1;
     }
 
-    if (g_uki_n == 1)
+    if (g_images.n == 1)
         return 0;
 
-    for (i = 0; i < g_uki_n; i++) {
-        static const CHAR16 prefix[] = L"Personal OS: ";
-        UINTN pl = sizeof(prefix) / sizeof(prefix[0]) - 1;
-        char label[OSREL_LABEL_MAX];
-        CHAR16 *row = g_uki_entries[i].label;
-
-        memcpy(row, prefix, pl * sizeof(CHAR16));
-        if (uki_osrel_label(&g_ukis[i], label, sizeof label,
-                            g_uki_uname[i], sizeof g_uki_uname[i]))
-            ascii_to_ucs2(row + pl, MENU_PATH_MAX - pl, label);
-        else
-            name_to_ucs2(row + pl, MENU_PATH_MAX - pl,
-                         g_ukis[i].name, g_ukis[i].name_len);
-        g_uki_named[i] = (row[pl] != L'\0');
+    /* The rows' names, order and qualifiers are falcon-core's
+     * (media/shelf.c), so falcon-bios offers the same rows. */
+    shelf_label(&g_images, &g_fs);
+    for (i = 0; i < g_images.n; i++) {
+        ucs2_copy(g_uki_entries[i].label, MENU_PATH_MAX,
+                  g_images.uki[i].label);
+        g_uki_entries[i].sig[0] = 0;
+        g_uki_entries[i].why[0] = 0;
+        g_uki_entries[i].caution = 0;
     }
-
-    /* Stable insertion sort: a handful of rows, and ties keep shelf order. */
-    for (i = 1; i < g_uki_n; i++) {
-        UINTN j;
-
-        for (j = i; j > 0 && uki_before(j, j - 1u); j--)
-            uki_swap(j, j - 1u);
-    }
-
-    /* Two images that say the same thing about themselves are the common case,
-     * not the exotic one: every Arch UKI on the shelf carries PRETTY_NAME
-     * "Arch Linux", so a rollback copy beside the current one produces two
-     * identical, unpickable rows. The filename is what actually differs, so it
-     * is appended to every row whose label is not unique. Only to those: adding
-     * it everywhere would throw away the whole point of reading .osrel.
-     *
-     * TWO PASSES, and the split is not tidiness. Marking and rewriting in one
-     * loop compares later rows against labels earlier iterations have already
-     * rewritten: the first of a colliding pair gets its filename appended, and
-     * the second then matches nothing and is left bare. Measured in the rig on
-     * 2026-09-15 - "Test Linux (alpha.efi)" above a naked "Test Linux" - which
-     * is worse than leaving both alone, because it reads as though the two rows
-     * are different KINDS of thing. */
-    for (i = 0; i < g_uki_n; i++) {
-        UINTN j;
-
-        g_uki_dup[i] = 0;
-        if (!g_uki_named[i])
-            continue;               /* already showing its filename */
-        for (j = 0; j < g_uki_n && !g_uki_dup[i]; j++) {
-            if (j != i && ucs2_eq(g_uki_entries[i].label,
-                                  g_uki_entries[j].label))
-                g_uki_dup[i] = 1;
-        }
-    }
-
-    /* The kernel version is the qualifier worth showing, and the filename is
-     * the fallback when there is no .uname or two images somehow share one.
-     * "Arch Linux 7.2.6-arch2-1" beside "Arch Linux 6.18.52-1-lts" tells a
-     * person which row is the LTS fallback; "(arch-usb.efi)" beside
-     * "(arch-lts.efi)" only tells them the filenames differ, which they could
-     * already see. No brackets on the version: it reads as part of the name,
-     * which is what sd-boot shows too. */
-    /* DECIDE for every row, THEN rewrite. Same reason the marking pass above is
-     * separate, and the same bug if it is not: uname_shared() compares
-     * g_uki_entries[].label, and the rewrite below mutates exactly those. Fused
-     * into one loop, each row is compared against siblings that earlier
-     * iterations have already qualified, so the last member of a group matches
-     * nothing, looks unique, and is handed a kernel version it shares with the
-     * rows above it. Measured in the rig on 2026-09-15 with five label fixtures
-     * (falcon-efi/tools/mk-test-labels.sh): "Twin Linux (twin-a.efi)" above
-     * "Twin Linux 9.9.9-twin", which claims the two are different kernels when
-     * they are the same image twice. */
-    for (i = 0; i < g_uki_n; i++)
-        g_uki_byver[i] = (g_uki_dup[i] && g_uki_uname[i][0] != '\0' &&
-                          !uname_shared(i));
-
-    for (i = 0; i < g_uki_n; i++) {
-        UINTN at;
-
-        if (!g_uki_dup[i])
-            continue;
-        at = ucs2_len(g_uki_entries[i].label);
-
-        if (g_uki_byver[i]) {
-            if (at + 2u < MENU_PATH_MAX) {
-                g_uki_entries[i].label[at++] = L' ';
-                ascii_to_ucs2(g_uki_entries[i].label + at,
-                              MENU_PATH_MAX - at, g_uki_uname[i]);
-            }
-            continue;
-        }
-
-        if (at + 3u < MENU_PATH_MAX) {
-            g_uki_entries[i].label[at++] = L' ';
-            g_uki_entries[i].label[at++] = L'(';
-            name_to_ucs2(g_uki_entries[i].label + at, MENU_PATH_MAX - at - 2u,
-                         g_ukis[i].name, g_ukis[i].name_len);
-            at = ucs2_len(g_uki_entries[i].label);
-            if (at + 2u < MENU_PATH_MAX) {
-                g_uki_entries[i].label[at++] = L')';
-                g_uki_entries[i].label[at] = L'\0';
-            }
-        }
-    }
-    return menu_run(g_st, banner, g_uki_entries, g_uki_n);
+    return menu_run(g_st, banner, g_uki_entries, g_images.n);
 }
 
 /* ---- the shim-verified load path (DESIGN Section 7.6) ---- */
@@ -1282,7 +867,7 @@ EFI_STATUS pos_boot_pick(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
     }
 
     result->stage = L"looking for a UKI";
-    rc = collect_ukis();
+    rc = shelf_collect(&g_images, &g_fs);
     if (rc != 1) {
         result->advice = L"no *.efi image was found in /uki or /EFI/Linux.";
         status = (rc < 0) ? EFI_DEVICE_ERROR : EFI_NOT_FOUND;
@@ -1324,10 +909,10 @@ EFI_STATUS pos_boot_pick(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
             L"\r\n         see the note after it exits.\r\n\r\n");
 
     out(L"reading ");
-    out_name(g_ukis[chosen].name, g_ukis[chosen].name_len);
+    out_name(g_images.uki[chosen].ent.name, g_images.uki[chosen].ent.name_len);
     out(L" ");
     result->stage = L"reading the UKI";
-    status = read_uki(bs, &g_ukis[chosen], &buf, &size, &pages);
+    status = read_uki(bs, &g_images.uki[chosen].ent, &buf, &size, &pages);
     if (EFI_ERROR(status))
         goto out_close;
     out(L"\r\n");
@@ -1343,7 +928,7 @@ EFI_STATUS pos_boot_pick(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
      * (credfs.h, Lifetime). */
     wipe_shelf();
 
-    status = launch_uki(st, parent_image, &g_ukis[chosen], buf, size, &ops,
+    status = launch_uki(st, parent_image, &g_images.uki[chosen].ent, buf, size, &ops,
                         inner_blocked, &retain, result);
 
     /* The image is loaded and running from the firmware's own copy by now, so

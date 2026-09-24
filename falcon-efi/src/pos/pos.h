@@ -93,17 +93,11 @@ const CHAR16 *pos_entry_label(void);
  * time. APPLIANCE is the Windows auto-prep path of Section 6.3.1, where the
  * user has already said which thing they want and a chooser would only be a
  * second way to get it wrong; the appliance image is identified by name (see
- * POS_APPLIANCE_PREFIX). */
+ * SHELF_APPLIANCE_PREFIX in falcon-core/src/media/shelf.h). */
 typedef enum {
     POS_PICK_ASK       = 0,
     POS_PICK_APPLIANCE = 1
 } pos_pick;
-
-/* How the signing-appliance image is told apart from every other UKI on the
- * shelf: its file name starts with this, ASCII, case-insensitively. A name
- * rather than a manifest because p3 has no manifest and the loader cannot
- * write one; mkstick is what makes it true when it stages the image. */
-#define POS_APPLIANCE_PREFIX "appliance"
 
 /* The entry's action, start to finish. Prompts, unlocks, mounts, reads and
  * launches; returns when the UKI exits or a stage fails.

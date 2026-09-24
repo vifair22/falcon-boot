@@ -28,6 +28,11 @@
 #include <media/eltorito.h>
 #include <lib/string.h>
 
+/* The UEFI loader's words for the same failure (falcon-efi/src/direct). */
+#define TOO_MANY_PIECES \
+    "the ISO is in too many pieces on the stick. Copy it again, onto a " \
+    "stick with more free space."
+
 /* The blob, as vcdres.S lays it out. Copied, never called where it is
  * linked: stage 3 is above a megabyte and real mode cannot reach it.
  *
@@ -85,8 +90,6 @@ static vcd_extent g_ext[VCD_MAX_RUNS + 8u];
 static fs_extent  g_fsext[VCD_MAX_RUNS + 8u];
 static uint8_t    g_sector[2048];
 
-static void put(const char *s) { bios_screen_puts(s); }
-
 void vcd_overlay_reset(void)
 {
     g_pool_used = 0;
@@ -135,26 +138,6 @@ int vcd_overlay(fs_file *isofile, uint64_t iso_off, const void *bytes,
     g_n_pending++;
     g_pool_used += n_cd;
     return 0;
-}
-
-static void put_hex(uint64_t v)
-{
-    static const char digits[] = "0123456789abcdef";
-    char one[2];
-    int shift;
-    int leading = 1;
-
-    one[1] = '\0';
-    put("0x");
-    for (shift = 60; shift >= 0; shift -= 4) {
-        unsigned nib = (unsigned)((v >> shift) & 0xFu);
-
-        if (nib == 0 && leading && shift != 0)
-            continue;
-        leading = 0;
-        one[0] = digits[nib];
-        put(one);
-    }
 }
 
 /* The medium's BIOS boot image: the default entry, or the first entry that
@@ -228,7 +211,7 @@ static void take_conventional_memory(uint16_t seg)
 }
 
 int vcd_chainload(bios_disk *d, fs_vol *p2, const gpt_part *p2part,
-                  const fs_dirent *iso, fs_file *isofile)
+                  const fs_dirent *iso, fs_file *isofile, boot_result *r)
 {
     elt_catalog cat;
     const elt_entry *e;
@@ -241,27 +224,28 @@ int vcd_chainload(bios_disk *d, fs_vol *p2, const gpt_part *p2part,
     size_t i;
     int rc;
 
+    r->stage = "reading the ISO's boot catalog";
     if (elt_parse(&cat, fs_file_read_cb, isofile, iso->size) != ELT_OK) {
-        put("  the medium has no boot catalog\n");
+        r->advice = "the medium has no El Torito boot catalog.";
         return -1;
     }
     e = bios_entry(&cat);
     if (e == (const elt_entry *)0) {
-        put("  the medium has no BIOS boot image; it is UEFI-only\n");
+        r->advice = "the medium boots only on UEFI.";
         return -1;
     }
     if (e->media != ELT_MEDIA_NONE) {
-        put("  the medium's boot image asks for floppy or hard disk"
-            " emulation, which this loader does not do\n");
+        r->advice = "the medium's boot image asks for floppy or hard disk "
+                    "emulation, which this loader does not do.";
         return -1;
     }
 
     /* Where the ISO is on the disk, as runs the handler can scan. */
+    r->stage = "mapping the ISO's extents on p2";
     rc = fs_extents(p2, iso, g_fsext,
                     sizeof g_fsext / sizeof g_fsext[0], &n_ext);
     if (rc != FS_OK) {
-        put("  the ISO is in more pieces on p2 than can be served."
-            " Copy it again, onto a stick with more free space.\n");
+        r->advice = TOO_MANY_PIECES;
         return -1;
     }
     for (i = 0; i < n_ext; i++) {
@@ -273,12 +257,10 @@ int vcd_chainload(bios_disk *d, fs_vol *p2, const gpt_part *p2part,
                    (uint8_t)VCD_DRIVE, d->drive);
     if (rc != VCD_OK) {
         if (rc == VCD_ERR_TOO_MANY)
-            put("  the ISO is in too many pieces on p2. Copy it again,"
-                " onto a stick with more free space.\n");
+            r->advice = TOO_MANY_PIECES;
         else if (rc == VCD_ERR_ALIGN)
-            put("  the ISO is not laid out on p2 in whole CD sectors\n");
-        else
-            put("  the ISO cannot be served as a CD\n");
+            r->advice = "the ISO is not laid out on the stick in whole CD "
+                        "sectors.";
         return -1;
     }
 
@@ -303,21 +285,22 @@ int vcd_chainload(bios_disk *d, fs_vol *p2, const gpt_part *p2part,
 
             if (chunk > (uint32_t)sizeof g_sector)
                 chunk = (uint32_t)sizeof g_sector;
+            r->stage = "reading the ISO's boot image";
             if (fs_file_read(isofile,
                              (uint64_t)e->lba * ELT_SECTOR + done,
-                             chunk, g_sector) != FS_OK) {
-                put("  the medium's boot image would not read\n");
+                             chunk, g_sector) != FS_OK)
                 return -1;
-            }
             memcpy(dst + done, g_sector, (size_t)chunk);
             done += chunk;
         }
     }
 
     /* Where the resident will live. Not taken until the end. */
+    r->stage = "reserving memory for the virtual CD";
     seg = resident_segment();
     if (seg == 0) {
-        put("  this machine will not give up the memory the handler needs\n");
+        r->advice = "this machine will not give up the conventional memory "
+                    "the virtual CD needs.";
         return -1;
     }
 
@@ -326,13 +309,12 @@ int vcd_chainload(bios_disk *d, fs_vol *p2, const gpt_part *p2part,
      * up, not the size it started. The appended region goes first because
      * the medium has to say it is there before anything may be placed in
      * it. */
+    r->stage = "placing the medium's edits";
     if (g_append_cd != 0) {
         if (vcd_extend(&g_map, g_append_cd) != VCD_OK ||
             vcd_override_add_ext(&g_map, g_map.n_real - g_append_cd,
-                                 g_append_cd, g_append_phys) != VCD_OK) {
-            put("  the appended blocks do not fit the medium\n");
+                                 g_append_cd, g_append_phys) != VCD_OK)
             return -1;
-        }
     }
     for (i = 0; i < g_n_pending; i++) {
         uint16_t pool_seg = (uint16_t)(seg + (VCD_OVER_OFF / 16u) +
@@ -340,10 +322,8 @@ int vcd_chainload(bios_disk *d, fs_vol *p2, const gpt_part *p2part,
                                        (VCD_CD_BYTES / 16u));
 
         if (vcd_override_add(&g_map, g_pending[i].cd_lba,
-                             g_pending[i].n_cd, pool_seg) != VCD_OK) {
-            put("  an overlay does not fit the medium\n");
+                             g_pending[i].n_cd, pool_seg) != VCD_OK)
             return -1;
-        }
     }
 
     /* The memory map a chainloaded loader will allocate from, with what
@@ -364,12 +344,13 @@ int vcd_chainload(bios_disk *d, fs_vol *p2, const gpt_part *p2part,
             keep[n_keep].len = (uint64_t)g_append_cd * VCD_CD_BYTES;
             n_keep++;
         }
+        r->stage = "building the memory map the ISO is handed";
         g_n_carved = 0;
         if (first != (const e820_entry *)0 &&
             e820_carve(first, e820_count(), keep, n_keep, g_carved,
                        VCD_E820_MAX, &g_n_carved) != 0) {
-            put("  the memory map is too long to hand on with the handler's"
-                " memory taken out\n");
+            r->advice = "the memory map is too long to hand on with the "
+                        "virtual CD's memory taken out.";
             return -1;
         }
         g_e801_cap = e820_e801_cap(keep, n_keep);
@@ -394,11 +375,11 @@ int vcd_chainload(bios_disk *d, fs_vol *p2, const gpt_part *p2part,
     memcpy(at + VCD_OFF_NREAL, &g_map.n_real, 4);
     memcpy(at + VCD_OFF_NLIMIT, &g_map.n_limit, 4);
     for (i = 0; i < g_map.n_runs; i++) {
-        uint8_t *r = at + VCD_OFF_RUNS + i * VCD_RUN_LEN;
+        uint8_t *run = at + VCD_OFF_RUNS + i * VCD_RUN_LEN;
 
-        memcpy(r, &g_map.run[i].cd_lba, 4);
-        memcpy(r + 4, &g_map.run[i].n_cd, 4);
-        memcpy(r + 8, &g_map.run[i].disk_lba, 8);
+        memcpy(run, &g_map.run[i].cd_lba, 4);
+        memcpy(run + 4, &g_map.run[i].n_cd, 4);
+        memcpy(run + 8, &g_map.run[i].disk_lba, 8);
     }
     /* The overlay: its bytes into the pool behind the resident, and the
      * table the handler scans before every pass. */
@@ -443,15 +424,15 @@ int vcd_chainload(bios_disk *d, fs_vol *p2, const gpt_part *p2part,
     at[VCD_OFF_LLEN + 1u] = (uint8_t)((load_bytes >> 8) & 0xFFu);
     at[VCD_OFF_LDRIVE] = (uint8_t)VCD_DRIVE;
 
-    put("  serving the medium on drive ");
-    put_hex(VCD_DRIVE);
-    put(" from ");
-    put_hex((uint64_t)seg * 16u);
-    put("\n  boot image at CD sector ");
-    put_hex(e->lba);
-    put(", ");
-    put_hex(g_map.n_runs);
-    put(" run(s)\n  handing over\n");
+    bios_puts("falcon-bios: serving the medium on drive ");
+    bios_put_hex64(VCD_DRIVE);
+    bios_puts(" from ");
+    bios_put_hex64((uint64_t)seg * 16u);
+    bios_puts("\nfalcon-bios: boot image at CD sector ");
+    bios_put_hex64(e->lba);
+    bios_puts(", ");
+    bios_put_hex64(g_map.n_runs);
+    bios_puts(" run(s)\nfalcon-bios: handing over\n");
 
     /* From here nothing may fail: the memory is taken, the vector is
      * hooked, the machine is about to be somebody else's. */

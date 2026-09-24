@@ -137,7 +137,9 @@ the tree, so `#include <fs/exfat.h>` means one file wherever it is written.
     itself as a memory disk (`bsdmd.c`). `survey.c` is what a menu is built
     from: the directory walk over a mounted volume, the extension rule, the
     sort and the folder view. Both loaders use it, so neither can have its
-    own idea of what is on a stick. `eltorito.c` reads a medium's boot
+    own idea of what is on a stick. `shelf.c` is the personal-OS chooser's
+    rows: the UKIs in p3's `/uki` (or `/EFI/Linux`), their `.osrel` names,
+    order and qualifiers, again for both loaders. `eltorito.c` reads a medium's boot
     catalog and `medium.c` assembles what a medium holds into a set of
     mounted volumes (UDF, then ISO9660, then the El Torito boot image) over
     one read callback, which is the job the firmware's ConnectController does
@@ -148,6 +150,11 @@ the tree, so `#include <fs/exfat.h>` means one file wherever it is written.
     original's end, the original bytes untouched.
   - `manifest/` the blessed-artifact manifest parser and writer (DESIGN
     Section 8.1), shared by the loader and the sign tool.
+  - `tui/` how a loader screen is laid out: the centred content block, a
+    menu's banner, list and key hint, a page started a third of the way
+    down, the route code's place, row composition and the colours. Geometry
+    only, no drawing; both loaders draw from it, which is what keeps their
+    screens the same cell for cell.
   - `lib/` the freestanding `mem*` (`string.c`, linked into the loader
     flavours only, since every hosted build has a libc) and the UCS-2
     helpers (`ucs2.c`, linked into every flavour including the hosted
@@ -166,9 +173,9 @@ the tree, so `#include <fs/exfat.h>` means one file wherever it is written.
     credential beside it (DESIGN Section 5.1). `credfs_efi.h` carries the
     File Protocol's full provider-side surface, which `efi/sfs.h` deliberately
     stubs out on the consumer side.
-  - `console/` the text menu over Simple Text Output/Input, plus the masked
-    passphrase prompt (`prompt.c`, its own TU so "what has held the secret"
-    has a one-file answer).
+  - `console/` the text menu over Simple Text Output/Input, drawn from core's
+    `tui`, plus the masked passphrase prompt (`prompt.c`, its own TU so
+    "what has held the secret" has a one-file answer).
   - `discover/` the single device-discovery pass (`discover.c`) and GPT
     identification's firmware half (`partefi.c`): enumerates the Block I/O
     handles once, classifies each, and hands every consumer one inventory.
@@ -280,6 +287,16 @@ the tree, so `#include <fs/exfat.h>` means one file wherever it is written.
   exception is reported through the same path (`src/fault.c`) rather than
   triple faulting.
 
+  Stage 3 draws every screen through `src/screen.c`, the UEFI console's
+  calls one for one (`screen_page` is `menu_screen`, `screen_menu` is
+  `menu_run_keys`) over core's `tui`: cells and colours go straight into
+  VGA text memory, and serial gets the ANSI sequences OVMF's terminal sends
+  for the same calls, so the coverage harness reads both loaders one way.
+  Diagnostics (volumes, config, addresses, cmdline) go to serial only, as
+  `falcon-bios:` lines. Routes report back in a `boot_result` (`src/result.h`)
+  and `main.c` says it as the UEFI loader does, "<route> failed while
+  <stage>" and the advice.
+
   It shares falcon-core unchanged: the read callback is the per-platform
   boundary. What a BIOS build had to provide that firmware used to is the
   thing to remember here - `lmode.S` sets CR4.OSFXSR because falcon-core's
@@ -309,6 +326,23 @@ the tree, so `#include <fs/exfat.h>` means one file wherever it is written.
 strictly and reports over all of them, `make test-fixtures` builds the images
 the image-backed suites need. `compile_commands.json` is regenerated at the
 repo root by the default target.
+
+## One screen, two loaders
+
+The UEFI loader and falcon-bios show the same screens: the same layout,
+colours, key hints and sentences. The layout is one implementation
+(`falcon-core/src/tui`), and so are the menu's rows (`media/survey.c`) and
+the chooser's (`media/shelf.c`). The sentences are written twice, once per
+loader, so a screen or a line changed on one loader is changed on the other
+in the same commit. Where the platforms really differ (no trust tags, no
+firmware-setup row, no status code on BIOS) the screen leaves the part out
+rather than saying something else.
+
+The pattern every route follows: its code, a page, `booting: <label>`; the
+route's own lines up to the handover; and when it comes back, a new page
+with the label, `<route> failed while <stage>`, the advice, and "press any
+key to return to the menu." Diagnostics a person at the machine cannot act
+on go to serial only.
 
 ## Tone: no preaching
 

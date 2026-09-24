@@ -255,9 +255,9 @@ serial_text() {
 # ---- the menu ----
 for ((i = 0; i < MENU_WAIT; i++)); do
     alive || finish ERROR "qemu exited before the menu ($(tail -c 200 "$OUTDIR/qemu.log" | tr '\n\t' '  '))"
-    # Either loader's footer: the UEFI menu ends with its key legend, and
-    # falcon-bios with its own (falcon-bios/src/main.c).
-    if serial_text | grep -qE 'esc back|enter to boot'; then
+    # The menu's key legend, which both loaders draw from one layout
+    # (falcon-core/src/tui).
+    if serial_text | grep -q 'esc back'; then
         break
     fi
     sleep 1
@@ -287,17 +287,14 @@ selected_row() {
                    sed -e 's/.*@ROW@//' -e 's/\x1b\[[0-9;=?]*[A-Za-z]//' \
                        -e 's/\x1b.*//' -e 's/^ *//' -e 's/ *$//')"
 }
-# Not under bios: falcon-bios draws its selection with "> " rather than
-# reverse video, and a case stick gives it exactly one row, which is the one
-# already selected.
-if [[ "$STATE_BIOS" -eq 0 ]]; then
-    for ((i = 0; i < 8; i++)); do
-        row=$(selected_row)
-        [[ "$row" == *.iso* || "$row" == *.img* ]] && break
-        echo "sendkey down" | socat - UNIX-CONNECT:"$MON" >/dev/null
-        sleep 1
-    done
-fi
+# Both loaders: falcon-bios sends its menu to serial as the same ANSI
+# sequences OVMF's terminal does (falcon-bios/src/screen.c).
+for ((i = 0; i < 8; i++)); do
+    row=$(selected_row)
+    [[ "$row" == *.iso* || "$row" == *.img* ]] && break
+    echo "sendkey down" | socat - UNIX-CONNECT:"$MON" >/dev/null
+    sleep 1
+done
 
 MENU_LINES=$(serial_text | wc -l)
 echo "sendkey $KEY" | socat - UNIX-CONNECT:"$MON" >/dev/null
