@@ -7,9 +7,9 @@
  * The transport underneath it is bios_disk_read, the same callback
  * falcon-core reads a partition table through.
  *
- * It runs in long mode, so writing to a megabyte is an ordinary store; the
- * BIOS read underneath still goes through the bounce buffer in low memory,
- * because the far end of it is a real-mode interrupt handler.
+ * It runs in protected mode, so writing to a megabyte is an ordinary store;
+ * the BIOS read underneath still goes through the bounce buffer in low
+ * memory, because the far end of it is a real-mode interrupt handler.
  */
 
 #include <bios.h>

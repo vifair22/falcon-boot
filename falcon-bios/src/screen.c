@@ -3,8 +3,8 @@
  * Why VGA memory and not INT 10h. Teletype output (AH=0Eh) cannot colour a
  * cell, and the UEFI menu's banner, selection bar and route code are colour;
  * AH=09h can, one character per call, and a call is a round trip through the
- * thunk down to real mode and back. Text memory at 0xB8000 is inside the
- * gigabyte lmode.S identity maps, a cell is a character and an attribute
+ * thunk down to real mode and back. Text memory at 0xB8000 is an ordinary
+ * address in flat protected mode, a cell is a character and an attribute
  * byte, and the attribute byte is EFI_TEXT_ATTR's encoding already
  * (falcon-core/src/tui/tui.h). So a composed row goes in as a loop of stores,
  * and the BIOS is asked only for what it alone knows: the mode, the cursor

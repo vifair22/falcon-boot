@@ -40,4 +40,8 @@ int linux_boot(const linux_object *kernel, const linux_object *initrd,
  * stop; NULL before any failure. */
 const char *linux_why(void);
 
+/* Whether the processor has long mode, which a 64-bit kernel needs and a
+ * 32-bit one does not. */
+int linux_cpu_is_64(void);
+
 #endif /* FALCON_BIOS_LINUX_H */

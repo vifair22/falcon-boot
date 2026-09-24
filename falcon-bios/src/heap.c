@@ -12,13 +12,12 @@
  * is no free, and that is not a shortcut: one of these boots happens at a
  * time and ends by handing the machine to somebody else.
  *
- * Above 64 MB so it is clear of everything this loader places, and below the
- * end of the identity map, which is the real ceiling: a 32-bit base is what
- * an override the BIOS moves is described by, but this loader writes the
- * buffer itself first, and it can only write what its own page tables
- * describe. Taking the highest run under 4 GB on a 4 GB machine put it near
- * 3 GB, outside the gigabyte lmode.S maps, and the first store triple
- * faulted.
+ * Above 64 MB so it is clear of everything this loader places, and below
+ * 4 GiB: a 32-bit base is what an override the BIOS moves is described by,
+ * and 4 GiB is the end of what the loader itself can write (biosdefs.h,
+ * ADDR_END). When the loader ran in long mode the ceiling was its one-
+ * gigabyte identity map instead, and a run near 3 GB on a 4 GB machine took
+ * the first store past it and triple faulted.
  */
 
 #include <bios.h>
@@ -26,7 +25,7 @@
 #include <e820.h>
 
 #define HEAP_LOW  (64ull * 1024ull * 1024ull)
-#define HEAP_HIGH ((uint64_t)IDENTITY_MAP)
+#define HEAP_HIGH ADDR_END
 
 static uint64_t g_base;
 static uint64_t g_len;

@@ -1,13 +1,13 @@
 /* falcon-bios stage 3: the header and the entry
  * (docs/notes/bios-route.md Section 6).
  *
- * WHY THERE IS A THIRD STAGE. Stage 2 is linked where real mode and long mode
- * agree on what an address means, which puts a ceiling of about 33 KB on it -
- * not a budget anyone chose, but the distance from 0x7E00 to the end of the
- * first 64 KB segment. The loader proper is past that ceiling as soon as it
- * carries the filesystem registry, the ISO reader and a boot path, so it is
- * linked at a megabyte and loaded there after paging is on, where the only
- * limit is memory.
+ * WHY THERE IS A THIRD STAGE. Stage 2 is linked where real mode and protected
+ * mode agree on what an address means, which puts a ceiling of about 33 KB on
+ * it - not a budget anyone chose, but the distance from 0x7E00 to the end of
+ * the first 64 KB segment. The loader proper is past that ceiling as soon as
+ * it carries the filesystem registry, the ISO reader and a boot path, so it
+ * is linked at a megabyte and loaded there once protected mode is up, where
+ * the only limit is memory.
  *
  * What stays behind in stage 2 is everything that has to be reachable from
  * real mode: the thunk, and the gate that publishes it at a fixed address
@@ -30,15 +30,17 @@ stage3_header:
 	.long   stage3_bss_end - stage3_header     /* bytes to occupy */
 	.long   0                    /* room to grow */
 
-	.code64
+	.code32
 	.globl  stage3_entry
-/* Entered from stage 2 by an absolute jump to STAGE3_LOAD + STAGE3_HDR, in
- * long mode, with the GDT and page tables stage 2 built still live. Nothing
- * here may assume a stack: stage 2's is in low memory and is about to stop
- * being the right one. */
+/* Entered from stage 2 by an absolute call to STAGE3_LOAD + STAGE3_HDR, in
+ * 32-bit protected mode, with the GDT and IDT stage 2 built still live.
+ * Nothing here may assume a stack: stage 2's is in low memory and is about
+ * to stop being the right one. */
 stage3_entry:
-	movq    $STAGE3_STACK, %rsp
-	movzbl  GATE_DRIVE, %edi
+	movl    $STAGE3_STACK, %esp
+	movzbl  GATE_DRIVE, %eax
+	subl    $12, %esp            /* 16-byte aligned at the call */
+	pushl   %eax
 	call    bios_main
 1:	hlt
 	jmp     1b

@@ -10,8 +10,8 @@
  *
  * THE BOUNCE BUFFER IS NOT OPTIONAL, and it is the only thing here that is
  * not obvious. Real mode addresses twenty bits, so the BIOS cannot write
- * above one megabyte, and a caller in long mode will happily pass a buffer
- * anywhere in the gigabyte the mode switch mapped. Every transfer therefore
+ * above one megabyte, and a caller in protected mode will happily pass a
+ * buffer anywhere in the 4 GiB it can address. Every transfer therefore
  * lands in a fixed low buffer first and is copied up. Syslinux's MEMDISK and
  * every other BIOS loader does the same thing for the same reason.
  */

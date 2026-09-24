@@ -79,10 +79,10 @@ linuxcore_status linuxcore_geometry(const uint8_t *setup, size_t setup_len,
     out->version = rd16(setup, HDR_VERSION);
     if (out->version < LINUXCORE_MIN_VERSION)
         return LINUXCORE_ERR_VERSION;
-    /* A 32-bit kernel has no entry this route can take, and there is no
-     * second route here. */
-    if ((rd16(setup, HDR_XLOADFLAGS) & XLF_KERNEL_64) == 0)
-        return LINUXCORE_ERR_NO_64;
+    /* Either width boots through the 32-bit entry. Which one this is
+     * decides the falcon-hook that rides along, and whether the processor
+     * can run it at all; both are the caller's to act on. */
+    out->is_64 = (rd16(setup, HDR_XLOADFLAGS) & XLF_KERNEL_64) != 0;
 
     sects = rd8(setup, HDR_SETUP_SECTS);
     if (sects == 0)
@@ -112,7 +112,8 @@ linuxcore_status linuxcore_geometry(const uint8_t *setup, size_t setup_len,
     }
 
     /* init_size is what the kernel needs to decompress and run in, which is
-     * larger than the image; the identity map has to cover all of it. */
+     * larger than the image; the loader's address space has to hold all
+     * of it. */
     out->init_size = rd32(setup, HDR_INIT_SIZE);
     if (out->init_size < out->pm_len)
         out->init_size = out->pm_len;

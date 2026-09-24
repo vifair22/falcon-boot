@@ -1,4 +1,4 @@
-/* falcon-bios: the C half, entered once long mode is up
+/* falcon-bios: the C half, entered once protected mode is up
  * (docs/notes/bios-route.md Sections 1 and 5.3).
  *
  * What this file is for, at this stage of the route, is to be the evidence
@@ -625,7 +625,7 @@ static void show_memory(void)
 
 void bios_main(uint8_t drive)
 {
-    bios_puts("falcon-bios: C is running in long mode\n");
+    bios_puts("falcon-bios: C is running in protected mode\n");
     show_memory();
 
     if (!bios_disk_probe(&g_boot, drive))

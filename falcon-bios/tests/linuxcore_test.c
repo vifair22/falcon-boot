@@ -22,7 +22,7 @@
 
 #include <linuxcore.h>
 
-#define MAP_END   0x40000000ull   /* biosdefs.h IDENTITY_MAP */
+#define MAP_END   0x100000000ull  /* biosdefs.h ADDR_END */
 #define PREF_LOAD 0x01000000ull   /* biosdefs.h KERNEL_ADDR */
 #define SETUP_CAP (65u * 512u)
 
@@ -185,10 +185,15 @@ static void test_geometry_refusals(void **state)
     wr16(HDR_VERSION, 0x020Bu);
     assert_int_equal(geom(1 << 20, &g), LINUXCORE_ERR_VERSION);
 
-    /* A 32-bit kernel: the entry this route takes does not exist. */
+    /* A 32-bit kernel is not a refusal: it takes the same entry, and the
+     * geometry only says which width it is. */
     good_setup();
     wr16(HDR_XLOADFLAGS, 0);
-    assert_int_equal(geom(1 << 20, &g), LINUXCORE_ERR_NO_64);
+    assert_int_equal(geom(1 << 20, &g), LINUXCORE_OK);
+    assert_int_equal(g.is_64, 0);
+    good_setup();
+    assert_int_equal(geom(1 << 20, &g), LINUXCORE_OK);
+    assert_int_equal(g.is_64, 1);
 
     /* Setup longer than the buffer that will hold it. */
     good_setup();

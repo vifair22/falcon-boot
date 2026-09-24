@@ -166,7 +166,7 @@ int bios_disk_read(void *ctx, uint64_t off, uint64_t len, void *buf);
  * whether the drive answered at all. Nonzero on success. */
 int bios_disk_probe(bios_disk *d, uint8_t drive);
 
-/* Entered from stage 2 once long mode is up. Never returns. */
+/* Entered from stage 2 once protected mode is up. Never returns. */
 void bios_main(uint8_t drive);
 
 #endif /* FALCON_BIOS_H */
