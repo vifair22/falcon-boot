@@ -3,7 +3,8 @@
  *
  * Every case here is a kernel this loader must refuse or an address it must
  * get exactly right, because none of them says anything when it is wrong: a
- * kernel placed past the identity map triple-faults, and an initrd segment
+ * kernel placed past what the loader can address faults (it triple-faulted
+ * past the identity map of the long-mode loader), and an initrd segment
  * one byte short of alignment is reported by the kernel as a corrupt
  * archive. The padding case is a regression test - it shipped unpadded once,
  * and Arch booted while Debian did not, purely because Arch's initrd happens
@@ -138,8 +139,8 @@ static void test_geometry_fixed_address(void **state)
     assert_int_equal(g.load_at, PREF_LOAD);
 }
 
-/* The initrd ceiling is the kernel's, clamped to what the loader mapped.
- * Nothing may be written outside the identity map. */
+/* The initrd ceiling is the kernel's, clamped to what the loader can
+ * address. Paging is off, so nothing may be written at or above 4 GiB. */
 static void test_geometry_initrd_ceiling(void **state)
 {
     linux_geom g;

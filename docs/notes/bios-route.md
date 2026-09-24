@@ -1,16 +1,23 @@
 # BIOS mode: the scope, measured against the tree (2026-09-19)
 
-Not decided. This began as the scoping study behind "what would a
-BIOS-capable falcon-boot actually cost", written down because the answer that
-had been assumed is wrong and the right answer is cheap enough to be asked
-again.
+Status (2026-09-24): decided, built and in the scorecard. falcon-bios boots
+all five routes, is i686 in 32-bit protected mode since Section 6h, and is
+judged in two coverage columns, `bios` and `bios32`. DESIGN Section 12.3 is
+the current design; this note is how it got there, and its sections are
+dated because the early ones describe a loader that ran in long mode.
+Where a passage has since stopped being true it says so in place.
+
+This began as the scoping study behind "what would a BIOS-capable
+falcon-boot actually cost", written down because the answer that had been
+assumed is wrong and the right answer is cheap enough to be asked again.
 
 Since then it is built (2026-09-20): `falcon-bios/` boots all five of the
 routes Section 4 describes - a Linux ISO directly with falcon-hook, an ISO's
 own bootloader through a resident INT 13h handler, the personal OS unwrapped
 out of its UKI, BSD media as their own memory disk, and Windows with its
 `boot.wim` patched in memory. It boots under SeaBIOS and reads its own boot sector
-back through the BIOS from 64-bit code:
+back through the BIOS from 64-bit code (it ran in long mode until Section
+6h):
 
     falcon-bios: entering long mode
     falcon-bios: running in 64-bit long mode
@@ -61,6 +68,11 @@ character, which is slow and is the right trade: the alternative is a VGA
 driver and a PS/2 driver of our own, and neither would work on a machine
 whose firmware is doing something unusual. (Superseded for the screen by
 Section 6g: stage 3 writes VGA text memory, which needs no driver.)
+
+*The next three paragraphs are the state on 2026-09-20, the day the
+first stage booted. All of it has been done since, the route was decided
+once 5.4 turned out wrong, and `make test` runs falcon-bios's three
+host-testable halves (`vcdcore.c`, `linuxcore.c`, `e820.c`).*
 
 What is left in S1 is the shared menu model (open question 2, and the moment
 to move it is when this build boots something, not before), the ISO scan's
@@ -328,6 +340,10 @@ The five:
 5. The jump to a loaded kernel, with registers set per the boot protocol,
    interrupts off and the protocol's GDT loaded.
 
+*Items 2 and 3 as built until 2026-09-24. Since Section 6h there is no
+paging: the mode switch stops at the first far jump, and the thunk is
+protected to real and back.*
+
 Everything else is C in falcon-core or falcon-bios and host-tested: extent
 walking, 2048-to-512 sector translation, the overlay arithmetic, El Torito
 parsing, zero-page construction, GPT identification, menu logic.
@@ -434,7 +450,7 @@ that has to be taken by a person rather than measured.
 
 Stage 2 reached 28.3 KB of a ceiling it does not get to choose. Linked at
 `STAGE2_LOAD` (0x7E00), it has to be addressable in both real mode and long
-mode, which means it has to fit below the end of the first 64 KB segment:
+mode (protected mode since 6h; the ceiling is the same), which means it has to fit below the end of the first 64 KB segment:
 about 33 KB, with the menu and one filesystem driver in it and the ISO reader
 and a boot path still to come. Raising `STAGE2_SECTORS` does not help. The
 answer the note predicted is the one taken.
@@ -506,6 +522,12 @@ initramfs, because nothing has told it where its medium is. That is the next
 piece and it is already written: falcon-hook and the extent map (DESIGN
 Section 6.4), which the UEFI loader appends to the same initramfs for the
 same reason.
+
+*Superseded 2026-09-24 (Section 6h): the loader now takes the 32-bit
+entry, which starts kernels of both widths, from protected mode with paging
+off, so there is no identity map and the ceiling is 4 GiB (`ADDR_END`). The
+handoff GDT, code 0x10 and data 0x18, is unchanged. The next two paragraphs
+are the long-mode loader.*
 
 **Why the 64-bit entry.** The loader is already in long mode with paging on,
 which is the state the protocol asks for; the 16-bit entry would mean going
@@ -654,7 +676,8 @@ holds the patch takes the highest usable run it can find, and the first
 attempt took one near 3 GB on a 4 GB machine - outside the gigabyte
 `lmode.S` maps. The first store triple faulted. Under UEFI the firmware maps
 what it allocates; here the loader maps a gigabyte and everything it writes
-has to be inside it.
+has to be inside it. (Since 6h nothing is mapped: the heap's ceiling is
+4 GiB, `ADDR_END`, in `heap.c`.)
 
 ## 6e. The personal OS, and one bit nobody sets (2026-09-20)
 
@@ -678,7 +701,10 @@ serial line but the menu drawing a second time. falcon-core's AES-NI path is
 the only translation unit in this build compiled with SSE at all, and long
 mode had been entered with CR4 holding PAE and nothing else: the first XMM
 instruction raised #UD, and with no IDT that is a triple fault. Two bits in
-`lmode.S` fix it.
+`lmode.S` fix it. (Since 6h they are set in `pmode.S`, and only when CPUID
+reports FXSR and SSE, because the CR4 write itself faults on a processor
+without them. `idt.S` now gives protected mode an IDT, so an exception is
+reported rather than triple faulting.)
 
 It is worth naming because of what it says about the port generally. The same
 falcon-core has run under UEFI for months and never needed this, because
@@ -710,7 +736,8 @@ prompt. The other four routes are still unmeasured on hardware.
 
 The machine also answered part of a question the study had not asked: a CSM
 of this era does not require the active flag. Older BIOSes are the open case
-(the Win2k/XP-era hardware that would need a 32-bit stage 3 as well).
+(the Win2k/XP-era hardware that would need a 32-bit stage 3 as well, which
+is Section 6h).
 
 ## 6g. One screen (2026-09-24)
 
@@ -818,6 +845,17 @@ found the one thing the loader's side could not: `mkstick create`'s stock
 argon2id on p4 is tuned on the building host and cannot run on an old
 machine, hence `mkstick create --p4-kdf-memory`.
 
+**On hardware** (2026-09-24): a Windows 7 era machine in BIOS mode booted
+the 32-bit stick to its personal OS (stick32.md, which also records the
+retry-prompt wrap it found). Still unmeasured: a processor without a
+64-bit mode, and the 32-bit ISOs.
+
+**Building it.** falcon-bios and `falcon-hook32` link against the host
+compiler's 32-bit libgcc (64-bit division and shifts in i686 code are calls
+into it). Without multilib, `gcc -m32 -print-libgcc-file-name` answers with
+the 64-bit libgcc and the link fails on `__udivdi3`; `make check-tools`
+warns, and the coverage container installs `gcc-multilib` for it.
+
 ## 7. Risks, in the order they matter
 
 **7.1 The `INT 13h` resident is a spike, not an estimate.** The ~1,000 above
@@ -854,14 +892,17 @@ install is opt-in and is not part of `mkstick create`: somebody asks for it.
 **7.4 A second platform is a second coverage matrix.** `docs/coverage.md`
 scores each corpus ISO in three Secure Boot states. BIOS adds a fourth cell
 per ISO that shares none of the three. The harness work is small; the
-recurring cost of keeping the cell green is not.
+recurring cost of keeping the cell green is not. (Since 6h there is a
+fifth, `bios32`, the same machine as a Pentium III, where the 32-bit ISOs
+are judged and the 64-bit ones are N/A.)
 
 ## 8. Open questions
 
 1. **Is it wanted at all?** BIOS-only machines are pre-2012, and CSM is gone
    from new firmware. The study says the cost is ~5,300 lines rather than a
    second product; it does not say the reach is worth it. Nobody has asked
-   for it yet.
+   for it yet. Answered 2026-09-20 by building it, and 2026-09-24 by the
+   request that widened it: XP-era machines that boot from USB (6h).
 2. **Where the shared menu model lives.** Answered 2026-09-20, and the
    question aimed slightly wrong: `falcon-efi/src/console` is presentation
    and belongs where it is. What had to move was the survey - the directory
@@ -874,7 +915,7 @@ recurring cost of keeping the cell green is not.
 3. **Whether S1 alone is a coherent release.** Chainload-only means Tier B
    installers and anything needing the hook do not find their media, which is
    the wall `coverage-roadmap.md` W1 exists for. S1 plus S2 may be the real
-   minimum.
+   minimum. Moot: all five stages were built before any was released.
 4. **What the menu says about verification.** Answered 2026-09-24 (Section
    6g): the banner's state segment, where the UEFI menu says "SB: off" or
    what the machine trusts, says "BIOS", and the rows carry no tag columns.

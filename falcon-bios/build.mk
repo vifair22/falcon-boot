@@ -174,7 +174,7 @@ $(BIOS_STAGE2): $(BIOS_STAGE2_OBJS) $(BIOS)/bios.ld
 	done
 
 # Stage 3: the loader proper, linked at a megabyte where nothing constrains
-# its size. It is read in by stage 2 after paging is on and never runs below
+# its size. It is read in by stage 2 in protected mode and never runs below
 # a megabyte, so it holds no real-mode code at all and reaches the BIOS
 # through the gate.
 # The hook's blobs, which are generated (falcon-hook/build.mk). The x86-64
@@ -234,7 +234,8 @@ bios: $(BIOS_STAGE1) $(BIOS_STAGE2) $(BIOS_STAGE3)
 # with no analyzer over it depends on (Section 7.2). Testing them is the whole
 # point of having written them separately - and two have already been wrong
 # once, in a way the machine did not report: an unpadded initrd read as a
-# corrupt archive, and a kernel placed past the identity map triple-faulted.
+# corrupt archive, and a kernel placed past the identity map of the loader's
+# long-mode days triple-faulted.
 BIOS_TESTS := $(addprefix falcon-bios/tests/,main.c vcdcore_test.c \
 	linuxcore_test.c e820_test.c)
 BIOS_UUT := $(BIOS)/vcdcore.c $(BIOS)/linuxcore.c $(BIOS)/e820.c

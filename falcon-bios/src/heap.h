@@ -9,8 +9,8 @@
 #include <stdint.h>
 
 /* Takes the highest usable run of at least `want` bytes between 64 MB and
- * the end of the identity map (1 GB), from the E820 map. 0 when there is no such run; the caller says so
- * and does not go on. */
+ * 4 GiB (ADDR_END), from the E820 map. 0 when there is no such run; the
+ * caller says so and does not go on. */
 int heap_open(uint64_t want);
 
 /* A page-aligned block, or NULL when the run is exhausted. There is no free:
@@ -20,7 +20,7 @@ int heap_open(uint64_t want);
 void *heap_alloc(uint64_t n);
 
 /* The physical address of a pointer heap_alloc returned, which is what an
- * override the BIOS moves has to be told. Identity mapped, so this is the
+ * override the BIOS moves has to be told. Paging is off, so this is the
  * pointer; it is a function because saying so once is better than casting at
  * every call. */
 uint32_t heap_phys(const void *p);

@@ -524,6 +524,12 @@ personal-OS UKI's inner LoadImage to succeed (DESIGN 7.4's UKI limitation).
 
 ## 9. BIOS mode: costed on demand, not scheduled
 
+*Superseded. Built 2026-09-20 with no layout change (the stages sit in the
+gap every GPT stick already leaves; bios-route.md 5.4), made i686 on
+2026-09-24 (6h), and scored in `docs/coverage.md` as the `bios` and
+`bios32` columns. The section below is the costing as it stood on
+2026-09-19.*
+
 Scoped 2026-09-19, written up in `docs/notes/bios-route.md`. A BIOS-capable
 falcon-boot had been given up on because it was believed to mean two
 codebases. It does not: falcon-core's 18,675 lines are EFI-free already, and
