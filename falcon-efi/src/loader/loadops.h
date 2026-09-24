@@ -122,7 +122,7 @@ const CHAR16 *load_ops_inner_load_advice(void);
  *
  * Returns the byte count written to buf (0 when there was no marker, or when
  * it is longer than cap, which for a value this short means it is not ours).
- * The bytes are raw and untrusted; bless_next_decode is what turns them into
+ * The bytes are raw and untrusted; nextboot_decode is what turns them into
  * something that may be compared against a path. */
 UINTN loader_next_boot_take(EFI_SYSTEM_TABLE *st, void *buf, UINTN cap);
 

@@ -135,7 +135,7 @@ EFI_STATUS loader_next_boot_set(EFI_SYSTEM_TABLE *st, const char *name)
         return EFI_UNSUPPORTED;
 
     /* The terminator travels with the value so the variable reads as a string
-     * in any dumper. The reader accepts it either way (bless_next_decode). */
+     * in any dumper. The reader accepts it either way (nextboot_decode). */
     if (name != (const char *)0) {
         while (name[len] != '\0')
             len++;

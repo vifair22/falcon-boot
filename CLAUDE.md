@@ -145,7 +145,10 @@ the tree, so `#include <fs/exfat.h>` means one file wherever it is written.
     sort and the folder view. Both loaders use it, so neither can have its
     own idea of what is on a stick. `shelf.c` is the personal-OS chooser's
     rows: the UKIs in p3's `/uki` (or `/EFI/Linux`), their `.osrel` names,
-    order and qualifiers, again for both loaders. `eltorito.c` reads a medium's boot
+    order and qualifiers, again for both loaders. `nextboot.c` is the
+    next-boot marker's value rules (decode, path match, the `:` reserved
+    names) for both loaders, and the BIOS marker sector's format and dating.
+    `eltorito.c` reads a medium's boot
     catalog and `medium.c` assembles what a medium holds into a set of
     mounted volumes (UDF, then ISO9660, then the El Torito boot image) over
     one read callback, which is the job the firmware's ConnectController does
@@ -304,7 +307,11 @@ the tree, so `#include <fs/exfat.h>` means one file wherever it is written.
   `src/bsd.c` lays `media/bsdmd.c`'s two edits over the served medium; and
   `src/win.c` patches boot.wim with core's `wim`, serving the appended tail
   from extended memory through INT 15h AH=87h. `src/heap.c` is the one
-  allocator, for that tail alone.
+  allocator, for that tail alone. `src/marker.c` takes the next-boot marker
+  (DESIGN Section 6.3.1): LBA 2047 of the boot disk, written from Linux,
+  cleared before it is believed and honoured only within ten minutes by the
+  RTC. It is the only code in falcon-bios that writes a disk (one sector,
+  INT 13h AH=43h), and only the stick's stage 3 links it.
 
   No failure ends in a halt, which on a machine with no serial cable is a
   hang: it ends in `bios_fatal` (`fatal_rm` before there is C), the reason

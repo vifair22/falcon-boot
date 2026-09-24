@@ -20,7 +20,6 @@ int main(void)
     int failed = 0;
 
     failed += run_bless_tests();
-    failed += run_next_tests();
     failed += run_iso_overlay_tests();
     failed += run_sb_tests();
     failed += run_nxt_tests();
