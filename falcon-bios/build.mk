@@ -102,7 +102,9 @@ $(BIOS_OBJ)/falcon-core/src/crypto/aesni.o: BIOS_CFLAGS := \
 # them into and nothing that would enforce it if there were.
 # 64-bit division and shifts in i686 code are calls into libgcc
 # (__udivdi3 and its siblings); -nostdlib drops it, so it goes back in by
-# name, after the objects that need it.
+# name, after the objects that need it. A gcc with no 32-bit multilib
+# answers with its 64-bit libgcc instead, and the link then fails on
+# __udivdi3 as if the library were not there; `make check-tools` names it.
 BIOS_LIBGCC := $(shell $(CC_HOST) -m32 -print-libgcc-file-name)
 
 BIOS_LDFLAGS := -m32 -nostdlib -static -no-pie -Wl,--build-id=none \
@@ -163,7 +165,7 @@ $(BIOS_STAGE2): $(BIOS_STAGE2_OBJS) $(BIOS)/bios.ld
 	            thunk_vector:7e40 gate_drive:7e41 gate_target:7e48; do \
 		sym=$${pair%%:*}; want=$${pair##*:}; \
 		got=$$(nm $@.elf | awk -v s="$$sym" '$$3 == s { print $$1 }'); \
-		if [ -z "$$got" ] || [ $$((16#$$got)) -ne $$((16#$$want)) ]; then \
+		if [ -z "$$got" ] || [ $$((0x$$got)) -ne $$((0x$$want)) ]; then \
 			echo "ERROR: $$sym is at $$got, not $$want"; \
 			echo "       falcon-bios/src/biosdefs.h GATE_* and the"; \
 			echo "       gate block in stage2.S disagree"; \

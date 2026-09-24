@@ -328,6 +328,8 @@ check-tools:
 	done; \
 	command -v 7z >/dev/null 2>&1 || command -v 7zz >/dev/null 2>&1 || \
 		echo "missing (mk-test-isoview.sh cross-checks its UDF fixture with it): 7z"; \
+	[ "$$($(CC_HOST) -m32 -print-multi-directory 2>/dev/null)" = 32 ] || \
+		echo "missing (make bios links the i686 loader and falcon-hook32 against it): a 32-bit libgcc, gcc-multilib on Debian"; \
 	if [ $$missing -ne 0 ]; then echo "Required toolchain incomplete."; exit 1; fi; \
 	echo "Toolchain OK."
 

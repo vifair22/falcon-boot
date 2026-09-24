@@ -27,6 +27,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates git make python3 rsync sudo \
         build-essential binutils pkg-config xxd \
+        gcc-multilib \
         gcc-mingw-w64-x86-64 \
         libcmocka-dev \
         qemu-system-x86 qemu-utils ovmf \
