@@ -29,8 +29,8 @@
  * got past it because the host's own headers happen to fit. Claiming the
  * header already included keeps it out for both compilers (GCC's guard,
  * then clang's). */
-#define _MM_MALLOC_H_INCLUDED
-#define __MM_MALLOC_H
+#define _MM_MALLOC_H_INCLUDED   /* NOLINT(bugprone-reserved-identifier) */
+#define __MM_MALLOC_H           /* NOLINT(bugprone-reserved-identifier) */
 
 #include <wmmintrin.h>
 #include <emmintrin.h>
