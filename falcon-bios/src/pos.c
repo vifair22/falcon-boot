@@ -41,6 +41,7 @@
 #include <crypto/crypto.h>
 #include <media/cpio.h>
 #include <media/shelf.h>
+#include <tui/tui.h>
 #include <lib/string.h>
 
 /* The credential beside the image (DESIGN Section 5.1). */
@@ -380,9 +381,6 @@ static int choose_uki(void)
     static const screen_banner banner = {
         u"falcon-boot: which image?", (const uint16_t *)0, 0
     };
-    /* The UEFI chooser's key line, less the legend for the trust tags,
-     * which a BIOS machine has nothing to predict with. */
-    static const uint16_t hint[] = u"up/down select | enter choose | esc back";
     size_t i;
 
     if (g_images.n == 1)
@@ -390,8 +388,8 @@ static int choose_uki(void)
     shelf_label(&g_images, &g_fs);
     for (i = 0; i < g_images.n; i++)
         g_rows[i] = g_images.uki[i].label;
-    return screen_menu(&banner, g_rows, g_images.n, (const char *)0, hint,
-                       (int *)0);
+    return screen_menu(&banner, g_rows, g_images.n, (const char *)0,
+                       tui_hint_plain, (int *)0);
 }
 
 const uint16_t *pos_entry_label(void)

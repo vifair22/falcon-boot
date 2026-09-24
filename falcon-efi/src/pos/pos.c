@@ -19,6 +19,7 @@
 #include <manifest/blesslist.h>
 #include <console/menu.h>
 #include <media/shelf.h>
+#include <tui/tui.h>
 
 /* p3 is one partition, but the scan is not told which one it is, so it takes
  * whatever shelf-role volumes it finds. Four covers a stick built to DESIGN
@@ -377,6 +378,7 @@ static int plain_shelf_usable(discover_dev *dev, const fs_ops *ops)
  * so. */
 static INTN choose_uki(const menu_banner *banner, pos_pick pick)
 {
+    menu_keys keys;
     UINTN i;
 
     if (pick == POS_PICK_APPLIANCE) {
@@ -389,6 +391,8 @@ static INTN choose_uki(const menu_banner *banner, pos_pick pick)
 
     if (g_images.n == 1)
         return 0;
+    keys.keys = (const CHAR16 *)0;
+    keys.hint = (const CHAR16 *)tui_hint_plain;
 
     /* The rows' names, order and qualifiers are falcon-core's
      * (media/shelf.c), so falcon-bios offers the same rows. */
@@ -400,7 +404,9 @@ static INTN choose_uki(const menu_banner *banner, pos_pick pick)
         g_uki_entries[i].why[0] = 0;
         g_uki_entries[i].caution = 0;
     }
-    return menu_run(g_st, banner, g_uki_entries, g_images.n);
+    /* No row here carries a trust tag, so the key line has no legend. */
+    return menu_run_keys(g_st, banner, g_uki_entries, g_images.n, &keys,
+                         (CHAR16 *)0);
 }
 
 /* ---- the shim-verified load path (DESIGN Section 7.6) ---- */

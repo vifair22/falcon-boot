@@ -5,6 +5,8 @@
 const uint16_t tui_hint_default[] =
     u"up/down select | enter choose | esc back | "
     u"[signed by] {expected refusal}";
+const uint16_t tui_hint_plain[] =
+    u"up/down select | enter choose | esc back";
 const uint16_t tui_hint_empty[] = u"no entries | esc back";
 const uint16_t tui_list_empty[] = u"(no ISOs found on the exFAT partition)";
 

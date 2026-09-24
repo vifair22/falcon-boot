@@ -165,8 +165,13 @@ void tui_row_banner(uint16_t *row, size_t w, const uint16_t *title,
  * The hint's two key words stay general because what they do is the
  * caller's: enter opens a folder or boots an image on the main menu and
  * picks an image in the personal-OS chooser, and esc leaves a folder, the
- * chooser or the loader depending on where the caller is. */
+ * chooser or the loader depending on where the caller is.
+ *
+ * tui_hint_plain is the default less the legend for the trust tags, for a
+ * list whose rows never carry one: the personal-OS chooser on both loaders,
+ * and every menu of the stationary build, which links no predictions. */
 extern const uint16_t tui_hint_default[];
+extern const uint16_t tui_hint_plain[];
 extern const uint16_t tui_hint_empty[];
 extern const uint16_t tui_list_empty[];
 
