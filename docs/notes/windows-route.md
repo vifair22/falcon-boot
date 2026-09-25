@@ -749,9 +749,28 @@ case, not a QEMU-persists shortcut.
   itself alive for Windows rather than letting the firmware CD evaporate, not a
   driver that re-creates one. On UEFI that means presenting the medium as
   something Windows keeps across ExitBootServices (an EFI RAM disk registered
-  in the ACPI NFIT, or equivalent), which is a deep change to the loader's boot
-  path and carries the cost of holding the boot medium in memory. That is the
-  remaining work, and it is not built.
+  in the ACPI NFIT), which holds the boot medium in memory.
+
+  **The persistent RAM disk was built and tested, and OVMF blocks it
+  (2026-09-25).** A loader path (winram.c, since reverted) read the ISO whole
+  into reserved pages and registered it with the firmware's
+  EFI_RAM_DISK_PROTOCOL as an EFI_PERSISTENT_VIRTUAL_CD, the NFIT-backed medium
+  Windows would keep. The firmware processes El Torito on it - the EFI boot
+  image (efi/microsoft/boot/efisys.bin) mounts, and \EFI\BOOT\BOOTX64.EFI
+  (cdboot) loads from it - but OVMF's RamDiskDxe does **not** connect a
+  filesystem driver to the RAM disk's own Block I/O, so the CD's main ISO 9660
+  / UDF filesystem never mounts. cdboot then cannot map back to the CD and
+  returns NO_MAPPING (0x8000000000000011); \bootmgr.efi, which lives on that
+  main filesystem, is absent on every mounted volume (NOT_FOUND, both cases
+  tried). Windows cannot boot from the RAM disk under OVMF.
+
+  This is a firmware limit of the corpus, not of the approach: real firmware
+  may connect the filesystem to the RAM disk where OVMF does not, and the bench
+  already showed Win7 boots from a medium that stays. But the corpus (OVMF)
+  cannot validate it, so Windows 7/Vista under UEFI remains a real-hardware
+  question. What is proven here: neither of the two userland/loader shapes
+  (boot-start driver, EFI RAM disk) boots them under OVMF, and the cause of
+  each is understood.
 
 - **Windows XP x64 and Vista x64 do not boot under UEFI at all**, failing at
   "finding the medium's EFI System Partition": XP has no UEFI support and Vista

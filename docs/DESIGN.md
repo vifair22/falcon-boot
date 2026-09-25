@@ -697,12 +697,16 @@ One limit the corpus then found (docs/notes/windows-route.md Section 7):
 loading falcon-vdisk from winjump, which runs as winpeshl, assumes WinPE got
 as far as winpeshl. Windows 8 and up do; Windows 7 and Vista hang earlier, at
 "Starting Windows", where their boot-start storage driver waits on the boot
-device that vanished at ExitBootServices. A boot-start falcon-vdisk that
-presents a substitute CD was built, injected into a Win7 boot.wim and tested;
-it does not fix the hang, because the wait is on the specific device Win7
-booted from, not on any CD. Serving 7 and Vista needs a persistent boot medium
-(one Windows keeps across ExitBootServices, e.g. an EFI RAM disk), which is a
-deeper change to the loader's boot path and is not built.
+device that vanished at ExitBootServices. Both shapes for serving 7 and Vista were built and tested under OVMF, and
+neither boots them there (docs/notes/windows-route.md Section 7). A boot-start
+falcon-vdisk that presents a substitute CD does not fix the hang: the wait is
+on the specific device Win7 booted from, not on any CD. A persistent EFI RAM
+disk (EFI_PERSISTENT_VIRTUAL_CD, the medium Windows would keep) registers and
+the firmware processes its El Torito, but OVMF's RamDiskDxe never mounts the
+RAM disk CD's main filesystem, so Windows' boot manager cannot reach bootmgr or
+boot.wim. That is a firmware limit of the corpus; real firmware may mount it,
+and the bench confirmed Win7 boots from a medium that stays. So Windows 7/Vista
+under UEFI is a real-hardware question, unvalidatable in the OVMF corpus.
 Three WinPE-specific hazards were found and fixed there: CDFS's mount issues
 `IOCTL_DISK_CHECK_VERIFY` (not only the CD-ROM and storage variants); a
 filesystem may issue reads above `PASSIVE_LEVEL`, so the lower-disk read runs
