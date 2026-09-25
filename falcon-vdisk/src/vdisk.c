@@ -57,6 +57,41 @@ typedef struct {
 #define IOCTL_CDROM_READ_TOC            CTL_CODE(2, 0x0000, 0, 1)
 #define IOCTL_STORAGE_GET_DEVICE_NUMBER CTL_CODE(0x2d, 0x0420, 0, 0)
 #define IOCTL_STORAGE_GET_HOTPLUG_INFO  CTL_CODE(0x2d, 0x0305, 0, 0)
+/* How the mount path asks a CD its size. UDFS reads its anchor at the disc's
+ * last sector, so without a true size it cannot mount and CDFS falls back to
+ * the ISO 9660 view, which on a Windows install DVD is a bridge stub with only
+ * a readme. These are what give it the size. */
+#define IOCTL_DISK_GET_LENGTH_INFO      CTL_CODE(7, 0x0017, 0, 0)
+#define IOCTL_STORAGE_READ_CAPACITY     CTL_CODE(0x2d, 0x0450, 0, 1)
+#define IOCTL_CDROM_GET_LAST_SESSION    CTL_CODE(2, 0x000E, 0, 1)
+
+typedef struct {
+    LARGE_INTEGER Length;
+} FALCON_GET_LENGTH_INFORMATION;
+
+typedef struct {
+    ULONG Version;
+    ULONG Size;
+    ULONG BlockLength;
+    LARGE_INTEGER NumberOfBlocks;
+    LARGE_INTEGER DiskLength;
+} FALCON_STORAGE_READ_CAPACITY;
+
+/* A session TOC has the same shape as the plain TOC but names sessions, not
+ * tracks; one session, its first track at LBA 0. */
+typedef struct {
+    UCHAR Length[2];
+    UCHAR FirstSession;
+    UCHAR LastSession;
+    struct {
+        UCHAR Reserved;
+        UCHAR Control : 4;
+        UCHAR Adr : 4;
+        UCHAR TrackNumber;
+        UCHAR Reserved1;
+        UCHAR Address[4];
+    } TrackData[1];
+} FALCON_CDROM_SESSION_DATA;
 
 typedef struct {
     DEVICE_TYPE DeviceType;
@@ -407,6 +442,18 @@ static NTSTATUS ctl_ioctl(PIRP irp, PIO_STACK_LOCATION io)
     return complete(irp, STATUS_INVALID_DEVICE_REQUEST, 0);
 }
 
+/* An LBA as the minute:second:frame a TOC entry carries: 75 frames a second,
+ * and the 2-second (150-frame) lead-in the addressing counts from. */
+static void lba_to_msf(ULONG lba, UCHAR addr[4])
+{
+    ULONG f = lba + 150;
+
+    addr[0] = 0;
+    addr[1] = (UCHAR)(f / (75u * 60u));
+    addr[2] = (UCHAR)((f / 75u) % 60u);
+    addr[3] = (UCHAR)(f % 75u);
+}
+
 static NTSTATUS cd_ioctl(PIRP irp, PIO_STACK_LOCATION io)
 {
     ULONG code = io->Parameters.DeviceIoControl.IoControlCode;
@@ -445,6 +492,7 @@ static NTSTATUS cd_ioctl(PIRP irp, PIO_STACK_LOCATION io)
     }
     case IOCTL_CDROM_READ_TOC: {
         FALCON_CDROM_TOC *t = buf;
+        ULONG sectors = (ULONG)(g_size / 2048);
 
         if (out < sizeof *t)
             return complete(irp, STATUS_BUFFER_TOO_SMALL, 0);
@@ -456,7 +504,52 @@ static NTSTATUS cd_ioctl(PIRP irp, PIO_STACK_LOCATION io)
         t->TrackData[0].TrackNumber = 1;
         t->TrackData[0].Control = 0x04;    /* a data track */
         t->TrackData[0].Adr = 0x01;
+        lba_to_msf(0, t->TrackData[0].Address);
+        /* The lead-out (track 0xAA) sits at the end of the data, which is how
+         * the disc says how large it is. Without it the mount path cannot find
+         * the UDF anchor at the last sector. */
+        t->TrackData[1].TrackNumber = 0xAA;
+        t->TrackData[1].Control = 0x04;
+        t->TrackData[1].Adr = 0x01;
+        lba_to_msf(sectors, t->TrackData[1].Address);
         return complete(irp, STATUS_SUCCESS, sizeof *t);
+    }
+    case IOCTL_DISK_GET_LENGTH_INFO: {
+        FALCON_GET_LENGTH_INFORMATION *l = buf;
+
+        if (out < sizeof *l)
+            return complete(irp, STATUS_BUFFER_TOO_SMALL, 0);
+        l->Length.QuadPart = (LONGLONG)g_size;
+        return complete(irp, STATUS_SUCCESS, sizeof *l);
+    }
+    case IOCTL_STORAGE_READ_CAPACITY: {
+        FALCON_STORAGE_READ_CAPACITY *c = buf;
+
+        if (out < sizeof *c)
+            return complete(irp, STATUS_BUFFER_TOO_SMALL, 0);
+        RtlZeroMemory(c, sizeof *c);
+        c->Version = sizeof *c;
+        c->Size = sizeof *c;
+        c->BlockLength = 2048;
+        c->NumberOfBlocks.QuadPart = (LONGLONG)(g_size / 2048);
+        c->DiskLength.QuadPart = (LONGLONG)g_size;
+        return complete(irp, STATUS_SUCCESS, sizeof *c);
+    }
+    case IOCTL_CDROM_GET_LAST_SESSION: {
+        FALCON_CDROM_SESSION_DATA *s = buf;
+
+        if (out < sizeof *s)
+            return complete(irp, STATUS_BUFFER_TOO_SMALL, 0);
+        RtlZeroMemory(s, sizeof *s);
+        s->Length[0] = (UCHAR)((sizeof *s - 2) >> 8);
+        s->Length[1] = (UCHAR)(sizeof *s - 2);
+        s->FirstSession = 1;
+        s->LastSession = 1;
+        s->TrackData[0].TrackNumber = 1;
+        s->TrackData[0].Control = 0x04;
+        s->TrackData[0].Adr = 0x01;
+        lba_to_msf(0, s->TrackData[0].Address);
+        return complete(irp, STATUS_SUCCESS, sizeof *s);
     }
     case IOCTL_MOUNTDEV_QUERY_DEVICE_NAME: {
         PMOUNTDEV_NAME name = buf;
