@@ -249,6 +249,7 @@ include falcon-core/build.mk
 # source list is expanded as it is read.
 include falcon-hook/build.mk
 include falcon-winjump/build.mk
+include falcon-vdisk/build.mk
 include falcon-efi/build.mk
 include falcon-cli/build.mk
 include falcon-appliance/build.mk

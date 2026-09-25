@@ -244,6 +244,19 @@ the tree, so `#include <fs/exfat.h>` means one file wherever it is written.
   routines it needs): a missing import kills it before its first log line, so
   it imports only kernel32, advapi32 and user32, which every WinPE from
   Vista's on carries, and loads VirtDisk.dll at run time.
+- `falcon-vdisk/` the WinPE virtual-CD kernel driver (DESIGN Section 6.3),
+  for Windows older than 8, whose WinPE cannot attach an ISO (and 2000/XP,
+  which have no WinPE). A native-subsystem NT driver (`.sys`) built for both
+  widths from `src/vdisk.c` with mingw's DDK headers and `ntoskrnl`/`hal`
+  import libraries (no separate WDK). It presents the ISO as a read-only
+  CD-ROM CDFS mounts, reading the ISO's raw disk extents (the same map the
+  BIOS virtual CD and falcon-hook use) since WinPE cannot read the exFAT the
+  ISO lives on. winjump loads it (CreateService/StartService) and hands it
+  the extents through `src/vdiskio.h`. 32-bit Windows loads it unsigned;
+  64-bit needs the served boot config put into test-signing mode and the
+  driver signed with a throwaway cert, which Secure Boot on refuses (the
+  platform opt-out, DESIGN Section 7). Runs only in the installer's WinPE;
+  the installed Windows keeps signing enforcement.
 - `falcon-hook/` the program the loader appends to an ISO's initrd (DESIGN
   Section 6.4): freestanding static Linux, no libc, built twice, x86-64
   (`falcon-hook`) and i686 (`falcon-hook32`) from the same source: `src/sys.c`
