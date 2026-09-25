@@ -698,37 +698,58 @@ answered while writing this note: yes, along with `vhdmp.sys`, `vdrvroot.sys`,
    and see whether Windows mounts it. A surprise here would remove all injected
    code from the Windows route, so it is worth one experiment even at low odds.
 
-## 7. Rig findings (2026-09-25): the vanishing-CD limit for Windows before 8
+## 7. Rig findings (2026-09-25): Windows 7 and Vista, BIOS solved, EFI limited
 
-The full corpus was run through the loader under OVMF, which is the rig test
-Section 6.4 asked for. The loader serves the ISO as a virtual CD over EFI
-Block I/O on p2 (falcon-efi/src/iso), and that CD is gone at ExitBootServices,
-exactly as on real hardware. So the corpus does exercise the media-vanishes
-case, not a QEMU-persists shortcut.
+The corpus was run through both loaders, and the pre-8 Windows story split
+cleanly by firmware, because the medium behaves differently under each:
+
+- On **BIOS**, falcon-bios serves the ISO as a resident INT 13h CD that stays
+  in memory across the whole boot. bootmgr loads boot.wim into a WIM RAM disk,
+  WinPE runs from RAM, and winjump reaches winpeshl and serves Setup its source
+  through the falcon-vdisk driver. **Windows 7 (x86 and x64) and Vista x86 now
+  boot here end to end** once four separate bugs were fixed (Section 7.2).
+- On **EFI**, the loader serves the ISO as a firmware Block I/O CD that is
+  destroyed at ExitBootServices. Windows 7 and Vista WinPE wait on that device
+  in early kernel init and hang at "Starting Windows", before winpeshl ever
+  runs. That is the one case the RAM-disk work in 7.1 is about, and OVMF blocks
+  the only fix for it.
+
+The earlier draft of this section blamed the EFI vanishing-CD hang for the BIOS
+failures too. That was wrong: on BIOS the medium does not vanish, and the BIOS
+failures had four unrelated causes, all now fixed. This section is corrected to
+match.
+
+### 7.1 EFI: the vanishing-CD hang before winpeshl
+
+The loader serves the ISO as a virtual CD over EFI Block I/O on p2
+(falcon-efi/src/iso), gone at ExitBootServices exactly as on real hardware, so
+the corpus exercises the media-vanishes case rather than a QEMU-persists
+shortcut.
 
 - **Windows 8 and up (8.1, 10, 11, Server 2025, Macrium WinPE): pass.** Their
   WinPE reaches winpeshl, winjump attaches the ISO with `AttachVirtualDisk`,
   and Setup reads `\sources\install.wim` back through it (the harness measures
-  the p2 reads: "read 451 MiB of install.* through the ISO attached in
+  the p2 reads: "read 255 MiB of install.* through the ISO attached in
   Windows"). This is the whole route working end to end.
 
-- **Windows 7 x64: WinPE hangs before winpeshl.** It reaches the "Starting
-  Windows" splash and stays there to the 300 s timeout; Setup's UI never
-  appears, so winpeshl - and therefore winjump, and therefore falcon-vdisk -
-  never runs. The hang is in early kernel init, where the boot-start storage
-  and CD drivers come up and wait on the boot device that vanished at
-  ExitBootServices. Windows 8+ tolerates the missing device and finishes to
-  winpeshl; Windows 7 does not.
+- **Windows 7 x64 on EFI: WinPE hangs before winpeshl.** It reaches the
+  "Starting Windows" splash and stays there to the 300 s timeout; Setup's UI
+  never appears, so winpeshl - and therefore winjump, and therefore
+  falcon-vdisk - never runs (measured clean, off state, 2026-09-25). The hang
+  is in early kernel init, where the boot-start storage and CD drivers come up
+  and wait on the boot device that vanished at ExitBootServices. Windows 8+
+  tolerates the missing device and finishes to winpeshl; Windows 7 does not.
+  This does not happen on BIOS (Section 7.2), where the resident INT 13h CD
+  never vanishes.
 
   Consequence, and it is a real one: **loading the driver from winpeshl is too
-  late for Windows 7 and Vista.** winjump running as winpeshl assumes WinPE got
-  that far.
+  late for Windows 7 and Vista under EFI.**
 
   Confirmed with a persistent CD (bench rig, 2026-09-25): booting the same
   windows-7-x64 ISO as an ordinary QEMU CD-ROM that never vanishes, Win7's
   WinPE reaches the shell and Setup's "Enter your language" screen with no
   trouble. So Win7's WinPE is not the problem and needs neither winjump nor the
-  driver when the media stays: the whole failure is that our EFI-served CD
+  driver when the media stays: the whole EFI failure is that our EFI-served CD
   vanishes at ExitBootServices and Win7, unlike 8+, will not finish booting
   without it.
 
@@ -798,7 +819,61 @@ case, not a QEMU-persists shortcut.
   x64's is marginal. A firmware/architecture limit, the exit goal's allowed
   exception, not the hang above.
 
-### 7.1 32-bit Windows, characterized in full (2026-09-25)
+### 7.2 BIOS: Windows 7 and Vista boot (the four fixes)
+
+On BIOS the medium does not vanish, so pre-8 WinPE reaches winpeshl and winjump
+runs. Four separate bugs then stood between it and a served install source,
+each found by extracting winjump's own `X:\falcon-winjump.log` from inside
+WinPE on binhost and reading the served ISO's two filesystems by hand.
+
+1. **The "No disk in drive A:" dialog (winjump, commit 83d247f).** Windows 7
+   and Vista WinPE carry a floppy driver, so their drive set includes an empty
+   A:. winjump's drive scan queried it, and Windows raised a modal hard-error
+   dialog attributed to winpeshl's replacement, freezing the GUI with no shell
+   behind it. Windows 8+ WinPE has no floppy driver and so no A:, which is why
+   they never hit it. Fixed by `SetErrorMode(SEM_FAILCRITICALERRORS)` before
+   the scan.
+
+2. **The missing extent map (falcon-bios, commit 8831820).** Windows 7 and
+   Vista WinPE cannot read the exFAT the ISO lives on and have no
+   AttachVirtualDisk, so winjump falls to the falcon-vdisk driver, which serves
+   the ISO from its raw disk extents. That needs the extent map, and the BIOS
+   winjump config carried only `iso=` and `size=`, no `map=`; the EFI loader had
+   carried it since the driver route was added.
+
+3. **UDFS declining to mount (falcon-vdisk, commit 02934b0).** A Windows
+   install DVD is a UDF/ISO 9660 bridge: the ISO 9660 tree is a stub with only
+   a readme, the real sources live in the UDF tree. UDFS reads its anchor at the
+   disc's last sector, so it needs the medium's true size; the driver answered
+   no size query, so CDFS mounted the ISO 9660 stub instead and Setup found no
+   install source. Fixed by answering READ_TOC's lead-out,
+   IOCTL_DISK_GET_LENGTH_INFO, IOCTL_STORAGE_READ_CAPACITY and
+   IOCTL_CDROM_GET_LAST_SESSION, each reporting the ISO's size.
+
+4. **The harness could not see it (tools/coverage, commits 7342ee7, d2479cc).**
+   `screen_kind` knew only Windows 8+'s flat dark-blue Setup; Windows 7 is a
+   blue gradient and Vista a green-to-blue one, so both read as "graphical" and
+   the install.* probe never fired. The Enter nudges walked Setup onto the
+   license page before it could. And the probe read once, too early for a
+   Windows 7 DVD whose UDF mount lands a few seconds after the volume answers.
+   Fixed: the classifier matches the gradients, the nudges stop once Setup is
+   up, and the probe re-opens a prompt and retries the read.
+
+Measured on BIOS (2026-09-25): windows-7-sp1-x86 reads 338 MiB of install.*,
+windows-7-x64 405 MiB, windows-vista-x86 349 MiB, each through the ISO the
+driver serves; windows-server-2025, a modern Windows that had been failing BIOS
+for the harness reason alone, reads 160 MiB and passes too. Windows 7 x64 needs
+no driver signing: its WinPE loads the unsigned falcon-vdisk.
+
+**windows-vista-sp1-x64 does not boot.** Its `winpeshl.exe` is still the stock
+18,432-byte Vista binary, so the boot.wim winpeshl patch did not take and
+winjump never ran; the copy then sees only falcon-bios's own INT 13h CD as a
+"device not ready". The patch works on Vista x86 and Windows 7 x64, so this is
+a WIM-image quirk specific to Vista SP1 x64's boot.wim, likely the patch
+targeting the wrong image through the header's boot-metadata resource. Not yet
+fixed.
+
+### 7.3 32-bit Windows, characterized in full (2026-09-25)
 
 The corpus runs a BIOS machine in two CPU columns: `bios` (the 64-bit host CPU
 in legacy mode) and `bios32` (a Pentium III, 32-bit only, with SSE but no SSE2
@@ -814,22 +889,22 @@ Every 32-bit (x86) Windows medium in the corpus, with its root cause:
 |---|---|---|---|
 | windows-10-22h2-x86 | PASS | FAIL (reading winpeshl headers) | winjump32 proven on bios. On the P3, Windows 10 needs PAE/NX/SSE2 the P3 lacks: an allowed architecture exception. It currently fails one stage before the CPU check names that, a cosmetic imprecision, not a boot regression. |
 | windows-8.1-x86 | PASS | FAIL (checking the processor: no SSE2) | winjump32 proven on bios. P3 correctly rejected: 8.1 needs SSE2/NX. Allowed architecture exception. |
-| windows-7-sp1-x86 | FAIL (no userland, text console) | FAIL (checking the processor: no SSE2) | The Win7 boot-medium hang (Section 7), same root cause as windows-7-x64. The P3 CPU check cites SSE2, which Windows 7 does not actually require; it would not boot there regardless, because of the medium hang. |
-| windows-vista-x86 | FAIL (no userland, text console) | FAIL (checking the processor: no SSE2) | Same as Windows 7: the boot-medium hang. Vista does not require SSE2 either. |
+| windows-7-sp1-x86 | PASS (338 MiB) | FAIL (checking the processor: no SSE2) | Boots after the four Section 7.2 fixes. The P3 CPU check cites SSE2, which Windows 7 does not actually require, but the P3 also lacks NX, so the outcome (no boot on a P3) is an allowed architecture exception. |
+| windows-vista-x86 | PASS (349 MiB) | FAIL (checking the processor: no SSE2) | Boots after the Section 7.2 fixes. Same P3 note as Windows 7. |
 | windows-2000-pro-x86 | FAIL (no userland, graphical) | FAIL (no userland, graphical) | No WinPE at all; text-mode setup, a wholly separate route not yet built. |
 | windows-xp-pro-sp3-x86 | FAIL (no userland, graphical) | FAIL (no userland, graphical) | Same as 2000: text-mode setup. |
 
 What this settles:
 
-- **The 32-bit jump binary (falcon-winjump32.exe) works.** windows-10-22h2-x86
-  and windows-8.1-x86 pass `bios drop` end to end, which is winjump32 running as
-  winpeshl, attaching the ISO, and Setup reading install.* through it.
-- **The remaining 32-bit Windows non-boots reduce to two causes, neither a
-  simple architecture or Secure Boot exception:** the Windows 7 / Vista
-  boot-medium-persistence hang (all four of x86/x64 * bios/efi share it), and
-  the Windows 2000 / XP text-mode installer, which has no WinPE and needs a
-  different route entirely.
+- **The 32-bit jump binary (falcon-winjump32.exe) works.** 10-x86, 8.1-x86,
+  7-sp1-x86 and vista-x86 all pass `bios drop` end to end: winjump32 running as
+  winpeshl, serving the ISO (through AttachVirtualDisk on 8.1/10, through the
+  driver on 7/Vista), and Setup reading install.* through it.
+- **The remaining 32-bit non-boots are the Windows 2000 / XP text-mode
+  installer**, which has no WinPE and needs a different route entirely (not yet
+  built).
 - **8.1-x86 and 10-x86 on the Pentium III are genuine architecture exceptions:**
-  those releases require SSE2 and NX that a P3 does not have. The one flaw is
-  that windows-10-x86 reports it at the wrong stage; the outcome (does not, and
-  cannot, boot on a P3) is correct.
+  those releases require SSE2 and NX that a P3 does not have. 7-x86 and vista-x86
+  are refused on the P3 for the same reason (no NX), which is why they pass on
+  the 64-bit `bios` column but not on `bios32`. windows-10-x86 reports it one
+  stage early; the outcome (no boot on a P3) is correct.
