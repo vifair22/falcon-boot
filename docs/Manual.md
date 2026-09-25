@@ -83,9 +83,7 @@ menu, on screen and serial:
 | both | `WIN` | `CHN` | Windows media with nothing to patch |
 | UEFI | `BSD` | `CHN` | the medium is not one the memory-disk route applies to |
 | BIOS | `BSD` | `DIR` | as above |
-
-On the BIOS loader, `DIR` with no boot entry it can take stops with a
-message rather than falling through; `c` on the row chainloads.
+| BIOS | `DIR` | `CHN` | no boot entry in the ISO's configuration the loader can take, or its kernel is not a Linux kernel the loader can start (DOS, BSD, anything else) |
 
 A route falls through only before it has committed to the medium. A
 failure after that is reported on screen and the key returns to the menu.

@@ -949,7 +949,9 @@ The drop FAILs for FreeDOS, ReactOS, the BSDs, Haiku and memtest86+ are
 "direct boot failed" within seconds: Enter is the direct route, these are not
 Linux, and on BIOS a direct boot with no entry it can take stops instead of
 falling through to the chainload (12.3.5 of DESIGN; the UEFI loader does
-fall through). Whether the BIOS menu should fall through too is open.
+fall through). Decided 2026-09-25 that it should, and it does now: a direct
+boot that stops before committing goes on to the medium's own loader, so
+Enter on those rows now means what `c` did.
 
 What the table asks for, in the order it would pay: floppy and hard disk
 emulation in the resident (Haiku, memtest86+, and every DOS-era image); a

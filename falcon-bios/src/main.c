@@ -273,17 +273,25 @@ static int boot_bsd(const survey_entry *e)
     return 1;
 }
 
+static void boot_target(const survey_entry *e, const family_desc *fam);
+
 /* The ISO's kernel, directly, with falcon-hook (DESIGN Section 6.4). An ISO
- * with no boot entry this loader can take stops here with the key that
- * boots its own loader, rather than falling through to it: on this
- * platform that is a separate choice (docs/Manual.md, Section 1.3). */
-static void boot_direct(const survey_entry *e)
+ * this route cannot take (no boot entry it can read, a kernel that is not
+ * one it can start) goes on to its own loader, as on the UEFI loader
+ * (docs/Manual.md, Section 1.3): that is what Enter on DOS, BSD or anything
+ * else that is not Linux means. A failure after the route committed is
+ * reported here. */
+static void boot_direct(const survey_entry *e, const family_desc *fam)
 {
     boot_result r;
 
     boot_result_init(&r);
     booting("DIR", e->label);
     (void)scan_direct(&g_p2, g_p2_part, &e->ent, g_p2_block, &r);
+    if (r.fallthrough) {
+        boot_target(e, fam);
+        return;
+    }
 
     screen_page();
     screen_out16(e->label);
@@ -336,7 +344,7 @@ static void boot_plain(size_t idx, int which)
     if (!chain && id == (int)FAMILY_BSD && boot_bsd(e))
         return;
     if (!chain) {
-        boot_direct(e);
+        boot_direct(e, fam);
         return;
     }
     boot_target(e, fam);

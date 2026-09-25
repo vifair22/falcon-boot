@@ -3140,12 +3140,17 @@ flowchart TD
     B -- "yes, edits fit" --> BSD[BSD]
     B -- "not_bsd" --> DIR
     B -- no --> DIR[DIR]
-    DIR -- "no CD boot entry" --> STOP["direct boot failed while reading<br/>the ISO's boot configuration<br/>(c chainloads)"]
+    DIR -- "no CD boot entry, or not a Linux kernel it can start" --> CHN
 ```
 
 Unlike the UEFI loader, a BSD medium that is not one the memory-disk route
-applies to goes on to the direct boot, and `DIR` with no entry stops
-rather than chainloading.
+applies to goes on to the direct boot. `DIR` goes on to `CHN`, as on the
+UEFI loader, when it stops before committing because the medium is not one
+it can take (`boot_result.fallthrough`): no filesystem or boot entry it can
+read, a kernel that is not on the medium, or one `linux_boot` refuses before
+placing anything (`linux_not_taken`). A 64-bit kernel on a processor without
+long mode is not one of those: the medium's own loader would start the same
+kernel.
 
 #### 12.3.6 DIR: direct kernel boot
 

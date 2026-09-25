@@ -214,11 +214,13 @@ static int boot_entry(const bootcfg_entry *e, fs_vol *p2,
     if (e->kernel_unresolved) {
         r->advice = "the entry names its kernel through a value only GRUB "
                     "could compute.";
+        r->fallthrough = 1;
         return -1;
     }
     if (bootfs_open(&g_bctx, e->kernel, &g_kernel, &size) != FS_OK) {
         boot_result_advise(r, "the entry's kernel is not on the medium: ",
                            e->kernel);
+        r->fallthrough = 1;
         return -1;
     }
     kernel.read = fs_file_read_cb;
@@ -282,6 +284,7 @@ static int boot_entry(const bootcfg_entry *e, fs_vol *p2,
     g_title = e->title;
     (void)linux_boot(&kernel, g_obj, i, cmd, dir_handoff);
     boot_result_advise(r, linux_why(), (const char *)0);
+    r->fallthrough = linux_not_taken();
     return -1;
 }
 
@@ -340,8 +343,10 @@ int scan_direct(fs_vol *p2, const gpt_part *p2part, const fs_dirent *ent,
     size_t i;
 
     cfgvol = open_medium(p2, ent, r);
-    if (cfgvol == (fs_vol *)0)
+    if (cfgvol == (fs_vol *)0) {
+        r->fallthrough = 1;
         return -1;
+    }
 
     r->stage = "reading the ISO's boot configuration";
     bootfs_src(&g_bctx, cfgvol, &g_src);
@@ -349,6 +354,7 @@ int scan_direct(fs_vol *p2, const gpt_part *p2part, const fs_dirent *ent,
                      &g_cfg) != BOOTCFG_OK ||
         g_cfg.pick >= BOOTCFG_ENTRIES_MAX) {
         r->advice = "the ISO has no boot entry this loader can take.";
+        r->fallthrough = 1;
         return -1;
     }
     e = &g_cfg.entry[g_cfg.pick];
