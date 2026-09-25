@@ -136,6 +136,14 @@ int nextboot_is_reserved(const char *name);
  * and an old machine's POST, short enough that "later" is not "now". */
 #define NEXTBOOT_WINDOW_SECONDS 600u
 
+/* How far the clock may appear to have gone BACK between setting and booting
+ * and still be the same clock. Something may correct the RTC in between (an
+ * NTP-synced kernel writing it, hwclock at shutdown), and an RTC a few seconds
+ * fast then reads earlier at boot than it did when the marker was set. Found
+ * in the rig, where the host's RTC ran four seconds ahead of the time QEMU's
+ * RTC follows. */
+#define NEXTBOOT_SKEW_SECONDS 120u
+
 typedef enum {
     NEXTBOOT_SECTOR_NONE = 0,  /* not a marker: leave the sector alone */
     NEXTBOOT_SECTOR_VALUE,     /* a marker; stamp and value filled in */
@@ -166,9 +174,12 @@ typedef enum {
 } nextboot_age;
 
 /* How old a stamp is against now, on the same clock. Equal counts as fresh:
- * both sides read whole seconds. A clock that went backwards is refused,
- * because nothing about the marker can then be judged. */
-nextboot_age nextboot_age_of(uint64_t stamp, uint64_t now, uint64_t window);
+ * both sides read whole seconds. A stamp up to `skew` seconds after now is
+ * fresh too (NEXTBOOT_SKEW_SECONDS says why); one further ahead is FUTURE and
+ * refused, because a clock that went back that far says nothing about when
+ * the marker was set. */
+nextboot_age nextboot_age_of(uint64_t stamp, uint64_t now, uint64_t window,
+                             uint64_t skew);
 
 /* The RTC's BCD digits as INT 1Ah reports them, century first
  * (bcd[0] century, [1] year, [2] month, [3] day, [4] hour, [5] minute,

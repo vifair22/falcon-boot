@@ -902,6 +902,16 @@ an unknown reserved value each end at a note and the menu. The sector reads
 zero after every one of them, and a sector of 0xA5 bytes, which is not a
 marker, is left byte for byte as it was.
 
+End to end with archusb's writer: `archusb-boot-next set arch` (its BIOS
+branch, pointed at an image of the rig stick that `mkstick bios` had given
+stages) wrote the marker, SeaBIOS booted that image as its only disk, and
+falcon-bios cleared the marker and opened at the passphrase prompt. That run
+is also why the window allows a clock that went back: the laptop's RTC ran
+four seconds ahead of the system time QEMU's RTC follows, so the marker was
+stamped four seconds "after" the boot read it, and the first build refused
+it. Anything that corrects the RTC between the two readings does the same,
+so up to two minutes backwards counts as fresh.
+
 ## 7. Risks, in the order they matter
 
 **7.1 The `INT 13h` resident is a spike, not an estimate.** The ~1,000 above

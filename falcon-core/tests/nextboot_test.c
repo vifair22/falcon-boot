@@ -397,12 +397,26 @@ static void test_sector_write_refusals(void **state)
 static void test_age(void **state)
 {
     (void)state;
-    assert_int_equal(nextboot_age_of(1000u, 1000u, 600u), NEXTBOOT_AGE_FRESH);
-    assert_int_equal(nextboot_age_of(1000u, 1600u, 600u), NEXTBOOT_AGE_FRESH);
-    assert_int_equal(nextboot_age_of(1000u, 1601u, 600u), NEXTBOOT_AGE_STALE);
-    assert_int_equal(nextboot_age_of(1000u, 999u, 600u), NEXTBOOT_AGE_FUTURE);
-    assert_int_equal(nextboot_age_of(0u, ~(uint64_t)0, 600u),
+    assert_int_equal(nextboot_age_of(1000u, 1000u, 600u, 120u),
+                     NEXTBOOT_AGE_FRESH);
+    assert_int_equal(nextboot_age_of(1000u, 1600u, 600u, 120u),
+                     NEXTBOOT_AGE_FRESH);
+    assert_int_equal(nextboot_age_of(1000u, 1601u, 600u, 120u),
                      NEXTBOOT_AGE_STALE);
+    assert_int_equal(nextboot_age_of(0u, ~(uint64_t)0, 600u, 120u),
+                     NEXTBOOT_AGE_STALE);
+    /* A clock corrected back a little between setting and booting: the rig
+     * saw four seconds. */
+    assert_int_equal(nextboot_age_of(1004u, 1000u, 600u, 120u),
+                     NEXTBOOT_AGE_FRESH);
+    assert_int_equal(nextboot_age_of(1120u, 1000u, 600u, 120u),
+                     NEXTBOOT_AGE_FRESH);
+    assert_int_equal(nextboot_age_of(1121u, 1000u, 600u, 120u),
+                     NEXTBOOT_AGE_FUTURE);
+    assert_int_equal(nextboot_age_of(1001u, 1000u, 600u, 0u),
+                     NEXTBOOT_AGE_FUTURE);
+    assert_int_equal(nextboot_age_of(~(uint64_t)0, 0u, 600u, 120u),
+                     NEXTBOOT_AGE_FUTURE);
 }
 
 /* Checked against `date -u -d @N`: the number Linux's since_epoch gives for

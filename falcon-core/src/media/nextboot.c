@@ -209,10 +209,11 @@ int nextboot_sector_write(uint8_t *sec, size_t len, uint64_t stamp,
 
 /* ---- dating it ---- */
 
-nextboot_age nextboot_age_of(uint64_t stamp, uint64_t now, uint64_t window)
+nextboot_age nextboot_age_of(uint64_t stamp, uint64_t now, uint64_t window,
+                             uint64_t skew)
 {
     if (now < stamp)
-        return NEXTBOOT_AGE_FUTURE;
+        return stamp - now <= skew ? NEXTBOOT_AGE_FRESH : NEXTBOOT_AGE_FUTURE;
     if (now - stamp > window)
         return NEXTBOOT_AGE_STALE;
     return NEXTBOOT_AGE_FRESH;

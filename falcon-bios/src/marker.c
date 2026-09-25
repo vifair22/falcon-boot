@@ -194,8 +194,8 @@ marker_state marker_take(const bios_disk *d, char *out, size_t cap)
     bios_puts(", now ");
     bios_put_dec(now);
     bios_puts("\n");
-    if (nextboot_age_of(stamp, now, NEXTBOOT_WINDOW_SECONDS) !=
-        NEXTBOOT_AGE_FRESH) {
+    if (nextboot_age_of(stamp, now, NEXTBOOT_WINDOW_SECONDS,
+                        NEXTBOOT_SKEW_SECONDS) != NEXTBOOT_AGE_FRESH) {
         log_state("cleared; not set within the window");
         out[0] = '\0';
         return MARKER_STALE;

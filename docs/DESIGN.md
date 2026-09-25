@@ -932,8 +932,10 @@ INT 1Ah read through `nextboot_rtc_seconds`. A BIOS machine keeps its RTC in
 whatever zone the installed OS prefers, and reading one clock one way on both
 sides makes the zone cancel out. What can still break it is something
 rewriting the RTC between the two readings (an NTP sync that sets the
-hardware clock): the marker then reads as stale or as set in the future, and
-is refused, which is the safe direction.
+hardware clock): a correction of up to two minutes backwards is allowed
+(`NEXTBOOT_SKEW_SECONDS`), since an RTC a few seconds fast reads earlier once
+corrected; anything larger reads as stale or as set in the future and is
+refused, which is the safe direction.
 
 **Sidecar layout: named by the source ISO's checksum (decision 2026-09-13).**
 Prepared artifacts live under the reserved directory of Section 6.2, in a
