@@ -912,6 +912,51 @@ stamped four seconds "after" the boot read it, and the first build refused
 it. Anything that corrects the RTC between the two readings does the same,
 so up to two minutes backwards counts as fresh.
 
+## 6j. 32-bit Windows, and a wider 32-bit corpus (2026-09-25)
+
+The Windows route puts falcon-winjump in place of `winpeshl.exe`, and winjump
+was built for x64 only, so a 32-bit WinPE could never start it. It is built
+twice now, from one source (`winjump32.exe`, `i686-w64-mingw32-gcc`, with
+exactly the x64 build's imports), and falcon-bios reads the machine type out
+of the boot image's own `winpeshl.exe` headers to choose (DESIGN 12.3.9). In
+the harness, Windows 10 22H2 x86 passes the BIOS drop: Setup read 330 MiB of
+its install image through the ISO the i686 winjump attached.
+
+On the Pentium III it cannot: Windows 8 and later need PAE, NX and SSE2, and
+bootmgr reset the machine silently. falcon-bios now asks CPUID first and
+names what is missing ("this processor has no SSE2"). Windows 7 is a separate
+wall and is not addressed: its WinPE cannot attach an ISO at all
+(`AttachVirtualDisk` gained ISO support in Windows 8), 32-bit or 64-bit.
+
+Thirteen 32-bit rows went into the corpus with it. What the harness said,
+read against the screenshots, because several of these systems write nothing
+to serial and take no DHCP lease:
+
+| media | BIOS | what the screen shows |
+|---|---|---|
+| Windows 10 22H2 x86 | drop PASS | Setup, reading install.wim through the attached ISO |
+| Clonezilla, GParted, antiX 26 (i686) | drop PASS in both columns | live systems up |
+| Tiny Core 17.1 | PASS in every BIOS cell | |
+| Slackware 15.0 | PASS on the host CPU | on the Pentium III its `huge.s` kernel prints nothing: probably its own processor floor |
+| OpenBSD 7.9 | chain FAIL | the installer is up; it uses the VGA console only, so the judge cannot see it |
+| FreeDOS 1.4 | chain FAIL | DOS boots off the virtual CD, then its CD driver (UDVD2) drives the ATAPI hardware directly, cannot see an INT 13h CD, and asks Abort, Retry, Fail |
+| ReactOS 0.4.16 | chain FAIL | FreeLoader and the kernel load, then `IO1_INITIALIZATION_FAILED`: the protected-mode kernel loses the INT 13h CD, the wall chained Linux meets |
+| FreeBSD 14.5 i386 | drop FAIL | the memory-disk route: BTX halts while the i386 loader pulls a 1.1 GB image into its 32-bit space |
+| NetBSD 10.2 | chain FAIL | its own boot code, chained off the virtual CD, resets the machine right after the handoff (the harness's Enter nudges then reach the menu and report a DIR failure) |
+| Haiku R1b6, memtest86+ 8.10 | chain refused | their El Torito boot images ask for floppy or hard disk emulation, which the resident does not do |
+
+The drop FAILs for FreeDOS, ReactOS, the BSDs, Haiku and memtest86+ are
+"direct boot failed" within seconds: Enter is the direct route, these are not
+Linux, and on BIOS a direct boot with no entry it can take stops instead of
+falling through to the chainload (12.3.5 of DESIGN; the UEFI loader does
+fall through). Whether the BIOS menu should fall through too is open.
+
+What the table asks for, in the order it would pay: floppy and hard disk
+emulation in the resident (Haiku, memtest86+, and every DOS-era image); a
+look at why NetBSD's boot code resets; a judge that reads the screen for
+systems with no serial console. FreeDOS and ReactOS need a driver of their
+own inside the booted system, which is the Ventoy question again.
+
 ## 7. Risks, in the order they matter
 
 **7.1 The `INT 13h` resident is a spike, not an estimate.** The ~1,000 above

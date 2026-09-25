@@ -33,15 +33,15 @@ example (2026-09-20): its default entry is "Clonezilla live (VGA
 and listing the disk it found, and serial stayed empty for 300s. Read
 the screenshot before believing one of these.
 
-Loader: 0.1.0_20260920.0816.release, 0.1.0_20260920.0859.release, 0.1.0_20260920.1824.release, 0.1.0_20260924.1655.release
+Loader: 0.1.0_20260920.0816.release, 0.1.0_20260920.0859.release, 0.1.0_20260920.1824.release, 0.1.0_20260924.1655.release, 0.1.0_20260925.0145.release, 0.1.0_20260925.0152.release, 0.1.0_20260925.0228.release
 
 ## Summary
 
 | tier | ISOs run | SB off, drop | target | SB on, MS CA | target | SB on, own keys | BIOS, drop | BIOS, Pentium III, drop |
 |---|---|---|---|---|---|---|---|---|
-| A | 23 | 19/22 (86%) | 100% | 20/22 (90%) | 95% | 19/22 (86%) | 21/23 (91%) | 1/1 (100%) |
-| B | 11 | 9/9 (100%) | 90% | 9/9 (100%) | - | 9/9 (100%) | 11/11 (100%) | 2/2 (100%) |
-| C | 6 | 5/6 (83%) | - | 2/6 (33%) | - | 1/6 (16%) | 1/6 (16%) | - |
+| A | 27 | 19/22 (86%) | 100% | 20/22 (90%) | 95% | 19/22 (86%) | 25/27 (92%) | 4/5 (80%) |
+| B | 13 | 9/9 (100%) | 90% | 9/9 (100%) | - | 9/9 (100%) | 13/13 (100%) | 3/4 (75%) |
+| C | 13 | 5/6 (83%) | - | 2/6 (33%) | - | 1/6 (16%) | 1/13 (7%) | 0/7 (0%) |
 
 ## Matrix
 
@@ -87,6 +87,19 @@ Loader: 0.1.0_20260920.0816.release, 0.1.0_20260920.0859.release, 0.1.0_20260920
 | alpine-std-x86-3.24.2 | B | alpine | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | PASS | FAIL | N/A | PASS | FAIL | N/A |
 | archlinux32-2024.07.10 | A | arch | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | PASS | FAIL | N/A | PASS | FAIL | N/A |
 | debian-netinst-12.15-i386 | B | debian-installer | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | PASS | FAIL | N/A | PASS | FAIL | N/A |
+| windows-10-22h2-x86 | A | windows | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | PASS | FAIL | N/A | FAIL | FAIL | N/A |
+| freedos-1.4-live | C | freedos | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | FAIL | FAIL | N/A | FAIL | FAIL | N/A |
+| reactos-0.4.16 | C | reactos | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | FAIL | FAIL | N/A | FAIL | FAIL | N/A |
+| freebsd-disc1-14.5-i386 | C | freebsd | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | FAIL | FAIL | N/A | FAIL | FAIL | N/A |
+| openbsd-7.9-i386 | C | openbsd | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | FAIL | FAIL | N/A | FAIL | FAIL | N/A |
+| netbsd-10.2-i386 | C | netbsd | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | FAIL | FAIL | N/A | FAIL | FAIL | N/A |
+| haiku-r1b6-x86_gcc2h | C | haiku | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | FAIL | FAIL | N/A | FAIL | FAIL | N/A |
+| clonezilla-3.2.0-5-i686 | A | debian-live | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | PASS | FAIL | N/A | PASS | FAIL | N/A |
+| gparted-1.6.0-10-i686 | A | debian-live | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | PASS | FAIL | N/A | PASS | FAIL | N/A |
+| memtest86plus-8.10-i586 | C | memtest | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | FAIL | FAIL | N/A | FAIL | FAIL | N/A |
+| antix-26-386-full | A | antix | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | PASS | FAIL | N/A | PASS | FAIL | N/A |
+| tinycore-17.1 | B | tinycore | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | PASS | PASS | N/A | PASS | PASS | N/A |
+| slackware-15.0-dvd | B | slackware | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | PASS | PASS | N/A | FAIL | FAIL | N/A |
 
 ## Failures
 
@@ -266,4 +279,43 @@ Loader: 0.1.0_20260920.0816.release, 0.1.0_20260920.0859.release, 0.1.0_20260920
 | archlinux32-2024.07.10 | bios32 | chain | FAIL | no userland within 300s (screen: text console) |
 | debian-netinst-12.15-i386 | bios | chain | FAIL | no userland within 300s (screen: graphical) |
 | debian-netinst-12.15-i386 | bios32 | chain | FAIL | no userland within 300s (screen: graphical) |
+| windows-10-22h2-x86 | bios | chain | FAIL | no userland within 300s (screen: Windows Setup) |
+| windows-10-22h2-x86 | bios32 | drop | FAIL | back at the menu: boot failed while reading winpeshl.exe's headers (screen: text console) |
+| windows-10-22h2-x86 | bios32 | chain | FAIL | no userland within 300s (screen: text console) |
+| freedos-1.4-live | bios | drop | FAIL | back at the menu: direct boot failed while starting the kernel (screen: text console) |
+| freedos-1.4-live | bios | chain | FAIL | no userland within 300s (screen: text console) |
+| freedos-1.4-live | bios32 | drop | FAIL | back at the menu: direct boot failed while starting the kernel (screen: text console) |
+| freedos-1.4-live | bios32 | chain | FAIL | no userland within 300s (screen: text console) |
+| reactos-0.4.16 | bios | drop | FAIL | back at the menu: direct boot failed while reading the ISO's boot configuration (screen: text console) |
+| reactos-0.4.16 | bios | chain | FAIL | no userland within 300s (screen: graphical) |
+| reactos-0.4.16 | bios32 | drop | FAIL | back at the menu: direct boot failed while reading the ISO's boot configuration (screen: text console) |
+| reactos-0.4.16 | bios32 | chain | FAIL | no userland within 300s (screen: graphical) |
+| freebsd-disc1-14.5-i386 | bios | drop | FAIL | no userland within 300s (screen: text console) |
+| freebsd-disc1-14.5-i386 | bios | chain | FAIL | no userland within 300s (screen: text console) |
+| freebsd-disc1-14.5-i386 | bios32 | drop | FAIL | no userland within 300s (screen: text console) |
+| freebsd-disc1-14.5-i386 | bios32 | chain | FAIL | no userland within 300s (screen: text console) |
+| openbsd-7.9-i386 | bios | drop | FAIL | back at the menu: direct boot failed while reading the ISO's boot configuration (screen: text console) |
+| openbsd-7.9-i386 | bios | chain | FAIL | no userland within 300s (screen: text console) |
+| openbsd-7.9-i386 | bios32 | drop | FAIL | back at the menu: direct boot failed while reading the ISO's boot configuration (screen: text console) |
+| openbsd-7.9-i386 | bios32 | chain | FAIL | no userland within 300s (screen: text console) |
+| netbsd-10.2-i386 | bios | drop | FAIL | back at the menu: direct boot failed while reading the ISO's boot configuration (screen: text console) |
+| netbsd-10.2-i386 | bios | chain | FAIL | back at the menu: direct boot failed while reading the ISO's boot configuration (screen: text console) |
+| netbsd-10.2-i386 | bios32 | drop | FAIL | back at the menu: direct boot failed while reading the ISO's boot configuration (screen: text console) |
+| netbsd-10.2-i386 | bios32 | chain | FAIL | back at the menu: direct boot failed while reading the ISO's boot configuration (screen: text console) |
+| haiku-r1b6-x86_gcc2h | bios | drop | FAIL | back at the menu: direct boot failed while reading the ISO's boot configuration (screen: text console) |
+| haiku-r1b6-x86_gcc2h | bios | chain | FAIL | back at the menu: boot failed while reading the ISO's boot catalog (screen: text console) |
+| haiku-r1b6-x86_gcc2h | bios32 | drop | FAIL | back at the menu: direct boot failed while reading the ISO's boot configuration (screen: text console) |
+| haiku-r1b6-x86_gcc2h | bios32 | chain | FAIL | back at the menu: boot failed while reading the ISO's boot catalog (screen: text console) |
+| clonezilla-3.2.0-5-i686 | bios | chain | FAIL | no userland within 300s (screen: text console) |
+| clonezilla-3.2.0-5-i686 | bios32 | chain | FAIL | no userland within 300s (screen: text console) |
+| gparted-1.6.0-10-i686 | bios | chain | FAIL | no userland within 300s (screen: text console) |
+| gparted-1.6.0-10-i686 | bios32 | chain | FAIL | no userland within 300s (screen: text console) |
+| memtest86plus-8.10-i586 | bios | drop | FAIL | back at the menu: direct boot failed while reading the ISO's boot configuration (screen: text console) |
+| memtest86plus-8.10-i586 | bios | chain | FAIL | back at the menu: boot failed while reading the ISO's boot catalog (screen: text console) |
+| memtest86plus-8.10-i586 | bios32 | drop | FAIL | back at the menu: direct boot failed while reading the ISO's boot configuration (screen: text console) |
+| memtest86plus-8.10-i586 | bios32 | chain | FAIL | back at the menu: boot failed while reading the ISO's boot catalog (screen: text console) |
+| antix-26-386-full | bios | chain | FAIL | no userland within 300s (screen: text console) |
+| antix-26-386-full | bios32 | chain | FAIL | no userland within 300s (screen: text console) |
+| slackware-15.0-dvd | bios32 | drop | FAIL | no userland on serial within 300s after starting huge.s (screen: text console) |
+| slackware-15.0-dvd | bios32 | chain | FAIL | no userland within 300s (screen: text console) |
 
