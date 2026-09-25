@@ -908,3 +908,47 @@ What this settles:
   are refused on the P3 for the same reason (no NX), which is why they pass on
   the 64-bit `bios` column but not on `bios32`. windows-10-x86 reports it one
   stage early; the outcome (no boot on a P3) is correct.
+
+### 7.4 Windows 2000 and XP: text-mode setup (route not yet built)
+
+2000 and XP have no WinPE. They boot a text-mode setup: the CD's El Torito boot
+image loads setupldr, which reads txtsetup.sif, the kernel, the HAL and the
+boot-start drivers off the CD through INT 13h, then hands to the NT kernel.
+falcon-bios serves all of that as its INT 13h virtual CD, and it works up to
+the handover: both windows-2000-pro-x86 and windows-xp-pro-sp3-x86 reach the NT
+kernel and bugcheck 0x7B INACCESSIBLE_BOOT_DEVICE (0xC0000034,
+OBJECT_NAME_NOT_FOUND), measured 2026-09-25.
+
+The cause is the same shape as Windows 7: the running kernel re-accesses its
+boot device through its own storage stack, not INT 13h. atapi.sys enumerates
+real ATAPI hardware; the INT 13h virtual CD is not a device it binds to, so the
+CD's ARC path does not resolve and the boot device is missing. Unlike 7 and
+Vista there is no winpeshl to run winjump from, so the driver cannot be loaded
+from userland.
+
+The route, when built, is firadisk/winvblock-shaped: a driver that presents the
+ISO as a device the NT kernel binds to, injected into text-mode setup by
+patching the served ISO. The pieces, in build order, with the obstacles found:
+
+1. A driver text-mode setup loads. falcon-vdisk already presents a CD-ROM from
+   the ISO's raw disk extents, and its API use (ZwCreateFile/ZwReadFile,
+   IoRegisterBootDriverReinitialization, the mount-manager IOCTLs, a servicing
+   thread) is all NT 5.0+; the 0x0600 build may run on XP unchanged. But the
+   mingw DDK will not compile it at _WIN32_WINNT below 0x0600 (wdm.h names
+   SYSTEM_POWER_STATE_CONTEXT, defined only from 0x0600), so an XP-targeted
+   build needs that type stubbed. Whether XP loads a root-enumerated CD-ROM
+   driver through txtsetup.sif's [SCSI.Load] (where firadisk goes) or wants
+   another section is the open question, and the first thing to settle.
+2. Patch the served ISO for the XP layout. Add the .sys and rewrite
+   i386/txtsetup.sif ([SCSI.Load], [SCSI], [HardwareIdsDatabase],
+   [SourceDisksFiles]) and i386/dosnet.inf. This is an ISO 9660 + Joliet edit
+   over the virtual CD's overlay, separate from the boot.wim/UDF patch that 7
+   and Vista use: txtsetup.sif grows, so its directory record and the appended
+   file both need placing, the same shape as the WIM tail.
+3. Give the driver the ISO's extents without winjump to hand them over. Bake the
+   extent map into the driver at patch time, or leave it at a sector the driver
+   reads. atapi.sys must enumerate the physical stick before the driver reads
+   the ISO off it, so the load order matters.
+
+Each piece is real work and they interlock: nothing boots until all three are
+in, so the first end-to-end test is late. This is a focused multi-session build.
