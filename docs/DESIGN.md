@@ -3256,7 +3256,14 @@ no map and finds its medium only if its initramfs can do so unaided.
 #### 12.3.9 WIN: Windows install media
 
 The same patch as the UEFI route (12.2.13), computed by the same falcon-core
-code; only the serving differs.
+code; only the serving differs, and which build of winjump goes in. The jump
+binary replaces `winpeshl.exe`, and a 32-bit WinPE cannot start a 64-bit
+program, so falcon-bios embeds winjump twice (x64 and i686, one source) and
+reads the machine type out of the boot image's own `winpeshl.exe` headers
+(`wim_winpeshl`, `wim_read_head`, `pe_parse`). A 64-bit boot.wim on a
+processor without long mode is refused with a sentence, as `linux.c` refuses
+a 64-bit kernel. The UEFI loader embeds the x64 build only: 32-bit Windows
+starts from 32-bit UEFI, which is out of scope (Section 1).
 
 ```mermaid
 sequenceDiagram
@@ -3265,8 +3272,10 @@ sequenceDiagram
     participant M as bootmgr, winload
     participant W as winjump (WinPE)
     participant ST as Setup
-    L->>L: udf_mount, boot.wim, wim_open, wim_patch_build
+    L->>L: udf_mount, boot.wim, wim_open
     L->>L: heap.c: the tail in 64 MiB-4 GiB, at E820's highest fit
+    L->>L: winpeshl.exe's PE machine: i386 is winjump32, AMD64 winjump (and long mode needed)
+    L->>L: wim_patch_build with that build
     L->>L: UDF edits into the overlay pool, the tail as an append past the end
     L->>R: CHN (12.3.8), etfsboot at 07C0:0000
     R->>M: bootmgr

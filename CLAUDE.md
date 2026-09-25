@@ -236,8 +236,10 @@ the tree, so `#include <fs/exfat.h>` means one file wherever it is written.
   it.
   `tools/` holds the QEMU proofs.
 - `falcon-winjump/` the WinPE jump binary (DESIGN Section 6.3), a Win64
-  console program. The loader embeds its stripped build as a generated C
-  array. It links static (`-static`) because WinPE has no `libssp-0.dll`, and
+  console program, built a second time for i686 (`winjump32.exe`,
+  `i686-w64-mingw32-gcc`) for 32-bit Windows media. The UEFI loader embeds
+  the x64 build as a generated C array; falcon-bios embeds both and puts in
+  the one the boot image's `winpeshl.exe` is built for. It links static (`-static`) because WinPE has no `libssp-0.dll`, and
   a missing import kills it before its first log line.
 - `falcon-hook/` the program the loader appends to an ISO's initrd (DESIGN
   Section 6.4): freestanding static Linux, no libc, built twice, x86-64

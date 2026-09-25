@@ -28,15 +28,24 @@
 #include <vcd.h>
 #include <screen.h>
 #include <heap.h>
+#include <linux.h>
+
+#include <cpuid.h>
 
 #include <fs/fs.h>
 #include <fs/udf.h>
+#include <pe/pe.h>
 #include <wim/wim.h>
 #include <lib/string.h>
 
-/* The jump binary, as make embeds it (falcon-winjump/build.mk). */
+/* The jump binary, as make embeds it (falcon-winjump/build.mk), in both of
+ * its builds. The patch puts it in place of winpeshl.exe, so it has to be
+ * the boot image's width: a 32-bit WinPE cannot start a 64-bit program, and
+ * Setup then never appears. */
 extern const unsigned char falcon_winjump_bin[];
 extern const size_t falcon_winjump_bin_len;
+extern const unsigned char falcon_winjump32_bin[];
+extern const size_t falcon_winjump32_bin_len;
 
 #define BLK 2048u
 
@@ -49,6 +58,30 @@ static uint8_t  g_pd[2][BLK];
 static uint8_t  g_hdr[WIM_HDR_LEN];
 static char     g_cfg[512];
 static udf_extent g_ext[UDF_MAX_EXTENTS];
+static uint8_t  g_head[WIM_CHUNK_LEN];
+
+/* What Windows install media of the WIM era (Windows 8 and later; Windows 7
+ * cannot attach the ISO winjump needs anyway) asks of a processor before it
+ * runs: PAE, NX and SSE2. Missing any of them, bootmgr or winload resets the
+ * machine with nothing on screen, measured on the harness's Pentium III,
+ * which has no NX and no SSE2. So they are asked here and a missing one is
+ * named. NULL when all three are there. */
+static const char *win_cpu_lacks(void)
+{
+    unsigned a, b, c, d;
+
+    if (__get_cpuid(1u, &a, &b, &c, &d) == 0)
+        return "CPUID";
+    if ((d & (1u << 6)) == 0)
+        return "PAE";
+    if ((d & (1u << 26)) == 0)
+        return "SSE2";
+    if (__get_cpuid(0x80000000u, &a, &b, &c, &d) == 0 || a < 0x80000001u ||
+        __get_cpuid(0x80000001u, &a, &b, &c, &d) == 0 ||
+        (d & (1u << 20)) == 0)
+        return "NX";
+    return (const char *)0;
+}
 
 static int wim_rd(void *ctx, uint64_t off, uint64_t len, void *buf)
 {
@@ -117,6 +150,8 @@ int win_boot(bios_disk *d, fs_vol *p2, const gpt_part *p2part,
     uint32_t iso_blocks;
     uint32_t app_blocks;
     uint64_t app_len;
+    const unsigned char *jump = falcon_winjump_bin;
+    size_t jump_len = falcon_winjump_bin_len;
 
     if (unpatchable != (int *)0)
         *unpatchable = 1;
@@ -147,9 +182,15 @@ int win_boot(bios_disk *d, fs_vol *p2, const gpt_part *p2part,
         *unpatchable = 0;
 
     cfg_len = make_cfg(iso_rel, iso->size);
+    /* Sized for the larger of the two builds: which one this boot.wim takes
+     * is read out of it after the memory is reserved. */
     tail_cap = wim_patch_tail_max((size_t)w.boot_meta.orig,
                                   (size_t)w.lookup.orig,
-                                  falcon_winjump_bin_len, cfg_len);
+                                  falcon_winjump_bin_len >
+                                          falcon_winjump32_bin_len
+                                      ? falcon_winjump_bin_len
+                                      : falcon_winjump32_bin_len,
+                                  cfg_len);
 
     /* Everything the patch needs at once, so a run that is big enough is
      * found once rather than discovered to be too small halfway through. */
@@ -176,13 +217,74 @@ int win_boot(bios_disk *d, fs_vol *p2, const gpt_part *p2part,
                           (size_t)w.boot_meta.orig, g_scratch) != WIM_OK)
         return -1;
 
+    /* Which build of the jump binary: winpeshl.exe's own machine type, since
+     * that is the program it replaces. Read from its first chunk, which
+     * holds the headers. */
+    r->stage = "reading winpeshl.exe's headers";
+    {
+        wim_reshdr pe_res;
+        size_t head_len = 0;
+        pe_hdr h;
+
+        if (wim_winpeshl(&w, lookup, meta, (size_t)w.boot_meta.orig,
+                         &pe_res) != WIM_OK ||
+            wim_read_head(&w, wim_rd, (void *)0, &pe_res, g_head, &head_len,
+                          g_scratch) != WIM_OK ||
+            pe_parse(g_head, head_len, &h) != PE_OK) {
+            r->advice = "boot.wim has no winpeshl.exe this loader can read.";
+            return -1;
+        }
+        if (h.machine == PE_MACHINE_I386 || h.machine == PE_MACHINE_AMD64) {
+            const char *lacks = win_cpu_lacks();
+
+            if (lacks != (const char *)0) {
+                bios_puts("falcon-bios: this processor has no ");
+                bios_puts(lacks);
+                bios_puts("\n");
+                /* The sentence names what is missing: it is the thing a
+                 * person looking at an old machine can check. */
+                r->advice =
+                    lacks[0] == 'P'
+                        ? "Windows 8 and later need PAE, NX and SSE2; this "
+                          "processor has no PAE."
+                    : lacks[0] == 'S'
+                        ? "Windows 8 and later need PAE, NX and SSE2; this "
+                          "processor has no SSE2."
+                    : lacks[0] == 'N'
+                        ? "Windows 8 and later need PAE, NX and SSE2; this "
+                          "processor has no NX."
+                        : "this processor does not answer CPUID.";
+                return -1;
+            }
+        }
+        if (h.machine == PE_MACHINE_I386) {
+            jump = falcon_winjump32_bin;
+            jump_len = falcon_winjump32_bin_len;
+            bios_puts("falcon-bios: boot.wim is 32-bit Windows\n");
+        } else if (h.machine == PE_MACHINE_AMD64) {
+            /* Asked here, as linux.c asks before a 64-bit kernel: a 64-bit
+             * Windows on a processor without long mode stops inside bootmgr
+             * with nothing on screen to say why. */
+            if (!linux_cpu_is_64()) {
+                r->advice = "this is 64-bit Windows and this processor has "
+                            "no 64-bit mode.";
+                return -1;
+            }
+            bios_puts("falcon-bios: boot.wim is 64-bit Windows\n");
+        } else {
+            r->advice = "boot.wim is for a processor this loader has no "
+                        "jump binary for.";
+            return -1;
+        }
+    }
+
     /* The tail is built one block into the append buffer: the old partial
      * last block goes in front of it once the File Entry says how long that
      * is. A block of slack at the end holds the zero padding, and one more
      * the anchor. */
     r->stage = "patching boot.wim";
     if (wim_patch_build(&w, lookup, meta, (size_t)w.boot_meta.orig,
-                        falcon_winjump_bin, falcon_winjump_bin_len, g_cfg,
+                        jump, jump_len, g_cfg,
                         cfg_len, g_hdr, app + BLK, tail_cap,
                         &tail_len) != WIM_OK) {
         r->advice = "boot.wim is not one this loader can patch.";

@@ -27,6 +27,7 @@
 #   efi-$(VARIANT)  freestanding mingw, linked into the loader
 #   host            hosted Linux, linked into the host tools
 #   winjump         hosted mingw, linked into winjump.exe
+#   winjump32       hosted i686 mingw, linked into winjump32.exe
 #   hook, hook32    freestanding static Linux, x86-64 and i686: falcon-hook
 #   bios            freestanding i686: falcon-bios's three stages
 #   test            hosted Linux at -O0 with --coverage, linked into the tests
@@ -339,6 +340,8 @@ check-tools:
 		echo "missing (mk-test-isoview.sh cross-checks its UDF fixture with it): 7z"; \
 	[ "$$($(CC_HOST) -m32 -print-multi-directory 2>/dev/null)" = 32 ] || \
 		echo "missing (make bios links the i686 loader and falcon-hook32 against it): a 32-bit libgcc, gcc-multilib on Debian"; \
+	command -v $(CC_WIN32) >/dev/null 2>&1 || \
+		echo "missing (make bios embeds the i686 winjump for 32-bit Windows media): $(CC_WIN32)"; \
 	if [ $$missing -ne 0 ]; then echo "Required toolchain incomplete."; exit 1; fi; \
 	echo "Toolchain OK."
 

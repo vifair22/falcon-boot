@@ -27,6 +27,7 @@
 #include <crypto/sha1.h>
 #include <wim/lzx.h>
 #include <wim/wim.h>
+#include <pe/pe.h>
 
 #ifndef MEDIA_FIXTURE_DIR
 #define MEDIA_FIXTURE_DIR "build"
@@ -81,6 +82,19 @@ static size_t check_all(const wim_info *w)
         if (memcmp(got, hash, WIM_HASH_LEN) != 0)
             fail_msg("resource %zu (flags 0x%x, %llu bytes) does not hash to "
                      "its name", i, r.flags, (unsigned long long)r.orig);
+        /* The first chunk alone is the same bytes as the head of the whole,
+         * compressed or not, one chunk or many. */
+        {
+            static uint8_t head[WIM_CHUNK_LEN];
+            size_t hlen = 0;
+            size_t want = r.orig < WIM_CHUNK_LEN ? (size_t)r.orig
+                                                 : WIM_CHUNK_LEN;
+
+            assert_int_equal(wim_read_head(w, rd, NULL, &r, head, &hlen,
+                                           g_scratch), WIM_OK);
+            assert_int_equal(hlen, want);
+            assert_memory_equal(head, buf, want ? want : 1u);
+        }
         compressed += (r.flags & WIM_RES_COMPRESSED) != 0;
         free(buf);
     }
@@ -101,6 +115,49 @@ static void test_wim_reads_fixture(void **state)
     assert_int_equal(w.image_count, 2);
     assert_int_equal(w.boot_index, 2);
     assert_true(check_all(&w) > 0);
+}
+
+/* The boot image's winpeshl.exe is found by its stream hash, and its head
+ * is its bytes: the fixture's is a line of text. */
+static void test_wim_winpeshl(void **state)
+{
+    static const char want[] = "the original winpeshl.exe\n";
+    static uint8_t head[WIM_CHUNK_LEN];
+    char path[512];
+    wim_info w;
+    wim_reshdr r;
+    uint8_t *lookup;
+    uint8_t *meta;
+    size_t hlen = 0;
+
+    (void)state;
+    fixture(path, sizeof path, "test-wim.wim");
+    assert_int_equal(wim_open(rd, NULL, open_wim(path), &w), WIM_OK);
+    lookup = malloc(w.lookup.orig);
+    meta = malloc(w.boot_meta.orig);
+    assert_non_null(lookup);
+    assert_non_null(meta);
+    assert_int_equal(rd(NULL, w.lookup.offset, w.lookup.orig, lookup), 0);
+    assert_int_equal(wim_read_resource(&w, rd, NULL, &w.boot_meta, meta,
+                                       w.boot_meta.orig, g_scratch), WIM_OK);
+
+    assert_int_equal(wim_winpeshl(&w, lookup, meta, w.boot_meta.orig, &r),
+                     WIM_OK);
+    assert_int_equal(r.orig, sizeof want - 1u);
+    assert_int_equal(wim_read_head(&w, rd, NULL, &r, head, &hlen, g_scratch),
+                     WIM_OK);
+    assert_int_equal(hlen, sizeof want - 1u);
+    assert_memory_equal(head, want, sizeof want - 1u);
+
+    /* Refusals: no arguments, and metadata with no tree in it. */
+    assert_int_equal(wim_winpeshl(NULL, lookup, meta, w.boot_meta.orig, &r),
+                     WIM_ERR_BAD_ARG);
+    assert_int_equal(wim_winpeshl(&w, lookup, meta, 4u, &r),
+                     WIM_ERR_CORRUPT);
+    assert_int_equal(wim_read_head(&w, rd, NULL, &r, NULL, &hlen, g_scratch),
+                     WIM_ERR_BAD_ARG);
+    free(lookup);
+    free(meta);
 }
 
 static int have_wimlib(void)
@@ -225,6 +282,32 @@ static void test_wim_real_bootwim(void **state)
     }
     assert_int_equal(wim_open(rd, NULL, open_wim(path), &w), WIM_OK);
     (void)check_all(&w);
+    /* A real WinPE's winpeshl.exe is a PE whose machine is one this tree
+     * has a jump binary for. */
+    {
+        static uint8_t head[WIM_CHUNK_LEN];
+        uint8_t *lookup = malloc(w.lookup.orig);
+        uint8_t *meta = malloc(w.boot_meta.orig);
+        size_t hlen = 0;
+        wim_reshdr r;
+        pe_hdr h;
+
+        assert_non_null(lookup);
+        assert_non_null(meta);
+        assert_int_equal(rd(NULL, w.lookup.offset, w.lookup.orig, lookup), 0);
+        assert_int_equal(wim_read_resource(&w, rd, NULL, &w.boot_meta, meta,
+                                           w.boot_meta.orig, g_scratch),
+                         WIM_OK);
+        assert_int_equal(wim_winpeshl(&w, lookup, meta, w.boot_meta.orig,
+                                      &r), WIM_OK);
+        assert_int_equal(wim_read_head(&w, rd, NULL, &r, head, &hlen,
+                                       g_scratch), WIM_OK);
+        assert_int_equal(pe_parse(head, hlen, &h), PE_OK);
+        assert_true(h.machine == PE_MACHINE_AMD64 ||
+                    h.machine == PE_MACHINE_I386);
+        free(lookup);
+        free(meta);
+    }
     fixture(out, sizeof out, "test-bootwim-patched.wim");
     fixture(jump_path, sizeof jump_path, "test-bootwim.jump");
     f = fopen(jump_path, "wb");
@@ -276,6 +359,7 @@ int run_wim_tests(void)
     const struct CMUnitTest tests[] = {
         cmocka_unit_test_teardown(test_wim_reads_fixture, teardown),
         cmocka_unit_test_teardown(test_wim_patch_fixture, teardown),
+        cmocka_unit_test_teardown(test_wim_winpeshl, teardown),
         cmocka_unit_test_teardown(test_wim_real_bootwim, teardown),
         cmocka_unit_test_teardown(test_wim_refusals, teardown),
     };

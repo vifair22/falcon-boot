@@ -185,6 +185,9 @@ $(BIOS_STAGE2): $(BIOS_STAGE2_OBJS) $(BIOS)/bios.ld
 BIOS_HOOK_OBJ := $(BIOS_OBJ)/$(HOOK_BLOB).o
 BIOS_HOOK32_OBJ := $(BIOS_OBJ)/$(HOOK32_BLOB).o
 BIOS_WINJUMP_OBJ := $(BIOS_OBJ)/$(WINJUMP_BLOB).o
+# Both widths of the jump binary, for the same reason as the hook's two:
+# win.c puts in the one boot.wim's winpeshl.exe is built for.
+BIOS_WINJUMP32_OBJ := $(BIOS_OBJ)/$(WINJUMP32_BLOB).o
 
 $(BIOS_HOOK_OBJ): $(HOOK_BLOB)
 	@mkdir -p $(@D)
@@ -198,9 +201,14 @@ $(BIOS_WINJUMP_OBJ): $(WINJUMP_BLOB)
 	@mkdir -p $(@D)
 	$(CC_HOST) $(BIOS_CFLAGS) -c -o $@ $<
 
+$(BIOS_WINJUMP32_OBJ): $(WINJUMP32_BLOB)
+	@mkdir -p $(@D)
+	$(CC_HOST) $(BIOS_CFLAGS) -c -o $@ $<
+
 BIOS_STAGE3_OBJS := $(BIOS_OBJ)/$(BIOS)/stage3.o $(BIOS_OBJ)/$(BIOS)/vcdres.o \
 	$(BIOS_S3_COBJS) \
-	$(BIOS_HOOK_OBJ) $(BIOS_HOOK32_OBJ) $(BIOS_WINJUMP_OBJ)
+	$(BIOS_HOOK_OBJ) $(BIOS_HOOK32_OBJ) $(BIOS_WINJUMP_OBJ) \
+	$(BIOS_WINJUMP32_OBJ)
 
 $(BIOS_STAGE3): $(BIOS_STAGE3_OBJS) $(BIOS)/bios.ld
 	@mkdir -p $(@D)

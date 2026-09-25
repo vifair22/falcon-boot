@@ -99,7 +99,11 @@ static void test_fields_both_magics(void **state)
         build(img, magics[m], 16, 0, NULL);
         put32(img + opt + dirs + 4u * 8u, 0x1234u);     /* security rva */
         put32(img + opt + dirs + 4u * 8u + 4u, 0x88u);  /* security size */
+        put16(img + PE_AT + 4, magics[m] == PE_MAGIC_PE32P
+                                   ? PE_MACHINE_AMD64 : PE_MACHINE_I386);
         assert_int_equal(pe_parse(img, IMG_MAX, &h), PE_OK);
+        assert_int_equal(h.machine, magics[m] == PE_MAGIC_PE32P
+                                        ? PE_MACHINE_AMD64 : PE_MACHINE_I386);
         assert_int_equal(pe_checksum_off(&h, &off), PE_OK);
         assert_int_equal(off, opt + 64u);
         assert_int_equal(pe_size_of_headers(&h, img, &v), PE_OK);
@@ -223,6 +227,7 @@ static void test_real_loader(void **state)
 
     assert_int_equal(pe_parse(buf, got, &h), PE_OK);
     assert_int_equal(h.magic, PE_MAGIC_PE32P);
+    assert_int_equal(h.machine, PE_MACHINE_AMD64);
     assert_int_equal(pe_size_of_headers(&h, buf, &soh), PE_OK);
     assert_true(soh <= got);
     assert_int_equal(pe_dir(&h, buf, PE_DIR_SECURITY, &entry, &rva, &sz),

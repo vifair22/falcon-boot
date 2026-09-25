@@ -144,11 +144,81 @@ void wim_lookup_entry(const uint8_t *table, size_t i, wim_reshdr *r,
 
 /* ---- resources ---- */
 
+/* The shape of a resource, checked: its chunk count, the width of a chunk
+ * table entry and the table's length. For an uncompressed resource n is 0.
+ */
+typedef struct {
+    uint64_t n;
+    uint64_t esz;
+    uint64_t table_len;
+} res_shape;
+
+static int res_check(const wim_info *w, const wim_reshdr *r, res_shape *sh)
+{
+    if ((r->flags & (RES_SPANNED | RES_SOLID)) != 0 || !in_file(w, r))
+        return WIM_ERR_FORMAT;
+    sh->n = 0;
+    sh->esz = 0;
+    sh->table_len = 0;
+    if ((r->flags & WIM_RES_COMPRESSED) == 0)
+        return r->size == r->orig ? WIM_OK : WIM_ERR_CORRUPT;
+    if (r->orig == 0)
+        return WIM_ERR_CORRUPT;
+    sh->n = (r->orig + CHUNK - 1u) / CHUNK;
+    sh->esz = r->orig > 0xffffffffull ? 8u : 4u;
+    sh->table_len = (sh->n - 1u) * sh->esz;
+    if (sh->table_len > r->size)
+        return WIM_ERR_CORRUPT;
+    return WIM_OK;
+}
+
+/* Chunk i of a compressed resource into out, which holds CHUNK bytes. *got
+ * is how many it produced: CHUNK, or less for the last. */
+static int read_chunk(wim_read_fn read, void *ctx, const wim_reshdr *r,
+                      const res_shape *sh, uint64_t i, uint8_t *out,
+                      uint8_t *scratch, uint64_t *got)
+{
+    uint64_t start = 0, end = r->size - sh->table_len, csize, usize;
+    uint8_t e[16];
+
+    if (i > 0) {
+        if (read(ctx, r->offset + (i - 1u) * sh->esz,
+                 i + 1u < sh->n ? 2u * sh->esz : sh->esz, e) != 0)
+            return WIM_ERR_IO;
+        start = sh->esz == 8u ? ld64(e) : ld32(e);
+        if (i + 1u < sh->n)
+            end = sh->esz == 8u ? ld64(e + 8) : ld32(e + 4);
+    } else if (sh->n > 1u) {
+        if (read(ctx, r->offset, sh->esz, e) != 0)
+            return WIM_ERR_IO;
+        end = sh->esz == 8u ? ld64(e) : ld32(e);
+    }
+    usize = i + 1u < sh->n ? CHUNK : r->orig - (sh->n - 1u) * CHUNK;
+    if (end < start || end > r->size - sh->table_len)
+        return WIM_ERR_CORRUPT;
+    csize = end - start;
+    if (csize == 0 || csize > usize)
+        return WIM_ERR_CORRUPT;
+    *got = usize;
+    if (csize == usize)
+        return read(ctx, r->offset + sh->table_len + start, usize, out) == 0
+                   ? WIM_OK : WIM_ERR_IO;
+    if (csize > WIM_SCRATCH_LEN)
+        return WIM_ERR_CORRUPT;
+    if (read(ctx, r->offset + sh->table_len + start, csize, scratch) != 0)
+        return WIM_ERR_IO;
+    if (lzx_decompress(scratch, (size_t)csize, out, (size_t)usize) != LZX_OK)
+        return WIM_ERR_CORRUPT;
+    return WIM_OK;
+}
+
 int wim_read_resource(const wim_info *w, wim_read_fn read, void *ctx,
                       const wim_reshdr *r, uint8_t *out, size_t cap,
                       uint8_t *scratch)
 {
-    uint64_t n, table_len, i, esz;
+    res_shape sh;
+    uint64_t i, got;
+    int rc;
 
     if (w == (const wim_info *)0 || read == (wim_read_fn)0 ||
         r == (const wim_reshdr *)0 || out == (uint8_t *)0 ||
@@ -156,57 +226,46 @@ int wim_read_resource(const wim_info *w, wim_read_fn read, void *ctx,
         return WIM_ERR_BAD_ARG;
     if (r->orig > cap)
         return WIM_ERR_NOSPACE;
-    if ((r->flags & (RES_SPANNED | RES_SOLID)) != 0 || !in_file(w, r))
-        return WIM_ERR_FORMAT;
-    if ((r->flags & WIM_RES_COMPRESSED) == 0) {
-        if (r->size != r->orig)
-            return WIM_ERR_CORRUPT;
+    rc = res_check(w, r, &sh);
+    if (rc != WIM_OK)
+        return rc;
+    if (sh.n == 0)
         return r->orig == 0 || read(ctx, r->offset, r->orig, out) == 0
                    ? WIM_OK : WIM_ERR_IO;
+    for (i = 0; i < sh.n; i++) {
+        rc = read_chunk(read, ctx, r, &sh, i, out + i * CHUNK, scratch, &got);
+        if (rc != WIM_OK)
+            return rc;
     }
-    if (r->orig == 0)
-        return WIM_ERR_CORRUPT;
-    n = (r->orig + CHUNK - 1u) / CHUNK;
-    esz = r->orig > 0xffffffffull ? 8u : 4u;
-    table_len = (n - 1u) * esz;
-    if (table_len > r->size)
-        return WIM_ERR_CORRUPT;
-    for (i = 0; i < n; i++) {
-        uint64_t start = 0, end = r->size - table_len, csize, usize;
-        uint8_t e[16];
+    return WIM_OK;
+}
 
-        if (i > 0) {
-            if (read(ctx, r->offset + (i - 1u) * esz,
-                     i + 1u < n ? 2u * esz : esz, e) != 0)
-                return WIM_ERR_IO;
-            start = esz == 8u ? ld64(e) : ld32(e);
-            if (i + 1u < n)
-                end = esz == 8u ? ld64(e + 8) : ld32(e + 4);
-        } else if (n > 1u) {
-            if (read(ctx, r->offset, esz, e) != 0)
-                return WIM_ERR_IO;
-            end = esz == 8u ? ld64(e) : ld32(e);
-        }
-        usize = i + 1u < n ? CHUNK : r->orig - (n - 1u) * CHUNK;
-        if (end < start || end > r->size - table_len)
-            return WIM_ERR_CORRUPT;
-        csize = end - start;
-        if (csize == 0 || csize > usize)
-            return WIM_ERR_CORRUPT;
-        if (csize == usize) {
-            if (read(ctx, r->offset + table_len + start, usize,
-                     out + i * CHUNK) != 0)
-                return WIM_ERR_IO;
-            continue;
-        }
-        if (csize > WIM_SCRATCH_LEN)
-            return WIM_ERR_CORRUPT;
-        if (read(ctx, r->offset + table_len + start, csize, scratch) != 0)
+int wim_read_head(const wim_info *w, wim_read_fn read, void *ctx,
+                  const wim_reshdr *r, uint8_t *out, size_t *len,
+                  uint8_t *scratch)
+{
+    res_shape sh;
+    uint64_t got = 0;
+    int rc;
+
+    if (w == (const wim_info *)0 || read == (wim_read_fn)0 ||
+        r == (const wim_reshdr *)0 || out == (uint8_t *)0 ||
+        len == (size_t *)0 || scratch == (uint8_t *)0)
+        return WIM_ERR_BAD_ARG;
+    *len = 0;
+    rc = res_check(w, r, &sh);
+    if (rc != WIM_OK)
+        return rc;
+    if (sh.n == 0) {
+        got = r->orig < CHUNK ? r->orig : CHUNK;
+        if (got != 0 && read(ctx, r->offset, got, out) != 0)
             return WIM_ERR_IO;
-        if (lzx_decompress(scratch, (size_t)csize, out + i * CHUNK,
-                           (size_t)usize) != LZX_OK)
-            return WIM_ERR_CORRUPT;
+    } else {
+        rc = read_chunk(read, ctx, r, &sh, 0, out, scratch, &got);
+        if (rc != WIM_OK)
+            return rc;
     }
+    *len = (size_t)got;
     return WIM_OK;
 }
 
@@ -327,6 +386,63 @@ static size_t data_hash_at(const meta_view *v, size_t off)
     return off + 64u;
 }
 
+/* \Windows\System32 and its winpeshl.exe in the boot image's metadata: the
+ * tree is the security data, then the root dentry at its aligned end. */
+static int find_winpeshl(const meta_view *v, size_t *sys32, size_t *pe)
+{
+    size_t root, win, next, end;
+    uint32_t sec;
+    int rc;
+
+    if (v->len < 8u)
+        return WIM_ERR_CORRUPT;
+    sec = ld32(v->m);
+    root = (size_t)(sec < 8u ? 8u : sec);
+    root = (root + 7u) & ~(size_t)7u;
+    rc = dentry_at(v, root, &next, &end);
+    if (rc != WIM_OK)
+        return rc;
+    if (end)
+        return WIM_ERR_CORRUPT;
+    rc = child(v, root, "Windows", &win);
+    if (rc == WIM_OK)
+        rc = child(v, win, "System32", sys32);
+    if (rc == WIM_OK)
+        rc = child(v, *sys32, "winpeshl.exe", pe);
+    return rc;
+}
+
+int wim_winpeshl(const wim_info *w, const uint8_t *lookup,
+                 const uint8_t *meta, size_t meta_len, wim_reshdr *out)
+{
+    meta_view v;
+    size_t sys32, pe, at, n, i;
+    uint8_t hash[WIM_HASH_LEN];
+    int rc;
+
+    if (w == (const wim_info *)0 || lookup == (const uint8_t *)0 ||
+        meta == (const uint8_t *)0 || out == (wim_reshdr *)0)
+        return WIM_ERR_BAD_ARG;
+    if (w->lookup.orig > (uint64_t)SIZE_MAX)
+        return WIM_ERR_NOSPACE;
+    v.m = meta;
+    v.len = meta_len;
+    rc = find_winpeshl(&v, &sys32, &pe);
+    if (rc != WIM_OK)
+        return rc;
+    at = data_hash_at(&v, pe);
+    if (at > meta_len || meta_len - at < WIM_HASH_LEN)
+        return WIM_ERR_CORRUPT;
+    n = (size_t)w->lookup.orig / WIM_LOOKUP_LEN;
+    for (i = 0; i < n; i++) {
+        wim_lookup_entry(lookup, i, out, (uint32_t *)0, hash);
+        if ((out->flags & WIM_RES_METADATA) == 0 &&
+            memcmp(hash, meta + at, WIM_HASH_LEN) == 0)
+            return WIM_OK;
+    }
+    return WIM_ERR_NOT_FOUND;
+}
+
 static const char g_orig_name[] = "winpeshl_orig.exe";
 
 static uint16_t upcase(uint16_t c)
@@ -433,7 +549,7 @@ int wim_patch_build(const wim_info *w, const uint8_t *lookup,
                     size_t *tail_len)
 {
     meta_view v;
-    size_t root, win, sys32, pe, off, next, end, list_start, list_end;
+    size_t sys32, pe, off, next, end, list_start, list_end;
     size_t meta_off, meta_new_len, lk_off, entries, i, meta_seen = 0;
     size_t cfg_off, dlen, lk_len;
     uint64_t start;
@@ -441,7 +557,6 @@ int wim_patch_build(const wim_info *w, const uint8_t *lookup,
     uint8_t cfg_hash[WIM_HASH_LEN];
     uint8_t *nm, *lk;
     wim_reshdr r;
-    uint32_t sec;
     int rc, replaced = 0;
 
     if (w == (const wim_info *)0 || lookup == (const uint8_t *)0 ||
@@ -460,21 +575,7 @@ int wim_patch_build(const wim_info *w, const uint8_t *lookup,
         return WIM_ERR_NOSPACE;
     lk_len = (size_t)w->lookup.orig;
 
-    /* The tree: security data, then the root dentry at its aligned end. */
-    if (meta_len < 8u)
-        return WIM_ERR_CORRUPT;
-    sec = ld32(meta);
-    root = align8(sec < 8u ? 8u : sec);
-    rc = dentry_at(&v, root, &next, &end);
-    if (rc != WIM_OK)
-        return rc;
-    if (end)
-        return WIM_ERR_CORRUPT;
-    rc = child(&v, root, "Windows", &win);
-    if (rc == WIM_OK)
-        rc = child(&v, win, "System32", &sys32);
-    if (rc == WIM_OK)
-        rc = child(&v, sys32, "winpeshl.exe", &pe);
+    rc = find_winpeshl(&v, &sys32, &pe);
     if (rc != WIM_OK)
         return rc;
 

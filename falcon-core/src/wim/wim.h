@@ -85,11 +85,29 @@ int wim_read_resource(const wim_info *w, wim_read_fn read, void *ctx,
                       const wim_reshdr *r, uint8_t *out, size_t cap,
                       uint8_t *scratch);
 
+/* The first chunk of a resource: the first 32 KiB of what it holds, or all
+ * of it when it is shorter, into out (WIM_CHUNK_LEN bytes). *len is how many.
+ * Enough to read a file's headers without reading the file. */
+#define WIM_CHUNK_LEN 32768u
+int wim_read_head(const wim_info *w, wim_read_fn read, void *ctx,
+                  const wim_reshdr *r, uint8_t *out, size_t *len,
+                  uint8_t *scratch);
+
 /* The lookup table's entry i, from the table's bytes. */
 void wim_lookup_entry(const uint8_t *table, size_t i, wim_reshdr *r,
                       uint32_t *refcnt, uint8_t hash[WIM_HASH_LEN]);
 
 /* ---- the patch ---- */
+
+/* Where the boot image's \Windows\System32\winpeshl.exe is stored: its
+ * lookup table entry's resource header, found by the stream hash its dentry
+ * carries. It is the file the patch replaces with the jump binary, so its
+ * headers say which processor the image is for, and therefore which build
+ * of the jump binary it can run (a 32-bit WinPE cannot start a 64-bit
+ * program). lookup and meta as for wim_patch_build. WIM_ERR_NOT_FOUND when
+ * there is no such file or no lookup entry for it. */
+int wim_winpeshl(const wim_info *w, const uint8_t *lookup,
+                 const uint8_t *meta, size_t meta_len, wim_reshdr *out);
 
 /* Bytes the tail can need, for a boot image metadata resource of meta_len
  * bytes, a lookup table of lookup_len, a jump binary of jump_len and its

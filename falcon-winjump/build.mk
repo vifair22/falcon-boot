@@ -73,3 +73,50 @@ $(WINJUMP_BLOB): $(WINJUMP_STRIPPED)
 	   sed -e 's/^unsigned char/const unsigned char/' \
 	       -e 's/^unsigned int falcon_winjump_bin_len/const size_t falcon_winjump_bin_len/'; \
 	} > $@
+
+# ---- the i686 build ----
+#
+# The same source for 32-bit Windows install media, which only falcon-bios
+# boots (a 32-bit WinPE starts from 32-bit UEFI, which is out of scope, or
+# from a BIOS). The patch replaces winpeshl.exe, and a 32-bit WinPE cannot
+# start a 64-bit program, so the jump binary has to match the boot image:
+# falcon-bios reads winpeshl.exe's machine type and embeds both builds to
+# choose from (falcon-bios/src/win.c). The UEFI loader embeds the x64 one
+# only.
+CC_WIN32 ?= i686-w64-mingw32-gcc
+WINJUMP32 := $(BIN)/winjump32.exe
+WINJUMP32_OBJ := $(OBJ)/winjump32
+WINJUMP32_OBJS := $(WINJUMP_SRCS:%.c=$(WINJUMP32_OBJ)/%.o)
+MINGW32_SYSROOT := $(shell $(CC_WIN32) -print-sysroot 2>/dev/null)
+WINJUMP32_SYSINC := $(if $(MINGW32_SYSROOT),\
+	-isystem $(MINGW32_SYSROOT)/i686-w64-mingw32/include,)
+WINJUMP32_CFLAGS := $(filter-out $(WINJUMP_SYSINC),$(WINJUMP_CFLAGS)) \
+	$(WINJUMP32_SYSINC)
+
+$(WINJUMP32): $(WINJUMP32_OBJS)
+	@mkdir -p $(@D)
+	$(CC_WIN32) $(WINJUMP_LDFLAGS) -o $@ $(WINJUMP32_OBJS) $(WINJUMP_LIBS)
+
+$(WINJUMP32_OBJ)/%.o: %.c
+	@mkdir -p $(@D)
+	$(CC_WIN32) $(WINJUMP32_CFLAGS) -MMD -MF $@.d -c -o $@ $<
+
+WINJUMP32_STRIPPED := build/gen/winjump32-stripped.exe
+WINJUMP32_BLOB := build/gen/winjump32_blob.c
+
+$(WINJUMP32_STRIPPED): $(WINJUMP32)
+	@mkdir -p $(@D)
+	$(CC_WIN32:gcc=strip) -s -o $@ $<
+
+$(WINJUMP32_BLOB): $(WINJUMP32_STRIPPED)
+	@mkdir -p $(@D)
+	@{ echo '/* generated from $(WINJUMP32) by make; do not edit */'; \
+	   echo '#include <stddef.h>'; \
+	   xxd -i -n falcon_winjump32_bin $< | \
+	   sed -e 's/^unsigned char/const unsigned char/' \
+	       -e 's/^unsigned int falcon_winjump32_bin_len/const size_t falcon_winjump32_bin_len/'; \
+	} > $@
+
+winjump32: $(WINJUMP32)
+
+.PHONY: winjump32
