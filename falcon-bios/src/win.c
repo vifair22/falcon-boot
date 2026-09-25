@@ -584,6 +584,36 @@ no_room:
     return -1;
 }
 
+/* The 16-byte marker falcon-vdisk carries so the loader can find its baked
+ * extent-map struct in the served .sys without symbols (falcon-vdisk/src/
+ * vdisk.c, VDISK_BAKE_MAGIC). map_len follows at +16, the map bytes at +20. */
+static const uint8_t XP_BAKE_MAGIC[16] = {
+    'F', 'A', 'L', 'C', 'O', 'N', 'v', 'd', 'B', 'A', 'K', 'E', '0', '0', '0', '1'
+};
+
+/* Writes the extent map into the driver's baked struct in the served .sys, so
+ * its DriverEntry finds the stick and the ISO's bytes with no winjump (piece 3,
+ * windows-route.md 7.4). Best effort: without it the driver still loads, it
+ * just cannot reach its boot device. */
+static void xp_bake_map(uint8_t *sys, size_t sys_len,
+                        const uint8_t *map, size_t map_len)
+{
+    size_t i, j;
+
+    if (map_len == 0 || map_len > 4096u || sys_len < 20u + map_len)
+        return;
+    for (i = 0; i + 20u + map_len <= sys_len; i++) {
+        for (j = 0; j < 16u; j++)
+            if (sys[i + j] != XP_BAKE_MAGIC[j])
+                break;
+        if (j == 16u) {
+            put_le32(sys + i + 16, (uint32_t)map_len);
+            memcpy(sys + i + 20, map, map_len);
+            return;
+        }
+    }
+}
+
 /* Windows 2000/XP have no WinPE, so the loader cannot patch a running PE; it
  * injects falcon-vdisk into text-mode setup instead (DESIGN Section 6.3,
  * windows-route.md 7.4). The served ISO is edited in memory the way the
@@ -692,6 +722,15 @@ int win_xp_boot(bios_disk *d, fs_vol *p2, const gpt_part *p2part,
     memcpy(app + (size_t)sif_blocks * BLK, falcon_vdisk_bin, sys_len);
     memset(app + (size_t)sif_blocks * BLK + sys_len, 0,
            (size_t)sys_blocks * BLK - sys_len);
+
+    /* Bake the ISO's extent map into the served driver so its DriverEntry can
+     * find the stick's disk and the ISO's bytes on it with no winjump. */
+    {
+        size_t map_len = build_win_map(d, p2, p2part, iso);
+
+        if (map_len != 0)
+            xp_bake_map(app + (size_t)sif_blocks * BLK, sys_len, g_map, map_len);
+    }
 
     r->stage = "growing the ISO in memory";
     vcd_overlay_reset();

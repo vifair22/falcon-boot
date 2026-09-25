@@ -34,6 +34,34 @@
 
 #include "vdiskio.h"
 
+#include <media/extmap.h>
+#include <winjumpcore.h>
+
+/* Piece 3 (windows-route.md 7.4): the boot-start backing, for Windows 2000/XP
+ * text-mode setup, which has no WinPE and so no winjump to hand the driver its
+ * disk and extents through SET_BACKING. The loader (win_xp_boot) instead patches
+ * an extent map into this driver's served copy: it scans the .sys for the magic
+ * below and writes map_len and the extmap (falcon-core/src/media/extmap) after
+ * it. At load the driver finds the stick itself from that map - the same GPT
+ * match and run conversion winjump does in userland (winjumpcore) - and reads
+ * the ISO from the stick's real disk. map_len != 0 means the loader configured
+ * it; a plain winjump build leaves it zero and the SET_BACKING path is used.
+ *
+ * The magic is a distinctive 16 bytes present at build time so the loader can
+ * find the struct by scanning, without symbols. */
+#define VDISK_BAKE_MAGIC { 'F','A','L','C','O','N','v','d','B','A','K','E', \
+                           '0','0','0','1' }
+#define VDISK_BAKE_CAP 4096u
+static struct {
+    unsigned char magic[16];
+    unsigned long map_len;
+    unsigned char map[VDISK_BAKE_CAP];
+} g_bake = { VDISK_BAKE_MAGIC, 0, { 0 } };
+
+#ifdef VDISK_SERIAL_TRACE
+static void serial_trace(const char *s);
+#endif
+
 /* DISK_GEOMETRY and the media type live in ntdddisk.h, which this mingw does
  * not ship, so they are here. RemovableMedia is 11 in the MEDIA_TYPE enum. */
 typedef enum { FALCON_RemovableMedia = 11 } FALCON_MEDIA_TYPE;
@@ -123,6 +151,12 @@ typedef struct {
 } vdisk_ext;
 
 static UNICODE_STRING g_ctl_name, g_ctl_link, g_cd_name;
+/* Piece 3: the standard CD-ROM device name the boot-device ARC path resolves
+ * to, aliased to this device so 2000/XP text-mode setup's kernel finds its boot
+ * CD (else 0x7B). Created only on the baked path; g_cdrom0 records whether it
+ * was, so unload removes it. */
+static UNICODE_STRING g_cdrom0_name;
+static BOOLEAN g_cdrom0;
 static PDEVICE_OBJECT g_ctl_dev, g_cd_dev;
 
 /* The backing store. Two sources behind one seam: the raw-disk extents winjump
@@ -352,6 +386,137 @@ static NTSTATUS notify_mountmgr(void)
     ExFreePoolWithTag(tn, 'DVaF');
     ObDereferenceObject(fobj);
     return st;
+}
+
+/* An unsigned integer as decimal WCHARs into `p` (no kernel swprintf here),
+ * returning the count. For the \Device\Harddisk<n>\DR<n> path (piece 3). */
+static int put_udec(WCHAR *p, unsigned v)
+{
+    WCHAR t[12];
+    int n = 0, i;
+
+    if (v == 0) {
+        p[0] = L'0';
+        return 1;
+    }
+    while (v != 0) {
+        t[n++] = (WCHAR)(L'0' + v % 10u);
+        v /= 10u;
+    }
+    for (i = 0; i < n; i++)
+        p[i] = t[n - 1 - i];
+    return n;
+}
+
+/* Opens \Device\Harddisk<n>\DR<n> for reading, into *out. The physical disk,
+ * not a partition: piece 3 reads the ISO by absolute disk offset. */
+static NTSTATUS open_physical_disk(unsigned n, PHANDLE out)
+{
+    static const WCHAR pre[] = L"\\Device\\Harddisk";
+    static const WCHAR mid[] = L"\\DR";
+    WCHAR buf[44];
+    UNICODE_STRING us;
+    OBJECT_ATTRIBUTES oa;
+    IO_STATUS_BLOCK iosb;
+    int i = 0, j;
+
+    for (j = 0; pre[j] != 0; j++)
+        buf[i++] = pre[j];
+    i += put_udec(buf + i, n);
+    for (j = 0; mid[j] != 0; j++)
+        buf[i++] = mid[j];
+    i += put_udec(buf + i, n);
+    buf[i] = 0;
+
+    us.Buffer = buf;
+    us.Length = (USHORT)((size_t)i * sizeof(WCHAR));
+    us.MaximumLength = (USHORT)sizeof buf;
+    InitializeObjectAttributes(&oa, &us, OBJ_KERNEL_HANDLE | OBJ_CASE_INSENSITIVE,
+                               NULL, NULL);
+    return ZwCreateFile(out, FILE_READ_DATA | SYNCHRONIZE, &oa, &iosb, NULL,
+                        FILE_ATTRIBUTE_NORMAL,
+                        FILE_SHARE_READ | FILE_SHARE_WRITE, FILE_OPEN,
+                        FILE_SYNCHRONOUS_IO_NONALERT | FILE_NON_DIRECTORY_FILE,
+                        NULL, 0);
+}
+
+/* Piece 3 (windows-route.md 7.4): resolve the baked extent map to a live
+ * backing, on its own thread so notify_mountmgr's wait (and the CDFS mount and
+ * reads it triggers, serviced by the other thread) do not deadlock. Finds the
+ * stick by the same GPT match winjump does, retrying while the disk stack comes
+ * up, then converts the map's partition-relative runs to absolute disk extents
+ * and brings the CD online. A plain winjump build leaves g_bake.map_len zero
+ * and this returns at once; SET_BACKING is used instead. */
+static void NTAPI baked_resolve(PVOID ctx)
+{
+    static UCHAR gpthdr[512];
+    static UCHAR ents[128 * 128];
+    extmap_hdr hdr;
+    int tries, n;
+    uint32_t got = 0;
+    ULONG bytes;
+
+    (void)ctx;
+    if (g_bake.map_len == 0 || g_bake.map_len > VDISK_BAKE_CAP)
+        goto done;
+    if (extmap_decode(g_bake.map, g_bake.map_len, &hdr) != EXTMAP_OK)
+        goto done;
+
+    for (tries = 0; tries < 120 && g_disk_handle == NULL; tries++) {
+        for (n = 0; n < 32; n++) {
+            HANDLE h;
+            IO_STATUS_BLOCK iosb;
+            LARGE_INTEGER at;
+            uint64_t first_lba;
+
+            if (!NT_SUCCESS(open_physical_disk((unsigned)n, &h)))
+                continue;
+            at.QuadPart = 512;                          /* LBA 1: GPT header */
+            if (NT_SUCCESS(ZwReadFile(h, NULL, NULL, NULL, &iosb, gpthdr,
+                                      sizeof gpthdr, &at, NULL))) {
+                at.QuadPart = 1024;                     /* LBA 2: entry array */
+                if (NT_SUCCESS(ZwReadFile(h, NULL, NULL, NULL, &iosb, ents,
+                                          sizeof ents, &at, NULL)) &&
+                    wj_gpt_match(gpthdr, ents, sizeof ents, hdr.part_guid,
+                                 &first_lba) == WJ_OK) {
+                    g_disk_handle = h;                  /* keep it open */
+                    break;
+                }
+            }
+            ZwClose(h);
+        }
+        if (g_disk_handle == NULL) {
+            LARGE_INTEGER d;
+
+            d.QuadPart = -5000000;                      /* 500 ms, relative */
+            KeDelayExecutionThread(KernelMode, FALSE, &d);
+        }
+    }
+    if (g_disk_handle == NULL)
+        goto done;      /* no stick found: reads serve zeros, setup 0x7B's */
+
+    bytes = hdr.n_extents * (ULONG)sizeof(struct falcon_vdisk_extent);
+    g_ext = ExAllocatePoolWithTag(NonPagedPool, bytes, 'DVaF');
+    if (g_ext == NULL) {
+        backing_release();
+        goto done;
+    }
+    /* wj_extent is byte-identical to falcon_vdisk_extent, so the runs decode
+     * straight into g_ext. */
+    if (wj_backing_extents(&hdr, g_bake.map, g_bake.map_len, (wj_extent *)g_ext,
+                           hdr.n_extents, &got) != WJ_OK || got == 0) {
+        backing_release();
+        goto done;
+    }
+    g_ext_count = got;
+    g_size = hdr.iso_size;
+#ifdef VDISK_SERIAL_TRACE
+    serial_trace("FALCONVDISK_BACKING_OK\r\n");
+#endif
+    (void)notify_mountmgr();
+
+done:
+    PsTerminateSystemThread(STATUS_SUCCESS);
 }
 
 static NTSTATUS ctl_ioctl(PIRP irp, PIO_STACK_LOCATION io)
@@ -604,6 +769,8 @@ static void NTAPI vdisk_unload(PDRIVER_OBJECT drv)
         ObDereferenceObject(g_thread);
     }
     IoDeleteSymbolicLink(&g_ctl_link);
+    if (g_cdrom0)
+        IoDeleteSymbolicLink(&g_cdrom0_name);
     if (g_cd_dev != NULL)
         IoDeleteDevice(g_cd_dev);
     if (g_ctl_dev != NULL)
@@ -673,6 +840,20 @@ NTSTATUS NTAPI DriverEntry(PDRIVER_OBJECT drv, PUNICODE_STRING reg)
     g_cd_dev->Flags |= DO_DIRECT_IO;
     g_cd_dev->Flags &= ~DO_DEVICE_INITIALIZING;
 
+    /* Piece 3, boot-device binding (NOT yet complete). On the baked (2000/XP)
+     * path the kernel bugchecks 0x7B with OBJECT_NAME_NOT_FOUND after this
+     * driver has loaded and resolved its backing: it cannot resolve the ARC
+     * name of its boot device to this CD. Aliasing the standard CD-ROM device
+     * name to this device is a first step, but does not resolve it on its own
+     * (the boot ARC path is not simply cdrom(0), or \Device\CdRom0 is already
+     * taken by cdrom.sys's empty drive). The full binding is the remaining work
+     * (windows-route.md 7.4). A WinPE build leaves map_len zero and is
+     * untouched. */
+    if (g_bake.map_len != 0) {
+        RtlInitUnicodeString(&g_cdrom0_name, L"\\Device\\CdRom0");
+        g_cdrom0 = NT_SUCCESS(IoCreateSymbolicLink(&g_cdrom0_name, &g_cd_name));
+    }
+
     for (i = 0; i <= IRP_MJ_MAXIMUM_FUNCTION; i++)
         drv->MajorFunction[i] = vdisk_create_close;
     drv->MajorFunction[IRP_MJ_READ] = vdisk_read;
@@ -698,6 +879,21 @@ NTSTATUS NTAPI DriverEntry(PDRIVER_OBJECT drv, PUNICODE_STRING reg)
         ObReferenceObjectByHandle(h, THREAD_ALL_ACCESS, NULL, KernelMode,
                                   &g_thread, NULL);
         ZwClose(h);
+    }
+
+    /* Piece 3: when the loader baked an extent map in (2000/XP text-mode
+     * setup), resolve the backing on its own detached thread, so its wait on
+     * the mount does not block the read-servicing thread. Fire and forget; it
+     * terminates itself. A winjump build leaves the map empty and this thread
+     * returns at once, the SET_BACKING path taking over. */
+    if (g_bake.map_len != 0) {
+        HANDLE rh;
+        OBJECT_ATTRIBUTES roa;
+
+        InitializeObjectAttributes(&roa, NULL, OBJ_KERNEL_HANDLE, NULL, NULL);
+        if (NT_SUCCESS(PsCreateSystemThread(&rh, THREAD_ALL_ACCESS, &roa, NULL,
+                                            NULL, baked_resolve, NULL)))
+            ZwClose(rh);
     }
 
     DbgPrint("falcon-vdisk: loaded\n");
