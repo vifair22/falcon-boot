@@ -21,6 +21,7 @@ int main(void)
     int failed = 0;
 
     failed += run_vcdcore_tests();
+    failed += run_vfdcore_tests();
     failed += run_linuxcore_tests();
     failed += run_e820_tests();
 

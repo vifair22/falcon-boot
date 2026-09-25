@@ -276,9 +276,9 @@ bios-pos: $(BIOS_STAGE1) $(BIOS_STAGE2) $(BIOS_POS_STAGE3)
 # once, in a way the machine did not report: an unpadded initrd read as a
 # corrupt archive, and a kernel placed past the identity map of the loader's
 # long-mode days triple-faulted.
-BIOS_TESTS := $(addprefix falcon-bios/tests/,main.c vcdcore_test.c \
+BIOS_TESTS := $(addprefix falcon-bios/tests/,main.c vcdcore_test.c vfdcore_test.c \
 	linuxcore_test.c e820_test.c)
-BIOS_UUT := $(BIOS)/vcdcore.c $(BIOS)/linuxcore.c $(BIOS)/e820.c
+BIOS_UUT := $(BIOS)/vcdcore.c $(BIOS)/vfdcore.c $(BIOS)/linuxcore.c $(BIOS)/e820.c
 
 $(eval $(call test_bin,bios,$(BIOS_TESTS) $(BIOS_UUT)))
 
