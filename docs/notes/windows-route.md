@@ -797,3 +797,39 @@ case, not a QEMU-persists shortcut.
   "finding the medium's EFI System Partition": XP has no UEFI support and Vista
   x64's is marginal. A firmware/architecture limit, the exit goal's allowed
   exception, not the hang above.
+
+### 7.1 32-bit Windows, characterized in full (2026-09-25)
+
+The corpus runs a BIOS machine in two CPU columns: `bios` (the 64-bit host CPU
+in legacy mode) and `bios32` (a Pentium III, 32-bit only, with SSE but no SSE2
+and no NX). A Windows verdict is PASS only when the screen reaches "Windows
+Setup" (WinPE booted, winpeshl ran, winjump ran) and then a Shift-F10 prompt
+reads `\sources\install.*` back off a drive letter - which exists only if
+winjump attached the ISO. So a PASS is end-to-end proof that the jump binary
+ran and served Setup its source.
+
+Every 32-bit (x86) Windows medium in the corpus, with its root cause:
+
+| ISO | bios (host CPU) | bios32 (Pentium III) | root cause |
+|---|---|---|---|
+| windows-10-22h2-x86 | PASS | FAIL (reading winpeshl headers) | winjump32 proven on bios. On the P3, Windows 10 needs PAE/NX/SSE2 the P3 lacks: an allowed architecture exception. It currently fails one stage before the CPU check names that, a cosmetic imprecision, not a boot regression. |
+| windows-8.1-x86 | PASS | FAIL (checking the processor: no SSE2) | winjump32 proven on bios. P3 correctly rejected: 8.1 needs SSE2/NX. Allowed architecture exception. |
+| windows-7-sp1-x86 | FAIL (no userland, text console) | FAIL (checking the processor: no SSE2) | The Win7 boot-medium hang (Section 7), same root cause as windows-7-x64. The P3 CPU check cites SSE2, which Windows 7 does not actually require; it would not boot there regardless, because of the medium hang. |
+| windows-vista-x86 | FAIL (no userland, text console) | FAIL (checking the processor: no SSE2) | Same as Windows 7: the boot-medium hang. Vista does not require SSE2 either. |
+| windows-2000-pro-x86 | FAIL (no userland, graphical) | FAIL (no userland, graphical) | No WinPE at all; text-mode setup, a wholly separate route not yet built. |
+| windows-xp-pro-sp3-x86 | FAIL (no userland, graphical) | FAIL (no userland, graphical) | Same as 2000: text-mode setup. |
+
+What this settles:
+
+- **The 32-bit jump binary (falcon-winjump32.exe) works.** windows-10-22h2-x86
+  and windows-8.1-x86 pass `bios drop` end to end, which is winjump32 running as
+  winpeshl, attaching the ISO, and Setup reading install.* through it.
+- **The remaining 32-bit Windows non-boots reduce to two causes, neither a
+  simple architecture or Secure Boot exception:** the Windows 7 / Vista
+  boot-medium-persistence hang (all four of x86/x64 * bios/efi share it), and
+  the Windows 2000 / XP text-mode installer, which has no WinPE and needs a
+  different route entirely.
+- **8.1-x86 and 10-x86 on the Pentium III are genuine architecture exceptions:**
+  those releases require SSE2 and NX that a P3 does not have. The one flaw is
+  that windows-10-x86 reports it at the wrong stage; the outcome (does not, and
+  cannot, boot on a P3) is correct.
