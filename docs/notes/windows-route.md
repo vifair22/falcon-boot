@@ -1006,22 +1006,37 @@ patching the served ISO. The pieces, in build order, with the obstacles found:
    [SCSI.Load] (where firadisk goes) or wants another section - a rig question,
    not a build one.
 2. Patch the served ISO for the XP layout. Add the .sys and rewrite
-   i386/txtsetup.sif ([SCSI.Load], [SCSI], [HardwareIdsDatabase],
-   [SourceDisksFiles]) and i386/dosnet.inf. This is an ISO 9660 + Joliet edit
-   over the virtual CD's overlay, separate from the boot.wim/UDF patch that 7
-   and Vista use: txtsetup.sif grows, so its directory record and the appended
-   file both need placing, the same shape as the WIM tail - and the boot.wim
-   relocation now in win.c (single extent moved past the ISO's end, its record
-   rewritten in both trees, the bulk redirected to disk) is the template.
-   Adding the .sys is the harder half: measured on windows-xp-pro-sp3-x86, the
-   i386 directory is 129 sectors and every one is packed to within 2-40 bytes
-   of full, so a new ~44-byte record does not fit in place. The directory has
-   to be relocated whole with the record inserted - the packed-directory
-   problem the boot.wim multi-extent attempt hit, one step further.
-3. Give the driver the ISO's extents without winjump to hand them over. Bake the
-   extent map into the driver at patch time, or leave it at a sector the driver
-   reads. atapi.sys must enumerate the physical stick before the driver reads
-   the ISO off it, so the load order matters.
+   i386/txtsetup.sif ([SCSI.Load], [SCSI], [SourceDisksFiles]; the driver loads
+   as a legacy [SCSI.Load] entry like firadisk, so no [HardwareIdsDatabase]
+   line is needed) and, for a real install, i386/dosnet.inf. Two edits:
+   - **Adding the .sys turned out to be the easy half, not the hard one, and is
+     built (iso9660_append_record, 2026-09-25).** The i386 directory is 129
+     blocks, but the record does NOT need the directory relocated: its last
+     block (block 155 on windows-xp-pro-sp3-x86) has 550 free bytes and the
+     entries end at "_DEFAULT.PI_", so a driver named to sort just past it
+     ("_FALCON.SYS") appends in that block's slack, in order. The directory
+     keeps its size and location - no relocation, no path-table edit. The .sys
+     data appends past the ISO's end, exactly the Vista boot.wim tail. Host-
+     tested.
+   - txtsetup.sif itself grows by three short lines (one per section). That
+     file (~480 KB) is grown and served by the same relocation as boot.wim
+     (single extent moved past the ISO's end, record rewritten, bulk redirected
+     to disk). Not yet built; an INI-section line-insert plus the existing
+     relocation.
+3. Give the driver the ISO's extents without winjump to hand them over, and a
+   boot-start mode. The current falcon-vdisk gets its backing by IOCTL from
+   winjump (SET_BACKING, a disk path + extents); text-mode setup has no winjump,
+   so DriverEntry must instead read a baked-in extent map and FIND the stick
+   itself (scan \Device\HarddiskN for the ISO's disk, since the NT device path
+   is not known at patch time), then serve the ISO from the stick's real disk
+   through the NT disk stack. atapi.sys/disk.sys must enumerate the stick before
+   the driver reads it, so the [SCSI.Load] order matters. This is the crux and
+   the remaining novel work.
 
-Each piece is real work and they interlock: nothing boots until all three are
-in, so the first end-to-end test is late. This is a focused multi-session build.
+The pieces interlock: nothing boots until all are in, so the first end-to-end
+test is late. But the first useful milestone is earlier and settles the docs'
+open question - inject the .sys (built) + the txtsetup lines + kernel debug
+(/debugport=com1) and boot XP setup: falcon-vdisk's DriverEntry DbgPrint on
+serial proves whether [SCSI.Load] loads the driver at all, before the full
+boot-start mode is written. This is a focused multi-session build; piece 2's
+directory insert is done.
