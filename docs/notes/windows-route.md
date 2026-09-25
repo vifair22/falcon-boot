@@ -751,26 +751,47 @@ case, not a QEMU-persists shortcut.
   something Windows keeps across ExitBootServices (an EFI RAM disk registered
   in the ACPI NFIT), which holds the boot medium in memory.
 
-  **The persistent RAM disk was built and tested, and OVMF blocks it
-  (2026-09-25).** A loader path (winram.c, since reverted) read the ISO whole
-  into reserved pages and registered it with the firmware's
-  EFI_RAM_DISK_PROTOCOL as an EFI_PERSISTENT_VIRTUAL_CD, the NFIT-backed medium
-  Windows would keep. The firmware processes El Torito on it - the EFI boot
-  image (efi/microsoft/boot/efisys.bin) mounts, and \EFI\BOOT\BOOTX64.EFI
-  (cdboot) loads from it - but OVMF's RamDiskDxe does **not** connect a
-  filesystem driver to the RAM disk's own Block I/O, so the CD's main ISO 9660
-  / UDF filesystem never mounts. cdboot then cannot map back to the CD and
-  returns NO_MAPPING (0x8000000000000011); \bootmgr.efi, which lives on that
-  main filesystem, is absent on every mounted volume (NOT_FOUND, both cases
-  tried). Windows cannot boot from the RAM disk under OVMF.
+  **The persistent RAM disk was built and tested in three shapes, and OVMF
+  blocks every one (2026-09-25).** A loader path (winram.c, since reverted)
+  read a medium whole into pages and registered it with the firmware's
+  EFI_RAM_DISK_PROTOCOL, then connected it and looked for the medium's own
+  filesystem to boot \bootmgr.efi off. The common wall across all three shapes:
+  OVMF's RamDiskDxe publishes a Block I/O for the RAM disk, but the firmware's
+  filesystem and partition drivers do **not** bind to it, so the medium's own
+  filesystem never mounts.
+
+  1. **Persistent CD (EFI_PERSISTENT_VIRTUAL_CD), the ISO read whole.** The
+     firmware processes El Torito on it - the EFI boot image
+     (efi/microsoft/boot/efisys.bin) mounts, and \EFI\BOOT\BOOTX64.EFI (cdboot)
+     loads from it - but CDFS does not bind to the RAM disk's Block I/O, so the
+     CD's main ISO 9660 / UDF filesystem never mounts. cdboot then cannot map
+     back to the CD and returns NO_MAPPING (0x8000000000000011); \bootmgr.efi,
+     which lives on the main filesystem, is absent on every mounted volume
+     (NOT_FOUND). Folding the whole boot chain into the El Torito EFI image so
+     the one filesystem that does mount holds everything is capped out: the
+     boot catalog's sector-count field is 16-bit, so that image cannot exceed
+     ~32 MB, and boot.wim is ~168 MB.
+
+  2. **Persistent hard disk (EFI_PERSISTENT_VIRTUAL_DISK), a GPT with one FAT32
+     ESP holding the boot chain and boot.wim.** PartitionDxe does not process
+     the RAM disk's GPT, so no ESP child handle appears and FatDxe never mounts
+     it; \bootmgr.efi is NOT_FOUND on every volume. A raw FAT superfloppy (no
+     partition table) registered the same way did not mount either.
+
+  3. **Non-persistent disk (EFI_VIRTUAL_DISK) in loader-owned memory**, the most
+     permissive config, run to rule out the memory type and the NFIT
+     persistence flag as the cause. Same result: NOT_FOUND at "booting
+     \bootmgr.efi", no filesystem mounted. So the block is PartitionDxe/FatDxe
+     declining to bind to the RAM disk, not the persistence attribute.
 
   This is a firmware limit of the corpus, not of the approach: real firmware
-  may connect the filesystem to the RAM disk where OVMF does not, and the bench
+  may bind a filesystem to the RAM disk where OVMF does not, and the bench
   already showed Win7 boots from a medium that stays. But the corpus (OVMF)
   cannot validate it, so Windows 7/Vista under UEFI remains a real-hardware
-  question. What is proven here: neither of the two userland/loader shapes
-  (boot-start driver, EFI RAM disk) boots them under OVMF, and the cause of
-  each is understood.
+  question. What is proven here: none of the loader/userland shapes tried
+  (boot-start driver, CD RAM disk, hard-disk RAM disk persistent or not) boots
+  them under OVMF, and the cause of each is understood - the storage path waits
+  on the vanished boot device, or the firmware will not mount the RAM disk.
 
 - **Windows XP x64 and Vista x64 do not boot under UEFI at all**, failing at
   "finding the medium's EFI System Partition": XP has no UEFI support and Vista

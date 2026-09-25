@@ -697,13 +697,15 @@ One limit the corpus then found (docs/notes/windows-route.md Section 7):
 loading falcon-vdisk from winjump, which runs as winpeshl, assumes WinPE got
 as far as winpeshl. Windows 8 and up do; Windows 7 and Vista hang earlier, at
 "Starting Windows", where their boot-start storage driver waits on the boot
-device that vanished at ExitBootServices. Both shapes for serving 7 and Vista were built and tested under OVMF, and
-neither boots them there (docs/notes/windows-route.md Section 7). A boot-start
-falcon-vdisk that presents a substitute CD does not fix the hang: the wait is
-on the specific device Win7 booted from, not on any CD. A persistent EFI RAM
-disk (EFI_PERSISTENT_VIRTUAL_CD, the medium Windows would keep) registers and
-the firmware processes its El Torito, but OVMF's RamDiskDxe never mounts the
-RAM disk CD's main filesystem, so Windows' boot manager cannot reach bootmgr or
+device that vanished at ExitBootServices. Every shape for serving 7 and Vista
+was built and tested under OVMF, and none boots them there
+(docs/notes/windows-route.md Section 7). A boot-start falcon-vdisk that presents
+a substitute CD does not fix the hang: the wait is on the specific device Win7
+booted from, not on any CD. An EFI RAM disk (the medium Windows would keep) was
+then tried in three shapes - a persistent CD, a persistent GPT+ESP hard disk,
+and a non-persistent hard disk in loader memory - and OVMF mounts none of their
+filesystems: RamDiskDxe publishes a Block I/O the firmware's CDFS, PartitionDxe
+and FatDxe do not bind to, so Windows' boot manager cannot reach bootmgr or
 boot.wim. That is a firmware limit of the corpus; real firmware may mount it,
 and the bench confirmed Win7 boots from a medium that stays. So Windows 7/Vista
 under UEFI is a real-hardware question, unvalidatable in the OVMF corpus.
