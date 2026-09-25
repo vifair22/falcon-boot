@@ -93,6 +93,27 @@ cli_status mkstick_guid_selfcheck(void);
  * start a whole number of 4 KiB filesystem blocks. */
 #define MKS_ALIGN ((uint64_t)1024 * 1024)
 
+/* ---- putting falcon-bios on a stick (bios.c) ----
+ *
+ * `mkstick bios`'s install, as a call, so that `mkstick create --bios-only`
+ * runs the same one rather than a second copy. NULL stages mean the build's
+ * (build/bin/falcon-bios-stage{1,2,3}.bin); a NULL backup with no_backup
+ * clear means a file named after the target. */
+typedef struct {
+    const char *target;
+    const char *stage1;
+    const char *stage2;
+    const char *stage3;
+    const char *backup;
+    int         no_backup;
+    int         remove;
+    int         reserve;
+    int         dry_run;
+    int         force;
+} mks_bios_req;
+
+cli_status mks_bios_install(const mks_bios_req *req);
+
 /* ---- the commands ---- */
 extern const cli_cmd mks_cmd_bios;
 extern const cli_cmd mks_cmd_create;

@@ -255,7 +255,9 @@ the tree, so `#include <fs/exfat.h>` means one file wherever it is written.
   `tools/run-hook-rig.sh` boots it under QEMU without the loader.
 - `falcon-bios/` the BIOS loader (docs/notes/bios-route.md). The image is
   opt-in and not built by `all`, and so is putting it on a stick: `mkstick
-  bios <target>` installs it, `mkstick create` does not. A BIOS machine has
+  bios <target>` installs it, `mkstick create` does not, except with
+  `--bios-only`, which makes a stick with no ESP and no MOK that boots only
+  this way (DESIGN Section 3). A BIOS machine has
   no Secure Boot, no shim and no db, so this route has no blessed path and
   installing it changes what a stick can reach (bios-route.md Section 7.3).
   It is NOT a layout change: stage 1 goes in the 440 bytes of boot code at
