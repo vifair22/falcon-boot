@@ -214,6 +214,17 @@ for sr, sg, sb in ((0x1A, 0x00, 0x50), (0x00, 0x19, 0x40)):
            for r, g, b in edge):
         print('Windows Setup')
         sys.exit()
+# Windows 7 and Vista Setup: not a flat colour but a blue gradient, darker at
+# the top and lighter toward the bottom, with blue the dominant channel at
+# every edge point. A false match only makes the harness try Shift+F10 and read
+# install.*, which finds nothing on a non-Windows screen, so a loose test here
+# costs nothing and a missed one loses a whole case.
+top = [at(x, 2) for x in (2, w // 2, w - 3)]
+bot = [at(x, h - 3) for x in (2, w // 2, w - 3)]
+if (all(b >= max(r, g) and b >= 60 for r, g, b in top + bot) and
+        sum(b for _, _, b in bot) > sum(b for _, _, b in top) + 100):
+    print('Windows Setup')
+    sys.exit()
 dark = sum(1 for k in range(0, len(px) - 2, 3 * 97) if max(px[k:k+3]) < 40)
 total = len(range(0, len(px) - 2, 3 * 97))
 print('text console' if dark > 0.8 * total else 'graphical')
@@ -362,7 +373,12 @@ while (( $(date +%s) - T1 < TIMEOUT )); do
     alive || finish FAIL "the guest powered off or reset"
 
     now=$(date +%s)
-    if (( now >= next_nudge && now - T1 <= NUDGE_FOR )); then
+    # Once Windows Setup is up the nudges stop: a stray Enter walks Setup off
+    # the screen where Shift+F10 and the install.* read work (onto the license
+    # page, which needs a checkbox, not Enter), and the read is how a Windows
+    # case is judged.
+    if [[ -z "$setup_probe" ]] &&
+       (( now >= next_nudge && now - T1 <= NUDGE_FOR )); then
         echo "sendkey ret" | socat - UNIX-CONNECT:"$MON" >/dev/null 2>&1 || true
         if (( now - T1 < 30 )); then
             next_nudge=$(( now + NUDGE_EVERY ))
@@ -435,6 +451,17 @@ while (( $(date +%s) - T1 < TIMEOUT )); do
             type_line 'for %d in (D E F G H I) do copy /b %d:\sources\install.* nul'
         fi
         rm -f "$OUTDIR"/setup.ppm "$OUTDIR"/setup.png
+    elif [[ -n "$setup_probe" ]] && (( now >= next_setup )); then
+        # The install CD can come up a little after Setup's first screen: UDFS
+        # on a Windows 7 DVD reads its anchor at the disc's end before the
+        # volume answers, so the driver serves it but the mount lands a few
+        # seconds later. Re-open a prompt (the first Shift+F10 can be early) and
+        # re-issue the copy until the read lands or the case times out; a single
+        # early shot would miss it.
+        next_setup=$(( now + SETUP_EVERY ))
+        echo "sendkey shift-f10" | socat - UNIX-CONNECT:"$MON" >/dev/null 2>&1 || true
+        sleep 2
+        type_line 'for %d in (D E F G H I) do copy /b %d:\sources\install.* nul'
     fi
     if [[ -z "$media_base" ]] && grep -q '^ *starting ' <<<"$after"; then
         media_base=$(stick_read)
