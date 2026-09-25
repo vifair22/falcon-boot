@@ -65,6 +65,7 @@ int main(void)
     failed += run_hookcmd_tests();
     failed += run_grubcfg_tests();
     failed += run_bsdmd_tests();
+    failed += run_xpsetup_tests();
     failed += run_eltorito_tests();
     failed += run_fat_tests();
     failed += run_medium_tests();
