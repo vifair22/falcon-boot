@@ -33,15 +33,15 @@ example (2026-09-20): its default entry is "Clonezilla live (VGA
 and listing the disk it found, and serial stayed empty for 300s. Read
 the screenshot before believing one of these.
 
-Loader: 0.1.0_20260920.1824.release, 0.1.0_20260924.1655.release, 0.1.0_20260925.0145.release, 0.1.0_20260925.0152.release, 0.1.0_20260925.0228.release, 0.1.0_20260925.0358.release, 0.1.0_20260925.0434.release, 0.1.0_20260925.0506.release, 0.1.0_20260925.0555.release, 0.1.0_20260925.0638.release, 0.1.0_20260925.0641.release, 0.1.0_20260925.0643.release, 0.1.0_20260925.0656.release, 0.1.0_20260925.0701.release, 0.1.0_20260925.0904.release
+Loader: 0.1.0_20260920.1824.release, 0.1.0_20260924.1655.release, 0.1.0_20260925.0145.release, 0.1.0_20260925.0152.release, 0.1.0_20260925.0358.release, 0.1.0_20260925.0506.release, 0.1.0_20260925.0638.release, 0.1.0_20260925.0641.release, 0.1.0_20260925.0643.release, 0.1.0_20260925.0701.release, 0.1.0_20260925.0904.release, 0.1.0_20260925.1627.release
 
 ## Summary
 
 | tier | ISOs run | SB off, drop | target | SB on, MS CA | target | SB on, own keys | BIOS, drop | BIOS, Pentium III, drop |
 |---|---|---|---|---|---|---|---|---|
-| A | 27 | 22/22 (100%) | 100% | 22/22 (100%) | 95% | 19/22 (86%) | 26/27 (96%) | 4/5 (80%) |
+| A | 27 | 22/22 (100%) | 100% | 22/22 (100%) | 95% | 19/22 (86%) | 27/27 (100%) | 4/5 (80%) |
 | B | 13 | 9/9 (100%) | 90% | 9/9 (100%) | - | 9/9 (100%) | 13/13 (100%) | 3/4 (75%) |
-| C | 22 | 6/10 (60%) | - | 3/10 (30%) | - | 1/10 (10%) | 3/22 (13%) | 0/12 (0%) |
+| C | 22 | 6/10 (60%) | - | 3/10 (30%) | - | 1/10 (10%) | 6/22 (27%) | 0/12 (0%) |
 
 ## Matrix
 
@@ -77,7 +77,7 @@ Loader: 0.1.0_20260920.1824.release, 0.1.0_20260924.1655.release, 0.1.0_20260925
 | freebsd-bootonly-15.1 | C | freebsd | PASS | PASS | PASS | FAIL | FAIL | PASS | FAIL | FAIL | PASS | FAIL | FAIL | - | N/A | N/A | N/A |
 | gentoo-min-20260510 | A | gentoo | PASS | FAIL | PASS | FAIL | FAIL | PASS | FAIL | FAIL | PASS | PASS | FAIL | - | N/A | N/A | N/A |
 | windows-11-25h2 | A | windows | PASS | FAIL | N/A | PASS | FAIL | N/A | REFUSED | REFUSED | N/A | PASS | FAIL | - | N/A | N/A | N/A |
-| windows-server-2025 | A | windows | PASS | FAIL | N/A | PASS | FAIL | N/A | REFUSED | REFUSED | N/A | FAIL | FAIL | - | N/A | N/A | N/A |
+| windows-server-2025 | A | windows | PASS | FAIL | N/A | PASS | FAIL | N/A | REFUSED | REFUSED | N/A | PASS | FAIL | - | N/A | N/A | N/A |
 | esxi-7.0u3l | C | esxi | PASS | PASS | UNBLESSABLE | FAIL | FAIL | UNBLESSABLE | REFUSED | REFUSED | UNBLESSABLE | - | PASS | - | N/A | N/A | N/A |
 | esxi-8.0u3 | C | esxi | PASS | PASS | UNBLESSABLE | FAIL | FAIL | UNBLESSABLE | REFUSED | REFUSED | UNBLESSABLE | - | PASS | - | N/A | N/A | N/A |
 | macrium-rescue-8.0 | A | windows-pe | PASS | PASS | UNBLESSABLE | PASS | PASS | UNBLESSABLE | REFUSED | REFUSED | UNBLESSABLE | PASS | PASS | - | N/A | N/A | N/A |
@@ -103,10 +103,10 @@ Loader: 0.1.0_20260920.1824.release, 0.1.0_20260924.1655.release, 0.1.0_20260925
 | windows-2000-pro-x86 | C | windows | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | FAIL | FAIL | N/A | FAIL | FAIL | N/A |
 | windows-xp-pro-sp3-x86 | C | windows | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | FAIL | FAIL | N/A | FAIL | FAIL | N/A |
 | windows-xp-pro-x64 | C | windows | FAIL | FAIL | N/A | FAIL | FAIL | N/A | FAIL | FAIL | N/A | FAIL | FAIL | N/A | N/A | N/A | N/A |
-| windows-vista-x86 | C | windows | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | FAIL | FAIL | N/A | FAIL | - | N/A |
+| windows-vista-x86 | C | windows | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | PASS | FAIL | N/A | FAIL | - | N/A |
 | windows-vista-sp1-x64 | C | windows | FAIL | FAIL | N/A | FAIL | FAIL | N/A | FAIL | FAIL | N/A | FAIL | - | N/A | N/A | N/A | N/A |
-| windows-7-sp1-x86 | C | windows | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | FAIL | - | N/A | FAIL | - | N/A |
-| windows-7-x64 | C | windows | FAIL | FAIL | N/A | REFUSED | REFUSED | N/A | REFUSED | REFUSED | N/A | FAIL | - | N/A | N/A | N/A | N/A |
+| windows-7-sp1-x86 | C | windows | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | PASS | - | N/A | FAIL | - | N/A |
+| windows-7-x64 | C | windows | FAIL | FAIL | N/A | REFUSED | REFUSED | N/A | REFUSED | REFUSED | N/A | PASS | - | N/A | N/A | N/A | N/A |
 | windows-8.1-x86 | C | windows | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | PASS | - | N/A | FAIL | - | N/A |
 | windows-8.1-x64 | C | windows | PASS | FAIL | N/A | PASS | FAIL | N/A | REFUSED | REFUSED | N/A | PASS | - | N/A | N/A | N/A | N/A |
 
@@ -244,7 +244,6 @@ Loader: 0.1.0_20260920.1824.release, 0.1.0_20260924.1655.release, 0.1.0_20260925
 | windows-11-25h2 | bios | chain | FAIL | no userland within 300s (screen: Windows Setup) |
 | windows-server-2025 | off | chain | FAIL | no userland within 300s (screen: Windows Setup) |
 | windows-server-2025 | ms | chain | FAIL | no userland within 300s (screen: Windows Setup) |
-| windows-server-2025 | bios | drop | FAIL | no userland within 300s (screen: Windows Setup) |
 | windows-server-2025 | bios | chain | FAIL | no userland within 300s (screen: Windows Setup) |
 | esxi-7.0u3l | ms | drop | FAIL | no userland within 300s (screen: text console) |
 | esxi-7.0u3l | ms | chain | FAIL | no userland within 300s (screen: text console) |
@@ -283,7 +282,7 @@ Loader: 0.1.0_20260920.1824.release, 0.1.0_20260924.1655.release, 0.1.0_20260925
 | debian-netinst-12.15-i386 | bios | chain | FAIL | no userland within 300s (screen: graphical) |
 | debian-netinst-12.15-i386 | bios32 | chain | FAIL | no userland within 300s (screen: graphical) |
 | windows-10-22h2-x86 | bios | chain | FAIL | no userland within 300s (screen: Windows Setup) |
-| windows-10-22h2-x86 | bios32 | drop | FAIL | back at the menu: boot failed while reading winpeshl.exe's headers (screen: text console) |
+| windows-10-22h2-x86 | bios32 | drop | FAIL | back at the menu: boot failed while checking the processor (screen: text console) |
 | windows-10-22h2-x86 | bios32 | chain | FAIL | no userland within 300s (screen: text console) |
 | freedos-1.4-live | bios | drop | FAIL | no userland within 300s (screen: text console) |
 | freedos-1.4-live | bios | chain | FAIL | no userland within 300s (screen: text console) |
@@ -337,7 +336,6 @@ Loader: 0.1.0_20260920.1824.release, 0.1.0_20260924.1655.release, 0.1.0_20260925
 | windows-xp-pro-x64 | own | chain | FAIL | back at the menu: boot failed while finding the medium's EFI System Partition: 0x800000000000000e (screen: text console) |
 | windows-xp-pro-x64 | bios | drop | FAIL | no userland within 300s (screen: graphical) |
 | windows-xp-pro-x64 | bios | chain | FAIL | no userland within 300s (screen: graphical) |
-| windows-vista-x86 | bios | drop | FAIL | no userland within 300s (screen: text console) |
 | windows-vista-x86 | bios | chain | FAIL | no userland within 300s (screen: graphical) |
 | windows-vista-x86 | bios32 | drop | FAIL | back at the menu: boot failed while checking the processor (screen: text console) |
 | windows-vista-sp1-x64 | off | drop | FAIL | back at the menu: boot failed while finding the medium's EFI System Partition: 0x800000000000000e (screen: text console) |
@@ -346,12 +344,10 @@ Loader: 0.1.0_20260920.1824.release, 0.1.0_20260924.1655.release, 0.1.0_20260925
 | windows-vista-sp1-x64 | ms | chain | FAIL | back at the menu: boot failed while finding the medium's EFI System Partition: 0x800000000000000e (screen: text console) |
 | windows-vista-sp1-x64 | own | drop | FAIL | back at the menu: boot failed while finding the medium's EFI System Partition: 0x800000000000000e (screen: text console) |
 | windows-vista-sp1-x64 | own | chain | FAIL | back at the menu: boot failed while finding the medium's EFI System Partition: 0x800000000000000e (screen: text console) |
-| windows-vista-sp1-x64 | bios | drop | FAIL | no userland within 300s (screen: graphical) |
-| windows-7-sp1-x86 | bios | drop | FAIL | no userland within 300s (screen: text console) |
+| windows-vista-sp1-x64 | bios | drop | FAIL | no userland within 300s (screen: Windows Setup) |
 | windows-7-sp1-x86 | bios32 | drop | FAIL | back at the menu: boot failed while checking the processor (screen: text console) |
 | windows-7-x64 | off | drop | FAIL | no userland within 300s (screen: text console) |
 | windows-7-x64 | off | chain | FAIL | no userland within 300s (screen: text console) |
-| windows-7-x64 | bios | drop | FAIL | no userland within 300s (screen: text console) |
 | windows-8.1-x86 | bios32 | drop | FAIL | back at the menu: boot failed while checking the processor (screen: text console) |
 | windows-8.1-x64 | off | chain | FAIL | no userland within 300s (screen: Windows Setup) |
 | windows-8.1-x64 | ms | chain | FAIL | no userland within 300s (screen: Windows Setup) |
