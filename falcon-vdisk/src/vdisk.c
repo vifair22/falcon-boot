@@ -30,6 +30,7 @@
 
 #include <ntddk.h>
 #include <mountdev.h>
+#include <mountmgr.h>
 
 #include "vdiskio.h"
 
@@ -52,6 +53,7 @@ typedef struct {
 #define IOCTL_STORAGE_CHECK_VERIFY      CTL_CODE(0x2d, 0x0200, 0, 1)
 #define IOCTL_STORAGE_CHECK_VERIFY2     CTL_CODE(0x2d, 0x0200, 0, 0)
 #define IOCTL_CDROM_CHECK_VERIFY        CTL_CODE(2, 0x0200, 0, 1)
+#define IOCTL_DISK_CHECK_VERIFY         CTL_CODE(7, 0x0200, 0, 1)
 #define IOCTL_CDROM_READ_TOC            CTL_CODE(2, 0x0000, 0, 1)
 #define IOCTL_STORAGE_GET_DEVICE_NUMBER CTL_CODE(0x2d, 0x0420, 0, 0)
 #define IOCTL_STORAGE_GET_HOTPLUG_INFO  CTL_CODE(0x2d, 0x0305, 0, 0)
@@ -88,26 +90,118 @@ typedef struct {
 static UNICODE_STRING g_ctl_name, g_ctl_link, g_cd_name;
 static PDEVICE_OBJECT g_ctl_dev, g_cd_dev;
 
-/* The backing store. A pool buffer for now (see the header); the raw-disk
- * read path replaces read_from_pool without touching the callers. */
+/* The backing store. Two sources behind one seam: the raw-disk extents winjump
+ * hands over (g_disk_handle + g_ext), and a pool buffer stand-in (g_pool) that
+ * brought the mount up before the extent path existed. When extents are set
+ * they win; the pool path stays for the test tool. */
 static PUCHAR    g_pool;
+static ULONG     g_last_unhandled;   /* diagnostic: last CD IOCTL we did not handle */
 static ULONGLONG g_size;      /* the medium's declared size in bytes */
 
-/* Copies `len` bytes of the medium at `off` into `dst`, zero-filling past the
- * end (a pressed CD answers its padding). The seam the raw-disk path plugs
- * into. */
+/* The physical disk the extents read from, a synchronous kernel handle so the
+ * servicing thread reads it with ZwReadFile, which builds the lower IRP and
+ * MDL itself. */
+static HANDLE g_disk_handle;
+static struct falcon_vdisk_extent *g_ext;
+static ULONG g_ext_count;
+
+/* Read IRPs are serviced on a dedicated thread, never inline in the dispatch
+ * routine: a filesystem may issue reads above PASSIVE_LEVEL, where the disk
+ * read below (a wait) cannot run. The thread dequeues pended IRPs and does the
+ * disk I/O at PASSIVE. */
+static LIST_ENTRY g_queue;
+static KSPIN_LOCK g_qlock;
+static KSEMAPHORE g_qsem;
+static PVOID      g_thread;
+static BOOLEAN    g_stop;
+
+/* Reads `len` bytes at absolute disk byte offset `off` into `buf`, a nonpaged
+ * pool buffer, with ZwReadFile on the synchronous disk handle: it builds the
+ * lower IRP and MDL itself, unlike a hand-rolled IoBuildSynchronousFsdRequest,
+ * which faulted forwarding a mapped MDL. `off` and `len` are sector-aligned
+ * (CDFS/UDFS read 2048-aligned, extents are sector-aligned), so no read-modify
+ * is needed on a 512-byte-sector disk. PASSIVE_LEVEL only, where the servicing
+ * thread runs. */
+static NTSTATUS disk_read(ULONGLONG off, ULONG len, PUCHAR buf)
+{
+    IO_STATUS_BLOCK iosb;
+    LARGE_INTEGER at;
+
+    at.QuadPart = (LONGLONG)off;
+    return ZwReadFile(g_disk_handle, NULL, NULL, NULL, &iosb, buf, len, &at,
+                      NULL);
+}
+
+/* Serves `len` bytes of the medium at `off` into `dst`. From the raw-disk
+ * extents when they are set, else from the pool buffer, zero-filling any gap
+ * between extents and any read past the medium's end (a pressed CD answers its
+ * padding). The seam both backings meet at. */
 static void backing_read(ULONGLONG off, ULONG len, PUCHAR dst)
 {
-    ULONG got = 0;
+    if (g_disk_handle != NULL) {
+        PUCHAR bounce = ExAllocatePoolWithTag(NonPagedPool, len, 'DVaF');
+        ULONG done = 0;
 
-    if (g_pool != NULL && off < g_size) {
-        ULONGLONG avail = g_size - off;
+        if (bounce == NULL) {
+            RtlZeroMemory(dst, len);
+            return;
+        }
+        while (done < len) {
+            ULONG i, run = 0;
+            ULONGLONG here = off + done;
+            ULONGLONG disk_off = 0;
 
-        got = (ULONG)(avail < len ? avail : len);
-        RtlCopyMemory(dst, g_pool + off, got);
+            for (i = 0; i < g_ext_count; i++) {
+                struct falcon_vdisk_extent *e = &g_ext[i];
+
+                if (here >= e->iso_offset && here < e->iso_offset + e->length) {
+                    ULONGLONG left = e->iso_offset + e->length - here;
+                    ULONG want = len - done;
+
+                    run = (ULONG)(left < want ? left : want);
+                    disk_off = e->disk_offset + (here - e->iso_offset);
+                    break;
+                }
+            }
+            if (run == 0) {                 /* a gap, or past the last extent */
+                RtlZeroMemory(bounce + done, len - done);
+                break;
+            }
+            if (!NT_SUCCESS(disk_read(disk_off, run, bounce + done)))
+                RtlZeroMemory(bounce + done, run);
+            done += run;
+        }
+        RtlCopyMemory(dst, bounce, len);
+        ExFreePoolWithTag(bounce, 'DVaF');
+        return;
     }
-    if (got < len)
-        RtlZeroMemory(dst + got, len - got);
+
+    {
+        ULONG got = 0;
+
+        if (g_pool != NULL && off < g_size) {
+            ULONGLONG avail = g_size - off;
+
+            got = (ULONG)(avail < len ? avail : len);
+            RtlCopyMemory(dst, g_pool + off, got);
+        }
+        if (got < len)
+            RtlZeroMemory(dst + got, len - got);
+    }
+}
+
+/* Drops the disk reference and the extent map. */
+static void backing_release(void)
+{
+    if (g_disk_handle != NULL) {
+        ZwClose(g_disk_handle);
+        g_disk_handle = NULL;
+    }
+    if (g_ext != NULL) {
+        ExFreePoolWithTag(g_ext, 'DVaF');
+        g_ext = NULL;
+    }
+    g_ext_count = 0;
 }
 
 static NTSTATUS complete(PIRP irp, NTSTATUS st, ULONG_PTR info)
@@ -124,24 +218,105 @@ static NTSTATUS NTAPI vdisk_create_close(PDEVICE_OBJECT dev, PIRP irp)
     return complete(irp, STATUS_SUCCESS, 0);
 }
 
-static NTSTATUS NTAPI vdisk_read(PDEVICE_OBJECT dev, PIRP irp)
+/* Does the work of one read IRP at PASSIVE_LEVEL and completes it. */
+static void serve_read(PIRP irp)
 {
     PIO_STACK_LOCATION io = IoGetCurrentIrpStackLocation(irp);
-    vdisk_ext *ext = dev->DeviceExtension;
     ULONG len = io->Parameters.Read.Length;
     ULONGLONG off = (ULONGLONG)io->Parameters.Read.ByteOffset.QuadPart;
     PUCHAR dst;
 
-    if (!ext->is_cd)
-        return complete(irp, STATUS_INVALID_DEVICE_REQUEST, 0);
-    if (len == 0)
-        return complete(irp, STATUS_SUCCESS, 0);
+    if (len == 0) {
+        complete(irp, STATUS_SUCCESS, 0);
+        return;
+    }
     /* DO_DIRECT_IO: the caller's pages are described by an MDL. */
     dst = MmGetSystemAddressForMdlSafe(irp->MdlAddress, NormalPagePriority);
-    if (dst == NULL)
-        return complete(irp, STATUS_INSUFFICIENT_RESOURCES, 0);
+    if (dst == NULL) {
+        complete(irp, STATUS_INSUFFICIENT_RESOURCES, 0);
+        return;
+    }
     backing_read(off, len, dst);
-    return complete(irp, STATUS_SUCCESS, len);
+    complete(irp, STATUS_SUCCESS, len);
+}
+
+/* The servicing thread: waits for queued read IRPs and serves them. */
+static void NTAPI vdisk_thread(PVOID ctx)
+{
+    (void)ctx;
+    for (;;) {
+        PLIST_ENTRY e;
+
+        KeWaitForSingleObject(&g_qsem, Executive, KernelMode, FALSE, NULL);
+        if (g_stop && IsListEmpty(&g_queue))
+            break;
+        e = ExInterlockedRemoveHeadList(&g_queue, &g_qlock);
+        if (e == NULL)
+            continue;
+        serve_read(CONTAINING_RECORD(e, IRP, Tail.Overlay.ListEntry));
+    }
+    PsTerminateSystemThread(STATUS_SUCCESS);
+}
+
+static NTSTATUS NTAPI vdisk_read(PDEVICE_OBJECT dev, PIRP irp)
+{
+    vdisk_ext *ext = dev->DeviceExtension;
+
+    if (!ext->is_cd)
+        return complete(irp, STATUS_INVALID_DEVICE_REQUEST, 0);
+    /* Pend and hand to the thread; never touch the lower disk inline. */
+    IoMarkIrpPending(irp);
+    ExInterlockedInsertTailList(&g_queue, &irp->Tail.Overlay.ListEntry,
+                                &g_qlock);
+    KeReleaseSemaphore(&g_qsem, 0, 1, FALSE);
+    return STATUS_PENDING;
+}
+
+/* Tell the mount manager the CD-ROM has arrived: it queries the device
+ * (the MOUNTDEV IOCTLs above), assigns a drive letter, and a first open then
+ * mounts CDFS on it. Done from an IOCTL rather than DriverEntry so the backing
+ * already holds the ISO when the mount reads it. */
+static NTSTATUS notify_mountmgr(void)
+{
+    UNICODE_STRING mm;
+    PFILE_OBJECT fobj = NULL;
+    PDEVICE_OBJECT mdev = NULL;
+    PMOUNTMGR_TARGET_NAME tn;
+    KEVENT ev;
+    IO_STATUS_BLOCK iosb;
+    PIRP irp;
+    NTSTATUS st;
+    ULONG len = FIELD_OFFSET(MOUNTMGR_TARGET_NAME, DeviceName) +
+                g_cd_name.Length;
+
+    RtlInitUnicodeString(&mm, MOUNTMGR_DEVICE_NAME);
+    st = IoGetDeviceObjectPointer(&mm, FILE_READ_ATTRIBUTES, &fobj, &mdev);
+    if (!NT_SUCCESS(st))
+        return st;
+    tn = ExAllocatePoolWithTag(NonPagedPool, len, 'DVaF');
+    if (tn == NULL) {
+        ObDereferenceObject(fobj);
+        return STATUS_INSUFFICIENT_RESOURCES;
+    }
+    tn->DeviceNameLength = g_cd_name.Length;
+    RtlCopyMemory(tn->DeviceName, g_cd_name.Buffer, g_cd_name.Length);
+    KeInitializeEvent(&ev, NotificationEvent, FALSE);
+    irp = IoBuildDeviceIoControlRequest(
+        IOCTL_MOUNTMGR_VOLUME_ARRIVAL_NOTIFICATION, mdev, tn, len, NULL, 0,
+        FALSE, &ev, &iosb);
+    if (irp == NULL) {
+        ExFreePoolWithTag(tn, 'DVaF');
+        ObDereferenceObject(fobj);
+        return STATUS_INSUFFICIENT_RESOURCES;
+    }
+    st = IoCallDriver(mdev, irp);
+    if (st == STATUS_PENDING) {
+        KeWaitForSingleObject(&ev, Executive, KernelMode, FALSE, NULL);
+        st = iosb.Status;
+    }
+    ExFreePoolWithTag(tn, 'DVaF');
+    ObDereferenceObject(fobj);
+    return st;
 }
 
 static NTSTATUS ctl_ioctl(PIRP irp, PIO_STACK_LOCATION io)
@@ -178,6 +353,57 @@ static NTSTATUS ctl_ioctl(PIRP irp, PIO_STACK_LOCATION io)
                       (SIZE_T)w->length);
         return complete(irp, STATUS_SUCCESS, 0);
     }
+    if (code == IOCTL_FALCON_VDISK_SET_BACKING) {
+        const struct falcon_vdisk_backing *b = buf;
+        const UCHAR *p = (const UCHAR *)buf + sizeof *b;
+        ULONG need, ext_bytes;
+        UNICODE_STRING disk;
+        OBJECT_ATTRIBUTES oa;
+        IO_STATUS_BLOCK iosb;
+        HANDLE h;
+        NTSTATUS st;
+
+        if (in < sizeof *b)
+            return complete(irp, STATUS_BUFFER_TOO_SMALL, 0);
+        ext_bytes = b->extent_count * (ULONG)sizeof(struct falcon_vdisk_extent);
+        need = (ULONG)sizeof *b + b->path_bytes + ext_bytes;
+        if (in < need || b->extent_count == 0 || (b->path_bytes & 1) != 0)
+            return complete(irp, STATUS_INVALID_PARAMETER, 0);
+
+        disk.Length = b->path_bytes;
+        disk.MaximumLength = b->path_bytes;
+        disk.Buffer = (PWCH)p;
+        InitializeObjectAttributes(&oa, &disk,
+                                   OBJ_KERNEL_HANDLE | OBJ_CASE_INSENSITIVE,
+                                   NULL, NULL);
+        st = ZwCreateFile(&h, FILE_READ_DATA | SYNCHRONIZE, &oa, &iosb, NULL,
+                          FILE_ATTRIBUTE_NORMAL,
+                          FILE_SHARE_READ | FILE_SHARE_WRITE, FILE_OPEN,
+                          FILE_SYNCHRONOUS_IO_NONALERT | FILE_NON_DIRECTORY_FILE,
+                          NULL, 0);
+        if (!NT_SUCCESS(st))
+            return complete(irp, st, 0);
+
+        backing_release();
+        g_ext = ExAllocatePoolWithTag(NonPagedPool, ext_bytes, 'DVaF');
+        if (g_ext == NULL) {
+            ZwClose(h);
+            return complete(irp, STATUS_INSUFFICIENT_RESOURCES, 0);
+        }
+        RtlCopyMemory(g_ext, p + b->path_bytes, ext_bytes);
+        g_ext_count = b->extent_count;
+        g_disk_handle = h;
+        g_size = b->iso_bytes;
+        return complete(irp, STATUS_SUCCESS, 0);
+    }
+    if (code == IOCTL_FALCON_VDISK_ONLINE)
+        return complete(irp, notify_mountmgr(), 0);
+    if (code == IOCTL_FALCON_VDISK_LASTIOCTL) {
+        if (io->Parameters.DeviceIoControl.OutputBufferLength < sizeof(ULONG))
+            return complete(irp, STATUS_BUFFER_TOO_SMALL, 0);
+        *(ULONG *)buf = g_last_unhandled;
+        return complete(irp, STATUS_SUCCESS, sizeof(ULONG));
+    }
     return complete(irp, STATUS_INVALID_DEVICE_REQUEST, 0);
 }
 
@@ -205,6 +431,7 @@ static NTSTATUS cd_ioctl(PIRP irp, PIO_STACK_LOCATION io)
     case IOCTL_STORAGE_CHECK_VERIFY:
     case IOCTL_STORAGE_CHECK_VERIFY2:
     case IOCTL_CDROM_CHECK_VERIFY:
+    case IOCTL_DISK_CHECK_VERIFY:
         return complete(irp, STATUS_SUCCESS, 0);
     case IOCTL_STORAGE_GET_DEVICE_NUMBER: {
         FALCON_STORAGE_DEVICE_NUMBER *n = buf;
@@ -261,6 +488,7 @@ static NTSTATUS cd_ioctl(PIRP irp, PIO_STACK_LOCATION io)
                         FIELD_OFFSET(MOUNTDEV_UNIQUE_ID, UniqueId) + need);
     }
     default:
+        g_last_unhandled = code;
         return complete(irp, STATUS_INVALID_DEVICE_REQUEST, 0);
     }
 }
@@ -276,6 +504,12 @@ static NTSTATUS NTAPI vdisk_ioctl(PDEVICE_OBJECT dev, PIRP irp)
 static void NTAPI vdisk_unload(PDRIVER_OBJECT drv)
 {
     (void)drv;
+    if (g_thread != NULL) {
+        g_stop = TRUE;
+        KeReleaseSemaphore(&g_qsem, 0, 1, FALSE);
+        KeWaitForSingleObject(g_thread, Executive, KernelMode, FALSE, NULL);
+        ObDereferenceObject(g_thread);
+    }
     IoDeleteSymbolicLink(&g_ctl_link);
     if (g_cd_dev != NULL)
         IoDeleteDevice(g_cd_dev);
@@ -283,6 +517,7 @@ static void NTAPI vdisk_unload(PDRIVER_OBJECT drv)
         IoDeleteDevice(g_ctl_dev);
     if (g_pool != NULL)
         ExFreePoolWithTag(g_pool, 'DVaF');
+    backing_release();
 }
 
 NTSTATUS NTAPI DriverEntry(PDRIVER_OBJECT drv, PUNICODE_STRING reg);
@@ -324,6 +559,27 @@ NTSTATUS NTAPI DriverEntry(PDRIVER_OBJECT drv, PUNICODE_STRING reg)
     drv->MajorFunction[IRP_MJ_READ] = vdisk_read;
     drv->MajorFunction[IRP_MJ_DEVICE_CONTROL] = vdisk_ioctl;
     drv->DriverUnload = vdisk_unload;
+
+    InitializeListHead(&g_queue);
+    KeInitializeSpinLock(&g_qlock);
+    KeInitializeSemaphore(&g_qsem, 0, MAXLONG);
+    {
+        HANDLE h;
+        OBJECT_ATTRIBUTES oa;
+
+        InitializeObjectAttributes(&oa, NULL, OBJ_KERNEL_HANDLE, NULL, NULL);
+        st = PsCreateSystemThread(&h, THREAD_ALL_ACCESS, &oa, NULL, NULL,
+                                  vdisk_thread, NULL);
+        if (!NT_SUCCESS(st)) {
+            IoDeleteSymbolicLink(&g_ctl_link);
+            IoDeleteDevice(g_cd_dev);
+            IoDeleteDevice(g_ctl_dev);
+            return st;
+        }
+        ObReferenceObjectByHandle(h, THREAD_ALL_ACCESS, NULL, KernelMode,
+                                  &g_thread, NULL);
+        ZwClose(h);
+    }
 
     DbgPrint("falcon-vdisk: loaded\n");
     return STATUS_SUCCESS;
