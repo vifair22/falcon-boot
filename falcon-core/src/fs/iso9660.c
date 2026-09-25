@@ -782,7 +782,7 @@ int iso9660_append_record(iso9660_vol *v, uint32_t dir_lba, uint32_t dir_len,
     uint8_t *r;
 
     if (v == (iso9660_vol *)0 || name == (const char *)0 ||
-        out == (uint8_t *)0 || dir_len == 0 || dir_len % BLK != 0)
+        out == (uint8_t *)0 || dir_len == 0)
         return ISO9660_ERR_BAD_ARG;
     nl = name_len_of(name);
     if (nl == 0 || nl > 222u)                 /* 255 - 33, the record's cap */
@@ -791,7 +791,12 @@ int iso9660_append_record(iso9660_vol *v, uint32_t dir_lba, uint32_t dir_len,
     if ((reclen & 1u) != 0)                   /* records are an even length */
         reclen = (uint16_t)(reclen + 1u);
 
-    last = dir_lba + dir_len / BLK - 1u;
+    /* The directory occupies whole blocks, but its recorded data length need
+     * not be a multiple of the block size: Windows XP's \i386 is 263642 bytes,
+     * which is 128 full blocks plus a 129th holding 1498 bytes of records and
+     * 550 free. Round up so the last block is the partly-filled one, not the
+     * last full one. */
+    last = dir_lba + (dir_len + BLK - 1u) / BLK - 1u;
     if (v->read(v->read_ctx, (uint64_t)last * BLK, BLK, out) != 0)
         return ISO9660_ERR_IO;
 

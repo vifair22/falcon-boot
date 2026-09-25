@@ -179,8 +179,20 @@ int iso9660_probe(iso9660_read_fn read, void *read_ctx);
 /* Adds a directory record for a new file to an ISO 9660 directory without
  * moving the directory: the record goes in the free space at the end of the
  * directory's last block, so the directory keeps its block count and location
- * and neither its own record nor the path table changes. This is how the
- * Windows 2000/XP text-mode driver injection adds its .sys to \i386.
+ * and the path table does not change. This is how the Windows 2000/XP
+ * text-mode driver injection adds its .sys to \i386.
+ *
+ * `dir_len` is the directory's recorded data length, which need NOT be a
+ * multiple of the block size: Windows XP's \i386 is 263642 bytes (128 full
+ * blocks and a 129th holding 1498 bytes of records and 550 free), and the
+ * record lands in that free tail.
+ *
+ * The caller must ALSO grow the directory's own record's data length (in the
+ * parent) by the record's length, or a data-length-strict reader (setupldr,
+ * libisofs) stops at the old end and never sees the new file. The record's
+ * length is 33 + strlen(name), rounded up to even. Only that one field of the
+ * parent record changes; the directory is not relocated and its block count is
+ * unchanged, since the record fits the last block's existing free space.
  *
  * `name` is the full ISO 9660 identifier including the ";1" version, and it
  * must sort at or after the directory's current last entry, so the record can

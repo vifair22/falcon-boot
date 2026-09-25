@@ -893,6 +893,44 @@ static void test_iso_append_record(void **state)
                      ISO9660_ERR_NOSPACE);
 }
 
+/* A directory whose recorded data length is not a multiple of the block size:
+ * whole blocks of records, then a last block only partly filled. Windows XP's
+ * \i386 is exactly this shape (263642 bytes: 128 full blocks and a 129th with
+ * 1498 bytes of records and 550 free), and the driver-injection route appends
+ * _FALCON.SYS into that free space. A floor of the data length would pick the
+ * last full block, not the partly-filled one, and overflow. */
+static void test_iso_append_record_unaligned(void **state)
+{
+    uint8_t *q;
+    uint8_t out[B];
+    uint32_t blk = 0;
+    size_t used21;
+    const uint8_t *r;
+
+    (void)state;
+    (void)fresh(NULL, 0);
+    q = img + 21u * B;
+    q += rec(q, 40, 10, 0, "AAA.TXT;1", 9, NULL, 0);
+    q += rec(q, 41, 20, 0, "_DEFAULT.PI_;1", 14, NULL, 0);
+    used21 = (size_t)(q - (img + 21u * B));
+    assert_int_equal(iso9660_mount(&v, img_read, NULL), ISO9660_OK);
+
+    assert_int_equal(iso9660_append_record(&v, 20, (uint32_t)(B + used21),
+                                           "_FALCON.SYS;1", 777, 21020u,
+                                           out, &blk), ISO9660_OK);
+    assert_int_equal(blk, 21u);
+
+    /* It sits right after the block's existing records, naming its extent. */
+    r = out + used21;
+    assert_int_equal(r[0], 46u);              /* 33 + 13-char name, even */
+    assert_int_equal((uint32_t)r[2] | ((uint32_t)r[3] << 8) |
+                     ((uint32_t)r[4] << 16) | ((uint32_t)r[5] << 24), 777u);
+    assert_int_equal((uint32_t)r[10] | ((uint32_t)r[11] << 8) |
+                     ((uint32_t)r[12] << 16) | ((uint32_t)r[13] << 24), 21020u);
+    assert_int_equal(r[32], 13u);
+    assert_memory_equal(r + 33, "_FALCON.SYS;1", 13u);
+}
+
 int run_iso9660_tests(void)
 {
     const struct CMUnitTest tests[] = {
@@ -904,6 +942,7 @@ int run_iso9660_tests(void)
         cmocka_unit_test(test_iso_multi_extent),
         cmocka_unit_test(test_iso_multi_extent_edges),
         cmocka_unit_test(test_iso_append_record),
+        cmocka_unit_test(test_iso_append_record_unaligned),
         cmocka_unit_test(test_iso_file_paths),
         cmocka_unit_test(test_iso_rr_basic),
         cmocka_unit_test(test_iso_rr_skip),
