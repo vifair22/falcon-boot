@@ -33,7 +33,7 @@ example (2026-09-20): its default entry is "Clonezilla live (VGA
 and listing the disk it found, and serial stayed empty for 300s. Read
 the screenshot before believing one of these.
 
-Loader: 0.1.0_20260920.1824.release, 0.1.0_20260924.1655.release, 0.1.0_20260925.0145.release, 0.1.0_20260925.0152.release, 0.1.0_20260925.0358.release, 0.1.0_20260925.0506.release, 0.1.0_20260925.0641.release, 0.1.0_20260925.0643.release, 0.1.0_20260925.0701.release, 0.1.0_20260925.0904.release, 0.1.0_20260925.1627.release, 0.1.0_20260925.1701.release, 0.1.0_20260925.1721.release
+Loader: 0.1.0_20260920.1824.release, 0.1.0_20260924.1655.release, 0.1.0_20260925.0145.release, 0.1.0_20260925.0152.release, 0.1.0_20260925.0358.release, 0.1.0_20260925.0506.release, 0.1.0_20260925.0643.release, 0.1.0_20260925.0904.release, 0.1.0_20260925.1627.release, 0.1.0_20260925.1701.release, 0.1.0_20260925.1721.release, 0.1.0_20260925.1942.release, 0.1.0_20260925.2013.release, 0.1.0_20260925.2027.release, 0.1.0_20260925.2053.release, 0.1.0_20260925.2111.release, 0.1.0_20260925.2112.release
 
 ## Summary
 
@@ -41,7 +41,7 @@ Loader: 0.1.0_20260920.1824.release, 0.1.0_20260924.1655.release, 0.1.0_20260925
 |---|---|---|---|---|---|---|---|---|
 | A | 27 | 22/22 (100%) | 100% | 22/22 (100%) | 95% | 19/22 (86%) | 27/27 (100%) | 4/5 (80%) |
 | B | 13 | 9/9 (100%) | 90% | 9/9 (100%) | - | 9/9 (100%) | 13/13 (100%) | 3/4 (75%) |
-| C | 22 | 6/10 (60%) | - | 3/10 (30%) | - | 1/10 (10%) | 8/22 (36%) | 1/12 (8%) |
+| C | 22 | 6/10 (60%) | - | 3/10 (30%) | - | 1/10 (10%) | 9/22 (40%) | 3/12 (25%) |
 
 ## Matrix
 
@@ -81,7 +81,7 @@ Loader: 0.1.0_20260920.1824.release, 0.1.0_20260924.1655.release, 0.1.0_20260925
 | esxi-7.0u3l | C | esxi | PASS | PASS | UNBLESSABLE | FAIL | FAIL | UNBLESSABLE | REFUSED | REFUSED | UNBLESSABLE | - | PASS | - | N/A | N/A | N/A |
 | esxi-8.0u3 | C | esxi | PASS | PASS | UNBLESSABLE | FAIL | FAIL | UNBLESSABLE | REFUSED | REFUSED | UNBLESSABLE | - | PASS | - | N/A | N/A | N/A |
 | macrium-rescue-8.0 | A | windows-pe | PASS | PASS | UNBLESSABLE | PASS | PASS | UNBLESSABLE | REFUSED | REFUSED | UNBLESSABLE | PASS | PASS | - | N/A | N/A | N/A |
-| opnsense-25.1 | C | freebsd | FAIL | FAIL | FAIL | FAIL | FAIL | FAIL | FAIL | FAIL | FAIL | FAIL | FAIL | - | N/A | N/A | N/A |
+| opnsense-25.1 | C | freebsd | FAIL | FAIL | FAIL | FAIL | FAIL | FAIL | FAIL | FAIL | FAIL | - | FAIL | - | N/A | N/A | N/A |
 | pfsense-plus-24.06b7 | C | freebsd | PASS | FAIL | PASS | FAIL | FAIL | FAIL | FAIL | FAIL | FAIL | FAIL | FAIL | - | N/A | N/A | N/A |
 | bazzite-stable | A | bazzite | PASS | FAIL | PASS | FAIL | FAIL | PASS | FAIL | FAIL | PASS | PASS | FAIL | - | N/A | N/A | N/A |
 | alpine-std-x86-3.24.2 | B | alpine | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | PASS | FAIL | N/A | PASS | FAIL | N/A |
@@ -103,9 +103,9 @@ Loader: 0.1.0_20260920.1824.release, 0.1.0_20260924.1655.release, 0.1.0_20260925
 | windows-2000-pro-x86 | C | windows | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | FAIL | FAIL | N/A | FAIL | FAIL | N/A |
 | windows-xp-pro-sp3-x86 | C | windows | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | FAIL | FAIL | N/A | FAIL | FAIL | N/A |
 | windows-xp-pro-x64 | C | windows | FAIL | FAIL | N/A | FAIL | FAIL | N/A | FAIL | FAIL | N/A | FAIL | FAIL | N/A | N/A | N/A | N/A |
-| windows-vista-x86 | C | windows | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | PASS | FAIL | N/A | FAIL | - | N/A |
-| windows-vista-sp1-x64 | C | windows | FAIL | FAIL | N/A | FAIL | FAIL | N/A | FAIL | FAIL | N/A | FAIL | - | N/A | N/A | N/A | N/A |
-| windows-7-sp1-x86 | C | windows | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | PASS | - | N/A | FAIL | - | N/A |
+| windows-vista-x86 | C | windows | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | PASS | FAIL | N/A | PASS | - | N/A |
+| windows-vista-sp1-x64 | C | windows | FAIL | FAIL | N/A | FAIL | FAIL | N/A | FAIL | FAIL | N/A | PASS | - | N/A | N/A | N/A | N/A |
+| windows-7-sp1-x86 | C | windows | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | PASS | - | N/A | PASS | - | N/A |
 | windows-7-x64 | C | windows | FAIL | FAIL | N/A | REFUSED | REFUSED | N/A | REFUSED | REFUSED | N/A | PASS | - | N/A | N/A | N/A | N/A |
 | windows-8.1-x86 | C | windows | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | PASS | - | N/A | FAIL | - | N/A |
 | windows-8.1-x64 | C | windows | PASS | FAIL | N/A | PASS | FAIL | N/A | REFUSED | REFUSED | N/A | PASS | - | N/A | N/A | N/A | N/A |
@@ -257,7 +257,6 @@ Loader: 0.1.0_20260920.1824.release, 0.1.0_20260924.1655.release, 0.1.0_20260925
 | opnsense-25.1 | own | drop | FAIL | back at the menu: the memory-disk boot failed while checking memory for the image: 0x8000000000000009 (screen: text console) |
 | opnsense-25.1 | own | chain | FAIL | back at the menu: the memory-disk boot failed while checking memory for the image: 0x8000000000000009 (screen: text console) |
 | opnsense-25.1 | own | bless | FAIL | back at the menu: blessed boot failed while checking memory for the image: 0x8000000000000009 (screen: text console) |
-| opnsense-25.1 | bios | drop | FAIL | no userland within 300s (screen: text console) |
 | opnsense-25.1 | bios | chain | FAIL | no userland within 300s (screen: text console) |
 | pfsense-plus-24.06b7 | off | chain | FAIL | no userland within 300s (screen: text console) |
 | pfsense-plus-24.06b7 | ms | drop | FAIL | back at the menu: the memory-disk boot failed while LoadImage of \EFI\BOOT\BOOTX64.EFI (shim): 0x80000 (screen: text console) |
@@ -291,7 +290,7 @@ Loader: 0.1.0_20260920.1824.release, 0.1.0_20260924.1655.release, 0.1.0_20260925
 | reactos-0.4.16 | bios | chain | FAIL | no userland within 300s (screen: graphical) |
 | reactos-0.4.16 | bios32 | drop | FAIL | no userland within 300s (screen: graphical) |
 | reactos-0.4.16 | bios32 | chain | FAIL | no userland within 300s (screen: graphical) |
-| freebsd-disc1-14.5-i386 | bios | drop | FAIL | no userland within 300s (screen: text console) |
+| freebsd-disc1-14.5-i386 | bios | drop | FAIL | back at the menu: the memory-disk boot failed while checking memory for the image (screen: text console) |
 | freebsd-disc1-14.5-i386 | bios | chain | FAIL | no userland within 300s (screen: text console) |
 | freebsd-disc1-14.5-i386 | bios32 | drop | FAIL | no userland within 300s (screen: text console) |
 | freebsd-disc1-14.5-i386 | bios32 | chain | FAIL | no userland within 300s (screen: text console) |
@@ -299,11 +298,11 @@ Loader: 0.1.0_20260920.1824.release, 0.1.0_20260924.1655.release, 0.1.0_20260925
 | openbsd-7.9-i386 | bios | chain | FAIL | no userland within 300s (screen: text console) |
 | openbsd-7.9-i386 | bios32 | drop | FAIL | back at the menu: direct boot failed while reading the ISO's boot configuration (screen: text console) |
 | openbsd-7.9-i386 | bios32 | chain | FAIL | no userland within 300s (screen: text console) |
-| netbsd-10.2-i386 | bios | drop | FAIL | no userland within 60s (screen: text console) |
+| netbsd-10.2-i386 | bios | drop | FAIL | no userland within 300s (screen: text console) |
 | netbsd-10.2-i386 | bios | chain | FAIL | back at the menu: direct boot failed while reading the ISO's boot configuration (screen: text console) |
 | netbsd-10.2-i386 | bios32 | drop | FAIL | back at the menu: direct boot failed while reading the ISO's boot configuration (screen: text console) |
 | netbsd-10.2-i386 | bios32 | chain | FAIL | back at the menu: direct boot failed while reading the ISO's boot configuration (screen: text console) |
-| haiku-r1b6-x86_gcc2h | bios | drop | FAIL | no userland within 120s (screen: text console) |
+| haiku-r1b6-x86_gcc2h | bios | drop | FAIL | no userland within 300s (screen: text console) |
 | haiku-r1b6-x86_gcc2h | bios | chain | FAIL | back at the menu: boot failed while reading the ISO's boot catalog (screen: text console) |
 | haiku-r1b6-x86_gcc2h | bios32 | drop | FAIL | back at the menu: direct boot failed while reading the ISO's boot configuration (screen: text console) |
 | haiku-r1b6-x86_gcc2h | bios32 | chain | FAIL | back at the menu: boot failed while reading the ISO's boot catalog (screen: text console) |
@@ -334,15 +333,12 @@ Loader: 0.1.0_20260920.1824.release, 0.1.0_20260924.1655.release, 0.1.0_20260925
 | windows-xp-pro-x64 | bios | drop | FAIL | no userland within 300s (screen: graphical) |
 | windows-xp-pro-x64 | bios | chain | FAIL | no userland within 300s (screen: graphical) |
 | windows-vista-x86 | bios | chain | FAIL | no userland within 300s (screen: graphical) |
-| windows-vista-x86 | bios32 | drop | FAIL | back at the menu: boot failed while checking the processor (screen: text console) |
 | windows-vista-sp1-x64 | off | drop | FAIL | back at the menu: boot failed while finding the medium's EFI System Partition: 0x800000000000000e (screen: text console) |
 | windows-vista-sp1-x64 | off | chain | FAIL | back at the menu: boot failed while finding the medium's EFI System Partition: 0x800000000000000e (screen: text console) |
 | windows-vista-sp1-x64 | ms | drop | FAIL | back at the menu: boot failed while finding the medium's EFI System Partition: 0x800000000000000e (screen: text console) |
 | windows-vista-sp1-x64 | ms | chain | FAIL | back at the menu: boot failed while finding the medium's EFI System Partition: 0x800000000000000e (screen: text console) |
 | windows-vista-sp1-x64 | own | drop | FAIL | back at the menu: boot failed while finding the medium's EFI System Partition: 0x800000000000000e (screen: text console) |
 | windows-vista-sp1-x64 | own | chain | FAIL | back at the menu: boot failed while finding the medium's EFI System Partition: 0x800000000000000e (screen: text console) |
-| windows-vista-sp1-x64 | bios | drop | FAIL | no userland within 300s (screen: Windows Setup) |
-| windows-7-sp1-x86 | bios32 | drop | FAIL | back at the menu: boot failed while checking the processor (screen: text console) |
 | windows-7-x64 | off | drop | FAIL | no userland within 300s (screen: text console) |
 | windows-7-x64 | off | chain | FAIL | no userland within 300s (screen: text console) |
 | windows-8.1-x86 | bios32 | drop | FAIL | back at the menu: boot failed while checking the processor (screen: text console) |
