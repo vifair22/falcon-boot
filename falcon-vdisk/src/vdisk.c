@@ -844,14 +844,21 @@ NTSTATUS NTAPI DriverEntry(PDRIVER_OBJECT drv, PUNICODE_STRING reg)
      * path the kernel bugchecks 0x7B with OBJECT_NAME_NOT_FOUND after this
      * driver has loaded and resolved its backing: it cannot resolve the ARC
      * name of its boot device to this CD. Aliasing the standard CD-ROM device
-     * name to this device is a first step, but does not resolve it on its own
-     * (the boot ARC path is not simply cdrom(0), or \Device\CdRom0 is already
-     * taken by cdrom.sys's empty drive). The full binding is the remaining work
+     * name to this device is a first step. Rig-measured 2026-09-25:
+     * \Device\CdRom0 is FREE and this link is created (the CDROM0_LINKED
+     * marker), yet 0x7B still follows - so the boot ARC path the kernel
+     * resolves is NOT cdrom(0). The remaining work is to find the path
+     * setupldr set (enumerate \ArcName, or read how it names an El Torito
+     * no-emulation CD served over INT 13h) and make it resolve here
      * (windows-route.md 7.4). A WinPE build leaves map_len zero and is
      * untouched. */
     if (g_bake.map_len != 0) {
         RtlInitUnicodeString(&g_cdrom0_name, L"\\Device\\CdRom0");
         g_cdrom0 = NT_SUCCESS(IoCreateSymbolicLink(&g_cdrom0_name, &g_cd_name));
+#ifdef VDISK_SERIAL_TRACE
+        serial_trace(g_cdrom0 ? "FALCONVDISK_CDROM0_LINKED\r\n"
+                              : "FALCONVDISK_CDROM0_EXISTS\r\n");
+#endif
     }
 
     for (i = 0; i <= IRP_MJ_MAXIMUM_FUNCTION; i++)
