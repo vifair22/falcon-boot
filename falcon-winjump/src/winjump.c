@@ -297,6 +297,20 @@ jlog(const char *fmt, ...)
             WriteFile(con, line, (DWORD)n + 2, &written, NULL);
     }
 
+    /* And the first serial port, when WinPE has one: it is the only view that
+     * outlives the machine. The corpus harness captures it, and on real
+     * hardware a serial cable reads a boot whose screen cannot be photographed.
+     * Absent or busy, the open fails and the line is simply not sent. */
+    {
+        HANDLE com = CreateFileW(L"\\\\.\\COM1", GENERIC_WRITE, 0, NULL,
+                                 OPEN_EXISTING, 0, NULL);
+
+        if (com != INVALID_HANDLE_VALUE) {
+            WriteFile(com, line, (DWORD)n + 2, &written, NULL);
+            CloseHandle(com);
+        }
+    }
+
     /* Reopened per line so a hang or a crash still leaves everything written
      * so far on disk. The log is a few dozen lines; the cost is irrelevant. */
     h = CreateFileW(LOG_PATH, FILE_APPEND_DATA, FILE_SHARE_READ, NULL,

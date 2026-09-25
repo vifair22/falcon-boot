@@ -34,6 +34,7 @@
 
 #include <fs/fs.h>
 #include <fs/udf.h>
+#include <media/extmap.h>
 #include <pe/pe.h>
 #include <wim/wim.h>
 #include <lib/string.h>
@@ -49,6 +50,13 @@ extern const size_t falcon_winjump32_bin_len;
 
 #define BLK 2048u
 
+/* The cfg carries the ISO's extent map as hex, so a WinPE that cannot read the
+ * exFAT the ISO lives on (Windows 7 and Vista) can serve it through the driver
+ * from raw disk sectors. Sized for the largest map, matching the EFI loader's
+ * winpatch.c. */
+#define WIN_CFG_MAX \
+    (1024u + 2u * (EXTMAP_HDR_LEN + EXTMAP_MAX_EXTENTS * EXTMAP_EXT_LEN))
+
 static fs_file  g_iso;
 static udf_vol  g_uv;
 static udf_file g_wim;
@@ -56,9 +64,12 @@ static uint8_t  g_scratch[WIM_SCRATCH_LEN];
 static uint8_t  g_fe[BLK];
 static uint8_t  g_pd[2][BLK];
 static uint8_t  g_hdr[WIM_HDR_LEN];
-static char     g_cfg[512];
+static char     g_cfg[WIN_CFG_MAX];
 static udf_extent g_ext[UDF_MAX_EXTENTS];
 static uint8_t  g_head[WIM_CHUNK_LEN];
+static fs_extent    g_fsext[EXTMAP_MAX_EXTENTS];
+static extmap_extent g_mext[EXTMAP_MAX_EXTENTS];
+static uint8_t  g_map[EXTMAP_HDR_LEN + EXTMAP_MAX_EXTENTS * EXTMAP_EXT_LEN];
 
 /* What Windows install media of the WIM era (Windows 8 and later; Windows 7
  * cannot attach the ISO winjump needs anyway) asks of a processor before it
@@ -108,14 +119,46 @@ static size_t put_dec(char *out, uint64_t v)
     return n;
 }
 
+/* Builds the ISO's extent map into g_map: the p2 GPT entry the winjump driver
+ * finds the disk by, and the runs of the ISO's bytes on it. Returns the map's
+ * length, or 0 if it could not be built (winjump then has only the VirtDisk
+ * route, which is all a Windows 8+ WinPE needs). Mirrors the EFI loader's
+ * build_map (falcon-efi/src/direct/direct.c). */
+static size_t build_win_map(const bios_disk *d, fs_vol *p2,
+                            const gpt_part *p2part, const fs_dirent *iso)
+{
+    extmap_hdr hdr;
+    size_t n = 0, i, mlen = 0;
+
+    memset(&hdr, 0, sizeof hdr);
+    memcpy(hdr.part_guid, p2part->unique, sizeof hdr.part_guid);
+    hdr.part_lba = p2part->start_lba;
+    hdr.block_size = d->sector_size;
+    hdr.iso_size = iso->size;
+
+    if (fs_extents(p2, iso, g_fsext, EXTMAP_MAX_EXTENTS, &n) != FS_OK)
+        return 0;
+    for (i = 0; i < n; i++) {
+        g_mext[i].offset = g_fsext[i].vol_off;
+        g_mext[i].length = g_fsext[i].len;
+    }
+    hdr.n_extents = (uint32_t)n;
+    if (extmap_encode(&hdr, g_mext, g_map, sizeof g_map, &mlen) != EXTMAP_OK)
+        return 0;
+    return mlen;
+}
+
 /* What falcon-winjump reads to find the medium once Windows is running: the
- * ISO's path on p2 and its length. The same file the UEFI route writes. */
-static size_t make_cfg(const char *rel, uint64_t size)
+ * ISO's path on p2, its length, and (when built) its extent map as hex for the
+ * driver path. The same file the UEFI route writes. */
+static size_t make_cfg(const char *rel, uint64_t size, const uint8_t *map,
+                       size_t map_len)
 {
     static const char head[] =
         "# falcon-boot winjump configuration, made by the loader at boot\n"
         "iso=";
     static const char mid[] = "\nsize=";
+    static const char hexd[] = "0123456789abcdef";
     size_t n;
     size_t i;
 
@@ -127,6 +170,17 @@ static size_t make_cfg(const char *rel, uint64_t size)
     n += sizeof mid - 1u;
     n += put_dec(g_cfg + n, size);
     g_cfg[n++] = '\n';
+
+    if (map != (const uint8_t *)0 && map_len != 0 &&
+        n + 5u + 2u * map_len < sizeof g_cfg) {
+        memcpy(g_cfg + n, "map=", 4u);
+        n += 4u;
+        for (i = 0; i < map_len; i++) {
+            g_cfg[n++] = hexd[map[i] >> 4];
+            g_cfg[n++] = hexd[map[i] & 0x0fu];
+        }
+        g_cfg[n++] = '\n';
+    }
     return n;
 }
 
@@ -142,6 +196,7 @@ int win_boot(bios_disk *d, fs_vol *p2, const gpt_part *p2part,
     size_t tail_cap;
     size_t tail_len = 0;
     size_t cfg_len;
+    size_t map_len;
     uint8_t *lookup;
     uint8_t *meta;
     uint8_t *app;
@@ -181,7 +236,9 @@ int win_boot(bios_disk *d, fs_vol *p2, const gpt_part *p2part,
     if (unpatchable != (int *)0)
         *unpatchable = 0;
 
-    cfg_len = make_cfg(iso_rel, iso->size);
+    map_len = build_win_map(d, p2, p2part, iso);
+    cfg_len = make_cfg(iso_rel, iso->size, map_len != 0 ? g_map : (uint8_t *)0,
+                       map_len);
     /* Sized for the larger of the two builds: which one this boot.wim takes
      * is read out of it after the memory is reserved. */
     tail_cap = wim_patch_tail_max((size_t)w.boot_meta.orig,
