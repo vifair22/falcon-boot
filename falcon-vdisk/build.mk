@@ -13,7 +13,7 @@ VDISK_SRC := falcon-vdisk/src/vdisk.c
 
 VDISK_CFLAGS := -std=c11 -O2 -ffreestanding -fno-builtin \
 	-fno-stack-protector -mno-stack-arg-probe \
-	-Wall -Wextra -Wshadow \
+	-Wall -Wextra -Wshadow -Wno-multichar \
 	-D_WIN32_WINNT=0x0600 -DNTDDI_VERSION=0x06000000 \
 	-Ifalcon-vdisk/src
 

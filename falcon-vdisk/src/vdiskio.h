@@ -1,21 +1,34 @@
 /* falcon-vdisk: the interface between falcon-winjump (userland) and the
  * kernel driver. Shared by both.
+ *
+ * CTL_CODE is <winioctl.h>'s in userland and <wdm.h>'s in the driver; the
+ * device type is FILE_DEVICE_UNKNOWN (0x22), the functions are above the
+ * 0x800 vendor base, METHOD_BUFFERED (0), FILE_ANY_ACCESS (0).
  */
 
 #ifndef FALCON_VDISK_IO_H
 #define FALCON_VDISK_IO_H
 
-/* CTL_CODE, spelled out so this header needs only <winioctl.h>'s macro or the
- * DDK's: FILE_DEVICE_UNKNOWN (0x22), a custom function base above 0x800,
- * METHOD_BUFFERED (0), FILE_ANY_ACCESS (0). */
+/* The medium's size, and the point where the raw-disk extents that back it
+ * will be told to the driver (a later revision). For now it also brings the
+ * backing store into being at that size. */
 #define IOCTL_FALCON_VDISK_SET_GEOMETRY \
-    CTL_CODE(0x00000022, 0x800, 0 /*METHOD_BUFFERED*/, 0 /*FILE_ANY_ACCESS*/)
+    CTL_CODE(0x00000022, 0x800, 0, 0)
 
-/* What the loader tells the driver about the medium. The extent map and the
- * physical disk that backs it follow this in later revisions; for now it is
- * the declared size, enough to bring the device and its mount up. */
+/* Feed a range of the medium's bytes into the backing store, for bringing
+ * the device and its mount up before the raw-disk read path exists. The
+ * input buffer is a falcon_vdisk_write header followed by its bytes. */
+#define IOCTL_FALCON_VDISK_WRITE \
+    CTL_CODE(0x00000022, 0x801, 0, 0)
+
 struct falcon_vdisk_geometry {
     unsigned long long iso_bytes;
+};
+
+struct falcon_vdisk_write {
+    unsigned long long offset;
+    unsigned long long length;
+    /* `length` bytes follow. */
 };
 
 #endif /* FALCON_VDISK_IO_H */
