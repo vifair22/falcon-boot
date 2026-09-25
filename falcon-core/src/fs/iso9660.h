@@ -176,4 +176,24 @@ int iso9660_file_extents(iso9660_vol *v, const iso9660_dirent *e,
 /* Probe: one read, "CD001" at block 16. */
 int iso9660_probe(iso9660_read_fn read, void *read_ctx);
 
+/* Adds a directory record for a new file to an ISO 9660 directory without
+ * moving the directory: the record goes in the free space at the end of the
+ * directory's last block, so the directory keeps its block count and location
+ * and neither its own record nor the path table changes. This is how the
+ * Windows 2000/XP text-mode driver injection adds its .sys to \i386.
+ *
+ * `name` is the full ISO 9660 identifier including the ";1" version, and it
+ * must sort at or after the directory's current last entry, so the record can
+ * be appended in order - the caller's to arrange by choosing a name that sorts
+ * last (e.g. one starting past the directory's last, which for \i386 is
+ * "_DEFAULT.PI_;1"). The file's extent is (ext_lba, ext_len), a plain file.
+ *
+ * The directory's last block is read through the volume's callback into `out`
+ * (ISO9660_BLOCK bytes) and the record appended; *blk_lba is that block's LBA,
+ * so the caller overlays only it. ISO9660_ERR_NOSPACE if the last block has no
+ * room for the record. Nothing is written to media. */
+int iso9660_append_record(iso9660_vol *v, uint32_t dir_lba, uint32_t dir_len,
+                          const char *name, uint32_t ext_lba, uint32_t ext_len,
+                          uint8_t *out, uint32_t *blk_lba);
+
 #endif /* FALCON_ISO9660_H */

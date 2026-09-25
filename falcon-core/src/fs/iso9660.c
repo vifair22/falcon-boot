@@ -748,3 +748,74 @@ int iso9660_file_extents(iso9660_vol *v, const iso9660_dirent *e,
     *count = n;
     return n > cap ? ISO9660_ERR_NOSPACE : ISO9660_OK;
 }
+
+/* ---- adding a file record ---- */
+
+static void put_le32_r(uint8_t *p, uint32_t v)
+{
+    p[0] = (uint8_t)v; p[1] = (uint8_t)(v >> 8);
+    p[2] = (uint8_t)(v >> 16); p[3] = (uint8_t)(v >> 24);
+}
+
+static void put_be32_r(uint8_t *p, uint32_t v)
+{
+    p[0] = (uint8_t)(v >> 24); p[1] = (uint8_t)(v >> 16);
+    p[2] = (uint8_t)(v >> 8); p[3] = (uint8_t)v;
+}
+
+static size_t name_len_of(const char *name)
+{
+    size_t n = 0;
+    while (name[n] != '\0')
+        n++;
+    return n;
+}
+
+int iso9660_append_record(iso9660_vol *v, uint32_t dir_lba, uint32_t dir_len,
+                          const char *name, uint32_t ext_lba, uint32_t ext_len,
+                          uint8_t *out, uint32_t *blk_lba)
+{
+    uint32_t last;
+    uint16_t off;
+    size_t nl;
+    uint16_t reclen;
+    uint8_t *r;
+
+    if (v == (iso9660_vol *)0 || name == (const char *)0 ||
+        out == (uint8_t *)0 || dir_len == 0 || dir_len % BLK != 0)
+        return ISO9660_ERR_BAD_ARG;
+    nl = name_len_of(name);
+    if (nl == 0 || nl > 222u)                 /* 255 - 33, the record's cap */
+        return ISO9660_ERR_BAD_ARG;
+    reclen = (uint16_t)(33u + nl);
+    if ((reclen & 1u) != 0)                   /* records are an even length */
+        reclen = (uint16_t)(reclen + 1u);
+
+    last = dir_lba + dir_len / BLK - 1u;
+    if (v->read(v->read_ctx, (uint64_t)last * BLK, BLK, out) != 0)
+        return ISO9660_ERR_IO;
+
+    off = 0;                                  /* walk to the block's free space */
+    while (off < BLK && out[off] != 0) {
+        if ((uint32_t)off + out[off] > BLK)
+            return ISO9660_ERR_CORRUPT;
+        off = (uint16_t)(off + out[off]);
+    }
+    if ((uint32_t)off + reclen > BLK)
+        return ISO9660_ERR_NOSPACE;
+
+    r = out + off;
+    memset(r, 0, reclen);
+    r[0] = (uint8_t)reclen;
+    put_le32_r(r + 2, ext_lba);
+    put_be32_r(r + 6, ext_lba);
+    put_le32_r(r + 10, ext_len);
+    put_be32_r(r + 14, ext_len);
+    /* bytes 18..24 recording date left zero; 25 file flags 0 (a plain file) */
+    r[28] = 1; r[31] = 1;                      /* volume sequence number, 1 */
+    r[32] = (uint8_t)nl;
+    memcpy(r + 33, name, nl);
+    if (blk_lba != (uint32_t *)0)
+        *blk_lba = last;
+    return ISO9660_OK;
+}
