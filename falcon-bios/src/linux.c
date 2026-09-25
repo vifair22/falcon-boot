@@ -58,6 +58,21 @@
  * is copied into the page and these sit outside the range it occupies. */
 #define BP_E820_ENTRIES     0x1E8   /* u8 */
 #define BP_E820_TABLE       0x2D0   /* E820_MAX * 20 bytes */
+/* struct screen_info, at the head of the zero page. */
+#define BP_ORIG_X           0x00    /* u8, cursor column */
+#define BP_ORIG_Y           0x01    /* u8, cursor row */
+#define BP_VIDEO_PAGE       0x04    /* u16 */
+#define BP_VIDEO_MODE       0x06    /* u8 */
+#define BP_VIDEO_COLS       0x07    /* u8 */
+#define BP_VIDEO_EGA_BX     0x0A    /* u16 */
+#define BP_VIDEO_LINES      0x0E    /* u8 */
+#define BP_VIDEO_ISVGA      0x0F    /* u8 */
+#define BP_VIDEO_POINTS     0x10    /* u16, character height */
+
+/* The BIOS data area's copy of the text screen's shape. */
+#define BDA_COLS            0x44Au  /* u16 */
+#define BDA_ROWS_MINUS_1    0x484u  /* u8 */
+#define BDA_POINTS          0x485u  /* u16 */
 
 static uint8_t g_setup[65u * 512u];
 
@@ -198,6 +213,53 @@ static void fill_e820(uint8_t *zp)
         wr32(zp, at + 16u, e->type);
     }
     wr8(zp, BP_E820_ENTRIES, (uint8_t)i);
+}
+
+static void int10(uint32_t eax, uint32_t ebx)
+{
+    thunk_regs.eax = eax;
+    thunk_regs.ebx = ebx;
+    thunk_regs.ecx = 0;
+    thunk_regs.edx = 0;
+    thunk_vector = 0x10;
+    thunk_bios();
+}
+
+/* The text screen, described in the zero page the way the kernel's own
+ * real-mode setup describes it (arch/x86/boot/video.c and video-vga.c),
+ * because the 32-bit entry skips that code and the zero page is otherwise
+ * zero. A zero screen_info has no rows and no columns, which vgacon reads
+ * as "no VGA": the kernel then runs on the dummy console, and on a kernel
+ * whose initramfs brings no GPU driver nothing it or systemd prints ever
+ * reaches the screen. The machine boots and shows a black screen.
+ *
+ * Asked of the BIOS, not assumed, and asked last, after the route's own
+ * final lines, so the cursor it reports is where the kernel's first line
+ * belongs. screen.c has set 80x25 colour text by the time any route runs. */
+static void fill_screen_info(uint8_t *zp)
+{
+    int10(0x0300u, 0);                  /* AH=03h, cursor of page 0 */
+    wr8(zp, BP_ORIG_X, (uint8_t)(thunk_regs.edx & 0xFFu));
+    wr8(zp, BP_ORIG_Y, (uint8_t)((thunk_regs.edx >> 8) & 0xFFu));
+
+    int10(0x0F00u, 0);                  /* AH=0Fh, current mode and page */
+    wr8(zp, BP_VIDEO_MODE, (uint8_t)(thunk_regs.eax & 0x7Fu));
+    wr16(zp, BP_VIDEO_PAGE, (uint16_t)((thunk_regs.ebx >> 8) & 0xFFu));
+
+    wr8(zp, BP_VIDEO_COLS, (uint8_t)peek16(BDA_COLS));
+    wr8(zp, BP_VIDEO_LINES, (uint8_t)(peek8(BDA_ROWS_MINUS_1) + 1u));
+    wr16(zp, BP_VIDEO_POINTS, peek16(BDA_POINTS));
+
+    /* AH=12h BL=10h is the EGA information call: BL coming back unchanged
+     * means no EGA, and vgacon reads the same field to decide. AX=1A00h
+     * answers 1Ah in AL only on VGA. */
+    int10(0x1200u, 0x0010u);
+    wr16(zp, BP_VIDEO_EGA_BX, (uint16_t)(thunk_regs.ebx & 0xFFFFu));
+    if ((thunk_regs.ebx & 0xFFu) != 0x10u) {
+        int10(0x1A00u, 0);
+        if ((thunk_regs.eax & 0xFFu) == 0x1Au)
+            wr8(zp, BP_VIDEO_ISVGA, 1u);
+    }
 }
 
 /* Reads an object into `dst` in bounce-sized pieces. The read callback is
@@ -424,6 +486,7 @@ int linux_boot(const linux_object *kernel, const linux_object *initrd,
 
     if (last != (void (*)(void))0)
         last();
+    fill_screen_info(zp);
     enter_kernel((uint32_t)load_at, ZEROPAGE_ADDR);
     return -1;
 }
