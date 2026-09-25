@@ -51,11 +51,11 @@ WINJUMP_CFLAGS := -std=c11 -O2 \
 # No C runtime (see the head of winjump.c): nothing from mingw's startup
 # code or its CRT is linked, the entry point is winjump.c's mainCRTStartup
 # (the linker's default name, so no -e is passed), and the
-# imports are kernel32 and advapi32, which every WinPE from Vista's
+# imports are kernel32, advapi32 and user32, which every WinPE from Vista's
 # on carries. VirtDisk.dll is loaded at run time. libgcc stays, for the
 # stack probe a frame over a page needs; it imports nothing.
 WINJUMP_LDFLAGS := -nostdlib -Wl,--no-insert-timestamp
-WINJUMP_LIBS := -lkernel32 -ladvapi32 -lgcc
+WINJUMP_LIBS := -lkernel32 -ladvapi32 -luser32 -lgcc
 
 
 # The image must enter at mainCRTStartup. A linker that cannot resolve its

@@ -111,20 +111,33 @@
 # decision; remove this entry once it is resolved.
 #
 # ==========================================================================
-# 4. falcon-winjump/src/winjump.c, Win32 API idioms (3 entries)
+# 4. falcon-winjump/src/winjump.c, Win32 API idioms (6 entries)
 # ==========================================================================
 #
 # This is the only file in the tree that targets Windows userland rather than
-# EFI or Linux, and all three hits are the Windows API's conventions rather
-# than anything about our code. It is analysed at all because it parses a
-# config file and a drive listing; that part gets the same scrutiny as the
-# rest of the tree.
+# EFI or Linux, and every hit is the Windows API's conventions, the freestanding
+# build's requirements, or an analyzer limit, rather than anything about our
+# code. It is analysed at all because it parses a config file and a drive
+# listing; that part gets the same scrutiny as the rest of the tree.
 #
 #   bugprone-reserved-identifier, _WIN32_WINNT and _UNICODE (2 entries).
 #       Both are reserved to the implementation and both are REQUIRED to be
 #       defined by the translation unit before <windows.h>: they are how the
 #       SDK is told which API level and which character width to expose.
 #       There is no non-reserved spelling.
+#
+#   bugprone-reserved-identifier, __stack_chk_guard and __stack_chk_fail
+#       (2 entries). winjump links no C runtime (-nostdlib; see the head of
+#       winjump.c), so the two symbols -fstack-protector-strong calls into,
+#       which libssp would otherwise provide, are defined in the file itself.
+#       Their names are the compiler's, not ours; there is no other spelling
+#       it will call.
+#
+#   uninitvar, "Uninitialized variable: d" in memset (1 entry). winjump
+#       defines its own memset (no CRT); cppcheck sees the destination written
+#       only through an alias pointer and reports the return of `d` as
+#       uninitialized. It is the caller's buffer, written by the loop above;
+#       the finding is a false positive on a hand-written mem routine.
 #
 #   optin.core.EnumCastOutOfRange, ATTACH_VIRTUAL_DISK_FLAG (1 entry). The
 #       flags are OR-ed, READ_ONLY (1) | PERMANENT_LIFETIME (4) = 5, and the
@@ -200,6 +213,9 @@ tidy	falcon-core/src/media/bootcfg.c	clang-analyzer-core.NullDereference	Array a
 tidy	falcon-core/src/trust/x509.c	bugprone-narrowing-conversions	narrowing conversion from 'int' to signed type 'char' is implementation-defined
 tidy	falcon-efi/src/efi/main.c	bugprone-narrowing-conversions	narrowing conversion from 'int' to signed type 'char' is implementation-defined
 tidy	falcon-winjump/src/winjump.c	bugprone-reserved-identifier	declaration uses identifier '_UNICODE', which is a reserved identifier
+tidy	falcon-winjump/src/winjump.c	bugprone-reserved-identifier	declaration uses identifier '__stack_chk_guard', which is a reserved identifier
+tidy	falcon-winjump/src/winjump.c	bugprone-reserved-identifier	declaration uses identifier '__stack_chk_fail', which is a reserved identifier
+cppcheck	falcon-winjump/src/winjump.c	uninitvar	Uninitialized variable: d
 tidy	falcon-winjump/src/winjump.c	clang-analyzer-optin.core.EnumCastOutOfRange	The value '5' provided to the cast expression is not in the valid range of values for '_ATTACH_VIRTUAL_DISK_FLAG'
 
 # ==========================================================================

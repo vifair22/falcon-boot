@@ -27,16 +27,15 @@
  *
  * NO C RUNTIME. A missing import stops a process before its first
  * instruction, so this binary imports only what every WinPE from Vista's on
- * carries: kernel32 and advapi32. The C runtime is not one of those:
+ * carries: kernel32, advapi32 and user32. The C runtime is not one of those:
  * a mingw built for the Universal CRT (Arch's) imports api-ms-win-crt-*,
  * which WinPE gained with Windows 10, and one built for msvcrt (Debian's)
  * imports msvcrt.dll, so the same source used to give different binaries on
  * different build hosts, and the laptop's could not start on Windows 8.1.
- * The handful of string routines and a small formatter are here instead,
- * and the entry point is ours, so the imports are kernel32 and advapi32
- * alone. (user32's wvsprintf was tried and dropped: loading user32 is a
- * window-station matter in a process that has no need of one.) VirtDisk.dll,
- * which Vista's WinPE
+ * The handful of string routines are here instead, the log's formatting is
+ * user32's wvsprintf (in every WinPE, which is a GUI; winpeshl itself
+ * imports it), and the entry point is ours. So the imports are kernel32,
+ * advapi32 and user32. VirtDisk.dll, which Vista's WinPE
  * does not have at all, is loaded at run time for the same reason: without
  * it there is no attach, but there is still a shell.
  */
@@ -242,116 +241,29 @@ struct stick_opts {
  * %d, %u, %ld, %lu and %%, which is every conversion this file uses and
  * nothing else. Output stops at cap - 1 bytes and is always terminated.
  * Returns the length written. */
-static size_t jput(char *out, size_t cap, size_t n, char c)
-{
-    if (n + 1u < cap)
-        out[n++] = c;
-    return n;
-}
-
-static size_t jput_u(char *out, size_t cap, size_t n, unsigned long v)
-{
-    char d[24];
-    size_t k = 0;
-
-    do {
-        d[k++] = (char)('0' + (int)(v % 10u));
-        v /= 10u;
-    } while (v != 0);
-    while (k > 0)
-        n = jput(out, cap, n, d[--k]);
-    return n;
-}
-
-static size_t jvformat(char *out, size_t cap, const char *fmt, va_list ap)
-{
-    size_t n = 0;
-
-    if (cap == 0)
-        return 0;
-    for (; *fmt != '\0'; fmt++) {
-        size_t prec = (size_t)-1;
-        int is_long = 0;
-
-        if (*fmt != '%') {
-            n = jput(out, cap, n, *fmt);
-            continue;
-        }
-        fmt++;
-        if (*fmt == '.') {
-            prec = 0;
-            for (fmt++; *fmt >= '0' && *fmt <= '9'; fmt++)
-                prec = prec * 10u + (size_t)(*fmt - '0');
-        }
-        if (*fmt == 'l') {
-            is_long = 1;
-            fmt++;
-        }
-        switch (*fmt) {
-        case 's':
-            if (is_long) {
-                const wchar_t *w = va_arg(ap, const wchar_t *);
-                size_t i;
-
-                for (i = 0; w != NULL && w[i] != L'\0' && i < prec; i++)
-                    n = jput(out, cap, n,
-                             (w[i] >= 0x20 && w[i] < 0x7F) ? (char)w[i] : '?');
-            } else {
-                const char *a = va_arg(ap, const char *);
-                size_t i;
-
-                for (i = 0; a != NULL && a[i] != '\0' && i < prec; i++)
-                    n = jput(out, cap, n, a[i]);
-            }
-            break;
-        case 'c':
-            n = jput(out, cap, n, (char)va_arg(ap, int));
-            break;
-        case 'u':
-            n = jput_u(out, cap, n, is_long ? va_arg(ap, unsigned long)
-                                            : (unsigned long)va_arg(ap,
-                                                                    unsigned));
-            break;
-        case 'd': {
-            long v = is_long ? va_arg(ap, long) : (long)va_arg(ap, int);
-
-            if (v < 0) {
-                n = jput(out, cap, n, '-');
-                n = jput_u(out, cap, n, 0ul - (unsigned long)v);
-            } else {
-                n = jput_u(out, cap, n, (unsigned long)v);
-            }
-            break;
-        }
-        case '%':
-            n = jput(out, cap, n, '%');
-            break;
-        default:
-            /* Not one this file writes; say so rather than guess. */
-            n = jput(out, cap, n, '?');
-            if (*fmt == '\0')
-                fmt--;
-            break;
-        }
-    }
-    out[n] = '\0';
-    return n;
-}
-
-static void __attribute__((format(printf, 1, 2)))
+/* user32's formatter: %s, %ls (wide), %c, %u, %lu, %ld and %% are all this
+ * file uses, and every one is a conversion wvsprintf takes; the 64-bit
+ * values go through u64s and %s. Its checker is ms_printf. wvsprintfA caps at
+ * 1024 bytes, which is why line is that size and every argument is a path or
+ * a number. */
+static void __attribute__((format(ms_printf, 1, 2)))
 jlog(const char *fmt, ...)
 {
     char line[1024 + 2];
     va_list ap;
     HANDLE h;
     DWORD written;
-    size_t n;
+    int n;
 
     va_start(ap, fmt);
-    n = jvformat(line, 1024 + 1, fmt, ap);
+    n = wvsprintfA(line, fmt, ap);
     va_end(ap);
+    if (n < 0)
+        return;
+    if (n > 1024)
+        n = 1024;
     line[n] = '\r';
-    line[n + 1u] = '\n';
+    line[n + 1] = '\n';
 
     /* The console as well: WinPE shows this process's window, so the log is
      * on screen as it happens, which is the only view there is when the
@@ -360,7 +272,7 @@ jlog(const char *fmt, ...)
         HANDLE con = GetStdHandle(STD_OUTPUT_HANDLE);
 
         if (con != NULL && con != INVALID_HANDLE_VALUE)
-            WriteFile(con, line, (DWORD)n + 2u, &written, NULL);
+            WriteFile(con, line, (DWORD)n + 2, &written, NULL);
     }
 
     /* Reopened per line so a hang or a crash still leaves everything written
@@ -369,7 +281,7 @@ jlog(const char *fmt, ...)
                     OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
     if (h == INVALID_HANDLE_VALUE)
         return;
-    WriteFile(h, line, (DWORD)n + 2u, &written, NULL);
+    WriteFile(h, line, (DWORD)n + 2, &written, NULL);
     CloseHandle(h);
 }
 
