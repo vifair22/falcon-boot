@@ -75,6 +75,7 @@ STATE=$2
 ROUTE=$3
 OUTDIR=$4
 TIMEOUT=${5:-300}
+CASE=$(basename "$STICK" .img)
 
 MENU_WAIT=120
 MEM=${FALCON_CASE_MEM:-4096}
@@ -433,6 +434,18 @@ while (( $(date +%s) - T1 < TIMEOUT )); do
     fi
     if grep -q -E 'Kernel panic - not syncing' <<<"$after"; then
         finish FAIL "$(grep -m1 'Kernel panic' <<<"$after" | cut -c1-120)"
+    fi
+    # A memory tester has no userland, no login and no network: it boots
+    # straight to a full-screen test and runs. So for memtest a graphical
+    # screen, once the boot is well underway, is the boot succeeding; a memtest
+    # that did not boot sits at the loader menu, which reads as a text console.
+    if [[ "$CASE" == memtest* ]] && (( now - T1 > 60 )) && (( now >= next_setup )); then
+        next_setup=$(( now + SETUP_EVERY ))
+        MON_SOCK="$MON" falcon-efi/tools/rig-shot.sh mt "$OUTDIR" \
+            >/dev/null 2>&1 || true
+        kind=$([[ -f "$OUTDIR/mt.ppm" ]] && screen_kind "$OUTDIR/mt.ppm")
+        rm -f "$OUTDIR"/mt.ppm "$OUTDIR"/mt.png
+        [[ "$kind" == graphical ]] && finish PASS "the memory tester is running"
     fi
     # The reason quotes the line that matched, not the first line with a
     # similar word in it ("unpack rootfs image as initramfs" is in every
