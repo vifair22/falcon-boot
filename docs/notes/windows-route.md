@@ -865,13 +865,31 @@ driver serves; windows-server-2025, a modern Windows that had been failing BIOS
 for the harness reason alone, reads 160 MiB and passes too. Windows 7 x64 needs
 no driver signing: its WinPE loads the unsigned falcon-vdisk.
 
-**windows-vista-sp1-x64 does not boot.** Its `winpeshl.exe` is still the stock
-18,432-byte Vista binary, so the boot.wim winpeshl patch did not take and
-winjump never ran; the copy then sees only falcon-bios's own INT 13h CD as a
-"device not ready". The patch works on Vista x86 and Windows 7 x64, so this is
-a WIM-image quirk specific to Vista SP1 x64's boot.wim, likely the patch
-targeting the wrong image through the header's boot-metadata resource. Not yet
-fixed.
+**windows-vista-sp1-x64 does not boot,** and the cause is the medium, not the
+WIM. Its `winpeshl.exe` is still the stock 18,432-byte Vista binary, so the
+patch did not take and winjump never ran; the copy then sees only falcon-bios's
+own INT 13h CD as a "device not ready". The reason: **Vista SP1 x64's ISO is
+ISO 9660 only, with no UDF filesystem** (Windows 7 x64 and Vista x86's are
+UDF/ISO 9660 bridges), and both loaders read and patch boot.wim through
+`udf_mount` alone. On an ISO 9660-only medium `udf_mount` fails, `win_boot`
+never finds `/sources/boot.wim`, the patch is skipped, and Vista boots its
+original winpeshl. Its boot.wim header is otherwise identical to Windows 7's
+(two images, boot index 2, a valid boot-metadata resource), so the earlier
+"wrong WIM image" guess was wrong.
+
+The fix is an ISO 9660 patch path beside the UDF one in `win_boot`: read
+boot.wim with the iso9660 driver (it exposes the file's extents and its
+directory record's location, `rec_lba`), build the same winjump tail with
+`wim_patch_build`, edit the WIM header over the overlay as the UDF path does,
+and grow the file. Growing it is the hard part: a UDF File Entry is natively
+multi-extent, so `udf_fe_append` just adds the appended tail as another extent,
+but an ISO 9660 file is one extent unless it carries the multi-extent flag over
+consecutive directory records. The virtual CD's overlay serves only memory
+buffers and an append past the ISO's end, not a redirect, so boot.wim's single
+extent cannot simply be moved. The tail has to become a second, multi-extent
+continuation record, which means inserting a directory record after boot.wim's
+and re-serialising the directory sectors it shares - the real work, and why
+this is not the WIM-image one-liner the earlier note guessed. Not yet built.
 
 ### 7.3 32-bit Windows, characterized in full (2026-09-25)
 
