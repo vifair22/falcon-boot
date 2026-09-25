@@ -28,6 +28,20 @@ saved screenshots and serial, not the scorecard's coarse "no userland".
   CD-read path. Not the AH=02h issue first suspected. Settling it needs a rig
   run with fast (~0.5 s) screendumps right after the chain to catch /boot's
   own output.
+- **haiku-r1beta6-x86 (BIOS):** its El Torito BIOS entry is a 2.88 MB floppy
+  emulation (the UEFI entry is separate), so it takes the vfd route (a floppy
+  served as a memory disk, not the CD chainload). It returns to the menu.
+  Suspect: vfd.c serves the floppy but not the virtual CD alongside, and
+  Haiku's loader on that floppy reads the Haiku system off the CD's ISO9660,
+  which is then not there. memtest (also a floppy image) passes because it is
+  self-contained. Needs a rig run to see Haiku's loader output and confirm
+  whether serving the CD alongside the floppy is the fix.
+- **pfsense-plus-24.06b7 (BIOS):** amd64, 1369 MiB, fits the amd64 staging
+  ceiling - the recent serial shows falcon-bios does serve it as a memory disk
+  and hand off, so it is past staging. The failure is downstream in pfSense's
+  own loader/installer (no serial "Welcome to pfSense!" within 300s), distinct
+  from the i386 BTX limit. Needs a fresh rig run to characterise; the saved
+  screenshot is from an older loader.
 
 ## Technical limitation - the medium cannot boot this way
 
@@ -50,10 +64,8 @@ saved screenshots and serial, not the scorecard's coarse "no userland".
   to halt BTX.
 - **opnsense-25.1 (BIOS):** amd64, 2.2 GB, correctly refused by staging_fits as
   too big even for the amd64 ceiling (its EFI failure is a separate shim/PE
-  matter). Not the i386 case.
-- **pfsense-plus-24.06b7 (BIOS):** amd64, 1.4 GB, fits the amd64 ceiling, so its
-  BIOS non-boot is a separate question from the i386 BTX limit - a distinct
-  look, not this bucket.
+  matter). Not the i386 case. (pfsense-plus, also amd64 but 1.4 GB, fits the
+  ceiling and is under investigation above, not here.)
 
 ## Hard - its own build (NT text-mode / driver injection)
 
