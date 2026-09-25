@@ -3166,6 +3166,7 @@ sequenceDiagram
     L->>B: initrds, hook last, 4-byte padded, at e820_place_high below initrd_addr_max
     L->>L: zero page at 0x10000: setup header, loader type 0xFF, E820 as the BIOS gave it
     L->>L: "starting <entry>" on screen
+    L->>L: screen_info from INT 10h and the BDA, after the route's last line: mode, columns, rows, cursor, VGA
     L->>K: own GDT (0x10, 0x18), jump to code32_start, ESI = zero page (32-bit entry, either width)
     K->>H: rdinit=/falcon/hook, map from /falcon/map
     H->>D: /dev/mapper/falcon-iso (12.4)
