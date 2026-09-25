@@ -85,13 +85,13 @@ static fs_extent    g_fsext[EXTMAP_MAX_EXTENTS];
 static extmap_extent g_mext[EXTMAP_MAX_EXTENTS];
 static uint8_t  g_map[EXTMAP_HDR_LEN + EXTMAP_MAX_EXTENTS * EXTMAP_EXT_LEN];
 
-/* What Windows install media of the WIM era (Windows 8 and later; Windows 7
- * cannot attach the ISO winjump needs anyway) asks of a processor before it
- * runs: PAE, NX and SSE2. Missing any of them, bootmgr or winload resets the
- * machine with nothing on screen, measured on the harness's Pentium III,
- * which has no NX and no SSE2. So they are asked here and a missing one is
- * named. NULL when all three are there. */
-static const char *win_cpu_lacks(void)
+/* What Windows asks of a processor before it runs. PAE every Windows of the
+ * WIM era needs. NX and SSE2 only Windows 8 and later need: without them
+ * bootmgr or winload resets with nothing on screen (measured on the harness's
+ * Pentium III, which has neither), but Vista and 7 run without either, so
+ * `modern` gates that half. A Pentium III boots Vista or 7 x86 and not Windows
+ * 10 x86. Returns the missing feature, or NULL when the processor will do. */
+static const char *win_cpu_lacks(int modern)
 {
     unsigned a, b, c, d;
 
@@ -99,6 +99,8 @@ static const char *win_cpu_lacks(void)
         return "CPUID";
     if ((d & (1u << 6)) == 0)
         return "PAE";
+    if (!modern)
+        return (const char *)0;
     if ((d & (1u << 26)) == 0)
         return "SSE2";
     if (__get_cpuid(0x80000000u, &a, &b, &c, &d) == 0 || a < 0x80000001u ||
@@ -414,8 +416,27 @@ int win_boot(bios_disk *d, fs_vol *p2, const gpt_part *p2part,
             return -1;
         }
         if (h.machine == PE_MACHINE_I386 || h.machine == PE_MACHINE_AMD64) {
-            const char *lacks = win_cpu_lacks();
+            /* winpeshl.exe's PE optional-header OS version is the Windows
+             * version (offset 40/42, the same for PE32 and PE32+): 6.2 is
+             * Windows 8, so 6.2 and up need NX and SSE2, Vista (6.0) and 7
+             * (6.1) do not. */
+            int modern = 1;
+            const char *lacks;
 
+            if ((size_t)h.opt + 44u <= head_len) {
+                uint16_t maj = (uint16_t)(g_head[h.opt + 40] |
+                                          ((uint16_t)g_head[h.opt + 41] << 8));
+                uint16_t min = (uint16_t)(g_head[h.opt + 42] |
+                                          ((uint16_t)g_head[h.opt + 43] << 8));
+
+                modern = maj > 6 || (maj == 6 && min >= 2);
+                bios_puts("falcon-bios: winpeshl targets Windows ");
+                bios_put_dec(maj);
+                bios_puts(".");
+                bios_put_dec(min);
+                bios_puts("\n");
+            }
+            lacks = win_cpu_lacks(modern);
             if (lacks != (const char *)0) {
                 r->stage = "checking the processor";
                 bios_puts("falcon-bios: this processor has no ");
@@ -425,13 +446,12 @@ int win_boot(bios_disk *d, fs_vol *p2, const gpt_part *p2part,
                  * person looking at an old machine can check. */
                 r->advice =
                     lacks[0] == 'P'
-                        ? "Windows 8 and later need PAE, NX and SSE2; this "
-                          "processor has no PAE."
+                        ? "Windows needs PAE; this processor has none."
                     : lacks[0] == 'S'
-                        ? "Windows 8 and later need PAE, NX and SSE2; this "
+                        ? "Windows 8 and later need NX and SSE2; this "
                           "processor has no SSE2."
                     : lacks[0] == 'N'
-                        ? "Windows 8 and later need PAE, NX and SSE2; this "
+                        ? "Windows 8 and later need NX and SSE2; this "
                           "processor has no NX."
                         : "this processor does not answer CPUID.";
                 return -1;

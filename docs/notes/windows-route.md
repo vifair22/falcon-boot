@@ -942,27 +942,31 @@ Every 32-bit (x86) Windows medium in the corpus, with its root cause:
 
 | ISO | bios (host CPU) | bios32 (Pentium III) | root cause |
 |---|---|---|---|
-| windows-10-22h2-x86 | PASS | FAIL (reading winpeshl headers) | winjump32 proven on bios. On the P3, Windows 10 needs PAE/NX/SSE2 the P3 lacks: an allowed architecture exception. It currently fails one stage before the CPU check names that, a cosmetic imprecision, not a boot regression. |
+| windows-10-22h2-x86 | PASS | FAIL (checking the processor: no SSE2) | winjump32 proven on bios. On the P3, Windows 10 needs NX/SSE2 the P3 lacks: an allowed architecture exception, and the CPU check now names it. |
 | windows-8.1-x86 | PASS | FAIL (checking the processor: no SSE2) | winjump32 proven on bios. P3 correctly rejected: 8.1 needs SSE2/NX. Allowed architecture exception. |
-| windows-7-sp1-x86 | PASS (338 MiB) | FAIL (checking the processor: no SSE2) | Boots after the four Section 7.2 fixes. The P3 CPU check cites SSE2, which Windows 7 does not actually require, but the P3 also lacks NX, so the outcome (no boot on a P3) is an allowed architecture exception. |
-| windows-vista-x86 | PASS (349 MiB) | FAIL (checking the processor: no SSE2) | Boots after the Section 7.2 fixes. Same P3 note as Windows 7. |
-| windows-2000-pro-x86 | FAIL (no userland, graphical) | FAIL (no userland, graphical) | No WinPE at all; text-mode setup, a wholly separate route not yet built. |
+| windows-7-sp1-x86 | PASS (338 MiB) | PASS (539 MiB) | Boots on the P3 (2026-09-25). The CPU check used to reject it for lacking SSE2, which Windows 7 does not require; it is now gated to Windows 8 and later by winpeshl's PE OS version, and 7 (6.1) passes. |
+| windows-vista-x86 | PASS (349 MiB) | PASS (581 MiB) | Boots on the P3 (2026-09-25), same fix as Windows 7: Vista (6.0) is below the 8+ gate, so NX/SSE2 are not asked of it. |
+| windows-2000-pro-x86 | FAIL (no userland, graphical) | FAIL (no userland, graphical) | No WinPE at all; text-mode setup, a wholly separate route not yet built (Section 7.4). |
 | windows-xp-pro-sp3-x86 | FAIL (no userland, graphical) | FAIL (no userland, graphical) | Same as 2000: text-mode setup. |
 
 What this settles:
 
-- **The 32-bit jump binary (falcon-winjump32.exe) works.** 10-x86, 8.1-x86,
-  7-sp1-x86 and vista-x86 all pass `bios drop` end to end: winjump32 running as
-  winpeshl, serving the ISO (through AttachVirtualDisk on 8.1/10, through the
+- **The 32-bit jump binary (falcon-winjump32.exe) works, on 32-bit hardware.**
+  10-x86, 8.1-x86, 7-sp1-x86 and vista-x86 all pass `bios drop`, and 7-sp1-x86
+  and vista-x86 also pass `bios32 drop` (a real Pentium III): winjump32 running
+  as winpeshl, serving the ISO (through AttachVirtualDisk on 8.1/10, through the
   driver on 7/Vista), and Setup reading install.* through it.
+- **The CPU check is gated to Windows 8 and later** by winpeshl.exe's PE
+  optional-header OS version (6.2 = Windows 8). PAE is still asked of every
+  Windows; NX and SSE2 only of 8+, which reset with nothing on screen without
+  them. Vista (6.0) and 7 (6.1) boot on a processor with neither, which is what
+  a Pentium III is.
+- **8.1-x86 and 10-x86 on the Pentium III are genuine architecture exceptions:**
+  those releases require SSE2 and NX a P3 does not have, and the check names the
+  missing feature rather than letting bootmgr reset in silence.
 - **The remaining 32-bit non-boots are the Windows 2000 / XP text-mode
   installer**, which has no WinPE and needs a different route entirely (not yet
   built).
-- **8.1-x86 and 10-x86 on the Pentium III are genuine architecture exceptions:**
-  those releases require SSE2 and NX that a P3 does not have. 7-x86 and vista-x86
-  are refused on the P3 for the same reason (no NX), which is why they pass on
-  the 64-bit `bios` column but not on `bios32`. windows-10-x86 reports it one
-  stage early; the outcome (no boot on a P3) is correct.
 
 ### 7.4 Windows 2000 and XP: text-mode setup (route not yet built)
 
@@ -986,20 +990,34 @@ ISO as a device the NT kernel binds to, injected into text-mode setup by
 patching the served ISO. The pieces, in build order, with the obstacles found:
 
 1. A driver text-mode setup loads. falcon-vdisk already presents a CD-ROM from
-   the ISO's raw disk extents, and its API use (ZwCreateFile/ZwReadFile,
-   IoRegisterBootDriverReinitialization, the mount-manager IOCTLs, a servicing
-   thread) is all NT 5.0+; the 0x0600 build may run on XP unchanged. But the
-   mingw DDK will not compile it at _WIN32_WINNT below 0x0600 (wdm.h names
-   SYSTEM_POWER_STATE_CONTEXT, defined only from 0x0600), so an XP-targeted
-   build needs that type stubbed. Whether XP loads a root-enumerated CD-ROM
-   driver through txtsetup.sif's [SCSI.Load] (where firadisk goes) or wants
-   another section is the open question, and the first thing to settle.
+   the ISO's raw disk extents. Settled 2026-09-25: the existing x86 build (at
+   _WIN32_WINNT 0x0600) needs no XP-specific build. Its imports, dumped from
+   the .sys, are ExAllocatePoolWithTag, ExFreePoolWithTag, the Exf interlocked
+   list pair, IoBuildDeviceIoControlRequest, IoCreateDevice/DeleteDevice,
+   Io{Create,Delete}SymbolicLink, IoGetDeviceObjectPointer, Iof{Call,Complete},
+   KeInitialize{Event,Semaphore}, KeReleaseSemaphore, KeWaitForSingleObject,
+   MmMapLockedPagesSpecifyCache, Ob{f}{Reference,Dereference}Object,
+   Ps{Create,Terminate}SystemThread, RtlInitUnicodeString, ZwClose/Create/Read,
+   DbgPrint - every one exported by Windows 2000 (NT 5.0) and XP (NT 5.1)
+   ntoskrnl, MmMapLockedPagesSpecifyCache being the newest at NT 5.0. So the
+   SYSTEM_POWER_STATE_CONTEXT compile wall (wdm.h at below 0x0600) is moot: the
+   0x0600 binary is XP-safe as it stands. The open question that remains is
+   whether XP loads a root-enumerated CD-ROM driver through txtsetup.sif's
+   [SCSI.Load] (where firadisk goes) or wants another section - a rig question,
+   not a build one.
 2. Patch the served ISO for the XP layout. Add the .sys and rewrite
    i386/txtsetup.sif ([SCSI.Load], [SCSI], [HardwareIdsDatabase],
    [SourceDisksFiles]) and i386/dosnet.inf. This is an ISO 9660 + Joliet edit
    over the virtual CD's overlay, separate from the boot.wim/UDF patch that 7
    and Vista use: txtsetup.sif grows, so its directory record and the appended
-   file both need placing, the same shape as the WIM tail.
+   file both need placing, the same shape as the WIM tail - and the boot.wim
+   relocation now in win.c (single extent moved past the ISO's end, its record
+   rewritten in both trees, the bulk redirected to disk) is the template.
+   Adding the .sys is the harder half: measured on windows-xp-pro-sp3-x86, the
+   i386 directory is 129 sectors and every one is packed to within 2-40 bytes
+   of full, so a new ~44-byte record does not fit in place. The directory has
+   to be relocated whole with the record inserted - the packed-directory
+   problem the boot.wim multi-extent attempt hit, one step further.
 3. Give the driver the ISO's extents without winjump to hand them over. Bake the
    extent map into the driver at patch time, or leave it at a sector the driver
    reads. atapi.sys must enumerate the physical stick before the driver reads
