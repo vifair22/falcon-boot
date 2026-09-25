@@ -31,6 +31,7 @@ WINJUMP_CFLAGS := -std=c11 -O2 \
 	-Wmissing-declarations -Wcast-align -Wcast-qual -Wnull-dereference \
 	-Wconversion -Wsign-conversion \
 	-fstack-protector-strong \
+	-fno-tree-loop-distribute-patterns \
 	$(WINJUMP_SYSINC)
 
 # VirtDisk.dll is the whole point; advapi32 supplies the token calls that
@@ -40,19 +41,42 @@ WINJUMP_CFLAGS := -std=c11 -O2 \
 # otherwise imports, is not, and a missing import kills the process before
 # its first log line: -static links it (and libgcc) in, and leaves the
 # system DLLs as imports.
+# -fno-tree-loop-distribute-patterns: winjump.c defines memset, memcpy and
+# strlen itself, and without it gcc recognises each one's loop as the very
+# function it is and compiles the body into a call to itself. memset became
+# a jump to its own first instruction, an infinite loop the 32-bit build
+# reached at its first structure zeroing and the 64-bit build happened not
+# to (it inlined those).
+#
 # No C runtime (see the head of winjump.c): nothing from mingw's startup
-# code or its CRT is linked, the entry point is winjump_start, and the
-# imports are kernel32, advapi32 and user32, which every WinPE from Vista's
+# code or its CRT is linked, the entry point is winjump.c's mainCRTStartup
+# (the linker's default name, so no -e is passed), and the
+# imports are kernel32 and advapi32, which every WinPE from Vista's
 # on carries. VirtDisk.dll is loaded at run time. libgcc stays, for the
 # stack probe a frame over a page needs; it imports nothing.
-WINJUMP_LDFLAGS := -nostdlib -Wl,--no-insert-timestamp -Wl,-e,winjump_start
-WINJUMP_LIBS := -lkernel32 -ladvapi32 -luser32 -lgcc
+WINJUMP_LDFLAGS := -nostdlib -Wl,--no-insert-timestamp
+WINJUMP_LIBS := -lkernel32 -ladvapi32 -lgcc
+
+
+# The image must enter at mainCRTStartup. A linker that cannot resolve its
+# entry symbol does not fail: it enters at the start of .text, whatever is
+# there, which on WinPE is a process that hangs before its first log line.
+# $(1) the image, $(2) the toolchain prefix.
+define winjump_entry_check
+	@s=$$($(2)objdump -f $(1) | sed -n 's/^start address //p'); \
+	e=$$($(2)nm $(1) | sed -n 's/^\([0-9a-f]*\) T _*mainCRTStartup$$/0x\1/p'); \
+	if [ -z "$$e" ] || [ $$(($$s)) -ne $$(($$e)) ]; then \
+		echo "error: $(1) enters at $$s, not at mainCRTStartup ($$e)"; \
+		rm -f $(1); exit 1; \
+	fi
+endef
 
 winjump: $(WINJUMP)
 
 $(WINJUMP): $(WINJUMP_OBJS)
 	@mkdir -p $(@D)
 	$(CC) $(WINJUMP_LDFLAGS) -o $@ $(WINJUMP_OBJS) $(WINJUMP_LIBS)
+	$(call winjump_entry_check,$@,$(CC:gcc=))
 
 $(WINJUMP_OBJ)/%.o: %.c
 	@mkdir -p $(@D)
@@ -98,13 +122,12 @@ WINJUMP32_SYSINC := $(if $(MINGW32_SYSROOT),\
 WINJUMP32_CFLAGS := $(filter-out $(WINJUMP_SYSINC),$(WINJUMP_CFLAGS)) \
 	$(WINJUMP32_SYSINC)
 
-# i686 symbols carry a leading underscore, and the linker's -e wants the
-# symbol as it is in the object.
-WINJUMP32_LDFLAGS := $(subst -e$(comma)winjump_start,-e$(comma)_winjump_start,$(WINJUMP_LDFLAGS))
+WINJUMP32_LDFLAGS := $(WINJUMP_LDFLAGS)
 
 $(WINJUMP32): $(WINJUMP32_OBJS)
 	@mkdir -p $(@D)
 	$(CC_WIN32) $(WINJUMP32_LDFLAGS) -o $@ $(WINJUMP32_OBJS) $(WINJUMP_LIBS)
+	$(call winjump_entry_check,$@,$(CC_WIN32:gcc=))
 
 $(WINJUMP32_OBJ)/%.o: %.c
 	@mkdir -p $(@D)
