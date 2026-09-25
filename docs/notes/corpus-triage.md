@@ -17,27 +17,43 @@ saved screenshots and serial, not the scorecard's coarse "no userland".
   wrongly demanded NX and SSE2 of Vista and 7, which need neither; gated to
   Windows 8+ by winpeshl's PE OS version. Both PASS on a real P3.
 
-## Real, and fixable (loader work, not yet done)
+## Under investigation
 
-- **freedos-1.4-live (BIOS):** its CD driver (UDVD2/SHSUCDX) initialises drive
-  D: off the virtual CD, then a later read fails, "Error reading from drive D:
-  data area: drive not ready". Some INT 13h read pattern FreeDOS issues is not
-  served correctly by the resident. A resident bug to chase, not a limitation.
-- **netbsd-10.2-i386 (BIOS):** the loader tries both the direct and the chain
-  route (serial shows DIR then CHN) and both return to the menu. NetBSD's i386
-  boot blocks are not handled by either path. Real; needs the NetBSD boot
-  mechanism understood. (OpenBSD i386, below, boots - so it is NetBSD-specific.)
+- **netbsd-10.2-i386 (BIOS):** disassembly settled that cdboot's first stage
+  works - it relocates itself, reads through the resident's INT 13h AH=42h
+  (same as OpenBSD's cdboot), finds the PVD, loads /boot into 0x10000 and
+  far-calls it; its "Can't read CD"/"Can't find /boot" errors never fire. The
+  crash is downstream, inside NetBSD's /boot secondary bootstrap (its kernel
+  load above 1 MB, or its reading of the carved E820), not in falcon-bios's
+  CD-read path. Not the AH=02h issue first suspected. Settling it needs a rig
+  run with fast (~0.5 s) screendumps right after the chain to catch /boot's
+  own output.
 
-## Real, but likely an i386/architecture limitation
+## Technical limitation - the medium cannot boot this way
 
-- **freebsd-disc1-14.5-i386 (BIOS):** the FreeBSD loader runs, loads the kernel,
-  references the FALCONBS.IMG memory disk, then "BTX halted" with a register
-  dump. The amd64 FreeBSD (freebsd-bootonly-15.1) passes; i386 BTX is a
-  constrained 32-bit environment and the memory disk is ~1 GB. Likely a BTX
-  limitation on i386 rather than a loader bug, but not yet proven either way.
-- **opnsense-25.1, pfsense-plus-24.06b7 (BIOS):** FreeBSD-derived, same memory-
-  disk route as freebsd-i386. opnsense also fails the EFI memory check
-  (0x8000000000000009) with Secure Boot off. Grouped with freebsd-i386.
+- **freedos-1.4-live (BIOS):** confirmed a limitation, not a loader bug. Its
+  CDROM.BAT tries only hardware ATAPI/AHCI/IDE drivers (AHCICD, VIDE-CDD,
+  OAKCDROM, GSCDROM, UDVD2) - none a BIOS/INT 13h El Torito driver. The virtual
+  CD is an INT 13h construct (drive 0xE0) with no ATAPI hardware behind it, so
+  UDVD2 assigns D: but its first real read fails. Everything before userland
+  loads fine through 0xE0, and the resident cannot even return "drive not
+  ready" (AH=0xAA), so the error is FreeDOS's, not falcon-bios's. The ISO ships
+  no driver a drag-and-drop virtual CD can serve.
+- **freebsd-disc1-14.5-i386 (BIOS):** confirmed an i386/BTX limitation. The ISO
+  is 1044 MiB; FreeBSD's i386 loader runs under BTX, which maps only the low
+  ~1 GB, and copies the whole ISO into RAM as the md_image, running off the end
+  of that window - "BTX halted" is BTX's exception handler. The amd64 FreeBSD
+  stages below 4 GB and passes. A ~1 GB i386 memory disk cannot fit; a smaller
+  i386 BSD ISO would boot. falcon-bios now gates staging_fits by the loader's
+  ELF machine (i386 -> 1 GB ceiling, amd64 -> 4 GB), so this ISO is refused at
+  "checking memory for the image" with that reason rather than served and left
+  to halt BTX.
+- **opnsense-25.1 (BIOS):** amd64, 2.2 GB, correctly refused by staging_fits as
+  too big even for the amd64 ceiling (its EFI failure is a separate shim/PE
+  matter). Not the i386 case.
+- **pfsense-plus-24.06b7 (BIOS):** amd64, 1.4 GB, fits the amd64 ceiling, so its
+  BIOS non-boot is a separate question from the i386 BTX limit - a distinct
+  look, not this bucket.
 
 ## Hard - its own build (NT text-mode / driver injection)
 
@@ -57,8 +73,12 @@ saved screenshots and serial, not the scorecard's coarse "no userland".
   VGA console (screenshot). It boots. The harness scores it FAIL only because
   OpenBSD's installer speaks to VGA, not the serial console the harness reads,
   and screen_kind cannot read the text off a console screen. This is an allowed
-  non-verdict, not a boot failure; a harness that OCR'd the console, or an ISO
-  served with the loader forcing com0, would score it PASS.
+  non-verdict, not a boot failure. Reading the console out of VGA text memory
+  (pmemsave 0xB8000) was tried in run-case.sh and reverted: the harness QEMU's
+  HMP would not write the file, though its screendump over the same monitor
+  worked - so the console text is only in the rendered PPM, which would need
+  OCR. Left as a documented measurement limit; an ISO served with the loader
+  forcing com0, or an OCR pass over the screendump, would score it PASS.
 
 ## Not yet inspected here
 

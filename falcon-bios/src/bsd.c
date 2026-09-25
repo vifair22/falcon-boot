@@ -42,13 +42,21 @@
  * bytes on FreeBSD, pfSense and OPNsense alike. */
 #define CONF_HEAD 1024u
 
-/* What the route needs free above the image's own size, in one run below
- * 4 GB. FreeBSD's loader stages the kernel and its modules in the same
- * region as the memory disk and grows it, with slop for the kernel's
- * earliest allocations; the figure and the ceiling are the UEFI route's,
- * measured on the same media (falcon-efi/src/bsd/bsd.c). */
-#define STAGING_SLOP (192ull * 1024ull * 1024ull)
-#define STAGING_MAX  0x100000000ull
+/* What the route needs free above the image's own size, in one run below the
+ * ceiling. FreeBSD's loader stages the kernel and its modules in the same
+ * region as the memory disk and grows it, with slop for the kernel's earliest
+ * allocations; the figure is the UEFI route's, measured on the same media
+ * (falcon-efi/src/bsd/bsd.c).
+ *
+ * The ceiling is the loader's own reach, and it differs by architecture. The
+ * amd64 loader stages below 4 GB. The i386 loader runs under BTX, which maps
+ * only the low ~1 GB, so an image the loader copies into RAM there runs off the
+ * end of that window and halts BTX (docs/notes/bsd-route.md). A ~1 GB i386
+ * memory disk cannot fit, so it is refused here with a message a reader can
+ * act on rather than served and left to crash. */
+#define STAGING_SLOP  (192ull * 1024ull * 1024ull)
+#define STAGING_AMD64 0x100000000ull   /* 4 GB */
+#define STAGING_I386  0x40000000ull    /* 1 GB, the i386 BTX window */
 
 static fs_file g_iso;
 static fs_vol  g_isovol;
@@ -65,13 +73,37 @@ static int iso_read(void *ctx, uint64_t off, uint64_t len, void *buf)
     return fs_file_read(&g_iso, off, len, buf) == FS_OK ? 0 : -1;
 }
 
-/* Is there one run of usable memory below 4 GB that the whole image and the
- * loader's staging area both fit in. Asked here rather than discovered by
- * the loader, because what the loader does when it does not fit is stop with
- * a message about a staging area, which names nothing a reader can act on. */
+/* The ISO's kernel is i386, not amd64: read /boot/kernel/kernel's ELF machine.
+ * EM_386 is 3, EM_X86_64 is 62, both little-endian at offset 18. The kernel,
+ * not /boot/loader, because FreeBSD's loader is not a plain ELF file but the
+ * kernel always is. An ISO whose kernel cannot be read is treated as amd64,
+ * the permissive ceiling: the crash it would then meet is no worse than
+ * today. */
+static int loader_is_i386(void)
+{
+    fs_dir dir;
+    fs_dirent le;
+    fs_file lf;
+    uint8_t hdr[20];
+
+    if (fs_lookup(&g_isovol, "/boot/kernel/kernel", &dir, &le) != FS_OK ||
+        le.is_dir || fs_file_open(&g_isovol, &lf, &le) != FS_OK ||
+        fs_file_read(&lf, 0, sizeof hdr, hdr) != FS_OK)
+        return 0;
+    if (hdr[0] != 0x7Fu || hdr[1] != 'E' || hdr[2] != 'L' || hdr[3] != 'F')
+        return 0;
+    return hdr[18] == 3u && hdr[19] == 0u;
+}
+
+/* Is there one run of usable memory below the loader's ceiling that the whole
+ * image and the loader's staging area both fit in. Asked here rather than
+ * discovered by the loader, because what the loader does when it does not fit
+ * is stop with a message about a staging area (amd64) or halt BTX (i386),
+ * neither of which names anything a reader can act on. */
 static int staging_fits(uint64_t iso_size)
 {
     uint64_t want = iso_size + STAGING_SLOP;
+    uint64_t ceiling = loader_is_i386() ? STAGING_I386 : STAGING_AMD64;
     unsigned n = e820_read();
     unsigned i;
 
@@ -82,8 +114,8 @@ static int staging_fits(uint64_t iso_size)
         if (e == (const e820_entry *)0 || e->type != E820_USABLE)
             continue;
         end = e->base + e->len;
-        if (end > STAGING_MAX)
-            end = STAGING_MAX;
+        if (end > ceiling)
+            end = ceiling;
         if (end > e->base && end - e->base >= want)
             return 1;
     }
@@ -141,9 +173,13 @@ int bsd_boot(bios_disk *d, fs_vol *p2, const gpt_part *p2part,
 
     r->stage = "checking memory for the image";
     if (!staging_fits(iso->size)) {
-        r->advice = "this machine has too little memory below 4 GB to hold "
-                    "the image, which is where FreeBSD's loader has to put "
-                    "it. Press c to boot the ISO's own loader instead.";
+        r->advice = loader_is_i386()
+            ? "this ISO is too large for its i386 loader to hold as a memory "
+              "disk: that loader runs under BTX and reaches only about 1 GB. "
+              "A smaller i386 BSD ISO would boot."
+            : "this machine has too little memory below 4 GB to hold the "
+              "image, which is where FreeBSD's loader has to put it. Press c "
+              "to boot the ISO's own loader instead.";
         return -1;
     }
 
