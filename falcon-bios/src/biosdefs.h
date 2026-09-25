@@ -148,6 +148,27 @@
  * with rather than reading the cap. */
 #define STAGE3_MAX_SECTORS 1024
 
+/* The next-boot marker (DESIGN Section 6.3.1; falcon-core/src/media/
+ * nextboot.h has the format, src/marker.c the reading and clearing). The last
+ * sector of the gap in front of the first 2048-aligned partition: as far from
+ * the stages as the gap allows, so stage 3 can grow toward it for a long time
+ * before the two meet, and inside the FALCON-BIOS reservation when `mkstick
+ * bios --reserve` made one. mkstick writes and zeroes only the stages' range
+ * (STAGE2_LBA up to STAGE3_LBA + STAGE3_MAX_SECTORS), so an install leaves a
+ * pending marker where it is. Writers on the Linux side seek to this number
+ * times 512, which is why it is a constant rather than something looked up. */
+#define NEXTBOOT_LBA    2047
+
+/* Where the BIOS is asked to put what it reads, and take what it writes.
+ *
+ * Below one megabyte, so real mode can reach it; above stage 2's window; and
+ * below the 0x9FC00 where the extended BIOS data area tends to start on a
+ * real machine (stage2.S refuses an EBDA below 0x98000). 32 KB is enough
+ * that a sequential read is not one interrupt per sector and small enough to
+ * be sure it fits. disk.c reads through it and marker.c writes through it. */
+#define BOUNCE_ADDR     0x90000
+#define BOUNCE_BYTES    0x8000
+
 /* Stage 3 begins with a header rather than code, so stage 2 can read one
  * sector, learn how long the rest is, and read exactly that. The alternative
  * is a build step that patches a sector count into stage 2, which is a second

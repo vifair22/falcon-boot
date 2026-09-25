@@ -493,6 +493,45 @@ static void test_bless_suffix(void **state)
     assert_null(bless_suffix(&hit));
 }
 
+/* A prepared record, as an appliance from before DESIGN Section 6.4 wrote
+ * it: the loader patches Windows media itself now, so manifest_parse skips
+ * the record and its ISO boots plain, with no label. A blessed record beside
+ * it is unaffected. */
+static const char g_manifest_prepared[] =
+    "# falcon-boot manifest\n"
+    "\n"
+    "iso=Windows/Win11_25H2_x64.iso\n"
+    "kind=prepared\n"
+    "size=7218589696\n"
+    "sha256=abcdef0123456789abcdef0123456789"
+    "abcdef0123456789abcdef0123456789\n"
+    "splice=22095872:593121462:boot.wim\n"
+    "family=windows\n"
+    "\n"
+    "iso=Linux/arch.iso\n"
+    "size=1538670592\n"
+    "uki=arch.uki\n"
+    "family=arch\n";
+
+static void test_bless_prepared_record_is_plain(void **state)
+{
+    bless_hit hit;
+
+    (void)state;
+    (void)bless_cache_add(&g_cache, g_manifest_prepared,
+                          strlen(g_manifest_prepared), g_vol_a);
+    assert_int_equal(look(&g_cache, g_vol_a, "Windows/Win11_25H2_x64.iso",
+                          7218589696u, &hit), BLESS_NONE);
+    assert_int_equal(bless_hit_action(&hit), BLESS_ACT_PLAIN);
+    assert_null(bless_suffix(&hit));
+    assert_int_equal(bless_hit_action(NULL), BLESS_ACT_PLAIN);
+
+    assert_int_equal(look(&g_cache, g_vol_a, "Linux/arch.iso", 1538670592u,
+                          &hit), BLESS_FRESH);
+    assert_int_equal(bless_hit_action(&hit), BLESS_ACT_UKI);
+    assert_non_null(bless_suffix(&hit));
+}
+
 int run_bless_tests(void)
 {
     const struct CMUnitTest tests[] = {
@@ -512,6 +551,8 @@ int run_bless_tests(void)
         cmocka_unit_test_setup(test_bless_reset, setup_cache),
         cmocka_unit_test_setup(test_bless_null_args, setup_cache),
         cmocka_unit_test_setup(test_bless_suffix, setup_cache),
+        cmocka_unit_test_setup(test_bless_prepared_record_is_plain,
+                               setup_cache),
     };
 
     return cmocka_run_group_tests_name("bless", tests, NULL, NULL);

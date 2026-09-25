@@ -20,31 +20,6 @@
 
 #include <lib/string.h>
 
-/* Where the BIOS is asked to put things.
- *
- * Below one megabyte, so real mode can reach it; above stage 2's window and
- * the page tables; and below the 0x9FC00 where the extended BIOS data area
- * tends to start on a real machine. 32 KB is enough that a sequential read
- * is not one interrupt per sector and small enough to be sure it fits. */
-#define BOUNCE_ADDR   0x90000u
-#define BOUNCE_BYTES  0x8000u   /* 32 KiB */
-
-/* The disk address packet INT 13h AH=42h reads, at the fixed low address
- * biosdefs.h names rather than as a static.
- *
- * A static was reachable while this file only ever ran in stage 2, which is
- * below a megabyte; the same file links into stage 3, which is not, and real
- * mode truncated the address to sixteen bits and handed the BIOS whatever
- * was there. Every read returned carry. */
-typedef struct {
-    uint8_t  size;
-    uint8_t  reserved;
-    uint16_t sectors;
-    uint16_t offset;
-    uint16_t segment;
-    uint64_t lba;
-} bios_dap;
-
 /* INT 13h AH=48h, the drive parameters. Same reachability rule.
  *
  * Not volatile. The BIOS writes it, but it does so inside thunk_bios, which
@@ -59,17 +34,16 @@ typedef struct {
     uint16_t bytes_per_sector;
 } bios_driveparm;
 
-#define g_dap    (*(bios_dap *)(uintptr_t)DAP_ADDR)
 #define g_params (*(bios_driveparm *)(uintptr_t)DRIVEPARM_ADDR)
 
 static int read_sectors(const bios_disk *d, uint64_t lba, uint16_t count)
 {
-    g_dap.size = 16;
-    g_dap.reserved = 0;
-    g_dap.sectors = count;
-    g_dap.offset = (uint16_t)(BOUNCE_ADDR & 0x0Fu);
-    g_dap.segment = (uint16_t)(BOUNCE_ADDR >> 4);
-    g_dap.lba = lba;
+    bios_dap_at.size = 16;
+    bios_dap_at.reserved = 0;
+    bios_dap_at.sectors = count;
+    bios_dap_at.offset = (uint16_t)(BOUNCE_ADDR & 0x0Fu);
+    bios_dap_at.segment = (uint16_t)(BOUNCE_ADDR >> 4);
+    bios_dap_at.lba = lba;
 
     thunk_regs.eax = 0x4200u;              /* AH=42h, extended read */
     thunk_regs.edx = d->drive;

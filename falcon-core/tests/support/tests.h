@@ -46,7 +46,6 @@ int run_util_tests(void);
 int run_appliance_route_tests(void);
 int run_manifest_tests(void);
 int run_bless_tests(void);
-int run_next_tests(void);
 int run_nxt_tests(void);
 int run_crypto_tests(void);
 int run_json_tests(void);
@@ -77,6 +76,7 @@ int run_pe_tests(void);
 int run_trust_tests(void);
 int run_tui_tests(void);
 int run_shelf_tests(void);
+int run_nextboot_tests(void);
 
 /* Copies a UCS-2 filename into an ASCII buffer. Every character the tests use
  * is ASCII; anything outside that range is rendered '?' so a mismatch is

@@ -799,7 +799,9 @@ prepares all of them in that one run. Dropping three ISOs costs one reboot,
 not three.
 
 **The next-boot handoff: a non-volatile EFI variable the loader owns.** The
-loader has no write path to the stick at all - every filesystem driver in
+UEFI loader has no write path to the stick at all (falcon-bios has exactly
+one, the marker sector below, because a BIOS offers nowhere else to keep
+it) - every filesystem driver in
 EFI-land is read-only by design and the stick is configured from Linux
 userland (Section 9) - so it can read
 a marker file on p2 but can never clear one, and a one-shot that cannot be
@@ -890,6 +892,50 @@ instead of silently doing nothing.
 Reserved values are untrusted like any other. `:personal` grants nothing the
 menu does not: the entry prompts for the passphrase exactly as it would if the
 user had selected it by hand, so naming it skips a keypress and nothing else.
+
+The value rules above (decode, the path match, the reserved namespace) are
+`falcon-core/src/media/nextboot.c`, which both loaders link.
+
+**On BIOS: one sector, not a variable (decision 2026-09-24).** A BIOS has no
+variable store and no `BootNext`, and nothing in the BIOS specifications lets
+an operating system set either. So on the BIOS route the marker is a sector
+the stick carries: LBA 2047, the last sector of the gap in front of p1
+(Section 12.1; `falcon-bios/src/biosdefs.h`, `NEXTBOOT_LBA`), written from
+Linux by archusb's `archusb-boot-next` when there is no `/sys/firmware/efi`.
+It is text, so a shell writes it with `printf` and `dd`:
+
+    falcon-next-boot 1
+    <the RTC's reading when it was set, decimal seconds>
+    <the value, as the variable would hold it>
+
+and zeros to the end of the sector (`media/nextboot.h` has the parse, which
+refuses every byte out of place). The value is the variable's, and
+everything this section says about validating it holds unchanged.
+
+The loader takes it the way it takes the variable: read, **cleared**, then
+believed (`falcon-bios/src/marker.c`). Clearing is a write, and this is the
+one place a loader writes the stick. It is bounded three ways: one fixed
+LBA, outside every partition; only when the sector begins with the magic,
+so a sector that is not a marker is never touched; and only ever to zero.
+If the zero does not read back (a write-protected stick), the marker is not
+acted on, because a one-shot that cannot be cleared is not a one-shot.
+`marker.c` is linked into the stick's stage 3 alone: stage 2 and the
+stationary build (Section 13) carry no code that can write a disk.
+
+What `BootNext` did cannot be replaced: a reboot from Linux follows the
+machine's boot order, and a stick picked from a boot menu is not in it. The
+marker then waits until the stick is next booted, which could be days
+later. So it is **dated**, and honoured only within ten minutes of being set
+(`NEXTBOOT_WINDOW_SECONDS`). The date is the RTC's own digits read as though
+they were UTC, on both sides: Linux's `/sys/class/rtc/rtc0/since_epoch` and
+INT 1Ah read through `nextboot_rtc_seconds`. A BIOS machine keeps its RTC in
+whatever zone the installed OS prefers, and reading one clock one way on both
+sides makes the zone cancel out. What can still break it is something
+rewriting the RTC between the two readings (an NTP sync that sets the
+hardware clock): a correction of up to two minutes backwards is allowed
+(`NEXTBOOT_SKEW_SECONDS`), since an RTC a few seconds fast reads earlier once
+corrected; anything larger reads as stale or as set in the future and is
+refused, which is the safe direction.
 
 **Sidecar layout: named by the source ISO's checksum (decision 2026-09-13).**
 Prepared artifacts live under the reserved directory of Section 6.2, in a
@@ -2456,7 +2502,8 @@ line numbers are left out because they would be stale within a week.
 | LBA 1-33 | GPT header and 128-entry array | both loaders, falcon-hook, the appliance |
 | LBA 34-97 | BIOS stage 2, 64 sectors | stage 1 |
 | LBA 98-1121 | BIOS stage 3, at most 1024 sectors; its header gives the length | stage 2 (`load3.c`) |
-| LBA 1122-2047 | unused; inside the `FALCON-BIOS` EF02 partition (LBA 34-2047) when `mkstick bios --reserve` made one | |
+| LBA 1122-2046 | unused; inside the `FALCON-BIOS` EF02 partition (LBA 34-2047) when `mkstick bios --reserve` made one | |
+| LBA 2047 | the BIOS next-boot marker when one is pending, zero otherwise (Section 6.3.1) | falcon-bios, which clears it; written by archusb |
 | p1 `FALCON-ESP` | FAT32 ESP: shim as `EFI\BOOT\BOOTX64.EFI`, MokManager, falcon-boot as `grubx64.efi`, `falcon-boot.cer` | UEFI firmware, shim |
 | p2 `FALCON-ISO` | exFAT: the media, `falcon/blessed/`, the manifest, `falcon/windows.cfg` | both loaders, falcon-hook (as raw extents), winjump, the appliance |
 | p3 | LUKS2 + ext4: UKIs in `/uki`, the MOK key pair | both loaders, the appliance |
@@ -2954,11 +3001,18 @@ flowchart TD
     L3 --> H3{"BOS3, length and<br/>memory in bounds?"}
     H3 -- no --> BF["bios_fatal: reason, key, reset"]
     H3 -- yes --> S3["read stage 3, zero its .bss<br/>call 0x100010, ESP 0x800000"]
-    S3 --> BM["bios_main<br/>E820, boot disk, GPT: p2, p3"]
-    BM --> P2["p2: fs_mount (exFAT), survey_volume (.iso, .img)"]
+    S3 --> BM["bios_main<br/>E820, boot disk"]
+    BM --> MK["marker_take: LBA 2047 of the boot disk<br/>a marker is zeroed, read back, then parsed and dated (6.3.1)"]
+    MK --> GPT["GPT: p2, p3"]
+    GPT --> P2["p2: fs_mount (exFAT), survey_volume (.iso, .img)"]
     P2 --> P3["pos_probe: p3 is LUKS2?"]
     P3 --> SI["screen_init: 80x25 text, VGA memory"]
-    SI --> MENU["menu"]
+    SI --> NB{"a marker taken?"}
+    NB -- "no" --> MENU["menu"]
+    NB -- "a fresh value" --> RUN["next_boot_run: :personal is POS,<br/>a path the survey found boots as Enter on its row"]
+    NB -- "bad, stale, undated, or not cleared" --> NOTE["a note, a key"]
+    RUN --> MENU
+    NOTE --> MENU
 ```
 
 The whole loader is i686 code in flat 32-bit protected mode, and one image
@@ -3012,8 +3066,10 @@ sequenceDiagram
 
 Buffers the BIOS reads into must be addressable from real mode with DS and
 ES at 0, so a disk read lands in the bounce buffer at 0x90000 (32 KiB) and
-is copied up; the packet is at 0x1000. Services used: INT 13h AH=42h and
-AH=48h, INT 10h (the 80x25 text mode, cursor shape and position, and
+is copied up; the packet is at 0x1000. The one write, clearing the
+next-boot marker, goes the other way through the same buffer. Services used:
+INT 13h AH=42h, AH=43h (`marker.c` only, one sector) and AH=48h, INT 1Ah
+AH=02h and AH=04h (the RTC, to date the marker), INT 10h (the 80x25 text mode, cursor shape and position, and
 teletype for stages 1 and 2 and `bios_fatal`), INT 16h AH=00h and AH=01h,
 INT 15h E820, and INT 18h when Escape at the root menu hands the machine
 back. Stage 3 writes the screen's cells into VGA text memory at 0xB8000
@@ -3045,8 +3101,7 @@ resident CD handler, from real mode.
 
 `mem_check` refuses a machine whose EBDA reaches below 0x98000, because the
 bounce buffer is there. The fixed addresses are in
-`falcon-bios/src/biosdefs.h`, except the bounce buffer (`disk.c`) and that
-floor (`stage2.S`).
+`falcon-bios/src/biosdefs.h`, except that floor (`stage2.S`).
 
 #### 12.3.5 The menu and route selection
 
@@ -3395,7 +3450,7 @@ share changes shape between them.
 | UEFI leaves out | | `iso/`, `direct/`, `bsd/`, `win/`, `bless/`, `trustefi.c`, `trust/`, the rest of `media/` (the survey included), `wim/`, `manifest/`, the exFAT, FAT, ISO9660 and UDF drivers, falcon-winjump, falcon-hook |
 | BIOS stage 3 | `main.c`, `falcon-bios-stage3.bin` | `main_pos.c`, `falcon-bios-pos-stage3.bin` (80 KB against 288 KB) |
 | BIOS links | everything in `falcon-bios/` | `pos.c`, `linux.c`, `linuxcore.c`, `e820.c`, `screen.c`, `prompt.c`, `console.c`, `disk.c`, `mbr.c` (13.4); core as UEFI, plus `media/cpio.c` for the credential |
-| BIOS leaves out | | `vcd.c`, `vcdres.S`, `scan.c`, `win.c`, `bsd.c`, `heap.c`: nothing is ever resident, and neither falcon-hook blob is linked, since only `scan.c` appends one |
+| BIOS leaves out | | `vcd.c`, `vcdres.S`, `scan.c`, `win.c`, `bsd.c`, `heap.c`: nothing is ever resident, and neither falcon-hook blob is linked, since only `scan.c` appends one; `marker.c`, so nothing in it writes a disk |
 | stages 1 and 2 | | unchanged, the same binaries |
 | version type | `release` | `pos-release`, so a screen photo says which build it is |
 | SBAT component | `falcon-boot` | `falcon-boot-pos`, its own generation: a revocation for a parser this build does not link must not stop it booting |

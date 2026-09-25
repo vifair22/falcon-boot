@@ -21,6 +21,7 @@
 #include <win/winpatch.h>
 #include <manifest/blesslist.h>
 #include <media/survey.h>
+#include <media/nextboot.h>
 #include <lib/string.h>
 #include <lib/ucs2.h>
 #include <console/menu.h>
@@ -550,7 +551,7 @@ static void probe_entries(iso_list *list)
          * against a path the scan found is also the only use the value ever
          * gets - nothing indexes anything with it (DESIGN Section 6.3.1). */
         if (g_next_idx >= MAX_ISOS && g_next_path[0] != '\0' &&
-            bless_next_names(entry_label(list, i), g_next_path))
+            nextboot_names(entry_label(list, i), g_next_path))
             g_next_idx = i;
 
         if (t->shape == ENTRY_PAYLOAD) {
@@ -1601,8 +1602,8 @@ static void next_boot_run(EFI_HANDLE image_handle, iso_list *list)
     /* Reserved values first, because they can never match a path and testing
      * them afterwards would report "not on the stick any more" for something
      * that was never a file (DESIGN Section 6.3.1). */
-    if (bless_next_is_reserved(g_next_path)) {
-        if (bless_next_is_personal(g_next_path)) {
+    if (nextboot_is_reserved(g_next_path)) {
+        if (nextboot_is_personal(g_next_path)) {
             /* Exactly what selecting the pinned entry does, passphrase prompt
              * included. Returns FALSE when the user backed out, and then there
              * is nothing on screen worth acknowledging. */
@@ -1681,12 +1682,12 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
      * happen a second time, whatever goes wrong below. Decoding it is separate
      * again, and acting on it needs a record set that does not exist yet. */
     {
-        UINT8 raw[BLESS_NEXT_MAX];
+        UINT8 raw[NEXTBOOT_MAX];
         UINTN raw_len = loader_next_boot_take(st, raw, sizeof raw);
 
         if (raw_len != 0 &&
-            bless_next_decode(raw, raw_len, g_next_path, sizeof g_next_path)
-                != BLESS_OK) {
+            nextboot_decode(raw, raw_len, g_next_path, sizeof g_next_path)
+                != NEXTBOOT_OK) {
             g_next_path[0] = '\0';
             g_next_bad = 1;
         }

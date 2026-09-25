@@ -155,6 +155,24 @@ __attribute__((noreturn)) void bios_fatal(const char *why);
 void bios_put_hex64(uint64_t v);
 void bios_put_dec(uint64_t v);
 
+/* The disk address packet INT 13h AH=42h and AH=43h read, at the fixed low
+ * address biosdefs.h names rather than as a static.
+ *
+ * A static was reachable while disk.c only ever ran in stage 2, which is
+ * below a megabyte; the same file links into stage 3, which is not, and real
+ * mode truncated the address to sixteen bits and handed the BIOS whatever
+ * was there. Every read returned carry. */
+typedef struct {
+    uint8_t  size;
+    uint8_t  reserved;
+    uint16_t sectors;
+    uint16_t offset;
+    uint16_t segment;
+    uint64_t lba;
+} bios_dap;
+
+#define bios_dap_at (*(bios_dap *)(uintptr_t)DAP_ADDR)
+
 /* ---- disk ----
  *
  * The whole of the per-platform boundary, and the reason falcon-core needs no

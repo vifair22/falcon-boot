@@ -40,14 +40,6 @@
 #include <iso/overlay.h>
 #include <manifest/manifest.h>
 
-/* Status codes for the calls below that can fail, repo convention: OK zero,
- * errors negative. The lookups do not appear here; they are total. */
-enum {
-    BLESS_OK           =  0,
-    BLESS_ERR_BAD_ARG  = -1,
-    BLESS_ERR_VALUE    = -5   /* the next-boot marker is not a usable path */
-};
-
 /* How many blessed ISOs one stick may offer.
  *
  * A bound, not a format limit: the cache is static storage in the loader
@@ -159,68 +151,7 @@ bless_action bless_hit_action(const bless_hit *h);
  * verified it; shim decides that at load time. */
 const uint16_t *bless_suffix(const bless_hit *h);
 
-/* ---- the next-boot marker (DESIGN Section 6.3.1) ---- */
-
-/* Longest marker value worth looking at: the path of an ISO on p2, so the
- * manifest's own path cap is the bound, terminator included. */
-#define BLESS_NEXT_MAX MANIFEST_PATH_MAX
-
-/* Decodes the raw variable bytes into a path, or refuses them.
- *
- * UNTRUSTED INPUT, and more so than the manifest: this comes out of NVRAM,
- * which anything with boot services on the machine may write, including
- * something that has never seen this stick. So it is decoded, never believed:
- * the bytes must be printable ASCII, non-empty, and short enough to be a path
- * a record could carry, with at most one trailing NUL (the loader writes one;
- * a tool that did not is not wrong). Anything else is BLESS_ERR_VALUE and the
- * marker is discarded. The result is still only a NAME at this point: whether
- * it may be acted on is bless_next_names plus bless_hit_action, against
- * records read from the stick.
- *
- * out is NUL-terminated on success and left empty otherwise. */
-int bless_next_decode(const void *buf, size_t len, char *out, size_t cap);
-
-/* Does this menu entry's path name the file the marker names?
- *
- * path is the entry's path relative to the volume root, as the scan built it,
- * exactly as bless_cache_lookup takes it. Nonzero when they are the same file
- * by manifest_path_eq's rule. This is the only way a marker value is ever
- * turned into an entry: it is matched against paths the scan found, never used
- * to index anything, so a hostile value can name a file that is not there and
- * nothing else. */
-int bless_next_names(const uint16_t *path, const char *name);
-
-/* ---- reserved marker values (DESIGN Section 6.3.1) ----
- *
- * Everything above treats the marker as a path on p2. One target is not a file
- * at all: the personal OS is a pinned menu entry, not something the scan found,
- * so "boot straight back into the personal OS" needs a value that names it
- * without naming a path.
- *
- * The leading ':' is what makes that unambiguous, and it is chosen rather than
- * decorative: exFAT forbids ':' in a filename, so no file on p2 can ever
- * produce a path containing one, and a reserved value can therefore never
- * shadow a real entry. A '@' prefix would have read more nicely and been
- * wrong - a file called "@personal" is perfectly legal and would have been
- * silently unbootable.
- *
- * Reserved values are still UNTRUSTED input like any other marker value. This
- * one grants nothing that the menu does not: the personal-OS entry prompts for
- * the passphrase exactly as it would if the user had selected it by hand, so
- * naming it skips a keypress and nothing else. */
-#define BLESS_NEXT_PERSONAL ":personal"
-
-/* Nonzero when the decoded marker names the personal-OS entry rather than a
- * path. Callers must test this BEFORE matching against entry paths; a reserved
- * value will never match one, but testing after would mean a stale marker
- * reports "not on the stick any more", which is a confusing way to say
- * "unrecognised". */
-int bless_next_is_personal(const char *name);
-
-/* Nonzero when the decoded marker is in the reserved namespace at all, i.e.
- * begins with ':'. A reserved value this build does not recognise is a value
- * from a newer loader or a typo, and either way it must be refused rather than
- * looked up as a path. */
-int bless_next_is_reserved(const char *name);
+/* The next-boot marker's value rules are falcon-core's (media/nextboot.h),
+ * shared with falcon-bios. */
 
 #endif /* FALCON_BLESS_CORE_H */

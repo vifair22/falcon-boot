@@ -22,7 +22,7 @@ CORE_TRUST    := $(addprefix $(CORE)/trust/,der.c x509.c authenticode.c \
 	siglist.c trust.c probe.c)
 CORE_MEDIA    := $(addprefix $(CORE)/media/,family.c cpio.c osrel.c bootcfg.c \
 	extmap.c hookcmd.c bootfs.c grubcfg.c bsdmd.c eltorito.c medium.c \
-	survey.c shelf.c)
+	survey.c shelf.c nextboot.c)
 CORE_WIM      := $(addprefix $(CORE)/wim/,lzx.c wim.c)
 # The screen layout both loaders draw from: geometry and row composition,
 # no drawing.
@@ -90,7 +90,8 @@ CORE_TESTS := $(addprefix falcon-core/tests/,main.c \
 	crypto_test.c json_test.c luks_test.c ext4_test.c fs_test.c \
 	iso9660_test.c udf_test.c udfedit_test.c media_fs_test.c bootcfg_test.c extmap_test.c \
 	hookcmd_test.c grubcfg_test.c bsdmd_test.c eltorito_test.c fat_test.c medium_test.c bootfs_test.c blesslist_test.c wim_test.c part_test.c \
-	osrel_test.c pe_test.c trust_test.c survey_test.c tui_test.c shelf_test.c)
+	osrel_test.c pe_test.c trust_test.c survey_test.c tui_test.c shelf_test.c \
+	nextboot_test.c)
 
 CORE_UUT := $(CORE_CRYPTO) $(CORE_FS) $(CORE_LUKS) $(CORE_PART) $(CORE_PE) \
 	$(CORE_WIM) $(CORE_UCS2) $(CORE_TUI) \

@@ -27,6 +27,7 @@
 #include <bsd.h>
 #include <screen.h>
 #include <e820.h>
+#include <marker.h>
 
 #include <part/part.h>
 #include <fs/fs.h>
@@ -38,6 +39,7 @@
 #include <version.h>
 #include <lib/ucs2.h>
 #include <media/survey.h>
+#include <media/nextboot.h>
 
 /* The drive the BIOS booted from, and one other. Both are asked about,
  * because the rig's default image (make test-bios-img) boots a raw disk with
@@ -102,6 +104,11 @@ static size_t   g_cur_len;
 /* Whether the menu has a personal-OS row, which it does when p3 opened as a
  * LUKS2 volume. One row, first on the root screen, as under UEFI. */
 static int g_pos_row;
+
+/* The next-boot marker (DESIGN Section 6.3.1): taken off the boot disk, and
+ * cleared, before anything else is read; acted on once the survey exists. */
+static marker_state g_next_state;
+static char         g_next[NEXTBOOT_MAX];
 
 static int part_read(void *ctx, uint64_t off, uint64_t len, void *buf)
 {
@@ -373,6 +380,90 @@ static void return_to_firmware(void)
     bios_reboot();
 }
 
+/* The next-boot marker, acted on: the UEFI loader's next_boot_run, in its
+ * order and with its sentences. The marker was cleared before any of this
+ * ran, so every path below, including a boot that starts and comes back,
+ * leaves nothing on the disk to repeat. Returns with a key taken, and the
+ * menu follows.
+ *
+ * The value is matched against paths the survey found, never used as one,
+ * and the match boots the entry exactly as Enter on its row would: the same
+ * boot_plain, not a second policy. */
+static void next_boot_run(void)
+{
+    const char *note = (const char *)0;
+    size_t i;
+
+    switch (g_next_state) {
+    case MARKER_NONE:
+        return;
+    case MARKER_BAD:
+        note = "the next-boot marker held something that is not a path on "
+               "this stick.";
+        break;
+    case MARKER_STALE:
+        note = "the next-boot marker was not set within the last ten "
+               "minutes.";
+        break;
+    case MARKER_NO_CLOCK:
+        note = "this machine's clock did not answer, so the next-boot marker "
+               "could not be dated.";
+        break;
+    case MARKER_STUCK:
+        note = "the next-boot marker could not be cleared, so nothing was "
+               "booted from it.";
+        break;
+    case MARKER_VALUE:
+    default:
+        break;
+    }
+
+    screen_mode((const char *)0);
+    screen_page();
+    if (note != (const char *)0) {
+        screen_out("note: ");
+        screen_out(note);
+        if (g_next_state != MARKER_STUCK)
+            screen_out("\nIt has been cleared; nothing was booted from it.");
+        screen_out("\n\npress any key for the menu.\n");
+        (void)screen_key();
+        return;
+    }
+
+    /* Reserved values first: they can never match a path, and testing them
+     * afterwards would report "not on the stick any more" for something that
+     * was never a file. */
+    if (nextboot_is_reserved(g_next)) {
+        if (nextboot_is_personal(g_next) && g_pos_row) {
+            if (boot_personal())
+                (void)screen_key();
+            return;
+        }
+        if (nextboot_is_personal(g_next))
+            screen_out("the personal OS the next-boot marker names is not on "
+                       "this stick.");
+        else
+            screen_out("the next-boot marker held a reserved value this "
+                       "loader does not know.");
+        screen_out("\nIt has been cleared; nothing was booted from it."
+                   "\n\npress any key for the menu.\n");
+        (void)screen_key();
+        return;
+    }
+
+    for (i = 0; g_p2_mounted && i < g_survey.count; i++) {
+        if (nextboot_names(g_survey.entries[i].label, g_next)) {
+            boot_plain(i, BIOS_KEY_ENTER);
+            (void)screen_key();
+            return;
+        }
+    }
+    screen_out("the ISO this boot was supposed to start is not on the stick "
+               "any more.\nIt has been cleared; nothing was booted from it."
+               "\n\npress any key for the menu.\n");
+    (void)screen_key();
+}
+
 static void menu_run(void)
 {
     static const screen_banner banner = {
@@ -633,6 +724,12 @@ void bios_main(uint8_t drive)
 
     if (!bios_disk_probe(&g_boot, drive))
         bios_puts("falcon-bios: the boot drive did not answer AH=48h\n");
+    /* First thing after the disk answers, and before anything that can
+     * fail: the marker is cleared as it is taken, so from here on nothing on
+     * the disk could make this boot happen twice. It is the boot disk's,
+     * the one the stages were read from: a marker on another disk was not
+     * set for this loader. */
+    g_next_state = marker_take(&g_boot, g_next, sizeof g_next);
     show_first_sector(&g_boot, "boot");
     claim_roles(&g_boot, g_parts, show_partitions(&g_boot, g_parts));
 
@@ -650,6 +747,7 @@ void bios_main(uint8_t drive)
 
     bios_puts("falcon-bios: done\n");
     screen_init();
+    next_boot_run();
     menu_run();
     for (;;)
         __asm__ __volatile__("hlt");

@@ -71,7 +71,7 @@ BIOS_S2_CSRCS := $(addprefix $(BIOS)/,load3.c disk.c console.c fault.c) \
 # one driver called by name.
 BIOS_S3_CSRCS := $(addprefix $(BIOS)/,main.c scan.c pos.c prompt.c screen.c linux.c \
 	linuxcore.c \
-	vcd.c vcdcore.c bsd.c win.c heap.c \
+	vcd.c vcdcore.c bsd.c win.c heap.c marker.c \
 	e820.c disk.c console.c) \
 	$(CORE_PART) $(CORE_FS) $(CORE_MEDIA) $(CORE_PE) $(CORE_CRYPTO) \
 	$(CORE_LUKS) $(CORE_WIM) $(CORE_LIBC) $(CORE_UCS2) $(CORE_TUI) \

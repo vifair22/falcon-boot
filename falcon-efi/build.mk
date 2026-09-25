@@ -44,6 +44,7 @@ EFI_SRCS := \
 	$(EFI_SRC)/pos/pos.c \
 	$(CORE)/media/osrel.c \
 	$(CORE)/media/shelf.c \
+	$(CORE)/media/nextboot.c \
 	$(EFI_SRC)/bless/bless.c \
 	$(EFI_SRC)/bless/blesscore.c \
 	$(CORE_MANIFEST) \
@@ -86,6 +87,7 @@ EFI_POS_SRCS := \
 	$(EFI_SRC)/pos/pos.c \
 	$(CORE)/media/osrel.c \
 	$(CORE)/media/shelf.c \
+	$(CORE)/media/nextboot.c \
 	$(EFI_SRC)/nxt/nxt.c \
 	$(EFI_SRC)/nxt/nxtcore.c \
 	$(CORE_LIBC) $(CORE_UCS2)
@@ -237,7 +239,7 @@ run-stick-secboot:
 # the virtual-media override arithmetic (a header, included by its test), and
 # the Secure Boot state reader, whose whole platform is one GetVariable.
 
-EFI_TESTS := $(addprefix falcon-efi/tests/,main.c bless_test.c next_test.c \
+EFI_TESTS := $(addprefix falcon-efi/tests/,main.c bless_test.c \
 	iso_overlay_test.c sb_test.c nxt_test.c)
 
 EFI_UUT := $(EFI_SRC)/bless/blesscore.c $(EFI_SRC)/secboot/sb.c \

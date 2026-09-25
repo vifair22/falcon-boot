@@ -856,6 +856,62 @@ into it). Without multilib, `gcc -m32 -print-libgcc-file-name` answers with
 the 64-bit libgcc and the link fails on `__udivdi3`; `make check-tools`
 warns, and the coverage container installs `gcc-multilib` for it.
 
+## 6i. The next-boot marker (2026-09-24)
+
+archusb's reboot chooser (`archusb-boot-next`) queues "boot this next" for
+the UEFI loader in the `FalconNextBoot` variable, and brings the reboot back
+to the stick with `BootNext`. Booted through falcon-bios it had neither:
+legacy BIOS has no variable store, the BIOS Boot Specification gives an
+operating system no way to set the boot order, and a CSM machine's UEFI
+`BootNext` is out of reach of a system booted in legacy mode. Vendor tools
+and IPMI can set a one-time boot on some machines; none of that generalises.
+
+So the marker lives on the stick: LBA 2047, the last sector of the gap in
+front of p1, as a short text record Linux writes with `printf` and `dd`
+(DESIGN Section 6.3.1 has the format and the reasoning; `media/nextboot.c`
+the parse, `falcon-bios/src/marker.c` the reading). `lilo -R` and GRUB's
+`grubenv` are the same idea: a one-shot kept in raw blocks outside any
+filesystem, because the loader has no filesystem writer.
+
+**Zeroed, not left to expire.** Two ways to make it one-shot were weighed.
+The loader clearing it costs the BIOS loader its first disk write. Leaving
+it to a time window alone costs the one-shot: a target that fails, or a
+reset inside the window, boots the same thing again. Clearing won, so the
+BIOS loader now writes one sector: only LBA 2047, only when it carries the
+magic, only ever to zero, and checked by reading it back. `marker.c` is the
+only file that can, and only the stick's stage 3 links it.
+
+**Dated as well.** What cannot be replaced is `BootNext`'s half: the reboot
+follows the machine's boot order, and a stick picked from a boot menu is not
+in it. The marker would then wait for the stick's next boot and start
+something unasked, so it is honoured only within ten minutes of being set.
+Both sides read the same RTC the same way (its digits taken as UTC), which is
+what keeps a machine that holds local time in its RTC from skewing it.
+
+**Moved, not copied.** The value's rules (decode, the path match, the `:`
+reserved namespace) were the UEFI loader's, in
+`falcon-efi/src/bless/blesscore.c`. They are falcon-core's now, so the two
+loaders cannot disagree about what a marker names.
+
+**Measured in the rig** (SeaBIOS; the marker written by `printf | dd` onto
+the stages image, the rig stick as the second disk): a fresh marker naming
+`payload-test.iso` boots it by `DIR` without the menu, and so does
+`PAYLOAD-TEST.ISO`; `:personal` opens at the passphrase prompt; a marker an
+hour old, one with a tab in its value, one naming a missing ISO and one with
+an unknown reserved value each end at a note and the menu. The sector reads
+zero after every one of them, and a sector of 0xA5 bytes, which is not a
+marker, is left byte for byte as it was.
+
+End to end with archusb's writer: `archusb-boot-next set arch` (its BIOS
+branch, pointed at an image of the rig stick that `mkstick bios` had given
+stages) wrote the marker, SeaBIOS booted that image as its only disk, and
+falcon-bios cleared the marker and opened at the passphrase prompt. That run
+is also why the window allows a clock that went back: the laptop's RTC ran
+four seconds ahead of the system time QEMU's RTC follows, so the marker was
+stamped four seconds "after" the boot read it, and the first build refused
+it. Anything that corrects the RTC between the two readings does the same,
+so up to two minutes backwards counts as fresh.
+
 ## 7. Risks, in the order they matter
 
 **7.1 The `INT 13h` resident is a spike, not an estimate.** The ~1,000 above
