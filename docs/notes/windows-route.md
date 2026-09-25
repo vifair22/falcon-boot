@@ -1001,28 +1001,46 @@ patching the served ISO. The pieces, in build order, with the obstacles found:
    DbgPrint - every one exported by Windows 2000 (NT 5.0) and XP (NT 5.1)
    ntoskrnl, MmMapLockedPagesSpecifyCache being the newest at NT 5.0. So the
    SYSTEM_POWER_STATE_CONTEXT compile wall (wdm.h at below 0x0600) is moot: the
-   0x0600 binary is XP-safe as it stands. The open question that remains is
-   whether XP loads a root-enumerated CD-ROM driver through txtsetup.sif's
-   [SCSI.Load] (where firadisk goes) or wants another section - a rig question,
-   not a build one.
+   0x0600 binary is XP-safe as it stands. **Settled 2026-09-25 on real
+   windows-xp-pro-sp3-x86 media: XP loads the driver through txtsetup.sif's
+   [SCSI.Load], the firadisk way, no other section needed.** The x86 .sys,
+   injected into a copy of the ISO and booted under QEMU (BIOS, `-machine pc`),
+   printed its DriverEntry marker on COM1 and text-mode setup reached the
+   "Welcome to Setup" screen unharmed, so the load path and the driver's entry
+   both work. What remains is not whether it loads but what it does once loaded
+   (piece 3).
 2. Patch the served ISO for the XP layout. Add the .sys and rewrite
    i386/txtsetup.sif ([SCSI.Load], [SCSI], [SourceDisksFiles]; the driver loads
    as a legacy [SCSI.Load] entry like firadisk, so no [HardwareIdsDatabase]
    line is needed) and, for a real install, i386/dosnet.inf. Two edits:
-   - **Adding the .sys turned out to be the easy half, not the hard one, and is
-     built (iso9660_append_record, 2026-09-25).** The i386 directory is 129
-     blocks, but the record does NOT need the directory relocated: its last
+   - **Adding the .sys is built (iso9660_append_record) and proven on the real
+     ISO (2026-09-25).** The i386 directory does NOT need relocating: its last
      block (block 155 on windows-xp-pro-sp3-x86) has 550 free bytes and the
      entries end at "_DEFAULT.PI_", so a driver named to sort just past it
-     ("_FALCON.SYS") appends in that block's slack, in order. The directory
-     keeps its size and location - no relocation, no path-table edit. The .sys
-     data appends past the ISO's end, exactly the Vista boot.wim tail. Host-
-     tested.
-   - txtsetup.sif itself grows by three short lines (one per section). That
-     file (~480 KB) is grown and served by the same relocation as boot.wim
-     (single extent moved past the ISO's end, record rewritten, bulk redirected
-     to disk). Not yet built; an INI-section line-insert plus the existing
-     relocation.
+     ("_FALCON.SYS") appends in that block's slack, in order. The .sys data
+     appends past the ISO's end, exactly the Vista boot.wim tail. Two things the
+     first host test missed and the real ISO forced:
+       - **The i386 directory's data length is not a multiple of the block
+         size.** It is 263642 bytes: 128 full blocks and a 129th with 1498
+         bytes of records and 550 free. iso9660_append_record floored that to
+         128 and rejected the non-aligned length outright; it now rounds up to
+         the partly-filled last block. A block-aligned synthetic directory (the
+         only shape the unit test had) never exercised this.
+       - **The directory's own record data length must grow by the record's
+         length.** The new record sits at the old data-length boundary, so a
+         data-length-strict reader (setupldr, libisofs) stops just before it and
+         never sees the file. Growing i386's record in the root directory by the
+         record length (still no relocation, block count unchanged) is what
+         makes _FALCON.SYS appear; without it a primary-tree read does not list
+         it. The earlier "keeps its size, its own record does not change" was
+         wrong on this one field.
+   - **txtsetup.sif's edit is built (txtsetup_inject) and proven.** It grows by
+     three short lines (one per section), each modelled on atapi.sys's own form
+     - the injected [SourceDisksFiles] line is byte-for-byte atapi's
+     (`= 100,,,,,,4_,4,0,0,,1,4`). The ~480 KB file is grown and served by the
+     same relocation as boot.wim: single extent moved past the ISO's end, its
+     directory record rewritten to the new extent and length, the PVD volume
+     space size grown to cover the appended blocks.
 3. Give the driver the ISO's extents without winjump to hand them over, and a
    boot-start mode. The current falcon-vdisk gets its backing by IOCTL from
    winjump (SET_BACKING, a disk path + extents); text-mode setup has no winjump,
@@ -1034,9 +1052,24 @@ patching the served ISO. The pieces, in build order, with the obstacles found:
    the remaining novel work.
 
 The pieces interlock: nothing boots until all are in, so the first end-to-end
-test is late. But the first useful milestone is earlier and settles the docs'
-open question - inject the .sys (built) + the txtsetup lines + kernel debug
-(/debugport=com1) and boot XP setup: falcon-vdisk's DriverEntry DbgPrint on
-serial proves whether [SCSI.Load] loads the driver at all, before the full
-boot-start mode is written. This is a focused multi-session build; piece 2's
-directory insert is done.
+test is late. The first useful milestone came earlier and is now done: pieces 1
+and 2 were proven together against the real ISO (2026-09-25). A host prototype
+(the eventual win_xp_boot's ISO surgery, run over a file instead of the served
+virtual CD) injected _FALCON.SYS and the three txtsetup.sif lines in place -
+append past the end, rewrite the sif's record, grow the PVD, add the .sys record
+in i386's slack, grow i386's own record - and the result booted XP text-mode
+setup under QEMU: the driver's COM1 marker proved [SCSI.Load] loaded it, and
+setup reached "Welcome to Setup" unharmed. The x86 driver carries an opt-in
+COM1 trace at DriverEntry (VDISK_SERIAL_TRACE) for exactly this.
+
+What is left is piece 3 and the port into falcon-bios:
+ - **Piece 3, the crux, is unbuilt.** In the prototype the served ISO was a
+   real QEMU CD, so the driver loading was all that was tested; nothing yet
+   gives DriverEntry the ISO's extents and a stick to read them from with no
+   winjump to hand them over. That is the remaining novel work.
+ - **win_xp_boot** does the same ISO surgery the prototype does, but over the
+   served virtual CD in memory (vcd_overlay/redirect/append, i9_relocate for the
+   sif, iso9660_append_record for the .sys, the PVD and i386 record edits), and
+   routes XP media to it. XP media is not FAMILY_WINDOWS today (no /sources), so
+   detection is by i386/txtsetup.sif; and setupldr shows "Press any key to boot
+   from CD", which the rig must answer (the working Vista+ routes already do).
