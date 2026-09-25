@@ -22,6 +22,9 @@
 #ifndef FALCON_WINPATCH_H
 #define FALCON_WINPATCH_H
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include <efi/uefi.h>
 #include <fs/fs.h>
 
@@ -37,9 +40,12 @@ typedef struct {
 
 /* Boots the ISO iso on the mounted p2 volume, patched. iso_rel is its path
  * relative to p2's root, which falcon-winjump uses to find it again from
- * Windows. Returns as iso_boot_overlaid does. */
+ * Windows; map/map_len is the ISO's extent map (extmap.h), carried in the cfg
+ * so winjump can serve the ISO through falcon-vdisk where VirtDisk cannot, and
+ * may be empty. Returns as iso_boot_overlaid does. */
 EFI_STATUS win_patched_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent,
                             fs_vol *p2, const fs_dirent *iso,
-                            const char *iso_rel, win_result *result);
+                            const char *iso_rel, const uint8_t *map,
+                            size_t map_len, win_result *result);
 
 #endif /* FALCON_WINPATCH_H */

@@ -111,7 +111,7 @@
 # decision; remove this entry once it is resolved.
 #
 # ==========================================================================
-# 4. falcon-winjump/src/winjump.c, Win32 API idioms (6 entries)
+# 4. falcon-winjump/src/winjump.c, Win32 API idioms (7 entries)
 # ==========================================================================
 #
 # This is the only file in the tree that targets Windows userland rather than
@@ -145,6 +145,13 @@
 #       do. Both flags are mandatory for an ISO attach (DESIGN Section 6.3),
 #       so the value is exactly right and the check simply does not model
 #       bitmask enums.
+#
+#   clang-analyzer-core.uninitialized.Assign, jwjoin (1 entry). The driver
+#       fallback's write_driver names a temp path with GetTempPathW, whose
+#       output buffer the analyzer does not model as written, then joins onto
+#       it; the analyzer traces the "uninitialized" buffer into jwjoin's copy.
+#       GetTempPathW writes the buffer whenever it returns non-zero, which is
+#       the only path that reaches the join. An API-output modelling limit.
 #
 # ==========================================================================
 # 5. -Wanalyzer-out-of-bounds in wbuf_ucs2 (1 entry)
@@ -253,3 +260,15 @@ tidy	falcon-winjump/src/winjump.c	clang-analyzer-optin.core.EnumCastOutOfRange	T
 # being written; there it was cheaper to write the code so the analyzer
 # could follow it than to baseline it. Here the loops are the published SHA
 # schedules and are not worth rearranging around a tool.
+
+# ==========================================================================
+# 9. falcon-efi/src/win/winpatch.c, make_cfg's byte buffer (1 entry)
+# ==========================================================================
+#
+# make_cfg builds falcon-winjump.cfg into a fixed buffer by copying string
+# fragments in with memcpy, the "map=" key among them; the result is handed to
+# wim_patch_build as (bytes, length), never as a C string, so it is not and
+# must not be null-terminated. bugprone-not-null-terminated-result reads a
+# memcpy of a literal as a botched string build.
+tidy	falcon-efi/src/win/winpatch.c	bugprone-not-null-terminated-result	the result from calling 'memcpy' is not null-terminated
+tidy	falcon-winjump/src/winjump.c	clang-analyzer-core.uninitialized.Assign	Assigned value is garbage or undefined

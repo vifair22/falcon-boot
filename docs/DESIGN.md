@@ -642,7 +642,10 @@ Windows kernel-mode driver trust chains to Microsoft's own hard-coded roots
 and has nothing whatever to do with our MOK or the UEFI `db`. That settles
 one thing permanently: we could never sign a driver ourselves, at any price
 short of a Partner Center account and an attestation submission, so writing
-our own `.sys` is dead. It does **not** settle the third-party candidates, and
+our own `.sys` looked dead. *Superseded 2026-09-25: see "Our own driver, after
+all" below. The argument is about the installed OS; the installer's WinPE does
+not enforce kernel signing the same way, which reopens exactly this door.* It
+does **not** settle the third-party candidates, and
 the record has to be explicit so nobody re-derives the wrong reason later:
 **ImDisk and Arsenal Image Mounter are both genuinely
 Microsoft-attestation-signed in 2026 and would load with Secure Boot ON.**
@@ -657,9 +660,45 @@ They were rejected on other grounds entirely.
   candidate; that did not save it.
 
 Held in reserve rather than rejected outright: if a rig test ever shows
-`AttachVirtualDisk` unusable, the pick is **ImDisk**, because its non-PnP
-design makes `CreateService` plus `StartService` the entire install and
-sidesteps the 26100 regression.
+`AttachVirtualDisk` unusable, the third-party pick is **ImDisk**, because its
+non-PnP design makes `CreateService` plus `StartService` the entire install
+and sidesteps the 26100 regression. In the event the reserve was not needed:
+we wrote our own instead.
+
+**Our own driver, after all (2026-09-25).** The signing argument above is
+about the *installed* OS. The installer's WinPE is a different enforcement
+regime, and that is where the driver runs:
+
+- 32-bit WinPE, which every 32-bit Windows installer boots, enforces no
+  kernel-mode code signing at all: an unsigned `.sys` loads. `falcon-vdisk`
+  loads there with nothing signed.
+- 64-bit WinPE enforces KMCS, but the boot configuration is ours to set as the
+  ISO is served: `testsigning` in the served BCD lets a self-signed driver
+  load. It is the platform opt-out of Section 7, refused under Secure Boot ON
+  exactly as the rest of the model is, and it touches only the installer's
+  WinPE - the OS it lays down boots with its own enforcement intact.
+
+So `falcon-vdisk` (`falcon-vdisk/`; a native NT CD-ROM driver, built for both
+widths from one source as the hook and winjump are) is the fallback for media
+`AttachVirtualDisk` cannot serve: Vista and 7 (whose WinPE has no ISO support,
+and no way to read the exFAT partition the ISO lives on either) and 2000/XP
+(no WinPE at all). winjump loads it with `CreateService`/`StartService`, hands
+it the ISO's physical-disk extents - the same extent map the Linux route
+computes (Section 6.4), carried in winjump's cfg rather than an EFI variable -
+and it serves those raw disk sectors as a read-only CD-ROM device that CDFS
+mounts. It reads the ISO straight off the disk, so an ISO of any size is
+served from where it already lies, never copied into RAM.
+
+The read path is proven in a Windows 10 x86 WinPE (2026-09-25): the driver
+loads unsigned, the mount manager gives it a drive letter, CDFS mounts it, and
+`dir E:\sources` lists `install.wim` read from the disk through the driver.
+Three WinPE-specific hazards were found and fixed there: CDFS's mount issues
+`IOCTL_DISK_CHECK_VERIFY` (not only the CD-ROM and storage variants); a
+filesystem may issue reads above `PASSIVE_LEVEL`, so the lower-disk read runs
+on a dedicated servicing thread, never inline in the dispatch routine; and the
+lower-disk read is `ZwReadFile` through a nonpaged bounce buffer, not a
+hand-built IRP forwarding the caller's mapped MDL, which faulted in the disk
+stack.
 
 **Loader side: two new layers, and they are pure data.** The virtual-media
 publisher of Section 6 stage 2 grows:

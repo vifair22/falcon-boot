@@ -22,6 +22,7 @@
 
 #include <fs/udf.h>
 #include <wim/wim.h>
+#include <media/extmap.h>
 #include <lib/string.h>
 
 /* The jump binary, as make embeds it (falcon-winjump/build.mk). */
@@ -30,6 +31,13 @@ extern const size_t falcon_winjump_bin_len;
 
 #define BLK 2048u
 
+/* The cfg carries the ISO's extent map, hex, so winjump can serve the ISO
+ * through falcon-vdisk when VirtDisk cannot (DESIGN Section 6.3). The map is
+ * at most EXTMAP_HDR_LEN + EXTMAP_MAX_EXTENTS extents, twice that in hex, plus
+ * the text keys. */
+#define WIN_CFG_MAX \
+    (1024u + 2u * (EXTMAP_HDR_LEN + EXTMAP_MAX_EXTENTS * EXTMAP_EXT_LEN))
+
 static fs_file g_iso;
 static udf_vol g_uv;
 static udf_file g_wim;
@@ -37,7 +45,7 @@ static uint8_t g_scratch[WIM_SCRATCH_LEN];
 static uint8_t g_fe[BLK];
 static uint8_t g_pd[2][BLK];
 static uint8_t g_hdr[WIM_HDR_LEN];
-static char g_cfg[512];
+static char g_cfg[WIN_CFG_MAX];
 
 static int wim_rd(void *ctx, uint64_t off, uint64_t len, void *buf)
 {
@@ -68,13 +76,18 @@ static size_t put_dec(char *out, uint64_t v)
     return n;
 }
 
-/* falcon-winjump.cfg (falcon-winjump/src/winjump.c reads it). */
-static size_t make_cfg(const char *rel, uint64_t size)
+/* falcon-winjump.cfg (falcon-winjump/src/winjump.c reads it). The extent map,
+ * when one was built, is appended as a hex `map=` line; an empty map (a disk
+ * with no GPT entry for p2, say) leaves it out, and winjump then has only the
+ * VirtDisk route. */
+static size_t make_cfg(const char *rel, uint64_t size, const uint8_t *map,
+                       size_t map_len)
 {
     static const char head[] =
         "# falcon-boot winjump configuration, made by the loader at boot\n"
         "iso=";
     static const char mid[] = "\nsize=";
+    static const char hexd[] = "0123456789abcdef";
     size_t n = 0, i;
 
     memcpy(g_cfg, head, sizeof head - 1u);
@@ -85,6 +98,17 @@ static size_t make_cfg(const char *rel, uint64_t size)
     n += sizeof mid - 1u;
     n += put_dec(g_cfg + n, size);
     g_cfg[n++] = '\n';
+
+    if (map != (const uint8_t *)0 && map_len != 0 &&
+        n + 5u + 2u * map_len < sizeof g_cfg) {
+        memcpy(g_cfg + n, "map=", 4u);
+        n += 4u;
+        for (i = 0; i < map_len; i++) {
+            g_cfg[n++] = hexd[map[i] >> 4];
+            g_cfg[n++] = hexd[map[i] & 0x0fu];
+        }
+        g_cfg[n++] = '\n';
+    }
     return n;
 }
 
@@ -108,7 +132,8 @@ static void add_ovl(iso_overlay *o, uint64_t off, uint64_t len,
 
 EFI_STATUS win_patched_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent,
                             fs_vol *p2, const fs_dirent *iso,
-                            const char *iso_rel, win_result *r)
+                            const char *iso_rel, const uint8_t *map,
+                            size_t map_len, win_result *r)
 {
     EFI_BOOT_SERVICES *bs = st->BootServices;
     iso_boot_result ir = { L"starting", EFI_SUCCESS,
@@ -165,7 +190,7 @@ EFI_STATUS win_patched_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent,
      * is. A block of slack at the end holds the zero padding, and one more
      * the anchor. */
     r->stage = L"patching boot.wim";
-    cfg_len = make_cfg(iso_rel, iso->size);
+    cfg_len = make_cfg(iso_rel, iso->size, map, map_len);
     tail_cap = wim_patch_tail_max((size_t)w.boot_meta.orig,
                                   (size_t)w.lookup.orig,
                                   falcon_winjump_bin_len, cfg_len);

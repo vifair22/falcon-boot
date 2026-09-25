@@ -1134,6 +1134,9 @@ static BOOLEAN boot_windows(EFI_HANDLE image_handle, const CHAR16 *label,
 {
     win_result result;
     char path[MANIFEST_PATH_MAX];
+    discover_dev *dev = g_vol_dev[target->vol];
+    const UINT8 *map = (const UINT8 *)0;
+    UINTN map_len = 0;
     EFI_STATUS status;
 
     if (!entry_path_ascii(label, path, sizeof path))
@@ -1143,8 +1146,15 @@ static BOOLEAN boot_windows(EFI_HANDLE image_handle, const CHAR16 *label,
     out(L"booting: ");
     out(label);
     out(L"\r\n\r\n");
+    /* The ISO's extent map, for winjump's driver route; empty (VirtDisk only)
+     * if p2 has no GPT entry to name. Not set as an EFI variable, only carried
+     * in the cfg the patch injects. */
+    (void)direct_map_build(g_st, &g_vols[target->vol], dev->handle,
+                           dev->bio->Media->BlockSize, &target->ent, &map,
+                           &map_len);
     status = win_patched_boot(g_st, image_handle, &g_vols[target->vol],
-                              &target->ent, path, &result);
+                              &target->ent, path, map, (size_t)map_len,
+                              &result);
     if (EFI_ERROR(status) && result.unpatchable)
         return FALSE;
 

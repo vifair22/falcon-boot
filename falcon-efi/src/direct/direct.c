@@ -308,10 +308,10 @@ static EFI_STATUS build_map(EFI_BOOT_SERVICES *bs, fs_vol *p2,
     return EFI_SUCCESS;
 }
 
-EFI_STATUS direct_map_set(EFI_SYSTEM_TABLE *st, fs_vol *p2,
-                          EFI_HANDLE p2_handle, UINT32 block_size,
-                          const fs_dirent *iso, const UINT8 **map,
-                          UINTN *len)
+EFI_STATUS direct_map_build(EFI_SYSTEM_TABLE *st, fs_vol *p2,
+                            EFI_HANDLE p2_handle, UINT32 block_size,
+                            const fs_dirent *iso, const UINT8 **map,
+                            UINTN *len)
 {
     direct_result r;
     UINTN n = 0;
@@ -330,7 +330,26 @@ EFI_STATUS direct_map_set(EFI_SYSTEM_TABLE *st, fs_vol *p2,
         *map = g_map;
     if (len != (UINTN *)0)
         *len = n;
-    return loader_isomap_set(st, g_map, n);
+    return EFI_SUCCESS;
+}
+
+EFI_STATUS direct_map_set(EFI_SYSTEM_TABLE *st, fs_vol *p2,
+                          EFI_HANDLE p2_handle, UINT32 block_size,
+                          const fs_dirent *iso, const UINT8 **map,
+                          UINTN *len)
+{
+    const UINT8 *m = (const UINT8 *)0;
+    UINTN n = 0;
+    EFI_STATUS status;
+
+    status = direct_map_build(st, p2, p2_handle, block_size, iso, &m, &n);
+    if (map != (const UINT8 **)0)
+        *map = m;
+    if (len != (UINTN *)0)
+        *len = n;
+    if (EFI_ERROR(status))
+        return status;
+    return loader_isomap_set(st, m, n);
 }
 
 /* Reads the configuration and settles the cmdline. */

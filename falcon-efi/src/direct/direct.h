@@ -73,6 +73,14 @@ EFI_STATUS direct_map_set(EFI_SYSTEM_TABLE *st, fs_vol *p2,
                           const fs_dirent *iso, const UINT8 **map,
                           UINTN *len);
 
+/* Builds the map's bytes into *map and *len without setting FalconIsoMap: the
+ * Windows path carries them in winjump's cfg instead of an EFI variable. The
+ * bytes stay valid until the next call to either builder. */
+EFI_STATUS direct_map_build(EFI_SYSTEM_TABLE *st, fs_vol *p2,
+                            EFI_HANDLE p2_handle, UINT32 block_size,
+                            const fs_dirent *iso, const UINT8 **map,
+                            UINTN *len);
+
 /* D3b (docs/notes/d3-spike.md): boots iso through its own loader chain
  * (its shim, its signed GRUB) with its grub.cfg's bytes replaced by one of
  * ours (falcon-core/src/media/grubcfg.h) and falcon-hook's archive served

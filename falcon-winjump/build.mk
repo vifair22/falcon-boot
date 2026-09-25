@@ -10,9 +10,39 @@
 # the loader.
 
 WINJUMP := $(BIN)/winjump.exe
-WINJUMP_SRCS := falcon-winjump/src/winjump.c
+# winjumpcore.c and core's extmap.c are shared with the host tests; the driver
+# blob is per-width and added to each build's object list below.
+WINJUMP_SRCS := falcon-winjump/src/winjump.c falcon-winjump/src/winjumpcore.c \
+	falcon-core/src/media/extmap.c
 WINJUMP_OBJ := $(OBJ)/winjump
 WINJUMP_OBJS := $(WINJUMP_SRCS:%.c=$(WINJUMP_OBJ)/%.o)
+
+# The driver, embedded as a C array so this binary carries the matching-width
+# .sys into WinPE, the way the loader carries winjump. x64 winjump embeds the
+# x64 driver, winjump32 the x86 one; both name the symbol falcon_vdisk_bin.
+VDISK_X64_BLOB := build/gen/vdisk-x64-blob.c
+VDISK_X86_BLOB := build/gen/vdisk-x86-blob.c
+
+define vdisk_blob
+	@mkdir -p $(@D)
+	@{ echo '/* generated from $< by make; do not edit */'; \
+	   echo '#include <stddef.h>'; \
+	   xxd -i -n falcon_vdisk_bin $< | \
+	   sed -e 's/^unsigned char/const unsigned char/' \
+	       -e 's/^unsigned int falcon_vdisk_bin_len/const size_t falcon_vdisk_bin_len/'; \
+	} > $@
+endef
+
+$(VDISK_X64_BLOB): $(BIN)/falcon-vdisk-x64.sys
+	$(vdisk_blob)
+
+$(VDISK_X86_BLOB): $(BIN)/falcon-vdisk-x86.sys
+	$(vdisk_blob)
+
+WINJUMP_OBJS += $(WINJUMP_OBJ)/vdisk-blob.o
+$(WINJUMP_OBJ)/vdisk-blob.o: $(VDISK_X64_BLOB)
+	@mkdir -p $(@D)
+	$(CC) $(WINJUMP_CFLAGS) -c -o $@ $<
 
 # Redundant for gcc, which already searches its own sysroot, and present for
 # the clang-based tools: clang-tidy infers the mingw target from the compiler
@@ -32,6 +62,7 @@ WINJUMP_CFLAGS := -std=c11 -O2 \
 	-Wconversion -Wsign-conversion \
 	-fstack-protector-strong \
 	-fno-tree-loop-distribute-patterns \
+	$(CORE_INC) $(WINJUMP_INC) -Ifalcon-vdisk/src \
 	$(WINJUMP_SYSINC)
 
 # VirtDisk.dll is the whole point; advapi32 supplies the token calls that
@@ -116,6 +147,10 @@ CC_WIN32 ?= i686-w64-mingw32-gcc
 WINJUMP32 := $(BIN)/winjump32.exe
 WINJUMP32_OBJ := $(OBJ)/winjump32
 WINJUMP32_OBJS := $(WINJUMP_SRCS:%.c=$(WINJUMP32_OBJ)/%.o)
+WINJUMP32_OBJS += $(WINJUMP32_OBJ)/vdisk-blob.o
+$(WINJUMP32_OBJ)/vdisk-blob.o: $(VDISK_X86_BLOB)
+	@mkdir -p $(@D)
+	$(CC_WIN32) $(WINJUMP32_CFLAGS) -c -o $@ $<
 MINGW32_SYSROOT := $(shell $(CC_WIN32) -print-sysroot 2>/dev/null)
 WINJUMP32_SYSINC := $(if $(MINGW32_SYSROOT),\
 	-isystem $(MINGW32_SYSROOT)/i686-w64-mingw32/include,)
@@ -152,3 +187,16 @@ $(WINJUMP32_BLOB): $(WINJUMP32_STRIPPED)
 winjump32: $(WINJUMP32)
 
 .PHONY: winjump32
+
+# ---- tests ----
+#
+# Only winjumpcore.c is host-testable: the rest of winjump.c is Win32 glue
+# that runs in a WinPE. The test links core's extmap.c, the map format both
+# sides share.
+WINJUMP_TESTS := falcon-winjump/tests/main.c falcon-winjump/tests/winjumpcore_test.c
+WINJUMP_UUT := falcon-winjump/src/winjumpcore.c falcon-core/src/media/extmap.c
+
+$(eval $(call test_bin,winjump,$(WINJUMP_TESTS) $(WINJUMP_UUT)))
+
+ALL_TEST_SRCS += $(WINJUMP_TESTS)
+ALL_UUT_SRCS  += falcon-winjump/src/winjumpcore.c

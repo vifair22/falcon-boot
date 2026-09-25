@@ -52,9 +52,14 @@
 
 #include <windows.h>
 #include <virtdisk.h>
+#include <winioctl.h>
 #include <stdarg.h>
 #include <stddef.h>
 #include <stdint.h>
+
+#include <media/extmap.h>
+#include "winjumpcore.h"
+#include "vdiskio.h"
 
 /* ---- what the C runtime would have provided ----
  *
@@ -90,6 +95,21 @@ size_t strlen(const char *s)
     while (*e != '\0')
         e++;
     return (size_t)(e - s);
+}
+
+/* memcmp, for the linked-in falcon-core code (extmap, winjumpcore) that a
+ * hosted build would get from libc. */
+int memcmp(const void *a, const void *b, size_t n);
+int memcmp(const void *a, const void *b, size_t n)
+{
+    const unsigned char *p = a;
+    const unsigned char *q = b;
+
+    for (; n-- > 0; p++, q++) {
+        if (*p != *q)
+            return (int)*p - (int)*q;
+    }
+    return 0;
 }
 
 /* A number as decimal, into buf, for the log: wvsprintf's only 64-bit
@@ -220,6 +240,8 @@ struct cfg {
     char iso[MAX_PATH];       /* ISO path relative to a volume root */
     unsigned long long size;  /* its exact byte length, 0 if unspecified */
     char shell[MAX_PATH];     /* original shell, empty for the default */
+    uint8_t *map;             /* the ISO's extent map, heap, NULL if none */
+    DWORD map_len;            /* its length in bytes */
 };
 
 /* p2:\falcon\windows.cfg, every key optional:
@@ -358,7 +380,9 @@ typedef void (*kv_fn)(void *ctx, const char *key, const char *value);
  * file cannot be read; what is in it is the caller's business. */
 static BOOL read_kv(const wchar_t *path, kv_fn fn, void *ctx)
 {
-    char buf[4096];
+    /* Large enough for the cfg with the extent map's hex on one line: the
+     * header, then map= and up to EXTMAP_MAX_EXTENTS runs, twice over in hex. */
+    static char buf[24576];
     HANDLE h;
     DWORD got = 0;
     char *line;
@@ -397,6 +421,45 @@ static BOOL read_kv(const wchar_t *path, kv_fn fn, void *ctx)
     return TRUE;
 }
 
+/* A hex digit's value, or -1. */
+static int hexval(char c)
+{
+    if (c >= '0' && c <= '9')
+        return c - '0';
+    if (c >= 'a' && c <= 'f')
+        return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F')
+        return c - 'A' + 10;
+    return -1;
+}
+
+/* Decode the map= hex into a heap buffer on cfg (freed when winjump exits). */
+static void cfg_map(struct cfg *cfg, const char *hex)
+{
+    size_t n = strlen(hex), i;
+    uint8_t *out;
+
+    if ((n & 1u) != 0 || n == 0) {
+        jlog("cfg: map= has an odd or empty hex length");
+        return;
+    }
+    out = HeapAlloc(GetProcessHeap(), 0, n / 2u);
+    if (out == NULL)
+        return;
+    for (i = 0; i < n; i += 2) {
+        int hi = hexval(hex[i]), lo = hexval(hex[i + 1]);
+
+        if (hi < 0 || lo < 0) {
+            jlog("cfg: map= has a non-hex digit");
+            HeapFree(GetProcessHeap(), 0, out);
+            return;
+        }
+        out[i / 2] = (uint8_t)((hi << 4) | lo);
+    }
+    cfg->map = out;
+    cfg->map_len = (DWORD)(n / 2u);
+}
+
 static void cfg_key(void *ctx, const char *key, const char *value)
 {
     struct cfg *cfg = ctx;
@@ -407,6 +470,8 @@ static void cfg_key(void *ctx, const char *key, const char *value)
         lstrcpynA(cfg->shell, value, MAX_PATH);
     else if (jstrcmp(key, "size") == 0)
         cfg->size = jparse_u64(value);
+    else if (jstrcmp(key, "map") == 0)
+        cfg_map(cfg, value);
     else
         jlog("cfg: ignoring unknown key '%s'", key);
 }
@@ -730,6 +795,207 @@ static BOOL attach_iso(const wchar_t *path)
     return TRUE;
 }
 
+/* ---- the driver-mount fallback (DESIGN Section 6.3) ----
+ *
+ * When VirtDisk cannot attach the ISO, present it through falcon-vdisk, the
+ * kernel driver carried in this binary. The loader drops the ISO's extent map
+ * beside winjump; winjump finds the disk the map names, hands the driver the
+ * disk and the runs, and the driver serves the ISO as a CD Setup mounts.
+ *
+ * Nothing here is reached when the VirtDisk attach worked. Every failure is
+ * logged and returns FALSE, and the shell still launches. */
+
+extern const unsigned char falcon_vdisk_bin[];
+extern const size_t falcon_vdisk_bin_len;
+
+/* The driver's names. */
+#define VDISK_SERVICE   L"falconvdisk"
+#define VDISK_CTL_PATH  L"\\\\.\\FalconVDisk"
+
+/* Writes the embedded driver to a temp file and returns its path (a static
+ * buffer). NULL on failure. */
+static const wchar_t *write_driver(void)
+{
+    static wchar_t path[MAX_PATH];
+    wchar_t dir[MAX_PATH];
+    HANDLE h;
+    DWORD wrote = 0;
+
+    if (GetTempPathW(MAX_PATH, dir) == 0 ||
+        !jwjoin(path, MAX_PATH, dir, L"falcon-vdisk.sys"))
+        return NULL;
+    h = CreateFileW(path, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, 0, NULL);
+    if (h == INVALID_HANDLE_VALUE) {
+        jlog("driver: cannot write %ls, err=%lu", path, GetLastError());
+        return NULL;
+    }
+    if (!WriteFile(h, falcon_vdisk_bin, (DWORD)falcon_vdisk_bin_len, &wrote,
+                   NULL) || wrote != (DWORD)falcon_vdisk_bin_len) {
+        jlog("driver: write failed, err=%lu", GetLastError());
+        CloseHandle(h);
+        return NULL;
+    }
+    CloseHandle(h);
+    return path;
+}
+
+/* Registers and starts the driver, returns an open handle to its control
+ * device, or NULL. A stale service from an earlier run is reused. */
+static HANDLE driver_start(const wchar_t *sys)
+{
+    SC_HANDLE scm, svc;
+    HANDLE ctl;
+
+    scm = OpenSCManagerW(NULL, NULL, SC_MANAGER_ALL_ACCESS);
+    if (scm == NULL) {
+        jlog("driver: OpenSCManager err=%lu", GetLastError());
+        return NULL;
+    }
+    svc = CreateServiceW(scm, VDISK_SERVICE, VDISK_SERVICE, SERVICE_ALL_ACCESS,
+                         SERVICE_KERNEL_DRIVER, SERVICE_DEMAND_START,
+                         SERVICE_ERROR_NORMAL, sys, NULL, NULL, NULL, NULL,
+                         NULL);
+    if (svc == NULL && GetLastError() == ERROR_SERVICE_EXISTS)
+        svc = OpenServiceW(scm, VDISK_SERVICE, SERVICE_ALL_ACCESS);
+    if (svc == NULL) {
+        jlog("driver: CreateService err=%lu", GetLastError());
+        CloseServiceHandle(scm);
+        return NULL;
+    }
+    if (!StartServiceW(svc, 0, NULL) &&
+        GetLastError() != ERROR_SERVICE_ALREADY_RUNNING) {
+        jlog("driver: StartService err=%lu", GetLastError());
+        CloseServiceHandle(svc);
+        CloseServiceHandle(scm);
+        return NULL;
+    }
+    CloseServiceHandle(svc);
+    CloseServiceHandle(scm);
+
+    ctl = CreateFileW(VDISK_CTL_PATH, GENERIC_READ | GENERIC_WRITE, 0, NULL,
+                      OPEN_EXISTING, 0, NULL);
+    if (ctl == INVALID_HANDLE_VALUE) {
+        jlog("driver: open control device err=%lu", GetLastError());
+        return NULL;
+    }
+    return ctl;
+}
+
+/* Finds the physical disk whose GPT carries the partition `part_guid` names.
+ * Fills `nt_path` with the disk's NT device path for the driver and *first_lba
+ * with the partition's first LBA. */
+static BOOL find_falcon_disk(const uint8_t part_guid[16], wchar_t *nt_path,
+                             size_t cap, uint64_t *first_lba)
+{
+    uint8_t hdr[512];
+    static uint8_t ents[128 * 128];
+    int n;
+
+    for (n = 0; n < 32; n++) {
+        wchar_t phys[32];
+        HANDLE h;
+        DWORD got = 0;
+        LARGE_INTEGER at;
+
+        wsprintfW(phys, L"\\\\.\\PhysicalDrive%d", n);
+        h = CreateFileW(phys, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                        NULL, OPEN_EXISTING, 0, NULL);
+        if (h == INVALID_HANDLE_VALUE)
+            continue;
+        at.QuadPart = 512;                          /* LBA 1: the GPT header */
+        got = 0;
+        if (SetFilePointerEx(h, at, NULL, FILE_BEGIN) &&
+            ReadFile(h, hdr, sizeof hdr, &got, NULL) && got == sizeof hdr) {
+            at.QuadPart = 1024;                     /* LBA 2: the entry array */
+            got = 0;
+            if (SetFilePointerEx(h, at, NULL, FILE_BEGIN) &&
+                ReadFile(h, ents, sizeof ents, &got, NULL) &&
+                wj_gpt_match(hdr, ents, got, part_guid, first_lba) == WJ_OK) {
+                CloseHandle(h);
+                if ((size_t)wsprintfW(nt_path, L"\\Device\\Harddisk%d\\DR%d",
+                                      n, n) >= cap)
+                    return FALSE;
+                jlog("driver: ISO on PhysicalDrive%d, partition first LBA %s",
+                     n, u64s((char[24]){ 0 }, *first_lba));
+                return TRUE;
+            }
+        }
+        CloseHandle(h);
+    }
+    jlog("driver: no disk carries the ISO's partition GUID");
+    return FALSE;
+}
+
+/* Presents the ISO to Windows through the driver: from the map the loader put
+ * in the cfg, find the disk, hand the driver the disk path and runs, and bring
+ * the CD online. */
+static BOOL mount_via_driver(const struct cfg *cfg)
+{
+    wchar_t nt_path[64];
+    const wchar_t *sys;
+    extmap_hdr hdr;
+    uint64_t first_lba = 0;
+    HANDLE ctl;
+    wj_extent exts[EXTMAP_MAX_EXTENTS];
+    uint32_t n_ext = 0;
+    struct falcon_vdisk_backing *b;
+    size_t path_bytes, msg_len;
+    uint8_t *msg;
+    DWORD ret = 0;
+    BOOL ok = FALSE;
+
+    if (cfg->map == NULL) {
+        jlog("driver: the loader left no extent map (an older loader?)");
+        return FALSE;
+    }
+    if (extmap_decode(cfg->map, cfg->map_len, &hdr) != EXTMAP_OK ||
+        wj_backing_extents(&hdr, cfg->map, cfg->map_len, exts,
+                           EXTMAP_MAX_EXTENTS, &n_ext) != WJ_OK) {
+        jlog("driver: extent map is not one this reads");
+        return FALSE;
+    }
+
+    if (!find_falcon_disk(hdr.part_guid, nt_path, 64, &first_lba))
+        return FALSE;
+
+    sys = write_driver();
+    if (sys == NULL)
+        return FALSE;
+    ctl = driver_start(sys);
+    if (ctl == NULL)
+        return FALSE;
+
+    /* SET_BACKING: header, the disk's NT path in UTF-16 (no NUL), the runs. */
+    path_bytes = jwcslen(nt_path) * sizeof(wchar_t);
+    msg_len = sizeof *b + path_bytes + (size_t)n_ext * sizeof(wj_extent);
+    msg = HeapAlloc(GetProcessHeap(), 0, msg_len);
+    if (msg == NULL) {
+        CloseHandle(ctl);
+        return FALSE;
+    }
+    b = (struct falcon_vdisk_backing *)msg;
+    b->iso_bytes = hdr.iso_size;
+    b->path_bytes = (unsigned short)path_bytes;
+    b->reserved = 0;
+    b->extent_count = n_ext;
+    memcpy(msg + sizeof *b, nt_path, path_bytes);
+    memcpy(msg + sizeof *b + path_bytes, exts, (size_t)n_ext * sizeof(wj_extent));
+
+    if (!DeviceIoControl(ctl, IOCTL_FALCON_VDISK_SET_BACKING, msg,
+                         (DWORD)msg_len, NULL, 0, &ret, NULL)) {
+        jlog("driver: SET_BACKING err=%lu", GetLastError());
+    } else if (!DeviceIoControl(ctl, IOCTL_FALCON_VDISK_ONLINE, NULL, 0, NULL,
+                                0, &ret, NULL)) {
+        jlog("driver: ONLINE err=%lu", GetLastError());
+    } else {
+        jlog("driver: ISO online as a CD, %lu run(s)", (unsigned long)n_ext);
+        ok = TRUE;
+    }
+    HeapFree(GetProcessHeap(), 0, msg);
+    CloseHandle(ctl);
+    return ok;
+}
+
 /* ---- the user's options (p2:\\falcon\\windows.cfg) ---- */
 
 static void opt_key(void *ctx, const char *key, const char *value)
@@ -905,13 +1171,27 @@ static int winjump_main(void)
 
     /* From here every failure is logged and then ignored: a WinPE with no
      * media still has Shift+F10 and this log, and is worth a great deal more
-     * than a machine that reboots without a shell. */
-    if (enable_manage_volume() && read_cfg(dir, &cfg) &&
-        find_iso(&cfg, iso, MAX_PATH)) {
-        (void)attach_iso(iso);
-        apply_stick_options(iso);
-    } else
-        jlog("winjump: attach skipped; launching the original shell anyway");
+     * than a machine that reboots without a shell.
+     *
+     * VirtDisk first (Windows 8+, when the ISO's volume is readable), then the
+     * driver (Vista and 7, whose WinPE has neither ISO support nor a way to
+     * read the exFAT partition the ISO lives on). */
+    {
+        BOOL mounted = FALSE;
+        BOOL have_cfg = read_cfg(dir, &cfg);
+
+        if (have_cfg && enable_manage_volume() &&
+            find_iso(&cfg, iso, MAX_PATH)) {
+            mounted = attach_iso(iso);
+            apply_stick_options(iso);
+        }
+        if (!mounted && have_cfg) {
+            jlog("winjump: VirtDisk did not mount the ISO; trying the driver");
+            mounted = mount_via_driver(&cfg);
+        }
+        if (!mounted)
+            jlog("winjump: no media presented; launching the shell anyway");
+    }
 
     return launch_shell(dir, &cfg);
 }

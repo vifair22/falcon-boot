@@ -63,6 +63,7 @@ CLI_INC       := -Ifalcon-cli/src
 APPLIANCE_INC := -Ifalcon-appliance/src
 HOOK_INC      := -Ifalcon-hook/src
 BIOS_INC      := -Ifalcon-bios/src
+WINJUMP_INC   := -Ifalcon-winjump/src
 
 # ---- the freestanding EFI flavour ----
 CC := x86_64-w64-mingw32-gcc
@@ -222,7 +223,7 @@ TEST_CFLAGS := -std=c11 -O0 -g --coverage $(TEST_WARNS) \
 	-DSHIM_DIR='"$(SHIM_DIR)"' \
 	-DMEDIA_FIXTURE_DIR='"$(MEDIA_FIXTURE_DIR)"' \
 	-I$(TEST_SUPPORT)/hostshim $(CORE_INC) $(EFI_INC) $(CLI_INC) \
-	$(APPLIANCE_INC) $(HOOK_INC) $(BIOS_INC) -I$(TEST_SUPPORT) \
+	$(APPLIANCE_INC) $(HOOK_INC) $(BIOS_INC) $(WINJUMP_INC) -I$(TEST_SUPPORT) \
 	$(CMOCKA_CFLAGS)
 
 TEST_LDFLAGS := --coverage
@@ -260,7 +261,7 @@ include falcon-appliance/build.mk
 # else, because it is ordinary C and is the half that can be checked.
 include falcon-bios/build.mk
 
-TESTS := core efi cli appliance hook bios
+TESTS := core efi cli appliance hook bios winjump
 TEST_BINS := $(TESTS:%=$(BIN)/falcon-%-test)
 
 # The coverage report's units: what the test binaries link as units under
