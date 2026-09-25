@@ -214,15 +214,20 @@ for sr, sg, sb in ((0x1A, 0x00, 0x50), (0x00, 0x19, 0x40)):
            for r, g, b in edge):
         print('Windows Setup')
         sys.exit()
-# Windows 7 and Vista Setup: not a flat colour but a blue gradient, darker at
-# the top and lighter toward the bottom, with blue the dominant channel at
-# every edge point. A false match only makes the harness try Shift+F10 and read
-# install.*, which finds nothing on a non-Windows screen, so a loose test here
-# costs nothing and a missed one loses a whole case.
+# Windows 7 and Vista Setup: not a flat colour but a cool gradient. Windows 7
+# is blue, dark at the top and light toward the bottom; Vista is its green-to-
+# blue aurora, green at the top and blue below. So at every edge point green or
+# blue leads red, and the top and bottom differ, which a black boot menu, a
+# grey console or a flat desktop does not. This probe only runs for a case with
+# no serial "starting" line, i.e. Windows, and a false match there only makes
+# the harness try a Shift+F10 read that finds nothing, so a loose test is safe
+# and a missed one loses a whole case.
 top = [at(x, 2) for x in (2, w // 2, w - 3)]
 bot = [at(x, h - 3) for x in (2, w // 2, w - 3)]
-if (all(b >= max(r, g) and b >= 60 for r, g, b in top + bot) and
-        sum(b for _, _, b in bot) > sum(b for _, _, b in top) + 100):
+def cool(p):
+    return max(p[1], p[2]) >= p[0] + 15 and max(p[1], p[2]) >= 60
+if (all(cool(p) for p in top + bot) and
+        abs(sum(b for _, _, b in bot) - sum(b for _, _, b in top)) > 90):
     print('Windows Setup')
     sys.exit()
 dark = sum(1 for k in range(0, len(px) - 2, 3 * 97) if max(px[k:k+3]) < 40)
