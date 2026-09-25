@@ -480,16 +480,16 @@ static void describe_plan(const bios_plan *p, const bios_survey *s,
              (unsigned long long)p->stage3_sectors);
 }
 
-static cli_status bios_run(const cli_args *a)
+cli_status mks_bios_install(const mks_bios_req *req)
 {
-    const char *target = a->pos[0];
-    const char *p1 = cli_value(a, "stage1", DEFAULT_STAGE1);
-    const char *p2 = cli_value(a, "stage2", DEFAULT_STAGE2);
-    const char *p3 = cli_value(a, "stage3", DEFAULT_STAGE3);
-    const char *backup = cli_value(a, "backup", NULL);
-    int removing = cli_flag(a, "remove");
-    int dry = cli_flag(a, "dry-run");
-    int force = cli_flag(a, "force");
+    const char *target = req->target;
+    const char *p1 = req->stage1 != NULL ? req->stage1 : DEFAULT_STAGE1;
+    const char *p2 = req->stage2 != NULL ? req->stage2 : DEFAULT_STAGE2;
+    const char *p3 = req->stage3 != NULL ? req->stage3 : DEFAULT_STAGE3;
+    const char *backup = req->backup;
+    int removing = req->remove;
+    int dry = req->dry_run;
+    int force = req->force;
     char derived[MKS_PATH_MAX];
     void *b1 = NULL, *b2 = NULL, *b3 = NULL;
     size_t l1 = 0, l2 = 0, l3 = 0;
@@ -576,7 +576,7 @@ static cli_status bios_run(const cli_args *a)
 
     /* The default name is the target's, so two sticks cannot quietly share
      * one backup file. */
-    if (backup == NULL && !cli_flag(a, "no-backup")) {
+    if (backup == NULL && !req->no_backup) {
         (void)snprintf(derived, sizeof derived, "falcon-bios-backup-%s.bin",
                        util_basename(d.path));
         backup = derived;
@@ -640,7 +640,7 @@ static cli_status bios_run(const cli_args *a)
     if (rc != CLI_OK)
         goto close_out;
 
-    if (cli_flag(a, "reserve")) {
+    if (req->reserve) {
         if (fsync(dev.fd) != 0) {
             rc = set_error_errno(CLI_ERR_IO, "flushing %s", d.path);
             goto close_out;
@@ -663,6 +663,24 @@ out:
     free(b2);
     free(b3);
     return rc;
+}
+
+static cli_status bios_run(const cli_args *a)
+{
+    mks_bios_req req;
+
+    memset(&req, 0, sizeof req);
+    req.target = a->pos[0];
+    req.stage1 = cli_value(a, "stage1", DEFAULT_STAGE1);
+    req.stage2 = cli_value(a, "stage2", DEFAULT_STAGE2);
+    req.stage3 = cli_value(a, "stage3", DEFAULT_STAGE3);
+    req.backup = cli_value(a, "backup", NULL);
+    req.no_backup = cli_flag(a, "no-backup");
+    req.remove = cli_flag(a, "remove");
+    req.reserve = cli_flag(a, "reserve");
+    req.dry_run = cli_flag(a, "dry-run");
+    req.force = cli_flag(a, "force");
+    return mks_bios_install(&req);
 }
 
 const cli_cmd mks_cmd_bios = {

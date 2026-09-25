@@ -38,6 +38,9 @@ typedef struct {
     char     base[MKS_PATH_MAX];
     char     part[MKS_PARTS][MKS_PATH_MAX];
     int      loop_attached;
+    /* A BIOS-only stick (mkstick create --bios-only) leaves GPT slot 1
+     * empty, so part[0] names a node that never appears. */
+    int      no_p1;
 } mks_disk;
 
 /* Identify and size the target. Does not open it for writing and does not

@@ -8,9 +8,9 @@ this stick 32-bit is what is on it.
 
 | part | contents |
 |---|---|
-| p1 | the ESP `mkstick create` always writes; unused on a BIOS machine |
+| p1 | none: `mkstick create --bios-only` leaves slot 1 empty (DESIGN Section 3) |
 | p2 | 32-bit ISOs, in `Linux/` |
-| p3 | LUKS2 (pbkdf2, the loader's 200000 iterations): `/uki/arch32.efi`, the MOK |
+| p3 | LUKS2 (pbkdf2, the loader's 200000 iterations): `/uki/arch32.efi`, unsigned |
 | p4 | LUKS2 (argon2id, 128 MiB, time cost 4, one thread): Arch Linux 32 |
 | gap | falcon-bios stages 1 to 3 (`mkstick bios`) |
 
@@ -22,10 +22,10 @@ The current one is the 128 GB Corsair Voyager, serial
 ```bash
 # 1. The stick. --p4-kdf-memory is what makes p4 openable on an old machine.
 printf '%s' 'the passphrase' > pass          # no newline; p3 and p4 share it
-sudo build/bin/falcon-boot-mkstick create /dev/sdX --force \
-    --passphrase-file pass --iso-size 60G --p4-kdf-memory 131072 \
-    --cn "falcon-boot i686 stick"
-sudo build/bin/falcon-boot-mkstick bios /dev/sdX --no-backup
+# --bios-only: no ESP, no MOK, and falcon-bios's stages installed as part of
+# create (needs `make bios` first).
+sudo build/bin/falcon-boot-mkstick create /dev/sdX --force --bios-only \
+    --passphrase-file pass --iso-size 60G --p4-kdf-memory 131072
 
 # 2. Arch Linux 32 into p4, its UKI onto p3.
 sudo falcon-bios/tools/mk-stick32-pos.sh /dev/sdX <serial> pass /some/workdir

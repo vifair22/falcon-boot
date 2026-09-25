@@ -170,6 +170,19 @@ Rationale per partition:
 
 p3 and p4 share the same passphrase (Section 5).
 
+**A BIOS-only stick has no p1 (decision 2026-09-24).** A stick made for
+machines with no UEFI at all, such as the 32-bit one of
+docs/notes/stick32.md, has no use for an ESP, a shim or a MOK, and carrying
+them is only surface: `mkstick create --bios-only` leaves GPT slot 1 empty,
+generates no MOK, stages UKIs unsigned (falcon-bios unwraps a UKI rather
+than launching it, and nothing on a BIOS machine verifies one), and installs
+falcon-bios's stages in the gap as `mkstick bios` does. Slot 1 is left empty
+rather than p2..p4 being renumbered, so the numbers above, the Manual's and
+an installed system's crypttab stay true; the loaders find p2 and p3 by type
+and name, never by number. `mkstick status` reads a stick with no
+ESP-typed partition as one of these, and fails it if the stages are
+missing.
+
 **p3 encryption is the default, not a requirement (decision 2026-09-13).**
 mkstick can create p3 plaintext (`--p3-plain`), for users who want the UKI
 shelf simple or firmware-readable. Consequences, all of which the tooling
@@ -2504,7 +2517,7 @@ line numbers are left out because they would be stale within a week.
 | LBA 98-1121 | BIOS stage 3, at most 1024 sectors; its header gives the length | stage 2 (`load3.c`) |
 | LBA 1122-2046 | unused; inside the `FALCON-BIOS` EF02 partition (LBA 34-2047) when `mkstick bios --reserve` made one | |
 | LBA 2047 | the BIOS next-boot marker when one is pending, zero otherwise (Section 6.3.1) | falcon-bios, which clears it; written by archusb |
-| p1 `FALCON-ESP` | FAT32 ESP: shim as `EFI\BOOT\BOOTX64.EFI`, MokManager, falcon-boot as `grubx64.efi`, `falcon-boot.cer` | UEFI firmware, shim |
+| p1 `FALCON-ESP` | FAT32 ESP: shim as `EFI\BOOT\BOOTX64.EFI`, MokManager, falcon-boot as `grubx64.efi`, `falcon-boot.cer`; absent on a BIOS-only stick (Section 3) | UEFI firmware, shim |
 | p2 `FALCON-ISO` | exFAT: the media, `falcon/blessed/`, the manifest, `falcon/windows.cfg` | both loaders, falcon-hook (as raw extents), winjump, the appliance |
 | p3 | LUKS2 + ext4: UKIs in `/uki`, the MOK key pair | both loaders, the appliance |
 | p4 | LUKS2: the personal OS's LVM (root, home) | the personal OS's initramfs |

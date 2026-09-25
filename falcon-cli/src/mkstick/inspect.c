@@ -523,6 +523,36 @@ out:
     (void)rmdir(tmpl);
 }
 
+/* ---- the BIOS stages ----
+ *
+ * Read by their magic numbers rather than compared with a build: status is
+ * read-only and runs where no build may be. Stage 2 carries "BOS2" four bytes
+ * in (what stage 1 checks before it jumps) and stage 3 starts with "BOS3"
+ * (what stage 2 checks), at the LBAs falcon-bios/src/biosdefs.h fixes.
+ * Nonzero when both are there. */
+#define STATUS_STAGE2_LBA 34u
+#define STATUS_STAGE3_LBA 98u
+
+static int bios_stages_present(const mks_disk *d)
+{
+    uint8_t s2[512];
+    uint8_t s3[512];
+    disk_io io;
+    int ok;
+
+    if (d->sector != 512u)
+        return 0;
+    if (disk_io_open(&io, d->path, 0, d->size) != CLI_OK)
+        return 0;
+    ok = disk_io_read(&io, (uint64_t)STATUS_STAGE2_LBA * 512u, sizeof s2,
+                      s2) == 0 &&
+         disk_io_read(&io, (uint64_t)STATUS_STAGE3_LBA * 512u, sizeof s3,
+                      s3) == 0 &&
+         memcmp(s2 + 4, "BOS2", 4) == 0 && memcmp(s3, "BOS3", 4) == 0;
+    disk_io_close(&io);
+    return ok;
+}
+
 /* ---- the command ---- */
 
 /* p2 is named as well as typed, so this takes the whole entry: its Microsoft
@@ -550,6 +580,7 @@ static cli_status status_run(const cli_args *a)
     int gpt_rc;
     uint32_t i;
     uint32_t reserved = 0;
+    int has_esp = 0;
 
     memset(&t, 0, sizeof t);
 
@@ -583,10 +614,15 @@ static cli_status status_run(const cli_args *a)
     for (i = 0; i < table.count; i++) {
         if (bioscore_is_reserve(&table.parts[i]))
             reserved++;
+        if (gpt_guid_eq(table.parts[i].type, gpt_guid_esp))
+            has_esp = 1;
     }
-    if (table.count - reserved != MKS_PARTS)
-        note(&t, "%u partitions, not the four DESIGN Section 3 describes",
-             table.count - reserved);
+    /* A stick with no ESP is `mkstick create --bios-only`'s: three
+     * partitions, slot 1 empty, and falcon-bios the only way in. */
+    if (table.count - reserved != (has_esp ? MKS_PARTS : MKS_PARTS - 1u))
+        note(&t, "%u partitions, not the %s DESIGN Section 3 describes",
+             table.count - reserved,
+             has_esp ? "four" : "three of a BIOS-only stick");
     for (i = 0; i < table.count; i++) {
         const gpt_part *p = &table.parts[i];
         const char *role = role_text(p);
@@ -665,8 +701,21 @@ static cli_status status_run(const cli_args *a)
     }
 
     cli_log_blank();
+    log_info("falcon-bios (docs/notes/bios-route.md)");
+    if (bios_stages_present(&disk))
+        check(&t, 1, "stages 2 and 3 are in the gap (LBA %u and %u)",
+              STATUS_STAGE2_LBA, STATUS_STAGE3_LBA);
+    else if (has_esp)
+        note(&t, "not installed; `mkstick bios` puts it on");
+    else
+        check(&t, 0, "not installed, and a stick with no ESP boots through "
+                     "nothing else; run `mkstick bios`");
+
+    cli_log_blank();
     log_info("p1: the ESP and the Secure Boot chain (DESIGN Section 4)");
-    if (cli_flag(a, "no-esp"))
+    if (!has_esp)
+        check(&t, 1, "none: a BIOS-only stick (mkstick create --bios-only)");
+    else if (cli_flag(a, "no-esp"))
         skip(&t, "skipped (--no-esp)");
     else
         status_check_esp(&t, &disk);
