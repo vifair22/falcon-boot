@@ -253,6 +253,27 @@ static int boot_windows(const survey_entry *e)
     return 1;
 }
 
+/* Windows 2000/XP text-mode setup media: the virtual-CD driver injected into
+ * setup (DESIGN Section 6.3, windows-route.md 7.4). 0 when the medium is not
+ * 2000/XP media, so the caller boots it as it is. */
+static int boot_windows_xp(const survey_entry *e)
+{
+    boot_result r;
+    int not_xp = 1;
+
+    boot_result_init(&r);
+    booting("WXP", e->label);
+    (void)win_xp_boot(g_p2_src.disk, &g_p2, g_p2_part, &e->ent, &r, &not_xp);
+    if (not_xp)
+        return 0;
+
+    screen_page();
+    screen_out16(e->label);
+    failed("Windows setup", &r);
+    screen_out(k_press_any);
+    return 1;
+}
+
 /* A BSD medium served as its own memory disk (docs/notes/bsd-route.md). 0
  * when the medium is not one this route applies to. */
 static int boot_bsd(const survey_entry *e)
@@ -337,7 +358,9 @@ static void boot_plain(size_t idx, int which)
     int id = (fam != (const family_desc *)0) ? (int)fam->id : -1;
 
     if (!chain && id == (int)FAMILY_WINDOWS) {
-        if (!boot_windows(e))
+        /* boot.wim media (Vista and later) go through win_boot; 2000/XP have
+         * no boot.wim and fall to the text-mode-setup injection. */
+        if (!boot_windows(e) && !boot_windows_xp(e))
             boot_target(e, fam);
         return;
     }

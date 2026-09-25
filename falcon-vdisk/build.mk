@@ -17,6 +17,14 @@ VDISK_CFLAGS := -std=c11 -O2 -ffreestanding -fno-builtin \
 	-D_WIN32_WINNT=0x0600 -DNTDDI_VERSION=0x06000000 \
 	-Ifalcon-vdisk/src
 
+# A rig-only diagnostic: `make VDISK_TRACE=1 ...` builds the driver with the
+# opt-in COM1 marker at DriverEntry (VDISK_SERIAL_TRACE), so a coverage run can
+# tell from the serial log whether text-mode setup loaded it. Never in a
+# shipped build.
+ifdef VDISK_TRACE
+VDISK_CFLAGS += -DVDISK_SERIAL_TRACE
+endif
+
 # --subsystem native and DriverEntry as the entry point make it a driver
 # rather than an application; the base and alignment are what a .sys wants.
 VDISK_LDFLAGS := -nostdlib -shared -Wl,--subsystem,native \

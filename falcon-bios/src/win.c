@@ -36,6 +36,7 @@
 #include <fs/udf.h>
 #include <fs/iso9660.h>
 #include <media/extmap.h>
+#include <media/xpsetup.h>
 #include <pe/pe.h>
 #include <wim/wim.h>
 #include <lib/string.h>
@@ -48,6 +49,12 @@ extern const unsigned char falcon_winjump_bin[];
 extern const size_t falcon_winjump_bin_len;
 extern const unsigned char falcon_winjump32_bin[];
 extern const size_t falcon_winjump32_bin_len;
+
+/* The x86 virtual-CD driver, embedded the same way (falcon-bios/build.mk). The
+ * 2000/XP route serves it into the ISO's \i386 and injects it into
+ * txtsetup.sif, since those Windows have no WinPE and so no winjump. */
+extern const unsigned char falcon_vdisk_bin[];
+extern const size_t falcon_vdisk_bin_len;
 
 #define BLK 2048u
 
@@ -569,6 +576,177 @@ int win_boot(bios_disk *d, fs_vol *p2, const gpt_part *p2part,
     bios_put_dec((uint64_t)app_blocks * BLK / 1024u);
     bios_puts(" KiB served\n");
     screen_out("booting with boot.wim patched in memory\n\n");
+    r->stage = "booting";
+    return vcd_chainload(d, p2, p2part, iso, &g_iso, r);
+
+no_room:
+    vcd_overlay_reset();
+    return -1;
+}
+
+/* Windows 2000/XP have no WinPE, so the loader cannot patch a running PE; it
+ * injects falcon-vdisk into text-mode setup instead (DESIGN Section 6.3,
+ * windows-route.md 7.4). The served ISO is edited in memory the way the
+ * boot.wim relocation edits an ISO 9660-only medium, but the targets are
+ * i386/txtsetup.sif and a new i386/_FALCON.SYS:
+ *   - txtsetup.sif grows by three lines (txtsetup_inject) and is served whole
+ *     from memory past the ISO's end, its directory record rewritten to the
+ *     new extent;
+ *   - _FALCON.SYS (the embedded driver) is served past that, its record added
+ *     in i386's last-block slack, and i386's own record grown so a strict
+ *     reader (setupldr) walks past the old end and sees it;
+ *   - the PVD volume space size is grown to cover the appended blocks.
+ * setupldr reads all of this through the ISO 9660 primary (8.3) tree, which is
+ * why the mount and every lookup use it. *not_xp stays 1 when the medium is
+ * not 2000/XP media, so the caller boots it as it is. Returns only when it did
+ * not boot, with *r filled in.
+ *
+ * This wires the driver in; giving its DriverEntry the stick's extents at
+ * boot-start with no winjump (piece 3, windows-route.md 7.4) is separate, so
+ * for now setup loads the driver and then cannot reach its boot device. */
+int win_xp_boot(bios_disk *d, fs_vol *p2, const gpt_part *p2part,
+                const fs_dirent *iso, boot_result *r, int *not_xp)
+{
+    static uint8_t pvd[BLK], i386rec[BLK], dirblk[BLK];
+    iso9660_dir dir;
+    iso9660_dirent i386, sif;
+    iso9660_file f;
+    uint8_t *raw, *app;
+    size_t sif_len, grown_len = 0, sys_len = falcon_vdisk_bin_len;
+    uint32_t iso_blocks, sif_start, sys_start, total;
+    uint32_t sif_blocks, sys_blocks, app_blocks, blk_lba, new_i386_len;
+    /* 33 + strlen("_FALCON.SYS;1") = 46, already even. */
+    const uint32_t reclen = 46u;
+
+    if (not_xp != (int *)0)
+        *not_xp = 1;
+
+    r->stage = "opening the ISO";
+    if (iso->size % BLK != 0)
+        return -1;
+    iso_blocks = (uint32_t)(iso->size / BLK);
+    if (fs_file_open(p2, &g_iso, iso) != FS_OK)
+        return -1;
+
+    /* setupldr reads the primary (8.3) tree, so mount and look up there. */
+    r->stage = "reading the ISO's filesystem";
+    if (iso9660_mount_primary(&g_iv_pri, fs_file_read_cb, &g_iso) != ISO9660_OK)
+        return -1;
+    if (iso9660_dir_open_root(&g_iv_pri, &dir) != ISO9660_OK ||
+        i9_child(&dir, "i386", &i386) != 0 || !i386.is_dir)
+        return -1;
+    if (iso9660_dir_open(&g_iv_pri, &dir, &i386) != ISO9660_OK ||
+        i9_child(&dir, "txtsetup.sif", &sif) != 0)
+        return -1;
+
+    /* From here it is 2000/XP media, so a failure is a real failure. */
+    if (not_xp != (int *)0)
+        *not_xp = 0;
+    if (sif.parts != 1 || sif.size < 64u)
+        return -1;
+    sif_len = (size_t)sif.size;
+
+    /* Two heap_alloc regions (the sif read buffer and the append region), each
+     * rounded up to a page, plus room for the sif to grow and the driver: a
+     * generous slack covers both roundings so a barely-fitting request does not
+     * fail the second alloc. */
+    r->stage = "reserving memory for the driver injection";
+    heap_reset();
+    if (!heap_open((uint64_t)sif_len * 2u + (uint64_t)sys_len + 0x8000u)) {
+        r->advice = "this machine has too little memory above 64 MB to inject "
+                    "the driver.";
+        return -1;
+    }
+    raw = heap_alloc(sif_len);
+    /* The append region: the grown sif block-padded, then the driver
+     * block-padded, served as one run past the ISO's end. */
+    app = heap_alloc((uint64_t)sif_len + (uint64_t)sys_len +
+                     0x1000u + 3u * (uint64_t)BLK);
+    if (raw == (uint8_t *)0 || app == (uint8_t *)0) {
+        r->advice = "there is not enough memory to inject the driver.";
+        return -1;
+    }
+
+    r->stage = "reading txtsetup.sif";
+    if (iso9660_file_open(&g_iv_pri, &f, &sif) != ISO9660_OK ||
+        iso9660_file_read(&f, 0, sif_len, raw) != ISO9660_OK)
+        return -1;
+
+    r->stage = "injecting the driver into txtsetup.sif";
+    if (txtsetup_inject((const char *)raw, sif_len, "falconcd", "_FALCON.SYS",
+                        "Falcon Virtual CD", (char *)app,
+                        sif_len + 0x1000u, &grown_len) != XPSETUP_OK) {
+        r->advice = "txtsetup.sif is not one this loader can edit.";
+        return -1;
+    }
+
+    sif_blocks = (uint32_t)((grown_len + BLK - 1u) / BLK);
+    sys_blocks = (uint32_t)((sys_len + BLK - 1u) / BLK);
+    sif_start = iso_blocks;
+    sys_start = iso_blocks + sif_blocks;
+    app_blocks = sif_blocks + sys_blocks;
+    total = iso_blocks + app_blocks;
+
+    /* Pad the sif to a whole block, lay the driver after it, pad that too. */
+    memset(app + grown_len, 0, (size_t)sif_blocks * BLK - grown_len);
+    memcpy(app + (size_t)sif_blocks * BLK, falcon_vdisk_bin, sys_len);
+    memset(app + (size_t)sif_blocks * BLK + sys_len, 0,
+           (size_t)sys_blocks * BLK - sys_len);
+
+    r->stage = "growing the ISO in memory";
+    vcd_overlay_reset();
+
+    /* The appended sif and driver, served as CD sectors past the ISO's end. */
+    if (vcd_overlay_append(heap_phys(app), app_blocks) != 0)
+        goto no_room;
+
+    /* PVD (LBA 16) volume space size -> the new total, both-endian at 80/84. */
+    if (fs_file_read(&g_iso, 16u * (uint64_t)BLK, BLK, pvd) != FS_OK)
+        goto no_room;
+    put_le32(pvd + 80, total);
+    put_be32(pvd + 84, total);
+    if (vcd_overlay_at(16u, pvd) != 0)
+        goto no_room;
+
+    /* txtsetup.sif's record -> the appended copy (extent and length). */
+    if (i9_relocate(&sif, sif_start, (uint32_t)grown_len) != 0)
+        goto no_room;
+
+    /* i386's own record data length grows by the .sys record, so a strict
+     * reader walks past the old end to _FALCON.SYS. Its record is in the root
+     * directory (a different block from the sif's record and the .sys append
+     * target). */
+    new_i386_len = (uint32_t)i386.size + reclen;
+    if (fs_file_read(&g_iso, (uint64_t)i386.rec_lba * BLK, BLK, i386rec) !=
+            FS_OK)
+        goto no_room;
+    put_le32(i386rec + i386.rec_off + 10, new_i386_len);
+    put_be32(i386rec + i386.rec_off + 14, new_i386_len);
+    if (vcd_overlay_at(i386.rec_lba, i386rec) != 0)
+        goto no_room;
+
+    /* _FALCON.SYS's record, in i386's last-block slack. */
+    if (iso9660_append_record(&g_iv_pri, i386.lba, (uint32_t)i386.size,
+                              "_FALCON.SYS;1", sys_start, (uint32_t)sys_len,
+                              dirblk, &blk_lba) != ISO9660_OK) {
+        r->advice = "the ISO's i386 directory has no room for the driver's "
+                    "record.";
+        goto no_room;
+    }
+    /* Two edits landing in one block would clobber each other through separate
+     * overlays. Not seen on XP SP3 (records at 136, 24, 16; the .sys at 155),
+     * and merging them is not worth guessing until a medium needs it. */
+    if (blk_lba == sif.rec_lba || blk_lba == i386.rec_lba || blk_lba == 16u) {
+        r->advice = "this ISO's i386 layout is one this loader does not edit.";
+        goto no_room;
+    }
+    if (vcd_overlay_at(blk_lba, dirblk) != 0)
+        goto no_room;
+
+    bios_puts("falcon-bios: 2000/XP driver injected, ");
+    bios_put_dec((uint64_t)app_blocks * BLK / 1024u);
+    bios_puts(" KiB served\n");
+    screen_out("booting Windows setup with the virtual-CD driver injected\n\n");
     r->stage = "booting";
     return vcd_chainload(d, p2, p2part, iso, &g_iso, r);
 

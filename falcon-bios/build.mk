@@ -188,6 +188,11 @@ BIOS_WINJUMP_OBJ := $(BIOS_OBJ)/$(WINJUMP_BLOB).o
 # Both widths of the jump binary, for the same reason as the hook's two:
 # win.c puts in the one boot.wim's winpeshl.exe is built for.
 BIOS_WINJUMP32_OBJ := $(BIOS_OBJ)/$(WINJUMP32_BLOB).o
+# The x86 virtual-CD driver, embedded as a C array (symbol falcon_vdisk_bin):
+# the Windows 2000/XP text-mode route serves it into the ISO's \i386 and
+# injects it into txtsetup.sif, since those Windows have no WinPE and so no
+# winjump to carry it. Only the x86 build; XP x64 is not a BIOS target.
+BIOS_VDISK_OBJ := $(BIOS_OBJ)/$(VDISK_X86_BLOB).o
 
 $(BIOS_HOOK_OBJ): $(HOOK_BLOB)
 	@mkdir -p $(@D)
@@ -205,11 +210,15 @@ $(BIOS_WINJUMP32_OBJ): $(WINJUMP32_BLOB)
 	@mkdir -p $(@D)
 	$(CC_HOST) $(BIOS_CFLAGS) -c -o $@ $<
 
+$(BIOS_VDISK_OBJ): $(VDISK_X86_BLOB)
+	@mkdir -p $(@D)
+	$(CC_HOST) $(BIOS_CFLAGS) -c -o $@ $<
+
 BIOS_STAGE3_OBJS := $(BIOS_OBJ)/$(BIOS)/stage3.o $(BIOS_OBJ)/$(BIOS)/vcdres.o \
 	$(BIOS_OBJ)/$(BIOS)/vfdres.o \
 	$(BIOS_S3_COBJS) \
 	$(BIOS_HOOK_OBJ) $(BIOS_HOOK32_OBJ) $(BIOS_WINJUMP_OBJ) \
-	$(BIOS_WINJUMP32_OBJ)
+	$(BIOS_WINJUMP32_OBJ) $(BIOS_VDISK_OBJ)
 
 $(BIOS_STAGE3): $(BIOS_STAGE3_OBJS) $(BIOS)/bios.ld
 	@mkdir -p $(@D)
