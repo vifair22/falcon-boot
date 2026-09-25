@@ -1163,6 +1163,17 @@ static int winjump_main(void)
     memset(&cfg, 0, sizeof cfg);
     jlog("winjump: start");
 
+    /* Suppress the "There is no disk in the drive" hard-error dialog before
+     * anything enumerates drive letters. Windows 7 and Vista WinPE carry a
+     * floppy driver, so their drive set includes A: with no media; a query
+     * against it (find_iso probes every root) makes Windows raise a modal
+     * dialog attributed to this process, which is winpeshl's replacement, and
+     * a GUI WinPE then blocks on it forever with no shell behind it. That is
+     * exactly why 7 and Vista hung where Windows 8 and later, whose WinPE has
+     * no floppy driver and so no A:, did not. SEM_FAILCRITICALERRORS makes the
+     * failing call return an error we already handle instead. */
+    (void)SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOOPENFILEERRORBOX);
+
     if (!module_dir(dir, MAX_PATH)) {
         jlog("winjump: cannot locate own directory; nothing else is possible");
         return 1;
