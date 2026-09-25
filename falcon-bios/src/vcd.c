@@ -22,6 +22,7 @@
 #include <bios.h>
 #include <vcd.h>
 #include <vcdcore.h>
+#include <vfd.h>
 #include <e820.h>
 
 #include <fs/fs.h>
@@ -234,9 +235,15 @@ int vcd_chainload(bios_disk *d, fs_vol *p2, const gpt_part *p2part,
         r->advice = "the medium boots only on UEFI.";
         return -1;
     }
+    if (e->media == ELT_MEDIA_1200K || e->media == ELT_MEDIA_1440K ||
+        e->media == ELT_MEDIA_2880K) {
+        /* A floppy-emulation image is served as a memory disk (vfd.c),
+         * not chainloaded off the virtual CD. Never returns on success. */
+        return vfd_serve(isofile, e, r);
+    }
     if (e->media != ELT_MEDIA_NONE) {
-        r->advice = "the medium's boot image asks for floppy or hard disk "
-                    "emulation, which this loader does not do.";
+        r->advice = "the medium's boot image asks for hard-disk emulation, "
+                    "which this loader does not do.";
         return -1;
     }
 

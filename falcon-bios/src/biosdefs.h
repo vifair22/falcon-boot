@@ -260,6 +260,43 @@
 
 #define VCD_STAGE_ADDR   0x00020000
 
+/* The floppy-emulation resident (falcon-bios/src/vfdres.S, vfd.c), for a
+ * medium whose El Torito BIOS entry is a floppy image rather than a
+ * no-emulation CD. It is a memory disk: the whole image (2.88 MB at most)
+ * sits in extended memory and INT 15h AH=87h copies from it, so the block
+ * itself is small. It never coexists with the CD resident - a medium is one
+ * or the other - so it takes the same top-of-conventional-memory block and
+ * the same VCD_BYTES the BDA gives up.
+ *
+ * It hooks INT 13h only. The image is served out of extended memory, which
+ * the map handed to the payload does not hide: the media this route serves
+ * (memtest86+, Haiku) read the floppy once as they load and never again, so
+ * that RAM being usable afterwards is harmless, and not carving the map
+ * keeps the resident to one interrupt. The offsets, as vfdres.S lays them
+ * out with .org and the build checks: */
+#define VFD_OFF_OLDINT13 0x0000   /* far pointer to the previous handler */
+#define VFD_OFF_DRIVE    0x0008   /* byte: the drive we answer for (0x00) */
+#define VFD_OFF_HEADS    0x0009   /* byte */
+#define VFD_OFF_SECTORS  0x000A   /* byte: sectors per track */
+#define VFD_OFF_BTYPE    0x000B   /* byte: AH=08h/AH=15h drive type */
+#define VFD_OFF_CYLS     0x000C   /* word */
+#define VFD_OFF_TOTAL    0x0010   /* dword: total 512-byte sectors */
+#define VFD_OFF_PHYS     0x0014   /* dword: the image's physical address */
+#define VFD_OFF_STATUS   0x001C   /* byte: the last operation's status */
+#define VFD_OFF_SRC      0x0020   /* dword: scratch, an AH=87h source */
+#define VFD_OFF_DST      0x0024   /* dword: scratch, an AH=87h destination */
+#define VFD_OFF_CNT      0x0028   /* dword: scratch, a read's sector count */
+#define VFD_OFF_MOVEGDT  0x0040   /* 48 bytes: the AH=87h descriptor table */
+#define VFD_OFF_DBT      0x0070   /* 11 bytes: the disk base table AH=08h returns */
+#define VFD_OFF_LDRIVE   0x007C   /* byte: the drive handed over in DL */
+#define VFD_OFF_LAUNCH   0x0080   /* the launch stub */
+#define VFD_OFF_CODE     0x00C0   /* the INT 13h handler */
+
+/* Where sector 0 of the image is staged for the launch stub to copy to
+ * 0x7C00: the same conventional address the CD's boot image uses, since the
+ * two routes never run together. */
+#define VFD_STAGE_ADDR   VCD_STAGE_ADDR
+
 /* Stage 3's stack. Above the image and below anything a payload is loaded
  * into (KERNEL_ADDR is 16 MB). Everything between STAGE3_LOAD and here is
  * stage 3's to use, which is what STAGE3_MAX_MEM bounds. */

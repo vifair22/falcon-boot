@@ -959,6 +959,44 @@ look at why NetBSD's boot code resets; a judge that reads the screen for
 systems with no serial console. FreeDOS and ReactOS need a driver of their
 own inside the booted system, which is the Ventoy question again.
 
+## 6k. Floppy-emulation El Torito (2026-09-25)
+
+Some media boot a BIOS through an El Torito image that emulates a floppy
+rather than a no-emulation CD: the catalog's media type is 1, 2 or 3 (1.2M,
+1.44M, 2.88M), and the BIOS is meant to present the image as drive 0x00 and
+boot its first sector. falcon-bios refused these at the boot catalog. Two
+corpus rows need it: memtest86+ 8.10 (a 1.44M floppy) and Haiku R1b6 (2.88M).
+
+It is served as a memory disk, not off the disk like the CD: the whole image
+is small (2.88 MB at most), so `vfd.c` loads it into extended memory once and
+the resident of `vfdres.S` serves reads with INT 15h AH=87h, the block move
+the Windows tail already uses. The resident hooks INT 13h only and answers
+for drive 0x00: AH=02h reads (CHS to a linear sector by `vfdcore.c`'s
+arithmetic, one AH=87h move, since a flat memory disk has no real tracks to
+cross), AH=08h the geometry, the reset and status calls, and it refuses
+writes. The image sits in RAM the map does not hide, which is sound for media
+that read the floppy once as they load and never again. The geometry and the
+CHS-to-LBA arithmetic are `vfdcore.c`, host-tested; the assembly does a
+multiply and a re-issued move.
+
+Enter on such a medium takes the DIR route, which is not Linux and falls
+through to CHN (6j), and `vcd_chainload` dispatches a floppy media type to
+`vfd_serve` rather than to the CD.
+
+Measured in the rig (SeaBIOS): **memtest86+ boots and runs** off the emulated
+1.44M floppy - it loaded itself through the handler and reached its memory
+test, Pass 23%, no errors. The harness scores it FAIL because memtest writes
+only to the screen (no serial, no DHCP), the same blind spot OpenBSD's
+installer has; the screenshot is the evidence.
+
+**Haiku does not, and it is a real gap.** Its 2.88M floppy boots
+`haiku_loader`, which then loads the rest of Haiku - hundreds of megabytes -
+from the medium's CD portion. falcon-bios serves the floppy but not a CD at
+the same time, so the loader finds nothing and resets, and the boot loops.
+Booting Haiku's anyboot needs floppy and CD emulation co-resident, which this
+does not do. Hard-disk emulation (media type 4) is also not here; no corpus
+medium needs it.
+
 ## 7. Risks, in the order they matter
 
 **7.1 The `INT 13h` resident is a spike, not an estimate.** The ~1,000 above

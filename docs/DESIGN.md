@@ -3258,6 +3258,19 @@ drop back to real mode for each read. A protected-mode kernel that does not
 call the BIOS loses it, so a Linux live ISO chainloaded here has no hook and
 no map and finds its medium only if its initramfs can do so unaided.
 
+A medium whose BIOS boot image is a floppy emulation (El Torito media type 1,
+2 or 3) rather than a no-emulation CD is served differently: `vcd_chainload`
+hands it to `vfd_serve` (`falcon-bios/src/vfd.c`), which loads the whole
+image - 2.88 MB at most - into extended memory and installs a smaller
+resident (`vfdres.S`) that answers INT 13h for drive 0x00 as a memory disk,
+copying each read out of the image with AH=87h. It is a flat disk, so the
+geometry (`vfdcore.c`, host-tested) is only how a CHS read is named. It hooks
+INT 13h alone and does not hide the image from the memory map, which is sound
+for media that read the floppy once as they load: memtest86+ boots this way.
+Haiku's 2.88M floppy boots its loader but then wants the rest of Haiku off
+the CD, which is not co-resident, so it does not complete. Hard-disk
+emulation (media type 4) is not implemented; no corpus medium needs it.
+
 #### 12.3.9 WIN: Windows install media
 
 The same patch as the UEFI route (12.2.13), computed by the same falcon-core

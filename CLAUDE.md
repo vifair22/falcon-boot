@@ -313,8 +313,11 @@ the tree, so `#include <fs/exfat.h>` means one file wherever it is written.
   than chainloading it, rebuilding sd-stub's credential cpio itself;
   `src/bsd.c` lays `media/bsdmd.c`'s two edits over the served medium; and
   `src/win.c` patches boot.wim with core's `wim`, serving the appended tail
-  from extended memory through INT 15h AH=87h. `src/heap.c` is the one
-  allocator, for that tail alone. `src/marker.c` takes the next-boot marker
+  from extended memory through INT 15h AH=87h. `src/vfd.c` serves a
+  medium whose El Torito boot image is a floppy emulation (memtest86+,
+  Haiku) as a memory disk instead, its resident `src/vfdres.S` and its
+  geometry `src/vfdcore.c`. `src/heap.c` is the one
+  allocator, for that tail and that image. `src/marker.c` takes the next-boot marker
   (DESIGN Section 6.3.1): LBA 2047 of the boot disk, written from Linux,
   cleared before it is believed and honoured only within ten minutes by the
   RTC. It is the only code in falcon-bios that writes a disk (one sector,
