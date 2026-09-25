@@ -696,10 +696,13 @@ loads unsigned, the mount manager gives it a drive letter, CDFS mounts it, and
 One limit the corpus then found (docs/notes/windows-route.md Section 7):
 loading falcon-vdisk from winjump, which runs as winpeshl, assumes WinPE got
 as far as winpeshl. Windows 8 and up do; Windows 7 and Vista hang earlier, at
-"Starting Windows", where their boot-start drivers wait on the boot device
-that vanished at ExitBootServices. Serving those two needs falcon-vdisk as a
-boot-start driver registered in boot.wim's SYSTEM hive, not the winpeshl swap,
-and that is not built.
+"Starting Windows", where their boot-start storage driver waits on the boot
+device that vanished at ExitBootServices. A boot-start falcon-vdisk that
+presents a substitute CD was built, injected into a Win7 boot.wim and tested;
+it does not fix the hang, because the wait is on the specific device Win7
+booted from, not on any CD. Serving 7 and Vista needs a persistent boot medium
+(one Windows keeps across ExitBootServices, e.g. an EFI RAM disk), which is a
+deeper change to the loader's boot path and is not built.
 Three WinPE-specific hazards were found and fixed there: CDFS's mount issues
 `IOCTL_DISK_CHECK_VERIFY` (not only the CD-ROM and storage variants); a
 filesystem may issue reads above `PASSIVE_LEVEL`, so the lower-disk read runs

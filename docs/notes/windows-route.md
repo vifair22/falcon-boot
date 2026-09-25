@@ -732,16 +732,26 @@ case, not a QEMU-persists shortcut.
   vanishes at ExitBootServices and Win7, unlike 8+, will not finish booting
   without it.
 
-  Two ways to serve these, both larger than the winpeshl swap and neither
-  built:
-  - **falcon-vdisk as a boot-start driver**, registered in boot.wim's `SYSTEM`
-    hive as it is patched in, so it comes up during "Starting Windows" and
-    answers for the CD before WinPE blocks on it. This is a registry-hive edit
-    inside boot.wim, and it is unproven that WinPE will accept a substitute CD
-    for the boot device it actually booted from.
-  - **A persistent boot medium**, the way Ventoy keeps the ISO available for
-    Windows rather than letting the firmware CD evaporate. This is the more
-    certain of the two and the larger.
+  **The boot-start driver was built and tested, and it does not work
+  (2026-09-25).** falcon-vdisk was given a boot-start mode (present a CD from a
+  small embedded ISO, announce it once the boot drivers are up via
+  IoRegisterBootDriverReinitialization), injected into a windows-7-x64 boot.wim
+  as a `Boot Bus Extender` service (wimlib to add the `.sys`, hivex to register
+  it), and that ISO run through the loader in the corpus. Win7 froze at
+  "Starting Windows" exactly as before: a substitute CD-ROM the driver creates
+  does not satisfy whatever is waiting. The wait is not "a CD must exist"; it is
+  the storage path itself. The firmware presented the virtual CD as a SATA
+  device (`Sata(0x0)` in the boot log), and that device is gone at
+  ExitBootServices; Win7's boot-start storage driver blocks on the device it
+  booted from, and a software CD from a later driver is a different device.
+
+  So the fix is **a persistent boot medium**, the way Ventoy keeps the medium
+  itself alive for Windows rather than letting the firmware CD evaporate, not a
+  driver that re-creates one. On UEFI that means presenting the medium as
+  something Windows keeps across ExitBootServices (an EFI RAM disk registered
+  in the ACPI NFIT, or equivalent), which is a deep change to the loader's boot
+  path and carries the cost of holding the boot medium in memory. That is the
+  remaining work, and it is not built.
 
 - **Windows XP x64 and Vista x64 do not boot under UEFI at all**, failing at
   "finding the medium's EFI System Partition": XP has no UEFI support and Vista
