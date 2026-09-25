@@ -238,6 +238,7 @@ int win_boot(bios_disk *d, fs_vol *p2, const gpt_part *p2part,
             const char *lacks = win_cpu_lacks();
 
             if (lacks != (const char *)0) {
+                r->stage = "checking the processor";
                 bios_puts("falcon-bios: this processor has no ");
                 bios_puts(lacks);
                 bios_puts("\n");
@@ -266,6 +267,7 @@ int win_boot(bios_disk *d, fs_vol *p2, const gpt_part *p2part,
              * Windows on a processor without long mode stops inside bootmgr
              * with nothing on screen to say why. */
             if (!linux_cpu_is_64()) {
+                r->stage = "checking the processor";
                 r->advice = "this is 64-bit Windows and this processor has "
                             "no 64-bit mode.";
                 return -1;
