@@ -88,6 +88,7 @@ EFI_POS_SRCS := \
 	$(CORE)/media/osrel.c \
 	$(CORE)/media/shelf.c \
 	$(CORE)/media/nextboot.c \
+	$(CORE)/manifest/manifest.c \
 	$(EFI_SRC)/nxt/nxt.c \
 	$(EFI_SRC)/nxt/nxtcore.c \
 	$(CORE_LIBC) $(CORE_UCS2)
