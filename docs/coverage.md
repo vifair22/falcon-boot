@@ -33,7 +33,7 @@ example (2026-09-20): its default entry is "Clonezilla live (VGA
 and listing the disk it found, and serial stayed empty for 300s. Read
 the screenshot before believing one of these.
 
-Loader: 0.1.0_20260920.1824.release, 0.1.0_20260924.1655.release, 0.1.0_20260925.0145.release, 0.1.0_20260925.0152.release, 0.1.0_20260925.0358.release, 0.1.0_20260925.0506.release, 0.1.0_20260925.0638.release, 0.1.0_20260925.0641.release, 0.1.0_20260925.0643.release, 0.1.0_20260925.0701.release, 0.1.0_20260925.0904.release, 0.1.0_20260925.1627.release
+Loader: 0.1.0_20260920.1824.release, 0.1.0_20260924.1655.release, 0.1.0_20260925.0145.release, 0.1.0_20260925.0152.release, 0.1.0_20260925.0358.release, 0.1.0_20260925.0506.release, 0.1.0_20260925.0641.release, 0.1.0_20260925.0643.release, 0.1.0_20260925.0701.release, 0.1.0_20260925.0904.release, 0.1.0_20260925.1627.release, 0.1.0_20260925.1701.release
 
 ## Summary
 
@@ -41,7 +41,7 @@ Loader: 0.1.0_20260920.1824.release, 0.1.0_20260924.1655.release, 0.1.0_20260925
 |---|---|---|---|---|---|---|---|---|
 | A | 27 | 22/22 (100%) | 100% | 22/22 (100%) | 95% | 19/22 (86%) | 27/27 (100%) | 4/5 (80%) |
 | B | 13 | 9/9 (100%) | 90% | 9/9 (100%) | - | 9/9 (100%) | 13/13 (100%) | 3/4 (75%) |
-| C | 22 | 6/10 (60%) | - | 3/10 (30%) | - | 1/10 (10%) | 6/22 (27%) | 0/12 (0%) |
+| C | 22 | 6/10 (60%) | - | 3/10 (30%) | - | 1/10 (10%) | 7/22 (31%) | 0/12 (0%) |
 
 ## Matrix
 
@@ -74,7 +74,7 @@ Loader: 0.1.0_20260920.1824.release, 0.1.0_20260924.1655.release, 0.1.0_20260925
 | nixos-min-26.05 | B | nixos | PASS | FAIL | PASS | FAIL | FAIL | PASS | FAIL | FAIL | PASS | PASS | FAIL | - | N/A | N/A | N/A |
 | leap-agama-16.0 | B | suse-installer | PASS | FAIL | PASS | PASS | FAIL | PASS | FAIL | FAIL | PASS | PASS | FAIL | - | N/A | N/A | N/A |
 | truenas-25.10.7 | B | truenas | PASS | FAIL | PASS | FAIL | FAIL | PASS | FAIL | FAIL | PASS | PASS | FAIL | - | N/A | N/A | N/A |
-| freebsd-bootonly-15.1 | C | freebsd | PASS | PASS | PASS | FAIL | FAIL | PASS | FAIL | FAIL | PASS | FAIL | FAIL | - | N/A | N/A | N/A |
+| freebsd-bootonly-15.1 | C | freebsd | PASS | PASS | PASS | FAIL | FAIL | PASS | FAIL | FAIL | PASS | PASS | FAIL | - | N/A | N/A | N/A |
 | gentoo-min-20260510 | A | gentoo | PASS | FAIL | PASS | FAIL | FAIL | PASS | FAIL | FAIL | PASS | PASS | FAIL | - | N/A | N/A | N/A |
 | windows-11-25h2 | A | windows | PASS | FAIL | N/A | PASS | FAIL | N/A | REFUSED | REFUSED | N/A | PASS | FAIL | - | N/A | N/A | N/A |
 | windows-server-2025 | A | windows | PASS | FAIL | N/A | PASS | FAIL | N/A | REFUSED | REFUSED | N/A | PASS | FAIL | - | N/A | N/A | N/A |
@@ -231,7 +231,6 @@ Loader: 0.1.0_20260920.1824.release, 0.1.0_20260924.1655.release, 0.1.0_20260925
 | freebsd-bootonly-15.1 | ms | chain | FAIL | back at the menu: the memory-disk boot failed while LoadImage of \EFI\BOOT\BOOTX64.EFI (shim): 0x80000 (screen: text console) |
 | freebsd-bootonly-15.1 | own | drop | FAIL | back at the menu: the memory-disk boot failed while LoadImage of \EFI\BOOT\BOOTX64.EFI (shim): 0x80000 (screen: text console) |
 | freebsd-bootonly-15.1 | own | chain | FAIL | back at the menu: the memory-disk boot failed while LoadImage of \EFI\BOOT\BOOTX64.EFI (shim): 0x80000 (screen: text console) |
-| freebsd-bootonly-15.1 | bios | drop | FAIL | no userland within 300s (screen: graphical) |
 | freebsd-bootonly-15.1 | bios | chain | FAIL | no userland within 300s (screen: graphical) |
 | gentoo-min-20260510 | off | chain | FAIL | no userland within 300s (screen: text console) |
 | gentoo-min-20260510 | ms | drop | FAIL | back at the menu: direct boot failed while LoadImage of \EFI\BOOT\BOOTX64.EFI (shim): 0x80000000000000 (screen: text console) |
@@ -288,9 +287,9 @@ Loader: 0.1.0_20260920.1824.release, 0.1.0_20260924.1655.release, 0.1.0_20260925
 | freedos-1.4-live | bios | chain | FAIL | no userland within 300s (screen: text console) |
 | freedos-1.4-live | bios32 | drop | FAIL | back at the menu: direct boot failed while starting the kernel (screen: text console) |
 | freedos-1.4-live | bios32 | chain | FAIL | no userland within 300s (screen: text console) |
-| reactos-0.4.16 | bios | drop | FAIL | back at the menu: direct boot failed while reading the ISO's boot configuration (screen: text console) |
+| reactos-0.4.16 | bios | drop | FAIL | no userland within 300s (screen: graphical) |
 | reactos-0.4.16 | bios | chain | FAIL | no userland within 300s (screen: graphical) |
-| reactos-0.4.16 | bios32 | drop | FAIL | back at the menu: direct boot failed while reading the ISO's boot configuration (screen: text console) |
+| reactos-0.4.16 | bios32 | drop | FAIL | no userland within 300s (screen: graphical) |
 | reactos-0.4.16 | bios32 | chain | FAIL | no userland within 300s (screen: graphical) |
 | freebsd-disc1-14.5-i386 | bios | drop | FAIL | no userland within 300s (screen: text console) |
 | freebsd-disc1-14.5-i386 | bios | chain | FAIL | no userland within 300s (screen: text console) |
@@ -312,9 +311,9 @@ Loader: 0.1.0_20260920.1824.release, 0.1.0_20260924.1655.release, 0.1.0_20260925
 | clonezilla-3.2.0-5-i686 | bios32 | chain | FAIL | no userland within 300s (screen: text console) |
 | gparted-1.6.0-10-i686 | bios | chain | FAIL | no userland within 300s (screen: text console) |
 | gparted-1.6.0-10-i686 | bios32 | chain | FAIL | no userland within 300s (screen: text console) |
-| memtest86plus-8.10-i586 | bios | drop | FAIL | no userland within 90s (screen: graphical) |
+| memtest86plus-8.10-i586 | bios | drop | FAIL | no userland within 300s (screen: graphical) |
 | memtest86plus-8.10-i586 | bios | chain | FAIL | back at the menu: boot failed while reading the ISO's boot catalog (screen: text console) |
-| memtest86plus-8.10-i586 | bios32 | drop | FAIL | back at the menu: direct boot failed while reading the ISO's boot configuration (screen: text console) |
+| memtest86plus-8.10-i586 | bios32 | drop | FAIL | no userland within 300s (screen: graphical) |
 | memtest86plus-8.10-i586 | bios32 | chain | FAIL | back at the menu: boot failed while reading the ISO's boot catalog (screen: text console) |
 | antix-26-386-full | bios | chain | FAIL | no userland within 300s (screen: text console) |
 | antix-26-386-full | bios32 | chain | FAIL | no userland within 300s (screen: text console) |
