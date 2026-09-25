@@ -19,29 +19,44 @@ saved screenshots and serial, not the scorecard's coarse "no userland".
 
 ## Under investigation
 
-- **netbsd-10.2-i386 (BIOS):** disassembly settled that cdboot's first stage
-  works - it relocates itself, reads through the resident's INT 13h AH=42h
-  (same as OpenBSD's cdboot), finds the PVD, loads /boot into 0x10000 and
-  far-calls it; its "Can't read CD"/"Can't find /boot" errors never fire. The
-  crash is downstream, inside NetBSD's /boot secondary bootstrap (its kernel
-  load above 1 MB, or its reading of the carved E820), not in falcon-bios's
-  CD-read path. Not the AH=02h issue first suspected. Settling it needs a rig
-  run with fast (~0.5 s) screendumps right after the chain to catch /boot's
-  own output.
-- **haiku-r1beta6-x86 (BIOS):** its El Torito BIOS entry is a 2.88 MB floppy
-  emulation (the UEFI entry is separate), so it takes the vfd route (a floppy
-  served as a memory disk, not the CD chainload). It returns to the menu.
-  Suspect: vfd.c serves the floppy but not the virtual CD alongside, and
-  Haiku's loader on that floppy reads the Haiku system off the CD's ISO9660,
-  which is then not there. memtest (also a floppy image) passes because it is
-  self-contained. Needs a rig run to see Haiku's loader output and confirm
-  whether serving the CD alongside the floppy is the fix.
-- **pfsense-plus-24.06b7 (BIOS):** amd64, 1369 MiB, fits the amd64 staging
-  ceiling - the recent serial shows falcon-bios does serve it as a memory disk
-  and hand off, so it is past staging. The failure is downstream in pfSense's
-  own loader/installer (no serial "Welcome to pfSense!" within 300s), distinct
-  from the i386 BTX limit. Needs a fresh rig run to characterise; the saved
-  screenshot is from an older loader.
+- **netbsd-10.2-i386 (BIOS):** an open NetBSD-/boot failure, not a falcon-bios
+  CD-path bug. Freezing the crash (`-no-reboot`) shows exactly cdboot's banner
+  "NetBSD/x86 cd9660 Primary Bootstrap" and nothing more: cdboot runs fully
+  (reads through the resident's INT 13h AH=42h, loads /BOOT - lba 340030,
+  86444 bytes, its >64 KB load handled by the resident's segment advance - and
+  far-calls it at 0x10000), and NetBSD's /boot then resets the machine at its
+  entry before printing anything. Ruled out: a CPU-feature issue (identical
+  crash under -cpu host and -cpu qemu64) and the CD path (cdboot works; OpenBSD
+  and Linux-32 boot fine in the same setup). The pre-reset fault could not be
+  read - KVM logs only a plain reset, and a TCG run with `-d int` is too slow
+  to reach it in a bounded pass. Settling it (not done): a TCG run carried to
+  the fault to read the exception vector and /boot's crashing EIP, or an ISO
+  remastered with `consdev com0` so /boot's own crash message reaches serial.
+  No falcon-bios fix identified; not proven a hard limitation either.
+- **haiku-r1beta6-x86 (BIOS):** an open downstream Haiku-loader failure, not a
+  falcon-bios serving bug. Its El Torito BIOS entry is a 2.88 MB floppy
+  emulation, so it takes the vfd route, and the serial confirms falcon-bios
+  serves it correctly ("serving a 2880 KiB floppy image on drive 0x00",
+  "booting the medium's floppy image") - the same route memtest boots through.
+  Haiku's loader then runs (a frozen `-no-reboot` capture shows it has cleared
+  the screen to black, so it got past the floppy load into its own code) and
+  resets. Like NetBSD's /boot, the crash is in the medium's own loader after
+  falcon-bios hands off. Whether Haiku's loader is failing to find the Haiku
+  BFS volume (it would have to scan the physical disks, since vfd serves only
+  the floppy, not the CD) or crashing for another reason is unsettled; a frozen
+  TCG run to read the fault would be the next step, as for NetBSD.
+- **pfsense-plus-24.06b7 (BIOS):** a downstream failure past falcon-bios, like
+  netbsd and haiku. amd64, 1369 MiB, fits the amd64 staging ceiling. The serial
+  shows it all the way through pfSense's own loader menu ("Welcome to Netgate
+  pfSense Plus", console set to Video), its autoboot, and "Loading kernel...
+  /boot/kernel/kernel text=..." - so falcon-bios serves the memory disk and
+  pfSense's loader loads the kernel. Then the machine resets (a live VGA
+  screendump shows the falcon menu again). pfSense's kernel resets after load
+  where freebsd-bootonly-15.1 (amd64, 546 MiB) boots to its installer through
+  the same route, so the suspect is the larger (1.4 GB) memory disk served over
+  INT 15h - possibly a falcon-bios limit for memory disks past ~1 GB, or a
+  pfSense-kernel issue - but it is not a serving/staging failure. Left as an
+  open downstream reset pending a frozen-fault run to read the cause.
 
 ## Technical limitation - the medium cannot boot this way
 
