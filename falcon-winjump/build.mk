@@ -40,8 +40,13 @@ WINJUMP_CFLAGS := -std=c11 -O2 \
 # otherwise imports, is not, and a missing import kills the process before
 # its first log line: -static links it (and libgcc) in, and leaves the
 # system DLLs as imports.
-WINJUMP_LDFLAGS := -fstack-protector-strong -static -Wl,--no-insert-timestamp
-WINJUMP_LIBS := -lvirtdisk -ladvapi32
+# No C runtime (see the head of winjump.c): nothing from mingw's startup
+# code or its CRT is linked, the entry point is winjump_start, and the
+# imports are kernel32, advapi32 and user32, which every WinPE from Vista's
+# on carries. VirtDisk.dll is loaded at run time. libgcc stays, for the
+# stack probe a frame over a page needs; it imports nothing.
+WINJUMP_LDFLAGS := -nostdlib -Wl,--no-insert-timestamp -Wl,-e,winjump_start
+WINJUMP_LIBS := -lkernel32 -ladvapi32 -luser32 -lgcc
 
 winjump: $(WINJUMP)
 
@@ -93,9 +98,13 @@ WINJUMP32_SYSINC := $(if $(MINGW32_SYSROOT),\
 WINJUMP32_CFLAGS := $(filter-out $(WINJUMP_SYSINC),$(WINJUMP_CFLAGS)) \
 	$(WINJUMP32_SYSINC)
 
+# i686 symbols carry a leading underscore, and the linker's -e wants the
+# symbol as it is in the object.
+WINJUMP32_LDFLAGS := $(subst -e$(comma)winjump_start,-e$(comma)_winjump_start,$(WINJUMP_LDFLAGS))
+
 $(WINJUMP32): $(WINJUMP32_OBJS)
 	@mkdir -p $(@D)
-	$(CC_WIN32) $(WINJUMP_LDFLAGS) -o $@ $(WINJUMP32_OBJS) $(WINJUMP_LIBS)
+	$(CC_WIN32) $(WINJUMP32_LDFLAGS) -o $@ $(WINJUMP32_OBJS) $(WINJUMP_LIBS)
 
 $(WINJUMP32_OBJ)/%.o: %.c
 	@mkdir -p $(@D)

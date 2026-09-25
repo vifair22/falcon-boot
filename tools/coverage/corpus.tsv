@@ -92,3 +92,17 @@ memtest86plus-8.10-i586	C	memtest	fa0d8a5c01d6c235393c05150dd572e3069b2f4456a26a
 antix-26-386-full	A	antix	64289e3bd26459e7d1acaf702eb411729c3bed87b2c2ab4a3836ed042a97f8ce	antiX-26_386-full.iso	https://downloads.sourceforge.net/project/antix-linux/Final/antiX-26/antiX-26_386-full.iso	i686
 tinycore-17.1	B	tinycore	877f65d7e4fd2629ff06ebdd24dc982b50141fe3f8c8b0e7f01e089cec365357	TinyCore-17.1.iso	https://distro.ibiblio.org/tinycorelinux/17.x/x86/release/TinyCore-17.1.iso	i686
 slackware-15.0-dvd	B	slackware	f795ef602707bcd0c2e615e88b307f71a18039ee54c89a0109588500258991c2	slackware-15.0-install-dvd.iso	https://mirrors.slackware.com/slackware/slackware-iso/slackware-15.0-iso/slackware-15.0-install-dvd.iso	i686
+#
+# Windows before 10, 2026-09-25, supplied by the user (Microsoft no longer
+# offers them). 2000 and XP install through a text-mode setup with no WIM,
+# which the Windows route does not reach; Vista and 7 have a WIM but a
+# WinPE that cannot attach an ISO; 8.1 has both (bios-route.md 6k).
+windows-2000-pro-x86	C	windows	0d901b135b29826e34588e3a9facd33dbed299be38a773fe36c75a13ea2740c1	windows-2000-pro-x86.iso	local:Windows 2000 Professional (W2PFPP_EN), i386, supplied by the user	i686
+windows-xp-pro-sp3-x86	C	windows	fd8c8d42c1581e8767217fe800bfc0d5649c0ad20d754c927d6c763e446d1927	windows-xp-pro-sp3-x86.iso	local:Windows XP Professional SP3 volume licence (x14-73974), i386, supplied by the user	i686
+windows-xp-pro-x64	C	windows	7c24e588a16021cb88c37935d42b91ecbbd47de319b00ff39745f0f5577585c6	windows-xp-pro-x64.iso	local:Windows XP Professional x64 (ARMPXVOL_EN), supplied by the user
+windows-vista-x86	C	windows	ae60ecc228587b615fbd27b7071138b1b257521c3b0b9491614f575978158a73	windows-vista-x86.iso	local:Windows Vista RTM x86, all editions (x12-34293), supplied by the user	i686
+windows-vista-sp1-x64	C	windows	7bd230e4e5436ce9a3c0b4fe99beba10c5964e2a909de72e50d456e2e35985f5	windows-vista-sp1-x64.iso	local:Windows Vista SP1 x64 (longhorn_rtm), all editions, supplied by the user
+windows-7-sp1-x86	C	windows	bd4c03c917d00a40222d92a6fab04981a7bd46140bda1888eb961a322e3c5d89	windows-7-sp1-x86.iso	local:Windows 7 SP1 x86, all editions (GSP1RMCPRFREO_EN_DVD), supplied by the user	i686
+windows-7-x64	C	windows	63c02e9f0b91061203ca67d71456ea0f8a8c5c90134439c707de32090251391e	windows-7-x64.iso	local:Windows 7 RTM Ultimate x64 (GRMCULXFRER_EN_DVD), supplied by the user
+windows-8.1-x86	C	windows	a569191631a41a260cd180b0d6b926cd2064235f0ac0e3e4ccc387f440e0827a	windows-8.1-x86.iso	local:Windows 8.1 with Update x86 (IR5_CCSA_X86FRE_EN-US_DV9), supplied by the user	i686
+windows-8.1-x64	C	windows	d8333cf427eb3318ff6ab755eb1dd9d433f0e2ae43745312c1cd23e83ca1ce51	windows-8.1-x64.iso	local:Windows 8.1 with Update x64 (IR5_CCSA_X64FRE_EN-US_DV9), supplied by the user
