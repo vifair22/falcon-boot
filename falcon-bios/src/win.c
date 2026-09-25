@@ -34,6 +34,7 @@
 
 #include <fs/fs.h>
 #include <fs/udf.h>
+#include <fs/iso9660.h>
 #include <media/extmap.h>
 #include <pe/pe.h>
 #include <wim/wim.h>
@@ -60,6 +61,19 @@ extern const size_t falcon_winjump32_bin_len;
 static fs_file  g_iso;
 static udf_vol  g_uv;
 static udf_file g_wim;
+/* The medium's boot.wim comes off UDF on a bridge disc (Windows 7, Vista x86)
+ * and off ISO 9660 on an ISO 9660-only one (Vista SP1 x64). g_i9 says which,
+ * so wim_rd and the grow read and edit the right filesystem. */
+static int          g_i9;
+static iso9660_vol  g_iv;
+static iso9660_file g_i9wim;
+static iso9660_dirent g_i9dir;
+/* bootmgr reads a boot CD through the ISO 9660 primary tree, so when the mount
+ * above chose Joliet the primary /sources/boot.wim record is a second one to
+ * relocate. g_i9_pri says it is a distinct record. */
+static int          g_i9_pri;
+static iso9660_vol  g_iv_pri;
+static iso9660_dirent g_i9dir_pri;
 static uint8_t  g_scratch[WIM_SCRATCH_LEN];
 static uint8_t  g_fe[BLK];
 static uint8_t  g_pd[2][BLK];
@@ -97,7 +111,87 @@ static const char *win_cpu_lacks(void)
 static int wim_rd(void *ctx, uint64_t off, uint64_t len, void *buf)
 {
     (void)ctx;
+    if (g_i9)
+        return iso9660_file_read(&g_i9wim, off, len, buf) == ISO9660_OK ? 0 : -1;
     return udf_file_read(&g_wim, off, len, buf) == UDF_OK ? 0 : -1;
+}
+
+static void put_le32(uint8_t *p, uint32_t v)
+{
+    p[0] = (uint8_t)v;
+    p[1] = (uint8_t)(v >> 8);
+    p[2] = (uint8_t)(v >> 16);
+    p[3] = (uint8_t)(v >> 24);
+}
+
+static void put_be32(uint8_t *p, uint32_t v)
+{
+    p[0] = (uint8_t)(v >> 24);
+    p[1] = (uint8_t)(v >> 16);
+    p[2] = (uint8_t)(v >> 8);
+    p[3] = (uint8_t)v;
+}
+
+/* Case-insensitive match of an ISO 9660 name (the driver strips the version
+ * suffix; a Joliet name is UCS-2 but ASCII for these) to lower-case ASCII. */
+static int i9_name_eq(const iso9660_dirent *e, const char *s)
+{
+    uint16_t i;
+
+    for (i = 0; s[i] != '\0'; i++) {
+        uint16_t c = e->name[i];
+
+        if (c >= 'A' && c <= 'Z')
+            c = (uint16_t)(c + 32u);
+        if (c != (uint16_t)(unsigned char)s[i])
+            return 0;
+    }
+    return e->name_len == i;
+}
+
+static int i9_child(iso9660_dir *dir, const char *name, iso9660_dirent *out)
+{
+    while (iso9660_dir_next(dir, out) == 1)
+        if (i9_name_eq(out, name))
+            return 0;
+    return -1;
+}
+
+/* /sources/boot.wim on the ISO 9660 tree, into *out. */
+static int i9_bootwim(iso9660_vol *v, iso9660_dirent *out)
+{
+    iso9660_dir dir;
+    iso9660_dirent e;
+
+    if (iso9660_dir_open_root(v, &dir) != ISO9660_OK ||
+        i9_child(&dir, "sources", &e) != 0 || !e.is_dir ||
+        iso9660_dir_open(v, &dir, &e) != ISO9660_OK ||
+        i9_child(&dir, "boot.wim", out) != 0)
+        return -1;
+    return 0;
+}
+
+/* Relocates boot.wim's single ISO 9660 extent to an appended run, rewriting a
+ * directory record in place to name the new extent (new_lba, new_len). bootmgr's
+ * CDFS reads a single extent but not a multi-extent file, so the grown
+ * boot.wim cannot stay where it lies with a second extent tacked on; it moves
+ * whole to space past the ISO's end. The record is the same length either way
+ * (only its extent and data-length fields change), so its own directory block
+ * is edited and served over the overlay. Called once per tree that names the
+ * file, since bootmgr reads through the primary tree and not the Joliet one. */
+static int i9_relocate(const iso9660_dirent *rec, uint32_t new_lba,
+                       uint32_t new_len)
+{
+    uint8_t *sec = g_pd[0];
+    uint16_t off = rec->rec_off;
+
+    if (fs_file_read(&g_iso, (uint64_t)rec->rec_lba * BLK, BLK, sec) != FS_OK)
+        return -1;
+    put_le32(sec + off + 2, new_lba);          /* extent LBA, both-endian */
+    put_be32(sec + off + 6, new_lba);
+    put_le32(sec + off + 10, new_len);         /* data length, both-endian */
+    put_be32(sec + off + 14, new_len);
+    return vcd_overlay(&g_iso, (uint64_t)rec->rec_lba * BLK, sec, BLK);
 }
 
 static size_t put_dec(char *out, uint64_t v)
@@ -173,8 +267,8 @@ static size_t make_cfg(const char *rel, uint64_t size, const uint8_t *map,
 
     if (map != (const uint8_t *)0 && map_len != 0 &&
         n + 5u + 2u * map_len < sizeof g_cfg) {
-        memcpy(g_cfg + n, "map=", 4u);
-        n += 4u;
+        memcpy(g_cfg + n, "map=", sizeof "map=" - 1u);
+        n += sizeof "map=" - 1u;
         for (i = 0; i < map_len; i++) {
             g_cfg[n++] = hexd[map[i] >> 4];
             g_cfg[n++] = hexd[map[i] & 0x0fu];
@@ -205,6 +299,8 @@ int win_boot(bios_disk *d, fs_vol *p2, const gpt_part *p2part,
     uint32_t iso_blocks;
     uint32_t app_blocks;
     uint64_t app_len;
+    uint64_t wim_size = 0;
+    uint64_t wim_off = 0;
     const unsigned char *jump = falcon_winjump_bin;
     size_t jump_len = falcon_winjump_bin_len;
 
@@ -218,17 +314,43 @@ int win_boot(bios_disk *d, fs_vol *p2, const gpt_part *p2part,
 
     if (fs_file_open(p2, &g_iso, iso) != FS_OK)
         return -1;
-    r->stage = "reading the ISO's UDF tree";
-    if (udf_mount(&g_uv, fs_file_read_cb, &g_iso) != UDF_OK ||
-        udf_lookup(&g_uv, "/sources/boot.wim", &we) != UDF_OK ||
-        udf_file_open(&g_uv, &g_wim, &we) != UDF_OK ||
-        udf_file_extents(&g_uv, &we, g_ext, UDF_MAX_EXTENTS, &next) !=
-            UDF_OK ||
-        next == 0 || g_ext[0].len < WIM_HDR_LEN)
+    /* boot.wim comes off UDF on a Windows 7 or Vista x86 bridge disc, and off
+     * ISO 9660 on an ISO 9660-only one (Vista SP1 x64). Try UDF first, since a
+     * bridge disc carries both and its UDF tree is the one Windows reads. */
+    r->stage = "reading the ISO's filesystem";
+    g_i9 = 0;
+    if (udf_mount(&g_uv, fs_file_read_cb, &g_iso) == UDF_OK &&
+        udf_lookup(&g_uv, "/sources/boot.wim", &we) == UDF_OK &&
+        udf_file_open(&g_uv, &g_wim, &we) == UDF_OK &&
+        udf_file_extents(&g_uv, &we, g_ext, UDF_MAX_EXTENTS, &next) == UDF_OK &&
+        next != 0 && g_ext[0].len >= WIM_HDR_LEN) {
+        wim_size = we.size;
+        wim_off = g_ext[0].vol_off;
+    } else if (iso9660_mount(&g_iv, fs_file_read_cb, &g_iso) == ISO9660_OK &&
+               i9_bootwim(&g_iv, &g_i9dir) == 0 && g_i9dir.parts == 1 &&
+               iso9660_file_open(&g_iv, &g_i9wim, &g_i9dir) == ISO9660_OK &&
+               g_i9dir.size >= WIM_HDR_LEN) {
+        g_i9 = 1;
+        wim_size = g_i9dir.size;
+        wim_off = (uint64_t)g_i9dir.lba * BLK;
+        /* bootmgr reads boot.wim through the primary tree. When the mount chose
+         * Joliet its record is a second one to relocate, and it must be found
+         * or bootmgr would read the un-relocated original; when the mount chose
+         * plain, g_i9dir already is the primary record. */
+        if (g_iv.names != ISO9660_NAMES_PLAIN) {
+            if (iso9660_mount_primary(&g_iv_pri, fs_file_read_cb, &g_iso) !=
+                    ISO9660_OK ||
+                i9_bootwim(&g_iv_pri, &g_i9dir_pri) != 0 ||
+                g_i9dir_pri.parts != 1)
+                return -1;
+            g_i9_pri = 1;
+        }
+    } else {
         return -1;
+    }
 
     r->stage = "reading boot.wim";
-    if (wim_open(wim_rd, (void *)0, we.size, &w) != WIM_OK)
+    if (wim_open(wim_rd, (void *)0, wim_size, &w) != WIM_OK)
         return -1;
 
     /* From here the medium is one this route applies to, so a failure is a
@@ -350,54 +472,82 @@ int win_boot(bios_disk *d, fs_vol *p2, const gpt_part *p2part,
         return -1;
     }
 
-    r->stage = "rewriting boot.wim's UDF entry";
-    if (fs_file_read(&g_iso, ((uint64_t)g_uv.part_start + we.icb_lbn) * BLK,
-                     BLK, g_fe) != FS_OK ||
-        udf_fe_append(g_fe, we.icb_lbn, tail_len,
-                      iso_blocks - g_uv.part_start, &moved) != UDF_OK)
-        return -1;
-    memmove(app + moved, app + BLK, tail_len);
-    if (moved != 0 &&
-        udf_file_read(&g_wim, we.size - moved, moved, app) != UDF_OK)
-        return -1;
-    app_len = ((uint64_t)moved + tail_len + BLK - 1u) / BLK * BLK;
-    memset(app + moved + tail_len, 0, (size_t)(app_len - moved - tail_len));
-    app_blocks = (uint32_t)(app_len / BLK) + 1u;
-    r->stage = "rewriting the UDF partition";
-    if (fs_file_read(&g_iso, (uint64_t)256u * BLK, BLK,
-                     app + app_len) != FS_OK ||
-        udf_avdp_at(app + app_len, iso_blocks + app_blocks - 1u) != UDF_OK)
-        return -1;
-
-    if (udf_pd_blocks(&g_uv, pd, &npd) != UDF_OK)
-        return -1;
-    for (i = 0; i < npd; i++) {
-        if (fs_file_read(&g_iso, (uint64_t)pd[i] * BLK, BLK,
-                         g_pd[i]) != FS_OK ||
-            udf_pd_set_length(g_pd[i], pd[i],
-                              iso_blocks + app_blocks - g_uv.part_start) !=
-                UDF_OK)
-            return -1;
-    }
-
-    /* The four small edits go in the handler's own pool; the appended blocks
-     * stay where they are and the BIOS moves them. */
-    r->stage = "placing the medium's edits";
+    r->stage = "growing boot.wim";
     vcd_overlay_reset();
-    for (i = 0; i < npd; i++) {
-        if (vcd_overlay(&g_iso, (uint64_t)pd[i] * BLK, g_pd[i], BLK) != 0)
+    if (g_i9) {
+        /* ISO 9660-only medium (Vista SP1 x64): bootmgr's CDFS reads a single
+         * extent but not a multi-extent file, so boot.wim cannot grow in place.
+         * It is relocated whole to one new extent past the ISO's end, but its
+         * bulk is not copied: those sectors redirect to where the original
+         * boot.wim already lies on the disk. Only two things go to memory - the
+         * patched header sector at the start, and a tail of the original's
+         * partial last block followed by the patch tail. */
+        uint32_t body_cds = (uint32_t)(wim_size / BLK);
+        uint8_t *hdrsec = g_pd[1];   /* not g_pd[0]: i9_relocate reads records
+                                      * into that one */
+
+        moved = (uint32_t)(wim_size - (uint64_t)body_cds * BLK);
+        memmove(app + moved, app + BLK, tail_len);
+        if (moved != 0 &&
+            iso9660_file_read(&g_i9wim, (uint64_t)body_cds * BLK, moved, app)
+                != ISO9660_OK)
+            goto no_room;
+        app_len = ((uint64_t)moved + tail_len + BLK - 1u) / BLK * BLK;
+        memset(app + moved + tail_len, 0, (size_t)(app_len - moved - tail_len));
+        app_blocks = (uint32_t)(app_len / BLK);
+        if (iso9660_file_read(&g_i9wim, 0, BLK, hdrsec) != ISO9660_OK)
+            goto no_room;
+        memcpy(hdrsec, g_hdr, WIM_HDR_LEN);
+        if (i9_relocate(&g_i9dir, iso_blocks, (uint32_t)(wim_size + tail_len))
+                != 0 ||
+            (g_i9_pri &&
+             i9_relocate(&g_i9dir_pri, iso_blocks,
+                         (uint32_t)(wim_size + tail_len)) != 0) ||
+            vcd_overlay_redirect(g_i9dir.lba, body_cds) != 0 ||
+            vcd_overlay_at(iso_blocks, hdrsec) != 0 ||
+            vcd_overlay_append(heap_phys(app), app_blocks) != 0)
+            goto no_room;
+    } else {
+        /* UDF: the File Entry gains the appended tail as its last extent, with
+         * boot.wim's old partial last block moved in front of it, and the
+         * anchor and partition descriptors follow the now-longer volume. */
+        if (fs_file_read(&g_iso, ((uint64_t)g_uv.part_start + we.icb_lbn) * BLK,
+                         BLK, g_fe) != FS_OK ||
+            udf_fe_append(g_fe, we.icb_lbn, tail_len,
+                          iso_blocks - g_uv.part_start, &moved) != UDF_OK)
+            goto no_room;
+        memmove(app + moved, app + BLK, tail_len);
+        if (moved != 0 &&
+            udf_file_read(&g_wim, we.size - moved, moved, app) != UDF_OK)
+            goto no_room;
+        app_len = ((uint64_t)moved + tail_len + BLK - 1u) / BLK * BLK;
+        memset(app + moved + tail_len, 0, (size_t)(app_len - moved - tail_len));
+        app_blocks = (uint32_t)(app_len / BLK) + 1u;
+        if (fs_file_read(&g_iso, (uint64_t)256u * BLK, BLK,
+                         app + app_len) != FS_OK ||
+            udf_avdp_at(app + app_len, iso_blocks + app_blocks - 1u) != UDF_OK)
+            goto no_room;
+        if (udf_pd_blocks(&g_uv, pd, &npd) != UDF_OK)
+            goto no_room;
+        for (i = 0; i < npd; i++) {
+            if (fs_file_read(&g_iso, (uint64_t)pd[i] * BLK, BLK,
+                             g_pd[i]) != FS_OK ||
+                udf_pd_set_length(g_pd[i], pd[i],
+                                  iso_blocks + app_blocks - g_uv.part_start) !=
+                    UDF_OK ||
+                vcd_overlay(&g_iso, (uint64_t)pd[i] * BLK, g_pd[i], BLK) != 0)
+                goto no_room;
+        }
+        if (vcd_overlay(&g_iso, ((uint64_t)g_uv.part_start + we.icb_lbn) * BLK,
+                        g_fe, BLK) != 0 ||
+            vcd_overlay(&g_iso, wim_off, g_hdr, WIM_HDR_LEN) != 0 ||
+            vcd_overlay_append(heap_phys(app), app_blocks) != 0)
             goto no_room;
     }
-    if (vcd_overlay(&g_iso, ((uint64_t)g_uv.part_start + we.icb_lbn) * BLK,
-                    g_fe, BLK) != 0 ||
-        vcd_overlay(&g_iso, g_ext[0].vol_off, g_hdr, WIM_HDR_LEN) != 0)
-        goto no_room;
-    if (vcd_overlay_append(heap_phys(app), app_blocks) != 0)
-        goto no_room;
 
     bios_puts("falcon-bios: boot.wim patched in memory, ");
     bios_put_dec((uint64_t)app_blocks * BLK / 1024u);
-    bios_puts(" KiB appended\n");
+    bios_puts(" KiB served\n");
     screen_out("booting with boot.wim patched in memory\n\n");
     r->stage = "booting";
     return vcd_chainload(d, p2, p2part, iso, &g_iso, r);

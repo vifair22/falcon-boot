@@ -84,6 +84,12 @@ static unsigned g_n_pending;
 static uint32_t g_append_phys;
 static uint32_t g_append_cd;
 
+/* The redirect, when there is one: a stretch grown past the ISO's end whose
+ * sectors are served from where CD sector g_redir_src and the ones after it
+ * already sit on the disk. It is a relocated boot.wim's bulk (vcd.h). */
+static uint32_t g_redir_src;
+static uint32_t g_redir_cd;
+
 static unsigned g_n_carved;
 static uint16_t g_e801_cap;
 
@@ -97,6 +103,8 @@ void vcd_overlay_reset(void)
     g_n_pending = 0;
     g_append_phys = 0;
     g_append_cd = 0;
+    g_redir_src = 0;
+    g_redir_cd = 0;
 }
 
 int vcd_overlay_append(uint32_t phys, uint32_t n_cd)
@@ -105,6 +113,34 @@ int vcd_overlay_append(uint32_t phys, uint32_t n_cd)
         return -1;
     g_append_phys = phys;
     g_append_cd = n_cd;
+    return 0;
+}
+
+int vcd_overlay_redirect(uint32_t src_cd_lba, uint32_t n_cd)
+{
+    if (n_cd == 0 || g_redir_cd != 0)
+        return -1;
+    g_redir_src = src_cd_lba;
+    g_redir_cd = n_cd;
+    return 0;
+}
+
+int vcd_overlay_at(uint32_t cd_lba, const uint8_t *sector)
+{
+    uint8_t *at;
+
+    if (sector == (const uint8_t *)0)
+        return -1;
+    if (g_n_pending >= VCD_MAX_OVERRIDES || g_pool_used >= VCD_OVER_MAX_CD)
+        return -1;
+
+    at = g_pool + (size_t)g_pool_used * VCD_CD_BYTES;
+    memcpy(at, sector, VCD_CD_BYTES);
+    g_pending[g_n_pending].cd_lba = cd_lba;
+    g_pending[g_n_pending].n_cd = 1;
+    g_pending[g_n_pending].pool_at = g_pool_used;
+    g_n_pending++;
+    g_pool_used += 1;
     return 0;
 }
 
@@ -317,6 +353,26 @@ int vcd_chainload(bios_disk *d, fs_vol *p2, const gpt_part *p2part,
      * the medium has to say it is there before anything may be placed in
      * it. */
     r->stage = "placing the medium's edits";
+    if (g_redir_cd != 0) {
+        /* The redirect grows the medium and maps its new sectors, run for run,
+         * to where the original bytes already lie: the disk serves them, so
+         * nothing here is carved out of the memory map below. */
+        uint32_t dst = g_map.n_real;    /* the redirect starts at the old end */
+        uint32_t placed = 0;
+
+        if (vcd_extend(&g_map, g_redir_cd) != VCD_OK)
+            return -1;
+        while (placed < g_redir_cd) {
+            uint64_t disk;
+            uint32_t n;
+
+            if (vcd_locate(&g_map, g_redir_src + placed, g_redir_cd - placed,
+                           &disk, &n) != VCD_OK ||
+                vcd_add_run(&g_map, dst + placed, n, disk) != VCD_OK)
+                return -1;
+            placed += n;
+        }
+    }
     if (g_append_cd != 0) {
         if (vcd_extend(&g_map, g_append_cd) != VCD_OK ||
             vcd_override_add_ext(&g_map, g_map.n_real - g_append_cd,

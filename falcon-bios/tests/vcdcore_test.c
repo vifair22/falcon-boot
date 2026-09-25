@@ -353,6 +353,54 @@ static void test_extended_override_and_extend(void **state)
     assert_int_equal(vcd_span(&m, 4104, 8, &seg, &phys, &n), VCD_FROM_ZERO);
 }
 
+static void test_redirect_run(void **state)
+{
+    /* What an ISO 9660-only Windows medium needs: boot.wim is relocated to
+     * sectors grown past the image, and those sectors are served from where
+     * the original boot.wim already lies on the disk (vcd_add_run) rather than
+     * copied into memory. Here the original file is cd 16 onward. */
+    vcd_extent ext = { 0, 8u << 20 };
+    vcd_map m;
+    uint16_t seg = 0;
+    uint32_t phys = 0;
+    uint32_t n = 0;
+    uint64_t disk = 0;
+
+    (void)state;
+    assert_int_equal(vcd_build(&m, &ext, 1, PART_LBA, 512u, 8u << 20,
+                               0xE0u, 0x80u), VCD_OK);
+    assert_int_equal(m.n_real, 4096);
+
+    /* A run may not be placed past the image until the medium says it is
+     * there, nor may it overlap the base ISO's own run. */
+    assert_int_equal(vcd_add_run(&m, 4096, 100, PART_LBA + 64u),
+                     VCD_ERR_BAD_ARG);
+    assert_int_equal(vcd_extend(&m, 100), VCD_OK);
+    assert_int_equal(vcd_add_run(&m, 0, 4, PART_LBA), VCD_ERR_BAD_ARG);
+
+    /* Redirect the grown sectors to the disk location of cd 16 onward. */
+    assert_int_equal(vcd_locate(&m, 16, 1, &disk, &n), VCD_OK);
+    assert_int_equal((int)disk, PART_LBA + 64u);
+    assert_int_equal(vcd_add_run(&m, 4096, 100, disk), VCD_OK);
+    assert_int_equal(m.n_runs, 2);
+
+    /* A read of the redirected region resolves to the original's disk sectors,
+     * offset for how far in it is, exactly as a read of cd 16 onward does. */
+    assert_int_equal(vcd_span(&m, 4096, 64, &seg, &phys, &n), VCD_OK);
+    assert_int_equal(vcd_locate(&m, 4096, 64, &disk, &n), VCD_OK);
+    assert_int_equal((int)disk, PART_LBA + 64u);
+    assert_int_equal(vcd_locate(&m, 4106, 8, &disk, &n), VCD_OK);
+    assert_int_equal((int)disk, PART_LBA + 64u + 10u * 4u);
+
+    /* A memory override at the redirect's start wins over the run beneath it,
+     * which is how the relocated file's patched header sits over the original
+     * header the redirect otherwise serves. */
+    assert_int_equal(vcd_override_add(&m, 4096, 1, 0xB000u), VCD_OK);
+    assert_int_equal(vcd_span(&m, 4096, 64, &seg, &phys, &n), VCD_FROM_MEMORY);
+    assert_int_equal(n, 1);
+    assert_int_equal(vcd_span(&m, 4097, 64, &seg, &phys, &n), VCD_OK);
+}
+
 int run_vcdcore_tests(void)
 {
     const struct CMUnitTest tests[] = {
@@ -367,6 +415,7 @@ int run_vcdcore_tests(void)
         cmocka_unit_test(test_sector_size_is_the_disks_own),
         cmocka_unit_test(test_overrides),
         cmocka_unit_test(test_extended_override_and_extend),
+        cmocka_unit_test(test_redirect_run),
     };
 
     return cmocka_run_group_tests_name("falcon-bios", tests, NULL, NULL);

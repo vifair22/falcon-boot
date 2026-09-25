@@ -253,7 +253,13 @@ static int cl_resolve(iso9660_vol *v, uint32_t lba, uint32_t *len)
 
 /* ---- mount ---- */
 
-int iso9660_mount(iso9660_vol *v, iso9660_read_fn read, void *read_ctx)
+/* primary_only forces the ISO 9660 primary tree with plain names, ignoring any
+ * Joliet or Rock Ridge tree that would otherwise win. Windows' bootmgr reads a
+ * boot CD through the primary descriptor, so a loader that relocates
+ * \sources\boot.wim for it must edit the record in this tree, not the Joliet
+ * one iso9660_mount prefers. */
+static int mount_common(iso9660_vol *v, iso9660_read_fn read, void *read_ctx,
+                        int primary_only)
 {
     uint8_t b[BLK];
     uint32_t pvd_root_lba = 0, pvd_root_len = 0;
@@ -314,26 +320,29 @@ int iso9660_mount(iso9660_vol *v, iso9660_read_fn read, void *read_ctx)
 
     /* Rock Ridge announces itself in the root's "." record: its System Use
      * area opens with SUSP's SP entry (SUSP 5.3), check bytes BE EF, and
-     * SP's LEN_SKP applies to every System Use area after it. */
-    rc = read_block(v, pvd_root_lba, v->cache, &v->cache_off);
-    if (rc != ISO9660_OK)
-        return rc;
-    {
-        const uint8_t *r = v->cache;
-        uint32_t rl = r[0];
+     * SP's LEN_SKP applies to every System Use area after it. Not consulted
+     * for a primary-only mount, which serves plain names by definition. */
+    if (!primary_only) {
+        rc = read_block(v, pvd_root_lba, v->cache, &v->cache_off);
+        if (rc != ISO9660_OK)
+            return rc;
+        {
+            const uint8_t *r = v->cache;
+            uint32_t rl = r[0];
 
-        if (rl >= REC_MIN + 7u && r[32] == 1u &&
-            r[34] == 'S' && r[35] == 'P' && r[36] >= 7u &&
-            r[38] == 0xBEu && r[39] == 0xEFu) {
-            v->names = ISO9660_NAMES_RRIP;
-            v->su_skip = r[40];
+            if (rl >= REC_MIN + 7u && r[32] == 1u &&
+                r[34] == 'S' && r[35] == 'P' && r[36] >= 7u &&
+                r[38] == 0xBEu && r[39] == 0xEFu) {
+                v->names = ISO9660_NAMES_RRIP;
+                v->su_skip = r[40];
+            }
         }
     }
 
-    if (v->names == ISO9660_NAMES_RRIP) {
+    if (!primary_only && v->names == ISO9660_NAMES_RRIP) {
         v->root_lba = pvd_root_lba;
         v->root_len = pvd_root_len;
-    } else if (have_joliet) {
+    } else if (!primary_only && have_joliet) {
         v->names = ISO9660_NAMES_JOLIET;
         v->root_lba = jol_root_lba;
         v->root_len = jol_root_len;
@@ -343,6 +352,16 @@ int iso9660_mount(iso9660_vol *v, iso9660_read_fn read, void *read_ctx)
         v->root_len = pvd_root_len;
     }
     return ISO9660_OK;
+}
+
+int iso9660_mount(iso9660_vol *v, iso9660_read_fn read, void *read_ctx)
+{
+    return mount_common(v, read, read_ctx, 0);
+}
+
+int iso9660_mount_primary(iso9660_vol *v, iso9660_read_fn read, void *read_ctx)
+{
+    return mount_common(v, read, read_ctx, 1);
 }
 
 /* ---- directories ---- */

@@ -150,6 +150,11 @@ typedef struct {
 } iso9660_extent;
 
 int iso9660_mount(iso9660_vol *v, iso9660_read_fn read, void *read_ctx);
+/* Mounts the primary (ISO 9660) tree with plain names, ignoring any Joliet or
+ * Rock Ridge tree iso9660_mount would prefer: Windows' bootmgr reads a boot CD
+ * through the primary descriptor, so a loader relocating a file for it must
+ * edit the record there too. */
+int iso9660_mount_primary(iso9660_vol *v, iso9660_read_fn read, void *read_ctx);
 int iso9660_dir_open_root(iso9660_vol *v, iso9660_dir *d);
 int iso9660_dir_open(iso9660_vol *v, iso9660_dir *d, const iso9660_dirent *e);
 /* 1 = entry produced, 0 = end of directory, negative = error. "." and ".."

@@ -50,4 +50,20 @@ void vcd_overlay_reset(void);
  * conventional memory than a machine has to give. */
 int vcd_overlay_append(uint32_t phys, uint32_t n_cd);
 
+/* Serves one CD sector at `cd_lba` from the given 2048 bytes, which are copied
+ * into the handler's pool. Unlike vcd_overlay it does not read a base sector
+ * off the ISO first, so `cd_lba` may be one the ISO does not have: the
+ * relocated Windows boot.wim's patched header sits at the appended run's start,
+ * over the original header the redirect otherwise serves from disk. Call before
+ * vcd_chainload. */
+int vcd_overlay_at(uint32_t cd_lba, const uint8_t *sector);
+
+/* Redirects `n_cd` CD sectors of the medium grown past the ISO's end back to
+ * where CD sector `src_cd_lba` and the ones after it already lie on the disk,
+ * so a relocated file's bulk is served over INT 13h. The redirected region is
+ * placed at the current end of the medium, before any vcd_overlay_append tail;
+ * its first sector is where a relocated file's record must point. Call before
+ * vcd_chainload; one redirect per medium. */
+int vcd_overlay_redirect(uint32_t src_cd_lba, uint32_t n_cd);
+
 #endif /* FALCON_BIOS_VCD_H */
