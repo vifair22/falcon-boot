@@ -693,22 +693,26 @@ The read path is proven in a Windows 10 x86 WinPE (2026-09-25): the driver
 loads unsigned, the mount manager gives it a drive letter, CDFS mounts it, and
 `dir E:\sources` lists `install.wim` read from the disk through the driver.
 
-One limit the corpus then found (docs/notes/windows-route.md Section 7):
-loading falcon-vdisk from winjump, which runs as winpeshl, assumes WinPE got
-as far as winpeshl. Windows 8 and up do; Windows 7 and Vista hang earlier, at
-"Starting Windows", where their boot-start storage driver waits on the boot
-device that vanished at ExitBootServices. Every shape for serving 7 and Vista
-was built and tested under OVMF, and none boots them there
-(docs/notes/windows-route.md Section 7). A boot-start falcon-vdisk that presents
-a substitute CD does not fix the hang: the wait is on the specific device Win7
-booted from, not on any CD. An EFI RAM disk (the medium Windows would keep) was
-then tried in three shapes - a persistent CD, a persistent GPT+ESP hard disk,
-and a non-persistent hard disk in loader memory - and OVMF mounts none of their
-filesystems: RamDiskDxe publishes a Block I/O the firmware's CDFS, PartitionDxe
-and FatDxe do not bind to, so Windows' boot manager cannot reach bootmgr or
-boot.wim. That is a firmware limit of the corpus; real firmware may mount it,
-and the bench confirmed Win7 boots from a medium that stays. So Windows 7/Vista
-under UEFI is a real-hardware question, unvalidatable in the OVMF corpus.
+The corpus then split the pre-8 case by firmware (docs/notes/windows-route.md
+Section 7). On BIOS the ISO is a resident INT 13h CD that never vanishes, so
+WinPE reaches winpeshl and winjump runs; four separate bugs then kept it from
+serving the install source, all now fixed - the "No disk in drive A:" dialog
+winjump raised probing an empty floppy, the extent map the BIOS winjump config
+had never carried, UDFS declining to mount the install DVD's UDF tree until the
+driver answered a size query, and the harness not recognising pre-8 Setup.
+Windows 7 (x86 and x64) and Vista x86 now boot end to end; vista-sp1-x64 does
+not, because its boot.wim winpeshl patch does not take.
+
+On EFI the ISO is a firmware Block I/O CD destroyed at ExitBootServices, and
+Windows 7 and Vista WinPE hang before winpeshl at "Starting Windows", waiting
+on that vanished device, so loading falcon-vdisk from winpeshl is too late. The
+fix is a medium Windows keeps across ExitBootServices (an EFI RAM disk), tried
+in three shapes - a persistent CD, a persistent GPT+ESP disk, and a
+non-persistent disk in loader memory - and OVMF's RamDiskDxe mounts none of
+their filesystems: it publishes a Block I/O the firmware's CDFS, PartitionDxe
+and FatDxe do not bind to. That is a firmware limit of the corpus; real firmware
+may mount it, and the bench confirmed Win7 boots from a medium that stays. So
+Windows 7/Vista under EFI is a real-hardware question, unvalidatable in OVMF.
 Three WinPE-specific hazards were found and fixed there: CDFS's mount issues
 `IOCTL_DISK_CHECK_VERIFY` (not only the CD-ROM and storage variants); a
 filesystem may issue reads above `PASSIVE_LEVEL`, so the lower-disk read runs
