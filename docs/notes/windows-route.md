@@ -968,7 +968,7 @@ What this settles:
   installer**, which has no WinPE and needs a different route entirely (not yet
   built).
 
-### 7.4 Windows 2000 and XP: text-mode setup (route not yet built)
+### 7.4 Windows 2000 and XP: text-mode setup (built to the boot-device binding)
 
 2000 and XP have no WinPE. They boot a text-mode setup: the CD's El Torito boot
 image loads setupldr, which reads txtsetup.sif, the kernel, the HAL and the
@@ -1062,14 +1062,35 @@ setup under QEMU: the driver's COM1 marker proved [SCSI.Load] loaded it, and
 setup reached "Welcome to Setup" unharmed. The x86 driver carries an opt-in
 COM1 trace at DriverEntry (VDISK_SERIAL_TRACE) for exactly this.
 
-What is left is piece 3 and the port into falcon-bios:
- - **Piece 3, the crux, is unbuilt.** In the prototype the served ISO was a
-   real QEMU CD, so the driver loading was all that was tested; nothing yet
-   gives DriverEntry the ISO's extents and a stick to read them from with no
-   winjump to hand them over. That is the remaining novel work.
- - **win_xp_boot** does the same ISO surgery the prototype does, but over the
-   served virtual CD in memory (vcd_overlay/redirect/append, i9_relocate for the
-   sif, iso9660_append_record for the .sys, the PVD and i386 record edits), and
-   routes XP media to it. XP media is not FAMILY_WINDOWS today (no /sources), so
-   detection is by i386/txtsetup.sif; and setupldr shows "Press any key to boot
-   from CD", which the rig must answer (the working Vista+ routes already do).
+Since then win_xp_boot and piece 3's disk-finding are built and rig-proven
+(2026-09-25), and the route is one barrier short of booting.
+
+ - **win_xp_boot** (falcon-bios/src/win.c) does the prototype's ISO surgery over
+   the served virtual CD in memory (vcd_overlay_append for the appended sif and
+   driver, i9_relocate for the sif's record, iso9660_append_record for the .sys,
+   the PVD and i386 record edits), routes 2000/XP media to it (now FAMILY_WINDOWS,
+   detected by i386/txtsetup.sif + i386/setupldr.bin), and embeds the x86 driver.
+   Rig-proven: the loader injects and serves the ISO, XP text-mode setup boots
+   from the served virtual CD, and loads the driver through [SCSI.Load].
+
+ - **Piece 3's disk-finding is built and proven.** win_xp_boot bakes the ISO's
+   extent map into the served .sys at a magic-tagged struct; the driver decodes
+   it at load on a detached thread and, retrying while the disk stack comes up,
+   finds the stick by the GPT partition GUID (extmap.c + winjumpcore.c linked
+   into the .sys, the same match winjump does in userland) and sets the backing.
+   Rig-proven: both COM1 markers (SCSILOAD_OK and BACKING_OK) appear, so the
+   novel "find the stick with no winjump" work is done.
+
+ - **What is left: the boot-device binding.** After the driver loads and
+   resolves its backing, setup still bugchecks 0x7B with OBJECT_NAME_NOT_FOUND:
+   the kernel cannot resolve its boot device's ARC name to this virtual CD.
+   Aliasing the standard CD-ROM device name (\Device\CdRom0) to the device is a
+   first step that does not resolve it alone - the boot ARC path is not simply
+   cdrom(0), or cdrom.sys already owns \Device\CdRom0. This is a distinct problem
+   from the disk-finding, needing setupldr's exact boot-device path and how
+   firadisk/winvblock present the boot device; it is the remaining work.
+
+The rig: a falcon-bios stick with the ISO on p2 (mk-case-stick.sh), booted
+under QEMU BIOS with the loader disk; the menu's Enter selects the ISO, and
+setupldr's "press any key to boot from CD" is answered with more Enters. A
+VDISK_TRACE=1 build turns on the driver's COM1 markers to read the sequence.
