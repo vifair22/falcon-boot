@@ -697,3 +697,53 @@ answered while writing this note: yes, along with `vhdmp.sys`, `vdrvroot.sys`,
    disproving it, patch a sector-0-spanning MBR into the system area of a copy
    and see whether Windows mounts it. A surprise here would remove all injected
    code from the Windows route, so it is worth one experiment even at low odds.
+
+## 7. Rig findings (2026-09-25): the vanishing-CD limit for Windows before 8
+
+The full corpus was run through the loader under OVMF, which is the rig test
+Section 6.4 asked for. The loader serves the ISO as a virtual CD over EFI
+Block I/O on p2 (falcon-efi/src/iso), and that CD is gone at ExitBootServices,
+exactly as on real hardware. So the corpus does exercise the media-vanishes
+case, not a QEMU-persists shortcut.
+
+- **Windows 8 and up (8.1, 10, 11, Server 2025, Macrium WinPE): pass.** Their
+  WinPE reaches winpeshl, winjump attaches the ISO with `AttachVirtualDisk`,
+  and Setup reads `\sources\install.wim` back through it (the harness measures
+  the p2 reads: "read 451 MiB of install.* through the ISO attached in
+  Windows"). This is the whole route working end to end.
+
+- **Windows 7 x64: WinPE hangs before winpeshl.** It reaches the "Starting
+  Windows" splash and stays there to the 300 s timeout; Setup's UI never
+  appears, so winpeshl - and therefore winjump, and therefore falcon-vdisk -
+  never runs. The hang is in early kernel init, where the boot-start storage
+  and CD drivers come up and wait on the boot device that vanished at
+  ExitBootServices. Windows 8+ tolerates the missing device and finishes to
+  winpeshl; Windows 7 does not.
+
+  Consequence, and it is a real one: **loading the driver from winpeshl is too
+  late for Windows 7 and Vista.** winjump running as winpeshl assumes WinPE got
+  that far.
+
+  Confirmed with a persistent CD (bench rig, 2026-09-25): booting the same
+  windows-7-x64 ISO as an ordinary QEMU CD-ROM that never vanishes, Win7's
+  WinPE reaches the shell and Setup's "Enter your language" screen with no
+  trouble. So Win7's WinPE is not the problem and needs neither winjump nor the
+  driver when the media stays: the whole failure is that our EFI-served CD
+  vanishes at ExitBootServices and Win7, unlike 8+, will not finish booting
+  without it.
+
+  Two ways to serve these, both larger than the winpeshl swap and neither
+  built:
+  - **falcon-vdisk as a boot-start driver**, registered in boot.wim's `SYSTEM`
+    hive as it is patched in, so it comes up during "Starting Windows" and
+    answers for the CD before WinPE blocks on it. This is a registry-hive edit
+    inside boot.wim, and it is unproven that WinPE will accept a substitute CD
+    for the boot device it actually booted from.
+  - **A persistent boot medium**, the way Ventoy keeps the ISO available for
+    Windows rather than letting the firmware CD evaporate. This is the more
+    certain of the two and the larger.
+
+- **Windows XP x64 and Vista x64 do not boot under UEFI at all**, failing at
+  "finding the medium's EFI System Partition": XP has no UEFI support and Vista
+  x64's is marginal. A firmware/architecture limit, the exit goal's allowed
+  exception, not the hang above.

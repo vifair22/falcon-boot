@@ -692,6 +692,14 @@ served from where it already lies, never copied into RAM.
 The read path is proven in a Windows 10 x86 WinPE (2026-09-25): the driver
 loads unsigned, the mount manager gives it a drive letter, CDFS mounts it, and
 `dir E:\sources` lists `install.wim` read from the disk through the driver.
+
+One limit the corpus then found (docs/notes/windows-route.md Section 7):
+loading falcon-vdisk from winjump, which runs as winpeshl, assumes WinPE got
+as far as winpeshl. Windows 8 and up do; Windows 7 and Vista hang earlier, at
+"Starting Windows", where their boot-start drivers wait on the boot device
+that vanished at ExitBootServices. Serving those two needs falcon-vdisk as a
+boot-start driver registered in boot.wim's SYSTEM hive, not the winpeshl swap,
+and that is not built.
 Three WinPE-specific hazards were found and fixed there: CDFS's mount issues
 `IOCTL_DISK_CHECK_VERIFY` (not only the CD-ROM and storage variants); a
 filesystem may issue reads above `PASSIVE_LEVEL`, so the lower-disk read runs
