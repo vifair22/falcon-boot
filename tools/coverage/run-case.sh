@@ -356,7 +356,7 @@ type_line() {   # type_line TEXT
             ' ') k=spc ;;  '.') k=dot ;;  '\') k=backslash ;;
             ':') k=shift-semicolon ;;  '*') k=shift-8 ;;
             '%') k=shift-5 ;;  '(') k=shift-9 ;;  ')') k=shift-0 ;;
-            '/') k=slash ;;
+            '/') k=slash ;;  '-') k=minus ;;
             *) continue ;;
         esac
         echo "sendkey $k" | socat - UNIX-CONNECT:"$MON" >/dev/null 2>&1 || true
@@ -467,6 +467,9 @@ while (( $(date +%s) - T1 < TIMEOUT )); do
         echo "sendkey shift-f10" | socat - UNIX-CONNECT:"$MON" >/dev/null 2>&1 || true
         sleep 2
         type_line 'for %d in (D E F G H I) do copy /b %d:\sources\install.* nul'
+        # FALCON_CASE_WJLOG=1 leaves winjump's own log on screen, so a failing
+        # Windows case shows why in its final screenshot.
+        [[ "${FALCON_CASE_WJLOG:-0}" == 1 ]] && type_line 'type X:\falcon-winjump.log'
     fi
     if [[ -z "$media_base" ]] && grep -q '^ *starting ' <<<"$after"; then
         media_base=$(stick_read)
