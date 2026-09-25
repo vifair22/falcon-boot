@@ -613,6 +613,29 @@ static void NTAPI vdisk_unload(PDRIVER_OBJECT drv)
     backing_release();
 }
 
+#ifdef VDISK_SERIAL_TRACE
+/* A diagnostic-only marker written straight to COM1 (0x3F8) at DriverEntry, so
+ * a rig run can tell from the serial log whether text-mode setup loaded this
+ * driver at all through txtsetup.sif's [SCSI.Load], independent of whether the
+ * kernel debugger is wired. Never compiled into a shipped driver: it does port
+ * I/O the installed system would not want. WRITE_PORT_UCHAR/READ_PORT_UCHAR
+ * are HAL routines the driver already links. */
+static void serial_trace(const char *s)
+{
+    WRITE_PORT_UCHAR((PUCHAR)0x3FB, 0x80);   /* LCR: DLAB on */
+    WRITE_PORT_UCHAR((PUCHAR)0x3F8, 0x01);   /* divisor low: 115200 */
+    WRITE_PORT_UCHAR((PUCHAR)0x3F9, 0x00);   /* divisor high */
+    WRITE_PORT_UCHAR((PUCHAR)0x3FB, 0x03);   /* LCR: 8N1, DLAB off */
+    WRITE_PORT_UCHAR((PUCHAR)0x3FA, 0xC7);   /* FCR: FIFO on, cleared */
+    WRITE_PORT_UCHAR((PUCHAR)0x3FC, 0x03);   /* MCR: DTR, RTS */
+    while (*s != '\0') {
+        while ((READ_PORT_UCHAR((PUCHAR)0x3FD) & 0x20) == 0)
+            ;                                /* wait for THR empty */
+        WRITE_PORT_UCHAR((PUCHAR)0x3F8, (UCHAR)*s++);
+    }
+}
+#endif
+
 NTSTATUS NTAPI DriverEntry(PDRIVER_OBJECT drv, PUNICODE_STRING reg);
 NTSTATUS NTAPI DriverEntry(PDRIVER_OBJECT drv, PUNICODE_STRING reg)
 {
@@ -620,6 +643,9 @@ NTSTATUS NTAPI DriverEntry(PDRIVER_OBJECT drv, PUNICODE_STRING reg)
     int i;
 
     (void)reg;
+#ifdef VDISK_SERIAL_TRACE
+    serial_trace("FALCONVDISK_SCSILOAD_OK\r\n");
+#endif
     RtlInitUnicodeString(&g_ctl_name, VDISK_CTL_DEVICE);
     RtlInitUnicodeString(&g_ctl_link, VDISK_CTL_LINK);
     RtlInitUnicodeString(&g_cd_name, VDISK_CD_DEVICE);
