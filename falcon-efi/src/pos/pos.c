@@ -344,6 +344,18 @@ static int mount_shelf(fs_read_fn read, void *ctx, const fs_ops *known)
     return fs_mount(&g_fs, ops, read, ctx);
 }
 
+/* The advice for a shelf that would not mount. A shelf the personal OS left
+ * mounted when the power went is the common case, and the one the reader can
+ * fix; `otherwise` sent them looking for a format problem that is not there.
+ * falcon-bios/src/pos.c says the same sentence. */
+static const CHAR16 *mount_advice(int rc, const CHAR16 *otherwise)
+{
+    if (rc == FS_ERR_NEEDS_RECOVERY || rc == FS_ERR_DIRTY)
+        return L"the filesystem was not cleanly unmounted; run fsck on it "
+               L"from Linux.";
+    return otherwise;
+}
+
 /* Scan-time question for a plaintext shelf: is there a UKI on it?
  *
  * Mounts, looks, and leaves nothing behind. The encrypted case cannot be
@@ -862,9 +874,11 @@ EFI_STATUS pos_boot_pick(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
         crypto_wipe(&g_mk, sizeof g_mk);
 
         result->stage = L"mounting the filesystem inside it";
-        if (mount_shelf(luks_read, &g_dev, (const fs_ops *)0) != FS_OK) {
-            result->advice = L"the decrypted volume is not a filesystem this "
-                             L"loader can read.";
+        rc = mount_shelf(luks_read, &g_dev, (const fs_ops *)0);
+        if (rc != FS_OK) {
+            result->advice = mount_advice(rc,
+                L"the decrypted volume is not a filesystem this loader can "
+                L"read.");
             status = EFI_UNSUPPORTED;
             goto out_close;
         }
@@ -886,9 +900,10 @@ EFI_STATUS pos_boot_pick(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
         }
 
         result->stage = L"mounting the plaintext UKI shelf";
-        if (mount_shelf(discover_read, p->dev, p->fs) != FS_OK) {
-            result->advice = L"the shelf is not a filesystem this loader can "
-                             L"read.";
+        rc = mount_shelf(discover_read, p->dev, p->fs);
+        if (rc != FS_OK) {
+            result->advice = mount_advice(rc,
+                L"the shelf is not a filesystem this loader can read.");
             status = EFI_UNSUPPORTED;
             goto out_close;
         }

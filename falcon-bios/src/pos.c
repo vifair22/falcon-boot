@@ -439,10 +439,18 @@ int pos_run(bios_disk *d, const gpt_part *p3, boot_result *r)
 
     r->stage = "mounting the filesystem inside it";
     ops = fs_identify(luks_read, &g_dev, FS_HINT_SHELF);
-    if (ops == (const fs_ops *)0 ||
-        fs_mount(&g_fs, ops, luks_read, &g_dev) != FS_OK) {
-        r->advice = "the decrypted volume is not a filesystem this loader "
-                    "can read.";
+    rc = ops == (const fs_ops *)0 ? FS_ERR_BAD_SUPER
+                                  : fs_mount(&g_fs, ops, luks_read, &g_dev);
+    if (rc != FS_OK) {
+        /* A shelf the personal OS left mounted when the power went is the
+         * common case, and the one the reader can fix; the generic sentence
+         * sent them looking for a format problem that is not there. */
+        if (rc == FS_ERR_NEEDS_RECOVERY || rc == FS_ERR_DIRTY)
+            r->advice = "the filesystem was not cleanly unmounted; run fsck "
+                        "on it from Linux.";
+        else
+            r->advice = "the decrypted volume is not a filesystem this "
+                        "loader can read.";
         wipe_secrets();
         return -1;
     }
