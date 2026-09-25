@@ -17,6 +17,12 @@ this stick 32-bit is what is on it.
 The current one is the 128 GB Corsair Voyager, serial
 `19368169000125990059`.
 
+It was built before `--bios-only` existed and converted in place on
+2026-09-24: p1 zeroed and its GPT entry deleted (slot 1 empty, the 64 MiB
+in front of p2 unallocated), the MOK shredded inside p3. `mkstick status`
+passes it as a BIOS-only stick. The GPT from before is in the author's
+`falcon-backups/2026-09-24-2021/sdb-gpt-before-bios-only.bin`.
+
 ## Building one
 
 ```bash
