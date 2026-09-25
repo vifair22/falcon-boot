@@ -33,7 +33,7 @@ example (2026-09-20): its default entry is "Clonezilla live (VGA
 and listing the disk it found, and serial stayed empty for 300s. Read
 the screenshot before believing one of these.
 
-Loader: 0.1.0_20260920.1824.release, 0.1.0_20260924.1655.release, 0.1.0_20260925.0145.release, 0.1.0_20260925.0152.release, 0.1.0_20260925.0358.release, 0.1.0_20260925.0506.release, 0.1.0_20260925.0641.release, 0.1.0_20260925.0643.release, 0.1.0_20260925.0701.release, 0.1.0_20260925.0904.release, 0.1.0_20260925.1627.release, 0.1.0_20260925.1701.release
+Loader: 0.1.0_20260920.1824.release, 0.1.0_20260924.1655.release, 0.1.0_20260925.0145.release, 0.1.0_20260925.0152.release, 0.1.0_20260925.0358.release, 0.1.0_20260925.0506.release, 0.1.0_20260925.0641.release, 0.1.0_20260925.0643.release, 0.1.0_20260925.0701.release, 0.1.0_20260925.0904.release, 0.1.0_20260925.1627.release, 0.1.0_20260925.1701.release, 0.1.0_20260925.1721.release
 
 ## Summary
 
@@ -41,7 +41,7 @@ Loader: 0.1.0_20260920.1824.release, 0.1.0_20260924.1655.release, 0.1.0_20260925
 |---|---|---|---|---|---|---|---|---|
 | A | 27 | 22/22 (100%) | 100% | 22/22 (100%) | 95% | 19/22 (86%) | 27/27 (100%) | 4/5 (80%) |
 | B | 13 | 9/9 (100%) | 90% | 9/9 (100%) | - | 9/9 (100%) | 13/13 (100%) | 3/4 (75%) |
-| C | 22 | 6/10 (60%) | - | 3/10 (30%) | - | 1/10 (10%) | 7/22 (31%) | 0/12 (0%) |
+| C | 22 | 6/10 (60%) | - | 3/10 (30%) | - | 1/10 (10%) | 8/22 (36%) | 1/12 (8%) |
 
 ## Matrix
 
@@ -96,7 +96,7 @@ Loader: 0.1.0_20260920.1824.release, 0.1.0_20260924.1655.release, 0.1.0_20260925
 | haiku-r1b6-x86_gcc2h | C | haiku | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | FAIL | FAIL | N/A | FAIL | FAIL | N/A |
 | clonezilla-3.2.0-5-i686 | A | debian-live | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | PASS | FAIL | N/A | PASS | FAIL | N/A |
 | gparted-1.6.0-10-i686 | A | debian-live | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | PASS | FAIL | N/A | PASS | FAIL | N/A |
-| memtest86plus-8.10-i586 | C | memtest | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | FAIL | FAIL | N/A | FAIL | FAIL | N/A |
+| memtest86plus-8.10-i586 | C | memtest | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | PASS | FAIL | N/A | PASS | FAIL | N/A |
 | antix-26-386-full | A | antix | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | PASS | FAIL | N/A | PASS | FAIL | N/A |
 | tinycore-17.1 | B | tinycore | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | PASS | PASS | N/A | PASS | PASS | N/A |
 | slackware-15.0-dvd | B | slackware | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | PASS | PASS | N/A | FAIL | FAIL | N/A |
@@ -311,9 +311,7 @@ Loader: 0.1.0_20260920.1824.release, 0.1.0_20260924.1655.release, 0.1.0_20260925
 | clonezilla-3.2.0-5-i686 | bios32 | chain | FAIL | no userland within 300s (screen: text console) |
 | gparted-1.6.0-10-i686 | bios | chain | FAIL | no userland within 300s (screen: text console) |
 | gparted-1.6.0-10-i686 | bios32 | chain | FAIL | no userland within 300s (screen: text console) |
-| memtest86plus-8.10-i586 | bios | drop | FAIL | no userland within 300s (screen: graphical) |
 | memtest86plus-8.10-i586 | bios | chain | FAIL | back at the menu: boot failed while reading the ISO's boot catalog (screen: text console) |
-| memtest86plus-8.10-i586 | bios32 | drop | FAIL | no userland within 300s (screen: graphical) |
 | memtest86plus-8.10-i586 | bios32 | chain | FAIL | back at the menu: boot failed while reading the ISO's boot catalog (screen: text console) |
 | antix-26-386-full | bios | chain | FAIL | no userland within 300s (screen: text console) |
 | antix-26-386-full | bios32 | chain | FAIL | no userland within 300s (screen: text console) |
