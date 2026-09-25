@@ -468,8 +468,12 @@ while (( $(date +%s) - T1 < TIMEOUT )); do
         sleep 2
         type_line 'for %d in (D E F G H I) do copy /b %d:\sources\install.* nul'
         # FALCON_CASE_WJLOG=1 leaves winjump's own log on screen, so a failing
-        # Windows case shows why in its final screenshot.
-        [[ "${FALCON_CASE_WJLOG:-0}" == 1 ]] && type_line 'type X:\falcon-winjump.log'
+        # Windows case shows why in its final screenshot. The dir says whether
+        # winjump ran at all: it renames the original to winpeshl_orig.exe.
+        if [[ "${FALCON_CASE_WJLOG:-0}" == 1 ]]; then
+            type_line 'dir X:\windows\system32\winpeshl.exe X:\windows\system32\winpeshl_orig.exe'
+            type_line 'type X:\falcon-winjump.log'
+        fi
     fi
     if [[ -z "$media_base" ]] && grep -q '^ *starting ' <<<"$after"; then
         media_base=$(stick_read)
