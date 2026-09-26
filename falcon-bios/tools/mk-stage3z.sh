@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# A compressed stage 3 (falcon-bios/src/start/biosdefs.h, STAGE3_MAGIC_GZ):
-# the "BOSZ" header, then a gzip member of the ordinary stage 3 image, which
-# stage 2 inflates (load3.c). For falcon jump's floppy, where the bytes read
-# are the time taken (docs/DESIGN.md Section 14.3).
+# A stage 3 as it goes on the disk (falcon-bios/src/start/biosdefs.h,
+# STAGE3_MAGIC_GZ): the "BOSZ" header, then a gzip member of the linked
+# image, which stage 2 inflates and checks (load3.c). Every app's stage 3 is
+# built through this (falcon-bios/build.mk, bios_app).
 #
-# Usage: mk-stage3z.sh STAGE3.bin OUT.bin
+# Usage: mk-stage3z.sh STAGE3.raw OUT.bin
 # gzip -9 -n: the smallest deflate gzip makes, and no name or time in the
 # header, so the same stage 3 always makes the same file.
 set -euo pipefail
@@ -21,7 +21,8 @@ magic=$(od -An -tu4 -N4 "$in" | tr -d ' ')
 len=$(stat -c %s "$in")
 mem=$(od -An -tu4 -j8 -N4 "$in" | tr -d ' ')
 hdr_len=$(od -An -tu4 -j4 -N4 "$in" | tr -d ' ')
-# "BOS3", and its header's own idea of its length, or this is not a stage 3.
+# "BOS3", and its header's own idea of its length, or this is not a linked
+# stage 3.
 if [[ "$magic" != 861097794 || "$hdr_len" != "$len" ]]; then
     echo "mk-stage3z: $in is not a stage 3 image" >&2
     exit 1

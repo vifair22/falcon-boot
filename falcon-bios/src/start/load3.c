@@ -22,76 +22,30 @@ static __attribute__((noreturn)) void die(const char *why)
     bios_fatal(why);
 }
 
-/* A compressed stage 3 (biosdefs.h, STAGE3_MAGIC_GZ): the file to
- * GZ_STAGE_ADDR, inflated to STAGE3_LOAD with its CRC-32 and length checked,
- * and then the same checks and start as an ordinary one. On a floppy the
- * bytes read are the time taken, which is the whole reason: falcon jump's
- * stage 3 is half the size this way (DESIGN Section 14.3). Does not return. */
-static __attribute__((noreturn)) void load_gz(bios_disk *d, uint64_t base)
-{
-    volatile uint32_t *zh = (volatile uint32_t *)(uintptr_t)STAGE3_LOAD;
-    uint32_t *hdr = (uint32_t *)(uintptr_t)STAGE3_LOAD;
-    uint8_t *packed = (uint8_t *)(uintptr_t)GZ_STAGE_ADDR;
-    uint64_t file = zh[1];
-    uint64_t mem = zh[2];
-    uint64_t want = zh[3];
-    uint64_t sectors;
-    size_t got = 0;
-    unsigned attempt;
-
-    if (file <= STAGE3_HDR ||
-        file > (uint64_t)STAGE3_MAX_SECTORS * d->sector_size)
-        die("stage 3 declares a length this stage will not read");
-    if (want < STAGE3_HDR || mem < want ||
-        mem > GZ_STAGE_ADDR - STAGE3_LOAD)
-        die("stage 3 declares a size that will not fit below its staging");
-
-    /* Twice, the second time from the disk rather than the track cache: a
-     * floppy that misread once often reads right the next time, and the
-     * member's CRC-32 is what tells the two apart. */
-    sectors = (file + d->sector_size - 1u) / d->sector_size;
-    for (attempt = 0; ; attempt++) {
-        if (bios_disk_read(d, base, sectors * d->sector_size, packed) != 0)
-            die("stage 3 is on the disk but would not read whole");
-        if (gz_member(packed + STAGE3_HDR, (size_t)(file - STAGE3_HDR),
-                      (uint8_t *)(uintptr_t)STAGE3_LOAD, (size_t)want,
-                      &got) == GZ_OK && got == want)
-            break;
-        if (attempt == 1)
-            die("stage 3 did not read back as it was written, twice; the "
-                "disk may be failing");
-        bios_puts("falcon-bios: stage 3 failed its check; reading it again\n");
-        bios_disk_forget();
-    }
-    if (hdr[0] != (uint32_t)STAGE3_MAGIC || hdr[1] != want || hdr[2] != mem)
-        die("stage 3 inflated to something that is not stage 3");
-
-    memset((void *)(uintptr_t)(STAGE3_LOAD + want), 0, (size_t)(mem - want));
-
-    bios_puts("falcon-bios: stage 3 inflated, ");
-    bios_put_dec(file);
-    bios_puts(" bytes to ");
-    bios_put_dec(want);
-    bios_puts(" at ");
-    bios_put_hex64(STAGE3_LOAD);
-    bios_puts("\n");
-
-    ((void (*)(void))(uintptr_t)(STAGE3_LOAD + STAGE3_HDR))();
-    die("stage 3 returned");
-}
-
-/* Entered from stage2.S in 32-bit protected mode with the drive the BIOS booted from.
- * Does not return: either stage 3 runs or the machine resets. */
+/* Entered from stage2.S in 32-bit protected mode with the drive the BIOS
+ * booted from. Does not return: either stage 3 runs or the machine resets.
+ *
+ * Stage 3 is always stored compressed (biosdefs.h, STAGE3_MAGIC_GZ): a
+ * "BOSZ" header, then a gzip member of the linked image, "BOS3" header and
+ * all. The member goes to GZ_STAGE_ADDR and is inflated to STAGE3_LOAD, its
+ * CRC-32 and length checked, which is the check that the disk gave back what
+ * was written; and it is half the bytes to read, which on a floppy or USB
+ * 1.1 is most of the time stage 2 takes (DESIGN Section 14.3). */
 void stage3_load(uint8_t drive);
 
 void stage3_load(uint8_t drive)
 {
-    volatile uint32_t *hdr = (volatile uint32_t *)(uintptr_t)STAGE3_LOAD;
+    volatile uint32_t *zh = (volatile uint32_t *)(uintptr_t)STAGE3_LOAD;
+    uint32_t *hdr = (uint32_t *)(uintptr_t)STAGE3_LOAD;
+    uint8_t *packed = (uint8_t *)(uintptr_t)GZ_STAGE_ADDR;
     bios_disk d;
     uint64_t base;
-    uint64_t len;
+    uint64_t file;
     uint64_t mem;
+    uint64_t want;
     uint64_t sectors;
+    size_t got = 0;
+    unsigned attempt;
 
     /* The gate's copy, which is where stage 3 reads it from: stage 3 is
      * linked separately and shares no symbol with the assembly. */
@@ -107,44 +61,55 @@ void stage3_load(uint8_t drive)
         bios_puts("falcon-bios: the boot drive has no INT 13h extensions, reading by CHS\n");
 
     base = (uint64_t)STAGE3_LBA * d.sector_size;
-    if (bios_disk_read(&d, base, d.sector_size, (void *)(uintptr_t)hdr) != 0)
+    if (bios_disk_read(&d, base, d.sector_size, (void *)(uintptr_t)zh) != 0)
         die("stage 3 could not be read");
-
-    if (hdr[0] == (uint32_t)STAGE3_MAGIC_GZ) {
-        load_gz(&d, base);
-        return;
-    }
-    if (hdr[0] != (uint32_t)STAGE3_MAGIC)
+    if (zh[0] != (uint32_t)STAGE3_MAGIC_GZ)
         die("stage 3 is not where the header says it should be");
 
-    len = hdr[1];
-    mem = hdr[2];
-    if (len < STAGE3_HDR ||
-        len > (uint64_t)STAGE3_MAX_SECTORS * d.sector_size)
+    file = zh[1];
+    mem = zh[2];
+    want = zh[3];
+    if (file <= STAGE3_HDR ||
+        file > (uint64_t)STAGE3_MAX_SECTORS * d.sector_size)
         die("stage 3 declares a length this stage will not read");
-    if (mem < len || mem > STAGE3_MAX_MEM)
-        die("stage 3 declares a size that will not fit below its stack");
+    if (want < STAGE3_HDR || mem < want ||
+        mem > GZ_STAGE_ADDR - STAGE3_LOAD)
+        die("stage 3 declares a size that will not fit below its staging");
 
-    /* Round up: the BIOS reads whole sectors and the last one is partly the
-     * image. Reading the first sector twice costs one interrupt and keeps
-     * the arithmetic to one place. */
-    sectors = (len + d.sector_size - 1u) / d.sector_size;
-    if (bios_disk_read(&d, base, sectors * d.sector_size,
-                       (void *)(uintptr_t)hdr) != 0)
-        die("stage 3 is on the disk but would not read whole");
+    /* Twice, the second time from the disk rather than the track cache: a
+     * floppy that misread once often reads right the next time, and the
+     * member's CRC-32 is what tells the two apart. */
+    sectors = (file + d.sector_size - 1u) / d.sector_size;
+    for (attempt = 0; ; attempt++) {
+        if (bios_disk_read(&d, base, sectors * d.sector_size, packed) != 0)
+            die("stage 3 is on the disk but would not read whole");
+        if (gz_member(packed + STAGE3_HDR, (size_t)(file - STAGE3_HDR),
+                      (uint8_t *)(uintptr_t)STAGE3_LOAD, (size_t)want,
+                      &got) == GZ_OK && got == want)
+            break;
+        if (attempt == 1)
+            die("stage 3 did not read back as it was written, twice; the "
+                "disk may be failing");
+        bios_puts("falcon-bios: stage 3 failed its check; reading it again\n");
+        bios_disk_forget();
+    }
+    if (hdr[0] != (uint32_t)STAGE3_MAGIC || hdr[1] != want || hdr[2] != mem)
+        die("stage 3 inflated to something that is not stage 3");
 
     /* Everything past the image is .bss, which is not in the image and which
      * nothing else will clear: stage 3 is the only thing here with a loader.
      * A C program whose statics start as whatever the BIOS left behind fails
      * in ways that look like anything but this. */
-    memset((void *)(uintptr_t)(STAGE3_LOAD + len), 0, (size_t)(mem - len));
+    memset((void *)(uintptr_t)(STAGE3_LOAD + want), 0, (size_t)(mem - want));
 
-    bios_puts("falcon-bios: stage 3 loaded, ");
-    bios_put_dec(len);
-    bios_puts(" bytes at ");
+    bios_puts("falcon-bios: stage 3 inflated, ");
+    bios_put_dec(file);
+    bios_puts(" bytes to ");
+    bios_put_dec(want);
+    bios_puts(" at ");
     bios_put_hex64(STAGE3_LOAD);
     bios_puts(", ");
-    bios_put_dec(mem - len);
+    bios_put_dec(mem - want);
     bios_puts(" zeroed\n");
 
     ((void (*)(void))(uintptr_t)(STAGE3_LOAD + STAGE3_HDR))();
