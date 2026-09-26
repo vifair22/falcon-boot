@@ -134,6 +134,11 @@ int pcc_cis_parse(const uint8_t *cis, size_t n, pcc_cis *out)
     out->funcid = 0xFFu;
     out->config_base = 0;
     fixed.funcid = 0xFFu;
+    fixed.config_base = 0;
+    fixed.index = 0;
+    fixed.io_lines = 0;
+    fixed.io_base = 0;
+    fixed.io_len = 0;
 
     for (hops = 0; hops < 256u && p < end; hops++) {
         uint8_t code = *p++;
