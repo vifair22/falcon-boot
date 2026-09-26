@@ -86,6 +86,12 @@ $(JUMP_IMG): $(BIOS_FD_STAGE1) $(BIOS_STAGE2) $(BIOS_JUMP_STAGE3) \
 	@cmp -s -i 62:62 -n 448 $(BIOS_FD_STAGE1) $@.tmp || { \
 		echo "ERROR: mformat did not keep the boot sector's code"; \
 		rm -f $@.tmp; exit 1; }
+	@# Stage 2's real length, for the boot sector to read no more than
+	@# that (boot_fd.S, FD_S2_SECTORS_OFF): little endian, two bytes.
+	@n=$$(( ($$(stat -c %s $(BIOS_STAGE2)) + 511) / 512 )); \
+	printf "$$(printf '\\%03o\\%03o' $$((n & 255)) $$((n >> 8)))" | \
+		dd of=$@.tmp bs=1 seek=$(FD_S2_SECTORS_OFF_CHECK) conv=notrunc \
+		status=none
 	dd if=$(BIOS_STAGE2) of=$@.tmp bs=512 seek=$(STAGE2_LBA_CHECK) \
 		conv=notrunc status=none
 	dd if=$(BIOS_JUMP_STAGE3) of=$@.tmp bs=512 seek=$(STAGE3_LBA_CHECK) \

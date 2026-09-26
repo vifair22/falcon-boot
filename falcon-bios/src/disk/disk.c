@@ -36,48 +36,98 @@ typedef struct {
 
 #define g_params (*(bios_driveparm *)(uintptr_t)DRIVEPARM_ADDR)
 
+/* One AH=02h call: `n` sectors from `at`, all on one track, to the real-mode
+ * address `dest`. Three tries with a reset between, since a floppy's first
+ * read can fail while its motor comes up to speed; that is what every BIOS's
+ * own boot code does too. */
+static int chs_call(const bios_disk *d, uint32_t at, uint32_t n,
+                    uint32_t dest)
+{
+    uint16_t cyl;
+    uint8_t head;
+    uint8_t sector;
+    int tries;
+
+    if (vfd_lba_to_chs(&d->geom, at, &cyl, &head, &sector) != VFD_OK)
+        return 0;
+    for (tries = 0; tries < 3; tries++) {
+        thunk_regs.eax = 0x0200u | n;          /* AH=02h, AL sectors */
+        thunk_regs.ecx = ((uint32_t)(cyl & 0xFFu) << 8) |
+                         (uint32_t)(sector & 0x3Fu) |
+                         (uint32_t)((cyl >> 2) & 0xC0u);
+        thunk_regs.edx = ((uint32_t)head << 8) | d->drive;
+        thunk_regs.es = (uint16_t)(dest >> 4);
+        thunk_regs.ebx = dest & 0x0Fu;
+        thunk_vector = 0x13;
+        thunk_bios();
+        if ((thunk_regs.flags & BIOS_FLAG_CARRY) == 0)
+            return 1;
+        thunk_regs.eax = 0x0000u;              /* AH=00h, reset */
+        thunk_regs.edx = d->drive;
+        thunk_vector = 0x13;
+        thunk_bios();
+    }
+    return 0;
+}
+
+/* The track cache (biosdefs.h, TRACK_CACHE_ADDR): which drive's which track
+ * is there. Not in .bss, because stage 2 links this file and stage 2 has no
+ * .bss (nothing clears it); a stale answer is ruled out by the valid flag
+ * starting at zero in .data and by the drive and geometry being compared. */
+static struct {
+    uint32_t valid;
+    uint32_t drive;
+    uint32_t track;
+    uint32_t sectors;
+} g_track __attribute__((section(".data"))) = { 0, 0, 0, 0 };
+
 /* AH=02h, a track at a time, for a drive with no extensions: a read that
  * crosses a track is refused by many floppy controllers, and one sector per
- * call costs a revolution each. Three tries with a reset between, since a
- * floppy's first read can fail while its motor comes up to speed; that is
- * what every BIOS's own boot code does too. */
+ * call costs a revolution each.
+ *
+ * A read that ends before its track does (a FAT walk's single sectors, a
+ * header before its body) reads the whole track into the cache instead and
+ * copies out of it, so the next read on that track costs no revolution at
+ * all. A read that runs to the end of its track goes straight to the bounce
+ * buffer, as it did before there was a cache: it gains nothing from one. */
 static int read_sectors_chs(const bios_disk *d, uint64_t lba, uint16_t count)
 {
     uint32_t done = 0;
+    uint32_t spt = d->geom.sectors;
 
-    if (lba > 0xFFFFFFFFu)
+    if (lba > 0xFFFFFFFFu || spt == 0 ||
+        spt * d->sector_size > TRACK_CACHE_BYTES)
         return 0;
     while (done < count) {
         uint32_t at = (uint32_t)lba + done;
         uint32_t dest = (uint32_t)BOUNCE_ADDR + done * d->sector_size;
+        uint32_t track = at / spt;
+        uint32_t into = at % spt;
         uint32_t n;
-        uint16_t cyl;
-        uint8_t head;
-        uint8_t sector;
-        int tries;
 
-        if (vfd_run_on_track(&d->geom, at, count - done, &n) != VFD_OK ||
-            vfd_lba_to_chs(&d->geom, at, &cyl, &head, &sector) != VFD_OK)
+        if (vfd_run_on_track(&d->geom, at, count - done, &n) != VFD_OK)
             return 0;
-        for (tries = 0; tries < 3; tries++) {
-            thunk_regs.eax = 0x0200u | n;          /* AH=02h, AL sectors */
-            thunk_regs.ecx = ((uint32_t)(cyl & 0xFFu) << 8) |
-                             (uint32_t)(sector & 0x3Fu) |
-                             (uint32_t)((cyl >> 2) & 0xC0u);
-            thunk_regs.edx = ((uint32_t)head << 8) | d->drive;
-            thunk_regs.es = (uint16_t)(dest >> 4);
-            thunk_regs.ebx = dest & 0x0Fu;
-            thunk_vector = 0x13;
-            thunk_bios();
-            if ((thunk_regs.flags & BIOS_FLAG_CARRY) == 0)
-                break;
-            thunk_regs.eax = 0x0000u;              /* AH=00h, reset */
-            thunk_regs.edx = d->drive;
-            thunk_vector = 0x13;
-            thunk_bios();
+        if (g_track.valid && g_track.drive == d->drive &&
+            g_track.track == track && g_track.sectors == spt) {
+            memcpy((void *)(uintptr_t)dest,
+                   (const void *)(uintptr_t)(TRACK_CACHE_ADDR +
+                                             into * d->sector_size),
+                   (size_t)n * d->sector_size);
+        } else if (into + n < spt) {
+            g_track.valid = 0;
+            if (!chs_call(d, track * spt, spt, TRACK_CACHE_ADDR))
+                return 0;
+            g_track.valid = 1;
+            g_track.drive = d->drive;
+            g_track.track = track;
+            g_track.sectors = spt;
+            memcpy((void *)(uintptr_t)dest,
+                   (const void *)(uintptr_t)(TRACK_CACHE_ADDR +
+                                             into * d->sector_size),
+                   (size_t)n * d->sector_size);
+        } else if (!chs_call(d, at, n, dest)) {
+            return 0;
         }
-        if (tries == 3)
-            return 0;
         done += n;
     }
     return 1;

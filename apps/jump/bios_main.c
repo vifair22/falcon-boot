@@ -87,9 +87,7 @@ static int       g_have_pcc;
 static int g_pci_ide;
 static int g_pci_cardbus;
 
-/* The PCI classes, class << 16 | subclass << 8 | programming interface; an
- * IDE controller's interface byte varies with its modes, so it is matched
- * without it. */
+/* The PCI classes, class << 16 | subclass << 8 | programming interface. */
 #define PCI_UHCI 0x0C0300u
 #define PCI_OHCI 0x0C0310u
 #define PCI_EHCI 0x0C0320u
@@ -129,8 +127,9 @@ static void pci_scan(void)
     pci_loc loc;
     unsigned pi;
 
-    for (pi = 0; pi < 256u && !g_pci_ide; pi++)
-        g_pci_ide = pci_find_class(0x010100u | pi, 0, &loc) == 0;
+    /* Any IDE controller, whatever its programming interface says about
+     * its modes: one pass, the interface masked off. */
+    g_pci_ide = pci_find_class_mask(0x010100u, 0xFFFF00u, 0, &loc) == 0;
     g_pci_cardbus = pci_find_class(0x060700u, 0, &loc) == 0;
     bios_puts("falcon-bios: PCI: ");
     bios_puts(g_pci_ide ? "IDE " : "");

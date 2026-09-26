@@ -3925,6 +3925,17 @@ That is the one change jump makes outside its own files. The arithmetic is
 floppy's geometry is the same shape, read from AH=08h
 (`vfd_geometry_int13`) rather than from a media type.
 
+On a floppy every read call waits half a revolution (about 100 ms) for its
+first sector, whatever it asks for, so the calls are what cost. The boot
+sector reads only stage 2's real length, which the build writes into it
+(`FD_S2_SECTORS_OFF`), not the 64 sectors the stick reserves. A read that
+ends before its track does fills a track cache instead (`disk.c`,
+`TRACK_CACHE_ADDR`), so a FAT walk's single sectors and stage 3's header
+cost one revolution per track rather than one each. Measured on the
+ThinkPad A21m (2026-09-26), stage 1 to the menu: 7.3 s before these, 5.8 s
+after; of what remains, stage 3's 73 KB is 2.8 s, which only reading fewer
+bytes shortens.
+
 `make jump` builds `build/bin/falcon-jump.img`, the whole floppy, with
 mtools (no loop device, no sudo).
 

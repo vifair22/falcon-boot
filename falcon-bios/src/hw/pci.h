@@ -55,11 +55,14 @@ typedef struct {
     uint8_t fn;
 } pci_loc;
 
-/* The `nth` function (from 0) whose class, subclass and programming
- * interface are `cls`; 0 when there is one. Bus 0 and the buses bridges on
- * it name are enough on the machines Section 14 is for; every bus is tried,
- * which costs a few thousand port reads. */
-static inline int pci_find_class(uint32_t cls, unsigned nth, pci_loc *out)
+/* The `nth` function (from 0) whose class code, masked with `mask`, is
+ * `cls` (class << 16 | subclass << 8 | programming interface); 0 when there
+ * is one. Every bus is tried, which costs a few thousand port reads, a few
+ * milliseconds on the machines Section 14 is for: call it once per thing
+ * wanted, never once per programming interface. (It was, for IDE, and 128
+ * passes cost the ThinkPad A21m about two seconds before its menu.) */
+static inline int pci_find_class_mask(uint32_t cls, uint32_t mask,
+                                      unsigned nth, pci_loc *out)
 {
     unsigned bus;
     unsigned dev;
@@ -79,7 +82,7 @@ static inline int pci_find_class(uint32_t cls, unsigned nth, pci_loc *out)
                 }
                 cc = pci_read32((uint8_t)bus, (uint8_t)dev, (uint8_t)fn,
                                 0x08) >> 8;
-                if (cc == cls && nth-- == 0) {
+                if ((cc & mask) == cls && nth-- == 0) {
                     out->bus = (uint8_t)bus;
                     out->dev = (uint8_t)dev;
                     out->fn = (uint8_t)fn;
@@ -94,6 +97,12 @@ static inline int pci_find_class(uint32_t cls, unsigned nth, pci_loc *out)
         }
     }
     return -1;
+}
+
+/* An exact class code, programming interface included. */
+static inline int pci_find_class(uint32_t cls, unsigned nth, pci_loc *out)
+{
+    return pci_find_class_mask(cls, 0xFFFFFFu, nth, out);
 }
 
 #endif /* FALCON_BIOS_PCI_H */

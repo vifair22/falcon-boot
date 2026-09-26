@@ -38,6 +38,7 @@ BIOS_DEF = $(shell sed -n 's/^\#define[ \t]*$(1)[ \t]*\([0-9]*\).*/\1/p' \
 STAGE2_LBA_CHECK := $(call BIOS_DEF,STAGE2_LBA)
 STAGE2_SECTORS_CHECK := $(call BIOS_DEF,STAGE2_SECTORS)
 STAGE3_MAX_SECTORS_CHECK := $(call BIOS_DEF,STAGE3_MAX_SECTORS)
+FD_S2_SECTORS_OFF_CHECK := $(call BIOS_DEF,FD_S2_SECTORS_OFF)
 STAGE3_LBA_CHECK := $(shell echo $$(( $(call BIOS_DEF,STAGE2_LBA) + \
 	$(call BIOS_DEF,STAGE2_SECTORS) )))
 

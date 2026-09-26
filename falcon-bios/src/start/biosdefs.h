@@ -55,6 +55,11 @@
  * addressed through. A single INT 13h transfer may not cross a 64 KB boundary
  * and this one does not. */
 #define STAGE2_SECTORS  64
+/* Where the floppy boot sector (boot_fd.S) keeps the count of stage 2's
+ * sectors it reads, which the build writes after mformat: the two bytes
+ * before the boot signature. */
+#define FD_S2_SECTORS_OFF 508
+
 /* "BOS2", at GATE_MAGIC: what stage 1 checks before it jumps, so sectors
  * that are not stage 2 (a stick whose gap was written over, a disk with
  * 4 KiB sectors that put LBA 34 somewhere else) stop with a message rather
@@ -177,6 +182,15 @@
  * be sure it fits. disk.c reads through it and marker.c writes through it. */
 #define BOUNCE_ADDR     0x90000
 #define BOUNCE_BYTES    0x8000
+
+/* The last track read from a drive with no INT 13h extensions (a floppy),
+ * kept (disk.c): on a floppy every read call waits for its first sector to
+ * come round, half a revolution on average, so the single sectors a FAT
+ * walk reads cost a revolution each unless the track they sit on is already
+ * here. Below the bounce buffer, inside one 64 KB page as floppy DMA needs,
+ * and big enough for any track INT 13h can describe (63 sectors). */
+#define TRACK_CACHE_ADDR  0x88000
+#define TRACK_CACHE_BYTES 0x8000
 
 /* Stage 3 begins with a header rather than code, so stage 2 can read one
  * sector, learn how long the rest is, and read exactly that. The alternative

@@ -76,7 +76,8 @@ start:
 	call    serial_puts
 
 	movw    $STAGE2_LBA, lba
-	movw    $STAGE2_SECTORS, left
+	movw    s2_sectors, %ax          /* what the build says stage 2 is */
+	movw    %ax, left
 	movw    $STAGE2_LOAD, dest
 
 next:
@@ -225,6 +226,14 @@ msg_notstage2:
 	.asciz  "falcon-bios: no stage 2 here\r\n"
 msg_key:
 	.asciz  "press any key to reboot.\r\n"
+
+	/* How many sectors stage 2 takes, which the build writes here once it
+	 * knows (apps/jump/app.mk): stage 2 is about 19 sectors, and the 64 the
+	 * stick reserves for it cost three more track reads on a floppy, each
+	 * half a revolution of waiting. STAGE2_SECTORS until the build says. */
+	. = _start + FD_S2_SECTORS_OFF
+s2_sectors:
+	.word   STAGE2_SECTORS
 
 	. = _start + 510
 	.byte   0x55, 0xAA
