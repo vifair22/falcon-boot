@@ -8,6 +8,8 @@
 
 #define IVT_INT13 (0x13u * 4u)
 #define IVT_INT15 (0x15u * 4u)
+#define IVT_INT18 (0x18u * 4u)
+#define IVT_INT19 (0x19u * 4u)
 
 /* The blob, copied, never called where it is linked (stage 3 is above a
  * megabyte, out of real mode's reach). Its length through integers, as
@@ -18,6 +20,8 @@ extern const unsigned char jres_blob_end[];
 static uint16_t g_seg;
 static uint32_t g_old13;
 static uint32_t g_old15;
+static uint32_t g_old18;
+static uint32_t g_old19;
 static int      g_hooked15;
 static uint16_t g_old_kb;
 static e820_entry g_carved[JRES_E820_MAX];
@@ -117,6 +121,11 @@ int jres_install(uint8_t drive, uint32_t entry, uint32_t stack_top,
     poke32(IVT_INT13, ((uint32_t)seg << 16) | (uint32_t)JRES_OFF_CODE);
     if (g_hooked15)
         poke32(IVT_INT15, ((uint32_t)seg << 16) | (uint32_t)JRES_OFF_CODE15);
+    /* No chaining: both end in a cold reset (rthunk.S, jres_reset). */
+    g_old18 = peek32(IVT_INT18);
+    g_old19 = peek32(IVT_INT19);
+    poke32(IVT_INT18, ((uint32_t)seg << 16) | (uint32_t)JRES_OFF_RESET);
+    poke32(IVT_INT19, ((uint32_t)seg << 16) | (uint32_t)JRES_OFF_RESET);
     g_seg = seg;
     if (base != (uint32_t *)0)
         *base = b;
@@ -138,6 +147,10 @@ void jres_remove(void)
         peek32(IVT_INT15) == (((uint32_t)g_seg << 16) | JRES_OFF_CODE15))
         poke32(IVT_INT15, g_old15);
     g_hooked15 = 0;
+    if (peek32(IVT_INT18) == (((uint32_t)g_seg << 16) | JRES_OFF_RESET))
+        poke32(IVT_INT18, g_old18);
+    if (peek32(IVT_INT19) == (((uint32_t)g_seg << 16) | JRES_OFF_RESET))
+        poke32(IVT_INT19, g_old19);
     if (peek16(BDA_MEMSIZE) == (uint16_t)((uint32_t)g_seg * 16u / 1024u))
         poke16(BDA_MEMSIZE, g_old_kb);
     g_seg = 0;

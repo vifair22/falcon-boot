@@ -49,7 +49,8 @@ int jmod_load(fs_vol *vol, const char *path, unsigned slot_idx,
     uint32_t slot = JMOD_SLOT_ADDR(slot_idx);
     uint8_t *at = (uint8_t *)(uintptr_t)slot;
     uint8_t *stage = (uint8_t *)(uintptr_t)JMOD_GZ_STAGE;
-    size_t len;
+    size_t len = 0;
+    unsigned attempt;
     fs_dir scratch;
     fs_dirent e;
     fs_file f;
@@ -71,23 +72,36 @@ int jmod_load(fs_vol *vol, const char *path, unsigned slot_idx,
         return -1;
     }
     if (e.size > JMOD_SLOT_BYTES ||
-        !e820_is_ram(JMOD_GZ_STAGE, JMOD_SLOT_BYTES) ||
-        fs_file_open(vol, &f, &e) != FS_OK ||
-        fs_file_read(&f, 0, e.size, stage) != FS_OK) {
+        !e820_is_ram(JMOD_GZ_STAGE, JMOD_SLOT_BYTES)) {
         *why = "the driver could not be read off the floppy.";
         return -1;
     }
-    /* Compressed as the build writes it, or as it is, which is what a
-     * module copied on by hand may be: the magic says which. */
-    len = (size_t)e.size;
-    if (len >= 2u && stage[0] == 0x1Fu && stage[1] == 0x8Bu) {
-        if (gz_member(stage, len, at, JMOD_SLOT_BYTES, &len) != GZ_OK) {
-            *why = "the driver on the floppy is damaged: it did not "
-                   "decompress.";
+    /* A module is always a gzip member: its CRC-32 is the check that the
+     * floppy gave back what was written. Read twice at most, the second
+     * time past the track cache, since a floppy that misreads once often
+     * reads right again. */
+    for (attempt = 0; ; attempt++) {
+        if (fs_file_open(vol, &f, &e) != FS_OK ||
+            fs_file_read(&f, 0, e.size, stage) != FS_OK) {
+            *why = "the driver could not be read off the floppy.";
             return -1;
         }
-    } else {
-        memcpy(at, stage, len);
+        if (e.size < 2u || stage[0] != 0x1Fu || stage[1] != 0x8Bu) {
+            *why = "the file is not a falcon jump module.";
+            return -1;
+        }
+        if (gz_member(stage, (size_t)e.size, at, JMOD_SLOT_BYTES,
+                      &len) == GZ_OK)
+            break;
+        if (attempt == 1) {
+            *why = "the driver did not read back as it was written, twice. "
+                   "The floppy may be failing.";
+            return -1;
+        }
+        bios_puts("falcon-bios: ");
+        bios_puts(path);
+        bios_puts(" failed its check; reading it again\n");
+        bios_disk_forget();
     }
     rc = jmod_check(at, len, len, slot, JMOD_SLOT_BYTES, &info);
     if (rc != JMOD_OK) {

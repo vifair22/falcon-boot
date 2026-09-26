@@ -81,6 +81,11 @@ static struct {
     uint32_t sectors;
 } g_track __attribute__((section(".data"))) = { 0, 0, 0, 0 };
 
+void bios_disk_forget(void)
+{
+    g_track.valid = 0;
+}
+
 /* AH=02h, a track at a time, for a drive with no extensions: a read that
  * crosses a track is refused by many floppy controllers, and one sector per
  * call costs a revolution each.

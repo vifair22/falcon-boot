@@ -3069,7 +3069,9 @@ flowchart TD
     RD -- ok --> MG{"0x7E04 holds BOS2?"}
     MG -- no --> F1
     MG -- yes --> S2["Stage 2, stage2.S at 0x7E00 (real mode)"]
-    S2 --> CPU{"cpu_check<br/>CPUID, CMOV (the i686 floor)"}
+    S2 --> CRC{"CRC-32 of GATE_S2LEN bytes<br/>matches the one after them?"}
+    CRC -- no --> FR
+    CRC -- yes --> CPU{"cpu_check<br/>CPUID, CMOV (the i686 floor)"}
     CPU -- no --> FR["fatal_rm: reason, key, reset"]
     CPU -- yes --> MEM{"mem_check<br/>BDA 0x413 at least 608 KiB"}
     MEM -- no --> FR
@@ -3121,8 +3123,17 @@ it:
 | 0x7E40 | the interrupt vector |
 | 0x7E41 | the boot drive |
 | 0x7E48 | the real-mode target of `boot16`, offset then segment |
+| 0x7E4C | stage 2's length, written by the build; its CRC-32 follows the image |
 
 `build.mk` checks every one against `nm` output.
+
+Stage 2 checks itself before it runs past the gate. The build writes its
+length into 0x7E4C and appends the CRC-32 of that many bytes (gzip's,
+taken from gzip's trailer, so no other tool computes it); `stage2_begin`
+recomputes it, bitwise, over what stage 1 read, and a mismatch is
+`fatal_rm` with the reason. Stage 1 has no room for the check (jump's is
+508 bytes of 510), and a medium that reads back wrong without an error is
+the reason for it: falcon jump's floppies did, on the A21m (14.3).
 
 #### 12.3.3 The thunk: a BIOS call from protected mode
 
@@ -3555,7 +3566,7 @@ flowchart TD
     PB --> CAT{"the catalog through ops.read (disc_read)<br/>vcd_boot_entry: its media type"}
     CAT -- "floppy emulation" --> VFD["vfd_serve over disc_read: the image to the heap above 64 MB,<br/>vfdres.S as drive 0x00; nothing of the module stays (12.3.8)"]
     CAT -- "hard-disk emulation, or no catalog" --> MENU
-    CAT -- "no emulation" --> RT["jres_install: rthunk.S's block below the BDA's count (1 KB)<br/>INT 13h for drive 0xEF to ops.int13, stack at the slot's top"]
+    CAT -- "no emulation" --> RT["jres_install: rthunk.S's block below the BDA's count (3 KB)<br/>INT 13h for drive 0xEF to ops.int13, stack at the slot's top;<br/>INT 18h, 19h: a cold reset"]
     RT --> PR2["bios_disk_probe(0xEF): AH=48h through the thunk, 2048-byte sectors"]
     PR2 --> VCD["vcd_chainload_drive: the catalog over 0xEF, one run,<br/>keep ranges: the thunk block and 15-16 MB (E820, E801 both halves, AH=88h)"]
     VCD --> CD["the disc's boot image at 0x7C00, DL = 0xE0 (12.3.8)"]
@@ -3566,7 +3577,7 @@ flowchart TD
     LU --> EN["ops.probe: every controller of that kind (up to four), taken from the BIOS, reset;<br/>each root port reset, enumerated, INQUIRY, READ CAPACITY"]
     EN --> GPT{"gpt_parse through ops.read:<br/>an ISO library or a shelf?"}
     GPT -- "no falcon stick" --> MENU
-    GPT -- "yes" --> RU["jres_install for the next BIOS disk (BDA 0x475 + 0x80),<br/>INT 15h hooked too: the block and 15-16 MB carved"]
+    GPT -- "yes" --> RU["jres_install for the next BIOS disk (BDA 0x475 + 0x80),<br/>INT 15h hooked too: the block and 15-16 MB carved;<br/>INT 18h, 19h: a cold reset"]
     RU --> MB["BDA count + 1; mbr_boot: LBA 0 through the thunk to 0x7C00,<br/>DL = that drive; the stick's falcon-bios from there (12.3)"]
     MB -- "unreadable, no 0x55AA" --> RM2["BDA count back, jres_remove"]
     RM2 --> MENU
@@ -3988,6 +3999,19 @@ route is chosen, so that saves nothing before the menu, and costs it the
 inflater stage 3 now links: 4 KB, about 2 KB compressed, well under a
 revolution.
 
+**Every link is checked, up to the modules.** A floppy wears, and on the
+A21m two in a day came to read back sectors that no longer matched what
+was written, sometimes with no error from the drive. What each stage reads
+is checked before it runs: stage 2 by its own CRC-32 (12.3.2), stage 3
+and every module by their gzip members' CRC-32 and length. A stage 3 or a
+module that fails is read once more, from the disk rather than the track
+cache, since a misread is often not repeated; a second failure is a
+sentence naming the disk. The rig flips one byte of each (`s2crc`,
+`s3crc`, `modcrc`) and expects the sentence. JUMP.INI and MEMTEST.BIN are
+left unchecked: both are files a person puts on the floppy by hand,
+JUMP.INI's parser refuses a line it cannot read, and memtest86+ is the
+test a failing machine is booted for.
+
 `make jump` builds `build/bin/falcon-jump.img`, the whole floppy, with
 mtools (no loop device, no sudo).
 
@@ -4035,8 +4059,10 @@ into memory and called.
   and UHCI. `jmodload.c` reads the file to `JMOD_GZ_STAGE` (6 MB, stage 2's
   staging area, free once stage 3 runs) and inflates it into its slot; the
   member's CRC-32 catches a floppy that read wrong before the header is
-  even checked. A file without gzip's magic is copied into the slot as it
-  is, so a module put on the floppy by hand needs no compressing.
+  even checked. A module is always compressed, so it is always checked:
+  a file without gzip's magic is refused as not a module. One that fails
+  its check is read again, past the track cache (`bios_disk_forget`),
+  before the route says so.
 - **Where the code lives.** `falcon-bios/src/hw/`, one directory per driver,
   and each driver's decisions in a host-tested half beside it, as
   `vcdcore.c` is to `vcdres.S`: descriptor parsing, BOT's CBW and CSW, SCSI
@@ -4088,6 +4114,20 @@ arena are extended memory, kept out of what the next loader is told it can
 use: the E820 map is carved (`e820_carve`) and E801's answer capped, as the
 stick's resident already does, and INT 15h AH=88h is answered too, since
 some of the loaders these machines run predate E801.
+
+**A medium that gives up.** The block also takes INT 18h and INT 19h, and
+both end in a cold reset (`rthunk.S`, `jres_reset`): 0x0000 into the BDA's
+reset flag at 0x472 so the BIOS runs its full POST, a line on serial, then
+the reset through 0xCF9, the keyboard controller and the reset vector.
+INT 18h is what a bootloader calls when it has nothing to boot (falcon's own
+"returning to firmware" is one), and the BIOS answers it by starting its
+next boot device without a POST, on top of everything this route left: INT
+13h and 15h hooked, the BDA's count lowered, a module in 15-16 MB, on `PCC`
+a slot still powered with its I/O window open. On the A21m that started
+Windows 2000 from the disk, which bugchecked (STOP 0x0A) on a real-mode
+vector taken for a kernel pointer. A reset rather than an undo: the list of
+what to undo grows with jump, and a reset has no list. The rig's `giveup`
+case boots a card whose boot sector is INT 18h and expects the reset.
 
 **Virtual 8086 mode.** A caller in v86 mode (DOS with EMM386, the real-mode
 half of Windows 9x) cannot be taken into protected mode: the CR0 write

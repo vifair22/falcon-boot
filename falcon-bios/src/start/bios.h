@@ -200,6 +200,11 @@ typedef struct {
 
 int bios_disk_read(void *ctx, uint64_t off, uint64_t len, void *buf);
 
+/* Empties the track cache, so the next read of any sector goes to the disk.
+ * For a read whose checksum failed: the retry has to read the medium again,
+ * not the copy the first attempt left behind. */
+void bios_disk_forget(void);
+
 /* Fills in `sector_size` by asking the BIOS about the drive, and says
  * whether the drive answered at all. Nonzero on success. A drive that
  * answers neither AH=48h nor AH=41h but reports a geometry through AH=08h is
