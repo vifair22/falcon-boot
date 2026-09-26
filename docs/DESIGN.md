@@ -3069,7 +3069,9 @@ flowchart TD
     RD -- ok --> MG{"0x7E04 holds BOS2?"}
     MG -- no --> F1
     MG -- yes --> S2["Stage 2, stage2.S at 0x7E00 (real mode)"]
-    S2 --> CPU{"cpu_check<br/>CPUID, CMOV (the i686 floor)"}
+    S2 --> CRC{"CRC-32 of GATE_S2LEN bytes<br/>matches the one after them?"}
+    CRC -- no --> FR
+    CRC -- yes --> CPU{"cpu_check<br/>CPUID, CMOV (the i686 floor)"}
     CPU -- no --> FR["fatal_rm: reason, key, reset"]
     CPU -- yes --> MEM{"mem_check<br/>BDA 0x413 at least 608 KiB"}
     MEM -- no --> FR
@@ -3121,8 +3123,17 @@ it:
 | 0x7E40 | the interrupt vector |
 | 0x7E41 | the boot drive |
 | 0x7E48 | the real-mode target of `boot16`, offset then segment |
+| 0x7E4C | stage 2's length, written by the build; its CRC-32 follows the image |
 
 `build.mk` checks every one against `nm` output.
+
+Stage 2 checks itself before it runs past the gate. The build writes its
+length into 0x7E4C and appends the CRC-32 of that many bytes (gzip's,
+taken from gzip's trailer, so no other tool computes it); `stage2_begin`
+recomputes it, bitwise, over what stage 1 read, and a mismatch is
+`fatal_rm` with the reason. Stage 1 has no room for the check (jump's is
+508 bytes of 510), and a medium that reads back wrong without an error is
+the reason for it: falcon jump's floppies did, on the A21m (14.3).
 
 #### 12.3.3 The thunk: a BIOS call from protected mode
 
@@ -3988,6 +3999,19 @@ route is chosen, so that saves nothing before the menu, and costs it the
 inflater stage 3 now links: 4 KB, about 2 KB compressed, well under a
 revolution.
 
+**Every link is checked, up to the modules.** A floppy wears, and on the
+A21m two in a day came to read back sectors that no longer matched what
+was written, sometimes with no error from the drive. What each stage reads
+is checked before it runs: stage 2 by its own CRC-32 (12.3.2), stage 3
+and every module by their gzip members' CRC-32 and length. A stage 3 or a
+module that fails is read once more, from the disk rather than the track
+cache, since a misread is often not repeated; a second failure is a
+sentence naming the disk. The rig flips one byte of each (`s2crc`,
+`s3crc`, `modcrc`) and expects the sentence. JUMP.INI and MEMTEST.BIN are
+left unchecked: both are files a person puts on the floppy by hand,
+JUMP.INI's parser refuses a line it cannot read, and memtest86+ is the
+test a failing machine is booted for.
+
 `make jump` builds `build/bin/falcon-jump.img`, the whole floppy, with
 mtools (no loop device, no sudo).
 
@@ -4035,8 +4059,10 @@ into memory and called.
   and UHCI. `jmodload.c` reads the file to `JMOD_GZ_STAGE` (6 MB, stage 2's
   staging area, free once stage 3 runs) and inflates it into its slot; the
   member's CRC-32 catches a floppy that read wrong before the header is
-  even checked. A file without gzip's magic is copied into the slot as it
-  is, so a module put on the floppy by hand needs no compressing.
+  even checked. A module is always compressed, so it is always checked:
+  a file without gzip's magic is refused as not a module. One that fails
+  its check is read again, past the track cache (`bios_disk_forget`),
+  before the route says so.
 - **Where the code lives.** `falcon-bios/src/hw/`, one directory per driver,
   and each driver's decisions in a host-tested half beside it, as
   `vcdcore.c` is to `vcdres.S`: descriptor parsing, BOT's CBW and CSW, SCSI

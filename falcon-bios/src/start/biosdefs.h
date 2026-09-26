@@ -113,6 +113,7 @@
 #define GATE_VECTOR     (GATE_ADDR + 0x40)   /* the interrupt to raise */
 #define GATE_DRIVE      (GATE_ADDR + 0x41)   /* the drive to hand over in DL */
 #define GATE_TARGET     (GATE_ADDR + 0x48)   /* where boot16 lands: off, seg */
+#define GATE_S2LEN      (GATE_ADDR + 0x4C)   /* stage 2's length, CRC-32 after */
 
 /* Where a structure the BIOS itself reads or writes has to live.
  *

@@ -24,6 +24,7 @@
 	.globl  gate_magic
 	.globl  gate_boot16
 	.globl  gate_target
+	.globl  gate_s2len
 	.globl  thunk_regs
 	.globl  thunk_vector
 	.globl  gate_drive
@@ -88,8 +89,45 @@ gate_target:
 	.word   0                    /* GATE_TARGET: offset, then segment */
 	.word   0
 
+	.org    0x4C
+gate_s2len:
+	.word   0                    /* GATE_S2LEN: written by the build */
+
 	.org    0x50
 stage2_begin:
+	/* Stage 2 checks itself before it runs any more of itself. Stage 1
+	 * reads it off media that can be wrong (a floppy wears out, and reads
+	 * back what it read without saying so), and stage 1 has no room for a
+	 * check. The build writes stage 2's length into the gate and appends
+	 * the CRC-32 of that many bytes (gzip's, reflected 0xEDB88320) after
+	 * them; this recomputes it over what stage 1 put in memory. Nothing
+	 * above has been written yet, so the bytes are still the disk's.
+	 *
+	 * Bitwise, no table: a table is a kilobyte stage 2 would carry to save
+	 * a few milliseconds once. 32-bit registers in real mode are the
+	 * 386's; the i686 floor is checked just after, by code this has
+	 * already vouched for. */
+	movw    %dx, %bp             /* the boot drive, kept across the loop */
+	movw    $STAGE2_LOAD, %si
+	movw    gate_s2len, %cx
+	jcxz    3f                   /* no length: a build that did not write it */
+	movl    $0xFFFFFFFF, %eax
+1:	xorb    (%si), %al
+	incw    %si
+	movb    $8, %bl
+2:	shrl    $1, %eax
+	jnc     4f
+	xorl    $0xEDB88320, %eax
+4:	decb    %bl
+	jnz     2b
+	loop    1b
+	notl    %eax
+	cmpl    (%si), %eax
+	je      5f
+3:	movw    $msg_s2crc, %si
+	jmp     fatal_rm
+5:	movw    %bp, %dx
+
 	movb    %dl, drive
 
 	movw    $msg_hello, %si
@@ -332,6 +370,8 @@ msg_crlf:
 	.asciz  "\r\n"
 msg_pmode:
 	.asciz  "falcon-bios: entering protected mode\r\n"
+msg_s2crc:
+	.asciz  "falcon-bios: stage 2 did not read back as it was written; the disk may be failing\r\n"
 msg_old_cpu:
 	.asciz  "falcon-bios: this processor is older than a Pentium Pro, which this loader needs\r\n"
 msg_lowmem:

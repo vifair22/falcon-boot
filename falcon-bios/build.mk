@@ -176,6 +176,15 @@ $(BIOS_STAGE2): $(BIOS_STAGE2_OBJS) $(BIOS)/start/bios.ld
 	$(CC_HOST) $(BIOS_LDFLAGS) -Wl,-Ttext,0x7E00 -Wl,-e,stage2_start -o $@.elf $(BIOS_STAGE2_OBJS) \
 		$(BIOS_LIBGCC)
 	objcopy -O binary -j .text $@.elf $@
+	@# Stage 2 checks itself (stage2.S, stage2_begin): its length into the
+	@# gate's GATE_S2LEN word, then the CRC-32 of those bytes, length
+	@# included, appended after them. gzip's trailer is that CRC, little
+	@# endian, so no tool beyond gzip computes it.
+	@n=$$(stat -c %s $@); \
+	printf "$$(printf '\\%03o\\%03o' $$((n & 255)) $$((n >> 8)))" | \
+		dd of=$@ bs=1 seek=$$((0x4C)) conv=notrunc status=none; \
+	gzip -c -n $@ | tail -c 8 | head -c 4 > $@.crc; \
+	cat $@.crc >> $@; rm -f $@.crc
 	@sz=$$(stat -c %s $@); \
 	max=$$(($(STAGE2_SECTORS_CHECK) * 512)); \
 	if [ "$$sz" -gt "$$max" ]; then \
@@ -197,7 +206,8 @@ $(BIOS_STAGE2): $(BIOS_STAGE2_OBJS) $(BIOS)/start/bios.ld
 	@# moved would be stage 3 calling into whatever is at 0x7400 instead.
 	@for pair in gate_magic:7e04 gate_entry:7e08 gate_boot16:7e10 \
 	            thunk_regs:7e20 \
-	            thunk_vector:7e40 gate_drive:7e41 gate_target:7e48; do \
+	            thunk_vector:7e40 gate_drive:7e41 gate_target:7e48 \
+	            gate_s2len:7e4c; do \
 		sym=$${pair%%:*}; want=$${pair##*:}; \
 		got=$$(nm $@.elf | awk -v s="$$sym" '$$3 == s { print $$1 }'); \
 		if [ -z "$$got" ] || [ $$((0x$$got)) -ne $$((0x$$want)) ]; then \

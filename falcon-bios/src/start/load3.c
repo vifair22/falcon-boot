@@ -37,6 +37,7 @@ static __attribute__((noreturn)) void load_gz(bios_disk *d, uint64_t base)
     uint64_t want = zh[3];
     uint64_t sectors;
     size_t got = 0;
+    unsigned attempt;
 
     if (file <= STAGE3_HDR ||
         file > (uint64_t)STAGE3_MAX_SECTORS * d->sector_size)
@@ -45,13 +46,23 @@ static __attribute__((noreturn)) void load_gz(bios_disk *d, uint64_t base)
         mem > GZ_STAGE_ADDR - STAGE3_LOAD)
         die("stage 3 declares a size that will not fit below its staging");
 
+    /* Twice, the second time from the disk rather than the track cache: a
+     * floppy that misread once often reads right the next time, and the
+     * member's CRC-32 is what tells the two apart. */
     sectors = (file + d->sector_size - 1u) / d->sector_size;
-    if (bios_disk_read(d, base, sectors * d->sector_size, packed) != 0)
-        die("stage 3 is on the disk but would not read whole");
-    if (gz_member(packed + STAGE3_HDR, (size_t)(file - STAGE3_HDR),
-                  (uint8_t *)(uintptr_t)STAGE3_LOAD, (size_t)want,
-                  &got) != GZ_OK || got != want)
-        die("stage 3 did not inflate whole; the disk may have read wrong");
+    for (attempt = 0; ; attempt++) {
+        if (bios_disk_read(d, base, sectors * d->sector_size, packed) != 0)
+            die("stage 3 is on the disk but would not read whole");
+        if (gz_member(packed + STAGE3_HDR, (size_t)(file - STAGE3_HDR),
+                      (uint8_t *)(uintptr_t)STAGE3_LOAD, (size_t)want,
+                      &got) == GZ_OK && got == want)
+            break;
+        if (attempt == 1)
+            die("stage 3 did not read back as it was written, twice; the "
+                "disk may be failing");
+        bios_puts("falcon-bios: stage 3 failed its check; reading it again\n");
+        bios_disk_forget();
+    }
     if (hdr[0] != (uint32_t)STAGE3_MAGIC || hdr[1] != want || hdr[2] != mem)
         die("stage 3 inflated to something that is not stage 3");
 

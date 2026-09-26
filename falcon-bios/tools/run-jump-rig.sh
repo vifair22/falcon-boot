@@ -19,6 +19,12 @@
 #             of its voltage registers ask for 3.3 V
 #   mem       memtest86+, when MEMTEST names a build with the boot protocol
 #             header: the handoff to it
+#   s2crc     one byte of stage 2 flipped on the floppy: stage 2's own
+#             CRC-32 stops it before it runs past its first sector
+#   s3crc     one byte of the compressed stage 3 flipped: stage 2 reads it
+#             twice and stops
+#   modcrc    one byte of UHCI.MOD flipped, the usb route chosen: the module
+#             is read twice and refused
 #   menu      the countdown interrupted: a five-second default=hdd, a Down
 #             key two seconds in, then nothing may boot for six seconds;
 #             Enter then boots the row Down moved to (the CD drive, empty in
@@ -70,6 +76,24 @@ boot() {      # boot QEMU-BINARY ARGS...
         -serial file:"$R/serial.log" -monitor none "$@" \
         >/dev/null 2>&1 || true
     log_text > "$R/serial.txt"
+}
+
+# Flips one byte of the floppy image, at a byte offset.
+flip() {      # flip OFFSET
+    local b
+    b=$(od -An -tu1 -j "$1" -N1 "$R/jump.img" | tr -d ' ')
+    printf "\\$(printf %03o $((b ^ 0xFF)))" |
+        dd of="$R/jump.img" bs=1 seek="$1" conv=notrunc status=none
+}
+
+# The byte offset of a file's contents in the floppy image: where its bytes
+# as built (the .gz the image recipe copies) sit.
+file_off() {  # file_off BUILT-FILE
+    python3 - "$R/jump.img" "$1" <<'PY'
+import sys
+img, f = (open(p, 'rb').read() for p in sys.argv[1:3])
+print(img.index(f[:64]))
+PY
 }
 
 log_text() {
@@ -154,7 +178,8 @@ usb() {       # usb CASE HC-DEVICES...
 
 FAILED=0
 CASES=("$@")
-[[ ${#CASES[@]} -gt 0 ]] || CASES=(hdd cd usb-uhci usb-ohci usb-ehci cf cf3v mem menu)
+[[ ${#CASES[@]} -gt 0 ]] ||
+    CASES=(hdd cd usb-uhci usb-ohci usb-ehci cf cf3v mem s2crc s3crc modcrc menu)
 
 for c in "${CASES[@]}"; do
     case $c in
@@ -181,6 +206,24 @@ for c in "${CASES[@]}"; do
         boot "$QPCC" -drive if=none,id=cf,format=raw,file="$R/cf.img" \
             -device falcon-pcc,drive=cf$([[ $c == cf3v ]] && echo ,volts=3)
         judge "$c" 'boot drive 0x81, sector size 512'
+        ;;
+    s2crc)
+        floppy hdd
+        flip $((34 * 512 + 0x1000))
+        boot "$QEMU"
+        judge s2crc 'stage 2 did not read back as it was written'
+        ;;
+    s3crc)
+        floppy hdd
+        flip $((98 * 512 + 0x2000))
+        boot "$QEMU"
+        judge s3crc 'stage 3 did not read back as it was written, twice'
+        ;;
+    modcrc)
+        floppy usb
+        flip $(( $(file_off build/bin/mod/UHCI.MOD.gz) + 0x400 ))
+        boot "$QEMU" -device piix3-usb-uhci,id=hc
+        judge modcrc 'did not read back as it was written, twice'
         ;;
     menu) menu_case ;;
     mem)
