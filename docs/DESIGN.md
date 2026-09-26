@@ -2559,7 +2559,8 @@ was struck: Windows needs no injector, for the reason in Section 6.1.
 
 ## 12. Boot flows
 
-Every route both loaders take, the stationary build's included (12.5),
+Every route both loaders take, the stationary build's (12.5) and falcon
+jump's (12.6) included,
 from power-on to the point where the booted
 system stands on its own: Linux has found its medium and mounted root,
 Windows Setup has found its install source, FreeBSD has mounted root from
@@ -3512,6 +3513,42 @@ memory map as the BIOS left them. A disk row is every drive but the boot
 drive whose LBA 0 carries the boot signature.
 
 
+### 12.6 falcon jump
+
+Section 14's boot floppy, as built at Section 14.11 step 1: the machine's
+disks and memtest86+. `CDR` and `USB` join the menu as rows when steps 2 and
+4 land.
+
+```mermaid
+flowchart TD
+    BIOS["BIOS<br/>sector 0 of the floppy to 0x7C00, DL = 0x00"] --> S1["Stage 1, boot_fd.S (real mode)<br/>BPB geometry, COM1 up"]
+    S1 --> RD{"INT 13h AH=02h, STAGE2_LBA on,<br/>to the end of each track to 0x7E00<br/>3 tries, AH=00h reset between"}
+    RD -- fails --> F1["fail: reason, key, jump to FFFF:0"]
+    RD -- ok --> MG{"0x7E04 holds BOS2?"}
+    MG -- no --> F1
+    MG -- yes --> S2["Stage 2, as 12.3.2"]
+    S2 --> PR{"bios_disk_probe (disk.c)<br/>AH=48h, then AH=41h"}
+    PR -- "neither" --> GEO["AH=08h: the geometry, vfd_geometry_int13<br/>reads by AH=02h from here on"]
+    PR -- "either" --> L3
+    GEO --> L3["stage3_load: header at STAGE3_LBA, then the image"]
+    L3 --> BM["bios_main (apps/jump/bios_main.c)<br/>e820_read"]
+    BM --> FAT["read_floppy: fs_identify, fs_mount (FAT12)<br/>MEMTEST.BIN present? JUMP.INI parsed (jumpini.c)"]
+    FAT --> DSK["scan_disks: every drive the BDA counts (0x475)<br/>whose LBA 0 ends in 0x55AA"]
+    DSK --> INI{"JUMP.INI taken?"}
+    INI -- "a line it cannot take" --> REP["the line and why, a key<br/>no default"]
+    INI -- "yes, or no file" --> MENU
+    REP --> MENU{"menu: a disk row each, Memory test<br/>a countdown only for a default whose row is there"}
+    MENU -- "a disk, or the countdown on it" --> MBR["MBR (mbr.c): LBA 0 to 0x7C00, DL = that drive<br/>boot16: real mode, jump 0000:7C00"]
+    MENU -- "Memory test" --> MEM["MEM: MEMTEST.BIN through linux_boot<br/>no initrd, empty command line"]
+    MENU -- "Escape" --> RF["INT 18h, else bios_reboot"]
+    MBR -- "unreadable, no 0x55AA" --> MENU
+    MEM -- "refused or unreadable" --> MENU
+```
+
+Nothing is resident at either handoff, as with the station (12.5.2). The
+floppy is read by CHS wherever its BIOS has no extensions, SeaBIOS's
+included, so the rig exercises the same path an old machine takes.
+
 ## 13. The stationary build (decided 2026-09-21)
 
 Status (2026-09-24): both builds exist and are rig-proven (`make station`):
@@ -3754,9 +3791,9 @@ was weighed and accepted (13.6).
 
 ## 14. falcon jump: a boot floppy (decided 2026-09-25)
 
-Status (2026-09-25): designed, not built. `apps/jump/` does not exist yet;
-14.11 is the order it is built in. When a route exists, Section 12 gains its
-diagram, traced from the code; the diagrams here are the design.
+Status (2026-09-25): step 1 of 14.11 is built and rig-proven under SeaBIOS
+(`make jump`): the floppy, its CHS boot sector, `MBR` and `MEM`, and
+`JUMP.INI`. Section 12.6 draws it. Steps 2 onward are the design below.
 
 A floppy that lives in the drive of an old BIOS machine and is its boot
 manager. It boots the machine's own disks by default, memtest86+ on request,
@@ -3837,7 +3874,10 @@ so jump's stage 1 reads by AH=02h with the geometry from the BPB, three
 tries with a reset between (a drive's motor spins up on the first). Stage 2
 is the stick's; what changes in shared code is that `load3.c` and `disk.c`
 gain a CHS path, taken when AH=41h says the boot drive has no extensions.
-That is the one change jump makes outside its own files.
+That is the one change jump makes outside its own files. The arithmetic is
+`vfd/vfdcore.c`'s, which already had it for the emulated floppy: a real
+floppy's geometry is the same shape, read from AH=08h
+(`vfd_geometry_int13`) rather than from a media type.
 
 `make jump` builds `build/bin/falcon-jump.img`, the whole floppy, with
 mtools (no loop device, no sudo).
@@ -3872,6 +3912,9 @@ into memory and called.
 
 ### 14.5 Power-on to the menu
 
+Section 12.6 draws what step 1 built, traced from the code. The design for
+the whole menu, the later routes included:
+
 ```mermaid
 flowchart TD
     BIOS["BIOS<br/>sector 0 of the floppy to 0x7C00, DL = 0x00"] --> S1["Stage 1, the floppy boot sector (real mode)<br/>BPB geometry, COM1 up"]
@@ -3885,9 +3928,9 @@ flowchart TD
     PCI --> DSK["the disks INT 13h already has (BDA 0x475)"]
     DSK --> MENU{"menu<br/>a countdown only if JUMP.INI sets one"}
     MENU -- "a disk" --> MBR["MBR"]
-    MENU -- "m" --> MEM["MEM"]
-    MENU -- "c" --> CDR["CDR: load ATA.MOD, 14.6"]
-    MENU -- "u" --> USB["USB: load the host controller modules and USB.MOD, 14.6"]
+    MENU -- "Memory test" --> MEM["MEM"]
+    MENU -- "CD" --> CDR["CDR: load ATA.MOD, 14.6"]
+    MENU -- "USB" --> USB["USB: load the host controller modules and USB.MOD, 14.6"]
 ```
 
 `MBR` and `MEM` leave nothing behind, as the station's routes do (12.5.2).

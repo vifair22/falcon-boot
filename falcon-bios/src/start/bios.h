@@ -20,6 +20,7 @@
 #include <stdint.h>
 
 #include <start/biosdefs.h>
+#include <vfd/vfdcore.h>
 
 /* ---- the thunk (falcon-bios/src/start/thunk.S) ----
  *
@@ -185,12 +186,18 @@ typedef struct {
 typedef struct {
     uint8_t  drive;         /* what the BIOS booted from; rarely 0x80 */
     uint32_t sector_size;   /* 512 for a disk, 2048 for a CD */
+    /* Zero sectors: read by LBA, AH=42h. Otherwise the drive has no INT 13h
+     * extensions (a floppy, DESIGN Section 14.3) and is read by AH=02h with
+     * the geometry AH=08h gave. */
+    vfd_geom geom;
 } bios_disk;
 
 int bios_disk_read(void *ctx, uint64_t off, uint64_t len, void *buf);
 
 /* Fills in `sector_size` by asking the BIOS about the drive, and says
- * whether the drive answered at all. Nonzero on success. */
+ * whether the drive answered at all. Nonzero on success. A drive that
+ * answers neither AH=48h nor AH=41h but reports a geometry through AH=08h is
+ * read by CHS from then on. */
 int bios_disk_probe(bios_disk *d, uint8_t drive);
 
 /* Entered from stage 2 once protected mode is up. Never returns. */

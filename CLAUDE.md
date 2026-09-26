@@ -116,8 +116,10 @@ falcon-efi and falcon-bios, which never share a set, may both have a `pos/`.
 
 - `apps/` the loaders, one directory per build: `stick/` (every route, the
   loader on a falcon stick; `all` builds its UEFI image, `make bios` its
-  BIOS one) and `station/` (DESIGN Section 13, falcon as a machine's own
-  boot loader; `make station`). An app is its entry points (`efi_main.c`,
+  BIOS one), `station/` (DESIGN Section 13, falcon as a machine's own
+  boot loader; `make station`) and `jump/` (DESIGN Section 14, a boot
+  floppy for an old BIOS machine; `make jump` builds the whole 1.44 MB
+  image with mtools, its core in the FAT12 volume's reserved sectors). An app is its entry points (`efi_main.c`,
   `efi_sbat.c`, `bios_main.c`) and an `app.mk` that lists, one line per
   module with its reason, what the build links. falcon-efi and falcon-bios
   hold the modules and say how an app is linked (`efi_app`, `bios_app`);
@@ -317,8 +319,11 @@ falcon-efi and falcon-bios, which never share a set, may both have a `pos/`.
   `biosdefs.h`), `console/` (serial, the screen, the prompt), `iso/` (the
   virtual CD and the ISO scan), `vfd/`, `mem/` (E820 and the heap),
   `disk/` (the read callback and the marker), `linux/`, `pos/`, `bsd/`,
-  `win/` and `mbr/`. The entry points are the apps'
-  (`apps/stick/bios_main.c`, `apps/station/bios_main.c`).
+  `win/` and `mbr/`, and `jump/` (falcon jump's JUMP.INI parser). The
+  entry points are the apps' (`apps/<app>/bios_main.c`). `start/boot_fd.S`
+  is jump's stage 1, a FAT12 boot sector that reads the stick's stage 2 by
+  CHS; `disk.c` reads by CHS too (AH=02h, `vfdcore.c`'s arithmetic) when a
+  drive answers neither AH=48h nor AH=41h, which is a floppy.
 
   It is i686 code in flat 32-bit protected mode, paging off, and one image
   runs on every processor from the Pentium Pro on (docs/notes/bios-route.md

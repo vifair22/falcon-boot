@@ -68,7 +68,8 @@ BIOS_CFLAGS := -std=c11 -O2 -ffreestanding -fno-stack-protector \
 # hundred bytes each, they reach the BIOS through the gate at a fixed address
 # rather than through a symbol, and duplicating them is cheaper than a call
 # gate for every line of output.
-BIOS_S2_CSRCS := $(addprefix $(BIOS)/,start/load3.c disk/disk.c console/console.c start/fault.c) \
+BIOS_S2_CSRCS := $(addprefix $(BIOS)/,start/load3.c disk/disk.c vfd/vfdcore.c console/console.c \
+	start/fault.c) \
 	$(CORE_LIBC)
 BIOS_S2_COBJS := $(patsubst %.c,$(BIOS_OBJ)/%.o,$(BIOS_S2_CSRCS))
 
@@ -77,12 +78,13 @@ BIOS_S2_COBJS := $(patsubst %.c,$(BIOS_OBJ)/%.o,$(BIOS_S2_CSRCS))
 # and the whole media layer, which is what the third stage was for: under
 # stage 2's 33 KB ceiling that had to be one driver called by name.
 BIOS_MOD_serial  := $(BIOS)/console/console.c
-BIOS_MOD_console := $(BIOS)/console/prompt.c $(BIOS)/console/screen.c
-BIOS_MOD_disk    := $(BIOS)/disk/disk.c
+BIOS_MOD_prompt  := $(BIOS)/console/prompt.c  # the passphrase, and nothing else
+BIOS_MOD_console := $(BIOS)/console/screen.c
+BIOS_MOD_disk    := $(BIOS)/disk/disk.c $(BIOS)/vfd/vfdcore.c
 BIOS_MOD_marker  := $(BIOS)/disk/marker.c
 BIOS_MOD_scan    := $(BIOS)/iso/scan.c
 BIOS_MOD_iso     := $(BIOS)/iso/vcd.c $(BIOS)/iso/vcdcore.c
-BIOS_MOD_vfd     := $(BIOS)/vfd/vfd.c $(BIOS)/vfd/vfdcore.c
+BIOS_MOD_vfd     := $(BIOS)/vfd/vfd.c
 BIOS_MOD_e820    := $(BIOS)/mem/e820.c
 BIOS_MOD_heap    := $(BIOS)/mem/heap.c
 BIOS_MOD_linux   := $(BIOS)/linux/linux.c $(BIOS)/linux/linuxcore.c
@@ -90,6 +92,7 @@ BIOS_MOD_pos     := $(BIOS)/pos/pos.c
 BIOS_MOD_bsd     := $(BIOS)/bsd/bsd.c
 BIOS_MOD_win     := $(BIOS)/win/win.c
 BIOS_MOD_mbr     := $(BIOS)/mbr/mbr.c
+BIOS_MOD_jumpini := $(BIOS)/jump/jumpini.c
 
 # Every C source some image links, for compile_commands.json and the analyzers.
 BIOS_CSRCS := $(BIOS_S2_CSRCS)
@@ -142,6 +145,25 @@ $(BIOS_STAGE1): $(BIOS_OBJ)/$(BIOS)/start/boot.o $(BIOS)/start/bios.ld
 		echo "ERROR: $@ is $$sz bytes, not 512: a boot sector is one sector"; \
 		exit 1; \
 	fi
+
+# Stage 1 for a floppy (DESIGN Section 14.3): a FAT12 boot sector, BPB and
+# all, that reads the same stage 2 from the volume's reserved sectors by CHS.
+BIOS_FD_STAGE1 := $(BIN)/falcon-bios-fd-stage1.bin
+
+$(BIOS_FD_STAGE1): $(BIOS_OBJ)/$(BIOS)/start/boot_fd.o $(BIOS)/start/bios.ld
+	@mkdir -p $(@D)
+	$(CC_HOST) $(BIOS_LDFLAGS) -Wl,-Ttext,0x7C00 -Wl,-e,_start -o $@.elf $<
+	objcopy -O binary -j .text $@.elf $@
+	@sz=$$(stat -c %s $@); \
+	if [ "$$sz" -ne 512 ]; then \
+		echo "ERROR: $@ is $$sz bytes, not 512: a boot sector is one sector"; \
+		exit 1; \
+	fi
+	@# The BPB has to start at byte 3, after a two-byte short jump and a
+	@# nop, or mformat writes the geometry over the code.
+	@test "$$(od -An -tx1 -N3 $@ | tr -d ' ')" = "eb3c90" || { \
+		echo "ERROR: $@ does not open with the short jump the BPB needs"; \
+		exit 1; }
 
 BIOS_STAGE2_OBJS := $(BIOS_OBJ)/$(BIOS)/start/stage2.o $(BIOS_OBJ)/$(BIOS)/start/pmode.o \
 	$(BIOS_OBJ)/$(BIOS)/start/thunk.o $(BIOS_OBJ)/$(BIOS)/start/idt.o $(BIOS_S2_COBJS)
@@ -271,8 +293,9 @@ endef
 # corrupt archive, and a kernel placed past the identity map of the loader's
 # long-mode days triple-faulted.
 BIOS_TESTS := $(addprefix falcon-bios/tests/,main.c vcdcore_test.c vfdcore_test.c \
-	linuxcore_test.c e820_test.c)
-BIOS_UUT := $(BIOS)/iso/vcdcore.c $(BIOS)/vfd/vfdcore.c $(BIOS)/linux/linuxcore.c $(BIOS)/mem/e820.c
+	linuxcore_test.c e820_test.c jumpini_test.c)
+BIOS_UUT := $(BIOS)/iso/vcdcore.c $(BIOS)/vfd/vfdcore.c $(BIOS)/linux/linuxcore.c $(BIOS)/mem/e820.c \
+	$(BIOS)/jump/jumpini.c
 
 $(eval $(call test_bin,bios,$(BIOS_TESTS) $(BIOS_UUT)))
 

@@ -63,6 +63,20 @@ int vfd_geometry(uint8_t media, uint64_t image_bytes, vfd_geom *g);
 int vfd_chs_to_lba(const vfd_geom *g, uint16_t cyl, uint8_t head,
                    uint8_t sector, uint32_t *lba);
 
+/* The inverse, for reading a real floppy rather than serving an image
+ * (falcon-bios/src/disk/disk.c, DESIGN Section 14.3): the CHS INT 13h AH=02h
+ * takes for a linear sector. VFD_ERR_RANGE past the geometry's last sector. */
+int vfd_lba_to_chs(const vfd_geom *g, uint32_t lba, uint16_t *cyl,
+                   uint8_t *head, uint8_t *sector);
+
+/* A real drive's geometry from what INT 13h AH=08h returns in CH, CL and
+ * DH: the last cylinder's index split across CH and CL's top two bits, the
+ * sectors per track in CL's low six, the last head's index in DH. `media`
+ * and `bios_type` are left zero; they describe an emulated floppy, not a
+ * real one. VFD_ERR_RANGE when the answer describes no sectors, or more
+ * heads than the geometry can hold. */
+int vfd_geometry_int13(uint8_t ch, uint8_t cl, uint8_t dh, vfd_geom *g);
+
 /* How many sectors of a CHS read stay on one track, so the handler serves a
  * multi-sector read in track-sized passes: a read may not cross a track
  * boundary in one INT 13h AH=02h, and real code (a boot sector loading its

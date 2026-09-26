@@ -90,7 +90,8 @@ make test-image      # build the exFAT fixture the rig boots against
 make run             # boot it under QEMU/OVMF with a display window
 make bios            # the BIOS loader's stages
 make test-bios-img   # a disk the rig boots with run-qemu.sh --bios
-make station             # the stationary build, UEFI and BIOS (DESIGN 13)
+make station         # the stationary build, UEFI and BIOS (DESIGN 13)
+make jump            # the boot floppy, build/bin/falcon-jump.img (DESIGN 14)
 ```
 
 See `docs/DESIGN.md` for architecture and the MVP build order.

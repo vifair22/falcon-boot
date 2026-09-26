@@ -36,8 +36,58 @@ typedef struct {
 
 #define g_params (*(bios_driveparm *)(uintptr_t)DRIVEPARM_ADDR)
 
+/* AH=02h, a track at a time, for a drive with no extensions: a read that
+ * crosses a track is refused by many floppy controllers, and one sector per
+ * call costs a revolution each. Three tries with a reset between, since a
+ * floppy's first read can fail while its motor comes up to speed; that is
+ * what every BIOS's own boot code does too. */
+static int read_sectors_chs(const bios_disk *d, uint64_t lba, uint16_t count)
+{
+    uint32_t done = 0;
+
+    if (lba > 0xFFFFFFFFu)
+        return 0;
+    while (done < count) {
+        uint32_t at = (uint32_t)lba + done;
+        uint32_t dest = (uint32_t)BOUNCE_ADDR + done * d->sector_size;
+        uint32_t n;
+        uint16_t cyl;
+        uint8_t head;
+        uint8_t sector;
+        int tries;
+
+        if (vfd_run_on_track(&d->geom, at, count - done, &n) != VFD_OK ||
+            vfd_lba_to_chs(&d->geom, at, &cyl, &head, &sector) != VFD_OK)
+            return 0;
+        for (tries = 0; tries < 3; tries++) {
+            thunk_regs.eax = 0x0200u | n;          /* AH=02h, AL sectors */
+            thunk_regs.ecx = ((uint32_t)(cyl & 0xFFu) << 8) |
+                             (uint32_t)(sector & 0x3Fu) |
+                             (uint32_t)((cyl >> 2) & 0xC0u);
+            thunk_regs.edx = ((uint32_t)head << 8) | d->drive;
+            thunk_regs.es = (uint16_t)(dest >> 4);
+            thunk_regs.ebx = dest & 0x0Fu;
+            thunk_vector = 0x13;
+            thunk_bios();
+            if ((thunk_regs.flags & BIOS_FLAG_CARRY) == 0)
+                break;
+            thunk_regs.eax = 0x0000u;              /* AH=00h, reset */
+            thunk_regs.edx = d->drive;
+            thunk_vector = 0x13;
+            thunk_bios();
+        }
+        if (tries == 3)
+            return 0;
+        done += n;
+    }
+    return 1;
+}
+
 static int read_sectors(const bios_disk *d, uint64_t lba, uint16_t count)
 {
+    if (d->geom.sectors != 0)
+        return read_sectors_chs(d, lba, count);
+
     bios_dap_at.size = 16;
     bios_dap_at.reserved = 0;
     bios_dap_at.sectors = count;
@@ -94,6 +144,39 @@ int bios_disk_read(void *ctx, uint64_t off, uint64_t len, void *buf)
     return 0;
 }
 
+/* A drive AH=48h did not answer. If AH=41h says it has the extensions after
+ * all, it stays on AH=42h at 512 bytes, as before there was a CHS path;
+ * otherwise AH=08h's geometry, and AH=02h from then on (DESIGN Section 14.3).
+ * Nonzero when the drive answered either. */
+static int probe_chs(bios_disk *d)
+{
+    thunk_regs.eax = 0x4100u;              /* AH=41h, extensions present? */
+    thunk_regs.ebx = 0x55AAu;
+    thunk_regs.edx = d->drive;
+    thunk_vector = 0x13;
+    thunk_bios();
+    if ((thunk_regs.flags & BIOS_FLAG_CARRY) == 0 &&
+        (thunk_regs.ebx & 0xFFFFu) == 0xAA55u)
+        return 1;
+
+    thunk_regs.eax = 0x0800u;              /* AH=08h, drive geometry */
+    thunk_regs.edx = d->drive;
+    thunk_regs.es = 0;
+    thunk_regs.edi = 0;
+    thunk_vector = 0x13;
+    thunk_bios();
+    if ((thunk_regs.flags & BIOS_FLAG_CARRY) != 0)
+        return 0;
+    if (vfd_geometry_int13((uint8_t)((thunk_regs.ecx >> 8) & 0xFFu),
+                           (uint8_t)(thunk_regs.ecx & 0xFFu),
+                           (uint8_t)((thunk_regs.edx >> 8) & 0xFFu),
+                           &d->geom) != VFD_OK) {
+        memset(&d->geom, 0, sizeof d->geom);
+        return 0;
+    }
+    return 1;
+}
+
 int bios_disk_probe(bios_disk *d, uint8_t drive)
 {
     if (d == (bios_disk *)0)
@@ -107,6 +190,8 @@ int bios_disk_probe(bios_disk *d, uint8_t drive)
     memset(&g_params, 0, sizeof g_params);
     g_params.size = sizeof g_params;
 
+    memset(&d->geom, 0, sizeof d->geom);
+
     thunk_regs.eax = 0x4800u;              /* AH=48h, drive parameters */
     thunk_regs.edx = drive;
     thunk_regs.esi = (uint32_t)DRIVEPARM_ADDR;
@@ -115,7 +200,7 @@ int bios_disk_probe(bios_disk *d, uint8_t drive)
     thunk_bios();
 
     if ((thunk_regs.flags & BIOS_FLAG_CARRY) != 0)
-        return 0;
+        return probe_chs(d);
     if (g_params.bytes_per_sector == 512u || g_params.bytes_per_sector == 2048u ||
         g_params.bytes_per_sector == 4096u)
         d->sector_size = g_params.bytes_per_sector;

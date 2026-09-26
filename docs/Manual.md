@@ -119,6 +119,34 @@ BIOS:
 Every BIOS disk but the boot disk whose first sector carries the boot
 signature is a row.
 
+### 1.5 falcon jump
+
+The boot floppy (`docs/DESIGN.md` Section 14), `build/bin/falcon-jump.img`
+from `make jump`. Written to a floppy with `dd if=build/bin/falcon-jump.img
+of=/dev/fd0`; it is an ordinary FAT12 volume after that, and its files are
+changed with `mcopy` or by mounting it.
+
+| code | route | reached by |
+|---|---|---|
+| `MBR` | a disk's own boot code, started from 0x7C00 with DL naming that disk | its row, `Disk 0x80` and so on |
+| `MEM` | memtest86+, `MEMTEST.BIN` on the floppy, started through the x86 boot protocol | the Memory test row |
+
+Every BIOS disk whose first sector carries the boot signature is a row, and
+the Memory test row is there when the floppy holds a `MEMTEST.BIN`. `make
+jump MEMTEST=<file>` copies one on; it has to be a build carrying the x86
+boot protocol header (memtest86+ 6 and later), and the 32-bit build for a
+processor with no 64-bit mode.
+
+`JUMP.INI`, when the floppy has one, sets a default and a countdown:
+
+    default=hdd        ; hdd, memtest, cd or usb
+    timeout=5          ; seconds; any key stops the countdown
+
+`hdd` is the first disk row. Without the file, or with a default whose row
+is not on the menu, the menu waits. A line the file cannot take is named on
+screen before the menu, which then waits with no default. `make jump
+JUMP_INI=<file>` copies one on.
+
 ## 2. Installing the stationary build by hand
 
 The stationary build (`docs/DESIGN.md` Section 13) is a machine's own boot
