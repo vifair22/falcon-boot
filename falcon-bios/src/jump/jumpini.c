@@ -20,9 +20,11 @@ const char *jump_default_name(jump_default d)
     return k_default_names[d];
 }
 
-static char lower(char c)
+static unsigned char lower(char c)
 {
-    return (c >= 'A' && c <= 'Z') ? (char)(c - 'A' + 'a') : c;
+    unsigned char u = (unsigned char)c;
+
+    return (u >= 'A' && u <= 'Z') ? (unsigned char)(u + ('a' - 'A')) : u;
 }
 
 static int is_space(char c)
@@ -34,7 +36,7 @@ static int is_space(char c)
 static int word_eq(const char *a, const char *b, const char *word)
 {
     while (a < b && *word != '\0') {
-        if (lower(*a) != *word)
+        if (lower(*a) != (unsigned char)*word)
             return 0;
         a++;
         word++;

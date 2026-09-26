@@ -148,7 +148,9 @@ static void read_floppy(uint8_t drive)
         static const char why[] = "the file could not be read";
         size_t i;
 
-        for (i = 0; i < sizeof why && i < sizeof g_cfg.why; i++)
+        _Static_assert(sizeof why <= sizeof g_cfg.why,
+                       "the sentence fits jump_cfg's buffer");
+        for (i = 0; i < sizeof why; i++)
             g_cfg.why[i] = why[i];
         g_cfg.err_line = 1;
         bios_puts("falcon-bios: JUMP.INI could not be read\n");
