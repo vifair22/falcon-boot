@@ -68,6 +68,11 @@ change it.
    other systems, for installing on a machine's own disk as its boot
    loader. Chosen at compile time, so the stick's parsers are not in it at
    all. Section 13.
+8. **A boot floppy, falcon jump (decision 2026-09-25).** A third BIOS
+   loader, on a FAT12 floppy that stays in an old machine's drive: it boots
+   the machine's disks and memtest86+, and the CD and USB sticks that
+   machine's BIOS cannot boot, loading a driver off the floppy only for the
+   route chosen. Section 14.
 
 ### Non-goals
 
@@ -3746,3 +3751,261 @@ was weighed and accepted (13.6).
   has been done on a few machines.
 - **A drive swap for BIOS chains by default.** Built when a Windows is
   measured that needs it (13.4), not before.
+
+## 14. falcon jump: a boot floppy (decided 2026-09-25)
+
+Status (2026-09-25): designed, not built. `apps/jump/` does not exist yet;
+14.11 is the order it is built in. When a route exists, Section 12 gains its
+diagram, traced from the code; the diagrams here are the design.
+
+A floppy that lives in the drive of an old BIOS machine and is its boot
+manager. It boots the machine's own disks by default, memtest86+ on request,
+and on a key press the two things such a BIOS cannot boot on its own: a CD
+in an IDE drive, and a falcon stick in a USB port. It is a third loader app
+beside the stick and the station, built from falcon-bios's modules plus the
+drivers this section adds.
+
+Section 7's invariants are untouched: jump holds no key and signs nothing,
+and a BIOS has no enforcement for it to relax.
+
+### 14.1 What it boots, and what it does not
+
+| Code | Route | Needs |
+|---|---|---|
+| `MBR` | a disk the BIOS already sees, its own boot code at 0x7C00 (13.4's route, `mbr.c`) | nothing loaded |
+| `MEM` | memtest86+ off the floppy, through the x86 boot protocol (`linux.c`) | nothing loaded |
+| `CDR` | the CD in an IDE drive, El Torito no-emulation or floppy emulation | `ATA.MOD`, resident |
+| `USB` | a falcon stick in a USB port, as drive 0x80 | a host controller module and `USB.MOD`, resident |
+| `PCC` | a CF card in a PC Card ATA adapter, as a disk (after the MVP) | a socket module and `ATA.MOD`, resident |
+
+Not in scope, and why:
+
+- **ISOs and disk images.** falcon-boot on a stick does that, and jump's
+  `USB` route is how an old machine gets to it. A second implementation
+  in jump would be two places to fix every ISO bug.
+- **Other USB sticks.** The resident serves any mass-storage device; the
+  menu offers only falcon sticks (their GPT carries falcon's partition
+  identities, `part/`). Widened when a need turns up, not before.
+- **Hard-disk emulation CDs** (El Torito media type 4). The image can be
+  hundreds of MB, so it cannot be copied into memory as a floppy image is,
+  and streaming it needs a resident the MVP's CD route does not. They are
+  rare. Refused with a sentence.
+- **Disks the BIOS cannot see** (an add-in controller with no option ROM, a
+  disk past an old BIOS's size limit). The MVP boots the disks INT 13h
+  already has; `ATA.MOD` serving them is the same resident as `PCC`, and
+  comes with it.
+- **USB keyboards.** PS/2 only. Taking a USB controller from the BIOS ends
+  its legacy keyboard emulation, on EHCI for the companion controllers too,
+  so a USB keyboard would need a HID driver in jump to keep working.
+
+### 14.2 Speed: why nothing loads until it is needed
+
+The tool this replaces (Plop) enumerates every controller and device at
+every boot, and USB enumeration is slow by specification: at least 50 ms of
+port reset per port, 100 ms for a device to settle, and taking EHCI from
+the BIOS's SMI handler on top. Paid at every boot, it is the delay.
+
+A floppy reads at roughly 30-50 KB/s. So the core is small (screen, a PCI
+class scan, the menu, the INI) and is on screen in about a second; the
+default route loads nothing more at all. A driver is read off the floppy
+only when its route is chosen, and only for a controller the PCI scan found
+(class 0x0C03 prog-if 0x00/0x10/0x20 for UHCI/OHCI/EHCI, 0x0101 for IDE).
+USB is enumerated only after the key that asks for it.
+
+### 14.3 The floppy
+
+A 1.44 MB FAT12 volume, so it mounts in Linux and its files are replaced
+with `mcopy` or `cp`:
+
+| Where | What |
+|---|---|
+| sector 0 | the boot sector: the BPB, then the stage 1 that reads the reserved sectors |
+| reserved sectors | stage 2 (falcon-bios's, unchanged) and jump's stage 3, the core |
+| `JUMP.INI` | optional, 14.7 |
+| `MEMTEST.BIN` | memtest86+, any build carrying the x86 boot protocol header |
+| `*.MOD` | the drivers, 14.4 |
+
+The core goes in the reserved sectors (the BPB's reserved-sector count is
+raised to cover it) rather than in a file, so the boot sector reads one
+fixed range and parses no filesystem. FAT12 in 512 bytes of assembly is
+possible (DOS does it), and is the kind of decision
+docs/notes/bios-route.md Section 5.3 keeps out of assembly. Everything
+after the core is read as files, through falcon-core's `fat.c`.
+
+**CHS, not LBA.** A BIOS's floppy support rarely answers INT 13h AH=41h/42h,
+so jump's stage 1 reads by AH=02h with the geometry from the BPB, three
+tries with a reset between (a drive's motor spins up on the first). Stage 2
+is the stick's; what changes in shared code is that `load3.c` and `disk.c`
+gain a CHS path, taken when AH=41h says the boot drive has no extensions.
+That is the one change jump makes outside its own files.
+
+`make jump` builds `build/bin/falcon-jump.img`, the whole floppy, with
+mtools (no loop device, no sudo).
+
+### 14.4 Modules
+
+A module is a driver as a separately linked flat image, read from its file
+into memory and called.
+
+- **Fixed slots, no relocation.** Each module is linked at its own address
+  in extended memory, fixed in `biosdefs.h` as the stages' addresses are.
+  The core loads a module to its slot; nothing is relocated at run time.
+- **A header.** Magic, an ABI version, the slot the module was linked for,
+  its length, its entry point and its name. The core checks all of them
+  before the jump and refuses a mismatch with a sentence ("UHCI.MOD is from
+  another build"), not a fault.
+- **Two tables.** The core calls the entry with a table of the services a
+  module may use (serial output, a delay from the PIT, PCI configuration
+  space, memory from the module's own arena, the thunk to the BIOS), and the
+  module fills in a table of what it offers: find devices, read blocks. A
+  module calls nothing in the core by symbol.
+- **The set.** `ATA.MOD` (ATA and ATAPI, legacy ports and PCI IDE),
+  `UHCI.MOD`, `OHCI.MOD`, `EHCI.MOD` (one host controller each, root ports
+  only in the MVP), `USB.MOD` (enumeration, Bulk-Only Transport, the SCSI
+  commands a stick needs). Later, a PC Card socket module.
+- **Where the code lives.** `falcon-bios/src/hw/`, one directory per driver,
+  and each driver's decisions in a host-tested half beside it, as
+  `vcdcore.c` is to `vcdres.S`: descriptor parsing, BOT's CBW and CSW, SCSI
+  command blocks, transfer descriptor layout. A driver that is wrong about
+  hardware fails silently on a real machine, which is the reason for the
+  split.
+
+### 14.5 Power-on to the menu
+
+```mermaid
+flowchart TD
+    BIOS["BIOS<br/>sector 0 of the floppy to 0x7C00, DL = 0x00"] --> S1["Stage 1, the floppy boot sector (real mode)<br/>BPB geometry, COM1 up"]
+    S1 --> RD{"INT 13h AH=02h, CHS<br/>the reserved sectors to 0x7E00<br/>3 tries, AH=00h reset between"}
+    RD -- fails --> F1["fail: reason, key, jump to FFFF:0"]
+    RD -- ok --> S2["Stage 2, as 12.3.2<br/>CPU floor, A20, protected mode"]
+    S2 --> L3["stage3_load: no extensions on DL,<br/>so the CHS path"]
+    L3 --> BM["bios_main (apps/jump/bios_main.c)<br/>e820_read"]
+    BM --> FAT["fat_mount on the floppy<br/>JUMP.INI, if present (14.7)"]
+    FAT --> PCI["PCI class scan: what each route could use<br/>no driver loaded"]
+    PCI --> DSK["the disks INT 13h already has (BDA 0x475)"]
+    DSK --> MENU{"menu<br/>a countdown only if JUMP.INI sets one"}
+    MENU -- "a disk" --> MBR["MBR"]
+    MENU -- "m" --> MEM["MEM"]
+    MENU -- "c" --> CDR["CDR: load ATA.MOD, 14.6"]
+    MENU -- "u" --> USB["USB: load the host controller modules and USB.MOD, 14.6"]
+```
+
+`MBR` and `MEM` leave nothing behind, as the station's routes do (12.5.2).
+
+### 14.6 The residents
+
+`CDR` and `USB` hand the machine to a bootloader that reads its medium
+through INT 13h, so the driver that found the medium has to stay and answer
+it. That is the one hard part of jump.
+
+**The reverse thunk.** A resident's INT 13h entry is called in real mode,
+but the driver is protected-mode C at its slot above a megabyte. The entry
+is a small real-mode stub in conventional memory that saves the caller's
+state, enters protected mode with jump's own GDT and interrupts off, calls
+the driver, and returns to real mode and the caller, the opposite way from
+stage 2's thunk. Drivers poll; nothing in them takes an interrupt.
+
+**Memory.** The stub and its state take conventional memory the way
+`vcdres.S` does (the BDA's count at 0x413 is lowered). The driver's slot and
+arena are extended memory, kept out of what the next loader is told it can
+use: the E820 map is carved (`e820_carve`) and E801's answer capped, as the
+stick's resident already does, and INT 15h AH=88h is answered too, since
+some of the loaders these machines run predate E801.
+
+**Virtual 8086 mode.** A caller in v86 mode (DOS with EMM386, the real-mode
+half of Windows 9x) cannot be taken into protected mode: the CR0 write
+faults to the monitor. The stub checks and fails the call with an error
+rather than trying. DOS with a memory manager cannot read a CD or stick
+through jump; booting one without it can.
+
+**CD.** `ATA.MOD` finds the ATAPI drive, core's `eltorito.c` reads the
+catalog, and the entry's media type decides:
+
+- no emulation (every Linux, BSD and Windows 2000-on disc): the boot image
+  is loaded at its segment and the resident serves the disc as a CD
+  drive number, 2048-byte sectors through AH=42h, and AH=4Bh;
+- floppy emulation (DOS and Win9x boot discs, vendor utility CDs): the
+  image (2.88 MB at most) is read into extended memory and served as drive
+  0x00 by the stick's `vfdres.S`, with the real floppy moved to 0x01. `vfd.c`
+  takes a read callback in place of an ISO file for this;
+- hard-disk emulation: refused (14.1).
+
+**USB.** The host controller modules for the controllers the scan found,
+then `USB.MOD`, enumerate the root ports. The sticks whose GPT is a falcon
+stick's are offered; the one picked becomes drive 0x80 and the BIOS's own
+disks move up one (the BDA's count at 0x475 goes up by one, and a call for
+0x80 onwards is renumbered before it is passed on). That is what a BIOS that
+boots USB does, so the stick's own routes, its `MBR` and Windows chains
+included, see the machine as they would there. Then the stick's LBA 0 goes
+to 0x7C00 with DL = 0x80, and falcon-bios on the stick takes it from there.
+
+### 14.7 JUMP.INI
+
+Optional. Without it there is no default and no countdown: the menu waits.
+With it:
+
+    default=hdd        ; hdd, memtest, cd or usb
+    timeout=5          ; seconds; any key stops the countdown
+
+A key the file does not know, or a value it cannot parse, is a line on the
+screen naming it, and the menu then waits as if there were no file: a typo
+must not become a different default silently.
+
+This is the second reversal of "no config file, no default, no timeout"
+(13.6), and the reasons differ. The station's default would boot a system
+that needs a person at the keyboard anyway, and its config would sit where
+it cannot be read. Jump's default boots the machine's own disk, which is
+what a floppy that stays in the drive should do when nobody is there, and
+the file sits on a volume anyone can edit.
+
+### 14.8 Processor floor
+
+The MVP is i686, the floor stage 2 already enforces. Nothing in jump's own
+code assumes more than a Pentium (no CMOV in its assembly, no SSE), so a 586
+build is a compiler flag and stage 2's check, taken when a machine needs it.
+Few machines are older than a Pentium and have a CD drive or USB.
+
+### 14.9 The rig
+
+QEMU with SeaBIOS, the image as the floppy (`-drive if=floppy`), a
+`piix3-usb-uhci`, `pci-ohci` or `usb-ehci` controller with a `usb-storage`
+stick built by the rig's stick tooling, and an `ide-cd`. SeaBIOS boots USB
+and CDs itself, which would pass every test whether jump worked or not, so
+the rig's SeaBIOS is built with both compiled out.
+
+The first machine is the ThinkPad A21m (its repository's
+`docs/HARDWARE.md`): a PIIX4 with UHCI and the IDE optical bay, a TI
+PCI-1450 CardBus bridge for `PCC` later, and COM1 cabled to a workstation
+for the serial log.
+
+### 14.10 Considered and rejected
+
+- **Enumerating everything at boot**, Plop's model. It is the delay (14.2).
+- **One image with every driver.** Every boot, the default one included,
+  would read drivers it does not use off a floppy.
+- **Position-independent modules and a relocator in the core.** More code
+  to write and test, and to reach at every boot, for a handful of drivers
+  fixed slots serve.
+- **Resident drivers in conventional memory.** Every loader respects the
+  BDA's count, but its top moves with the EBDA, so a driver there needs a
+  run-time address, and so relocation; and 640 KB is what DOS-era loaders
+  are short of. Extended memory with the map carved costs one more INT 15h
+  answer.
+- **FAT12 in the boot sector.** The reserved sectors do the same job with no
+  filesystem code in assembly (14.3).
+- **ISOs and images in jump.** falcon-boot does it, one `USB` route away.
+- **A fixed default at build time.** The point of the floppy is that it is
+  set per machine, and rebuilding an image to change a timeout is not that.
+
+### 14.11 Build order
+
+1. The floppy image, its boot sector, the CHS path in `load3.c` and
+   `disk.c`, and the core: the menu, `JUMP.INI`, `MBR` and `MEM`. It boots a
+   machine's disks and memtest, and is the first thing tried on the A21m.
+2. The module format and loader, `ATA.MOD`, the reverse thunk, and `CDR`
+   with no-emulation discs.
+3. Floppy-emulation discs: `vfd.c` over a read callback.
+4. `UHCI.MOD` and `USB.MOD`, and `USB` to a falcon stick. Proven on the
+   A21m.
+5. `OHCI.MOD` and `EHCI.MOD`.
+6. After the MVP: `PCC`, then disks the BIOS cannot see.
