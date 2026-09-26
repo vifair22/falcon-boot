@@ -3841,7 +3841,8 @@ a device itself where the silicon does not; and anything the real bridge
 does that the model does not. Disks the BIOS cannot see are the design
 below.
 
-Measured on the ThinkPad A21m (2026-09-26): `MBR` to its Windows 2000, and
+Measured on the ThinkPad A21m (2026-09-26): `MBR` to its Windows 2000, `MEM`
+to memtest86+ running, and
 `CDR` to a Windows install disc through Setup, from the countdown stopped
 by a key; `ATA.MOD` found the UJDA310 and served
 the no-emulation disc as drive 0xE0. `USB` and `PCC` are still to be
