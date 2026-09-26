@@ -54,9 +54,14 @@ BIN := build/bin
 
 # ---- include roots ----
 #
-# One -I per component src/. Module directory names are unique across the
-# tree, so <fs/exfat.h> or <secboot/sb.h> means exactly one file, whichever
-# components a translation unit sees.
+# One -I per component src/. A translation unit sees its own component and
+# the components it is built against, never the rest: the UEFI loader
+# efi+core, falcon-bios bios+core, and so on. A module directory name is
+# unique within every include set a build uses, which is what lets
+# <fs/exfat.h> mean one file wherever it is written; falcon-efi and
+# falcon-bios never share a set, so both may have a pos/ or a win/, and the
+# two halves of one route carry one name. tools/analyze.sh fails the gate on
+# a name that appears twice within a set.
 CORE_INC      := -Ifalcon-core/src
 EFI_INC       := -Ifalcon-efi/src
 CLI_INC       := -Ifalcon-cli/src
@@ -221,10 +226,28 @@ TEST_CFLAGS := -std=c11 -O0 -g --coverage $(TEST_WARNS) \
 	-DLUKS_REF='"$(LUKS_REF)"' \
 	-DTRUST_DIR='"$(TRUST_DIR)"' \
 	-DSHIM_DIR='"$(SHIM_DIR)"' \
-	-DMEDIA_FIXTURE_DIR='"$(MEDIA_FIXTURE_DIR)"' \
-	-I$(TEST_SUPPORT)/hostshim $(CORE_INC) $(EFI_INC) $(CLI_INC) \
-	$(APPLIANCE_INC) $(HOOK_INC) $(BIOS_INC) $(WINJUMP_INC) -I$(TEST_SUPPORT) \
-	$(CMOCKA_CFLAGS)
+	-DMEDIA_FIXTURE_DIR='"$(MEDIA_FIXTURE_DIR)"'
+
+# A test object sees the include set its component builds with, not every
+# component's at once. With one shared set, a header name two components both
+# use would resolve to whichever came first on the line, and a BIOS test could
+# compile against the UEFI loader's header without a word. The set is chosen
+# by the source's top directory, so a unit linked into another component's
+# test binary (cli's sign/ into the appliance's) keeps its own. hostshim comes
+# first because it is how <lib/string.h> means libc in a hosted build.
+TEST_INC_falcon-core      := $(CORE_INC)
+TEST_INC_falcon-efi       := $(EFI_INC) $(CORE_INC)
+TEST_INC_falcon-cli       := $(CLI_INC) $(CORE_INC)
+TEST_INC_falcon-appliance := $(APPLIANCE_INC) $(CLI_INC) $(CORE_INC)
+TEST_INC_falcon-hook      := $(HOOK_INC) $(CORE_INC)
+TEST_INC_falcon-bios      := $(BIOS_INC) $(CORE_INC)
+TEST_INC_falcon-winjump   := $(WINJUMP_INC) $(CORE_INC)
+
+# $(call test_inc,<source path>)
+test_inc = -I$(TEST_SUPPORT)/hostshim \
+	$(or $(TEST_INC_$(firstword $(subst /, ,$(1)))),\
+		$(error no test include set for $(1): add a TEST_INC_ line to the Makefile)) \
+	-I$(TEST_SUPPORT) $(CMOCKA_CFLAGS)
 
 TEST_LDFLAGS := --coverage
 TEST_LIBS    := $(CMOCKA_LIBS)
@@ -233,7 +256,7 @@ TEST_OBJ := $(OBJ)/test
 
 $(TEST_OBJ)/%.o: %.c
 	@mkdir -p $(@D)
-	$(CC_HOST) $(TEST_CFLAGS) -MMD -MF $@.d -c -o $@ $<
+	$(CC_HOST) $(TEST_CFLAGS) $(call test_inc,$<) -MMD -MF $@.d -c -o $@ $<
 
 TEST_SUPPORT_SRCS := $(TEST_SUPPORT)/support.c $(TEST_SUPPORT)/synth.c
 
@@ -371,6 +394,15 @@ CC_DB_EFI := $(foreach s,$(sort $(EFI_SRCS) $(EFI_POS_SRCS)) $(PAYLOAD_SRC),$(s)
 CC_DB_HOST := $(foreach s,$(filter-out $(EFI_SRCS) $(EFI_POS_SRCS),$(sort $(HOST_SRCS))),$(s):$(HOST_OBJ)/$(s:.c=.o))
 CC_DB_WINJUMP := $(foreach s,$(WINJUMP_SRCS),$(s):$(WINJUMP_OBJ)/$(s:.c=.o))
 CC_DB_TEST := $(foreach s,$(sort $(ALL_TEST_SRCS) $(TEST_SUPPORT_SRCS)),$(s):$(TEST_OBJ)/$(s:.c=.o))
+# Test sources are entered one component at a time, each under the include
+# set the pattern rule gives it, so clangd resolves a test's headers the way
+# the compiler does.
+CC_DB_TEST_COMPONENTS := $(sort $(foreach s,$(CC_DB_TEST),$(firstword $(subst /, ,$(s)))))
+# A case arm ends in ')', which inside $(foreach ...) would close the call.
+cc_rparen := )
+CC_DB_TEST_INC = case "$$src" in \
+	$(foreach c,$(CC_DB_TEST_COMPONENTS),$(c)/*$(cc_rparen) inc=' $(strip $(call test_inc,$(c)/))';;) \
+	esac;
 # falcon-bios's own C. The falcon-core it links is already entered under the
 # loader's flags, so only what lives in falcon-bios/src is added here; without
 # it, a component's worth of C would sit outside cppcheck, -fanalyzer and
@@ -378,17 +410,19 @@ CC_DB_TEST := $(foreach s,$(sort $(ALL_TEST_SRCS) $(TEST_SUPPORT_SRCS)),$(s):$(T
 # let happen.
 CC_DB_BIOS := $(foreach s,$(filter falcon-bios/%,$(sort $(BIOS_CSRCS))),$(s):$(BIOS_OBJ)/$(s:.c=.o))
 
-# $(call cc_db_emit,<entries>,<compiler>,<flags>)
+# $(call cc_db_emit,<entries>,<compiler>,<flags>[,<shell setting inc per entry>])
 define cc_db_emit
 	@for entry in $(1); do \
 		src=$${entry%%:*}; \
 		obj=$${entry##*:}; \
 		extra=""; \
+		inc=""; \
+		$(4) \
 		case "$$obj" in */crypto/aesni.o) extra=" -maes";; esac; \
 		printf '  {\n' >> $@; \
 		printf '    "directory": "%s",\n' '$(CURDIR)' >> $@; \
-		printf '    "command": "%s %s%s -MMD -MF %s.d -c -o %s %s/%s",\n' \
-			'$(2)' '$(strip $(3))' "$$extra" "$$obj" "$$obj" \
+		printf '    "command": "%s %s%s%s -MMD -MF %s.d -c -o %s %s/%s",\n' \
+			'$(2)' '$(strip $(3))' "$$inc" "$$extra" "$$obj" "$$obj" \
 			'$(CURDIR)' "$$src" >> $@; \
 		printf '    "file": "%s/%s"\n' '$(CURDIR)' "$$src" >> $@; \
 		printf '  },\n' >> $@; \
@@ -401,7 +435,7 @@ compile_commands.json: Makefile $(wildcard falcon-*/build.mk)
 	$(call cc_db_emit,$(CC_DB_BIOS),$(CC_HOST),$(BIOS_CFLAGS))
 	$(call cc_db_emit,$(CC_DB_HOST),$(CC_HOST),$(HOST_CFLAGS))
 	$(call cc_db_emit,$(CC_DB_WINJUMP),$(CC),$(WINJUMP_CFLAGS))
-	$(call cc_db_emit,$(CC_DB_TEST),$(CC_HOST),$(TEST_CFLAGS))
+	$(call cc_db_emit,$(CC_DB_TEST),$(CC_HOST),$(TEST_CFLAGS),$(CC_DB_TEST_INC))
 	@sed -i '$$ s/,$$//' $@
 	@echo ']' >> $@
 
