@@ -75,6 +75,7 @@ int run_sb_tests(void);
 int run_osrel_tests(void);
 int run_pe_tests(void);
 int run_trust_tests(void);
+int run_gz_tests(void);
 int run_tui_tests(void);
 int run_shelf_tests(void);
 int run_nextboot_tests(void);

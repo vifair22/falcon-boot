@@ -199,6 +199,15 @@
 #define STAGE3_MAGIC    0x33534F42   /* "BOS3" */
 #define STAGE3_HDR      16           /* magic, two lengths, room to grow */
 
+/* A stage 3 stored compressed (falcon jump's, DESIGN Section 14.3): its own
+ * header, then a gzip member of the whole ordinary stage 3, "BOS3" header
+ * and all. The header is the magic, the file's length, the memory the
+ * inflated stage 3 takes with its .bss, and the inflated length. Stage 2
+ * reads the member to GZ_STAGE_ADDR and inflates it to STAGE3_LOAD, which
+ * it may fill up to GZ_STAGE_ADDR. */
+#define STAGE3_MAGIC_GZ 0x5A534F42   /* "BOSZ" */
+#define GZ_STAGE_ADDR   0x00600000
+
 /* How far above STAGE3_LOAD stage 3 may occupy, image and .bss together.
  * The stack is above it and nothing else is below the stack. */
 #define STAGE3_MAX_MEM  (STAGE3_STACK - STAGE3_LOAD - 0x10000)
