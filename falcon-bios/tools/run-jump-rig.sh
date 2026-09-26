@@ -16,6 +16,11 @@
 #             carrying falcon-bios: its stage 3 loads off the card
 #   mem       memtest86+, when MEMTEST names a build with the boot protocol
 #             header: the handoff to it
+#   menu      the countdown interrupted: a five-second default=hdd, a Down
+#             key two seconds in, then nothing may boot for six seconds;
+#             Enter then boots the row Down moved to (the CD drive, empty in
+#             QEMU's default machine), not the default. The keys go in
+#             through QEMU's monitor.
 #
 # The cf case needs the QEMU build-qemu.sh makes; the rest the system's.
 #
@@ -44,8 +49,8 @@ dd if=build/bin/falcon-bios-stage2.bin of="$R/stick.img" bs=512 seek=34 \
 dd if=build/bin/falcon-bios-stage3.bin of="$R/stick.img" bs=512 seek=98 \
     conv=notrunc status=none
 
-floppy() {    # floppy DEFAULT
-    printf 'default=%s\ntimeout=1\n' "$1" > "$R/JUMP.INI"
+floppy() {    # floppy DEFAULT [SECONDS]
+    printf 'default=%s\ntimeout=%s\n' "$1" "${2:-1}" > "$R/JUMP.INI"
     make --no-print-directory jump JUMP_INI="$R/JUMP.INI" \
         ${MEMTEST:+MEMTEST=$MEMTEST} >/dev/null
     cp build/bin/falcon-jump.img "$R/jump.img"
@@ -61,8 +66,64 @@ boot() {      # boot QEMU-BINARY ARGS...
         -drive file="$R/disk.img",format=raw,if=ide,index=0 \
         -serial file:"$R/serial.log" -monitor none "$@" \
         >/dev/null 2>&1 || true
-    tr -d '\r' < "$R/serial.log" | sed 's/\x1b\[[0-9;?]*[a-zA-Z]/ /g' \
-        > "$R/serial.txt"
+    log_text > "$R/serial.txt"
+}
+
+log_text() {
+    tr -d '\r' < "$R/serial.log" | sed 's/\x1b\[[0-9;?]*[a-zA-Z]/ /g'
+}
+
+monitor() {   # monitor COMMAND
+    echo "$1" | socat - UNIX-CONNECT:"$R/mon.sock" >/dev/null 2>&1 || true
+}
+
+# The countdown, interrupted. The judgement is in three parts, each its
+# own reason for a FAIL: the countdown ran, a key stopped it (no boot in the
+# six seconds after, where an unstopped five-second count would have booted
+# the disk), and Enter took the row the key moved to.
+menu_case() {
+    local i
+
+    floppy hdd 5
+    cp build/test-bios.img "$R/disk.img"
+    rm -f "$R/mon.sock" "$R/serial.log"
+    timeout "$TIMEOUT" "$QEMU" -L /usr/share/qemu -machine pc -cpu pentium3 \
+        -m 128 -display none -boot a \
+        -drive if=floppy,format=raw,file="$R/jump.img" \
+        -drive file="$R/disk.img",format=raw,if=ide,index=0 \
+        -serial file:"$R/serial.log" \
+        -monitor unix:"$R/mon.sock",server,nowait >/dev/null 2>&1 &
+    for i in $(seq 1 300); do
+        log_text 2>/dev/null | grep -aq 'Booting in' && break
+        sleep 0.1
+    done
+    sleep 2
+    monitor "sendkey down"
+    sleep 6
+    log_text > "$R/serial.txt"
+    local counted=0 booted=0
+    grep -aq 'Booting in 5 s' "$R/serial.txt" && counted=1
+    grep -aq 'booting: ' "$R/serial.txt" && booted=1
+    monitor "sendkey ret"
+    sleep 4
+    monitor quit
+    wait 2>/dev/null || true
+    log_text > "$R/serial.txt"
+    cp "$R/serial.txt" "$R/menu.log"
+
+    if [[ $counted -eq 0 ]]; then
+        echo "FAIL  menu      the countdown never started"
+        FAILED=1
+    elif [[ $booted -eq 1 ]]; then
+        echo "FAIL  menu      a key did not stop the countdown"
+        FAILED=1
+    elif ! grep -aq 'booting: CD' "$R/serial.txt" ||
+         grep -aq 'booting: Disk' "$R/serial.txt"; then
+        echo "FAIL  menu      Enter did not boot the row the key moved to"
+        FAILED=1
+    else
+        echo "PASS  menu      stopped by a key, Enter booted the next row"
+    fi
 }
 
 # PASS when the log carries `want`, the boot the case is for.
@@ -90,7 +151,7 @@ usb() {       # usb CASE HC-DEVICES...
 
 FAILED=0
 CASES=("$@")
-[[ ${#CASES[@]} -gt 0 ]] || CASES=(hdd cd usb-uhci usb-ohci usb-ehci cf mem)
+[[ ${#CASES[@]} -gt 0 ]] || CASES=(hdd cd usb-uhci usb-ohci usb-ehci cf mem menu)
 
 for c in "${CASES[@]}"; do
     case $c in
@@ -118,6 +179,7 @@ for c in "${CASES[@]}"; do
             -device falcon-pcc,drive=cf
         judge cf 'boot drive 0x81, sector size 512'
         ;;
+    menu) menu_case ;;
     mem)
         if [[ -z "${MEMTEST:-}" ]]; then
             echo "SKIP  mem       no MEMTEST"

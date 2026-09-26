@@ -4104,7 +4104,10 @@ QEMU with SeaBIOS, the image as the floppy (`-drive if=floppy`), a
 stick (the rig's GPT disk with the stick's stages written in), and an
 `ide-cd`. `make test-jump` runs every route that way
 (`falcon-bios/tools/run-jump-rig.sh`), each case a `JUMP.INI` default with
-a one-second countdown, judged from the serial log. Neither needs a change
+a one-second countdown, judged from the serial log, and one case more for
+the menu itself: a five-second countdown stopped by a key sent through
+QEMU's monitor, which must boot nothing until Enter, and then the row the
+key moved to. Neither needs a change
 to SeaBIOS: the floppy boots first, and
 jump reads the CD drive and the USB stick through its own drivers, never
 through the BIOS, so SeaBIOS's support cannot stand in for them. SeaBIOS
