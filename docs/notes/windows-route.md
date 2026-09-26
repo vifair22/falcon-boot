@@ -968,7 +968,7 @@ What this settles:
   installer**, which has no WinPE and needs a different route entirely (not yet
   built).
 
-### 7.4 Windows 2000 and XP: text-mode setup (0x7B solved; trace build boots)
+### 7.4 Windows 2000 and XP: text-mode setup (XP boots; 2000 to CDFS mount)
 
 2000 and XP have no WinPE. They boot a text-mode setup: the CD's El Torito boot
 image loads setupldr, which reads txtsetup.sif, the kernel, the HAL and the
@@ -1094,15 +1094,35 @@ Since then win_xp_boot and piece 3's disk-finding are built and rig-proven
    before the backing thread finishes (a no-media device is skipped -> "Setup
    cannot find a CD-ROM drive"); and the backing must stay on its own thread, not
    block DriverEntry, or the boot-start sequence stalls, disk.sys never
-   enumerates the stick, and the volume comes back unmountable (0xED). With all
-   three, XP text-mode setup boots from the driver-served CD: the trace build
-   reaches "Welcome to Setup" reliably. The shipped build is not yet reliable -
-   it reaches setup's file-loading on some runs and "Setup cannot find a CD-ROM
-   drive" on others: setup's CD-ROM scan still races the backing thread finding
-   the stick, and only the trace build's serial delays pace it past the race
-   every time. Closing that race for the shipped build (e.g. registering the CD
-   so the scan reads it only once it is backed) is the remaining polish; the
-   0x7B boot-device binding itself is solved.
+   enumerates the stick, and the volume comes back unmountable (0xED).
+
+   **XP boots reliably in the shipped build (2026-09-25).** The race that a
+   read faced - serving zeros before the backing thread found the stick - is
+   closed with an event: a read waits on it until the backing is resolved
+   (signalled at once on the winjump path). The wait is on the read-servicing
+   thread, never DriverEntry, so it does not stall the boot-start sequence. With
+   that, the non-trace XP build reaches "Welcome to Setup" every run, no serial
+   delays needed.
+
+ - **Windows 2000 is fixed up to the CDFS mount; 0x26 remains.** Two 2000-only
+   fixes got it there: txtsetup_inject copies the source-disk id from the
+   medium's own atapi.sys line (2000 names its disk 1, not XP's 100, or setup
+   rejects it as a corrupt [SourceDisksNames] entry), and the boot-device link
+   is created for cdrom(224) directly (2000 keeps no SystemBootDevice - its
+   ControlSet001\Control holds only the boot options - so bind_boot_device has
+   nothing to read; the boot CD is still the served drive 0xE0 = 224). With
+   those, 2000 clears 0x7B and reaches the boot-volume mount, then bugchecks
+   0x26 CDFS_FILE_SYSTEM. The cause is a boot-ordering deadlock the read-wait
+   cannot fix: 2000's boot mount holds up the PnP enumeration that would create
+   the stick's disk device, so the backing thread cannot find the stick before
+   the mount times out, and the read serves zeros. The trace build's delays let
+   disk.sys enumerate the stick first, so it boots there (BACKING_OK); the
+   shipped build deadlocks. Extending the retry does not help - the mount times
+   out first - and STATUS_DEVICE_NOT_READY is fatal on a boot-device read, not
+   retried. The real fix is to read the stick without waiting on disk.sys (the
+   port driver / the PDO, up before it), or to serve the medium some way that
+   does not need the stick disk during the boot mount. That is the remaining
+   work for 2000.
 
 The rig: a falcon-bios stick with the ISO on p2 (mk-case-stick.sh), booted
 under QEMU BIOS with the loader disk; the menu's Enter selects the ISO, and
