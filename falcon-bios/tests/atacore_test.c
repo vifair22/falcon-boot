@@ -22,20 +22,20 @@ static void test_cdbs(void **state)
 
     (void)state;
     memset(cdb, 0xAA, sizeof cdb);
-    atapi_cdb_read10(cdb, 0x01234567u, 32u);
+    (void)scsi_cdb_read10(cdb, 0x01234567u, 32u);
     assert_memory_equal(cdb, read10, sizeof cdb);
 
     memset(cdb, 0xAA, sizeof cdb);
-    atapi_cdb_read_capacity(cdb);
+    (void)scsi_cdb_read_capacity(cdb);
     assert_int_equal(cdb[0], SCSI_READ_CAPACITY);
     assert_int_equal(cdb[11], 0);
 
-    atapi_cdb_request_sense(cdb, 18u);
+    (void)scsi_cdb_request_sense(cdb, 18u);
     assert_int_equal(cdb[0], SCSI_REQUEST_SENSE);
     assert_int_equal(cdb[4], 18);
 
     memset(cdb, 0xAA, sizeof cdb);
-    atapi_cdb_test_unit_ready(cdb);
+    (void)scsi_cdb_test_unit_ready(cdb);
     assert_int_equal(cdb[0], 0);
     assert_int_equal(cdb[5], 0);
 }
@@ -64,13 +64,13 @@ static void test_sense(void **state)
     memset(s, 0, sizeof s);
     s[0] = 0x70;
     s[2] = SENSE_UNIT_ATTENTION;
-    assert_int_equal(atapi_parse_sense(s, sizeof s), SENSE_UNIT_ATTENTION);
+    assert_int_equal(scsi_parse_sense(s, sizeof s), SENSE_UNIT_ATTENTION);
     s[0] = 0xF0;                        /* the valid bit set */
     s[2] = 0x20 | SENSE_NOT_READY;      /* ILI, and the key */
-    assert_int_equal(atapi_parse_sense(s, sizeof s), SENSE_NOT_READY);
+    assert_int_equal(scsi_parse_sense(s, sizeof s), SENSE_NOT_READY);
     s[0] = 0x72;                        /* descriptor format */
-    assert_int_equal(atapi_parse_sense(s, sizeof s), -1);
-    assert_int_equal(atapi_parse_sense(s, 2u), -1);
+    assert_int_equal(scsi_parse_sense(s, sizeof s), -1);
+    assert_int_equal(scsi_parse_sense(s, 2u), -1);
 }
 
 /* QEMU's ide-cd, as IDENTIFY PACKET DEVICE words describe it. */

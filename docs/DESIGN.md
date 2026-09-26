@@ -3175,11 +3175,11 @@ resident CD handler, from real mode.
 | 0x20000 | Linux cmdline; or the staged El Torito boot image (up to 63 KiB) on a chainload | handed over |
 | 0x90000-0x97FFF | bounce buffer | every read |
 | BDA top - 16 KiB | the resident CD handler: data, runs, El Torito packet, launch stub at +0x530, INT 13h entry at +0x570, INT 15h entry at +0xA00, carved E820 map at +0xB00, overlay pool at +0x1000; never below 0x98000 | permanent after a chainload; reserved in the map it hands on |
-| BDA top - 1 KiB (falcon jump) | the reverse thunk (`rthunk.S`): far pointers, its GDT, the saved caller, the INT 13h entry at +0x90; below it the virtual CD's block | permanent after `CDR` hands over; reserved in the map it hands on |
+| BDA top - 3 KiB (falcon jump) | the reverse thunk (`rthunk.S`): far pointers, its GDT, the saved caller, the INT 13h entry at +0x90, the INT 15h entry at +0x300 and its carved map at +0x400 (the `USB` route's); below it the virtual CD's block on `CDR` | permanent after `CDR` hands over; reserved in the map it hands on |
 | 0x100000 | stage 3: 16-byte header, entry at +0x10, then its image and `.bss` (at most 0x6F0000 together) | whole loader |
 | 0xB8000-0xB8F9F | VGA text memory, the 80x25 screen stage 3 draws | whole loader |
 | 0x7F0000-0x7FFFFF | stage 3 stack, ESP from 0x800000 | whole loader |
-| 0xF00000-0xFFFFFF (falcon jump) | the module slots, eight of 128 KiB (`JMOD_REGION`): `ATA.MOD` at 0xF00000 | from the module's load; permanent after `CDR` hands over, reserved in E820, E801 and AH=88h |
+| 0xF00000-0xFFFFFF (falcon jump) | the module slots, eight of 128 KiB (`JMOD_REGION`): `ATA.MOD` at 0xF00000, `UHCI.MOD` at 0xF20000 | from the module's load; permanent after `CDR` hands over, reserved in E820, E801 and AH=88h |
 | 0x1000000 | the kernel's protected-mode part (aligned up; `pref_address` for a non-relocatable kernel); one fixed below here, at 1 MB (memtest86+), is staged here instead, above its own footprint, and moved down at the handoff | handed to the kernel |
 | highest fit below the kernel's `initrd_addr_max` | the initrds, placed from E820 | handed to the kernel |
 | highest fit in 64 MiB-4 GiB | `heap.c`: the patched boot.wim tail | through the chainload, served by AH=87h; the appended part reserved in the map it hands on |
@@ -3518,9 +3518,9 @@ drive whose LBA 0 carries the boot signature.
 
 ### 12.6 falcon jump
 
-Section 14's boot floppy, as built at Section 14.11 step 3: the machine's
-disks, memtest86+, and a no-emulation or floppy-emulation disc in an IDE CD
-drive. `USB` joins
+Section 14's boot floppy, as built at Section 14.11 step 4: the machine's
+disks, memtest86+, a no-emulation or floppy-emulation disc in an IDE CD
+drive, and a falcon stick on a UHCI root port. `USB` joins
 the menu as a row when step 4 lands.
 
 ```mermaid
@@ -3559,6 +3559,14 @@ flowchart TD
     CD --> RD13["its reads: 0xE0 (vcdres.S) re-issues to 0xEF,<br/>rthunk.S: saves the caller, A20 on, protected mode, ops.int13, back"]
     VCD -- "refused" --> RM["jres_remove"]
     RM --> MENU
+    MENU -- "USB stick" --> LU["jmod_load: UHCI.MOD to JMOD_SLOT_UHCI<br/>init: msc.c over uhci.c"]
+    LU --> EN["ops.probe: the first UHCI on the PCI bus, legacy support off, reset;<br/>each root port reset, enumerated, INQUIRY, READ CAPACITY"]
+    EN --> GPT{"gpt_parse through ops.read:<br/>an ISO library or a shelf?"}
+    GPT -- "no falcon stick" --> MENU
+    GPT -- "yes" --> RU["jres_install for the next BIOS disk (BDA 0x475 + 0x80),<br/>INT 15h hooked too: the block and 15-16 MB carved"]
+    RU --> MB["BDA count + 1; mbr_boot: LBA 0 through the thunk to 0x7C00,<br/>DL = that drive; the stick's falcon-bios from there (12.3)"]
+    MB -- "unreadable, no 0x55AA" --> RM2["BDA count back, jres_remove"]
+    RM2 --> MENU
 ```
 
 `MBR` and `MEM` leave nothing resident, as the station's routes do (12.5.2).
@@ -3809,12 +3817,13 @@ was weighed and accepted (13.6).
 
 ## 14. falcon jump: a boot floppy (decided 2026-09-25)
 
-Status (2026-09-26): steps 1 to 3 of 14.11 are built and rig-proven under
+Status (2026-09-26): steps 1 to 4 of 14.11 are built and rig-proven under
 SeaBIOS (`make jump`): the floppy, its CHS boot sector, `MBR`, `MEM` and
 `JUMP.INI`; the module format, the reverse thunk, `ATA.MOD` and `CDR`, which
 boots the Arch Linux ISO from an IDE CD to its login prompt, and a
-floppy-emulation disc. Section 12.6 draws it. Steps 4 onward are the design
-below.
+floppy-emulation disc; `UHCI.MOD` and `USB`, which boots a falcon stick's
+own falcon-bios off a UHCI port. Section 12.6 draws it. Steps 5 onward are
+the design below.
 
 A floppy that lives in the drive of an old BIOS machine and is its boot
 manager. It boots the machine's own disks by default, memtest86+ on request,
@@ -3929,10 +3938,17 @@ into memory and called.
   port I/O, its own delays (reads of port 0x80), its own buffers. A module
   calls nothing in the core by symbol and links its own copy of the core
   routines it uses.
-- **The set.** `ATA.MOD` (ATA and ATAPI, legacy ports and PCI IDE),
-  `UHCI.MOD`, `OHCI.MOD`, `EHCI.MOD` (one host controller each, root ports
-  only in the MVP), `USB.MOD` (enumeration, Bulk-Only Transport, the SCSI
-  commands a stick needs). Later, a PC Card socket module.
+- **The set.** `ATA.MOD` (ATAPI on the legacy IDE channels), `UHCI.MOD`,
+  `OHCI.MOD`, `EHCI.MOD` (one host controller each, root ports only in the
+  MVP). Later, a PC Card socket module. A USB module is its host controller
+  and the whole storage stack (enumeration, Bulk-Only Transport, SCSI:
+  `hw/usb/msc.c` over the small interface `usbhc.h` a controller offers),
+  one image per controller rather than a controller module and a separate
+  `USB.MOD`: that keeps the module interface to one storage table with no
+  calls between modules, and only the module for the controller that is
+  there is read. The storage half and the SCSI blocks (`hw/scsi`) are one
+  source each; only the built images repeat them. A module's INT 13h
+  answers are `hw/blk13.c`, shared by every module.
 - **Where the code lives.** `falcon-bios/src/hw/`, one directory per driver,
   and each driver's decisions in a host-tested half beside it, as
   `vcdcore.c` is to `vcdres.S`: descriptor parsing, BOT's CBW and CSW, SCSI
@@ -4008,14 +4024,19 @@ hardware and nothing about El Torito. The catalog's entry decides:
   kind of disc needs a machine with more than that;
 - hard-disk emulation: refused (14.1).
 
-**USB.** The host controller modules for the controllers the scan found,
-then `USB.MOD`, enumerate the root ports. The sticks whose GPT is a falcon
-stick's are offered; the one picked becomes drive 0x80 and the BIOS's own
-disks move up one (the BDA's count at 0x475 goes up by one, and a call for
-0x80 onwards is renumbered before it is passed on). That is what a BIOS that
-boots USB does, so the stick's own routes, its `MBR` and Windows chains
-included, see the machine as they would there. Then the stick's LBA 0 goes
-to 0x7C00 with DL = 0x80, and falcon-bios on the stick takes it from there.
+**USB.** The module for the controller present (`UHCI.MOD` first; it finds
+its controller on the PCI bus itself and takes it from the BIOS) enumerates
+the root ports, and the first stick whose GPT is a falcon stick's (an ISO
+library or a shelf, `gpt_has_role`) is booted. It becomes the next BIOS disk
+after the ones the BIOS has (the BDA's count at 0x475 goes up by one), not
+0x80 with the BIOS's disks moved up: falcon-bios never assumes 0x80, and a
+drive swap is added when something on a stick is measured to need one, as
+the station decides for its chains (13.4). The reverse thunk answers that
+drive, and since there is no virtual CD on this route, its own INT 15h half
+carves the block and the module region out of the memory map (E820, E801's
+two halves, AH=88h). Then the stick's LBA 0 goes to 0x7C00 with DL naming
+it (`mbr.c`), and falcon-bios on the stick takes it from there. A second
+stick, or a stick behind a hub, is a later change.
 
 ### 14.7 JUMP.INI
 
@@ -4047,11 +4068,15 @@ Few machines are older than a Pentium and have a CD drive or USB.
 
 QEMU with SeaBIOS, the image as the floppy (`-drive if=floppy`), a
 `piix3-usb-uhci`, `pci-ohci` or `usb-ehci` controller with a `usb-storage`
-stick built by the rig's stick tooling, and an `ide-cd`. The CD needs no
-change to SeaBIOS: the floppy boots first, and jump reads the drive through
-its own driver, never through the BIOS, so SeaBIOS's CD support cannot stand
-in for it. A USB stick is different, since SeaBIOS also lists one as a disk
-the `MBR` route would offer; step 4 decides how the rig keeps the two apart.
+stick (the rig's GPT disk with the stick's stages written in), and an
+`ide-cd`. Neither needs a change to SeaBIOS: the floppy boots first, and
+jump reads the CD drive and the USB stick through its own drivers, never
+through the BIOS, so SeaBIOS's support cannot stand in for them. SeaBIOS
+does list the stick as a disk of its own before jump takes the controller,
+so in the rig the stick is served one drive number higher than it would be
+on a BIOS that cannot see USB, and SeaBIOS's own entry for it stops
+answering once jump has the controller. The `USB` route never uses that
+entry.
 
 The first machine is the ThinkPad A21m (its repository's
 `docs/HARDWARE.md`): a PIIX4 with UHCI and the IDE optical bay, a TI
@@ -4085,7 +4110,6 @@ for the serial log.
 2. The module format and loader, `ATA.MOD`, the reverse thunk, and `CDR`
    with no-emulation discs.
 3. Floppy-emulation discs: `vfd.c` over a read callback.
-4. `UHCI.MOD` and `USB.MOD`, and `USB` to a falcon stick. Proven on the
-   A21m.
-5. `OHCI.MOD` and `EHCI.MOD`.
+4. `UHCI.MOD`, and `USB` to a falcon stick. To be proven on the A21m.
+5. `OHCI.MOD` and `EHCI.MOD`, over the same `msc.c`.
 6. After the MVP: `PCC`, then disks the BIOS cannot see.

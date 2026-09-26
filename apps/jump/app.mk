@@ -25,7 +25,12 @@ $(BIOS_OBJ)/$(JUMP)/bios_main.o: build/version.h
 # The drivers (DESIGN Section 14.4), each a module read off the floppy only
 # for the route that needs it.
 $(eval $(call jump_module,ATA,JMOD_SLOT_ATA,\
-	$(BIOS)/hw/ata/ata.c $(BIOS)/hw/ata/atacore.c $(CORE_LIBC)))
+	$(BIOS)/hw/ata/ata.c $(BIOS)/hw/ata/atacore.c $(BIOS)/hw/scsi/scsi.c \
+	$(BIOS)/hw/blk13.c $(CORE_LIBC)))
+$(eval $(call jump_module,UHCI,JMOD_SLOT_UHCI,\
+	$(BIOS)/hw/usb/uhci_mod.c $(BIOS)/hw/usb/uhci.c $(BIOS)/hw/usb/msc.c \
+	$(BIOS)/hw/usb/usbcore.c $(BIOS)/hw/scsi/scsi.c $(BIOS)/hw/blk13.c \
+	$(CORE_LIBC)))
 
 # The floppy (Section 14.3): a 1.44 MB FAT12 volume whose reserved sectors
 # hold stage 2 at STAGE2_LBA and stage 3 at STAGE3_LBA, the stick's own

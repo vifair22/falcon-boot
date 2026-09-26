@@ -86,6 +86,12 @@ jres_blob_start:
 	.org    JRES_OFF_PM16PTR
 	.long   jres_pm16 - jres_blob_start   /* relative to SEL_C16's base */
 	.word   SEL_C16
+	.org    JRES_OFF_NE820
+	.word   0
+	.org    JRES_OFF_E801LOW
+	.word   0xFFFF
+	.org    JRES_OFF_E801CAP
+	.word   0xFFFF
 
 	.org    JRES_OFF_GDT
 	.quad   0
@@ -93,6 +99,8 @@ jres_blob_start:
 	.quad   0x00CF92000000FFFF   /* 0x10: data32, flat */
 	.quad   0x00009A000000FFFF   /* 0x18: code16, base the block, installed */
 	.quad   0x000092000000FFFF   /* 0x20: data16, base 0, real mode's limits */
+	.org    JRES_OFF_OLDINT15
+	.long   0
 
 	.org    JRES_OFF_REGS
 	.fill   32, 1, 0
@@ -200,6 +208,102 @@ jres_rm16:
 3:	andw    $0xFFFE, 6(%bp)
 4:	popw    %bp
 	iret
+
+/* ---- INT 15h: the memory map, for the USB route (DESIGN Section 14.6) ----
+ *
+ * vcdres.S's INT 15h half, for a route with no virtual CD to carry one: the
+ * E820 map jres.c carved (e820_carve, host-tested), E801's two counts held
+ * to their ceilings, and AH=88h to the lower one. It decides nothing; the
+ * arithmetic is the installer's. Every other call goes to the handler it
+ * replaced, and the flags come back from that handler's iret into ours.
+ */
+	.org    JRES_OFF_CODE15
+jres_int15:
+	cmpw    $0xE801, %ax
+	je      e801
+	cmpb    $0x88, %ah
+	je      ah88
+	cmpl    $0x0000E820, %eax
+	jne     5f
+	cmpl    $0x534D4150, %edx    /* "SMAP" */
+	jne     5f
+	cmpw    $0, %cs:JRES_OFF_NE820
+	jne     e820_next
+5:	ljmp    *%cs:JRES_OFF_OLDINT15
+
+/* EBX is the index wanted, 0 to start; it comes back as the next one, or 0
+ * after the last. */
+e820_next:
+	cmpl    $20, %ecx
+	jb      e820_bad
+	movzwl  %cs:JRES_OFF_NE820, %eax
+	cmpl    %eax, %ebx
+	jae     e820_bad
+	pushw   %ds
+	pushl   %esi
+	pushw   %di
+	imull   $20, %ebx, %esi
+	addw    $JRES_OFF_E820, %si
+	pushw   %cs
+	popw    %ds
+	movw    $10, %cx
+	cld
+	rep movsw
+	popw    %di
+	popl    %esi
+	popw    %ds
+	incl    %ebx
+	cmpl    %eax, %ebx
+	jb      6f
+	xorl    %ebx, %ebx
+6:	movl    $0x534D4150, %eax
+	movl    $20, %ecx
+	jmp     ok15
+e820_bad:
+	movb    $0x86, %ah
+	jmp     fail15
+
+ah88:
+	pushfw
+	lcall   *%cs:JRES_OFF_OLDINT15
+	jc      fail15
+	cmpw    %cs:JRES_OFF_E801LOW, %ax
+	jbe     ok15
+	movw    %cs:JRES_OFF_E801LOW, %ax
+	jmp     ok15
+
+e801:
+	pushfw
+	lcall   *%cs:JRES_OFF_OLDINT15
+	jc      fail15
+	cmpw    %cs:JRES_OFF_E801CAP, %bx
+	jbe     7f
+	movw    %cs:JRES_OFF_E801CAP, %bx
+7:	cmpw    %cs:JRES_OFF_E801CAP, %dx
+	jbe     8f
+	movw    %cs:JRES_OFF_E801CAP, %dx
+8:	cmpw    %cs:JRES_OFF_E801LOW, %ax
+	jbe     9f
+	movw    %cs:JRES_OFF_E801LOW, %ax
+9:	cmpw    %cs:JRES_OFF_E801LOW, %cx
+	jbe     ok15
+	movw    %cs:JRES_OFF_E801LOW, %cx
+
+ok15:
+	pushw   %bp
+	movw    %sp, %bp
+	andw    $0xFFFE, 6(%bp)
+	popw    %bp
+	iret
+fail15:
+	pushw   %bp
+	movw    %sp, %bp
+	orw     $0x0001, 6(%bp)
+	popw    %bp
+	iret
+
+	.org    JRES_OFF_E820
+	.space  (JRES_E820_MAX * 20)
 
 	.org    JRES_BYTES - 1
 	.byte   0

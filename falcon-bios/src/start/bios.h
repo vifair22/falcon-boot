@@ -85,6 +85,12 @@ static inline uint16_t peek16(uint32_t addr)
     return v;
 }
 
+static inline void poke8(uint32_t addr, uint8_t v)
+{
+    __asm__ __volatile__("movb %0, (%1)"
+                         : : "q"(v), "r"((uintptr_t)addr) : "memory");
+}
+
 static inline void poke16(uint32_t addr, uint16_t v)
 {
     __asm__ __volatile__("movw %0, (%1)"

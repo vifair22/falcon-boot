@@ -348,10 +348,20 @@
 #define JRES_OFF_PM32PTR  0x28   /* 6 bytes: offset32, selector 0x08 */
 #define JRES_OFF_RMPTR    0x30   /* 4 bytes: offset16, segment */
 #define JRES_OFF_PM16PTR  0x34   /* 6 bytes: offset32, selector 0x18 */
+#define JRES_OFF_NE820    0x3A   /* word: carved entries; 0 hooks no INT 15h */
+#define JRES_OFF_E801LOW  0x3C   /* word: E801's 1-16 MB ceiling, and 88h's */
+#define JRES_OFF_E801CAP  0x3E   /* word: E801's above-16 MB ceiling */
 #define JRES_OFF_GDT      0x40   /* 5 descriptors */
+#define JRES_OFF_OLDINT15 0x68   /* far pointer to the previous INT 15h */
 #define JRES_OFF_REGS     0x70   /* jmod_regs, 32 bytes */
 #define JRES_OFF_CODE     0x90   /* the INT 13h entry */
-#define JRES_BYTES        0x400  /* 1 KB, what the BDA loses */
+/* The INT 15h half (the USB route's; the CD route's virtual CD has its own):
+ * the memory map with the resident's memory carved out of it, as
+ * vcdres.S's, in the same twenty-byte entries. */
+#define JRES_OFF_CODE15   0x300
+#define JRES_OFF_E820     0x400
+#define JRES_E820_MAX     64
+#define JRES_BYTES        0xC00  /* 3 KB, what the BDA loses */
 
 /* Stage 3's stack. Above the image and below anything a payload is loaded
  * into (KERNEL_ADDR is 16 MB). Everything between STAGE3_LOAD and here is

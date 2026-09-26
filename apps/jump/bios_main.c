@@ -5,8 +5,9 @@
  * (route MEM) and the disc in an IDE CD drive (route CDR), with an optional
  * default and countdown from JUMP.INI. MBR and MEM load nothing and leave
  * nothing resident; CDR reads ATA.MOD off the floppy and leaves it behind
- * the reverse thunk, under the stick's own virtual CD (Section 14.6). The
- * USB route is a later step of Section 14.11.
+ * the reverse thunk, under the stick's own virtual CD (Section 14.6). USB
+ * reads UHCI.MOD and leaves it behind the thunk, serving a falcon stick as
+ * the next BIOS disk.
  *
  * Stages 1 and 2: the floppy's own boot sector (start/boot_fd.S) and the
  * stick's stage 2, both reading by CHS from the volume's reserved sectors.
@@ -27,6 +28,7 @@
 #include <vfd/vfd.h>
 
 #include <fs/fs.h>
+#include <part/part.h>
 #include <media/eltorito.h>
 #include <tui/tui.h>
 
@@ -40,8 +42,8 @@
 
 #define DISKS_MAX 8u
 
-/* One row per disk, the CD, and memtest86+. */
-#define LIST_MAX (DISKS_MAX + 2u)
+/* One row per disk, the CD, USB, and memtest86+. */
+#define LIST_MAX (DISKS_MAX + 3u)
 
 /* The drive number ATA.MOD answers for through the reverse thunk: private,
  * raw 2048-byte sectors, never offered to anything but the virtual CD that
@@ -51,6 +53,10 @@
 /* What a row of the list is. */
 #define ROW_MEMTEST (-1)
 #define ROW_CD      (-2)
+#define ROW_USB     (-3)
+
+/* The GPT entries read to find a falcon stick. */
+#define PARTS_MAX 16u
 
 /* JUMP.INI is a few lines; anything longer is not one. */
 #define INI_MAX 4096u
@@ -70,6 +76,7 @@ static int       g_have_vol;
 static fs_dirent g_memtest;
 static int       g_have_memtest;
 static int       g_have_ata;
+static int       g_have_uhci;
 
 static jump_cfg g_cfg;
 static char     g_ini[INI_MAX];
@@ -161,6 +168,8 @@ static void read_floppy(uint8_t drive)
 
         g_have_ata = fs_lookup(&g_vol, "/ATA.MOD", &scratch, &mod) == FS_OK &&
                      !mod.is_dir;
+        g_have_uhci = fs_lookup(&g_vol, "/UHCI.MOD", &scratch, &mod) ==
+                          FS_OK && !mod.is_dir;
     }
 
     if (fs_lookup(&g_vol, "/JUMP.INI", &scratch, &ini) != FS_OK || ini.is_dir)
@@ -234,12 +243,16 @@ static struct {
     unsigned  idx;
 } g_disc;
 
+static uint32_t g_disc_sector = 2048u;
+
 static int disc_read(void *ctx, uint64_t off, uint64_t len, void *buf)
 {
+    uint32_t ss = g_disc_sector;
+
     (void)ctx;
-    if (off % 2048u != 0 || len % 2048u != 0)
+    if (off % ss != 0 || len % ss != 0)
         return -1;
-    return g_disc.ops->read(g_disc.idx, off / 2048u, (uint32_t)(len / 2048u),
+    return g_disc.ops->read(g_disc.idx, off / ss, (uint32_t)(len / ss),
                             buf) == 0 ? 0 : -1;
 }
 
@@ -290,6 +303,7 @@ static void boot_cd(void)
     r.stage = "reading the disc's boot catalog";
     g_disc.ops = &ops;
     g_disc.idx = i;
+    g_disc_sector = 2048u;
     if (elt_parse(&cat, disc_read, &g_disc, dev.sectors * 2048u) != ELT_OK) {
         r.advice = "the disc has no El Torito boot catalog.";
         goto fail;
@@ -315,7 +329,7 @@ static void boot_cd(void)
     if (ops.serve(i, (uint8_t)CD_RAW_DRIVE) != 0 ||
         jres_install((uint8_t)CD_RAW_DRIVE, (uint32_t)(uintptr_t)ops.int13,
                      JMOD_SLOT_ADDR(JMOD_SLOT_ATA) + JMOD_SLOT_BYTES,
-                     &base) != 0) {
+                     (const e820_range *)0, 0, &base) != 0) {
         r.advice = "this machine will not give up the conventional memory "
                    "the CD driver needs.";
         goto fail;
@@ -335,6 +349,97 @@ static void boot_cd(void)
 fail:
     screen_page();
     screen_out("CD");
+    failed("boot", &r);
+    screen_out(k_press_any);
+}
+
+/* Whether the device the module calls `idx` is a falcon stick: its GPT, read
+ * through the module, has an ISO library or a shelf. */
+static int is_falcon_stick(jmod_ops *ops, unsigned idx)
+{
+    static gpt_part parts[PARTS_MAX];
+    gpt_table t;
+
+    g_disc.ops = ops;
+    g_disc.idx = idx;
+    g_disc_sector = 512u;
+    t.parts = parts;
+    t.cap = PARTS_MAX;
+    t.count = 0;
+    t.truncated = 0;
+    if (gpt_parse(&t, disc_read, &g_disc, 512u) != GPT_OK)
+        return 0;
+    return gpt_has_role(&t, PART_ROLE_ISO) || gpt_has_role(&t, PART_ROLE_SHELF);
+}
+
+/* USB: UHCI.MOD off the floppy, the first falcon stick on the root ports,
+ * and that stick booted as the next BIOS disk: the module resident behind
+ * the reverse thunk, which also carves its memory out of INT 15h, and the
+ * BDA's disk count one higher. The stick's own stage 1 takes it from there
+ * with DL naming it. Returns only when it could not hand over, with
+ * everything it installed taken back. */
+static void boot_usb(void)
+{
+    static jmod_ops ops;
+    static const e820_range keep = {
+        JMOD_REGION, JMOD_REGION_END - JMOD_REGION
+    };
+    boot_result r;
+    bios_disk stick;
+    jmod_dev dev;
+    const char *why = (const char *)0;
+    uint32_t base = 0;
+    uint8_t ndisks = peek8(BDA_NDISKS);
+    uint8_t drive = (uint8_t)(0x80u + ndisks);
+    unsigned n;
+    unsigned i;
+
+    boot_result_init(&r);
+    screen_mode("USB");
+    screen_page();
+    screen_out("booting: USB stick\n\n");
+
+    r.stage = "loading UHCI.MOD";
+    if (jmod_load(&g_vol, "/UHCI.MOD", JMOD_SLOT_UHCI, &ops, &why) != 0) {
+        r.advice = why;
+        goto fail;
+    }
+    r.stage = "looking for a falcon stick";
+    n = ops.probe();
+    for (i = 0; i < n; i++) {
+        if (ops.dev(i, &dev) == 0 && is_falcon_stick(&ops, i))
+            break;
+    }
+    if (i == n) {
+        r.advice = n == 0 ? "there is no USB storage on the UHCI ports."
+                          : "none of the USB storage is a falcon stick.";
+        goto fail;
+    }
+    screen_out(dev.label);
+    screen_out("\n\n");
+
+    r.stage = "installing the USB driver";
+    if (ndisks >= 0x7Fu || ops.serve(i, drive) != 0 ||
+        jres_install(drive, (uint32_t)(uintptr_t)ops.int13,
+                     JMOD_SLOT_ADDR(JMOD_SLOT_UHCI) + JMOD_SLOT_BYTES, &keep,
+                     1u, &base) != 0) {
+        r.advice = "this machine will not give up the conventional memory "
+                   "the USB driver needs.";
+        goto fail;
+    }
+    poke8(BDA_NDISKS, (uint8_t)(ndisks + 1u));
+    if (!bios_disk_probe(&stick, drive)) {
+        r.advice = "the USB driver did not answer through INT 13h.";
+    } else {
+        r.stage = "starting the stick";
+        (void)mbr_boot(&stick, &r);
+    }
+    poke8(BDA_NDISKS, ndisks);
+    jres_remove();
+
+fail:
+    screen_page();
+    screen_out("USB stick");
     failed("boot", &r);
     screen_out(k_press_any);
 }
@@ -399,6 +504,15 @@ static void list_run(void)
             kind[n] = ROW_CD;
             n++;
         }
+        if (g_have_uhci) {
+            if (g_cfg.def == JUMP_DEF_USB) {
+                def = n;
+                have_def = 1;
+            }
+            labels[n] = u"USB stick";
+            kind[n] = ROW_USB;
+            n++;
+        }
         if (g_have_memtest) {
             if (g_cfg.def == JUMP_DEF_MEMTEST) {
                 def = n;
@@ -427,6 +541,8 @@ static void list_run(void)
             boot_memtest();
         else if (kind[pick] == ROW_CD)
             boot_cd();
+        else if (kind[pick] == ROW_USB)
+            boot_usb();
         else
             boot_disk(&g_disks[kind[pick]]);
         (void)screen_key();
@@ -451,8 +567,6 @@ void bios_main(uint8_t drive)
     screen_init();
     if (g_cfg.err_line != 0)
         report_ini();
-    else if (g_cfg.def == JUMP_DEF_USB)
-        bios_puts("falcon-bios: JUMP.INI names a route this build does not have\n");
     list_run();
     for (;;)
         __asm__ __volatile__("hlt");
