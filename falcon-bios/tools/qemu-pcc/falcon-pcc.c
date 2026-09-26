@@ -86,6 +86,7 @@ struct FalconPccState {
     uint64_t sectors;
 
     uint32_t sock_control;
+    uint8_t volts;          /* 0: a card taking 5 V or 3.3 V; 3: 3.3 V only */
     uint8_t exca[256];
     uint8_t cor;
 
@@ -145,9 +146,18 @@ static void cis_build(FalconPccState *s)
 
 /* ---- window decoding ---- */
 
+/* VCC as the socket control register holds it: 0x20 is 5 V, 0x30 3.3 V.
+ * A card that takes only 3.3 V gets nothing at 5 V; the bridge refuses the
+ * request, as the PCI-1450 does. */
 static bool powered(FalconPccState *s)
 {
-    return (s->sock_control & 0x70) != 0 && (s->exca[X_POWER] & 0x80) != 0;
+    uint32_t vcc = s->sock_control & 0x70;
+
+    if (vcc != 0x20 && vcc != 0x30)
+        return false;
+    if (s->volts == 3 && vcc != 0x30)
+        return false;
+    return (s->exca[X_POWER] & 0x80) != 0;
 }
 
 static bool running(FalconPccState *s)
@@ -455,7 +465,8 @@ static uint64_t bar_read(void *opaque, hwaddr off, unsigned size)
     FalconPccState *s = opaque;
 
     if (off == SOCK_PRESENT && size == 4)
-        return PS_16BIT | PS_5V | PS_3V;         /* card in, both detects low */
+        return PS_16BIT | PS_3V |                /* card in, both detects low */
+               (s->volts == 3 ? 0 : PS_5V);
     if (off == SOCK_CONTROL && size == 4)
         return s->sock_control;
     if (off >= EXCA && off < EXCA + 0x100 && size == 1) {
@@ -477,6 +488,10 @@ static void bar_write(void *opaque, hwaddr off, uint64_t v, unsigned size)
 
     if (off == SOCK_CONTROL && size == 4) {
         s->sock_control = (uint32_t)v & 0x77;
+        /* The ExCA VCC field reads back what the socket was asked for. */
+        s->exca[X_POWER] = (uint8_t)((s->exca[X_POWER] & ~0x18) |
+            ((s->sock_control & 0x70) == 0x20 ? 0x10 :
+             (s->sock_control & 0x70) == 0x30 ? 0x18 : 0));
         if (!powered(s))
             card_reset(s);
         remap(s);
@@ -489,6 +504,11 @@ static void bar_write(void *opaque, hwaddr off, uint64_t v, unsigned size)
         s->exca[r] = (uint8_t)v;
         if (r == X_INTCTL && (old & IC_RESET) != 0 && (v & IC_RESET) == 0)
             card_reset(s);
+        /* The PCI-1450 takes the ExCA VCC field as a request too, and the
+         * last one written is the one the socket applies. */
+        if (r == X_POWER)
+            s->sock_control = (s->sock_control & ~0x70u) |
+                ((v & 0x18) == 0x10 ? 0x20u : (v & 0x18) == 0x18 ? 0x30u : 0);
         if (r == X_POWER && !powered(s))
             card_reset(s);
         remap(s);
@@ -543,6 +563,7 @@ static void falcon_pcc_realize(PCIDevice *pdev, Error **errp)
 
 static const Property falcon_pcc_props[] = {
     DEFINE_PROP_DRIVE("drive", FalconPccState, blk),
+    DEFINE_PROP_UINT8("volts", FalconPccState, volts, 0),
 };
 
 static void falcon_pcc_class_init(ObjectClass *klass, const void *data)

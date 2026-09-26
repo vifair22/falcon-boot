@@ -58,7 +58,8 @@
 #define ST_CD        0x0Cu
 #define ST_READY     0x20u
 #define PWR_OE       0x80u
-#define PWR_VCC      0x10u
+#define PWR_VCC_5V   0x10u      /* the VCC field, bits 4:3 */
+#define PWR_VCC_3V   0x18u
 #define IC_RESET     0x40u      /* 1: reset released */
 #define IC_IOCARD    0x20u
 #define EN_MEM0      0x01u
@@ -99,6 +100,20 @@ static void log_s(const char *s)
         g_svc->log(s);
 }
 
+/* "falcon-bios: PCC.MOD: <what> 0x<v>". A socket that yields no disk says
+ * which step it stopped at and what the register said, on serial: on a real
+ * bridge the reason is otherwise a guess. */
+static void log_v(const char *what, uint32_t v)
+{
+    if (g_svc == (const jmod_services *)0)
+        return;
+    g_svc->log("falcon-bios: PCC.MOD: ");
+    g_svc->log(what);
+    g_svc->log(" ");
+    g_svc->log_hex(v);
+    g_svc->log("\n");
+}
+
 static uint8_t exca_rd(uint32_t r)
 {
     return *(volatile uint8_t *)(uintptr_t)(g_regs + EXCA + r);
@@ -125,17 +140,28 @@ static int power_up(void)
     uint32_t present;
     unsigned i;
 
-    if ((exca_rd(X_STATUS) & ST_CD) != ST_CD)
-        return -1;                   /* no card */
+    if ((exca_rd(X_STATUS) & ST_CD) != ST_CD) {
+        log_v("no card detected, ExCA status", exca_rd(X_STATUS));
+        return -1;
+    }
     present = sock_rd(SOCK_PRESENT);
+    log_v("a card, socket present state", present);
     if ((present & PS_16BIT) == 0)
         return -1;                   /* a CardBus card: not this driver's */
 
     exca_wr(X_CSCINT, 0);            /* no status-change interrupts */
     exca_wr(X_ENABLE, 0);
     exca_wr(X_INTCTL, 0);            /* reset held, a memory card */
-    sock_wr(SOCK_CONTROL, (present & PS_3V) != 0 ? SC_VCC_3V : SC_VCC_5V);
-    exca_wr(X_POWER, PWR_OE | PWR_VCC);
+    /* The same voltage in both registers. A TI bridge takes the ExCA VCC
+     * field as a request too: the A21m's PCI-1450, asked for 3.3 V through
+     * the socket and 5 V through ExCA, powered a 3.3 V card with neither. */
+    if ((present & PS_3V) != 0) {
+        sock_wr(SOCK_CONTROL, SC_VCC_3V);
+        exca_wr(X_POWER, PWR_OE | PWR_VCC_3V);
+    } else {
+        sock_wr(SOCK_CONTROL, SC_VCC_5V);
+        exca_wr(X_POWER, PWR_OE | PWR_VCC_5V);
+    }
     io_delay_us(300000);             /* the card's supply settles */
     exca_wr(X_INTCTL, IC_RESET);
     io_delay_us(20000);
@@ -144,6 +170,8 @@ static int power_up(void)
             return 0;
         io_delay_us(10000);
     }
+    log_v("the card never became ready, ExCA status", exca_rd(X_STATUS));
+    log_v("socket present state", sock_rd(SOCK_PRESENT));
     return -1;
 }
 
@@ -215,6 +243,9 @@ static unsigned pcc_probe(void)
         if (pci_find_class(0x060700u, nth, &loc) != 0)
             break;
         bar = pci_read32(loc.bus, loc.dev, loc.fn, 0x10);
+        log_v("CardBus bridge at bus/dev/fn",
+              ((uint32_t)loc.bus << 16) | ((uint32_t)loc.dev << 8) | loc.fn);
+        log_v("its socket registers (BAR0)", bar);
         if ((bar & 1u) != 0 || (bar & ~0xFFFu) == 0)
             continue;                /* no socket registers assigned */
         cmd = pci_read32(loc.bus, loc.dev, loc.fn, 0x04);
