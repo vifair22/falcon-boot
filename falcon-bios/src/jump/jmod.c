@@ -52,9 +52,12 @@ jmod_status jmod_check(const uint8_t *hdr, size_t have, uint64_t file_len,
     out->mem_len = mem_end - slot;
     out->init = init;
     for (i = 0; i < 8u; i++) {
-        char c = (char)hdr[JMOD_OFF_NAME + i];
+        uint8_t c = hdr[JMOD_OFF_NAME + i];
 
-        out->name[i] = (c >= ' ' && c <= '~') ? c : '\0';
+        if (c >= (uint8_t)' ' && c <= (uint8_t)'~')
+            out->name[i] = (char)c;
+        else
+            out->name[i] = '\0';
     }
     out->name[8] = '\0';
     return JMOD_OK;
