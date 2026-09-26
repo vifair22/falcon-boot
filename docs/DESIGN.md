@@ -3167,6 +3167,7 @@ resident CD handler, from real mode.
 | 0x0400-0x04FF | BDA; 0x413 is conventional memory in KiB, lowered 16 by a chainload | permanent |
 | 0x1000-0x10FF | disk packet, drive parameters, E820 slot | per call |
 | below 0x7000 | real-mode stack during a thunk | per call |
+| 0x3000-0x311F | the Linux handoff: the move stub at 0x3000, the handoff GDT at 0x3100 | copied at the handoff, handed to the kernel |
 | 0x7000-0x7BFF | stage 2's protected-mode stack | until stage 3 |
 | 0x7C00-0x7DFF | stage 1; later the chainloaded boot image | stage 1 dies at the jump |
 | 0x7E00-0xFDFF | stage 2 (64 sectors; 8 KiB used): gate, thunk, GDT, IDT, fault reporting | until the target starts |
@@ -3177,7 +3178,7 @@ resident CD handler, from real mode.
 | 0x100000 | stage 3: 16-byte header, entry at +0x10, then its image and `.bss` (at most 0x6F0000 together) | whole loader |
 | 0xB8000-0xB8F9F | VGA text memory, the 80x25 screen stage 3 draws | whole loader |
 | 0x7F0000-0x7FFFFF | stage 3 stack, ESP from 0x800000 | whole loader |
-| 0x1000000 | the kernel's protected-mode part (aligned up; `pref_address` for a non-relocatable kernel) | handed to the kernel |
+| 0x1000000 | the kernel's protected-mode part (aligned up; `pref_address` for a non-relocatable kernel); one fixed below here, at 1 MB (memtest86+), is staged here instead, above its own footprint, and moved down at the handoff | handed to the kernel |
 | highest fit below the kernel's `initrd_addr_max` | the initrds, placed from E820 | handed to the kernel |
 | highest fit in 64 MiB-4 GiB | `heap.c`: the patched boot.wim tail | through the chainload, served by AH=87h; the appended part reserved in the map it hands on |
 | 4 GiB | `ADDR_END`: paging is off, so nothing is placed above it | |
@@ -3236,13 +3237,13 @@ sequenceDiagram
     L->>L: build_map (block size from AH=48h), hook cpio /falcon/hook + /falcon/map, the hook of the kernel's width
     L->>L: hookcmd_build + console=ttyS0,115200 console=tty0
     L->>L: linuxcore_geometry: boot protocol 2.12+, load address, and a 64-bit kernel needs CPUID long mode
-    L->>B: kernel's protected-mode part to 16 MiB, in 64 KiB chunks
+    L->>B: kernel's protected-mode part to 16 MiB, in 64 KiB chunks (a kernel fixed below that is staged there, stage_at)
     L->>L: cmdline to 0x20000
     L->>B: initrds, hook last, 4-byte padded, at e820_place_high below initrd_addr_max
     L->>L: zero page at 0x10000: setup header, loader type 0xFF, E820 as the BIOS gave it
     L->>L: "starting <entry>" on screen
     L->>L: screen_info from INT 10h and the BDA, after the route's last line: mode, columns, rows, cursor, VGA
-    L->>K: own GDT (0x10, 0x18), jump to code32_start, ESI = zero page (32-bit entry, either width)
+    L->>K: GDT (0x10, 0x18) copied to 0x3100; a staged kernel is moved down by the stub at 0x3000; jump to code32_start, ESI = zero page (32-bit entry, either width)
     K->>H: rdinit=/falcon/hook, map from /falcon/map
     H->>D: /dev/mapper/falcon-iso (12.4)
     Note over D: the distro finds its medium, mounts root
@@ -3539,7 +3540,7 @@ flowchart TD
     INI -- "yes, or no file" --> MENU
     REP --> MENU{"menu: a disk row each, Memory test<br/>a countdown only for a default whose row is there"}
     MENU -- "a disk, or the countdown on it" --> MBR["MBR (mbr.c): LBA 0 to 0x7C00, DL = that drive<br/>boot16: real mode, jump 0000:7C00"]
-    MENU -- "Memory test" --> MEM["MEM: MEMTEST.BIN through linux_boot<br/>no initrd, empty command line"]
+    MENU -- "Memory test" --> MEM["MEM: MEMTEST.BIN through linux_boot<br/>no initrd, empty command line<br/>fixed at 1 MB: staged at 16 MB, moved down at the handoff"]
     MENU -- "Escape" --> RF["INT 18h, else bios_reboot"]
     MBR -- "unreadable, no 0x55AA" --> MENU
     MEM -- "refused or unreadable" --> MENU
