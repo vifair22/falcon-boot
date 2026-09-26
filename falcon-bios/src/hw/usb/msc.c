@@ -26,6 +26,7 @@
 #define MAX_COUNT 32u
 
 typedef struct {
+    unsigned   port;
     uint8_t    addr;
     uint8_t    mps0;
     int        low;
@@ -64,7 +65,8 @@ static int clear_halt(msc_dev *d, uint8_t ep)
         d->toggle_in = 0;
     else
         d->toggle_out = 0;
-    return g_hc->control(d->addr, d->mps0, d->low, setup, (void *)0, 0);
+    return g_hc->control(d->port, d->addr, d->mps0, d->low, setup,
+                         (void *)0, 0);
 }
 
 /* Bulk-Only's reset recovery: the class reset, then both endpoints' halts
@@ -74,14 +76,15 @@ static void reset_recovery(msc_dev *d)
     uint8_t setup[USB_SETUP_LEN];
 
     usb_setup_bot_reset(setup, d->m.iface);
-    (void)g_hc->control(d->addr, d->mps0, d->low, setup, (void *)0, 0);
+    (void)g_hc->control(d->port, d->addr, d->mps0, d->low, setup,
+                        (void *)0, 0);
     (void)clear_halt(d, d->m.ep_in);
     (void)clear_halt(d, d->m.ep_out);
 }
 
 static int bulk(msc_dev *d, int in, void *buf, uint32_t len, uint32_t *done)
 {
-    return g_hc->bulk(d->addr, in ? d->m.ep_in : d->m.ep_out,
+    return g_hc->bulk(d->port, d->addr, in ? d->m.ep_in : d->m.ep_out,
                       in ? d->m.mps_in : d->m.mps_out, buf, len, done,
                       in ? &d->toggle_in : &d->toggle_out);
 }
@@ -197,24 +200,27 @@ static int enumerate(unsigned port, msc_dev *d)
     uint32_t block;
 
     memset(d, 0, sizeof *d);
+    d->port = port;
     if (g_hc->port_reset(port, &d->low) != 1)
         return -1;
 
     /* Its first eight bytes at address 0, which is where it answers until
      * it is given one; endpoint 0's packet size is in them. */
     usb_setup_get_descriptor(setup, USB_DESC_DEVICE, 0, 8u);
-    if (g_hc->control(0, 8u, d->low, setup, buf, 8u) != USBHC_OK ||
+    if (g_hc->control(port, 0, 8u, d->low, setup, buf, 8u) != USBHC_OK ||
         usb_parse_device(buf, 8u, &dd) != 0)
         return -1;
     d->mps0 = dd.max_packet0;
     usb_setup_set_address(setup, (uint8_t)(port + 1u));
-    if (g_hc->control(0, d->mps0, d->low, setup, (void *)0, 0) != USBHC_OK)
+    if (g_hc->control(port, 0, d->mps0, d->low, setup, (void *)0, 0) !=
+        USBHC_OK)
         return -1;
     d->addr = (uint8_t)(port + 1u);
     io_delay_us(10000);              /* SET_ADDRESS recovery */
 
     usb_setup_get_descriptor(setup, USB_DESC_CONFIG, 0, 9u);
-    if (g_hc->control(d->addr, d->mps0, d->low, setup, buf, 9u) != USBHC_OK)
+    if (g_hc->control(d->port, d->addr, d->mps0, d->low, setup, buf, 9u) !=
+        USBHC_OK)
         return -1;
     total = usb_config_total(buf, 9u);
     if (total < 9u)
@@ -222,14 +228,14 @@ static int enumerate(unsigned port, msc_dev *d)
     if (total > sizeof buf)
         total = (uint16_t)sizeof buf;
     usb_setup_get_descriptor(setup, USB_DESC_CONFIG, 0, total);
-    if (g_hc->control(d->addr, d->mps0, d->low, setup, buf, total) !=
+    if (g_hc->control(d->port, d->addr, d->mps0, d->low, setup, buf, total) !=
             USBHC_OK ||
         usb_find_msc(buf, total, &d->m) != 0) {
         log_s("falcon-bios: USB: a device that is not mass storage\n");
         return -1;
     }
     usb_setup_set_config(setup, d->m.config);
-    if (g_hc->control(d->addr, d->mps0, d->low, setup, (void *)0, 0) !=
+    if (g_hc->control(d->port, d->addr, d->mps0, d->low, setup, (void *)0, 0) !=
         USBHC_OK)
         return -1;
 

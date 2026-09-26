@@ -4,8 +4,8 @@
  * The ThinkPad A21m's PIIX4 is one, and so is QEMU's piix3-usb-uhci; every
  * Intel and VIA chipset of the era has one or more.
  *
- * THE WHOLE SCHEDULE IS ONE QUEUE HEAD. Every entry of the frame list points
- * at it, and a transfer is a chain of transfer descriptors hung from its
+ * EACH CONTROLLER'S SCHEDULE IS ONE QUEUE HEAD. Every entry of its frame list
+ * points at it, and a transfer is a chain of transfer descriptors hung from its
  * element pointer and polled until the controller has retired them. One
  * transfer at a time, no interrupts, no periodic traffic: all a bootloader's
  * INT 13h call needs, and nothing that could run while the resident is not
@@ -72,6 +72,11 @@
  * moves before it loops. */
 #define TD_MAX     256u
 
+/* Controllers: a PIIX4 has one, the ICH family up to four, two ports each.
+ * Root ports are numbered across all of them, two to a controller. */
+#define UHCI_MAX   4u
+#define UHCI_PORTS 2u
+
 /* How long a transfer may take, in 10 us steps: 5 s. A stick that is still
  * spinning up its flash controller answers the first reads slowly. */
 #define WAIT_XFER  500000u
@@ -90,10 +95,27 @@ typedef struct {
     uint32_t pad[2];
 } uhci_qh;
 
-static volatile uint32_t g_frames[1024] __attribute__((aligned(4096)));
-static uhci_qh g_qh __attribute__((aligned(16)));
+static volatile uint32_t g_frames[UHCI_MAX][1024]
+    __attribute__((aligned(4096)));
+static uhci_qh g_qhs[UHCI_MAX] __attribute__((aligned(16)));
+static uint16_t g_ios[UHCI_MAX];
+static unsigned g_nctl;
+
+/* One transfer at a time, whichever controller it is on: the descriptor
+ * pool is shared, and these name the controller the current call uses. */
 static uhci_td g_td[TD_MAX] __attribute__((aligned(32)));
 static uint16_t g_io;
+static uhci_qh *g_qhp;
+
+static void use(unsigned port)
+{
+    unsigned c = port / UHCI_PORTS;
+
+    if (c >= g_nctl)
+        c = 0;
+    g_io = g_ios[c];
+    g_qhp = &g_qhs[c];
+}
 
 static uint32_t phys(const volatile void *p)
 {
@@ -110,20 +132,22 @@ static uint16_t rd16(uint16_t reg)
     return inw((uint16_t)(g_io + reg));
 }
 
-static unsigned uhci_start(void)
+/* Takes controller `c`'s registers from the BIOS, resets it, and runs its
+ * schedule. 0 on success. */
+static int start_one(const pci_loc *loc, unsigned c)
 {
-    pci_loc loc;
     uint32_t cmd;
     unsigned i;
 
-    if (pci_find_class(0x0C0300u, 0, &loc) != 0)
-        return 0;
-    g_io = (uint16_t)(pci_read32(loc.bus, loc.dev, loc.fn, 0x20) & 0xFFE0u);
+    g_io = (uint16_t)(pci_read32(loc->bus, loc->dev, loc->fn, 0x20) &
+                      0xFFE0u);
     if (g_io == 0)
-        return 0;
-    cmd = pci_read32(loc.bus, loc.dev, loc.fn, 0x04);
-    pci_write32(loc.bus, loc.dev, loc.fn, 0x04, (cmd & 0xFFFFu) | 0x0005u);
-    pci_write16(loc.bus, loc.dev, loc.fn, LEGSUP, 0x8F00u);
+        return -1;
+    g_ios[c] = g_io;
+    g_qhp = &g_qhs[c];
+    cmd = pci_read32(loc->bus, loc->dev, loc->fn, 0x04);
+    pci_write32(loc->bus, loc->dev, loc->fn, 0x04, (cmd & 0xFFFFu) | 0x0005u);
+    pci_write16(loc->bus, loc->dev, loc->fn, LEGSUP, 0x8F00u);
 
     wr16(REG_CMD, 0);
     for (i = 0; i < 1000u && (rd16(REG_STS) & STS_HALTED) == 0; i++)
@@ -136,28 +160,44 @@ static unsigned uhci_start(void)
     for (i = 0; i < 1000u && (rd16(REG_CMD) & CMD_HCRST) != 0; i++)
         io_delay_us(10);
 
-    g_qh.link = LINK_T;
-    g_qh.element = LINK_T;
+    g_qhp->link = LINK_T;
+    g_qhp->element = LINK_T;
     for (i = 0; i < 1024u; i++)
-        g_frames[i] = phys(&g_qh) | LINK_Q;
+        g_frames[c][i] = phys(g_qhp) | LINK_Q;
 
     wr16(REG_INTR, 0);
-    outl((uint16_t)(g_io + REG_FLBASE), phys(g_frames));
+    outl((uint16_t)(g_io + REG_FLBASE), phys(g_frames[c]));
     wr16(REG_FRNUM, 0);
     outb((uint16_t)(g_io + REG_SOF), 0x40u);
     wr16(REG_STS, 0xFFFFu);
     wr16(REG_CMD, CMD_RS | CMD_CF | CMD_MAXP);
-    return 2;
+    return 0;
+}
+
+static unsigned uhci_start(void)
+{
+    pci_loc loc;
+    unsigned nth;
+
+    g_nctl = 0;
+    for (nth = 0; nth < UHCI_MAX; nth++) {
+        if (pci_find_class(0x0C0300u, nth, &loc) != 0)
+            break;
+        if (start_one(&loc, g_nctl) == 0)
+            g_nctl++;
+    }
+    return g_nctl * UHCI_PORTS;
 }
 
 static int uhci_port_reset(unsigned port, int *low)
 {
-    uint16_t reg = (uint16_t)(REG_PORT + port * 2u);
+    uint16_t reg = (uint16_t)(REG_PORT + (port % UHCI_PORTS) * 2u);
     uint16_t v;
     unsigned i;
 
-    if (port >= 2u)
+    if (port >= g_nctl * UHCI_PORTS)
         return -1;
+    use(port);
     wr16(reg, PORT_PR);
     io_delay_us(50000);
     wr16(reg, 0);
@@ -207,7 +247,7 @@ static int run(unsigned n, uint32_t *done, unsigned first_data,
 
     *done = 0;
     *retired = 0;
-    g_qh.element = phys(&g_td[0]);
+    g_qhp->element = phys(&g_td[0]);
     while (steps-- > 0) {
         uint32_t st = g_td[i].status;
         uint32_t actual;
@@ -230,7 +270,7 @@ static int run(unsigned n, uint32_t *done, unsigned first_data,
                 /* Short: the rest of the data stage is not coming. A
                  * control transfer still has its status stage to run. */
                 if (end_data < n) {
-                    g_qh.element = phys(&g_td[end_data]);
+                    g_qhp->element = phys(&g_td[end_data]);
                     i = end_data;
                     continue;
                 }
@@ -244,13 +284,13 @@ static int run(unsigned n, uint32_t *done, unsigned first_data,
         }
     }
 out:
-    g_qh.element = LINK_T;
+    g_qhp->element = LINK_T;
     for (i = 0; i < n; i++)
         g_td[i].status &= ~TD_ACTIVE;
     return rc;
 }
 
-static int uhci_control(uint8_t addr, uint8_t mps0, int low,
+static int uhci_control(unsigned port, uint8_t addr, uint8_t mps0, int low,
                         const uint8_t setup[8], void *data, uint16_t len)
 {
     static uint8_t s[8];
@@ -263,6 +303,7 @@ static int uhci_control(uint8_t addr, uint8_t mps0, int low,
 
     if (mps0 == 0)
         return USBHC_ERR;
+    use(port);
     memcpy(s, setup, 8);
     td_fill(&g_td[n], &g_td[n + 1u], low, PID_SETUP, addr, 0, 0, s, 8);
     n++;
@@ -289,8 +330,9 @@ static int uhci_control(uint8_t addr, uint8_t mps0, int low,
     }
 }
 
-static int uhci_bulk(uint8_t addr, uint8_t ep, uint16_t mps, void *data,
-                     uint32_t len, uint32_t *done, uint8_t *toggle)
+static int uhci_bulk(unsigned port, uint8_t addr, uint8_t ep, uint16_t mps,
+                     void *data, uint32_t len, uint32_t *done,
+                     uint8_t *toggle)
 {
     int in = (ep & 0x80u) != 0;
     uint8_t *p = data;
@@ -299,6 +341,7 @@ static int uhci_bulk(uint8_t addr, uint8_t ep, uint16_t mps, void *data,
     *done = 0;
     if (mps == 0 || mps > 64u)
         return USBHC_ERR;
+    use(port);
     do {
         uint32_t off = 0;
         uint32_t got;
