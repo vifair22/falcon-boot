@@ -19,6 +19,10 @@
 #             of its voltage registers ask for 3.3 V
 #   mem       memtest86+, when MEMTEST names a build with the boot protocol
 #             header: the handoff to it
+#   giveup    the cf route to a card whose boot sector only calls INT 18h,
+#             a medium with nothing to boot: jump's resident resets the
+#             machine, which comes back to the floppy, rather than the BIOS
+#             starting its next device on top of the resident (DESIGN 14.6)
 #   s2crc     one byte of stage 2 flipped on the floppy: stage 2's own
 #             CRC-32 stops it before it runs past its first sector
 #   s3crc     one byte of the compressed stage 3 flipped: stage 2 reads it
@@ -179,7 +183,8 @@ usb() {       # usb CASE HC-DEVICES...
 FAILED=0
 CASES=("$@")
 [[ ${#CASES[@]} -gt 0 ]] ||
-    CASES=(hdd cd usb-uhci usb-ohci usb-ehci cf cf3v mem s2crc s3crc modcrc menu)
+    CASES=(hdd cd usb-uhci usb-ohci usb-ehci cf cf3v giveup mem s2crc s3crc
+           modcrc menu)
 
 for c in "${CASES[@]}"; do
     case $c in
@@ -206,6 +211,29 @@ for c in "${CASES[@]}"; do
         boot "$QPCC" -drive if=none,id=cf,format=raw,file="$R/cf.img" \
             -device falcon-pcc,drive=cf$([[ $c == cf3v ]] && echo ,volts=3)
         judge "$c" 'boot drive 0x81, sector size 512'
+        ;;
+    giveup)
+        if [[ ! -x "$QPCC" ]]; then
+            echo "SKIP  giveup    no rig QEMU (falcon-bios/tools/qemu-pcc/build-qemu.sh)"
+            continue
+        fi
+        # INT 18h, then a halt that is never reached.
+        head -c 4194304 /dev/zero > "$R/cf.img"
+        printf '\xcd\x18\xfa\xf4' |
+            dd of="$R/cf.img" conv=notrunc status=none
+        printf '\x55\xaa' |
+            dd of="$R/cf.img" bs=1 seek=510 conv=notrunc status=none
+        floppy cf
+        boot "$QPCC" -drive if=none,id=cf,format=raw,file="$R/cf.img" \
+            -device falcon-pcc,drive=cf
+        if grep -aq 'returned to the BIOS; resetting' "$R/serial.txt" &&
+           [[ $(grep -ac 'stage 1, floppy' "$R/serial.txt") -ge 2 ]]; then
+            echo "PASS  giveup    INT 18h reset the machine, back to the floppy"
+        else
+            echo "FAIL  giveup    INT 18h did not come back through a reset"
+            FAILED=1
+        fi
+        cp "$R/serial.txt" "$R/giveup.log"
         ;;
     s2crc)
         floppy hdd

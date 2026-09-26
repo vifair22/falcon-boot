@@ -393,6 +393,11 @@
 #define JRES_OFF_CODE15   0x300
 #define JRES_OFF_E820     0x400
 #define JRES_E820_MAX     64
+/* The INT 18h and INT 19h entry: a medium that gives up, or asks for the
+ * bootstrap again, gets a cold reset instead of the BIOS's next boot device
+ * started on top of this block, its hooks and a powered PC Card slot. After
+ * the carved map's 64 entries. */
+#define JRES_OFF_RESET    0x900
 #define JRES_BYTES        0xC00  /* 3 KB, what the BDA loses */
 
 /* Stage 3's stack. Above the image and below anything a payload is loaded

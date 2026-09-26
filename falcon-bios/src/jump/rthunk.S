@@ -305,6 +305,63 @@ fail15:
 	.org    JRES_OFF_E820
 	.space  (JRES_E820_MAX * 20)
 
+/* INT 18h and INT 19h: what a booted medium calls when it has nothing to
+ * boot, and what asks for the bootstrap again. Either way the BIOS would go
+ * on to its next boot device without a POST, and start it on top of what
+ * this route left: INT 13h and 15h hooked into this block, the BDA's memory
+ * count lowered, a module in 15-16 MB and, on the PC Card route, a slot
+ * still powered with its I/O window open. Windows 2000 started that way on
+ * the A21m and bugchecked (STOP 0x0A) on a real-mode vector taken for a
+ * kernel pointer. Undoing each change is a list that has to stay complete
+ * as jump grows; a cold reset clears all of it, and the machine comes back
+ * to the floppy.
+ *
+ * 0x0000 in the BDA's reset flag (0x472) is a cold start: the full POST,
+ * which is what re-initialises the PC Card bridge. Then the reset three
+ * ways, as stage2.S's fatal_rm does it. */
+	.org    JRES_OFF_RESET
+jres_reset:
+	cli
+	xorw    %ax, %ax
+	movw    %ax, %ds
+	movw    %ax, (0x0472)
+	movw    $(jres_reset_msg - jres_blob_start), %si
+1:	movb    %cs:(%si), %bl
+	testb   %bl, %bl
+	jz      3f
+	movw    $(SERIAL_PORT + 5), %dx
+	movw    $0xFFFF, %cx
+2:	inb     %dx, %al
+	testb   $0x20, %al           /* the transmitter has room */
+	jnz     4f
+	loop    2b
+4:	movw    $SERIAL_PORT, %dx
+	movb    %bl, %al
+	outb    %al, %dx
+	incw    %si
+	jmp     1b
+3:	movw    $0xCF9, %dx
+	movb    $0x02, %al
+	outb    %al, %dx
+	movb    $0x06, %al
+	outb    %al, %dx
+	movl    $500000, %ecx
+5:	outb    %al, $0x80
+	addr32 loop 5b
+	movl    $100000, %ecx
+6:	inb     $0x64, %al
+	testb   $0x02, %al
+	jz      7f
+	addr32 loop 6b
+7:	movb    $0xFE, %al
+	outb    %al, $0x64
+	movl    $500000, %ecx
+8:	outb    %al, $0x80
+	addr32 loop 8b
+	ljmp    $0xFFFF, $0x0000     /* the reset vector */
+jres_reset_msg:
+	.asciz  "falcon-bios: the booted medium returned to the BIOS; resetting\r\n"
+
 	.org    JRES_BYTES - 1
 	.byte   0
 jres_blob_end:

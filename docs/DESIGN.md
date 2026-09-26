@@ -3566,7 +3566,7 @@ flowchart TD
     PB --> CAT{"the catalog through ops.read (disc_read)<br/>vcd_boot_entry: its media type"}
     CAT -- "floppy emulation" --> VFD["vfd_serve over disc_read: the image to the heap above 64 MB,<br/>vfdres.S as drive 0x00; nothing of the module stays (12.3.8)"]
     CAT -- "hard-disk emulation, or no catalog" --> MENU
-    CAT -- "no emulation" --> RT["jres_install: rthunk.S's block below the BDA's count (1 KB)<br/>INT 13h for drive 0xEF to ops.int13, stack at the slot's top"]
+    CAT -- "no emulation" --> RT["jres_install: rthunk.S's block below the BDA's count (3 KB)<br/>INT 13h for drive 0xEF to ops.int13, stack at the slot's top;<br/>INT 18h, 19h: a cold reset"]
     RT --> PR2["bios_disk_probe(0xEF): AH=48h through the thunk, 2048-byte sectors"]
     PR2 --> VCD["vcd_chainload_drive: the catalog over 0xEF, one run,<br/>keep ranges: the thunk block and 15-16 MB (E820, E801 both halves, AH=88h)"]
     VCD --> CD["the disc's boot image at 0x7C00, DL = 0xE0 (12.3.8)"]
@@ -3577,7 +3577,7 @@ flowchart TD
     LU --> EN["ops.probe: every controller of that kind (up to four), taken from the BIOS, reset;<br/>each root port reset, enumerated, INQUIRY, READ CAPACITY"]
     EN --> GPT{"gpt_parse through ops.read:<br/>an ISO library or a shelf?"}
     GPT -- "no falcon stick" --> MENU
-    GPT -- "yes" --> RU["jres_install for the next BIOS disk (BDA 0x475 + 0x80),<br/>INT 15h hooked too: the block and 15-16 MB carved"]
+    GPT -- "yes" --> RU["jres_install for the next BIOS disk (BDA 0x475 + 0x80),<br/>INT 15h hooked too: the block and 15-16 MB carved;<br/>INT 18h, 19h: a cold reset"]
     RU --> MB["BDA count + 1; mbr_boot: LBA 0 through the thunk to 0x7C00,<br/>DL = that drive; the stick's falcon-bios from there (12.3)"]
     MB -- "unreadable, no 0x55AA" --> RM2["BDA count back, jres_remove"]
     RM2 --> MENU
@@ -4114,6 +4114,20 @@ arena are extended memory, kept out of what the next loader is told it can
 use: the E820 map is carved (`e820_carve`) and E801's answer capped, as the
 stick's resident already does, and INT 15h AH=88h is answered too, since
 some of the loaders these machines run predate E801.
+
+**A medium that gives up.** The block also takes INT 18h and INT 19h, and
+both end in a cold reset (`rthunk.S`, `jres_reset`): 0x0000 into the BDA's
+reset flag at 0x472 so the BIOS runs its full POST, a line on serial, then
+the reset through 0xCF9, the keyboard controller and the reset vector.
+INT 18h is what a bootloader calls when it has nothing to boot (falcon's own
+"returning to firmware" is one), and the BIOS answers it by starting its
+next boot device without a POST, on top of everything this route left: INT
+13h and 15h hooked, the BDA's count lowered, a module in 15-16 MB, on `PCC`
+a slot still powered with its I/O window open. On the A21m that started
+Windows 2000 from the disk, which bugchecked (STOP 0x0A) on a real-mode
+vector taken for a kernel pointer. A reset rather than an undo: the list of
+what to undo grows with jump, and a reset has no list. The rig's `giveup`
+case boots a card whose boot sector is INT 18h and expects the reset.
 
 **Virtual 8086 mode.** A caller in v86 mode (DOS with EMM386, the real-mode
 half of Windows 9x) cannot be taken into protected mode: the CR0 write
