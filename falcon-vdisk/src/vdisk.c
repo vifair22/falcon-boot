@@ -60,6 +60,7 @@ static struct {
 
 #ifdef VDISK_SERIAL_TRACE
 static void serial_trace(const char *s);
+static void trace_object_dir(const WCHAR *path);
 #endif
 
 /* DISK_GEOMETRY and the media type live in ntdddisk.h, which this mingw does
@@ -157,6 +158,12 @@ static UNICODE_STRING g_ctl_name, g_ctl_link, g_cd_name;
  * was, so unload removes it. */
 static UNICODE_STRING g_cdrom0_name;
 static BOOLEAN g_cdrom0;
+/* Piece 3: the ARC name of the boot CD, which no real CD-ROM registers here
+ * (the medium is served over INT 13h), so this driver creates it and points it
+ * at this device, else the kernel's boot-device open finds no such name (0x7B).
+ * g_arc records whether it was, so unload removes it. */
+static UNICODE_STRING g_arc_name;
+static BOOLEAN g_arc;
 static PDEVICE_OBJECT g_ctl_dev, g_cd_dev;
 
 /* The backing store. Two sources behind one seam: the raw-disk extents winjump
@@ -512,6 +519,9 @@ static void NTAPI baked_resolve(PVOID ctx)
     g_size = hdr.iso_size;
 #ifdef VDISK_SERIAL_TRACE
     serial_trace("FALCONVDISK_BACKING_OK\r\n");
+    /* \ArcName again, now the disk stack is up: shows what the kernel has
+     * registered by this point, to compare against the boot ARC name. */
+    trace_object_dir(L"\\ArcName");
 #endif
     (void)notify_mountmgr();
 
@@ -771,6 +781,8 @@ static void NTAPI vdisk_unload(PDRIVER_OBJECT drv)
     IoDeleteSymbolicLink(&g_ctl_link);
     if (g_cdrom0)
         IoDeleteSymbolicLink(&g_cdrom0_name);
+    if (g_arc)
+        IoDeleteSymbolicLink(&g_arc_name);
     if (g_cd_dev != NULL)
         IoDeleteDevice(g_cd_dev);
     if (g_ctl_dev != NULL)
@@ -801,6 +813,65 @@ static void serial_trace(const char *s)
         WRITE_PORT_UCHAR((PUCHAR)0x3F8, (UCHAR)*s++);
     }
 }
+
+/* Trace a UNICODE_STRING as ASCII to COM1, one line. */
+static void serial_trace_ustr(const UNICODE_STRING *u)
+{
+    USHORT i, n = (USHORT)(u->Length / sizeof(WCHAR));
+
+    for (i = 0; i < n; i++) {
+        WCHAR c = u->Buffer[i];
+        char two[2];
+
+        two[0] = (c >= 32 && c < 127) ? (char)c : '?';
+        two[1] = '\0';
+        serial_trace(two);
+    }
+    serial_trace("\r\n");
+}
+
+/* The object-directory query the boot-device diagnostic needs; mingw's ddk
+ * headers do not declare it. Exported by ntoskrnl. */
+typedef struct {
+    UNICODE_STRING Name;
+    UNICODE_STRING TypeName;
+} FALCON_OBJDIR_INFO;
+NTSTATUS NTAPI ZwOpenDirectoryObject(PHANDLE, ACCESS_MASK, POBJECT_ATTRIBUTES);
+NTSTATUS NTAPI ZwQueryDirectoryObject(HANDLE, PVOID, ULONG, BOOLEAN, BOOLEAN,
+                                      PULONG, PULONG);
+
+/* Diagnostic: list an object directory (e.g. \ArcName, whose links name the
+ * boot device the 2000/XP route must resolve to) to COM1, one entry a line,
+ * between BEGIN/END markers. */
+static void trace_object_dir(const WCHAR *path)
+{
+    static UCHAR buf[1024];
+    UNICODE_STRING name;
+    OBJECT_ATTRIBUTES oa;
+    HANDLE h;
+    ULONG ctx = 0, ret;
+    BOOLEAN first = TRUE;
+
+    RtlInitUnicodeString(&name, path);
+    InitializeObjectAttributes(&oa, &name, OBJ_KERNEL_HANDLE | OBJ_CASE_INSENSITIVE,
+                               NULL, NULL);
+    if (!NT_SUCCESS(ZwOpenDirectoryObject(&h, 1u /*DIRECTORY_QUERY*/, &oa))) {
+        serial_trace("FALCONVDISK_ARCDIR_OPEN_FAIL\r\n");
+        return;
+    }
+    serial_trace("FALCONVDISK_ARCDIR_BEGIN\r\n");
+    for (;;) {
+        FALCON_OBJDIR_INFO *di = (FALCON_OBJDIR_INFO *)buf;
+
+        if (!NT_SUCCESS(ZwQueryDirectoryObject(h, buf, sizeof buf, TRUE, first,
+                                               &ctx, &ret)))
+            break;
+        first = FALSE;
+        serial_trace_ustr(&di->Name);
+    }
+    serial_trace("FALCONVDISK_ARCDIR_END\r\n");
+    ZwClose(h);
+}
 #endif
 
 NTSTATUS NTAPI DriverEntry(PDRIVER_OBJECT drv, PUNICODE_STRING reg);
@@ -812,6 +883,9 @@ NTSTATUS NTAPI DriverEntry(PDRIVER_OBJECT drv, PUNICODE_STRING reg)
     (void)reg;
 #ifdef VDISK_SERIAL_TRACE
     serial_trace("FALCONVDISK_SCSILOAD_OK\r\n");
+    /* What the kernel's boot-device ARC name resolves through: the links here
+     * name the boot device the route must make resolve to this CD. */
+    trace_object_dir(L"\\ArcName");
 #endif
     RtlInitUnicodeString(&g_ctl_name, VDISK_CTL_DEVICE);
     RtlInitUnicodeString(&g_ctl_link, VDISK_CTL_LINK);
@@ -855,9 +929,23 @@ NTSTATUS NTAPI DriverEntry(PDRIVER_OBJECT drv, PUNICODE_STRING reg)
     if (g_bake.map_len != 0) {
         RtlInitUnicodeString(&g_cdrom0_name, L"\\Device\\CdRom0");
         g_cdrom0 = NT_SUCCESS(IoCreateSymbolicLink(&g_cdrom0_name, &g_cd_name));
+        /* The boot CD's ARC name. Measured 2026-09-25: \ArcName is empty when
+         * this driver loads, and later holds only multi(0)disk(0)cdrom(0) (this
+         * link) and multi(0)disk(0)fdisk(0) (the floppy) - the system never
+         * registers an ARC name for the served medium, since it is no real
+         * device. This link is created and resolves to this device, yet the
+         * kernel still 0x7B's: so the boot ARC name setupldr set is NOT
+         * cdrom(0). Finding what it IS (the loader block's ArcBootDeviceName, or
+         * the registry) is the remaining work; this link is kept as the
+         * scaffolding it will hang on. */
+        RtlInitUnicodeString(&g_arc_name,
+                             L"\\ArcName\\multi(0)disk(0)cdrom(0)");
+        g_arc = NT_SUCCESS(IoCreateSymbolicLink(&g_arc_name, &g_cd_name));
 #ifdef VDISK_SERIAL_TRACE
         serial_trace(g_cdrom0 ? "FALCONVDISK_CDROM0_LINKED\r\n"
                               : "FALCONVDISK_CDROM0_EXISTS\r\n");
+        serial_trace(g_arc ? "FALCONVDISK_ARC_LINKED\r\n"
+                           : "FALCONVDISK_ARC_FAIL\r\n");
 #endif
     }
 
