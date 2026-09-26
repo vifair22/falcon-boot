@@ -3518,8 +3518,9 @@ drive whose LBA 0 carries the boot signature.
 
 ### 12.6 falcon jump
 
-Section 14's boot floppy, as built at Section 14.11 step 2: the machine's
-disks, memtest86+, and a no-emulation disc in an IDE CD drive. `USB` joins
+Section 14's boot floppy, as built at Section 14.11 step 3: the machine's
+disks, memtest86+, and a no-emulation or floppy-emulation disc in an IDE CD
+drive. `USB` joins
 the menu as a row when step 4 lands.
 
 ```mermaid
@@ -3548,7 +3549,10 @@ flowchart TD
     MEM -- "refused or unreadable" --> MENU
     MENU -- "CD drive" --> LD["jmod_load: ATA.MOD to JMOD_SLOT_ATA (15 MB)<br/>E820 says 15-16 MB is RAM; header checked; .bss zeroed; init"]
     LD --> PB["ops.probe: IDENTIFY PACKET DEVICE on 0x1F0 and 0x170,<br/>master and slave; READ CAPACITY; the first with a disc"]
-    PB --> RT["jres_install: rthunk.S's block below the BDA's count (1 KB)<br/>INT 13h for drive 0xEF to ops.int13, stack at the slot's top"]
+    PB --> CAT{"the catalog through ops.read (disc_read)<br/>vcd_boot_entry: its media type"}
+    CAT -- "floppy emulation" --> VFD["vfd_serve over disc_read: the image to the heap above 64 MB,<br/>vfdres.S as drive 0x00; nothing of the module stays (12.3.8)"]
+    CAT -- "hard-disk emulation, or no catalog" --> MENU
+    CAT -- "no emulation" --> RT["jres_install: rthunk.S's block below the BDA's count (1 KB)<br/>INT 13h for drive 0xEF to ops.int13, stack at the slot's top"]
     RT --> PR2["bios_disk_probe(0xEF): AH=48h through the thunk, 2048-byte sectors"]
     PR2 --> VCD["vcd_chainload_drive: the catalog over 0xEF, one run,<br/>keep ranges: the thunk block and 15-16 MB (E820, E801 both halves, AH=88h)"]
     VCD --> CD["the disc's boot image at 0x7C00, DL = 0xE0 (12.3.8)"]
@@ -3805,11 +3809,12 @@ was weighed and accepted (13.6).
 
 ## 14. falcon jump: a boot floppy (decided 2026-09-25)
 
-Status (2026-09-26): steps 1 and 2 of 14.11 are built and rig-proven under
+Status (2026-09-26): steps 1 to 3 of 14.11 are built and rig-proven under
 SeaBIOS (`make jump`): the floppy, its CHS boot sector, `MBR`, `MEM` and
 `JUMP.INI`; the module format, the reverse thunk, `ATA.MOD` and `CDR`, which
-boots the Arch Linux ISO from an IDE CD to its login prompt. Section 12.6
-draws it. Steps 3 onward are the design below.
+boots the Arch Linux ISO from an IDE CD to its login prompt, and a
+floppy-emulation disc. Section 12.6 draws it. Steps 4 onward are the design
+below.
 
 A floppy that lives in the drive of an old BIOS machine and is its boot
 manager. It boots the machine's own disks by default, memtest86+ on request,
@@ -3995,9 +4000,12 @@ hardware and nothing about El Torito. The catalog's entry decides:
 
 - no emulation (every Linux, BSD and Windows 2000-on disc): as above;
 - floppy emulation (DOS and Win9x boot discs, vendor utility CDs): the
-  image (2.88 MB at most) is read into extended memory and served as drive
-  0x00 by the stick's `vfdres.S`, with the real floppy moved to 0x01. `vfd.c`
-  takes a read callback in place of an ISO file for this;
+  image (2.88 MB at most) is read into extended memory through `ATA.MOD`
+  directly, before anything is resident, and served as drive 0x00 by the
+  stick's `vfdres.S` from there, so nothing of the module or the thunk is
+  left behind. `vfd.c` takes a read callback in place of an ISO file for
+  this. The image goes where `vfd.c`'s heap puts it, above 64 MB, so this
+  kind of disc needs a machine with more than that;
 - hard-disk emulation: refused (14.1).
 
 **USB.** The host controller modules for the controllers the scan found,

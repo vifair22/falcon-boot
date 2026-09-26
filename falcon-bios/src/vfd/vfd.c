@@ -43,7 +43,7 @@ static size_t vfd_blob_len(void)
     return (size_t)((uintptr_t)vfd_blob_end - (uintptr_t)vfd_blob_start);
 }
 
-int vfd_serve(fs_file *isofile, const elt_entry *e, boot_result *r)
+int vfd_serve(fs_read_fn read, void *ctx, const elt_entry *e, boot_result *r)
 {
     vfd_geom g;
     uint64_t image_bytes;
@@ -56,7 +56,7 @@ int vfd_serve(fs_file *isofile, const elt_entry *e, boot_result *r)
     uint16_t equip;
 
     r->stage = "reading the floppy image's geometry";
-    if (isofile == (fs_file *)0 || e == (const elt_entry *)0)
+    if (read == (fs_read_fn)0 || e == (const elt_entry *)0)
         return -1;
     if (vfd_geometry((uint8_t)e->media, 0, &g) != VFD_OK) {
         r->advice = "the boot image is a floppy type this loader does not "
@@ -90,9 +90,9 @@ int vfd_serve(fs_file *isofile, const elt_entry *e, boot_result *r)
 
         if (chunk > 0x8000u)
             chunk = 0x8000u;
-        /* A read that runs off the ISO's end is where the padding begins;
-         * the rest stays zero. */
-        if (fs_file_read(isofile, iso_off + done, chunk, buf + done) != FS_OK)
+        /* A read that runs off the medium's end is where the padding
+         * begins; the rest stays zero. */
+        if (read(ctx, iso_off + done, chunk, buf + done) != 0)
             break;
         done += chunk;
     }

@@ -7,6 +7,7 @@
 #include <result.h>
 #include <fs/fs.h>
 #include <part/part.h>
+#include <media/eltorito.h>
 
 /* The drive number the served medium answers on.
  *
@@ -34,6 +35,11 @@ int vcd_chainload_drive(bios_disk *d, uint64_t n_cd, boot_result *r);
  * the medium is handed along with the virtual CD's own. At most two. */
 int vcd_keep(uint64_t base, uint64_t len);
 void vcd_keep_reset(void);
+
+/* The catalog entry a BIOS boots: the default entry, or the first that says
+ * x86 (media/eltorito.c's header says why the platform is not trusted
+ * first). NULL when the medium boots only on UEFI. */
+const elt_entry *vcd_boot_entry(const elt_catalog *cat);
 
 /* Serves `len` bytes at `iso_off` from memory rather than from the disk when
  * the medium is next chainloaded. This is iso/overlay.h's job under UEFI and

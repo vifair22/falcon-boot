@@ -135,9 +135,11 @@ changed with `mcopy` or by mounting it.
 Every BIOS disk whose first sector carries the boot signature is a row, the
 CD drive row is there when the floppy holds `ATA.MOD` (which `make jump`
 copies on), and the Memory test row when it holds a `MEMTEST.BIN`. The CD
-route boots a no-emulation disc (every Linux, BSD and Windows 2000-on disc)
-from the first drive on the legacy IDE channels that has one, and needs 16 MB
-of memory: the driver stays resident at 15 MB. `make
+route boots the disc in the first drive on the legacy IDE channels that has
+one: a no-emulation disc (every Linux, BSD and Windows 2000-on disc), which
+needs 16 MB of memory since the driver stays resident at 15 MB, or a
+floppy-emulation disc (DOS and Win9x boot discs, vendor utility CDs), which
+is read into memory above 64 MB and so needs more than that. `make
 jump MEMTEST=<file>` copies one on; it has to be a build carrying the x86
 boot protocol header (memtest86+ 6 and later), and the 32-bit build for a
 processor with no 64-bit mode.

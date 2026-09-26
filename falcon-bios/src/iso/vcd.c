@@ -200,7 +200,7 @@ int vcd_overlay(fs_file *isofile, uint64_t iso_off, const void *bytes,
  * says x86. The platform byte is reported rather than trusted for filtering
  * (media/eltorito.c's header says why), so the default entry comes first and
  * the platform is only a fallback. */
-static const elt_entry *bios_entry(const elt_catalog *cat)
+const elt_entry *vcd_boot_entry(const elt_catalog *cat)
 {
     size_t i;
 
@@ -476,7 +476,7 @@ int vcd_chainload(bios_disk *d, fs_vol *p2, const gpt_part *p2part,
         r->advice = "the medium has no El Torito boot catalog.";
         return -1;
     }
-    e = bios_entry(&cat);
+    e = vcd_boot_entry(&cat);
     if (e == (const elt_entry *)0) {
         r->advice = "the medium boots only on UEFI.";
         return -1;
@@ -485,7 +485,7 @@ int vcd_chainload(bios_disk *d, fs_vol *p2, const gpt_part *p2part,
         e->media == ELT_MEDIA_2880K) {
         /* A floppy-emulation image is served as a memory disk (vfd.c),
          * not chainloaded off the virtual CD. Never returns on success. */
-        return vfd_serve(isofile, e, r);
+        return vfd_serve(fs_file_read_cb, isofile, e, r);
     }
     if (e->media != ELT_MEDIA_NONE) {
         r->advice = "the medium's boot image asks for hard-disk emulation, "
@@ -533,7 +533,7 @@ int vcd_chainload_drive(bios_disk *d, uint64_t n_cd, boot_result *r)
         r->advice = "the disc has no El Torito boot catalog.";
         return -1;
     }
-    e = bios_entry(&cat);
+    e = vcd_boot_entry(&cat);
     if (e == (const elt_entry *)0) {
         r->advice = "the disc boots only on UEFI.";
         return -1;
