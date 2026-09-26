@@ -1,11 +1,12 @@
 /* falcon jump (docs/DESIGN.md Section 14): stage 3's entry point in
  * falcon-bios-jump-stage3.bin, the core of the boot floppy.
  *
- * It boots the machine's own disks (route MBR) and memtest86+ off the
- * floppy (route MEM), with an optional default and countdown from JUMP.INI.
- * Nothing is loaded for either route and nothing is left resident. The CD
- * and USB routes, and the drivers they read off the floppy, are later steps
- * of Section 14.11.
+ * It boots the machine's own disks (route MBR), memtest86+ off the floppy
+ * (route MEM) and the disc in an IDE CD drive (route CDR), with an optional
+ * default and countdown from JUMP.INI. MBR and MEM load nothing and leave
+ * nothing resident; CDR reads ATA.MOD off the floppy and leaves it behind
+ * the reverse thunk, under the stick's own virtual CD (Section 14.6). The
+ * USB route is a later step of Section 14.11.
  *
  * Stages 1 and 2: the floppy's own boot sector (start/boot_fd.S) and the
  * stick's stage 2, both reading by CHS from the volume's reserved sectors.
@@ -20,6 +21,9 @@
 #include <linux/linux.h>
 #include <mem/e820.h>
 #include <jump/jumpini.h>
+#include <jump/jmodload.h>
+#include <jump/jres.h>
+#include <iso/vcd.h>
 
 #include <fs/fs.h>
 #include <tui/tui.h>
@@ -34,8 +38,17 @@
 
 #define DISKS_MAX 8u
 
-/* One row per disk, and memtest86+. */
-#define LIST_MAX (DISKS_MAX + 1u)
+/* One row per disk, the CD, and memtest86+. */
+#define LIST_MAX (DISKS_MAX + 2u)
+
+/* The drive number ATA.MOD answers for through the reverse thunk: private,
+ * raw 2048-byte sectors, never offered to anything but the virtual CD that
+ * serves the disc from it as VCD_DRIVE. */
+#define CD_RAW_DRIVE 0xEFu
+
+/* What a row of the list is. */
+#define ROW_MEMTEST (-1)
+#define ROW_CD      (-2)
 
 /* JUMP.INI is a few lines; anything longer is not one. */
 #define INI_MAX 4096u
@@ -54,6 +67,7 @@ static fs_vol    g_vol;
 static int       g_have_vol;
 static fs_dirent g_memtest;
 static int       g_have_memtest;
+static int       g_have_ata;
 
 static jump_cfg g_cfg;
 static char     g_ini[INI_MAX];
@@ -140,6 +154,13 @@ static void read_floppy(uint8_t drive)
         fs_lookup(&g_vol, "/MEMTEST.BIN", &scratch, &g_memtest) == FS_OK &&
         !g_memtest.is_dir && g_memtest.size > 0;
 
+    {
+        fs_dirent mod;
+
+        g_have_ata = fs_lookup(&g_vol, "/ATA.MOD", &scratch, &mod) == FS_OK &&
+                     !mod.is_dir;
+    }
+
     if (fs_lookup(&g_vol, "/JUMP.INI", &scratch, &ini) != FS_OK || ini.is_dir)
         return;
     if (ini.size > INI_MAX ||
@@ -204,6 +225,72 @@ static void boot_memtest(void)
     screen_out(k_press_any);
 }
 
+/* CDR: ATA.MOD off the floppy, the first drive with a disc, and the stick's
+ * virtual CD serving that disc from the module's private drive. Returns only
+ * when it could not hand over, with everything it installed taken back. */
+static void boot_cd(void)
+{
+    static jmod_ops ops;
+    boot_result r;
+    bios_disk raw;
+    jmod_dev dev;
+    const char *why = (const char *)0;
+    uint32_t base = 0;
+    unsigned n;
+    unsigned i;
+
+    boot_result_init(&r);
+    screen_mode("CDR");
+    screen_page();
+    screen_out("booting: CD\n\n");
+
+    r.stage = "loading ATA.MOD";
+    if (jmod_load(&g_vol, "/ATA.MOD", JMOD_SLOT_ATA, &ops, &why) != 0) {
+        r.advice = why;
+        goto fail;
+    }
+    r.stage = "looking for a CD drive";
+    n = ops.probe();
+    for (i = 0; i < n; i++) {
+        if (ops.dev(i, &dev) == 0 && dev.sectors != 0)
+            break;
+    }
+    if (i == n) {
+        r.advice = n == 0 ? "there is no CD drive on the IDE channels."
+                          : "there is no disc in the CD drive.";
+        goto fail;
+    }
+    screen_out(dev.label);
+    screen_out("\n\n");
+
+    r.stage = "installing the CD driver";
+    if (ops.serve(i, (uint8_t)CD_RAW_DRIVE) != 0 ||
+        jres_install((uint8_t)CD_RAW_DRIVE, (uint32_t)(uintptr_t)ops.int13,
+                     JMOD_SLOT_ADDR(JMOD_SLOT_ATA) + JMOD_SLOT_BYTES,
+                     &base) != 0) {
+        r.advice = "this machine will not give up the conventional memory "
+                   "the CD driver needs.";
+        goto fail;
+    }
+    /* Through the thunk, as the disc's own bootloader will reach it. */
+    if (!bios_disk_probe(&raw, (uint8_t)CD_RAW_DRIVE)) {
+        r.advice = "the CD driver did not answer through INT 13h.";
+        jres_remove();
+        goto fail;
+    }
+    vcd_keep_reset();
+    (void)vcd_keep(base, JRES_BYTES);
+    (void)vcd_keep(JMOD_REGION, JMOD_REGION_END - JMOD_REGION);
+    (void)vcd_chainload_drive(&raw, dev.sectors, &r);
+    jres_remove();
+
+fail:
+    screen_page();
+    screen_out("CD");
+    failed("boot", &r);
+    screen_out(k_press_any);
+}
+
 /* Escape on the list: INT 18h, and a reset if the BIOS returns. */
 static void return_to_firmware(void)
 {
@@ -235,7 +322,7 @@ static void list_run(void)
         u"falcon-boot " FALCON_VERSION_JUMP, u"BIOS", TUI_ATTR_TEXT
     };
     static const uint16_t *labels[LIST_MAX];
-    static int kind[LIST_MAX];      /* -1 memtest86+, else a g_disks slot */
+    static int kind[LIST_MAX];      /* ROW_*, else a g_disks slot */
     unsigned seconds = g_cfg.timeout;
 
     for (;;) {
@@ -255,13 +342,22 @@ static void list_run(void)
             kind[n] = (int)i;
             n++;
         }
+        if (g_have_ata) {
+            if (g_cfg.def == JUMP_DEF_CD) {
+                def = n;
+                have_def = 1;
+            }
+            labels[n] = u"CD drive";
+            kind[n] = ROW_CD;
+            n++;
+        }
         if (g_have_memtest) {
             if (g_cfg.def == JUMP_DEF_MEMTEST) {
                 def = n;
                 have_def = 1;
             }
             labels[n] = u"Memory test (memtest86+)";
-            kind[n] = -1;
+            kind[n] = ROW_MEMTEST;
             n++;
         }
 
@@ -279,8 +375,10 @@ static void list_run(void)
         if (pick < 0)
             return_to_firmware();
 
-        if (kind[pick] < 0)
+        if (kind[pick] == ROW_MEMTEST)
             boot_memtest();
+        else if (kind[pick] == ROW_CD)
+            boot_cd();
         else
             boot_disk(&g_disks[kind[pick]]);
         (void)screen_key();
@@ -305,7 +403,7 @@ void bios_main(uint8_t drive)
     screen_init();
     if (g_cfg.err_line != 0)
         report_ini();
-    else if (g_cfg.def == JUMP_DEF_CD || g_cfg.def == JUMP_DEF_USB)
+    else if (g_cfg.def == JUMP_DEF_USB)
         bios_puts("falcon-bios: JUMP.INI names a route this build does not have\n");
     list_run();
     for (;;)

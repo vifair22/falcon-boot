@@ -1,0 +1,16 @@
+/* falcon jump: reading a module off the floppy into its slot and starting
+ * it (DESIGN Section 14.4). */
+
+#ifndef FALCON_BIOS_JMODLOAD_H
+#define FALCON_BIOS_JMODLOAD_H
+
+#include <jump/jmod.h>
+#include <fs/fs.h>
+
+/* Reads `path` off `vol` into slot `slot_idx`, checks it (jmod_check),
+ * zeroes its .bss and calls its init, which fills `ops`. 0 on success;
+ * otherwise -1 with *why a sentence for the screen. */
+int jmod_load(fs_vol *vol, const char *path, unsigned slot_idx,
+              jmod_ops *ops, const char **why);
+
+#endif /* FALCON_BIOS_JMODLOAD_H */

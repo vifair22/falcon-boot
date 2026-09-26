@@ -22,17 +22,16 @@
 
 #include <fs/fs.h>
 #include <media/eltorito.h>
+#include <mem/lowmem.h>
+
 #include <lib/string.h>
 
 /* The BIOS data area words this touches: the conventional-memory size the
  * resident hides itself behind, and the equipment word that says a floppy is
  * present. */
-#define BDA_MEMSIZE 0x413
 #define BDA_EQUIP   0x410
 #define IVT_INT13   (0x13u * 4u)
 
-/* The resident may not start below the bounce buffer's end (biosdefs.h). */
-#define RESIDENT_FLOOR 0x98000u
 
 /* The blob, as vfdres.S lays it out; copied, never called where it is linked
  * (stage 3 is above a megabyte, out of real mode's reach). */
@@ -42,26 +41,6 @@ extern const unsigned char vfd_blob_end[];
 static size_t vfd_blob_len(void)
 {
     return (size_t)((uintptr_t)vfd_blob_end - (uintptr_t)vfd_blob_start);
-}
-
-/* The top-of-conventional-memory block the resident lives in, without taking
- * it yet. 0 when the machine cannot give it up. The same rule as vcd.c's:
- * asked for here, taken only past the point where nothing can fail. */
-static uint16_t resident_segment(void)
-{
-    uint16_t have = peek16(BDA_MEMSIZE);
-    uint16_t want = (uint16_t)(VCD_BYTES / 1024u);
-
-    if (have < 256u || have <= want)
-        return 0;
-    if ((uint32_t)(have - want) * 1024u < RESIDENT_FLOOR)
-        return 0;
-    return (uint16_t)((uint32_t)(have - want) * 1024u / 16u);
-}
-
-static void take_conventional_memory(uint16_t seg)
-{
-    poke16(BDA_MEMSIZE, (uint16_t)((uint32_t)seg * 16u / 1024u));
 }
 
 int vfd_serve(fs_file *isofile, const elt_entry *e, boot_result *r)
@@ -127,7 +106,7 @@ int vfd_serve(fs_file *isofile, const elt_entry *e, boot_result *r)
     memcpy((void *)(uintptr_t)VFD_STAGE_ADDR, buf, VFD_SECTOR);
 
     r->stage = "reserving memory for the virtual floppy";
-    seg = resident_segment();
+    seg = lowmem_segment(VCD_BYTES);
     if (seg == 0) {
         r->advice = "this machine will not give up the conventional memory "
                     "the virtual floppy needs.";
@@ -182,7 +161,7 @@ int vfd_serve(fs_file *isofile, const elt_entry *e, boot_result *r)
     poke16(BDA_EQUIP, equip);
 
     /* From here nothing may fail. */
-    take_conventional_memory(seg);
+    lowmem_take(seg);
     poke32(IVT_INT13, ((uint32_t)seg << 16) | (uint32_t)VFD_OFF_CODE);
 
     bios_boot_drive = 0x00;

@@ -10,13 +10,22 @@ JUMP_BIOS := $(JUMP)/bios_main.c
 JUMP_BIOS += $(BIOS_MOD_console) $(BIOS_MOD_jumpini)
 JUMP_BIOS += $(BIOS_MOD_mbr)          # the disks the BIOS already sees
 JUMP_BIOS += $(BIOS_MOD_linux)        # memtest86+, through the boot protocol
+JUMP_BIOS += $(BIOS_MOD_jmod)         # the drivers, read off the floppy
+JUMP_BIOS += $(BIOS_MOD_iso) $(BIOS_MOD_vfd) $(BIOS_MOD_lowmem) $(BIOS_MOD_heap)  # CDR: the stick's virtual CD over ATA.MOD
+JUMP_BIOS += $(CORE)/media/eltorito.c
 JUMP_BIOS += $(BIOS_MOD_e820) $(BIOS_MOD_disk) $(BIOS_MOD_serial)
 JUMP_BIOS += $(CORE_FS_FAT)           # the floppy is FAT12; nothing else is mounted
 JUMP_BIOS += $(CORE_PART) $(CORE_PE) $(CORE_LIBC) $(CORE_UCS2) $(CORE_TUI)
 
-$(eval $(call bios_app,jump,$(BIOS_JUMP_STAGE3),,$(JUMP_BIOS),))
+$(eval $(call bios_app,jump,$(BIOS_JUMP_STAGE3),\
+	$(BIOS_RES_iso) $(BIOS_RES_vfd) $(BIOS_RES_jres),$(JUMP_BIOS),))
 
 $(BIOS_OBJ)/$(JUMP)/bios_main.o: build/version.h
+
+# The drivers (DESIGN Section 14.4), each a module read off the floppy only
+# for the route that needs it.
+$(eval $(call jump_module,ATA,JMOD_SLOT_ATA,\
+	$(BIOS)/hw/ata/ata.c $(BIOS)/hw/ata/atacore.c $(CORE_LIBC)))
 
 # The floppy (Section 14.3): a 1.44 MB FAT12 volume whose reserved sectors
 # hold stage 2 at STAGE2_LBA and stage 3 at STAGE3_LBA, the stick's own
@@ -31,7 +40,7 @@ MEMTEST ?=
 JUMP_INI ?=
 
 $(JUMP_IMG): $(BIOS_FD_STAGE1) $(BIOS_STAGE2) $(BIOS_JUMP_STAGE3) \
-		$(MEMTEST) $(JUMP_INI)
+		$(JUMP_MODS) $(MEMTEST) $(JUMP_INI)
 	@mkdir -p $(@D)
 	@rm -f $@.tmp
 	@s3=$$(( ($$(stat -c %s $(BIOS_JUMP_STAGE3)) + 511) / 512 )); \
@@ -48,6 +57,7 @@ $(JUMP_IMG): $(BIOS_FD_STAGE1) $(BIOS_STAGE2) $(BIOS_JUMP_STAGE3) \
 		conv=notrunc status=none
 	dd if=$(BIOS_JUMP_STAGE3) of=$@.tmp bs=512 seek=$(STAGE3_LBA_CHECK) \
 		conv=notrunc status=none
+	$(foreach m,$(JUMP_MODS),mcopy -i $@.tmp $(m) ::$(notdir $(m));)
 	$(if $(MEMTEST),mcopy -i $@.tmp $(MEMTEST) ::MEMTEST.BIN)
 	$(if $(JUMP_INI),mcopy -i $@.tmp $(JUMP_INI) ::JUMP.INI)
 	@mv $@.tmp $@

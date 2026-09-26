@@ -3175,9 +3175,11 @@ resident CD handler, from real mode.
 | 0x20000 | Linux cmdline; or the staged El Torito boot image (up to 63 KiB) on a chainload | handed over |
 | 0x90000-0x97FFF | bounce buffer | every read |
 | BDA top - 16 KiB | the resident CD handler: data, runs, El Torito packet, launch stub at +0x530, INT 13h entry at +0x570, INT 15h entry at +0xA00, carved E820 map at +0xB00, overlay pool at +0x1000; never below 0x98000 | permanent after a chainload; reserved in the map it hands on |
+| BDA top - 1 KiB (falcon jump) | the reverse thunk (`rthunk.S`): far pointers, its GDT, the saved caller, the INT 13h entry at +0x90; below it the virtual CD's block | permanent after `CDR` hands over; reserved in the map it hands on |
 | 0x100000 | stage 3: 16-byte header, entry at +0x10, then its image and `.bss` (at most 0x6F0000 together) | whole loader |
 | 0xB8000-0xB8F9F | VGA text memory, the 80x25 screen stage 3 draws | whole loader |
 | 0x7F0000-0x7FFFFF | stage 3 stack, ESP from 0x800000 | whole loader |
+| 0xF00000-0xFFFFFF (falcon jump) | the module slots, eight of 128 KiB (`JMOD_REGION`): `ATA.MOD` at 0xF00000 | from the module's load; permanent after `CDR` hands over, reserved in E820, E801 and AH=88h |
 | 0x1000000 | the kernel's protected-mode part (aligned up; `pref_address` for a non-relocatable kernel); one fixed below here, at 1 MB (memtest86+), is staged here instead, above its own footprint, and moved down at the handoff | handed to the kernel |
 | highest fit below the kernel's `initrd_addr_max` | the initrds, placed from E820 | handed to the kernel |
 | highest fit in 64 MiB-4 GiB | `heap.c`: the patched boot.wim tail | through the chainload, served by AH=87h; the appended part reserved in the map it hands on |
@@ -3516,9 +3518,9 @@ drive whose LBA 0 carries the boot signature.
 
 ### 12.6 falcon jump
 
-Section 14's boot floppy, as built at Section 14.11 step 1: the machine's
-disks and memtest86+. `CDR` and `USB` join the menu as rows when steps 2 and
-4 land.
+Section 14's boot floppy, as built at Section 14.11 step 2: the machine's
+disks, memtest86+, and a no-emulation disc in an IDE CD drive. `USB` joins
+the menu as a row when step 4 lands.
 
 ```mermaid
 flowchart TD
@@ -3534,7 +3536,7 @@ flowchart TD
     GEO --> L3["stage3_load: header at STAGE3_LBA, then the image"]
     L3 --> BM["bios_main (apps/jump/bios_main.c)<br/>e820_read"]
     BM --> FAT["read_floppy: fs_identify, fs_mount (FAT12)<br/>MEMTEST.BIN present? JUMP.INI parsed (jumpini.c)"]
-    FAT --> DSK["scan_disks: every drive the BDA counts (0x475)<br/>whose LBA 0 ends in 0x55AA"]
+    FAT --> DSK["scan_disks: every drive the BDA counts (0x475)<br/>whose LBA 0 ends in 0x55AA; the CD row when ATA.MOD is on the floppy"]
     DSK --> INI{"JUMP.INI taken?"}
     INI -- "a line it cannot take" --> REP["the line and why, a key<br/>no default"]
     INI -- "yes, or no file" --> MENU
@@ -3544,11 +3546,22 @@ flowchart TD
     MENU -- "Escape" --> RF["INT 18h, else bios_reboot"]
     MBR -- "unreadable, no 0x55AA" --> MENU
     MEM -- "refused or unreadable" --> MENU
+    MENU -- "CD drive" --> LD["jmod_load: ATA.MOD to JMOD_SLOT_ATA (15 MB)<br/>E820 says 15-16 MB is RAM; header checked; .bss zeroed; init"]
+    LD --> PB["ops.probe: IDENTIFY PACKET DEVICE on 0x1F0 and 0x170,<br/>master and slave; READ CAPACITY; the first with a disc"]
+    PB --> RT["jres_install: rthunk.S's block below the BDA's count (1 KB)<br/>INT 13h for drive 0xEF to ops.int13, stack at the slot's top"]
+    RT --> PR2["bios_disk_probe(0xEF): AH=48h through the thunk, 2048-byte sectors"]
+    PR2 --> VCD["vcd_chainload_drive: the catalog over 0xEF, one run,<br/>keep ranges: the thunk block and 15-16 MB (E820, E801 both halves, AH=88h)"]
+    VCD --> CD["the disc's boot image at 0x7C00, DL = 0xE0 (12.3.8)"]
+    CD --> RD13["its reads: 0xE0 (vcdres.S) re-issues to 0xEF,<br/>rthunk.S: saves the caller, A20 on, protected mode, ops.int13, back"]
+    VCD -- "refused" --> RM["jres_remove"]
+    RM --> MENU
 ```
 
-Nothing is resident at either handoff, as with the station (12.5.2). The
-floppy is read by CHS wherever its BIOS has no extensions, SeaBIOS's
-included, so the rig exercises the same path an old machine takes.
+`MBR` and `MEM` leave nothing resident, as the station's routes do (12.5.2).
+`CDR` leaves two: the stick's virtual CD, unchanged but for serving a whole
+drive as one run, and under it the reverse thunk and `ATA.MOD`. The floppy
+is read by CHS wherever its BIOS has no extensions, SeaBIOS's included, so
+the rig exercises the same path an old machine takes.
 
 ## 13. The stationary build (decided 2026-09-21)
 
@@ -3792,9 +3805,11 @@ was weighed and accepted (13.6).
 
 ## 14. falcon jump: a boot floppy (decided 2026-09-25)
 
-Status (2026-09-25): step 1 of 14.11 is built and rig-proven under SeaBIOS
-(`make jump`): the floppy, its CHS boot sector, `MBR` and `MEM`, and
-`JUMP.INI`. Section 12.6 draws it. Steps 2 onward are the design below.
+Status (2026-09-26): steps 1 and 2 of 14.11 are built and rig-proven under
+SeaBIOS (`make jump`): the floppy, its CHS boot sector, `MBR`, `MEM` and
+`JUMP.INI`; the module format, the reverse thunk, `ATA.MOD` and `CDR`, which
+boots the Arch Linux ISO from an IDE CD to its login prompt. Section 12.6
+draws it. Steps 3 onward are the design below.
 
 A floppy that lives in the drive of an old BIOS machine and is its boot
 manager. It boots the machine's own disks by default, memtest86+ on request,
@@ -3895,11 +3910,20 @@ into memory and called.
   its length, its entry point and its name. The core checks all of them
   before the jump and refuses a mismatch with a sentence ("UHCI.MOD is from
   another build"), not a fault.
-- **Two tables.** The core calls the entry with a table of the services a
-  module may use (serial output, a delay from the PIT, PCI configuration
-  space, memory from the module's own arena, the thunk to the BIOS), and the
-  module fills in a table of what it offers: find devices, read blocks. A
-  module calls nothing in the core by symbol.
+- **The slots.** One region, 15-16 MB (`JMOD_REGION`), eight 128 KB slots,
+  each holding a module's image, its .bss and, at its top, its stack. Just
+  under the 16 MB where kernels go, above everything a falcon-bios stage 3
+  occupies, and present on any machine with 16 MB; the core checks the
+  E820 map says it is RAM before it loads anything there.
+- **Two tables, and when each may be used.** The core calls init with a
+  table of services (serial output), and the module fills in a table of
+  what it offers: probe, describe a device, read, choose the device to
+  serve, and `int13`, the resident entry. The services exist only while the
+  core does. Once the medium's bootloader runs, the core is gone, so
+  `int13` and everything it reaches use only the module itself: its own
+  port I/O, its own delays (reads of port 0x80), its own buffers. A module
+  calls nothing in the core by symbol and links its own copy of the core
+  routines it uses.
 - **The set.** `ATA.MOD` (ATA and ATAPI, legacy ports and PCI IDE),
   `UHCI.MOD`, `OHCI.MOD`, `EHCI.MOD` (one host controller each, root ports
   only in the MVP), `USB.MOD` (enumeration, Bulk-Only Transport, the SCSI
@@ -3962,12 +3986,14 @@ faults to the monitor. The stub checks and fails the call with an error
 rather than trying. DOS with a memory manager cannot read a CD or stick
 through jump; booting one without it can.
 
-**CD.** `ATA.MOD` finds the ATAPI drive, core's `eltorito.c` reads the
-catalog, and the entry's media type decides:
+**CD.** `ATA.MOD` finds the ATAPI drive and answers raw 2048-byte reads for
+it on a private drive number (0xEF) through the reverse thunk. The stick's
+virtual CD (`vcd.c`, `vcdres.S`) then serves the disc as drive 0xE0, one run
+over 0xEF, which gives it every CD call a bootloader makes (AH=41h, 42h, 48h,
+4Bh, the launch stub) without a second CD emulator; `ATA.MOD` knows the
+hardware and nothing about El Torito. The catalog's entry decides:
 
-- no emulation (every Linux, BSD and Windows 2000-on disc): the boot image
-  is loaded at its segment and the resident serves the disc as a CD
-  drive number, 2048-byte sectors through AH=42h, and AH=4Bh;
+- no emulation (every Linux, BSD and Windows 2000-on disc): as above;
 - floppy emulation (DOS and Win9x boot discs, vendor utility CDs): the
   image (2.88 MB at most) is read into extended memory and served as drive
   0x00 by the stick's `vfdres.S`, with the real floppy moved to 0x01. `vfd.c`
@@ -4013,9 +4039,11 @@ Few machines are older than a Pentium and have a CD drive or USB.
 
 QEMU with SeaBIOS, the image as the floppy (`-drive if=floppy`), a
 `piix3-usb-uhci`, `pci-ohci` or `usb-ehci` controller with a `usb-storage`
-stick built by the rig's stick tooling, and an `ide-cd`. SeaBIOS boots USB
-and CDs itself, which would pass every test whether jump worked or not, so
-the rig's SeaBIOS is built with both compiled out.
+stick built by the rig's stick tooling, and an `ide-cd`. The CD needs no
+change to SeaBIOS: the floppy boots first, and jump reads the drive through
+its own driver, never through the BIOS, so SeaBIOS's CD support cannot stand
+in for it. A USB stick is different, since SeaBIOS also lists one as a disk
+the `MBR` route would offer; step 4 decides how the rig keeps the two apart.
 
 The first machine is the ThinkPad A21m (its repository's
 `docs/HARDWARE.md`): a PIIX4 with UHCI and the IDE optical bay, a TI

@@ -24,6 +24,7 @@
 #include <iso/vcdcore.h>
 #include <vfd/vfd.h>
 #include <mem/e820.h>
+#include <mem/lowmem.h>
 
 #include <fs/fs.h>
 #include <media/eltorito.h>
@@ -51,14 +52,9 @@ static size_t vcd_blob_len(void)
 
 /* How many kilobytes of conventional memory the BIOS says there are, and
  * the vector this loader takes over. */
-#define BDA_MEMSIZE 0x413
 #define IVT_INT13   (0x13u * 4u)
 #define IVT_INT15   (0x15u * 4u)
 
-/* The bounce buffer and everything below it are stage 3's until the jump,
- * so the resident may not start under its end (biosdefs.h: the floor
- * mem_check holds the EBDA to). */
-#define RESIDENT_FLOOR 0x98000u
 
 /* The memory map the resident answers E820 with. */
 static e820_entry g_carved[VCD_E820_MAX];
@@ -92,10 +88,33 @@ static uint32_t g_redir_cd;
 
 static unsigned g_n_carved;
 static uint16_t g_e801_cap;
+static uint16_t g_e801_low;
+
+/* Memory a caller keeps in use behind the handoff besides the virtual CD's
+ * own (falcon jump's reverse thunk and driver region): carved out of the map
+ * with it. */
+#define VCD_KEEP_MAX 2u
+static e820_range g_keep_extra[VCD_KEEP_MAX];
+static unsigned   g_n_keep_extra;
 
 static vcd_extent g_ext[VCD_MAX_RUNS + 8u];
 static fs_extent  g_fsext[VCD_MAX_RUNS + 8u];
 static uint8_t    g_sector[2048];
+
+void vcd_keep_reset(void)
+{
+    g_n_keep_extra = 0;
+}
+
+int vcd_keep(uint64_t base, uint64_t len)
+{
+    if (g_n_keep_extra >= VCD_KEEP_MAX || len == 0)
+        return -1;
+    g_keep_extra[g_n_keep_extra].base = base;
+    g_keep_extra[g_n_keep_extra].len = len;
+    g_n_keep_extra++;
+    return 0;
+}
 
 void vcd_overlay_reset(void)
 {
@@ -219,93 +238,19 @@ static void write_spec(uint8_t *at, const elt_entry *e, uint16_t load_seg)
     at[0x0F] = (uint8_t)(e->sectors >> 8);
 }
 
-/* The segment of the block at the top of conventional memory the resident
- * will live in, without taking it yet. 0 when the machine cannot give it up.
- *
- * Asked for, then taken separately (take_conventional_memory) at the point
- * past which nothing can fail. Everything between can refuse, and a refusal
- * that had already lowered the BDA would leave the machine sixteen
- * kilobytes shorter for the rest of its uptime, once per attempt. Writing
- * the block before the BDA admits it is gone is safe: nothing of this
- * loader's lives up there, and nothing else runs until the handoff. */
-static uint16_t resident_segment(void)
+/* Everything after the map: the boot image staged, the resident's block
+ * found, the map finished and carved, the resident written and the machine
+ * handed over. `read` reads the medium by byte offset, in whole CD sectors.
+ * Returns only on a refusal. */
+static int launch(bios_disk *d, const elt_entry *e, fs_read_fn read,
+                  void *ctx, boot_result *r)
 {
-    uint16_t have = peek16(BDA_MEMSIZE);
-    uint16_t want = (uint16_t)(VCD_BYTES / 1024u);
-
-    /* A machine reporting less than 256 KB is one whose BDA we do not
-     * believe, and taking memory from it would be worse than refusing. */
-    if (have < 256u || have <= want)
-        return 0;
-    if ((uint32_t)(have - want) * 1024u < RESIDENT_FLOOR)
-        return 0;
-    return (uint16_t)((uint32_t)(have - want) * 1024u / 16u);
-}
-
-static void take_conventional_memory(uint16_t seg)
-{
-    poke16(BDA_MEMSIZE, (uint16_t)((uint32_t)seg * 16u / 1024u));
-}
-
-int vcd_chainload(bios_disk *d, fs_vol *p2, const gpt_part *p2part,
-                  const fs_dirent *iso, fs_file *isofile, boot_result *r)
-{
-    elt_catalog cat;
-    const elt_entry *e;
     uint8_t *at;
     uint16_t seg;
     uint16_t load_seg;
     uint32_t load_bytes;
     uint32_t old_vector;
-    size_t n_ext = 0;
     size_t i;
-    int rc;
-
-    r->stage = "reading the ISO's boot catalog";
-    if (elt_parse(&cat, fs_file_read_cb, isofile, iso->size) != ELT_OK) {
-        r->advice = "the medium has no El Torito boot catalog.";
-        return -1;
-    }
-    e = bios_entry(&cat);
-    if (e == (const elt_entry *)0) {
-        r->advice = "the medium boots only on UEFI.";
-        return -1;
-    }
-    if (e->media == ELT_MEDIA_1200K || e->media == ELT_MEDIA_1440K ||
-        e->media == ELT_MEDIA_2880K) {
-        /* A floppy-emulation image is served as a memory disk (vfd.c),
-         * not chainloaded off the virtual CD. Never returns on success. */
-        return vfd_serve(isofile, e, r);
-    }
-    if (e->media != ELT_MEDIA_NONE) {
-        r->advice = "the medium's boot image asks for hard-disk emulation, "
-                    "which this loader does not do.";
-        return -1;
-    }
-
-    /* Where the ISO is on the disk, as runs the handler can scan. */
-    r->stage = "mapping the ISO's extents on p2";
-    rc = fs_extents(p2, iso, g_fsext,
-                    sizeof g_fsext / sizeof g_fsext[0], &n_ext);
-    if (rc != FS_OK) {
-        r->advice = TOO_MANY_PIECES;
-        return -1;
-    }
-    for (i = 0; i < n_ext; i++) {
-        g_ext[i].off = g_fsext[i].vol_off;
-        g_ext[i].len = g_fsext[i].len;
-    }
-    rc = vcd_build(&g_map, g_ext, n_ext,
-                   p2part->start_lba, d->sector_size, iso->size,
-                   (uint8_t)VCD_DRIVE, d->drive);
-    if (rc != VCD_OK) {
-        if (rc == VCD_ERR_TOO_MANY)
-            r->advice = TOO_MANY_PIECES;
-        else if (rc == VCD_ERR_ALIGN)
-            r->advice = "the ISO is not laid out on the stick in whole CD "
-                        "sectors.";
-        return -1;
-    }
 
     /* The boot image, where the medium says it goes. A load segment of zero
      * means 0x7C0, which is the boot sector address every BIOS has used. */
@@ -323,15 +268,15 @@ int vcd_chainload(bios_disk *d, fs_vol *p2, const gpt_part *p2part,
         uint32_t done = 0;
         uint8_t *dst = (uint8_t *)(uintptr_t)VCD_STAGE_ADDR;
 
+        /* A whole CD sector at a time: a drive reads nothing smaller. */
         while (done < load_bytes) {
             uint32_t chunk = load_bytes - done;
 
             if (chunk > (uint32_t)sizeof g_sector)
                 chunk = (uint32_t)sizeof g_sector;
-            r->stage = "reading the ISO's boot image";
-            if (fs_file_read(isofile,
-                             (uint64_t)e->lba * ELT_SECTOR + done,
-                             chunk, g_sector) != FS_OK)
+            r->stage = "reading the medium's boot image";
+            if (read(ctx, (uint64_t)e->lba * ELT_SECTOR + done,
+                     (uint64_t)sizeof g_sector, g_sector) != 0)
                 return -1;
             memcpy(dst + done, g_sector, (size_t)chunk);
             done += chunk;
@@ -340,7 +285,7 @@ int vcd_chainload(bios_disk *d, fs_vol *p2, const gpt_part *p2part,
 
     /* Where the resident will live. Not taken until the end. */
     r->stage = "reserving memory for the virtual CD";
-    seg = resident_segment();
+    seg = lowmem_segment(VCD_BYTES);
     if (seg == 0) {
         r->advice = "this machine will not give up the conventional memory "
                     "the virtual CD needs.";
@@ -395,7 +340,7 @@ int vcd_chainload(bios_disk *d, fs_vol *p2, const gpt_part *p2part,
      * hides the block from a caller that asks it; this hides both from one
      * that asks E820 or E801, which is what bootmgr and a kernel ask. */
     {
-        e820_range keep[2];
+        e820_range keep[2u + VCD_KEEP_MAX];
         unsigned n_keep = 0;
         const e820_entry *first = e820_at(0);
 
@@ -407,6 +352,8 @@ int vcd_chainload(bios_disk *d, fs_vol *p2, const gpt_part *p2part,
             keep[n_keep].len = (uint64_t)g_append_cd * VCD_CD_BYTES;
             n_keep++;
         }
+        for (i = 0; i < g_n_keep_extra; i++)
+            keep[n_keep++] = g_keep_extra[i];
         r->stage = "building the memory map the ISO is handed";
         g_n_carved = 0;
         if (first != (const e820_entry *)0 &&
@@ -417,6 +364,7 @@ int vcd_chainload(bios_disk *d, fs_vol *p2, const gpt_part *p2part,
             return -1;
         }
         g_e801_cap = e820_e801_cap(keep, n_keep);
+        g_e801_low = e820_e801_cap_low(keep, n_keep);
     }
 
     /* The resident, in memory the BIOS is about to be told it does not
@@ -468,6 +416,8 @@ int vcd_chainload(bios_disk *d, fs_vol *p2, const gpt_part *p2part,
     at[VCD_OFF_NE820 + 1u] = (uint8_t)(g_n_carved >> 8);
     at[VCD_OFF_E801CAP] = (uint8_t)(g_e801_cap & 0xFFu);
     at[VCD_OFF_E801CAP + 1u] = (uint8_t)(g_e801_cap >> 8);
+    at[VCD_OFF_E801LOW] = (uint8_t)(g_e801_low & 0xFFu);
+    at[VCD_OFF_E801LOW + 1u] = (uint8_t)(g_e801_low >> 8);
     for (i = 0; i < g_n_carved; i++) {
         uint8_t *m = at + VCD_OFF_E820 + i * VCD_E820_LEN;
 
@@ -499,7 +449,7 @@ int vcd_chainload(bios_disk *d, fs_vol *p2, const gpt_part *p2part,
 
     /* From here nothing may fail: the memory is taken, the vector is
      * hooked, the machine is about to be somebody else's. */
-    take_conventional_memory(seg);
+    lowmem_take(seg);
     poke32(IVT_INT13, ((uint32_t)seg << 16) | (uint32_t)VCD_OFF_CODE);
     poke32(IVT_INT15, ((uint32_t)seg << 16) | (uint32_t)VCD_OFF_CODE15);
 
@@ -510,4 +460,97 @@ int vcd_chainload(bios_disk *d, fs_vol *p2, const gpt_part *p2part,
     poke16(GATE_TARGET + 2u, seg);
     ((void (*)(void))(uintptr_t)GATE_BOOT16)();
     return -1;
+}
+
+int vcd_chainload(bios_disk *d, fs_vol *p2, const gpt_part *p2part,
+                  const fs_dirent *iso, fs_file *isofile, boot_result *r)
+{
+    elt_catalog cat;
+    const elt_entry *e;
+    size_t n_ext = 0;
+    size_t i;
+    int rc;
+
+    r->stage = "reading the ISO's boot catalog";
+    if (elt_parse(&cat, fs_file_read_cb, isofile, iso->size) != ELT_OK) {
+        r->advice = "the medium has no El Torito boot catalog.";
+        return -1;
+    }
+    e = bios_entry(&cat);
+    if (e == (const elt_entry *)0) {
+        r->advice = "the medium boots only on UEFI.";
+        return -1;
+    }
+    if (e->media == ELT_MEDIA_1200K || e->media == ELT_MEDIA_1440K ||
+        e->media == ELT_MEDIA_2880K) {
+        /* A floppy-emulation image is served as a memory disk (vfd.c),
+         * not chainloaded off the virtual CD. Never returns on success. */
+        return vfd_serve(isofile, e, r);
+    }
+    if (e->media != ELT_MEDIA_NONE) {
+        r->advice = "the medium's boot image asks for hard-disk emulation, "
+                    "which this loader does not do.";
+        return -1;
+    }
+
+    /* Where the ISO is on the disk, as runs the handler can scan. */
+    r->stage = "mapping the ISO's extents on p2";
+    rc = fs_extents(p2, iso, g_fsext,
+                    sizeof g_fsext / sizeof g_fsext[0], &n_ext);
+    if (rc != FS_OK) {
+        r->advice = TOO_MANY_PIECES;
+        return -1;
+    }
+    for (i = 0; i < n_ext; i++) {
+        g_ext[i].off = g_fsext[i].vol_off;
+        g_ext[i].len = g_fsext[i].len;
+    }
+    rc = vcd_build(&g_map, g_ext, n_ext,
+                   p2part->start_lba, d->sector_size, iso->size,
+                   (uint8_t)VCD_DRIVE, d->drive);
+    if (rc != VCD_OK) {
+        if (rc == VCD_ERR_TOO_MANY)
+            r->advice = TOO_MANY_PIECES;
+        else if (rc == VCD_ERR_ALIGN)
+            r->advice = "the ISO is not laid out on the stick in whole CD "
+                        "sectors.";
+        return -1;
+    }
+
+    return launch(d, e, fs_file_read_cb, isofile, r);
+}
+
+int vcd_chainload_drive(bios_disk *d, uint64_t n_cd, boot_result *r)
+{
+    elt_catalog cat;
+    const elt_entry *e;
+    vcd_extent whole;
+    int rc;
+
+    r->stage = "reading the disc's boot catalog";
+    if (d->sector_size != VCD_CD_BYTES ||
+        elt_parse(&cat, bios_disk_read, d, n_cd * VCD_CD_BYTES) != ELT_OK) {
+        r->advice = "the disc has no El Torito boot catalog.";
+        return -1;
+    }
+    e = bios_entry(&cat);
+    if (e == (const elt_entry *)0) {
+        r->advice = "the disc boots only on UEFI.";
+        return -1;
+    }
+    if (e->media != ELT_MEDIA_NONE) {
+        r->advice = "the disc boots through floppy or hard-disk emulation, "
+                    "which this build does not serve from a drive.";
+        return -1;
+    }
+
+    /* The whole disc is one run: CD sector n is the drive's sector n. */
+    r->stage = "mapping the disc";
+    whole.off = 0;
+    whole.len = n_cd * VCD_CD_BYTES;
+    rc = vcd_build(&g_map, &whole, 1, 0, VCD_CD_BYTES, whole.len,
+                   (uint8_t)VCD_DRIVE, d->drive);
+    if (rc != VCD_OK)
+        return -1;
+    return launch(d, e, bios_disk_read, d, r);
 }

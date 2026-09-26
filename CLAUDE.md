@@ -319,7 +319,14 @@ falcon-efi and falcon-bios, which never share a set, may both have a `pos/`.
   `biosdefs.h`), `console/` (serial, the screen, the prompt), `iso/` (the
   virtual CD and the ISO scan), `vfd/`, `mem/` (E820 and the heap),
   `disk/` (the read callback and the marker), `linux/`, `pos/`, `bsd/`,
-  `win/` and `mbr/`, and `jump/` (falcon jump's JUMP.INI parser). The
+  `win/` and `mbr/`; `jump/` (falcon jump's JUMP.INI parser, the module
+  format and loader `jmod.c`/`jmodload.c`, and the reverse thunk:
+  `rthunk.S`, a real-mode INT 13h entry that calls a module's protected-mode
+  `int13`, installed by `jres.c`); and `hw/`, jump's drivers, each built as
+  a module linked at its slot (`jmod.ld.S`, `jump_module`): `hw/ata/` is
+  ATA.MOD, ATAPI over the legacy IDE channels, with `atacore.c` its
+  host-tested half. `mem/lowmem.c` is the one place a resident's block is
+  taken off the top of conventional memory. The
   entry points are the apps' (`apps/<app>/bios_main.c`). `start/boot_fd.S`
   is jump's stage 1, a FAT12 boot sector that reads the stick's stage 2 by
   CHS; `disk.c` reads by CHS too (AH=02h, `vfdcore.c`'s arithmetic) when a
