@@ -105,7 +105,7 @@ void blk13_call(const blk13_dev *d, jmod_regs *r)
         chs(d, r, ah == 0x03);
         return;
     case 0x08: {                               /* geometry */
-        uint64_t cyls = d->sectors / (FAKE_HEADS * FAKE_SECTORS);
+        uint64_t cyls = d->sectors / ((uint64_t)FAKE_HEADS * FAKE_SECTORS);
 
         if (cyls > 1024u)
             cyls = 1024u;

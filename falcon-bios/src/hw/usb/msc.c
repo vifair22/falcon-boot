@@ -170,11 +170,14 @@ static void label_from_inquiry(msc_dev *d, const uint8_t *q)
 
     /* Vendor (8-15) and product (16-31), with one space between. */
     for (i = 8; i < 32u && n + 1u < sizeof d->label; i++) {
-        char c = (char)q[i];
+        uint8_t c = q[i];
 
         if (i == 16u && n > 0 && d->label[n - 1] != ' ')
             d->label[n++] = ' ';
-        d->label[n++] = (c >= ' ' && c <= '~') ? c : ' ';
+        if (c >= (uint8_t)' ' && c <= (uint8_t)'~')
+            d->label[n++] = (char)c;
+        else
+            d->label[n++] = ' ';
     }
     while (n > 0 && d->label[n - 1] == ' ')
         n--;
