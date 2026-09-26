@@ -375,7 +375,7 @@ install never writes the partition table at all, which is the only step with
 any risk in it. Slot 5, so p1..p4 keep the numbers DESIGN Section 3 and the
 install manifest use.
 
-The one real code change was in `falcon-bios/src/biosdefs.h`: `STAGE2_LBA`
+The one real code change was in `falcon-bios/src/start/biosdefs.h`: `STAGE2_LBA`
 was 1, which is correct for the rig's raw image and is the GPT header on a
 stick. It is 34 now, and the rig image moved with it so that what the
 coverage harness boots sits at the offsets real media uses.
@@ -751,7 +751,7 @@ showed "starting the kernel" and then the menu, with no reason between.
 
 Now both loaders draw from one layout, `falcon-core/src/tui` (the UEFI
 console's frame, block and row composition, moved rather than copied), and
-falcon-bios draws through `src/screen.c`, which is `console/menu.c`'s calls
+falcon-bios draws through `src/console/screen.c`, which is `console/menu.c`'s calls
 one for one. Cells go into VGA text memory directly: teletype output cannot
 colour a cell, and AH=09h can but costs a thunk round trip per character.
 Serial gets the ANSI sequences OVMF's terminal sends for the same calls,
@@ -869,7 +869,7 @@ and IPMI can set a one-time boot on some machines; none of that generalises.
 So the marker lives on the stick: LBA 2047, the last sector of the gap in
 front of p1, as a short text record Linux writes with `printf` and `dd`
 (DESIGN Section 6.3.1 has the format and the reasoning; `media/nextboot.c`
-the parse, `falcon-bios/src/marker.c` the reading). `lilo -R` and GRUB's
+the parse, `falcon-bios/src/disk/marker.c` the reading). `lilo -R` and GRUB's
 `grubenv` are the same idea: a one-shot kept in raw blocks outside any
 filesystem, because the loader has no filesystem writer.
 

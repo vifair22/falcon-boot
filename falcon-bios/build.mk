@@ -30,7 +30,7 @@ BIOS_OBJ := $(OBJ)/bios
 # written a second time here. A stage placed at an LBA the header does not
 # name is the one failure in this file that would look like a hardware fault.
 BIOS_DEF = $(shell sed -n 's/^\#define[ \t]*$(1)[ \t]*\([0-9]*\).*/\1/p' \
-	$(BIOS)/biosdefs.h | head -1)
+	$(BIOS)/start/biosdefs.h | head -1)
 STAGE2_LBA_CHECK := $(call BIOS_DEF,STAGE2_LBA)
 STAGE2_SECTORS_CHECK := $(call BIOS_DEF,STAGE2_SECTORS)
 STAGE3_MAX_SECTORS_CHECK := $(call BIOS_DEF,STAGE3_MAX_SECTORS)
@@ -64,15 +64,15 @@ BIOS_CFLAGS := -std=c11 -O2 -ffreestanding -fno-stack-protector \
 # they are a few hundred bytes each, they reach the BIOS through the gate at
 # a fixed address rather than through a symbol, and duplicating them is
 # cheaper than a call gate for every line of output.
-BIOS_S2_CSRCS := $(addprefix $(BIOS)/,load3.c disk.c console.c fault.c) \
+BIOS_S2_CSRCS := $(addprefix $(BIOS)/,start/load3.c disk/disk.c console/console.c start/fault.c) \
 	$(CORE_LIBC)
 # Stage 3 takes the filesystem registry and the whole media layer, which is
 # what the third stage was for: under stage 2's 33 KB ceiling this had to be
 # one driver called by name.
-BIOS_S3_CSRCS := $(addprefix $(BIOS)/,main.c scan.c pos.c prompt.c screen.c linux.c \
-	linuxcore.c \
-	vcd.c vcdcore.c vfd.c vfdcore.c bsd.c win.c heap.c marker.c \
-	e820.c disk.c console.c) \
+BIOS_S3_CSRCS := $(addprefix $(BIOS)/,main.c iso/scan.c pos/pos.c console/prompt.c console/screen.c linux/linux.c \
+	linux/linuxcore.c \
+	iso/vcd.c iso/vcdcore.c vfd/vfd.c vfd/vfdcore.c bsd/bsd.c win/win.c mem/heap.c disk/marker.c \
+	mem/e820.c disk/disk.c console/console.c) \
 	$(CORE_PART) $(CORE_FS) $(CORE_MEDIA) $(CORE_PE) $(CORE_CRYPTO) \
 	$(CORE_LUKS) $(CORE_WIM) $(CORE_LIBC) $(CORE_UCS2) $(CORE_TUI) \
 	$(CORE)/manifest/manifest.c
@@ -108,7 +108,7 @@ $(BIOS_OBJ)/falcon-core/src/crypto/aesni.o: BIOS_CFLAGS := \
 BIOS_LIBGCC := $(shell $(CC_HOST) -m32 -print-libgcc-file-name)
 
 BIOS_LDFLAGS := -m32 -nostdlib -static -no-pie -Wl,--build-id=none \
-	-Wl,--no-warn-rwx-segments -Wl,-T,$(BIOS)/bios.ld
+	-Wl,--no-warn-rwx-segments -Wl,-T,$(BIOS)/start/bios.ld
 
 # -MMD on the assembly too, and it is not a nicety: every address in this
 # component is a macro in biosdefs.h, and an object that kept an old one
@@ -123,7 +123,7 @@ BIOS_STAGE1 := $(BIN)/falcon-bios-stage1.bin
 BIOS_STAGE2 := $(BIN)/falcon-bios-stage2.bin
 BIOS_STAGE3 := $(BIN)/falcon-bios-stage3.bin
 
-$(BIOS_STAGE1): $(BIOS_OBJ)/$(BIOS)/boot.o $(BIOS)/bios.ld
+$(BIOS_STAGE1): $(BIOS_OBJ)/$(BIOS)/start/boot.o $(BIOS)/start/bios.ld
 	@mkdir -p $(@D)
 	$(CC_HOST) $(BIOS_LDFLAGS) -Wl,-Ttext,0x7C00 -Wl,-e,_start -o $@.elf $<
 	objcopy -O binary -j .text $@.elf $@
@@ -133,10 +133,10 @@ $(BIOS_STAGE1): $(BIOS_OBJ)/$(BIOS)/boot.o $(BIOS)/bios.ld
 		exit 1; \
 	fi
 
-BIOS_STAGE2_OBJS := $(BIOS_OBJ)/$(BIOS)/stage2.o $(BIOS_OBJ)/$(BIOS)/pmode.o \
-	$(BIOS_OBJ)/$(BIOS)/thunk.o $(BIOS_OBJ)/$(BIOS)/idt.o $(BIOS_S2_COBJS)
+BIOS_STAGE2_OBJS := $(BIOS_OBJ)/$(BIOS)/start/stage2.o $(BIOS_OBJ)/$(BIOS)/start/pmode.o \
+	$(BIOS_OBJ)/$(BIOS)/start/thunk.o $(BIOS_OBJ)/$(BIOS)/start/idt.o $(BIOS_S2_COBJS)
 
-$(BIOS_STAGE2): $(BIOS_STAGE2_OBJS) $(BIOS)/bios.ld
+$(BIOS_STAGE2): $(BIOS_STAGE2_OBJS) $(BIOS)/start/bios.ld
 	@mkdir -p $(@D)
 	$(CC_HOST) $(BIOS_LDFLAGS) -Wl,-Ttext,0x7E00 -Wl,-e,stage2_start -o $@.elf $(BIOS_STAGE2_OBJS) \
 		$(BIOS_LIBGCC)
@@ -145,7 +145,7 @@ $(BIOS_STAGE2): $(BIOS_STAGE2_OBJS) $(BIOS)/bios.ld
 	max=$$(($(STAGE2_SECTORS_CHECK) * 512)); \
 	if [ "$$sz" -gt "$$max" ]; then \
 		echo "ERROR: $@ is $$sz bytes, past the $$max stage 1 reads"; \
-		echo "       raise STAGE2_SECTORS in falcon-bios/src/biosdefs.h"; \
+		echo "       raise STAGE2_SECTORS in falcon-bios/src/start/biosdefs.h"; \
 		exit 1; \
 	fi
 	@# Stage 2 has no loader: stage 1 reads it off the disk and jumps to
@@ -167,7 +167,7 @@ $(BIOS_STAGE2): $(BIOS_STAGE2_OBJS) $(BIOS)/bios.ld
 		got=$$(nm $@.elf | awk -v s="$$sym" '$$3 == s { print $$1 }'); \
 		if [ -z "$$got" ] || [ $$((0x$$got)) -ne $$((0x$$want)) ]; then \
 			echo "ERROR: $$sym is at $$got, not $$want"; \
-			echo "       falcon-bios/src/biosdefs.h GATE_* and the"; \
+			echo "       falcon-bios/src/start/biosdefs.h GATE_* and the"; \
 			echo "       gate block in stage2.S disagree"; \
 			exit 1; \
 		fi; \
@@ -214,13 +214,13 @@ $(BIOS_VDISK_OBJ): $(VDISK_X86_BLOB)
 	@mkdir -p $(@D)
 	$(CC_HOST) $(BIOS_CFLAGS) -c -o $@ $<
 
-BIOS_STAGE3_OBJS := $(BIOS_OBJ)/$(BIOS)/stage3.o $(BIOS_OBJ)/$(BIOS)/vcdres.o \
-	$(BIOS_OBJ)/$(BIOS)/vfdres.o \
+BIOS_STAGE3_OBJS := $(BIOS_OBJ)/$(BIOS)/start/stage3.o $(BIOS_OBJ)/$(BIOS)/iso/vcdres.o \
+	$(BIOS_OBJ)/$(BIOS)/vfd/vfdres.o \
 	$(BIOS_S3_COBJS) \
 	$(BIOS_HOOK_OBJ) $(BIOS_HOOK32_OBJ) $(BIOS_WINJUMP_OBJ) \
 	$(BIOS_WINJUMP32_OBJ) $(BIOS_VDISK_OBJ)
 
-$(BIOS_STAGE3): $(BIOS_STAGE3_OBJS) $(BIOS)/bios.ld
+$(BIOS_STAGE3): $(BIOS_STAGE3_OBJS) $(BIOS)/start/bios.ld
 	@mkdir -p $(@D)
 	$(CC_HOST) $(BIOS_LDFLAGS) -Wl,-Ttext,0x100000 -Wl,-e,stage3_entry \
 		-o $@.elf $(BIOS_STAGE3_OBJS) $(BIOS_LIBGCC)
@@ -232,14 +232,14 @@ $(BIOS_STAGE3): $(BIOS_STAGE3_OBJS) $(BIOS)/bios.ld
 	n=$$(( 0x$$e - 0x$$s )); \
 	if [ "$$n" -gt 4096 ]; then \
 		echo "ERROR: the INT 13h resident is $$n bytes, past VCD_BYTES"; \
-		echo "       raise VCD_BYTES in falcon-bios/src/biosdefs.h"; \
+		echo "       raise VCD_BYTES in falcon-bios/src/start/biosdefs.h"; \
 		exit 1; \
 	fi
 	@sz=$$(stat -c %s $@); \
 	max=$$(($(STAGE3_MAX_SECTORS_CHECK) * 512)); \
 	if [ "$$sz" -gt "$$max" ]; then \
 		echo "ERROR: $@ is $$sz bytes, past the $$max stage 2 will read"; \
-		echo "       raise STAGE3_MAX_SECTORS in falcon-bios/src/biosdefs.h"; \
+		echo "       raise STAGE3_MAX_SECTORS in falcon-bios/src/start/biosdefs.h"; \
 		exit 1; \
 	fi
 
@@ -250,8 +250,8 @@ bios: $(BIOS_STAGE1) $(BIOS_STAGE2) $(BIOS_STAGE3)
 # the stick's, byte for byte; this is only a different image at LBA 98. No
 # resident, no ISO scan, and so neither falcon-hook blob, which only scan.c
 # appends. fs/ is ext4 alone, as in the UEFI build.
-BIOS_POS_S3_CSRCS := $(addprefix $(BIOS)/,main_pos.c pos.c prompt.c screen.c \
-	linux.c linuxcore.c mbr.c e820.c disk.c console.c) \
+BIOS_POS_S3_CSRCS := $(addprefix $(BIOS)/,main_pos.c pos/pos.c console/prompt.c console/screen.c \
+	linux/linux.c linux/linuxcore.c mbr/mbr.c mem/e820.c disk/disk.c console/console.c) \
 	$(CORE_PART) $(CORE_FS_EXT4) $(CORE_PE) $(CORE_CRYPTO) $(CORE_LUKS) \
 	$(CORE)/media/cpio.c $(CORE)/media/osrel.c $(CORE)/media/shelf.c \
 	$(CORE_LIBC) $(CORE_UCS2) $(CORE_TUI)
@@ -261,9 +261,9 @@ BIOS_CSRCS := $(sort $(BIOS_CSRCS) $(BIOS_POS_S3_CSRCS))
 $(BIOS_OBJ)/$(BIOS)/main_pos.o: build/version.h
 
 BIOS_POS_STAGE3 := $(BIN)/falcon-bios-pos-stage3.bin
-BIOS_POS_STAGE3_OBJS := $(BIOS_OBJ)/$(BIOS)/stage3.o $(BIOS_POS_S3_COBJS)
+BIOS_POS_STAGE3_OBJS := $(BIOS_OBJ)/$(BIOS)/start/stage3.o $(BIOS_POS_S3_COBJS)
 
-$(BIOS_POS_STAGE3): $(BIOS_POS_STAGE3_OBJS) $(BIOS)/bios.ld
+$(BIOS_POS_STAGE3): $(BIOS_POS_STAGE3_OBJS) $(BIOS)/start/bios.ld
 	@mkdir -p $(@D)
 	$(CC_HOST) $(BIOS_LDFLAGS) -Wl,-Ttext,0x100000 -Wl,-e,stage3_entry \
 		-o $@.elf $(BIOS_POS_STAGE3_OBJS) $(BIOS_LIBGCC)
@@ -288,7 +288,7 @@ bios-pos: $(BIOS_STAGE1) $(BIOS_STAGE2) $(BIOS_POS_STAGE3)
 # long-mode days triple-faulted.
 BIOS_TESTS := $(addprefix falcon-bios/tests/,main.c vcdcore_test.c vfdcore_test.c \
 	linuxcore_test.c e820_test.c)
-BIOS_UUT := $(BIOS)/vcdcore.c $(BIOS)/vfdcore.c $(BIOS)/linuxcore.c $(BIOS)/e820.c
+BIOS_UUT := $(BIOS)/iso/vcdcore.c $(BIOS)/vfd/vfdcore.c $(BIOS)/linux/linuxcore.c $(BIOS)/mem/e820.c
 
 $(eval $(call test_bin,bios,$(BIOS_TESTS) $(BIOS_UUT)))
 
@@ -334,7 +334,7 @@ test-bios-img: $(BIOS_IMG) $(BIOS_GPT_IMG)
 BIOS_PROBE_BIN := build/memprobe.bin
 BIOS_PROBE_ISO := build/memprobe.iso
 
-$(BIOS_PROBE_BIN): $(BIOS_OBJ)/falcon-bios/tools/memprobe.o $(BIOS)/bios.ld
+$(BIOS_PROBE_BIN): $(BIOS_OBJ)/falcon-bios/tools/memprobe.o $(BIOS)/start/bios.ld
 	@mkdir -p $(@D)
 	$(CC_HOST) $(BIOS_LDFLAGS) -Wl,-Ttext,0 -Wl,-e,_start -o $@.elf $<
 	objcopy -O binary -j .text $@.elf $@

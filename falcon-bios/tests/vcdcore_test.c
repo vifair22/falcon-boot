@@ -1,4 +1,4 @@
-/* Tests for falcon-bios/src/vcdcore.c: where a CD sector of a served ISO is
+/* Tests for falcon-bios/src/iso/vcdcore.c: where a CD sector of a served ISO is
  * on the physical disk.
  *
  * This is the arithmetic the resident INT 13h handler performs, in the one
@@ -15,7 +15,7 @@
 #include <stdint.h>
 #include <cmocka.h>
 
-#include <vcdcore.h>
+#include <iso/vcdcore.h>
 
 #define PART_LBA 133120u
 

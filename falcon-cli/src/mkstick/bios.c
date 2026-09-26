@@ -43,7 +43,7 @@
  * than written a second time here. falcon-bios/build.mk reads the same file
  * with sed to place the rig image; this is the third reader and the only one
  * that ever touches real media. */
-#include <falcon-bios/src/biosdefs.h>
+#include <falcon-bios/src/start/biosdefs.h>
 
 #define DEFAULT_STAGE1 "build/bin/falcon-bios-stage1.bin"
 #define DEFAULT_STAGE2 "build/bin/falcon-bios-stage2.bin"
@@ -508,7 +508,7 @@ cli_status mks_bios_install(const mks_bios_req *req)
     bs = bioscore_plan(STAGE2_LBA, STAGE2_SECTORS, STAGE3_MAX_SECTORS, &plan);
     if (bs != BIOSCORE_OK)
         return set_error(CLI_ERR_INTERNAL,
-                         "falcon-bios/src/biosdefs.h describes a layout that "
+                         "falcon-bios/src/start/biosdefs.h describes a layout that "
                          "cannot be written: %s", bioscore_strerror(bs));
 
     rc = util_read_file(p1, &b1, &l1, STAGE_MAX);

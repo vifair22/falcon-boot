@@ -528,7 +528,7 @@ out:
  * Read by their magic numbers rather than compared with a build: status is
  * read-only and runs where no build may be. Stage 2 carries "BOS2" four bytes
  * in (what stage 1 checks before it jumps) and stage 3 starts with "BOS3"
- * (what stage 2 checks), at the LBAs falcon-bios/src/biosdefs.h fixes.
+ * (what stage 2 checks), at the LBAs falcon-bios/src/start/biosdefs.h fixes.
  * Nonzero when both are there. */
 #define STATUS_STAGE2_LBA 34u
 #define STATUS_STAGE3_LBA 98u

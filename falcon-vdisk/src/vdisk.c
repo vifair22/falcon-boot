@@ -167,7 +167,7 @@ static BOOLEAN g_arc;
 /* The boot CD's ARC name by the fixed served drive, created unconditionally as
  * well: Windows 2000 keeps no SystemBootDevice for bind_boot_device to read,
  * and names its boot CD by the BIOS drive falcon-bios serves on, 0xE0 = 224
- * (falcon-bios/src/vcd.h VCD_DRIVE) - the same name XP records, so cdrom(224)
+ * (falcon-bios/src/iso/vcd.h VCD_DRIVE) - the same name XP records, so cdrom(224)
  * covers 2000 too. */
 static UNICODE_STRING g_arc0_name;
 static BOOLEAN g_arc0;
