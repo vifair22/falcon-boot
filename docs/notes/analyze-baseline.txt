@@ -133,12 +133,6 @@
 #       Their names are the compiler's, not ours; there is no other spelling
 #       it will call.
 #
-#   uninitvar, "Uninitialized variable: d" in memset (1 entry). winjump
-#       defines its own memset (no CRT); cppcheck sees the destination written
-#       only through an alias pointer and reports the return of `d` as
-#       uninitialized. It is the caller's buffer, written by the loop above;
-#       the finding is a false positive on a hand-written mem routine.
-#
 #   optin.core.EnumCastOutOfRange, ATTACH_VIRTUAL_DISK_FLAG (1 entry). The
 #       flags are OR-ed, READ_ONLY (1) | PERMANENT_LIFETIME (4) = 5, and the
 #       enum declares no enumerator for the combination, as flag enums never
@@ -222,7 +216,6 @@ tidy	falcon-efi/src/efi/main.c	bugprone-narrowing-conversions	narrowing conversi
 tidy	falcon-winjump/src/winjump.c	bugprone-reserved-identifier	declaration uses identifier '_UNICODE', which is a reserved identifier
 tidy	falcon-winjump/src/winjump.c	bugprone-reserved-identifier	declaration uses identifier '__stack_chk_guard', which is a reserved identifier
 tidy	falcon-winjump/src/winjump.c	bugprone-reserved-identifier	declaration uses identifier '__stack_chk_fail', which is a reserved identifier
-cppcheck	falcon-winjump/src/winjump.c	uninitvar	Uninitialized variable: d
 tidy	falcon-winjump/src/winjump.c	clang-analyzer-optin.core.EnumCastOutOfRange	The value '5' provided to the cast expression is not in the valid range of values for '_ATTACH_VIRTUAL_DISK_FLAG'
 
 # ==========================================================================

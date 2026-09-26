@@ -293,6 +293,7 @@ int win_boot(bios_disk *d, fs_vol *p2, const gpt_part *p2part,
 {
     udf_dirent we;
     wim_info w;
+    int i9 = 0;
     size_t next = 0;
     size_t npd = 0;
     size_t i;
@@ -340,6 +341,7 @@ int win_boot(bios_disk *d, fs_vol *p2, const gpt_part *p2part,
                iso9660_file_open(&g_iv, &g_i9wim, &g_i9dir) == ISO9660_OK &&
                g_i9dir.size >= WIM_HDR_LEN) {
         g_i9 = 1;
+        i9 = 1;
         wim_size = g_i9dir.size;
         wim_off = (uint64_t)g_i9dir.lba * BLK;
         /* bootmgr reads boot.wim through the primary tree. When the mount chose
@@ -501,7 +503,10 @@ int win_boot(bios_disk *d, fs_vol *p2, const gpt_part *p2part,
 
     r->stage = "growing boot.wim";
     vcd_overlay_reset();
-    if (g_i9) {
+    /* The local flag, not g_i9: `we` is filled only on the UDF branch, and a
+     * file-scope flag is one the calls in between could in principle rewrite,
+     * so testing it here leaves a path on which `we` is read unset. */
+    if (i9) {
         /* ISO 9660-only medium (Vista SP1 x64): bootmgr's CDFS reads a single
          * extent but not a multi-extent file, so boot.wim cannot grow in place.
          * It is relocated whole to one new extent past the ISO's end, but its
