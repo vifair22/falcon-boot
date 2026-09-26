@@ -31,6 +31,10 @@ $(eval $(call jump_module,UHCI,JMOD_SLOT_UHCI,\
 	$(BIOS)/hw/usb/uhci_mod.c $(BIOS)/hw/usb/uhci.c $(BIOS)/hw/usb/msc.c \
 	$(BIOS)/hw/usb/usbcore.c $(BIOS)/hw/scsi/scsi.c $(BIOS)/hw/blk13.c \
 	$(CORE_LIBC)))
+$(eval $(call jump_module,EHCI,JMOD_SLOT_EHCI,\
+	$(BIOS)/hw/usb/ehci_mod.c $(BIOS)/hw/usb/ehci.c $(BIOS)/hw/usb/msc.c \
+	$(BIOS)/hw/usb/usbcore.c $(BIOS)/hw/scsi/scsi.c $(BIOS)/hw/blk13.c \
+	$(CORE_LIBC)))
 $(eval $(call jump_module,OHCI,JMOD_SLOT_OHCI,\
 	$(BIOS)/hw/usb/ohci_mod.c $(BIOS)/hw/usb/ohci.c $(BIOS)/hw/usb/msc.c \
 	$(BIOS)/hw/usb/usbcore.c $(BIOS)/hw/scsi/scsi.c $(BIOS)/hw/blk13.c \

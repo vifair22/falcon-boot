@@ -89,6 +89,7 @@ static int g_pci_ide;
  * without it. */
 #define PCI_UHCI 0x0C0300u
 #define PCI_OHCI 0x0C0310u
+#define PCI_EHCI 0x0C0320u
 
 /* The USB modules, in the order the route tries them: each needs its file
  * on the floppy and its controller on the bus. */
@@ -101,6 +102,9 @@ typedef struct {
 } usb_mod;
 
 static usb_mod g_usb[] = {
+    /* EHCI first: it hands a device that is not high speed to its
+     * companion, where the UHCI or OHCI module after it finds it. */
+    { "EHCI", "/EHCI.MOD", JMOD_SLOT_EHCI, PCI_EHCI, 0 },
     { "UHCI", "/UHCI.MOD", JMOD_SLOT_UHCI, PCI_UHCI, 0 },
     { "OHCI", "/OHCI.MOD", JMOD_SLOT_OHCI, PCI_OHCI, 0 },
 };
@@ -433,7 +437,7 @@ static int is_falcon_stick(jmod_ops *ops, unsigned idx)
 }
 
 /* USB: the first falcon stick on the root ports of any controller a module
- * is on the floppy for (UHCI, then OHCI),
+ * is on the floppy for (EHCI, then UHCI, then OHCI),
  * and that stick booted as the next BIOS disk: the module resident behind
  * the reverse thunk, which also carves its memory out of INT 15h, and the
  * BDA's disk count one higher. The stick's own stage 1 takes it from there
