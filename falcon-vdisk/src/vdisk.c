@@ -872,7 +872,89 @@ static void trace_object_dir(const WCHAR *path)
     serial_trace("FALCONVDISK_ARCDIR_END\r\n");
     ZwClose(h);
 }
+
+/* Diagnostic: trace one registry value (a string) to COM1, framed by the value
+ * name, to find the boot-device ARC name setupldr recorded. */
+static void trace_reg_value(const WCHAR *keypath, const WCHAR *valname)
+{
+    static UCHAR buf[512];
+    UNICODE_STRING kp, vn, v;
+    OBJECT_ATTRIBUTES oa;
+    HANDLE h;
+    ULONG got = 0;
+    KEY_VALUE_PARTIAL_INFORMATION *pi = (KEY_VALUE_PARTIAL_INFORMATION *)buf;
+
+    RtlInitUnicodeString(&kp, keypath);
+    InitializeObjectAttributes(&oa, &kp, OBJ_KERNEL_HANDLE | OBJ_CASE_INSENSITIVE,
+                               NULL, NULL);
+    if (!NT_SUCCESS(ZwOpenKey(&h, KEY_READ, &oa))) {
+        serial_trace("FALCONVDISK_REG_KEY_FAIL\r\n");
+        return;
+    }
+    RtlInitUnicodeString(&vn, valname);
+    serial_trace("FALCONVDISK_REGVAL ");
+    serial_trace_ustr(&vn);
+    if (NT_SUCCESS(ZwQueryValueKey(h, &vn, KeyValuePartialInformation, buf,
+                                   sizeof buf, &got)) &&
+        pi->DataLength >= sizeof(WCHAR)) {
+        v.Buffer = (PWCH)pi->Data;
+        v.Length = (USHORT)(pi->DataLength - sizeof(WCHAR));   /* drop the NUL */
+        v.MaximumLength = v.Length;
+        serial_trace_ustr(&v);
+    } else {
+        serial_trace("(missing)\r\n");
+    }
+    ZwClose(h);
+}
 #endif
+
+/* Binds this CD as the kernel's boot device (piece 3, the 2000/XP 0x7B). The
+ * kernel resolves its boot device through an ARC name, but no real device
+ * registers one for the INT-13h-served medium, so this driver must. The name
+ * is not a fixed cdrom(0): setupldr records it as the BIOS drive number the
+ * loader served on (measured multi(0)disk(0)cdrom(224), 224 = 0xE0), so it is
+ * READ from SystemBootDevice in the registry and \ArcName\<that> is pointed at
+ * this device. Returns TRUE if the link was made. */
+static BOOLEAN bind_boot_device(void)
+{
+    static UCHAR buf[512];
+    static WCHAR link[300];
+    static const WCHAR pre[] = L"\\ArcName\\";
+    KEY_VALUE_PARTIAL_INFORMATION *pi = (KEY_VALUE_PARTIAL_INFORMATION *)buf;
+    UNICODE_STRING kp, vn;
+    OBJECT_ATTRIBUTES oa;
+    HANDLE h;
+    ULONG got = 0, arclen, i, n = 0;
+    const WCHAR *arc;
+
+    RtlInitUnicodeString(&kp,
+        L"\\Registry\\Machine\\SYSTEM\\ControlSet001\\Control");
+    InitializeObjectAttributes(&oa, &kp, OBJ_KERNEL_HANDLE | OBJ_CASE_INSENSITIVE,
+                               NULL, NULL);
+    if (!NT_SUCCESS(ZwOpenKey(&h, KEY_READ, &oa)))
+        return FALSE;
+    RtlInitUnicodeString(&vn, L"SystemBootDevice");
+    if (!NT_SUCCESS(ZwQueryValueKey(h, &vn, KeyValuePartialInformation, buf,
+                                    sizeof buf, &got)) ||
+        pi->DataLength < 2u * sizeof(WCHAR)) {
+        ZwClose(h);
+        return FALSE;
+    }
+    ZwClose(h);
+
+    arc = (const WCHAR *)pi->Data;
+    arclen = pi->DataLength / sizeof(WCHAR);
+    while (arclen > 0 && arc[arclen - 1] == 0)
+        arclen--;                                   /* drop the NUL(s) */
+
+    for (i = 0; pre[i] != 0; i++)
+        link[n++] = pre[i];
+    for (i = 0; i < arclen && n < 299u; i++)
+        link[n++] = arc[i];
+    link[n] = 0;
+    RtlInitUnicodeString(&g_arc_name, link);        /* link is static */
+    return NT_SUCCESS(IoCreateSymbolicLink(&g_arc_name, &g_cd_name));
+}
 
 NTSTATUS NTAPI DriverEntry(PDRIVER_OBJECT drv, PUNICODE_STRING reg);
 NTSTATUS NTAPI DriverEntry(PDRIVER_OBJECT drv, PUNICODE_STRING reg)
@@ -886,6 +968,13 @@ NTSTATUS NTAPI DriverEntry(PDRIVER_OBJECT drv, PUNICODE_STRING reg)
     /* What the kernel's boot-device ARC name resolves through: the links here
      * name the boot device the route must make resolve to this CD. */
     trace_object_dir(L"\\ArcName");
+    /* The boot-device ARC name setupldr recorded, the string this route must
+     * make resolve to this CD: XP keeps it here. */
+    trace_reg_value(L"\\Registry\\Machine\\SYSTEM\\ControlSet001\\Control",
+                    L"FirmwareBootDevice");
+    trace_reg_value(L"\\Registry\\Machine\\SYSTEM\\ControlSet001\\Control",
+                    L"SystemBootDevice");
+    trace_reg_value(L"\\Registry\\Machine\\SYSTEM\\Setup", L"SystemPartition");
 #endif
     RtlInitUnicodeString(&g_ctl_name, VDISK_CTL_DEVICE);
     RtlInitUnicodeString(&g_ctl_link, VDISK_CTL_LINK);
@@ -927,20 +1016,22 @@ NTSTATUS NTAPI DriverEntry(PDRIVER_OBJECT drv, PUNICODE_STRING reg)
      * (windows-route.md 7.4). A WinPE build leaves map_len zero and is
      * untouched. */
     if (g_bake.map_len != 0) {
+        extmap_hdr bh;
+
+        /* Report the medium's size at once, from the baked map, so the CD
+         * answers CHECK_VERIFY and geometry as present the instant it is
+         * created - text-mode setup scans for a CD-ROM before the backing
+         * thread has finished finding the stick, and a device reporting no
+         * media is not counted. The reads come later, when the backing is up. */
+        if (extmap_decode(g_bake.map, g_bake.map_len, &bh) == EXTMAP_OK)
+            g_size = bh.iso_size;
+
         RtlInitUnicodeString(&g_cdrom0_name, L"\\Device\\CdRom0");
         g_cdrom0 = NT_SUCCESS(IoCreateSymbolicLink(&g_cdrom0_name, &g_cd_name));
-        /* The boot CD's ARC name. Measured 2026-09-25: \ArcName is empty when
-         * this driver loads, and later holds only multi(0)disk(0)cdrom(0) (this
-         * link) and multi(0)disk(0)fdisk(0) (the floppy) - the system never
-         * registers an ARC name for the served medium, since it is no real
-         * device. This link is created and resolves to this device, yet the
-         * kernel still 0x7B's: so the boot ARC name setupldr set is NOT
-         * cdrom(0). Finding what it IS (the loader block's ArcBootDeviceName, or
-         * the registry) is the remaining work; this link is kept as the
-         * scaffolding it will hang on. */
-        RtlInitUnicodeString(&g_arc_name,
-                             L"\\ArcName\\multi(0)disk(0)cdrom(0)");
-        g_arc = NT_SUCCESS(IoCreateSymbolicLink(&g_arc_name, &g_cd_name));
+        /* Bind this CD as the kernel's boot device by the ARC name setupldr
+         * recorded (read from the registry, not assumed - it is the served BIOS
+         * drive number, e.g. cdrom(224) for 0xE0). This is what clears the 0x7B. */
+        g_arc = bind_boot_device();
 #ifdef VDISK_SERIAL_TRACE
         serial_trace(g_cdrom0 ? "FALCONVDISK_CDROM0_LINKED\r\n"
                               : "FALCONVDISK_CDROM0_EXISTS\r\n");
@@ -977,10 +1068,12 @@ NTSTATUS NTAPI DriverEntry(PDRIVER_OBJECT drv, PUNICODE_STRING reg)
     }
 
     /* Piece 3: when the loader baked an extent map in (2000/XP text-mode
-     * setup), resolve the backing on its own detached thread, so its wait on
-     * the mount does not block the read-servicing thread. Fire and forget; it
-     * terminates itself. A winjump build leaves the map empty and this thread
-     * returns at once, the SET_BACKING path taking over. */
+     * setup), resolve the backing on its own detached thread. It must NOT block
+     * DriverEntry: a boot-start driver that does not return holds up the rest of
+     * the boot-start sequence, so disk.sys never enumerates the stick the
+     * resolve is waiting for, and the deadlock ends in an unmountable boot
+     * volume (0xED). Fire and forget; it terminates itself. A winjump build
+     * leaves the map empty and this is skipped, SET_BACKING taking over. */
     if (g_bake.map_len != 0) {
         HANDLE rh;
         OBJECT_ATTRIBUTES roa;
