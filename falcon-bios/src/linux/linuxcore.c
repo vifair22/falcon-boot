@@ -99,13 +99,12 @@ linuxcore_status linuxcore_geometry(const uint8_t *setup, size_t setup_len,
     align = rd32(setup, HDR_KERNEL_ALIGNMENT);
     if (align == 0)
         align = 0x200000u;
+    out->stage_at = 0;
     if (rd8(setup, HDR_RELOCATABLE) == 0) {
         out->load_at = rd64(setup, HDR_PREF_ADDRESS);
         if (out->load_at == 0)
             return LINUXCORE_ERR_NOT_RELOC;
-        /* The classic fixed address is 1 MiB, which is where stage 3 is
-         * running: loading there overwrites the code doing the loading. */
-        if (out->load_at < pref_load)
+        if (out->load_at < LINUXCORE_LOW_MIN)
             return LINUXCORE_ERR_TOO_LOW;
     } else {
         out->load_at = (pref_load + align - 1u) & ~(align - 1u);
@@ -119,6 +118,22 @@ linuxcore_status linuxcore_geometry(const uint8_t *setup, size_t setup_len,
         out->init_size = out->pm_len;
     if (out->load_at > map_end || map_end - out->load_at < out->init_size)
         return LINUXCORE_ERR_NO_ROOM;
+    out->end = out->load_at + out->init_size;
+
+    /* The classic fixed address is 1 MiB, which is where stage 3 is running:
+     * reading there would overwrite the code doing the reading. So it is
+     * read above both the loader and the kernel's own footprint, and moved
+     * down last. The move runs downward from a higher source, so the two
+     * may not overlap in the other direction, which this rules out. */
+    if (out->load_at < pref_load) {
+        uint64_t at = pref_load > out->end ? pref_load : out->end;
+
+        at = (at + 0xFFFu) & ~(uint64_t)0xFFFu;
+        if (at > map_end || map_end - at < out->pm_len)
+            return LINUXCORE_ERR_NO_ROOM;
+        out->stage_at = at;
+        out->end = at + out->pm_len;
+    }
 
     out->cmdline_cap = rd32(setup, HDR_CMDLINE_SIZE);
     if (out->cmdline_cap == 0 || out->cmdline_cap > 4096u)

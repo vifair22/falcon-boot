@@ -79,3 +79,41 @@ int vfd_run_on_track(const vfd_geom *g, uint32_t lba, uint32_t want,
         *n = g->total_sectors - lba;
     return VFD_OK;
 }
+
+int vfd_lba_to_chs(const vfd_geom *g, uint32_t lba, uint16_t *cyl,
+                   uint8_t *head, uint8_t *sector)
+{
+    uint32_t track;
+
+    if (g == (const vfd_geom *)0 || cyl == (uint16_t *)0 ||
+        head == (uint8_t *)0 || sector == (uint8_t *)0 ||
+        g->heads == 0u || g->sectors == 0u)
+        return VFD_ERR_BAD_ARG;
+    if (lba >= g->total_sectors)
+        return VFD_ERR_RANGE;
+    track = lba / g->sectors;
+    *cyl = (uint16_t)(track / g->heads);
+    *head = (uint8_t)(track % g->heads);
+    *sector = (uint8_t)(lba % g->sectors + 1u);
+    return VFD_OK;
+}
+
+int vfd_geometry_int13(uint8_t ch, uint8_t cl, uint8_t dh, vfd_geom *g)
+{
+    uint32_t cylinders;
+
+    if (g == (vfd_geom *)0)
+        return VFD_ERR_BAD_ARG;
+    cylinders = ((uint32_t)ch | (((uint32_t)cl & 0xC0u) << 2)) + 1u;
+    /* DH is the last head's index, so 0xFF would be 256 heads, which the
+     * geometry's byte cannot hold; no drive reports it in practice. */
+    if ((cl & 0x3Fu) == 0u || dh == 0xFFu)
+        return VFD_ERR_RANGE;
+    g->cylinders = (uint16_t)cylinders;
+    g->heads = (uint8_t)(dh + 1u);
+    g->sectors = (uint8_t)(cl & 0x3Fu);
+    g->total_sectors = cylinders * g->heads * g->sectors;
+    g->media = 0;
+    g->bios_type = 0;
+    return VFD_OK;
+}

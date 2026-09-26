@@ -141,6 +141,15 @@
 #define CMDLINE_ADDR    0x00020000
 #define KERNEL_ADDR     0x01000000
 
+/* The handoff's last few instructions and the GDT the kernel is entered
+ * with, copied below a megabyte just before the jump (linux.c). A kernel
+ * that is not relocatable runs at 1 MB, which is where stage 3 is; it is
+ * staged higher and moved down by code that has to be somewhere the move
+ * does not reach. Between the scratch block and the real-mode stack, which
+ * grows down from 0x7C00 and is a few hundred bytes deep. */
+#define LINUX_STUB_ADDR 0x00003000
+#define LINUX_GDT_ADDR  0x00003100
+
 #define STAGE3_LOAD     0x100000
 #define STAGE3_LBA      (STAGE2_LBA + STAGE2_SECTORS)
 /* 512 KB, which is far more than the loader needs and costs only the sectors

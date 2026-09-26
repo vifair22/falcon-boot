@@ -57,6 +57,16 @@ int screen_menu(const screen_banner *banner, const uint16_t *const *labels,
                 size_t count, const char *keys, const uint16_t *hint,
                 int *which);
 
+/* screen_menu with `empty` as the line an empty list shows, `sel`
+ * highlighted first and, when `seconds` is nonzero, a countdown in the key
+ * line: when it runs out, `sel` is returned as if Enter had been pressed,
+ * and any key stops it for the rest of the menu's life (falcon jump's
+ * JUMP.INI, DESIGN Section 14.7). */
+int screen_menu_timed(const screen_banner *banner,
+                      const uint16_t *const *labels, size_t count,
+                      const char *keys, const uint16_t *hint, int *which,
+                      const uint16_t *empty, size_t sel, unsigned seconds);
+
 /* Blocks for a key, as bios_getkey. */
 int screen_key(void);
 

@@ -15,6 +15,8 @@ CORE_FS       := $(addprefix $(CORE)/fs/,exfat.c ext4.c fat.c iso9660.c udf.c fs
 # The stationary build's (DESIGN Section 13): ext4 and its adapter, and a
 # registry that names nothing else.
 CORE_FS_EXT4  := $(addprefix $(CORE)/fs/,ext4.c fs.c fs_ext4.c fs_reg_ext4.c)
+# falcon jump's (DESIGN Section 14.3): FAT, for the floppy it boots from.
+CORE_FS_FAT   := $(addprefix $(CORE)/fs/,fat.c fs.c fs_fat.c fs_reg_fat.c)
 CORE_LUKS     := $(addprefix $(CORE)/luks/,json.c af.c luks.c)
 CORE_PART     := $(CORE)/part/part.c
 CORE_PE       := $(CORE)/pe/pe.c

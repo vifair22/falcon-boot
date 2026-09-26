@@ -63,13 +63,22 @@ typedef enum {
     LINUXCORE_ERR_NO_KERNEL   = -7,  /* all setup and no kernel */
     LINUXCORE_ERR_NOT_RELOC   = -8,  /* fixed, and names no address */
     LINUXCORE_ERR_NO_ROOM     = -9,  /* wants more than the loader reaches */
-    LINUXCORE_ERR_TOO_LOW     = -10  /* fixed, below where a kernel may go */
+    LINUXCORE_ERR_TOO_LOW     = -10  /* fixed, below a megabyte */
 } linuxcore_status;
 
 typedef struct {
     uint64_t setup_len;    /* bytes of setup, from the file's start */
     uint64_t pm_len;       /* the protected-mode half that follows it */
-    uint64_t load_at;      /* where the protected-mode half goes */
+    uint64_t load_at;      /* where the protected-mode half runs */
+    /* Where it is read to first, when that is not load_at: a kernel that is
+     * not relocatable and names an address inside the loader's own memory
+     * (1 MB, memtest86+'s) is staged above everything and moved down as the
+     * handoff's last act, when the loader no longer needs that memory
+     * (linux.c). 0 when the kernel is read straight to load_at. */
+    uint64_t stage_at;
+    /* The first byte above the kernel and its staged copy, which is where
+     * an initrd may start. */
+    uint64_t end;
     uint64_t init_size;    /* what the kernel needs to run in, >= pm_len */
     uint64_t initrd_max;   /* highest byte an initrd may occupy */
     uint32_t cmdline_cap;  /* including the terminator */
@@ -77,13 +86,18 @@ typedef struct {
     uint8_t  is_64;        /* a 64-bit kernel (xloadflags) */
 } linux_geom;
 
+/* Below this, a fixed address is refused outright: the zero page, the
+ * command line and the handoff's own stub are there. */
+#define LINUXCORE_LOW_MIN 0x100000u
+
 /* Reads the geometry out of `setup` (at least 1024 bytes of the kernel's
  * start) for a kernel of `file_len` bytes, refusing every shape this loader
  * cannot boot. `pref_load` is where a relocatable kernel is placed before
- * alignment and the lowest address any kernel may take, since everything
- * below it is the loader's own; `map_end` one past the last byte the loader
- * can address, and
- * `setup_cap` the buffer the caller will read the setup into. */
+ * alignment, and the start of what is free once the loader is running:
+ * everything below it is the loader's own, so a fixed address under it is
+ * staged there instead (stage_at). `map_end` is one past the last byte the
+ * loader can address, and `setup_cap` the buffer the caller will read the
+ * setup into. */
 linuxcore_status linuxcore_geometry(const uint8_t *setup, size_t setup_len,
                                     uint64_t file_len, uint64_t pref_load,
                                     uint64_t map_end, uint64_t setup_cap,

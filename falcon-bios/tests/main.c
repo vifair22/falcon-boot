@@ -7,7 +7,8 @@
  * machine. What is left is the arithmetic: the virtual CD's INT 13h handler
  * (vcdcore), the addresses the x86 boot protocol is handed and the padding
  * between concatenated initrds (linuxcore), and the placement that chooses
- * an initrd's address out of the BIOS memory map (e820). Every one of them
+ * an initrd's address out of the BIOS memory map (e820), and falcon jump's
+ * JUMP.INI (jumpini), where a misread line would boot the wrong thing. Every one of them
  * fails silently on a real machine, and the assembly around them is the part
  * of this repository no analyzer reads.
  */
@@ -24,6 +25,7 @@ int main(void)
     failed += run_vfdcore_tests();
     failed += run_linuxcore_tests();
     failed += run_e820_tests();
+    failed += run_jumpini_tests();
 
     printf("\nfalcon-bios: total failed: %d\n", failed);
     return failed == 0 ? 0 : 1;

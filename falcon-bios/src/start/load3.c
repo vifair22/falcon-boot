@@ -38,11 +38,14 @@ void stage3_load(uint8_t drive)
      * linked separately and shares no symbol with the assembly. */
     bios_boot_drive = drive;
 
-    /* A drive that does not answer is left at 512-byte sectors, which is
-     * what a stick is, and what stage 3 assumes too; the read below is
-     * what decides whether that was right. */
+    /* A drive that does not answer is left at 512-byte sectors and AH=42h,
+     * which is what a stick is, and what stage 3 assumes too; the read below
+     * is what decides whether that was right. A floppy answers AH=08h and is
+     * read by CHS (DESIGN Section 14.3). */
     if (!bios_disk_probe(&d, drive))
-        bios_puts("falcon-bios: the boot drive did not answer AH=48h\n");
+        bios_puts("falcon-bios: the boot drive answered neither AH=48h nor AH=08h\n");
+    else if (d.geom.sectors != 0)
+        bios_puts("falcon-bios: the boot drive has no INT 13h extensions, reading by CHS\n");
 
     base = (uint64_t)STAGE3_LBA * d.sector_size;
     if (bios_disk_read(&d, base, d.sector_size, (void *)(uintptr_t)hdr) != 0)

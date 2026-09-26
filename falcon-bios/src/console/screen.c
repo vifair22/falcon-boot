@@ -378,7 +378,8 @@ static void draw_banner(const tui_menu *m, const screen_banner *banner)
 }
 
 static void paint_slot(const tui_menu *m, const uint16_t *const *labels,
-                       size_t count, size_t slot, size_t top, size_t sel)
+                       size_t count, size_t slot, size_t top, size_t sel,
+                       const uint16_t *empty)
 {
     size_t idx = top + slot;
 
@@ -389,7 +390,7 @@ static void paint_slot(const tui_menu *m, const uint16_t *const *labels,
                  tui_entry_attr(0, idx == sel));
     } else {
         tui_row_text(g_row, m->list_width,
-                     (idx == 0) ? tui_list_empty : (const uint16_t *)0);
+                     (idx == 0) ? empty : (const uint16_t *)0);
         emit_row(m->list_top + slot, m->list_left, TUI_ATTR_TEXT);
     }
 }
@@ -413,25 +414,82 @@ static void restore(void)
     screen_cursor(1);
 }
 
+/* ---- the countdown (DESIGN Section 14.7) ----
+ *
+ * Timed off the BIOS's tick count in the data area, 18.2 a second, which
+ * IRQ0 advances while the thunk is in real mode with interrupts on: the key
+ * poll below is itself what lets the count move. It resets at midnight
+ * (0x1800B0 ticks), which the arithmetic allows for. */
+#define BDA_TICKS      0x46Cu
+#define TICKS_PER_DAY  0x1800B0u
+
+static uint32_t ticks_since(uint32_t start)
+{
+    uint32_t now = peek32(BDA_TICKS);
+
+    return now >= start ? now - start : now + TICKS_PER_DAY - start;
+}
+
+/* "Booting in 5 seconds. Any key stops the countdown." in the key line. */
+static void paint_countdown(const tui_menu *m, unsigned left)
+{
+    static const char head[] = "Booting in ";
+    static const char tail[] = ". Any key stops the countdown.";
+    uint16_t text[80];
+    char digits[6];
+    size_t n = 0;
+    size_t d = 0;
+    size_t i;
+
+    do {
+        digits[d++] = (char)('0' + left % 10u);
+        left /= 10u;
+    } while (left != 0 && d < sizeof digits);
+    for (i = 0; head[i] != '\0'; i++)
+        text[n++] = (uint16_t)head[i];
+    while (d > 0)
+        text[n++] = (uint16_t)digits[--d];
+    text[n++] = (uint16_t)' ';
+    text[n++] = (uint16_t)'s';
+    for (i = 0; tail[i] != '\0' && n + 1u < sizeof text / sizeof text[0]; i++)
+        text[n++] = (uint16_t)tail[i];
+    text[n] = 0;
+    tui_row_text(g_row, m->width, text);
+    emit_row(m->hint_row, m->left, TUI_ATTR_TEXT);
+}
+
 int screen_menu(const screen_banner *banner, const uint16_t *const *labels,
                 size_t count, const char *keys, const uint16_t *hint,
                 int *which)
 {
+    return screen_menu_timed(banner, labels, count, keys, hint, which,
+                             tui_list_empty, 0, 0);
+}
+
+int screen_menu_timed(const screen_banner *banner,
+                      const uint16_t *const *labels, size_t count,
+                      const char *keys, const uint16_t *hint, int *which,
+                      const uint16_t *empty, size_t sel, unsigned seconds)
+{
     tui_menu m;
     size_t top = 0;
-    size_t sel = 0;
     size_t painted = 0;
     int full = 1;
+    const uint16_t *line = count == 0 ? tui_hint_empty
+                           : hint != (const uint16_t *)0 ? hint
+                           : tui_hint_default;
+
+    if (sel >= count)
+        sel = 0;
+    if (count == 0)
+        seconds = 0;
 
     tui_menu_layout(&g_frame, count, &m);
     screen_cursor(0);
     clear();
 
     draw_banner(&m, banner);
-    tui_row_text(g_row, m.width,
-                 count == 0 ? tui_hint_empty
-                 : hint != (const uint16_t *)0 ? hint
-                 : tui_hint_default);
+    tui_row_text(g_row, m.width, line);
     emit_row(m.hint_row, m.left, TUI_ATTR_TEXT);
 
     for (;;) {
@@ -442,13 +500,43 @@ int screen_menu(const screen_banner *banner, const uint16_t *const *labels,
             full = 1;
         if (full) {
             for (i = 0; i < m.win; i++)
-                paint_slot(&m, labels, count, i, top, sel);
+                paint_slot(&m, labels, count, i, top, sel, empty);
             full = 0;
         } else if (painted != sel) {
-            paint_slot(&m, labels, count, painted - top, top, sel);
-            paint_slot(&m, labels, count, sel - top, top, sel);
+            paint_slot(&m, labels, count, painted - top, top, sel, empty);
+            paint_slot(&m, labels, count, sel - top, top, sel, empty);
         }
         painted = sel;
+
+        /* The countdown runs until it ends or a key arrives, whichever is
+         * first; a key stops it for good, and is then taken as any key is. */
+        if (seconds != 0) {
+            uint32_t start = peek32(BDA_TICKS);
+            uint32_t total = seconds * 182u / 10u;
+            unsigned shown = seconds + 1u;
+
+            while (!key_waiting()) {
+                uint32_t gone = ticks_since(start);
+                unsigned left;
+
+                if (gone >= total) {
+                    restore();
+                    if (which != (int *)0)
+                        *which = '\r';
+                    return (int)sel;
+                }
+                left = (unsigned)((total - gone) * 10u / 182u) + 1u;
+                if (left > seconds)
+                    left = seconds;
+                if (left != shown) {
+                    paint_countdown(&m, left);
+                    shown = left;
+                }
+            }
+            seconds = 0;
+            tui_row_text(g_row, m.width, line);
+            emit_row(m.hint_row, m.left, TUI_ATTR_TEXT);
+        }
 
         /* Drain the queue, then paint once: a held arrow arrives as a run
          * of keystrokes, and one repaint each - a couple of kilobytes on a
