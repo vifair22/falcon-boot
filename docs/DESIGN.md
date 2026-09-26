@@ -3538,7 +3538,7 @@ flowchart TD
     PR -- "either" --> L3
     GEO --> L3["stage3_load: header at STAGE3_LBA, then the image"]
     L3 --> BM["bios_main (apps/jump/bios_main.c)<br/>e820_read"]
-    BM --> FAT["read_floppy: fs_identify, fs_mount (FAT12)<br/>MEMTEST.BIN present? JUMP.INI parsed (jumpini.c)"]
+    BM --> FAT["read_floppy: fs_identify, fs_mount (FAT12; sector 0 from 0x7C00)<br/>MEMTEST.BIN present? JUMP.INI parsed (jumpini.c)"]
     FAT --> PCI["pci_scan: an IDE controller? a UHCI one?<br/>class codes through 0xCF8/0xCFC; nothing loaded"]
     PCI --> DSK["scan_disks: every drive the BDA counts (0x475)<br/>whose LBA 0 ends in 0x55AA; the CD and USB rows when<br/>their module is on the floppy and their controller in the machine"]
     DSK --> INI{"JUMP.INI taken?"}
@@ -3550,7 +3550,7 @@ flowchart TD
     MENU -- "Escape" --> RF["INT 18h, else bios_reboot"]
     MBR -- "unreadable, no 0x55AA" --> MENU
     MEM -- "refused or unreadable" --> MENU
-    MENU -- "CD drive" --> LD["jmod_load: ATA.MOD to JMOD_SLOT_ATA (15 MB)<br/>E820 says 15-16 MB is RAM; header checked; .bss zeroed; init"]
+    MENU -- "CD drive" --> LD["jmod_load: ATA.MOD read to 6 MB, inflated to JMOD_SLOT_ATA (15 MB)<br/>E820 says 15-16 MB is RAM; header checked; .bss zeroed; init"]
     LD --> PB["ops.probe: IDENTIFY PACKET DEVICE on 0x1F0 and 0x170,<br/>master and slave; READ CAPACITY; the first with a disc"]
     PB --> CAT{"the catalog through ops.read (disc_read)<br/>vcd_boot_entry: its media type"}
     CAT -- "floppy emulation" --> VFD["vfd_serve over disc_read: the image to the heap above 64 MB,<br/>vfdres.S as drive 0x00; nothing of the module stays (12.3.8)"]
@@ -3858,7 +3858,7 @@ and a BIOS has no enforcement for it to relax.
 | `MBR` | a disk the BIOS already sees, its own boot code at 0x7C00 (13.4's route, `mbr.c`) | nothing loaded |
 | `MEM` | memtest86+ off the floppy, through the x86 boot protocol (`linux.c`) | nothing loaded |
 | `CDR` | the CD in an IDE drive, El Torito no-emulation or floppy emulation | `ATA.MOD`, resident |
-| `USB` | a falcon stick in a USB port, as drive 0x80 | a host controller module and `USB.MOD`, resident |
+| `USB` | a falcon stick in a USB port, as drive 0x80 | a host controller module (`EHCI.MOD`, `UHCI.MOD` or `OHCI.MOD`), resident |
 | `PCC` | a CompactFlash card in a PC Card slot (a CF-to-PC Card adapter), as a disk | `PCC.MOD`, resident |
 
 Not in scope, and why:
@@ -3903,7 +3903,7 @@ with `mcopy` or `cp`:
 | Where | What |
 |---|---|
 | sector 0 | the boot sector: the BPB, then the stage 1 that reads the reserved sectors |
-| reserved sectors | stage 2 (falcon-bios's, unchanged) and jump's stage 3, the core |
+| reserved sectors | stage 2 (falcon-bios's, unchanged) and jump's stage 3, the core, padded so the root directory starts a track |
 | `JUMP.INI` | optional, 14.7 |
 | `MEMTEST.BIN` | memtest86+, any build carrying the x86 boot protocol header |
 | `*.MOD` | the drivers, 14.4 |
@@ -3950,6 +3950,29 @@ a sentence instead of running what it read. Only jump's stage 3 is
 compressed; the stick's and the station's are read off media where the
 bytes cost nothing, and stage 2 takes either.
 
+What stage 3 reads before its menu is laid out to cost one revolution.
+Stage 3 needs three things off the floppy: the BPB in sector 0, the root
+directory (JUMP.INI, and which of MEMTEST.BIN and the modules are there),
+and JUMP.INI's cluster. Read where mformat puts them by default they are
+three tracks, each a seek and a revolution: 1.2 s on the A21m between stage
+3 starting and its PCI scan. Sector 0 is not read at all: the BIOS put it
+at 0x7C00, and nothing writes there before a route starts, so the floppy's
+read callback in `bios_main.c` answers it from memory. The build pads the
+reserved sectors until the root directory starts a track (`app.mk` formats,
+reads the FAT's length back, and formats again), and copies JUMP.INI first,
+so its one cluster is the first after the root directory and in the same
+track. The FAT itself is not read for a file of one cluster. Measured on the
+A21m, stage 1 to the menu: 3.7 s with stage 3 compressed, 2.9 s with this
+(stage 3's start to its PCI scan, 1.2 s to 0.4 s). What remains is stage 2
+(0.7 s) and stage 3 (1.5 s), which are bytes. A JUMP.INI edited on the
+floppy later may be given another cluster, and costs one more track; the
+file still reads.
+
+The modules are stored compressed as well (14.4). None is read before a
+route is chosen, so that saves nothing before the menu, and costs it the
+inflater stage 3 now links: 4 KB, about 2 KB compressed, well under a
+revolution.
+
 `make jump` builds `build/bin/falcon-jump.img`, the whole floppy, with
 mtools (no loop device, no sudo).
 
@@ -3981,7 +4004,8 @@ into memory and called.
   routines it uses.
 - **The set.** `ATA.MOD` (ATAPI on the legacy IDE channels), `UHCI.MOD`,
   `OHCI.MOD`, `EHCI.MOD` (one host controller each, root ports only in the
-  MVP). Later, a PC Card socket module. A USB module is its host controller
+  MVP), and `PCC.MOD` (a CardBus bridge's PC Card socket and the ATA disk
+  on the card in it). A USB module is its host controller
   and the whole storage stack (enumeration, Bulk-Only Transport, SCSI:
   `hw/usb/msc.c` over the small interface `usbhc.h` a controller offers),
   one image per controller rather than a controller module and a separate
@@ -3990,6 +4014,14 @@ into memory and called.
   there is read. The storage half and the SCSI blocks (`hw/scsi`) are one
   source each; only the built images repeat them. A module's INT 13h
   answers are `hw/blk13.c`, shared by every module.
+- **Stored compressed.** A module goes on the floppy as a gzip member
+  (`gzip -9 -n`, the build's `$(NAME).MOD.gz` under the `.MOD` name),
+  about 60% of its size: 16 sectors fewer for a USB route that reads EHCI
+  and UHCI. `jmodload.c` reads the file to `JMOD_GZ_STAGE` (6 MB, stage 2's
+  staging area, free once stage 3 runs) and inflates it into its slot; the
+  member's CRC-32 catches a floppy that read wrong before the header is
+  even checked. A file without gzip's magic is copied into the slot as it
+  is, so a module put on the floppy by hand needs no compressing.
 - **Where the code lives.** `falcon-bios/src/hw/`, one directory per driver,
   and each driver's decisions in a host-tested half beside it, as
   `vcdcore.c` is to `vcdres.S`: descriptor parsing, BOT's CBW and CSW, SCSI

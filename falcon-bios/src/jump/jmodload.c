@@ -5,6 +5,7 @@
 #include <jump/jmodload.h>
 #include <mem/e820.h>
 
+#include <gz/gz.h>
 #include <lib/string.h>
 
 static void svc_log(const char *s)
@@ -47,6 +48,8 @@ int jmod_load(fs_vol *vol, const char *path, unsigned slot_idx,
 {
     uint32_t slot = JMOD_SLOT_ADDR(slot_idx);
     uint8_t *at = (uint8_t *)(uintptr_t)slot;
+    uint8_t *stage = (uint8_t *)(uintptr_t)JMOD_GZ_STAGE;
+    size_t len;
     fs_dir scratch;
     fs_dirent e;
     fs_file f;
@@ -67,12 +70,26 @@ int jmod_load(fs_vol *vol, const char *path, unsigned slot_idx,
         *why = "the driver is not on the floppy.";
         return -1;
     }
-    if (e.size > JMOD_SLOT_BYTES || fs_file_open(vol, &f, &e) != FS_OK ||
-        fs_file_read(&f, 0, e.size, at) != FS_OK) {
+    if (e.size > JMOD_SLOT_BYTES ||
+        !e820_is_ram(JMOD_GZ_STAGE, JMOD_SLOT_BYTES) ||
+        fs_file_open(vol, &f, &e) != FS_OK ||
+        fs_file_read(&f, 0, e.size, stage) != FS_OK) {
         *why = "the driver could not be read off the floppy.";
         return -1;
     }
-    rc = jmod_check(at, (size_t)e.size, e.size, slot, JMOD_SLOT_BYTES, &info);
+    /* Compressed as the build writes it, or as it is, which is what a
+     * module copied on by hand may be: the magic says which. */
+    len = (size_t)e.size;
+    if (len >= 2u && stage[0] == 0x1Fu && stage[1] == 0x8Bu) {
+        if (gz_member(stage, len, at, JMOD_SLOT_BYTES, &len) != GZ_OK) {
+            *why = "the driver on the floppy is damaged: it did not "
+                   "decompress.";
+            return -1;
+        }
+    } else {
+        memcpy(at, stage, len);
+    }
+    rc = jmod_check(at, len, len, slot, JMOD_SLOT_BYTES, &info);
     if (rc != JMOD_OK) {
         *why = check_why(rc);
         return -1;

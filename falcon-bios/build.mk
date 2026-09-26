@@ -299,7 +299,7 @@ define jump_module
 $(1)_MOD_OBJS := $$(patsubst %.c,$$(BIOS_OBJ)/%.o,$(3))
 $(1)_MOD := $$(BIN)/mod/$(1).MOD
 BIOS_CSRCS += $(3)
-JUMP_MODS += $$($(1)_MOD)
+JUMP_MODS += $$($(1)_MOD).gz
 
 build/gen/jmod-$(1).ld: $$(BIOS)/hw/jmod.ld.S $$(BIOS)/start/biosdefs.h
 	@mkdir -p $$(@D)
@@ -311,6 +311,12 @@ $$($(1)_MOD): $$($(1)_MOD_OBJS) build/gen/jmod-$(1).ld
 		-Wl,--no-warn-rwx-segments -Wl,-T,build/gen/jmod-$(1).ld \
 		-o $$@.elf $$($(1)_MOD_OBJS) $$(BIOS_LIBGCC)
 	objcopy -O binary -j .image $$@.elf $$@
+
+# What goes on the floppy (DESIGN Section 14.3): the module as a gzip
+# member, which jmodload.c inflates into its slot. -n, so the member carries
+# no name or time and the same module compresses to the same bytes.
+$$($(1)_MOD).gz: $$($(1)_MOD)
+	gzip -9 -n -c $$< > $$@
 endef
 
 # ---- tests ----
