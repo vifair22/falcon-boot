@@ -107,6 +107,37 @@ static void test_identify(void **state)
     assert_string_equal(model, "QEMU");
 }
 
+/* A CompactFlash card's IDENTIFY: 0x848A, LBA, 1 GB. */
+static void test_identify_disk(void **state)
+{
+    uint16_t w[256];
+    uint64_t n = 0;
+    char model[41];
+
+    (void)state;
+    memset(w, 0, sizeof w);
+    w[0] = 0x848Au;
+    w[49] = 1u << 9;
+    w[60] = 0x0000u;
+    w[61] = 0x0020u;                    /* 0x200000 sectors */
+    w[27] = (uint16_t)(('C' << 8) | 'F');
+    assert_int_equal(ata_parse_identify_disk(w, &n, model, sizeof model), 0);
+    assert_int_equal(n, 0x200000u);
+    assert_string_equal(model, "CF");
+
+    w[0] = 0x0040u;                     /* an ordinary fixed disk */
+    assert_int_equal(ata_parse_identify_disk(w, &n, model, sizeof model), 0);
+    w[0] = 0x85C0u;                     /* a CD drive */
+    assert_int_equal(ata_parse_identify_disk(w, &n, model, sizeof model), -1);
+    w[0] = 0x0040u;
+    w[49] = 0;                          /* CHS only */
+    assert_int_equal(ata_parse_identify_disk(w, &n, model, sizeof model), -1);
+    w[49] = 1u << 9;
+    w[60] = 0;
+    w[61] = 0;
+    assert_int_equal(ata_parse_identify_disk(w, &n, model, sizeof model), -1);
+}
+
 int run_atacore_tests(void)
 {
     const struct CMUnitTest tests[] = {
@@ -114,6 +145,7 @@ int run_atacore_tests(void)
         cmocka_unit_test(test_capacity),
         cmocka_unit_test(test_sense),
         cmocka_unit_test(test_identify),
+        cmocka_unit_test(test_identify_disk),
     };
 
     return cmocka_run_group_tests_name("atacore", tests, NULL, NULL);

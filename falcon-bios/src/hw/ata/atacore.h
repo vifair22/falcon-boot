@@ -28,4 +28,11 @@ int atapi_parse_capacity(const uint8_t data[8], uint64_t *sectors);
  * string, trimmed, into `model` of `cap` bytes. Nonzero for a CD. */
 int atapi_parse_identify(const uint16_t words[256], char *model, size_t cap);
 
+/* IDENTIFY DEVICE's 256 words for a disk: the LBA28 sector count and the
+ * model string, trimmed. 0 for an ATA device that addresses by LBA (a
+ * CompactFlash card included, which says 0x848A in word 0); -1 for a packet
+ * device or one that addresses by CHS alone. */
+int ata_parse_identify_disk(const uint16_t words[256], uint64_t *sectors,
+                            char *model, size_t cap);
+
 #endif /* FALCON_BIOS_ATACORE_H */

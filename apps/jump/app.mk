@@ -31,6 +31,10 @@ $(eval $(call jump_module,UHCI,JMOD_SLOT_UHCI,\
 	$(BIOS)/hw/usb/uhci_mod.c $(BIOS)/hw/usb/uhci.c $(BIOS)/hw/usb/msc.c \
 	$(BIOS)/hw/usb/usbcore.c $(BIOS)/hw/scsi/scsi.c $(BIOS)/hw/blk13.c \
 	$(CORE_LIBC)))
+$(eval $(call jump_module,PCC,JMOD_SLOT_PCC,\
+	$(BIOS)/hw/pcc/pcc.c $(BIOS)/hw/pcc/pcccore.c $(BIOS)/hw/ata/atadisk.c \
+	$(BIOS)/hw/ata/atacore.c $(BIOS)/hw/scsi/scsi.c $(BIOS)/hw/blk13.c \
+	$(CORE_LIBC)))
 $(eval $(call jump_module,EHCI,JMOD_SLOT_EHCI,\
 	$(BIOS)/hw/usb/ehci_mod.c $(BIOS)/hw/usb/ehci.c $(BIOS)/hw/usb/msc.c \
 	$(BIOS)/hw/usb/usbcore.c $(BIOS)/hw/scsi/scsi.c $(BIOS)/hw/blk13.c \
@@ -94,4 +98,10 @@ $(JUMP_IMG): $(BIOS_FD_STAGE1) $(BIOS_STAGE2) $(BIOS_JUMP_STAGE3) \
 
 jump: $(JUMP_IMG)
 
-.PHONY: jump jump-files-stamp
+# Every route booted under SeaBIOS and judged from serial
+# (falcon-bios/tools/run-jump-rig.sh); the CF case needs the rig's QEMU
+# (falcon-bios/tools/qemu-pcc/build-qemu.sh).
+test-jump: jump
+	falcon-bios/tools/run-jump-rig.sh
+
+.PHONY: jump jump-files-stamp test-jump

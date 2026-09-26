@@ -132,6 +132,7 @@ changed with `mcopy` or by mounting it.
 | `MEM` | memtest86+, `MEMTEST.BIN` on the floppy, started through the x86 boot protocol | the Memory test row |
 | `CDR` | the disc in an IDE CD drive, through `ATA.MOD` and the stick's virtual CD as drive 0xE0 | the CD drive row |
 | `USB` | a falcon stick on a USB port, through `EHCI.MOD`, `UHCI.MOD` or `OHCI.MOD`, as the next BIOS disk | the USB stick row |
+| `PCC` | a CompactFlash card in a PC Card slot, through `PCC.MOD`, as the next BIOS disk | the CF card (PC Card) row |
 
 Every BIOS disk whose first sector carries the boot signature is a row, the
 CD drive row is there when the floppy holds `ATA.MOD` (which `make jump`
@@ -146,17 +147,21 @@ is read into memory above 64 MB and so needs more than that. The USB stick row i
 boots the first falcon stick (an ISO library or a shelf in its GPT) on a
 root port of any of them, as the BIOS disk after the machine's
 own, and needs 16 MB like the CD. A USB keyboard stops working once it runs:
-jump takes the controller from the BIOS, so the machine wants a PS/2 one. `make
+jump takes the controller from the BIOS, so the machine wants a PS/2 one. The CF card (PC Card) row is there when the floppy
+holds `PCC.MOD` and the machine has a CardBus bridge; the route boots the
+first CompactFlash card in a slot as a disk, its own MBR whatever is on it,
+and needs 16 MB like the others. While it reads the card's configuration it
+uses memory at 0xD0000, and the card's registers sit at I/O 0x1E0-0x1EF. `make
 jump MEMTEST=<file>` copies one on; it has to be a build carrying the x86
 boot protocol header (memtest86+ 6 and later), and the 32-bit build for a
 processor with no 64-bit mode.
 
 `JUMP.INI`, when the floppy has one, sets a default and a countdown:
 
-    default=hdd        ; hdd, memtest, cd or usb
+    default=hdd        ; hdd, memtest, cd, usb or cf
     timeout=5          ; seconds; any key stops the countdown
 
-`hdd` is the first disk row, `cd` the CD drive row, `usb` the USB stick row. Without the file, or with a default whose row
+`hdd` is the first disk row, `cd` the CD drive row, `usb` the USB stick row, `cf` the CF card row. Without the file, or with a default whose row
 is not on the menu, the menu waits. A line the file cannot take is named on
 screen before the menu, which then waits with no default. `make jump
 JUMP_INI=<file>` copies one on.

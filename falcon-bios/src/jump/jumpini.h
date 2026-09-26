@@ -1,7 +1,7 @@
 /* falcon jump: JUMP.INI, the floppy's optional default and countdown
  * (docs/DESIGN.md Section 14.7).
  *
- *     default=hdd        ; hdd, memtest, cd or usb
+ *     default=hdd        ; hdd, memtest, cd, usb or cf
  *     timeout=5          ; seconds; any key stops the countdown
  *
  * Strict on purpose. A key the file does not know, a value it cannot parse,
@@ -24,7 +24,8 @@ typedef enum {
     JUMP_DEF_HDD,         /* the first disk with boot code */
     JUMP_DEF_MEMTEST,
     JUMP_DEF_CD,
-    JUMP_DEF_USB
+    JUMP_DEF_USB,
+    JUMP_DEF_CF           /* a CompactFlash card in a PC Card slot */
 } jump_default;
 
 /* The longest timeout accepted: an hour, which is already past any use. */

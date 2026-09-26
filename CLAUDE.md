@@ -308,7 +308,11 @@ falcon-efi and falcon-bios, which never share a set, may both have a `pos/`.
   that does the writing. `make bios` builds it, `make test-bios-img` makes
   a disk the rig boots with `falcon-efi/tools/run-qemu.sh --bios`, and
   `make test-bios-probe` makes the medium that checks the resident's INT 15h
-  half from real mode (`tools/memprobe.S`). `make station` links the
+  half from real mode (`tools/memprobe.S`). `make test-jump` boots every
+  falcon jump route under SeaBIOS and judges it from serial
+  (`tools/run-jump-rig.sh`); its CF case runs on a QEMU that
+  `tools/qemu-pcc/build-qemu.sh` builds with `falcon-pcc.c`, a model of the
+  A21m's PC Card bridge, since QEMU has none. `make station` links the
   stationary build's stage 3 (DESIGN Section 13) from
   `apps/station/bios_main.c`: the personal OS and `src/mbr/mbr.c`, another
   disk's own boot code started from 0x7C00, with nothing resident.
@@ -328,7 +332,10 @@ falcon-efi and falcon-bios, which never share a set, may both have a `pos/`.
   host-tested half; `hw/usb/` is the USB modules, `uhci.c`, `ohci.c` and
   `ehci.c` host controllers behind `usbhc.h` and `msc.c` the storage stack every
   controller's module links, with `usbcore.c` (descriptors, Bulk-Only)
-  host-tested; `hw/scsi/` the SCSI blocks both speak; `hw/blk13.c` the
+  host-tested; `hw/pcc/` is PCC.MOD, a CompactFlash card in a PC Card
+  slot (a CardBus bridge's ExCA registers, the card's CIS in `pcccore.c`
+  host-tested) as an ATA disk through `hw/ata/atadisk.c`;
+  `hw/scsi/` the SCSI blocks both speak; `hw/blk13.c` the
   INT 13h answers every module's resident gives; `hw/pci.h` and
   `hw/modrt.h` the port I/O a module does itself. `mem/lowmem.c` is the one place a resident's block is
   taken off the top of conventional memory. The

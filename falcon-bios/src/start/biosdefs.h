@@ -328,6 +328,7 @@
 #define JMOD_SLOT_OHCI   2
 #define JMOD_SLOT_EHCI   3
 #define JMOD_SLOT_USB    4
+#define JMOD_SLOT_PCC    5
 
 /* The reverse thunk (falcon-bios/src/jump/rthunk.S, jres.c): the real-mode
  * INT 13h entry a module's resident half is reached through. One block in
