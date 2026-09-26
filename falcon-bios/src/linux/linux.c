@@ -294,14 +294,69 @@ static int load_object(const linux_object *o, uint64_t from, uint64_t len,
     return 0;
 }
 
+/* The move for a staged kernel (linuxcore.h, stage_at): copy it down over
+ * the loader, then enter it. Copied to LINUX_STUB_ADDR before it runs, so it
+ * is position independent and uses nothing but registers: ESI the staged
+ * copy, EDI where it runs, ECX its length, EDX the entry, EBX the zero page.
+ * Nothing of the loader survives the copy, this included in its original
+ * place, which is why it runs from the copy. */
+__asm__(
+    "\t.section .text.linux_move, \"ax\"\n"
+    "\t.code32\n"
+    "\t.globl linux_move_stub\n"
+    "linux_move_stub:\n"
+    "\tcld\n"
+    "\trep movsb\n"
+    "\tmovl   %ebx, %esi\n"
+    "\txorl   %ebp, %ebp\n"
+    "\txorl   %edi, %edi\n"
+    "\txorl   %ebx, %ebx\n"
+    "\tjmp    *%edx\n"
+    "\t.globl linux_move_stub_end\n"
+    "linux_move_stub_end:\n"
+    "\t.previous\n");
+
+extern const uint8_t linux_move_stub[];
+extern const uint8_t linux_move_stub_end[];
+
 /* Never returns. Everything the kernel needs is in memory; this is the
  * handoff itself, and it is the fifth and last of Section 5.3's assembly
  * jobs, written here as inline asm because it is six instructions and
- * separating them from the values they use would help nobody. */
-static void enter_kernel(uint32_t entry, uint32_t zeropage)
+ * separating them from the values they use would help nobody.
+ *
+ * A nonzero `move` is a staged kernel: `move` bytes at `from` go to `entry`
+ * first, through the stub above. The GDT goes below a megabyte either way,
+ * since the move would otherwise copy the kernel over the table the CPU is
+ * still reading its segments from. */
+static void enter_kernel(uint32_t entry, uint32_t zeropage, uint32_t from,
+                         uint32_t move)
 {
+    memcpy((void *)(uintptr_t)LINUX_GDT_ADDR, g_gdt, sizeof g_gdt);
     g_gdtr.limit = (uint16_t)(sizeof g_gdt - 1u);
-    g_gdtr.base = (uint32_t)(uintptr_t)g_gdt;
+    g_gdtr.base = (uint32_t)LINUX_GDT_ADDR;
+
+    if (move != 0) {
+        memcpy((void *)(uintptr_t)LINUX_STUB_ADDR, linux_move_stub,
+               (size_t)(linux_move_stub_end - linux_move_stub));
+        __asm__ __volatile__(
+            "cli\n\t"
+            "lgdt   %[gdtr]\n\t"
+            "ljmp   $0x10, $1f\n"
+            "1:\n\t"
+            "movw   $0x18, %%ax\n\t"
+            "movw   %%ax, %%ds\n\t"
+            "movw   %%ax, %%es\n\t"
+            "movw   %%ax, %%ss\n\t"
+            "movw   %%ax, %%fs\n\t"
+            "movw   %%ax, %%gs\n\t"
+            "ljmp   $0x10, %[stub]\n\t"
+            :
+            : [gdtr] "m"(g_gdtr), [stub] "i"(LINUX_STUB_ADDR),
+              "S"(from), "D"(entry), "c"(move), "d"(entry), "b"(zeropage)
+            : "memory");
+        for (;;)
+            __asm__ __volatile__("hlt");
+    }
 
     /* Nothing is declared clobbered because nothing comes back: after the
      * last jump this loader no longer exists, and the registers the
@@ -339,7 +394,6 @@ int linux_boot(const linux_object *kernel, const linux_object *initrd,
     uint64_t setup_len;
     uint64_t pm_len;
     uint64_t load_at;
-    uint64_t init_size;
     uint64_t initrd_at = 0;
     uint64_t initrd_len = 0;
     uint32_t cmdline_cap;
@@ -381,7 +435,6 @@ int linux_boot(const linux_object *kernel, const linux_object *initrd,
     setup_len = geom.setup_len;
     pm_len = geom.pm_len;
     load_at = geom.load_at;
-    init_size = geom.init_size;
 
     /* Now the whole setup, which the zero page is built out of. */
     if (kernel->read(kernel->ctx, 0, setup_len, g_setup) != 0) {
@@ -390,8 +443,10 @@ int linux_boot(const linux_object *kernel, const linux_object *initrd,
     }
 
     /* The protected-mode half only: the setup that precedes it in the file
-     * is the sixteen-bit entry, which this route does not take. */
-    if (load_object(kernel, setup_len, pm_len, load_at) != 0) {
+     * is the sixteen-bit entry, which this route does not take. A staged
+     * kernel is read to its staging address and moved at the handoff. */
+    if (load_object(kernel, setup_len, pm_len,
+                    geom.stage_at != 0 ? geom.stage_at : load_at) != 0) {
         say("the kernel would not read");
         return -1;
     }
@@ -429,8 +484,7 @@ int linux_boot(const linux_object *kernel, const linux_object *initrd,
         initrd_len = linuxcore_initrd_len(sizes, i);
     }
     if (initrd_len > 0) {
-        initrd_at = e820_place_high(initrd_len, 4096u,
-                                    load_at + init_size,
+        initrd_at = e820_place_high(initrd_len, 4096u, geom.end,
                                     geom.initrd_max + 1u);
         if (initrd_at == 0) {
             say("there is nowhere to put the initrd");
@@ -484,6 +538,10 @@ int linux_boot(const linux_object *kernel, const linux_object *initrd,
 
     bios_puts("falcon-bios: kernel at ");
     bios_put_hex64(load_at);
+    if (geom.stage_at != 0) {
+        bios_puts(", staged at ");
+        bios_put_hex64(geom.stage_at);
+    }
     bios_puts(", ");
     bios_put_dec(pm_len);
     bios_puts(" bytes");
@@ -501,6 +559,7 @@ int linux_boot(const linux_object *kernel, const linux_object *initrd,
     if (last != (void (*)(void))0)
         last();
     fill_screen_info(zp);
-    enter_kernel((uint32_t)load_at, ZEROPAGE_ADDR);
+    enter_kernel((uint32_t)load_at, ZEROPAGE_ADDR, (uint32_t)geom.stage_at,
+                 geom.stage_at != 0 ? (uint32_t)pm_len : 0u);
     return -1;
 }

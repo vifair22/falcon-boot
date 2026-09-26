@@ -129,14 +129,48 @@ static void test_geometry_fixed_address(void **state)
     wr64(HDR_PREF_ADDRESS, 0);
     assert_int_equal(geom(8u * 1024u * 1024u, &g), LINUXCORE_ERR_NOT_RELOC);
 
-    /* ... and one whose address is below the floor, here the classic
-     * 1 MiB, is refused: that is where stage 3 runs. The floor itself is
-     * the lowest address taken. */
-    wr64(HDR_PREF_ADDRESS, 0x00100000ull);
+    /* ... and one whose address is below a megabyte is refused: the zero
+     * page and the command line are there. */
+    wr64(HDR_PREF_ADDRESS, 0x00090000ull);
     assert_int_equal(geom(8u * 1024u * 1024u, &g), LINUXCORE_ERR_TOO_LOW);
+
+    /* At the floor itself, nothing is staged. */
     wr64(HDR_PREF_ADDRESS, PREF_LOAD);
     assert_int_equal(geom(8u * 1024u * 1024u, &g), LINUXCORE_OK);
     assert_int_equal(g.load_at, PREF_LOAD);
+    assert_int_equal(g.stage_at, 0);
+    assert_int_equal(g.end, g.load_at + g.init_size);
+}
+
+/* The classic fixed 1 MiB, memtest86+'s: where stage 3 runs. It is read
+ * above the loader and above its own footprint, page aligned, and moved
+ * down last; the initrd starts past both. */
+static void test_geometry_staged(void **state)
+{
+    linux_geom g;
+
+    (void)state;
+    good_setup();
+    g_setup[HDR_RELOCATABLE] = 0;
+    wr64(HDR_PREF_ADDRESS, 0x00100000ull);
+    assert_int_equal(geom(160u * 1024u, &g), LINUXCORE_OK);
+    assert_int_equal(g.load_at, 0x00100000ull);
+    assert_true(g.stage_at >= PREF_LOAD);
+    assert_true(g.stage_at >= g.load_at + g.init_size);
+    assert_int_equal(g.stage_at & 0xFFFu, 0);
+    assert_int_equal(g.end, g.stage_at + g.pm_len);
+
+    /* A footprint reaching past the loader's end pushes the copy above it,
+     * so the downward move never reads what it has already written. */
+    wr32(HDR_INIT_SIZE, 0x01800000u);
+    assert_int_equal(geom(160u * 1024u, &g), LINUXCORE_OK);
+    assert_int_equal(g.stage_at, 0x01900000ull);
+
+    /* No room above for the copy is refused, not wrapped. */
+    assert_int_equal(linuxcore_geometry(g_setup, sizeof g_setup, 160u * 1024u,
+                                        PREF_LOAD, 0x01900000ull, SETUP_CAP,
+                                        &g),
+                     LINUXCORE_ERR_NO_ROOM);
 }
 
 /* The initrd ceiling is the kernel's, clamped to what the loader can
@@ -260,6 +294,7 @@ int run_linuxcore_tests(void)
         cmocka_unit_test(test_geometry_ok),
         cmocka_unit_test(test_geometry_defaults),
         cmocka_unit_test(test_geometry_fixed_address),
+        cmocka_unit_test(test_geometry_staged),
         cmocka_unit_test(test_geometry_initrd_ceiling),
         cmocka_unit_test(test_geometry_refusals),
         cmocka_unit_test(test_initrd_padding),
