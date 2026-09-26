@@ -709,10 +709,13 @@ cleanly by firmware, because the medium behaves differently under each:
   through the falcon-vdisk driver. **Windows 7 (x86 and x64) and Vista x86 now
   boot here end to end** once four separate bugs were fixed (Section 7.2).
 - On **EFI**, the loader serves the ISO as a firmware Block I/O CD that is
-  destroyed at ExitBootServices. Windows 7 and Vista WinPE wait on that device
-  in early kernel init and hang at "Starting Windows", before winpeshl ever
-  runs. That is the one case the RAM-disk work in 7.1 is about, and OVMF blocks
-  the only fix for it.
+  destroyed at ExitBootServices. Windows 7 WinPE waits on that device in early
+  kernel init and hangs at "Starting Windows", before winpeshl ever runs. That
+  is the one EFI follow-up: the RAM-disk work in 7.1 is its only fix, OVMF
+  blocks it, so it is a real-hardware question. Vista and XP are out of the EFI
+  boot path entirely - Vista's only UEFI edition is x64 SP1 and its support is
+  marginal, XP has none - the exit goal's allowed architecture exception, not a
+  follow-up.
 
 The earlier draft of this section blamed the EFI vanishing-CD hang for the BIOS
 failures too. That was wrong: on BIOS the medium does not vanish, and the BIOS
@@ -743,7 +746,8 @@ shortcut.
   never vanishes.
 
   Consequence, and it is a real one: **loading the driver from winpeshl is too
-  late for Windows 7 and Vista under EFI.**
+  late for Windows 7 under EFI.** (Vista is out of the EFI path entirely, below;
+  this hang is the Windows 7 follow-up, not a Vista one.)
 
   Confirmed with a persistent CD (bench rig, 2026-09-25): booting the same
   windows-7-x64 ISO as an ordinary QEMU CD-ROM that never vanishes, Win7's
@@ -814,10 +818,11 @@ shortcut.
   them under OVMF, and the cause of each is understood - the storage path waits
   on the vanished boot device, or the firmware will not mount the RAM disk.
 
-- **Windows XP x64 and Vista x64 do not boot under UEFI at all**, failing at
-  "finding the medium's EFI System Partition": XP has no UEFI support and Vista
-  x64's is marginal. A firmware/architecture limit, the exit goal's allowed
-  exception, not the hang above.
+- **Vista and XP are out of the EFI boot path entirely.** XP has no UEFI
+  support; Vista's only UEFI-capable edition is x64 SP1, and its support is
+  marginal (it fails at "finding the medium's EFI System Partition"). A
+  firmware/architecture limit, the exit goal's allowed exception, not the
+  Windows 7 hang above and not a follow-up.
 
 ### 7.2 BIOS: Windows 7 and Vista boot (the four fixes)
 
