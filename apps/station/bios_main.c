@@ -1,5 +1,5 @@
 /* falcon-bios, the stationary build (docs/DESIGN.md Section 13): stage 3's
- * entry point in falcon-bios-pos-stage3.bin.
+ * entry point in falcon-bios-station-stage3.bin.
  *
  * The BIOS half of a machine's own boot loader. It boots the personal OS off
  * the boot disk's shelf and hands the machine to another disk's own boot code
@@ -9,7 +9,7 @@
  * from LBA 98 differs.
  *
  * It opens at the passphrase prompt, and Escape there or a failed boot lands
- * on the list, as the UEFI build's main_pos.c does; the sentences written
+ * on the list, as the UEFI build's efi_main.c does; the sentences written
  * here follow that file and main.c's, and a change to one is a change to the
  * others (CLAUDE.md, "One screen, two loaders").
  */
@@ -212,7 +212,7 @@ static void return_to_firmware(void)
 static void list_run(void)
 {
     static const screen_banner banner = {
-        u"falcon-boot " FALCON_VERSION_POS, u"BIOS", TUI_ATTR_TEXT
+        u"falcon-boot " FALCON_VERSION_STATION, u"BIOS", TUI_ATTR_TEXT
     };
     static const uint16_t *labels[LIST_MAX];
     static int kind[LIST_MAX];      /* -1 personal OS, else a g_disks slot */

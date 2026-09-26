@@ -106,7 +106,7 @@ void bless_uki_trust(const bless_hit *hit, const trust_stores *stores,
  * worth acting on. EFI_SECURITY_VIOLATION is the platform refusing the image
  * and is reported as such: the caller must NOT respond by booting the ISO the
  * unblessed way, because that is the path the user blessed the ISO to avoid
- * (see the dispatch note in falcon-efi/src/efi/main.c).
+ * (see the dispatch note in apps/stick/efi_main.c).
  *
  * Everything allocated is released before returning, so a refused entry can
  * be retried and the menu comes back intact. */

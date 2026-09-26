@@ -43,7 +43,7 @@
 #       is how a const string reaches a non-const UEFI output parameter
 #       without tripping gcc -Wcast-qual, also in the standard CFLAGS.
 #
-#   misc-no-recursion falcon-efi/src/efi/main.c scan_dir recurses on purpose;
+#   misc-no-recursion apps/stick/efi_main.c scan_dir recurses on purpose;
 # frame size is policed by -Wstack-usage=32768, which is the control that
 # actually matters here.
 #

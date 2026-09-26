@@ -82,7 +82,7 @@
 #       against a uint64_t.
 #
 # ==========================================================================
-# 2. misc-use-internal-linkage, falcon-efi/src/efi/main.c (1 entry)
+# 2. misc-use-internal-linkage, apps/stick/efi_main.c (1 entry)
 # ==========================================================================
 #
 # `efi_main` has no declaration in a header and no in-tree caller, so the
@@ -151,7 +151,7 @@
 # 5. -Wanalyzer-out-of-bounds in wbuf_ucs2 (1 entry)
 # ==========================================================================
 #
-# falcon-efi/src/efi/main.c, the copy loop behind every menu tag:
+# apps/stick/efi_main.c, the copy loop behind every menu tag:
 #
 #     while (*s != 0 && w->len + 1 < w->cap)
 #         w->buf[w->len++] = *s++;
@@ -173,7 +173,7 @@
 fanalyzer	falcon-cli/src/sign/util.c	-Wanalyzer-fd-leak	leak of file descriptor 'dup2(fds[1], 1)' [CWE-775]
 fanalyzer	falcon-cli/src/sign/util.c	-Wanalyzer-fd-leak	leak of file descriptor 'dup2(out_fd, 1)' [CWE-775]
 fanalyzer	falcon-cli/src/sign/util.c	-Wanalyzer-fd-leak	leak of file descriptor 'dup2(out_fd, 1)' [CWE-775]
-fanalyzer	falcon-efi/src/efi/main.c	-Wanalyzer-out-of-bounds	buffer over-read [CWE-126]
+fanalyzer	apps/stick/efi_main.c	-Wanalyzer-out-of-bounds	buffer over-read [CWE-126]
 fanalyzer	falcon-core/src/crypto/sha256.c	-Wanalyzer-use-of-uninitialized-value	use of uninitialized value 'w[<unknown>]' [CWE-457]
 fanalyzer	falcon-core/src/crypto/sha512.c	-Wanalyzer-use-of-uninitialized-value	use of uninitialized value 'w[<unknown>]' [CWE-457]
 tidy	falcon-cli/src/mkstick/inspect.c	bugprone-narrowing-conversions	narrowing conversion from 'int' to signed type 'char' is implementation-defined
@@ -212,7 +212,7 @@ tidy	falcon-core/src/media/bootcfg.c	bugprone-narrowing-conversions	narrowing co
 tidy	falcon-core/src/media/bootcfg.c	bugprone-narrowing-conversions	narrowing conversion from 'int' to signed type 'char' is implementation-defined
 tidy	falcon-core/src/media/bootcfg.c	clang-analyzer-core.NullDereference	Array access (from variable 'buf') results in a null pointer dereference
 tidy	falcon-core/src/trust/x509.c	bugprone-narrowing-conversions	narrowing conversion from 'int' to signed type 'char' is implementation-defined
-tidy	falcon-efi/src/efi/main.c	bugprone-narrowing-conversions	narrowing conversion from 'int' to signed type 'char' is implementation-defined
+tidy	apps/stick/efi_main.c	bugprone-narrowing-conversions	narrowing conversion from 'int' to signed type 'char' is implementation-defined
 tidy	falcon-winjump/src/winjump.c	bugprone-reserved-identifier	declaration uses identifier '_UNICODE', which is a reserved identifier
 tidy	falcon-winjump/src/winjump.c	bugprone-reserved-identifier	declaration uses identifier '__stack_chk_guard', which is a reserved identifier
 tidy	falcon-winjump/src/winjump.c	bugprone-reserved-identifier	declaration uses identifier '__stack_chk_fail', which is a reserved identifier

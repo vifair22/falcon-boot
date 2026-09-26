@@ -127,15 +127,26 @@ if ! make -C "$ROOT" --no-print-directory compile_commands.json \
 		"using the existing one" >&2
 fi
 
-# Every loader source, absolute, from the database. falcon-efi/tools/payload is
-# excluded: it is a throwaway test artifact that is never linked into the
-# loader.
-mapfile -t SOURCES < <(python3 -c '
+# What the gate covers, by path relative to the repository: a component's
+# src/ or an app under apps/. Relative, because the absolute path carries
+# wherever the tree is mounted, and a mount point named like a directory the
+# tree uses would put everything in the gate (tools/coverage/harness.sh has
+# the story). Test sources and falcon-efi/tools/payload, a throwaway test
+# artifact never linked into a loader, are outside both.
+GATED_PY='
+import os, re
+def gated(path, root):
+    rel = os.path.relpath(path, root)
+    return re.match(r"(falcon-[^/]+/src|apps)/", rel) is not None
+'
+
+# Every gated source, absolute, from the database.
+mapfile -t SOURCES < <(python3 -c "$GATED_PY"'
 import json, sys
 for e in json.load(open(sys.argv[1])):
-    if "/src/" in e["file"]:
+    if gated(e["file"], sys.argv[2]):
         print(e["file"])
-' "$DB" | sort)
+' "$DB" "$ROOT" | sort)
 
 if [ ${#SOURCES[@]} -eq 0 ]; then
 	echo "analyze: no src/ entries in $DB" >&2
@@ -241,13 +252,15 @@ stage_cppcheck()
 		return 0
 	fi
 	# --project gives cppcheck the real -I set and the per-file -maes without
-	# restating them; --file-filter then drops falcon-efi/tools/payload back out.
+	# restating them; the --file-filter pair then drops the test sources and
+	# falcon-efi/tools/payload back out.
 	# --check-level=exhaustive costs well under a second on this tree and
 	# removes the "limiting analysis of branches" caveat entirely.
 	cppcheck \
 		--enable="$CPPCHECK_ENABLE" \
 		--project="$DB" \
 		--file-filter='*/src/*' \
+		--file-filter='*/apps/*' \
 		--check-level=exhaustive \
 		--inline-suppr \
 		--suppress=missingIncludeSystem \
@@ -275,12 +288,12 @@ print(shlex.split(json.load(open(sys.argv[1]))[0]["command"])[0])
 	# dependency-file and output flags, plus -fanalyzer and an output path
 	# under build/analyze/. Reusing the database is what carries -maes onto
 	# aesni.c and nothing else, exactly as the Makefile does.
-	python3 -c '
+	python3 -c "$GATED_PY"'
 import json, os, shlex, sys
 
-db, work = sys.argv[1], sys.argv[2]
+db, work, root = sys.argv[1], sys.argv[2], sys.argv[3]
 for e in json.load(open(db)):
-    if "/src/" not in e["file"]:
+    if not gated(e["file"], root):
         continue
     argv, skip = [], 0
     for t in shlex.split(e["command"]):
@@ -301,7 +314,7 @@ for e in json.load(open(db)):
     argv += ["-fdiagnostics-plain-output", "-fanalyzer", "-c", "-o", obj,
              os.path.relpath(e["file"], os.path.dirname(db))]
     print(shlex.join(argv))
-' "$DB" "$WORK/obj" >"$WORK/fanalyzer.cmds"
+' "$DB" "$WORK/obj" "$ROOT" >"$WORK/fanalyzer.cmds"
 
 	(
 		cd "$ROOT"
