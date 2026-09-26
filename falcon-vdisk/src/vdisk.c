@@ -164,11 +164,19 @@ static BOOLEAN g_cdrom0;
  * g_arc records whether it was, so unload removes it. */
 static UNICODE_STRING g_arc_name;
 static BOOLEAN g_arc;
-/* The fixed cdrom(0) ARC name, created unconditionally as well: Windows 2000
- * keeps no SystemBootDevice for bind_boot_device to read, and names its boot CD
- * cdrom(0), so this covers it while bind_boot_device covers XP's cdrom(224). */
+/* The boot CD's ARC name by the fixed served drive, created unconditionally as
+ * well: Windows 2000 keeps no SystemBootDevice for bind_boot_device to read,
+ * and names its boot CD by the BIOS drive falcon-bios serves on, 0xE0 = 224
+ * (falcon-bios/src/vcd.h VCD_DRIVE) - the same name XP records, so cdrom(224)
+ * covers 2000 too. */
 static UNICODE_STRING g_arc0_name;
 static BOOLEAN g_arc0;
+/* Signalled once the backing is resolved (or given up on), so a read waits for
+ * the stick to be found rather than serving zeros: this is what makes the
+ * shipped build reliable without the trace build's serial delays. The wait is
+ * on the read-servicing thread, never DriverEntry, so it does not stall the
+ * boot-start sequence. */
+static KEVENT g_backing_ready;
 static PDEVICE_OBJECT g_ctl_dev, g_cd_dev;
 
 /* The backing store. Two sources behind one seam: the raw-disk extents winjump
@@ -317,6 +325,11 @@ static void serve_read(PIRP irp)
         complete(irp, STATUS_INSUFFICIENT_RESOURCES, 0);
         return;
     }
+    /* Wait for the backing to be resolved before serving, so the kernel's boot
+     * mount and setup's CD reads never get zeros because the stick was not
+     * found yet. Signalled at once on the winjump path (SET_BACKING). At
+     * PASSIVE on this thread, so it does not stall the boot-start sequence. */
+    KeWaitForSingleObject(&g_backing_ready, Executive, KernelMode, FALSE, NULL);
     backing_read(off, len, dst);
     complete(irp, STATUS_SUCCESS, len);
 }
@@ -535,6 +548,9 @@ static void NTAPI baked_resolve(PVOID ctx)
     (void)notify_mountmgr();
 
 done:
+    /* Release any reads that were waiting for the backing - whether it was set
+     * or given up on (they then serve zeros, which is the honest failure). */
+    KeSetEvent(&g_backing_ready, IO_NO_INCREMENT, FALSE);
     PsTerminateSystemThread(STATUS_SUCCESS);
 }
 
@@ -1086,10 +1102,11 @@ NTSTATUS NTAPI DriverEntry(PDRIVER_OBJECT drv, PUNICODE_STRING reg)
          * recorded (read from the registry, not assumed - it is the served BIOS
          * drive number, e.g. cdrom(224) for 0xE0). This clears XP's 0x7B. */
         g_arc = bind_boot_device();
-        /* And the fixed cdrom(0) name for Windows 2000, which records no
-         * SystemBootDevice and names its boot CD cdrom(0). */
+        /* And cdrom(224) directly, for Windows 2000, which records no
+         * SystemBootDevice: the boot CD is the drive falcon-bios serves on
+         * (0xE0 = 224), the same name XP's SystemBootDevice holds. */
         RtlInitUnicodeString(&g_arc0_name,
-                             L"\\ArcName\\multi(0)disk(0)cdrom(0)");
+                             L"\\ArcName\\multi(0)disk(0)cdrom(224)");
         g_arc0 = NT_SUCCESS(IoCreateSymbolicLink(&g_arc0_name, &g_cd_name));
 #ifdef VDISK_SERIAL_TRACE
         serial_trace(g_cdrom0 ? "FALCONVDISK_CDROM0_LINKED\r\n"
@@ -1108,6 +1125,12 @@ NTSTATUS NTAPI DriverEntry(PDRIVER_OBJECT drv, PUNICODE_STRING reg)
     InitializeListHead(&g_queue);
     KeInitializeSpinLock(&g_qlock);
     KeInitializeSemaphore(&g_qsem, 0, MAXLONG);
+    /* Reads wait on this until the backing is resolved. On the winjump path
+     * (no baked map) there is no resolve thread, so signal it now; SET_BACKING
+     * fills the backing before the CD is brought online. */
+    KeInitializeEvent(&g_backing_ready, NotificationEvent, FALSE);
+    if (g_bake.map_len == 0)
+        KeSetEvent(&g_backing_ready, IO_NO_INCREMENT, FALSE);
     {
         HANDLE h;
         OBJECT_ATTRIBUTES oa;
