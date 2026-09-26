@@ -161,7 +161,7 @@ void survey_file(const char *abs, const char *rel, uint64_t size)
 }
 
 /* Recursive walk of p2 looking for what the loader's own scan lists: *.iso,
- * *.img and *.efi (falcon-efi/src/efi/main.c). `rel` is the path so far
+ * *.img and *.efi (apps/stick/efi_main.c). `rel` is the path so far
  * relative to the p2 root, which is the form the manifest records and the form
  * `sign` embeds in the signed cmdline. */
 void walk(const char *abs, const char *rel, unsigned depth)

@@ -6,7 +6,7 @@
 # image file instead of a disk, so the rig boots what that procedure makes
 # and a procedure that stops working stops this script first:
 #
-#   p1  ESP                 shim, MokManager and falcon-boot-pos.efi (signed
+#   p1  ESP                 shim, MokManager and falcon-boot-station.efi (signed
 #                           with the test MOK) in \EFI\falcon\
 #   p2  falcon shelf GUID   LUKS2, pbkdf2 at the Manual's 200000 iterations,
 #                           ext4, /uki/personal.efi (the sd-stub fixture UKI,
@@ -41,14 +41,14 @@ ROOT_GUID=CA7D7CCB-63ED-4C53-861C-1742536059CC
 
 SHIM_EFI=build/shim/bins/fedora-16.1-shimx64.efi
 MM_EFI=build/shim/bins/fedora-16.1-mmx64.efi
-EFI_POS_SIGNED=build/bin/falcon-boot-pos-signed.efi
+EFI_STATION_SIGNED=build/bin/falcon-boot-station-signed.efi
 MOK_KEY=build/mok-test/falcon-test-mok.key
 MOK_CRT=build/mok-test/falcon-test-mok.crt
 FIXTURE_UKI_SIGNED=build/test/fixture-uki-signed.efi
 MKSTICK=build/bin/falcon-boot-mkstick
 STAGE1=build/bin/falcon-bios-stage1.bin
 STAGE2=build/bin/falcon-bios-stage2.bin
-STAGE3=build/bin/falcon-bios-pos-stage3.bin
+STAGE3=build/bin/falcon-bios-station-stage3.bin
 
 LOOP=
 MAPPER=
@@ -71,7 +71,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-for f in "$SHIM_EFI" "$MM_EFI" "$EFI_POS_SIGNED" "$MOK_KEY" "$MOK_CRT" \
+for f in "$SHIM_EFI" "$MM_EFI" "$EFI_STATION_SIGNED" "$MOK_KEY" "$MOK_CRT" \
          "$FIXTURE_UKI_SIGNED" "$MKSTICK" "$STAGE1" "$STAGE2" "$STAGE3"; do
     [[ -f "$f" ]] || {
         echo "ERROR: $f missing (make test-station builds what it needs)" >&2
@@ -116,7 +116,7 @@ sudo mount "${LOOP}p1" "$MNT"
 for dir in falcon BOOT; do
     sudo mkdir -p "$MNT/EFI/$dir"
     sudo cp "$MM_EFI" "$MNT/EFI/$dir/mmx64.efi"
-    sudo cp "$EFI_POS_SIGNED" "$MNT/EFI/$dir/grubx64.efi"
+    sudo cp "$EFI_STATION_SIGNED" "$MNT/EFI/$dir/grubx64.efi"
 done
 sudo cp "$SHIM_EFI" "$MNT/EFI/falcon/shimx64.efi"
 sudo cp "$SHIM_EFI" "$MNT/EFI/BOOT/BOOTX64.EFI"

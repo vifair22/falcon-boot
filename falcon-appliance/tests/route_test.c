@@ -143,7 +143,7 @@ static void test_route_fresh_is_done(void **state)
 /* --------------------------------------------------- bare payloads */
 
 /* The set of names the appliance surveys has to be the set the loader lists
- * (falcon-efi/src/efi/main.c: *.iso, *.img, *.efi), and the split between the
+ * (apps/stick/efi_main.c: *.iso, *.img, *.efi), and the split between the
  * wrap path and the payload path inside that set is this one function. An
  * appliance that disagreed with the menu here would leave a user looking at an
  * entry it cannot offer to bless. */

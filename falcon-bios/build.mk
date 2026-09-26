@@ -1,5 +1,9 @@
 # falcon-bios: the BIOS loader (docs/notes/bios-route.md).
 #
+# This file names the modules, links stages 1 and 2, which every app shares,
+# and says how a stage 3 is linked; which modules a stage 3 takes is its
+# app's business (apps/<app>/app.mk).
+#
 # Not built by `all`, and that is deliberate: the route is opt-in, installed
 # onto a stick by `mkstick bios` rather than by every `mkstick create`
 # (Section 7.3). `make bios` builds it, `make test-bios-img` makes a disk
@@ -60,32 +64,39 @@ BIOS_CFLAGS := -std=c11 -O2 -ffreestanding -fno-stack-protector \
 	-Wconversion -Wsign-conversion \
 	-I$(BIOS) $(CORE_INC) -Ibuild
 
-# Two sets, because there are two links. console.c and disk.c are in both:
-# they are a few hundred bytes each, they reach the BIOS through the gate at
-# a fixed address rather than through a symbol, and duplicating them is
-# cheaper than a call gate for every line of output.
+# Stage 2's C. console.c and disk.c are in every stage 3 too: they are a few
+# hundred bytes each, they reach the BIOS through the gate at a fixed address
+# rather than through a symbol, and duplicating them is cheaper than a call
+# gate for every line of output.
 BIOS_S2_CSRCS := $(addprefix $(BIOS)/,start/load3.c disk/disk.c console/console.c start/fault.c) \
 	$(CORE_LIBC)
-# Stage 3 takes the filesystem registry and the whole media layer, which is
-# what the third stage was for: under stage 2's 33 KB ceiling this had to be
-# one driver called by name.
-BIOS_S3_CSRCS := $(addprefix $(BIOS)/,main.c iso/scan.c pos/pos.c console/prompt.c console/screen.c linux/linux.c \
-	linux/linuxcore.c \
-	iso/vcd.c iso/vcdcore.c vfd/vfd.c vfd/vfdcore.c bsd/bsd.c win/win.c mem/heap.c disk/marker.c \
-	mem/e820.c disk/disk.c console/console.c) \
-	$(CORE_PART) $(CORE_FS) $(CORE_MEDIA) $(CORE_PE) $(CORE_CRYPTO) \
-	$(CORE_LUKS) $(CORE_WIM) $(CORE_LIBC) $(CORE_UCS2) $(CORE_TUI) \
-	$(CORE)/manifest/manifest.c
 BIOS_S2_COBJS := $(patsubst %.c,$(BIOS_OBJ)/%.o,$(BIOS_S2_CSRCS))
-BIOS_S3_COBJS := $(patsubst %.c,$(BIOS_OBJ)/%.o,$(BIOS_S3_CSRCS))
-BIOS_CSRCS := $(sort $(BIOS_S2_CSRCS) $(BIOS_S3_CSRCS))
+
+# The modules a stage 3 is built from. Which ones a loader takes is its app's
+# business (apps/<app>/app.mk). Stage 3 is what takes the filesystem registry
+# and the whole media layer, which is what the third stage was for: under
+# stage 2's 33 KB ceiling that had to be one driver called by name.
+BIOS_MOD_serial  := $(BIOS)/console/console.c
+BIOS_MOD_console := $(BIOS)/console/prompt.c $(BIOS)/console/screen.c
+BIOS_MOD_disk    := $(BIOS)/disk/disk.c
+BIOS_MOD_marker  := $(BIOS)/disk/marker.c
+BIOS_MOD_scan    := $(BIOS)/iso/scan.c
+BIOS_MOD_iso     := $(BIOS)/iso/vcd.c $(BIOS)/iso/vcdcore.c
+BIOS_MOD_vfd     := $(BIOS)/vfd/vfd.c $(BIOS)/vfd/vfdcore.c
+BIOS_MOD_e820    := $(BIOS)/mem/e820.c
+BIOS_MOD_heap    := $(BIOS)/mem/heap.c
+BIOS_MOD_linux   := $(BIOS)/linux/linux.c $(BIOS)/linux/linuxcore.c
+BIOS_MOD_pos     := $(BIOS)/pos/pos.c
+BIOS_MOD_bsd     := $(BIOS)/bsd/bsd.c
+BIOS_MOD_win     := $(BIOS)/win/win.c
+BIOS_MOD_mbr     := $(BIOS)/mbr/mbr.c
+
+# Every C source some image links, for compile_commands.json and the analyzers.
+BIOS_CSRCS := $(BIOS_S2_CSRCS)
 
 $(BIOS_OBJ)/%.o: %.c
 	@mkdir -p $(@D)
 	$(CC_HOST) $(BIOS_CFLAGS) -MMD -MF $@.d -c -o $@ $<
-
-# The banner names the build, as the UEFI loader's does.
-$(BIOS_OBJ)/$(BIOS)/main.o: build/version.h
 
 # AES-NI, this object only, as in the other two flavours (root Makefile). It
 # needs the instructions it is named for and the SSE registers they use, so
@@ -121,7 +132,6 @@ $(BIOS_OBJ)/%.o: %.S
 
 BIOS_STAGE1 := $(BIN)/falcon-bios-stage1.bin
 BIOS_STAGE2 := $(BIN)/falcon-bios-stage2.bin
-BIOS_STAGE3 := $(BIN)/falcon-bios-stage3.bin
 
 $(BIOS_STAGE1): $(BIOS_OBJ)/$(BIOS)/start/boot.o $(BIOS)/start/bios.ld
 	@mkdir -p $(@D)
@@ -173,20 +183,21 @@ $(BIOS_STAGE2): $(BIOS_STAGE2_OBJS) $(BIOS)/start/bios.ld
 		fi; \
 	done
 
-# Stage 3: the loader proper, linked at a megabyte where nothing constrains
-# its size. It is read in by stage 2 in protected mode and never runs below
-# a megabyte, so it holds no real-mode code at all and reaches the BIOS
-# through the gate.
+# The residents, assembly the stick's stage 3 links for the routes that
+# leave something behind in conventional memory.
+BIOS_RES_iso := $(BIOS_OBJ)/$(BIOS)/iso/vcdres.o
+BIOS_RES_vfd := $(BIOS_OBJ)/$(BIOS)/vfd/vfdres.o
+
 # The hook's blobs, which are generated (falcon-hook/build.mk). The x86-64
 # one is the same object the UEFI loader embeds: falcon-hook runs in the
 # initramfs and does not know which firmware started the kernel. The i686 one
-# is for the 32-bit kernels only this loader boots, and scan.c appends
+# is for the 32-bit kernels only this loader boots, and iso/scan.c appends
 # whichever matches the kernel.
 BIOS_HOOK_OBJ := $(BIOS_OBJ)/$(HOOK_BLOB).o
 BIOS_HOOK32_OBJ := $(BIOS_OBJ)/$(HOOK32_BLOB).o
 BIOS_WINJUMP_OBJ := $(BIOS_OBJ)/$(WINJUMP_BLOB).o
 # Both widths of the jump binary, for the same reason as the hook's two:
-# win.c puts in the one boot.wim's winpeshl.exe is built for.
+# win/win.c puts in the one boot.wim's winpeshl.exe is built for.
 BIOS_WINJUMP32_OBJ := $(BIOS_OBJ)/$(WINJUMP32_BLOB).o
 # The x86 virtual-CD driver, embedded as a C array (symbol falcon_vdisk_bin):
 # the Windows 2000/XP text-mode route serves it into the ISO's \i386 and
@@ -214,68 +225,41 @@ $(BIOS_VDISK_OBJ): $(VDISK_X86_BLOB)
 	@mkdir -p $(@D)
 	$(CC_HOST) $(BIOS_CFLAGS) -c -o $@ $<
 
-BIOS_STAGE3_OBJS := $(BIOS_OBJ)/$(BIOS)/start/stage3.o $(BIOS_OBJ)/$(BIOS)/iso/vcdres.o \
-	$(BIOS_OBJ)/$(BIOS)/vfd/vfdres.o \
-	$(BIOS_S3_COBJS) \
-	$(BIOS_HOOK_OBJ) $(BIOS_HOOK32_OBJ) $(BIOS_WINJUMP_OBJ) \
-	$(BIOS_WINJUMP32_OBJ) $(BIOS_VDISK_OBJ)
+# $(call bios_app,<app>,<stage 3 image>,<objects before>,<C sources>,<objects after>)
+#
+# One stage 3: the loader proper, linked at a megabyte where nothing
+# constrains its size. It is read in by stage 2 in protected mode and never
+# runs below a megabyte, so it holds no real-mode code at all and reaches the
+# BIOS through the gate. Stages 1 and 2 are every app's, byte for byte; an app
+# is a different image at LBA 98. The objects before and after the C are the
+# residents and the embedded blobs, kept where the link has always put them.
+define bios_app
+$(1)_BIOS_OBJS := $$(BIOS_OBJ)/$$(BIOS)/start/stage3.o $(3) \
+	$$(patsubst %.c,$$(BIOS_OBJ)/%.o,$(4)) $(5)
+BIOS_CSRCS += $(4)
 
-$(BIOS_STAGE3): $(BIOS_STAGE3_OBJS) $(BIOS)/start/bios.ld
-	@mkdir -p $(@D)
-	$(CC_HOST) $(BIOS_LDFLAGS) -Wl,-Ttext,0x100000 -Wl,-e,stage3_entry \
-		-o $@.elf $(BIOS_STAGE3_OBJS) $(BIOS_LIBGCC)
-	objcopy -O binary -j .text $@.elf $@
-	@# The resident has to fit the conventional memory it takes, which is
+$(2): $$($(1)_BIOS_OBJS) $$(BIOS)/start/bios.ld
+	@mkdir -p $$(@D)
+	$$(CC_HOST) $$(BIOS_LDFLAGS) -Wl,-Ttext,0x100000 -Wl,-e,stage3_entry \
+		-o $$@.elf $$($(1)_BIOS_OBJS) $$(BIOS_LIBGCC)
+	objcopy -O binary -j .text $$@.elf $$@
+	@# A resident has to fit the conventional memory it takes, which is
 	@# VCD_BYTES and is what the BIOS data area is told it no longer has.
-	@s=$$(nm $@.elf | awk '$$3 == "vcd_blob_start" { print $$1 }'); \
-	e=$$(nm $@.elf | awk '$$3 == "vcd_blob_end" { print $$1 }'); \
-	n=$$(( 0x$$e - 0x$$s )); \
-	if [ "$$n" -gt 4096 ]; then \
-		echo "ERROR: the INT 13h resident is $$n bytes, past VCD_BYTES"; \
+	@s=$$$$(nm $$@.elf | awk '$$$$3 == "vcd_blob_start" { print $$$$1 }'); \
+	e=$$$$(nm $$@.elf | awk '$$$$3 == "vcd_blob_end" { print $$$$1 }'); \
+	if [ -n "$$$$s" ] && [ $$$$(( 0x$$$$e - 0x$$$$s )) -gt 4096 ]; then \
+		echo "ERROR: the INT 13h resident is $$$$(( 0x$$$$e - 0x$$$$s )) bytes, past VCD_BYTES"; \
 		echo "       raise VCD_BYTES in falcon-bios/src/start/biosdefs.h"; \
 		exit 1; \
 	fi
-	@sz=$$(stat -c %s $@); \
-	max=$$(($(STAGE3_MAX_SECTORS_CHECK) * 512)); \
-	if [ "$$sz" -gt "$$max" ]; then \
-		echo "ERROR: $@ is $$sz bytes, past the $$max stage 2 will read"; \
+	@sz=$$$$(stat -c %s $$@); \
+	max=$$$$(($$(STAGE3_MAX_SECTORS_CHECK) * 512)); \
+	if [ "$$$$sz" -gt "$$$$max" ]; then \
+		echo "ERROR: $$@ is $$$$sz bytes, past the $$$$max stage 2 will read"; \
 		echo "       raise STAGE3_MAX_SECTORS in falcon-bios/src/start/biosdefs.h"; \
 		exit 1; \
 	fi
-
-bios: $(BIOS_STAGE1) $(BIOS_STAGE2) $(BIOS_STAGE3)
-
-# The stationary build's stage 3 (docs/DESIGN.md Section 13): the personal
-# OS and another disk's own boot code, and nothing else. Stages 1 and 2 are
-# the stick's, byte for byte; this is only a different image at LBA 98. No
-# resident, no ISO scan, and so neither falcon-hook blob, which only scan.c
-# appends. fs/ is ext4 alone, as in the UEFI build.
-BIOS_POS_S3_CSRCS := $(addprefix $(BIOS)/,main_pos.c pos/pos.c console/prompt.c console/screen.c \
-	linux/linux.c linux/linuxcore.c mbr/mbr.c mem/e820.c disk/disk.c console/console.c) \
-	$(CORE_PART) $(CORE_FS_EXT4) $(CORE_PE) $(CORE_CRYPTO) $(CORE_LUKS) \
-	$(CORE)/media/cpio.c $(CORE)/media/osrel.c $(CORE)/media/shelf.c \
-	$(CORE_LIBC) $(CORE_UCS2) $(CORE_TUI)
-BIOS_POS_S3_COBJS := $(patsubst %.c,$(BIOS_OBJ)/%.o,$(BIOS_POS_S3_CSRCS))
-BIOS_CSRCS := $(sort $(BIOS_CSRCS) $(BIOS_POS_S3_CSRCS))
-
-$(BIOS_OBJ)/$(BIOS)/main_pos.o: build/version.h
-
-BIOS_POS_STAGE3 := $(BIN)/falcon-bios-pos-stage3.bin
-BIOS_POS_STAGE3_OBJS := $(BIOS_OBJ)/$(BIOS)/start/stage3.o $(BIOS_POS_S3_COBJS)
-
-$(BIOS_POS_STAGE3): $(BIOS_POS_STAGE3_OBJS) $(BIOS)/start/bios.ld
-	@mkdir -p $(@D)
-	$(CC_HOST) $(BIOS_LDFLAGS) -Wl,-Ttext,0x100000 -Wl,-e,stage3_entry \
-		-o $@.elf $(BIOS_POS_STAGE3_OBJS) $(BIOS_LIBGCC)
-	objcopy -O binary -j .text $@.elf $@
-	@sz=$$(stat -c %s $@); \
-	max=$$(($(STAGE3_MAX_SECTORS_CHECK) * 512)); \
-	if [ "$$sz" -gt "$$max" ]; then \
-		echo "ERROR: $@ is $$sz bytes, past the $$max stage 2 will read"; \
-		exit 1; \
-	fi
-
-bios-pos: $(BIOS_STAGE1) $(BIOS_STAGE2) $(BIOS_POS_STAGE3)
+endef
 
 # ---- tests ----
 #
@@ -347,4 +331,4 @@ $(BIOS_PROBE_ISO): $(BIOS_PROBE_BIN)
 
 test-bios-probe: $(BIOS_PROBE_ISO)
 
-.PHONY: bios bios-pos test-bios-img test-bios-probe
+.PHONY: test-bios-img test-bios-probe

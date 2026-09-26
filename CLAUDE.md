@@ -100,10 +100,12 @@ is by design; it is not a gap to close.
 
 See `docs/DESIGN.md` for full architecture. Quick orientation:
 
-The repository is six components, each with its own `src/`, `tests/` and
-`tools/`, built by one non-recursive Makefile: the root `Makefile` holds the
-shared toolchains, flags, test runner and compile database, and `include`s a
-`build.mk` from each component. There is one make invocation and one
+The repository is the loaders in `apps/`, and the components they and the
+host programs are built from, each component with its own `src/`, `tests/`
+and `tools/`. One non-recursive Makefile builds all of it: the root
+`Makefile` holds the shared toolchains, flags, test runner and compile
+database, and `include`s a `build.mk` from each component and an `app.mk`
+from each app. There is one make invocation and one
 dependency graph; nothing recurses. Each translation unit, tests included,
 sees only its own component's `src/` and the ones it builds against (the UEFI
 loader efi+core, falcon-bios bios+core, the appliance appliance+cli+core). A
@@ -112,6 +114,14 @@ module directory name is unique within every such include set, so
 falcon-efi and falcon-bios, which never share a set, may both have a `pos/`.
 `tools/analyze.sh` fails on a name that appears twice within a set.
 
+- `apps/` the loaders, one directory per build: `stick/` (every route, the
+  loader on a falcon stick; `all` builds its UEFI image, `make bios` its
+  BIOS one) and `station/` (DESIGN Section 13, falcon as a machine's own
+  boot loader; `make station`). An app is its entry points (`efi_main.c`,
+  `efi_sbat.c`, `bios_main.c`) and an `app.mk` that lists, one line per
+  module with its reason, what the build links. falcon-efi and falcon-bios
+  hold the modules and say how an app is linked (`efi_app`, `bios_app`);
+  they carry no entry point. What an app does not list, it cannot run.
 - `falcon-core/` the EFI-free libraries every other component links. Nothing
   here knows about firmware: device access goes through a read callback and
   every buffer is the caller's, which is what lets the loader, the host tools
@@ -179,10 +189,8 @@ falcon-efi and falcon-bios, which never share a set, may both have a `pos/`.
     trust.
 - `falcon-efi/` the loader: freestanding C11, MS x64 ABI, built to PE32+ with
   `x86_64-w64-mingw32-gcc`. No gnu-efi, no EDK2.
-  - `efi/` the entry point (`main.c`), the `.sbat` section, our own minimal
-    UEFI headers; and the stationary build's entry point and `.sbat`
-    (`main_pos.c`, `sbat_pos.c`; DESIGN Section 13), linked with its own
-    source list by `make pos` into `falcon-boot-pos.efi`, not by `all`.
+  - `efi/` our own minimal UEFI headers. The entry points and `.sbat`
+    sections are the apps' (`apps/stick/`, `apps/station/`).
   - `nxt/` the stationary build's route to the firmware's other boot
     entries (NXT, BootNext and a reset): `nxtcore.c` parses BootOrder and
     Boot#### and is host-tested, `nxt.c` reads the variables.
@@ -298,10 +306,10 @@ falcon-efi and falcon-bios, which never share a set, may both have a `pos/`.
   that does the writing. `make bios` builds it, `make test-bios-img` makes
   a disk the rig boots with `falcon-efi/tools/run-qemu.sh --bios`, and
   `make test-bios-probe` makes the medium that checks the resident's INT 15h
-  half from real mode (`tools/memprobe.S`). `make bios-pos` (part of `make
-  pos`) links the stationary build's stage 3 (DESIGN Section 13) from
-  `src/main_pos.c`: the personal OS and `src/mbr/mbr.c`, another disk's own
-  boot code started from 0x7C00, with nothing resident.
+  half from real mode (`tools/memprobe.S`). `make station` links the
+  stationary build's stage 3 (DESIGN Section 13) from
+  `apps/station/bios_main.c`: the personal OS and `src/mbr/mbr.c`, another
+  disk's own boot code started from 0x7C00, with nothing resident.
 
   `src/` is grouped by job, and a job the UEFI loader also does carries
   that module's name, so the two halves of a route sit side by side:
@@ -309,8 +317,8 @@ falcon-efi and falcon-bios, which never share a set, may both have a `pos/`.
   `biosdefs.h`), `console/` (serial, the screen, the prompt), `iso/` (the
   virtual CD and the ISO scan), `vfd/`, `mem/` (E820 and the heap),
   `disk/` (the read callback and the marker), `linux/`, `pos/`, `bsd/`,
-  `win/` and `mbr/`. The entry points `main.c` and `main_pos.c` sit at
-  the root.
+  `win/` and `mbr/`. The entry points are the apps'
+  (`apps/stick/bios_main.c`, `apps/station/bios_main.c`).
 
   It is i686 code in flat 32-bit protected mode, paging off, and one image
   runs on every processor from the Pentium Pro on (docs/notes/bios-route.md
@@ -365,7 +373,7 @@ falcon-efi and falcon-bios, which never share a set, may both have a `pos/`.
   for the same calls, so the coverage harness reads both loaders one way.
   Diagnostics (volumes, config, addresses, cmdline) go to serial only, as
   `falcon-bios:` lines. Routes report back in a `boot_result` (`src/result.h`)
-  and `main.c` says it as the UEFI loader does, "<route> failed while
+  and `bios_main.c` says it as the UEFI loader does, "<route> failed while
   <stage>" and the advice.
 
   It shares falcon-core unchanged: the read callback is the per-platform

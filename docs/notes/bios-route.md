@@ -77,7 +77,7 @@ host-testable halves (`vcdcore.c`, `linuxcore.c`, `e820.c`).*
 What is left in S1 is the shared menu model (open question 2, and the moment
 to move it is when this build boots something, not before), the ISO scan's
 depth and filter rules
-(`falcon-efi/src/efi/main.c` has them and they are not EFI-shaped), the boot
+(`apps/stick/efi_main.c` has them and they are not EFI-shaped), the boot
 paths, and the resident INT 13h hook of Section 7.1, which is still a spike
 rather than an estimate. The ceiling stage 2 is now up against is its own:
 about 33 KB, because it is linked where real mode and long mode agree on what
@@ -1048,7 +1048,7 @@ are judged and the 64-bit ones are N/A.)
    question aimed slightly wrong: `falcon-efi/src/console` is presentation
    and belongs where it is. What had to move was the survey - the directory
    walk, the extension rule, the sort and the folder view - which sat in
-   `falcon-efi/src/efi/main.c` and so was unreachable from here. It is
+   `apps/stick/efi_main.c` and so was unreachable from here. It is
    `falcon-core/src/media/survey.c` now, beside `medium.c`, and both loaders
    build their menus from it. Found the hard way: falcon-bios had its own
    flat root-only scan, which showed an empty menu on a stick whose ISOs sit

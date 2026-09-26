@@ -41,7 +41,7 @@ The survey's sequence, per menu entry, at draw time
 Three workarounds in the tree exist only because of that sequence, and each
 names its own cause:
 
-- **`PROBE_LIMIT 24`** (`falcon-efi/src/efi/main.c:46`). "Each probe builds a
+- **`PROBE_LIMIT 24`** (`apps/stick/efi_main.c:46`). "Each probe builds a
   virtual medium, makes the firmware bind its partition and FAT drivers to it
   and tears the whole thing down again, so the cost is bounded by a constant
   rather than by how many images someone dropped on the stick." Entries past

@@ -1,6 +1,6 @@
 /* falcon-boot, the stationary build: its .sbat section.
  *
- * Everything falcon-efi/src/efi/sbat.c says about why this section exists
+ * Everything apps/stick/efi_sbat.c says about why this section exists
  * and how it has to be emitted holds here unchanged; read it there.
  *
  * What differs is the component name, and that is the decision of

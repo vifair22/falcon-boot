@@ -95,7 +95,7 @@ route.
 ### 1.4 Stationary build
 
 The build for a machine's own disk (`docs/DESIGN.md` Section 13):
-`falcon-boot-pos.efi` for UEFI, and `falcon-bios-pos-stage3.bin` as stage 3
+`falcon-boot-station.efi` for UEFI, and `falcon-bios-station-stage3.bin` as stage 3
 behind the stick's stages 1 and 2 for BIOS. Either opens at the passphrase
 prompt; Escape there goes to the list.
 
@@ -132,7 +132,7 @@ partitions (`/dev/nvme0n1p1` and so on for NVMe).
 
 | item | where it comes from |
 |---|---|
-| `falcon-boot-pos.efi`, `falcon-bios-pos-stage3.bin` | `make pos` |
+| `falcon-boot-station.efi`, `falcon-bios-station-stage3.bin` | `make station` |
 | `falcon-bios-stage1.bin`, `falcon-bios-stage2.bin` | `make bios`; the stick's, unchanged |
 | `falcon-boot-mkstick` | `make`; used here only for `keygen` and `bios` |
 | Fedora shim 16.1 and its MokManager | `falcon-efi/tools/shim-spike/fetch-shims.sh`, into `build/shim/bins/` |
@@ -206,7 +206,7 @@ mkdir -p /mnt/esp/EFI/falcon
 cp build/shim/bins/fedora-16.1-shimx64.efi /mnt/esp/EFI/falcon/shimx64.efi
 cp build/shim/bins/fedora-16.1-mmx64.efi   /mnt/esp/EFI/falcon/mmx64.efi
 sbsign --key falcon-mok.key --cert falcon-mok.crt \
-       --output /mnt/esp/EFI/falcon/grubx64.efi build/bin/falcon-boot-pos.efi
+       --output /mnt/esp/EFI/falcon/grubx64.efi build/bin/falcon-boot-station.efi
 efibootmgr --create --disk /dev/X --part 1 --label falcon \
            --loader '\EFI\falcon\shimx64.efi'
 mokutil --import falcon-mok.cer
@@ -236,7 +236,7 @@ cryptsetup close shelf
 falcon-boot-mkstick bios --reserve \
     --stage1 build/bin/falcon-bios-stage1.bin \
     --stage2 build/bin/falcon-bios-stage2.bin \
-    --stage3 build/bin/falcon-bios-pos-stage3.bin \
+    --stage3 build/bin/falcon-bios-station-stage3.bin \
     --backup lba0-gap.bak /dev/X
 ```
 

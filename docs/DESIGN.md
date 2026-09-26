@@ -2292,12 +2292,16 @@ are (both measured 2026-09-13):
   for one purpose and missed for another; classification is eager (cheap
   per-handle reads), mounting stays lazy per consumer. Re-scan is the
   same single entry point run again.
-- **Components and modules.** The repository is five components, each with
+- **Apps, components and modules.** The loaders are apps, one directory
+  each under `apps/`: `stick` (this loader) and `station` (Section 13). An
+  app is its entry points and an `app.mk` listing the modules it links; what
+  it does not list, it cannot run. The modules live in components, each with
   its own `src/`: `falcon-core` (the EFI-free libraries every other component
-  links), `falcon-efi` (this loader), `falcon-cli` (the host tools, Section 8),
-  `falcon-appliance` (the signing appliance, Section 7.5) and `falcon-winjump`
-  (Section 6.3). One non-recursive Makefile builds them all; CLAUDE.md has the
-  directory-by-directory map. The loader's modules, named by directory, with
+  links), `falcon-efi` (this loader's modules), `falcon-bios` (the BIOS
+  loader's), `falcon-cli` (the host tools, Section 8), `falcon-appliance` (the
+  signing appliance, Section 7.5), `falcon-hook` (Section 6.4),
+  `falcon-winjump` and `falcon-vdisk` (Section 6.3). One non-recursive
+  Makefile builds them all; CLAUDE.md has the directory-by-directory map. The loader's modules, named by directory, with
   the core modules they lean on:
   - `console` - text menu over Simple Text Output/Input. Lists ISOs, the personal-OS
     entry, and the signing-appliance entry (Section 7.5); shows per-entry
@@ -2659,7 +2663,7 @@ flowchart TD
     D3B -- "no_entry" --> CHN
 ```
 
-`boot_plain` (`falcon-efi/src/efi/main.c`) runs the tests in this order.
+`boot_plain` (`apps/stick/efi_main.c`) runs the tests in this order.
 `d` and Enter are the same on an unblessed row; `c` and `d` on a blessed row
 skip the blessing.
 
@@ -3453,8 +3457,8 @@ from its code; the BIOS build is not built yet (Section 13's status), so
 
 ```mermaid
 flowchart TD
-    FW["Firmware<br/>boot entry for \EFI\falcon\shimx64.efi"] --> SHIM["shim<br/>verifies grubx64.efi (falcon-boot-pos) against db / MokList"]
-    SHIM --> MAIN["efi_main (main_pos.c)"]
+    FW["Firmware<br/>boot entry for \EFI\falcon\shimx64.efi"] --> SHIM["shim<br/>verifies grubx64.efi (falcon-boot-station.efi) against db / MokList"]
+    SHIM --> MAIN["efi_main (apps/station/efi_main.c)"]
     MAIN --> DISC["discover_scan"]
     DISC --> POSS["pos_scan<br/>only the boot disk's shelf, if it has one (13.3)"]
     POSS --> OTH["nxt_scan<br/>BootOrder's offered entries but BootCurrent"]
@@ -3481,7 +3485,7 @@ is not drawn.
 
 ```mermaid
 flowchart TD
-    S12["stages 1 and 2, as 12.3.2"] --> BM["bios_main (main_pos.c)<br/>e820_read"]
+    S12["stages 1 and 2, as 12.3.2"] --> BM["bios_main (apps/station/bios_main.c)<br/>e820_read"]
     BM --> DSK["scan_disks: every drive the BDA counts (0x475)<br/>its GPT, and whether LBA 0 ends in 0x55AA"]
     DSK --> P3["pick_shelf: the boot disk's shelf if pos_probe opens it,<br/>else the first other disk's that does"]
     P3 --> SH{"shelf found?"}
@@ -3505,9 +3509,9 @@ drive whose LBA 0 carries the boot signature.
 
 ## 13. The stationary build (decided 2026-09-21)
 
-Status (2026-09-24): both builds exist and are rig-proven (`make pos`):
-`falcon-boot-pos.efi` with POS, NXT and Firmware Setup, and
-`falcon-bios-pos-stage3.bin` with POS and MBR. The boot-disk rule (13.3) is
+Status (2026-09-24): both builds exist and are rig-proven (`make station`):
+`falcon-boot-station.efi` with POS, NXT and Firmware Setup, and
+`falcon-bios-station-stage3.bin` with POS and MBR. The boot-disk rule (13.3) is
 in both stick loaders too. `make test-station` builds a disk by following
 the Manual's hand procedure (Manual Section 2); the personal OS boots off it
 with its credential under OVMF with Secure Boot on and under SeaBIOS. Not
@@ -3540,23 +3544,23 @@ read.
 It is a separate link, not `#ifdef`s through the shared code. `pos` on both
 loaders is already self-contained (UEFI `pos_scan`/`pos_boot`, BIOS
 `pos_probe`/`pos_run`); what differs is the entry point, which is a second,
-small file per loader beside the stick's `main.c`. No module the two builds
+small file per loader beside the stick's (`apps/station/` beside `apps/stick/`). No module the two builds
 share changes shape between them.
 
 | | stick build | stationary build |
 |---|---|---|
-| UEFI image | `falcon-boot.efi` | `falcon-boot-pos.efi` |
-| UEFI entry | `efi/main.c` | `efi/main_pos.c` |
-| UEFI links | everything in Section 9 | `efi/sbat_pos.c`, `loader/`, `console/`, `discover/`, `sb.c`, `pos/`, `nxt/` (13.4); core's `crypto`, `luks`, `fs` (ext4 only), `part`, `tui`, `media/shelf.c` (the chooser's rows), `lib` |
+| UEFI image | `falcon-boot.efi` | `falcon-boot-station.efi` |
+| UEFI entry | `apps/stick/efi_main.c` | `apps/station/efi_main.c` |
+| UEFI links | everything in Section 9 | `apps/station/efi_sbat.c`, `loader/`, `console/`, `discover/`, `sb.c`, `pos/`, `nxt/` (13.4); core's `crypto`, `luks`, `fs` (ext4 only), `part`, `tui`, `media/shelf.c` (the chooser's rows), `lib` |
 | UEFI leaves out | | `iso/`, `direct/`, `bsd/`, `win/`, `bless/`, `trustefi.c`, `trust/`, the rest of `media/` (the survey included), `wim/`, `manifest/`, the exFAT, FAT, ISO9660 and UDF drivers, falcon-winjump, falcon-hook |
-| BIOS stage 3 | `main.c`, `falcon-bios-stage3.bin` | `main_pos.c`, `falcon-bios-pos-stage3.bin` (80 KB against 288 KB) |
+| BIOS stage 3 | `apps/stick/bios_main.c`, `falcon-bios-stage3.bin` | `apps/station/bios_main.c`, `falcon-bios-station-stage3.bin` (80 KB against 288 KB) |
 | BIOS links | everything in `falcon-bios/` | `pos.c`, `linux.c`, `linuxcore.c`, `e820.c`, `screen.c`, `prompt.c`, `console.c`, `disk.c`, `mbr.c` (13.4); core as UEFI, plus `media/cpio.c` for the credential |
 | BIOS leaves out | | `vcd.c`, `vcdres.S`, `scan.c`, `win.c`, `bsd.c`, `heap.c`: nothing is ever resident, and neither falcon-hook blob is linked, since only `scan.c` appends one; `marker.c`, so nothing in it writes a disk |
 | stages 1 and 2 | | unchanged, the same binaries |
-| version type | `release` | `pos-release`, so a screen photo says which build it is |
+| version type | `release` | `station-release`, so a screen photo says which build it is |
 | SBAT component | `falcon-boot` | `falcon-boot-pos`, its own generation: a revocation for a parser this build does not link must not stop it booting |
 
-`make pos` builds both, and `all` builds neither, as with `make bios`.
+`make station` builds both, and `all` builds neither, as with `make bios`.
 
 No boot predictions (Section 7.8) are linked, so no row carries a trust
 tag and the key line has no legend; a UKI shim refuses is reported with
@@ -3607,7 +3611,7 @@ partitioning tool later puts a partition over the stages.
 disk is the machine's, and a tool that partitions it is a tool that can
 destroy an OS the user meant to keep. The Manual carries the procedure
 (partition types, the shelf's GUID, the ESP's files and boot entry, the BIOS
-stages written at `biosdefs.h`'s LBAs, with `falcon-bios-pos-stage3.bin`
+stages written at `biosdefs.h`'s LBAs, with `falcon-bios-station-stage3.bin`
 as stage 3, MOK enrollment). Kernel updates are
 the OS's: the shelf mounted at `/efi` and a hook that builds and signs the
 UKI with the MOK key on it, as the personal OS on the stick already does.

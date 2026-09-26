@@ -1,126 +1,61 @@
-# falcon-efi: the loader, a UEFI x64 PE32+ (docs/DESIGN.md Section 9).
+# falcon-efi: the UEFI loader's modules (docs/DESIGN.md Section 9).
 #
-# Its own sources plus the falcon-core it links, in one list. The order is the
-# link order, kept as it was when this was one tree so the image did not move.
+# This file names the modules and says how a UEFI app is linked; which modules
+# a loader takes is its app's business (apps/<app>/app.mk), the way
+# falcon-core names its libraries and the components choose among them.
 
 EFI_SRC := falcon-efi/src
 
-EFI_SRCS := \
-	$(EFI_SRC)/efi/main.c \
-	$(EFI_SRC)/efi/sbat.c \
-	$(EFI_SRC)/loader/loadops.c \
-	$(EFI_SRC)/loader/credfs.c \
-	$(EFI_SRC)/console/menu.c \
-	$(EFI_SRC)/console/prompt.c \
-	$(CORE_TUI) \
-	$(EFI_SRC)/discover/discover.c \
-	$(CORE_PART) \
-	$(EFI_SRC)/discover/partefi.c \
-	$(CORE_FS) \
-	$(CORE_PE) \
-	$(CORE_LUKS) \
-	$(CORE_CRYPTO) \
-	$(EFI_SRC)/secboot/sb.c \
-	$(CORE_TRUST) \
-	$(EFI_SRC)/secboot/trustefi.c \
-	$(EFI_SRC)/iso/iso.c \
-	$(CORE)/media/family.c \
-	$(CORE)/media/cpio.c \
-	$(EFI_SRC)/direct/direct.c \
-	$(EFI_SRC)/bsd/bsd.c \
-	$(EFI_SRC)/win/winpatch.c \
-	$(CORE_WIM) \
-	$(WINJUMP_BLOB) \
-	$(CORE)/media/bootcfg.c \
-	$(CORE)/media/bootfs.c \
-	$(CORE)/media/eltorito.c \
-	$(CORE)/media/medium.c \
-	$(CORE)/media/hookcmd.c \
-	$(CORE)/media/grubcfg.c \
-	$(CORE)/media/bsdmd.c \
-	$(CORE)/media/extmap.c \
-	$(CORE)/media/survey.c \
-	$(HOOK_BLOB) \
-	$(EFI_SRC)/pos/pos.c \
-	$(CORE)/media/osrel.c \
-	$(CORE)/media/shelf.c \
-	$(CORE)/media/nextboot.c \
-	$(EFI_SRC)/bless/bless.c \
-	$(EFI_SRC)/bless/blesscore.c \
-	$(CORE_MANIFEST) \
-	$(CORE_LIBC) $(CORE_UCS2)
+EFI_MOD_loader        := $(EFI_SRC)/loader/loadops.c $(EFI_SRC)/loader/credfs.c
+EFI_MOD_console       := $(EFI_SRC)/console/menu.c $(EFI_SRC)/console/prompt.c
+EFI_MOD_discover      := $(EFI_SRC)/discover/discover.c $(EFI_SRC)/discover/partefi.c
+# Secure Boot state, for UX. The variable reads the boot predictions judge
+# against are their own module, so a build without predictions leaves them out.
+EFI_MOD_secboot       := $(EFI_SRC)/secboot/sb.c
+EFI_MOD_secboot_trust := $(EFI_SRC)/secboot/trustefi.c
+EFI_MOD_iso           := $(EFI_SRC)/iso/iso.c
+EFI_MOD_direct        := $(EFI_SRC)/direct/direct.c
+EFI_MOD_bsd           := $(EFI_SRC)/bsd/bsd.c
+EFI_MOD_win           := $(EFI_SRC)/win/winpatch.c
+EFI_MOD_pos           := $(EFI_SRC)/pos/pos.c
+EFI_MOD_bless         := $(EFI_SRC)/bless/bless.c $(EFI_SRC)/bless/blesscore.c
+EFI_MOD_nxt           := $(EFI_SRC)/nxt/nxt.c $(EFI_SRC)/nxt/nxtcore.c
 
-EFI_OBJS := $(EFI_SRCS:%.c=$(EFI_OBJ)/%.o)
+# Every source some app links, for compile_commands.json and the analyzers.
+EFI_APP_SRCS :=
 
-EFI := $(BIN)/falcon-boot.efi
-
-$(EFI): $(EFI_OBJS)
-	@mkdir -p $(@D)
-	$(CC) $(EFI_LDFLAGS) -o $@ $(EFI_OBJS)
-
-$(EFI_OBJ)/$(EFI_SRC)/efi/main.o: build/version.h
-
-# The stationary build (docs/DESIGN.md Section 13): the personal OS and the
-# firmware's other boot entries, and nothing else. A separate link rather
-# than a mode, so what it leaves out it cannot run; the list below is the
-# answer to what it can do, and Section 13.1 is the argument. Not in `all`:
-# `make pos` builds it.
+# $(call efi_app,<app>,<image name>,<sources>)
 #
-# fs/ is ext4 alone (CORE_FS_EXT4): the only filesystem this build mounts,
-# and so the only one discover_scan's identification pass probes for.
-EFI_POS_SRCS := \
-	$(EFI_SRC)/efi/main_pos.c \
-	$(EFI_SRC)/efi/sbat_pos.c \
-	$(EFI_SRC)/loader/loadops.c \
-	$(EFI_SRC)/loader/credfs.c \
-	$(EFI_SRC)/console/menu.c \
-	$(EFI_SRC)/console/prompt.c \
-	$(CORE_TUI) \
-	$(EFI_SRC)/discover/discover.c \
-	$(CORE_PART) \
-	$(EFI_SRC)/discover/partefi.c \
-	$(CORE_FS_EXT4) \
-	$(CORE_PE) \
-	$(CORE_LUKS) \
-	$(CORE_CRYPTO) \
-	$(EFI_SRC)/secboot/sb.c \
-	$(EFI_SRC)/pos/pos.c \
-	$(CORE)/media/osrel.c \
-	$(CORE)/media/shelf.c \
-	$(CORE)/media/nextboot.c \
-	$(CORE)/manifest/manifest.c \
-	$(EFI_SRC)/nxt/nxt.c \
-	$(EFI_SRC)/nxt/nxtcore.c \
-	$(CORE_LIBC) $(CORE_UCS2)
+# One UEFI image: the link, the check that its .sbat section survived, and a
+# copy signed with the rig's test MOK. Without .sbat shim refuses the image
+# under Secure Boot with the same opaque EFI_SECURITY_VIOLATION a bad
+# signature gives, and the mistake is invisible until someone turns Secure
+# Boot on (apps/stick/efi_sbat.c has the details). sbsign warns "data
+# remaining: gaps between PE/COFF sections?" about our mingw output; it says
+# the same about Fedora's own gnu-efi binaries and both verify under shim
+# (docs/notes/shim-spike.md Section 5.2).
+define efi_app
+$(1)_EFI_OBJS := $$(patsubst %.c,$$(EFI_OBJ)/%.o,$(3))
+EFI_APP_SRCS += $(3)
 
-EFI_POS_OBJS := $(EFI_POS_SRCS:%.c=$(EFI_OBJ)/%.o)
+$$(BIN)/$(2).efi: $$($(1)_EFI_OBJS)
+	@mkdir -p $$(@D)
+	$$(CC) $$(EFI_LDFLAGS) -o $$@ $$($(1)_EFI_OBJS)
 
-EFI_POS := $(BIN)/falcon-boot-pos.efi
-
-$(EFI_POS): $(EFI_POS_OBJS)
-	@mkdir -p $(@D)
-	$(CC) $(EFI_LDFLAGS) -o $@ $(EFI_POS_OBJS)
-
-$(EFI_OBJ)/$(EFI_SRC)/efi/main_pos.o: build/version.h
-
-# Fail the build loudly if the .sbat section did not survive the link. Without
-# it shim refuses the loader under Secure Boot with the same opaque
-# EFI_SECURITY_VIOLATION a bad signature gives, and the mistake is invisible
-# until someone turns Secure Boot on (falcon-efi/src/efi/sbat.c has the
-# details).
-sbat-check: $(EFI)
-	@$(CC:gcc=objdump) -h $(EFI) | grep -q '\.sbat' || { \
-		echo "ERROR: $(EFI) has no .sbat section; shim will refuse it" >&2; \
+sbat-check-$(1): $$(BIN)/$(2).efi
+	@$$(CC:gcc=objdump) -h $$< | grep -q '\.sbat' || { \
+		echo "ERROR: $$< has no .sbat section; shim will refuse it" >&2; \
 		exit 1; }
 	@echo ".sbat section present:"
-	@$(CC:gcc=objdump) -s -j .sbat $(EFI) | sed -n '3,$$p'
+	@$$(CC:gcc=objdump) -s -j .sbat $$< | sed -n '3,$$$$p'
 
-sbat-check-pos: $(EFI_POS)
-	@$(CC:gcc=objdump) -h $(EFI_POS) | grep -q '\.sbat' || { \
-		echo "ERROR: $(EFI_POS) has no .sbat section; shim will refuse it" >&2; \
-		exit 1; }
-	@echo ".sbat section present:"
-	@$(CC:gcc=objdump) -s -j .sbat $(EFI_POS) | sed -n '3,$$p'
+$$(BIN)/$(2)-signed.efi: $$(BIN)/$(2).efi $$(MOK_KEY)
+	@$$(MAKE) --no-print-directory sbat-check-$(1)
+	sbsign --key $$(MOK_KEY) --cert $$(MOK_CRT) --output $$@ $$<
+	@echo "signed with the TEST MOK; not a release artifact"
+
+.PHONY: sbat-check-$(1)
+endef
 
 # ---- the rig (docs/DESIGN.md Section 10) ----
 
@@ -138,7 +73,6 @@ OVMF_VARS := $(OVMF_DIR)/OVMF_VARS.fd
 MOK_DIR := build/mok-test
 MOK_KEY := $(MOK_DIR)/falcon-test-mok.key
 MOK_CRT := $(MOK_DIR)/falcon-test-mok.crt
-EFI_SIGNED := $(BIN)/falcon-boot-signed.efi
 
 # The fixture UKI staged on p3 (falcon-efi/tools/mk-test-uki.sh).
 FIXTURE_UKI := build/test/fixture-uki.efi
@@ -171,25 +105,9 @@ mok-test: $(MOK_KEY)
 $(MOK_KEY):
 	falcon-efi/tools/mk-test-mok.sh
 
-# Sign the loader with the test MOK so shim will accept it as a second stage.
-# sbsign warns "data remaining: gaps between PE/COFF sections?" about our mingw
-# output; it says the same about Fedora's own gnu-efi binaries and both verify
-# under shim (docs/notes/shim-spike.md Section 5.2).
+# The stick loader signed with the test MOK, so shim accepts it as a second
+# stage (the rule is efi_app's).
 sign: $(EFI_SIGNED)
-
-$(EFI_SIGNED): $(EFI) $(MOK_KEY)
-	@$(MAKE) --no-print-directory sbat-check
-	sbsign --key $(MOK_KEY) --cert $(MOK_CRT) --output $@ $(EFI)
-	@echo "signed with the TEST MOK; not a release artifact"
-
-EFI_POS_SIGNED := $(BIN)/falcon-boot-pos-signed.efi
-
-$(EFI_POS_SIGNED): $(EFI_POS) $(MOK_KEY)
-	@$(MAKE) --no-print-directory sbat-check-pos
-	sbsign --key $(MOK_KEY) --cert $(MOK_CRT) --output $@ $(EFI_POS)
-	@echo "signed with the TEST MOK; not a release artifact"
-
-pos: $(EFI_POS) bios-pos
 
 run-secboot: $(EFI_SIGNED)
 	falcon-efi/tools/run-qemu.sh --secboot
@@ -219,7 +137,7 @@ test-stick: $(EFI_SIGNED) test-iso test-uki
 
 # A disk laid out as the Manual's stationary install (Section 2), made by
 # following that procedure; the rig boots it under both firmwares.
-test-station: $(EFI_POS_SIGNED) bios-pos test-uki cli
+test-station: $(EFI_STATION_SIGNED) station test-uki cli
 	falcon-efi/tools/mk-test-station.sh
 
 # No prerequisite on $(TEST_STICK): rebuilding it needs sudo and takes seconds
@@ -231,7 +149,7 @@ run-stick:
 run-stick-secboot:
 	falcon-efi/tools/run-qemu.sh --stick --secboot
 
-.PHONY: pos test-station sbat-check-pos sbat-check payload esp run mok-test sign run-secboot test-iso \
+.PHONY: test-station payload esp run mok-test sign run-secboot test-iso \
 	test-img test-uki test-stick run-stick run-stick-secboot
 
 # ---- tests ----
