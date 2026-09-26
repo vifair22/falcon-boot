@@ -968,7 +968,7 @@ What this settles:
   installer**, which has no WinPE and needs a different route entirely (not yet
   built).
 
-### 7.4 Windows 2000 and XP: text-mode setup (built to the boot-device binding)
+### 7.4 Windows 2000 and XP: text-mode setup (works: XP boots to setup)
 
 2000 and XP have no WinPE. They boot a text-mode setup: the CD's El Torito boot
 image loads setupldr, which reads txtsetup.sif, the kernel, the HAL and the
@@ -1081,14 +1081,23 @@ Since then win_xp_boot and piece 3's disk-finding are built and rig-proven
    Rig-proven: both COM1 markers (SCSILOAD_OK and BACKING_OK) appear, so the
    novel "find the stick with no winjump" work is done.
 
- - **What is left: the boot-device binding.** After the driver loads and
-   resolves its backing, setup still bugchecks 0x7B with OBJECT_NAME_NOT_FOUND:
-   the kernel cannot resolve its boot device's ARC name to this virtual CD.
-   Aliasing the standard CD-ROM device name (\Device\CdRom0) to the device is a
-   first step that does not resolve it alone - the boot ARC path is not simply
-   cdrom(0), or cdrom.sys already owns \Device\CdRom0. This is a distinct problem
-   from the disk-finding, needing setupldr's exact boot-device path and how
-   firadisk/winvblock present the boot device; it is the remaining work.
+ - **The boot-device binding is SOLVED (2026-09-25); XP boots.** After the
+   driver resolved its backing it still bugchecked 0x7B (OBJECT_NAME_NOT_FOUND):
+   the kernel resolves its boot device through an ARC name, but no real device
+   registers one for the INT-13h-served medium, so the driver must. The name is
+   NOT cdrom(0): setupldr records it as the served BIOS drive number, read on the
+   rig from the registry as SystemBootDevice = multi(0)disk(0)cdrom(224) (224 =
+   0xE0, the drive falcon-bios serves on). bind_boot_device reads that value and
+   points \ArcName\<it> at the CD, which clears the 0x7B. Two more things the
+   route needs, both learned on the rig: the CD reports its size from the baked
+   map the instant it is created, so text-mode setup's CD-ROM scan counts it
+   before the backing thread finishes (a no-media device is skipped -> "Setup
+   cannot find a CD-ROM drive"); and the backing must stay on its own thread, not
+   block DriverEntry, or the boot-start sequence stalls, disk.sys never
+   enumerates the stick, and the volume comes back unmountable (0xED). With all
+   three, XP text-mode setup boots end to end: the trace build reaches "Welcome
+   to Setup", the shipped build reaches setup's file-loading, served entirely by
+   this driver from the stick.
 
 The rig: a falcon-bios stick with the ISO on p2 (mk-case-stick.sh), booted
 under QEMU BIOS with the loader disk; the menu's Enter selects the ISO, and
