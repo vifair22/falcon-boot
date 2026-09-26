@@ -23,11 +23,15 @@ enum {
  *
  *   [SCSI.Load]         <svc> = <file>,4
  *   [SCSI]             <svc> = "<desc>"
- *   [SourceDisksFiles]  <file> = 100,,,,,,4_,4,0,0,,1,4   (atapi.sys's own form)
+ *   [SourceDisksFiles]  <file> = <the section's first entry's value>
  *
  * so text-mode setup loads <file> from i386 as a boot-start SCSI-class driver,
- * the way firadisk is loaded. Each new line is inserted right after its section
- * header, and the file's CRLF line ending is kept.
+ * the way firadisk is loaded. The [SCSI] lines go right after their headers;
+ * the [SourceDisksFiles] line follows the section's first real entry (e.g.
+ * atapi.sys) and COPIES its value, because the source-disk id and field layout
+ * differ per Windows - XP names the disk 100, 2000 names it 1 - and a wrong id
+ * is rejected as a corrupt [SourceDisksNames] entry. The file's CRLF ending is
+ * kept.
  *
  * `in` is the whole txtsetup.sif (in_len bytes). The grown file is written to
  * `out` (out_cap bytes) and its length returned in *out_len. `svc`, `file` and

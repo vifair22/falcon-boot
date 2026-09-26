@@ -44,6 +44,8 @@ int txtsetup_inject(const char *in, size_t in_len,
 {
     size_t i = 0, o = 0;
     int did_load = 0, did_scsi = 0, did_src = 0;
+    int in_src = 0;               /* inside [SourceDisksFiles], before its first
+                                   * entry, which the driver's line copies */
 
     if (in == (const char *)0 || svc == (const char *)0 ||
         file == (const char *)0 || desc == (const char *)0 ||
@@ -83,10 +85,38 @@ int txtsetup_inject(const char *in, size_t in_len,
             did_scsi = 1;
         } else if (!did_src &&
                    line_is(in, start, linelen, "[SourceDisksFiles]")) {
-            if (put_str(out, &o, out_cap, file) != 0 ||
-                put_str(out, &o, out_cap, " = 100,,,,,,4_,4,0,0,,1,4\r\n") != 0)
-                return XPSETUP_ERR_NOSPACE;
-            did_src = 1;
+            in_src = 1;
+        } else if (in_src) {
+            /* Copy the driver's SourceDisksFiles value from the section's first
+             * real entry (e.g. atapi.sys), so the source-disk id and field
+             * layout match this Windows exactly: XP names it 100, 2000 names it
+             * 1, and a wrong id is "the entry N in [SourceDisksNames] is corrupt
+             * or missing". Blank and comment lines have no '=' and are skipped. */
+            size_t eq = start;
+
+            while (eq < start + linelen && in[eq] != '=' &&
+                   in[eq] != '\r' && in[eq] != '\n')
+                eq++;
+            if (eq < start + linelen && in[eq] == '=') {
+                size_t v = eq + 1, ve;
+
+                while (v < start + linelen && (in[v] == ' ' || in[v] == '\t'))
+                    v++;
+                ve = v;
+                while (ve < start + linelen && in[ve] != '\r' && in[ve] != '\n')
+                    ve++;
+                if (put_str(out, &o, out_cap, file) != 0 ||
+                    put_str(out, &o, out_cap, " = ") != 0)
+                    return XPSETUP_ERR_NOSPACE;
+                if (o + (ve - v) + 2u > out_cap)
+                    return XPSETUP_ERR_NOSPACE;
+                memcpy(out + o, in + v, ve - v);
+                o += ve - v;
+                out[o++] = '\r';
+                out[o++] = '\n';
+                in_src = 0;
+                did_src = 1;
+            }
         }
     }
 

@@ -60,10 +60,12 @@ static void test_xpsetup_inject(void **state)
                          "\r\n_falcon = \"Falcon Virtual CD\"\r\n"));
     assert_true(contains(out, out_len,
                          "\r\n_falcon.sys = 100,,,,,,4_,4,0,0,,1,4\r\n"));
-    /* Each new line sits right after its header, not elsewhere. */
+    /* The [SCSI] lines sit right after their header; the SourceDisksFiles line
+     * follows the first existing entry, whose value it copies. */
     assert_true(contains(out, out_len, "[SCSI.Load]\r\n_falcon = "));
     assert_true(contains(out, out_len, "[SCSI]\r\n_falcon = \""));
-    assert_true(contains(out, out_len, "[SourceDisksFiles]\r\n_falcon.sys = "));
+    assert_true(contains(out, out_len,
+                         "atapi.sys = 100,,,,,,4_,4,0,0,,1,4\r\n_falcon.sys = "));
     /* The original content survives, and the file grew by exactly the three
      * lines. */
     assert_true(contains(out, out_len, "atapi = atapi.sys,4\r\n"));
@@ -72,6 +74,33 @@ static void test_xpsetup_inject(void **state)
     /* [SCSI] is matched exactly, not as a prefix of [SCSI.Load]: the two
      * lines differ. */
     assert_false(contains(out, out_len, "[SCSI.Load]\r\n_falcon = \"Falcon"));
+}
+
+/* Windows 2000 names its source disk 1 with a different field layout, not XP's
+ * 100; the driver's line must copy whichever the medium uses, or setup rejects
+ * it as a corrupt [SourceDisksNames] entry. */
+static void test_xpsetup_copies_source_id(void **state)
+{
+    static const char sif2k[] =
+        "[SCSI.Load]\r\n"
+        "atapi = atapi.sys,4\r\n"
+        "[SCSI]\r\n"
+        "atapi = \"IDE CD-ROM\"\r\n"
+        "[SourceDisksFiles]\r\n"
+        "\r\n"
+        "atapi.sys = 1,,,,,,3_,4,0,0\r\n";
+    char out[1024];
+    size_t out_len = 0;
+
+    (void)state;
+    assert_int_equal(txtsetup_inject(sif2k, sizeof sif2k - 1u, "_falcon",
+                                     "_falcon.sys", "x", out, sizeof out,
+                                     &out_len), XPSETUP_OK);
+    /* The 2000 id and layout, copied verbatim, after the existing entry - not
+     * XP's 100, and not right after the blank line that follows the header. */
+    assert_true(contains(out, out_len,
+                         "atapi.sys = 1,,,,,,3_,4,0,0\r\n_falcon.sys = 1,,,,,,3_,4,0,0\r\n"));
+    assert_false(contains(out, out_len, "_falcon.sys = 100"));
 }
 
 static void test_xpsetup_missing_section(void **state)
@@ -107,6 +136,7 @@ int run_xpsetup_tests(void)
 {
     const struct CMUnitTest tests[] = {
         cmocka_unit_test(test_xpsetup_inject),
+        cmocka_unit_test(test_xpsetup_copies_source_id),
         cmocka_unit_test(test_xpsetup_missing_section),
         cmocka_unit_test(test_xpsetup_nospace),
     };
