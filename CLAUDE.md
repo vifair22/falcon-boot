@@ -104,8 +104,13 @@ The repository is six components, each with its own `src/`, `tests/` and
 `tools/`, built by one non-recursive Makefile: the root `Makefile` holds the
 shared toolchains, flags, test runner and compile database, and `include`s a
 `build.mk` from each component. There is one make invocation and one
-dependency graph; nothing recurses. Module directory names are unique across
-the tree, so `#include <fs/exfat.h>` means one file wherever it is written.
+dependency graph; nothing recurses. Each translation unit, tests included,
+sees only its own component's `src/` and the ones it builds against (the UEFI
+loader efi+core, falcon-bios bios+core, the appliance appliance+cli+core). A
+module directory name is unique within every such include set, so
+`#include <fs/exfat.h>` means one file wherever it is written, while
+falcon-efi and falcon-bios, which never share a set, may both have a `pos/`.
+`tools/analyze.sh` fails on a name that appears twice within a set.
 
 - `falcon-core/` the EFI-free libraries every other component links. Nothing
   here knows about firmware: device access goes through a read callback and

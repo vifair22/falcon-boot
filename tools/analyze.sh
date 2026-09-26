@@ -142,6 +142,52 @@ if [ ${#SOURCES[@]} -eq 0 ]; then
 	exit 2
 fi
 
+# ---- module names --------------------------------------------------------
+#
+# <pos/pos.h> means one file only while no two component src/ directories on
+# one include line both hold a pos/. The rule is per include set, not per
+# tree (falcon-efi and falcon-bios each have a pos/ and never share a set), so
+# it is checked per set, and the sets are read from the database rather than
+# restated: every -I<component>/src a real command carries. A top-level header
+# (falcon-winjump's flat src/) is a name in the same namespace as a directory.
+# It is not a baselined stage: a collision silently resolves to the first
+# directory on the line, so there is no version of it worth keeping.
+if ! python3 - "$DB" "$ROOT" <<'EOF'; then
+import json, os, re, sys
+
+db, root = sys.argv[1], sys.argv[2]
+sets = {}
+for e in json.load(open(db)):
+    incs = []
+    for d in re.findall(r"(?:^|\s)-I(\S+)", e["command"]):
+        d = os.path.normpath(os.path.join(e["directory"], d))
+        rel = os.path.relpath(d, root)
+        if re.fullmatch(r"falcon-[^/]+/src", rel) and rel not in incs:
+            incs.append(rel)
+    if len(incs) > 1:
+        sets.setdefault(tuple(sorted(incs)), e["file"])
+
+bad = 0
+for incs, example in sorted(sets.items()):
+    seen = {}
+    for inc in incs:
+        for name in sorted(os.listdir(os.path.join(root, inc))):
+            if not (os.path.isdir(os.path.join(root, inc, name)) or
+                    name.endswith(".h")):
+                continue
+            if name in seen:
+                print(f"analyze: module name '{name}' is in both "
+                      f"{seen[name]} and {inc}, which share an include set "
+                      f"(e.g. {os.path.relpath(example, root)})")
+                bad = 1
+            else:
+                seen[name] = inc
+sys.exit(bad)
+EOF
+	echo "analyze: FAIL, rename one of each pair above." >&2
+	exit 1
+fi
+
 # ---- finding normalisation ----------------------------------------------
 #
 # All three analyzers can be made to emit "file:line:col: severity: message
