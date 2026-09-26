@@ -968,7 +968,7 @@ What this settles:
   installer**, which has no WinPE and needs a different route entirely (not yet
   built).
 
-### 7.4 Windows 2000 and XP: text-mode setup (works: XP boots to setup)
+### 7.4 Windows 2000 and XP: text-mode setup (0x7B solved; trace build boots)
 
 2000 and XP have no WinPE. They boot a text-mode setup: the CD's El Torito boot
 image loads setupldr, which reads txtsetup.sif, the kernel, the HAL and the
@@ -1095,9 +1095,14 @@ Since then win_xp_boot and piece 3's disk-finding are built and rig-proven
    cannot find a CD-ROM drive"); and the backing must stay on its own thread, not
    block DriverEntry, or the boot-start sequence stalls, disk.sys never
    enumerates the stick, and the volume comes back unmountable (0xED). With all
-   three, XP text-mode setup boots end to end: the trace build reaches "Welcome
-   to Setup", the shipped build reaches setup's file-loading, served entirely by
-   this driver from the stick.
+   three, XP text-mode setup boots from the driver-served CD: the trace build
+   reaches "Welcome to Setup" reliably. The shipped build is not yet reliable -
+   it reaches setup's file-loading on some runs and "Setup cannot find a CD-ROM
+   drive" on others: setup's CD-ROM scan still races the backing thread finding
+   the stick, and only the trace build's serial delays pace it past the race
+   every time. Closing that race for the shipped build (e.g. registering the CD
+   so the scan reads it only once it is backed) is the remaining polish; the
+   0x7B boot-device binding itself is solved.
 
 The rig: a falcon-bios stick with the ISO on p2 (mk-case-stick.sh), booted
 under QEMU BIOS with the loader disk; the menu's Enter selects the ISO, and
