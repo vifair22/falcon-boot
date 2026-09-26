@@ -131,7 +131,7 @@ changed with `mcopy` or by mounting it.
 | `MBR` | a disk's own boot code, started from 0x7C00 with DL naming that disk | its row, `Disk 0x80` and so on |
 | `MEM` | memtest86+, `MEMTEST.BIN` on the floppy, started through the x86 boot protocol | the Memory test row |
 | `CDR` | the disc in an IDE CD drive, through `ATA.MOD` and the stick's virtual CD as drive 0xE0 | the CD drive row |
-| `USB` | a falcon stick on a UHCI port, through `UHCI.MOD`, as the next BIOS disk | the USB stick row |
+| `USB` | a falcon stick on a UHCI or OHCI port, through `UHCI.MOD` or `OHCI.MOD`, as the next BIOS disk | the USB stick row |
 
 Every BIOS disk whose first sector carries the boot signature is a row, the
 CD drive row is there when the floppy holds `ATA.MOD` (which `make jump`
@@ -142,8 +142,9 @@ one: a no-emulation disc (every Linux, BSD and Windows 2000-on disc), which
 needs 16 MB of memory since the driver stays resident at 15 MB, or a
 floppy-emulation disc (DOS and Win9x boot discs, vendor utility CDs), which
 is read into memory above 64 MB and so needs more than that. The USB stick row is there when the floppy holds
-`UHCI.MOD` and the machine has a UHCI controller; the route boots the first falcon stick (an ISO library or a
-shelf in its GPT) on a UHCI root port, as the BIOS disk after the machine's
+`UHCI.MOD` or `OHCI.MOD` and the machine has that controller; the route
+boots the first falcon stick (an ISO library or a shelf in its GPT) on a
+root port of any of them, as the BIOS disk after the machine's
 own, and needs 16 MB like the CD. A USB keyboard stops working once it runs:
 jump takes the controller from the BIOS, so the machine wants a PS/2 one. `make
 jump MEMTEST=<file>` copies one on; it has to be a build carrying the x86

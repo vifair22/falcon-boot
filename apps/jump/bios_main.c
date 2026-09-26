@@ -78,18 +78,44 @@ static int       g_have_vol;
 static fs_dirent g_memtest;
 static int       g_have_memtest;
 static int       g_have_ata;
-static int       g_have_uhci;
 
 /* What the PCI scan found (DESIGN Section 14.2): the routes a controller
  * exists for. A row needs its module on the floppy and its controller in
  * the machine; nothing is loaded to find out. */
 static int g_pci_ide;
-static int g_pci_uhci;
 
 /* The PCI classes, class << 16 | subclass << 8 | programming interface; an
  * IDE controller's interface byte varies with its modes, so it is matched
  * without it. */
 #define PCI_UHCI 0x0C0300u
+#define PCI_OHCI 0x0C0310u
+
+/* The USB modules, in the order the route tries them: each needs its file
+ * on the floppy and its controller on the bus. */
+typedef struct {
+    const char *name;
+    const char *path;
+    unsigned    slot;
+    uint32_t    pci;
+    int         have;           /* file and controller both there */
+} usb_mod;
+
+static usb_mod g_usb[] = {
+    { "UHCI", "/UHCI.MOD", JMOD_SLOT_UHCI, PCI_UHCI, 0 },
+    { "OHCI", "/OHCI.MOD", JMOD_SLOT_OHCI, PCI_OHCI, 0 },
+};
+#define N_USB (sizeof g_usb / sizeof g_usb[0])
+
+static int any_usb(void)
+{
+    unsigned i;
+
+    for (i = 0; i < N_USB; i++) {
+        if (g_usb[i].have)
+            return 1;
+    }
+    return 0;
+}
 
 static void pci_scan(void)
 {
@@ -98,10 +124,15 @@ static void pci_scan(void)
 
     for (pi = 0; pi < 256u && !g_pci_ide; pi++)
         g_pci_ide = pci_find_class(0x010100u | pi, 0, &loc) == 0;
-    g_pci_uhci = pci_find_class(PCI_UHCI, 0, &loc) == 0;
     bios_puts("falcon-bios: PCI: ");
     bios_puts(g_pci_ide ? "IDE " : "");
-    bios_puts(g_pci_uhci ? "UHCI " : "");
+    for (pi = 0; pi < N_USB; pi++) {
+        int found = pci_find_class(g_usb[pi].pci, 0, &loc) == 0;
+
+        bios_puts(found ? g_usb[pi].name : "");
+        bios_puts(found ? " " : "");
+        g_usb[pi].have = g_usb[pi].have && found;
+    }
     bios_puts("\n");
 }
 
@@ -169,6 +200,7 @@ static void read_floppy(uint8_t drive)
     fs_dir scratch;
     fs_dirent ini;
     fs_file f;
+    unsigned i;
 
     g_cfg.def = JUMP_DEF_NONE;
     g_cfg.timeout = 0;
@@ -195,8 +227,9 @@ static void read_floppy(uint8_t drive)
 
         g_have_ata = fs_lookup(&g_vol, "/ATA.MOD", &scratch, &mod) == FS_OK &&
                      !mod.is_dir;
-        g_have_uhci = fs_lookup(&g_vol, "/UHCI.MOD", &scratch, &mod) ==
-                          FS_OK && !mod.is_dir;
+        for (i = 0; i < N_USB; i++)
+            g_usb[i].have = fs_lookup(&g_vol, g_usb[i].path, &scratch, &mod) ==
+                                FS_OK && !mod.is_dir;
     }
 
     if (fs_lookup(&g_vol, "/JUMP.INI", &scratch, &ini) != FS_OK || ini.is_dir)
@@ -205,12 +238,12 @@ static void read_floppy(uint8_t drive)
         fs_file_open(&g_vol, &f, &ini) != FS_OK ||
         fs_file_read(&f, 0, ini.size, g_ini) != FS_OK) {
         static const char why[] = "the file could not be read";
-        size_t i;
+        size_t k;
 
         _Static_assert(sizeof why <= sizeof g_cfg.why,
                        "the sentence fits jump_cfg's buffer");
-        for (i = 0; i < sizeof why; i++)
-            g_cfg.why[i] = why[i];
+        for (k = 0; k < sizeof why; k++)
+            g_cfg.why[k] = why[k];
         g_cfg.err_line = 1;
         bios_puts("falcon-bios: JUMP.INI could not be read\n");
         return;
@@ -399,7 +432,8 @@ static int is_falcon_stick(jmod_ops *ops, unsigned idx)
     return gpt_has_role(&t, PART_ROLE_ISO) || gpt_has_role(&t, PART_ROLE_SHELF);
 }
 
-/* USB: UHCI.MOD off the floppy, the first falcon stick on the root ports,
+/* USB: the first falcon stick on the root ports of any controller a module
+ * is on the floppy for (UHCI, then OHCI),
  * and that stick booted as the next BIOS disk: the module resident behind
  * the reverse thunk, which also carves its memory out of INT 15h, and the
  * BDA's disk count one higher. The stick's own stage 1 takes it from there
@@ -411,6 +445,8 @@ static void boot_usb(void)
     static const e820_range keep = {
         JMOD_REGION, JMOD_REGION_END - JMOD_REGION
     };
+    unsigned m;
+    unsigned found_any = 0;
     boot_result r;
     bios_disk stick;
     jmod_dev dev;
@@ -426,20 +462,27 @@ static void boot_usb(void)
     screen_page();
     screen_out("booting: USB stick\n\n");
 
-    r.stage = "loading UHCI.MOD";
-    if (jmod_load(&g_vol, "/UHCI.MOD", JMOD_SLOT_UHCI, &ops, &why) != 0) {
-        r.advice = why;
-        goto fail;
-    }
-    r.stage = "looking for a falcon stick";
-    n = ops.probe();
-    for (i = 0; i < n; i++) {
-        if (ops.dev(i, &dev) == 0 && is_falcon_stick(&ops, i))
+    for (m = 0; m < N_USB; m++) {
+        if (!g_usb[m].have)
+            continue;
+        r.stage = "loading a USB driver";
+        if (jmod_load(&g_vol, g_usb[m].path, g_usb[m].slot, &ops, &why) != 0) {
+            r.advice = why;
+            goto fail;
+        }
+        r.stage = "looking for a falcon stick";
+        n = ops.probe();
+        found_any += n;
+        for (i = 0; i < n; i++) {
+            if (ops.dev(i, &dev) == 0 && is_falcon_stick(&ops, i))
+                break;
+        }
+        if (i < n)
             break;
     }
-    if (i == n) {
-        r.advice = n == 0 ? "there is no USB storage on the UHCI ports."
-                          : "none of the USB storage is a falcon stick.";
+    if (m == N_USB) {
+        r.advice = found_any == 0 ? "there is no USB storage on the ports."
+                                  : "none of the USB storage is a falcon stick.";
         goto fail;
     }
     screen_out(dev.label);
@@ -448,7 +491,7 @@ static void boot_usb(void)
     r.stage = "installing the USB driver";
     if (ndisks >= 0x7Fu || ops.serve(i, drive) != 0 ||
         jres_install(drive, (uint32_t)(uintptr_t)ops.int13,
-                     JMOD_SLOT_ADDR(JMOD_SLOT_UHCI) + JMOD_SLOT_BYTES, &keep,
+                     JMOD_SLOT_ADDR(g_usb[m].slot) + JMOD_SLOT_BYTES, &keep,
                      1u, &base) != 0) {
         r.advice = "this machine will not give up the conventional memory "
                    "the USB driver needs.";
@@ -531,7 +574,7 @@ static void list_run(void)
             kind[n] = ROW_CD;
             n++;
         }
-        if (g_have_uhci && g_pci_uhci) {
+        if (any_usb()) {
             if (g_cfg.def == JUMP_DEF_USB) {
                 def = n;
                 have_def = 1;

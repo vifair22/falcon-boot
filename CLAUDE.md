@@ -325,8 +325,8 @@ falcon-efi and falcon-bios, which never share a set, may both have a `pos/`.
   `int13`, installed by `jres.c`); and `hw/`, jump's drivers, each built as
   a module linked at its slot (`jmod.ld.S`, `jump_module`): `hw/ata/` is
   ATA.MOD, ATAPI over the legacy IDE channels, with `atacore.c` its
-  host-tested half; `hw/usb/` is the USB modules, `uhci.c` a host
-  controller behind `usbhc.h` and `msc.c` the storage stack every
+  host-tested half; `hw/usb/` is the USB modules, `uhci.c` and `ohci.c`
+  host controllers behind `usbhc.h` and `msc.c` the storage stack every
   controller's module links, with `usbcore.c` (descriptors, Bulk-Only)
   host-tested; `hw/scsi/` the SCSI blocks both speak; `hw/blk13.c` the
   INT 13h answers every module's resident gives; `hw/pci.h` and
