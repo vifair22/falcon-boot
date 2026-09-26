@@ -353,6 +353,13 @@
 #define JMOD_SLOT_USB    4
 #define JMOD_SLOT_PCC    5
 
+/* A module is stored on the floppy as a gzip member (DESIGN Section 14.3),
+ * read here whole and inflated into its slot. GZ_STAGE_ADDR again: stage 2
+ * is done with it by the time stage 3 runs, and it is inside the memory
+ * stage 3 has to itself, below STAGE3_STACK and above the image, which
+ * load3.c keeps below GZ_STAGE_ADDR. */
+#define JMOD_GZ_STAGE    GZ_STAGE_ADDR
+
 /* The reverse thunk (falcon-bios/src/jump/rthunk.S, jres.c): the real-mode
  * INT 13h entry a module's resident half is reached through. One block in
  * conventional memory, taken from the BDA's count as the virtual CD's is,

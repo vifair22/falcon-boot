@@ -15,6 +15,7 @@ JUMP_BIOS += $(BIOS_MOD_iso) $(BIOS_MOD_vfd) $(BIOS_MOD_lowmem) $(BIOS_MOD_heap)
 JUMP_BIOS += $(CORE)/media/eltorito.c
 JUMP_BIOS += $(BIOS_MOD_e820) $(BIOS_MOD_disk) $(BIOS_MOD_serial)
 JUMP_BIOS += $(CORE_FS_FAT)           # the floppy is FAT12; nothing else is mounted
+JUMP_BIOS += $(CORE_GZ)               # the modules are stored compressed
 JUMP_BIOS += $(CORE_PART) $(CORE_PE) $(CORE_LIBC) $(CORE_UCS2) $(CORE_TUI)
 
 $(eval $(call bios_app,jump,$(BIOS_JUMP_STAGE3),\
@@ -83,11 +84,29 @@ $(JUMP_IMG): $(BIOS_FD_STAGE1) $(BIOS_STAGE2) $(JUMP_STAGE3Z) \
 		$(JUMP_MODS) $(MEMTEST) $(JUMP_INI) $(JUMP_FILES_STAMP)
 	@mkdir -p $(@D)
 	@rm -f $@.tmp
+	@# The reserved sectors end where stage 3 does, padded so the root
+	@# directory starts a track: it and the first cluster, JUMP.INI's, are
+	@# then one track, and stage 3 reads one track before its menu rather
+	@# than one per file (DESIGN Section 14.3). The FAT's length depends on
+	@# the reserved count, so the pad is taken from a first format and the
+	@# second is checked.
 	@s3=$$(( ($$(stat -c %s $(JUMP_STAGE3Z)) + 511) / 512 )); \
 	reserved=$$(( $(STAGE3_LBA_CHECK) + s3 )); \
-	echo "mformat: $$reserved reserved sectors (stage 3 is $$s3)"; \
-	mformat -C -i $@.tmp -f 1440 -R $$reserved -B $(BIOS_FD_STAGE1) \
-		-v "FALCON JUMP" ::
+	fmt() { rm -f $@.tmp; mformat -C -i $@.tmp -f 1440 -R $$1 \
+		-B $(BIOS_FD_STAGE1) -v "FALCON JUMP" ::; }; \
+	root() { minfo -i $@.tmp :: | awk -v r=$$1 \
+		'/^sectors per track:/ { t = $$4 } \
+		 /^sectors per fat:/ { f = $$4 } \
+		 /^fats:/ { n = $$2 } \
+		 END { print (r + n * f) % t, r + n * f, t }'; }; \
+	fmt $$reserved; \
+	set -- $$(root $$reserved); \
+	[ "$$1" -eq 0 ] || reserved=$$(( reserved + $$3 - $$1 )); \
+	fmt $$reserved; \
+	set -- $$(root $$reserved); \
+	[ "$$1" -eq 0 ] || { echo "ERROR: the root directory at $$2 does not start a track"; \
+		rm -f $@.tmp; exit 1; }; \
+	echo "mformat: $$reserved reserved sectors (stage 3 is $$s3), root directory at $$2"
 	@# mformat must have kept the code; a BPB written over it would boot
 	@# into garbage.
 	@cmp -s -i 62:62 -n 448 $(BIOS_FD_STAGE1) $@.tmp || { \
@@ -103,9 +122,11 @@ $(JUMP_IMG): $(BIOS_FD_STAGE1) $(BIOS_STAGE2) $(JUMP_STAGE3Z) \
 		conv=notrunc status=none
 	dd if=$(JUMP_STAGE3Z) of=$@.tmp bs=512 seek=$(STAGE3_LBA_CHECK) \
 		conv=notrunc status=none
-	$(foreach m,$(JUMP_MODS),mcopy -i $@.tmp $(m) ::$(notdir $(m));)
-	$(if $(MEMTEST),mcopy -i $@.tmp $(MEMTEST) ::MEMTEST.BIN)
+	@# JUMP.INI first, into the root directory's track; the rest are read
+	@# only once a route is chosen.
 	$(if $(JUMP_INI),mcopy -i $@.tmp $(JUMP_INI) ::JUMP.INI)
+	$(foreach m,$(JUMP_MODS),mcopy -i $@.tmp $(m) ::$(notdir $(basename $(m)));)
+	$(if $(MEMTEST),mcopy -i $@.tmp $(MEMTEST) ::MEMTEST.BIN)
 	@mv $@.tmp $@
 	@echo "$@: $$(mdir -i $@ :: | grep "bytes free" | sed "s/^ *//")"
 
