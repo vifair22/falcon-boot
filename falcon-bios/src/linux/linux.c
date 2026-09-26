@@ -432,6 +432,16 @@ int linux_boot(const linux_object *kernel, const linux_object *initrd,
         say("the kernel is 64-bit and this processor has no 64-bit mode");
         return -1;
     }
+    /* Where it runs, and where it is staged, have to be memory: a machine
+     * with less than the kernel's footprint, or something kept resident in
+     * the way (falcon jump's drivers at 15 MB, carved out of the map this
+     * loader was handed), would otherwise take the kernel's first write. */
+    if (!e820_is_ram(geom.load_at, geom.init_size) ||
+        (geom.stage_at != 0 && !e820_is_ram(geom.stage_at, geom.pm_len))) {
+        say("the kernel needs memory this machine's map does not have "
+            "free where it has to go");
+        return -1;
+    }
     setup_len = geom.setup_len;
     pm_len = geom.pm_len;
     load_at = geom.load_at;

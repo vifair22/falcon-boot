@@ -87,12 +87,14 @@ BIOS_MOD_iso     := $(BIOS)/iso/vcd.c $(BIOS)/iso/vcdcore.c
 BIOS_MOD_vfd     := $(BIOS)/vfd/vfd.c
 BIOS_MOD_e820    := $(BIOS)/mem/e820.c
 BIOS_MOD_heap    := $(BIOS)/mem/heap.c
+BIOS_MOD_lowmem  := $(BIOS)/mem/lowmem.c $(BIOS)/mem/lowmem_bda.c
 BIOS_MOD_linux   := $(BIOS)/linux/linux.c $(BIOS)/linux/linuxcore.c
 BIOS_MOD_pos     := $(BIOS)/pos/pos.c
 BIOS_MOD_bsd     := $(BIOS)/bsd/bsd.c
 BIOS_MOD_win     := $(BIOS)/win/win.c
 BIOS_MOD_mbr     := $(BIOS)/mbr/mbr.c
 BIOS_MOD_jumpini := $(BIOS)/jump/jumpini.c
+BIOS_MOD_jmod    := $(BIOS)/jump/jmod.c $(BIOS)/jump/jmodload.c $(BIOS)/jump/jres.c
 
 # Every C source some image links, for compile_commands.json and the analyzers.
 BIOS_CSRCS := $(BIOS_S2_CSRCS)
@@ -209,6 +211,7 @@ $(BIOS_STAGE2): $(BIOS_STAGE2_OBJS) $(BIOS)/start/bios.ld
 # leave something behind in conventional memory.
 BIOS_RES_iso := $(BIOS_OBJ)/$(BIOS)/iso/vcdres.o
 BIOS_RES_vfd := $(BIOS_OBJ)/$(BIOS)/vfd/vfdres.o
+BIOS_RES_jres := $(BIOS_OBJ)/$(BIOS)/jump/rthunk.o
 
 # The hook's blobs, which are generated (falcon-hook/build.mk). The x86-64
 # one is the same object the UEFI loader embeds: falcon-hook runs in the
@@ -283,6 +286,32 @@ $(2): $$($(1)_BIOS_OBJS) $$(BIOS)/start/bios.ld
 	fi
 endef
 
+# $(call jump_module,<name>,<slot macro>,<C sources>)
+#
+# One of falcon jump's drivers (DESIGN Section 14.4): a flat image linked at
+# its slot, which is the address the core reads it to, built to
+# build/bin/mod/<NAME>.MOD, the name the floppy carries it under. The link
+# script is preprocessed with the slot's index, so the address is
+# biosdefs.h's. A module links its own copy of what it uses of falcon-core:
+# nothing of the core is callable from its resident half.
+define jump_module
+$(1)_MOD_OBJS := $$(patsubst %.c,$$(BIOS_OBJ)/%.o,$(3))
+$(1)_MOD := $$(BIN)/mod/$(1).MOD
+BIOS_CSRCS += $(3)
+JUMP_MODS += $$($(1)_MOD)
+
+build/gen/jmod-$(1).ld: $$(BIOS)/hw/jmod.ld.S $$(BIOS)/start/biosdefs.h
+	@mkdir -p $$(@D)
+	$$(CC_HOST) -E -P -x c -I$$(BIOS) -DJMOD_SLOT=$(2) $$< -o $$@
+
+$$($(1)_MOD): $$($(1)_MOD_OBJS) build/gen/jmod-$(1).ld
+	@mkdir -p $$(@D)
+	$$(CC_HOST) -m32 -nostdlib -static -no-pie -Wl,--build-id=none \
+		-Wl,--no-warn-rwx-segments -Wl,-T,build/gen/jmod-$(1).ld \
+		-o $$@.elf $$($(1)_MOD_OBJS) $$(BIOS_LIBGCC)
+	objcopy -O binary -j .image $$@.elf $$@
+endef
+
 # ---- tests ----
 #
 # The image is not in `all` or `test`, but these are: three halves of ordinary
@@ -293,9 +322,11 @@ endef
 # corrupt archive, and a kernel placed past the identity map of the loader's
 # long-mode days triple-faulted.
 BIOS_TESTS := $(addprefix falcon-bios/tests/,main.c vcdcore_test.c vfdcore_test.c \
-	linuxcore_test.c e820_test.c jumpini_test.c)
+	linuxcore_test.c e820_test.c jumpini_test.c jmod_test.c lowmem_test.c \
+	atacore_test.c)
 BIOS_UUT := $(BIOS)/iso/vcdcore.c $(BIOS)/vfd/vfdcore.c $(BIOS)/linux/linuxcore.c $(BIOS)/mem/e820.c \
-	$(BIOS)/jump/jumpini.c
+	$(BIOS)/jump/jumpini.c $(BIOS)/jump/jmod.c $(BIOS)/mem/lowmem.c \
+	$(BIOS)/hw/ata/atacore.c
 
 $(eval $(call test_bin,bios,$(BIOS_TESTS) $(BIOS_UUT)))
 

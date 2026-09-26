@@ -26,6 +26,9 @@ int main(void)
     failed += run_linuxcore_tests();
     failed += run_e820_tests();
     failed += run_jumpini_tests();
+    failed += run_jmod_tests();
+    failed += run_lowmem_tests();
+    failed += run_atacore_tests();
 
     printf("\nfalcon-bios: total failed: %d\n", failed);
     return failed == 0 ? 0 : 1;

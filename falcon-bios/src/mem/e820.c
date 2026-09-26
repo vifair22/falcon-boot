@@ -233,8 +233,80 @@ uint16_t e820_e801_cap(const e820_range *res, unsigned n_res)
 
 /* The cached map, which is the only one the loader has. Split from the line
  * above it so the arithmetic can be handed a map a test wrote. */
+int e820_is_ram_in(const e820_entry *map, unsigned n, uint64_t base,
+                   uint64_t len)
+{
+    uint64_t end;
+    uint64_t at;
+    unsigned i;
+    unsigned pass;
+
+    if (map == (const e820_entry *)0 || len == 0 || base + len < base)
+        return 0;
+    end = base + len;
+
+    for (i = 0; i < n; i++) {
+        if (map[i].type != E820_USABLE && map[i].len != 0 &&
+            map[i].base < end && base < map[i].base + map[i].len)
+            return 0;
+    }
+    /* Walk the range through the usable entries that cover it, in any order
+     * the map lists them; each pass either advances or the range has a hole.
+     * n passes is enough for every entry to be used once. */
+    at = base;
+    for (pass = 0; pass <= n && at < end; pass++) {
+        uint64_t next = at;
+
+        for (i = 0; i < n; i++) {
+            uint64_t e_end = map[i].base + map[i].len;
+
+            if (map[i].type == E820_USABLE && map[i].base <= at &&
+                e_end > next)
+                next = e_end;
+        }
+        if (next == at)
+            return 0;
+        at = next;
+    }
+    return at >= end;
+}
+
+int e820_is_ram(uint64_t base, uint64_t len)
+{
+    return e820_is_ram_in(g_map, g_count, base, len);
+}
+
 uint64_t e820_place_high(uint64_t size, uint64_t align, uint64_t low,
                          uint64_t high)
 {
     return e820_place_in(g_map, g_count, size, align, low, high);
+}
+
+uint16_t e820_e801_cap_low(const e820_range *res, unsigned n_res)
+{
+    const uint64_t one = 1024ull * 1024ull;
+    const uint64_t sixteen = 16ull * 1024ull * 1024ull;
+    uint64_t lowest = sixteen;
+    unsigned i;
+
+    if (res == (const e820_range *)0)
+        return 0xFFFFu;
+    for (i = 0; i < n_res; i++) {
+        uint64_t start = res[i].base;
+        uint64_t end;
+
+        if (res[i].len == 0)
+            continue;
+        end = (res[i].len > UINT64_MAX - start) ? UINT64_MAX
+                                                : start + res[i].len;
+        if (end <= one || start >= sixteen)
+            continue;
+        if (start < one)
+            start = one;
+        if (start < lowest)
+            lowest = start;
+    }
+    if (lowest >= sixteen)
+        return 0xFFFFu;
+    return (uint16_t)((lowest - one) >> 10);
 }

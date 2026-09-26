@@ -43,6 +43,17 @@ uint64_t e820_place_high(uint64_t size, uint64_t align, uint64_t low,
 uint64_t e820_place_in(const e820_entry *map, unsigned n, uint64_t size,
                        uint64_t align, uint64_t low, uint64_t high);
 
+/* Whether every byte of [base, base + len) is usable memory: covered by
+ * usable entries and overlapped by no other kind, since a real map can carry
+ * a reserved entry inside a usable one. A fixed address this loader puts
+ * something at (falcon jump's module region, a fixed-address kernel) is
+ * checked with it. Nonzero when it is RAM; an empty range is not. */
+int e820_is_ram_in(const e820_entry *map, unsigned n, uint64_t base,
+                   uint64_t len);
+
+/* The same over the cached map. */
+int e820_is_ram(uint64_t base, uint64_t len);
+
 /* A stretch of memory the loader leaves in use behind it when it hands the
  * machine over: the resident CD handler, and the Windows route's patched
  * tail (vcd.c). */
@@ -73,9 +84,13 @@ int e820_carve(const e820_entry *in, unsigned n, const e820_range *res,
 /* INT 15h AX=E801's answer for memory above 16 MB is one contiguous count of
  * 64 KB blocks, so it cannot describe a hole. This is the count that stops
  * short of the lowest range in `res` that reaches above 16 MB, or 0xFFFF
- * (no limit) when none does. A range between 1 and 16 MB would need the
- * other half of E801's answer capped too; nothing reserves one, and vcd.c
- * refuses a range there. */
+ * (no limit) when none does. */
 uint16_t e820_e801_cap(const e820_range *res, unsigned n_res);
+
+/* The other half of E801's answer, the KB between 1 and 16 MB, which is one
+ * contiguous count too: the count that stops short of the lowest range in
+ * `res` that reaches into that stretch (falcon jump's drivers, at 15 MB), or
+ * 0xFFFF (no limit) when none does. */
+uint16_t e820_e801_cap_low(const e820_range *res, unsigned n_res);
 
 #endif /* FALCON_BIOS_E820_H */

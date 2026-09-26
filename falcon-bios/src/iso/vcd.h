@@ -7,6 +7,7 @@
 #include <result.h>
 #include <fs/fs.h>
 #include <part/part.h>
+#include <media/eltorito.h>
 
 /* The drive number the served medium answers on.
  *
@@ -24,6 +25,21 @@
  * handler will scan. What it hands over is logged to serial. */
 int vcd_chainload(bios_disk *d, fs_vol *p2, const gpt_part *p2part,
                   const fs_dirent *iso, fs_file *isofile, boot_result *r);
+
+/* The same for a whole drive whose sectors are the medium's CD sectors
+ * (falcon jump's CD route, DESIGN Section 14.6: a drive a module answers
+ * through the reverse thunk). `n_cd` is the disc's length in CD sectors. */
+int vcd_chainload_drive(bios_disk *d, uint64_t n_cd, boot_result *r);
+
+/* Memory the caller keeps in use behind the handoff, carved out of the map
+ * the medium is handed along with the virtual CD's own. At most two. */
+int vcd_keep(uint64_t base, uint64_t len);
+void vcd_keep_reset(void);
+
+/* The catalog entry a BIOS boots: the default entry, or the first that says
+ * x86 (media/eltorito.c's header says why the platform is not trusted
+ * first). NULL when the medium boots only on UEFI. */
+const elt_entry *vcd_boot_entry(const elt_catalog *cat);
 
 /* Serves `len` bytes at `iso_off` from memory rather than from the disk when
  * the medium is next chainloaded. This is iso/overlay.h's job under UEFI and

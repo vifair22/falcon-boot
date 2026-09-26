@@ -130,9 +130,16 @@ changed with `mcopy` or by mounting it.
 |---|---|---|
 | `MBR` | a disk's own boot code, started from 0x7C00 with DL naming that disk | its row, `Disk 0x80` and so on |
 | `MEM` | memtest86+, `MEMTEST.BIN` on the floppy, started through the x86 boot protocol | the Memory test row |
+| `CDR` | the disc in an IDE CD drive, through `ATA.MOD` and the stick's virtual CD as drive 0xE0 | the CD drive row |
 
-Every BIOS disk whose first sector carries the boot signature is a row, and
-the Memory test row is there when the floppy holds a `MEMTEST.BIN`. `make
+Every BIOS disk whose first sector carries the boot signature is a row, the
+CD drive row is there when the floppy holds `ATA.MOD` (which `make jump`
+copies on), and the Memory test row when it holds a `MEMTEST.BIN`. The CD
+route boots the disc in the first drive on the legacy IDE channels that has
+one: a no-emulation disc (every Linux, BSD and Windows 2000-on disc), which
+needs 16 MB of memory since the driver stays resident at 15 MB, or a
+floppy-emulation disc (DOS and Win9x boot discs, vendor utility CDs), which
+is read into memory above 64 MB and so needs more than that. `make
 jump MEMTEST=<file>` copies one on; it has to be a build carrying the x86
 boot protocol header (memtest86+ 6 and later), and the 32-bit build for a
 processor with no 64-bit mode.
@@ -142,7 +149,7 @@ processor with no 64-bit mode.
     default=hdd        ; hdd, memtest, cd or usb
     timeout=5          ; seconds; any key stops the countdown
 
-`hdd` is the first disk row. Without the file, or with a default whose row
+`hdd` is the first disk row, `cd` the CD drive row. Without the file, or with a default whose row
 is not on the menu, the menu waits. A line the file cannot take is named on
 screen before the menu, which then waits with no default. `make jump
 JUMP_INI=<file>` copies one on.

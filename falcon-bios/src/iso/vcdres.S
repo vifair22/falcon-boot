@@ -82,6 +82,8 @@ vcd_blob_start:
 	.word   0
 	.org    VCD_OFF_E801CAP
 	.word   0
+	.org    VCD_OFF_E801LOW
+	.word   0
 	.org    VCD_OFF_RUNS
 	.space  (VCD_MAX_RUNS_ASM * VCD_RUN_LEN)
 	.org    VCD_OFF_SPEC
@@ -635,6 +637,8 @@ fail:
 vcd_entry15:
 	cmpw    $0xE801, %ax
 	je      e801_capped
+	cmpb    $0x88, %ah
+	je      ah88_capped
 	cmpl    $0x0000E820, %eax
 	jne     1f
 	cmpl    $0x534D4150, %edx    /* "SMAP": the caller asked for this map */
@@ -675,9 +679,23 @@ e820_bad:
 	movb    $0x86, %ah
 	jmp     fail
 
+/* AH=88h: the KB above a megabyte, the oldest question and the one some of
+ * the loaders on these machines still ask. The same ceiling as E801's lower
+ * half, since both count contiguous KB from 1 MB up. */
+ah88_capped:
+	pushfw
+	lcall   *%cs:VCD_OFF_OLDINT15
+	jc      fail
+	cmpw    %cs:VCD_OFF_E801LOW, %ax
+	jbe     succeed
+	movw    %cs:VCD_OFF_E801LOW, %ax
+	jmp     succeed
+
 /* E801: the BIOS's answer, with the count of 64 KB blocks above 16 MB in BX
- * and DX held to the ceiling. The flags come back from the BIOS's iret into
- * ours, the way the read path's AH=42h call gets them. */
+ * and DX held to its ceiling, and the KB between 1 and 16 MB in AX and CX to
+ * theirs (falcon jump's drivers are resident at 15 MB). The flags come back
+ * from the BIOS's iret into ours, the way the read path's AH=42h call gets
+ * them. */
 e801_capped:
 	pushfw
 	lcall   *%cs:VCD_OFF_OLDINT15
@@ -686,8 +704,14 @@ e801_capped:
 	jbe     3f
 	movw    %cs:VCD_OFF_E801CAP, %bx
 3:	cmpw    %cs:VCD_OFF_E801CAP, %dx
-	jbe     succeed
+	jbe     4f
 	movw    %cs:VCD_OFF_E801CAP, %dx
+4:	cmpw    %cs:VCD_OFF_E801LOW, %ax
+	jbe     5f
+	movw    %cs:VCD_OFF_E801LOW, %ax
+5:	cmpw    %cs:VCD_OFF_E801LOW, %cx
+	jbe     succeed
+	movw    %cs:VCD_OFF_E801LOW, %cx
 	jmp     succeed
 
 	.org    VCD_OFF_E820

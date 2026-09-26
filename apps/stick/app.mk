@@ -32,6 +32,7 @@ sbat-check: sbat-check-stick
 STICK_BIOS := $(STICK)/bios_main.c
 STICK_BIOS += $(BIOS_MOD_scan) $(BIOS_MOD_pos) $(BIOS_MOD_prompt) $(BIOS_MOD_console) $(BIOS_MOD_linux)
 STICK_BIOS += $(BIOS_MOD_iso) $(BIOS_MOD_vfd) $(BIOS_MOD_bsd) $(BIOS_MOD_win)
+STICK_BIOS += $(BIOS_MOD_lowmem)       # the residents' blocks
 STICK_BIOS += $(BIOS_MOD_heap)         # the Windows tail and the floppy image
 STICK_BIOS += $(BIOS_MOD_marker)       # the only disk write in falcon-bios
 STICK_BIOS += $(BIOS_MOD_e820) $(BIOS_MOD_disk) $(BIOS_MOD_serial)

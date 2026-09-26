@@ -225,11 +225,12 @@
 
 /* The INT 15h half (DESIGN Section 12.3.8): the vector it chains to, how many
  * entries of the memory map it answers E820 with (0: it answers none and the
- * BIOS answers them all), and the ceiling on E801's count of 64 KB blocks
- * above 16 MB. */
+ * BIOS answers them all), and the ceilings on E801's two counts: 64 KB
+ * blocks above 16 MB, and KB between 1 and 16 MB. */
 #define VCD_OFF_OLDINT15 0x00E0   /* far pointer to the previous handler */
 #define VCD_OFF_NE820    0x00E4   /* word */
 #define VCD_OFF_E801CAP  0x00E6   /* word */
+#define VCD_OFF_E801LOW  0x00E8   /* word: the 1-16 MB half's ceiling, KB */
 #define VCD_OFF_RUNS     0x0100   /* 64 runs of 16 bytes */
 #define VCD_RUN_LEN      16
 #define VCD_MAX_RUNS_ASM 64
@@ -305,6 +306,52 @@
  * 0x7C00: the same conventional address the CD's boot image uses, since the
  * two routes never run together. */
 #define VFD_STAGE_ADDR   VCD_STAGE_ADDR
+
+/* ---- falcon jump's modules (docs/DESIGN.md Section 14.4) ----
+ *
+ * A driver is a flat image linked at a fixed slot, read off the floppy into
+ * that slot, and left there for as long as it serves a drive. The slots are
+ * one small region just under KERNEL_ADDR, so any machine with 16 MB has
+ * them, and above everything a falcon-bios stage 3 occupies (its stack ends
+ * at STAGE3_STACK), so a stick's loader started through a module never lands
+ * on one. The region is carved out of the memory map the next loader is
+ * handed. Each slot holds the module's image, its .bss and its stack, which
+ * is the top JMOD_STACK_BYTES of the slot. */
+#define JMOD_REGION      0x00F00000
+#define JMOD_SLOT_BYTES  0x00020000   /* 128 KB */
+#define JMOD_SLOTS       8
+#define JMOD_REGION_END  (JMOD_REGION + JMOD_SLOTS * JMOD_SLOT_BYTES)
+#define JMOD_STACK_BYTES 0x2000
+#define JMOD_SLOT_ADDR(n) (JMOD_REGION + (n) * JMOD_SLOT_BYTES)
+#define JMOD_SLOT_ATA    0
+#define JMOD_SLOT_UHCI   1
+#define JMOD_SLOT_OHCI   2
+#define JMOD_SLOT_EHCI   3
+#define JMOD_SLOT_USB    4
+
+/* The reverse thunk (falcon-bios/src/jump/rthunk.S, jres.c): the real-mode
+ * INT 13h entry a module's resident half is reached through. One block in
+ * conventional memory, taken from the BDA's count as the virtual CD's is,
+ * data at fixed offsets and then code, position independent: it is copied
+ * wherever the count leaves room. The far pointers are part-filled by the
+ * assembly (their offsets) and part by the installer (the block's segment
+ * and linear address). The build checks the offsets against the .org's. */
+#define JRES_OFF_OLDINT13 0x00   /* far pointer to the previous handler */
+#define JRES_OFF_DRIVE    0x04   /* byte: the drive the module answers */
+#define JRES_OFF_A20      0x05   /* byte: port 0x92 as the caller had it */
+#define JRES_OFF_GDTR     0x08   /* 6 bytes: this block's GDT */
+#define JRES_OFF_SAVEGDT  0x10   /* 6 bytes: the caller's GDTR */
+#define JRES_OFF_SAVESP   0x18   /* word */
+#define JRES_OFF_SAVESS   0x1A   /* word */
+#define JRES_OFF_ENTRY    0x1C   /* dword: the module's int13, linear */
+#define JRES_OFF_STACK    0x20   /* dword: the module's stack top, linear */
+#define JRES_OFF_PM32PTR  0x28   /* 6 bytes: offset32, selector 0x08 */
+#define JRES_OFF_RMPTR    0x30   /* 4 bytes: offset16, segment */
+#define JRES_OFF_PM16PTR  0x34   /* 6 bytes: offset32, selector 0x18 */
+#define JRES_OFF_GDT      0x40   /* 5 descriptors */
+#define JRES_OFF_REGS     0x70   /* jmod_regs, 32 bytes */
+#define JRES_OFF_CODE     0x90   /* the INT 13h entry */
+#define JRES_BYTES        0x400  /* 1 KB, what the BDA loses */
 
 /* Stage 3's stack. Above the image and below anything a payload is loaded
  * into (KERNEL_ADDR is 16 MB). Everything between STAGE3_LOAD and here is

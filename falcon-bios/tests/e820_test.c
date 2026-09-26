@@ -239,6 +239,65 @@ static void test_e801_cap(void **state)
     assert_int_equal(e820_e801_cap((const e820_range *)0, 0), 0xFFFFu);
 }
 
+/* The module region below 16 MB, on the maps a machine hands over. */
+static void test_is_ram(void **state)
+{
+    static const e820_entry plain[] = {
+        { 0x0ull, 0x9FC00ull, E820_USABLE, 0 },
+        { 0x9FC00ull, 0x400ull, E820_RESERVED, 0 },
+        { 0x100000ull, 511ull * MIB, E820_USABLE, 0 },
+    };
+    /* Two usable entries that abut, listed out of order. */
+    static const e820_entry split[] = {
+        { 0x00F80000ull, 0x01000000ull, E820_USABLE, 0 },
+        { 0x00100000ull, 0x00E80000ull, E820_USABLE, 0 },
+    };
+    /* A reserved hole inside a usable entry. */
+    static const e820_entry holed[] = {
+        { 0x00100000ull, 63ull * MIB, E820_USABLE, 0 },
+        { 0x00F40000ull, 0x1000ull, E820_RESERVED, 0 },
+    };
+    /* A 15 MB machine. */
+    static const e820_entry small[] = {
+        { 0x00100000ull, 14ull * MIB, E820_USABLE, 0 },
+    };
+
+    (void)state;
+    assert_true(e820_is_ram_in(plain, 3, 0x00F00000ull, 1ull * MIB));
+    assert_false(e820_is_ram_in(plain, 3, 0x9F000ull, 0x2000ull));
+    assert_true(e820_is_ram_in(split, 2, 0x00F00000ull, 1ull * MIB));
+    assert_false(e820_is_ram_in(holed, 2, 0x00F00000ull, 1ull * MIB));
+    assert_true(e820_is_ram_in(holed, 2, 0x00F00000ull, 0x40000ull));
+    assert_false(e820_is_ram_in(small, 1, 0x00F00000ull, 1ull * MIB));
+    assert_false(e820_is_ram_in(plain, 3, 0x00F00000ull, 0));
+    assert_false(e820_is_ram_in(NULL, 3, 0x00F00000ull, 1ull * MIB));
+    assert_false(e820_is_ram_in(plain, 3, ~0ull - 10u, 100u));
+}
+
+/* The 1-16 MB half: falcon jump's region at 15 MB leaves 14 MB. */
+static void test_e801_cap_low(void **state)
+{
+    static const e820_range jump[] = {
+        { 0x9B800ull, 0x4000ull },            /* conventional: not this half */
+        { 0x00F00000ull, 0x00100000ull },
+        { 0x40000000ull, 0x1000ull },         /* above 16 MB: the other half */
+    };
+    static const e820_range none[] = {
+        { 0x9B800ull, 0x4000ull },
+        { 0x01000000ull, 0x1000ull },
+    };
+    /* Straddling 1 MB: the whole half is gone. */
+    static const e820_range low[] = {
+        { 0x000F0000ull, 0x20000ull },
+    };
+
+    (void)state;
+    assert_int_equal(e820_e801_cap_low(jump, 3), 14u * 1024u);
+    assert_int_equal(e820_e801_cap_low(none, 2), 0xFFFFu);
+    assert_int_equal(e820_e801_cap_low(low, 1), 0);
+    assert_int_equal(e820_e801_cap_low(NULL, 0), 0xFFFFu);
+}
+
 int run_e820_tests(void)
 {
     const struct CMUnitTest tests[] = {
@@ -250,6 +309,8 @@ int run_e820_tests(void)
         cmocka_unit_test(test_carve_edges),
         cmocka_unit_test(test_carve_refusals),
         cmocka_unit_test(test_e801_cap),
+        cmocka_unit_test(test_is_ram),
+        cmocka_unit_test(test_e801_cap_low),
     };
 
     return cmocka_run_group_tests_name("bios e820", tests, NULL, NULL);
