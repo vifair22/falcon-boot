@@ -71,7 +71,7 @@ BIOS_CFLAGS := -std=c11 -O2 -ffreestanding -fno-stack-protector \
 # gate for every line of output.
 BIOS_S2_CSRCS := $(addprefix $(BIOS)/,start/load3.c disk/disk.c vfd/vfdcore.c console/console.c \
 	start/fault.c) \
-	$(CORE_LIBC)
+	$(CORE_LIBC) $(CORE_GZ)
 BIOS_S2_COBJS := $(patsubst %.c,$(BIOS_OBJ)/%.o,$(BIOS_S2_CSRCS))
 
 # The modules a stage 3 is built from. Which ones a loader takes is its app's

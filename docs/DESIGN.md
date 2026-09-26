@@ -3933,8 +3933,22 @@ ends before its track does fills a track cache instead (`disk.c`,
 `TRACK_CACHE_ADDR`), so a FAT walk's single sectors and stage 3's header
 cost one revolution per track rather than one each. Measured on the
 ThinkPad A21m (2026-09-26), stage 1 to the menu: 7.3 s before these, 5.8 s
-after; of what remains, stage 3's 73 KB is 2.8 s, which only reading fewer
+after; of what remains, stage 3's 73 KB was 2.8 s, which only reading fewer
 bytes shortens.
+
+So stage 3 is on the floppy compressed: a "BOSZ" header and a gzip member
+of the whole ordinary stage 3 (`falcon-bios/tools/mk-stage3z.sh`, `gzip -9
+-n`), 37 KB in place of 73. Stage 2 reads it to 6 MB and inflates it to
+where stage 3 always runs (`load3.c`, falcon-core's `gz/`, written from
+RFCs 1951 and 1952 with no allocation and no .bss, since stage 2 has no
+loader to clear one), then checks it as it checks any stage 3. Deflate,
+not LZ4 (44 KB, a smaller decoder) nor LZMA (34 KB, a decoder twice the
+size): at a floppy's rate the decoder is read on every boot too, and
+deflate's 4 KB in stage 2 buys back the most. The gzip member's CRC-32 and
+length cover the inflated stage 3, so a floppy that reads wrong stops with
+a sentence instead of running what it read. Only jump's stage 3 is
+compressed; the stick's and the station's are read off media where the
+bytes cost nothing, and stage 2 takes either.
 
 `make jump` builds `build/bin/falcon-jump.img`, the whole floppy, with
 mtools (no loop device, no sudo).

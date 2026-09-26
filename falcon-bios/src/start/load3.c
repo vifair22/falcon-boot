@@ -15,10 +15,58 @@
 #include <start/bios.h>
 
 #include <lib/string.h>
+#include <gz/gz.h>
 
 static __attribute__((noreturn)) void die(const char *why)
 {
     bios_fatal(why);
+}
+
+/* A compressed stage 3 (biosdefs.h, STAGE3_MAGIC_GZ): the file to
+ * GZ_STAGE_ADDR, inflated to STAGE3_LOAD with its CRC-32 and length checked,
+ * and then the same checks and start as an ordinary one. On a floppy the
+ * bytes read are the time taken, which is the whole reason: falcon jump's
+ * stage 3 is half the size this way (DESIGN Section 14.3). Does not return. */
+static __attribute__((noreturn)) void load_gz(bios_disk *d, uint64_t base)
+{
+    volatile uint32_t *zh = (volatile uint32_t *)(uintptr_t)STAGE3_LOAD;
+    uint32_t *hdr = (uint32_t *)(uintptr_t)STAGE3_LOAD;
+    uint8_t *packed = (uint8_t *)(uintptr_t)GZ_STAGE_ADDR;
+    uint64_t file = zh[1];
+    uint64_t mem = zh[2];
+    uint64_t want = zh[3];
+    uint64_t sectors;
+    size_t got = 0;
+
+    if (file <= STAGE3_HDR ||
+        file > (uint64_t)STAGE3_MAX_SECTORS * d->sector_size)
+        die("stage 3 declares a length this stage will not read");
+    if (want < STAGE3_HDR || mem < want ||
+        mem > GZ_STAGE_ADDR - STAGE3_LOAD)
+        die("stage 3 declares a size that will not fit below its staging");
+
+    sectors = (file + d->sector_size - 1u) / d->sector_size;
+    if (bios_disk_read(d, base, sectors * d->sector_size, packed) != 0)
+        die("stage 3 is on the disk but would not read whole");
+    if (gz_member(packed + STAGE3_HDR, (size_t)(file - STAGE3_HDR),
+                  (uint8_t *)(uintptr_t)STAGE3_LOAD, (size_t)want,
+                  &got) != GZ_OK || got != want)
+        die("stage 3 did not inflate whole; the disk may have read wrong");
+    if (hdr[0] != (uint32_t)STAGE3_MAGIC || hdr[1] != want || hdr[2] != mem)
+        die("stage 3 inflated to something that is not stage 3");
+
+    memset((void *)(uintptr_t)(STAGE3_LOAD + want), 0, (size_t)(mem - want));
+
+    bios_puts("falcon-bios: stage 3 inflated, ");
+    bios_put_dec(file);
+    bios_puts(" bytes to ");
+    bios_put_dec(want);
+    bios_puts(" at ");
+    bios_put_hex64(STAGE3_LOAD);
+    bios_puts("\n");
+
+    ((void (*)(void))(uintptr_t)(STAGE3_LOAD + STAGE3_HDR))();
+    die("stage 3 returned");
 }
 
 /* Entered from stage2.S in 32-bit protected mode with the drive the BIOS booted from.
@@ -51,6 +99,10 @@ void stage3_load(uint8_t drive)
     if (bios_disk_read(&d, base, d.sector_size, (void *)(uintptr_t)hdr) != 0)
         die("stage 3 could not be read");
 
+    if (hdr[0] == (uint32_t)STAGE3_MAGIC_GZ) {
+        load_gz(&d, base);
+        return;
+    }
     if (hdr[0] != (uint32_t)STAGE3_MAGIC)
         die("stage 3 is not where the header says it should be");
 

@@ -171,6 +171,9 @@ falcon-efi and falcon-bios, which never share a set, may both have a `pos/`.
     one read callback, which is the job the firmware's ConnectController does
     today and the per-platform boundary a BIOS build would need
     (docs/notes/iso-reader-route.md).
+  - `gz/` inflate and the gzip member around it (RFCs 1951, 1952), for
+    falcon jump's stage 3, which stage 2 inflates off the floppy; no
+    allocation and no .bss.
   - `wim/` LZX decompression and the WIM reader, plus the boot.wim patch
     (`wim_patch_build`): a new header and a tail appended after the
     original's end, the original bytes untouched.
