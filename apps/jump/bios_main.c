@@ -27,6 +27,8 @@
 #include <iso/vcd.h>
 #include <vfd/vfd.h>
 
+#include <hw/pci.h>
+
 #include <fs/fs.h>
 #include <part/part.h>
 #include <media/eltorito.h>
@@ -77,6 +79,31 @@ static fs_dirent g_memtest;
 static int       g_have_memtest;
 static int       g_have_ata;
 static int       g_have_uhci;
+
+/* What the PCI scan found (DESIGN Section 14.2): the routes a controller
+ * exists for. A row needs its module on the floppy and its controller in
+ * the machine; nothing is loaded to find out. */
+static int g_pci_ide;
+static int g_pci_uhci;
+
+/* The PCI classes, class << 16 | subclass << 8 | programming interface; an
+ * IDE controller's interface byte varies with its modes, so it is matched
+ * without it. */
+#define PCI_UHCI 0x0C0300u
+
+static void pci_scan(void)
+{
+    pci_loc loc;
+    unsigned pi;
+
+    for (pi = 0; pi < 256u && !g_pci_ide; pi++)
+        g_pci_ide = pci_find_class(0x010100u | pi, 0, &loc) == 0;
+    g_pci_uhci = pci_find_class(PCI_UHCI, 0, &loc) == 0;
+    bios_puts("falcon-bios: PCI: ");
+    bios_puts(g_pci_ide ? "IDE " : "");
+    bios_puts(g_pci_uhci ? "UHCI " : "");
+    bios_puts("\n");
+}
 
 static jump_cfg g_cfg;
 static char     g_ini[INI_MAX];
@@ -495,7 +522,7 @@ static void list_run(void)
             kind[n] = (int)i;
             n++;
         }
-        if (g_have_ata) {
+        if (g_have_ata && g_pci_ide) {
             if (g_cfg.def == JUMP_DEF_CD) {
                 def = n;
                 have_def = 1;
@@ -504,7 +531,7 @@ static void list_run(void)
             kind[n] = ROW_CD;
             n++;
         }
-        if (g_have_uhci) {
+        if (g_have_uhci && g_pci_uhci) {
             if (g_cfg.def == JUMP_DEF_USB) {
                 def = n;
                 have_def = 1;
@@ -562,6 +589,7 @@ void bios_main(uint8_t drive)
     bios_puts(" E820 entries\n");
 
     read_floppy(drive);
+    pci_scan();
     scan_disks();
 
     screen_init();

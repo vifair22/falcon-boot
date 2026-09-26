@@ -135,13 +135,14 @@ changed with `mcopy` or by mounting it.
 
 Every BIOS disk whose first sector carries the boot signature is a row, the
 CD drive row is there when the floppy holds `ATA.MOD` (which `make jump`
-copies on), and the Memory test row when it holds a `MEMTEST.BIN`. The CD
+copies on) and the machine has an IDE controller, and the Memory test row
+when the floppy holds a `MEMTEST.BIN`. The CD
 route boots the disc in the first drive on the legacy IDE channels that has
 one: a no-emulation disc (every Linux, BSD and Windows 2000-on disc), which
 needs 16 MB of memory since the driver stays resident at 15 MB, or a
 floppy-emulation disc (DOS and Win9x boot discs, vendor utility CDs), which
 is read into memory above 64 MB and so needs more than that. The USB stick row is there when the floppy holds
-`UHCI.MOD`; the route boots the first falcon stick (an ISO library or a
+`UHCI.MOD` and the machine has a UHCI controller; the route boots the first falcon stick (an ISO library or a
 shelf in its GPT) on a UHCI root port, as the BIOS disk after the machine's
 own, and needs 16 MB like the CD. A USB keyboard stops working once it runs:
 jump takes the controller from the BIOS, so the machine wants a PS/2 one. `make

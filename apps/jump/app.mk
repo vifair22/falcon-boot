@@ -44,8 +44,24 @@ $(eval $(call jump_module,UHCI,JMOD_SLOT_UHCI,\
 MEMTEST ?=
 JUMP_INI ?=
 
+# Which of the two the image carries, as a file whose contents change when
+# the choice does: a changed MEMTEST= or JUMP_INI= rebuilds the image, which
+# a timestamp alone would not, since the files themselves are older. The
+# same trick as build/version.h.
+JUMP_FILES_STAMP := build/jump-files.stamp
+
+jump-files-stamp:
+	@mkdir -p build
+	@printf 'MEMTEST=%s\nJUMP_INI=%s\n' '$(MEMTEST)' '$(JUMP_INI)' \
+		> $(JUMP_FILES_STAMP).tmp
+	@cmp -s $(JUMP_FILES_STAMP).tmp $(JUMP_FILES_STAMP) || \
+		mv $(JUMP_FILES_STAMP).tmp $(JUMP_FILES_STAMP)
+	@rm -f $(JUMP_FILES_STAMP).tmp
+
+$(JUMP_FILES_STAMP): jump-files-stamp ;
+
 $(JUMP_IMG): $(BIOS_FD_STAGE1) $(BIOS_STAGE2) $(BIOS_JUMP_STAGE3) \
-		$(JUMP_MODS) $(MEMTEST) $(JUMP_INI)
+		$(JUMP_MODS) $(MEMTEST) $(JUMP_INI) $(JUMP_FILES_STAMP)
 	@mkdir -p $(@D)
 	@rm -f $@.tmp
 	@s3=$$(( ($$(stat -c %s $(BIOS_JUMP_STAGE3)) + 511) / 512 )); \
@@ -70,4 +86,4 @@ $(JUMP_IMG): $(BIOS_FD_STAGE1) $(BIOS_STAGE2) $(BIOS_JUMP_STAGE3) \
 
 jump: $(JUMP_IMG)
 
-.PHONY: jump
+.PHONY: jump jump-files-stamp
