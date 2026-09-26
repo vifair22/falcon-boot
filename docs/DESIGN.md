@@ -3851,7 +3851,10 @@ A21m's PCI-1450: its falcon-bios read its stages off the card as drive
 0x81. The card takes only 3.3 V, and the bridge powers it only when the
 socket control register and the ExCA power register's VCC field both ask
 for 3.3 V (the rig's model now does the same, and `cf3v` is that card).
-`USB` is still to be measured there.
+And `USB`, to the 128 GB 32-bit stick on the A21m's UHCI (USB 1.1): its
+stages loaded as drive 0x81 through `UHCI.MOD`, and its falcon-bios
+mounted p2 and listed its ISOs. Every route of 14.1 is measured on the
+A21m.
 
 A floppy that lives in the drive of an old BIOS machine and is its boot
 manager. It boots the machine's own disks by default, memtest86+ on request,
