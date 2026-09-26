@@ -25,7 +25,24 @@ $(BIOS_OBJ)/$(JUMP)/bios_main.o: build/version.h
 # The drivers (DESIGN Section 14.4), each a module read off the floppy only
 # for the route that needs it.
 $(eval $(call jump_module,ATA,JMOD_SLOT_ATA,\
-	$(BIOS)/hw/ata/ata.c $(BIOS)/hw/ata/atacore.c $(CORE_LIBC)))
+	$(BIOS)/hw/ata/ata.c $(BIOS)/hw/ata/atacore.c $(BIOS)/hw/scsi/scsi.c \
+	$(BIOS)/hw/blk13.c $(CORE_LIBC)))
+$(eval $(call jump_module,UHCI,JMOD_SLOT_UHCI,\
+	$(BIOS)/hw/usb/uhci_mod.c $(BIOS)/hw/usb/uhci.c $(BIOS)/hw/usb/msc.c \
+	$(BIOS)/hw/usb/usbcore.c $(BIOS)/hw/scsi/scsi.c $(BIOS)/hw/blk13.c \
+	$(CORE_LIBC)))
+$(eval $(call jump_module,PCC,JMOD_SLOT_PCC,\
+	$(BIOS)/hw/pcc/pcc.c $(BIOS)/hw/pcc/pcccore.c $(BIOS)/hw/ata/atadisk.c \
+	$(BIOS)/hw/ata/atacore.c $(BIOS)/hw/scsi/scsi.c $(BIOS)/hw/blk13.c \
+	$(CORE_LIBC)))
+$(eval $(call jump_module,EHCI,JMOD_SLOT_EHCI,\
+	$(BIOS)/hw/usb/ehci_mod.c $(BIOS)/hw/usb/ehci.c $(BIOS)/hw/usb/msc.c \
+	$(BIOS)/hw/usb/usbcore.c $(BIOS)/hw/scsi/scsi.c $(BIOS)/hw/blk13.c \
+	$(CORE_LIBC)))
+$(eval $(call jump_module,OHCI,JMOD_SLOT_OHCI,\
+	$(BIOS)/hw/usb/ohci_mod.c $(BIOS)/hw/usb/ohci.c $(BIOS)/hw/usb/msc.c \
+	$(BIOS)/hw/usb/usbcore.c $(BIOS)/hw/scsi/scsi.c $(BIOS)/hw/blk13.c \
+	$(CORE_LIBC)))
 
 # The floppy (Section 14.3): a 1.44 MB FAT12 volume whose reserved sectors
 # hold stage 2 at STAGE2_LBA and stage 3 at STAGE3_LBA, the stick's own
@@ -39,8 +56,24 @@ $(eval $(call jump_module,ATA,JMOD_SLOT_ATA,\
 MEMTEST ?=
 JUMP_INI ?=
 
+# Which of the two the image carries, as a file whose contents change when
+# the choice does: a changed MEMTEST= or JUMP_INI= rebuilds the image, which
+# a timestamp alone would not, since the files themselves are older. The
+# same trick as build/version.h.
+JUMP_FILES_STAMP := build/jump-files.stamp
+
+jump-files-stamp:
+	@mkdir -p build
+	@printf 'MEMTEST=%s\nJUMP_INI=%s\n' '$(MEMTEST)' '$(JUMP_INI)' \
+		> $(JUMP_FILES_STAMP).tmp
+	@cmp -s $(JUMP_FILES_STAMP).tmp $(JUMP_FILES_STAMP) || \
+		mv $(JUMP_FILES_STAMP).tmp $(JUMP_FILES_STAMP)
+	@rm -f $(JUMP_FILES_STAMP).tmp
+
+$(JUMP_FILES_STAMP): jump-files-stamp ;
+
 $(JUMP_IMG): $(BIOS_FD_STAGE1) $(BIOS_STAGE2) $(BIOS_JUMP_STAGE3) \
-		$(JUMP_MODS) $(MEMTEST) $(JUMP_INI)
+		$(JUMP_MODS) $(MEMTEST) $(JUMP_INI) $(JUMP_FILES_STAMP)
 	@mkdir -p $(@D)
 	@rm -f $@.tmp
 	@s3=$$(( ($$(stat -c %s $(BIOS_JUMP_STAGE3)) + 511) / 512 )); \
@@ -53,6 +86,12 @@ $(JUMP_IMG): $(BIOS_FD_STAGE1) $(BIOS_STAGE2) $(BIOS_JUMP_STAGE3) \
 	@cmp -s -i 62:62 -n 448 $(BIOS_FD_STAGE1) $@.tmp || { \
 		echo "ERROR: mformat did not keep the boot sector's code"; \
 		rm -f $@.tmp; exit 1; }
+	@# Stage 2's real length, for the boot sector to read no more than
+	@# that (boot_fd.S, FD_S2_SECTORS_OFF): little endian, two bytes.
+	@n=$$(( ($$(stat -c %s $(BIOS_STAGE2)) + 511) / 512 )); \
+	printf "$$(printf '\\%03o\\%03o' $$((n & 255)) $$((n >> 8)))" | \
+		dd of=$@.tmp bs=1 seek=$(FD_S2_SECTORS_OFF_CHECK) conv=notrunc \
+		status=none
 	dd if=$(BIOS_STAGE2) of=$@.tmp bs=512 seek=$(STAGE2_LBA_CHECK) \
 		conv=notrunc status=none
 	dd if=$(BIOS_JUMP_STAGE3) of=$@.tmp bs=512 seek=$(STAGE3_LBA_CHECK) \
@@ -65,4 +104,10 @@ $(JUMP_IMG): $(BIOS_FD_STAGE1) $(BIOS_STAGE2) $(BIOS_JUMP_STAGE3) \
 
 jump: $(JUMP_IMG)
 
-.PHONY: jump
+# Every route booted under SeaBIOS and judged from serial
+# (falcon-bios/tools/run-jump-rig.sh); the CF case needs the rig's QEMU
+# (falcon-bios/tools/qemu-pcc/build-qemu.sh).
+test-jump: jump
+	falcon-bios/tools/run-jump-rig.sh
+
+.PHONY: jump jump-files-stamp test-jump

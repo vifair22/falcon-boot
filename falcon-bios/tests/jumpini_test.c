@@ -67,6 +67,8 @@ static void test_every_default(void **state)
     assert_int_equal(c.def, JUMP_DEF_CD);
     assert_int_equal(parse("default=usb", &c), 0);
     assert_int_equal(c.def, JUMP_DEF_USB);
+    assert_int_equal(parse("default=CF", &c), 0);
+    assert_int_equal(c.def, JUMP_DEF_CF);
     /* A default with no timeout: preselected, and the menu waits. */
     assert_int_equal(c.timeout, 0);
     assert_string_equal(jump_default_name(JUMP_DEF_MEMTEST), "memtest");
@@ -87,7 +89,7 @@ static void test_refusals_name_the_line(void **state)
 
     assert_int_equal(parse("default=floppy\n", &c), -1);
     assert_string_equal(c.why,
-                        "default 'floppy' is not hdd, memtest, cd or usb");
+                        "default 'floppy' is not hdd, memtest, cd, usb or cf");
     assert_int_equal(parse("default=hdd\ntimeout=five\n", &c), -1);
     assert_int_equal(c.err_line, 2);
     assert_string_equal(c.why,

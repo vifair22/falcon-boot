@@ -11,5 +11,7 @@ int run_jumpini_tests(void);
 int run_jmod_tests(void);
 int run_lowmem_tests(void);
 int run_atacore_tests(void);
+int run_usbcore_tests(void);
+int run_pcccore_tests(void);
 
 #endif /* FALCON_BIOS_TESTS_H */

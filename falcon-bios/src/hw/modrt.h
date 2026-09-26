@@ -44,6 +44,11 @@ static inline uint16_t inw(uint16_t port)
     return v;
 }
 
+static inline void outl(uint16_t port, uint32_t v)
+{
+    __asm__ __volatile__("outl %0, %1" : : "a"(v), "Nd"(port));
+}
+
 /* About `us` microseconds, at least. */
 static inline void io_delay_us(uint32_t us)
 {

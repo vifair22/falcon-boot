@@ -21,6 +21,7 @@
 #include <hw/jmodhdr.h>
 #include <hw/modrt.h>
 #include <hw/ata/atacore.h>
+#include <hw/blk13.h>
 
 #include <lib/string.h>
 
@@ -66,10 +67,13 @@ static ata_dev g_dev[DEVS_MAX];
 static unsigned g_ndev;
 static const jmod_services *g_svc;   /* probe time only */
 
-/* The device and drive the resident answers for, and the last status its
- * AH=01h reports. */
+/* The device the resident answers for, as INT 13h sees it (hw/blk13.c):
+ * filled in by serve. */
 static unsigned g_serve = DEVS_MAX;
-static uint8_t  g_last;
+static int serve_read(uint64_t lba, uint32_t count, void *buf);
+static blk13_dev g_blk = {
+    ATAPI_SECTOR, 0, 1, serve_read, 0, BYTE_LIMIT / ATAPI_SECTOR
+};
 
 static const struct {
     uint16_t base;
@@ -175,7 +179,6 @@ static int packet(const ata_dev *d, const uint8_t cdb[ATAPI_CDB_LEN],
 out:
     (void)inb((uint16_t)(d->base + REG_STATUS));
     outb(d->ctrl, 0);
-    g_last = rc == 0 ? 0x00u : 0x20u;
     return rc;
 }
 
@@ -185,10 +188,10 @@ static int sense_key(const ata_dev *d)
     uint8_t data[18];
     uint32_t got;
 
-    atapi_cdb_request_sense(cdb, (uint8_t)sizeof data);
+    (void)scsi_cdb_request_sense(cdb, (uint8_t)sizeof data);
     if (packet(d, cdb, data, sizeof data, &got) != 0)
         return -1;
-    return atapi_parse_sense(data, got < sizeof data ? got : sizeof data);
+    return scsi_parse_sense(data, got < sizeof data ? got : sizeof data);
 }
 
 /* A command that may meet a disc still spinning up or just changed: a UNIT
@@ -250,7 +253,7 @@ static void capacity(ata_dev *d)
     uint32_t got;
 
     d->sectors = 0;
-    atapi_cdb_read_capacity(cdb);
+    (void)scsi_cdb_read_capacity(cdb);
     if (packet_retry(d, cdb, data, sizeof data, &got) != 0 || got < 8u ||
         atapi_parse_capacity(data, &d->sectors) != 0)
         d->sectors = 0;
@@ -304,7 +307,7 @@ static int ata_read(unsigned idx, uint64_t lba, uint32_t count, void *buf)
                      BYTE_LIMIT / ATAPI_SECTOR : count;
         uint32_t got;
 
-        atapi_cdb_read10(cdb, (uint32_t)lba, (uint16_t)n);
+        (void)scsi_cdb_read10(cdb, (uint32_t)lba, (uint16_t)n);
         if (packet_retry(&g_dev[idx], cdb, p, n * ATAPI_SECTOR, &got) != 0 ||
             got < n * ATAPI_SECTOR)
             return -1;
@@ -321,6 +324,7 @@ static int ata_serve(unsigned idx, uint8_t drive)
     if (idx >= g_ndev)
         return -1;
     g_serve = idx;
+    g_blk.sectors = g_dev[idx].sectors;
     /* From here the resident answers, and the core's services go away. */
     g_svc = (const jmod_services *)0;
     return 0;
@@ -328,98 +332,19 @@ static int ata_serve(unsigned idx, uint8_t drive)
 
 /* ---- the resident: INT 13h for the drive the stub answers ---- */
 
-static uint8_t *linear(uint16_t seg, uint16_t off)
+static int serve_read(uint64_t lba, uint32_t count, void *buf)
 {
-    return (uint8_t *)(uintptr_t)(((uint32_t)seg << 4) + off);
-}
-
-static void answer(jmod_regs *r, uint8_t ah, int fail)
-{
-    r->eax = (r->eax & 0xFFFF00FFu) | ((uint32_t)ah << 8);
-    r->flags = fail ? 1u : 0u;
-    g_last = ah;
+    return ata_read(g_serve, lba, count, buf);
 }
 
 static void ata_int13(jmod_regs *r)
 {
-    uint8_t ah = (uint8_t)((r->eax >> 8) & 0xFFu);
-    uint8_t *p;
-
     if (g_serve >= g_ndev) {
-        answer(r, 0xAAu, 1);                   /* drive not ready */
+        r->eax = (r->eax & 0xFFFF00FFu) | 0xAA00u;   /* drive not ready */
+        r->flags = 1;
         return;
     }
-    switch (ah) {
-    case 0x00:                                 /* reset */
-        answer(r, 0, 0);
-        return;
-    case 0x01:                                 /* last status */
-        answer(r, g_last, 0);
-        return;
-    case 0x41:                                 /* extensions present? */
-        if ((r->ebx & 0xFFFFu) != 0x55AAu) {
-            answer(r, 0x01u, 1);
-            return;
-        }
-        r->ebx = (r->ebx & 0xFFFF0000u) | 0xAA55u;
-        r->ecx = (r->ecx & 0xFFFF0000u) | 0x0001u;   /* packet calls */
-        answer(r, 0x21u, 0);
-        g_last = 0;
-        return;
-    case 0x42: {                               /* extended read */
-        uint16_t count;
-        uint16_t done = 0;
-        uint64_t lba;
-        uint8_t *buf;
-
-        p = linear((uint16_t)r->ds, (uint16_t)r->esi);
-        memcpy(&count, p + 2, 2);
-        memcpy(&lba, p + 8, 8);
-        buf = linear((uint16_t)((unsigned)p[6] | ((unsigned)p[7] << 8)),
-                     (uint16_t)((unsigned)p[4] | ((unsigned)p[5] << 8)));
-        while (done < count) {
-            uint16_t n = (uint16_t)(count - done);
-
-            if (n > BYTE_LIMIT / ATAPI_SECTOR)
-                n = (uint16_t)(BYTE_LIMIT / ATAPI_SECTOR);
-            if (ata_read(g_serve, lba + done, n,
-                         buf + (uint32_t)done * ATAPI_SECTOR) != 0)
-                break;
-            done = (uint16_t)(done + n);
-        }
-        memcpy(p + 2, &done, 2);
-        answer(r, done == count ? 0 : 0x20u, done != count);
-        return;
-    }
-    case 0x48: {                               /* drive parameters */
-        uint16_t size;
-        uint16_t v;
-        uint32_t z = 0;
-        uint64_t n = g_dev[g_serve].sectors;
-
-        p = linear((uint16_t)r->ds, (uint16_t)r->esi);
-        memcpy(&size, p, 2);
-        if (size < 0x1Au) {
-            answer(r, 0x01u, 1);
-            return;
-        }
-        v = 0x1Au;
-        memcpy(p, &v, 2);
-        v = 0x0004u;                           /* removable */
-        memcpy(p + 2, &v, 2);
-        memcpy(p + 4, &z, 4);
-        memcpy(p + 8, &z, 4);
-        memcpy(p + 12, &z, 4);
-        memcpy(p + 16, &n, 8);
-        v = (uint16_t)ATAPI_SECTOR;
-        memcpy(p + 24, &v, 2);
-        answer(r, 0, 0);
-        return;
-    }
-    default:
-        answer(r, 0x01u, 1);                   /* invalid function */
-        return;
-    }
+    blk13_call(&g_blk, r);
 }
 
 static int ata_init(const jmod_services *svc, jmod_ops *ops)

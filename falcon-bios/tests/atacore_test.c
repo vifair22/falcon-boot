@@ -22,20 +22,20 @@ static void test_cdbs(void **state)
 
     (void)state;
     memset(cdb, 0xAA, sizeof cdb);
-    atapi_cdb_read10(cdb, 0x01234567u, 32u);
+    (void)scsi_cdb_read10(cdb, 0x01234567u, 32u);
     assert_memory_equal(cdb, read10, sizeof cdb);
 
     memset(cdb, 0xAA, sizeof cdb);
-    atapi_cdb_read_capacity(cdb);
+    (void)scsi_cdb_read_capacity(cdb);
     assert_int_equal(cdb[0], SCSI_READ_CAPACITY);
     assert_int_equal(cdb[11], 0);
 
-    atapi_cdb_request_sense(cdb, 18u);
+    (void)scsi_cdb_request_sense(cdb, 18u);
     assert_int_equal(cdb[0], SCSI_REQUEST_SENSE);
     assert_int_equal(cdb[4], 18);
 
     memset(cdb, 0xAA, sizeof cdb);
-    atapi_cdb_test_unit_ready(cdb);
+    (void)scsi_cdb_test_unit_ready(cdb);
     assert_int_equal(cdb[0], 0);
     assert_int_equal(cdb[5], 0);
 }
@@ -64,13 +64,13 @@ static void test_sense(void **state)
     memset(s, 0, sizeof s);
     s[0] = 0x70;
     s[2] = SENSE_UNIT_ATTENTION;
-    assert_int_equal(atapi_parse_sense(s, sizeof s), SENSE_UNIT_ATTENTION);
+    assert_int_equal(scsi_parse_sense(s, sizeof s), SENSE_UNIT_ATTENTION);
     s[0] = 0xF0;                        /* the valid bit set */
     s[2] = 0x20 | SENSE_NOT_READY;      /* ILI, and the key */
-    assert_int_equal(atapi_parse_sense(s, sizeof s), SENSE_NOT_READY);
+    assert_int_equal(scsi_parse_sense(s, sizeof s), SENSE_NOT_READY);
     s[0] = 0x72;                        /* descriptor format */
-    assert_int_equal(atapi_parse_sense(s, sizeof s), -1);
-    assert_int_equal(atapi_parse_sense(s, 2u), -1);
+    assert_int_equal(scsi_parse_sense(s, sizeof s), -1);
+    assert_int_equal(scsi_parse_sense(s, 2u), -1);
 }
 
 /* QEMU's ide-cd, as IDENTIFY PACKET DEVICE words describe it. */
@@ -107,6 +107,37 @@ static void test_identify(void **state)
     assert_string_equal(model, "QEMU");
 }
 
+/* A CompactFlash card's IDENTIFY: 0x848A, LBA, 1 GB. */
+static void test_identify_disk(void **state)
+{
+    uint16_t w[256];
+    uint64_t n = 0;
+    char model[41];
+
+    (void)state;
+    memset(w, 0, sizeof w);
+    w[0] = 0x848Au;
+    w[49] = 1u << 9;
+    w[60] = 0x0000u;
+    w[61] = 0x0020u;                    /* 0x200000 sectors */
+    w[27] = (uint16_t)(('C' << 8) | 'F');
+    assert_int_equal(ata_parse_identify_disk(w, &n, model, sizeof model), 0);
+    assert_int_equal(n, 0x200000u);
+    assert_string_equal(model, "CF");
+
+    w[0] = 0x0040u;                     /* an ordinary fixed disk */
+    assert_int_equal(ata_parse_identify_disk(w, &n, model, sizeof model), 0);
+    w[0] = 0x85C0u;                     /* a CD drive */
+    assert_int_equal(ata_parse_identify_disk(w, &n, model, sizeof model), -1);
+    w[0] = 0x0040u;
+    w[49] = 0;                          /* CHS only */
+    assert_int_equal(ata_parse_identify_disk(w, &n, model, sizeof model), -1);
+    w[49] = 1u << 9;
+    w[60] = 0;
+    w[61] = 0;
+    assert_int_equal(ata_parse_identify_disk(w, &n, model, sizeof model), -1);
+}
+
 int run_atacore_tests(void)
 {
     const struct CMUnitTest tests[] = {
@@ -114,6 +145,7 @@ int run_atacore_tests(void)
         cmocka_unit_test(test_capacity),
         cmocka_unit_test(test_sense),
         cmocka_unit_test(test_identify),
+        cmocka_unit_test(test_identify_disk),
     };
 
     return cmocka_run_group_tests_name("atacore", tests, NULL, NULL);

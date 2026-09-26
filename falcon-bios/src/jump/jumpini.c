@@ -10,7 +10,7 @@
 #include <stdint.h>
 
 static const char *const k_default_names[] = {
-    "", "hdd", "memtest", "cd", "usb"
+    "", "hdd", "memtest", "cd", "usb", "cf"
 };
 
 const char *jump_default_name(jump_default d)
@@ -193,7 +193,7 @@ int jump_ini_parse(const char *text, size_t len, jump_cfg *out)
                 return fail_plain(out, line, "default is given twice");
             if (parse_default(va, vb, &out->def) != 0)
                 return fail(out, line, "default", va, vb,
-                            " is not hdd, memtest, cd or usb");
+                            " is not hdd, memtest, cd, usb or cf");
             have_def = 1;
         } else if (word_eq(ka, kb, "timeout")) {
             if (have_timeout)

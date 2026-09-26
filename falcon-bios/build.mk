@@ -38,6 +38,7 @@ BIOS_DEF = $(shell sed -n 's/^\#define[ \t]*$(1)[ \t]*\([0-9]*\).*/\1/p' \
 STAGE2_LBA_CHECK := $(call BIOS_DEF,STAGE2_LBA)
 STAGE2_SECTORS_CHECK := $(call BIOS_DEF,STAGE2_SECTORS)
 STAGE3_MAX_SECTORS_CHECK := $(call BIOS_DEF,STAGE3_MAX_SECTORS)
+FD_S2_SECTORS_OFF_CHECK := $(call BIOS_DEF,FD_S2_SECTORS_OFF)
 STAGE3_LBA_CHECK := $(shell echo $$(( $(call BIOS_DEF,STAGE2_LBA) + \
 	$(call BIOS_DEF,STAGE2_SECTORS) )))
 
@@ -323,10 +324,11 @@ endef
 # long-mode days triple-faulted.
 BIOS_TESTS := $(addprefix falcon-bios/tests/,main.c vcdcore_test.c vfdcore_test.c \
 	linuxcore_test.c e820_test.c jumpini_test.c jmod_test.c lowmem_test.c \
-	atacore_test.c)
+	atacore_test.c usbcore_test.c pcccore_test.c)
 BIOS_UUT := $(BIOS)/iso/vcdcore.c $(BIOS)/vfd/vfdcore.c $(BIOS)/linux/linuxcore.c $(BIOS)/mem/e820.c \
 	$(BIOS)/jump/jumpini.c $(BIOS)/jump/jmod.c $(BIOS)/mem/lowmem.c \
-	$(BIOS)/hw/ata/atacore.c
+	$(BIOS)/hw/ata/atacore.c $(BIOS)/hw/scsi/scsi.c $(BIOS)/hw/usb/usbcore.c \
+	$(BIOS)/hw/pcc/pcccore.c
 
 $(eval $(call test_bin,bios,$(BIOS_TESTS) $(BIOS_UUT)))
 

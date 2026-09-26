@@ -92,6 +92,7 @@ make bios            # the BIOS loader's stages
 make test-bios-img   # a disk the rig boots with run-qemu.sh --bios
 make station         # the stationary build, UEFI and BIOS (DESIGN 13)
 make jump            # the boot floppy, build/bin/falcon-jump.img (DESIGN 14)
+make test-jump       # every jump route under QEMU (CF needs build-qemu.sh)
 ```
 
 See `docs/DESIGN.md` for architecture and the MVP build order.
