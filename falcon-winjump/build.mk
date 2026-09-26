@@ -141,7 +141,7 @@ $(WINJUMP_BLOB): $(WINJUMP_STRIPPED)
 # from a BIOS). The patch replaces winpeshl.exe, and a 32-bit WinPE cannot
 # start a 64-bit program, so the jump binary has to match the boot image:
 # falcon-bios reads winpeshl.exe's machine type and embeds both builds to
-# choose from (falcon-bios/src/win.c). The UEFI loader embeds the x64 one
+# choose from (falcon-bios/src/win/win.c). The UEFI loader embeds the x64 one
 # only.
 CC_WIN32 ?= i686-w64-mingw32-gcc
 WINJUMP32 := $(BIN)/winjump32.exe

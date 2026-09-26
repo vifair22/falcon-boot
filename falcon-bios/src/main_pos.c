@@ -14,12 +14,12 @@
  * others (CLAUDE.md, "One screen, two loaders").
  */
 
-#include <bios.h>
+#include <start/bios.h>
 
-#include <pos.h>
-#include <mbr.h>
-#include <screen.h>
-#include <e820.h>
+#include <pos/pos.h>
+#include <mbr/mbr.h>
+#include <console/screen.h>
+#include <mem/e820.h>
 
 #include <part/part.h>
 #include <tui/tui.h>

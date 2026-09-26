@@ -347,7 +347,7 @@ static int mount_shelf(fs_read_fn read, void *ctx, const fs_ops *known)
 /* The advice for a shelf that would not mount. A shelf the personal OS left
  * mounted when the power went is the common case, and the one the reader can
  * fix; `otherwise` sent them looking for a format problem that is not there.
- * falcon-bios/src/pos.c says the same sentence. */
+ * falcon-bios/src/pos/pos.c says the same sentence. */
 static const CHAR16 *mount_advice(int rc, const CHAR16 *otherwise)
 {
     if (rc == FS_ERR_NEEDS_RECOVERY || rc == FS_ERR_DIRTY)

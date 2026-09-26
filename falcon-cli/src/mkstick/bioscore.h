@@ -11,7 +11,7 @@
  * here, where it is pure and tested, and the part that opens the device is in
  * bios.c.
  *
- * The other half of the contract is falcon-bios/src/biosdefs.h. Stage 1 is
+ * The other half of the contract is falcon-bios/src/start/biosdefs.h. Stage 1 is
  * 512 bytes and reads a fixed sector range rather than looking anything up,
  * so the LBAs are compile-time constants on both sides. bios.c passes the
  * loader's values in rather than including biosdefs.h, which keeps this file

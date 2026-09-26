@@ -5,7 +5,7 @@
  * of the way down. This module is that geometry and the composition of a
  * row's cells, and nothing else. It never draws: the UEFI loader emits a
  * composed row through Simple Text Output (falcon-efi/src/console/menu.c),
- * falcon-bios writes it into VGA text memory (falcon-bios/src/screen.c), and
+ * falcon-bios writes it into VGA text memory (falcon-bios/src/console/screen.c), and
  * both hand this module the same numbers, so both screens come out the same
  * cell for cell. Before it existed the two loaders drew the same menu twice,
  * by hand, and the BIOS one drifted.

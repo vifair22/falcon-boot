@@ -1,4 +1,4 @@
-/* Tests for falcon-bios/src/linuxcore.c: the addresses the x86 boot protocol
+/* Tests for falcon-bios/src/linux/linuxcore.c: the addresses the x86 boot protocol
  * is handed, and the padding between concatenated initrds.
  *
  * Every case here is a kernel this loader must refuse or an address it must
@@ -21,7 +21,7 @@
 
 #include <string.h>
 
-#include <linuxcore.h>
+#include <linux/linuxcore.h>
 
 #define MAP_END   0x100000000ull  /* biosdefs.h ADDR_END */
 #define PREF_LOAD 0x01000000ull   /* biosdefs.h KERNEL_ADDR */

@@ -1,4 +1,4 @@
-/* Tests for falcon-bios/src/e820.c's placement arithmetic, which is what
+/* Tests for falcon-bios/src/mem/e820.c's placement arithmetic, which is what
  * chooses an initrd's address.
  *
  * The map a machine hands back is the one thing here nobody can arrange on
@@ -16,7 +16,7 @@
 #include <stdint.h>
 #include <cmocka.h>
 
-#include <e820.h>
+#include <mem/e820.h>
 #include <string.h>
 
 #define MIB (1024ull * 1024ull)

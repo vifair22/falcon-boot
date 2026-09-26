@@ -115,7 +115,7 @@ A Windows 7 era machine, BIOS mode, booted the stick to the personal OS.
 The retry after a wrong passphrase ran its asterisks off the text area: the
 attempt-2 prompt is 80 characters with its TAB hint, the 80x25 screen's text
 area was 64 columns, and the echo did not follow the wrap. Fixed the same
-day in `falcon-bios/src/screen.c` (the echo and its erase wrap, a backspace
+day in `falcon-bios/src/console/screen.c` (the echo and its erase wrap, a backspace
 climbs back over a wrap) and `falcon-core/src/tui/tui.c` (an 80-column
 console gets a one-column margin, so 74 columns of text).
 

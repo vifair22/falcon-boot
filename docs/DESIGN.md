@@ -973,7 +973,7 @@ The value rules above (decode, the path match, the reserved namespace) are
 variable store and no `BootNext`, and nothing in the BIOS specifications lets
 an operating system set either. So on the BIOS route the marker is a sector
 the stick carries: LBA 2047, the last sector of the gap in front of p1
-(Section 12.1; `falcon-bios/src/biosdefs.h`, `NEXTBOOT_LBA`), written from
+(Section 12.1; `falcon-bios/src/start/biosdefs.h`, `NEXTBOOT_LBA`), written from
 Linux by archusb's `archusb-boot-next` when there is no `/sys/firmware/efi`.
 It is text, so a shell writes it with `printf` and `dd`:
 
@@ -986,7 +986,7 @@ refuses every byte out of place). The value is the variable's, and
 everything this section says about validating it holds unchanged.
 
 The loader takes it the way it takes the variable: read, **cleared**, then
-believed (`falcon-bios/src/marker.c`). Clearing is a write, and this is the
+believed (`falcon-bios/src/disk/marker.c`). Clearing is a write, and this is the
 one place a loader writes the stick. It is bounded three ways: one fixed
 LBA, outside every partition; only when the sector begins with the magic,
 so a sector that is not a marker is never touched; and only ever to zero.
@@ -2570,7 +2570,7 @@ line numbers are left out because they would be stale within a week.
 
 | region | holds | read by |
 |---|---|---|
-| LBA 0, bytes 0-439 | BIOS stage 1 (`falcon-bios/src/boot.S`) | a BIOS |
+| LBA 0, bytes 0-439 | BIOS stage 1 (`falcon-bios/src/start/boot.S`) | a BIOS |
 | LBA 0, bytes 440-511 | disk signature, protective MBR entry, `0x55AA` | everything; `mkstick bios` keeps them |
 | LBA 1-33 | GPT header and 128-entry array | both loaders, falcon-hook, the appliance |
 | LBA 34-97 | BIOS stage 2, 64 sectors | stage 1 |
@@ -3146,7 +3146,7 @@ AH=02h and AH=04h (the RTC, to date the marker), INT 10h (the 80x25 text mode, c
 teletype for stages 1 and 2 and `bios_fatal`), INT 16h AH=00h and AH=01h,
 INT 15h E820, and INT 18h when Escape at the root menu hands the machine
 back. Stage 3 writes the screen's cells into VGA text memory at 0xB8000
-directly (falcon-bios/src/screen.c). INT 15h AH=87h is used only by the
+directly (falcon-bios/src/console/screen.c). INT 15h AH=87h is used only by the
 resident CD handler, from real mode.
 
 #### 12.3.4 Memory map
@@ -3174,7 +3174,7 @@ resident CD handler, from real mode.
 
 `mem_check` refuses a machine whose EBDA reaches below 0x98000, because the
 bounce buffer is there. The fixed addresses are in
-`falcon-bios/src/biosdefs.h`, except that floor (`stage2.S`).
+`falcon-bios/src/start/biosdefs.h`, except that floor (`stage2.S`).
 
 #### 12.3.5 The menu and route selection
 
@@ -3321,7 +3321,7 @@ no map and finds its medium only if its initramfs can do so unaided.
 
 A medium whose BIOS boot image is a floppy emulation (El Torito media type 1,
 2 or 3) rather than a no-emulation CD is served differently: `vcd_chainload`
-hands it to `vfd_serve` (`falcon-bios/src/vfd.c`), which loads the whole
+hands it to `vfd_serve` (`falcon-bios/src/vfd/vfd.c`), which loads the whole
 image - 2.88 MB at most - into extended memory and installs a smaller
 resident (`vfdres.S`) that answers INT 13h for drive 0x00 as a memory disk,
 copying each read out of the image with AH=87h. It is a flat disk, so the

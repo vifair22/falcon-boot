@@ -1,4 +1,4 @@
-/* Tests for falcon-bios/src/vfdcore.c: the geometry of an emulated floppy and
+/* Tests for falcon-bios/src/vfd/vfdcore.c: the geometry of an emulated floppy and
  * the CHS-to-LBA arithmetic the resident handler copies.
  *
  * The handler is 16-bit real-mode assembly no analyzer or test reaches
@@ -14,7 +14,7 @@
 #include <stdint.h>
 #include <cmocka.h>
 
-#include <vfdcore.h>
+#include <vfd/vfdcore.h>
 
 static void test_geometry(void **state)
 {

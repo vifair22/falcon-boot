@@ -1070,7 +1070,7 @@ COM1 trace at DriverEntry (VDISK_SERIAL_TRACE) for exactly this.
 Since then win_xp_boot and piece 3's disk-finding are built and rig-proven
 (2026-09-25), and the route is one barrier short of booting.
 
- - **win_xp_boot** (falcon-bios/src/win.c) does the prototype's ISO surgery over
+ - **win_xp_boot** (falcon-bios/src/win/win.c) does the prototype's ISO surgery over
    the served virtual CD in memory (vcd_overlay_append for the appended sif and
    driver, i9_relocate for the sif's record, iso9660_append_record for the .sys,
    the PVD and i386 record edits), routes 2000/XP media to it (now FAMILY_WINDOWS,

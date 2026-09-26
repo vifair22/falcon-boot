@@ -300,8 +300,17 @@ falcon-efi and falcon-bios, which never share a set, may both have a `pos/`.
   `make test-bios-probe` makes the medium that checks the resident's INT 15h
   half from real mode (`tools/memprobe.S`). `make bios-pos` (part of `make
   pos`) links the stationary build's stage 3 (DESIGN Section 13) from
-  `src/main_pos.c`: the personal OS and `src/mbr.c`, another disk's own
+  `src/main_pos.c`: the personal OS and `src/mbr/mbr.c`, another disk's own
   boot code started from 0x7C00, with nothing resident.
+
+  `src/` is grouped by job, and a job the UEFI loader also does carries
+  that module's name, so the two halves of a route sit side by side:
+  `start/` (the MBR, stage 2, the mode switch, the thunk, the IDT and
+  `biosdefs.h`), `console/` (serial, the screen, the prompt), `iso/` (the
+  virtual CD and the ISO scan), `vfd/`, `mem/` (E820 and the heap),
+  `disk/` (the read callback and the marker), `linux/`, `pos/`, `bsd/`,
+  `win/` and `mbr/`. The entry points `main.c` and `main_pos.c` sit at
+  the root.
 
   It is i686 code in flat 32-bit protected mode, paging off, and one image
   runs on every processor from the Pentium Pro on (docs/notes/bios-route.md
@@ -312,30 +321,30 @@ falcon-efi and falcon-bios, which never share a set, may both have a `pos/`.
 
   Three stages, because stage 2 is linked where real mode and protected mode
   agree on what an address means and so cannot exceed about 33 KB.
-  `src/boot.S` is the 512-byte MBR; `src/stage2.S`, `src/pmode.S` and
-  `src/thunk.S` reach protected mode and keep what has to stay reachable
+  `src/start/boot.S` is the 512-byte MBR; `src/start/stage2.S`, `src/start/pmode.S` and
+  `src/start/thunk.S` reach protected mode and keep what has to stay reachable
   from real mode (the thunk, and the gate at the head of stage 2 that
   publishes it at a fixed address);
-  `src/load3.c` reads stage 3 in and jumps. Stage 3 links at a megabyte and
-  holds the loader proper. `src/biosdefs.h` is the one place every address is
+  `src/start/load3.c` reads stage 3 in and jumps. Stage 3 links at a megabyte and
+  holds the loader proper. `src/start/biosdefs.h` is the one place every address is
   written, which is why the assembly is preprocessed gas `.S` rather than
   NASM, and why the assembly rule tracks headers.
 
-  All five of Section 4's boot routes work: `src/linux.c` takes the x86 boot
+  All five of Section 4's boot routes work: `src/linux/linux.c` takes the x86 boot
   protocol's 32-bit entry, which boots 64-bit and 32-bit kernels alike
   (falcon-hook of the kernel's width and its extent map appended as the
-  UEFI loader appends them); `src/vcdres.S` is the resident INT 13h handler
+  UEFI loader appends them); `src/iso/vcdres.S` is the resident INT 13h handler
   that serves an ISO as a CD, and the INT 15h half that keeps the memory it
-  leaves behind out of the map the medium is handed, with `src/vcdcore.c`
-  and `e820_carve` its host-tested halves and `src/vcd.c` its installation; `src/pos.c` unwraps a UKI out of p3 rather
+  leaves behind out of the map the medium is handed, with `src/iso/vcdcore.c`
+  and `e820_carve` its host-tested halves and `src/iso/vcd.c` its installation; `src/pos/pos.c` unwraps a UKI out of p3 rather
   than chainloading it, rebuilding sd-stub's credential cpio itself;
-  `src/bsd.c` lays `media/bsdmd.c`'s two edits over the served medium; and
-  `src/win.c` patches boot.wim with core's `wim`, serving the appended tail
-  from extended memory through INT 15h AH=87h. `src/vfd.c` serves a
+  `src/bsd/bsd.c` lays `media/bsdmd.c`'s two edits over the served medium; and
+  `src/win/win.c` patches boot.wim with core's `wim`, serving the appended tail
+  from extended memory through INT 15h AH=87h. `src/vfd/vfd.c` serves a
   medium whose El Torito boot image is a floppy emulation (memtest86+,
-  Haiku) as a memory disk instead, its resident `src/vfdres.S` and its
-  geometry `src/vfdcore.c`. `src/heap.c` is the one
-  allocator, for that tail and that image. `src/marker.c` takes the next-boot marker
+  Haiku) as a memory disk instead, its resident `src/vfd/vfdres.S` and its
+  geometry `src/vfd/vfdcore.c`. `src/mem/heap.c` is the one
+  allocator, for that tail and that image. `src/disk/marker.c` takes the next-boot marker
   (DESIGN Section 6.3.1): LBA 2047 of the boot disk, written from Linux,
   cleared before it is believed and honoured only within ten minutes by the
   RTC. It is the only code in falcon-bios that writes a disk (one sector,
@@ -345,11 +354,11 @@ falcon-efi and falcon-bios, which never share a set, may both have a `pos/`.
   hang: it ends in `bios_fatal` (`fatal_rm` before there is C), the reason
   on screen and serial, a key, then a reset. Stage 2 asks CPUID for CMOV
   (the i686 floor) and the BDA whether the EBDA reaches memory it writes
-  before it enters protected mode, and `src/idt.S` gives protected mode an
+  before it enters protected mode, and `src/start/idt.S` gives protected mode an
   IDT, so a processor exception is reported through the same path
-  (`src/fault.c`) rather than triple faulting.
+  (`src/start/fault.c`) rather than triple faulting.
 
-  Stage 3 draws every screen through `src/screen.c`, the UEFI console's
+  Stage 3 draws every screen through `src/console/screen.c`, the UEFI console's
   calls one for one (`screen_page` is `menu_screen`, `screen_menu` is
   `menu_run_keys`) over core's `tui`: cells and colours go straight into
   VGA text memory, and serial gets the ANSI sequences OVMF's terminal sends

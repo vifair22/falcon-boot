@@ -19,15 +19,15 @@
  * firmware.
  */
 
-#include <bios.h>
+#include <start/bios.h>
 
-#include <scan.h>
-#include <pos.h>
-#include <win.h>
-#include <bsd.h>
-#include <screen.h>
-#include <e820.h>
-#include <marker.h>
+#include <iso/scan.h>
+#include <pos/pos.h>
+#include <win/win.h>
+#include <bsd/bsd.h>
+#include <console/screen.h>
+#include <mem/e820.h>
+#include <disk/marker.h>
 
 #include <part/part.h>
 #include <fs/fs.h>
