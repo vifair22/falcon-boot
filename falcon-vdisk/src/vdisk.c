@@ -164,6 +164,11 @@ static BOOLEAN g_cdrom0;
  * g_arc records whether it was, so unload removes it. */
 static UNICODE_STRING g_arc_name;
 static BOOLEAN g_arc;
+/* The fixed cdrom(0) ARC name, created unconditionally as well: Windows 2000
+ * keeps no SystemBootDevice for bind_boot_device to read, and names its boot CD
+ * cdrom(0), so this covers it while bind_boot_device covers XP's cdrom(224). */
+static UNICODE_STRING g_arc0_name;
+static BOOLEAN g_arc0;
 static PDEVICE_OBJECT g_ctl_dev, g_cd_dev;
 
 /* The backing store. Two sources behind one seam: the raw-disk extents winjump
@@ -469,7 +474,7 @@ static void NTAPI baked_resolve(PVOID ctx)
     if (extmap_decode(g_bake.map, g_bake.map_len, &hdr) != EXTMAP_OK)
         goto done;
 
-    for (tries = 0; tries < 120 && g_disk_handle == NULL; tries++) {
+    for (tries = 0; tries < 1200 && g_disk_handle == NULL; tries++) {
         for (n = 0; n < 32; n++) {
             HANDLE h;
             IO_STATUS_BLOCK iosb;
@@ -495,7 +500,11 @@ static void NTAPI baked_resolve(PVOID ctx)
         if (g_disk_handle == NULL) {
             LARGE_INTEGER d;
 
-            d.QuadPart = -5000000;                      /* 500 ms, relative */
+            /* Poll fast (25 ms) so the scan catches the stick the instant
+             * disk.sys enumerates it, before the kernel needs the boot CD or
+             * setup scans for a CD-ROM - the window is narrow and a slow retry
+             * loses the race. 1200 tries is still ~30 s of patience. */
+            d.QuadPart = -250000;                       /* 25 ms, relative */
             KeDelayExecutionThread(KernelMode, FALSE, &d);
         }
     }
@@ -783,6 +792,8 @@ static void NTAPI vdisk_unload(PDRIVER_OBJECT drv)
         IoDeleteSymbolicLink(&g_cdrom0_name);
     if (g_arc)
         IoDeleteSymbolicLink(&g_arc_name);
+    if (g_arc0)
+        IoDeleteSymbolicLink(&g_arc0_name);
     if (g_cd_dev != NULL)
         IoDeleteDevice(g_cd_dev);
     if (g_ctl_dev != NULL)
@@ -870,6 +881,46 @@ static void trace_object_dir(const WCHAR *path)
         serial_trace_ustr(&di->Name);
     }
     serial_trace("FALCONVDISK_ARCDIR_END\r\n");
+    ZwClose(h);
+}
+
+/* Diagnostic: list every value of a registry key to COM1 (name = string), to
+ * find where 2000 keeps its boot-device ARC name when XP's SystemBootDevice is
+ * absent. */
+static void trace_reg_values(const WCHAR *keypath)
+{
+    static UCHAR buf[1024];
+    KEY_VALUE_FULL_INFORMATION *vi = (KEY_VALUE_FULL_INFORMATION *)buf;
+    UNICODE_STRING kp, nm, v;
+    OBJECT_ATTRIBUTES oa;
+    HANDLE h;
+    ULONG idx = 0, got;
+
+    RtlInitUnicodeString(&kp, keypath);
+    InitializeObjectAttributes(&oa, &kp, OBJ_KERNEL_HANDLE | OBJ_CASE_INSENSITIVE,
+                               NULL, NULL);
+    if (!NT_SUCCESS(ZwOpenKey(&h, KEY_READ, &oa))) {
+        serial_trace("FALCONVDISK_VALS_OPEN_FAIL\r\n");
+        return;
+    }
+    serial_trace("FALCONVDISK_VALS_BEGIN\r\n");
+    for (idx = 0;; idx++) {
+        if (!NT_SUCCESS(ZwEnumerateValueKey(h, idx, KeyValueFullInformation, buf,
+                                            sizeof buf, &got)))
+            break;
+        nm.Buffer = vi->Name;
+        nm.Length = (USHORT)vi->NameLength;
+        nm.MaximumLength = nm.Length;
+        serial_trace_ustr(&nm);
+        if (vi->Type == REG_SZ && vi->DataLength >= sizeof(WCHAR)) {
+            v.Buffer = (PWCH)((PUCHAR)buf + vi->DataOffset);
+            v.Length = (USHORT)(vi->DataLength - sizeof(WCHAR));
+            v.MaximumLength = v.Length;
+            serial_trace("  = ");
+            serial_trace_ustr(&v);
+        }
+    }
+    serial_trace("FALCONVDISK_VALS_END\r\n");
     ZwClose(h);
 }
 
@@ -975,6 +1026,9 @@ NTSTATUS NTAPI DriverEntry(PDRIVER_OBJECT drv, PUNICODE_STRING reg)
     trace_reg_value(L"\\Registry\\Machine\\SYSTEM\\ControlSet001\\Control",
                     L"SystemBootDevice");
     trace_reg_value(L"\\Registry\\Machine\\SYSTEM\\Setup", L"SystemPartition");
+    /* Where Windows 2000 keeps it, since SystemBootDevice is absent there. */
+    trace_reg_values(L"\\Registry\\Machine\\SYSTEM\\ControlSet001\\Control");
+    trace_reg_values(L"\\Registry\\Machine\\SYSTEM\\CurrentControlSet\\Control");
 #endif
     RtlInitUnicodeString(&g_ctl_name, VDISK_CTL_DEVICE);
     RtlInitUnicodeString(&g_ctl_link, VDISK_CTL_LINK);
@@ -1030,8 +1084,13 @@ NTSTATUS NTAPI DriverEntry(PDRIVER_OBJECT drv, PUNICODE_STRING reg)
         g_cdrom0 = NT_SUCCESS(IoCreateSymbolicLink(&g_cdrom0_name, &g_cd_name));
         /* Bind this CD as the kernel's boot device by the ARC name setupldr
          * recorded (read from the registry, not assumed - it is the served BIOS
-         * drive number, e.g. cdrom(224) for 0xE0). This is what clears the 0x7B. */
+         * drive number, e.g. cdrom(224) for 0xE0). This clears XP's 0x7B. */
         g_arc = bind_boot_device();
+        /* And the fixed cdrom(0) name for Windows 2000, which records no
+         * SystemBootDevice and names its boot CD cdrom(0). */
+        RtlInitUnicodeString(&g_arc0_name,
+                             L"\\ArcName\\multi(0)disk(0)cdrom(0)");
+        g_arc0 = NT_SUCCESS(IoCreateSymbolicLink(&g_arc0_name, &g_cd_name));
 #ifdef VDISK_SERIAL_TRACE
         serial_trace(g_cdrom0 ? "FALCONVDISK_CDROM0_LINKED\r\n"
                               : "FALCONVDISK_CDROM0_EXISTS\r\n");
