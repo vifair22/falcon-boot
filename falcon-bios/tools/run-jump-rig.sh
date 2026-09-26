@@ -14,6 +14,9 @@
 #   usb-ehci  drive the reverse thunk serves
 #   cf        a CompactFlash card in the PC Card bridge falcon-pcc.c models,
 #             carrying falcon-bios: its stage 3 loads off the card
+#   cf3v      the same with a card that takes only 3.3 V, as the A21m's
+#             SanDisk reports itself: the bridge powers it only when both
+#             of its voltage registers ask for 3.3 V
 #   mem       memtest86+, when MEMTEST names a build with the boot protocol
 #             header: the handoff to it
 #   menu      the countdown interrupted: a five-second default=hdd, a Down
@@ -151,7 +154,7 @@ usb() {       # usb CASE HC-DEVICES...
 
 FAILED=0
 CASES=("$@")
-[[ ${#CASES[@]} -gt 0 ]] || CASES=(hdd cd usb-uhci usb-ohci usb-ehci cf mem menu)
+[[ ${#CASES[@]} -gt 0 ]] || CASES=(hdd cd usb-uhci usb-ohci usb-ehci cf cf3v mem menu)
 
 for c in "${CASES[@]}"; do
     case $c in
@@ -168,16 +171,16 @@ for c in "${CASES[@]}"; do
     usb-uhci) usb usb-uhci -device piix3-usb-uhci,id=hc ;;
     usb-ohci) usb usb-ohci -device pci-ohci,id=hc ;;
     usb-ehci) usb usb-ehci -device usb-ehci,id=hc ;;
-    cf)
+    cf|cf3v)
         if [[ ! -x "$QPCC" ]]; then
-            echo "SKIP  cf        no rig QEMU (falcon-bios/tools/qemu-pcc/build-qemu.sh)"
+            printf 'SKIP  %-9s no rig QEMU (falcon-bios/tools/qemu-pcc/build-qemu.sh)\n' "$c"
             continue
         fi
         cp build/test-bios.img "$R/cf.img"
         floppy cf
         boot "$QPCC" -drive if=none,id=cf,format=raw,file="$R/cf.img" \
-            -device falcon-pcc,drive=cf
-        judge cf 'boot drive 0x81, sector size 512'
+            -device falcon-pcc,drive=cf$([[ $c == cf3v ]] && echo ,volts=3)
+        judge "$c" 'boot drive 0x81, sector size 512'
         ;;
     menu) menu_case ;;
     mem)
