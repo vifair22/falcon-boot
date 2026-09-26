@@ -174,6 +174,27 @@ static void test_family_windows(void **state)
     assert_int_equal(family_by_id(FAMILY_WINDOWS)->needs_injection, 0);
 }
 
+/* Windows 2000/XP: no /sources, no WinPE - the text-mode setup loader and its
+ * script live in /i386. Detected as Windows so the loader takes the
+ * driver-injection route (windows-route.md 7.4). Both halves are required, so
+ * an unrelated ISO that happens to carry a txtsetup.sif is not mistaken for it. */
+static void test_family_windows_xp(void **state)
+{
+    static const fake_file xp[] = {
+        { "/i386", NULL },
+        { "/i386/txtsetup.sif", NULL },
+        { "/i386/setupldr.bin", NULL },
+    };
+    static const fake_file half[] = {
+        { "/i386", NULL },
+        { "/i386/txtsetup.sif", NULL },
+    };
+
+    (void)state;
+    expect_family(xp, 3, FAMILY_WINDOWS, NULL);
+    expect_family(half, 2, FAMILY_UNKNOWN, NULL);
+}
+
 /* Which volume of the medium is fingerprinted decides the answer, and on
  * Microsoft's media it is not the bootable one. oscdimg leaves the ISO 9660
  * namespace holding a single stub README.TXT and puts every real file in the
@@ -994,6 +1015,7 @@ int run_family_tests(void)
 {
     const struct CMUnitTest tests[] = {
         cmocka_unit_test(test_family_windows),
+        cmocka_unit_test(test_family_windows_xp),
         cmocka_unit_test(test_family_windows_only_on_the_udf_volume),
         cmocka_unit_test(test_family_winpe),
         cmocka_unit_test(test_family_systemrescue),

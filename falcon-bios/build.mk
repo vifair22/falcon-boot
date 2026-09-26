@@ -71,7 +71,7 @@ BIOS_S2_CSRCS := $(addprefix $(BIOS)/,load3.c disk.c console.c fault.c) \
 # one driver called by name.
 BIOS_S3_CSRCS := $(addprefix $(BIOS)/,main.c scan.c pos.c prompt.c screen.c linux.c \
 	linuxcore.c \
-	vcd.c vcdcore.c bsd.c win.c heap.c marker.c \
+	vcd.c vcdcore.c vfd.c vfdcore.c bsd.c win.c heap.c marker.c \
 	e820.c disk.c console.c) \
 	$(CORE_PART) $(CORE_FS) $(CORE_MEDIA) $(CORE_PE) $(CORE_CRYPTO) \
 	$(CORE_LUKS) $(CORE_WIM) $(CORE_LIBC) $(CORE_UCS2) $(CORE_TUI) \
@@ -185,6 +185,14 @@ $(BIOS_STAGE2): $(BIOS_STAGE2_OBJS) $(BIOS)/bios.ld
 BIOS_HOOK_OBJ := $(BIOS_OBJ)/$(HOOK_BLOB).o
 BIOS_HOOK32_OBJ := $(BIOS_OBJ)/$(HOOK32_BLOB).o
 BIOS_WINJUMP_OBJ := $(BIOS_OBJ)/$(WINJUMP_BLOB).o
+# Both widths of the jump binary, for the same reason as the hook's two:
+# win.c puts in the one boot.wim's winpeshl.exe is built for.
+BIOS_WINJUMP32_OBJ := $(BIOS_OBJ)/$(WINJUMP32_BLOB).o
+# The x86 virtual-CD driver, embedded as a C array (symbol falcon_vdisk_bin):
+# the Windows 2000/XP text-mode route serves it into the ISO's \i386 and
+# injects it into txtsetup.sif, since those Windows have no WinPE and so no
+# winjump to carry it. Only the x86 build; XP x64 is not a BIOS target.
+BIOS_VDISK_OBJ := $(BIOS_OBJ)/$(VDISK_X86_BLOB).o
 
 $(BIOS_HOOK_OBJ): $(HOOK_BLOB)
 	@mkdir -p $(@D)
@@ -198,9 +206,19 @@ $(BIOS_WINJUMP_OBJ): $(WINJUMP_BLOB)
 	@mkdir -p $(@D)
 	$(CC_HOST) $(BIOS_CFLAGS) -c -o $@ $<
 
+$(BIOS_WINJUMP32_OBJ): $(WINJUMP32_BLOB)
+	@mkdir -p $(@D)
+	$(CC_HOST) $(BIOS_CFLAGS) -c -o $@ $<
+
+$(BIOS_VDISK_OBJ): $(VDISK_X86_BLOB)
+	@mkdir -p $(@D)
+	$(CC_HOST) $(BIOS_CFLAGS) -c -o $@ $<
+
 BIOS_STAGE3_OBJS := $(BIOS_OBJ)/$(BIOS)/stage3.o $(BIOS_OBJ)/$(BIOS)/vcdres.o \
+	$(BIOS_OBJ)/$(BIOS)/vfdres.o \
 	$(BIOS_S3_COBJS) \
-	$(BIOS_HOOK_OBJ) $(BIOS_HOOK32_OBJ) $(BIOS_WINJUMP_OBJ)
+	$(BIOS_HOOK_OBJ) $(BIOS_HOOK32_OBJ) $(BIOS_WINJUMP_OBJ) \
+	$(BIOS_WINJUMP32_OBJ) $(BIOS_VDISK_OBJ)
 
 $(BIOS_STAGE3): $(BIOS_STAGE3_OBJS) $(BIOS)/bios.ld
 	@mkdir -p $(@D)
@@ -268,9 +286,9 @@ bios-pos: $(BIOS_STAGE1) $(BIOS_STAGE2) $(BIOS_POS_STAGE3)
 # once, in a way the machine did not report: an unpadded initrd read as a
 # corrupt archive, and a kernel placed past the identity map of the loader's
 # long-mode days triple-faulted.
-BIOS_TESTS := $(addprefix falcon-bios/tests/,main.c vcdcore_test.c \
+BIOS_TESTS := $(addprefix falcon-bios/tests/,main.c vcdcore_test.c vfdcore_test.c \
 	linuxcore_test.c e820_test.c)
-BIOS_UUT := $(BIOS)/vcdcore.c $(BIOS)/linuxcore.c $(BIOS)/e820.c
+BIOS_UUT := $(BIOS)/vcdcore.c $(BIOS)/vfdcore.c $(BIOS)/linuxcore.c $(BIOS)/e820.c
 
 $(eval $(call test_bin,bios,$(BIOS_TESTS) $(BIOS_UUT)))
 

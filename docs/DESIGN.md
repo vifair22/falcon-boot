@@ -642,7 +642,10 @@ Windows kernel-mode driver trust chains to Microsoft's own hard-coded roots
 and has nothing whatever to do with our MOK or the UEFI `db`. That settles
 one thing permanently: we could never sign a driver ourselves, at any price
 short of a Partner Center account and an attestation submission, so writing
-our own `.sys` is dead. It does **not** settle the third-party candidates, and
+our own `.sys` looked dead. *Superseded 2026-09-25: see "Our own driver, after
+all" below. The argument is about the installed OS; the installer's WinPE does
+not enforce kernel signing the same way, which reopens exactly this door.* It
+does **not** settle the third-party candidates, and
 the record has to be explicit so nobody re-derives the wrong reason later:
 **ImDisk and Arsenal Image Mounter are both genuinely
 Microsoft-attestation-signed in 2026 and would load with Secure Boot ON.**
@@ -657,9 +660,66 @@ They were rejected on other grounds entirely.
   candidate; that did not save it.
 
 Held in reserve rather than rejected outright: if a rig test ever shows
-`AttachVirtualDisk` unusable, the pick is **ImDisk**, because its non-PnP
-design makes `CreateService` plus `StartService` the entire install and
-sidesteps the 26100 regression.
+`AttachVirtualDisk` unusable, the third-party pick is **ImDisk**, because its
+non-PnP design makes `CreateService` plus `StartService` the entire install
+and sidesteps the 26100 regression. In the event the reserve was not needed:
+we wrote our own instead.
+
+**Our own driver, after all (2026-09-25).** The signing argument above is
+about the *installed* OS. The installer's WinPE is a different enforcement
+regime, and that is where the driver runs:
+
+- 32-bit WinPE, which every 32-bit Windows installer boots, enforces no
+  kernel-mode code signing at all: an unsigned `.sys` loads. `falcon-vdisk`
+  loads there with nothing signed.
+- 64-bit WinPE enforces KMCS, but the boot configuration is ours to set as the
+  ISO is served: `testsigning` in the served BCD lets a self-signed driver
+  load. It is the platform opt-out of Section 7, refused under Secure Boot ON
+  exactly as the rest of the model is, and it touches only the installer's
+  WinPE - the OS it lays down boots with its own enforcement intact.
+
+So `falcon-vdisk` (`falcon-vdisk/`; a native NT CD-ROM driver, built for both
+widths from one source as the hook and winjump are) is the fallback for media
+`AttachVirtualDisk` cannot serve: Vista and 7 (whose WinPE has no ISO support,
+and no way to read the exFAT partition the ISO lives on either) and 2000/XP
+(no WinPE at all). winjump loads it with `CreateService`/`StartService`, hands
+it the ISO's physical-disk extents - the same extent map the Linux route
+computes (Section 6.4), carried in winjump's cfg rather than an EFI variable -
+and it serves those raw disk sectors as a read-only CD-ROM device that CDFS
+mounts. It reads the ISO straight off the disk, so an ISO of any size is
+served from where it already lies, never copied into RAM.
+
+The read path is proven in a Windows 10 x86 WinPE (2026-09-25): the driver
+loads unsigned, the mount manager gives it a drive letter, CDFS mounts it, and
+`dir E:\sources` lists `install.wim` read from the disk through the driver.
+
+The corpus then split the pre-8 case by firmware (docs/notes/windows-route.md
+Section 7). On BIOS the ISO is a resident INT 13h CD that never vanishes, so
+WinPE reaches winpeshl and winjump runs; four separate bugs then kept it from
+serving the install source, all now fixed - the "No disk in drive A:" dialog
+winjump raised probing an empty floppy, the extent map the BIOS winjump config
+had never carried, UDFS declining to mount the install DVD's UDF tree until the
+driver answered a size query, and the harness not recognising pre-8 Setup.
+Windows 7 (x86 and x64) and Vista x86 now boot end to end; vista-sp1-x64 does
+not, because its boot.wim winpeshl patch does not take.
+
+On EFI the ISO is a firmware Block I/O CD destroyed at ExitBootServices, and
+Windows 7 and Vista WinPE hang before winpeshl at "Starting Windows", waiting
+on that vanished device, so loading falcon-vdisk from winpeshl is too late. The
+fix is a medium Windows keeps across ExitBootServices (an EFI RAM disk), tried
+in three shapes - a persistent CD, a persistent GPT+ESP disk, and a
+non-persistent disk in loader memory - and OVMF's RamDiskDxe mounts none of
+their filesystems: it publishes a Block I/O the firmware's CDFS, PartitionDxe
+and FatDxe do not bind to. That is a firmware limit of the corpus; real firmware
+may mount it, and the bench confirmed Win7 boots from a medium that stays. So
+Windows 7/Vista under EFI is a real-hardware question, unvalidatable in OVMF.
+Three WinPE-specific hazards were found and fixed there: CDFS's mount issues
+`IOCTL_DISK_CHECK_VERIFY` (not only the CD-ROM and storage variants); a
+filesystem may issue reads above `PASSIVE_LEVEL`, so the lower-disk read runs
+on a dedicated servicing thread, never inline in the dispatch routine; and the
+lower-disk read is `ZwReadFile` through a nonpaged bounce buffer, not a
+hand-built IRP forwarding the caller's mapped MDL, which faulted in the disk
+stack.
 
 **Loader side: two new layers, and they are pure data.** The virtual-media
 publisher of Section 6 stage 2 grows:
@@ -3140,12 +3200,17 @@ flowchart TD
     B -- "yes, edits fit" --> BSD[BSD]
     B -- "not_bsd" --> DIR
     B -- no --> DIR[DIR]
-    DIR -- "no CD boot entry" --> STOP["direct boot failed while reading<br/>the ISO's boot configuration<br/>(c chainloads)"]
+    DIR -- "no CD boot entry, or not a Linux kernel it can start" --> CHN
 ```
 
 Unlike the UEFI loader, a BSD medium that is not one the memory-disk route
-applies to goes on to the direct boot, and `DIR` with no entry stops
-rather than chainloading.
+applies to goes on to the direct boot. `DIR` goes on to `CHN`, as on the
+UEFI loader, when it stops before committing because the medium is not one
+it can take (`boot_result.fallthrough`): no filesystem or boot entry it can
+read, a kernel that is not on the medium, or one `linux_boot` refuses before
+placing anything (`linux_not_taken`). A 64-bit kernel on a processor without
+long mode is not one of those: the medium's own loader would start the same
+kernel.
 
 #### 12.3.6 DIR: direct kernel boot
 
@@ -3254,10 +3319,30 @@ drop back to real mode for each read. A protected-mode kernel that does not
 call the BIOS loses it, so a Linux live ISO chainloaded here has no hook and
 no map and finds its medium only if its initramfs can do so unaided.
 
+A medium whose BIOS boot image is a floppy emulation (El Torito media type 1,
+2 or 3) rather than a no-emulation CD is served differently: `vcd_chainload`
+hands it to `vfd_serve` (`falcon-bios/src/vfd.c`), which loads the whole
+image - 2.88 MB at most - into extended memory and installs a smaller
+resident (`vfdres.S`) that answers INT 13h for drive 0x00 as a memory disk,
+copying each read out of the image with AH=87h. It is a flat disk, so the
+geometry (`vfdcore.c`, host-tested) is only how a CHS read is named. It hooks
+INT 13h alone and does not hide the image from the memory map, which is sound
+for media that read the floppy once as they load: memtest86+ boots this way.
+Haiku's 2.88M floppy boots its loader but then wants the rest of Haiku off
+the CD, which is not co-resident, so it does not complete. Hard-disk
+emulation (media type 4) is not implemented; no corpus medium needs it.
+
 #### 12.3.9 WIN: Windows install media
 
 The same patch as the UEFI route (12.2.13), computed by the same falcon-core
-code; only the serving differs.
+code; only the serving differs, and which build of winjump goes in. The jump
+binary replaces `winpeshl.exe`, and a 32-bit WinPE cannot start a 64-bit
+program, so falcon-bios embeds winjump twice (x64 and i686, one source) and
+reads the machine type out of the boot image's own `winpeshl.exe` headers
+(`wim_winpeshl`, `wim_read_head`, `pe_parse`). A 64-bit boot.wim on a
+processor without long mode is refused with a sentence, as `linux.c` refuses
+a 64-bit kernel. The UEFI loader embeds the x64 build only: 32-bit Windows
+starts from 32-bit UEFI, which is out of scope (Section 1).
 
 ```mermaid
 sequenceDiagram
@@ -3266,8 +3351,10 @@ sequenceDiagram
     participant M as bootmgr, winload
     participant W as winjump (WinPE)
     participant ST as Setup
-    L->>L: udf_mount, boot.wim, wim_open, wim_patch_build
+    L->>L: udf_mount, boot.wim, wim_open
     L->>L: heap.c: the tail in 64 MiB-4 GiB, at E820's highest fit
+    L->>L: winpeshl.exe's PE machine: i386 is winjump32, AMD64 winjump (and long mode needed)
+    L->>L: wim_patch_build with that build
     L->>L: UDF edits into the overlay pool, the tail as an append past the end
     L->>R: CHN (12.3.8), etfsboot at 07C0:0000
     R->>M: bootmgr

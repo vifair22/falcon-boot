@@ -9,7 +9,8 @@
 #define DOS_MAGIC       0x5A4Du     /* "MZ" */
 #define PE_LFANEW_OFF   0x3Cu
 #define COFF_SIZE       24u         /* "PE\0\0" + the 20-byte COFF header */
-#define COFF_NSECT      6u          /* from the PE signature */
+#define COFF_MACHINE    4u          /* from the PE signature */
+#define COFF_NSECT      6u
 #define COFF_OPTSIZE    20u
 
 /* Optional-header offsets. CheckSum and SizeOfHeaders sit before the point
@@ -51,6 +52,7 @@ int pe_parse(const void *buf, size_t len, pe_hdr *out)
     out->len = len;
     out->coff = (size_t)lfanew + 4u;
     out->opt = (size_t)lfanew + COFF_SIZE;
+    out->machine = get_le16(b + lfanew + COFF_MACHINE);
     out->nsect = get_le16(b + lfanew + COFF_NSECT);
     out->opt_size = get_le16(b + lfanew + COFF_OPTSIZE);
     out->sect_table = out->opt + out->opt_size;

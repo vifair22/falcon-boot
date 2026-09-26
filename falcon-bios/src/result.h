@@ -20,6 +20,10 @@ typedef struct {
     const char *advice;    /* what to do about it, or NULL */
     char        title[BOOTCFG_TITLE_MAX];  /* a direct boot's entry, or "" */
     char        buf[BOOT_ADVICE_MAX];      /* advice, when it is built */
+    /* Set when the route stopped before it committed to the medium, because
+     * the medium is not one it can take: the caller goes on to the next
+     * route, as the UEFI loader does (docs/Manual.md, Section 1.3). */
+    int         fallthrough;
 } boot_result;
 
 /* Before a route runs. */
@@ -27,6 +31,7 @@ static inline void boot_result_init(boot_result *r)
 {
     r->stage = "starting";
     r->advice = (const char *)0;
+    r->fallthrough = 0;
     r->title[0] = '\0';
     r->buf[0] = '\0';
 }

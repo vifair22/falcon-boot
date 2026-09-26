@@ -697,3 +697,439 @@ answered while writing this note: yes, along with `vhdmp.sys`, `vdrvroot.sys`,
    disproving it, patch a sector-0-spanning MBR into the system area of a copy
    and see whether Windows mounts it. A surprise here would remove all injected
    code from the Windows route, so it is worth one experiment even at low odds.
+
+## 7. Rig findings (2026-09-25): Windows 7 and Vista, BIOS solved, EFI limited
+
+The corpus was run through both loaders, and the pre-8 Windows story split
+cleanly by firmware, because the medium behaves differently under each:
+
+- On **BIOS**, falcon-bios serves the ISO as a resident INT 13h CD that stays
+  in memory across the whole boot. bootmgr loads boot.wim into a WIM RAM disk,
+  WinPE runs from RAM, and winjump reaches winpeshl and serves Setup its source
+  through the falcon-vdisk driver. **Windows 7 (x86 and x64) and Vista x86 now
+  boot here end to end** once four separate bugs were fixed (Section 7.2).
+- On **EFI**, the loader serves the ISO as a firmware Block I/O CD that is
+  destroyed at ExitBootServices. Windows 7 WinPE waits on that device in early
+  kernel init and hangs at "Starting Windows", before winpeshl ever runs. That
+  is the one EFI follow-up: the RAM-disk work in 7.1 is its only fix, OVMF
+  blocks it, so it is a real-hardware question. Vista and XP are out of the EFI
+  boot path entirely - Vista's only UEFI edition is x64 SP1 and its support is
+  marginal, XP has none - the exit goal's allowed architecture exception, not a
+  follow-up.
+
+The earlier draft of this section blamed the EFI vanishing-CD hang for the BIOS
+failures too. That was wrong: on BIOS the medium does not vanish, and the BIOS
+failures had four unrelated causes, all now fixed. This section is corrected to
+match.
+
+### 7.1 EFI: the vanishing-CD hang before winpeshl
+
+The loader serves the ISO as a virtual CD over EFI Block I/O on p2
+(falcon-efi/src/iso), gone at ExitBootServices exactly as on real hardware, so
+the corpus exercises the media-vanishes case rather than a QEMU-persists
+shortcut.
+
+- **Windows 8 and up (8.1, 10, 11, Server 2025, Macrium WinPE): pass.** Their
+  WinPE reaches winpeshl, winjump attaches the ISO with `AttachVirtualDisk`,
+  and Setup reads `\sources\install.wim` back through it (the harness measures
+  the p2 reads: "read 255 MiB of install.* through the ISO attached in
+  Windows"). This is the whole route working end to end.
+
+- **Windows 7 x64 on EFI: WinPE hangs before winpeshl.** It reaches the
+  "Starting Windows" splash and stays there to the 300 s timeout; Setup's UI
+  never appears, so winpeshl - and therefore winjump, and therefore
+  falcon-vdisk - never runs (measured clean, off state, 2026-09-25). The hang
+  is in early kernel init, where the boot-start storage and CD drivers come up
+  and wait on the boot device that vanished at ExitBootServices. Windows 8+
+  tolerates the missing device and finishes to winpeshl; Windows 7 does not.
+  This does not happen on BIOS (Section 7.2), where the resident INT 13h CD
+  never vanishes.
+
+  Consequence, and it is a real one: **loading the driver from winpeshl is too
+  late for Windows 7 under EFI.** (Vista is out of the EFI path entirely, below;
+  this hang is the Windows 7 follow-up, not a Vista one.)
+
+  Confirmed with a persistent CD (bench rig, 2026-09-25): booting the same
+  windows-7-x64 ISO as an ordinary QEMU CD-ROM that never vanishes, Win7's
+  WinPE reaches the shell and Setup's "Enter your language" screen with no
+  trouble. So Win7's WinPE is not the problem and needs neither winjump nor the
+  driver when the media stays: the whole EFI failure is that our EFI-served CD
+  vanishes at ExitBootServices and Win7, unlike 8+, will not finish booting
+  without it.
+
+  **The boot-start driver was built and tested, and it does not work
+  (2026-09-25).** falcon-vdisk was given a boot-start mode (present a CD from a
+  small embedded ISO, announce it once the boot drivers are up via
+  IoRegisterBootDriverReinitialization), injected into a windows-7-x64 boot.wim
+  as a `Boot Bus Extender` service (wimlib to add the `.sys`, hivex to register
+  it), and that ISO run through the loader in the corpus. Win7 froze at
+  "Starting Windows" exactly as before: a substitute CD-ROM the driver creates
+  does not satisfy whatever is waiting. The wait is not "a CD must exist"; it is
+  the storage path itself. The firmware presented the virtual CD as a SATA
+  device (`Sata(0x0)` in the boot log), and that device is gone at
+  ExitBootServices; Win7's boot-start storage driver blocks on the device it
+  booted from, and a software CD from a later driver is a different device.
+
+  So the fix is **a persistent boot medium**, the way Ventoy keeps the medium
+  itself alive for Windows rather than letting the firmware CD evaporate, not a
+  driver that re-creates one. On UEFI that means presenting the medium as
+  something Windows keeps across ExitBootServices (an EFI RAM disk registered
+  in the ACPI NFIT), which holds the boot medium in memory.
+
+  **The persistent RAM disk was built and tested in three shapes, and OVMF
+  blocks every one (2026-09-25).** A loader path (winram.c, since reverted)
+  read a medium whole into pages and registered it with the firmware's
+  EFI_RAM_DISK_PROTOCOL, then connected it and looked for the medium's own
+  filesystem to boot \bootmgr.efi off. The common wall across all three shapes:
+  OVMF's RamDiskDxe publishes a Block I/O for the RAM disk, but the firmware's
+  filesystem and partition drivers do **not** bind to it, so the medium's own
+  filesystem never mounts.
+
+  1. **Persistent CD (EFI_PERSISTENT_VIRTUAL_CD), the ISO read whole.** The
+     firmware processes El Torito on it - the EFI boot image
+     (efi/microsoft/boot/efisys.bin) mounts, and \EFI\BOOT\BOOTX64.EFI (cdboot)
+     loads from it - but CDFS does not bind to the RAM disk's Block I/O, so the
+     CD's main ISO 9660 / UDF filesystem never mounts. cdboot then cannot map
+     back to the CD and returns NO_MAPPING (0x8000000000000011); \bootmgr.efi,
+     which lives on the main filesystem, is absent on every mounted volume
+     (NOT_FOUND). Folding the whole boot chain into the El Torito EFI image so
+     the one filesystem that does mount holds everything is capped out: the
+     boot catalog's sector-count field is 16-bit, so that image cannot exceed
+     ~32 MB, and boot.wim is ~168 MB.
+
+  2. **Persistent hard disk (EFI_PERSISTENT_VIRTUAL_DISK), a GPT with one FAT32
+     ESP holding the boot chain and boot.wim.** PartitionDxe does not process
+     the RAM disk's GPT, so no ESP child handle appears and FatDxe never mounts
+     it; \bootmgr.efi is NOT_FOUND on every volume. A raw FAT superfloppy (no
+     partition table) registered the same way did not mount either.
+
+  3. **Non-persistent disk (EFI_VIRTUAL_DISK) in loader-owned memory**, the most
+     permissive config, run to rule out the memory type and the NFIT
+     persistence flag as the cause. Same result: NOT_FOUND at "booting
+     \bootmgr.efi", no filesystem mounted. So the block is PartitionDxe/FatDxe
+     declining to bind to the RAM disk, not the persistence attribute.
+
+  This is a firmware limit of the corpus, not of the approach: real firmware
+  may bind a filesystem to the RAM disk where OVMF does not, and the bench
+  already showed Win7 boots from a medium that stays. But the corpus (OVMF)
+  cannot validate it, so Windows 7/Vista under UEFI remains a real-hardware
+  question. What is proven here: none of the loader/userland shapes tried
+  (boot-start driver, CD RAM disk, hard-disk RAM disk persistent or not) boots
+  them under OVMF, and the cause of each is understood - the storage path waits
+  on the vanished boot device, or the firmware will not mount the RAM disk.
+
+- **Vista and XP are out of the EFI boot path entirely.** XP has no UEFI
+  support; Vista's only UEFI-capable edition is x64 SP1, and its support is
+  marginal (it fails at "finding the medium's EFI System Partition"). A
+  firmware/architecture limit, the exit goal's allowed exception, not the
+  Windows 7 hang above and not a follow-up.
+
+### 7.2 BIOS: Windows 7 and Vista boot (the four fixes)
+
+On BIOS the medium does not vanish, so pre-8 WinPE reaches winpeshl and winjump
+runs. Four separate bugs then stood between it and a served install source,
+each found by extracting winjump's own `X:\falcon-winjump.log` from inside
+WinPE on binhost and reading the served ISO's two filesystems by hand.
+
+1. **The "No disk in drive A:" dialog (winjump, commit 83d247f).** Windows 7
+   and Vista WinPE carry a floppy driver, so their drive set includes an empty
+   A:. winjump's drive scan queried it, and Windows raised a modal hard-error
+   dialog attributed to winpeshl's replacement, freezing the GUI with no shell
+   behind it. Windows 8+ WinPE has no floppy driver and so no A:, which is why
+   they never hit it. Fixed by `SetErrorMode(SEM_FAILCRITICALERRORS)` before
+   the scan.
+
+2. **The missing extent map (falcon-bios, commit 8831820).** Windows 7 and
+   Vista WinPE cannot read the exFAT the ISO lives on and have no
+   AttachVirtualDisk, so winjump falls to the falcon-vdisk driver, which serves
+   the ISO from its raw disk extents. That needs the extent map, and the BIOS
+   winjump config carried only `iso=` and `size=`, no `map=`; the EFI loader had
+   carried it since the driver route was added.
+
+3. **UDFS declining to mount (falcon-vdisk, commit 02934b0).** A Windows
+   install DVD is a UDF/ISO 9660 bridge: the ISO 9660 tree is a stub with only
+   a readme, the real sources live in the UDF tree. UDFS reads its anchor at the
+   disc's last sector, so it needs the medium's true size; the driver answered
+   no size query, so CDFS mounted the ISO 9660 stub instead and Setup found no
+   install source. Fixed by answering READ_TOC's lead-out,
+   IOCTL_DISK_GET_LENGTH_INFO, IOCTL_STORAGE_READ_CAPACITY and
+   IOCTL_CDROM_GET_LAST_SESSION, each reporting the ISO's size.
+
+4. **The harness could not see it (tools/coverage, commits 7342ee7, d2479cc).**
+   `screen_kind` knew only Windows 8+'s flat dark-blue Setup; Windows 7 is a
+   blue gradient and Vista a green-to-blue one, so both read as "graphical" and
+   the install.* probe never fired. The Enter nudges walked Setup onto the
+   license page before it could. And the probe read once, too early for a
+   Windows 7 DVD whose UDF mount lands a few seconds after the volume answers.
+   Fixed: the classifier matches the gradients, the nudges stop once Setup is
+   up, and the probe re-opens a prompt and retries the read.
+
+Measured on BIOS (2026-09-25): windows-7-sp1-x86 reads 338 MiB of install.*,
+windows-7-x64 405 MiB, windows-vista-x86 349 MiB, each through the ISO the
+driver serves; windows-server-2025, a modern Windows that had been failing BIOS
+for the harness reason alone, reads 160 MiB and passes too. Windows 7 x64 needs
+no driver signing: its WinPE loads the unsigned falcon-vdisk.
+
+**windows-vista-sp1-x64 boots (2026-09-25, BIOS):** it reads 750 MiB of
+install.* through the ISO winjump attaches, a full PASS. The road there is
+worth recording, because two intuitive approaches are dead ends the code now
+avoids.
+
+The medium is the reason it needed its own path: **Vista SP1 x64's ISO is
+ISO 9660 only, with no UDF filesystem** (Windows 7 x64 and Vista x86's are
+UDF/ISO 9660 bridges). Both loaders read and patch boot.wim through `udf_mount`,
+so on this medium `udf_mount` failed, `/sources/boot.wim` was never found, the
+patch was skipped, and Vista booted its stock 18,432-byte winpeshl with no
+winjump. So `win_boot` gained an ISO 9660 branch beside the UDF one: mount with
+the iso9660 driver, read boot.wim, build the same winjump tail with
+`wim_patch_build`.
+
+Growing the file is where the two dead ends live. A UDF File Entry is natively
+multi-extent, so the UDF path just appends the tail as a second extent; an
+ISO 9660 file is one extent unless a "not final" record is followed by a
+continuation. The first attempt did exactly that - made boot.wim multi-extent
+by inserting a continuation record and re-packing its directory - and it
+failed: **bootmgr's ISO 9660 reader loads a single extent but not a
+multi-extent file.** winload stopped with `0xc0000001`, "the application is
+missing or corrupt": it read only the first extent and never saw the patched
+lookup table in the tail. Multi-extent is off the table for a boot CD.
+
+So boot.wim is instead **relocated whole** to one new single extent past the
+ISO's end, its directory record rewritten in place to point there (same record
+length, only the extent and data-length fields change). The naive version of
+that copied all ~148 MB into the append region and served it from memory over
+INT 15h AH=87h, a block move per read: WinPE booted but so slowly it missed the
+probe's timeout. The shipped version does not copy the bulk. The relocated
+extent's sectors **redirect** to where the original boot.wim already lies on
+the disk: `vcd_add_run` adds a run mapping the appended CD sectors, run for
+run, to the original's disk location, so they are served over INT 13h like any
+other ISO sector. Only two things reach memory - the one patched header sector
+at the relocated file's start (a `vcd_overlay_at` conventional-memory override
+over the header the redirect otherwise serves from disk), and the tail: the
+original's partial last block followed by the patch tail, the same ~1 MB the
+UDF path appends. Served that way boot.wim loads at disk speed.
+
+One more edit was needed, and it is the reason the multi-extent attempt's
+`0xc0000001` was so confusing: **bootmgr reads the boot CD through the ISO 9660
+primary tree, not Joliet.** The iso9660 driver prefers Joliet (long names), so
+relocating only the record it found left bootmgr reading the un-relocated
+original from the primary tree - which booted, with the original winpeshl and
+no source. `iso9660_mount_primary` mounts the primary tree with plain names so
+`win_boot` relocates the record in both trees; whichever bootmgr reads now
+points at the patched file. (A subtle bug hid behind this the whole time: the
+header sector was built in the same scratch buffer the record edits reused, so
+it was clobbered before it was staged and the relocated file's sector 0 was
+served as a directory sector - the same `0xc0000001`. It is now its own
+buffer.)
+
+This is BIOS-specific, and for this ISO that is the whole story: Vista SP1
+x64's El Torito catalog carries one entry, an x86 no-emulation image, and no
+UEFI one, so on UEFI the loader fails at "finding the medium's EFI System
+Partition" (0x800000000000000e) before boot.wim is ever read. The medium does
+not boot UEFI at all - Vista's x64 UEFI support predates the install-media
+convention - so there is nothing for a UEFI patch path to do here, and it is
+the corpus's only ISO 9660-only Windows medium (Windows 7 x64 and Vista x86 are
+UDF/ISO 9660 bridges). Should a UEFI-bootable ISO 9660-only Windows ISO ever
+turn up, `iso9660_mount_primary` and the tail assembly are in falcon-core and a
+UEFI path could reuse them over `iso/overlay.h`'s sidecar redirect.
+
+### 7.3 32-bit Windows, characterized in full (2026-09-25)
+
+The corpus runs a BIOS machine in two CPU columns: `bios` (the 64-bit host CPU
+in legacy mode) and `bios32` (a Pentium III, 32-bit only, with SSE but no SSE2
+and no NX). A Windows verdict is PASS only when the screen reaches "Windows
+Setup" (WinPE booted, winpeshl ran, winjump ran) and then a Shift-F10 prompt
+reads `\sources\install.*` back off a drive letter - which exists only if
+winjump attached the ISO. So a PASS is end-to-end proof that the jump binary
+ran and served Setup its source.
+
+Every 32-bit (x86) Windows medium in the corpus, with its root cause:
+
+| ISO | bios (host CPU) | bios32 (Pentium III) | root cause |
+|---|---|---|---|
+| windows-10-22h2-x86 | PASS | FAIL (checking the processor: no SSE2) | winjump32 proven on bios. On the P3, Windows 10 needs NX/SSE2 the P3 lacks: an allowed architecture exception, and the CPU check now names it. |
+| windows-8.1-x86 | PASS | FAIL (checking the processor: no SSE2) | winjump32 proven on bios. P3 correctly rejected: 8.1 needs SSE2/NX. Allowed architecture exception. |
+| windows-7-sp1-x86 | PASS (338 MiB) | PASS (539 MiB) | Boots on the P3 (2026-09-25). The CPU check used to reject it for lacking SSE2, which Windows 7 does not require; it is now gated to Windows 8 and later by winpeshl's PE OS version, and 7 (6.1) passes. |
+| windows-vista-x86 | PASS (349 MiB) | PASS (581 MiB) | Boots on the P3 (2026-09-25), same fix as Windows 7: Vista (6.0) is below the 8+ gate, so NX/SSE2 are not asked of it. |
+| windows-2000-pro-x86 | FAIL (no userland, graphical) | FAIL (no userland, graphical) | No WinPE at all; text-mode setup, a wholly separate route not yet built (Section 7.4). |
+| windows-xp-pro-sp3-x86 | FAIL (no userland, graphical) | FAIL (no userland, graphical) | Same as 2000: text-mode setup. |
+
+What this settles:
+
+- **The 32-bit jump binary (falcon-winjump32.exe) works, on 32-bit hardware.**
+  10-x86, 8.1-x86, 7-sp1-x86 and vista-x86 all pass `bios drop`, and 7-sp1-x86
+  and vista-x86 also pass `bios32 drop` (a real Pentium III): winjump32 running
+  as winpeshl, serving the ISO (through AttachVirtualDisk on 8.1/10, through the
+  driver on 7/Vista), and Setup reading install.* through it.
+- **The CPU check is gated to Windows 8 and later** by winpeshl.exe's PE
+  optional-header OS version (6.2 = Windows 8). PAE is still asked of every
+  Windows; NX and SSE2 only of 8+, which reset with nothing on screen without
+  them. Vista (6.0) and 7 (6.1) boot on a processor with neither, which is what
+  a Pentium III is.
+- **8.1-x86 and 10-x86 on the Pentium III are genuine architecture exceptions:**
+  those releases require SSE2 and NX a P3 does not have, and the check names the
+  missing feature rather than letting bootmgr reset in silence.
+- **The remaining 32-bit non-boots are the Windows 2000 / XP text-mode
+  installer**, which has no WinPE and needs a different route entirely (not yet
+  built).
+
+### 7.4 Windows 2000 and XP: text-mode setup (XP boots; 2000 to CDFS mount)
+
+2000 and XP have no WinPE. They boot a text-mode setup: the CD's El Torito boot
+image loads setupldr, which reads txtsetup.sif, the kernel, the HAL and the
+boot-start drivers off the CD through INT 13h, then hands to the NT kernel.
+falcon-bios serves all of that as its INT 13h virtual CD, and it works up to
+the handover: both windows-2000-pro-x86 and windows-xp-pro-sp3-x86 reach the NT
+kernel and bugcheck 0x7B INACCESSIBLE_BOOT_DEVICE (0xC0000034,
+OBJECT_NAME_NOT_FOUND), measured 2026-09-25.
+
+The cause is the same shape as Windows 7: the running kernel re-accesses its
+boot device through its own storage stack, not INT 13h. atapi.sys enumerates
+real ATAPI hardware; the INT 13h virtual CD is not a device it binds to, so the
+CD's ARC path does not resolve and the boot device is missing. Unlike 7 and
+Vista there is no winpeshl to run winjump from, so the driver cannot be loaded
+from userland.
+
+The route, when built, is firadisk/winvblock-shaped: a driver that presents the
+ISO as a device the NT kernel binds to, injected into text-mode setup by
+patching the served ISO. The pieces, in build order, with the obstacles found:
+
+1. A driver text-mode setup loads. falcon-vdisk already presents a CD-ROM from
+   the ISO's raw disk extents. Settled 2026-09-25: the existing x86 build (at
+   _WIN32_WINNT 0x0600) needs no XP-specific build. Its imports, dumped from
+   the .sys, are ExAllocatePoolWithTag, ExFreePoolWithTag, the Exf interlocked
+   list pair, IoBuildDeviceIoControlRequest, IoCreateDevice/DeleteDevice,
+   Io{Create,Delete}SymbolicLink, IoGetDeviceObjectPointer, Iof{Call,Complete},
+   KeInitialize{Event,Semaphore}, KeReleaseSemaphore, KeWaitForSingleObject,
+   MmMapLockedPagesSpecifyCache, Ob{f}{Reference,Dereference}Object,
+   Ps{Create,Terminate}SystemThread, RtlInitUnicodeString, ZwClose/Create/Read,
+   DbgPrint - every one exported by Windows 2000 (NT 5.0) and XP (NT 5.1)
+   ntoskrnl, MmMapLockedPagesSpecifyCache being the newest at NT 5.0. So the
+   SYSTEM_POWER_STATE_CONTEXT compile wall (wdm.h at below 0x0600) is moot: the
+   0x0600 binary is XP-safe as it stands. **Settled 2026-09-25 on real
+   windows-xp-pro-sp3-x86 media: XP loads the driver through txtsetup.sif's
+   [SCSI.Load], the firadisk way, no other section needed.** The x86 .sys,
+   injected into a copy of the ISO and booted under QEMU (BIOS, `-machine pc`),
+   printed its DriverEntry marker on COM1 and text-mode setup reached the
+   "Welcome to Setup" screen unharmed, so the load path and the driver's entry
+   both work. What remains is not whether it loads but what it does once loaded
+   (piece 3).
+2. Patch the served ISO for the XP layout. Add the .sys and rewrite
+   i386/txtsetup.sif ([SCSI.Load], [SCSI], [SourceDisksFiles]; the driver loads
+   as a legacy [SCSI.Load] entry like firadisk, so no [HardwareIdsDatabase]
+   line is needed) and, for a real install, i386/dosnet.inf. Two edits:
+   - **Adding the .sys is built (iso9660_append_record) and proven on the real
+     ISO (2026-09-25).** The i386 directory does NOT need relocating: its last
+     block (block 155 on windows-xp-pro-sp3-x86) has 550 free bytes and the
+     entries end at "_DEFAULT.PI_", so a driver named to sort just past it
+     ("_FALCON.SYS") appends in that block's slack, in order. The .sys data
+     appends past the ISO's end, exactly the Vista boot.wim tail. Two things the
+     first host test missed and the real ISO forced:
+       - **The i386 directory's data length is not a multiple of the block
+         size.** It is 263642 bytes: 128 full blocks and a 129th with 1498
+         bytes of records and 550 free. iso9660_append_record floored that to
+         128 and rejected the non-aligned length outright; it now rounds up to
+         the partly-filled last block. A block-aligned synthetic directory (the
+         only shape the unit test had) never exercised this.
+       - **The directory's own record data length must grow by the record's
+         length.** The new record sits at the old data-length boundary, so a
+         data-length-strict reader (setupldr, libisofs) stops just before it and
+         never sees the file. Growing i386's record in the root directory by the
+         record length (still no relocation, block count unchanged) is what
+         makes _FALCON.SYS appear; without it a primary-tree read does not list
+         it. The earlier "keeps its size, its own record does not change" was
+         wrong on this one field.
+   - **txtsetup.sif's edit is built (txtsetup_inject) and proven.** It grows by
+     three short lines (one per section), each modelled on atapi.sys's own form
+     - the injected [SourceDisksFiles] line is byte-for-byte atapi's
+     (`= 100,,,,,,4_,4,0,0,,1,4`). The ~480 KB file is grown and served by the
+     same relocation as boot.wim: single extent moved past the ISO's end, its
+     directory record rewritten to the new extent and length, the PVD volume
+     space size grown to cover the appended blocks.
+3. Give the driver the ISO's extents without winjump to hand them over, and a
+   boot-start mode. The current falcon-vdisk gets its backing by IOCTL from
+   winjump (SET_BACKING, a disk path + extents); text-mode setup has no winjump,
+   so DriverEntry must instead read a baked-in extent map and FIND the stick
+   itself (scan \Device\HarddiskN for the ISO's disk, since the NT device path
+   is not known at patch time), then serve the ISO from the stick's real disk
+   through the NT disk stack. atapi.sys/disk.sys must enumerate the stick before
+   the driver reads it, so the [SCSI.Load] order matters. This is the crux and
+   the remaining novel work.
+
+The pieces interlock: nothing boots until all are in, so the first end-to-end
+test is late. The first useful milestone came earlier and is now done: pieces 1
+and 2 were proven together against the real ISO (2026-09-25). A host prototype
+(the eventual win_xp_boot's ISO surgery, run over a file instead of the served
+virtual CD) injected _FALCON.SYS and the three txtsetup.sif lines in place -
+append past the end, rewrite the sif's record, grow the PVD, add the .sys record
+in i386's slack, grow i386's own record - and the result booted XP text-mode
+setup under QEMU: the driver's COM1 marker proved [SCSI.Load] loaded it, and
+setup reached "Welcome to Setup" unharmed. The x86 driver carries an opt-in
+COM1 trace at DriverEntry (VDISK_SERIAL_TRACE) for exactly this.
+
+Since then win_xp_boot and piece 3's disk-finding are built and rig-proven
+(2026-09-25), and the route is one barrier short of booting.
+
+ - **win_xp_boot** (falcon-bios/src/win.c) does the prototype's ISO surgery over
+   the served virtual CD in memory (vcd_overlay_append for the appended sif and
+   driver, i9_relocate for the sif's record, iso9660_append_record for the .sys,
+   the PVD and i386 record edits), routes 2000/XP media to it (now FAMILY_WINDOWS,
+   detected by i386/txtsetup.sif + i386/setupldr.bin), and embeds the x86 driver.
+   Rig-proven: the loader injects and serves the ISO, XP text-mode setup boots
+   from the served virtual CD, and loads the driver through [SCSI.Load].
+
+ - **Piece 3's disk-finding is built and proven.** win_xp_boot bakes the ISO's
+   extent map into the served .sys at a magic-tagged struct; the driver decodes
+   it at load on a detached thread and, retrying while the disk stack comes up,
+   finds the stick by the GPT partition GUID (extmap.c + winjumpcore.c linked
+   into the .sys, the same match winjump does in userland) and sets the backing.
+   Rig-proven: both COM1 markers (SCSILOAD_OK and BACKING_OK) appear, so the
+   novel "find the stick with no winjump" work is done.
+
+ - **The boot-device binding is SOLVED (2026-09-25); XP boots.** After the
+   driver resolved its backing it still bugchecked 0x7B (OBJECT_NAME_NOT_FOUND):
+   the kernel resolves its boot device through an ARC name, but no real device
+   registers one for the INT-13h-served medium, so the driver must. The name is
+   NOT cdrom(0): setupldr records it as the served BIOS drive number, read on the
+   rig from the registry as SystemBootDevice = multi(0)disk(0)cdrom(224) (224 =
+   0xE0, the drive falcon-bios serves on). bind_boot_device reads that value and
+   points \ArcName\<it> at the CD, which clears the 0x7B. Two more things the
+   route needs, both learned on the rig: the CD reports its size from the baked
+   map the instant it is created, so text-mode setup's CD-ROM scan counts it
+   before the backing thread finishes (a no-media device is skipped -> "Setup
+   cannot find a CD-ROM drive"); and the backing must stay on its own thread, not
+   block DriverEntry, or the boot-start sequence stalls, disk.sys never
+   enumerates the stick, and the volume comes back unmountable (0xED).
+
+   **XP boots reliably in the shipped build (2026-09-25).** The race that a
+   read faced - serving zeros before the backing thread found the stick - is
+   closed with an event: a read waits on it until the backing is resolved
+   (signalled at once on the winjump path). The wait is on the read-servicing
+   thread, never DriverEntry, so it does not stall the boot-start sequence. With
+   that, the non-trace XP build reaches "Welcome to Setup" every run, no serial
+   delays needed.
+
+ - **Windows 2000 is fixed up to the CDFS mount; 0x26 remains.** Two 2000-only
+   fixes got it there: txtsetup_inject copies the source-disk id from the
+   medium's own atapi.sys line (2000 names its disk 1, not XP's 100, or setup
+   rejects it as a corrupt [SourceDisksNames] entry), and the boot-device link
+   is created for cdrom(224) directly (2000 keeps no SystemBootDevice - its
+   ControlSet001\Control holds only the boot options - so bind_boot_device has
+   nothing to read; the boot CD is still the served drive 0xE0 = 224). With
+   those, 2000 clears 0x7B and reaches the boot-volume mount, then bugchecks
+   0x26 CDFS_FILE_SYSTEM. The cause is a boot-ordering deadlock the read-wait
+   cannot fix: 2000's boot mount holds up the PnP enumeration that would create
+   the stick's disk device, so the backing thread cannot find the stick before
+   the mount times out, and the read serves zeros. The trace build's delays let
+   disk.sys enumerate the stick first, so it boots there (BACKING_OK); the
+   shipped build deadlocks. Extending the retry does not help - the mount times
+   out first - and STATUS_DEVICE_NOT_READY is fatal on a boot-device read, not
+   retried. The real fix is to read the stick without waiting on disk.sys (the
+   port driver / the PDO, up before it), or to serve the medium some way that
+   does not need the stick disk during the boot mount. That is the remaining
+   work for 2000.
+
+The rig: a falcon-bios stick with the ISO on p2 (mk-case-stick.sh), booted
+under QEMU BIOS with the loader disk; the menu's Enter selects the ISO, and
+setupldr's "press any key to boot from CD" is answered with more Enters. A
+VDISK_TRACE=1 build turns on the driver's COM1 markers to read the sequence.

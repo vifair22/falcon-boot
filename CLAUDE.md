@@ -236,9 +236,27 @@ the tree, so `#include <fs/exfat.h>` means one file wherever it is written.
   it.
   `tools/` holds the QEMU proofs.
 - `falcon-winjump/` the WinPE jump binary (DESIGN Section 6.3), a Win64
-  console program. The loader embeds its stripped build as a generated C
-  array. It links static (`-static`) because WinPE has no `libssp-0.dll`, and
-  a missing import kills it before its first log line.
+  console program, built a second time for i686 (`winjump32.exe`,
+  `i686-w64-mingw32-gcc`) for 32-bit Windows media. The UEFI loader embeds
+  the x64 build as a generated C array; falcon-bios embeds both and puts in
+  the one the boot image's `winpeshl.exe` is built for. It links no C
+  runtime at all (`-nostdlib`, its own entry point and the few string
+  routines it needs): a missing import kills it before its first log line, so
+  it imports only kernel32, advapi32 and user32, which every WinPE from
+  Vista's on carries, and loads VirtDisk.dll at run time.
+- `falcon-vdisk/` the WinPE virtual-CD kernel driver (DESIGN Section 6.3),
+  for Windows older than 8, whose WinPE cannot attach an ISO (and 2000/XP,
+  which have no WinPE). A native-subsystem NT driver (`.sys`) built for both
+  widths from `src/vdisk.c` with mingw's DDK headers and `ntoskrnl`/`hal`
+  import libraries (no separate WDK). It presents the ISO as a read-only
+  CD-ROM CDFS mounts, reading the ISO's raw disk extents (the same map the
+  BIOS virtual CD and falcon-hook use) since WinPE cannot read the exFAT the
+  ISO lives on. winjump loads it (CreateService/StartService) and hands it
+  the extents through `src/vdiskio.h`. 32-bit Windows loads it unsigned;
+  64-bit needs the served boot config put into test-signing mode and the
+  driver signed with a throwaway cert, which Secure Boot on refuses (the
+  platform opt-out, DESIGN Section 7). Runs only in the installer's WinPE;
+  the installed Windows keeps signing enforcement.
 - `falcon-hook/` the program the loader appends to an ISO's initrd (DESIGN
   Section 6.4): freestanding static Linux, no libc, built twice, x86-64
   (`falcon-hook`) and i686 (`falcon-hook32`) from the same source: `src/sys.c`
@@ -308,8 +326,11 @@ the tree, so `#include <fs/exfat.h>` means one file wherever it is written.
   than chainloading it, rebuilding sd-stub's credential cpio itself;
   `src/bsd.c` lays `media/bsdmd.c`'s two edits over the served medium; and
   `src/win.c` patches boot.wim with core's `wim`, serving the appended tail
-  from extended memory through INT 15h AH=87h. `src/heap.c` is the one
-  allocator, for that tail alone. `src/marker.c` takes the next-boot marker
+  from extended memory through INT 15h AH=87h. `src/vfd.c` serves a
+  medium whose El Torito boot image is a floppy emulation (memtest86+,
+  Haiku) as a memory disk instead, its resident `src/vfdres.S` and its
+  geometry `src/vfdcore.c`. `src/heap.c` is the one
+  allocator, for that tail and that image. `src/marker.c` takes the next-boot marker
   (DESIGN Section 6.3.1): LBA 2047 of the boot disk, written from Linux,
   cleared before it is believed and honoured only within ten minutes by the
   RTC. It is the only code in falcon-bios that writes a disk (one sector,

@@ -150,6 +150,11 @@ typedef struct {
 } iso9660_extent;
 
 int iso9660_mount(iso9660_vol *v, iso9660_read_fn read, void *read_ctx);
+/* Mounts the primary (ISO 9660) tree with plain names, ignoring any Joliet or
+ * Rock Ridge tree iso9660_mount would prefer: Windows' bootmgr reads a boot CD
+ * through the primary descriptor, so a loader relocating a file for it must
+ * edit the record there too. */
+int iso9660_mount_primary(iso9660_vol *v, iso9660_read_fn read, void *read_ctx);
 int iso9660_dir_open_root(iso9660_vol *v, iso9660_dir *d);
 int iso9660_dir_open(iso9660_vol *v, iso9660_dir *d, const iso9660_dirent *e);
 /* 1 = entry produced, 0 = end of directory, negative = error. "." and ".."
@@ -170,5 +175,37 @@ int iso9660_file_extents(iso9660_vol *v, const iso9660_dirent *e,
 
 /* Probe: one read, "CD001" at block 16. */
 int iso9660_probe(iso9660_read_fn read, void *read_ctx);
+
+/* Adds a directory record for a new file to an ISO 9660 directory without
+ * moving the directory: the record goes in the free space at the end of the
+ * directory's last block, so the directory keeps its block count and location
+ * and the path table does not change. This is how the Windows 2000/XP
+ * text-mode driver injection adds its .sys to \i386.
+ *
+ * `dir_len` is the directory's recorded data length, which need NOT be a
+ * multiple of the block size: Windows XP's \i386 is 263642 bytes (128 full
+ * blocks and a 129th holding 1498 bytes of records and 550 free), and the
+ * record lands in that free tail.
+ *
+ * The caller must ALSO grow the directory's own record's data length (in the
+ * parent) by the record's length, or a data-length-strict reader (setupldr,
+ * libisofs) stops at the old end and never sees the new file. The record's
+ * length is 33 + strlen(name), rounded up to even. Only that one field of the
+ * parent record changes; the directory is not relocated and its block count is
+ * unchanged, since the record fits the last block's existing free space.
+ *
+ * `name` is the full ISO 9660 identifier including the ";1" version, and it
+ * must sort at or after the directory's current last entry, so the record can
+ * be appended in order - the caller's to arrange by choosing a name that sorts
+ * last (e.g. one starting past the directory's last, which for \i386 is
+ * "_DEFAULT.PI_;1"). The file's extent is (ext_lba, ext_len), a plain file.
+ *
+ * The directory's last block is read through the volume's callback into `out`
+ * (ISO9660_BLOCK bytes) and the record appended; *blk_lba is that block's LBA,
+ * so the caller overlays only it. ISO9660_ERR_NOSPACE if the last block has no
+ * room for the record. Nothing is written to media. */
+int iso9660_append_record(iso9660_vol *v, uint32_t dir_lba, uint32_t dir_len,
+                          const char *name, uint32_t ext_lba, uint32_t ext_len,
+                          uint8_t *out, uint32_t *blk_lba);
 
 #endif /* FALCON_ISO9660_H */

@@ -27,6 +27,7 @@
 #   efi-$(VARIANT)  freestanding mingw, linked into the loader
 #   host            hosted Linux, linked into the host tools
 #   winjump         hosted mingw, linked into winjump.exe
+#   winjump32       hosted i686 mingw, linked into winjump32.exe
 #   hook, hook32    freestanding static Linux, x86-64 and i686: falcon-hook
 #   bios            freestanding i686: falcon-bios's three stages
 #   test            hosted Linux at -O0 with --coverage, linked into the tests
@@ -62,6 +63,7 @@ CLI_INC       := -Ifalcon-cli/src
 APPLIANCE_INC := -Ifalcon-appliance/src
 HOOK_INC      := -Ifalcon-hook/src
 BIOS_INC      := -Ifalcon-bios/src
+WINJUMP_INC   := -Ifalcon-winjump/src
 
 # ---- the freestanding EFI flavour ----
 CC := x86_64-w64-mingw32-gcc
@@ -221,7 +223,7 @@ TEST_CFLAGS := -std=c11 -O0 -g --coverage $(TEST_WARNS) \
 	-DSHIM_DIR='"$(SHIM_DIR)"' \
 	-DMEDIA_FIXTURE_DIR='"$(MEDIA_FIXTURE_DIR)"' \
 	-I$(TEST_SUPPORT)/hostshim $(CORE_INC) $(EFI_INC) $(CLI_INC) \
-	$(APPLIANCE_INC) $(HOOK_INC) $(BIOS_INC) -I$(TEST_SUPPORT) \
+	$(APPLIANCE_INC) $(HOOK_INC) $(BIOS_INC) $(WINJUMP_INC) -I$(TEST_SUPPORT) \
 	$(CMOCKA_CFLAGS)
 
 TEST_LDFLAGS := --coverage
@@ -248,6 +250,7 @@ include falcon-core/build.mk
 # source list is expanded as it is read.
 include falcon-hook/build.mk
 include falcon-winjump/build.mk
+include falcon-vdisk/build.mk
 include falcon-efi/build.mk
 include falcon-cli/build.mk
 include falcon-appliance/build.mk
@@ -258,7 +261,7 @@ include falcon-appliance/build.mk
 # else, because it is ordinary C and is the half that can be checked.
 include falcon-bios/build.mk
 
-TESTS := core efi cli appliance hook bios
+TESTS := core efi cli appliance hook bios winjump
 TEST_BINS := $(TESTS:%=$(BIN)/falcon-%-test)
 
 # The coverage report's units: what the test binaries link as units under
@@ -339,6 +342,8 @@ check-tools:
 		echo "missing (mk-test-isoview.sh cross-checks its UDF fixture with it): 7z"; \
 	[ "$$($(CC_HOST) -m32 -print-multi-directory 2>/dev/null)" = 32 ] || \
 		echo "missing (make bios links the i686 loader and falcon-hook32 against it): a 32-bit libgcc, gcc-multilib on Debian"; \
+	command -v $(CC_WIN32) >/dev/null 2>&1 || \
+		echo "missing (make bios embeds the i686 winjump for 32-bit Windows media): $(CC_WIN32)"; \
 	if [ $$missing -ne 0 ]; then echo "Required toolchain incomplete."; exit 1; fi; \
 	echo "Toolchain OK."
 

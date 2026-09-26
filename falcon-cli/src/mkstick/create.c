@@ -980,6 +980,7 @@ static cli_status create_run(const cli_args *a)
     size_t i;
 
     memset(&pass, 0, sizeof pass);
+    memset(&plan, 0, sizeof plan);
 
     rc = mkstick_guid_selfcheck();
     if (rc != CLI_OK)

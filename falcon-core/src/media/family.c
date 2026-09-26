@@ -339,6 +339,13 @@ const family_desc *family_detect(const family_probe *p)
         (probe_exists(p, "/bootmgr") ||
          probe_exists(p, "/EFI/Microsoft/Boot/BCD")))
         return family_by_id(FAMILY_WINDOWS);
+    /* Windows 2000/XP text-mode setup: no /sources and no WinPE - the installer
+     * is i386/setupldr.bin reading i386/txtsetup.sif. The loader injects the
+     * virtual-CD driver into that setup rather than patching a boot.wim
+     * (windows-route.md 7.4). */
+    if (probe_exists(p, "/i386/txtsetup.sif") &&
+        probe_exists(p, "/i386/setupldr.bin"))
+        return family_by_id(FAMILY_WINDOWS);
 
     /* SystemRescue before Arch: it is archiso underneath, and its media can
      * carry archiso's loader entries while its base directory is its own. */

@@ -60,6 +60,7 @@ int run_extmap_tests(void);
 int run_hookcmd_tests(void);
 int run_grubcfg_tests(void);
 int run_bsdmd_tests(void);
+int run_xpsetup_tests(void);
 int run_eltorito_tests(void);
 int run_fat_tests(void);
 int run_medium_tests(void);
@@ -77,6 +78,7 @@ int run_trust_tests(void);
 int run_tui_tests(void);
 int run_shelf_tests(void);
 int run_nextboot_tests(void);
+int run_winjumpcore_tests(void);
 
 /* Copies a UCS-2 filename into an ASCII buffer. Every character the tests use
  * is ASCII; anything outside that range is rendered '?' so a mismatch is

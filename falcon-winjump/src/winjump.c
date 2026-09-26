@@ -24,6 +24,20 @@
  * Every failure path still launches the original shell. A machine that boots
  * to a media-less WinPE can be diagnosed; one whose shell never started
  * reboots on the spot and tells nobody anything.
+ *
+ * NO C RUNTIME. A missing import stops a process before its first
+ * instruction, so this binary imports only what every WinPE from Vista's on
+ * carries: kernel32, advapi32 and user32. The C runtime is not one of those:
+ * a mingw built for the Universal CRT (Arch's) imports api-ms-win-crt-*,
+ * which WinPE gained with Windows 10, and one built for msvcrt (Debian's)
+ * imports msvcrt.dll, so the same source used to give different binaries on
+ * different build hosts, and the laptop's could not start on Windows 8.1.
+ * The handful of string routines are here instead, the log's formatting is
+ * user32's wvsprintf (in every WinPE, which is a GUI; winpeshl itself
+ * imports it), and the entry point is ours. So the imports are kernel32,
+ * advapi32 and user32. VirtDisk.dll, which Vista's WinPE
+ * does not have at all, is loaded at run time for the same reason: without
+ * it there is no attach, but there is still a shell.
  */
 
 /* AttachVirtualDisk's ISO support arrived in Windows 8; ask for the modern
@@ -38,11 +52,176 @@
 
 #include <windows.h>
 #include <virtdisk.h>
+#include <winioctl.h>
 #include <stdarg.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <wchar.h>
+#include <stddef.h>
+#include <stdint.h>
+
+#include <media/extmap.h>
+#include "winjumpcore.h"
+#include "vdiskio.h"
+
+/* ---- what the C runtime would have provided ----
+ *
+ * memset, memcpy and strlen keep their names because the compiler emits
+ * calls to them on its own: zeroing or copying a structure, and recognising
+ * a counting loop as strlen. The rest are named for what they are. */
+void *memset(void *d, int c, size_t n);
+void *memset(void *d, int c, size_t n)
+{
+    unsigned char *p = d;
+
+    while (n-- > 0)
+        *p++ = (unsigned char)c;
+    return d;
+}
+
+void *memcpy(void *d, const void *src, size_t n);
+void *memcpy(void *d, const void *src, size_t n)
+{
+    unsigned char *p = d;
+    const unsigned char *q = src;
+
+    while (n-- > 0)
+        *p++ = *q++;
+    return d;
+}
+
+size_t strlen(const char *s);
+size_t strlen(const char *s)
+{
+    const char *e = s;
+
+    while (*e != '\0')
+        e++;
+    return (size_t)(e - s);
+}
+
+/* memcmp, for the linked-in falcon-core code (extmap, winjumpcore) that a
+ * hosted build would get from libc. */
+int memcmp(const void *a, const void *b, size_t n);
+int memcmp(const void *a, const void *b, size_t n)
+{
+    const unsigned char *p = a;
+    const unsigned char *q = b;
+
+    for (; n-- > 0; p++, q++) {
+        if (*p != *q)
+            return (int)*p - (int)*q;
+    }
+    return 0;
+}
+
+/* A number as decimal, into buf, for the log: wvsprintf's only 64-bit
+ * conversion is a Microsoft extension the pedantic checker rejects. */
+static const char *u64s(char buf[24], unsigned long long v)
+{
+    char *p = buf + 23;
+
+    *p = '\0';
+    do {
+        *--p = (char)('0' + (int)(v % 10u));
+        v /= 10u;
+    } while (v != 0);
+    return p;
+}
+
+static int jstrcmp(const char *a, const char *b)
+{
+    while (*a != '\0' && *a == *b) {
+        a++;
+        b++;
+    }
+    return (int)(unsigned char)*a - (int)(unsigned char)*b;
+}
+
+static char *jstrchr(char *s, char c)
+{
+    for (; *s != '\0'; s++) {
+        if (*s == c)
+            return s;
+    }
+    return NULL;
+}
+
+static size_t jwcslen(const wchar_t *s)
+{
+    size_t n = 0;
+
+    while (s[n] != L'\0')
+        n++;
+    return n;
+}
+
+static int jwcscmp(const wchar_t *a, const wchar_t *b)
+{
+    while (*a != L'\0' && *a == *b) {
+        a++;
+        b++;
+    }
+    return (int)*a - (int)*b;
+}
+
+/* Decimal digits to a number; stops at the first non-digit, and saturates
+ * rather than wrapping, so a mangled size can only fail to match. */
+static unsigned long long jparse_u64(const char *s)
+{
+    unsigned long long v = 0;
+
+    for (; *s >= '0' && *s <= '9'; s++) {
+        unsigned d = (unsigned)(*s - '0');
+
+        if (v > (~0ull - d) / 10u)
+            return ~0ull;
+        v = v * 10u + d;
+    }
+    return v;
+}
+
+/* dst = a followed by b, both whole or not at all. FALSE when they do not fit,
+ * with dst left empty, which is swprintf's contract as this file used it. */
+static BOOL jwjoin(wchar_t *dst, size_t cap, const wchar_t *a,
+                   const wchar_t *b)
+{
+    size_t la = jwcslen(a);
+    size_t lb = jwcslen(b);
+    size_t i;
+
+    if (cap == 0)
+        return FALSE;
+    dst[0] = L'\0';
+    if (la + lb + 1u > cap)
+        return FALSE;
+    for (i = 0; i < la; i++)
+        dst[i] = a[i];
+    for (i = 0; i < lb; i++)
+        dst[la + i] = b[i];
+    dst[la + lb] = L'\0';
+    return TRUE;
+}
+
+/* ---- the stack protector, without libssp ----
+ *
+ * -fstack-protector-strong stays on (it is the repository's rule for every
+ * hosted build), and it needs a guard value and a function to call when a
+ * canary is found broken. libssp provides both and reports through the C
+ * runtime, which is exactly what this file does without. The guard is set
+ * from values that differ per boot before any protected function runs
+ * (mainCRTStartup is built without the protector), and a broken canary ends
+ * the process at once: whatever overwrote the stack is not something to go
+ * on running with. */
+#if defined(__x86_64__)
+unsigned long long __stack_chk_guard = 0x2d5f3a1c9e7b4d60ull;
+#else
+unsigned long __stack_chk_guard = 0x9e7b4d60ul;
+#endif
+void __stack_chk_fail(void) __attribute__((noreturn));
+void __stack_chk_fail(void)
+{
+    TerminateProcess(GetCurrentProcess(), 0xC0000409u);
+    for (;;)
+        ;
+}
 
 /* WinPE's RAM disk is X: and is writable. The log is the only view into a
  * black box: everything here is inside a RAM disk that evaporates on reboot,
@@ -61,6 +240,8 @@ struct cfg {
     char iso[MAX_PATH];       /* ISO path relative to a volume root */
     unsigned long long size;  /* its exact byte length, 0 if unspecified */
     char shell[MAX_PATH];     /* original shell, empty for the default */
+    uint8_t *map;             /* the ISO's extent map, heap, NULL if none */
+    DWORD map_len;            /* its length in bytes */
 };
 
 /* p2:\falcon\windows.cfg, every key optional:
@@ -78,24 +259,57 @@ struct stick_opts {
     char unattend[MAX_PATH];
 };
 
-static void __attribute__((format(__MINGW_PRINTF_FORMAT, 1, 2)))
+/* The log's formatter: %s, %ls (wide, non-ASCII shown as '?'), %.Nls, %c,
+ * %d, %u, %ld, %lu and %%, which is every conversion this file uses and
+ * nothing else. Output stops at cap - 1 bytes and is always terminated.
+ * Returns the length written. */
+/* user32's formatter: %s, %ls (wide), %c, %u, %lu, %ld and %% are all this
+ * file uses, and every one is a conversion wvsprintf takes; the 64-bit
+ * values go through u64s and %s. Its checker is ms_printf. wvsprintfA caps at
+ * 1024 bytes, which is why line is that size and every argument is a path or
+ * a number. */
+static void __attribute__((format(ms_printf, 1, 2)))
 jlog(const char *fmt, ...)
 {
-    char line[512];
+    char line[1024 + 2];
     va_list ap;
     HANDLE h;
     DWORD written;
     int n;
 
     va_start(ap, fmt);
-    n = vsnprintf(line, sizeof line - 2, fmt, ap);
+    n = wvsprintfA(line, fmt, ap);
     va_end(ap);
     if (n < 0)
         return;
-    if ((size_t)n > sizeof line - 3)
-        n = (int)(sizeof line - 3);
+    if (n > 1024)
+        n = 1024;
     line[n] = '\r';
     line[n + 1] = '\n';
+
+    /* The console as well: WinPE shows this process's window, so the log is
+     * on screen as it happens, which is the only view there is when the
+     * machine then reboots and takes X: with it. */
+    {
+        HANDLE con = GetStdHandle(STD_OUTPUT_HANDLE);
+
+        if (con != NULL && con != INVALID_HANDLE_VALUE)
+            WriteFile(con, line, (DWORD)n + 2, &written, NULL);
+    }
+
+    /* And the first serial port, when WinPE has one: it is the only view that
+     * outlives the machine. The corpus harness captures it, and on real
+     * hardware a serial cable reads a boot whose screen cannot be photographed.
+     * Absent or busy, the open fails and the line is simply not sent. */
+    {
+        HANDLE com = CreateFileW(L"\\\\.\\COM1", GENERIC_WRITE, 0, NULL,
+                                 OPEN_EXISTING, 0, NULL);
+
+        if (com != INVALID_HANDLE_VALUE) {
+            WriteFile(com, line, (DWORD)n + 2, &written, NULL);
+            CloseHandle(com);
+        }
+    }
 
     /* Reopened per line so a hang or a crash still leaves everything written
      * so far on disk. The log is a few dozen lines; the cost is irrelevant. */
@@ -180,7 +394,9 @@ typedef void (*kv_fn)(void *ctx, const char *key, const char *value);
  * file cannot be read; what is in it is the caller's business. */
 static BOOL read_kv(const wchar_t *path, kv_fn fn, void *ctx)
 {
-    char buf[4096];
+    /* Large enough for the cfg with the extent map's hex on one line: the
+     * header, then map= and up to EXTMAP_MAX_EXTENTS runs, twice over in hex. */
+    static char buf[24576];
     HANDLE h;
     DWORD got = 0;
     char *line;
@@ -203,14 +419,14 @@ static BOOL read_kv(const wchar_t *path, kv_fn fn, void *ctx)
     for (line = buf; line != NULL && *line != '\0'; line = next) {
         char *eq;
 
-        next = strchr(line, '\n');
+        next = jstrchr(line, '\n');
         if (next != NULL)
             *next++ = '\0';
         trim(line);
         if (*line == '\0' || *line == '#')
             continue;
 
-        eq = strchr(line, '=');
+        eq = jstrchr(line, '=');
         if (eq == NULL)
             continue;
         *eq++ = '\0';
@@ -219,16 +435,57 @@ static BOOL read_kv(const wchar_t *path, kv_fn fn, void *ctx)
     return TRUE;
 }
 
+/* A hex digit's value, or -1. */
+static int hexval(char c)
+{
+    if (c >= '0' && c <= '9')
+        return c - '0';
+    if (c >= 'a' && c <= 'f')
+        return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F')
+        return c - 'A' + 10;
+    return -1;
+}
+
+/* Decode the map= hex into a heap buffer on cfg (freed when winjump exits). */
+static void cfg_map(struct cfg *cfg, const char *hex)
+{
+    size_t n = strlen(hex), i;
+    uint8_t *out;
+
+    if ((n & 1u) != 0 || n == 0) {
+        jlog("cfg: map= has an odd or empty hex length");
+        return;
+    }
+    out = HeapAlloc(GetProcessHeap(), 0, n / 2u);
+    if (out == NULL)
+        return;
+    for (i = 0; i < n; i += 2) {
+        int hi = hexval(hex[i]), lo = hexval(hex[i + 1]);
+
+        if (hi < 0 || lo < 0) {
+            jlog("cfg: map= has a non-hex digit");
+            HeapFree(GetProcessHeap(), 0, out);
+            return;
+        }
+        out[i / 2] = (uint8_t)((hi << 4) | lo);
+    }
+    cfg->map = out;
+    cfg->map_len = (DWORD)(n / 2u);
+}
+
 static void cfg_key(void *ctx, const char *key, const char *value)
 {
     struct cfg *cfg = ctx;
 
-    if (strcmp(key, "iso") == 0)
+    if (jstrcmp(key, "iso") == 0)
         lstrcpynA(cfg->iso, value, MAX_PATH);
-    else if (strcmp(key, "shell") == 0)
+    else if (jstrcmp(key, "shell") == 0)
         lstrcpynA(cfg->shell, value, MAX_PATH);
-    else if (strcmp(key, "size") == 0)
-        cfg->size = strtoull(value, NULL, 10);
+    else if (jstrcmp(key, "size") == 0)
+        cfg->size = jparse_u64(value);
+    else if (jstrcmp(key, "map") == 0)
+        cfg_map(cfg, value);
     else
         jlog("cfg: ignoring unknown key '%s'", key);
 }
@@ -239,7 +496,7 @@ static BOOL read_cfg(const wchar_t *dir, struct cfg *cfg)
 {
     wchar_t path[MAX_PATH];
 
-    if (swprintf(path, MAX_PATH, L"%ls%ls", dir, CFG_NAME) < 0)
+    if (!jwjoin(path, MAX_PATH, dir, CFG_NAME))
         return FALSE;
     if (!read_kv(path, cfg_key, cfg))
         return FALSE;
@@ -248,8 +505,12 @@ static BOOL read_cfg(const wchar_t *dir, struct cfg *cfg)
         jlog("cfg: no iso= key");
         return FALSE;
     }
-    jlog("cfg: iso=%s size=%llu shell=%s", cfg->iso, cfg->size,
-         cfg->shell[0] != '\0' ? cfg->shell : "(default)");
+    {
+        char n[24];
+
+        jlog("cfg: iso=%s size=%s shell=%s", cfg->iso, u64s(n, cfg->size),
+             cfg->shell[0] != '\0' ? cfg->shell : "(default)");
+    }
     return TRUE;
 }
 
@@ -309,36 +570,36 @@ static BOOL find_iso_once(const struct cfg *cfg, const wchar_t *rel,
     n = GetLogicalDriveStringsW(sizeof drives / sizeof drives[0] - 1, drives);
     if (n == 0 || n >= sizeof drives / sizeof drives[0]) {
         lstrcpynW(seen, L"(enumeration failed)", SEEN_CAP);
-        if (wcscmp(prev_seen, seen) != 0)
+        if (jwcscmp(prev_seen, seen) != 0)
             jlog("scan: GetLogicalDriveStrings failed, err=%lu", GetLastError());
         return FALSE;
     }
 
-    for (root = drives; *root != L'\0'; root += wcslen(root) + 1) {
-        int w;
+    for (root = drives; *root != L'\0'; root += jwcslen(root) + 1) {
+        UINT type = GetDriveTypeW(root);
+        size_t i;
 
+        /* "C:\(2) ": a root is three characters, a drive type one digit. */
         if (SEEN_CAP - at < 16)
             break;
-        w = swprintf(seen + at, SEEN_CAP - at, L"%ls(%u) ", root,
-                     (unsigned)GetDriveTypeW(root));
-        if (w < 0) {
-            /* A truncating swprintf leaves the buffer indeterminate, so the
-             * terminator has to be restored before anything logs it. */
-            seen[at] = L'\0';
-            break;
-        }
-        at += (size_t)w;
+        for (i = 0; i < 3u && root[i] != L'\0'; i++)
+            seen[at++] = root[i];
+        seen[at++] = L'(';
+        seen[at++] = (wchar_t)(L'0' + (type % 10u));
+        seen[at++] = L')';
+        seen[at++] = L' ';
+        seen[at] = L'\0';
     }
 
-    verbose = wcscmp(prev_seen, seen) != 0;
+    verbose = jwcscmp(prev_seen, seen) != 0;
     if (verbose)
         jlog("scan: drives %ls", seen);
 
-    for (root = drives; *root != L'\0'; root += wcslen(root) + 1) {
+    for (root = drives; *root != L'\0'; root += jwcslen(root) + 1) {
         WIN32_FILE_ATTRIBUTE_DATA fad;
         unsigned long long size;
 
-        if (swprintf(out, (size_t)cap, L"%ls%ls", root, rel) < 0)
+        if (!jwjoin(out, (size_t)cap, root, rel))
             continue;
         if (!GetFileAttributesExW(out, GetFileExInfoStandard, &fad)) {
             if (verbose)
@@ -348,12 +609,20 @@ static BOOL find_iso_once(const struct cfg *cfg, const wchar_t *rel,
 
         size = ((unsigned long long)fad.nFileSizeHigh << 32) | fad.nFileSizeLow;
         if (cfg->size != 0 && size != cfg->size) {
-            if (verbose)
-                jlog("scan: %ls is %llu bytes, want %llu; skipping", out, size,
-                     cfg->size);
+            if (verbose) {
+                char a[24];
+                char b[24];
+
+                jlog("scan: %ls is %s bytes, want %s; skipping", out,
+                     u64s(a, size), u64s(b, cfg->size));
+            }
             continue;
         }
-        jlog("scan: found %ls (%llu bytes)", out, size);
+        {
+            char a[24];
+
+            jlog("scan: found %ls (%s bytes)", out, u64s(a, size));
+        }
         return TRUE;
     }
 
@@ -417,14 +686,18 @@ static BOOL find_iso(const struct cfg *cfg, wchar_t *out, int cap)
 
         now = GetTickCount64();
         if (now - start >= FIND_DEADLINE_MS) {
-            jlog("scan: no volume carries %s after %llu ms and %u passes",
-                 cfg->iso, now - start, passes);
+            char a[24];
+
+            jlog("scan: no volume carries %s after %s ms and %u passes",
+                 cfg->iso, u64s(a, now - start), passes);
             jlog("scan: last drives seen %ls", seen);
             return FALSE;
         }
         if (now - beat >= FIND_HEARTBEAT_MS) {
-            jlog("scan: still waiting, %llu ms elapsed, %u passes, drives %ls",
-                 now - start, passes, seen);
+            char a[24];
+
+            jlog("scan: still waiting, %s ms elapsed, %u passes, drives %ls",
+                 u64s(a, now - start), passes, seen);
             beat = now;
         }
         Sleep(FIND_INTERVAL_MS);
@@ -439,14 +712,44 @@ static BOOL find_iso(const struct cfg *cfg, wchar_t *out, int cap)
  * does not support, an image the VHD stack will not open - and retrying those
  * only delays the shell launch that is the actual fail-safe.
  */
+/* VirtDisk.dll's two calls, looked up at run time: Vista's WinPE has no such
+ * DLL, and a static import of it would stop this process before it could
+ * start the shell. */
+typedef DWORD (WINAPI *open_vd_fn)(PVIRTUAL_STORAGE_TYPE, PCWSTR,
+                                   VIRTUAL_DISK_ACCESS_MASK,
+                                   OPEN_VIRTUAL_DISK_FLAG,
+                                   POPEN_VIRTUAL_DISK_PARAMETERS, PHANDLE);
+typedef DWORD (WINAPI *attach_vd_fn)(HANDLE, PSECURITY_DESCRIPTOR,
+                                     ATTACH_VIRTUAL_DISK_FLAG, ULONG,
+                                     PATTACH_VIRTUAL_DISK_PARAMETERS,
+                                     LPOVERLAPPED);
+
 static BOOL attach_iso(const wchar_t *path)
 {
+    HMODULE vd;
+    open_vd_fn open_vd;
+    attach_vd_fn attach_vd;
     VIRTUAL_STORAGE_TYPE st;
     OPEN_VIRTUAL_DISK_PARAMETERS op;
     ATTACH_VIRTUAL_DISK_PARAMETERS ap;
     HANDLE disk = INVALID_HANDLE_VALUE;
     DWORD before, after, appeared;
     DWORD rc;
+
+    vd = LoadLibraryW(L"virtdisk.dll");
+    if (vd == NULL) {
+        jlog("attach: no virtdisk.dll in this WinPE, err=%lu", GetLastError());
+        return FALSE;
+    }
+    /* GetProcAddress hands back a generic pointer; through uintptr_t so the
+     * cast is not a function-pointer pun the compiler has to warn about. */
+    open_vd = (open_vd_fn)(uintptr_t)GetProcAddress(vd, "OpenVirtualDisk");
+    attach_vd = (attach_vd_fn)(uintptr_t)GetProcAddress(vd,
+                                                        "AttachVirtualDisk");
+    if (open_vd == NULL || attach_vd == NULL) {
+        jlog("attach: virtdisk.dll has no OpenVirtualDisk/AttachVirtualDisk");
+        return FALSE;
+    }
 
     memset(&st, 0, sizeof st);
     st.DeviceId = VIRTUAL_STORAGE_TYPE_DEVICE_ISO;
@@ -463,7 +766,7 @@ static BOOL attach_iso(const wchar_t *path)
     memset(&op, 0, sizeof op);
     op.Version = OPEN_VIRTUAL_DISK_VERSION_1;
 
-    rc = OpenVirtualDisk(&st, path, VIRTUAL_DISK_ACCESS_READ,
+    rc = open_vd(&st, path, VIRTUAL_DISK_ACCESS_READ,
                          OPEN_VIRTUAL_DISK_FLAG_NONE, &op, &disk);
     if (rc != ERROR_SUCCESS) {
         jlog("attach: OpenVirtualDisk failed, rc=%lu", rc);
@@ -477,7 +780,7 @@ static BOOL attach_iso(const wchar_t *path)
 
     /* READ_ONLY is mandatory for an ISO and PERMANENT_LIFETIME is what
      * survives our exit; neither is a preference. */
-    rc = AttachVirtualDisk(disk, NULL,
+    rc = attach_vd(disk, NULL,
                            ATTACH_VIRTUAL_DISK_FLAG_READ_ONLY |
                            ATTACH_VIRTUAL_DISK_FLAG_PERMANENT_LIFETIME,
                            0, &ap, NULL);
@@ -506,17 +809,218 @@ static BOOL attach_iso(const wchar_t *path)
     return TRUE;
 }
 
+/* ---- the driver-mount fallback (DESIGN Section 6.3) ----
+ *
+ * When VirtDisk cannot attach the ISO, present it through falcon-vdisk, the
+ * kernel driver carried in this binary. The loader drops the ISO's extent map
+ * beside winjump; winjump finds the disk the map names, hands the driver the
+ * disk and the runs, and the driver serves the ISO as a CD Setup mounts.
+ *
+ * Nothing here is reached when the VirtDisk attach worked. Every failure is
+ * logged and returns FALSE, and the shell still launches. */
+
+extern const unsigned char falcon_vdisk_bin[];
+extern const size_t falcon_vdisk_bin_len;
+
+/* The driver's names. */
+#define VDISK_SERVICE   L"falconvdisk"
+#define VDISK_CTL_PATH  L"\\\\.\\FalconVDisk"
+
+/* Writes the embedded driver to a temp file and returns its path (a static
+ * buffer). NULL on failure. */
+static const wchar_t *write_driver(void)
+{
+    static wchar_t path[MAX_PATH];
+    wchar_t dir[MAX_PATH];
+    HANDLE h;
+    DWORD wrote = 0;
+
+    if (GetTempPathW(MAX_PATH, dir) == 0 ||
+        !jwjoin(path, MAX_PATH, dir, L"falcon-vdisk.sys"))
+        return NULL;
+    h = CreateFileW(path, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, 0, NULL);
+    if (h == INVALID_HANDLE_VALUE) {
+        jlog("driver: cannot write %ls, err=%lu", path, GetLastError());
+        return NULL;
+    }
+    if (!WriteFile(h, falcon_vdisk_bin, (DWORD)falcon_vdisk_bin_len, &wrote,
+                   NULL) || wrote != (DWORD)falcon_vdisk_bin_len) {
+        jlog("driver: write failed, err=%lu", GetLastError());
+        CloseHandle(h);
+        return NULL;
+    }
+    CloseHandle(h);
+    return path;
+}
+
+/* Registers and starts the driver, returns an open handle to its control
+ * device, or NULL. A stale service from an earlier run is reused. */
+static HANDLE driver_start(const wchar_t *sys)
+{
+    SC_HANDLE scm, svc;
+    HANDLE ctl;
+
+    scm = OpenSCManagerW(NULL, NULL, SC_MANAGER_ALL_ACCESS);
+    if (scm == NULL) {
+        jlog("driver: OpenSCManager err=%lu", GetLastError());
+        return NULL;
+    }
+    svc = CreateServiceW(scm, VDISK_SERVICE, VDISK_SERVICE, SERVICE_ALL_ACCESS,
+                         SERVICE_KERNEL_DRIVER, SERVICE_DEMAND_START,
+                         SERVICE_ERROR_NORMAL, sys, NULL, NULL, NULL, NULL,
+                         NULL);
+    if (svc == NULL && GetLastError() == ERROR_SERVICE_EXISTS)
+        svc = OpenServiceW(scm, VDISK_SERVICE, SERVICE_ALL_ACCESS);
+    if (svc == NULL) {
+        jlog("driver: CreateService err=%lu", GetLastError());
+        CloseServiceHandle(scm);
+        return NULL;
+    }
+    if (!StartServiceW(svc, 0, NULL) &&
+        GetLastError() != ERROR_SERVICE_ALREADY_RUNNING) {
+        jlog("driver: StartService err=%lu", GetLastError());
+        CloseServiceHandle(svc);
+        CloseServiceHandle(scm);
+        return NULL;
+    }
+    CloseServiceHandle(svc);
+    CloseServiceHandle(scm);
+
+    ctl = CreateFileW(VDISK_CTL_PATH, GENERIC_READ | GENERIC_WRITE, 0, NULL,
+                      OPEN_EXISTING, 0, NULL);
+    if (ctl == INVALID_HANDLE_VALUE) {
+        jlog("driver: open control device err=%lu", GetLastError());
+        return NULL;
+    }
+    return ctl;
+}
+
+/* Finds the physical disk whose GPT carries the partition `part_guid` names.
+ * Fills `nt_path` with the disk's NT device path for the driver and *first_lba
+ * with the partition's first LBA. */
+static BOOL find_falcon_disk(const uint8_t part_guid[16], wchar_t *nt_path,
+                             size_t cap, uint64_t *first_lba)
+{
+    uint8_t hdr[512];
+    static uint8_t ents[128 * 128];
+    int n;
+
+    for (n = 0; n < 32; n++) {
+        wchar_t phys[32];
+        HANDLE h;
+        DWORD got = 0;
+        LARGE_INTEGER at;
+
+        wsprintfW(phys, L"\\\\.\\PhysicalDrive%d", n);
+        h = CreateFileW(phys, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                        NULL, OPEN_EXISTING, 0, NULL);
+        if (h == INVALID_HANDLE_VALUE)
+            continue;
+        at.QuadPart = 512;                          /* LBA 1: the GPT header */
+        got = 0;
+        if (SetFilePointerEx(h, at, NULL, FILE_BEGIN) &&
+            ReadFile(h, hdr, sizeof hdr, &got, NULL) && got == sizeof hdr) {
+            at.QuadPart = 1024;                     /* LBA 2: the entry array */
+            got = 0;
+            if (SetFilePointerEx(h, at, NULL, FILE_BEGIN) &&
+                ReadFile(h, ents, sizeof ents, &got, NULL) &&
+                wj_gpt_match(hdr, ents, got, part_guid, first_lba) == WJ_OK) {
+                CloseHandle(h);
+                if ((size_t)wsprintfW(nt_path, L"\\Device\\Harddisk%d\\DR%d",
+                                      n, n) >= cap)
+                    return FALSE;
+                jlog("driver: ISO on PhysicalDrive%d, partition first LBA %s",
+                     n, u64s((char[24]){ 0 }, *first_lba));
+                return TRUE;
+            }
+        }
+        CloseHandle(h);
+    }
+    jlog("driver: no disk carries the ISO's partition GUID");
+    return FALSE;
+}
+
+/* Presents the ISO to Windows through the driver: from the map the loader put
+ * in the cfg, find the disk, hand the driver the disk path and runs, and bring
+ * the CD online. */
+static BOOL mount_via_driver(const struct cfg *cfg)
+{
+    wchar_t nt_path[64];
+    const wchar_t *sys;
+    extmap_hdr hdr;
+    uint64_t first_lba = 0;
+    HANDLE ctl;
+    wj_extent exts[EXTMAP_MAX_EXTENTS];
+    uint32_t n_ext = 0;
+    struct falcon_vdisk_backing *b;
+    size_t path_bytes, msg_len;
+    uint8_t *msg;
+    DWORD ret = 0;
+    BOOL ok = FALSE;
+
+    if (cfg->map == NULL) {
+        jlog("driver: the loader left no extent map (an older loader?)");
+        return FALSE;
+    }
+    if (extmap_decode(cfg->map, cfg->map_len, &hdr) != EXTMAP_OK ||
+        wj_backing_extents(&hdr, cfg->map, cfg->map_len, exts,
+                           EXTMAP_MAX_EXTENTS, &n_ext) != WJ_OK) {
+        jlog("driver: extent map is not one this reads");
+        return FALSE;
+    }
+
+    if (!find_falcon_disk(hdr.part_guid, nt_path, 64, &first_lba))
+        return FALSE;
+
+    sys = write_driver();
+    if (sys == NULL)
+        return FALSE;
+    ctl = driver_start(sys);
+    if (ctl == NULL)
+        return FALSE;
+
+    /* SET_BACKING: header, the disk's NT path in UTF-16 (no NUL), the runs. */
+    path_bytes = jwcslen(nt_path) * sizeof(wchar_t);
+    msg_len = sizeof *b + path_bytes + (size_t)n_ext * sizeof(wj_extent);
+    msg = HeapAlloc(GetProcessHeap(), 0, msg_len);
+    if (msg == NULL) {
+        CloseHandle(ctl);
+        return FALSE;
+    }
+    b = (struct falcon_vdisk_backing *)msg;
+    b->iso_bytes = hdr.iso_size;
+    b->path_bytes = (unsigned short)path_bytes;
+    b->reserved = 0;
+    b->extent_count = n_ext;
+    memcpy(msg + sizeof *b, nt_path, path_bytes);
+    memcpy(msg + sizeof *b + path_bytes, exts, (size_t)n_ext * sizeof(wj_extent));
+
+    if (!DeviceIoControl(ctl, IOCTL_FALCON_VDISK_SET_BACKING, msg,
+                         (DWORD)msg_len, NULL, 0, &ret, NULL)) {
+        jlog("driver: SET_BACKING err=%lu", GetLastError());
+    } else if (!DeviceIoControl(ctl, IOCTL_FALCON_VDISK_ONLINE, NULL, 0, NULL,
+                                0, &ret, NULL)) {
+        jlog("driver: ONLINE err=%lu", GetLastError());
+    } else {
+        jlog("driver: ISO online as a CD, %lu run(s)", (unsigned long)n_ext);
+        ok = TRUE;
+    }
+    HeapFree(GetProcessHeap(), 0, msg);
+    CloseHandle(ctl);
+    return ok;
+}
+
 /* ---- the user's options (p2:\\falcon\\windows.cfg) ---- */
 
 static void opt_key(void *ctx, const char *key, const char *value)
 {
     struct stick_opts *o = ctx;
 
-    if (strcmp(key, "win11_bypass") == 0)
-        o->win11_bypass = (strcmp(value, "1") == 0 ||
-                           strcmp(value, "yes") == 0 ||
-                           strcmp(value, "true") == 0);
-    else if (strcmp(key, "unattend") == 0)
+    if (jstrcmp(key, "win11_bypass") == 0)
+        o->win11_bypass = (jstrcmp(value, "1") == 0 ||
+                           jstrcmp(value, "yes") == 0 ||
+                           jstrcmp(value, "true") == 0);
+    else if (jstrcmp(key, "unattend") == 0)
         lstrcpynA(o->unattend, value, MAX_PATH);
     else
         jlog("options: ignoring unknown key '%s'", key);
@@ -562,7 +1066,7 @@ static void use_unattend(const wchar_t *root, const char *rel)
     LSTATUS rc;
 
     if (!widen_relative(rel, tail, MAX_PATH) ||
-        swprintf(src, MAX_PATH, L"%ls%ls", root, tail) < 0)
+        !jwjoin(src, MAX_PATH, root, tail))
         return;
     if (!CopyFileW(src, UNATTEND_COPY, FALSE)) {
         jlog("options: cannot copy %ls, err=%lu", src, GetLastError());
@@ -593,10 +1097,10 @@ static void apply_stick_options(const wchar_t *iso)
     wchar_t path[MAX_PATH];
 
     memset(&o, 0, sizeof o);
-    if (wcslen(iso) < 3 || iso[1] != L':' || iso[2] != L'\\')
+    if (jwcslen(iso) < 3 || iso[1] != L':' || iso[2] != L'\\')
         return;
     lstrcpynW(root, iso, 4);
-    if (swprintf(path, MAX_PATH, L"%ls%ls", root, STICK_CFG) < 0)
+    if (!jwjoin(path, MAX_PATH, root, STICK_CFG))
         return;
     if (GetFileAttributesW(path) == INVALID_FILE_ATTRIBUTES) {
         jlog("options: no %ls", path);
@@ -631,14 +1135,16 @@ static int launch_shell(const wchar_t *dir, const struct cfg *cfg)
             jlog("shell: cannot widen %s, err=%lu", cfg->shell, GetLastError());
             return 1;
         }
-    } else if (swprintf(path, MAX_PATH, L"%ls%ls", dir, DEFAULT_SHELL) < 0) {
+    } else if (!jwjoin(path, MAX_PATH, dir, DEFAULT_SHELL)) {
         jlog("shell: path too long");
         return 1;
     }
 
     /* CreateProcessW may write to the command line buffer, so it cannot be a
      * literal; quoted because the path can contain spaces. */
-    if (swprintf(cmdline, MAX_PATH + 4, L"\"%ls\"", path) < 0) {
+    if (!jwjoin(cmdline, MAX_PATH + 4, L"\"", path) ||
+        !jwjoin(cmdline + jwcslen(cmdline), MAX_PATH + 4 - jwcslen(cmdline),
+                L"\"", L"")) {
         jlog("shell: command line too long");
         return 1;
     }
@@ -662,7 +1168,7 @@ static int launch_shell(const wchar_t *dir, const struct cfg *cfg)
     return (int)code;
 }
 
-int main(void)
+static int winjump_main(void)
 {
     wchar_t dir[MAX_PATH];
     wchar_t iso[MAX_PATH];
@@ -670,6 +1176,17 @@ int main(void)
 
     memset(&cfg, 0, sizeof cfg);
     jlog("winjump: start");
+
+    /* Suppress the "There is no disk in the drive" hard-error dialog before
+     * anything enumerates drive letters. Windows 7 and Vista WinPE carry a
+     * floppy driver, so their drive set includes A: with no media; a query
+     * against it (find_iso probes every root) makes Windows raise a modal
+     * dialog attributed to this process, which is winpeshl's replacement, and
+     * a GUI WinPE then blocks on it forever with no shell behind it. That is
+     * exactly why 7 and Vista hung where Windows 8 and later, whose WinPE has
+     * no floppy driver and so no A:, did not. SEM_FAILCRITICALERRORS makes the
+     * failing call return an error we already handle instead. */
+    (void)SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOOPENFILEERRORBOX);
 
     if (!module_dir(dir, MAX_PATH)) {
         jlog("winjump: cannot locate own directory; nothing else is possible");
@@ -679,13 +1196,49 @@ int main(void)
 
     /* From here every failure is logged and then ignored: a WinPE with no
      * media still has Shift+F10 and this log, and is worth a great deal more
-     * than a machine that reboots without a shell. */
-    if (enable_manage_volume() && read_cfg(dir, &cfg) &&
-        find_iso(&cfg, iso, MAX_PATH)) {
-        (void)attach_iso(iso);
-        apply_stick_options(iso);
-    } else
-        jlog("winjump: attach skipped; launching the original shell anyway");
+     * than a machine that reboots without a shell.
+     *
+     * VirtDisk first (Windows 8+, when the ISO's volume is readable), then the
+     * driver (Vista and 7, whose WinPE has neither ISO support nor a way to
+     * read the exFAT partition the ISO lives on). */
+    {
+        BOOL mounted = FALSE;
+        BOOL have_cfg = read_cfg(dir, &cfg);
+
+        if (have_cfg && enable_manage_volume() &&
+            find_iso(&cfg, iso, MAX_PATH)) {
+            mounted = attach_iso(iso);
+            apply_stick_options(iso);
+        }
+        if (!mounted && have_cfg) {
+            jlog("winjump: VirtDisk did not mount the ISO; trying the driver");
+            mounted = mount_via_driver(&cfg);
+        }
+        if (!mounted)
+            jlog("winjump: no media presented; launching the shell anyway");
+    }
 
     return launch_shell(dir, &cfg);
+}
+
+/* The process entry point, in place of the C runtime's. The stack guard is
+ * seeded here, before any function the protector instruments runs: the tick
+ * count and the performance counter differ on every boot, and this function
+ * is built without the protector so its own frame has no canary to break. */
+/* The name is the linker's default entry point for a console program, which
+ * is why nothing names it on the command line: each toolchain decorates it
+ * (the leading underscore of an i386 symbol) its own way, and passing -e
+ * with one spelling left Debian's i686 linker entering at the start of .text
+ * instead, silently. build.mk checks the entry after every link. */
+void mainCRTStartup(void) __attribute__((no_stack_protector, noreturn));
+void mainCRTStartup(void)
+{
+    LARGE_INTEGER pc;
+
+    pc.QuadPart = 0;
+    (void)QueryPerformanceCounter(&pc);
+    __stack_chk_guard ^= (__typeof__(__stack_chk_guard))
+        ((unsigned long long)pc.QuadPart ^ GetTickCount64() ^
+         (unsigned long long)GetCurrentProcessId() << 16);
+    ExitProcess((UINT)winjump_main());
 }

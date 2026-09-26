@@ -75,6 +75,7 @@ STATE=$2
 ROUTE=$3
 OUTDIR=$4
 TIMEOUT=${5:-300}
+CASE=$(basename "$STICK" .img)
 
 MENU_WAIT=120
 MEM=${FALCON_CASE_MEM:-4096}
@@ -214,6 +215,22 @@ for sr, sg, sb in ((0x1A, 0x00, 0x50), (0x00, 0x19, 0x40)):
            for r, g, b in edge):
         print('Windows Setup')
         sys.exit()
+# Windows 7 and Vista Setup: not a flat colour but a cool gradient. Windows 7
+# is blue, dark at the top and light toward the bottom; Vista is its green-to-
+# blue aurora, green at the top and blue below. So at every edge point green or
+# blue leads red, and the top and bottom differ, which a black boot menu, a
+# grey console or a flat desktop does not. This probe only runs for a case with
+# no serial "starting" line, i.e. Windows, and a false match there only makes
+# the harness try a Shift+F10 read that finds nothing, so a loose test is safe
+# and a missed one loses a whole case.
+top = [at(x, 2) for x in (2, w // 2, w - 3)]
+bot = [at(x, h - 3) for x in (2, w // 2, w - 3)]
+def cool(p):
+    return max(p[1], p[2]) >= p[0] + 15 and max(p[1], p[2]) >= 60
+if (all(cool(p) for p in top + bot) and
+        abs(sum(b for _, _, b in bot) - sum(b for _, _, b in top)) > 90):
+    print('Windows Setup')
+    sys.exit()
 dark = sum(1 for k in range(0, len(px) - 2, 3 * 97) if max(px[k:k+3]) < 40)
 total = len(range(0, len(px) - 2, 3 * 97))
 print('text console' if dark > 0.8 * total else 'graphical')
@@ -340,7 +357,7 @@ type_line() {   # type_line TEXT
             ' ') k=spc ;;  '.') k=dot ;;  '\') k=backslash ;;
             ':') k=shift-semicolon ;;  '*') k=shift-8 ;;
             '%') k=shift-5 ;;  '(') k=shift-9 ;;  ')') k=shift-0 ;;
-            '/') k=slash ;;
+            '/') k=slash ;;  '-') k=minus ;;
             *) continue ;;
         esac
         echo "sendkey $k" | socat - UNIX-CONNECT:"$MON" >/dev/null 2>&1 || true
@@ -362,7 +379,12 @@ while (( $(date +%s) - T1 < TIMEOUT )); do
     alive || finish FAIL "the guest powered off or reset"
 
     now=$(date +%s)
-    if (( now >= next_nudge && now - T1 <= NUDGE_FOR )); then
+    # Once Windows Setup is up the nudges stop: a stray Enter walks Setup off
+    # the screen where Shift+F10 and the install.* read work (onto the license
+    # page, which needs a checkbox, not Enter), and the read is how a Windows
+    # case is judged.
+    if [[ -z "$setup_probe" ]] &&
+       (( now >= next_nudge && now - T1 <= NUDGE_FOR )); then
         echo "sendkey ret" | socat - UNIX-CONNECT:"$MON" >/dev/null 2>&1 || true
         if (( now - T1 < 30 )); then
             next_nudge=$(( now + NUDGE_EVERY ))
@@ -413,6 +435,18 @@ while (( $(date +%s) - T1 < TIMEOUT )); do
     if grep -q -E 'Kernel panic - not syncing' <<<"$after"; then
         finish FAIL "$(grep -m1 'Kernel panic' <<<"$after" | cut -c1-120)"
     fi
+    # A memory tester has no userland, no login and no network: it boots
+    # straight to a full-screen test and runs. So for memtest a graphical
+    # screen, once the boot is well underway, is the boot succeeding; a memtest
+    # that did not boot sits at the loader menu, which reads as a text console.
+    if [[ "$CASE" == memtest* ]] && (( now - T1 > 60 )) && (( now >= next_setup )); then
+        next_setup=$(( now + SETUP_EVERY ))
+        MON_SOCK="$MON" falcon-efi/tools/rig-shot.sh mt "$OUTDIR" \
+            >/dev/null 2>&1 || true
+        kind=$([[ -f "$OUTDIR/mt.ppm" ]] && screen_kind "$OUTDIR/mt.ppm")
+        rm -f "$OUTDIR"/mt.ppm "$OUTDIR"/mt.png
+        [[ "$kind" == graphical ]] && finish PASS "the memory tester is running"
+    fi
     # The reason quotes the line that matched, not the first line with a
     # similar word in it ("unpack rootfs image as initramfs" is in every
     # boot).
@@ -435,6 +469,24 @@ while (( $(date +%s) - T1 < TIMEOUT )); do
             type_line 'for %d in (D E F G H I) do copy /b %d:\sources\install.* nul'
         fi
         rm -f "$OUTDIR"/setup.ppm "$OUTDIR"/setup.png
+    elif [[ -n "$setup_probe" ]] && (( now >= next_setup )); then
+        # The install CD can come up a little after Setup's first screen: UDFS
+        # on a Windows 7 DVD reads its anchor at the disc's end before the
+        # volume answers, so the driver serves it but the mount lands a few
+        # seconds later. Re-open a prompt (the first Shift+F10 can be early) and
+        # re-issue the copy until the read lands or the case times out; a single
+        # early shot would miss it.
+        next_setup=$(( now + SETUP_EVERY ))
+        echo "sendkey shift-f10" | socat - UNIX-CONNECT:"$MON" >/dev/null 2>&1 || true
+        sleep 2
+        type_line 'for %d in (D E F G H I) do copy /b %d:\sources\install.* nul'
+        # FALCON_CASE_WJLOG=1 leaves winjump's own log on screen, so a failing
+        # Windows case shows why in its final screenshot. The dir says whether
+        # winjump ran at all: it renames the original to winpeshl_orig.exe.
+        if [[ "${FALCON_CASE_WJLOG:-0}" == 1 ]]; then
+            type_line 'dir X:\windows\system32\winpeshl.exe X:\windows\system32\winpeshl_orig.exe'
+            type_line 'type X:\falcon-winjump.log'
+        fi
     fi
     if [[ -z "$media_base" ]] && grep -q '^ *starting ' <<<"$after"; then
         media_base=$(stick_read)

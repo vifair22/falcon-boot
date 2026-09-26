@@ -44,6 +44,11 @@ enum {
 #define PE_MAGIC_PE32   0x10bu
 #define PE_MAGIC_PE32P  0x20bu
 
+/* The COFF Machine values this tree meets: an image's processor. */
+#define PE_MACHINE_I386  0x014cu
+#define PE_MACHINE_AMD64 0x8664u
+#define PE_MACHINE_ARM64 0xaa64u
+
 #define PE_DIR_SECURITY 4u          /* the certificate table */
 #define PE_SECT_NAME    8u
 #define PE_SECT_ENTRY   40u
@@ -51,6 +56,7 @@ enum {
 typedef struct {
     size_t   len;           /* bytes of the file in buf */
     size_t   coff;          /* file offset of the COFF header */
+    uint16_t machine;       /* the COFF Machine field, PE_MACHINE_* */
     size_t   opt;           /* file offset of the optional header */
     uint16_t opt_size;      /* SizeOfOptionalHeader */
     uint16_t magic;         /* PE_MAGIC_*, or anything else */

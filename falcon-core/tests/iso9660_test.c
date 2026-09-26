@@ -848,6 +848,89 @@ static void test_iso_rr_relocation(void **state)
     assert_int_equal(iso9660_dir_next(&d, &e), ISO9660_ERR_IO);
 }
 
+static void test_iso_append_record(void **state)
+{
+    uint8_t *p;
+    uint8_t out[B];
+    uint32_t blk = 0;
+    int found = 0, count = 0;
+
+    (void)state;
+    /* A one-block root at 20 with two files, in sorted order. */
+    p = fresh(NULL, 0);
+    p += rec(p, 30, 100, 0, "AAA.TXT;1", 9, NULL, 0);
+    p += rec(p, 31, 200, 0, "BBB.TXT;1", 9, NULL, 0);
+    (void)p;
+    assert_int_equal(iso9660_mount(&v, img_read, NULL), ISO9660_OK);
+
+    /* Append a file whose name sorts last; it lands in the block's slack. */
+    assert_int_equal(iso9660_append_record(&v, 20, B, "_Z.SYS;1",
+                                           500, 4096u, out, &blk), ISO9660_OK);
+    assert_int_equal(blk, 20);
+
+    /* Overlay the edited block and read it back: the new file is there, with
+     * its extent, and the two existing files still are. */
+    memcpy(img + (size_t)20 * B, out, B);
+    v.cache_off = ~(uint64_t)0;
+    assert_int_equal(iso9660_dir_open_root(&v, &d), ISO9660_OK);
+    while (iso9660_dir_next(&d, &e) == 1) {
+        count++;
+        if (e.name_len == 6u && e.name[0] == '_' && e.name[1] == 'Z') {
+            found = 1;
+            assert_int_equal(e.lba, 500);
+            assert_int_equal((int)e.size, 4096);
+        }
+    }
+    assert_int_equal(count, 3);
+    assert_true(found);
+
+    /* A block with no room refuses. Fill the root to within a few bytes. */
+    p = fresh(NULL, 0);
+    filler(p, (size_t)(img + 21u * B) - (size_t)p - 8u);
+    assert_int_equal(iso9660_mount(&v, img_read, NULL), ISO9660_OK);
+    assert_int_equal(iso9660_append_record(&v, 20, B, "_Z.SYS;1",
+                                           500, 4096u, out, &blk),
+                     ISO9660_ERR_NOSPACE);
+}
+
+/* A directory whose recorded data length is not a multiple of the block size:
+ * whole blocks of records, then a last block only partly filled. Windows XP's
+ * \i386 is exactly this shape (263642 bytes: 128 full blocks and a 129th with
+ * 1498 bytes of records and 550 free), and the driver-injection route appends
+ * _FALCON.SYS into that free space. A floor of the data length would pick the
+ * last full block, not the partly-filled one, and overflow. */
+static void test_iso_append_record_unaligned(void **state)
+{
+    uint8_t *q;
+    uint8_t out[B];
+    uint32_t blk = 0;
+    size_t used21;
+    const uint8_t *r;
+
+    (void)state;
+    (void)fresh(NULL, 0);
+    q = img + 21u * B;
+    q += rec(q, 40, 10, 0, "AAA.TXT;1", 9, NULL, 0);
+    q += rec(q, 41, 20, 0, "_DEFAULT.PI_;1", 14, NULL, 0);
+    used21 = (size_t)(q - (img + 21u * B));
+    assert_int_equal(iso9660_mount(&v, img_read, NULL), ISO9660_OK);
+
+    assert_int_equal(iso9660_append_record(&v, 20, (uint32_t)(B + used21),
+                                           "_FALCON.SYS;1", 777, 21020u,
+                                           out, &blk), ISO9660_OK);
+    assert_int_equal(blk, 21u);
+
+    /* It sits right after the block's existing records, naming its extent. */
+    r = out + used21;
+    assert_int_equal(r[0], 46u);              /* 33 + 13-char name, even */
+    assert_int_equal((uint32_t)r[2] | ((uint32_t)r[3] << 8) |
+                     ((uint32_t)r[4] << 16) | ((uint32_t)r[5] << 24), 777u);
+    assert_int_equal((uint32_t)r[10] | ((uint32_t)r[11] << 8) |
+                     ((uint32_t)r[12] << 16) | ((uint32_t)r[13] << 24), 21020u);
+    assert_int_equal(r[32], 13u);
+    assert_memory_equal(r + 33, "_FALCON.SYS;1", 13u);
+}
+
 int run_iso9660_tests(void)
 {
     const struct CMUnitTest tests[] = {
@@ -858,6 +941,8 @@ int run_iso9660_tests(void)
         cmocka_unit_test(test_iso_joliet),
         cmocka_unit_test(test_iso_multi_extent),
         cmocka_unit_test(test_iso_multi_extent_edges),
+        cmocka_unit_test(test_iso_append_record),
+        cmocka_unit_test(test_iso_append_record_unaligned),
         cmocka_unit_test(test_iso_file_paths),
         cmocka_unit_test(test_iso_rr_basic),
         cmocka_unit_test(test_iso_rr_skip),

@@ -44,6 +44,12 @@ const char *linux_why(void);
  * 32-bit one does not. */
 int linux_cpu_is_64(void);
 
+/* Nonzero when the last linux_boot refused what it was handed before placing
+ * anything, because it is not a Linux kernel it can start (no boot protocol
+ * header, a protocol too old, a size it cannot place): the medium's own
+ * loader may still boot it. Zero for every later refusal. */
+int linux_not_taken(void);
+
 /* Reads the kernel's setup header and says whether it is a 64-bit kernel,
  * before anything is placed: the falcon-hook that rides in its initrd has to
  * be its width. 0 when the header could be read and *is_64 is set, nonzero

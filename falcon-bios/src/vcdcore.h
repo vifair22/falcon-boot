@@ -153,6 +153,16 @@ int vcd_override_add_ext(vcd_map *m, uint32_t cd_lba, uint32_t n_cd,
  */
 int vcd_extend(vcd_map *m, uint32_t extra);
 
+/* Adds a run mapping n_cd CD sectors at cd_lba to disk_lba, the way vcd_build
+ * lays down the base ISO's own runs. It is how a stretch of the medium grown
+ * past the image (vcd_extend) is served from the disk rather than from memory:
+ * the relocated Windows boot.wim of an ISO 9660-only medium points its single
+ * extent at appended sectors that redirect, run for run, to where the original
+ * boot.wim already sits, so its bulk goes out over INT 13h and not a sector at
+ * a time from memory over INT 15h. The run must lie within the medium (grow it
+ * first) and not overlap one already present. */
+int vcd_add_run(vcd_map *m, uint32_t cd_lba, uint32_t n_cd, uint64_t disk_lba);
+
 /* How the next stretch of a read is served, which is the first thing the
  * handler asks of each pass.
  *

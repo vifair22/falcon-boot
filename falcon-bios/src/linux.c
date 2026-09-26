@@ -178,6 +178,10 @@ static const char *geom_error(linuxcore_status rc)
  * here as it happens. */
 static const char *g_why;
 
+/* Whether the last linux_boot refused before it placed anything, because
+ * what it was handed is not a kernel it can start (see linux_not_taken). */
+static int g_not_taken;
+
 static void say(const char *s)
 {
     g_why = s;
@@ -189,6 +193,11 @@ static void say(const char *s)
 const char *linux_why(void)
 {
     return g_why;
+}
+
+int linux_not_taken(void)
+{
+    return g_not_taken;
 }
 
 /* Copies the E820 map into the zero page, in the 20-byte form the protocol
@@ -339,6 +348,7 @@ int linux_boot(const linux_object *kernel, const linux_object *initrd,
     linux_geom geom;
     linuxcore_status rc;
 
+    g_not_taken = 1;
     if (kernel == (const linux_object *)0) {
         say("that is not a kernel");
         return -1;
@@ -357,6 +367,10 @@ int linux_boot(const linux_object *kernel, const linux_object *initrd,
         say(geom_error(rc));
         return -1;
     }
+    /* From here a refusal is not a cue to try the medium's own loader: a
+     * 64-bit kernel on a processor without long mode is the same kernel
+     * that loader would start. */
+    g_not_taken = 0;
     /* Asked here rather than found out: a 64-bit kernel on a processor
      * without long mode dies in its own decompressor, before it can print
      * anything, and the screen keeps saying "starting". */

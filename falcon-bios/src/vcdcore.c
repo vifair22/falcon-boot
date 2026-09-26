@@ -162,6 +162,29 @@ int vcd_extend(vcd_map *m, uint32_t extra)
     return VCD_OK;
 }
 
+int vcd_add_run(vcd_map *m, uint32_t cd_lba, uint32_t n_cd, uint64_t disk_lba)
+{
+    uint32_t i;
+
+    if (m == (vcd_map *)0 || n_cd == 0)
+        return VCD_ERR_BAD_ARG;
+    if (cd_lba >= m->n_real || n_cd > m->n_real - cd_lba)
+        return VCD_ERR_BAD_ARG;
+    for (i = 0; i < m->n_runs; i++) {
+        const vcd_run *r = &m->run[i];
+
+        if (cd_lba < r->cd_lba + r->n_cd && r->cd_lba < cd_lba + n_cd)
+            return VCD_ERR_BAD_ARG;
+    }
+    if (m->n_runs >= VCD_MAX_RUNS)
+        return VCD_ERR_TOO_MANY;
+    m->run[m->n_runs].cd_lba = cd_lba;
+    m->run[m->n_runs].n_cd = n_cd;
+    m->run[m->n_runs].disk_lba = disk_lba;
+    m->n_runs++;
+    return VCD_OK;
+}
+
 int vcd_span(const vcd_map *m, uint32_t cd_lba, uint32_t want,
              uint16_t *seg, uint32_t *phys, uint32_t *n_cd)
 {

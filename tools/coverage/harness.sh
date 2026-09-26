@@ -98,5 +98,7 @@ exec docker run --rm "${TTY[@]}" \
     --privileged --device /dev/kvm \
     "${MOUNTS[@]}" \
     -e FALCON_CORPUS=/corpus \
+    -e FALCON_CASE_WJLOG \
+    -e FALCON_CASE_MEM \
     -w /work \
     "$IMAGE" "${CMD[@]}"
