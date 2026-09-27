@@ -159,7 +159,7 @@ int vbr_mbr_bootable(const uint8_t *mbr)
     if (!code)
         return 0;
     for (i = 0; i < 4u; i++) {
-        const uint8_t *e = mbr + VBR_TABLE_OFF + VBR_ENTRY_LEN * i;
+        const uint8_t *e = mbr + VBR_TABLE_OFF + (size_t)VBR_ENTRY_LEN * i;
 
         if (e[ENTRY_STATUS] == 0x80u && e[ENTRY_TYPE] != 0)
             return 1;
