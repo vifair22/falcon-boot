@@ -168,7 +168,11 @@ falcon-efi and falcon-bios, which never share a set, may both have a `pos/`.
     sort and the folder view. Both loaders use it, so neither can have its
     own idea of what is on a stick. `shelf.c` is the personal-OS chooser's
     rows: the UKIs in p3's `/uki` (or `/EFI/Linux`), their `.osrel` names,
-    order and qualifiers, again for both loaders. `nextboot.c` is the
+    order and qualifiers, again for both loaders. `strows.c` is the
+    station's list as data, both stations' (DESIGN Section 13.7): the
+    generated names, what a STATION.INI section changes or adds (a
+    firmware entry or an ESP on UEFI, a chain on BIOS), the order and the
+    default; `stationini.c` parses and writes the file. `nextboot.c` is the
     next-boot marker's value rules (decode, path match, the `:` reserved
     names) for both loaders, and the BIOS marker sector's format and dating.
     `eltorito.c` reads a medium's boot
@@ -204,7 +208,12 @@ falcon-efi and falcon-bios, which never share a set, may both have a `pos/`.
     sections are the apps' (`apps/stick/`, `apps/station/`).
   - `nxt/` the stationary build's route to the firmware's other boot
     entries (NXT, BootNext and a reset): `nxtcore.c` parses BootOrder and
-    Boot#### and is host-tested, `nxt.c` reads the variables.
+    Boot#### (the description, and the partition and file its device path
+    names) and is host-tested, `nxt.c` reads the variables.
+  - `esp/` the station's other way into a system (DESIGN Sections 13.4,
+    13.6; routes ESP and MEM): a file on a firmware-mounted volume
+    (`bootmgfw.efi`, `memtest.efi`) loaded by device path through
+    `loadops`, and the reads STATION.INI and the ESP rows need.
   - `loader/` the shim-verified load path (`loadops.c`, DESIGN Section 7.6)
     and `credfs.c`, the synthetic read-only filesystem a UKI is published on
     so it can be loaded by device path and sd-stub finds the passphrase
@@ -218,7 +227,9 @@ falcon-efi and falcon-bios, which never share a set, may both have a `pos/`.
     device-path half (`partefi.c`: same disk, start LBA): reads the boot
     partition's record for the install ID, enumerates the Block I/O handles
     once (the boot disk's first), reads each one's record, and hands every
-    consumer the rows that carry the install ID.
+    consumer the rows that carry the install ID. `disks.c` (the station
+    only) reads each whole disk's table so a partition handle or a firmware
+    entry's HARDDRIVE node can be named as STATION.INI names it.
   - `secboot/` Secure Boot state for UX (`sb.c`) and the variable reads the
     boot predictions judge against (`trustefi.c`).
   - `bsd/` BSD media served as its own memory disk (Section 6.4; M7):
@@ -335,14 +346,16 @@ falcon-efi and falcon-bios, which never share a set, may both have a `pos/`.
   0000:0600, DS:SI at its entry, the BPB made to agree) or another disk's
   MBR, with `src/mbr/swapres.S` the one resident, an 84-byte INT 13h hook
   that swaps a chained disk with 0x80; `src/mbr/vbrcore.c` (the loader
-  signatures, the BPB fix, the entry) and `src/station/rows.c` (the rows'
-  names and the STATION.INI merge) are its host-tested halves, and `make
+  signatures, the BPB fix, the entry) is its host-tested half, and
+  core's `media/strows.c` the list both stations share, and `make
   test-station-bios` boots every chain under SeaBIOS
   (`tools/run-station-rig.sh`, with `tools/rigboot.S`, a boot sector that
   reports what it was handed, and FreeDOS). `make test-core` boots the core matrix cells (the stick
   under both firmwares alone, beside a second stick, an MBR disk and another
   install's records; a 4Kn stick on NVMe; the station) and judges each from
-  serial (`falcon-efi/tools/run-core-rig.sh`).
+  serial (`falcon-efi/tools/run-core-rig.sh`); `make test-station-uefi`
+  does the same for the UEFI station's own cases
+  (`falcon-efi/tools/run-station-rig.sh`).
 
   `src/` is grouped by job, and a job the UEFI loader also does carries
   that module's name, so the two halves of a route sit side by side:

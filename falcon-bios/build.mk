@@ -114,8 +114,6 @@ BIOS_MOD_mbr     := $(BIOS)/mbr/mbr.c
 # The station's chains, a partition's boot sector and another disk's MBR,
 # with the drive swap (DESIGN Section 13.4); vbrcore.c is the tested half.
 BIOS_MOD_chain   := $(BIOS)/mbr/chain.c $(BIOS)/mbr/vbrcore.c
-# The station's rows and their STATION.INI merge (DESIGN Section 13.7).
-BIOS_MOD_rows    := $(BIOS)/station/rows.c
 BIOS_MOD_jumpini := $(BIOS)/jump/jumpini.c
 BIOS_MOD_jmod    := $(BIOS)/jump/jmod.c $(BIOS)/jump/jmodload.c $(BIOS)/jump/jres.c
 
@@ -406,15 +404,14 @@ endef
 BIOS_TESTS := $(addprefix falcon-bios/tests/,main.c vcdcore_test.c vfdcore_test.c \
 	linuxcore_test.c e820_test.c jumpini_test.c jmod_test.c lowmem_test.c \
 	atacore_test.c usbcore_test.c pcccore_test.c bootpart_test.c \
-	vbrcore_test.c rows_test.c)
+	vbrcore_test.c)
 BIOS_UUT := $(BIOS)/iso/vcdcore.c $(BIOS)/vfd/vfdcore.c $(BIOS)/linux/linuxcore.c $(BIOS)/mem/e820.c \
 	$(BIOS)/jump/jumpini.c $(BIOS)/jump/jmod.c $(BIOS)/mem/lowmem.c \
 	$(BIOS)/hw/ata/atacore.c $(BIOS)/hw/scsi/scsi.c $(BIOS)/hw/usb/usbcore.c \
-	$(BIOS)/hw/pcc/pcccore.c $(BIOS)/disk/bootpart.c $(BIOS)/mbr/vbrcore.c \
-	$(BIOS)/station/rows.c
+	$(BIOS)/hw/pcc/pcccore.c $(BIOS)/disk/bootpart.c $(BIOS)/mbr/vbrcore.c
 # What bootpart.c is built on, linked into the test binary but counted under
 # core's own tests.
-BIOS_TEST_CORE := $(CORE_PART) $(CORE_IDENT) $(CORE_STATIONINI)
+BIOS_TEST_CORE := $(CORE_PART) $(CORE_IDENT)
 
 $(eval $(call test_bin,bios,$(BIOS_TESTS) $(BIOS_UUT) $(BIOS_TEST_CORE)))
 

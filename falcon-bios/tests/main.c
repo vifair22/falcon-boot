@@ -34,7 +34,6 @@ int main(void)
     failed += run_pcccore_tests();
     failed += run_bootpart_tests();
     failed += run_vbrcore_tests();
-    failed += run_rows_tests();
 
     printf("\nfalcon-bios: total failed: %d\n", failed);
     return failed == 0 ? 0 : 1;

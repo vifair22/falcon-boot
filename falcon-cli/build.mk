@@ -8,7 +8,8 @@ CLI_COMMON := $(addprefix $(CLI)/common/,status.c log.c opt.c proc.c util.c)
 
 MKSTICK_SRCS := $(CLI_COMMON) $(addprefix $(CLI)/mkstick/,main.c cleanup.c \
 	disk.c guid.c keys.c pass.c shimname.c create.c keygen.c inspect.c \
-	varstore.c bios.c bioscore.c records.c identcmd.c nextcmd.c nextcore.c)
+	varstore.c bios.c bioscore.c records.c identcmd.c nextcmd.c nextcore.c \
+	nextio.c)
 
 # The core modules `mkstick status` reuses verbatim. Every one is EFI-free by
 # construction (device access through a byte-read callback), which is exactly
@@ -62,6 +63,21 @@ test-isoview:
 
 .PHONY: cli test-isoview
 
+# `make install` puts the two host tools on a machine's PATH, built first.
+# The static sign tool is the appliance's and stays in build/bin. DESTDIR
+# stages the install for a package; PREFIX is where it will live.
+PREFIX ?= /usr/local
+CLI_BINDIR = $(DESTDIR)$(PREFIX)/bin
+
+install: $(MKSTICK) $(SIGN)
+	install -d $(CLI_BINDIR)
+	install -m 0755 $(MKSTICK) $(SIGN) $(CLI_BINDIR)/
+
+uninstall:
+	rm -f $(CLI_BINDIR)/$(notdir $(MKSTICK)) $(CLI_BINDIR)/$(notdir $(SIGN))
+
+.PHONY: install uninstall
+
 # ---- tests ----
 #
 # The bless tool's logic, split out of the code that spawns helpers and loop
@@ -78,13 +94,14 @@ test-isoview:
 # compromise rather than an oversight.
 
 CLI_TESTS := $(addprefix falcon-cli/tests/,main.c isoprobe_test.c \
-	payload_test.c uki_test.c util_test.c bioscore_test.c records_test.c)
+	payload_test.c uki_test.c util_test.c bioscore_test.c records_test.c \
+	nextio_test.c)
 
 # records.c reads through disk.c's byte reader, which brings the process and
 # cleanup helpers disk.c also holds; they are linked, not tested, here.
 CLI_UUT := $(addprefix $(CLI)/sign/,isoprobe.c payload.c uki.c util.c) \
-	$(addprefix $(CLI)/mkstick/,bioscore.c records.c nextcore.c disk.c \
-		cleanup.c) \
+	$(addprefix $(CLI)/mkstick/,bioscore.c records.c nextcore.c nextio.c \
+		disk.c cleanup.c) \
 	$(addprefix $(CLI)/common/,status.c log.c proc.c util.c) \
 	$(CORE)/media/family.c $(CORE)/media/bootcfg.c $(CORE)/media/nextboot.c \
 	$(CORE_MANIFEST) $(CORE_MANIFEST_WRITE) \
@@ -100,7 +117,7 @@ $(TEST_OBJ)/$(CLI)/sign/util.o: TEST_CFLAGS += -D_XOPEN_SOURCE=700
 # The mkstick objects the records tests link are built for the tool with
 # _GNU_SOURCE (realpath, usleep, sync); the same for their test objects.
 $(addprefix $(TEST_OBJ)/$(CLI)/,mkstick/disk.o mkstick/cleanup.o \
-	mkstick/records.o common/proc.o common/log.o common/status.o \
+	mkstick/records.o mkstick/nextio.o common/proc.o common/log.o common/status.o \
 	common/util.o): \
 	TEST_CFLAGS += -D_GNU_SOURCE
 

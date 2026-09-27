@@ -7,7 +7,8 @@
  * table (payload.c), the UKI builder (uki.c) and the initrd and cmdline
  * helpers of util.c. Plus mkstick's bioscore.c, which is where the sectors
  * the BIOS stages take are measured before anything is written to them, and
- * records.c and nextcore.c, the identity records and the next-boot marker.
+ * records.c, nextcore.c and nextio.c, the identity records and the
+ * next-boot marker.
  */
 
 #include "tests.h"
@@ -22,6 +23,7 @@ int main(void)
     failed += run_isoprobe_tests();
     failed += run_payload_tests();
     failed += run_records_tests();
+    failed += run_nextio_tests();
     failed += run_uki_tests();
     failed += run_util_tests();
 

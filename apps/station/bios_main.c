@@ -16,16 +16,18 @@
  * jump boots it). No ISO scan, virtual CD, Windows media or BSD code is in
  * this stage 3. Stages 1 and 2 are the stick's, unchanged.
  *
- * The sentences here are also the UEFI station's (apps/station/efi_main.c),
- * listed in docs/notes/station-rework.md section 11; a change to one is a
- * change to the other (CLAUDE.md, "One screen, two loaders").
+ * What the rows are called, what a STATION.INI section does to them and the
+ * order they are shown in are falcon-core's media/strows.c, the UEFI
+ * station's list too; this file finds the rows and boots them. The
+ * sentences are the UEFI station's (apps/station/efi_main.c), listed in
+ * docs/notes/station-rework.md section 11; a change to one is a change to
+ * the other (CLAUDE.md, "One screen, two loaders").
  */
 
 #include <start/bios.h>
 
 #include <pos/pos.h>
 #include <mbr/chain.h>
-#include <station/rows.h>
 #include <console/screen.h>
 #include <linux/linux.h>
 #include <mem/e820.h>
@@ -36,6 +38,7 @@
 #include <part/table.h>
 #include <ident/ident.h>
 #include <media/stationini.h>
+#include <media/strows.h>
 #include <media/nextboot.h>
 #include <tui/tui.h>
 #include <lib/ucs2.h>
@@ -51,8 +54,8 @@
 #define PARTS_MAX   16u
 #define SHELVES_MAX 4u
 
-/* STATION.INI is a few dozen lines; anything longer is not one. */
-#define INI_MAX 8192u
+/* STATION.INI is a few dozen lines; the UEFI station reads 16 KB. */
+#define INI_MAX 16384u
 
 typedef struct {
     bios_disk    disk;
@@ -69,6 +72,7 @@ static unsigned  g_boot_idx;  /* the boot drive's slot, or DISKS_MAX */
 typedef struct {
     unsigned          disk;
     const part_entry *part;
+    int               encrypted;
 } shelf_ref;
 
 static shelf_ref g_shelves[SHELVES_MAX];
@@ -88,15 +92,20 @@ typedef struct {
 
 static part_src  g_ssrc;
 static fs_vol    g_svol;
-static int       g_have_svol;
 static fs_dirent g_memtest;
 static int       g_have_memtest;
 
 static stationini g_ini;
 static int        g_have_ini;
+static int        g_ini_state;   /* INI_* below */
 static char       g_ini_text[INI_MAX];
 
-static st_rows g_rows;
+#define INI_NONE     0
+#define INI_OK       1
+#define INI_TOO_BIG  2
+#define INI_UNREAD   3
+
+static strows g_rows;
 
 /* The next-boot marker (DESIGN Section 13.8), taken off the station
  * partition before anything else is decided. */
@@ -105,10 +114,16 @@ static char         g_next[NEXTBOOT_MAX];
 
 static const char k_press_any[] = "\npress any key to return to the menu.\n";
 
-static void failed(const char *what, const boot_result *r)
+/* The page a route leaves when it comes back: the label, then "<route>
+ * failed while <stage>" and the advice, as the UEFI station's page_failed
+ * draws it. */
+static void failed(const uint16_t *label, const char *route,
+                   const boot_result *r)
 {
-    screen_out("\n");
-    screen_out(what);
+    screen_page();
+    screen_out16(label);
+    screen_out("\n\n");
+    screen_out(route);
     screen_out(" failed while ");
     screen_out(r->stage);
     screen_out("\n");
@@ -117,11 +132,7 @@ static void failed(const char *what, const boot_result *r)
         screen_out(r->advice);
         screen_out("\n");
     }
-}
-
-static void put_name(const char *s)
-{
-    bios_puts(s);
+    screen_out(k_press_any);
 }
 
 /* ---- disks ---- */
@@ -187,11 +198,11 @@ static int is_boot_partition(unsigned disk, const part_entry *p)
     return disk == g_boot_idx && p->start_lba == install_boot_lba();
 }
 
-static int disk_of(const part_disk_id *id, void *ctx)
+/* The disk slot a disk id names today, whichever BIOS number it has. */
+static int disk_of(const part_disk_id *id)
 {
     unsigned i;
 
-    (void)ctx;
     for (i = 0; i < g_ndisks; i++) {
         if (part_disk_id_eq(&g_disks[i].id, id))
             return (int)i;
@@ -208,19 +219,6 @@ static int station_read(void *ctx, uint64_t off, uint64_t len, void *buf)
     if (off > ~(uint64_t)0 - p->base)
         return -1;
     return bios_disk_bytes(p->disk, p->base + off, len, buf);
-}
-
-static void ini_unreadable(void)
-{
-    static const char why[] = "the file could not be read";
-
-    _Static_assert(sizeof why <= sizeof g_ini.why,
-                   "the sentence fits stationini's buffer");
-    memset(&g_ini, 0, sizeof g_ini);
-    memcpy(g_ini.why, why, sizeof why);
-    g_ini.err_line = 1;
-    g_have_ini = 1;
-    bios_puts("falcon-bios: STATION.INI could not be read\n");
 }
 
 /* The station partition is the boot partition stage 2 found (DESIGN
@@ -244,7 +242,6 @@ static void read_station(void)
         bios_puts("falcon-bios: the station partition does not mount\n");
         return;
     }
-    g_have_svol = 1;
 
     g_have_memtest =
         fs_lookup(&g_svol, "/MEMTEST.BIN", &scratch, &g_memtest) == FS_OK &&
@@ -253,11 +250,18 @@ static void read_station(void)
     if (fs_lookup(&g_svol, "/" STATIONINI_FILE, &scratch, &ini) != FS_OK ||
         ini.is_dir)
         return;
-    if (ini.size > INI_MAX || fs_file_open(&g_svol, &f, &ini) != FS_OK ||
-        fs_file_read(&f, 0, ini.size, g_ini_text) != FS_OK) {
-        ini_unreadable();
+    if (ini.size > INI_MAX) {
+        g_ini_state = INI_TOO_BIG;
+        bios_puts("falcon-bios: STATION.INI is larger than 16 KB\n");
         return;
     }
+    if (fs_file_open(&g_svol, &f, &ini) != FS_OK ||
+        fs_file_read(&f, 0, ini.size, g_ini_text) != FS_OK) {
+        g_ini_state = INI_UNREAD;
+        bios_puts("falcon-bios: STATION.INI could not be read\n");
+        return;
+    }
+    g_ini_state = INI_OK;
     g_have_ini = 1;
     if (stationini_parse(g_ini_text, (size_t)ini.size, &g_ini) != 0) {
         bios_puts("falcon-bios: STATION.INI line ");
@@ -281,22 +285,26 @@ static void file_ascii(const uint16_t *u, char *out, size_t cap)
     out[i] = '\0';
 }
 
+static void ascii16(uint16_t *out, size_t cap, const char *s)
+{
+    size_t i;
+
+    for (i = 0; s[i] != '\0' && i + 1u < cap; i++)
+        out[i] = (uint16_t)(uint8_t)s[i];
+    out[i] = 0;
+}
+
 static void add_uki(const shelf_uki *u, void *ctx)
 {
     unsigned shelf = *(const unsigned *)ctx;
-    char name[STATIONINI_NAME_MAX];
-    st_row *r;
-    size_t i;
+    strow *w = strows_add(&g_rows, STROW_UKI);
 
-    rows_name_uki(name, u->ent.name);
-    r = rows_add(&g_rows, ROW_UKI, name);
-    if (r == (st_row *)0)
+    if (w == (strow *)0)
         return;
-    r->shelf = shelf;
-    file_ascii(u->ent.name, r->uki, sizeof r->uki);
-    for (i = 0; u->label[i] != 0 && i + 1u < ROW_LABEL_MAX; i++)
-        r->label[i] = u->label[i];
-    r->label[i] = 0;
+    w->ref = shelf;
+    file_ascii(u->ent.name, w->file, sizeof w->file);
+    strows_name_uki(w->name, w->file);
+    (void)ucs2_copy(w->label, STROWS_LABEL_MAX, u->label);
 }
 
 /* Every partition whose own record names it a shelf of this install, and
@@ -316,7 +324,6 @@ static void find_shelves(void)
             ident_rec rec;
             int encrypted = 0;
             unsigned idx = g_nshelves;
-            int listed;
 
             if (!install_part_record(&s->disk, &s->parts[i], &rec,
                                      &encrypted) ||
@@ -333,18 +340,43 @@ static void find_shelves(void)
             bios_put_dec(s->parts[i].number);
             bios_puts(encrypted ? ", LUKS2\n" : ", plaintext\n");
 
-            listed = pos_list(&s->disk, &s->parts[i], add_uki, &idx);
-            if (listed < 0) {
-                st_row *r = rows_add(&g_rows, ROW_SHELF, "shelf");
+            if (pos_list(&s->disk, &s->parts[i], add_uki, &idx) < 0) {
+                strow *w = strows_add(&g_rows, STROW_POS);
 
-                if (r != (st_row *)0) {
-                    r->shelf = idx;
+                g_shelves[idx].encrypted = 1;
+                if (w != (strow *)0) {
+                    w->ref = idx;
                     (void)pos_probe(&s->disk, &s->parts[i]);
-                    (void)ucs2_copy(r->label, ROW_LABEL_MAX, pos_entry_label());
+                    (void)ucs2_copy(w->label, STROWS_LABEL_MAX,
+                                    pos_entry_label());
                 }
             }
         }
     }
+}
+
+static strow *add_chain(strow_kind kind, unsigned d, uint32_t part,
+                        const char *what)
+{
+    disk_slot *s = &g_disks[d];
+    uint16_t what16[32];
+    strow *w = strows_add(&g_rows, kind);
+
+    if (w == (strow *)0)
+        return w;
+    w->has_part = 1;
+    w->disk = s->id;
+    w->part = part;
+    w->ref = d;
+    strows_name_part(w->name, &s->id, part);
+    ascii16(what16, sizeof what16 / sizeof what16[0], what);
+    strows_label_part(w->label, STROWS_LABEL_MAX, what16, &s->id, part);
+    bios_puts("falcon-bios: ");
+    bios_puts(w->name);
+    bios_puts(": ");
+    bios_puts(what);
+    bios_puts("\n");
+    return w;
 }
 
 static void find_chains(void)
@@ -357,74 +389,42 @@ static void find_chains(void)
 
         for (i = 0; i < s->nparts; i++) {
             const part_entry *p = &s->parts[i];
-            char name[STATIONINI_NAME_MAX];
             vbr_loader l;
-            st_row *r;
 
             if (s->id.kind != PART_KIND_MBR || !p->primary ||
                 is_boot_partition(d, p))
                 continue;
             l = chain_part_loader(&s->disk, p);
-            if (l == VBR_LOADER_NONE)
-                continue;
-            rows_name_disk(name, &s->id, p->number);
-            r = rows_add(&g_rows, ROW_PART, name);
-            if (r == (st_row *)0)
+            if (l != VBR_LOADER_NONE &&
+                add_chain(STROW_VBR, d, p->number, vbr_loader_name(l)) ==
+                    (strow *)0)
                 return;
-            r->disk = d;
-            r->part = p->number;
-            rows_label_disk(r->label, vbr_loader_name(l), &s->id, p->number);
-            bios_puts("falcon-bios: ");
-            put_name(r->name);
-            bios_puts(": ");
-            bios_puts(vbr_loader_name(l));
-            bios_puts("\n");
         }
     }
     for (d = 0; d < g_ndisks; d++) {
-        disk_slot *s = &g_disks[d];
-        char name[STATIONINI_NAME_MAX];
-        st_row *r;
-
-        if (d == g_boot_idx || !chain_disk_bootable(&s->disk))
+        if (d == g_boot_idx || g_disks[d].id.kind == 0 ||
+            !chain_disk_bootable(&g_disks[d].disk))
             continue;
-        rows_name_disk(name, &s->id, 0);
-        r = rows_add(&g_rows, ROW_DISK, name);
-        if (r == (st_row *)0)
+        if (add_chain(STROW_MBR, d, 0, "Boot code") == (strow *)0)
             return;
-        r->disk = d;
-        rows_label_disk(r->label, "Boot code", &s->id, 0);
-        bios_puts("falcon-bios: ");
-        put_name(r->name);
-        bios_puts(": boot code and an active entry in LBA 0\n");
     }
-}
-
-static void ini_note(const char *section, const char *why, void *ctx)
-{
-    (void)ctx;
-    bios_puts("falcon-bios: STATION.INI [");
-    bios_puts(section);
-    bios_puts("]: ");
-    bios_puts(why);
-    bios_puts("\n");
 }
 
 static void build_rows(void)
 {
-    rows_init(&g_rows);
+    strows_init(&g_rows);
     find_shelves();
     find_chains();
     if (g_have_memtest) {
-        st_row *r = rows_add(&g_rows, ROW_MEMTEST, "memtest");
+        strow *w = strows_add(&g_rows, STROW_MEMTEST);
 
-        if (r != (st_row *)0)
-            rows_label_ascii(r->label, "Memory test (memtest86+)");
+        if (w != (strow *)0) {
+            memcpy(w->name, "memtest", 8);
+            ascii16(w->label, STROWS_LABEL_MAX, "Memory test (memtest86+)");
+        }
     }
     if (g_have_ini)
-        rows_apply_ini(&g_rows, &g_ini, g_nshelves, disk_of, ini_note,
-                       (void *)0);
-    rows_arrange(&g_rows, g_have_ini ? &g_ini : (const stationini *)0);
+        strows_apply(&g_rows, &g_ini, STROWS_BIOS);
 }
 
 /* ---- the routes ---- */
@@ -455,25 +455,21 @@ static int pick_file(const fs_dirent *e, void *ctx)
     return b[i] == '\0' && e->name[i] == 0;
 }
 
-/* A next-boot value "uki-<stem>" on a shelf this loader could not list: the
- * image whose generated name it is. */
-static int pick_name(const fs_dirent *e, void *ctx)
+/* The encrypted shelf a UKI no row lists is on, else the first shelf. */
+static int uki_shelf(void)
 {
-    const char *want = ctx;
-    char name[STATIONINI_NAME_MAX];
-    size_t i;
+    unsigned i;
 
-    rows_name_uki(name, e->name);
-    for (i = 0; name[i] != '\0' && name[i] == want[i]; i++)
-        ;
-    return name[i] == want[i];
+    for (i = 0; i < g_nshelves; i++) {
+        if (g_shelves[i].encrypted)
+            return (int)i;
+    }
+    return g_nshelves != 0 ? 0 : -1;
 }
 
 /* Returns nonzero when there is something on screen worth a key. */
-static int boot_shelf(unsigned shelf, const uint16_t *label, pos_pick_fn want,
-                      void *ctx)
+static int boot_shelf(int shelf, const uint16_t *label, const char *file)
 {
-    const shelf_ref *s = &g_shelves[shelf];
     boot_result r;
     int rc;
 
@@ -481,11 +477,20 @@ static int boot_shelf(unsigned shelf, const uint16_t *label, pos_pick_fn want,
     screen_page();
     screen_out16(label);
     screen_out("\n\n");
-    rc = pos_run_pick(&g_disks[s->disk].disk, s->part, want, ctx, &r);
-    if (rc == POS_ABORTED)
-        return 0;
-    failed("personal OS boot", &r);
-    screen_out(k_press_any);
+    if (shelf < 0 || (unsigned)shelf >= g_nshelves) {
+        boot_result_init(&r);
+        r.stage = "looking for a UKI shelf";
+        r.advice = "No shelf of this install was found.";
+    } else {
+        const shelf_ref *s = &g_shelves[shelf];
+
+        rc = pos_run_pick(&g_disks[s->disk].disk, s->part,
+                          file != (const char *)0 ? pick_file : (pos_pick_fn)0,
+                          (void *)(uintptr_t)file, &r);
+        if (rc == POS_ABORTED)
+            return 0;
+    }
+    failed(label, "personal OS boot", &r);
     return 1;
 }
 
@@ -500,36 +505,38 @@ static const part_entry *find_part(const disk_slot *s, uint32_t number)
     return (const part_entry *)0;
 }
 
-static void boot_chain(const st_row *row)
+static void boot_chain(const strow *w)
 {
-    disk_slot *s = &g_disks[row->disk];
+    const char *code = w->kind == STROW_VBR ? "VBR" : "MBR";
+    int d = w->ref_none ? disk_of(&w->disk) : (int)w->ref;
+    int swap = !w->no_swap;
     boot_result r;
 
     boot_result_init(&r);
-    screen_mode(row->kind == ROW_PART ? "VBR" : "MBR");
+    screen_mode(code);
     screen_page();
     screen_out("booting: ");
-    screen_out16(row->label);
+    screen_out16(w->label);
     screen_out("\n\n");
-    if (row->kind == ROW_DISK) {
-        (void)chain_disk(&s->disk, row->swap, &r);
+    if (d < 0 || (unsigned)d >= g_ndisks) {
+        r.stage = "finding the disk";
+        r.advice = "The disk this entry names is not attached.";
+    } else if (w->kind == STROW_MBR) {
+        (void)chain_disk(&g_disks[d].disk, swap, &r);
     } else {
-        const part_entry *p = find_part(s, row->part);
+        const part_entry *p = find_part(&g_disks[d], w->part);
 
         if (p != (const part_entry *)0) {
-            (void)chain_part(&s->disk, p, row->swap, &r);
+            (void)chain_part(&g_disks[d].disk, p, swap, &r);
         } else {
             r.stage = "finding the partition";
             r.advice = "The disk has no partition of that number.";
         }
     }
-    screen_page();
-    screen_out16(row->label);
-    failed("boot", &r);
-    screen_out(k_press_any);
+    failed(w->label, code, &r);
 }
 
-static void boot_memtest(const st_row *row)
+static void boot_memtest(const strow *w)
 {
     boot_result r;
     fs_file f;
@@ -539,11 +546,11 @@ static void boot_memtest(const st_row *row)
     screen_mode("MEM");
     screen_page();
     screen_out("booting: ");
-    screen_out16(row->label);
+    screen_out16(w->label);
     screen_out("\n\n");
 
     r.stage = "opening MEMTEST.BIN";
-    if (fs_file_open(&g_svol, &f, &g_memtest) == FS_OK) {
+    if (g_have_memtest && fs_file_open(&g_svol, &f, &g_memtest) == FS_OK) {
         k.read = fs_file_read_cb;
         k.ctx = &f;
         k.size = g_memtest.size;
@@ -551,35 +558,32 @@ static void boot_memtest(const st_row *row)
         (void)linux_boot(&k, (const linux_object *)0, 0, "", (void (*)(void))0);
         boot_result_advise(&r, linux_why(), (const char *)0);
     }
-
-    screen_page();
-    screen_out16(row->label);
-    failed("boot", &r);
-    screen_out(k_press_any);
+    failed(w->label, "MEM", &r);
 }
 
 /* Boots a row, as Enter on it. Returns nonzero when a screen is waiting for
  * its key. */
-static int boot_row(unsigned idx)
+static int boot_row(const strow *w)
 {
-    const st_row *row = &g_rows.row[idx];
-
     bios_puts("falcon-bios: entry ");
-    bios_puts(row->name);
+    bios_puts(w->section[0] != '\0' ? w->section : w->name);
     bios_puts("\n");
-    switch (row->kind) {
-    case ROW_SHELF:
-        return boot_shelf(row->shelf, row->label, (pos_pick_fn)0, (void *)0);
-    case ROW_UKI:
-        return boot_shelf(row->shelf, row->label, pick_file,
-                          (void *)(uintptr_t)row->uki);
-    case ROW_PART:
-    case ROW_DISK:
-        boot_chain(row);
+    switch (w->kind) {
+    case STROW_POS:
+        return boot_shelf((int)w->ref, w->label, (const char *)0);
+    case STROW_UKI:
+        return boot_shelf(w->ref_none ? uki_shelf() : (int)w->ref, w->label,
+                          w->file);
+    case STROW_VBR:
+    case STROW_MBR:
+        boot_chain(w);
         return 1;
-    case ROW_MEMTEST:
-        boot_memtest(row);
+    case STROW_MEMTEST:
+        boot_memtest(w);
         return 1;
+    case STROW_NXT:
+    case STROW_ESP:
+    case STROW_FWSETUP:
     default:
         return 0;
     }
@@ -588,30 +592,15 @@ static int boot_row(unsigned idx)
 /* ---- before the menu ---- */
 
 /* The install not known, said before anything, since the list that follows
- * then has no shelf. The UEFI station's discover sentences, in the
- * station's terms. */
+ * then has no shelf: the stick's sentences, as the UEFI station says its
+ * discover ones. */
 static void install_notice(void)
 {
-    const char *why;
-
-    switch (g_install_state) {
-    case INSTALL_UNREAD:
-        why = "The partition this loader started from would not read,\n"
-              "so no shelf is offered.";
-        break;
-    case INSTALL_NONE:
-    case INSTALL_BAD:
-        why = "The partition this loader started from has no falcon "
-              "record,\nso no shelf is offered.\nInstall the station with "
-              "a current mkstick.";
-        break;
-    case INSTALL_OK:
-    default:
+    if (install_problem(g_install_state) == (const char *)0)
         return;
-    }
     screen_mode((const char *)0);
     screen_page();
-    screen_out(why);
+    screen_out(install_problem(g_install_state));
     screen_out("\n\npress any key to continue.\n");
     (void)screen_key();
 }
@@ -620,75 +609,75 @@ static void install_notice(void)
  * said once before the menu, which then waits. */
 static void ini_notice(void)
 {
-    if (!g_have_ini)
+    if (g_ini_state == INI_NONE)
         return;
-    if (g_ini.err_line != 0) {
-        screen_mode((const char *)0);
+    screen_mode((const char *)0);
+    if (g_ini_state == INI_TOO_BIG || g_ini_state == INI_UNREAD) {
         screen_page();
-        screen_out(STATIONINI_FILE " line ");
+        screen_out(g_ini_state == INI_TOO_BIG
+                       ? "STATION.INI is larger than 16 KB and was not read."
+                       : "STATION.INI could not be read.");
+    } else if (g_ini.err_line != 0) {
+        screen_page();
+        screen_out("STATION.INI line ");
         screen_out_dec(g_ini.err_line);
         screen_out(": ");
         screen_out(g_ini.why);
-        screen_out(".\n\nThe menu will wait with no default.\n"
-                   "\npress any key to continue.\n");
-        (void)screen_key();
+        screen_out(".");
+    } else if (g_ini.default_name[0] != '\0' &&
+               strows_find(&g_rows, g_ini.default_name) == (strow *)0) {
+        bios_puts("falcon-bios: STATION.INI's default names no entry here\n");
+        screen_page();
+        screen_out("STATION.INI's default, ");
+        screen_out(g_ini.default_name);
+        screen_out(",\nnames no entry on this machine.");
+    } else {
         return;
     }
-    if (g_ini.default_name[0] != '\0' && g_rows.def < 0) {
-        bios_puts("falcon-bios: STATION.INI default ");
-        bios_puts(g_ini.default_name);
-        bios_puts(" is not an entry here\n");
-        screen_mode((const char *)0);
-        screen_page();
-        screen_out(STATIONINI_FILE "'s default, ");
-        screen_out(g_ini.default_name);
-        screen_out(",\nis not an entry on this machine.\n\n"
-                   "The menu will wait with no default.\n"
-                   "\npress any key to continue.\n");
-        (void)screen_key();
-    }
+    screen_out("\n\nThe menu will wait with no default.\n"
+               "\npress any key to continue.\n");
+    (void)screen_key();
 }
 
-/* The first Linux row, for the reserved value :personal. -1 for none. */
-static int first_linux(void)
-{
-    unsigned i;
-
-    for (i = 0; i < g_rows.n; i++) {
-        if (g_rows.row[i].kind == ROW_SHELF || g_rows.row[i].kind == ROW_UKI)
-            return (int)i;
-    }
-    return -1;
-}
-
-/* A UKI named by a next-boot value on an encrypted shelf, which the rows
- * could not list: the shelf, unlocked, then the image of that name. */
+/* A UKI on the encrypted shelf has no row of its own until it is unlocked,
+ * so uki-<stem> that no row carries is <stem>.efi there, behind the
+ * prompt: how Linux asks to come back to itself. Nonzero when it was. */
 static int next_boot_uki(void)
 {
-    unsigned i;
+    static char file[STATIONINI_PATH_MAX];
+    int shelf = -1;
+    size_t n = 0;
+    size_t i;
 
-    if (g_next[0] != 'u' || g_next[1] != 'k' || g_next[2] != 'i' ||
-        g_next[3] != '-')
-        return 0;
-    for (i = 0; i < g_rows.n; i++) {
-        const st_row *row = &g_rows.row[i];
-
-        if (row->kind == ROW_SHELF) {
-            if (boot_shelf(row->shelf, row->label, pick_name, g_next))
-                (void)screen_key();
-            return 1;
+    for (i = 0; i < g_nshelves; i++) {
+        if (g_shelves[i].encrypted) {
+            shelf = (int)i;
+            break;
         }
     }
-    return 0;
+    if (shelf < 0 || g_next[0] != 'u' || g_next[1] != 'k' ||
+        g_next[2] != 'i' || g_next[3] != '-' || g_next[4] == '\0')
+        return 0;
+    for (i = 4; g_next[i] != '\0' && n + 5u < sizeof file; i++)
+        file[n++] = g_next[i];
+    memcpy(file + n, ".efi", 5);
+    {
+        uint16_t label[STATIONINI_PATH_MAX];
+
+        ascii16(label, STATIONINI_PATH_MAX, file);
+        if (boot_shelf(shelf, label, file))
+            (void)screen_key();
+    }
+    return 1;
 }
 
-/* The next-boot marker, acted on (DESIGN Section 13.8): the stick's
- * next_boot_run with the station's values, which are entry names. The
- * marker was cleared before any of this ran. */
+/* The next-boot marker, acted on (DESIGN Section 13.8), as the UEFI
+ * station's next_boot_run with the BIOS marker's own states. The marker was
+ * cleared before any of this ran. */
 static void next_boot_run(void)
 {
     const char *note = (const char *)0;
-    int at;
+    strow *w;
 
     switch (g_next_state) {
     case MARKER_NONE:
@@ -698,48 +687,45 @@ static void next_boot_run(void)
                "name.";
         break;
     case MARKER_STALE:
-        note = "the next-boot marker was not set within the last ten "
+        note = "note: the next-boot marker was not set within the last ten "
                "minutes.";
         break;
     case MARKER_NO_CLOCK:
-        note = "this machine's clock did not answer, so the next-boot marker "
-               "could not be dated.";
+        note = "note: this machine's clock did not answer, so the next-boot "
+               "marker could not be dated.";
         break;
     case MARKER_STUCK:
-        note = "the next-boot marker could not be cleared, so nothing was "
-               "booted from it.";
+        note = "note: the next-boot marker could not be cleared, so nothing "
+               "was booted from it.";
         break;
     case MARKER_VALUE:
     default:
         break;
     }
 
-    screen_mode((const char *)0);
-    screen_page();
     if (note == (const char *)0) {
         bios_puts("falcon-bios: next boot: ");
         bios_puts(g_next);
         bios_puts("\n");
-        at = nextboot_is_personal(g_next) ? first_linux()
-                                           : rows_find(&g_rows, g_next);
-        if (at >= 0) {
-            if (boot_row((unsigned)at))
+        w = strows_find(&g_rows, g_next);
+        if (w != (strow *)0) {
+            if (boot_row(w))
                 (void)screen_key();
             return;
         }
-        if (!nextboot_is_reserved(g_next) && next_boot_uki())
+        if (next_boot_uki())
             return;
-        screen_mode((const char *)0);
-        screen_page();
-        if (nextboot_is_reserved(g_next) && !nextboot_is_personal(g_next))
-            note = "the next-boot marker held a reserved value this loader "
-                   "does not know.";
-        else
-            note = "the entry the next-boot marker names is not on this "
-                   "machine.";
     }
-    screen_out("note: ");
-    screen_out(note);
+
+    screen_mode((const char *)0);
+    screen_page();
+    if (note == (const char *)0) {
+        screen_out("the next-boot marker names ");
+        screen_out(g_next);
+        screen_out(", and no entry has that name.");
+    } else {
+        screen_out(note);
+    }
     if (g_next_state != MARKER_STUCK)
         screen_out("\nIt has been cleared; nothing was booted from it.");
     screen_out("\n\npress any key for the menu.\n");
@@ -747,11 +733,14 @@ static void next_boot_run(void)
 }
 
 /* Escape on the list: INT 18h, and a reset if the BIOS returns. */
-static void return_to_firmware(void)
+static void return_to_firmware(size_t shown)
 {
     screen_mode((const char *)0);
     screen_page();
     screen_out("falcon-boot: returning to firmware.\n");
+    if (shown == 0)
+        screen_out("note: no personal OS shelf and no other boot entry was "
+                   "found.\n");
     thunk_vector = 0x18;
     thunk_bios();
     bios_reboot();
@@ -762,27 +751,39 @@ static void list_run(void)
     static const screen_banner banner = {
         u"falcon-boot " FALCON_VERSION_STATION, u"BIOS", TUI_ATTR_TEXT
     };
-    static const uint16_t *labels[ROWS_MAX];
-    unsigned seconds = g_rows.timeout;
+    static size_t view[STROWS_MAX];
+    static const uint16_t *labels[STROWS_MAX];
+    const stationini *c = g_have_ini ? &g_ini : (const stationini *)0;
+    size_t shown = strows_arrange(&g_rows, c, view, STROWS_MAX);
+    size_t sel = 0;
+    unsigned seconds = 0;
+    size_t i;
+
+    if (c != (const stationini *)0 && c->timeout != 0 &&
+        strows_default(&g_rows, c, view, shown, &sel))
+        seconds = c->timeout;
+    bios_puts("falcon-bios: ");
+    bios_put_dec(g_rows.n);
+    bios_puts(" entries, ");
+    bios_put_dec(shown);
+    bios_puts(" shown\n");
+    for (i = 0; i < shown; i++)
+        labels[i] = g_rows.row[view[i]].label;
 
     for (;;) {
-        size_t def = g_rows.def >= 0 ? (size_t)g_rows.def : 0;
-        unsigned i;
         int pick;
 
         screen_mode((const char *)0);
-        for (i = 0; i < g_rows.n_shown; i++)
-            labels[i] = g_rows.row[g_rows.shown[i]].label;
-        pick = screen_menu_timed(&banner, labels, g_rows.n_shown,
-                                 (const char *)0, tui_hint_plain, (int *)0,
-                                 u"(nothing to boot was found)", def,
-                                 g_rows.def >= 0 ? seconds : 0);
+        pick = screen_menu_timed(&banner, labels, shown, (const char *)0,
+                                 tui_hint_plain, (int *)0,
+                                 u"(nothing to boot was found)", sel, seconds);
         /* The countdown is the first menu's only; coming back from a
          * failed boot, the menu waits. */
         seconds = 0;
         if (pick < 0)
-            return_to_firmware();
-        if (boot_row(g_rows.shown[pick]))
+            return_to_firmware(shown);
+        sel = (size_t)pick;
+        if (boot_row(&g_rows.row[view[pick]]))
             (void)screen_key();
     }
 }
@@ -802,11 +803,6 @@ void bios_main(uint8_t drive)
     scan_disks(drive);
     read_station();
     build_rows();
-    bios_puts("falcon-bios: ");
-    bios_put_dec(g_rows.n);
-    bios_puts(" entries, ");
-    bios_put_dec(g_rows.n_shown);
-    bios_puts(" shown\n");
 
     screen_init();
     install_notice();

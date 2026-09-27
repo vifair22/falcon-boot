@@ -29,4 +29,8 @@ BOOLEAN part_same_disk(EFI_SYSTEM_TABLE *st, EFI_HANDLE a, EFI_HANDLE b);
  * for a handle that is not a partition. */
 EFI_STATUS part_start_lba(EFI_SYSTEM_TABLE *st, EFI_HANDLE h, UINT64 *lba);
 
+/* Is `part` a partition of the disk `disk`? disk's device path, less its
+ * end node, must be exactly what comes before part's HARDDRIVE node. */
+BOOLEAN part_on_disk(EFI_SYSTEM_TABLE *st, EFI_HANDLE disk, EFI_HANDLE part);
+
 #endif /* FALCON_PARTEFI_H */

@@ -377,10 +377,42 @@ static int plain_shelf_usable(discover_dev *dev, const fs_ops *ops)
  * only be a second place to pick the wrong image. A shelf with no appliance on
  * it is a negative return, which the caller turns into the message that says
  * so. */
-static INTN choose_uki(const menu_banner *banner, pos_pick pick)
+/* Does a directory entry's name say `file`, ASCII-case-insensitively? */
+static BOOLEAN name_is(const fs_dirent *e, const char *file)
+{
+    UINTN i;
+
+    for (i = 0; i < e->name_len; i++) {
+        uint16_t a = e->name[i];
+        char b = file[i];
+
+        if (b == '\0')
+            return FALSE;
+        if (a >= 'A' && a <= 'Z')
+            a = (uint16_t)(a - 'A' + 'a');
+        if (b >= 'A' && b <= 'Z')
+            b = (char)(b - 'A' + 'a');
+        if (a != (uint16_t)(unsigned char)b)
+            return FALSE;
+    }
+    return (BOOLEAN)(file[i] == '\0');
+}
+
+static INTN choose_uki(const menu_banner *banner, pos_pick pick,
+                       const char *file)
 {
     menu_keys keys;
     UINTN i;
+
+    /* Named by the caller (a station row, its default, next boot): that
+     * file or nothing, never the chooser in its place. */
+    if (file != (const char *)0) {
+        for (i = 0; i < g_images.n; i++) {
+            if (name_is(&g_images.uki[i].ent, file))
+                return (INTN)i;
+        }
+        return -2;
+    }
 
     if (pick == POS_PICK_APPLIANCE) {
         for (i = 0; i < g_images.n; i++) {
@@ -798,8 +830,83 @@ EFI_STATUS pos_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
     return pos_boot_pick(st, parent_image, POS_PICK_ASK, result);
 }
 
+/* Which shelf an attempt opens: POS_ANY is pos_boot's rule (an unlockable
+ * encrypted shelf outranks a plaintext one), POS_ENCRYPTED the prompt, and
+ * anything else that plaintext shelf's index in g_shelf. */
+#define POS_ANY ((UINTN)-2)
+
+static EFI_STATUS boot_shelf(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
+                             pos_pick want, UINTN shelf, const char *file,
+                             pos_result *result);
+
 EFI_STATUS pos_boot_pick(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
                          pos_pick want, pos_result *result)
+{
+    return boot_shelf(st, parent_image, want, POS_ANY, (const char *)0,
+                      result);
+}
+
+EFI_STATUS pos_boot_file(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
+                         UINTN shelf, const char *file, pos_result *result)
+{
+    return boot_shelf(st, parent_image, POS_PICK_ASK, shelf, file, result);
+}
+
+BOOLEAN pos_has_encrypted(void)
+{
+    return (BOOLEAN)(g_luks_usable != 0);
+}
+
+UINTN pos_plain_images(EFI_SYSTEM_TABLE *st, pos_image *out, UINTN cap)
+{
+    UINTN n = 0;
+    UINTN i;
+
+    g_st = st;
+    if (out == (pos_image *)0)
+        return 0;
+    for (i = 0; i < g_shelf_n && n < cap; i++) {
+        pos_shelf *p = &g_shelf[i];
+        UINTN k;
+
+        if (p->encrypted || !p->usable)
+            continue;
+        if (mount_shelf(discover_read, p->dev, p->fs) != FS_OK) {
+            crypto_wipe(&g_fs, sizeof g_fs);
+            continue;
+        }
+        if (shelf_collect(&g_images, &g_fs) == 1) {
+            shelf_label(&g_images, &g_fs);
+            for (k = 0; k < g_images.n && n < cap; k++) {
+                const fs_dirent *e = &g_images.uki[k].ent;
+                UINTN c;
+
+                ucs2_copy(out[n].label, POS_LABEL_MAX, g_images.uki[k].label);
+                /* A name that is not ASCII, or too long to carry, is not
+                 * one a row can ask for again by name. */
+                if (e->name_len == 0 || e->name_len >= POS_FILE_MAX)
+                    continue;
+                for (c = 0; c < e->name_len; c++) {
+                    if (e->name[c] < 0x21u || e->name[c] > 0x7Eu)
+                        break;
+                    out[n].file[c] = (char)e->name[c];
+                }
+                if (c != e->name_len)
+                    continue;
+                out[n].file[c] = '\0';
+                out[n].shelf = i;
+                n++;
+            }
+        }
+        crypto_wipe(&g_fs, sizeof g_fs);
+        shelf_wipe(&g_images);
+    }
+    return n;
+}
+
+static EFI_STATUS boot_shelf(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
+                             pos_pick want, UINTN shelf, const char *file,
+                             pos_result *result)
 {
     EFI_BOOT_SERVICES *bs;
     menu_banner banner = { L"falcon-boot: which image?", (const CHAR16 *)0,
@@ -831,12 +938,24 @@ EFI_STATUS pos_boot_pick(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
         result->stage = L"looking for a UKI shelf";
         return EFI_NOT_FOUND;
     }
+    if (shelf == POS_ENCRYPTED && g_luks_usable == 0) {
+        result->stage = L"looking for an encrypted shelf";
+        result->advice = L"no encrypted shelf of this install was found.";
+        return EFI_NOT_FOUND;
+    }
+    if (shelf != POS_ENCRYPTED && shelf != POS_ANY &&
+        (shelf >= g_shelf_n || g_shelf[shelf].encrypted ||
+         !g_shelf[shelf].usable)) {
+        result->stage = L"looking for a UKI shelf";
+        return EFI_NOT_FOUND;
+    }
 
     /* An unlockable encrypted shelf outranks a plaintext one. On a stick
      * built to DESIGN Section 3 there is only ever one; where both are in the
      * machine, the encrypted one is the one whose contents nobody else could
-     * have read, so it is the one this entry means. */
-    if (g_luks_usable != 0) {
+     * have read, so it is the one this entry means. A station row names its
+     * shelf instead. */
+    if (shelf == POS_ENCRYPTED || (shelf == POS_ANY && g_luks_usable != 0)) {
         result->stage = L"unlocking the encrypted partition";
         rc = prompt_and_unlock(&which);
         if (rc != LUKS_OK) {
@@ -895,10 +1014,14 @@ EFI_STATUS pos_boot_pick(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
          * the same boot. */
         pos_shelf *p = (pos_shelf *)0;
 
-        for (which = 0; which < g_shelf_n; which++) {
-            if (!g_shelf[which].encrypted && g_shelf[which].usable) {
-                p = &g_shelf[which];
-                break;
+        if (shelf != POS_ANY) {
+            p = &g_shelf[shelf];
+        } else {
+            for (which = 0; which < g_shelf_n; which++) {
+                if (!g_shelf[which].encrypted && g_shelf[which].usable) {
+                    p = &g_shelf[which];
+                    break;
+                }
             }
         }
         if (p == (pos_shelf *)0) {
@@ -924,7 +1047,13 @@ EFI_STATUS pos_boot_pick(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
         goto out_close;
     }
 
-    pick = choose_uki(&banner, want);
+    pick = choose_uki(&banner, want, file);
+    if (pick == -2) {
+        result->stage = L"looking for the UKI";
+        result->advice = L"that UKI is not on the shelf.";
+        status = EFI_NOT_FOUND;
+        goto out_close;
+    }
     if (pick < 0) {
         /* The appliance case never showed a chooser, so a negative answer
          * there is not a user cancelling: it is a shelf with no appliance on

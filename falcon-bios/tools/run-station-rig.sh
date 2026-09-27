@@ -34,6 +34,7 @@
 #              and no countdown
 #   next-boot  a marker naming B's MBR, and a default naming A p1: B's MBR
 #              boots with no menu drawn
+#   next-miss  a marker naming nothing here: the sentence, and no boot
 #   mem        MEMTEST.BIN in the station partition, the default: the
 #              handoff to it (skipped without MEMTEST)
 #   fd-own     FreeDOS 1.4 LiteUSB as the station's own disk (the station
@@ -323,7 +324,7 @@ fd_judge() {  # fd_judge CASE
 CASES=("$@")
 [[ ${#CASES[@]} -gt 0 ]] ||
     CASES=(own-p1 own-p2 logical b-p1-swap b-p1-noswap b-mbr ini-error
-           next-boot mem fd-own fd-second fd-mbr)
+           next-boot next-miss mem fd-own fd-second fd-mbr)
 
 build_disks
 FD_SRC=
@@ -387,6 +388,17 @@ for c in "${CASES[@]}"; do
             "RIGBOOT dl=80 dssi=0000:0000 .* sig80=$SIG_B"
         if grep -aq 'Booting in' "$R/serial.txt"; then
             fail next-boot "the menu's countdown ran before the marker's entry"
+        fi
+        ;;
+    next-miss)
+        case_ini next-miss $'[general]\ndefault = mbr-'"$SIG_A"$'-p1\ntimeout = 1\n' \
+            no-such-entry
+        boot next-miss '' 12 "$R/a-run.img" "$R/b-run.img"
+        if grep -aq 'the next-boot marker names no-such-entry, and no entry has that name' \
+               "$R/serial.txt" && ! grep -aq 'RIGBOOT' "$R/serial.txt"; then
+            pass next-miss "the marker's name refused, nothing booted"
+        else
+            fail next-miss "no sentence, or a boot followed it"
         fi
         ;;
     mem)

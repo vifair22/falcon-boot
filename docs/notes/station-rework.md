@@ -334,88 +334,133 @@ and the installer agree.
 - **Row labels**: "<what> (disk <id>, partition <n>)" for a found OS, the
   INI label when given.
 
-## 11. Station screen text
+## 11. Station screen text (2026-09-27)
 
-The sentences the station's screens say, written once here so the two
-loaders say the same ones (CLAUDE.md, "One screen, two loaders"). The BIOS
-column is `apps/station/bios_main.c` and `falcon-bios/src/mbr/chain.c` as
-built on st/bios (2026-09-27); the UEFI loader writes the same sentence
-where it has the same case, and leaves out what it has no case for.
-Serial-only diagnostics (`falcon-bios: ...`) are not listed. The BIOS
-screen breaks a line where its 74-column block would split a word; the
-sentences are given here unbroken.
+What the station says, so the UEFI and BIOS stations say it the same way
+(CLAUDE.md, "One screen, two loaders"). Written by the UEFI stream from
+`apps/station/efi_main.c` and aligned by the BIOS stream to
+`apps/station/bios_main.c` and `falcon-bios/src/mbr/chain.c`; a change to
+one loader's line is a change to the other's. Lines only one platform has
+are marked. Serial-only diagnostics (`falcon-bios: ...`) are not listed.
+The BIOS screen breaks a line where its 74-column block would split a
+word; the sentences are given here unbroken.
 
-**Menu.** Banner `falcon-boot <version>`, state `BIOS` (UEFI: its Secure
-Boot state). Empty list: `(nothing to boot was found)`. The countdown is the
-existing key-line text, `Booting in N s. Any key stops the countdown.`,
-on the first menu only.
+**Rows.** The names and the list's rules are one module,
+`falcon-core/src/media/strows.c`, for both loaders.
 
-**Row labels** (section 10 has the names):
+| row | label |
+|---|---|
+| the encrypted shelf | `Personal OS (encrypted)`: the prompt, then shelf.c's chooser |
+| a plaintext shelf's UKI | shelf.c's label (`Personal OS: Arch Linux`), one row per UKI |
+| a found OS on a partition | `<what> (disk <id>, partition <n>)`; UEFI's `<what>` is `Windows Boot Manager`, BIOS's the loader its boot sector names: `Windows (BOOTMGR)`, `Windows (NTLDR)`, `Windows 9x`, `FreeDOS`, `MS-DOS`, `GRUB`, `SYSLINUX` |
+| another disk's MBR (BIOS) | `Boot code (disk <id>)` |
+| a partition or disk a section added (BIOS) | `Partition (disk <id>, partition <n>)`, `Boot code (disk <id>)` |
+| a firmware entry (UEFI) | the entry's description |
+| memtest86+ | `Memory test (memtest86+)` (jump's) |
+| firmware setup (UEFI) | `Reboot to firmware setup`, always last |
 
-| row | label | name |
-|---|---|---|
-| a partition, autodetected | `<loader> (disk <id>, partition <n>)`, loader one of `Windows (BOOTMGR)`, `Windows (NTLDR)`, `Windows 9x`, `FreeDOS`, `MS-DOS`, `GRUB`, `SYSLINUX` | `mbr-<sig>-p<n>` |
-| another disk's MBR | `Boot code (disk <id>)` | `mbr-<sig>` / `gpt-<8>` |
-| a partition a section added | `Partition (disk <id>, partition <n>)` unless it has a label | the section |
-| a disk a section added | `Boot code (disk <id>)` unless it has a label | the section |
-| a UKI on a plaintext shelf | shelf.c's label (`Personal OS: <PRETTY_NAME>`) | `uki-<stem>`: the file name without `.efi`, anything but `[A-Za-z0-9_-]` as `_` |
-| an encrypted shelf | `Personal OS (encrypted)` | `shelf` (`shelf-2` for a second) |
-| a UKI a section added | its file name unless it has a label | the section |
-| memtest86+ | `Memory test (memtest86+)` | `memtest` |
+`<id>` is the short form: `gpt:` and the DiskGUID's first 8 hex digits as
+the GUID is written, or `mbr:` and the 8-digit signature, lower case. A
+STATION.INI `label` replaces any of these. Generated names follow section
+10: lower-case hex (`nxt-000a`, `gpt-1a2b3c4d-p1`, `mbr-cdcccdcc-p1`,
+`mbr-1a2b3c4d`); `uki-<file name less .efi>` with every character outside
+`[A-Za-z0-9_-]` made `-` and the whole cut to 31 characters. The encrypted
+shelf's row has no name; next boot's `uki-<stem>`, when no row carries it,
+is `<stem>.efi` on that shelf, behind the prompt.
 
-`<id>` is the INI spelling, `mbr:cdcccdcc` or `gpt:<DiskGUID>`.
+An empty list (BIOS; UEFI returns to the firmware instead):
+`(nothing to boot was found)`.
 
-**Route codes.** `POS` (a shelf or UKI row), `VBR` (a partition's boot
-sector, BIOS only), `MBR` (another disk's MBR, BIOS only), `MEM`
-(memtest86+), and the UEFI loader's `NXT` and its `bootmgfw.efi` route.
+**The countdown**, in the key line, counting down each second:
 
-**A route's page.** `booting: <label>`, then on return a new page:
-`<label>`, `boot failed while <stage>` (`personal OS boot failed while
-<stage>` for POS), the advice, `press any key to return to the menu.`
+    Booting in 5 s. Any key stops the countdown.
 
-Stages and advice of the chains (BIOS only):
+Any key stops it and restores the ordinary key line; the key is then taken
+as any key is (Enter boots the highlighted row). It runs on the first list
+only.
+
+**STATION.INI that cannot be taken**, a page before the list, then a key:
+
+    STATION.INI line <n>: <the parser's why>.
+
+    The menu will wait with no default.
+
+    press any key to continue.
+
+with, in place of the first line, `STATION.INI is larger than 16 KB and was
+not read.` or `STATION.INI could not be read.` The entries before a parse
+error still apply.
+
+**A default that names nothing** on this machine, the same page:
+
+    STATION.INI's default, <name>, names no entry on this machine.
+
+A default naming a hidden row is no countdown, and says nothing.
+
+**The install not known** (no record on the partition the loader started
+from), a page before the list: the stick's sentences, `install_problem`
+(BIOS) and `discover_install_problem` (UEFI).
+
+**Next boot**, a page, then the list:
+
+    the next-boot marker held something that is not an entry name.
+    It has been cleared; nothing was booted from it.
+
+    press any key for the menu.
+
+    the next-boot marker names <name>, and no entry has that name.
+    It has been cleared; nothing was booted from it.
+
+    press any key for the menu.
+
+and on BIOS, where the marker is a dated sector, each as `note: <line>`
+with the same two closing lines (the last without "It has been cleared"):
+
+- `the next-boot marker was not set within the last ten minutes.`
+- `this machine's clock did not answer, so the next-boot marker could not
+  be dated.`
+- `the next-boot marker could not be cleared, so nothing was booted from
+  it.`
+
+**Route pages.** The code, a page, `booting: <label>`, the route's lines,
+and when it comes back a new page: the label, a blank line, `<route>
+failed while <stage>` (`: 0x<status>` on UEFI), the advice, and `press any
+key to return to the menu.` Route words: `personal OS boot` (POS), `NXT`,
+`ESP`, `MEM`, and on BIOS `VBR` and `MBR`. Stages and advice the station
+adds:
+
+- ESP, before the load of `bootmgfw.efi` (UEFI): `BitLocker will ask for
+  the recovery key if the volume is sealed.`
+- ESP or MEM, no volume carries the file: stage `finding its ESP`, advice
+  `No partition of that disk carries the file.`
+- ESP or MEM, refused under Secure Boot: advice `the image is not signed
+  with a key this machine trusts.`
+- NXT for an INI entry with no firmware entry (UEFI): stage `finding its
+  firmware entry`, advice `No firmware boot entry names this disk. Set
+  method = efi in STATION.INI to start its bootmgfw.efi.`
+- An image that returns (UEFI): `the image exited, status 0x<n>`.
+- MEM (BIOS): stages `opening MEMTEST.BIN`, `starting memtest86+`, advice
+  linux.c's reason.
+- POS, a UKI row whose image is not there: stage `looking for a UKI`,
+  advice `the image this entry names is not on the shelf.`
+
+VBR and MBR (BIOS):
 
 | stage | advice |
 |---|---|
+| `finding the disk` | `The disk this entry names is not attached.` |
+| `finding the partition` | `The disk has no partition of that number.` |
 | `checking the partition` | `The disk's sectors are not 512 bytes, and a BIOS starts boot code only from a disk whose sectors are.` |
 | | `A partition on a GPT disk has no boot sector a BIOS starts.` |
 | | `It is a logical partition; DOS, Windows 9x and NT start only from a primary one.` |
 | | `It is an extended partition, which holds other partitions and has no boot sector.` |
-| `finding the partition` | `The disk has no partition of that number.` |
 | `reading the disk's partition table` | `The disk did not answer a read.` / `The disk's partition table is not the one the menu was built from.` |
 | `reading the partition's boot sector` | `The disk did not answer a read.` / `The partition's first sector carries no boot code.` |
-| `reading the disk's first sector` | `The disk did not answer a read.` |
+| `reading the disk's first sector` | `The disk did not answer a read.` / as `checking the partition`'s first |
 | `checking the boot signature` | `Its first sector carries no boot code.` |
 | `installing the drive swap` | `There is no conventional memory left for it; swap = no in STATION.INI starts this entry without it.` |
 | `starting its boot code` | (none) |
 
-memtest86+: stages `opening MEMTEST.BIN`, `starting memtest86+`, advice
-linux.c's reason. POS: pos.c's, as the stick's, and for a UKI row whose
-image is gone `looking for a UKI`, `the image this entry names is not on the
-shelf.`
-
-**Before the menu**, each a page, then `press any key to continue.`:
-
-- Install unknown: `The partition this loader started from would not
-  read,\nso no shelf is offered.` / `The partition this loader started from
-  has no falcon record,\nso no shelf is offered.\nInstall the station with a
-  current mkstick.`
-- A line refused: `STATION.INI line <n>: <why>.` then `The menu will wait
-  with no default.`
-- A default naming nothing here: `STATION.INI's default, <name>,\nis not an
-  entry on this machine.` then `The menu will wait with no default.`
-
-**Next boot** notes, `note: <sentence>`, then (but for the last)
-`It has been cleared; nothing was booted from it.`, then `press any key for
-the menu.`:
-
-- `the next-boot marker held something that is not an entry name.`
-- `the next-boot marker was not set within the last ten minutes.` (BIOS)
-- `this machine's clock did not answer, so the next-boot marker could not
-  be dated.` (BIOS)
-- `the entry the next-boot marker names is not on this machine.`
-- `the next-boot marker held a reserved value this loader does not know.`
-- `the next-boot marker could not be cleared, so nothing was booted from
-  it.`
-
-**Escape** at the menu: `falcon-boot: returning to firmware.`
+**Escape** at the list: `falcon-boot: returning to firmware.`, and when
+the list was empty, `note: no personal OS shelf and no other boot entry was
+found.`

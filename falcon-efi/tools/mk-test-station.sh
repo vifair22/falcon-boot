@@ -7,9 +7,12 @@
 # and a procedure that stops working stops this script first:
 #
 #   p1  ESP                 shim, MokManager and falcon-boot-station.efi (signed
-#                           with the test MOK) in \EFI\falcon\; the boot
-#                           record, and the stationary BIOS stage 3 in its
-#                           reserved sectors
+#                           with the test MOK) in \EFI\falcon\, with the
+#                           public cert and memtest.efi (the rig's stand-in,
+#                           signed) as the installer puts them there
+#                           (docs/notes/station-rework.md section 10); the
+#                           boot record, and the stationary BIOS stage 3 in
+#                           its reserved sectors
 #   p2  falcon shelf GUID   LUKS2, pbkdf2 at the Manual's 200000 iterations,
 #                           a falcon token (role shelf), ext4,
 #                           /uki/personal.efi (the sd-stub fixture UKI,
@@ -51,6 +54,8 @@ MM_EFI=build/shim/bins/fedora-16.1-mmx64.efi
 EFI_STATION_SIGNED=build/bin/falcon-boot-station-signed.efi
 MOK_KEY=build/mok-test/falcon-test-mok.key
 MOK_CRT=build/mok-test/falcon-test-mok.crt
+MOK_CER=build/mok-test/falcon-test-mok.cer
+STANDIN_SIGNED=build/test/standin-signed.efi
 FIXTURE_UKI_SIGNED=build/test/fixture-uki-signed.efi
 MKSTICK=build/bin/falcon-boot-mkstick
 STAGE1=build/bin/falcon-bios-stage1.bin
@@ -79,7 +84,8 @@ cleanup() {
 trap cleanup EXIT
 
 for f in "$SHIM_EFI" "$MM_EFI" "$EFI_STATION_SIGNED" "$MOK_KEY" "$MOK_CRT" \
-         "$FIXTURE_UKI_SIGNED" "$MKSTICK" "$STAGE1" "$STAGE2" "$STAGE3"; do
+         "$MOK_CER" "$STANDIN_SIGNED" "$FIXTURE_UKI_SIGNED" "$MKSTICK" \
+         "$STAGE1" "$STAGE2" "$STAGE3"; do
     [[ -f "$f" ]] || {
         echo "ERROR: $f missing (make test-station builds what it needs)" >&2
         exit 1
@@ -133,6 +139,8 @@ for dir in falcon BOOT; do
     sudo cp "$EFI_STATION_SIGNED" "$MNT/EFI/$dir/grubx64.efi"
 done
 sudo cp "$SHIM_EFI" "$MNT/EFI/falcon/shimx64.efi"
+sudo cp "$MOK_CER" "$MNT/EFI/falcon/falcon-boot.cer"
+sudo cp "$STANDIN_SIGNED" "$MNT/EFI/falcon/memtest.efi"
 sudo cp "$SHIM_EFI" "$MNT/EFI/BOOT/BOOTX64.EFI"
 sudo umount "$MNT"
 rmdir "$MNT"

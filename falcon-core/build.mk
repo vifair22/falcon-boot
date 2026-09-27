@@ -53,6 +53,11 @@ CORE_UEFIBOOT := $(CORE)/media/uefiboot.c
 # parser for both loaders and the installer's writer. Apart from CORE_MEDIA
 # because only the station and mkstick read it.
 CORE_STATIONINI := $(CORE)/media/stationini.c
+# The station's list as data (DESIGN Sections 13.3, 13.7, 13.8): the rows'
+# generated names, what a STATION.INI section changes or adds, the order and
+# the default. One module for both stations, so the two lists follow one set
+# of rules.
+CORE_STROWS   := $(CORE)/media/strows.c
 CORE_WIM      := $(addprefix $(CORE)/wim/,lzx.c wim.c)
 # gzip, inflated: falcon jump's stage 3 is stored compressed on its floppy
 # and stage 2 inflates it (DESIGN Section 14.3).
@@ -129,13 +134,13 @@ CORE_TESTS := $(addprefix falcon-core/tests/,main.c \
 	iso9660_test.c udf_test.c udfedit_test.c media_fs_test.c bootcfg_test.c extmap_test.c \
 	hookcmd_test.c grubcfg_test.c bsdmd_test.c xpsetup_test.c eltorito_test.c fat_test.c medium_test.c bootfs_test.c uefiboot_test.c blesslist_test.c wim_test.c part_test.c \
 	osrel_test.c pe_test.c trust_test.c survey_test.c tui_test.c shelf_test.c \
-	nextboot_test.c stationini_test.c gz_test.c table_test.c ident_test.c identfs_test.c extfind_test.c \
+	nextboot_test.c stationini_test.c strows_test.c gz_test.c table_test.c ident_test.c identfs_test.c extfind_test.c \
 	rebl_test.c kndev.c)
 
 CORE_UUT := $(CORE_CRYPTO) $(CORE_FS) $(CORE_LUKS) $(CORE_PART) $(CORE_IDENT) \
 	$(CORE_IDENT_FS) $(CORE)/media/extfind.c $(CORE_BLK) $(CORE_PE) \
 	$(CORE_WIM) $(CORE_UCS2) $(CORE_TUI) \
-	$(CORE_TRUST) $(CORE_MEDIA) $(CORE_UEFIBOOT) $(CORE_STATIONINI) $(CORE_MANIFEST) \
+	$(CORE_TRUST) $(CORE_MEDIA) $(CORE_UEFIBOOT) $(CORE_STATIONINI) $(CORE_STROWS) $(CORE_MANIFEST) \
 	$(CORE_MANIFEST_WRITE) $(CORE_GZ)
 
 $(eval $(call test_bin,core,$(CORE_TESTS) $(CORE_UUT)))

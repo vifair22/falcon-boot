@@ -87,6 +87,12 @@ int nextboot_is_personal(const char *name)
  * reads must begin with. */
 static const char k_head[] = NEXTBOOT_MAGIC NEXTBOOT_VERSION "\n";
 
+int nextboot_sector_size_ok(size_t len)
+{
+    return len >= NEXTBOOT_SECTOR_BYTES && len <= NEXTBOOT_SECTOR_MAX &&
+           (len & (len - 1u)) == 0u;
+}
+
 int nextboot_sector_is_marker(const uint8_t *sec, size_t len)
 {
     static const char magic[] = NEXTBOOT_MAGIC;
@@ -113,6 +119,9 @@ static size_t line_end(const uint8_t *sec, size_t from, size_t len)
 nextboot_sector nextboot_sector_parse(const uint8_t *sec, size_t len,
                                       uint64_t *stamp, char *out, size_t cap)
 {
+    /* The lines end inside the text area whatever the sector's size, so a
+     * record is the same record on a 4Kn disk and cannot run on past it. */
+    const size_t text = NEXTBOOT_SECTOR_BYTES;
     uint64_t v = 0;
     size_t at;
     size_t end;
@@ -120,7 +129,7 @@ nextboot_sector nextboot_sector_parse(const uint8_t *sec, size_t len,
 
     if (out != (char *)0 && cap != 0)
         out[0] = '\0';
-    if (sec == (const uint8_t *)0 || len != NEXTBOOT_SECTOR_BYTES ||
+    if (sec == (const uint8_t *)0 || !nextboot_sector_size_ok(len) ||
         !nextboot_sector_is_marker(sec, len))
         return NEXTBOOT_SECTOR_NONE;
     if (stamp == (uint64_t *)0 || out == (char *)0 || cap == 0)
@@ -135,8 +144,8 @@ nextboot_sector nextboot_sector_parse(const uint8_t *sec, size_t len,
     at = sizeof k_head - 1u;
 
     /* The stamp: one to twenty digits, nothing else, no overflow. */
-    end = line_end(sec, at, len);
-    if (end == at || end == len || end - at > 20u)
+    end = line_end(sec, at, text);
+    if (end == at || end == text || end - at > 20u)
         return NEXTBOOT_SECTOR_BAD;
     for (i = at; i < end; i++) {
         uint64_t d;
@@ -151,8 +160,8 @@ nextboot_sector nextboot_sector_parse(const uint8_t *sec, size_t len,
     at = end + 1u;
 
     /* The value, by the same rule as the UEFI variable's bytes. */
-    end = line_end(sec, at, len);
-    if (end == len)
+    end = line_end(sec, at, text);
+    if (end == text)
         return NEXTBOOT_SECTOR_BAD;
     if (nextboot_decode(sec + at, end - at, out, cap) != NEXTBOOT_OK)
         return NEXTBOOT_SECTOR_BAD;
@@ -180,7 +189,7 @@ int nextboot_sector_write(uint8_t *sec, size_t len, uint64_t stamp,
     size_t d = 0;
     size_t i;
 
-    if (sec == (uint8_t *)0 || len != NEXTBOOT_SECTOR_BYTES ||
+    if (sec == (uint8_t *)0 || !nextboot_sector_size_ok(len) ||
         value == (const char *)0)
         return NEXTBOOT_ERR_BAD_ARG;
     while (value[vlen] != '\0')
@@ -194,7 +203,8 @@ int nextboot_sector_write(uint8_t *sec, size_t len, uint64_t stamp,
     } while (stamp != 0u);
 
     /* Fits by construction: the head, twenty digits and a value shorter than
-     * NEXTBOOT_MAX are well under a sector. */
+     * NEXTBOOT_MAX are well under the 512-byte text area. The rest of the
+     * sector, to len, is zero. */
     memset(sec, 0, len);
     for (i = 0; i + 1u < sizeof k_head; i++)
         sec[n++] = (uint8_t)k_head[i];

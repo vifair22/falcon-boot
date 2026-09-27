@@ -41,11 +41,21 @@ typedef void     *EFI_EVENT;
 typedef UINT64    EFI_LBA;
 typedef UINTN     EFI_TPL;
 
-/* An event's notification function, and the two values CreateEvent takes
- * for the one kind of event the loader creates (UEFI 2.10 Section 7.1). */
+/* An event's notification function, and the values CreateEvent takes for
+ * the two kinds of event the loader creates (UEFI 2.10 Section 7.1): a
+ * notification at ExitBootServices, and a plain timer the menu's countdown
+ * waits on beside the keyboard. */
 typedef void (EFIAPI *EFI_EVENT_NOTIFY)(EFI_EVENT Event, void *Context);
 #define EVT_SIGNAL_EXIT_BOOT_SERVICES 0x00000201u
+#define EVT_TIMER                     0x80000000u
 #define TPL_CALLBACK                  ((EFI_TPL)8)
+
+/* SetTimer's kinds (spec 7.1); the countdown uses a periodic one. Its
+ * trigger time is in units of 100 ns. */
+typedef UINT32 EFI_TIMER_DELAY;
+#define TimerCancel   ((EFI_TIMER_DELAY)0)
+#define TimerPeriodic ((EFI_TIMER_DELAY)1)
+#define TimerRelative ((EFI_TIMER_DELAY)2)
 
 typedef struct {
     UINT32 Data1;

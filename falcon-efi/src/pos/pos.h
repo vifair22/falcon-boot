@@ -122,6 +122,42 @@ EFI_STATUS pos_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
 EFI_STATUS pos_boot_pick(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
                          pos_pick want, pos_result *result);
 
+/* ---- the station's rows (DESIGN Section 13.3) ----
+ *
+ * The station lists a plaintext shelf's UKIs one row each, since their
+ * names can be read without a passphrase, and an encrypted shelf as one row
+ * that prompts and then offers its chooser. Either may be asked for one
+ * image by file name (a STATION.INI `uki` entry, a default, next boot). */
+
+/* Longest UKI file name a row carries, ASCII, terminator included. */
+#define POS_FILE_MAX 128u
+/* A row's label, in UTF-16 units, terminator included. */
+#define POS_LABEL_MAX 128u
+
+typedef struct {
+    CHAR16 label[POS_LABEL_MAX];   /* shelf.c's, as the chooser says it */
+    char   file[POS_FILE_MAX];     /* its file name on the shelf */
+    UINTN  shelf;                  /* for pos_boot_file */
+} pos_image;
+
+/* The shelf argument that means "the encrypted shelf, after the prompt". */
+#define POS_ENCRYPTED ((UINTN)-1)
+
+/* The UKIs on this install's plaintext shelves, labelled and in the order
+ * the chooser would give them (media/shelf.c). Meaningful after pos_scan.
+ * Returns how many were written, at most cap. */
+UINTN pos_plain_images(EFI_SYSTEM_TABLE *st, pos_image *out, UINTN cap);
+
+/* Is there an encrypted shelf to prompt for? Meaningful after pos_scan. */
+BOOLEAN pos_has_encrypted(void);
+
+/* pos_boot for one shelf and one image: `shelf` is a pos_image's, or
+ * POS_ENCRYPTED; `file` is the image's file name, matched without regard
+ * to case, or NULL for the chooser. EFI_NOT_FOUND with result->advice when
+ * the shelf holds no such file. */
+EFI_STATUS pos_boot_file(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
+                         UINTN shelf, const char *file, pos_result *result);
+
 /* Every launch also carries the install's identity, as IDENT_CRED beside
  * the passphrase: the boot partition's record (discover_install) in its text
  * form. The signing appliance opens only partitions carrying that ID (DESIGN

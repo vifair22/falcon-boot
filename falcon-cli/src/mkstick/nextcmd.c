@@ -14,7 +14,12 @@
  * The value is checked with the loaders' own rule (nextboot_decode) before
  * anything is written, and the sector is written only when it is empty or
  * already a marker: a sector holding anything else is not the one the
- * record meant, and is left alone.
+ * record meant, and is left alone. The sector's I/O, the choice of disk and
+ * the --print report are nextio.c, where the tests reach them.
+ *
+ * --print reads whichever marker this machine would use and reports it as
+ * key=value lines for a script (the format is in the help below and in
+ * docs/Manual.md Section 3.5), changing nothing.
  *
  * This replaces archusb's `archusb-boot-next` writer, which wrote the BIOS
  * marker to LBA 2047 of the disk with dd: that sector is inside the first
@@ -36,7 +41,7 @@
 #include <common/util.h>
 #include <mkstick/disk.h>
 #include <mkstick/nextcore.h>
-#include <mkstick/records.h>
+#include <mkstick/nextio.h>
 
 #include <media/nextboot.h>
 
@@ -44,11 +49,13 @@
 
 static const cli_opt next_opts[] = {
     { "disk", CLI_OPT_VALUE, 0, "<dev>",
-      "the disk holding the boot partition, when more than one does" },
+      "only this disk (or image) is looked at for the boot partition" },
     { "sector", CLI_OPT_FLAG, 0, NULL,
-      "write the BIOS marker sector even on a UEFI machine" },
+      "use the BIOS marker sector even on a UEFI machine" },
     { "clear", CLI_OPT_FLAG, 0, NULL,
-      "remove a pending marker instead of setting one" }
+      "remove a pending marker instead of setting one" },
+    { "print", CLI_OPT_FLAG, 0, NULL,
+      "print what is queued, as key=value lines, and change nothing" }
 };
 
 /* ---- UEFI: the variable ---- */
@@ -123,55 +130,23 @@ static cli_status set_variable(const char *value, int clear)
 
 /* ---- BIOS: the sector ---- */
 
-typedef struct {
-    char     path[MKS_PATH_MAX];
-    uint64_t marker_lba;
-} next_target;
-
-/* The boot partition on one disk, when it has one with a marker. */
-static int probe_disk(const char *path, next_target *out)
-{
-    static mks_records r;
-    mks_disk d;
-    int boot;
-
-    if (disk_stat(&d, path) != CLI_OK) {
-        cli_error_clear();
-        return 0;
-    }
-    if (d.sector != NEXTBOOT_SECTOR_BYTES)
-        return 0;
-    if (records_read(&r, d.path, d.sector, d.size) != CLI_OK) {
-        cli_error_clear();
-        return 0;
-    }
-    boot = records_boot(&r);
-    if (boot < 0 || r.recs[boot].rec.marker_sector == 0u)
-        return 0;
-    (void)snprintf(out->path, sizeof out->path, "%s", d.path);
-    out->marker_lba = r.parts[boot].start_lba +
-                      r.recs[boot].rec.marker_sector;
-    return 1;
-}
-
 /* Every whole disk the kernel lists, bar the ones that are never a boot
  * disk. Loop devices are left out too: an image is named with --disk. */
-static cli_status find_target(next_target *out)
+static cli_status list_disks(char (*paths)[MKS_PATH_MAX], size_t cap,
+                             size_t *n)
 {
-    static next_target found[NEXT_MAX_DISKS];
     static const char *const skip_prefix[] = {
         "loop", "ram", "zram", "sr", "fd", "dm-", "md", "nbd"
     };
-    size_t n = 0;
     size_t i;
     DIR *dir;
     struct dirent *e;
 
+    *n = 0;
     dir = opendir("/sys/block");
     if (dir == NULL)
         return set_error_errno(CLI_ERR_IO, "listing /sys/block");
-    while ((e = readdir(dir)) != NULL && n < NEXT_MAX_DISKS) {
-        char path[MKS_PATH_MAX];
+    while ((e = readdir(dir)) != NULL && *n < cap) {
         int skip = (e->d_name[0] == '.');
 
         for (i = 0; i < sizeof skip_prefix / sizeof skip_prefix[0]; i++) {
@@ -181,26 +156,31 @@ static cli_status find_target(next_target *out)
         }
         if (skip)
             continue;
-        (void)snprintf(path, sizeof path, "/dev/%s", e->d_name);
-        if (probe_disk(path, &found[n]))
-            n++;
+        (void)snprintf(paths[*n], MKS_PATH_MAX, "/dev/%s", e->d_name);
+        (*n)++;
     }
     (void)closedir(dir);
-
-    if (n == 0u)
-        return set_error(CLI_ERR_NOTFOUND,
-                         "no disk carries a falcon boot partition with a "
-                         "marker sector%s; name one with --disk",
-                         geteuid() != 0 ? " that this user can read" : "");
-    if (n > 1u) {
-        for (i = 0; i < n; i++)
-            log_error("a boot partition is on %s", found[i].path);
-        return set_error(CLI_ERR_USAGE,
-                         "%zu disks carry a falcon boot partition; name one "
-                         "with --disk", n);
-    }
-    *out = found[0];
     return CLI_OK;
+}
+
+/* The disk whose marker this is. --disk is that disk and no other: the
+ * kernel's list is not even read (nextio_resolve). */
+static cli_status find_target(const char *disk, next_target *out)
+{
+    static char paths[NEXT_MAX_DISKS][MKS_PATH_MAX];
+    const char *cands[NEXT_MAX_DISKS] = { NULL };
+    size_t n = 0;
+    size_t i;
+    cli_status rc;
+
+    if (disk != NULL)
+        return nextio_resolve(disk, NULL, 0, out);
+    rc = list_disks(paths, NEXT_MAX_DISKS, &n);
+    if (rc != CLI_OK)
+        return rc;
+    for (i = 0; i < n; i++)
+        cands[i] = paths[i];
+    return nextio_resolve(NULL, cands, n, out);
 }
 
 static cli_status read_rtc(uint64_t *now)
@@ -224,64 +204,29 @@ static cli_status read_rtc(uint64_t *now)
 
 static cli_status set_sector(const char *disk, const char *value, int clear)
 {
-    uint8_t cur[NEXTBOOT_SECTOR_BYTES];
-    uint8_t sec[NEXTBOOT_SECTOR_BYTES];
-    uint8_t back[NEXTBOOT_SECTOR_BYTES];
+    uint8_t probe[NEXTBOOT_SECTOR_BYTES];
     next_target t;
     uint64_t now = 0;
-    off_t off;
     cli_status rc;
-    int fd;
 
-    memset(sec, 0, sizeof sec);
-    memset(&t, 0, sizeof t);
     if (!clear) {
-        rc = read_rtc(&now);
-        if (rc != CLI_OK)
-            return rc;
-        if (nextboot_sector_write(sec, sizeof sec, now, value) != NEXTBOOT_OK)
+        /* The value first, so a typo is reported before the disks are. */
+        if (nextboot_sector_write(probe, sizeof probe, 0, value) !=
+            NEXTBOOT_OK)
             return set_error(CLI_ERR_INVALID,
                              "'%s' is not a next-boot value: printable ASCII, "
                              "a path on p2 or a reserved name such as %s",
                              value, NEXTBOOT_PERSONAL);
-    }
-
-    if (disk != NULL) {
-        if (!probe_disk(disk, &t))
-            return set_error(CLI_ERR_NOTFOUND,
-                             "%s carries no falcon boot partition with a "
-                             "marker sector", disk);
-    } else {
-        rc = find_target(&t);
+        rc = read_rtc(&now);
         if (rc != CLI_OK)
             return rc;
     }
-
-    fd = open(t.path, O_RDWR | O_CLOEXEC);
-    if (fd < 0)
-        return set_error_errno(CLI_ERR_IO, "opening %s for writing", t.path);
-    off = (off_t)(t.marker_lba * NEXTBOOT_SECTOR_BYTES);
-    if (pread(fd, cur, sizeof cur, off) != (ssize_t)sizeof cur) {
-        (void)close(fd);
-        return set_error_errno(CLI_ERR_IO, "reading %s", t.path);
-    }
-    if (!nextcore_sector_ours(cur, sizeof cur)) {
-        (void)close(fd);
-        return set_error(CLI_ERR_INVALID,
-                         "LBA %llu of %s is neither empty nor a next-boot "
-                         "marker; left alone",
-                         (unsigned long long)t.marker_lba, t.path);
-    }
-    if (pwrite(fd, sec, sizeof sec, off) != (ssize_t)sizeof sec ||
-        fsync(fd) != 0 ||
-        pread(fd, back, sizeof back, off) != (ssize_t)sizeof back) {
-        (void)close(fd);
-        return set_error_errno(CLI_ERR_IO, "writing %s", t.path);
-    }
-    (void)close(fd);
-    if (memcmp(sec, back, sizeof sec) != 0)
-        return set_error(CLI_ERR_IO, "the marker did not read back on %s",
-                         t.path);
+    rc = find_target(disk, &t);
+    if (rc != CLI_OK)
+        return rc;
+    rc = nextio_write(&t, clear ? NULL : value, now);
+    if (rc != CLI_OK)
+        return rc;
 
     if (clear)
         log_info("next-boot marker cleared on %s (LBA %llu)", t.path,
@@ -293,22 +238,76 @@ static cli_status set_sector(const char *disk, const char *value, int clear)
     return CLI_OK;
 }
 
+/* ---- --print ---- */
+
+static cli_status print_sector(const char *disk)
+{
+    next_target t;
+    next_queued q;
+    uint64_t now = 0;
+    int have_now;
+    cli_status rc;
+
+    rc = find_target(disk, &t);
+    if (rc == CLI_OK)
+        rc = nextio_read(&t, &q);
+    if (rc != CLI_OK)
+        return rc;
+    have_now = (read_rtc(&now) == CLI_OK);
+    if (!have_now)
+        cli_error_clear();
+    nextio_print_sector(stdout, &t, &q, have_now, now);
+    return CLI_OK;
+}
+
+static cli_status print_variable(void)
+{
+    char path[MKS_PATH_MAX];
+    uint8_t buf[4u + NEXTBOOT_MAX + 1u];
+    ssize_t n;
+    int fd;
+
+    (void)snprintf(path, sizeof path, "%s/%s", NEXTCORE_EFIVARS_DIR,
+                   NEXTCORE_EFIVAR);
+    fd = open(path, O_RDONLY | O_CLOEXEC);
+    if (fd < 0) {
+        if (errno != ENOENT)
+            return set_error_errno(CLI_ERR_IO, "opening %s", path);
+        nextio_print_efivar(stdout, NULL, 0);
+        return CLI_OK;
+    }
+    n = read(fd, buf, sizeof buf);
+    (void)close(fd);
+    if (n < 0)
+        return set_error_errno(CLI_ERR_IO, "reading %s", path);
+    /* A value too long to fill the buffer exactly is longer than any the
+     * loader accepts; the decode refuses it as it would. */
+    nextio_print_efivar(stdout, buf, (size_t)n);
+    return CLI_OK;
+}
+
 static cli_status next_run(const cli_args *a)
 {
     const char *value = (a->npos > 0u) ? a->pos[0] : NULL;
     const char *disk = cli_value(a, "disk", NULL);
     int clear = cli_flag(a, "clear");
+    int print = cli_flag(a, "print");
     int sector = cli_flag(a, "sector") || !util_is_dir("/sys/firmware/efi");
 
+    if (print && (clear || value != NULL))
+        return set_error(CLI_ERR_USAGE, "--print takes no value and no "
+                                        "--clear");
     if (clear && value != NULL)
         return set_error(CLI_ERR_USAGE, "--clear takes no value");
-    if (!clear && value == NULL)
+    if (!clear && !print && value == NULL)
         return set_error(CLI_ERR_USAGE, "which entry? a path on p2, or %s",
                          NEXTBOOT_PERSONAL);
     if (!sector && disk != NULL)
         return set_error(CLI_ERR_USAGE,
                          "this machine booted with UEFI and keeps the marker "
                          "in a variable; --disk is for the sector (--sector)");
+    if (print)
+        return sector ? print_sector(disk) : print_variable();
     if (sector)
         return set_sector(disk, value, clear);
     return set_variable(value, clear);
@@ -328,10 +327,36 @@ const cli_cmd mks_cmd_next_boot = {
     "\n"
     "On a machine booted with UEFI it sets the FalconNextBoot variable. On a\n"
     "BIOS machine, or with --sector, it writes the marker sector of the\n"
-    "disk's boot partition (the one whose identity record says boot), dated\n"
-    "with the RTC's reading; the loader honours it for ten minutes. --disk\n"
-    "names the disk when more than one carries a boot partition.\n"
+    "disk's boot partition (the one whose identity record says boot), one\n"
+    "whole sector of the disk (512 bytes, or 4096 on a 4Kn disk), dated\n"
+    "with the RTC's reading; the loader honours it for ten minutes. Without\n"
+    "--disk every disk is looked at and exactly one must carry a boot\n"
+    "partition. With --disk only that disk is looked at, whatever else is\n"
+    "attached.\n"
     "\n"
-    "--clear removes a pending marker. Needs root.\n",
+    "--clear removes a pending marker. Both need root (or write access to\n"
+    "the disk).\n"
+    "\n"
+    "--print writes what is queued to stdout, one key=value per line, and\n"
+    "exits 0 whether or not anything is. The UEFI variable:\n"
+    "\n"
+    "  source=efivar\n"
+    "  queued=yes|no|invalid\n"
+    "  value=<the value>            (queued=yes only)\n"
+    "\n"
+    "The sector (a BIOS machine, or --sector):\n"
+    "\n"
+    "  source=sector\n"
+    "  disk=<the disk>\n"
+    "  lba=<the marker's LBA, in the disk's sectors>\n"
+    "  sector_size=<512 or 4096>\n"
+    "  queued=yes|no|invalid\n"
+    "  value=<the value>            (this and the rest: queued=yes only)\n"
+    "  set_rtc=<the RTC's reading when it was set>\n"
+    "  age=<seconds since; negative if the clock went back>\n"
+    "  window=yes|no                (the loader would honour it now)\n"
+    "\n"
+    "invalid is a marker the loader would clear and not act on. age and\n"
+    "window are unknown when the RTC cannot be read.\n",
     next_run
 };

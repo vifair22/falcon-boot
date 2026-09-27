@@ -39,6 +39,36 @@ enum {
 int nxt_option_parse(const uint8_t *buf, size_t len, uint32_t *attrs,
                      uint16_t label[NXT_LABEL_MAX]);
 
+/* What an entry boots, read out of its device path: the partition its
+ * HARDDRIVE node names and the file its FILEPATH nodes name. The station
+ * needs both to tell which firmware entry is a given disk's Windows (a
+ * STATION.INI section naming a disk, DESIGN Section 13.7) and whether an
+ * ESP's bootmgfw.efi already has an entry (13.3). Only the first instance
+ * of the path is read. */
+#define NXT_PATH_MAX 128u
+
+typedef struct {
+    uint8_t  has_hd;          /* a HARDDRIVE node was found */
+    uint32_t part;            /* its PartitionNumber */
+    uint64_t start;           /* its PartitionStart, in the disk's blocks */
+    uint8_t  sig_type;        /* 1 MBR (sig[0..3] the disk signature),
+                                 2 GPT (sig the partition's unique GUID) */
+    uint8_t  sig[16];
+    char     file[NXT_PATH_MAX];  /* the FILEPATH nodes joined, ASCII; ""
+                                     when there are none, or when one holds
+                                     a unit outside printable ASCII or the
+                                     whole does not fit */
+} nxt_target;
+
+#define NXT_SIG_MBR 1u
+#define NXT_SIG_GPT 2u
+
+/* Parses the device path of one Boot#### variable, which must already pass
+ * nxt_option_parse. NXT_OK with *out filled (has_hd 0 and file "" when the
+ * path holds neither, as a network or firmware-volume entry does);
+ * NXT_ERR_PATH when a node's length runs past the path. */
+int nxt_option_target(const uint8_t *buf, size_t len, nxt_target *out);
+
 /* Is an entry with these attributes one the firmware's own boot menu would
  * offer: active, not hidden, and in the boot category (an application
  * category entry, such as a firmware's setup UI, is not an OS). */

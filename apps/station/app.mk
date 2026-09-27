@@ -16,12 +16,15 @@ STATION_EFI := $(STATION)/efi_main.c $(STATION)/efi_sbat.c
 STATION_EFI += $(EFI_MOD_loader)        # shim-verified load path, credfs
 STATION_EFI += $(EFI_MOD_console) $(CORE_TUI)
 STATION_EFI += $(EFI_MOD_discover) $(CORE_IDENT) $(CORE_IDENT_FS)  # rows, by record
+STATION_EFI += $(EFI_MOD_disks) $(CORE_PART)  # partitions named as STATION.INI names them
 STATION_EFI += $(CORE_BLK)             # any length at any offset, under discover_read
 STATION_EFI += $(CORE_FS_EXT4) $(CORE_PE) $(CORE_LUKS) $(CORE_CRYPTO)
 STATION_EFI += $(EFI_MOD_secboot)       # state for UX only: no predictions
 STATION_EFI += $(EFI_MOD_pos) $(addprefix $(CORE)/media/,osrel.c shelf.c nextboot.c)
 STATION_EFI += $(CORE)/manifest/manifest.c
 STATION_EFI += $(EFI_MOD_nxt)           # other systems through BootNext
+STATION_EFI += $(EFI_MOD_esp)           # bootmgfw.efi and memtest through loadops
+STATION_EFI += $(CORE_STROWS) $(CORE_STATIONINI)  # the list, and STATION.INI
 STATION_EFI += $(CORE_LIBC) $(CORE_UCS2)
 
 $(eval $(call efi_app,station,falcon-boot-station,$(STATION_EFI)))
@@ -34,7 +37,7 @@ $(EFI_OBJ)/$(STATION)/efi_main.o: build/version.h
 STATION_BIOS := $(STATION)/bios_main.c
 STATION_BIOS += $(BIOS_MOD_pos) $(BIOS_MOD_prompt) $(BIOS_MOD_console) $(BIOS_MOD_linux)
 STATION_BIOS += $(BIOS_MOD_chain) $(BIOS_MOD_lowmem)  # partition and disk chains, the swap's memory
-STATION_BIOS += $(BIOS_MOD_rows) $(CORE_STATIONINI)   # the rows, and STATION.INI
+STATION_BIOS += $(CORE_STROWS) $(CORE_STATIONINI)   # the list, and STATION.INI
 STATION_BIOS += $(BIOS_MOD_marker) $(CORE)/media/nextboot.c  # next boot (Section 13.8)
 STATION_BIOS += $(CORE)/manifest/manifest.c  # nextboot.c's path rules
 STATION_BIOS += $(BIOS_MOD_install) $(CORE_IDENT) $(CORE_IDENT_FS)  # the shelf by its record
