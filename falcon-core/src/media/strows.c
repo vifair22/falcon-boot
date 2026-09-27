@@ -4,9 +4,21 @@
 
 #include <lib/string.h>
 
+/* The char helpers here are written with if rather than ?: because C
+ * promotes a conditional's char operands to int, and the int would then
+ * narrow back to char. */
 static char lower(char c)
 {
-    return (c >= 'A' && c <= 'Z') ? (char)(c - 'A' + 'a') : c;
+    if (c >= 'A' && c <= 'Z')
+        return (char)(c - 'A' + 'a');
+    return c;
+}
+
+static char backslash(char c)
+{
+    if (c == '/')
+        return '\\';
+    return c;
 }
 
 static int name_eq(const char *a, const char *b)
@@ -36,7 +48,7 @@ static void copy_path(char *dst, size_t cap, const char *src)
     size_t i;
 
     for (i = 0; src[i] != '\0' && i + 1u < cap; i++)
-        dst[i] = src[i] == '/' ? '\\' : src[i];
+        dst[i] = backslash(src[i]);
     dst[i] = '\0';
 }
 
@@ -74,7 +86,7 @@ static size_t disk_short(const part_disk_id *d, char out[16])
     size_t n;
 
     part_disk_id_format(d, text);
-    for (n = 0; text[n] != '\0' && n < 12u; n++)
+    for (n = 0; n < 12u && text[n] != '\0'; n++)
         out[n] = text[n];
     out[n] = '\0';
     return n;
@@ -141,10 +153,10 @@ void strows_name_uki(char out[STATIONINI_NAME_MAX], const char *file)
     for (i = 0; i < len && n + 1u < STATIONINI_NAME_MAX; i++) {
         char c = file[i];
 
-        out[n++] = ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
-                    (c >= '0' && c <= '9') || c == '_' || c == '-')
-                       ? c
-                       : '-';
+        if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+              (c >= '0' && c <= '9') || c == '_' || c == '-'))
+            c = '-';
+        out[n++] = c;
     }
     out[n] = '\0';
 }
@@ -209,8 +221,8 @@ int strows_path_eq(const char *a, const char *b)
     size_t i;
 
     for (i = 0; a[i] != '\0' && b[i] != '\0'; i++) {
-        char x = a[i] == '/' ? '\\' : lower(a[i]);
-        char y = b[i] == '/' ? '\\' : lower(b[i]);
+        char x = lower(backslash(a[i]));
+        char y = lower(backslash(b[i]));
 
         if (x != y)
             return 0;
@@ -289,13 +301,16 @@ static strow *match(strows *r, const stationini_entry *e, strows_fw fw)
 
     if (e->uki[0] != '\0') {
         w = first(r, STROW_UKI, e, (const char *)0);
-        if (w == (strow *)0 && (w = strows_add(r, STROW_UKI)) != (strow *)0) {
-            copy_str(w->file, sizeof w->file, e->uki);
-            strows_name_uki(w->name, e->uki);
-            ascii_label(w->label, STROWS_LABEL_MAX, e->uki);
-            w->added = 1;
-            w->ref_none = 1;
-        }
+        if (w != (strow *)0)
+            return w;
+        w = strows_add(r, STROW_UKI);
+        if (w == (strow *)0)
+            return w;
+        copy_str(w->file, sizeof w->file, e->uki);
+        strows_name_uki(w->name, e->uki);
+        ascii_label(w->label, STROWS_LABEL_MAX, e->uki);
+        w->added = 1;
+        w->ref_none = 1;
         return w;
     }
     if (fw == STROWS_BIOS) {
@@ -342,13 +357,16 @@ static strow *match(strows *r, const stationini_entry *e, strows_fw fw)
     }
     if (e->efi[0] != '\0') {
         w = first(r, STROW_ESP, e, e->efi);
-        if (w == (strow *)0 && (w = strows_add(r, STROW_ESP)) != (strow *)0) {
-            copy_path(w->file, sizeof w->file, e->efi);
-            ascii_label(w->label, STROWS_LABEL_MAX, e->efi);
-            w->own_esp = 1;
-            w->added = 1;
-            w->ref_none = 1;
-        }
+        if (w != (strow *)0)
+            return w;
+        w = strows_add(r, STROW_ESP);
+        if (w == (strow *)0)
+            return w;
+        copy_path(w->file, sizeof w->file, e->efi);
+        ascii_label(w->label, STROWS_LABEL_MAX, e->efi);
+        w->own_esp = 1;
+        w->added = 1;
+        w->ref_none = 1;
         return w;
     }
     return strows_find(r, e->name);

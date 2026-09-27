@@ -25,7 +25,8 @@ typedef enum {
  * disk), and, if it is a marker, CLEARS it, before anything else is
  * decided about it. Every state but NONE and STUCK means the sector is
  * zero now. Only MARKER_VALUE fills out (NUL-terminated); it is still only a
- * name, matched against the survey by the caller. */
+ * name, matched against the survey by the caller. Without an out of at least
+ * one byte the sector is not read and the answer is MARKER_NONE. */
 marker_state marker_take(const bios_disk *d, uint64_t part_lba,
                          uint16_t sector, char *out, size_t cap);
 
