@@ -53,6 +53,7 @@ int run_manifest_tests(void);
 int run_bless_tests(void);
 int run_nxt_tests(void);
 int run_strows_tests(void);
+int run_vbr_tests(void);
 int run_crypto_tests(void);
 int run_json_tests(void);
 int run_luks_tests(void);

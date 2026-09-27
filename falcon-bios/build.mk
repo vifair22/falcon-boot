@@ -118,8 +118,9 @@ BIOS_MOD_bsd     := $(BIOS)/bsd/bsd.c
 BIOS_MOD_win     := $(BIOS)/win/win.c
 BIOS_MOD_mbr     := $(BIOS)/mbr/mbr.c
 # The station's chains, a partition's boot sector and another disk's MBR,
-# with the drive swap (DESIGN Section 13.4); vbrcore.c is the tested half.
-BIOS_MOD_chain   := $(BIOS)/mbr/chain.c $(BIOS)/mbr/vbrcore.c
+# with the drive swap (DESIGN Section 13.4); vbrcore.c is the tested half,
+# and core's vbr.c what a boot sector is.
+BIOS_MOD_chain   := $(BIOS)/mbr/chain.c $(BIOS)/mbr/vbrcore.c $(CORE_VBR)
 BIOS_MOD_jumpini := $(BIOS)/jump/jumpini.c
 BIOS_MOD_jmod    := $(BIOS)/jump/jmod.c $(BIOS)/jump/jmodload.c $(BIOS)/jump/jres.c
 
@@ -419,9 +420,9 @@ BIOS_UUT := $(BIOS)/iso/vcdcore.c $(BIOS)/vfd/vfdcore.c $(BIOS)/linux/linuxcore.
 	$(BIOS)/jump/jumpini.c $(BIOS)/jump/jmod.c $(BIOS)/mem/lowmem.c \
 	$(BIOS)/hw/ata/atacore.c $(BIOS)/hw/scsi/scsi.c $(BIOS)/hw/usb/usbcore.c \
 	$(BIOS)/hw/pcc/pcccore.c $(BIOS)/disk/bootpart.c $(BIOS)/mbr/vbrcore.c
-# What bootpart.c is built on, linked into the test binary but counted under
-# core's own tests.
-BIOS_TEST_CORE := $(CORE_PART) $(CORE_IDENT)
+# What bootpart.c and vbrcore.c are built on, linked into the test binary
+# but counted under core's own tests.
+BIOS_TEST_CORE := $(CORE_PART) $(CORE_IDENT) $(CORE_VBR)
 
 $(eval $(call test_bin,bios,$(BIOS_TESTS) $(BIOS_UUT) $(BIOS_TEST_CORE)))
 
