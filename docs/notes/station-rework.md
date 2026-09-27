@@ -128,11 +128,12 @@ gap to close before the build is called done.
 | BIOS | MBR | 512 | i686 | station | Windows 98/2000/XP alone on the disk | none | SeaBIOS + a Windows boot-sector fixture on an MBR disk |
 | BIOS | MBR | 512 | i686 | legacy | the A21m: Windows 2000 + CD/USB/CF | none | as above + jump's rig cases |
 | BIOS | MBR | 512 | x86-64 | station | Windows 7 + Linux UKIs | none | |
-| BIOS | GPT | 512 | x86-64 | station | Linux UKIs + Windows on a second disk | test-core station-bios (to the passphrase prompt, its install) | + second disk |
-| UEFI | GPT | 512 | x86-64 | station | Windows 10/11 + Linux UKIs, one disk | test-core station-uefi (to the passphrase prompt) | + a bootmgfw fixture |
+| BIOS | GPT | 512 | x86-64 | station | Linux UKIs + Windows on a second disk | test-core station-bios (to the passphrase prompt, its install; the disk `station install` made) | + second disk |
+| UEFI | GPT | 512 | x86-64 | station | Windows 10/11 + Linux UKIs, one disk | test-core station-uefi (to the passphrase prompt); test-station-installed uefi-default, uefi-sb-default (`station install --uefi` beside a bootmgfw stand-in, its entry and Windows's in the varstore: the installer's INI counts down to Windows through BootNext), uefi-pos, uefi-sb-pos (a key, then the Personal OS to the UKI) | |
 | UEFI | GPT | 512 | x86-64 | station | Windows on a second disk | none (NXT measured by hand) | |
 | UEFI | MBR | 512 | x86-64 | station | Windows 7-11 on MBR | none | |
-| any | GPT | 4096 | x86-64 | station | Linux UKIs | none (the stick's 4Kn cells below cover core) | a 4Kn station disk under both firmwares |
+| any | GPT | 4096 | x86-64 | station | Linux UKIs | test-station-installed 4kn-uefi, 4kn-uefi-sb (OVMF, NVMe at 4096: the installer's `[linux]` default to the prompt and the UKI), 4kn-bios (SeaBIOS, NVMe: stage 2 takes the station partition over the ESP, the shelf to the UKI), 4kn-remove (status, `remove --full`); both stations put on by `station install` | |
+| BIOS | MBR | 4096 | x86-64 | station | Linux UKIs | test-station-installed mbr4k-bios (`station install --bios`, SeaBIOS, NVMe, to the UKI) | |
 | UEFI | GPT | 512 | x86-64 | stick | full four-partition stick | test-core uefi-stick, uefi-stick-sb (Secure Boot off, on) | |
 | BIOS | GPT | 512 | any | stick | full four-partition stick | test-core bios-stick (the same image as the only disk) | |
 | any | GPT | 512 | x86-64 | stick | a second stick of another install attached | test-core two-sticks-uefi, two-sticks-bios | |

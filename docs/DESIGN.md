@@ -3847,8 +3847,11 @@ the rig exercises the same path an old machine takes.
 Status (2026-09-27): the UEFI station is built and rig-proven under OVMF
 with Secure Boot off and on (`make test-station-uefi`, 13.11; 12.5.1 draws
 it): the list of 13.3, `STATION.INI`, the countdown, the firmware entry and
-`bootmgfw.efi` routes of 13.4, memtest and next boot. The BIOS station and
-the installer are being built. Designed 2026-09-26. This replaces the stationary build
+`bootmgfw.efi` routes of 13.4, memtest and next boot. The installer (13.9)
+is built, on disks of 512- and 4096-byte sectors, and the rigs boot what it
+writes, a 4Kn disk under both firmwares included (`make
+test-station-installed`). The BIOS station is being built. Designed
+2026-09-26. This replaces the stationary build
 of 2026-09-21, which was the stick's loader with the ISO library taken out: it
 booted a personal OS off a shelf and handed the machine to other disks, but
 leaned on the stick's view of the world (a shelf found by rule on any disk,
@@ -4189,6 +4192,17 @@ header). The Manual's Section 3.6 is its reference. What the code settled:
   before anything is formatted. `mkfs.fat` formats it at its offset of the
   whole disk and mtools writes its files, so nothing is mounted and an
   image needs no root.
+- **Sector sizes** (2026-09-27). Disks of 512- and 4096-byte sectors, MBR
+  and GPT, as 3.4 has the loaders read them: every count is the disk's own
+  sectors (the free space, the alignment, stage 2 at LBA 34 on GPT and 1 on
+  MBR, the record's sectors, the backup's runs), and `mkfs.fat -S` gives the
+  station partition's FAT the disk's sector, which the BIOS reads its
+  reserved sectors in. FAT32's 65525 clusters of at least one sector make
+  a 4Kn station partition 288 MiB by default and 272 MiB at least, the
+  arithmetic that makes a 4Kn ESP 260 MB. A 4Kn image is written through a
+  loop device with 4096-byte sectors, and a loop device is an image: the
+  machine's other disks are not scanned for it and no firmware entry is
+  read or made.
 - **Two boot records on one disk.** A GPT disk with both stations carries
   the ESP's record (stage 3 and marker 0) and the station partition's.
   The one with a stage 3 is the BIOS one, as the installer and `status`
@@ -4204,7 +4218,11 @@ header). The Manual's Section 3.6 is its reference. What the code settled:
 - **The INI** has a section only for what the loader chains (a partition, a
   disk's MBR, Windows on an ESP), named by what it is, so a person edits a
   label without looking up a signature; a UKI or firmware entry is named by
-  its generated name when it is the default. It is formatted with
+  its generated name when it is the default, except a UKI on a LUKS2
+  shelf: no row carries `uki-<stem>` before the shelf is unlocked, so that
+  default is a `[linux]` section with `uki = <file>`, the row that prompts
+  and boots that file (13.7). Nothing found is a file of one comment line,
+  no default and no countdown. It is formatted with
   `stationini_format` and parsed back before it is written.
 - **The backup** is one file for every disk the install touches: a header
   naming the disks and each saved run with what it is (LBA 0, stage 2's
@@ -4259,6 +4277,30 @@ with no entry; next boot of memtest, of a UKI on the encrypted shelf (the
 prompt, no list) and of nothing; the INI error page; a default naming nothing; and an unsigned `memtest.efi`, which boots
 with Secure Boot off and is refused with it on.
 
+`make test-station` makes that station disk the way a user does
+(`falcon-efi/tools/mk-test-station.sh`): an ESP, a LUKS2 shelf and a root
+partition on GPT with free space after them, and `mkstick station install`
+putting both stations on it. The one addition is shim, MokManager and the
+loader copied to `\EFI\BOOT\`, since an image has no firmware entry and
+the rigs boot it by the removable-media path.
+
+`make test-station-installed` (`falcon-efi/tools/run-installed-rig.sh`)
+boots stations the installer made through the `falcon` Boot0001 that
+`efibootmgr` would create, nothing added by hand:
+
+- a GPT disk with an ESP carrying the stand-in `bootmgfw.efi`, a Windows
+  partition and a LUKS2 shelf, `--uefi`, with Windows's firmware entry in
+  the varstore: under OVMF, Secure Boot off and on, the installer's
+  `STATION.INI` counts down to Windows (its `[windows]` section matching
+  the entry by disk) through BootNext; a key stops it and the Personal OS
+  unlocks to the fixture UKI;
+- a 4Kn GPT disk, both stations, booted as NVMe with 4096-byte blocks: under
+  OVMF, off and on, the `[linux]` default counts down to the prompt and the
+  UKI; under SeaBIOS stage 2 takes the station partition over the ESP and
+  the shelf unlocks; `status` passes and `remove --full` gives back every
+  byte outside the ESP and the shelf;
+- a 4Kn MBR disk, `--bios`, under SeaBIOS to the UKI.
+
 Still to be written:
 
 - **A copy of the A21m's disk image** (Windows 2000 SP4, MBR, NTFS at 63)
@@ -4275,7 +4317,6 @@ Still to be written:
 - **Synthetic boot sectors** that print DL, DS:SI and the entry they were
   handed on serial: every chain case (a partition, another disk, swap on and
   off, a logical partition refused) without an OS.
-- **A 4Kn disk** under both firmwares.
 - **Two disks**: a station with Windows on the second; a station with a falcon
   stick plugged in, which must change nothing.
 
