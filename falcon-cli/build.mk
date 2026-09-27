@@ -61,6 +61,33 @@ $(SIGN_STATIC): $(SIGN_OBJS)
 	@mkdir -p $(@D)
 	$(CC_HOST) $(HOST_LDFLAGS) -static -o $@ $(SIGN_OBJS)
 
+# mkstick for a 32-bit machine's own Linux (the A21m's Pentium III, from
+# DevLink recovery): the same objects built -m32 for the i686 and linked
+# static, since the image it runs in has no glibc of its own. Needs a
+# 32-bit static libc (Debian's gcc-multilib; the harness image has it):
+# `tools/coverage/harness.sh make mkstick32`.
+HOST32_OBJ := $(OBJ)/host32
+MKSTICK32 := $(BIN)/falcon-boot-mkstick32
+MKSTICK32_OBJS := $(patsubst %.c,$(HOST32_OBJ)/%.o,$(sort $(MKSTICK_SRCS) $(MKSTICK_CORE)))
+
+HOST32_CFLAGS := -m32 -march=i686 $(HOST_CFLAGS)
+
+$(HOST32_OBJ)/%.o: %.c
+	@mkdir -p $(@D)
+	$(CC_HOST) $(HOST32_CFLAGS) -MMD -MF $@.d -c -o $@ $<
+
+# AES-NI alone, as falcon-bios builds it: crypto.c's CPUID probe takes this
+# path only on a processor that has it, which a Pentium III does not.
+$(HOST32_OBJ)/falcon-core/src/crypto/aesni.o: HOST32_CFLAGS += -msse2 -maes
+
+$(MKSTICK32): $(MKSTICK32_OBJS)
+	@mkdir -p $(@D)
+	$(CC_HOST) -m32 $(HOST_LDFLAGS) -static -o $@ $(MKSTICK32_OBJS)
+
+mkstick32: $(MKSTICK32)
+
+-include $(MKSTICK32_OBJS:.o=.o.d)
+
 # The one image-backed fixture that needs no sudo: an ISO is built from a
 # directory rather than mounted.
 test-isoview:
@@ -71,7 +98,7 @@ test-isoview:
 test-station-install: $(MKSTICK) bios station
 	falcon-cli/tools/test-station-install.sh
 
-.PHONY: cli test-isoview test-station-install
+.PHONY: cli mkstick32 test-isoview test-station-install
 
 # `make install` puts the two host tools on a machine's PATH, built first.
 # The static sign tool is the appliance's and stays in build/bin. DESTDIR

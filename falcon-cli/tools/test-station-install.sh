@@ -20,11 +20,13 @@
 #
 # Usage: falcon-cli/tools/test-station-install.sh   (after make, make bios,
 # make station; the UEFI half needs build/shim/bins and build/mok-test)
+# Env:   MKSTICK  the mkstick to test (default build/bin/falcon-boot-mkstick;
+#                 build/bin/falcon-boot-mkstick32 for the i686 build)
 
 set -euo pipefail
 
 cd "$(dirname "$0")/../.."
-MK=build/bin/falcon-boot-mkstick
+MK=${MKSTICK:-build/bin/falcon-boot-mkstick}
 W=build/station-install
 MOK=build/mok-test
 export MTOOLS_SKIP_CHECK=1
