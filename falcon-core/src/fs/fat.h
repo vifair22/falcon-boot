@@ -71,12 +71,13 @@ typedef int (*fat_read_fn)(void *ctx, uint64_t off, uint64_t len, void *buf);
  * drive we will meet, and matches GPT_MAX_SECTOR next door in part.h. */
 #define FAT_MAX_SECTOR 4096u
 
-/* Every read this driver makes is a whole volume sector at a sector-aligned
- * offset, which is not a style choice: the loader's callback over a firmware
- * block device (falcon-efi/src/discover/discover.c, discover_read) refuses
- * any offset or length that is not a multiple of the device's block size. A
- * driver that read a convenient 512 bytes from a 2048-byte-block CD would
- * simply get an error.
+/* Every read this driver makes after mount is a whole volume sector at a
+ * sector-aligned offset, and the boot sector is read as its first 512 bytes.
+ * Neither has to be a whole device sector: the loaders put falcon-core's
+ * re-blocking layer (blk/rebl.h, DESIGN Section 3.4) under the callback, so
+ * a 512-byte-sector volume on a 4096-byte-sector disk reads as one on its
+ * own kind of disk. Volume-sector reads are still what keep that layer on
+ * its no-copy path whenever the two sizes agree.
  *
  * A directory entry is 32 bytes and every supported sector size is a multiple
  * of 32, so no entry ever straddles a sector boundary. A FAT12 entry can

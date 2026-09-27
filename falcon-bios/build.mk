@@ -83,6 +83,9 @@ BIOS_MOD_prompt  := $(BIOS)/console/prompt.c  # the passphrase, and nothing else
 BIOS_MOD_console := $(BIOS)/console/screen.c
 BIOS_MOD_disk    := $(BIOS)/disk/disk.c $(BIOS)/vfd/vfdcore.c
 BIOS_MOD_marker  := $(BIOS)/disk/marker.c
+# The drivers' callback, any length at any offset (DESIGN Section 3.4); the
+# re-blocking layer it wraps is falcon-core's.
+BIOS_MOD_bytes   := $(BIOS)/disk/bytes.c $(CORE_BLK)
 BIOS_MOD_scan    := $(BIOS)/iso/scan.c
 BIOS_MOD_iso     := $(BIOS)/iso/vcd.c $(BIOS)/iso/vcdcore.c
 BIOS_MOD_vfd     := $(BIOS)/vfd/vfd.c

@@ -88,10 +88,10 @@ discover_dev *discover_at(UINTN i);
 discover_dev *discover_next(part_role role, UINTN *cursor);
 
 /* The byte-read callback over a row's Block I/O instance, in the shape every
- * driver in this tree takes. ctx is the discover_dev. Offsets and lengths
- * must be whole blocks, which is what every caller here produces: an
- * unaligned request is a driver bug rather than a device condition, and is
- * reported as a read failure rather than fixed up. */
+ * driver in this tree takes. ctx is the discover_dev. Any offset and any
+ * length: falcon-core's re-blocking layer (blk/rebl.h, DESIGN Section 3.4)
+ * turns the drivers' 512- and 1024-byte reads into whole blocks, so a
+ * 4096-byte-block disk mounts and unlocks as a 512-byte one does. */
 int discover_read(void *ctx, uint64_t off, uint64_t len, void *buf);
 
 #endif /* FALCON_DISCOVER_H */
