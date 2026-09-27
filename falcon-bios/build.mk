@@ -378,10 +378,11 @@ endef
 
 # ---- the record tool ----
 #
-# Writes an identity record into a sector of an image file (DESIGN Section
-# 3.1), or prints a /.falcon line: how jump's floppy and the rig disks get
-# their records without a loop device. Host C over falcon-core's own
-# encoder.
+# Writes an identity record at a byte offset of an image file (DESIGN
+# Section 3.1), with every field given: how jump's floppy, a volume with no
+# partition table and its own stage 3 sector, gets its boot record. A
+# partition of a table is `mkstick ident --write-boot`'s. Host C over
+# falcon-core's own encoder.
 BIOS_MKIDENT := $(BIN)/falcon-bios-mkident
 BIOS_MKIDENT_SRCS := falcon-bios/tools/mkident.c falcon-bios/tools/mkidentargs.c \
 	$(CORE_IDENT)
@@ -419,18 +420,16 @@ ALL_UUT_SRCS  += $(BIOS_UUT)
 
 # The rig's disks, on the single BIOS layout (DESIGN Section 3.3), made by
 # falcon-bios/tools/mk-rig-disk.sh from files alone (sfdisk, sgdisk,
-# mkfs.fat --offset, mkfs.exfat on a file, mkident): no loop device.
+# mkfs.fat --offset, mkfs.exfat on a file, `mkstick ident`): no loop device.
 #
 # test-bios.img is an MBR disk: stage 1 with stage 2's place written in,
 # stage 2 at LBA 1, and one hidden FAT32 boot partition at LBA 63 (the old
 # disk's shape) holding stage 3 in its reserved sectors, the marker sector
-# and the boot record. The stick's stage 3 boots from it as the only disk.
-# The corpus harness's BIOS columns boot it and look for a case stick's p2 on
-# the next disk; since the identity rework that p2 is taken only when its
-# /.falcon names this disk's install ID (RIG_MBR_ID in the script).
+# and the boot record. The stick's stage 3 boots from it as the only disk;
+# the jump rig boots it as a hard disk and as a CF card.
 BIOS_IMG := build/test-bios.img
 
-$(BIOS_IMG): $(BIOS_STAGE1) $(BIOS_STAGE2) $(BIOS_STAGE3) $(BIOS_MKIDENT) \
+$(BIOS_IMG): $(BIOS_STAGE1) $(BIOS_STAGE2) $(BIOS_STAGE3) $(MKSTICK) \
 		falcon-bios/tools/mk-rig-disk.sh $(BIOS)/start/biosdefs.h
 	falcon-bios/tools/mk-rig-disk.sh mbr $@
 
@@ -439,7 +438,7 @@ $(BIOS_IMG): $(BIOS_STAGE1) $(BIOS_STAGE2) $(BIOS_STAGE3) $(BIOS_MKIDENT) \
 # install. The jump rig boots it over USB (falcon-bios/tools/run-jump-rig.sh).
 BIOS_GPT_IMG := build/test-bios-gpt.img
 
-$(BIOS_GPT_IMG): $(BIOS_STAGE1) $(BIOS_STAGE2) $(BIOS_STAGE3) $(BIOS_MKIDENT) \
+$(BIOS_GPT_IMG): $(BIOS_STAGE1) $(BIOS_STAGE2) $(BIOS_STAGE3) $(MKSTICK) \
 		falcon-bios/tools/mk-rig-disk.sh $(BIOS)/start/biosdefs.h
 	falcon-bios/tools/mk-rig-disk.sh gpt $@
 

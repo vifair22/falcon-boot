@@ -25,9 +25,21 @@
 uint64_t install_boot_lba(void);
 uint16_t install_marker_sector(void);
 
+typedef enum {
+    INSTALL_OK = 0,
+    INSTALL_UNREAD,     /* the boot partition's first sector would not read */
+    INSTALL_NONE,       /* it carries no record */
+    INSTALL_BAD         /* a record, but damaged or not a boot record */
+} install_state;
+
 /* Reads the boot partition's record off the boot disk, and says on serial
- * which partition and install this is. 0 on success. */
-int install_boot_record(bios_disk *boot, ident_rec *out);
+ * which partition and install this is. */
+install_state install_boot_record(bios_disk *boot, ident_rec *out);
+
+/* What the screen says, before the menu, when the install is not known:
+ * the UEFI loader's discover_install_problem sentences, the first in the
+ * BIOS's own terms. NULL for INSTALL_OK. */
+const char *install_problem(install_state s);
 
 /* The BIOS drives to look at for an install's other partitions: the boot
  * drive first, whatever its number (a USB stick emulated past the BDA's

@@ -40,6 +40,7 @@
 #include <pe/pe.h>
 #include <crypto/crypto.h>
 #include <media/cpio.h>
+#include <ident/ident.h>
 #include <media/shelf.h>
 #include <tui/tui.h>
 #include <lib/string.h>
@@ -49,6 +50,7 @@
 #define CRED_SUBDIR  ".extra/credentials"
 #define CRED_FILE    "cryptsetup.passphrase.cred"
 #define CRED_PATH    CRED_SUBDIR "/" CRED_FILE
+#define IDENT_PATH   CRED_SUBDIR "/" IDENT_CRED
 
 #define PASS_MAX     256u
 
@@ -93,6 +95,11 @@ static char   g_pass[PASS_MAX];
 static size_t g_pass_len;
 
 static luks_master_key g_mk;
+
+/* The boot partition's record as text, for IDENT_CRED; empty until the
+ * caller has handed it over (pos_set_install). */
+static char   g_ident[IDENT_TEXT_MAX];
+static size_t g_ident_len;
 
 /* Everything the unlock produced: the passphrase and the key, the
  * credential, the keyboard ring the passphrase was typed through, and the
@@ -152,24 +159,30 @@ int pos_probe(bios_disk *d, const part_entry *shelf)
     return g_opened;
 }
 
-/* The credential sd-stub would have packed, as the cpio it would have made.
+/* The credentials sd-stub would have packed, as the cpio it would have made.
  *
- * Its content is the passphrase that just opened p3, because that is the one
- * that opens p4 as well (DESIGN Section 5.1). The UEFI loader synthesises the
- * same thing: it publishes the UKI on a filesystem of its own with a drop-in
- * directory beside it holding the passphrase as a .cred file, and sd-stub
- * turns that into exactly this cpio. Here there is no sd-stub, so the cpio is
- * written directly and concatenated onto .initrd.
+ * The passphrase that just opened p3, because that is the one that opens p4
+ * as well (DESIGN Section 5.1). The UEFI loader synthesises the same thing:
+ * it publishes the UKI on a filesystem of its own with a drop-in directory
+ * beside it holding the passphrase as a .cred file, and sd-stub turns that
+ * into exactly this cpio. Here there is no sd-stub, so the cpio is written
+ * directly and concatenated onto .initrd.
  *
- * Returns its length, or 0 when there is no passphrase to pack, which is not
- * an error: an image whose root needs none has none.
+ * And the install's identity, IDENT_CRED: the boot partition's record in its
+ * text form, which the UEFI loader publishes beside every UKI and the
+ * signing appliance opens its stick's partitions by (DESIGN Section 3.1).
+ * Not a secret, and there on a plaintext shelf too.
+ *
+ * Returns its length, or 0 when there is neither to pack, which is not an
+ * error.
  */
 static size_t build_credential(void)
 {
-    cpio_entry e[3];
+    cpio_entry e[4];
+    size_t n = 2;
     size_t wrote = 0;
 
-    if (g_pass_len == 0)
+    if (g_pass_len == 0 && g_ident_len == 0)
         return 0;
 
     /* Every parent directory has to be named, because the kernel's unpacker
@@ -182,15 +195,33 @@ static size_t build_credential(void)
     e[1].data = (const void *)0;
     e[1].len = 0;
     e[1].mode = CPIO_MODE_DIR;
-    e[2].path = CRED_PATH;
-    e[2].data = g_pass;
-    e[2].len = g_pass_len;
-    /* 0600: it is a passphrase, and the initramfs it lands in is root's. */
-    e[2].mode = 0100600u;
+    if (g_pass_len != 0) {
+        e[n].path = CRED_PATH;
+        e[n].data = g_pass;
+        e[n].len = g_pass_len;
+        /* 0600: it is a passphrase, and the initramfs it lands in is
+         * root's. */
+        e[n].mode = 0100600u;
+        n++;
+    }
+    if (g_ident_len != 0) {
+        e[n].path = IDENT_PATH;
+        e[n].data = g_ident;
+        e[n].len = g_ident_len;
+        e[n].mode = 0100644u;
+        n++;
+    }
 
-    if (cpio_write(e, 3, g_credcpio, sizeof g_credcpio, &wrote) != CPIO_OK)
+    if (cpio_write(e, n, g_credcpio, sizeof g_credcpio, &wrote) != CPIO_OK)
         return 0;
     return wrote;
+}
+
+void pos_set_install(const ident_rec *rec)
+{
+    g_ident_len = 0;
+    if (rec != (const ident_rec *)0)
+        g_ident_len = ident_encode_text(rec, g_ident, sizeof g_ident);
 }
 
 /* A linux_object over a section of an open file. */
@@ -335,7 +366,9 @@ static int boot_uki(const fs_dirent *uki, boot_result *r)
         initrd[n_initrd].ctx = &g_credsrc;
         initrd[n_initrd].size = credlen;
         n_initrd++;
-        bios_puts("falcon-bios: passphrase credential packed\n");
+        bios_puts(g_pass_len > 0 ? "falcon-bios: passphrase and identity "
+                                    "credentials packed\n"
+                                  : "falcon-bios: identity credential packed\n");
     } else if (g_pass_len > 0) {
         screen_out("warning: the passphrase credential could not be packed."
                    "\n         The initramfs will ask for the passphrase "

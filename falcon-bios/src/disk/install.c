@@ -58,9 +58,10 @@ void install_put_id(const ident_rec *r)
     }
 }
 
-int install_boot_record(bios_disk *boot, ident_rec *out)
+install_state install_boot_record(bios_disk *boot, ident_rec *out)
 {
     uint64_t lba = install_boot_lba();
+    int rc;
 
     if (boot->sector_size > sizeof g_sec ||
         lba > ~(uint64_t)0 / boot->sector_size ||
@@ -68,12 +69,17 @@ int install_boot_record(bios_disk *boot, ident_rec *out)
                        g_sec) != 0) {
         bios_puts("falcon-bios: the boot partition's first sector would "
                   "not read\n");
-        return -1;
+        return INSTALL_UNREAD;
     }
-    if (ident_decode_bin(g_sec, out) != IDENT_OK ||
-        out->role != IDENT_ROLE_BOOT) {
-        bios_puts("falcon-bios: no boot record where stage 2 found one\n");
-        return -1;
+    rc = ident_decode_bin(g_sec, out);
+    if (rc == IDENT_ERR_NONE) {
+        bios_puts("falcon-bios: no record on the boot partition\n");
+        return INSTALL_NONE;
+    }
+    if (rc != IDENT_OK || out->role != IDENT_ROLE_BOOT) {
+        bios_puts("falcon-bios: the boot partition's record is not a boot "
+                  "record\n");
+        return INSTALL_BAD;
     }
     bios_puts("falcon-bios: boot partition at LBA ");
     bios_put_dec(lba);
@@ -82,7 +88,28 @@ int install_boot_record(bios_disk *boot, ident_rec *out)
     bios_puts(", install ");
     install_put_id(out);
     bios_puts("\n");
-    return 0;
+    return INSTALL_OK;
+}
+
+const char *install_problem(install_state s)
+{
+    switch (s) {
+    case INSTALL_UNREAD:
+        return "The partition this loader started from would not read,\n"
+               "so no ISO library or shelf is offered.";
+    case INSTALL_NONE:
+        return "The partition this loader started from has no falcon "
+               "record,\nso no ISO library or shelf is offered.\n"
+               "Write the stick with a current mkstick.";
+    case INSTALL_BAD:
+        return "The falcon record on the partition this loader started "
+               "from is\ndamaged or not a boot record, so no ISO library "
+               "or shelf is offered.\nWrite the stick with a current "
+               "mkstick.";
+    case INSTALL_OK:
+    default:
+        return (const char *)0;
+    }
 }
 
 unsigned install_drives(uint8_t boot, uint8_t *out, unsigned max)

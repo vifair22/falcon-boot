@@ -3181,8 +3181,10 @@ A stage 1 whose fields are zero says `no stage 2` rather than reading
 anything, and a falcon stage 1 in front of a half-written stage 2 fails its
 `BOS2` check and says so rather than running it. The rig disks are made by
 `falcon-bios/tools/mk-rig-disk.sh` from files alone (`sfdisk`, `sgdisk`,
-`mkfs.fat --offset`, `mkfs.exfat` on a file and `falcon-bios-mkident`, which
-writes a record into a sector of an image).
+`mkfs.fat --offset`, `mkfs.exfat` on a file, and `mkstick ident` for the
+reserved count and the boot record); jump's floppy, which has no table,
+gets its record from `falcon-bios-mkident`, which writes one at any offset
+with every field given.
 
 #### 12.3.2 Power-on to the menu
 

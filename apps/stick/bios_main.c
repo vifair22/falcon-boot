@@ -60,8 +60,9 @@ static bios_disk  g_disks[DISKS_MAX];
 
 /* The boot partition's record: the install everything else must belong to
  * (DESIGN Section 3.1). */
-static ident_rec g_install;
-static int       g_have_install;
+static ident_rec     g_install;
+static int           g_have_install;
+static install_state g_install_state;
 
 /* The ISO partition, once found, and the offset shim that turns a
  * disk-relative callback into a partition-relative one. Same shape as
@@ -420,6 +421,22 @@ static void return_to_firmware(void)
     bios_reboot();
 }
 
+/* Said once, before the menu, when the loader could not learn its install:
+ * the menu that follows offers no library and no shelf, and without this it
+ * would not say why. The UEFI loader's install_notice. */
+static void install_notice(void)
+{
+    const char *why = install_problem(g_install_state);
+
+    if (why == (const char *)0)
+        return;
+    screen_mode((const char *)0);
+    screen_page();
+    screen_out(why);
+    screen_out("\n\npress any key to continue.\n");
+    (void)screen_key();
+}
+
 /* The next-boot marker, acted on: the UEFI loader's next_boot_run, in its
  * order and with its sentences. The marker was cleared before any of this
  * ran, so every path below, including a boot that starts and comes back,
@@ -762,7 +779,9 @@ void bios_main(uint8_t drive)
 
     if (!bios_disk_probe(&g_disks[0], drive))
         bios_puts("falcon-bios: the boot drive did not answer AH=48h\n");
-    g_have_install = install_boot_record(&g_disks[0], &g_install) == 0;
+    g_install_state = install_boot_record(&g_disks[0], &g_install);
+    g_have_install = g_install_state == INSTALL_OK;
+    pos_set_install(g_have_install ? &g_install : (const ident_rec *)0);
     /* First thing after the disk answers, and before anything that can
      * fail: the marker is cleared as it is taken, so from here on nothing on
      * the disk could make this boot happen twice. It is the boot
@@ -787,6 +806,7 @@ void bios_main(uint8_t drive)
 
     bios_puts("falcon-bios: done\n");
     screen_init();
+    install_notice();
     next_boot_run();
     menu_run();
     for (;;)

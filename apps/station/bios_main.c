@@ -59,8 +59,9 @@ static int               g_pos_row;
 
 /* The boot partition's record: the install the shelf must belong to
  * (DESIGN Section 3.1). */
-static ident_rec g_install;
-static int       g_have_install;
+static ident_rec     g_install;
+static int           g_have_install;
+static install_state g_install_state = INSTALL_UNREAD;
 
 static const char k_press_any[] = "\npress any key to return to the menu.\n";
 
@@ -167,8 +168,10 @@ static void scan_disks(uint8_t boot_drive)
         g_ndisks++;
     }
     if (g_boot_idx < g_ndisks)
-        g_have_install =
-            install_boot_record(&g_disks[g_boot_idx].disk, &g_install) == 0;
+        g_install_state =
+            install_boot_record(&g_disks[g_boot_idx].disk, &g_install);
+    g_have_install = g_install_state == INSTALL_OK;
+    pos_set_install(g_have_install ? &g_install : (const ident_rec *)0);
 }
 
 /* The install's shelf, wherever it is. The boot disk is asked first only
@@ -290,6 +293,15 @@ void bios_main(uint8_t drive)
     g_pos_row = (g_shelf != (const part_entry *)0);
 
     screen_init();
+    /* As the UEFI build: the install not known is said before anything,
+     * since the list that follows then has no shelf. */
+    if (install_problem(g_install_state) != (const char *)0) {
+        screen_mode((const char *)0);
+        screen_page();
+        screen_out(install_problem(g_install_state));
+        screen_out("\n\npress any key to continue.\n");
+        (void)screen_key();
+    }
     if (g_pos_row && boot_personal())
         (void)screen_key();
     list_run();

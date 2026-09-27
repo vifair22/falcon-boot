@@ -6,6 +6,7 @@
 #include <start/bios.h>
 #include <result.h>
 #include <part/table.h>
+#include <ident/ident.h>
 
 /* The user backed out, at the prompt or at the chooser. Nothing is on screen
  * worth a keypress. */
@@ -22,6 +23,11 @@ int pos_run(bios_disk *d, const part_entry *shelf, boot_result *r);
  * asks for nothing. Which partition is the install's shelf is the caller's
  * to decide, by its record (disk/install.h). */
 int pos_probe(bios_disk *d, const part_entry *shelf);
+
+/* The install's boot record, handed on to every image booted as the
+ * IDENT_CRED credential (DESIGN Section 3.1), as the UEFI loader does. NULL
+ * hands none. */
+void pos_set_install(const ident_rec *rec);
 
 /* The row's label, and the first line of its screen: which kind of shelf
  * the last pos_probe opened. */

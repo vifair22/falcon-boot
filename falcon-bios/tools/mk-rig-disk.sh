@@ -8,9 +8,7 @@
 #        sector, and its identity record. Stage 1 in LBA 0 with stage 2's
 #        place written in, stage 2 at LBA 1, in the 62 sectors in front of
 #        the partition. It boots the stick's stage 3 as the only disk; it
-#        has no ISO library of its own. The corpus harness's BIOS columns
-#        boot it (tools/coverage): a case stick's p2 is taken only when its
-#        /.falcon names this disk's install ID, RIG_MBR_ID below.
+#        has no ISO library of its own.
 #   gpt  build/test-bios-gpt.img: a stick. p1 the ESP, FAT32, carrying stage
 #        3 in its reserved sectors and the boot record; stage 2 at LBA 34,
 #        in the gap in front of p1; p2 exFAT with a /.falcon library record
@@ -25,8 +23,12 @@
 # here: STAGE2_LBA, STAGE2_LBA_MBR, STAGE1_S2_*_OFF and BOOTPART_*.
 #
 # Usage: falcon-bios/tools/mk-rig-disk.sh mbr|gpt|chs OUT
+# The boot records and the reserved-sector count are mkstick's own (`ident
+# --write-boot`, `ident --reserved-sectors`), so a rig disk's boot partition
+# is formatted and stamped as `mkstick create` does a stick's p1.
+#
 # Needs: sfdisk, sgdisk, mkfs.fat (dosfstools), mkfs.exfat (exfatprogs),
-#        python3; the stages and falcon-bios-mkident already built.
+#        python3; the stages and falcon-boot-mkstick already built.
 set -euo pipefail
 
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)
@@ -38,10 +40,9 @@ OUT=${2:?usage: mk-rig-disk.sh mbr|gpt|chs OUT}
 S1=build/bin/falcon-bios-stage1.bin
 S2=build/bin/falcon-bios-stage2.bin
 S3=build/bin/falcon-bios-stage3.bin
-MKIDENT=build/bin/falcon-bios-mkident
+MKSTICK=${MKSTICK:-build/bin/falcon-boot-mkstick}
 
-# Fixed install IDs, so a log names the same install every run and a tool
-# outside this script (the corpus harness) can write a record that matches.
+# Fixed install IDs, so a log names the same install every run.
 RIG_MBR_ID=f41c0b1057a6e0000000000000000001
 RIG_GPT_ID=f41c0b1057a6e0000000000000000002
 RIG_CHS_ID=f41c0b1057a6e0000000000000000003
@@ -58,13 +59,12 @@ STAGE2_LBA=$(def STAGE2_LBA)
 STAGE2_LBA_MBR=$(def STAGE2_LBA_MBR)
 S2_LBA_OFF=$(def STAGE1_S2_LBA_OFF)
 S2_SECTORS_OFF=$(def STAGE1_S2_SECTORS_OFF)
-MARKER=$(def BOOTPART_MARKER_SECTOR)
 STAGE3=$(def BOOTPART_STAGE3_SECTOR)
 
 s2_sectors=$(( ($(stat -c %s "$S2") + 511) / 512 ))
 s3_sectors=$(( ($(stat -c %s "$S3") + 511) / 512 ))
-# The reserved sectors: stage 3's place plus stage 3, rounded up to 8.
-reserved=$(( (STAGE3 + s3_sectors + 7) / 8 * 8 ))
+# The reserved sectors, by mkstick create's rule.
+reserved=$("$MKSTICK" ident --reserved-sectors --stage3 "$S3")
 
 le() {        # le VALUE BYTES: VALUE as BYTES little-endian bytes
     local v=$1 n=$2 i out=
@@ -84,19 +84,20 @@ stages12() {  # stages12 IMG S2_LBA
     dd if="$S2" of="$1" bs=512 seek="$2" conv=notrunc status=none
 }
 
-# A FAT32 boot partition at START, SIZE_MIB long, in place in the image:
-# stage 3 in its reserved sectors, its record in its boot sector.
-bootpart() {  # bootpart IMG START SIZE_KIB ID [FAT_BITS]
+# A FAT boot partition, partition NUMBER at START, SIZE_KIB long, in place
+# in the image: stage 3 in its reserved sectors, its record in its boot
+# sector.
+bootpart() {  # bootpart IMG START SIZE_KIB ID NUMBER [FAT_BITS]
     local log
     # The image runs past the partition; mkfs.fat says so and does as told.
     # FAT32 wants many small clusters, FAT12 few: 1 and 4 sectors.
-    log=$(mkfs.fat -F "${5:-32}" -S 512 -s $(( ${5:-32} == 12 ? 4 : 1 )) \
+    log=$(mkfs.fat -F "${6:-32}" -S 512 -s $(( ${6:-32} == 12 ? 4 : 1 )) \
         -R "$reserved" -h "$2" \
         --offset "$2" -n FALCON-BOOT "$1" "$3" 2>&1) || {
         echo "$log" >&2; exit 1; }
     dd if="$S3" of="$1" bs=512 seek=$(( $2 + STAGE3 )) conv=notrunc \
         status=none
-    "$MKIDENT" "$1" $(( $2 * 512 )) boot "$4" "$STAGE3" "$MARKER"
+    "$MKSTICK" ident "$1" --write-boot "$5" --id "$4" >/dev/null
 }
 
 # One file at the root of a fresh exFAT image, written straight into its
@@ -177,7 +178,7 @@ mbr)
     printf 'label: dos\nlabel-id: 0x%s\nstart=%d, size=%d, type=1c\n' \
         "${RIG_MBR_ID:0:8}" "$START" $(( SIZE_MIB * 2048 )) |
         sfdisk -q --no-reread --no-tell-kernel "$OUT" >/dev/null 2>&1
-    bootpart "$OUT" "$START" $(( SIZE_MIB * 1024 )) "$RIG_MBR_ID"
+    bootpart "$OUT" "$START" $(( SIZE_MIB * 1024 )) "$RIG_MBR_ID" 1
     stages12 "$OUT" "$STAGE2_LBA_MBR"
     echo "$OUT: MBR, boot partition p1 (0x1c) at LBA $START, stage 2 at LBA" \
          "$STAGE2_LBA_MBR ($s2_sectors sectors), stage 3 at +$STAGE3" \
@@ -195,10 +196,10 @@ gpt)
     (( STAGE2_LBA + s2_sectors <= esp )) || {
         echo "ERROR: stage 2 ($s2_sectors sectors) does not fit in front of LBA $esp" >&2
         exit 1; }
-    bootpart "$OUT" "$esp" $(( ESP_MIB * 1024 )) "$RIG_GPT_ID"
+    bootpart "$OUT" "$esp" $(( ESP_MIB * 1024 )) "$RIG_GPT_ID" 1
     truncate -s $(( LIB_MIB << 20 )) "$tmp/lib.img"
     mkfs.exfat -n FALCON-ISO "$tmp/lib.img" >/dev/null
-    exfat_put "$tmp/lib.img" .falcon "$("$MKIDENT" --text library "$RIG_GPT_ID")"$'\n'
+    exfat_put "$tmp/lib.img" .falcon "falcon 1 library $RIG_GPT_ID"$'\n'
     dd if="$tmp/lib.img" of="$OUT" bs=512 seek="$lib" conv=notrunc status=none
     stages12 "$OUT" "$STAGE2_LBA"
     echo "$OUT: GPT, ESP p1 at LBA $esp (boot record, stage 3 at +$STAGE3)," \
@@ -212,7 +213,7 @@ chs)
     printf 'label: dos\nlabel-id: 0x%s\nstart=%d, size=%d, type=1\n' \
         "${RIG_CHS_ID:0:8}" "$START" $(( SECTORS - START )) |
         sfdisk -q --no-reread --no-tell-kernel "$OUT" >/dev/null 2>&1
-    bootpart "$OUT" "$START" $(( (SECTORS - START) / 2 )) "$RIG_CHS_ID" 12
+    bootpart "$OUT" "$START" $(( (SECTORS - START) / 2 )) "$RIG_CHS_ID" 1 12
     stages12 "$OUT" "$STAGE2_LBA_MBR"
     echo "$OUT: 2.88 MB floppy with an MBR, FAT12 boot partition at LBA" \
          "$START, stage 2 at LBA $STAGE2_LBA_MBR, install $RIG_CHS_ID"
