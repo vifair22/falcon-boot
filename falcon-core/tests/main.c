@@ -77,6 +77,7 @@ int main(void)
     failed += run_table_tests();
     failed += run_ident_tests();
     failed += run_identfs_tests();
+    failed += run_extfind_tests();
     failed += run_osrel_tests();
     failed += run_pe_tests();
     failed += run_trust_tests();

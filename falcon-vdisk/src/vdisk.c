@@ -42,7 +42,7 @@
  * disk and extents through SET_BACKING. The loader (win_xp_boot) instead patches
  * an extent map into this driver's served copy: it scans the .sys for the magic
  * below and writes map_len and the extmap (falcon-core/src/media/extmap) after
- * it. At load the driver finds the stick itself from that map - the same GPT
+ * it. At load the driver finds the stick itself from that map - the same disk
  * match and run conversion winjump does in userland (winjumpcore) - and reads
  * the ISO from the stick's real disk. map_len != 0 means the loader configured
  * it; a plain winjump build leaves it zero and the SET_BACKING path is used.
@@ -465,17 +465,36 @@ static NTSTATUS open_physical_disk(unsigned n, PHANDLE out)
                         NULL, 0);
 }
 
+/* A raw read of an open disk for winjumpcore's match: whole sectors, which
+ * is what wj_disk_holds hands down. */
+static int disk_sector_read(void *ctx, uint64_t off, uint32_t len, void *buf)
+{
+    HANDLE h = *(HANDLE *)ctx;
+    IO_STATUS_BLOCK iosb;
+    LARGE_INTEGER at;
+
+    at.QuadPart = (LONGLONG)off;
+    if (!NT_SUCCESS(ZwReadFile(h, NULL, NULL, NULL, &iosb, buf, len, &at,
+                               NULL)) ||
+        iosb.Information != len)
+        return -1;
+    return 0;
+}
+
+/* The match's bounce buffer and record scratch: kilobytes, and this runs on
+ * a system thread's kernel stack. */
+static wj_scratch g_match;
+
 /* Piece 3 (windows-route.md 7.4): resolve the baked extent map to a live
  * backing, on its own thread so notify_mountmgr's wait (and the CDFS mount and
  * reads it triggers, serviced by the other thread) do not deadlock. Finds the
- * stick by the same GPT match winjump does, retrying while the disk stack comes
- * up, then converts the map's partition-relative runs to absolute disk extents
- * and brings the CD online. A plain winjump build leaves g_bake.map_len zero
- * and this returns at once; SET_BACKING is used instead. */
+ * stick by the same match winjump makes (the ISO library's /.falcon record at
+ * the map's LBA, winjumpcore.h), retrying while the disk stack comes up, then
+ * converts the map's partition-relative runs to absolute disk extents and
+ * brings the CD online. A plain winjump build leaves g_bake.map_len zero and
+ * this returns at once; SET_BACKING is used instead. */
 static void NTAPI baked_resolve(PVOID ctx)
 {
-    static UCHAR gpthdr[512];
-    static UCHAR ents[128 * 128];
     extmap_hdr hdr;
     int tries, n;
     uint32_t got = 0;
@@ -490,23 +509,13 @@ static void NTAPI baked_resolve(PVOID ctx)
     for (tries = 0; tries < 1200 && g_disk_handle == NULL; tries++) {
         for (n = 0; n < 32; n++) {
             HANDLE h;
-            IO_STATUS_BLOCK iosb;
-            LARGE_INTEGER at;
-            uint64_t first_lba;
 
             if (!NT_SUCCESS(open_physical_disk((unsigned)n, &h)))
                 continue;
-            at.QuadPart = 512;                          /* LBA 1: GPT header */
-            if (NT_SUCCESS(ZwReadFile(h, NULL, NULL, NULL, &iosb, gpthdr,
-                                      sizeof gpthdr, &at, NULL))) {
-                at.QuadPart = 1024;                     /* LBA 2: entry array */
-                if (NT_SUCCESS(ZwReadFile(h, NULL, NULL, NULL, &iosb, ents,
-                                          sizeof ents, &at, NULL)) &&
-                    wj_gpt_match(gpthdr, ents, sizeof ents, hdr.part_guid,
-                                 &first_lba) == WJ_OK) {
-                    g_disk_handle = h;                  /* keep it open */
-                    break;
-                }
+            if (wj_disk_holds(&hdr, disk_sector_read, &h, &g_match) ==
+                WJ_OK) {
+                g_disk_handle = h;                      /* keep it open */
+                break;
             }
             ZwClose(h);
         }

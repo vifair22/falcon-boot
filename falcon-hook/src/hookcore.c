@@ -138,6 +138,30 @@ int hook_parse_devnum(const char *s, size_t len, uint32_t *maj, uint32_t *min)
     return 1;
 }
 
+int hook_start_matches(const char *s, size_t len, uint64_t part_lba,
+                       uint32_t block_size)
+{
+    uint64_t v = 0, want;
+    size_t i = 0;
+
+    if (s == (const char *)0 || block_size < 512u || block_size % 512u != 0)
+        return 0;
+    if (part_lba > ~(uint64_t)0 / (block_size / 512u))
+        return 0;
+    want = part_lba * (block_size / 512u);
+    while (i < len && s[i] >= '0' && s[i] <= '9') {
+        if (v > (~(uint64_t)0 - 9u) / 10u)
+            return 0;
+        v = v * 10u + (uint64_t)(s[i] - '0');
+        i++;
+    }
+    if (i == 0)
+        return 0;
+    while (i < len && is_space(s[i]))
+        i++;
+    return i == len && v == want;
+}
+
 /* Decimal, into p; returns the characters written. */
 static size_t put_dec(char *p, uint64_t v)
 {

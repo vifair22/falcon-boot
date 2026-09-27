@@ -12,8 +12,9 @@
  *      boot is not one of ours and everything below is skipped;
  *   3. has the initramfs's own modprobe load what the stick and device
  *      mapper need (the drivers are the distro's; we cannot ship any);
- *   4. waits for the disk whose GPT carries the map's partition, verifying
- *      the table's CRCs with falcon-core's own parser;
+ *   4. waits for the disk that holds the map's ISO library: the exFAT
+ *      volume at the map's LBA whose /.falcon record carries the map's
+ *      install ID (falcon-core's media/extfind.c, as the loader reads it);
  *   5. creates /dev/mapper/falcon-iso, read-only, one linear target per run
  *      of the ISO file, over p2's own partition device (the whole disk only
  *      when the kernel made no partition devices);
@@ -32,9 +33,9 @@
 #include "hookcore.h"
 #include "dimod.h"
 
+#include <media/extfind.h>
 #include <media/extmap.h>
 #include <media/hookcmd.h>
-#include <part/part.h>
 #include <lib/string.h>
 
 #include <linux/ioctl.h>
@@ -292,19 +293,31 @@ static int disk_read(void *ctx, uint64_t off, uint64_t len, void *buf)
     return 0;
 }
 
-static gpt_part g_parts[128];
+/* How the disk is recognised. The map names the ISO library by its
+ * install ID and where the partition starts (media/extmap.h), and the hook
+ * confirms a candidate the way the loader found the library in the first
+ * place: it mounts the exFAT volume at that offset and reads its /.falcon
+ * record (media/extfind.h). That links falcon-core's exFAT driver, the fs
+ * registry trimmed to it (fs_reg_exfat.c) and the record reader into the
+ * hook, in place of the GPT parser it used to link: about 7 KB of stripped
+ * binary at either width (33.6 to 41.0 KB x86-64, 37.4 to 44.4 KB i686).
+ * The cheaper tests do not name a partition: every disk has something at
+ * LBA 2048, a second falcon stick has an exFAT volume there too, and only
+ * the record tells them apart. Nothing reads a partition table: the start
+ * LBA says where to look and the record says whether it is ours, so an MBR
+ * stick is found as a GPT one is. */
+static ident_fs_scratch g_rec;
 
-/* Does the disk NAME carry the map's partition? On a match, its dev number,
- * its logical block size, and the partition's 1-based GPT index. */
+/* Does the disk NAME hold the map's library? On a match, its dev number and
+ * its logical block size. */
 static int disk_matches(const char *name, const extmap_hdr *h, uint32_t *maj,
-                        uint32_t *min, uint32_t *block, uint32_t *partno)
+                        uint32_t *min, uint32_t *block)
 {
     char path[96], txt[32];
     disk_ctx d;
-    gpt_table t;
     long n;
     uint32_t i;
-    int ok = 0;
+    int ok;
 
     path[0] = '\0';
     cat(path, sizeof path, "/sys/block/");
@@ -324,8 +337,9 @@ static int disk_matches(const char *name, const extmap_hdr *h, uint32_t *maj,
     d.block = 0;
     for (i = 0; txt[i] >= '0' && txt[i] <= '9'; i++)
         d.block = d.block * 10u + (uint32_t)(txt[i] - '0');
-    if (d.block != 512u && d.block != 1024u && d.block != 2048u &&
-        d.block != 4096u)
+    /* A disk of another block size is not the one: the map's LBA is a
+     * different byte there. Checked before the disk is even opened. */
+    if (d.block != h->block_size)
         return 0;
 
     path[0] = '\0';
@@ -343,23 +357,7 @@ static int disk_matches(const char *name, const extmap_hdr *h, uint32_t *maj,
             return 0;
     }
     d.fd = (int)n;
-    t.parts = g_parts;
-    t.cap = sizeof(g_parts) / sizeof(g_parts[0]);
-    t.count = 0;
-    t.truncated = 0;
-    if (gpt_parse(&t, disk_read, &d, d.block) == GPT_OK) {
-        for (i = 0; i < t.count; i++) {
-            if (memcmp(t.parts[i].unique, h->part_guid, 16) == 0) {
-                ok = (t.parts[i].start_lba == h->part_lba &&
-                      d.block == h->block_size);
-                if (!ok)
-                    LOG2("partition found, but not where the map says, on ",
-                         name);
-                *partno = t.parts[i].number;
-                break;
-            }
-        }
-    }
+    ok = extmap_find_on_disk(h, disk_read, &d, d.block, &g_rec) == EXTMAP_OK;
     (void)sys_close(d.fd);
     *block = d.block;
     return ok;
@@ -368,7 +366,7 @@ static int disk_matches(const char *name, const extmap_hdr *h, uint32_t *maj,
 static char g_disk[64];
 
 static int find_disk(const extmap_hdr *h, uint32_t *maj, uint32_t *min,
-                     uint32_t *block, uint32_t *partno)
+                     uint32_t *block)
 {
     static uint8_t dents[4096];
     unsigned waited = 0;
@@ -393,11 +391,11 @@ static int find_disk(const extmap_hdr *h, uint32_t *maj, uint32_t *min,
                     if (reclen == 0)
                         break;
                     if (hook_disk_candidate(name) &&
-                        disk_matches(name, h, maj, min, block, partno)) {
+                        disk_matches(name, h, maj, min, block)) {
                         g_disk[0] = '\0';
                         cat(g_disk, sizeof g_disk, name);
                         (void)sys_close((int)fd);
-                        LOG2("found the ISO's partition on ", name);
+                        LOG2("found the ISO library by its record on ", name);
                         return 1;
                     }
                     off += reclen;
@@ -412,11 +410,11 @@ static int find_disk(const extmap_hdr *h, uint32_t *maj, uint32_t *min,
     }
 }
 
-/* The partition device for GPT index partno of disk: the entry under
- * /sys/block/DISK/ whose "partition" file holds that number. 1 with its dev
+/* The partition device the map names on disk: the entry under
+ * /sys/block/DISK/ whose "start" file is the map's first LBA. 1 with its dev
  * number on success. */
-static int find_partition(const char *disk, uint32_t partno, uint32_t *maj,
-                          uint32_t *min)
+static int find_partition(const char *disk, const extmap_hdr *h,
+                          uint32_t *maj, uint32_t *min)
 {
     static uint8_t dents[4096];
     char path[128], txt[32];
@@ -438,7 +436,6 @@ static int find_partition(const char *disk, uint32_t partno, uint32_t *maj,
                                          (dents[off + 17] << 8));
             const char *name = (const char *)dents + off + 19;
             long m;
-            uint32_t num = 0, i;
 
             if (reclen == 0)
                 break;
@@ -450,13 +447,10 @@ static int find_partition(const char *disk, uint32_t partno, uint32_t *maj,
             cat(path, sizeof path, disk);
             cat(path, sizeof path, "/");
             cat(path, sizeof path, name);
-            cat(path, sizeof path, "/partition");
+            cat(path, sizeof path, "/start");
             m = read_file(path, txt, sizeof txt - 1u);
-            if (m <= 0)
-                continue;
-            for (i = 0; i < (uint32_t)m && txt[i] >= '0' && txt[i] <= '9'; i++)
-                num = num * 10u + (uint32_t)(txt[i] - '0');
-            if (num != partno)
+            if (m <= 0 ||
+                !hook_start_matches(txt, (size_t)m, h->part_lba, h->block_size))
                 continue;
             path[0] = '\0';
             cat(path, sizeof path, "/sys/block/");
@@ -815,7 +809,7 @@ int hook_main(int argc, char **argv, char **envp)
     const uint8_t *data;
     size_t dlen = 0;
     long n;
-    uint32_t maj = 0, min = 0, block = 0, partno = 0;
+    uint32_t maj = 0, min = 0, block = 0;
 
     (void)argc;
     mount_one(M_PROC);
@@ -860,13 +854,13 @@ int hook_main(int argc, char **argv, char **envp)
     } else {
         LOGN("ISO map read, extents: ", h.n_extents);
         load_modules(envp);
-        if (!find_disk(&h, &maj, &min, &block, &partno)) {
-            LOG("the stick's partition never appeared");
+        if (!find_disk(&h, &maj, &min, &block)) {
+            LOG("no disk carries the ISO library the map names");
         } else {
             uint32_t pmaj = 0, pmin = 0;
             uint64_t base = 0;
 
-            if (find_partition(g_disk, partno, &pmaj, &pmin)) {
+            if (find_partition(g_disk, &h, &pmaj, &pmin)) {
                 maj = pmaj;
                 min = pmin;
             } else {

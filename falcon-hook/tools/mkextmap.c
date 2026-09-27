@@ -1,9 +1,12 @@
 /* falcon-hook-mkextmap: the extent map the loader would publish for an ISO on
  * p2 of a stick image, for booting falcon-hook in a rig without the loader.
  *
- * Reads the image's GPT and p2 with falcon-core's own parsers (the loader's
- * code), resolves the ISO's runs with the exFAT extent map, encodes them with
- * media/extmap.c, and prints the result in the JSON that virt-fw-vars
+ * Finds p2 as the loaders do, by its record (DESIGN Section 3.1): every
+ * partition of the image's table (MBR or GPT) whose volume carries a
+ * /.falcon record of role library, read with falcon-core's own readers. It
+ * resolves the ISO's runs with the exFAT extent map, encodes them with
+ * media/extmap.c (the library's install ID, its first LBA), and prints the
+ * result in the JSON that virt-fw-vars
  * --set-json takes, so a varstore can carry FalconIsoMap into an OVMF boot
  * that starts the kernel directly (falcon-hook/tools/run-hook-rig.sh).
  *
@@ -11,8 +14,9 @@
  */
 
 #include <fs/fs.h>
+#include <ident/identfs.h>
 #include <media/extmap.h>
-#include <part/part.h>
+#include <part/table.h>
 
 #include <fcntl.h>
 #include <stdio.h>
@@ -33,8 +37,8 @@ static int rd_part(void *ctx, uint64_t off, uint64_t len, void *buf)
     return rd_disk(ctx, g_base + off, len, buf);
 }
 
-static gpt_part g_parts[128];
-static fs_vol g_vol;
+static part_entry g_parts[128];
+static ident_fs_scratch g_rec;
 static fs_dir g_dir;
 static fs_extent g_ext[EXTMAP_MAX_EXTENTS];
 static extmap_extent g_map_ext[EXTMAP_MAX_EXTENTS];
@@ -42,8 +46,9 @@ static uint8_t g_buf[EXTMAP_HDR_LEN + EXTMAP_MAX_EXTENTS * EXTMAP_EXT_LEN];
 
 int main(int argc, char **argv)
 {
-    gpt_table t = { g_parts, 128, 0, 0, 0, 0 };
-    const gpt_part *p2 = NULL;
+    part_table t;
+    const part_entry *p2 = NULL;
+    ident_rec rec;
     fs_dirent e;
     extmap_hdr h;
     size_t n = 0, len = 0, i;
@@ -54,22 +59,28 @@ int main(int argc, char **argv)
         fprintf(stderr, "usage: %s STICK.img NAME-ON-P2-ROOT\n", argv[0]);
         return 2;
     }
+    memset(&t, 0, sizeof t);
+    t.parts = g_parts;
+    t.cap = 128;
     g_fd = open(argv[1], O_RDONLY);
-    if (g_fd < 0 || gpt_parse(&t, rd_disk, NULL, 512) != GPT_OK) {
-        fprintf(stderr, "%s: no GPT\n", argv[1]);
+    if (g_fd < 0 || part_read_table(&t, rd_disk, NULL, 512, 0) != PART_OK) {
+        fprintf(stderr, "%s: no partition table\n", argv[1]);
         return 1;
     }
-    for (k = 0; k < t.count; k++) {
-        if (gpt_part_is_role(&g_parts[k], PART_ROLE_ISO))
+    for (k = 0; k < t.count && p2 == NULL; k++) {
+        g_base = g_parts[k].start_lba * 512u;
+        if (ident_probe(rd_part, NULL, &g_rec, &rec) == IDENT_OK &&
+            rec.role == IDENT_ROLE_LIBRARY)
             p2 = &g_parts[k];
     }
     if (p2 == NULL) {
-        fprintf(stderr, "%s: no FALCON-ISO partition\n", argv[1]);
+        fprintf(stderr, "%s: no partition carries a library record\n",
+                argv[1]);
         return 1;
     }
-    g_base = p2->start_lba * 512u;
-    if (fs_mount(&g_vol, &fs_ops_exfat, rd_part, NULL) != FS_OK ||
-        fs_dir_open_root(&g_vol, &g_dir) != FS_OK) {
+    /* g_base is p2's, and g_rec.vol is p2 mounted. */
+    if (g_rec.vol.ops != &fs_ops_exfat ||
+        fs_dir_open_root(&g_rec.vol, &g_dir) != FS_OK) {
         fprintf(stderr, "%s: p2 is not a readable exFAT volume\n", argv[1]);
         return 1;
     }
@@ -79,12 +90,13 @@ int main(int argc, char **argv)
             break;
         }
     }
-    if (!found || fs_extents(&g_vol, &e, g_ext, EXTMAP_MAX_EXTENTS, &n) != FS_OK) {
+    if (!found ||
+        fs_extents(&g_rec.vol, &e, g_ext, EXTMAP_MAX_EXTENTS, &n) != FS_OK) {
         fprintf(stderr, "%s: no such file on p2, or too fragmented\n", argv[2]);
         return 1;
     }
     memset(&h, 0, sizeof h);
-    memcpy(h.part_guid, p2->unique, 16);
+    memcpy(h.install_id, rec.install_id, 16);
     h.part_lba = p2->start_lba;
     h.block_size = 512;
     h.n_extents = (uint32_t)n;

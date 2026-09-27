@@ -2795,7 +2795,7 @@ does not fall through. `BLS` and `BLB` never fall through at all.
 | LoadFile2 initrd | `direct/direct.c`, `initrd_publish` | the Linux initrd media GUID handle the kernel's EFI stub pulls its initrd from. |
 | virtual CD | `iso/iso.c`, `iso_open` | Block I/O over the p2 file: 2048-byte blocks for an ISO, 512 for an `.img`, read-only, `VenHw` device path. `ConnectController` lets the firmware's El Torito and FAT drivers mount the boot image. |
 | overlay | `iso/overlay.h`, `iso_read_blocks` | memory ranges laid over the virtual CD's reads, and an append region past the ISO's end. Each read is split at overlay boundaries. |
-| extent map | `direct/direct.c`, `build_map`; `falcon-core/src/media/extmap.c` | p2's partition GUID and start LBA, the block size, the ISO's size and its extents on p2. falcon-hook rebuilds the ISO from it. |
+| extent map | `direct/direct.c`, `build_map`; `falcon-core/src/media/extmap.c` | version 2: the ISO library's install ID (off p2's `/.falcon`), p2's start LBA (its handle's HARDDRIVE node, MBR or GPT) and the block size, the ISO's size and its extents on p2. falcon-hook, winjump and falcon-vdisk find p2 from it by the record at that LBA (`media/extfind.c`) and rebuild the ISO. |
 | `FalconIsoMap` | `loadops.c`, `loader_isomap_set` | the extent map as a volatile boot-and-runtime variable. Cleared if the boot returns to the menu, not otherwise. falcon-hook's last source, for wraps older than the map credential. |
 | SHIM_LOCK hide | `iso/iso.c`, `shim_lock_hide` | the stick shim's SHIM_LOCK is uninstalled for the length of a chainload, so the ISO's GRUB finds its own shim's. Only `chainload` does this: CHN, IMG, D3B, WIN, BSD. |
 
@@ -3543,7 +3543,8 @@ sequenceDiagram
     H->>H: the init to exec: falcon.init=, else /init
     H->>H: map: /falcon/map, else /.extra/credentials/falcon-map.cred, else FalconIsoMap in efivarfs
     H->>KN: the initramfs's own modprobe: dm_mod, storage and USB drivers, loop, isofs
-    H->>KN: poll /sys/block (30 s) for the disk whose GPT has p2's GUID and start LBA
+    H->>KN: poll /sys/block (30 s) for the disk of the map's block size whose exFAT volume at the map's LBA has a /.falcon record carrying the map's install ID (extfind)
+    H->>KN: the partition device: /sys/block/DISK/PART/start at that LBA (else the whole disk at an offset)
     alt device-mapper
         H->>KN: dm-linear, one read-only target per extent: /dev/mapper/falcon-iso
     else no dm, ISO contiguous

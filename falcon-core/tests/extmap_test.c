@@ -27,7 +27,7 @@ static void hdr_for(extmap_hdr *h, uint32_t n, uint64_t size)
 
     memset(h, 0, sizeof(*h));
     for (i = 0; i < 16; i++)
-        h->part_guid[i] = (uint8_t)(0xA0u + i);
+        h->install_id[i] = (uint8_t)(0xA0u + i);
     h->part_lba = 133120;
     h->block_size = 512;
     h->n_extents = n;
@@ -51,12 +51,12 @@ static void test_extmap_round_trip(void **state)
                      EXTMAP_OK);
     assert_int_equal(len, 112);
     assert_memory_equal(g_buf, "FLCNXT01", 8);
-    assert_int_equal(g_buf[8], 1);
+    assert_int_equal(g_buf[8], 2);
     assert_int_equal(g_buf[12], 64);
     assert_int_equal(g_buf[16], 0xA0);
 
     assert_int_equal(extmap_decode(g_buf, len, &back), EXTMAP_OK);
-    assert_memory_equal(back.part_guid, h.part_guid, 16);
+    assert_memory_equal(back.install_id, h.install_id, 16);
     assert_int_equal(back.part_lba, 133120);
     assert_int_equal(back.block_size, 512);
     assert_int_equal(back.n_extents, 3);
@@ -96,6 +96,11 @@ static void test_extmap_encode_refusals(void **state)
     assert_int_equal(extmap_encode(&h, &one, g_buf, sizeof g_buf, &len),
                      EXTMAP_ERR_RANGE);
     hdr_for(&h, 0, 0);
+    assert_int_equal(extmap_encode(&h, &one, g_buf, sizeof g_buf, &len),
+                     EXTMAP_ERR_RANGE);
+    /* No install ID: a map no record could ever match. */
+    hdr_for(&h, 1, 100);
+    memset(h.install_id, 0, sizeof h.install_id);
     assert_int_equal(extmap_encode(&h, &one, g_buf, sizeof g_buf, &len),
                      EXTMAP_ERR_RANGE);
     one.length = 0;
@@ -153,6 +158,19 @@ static void test_extmap_decode_refusals(void **state)
                              EXTMAP_ERR_FORMAT);
             g_buf[at[i]] = saved;
         }
+    }
+    /* Version 1, the GPT-GUID map: refused as a format, not misread. */
+    g_buf[8] = 1;
+    assert_int_equal(extmap_decode(g_buf, len, &back), EXTMAP_ERR_FORMAT);
+    g_buf[8] = 2;
+    /* An all-zero install ID. */
+    {
+        uint8_t id[16];
+
+        memcpy(id, g_buf + 16, 16);
+        memset(g_buf + 16, 0, 16);
+        assert_int_equal(extmap_decode(g_buf, len, &back), EXTMAP_ERR_FORMAT);
+        memcpy(g_buf + 16, id, 16);
     }
     /* The size field disagreeing with the extents. */
     g_buf[48] ^= 1;

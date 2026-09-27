@@ -40,6 +40,7 @@ STICK_BIOS += $(BIOS_MOD_e820) $(BIOS_MOD_disk) $(BIOS_MOD_serial)
 STICK_BIOS += $(CORE_PART) $(CORE_FS) $(CORE_MEDIA) $(CORE_PE) $(CORE_CRYPTO)
 STICK_BIOS += $(CORE_LUKS) $(CORE_WIM) $(CORE_LIBC) $(CORE_UCS2) $(CORE_TUI)
 STICK_BIOS += $(CORE)/manifest/manifest.c
+STICK_BIOS += $(CORE_IDENT) $(CORE_IDENT_FS)  # the library's ID, for the extent map
 
 $(eval $(call bios_app,stick,$(BIOS_STAGE3),\
 	$(BIOS_RES_iso) $(BIOS_RES_vfd),\

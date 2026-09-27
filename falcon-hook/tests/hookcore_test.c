@@ -102,6 +102,31 @@ static void test_hook_efivar_and_names(void **state)
                                                 (0x12300u << 12));
 }
 
+/* /sys/block/DISK/PART/start is in 512-byte sectors on every disk, and the
+ * map's LBA in the disk's own blocks. */
+static void test_hook_start_matches(void **state)
+{
+    (void)state;
+    assert_int_equal(hook_start_matches("2048\n", 5, 2048, 512), 1);
+    assert_int_equal(hook_start_matches("2048", 4, 2048, 512), 1);
+    assert_int_equal(hook_start_matches("2048\n", 5, 256, 4096), 1);
+    assert_int_equal(hook_start_matches("2048\n", 5, 2048, 4096), 0);
+    assert_int_equal(hook_start_matches("2049\n", 5, 2048, 512), 0);
+    assert_int_equal(hook_start_matches("204\n", 4, 2048, 512), 0);
+    assert_int_equal(hook_start_matches("\n", 1, 0, 512), 0);
+    assert_int_equal(hook_start_matches("2048x", 5, 2048, 512), 0);
+    assert_int_equal(hook_start_matches("63\n", 3, 63, 512), 1);
+    /* A block size the map never carries, and nothing at all. */
+    assert_int_equal(hook_start_matches("2048\n", 5, 2048, 520), 0);
+    assert_int_equal(hook_start_matches("2048\n", 5, 2048, 256), 0);
+    assert_int_equal(hook_start_matches(NULL, 5, 2048, 512), 0);
+    /* Overflow, in the digits and in the product. */
+    assert_int_equal(hook_start_matches("99999999999999999999999\n", 24,
+                                        2048, 512), 0);
+    assert_int_equal(hook_start_matches("8\n", 2, ~(uint64_t)0 / 4u, 4096),
+                     0);
+}
+
 static uint8_t g_map[EXTMAP_HDR_LEN + 8u * EXTMAP_EXT_LEN];
 static uint8_t g_tab[4096];
 
@@ -114,6 +139,7 @@ static void map3(extmap_hdr *h, uint64_t last_len)
 
     e[2].length = last_len;
     memset(h, 0, sizeof(*h));
+    h->install_id[0] = 0x5a;
     h->block_size = 512;
     h->part_lba = 2048;
     h->n_extents = 3;
@@ -176,6 +202,7 @@ static void test_hook_dm_table(void **state)
         size_t len2 = 0;
 
         memset(&bad, 0, sizeof bad);
+        bad.install_id[0] = 0x5a;
         bad.block_size = 512;
         bad.n_extents = 2;
         bad.iso_size = 1024;
@@ -374,6 +401,7 @@ int run_hookcore_tests(void)
     const struct CMUnitTest tests[] = {
         cmocka_unit_test(test_hook_cmdline),
         cmocka_unit_test(test_hook_efivar_and_names),
+        cmocka_unit_test(test_hook_start_matches),
         cmocka_unit_test(test_hook_dm_table),
         cmocka_unit_test(test_hook_iso_names),
         cmocka_unit_test(test_hook_patch),

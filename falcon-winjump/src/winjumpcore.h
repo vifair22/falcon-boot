@@ -9,15 +9,19 @@
  *
  * The loader already answers both, for the Linux route, in the extent map it
  * builds (falcon-core/src/media/extmap.h): the ISO's runs as byte offsets
- * within a GPT partition named by its unique partition GUID. winjump reads
- * the same map (the loader drops it in boot.wim beside winjump), finds the
- * disk whose GPT carries that partition GUID, and turns the partition-relative
- * runs into absolute disk extents for the driver.
+ * within the ISO library's partition, which the map names by the library's
+ * install ID and its first LBA. winjump reads the same map (the loader drops
+ * it in boot.wim beside winjump), finds the disk that holds that library the
+ * way falcon-hook does (falcon-core/src/media/extfind.h: the exFAT volume at
+ * the map's LBA whose /.falcon record carries the map's install ID, read
+ * over raw sectors, since this WinPE cannot mount exFAT), and turns the
+ * partition-relative runs into absolute disk extents for the driver.
+ * falcon-vdisk does the same from the kernel for 2000/XP setup.
  *
- * This file is the pure arithmetic of those two steps, no Windows in it, so
- * the host tests exercise it: the GPT match over bytes winjump has read, and
- * the run conversion. winjump.c does the I/O (enumerate the physical disks,
- * read their GPTs, feed the driver).
+ * This file is the part of those steps with no Windows in it, so the host
+ * tests exercise it: the disk match over a sector reader, and the run
+ * conversion. winjump.c and vdisk.c do the I/O (enumerate the physical
+ * disks, read sectors, feed the driver).
  */
 
 #ifndef FALCON_WINJUMPCORE_H
@@ -26,6 +30,7 @@
 #include <stdint.h>
 #include <stddef.h>
 
+#include <ident/identfs.h>
 #include <media/extmap.h>
 
 /* One run the driver serves: bytes of the medium at iso_offset live at
@@ -42,19 +47,32 @@ enum {
     WJ_OK          = 0,
     WJ_ERR_BAD_ARG = -1,
     WJ_ERR_NOSPACE = -2,   /* the output extent array is too small */
-    WJ_ERR_NOMATCH = -3,   /* no GPT partition with that unique GUID */
-    WJ_ERR_FORMAT  = -4    /* not a GPT, or a header this does not read */
+    WJ_ERR_NOMATCH = -3,   /* not the disk that holds the map's library */
+    WJ_ERR_FORMAT  = -4    /* not a map this reads */
 };
 
-/* Looks for a GPT partition with unique GUID `part_guid` in a disk's already
- * read table: `hdr_sector` is LBA 1 (the GPT header, at least 512 bytes) and
- * `entries`/`entries_len` the partition entry array it points at. On a match,
- * *first_lba is the partition's first LBA and the return is WJ_OK; WJ_ERR_NOMATCH
- * when the table is a GPT but carries no such partition; WJ_ERR_FORMAT when
- * `hdr_sector` is not a GPT header. Pure: winjump.c does the reading. */
-int wj_gpt_match(const uint8_t *hdr_sector, const uint8_t *entries,
-                 size_t entries_len, const uint8_t part_guid[16],
-                 uint64_t *first_lba);
+/* A raw disk read as Windows allows one: `len` bytes at byte offset `off`,
+ * both whole sectors of the disk. 0 on success. */
+typedef int (*wj_sector_read)(void *ctx, uint64_t off, uint32_t len,
+                              void *buf);
+
+/* What the match needs besides the disk: a bounce buffer for the reads the
+ * filesystem driver makes that are not whole sectors (a sector or more;
+ * WJ_BOUNCE covers a 4096-byte sector with room to spare), and the record
+ * reader's scratch. Both kilobytes, so the caller's statics, never a
+ * kernel thread's stack. */
+#define WJ_BOUNCE 16384u
+typedef struct {
+    uint8_t          bounce[WJ_BOUNCE];
+    ident_fs_scratch rec;
+} wj_scratch;
+
+/* Does the disk behind `read` hold the ISO library the map names? Reads are
+ * made in the map's block size, which a matching disk has; a disk of another
+ * sector size fails its reads and is not the one. WJ_OK or WJ_ERR_NOMATCH;
+ * WJ_ERR_BAD_ARG. */
+int wj_disk_holds(const extmap_hdr *hdr, wj_sector_read read, void *ctx,
+                  wj_scratch *s);
 
 /* Turns an accepted extent map into driver extents. `map`/`map_len` is a map
  * extmap_decode accepted and `hdr` its header; the disk offset of each run is

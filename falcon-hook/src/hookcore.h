@@ -39,11 +39,20 @@ const uint8_t *hook_efivar_data(const uint8_t *file, size_t len,
 
 /* Is a /sys/block name one that could be the stick? Whole disks only, and
  * none of the virtual kinds: loop, ram, zram, dm, md, nbd, sr (a CD cannot
- * hold a GPT that names p2), fd. */
+ * hold p2), fd. */
 int hook_disk_candidate(const char *name);
 
 /* Parses "MAJ:MIN\n" as /sys/block/X/dev has it. 1 on success. */
 int hook_parse_devnum(const char *s, size_t len, uint32_t *maj, uint32_t *min);
+
+/* Is s (len bytes, /sys/block/DISK/PART/start: a decimal count of 512-byte
+ * sectors, whatever the disk's block size, and a newline) the start of the
+ * partition the map names, part_lba blocks of block_size bytes? 1 when it
+ * is. How the hook finds the partition device once extfind has confirmed
+ * the disk: by where it starts, which is what the map carries, rather than
+ * by a number that depends on the table's kind. */
+int hook_start_matches(const char *s, size_t len, uint64_t part_lba,
+                       uint32_t block_size);
 
 /* The DM_TABLE_LOAD argument: a struct dm_ioctl for HOOK_DM_NAME, read-only,
  * followed by one linear target per extent, mapping the ISO's bytes in order
