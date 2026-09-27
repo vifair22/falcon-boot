@@ -121,7 +121,10 @@ static int part_read(void *ctx, uint64_t off, uint64_t len, void *buf)
 
     if (off > ~(uint64_t)0 - p->base)
         return -1;
-    return bios_disk_read(p->disk, p->base + off, len, buf);
+    /* bios_disk_bytes, not bios_disk_read: the drivers above read parts of
+     * a sector on a 4Kn disk (DESIGN Section 3.4). base is whole sectors,
+     * so the layer sees the drivers' alignment unchanged. */
+    return bios_disk_bytes(p->disk, p->base + off, len, buf);
 }
 
 /* A plaintext shelf's filesystem, mounted into g_fs. */

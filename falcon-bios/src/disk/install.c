@@ -3,6 +3,7 @@
 #include <disk/install.h>
 
 #include <fs/fs.h>
+#include <ident/identfs.h>
 #include <luks/luks.h>
 #include <lib/string.h>
 
@@ -13,13 +14,10 @@
 /* Caller-allocated, as everywhere in falcon-core, and static because stage
  * 3's stack is not the place for a 16 KB JSON area. Each probe reuses them;
  * nothing here is kept past the call. */
-static uint8_t  g_sec[4096];
-static luks_vol g_vol;
-static char     g_json[LUKS_JSON_CAP];
-static fs_vol   g_fs;
-static fs_dir   g_dir;
-static fs_file  g_file;
-static char     g_text[IDENT_TEXT_MAX];
+static uint8_t          g_sec[4096];
+static luks_vol         g_vol;
+static char             g_json[LUKS_JSON_CAP];
+static ident_fs_scratch g_fs;
 
 typedef struct {
     bios_disk *disk;
@@ -28,13 +26,15 @@ typedef struct {
 
 static part_src g_src;
 
+/* bios_disk_bytes, not bios_disk_read: LUKS2 and the filesystem drivers
+ * read parts of a sector (DESIGN Section 3.4). */
 static int part_read(void *ctx, uint64_t off, uint64_t len, void *buf)
 {
     const part_src *p = ctx;
 
     if (off > ~(uint64_t)0 - p->base)
         return -1;
-    return bios_disk_read(p->disk, p->base + off, len, buf);
+    return bios_disk_bytes(p->disk, p->base + off, len, buf);
 }
 
 uint64_t install_boot_lba(void)
@@ -103,28 +103,6 @@ unsigned install_drives(uint8_t boot, uint8_t *out, unsigned max)
     return n;
 }
 
-/* A /.falcon at the root of whatever the registry mounts here. */
-static int text_record(ident_rec *out)
-{
-    const fs_ops *ops;
-    fs_dirent ent;
-
-    ops = fs_identify(part_read, &g_src, FS_HINT_NONE);
-    if (ops == (const fs_ops *)0 ||
-        fs_mount(&g_fs, ops, part_read, &g_src) != FS_OK)
-        return 0;
-    if (fs_lookup(&g_fs, IDENT_FILE, &g_dir, &ent) != FS_OK || ent.is_dir ||
-        fs_file_open(&g_fs, &g_file, &ent) != FS_OK)
-        return 0;
-    /* The size from the open file: an ext4 directory entry carries none. */
-    if (fs_file_size(&g_file) == 0 ||
-        fs_file_size(&g_file) > sizeof g_text ||
-        fs_file_read(&g_file, 0, fs_file_size(&g_file), g_text) != FS_OK)
-        return 0;
-    return ident_decode_text(g_text, (size_t)fs_file_size(&g_file), out) ==
-           IDENT_OK;
-}
-
 int install_part_record(bios_disk *d, const part_entry *p, ident_rec *out,
                         int *encrypted)
 {
@@ -150,5 +128,6 @@ int install_part_record(bios_disk *d, const part_entry *p, ident_rec *out,
         return ident_from_strings(version, role, role_len, id, id_len,
                                   out) == IDENT_OK;
     }
-    return text_record(out);
+    /* A /.falcon at the root of whatever the registry mounts here. */
+    return ident_probe(part_read, &g_src, &g_fs, out) == IDENT_OK;
 }

@@ -96,6 +96,9 @@ BIOS_MOD_disk    := $(BIOS)/disk/disk.c $(BIOS)/vfd/vfdcore.c
 BIOS_MOD_marker  := $(BIOS)/disk/marker.c
 BIOS_MOD_install := $(BIOS)/disk/install.c   # the install's partitions, by record
 BIOS_MOD_bootpart := $(BIOS)/disk/bootpart.c # the boot partition, as stage 2 finds it
+# The drivers' callback, any length at any offset (DESIGN Section 3.4); the
+# re-blocking layer it wraps is falcon-core's.
+BIOS_MOD_bytes   := $(BIOS)/disk/bytes.c $(CORE_BLK)
 BIOS_MOD_scan    := $(BIOS)/iso/scan.c
 BIOS_MOD_iso     := $(BIOS)/iso/vcd.c $(BIOS)/iso/vcdcore.c
 BIOS_MOD_vfd     := $(BIOS)/vfd/vfd.c

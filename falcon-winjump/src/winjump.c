@@ -97,8 +97,8 @@ size_t strlen(const char *s)
     return (size_t)(e - s);
 }
 
-/* memcmp, for the linked-in falcon-core code (extmap, winjumpcore) that a
- * hosted build would get from libc. */
+/* memcmp, for the linked-in falcon-core code (extmap, winjumpcore, the
+ * record and exFAT readers) that a hosted build would get from libc. */
 int memcmp(const void *a, const void *b, size_t n);
 int memcmp(const void *a, const void *b, size_t n)
 {
@@ -895,48 +895,54 @@ static HANDLE driver_start(const wchar_t *sys)
     return ctl;
 }
 
-/* Finds the physical disk whose GPT carries the partition `part_guid` names.
- * Fills `nt_path` with the disk's NT device path for the driver and *first_lba
- * with the partition's first LBA. */
-static BOOL find_falcon_disk(const uint8_t part_guid[16], wchar_t *nt_path,
-                             size_t cap, uint64_t *first_lba)
+/* A raw read of an open PhysicalDrive: whole sectors, as Windows requires
+ * of a disk handle. */
+static int phys_read(void *ctx, uint64_t off, uint32_t len, void *buf)
 {
-    uint8_t hdr[512];
-    static uint8_t ents[128 * 128];
+    HANDLE h = *(HANDLE *)ctx;
+    LARGE_INTEGER at;
+    DWORD got = 0;
+
+    at.QuadPart = (LONGLONG)off;
+    if (!SetFilePointerEx(h, at, NULL, FILE_BEGIN) ||
+        !ReadFile(h, buf, len, &got, NULL) || got != len)
+        return -1;
+    return 0;
+}
+
+static wj_scratch g_match;
+
+/* Finds the physical disk that holds the ISO library the map names: the
+ * exFAT volume at the map's LBA whose /.falcon record carries the map's
+ * install ID (winjumpcore.h). Fills `nt_path` with the disk's NT device path
+ * for the driver. */
+static BOOL find_falcon_disk(const extmap_hdr *hdr, wchar_t *nt_path,
+                             size_t cap)
+{
     int n;
 
     for (n = 0; n < 32; n++) {
         wchar_t phys[32];
         HANDLE h;
-        DWORD got = 0;
-        LARGE_INTEGER at;
+        int rc;
 
         wsprintfW(phys, L"\\\\.\\PhysicalDrive%d", n);
         h = CreateFileW(phys, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE,
                         NULL, OPEN_EXISTING, 0, NULL);
         if (h == INVALID_HANDLE_VALUE)
             continue;
-        at.QuadPart = 512;                          /* LBA 1: the GPT header */
-        got = 0;
-        if (SetFilePointerEx(h, at, NULL, FILE_BEGIN) &&
-            ReadFile(h, hdr, sizeof hdr, &got, NULL) && got == sizeof hdr) {
-            at.QuadPart = 1024;                     /* LBA 2: the entry array */
-            got = 0;
-            if (SetFilePointerEx(h, at, NULL, FILE_BEGIN) &&
-                ReadFile(h, ents, sizeof ents, &got, NULL) &&
-                wj_gpt_match(hdr, ents, got, part_guid, first_lba) == WJ_OK) {
-                CloseHandle(h);
-                if ((size_t)wsprintfW(nt_path, L"\\Device\\Harddisk%d\\DR%d",
-                                      n, n) >= cap)
-                    return FALSE;
-                jlog("driver: ISO on PhysicalDrive%d, partition first LBA %s",
-                     n, u64s((char[24]){ 0 }, *first_lba));
-                return TRUE;
-            }
-        }
+        rc = wj_disk_holds(hdr, phys_read, &h, &g_match);
         CloseHandle(h);
+        if (rc == WJ_OK) {
+            if ((size_t)wsprintfW(nt_path, L"\\Device\\Harddisk%d\\DR%d",
+                                  n, n) >= cap)
+                return FALSE;
+            jlog("driver: ISO library on PhysicalDrive%d, first LBA %s", n,
+                 u64s((char[24]){ 0 }, hdr->part_lba));
+            return TRUE;
+        }
     }
-    jlog("driver: no disk carries the ISO's partition GUID");
+    jlog("driver: no disk holds the ISO library the map names");
     return FALSE;
 }
 
@@ -948,7 +954,6 @@ static BOOL mount_via_driver(const struct cfg *cfg)
     wchar_t nt_path[64];
     const wchar_t *sys;
     extmap_hdr hdr;
-    uint64_t first_lba = 0;
     HANDLE ctl;
     wj_extent exts[EXTMAP_MAX_EXTENTS];
     uint32_t n_ext = 0;
@@ -969,7 +974,7 @@ static BOOL mount_via_driver(const struct cfg *cfg)
         return FALSE;
     }
 
-    if (!find_falcon_disk(hdr.part_guid, nt_path, 64, &first_lba))
+    if (!find_falcon_disk(&hdr, nt_path, 64))
         return FALSE;
 
     sys = write_driver();

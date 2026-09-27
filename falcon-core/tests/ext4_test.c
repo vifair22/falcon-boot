@@ -41,6 +41,9 @@
 
 #include <fs/ext4.h>
 #include <crypto/sha256.h>
+#include <blk/rebl.h>
+
+#include "kndev.h"
 
 #ifndef EXT4_IMG
 #define EXT4_IMG "build/test-ext4.img"
@@ -453,15 +456,14 @@ static void test_ext4_walk_matches_manifest(void **state)
  * against the sha256sum the fixture script recorded. Two units validate each
  * other here, which is fine: both are pinned to outside evidence elsewhere
  * (crypto_test.c against FIPS vectors, the driver against the kernel). */
-static void test_ext4_file_hashes(void **state)
+static void file_hashes(ext4_read_fn read, void *read_ctx)
 {
     static uint8_t chunk[64u * 1024u];
     ext4_vol v;
     size_t i;
     unsigned files = 0;
 
-    (void)state;
-    assert_int_equal(ext4_mount(&v, img_read, &img_fd), EXT4_OK);
+    assert_int_equal(ext4_mount(&v, read, read_ctx), EXT4_OK);
 
     for (i = 0; i < manifest_n; i++) {
         ext4_dir d;
@@ -576,6 +578,33 @@ static void test_ext4_file_hashes(void **state)
         files++;
     }
     assert_true(files >= 310);
+}
+
+static void test_ext4_file_hashes(void **state)
+{
+    (void)state;
+    file_hashes(img_read, &img_fd);
+}
+
+/* The same volume on a 4096-byte-sector disk (docs/DESIGN.md Section 3.4):
+ * whole 4096-byte sectors only, under the core's re-blocking layer as the
+ * loaders hand it to the drivers. This fixture's 1 KiB blocks make it the
+ * hardest case there is: the superblock, every descriptor and every block
+ * the driver reads is smaller than a sector. */
+static void test_ext4_on_4kn(void **state)
+{
+    kn_dev k;
+    ext4_vol v;
+
+    (void)state;
+    kn_init(&k, img_read, &img_fd);
+    file_hashes(blk_rebl_read, &k.rebl);
+    assert_int_equal(k.strict.refused, 0);
+    assert_true(k.strict.calls > 0);
+
+    /* Without the layer, the 1024-byte superblock read is refused. */
+    assert_int_equal(ext4_mount(&v, kn_strict_read, &k.strict), EXT4_ERR_IO);
+    assert_int_equal(k.strict.refused, 1);
 }
 
 /* ------------------------------------------------------- the big file */
@@ -1454,6 +1483,7 @@ int run_ext4_tests(void)
         cmocka_unit_test(test_ext4_mount_geometry),
         cmocka_unit_test(test_ext4_walk_matches_manifest),
         cmocka_unit_test(test_ext4_file_hashes),
+        cmocka_unit_test(test_ext4_on_4kn),
         cmocka_unit_test(test_ext4_big_file_random_spans),
         cmocka_unit_test(test_ext4_htree_directory),
         cmocka_unit_test(test_ext4_empty_dir_and_file),

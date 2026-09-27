@@ -13,6 +13,7 @@
 #include <crypto/crypto.h>
 #include <discover/discover.h>
 #include <fs/fs.h>
+#include <ident/ident.h>
 #include <luks/luks.h>
 #include <lib/string.h>
 #include <lib/ucs2.h>
@@ -21,9 +22,8 @@
 #include <media/shelf.h>
 #include <tui/tui.h>
 
-/* p3 is one partition, but the scan is not told which one it is, so it takes
- * whatever shelf-role volumes it finds. Four covers a stick built to DESIGN
- * Section 3 (p3 and p4) with room for a second stick plugged in beside it. */
+/* The shelves carrying this install's ID. A stick has one (p3); the room is
+ * for an install that was given a second, which nothing makes today. */
 #define POS_MAX_VOLS 4u
 
 /* 256 bytes of passphrase plus the terminator. The limit is the prompt's, not
@@ -210,24 +210,22 @@ static uint8_t has_pbkdf2_slot(const luks_vol *v)
  * knows how to do that sits below with the rest of the filesystem walk. */
 static int plain_shelf_usable(discover_dev *dev, const fs_ops *ops);
 
-/* One pass of pos_scan over the shelf-role rows: those on the boot disk
- * when boot is 1, the rest when it is 0. Appends to g_shelf. */
-static void scan_shelves(uint8_t boot)
+/* The shelf-role rows of the inventory: this install's shelves, by record
+ * (discover.h). Appends to g_shelf. */
+static void scan_shelves(void)
 {
     UINTN cursor = 0;
     discover_dev *dev;
 
     /* The rows are falcon-efi/src/discover/discover.c's, classified once for
-     * the whole loader (DESIGN Section 9). DESIGN Section 3's filter decided
-     * which handles a shelf scan may look at; the LUKS2 magic on each row
-     * decides which of the two shapes below this one is. */
+     * the whole loader (DESIGN Section 9), and only those whose record
+     * carries this loader's install ID come back (Section 3.1). The LUKS2
+     * magic on each row decides which of the two shapes below this one is. */
     while (g_shelf_n < POS_MAX_VOLS &&
-           (dev = discover_next(PART_ROLE_SHELF, &cursor)) !=
+           (dev = discover_next(IDENT_ROLE_SHELF, &cursor)) !=
                (discover_dev *)0) {
         pos_shelf *p = &g_shelf[g_shelf_n];
 
-        if (dev->boot_disk != boot)
-            continue;
         p->dev = dev;
         p->fs = (const fs_ops *)0;
         p->encrypted = dev->luks2;
@@ -244,11 +242,10 @@ static void scan_shelves(uint8_t boot)
             continue;
         }
 
-        /* A plaintext shelf (DESIGN Section 3's --p3-plain). Unlike the
-         * encrypted case, its contents are readable right now, so the entry
-         * is offered only when there is something on it to boot: without the
-         * passphrase gate, "any ext4 volume in the machine" would otherwise
-         * put a Personal OS entry in the menu for somebody's data disk. */
+        /* A plaintext shelf (DESIGN Section 3's --p3-plain), offered only
+         * when there is something on it to boot: its contents are readable
+         * now, so an empty one is found out here rather than after the
+         * entry is picked. */
         if (dev->fs == (const fs_ops *)0)
             continue;
         if (!plain_shelf_usable(dev, dev->fs))
@@ -267,18 +264,10 @@ UINTN pos_scan(EFI_SYSTEM_TABLE *st)
     g_luks_usable = 0;
     g_plain_usable = 0;
 
-    /* The boot disk's shelf wins, and exclusively (DESIGN Section 13.3):
-     * unlock_any tries one passphrase against every recorded shelf, so a
-     * second disk's shelf left in the list would let the passphrase for one
-     * OS, typed at the other's prompt, boot the wrong one without a word.
-     * Other disks are looked at only when the boot disk has nothing usable,
-     * which is also the whole of the rig and any machine whose firmware
-     * gave the loader no device path to compare. */
-    scan_shelves(1);
-    if (g_luks_usable + g_plain_usable == 0) {
-        g_shelf_n = 0;
-        scan_shelves(0);
-    }
+    /* unlock_any tries one passphrase against every recorded shelf, which
+     * is sound because every one of them carries this install's ID: a
+     * second stick's shelf, or the machine's own, is never in the list. */
+    scan_shelves();
 
     return g_luks_usable + g_plain_usable;
 }
@@ -549,6 +538,10 @@ static void build_names(const fs_dirent *ent)
 #define LIST_W_(s) L##s
 #define LIST_W(s) LIST_W_(s)
 static const CHAR16 list_file[] = LIST_W(BLESSLIST_CRED);
+static const CHAR16 ident_file[] = LIST_W(IDENT_CRED);
+/* The boot partition's record as text, built per launch. */
+static char  g_ident_text[IDENT_TEXT_MAX];
+static UINTN g_ident_len;
 static const void *g_list;
 static UINTN       g_list_len;
 
@@ -561,10 +554,15 @@ void pos_set_bless_list(const void *data, UINTN len)
 static EFI_STATUS publish_credfs(EFI_SYSTEM_TABLE *st, const fs_dirent *ent,
                                  void *buf, UINT64 size)
 {
-    credfs_entry tree[4];
+    credfs_entry tree[5];
+    ident_rec rec;
     UINTN n = 2;
 
     build_names(ent);
+    g_ident_len = 0;
+    if (discover_install(&rec) == DISCOVER_ID_OK)
+        g_ident_len = ident_encode_text(&rec, g_ident_text,
+                                        sizeof g_ident_text);
 
     tree[0].name = g_uki_ucs2;
     tree[0].data = buf;
@@ -596,6 +594,15 @@ static EFI_STATUS publish_credfs(EFI_SYSTEM_TABLE *st, const fs_dirent *ent,
         tree[n].name = list_file;
         tree[n].data = (void *)(uintptr_t)g_list;
         tree[n].size = g_list_len;
+        tree[n].parent = (UINTN)1;
+        tree[n].is_dir = 0;
+        tree[n].secret = 0;
+        n++;
+    }
+    if (g_ident_len != 0) {
+        tree[n].name = ident_file;
+        tree[n].data = g_ident_text;
+        tree[n].size = g_ident_len;
         tree[n].parent = (UINTN)1;
         tree[n].is_dir = 0;
         tree[n].secret = 0;
