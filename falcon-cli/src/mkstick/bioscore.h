@@ -1,21 +1,33 @@
-/* falcon-boot mkstick: the arithmetic of putting falcon-bios on a GPT stick,
- * with no I/O in it (docs/notes/bios-route.md Section 7.3).
+/* falcon-boot mkstick: the arithmetic of putting falcon-bios on a disk, with
+ * no I/O in it (docs/DESIGN.md Section 3.3; the layout contract is
+ * docs/notes/station-rework.md section 9).
  *
- * Why this is a separate file. The BIOS route writes to three places no
- * filesystem owns and no partition covers: the 440 bytes of boot code at the
- * head of LBA 0, and a run of sectors between the end of the GPT entry array
- * and the start of the first partition. Every one of those numbers is a
- * chance to write a stage on top of something that matters - the GPT header
- * one sector up, a partition one sector down - and getting it wrong destroys
- * a stick rather than failing to boot one. So the part that decides WHERE is
- * here, where it is pure and tested, and the part that opens the device is in
- * bios.c.
+ * Why this is a separate file. The BIOS route writes to places no file
+ * owns: the boot code at the head of LBA 0, a run of sectors between LBA 0
+ * (or the GPT's entry array) and the first partition, and the reserved
+ * sectors of the `boot` partition, which FAT keeps its own boot sector,
+ * FSInfo and their backups among. Every one of those numbers is a chance to
+ * write a stage over something that matters, and getting it wrong destroys
+ * a disk rather than failing to boot one. So the part that decides WHERE is
+ * here, pure and tested, and the part that opens the device is bios.c.
  *
- * The other half of the contract is falcon-bios/src/start/biosdefs.h. Stage 1 is
- * 512 bytes and reads a fixed sector range rather than looking anything up,
- * so the LBAs are compile-time constants on both sides. bios.c passes the
- * loader's values in rather than including biosdefs.h, which keeps this file
+ * The other half of the contract is falcon-bios/src/start/biosdefs.h. bios.c
+ * passes its values in rather than this file including it, which keeps this
  * host C that a test can hand any layout to, including the wrong ones.
+ *
+ * The layout, as the plan below computes it:
+ *
+ *   LBA 0, bytes 0..439     stage 1, with stage 2's first LBA (LE32) and its
+ *                           length in sectors (LE16) patched in at the
+ *                           contract's offsets; 440..511 (disk signature,
+ *                           table, 0x55AA) are the disk's and never written
+ *   stage 2                 LBA 34 on GPT (past the entry array), LBA 1 on
+ *                           MBR; its real length, ending before the first
+ *                           partition
+ *   stage 3                 the `boot` partition's reserved sectors, from the
+ *                           sector its identity record names
+ *   the next-boot marker    one reserved sector of the same partition, named
+ *                           by the record too
  */
 
 #ifndef FALCON_MKSTICK_BIOSCORE_H
@@ -24,44 +36,29 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include <part/part.h>
+#include <part/table.h>
 
 #define BIOS_SECTOR_BYTES 512u
 
 /* The split of LBA 0. Bytes 0..439 are boot code; 440..443 are the disk
  * signature, 444..445 reserved, 446..509 the four MBR partition records and
- * 510..511 the 0xAA55 signature.
- *
- * On a GPT disk those partition records hold the PROTECTIVE entry, the single
- * 0xEE partition that stops an MBR-only tool from seeing free space where the
- * GPT is. It has to survive, which is why an install splices the sector
- * instead of writing stage 1 over it: LBA 0 is shared between the thing that
- * boots the disk and the thing that stops the disk being mistaken for empty. */
+ * 510..511 the 0xAA55 signature. On GPT the records hold the protective 0xEE
+ * entry, on MBR the disk's partitions; either way they survive, which is why
+ * an install splices the sector instead of writing stage 1 over it. */
 #define BIOS_MBR_CODE_LEN 440u
 #define BIOS_MBR_SIG_OFF  510u
 
 /* The GPT type for a BIOS boot partition, in sgdisk's textual form, and the
- * slot an install claims.
+ * slot `mkstick bios --reserve` claims it in.
  *
- * The partition is bookkeeping and nothing reads it: stage 1 goes to a fixed
- * LBA and never parses a table. What it buys is that a later gdisk, parted or
- * installer sees the gap as claimed rather than free. Slot 5 because p1..p4
- * are the falcon layout of DESIGN Section 3 and their NUMBERS are in the
- * install manifest and in people's heads; a BIOS boot partition inserted at
- * the front would renumber every one of them. */
+ * The partition is bookkeeping for stage 2 alone (stage 3 lives in the boot
+ * partition): stage 1 goes to the LBA written into it and never parses a
+ * table. What it buys is that a later gdisk, parted or installer sees the gap
+ * as claimed rather than free. Slot 5 because p1..p4 are the falcon layout of
+ * DESIGN Section 3 and a partition inserted at the front would renumber them. */
 #define BIOS_BOOT_TYPE "21686148-6449-6E6F-744E-656564454649"
 #define BIOS_BOOT_SLOT 5u
 #define BIOS_BOOT_NAME "FALCON-BIOS"
-
-/* What the install owns, in sectors. Derived from the loader's constants so
- * that a change to biosdefs.h moves the tool with it. */
-typedef struct {
-    uint64_t stage2_lba;
-    uint64_t stage2_sectors;   /* reserved, not the image's size */
-    uint64_t stage3_lba;
-    uint64_t stage3_sectors;   /* reserved */
-    uint64_t end_lba;          /* one past the last sector the install owns */
-} bios_plan;
 
 typedef enum {
     BIOSCORE_OK          =  0,
@@ -69,68 +66,141 @@ typedef enum {
     BIOSCORE_ERR_MBR     = -2,  /* the disk's LBA 0 has no 0xAA55 */
     BIOSCORE_ERR_STAGE1  = -3,  /* not a 512-byte sector ending 0xAA55 */
     BIOSCORE_ERR_SPLICE  = -4,  /* stage 1 runs into the partition table */
-    BIOSCORE_ERR_STAGE2  = -5,  /* image past the sectors stage 1 reads */
-    BIOSCORE_ERR_STAGE3  = -6,  /* image past the sectors stage 2 reads */
-    BIOSCORE_ERR_GPT     = -7,  /* the plan starts before first usable LBA */
-    BIOSCORE_ERR_GAP     = -8,  /* a partition starts inside the plan */
-    BIOSCORE_ERR_BACKUP  = -9   /* not a backup this tool wrote */
+    BIOSCORE_ERR_STAGE2  = -5,  /* stage 2 is larger than stage 1 may read */
+    BIOSCORE_ERR_GPT     = -7,  /* stage 2 would land on the GPT */
+    BIOSCORE_ERR_GAP     = -8,  /* stage 2 would reach the first partition */
+    BIOSCORE_ERR_BACKUP  = -9,  /* not a backup this tool wrote */
+    BIOSCORE_ERR_SECTOR  = -10, /* not a 512-byte-sector disk */
+    BIOSCORE_ERR_FAT     = -11, /* the boot partition is not a usable FAT */
+    BIOSCORE_ERR_RECORD  = -12, /* the record's sectors collide with FAT's */
+    BIOSCORE_ERR_RESERVED = -13 /* stage 3 does not fit the reserved sectors */
 } bioscore_status;
 
 const char *bioscore_strerror(bioscore_status s);
 
-/* The sector plan for one set of loader constants. Fails on a layout that
- * cannot be written at all: stage 2 on the GPT header, or a run that wraps. */
-bioscore_status bioscore_plan(uint64_t stage2_lba, uint64_t stage2_sectors,
-                              uint64_t stage3_sectors, bios_plan *out);
+/* ---- the boot partition's FAT boot sector ---- */
 
-/* Do these three images fit the plan, and is stage 1 sane to splice? `stage1`
- * is the whole 512-byte image; the other two are sizes only, since nothing
- * about their contents is this file's business. */
-bioscore_status bioscore_check_images(const uint8_t *stage1, size_t stage1_len,
-                                      size_t stage2_len, size_t stage3_len,
-                                      const bios_plan *p);
+typedef struct {
+    uint32_t reserved;     /* BPB reserved sector count */
+    uint32_t fsinfo;       /* FAT32: the FSInfo sector; 0 on FAT12/16 */
+    uint32_t backup;       /* FAT32: the backup boot sector; 0 when none */
+    int      fat32;
+} bios_fat;
 
-/* Does the plan fit the hole this disk actually has?
- *
- * `first_usable` is the GPT header's field and `first_part_lba` the lowest
- * start_lba of any partition in the table (or 0 when there are none, meaning
- * "nothing below the plan to protect"). These are the two checks that stand
- * between a typo and somebody's partition table: below first_usable is the
- * entry array, and at or past first_part_lba is a filesystem. */
-bioscore_status bioscore_check_gap(const bios_plan *p, uint64_t first_usable,
-                                   uint64_t first_part_lba);
+/* Reads what the plan needs out of a FAT boot sector: 512-byte sectors, the
+ * reserved count, and on FAT32 the FSInfo and backup boot sector numbers.
+ * BIOSCORE_ERR_FAT for anything that is not a FAT boot sector of 512-byte
+ * sectors. */
+bioscore_status bioscore_fat_bpb(const uint8_t *bs, bios_fat *out);
 
-/* Stage 1 laid into the disk's own LBA 0: bytes 0..439 from the image, bytes
+/* The reserved sector count a `boot` partition is formatted with
+ * (`mkfs.fat -R`): stage 3's first sector, then room for stage 3 of twice
+ * the size of the one given, rounded up to a whole MiB and never less than
+ * one. The margin is so a later, larger stage 3 still fits without
+ * reformatting the partition (the stick's is about 200 KB today, 1 MiB of
+ * room is five times that). 0 when the result would not fit the BPB's
+ * 16-bit field. */
+uint32_t bioscore_reserved_for(uint32_t stage3_sector, size_t stage3_len);
+
+/* ---- the plan ---- */
+
+/* Everything the plan needs to know about the disk, gathered by the caller
+ * from the table (part_read_table), the boot partition's identity record and
+ * its boot sector. */
+typedef struct {
+    uint32_t  sector_bytes;
+    part_kind kind;
+    uint64_t  first_usable;    /* GPT: the header's; MBR: 1 */
+    uint64_t  first_part_lba;  /* the lowest start of any partition except
+                                  the FALCON-BIOS reservation */
+    uint64_t  boot_start;      /* the boot partition's first LBA */
+    uint64_t  boot_sectors;    /* its length */
+    bios_fat  fat;             /* its boot sector's facts */
+    uint16_t  stage3_sector;   /* from its record */
+    uint16_t  marker_sector;   /* from its record; 0 for none */
+} bios_disk;
+
+/* What the install writes, in absolute LBAs. Each run is exactly the
+ * sectors written: a stage padded to a whole sector, nothing beyond. */
+typedef struct {
+    uint64_t stage2_lba;
+    uint64_t stage2_sectors;
+    uint64_t stage3_lba;
+    uint64_t stage3_sectors;
+    uint64_t marker_lba;       /* 0 when the record names no marker */
+} bios_plan;
+
+/* The plan for this disk. stage2_gpt_lba and stage2_mbr_lba are the
+ * contract's places for stage 2 (biosdefs.h STAGE2_LBA, STAGE2_LBA_MBR) and
+ * stage2_max its reservation (STAGE2_SECTORS): stage 1's read is bounded by
+ * it, whatever the gap would allow. Refuses a stage 2 below the GPT's first
+ * usable LBA or reaching the first partition, a record whose stage 3 or
+ * marker sector lands on one of FAT's own sectors or outside the reserved
+ * area, and a stage 3 that does not fit between its first sector and the end
+ * of the reserved area (with the marker outside that run). */
+bioscore_status bioscore_plan(const bios_disk *d, uint64_t stage2_gpt_lba,
+                              uint64_t stage2_mbr_lba, uint64_t stage2_max,
+                              size_t stage2_len, size_t stage3_len,
+                              bios_plan *out);
+
+/* Is stage 1 sane to splice? One 512-byte sector ending 0x55AA with nothing
+ * between byte 440 and the signature, since the splice keeps the disk's own
+ * bytes there. */
+bioscore_status bioscore_check_stage1(const uint8_t *stage1, size_t len);
+
+/* Stage 1 laid into the disk's own LBA 0: bytes 0..439 from the image, then
+ * stage 2's LBA and length written at the contract's offsets (lba_off,
+ * sectors_off: biosdefs.h STAGE1_S2_LBA_OFF, STAGE1_S2_SECTORS_OFF), bytes
  * 440..511 from the disk. `out` may alias `cur`. */
 bioscore_status bioscore_splice_mbr(const uint8_t *cur, const uint8_t *stage1,
-                                    uint8_t *out);
+                                    uint32_t lba_off, uint32_t sectors_off,
+                                    uint64_t stage2_lba,
+                                    uint64_t stage2_sectors, uint8_t *out);
 
-/* Nonzero when this LBA 0 already carries this stage 1. */
-int bioscore_is_installed(const uint8_t *mbr, const uint8_t *stage1);
+/* The stage 2 location an LBA 0 carries, read back from the same offsets.
+ * Returns nonzero when both fields are nonzero. */
+int bioscore_stage1_fields(const uint8_t *mbr, uint32_t lba_off,
+                           uint32_t sectors_off, uint64_t *lba,
+                           uint64_t *sectors);
 
-/* Nonzero when this GPT entry is the reservation `mkstick bios --reserve`
- * makes over the gap: slot BIOS_BOOT_SLOT, named BIOS_BOOT_NAME. The one
- * definition, so the command that makes it and the status report that reads
- * it back cannot disagree about what it looks like. */
-int bioscore_is_reserve(const gpt_part *p);
+/* Nonzero when this LBA 0 carries this stage 1's code: bytes 0..439 equal,
+ * except the six bytes of stage 2's location, which differ per disk. */
+int bioscore_is_installed(const uint8_t *mbr, const uint8_t *stage1,
+                          uint32_t lba_off, uint32_t sectors_off);
+
+/* Nonzero when this entry is the reservation `mkstick bios --reserve` makes
+ * over the gap: GPT slot BIOS_BOOT_SLOT, named BIOS_BOOT_NAME. The one
+ * definition, so the command that makes it and the report that reads it
+ * back cannot disagree about what it looks like. */
+int bioscore_is_reserve(const part_table *t, const part_entry *p);
 
 /* ---- the backup a write is preceded by ----
  *
- * An install overwrites boot code that may be somebody else's, so it saves
- * every sector it is about to touch first. The header exists so a restore
- * does not have to be told the offsets again, and so restoring the wrong file
- * onto a disk's boot sectors fails on the magic rather than succeeds. */
-#define BIOS_BACKUP_MAGIC "FALCON-BIOS-BK1"
-#define BIOS_BACKUP_HDR   64u
-#define BIOS_BACKUP_VER   1u
+ * An install overwrites sectors that may be somebody else's, so it saves
+ * every sector it is about to write first: LBA 0, the stage 2 run, the
+ * stage 3 run and the marker sector. The header lists those runs, so a
+ * restore needs no other information, and restoring the wrong file onto a
+ * disk fails on the magic rather than succeeding. Version 1 (one gap run
+ * from LBA 34) is not read: nothing wrote it past the layout it described. */
+#define BIOS_BACKUP_MAGIC    "FALCON-BIOS-BK2"
+#define BIOS_BACKUP_HDR      128u
+#define BIOS_BACKUP_VER      2u
+#define BIOS_BACKUP_MAX_RUNS 6u
+
+typedef struct {
+    uint64_t lba;
+    uint64_t sectors;
+} bios_run;
 
 bioscore_status bioscore_backup_header(uint8_t *out, uint32_t sector_bytes,
-                                       uint64_t gap_lba, uint64_t gap_sectors);
+                                       const bios_run *runs, size_t n);
 bioscore_status bioscore_backup_parse(const uint8_t *hdr, size_t len,
-                                      uint32_t *sector_bytes,
-                                      uint64_t *gap_lba, uint64_t *gap_sectors);
+                                      uint32_t *sector_bytes, bios_run *runs,
+                                      size_t cap, size_t *n);
 
-/* The byte length a backup file must have for the geometry in its header. */
-uint64_t bioscore_backup_size(uint32_t sector_bytes, uint64_t gap_sectors);
+/* The byte length a backup file has for these runs: the header, then each
+ * run's sectors in order. */
+uint64_t bioscore_backup_size(uint32_t sector_bytes, const bios_run *runs,
+                              size_t n);
 
 #endif /* FALCON_MKSTICK_BIOSCORE_H */

@@ -131,8 +131,9 @@ $(FIXTURE_UKI): falcon-efi/tools/mk-test-uki.sh \
 # The four-partition stick the personal-OS path needs (DESIGN Section 3). It
 # wants the signed loader for p1's shim chain and the payload for p3's /uki,
 # so both are prerequisites; the script degrades to an unsigned stick on its
-# own if the test MOK is absent.
-test-stick: $(EFI_SIGNED) test-iso test-uki
+# own if the test MOK is absent. mkstick writes the boot record and puts the
+# BIOS stages on, so the stick boots under SeaBIOS too (Section 3.3).
+test-stick: $(EFI_SIGNED) test-iso test-uki cli bios
 	falcon-efi/tools/mk-test-stick.sh
 
 # A disk laid out as the Manual's stationary install (Section 2), made by

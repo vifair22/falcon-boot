@@ -268,6 +268,20 @@ cli_status disk_settle(const mks_disk *d)
                      d->base, d->part[0]);
 }
 
+cli_status disk_settle_node(const char *node)
+{
+    unsigned tries;
+
+    if (proc_exists("udevadm"))
+        (void)proc_runl_quiet("udevadm", "settle", PROC_END);
+    for (tries = 0; tries < 100u; tries++) {
+        if (util_is_block(node))
+            return CLI_OK;
+        (void)usleep(50000);
+    }
+    return set_error(CLI_ERR_IO, "partition node %s did not appear", node);
+}
+
 cli_status disk_io_open(disk_io *io, const char *path, uint64_t base,
                         uint64_t len)
 {

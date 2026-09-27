@@ -113,7 +113,9 @@ cli_status mks_bios_install(const mks_bios_req *req);
 /* ---- the commands ---- */
 extern const cli_cmd mks_cmd_bios;
 extern const cli_cmd mks_cmd_create;
+extern const cli_cmd mks_cmd_ident;
 extern const cli_cmd mks_cmd_keygen;
+extern const cli_cmd mks_cmd_next_boot;
 extern const cli_cmd mks_cmd_status;
 extern const cli_cmd mks_cmd_varstore;
 

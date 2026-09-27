@@ -7,13 +7,20 @@
 # and a procedure that stops working stops this script first:
 #
 #   p1  ESP                 shim, MokManager and falcon-boot-station.efi (signed
-#                           with the test MOK) in \EFI\falcon\
+#                           with the test MOK) in \EFI\falcon\; the boot
+#                           record, and the stationary BIOS stage 3 in its
+#                           reserved sectors
 #   p2  falcon shelf GUID   LUKS2, pbkdf2 at the Manual's 200000 iterations,
-#                           ext4, /uki/personal.efi (the sd-stub fixture UKI,
+#                           a falcon token (role shelf), ext4,
+#                           /uki/personal.efi (the sd-stub fixture UKI,
 #                           signed) and the test MOK pair
 #   p3  Linux LUKS          LUKS2, argon2id, empty
-#   gap LBA 34-2047         the BIOS stages via mkstick bios --reserve, with
-#                           the stationary stage 3
+#   p5  FALCON-BIOS (EF02)  stage 2, via mkstick bios --reserve; stage 1 in
+#                           LBA 0
+#
+# GPT, and the ESP as the boot partition, as the station is today; the
+# station rework (docs/notes/station-rework.md) replaces this layout later.
+# Both records carry one install ID drawn per build (DESIGN Section 3.1).
 #
 # Two departures from the Manual, both because the rig has no installed OS:
 # the ESP also carries the same three files under \EFI\BOOT\ so OVMF boots it
@@ -88,12 +95,19 @@ sgdisk -n 1:2048:+64M -t 1:EF00 -c 1:ESP \
        -n 2:0:+64M -t 2:"$SHELF_GUID" -c 2:FALCON-UKI \
        -n 3:0:0 -t 3:"$ROOT_GUID" -c 3:root "$IMG" >/dev/null
 
+INSTALL_ID=$(od -An -tx1 -N16 /dev/urandom | tr -d ' \n')
+
 LOOP=$(sudo losetup -P --show -f "$IMG")
-sudo mkfs.fat -F 32 -n ESP "${LOOP}p1" >/dev/null
+sudo udevadm settle 2>/dev/null || sleep 1
+# Reserved sectors for stage 3 and the marker (DESIGN Section 3.3).
+sudo mkfs.fat -F 32 -R "$("$MKSTICK" ident --reserved-sectors --stage3 "$STAGE3")" \
+    -n ESP "${LOOP}p1" >/dev/null
 
 echo "== p2, the shelf (Manual 2.3)"
 printf '%s' "$PASS" | sudo cryptsetup luksFormat --type luks2 \
     --pbkdf pbkdf2 --pbkdf-force-iterations 200000 --batch-mode "${LOOP}p2" -
+printf '{"type":"falcon","keyslots":[],"version":1,"role":"shelf","install_id":"%s"}' \
+    "$INSTALL_ID" | sudo cryptsetup token import "${LOOP}p2"
 MAPPER=falcon-test-station
 printf '%s' "$PASS" | sudo cryptsetup open "${LOOP}p2" "$MAPPER" -
 sudo mkfs.ext4 -q -L FALCON-UKI "/dev/mapper/$MAPPER"
@@ -127,12 +141,14 @@ MNT=
 sudo losetup -d "$LOOP"
 LOOP=
 
-echo "== the BIOS stages (Manual 2.6)"
+echo "== the boot record and the BIOS stages (Manual 2.6)"
+"$MKSTICK" --quiet ident "$IMG" --write-boot 1 --id "$INSTALL_ID" >/dev/null
 "$MKSTICK" bios --reserve --no-backup --stage1 "$STAGE1" --stage2 "$STAGE2" \
     --stage3 "$STAGE3" "$IMG"
 
 echo
 echo "created $IMG (${SIZE_MIB} MiB, the Manual's three partitions)"
+echo "  install ID: $INSTALL_ID"
 echo "  passphrase: $PASS"
 echo "  UEFI: STICK_IMG=$IMG falcon-efi/tools/run-qemu.sh --stick --secboot"
 echo "  BIOS: STICK_IMG=$IMG falcon-efi/tools/run-qemu.sh --stick --bios"
