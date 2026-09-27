@@ -60,14 +60,6 @@ static const char *const required_tools[] = {
     "cryptsetup", "losetup", "mount", "umount", "openssl", "sbsign"
 };
 
-/* The ones a --bios-only stick does without: no ESP to format, no MOK to
- * generate, nothing to sign. */
-static int bios_only_skips(const char *tool)
-{
-    return strcmp(tool, "mkfs.fat") == 0 || strcmp(tool, "openssl") == 0 ||
-           strcmp(tool, "sbsign") == 0;
-}
-
 static const cli_opt create_opts[] = {
     { "force", CLI_OPT_FLAG, 0, NULL,
       "required for a block device; also overwrites an existing stick" },
@@ -100,13 +92,7 @@ static const cli_opt create_opts[] = {
     { "p2-fs", CLI_OPT_VALUE, 0, "<fs>",
       "filesystem for p2 (default exfat)" },
     { "p3-fs", CLI_OPT_VALUE, 0, "<fs>",
-      "filesystem for p3 (default ext4)" },
-    { "p4-kdf-memory", CLI_OPT_VALUE, 0, "<KiB>",
-      "cap p4's argon2id memory and use one thread, for a machine with little "
-      "RAM (default: cryptsetup's own tuning)" },
-    { "bios-only", CLI_OPT_FLAG, 0, NULL,
-      "a stick for BIOS machines only: no ESP, no MOK, and falcon-bios "
-      "installed in the gap" }
+      "filesystem for p3 (default ext4)" }
 };
 
 /* ---- filesystem choices (DESIGN Section 9) ----
@@ -174,36 +160,10 @@ static cli_status fs_choose(const cli_args *a, const char *opt,
 /* What `create` was asked to build, beyond the sizes. Gathered once so the
  * steps below take a decision rather than re-reading the command line. */
 typedef struct {
-    int         bios_only;   /* no p1, no MOK: see create_run */
     int         p3_plain;
     const char *p2_fs;
     const char *p3_fs;
-    const char *p4_kdf_memory;   /* KiB, validated; NULL for the default */
 } fs_plan;
-
-/* --p4-kdf-memory, checked before anything is written: a whole number of
- * KiB from argon2's floor to 4 GiB. */
-static cli_status kdf_memory_choose(const cli_args *a, const char **out)
-{
-    const char *v = cli_value(a, "p4-kdf-memory", NULL);
-    unsigned long n = 0;
-    size_t i;
-
-    *out = NULL;
-    if (v == NULL)
-        return CLI_OK;
-    for (i = 0; v[i] != '\0'; i++) {
-        if (v[i] < '0' || v[i] > '9' || i >= 7u)
-            return set_error(CLI_ERR_USAGE, "--p4-kdf-memory %s: a whole "
-                             "number of KiB, 8192 to 4194304", v);
-        n = n * 10u + (unsigned long)(v[i] - '0');
-    }
-    if (i == 0 || n < 8192u || n > 4194304u)
-        return set_error(CLI_ERR_USAGE, "--p4-kdf-memory %s: a whole number "
-                         "of KiB, 8192 to 4194304", v);
-    *out = v;
-    return CLI_OK;
-}
 
 /* ---- a small argv builder, because sgdisk's arguments are computed ---- */
 
@@ -299,7 +259,7 @@ static cli_status size_opt(const cli_args *a, const char *name,
 }
 
 static cli_status plan_layout(const cli_args *a, uint64_t disk_bytes,
-                              int bios_only, layout *out)
+                              layout *out)
 {
     /* One MiB at the front for the protective MBR and the primary GPT (which
      * need 34 sectors) and one at the back for the backup GPT, both rounded
@@ -328,11 +288,9 @@ static cli_status plan_layout(const cli_args *a, uint64_t disk_bytes,
                          (unsigned long long)disk_bytes);
     pool = round_down(disk_bytes - overhead, MKS_ALIGN);
 
-    if (!bios_only) {
-        rc = size_opt(a, "p1-size", MKS_DEFAULT_P1, &p1, NULL);
-        if (rc != CLI_OK)
-            return rc;
-    }
+    rc = size_opt(a, "p1-size", MKS_DEFAULT_P1, &p1, NULL);
+    if (rc != CLI_OK)
+        return rc;
     rc = size_opt(a, "p3-size", MKS_DEFAULT_P3, &p3, NULL);
     if (rc != CLI_OK)
         return rc;
@@ -388,9 +346,6 @@ static cli_status plan_layout(const cli_args *a, uint64_t disk_bytes,
     out->size[3] = p4;
 
     for (i = 0; i < MKS_PARTS; i++) {
-        /* A BIOS-only stick has no p1, and its size is 0 by design. */
-        if (i == 0 && bios_only)
-            continue;
         if (out->size[i] < floor_[i]) {
             char want[32];
             char got[32];
@@ -575,15 +530,10 @@ static cli_status write_partition_table(const mks_disk *d, const layout *l)
     ab_add(&ab, "--zap-all");
 
     /* p1 starts at the 1 MiB alignment boundary; every later partition takes
-     * sgdisk's "0" for start, which means the next aligned free block. A
-     * BIOS-only stick has no p1 and leaves slot 1 empty, so p2 lands on that
-     * same boundary and p2..p4 keep the numbers DESIGN Section 3, the Manual
-     * and an installed system's crypttab know them by. */
-    if (l->size[0] != 0) {
-        ab_addf(&ab, "-n1:1M:+%lluM", (unsigned long long)mib[0]);
-        ab_addf(&ab, "-t1:%s", MKS_TYPE_ESP);
-        ab_addf(&ab, "-c1:%s", MKS_LABEL_P1);
-    }
+     * sgdisk's "0" for start, which means the next aligned free block. */
+    ab_addf(&ab, "-n1:1M:+%lluM", (unsigned long long)mib[0]);
+    ab_addf(&ab, "-t1:%s", MKS_TYPE_ESP);
+    ab_addf(&ab, "-c1:%s", MKS_LABEL_P1);
 
     /* p2's -c is not a label for the user's benefit: with a type GUID the
      * whole world shares, the name is what tells the loader this partition is
@@ -604,10 +554,7 @@ static cli_status write_partition_table(const mks_disk *d, const layout *l)
     if (ab.rc != CLI_OK)
         return ab.rc;
 
-    log_info(l->size[0] != 0
-                 ? "partitioning (GPT, four partitions per DESIGN Section 3)"
-                 : "partitioning (GPT, p2..p4 per DESIGN Section 3; slot 1 "
-                   "left empty, no ESP)");
+    log_info("partitioning (GPT, four partitions per DESIGN Section 3)");
     {
         proc_spec spec;
 
@@ -638,13 +585,11 @@ static cli_status make_filesystems(const mks_disk *d, const mks_pass *pass,
     char mapper_path[MKS_PATH_MAX];
     cli_status rc;
 
-    if (!plan->bios_only) {
-        log_info("p1: FAT32 (the ESP the firmware boots)");
-        rc = proc_runl_quiet("mkfs.fat", "-F", "32", "-n", "FALCONESP",
-                             d->part[0], PROC_END);
-        if (rc != CLI_OK)
-            return rc;
-    }
+    log_info("p1: FAT32 (the ESP the firmware boots)");
+    rc = proc_runl_quiet("mkfs.fat", "-F", "32", "-n", "FALCONESP",
+                         d->part[0], PROC_END);
+    if (rc != CLI_OK)
+        return rc;
 
     log_info("p2: %s (the drag-and-drop ISO library)", plan->p2_fs);
     rc = make_fs(plan->p2_fs, MKS_LABEL_P2, d->part[1]);
@@ -704,33 +649,11 @@ p4:
      * inside the UKI's initramfs (DESIGN Section 3). EFI-land never touches
      * it. p4 is encrypted whether or not p3 is: it holds root and home, the
      * loader never reads it, and --p3-plain is a statement about the UKI
-     * shelf alone.
-     *
-     * Stock argon2id is tuned on THIS host, which can be up to a gibibyte
-     * and four threads: memory-hardness is free on the machine that made
-     * the stick and impossible on a 2002 laptop with 256 MB, whose initramfs
-     * then fails to open p4 without a word. --p4-kdf-memory caps it for a
-     * stick meant for machines like that (docs/notes/bios-route.md Section
-     * 6h), and pins the time cost as well: cryptsetup would tune that on
-     * this host too, and an old processor is twenty times slower than the
-     * one the tuning ran on. Four passes over the capped memory is seconds
-     * there. */
-    if (plan->p4_kdf_memory != NULL) {
-        log_info("p4: LUKS2 (argon2id, %s KiB, time cost %s, one thread) + "
-                 "ext4", plan->p4_kdf_memory, MKS_P4_LOWMEM_ITERATIONS);
-        rc = proc_input_l(pass->buf, pass->len, "cryptsetup", "luksFormat",
-                          "--type", "luks2", "--batch-mode",
-                          "--pbkdf", "argon2id",
-                          "--pbkdf-memory", plan->p4_kdf_memory,
-                          "--pbkdf-parallel", "1",
-                          "--pbkdf-force-iterations", MKS_P4_LOWMEM_ITERATIONS,
-                          d->part[3], "-", PROC_END);
-    } else {
-        log_info("p4: LUKS2 (argon2id, stock defaults) + ext4");
-        rc = proc_input_l(pass->buf, pass->len, "cryptsetup", "luksFormat",
-                          "--type", "luks2", "--batch-mode", d->part[3], "-",
-                          PROC_END);
-    }
+     * shelf alone. */
+    log_info("p4: LUKS2 (argon2id, stock defaults) + ext4");
+    rc = proc_input_l(pass->buf, pass->len, "cryptsetup", "luksFormat",
+                      "--type", "luks2", "--batch-mode", d->part[3], "-",
+                      PROC_END);
     if (rc != CLI_OK)
         return rc;
 
@@ -875,14 +798,6 @@ static cli_status install_shelf(const cli_args *a, const mks_disk *d,
                            util_basename(src));
             break;
         }
-        if (keys == (const mok_keys *)0) {
-            /* A BIOS-only stick: falcon-bios unwraps a UKI rather than
-             * launching it, and nothing on a BIOS machine verifies one, so
-             * there is no MOK and nothing to sign it with. */
-            log_info("p3: staging %s", util_basename(src));
-            rc = util_copy_file(src, dst, 0644);
-            continue;
-        }
         log_info("p3: signing and staging %s", util_basename(src));
         /* Signed on the way in, never staged unsigned: an unsigned UKI on p3
          * is refused by the platform under Secure Boot, and the user would
@@ -898,16 +813,16 @@ static cli_status install_shelf(const cli_args *a, const mks_disk *d,
      * On a plaintext shelf this step does not happen at all. Writing the key
      * here would put it on a partition anyone can read, which is the one
      * thing the key model does not permit. */
-    if (rc == CLI_OK && !plan->p3_plain && keys != (const mok_keys *)0) {
+    if (rc == CLI_OK && !plan->p3_plain) {
         log_info("p3: MOK private key -> %s (0600, inside the LUKS volume)",
                  MKS_P3_KEY_NAME);
         rc = util_join(dst, sizeof dst, mnt, MKS_P3_KEY_NAME);
         if (rc == CLI_OK)
             rc = util_copy_file(keys->key, dst, 0600);
     }
-    if (rc == CLI_OK && keys != (const mok_keys *)0)
+    if (rc == CLI_OK)
         rc = util_join(dst, sizeof dst, mnt, MKS_P3_CERT_NAME);
-    if (rc == CLI_OK && keys != (const mok_keys *)0)
+    if (rc == CLI_OK)
         rc = util_copy_file(keys->crt, dst, 0644);
 
     if (rc != CLI_OK) {
@@ -986,27 +901,7 @@ static cli_status create_run(const cli_args *a)
     if (rc != CLI_OK)
         return rc;
 
-    plan_fs.bios_only = cli_flag(a, "bios-only");
     plan_fs.p3_plain = cli_flag(a, "p3-plain");
-    if (plan_fs.bios_only) {
-        /* Everything these name belongs to the ESP or the MOK, and a
-         * BIOS-only stick has neither; accepting one silently would leave the
-         * user believing it did something. */
-        static const char *const esp_opts[] = {
-            "shim", "loader", "cn", "cert-out", "key-out", "p1-size"
-        };
-
-        for (i = 0; i < sizeof esp_opts / sizeof esp_opts[0]; i++) {
-            if (cli_value(a, esp_opts[i], NULL) != NULL)
-                return set_error(CLI_ERR_USAGE,
-                                 "--%s has nothing to act on with "
-                                 "--bios-only: the stick has no ESP and no "
-                                 "MOK", esp_opts[i]);
-        }
-    }
-    rc = kdf_memory_choose(a, &plan_fs.p4_kdf_memory);
-    if (rc != CLI_OK)
-        return rc;
     rc = fs_choose(a, "p2-fs", p2_implemented,
                    sizeof p2_implemented / sizeof p2_implemented[0], "exfat",
                    &plan_fs.p2_fs);
@@ -1018,7 +913,7 @@ static cli_status create_run(const cli_args *a)
     if (rc != CLI_OK)
         return rc;
 
-    if (plan_fs.p3_plain && !plan_fs.bios_only) {
+    if (plan_fs.p3_plain) {
         /* DESIGN Section 3 asks for the consequences to be stated at creation
          * time rather than discovered later, and they are stated before the
          * first byte is written, because the one that matters is a refusal:
@@ -1048,8 +943,6 @@ static cli_status create_run(const cli_args *a)
     }
 
     for (i = 0; i < sizeof required_tools / sizeof required_tools[0]; i++) {
-        if (plan_fs.bios_only && bios_only_skips(required_tools[i]))
-            continue;
         if (!proc_exists(required_tools[i]))
             return set_error(CLI_ERR_NOTFOUND,
                              "%s is not on PATH; mkstick shells out to it "
@@ -1087,55 +980,35 @@ static cli_status create_run(const cli_args *a)
     if (rc != CLI_OK)
         return rc;
 
-    rc = plan_layout(a, disk.size, plan_fs.bios_only, &plan);
+    rc = plan_layout(a, disk.size, &plan);
     if (rc != CLI_OK)
         return rc;
-    disk.no_p1 = plan_fs.bios_only;
-    for (i = plan_fs.bios_only ? 1u : 0u; i < MKS_PARTS; i++)
+    for (i = 0; i < MKS_PARTS; i++)
         log_info("  p%zu %s", i + 1u,
                  util_format_size(plan.size[i], sizetext, sizeof sizetext));
 
-    if (plan_fs.bios_only) {
-        /* The stages, checked now rather than after the stick is built:
-         * without them a BIOS-only stick boots nothing. */
-        static const char *const stages[] = {
-            "build/bin/falcon-bios-stage1.bin",
-            "build/bin/falcon-bios-stage2.bin",
-            "build/bin/falcon-bios-stage3.bin"
-        };
-
-        for (i = 0; i < sizeof stages / sizeof stages[0]; i++) {
-            if (!util_is_file(stages[i]))
-                return set_error(CLI_ERR_NOTFOUND,
-                                 "no %s (run make bios): a --bios-only "
-                                 "stick boots through falcon-bios alone",
-                                 stages[i]);
-        }
-    } else if (!util_is_file(loader))
+    if (!util_is_file(loader))
         return set_error(CLI_ERR_NOTFOUND,
                          "no loader at %s (run make), or pass --loader",
                          loader);
-    if (!plan_fs.bios_only) {
-        rc = find_shim(shim_dir, shim_path, sizeof shim_path);
-        if (rc != CLI_OK)
-            return rc;
+    rc = find_shim(shim_dir, shim_path, sizeof shim_path);
+    if (rc != CLI_OK)
+        return rc;
 
-        /* DESIGN Section 4: read the next-stage name out of the shim rather
-         * than assuming it, so that swapping shim vendors stays a data
-         * change. */
-        rc = shim_next_stage_name(shim_path, next_stage, sizeof next_stage);
-        if (rc != CLI_OK)
-            return rc;
-        rc = shim_mokmanager_name(shim_path, mm_name, sizeof mm_name);
-        if (rc != CLI_OK)
-            return rc;
-        rc = find_mokmanager(shim_path, mm_name, mm_path, sizeof mm_path);
-        if (rc != CLI_OK)
-            return rc;
-        log_info("shim:     %s", shim_path);
-        log_info("  next stage compiled in: %s", next_stage);
-        log_info("  MokManager:             %s", mm_name);
-    }
+    /* DESIGN Section 4: read the next-stage name out of the shim rather than
+     * assuming it, so that swapping shim vendors stays a data change. */
+    rc = shim_next_stage_name(shim_path, next_stage, sizeof next_stage);
+    if (rc != CLI_OK)
+        return rc;
+    rc = shim_mokmanager_name(shim_path, mm_name, sizeof mm_name);
+    if (rc != CLI_OK)
+        return rc;
+    rc = find_mokmanager(shim_path, mm_name, mm_path, sizeof mm_path);
+    if (rc != CLI_OK)
+        return rc;
+    log_info("shim:     %s", shim_path);
+    log_info("  next stage compiled in: %s", next_stage);
+    log_info("  MokManager:             %s", mm_name);
 
     for (i = 0; i < cli_count(a, "uki"); i++) {
         const char *u = cli_at(a, "uki", i);
@@ -1184,14 +1057,6 @@ static cli_status create_run(const cli_args *a)
     rc = make_filesystems(&disk, &pass, &plan_fs);
     if (rc != CLI_OK)
         goto out;
-
-    if (plan_fs.bios_only) {
-        rc = install_shelf(a, &disk, mntdir, &pass, (const mok_keys *)0,
-                           &plan_fs);
-        if (rc == CLI_OK)
-            rc = install_iso_library(&disk, mntdir);
-        goto out;
-    }
 
     rc = mok_paths(&keys, keydir);
     if (rc != CLI_OK)
@@ -1271,27 +1136,6 @@ out:
     if (rmdir(tmpdir) != 0)
         log_debug("leaving %s behind", tmpdir);
 
-    if (rc == CLI_OK && plan_fs.bios_only) {
-        /* The stages go in last, once the loop device is released: the
-         * install opens the target itself, and it is the same install
-         * `mkstick bios` performs. A fresh stick's gap holds nothing worth
-         * a backup. */
-        mks_bios_req req;
-
-        memset(&req, 0, sizeof req);
-        req.target = disk.path;
-        req.no_backup = 1;
-        req.force = force;
-        cli_log_blank();
-        rc = mks_bios_install(&req);
-        if (rc == CLI_OK) {
-            cli_log_blank();
-            log_info("%s is ready: a BIOS-only stick, with no ESP and no MOK.",
-                     disk.path);
-        }
-        return rc;
-    }
-
     if (rc == CLI_OK) {
         cli_log_blank();
         log_info("%s is ready.", disk.path);
@@ -1326,11 +1170,6 @@ const cli_cmd mks_cmd_create = {
     "on-stick private key and so no signing appliance, and the loader asks for\n"
     "no passphrase; --key-out is required, because the key would otherwise have\n"
     "nowhere to live. p4 stays encrypted either way.\n"
-    "\n"
-    "--bios-only makes a stick for BIOS machines alone (DESIGN Section 3): no\n"
-    "p1 (GPT slot 1 is left empty, so p2..p4 keep their numbers), no MOK, no\n"
-    "shim or loader, UKIs staged unsigned, and falcon-bios's stages installed\n"
-    "in the gap as `mkstick bios` would. It needs `make bios` first.\n"
     "\n"
     "--p2-fs/--p3-fs accept the filesystems the loader can actually read today\n"
     "(exfat for p2, ext4 for p3) and name the sanctioned-but-unwritten targets\n"

@@ -115,7 +115,7 @@ MBR (other disks' LBA 0).
 | E1 | `tools/coverage/states.sh:21-30, 152-161`, `run-case.sh:145-153` | BIOS columns boot `test-bios.img` as 0x80 and find the case stick's ISO library as the second disk | narrowing to the boot disk breaks this: the case stick carries its own stages, or the harness keeps a two-disk case on purpose | |
 | E2 | `falcon-efi/tools/mk-test-station.sh` | fresh GPT, `mkstick bios --reserve` | rig per matrix cell (section 6) | |
 | E3 | `falcon-efi/tools/mk-test-stick.sh` | GPT, no BIOS stages | a full stick booting under BIOS, scripted | |
-| E4 | `falcon-bios/tools/mk-stick32-pos.sh`, `mk-test-blessed-stick.sh`, appliance proofs | partitions by number (`${LOOP}p2`, `${DEV}4`) | by record or label | |
+| E4 | `falcon-bios/tools/mk-stick32-pos.sh` (removed, decision 22), `mk-test-blessed-stick.sh`, appliance proofs | partitions by number (`${LOOP}p2`, `${DEV}4`) | by record or label | |
 | E5 | `falcon-cli/src/sign/main.c:130` | help says `PARTLABEL=falcon-isos` | text | |
 
 ## 6. The matrix
