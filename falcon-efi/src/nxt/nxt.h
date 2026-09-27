@@ -20,13 +20,20 @@
 #define NXT_MAX 16u
 
 typedef struct {
-    UINT16 option;                 /* the #### of Boot#### */
-    CHAR16 label[NXT_LABEL_MAX];   /* its description, or "Boot####" */
+    UINT16     option;                 /* the #### of Boot#### */
+    CHAR16     label[NXT_LABEL_MAX];   /* its description, or "Boot####" */
+    nxt_target target;                 /* the partition and file it names */
 } nxt_row;
+
+/* The description of the station's own firmware entry (docs/notes/
+ * station-rework.md section 10), which is never a row: choosing it would
+ * reboot into this screen. */
+#define NXT_OWN_LABEL L"falcon"
 
 /* Reads BootOrder and each entry it names. Returns how many rows it wrote,
  * in BootOrder's order. Zero when BootOrder is missing or names nothing the
- * firmware would offer. */
+ * firmware would offer. Neither the entry this boot came through
+ * (BootCurrent) nor one described as NXT_OWN_LABEL is a row. */
 UINTN nxt_scan(EFI_SYSTEM_TABLE *st, nxt_row *rows, UINTN cap);
 
 /* Sets BootNext to the row's option and resets the machine. Returns only on

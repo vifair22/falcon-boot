@@ -3,6 +3,7 @@
 
 #include <nxt/nxt.h>
 #include <loader/loadops.h>
+#include <lib/ucs2.h>
 
 #define GLOBAL_VARIABLE_GUID \
     { 0x8be4df61, 0x93ca, 0x11d2, \
@@ -80,6 +81,12 @@ UINTN nxt_scan(EFI_SYSTEM_TABLE *st, nxt_row *rows, UINTN cap)
         if (nxt_option_parse(opt, size, &attrs, rows[n].label) != NXT_OK)
             continue;
         if (!nxt_option_offered(attrs))
+            continue;
+        /* Reached through another entry (the removable path, a one-time
+         * pick), falcon's own entry is still falcon. */
+        if (ucs2_casecmp(rows[n].label, NXT_OWN_LABEL) == 0)
+            continue;
+        if (nxt_option_target(opt, size, &rows[n].target) != NXT_OK)
             continue;
         if (rows[n].label[0] == 0) {
             UINTN k;
