@@ -358,7 +358,8 @@ does through its NVMe driver (AH=48h reports 4096) and not through
 virtio-blk, virtio-scsi, LSI, MegaRAID or USB mass storage, which drop the
 disk, nor IDE, which QEMU refuses at 4096. The rig boots its 4Kn stick
 from NVMe under both firmwares (`make test-core`). The BIOS next-boot marker
-is one 512-byte sector by format, and a 4Kn disk has none.
+is one whole sector of the disk, 4096 bytes on a 4Kn disk, with its text in
+the first 512 (Section 6.3.1).
 
 A BIOS reaches only so much of a disk: about 8 GB by CHS, 128 GiB with
 28-bit LBA. falcon-bios keeps each disk's size from AH=48h and refuses a
@@ -1087,8 +1088,13 @@ with `dd` when there is no `/sys/firmware/efi`. The sector is text:
     <the value, as the variable would hold it>
 
 and zeros to the end of the sector (`media/nextboot.h` has the parse, which
-refuses every byte out of place). The value is the variable's, and
-everything this section says about validating it holds unchanged.
+refuses every byte out of place). The marker is one whole sector of the
+disk, whatever its size: on a 4Kn disk the loader reads and clears 4096
+bytes and mkstick writes 4096, the text in the first 512 and zeros to the
+sector's end. A disk moves nothing smaller than its sector, and keeping the
+text inside 512 bytes makes the two sizes one record to every reader. The
+value is the variable's, and everything this section says about validating
+it holds unchanged.
 
 The loader takes it the way it takes the variable: read, **cleared**, then
 believed (`falcon-bios/src/disk/marker.c`). Clearing is a write, and this is the

@@ -392,6 +392,100 @@ static void test_sector_write_refusals(void **state)
                      NEXTBOOT_ERR_BAD_ARG);
 }
 
+/* A 4Kn disk's marker: one whole 4096-byte sector, the text in its first
+ * 512 bytes and zeros to its end, which reads as the same record. */
+static void test_sector_4k(void **state)
+{
+    static uint8_t sec[NEXTBOOT_SECTOR_MAX];
+    static uint8_t small[NEXTBOOT_SECTOR_BYTES];
+    char out[NEXTBOOT_MAX];
+    uint64_t stamp = 0;
+    size_t i;
+
+    (void)state;
+    memset(sec, 0xEE, sizeof sec);
+    assert_int_equal(nextboot_sector_write(sec, sizeof sec, 1790000000u,
+                                           WIN11_PATH), NEXTBOOT_OK);
+    assert_int_equal(nextboot_sector_write(small, sizeof small, 1790000000u,
+                                           WIN11_PATH), NEXTBOOT_OK);
+    assert_memory_equal(sec, small, sizeof small);
+    for (i = sizeof small; i < sizeof sec; i++)
+        assert_int_equal(sec[i], 0);
+    assert_true(nextboot_sector_is_marker(sec, sizeof sec));
+    assert_int_equal(nextboot_sector_parse(sec, sizeof sec, &stamp, out,
+                                           sizeof out),
+                     NEXTBOOT_SECTOR_VALUE);
+    assert_int_equal(stamp, 1790000000u);
+    assert_string_equal(out, WIN11_PATH);
+
+    /* The sector's other sizes between the two read the same. */
+    assert_int_equal(nextboot_sector_parse(sec, 1024u, &stamp, out,
+                                           sizeof out),
+                     NEXTBOOT_SECTOR_VALUE);
+    assert_int_equal(nextboot_sector_parse(sec, 2048u, &stamp, out,
+                                           sizeof out),
+                     NEXTBOOT_SECTOR_VALUE);
+
+    /* A byte anywhere past the text, to the sector's last, is not a marker
+     * this format wrote. */
+    sec[NEXTBOOT_SECTOR_MAX - 1u] = 0x01u;
+    assert_int_equal(nextboot_sector_parse(sec, sizeof sec, &stamp, out,
+                                           sizeof out), NEXTBOOT_SECTOR_BAD);
+    assert_string_equal(out, "");
+    /* ... though read as a 512-byte sector the text alone is whole. */
+    assert_int_equal(nextboot_sector_parse(sec, NEXTBOOT_SECTOR_BYTES, &stamp,
+                                           out, sizeof out),
+                     NEXTBOOT_SECTOR_VALUE);
+    sec[NEXTBOOT_SECTOR_MAX - 1u] = 0u;
+    sec[NEXTBOOT_SECTOR_BYTES] = (uint8_t)'x';
+    assert_int_equal(nextboot_sector_parse(sec, sizeof sec, &stamp, out,
+                                           sizeof out), NEXTBOOT_SECTOR_BAD);
+
+    /* A value line that runs past the text area is refused even where the
+     * sector is long enough to hold it. */
+    memset(sec, 0, sizeof sec);
+    memcpy(sec, "falcon-next-boot 1\n1\n", 21);
+    memset(sec + 21, 'a', NEXTBOOT_SECTOR_BYTES - 21u);
+    sec[NEXTBOOT_SECTOR_BYTES + 3u] = (uint8_t)'\n';
+    assert_int_equal(nextboot_sector_parse(sec, sizeof sec, &stamp, out,
+                                           sizeof out), NEXTBOOT_SECTOR_BAD);
+    /* And so is a stamp line that does. */
+    memset(sec, 0, sizeof sec);
+    memcpy(sec, "falcon-next-boot 1\n", 19);
+    memset(sec + 19, '1', NEXTBOOT_SECTOR_BYTES - 19u);
+    assert_int_equal(nextboot_sector_parse(sec, sizeof sec, &stamp, out,
+                                           sizeof out), NEXTBOOT_SECTOR_BAD);
+}
+
+static void test_sector_sizes(void **state)
+{
+    static uint8_t sec[2u * NEXTBOOT_SECTOR_MAX];
+    char out[NEXTBOOT_MAX];
+    uint64_t stamp = 0;
+
+    (void)state;
+    assert_true(nextboot_sector_size_ok(512u));
+    assert_true(nextboot_sector_size_ok(1024u));
+    assert_true(nextboot_sector_size_ok(2048u));
+    assert_true(nextboot_sector_size_ok(4096u));
+    assert_false(nextboot_sector_size_ok(0u));
+    assert_false(nextboot_sector_size_ok(256u));
+    assert_false(nextboot_sector_size_ok(511u));
+    assert_false(nextboot_sector_size_ok(1536u));
+    assert_false(nextboot_sector_size_ok(4095u));
+    assert_false(nextboot_sector_size_ok(8192u));
+
+    assert_int_equal(nextboot_sector_write(sec, 1536u, 1u, "x"),
+                     NEXTBOOT_ERR_BAD_ARG);
+    assert_int_equal(nextboot_sector_write(sec, 8192u, 1u, "x"),
+                     NEXTBOOT_ERR_BAD_ARG);
+    assert_int_equal(nextboot_sector_write(sec, 4096u, 1u, "x"), NEXTBOOT_OK);
+    assert_int_equal(nextboot_sector_parse(sec, 8192u, &stamp, out,
+                                           sizeof out), NEXTBOOT_SECTOR_NONE);
+    assert_int_equal(nextboot_sector_parse(sec, 4000u, &stamp, out,
+                                           sizeof out), NEXTBOOT_SECTOR_NONE);
+}
+
 /* ------------------------------------------------------------ dating it */
 
 static void test_age(void **state)
@@ -494,6 +588,8 @@ int run_nextboot_tests(void)
         cmocka_unit_test(test_sector_bad_shapes),
         cmocka_unit_test(test_sector_limits),
         cmocka_unit_test(test_sector_write_refusals),
+        cmocka_unit_test(test_sector_4k),
+        cmocka_unit_test(test_sector_sizes),
         cmocka_unit_test(test_age),
         cmocka_unit_test(test_rtc_seconds),
         cmocka_unit_test(test_rtc_refusals),
