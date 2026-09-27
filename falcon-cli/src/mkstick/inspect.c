@@ -602,20 +602,23 @@ static void check_bios(tally *t, const mks_disk *d, const mks_records *r,
               (unsigned)rec->stage3_sector, bp->number,
               (unsigned long long)s3);
         if (rec->marker_sector != 0u) {
+            /* The whole sector of the disk's size, as the loader and
+             * next-boot judge it: 4096 bytes on a 4Kn disk. */
+            static uint8_t msec[NEXTBOOT_SECTOR_MAX];
             uint64_t m = bp->start_lba + rec->marker_sector;
             size_t k;
             int zero = 1;
 
-            if (disk_io_read(&io, m * d->sector, sizeof sec,
-                             sec) != 0) {
+            if (!nextboot_sector_size_ok(d->sector) ||
+                disk_io_read(&io, m * d->sector, d->sector, msec) != 0) {
                 check(t, 0, "the marker sector could not be read");
             } else {
-                for (k = 0; k < sizeof sec; k++)
-                    zero &= (sec[k] == 0u);
+                for (k = 0; k < d->sector; k++)
+                    zero &= (msec[k] == 0u);
                 if (zero)
                     log_info("  %-4s next-boot marker (p%u sector %u): empty",
                              "--", bp->number, (unsigned)rec->marker_sector);
-                else if (nextboot_sector_is_marker(sec, sizeof sec))
+                else if (nextboot_sector_is_marker(msec, d->sector))
                     note(t, "next-boot marker (p%u sector %u) is set",
                          bp->number, (unsigned)rec->marker_sector);
                 else
