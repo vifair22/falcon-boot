@@ -21,7 +21,7 @@
 #include <lib/string.h>
 
 /* The biggest package read: a loop-modules udeb is about 20 KB. */
-#define PKG_MAX (4u * 1024u * 1024u)
+#define PKG_MAX ((uint64_t)4 * 1024u * 1024u)
 
 typedef struct {
     int fd;
@@ -104,14 +104,13 @@ static long find_package(const char *release, const char *prefix)
     static const char *const path[] = { "pool", "main", "l" };
     iso9660_dirent e, sub;
     size_t depth;
-    int rc;
 
     if (iso9660_dir_open_root(&g_vol, &g_d1) != 0)
         return -1;
     for (depth = 0; depth < sizeof path / sizeof path[0]; depth++) {
         int found = 0;
 
-        while ((rc = iso9660_dir_next(&g_d1, &e)) == 1) {
+        while (iso9660_dir_next(&g_d1, &e) == 1) {
             if (e.is_dir && name_is(e.name, path[depth])) {
                 found = 1;
                 break;
@@ -120,10 +119,10 @@ static long find_package(const char *release, const char *prefix)
         if (!found || iso9660_dir_open(&g_vol, &g_d1, &e) != 0)
             return -1;
     }
-    while ((rc = iso9660_dir_next(&g_d1, &sub)) == 1) {
+    while (iso9660_dir_next(&g_d1, &sub) == 1) {
         if (!sub.is_dir || iso9660_dir_open(&g_vol, &g_d2, &sub) != 0)
             continue;
-        while ((rc = iso9660_dir_next(&g_d2, &e)) == 1) {
+        while (iso9660_dir_next(&g_d2, &e) == 1) {
             char n[256];
 
             if (e.is_dir || !name_ascii(e.name, n, sizeof n) ||
@@ -183,7 +182,7 @@ int dimod_bring(const char *prefix, const char *module,
     c.base = base;
     n = -1;
     if (iso9660_mount(&g_vol, iso_read, &c) == 0)
-        n = find_package(uts + 2u * HOOK_UTS_FIELD, prefix);
+        n = find_package(uts + (size_t)2 * HOOK_UTS_FIELD, prefix);
     (void)sys_close(c.fd);
     if (n <= 0)
         return 0;

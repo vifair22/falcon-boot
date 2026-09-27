@@ -275,3 +275,22 @@ tidy	falcon-winjump/src/winjump.c	clang-analyzer-optin.core.EnumCastOutOfRange	T
 tidy	falcon-efi/src/win/winpatch.c	bugprone-not-null-terminated-result	the result from calling 'memcpy' is not null-terminated
 tidy	falcon-winjump/src/winjump.c	clang-analyzer-core.uninitialized.Assign	Assigned value is garbage or undefined
 cppcheck	falcon-winjump/src/winjump.c	uninitvar	Uninitialized variable: d
+
+# ==========================================================================
+# 10. falcon-hook (2 entries)
+# ==========================================================================
+#
+# The hook entered the compile database, and so the gate, on 2026-09-27;
+# before that none of its own C was analysed.
+#
+# cppcheck autoVariables in hook.c's main: argv[0] = init just before
+# execve, with init a local buffer. execve copies the vector into the new
+# image before it returns (it only returns on failure, where the pointer is
+# still live), so the address never outlives the frame.
+#
+# cppcheck preprocessorErrorDirective in sys.c: cppcheck tries a
+# configuration with neither __x86_64__ nor __i386__ defined and reaches the
+# #error that refuses any other width. The build compiles exactly the two
+# configurations the file supports.
+cppcheck	falcon-hook/src/hook.c	autoVariables	Address of local auto-variable assigned to a function parameter.
+cppcheck	falcon-hook/src/sys.c	preprocessorErrorDirective	#error "falcon-hook is built for x86-64 and i686 only"

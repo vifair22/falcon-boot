@@ -52,10 +52,15 @@ VDISK_X86_OBJS := $(OBJ)/vdisk-x86/vdisk.o \
 VDISK_X86_LIBGCC := $(shell i686-w64-mingw32-gcc -print-libgcc-file-name \
 	2>/dev/null)
 
-VDISK_X64_INC := $(if $(wildcard /usr/x86_64-w64-mingw32/include/ddk),\
-	-isystem /usr/x86_64-w64-mingw32/include/ddk,)
-VDISK_X86_INC := $(if $(wildcard /usr/i686-w64-mingw32/include/ddk),\
-	-isystem /usr/i686-w64-mingw32/include/ddk,)
+# Where ddk/ sits depends on how the distribution packaged mingw (Arch:
+# /usr/<triplet>/include, Gentoo: /usr/lib/mingw64-toolchain/<triplet>/include),
+# so each compiler is asked for its own system include directories.
+vdisk_ddk = $(abspath $(firstword $(wildcard $(addsuffix /ddk,$(shell echo | \
+	$(1) -E -Wp,-v - 2>&1 | sed -n 's/^ \(\/.*\)/\1/p')))))
+VDISK_X64_DDK := $(call vdisk_ddk,x86_64-w64-mingw32-gcc)
+VDISK_X86_DDK := $(call vdisk_ddk,i686-w64-mingw32-gcc)
+VDISK_X64_INC := $(if $(VDISK_X64_DDK),-isystem $(VDISK_X64_DDK),)
+VDISK_X86_INC := $(if $(VDISK_X86_DDK),-isystem $(VDISK_X86_DDK),)
 
 $(OBJ)/vdisk-x64/vdisk.o: $(VDISK_SRC) falcon-vdisk/src/vdiskio.h
 	@mkdir -p $(@D)

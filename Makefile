@@ -417,7 +417,7 @@ analyze: all bios
 # not build gets a host entry. Test sources are entered under the test flags;
 # they live outside every src/ directory, which is how tools/analyze.sh leaves
 # them out of the gate.
-CC_DB_EFI := $(foreach s,$(sort $(EFI_APP_SRCS)) $(PAYLOAD_SRC),$(s):$(EFI_OBJ)/$(s:.c=.o))
+CC_DB_EFI := $(foreach s,$(sort $(EFI_APP_SRCS)) $(PAYLOAD_SRC) $(STANDIN_SRC),$(s):$(EFI_OBJ)/$(s:.c=.o))
 CC_DB_HOST := $(foreach s,$(filter-out $(EFI_APP_SRCS),$(sort $(HOST_SRCS))),$(s):$(HOST_OBJ)/$(s:.c=.o))
 CC_DB_WINJUMP := $(foreach s,$(WINJUMP_SRCS),$(s):$(WINJUMP_OBJ)/$(s:.c=.o))
 CC_DB_TEST := $(foreach s,$(sort $(ALL_TEST_SRCS) $(TEST_SUPPORT_SRCS)),$(s):$(TEST_OBJ)/$(s:.c=.o))
@@ -437,6 +437,11 @@ CC_DB_TEST_INC = case "$$src" in \
 # clang-tidy, which is the one thing Section 7.2 of the BIOS note says not to
 # let happen.
 CC_DB_BIOS := $(foreach s,$(filter-out $(EFI_APP_SRCS) $(HOST_SRCS),$(sort $(BIOS_CSRCS))),$(s):$(BIOS_OBJ)/$(s:.c=.o))
+# falcon-hook's and falcon-vdisk's own C, each under its own freestanding
+# flags; the core they link is entered above. vdisk is entered at x64, the
+# width whose DDK headers every mingw ships.
+CC_DB_HOOK := $(foreach s,$(filter-out $(EFI_APP_SRCS) $(HOST_SRCS) $(BIOS_CSRCS),$(sort $(HOOK_SRCS))),$(s):$(HOOK_OBJ)/$(s:.c=.o))
+CC_DB_VDISK := $(VDISK_SRC):$(OBJ)/vdisk-x64/vdisk.o
 
 # $(call cc_db_emit,<entries>,<compiler>,<flags>[,<shell setting inc per entry>])
 define cc_db_emit
@@ -457,12 +462,14 @@ define cc_db_emit
 	done
 endef
 
-compile_commands.json: Makefile $(wildcard falcon-*/build.mk)
+compile_commands.json: Makefile $(wildcard falcon-*/build.mk apps/*/app.mk)
 	@echo '[' > $@
 	$(call cc_db_emit,$(CC_DB_EFI),$(CC),$(EFI_CFLAGS))
 	$(call cc_db_emit,$(CC_DB_BIOS),$(CC_HOST),$(BIOS_CFLAGS))
 	$(call cc_db_emit,$(CC_DB_HOST),$(CC_HOST),$(HOST_CFLAGS))
 	$(call cc_db_emit,$(CC_DB_WINJUMP),$(CC),$(WINJUMP_CFLAGS))
+	$(call cc_db_emit,$(CC_DB_HOOK),$(CC_HOST),$(HOOK_CFLAGS) -ffunction-sections -fdata-sections)
+	$(call cc_db_emit,$(CC_DB_VDISK),x86_64-w64-mingw32-gcc,$(VDISK_CFLAGS) $(VDISK_X64_INC))
 	$(call cc_db_emit,$(CC_DB_TEST),$(CC_HOST),$(TEST_CFLAGS),$(CC_DB_TEST_INC))
 	@sed -i '$$ s/,$$//' $@
 	@echo ']' >> $@

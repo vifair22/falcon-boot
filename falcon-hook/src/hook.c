@@ -225,7 +225,7 @@ static void ensure_depmod(char **envp)
         return;
     dep[0] = '\0';
     cat(dep, sizeof dep, "/lib/modules/");
-    cat(dep, sizeof dep, uts + 2u * HOOK_UTS_FIELD);
+    cat(dep, sizeof dep, uts + (size_t)2 * HOOK_UTS_FIELD);
     cat(dep, sizeof dep, "/modules.dep");
     if (sys_exists(dep) == 0 || sys_exists("/sbin/depmod") != 0)
         return;
