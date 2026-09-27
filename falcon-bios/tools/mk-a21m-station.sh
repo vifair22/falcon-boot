@@ -66,6 +66,13 @@ if [ $((start + size)) -ge "$total" ]; then
     sudo ntfsresize -f -n -s $((new * 512)) "${nbd}p1" >/dev/null
     echo y | sudo ntfsresize -f -s $((new * 512)) "${nbd}p1" |
         tr '\r' '\n' | grep -v "percent completed" | tail -3
+    # ntfsresize marks the volume dirty so that Windows checks it, and the
+    # check ends in a reboot: every rig boot would then be CHKDSK and a
+    # second trip through the station, the case the rig is not asking
+    # about. ntfsresize leaves the volume consistent (it relocates what it
+    # must before it cuts), and the flag is only its request for a check, so
+    # the flag goes.
+    sudo ntfsfix -d "${nbd}p1" >/dev/null
     echo "$start,$new,7,*" | sudo sfdisk -q -N 1 --no-reread "$nbd"
     sudo blockdev --rereadpt "$nbd" || true
 fi
