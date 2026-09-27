@@ -688,6 +688,28 @@ int stn_run_whole_lba0(const stn_run *r, int full)
     return r != NULL && r->kind == STN_RUN_LBA0 && full;
 }
 
+unsigned stn_min_mib(uint32_t sector)
+{
+    return sector == 512u ? STN_MIN_MIB
+         : sector == 4096u ? STN_MIN_MIB_4K : 0u;
+}
+
+unsigned stn_default_mib(uint32_t sector)
+{
+    return sector == 512u ? STN_DEFAULT_MIB
+         : sector == 4096u ? STN_DEFAULT_MIB_4K : 0u;
+}
+
+uint64_t stn_align_for(uint64_t align512, uint32_t sector)
+{
+    uint64_t n;
+
+    if (sector < 512u || sector % 512u != 0u)
+        return 0;
+    n = align512 / (sector / 512u);
+    return n == 0u ? 1u : n;
+}
+
 stn_reach stn_reach_of(uint64_t end)
 {
     if (end > STN_REACH_LBA28_BYTES)

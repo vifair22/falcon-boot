@@ -180,7 +180,7 @@ printf 'label: dos\nunit: sectors\nstart=2048, size=100000, type=7\nsize=100000,
     sfdisk -q "$S"
 expect_fail "refused: four primaries taken" "four primary slots" \
     "$MK" station install "$S" --bios --dry-run
-expect_fail "refused: --size under the floor" "a number of MiB" \
+expect_fail "refused: --size under the floor" "at least 40 MiB" \
     "$MK" station install "$M" --bios --size 30 --dry-run
 expect_fail "refused: --uki without --legacy" "station-legacy" \
     "$MK" station install "$M" --bios --uki "$W/memtest.bin" --dry-run

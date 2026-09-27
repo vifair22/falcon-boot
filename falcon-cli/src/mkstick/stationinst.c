@@ -538,7 +538,8 @@ static cli_status plan_bios(const stn_disk *td, uint64_t want, size_t l2,
                             size_t l3, stn_plan *p, int required)
 {
     const mks_records *r = &td->r;
-    uint64_t disk_sectors = td->d.size / td->d.sector;
+    uint32_t sec = td->d.sector;
+    uint64_t disk_sectors = td->d.size / sec;
     uint64_t lo;
     uint64_t hi;
     uint64_t largest = 0;
@@ -569,7 +570,7 @@ static cli_status plan_bios(const stn_disk *td, uint64_t want, size_t l2,
             return set_error(CLI_ERR_RANGE, "%s: the MBR's four primary "
                              "slots are all taken; the station partition "
                              "needs one", td->d.path);
-        lo = stn_first_allowed(&r->table, 2048u);
+        lo = stn_first_allowed(&r->table, (uint64_t)1024u * 1024u / sec);
         hi = disk_sectors - 1u;
         if (hi > 0xFFFFFFFFu)
             hi = 0xFFFFFFFFu;
@@ -580,15 +581,17 @@ static cli_status plan_bios(const stn_disk *td, uint64_t want, size_t l2,
         hi = r->table.last_usable;
     }
 
-    st = stn_find_free(&r->table, lo, hi, want, STN_ALIGN_MIB, &p->region,
+    st = stn_find_free(&r->table, lo, hi, want,
+                       stn_align_for(STN_ALIGN_MIB, sec), &p->region,
                        &largest);
     if (st == STN_ERR_NOSPACE)
-        st = stn_find_free(&r->table, lo, hi, want, STN_ALIGN_4K,
-                           &p->region, &largest4k);
+        st = stn_find_free(&r->table, lo, hi, want,
+                           stn_align_for(STN_ALIGN_4K, sec), &p->region,
+                           &largest4k);
     if (st != STN_OK) {
-        (void)util_format_size(want * STN_SECTOR, need, sizeof need);
+        (void)util_format_size(want * sec, need, sizeof need);
         (void)util_format_size((largest4k > largest ? largest4k : largest) *
-                                   STN_SECTOR, have, sizeof have);
+                                   sec, have, sizeof have);
         return set_error(CLI_ERR_RANGE,
                          "%s has no free space for the station partition: "
                          "it needs %s (%llu sectors) outside every "
@@ -604,8 +607,7 @@ static cli_status plan_bios(const stn_disk *td, uint64_t want, size_t l2,
                                                     : p->region.start) - 1u;
 
             if (gap_end < (uint64_t)STAGE2_LBA ||
-                gap_end - STAGE2_LBA + 1u < (l2 + STN_SECTOR - 1u) /
-                                                STN_SECTOR) {
+                gap_end - STAGE2_LBA + 1u < (l2 + sec - 1u) / sec) {
                 if (!required)
                     return set_error(CLI_ERR_RANGE, "no room before the "
                                      "first partition");
@@ -615,7 +617,7 @@ static cli_status plan_bios(const stn_disk *td, uint64_t want, size_t l2,
                                  "BIOS station needs %zu sectors there",
                                  td->d.path, (unsigned)STAGE2_LBA,
                                  (unsigned long long)p->first_real,
-                                 (l2 + STN_SECTOR - 1u) / STN_SECTOR);
+                                 (l2 + sec - 1u) / sec);
             }
             p->make_ef02 = 1;
             p->ef02_start = STAGE2_LBA;
@@ -862,10 +864,12 @@ static cli_status backup_rewrite_header(const stn_backup *b, const char *path)
 
 static cli_status format_station(const stn_disk *td, const stn_plan *p)
 {
+    char ssz[16];
     char res[16];
     char start[24];
     char kib[24];
 
+    (void)snprintf(ssz, sizeof ssz, "%u", (unsigned)td->d.sector);
     (void)snprintf(res, sizeof res, "%u", (unsigned)p->reserved);
     (void)snprintf(start, sizeof start, "%llu",
                    (unsigned long long)p->region.start);
@@ -875,10 +879,14 @@ static cli_status format_station(const stn_disk *td, const stn_plan *p)
     /* One sector a cluster keeps a partition this small FAT32 (65525
      * clusters at least); -h is what DOS-era code reads the partition's
      * place from; --mbr=n keeps mkfs.fat off LBA 0; -I because a whole
-     * disk with partitions is what the target is. */
-    return proc_runl_quiet("mkfs.fat", "-I", "-F", "32", "-s", "1", "-R",
-                           res, "-n", STN_FAT_LABEL, "-h", start, "--offset",
-                           start, "--mbr=n", td->d.path, kib, PROC_END);
+     * disk with partitions is what the target is. -S is the disk's sector:
+     * the FAT's must match it (the BIOS reads the reserved sectors in the
+     * disk's), and --offset and -h count in it, where an image file would
+     * otherwise be taken for 512. */
+    return proc_runl_quiet("mkfs.fat", "-I", "-F", "32", "-S", ssz, "-s",
+                           "1", "-R", res, "-n", STN_FAT_LABEL, "-h", start,
+                           "--offset", start, "--mbr=n", td->d.path, kib,
+                           PROC_END);
 }
 
 static cli_status put_bios_files(const cli_args *a, const stn_disk *td,
@@ -978,17 +986,19 @@ static cli_status write_bios(const cli_args *a, const stn_disk *td,
         return set_error_errno(CLI_ERR_IO, "opening %s", td->d.path);
     rc = dev_read(&dev, p->region.start, 1, bs);
     if (rc == CLI_OK && (bioscore_fat_bpb(bs, &fat) != BIOSCORE_OK ||
+                         fat.sector != td->d.sector ||
                          fat.reserved < p->reserved || !fat.fat32 ||
                          fat.fsinfo == BOOTPART_MARKER_SECTOR ||
                          fat.backup == BOOTPART_MARKER_SECTOR))
         rc = set_error(CLI_ERR_INVALID, "mkfs.fat made a FAT the plan does "
-                       "not fit (reserved %u, want %u)",
-                       (unsigned)fat.reserved, (unsigned)p->reserved);
+                       "not fit (%u-byte sectors, reserved %u; want %u, %u)",
+                       (unsigned)fat.sector, (unsigned)fat.reserved,
+                       (unsigned)td->d.sector, (unsigned)p->reserved);
     (void)close(dev.fd);
     if (rc != CLI_OK)
         return rc;
-    log_info("station partition: FAT32, %u reserved sectors",
-             (unsigned)fat.reserved);
+    log_info("station partition: FAT32, %u-byte sectors, %u reserved",
+             (unsigned)fat.sector, (unsigned)fat.reserved);
 
     rc = put_bios_files(a, td, p);
     if (rc != CLI_OK)
@@ -1115,7 +1125,7 @@ static cli_status firmware_entry(const stn_disk *td, const stn_plan *p,
     cli_status rc;
 
     *made = -1;
-    if (!td->d.is_block) {
+    if (!stn_is_machine(&td->d)) {
         log_info("firmware entry: none (an image; on its machine run "
                  "efibootmgr --create --disk <disk> --part %u --label %s "
                  "--loader '\\EFI\\falcon\\%s')",
@@ -1297,7 +1307,8 @@ static cli_status install_run(const cli_args *a)
     int dry = cli_flag(a, "dry-run");
     int ask_bios = cli_flag(a, "bios");
     int ask_uefi = cli_flag(a, "uefi");
-    uint64_t want = (uint64_t)STN_DEFAULT_MIB * 2048u;
+    unsigned long size_mib = 0;
+    uint64_t want;
     char derived[MKS_PATH_MAX];
     char tmpdir[] = "/tmp/falcon-station.XXXXXX";
     char keydir[MKS_PATH_MAX];
@@ -1326,13 +1337,12 @@ static cli_status install_run(const cli_args *a)
         return rc;
     if (size_text != NULL) {
         char *end = NULL;
-        unsigned long mib = strtoul(size_text, &end, 10);
 
-        if (end == size_text || *end != '\0' || mib < STN_MIN_MIB ||
-            mib > 4096u)
-            return set_error(CLI_ERR_USAGE, "--size %s: a number of MiB from "
-                             "%u to 4096", size_text, STN_MIN_MIB);
-        want = (uint64_t)mib * 2048u;
+        size_mib = strtoul(size_text, &end, 10);
+        if (end == size_text || *end != '\0' || size_mib == 0u ||
+            size_mib > STN_MAX_MIB)
+            return set_error(CLI_ERR_USAGE, "--size %s: a number of MiB up "
+                             "to %u", size_text, STN_MAX_MIB);
     }
     if ((key == NULL) != (cert == NULL))
         return set_error(CLI_ERR_USAGE, "--key and --cert go together");
@@ -1352,10 +1362,20 @@ static cli_status install_run(const cli_args *a)
         return rc;
     td = &s.disks[0];
     disk_describe(&td->d);
-    if (td->d.sector != STN_SECTOR)
+    if (stn_min_mib(td->d.sector) == 0u)
         return set_error(CLI_ERR_INVALID, "%s has %u-byte sectors; the "
-                         "installer writes 512-byte-sector disks",
-                         td->d.path, td->d.sector);
+                         "installer writes disks of 512- and 4096-byte "
+                         "sectors", td->d.path, td->d.sector);
+    /* The station partition's FAT32 needs 65525 clusters of one sector
+     * each, which is eight times the bytes on a 4Kn disk. */
+    if (size_mib == 0u)
+        size_mib = stn_default_mib(td->d.sector);
+    if (size_mib < stn_min_mib(td->d.sector))
+        return set_error(CLI_ERR_USAGE, "--size %s: at least %u MiB on a "
+                         "disk of %u-byte sectors (FAT32's 65525 clusters)",
+                         size_text, stn_min_mib(td->d.sector),
+                         td->d.sector);
+    want = (uint64_t)size_mib * (1024u * 1024u / td->d.sector);
     if (td->r.rc != PART_OK || td->r.table.count == 0u)
         return set_error(CLI_ERR_INVALID, "%s has no partition table; the "
                          "station goes onto a machine's disk beside its "
@@ -1534,7 +1554,7 @@ static cli_status install_run(const cli_args *a)
         stn_scan_found(&s, p.uefi);
         /* The firmware's entries are this machine's; an image's machine
          * is not this one. */
-        if (p.uefi && td->d.is_block)
+        if (p.uefi && stn_is_machine(&td->d))
             stn_scan_firmware(&s, &ours);
         if (ours >= 0)
             log_info("note:     firmware entry Boot%04X is already %s",
@@ -1577,7 +1597,7 @@ static cli_status install_run(const cli_args *a)
                                                       : "GPT",
                  p.slot, (unsigned long long)p.region.start,
                  (unsigned long long)(p.region.start + p.region.sectors - 1u),
-                 util_format_size(p.region.sectors * STN_SECTOR, size,
+                 util_format_size(p.region.sectors * td->d.sector, size,
                                   sizeof size),
                  (unsigned)p.reserved);
         if (p.make_ef02)
@@ -1593,7 +1613,7 @@ static cli_status install_run(const cli_args *a)
                  (unsigned long long)p.bplan.stage3_sectors,
                  (unsigned long long)p.bplan.marker_lba);
         reach_warn("the station partition",
-                   (p.region.start + p.region.sectors) * STN_SECTOR);
+                   (p.region.start + p.region.sectors) * td->d.sector);
         {
             char hdr[64];
 
@@ -1683,10 +1703,12 @@ static cli_status install_run(const cli_args *a)
                                 ? p.bplan.stage2_lba + p.bplan.stage2_sectors
                                       - gap_lo
                                 : first - gap_lo);
-        if (rc == CLI_OK)
+        if (rc == CLI_OK) {
+            uint64_t n = p.reserved + STN_REGION_BACKUP_BYTES / td->d.sector;
+
             rc = backup_add(&bk, td->d.path, STN_RUN_REGION, p.region.start,
-                            p.region.sectors < STN_REGION_BACKUP
-                                ? p.region.sectors : STN_REGION_BACKUP);
+                            p.region.sectors < n ? p.region.sectors : n);
+        }
     }
     if (rc == CLI_OK && p.uefi) {
         bk.flags |= STN_FLAG_UEFI;
