@@ -24,6 +24,15 @@
 #         in 4096-byte sectors.
 #   mbr4k MBR on a 4096-byte-sector disk: a Windows partition, a LUKS2
 #         shelf, free space. `station install --bios`.
+#   gpt2  two GPT disks: the station's (an ESP with no Windows, a LUKS2
+#         shelf, free space) and a Windows disk behind it (its own ESP
+#         carrying the stand-in Windows Boot Manager, a Windows partition).
+#         `station install --uefi --also` the Windows disk; the varstore
+#         has falcon's entry, and in the -nxt cases a "Windows Boot
+#         Manager" entry naming the second disk's ESP.
+#   mbr   MBR, 512-byte sectors: an ESP of type 0xEF, a LUKS2 shelf, free
+#         space. `station install --uefi`; falcon's entry names the ESP by
+#         the disk's signature, as a firmware does on an MBR disk.
 #
 # The cases:
 #
@@ -49,6 +58,18 @@
 #                 outside the ESP (mdeltree's deleted entries) and the
 #                 shelf (its stamp)
 #   mbr4k-bios    mbr4k under SeaBIOS, to the UKI
+#   second-nxt, second-sb-nxt
+#                 gpt2 with Windows's firmware entry: the INI's [windows]
+#                 (the second disk) matches the entry, counts down, and
+#                 boots it through BootNext and a reset
+#   second-esp, second-sb-esp
+#                 gpt2 with no entry for Windows: the same [windows] is the
+#                 second disk's ESP row, which counts down and loads
+#                 bootmgfw.efi from that disk by device path, no reset
+#   mbr-uefi, mbr-uefi-sb
+#                 mbr under OVMF: the list has the shelf's UKI and memtest,
+#                 the installer's default (the UKI, a [linux] section)
+#                 counts down to the prompt, and the UKI reports
 #
 # The disks are image files; the 4096-byte-sector ones are written through
 # loop devices, which needs sudo, as do cryptsetup and the installer's
@@ -225,6 +246,53 @@ build_mbr4k() {
     detach
 }
 
+# The Windows disk of gpt2: GPT with a fixed DiskGUID, its own ESP carrying
+# the stand-in as bootmgfw.efi, and a Windows partition.
+WIN2_DISK=5EEDD15C-0000-4000-8000-000000000002
+build_gpt2() {
+    local img=$R/gpt2.img win=$R/win2.img
+
+    rm -f "$img" "$win"
+    truncate -s 64M "$win"
+    sgdisk -U "$WIN2_DISK" -n 1:2048:+40M -t 1:EF00 -c 1:EFI \
+        -n 2:0:0 -t 2:0700 -c "2:Basic data" "$win" >/dev/null
+    mkfs.fat -F 32 --offset 2048 -n WINESP "$win" $(( 40 * 1024 )) >/dev/null 2>&1
+    mmd -i "$win@@1M" ::/EFI ::/EFI/Microsoft ::/EFI/Microsoft/Boot
+    mcopy -i "$win@@1M" "$STANDIN_SIGNED" ::/EFI/Microsoft/Boot/bootmgfw.efi
+    bootmgr_sector "$win" $(( $(part_facts "$win" 2 | cut -d' ' -f1) * 512 ))
+    part_facts "$win" 1 > "$R/win2.esp"
+
+    truncate -s 256M "$img"
+    sgdisk -n 1:2048:+64M -t 1:EF00 -c 1:EFI \
+        -n 2:0:+64M -t 2:"$SHELF_GUID" -c 2:FALCON-UKI "$img" >/dev/null
+    mkfs.fat -F 32 --offset 2048 -n SYSTEM "$img" $(( 64 * 1024 )) >/dev/null 2>&1
+    attach "$img"
+    make_shelf "${LOOP}p2"
+    detach
+    install_station gpt2 "$img" --uefi --shelf 2 --also "$win" \
+        --memtest-efi "$STANDIN"
+    part_facts "$img" 1 > "$R/gpt2.esp"
+}
+
+# An MBR disk with an ESP (0xEF) and a shelf; its ESP's facts as the
+# firmware's HARDDRIVE node names an MBR partition.
+MBR_SIG=4d425201
+build_mbr() {
+    local img=$R/mbr.img
+
+    rm -f "$img"
+    truncate -s 256M "$img"
+    printf 'label: dos\nlabel-id: 0x%s\nstart=2048, size=131072, type=ef\nsize=131072, type=83\n' \
+        "$MBR_SIG" | sfdisk -q --no-reread --no-tell-kernel "$img" >/dev/null
+    mkfs.fat -F 32 --offset 2048 -n SYSTEM "$img" $(( 64 * 1024 )) >/dev/null 2>&1
+    attach "$img"
+    make_shelf "${LOOP}p2"
+    detach
+    install_station mbr "$img" --uefi --shelf 2 --memtest-efi "$STANDIN"
+    echo "2048 131072 $(od -An -tx4 -j440 -N4 "$img" | tr -d ' ') 1" \
+        > "$R/mbr.esp"
+}
+
 build_all() {
     make --no-print-directory station cli "$STANDIN" "$STANDIN_SIGNED" \
         >/dev/null
@@ -234,13 +302,15 @@ build_all() {
         [[ -f "$f" ]] || { echo "ERROR: $f missing (make test-uki sign)" >&2; exit 1; }
     done
     if [[ "${KEEP:-0}" == 1 && -f "$R/gpt.img" && -f "$R/4kn.img" &&
-          -f "$R/mbr4k.img" ]]; then
+          -f "$R/mbr4k.img" && -f "$R/gpt2.img" && -f "$R/mbr.img" ]]; then
         return
     fi
     echo "== installing the rig's stations"
     build_gpt
     build_4kn
     build_mbr4k
+    build_gpt2
+    build_mbr
 }
 
 # ---- the machine ----
@@ -278,41 +348,53 @@ send_keys() {
     mon "sendkey ret"
 }
 
-# vars JSON: falcon's Boot0001 on the station disk's ESP, and with WIN a
-# "Windows Boot Manager" Boot0009 naming bootmgfw.efi on the same ESP.
-# The device path is the firmware's whole path to the disk: OVMF drops a
-# boot option whose path matches no device QEMU's bootorder lists.
-vars_json() {   # vars_json sata|nvme "START SIZE GUID" WIN
+# vars JSON: falcon's Boot0001 on the station disk's ESP, and a "Windows
+# Boot Manager" Boot0009 naming bootmgfw.efi: with WIN 1 on the same ESP,
+# with WIN 2 on the second disk's ESP (WINFACTS, SATA port 1). FACTS are
+# "START SIZE GUID" for a GPT partition or "START SIZE SIG N" for an MBR
+# one, in the disk's own sectors. The device path is the firmware's whole
+# path to the disk: OVMF drops a boot option whose path matches no device
+# QEMU's bootorder lists.
+vars_json() {   # vars_json sata|nvme FACTS WIN [WINFACTS]
     python3 - "$1" "$2" "$3" "$FALCON_SHIM" "$BOOTMGFW" "$GLOBAL_GUID" \
-        "$NVME_SLOT" <<'EOF'
+        "$NVME_SLOT" "${4:-}" <<'EOF'
 import json, struct, sys, uuid
-bus, facts, win, shim, bootmgfw, gguid, slot = sys.argv[1:8]
-start, size, guid = facts.split()
-if bus == "sata":
-    # PciRoot(0)/Pci(0x1f,0x2)/Sata(0,0xFFFF,0): q35's AHCI, port 0.
+bus, facts, win, shim, bootmgfw, gguid, slot, winfacts = sys.argv[1:9]
+def prefix(port):
     pre = struct.pack("<BBHII", 2, 1, 12, 0x0A0341D0, 0)
-    pre += struct.pack("<BBHBB", 1, 1, 6, 2, 0x1F)
-    pre += struct.pack("<BBHHHH", 3, 0x12, 10, 0, 0xFFFF, 0)
-else:
-    # PciRoot(0)/Pci(slot,0)/NVMe(0x1,00-00-00-00-00-00-00-00).
-    pre = struct.pack("<BBHII", 2, 1, 12, 0x0A0341D0, 0)
-    pre += struct.pack("<BBHBB", 1, 1, 6, 0, int(slot))
-    pre += struct.pack("<BBHI", 3, 0x17, 16, 1) + bytes(8)
-hd = struct.pack("<BBHIQQ", 4, 1, 42, 1, int(start), int(size))
-hd += uuid.UUID(guid).bytes_le + bytes([2, 2])
+    if bus == "sata":
+        # PciRoot(0)/Pci(0x1f,0x2)/Sata(port,0xFFFF,0): q35's AHCI.
+        pre += struct.pack("<BBHBB", 1, 1, 6, 2, 0x1F)
+        pre += struct.pack("<BBHHHH", 3, 0x12, 10, port, 0xFFFF, 0)
+    else:
+        # PciRoot(0)/Pci(slot,0)/NVMe(0x1,00-00-00-00-00-00-00-00).
+        pre += struct.pack("<BBHBB", 1, 1, 6, 0, int(slot))
+        pre += struct.pack("<BBHI", 3, 0x17, 16, 1) + bytes(8)
+    return pre
+def harddrive(f):
+    f = f.split()
+    if len(f) == 3:
+        hd = struct.pack("<BBHIQQ", 4, 1, 42, 1, int(f[0]), int(f[1]))
+        return hd + uuid.UUID(f[2]).bytes_le + bytes([2, 2])
+    # MBR: the partition's number, and the disk signature in the node's
+    # first four signature bytes (MBRType 1, SignatureType 1).
+    hd = struct.pack("<BBHIQQ", 4, 1, 42, int(f[3]), int(f[0]), int(f[1]))
+    return hd + struct.pack("<I", int(f[2], 16)) + bytes(12) + bytes([1, 1])
 end = bytes([0x7F, 0xFF, 4, 0])
-def option(desc, path):
+def option(desc, pre, hd, path):
     name = (path + "\0").encode("utf-16-le")
     fp = struct.pack("<BBH", 4, 4, 4 + len(name)) + name
     dp = pre + hd + fp + end
     d = (desc + "\0").encode("utf-16-le")
     return (struct.pack("<IH", 1, len(dp)) + d + dp).hex()
 v = [{"name": "Boot0001", "guid": gguid, "attr": 7,
-      "data": option("falcon", shim)}]
+      "data": option("falcon", prefix(0), harddrive(facts), shim)}]
 order = [1]
-if win == "1":
+if win in ("1", "2"):
+    where = (prefix(0), harddrive(facts)) if win == "1" else \
+        (prefix(1), harddrive(winfacts))
     v.append({"name": "Boot0009", "guid": gguid, "attr": 7,
-              "data": option("Windows Boot Manager", bootmgfw)})
+              "data": option("Windows Boot Manager", *where, bootmgfw)})
     order.append(9)
 v.append({"name": "BootOrder", "guid": gguid, "attr": 7,
           "data": b"".join(struct.pack("<H", n) for n in order).hex()})
@@ -320,7 +402,8 @@ print(json.dumps({"version": 2, "variables": v}))
 EOF
 }
 
-# boot FIRMWARE IMG BUS FACTS WIN: one disk, the station's. OVMF under
+# boot FIRMWARE IMG BUS FACTS WIN [WINFACTS]: the station's disk, and
+# SECOND (a disk image, a copy of it on SATA port 1) when it is set. OVMF under
 # KVM on a loaded host now and then stops before its boot manager says
 # anything (run-station-rig.sh has the same); one that has not reached
 # BdsDxe in a minute is started again once.
@@ -334,7 +417,8 @@ boot() {
 }
 
 boot_once() {
-    local fw=$1 img=$2 bus=$3 facts=$4 win=$5 code vars dev fwargs=()
+    local fw=$1 img=$2 bus=$3 facts=$4 win=$5 winfacts=${6:-} code vars dev
+    local fwargs=() second=()
     if [[ $bus == nvme ]]; then
         dev="nvme,drive=d0,serial=falcon4k,addr=$NVME_SLOT,logical_block_size=4096,physical_block_size=4096,bootindex=0"
     else
@@ -351,7 +435,7 @@ boot_once() {
         fi
         cp "$vars" "$R/vars.fd"
         chmod u+w "$R/vars.fd"
-        vars_json "$bus" "$facts" "$win" > "$R/vars.json"
+        vars_json "$bus" "$facts" "$win" "$winfacts" > "$R/vars.json"
         virt-fw-vars --inplace "$R/vars.fd" --set-json "$R/vars.json" \
             >/dev/null 2>&1
         if [[ $fw == uefi-sb ]]; then
@@ -369,10 +453,16 @@ boot_once() {
     esac
     # Each boot writes a copy, so the installed disk stays as installed.
     cp --sparse=always "$img" "$R/boot.img"
+    if [[ -n "${SECOND:-}" ]]; then
+        cp --sparse=always "$SECOND" "$R/boot2.img"
+        second=(-drive "if=none,id=d1,format=raw,file=$R/boot2.img"
+                -device "ide-hd,drive=d1,bus=ide.1,bootindex=1")
+    fi
     rm -f "$R/serial.log" "$R/mon.sock"
     timeout "$TIMEOUT" qemu-system-x86_64 "${fwargs[@]}" -m 1024 \
         -enable-kvm -cpu host -display none -net none \
         -drive "if=none,id=d0,format=raw,file=$R/boot.img" -device "$dev" \
+        "${second[@]}" \
         -serial "file:$R/serial.log" \
         -monitor "unix:$R/mon.sock,server,nowait" >"$R/qemu.log" 2>&1 &
     QPID=$!
@@ -382,7 +472,7 @@ halt() {
     mon quit
     wait "$QPID" 2>/dev/null || true
     QPID=
-    rm -f "$R/boot.img"
+    rm -f "$R/boot.img" "$R/boot2.img"
 }
 
 FAILED=0
@@ -497,6 +587,55 @@ case_bios() {           # case_bios CASE IMG PART
     result "$c" "$WHY" "4096-byte sectors: stage 2 took p$part, a key stopped the count, the shelf unlocked to the UKI"
 }
 
+# gpt2: Windows on the second disk, through its firmware entry (nxt) or
+# its ESP (esp).
+case_second() {         # case_second CASE FIRMWARE nxt|esp
+    local c=$1 fw=$2 how=$3 win=0
+    WHY=
+    [[ $how == nxt ]] && win=2
+    SECOND=$R/win2.img boot "$fw" "$R/gpt2.img" sata "$(cat "$R/gpt2.esp")" \
+        "$win" "$(cat "$R/win2.esp")"
+    wait_for "Booting in 5 s. Any key stops the countdown." 90 ||
+        WHY="no countdown"
+    [[ -z "$WHY" ]] && { has "Personal OS (encrypted)" || WHY="no Personal OS row"; }
+    [[ -z "$WHY" ]] && { wait_for "booting: Windows" 15 ||
+        WHY="the default was not Windows"; }
+    if [[ -z "$WHY" && $how == nxt ]]; then
+        has "restarting into it" || WHY="no NXT page"
+        [[ -z "$WHY" ]] && { wait_for "FALCON-STANDIN $BOOTMGFW" 90 ||
+            WHY="the firmware did not start Windows after the reset"; }
+    elif [[ -z "$WHY" ]]; then
+        wait_for "FALCON-STANDIN" 30 || WHY="bootmgfw.efi did not start"
+        [[ -z "$WHY" ]] && has "restarting into it" &&
+            WHY="the ESP row went through a reset"
+        [[ -z "$WHY" ]] && { has "BitLocker will ask for the recovery key" ||
+            WHY="no ESP page"; }
+    fi
+    halt
+    if [[ $how == nxt ]]; then
+        result "$c" "$WHY" "the INI's [windows] on the second disk matched its entry; BootNext started $BOOTMGFW"
+    else
+        result "$c" "$WHY" "the INI's [windows] was the second disk's ESP; bootmgfw.efi loaded from it, no reset"
+    fi
+}
+
+# mbr: the UEFI station on an MBR disk's ESP.
+case_mbr_uefi() {       # case_mbr_uefi CASE FIRMWARE
+    local c=$1 fw=$2 id
+    WHY=
+    id=$(install_id "$R/mbr.img")
+    boot "$fw" "$R/mbr.img" sata "$(cat "$R/mbr.esp")" 0
+    wait_for "Booting in 5 s. Any key stops the countdown." 90 ||
+        WHY="no countdown"
+    [[ -z "$WHY" ]] && { has "personal.efi" || WHY="no row for the INI's [linux]"; }
+    [[ -z "$WHY" ]] && { has "Memory test (memtest86+)" || WHY="no memtest row"; }
+    [[ -z "$WHY" ]] && { wait_for "booting: personal.efi" 15 ||
+        WHY="the default was not the shelf's UKI"; }
+    [[ -z "$WHY" ]] && unlock "$id" 30
+    halt
+    result "$c" "$WHY" "an ESP on MBR (mbr:$MBR_SIG): the default counted down to the prompt; UKI got both credentials"
+}
+
 case_4kn_remove() {
     local c=$1 out
     WHY=
@@ -543,7 +682,8 @@ done
 CASES=("$@")
 [[ ${#CASES[@]} -gt 0 ]] ||
     CASES=(uefi-default uefi-sb-default uefi-pos uefi-sb-pos 4kn-uefi
-           4kn-uefi-sb 4kn-bios 4kn-remove mbr4k-bios)
+           4kn-uefi-sb 4kn-bios 4kn-remove mbr4k-bios second-nxt
+           second-sb-nxt second-esp second-sb-esp mbr-uefi mbr-uefi-sb)
 
 for c in "${CASES[@]}"; do
     case $c in
@@ -556,6 +696,12 @@ for c in "${CASES[@]}"; do
     4kn-bios)        case_bios "$c" "$R/4kn.img" 4 ;;
     4kn-remove)      case_4kn_remove "$c" ;;
     mbr4k-bios)      case_bios "$c" "$R/mbr4k.img" 3 ;;
+    second-nxt)      case_second "$c" uefi nxt ;;
+    second-sb-nxt)   case_second "$c" uefi-sb nxt ;;
+    second-esp)      case_second "$c" uefi esp ;;
+    second-sb-esp)   case_second "$c" uefi-sb esp ;;
+    mbr-uefi)        case_mbr_uefi "$c" uefi ;;
+    mbr-uefi-sb)     case_mbr_uefi "$c" uefi-sb ;;
     *) echo "unknown case: $c" >&2; exit 2 ;;
     esac
 done
