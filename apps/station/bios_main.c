@@ -405,7 +405,7 @@ static void find_chains(void)
         if (d == g_boot_idx || g_disks[d].id.kind == 0 ||
             !chain_disk_bootable(&g_disks[d].disk))
             continue;
-        if (add_chain(STROW_MBR, d, 0, "Boot code") == (strow *)0)
+        if (add_chain(STROW_MBR, d, 0, STROWS_LABEL_BOOTCODE) == (strow *)0)
             return;
     }
 }
@@ -420,7 +420,7 @@ static void build_rows(void)
 
         if (w != (strow *)0) {
             memcpy(w->name, "memtest", 8);
-            ascii16(w->label, STROWS_LABEL_MAX, "Memory test (memtest86+)");
+            ascii16(w->label, STROWS_LABEL_MAX, STROWS_LABEL_MEMTEST);
         }
     }
     if (g_have_ini)

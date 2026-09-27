@@ -468,7 +468,7 @@ static void rows_find(void)
         copy_ascii(w->file, sizeof w->file, STROWS_BOOTMGFW);
         strows_name_part(w->name, &w->disk, w->part);
         strows_label_part(w->label, STROWS_LABEL_MAX,
-                          L"Windows Boot Manager", &w->disk, w->part);
+                          L"" STROWS_LABEL_BOOTMGR, &w->disk, w->part);
         w->ref = i;
     }
 
@@ -478,7 +478,7 @@ static void rows_find(void)
         copy_ascii(w->name, sizeof w->name, "memtest");
         w->own_esp = 1;
         w->ref_none = 1;
-        ucs2_copy(w->label, STROWS_LABEL_MAX, L"Memory test (memtest86+)");
+        ucs2_copy(w->label, STROWS_LABEL_MAX, L"" STROWS_LABEL_MEMTEST);
     }
 
     /* Firmware Setup last for the stick's reason: a mistimed Enter lands
@@ -486,7 +486,7 @@ static void rows_find(void)
      * strows_arrange keeps it last whatever STATION.INI's order says. */
     if (fw_setup_available(g_st) &&
         (w = strows_add(&g_rows, STROW_FWSETUP)) != (strow *)0)
-        ucs2_copy(w->label, STROWS_LABEL_MAX, L"Reboot to firmware setup");
+        ucs2_copy(w->label, STROWS_LABEL_MAX, L"" STROWS_LABEL_FWSETUP);
 }
 
 /* ---- STATION.INI (DESIGN Section 13.7) ---- */

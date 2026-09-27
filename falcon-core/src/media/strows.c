@@ -149,34 +149,59 @@ void strows_name_uki(char out[STATIONINI_NAME_MAX], const char *file)
     out[n] = '\0';
 }
 
+/* " (disk gpt:1a2b3c4d, partition 2)", or without the partition. */
+static void label_tail(char tail[64], const part_disk_id *d, uint32_t part)
+{
+    char id[16];
+    size_t t;
+    size_t i;
+
+    disk_short(d, id);
+    copy_str(tail, 64, " (disk ");
+    t = 7u;
+    for (i = 0; id[i] != '\0'; i++)
+        tail[t++] = id[i];
+    if (part != 0) {
+        copy_str(tail + t, 64 - t, ", partition ");
+        t += 12u;
+        t += put_dec(tail + t, part);
+    }
+    tail[t++] = ')';
+    tail[t] = '\0';
+}
+
 void strows_label_part(uint16_t *label, size_t cap, const uint16_t *what,
                        const part_disk_id *d, uint32_t part)
 {
     char tail[64];
-    char id[16];
     size_t n = 0;
-    size_t t = 0;
     size_t i;
 
     if (cap == 0)
         return;
     for (i = 0; what[i] != 0 && n + 1u < cap; i++)
         label[n++] = what[i];
-    disk_short(d, id);
-    copy_str(tail, sizeof tail, " (disk ");
-    t = 7u;
-    for (i = 0; id[i] != '\0'; i++)
-        tail[t++] = id[i];
-    if (part != 0) {
-        copy_str(tail + t, sizeof tail - t, ", partition ");
-        t += 12u;
-        t += put_dec(tail + t, part);
-    }
-    tail[t++] = ')';
-    tail[t] = '\0';
+    label_tail(tail, d, part);
     for (i = 0; tail[i] != '\0' && n + 1u < cap; i++)
         label[n++] = (uint16_t)(unsigned char)tail[i];
     label[n] = 0;
+}
+
+void strows_label_part_ascii(char *label, size_t cap, const char *what,
+                             const part_disk_id *d, uint32_t part)
+{
+    char tail[64];
+    size_t n = 0;
+    size_t i;
+
+    if (cap == 0)
+        return;
+    for (i = 0; what[i] != '\0' && n + 1u < cap; i++)
+        label[n++] = what[i];
+    label_tail(tail, d, part);
+    for (i = 0; tail[i] != '\0' && n + 1u < cap; i++)
+        label[n++] = tail[i];
+    label[n] = '\0';
 }
 
 int strows_path_eq(const char *a, const char *b)
@@ -248,8 +273,9 @@ static strow *match_chain(strows *r, const stationini_entry *e)
     w->part = e->part;
     strows_name_part(w->name, &e->disk, e->part);
     strows_label_part(w->label, STROWS_LABEL_MAX,
-                      e->part != 0 ? u"Partition" : u"Boot code", &e->disk,
-                      e->part);
+                      e->part != 0 ? u"" STROWS_LABEL_PARTITION
+                                   : u"" STROWS_LABEL_BOOTCODE,
+                      &e->disk, e->part);
     w->added = 1;
     w->ref_none = 1;
     return w;
@@ -292,7 +318,7 @@ static strow *match(strows *r, const stationini_entry *e, strows_fw fw)
             copy_path(w->file, sizeof w->file, path);
             if (e->efi[0] == '\0')
                 strows_label_part(w->label, STROWS_LABEL_MAX,
-                                  u"Windows Boot Manager", &e->disk, e->part);
+                                  u"" STROWS_LABEL_BOOTMGR, &e->disk, e->part);
             else
                 ascii_label(w->label, STROWS_LABEL_MAX, e->efi);
         } else {

@@ -6,6 +6,7 @@
 
 #include <pos/pos.h>
 #include <media/osrel.h>
+#include <media/strows.h>
 
 #include <loader/loadops.h>
 
@@ -818,7 +819,7 @@ const CHAR16 *pos_entry_label(void)
      * "encrypted" and is never asked has been told something false about
      * where their kernel lives. */
     if (g_luks_usable != 0)
-        return L"Personal OS (encrypted)";
+        return L"" STROWS_LABEL_POS;
     if (g_plain_usable != 0)
         return L"Personal OS (plaintext shelf)";
     return L"Personal OS";
