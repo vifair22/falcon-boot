@@ -485,7 +485,7 @@ case_4kn_marker() { # case_4kn_marker CASE
 case_station() { # case_station CASE FIRMWARE
     local id why=
     id=$("$MKSTICK" ident build/test-station.img |
-         awk -F '\t' '$2 == "boot" { print $3 }')
+         awk -F '\t' '$2 == "boot" { print $3; exit }')
     boot "$2" build/test-station.img:boot
     # Either station opens at its menu (DESIGN Section 13.3), the shelf's
     # row first; Enter on it is the prompt.

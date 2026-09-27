@@ -535,6 +535,20 @@ static void test_ini_linux(void **state)
     roundtrip(&ini, &back);
     assert_string_equal(back.default_name, "uki-arch");
 
+    /* On an encrypted shelf no row carries uki-arch before the prompt:
+     * the default is a section naming the file, which is that row. */
+    f[1].locked = 1;
+    f[2].locked = 1;
+    assert_int_equal(stn_ini_build(f, 3, 5, &ini), STN_OK);
+    assert_string_equal(ini.default_name, "linux");
+    roundtrip(&ini, &back);
+    assert_string_equal(back.default_name, "linux");
+    assert_non_null(stationini_find(&back, "linux"));
+    assert_string_equal(stationini_find(&back, "linux")->uki, "arch.efi");
+    assert_int_equal(stationini_find(&back, "linux")->has_disk, 0);
+    f[1].locked = 0;
+    f[2].locked = 0;
+
     /* A UKI whose name the INI cannot say is passed over. */
     f[1].name[0] = '\0';
     assert_int_equal(stn_ini_build(f, 3, 5, &ini), STN_OK);
@@ -725,6 +739,49 @@ static void test_reach(void **state)
     assert_int_equal(stn_reach_of(1024u * 1024u), STN_REACH_OK);
 }
 
+/* A 4Kn disk: the sizes are FAT32's floor at 4096-byte clusters, and the
+ * alignment is counted in its own sectors. */
+static void test_sizes_4kn(void **state)
+{
+    part_table t;
+    stn_region r;
+    uint64_t largest = 0;
+    uint64_t mib = 1024u * 1024u / 4096u;
+    uint64_t want = STN_DEFAULT_MIB_4K * mib;
+    uint64_t hi = 262144u - 6u;              /* 1 GiB, GPT's backup after */
+
+    (void)state;
+    assert_int_equal(stn_min_mib(512), STN_MIN_MIB);
+    assert_int_equal(stn_default_mib(512), STN_DEFAULT_MIB);
+    assert_int_equal(stn_min_mib(4096), STN_MIN_MIB_4K);
+    assert_int_equal(stn_default_mib(4096), STN_DEFAULT_MIB_4K);
+    assert_int_equal(stn_min_mib(2048), 0);
+    assert_int_equal(stn_default_mib(1024), 0);
+    /* 65525 clusters of one 4096-byte sector, past 2080 reserved sectors
+     * and two FATs of 64 sectors: the floor holds them. */
+    assert_true((uint64_t)STN_MIN_MIB_4K * mib >= 65525u + 2080u + 128u);
+    assert_true(STN_DEFAULT_MIB_4K >= STN_MIN_MIB_4K);
+    assert_true(STN_DEFAULT_MIB_4K <= STN_MAX_MIB);
+
+    assert_int_equal(stn_align_for(STN_ALIGN_MIB, 512), 2048);
+    assert_int_equal(stn_align_for(STN_ALIGN_4K, 512), 8);
+    assert_int_equal(stn_align_for(STN_ALIGN_MIB, 4096), 256);
+    assert_int_equal(stn_align_for(STN_ALIGN_4K, 4096), 1);
+    assert_int_equal(stn_align_for(STN_ALIGN_MIB, 100), 0);
+
+    /* An ESP of 300 MiB and a shelf of 64 MiB from 1 MiB: the station goes
+     * at the top of what is left, on a MiB boundary. */
+    table_init(&t, PART_KIND_GPT);
+    add_part(&t, mib, mib + 300u * mib - 1u, 0, 1);
+    add_part(&t, 301u * mib, 365u * mib - 1u, 0, 2);
+    assert_int_equal(stn_find_free(&t, 6, hi, want,
+                                   stn_align_for(STN_ALIGN_MIB, 4096), &r,
+                                   &largest), STN_OK);
+    assert_int_equal(r.start % mib, 0);
+    assert_true(r.start >= 365u * mib);
+    assert_true(r.start + want - 1u <= hi);
+}
+
 static void test_strerror(void **state)
 {
     int s;
@@ -753,6 +810,7 @@ int run_stationcore_tests(void)
         cmocka_unit_test(test_ini_many),
         cmocka_unit_test(test_backup),
         cmocka_unit_test(test_reach),
+        cmocka_unit_test(test_sizes_4kn),
         cmocka_unit_test(test_strerror),
     };
 

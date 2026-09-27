@@ -34,10 +34,13 @@
 #define STN_GPT_NAME      "FALCON-STATION"
 #define STN_TIMEOUT       5u
 
-/* The first sectors of a new station partition kept in the backup: what
- * mkfs.fat writes (the reserved sectors, both FATs and the root cluster)
- * lies inside them for any size the installer makes. */
-#define STN_REGION_BACKUP 16384u
+/* The first sectors of a new station partition kept in the backup: its
+ * reserved sectors, then this many bytes past them. What mkfs.fat and the
+ * installer write (both FATs, the root cluster and the files) lies inside
+ * them for any size the installer makes, at either sector size: the
+ * reserved area alone is 8 MiB on a 4Kn disk (bioscore_reserved_for counts
+ * its MiB in 512-byte sectors). */
+#define STN_REGION_BACKUP_BYTES (8u * 1024u * 1024u)
 
 /* One disk the scan read. */
 typedef struct {
@@ -97,6 +100,11 @@ cli_status stn_mtools_deltree(const char *disk, uint64_t off,
 /* Is partition `number` of this disk mounted? Always 0 for an image. */
 int stn_part_mounted(const mks_disk *d, uint32_t number, char *where,
                      size_t cap);
+
+/* Nonzero for a disk of the machine the command runs on: a block device
+ * that is not a loop device. An image, attached or not, is its own
+ * machine's, whose disks and firmware entries this one cannot see. */
+int stn_is_machine(const mks_disk *d);
 
 /* The index in r of the partition numbered n, or -1. */
 int stn_part_index(const mks_records *r, uint32_t n);

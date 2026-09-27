@@ -35,21 +35,35 @@
 #include <media/stationini.h>
 #include <part/table.h>
 
-#define STN_SECTOR 512u
-
 /* The station partition: 64 MiB by default, FAT32 hidden (0x1C) on MBR.
- * The floor is FAT32's: mkfs.fat will not make one of fewer than 65525
- * clusters, and at one 512-byte sector a cluster that is 32 MiB of data
- * behind the reserved sectors and the two FATs. */
-#define STN_DEFAULT_MIB 64u
-#define STN_MIN_MIB     40u
-#define STN_MBR_TYPE    0x1Cu
+ * The floor is FAT32's: a FAT of fewer than 65525 clusters is FAT16 by
+ * definition, whatever mkfs.fat was asked for (4.2 makes one with a
+ * warning, and every FAT reader, falcon-core's included, then reads it as
+ * FAT16). At one sector a cluster that is 32 MiB of data behind the
+ * reserved sectors and the two FATs on a 512-byte-sector disk, and 256 MiB
+ * on a 4Kn one, where a cluster cannot be smaller than a sector: the same
+ * arithmetic that makes a 4Kn disk's ESP 260 MB. STN_MAX_MIB bounds --size
+ * on either. */
+#define STN_DEFAULT_MIB    64u
+#define STN_MIN_MIB        40u
+#define STN_DEFAULT_MIB_4K 288u
+#define STN_MIN_MIB_4K     272u
+#define STN_MAX_MIB        4096u
+#define STN_MBR_TYPE       0x1Cu
+
+/* The floor and the default for a disk of `sector`-byte sectors (512 or
+ * 4096); 0 for any other size, which the installer refuses. */
+unsigned stn_min_mib(uint32_t sector);
+unsigned stn_default_mib(uint32_t sector);
 
 /* Where a new partition starts: on a MiB boundary when the free space
  * allows it, else on a 4 KiB one. An old disk's free space ends wherever its
- * last cylinder did. */
+ * last cylinder did. In 512-byte sectors; stn_align_for gives the same
+ * boundary in a disk's own sectors (a 4Kn disk: 256, and 1). */
 #define STN_ALIGN_MIB 2048u
 #define STN_ALIGN_4K  8u
+
+uint64_t stn_align_for(uint64_t align512, uint32_t sector);
 
 /* The byte counts DESIGN Section 3.4 warns at: what a BIOS reaches by CHS
  * (1024 cylinders of 255 heads of 63 sectors) and by 28-bit LBA. */
@@ -178,7 +192,11 @@ typedef struct {
                                                      one id until they are
                                                      given theirs */
     char           name[STATIONINI_NAME_MAX];     /* the loader's name */
-    char           label[STATIONINI_LABEL_MAX];
+    char           label[STATIONINI_LABEL_MAX];   /* UKI: its file name */
+    uint8_t        locked;                        /* UKI: on an encrypted
+                                                     shelf, so no row
+                                                     carries it at boot
+                                                     until the prompt */
 } stn_found;
 
 /* The row label the loaders give a found OS: "<what> (disk <id>, partition
@@ -193,7 +211,10 @@ void stn_found_label(stn_found *f);
  * the loader finds them itself and their generated names are enough to be
  * a default. The default is the first Windows or DOS, else the first UKI,
  * else the first other loader; `timeout` seconds when there is one, and no
- * countdown when there is not. */
+ * countdown when there is not. A UKI default on an encrypted shelf is a
+ * section of its own, `linux` with `uki = <file>`: the loader has no row
+ * named uki-<stem> before the shelf is unlocked, and a `uki` section is
+ * the row that prompts for the shelf and boots that file (Section 13.7). */
 stn_status stn_ini_build(const stn_found *f, size_t n, unsigned timeout,
                          stationini *out);
 

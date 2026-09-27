@@ -68,6 +68,19 @@ cli_status disk_stat(mks_disk *d, const char *path)
             d->sector = (uint32_t)sector;
         (void)close(fd);
         d->size = bytes;
+        {
+            char real[MKS_PATH_MAX];
+            char sys[MKS_PATH_MAX + 32];
+            const char *base;
+
+            if (realpath(path, real) == NULL)
+                (void)snprintf(real, sizeof real, "%s", path);
+            base = strrchr(real, '/');
+            base = (base != NULL) ? base + 1 : real;
+            (void)snprintf(sys, sizeof sys, "/sys/class/block/%s/loop",
+                           base);
+            d->is_loop = util_is_dir(sys);
+        }
     } else if (S_ISREG(st.st_mode)) {
         d->is_block = 0;
         d->size = (uint64_t)st.st_size;
