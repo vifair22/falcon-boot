@@ -19,6 +19,10 @@
 #   cf3v      the same with a card that takes only 3.3 V, as the A21m's
 #             SanDisk reports itself: the bridge powers it only when both
 #             of its voltage registers ask for 3.3 V
+#   cf48      a card past 128 GiB (mk-rig-disk.sh big, sparse) whose boot
+#             partition starts past sector 2^28: its stage 2 reads stage 3
+#             from there through PCC.MOD, which takes 48-bit commands for
+#             it (the model's lba48=on), and stage 3's CRC-32 holds
 #   mem       memtest86+, when MEMTEST names a build with the boot protocol
 #             header: the handoff to it
 #   giveup    the cf route to a card whose boot sector only calls INT 18h,
@@ -204,7 +208,7 @@ usb() {       # usb CASE HC-DEVICES...
 FAILED=0
 CASES=("$@")
 [[ ${#CASES[@]} -gt 0 ]] ||
-    CASES=(hdd cd usb-uhci usb-ohci usb-ehci cf cf3v giveup mem s2crc s3crc
+    CASES=(hdd cd usb-uhci usb-ohci usb-ehci cf cf3v cf48 giveup mem s2crc s3crc
            stick3crc modcrc chs menu)
 
 for c in "${CASES[@]}"; do
@@ -233,6 +237,19 @@ for c in "${CASES[@]}"; do
         boot "$QPCC" -drive if=none,id=cf,format=raw,file="$R/cf.img" \
             -device falcon-pcc,drive=cf$([[ $c == cf3v ]] && echo ,volts=3)
         judge "$c" 'boot drive 0x81, sector size 512'
+        ;;
+    cf48)
+        if [[ ! -x "$QPCC" ]]; then
+            printf 'SKIP  %-9s no rig QEMU (falcon-bios/tools/qemu-pcc/build-qemu.sh)\n' "$c"
+            continue
+        fi
+        falcon-bios/tools/mk-rig-disk.sh big "$R/cf48.img" >/dev/null
+        floppy cf
+        boot "$QPCC" -drive if=none,id=cf,format=raw,file="$R/cf48.img" \
+            -device falcon-pcc,drive=cf,lba48=on
+        rm -f "$R/cf48.img"
+        judge cf48 'boot partition p1 at LBA 268437504' \
+            'stage 3 inflated' 'boot drive 0x81, sector size 512'
         ;;
     giveup)
         if [[ ! -x "$QPCC" ]]; then

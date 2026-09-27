@@ -18,7 +18,11 @@
  *     onto its ATA task file once the card is configured for I/O;
  *   - the card: a CIS with the CompactFlash standard's entries (memory
  *     mapped, contiguous I/O, primary IDE), and ATA PIO over a drive:
- *     IDENTIFY DEVICE, READ SECTORS, WRITE SECTORS, LBA28.
+ *     IDENTIFY DEVICE, READ SECTORS, WRITE SECTORS, LBA28, and with
+ *     `lba48=on` the 48-bit feature set (READ and WRITE SECTORS EXT, the
+ *     task file's registers as two-deep FIFOs, HOB reads), which a card
+ *     past 128 GiB needs. Off, a card larger than that says 2^28 - 1
+ *     sectors, as a card without the feature set would.
  *
  * A model, so it is exactly as right as its reading of the specifications;
  * where the silicon is looser or stricter, only the A21m says. It is test
@@ -97,6 +101,10 @@ struct FalconPccState {
     uint8_t feature;
     uint8_t count;
     uint8_t lba[3];
+    uint8_t hob_count;      /* what the previous write to each register was */
+    uint8_t hob_lba[3];
+    bool lba48;             /* the property: IDENTIFY says 48-bit */
+    uint8_t devctl;         /* bit 7: HOB, reads return the previous byte */
     uint8_t device;
     uint8_t status;
     uint8_t error;
@@ -104,7 +112,7 @@ struct FalconPccState {
     unsigned pos;
     unsigned remain;
     bool writing;
-    uint32_t cur;
+    uint64_t cur;
 };
 
 /* ---- the card's CIS ---- */
@@ -278,8 +286,20 @@ static void ata_identify(FalconPccState *s)
     ata_str(w, 23, 4, "1.0");
     ata_str(w, 27, 20, "FALCON RIG CF");
     w[49] = 1u << 9;                     /* LBA */
-    w[60] = (uint16_t)(s->sectors & 0xFFFF);
-    w[61] = (uint16_t)(s->sectors >> 16);
+    {
+        uint64_t n28 = s->sectors > 0x0FFFFFFF ? 0x0FFFFFFF : s->sectors;
+
+        w[60] = (uint16_t)(n28 & 0xFFFF);
+        w[61] = (uint16_t)(n28 >> 16);
+    }
+    if (s->lba48) {
+        w[83] = (1u << 14) | (1u << 10);  /* valid; 48-bit supported */
+        w[86] = 1u << 10;                  /* 48-bit enabled */
+        w[100] = (uint16_t)(s->sectors & 0xFFFF);
+        w[101] = (uint16_t)(s->sectors >> 16);
+        w[102] = (uint16_t)(s->sectors >> 32);
+        w[103] = (uint16_t)(s->sectors >> 48);
+    }
     for (i = 0; i < 256; i++) {
         s->buf[i * 2] = (uint8_t)(w[i] & 0xFF);
         s->buf[i * 2 + 1] = (uint8_t)(w[i] >> 8);
@@ -307,8 +327,14 @@ static bool ata_fetch(FalconPccState *s)
 
 static void ata_command(FalconPccState *s, uint8_t cmd)
 {
-    uint32_t lba = s->lba[0] | (s->lba[1] << 8) | (s->lba[2] << 16) |
+    uint64_t lba = s->lba[0] | (s->lba[1] << 8) | (s->lba[2] << 16) |
                    ((uint32_t)(s->device & 0x0F) << 24);
+    uint64_t lba_ext = (uint64_t)s->lba[0] | ((uint64_t)s->lba[1] << 8) |
+                       ((uint64_t)s->lba[2] << 16) |
+                       ((uint64_t)s->hob_lba[0] << 24) |
+                       ((uint64_t)s->hob_lba[1] << 32) |
+                       ((uint64_t)s->hob_lba[2] << 40);
+    unsigned count_ext = (unsigned)s->count | ((unsigned)s->hob_count << 8);
 
     s->error = 0;
     switch (cmd) {
@@ -338,6 +364,27 @@ static void ata_command(FalconPccState *s, uint8_t cmd)
         }
         s->cur = lba;
         s->remain = s->count ? s->count : 256;
+        s->writing = true;
+        s->pos = 0;
+        s->status = A_DRDY | A_DRQ;
+        return;
+    case 0x24:                           /* READ SECTORS EXT */
+        if (!s->lba48 || (s->device & 0x40) == 0) {
+            ata_abort(s);
+            return;
+        }
+        s->cur = lba_ext;
+        s->remain = count_ext ? count_ext : 65536;
+        s->writing = false;
+        ata_fetch(s);
+        return;
+    case 0x34:                           /* WRITE SECTORS EXT */
+        if (!s->lba48 || (s->device & 0x40) == 0 || lba_ext >= s->sectors) {
+            ata_abort(s);
+            return;
+        }
+        s->cur = lba_ext;
+        s->remain = count_ext ? count_ext : 65536;
         s->writing = true;
         s->pos = 0;
         s->status = A_DRDY | A_DRQ;
@@ -396,10 +443,10 @@ static uint64_t io_read(void *opaque, hwaddr off, unsigned size)
         return v;
     }
     case 0x1: return s->error;
-    case 0x2: return s->count;
-    case 0x3: return s->lba[0];
-    case 0x4: return s->lba[1];
-    case 0x5: return s->lba[2];
+    case 0x2: return (s->devctl & 0x80) ? s->hob_count : s->count;
+    case 0x3: return (s->devctl & 0x80) ? s->hob_lba[0] : s->lba[0];
+    case 0x4: return (s->devctl & 0x80) ? s->hob_lba[1] : s->lba[1];
+    case 0x5: return (s->devctl & 0x80) ? s->hob_lba[2] : s->lba[2];
     case 0x6: return s->device;
     case 0x7:
     case 0xE: return s->status;
@@ -424,13 +471,16 @@ static void io_write(void *opaque, hwaddr off, uint64_t v, unsigned size)
         ata_word_done(s);
         return;
     case 0x1: s->feature = (uint8_t)v; return;
-    case 0x2: s->count = (uint8_t)v; return;
-    case 0x3: s->lba[0] = (uint8_t)v; return;
-    case 0x4: s->lba[1] = (uint8_t)v; return;
-    case 0x5: s->lba[2] = (uint8_t)v; return;
+    /* Each a two-deep FIFO, as the 48-bit feature set has it: a write
+     * pushes the byte before it into the HOB. */
+    case 0x2: s->hob_count = s->count; s->count = (uint8_t)v; return;
+    case 0x3: s->hob_lba[0] = s->lba[0]; s->lba[0] = (uint8_t)v; return;
+    case 0x4: s->hob_lba[1] = s->lba[1]; s->lba[1] = (uint8_t)v; return;
+    case 0x5: s->hob_lba[2] = s->lba[2]; s->lba[2] = (uint8_t)v; return;
     case 0x6: s->device = (uint8_t)v; return;
     case 0x7: ata_command(s, (uint8_t)v); return;
     case 0xE:
+        s->devctl = (uint8_t)v;
         if ((v & 0x04) != 0) {           /* SRST */
             s->status = A_DRDY;
             s->error = 0x01;
@@ -541,7 +591,7 @@ static void falcon_pcc_realize(PCIDevice *pdev, Error **errp)
         return;
     }
     s->sectors = (uint64_t)len / 512;
-    if (s->sectors > 0x0FFFFFFF)
+    if (!s->lba48 && s->sectors > 0x0FFFFFFF)
         s->sectors = 0x0FFFFFFF;
     cis_build(s);
     card_reset(s);
@@ -564,6 +614,7 @@ static void falcon_pcc_realize(PCIDevice *pdev, Error **errp)
 static const Property falcon_pcc_props[] = {
     DEFINE_PROP_DRIVE("drive", FalconPccState, blk),
     DEFINE_PROP_UINT8("volts", FalconPccState, volts, 0),
+    DEFINE_PROP_BOOL("lba48", FalconPccState, lba48, false),
 };
 
 static void falcon_pcc_class_init(ObjectClass *klass, const void *data)

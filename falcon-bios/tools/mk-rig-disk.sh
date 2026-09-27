@@ -14,6 +14,11 @@
 #        in the gap in front of p1; p2 exFAT with a /.falcon library record
 #        of the same install ID. What the jump rig boots over USB, and what
 #        the stick's stage 3 finds its library on by record.
+#   big  the mbr disk's layout on a sparse disk past 128 GiB, its boot
+#        partition starting at LBA 2^28 + 2048: stage 2 reads stage 3 from
+#        past the last sector a 28-bit ATA command reaches, which only a
+#        driver that takes the disk's 48-bit commands can do. The jump rig's
+#        cf48 case; a few megabytes on the host.
 #   chs  a 2.88 MB floppy image laid out as the mbr disk is (a FAT12 boot
 #        partition at 63): a BIOS offers no INT 13h extensions on a floppy
 #        drive, so booted as one, stage 1 and stage 2 read it by CHS. The
@@ -22,7 +27,7 @@
 # Every number comes from falcon-bios/src/start/biosdefs.h, never written
 # here: STAGE2_LBA, STAGE2_LBA_MBR, STAGE1_S2_*_OFF and BOOTPART_*.
 #
-# Usage: falcon-bios/tools/mk-rig-disk.sh mbr|gpt|chs OUT
+# Usage: falcon-bios/tools/mk-rig-disk.sh mbr|gpt|big|chs OUT
 # The boot records and the reserved-sector count are mkstick's own (`ident
 # --write-boot`, `ident --reserved-sectors`), so a rig disk's boot partition
 # is formatted and stamped as `mkstick create` does a stick's p1.
@@ -34,8 +39,8 @@ set -euo pipefail
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)
 cd "$ROOT"
 
-KIND=${1:?usage: mk-rig-disk.sh mbr|gpt|chs OUT}
-OUT=${2:?usage: mk-rig-disk.sh mbr|gpt|chs OUT}
+KIND=${1:?usage: mk-rig-disk.sh mbr|gpt|big|chs OUT}
+OUT=${2:?usage: mk-rig-disk.sh mbr|gpt|big|chs OUT}
 
 S1=build/bin/falcon-bios-stage1.bin
 S2=build/bin/falcon-bios-stage2.bin
@@ -46,6 +51,7 @@ MKSTICK=${MKSTICK:-build/bin/falcon-boot-mkstick}
 RIG_MBR_ID=f41c0b1057a6e0000000000000000001
 RIG_GPT_ID=f41c0b1057a6e0000000000000000002
 RIG_CHS_ID=f41c0b1057a6e0000000000000000003
+RIG_BIG_ID=f41c0b1057a6e0000000000000000004
 
 def() {       # def NAME: its value in biosdefs.h, hex or decimal
     local v
@@ -183,6 +189,18 @@ mbr)
     echo "$OUT: MBR, boot partition p1 (0x1c) at LBA $START, stage 2 at LBA" \
          "$STAGE2_LBA_MBR ($s2_sectors sectors), stage 3 at +$STAGE3" \
          "($s3_sectors of $(( reserved - STAGE3 )) sectors), install $RIG_MBR_ID"
+    ;;
+big)
+    START=$(( (1 << 28) + 2048 ))
+    SIZE_MIB=40
+    truncate -s $(( (START * 512) + (SIZE_MIB << 20) + (1 << 20) )) "$OUT"
+    printf 'label: dos\nlabel-id: 0x%s\nstart=%d, size=%d, type=1c\n' \
+        "${RIG_BIG_ID:0:8}" "$START" $(( SIZE_MIB * 2048 )) |
+        sfdisk -q --no-reread --no-tell-kernel "$OUT" >/dev/null 2>&1
+    bootpart "$OUT" "$START" $(( SIZE_MIB * 1024 )) "$RIG_BIG_ID" 1
+    stages12 "$OUT" "$STAGE2_LBA_MBR"
+    echo "$OUT: MBR, $(( $(stat -c %s "$OUT") >> 30 )) GiB sparse, boot" \
+         "partition p1 (0x1c) at LBA $START, past 2^28, install $RIG_BIG_ID"
     ;;
 gpt)
     ESP_MIB=40

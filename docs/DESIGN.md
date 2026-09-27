@@ -4961,7 +4961,15 @@ real mappings in QEMU's address spaces, moved and enabled as the ExCA
 registers are written, so `PCC.MOD` meets the register interface it will
 meet on silicon, not a shortcut past it. `build-qemu.sh` builds the QEMU
 release the machine runs with that one device added, into
-`build/qemu-pcc/`; the `cf` case of the rig runs on it. It is test
+`build/qemu-pcc/`; the `cf` case of the rig runs on it. With `lba48=on`
+the card has the 48-bit feature set (READ and WRITE SECTORS EXT, the task
+file's registers as two-deep FIFOs), and the `cf48` case boots a sparse
+card past 128 GiB whose boot partition starts past sector 2^28
+(`mk-rig-disk.sh big`): its stage 2 reads stage 3 from there through
+`PCC.MOD`, which `atadisk.c` addresses with 48-bit commands for any
+transfer LBA28 cannot reach (`atacore.c`'s `ata_addressing`, host-tested),
+and LBA28 everywhere else. Without them the case fails at stage 2's
+partition table read. It is test
 equipment, GPL-2.0-or-later as QEMU is, and never part of falcon.
 
 The first machine is the ThinkPad A21m (its repository's
