@@ -8,8 +8,9 @@
  *
  *   - UEFI: the FalconNextBoot variable, read and deleted by
  *     falcon-efi/src/loader/loadops.c. The variable's bytes are the value.
- *   - BIOS: one sector of the `boot` partition, at the sector its identity
- *     record names (DESIGN Section 3.3), read and zeroed by
+ *   - BIOS: one sector of the `boot` partition (a whole sector of the disk,
+ *     512 or 4096 bytes), at the sector its identity record names (DESIGN
+ *     Section 3.3), read and zeroed by
  *     falcon-bios/src/disk/marker.c. The sector carries the value
  *     inside a small text record, below.
  *
@@ -98,13 +99,21 @@ int nextboot_is_reserved(const char *name);
 
 /* ---- the BIOS sector ----
  *
- * One 512-byte sector, text so that a shell script can write it with printf
- * and a person can read it with xxd:
+ * One sector of the disk, whatever its size, text so that a shell script can
+ * write it with printf and a person can read it with xxd:
  *
  *     falcon-next-boot 1\n
  *     <the RTC's reading when it was set, decimal seconds>\n
  *     <the value>\n
  *     <zeros to the end of the sector>
+ *
+ * The text is in the first NEXTBOOT_SECTOR_BYTES (512) bytes and the zeros
+ * run to the end of the device's sector: 512 bytes on most disks, 4096 on a
+ * 4Kn one. A whole sector because a disk writes nothing smaller, so the
+ * loader clears one and the writer writes one; the text stays inside 512
+ * bytes so a 512-byte and a 4096-byte marker read alike to printf, xxd and
+ * this parse. The longest record (the head, twenty digits, a value at
+ * NEXTBOOT_MAX) is under 300 bytes.
  *
  * The first line is the magic and the format version. A sector that does not
  * begin with "falcon-next-boot " is not a marker, and the loader leaves it
@@ -126,7 +135,8 @@ int nextboot_is_reserved(const char *name);
  * same digits the same way. Both ends therefore count on one clock and the
  * difference is the time between setting and booting, whatever zone the
  * digits are in. */
-#define NEXTBOOT_SECTOR_BYTES 512u
+#define NEXTBOOT_SECTOR_BYTES 512u    /* the text area; the smallest sector */
+#define NEXTBOOT_SECTOR_MAX   4096u   /* the largest sector a marker fills */
 #define NEXTBOOT_MAGIC        "falcon-next-boot "
 #define NEXTBOOT_VERSION      "1"
 
@@ -151,17 +161,26 @@ typedef enum {
     NEXTBOOT_SECTOR_BAD        /* a marker by its magic, and nothing usable */
 } nextboot_sector;
 
+/* Nonzero when `len` is a sector size a marker may have: a power of two
+ * from NEXTBOOT_SECTOR_BYTES to NEXTBOOT_SECTOR_MAX. The loader and the
+ * writer pass the disk's own sector size, and a disk of any other size has
+ * no marker. */
+int nextboot_sector_size_ok(size_t len);
+
 /* Nonzero when the sector begins with the magic, which is what decides
  * whether the loader may write it. */
 int nextboot_sector_is_marker(const uint8_t *sec, size_t len);
 
 /* Parses a sector. VALUE fills *stamp and out (NUL-terminated); NONE and BAD
- * leave out empty. len must be NEXTBOOT_SECTOR_BYTES. */
+ * leave out empty. len is the whole sector (nextboot_sector_size_ok): the
+ * record's lines must end inside its first NEXTBOOT_SECTOR_BYTES, and every
+ * byte after them to len must be zero. */
 nextboot_sector nextboot_sector_parse(const uint8_t *sec, size_t len,
                                       uint64_t *stamp, char *out, size_t cap);
 
-/* Writes a marker into a caller's sector buffer, zeros included: the format's
- * other half, for tests and for anything in C that sets one. NEXTBOOT_OK, or
+/* Writes a marker into a caller's sector buffer of `len` bytes
+ * (nextboot_sector_size_ok), zeros included: the format's other half, for
+ * tests and for anything in C that sets one. NEXTBOOT_OK, or
  * NEXTBOOT_ERR_VALUE when the value would not decode. */
 int nextboot_sector_write(uint8_t *sec, size_t len, uint64_t stamp,
                           const char *value);

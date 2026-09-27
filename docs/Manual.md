@@ -315,6 +315,14 @@ The stick maker (`docs/DESIGN.md` Section 8). `falcon-boot-mkstick
 <command> --help` prints a command's options. Every command takes
 `--verbose` and `--quiet`.
 
+`make install` puts it and `falcon-boot-sign` in `$(PREFIX)/bin`, building
+them first:
+
+    make install                     # /usr/local/bin, mode 0755
+    make install PREFIX=/usr         # /usr/bin
+    make install DESTDIR=/tmp/pkg    # /tmp/pkg/usr/local/bin, for a package
+    make uninstall                   # removes both, same PREFIX and DESTDIR
+
 ### 3.1 create
 
     falcon-boot-mkstick create <target> [--size <size>] [--force] ...
@@ -418,6 +426,7 @@ token of 3.1.
 
     falcon-boot-mkstick next-boot [--sector] [--disk <dev>] <value>
     falcon-boot-mkstick next-boot [--sector] [--disk <dev>] --clear
+    falcon-boot-mkstick next-boot [--sector] [--disk <dev>] --print
 
 Asks the loader to start one entry on the next boot instead of drawing the
 menu (DESIGN Section 6.3.1). The value is a path on p2, as the menu lists
@@ -436,11 +445,54 @@ it finds, as a menu pick would be. Needs root.
       <the RTC's reading, /sys/class/rtc/rtc0/since_epoch>
       <the value>
 
-  and zeros to the end of the sector. The loader honours it for ten
-  minutes after it was written. The disk is the one whose partitions carry
-  a `boot` record; `--disk` names it when more than one does, or names an
-  image file. The sector is written only when it is empty or already a
-  marker. `--clear` zeros it.
+  and zeros to the end of the sector. The marker is one whole sector of the
+  disk: 512 bytes, or 4096 on a 4Kn disk, the text in its first 512. The
+  loader honours it for ten minutes after it was written. Without `--disk`
+  every disk is looked at and exactly one must carry a `boot` record. With
+  `--disk <dev>` (a disk or an image file) only that disk is looked at,
+  whatever else is attached, and it is an error if it has no `boot` record.
+  The sector is written only when it is empty or already a marker.
+  `--clear` zeros it.
+
+`--print` reports what is queued and changes nothing. It writes one
+`key=value` per line to stdout and exits 0 whether or not anything is
+queued; it exits 1 only on an error (no boot partition, a disk it cannot
+read). Keys may be added later; a script reads the ones it wants and
+ignores the rest. For the variable (UEFI):
+
+| key | value |
+|---|---|
+| `source` | `efivar` |
+| `queued` | `yes`, `no`, or `invalid` (set, but not a value the loader accepts; it deletes it and draws the menu) |
+| `value` | the value; only with `queued=yes` |
+
+For the sector (BIOS, or `--sector`):
+
+| key | value |
+|---|---|
+| `source` | `sector` |
+| `disk` | the disk it was read from |
+| `lba` | the marker's LBA, in the disk's sectors |
+| `sector_size` | the disk's sector size, `512` or `4096` |
+| `queued` | `yes`, `no` (all zeros, or not a marker, which the loader leaves alone), or `invalid` (a marker the loader clears and does not act on) |
+| `value` | the value; this and the keys below only with `queued=yes` |
+| `set_rtc` | the RTC's reading when it was set, seconds |
+| `age` | seconds since then by the RTC now; negative when the clock went back |
+| `window` | `yes` when the loader would honour it now (within ten minutes, or up to two minutes in the future), else `no` |
+
+`age` and `window` are `unknown` when `/sys/class/rtc/rtc0/since_epoch`
+cannot be read. For example:
+
+    $ falcon-boot-mkstick next-boot --print --sector --disk /dev/sdb
+    source=sector
+    disk=/dev/sdb
+    lba=2056
+    sector_size=512
+    queued=yes
+    value=:personal
+    set_rtc=1790495324
+    age=37
+    window=yes
 
 This replaces archusb's `archusb-boot-next`, which wrote the BIOS marker to
 LBA 2047 with `dd`; a pending marker there is no longer read.

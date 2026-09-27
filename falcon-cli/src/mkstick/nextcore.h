@@ -33,13 +33,20 @@
  * value is not one nextboot_decode accepts or does not fit. */
 size_t nextcore_efivar(const char *value, uint8_t *buf, size_t cap);
 
+/* The value in efivarfs's file bytes for the variable (the attributes, then
+ * the value), by the loader's rule. 0 with out NUL-terminated, or -1 with
+ * out empty when there is no value or it would not decode. */
+int nextcore_efivar_value(const uint8_t *buf, size_t len, char *out,
+                          size_t cap);
+
 /* since_epoch's text, decimal digits and an optional newline. 0 and *out
  * set, or -1. */
 int nextcore_parse_epoch(const char *text, size_t len, uint64_t *out);
 
 /* Nonzero when the sector may be written by next-boot: all zeros (what
  * `mkstick bios` left), or already a marker. Anything else is not falcon's
- * marker sector and is left alone. */
+ * marker sector and is left alone. len is the disk's whole sector (512, or
+ * 4096 on a 4Kn disk), every byte of which is judged. */
 int nextcore_sector_ours(const uint8_t *sec, size_t len);
 
 #endif /* FALCON_MKSTICK_NEXTCORE_H */

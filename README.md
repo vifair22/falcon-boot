@@ -94,6 +94,11 @@ make jump            # the boot floppy, build/bin/falcon-jump.img (DESIGN 14)
 make test-jump       # every jump route under QEMU (CF needs build-qemu.sh)
 ```
 
+`make install` copies the two host tools, `falcon-boot-mkstick` and
+`falcon-boot-sign`, into `/usr/local/bin` (mode 0755), building them first;
+`PREFIX` changes the prefix and `DESTDIR` stages the install elsewhere.
+`make uninstall` removes them.
+
 See `docs/DESIGN.md` for architecture and the MVP build order.
 
 The personal OS this loader boots is a separate project:

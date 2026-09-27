@@ -27,6 +27,18 @@ size_t nextcore_efivar(const char *value, uint8_t *buf, size_t cap)
     return 4u + len + 1u;
 }
 
+int nextcore_efivar_value(const uint8_t *buf, size_t len, char *out,
+                          size_t cap)
+{
+    if (buf == NULL || out == NULL || cap == 0u)
+        return -1;
+    out[0] = '\0';
+    if (len <= 4u)
+        return -1;
+    return nextboot_decode(buf + 4, len - 4u, out, cap) == NEXTBOOT_OK ? 0
+                                                                       : -1;
+}
+
 int nextcore_parse_epoch(const char *text, size_t len, uint64_t *out)
 {
     uint64_t v = 0;
@@ -51,7 +63,7 @@ int nextcore_sector_ours(const uint8_t *sec, size_t len)
 {
     size_t i;
 
-    if (sec == NULL || len != NEXTBOOT_SECTOR_BYTES)
+    if (sec == NULL || !nextboot_sector_size_ok(len))
         return 0;
     if (nextboot_sector_is_marker(sec, len))
         return 1;
