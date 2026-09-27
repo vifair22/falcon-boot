@@ -9,6 +9,8 @@ EFI_SRC := falcon-efi/src
 EFI_MOD_loader        := $(EFI_SRC)/loader/loadops.c $(EFI_SRC)/loader/credfs.c
 EFI_MOD_console       := $(EFI_SRC)/console/menu.c $(EFI_SRC)/console/prompt.c
 EFI_MOD_discover      := $(EFI_SRC)/discover/discover.c $(EFI_SRC)/discover/partefi.c
+# Partitions named as STATION.INI names them: disk id and number.
+EFI_MOD_disks         := $(EFI_SRC)/discover/disks.c
 # Secure Boot state, for UX. The variable reads the boot predictions judge
 # against are their own module, so a build without predictions leaves them out.
 EFI_MOD_secboot       := $(EFI_SRC)/secboot/sb.c
@@ -20,6 +22,7 @@ EFI_MOD_win           := $(EFI_SRC)/win/winpatch.c
 EFI_MOD_pos           := $(EFI_SRC)/pos/pos.c
 EFI_MOD_bless         := $(EFI_SRC)/bless/bless.c $(EFI_SRC)/bless/blesscore.c
 EFI_MOD_nxt           := $(EFI_SRC)/nxt/nxt.c $(EFI_SRC)/nxt/nxtcore.c
+EFI_MOD_esp           := $(EFI_SRC)/esp/esp.c
 
 # Every source some app links, for compile_commands.json and the analyzers.
 EFI_APP_SRCS :=
