@@ -341,6 +341,21 @@ $$($(1)_MOD).gz: $$($(1)_MOD)
 	gzip -9 -n -c $$< > $$@
 endef
 
+# ---- the record tool ----
+#
+# Writes an identity record into a sector of an image file (DESIGN Section
+# 3.1), or prints a /.falcon line: how jump's floppy and the rig disks get
+# their records without a loop device. Host C over falcon-core's own
+# encoder.
+BIOS_MKIDENT := $(BIN)/falcon-bios-mkident
+BIOS_MKIDENT_SRCS := falcon-bios/tools/mkident.c falcon-bios/tools/mkidentargs.c \
+	$(CORE_IDENT)
+HOST_SRCS += falcon-bios/tools/mkident.c falcon-bios/tools/mkidentargs.c
+
+$(BIOS_MKIDENT): $(patsubst %.c,$(HOST_OBJ)/%.o,$(BIOS_MKIDENT_SRCS))
+	@mkdir -p $(@D)
+	$(CC_HOST) $(HOST_LDFLAGS) -o $@ $^
+
 # ---- tests ----
 #
 # The image is not in `all` or `test`, but these are: three halves of ordinary
@@ -352,13 +367,16 @@ endef
 # long-mode days triple-faulted.
 BIOS_TESTS := $(addprefix falcon-bios/tests/,main.c vcdcore_test.c vfdcore_test.c \
 	linuxcore_test.c e820_test.c jumpini_test.c jmod_test.c lowmem_test.c \
-	atacore_test.c usbcore_test.c pcccore_test.c)
+	atacore_test.c usbcore_test.c pcccore_test.c mkident_test.c)
 BIOS_UUT := $(BIOS)/iso/vcdcore.c $(BIOS)/vfd/vfdcore.c $(BIOS)/linux/linuxcore.c $(BIOS)/mem/e820.c \
 	$(BIOS)/jump/jumpini.c $(BIOS)/jump/jmod.c $(BIOS)/mem/lowmem.c \
 	$(BIOS)/hw/ata/atacore.c $(BIOS)/hw/scsi/scsi.c $(BIOS)/hw/usb/usbcore.c \
-	$(BIOS)/hw/pcc/pcccore.c
+	$(BIOS)/hw/pcc/pcccore.c falcon-bios/tools/mkidentargs.c
+# What the record tool is built on, linked into the test binary but
+# counted under core's own tests.
+BIOS_TEST_CORE := $(CORE_IDENT)
 
-$(eval $(call test_bin,bios,$(BIOS_TESTS) $(BIOS_UUT)))
+$(eval $(call test_bin,bios,$(BIOS_TESTS) $(BIOS_UUT) $(BIOS_TEST_CORE)))
 
 ALL_TEST_SRCS += $(BIOS_TESTS)
 ALL_UUT_SRCS  += $(BIOS_UUT)
