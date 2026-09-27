@@ -494,6 +494,14 @@ $(BIOS_RIGBOOT): $(BIOS_OBJ)/falcon-bios/tools/rigboot.o $(BIOS)/start/bios.ld
 test-station-bios: station $(BIOS_RIGBOOT) $(MKSTICK)
 	falcon-bios/tools/run-station-rig.sh
 
+# The BIOS station in front of real systems (DESIGN Section 13.11): the
+# fixture disks of tools/fixtures/README.md (FreeDOS, Windows 98 SE, Windows
+# 95 when there is one) with the station installed by `mkstick station
+# install`, as the station's own disk and as a second disk behind the drive
+# swap, judged by the prompt or desktop on screen. Needs sudo (qemu-nbd).
+test-station-fixtures: station $(MKSTICK)
+	falcon-bios/tools/run-station-fixture-rig.sh
+
 # DevLink recovery (DESIGN Section 13.5) off the rig stick on a Pentium with
 # 32 MB, by both BIOS routes and both of its entries, the agent reached on
 # COM1 (falcon-bios/tools/run-devlink-rig.sh). Skipped when the ISO or the
@@ -501,4 +509,5 @@ test-station-bios: station $(BIOS_RIGBOOT) $(MKSTICK)
 test-devlink: all bios cli payload
 	falcon-bios/tools/run-devlink-rig.sh
 
-.PHONY: test-bios-img test-bios-probe test-station-bios test-devlink
+.PHONY: test-bios-img test-bios-probe test-station-bios test-station-fixtures \
+	test-devlink
