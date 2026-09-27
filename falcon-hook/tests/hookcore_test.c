@@ -135,6 +135,10 @@ static void test_hook_dm_table(void **state)
 
     (void)state;
     map3(&h, 1500);             /* a ragged last run rounds up */
+    h.block_size = 0;           /* a map naming no block size: 512 */
+    assert_int_equal(hook_dm_table(&h, g_map, 8, 2, 0, g_tab, sizeof g_tab,
+                                   &n), HOOK_OK);
+    h.block_size = 512;
     assert_int_equal(hook_dm_table(&h, g_map, 8, 2, 0, g_tab, sizeof g_tab,
                                    &n), HOOK_OK);
     assert_int_equal(n, hook_dm_table_size(3));
@@ -193,6 +197,42 @@ static void test_hook_dm_table(void **state)
                                    &n), HOOK_ERR_BAD_ARG);
     assert_int_equal(hook_dm_table(&h, g_map, 8, 2, ~(uint64_t)0 - 511u,
                                    g_tab, sizeof g_tab, &n), HOOK_ERR_RANGE);
+
+    /* A 4Kn disk: every run on 4096-byte blocks, and the ragged last one
+     * (an ISO is a multiple of 2048) rounded up to a block, so the kernel's
+     * alignment check passes. */
+    map3(&h, 2048);
+    h.block_size = 4096;
+    {
+        size_t len4 = 0;
+        extmap_extent e[3] = {
+            { 1u << 20, 4096u }, { 64u << 20, 8192u }, { 100u << 20, 2048u }
+        };
+        const struct dm_target_spec *t;
+
+        assert_int_equal(extmap_encode(&h, e, g_map, sizeof g_map, &len4),
+                         EXTMAP_OK);
+        assert_int_equal(hook_dm_table(&h, g_map, 8, 2, 0, g_tab,
+                                       sizeof g_tab, &n), HOOK_OK);
+        off = io->data_start;
+        t = (const struct dm_target_spec *)(const void *)(g_tab + off);
+        off += t->next;
+        off += ((const struct dm_target_spec *)(const void *)(g_tab + off))
+                   ->next;
+        t = (const struct dm_target_spec *)(const void *)(g_tab + off);
+        assert_int_equal(t->sector_start, 24);
+        assert_int_equal(t->length, 8);        /* 2048 bytes, as a block */
+        /* A base or a run that is 512-aligned but not 4096-aligned. */
+        assert_int_equal(hook_dm_table(&h, g_map, 8, 0, 2048u * 512u + 512u,
+                                       g_tab, sizeof g_tab, &n),
+                         HOOK_ERR_RANGE);
+        e[1].length = 8192u - 512u;
+        h.iso_size = 4096u + 8192u - 512u + 2048u;
+        assert_int_equal(extmap_encode(&h, e, g_map, sizeof g_map, &len4),
+                         EXTMAP_OK);
+        assert_int_equal(hook_dm_table(&h, g_map, 8, 2, 0, g_tab,
+                                       sizeof g_tab, &n), HOOK_ERR_RANGE);
+    }
 
     /* The header-only form. */
     assert_int_equal(hook_dm_header(g_tab, sizeof g_tab, 1), HOOK_OK);
