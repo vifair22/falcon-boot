@@ -212,8 +212,9 @@ does it in. `/dev/X` is the machine's disk.
 ### 2.2 Free space
 
 The installer resizes nothing. A BIOS station needs a partition of its own,
-64 MiB by default, in space no partition holds, and on MBR a free primary
-slot; it refuses and says how much it needs when there is none. On a disk
+64 MiB by default (288 MiB on a disk of 4096-byte sectors), in space no
+partition holds, and on MBR a free primary slot; it refuses and says how
+much it needs when there is none. On a disk
 one Windows partition fills (the A21m's), shrink it first, from any Linux:
 
 ```sh
@@ -470,7 +471,18 @@ The station partition goes in the highest free run that holds `--size`
 (64 MiB, at least 40), on a MiB boundary where the run allows it and a
 4 KiB one where it does not. It is formatted FAT32 with one sector a
 cluster and the reserved sectors `bios` uses (3.1): its boot record at byte
-0x1DC, the marker at reserved sector 8, stage 3 from 32. Its files are
+0x1DC, the marker at reserved sector 8, stage 3 from 32.
+
+**Sector sizes.** Disks of 512- and 4096-byte sectors, MBR or GPT. Every
+LBA above is the disk's own sector: on a 4Kn disk stage 2 is still at LBA
+34 on GPT (byte 139264) and LBA 1 on MBR, the reserved sectors, the marker
+and stage 3 are 4096-byte sectors, and the station partition's FAT has
+4096-byte sectors. FAT32 needs 65525 clusters, and a cluster cannot be
+smaller than a sector, so the station partition there is 288 MiB by default
+and 272 MiB at least, as a 4Kn disk's ESP is 260 MB. An image file is taken
+as 512-byte sectors; a 4Kn image is written through a loop device made with
+`losetup --sector-size 4096 -P`. A loop device is an image's: nothing else
+of this machine is scanned for it and no firmware entry is made. Its files are
 `STATION.INI`, `MEMTEST.BIN` (`--memtest`), and with `--legacy`
 (station-legacy, whose stage 3 is `falcon-bios-station-legacy-stage3.bin`)
 jump's drivers from `--mods` (default `build/bin/mod`) as `*.MOD` and each
@@ -503,21 +515,26 @@ device to itself and `--also`) is read as the loaders read it:
 Windows found (`windows`, `dos`, `grub`, `syslinux`, `disk`, numbered when
 repeated) with its `disk`, `part` and label, and `default` naming the first
 Windows or DOS, else the first UKI (`uki-<name>`), else the first other
-loader, with `timeout = 5`. Nothing found is no default and no countdown.
+loader, with `timeout = 5`. A UKI default on a LUKS2 shelf is a `[linux]`
+section with `uki = <file>` instead of its generated name: before the
+shelf is unlocked the UEFI loader has no row named `uki-<name>`, and a
+`uki` section is the row that prompts for the shelf and boots that file.
+Nothing found is no default and no countdown, and the file is one comment
+line.
 Each disk the file names that has signature 0 is given a random one.
 
-**Refusals.** No partition table; sectors other than 512 bytes; a disk
-already carrying a falcon boot record; no free space for the station
+**Refusals.** No partition table; sectors other than 512 or 4096 bytes; a
+disk already carrying a falcon boot record; no free space for the station
 partition (it names the size it needs and the largest free run); no free
 primary slot; no room before the first partition for stage 2; a mounted
-ESP; `--size` outside 40 to 4096. It warns when the station partition or
+ESP; `--size` above 4096, or under 40 (272 on a 4Kn disk). It warns when the station partition or
 the shelf ends past 8 GB or 128 GiB.
 
 **The backup** (`--backup`, default `falcon-station-backup-<disk>.bin`;
 refused when it exists, without `--force`) is written before anything else
-and holds: LBA 0; from the table's end to the first partition (stage 2's
-area); on GPT the primary and backup tables; the station partition's first
-16384 sectors; the ESP's boot sector and its FAT32 backup; each other
+and holds, in the disk's sectors: LBA 0; from the table's end to the first partition (stage 2's
+area); on GPT the primary and backup tables; the station partition's
+reserved sectors and 8 MiB after them; the ESP's boot sector and its FAT32 backup; each other
 disk's LBA 0 before its signature. Then, in order: the shelf's stamp, the
 station partition, its files, record and stages, the ESP, other disks'
 signatures, and LBA 0 last.

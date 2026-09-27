@@ -518,6 +518,20 @@ stn_status stn_ini_build(const stn_found *f, size_t n, unsigned timeout,
         }
     }
     if (pick != NULL) {
+        for (i = 0; i < n; i++) {
+            stationini_entry *e;
+
+            if (f[i].kind != STN_F_UKI || !f[i].locked ||
+                strcmp(f[i].name, pick) != 0)
+                continue;
+            if (out->n_entries >= STATIONINI_ENTRIES_MAX)
+                return STN_ERR_FULL;
+            e = &out->entries[out->n_entries++];
+            (void)snprintf(e->name, sizeof e->name, "linux");
+            (void)snprintf(e->uki, sizeof e->uki, "%s", f[i].label);
+            pick = e->name;
+            break;
+        }
         (void)snprintf(out->default_name, sizeof out->default_name, "%s",
                        pick);
         out->timeout = timeout;
@@ -686,6 +700,28 @@ int stn_run_restores(const stn_run *r, int full)
 int stn_run_whole_lba0(const stn_run *r, int full)
 {
     return r != NULL && r->kind == STN_RUN_LBA0 && full;
+}
+
+unsigned stn_min_mib(uint32_t sector)
+{
+    return sector == 512u ? STN_MIN_MIB
+         : sector == 4096u ? STN_MIN_MIB_4K : 0u;
+}
+
+unsigned stn_default_mib(uint32_t sector)
+{
+    return sector == 512u ? STN_DEFAULT_MIB
+         : sector == 4096u ? STN_DEFAULT_MIB_4K : 0u;
+}
+
+uint64_t stn_align_for(uint64_t align512, uint32_t sector)
+{
+    uint64_t n;
+
+    if (sector < 512u || sector % 512u != 0u)
+        return 0;
+    n = align512 / (sector / 512u);
+    return n == 0u ? 1u : n;
 }
 
 stn_reach stn_reach_of(uint64_t end)

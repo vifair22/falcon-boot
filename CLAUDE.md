@@ -251,8 +251,8 @@ falcon-efi and falcon-bios, which never share a set, may both have a `pos/`.
     and `--headless`; `ovmf.sh`; `rig-shot.sh`), its fixtures (the payload
     ISO and images, the throwaway test MOK, the sd-stub fixture UKI with its
     `/init` in `uki-init/`, the four-partition test stick, and
-    `mk-test-station.sh`, a disk made by following the Manual's stationary
-    install procedure, `make test-station`) and the two spikes
+    `mk-test-station.sh`, a disk `mkstick station install` puts the station
+    on, `make test-station`) and the two spikes
     whose findings are in `docs/notes/`.
 - `falcon-cli/` host tooling, Linux userland C never linked into the loader:
   `src/mkstick`, `src/sign`, and their shared `src/common`. May shell out to
@@ -355,7 +355,9 @@ falcon-efi and falcon-bios, which never share a set, may both have a `pos/`.
   install's records; a 4Kn stick on NVMe; the station) and judges each from
   serial (`falcon-efi/tools/run-core-rig.sh`); `make test-station-uefi`
   does the same for the UEFI station's own cases
-  (`falcon-efi/tools/run-station-rig.sh`).
+  (`falcon-efi/tools/run-station-rig.sh`), and `make
+  test-station-installed` for stations the installer put on a disk, 4Kn
+  GPT and MBR included (`falcon-efi/tools/run-installed-rig.sh`).
 
   `src/` is grouped by job, and a job the UEFI loader also does carries
   that module's name, so the two halves of a route sit side by side:

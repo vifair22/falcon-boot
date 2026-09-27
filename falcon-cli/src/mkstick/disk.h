@@ -30,6 +30,10 @@
 typedef struct {
     char     path[MKS_PATH_MAX];       /* what the user named */
     int      is_block;
+    /* A loop device: a block device, but an image file's, so not a disk of
+     * the machine it is attached on (the station installer scans that
+     * machine and writes its firmware entries only for a real disk). */
+    int      is_loop;
     uint64_t size;                     /* bytes */
     uint32_t sector;                   /* logical sector size */
 

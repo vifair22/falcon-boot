@@ -152,9 +152,10 @@ $(FIXTURE_UKI): falcon-efi/tools/mk-test-uki.sh \
 test-stick: $(EFI_SIGNED) test-iso test-uki cli bios
 	falcon-efi/tools/mk-test-stick.sh
 
-# A disk laid out as the Manual's stationary install (Section 2), made by
-# following that procedure; the rig boots it under both firmwares.
-test-station: $(EFI_STATION_SIGNED) $(STANDIN_SIGNED) station test-uki cli
+# The rig's station disk: a machine's disk with the station put on it by
+# `mkstick station install` (DESIGN Section 13.9); the rigs boot it under
+# both firmwares.
+test-station: $(STANDIN) station test-uki cli
 	falcon-efi/tools/mk-test-station.sh
 
 # The core step's matrix cells (docs/notes/station-rework.md section 6), each
@@ -174,6 +175,14 @@ test-station-uefi: $(EFI_STATION_SIGNED) $(STANDIN) $(STANDIN_SIGNED) cli
 	@test -f build/test-station.img || $(MAKE) --no-print-directory test-station
 	falcon-efi/tools/run-station-rig.sh
 
+# Stations the installer put on a machine's disk, booted (DESIGN Section
+# 13.11): a GPT disk with Windows under OVMF, Secure Boot off and on, to
+# its menu, its default and the shelf's UKI; a 4Kn GPT disk with both
+# stations under OVMF and SeaBIOS (NVMe), and its remove --full; a 4Kn MBR
+# disk under SeaBIOS. Builds its own disks (sudo, loop devices).
+test-station-installed: station cli $(STANDIN) $(STANDIN_SIGNED)
+	falcon-efi/tools/run-installed-rig.sh
+
 # No prerequisite on $(TEST_STICK): rebuilding it needs sudo and takes seconds
 # of cryptsetup, so it stays an explicit `make test-stick`. The rig says so if
 # the image is missing.
@@ -185,7 +194,7 @@ run-stick-secboot:
 
 .PHONY: test-station payload esp run mok-test sign run-secboot test-iso \
 	test-img test-uki test-stick run-stick run-stick-secboot test-core \
-	test-station-uefi
+	test-station-uefi test-station-installed
 
 # ---- tests ----
 #

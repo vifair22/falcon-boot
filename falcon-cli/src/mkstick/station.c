@@ -43,6 +43,11 @@
 
 /* ---- partitions ---- */
 
+int stn_is_machine(const mks_disk *d)
+{
+    return d->is_block && !d->is_loop;
+}
+
 int stn_part_index(const mks_records *r, uint32_t n)
 {
     uint32_t i;
@@ -334,7 +339,7 @@ cli_status stn_scan_disks(stn_scan *s, const char *target,
 
     /* A disk on this machine is a disk the station's machine has; an
      * image's machine is what the command line names. */
-    if (s->disks[0].d.is_block && !only_named) {
+    if (stn_is_machine(&s->disks[0].d) && !only_named) {
         DIR *dir = opendir("/sys/block");
         struct dirent *e;
 
@@ -1195,7 +1200,7 @@ static cli_status status_run(const cli_args *a)
             }
             s.n_found = n;
         }
-        if (s.disks[0].d.is_block)
+        if (stn_is_machine(&s.disks[0].d))
             stn_scan_firmware(&s, &ours);
         stn_scan_found(&s, 1);
         {
@@ -1210,7 +1215,7 @@ static cli_status status_run(const cli_args *a)
         }
         cli_log_blank();
         log_info("what the UEFI menu offers%s",
-                 !s.disks[0].d.is_block
+                 !stn_is_machine(&s.disks[0].d)
                      ? " (an image: the firmware's entries are its machine's)"
                  : !util_is_dir("/sys/firmware/efi")
                      ? " (this machine did not boot with UEFI: its firmware "
