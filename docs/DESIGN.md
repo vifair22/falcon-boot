@@ -4349,33 +4349,40 @@ with no entry; next boot of memtest, of a UKI on the encrypted shelf (the
 prompt, no list) and of nothing; the INI error page; a default naming nothing; and an unsigned `memtest.efi`, which boots
 with Secure Boot off and is refused with it on.
 
-Still to be written:
+The BIOS station's are `make test-station-bios`
+(`falcon-bios/tools/run-station-rig.sh`), under SeaBIOS, and the A21m's
+disk:
 
+- **Synthetic boot sectors**: `falcon-bios/tools/rigboot.S` reports on
+  serial DL, DS:SI, the 16-byte entry, its BPB's hidden sectors, the
+  entry's type and which disk INT 13h answers for 0x80 and for DL. The rig
+  installs it in two rig disks' partitions and MBRs and judges own-disk
+  primaries of type 0x0C (hidden sectors patched) and 0x0B, a logical
+  partition refused, a second disk's partition with the swap on and off, a
+  second disk's MBR, a `STATION.INI` error line, a next-boot marker over a
+  default, one naming nothing here, and memtest86+. FreeDOS 1.4 (the
+  LiteUSB image, checked against FreeDOS's published hash) boots as the
+  station's own disk, as a second disk's partition and as a second disk's
+  MBR behind the swap, judged from the VGA text it leaves on screen.
 - **A copy of the A21m's disk image** (Windows 2000 SP4, MBR, NTFS at 63)
-  under SeaBIOS, with falcon installed on the copy by the installer: the real
-  `NTLDR` path and the real installer on a real disk. The copy is a qcow2
-  overlay of the image, presented by `qemu-nbd` for ntfsresize, sfdisk and
-  the installer (`falcon-bios/tools/mk-a21m-station.sh`), and each boot a
-  throwaway overlay on that (`run-a21m-rig.sh`), so the 10 GB image is
-  never copied or written.
+  with the station installed on it by the installer: a qcow2 overlay of the
+  image, presented by `qemu-nbd` for ntfsresize, sfdisk and the installer
+  (`falcon-bios/tools/mk-a21m-station.sh`), and each boot a throwaway
+  overlay on that (`run-a21m-rig.sh`), so the 10 GB image is never copied
+  or written. The disk is given the A21m's geometry (15 heads, 63 sectors,
+  translated LARGE to the 240 heads its BPB carries); under SeaBIOS's
+  default the untouched image stops at "NTLDR is missing" with its own
+  MBR. The station's countdown boots its default through the partition
+  chain to NTLDR, "Starting Windows" and the Windows 2000 splash
+  (2026-09-27); the stop 0x7B that follows is the untouched image's too,
+  Windows 2000's IDE driver meeting QEMU's controller, not falcon's.
 - **The installer on images** (`make test-station-install`): an MBR disk of
   the A21m's shape with a Windows 98 second disk and a LUKS2 shelf, a GPT
   disk with an ESP, Windows and a plaintext shelf; install, status, remove,
   and `remove --full` back to the original bytes.
-- **Synthetic boot sectors** that print DL, DS:SI and the entry they were
-  handed on serial: every chain case (a partition, another disk, swap on and
-  off, a logical partition refused) without an OS. Built:
-  `falcon-bios/tools/rigboot.S` reports DL, DS:SI, the 16-byte entry, its
-  BPB's hidden sectors, the entry's type and which disk INT 13h answers for
-  0x80 and for DL; `falcon-bios/tools/run-station-rig.sh` (`make
-  test-station-bios`) installs it in two rig disks' partitions and MBRs and
-  judges own-disk primaries of type 0x0C (hidden sectors patched) and 0x0B,
-  a logical partition refused, a second disk's partition with the swap on
-  and off, a second disk's MBR, a `STATION.INI` error line, a next-boot
-  marker over a default, one naming nothing here, and memtest86+. FreeDOS 1.4 (the LiteUSB image,
-  checked against FreeDOS's published hash) boots as the station's own disk,
-  as a second disk's partition and as a second disk's MBR behind the swap,
-  judged from the VGA text it leaves on screen.
+
+Still to be written:
+
 - **A 4Kn disk** under both firmwares.
 - **Two disks**: a station with Windows on the second; a station with a falcon
   stick plugged in, which must change nothing.
