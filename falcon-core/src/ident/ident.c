@@ -29,7 +29,7 @@
 #define BIN_ID       12u
 #define BIN_CRC      28u
 
-#define ID_HEX_LEN (IDENT_ID_LEN * 2u)
+#define ID_HEX_LEN ((size_t)IDENT_ID_LEN * 2u)
 
 static const char magic[4] = { 'F', 'L', 'C', 'N' };
 
@@ -272,8 +272,10 @@ size_t ident_encode_text(const ident_rec *r, char *buf, size_t cap)
     if (role == NULL || r->version == 0u)
         return 0;
 
-    memcpy(tmp, "falcon ", 7);
-    n = 7;
+    /* Byte by byte rather than memcpy: tmp is not a string until the
+     * line is finished and terminated below. */
+    for (k = 0; k < sizeof "falcon " - 1u; k++)
+        tmp[n++] = "falcon "[k];
     /* The version, 1 to 3 digits, most significant first. */
     v = r->version;
     if (v >= 100u)
