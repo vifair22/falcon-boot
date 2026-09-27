@@ -41,6 +41,10 @@ CORE_TRUST    := $(addprefix $(CORE)/trust/,der.c x509.c authenticode.c \
 CORE_MEDIA    := $(addprefix $(CORE)/media/,family.c cpio.c osrel.c bootcfg.c \
 	extmap.c hookcmd.c bootfs.c grubcfg.c bsdmd.c xpsetup.c eltorito.c medium.c \
 	survey.c shelf.c nextboot.c)
+# Whether an x86-64 UEFI machine can boot a medium at all (the UEFI menu's
+# {BIOS ONLY} tag). Apart from CORE_MEDIA because only the UEFI stick asks,
+# and falcon-bios links CORE_MEDIA whole.
+CORE_UEFIBOOT := $(CORE)/media/uefiboot.c
 CORE_WIM      := $(addprefix $(CORE)/wim/,lzx.c wim.c)
 # gzip, inflated: falcon jump's stage 3 is stored compressed on its floppy
 # and stage 2 inflates it (DESIGN Section 14.3).
@@ -91,6 +95,11 @@ test-udf:
 test-wim:
 	falcon-core/tools/mk-test-wim.sh
 
+# The media uefiboot_test.c judges: BIOS-only, EFI-stub and UEFI-image ISOs,
+# Linux- and Windows-shaped. xorriso and mtools, no sudo.
+test-uefiboot:
+	falcon-core/tools/mk-test-uefiboot.sh
+
 test-luks:
 	falcon-core/tools/mk-test-luks.sh
 
@@ -101,7 +110,7 @@ test-trust: $(EFI)
 	falcon-core/tools/mk-test-trust.sh
 
 .PHONY: test-image test-ext4 test-fat test-luks test-trust test-iso9660 test-udf \
-	test-wim
+	test-wim test-uefiboot
 
 # ---- tests ----
 
@@ -110,7 +119,7 @@ CORE_TESTS := $(addprefix falcon-core/tests/,main.c \
 	exfat_fixture_test.c cpio_test.c family_test.c manifest_test.c \
 	crypto_test.c json_test.c luks_test.c ext4_test.c fs_test.c \
 	iso9660_test.c udf_test.c udfedit_test.c media_fs_test.c bootcfg_test.c extmap_test.c \
-	hookcmd_test.c grubcfg_test.c bsdmd_test.c xpsetup_test.c eltorito_test.c fat_test.c medium_test.c bootfs_test.c blesslist_test.c wim_test.c part_test.c \
+	hookcmd_test.c grubcfg_test.c bsdmd_test.c xpsetup_test.c eltorito_test.c fat_test.c medium_test.c bootfs_test.c uefiboot_test.c blesslist_test.c wim_test.c part_test.c \
 	osrel_test.c pe_test.c trust_test.c survey_test.c tui_test.c shelf_test.c \
 	nextboot_test.c gz_test.c table_test.c ident_test.c identfs_test.c extfind_test.c \
 	rebl_test.c kndev.c)
@@ -118,7 +127,8 @@ CORE_TESTS := $(addprefix falcon-core/tests/,main.c \
 CORE_UUT := $(CORE_CRYPTO) $(CORE_FS) $(CORE_LUKS) $(CORE_PART) $(CORE_IDENT) \
 	$(CORE_IDENT_FS) $(CORE)/media/extfind.c $(CORE_BLK) $(CORE_PE) \
 	$(CORE_WIM) $(CORE_UCS2) $(CORE_TUI) \
-	$(CORE_TRUST) $(CORE_MEDIA) $(CORE_MANIFEST) $(CORE_MANIFEST_WRITE) $(CORE_GZ)
+	$(CORE_TRUST) $(CORE_MEDIA) $(CORE_UEFIBOOT) $(CORE_MANIFEST) \
+	$(CORE_MANIFEST_WRITE) $(CORE_GZ)
 
 $(eval $(call test_bin,core,$(CORE_TESTS) $(CORE_UUT)))
 

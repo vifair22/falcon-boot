@@ -194,6 +194,11 @@ typedef struct {
      * recognised nothing". */
     family_id fam;
     UINT8 probed;
+    /* The medium boots only on a BIOS machine: no UEFI boot image and no
+     * kernel the direct route can start (falcon-core/src/media/uefiboot.h).
+     * Set from the survey that probed it, so it waits on `probed` like fam.
+     * The row carries {BIOS ONLY} and boot_plain refuses it with a page. */
+    UINT8 bios_only;
     /* The boot prediction for what this entry boots (DESIGN Section 7.8):
      * the ISO's default loader, the payload itself, or a fresh bless's wrap.
      * TRUST_NO_VERDICT until probed. Drawn, and shown when the platform
@@ -240,6 +245,7 @@ static void targets_build(iso_list *list)
         t->hit.state = BLESS_NONE;
         t->fam = FAMILY_UNKNOWN;
         t->probed = 0;
+        t->bios_only = 0;
         memset(&t->trust, 0, sizeof(t->trust));
         t->sig[0] = 0;
         t->why[0] = 0;
@@ -419,7 +425,14 @@ static void tags_build(iso_target *t, const iso_survey *survey)
             wbuf_ucs2(&w, state);
     }
 
+    if (survey != (const iso_survey *)0 && t->shape == ENTRY_MEDIA)
+        t->bios_only = survey->uefi == UEFIBOOT_NO ? 1 : 0;
     why = why_refused(t, uki);
+    /* In every Secure Boot state: it is not a prediction about a signature
+     * but a fact about the medium, and a fresh blessing is the one thing
+     * that would boot something else in its place. */
+    if (t->bios_only && !uki)
+        why = L"{BIOS ONLY}";
     t->why[0] = 0;
     t->caution = 0;
     if (why != (const CHAR16 *)0) {
@@ -457,6 +470,7 @@ static void payload_survey(fs_vol *vol, const fs_dirent *ent, iso_survey *out)
 
     out->family = family_by_id(FAMILY_UNKNOWN);
     out->sig = ISO_SIG_UNKNOWN;
+    out->uefi = UEFIBOOT_UNKNOWN;
     memset(&out->trust, 0, sizeof(out->trust));
 
     while (ent->name[i] != 0 && i + 1 < sizeof(name)) {
@@ -895,6 +909,7 @@ static void boot_blessed(EFI_HANDLE image_handle, const CHAR16 *label,
         iso_survey_media(g_st, &g_vols[target->vol], &target->ent,
                          target->kind, &g_stores, &survey);
         target->fam = survey.family->id;
+        target->bios_only = survey.uefi == UEFIBOOT_NO ? 1 : 0;
         target->probed = 1;
     }
     menu_mode(g_st, target->fam == FAMILY_BSD ? L"BLB" : L"BLS");
@@ -1202,7 +1217,7 @@ static BOOLEAN blessable(const iso_target *t)
 {
     if (t->shape != ENTRY_MEDIA || t->kind != ISO_MEDIA_CD)
         return FALSE;
-    if (t->fam == FAMILY_WINDOWS)
+    if (t->fam == FAMILY_WINDOWS || t->bios_only)
         return FALSE;
     return bless_hit_action(&t->hit) != BLESS_ACT_UKI ? TRUE : FALSE;
 }
@@ -1258,6 +1273,9 @@ static BOOLEAN bless_from_menu(EFI_HANDLE image_handle, const iso_list *list,
         else if (pick < list->count &&
                  bless_hit_action(&list->targets[pick].hit) == BLESS_ACT_UKI)
             out(L"This image is already blessed.\r\n");
+        else if (pick < list->count && list->targets[pick].bios_only)
+            out(L"This image boots only on a BIOS machine, where it needs no "
+                L"blessing.\r\n");
         else
             out(L"Only a Linux or other non-Windows .iso is blessed. Windows "
                 L"media boots as it is:\r\nselect it and press enter.\r\n");
@@ -1360,6 +1378,21 @@ static BOOLEAN bless_from_menu(EFI_HANDLE image_handle, const iso_list *list,
     return TRUE;
 }
 
+/* The page a {BIOS ONLY} row shows instead of a route
+ * (falcon-core/src/media/uefiboot.h): nothing is loaded, so there is no
+ * route code and no status, only what the medium is and where it boots. */
+static void boot_bios_only(const CHAR16 *label)
+{
+    menu_screen(g_st);
+    out(label);
+    out(L"\r\nthis image boots only on a BIOS machine: it has no UEFI boot "
+        L"loader, and no\r\nkernel UEFI can start.\r\n\r\n"
+        L"Start the machine from this stick in BIOS mode (legacy or CSM) "
+        L"instead. The\r\nstick needs its BIOS loader for that "
+        L"(mkstick bios).\r\n");
+    out(L"\r\npress any key to return to the menu.\r\n");
+}
+
 /* An entry with nothing fresh on the stick behind it: Windows media patched
  * as it is served, a Linux ISO's kernel booted directly, or the chainload
  * this loader has always done. c (ROUTE_CHAIN) always chainloads.
@@ -1378,7 +1411,15 @@ static BOOLEAN boot_plain(EFI_HANDLE image_handle, const CHAR16 *label,
         iso_survey_media(g_st, &g_vols[t->vol], &t->ent, t->kind, &g_stores,
                          &survey);
         t->fam = survey.family->id;
+        t->bios_only = survey.uefi == UEFIBOOT_NO ? 1 : 0;
         t->probed = 1;
+    }
+
+    /* Every route, c included: the chainload wants the UEFI boot image this
+     * medium does not have, and direct wants a kernel this one's is not. */
+    if (t->bios_only) {
+        boot_bios_only(label);
+        return TRUE;
     }
 
     if (route != ROUTE_CHAIN && t->fam == FAMILY_WINDOWS &&

@@ -1958,11 +1958,13 @@ entry's path on p2 (which retired the old "suffix clipped the path" case).
 Bracket vocabulary: `[blessed]`, `[blessed, stale]`, `[unsigned]`, `[MS UEFI
 CA]`, `[MS Windows]`, `[MOK]` for a MOK-signed first stage that is not a
 bless (the personal OS, the appliance), `[?]` for an entry past
-`PROBE_LIMIT`, and otherwise the CN of the topmost certificate in the
+`PROBE_LIMIT`, `[no efi]` for a medium with no `\EFI\BOOT\BOOTX64.EFI` on
+any of its volumes, and otherwise the CN of the topmost certificate in the
 signer's chain, cut to 16 columns. (`[not prepared]`, a media-finding fact
 about Windows rather than a signature fact, left with preparation on
-2026-09-19.) Yellow is reserved for "shim will refuse the
-first stage" so that it always answers one question.
+2026-09-19.) Yellow is reserved for "this will not boot here"
+(shim refusing the first stage, or `{BIOS ONLY}`) so that it always answers
+one question.
 
 Reasons, exhaustive:
 
@@ -1973,11 +1975,48 @@ Reasons, exhaustive:
 | `{BLESS STALE}` | the bless record is stale (8.1), so the ordinary path runs, and it predicts refused | re-bless |
 | `{REVOKED}` | a signer certificate or the image hash is in `dbx` or `MokListXRT`, or an SBAT generation is below `SbatLevelRT` | newer media |
 | `{VALIDATION OFF}` | a UKI entry (personal OS, fresh bless, appliance) with validation disabled (Section 7.4) | re-enable validation |
+| `{BIOS ONLY}` | an ISO this machine cannot boot at all, in any Secure Boot state (below) | boot the stick in BIOS mode |
+
+`{BIOS ONLY}` (decided 2026-09-27) is the one reason that is not a
+prediction about a signature. It is a fact about the medium, read by
+`falcon-core/src/media/uefiboot.c` during the survey, and it is shown in
+every Secure Boot state. An ISO is BIOS-only when neither way the UEFI
+loader boots an ISO can reach it:
+
+1. It has no UEFI boot image of its own: no El Torito entry for platform
+   0xEF, no `\EFI\BOOT\BOOTX64.EFI` on any of its volumes, and no
+   `\bootmgr.efi`. Any one of them is a UEFI medium, whatever it holds: a
+   0xEF image with only `BOOTIA32.EFI` (Windows 8.1 and 10 x86) is left
+   alone.
+2. Its kernel cannot be booted directly (DIR, 12.2.9): the kernel the
+   default CD entry of its boot configuration names is a bzImage with no PE
+   header, or a PE for a processor other than x86-64. Windows media has no
+   kernel for this route, so for the Windows family (`media/family.c`) the
+   first test is the whole rule.
+
+Anything the medium does not prove is not marked: no boot configuration, a
+kernel that cannot be read, bytes that are neither a PE nor a bzImage, a
+`.img`, an entry past `PROBE_LIMIT` until it is chosen. What that marks, by
+the known layouts of the corpus's Windows media: 2000, XP (both), Vista RTM
+x86 and 7 x86; and DevLink recovery (13.5), an isolinux medium around a
+32-bit kernel.
+
+The row stays selectable, like every other. Enter, `c` and `d` all show a
+page saying the image boots only on a BIOS machine and how to get there,
+and return to the menu. Nothing is handed to the load path, because there
+is nothing on the medium it could load: the chainload finds no boot image
+and the direct route's LoadImage takes only an x86-64 PE. That is why this
+does not cross Section 7.3 where greying out a predicted refusal would: no
+signature is judged and no image the platform could have run is withheld.
+`b` and `a` leave the row out; a BIOS machine needs no blessing.
 
 Colours: an unselected predicted row is `EFI_YELLOW` on black. The selection
 bar is black on light gray, and yellow on light gray is unreadable, so a
 selected predicted row is black on `EFI_BROWN` (which firmware renders as
 dark yellow): the bar itself changes colour rather than the text on it.
+`{BIOS ONLY}` is drawn in the same colours: yellow answers "this entry will
+not boot on this machine", and for every other reason that is because shim
+will refuse its first stage.
 
 The evidence goes on the screen shown when the platform refuses an entry,
 which is where the question gets asked (there is no per-entry details
@@ -2742,7 +2781,7 @@ flowchart TD
     NOTE --> POSS
     ID -- yes --> POSS["pos_scan<br/>shelves whose record carries the install ID, any disk:<br/>LUKS2 with a pbkdf2 keyslot, or plaintext with a UKI<br/>: the pinned Personal OS row"]
     POSS --> VOLS["scan_all_volumes, up to 4 libraries whose record<br/>carries the install ID, any disk<br/>fs_mount, bless_load (manifest), survey_volume"]
-    VOLS --> PROBE["probe_entries<br/>medium_open, family_detect,<br/>the loader's PE signature, trust_probe: row tags"]
+    VOLS --> PROBE["probe_entries<br/>medium_open, family_detect,<br/>the loader's PE signature, trust_probe;<br/>no loader: uefiboot_medium (BIOS ONLY): row tags"]
     PROBE --> PEND{"next-boot marker<br/>pending?"}
     PEND -- yes --> NBR["next_boot_run<br/>boot the named entry as Enter would"]
     NBR --> MENU
@@ -2781,7 +2820,9 @@ flowchart TD
     ROW -- "image, Enter / c / d" --> BL{"fresh blessing<br/>and Enter?"}
     BL -- "yes, BSD" --> BLB[BLB]
     BL -- "yes, other" --> BLS[BLS]
-    BL -- no --> C{"c?"}
+    BL -- no --> BO{"{BIOS ONLY}?"}
+    BO -- yes --> BOP["page: boots only on a BIOS machine"]
+    BO -- no --> C{"c?"}
     C -- "yes, .img" --> IMG[IMG]
     C -- "yes, .iso" --> CHN[CHN]
     C -- no --> W{"Windows CD,<br/>ASCII path?"}
@@ -2802,7 +2843,9 @@ flowchart TD
 
 `boot_plain` (`apps/stick/efi_main.c`) runs the tests in this order.
 `d` and Enter are the same on an unblessed row; `c` and `d` on a blessed row
-skip the blessing.
+skip the blessing. A `{BIOS ONLY}` row (7.8) is surveyed first if it was
+past `PROBE_LIMIT`, and then takes no route on any key: its page says so and
+the menu comes back.
 
 A route falls through only while it has not yet committed. Each one keeps a
 flag, set at the start and cleared once it has decided the medium is its own:
@@ -3941,7 +3984,8 @@ system will not boot, in as little as 32 MB. It is never on an encrypted
 shelf: the machines it is for should not have to unlock anything. On the
 stick it is an ISO in the library (devlink-rescue builds it with isolinux,
 BIOS El Torito only), booted like any ISO; the UEFI loader lists it and
-marks it unbootable, as it marks every ISO with no UEFI boot image. On a
+marks it `{BIOS ONLY}` (7.8), as it marks every ISO with no UEFI boot image
+and no kernel it could start directly. On a
 station it appears only on station-legacy (13.10): a machine modern enough
 for the plain station boots the stick's ISO from USB, or has no use for it.
 

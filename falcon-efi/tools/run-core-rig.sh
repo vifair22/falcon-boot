@@ -37,6 +37,12 @@
 #   station-uefi, station-bios
 #                  the station disk (mk-test-station.sh): reaches its
 #                  passphrase prompt, from the shelf of its install
+#   bios-only-uefi, bios-only-uefi-sb
+#                  the rig stick under OVMF, Secure Boot off and on: a
+#                  BIOS-only ISO on its library (isolinux, a kernel with no
+#                  EFI stub) is listed with {BIOS ONLY}, one whose kernel has
+#                  a stub is not, and choosing the first shows its page and
+#                  returns to the menu
 #
 # Every image is built from image files; loop devices on them need sudo, as
 # mk-test-stick.sh does. Nothing touches a real disk.
@@ -111,8 +117,14 @@ detach() {
     LOOP=
 }
 
+# The BIOS-only case's two media, named to sort first on the root screen,
+# right under the Personal OS row.
+BIOS_ONLY_ISO=a-bios-only.iso
+STUB_ISO=a-efi-stub.iso
+
 build_sticks() {
     STICK_ID=$ID_A TEST_STICK_IMG=$R/stick-a.img \
+        STICK_ISO_FILES="build/test-uefi-biosonly.iso:$BIOS_ONLY_ISO build/test-uefi-stub.iso:$STUB_ISO" \
         falcon-efi/tools/mk-test-stick.sh --no-labels >"$R/stick-a.build" 2>&1
     STICK_ID=$ID_B TEST_STICK_IMG=$R/stick-b.img FALCON_TEST_PASS=$PASS_B \
         STICK_ISOS="second-stick.iso" \
@@ -222,7 +234,8 @@ build_4kn() {
 }
 
 build_all() {
-    make --no-print-directory all bios station cli payload test-iso >/dev/null
+    make --no-print-directory all bios station cli payload test-iso \
+        test-uefiboot >/dev/null
     # The fixture UKI and the test MOK are built once (make test-uki,
     # make sign) and reused; this rig never rebuilds them.
     for f in build/test/fixture-uki.efi build/mok-test/falcon-test-mok.key \
@@ -436,6 +449,58 @@ case_station() { # case_station CASE FIRMWARE
     fi
 }
 
+# The row's tag, its page, and the menu back after a key. The rows are
+# found by what OVMF's terminal drew: each row's text lands on the serial
+# with the tag columns after the label.
+case_bios_only() { # case_bios_only CASE FIRMWARE
+    local why= n
+    boot "$2" "$R/stick-a.img:boot"
+    wait_for "$STUB_ISO" 90 || why="the menu never listed $STUB_ISO"
+    sleep 1
+    if [[ -z "$why" ]]; then
+        log_text "$R/serial.log" | grep -aqE "$BIOS_ONLY_ISO +\[no efi\] +\{BIOS ONLY\}" ||
+            why="$BIOS_ONLY_ISO is not drawn with {BIOS ONLY}"
+    fi
+    if [[ -z "$why" ]]; then
+        log_text "$R/serial.log" | grep -aqE "$STUB_ISO +\[" ||
+            why="$STUB_ISO is drawn with no tag column"
+    fi
+    if [[ -z "$why" ]]; then
+        log_text "$R/serial.log" | grep -aoE "$STUB_ISO +\[[^]]*\]( +\{[A-Z ]+\})?" |
+            grep -aqF "{BIOS ONLY}" && why="$STUB_ISO is drawn with {BIOS ONLY}"
+    fi
+    if [[ -z "$why" ]]; then
+        # Personal OS is the first row; the BIOS-only image the second.
+        mon "sendkey down"
+        sleep 0.3
+        mon "sendkey ret"
+        wait_for "this image boots only on a BIOS machine" 30 ||
+            why="choosing $BIOS_ONLY_ISO did not show its page"
+    fi
+    if [[ -z "$why" ]]; then
+        has "booting: $BIOS_ONLY_ISO" && why="the page started a route"
+        wait_for "press any key to return to the menu" 10 ||
+            why="${why:-the page has no way back}"
+    fi
+    if [[ -z "$why" ]]; then
+        n=$(log_text "$R/serial.log" | grep -aoF "c chain | d direct" | wc -l)
+        mon "sendkey spc"
+        local i
+        for (( i = 0; i < 100; i++ )); do
+            (( $(log_text "$R/serial.log" | grep -aoF "c chain | d direct" |
+                 wc -l) > n )) && break
+            sleep 0.1
+        done
+        (( i < 100 )) || why="the menu did not come back"
+    fi
+    halt
+    if [[ -z "$why" ]]; then
+        result "$1" 1 "$BIOS_ONLY_ISO tagged and refused with its page; $STUB_ISO untagged"
+    else
+        result "$1" 0 "$why"
+    fi
+}
+
 build_all
 
 A_ISOS="archlinux-fake.iso"
@@ -443,7 +508,8 @@ CASES=("$@")
 [[ ${#CASES[@]} -gt 0 ]] ||
     CASES=(uefi-stick uefi-stick-sb bios-stick two-sticks-uefi two-sticks-bios
            mbr-disk-uefi mbr-disk-bios foreign-uefi foreign-bios 4kn-uefi
-           4kn-bios station-uefi station-bios)
+           4kn-bios station-uefi station-bios bios-only-uefi
+           bios-only-uefi-sb)
 
 for c in "${CASES[@]}"; do
     case $c in
@@ -472,6 +538,8 @@ for c in "${CASES[@]}"; do
             "sector size 4096" "$R/stick-4kn.img:boot:4k" ;;
     station-uefi)  case_station "$c" uefi ;;
     station-bios)  case_station "$c" bios ;;
+    bios-only-uefi)    case_bios_only "$c" uefi ;;
+    bios-only-uefi-sb) case_bios_only "$c" uefi-sb ;;
     *) echo "unknown case: $c" >&2; exit 2 ;;
     esac
 done
