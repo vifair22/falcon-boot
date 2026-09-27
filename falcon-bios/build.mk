@@ -118,8 +118,9 @@ BIOS_MOD_bsd     := $(BIOS)/bsd/bsd.c
 BIOS_MOD_win     := $(BIOS)/win/win.c
 BIOS_MOD_mbr     := $(BIOS)/mbr/mbr.c
 # The station's chains, a partition's boot sector and another disk's MBR,
-# with the drive swap (DESIGN Section 13.4); vbrcore.c is the tested half.
-BIOS_MOD_chain   := $(BIOS)/mbr/chain.c $(BIOS)/mbr/vbrcore.c
+# with the drive swap (DESIGN Section 13.4); vbrcore.c is the tested half,
+# and core's vbr.c what a boot sector is.
+BIOS_MOD_chain   := $(BIOS)/mbr/chain.c $(BIOS)/mbr/vbrcore.c $(CORE_VBR)
 BIOS_MOD_jumpini := $(BIOS)/jump/jumpini.c
 BIOS_MOD_jmod    := $(BIOS)/jump/jmod.c $(BIOS)/jump/jmodload.c $(BIOS)/jump/jres.c
 
@@ -419,9 +420,9 @@ BIOS_UUT := $(BIOS)/iso/vcdcore.c $(BIOS)/vfd/vfdcore.c $(BIOS)/linux/linuxcore.
 	$(BIOS)/jump/jumpini.c $(BIOS)/jump/jmod.c $(BIOS)/mem/lowmem.c \
 	$(BIOS)/hw/ata/atacore.c $(BIOS)/hw/scsi/scsi.c $(BIOS)/hw/usb/usbcore.c \
 	$(BIOS)/hw/pcc/pcccore.c $(BIOS)/disk/bootpart.c $(BIOS)/mbr/vbrcore.c
-# What bootpart.c is built on, linked into the test binary but counted under
-# core's own tests.
-BIOS_TEST_CORE := $(CORE_PART) $(CORE_IDENT)
+# What bootpart.c and vbrcore.c are built on, linked into the test binary
+# but counted under core's own tests.
+BIOS_TEST_CORE := $(CORE_PART) $(CORE_IDENT) $(CORE_VBR)
 
 $(eval $(call test_bin,bios,$(BIOS_TESTS) $(BIOS_UUT) $(BIOS_TEST_CORE)))
 
@@ -489,10 +490,17 @@ $(BIOS_RIGBOOT): $(BIOS_OBJ)/falcon-bios/tools/rigboot.o $(BIOS)/start/bios.ld
 	fi
 
 # The BIOS station rig (DESIGN Section 13.11): the partition chain, the
-# drive swap, STATION.INI and next boot under SeaBIOS, judged from serial,
-# and FreeDOS from the VGA text it leaves on screen.
+# drive swap, STATION.INI and next boot under SeaBIOS, judged from serial.
 test-station-bios: station $(BIOS_RIGBOOT) $(MKSTICK)
 	falcon-bios/tools/run-station-rig.sh
+
+# The BIOS station in front of real systems (DESIGN Section 13.11): the
+# fixture disks of tools/fixtures/README.md (FreeDOS, Windows 98 SE, Windows
+# 95 when there is one) with the station installed by `mkstick station
+# install`, as the station's own disk and as a second disk behind the drive
+# swap, judged by the prompt or desktop on screen. Needs sudo (qemu-nbd).
+test-station-fixtures: station $(MKSTICK)
+	falcon-bios/tools/run-station-fixture-rig.sh
 
 # DevLink recovery (DESIGN Section 13.5) off the rig stick on a Pentium with
 # 32 MB, by both BIOS routes and both of its entries, the agent reached on
@@ -501,4 +509,5 @@ test-station-bios: station $(BIOS_RIGBOOT) $(MKSTICK)
 test-devlink: all bios cli payload
 	falcon-bios/tools/run-devlink-rig.sh
 
-.PHONY: test-bios-img test-bios-probe test-station-bios test-devlink
+.PHONY: test-bios-img test-bios-probe test-station-bios test-station-fixtures \
+	test-devlink

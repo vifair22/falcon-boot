@@ -29,6 +29,18 @@
 #define STROWS_MAX       64u
 #define STROWS_LABEL_MAX 128u
 
+/* The words both stations give the rows they find (docs/notes/
+ * station-rework.md section 11), as ASCII: a loader widens one by writing
+ * u"" or L"" before it, and the installer writes them into STATION.INI and
+ * `station status` prints them as they are, so all three say one thing. A
+ * boot sector's loader is media/vbr.c's vbr_loader_name. */
+#define STROWS_LABEL_POS       "Personal OS (encrypted)"
+#define STROWS_LABEL_MEMTEST   "Memory test (memtest86+)"
+#define STROWS_LABEL_BOOTCODE  "Boot code"
+#define STROWS_LABEL_PARTITION "Partition"
+#define STROWS_LABEL_BOOTMGR   "Windows Boot Manager"
+#define STROWS_LABEL_FWSETUP   "Reboot to firmware setup"
+
 /* Windows Boot Manager's path, the default of a `method = efi` entry. */
 #define STROWS_BOOTMGFW "\\EFI\\Microsoft\\Boot\\bootmgfw.efi"
 
@@ -99,6 +111,10 @@ void strows_name_uki(char out[STATIONINI_NAME_MAX], const char *file);
  * labels its rows. */
 void strows_label_part(uint16_t *label, size_t cap, const uint16_t *what,
                        const part_disk_id *d, uint32_t part);
+
+/* The same, in ASCII, for the installer and `station status`. */
+void strows_label_part_ascii(char *label, size_t cap, const char *what,
+                             const part_disk_id *d, uint32_t part);
 
 /* Two paths on an ESP naming the same file: case-insensitive, and '/' and
  * '\' the same. */

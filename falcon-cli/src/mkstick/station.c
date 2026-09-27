@@ -36,6 +36,8 @@
 #include <media/nextboot.h>
 #include <media/shelf.h>
 #include <media/stationini.h>
+#include <media/strows.h>
+#include <media/vbr.h>
 #include <part/part.h>
 #include <part/table.h>
 
@@ -376,6 +378,12 @@ static stn_found *new_found(stn_scan *s)
     return f;
 }
 
+/* vbr_identify's reader: the partition's 512-byte sector `sector`. */
+static int read_part_sector(void *ctx, uint32_t sector, uint8_t *buf)
+{
+    return disk_io_read((disk_io *)ctx, (uint64_t)sector * 512u, 512, buf);
+}
+
 void stn_scan_found(stn_scan *s, int uefi)
 {
     static char probe[512];
@@ -392,8 +400,9 @@ void stn_scan_found(stn_scan *s, int uefi)
         for (i = 0; i < r->table.count; i++) {
             const part_entry *p = &r->parts[i];
             uint8_t sec[512];
+            uint8_t scratch[512];
             disk_io io;
-            stn_os os;
+            vbr_loader os;
             stn_found *f;
 
             if (r->table.id.kind == PART_KIND_MBR &&
@@ -413,6 +422,9 @@ void stn_scan_found(stn_scan *s, int uefi)
                 disk_io_close(&io);
                 continue;
             }
+            /* What the BIOS station would call it, FAT32's reserved
+             * sectors asked as it asks them. */
+            os = vbr_identify(sec, read_part_sector, &io, scratch);
             disk_io_close(&io);
 
             if (uefi && !esp_windows &&
@@ -431,10 +443,13 @@ void stn_scan_found(stn_scan *s, int uefi)
                     f = new_found(s);
                     if (f != NULL) {
                         f->kind = STN_F_EFIWIN;
-                        f->os = STN_OS_BOOTMGR;
+                        f->os = VBR_LOADER_BOOTMGR;
                         f->disk = r->table.id;
                         f->disk_ix = (uint32_t)k;
-                        (void)stn_name_disk(&f->disk, 0, f->name,
+                        f->part = p->number;
+                        /* The name and label the UEFI station gives this
+                         * ESP's row. */
+                        (void)stn_name_disk(&f->disk, f->part, f->name,
                                             sizeof f->name);
                         stn_found_label(f);
                         esp_windows = 1;
@@ -443,8 +458,7 @@ void stn_scan_found(stn_scan *s, int uefi)
                 continue;
             }
 
-            os = stn_classify(sec, sizeof sec);
-            if (os == STN_OS_NONE)
+            if (os == VBR_LOADER_NONE)
                 continue;
             f = new_found(s);
             if (f == NULL)
@@ -523,10 +537,10 @@ void stn_scan_firmware(stn_scan *s, int *falcon_entry)
         if (f == NULL)
             return;
         f->kind = STN_F_FWENTRY;
-        f->os = STN_OS_BOOTMGR;
+        f->os = VBR_LOADER_BOOTMGR;
         f->boot_num = (uint16_t)num;
         (void)snprintf(f->name, sizeof f->name, "nxt-%04x", num);
-        (void)snprintf(f->label, sizeof f->label, "Windows Boot Manager");
+        (void)snprintf(f->label, sizeof f->label, "%s", STROWS_LABEL_BOOTMGR);
     }
 }
 
@@ -848,51 +862,104 @@ static void reach_note(const char *what, uint64_t end)
     }
 }
 
-/* One row of what the loader offers, after STATION.INI has had its say. */
-static void print_rows(const stn_scan *s, const stationini *ini, int have_ini,
-                       int memtest)
+/* A row's words as the loader draws them, for a terminal: UCS-2 to ASCII,
+ * anything else as '?'. */
+static void label_ascii(const uint16_t *in, char *out, size_t cap)
 {
     size_t i;
-    unsigned k;
-    unsigned char used[STATIONINI_ENTRIES_MAX];
 
-    memset(used, 0, sizeof used);
+    for (i = 0; in[i] != 0 && i + 1u < cap; i++)
+        out[i] = (in[i] >= 0x20u && in[i] < 0x7Fu) ? (char)in[i] : '?';
+    out[i] = '\0';
+}
+
+static void label_wide(uint16_t *out, size_t cap, const char *in)
+{
+    size_t i;
+
+    for (i = 0; in[i] != '\0' && i + 1u < cap; i++)
+        out[i] = (uint16_t)(unsigned char)in[i];
+    out[i] = 0;
+}
+
+/* The list a station shows, built as the loader builds it (DESIGN Section
+ * 13.3; apps/station/efi_main.c and bios_main.c, rows_find and
+ * build_rows) from what was found, then STATION.INI applied, ordered and
+ * defaulted by media/strows.c, the module both loaders use. The UEFI
+ * firmware-setup row is left out: whether the firmware offers it is known
+ * only at boot. */
+static void print_rows(const stn_scan *s, const stationini *ini, int have_ini,
+                       int memtest, strows_fw fw, int encrypted)
+{
+    static strows rows;
+    size_t view[STROWS_MAX];
+    size_t n;
+    size_t sel = 0;
+    size_t i;
+    int has_default;
+    strow *w;
+
+    strows_init(&rows);
+    if (encrypted && (w = strows_add(&rows, STROW_POS)) != NULL)
+        label_wide(w->label, STROWS_LABEL_MAX, STROWS_LABEL_POS);
     for (i = 0; i < s->n_found; i++) {
         const stn_found *f = &s->found[i];
-        const char *name = f->name;
-        const char *label = f->label;
-        int hide = 0;
+        strow_kind kind;
 
-        for (k = 0; have_ini && k < ini->n_entries; k++) {
-            const stationini_entry *e = &ini->entries[k];
-
-            if (f->kind == STN_F_UKI || f->kind == STN_F_FWENTRY ||
-                !e->has_disk || !part_disk_id_eq(&e->disk, &f->disk) ||
-                e->part != f->part)
-                continue;
-            used[k] = 1;
-            name = e->name;
-            if (e->label[0] != '\0')
-                label = e->label;
-            hide = (e->hide == STATIONINI_TRI_YES);
+        switch (f->kind) {
+        case STN_F_UKI:     kind = STROW_UKI; break;
+        case STN_F_PART:    kind = STROW_VBR; break;
+        case STN_F_DISK:    kind = STROW_MBR; break;
+        case STN_F_FWENTRY: kind = STROW_NXT; break;
+        case STN_F_EFIWIN:  kind = STROW_ESP; break;
+        default:            continue;
         }
-        log_info("  %-20s %s%s%s", name, label,
-                 (have_ini && strcmp(ini->default_name, name) == 0)
-                     ? "  [default]" : "",
-                 hide ? "  [hidden]" : "");
+        if ((w = strows_add(&rows, kind)) == NULL)
+            break;
+        (void)snprintf(w->name, sizeof w->name, "%s", f->name);
+        label_wide(w->label, STROWS_LABEL_MAX,
+                   f->title[0] != '\0' ? f->title : f->label);
+        if (kind == STROW_UKI)
+            (void)snprintf(w->file, sizeof w->file, "%s", f->label);
+        if (kind == STROW_ESP)
+            (void)snprintf(w->file, sizeof w->file, "%s", STROWS_BOOTMGFW);
+        if (kind == STROW_VBR || kind == STROW_MBR || kind == STROW_ESP) {
+            w->has_part = 1;
+            w->disk = f->disk;
+            w->part = f->part;
+        }
     }
-    for (k = 0; have_ini && k < ini->n_entries; k++) {
-        const stationini_entry *e = &ini->entries[k];
+    if (memtest && (w = strows_add(&rows, STROW_MEMTEST)) != NULL) {
+        (void)snprintf(w->name, sizeof w->name, "memtest");
+        label_wide(w->label, STROWS_LABEL_MAX, STROWS_LABEL_MEMTEST);
+        w->own_esp = (uint8_t)(fw == STROWS_UEFI);
+    }
+    if (have_ini)
+        strows_apply(&rows, ini, fw);
 
-        if (used[k] || e->hide == STATIONINI_TRI_YES)
-            continue;
-        log_info("  %-20s %s  (added by STATION.INI)%s", e->name,
-                 e->label[0] != '\0' ? e->label : e->name,
-                 strcmp(ini->default_name, e->name) == 0 ? "  [default]"
-                                                        : "");
+    n = strows_arrange(&rows, have_ini ? ini : NULL, view, STROWS_MAX);
+    has_default = have_ini && strows_default(&rows, ini, view, n, &sel);
+    for (i = 0; i < n; i++) {
+        const strow *r = &rows.row[view[i]];
+        char label[STROWS_LABEL_MAX];
+
+        label_ascii(r->label, label, sizeof label);
+        log_info("  %-20s %s%s%s",
+                 r->section[0] != '\0' ? r->section
+                 : r->name[0] != '\0'  ? r->name : "-",
+                 label, r->added ? "  (added by STATION.INI)" : "",
+                 has_default && sel == i ? "  [default]" : "");
     }
-    if (memtest)
-        log_info("  %-20s memtest86+", "memtest");
+    for (i = 0; i < rows.n; i++) {
+        const strow *r = &rows.row[i];
+        char label[STROWS_LABEL_MAX];
+
+        if (!r->hidden)
+            continue;
+        label_ascii(r->label, label, sizeof label);
+        log_info("  %-20s %s  [hidden]",
+                 r->section[0] != '\0' ? r->section : r->name, label);
+    }
 }
 
 static void show_ini(stn_tally *t, const char *where, const char *text,
@@ -1043,11 +1110,15 @@ static void status_uefi(stn_tally *t, stn_scan *s, stationini *ini,
                  STATIONINI_FILE);
 }
 
-static void status_shelf(stn_scan *s, const uint8_t *id)
+/* The shelves carrying the install ID, said; a plaintext one's UKIs added
+ * to what was found. Returns nonzero when one is LUKS2: the loader's
+ * "Personal OS (encrypted)" row. */
+static int status_shelf(stn_scan *s, const uint8_t *id)
 {
     size_t k;
     uint32_t i;
     int any = 0;
+    int encrypted = 0;
 
     cli_log_blank();
     log_info("the shelf (DESIGN Section 13.2)");
@@ -1062,6 +1133,8 @@ static void status_shelf(stn_scan *s, const uint8_t *id)
                 memcmp(rec->rec.install_id, id, IDENT_ID_LEN) != 0)
                 continue;
             any = 1;
+            if (rec->luks)
+                encrypted = 1;
             log_info("  OK   %s partition %u (%s)", sd->d.path, p->number,
                      rec->luks ? "LUKS2: its UKIs are rows once unlocked"
                                : "plaintext");
@@ -1084,6 +1157,7 @@ static void status_shelf(stn_scan *s, const uint8_t *id)
                 if (ops != NULL && fs_mount(&vol, ops, disk_io_read, &io) ==
                                        FS_OK &&
                     shelf_collect(&list, &vol) > 0) {
+                    shelf_label(&list, &vol);
                     for (u = 0; u < list.n; u++) {
                         stn_found *f = new_found(s);
                         uint8_t name[FS_NAME_MAX + 1u];
@@ -1099,6 +1173,8 @@ static void status_shelf(stn_scan *s, const uint8_t *id)
                             (void)snprintf(f->name, sizeof f->name, "uki");
                         (void)snprintf(f->label, sizeof f->label, "%.63s",
                                        (const char *)name);
+                        label_ascii(list.uki[u].label, f->title,
+                                    sizeof f->title);
                     }
                     shelf_wipe(&list);
                 }
@@ -1108,6 +1184,7 @@ static void status_shelf(stn_scan *s, const uint8_t *id)
     }
     if (!any)
         log_info("  --   no partition carries this station's shelf record");
+    return encrypted;
 }
 
 static cli_status status_run(const cli_args *a)
@@ -1125,6 +1202,7 @@ static cli_status status_run(const cli_args *a)
     int have_uefi = 0;
     int mem_bios = 0;
     int mem_uefi = 0;
+    int encrypted;
     int boot;
     int esp;
     size_t i;
@@ -1179,13 +1257,14 @@ static cli_status status_run(const cli_args *a)
 
     status_bios(&t, &s, &ini_bios, &have_bios, &mem_bios);
     status_uefi(&t, &s, &ini_uefi, &have_uefi, &mem_uefi);
-    status_shelf(&s, id);
+    encrypted = status_shelf(&s, id);
 
     stn_scan_found(&s, 0);
     if (boot >= 0) {
         cli_log_blank();
         log_info("what the BIOS menu offers");
-        print_rows(&s, &ini_bios, have_bios, mem_bios);
+        print_rows(&s, &ini_bios, have_bios, mem_bios, STROWS_BIOS,
+                   encrypted);
     }
     if (esp >= 0 && have_uefi) {
         int ours = -1;
@@ -1220,7 +1299,8 @@ static cli_status status_run(const cli_args *a)
                  : !util_is_dir("/sys/firmware/efi")
                      ? " (this machine did not boot with UEFI: its firmware "
                        "entries are not listed)" : "");
-        print_rows(&s, &ini_uefi, have_uefi, mem_uefi);
+        print_rows(&s, &ini_uefi, have_uefi, mem_uefi, STROWS_UEFI,
+                   encrypted);
     }
 
     cli_log_blank();

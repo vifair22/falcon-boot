@@ -1,7 +1,8 @@
 /* Tests for falcon-bios/src/mbr/vbrcore.c: what the station hands a
- * partition's boot sector (the entry marked active, the BPB made to agree)
- * and what it calls a boot sector. Each of these, wrong, is a system that
- * starts and then cannot find itself, on a machine with no serial line. */
+ * partition's boot sector (the entry marked active, the BPB made to agree).
+ * Each of these, wrong, is a system that starts and then cannot find
+ * itself, on a machine with no serial line. What the station calls a boot
+ * sector is core's media/vbr.c, tested there. */
 
 #include "tests.h"
 
@@ -140,25 +141,6 @@ static void test_mark_active(void **state)
     assert_int_equal(mbr[0x1BE], 0x00);
 }
 
-static void test_bpb_kinds(void **state)
-{
-    uint8_t s[512];
-
-    (void)state;
-    fat32(s, 63, 0x80);
-    assert_int_equal(vbr_bpb_kind(s), VBR_BPB_FAT32);
-    fat16(s, 63, 0x80, 0x29);
-    assert_int_equal(vbr_bpb_kind(s), VBR_BPB_FAT);
-    ntfs(s, 63, 0x80);
-    assert_int_equal(vbr_bpb_kind(s), VBR_BPB_NTFS);
-    /* An MBR's code in a partition's first sector: no BPB. */
-    memset(s, 0x33, sizeof s);
-    sign(s);
-    assert_int_equal(vbr_bpb_kind(s), VBR_BPB_NONE);
-    memset(s, 0, sizeof s);
-    assert_int_equal(vbr_bpb_kind(s), VBR_BPB_NONE);
-}
-
 static void test_fix_hidden_and_drive(void **state)
 {
     uint8_t s[512];
@@ -219,95 +201,12 @@ static void test_fix_hidden_and_drive(void **state)
     assert_int_equal(s[0x24], 0x33);
 }
 
-static void with_text(uint8_t *s, size_t at, const char *text)
-{
-    memcpy(s + at, text, strlen(text));
-}
-
-static void test_detect(void **state)
-{
-    uint8_t s[512];
-
-    (void)state;
-    fat32(s, 63, 0x80);
-    /* mkfs.fat's data boot sector is not a loader. */
-    with_text(s, 0x80, "This is not a bootable disk.");
-    assert_int_equal(vbr_detect(s), VBR_LOADER_NONE);
-
-    ntfs(s, 63, 0x80);
-    with_text(s, 0x180, "A disk read error occurred\r\nBOOTMGR is missing");
-    assert_int_equal(vbr_detect(s), VBR_LOADER_BOOTMGR);
-    ntfs(s, 63, 0x80);
-    with_text(s, 0x180, "A disk read error occurred\r\nNTLDR is missing");
-    assert_int_equal(vbr_detect(s), VBR_LOADER_NTLDR);
-
-    /* Windows 98 names IO.SYS as well: WINBOOT wins. */
-    fat32(s, 63, 0x80);
-    with_text(s, 0x1D0, "IO      SYSMSDOS   SYS");
-    assert_int_equal(vbr_detect(s), VBR_LOADER_MSDOS);
-    with_text(s, 0x1E8, "WINBOOT SYS");
-    assert_int_equal(vbr_detect(s), VBR_LOADER_WIN9X);
-
-    fat16(s, 63, 0x80, 0x29);
-    with_text(s, 0x1F0, "KERNEL  SYS");
-    assert_int_equal(vbr_detect(s), VBR_LOADER_FREEDOS);
-    fat16(s, 63, 0x80, 0x29);
-    with_text(s, 0x1E0, "IBMBIO  COM");
-    assert_int_equal(vbr_detect(s), VBR_LOADER_MSDOS);
-
-    memset(s, 0x90, sizeof s);
-    with_text(s, 0x180, "GRUB \0Geom");
-    sign(s);
-    assert_int_equal(vbr_detect(s), VBR_LOADER_GRUB);
-    fat32(s, 63, 0x80);
-    memcpy(s + 3, "SYSLINUX", 8);
-    assert_int_equal(vbr_detect(s), VBR_LOADER_SYSLINUX);
-    memcpy(s + 3, "EXTLINUX", 8);
-    assert_int_equal(vbr_detect(s), VBR_LOADER_SYSLINUX);
-
-    /* A signature with no 0x55AA is no boot sector. */
-    s[511] = 0;
-    assert_int_equal(vbr_detect(s), VBR_LOADER_NONE);
-
-    assert_string_equal(vbr_loader_name(VBR_LOADER_NTLDR), "Windows (NTLDR)");
-    assert_string_equal(vbr_loader_name(VBR_LOADER_WIN9X), "Windows 9x");
-    assert_null(vbr_loader_name(VBR_LOADER_NONE));
-    assert_int_equal(vbr_fat32_code_sectors[0], 2);
-    assert_int_equal(vbr_fat32_code_sectors[1], 12);
-    assert_int_equal(vbr_fat32_code_sectors[2], 0);
-}
-
-static void test_mbr_bootable(void **state)
-{
-    uint8_t mbr[512];
-
-    (void)state;
-    memset(mbr, 0, sizeof mbr);
-    entry(mbr, 0, 0x80, 0x07, 63, 1000);
-    sign(mbr);
-    /* No code: a table written by a partitioner that left LBA 0 zero. */
-    assert_false(vbr_mbr_bootable(mbr));
-    mbr[0] = 0xFA;
-    assert_true(vbr_mbr_bootable(mbr));
-    /* No active entry: a data disk. */
-    mbr[0x1BE] = 0;
-    assert_false(vbr_mbr_bootable(mbr));
-    /* A GPT's protective entry marked active, as some BIOSes need. */
-    entry(mbr, 0, 0x80, 0xEE, 1, 1000);
-    assert_true(vbr_mbr_bootable(mbr));
-    mbr[511] = 0;
-    assert_false(vbr_mbr_bootable(mbr));
-}
-
 int run_vbrcore_tests(void)
 {
     const struct CMUnitTest tests[] = {
         cmocka_unit_test(test_entry_si),
         cmocka_unit_test(test_mark_active),
-        cmocka_unit_test(test_bpb_kinds),
         cmocka_unit_test(test_fix_hidden_and_drive),
-        cmocka_unit_test(test_detect),
-        cmocka_unit_test(test_mbr_bootable),
     };
 
     return cmocka_run_group_tests_name("vbrcore", tests, NULL, NULL);

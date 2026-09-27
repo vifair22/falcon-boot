@@ -121,6 +121,7 @@ static void test_names(void **state)
     part_disk_id a = gpt_a();
     part_disk_id m = mbr(0xcdcccdccu);
     uint16_t label[STROWS_LABEL_MAX];
+    char ascii[STROWS_LABEL_MAX];
 
     (void)state;
     strows_name_part(n, &a, 2);
@@ -145,6 +146,16 @@ static void test_names(void **state)
                          "partition 1)"));
     strows_label_part(label, STROWS_LABEL_MAX, u"Windows 7", &m, 0);
     assert_true(label_is(label, "Windows 7 (disk mbr:cdcccdcc)"));
+
+    /* The installer's copy says the same, and cuts where it must. */
+    strows_label_part_ascii(ascii, sizeof ascii, STROWS_LABEL_BOOTMGR, &a, 1);
+    assert_string_equal(ascii, "Windows Boot Manager (disk gpt:1a2b3c4d, "
+                               "partition 1)");
+    strows_label_part_ascii(ascii, sizeof ascii, STROWS_LABEL_BOOTCODE, &m, 0);
+    assert_string_equal(ascii, "Boot code (disk mbr:cdcccdcc)");
+    strows_label_part_ascii(ascii, 10, "Windows 9x", &m, 1);
+    assert_string_equal(ascii, "Windows 9");
+    strows_label_part_ascii(ascii, 0, "x", &m, 1);
 
     assert_true(strows_path_eq("/efi/microsoft/boot/BOOTMGFW.EFI",
                                STROWS_BOOTMGFW));

@@ -45,6 +45,16 @@
 #                  passphrase prompt, from the shelf of its install, through
 #                  the Personal OS row of the menu either opens at
 #                  (run-station-rig.sh under each firmware has the rest)
+#   station-stick-uefi, station-stick-bios
+#                  the station disk with a STATION.INI (default the
+#                  shelf's personal.efi, a [linux] section), booted twice:
+#                  beside a blank disk, then beside stick-a (same
+#                  passphrase, its own library and UKIs). The first
+#                  screen's rows are the same both times, the countdown
+#                  boots the same default, one prompt unlocks the
+#                  station's shelf (no chooser: the stick's shelf has
+#                  more UKIs than the station's one), and nothing of the
+#                  stick's library is listed
 #   bios-only-uefi, bios-only-uefi-sb
 #                  the rig stick under OVMF, Secure Boot off and on: a
 #                  BIOS-only ISO on its library (isolinux, a kernel with no
@@ -297,9 +307,11 @@ send_keys() {   # send_keys TEXT: one sendkey per character, then Enter
 }
 
 # boot FIRMWARE DISK... : a disk is IMG[:boot][:4k]; the one marked boot is
-# given bootindex 0, the others follow in the order given.
+# given bootindex 0, the others 1, 2, ... in the order given. OVMF connects
+# only the disks QEMU's boot order lists, so a disk with no bootindex is
+# one the UEFI loader never sees.
 boot() {
-    local fw=$1 d img opts n=0 args=() fwargs=() vars code
+    local fw=$1 d img opts n=0 idx=1 args=() fwargs=() vars code
     shift
     for d in "$@"; do
         img=${d%%:*}
@@ -317,7 +329,12 @@ boot() {
         else
             dev="ide-hd,drive=d$n,bus=ide.$n"
         fi
-        [[ "$opts" == *:boot:* ]] && dev+=",bootindex=0"
+        if [[ "$opts" == *:boot:* ]]; then
+            dev+=",bootindex=0"
+        else
+            dev+=",bootindex=$idx"
+            idx=$(( idx + 1 ))
+        fi
         args+=(-device "$dev")
         n=$(( n + 1 ))
     done
@@ -505,6 +522,79 @@ case_station() { # case_station CASE FIRMWARE
     fi
 }
 
+# The first list's rows, as the serial carries them between the key hint
+# and the countdown's second line, less its first: the same text for the
+# same rows. (UEFI draws the countdown before the rows, BIOS after.)
+first_rows() {
+    log_text "$R/serial.log" | tr -s ' \n' ' ' |
+        sed -n 's/.*| esc back\(.*\)Booting in 4 s.*/\1/p' |
+        sed 's/Booting in [0-9] s.*//; s/Booting in 5 s\. Any key stops the countdown\.//' |
+        tr -s ' '
+}
+
+# The station disk with a STATION.INI on the ESP and in the station
+# partition: the shelf's UKI the default, a long enough count.
+station_ini_disk() {
+    local img=$R/station-ini.img start ini=$R/STATION.INI
+    cp --sparse=always build/test-station.img "$img"
+    printf '[general]\ndefault = linux\ntimeout = 5\n\n[linux]\nuki = personal.efi\n' \
+        > "$ini"
+    mcopy -o -i "$img@@1M" "$ini" ::/EFI/falcon/STATION.INI
+    start=$(sgdisk -p "$img" | awk '$7 == "FALCON-STATION" { print $2 }')
+    [[ -n "$start" ]] || { echo "ERROR: test-station.img has no FALCON-STATION" >&2; exit 1; }
+    mcopy -o -i "$img@@$(( start * 512 ))" "$ini" ::/STATION.INI
+    rm -f "$R/blank.img"
+    truncate -s 256M "$R/blank.img"
+}
+
+case_station_stick() { # case_station_stick CASE FIRMWARE
+    local c=$1 fw=$2 id why= alone with prompts
+    id=$("$MKSTICK" ident build/test-station.img |
+         awk -F '\t' '$2 == "boot" { print $3; exit }')
+    station_ini_disk
+    boot "$fw" "$R/station-ini.img:boot" "$R/blank.img"
+    wait_for "Booting in 4 s" 90 || why="no countdown beside a blank disk"
+    alone=$(first_rows)
+    log_text "$R/serial.log" > "$R/$c-alone.log"
+    halt
+    [[ -z "$why" && -z "$alone" ]] && why="no rows read beside a blank disk"
+    if [[ -z "$why" ]]; then
+        boot "$fw" "$R/station-ini.img:boot" "$R/stick-a.img"
+        wait_for "Booting in 4 s" 90 || why="no countdown beside the stick"
+        with=$(first_rows)
+        [[ -z "$why" && "$with" != "$alone" ]] &&
+            why="the rows differ: alone [$alone], with the stick [$with]"
+        [[ -z "$why" ]] && { wait_for "booting: personal.efi" 15 ||
+            why="the default was not the shelf's personal.efi"; }
+        [[ -z "$why" ]] && { wait_for "passphrase for the encrypted partition" 30 ||
+            why="no passphrase prompt"; }
+        if [[ -z "$why" ]]; then
+            sleep 0.5
+            send_keys "$PASS"
+            wait_for "FALCON-UKI-DONE" 120 || why="the UKI never reported"
+        fi
+        if [[ -z "$why" ]]; then
+            has "FALCON-CRED-OK" || why="the passphrase credential is wrong"
+            has "FALCON-CRED-HEAD falcon.ident.cred [falcon 1 boot $id" ||
+                why="${why:-falcon.ident.cred missing or not install $id}"
+            has "unsigned.efi" && why="${why:-a chooser listed the stick's UKIs}"
+            has "$A_ISOS" && why="${why:-the stick's library was listed}"
+            prompts=$(log_text "$R/serial.log" |
+                grep -aoF "passphrase for the encrypted partition" | wc -l)
+            (( prompts == 1 )) || why="${why:-$prompts passphrase prompts}"
+        fi
+        if [[ -z "$why" && "$fw" == bios ]]; then
+            has "install $id" || why="stage 3 did not report install $id"
+        fi
+        halt
+    fi
+    if [[ -z "$why" ]]; then
+        result "$c" 1 "rows and default as without the stick; one prompt, the station's shelf, install ${id:0:8}..."
+    else
+        result "$c" 0 "$why"
+    fi
+}
+
 # The row's tag, its page, and the menu back after a key. The rows are
 # found by what OVMF's terminal drew: each row's text lands on the serial
 # with the tag columns after the label.
@@ -564,7 +654,8 @@ CASES=("$@")
 [[ ${#CASES[@]} -gt 0 ]] ||
     CASES=(uefi-stick uefi-stick-sb bios-stick two-sticks-uefi two-sticks-bios
            mbr-disk-uefi mbr-disk-bios foreign-uefi foreign-bios 4kn-uefi
-           4kn-bios 4kn-bios-marker station-uefi station-bios bios-only-uefi
+           4kn-bios 4kn-bios-marker station-uefi station-bios
+           station-stick-uefi station-stick-bios bios-only-uefi
            bios-only-uefi-sb)
 
 for c in "${CASES[@]}"; do
@@ -595,6 +686,8 @@ for c in "${CASES[@]}"; do
     4kn-bios-marker) case_4kn_marker "$c" ;;
     station-uefi)  case_station "$c" uefi ;;
     station-bios)  case_station "$c" bios ;;
+    station-stick-uefi) case_station_stick "$c" uefi ;;
+    station-stick-bios) case_station_stick "$c" bios ;;
     bios-only-uefi)    case_bios_only "$c" uefi ;;
     bios-only-uefi-sb) case_bios_only "$c" uefi-sb ;;
     *) echo "unknown case: $c" >&2; exit 2 ;;

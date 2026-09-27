@@ -99,7 +99,7 @@ cp --sparse=always "$D2" "$W/disk2.orig"
 
 "$MK" station install "$M" --bios --also "$D2" --dry-run >"$W/dry.log" 2>&1
 check "mbr: --dry-run writes nothing" cmp -s "$M" "$W/mbr.orig"
-check "mbr: --dry-run names the NTLDR partition" grep -q "Windows NT/2000/XP" "$W/dry.log"
+check "mbr: --dry-run names the NTLDR partition" grep -q "Windows (NTLDR)" "$W/dry.log"
 
 "$MK" station install "$M" --bios --also "$D2" --shelf "$LS" \
     --memtest "$W/memtest.bin" --backup "$W/mbr.bak" >"$W/install.log" 2>&1 ||

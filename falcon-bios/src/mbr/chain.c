@@ -74,36 +74,28 @@ static const char *part_refusal(const bios_disk *d, const part_entry *p)
     return (const char *)0;
 }
 
+typedef struct {
+    bios_disk *d;
+    uint64_t   start;
+} part_reader;
+
+static int read_part(void *ctx, uint32_t sector, uint8_t *buf)
+{
+    part_reader *pr = (part_reader *)ctx;
+
+    return read512(pr->d, pr->start + sector, buf);
+}
+
 vbr_loader chain_part_loader(bios_disk *d, const part_entry *p)
 {
-    vbr_loader l;
-    size_t i;
+    part_reader pr;
 
     if (part_refusal(d, p) != (const char *)0 ||
-        read512(d, p->start_lba, g_vbr) != 0 || !vbr_signed(g_vbr))
+        read512(d, p->start_lba, g_vbr) != 0)
         return VBR_LOADER_NONE;
-    l = vbr_detect(g_vbr);
-    if (l != VBR_LOADER_NONE || vbr_bpb_kind(g_vbr) != VBR_BPB_FAT32)
-        return l;
-    /* FAT32 boot code runs on into the reserved sectors after it, and the
-     * name it loads can be there rather than in sector 0. The sector is
-     * asked only for the name: sector 0's 0x55AA is the signature. */
-    for (i = 0; vbr_fat32_code_sectors[i] != 0; i++) {
-        uint8_t sig[2];
-
-        if (read512(d, p->start_lba + vbr_fat32_code_sectors[i], g_mbr) != 0)
-            break;
-        sig[0] = g_mbr[VBR_SIG_OFF];
-        sig[1] = g_mbr[VBR_SIG_OFF + 1u];
-        g_mbr[VBR_SIG_OFF] = 0x55u;
-        g_mbr[VBR_SIG_OFF + 1u] = 0xAAu;
-        l = vbr_detect(g_mbr);
-        g_mbr[VBR_SIG_OFF] = sig[0];
-        g_mbr[VBR_SIG_OFF + 1u] = sig[1];
-        if (l != VBR_LOADER_NONE)
-            return l;
-    }
-    return VBR_LOADER_NONE;
+    pr.d = d;
+    pr.start = p->start_lba;
+    return vbr_identify(g_vbr, read_part, &pr, g_mbr);
 }
 
 int chain_disk_bootable(bios_disk *d)

@@ -35,6 +35,7 @@
 #include <console/screen.h>
 
 #include <part/table.h>
+#include <media/strows.h>
 #include <fs/fs.h>
 #include <luks/luks.h>
 #include <pe/pe.h>
@@ -450,7 +451,7 @@ const uint16_t *pos_entry_label(void)
     /* The UEFI loader's labels (falcon-efi/src/pos/pos.c). */
     if (g_plain)
         return u"Personal OS (plaintext shelf)";
-    return u"Personal OS (encrypted)";
+    return u"" STROWS_LABEL_POS;
 }
 
 /* Unlocks the encrypted shelf and mounts what is inside it into g_fs.
