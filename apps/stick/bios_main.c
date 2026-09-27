@@ -116,7 +116,10 @@ static int part_read(void *ctx, uint64_t off, uint64_t len, void *buf)
 
     if (off > ~(uint64_t)0 - p->base)
         return -1;
-    return bios_disk_read(p->disk, p->base + off, len, buf);
+    /* bios_disk_bytes, not bios_disk_read: the drivers above read parts of
+     * a sector on a 4Kn disk (DESIGN Section 3.4). base is whole sectors,
+     * so the layer sees the drivers' alignment unchanged. */
+    return bios_disk_bytes(p->disk, p->base + off, len, buf);
 }
 
 static void put_name(const uint16_t *name)
@@ -562,9 +565,7 @@ static void show_first_sector(bios_disk *d, const char *what)
     bios_put_dec(d->sector_size);
     bios_puts("\n");
 
-    if (bios_disk_read(d, 0, d->sector_size < sizeof g_sector
-                              ? d->sector_size : sizeof g_sector,
-                       g_sector) != 0) {
+    if (bios_disk_bytes(d, 0, sizeof g_sector, g_sector) != 0) {
         bios_puts("falcon-bios:   LBA 0 unreadable\n");
         return;
     }

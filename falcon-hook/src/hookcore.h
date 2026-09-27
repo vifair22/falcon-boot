@@ -54,9 +54,12 @@ int hook_parse_devnum(const char *s, size_t len, uint32_t *maj, uint32_t *min);
  * (base = the partition's byte offset) is the fallback for a kernel that did
  * not create partition devices.
  *
- * HOOK_ERR_RANGE when an extent or base is not whole 512-byte sectors (every
- * extent but the last must be; the last is rounded up, which is safe because
- * the tail of its last cluster belongs to the file). */
+ * HOOK_ERR_RANGE when an extent or base is not whole blocks of the map's
+ * block_size (512 when it names none; every extent but the last must be; the
+ * last is rounded up to a block, which is safe because the tail of its last
+ * cluster belongs to the file). Whole blocks rather than 512-byte sectors
+ * because the kernel loads no table misaligned to the disk's logical block,
+ * which on a 4Kn disk is 4096. */
 enum {
     HOOK_OK          = 0,
     HOOK_ERR_BAD_ARG = -1,

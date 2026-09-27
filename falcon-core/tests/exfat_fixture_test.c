@@ -28,6 +28,10 @@
 #include <unistd.h>
 
 #include <fs/exfat.h>
+#include <fs/fs.h>
+#include <blk/rebl.h>
+
+#include "kndev.h"
 
 #ifndef FIXTURE_IMG
 #define FIXTURE_IMG "build/test-exfat.img"
@@ -816,6 +820,84 @@ static void test_fixture_file_read_io_error(void **state)
 
 /* ------------------------------------------------------------------ run */
 
+/* The same volume on a 4096-byte-sector disk (docs/DESIGN.md Section 3.4):
+ * whole 4096-byte sectors only, under the core's re-blocking layer as the
+ * loaders hand it to the drivers. The volume keeps its own 512-byte sectors,
+ * which is the case of a stick formatted on one disk and read on another:
+ * the boot sector, every FAT sector and every directory sector is smaller
+ * than the device's. Everything is compared against the same driver over
+ * the plain image, which the tests above pin to the kernel's view. */
+static void test_fixture_on_4kn(void **state)
+{
+    static walk_result plain, kn;
+    static const char *const files[] = {
+        "payload-test.iso", "archlinux-fake.iso", "notaniso.txt",
+    };
+    kn_dev k;
+    exfat_vol v, v4;
+    exfat_dir root;
+    size_t i;
+    unsigned checked = 0;
+
+    (void)state;
+    assert_true(img_fd >= 0);
+    kn_init(&k, img_read, &img_fd);
+
+    /* The registry's probe reads the boot sector's first 512 bytes too. */
+    assert_ptr_equal(fs_identify(blk_rebl_read, &k.rebl, FS_HINT_NONE),
+                     &fs_ops_exfat);
+    mount_fixture(&v);
+    assert_int_equal(exfat_mount(&v4, blk_rebl_read, &k.rebl), EXFAT_OK);
+
+    memset(&plain, 0, sizeof plain);
+    memset(&kn, 0, sizeof kn);
+    assert_int_equal(exfat_dir_open_root(&v, &root), EXFAT_OK);
+    walk(&v, &root, "", &plain, 0);
+    assert_int_equal(exfat_dir_open_root(&v4, &root), EXFAT_OK);
+    walk(&v4, &root, "", &kn, 0);
+    assert_int_equal(kn.n, plain.n);
+    for (i = 0; i < plain.n; i++) {
+        assert_string_equal(kn.ents[i].path, plain.ents[i].path);
+        assert_int_equal(kn.ents[i].is_dir, plain.ents[i].is_dir);
+        assert_true(kn.ents[i].size == plain.ents[i].size);
+    }
+
+    for (i = 0; i < sizeof files / sizeof files[0]; i++) {
+        exfat_dirent e, e4;
+        exfat_file f, f4;
+        uint8_t *want, *got;
+
+        if (!find_in_root(&v, files[i], &e))
+            continue; /* optional artifact, not in this image */
+        assert_int_equal(find_in_root(&v4, files[i], &e4), 1);
+        assert_int_equal(exfat_file_open(&v, &f, &e), EXFAT_OK);
+        assert_int_equal(exfat_file_open(&v4, &f4, &e4), EXFAT_OK);
+        want = malloc((size_t)e.size + 1u);
+        got = malloc((size_t)e.size + 1u);
+        assert_non_null(want);
+        assert_non_null(got);
+        assert_int_equal(exfat_file_read(&f, 0, e.size, want), EXFAT_OK);
+        assert_int_equal(exfat_file_read(&f4, 0, e.size, got), EXFAT_OK);
+        assert_memory_equal(got, want, (size_t)e.size);
+        /* A span that starts and ends inside device sectors. */
+        if (e.size > 5000u) {
+            assert_int_equal(exfat_file_read(&f4, 777u, e.size - 1777u, got),
+                             EXFAT_OK);
+            assert_memory_equal(got, want + 777u, (size_t)e.size - 1777u);
+        }
+        free(want);
+        free(got);
+        checked++;
+    }
+    assert_true(checked >= 2);
+    assert_int_equal(k.strict.refused, 0);
+
+    /* Without the layer, the 512-byte boot sector read is refused. */
+    assert_int_equal(exfat_mount(&v4, kn_strict_read, &k.strict),
+                     EXFAT_ERR_IO);
+    assert_int_equal(k.strict.refused, 1);
+}
+
 int run_fixture_tests(void)
 {
     const struct CMUnitTest tests[] = {
@@ -831,6 +913,7 @@ int run_fixture_tests(void)
         cmocka_unit_test(test_fixture_file_read_whole_file),
         cmocka_unit_test(test_fixture_file_read_random_spans),
         cmocka_unit_test(test_fixture_extents_every_file),
+        cmocka_unit_test(test_fixture_on_4kn),
     };
     int fd = open(FIXTURE_IMG, O_RDONLY);
 
