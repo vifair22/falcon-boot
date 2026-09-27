@@ -2377,9 +2377,10 @@ are (both measured 2026-09-13):
   fixture image, and zero warnings under the repo flag set.
 - **Device discovery (decision 2026-09-13):** ONE pass, one inventory,
   every consumer reads it. A `discover` module enumerates the Block I/O
-  handles once at startup and classifies each: media present, role by GPT
-  type GUID (Section 3), LUKS2 magic, filesystem identification through
-  the fs_ops registry. The ISO scan, the personal-OS scan, and the
+  handles once at startup and classifies each: media present, LUKS2 magic,
+  filesystem identification through the fs_ops registry, and the identity
+  record (Section 3.1) with whether it carries the boot partition's install
+  ID. The ISO scan, the personal-OS scan, and the
   blessed-boot path all consume the same inventory rows rather than
   running their own enumeration loops, so a device cannot be discovered
   for one purpose and missed for another; classification is eager (cheap
@@ -2704,9 +2705,12 @@ flowchart TD
     POOLS -- no --> OOM["out of memory<br/>return to firmware"]
     POOLS -- yes --> TRUST["trust_stores_load<br/>db, dbx, MokListRT, MokListXRT,<br/>SbatLevelRT, falcon-boot.cer"]
     TRUST --> SB["banner_init / sb_state_read<br/>SecureBoot, SetupMode, MokSBStateRT<br/>to g_mode"]
-    SB --> DISC["discover_scan<br/>every Block I/O handle, GPT role per partition"]
-    DISC --> POSS["pos_scan<br/>p3 LUKS2 with a pbkdf2 keyslot, the boot disk's first<br/>(others only when it has none): the pinned Personal OS row"]
-    POSS --> VOLS["scan_all_volumes, up to 4 p2 volumes<br/>fs_mount, bless_load (manifest), survey_volume"]
+    SB --> DISC["discover_scan<br/>read_install: LoadedImage's DeviceHandle (p1), its boot sector's<br/>boot record gives the install ID; then every Block I/O handle,<br/>the boot disk's first: LUKS2 token, else /.falcon on what fs_identify claims"]
+    DISC --> ID{"boot record<br/>read?"}
+    ID -- no --> NOTE["install_notice: the sentence<br/>(no record, damaged, no device), a key<br/>no row is this install's"]
+    NOTE --> POSS
+    ID -- yes --> POSS["pos_scan<br/>shelves whose record carries the install ID, any disk:<br/>LUKS2 with a pbkdf2 keyslot, or plaintext with a UKI<br/>: the pinned Personal OS row"]
+    POSS --> VOLS["scan_all_volumes, up to 4 libraries whose record<br/>carries the install ID, any disk<br/>fs_mount, bless_load (manifest), survey_volume"]
     VOLS --> PROBE["probe_entries<br/>medium_open, family_detect,<br/>the loader's PE signature, trust_probe: row tags"]
     PROBE --> PEND{"next-boot marker<br/>pending?"}
     PEND -- yes --> NBR["next_boot_run<br/>boot the named entry as Enter would"]
@@ -2721,7 +2725,11 @@ alone (`media/medium.c` over the p2 file): nothing is published to the
 firmware to build the menu.
 
 The only failure before the menu is the pool allocation. A missing p2 or p3
-gives a shorter menu, not an error.
+gives a shorter menu, not an error. A boot partition with no readable
+`boot` record is said on screen once (`discover_install_problem`) and gives
+a menu with no library and no shelf: nothing on any disk is taken without
+the install ID (Section 3.1). MBR partitions are rows like GPT ones; the
+table's kind is never consulted.
 
 #### 12.2.2 The menu and route selection
 
@@ -2811,7 +2819,7 @@ sequenceDiagram
     FC-->>L: /uki/*.efi, else /EFI/Linux/*.efi
     L->>U: chooser (skipped for one image)
     L->>L: read the UKI into pages
-    L->>L: credfs: uki.efi, uki.efi.extra.d/cryptsetup.passphrase.cred
+    L->>L: credfs: uki.efi, uki.efi.extra.d/cryptsetup.passphrase.cred, falcon.ident.cred (p1's record as text)
     L->>S: LoadImage by credfs device path
     S-->>L: verified against db / MokList when enforcing
     L->>K: StartImage
@@ -3583,7 +3591,7 @@ flowchart TD
     FW["Firmware<br/>boot entry for \EFI\falcon\shimx64.efi"] --> SHIM["shim<br/>verifies grubx64.efi (falcon-boot-station.efi) against db / MokList"]
     SHIM --> MAIN["efi_main (apps/station/efi_main.c)"]
     MAIN --> DISC["discover_scan"]
-    DISC --> POSS["pos_scan<br/>only the boot disk's shelf, if it has one (13.3)"]
+    DISC --> POSS["pos_scan<br/>shelves whose record carries the install ID<br/>of the ESP's boot record, any disk (3.1)"]
     POSS --> OTH["nxt_scan<br/>BootOrder's offered entries but BootCurrent"]
     OTH --> SH{"shelf found?"}
     SH -- yes --> PR["passphrase prompt<br/>Escape to the list"]

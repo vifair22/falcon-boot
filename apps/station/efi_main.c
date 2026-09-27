@@ -264,8 +264,19 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
     permissive_notice(banner_init(&banner));
 
     discover_scan(st, image_handle);
-    /* The boot disk's shelf, and another disk's only when it has none
-     * (DESIGN Section 13.3). */
+    /* The shelves whose record carries the install ID of the partition this
+     * loader started from, on any disk (DESIGN Section 3.1). */
+    {
+        const CHAR16 *why =
+            discover_install_problem(discover_install((ident_rec *)0));
+
+        if (why != (const CHAR16 *)0) {
+            out(why);
+            out(L"\r\n\r\npress any key to continue.\r\n");
+            wait_key(&key);
+            menu_screen(st);
+        }
+    }
     have_pos = (pos_scan(st) != 0) ? TRUE : FALSE;
     g_nxt_n = nxt_scan(st, g_nxt, NXT_MAX);
 
