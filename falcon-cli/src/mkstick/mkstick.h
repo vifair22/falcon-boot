@@ -36,19 +36,13 @@
 #define MKS_TYPE_LUKS  "CA7D7CCB-63ED-4C53-861C-1742536059CC"  /* p4, stock */
 
 /* Verifies the strings above against falcon-core/src/part/part.h (and, for the
- * standard types, against the values DESIGN Section 3 records), and
- * MKS_LABEL_P2 against the name the loader looks for. Called at the top of
- * every command that writes or reads a partition table. */
+ * standard types, against the values DESIGN Section 3 records). Called at
+ * the top of every command that writes or reads a partition table. */
 cli_status mkstick_guid_selfcheck(void);
 
-/* Partition names, written into the GPT entry's name field and shown by
- * `lsblk` when something has gone wrong.
- *
- * MKS_LABEL_P2 IS NOT COSMETIC. p2 wears a type GUID the whole world shares, so
- * its name is the other half of what identifies it to the loader
- * (FALCON_PART_NAME_ISO in falcon-core/src/part/part.h, checked against this
- * string at startup). Renaming p2 outside this tool makes its ISO library
- * invisible. */
+/* Partition names, written into the GPT entry's name field for a person
+ * reading lsblk or a partition editor. Nothing reads them to identify a
+ * partition; its record does that (DESIGN Section 3.1). */
 #define MKS_LABEL_P1 "FALCON-ESP"
 #define MKS_LABEL_P2 "FALCON-ISO"
 #define MKS_LABEL_P3 "FALCON-UKI"
@@ -71,11 +65,6 @@ cli_status mkstick_guid_selfcheck(void);
  * created by this tool and never by a plain `cryptsetup luksFormat`. */
 #define MKS_P3_PBKDF2_ITERATIONS "200000"
 
-/* p4's argon2id time cost under --p4-kdf-memory, the one place this tool
- * pins it. The default is cryptsetup's tuning on the host building the
- * stick; this is for a stick whose p4 an old, slow machine opens. */
-#define MKS_P4_LOWMEM_ITERATIONS "4"
-
 /* Default partition sizes (DESIGN Section 3: p1 ~64 MB, p3 ~1 GB, p2 and p4
  * bulk). p2 and p4 have no default size: they split whatever is left. */
 #define MKS_DEFAULT_P1 ((uint64_t)64 * 1024 * 1024)
@@ -95,8 +84,9 @@ cli_status mkstick_guid_selfcheck(void);
 
 /* ---- putting falcon-bios on a stick (bios.c) ----
  *
- * `mkstick bios`'s install, as a call, so that `mkstick create --bios-only`
- * runs the same one rather than a second copy. NULL stages mean the build's
+ * `mkstick bios`'s install, as a call, so that any other command that puts
+ * the stages on a stick runs the same one rather than a second copy. NULL
+ * stages mean the build's
  * (build/bin/falcon-bios-stage{1,2,3}.bin); a NULL backup with no_backup
  * clear means a file named after the target. */
 typedef struct {
@@ -117,7 +107,9 @@ cli_status mks_bios_install(const mks_bios_req *req);
 /* ---- the commands ---- */
 extern const cli_cmd mks_cmd_bios;
 extern const cli_cmd mks_cmd_create;
+extern const cli_cmd mks_cmd_ident;
 extern const cli_cmd mks_cmd_keygen;
+extern const cli_cmd mks_cmd_next_boot;
 extern const cli_cmd mks_cmd_status;
 extern const cli_cmd mks_cmd_varstore;
 

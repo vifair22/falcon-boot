@@ -53,6 +53,9 @@
 #include <crypto/hash.h>
 #include <crypto/sha256.h>
 #include <fs/ext4.h>
+#include <blk/rebl.h>
+
+#include "kndev.h"
 
 #ifndef LUKS_IMG
 #define LUKS_IMG "build/test-luks.img"
@@ -628,7 +631,7 @@ static void test_luks_argon_slot_is_named_not_guessed(void **state)
  * checked. The files' hashes are computed with this repo's own SHA-256 over
  * bytes that came through its own AES-XTS off a volume cryptsetup created,
  * and compared against sha256sum's numbers from the fixture build. */
-static void test_ext4_over_luks(void **state)
+static void ext4_over_luks(luks_read_fn read, void *read_ctx)
 {
     static uint8_t chunk[64u * 1024u];
     luks_vol v;
@@ -639,8 +642,8 @@ static void test_ext4_over_luks(void **state)
     ext4_dirent e;
     unsigned matched = 0;
 
-    (void)state;
-    open_fixture(&v);
+    assert_int_equal(luks_open(&v, read, read_ctx, json_buf,
+                               sizeof json_buf), LUKS_OK);
     assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, &mk, NULL), LUKS_OK);
     assert_int_equal(luks_dev_open(&dev, &v, &mk), LUKS_OK);
 
@@ -704,6 +707,38 @@ static void test_ext4_over_luks(void **state)
     assert_int_equal(ext4_mount(&fs, luks_read, &dev), EXT4_ERR_IO);
 
     crypto_wipe(&mk, sizeof mk);
+}
+
+static void test_ext4_over_luks(void **state)
+{
+    (void)state;
+    ext4_over_luks(fd_read, &img_fd);
+}
+
+/* The same stack on a 4096-byte-sector disk (docs/DESIGN.md Section 3.4):
+ * the fixture served as a 4Kn disk's firmware serves it, whole 4096-byte
+ * sectors only, under the core's re-blocking layer as the loaders hand it
+ * to the drivers. The keyslot area is streamed in 512-byte units, none of
+ * which is a sector here. */
+static void test_ext4_over_luks_4kn(void **state)
+{
+    kn_dev k;
+    luks_vol v;
+    luks_master_key mk;
+
+    (void)state;
+    kn_init(&k, fd_read, &img_fd);
+    ext4_over_luks(blk_rebl_read, &k.rebl);
+    assert_int_equal(k.strict.refused, 0);
+    assert_true(k.strict.calls > 0);
+
+    /* The disk alone, without the layer, is the failure being fixed: the
+     * header opens (it is 4096 bytes at 0), the keyslot reads do not. */
+    assert_int_equal(luks_open(&v, kn_strict_read, &k.strict, json_buf,
+                               sizeof json_buf), LUKS_OK);
+    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, &mk, NULL),
+                     LUKS_ERR_IO);
+    assert_true(k.strict.refused > 0);
 }
 
 /* ------------------------------------------------ rewritten metadata */
@@ -2212,6 +2247,7 @@ int run_luks_tests(void)
         cmocka_unit_test(test_luks_secondary_header_fallback),
         cmocka_unit_test(test_luks_argon_slot_is_named_not_guessed),
         cmocka_unit_test(test_ext4_over_luks),
+        cmocka_unit_test(test_ext4_over_luks_4kn),
         cmocka_unit_test(test_luks_segment_refusals),
         cmocka_unit_test(test_luks_fixed_size_segment),
         cmocka_unit_test(test_luks_keyslot_refusals),

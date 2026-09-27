@@ -32,6 +32,12 @@
 #                             same stick. Disk contention starves a guest
 #                             into failures that read as product bugs, and a
 #                             flaky cell is worse than a slow run.
+#                             2026-09-26: --jobs 8 over the UEFI columns
+#                             (339 cases) matched the baseline exactly; at
+#                             --jobs 12 over the BIOS columns 3 of 372
+#                             failed (two panics, one timeout) and all three
+#                             passed alone. Run wide, then rerun every
+#                             changed case alone before calling it.
 #   --timeout S               seconds from the keypress to a verdict (300)
 #   --force                   rerun cases that already have a result
 #   --no-scorecard            leave docs/coverage.md alone
@@ -87,8 +93,10 @@ VERSION=$(sed -n 's/.*FALCON_VERSION "\(.*\)".*/\1/p' build/version.h 2>/dev/nul
 
 # The loader and the sign tool under test are the tree's: both are built
 # first, so neither a stale signed loader nor a sign tool carrying an older
-# falcon-hook can be what the corpus measures.
-make --no-print-directory -s sign build/bin/falcon-boot-sign >/dev/null
+# falcon-hook can be what the corpus measures. falcon-bios and mkstick too:
+# every stick carries the BIOS stages, whichever columns this run measures
+# (mk-case-stick.sh sizes p1 for them, stage-loader.sh puts them on).
+make --no-print-directory -s sign build/bin/falcon-boot-sign bios cli >/dev/null
 VERSION=$(sed -n 's/.*FALCON_VERSION "\(.*\)".*/\1/p' build/version.h 2>/dev/null)
 
 # ---- sticks ----
@@ -114,7 +122,15 @@ while IFS=$'\t' read -r id tier family sha file source arch; do
 
     # A bless the sign tool refused is remembered beside the stick, so it is
     # not retried every run; deleting the marker retries it.
-    if [[ ! -f "$stick.img" || "$iso" -nt "$stick.img" ]]; then
+    # A stick older than the identity records (no boot record on p1, no room
+    # for stage 3) is remade rather than patched.
+    recs=
+    [[ -f "$stick.img" ]] &&
+        recs=$(build/bin/falcon-boot-mkstick ident "$stick.img" 2>/dev/null ||
+               true)
+    if [[ ! -f "$stick.img" || "$iso" -nt "$stick.img" ||
+          "$recs" != *$'\tboot\t'* ]]; then
+        rm -f "$stick.blessed.img"
         echo "== $id: building sticks"
         rm -f "$stick.unblessable"
         args=()
@@ -177,15 +193,6 @@ while IFS=$'\t' read -r id tier family sha file source arch; do
     done
 done < "$MANIFEST"
 
-
-# falcon-bios is what the bios column boots; the sticks carry only the ISO.
-case " $STATES " in
-*" bios "*|*" bios32 "*)
-    echo "== building falcon-bios"
-    make bios test-bios-img >/dev/null || {
-        echo "ERROR: make bios test-bios-img failed" >&2; exit 1; }
-    ;;
-esac
 
 shopt -s nullglob
 STAGE=("$STICKS"/*.img)

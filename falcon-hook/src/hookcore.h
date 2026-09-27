@@ -39,11 +39,20 @@ const uint8_t *hook_efivar_data(const uint8_t *file, size_t len,
 
 /* Is a /sys/block name one that could be the stick? Whole disks only, and
  * none of the virtual kinds: loop, ram, zram, dm, md, nbd, sr (a CD cannot
- * hold a GPT that names p2), fd. */
+ * hold p2), fd. */
 int hook_disk_candidate(const char *name);
 
 /* Parses "MAJ:MIN\n" as /sys/block/X/dev has it. 1 on success. */
 int hook_parse_devnum(const char *s, size_t len, uint32_t *maj, uint32_t *min);
+
+/* Is s (len bytes, /sys/block/DISK/PART/start: a decimal count of 512-byte
+ * sectors, whatever the disk's block size, and a newline) the start of the
+ * partition the map names, part_lba blocks of block_size bytes? 1 when it
+ * is. How the hook finds the partition device once extfind has confirmed
+ * the disk: by where it starts, which is what the map carries, rather than
+ * by a number that depends on the table's kind. */
+int hook_start_matches(const char *s, size_t len, uint64_t part_lba,
+                       uint32_t block_size);
 
 /* The DM_TABLE_LOAD argument: a struct dm_ioctl for HOOK_DM_NAME, read-only,
  * followed by one linear target per extent, mapping the ISO's bytes in order
@@ -54,9 +63,12 @@ int hook_parse_devnum(const char *s, size_t len, uint32_t *maj, uint32_t *min);
  * (base = the partition's byte offset) is the fallback for a kernel that did
  * not create partition devices.
  *
- * HOOK_ERR_RANGE when an extent or base is not whole 512-byte sectors (every
- * extent but the last must be; the last is rounded up, which is safe because
- * the tail of its last cluster belongs to the file). */
+ * HOOK_ERR_RANGE when an extent or base is not whole blocks of the map's
+ * block_size (512 when it names none; every extent but the last must be; the
+ * last is rounded up to a block, which is safe because the tail of its last
+ * cluster belongs to the file). Whole blocks rather than 512-byte sectors
+ * because the kernel loads no table misaligned to the disk's logical block,
+ * which on a 4Kn disk is 4096. */
 enum {
     HOOK_OK          = 0,
     HOOK_ERR_BAD_ARG = -1,

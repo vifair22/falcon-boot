@@ -7,12 +7,15 @@
 # the firmware-setup row always sits last. The harness presses Enter (or the
 # route's key) on row 0 and nothing needs to find anything on screen.
 #
-#   p1  ESP    FAT32  64 MiB  shim -> mmx64.efi -> our loader as grubx64.efi
-#   p2  ISOs   exFAT  ISO + slack, basic-data typed, named FALCON-ISO
+#   p1  ESP    FAT32  64 MiB  shim -> mmx64.efi -> our loader as grubx64.efi;
+#                             the boot record, and BIOS stage 3 in its
+#                             reserved sectors
+#   p2  ISOs   exFAT  ISO + slack, basic-data typed, /.falcon (role library)
 #
-# The layout and the identification of p2 are DESIGN Section 3's, the same as
+# The layout and the identity records are DESIGN Section 3's, the same as
 # falcon-efi/tools/mk-test-stick.sh, minus p3/p4: nothing the harness measures
 # involves the personal OS, and an absent shelf keeps the menu at one row.
+# Both records carry one install ID, drawn per stick.
 #
 # Two outputs, both sparse:
 #
@@ -26,7 +29,10 @@
 #
 # p1 is written with mtools straight into the image, so tools/coverage/
 # stage-loader.sh can refresh the loader in every stick without sudo, a loop
-# device or rebuilding p2. That is also why the loader is not staged here.
+# device or rebuilding p2. That is also why the loader is not staged here,
+# and nor are the BIOS stages: stage-loader.sh puts both on, so the bios
+# columns boot the case stick alone, as a real stick boots (DESIGN Section
+# 3.3). p1's reserved sectors are sized by mkstick's rule for them.
 #
 # Usage: tools/coverage/mk-case-stick.sh ISO OUT [--blessed] [--bless-arg ARG]...
 #   ISO          the image to put on p2, under its own file name
@@ -36,13 +42,14 @@
 #   --bless-arg  passed through to falcon-boot-sign (repeatable), e.g.
 #                --bless-arg --kernel --bless-arg 'boot/vmlinuz*'
 #
-# Needs sgdisk, mformat, mkfs.exfat, losetup and passwordless sudo (loop
-# mounting p2). Everything lands where OUT says, which by default is under
+# Needs sgdisk, mformat, mkfs.exfat, losetup, mkstick and the BIOS stage 3
+# (make cli bios) and passwordless sudo (loop mounting p2). Everything lands where OUT says, which by default is under
 # build/coverage/ and therefore on whatever build/ is mounted from.
 
 set -euo pipefail
 
 cd "$(dirname "$0")/../.."
+. tools/rig-part.sh
 
 usage() {
     sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//'
@@ -70,6 +77,8 @@ while [[ $# -gt 0 ]]; do
 done
 
 SIGN=build/bin/falcon-boot-sign
+MKSTICK=build/bin/falcon-boot-mkstick
+STAGE3=build/bin/falcon-bios-stage3.bin
 MOK_KEY=build/mok-test/falcon-test-mok.key
 MOK_CRT=build/mok-test/falcon-test-mok.crt
 
@@ -82,6 +91,9 @@ BLESS_CONSOLE="console=tty0 console=ttyS0,115200"
 [[ -f "$ISO" ]] || { echo "ERROR: $ISO not found" >&2; exit 1; }
 for t in sgdisk mformat mkfs.exfat losetup; do
     command -v "$t" >/dev/null 2>&1 || { echo "ERROR: $t not found" >&2; exit 1; }
+done
+for f in "$MKSTICK" "$STAGE3"; do
+    [[ -f "$f" ]] || { echo "ERROR: $f not built (run: make cli bios)" >&2; exit 1; }
 done
 if [[ "$BLESSED" -eq 1 ]]; then
     [[ -x "$SIGN" ]] || { echo "ERROR: $SIGN not built (run: make cli)" >&2; exit 1; }
@@ -108,14 +120,19 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# p2 is partition 2 while it is being made, and the partition whose record
+# says library once it has one (DESIGN Section 3.1).
 mount_p2() {   # mount_p2 IMG [--format]
+    local n=2
+
+    [[ "${2:-}" == --format ]] || n=$(rig_part "$1" library)
     LOOP=$(sudo losetup --show -f -P "$1")
     sudo udevadm settle 2>/dev/null || sleep 1
     if [[ "${2:-}" == --format ]]; then
-        sudo mkfs.exfat -n FALCON-ISO "${LOOP}p2" >/dev/null
+        sudo mkfs.exfat -n FALCON-ISO "${LOOP}p$n" >/dev/null
     fi
     MNT=$(mktemp -d)
-    sudo mount -o uid="$(id -u)",gid="$(id -g)" "${LOOP}p2" "$MNT"
+    sudo mount -o uid="$(id -u)",gid="$(id -g)" "${LOOP}p$n" "$MNT"
 }
 
 unmount_p2() {
@@ -145,14 +162,20 @@ sgdisk \
     "$IMG" >/dev/null
 
 # p1 starts at 1 MiB; mtools addresses a partition inside an image by byte
-# offset. FAT32 because that is what a real ESP is.
-mformat -i "$IMG@@1M" -F -v FALCONESP -T $((64 * 2048)) -h 64 -s 32 :: \
+# offset. FAT32 because that is what a real ESP is, with reserved sectors
+# for BIOS stage 3 and the marker (-R), and the boot record written into its
+# boot sector by mkstick, which is how stage 2 and the loaders find it.
+INSTALL_ID=$(od -An -tx1 -N16 /dev/urandom | tr -d ' \n')
+mformat -i "$IMG@@1M" -F -v FALCONESP -T $((64 * 2048)) -h 64 -s 32 \
+    -R "$("$MKSTICK" ident --reserved-sectors --stage3 "$STAGE3")" :: \
     >/dev/null
+"$MKSTICK" --quiet ident "$IMG" --write-boot 1 --id "$INSTALL_ID" >/dev/null
 
 mount_p2 "$IMG" --format
 cp "$ISO" "$MNT/$NAME"
+printf 'falcon 1 library %s\n' "$INSTALL_ID" > "$MNT/.falcon"
 unmount_p2
-echo "   $IMG: $NAME on p2 (${P2_MIB} MiB)"
+echo "   $IMG: $NAME on p2 (${P2_MIB} MiB), install ID $INSTALL_ID"
 fi
 
 [[ "$BLESSED" -eq 1 ]] || exit 0

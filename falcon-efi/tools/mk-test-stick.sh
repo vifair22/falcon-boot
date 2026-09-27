@@ -8,11 +8,19 @@
 # parsing and the loader sees the same per-partition Block I/O handles it will
 # see on hardware.
 #
-#   p1  ESP   FAT32   64 MiB  shim -> mmx64.efi -> our loader as grubx64.efi
-#   p2  ISOs  exFAT   64 MiB  two fake ISOs, plus the real payload ISO if built
-#                             (basic-data typed, named FALCON-ISO: see below)
-#   p3  UKI   LUKS2   64 MiB  pbkdf2 keyslot, ext4 inside, /uki/*.efi
+#   p1  ESP   FAT32   64 MiB  shim -> mmx64.efi -> our loader as grubx64.efi;
+#                             the boot record, and BIOS stage 3 in its
+#                             reserved sectors
+#   p2  ISOs  exFAT   64 MiB  two fake ISOs, plus the real payload ISO if built,
+#                             and /.falcon (role library)
+#   p3  UKI   LUKS2   64 MiB  pbkdf2 keyslot and a falcon token (role shelf),
+#                             ext4 inside, /uki/*.efi
 #   p4  root  LUKS2   32 MiB  argon2id keyslot, deliberately empty
+#   p5  BIOS  EF02            stage 2 (mkstick bios --reserve); stage 1 in LBA 0
+#
+# Every record carries one install ID, drawn per build (DESIGN Section 3.1),
+# and the BIOS stages are put on by `mkstick bios`, so the same image boots
+# under OVMF and under SeaBIOS (DESIGN Section 3.3).
 #
 # p3's keyslot is pbkdf2 with a pinned iteration count because DESIGN Section 3
 # mandates it: argon2id is memory-hard and brutal single-threaded in EFI-land.
@@ -36,27 +44,37 @@
 # want a 30 KB one.
 #
 # Usage: falcon-efi/tools/mk-test-stick.sh [--unsigned] [--payload-uki]
+#                                          [--no-labels]
 #   --unsigned     stage the unsigned loader as the shim next-stage and skip
 #                  signing the UKI. For a plain-OVMF run when no test MOK
 #                  exists.
 #   --payload-uki  stage the small stand-in payload as /uki/personal.efi
 #                  instead of the sd-stub fixture UKI.
+#   --no-labels    leave the label fixtures off the shelf: personal.efi and
+#                  unsigned.efi alone (the core rig's sticks).
 #
 # Env: FALCON_TEST_PASS  passphrase for p3 and p4 (default "falcon-test").
+#      TEST_STICK_IMG    the image to write (default build/test-stick.img)
+#      STICK_ID          the install ID, 32 hex digits (default: drawn)
+#      STICK_ISOS        the fake ISOs on p2, space-separated (default
+#                        "archlinux-fake.iso systemrescue-fake.iso"); the
+#                        core rig names a second stick's apart from the
+#                        first's
 #
 # THIS IS RIG SCAFFOLDING. The product's stick is built by the host tooling of
 # DESIGN Section 8 (step 7), which generates a real MOK keypair and keeps the
 # private key encrypted on p3. Nothing here is that; everything lands under
 # build/ and the passphrase is a well-known string on purpose.
 #
-# Needs sgdisk, mkfs.fat, mkfs.exfat, cryptsetup, mkfs.ext4 and passwordless
-# sudo (loop devices and device-mapper).
+# Needs sgdisk, mkfs.fat, mkfs.exfat, cryptsetup, mkfs.ext4, the mkstick
+# and BIOS stage builds (make cli bios) and passwordless sudo (loop devices
+# and device-mapper).
 
 set -euo pipefail
 
 cd "$(dirname "$0")/../.."
 
-IMG=build/test-stick.img
+IMG=${TEST_STICK_IMG:-build/test-stick.img}
 SIZE_MIB=256
 PASS="${FALCON_TEST_PASS:-falcon-test}"
 
@@ -79,13 +97,19 @@ PAYLOAD_ISO=build/test-payload.iso
 FIXTURE_UKI=build/test/fixture-uki.efi
 WORK_LABELS=build/test/labels
 FIXTURE_UKI_SIGNED=build/test/fixture-uki-signed.efi
+MKSTICK=build/bin/falcon-boot-mkstick
+STAGE1=build/bin/falcon-bios-stage1.bin
+STAGE2=build/bin/falcon-bios-stage2.bin
+STAGE3=build/bin/falcon-bios-stage3.bin
 
 UNSIGNED=0
 PAYLOAD_UKI=0
+LABELS=1
 for arg in "$@"; do
     case "$arg" in
     --unsigned) UNSIGNED=1 ;;
     --payload-uki) PAYLOAD_UKI=1 ;;
+    --no-labels) LABELS=0 ;;
     *)
         echo "ERROR: unknown option $arg" >&2
         exit 1
@@ -131,6 +155,17 @@ done
     echo "ERROR: $PAYLOAD not built (run: make payload)" >&2
     exit 1
 }
+for f in "$MKSTICK" "$STAGE1" "$STAGE2" "$STAGE3"; do
+    [[ -f "$f" ]] || { echo "ERROR: $f not built (run: make cli bios)" >&2; exit 1; }
+done
+
+# One install ID for every record on the stick (DESIGN Section 3.1).
+INSTALL_ID=${STICK_ID:-$(od -An -tx1 -N16 /dev/urandom | tr -d ' \n')}
+[[ "$INSTALL_ID" =~ ^[0-9a-f]{32}$ ]] || {
+    echo "ERROR: STICK_ID must be 32 lowercase hex digits" >&2
+    exit 1
+}
+read -r -a ISOS <<< "${STICK_ISOS:-archlinux-fake.iso systemrescue-fake.iso}"
 
 if [[ "$UNSIGNED" -eq 0 && ! -f "$MOK_KEY" ]]; then
     echo "note: no test MOK at $MOK_KEY; falling back to --unsigned" >&2
@@ -146,26 +181,24 @@ if [[ "$UNSIGNED" -eq 0 && ( ! -f "$SHIM_EFI" || ! -f "$MM_EFI" ) ]]; then
     falcon-efi/tools/shim-spike/fetch-shims.sh
 fi
 
-mkdir -p build
+mkdir -p "$(dirname "$IMG")"
 rm -f "$IMG"
 truncate -s "${SIZE_MIB}M" "$IMG"
 
 # One MiB alignment throughout, which is both what real media wants and what
 # keeps every partition start a whole number of 4 KiB filesystem blocks.
 echo "== partitioning (GPT, four partitions per DESIGN Section 3)"
-# Identification per DESIGN Section 3, and the -c names are not decoration:
+# The types per DESIGN Section 3.1; the records below, not the types or
+# the -c names, are what the loaders identify a partition by:
 #
-#   p2  Microsoft basic data (ebd0a0a2-...), named FALCON-ISO. The type is
-#       what makes Windows create a volume for it and give it a drive letter,
-#       without which drag-and-drop from a Windows host and the WinPE jump
-#       binary both have nothing to talk to; the NAME is then what tells the
-#       loader this basic-data partition is ours rather than somebody's data
-#       volume. The loader requires both.
-#   p3  the falcon UKI-shelf type, which no one else wears. Deliberately NOT
-#       basic data: Windows offers to format a basic-data partition it cannot
-#       read, and this one holds the stick's private key.
+#   p2  Microsoft basic data (ebd0a0a2-...), so Windows creates a volume for
+#       it and gives it a drive letter, without which drag-and-drop from a
+#       Windows host and the WinPE jump binary both have nothing to talk to.
+#   p3  the falcon UKI-shelf type. Deliberately NOT basic data: Windows
+#       offers to format a basic-data partition it cannot read, and this one
+#       holds the stick's private key.
 #   p1  the standard ESP type; p4 the standard Linux LUKS type (8309), also
-#       unrecognised by Windows on purpose. The loader never matches p4.
+#       unrecognised by Windows on purpose. The loader never reads p4.
 #
 # The constants are frozen in falcon-core/src/part/part.h and must match it
 # exactly.
@@ -212,8 +245,11 @@ unmount_rw() {
 # partition rather than a vvfat directory: BOOTX64.EFI is Fedora's shim, and our
 # loader goes under grubx64.efi because that is the next-stage name compiled
 # into it.
+# The reserved sectors hold BIOS stage 3 and the marker, sized by the rule
+# mkstick create uses (DESIGN Section 3.3).
 echo "== p1: FAT32 ESP"
-sudo mkfs.fat -F 32 -n FALCONESP "$P1" >/dev/null
+sudo mkfs.fat -F 32 -R "$("$MKSTICK" ident --reserved-sectors --stage3 "$STAGE3")" \
+    -n FALCONESP "$P1" >/dev/null
 mount_rw "$P1"
 mkdir -p "$MNT/EFI/BOOT"
 if [[ "$UNSIGNED" -eq 1 ]]; then
@@ -234,12 +270,14 @@ unmount_rw
 echo "== p2: exFAT ISO library"
 sudo mkfs.exfat -n FALCON-ISO "$P2" >/dev/null
 mount_rw "$P2"
-dd if=/dev/zero of="$MNT/archlinux-fake.iso" bs=1M count=1 status=none
-dd if=/dev/zero of="$MNT/systemrescue-fake.iso" bs=1M count=1 status=none
+for iso in "${ISOS[@]}"; do
+    dd if=/dev/zero of="$MNT/$iso" bs=1M count=1 status=none
+done
 if [[ -f "$PAYLOAD_ISO" ]]; then
     cp "$PAYLOAD_ISO" "$MNT/payload-test.iso"
     echo "   payload-test.iso staged (real El Torito, bootable)"
 fi
+printf 'falcon 1 library %s\n' "$INSTALL_ID" > "$MNT/.falcon"
 unmount_rw
 
 # ---- p3: LUKS2 with a pbkdf2 keyslot, ext4 inside ----
@@ -249,7 +287,9 @@ printf '%s' "$PASS" | sudo cryptsetup luksFormat \
     --pbkdf pbkdf2 --pbkdf-force-iterations "$P3_ITER" \
     --cipher aes-xts-plain64 --key-size 512 \
     --batch-mode "$P3" -
-MAPPER=falcon-test-p3
+printf '{"type":"falcon","keyslots":[],"version":1,"role":"shelf","install_id":"%s"}' \
+    "$INSTALL_ID" | sudo cryptsetup token import "$P3"
+MAPPER=falcon-test-p3-$$
 printf '%s' "$PASS" | sudo cryptsetup open "$P3" "$MAPPER" -
 sudo mkfs.ext4 -q -L FALCON-UKI "/dev/mapper/$MAPPER"
 mount_rw_owned "/dev/mapper/$MAPPER"
@@ -295,7 +335,9 @@ echo "   /uki populated from the $UKI_KIND"
 # which is a separate path and was for a while a broken one. They are tiny, they
 # do not boot, and the chooser only appears when the shelf holds more than one
 # image, so staging them also keeps that screen on the default rig run.
-if [[ -x falcon-efi/tools/mk-test-labels.sh ]] && command -v ukify >/dev/null; then
+if [[ "$LABELS" -eq 0 ]]; then
+    echo "   /uki label fixtures left off (--no-labels)"
+elif [[ -x falcon-efi/tools/mk-test-labels.sh ]] && command -v ukify >/dev/null; then
     falcon-efi/tools/mk-test-labels.sh "$WORK_LABELS" >/dev/null
     cp "$WORK_LABELS"/*.efi "$MNT/uki/"
     echo "   /uki label fixtures: $(ls "$WORK_LABELS" | tr '\n' ' ')"
@@ -324,17 +366,27 @@ printf '%s' "$PASS" | sudo cryptsetup luksFormat \
 sudo losetup -d "$LOOP"
 LOOP=
 
+# ---- the boot record and the BIOS stages ----
+#
+# On the image file, with nothing attached: p1's boot sector (and its FAT32
+# backup) gets the binary record, then `mkstick bios` finds p1 by it and
+# puts stage 1 in LBA 0, stage 2 at the GPT place in a FALCON-BIOS
+# partition, and stage 3 in p1's reserved sectors.
+echo "== p1: boot record; the BIOS stages"
+"$MKSTICK" --quiet ident "$IMG" --write-boot 1 --id "$INSTALL_ID" >/dev/null
+"$MKSTICK" --quiet bios --reserve --no-backup --stage1 "$STAGE1" \
+    --stage2 "$STAGE2" --stage3 "$STAGE3" "$IMG"
+
 echo
-echo "created $IMG (${SIZE_MIB} MiB, GPT, four partitions)"
+echo "created $IMG (${SIZE_MIB} MiB, GPT, four partitions and the BIOS stages)"
+echo "  install ID: $INSTALL_ID"
 echo "  passphrase: $PASS  (override with FALCON_TEST_PASS)"
 echo
 echo "expected menu:"
 echo "  Personal OS (encrypted)       <- pinned first, from p3's pbkdf2 slot"
-echo "  archlinux-fake.iso"
-if [[ -f "$PAYLOAD_ISO" ]]; then
-    echo "  payload-test.iso"
-fi
-echo "  systemrescue-fake.iso"
+for iso in "${ISOS[@]}" $([[ -f "$PAYLOAD_ISO" ]] && echo payload-test.iso); do
+    echo "  $iso"
+done | sort
 echo
 echo "expected /uki listing after unlock:"
 if [[ "$UNSIGNED" -eq 1 ]]; then
@@ -344,7 +396,7 @@ else
 fi
 echo "  Personal OS: unsigned.efi     (unsigned: refused under Secure Boot)"
 echo "  README.txt / decoy.bin        present, never offered"
-if [[ -d "$WORK_LABELS" ]]; then
+if [[ "$LABELS" -eq 1 && -d "$WORK_LABELS" ]]; then
     echo
     echo "expected chooser, in full (the pair above carry ukify's autodetected"
     echo "\"Arch Linux\" too, so they join arch-b's group):"

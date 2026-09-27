@@ -561,6 +561,69 @@ int luks_slot_at(const luks_vol *v, size_t i, luks_slot_info *out)
     }
 }
 
+/* ---- the falcon token ------------------------------------------------ */
+
+int luks_falcon_token(const luks_vol *v, uint32_t *version,
+                      const char **role, size_t *role_len,
+                      const char **id, size_t *id_len)
+{
+    json_value root, tokens;
+    json_iter it;
+    int rc;
+
+    if (v == NULL || v->json == NULL || version == NULL || role == NULL ||
+        role_len == NULL || id == NULL || id_len == NULL) {
+        return LUKS_ERR_BAD_ARG;
+    }
+    rc = root_of(v, &root);
+    if (rc != LUKS_OK) {
+        return rc;
+    }
+    /* cryptsetup always writes "tokens", but a header without it simply
+     * has no token of ours. */
+    if (obj_get(&root, "tokens", &tokens) != LUKS_OK) {
+        return LUKS_ERR_NOTFOUND;
+    }
+    if (tokens.type != JSON_OBJECT ||
+        json_iter_init(&tokens, &it) != JSON_OK) {
+        return LUKS_ERR_CORRUPT;
+    }
+    for (;;) {
+        json_value k, tok, ver, r, i;
+        uint64_t n;
+        int more = json_iter_next(&it, &k, &tok);
+
+        if (more < 0) {
+            return LUKS_ERR_CORRUPT;
+        }
+        if (more == 0) {
+            return LUKS_ERR_NOTFOUND;
+        }
+        if (tok.type != JSON_OBJECT || !obj_str_is(&tok, "type", "falcon")) {
+            continue;
+        }
+        /* Ours from here, so a missing or mistyped field is damage, not a
+         * reason to go looking for another. A version sent as a string is
+         * refused: the writer writes a number. */
+        if (obj_get(&tok, "version", &ver) != LUKS_OK ||
+            ver.type != JSON_NUMBER || json_u64(&ver, &n) != JSON_OK ||
+            n > 0xffffffffull) {
+            return LUKS_ERR_CORRUPT;
+        }
+        if (obj_get(&tok, "role", &r) != LUKS_OK || r.type != JSON_STRING ||
+            obj_get(&tok, "install_id", &i) != LUKS_OK ||
+            i.type != JSON_STRING) {
+            return LUKS_ERR_CORRUPT;
+        }
+        *version = (uint32_t)n;
+        *role = r.ptr;
+        *role_len = r.len;
+        *id = i.ptr;
+        *id_len = i.len;
+        return LUKS_OK;
+    }
+}
+
 /* ---- unlock ---------------------------------------------------------- */
 
 /* Confirms the recovered key against the digest object that covers this

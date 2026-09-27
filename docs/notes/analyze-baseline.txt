@@ -111,7 +111,7 @@
 # decision; remove this entry once it is resolved.
 #
 # ==========================================================================
-# 4. falcon-winjump/src/winjump.c, Win32 API idioms (7 entries)
+# 4. falcon-winjump/src/winjump.c, Win32 API idioms (8 entries)
 # ==========================================================================
 #
 # This is the only file in the tree that targets Windows userland rather than
@@ -125,6 +125,15 @@
 #       defined by the translation unit before <windows.h>: they are how the
 #       SDK is told which API level and which character width to expose.
 #       There is no non-reserved spelling.
+#
+#   cppcheck uninitvar, "Uninitialized variable: d" in memset (1 entry).
+#       winjump links no C runtime and defines memset itself; cppcheck
+#       applies its library model of the standard memset (which writes d
+#       and so must receive an initialised pointer) to our definition of it,
+#       and reports the parameter as uninitialised inside its own body.
+#       First seen 2026-09-26, when the gate was made to build before
+#       analysing: cppcheck had been loading no compile database and
+#       reporting nothing.
 #
 #   bugprone-reserved-identifier, __stack_chk_guard and __stack_chk_fail
 #       (2 entries). winjump links no C runtime (-nostdlib; see the head of
@@ -265,3 +274,4 @@ tidy	falcon-winjump/src/winjump.c	clang-analyzer-optin.core.EnumCastOutOfRange	T
 # memcpy of a literal as a botched string build.
 tidy	falcon-efi/src/win/winpatch.c	bugprone-not-null-terminated-result	the result from calling 'memcpy' is not null-terminated
 tidy	falcon-winjump/src/winjump.c	clang-analyzer-core.uninitialized.Assign	Assigned value is garbage or undefined
+cppcheck	falcon-winjump/src/winjump.c	uninitvar	Uninitialized variable: d

@@ -138,6 +138,30 @@ int hook_parse_devnum(const char *s, size_t len, uint32_t *maj, uint32_t *min)
     return 1;
 }
 
+int hook_start_matches(const char *s, size_t len, uint64_t part_lba,
+                       uint32_t block_size)
+{
+    uint64_t v = 0, want;
+    size_t i = 0;
+
+    if (s == (const char *)0 || block_size < 512u || block_size % 512u != 0)
+        return 0;
+    if (part_lba > ~(uint64_t)0 / (block_size / 512u))
+        return 0;
+    want = part_lba * (block_size / 512u);
+    while (i < len && s[i] >= '0' && s[i] <= '9') {
+        if (v > (~(uint64_t)0 - 9u) / 10u)
+            return 0;
+        v = v * 10u + (uint64_t)(s[i] - '0');
+        i++;
+    }
+    if (i == 0)
+        return 0;
+    while (i < len && is_space(s[i]))
+        i++;
+    return i == len && v == want;
+}
+
 /* Decimal, into p; returns the characters written. */
 static size_t put_dec(char *p, uint64_t v)
 {
@@ -198,6 +222,7 @@ int hook_dm_table(const extmap_hdr *hdr, const uint8_t *map, uint32_t maj,
     struct dm_ioctl *io = (struct dm_ioctl *)buf;
     uint8_t *p;
     uint64_t logical = 0;
+    uint64_t unit;
     size_t need;
     uint32_t i;
 
@@ -205,7 +230,16 @@ int hook_dm_table(const extmap_hdr *hdr, const uint8_t *map, uint32_t maj,
         buf == (void *)0 || len == (size_t *)0 || hdr->n_extents == 0)
         return HOOK_ERR_BAD_ARG;
     *len = 0;
-    if ((base % 512u) != 0)
+    /* A table is counted in 512-byte sectors whatever the disk, but the
+     * kernel refuses to load one whose targets do not start and end on the
+     * disk's logical block (dm-table's hardware alignment check). On a 4Kn
+     * disk that is 4096, and an ISO is only a multiple of 2048, so the last
+     * run is rounded up to the block rather than to 512; the tail of the
+     * file's last cluster is still the file's. */
+    unit = hdr->block_size;
+    if (unit < 512u || (unit % 512u) != 0)
+        unit = 512u;
+    if ((base % unit) != 0)
         return HOOK_ERR_RANGE;
     need = hook_dm_table_size(hdr->n_extents);
     if (cap < need)
@@ -224,11 +258,12 @@ int hook_dm_table(const extmap_hdr *hdr, const uint8_t *map, uint32_t maj,
         size_t n = 0;
 
         extmap_extent_at(map, i, &e);
-        if ((e.offset % 512u) != 0 ||
-            (i + 1u < hdr->n_extents && (e.length % 512u) != 0) ||
-            e.offset > (~(uint64_t)0) - base)
+        if ((e.offset % unit) != 0 ||
+            (i + 1u < hdr->n_extents && (e.length % unit) != 0) ||
+            e.offset > (~(uint64_t)0) - base ||
+            e.length > (~(uint64_t)0) - unit)
             return HOOK_ERR_RANGE;
-        sectors = (e.length + 511u) / 512u;
+        sectors = (e.length + unit - 1u) / unit * (unit / 512u);
         dev_off = (base + e.offset) / 512u;
 
         memset(t, 0, SPEC_SIZE);

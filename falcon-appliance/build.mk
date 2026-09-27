@@ -9,9 +9,9 @@ APPLIANCE_STICK := build/appliance/appliance-stick.img
 APPLIANCE := falcon-appliance/src
 
 # PID 1, one program split by job (falcon-appliance/src/appliance.h has the
-# map), plus what it links from the other components: the GPT matcher and the
-# manifest parser the loader uses, so the appliance cannot disagree with the
-# menu about which partition is which or what "already blessed" means; and the
+# map), plus what it links from the other components: the record reader and
+# the manifest parser the loader uses, so the appliance cannot disagree with
+# the menu about which partition is which or what "already blessed" means; and the
 # bless tool's ISO reader, family table and payload rules, so the survey
 # cannot put an image in a queue the tool will refuse it from. util.c, the
 # two crypto units and the filesystem drivers come along because isoprobe
@@ -21,7 +21,8 @@ APPLIANCE := falcon-appliance/src
 # linked static: it is PID 1 in an initramfs whose dynamic loader exists for
 # the other programs, not for this one.
 APPLIANCE_INIT_SRCS := $(addprefix $(APPLIANCE)/,main.c console.c stick.c \
-	run.c survey.c select.c shelf.c bless.c list.c route.c) \
+	run.c survey.c select.c shelf.c bless.c list.c route.c stickid.c) \
+	$(CORE_IDENT) $(CORE_IDENT_FS) \
 	$(CORE_PART) $(CORE_MANIFEST) $(CORE)/media/family.c $(CORE_FS) $(CORE_LUKS) \
 	$(CORE)/media/bootcfg.c \
 	$(addprefix $(CLI)/sign/,isoprobe.c payload.c util.c) \
@@ -60,16 +61,22 @@ test-appliance:
 # what each file on p2 is owed, is split out for exactly that reason.
 
 APPLIANCE_TESTS := falcon-appliance/tests/main.c \
-	falcon-appliance/tests/route_test.c
+	falcon-appliance/tests/route_test.c falcon-appliance/tests/stickid_test.c
 
-APPLIANCE_UUT := falcon-appliance/src/route.c
+APPLIANCE_UUT := falcon-appliance/src/route.c falcon-appliance/src/stickid.c
+
+# stickid.c reads records with core's readers, over the synthetic exFAT the
+# core tests build; they are falcon-core's units and are reported there.
+APPLIANCE_STICKID_DEPS := $(CORE_IDENT) $(CORE_IDENT_FS) $(CORE_FS) \
+	$(CORE_LUKS) $(CORE_CRYPTO) $(CORE_UCS2)
 
 # The routing test checks route.c's answers against the bless tool's own
 # payload rules, so it links those, and what they link. They are falcon-cli's
 # units and are reported there.
 APPLIANCE_TEST_DEPS := $(CLI_UUT)
 
-$(eval $(call test_bin,appliance,$(APPLIANCE_TESTS) $(APPLIANCE_UUT) $(APPLIANCE_TEST_DEPS)))
+$(eval $(call test_bin,appliance,$(APPLIANCE_TESTS) $(APPLIANCE_UUT) $(APPLIANCE_TEST_DEPS) \
+	$(APPLIANCE_STICKID_DEPS)))
 
 ALL_TEST_SRCS += $(APPLIANCE_TESTS)
 ALL_UUT_SRCS  += $(APPLIANCE_UUT)

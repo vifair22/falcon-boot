@@ -38,9 +38,6 @@ typedef struct {
     char     base[MKS_PATH_MAX];
     char     part[MKS_PARTS][MKS_PATH_MAX];
     int      loop_attached;
-    /* A BIOS-only stick (mkstick create --bios-only) leaves GPT slot 1
-     * empty, so part[0] names a node that never appears. */
-    int      no_p1;
 } mks_disk;
 
 /* Identify and size the target. Does not open it for writing and does not
@@ -66,6 +63,10 @@ cli_status disk_detach(mks_disk *d);
 /* Wait for the kernel and udev to publish the partition nodes. Without it the
  * first mkfs races udev and fails with a confusing ENOENT. */
 cli_status disk_settle(const mks_disk *d);
+
+/* The same wait for one partition node, for a disk whose partitions are not
+ * the four of a stick (a station's, or any table status reads). */
+cli_status disk_settle_node(const char *node);
 
 cli_status disk_partition_name(const char *base, unsigned n,
                                char *out, size_t cap);

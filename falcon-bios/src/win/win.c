@@ -35,6 +35,7 @@
 #include <fs/fs.h>
 #include <fs/udf.h>
 #include <fs/iso9660.h>
+#include <ident/identfs.h>
 #include <media/extmap.h>
 #include <media/xpsetup.h>
 #include <pe/pe.h>
@@ -222,19 +223,26 @@ static size_t put_dec(char *out, uint64_t v)
     return n;
 }
 
-/* Builds the ISO's extent map into g_map: the p2 GPT entry the winjump driver
- * finds the disk by, and the runs of the ISO's bytes on it. Returns the map's
- * length, or 0 if it could not be built (winjump then has only the VirtDisk
- * route, which is all a Windows 8+ WinPE needs). Mirrors the EFI loader's
- * build_map (falcon-efi/src/direct/direct.c). */
+/* Builds the ISO's extent map into g_map: the ISO library the winjump
+ * driver finds the disk by (its install ID off p2's /.falcon record, and
+ * its first LBA; DESIGN Section 3.1), and the runs of the ISO's bytes on it.
+ * Returns the map's length, or 0 if it could not be built (winjump then has
+ * only the VirtDisk route, which is all a Windows 8+ WinPE needs). Mirrors
+ * the EFI loader's build_map (falcon-efi/src/direct/direct.c). */
+static ident_fs_scratch g_rec;
+
 static size_t build_win_map(const bios_disk *d, fs_vol *p2,
-                            const gpt_part *p2part, const fs_dirent *iso)
+                            const part_entry *p2part, const fs_dirent *iso)
 {
     extmap_hdr hdr;
+    ident_rec rec;
     size_t n = 0, i, mlen = 0;
 
     memset(&hdr, 0, sizeof hdr);
-    memcpy(hdr.part_guid, p2part->unique, sizeof hdr.part_guid);
+    if (ident_read_vol(p2, &g_rec, &rec) != IDENT_OK ||
+        rec.role != IDENT_ROLE_LIBRARY)
+        return 0;
+    memcpy(hdr.install_id, rec.install_id, sizeof hdr.install_id);
     hdr.part_lba = p2part->start_lba;
     hdr.block_size = d->sector_size;
     hdr.iso_size = iso->size;
@@ -287,7 +295,7 @@ static size_t make_cfg(const char *rel, uint64_t size, const uint8_t *map,
     return n;
 }
 
-int win_boot(bios_disk *d, fs_vol *p2, const gpt_part *p2part,
+int win_boot(bios_disk *d, fs_vol *p2, const part_entry *p2part,
              const fs_dirent *iso, const char *iso_rel, boot_result *r,
              int *unpatchable)
 {
@@ -639,7 +647,7 @@ static void xp_bake_map(uint8_t *sys, size_t sys_len,
  * This wires the driver in; giving its DriverEntry the stick's extents at
  * boot-start with no winjump (piece 3, windows-route.md 7.4) is separate, so
  * for now setup loads the driver and then cannot reach its boot device. */
-int win_xp_boot(bios_disk *d, fs_vol *p2, const gpt_part *p2part,
+int win_xp_boot(bios_disk *d, fs_vol *p2, const part_entry *p2part,
                 const fs_dirent *iso, boot_result *r, int *not_xp)
 {
     static uint8_t pvd[BLK], i386rec[BLK], dirblk[BLK];

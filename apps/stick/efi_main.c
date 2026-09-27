@@ -2,7 +2,7 @@
  *
  * Steps 2, 3 and 5 of the MVP build order (docs/DESIGN.md Section 11): take the
  * one device inventory falcon-efi/src/discover/discover.c builds (Section 9),
- * enumerate *.iso and *.img on the ISO-role volumes through the filesystem
+ * enumerate *.iso and *.img on the ISO library volumes through the filesystem
  * registry, present the text menu, and hand the selection to whichever path
  * owns it: the virtual-media path (Section 6's two flavors + the platform's
  * verifying LoadImage) or the personal-OS path (passphrase, LUKS2, ext4, UKI).
@@ -267,14 +267,14 @@ static char  g_next_path[MANIFEST_PATH_MAX]; /* empty when there was none */
 static UINTN g_next_idx = MAX_ISOS;          /* MAX_ISOS = nothing matched */
 static UINT8 g_next_bad;                     /* a value we would not decode */
 
-/* Walk the ISO-role rows of the one discovery inventory (DESIGN Section 9)
- * and scan each volume a filesystem driver claimed for bootable images.
+/* Walk the library-role rows of the one discovery inventory (DESIGN
+ * Section 9) and scan each volume a filesystem driver claimed for bootable
+ * images.
  *
- * Which rows those are is DESIGN Section 3's rule, applied once at discovery
- * time: if any partition in the machine is a falcon p2 (the basic-data type
- * named FALCON-ISO, part_match_role), only those are offered here, so an internal disk's exFAT volume can never
- * contribute entries; if none does, everything is, which is what keeps the
- * QEMU rig images working until mkstick stamps the types.
+ * Which rows those are is DESIGN Section 3.1's rule, applied once at
+ * discovery time: a volume whose /.falcon record names the library role and
+ * carries this loader's install ID. A second stick's p2 and an internal
+ * disk's exFAT volume carry no such record and contribute nothing.
  *
  * Which driver reads it is the registry's answer, not this function's: a p2
  * is exFAT today, and the day one is not, the menu keeps working because the
@@ -287,7 +287,7 @@ static void scan_all_volumes(iso_list *list, UINTN *vols_found)
     *vols_found = 0;
     bless_reset();
     while (*vols_found < MAX_VOLS &&
-           (dev = discover_next(PART_ROLE_ISO, &cursor)) != (discover_dev *)0) {
+           (dev = discover_next(IDENT_ROLE_LIBRARY, &cursor)) != (discover_dev *)0) {
         fs_vol *vol = &g_vols[*vols_found];
 
         if (dev->fs == (const fs_ops *)0)
@@ -1147,8 +1147,8 @@ static BOOLEAN boot_windows(EFI_HANDLE image_handle, const CHAR16 *label,
     out(label);
     out(L"\r\n\r\n");
     /* The ISO's extent map, for winjump's driver route; empty (VirtDisk only)
-     * if p2 has no GPT entry to name. Not set as an EFI variable, only carried
-     * in the cfg the patch injects. */
+     * when it cannot be built. Not set as an EFI variable, only carried in
+     * the cfg the patch injects. */
     (void)direct_map_build(g_st, &g_vols[target->vol], dev->handle,
                            dev->bio->Media->BlockSize, &target->ent, &map,
                            &map_len);
@@ -1583,6 +1583,23 @@ static void permissive_notice(sb_mode mode)
         L"MokManager\r\non the next boot.\r\n\r\n");
 }
 
+/* Said once, before the menu, when the loader could not learn its install:
+ * the menu that follows offers no library and no shelf, and without this it
+ * would not say why. */
+static void install_notice(void)
+{
+    const CHAR16 *why;
+    EFI_INPUT_KEY key;
+
+    why = discover_install_problem(discover_install((ident_rec *)0));
+    if (why == (const CHAR16 *)0)
+        return;
+    menu_screen(g_st);
+    out(why);
+    out(L"\r\n\r\npress any key to continue.\r\n");
+    wait_key(&key);
+}
+
 /* The one-shot's second half (DESIGN Section 6.3.1): the marker has already
  * been read and deleted; this is the validation and, if it passes, the boot
  * that happens WITHOUT drawing the menu.
@@ -1734,9 +1751,10 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
                                   L"falcon-boot " WIDEN(FALCON_VERSION)));
 
     /* One pass over the Block I/O handles for the whole loader (DESIGN
-     * Section 9): media, role, LUKS2 magic and filesystem identification for
+     * Section 9): media, LUKS2 magic, filesystem and identity record for
      * every device, before any consumer looks at one. */
     discover_scan(st, image_handle);
+    install_notice();
 
     /* Header probe only: it reads a block and parses metadata, and never asks
      * for a passphrase, so the entry's presence costs the user nothing and

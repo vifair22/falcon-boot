@@ -49,6 +49,7 @@ enum {
     LUKS_ERR_UNSUPPORTED     = -7,  /* well-formed, but a feature we lack */
     LUKS_ERR_UNSUPPORTED_KDF = -8,  /* argon2* keyslot; see the scope note */
     LUKS_ERR_NOKEY           = -9,  /* no keyslot opened with this passphrase */
+    LUKS_ERR_NOTFOUND        = -10, /* no token of the type asked for */
 };
 
 /* Reads len bytes at byte offset off, relative to the start of the LUKS
@@ -155,6 +156,28 @@ int luks_slot_at(const luks_vol *v, size_t i, luks_slot_info *out);
  * 250 KB anti-forensic expansion is never held. */
 int luks_unlock(luks_vol *v, const void *pass, size_t pass_len,
                 luks_master_key *mk, uint32_t *slot_id);
+
+/* The falcon identity token (DESIGN Section 3.1), read from the header's
+ * JSON with no key:
+ *
+ *   "tokens": { "<n>": { "type": "falcon", "keyslots": [], "version": 1,
+ *                        "role": "shelf", "install_id": "<32 hex>" } }
+ *
+ * The first token whose type is "falcon" is the one; tokens of any other
+ * type are passed over, and members the token does not need are ignored,
+ * in any order. *role and *id point into the volume's JSON buffer, as the
+ * raw bytes between the quotes (an escape sequence is not decoded, so it
+ * reaches ident_from_strings as written and is refused there); they live
+ * as long as luks_open's buffer does.
+ *
+ * LUKS_ERR_NOTFOUND when there is no falcon token; LUKS_ERR_CORRUPT when
+ * there is one but "version" is not a JSON integer or "role" or
+ * "install_id" is missing or not a string. The values themselves are
+ * judged by ident_from_strings, which this does not call, so luks/ does not
+ * depend on ident/. */
+int luks_falcon_token(const luks_vol *v, uint32_t *version,
+                      const char **role, size_t *role_len,
+                      const char **id, size_t *id_len);
 
 /* The decrypting reader over the data segment. Holds key material. */
 typedef struct {

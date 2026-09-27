@@ -28,6 +28,8 @@
 	.globl  thunk_regs
 	.globl  thunk_vector
 	.globl  gate_drive
+	.globl  gate_bootpart
+	.globl  gate_marker
 	.globl  putc
 	.globl  fatal_rm
 	.extern pmode_enter
@@ -74,6 +76,10 @@ gate_boot16:
 	jmp     boot16               /* GATE_BOOT16, and never back */
 	.code16
 
+	.org    0x18
+gate_bootpart:
+	.quad   0                    /* GATE_BOOTPART: written by load3.c */
+
 	.org    0x20
 thunk_regs:
 	.space  32                   /* GATE_REGS */
@@ -83,6 +89,8 @@ thunk_vector:
 	.byte   0                    /* GATE_VECTOR */
 gate_drive:
 	.byte   0                    /* GATE_DRIVE */
+gate_marker:
+	.word   0                    /* GATE_MARKER: written by load3.c */
 
 	.org    0x48
 gate_target:
@@ -170,7 +178,7 @@ stage2_32:
 	 * it. Stage 2 stops here: what stays resident of it is the thunk and
 	 * the gate, because those are the parts that have to be reachable
 	 * from real mode. */
-	movl    $0x7C00, %esp
+	movl    $STAGE2_STACK, %esp  /* biosdefs.h: not below 0x7C00 */
 	call    fault_install        /* before anything that can fault */
 	movzbl  drive, %eax
 	subl    $12, %esp            /* 16-byte aligned at the call */

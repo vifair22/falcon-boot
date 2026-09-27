@@ -131,14 +131,23 @@ $(FIXTURE_UKI): falcon-efi/tools/mk-test-uki.sh \
 # The four-partition stick the personal-OS path needs (DESIGN Section 3). It
 # wants the signed loader for p1's shim chain and the payload for p3's /uki,
 # so both are prerequisites; the script degrades to an unsigned stick on its
-# own if the test MOK is absent.
-test-stick: $(EFI_SIGNED) test-iso test-uki
+# own if the test MOK is absent. mkstick writes the boot record and puts the
+# BIOS stages on, so the stick boots under SeaBIOS too (Section 3.3).
+test-stick: $(EFI_SIGNED) test-iso test-uki cli bios
 	falcon-efi/tools/mk-test-stick.sh
 
 # A disk laid out as the Manual's stationary install (Section 2), made by
 # following that procedure; the rig boots it under both firmwares.
 test-station: $(EFI_STATION_SIGNED) station test-uki cli
 	falcon-efi/tools/mk-test-station.sh
+
+# The core step's matrix cells (docs/notes/station-rework.md section 6), each
+# booted headless and judged from serial: the stick alone, beside a second
+# stick, an MBR data disk and another install's records, a 4Kn stick, and
+# the station, under both firmwares. Builds its own disks (sudo, loop
+# devices on image files); the fixture UKI and test MOK must exist.
+test-core: all bios station cli payload
+	falcon-efi/tools/run-core-rig.sh
 
 # No prerequisite on $(TEST_STICK): rebuilding it needs sudo and takes seconds
 # of cryptsetup, so it stays an explicit `make test-stick`. The rig says so if
@@ -150,7 +159,7 @@ run-stick-secboot:
 	falcon-efi/tools/run-qemu.sh --stick --secboot
 
 .PHONY: test-station payload esp run mok-test sign run-secboot test-iso \
-	test-img test-uki test-stick run-stick run-stick-secboot
+	test-img test-uki test-stick run-stick run-stick-secboot test-core
 
 # ---- tests ----
 #

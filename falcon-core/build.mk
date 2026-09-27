@@ -17,8 +17,24 @@ CORE_FS       := $(addprefix $(CORE)/fs/,exfat.c ext4.c fat.c iso9660.c udf.c fs
 CORE_FS_EXT4  := $(addprefix $(CORE)/fs/,ext4.c fs.c fs_ext4.c fs_reg_ext4.c)
 # falcon jump's (DESIGN Section 14.3): FAT, for the floppy it boots from.
 CORE_FS_FAT   := $(addprefix $(CORE)/fs/,fat.c fs.c fs_fat.c fs_reg_fat.c)
+# The extent map's readers (falcon-hook, falcon-winjump, falcon-vdisk):
+# exFAT, the ISO library's filesystem, for its /.falcon record.
+CORE_FS_EXFAT := $(addprefix $(CORE)/fs/,exfat.c fs.c fs_exfat.c fs_reg_exfat.c)
 CORE_LUKS     := $(addprefix $(CORE)/luks/,json.c af.c luks.c)
-CORE_PART     := $(CORE)/part/part.c
+CORE_PART     := $(CORE)/part/part.c $(CORE)/part/table.c
+# The identity record (DESIGN Section 3.1): its binary, text and LUKS token
+# forms. No .bss and no other core module, so stage 2 can link it alone.
+CORE_IDENT    := $(CORE)/ident/ident.c
+# The record read off a mounted volume's /.falcon, through the fs registry.
+CORE_IDENT_FS := $(CORE)/ident/identfs.c
+# Which disk holds the partition an extent map names (media/extfind.h):
+# the map, the record and its reader, for the three programs that read maps.
+CORE_EXTFIND  := $(CORE)/media/extmap.c $(CORE)/media/extfind.c \
+	$(CORE_IDENT) $(CORE_IDENT_FS)
+# Re-blocking under a loader's read callback (DESIGN Section 3.4): any length
+# at any offset over a device that reads whole sectors. Linked by whatever
+# hands a sector-only callback to the drivers.
+CORE_BLK      := $(CORE)/blk/rebl.c
 CORE_PE       := $(CORE)/pe/pe.c
 CORE_TRUST    := $(addprefix $(CORE)/trust/,der.c x509.c authenticode.c \
 	siglist.c trust.c probe.c)
@@ -96,9 +112,11 @@ CORE_TESTS := $(addprefix falcon-core/tests/,main.c \
 	iso9660_test.c udf_test.c udfedit_test.c media_fs_test.c bootcfg_test.c extmap_test.c \
 	hookcmd_test.c grubcfg_test.c bsdmd_test.c xpsetup_test.c eltorito_test.c fat_test.c medium_test.c bootfs_test.c blesslist_test.c wim_test.c part_test.c \
 	osrel_test.c pe_test.c trust_test.c survey_test.c tui_test.c shelf_test.c \
-	nextboot_test.c gz_test.c)
+	nextboot_test.c gz_test.c table_test.c ident_test.c identfs_test.c extfind_test.c \
+	rebl_test.c kndev.c)
 
-CORE_UUT := $(CORE_CRYPTO) $(CORE_FS) $(CORE_LUKS) $(CORE_PART) $(CORE_PE) \
+CORE_UUT := $(CORE_CRYPTO) $(CORE_FS) $(CORE_LUKS) $(CORE_PART) $(CORE_IDENT) \
+	$(CORE_IDENT_FS) $(CORE)/media/extfind.c $(CORE_BLK) $(CORE_PE) \
 	$(CORE_WIM) $(CORE_UCS2) $(CORE_TUI) \
 	$(CORE_TRUST) $(CORE_MEDIA) $(CORE_MANIFEST) $(CORE_MANIFEST_WRITE) $(CORE_GZ)
 

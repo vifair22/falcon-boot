@@ -39,6 +39,7 @@
 set -euo pipefail
 
 cd "$(dirname "$0")/../.."
+. tools/rig-part.sh
 
 OUT=build/appliance
 IMG="$OUT/appliance-stick.img"
@@ -179,10 +180,11 @@ echo "   $MINI_ISO ($(stat -c%s "$MINI_ISO") bytes)"
 # only a real question when there is more than one and they are not all in the
 # same place.
 echo "== staging ISOs on p2"
+P2N=$(rig_part "$IMG" library)
 LOOP=$(sudo losetup --show -f -P "$IMG")
 sudo udevadm settle 2>/dev/null || sleep 1
 MNT=$(mktemp -d)
-sudo mount -o uid="$(id -u)",gid="$(id -g)" "${LOOP}p2" "$MNT"
+sudo mount -o uid="$(id -u)",gid="$(id -g)" "${LOOP}p$P2N" "$MNT"
 cp "$MINI_ISO" "$MNT/$ROOT_ISO_NAME"
 mkdir -p "$MNT/$FOLDER"
 cp "$MINI_ISO" "$MNT/$FOLDER/$FOLDER_ISO_NAME"

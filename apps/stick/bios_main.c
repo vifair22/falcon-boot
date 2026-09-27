@@ -28,8 +28,10 @@
 #include <console/screen.h>
 #include <mem/e820.h>
 #include <disk/marker.h>
+#include <disk/install.h>
 
-#include <part/part.h>
+#include <part/table.h>
+#include <ident/ident.h>
 #include <fs/fs.h>
 #include <manifest/manifest.h>
 #include <tui/tui.h>
@@ -41,23 +43,26 @@
 #include <media/survey.h>
 #include <media/nextboot.h>
 
-/* The drive the BIOS booted from, and one other. Both are asked about,
- * because the rig's default image (make test-bios-img) boots a raw disk with
- * no partition table and puts the falcon partitions on the second one. On a
- * real machine the other drive is the internal disk, and nothing on it may
- * stand in for the stick's own p2 or p3; claim_roles is where that is
- * decided. */
-#define DRIVE_FIRST  0x80u
-#define DRIVE_SECOND 0x81u
+/* The disks an install's partitions are looked for on: the boot drive,
+ * then every fixed disk the BIOS counts (disk/install.h). A partition is
+ * taken by its record's install ID, never by the disk it is on, so the rig
+ * disk a corpus case adds and a machine's internal disk are asked the same
+ * question and only this install's partitions answer. */
+#define DISKS_MAX 8u
 
 /* Caller-allocated, as everywhere in falcon-core, and static rather than on
  * the stack because stage 3's stack is 64 KB (biosdefs.h, STAGE3_STACK).
  * One array per disk: g_p2_part and g_p3_part point into these for the life
- * of the loader, so a second parse into the same array would change which
- * partition they name. */
+ * of the loader. */
 #define PARTS_MAX 16u
-static gpt_part g_parts[PARTS_MAX];
-static gpt_part g_parts_other[PARTS_MAX];
+static part_entry g_parts[DISKS_MAX][PARTS_MAX];
+static bios_disk  g_disks[DISKS_MAX];
+
+/* The boot partition's record: the install everything else must belong to
+ * (DESIGN Section 3.1). */
+static ident_rec     g_install;
+static int           g_have_install;
+static install_state g_install_state;
 
 /* The ISO partition, once found, and the offset shim that turns a
  * disk-relative callback into a partition-relative one. Same shape as
@@ -72,15 +77,16 @@ static part_src g_p2_src;
 static fs_vol   g_p2;
 static int      g_p2_mounted;
 
-/* p2's own GPT entry and the block size it was read with: between them they
- * are what names the partition to falcon-hook, which has to find the same
- * one from Linux (DESIGN Section 6.4). */
-static const gpt_part *g_p2_part;
-static uint32_t        g_p2_block;
+/* p2's own partition entry and the block size it was read with: between
+ * them they are what names the partition to falcon-hook, which has to find
+ * the same one from Linux (DESIGN Section 6.4). */
+static const part_entry *g_p2_part;
+static uint32_t          g_p2_block;
 
-/* p3 and the disk it is on, for the personal-OS row (DESIGN Section 5). */
-static const gpt_part *g_p3_part;
-static bios_disk      *g_p3_disk;
+/* The shelf and the disk it is on, for the personal-OS row (DESIGN Section
+ * 5). */
+static const part_entry *g_p3_part;
+static bios_disk        *g_p3_disk;
 
 /* What the menu draws, from falcon-core's survey (media/survey.c): the same
  * walk, extension rule, sort and folder view the UEFI loader uses. The
@@ -101,8 +107,9 @@ static survey_row   g_view[VIEW_MAX];
 static uint16_t g_cur[SURVEY_PATH_MAX];
 static size_t   g_cur_len;
 
-/* Whether the menu has a personal-OS row, which it does when p3 opened as a
- * LUKS2 volume. One row, first on the root screen, as under UEFI. */
+/* Whether the menu has a personal-OS row, which it does when the shelf
+ * opened, as LUKS2 or as a plaintext filesystem. One row, first on the root
+ * screen, as under UEFI. */
 static int g_pos_row;
 
 /* The next-boot marker (DESIGN Section 6.3.1): taken off the boot disk, and
@@ -116,7 +123,10 @@ static int part_read(void *ctx, uint64_t off, uint64_t len, void *buf)
 
     if (off > ~(uint64_t)0 - p->base)
         return -1;
-    return bios_disk_read(p->disk, p->base + off, len, buf);
+    /* bios_disk_bytes, not bios_disk_read: the drivers above read parts of
+     * a sector on a 4Kn disk (DESIGN Section 3.4). base is whole sectors,
+     * so the layer sees the drivers' alignment unchanged. */
+    return bios_disk_bytes(p->disk, p->base + off, len, buf);
 }
 
 static void put_name(const uint16_t *name)
@@ -411,6 +421,22 @@ static void return_to_firmware(void)
     bios_reboot();
 }
 
+/* Said once, before the menu, when the loader could not learn its install:
+ * the menu that follows offers no library and no shelf, and without this it
+ * would not say why. The UEFI loader's install_notice. */
+static void install_notice(void)
+{
+    const char *why = install_problem(g_install_state);
+
+    if (why == (const char *)0)
+        return;
+    screen_mode((const char *)0);
+    screen_page();
+    screen_out(why);
+    screen_out("\n\npress any key to continue.\n");
+    (void)screen_key();
+}
+
 /* The next-boot marker, acted on: the UEFI loader's next_boot_run, in its
  * order and with its sentences. The marker was cleared before any of this
  * ran, so every path below, including a boot that starts and comes back,
@@ -545,12 +571,10 @@ static void menu_run(void)
     }
 }
 
-static bios_disk g_boot;
-static bios_disk g_other;
 static uint8_t g_sector[512];
 
 /* Defined below, beside the exFAT state it uses. */
-static void scan_iso_partition(bios_disk *d, const gpt_part *p);
+static void scan_iso_partition(bios_disk *d, const part_entry *p);
 
 static void show_first_sector(bios_disk *d, const char *what)
 {
@@ -562,9 +586,7 @@ static void show_first_sector(bios_disk *d, const char *what)
     bios_put_dec(d->sector_size);
     bios_puts("\n");
 
-    if (bios_disk_read(d, 0, d->sector_size < sizeof g_sector
-                              ? d->sector_size : sizeof g_sector,
-                       g_sector) != 0) {
+    if (bios_disk_bytes(d, 0, sizeof g_sector, g_sector) != 0) {
         bios_puts("falcon-bios:   LBA 0 unreadable\n");
         return;
     }
@@ -573,93 +595,91 @@ static void show_first_sector(bios_disk *d, const char *what)
     bios_puts("\n");
 }
 
-static const char *gpt_error(int rc)
+static const char *table_error(int rc)
 {
     switch (rc) {
-    case GPT_ERR_IO:          return "the read callback failed";
-    case GPT_ERR_NOT_GPT:     return "no GPT signature at LBA 1";
-    case GPT_ERR_CRC:         return "a CRC did not check out";
-    case GPT_ERR_BAD_ARG:     return "bad argument";
-    case GPT_ERR_UNSUPPORTED: return "geometry this parser declines";
-    default:                  return "unknown";
+    case PART_ERR_IO:          return "the read callback failed";
+    case PART_ERR_NO_TABLE:    return "neither an MBR nor a GPT";
+    case PART_ERR_CORRUPT:     return "a table that does not check out";
+    case PART_ERR_ARG:         return "bad argument";
+    case PART_ERR_UNSUPPORTED: return "geometry this parser declines";
+    default:                   return "unknown";
     }
 }
 
-/* Parses and prints one disk's partitions into `parts`. The count, 0 when
- * there is no table. */
-static uint32_t show_partitions(bios_disk *d, gpt_part *parts)
+/* This install's library and shelf, from whichever disk carries them: a
+ * partition counts only when its own record names the boot partition's
+ * install (DESIGN Section 3.1), and the first of each role is taken. The
+ * shelf counts only when it opens (DESIGN Section 13.3, as the UEFI loader
+ * has it). Every partition's record is said on serial, the ones that are
+ * not this install's too, so a log shows what was passed over and why. */
+static void claim_roles(bios_disk *d, const part_table *t)
 {
-    gpt_table t;
     uint32_t i;
+
+    for (i = 0; i < t->count; i++) {
+        const part_entry *p = &t->parts[i];
+        ident_rec rec;
+        int encrypted = 0;
+        int mine;
+
+        bios_puts("falcon-bios:     p");
+        bios_put_dec(p->number);
+        bios_puts("  LBA ");
+        bios_put_dec(p->start_lba);
+        bios_puts("..");
+        bios_put_dec(p->end_lba);
+        if (d->drive == bios_boot_drive && p->start_lba == install_boot_lba()) {
+            bios_puts("  [boot]\n");
+            continue;
+        }
+        if (!install_part_record(d, p, &rec, &encrypted)) {
+            bios_puts("\n");
+            continue;
+        }
+        mine = g_have_install && ident_same_install(&rec, &g_install);
+        bios_puts("  [");
+        bios_puts(ident_role_name(rec.role));
+        bios_puts(mine ? "]" : ", another install]");
+        bios_puts("\n");
+        if (!mine)
+            continue;
+        if (rec.role == IDENT_ROLE_SHELF && g_p3_part == (const part_entry *)0 &&
+            pos_probe(d, p)) {
+            g_p3_part = p;
+            g_p3_disk = d;
+        } else if (rec.role == IDENT_ROLE_LIBRARY && !encrypted &&
+                   g_p2_part == (const part_entry *)0) {
+            scan_iso_partition(d, p);
+        }
+    }
+}
+
+/* One disk: its table, and what on it is this install's. */
+static void scan_disk(bios_disk *d, part_entry *parts, const char *what)
+{
+    part_table t;
     int rc;
 
+    show_first_sector(d, what);
     t.parts = parts;
     t.cap = PARTS_MAX;
-    t.count = 0;
-    t.truncated = 0;
-
-    rc = gpt_parse(&t, bios_disk_read, d, d->sector_size);
-    if (rc != GPT_OK) {
+    rc = part_read_table(&t, bios_disk_read, d, d->sector_size, 0);
+    if (rc != PART_OK) {
         bios_puts("falcon-bios:   no partition table: ");
-        bios_puts(gpt_error(rc));
+        bios_puts(table_error(rc));
         bios_puts("\n");
-        return 0;
+        return;
     }
-
-    bios_puts("falcon-bios:   GPT with ");
+    bios_puts("falcon-bios:   ");
+    bios_puts(t.id.kind == PART_KIND_GPT ? "GPT" : "MBR");
+    bios_puts(" with ");
     bios_put_dec(t.count);
     bios_puts(" partition(s)");
     if (t.truncated)
         bios_puts(" (more than fitted)");
     bios_puts("\n");
-
-    for (i = 0; i < t.count; i++) {
-        bios_puts("falcon-bios:     p");
-        bios_put_dec(parts[i].number);
-        bios_puts("  LBA ");
-        bios_put_dec(parts[i].start_lba);
-        bios_puts("..");
-        bios_put_dec(parts[i].end_lba);
-        /* The roles DESIGN Section 3 identifies, asked of falcon-core's own
-         * matcher rather than of a GUID comparison written again here. */
-        if (gpt_part_is_role(&parts[i], PART_ROLE_ISO))
-            bios_puts("  [falcon p2]");
-        else if (gpt_part_is_role(&parts[i], PART_ROLE_SHELF))
-            bios_puts("  [falcon p3]");
-        bios_puts("\n");
-    }
-    return t.count;
-}
-
-/* The one the menu is built from, and the one the personal-OS row needs,
- * each taken from the first disk that has it: the boot disk is asked first,
- * so a machine's internal disk fills a role only when the disk it booted
- * from does not. Both are identified by DESIGN Section 3's rules, asked of
- * falcon-core's own matcher. A shelf counts only when it opens as LUKS2
- * (DESIGN Section 13.3, as the UEFI loader has it): one on the boot disk
- * that does not must not keep another disk's from being offered. */
-static void claim_roles(bios_disk *d, gpt_part *parts, uint32_t n)
-{
-    uint32_t i;
-
-    if (g_p3_part == (const gpt_part *)0) {
-        for (i = 0; i < n; i++) {
-            if (gpt_part_is_role(&parts[i], PART_ROLE_SHELF) &&
-                pos_probe(d, &parts[i])) {
-                g_p3_part = &parts[i];
-                g_p3_disk = d;
-                break;
-            }
-        }
-    }
-    if (g_p2_part == (const gpt_part *)0) {
-        for (i = 0; i < n; i++) {
-            if (gpt_part_is_role(&parts[i], PART_ROLE_ISO)) {
-                scan_iso_partition(d, &parts[i]);
-                break;
-            }
-        }
-    }
+    claim_roles(d, &t);
 }
 
 /* Mount the falcon ISO partition and list what the menu would show.
@@ -668,7 +688,7 @@ static void claim_roles(bios_disk *d, gpt_part *parts, uint32_t n)
  * told it: p2 is exFAT today by DESIGN Section 3, and nothing here says so.
  * That was not possible in stage 2, where linking fs.c meant linking every
  * driver it knows and there were 33 KB for all of it. */
-static void scan_iso_partition(bios_disk *d, const gpt_part *p)
+static void scan_iso_partition(bios_disk *d, const part_entry *p)
 {
     const fs_ops *ops;
     size_t i;
@@ -750,34 +770,43 @@ static void show_memory(void)
 
 void bios_main(uint8_t drive)
 {
+    uint8_t drives[DISKS_MAX];
+    unsigned n;
+    unsigned i;
+
     bios_puts("falcon-bios: C is running in protected mode\n");
     show_memory();
 
-    if (!bios_disk_probe(&g_boot, drive))
+    if (!bios_disk_probe(&g_disks[0], drive))
         bios_puts("falcon-bios: the boot drive did not answer AH=48h\n");
+    g_install_state = install_boot_record(&g_disks[0], &g_install);
+    g_have_install = g_install_state == INSTALL_OK;
+    pos_set_install(g_have_install ? &g_install : (const ident_rec *)0);
     /* First thing after the disk answers, and before anything that can
      * fail: the marker is cleared as it is taken, so from here on nothing on
-     * the disk could make this boot happen twice. It is the boot disk's,
-     * the one the stages were read from: a marker on another disk was not
-     * set for this loader. */
-    g_next_state = marker_take(&g_boot, g_next, sizeof g_next);
-    show_first_sector(&g_boot, "boot");
-    claim_roles(&g_boot, g_parts, show_partitions(&g_boot, g_parts));
+     * the disk could make this boot happen twice. It is the boot
+     * partition's, the one stage 3 was read from: a marker on another disk
+     * was not set for this loader. */
+    if (g_have_install)
+        g_next_state = marker_take(&g_disks[0], install_boot_lba(),
+                                   install_marker_sector(), g_next,
+                                   sizeof g_next);
 
-    if (bios_disk_probe(&g_other,
-                        drive == DRIVE_FIRST ? DRIVE_SECOND : DRIVE_FIRST)) {
-        show_first_sector(&g_other, "other");
-        claim_roles(&g_other, g_parts_other,
-                    show_partitions(&g_other, g_parts_other));
+    n = install_drives(drive, drives, DISKS_MAX);
+    for (i = 0; i < n; i++) {
+        if (i != 0 && !bios_disk_probe(&g_disks[i], drives[i]))
+            continue;
+        scan_disk(&g_disks[i], g_parts[i], i == 0 ? "boot" : "other");
     }
 
-    /* The personal-OS row, if p3 is there and is LUKS2. Asked once, before
-     * the menu draws, because the answer does not change. */
-    if (g_p3_part != (const gpt_part *)0)
+    /* The personal-OS row, if the shelf is there and opens. Asked once,
+     * before the menu draws, because the answer does not change. */
+    if (g_p3_part != (const part_entry *)0)
         g_pos_row = pos_probe(g_p3_disk, g_p3_part);
 
     bios_puts("falcon-bios: done\n");
     screen_init();
+    install_notice();
     next_boot_run();
     menu_run();
     for (;;)

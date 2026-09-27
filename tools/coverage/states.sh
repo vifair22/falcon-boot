@@ -24,12 +24,10 @@
 #        other three, which Section 7.4 of that note says is the cost of a
 #        second platform.
 #
-#        The stick is the second drive, not the first. A case stick has no
-#        BIOS boot partition, because whether a falcon stick should have one
-#        is the layout decision Section 7.3 is still waiting on; the rig
-#        boots falcon-bios from build/test-bios.img instead and reads the
-#        stick from it. That measures every route without pre-empting the
-#        decision.
+#        The case stick is the only drive, and boots itself: it carries
+#        falcon-bios's stages where every stick keeps them (DESIGN Section
+#        3.3), put on by stage-loader.sh, so the column measures a stick
+#        booting on a BIOS machine and nothing else.
 #
 #   bios32 the bios column on a Pentium III (QEMU's pentium3 model): no long
 #        mode, no SSE2, no AES-NI. The floor falcon-bios runs on
@@ -155,9 +153,6 @@ state_firmware() {   # state_firmware STATE DEST
         STATE_SECURE=0
         STATE_BIOS=1
         [[ "$1" == bios32 ]] && STATE_CPU=pentium3
-        [[ -f build/test-bios.img ]] || {
-            echo "ERROR: build/test-bios.img missing (run make test-bios-img)" >&2
-            return 1; }
         return 0
         ;;
     off)

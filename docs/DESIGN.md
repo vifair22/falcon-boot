@@ -56,17 +56,19 @@ change it.
    so on that route nothing is verified, nothing is blessed and the
    appliance has no job; Section 7's invariants are vacuous there, not
    upheld. It is opt-in for that reason: `make bios` builds it and
-   `mkstick bios` installs it into the gap in front of p1, with no layout
-   change (Section 12.3). Widened 2026-09-24 to machines with no 64-bit
+   `mkstick bios` installs it (Section 3.3). Widened 2026-09-24 to machines with no 64-bit
    mode: the loader moved from long mode to i686 protected mode, asks CPUID
    for what a newer processor adds, and appends a falcon-hook of the
-   kernel's width, so one image serves both (bios-route.md Section 6h). A
-   second stick carries 32-bit ISOs and a 32-bit personal OS for those
-   machines (docs/notes/stick32.md).
-7. **A stationary build (decision 2026-09-21).** Each loader built a second
-   time with only the personal-OS route and a way out to the machine's
-   other systems, for installing on a machine's own disk as its boot
-   loader. Chosen at compile time, so the stick's parsers are not in it at
+   kernel's width, so one image serves both (bios-route.md Section 6h). The
+   second, 32-bit stick made for those machines was retired on 2026-09-26:
+   every machine goes through the one stick, whose ISO library carries the
+   32-bit ISOs.
+7. **The station (decision 2026-09-21, re-scoped 2026-09-26).** Each loader
+   built again as a machine's own boot loader, in place of GRUB,
+   systemd-boot or the Windows MBR: Windows 98 to 11, Linux as UKIs on a
+   shelf, memtest86+, on MBR and GPT disks, with a `STATION.INI`; and
+   station-legacy, the BIOS station with falcon jump's CD, CF and USB
+   routes. Chosen at compile time, so the stick's parsers are not in it at
    all. Section 13.
 8. **A boot floppy, falcon jump (decision 2026-09-25).** A third BIOS
    loader, on a FAT12 floppy that stays in an old machine's drive: it boots
@@ -141,16 +143,23 @@ ourselves.
 GPT, four partitions:
 
 ```
-p1  ESP        FAT32   ~64 MB   loader + shim + MokManager + our public cert
+p1  ESP        FAT32   ~64 MB   loader + shim + MokManager + our public cert; BIOS stage 3 in its reserved sectors
 p2  ISOs       exFAT   bulk     the ISO library (drag-and-drop target) + injection assets
 p3  UKI shelf  LUKS2 -> ext4    ~1 GB   personal-OS UKI + signing-appliance UKI + MOK private key, pbkdf2 keyslot
 p4  root+home  LUKS2 -> ext4    bulk    real root and home, argon2id keyslot
 ```
 
+A stick is always GPT and always has all four (decision 2026-09-26: the
+BIOS-only layout without p1 went with the 32-bit stick it was made for).
+The loaders read MBR disks as well (3.2), for the station of Section 13 and
+for the disks a machine already has; nothing makes an MBR stick.
+
 Rationale per partition:
 
 - **p1 ESP.** Standard. Contents in Section 4. FAT32 because firmware only
-  guarantees FAT.
+  guarantees FAT. Its reserved sectors also hold falcon-bios's stage 3 and
+  the BIOS next-boot marker (3.3), so a stick has one BIOS layout, the same
+  as a station's and jump's floppy.
 - **p2 exFAT.** exFAT so large ISOs (>4 GB) fit and any modern OS
   (Windows/macOS/Linux) can drop files on it. Firmware does not read exFAT, so
   we bring our own read-only exFAT driver (Section 6).
@@ -166,27 +175,9 @@ Rationale per partition:
 - **p4 root+home, argon2id.** p4 is unlocked by the *Linux* kernel inside the
   UKI's initramfs, where argon2id is fine, so it keeps the strong default. p4 is
   a separate partition from p3 purely so that EFI-land never has to understand or
-  mount the real root filesystem. EFI touches p3 only. The default is tuned by
-  cryptsetup on the machine that builds the stick, up to a gibibyte and four
-  threads, which a 2002 laptop's initramfs cannot run; a stick for machines
-  like that is made with `mkstick create --p4-kdf-memory <KiB>`, which caps
-  the memory, pins the time cost at 4 and uses one thread
-  (docs/notes/stick32.md).
+  mount the real root filesystem. EFI touches p3 only.
 
 p3 and p4 share the same passphrase (Section 5).
-
-**A BIOS-only stick has no p1 (decision 2026-09-24).** A stick made for
-machines with no UEFI at all, such as the 32-bit one of
-docs/notes/stick32.md, has no use for an ESP, a shim or a MOK, and carrying
-them is only surface: `mkstick create --bios-only` leaves GPT slot 1 empty,
-generates no MOK, stages UKIs unsigned (falcon-bios unwraps a UKI rather
-than launching it, and nothing on a BIOS machine verifies one), and installs
-falcon-bios's stages in the gap as `mkstick bios` does. Slot 1 is left empty
-rather than p2..p4 being renumbered, so the numbers above, the Manual's and
-an installed system's crypttab stay true; the loaders find p2 and p3 by type
-and name, never by number. `mkstick status` reads a stick with no
-ESP-typed partition as one of these, and fails it if the stages are
-missing.
 
 **p3 encryption is the default, not a requirement (decision 2026-09-13).**
 mkstick can create p3 plaintext (`--p3-plain`), for users who want the UKI
@@ -209,66 +200,171 @@ states at creation time rather than letting the user discover:
   initramfs - p3 is read by our EFI driver alone, and the initramfs
   unlocks and mounts p4 directly.
 
-**Partition identification (decision 2026-09-13).** The loader must not treat
-"any exFAT volume" as p2 or "any LUKS2 volume" as p3: on real hardware the
-stick sits next to internal disks that may carry both. mkstick creates every
-partition, so identification comes out of the **GPT partition entry**, not out
-of the volume's contents. The install manifest additionally records each
-partition's PARTUUID as a tiebreaker if two falcon sticks are ever plugged in
-at once. The loader reads the entry from the GPT entry protocol (or by parsing
-the GPT itself off the parent BlockIO if the firmware's PartitionInfo is
-absent) and falls back to the current probe-everything behavior only when it
-finds no partition it recognises at all, so the QEMU rig images keep working
-whatever is stamped on them.
+Both loaders read a plaintext shelf; until 2026-09-26 only the UEFI one did.
 
-*Amended 2026-09-13, and the amendment is the interesting half:*
+### 3.1 Identification: the identity record (decision 2026-09-26)
 
-- **p2 carries the Microsoft basic data type, `EBD0A0A2-B9E5-4433-87C0-68B6B72699C7`.**
-  It was originally given a falcon type GUID of its own, and that was wrong.
-  Windows' `partmgr` creates no volume for a GPT partition whose type GUID it
-  does not recognise: measured in WinPE 10.0.26100 against our own test image,
-  `diskpart` reported the falcon-typed p2 as `Hidden : Yes` with "There is no
-  volume associated with this partition", so no drive letter and no access at
-  all. Setting the type to basic data made it appear instantly as exFAT with a
-  letter, no driver load. Two things in this document depend on that:
-  drag-and-drop from a Windows host, which Section 1's in-scope item 2 and
-  this section both promise, and the Section 6.3 jump binary inside WinPE,
-  which has to find the ISO on p2. Both are dead if Windows cannot see the
-  partition. The measurement is recorded in `docs/notes/windows-route.md`.
-- **The discriminator moves to the GPT partition NAME, `FALCON-ISO`** (the
-  36-unit UTF-16 field of UEFI 5.3.3), matched exactly, case-sensitively, and
-  with no terminator assumed. p2 must satisfy **both** halves: the basic data
-  type and the name. The type alone is worn by every Windows data partition in
-  the machine; the name alone, on a partition of some unrelated type, is far
-  likelier to be a coincidence or somebody's label than it is to be ours.
-- **State the weakness plainly.** A partition name is not a type GUID. It is
-  user-editable from every OS's partition editor, nothing makes it unique, and
-  anyone can set it on any disk they like. It is a weaker discriminator than
-  what it replaces, and we take that trade because the alternative is a p2 the
-  user cannot drag files onto. What keeps a wrong guess from being fatal is the
-  fallback above: identification only ever *narrows* the scan, so a
-  misidentified or unrecognised stick still gets the probe-everything path and
-  still boots. Nothing is trusted because of a name; a name only decides where
-  to look first.
-- **p3 and p4 keep their unrecognised types, deliberately.** p3 keeps the
-  falcon UKI-shelf GUID `9CB02E90-85F4-4AF7-9AF3-1F9D6A95FEAF` and p4 keeps the
-  standard Linux LUKS type. This is the exact mirror of the p2 decision and not
-  an oversight: Windows offers to **format** a basic-data partition it cannot
-  read, and a LUKS volume is precisely that. The partition Windows would offer
-  to format is the one holding the stick's only copy of its MOK private key.
-  Their unrecognised types are what keep Windows' hands off them, so the
-  asymmetry - p2 visible to Windows, p3 and p4 invisible - is the whole design.
-  p1 keeps the standard ESP type, which the firmware must recognise to boot the
-  stick at all. The loader never matches p4 in any case; only the initramfs
-  touches it.
+Every partition falcon made carries an **identity record**, and the record,
+not the partition table, says what the partition is. It replaces the
+2026-09-13 rule, which identified p2 by the Microsoft basic-data type plus
+the GPT name `FALCON-ISO` and p3 by the falcon shelf type GUID, and let a
+loader take any disk's partitions. That rule had four failures the audit of
+docs/notes/station-rework.md found in the code: an MBR disk has no type
+GUIDs and no names, so nothing on one could be falcon's; two falcon disks
+attached at once merged their ISO libraries into one menu and let the
+appliance write blesses to the other stick; a name is user-editable and not
+unique; and the extent map named p2 by a GPT-only GUID that silently failed
+to match on MBR.
 
-**The boot disk's shelf wins (decision 2026-09-21).** When the disk a loader
-booted from carries a usable shelf, only that disk's shelves are
-considered; another disk's are considered only when the boot disk has none.
-A falcon stick in a machine with a falcon internal disk (Section 13) then
-boots its own OS, and one passphrase never opens the wrong one. Section 13.3 has the rule and why it
-is exclusive rather than an order.
+The record's fields:
 
+| field | size | meaning |
+|---|---|---|
+| magic | 4 | `FLCN` |
+| version | 1 | 1 |
+| role | 1 | `boot` (the FAT partition holding BIOS stage 3 and the marker: a stick's ESP, a station's partition, jump's floppy volume), `library` (p2), `shelf` (p3) |
+| stage 3 | 2 | on a `boot` partition, stage 3's first sector relative to the partition's start; 0 otherwise |
+| marker | 2 | on a `boot` partition, the next-boot marker's sector, relative likewise |
+| reserved | 2 | zero |
+| install ID | 16 | random, one per stick or station |
+| CRC-32 | 4 | over the 28 bytes before it |
+
+**One install ID per install.** `mkstick create` draws one 128-bit install
+ID for a stick and writes it into every partition's record; `mkstick
+station install` does the same for a station (Section 13). A loader starts
+from the partition it knows it booted from, reads that record's install ID,
+and then takes only partitions carrying the same ID, on whichever disk they
+are. A stick is one unit: a second stick's p2 or p3 can never be mixed in,
+whatever is plugged in, and nothing is decided by disk order. A station
+whose shelf is on a second disk (its ESP on the Windows disk, its Linux on
+another) is still one unit for the same reason.
+
+**Where the record is, by filesystem.** Each place is readable without a
+passphrase and without the partition table's help:
+
+- **FAT** (p1, a station's partition, jump's floppy): in the boot sector, at
+  byte 0x1DC, 32 bytes, inside the boot-code area. Nothing executes a data
+  partition's boot code and FAT has no checksum over it; stage 2 identifies
+  a `boot` partition with one sector read. 0x1DC is the one offset that
+  clears jump's floppy stage 1 (its code ends at 0x1DA, which the build
+  checks, and its stage 2 length is the word at 0x1FC).
+- **LUKS2** (p3): a token of type `falcon` in the header's JSON area,
+  `{"type":"falcon","keyslots":[],"version":1,"role":"shelf","install_id":"<32 hex>"}`.
+  It is read before any key is known, survives cryptsetup's own operations
+  and is shown and edited by `cryptsetup token`.
+- **exFAT and a plaintext ext4 shelf** (p2, p3 with `--p3-plain`): a file at
+  the root, `/.falcon`, one line of text, `falcon 1 <role> <install id>`.
+  exFAT's boot code is covered by its boot checksum and ext4 has no
+  unowned bytes fsck leaves alone, and the loaders mount these volumes
+  anyway. The same record in text; `cat` shows it.
+
+**The partition type only narrows the search.** The types themselves stay
+what they are and for the same reasons: p2 keeps the Microsoft basic-data
+type, because Windows' `partmgr` creates no volume for a GPT partition whose
+type it does not recognise (measured in WinPE 10.0.26100, where a
+falcon-typed p2 had no volume and no drive letter, `docs/notes/windows-route.md`),
+and drag-and-drop from Windows and winjump inside WinPE both need that
+volume. p3 keeps the falcon shelf type `9CB02E90-85F4-4AF7-9AF3-1F9D6A95FEAF`
+and p4 the Linux LUKS type, because Windows offers to format a basic-data
+partition it cannot read, and p3 holds the stick's only copy of its MOK
+private key; their unrecognised types keep Windows' hands off them. p1 keeps
+the ESP type the firmware needs. None of these is matched as identity any
+more; the GPT name `FALCON-ISO` is written for a person reading a
+partition editor and is read by nothing.
+
+There is no probe-everything fallback. A disk with no record is not
+falcon's. The rig images carry records like any stick (Section 10).
+
+**Everything that finds a partition uses the record.** The extent map that
+falcon-hook and falcon-winjump rebuild an ISO from (Section 6.4) names p2 by
+the install ID and the partition's start, not by a GPT partition GUID, so
+it works on either table and the two readers find p2 as the loaders do. The
+signing appliance is told its stick's install ID by the loader, in its
+credential, and opens only partitions carrying it; its fallback of taking
+the first exFAT and LUKS pair on any disk goes. `mkstick status` reads the
+records.
+
+### 3.2 Partition tables (decision 2026-09-26)
+
+`falcon-core/src/part` reads both tables and hands every consumer one
+table-neutral partition record: start, length, the type as a GUID or an MBR
+byte, the number, and the disk's identity (the GPT DiskGUID, or the MBR
+disk signature at offset 440).
+
+- **Which table.** LBA 0 is read first. Any 0xEE entry means GPT, and the
+  MBR's other entries are ignored: Linux's rule, and the one that keeps a
+  hybrid MBR a Windows-only view. Otherwise a valid MBR is read as MBR.
+- **GPT.** The primary header and array; when the primary fails its CRC,
+  the backup at the disk's end, said on serial.
+- **MBR.** The four primary entries and the extended chain's logical
+  partitions, numbered as Linux numbers them (1-4 primary, 5 on logical).
+  Only a primary is ever chained (Section 13.4): DOS, Windows 9x and NT boot
+  from nothing else.
+- **Sector sizes.** 512 and 4096 alike, in core, under every driver (3.4).
+
+A disk is named, wherever falcon has to name one (`STATION.INI`, a
+diagnostic), by that identity: `gpt:<DiskGUID>` or `mbr:<8 hex digits>`,
+plus a partition number. Never by a BIOS drive number or a firmware handle
+order, both of which change when a stick is plugged in. A DOS or Windows 9x
+disk often has signature 0; `mkstick station install` gives any disk the
+station names a random one, as Windows NT does on its first boot, after
+backing up LBA 0.
+
+`mkstick create` refuses a disk with a valid MBR table as it refuses one
+with a GPT: an MBR Windows disk is not an empty one.
+
+### 3.3 The BIOS boot area (decision 2026-09-26)
+
+One layout for every BIOS install, stick, station and jump's floppy:
+
+| where | holds |
+|---|---|
+| LBA 0, bytes 0-439 | stage 1; the table, signature and `0x55AA` behind it are kept |
+| after LBA 0, before the first partition | stage 2: LBA 34 on GPT (after the entry array, in the `FALCON-BIOS` EF02 partition on a stick), LBA 1 on MBR. The installer writes its start and real length into stage 1 |
+| the `boot` partition's reserved sectors | stage 3 (compressed, Section 12.3.2) and the next-boot marker, at the offsets its record gives |
+
+Stage 2 finds stage 3 by reading the boot disk's table (none on a floppy: the
+volume starts at LBA 0) and taking the partition whose boot sector carries a
+`boot` record. Stage 2 no longer has a stage 3 LBA of its own, and nothing
+is written at LBA 98 or 2047 any more. The marker is a sector of the `boot`
+partition (Section 6.3.1).
+
+Why a FAT partition's reserved sectors: an old MBR disk has only 62 sectors
+before its first partition (the A21m's Windows 2000 partition starts at 63,
+and the disk has nothing free at its end), which holds stage 2 and nothing
+more, and jump's floppy already kept its stage 3 this way. The reserved
+sectors are outside every file, so the filesystem never moves them.
+
+Stage 1 reads with INT 13h extensions when AH=41h says they are there, and
+by CHS otherwise (from AH=08h's geometry, as jump's floppy stage 1 does), so
+a BIOS without extensions boots it too.
+
+### 3.4 Sector sizes and BIOS reach (decision 2026-09-26)
+
+Every driver reads through the loaders' read callback, which takes whole
+sectors. The drivers ask for 512 or 1024 bytes at a time (a LUKS2 keyslot
+area, the ext4 superblock, a FAT boot sector), which on a 4096-byte-sector
+disk is not a whole sector, so today a 4Kn disk neither unlocks nor mounts.
+Core gains one re-blocking layer under the callback, and every driver reads
+any length at any offset on either sector size.
+
+On BIOS the same holds wherever the firmware presents the disk: every
+count of the BIOS layout is of the disk's own sectors (stage 1's LBA and
+length, stage 2 at LBA 34, the record's stage 3 and marker sectors), so
+`mkstick bios` installs onto a 4Kn stick as onto any other, with stage 2
+rounded to whole 4096-byte sectors inside the same 32 KB stage 1 reads to.
+Whether a BIOS offers a 4Kn disk at all is the firmware's: SeaBIOS 1.17
+does through its NVMe driver (AH=48h reports 4096) and not through
+virtio-blk, virtio-scsi, LSI, MegaRAID or USB mass storage, which drop the
+disk, nor IDE, which QEMU refuses at 4096. The rig boots its 4Kn stick
+from NVMe under both firmwares (`make test-core`). The BIOS next-boot marker
+is one 512-byte sector by format, and a 4Kn disk has none.
+
+A BIOS reaches only so much of a disk: about 8 GB by CHS, 128 GiB with
+28-bit LBA. falcon-bios keeps each disk's size from AH=48h and refuses a
+read past what the BIOS offers, with a sentence naming the limit; the
+installers warn when a `boot` partition or a shelf would sit past 8 GB or
+128 GiB, since they cannot know the machine's BIOS.
 
 ## 4. ESP contents and the Secure Boot chain
 
@@ -977,10 +1073,14 @@ The value rules above (decode, the path match, the reserved namespace) are
 **On BIOS: one sector, not a variable (decision 2026-09-24).** A BIOS has no
 variable store and no `BootNext`, and nothing in the BIOS specifications lets
 an operating system set either. So on the BIOS route the marker is a sector
-the stick carries: LBA 2047, the last sector of the gap in front of p1
-(Section 12.1; `falcon-bios/src/start/biosdefs.h`, `NEXTBOOT_LBA`), written from
-Linux by archusb's `archusb-boot-next` when there is no `/sys/firmware/efi`.
-It is text, so a shell writes it with `printf` and `dd`:
+the install carries. Since 2026-09-26 it is a sector of the `boot`
+partition, at the offset that partition's identity record gives (Section
+3.1, 3.3); until then it was LBA 2047, the last sector of the gap in front of
+p1, which on an MBR disk whose first partition starts at 63 is inside that
+partition. It is written from Linux by a falcon-cli command (`falcon-boot-mkstick
+next-boot <value>`), which finds the `boot` partition by its record the way
+stage 2 does; it replaces archusb's `archusb-boot-next`, which wrote LBA 2047
+with `dd` when there is no `/sys/firmware/efi`. The sector is text:
 
     falcon-next-boot 1
     <the RTC's reading when it was set, decimal seconds>
@@ -992,13 +1092,14 @@ everything this section says about validating it holds unchanged.
 
 The loader takes it the way it takes the variable: read, **cleared**, then
 believed (`falcon-bios/src/disk/marker.c`). Clearing is a write, and this is the
-one place a loader writes the stick. It is bounded three ways: one fixed
-LBA, outside every partition; only when the sector begins with the magic,
+one place a loader writes the stick. It is bounded three ways: one sector,
+in the `boot` partition's reserved sectors, outside every file; only when the sector begins with the magic,
 so a sector that is not a marker is never touched; and only ever to zero.
 If the zero does not read back (a write-protected stick), the marker is not
 acted on, because a one-shot that cannot be cleared is not a one-shot.
-`marker.c` is linked into the stick's stage 3 alone: stage 2 and the
-stationary build (Section 13) carry no code that can write a disk.
+`marker.c` is linked into the stage 3 of the stick and of the station
+(Section 13.8, where it is how Linux says "Windows next"); stage 2 and jump
+carry no code that can write a disk.
 
 What `BootNext` did cannot be replaced: a reboot from Linux follows the
 machine's boot order, and a stick picked from a boot menu is not in it. The
@@ -2011,6 +2112,24 @@ than reimplementing cryptography or filesystem creation:
   cost 3-6 s per unlock. Revisit only if real-hardware timing disagrees.
 - Install shim + MokManager + our loader + cert onto p1, naming our loader to
   match the shim's embedded next-stage path (Section 4).
+- Write the identity records (Section 3.1): one random install ID per
+  stick, in p1's boot sector (binary, and in FAT32's backup boot sector so
+  `fsck.fat` cannot copy it away), p2's `/.falcon`, and p3's LUKS2 `falcon`
+  token (`cryptsetup token import`) or a plaintext p3's `/.falcon`. p1 is
+  formatted with `mkfs.fat -R`: stage 3's first sector plus room for twice
+  the stage 3 the build has, rounded up to a whole MiB and at least one,
+  so a later, larger stage 3 installs without reformatting p1. `mkstick
+  create` refuses a disk carrying any MBR or GPT table without `--force`.
+- `mkstick bios` installs falcon-bios by the layout of Section 3.3, finding
+  the boot partition by its record as stage 2 does, backing up exactly the
+  sectors it writes and restoring them on `--remove`. `mkstick status`
+  reads every record and checks the stages where the loaders look for them;
+  `mkstick ident` lists the records for scripts and stamps a boot record
+  onto a FAT partition (the rig and corpus images use both, so every rig
+  image carries records and its own BIOS stages). `mkstick next-boot` sets
+  the next-boot marker (Section 6.3.1): the variable on UEFI, the boot
+  partition's marker sector on BIOS. docs/Manual.md Section 3 is the
+  reference for all of them.
 - Generate the MOK keypair; keep the private key encrypted on p3 (Section 7.5),
   export the public cert to p1 for enrollment.
 - Sign our loader, the personal-OS UKI, and the signing-appliance UKI with the
@@ -2271,8 +2390,7 @@ are (both measured 2026-09-13):
   dir_open_root, dir_open, dir_next, file_open, file_read, extents}` over
   the shared byte-read callback, registered in a static table (one adapter
   file per driver, `fs_<driver>.c`, and a table a build picks:
-  `fs_reg_all.c`, or `fs_reg_ext4.c` for the stationary build, Section
-  13.1). `extents` is
+  `fs_reg_all.c`, or the station's ext4 and FAT, Section 13.1). `extents` is
   an **optional capability**: the injection framework needs file-to-LBA
   resolution on p2, and a driver that cannot provide it (btrfs CoW and
   compression can make "the file's raw LBAs" not exist) still serves the
@@ -2289,9 +2407,10 @@ are (both measured 2026-09-13):
   fixture image, and zero warnings under the repo flag set.
 - **Device discovery (decision 2026-09-13):** ONE pass, one inventory,
   every consumer reads it. A `discover` module enumerates the Block I/O
-  handles once at startup and classifies each: media present, role by GPT
-  type GUID (Section 3), LUKS2 magic, filesystem identification through
-  the fs_ops registry. The ISO scan, the personal-OS scan, and the
+  handles once at startup and classifies each: media present, LUKS2 magic,
+  filesystem identification through the fs_ops registry, and the identity
+  record (Section 3.1) with whether it carries the boot partition's install
+  ID. The ISO scan, the personal-OS scan, and the
   blessed-boot path all consume the same inventory rows rather than
   running their own enumeration loops, so a device cannot be discovered
   for one purpose and missed for another; classification is eager (cheap
@@ -2357,6 +2476,12 @@ are (both measured 2026-09-13):
 - Buildable disk image with the four-partition layout, populated by the host
   tool, booted under QEMU with a writable copy of OVMF_VARS for MOK enrollment
   testing.
+- The core matrix cells (`make test-core`, `falcon-efi/tools/run-core-rig.sh`):
+  the rig stick under OVMF (Secure Boot off and on) and SeaBIOS, beside a
+  second stick, an MBR data disk and a disk of another install's records; a
+  4Kn stick on NVMe under both firmwares; the station disk under both. Each
+  case is judged from serial, through the personal OS to the fixture UKI's
+  report of both credentials.
 - Real hardware last, for the shim/MokManager enrollment flow, which is the
   least QEMU-friendly step.
 
@@ -2385,8 +2510,8 @@ I686 IN THE RIG (2026-09-24): falcon-bios is i686 in 32-bit protected mode
 and promotes at run time (docs/notes/bios-route.md Section 6h). On SeaBIOS
 with a Pentium III (the harness's `bios32` column) Alpine x86 and Arch Linux
 32 boot direct with the i686 falcon-hook; on the host CPU Arch x86_64,
-Windows 11 and the personal OS still pass. The 32-bit stick
-(docs/notes/stick32.md), booted read-only on the same Pentium III: its Arch
+Windows 11 and the personal OS still pass. The 32-bit stick (retired
+2026-09-26, Section 1), booted read-only on the same Pentium III: its Arch
 Linux 32 personal OS end to end with the credential handoff, and its ISOs.
 On hardware (2026-09-24), a Windows 7 era machine in BIOS mode booted the
 32-bit stick to its personal OS. Unmeasured on hardware: a processor
@@ -2580,24 +2705,23 @@ line numbers are left out because they would be stale within a week.
 
 | region | holds | read by |
 |---|---|---|
-| LBA 0, bytes 0-439 | BIOS stage 1 (`falcon-bios/src/start/boot.S`) | a BIOS |
-| LBA 0, bytes 440-511 | disk signature, protective MBR entry, `0x55AA` | everything; `mkstick bios` keeps them |
+| LBA 0, bytes 0-439 | BIOS stage 1 (`falcon-bios/src/start/boot.S`); stage 2's first LBA (0x1B2) and length in sectors (0x1B6), written by the installer | a BIOS |
+| LBA 0, bytes 440-511 | disk signature, protective MBR entry, `0x55AA` | everything; the installer keeps them |
 | LBA 1-33 | GPT header and 128-entry array | both loaders, falcon-hook, the appliance |
-| LBA 34-97 | BIOS stage 2, 64 sectors | stage 1 |
-| LBA 98-1121 | BIOS stage 3, at most 1024 sectors; its header gives the length | stage 2 (`load3.c`) |
-| LBA 1122-2046 | unused; inside the `FALCON-BIOS` EF02 partition (LBA 34-2047) when `mkstick bios --reserve` made one | |
-| LBA 2047 | the BIOS next-boot marker when one is pending, zero otherwise (Section 6.3.1) | falcon-bios, which clears it; written by archusb |
-| p1 `FALCON-ESP` | FAT32 ESP: shim as `EFI\BOOT\BOOTX64.EFI`, MokManager, falcon-boot as `grubx64.efi`, `falcon-boot.cer`; absent on a BIOS-only stick (Section 3) | UEFI firmware, shim |
-| p2 `FALCON-ISO` | exFAT: the media, `falcon/blessed/`, the manifest, `falcon/windows.cfg` | both loaders, falcon-hook (as raw extents), winjump, the appliance |
-| p3 | LUKS2 + ext4: UKIs in `/uki`, the MOK key pair | both loaders, the appliance |
+| LBA 34 on | BIOS stage 2, its real length (at most 62 sectors); inside the `FALCON-BIOS` EF02 partition when the installer made one | stage 1 |
+| p1 `FALCON-ESP` | FAT32 ESP: shim as `EFI\BOOT\BOOTX64.EFI`, MokManager, falcon-boot as `grubx64.efi`, `falcon-boot.cer`; the `boot` record at byte 0x1DC of its boot sector; in its reserved sectors the BIOS next-boot marker (sector 8) and BIOS stage 3 (from sector 32) | UEFI firmware, shim; stage 2 (`load3.c`) and `marker.c` |
+| p2 `FALCON-ISO` | exFAT: the media, `falcon/blessed/`, the manifest, `falcon/windows.cfg`; `/.falcon`, the `library` record | both loaders, falcon-hook (as raw extents), winjump, the appliance |
+| p3 | LUKS2 + ext4: UKIs in `/uki`, the MOK key pair; the `falcon` token, the `shelf` record | both loaders, the appliance |
 | p4 | LUKS2: the personal OS's LVM (root, home) | the personal OS's initramfs |
 
-The BIOS stages live in the gap a GPT leaves between its entry array and the
-first 2048-aligned partition, so installing them changes no partition
-(Section 12.3.1). p2 is identified by the Microsoft basic-data type plus the
-GPT name `FALCON-ISO`, p3 by the falcon shelf type GUID
-(`falcon-core/src/part/part.c`, `part_match_role`); p1 and p4 have no role
-either loader needs.
+Stages 1 and 2 live in front of p1 and stage 3 inside it, so installing
+them changes no partition (Section 12.3.1). Every reader identifies p2 and
+p3 by their records (Section 3.1): p1's `boot` record names the install,
+and p2's `/.falcon` and p3's LUKS2 token must carry its ID. The UEFI loader,
+falcon-hook, winjump, falcon-vdisk and the appliance do; so does
+falcon-bios, which finds p1 by its record (`falcon-bios/src/disk/bootpart.c`,
+in stage 2) and p2 and p3 on any BIOS disk (`disk/install.c`). p4 has no
+role any loader needs.
 
 ### 12.2 UEFI
 
@@ -2612,9 +2736,12 @@ flowchart TD
     POOLS -- no --> OOM["out of memory<br/>return to firmware"]
     POOLS -- yes --> TRUST["trust_stores_load<br/>db, dbx, MokListRT, MokListXRT,<br/>SbatLevelRT, falcon-boot.cer"]
     TRUST --> SB["banner_init / sb_state_read<br/>SecureBoot, SetupMode, MokSBStateRT<br/>to g_mode"]
-    SB --> DISC["discover_scan<br/>every Block I/O handle, GPT role per partition"]
-    DISC --> POSS["pos_scan<br/>p3 LUKS2 with a pbkdf2 keyslot, the boot disk's first<br/>(others only when it has none): the pinned Personal OS row"]
-    POSS --> VOLS["scan_all_volumes, up to 4 p2 volumes<br/>fs_mount, bless_load (manifest), survey_volume"]
+    SB --> DISC["discover_scan<br/>read_install: LoadedImage's DeviceHandle (p1), its boot sector's<br/>boot record gives the install ID; then every Block I/O handle,<br/>the boot disk's first: LUKS2 token, else /.falcon on what fs_identify claims"]
+    DISC --> ID{"boot record<br/>read?"}
+    ID -- no --> NOTE["install_notice: the sentence<br/>(no record, damaged, no device), a key<br/>no row is this install's"]
+    NOTE --> POSS
+    ID -- yes --> POSS["pos_scan<br/>shelves whose record carries the install ID, any disk:<br/>LUKS2 with a pbkdf2 keyslot, or plaintext with a UKI<br/>: the pinned Personal OS row"]
+    POSS --> VOLS["scan_all_volumes, up to 4 libraries whose record<br/>carries the install ID, any disk<br/>fs_mount, bless_load (manifest), survey_volume"]
     VOLS --> PROBE["probe_entries<br/>medium_open, family_detect,<br/>the loader's PE signature, trust_probe: row tags"]
     PROBE --> PEND{"next-boot marker<br/>pending?"}
     PEND -- yes --> NBR["next_boot_run<br/>boot the named entry as Enter would"]
@@ -2629,7 +2756,11 @@ alone (`media/medium.c` over the p2 file): nothing is published to the
 firmware to build the menu.
 
 The only failure before the menu is the pool allocation. A missing p2 or p3
-gives a shorter menu, not an error.
+gives a shorter menu, not an error. A boot partition with no readable
+`boot` record is said on screen once (`discover_install_problem`) and gives
+a menu with no library and no shelf: nothing on any disk is taken without
+the install ID (Section 3.1). MBR partitions are rows like GPT ones; the
+table's kind is never consulted.
 
 #### 12.2.2 The menu and route selection
 
@@ -2695,7 +2826,7 @@ does not fall through. `BLS` and `BLB` never fall through at all.
 | LoadFile2 initrd | `direct/direct.c`, `initrd_publish` | the Linux initrd media GUID handle the kernel's EFI stub pulls its initrd from. |
 | virtual CD | `iso/iso.c`, `iso_open` | Block I/O over the p2 file: 2048-byte blocks for an ISO, 512 for an `.img`, read-only, `VenHw` device path. `ConnectController` lets the firmware's El Torito and FAT drivers mount the boot image. |
 | overlay | `iso/overlay.h`, `iso_read_blocks` | memory ranges laid over the virtual CD's reads, and an append region past the ISO's end. Each read is split at overlay boundaries. |
-| extent map | `direct/direct.c`, `build_map`; `falcon-core/src/media/extmap.c` | p2's partition GUID and start LBA, the block size, the ISO's size and its extents on p2. falcon-hook rebuilds the ISO from it. |
+| extent map | `direct/direct.c`, `build_map`; `falcon-core/src/media/extmap.c` | version 2: the ISO library's install ID (off p2's `/.falcon`), p2's start LBA (its handle's HARDDRIVE node, MBR or GPT) and the block size, the ISO's size and its extents on p2. falcon-hook, winjump and falcon-vdisk find p2 from it by the record at that LBA (`media/extfind.c`) and rebuild the ISO. |
 | `FalconIsoMap` | `loadops.c`, `loader_isomap_set` | the extent map as a volatile boot-and-runtime variable. Cleared if the boot returns to the menu, not otherwise. falcon-hook's last source, for wraps older than the map credential. |
 | SHIM_LOCK hide | `iso/iso.c`, `shim_lock_hide` | the stick shim's SHIM_LOCK is uninstalled for the length of a chainload, so the ISO's GRUB finds its own shim's. Only `chainload` does this: CHN, IMG, D3B, WIN, BSD. |
 
@@ -2719,7 +2850,7 @@ sequenceDiagram
     FC-->>L: /uki/*.efi, else /EFI/Linux/*.efi
     L->>U: chooser (skipped for one image)
     L->>L: read the UKI into pages
-    L->>L: credfs: uki.efi, uki.efi.extra.d/cryptsetup.passphrase.cred
+    L->>L: credfs: uki.efi, uki.efi.extra.d/cryptsetup.passphrase.cred, falcon.ident.cred (p1's record as text)
     L->>S: LoadImage by credfs device path
     S-->>L: verified against db / MokList when enforcing
     L->>K: StartImage
@@ -2751,10 +2882,11 @@ sequenceDiagram
     L->>U: the list, y to confirm
     L->>F: FalconNextBoot = the entry, BootNext = this stick
     L->>L: unlock p3 as POS does, pick appliance*.efi
-    L->>L: credfs: uki, passphrase .cred, falcon.bless.cred (the list)
+    L->>L: credfs: uki, passphrase .cred, falcon.bless.cred (the list), falcon.ident.cred (the install ID)
     L->>S: LoadImage by path (MOK-signed), StartImage
     S->>A: sd-stub, kernel, /init = falcon-boot-appliance-init
-    A->>A: modules, find the stick (30 s), mount p2 (exFAT), read the manifest
+    A->>A: modules; the install ID from falcon.ident.cred (none: refuse, unlock nothing)
+    A->>A: find_stick (30 s): the exFAT /.falcon and the LUKS2 token carrying it, any disk; mount p2, read the manifest
     A->>A: survey only the listed paths
     A->>A: shelf_open p3 read-only in process (core LUKS2, ext4) with the passphrase .cred
     A->>A: MOK key and cert into sealed memfds
@@ -3051,21 +3183,41 @@ firmware rather than spinning.
 
 #### 12.3.1 The boot area
 
-Stage 1 goes in the 440 bytes of boot code in LBA 0; the partition table
-behind it is kept. Stages 2 and 3 go in LBA 34-1121 (12.1). `mkstick bios`
-(`falcon-cli/src/mkstick/bios.c`) backs up LBA 0 and the gap first, checks
-the gap is free, zeroes it, writes stage 2 and stage 3, and writes LBA 0
-last, so an interrupted install leaves the old LBA 0 in place. A falcon
-stage 1 in front of a half-written stage 2 fails its `BOS2` check and says
-so rather than running it.
+Section 3.3's layout. Stage 1 goes in the 440 bytes of boot code in LBA 0,
+with stage 2's first LBA (LE32 at 0x1B2) and its length in sectors (LE16 at
+0x1B6) written into its last six by the installer; the table behind is
+kept. Stage 2 goes in front of the first partition: LBA 34 on a GPT disk,
+LBA 1 on an MBR disk, and it is at most 62 sectors (the build checks), which
+is what an old MBR disk with its first partition at 63 leaves it. Stage 3
+goes in the `boot` partition's reserved sectors, from the sector its record
+names (32 as the installers write it) to no further than the reserved count
+in the FAT BPB, and the next-boot marker is the sector the record names (8).
+jump's floppy keeps its own layout: stage 2 at LBA 34 and stage 3 at 98 of
+the FAT12 volume, which is the `boot` volume itself (12.6).
+
+A stage 1 whose fields are zero says `no stage 2` rather than reading
+anything, and a falcon stage 1 in front of a half-written stage 2 fails its
+`BOS2` check and says so rather than running it. The rig disks are made by
+`falcon-bios/tools/mk-rig-disk.sh` from files alone (`sfdisk`, `sgdisk`,
+`mkfs.fat --offset`, `mkfs.exfat` on a file, and `mkstick ident` for the
+reserved count and the boot record); jump's floppy, which has no table,
+gets its record from `mkstick ident --write-boot-at`, which writes one at a
+byte offset with the sectors given.
 
 #### 12.3.2 Power-on to the menu
 
 ```mermaid
 flowchart TD
     BIOS["BIOS<br/>LBA 0 to 0x7C00, DL = boot drive"] --> S1["Stage 1, boot.S (real mode)<br/>segments 0, SP 0x7C00, COM1 up"]
-    S1 --> RD{"INT 13h AH=42h<br/>LBA 34, 64 sectors to 0x7E00<br/>3 tries, AH=00h reset between"}
-    RD -- fails --> F1["fail: reason, key, jump to FFFF:0"]
+    S1 --> PL{"stage 2's LBA and length<br/>(0x1B2, 0x1B6) written?"}
+    PL -- "no" --> F1["fail: reason, key, jump to FFFF:0"]
+    PL -- "yes" --> EXT{"INT 13h AH=41h:<br/>the extensions?"}
+    EXT -- "yes" --> RD{"AH=42h: all of stage 2<br/>to 0x7E00 in one call"}
+    EXT -- "no" --> GEO1["AH=08h: sectors per track, heads"]
+    GEO1 --> RC{"AH=02h: one sector a call<br/>to 0x7E00 on"}
+    RD -- "3 tries, AH=00h reset between, all fail" --> F1
+    RC -- "3 tries, AH=00h reset between, all fail" --> F1
+    RC -- ok --> MG
     RD -- ok --> MG{"0x7E04 holds BOS2?"}
     MG -- no --> F1
     MG -- yes --> S2["Stage 2, stage2.S at 0x7E00 (real mode)"]
@@ -3081,9 +3233,13 @@ flowchart TD
     SSE -- yes --> OSX["CR4 OSFXSR, OSXMMEXCPT"]
     SSE -- no --> PE
     OSX --> PE["pmode.S<br/>flat GDT, CR0.PE, paging off"]
-    PE --> PM["32-bit protected mode, stage2_32<br/>fault_install: IDT, 32 vectors"]
-    PM --> L3["stage3_load, load3.c<br/>AH=48h sector size, header at LBA 98 to 1 MiB"]
-    L3 --> H3{"BOSZ, lengths and<br/>memory in bounds?"}
+    PE --> PM["32-bit protected mode, stage2_32, ESP 0x800000<br/>fault_install: IDT, 32 vectors"]
+    PM --> BP["stage3_load, load3.c: AH=48h sector size<br/>find_boot: part_read_table on the boot drive;<br/>no table (a floppy): LBA 0 is the volume"]
+    BP --> BR{"bootpart_find: the first FAT-typed partition<br/>(GPT: ESP or the falcon boot type) whose<br/>boot sector's record is role boot?"}
+    BR -- no --> BF
+    BR -- yes --> GT["gate: 0x7E18 its first LBA,<br/>0x7E42 the record's marker sector"]
+    GT --> L3["header: one sector at start + the record's<br/>stage 3 sector, to 1 MiB"]
+    L3 --> H3{"BOSZ, length inside the volume's<br/>reserved sectors, memory in bounds?"}
     H3 -- no --> BF["bios_fatal: reason, key, reset"]
     H3 -- yes --> RZ["read the member to 6 MiB,<br/>inflate to 1 MiB (gz_member)"]
     RZ --> CZ{"CRC-32 and length match,<br/>BOS3 inside?"}
@@ -3091,11 +3247,14 @@ flowchart TD
     CZ -- "no, again" --> BF
     CZ -- yes --> S3["zero its .bss<br/>call 0x100010, ESP 0x800000"]
     S3 --> BM["bios_main<br/>E820, boot disk"]
-    BM --> MK["marker_take: LBA 2047 of the boot disk<br/>a marker is zeroed, read back, then parsed and dated (6.3.1)"]
-    MK --> GPT["GPT: p2, p3"]
-    GPT --> P2["p2: fs_mount (exFAT), survey_volume (.iso, .img)"]
-    P2 --> P3["pos_probe: p3 is LUKS2?"]
-    P3 --> SI["screen_init: 80x25 text, VGA memory"]
+    BM --> IR["install_boot_record: the boot partition's<br/>record, from the gate: the install ID"]
+    IR --> MK["marker_take: the boot partition's marker sector<br/>a marker is zeroed, read back, then parsed and dated (6.3.1)"]
+    MK --> DSK["install_drives: the boot drive, then every drive<br/>the BDA counts; each one's table, MBR or GPT"]
+    DSK --> REC["install_part_record per partition: a LUKS2 falcon token,<br/>or /.falcon on what the registry mounts;<br/>only the boot record's install ID counts"]
+    REC --> P2["library: fs_mount (exFAT), survey_volume (.iso, .img)"]
+    REC --> P3["shelf: pos_probe, LUKS2 or plaintext"]
+    P2 --> SI["screen_init: 80x25 text, VGA memory"]
+    P3 --> SI
     SI --> NB{"a marker taken?"}
     NB -- "no" --> MENU["menu"]
     NB -- "a fresh value" --> RUN["next_boot_run: :personal is POS,<br/>a path the survey found boots as Enter on its row"]
@@ -3123,9 +3282,11 @@ it:
 | 0x7E04 | `BOS2`, what stage 1 checks |
 | 0x7E08 | `jmp thunk_bios`: C calls a BIOS interrupt through here |
 | 0x7E10 | `jmp boot16`: the one-way drop to real mode a chainload takes |
+| 0x7E18 | the boot partition's first LBA, 64 bits (0 on a floppy), written by `load3.c` |
 | 0x7E20 | the register block, 32 bytes |
 | 0x7E40 | the interrupt vector |
 | 0x7E41 | the boot drive |
+| 0x7E42 | the boot record's marker sector, 16 bits (0 for none), written by `load3.c` |
 | 0x7E48 | the real-mode target of `boot16`, offset then segment |
 | 0x7E4C | stage 2's length, written by the build; its CRC-32 follows the image |
 
@@ -3135,8 +3296,8 @@ Stage 2 checks itself before it runs past the gate. The build writes its
 length into 0x7E4C and appends the CRC-32 of that many bytes (gzip's,
 taken from gzip's trailer, so no other tool computes it); `stage2_begin`
 recomputes it, bitwise, over what stage 1 read, and a mismatch is
-`fatal_rm` with the reason. Stage 1 has no room for the check (jump's is
-508 bytes of 510), and a medium that reads back wrong without an error is
+`fatal_rm` with the reason. Stage 1 has no room for the check (its code is
+413 of the 434 bytes it may use), and a medium that reads back wrong without an error is
 the reason for it: falcon jump's floppies did, on the A21m (14.3).
 
 #### 12.3.3 The thunk: a BIOS call from protected mode
@@ -3183,10 +3344,9 @@ resident CD handler, from real mode.
 | 0x1000-0x10FF | disk packet, drive parameters, E820 slot | per call |
 | below 0x7000 | real-mode stack during a thunk | per call |
 | 0x3000-0x311F | the Linux handoff: the move stub at 0x3000, the handoff GDT at 0x3100 | copied at the handoff, handed to the kernel |
-| 0x7000-0x7BFF | stage 2's protected-mode stack | until stage 3 |
 | 0xD0000-0xD0FFF (falcon jump) | a PC Card's attribute memory, through the bridge's memory window 0 | while `PCC.MOD` reads the CIS; closed before the handoff |
 | 0x7C00-0x7DFF | stage 1; later the chainloaded boot image | stage 1 dies at the jump |
-| 0x7E00-0xFDFF | stage 2 (64 sectors; 8 KiB used): gate, thunk, GDT, IDT, fault reporting | until the target starts |
+| 0x7E00-0xFDFF | stage 2 (at most 62 sectors; 25 KiB used): gate, thunk, GDT, IDT, fault reporting, the boot partition search | until the target starts |
 | 0x10000-0x10FFF | Linux zero page | handed to the kernel |
 | 0x20000 | Linux cmdline; or the staged El Torito boot image (up to 63 KiB) on a chainload | handed over |
 | 0x90000-0x97FFF | bounce buffer | every read |
@@ -3194,7 +3354,8 @@ resident CD handler, from real mode.
 | BDA top - 3 KiB (falcon jump) | the reverse thunk (`rthunk.S`): far pointers, its GDT, the saved caller, the INT 13h entry at +0x90, the INT 15h entry at +0x300 and its carved map at +0x400 (the `USB` route's); below it the virtual CD's block on `CDR` | permanent after `CDR` hands over; reserved in the map it hands on |
 | 0x100000 | stage 3: 16-byte header, entry at +0x10, then its image and `.bss` (at most 0x6F0000 together) | whole loader |
 | 0xB8000-0xB8F9F | VGA text memory, the 80x25 screen stage 3 draws | whole loader |
-| 0x7F0000-0x7FFFFF | stage 3 stack, ESP from 0x800000 | whole loader |
+| 0x600000 | stage 2's partition list and sector buffer while it looks for the boot partition (`STAGE2_SCRATCH`), then the compressed stage 3 it inflates | until stage 3 runs |
+| 0x7F0000-0x7FFFFF | stage 2's protected-mode stack, then stage 3's, ESP from 0x800000 | whole loader |
 | 0xF00000-0xFFFFFF (falcon jump) | the module slots, eight of 128 KiB (`JMOD_REGION`): `ATA.MOD` at 0xF00000, `UHCI.MOD` at 0xF20000, `OHCI.MOD` at 0xF40000, `EHCI.MOD` at 0xF60000, `PCC.MOD` at 0xFA0000 | from the module's load; permanent after `CDR` hands over, reserved in E820, E801 and AH=88h |
 | 0x1000000 | the kernel's protected-mode part (aligned up; `pref_address` for a non-relocatable kernel); one fixed below here, at 1 MB (memtest86+), is staged here instead, above its own footprint, and moved down at the handoff | handed to the kernel |
 | highest fit below the kernel's `initrd_addr_max` | the initrds, placed from E820 | handed to the kernel |
@@ -3285,8 +3446,12 @@ sequenceDiagram
     participant K as kernel
     participant I as initramfs (systemd)
     U->>L: Enter on Personal OS
-    L->>U: masked passphrase (INT 16h), three attempts
-    L->>FC: luks_unlock p3, luks_dev_open, fs_mount ext4
+    alt LUKS2 shelf
+        L->>U: masked passphrase (INT 16h), three attempts
+        L->>FC: luks_unlock p3, luks_dev_open, fs_mount ext4
+    else plaintext shelf
+        L->>FC: fs_mount straight off the partition, no prompt and no credential
+    end
     FC-->>L: shelf_collect: /uki or /EFI/Linux, *.efi (at most 8)
     L->>U: chooser, shelf_label's rows (one image boots without asking)
     L->>FC: pe_parse: .linux, .initrd, .cmdline
@@ -3415,7 +3580,7 @@ hang.
 |---|---|
 | stage 1 | reason on screen and serial, a key, `jmp FFFF:0` |
 | stage 2, real mode (`fatal_rm`) | older than i686 (no CMOV), EBDA too low, A20 closed: reason, a key, reset |
-| stage 2 and 3, protected mode (`bios_fatal`) | stage 3 missing or malformed, or `stage 3 returned`: reason, a key, reset |
+| stage 2 and 3, protected mode (`bios_fatal`) | no partition with a boot record, a damaged table, stage 3 missing, malformed or past its volume's reserved sectors, or `stage 3 returned`: reason, a key, reset |
 | a processor exception (`idt.S`, `fault.c`) | vector and name, EIP, error code, through `bios_fatal`; a second fault while reporting resets at once |
 | a route | message, "press any key to return to the menu" |
 | the POS | wrong passphrase, no `/uki`, no images: message, secrets wiped, back to the menu |
@@ -3441,7 +3606,8 @@ sequenceDiagram
     H->>H: the init to exec: falcon.init=, else /init
     H->>H: map: /falcon/map, else /.extra/credentials/falcon-map.cred, else FalconIsoMap in efivarfs
     H->>KN: the initramfs's own modprobe: dm_mod, storage and USB drivers, loop, isofs
-    H->>KN: poll /sys/block (30 s) for the disk whose GPT has p2's GUID and start LBA
+    H->>KN: poll /sys/block (30 s) for the disk of the map's block size whose exFAT volume at the map's LBA has a /.falcon record carrying the map's install ID (extfind)
+    H->>KN: the partition device: /sys/block/DISK/PART/start at that LBA (else the whole disk at an offset)
     alt device-mapper
         H->>KN: dm-linear, one read-only target per extent: /dev/mapper/falcon-iso
     else no dm, ISO contiguous
@@ -3472,11 +3638,14 @@ How each family then finds its root on the device the hook made:
 
 ### 12.5 The stationary build
 
+*The 2026-09-21 station, on the core step's records and single BIOS
+layout. Section 13 replaced its design on 2026-09-26; these diagrams are
+redrawn as the new station is built, in the same commits.*
+
 Section 13's second build of each loader. Its POS route is the stick's
 (12.2.4, 12.3.7); what is new is how it gets there and the routes out to
-the machine's other systems. The UEFI build exists and 12.5.1 is traced
-from its code; the BIOS build is not built yet (Section 13's status), so
-12.5.2 is its design.
+the machine's other systems. Both builds exist (`make station`) and both
+diagrams are traced from their code.
 
 #### 12.5.1 UEFI
 
@@ -3485,7 +3654,7 @@ flowchart TD
     FW["Firmware<br/>boot entry for \EFI\falcon\shimx64.efi"] --> SHIM["shim<br/>verifies grubx64.efi (falcon-boot-station.efi) against db / MokList"]
     SHIM --> MAIN["efi_main (apps/station/efi_main.c)"]
     MAIN --> DISC["discover_scan"]
-    DISC --> POSS["pos_scan<br/>only the boot disk's shelf, if it has one (13.3)"]
+    DISC --> POSS["pos_scan<br/>shelves whose record carries the install ID<br/>of the ESP's boot record, any disk (3.1)"]
     POSS --> OTH["nxt_scan<br/>BootOrder's offered entries but BootCurrent"]
     OTH --> SH{"shelf found?"}
     SH -- yes --> PR["passphrase prompt<br/>Escape to the list"]
@@ -3511,8 +3680,8 @@ is not drawn.
 ```mermaid
 flowchart TD
     S12["stages 1 and 2, as 12.3.2"] --> BM["bios_main (apps/station/bios_main.c)<br/>e820_read"]
-    BM --> DSK["scan_disks: every drive the BDA counts (0x475)<br/>its GPT, and whether LBA 0 ends in 0x55AA"]
-    DSK --> P3["pick_shelf: the boot disk's shelf if pos_probe opens it,<br/>else the first other disk's that does"]
+    BM --> DSK["scan_disks: the boot drive, then every drive the BDA counts (0x475)<br/>its table (MBR or GPT), and whether LBA 0 ends in 0x55AA;<br/>the boot partition's record, from the gate"]
+    DSK --> P3["pick_shelf: the partition whose LUKS2 token or /.falcon is a shelf<br/>record of that install, the boot disk asked first; pos_probe opens it"]
     P3 --> SH{"shelf found?"}
     SH -- yes --> PR["passphrase prompt (INT 16h)<br/>Escape to the list"]
     SH -- no --> LIST
@@ -3551,7 +3720,7 @@ flowchart TD
     S2 --> PR{"bios_disk_probe (disk.c)<br/>AH=48h, then AH=41h"}
     PR -- "neither" --> GEO["AH=08h: the geometry, vfd_geometry_int13<br/>reads by AH=02h from here on"]
     PR -- "either" --> L3
-    GEO --> L3["stage3_load: header at STAGE3_LBA, then the image"]
+    GEO --> L3["stage3_load: no partition table, so the floppy's own boot record:<br/>stage 3 at sector 98 (FD_STAGE3_SECTOR), no marker"]
     L3 --> BM["bios_main (apps/jump/bios_main.c)<br/>e820_read"]
     BM --> FAT["read_floppy: fs_identify, fs_mount (FAT12; sector 0 from 0x7C00)<br/>MEMTEST.BIN present? JUMP.INI parsed (jumpini.c)"]
     FAT --> PCI["pci_scan: an IDE controller? a UHCI one?<br/>class codes through 0xCF8/0xCFC; nothing loaded"]
@@ -3579,7 +3748,7 @@ flowchart TD
     RM --> MENU
     MENU -- "USB stick" --> LU["for EHCI.MOD, UHCI.MOD, OHCI.MOD, each on the floppy with its controller on the bus:<br/>jmod_load to its slot; init: msc.c over ehci.c, uhci.c or ohci.c<br/>EHCI hands a port whose device does not enable to its companion"]
     LU --> EN["ops.probe: every controller of that kind (up to four), taken from the BIOS, reset;<br/>each root port reset, enumerated, INQUIRY, READ CAPACITY"]
-    EN --> GPT{"gpt_parse through ops.read:<br/>an ISO library or a shelf?"}
+    EN --> GPT{"bootpart_find through ops.read:<br/>a partition with a boot record?"}
     GPT -- "no falcon stick" --> MENU
     GPT -- "yes" --> RU["jres_install for the next BIOS disk (BDA 0x475 + 0x80),<br/>INT 15h hooked too: the block and 15-16 MB carved;<br/>INT 18h, 19h: a cold reset"]
     RU --> MB["BDA count + 1; mbr_boot: LBA 0 through the thunk to 0x7C00,<br/>DL = that drive; the stick's falcon-bios from there (12.3)"]
@@ -3599,245 +3768,337 @@ drive as one run, and under it the reverse thunk and `ATA.MOD`. The floppy
 is read by CHS wherever its BIOS has no extensions, SeaBIOS's included, so
 the rig exercises the same path an old machine takes.
 
-## 13. The stationary build (decided 2026-09-21)
+## 13. The station: falcon as a machine's boot loader (decided 2026-09-26)
 
-Status (2026-09-24): both builds exist and are rig-proven (`make station`):
-`falcon-boot-station.efi` with POS, NXT and Firmware Setup, and
-`falcon-bios-station-stage3.bin` with POS and MBR. The boot-disk rule (13.3) is
-in both stick loaders too. `make test-station` builds a disk by following
-the Manual's hand procedure (Manual Section 2); the personal OS boots off it
-with its credential under OVMF with Secure Boot on and under SeaBIOS. Not
-built yet: the ESP chainload (13.4, after NXT is measured on hardware).
-Section 12.5 draws what exists.
+Status (2026-09-26): designed, not built. This replaces the stationary build
+of 2026-09-21, which was the stick's loader with the ISO library taken out: it
+booted a personal OS off a shelf and handed the machine to other disks, but
+leaned on the stick's view of the world (a shelf found by rule on any disk,
+GPT only, the stages in the GPT gap, no default and no timeout). The audit
+behind this section, and every decision in it, are docs/notes/station-rework.md.
 
-A falcon loader installed on a machine's internal disk, as that machine's
-boot loader, rather than on a stick. It boots the personal OS off a shelf on
-the same disk, and hands the machine to whatever else is installed on it:
-typically a second internal disk carrying an ordinary Windows install. It is
-a second build of each loader, chosen at compile time, not a mode of the
-stick's.
+Each build has one job:
+
+| build | job | firmware |
+|---|---|---|
+| stick | boots media: ISOs, blessing, Windows installers | UEFI, BIOS |
+| station | is the machine's boot loader, in place of GRUB, systemd-boot or the Windows MBR | UEFI, BIOS |
+| station-legacy | the station, plus jump's drivers and routes (CD, CF in a PC Card slot, USB) for a machine whose BIOS cannot boot them | BIOS |
+| jump | a boot floppy, for a machine falcon is not installed on (Section 14) | BIOS |
+
+The station boots:
+
+- **Windows, 98 to 11.** On BIOS by chaining a partition's boot sector or
+  another disk's MBR (13.4); on UEFI through the firmware's own entry, or
+  `bootmgfw.efi` through the shim-verified path where an entry asks (13.4).
+- **Linux, as UKIs on a shelf**, found and unlocked as the personal OS is on
+  a stick (Section 5), LUKS2 or plaintext, on both loaders (13.5).
+- **memtest86+** (13.6).
+
+Entries are found on their own (13.3); `STATION.INI` sets a default, a
+timeout and an order, and adds, hides or relabels entries, including ones on
+other disks (13.7).
 
 ### 13.1 Why a build and not an option
 
-The stick's loader carries everything drag-and-drop needs: ISO9660, UDF and
-exFAT readers, the WIM reader and LZX decompressor, the boot.wim patch, the
-virtual CD and its overlay, the bless flow, the boot predictions (a DER,
-X.509 and Authenticode parser), and two embedded binaries (falcon-winjump
-and falcon-hook). Section 7.8 already names the parsers as attack surface. A
-machine that only ever boots its own OS reaches none of it, and a runtime
-switch that hid the menu would still ship all of it, reachable by anything
-that can put bytes in front of the loader.
+Unchanged from 2026-09-21: the stick's loader carries everything drag-and-drop
+needs (ISO9660, UDF and exFAT readers, the WIM reader, the boot.wim patch, the
+virtual CD, the bless flow, the boot predictions' DER, X.509 and Authenticode
+parsers, and two embedded binaries), and Section 7.8 already names the
+parsers as attack surface. A machine that boots its own systems reaches none
+of it. So the station links less, and what it does not link it cannot run:
+the answer to "what can this loader do" is its source list. It is a separate
+link through the same shared modules, not `#ifdef`s through them; what
+differs is the entry point (`apps/station/`, `apps/station-legacy/`).
 
-So the stationary build links less, and what it does not link it cannot
-run. That is the argument for it, more than the size: the answer to "what
-can this loader do" is its source list, and that list is short enough to
-read.
+What each links, beyond the shared console, disk and loader plumbing:
 
-It is a separate link, not `#ifdef`s through the shared code. `pos` on both
-loaders is already self-contained (UEFI `pos_scan`/`pos_boot`, BIOS
-`pos_probe`/`pos_run`); what differs is the entry point, which is a second,
-small file per loader beside the stick's (`apps/station/` beside `apps/stick/`). No module the two builds
-share changes shape between them.
-
-| | stick build | stationary build |
+| | station | station-legacy |
 |---|---|---|
-| UEFI image | `falcon-boot.efi` | `falcon-boot-station.efi` |
-| UEFI entry | `apps/stick/efi_main.c` | `apps/station/efi_main.c` |
-| UEFI links | everything in Section 9 | `apps/station/efi_sbat.c`, `loader/`, `console/`, `discover/`, `sb.c`, `pos/`, `nxt/` (13.4); core's `crypto`, `luks`, `fs` (ext4 only), `part`, `tui`, `media/shelf.c` (the chooser's rows), `lib` |
-| UEFI leaves out | | `iso/`, `direct/`, `bsd/`, `win/`, `bless/`, `trustefi.c`, `trust/`, the rest of `media/` (the survey included), `wim/`, `manifest/`, the exFAT, FAT, ISO9660 and UDF drivers, falcon-winjump, falcon-hook |
-| BIOS stage 3 | `apps/stick/bios_main.c`, `falcon-bios-stage3.bin` | `apps/station/bios_main.c`, `falcon-bios-station-stage3.bin` (80 KB against 288 KB) |
-| BIOS links | everything in `falcon-bios/` | `pos.c`, `linux.c`, `linuxcore.c`, `e820.c`, `screen.c`, `prompt.c`, `console.c`, `disk.c`, `mbr.c` (13.4); core as UEFI, plus `media/cpio.c` for the credential |
-| BIOS leaves out | | `vcd.c`, `vcdres.S`, `scan.c`, `win.c`, `bsd.c`, `heap.c`: nothing is ever resident, and neither falcon-hook blob is linked, since only `scan.c` appends one; `marker.c`, so nothing in it writes a disk |
-| stages 1 and 2 | | unchanged, the same binaries |
-| version type | `release` | `station-release`, so a screen photo says which build it is |
-| SBAT component | `falcon-boot` | `falcon-boot-pos`, its own generation: a revocation for a parser this build does not link must not stop it booting |
+| UEFI | `pos/`, `nxt/`, `loadops` (bootmgfw, memtest), core `luks`, `fs` (ext4, FAT), `part`, `media/shelf.c`, the INI parser | none: legacy is BIOS only |
+| BIOS | `pos.c`, `linux.c` (UKIs, memtest), `mbr.c` and the partition chain (13.4), the drive swap resident, `marker.c`, core as UEFI plus `media/cpio.c` | the station's, plus the route module lifted out of jump (13.10), `jmod`, `jres`, the virtual CD and `vfd` |
+| leaves out | the ISO library, direct boot, Windows and BSD media, blessing, boot predictions, falcon-hook, falcon-winjump | as the station |
 
-`make station` builds both, and `all` builds neither, as with `make bios`.
-
-No boot predictions (Section 7.8) are linked, so no row carries a trust
-tag and the key line has no legend; a UKI shim refuses is reported with
-shim's status, without naming the signer. The chooser lists every UKI the
-shelf holds, an appliance image included, which a hand install does not
-put there.
-
-Its filesystem registry is ext4 alone (`CORE_FS_EXT4`: `fs_reg_ext4.c`
-names one driver, and each driver's adapter is its own file), so the
-exFAT, FAT, ISO9660 and UDF parsers are not linked and `discover_scan`'s
-identification pass probes every device for ext4 and nothing else. With
-that, UEFI is 123 KB and BIOS stage 3 80 KB.
-
-The BIOS build is i686, as the stick's falcon-bios is (Section 12.3,
-bios-route.md 6h), so the same image serves a 32-bit machine: its POS boots
-a kernel of either width through `linux.c`, which refuses a 64-bit one on a
-processor without long mode once it is chosen, as on the stick.
+No boot predictions are linked, so no row carries a trust tag. The version
+type is `station-release` and `station-legacy-release`; the SBAT component is
+`falcon-boot-station`, its own generation, so a revocation for a parser the
+station does not link cannot stop it booting.
 
 ### 13.2 Layout
 
+Nothing is repartitioned or resized by falcon. The installer (13.9) needs
+the space it uses to be free already.
+
+**UEFI.** The machine's ESP: shim, MokManager, the loader as `grubx64.efi`,
+the public cert, memtest86+ signed with the MOK (13.6) and `STATION.INI`, all
+in `\EFI\falcon\`, named by a firmware boot entry of its own. The ESP's boot
+sector carries the station's `boot` record (Section 3.1) in bytes UEFI never
+executes; the installer backs up the sector it changes. No extra partition.
+
+**BIOS, MBR disk.** Stage 1 in LBA 0's boot code, the table, signature and
+`0x55AA` kept. Stage 2 from LBA 1, before the first partition. A **station
+partition**: FAT32, hidden (type 0x1C, so no Windows from 98 to 11 gives it a
+drive letter or offers to check it), holding stage 3 and the next-boot marker
+in its reserved sectors and, as files, `STATION.INI`, `MEMTEST.BIN` and, on
+legacy, the drivers. On the A21m, whose Windows 2000 partition fills the
+disk, the NTFS partition is shrunk first (with ntfsresize, from DevLink
+recovery or any Linux), and about 64 MB at the end becomes the station
+partition.
+
+**BIOS, GPT disk.** Stage 2 in the `FALCON-BIOS` EF02 partition at LBA 34;
+the station partition as on MBR, typed with a falcon type GUID of its own
+(Windows then gives it no volume, Section 3.1).
+
+**The shelf** is a partition on any of the machine's disks carrying the
+station's install ID: LUKS2 with the falcon token, or plaintext ext4 with
+`/.falcon`. The station partition may also carry a `/uki` directory, read
+as a plaintext shelf: that is how a machine with no Linux of its own (the
+A21m) still has DevLink recovery (13.5).
+
+### 13.3 What the menu offers without being told
+
+The loader finds its `boot` partition (UEFI: the ESP it was started from;
+BIOS: the partition stage 2 found), reads the install ID, and builds rows:
+
+- **Linux:** every UKI on every shelf carrying that install ID, labelled
+  from each UKI's `.osrel` (`media/shelf.c`), with one passphrase prompt per
+  locked shelf when a row on it is chosen.
+- **Windows and other systems, UEFI:** every active, not hidden, boot-category
+  firmware entry but falcon's own (`nxt/`), labelled with its description.
+- **Windows and other systems, BIOS:** on every disk, each primary partition
+  whose boot sector is a known loader (`IO.SYS`/`WINBOOT.SYS` for DOS and
+  Windows 9x, `NTLDR`, `BOOTMGR`, GRUB's and syslinux's signatures), labelled
+  by what was found and where ("Windows 2000 (disk mbr:cdcccdcc, partition
+  1)"); and each other disk whose MBR carries boot code and an active entry.
+  A disk whose LBA 0 merely ends in `0x55AA` is not offered: a GPT data disk,
+  a table with no active entry and a UEFI-only Windows disk all end that way
+  and fail after the jump.
+- **memtest86+**, when the station carries it.
+- **Firmware Setup** (UEFI, where the firmware supports it).
+
+Anything else is added in `STATION.INI`.
+
+### 13.4 Windows
+
+**BIOS, a partition on any disk: the boot-sector chain.** The Windows MBR's
+own job, done by falcon: the disk's LBA 0 is copied to 0000:0600 and the
+chosen primary's entry marked active in that copy only, DS:SI points at the
+entry in it, the partition's first sector is read to 0000:7C00 and must end
+in `0x55AA`, DL names the disk, and `boot16` drops to real mode and jumps.
+DOS's `IO.SYS`, NT's `NTLDR` and Vista's `BOOTMGR` boot sectors all read
+DS:SI or the hidden-sectors field of their own BPB to find themselves; the
+field is checked against the entry's start and, when they disagree, patched
+in the copy in memory (never on the disk) and said on serial. Windows 9x's
+FAT32 boot sector reads its second sector by LBA or CHS according to the
+partition's type byte, which the entry carries unchanged. What 9x needs
+beyond this is measured on hardware before it is called done.
+
+**BIOS, another disk: its MBR, with a drive swap.** The disk's LBA 0 to
+0000:7C00 as `mbr.c` does today, but the disk is made 0x80 first: a small
+resident INT 13h hook swaps the chosen disk's number with 0x80 for every
+call, as a BIOS booting that disk directly would have numbered it. DOS,
+Windows 9x and `NTLDR`'s `boot.ini` (`rdisk(N)`) resolve disks by BIOS order
+and expect their own to be 0x80; Windows 7 and later do not care, and an
+entry turns the swap off with `swap = no`. The hook takes 1 KB of
+conventional memory off the BDA's count, the way the virtual CD's resident
+does (`mem/lowmem.c`), and is the only resident the station has.
+
+BIOS machines are taken to have no TPM sealing: the BIOS measured falcon's
+MBR, not Windows', and nothing on BIOS can hand that back.
+
+**UEFI: the firmware's entry by default.** Choosing a firmware entry writes
+`BootNext` and resets (`nxt/`), and the firmware boots Windows Boot Manager
+as though falcon had not run. BitLocker with a TPM seals to PCR 7, which
+records the authorities that verified the boot; `bootmgfw.efi` started through
+shim is verified under a different chain, PCR 7 differs, and Windows asks for
+its recovery key. `BootNext` leaves the measured boot as Windows sealed it.
+
+**UEFI: `bootmgfw.efi` directly, per entry.** An entry with `method = efi`
+loads `\EFI\Microsoft\Boot\bootmgfw.efi` (or the file it names) by device
+path through `loadops`, the shim-verified path every other launch takes: no
+reset, and no firmware entry needed, which is what a disk moved in from
+another machine or an NVRAM reset leaves. The row says BitLocker will ask for
+its recovery key if the volume is sealed.
+
+Windows 98, ME, 2000 and XP under UEFI, and legacy under UEFI, are out of
+scope: none of them has a UEFI boot path.
+
+### 13.5 Linux
+
+UKIs on a shelf, as Section 5 and the stick's personal OS: the shelf is
+unlocked with a pbkdf2 keyslot and the passphrase is handed to the UKI as an
+sd-stub credential (5.1), or the shelf is plaintext and there is no prompt.
+The BIOS loader unwraps a UKI (`.linux`, `.initrd`, `.cmdline`) and boots it
+through the x86 boot protocol, never running its EFI stub, so a UKI built
+around a 32-bit kernel is a BIOS row like any other. That is DevLink
+recovery: devlink-rescue's 32-bit kernel and initrd (the image that repository
+builds as "classic"), wrapped as a UKI by `falcon-boot-sign`, on the shelf or
+in the station partition's `/uki`. A 64-bit UKI on a processor without long
+mode is refused with a sentence, as the stick refuses one.
+
+The OS keeps its UKIs up to date the way the personal OS does: the shelf
+mounted at `/efi` and a hook that builds and signs each UKI with the MOK.
+
+### 13.6 memtest86+
+
+BIOS: `MEMTEST.BIN` in the station partition, any build carrying the x86
+boot protocol header, booted through `linux.c` as jump boots it (Section 14),
+staged and moved when it is fixed at 1 MB. UEFI: memtest86+'s `.efi`, signed
+with the MOK by the installer (13.9) as the POS hook signs UKIs, so it boots
+in every Secure Boot state, and loaded through `loadops`.
+
+### 13.7 STATION.INI
+
+On the ESP (`\EFI\falcon\STATION.INI`) or in the station partition's root.
+One `[section]` per entry and `[general]` for the rest:
+
 ```
-p1  ESP        FAT32    the machine's ESP; falcon in \EFI\falcon\
-p2  UKI shelf  LUKS2 -> ext4    UKIs in /uki, the MOK key pair, pbkdf2 keyslot
-p3  root+home  LUKS2 -> LVM     the OS's own, opened by its initramfs
+[general]
+default = win2k
+timeout = 5
+
+[win2k]
+disk = mbr:cdcccdcc
+part = 1
+label = Windows 2000
+
+[win7]
+disk = mbr:1a2b3c4d
+label = Windows 7 (second disk)
+swap = no
+
+[memtest]
+hide = yes
 ```
 
-The stick's layout without its ISO library. Nothing in either loader
-matches a partition by number: the shelf is found by the falcon shelf type
-GUID (Section 3), so it is the shelf here at p2 exactly as it is at p3 on a
-stick, and the root is never matched at all. The layout needs no change to
-identification. The shelf keeps its pbkdf2 keyslot for Section 3's reason,
-and the root's argon2id slot is the OS's business.
+- A section whose `disk` and `part` match an entry the loader found (13.3)
+  changes that entry (label, hide, order); one that matches nothing adds an
+  entry. A section's name is how `default` and the next-boot marker name it.
+- Keys: `disk` (`gpt:<DiskGUID>` or `mbr:<signature>`), `part` (a number;
+  absent means the disk's own MBR), `uki` (a file on the shelf), `efi` (a
+  path on an ESP), `method` (`firmware` or `efi`, UEFI Windows), `swap`,
+  `label`, `hide`; `[general]` has `default`, `timeout`, `order`.
+- Strict, as `JUMP.INI` is (Section 14.7): a key it does not know, a value it
+  cannot parse, a key given twice, or a timeout with no default is an error
+  naming the line, and the result is no default and no countdown. A typo
+  must not become a different default.
+- The installer writes the file with a default (the Windows or Linux it
+  found) and a five-second timeout, so an unattended reboot, Windows
+  Update's included, comes back to that system. With no file the menu
+  waits.
 
-p1 is the machine's ordinary ESP: shim, MokManager, the loader as
-`grubx64.efi` and the public cert in `\EFI\falcon\` (shim loads its next
-stage from its own directory), named by a firmware boot entry of its own.
-Not `\EFI\BOOT\BOOTX64.EFI`: the removable-media path is the firmware's
-fallback, and a stationary loader is a named entry like any other OS's.
+One parser serves both (`jumpini.c` generalised), and the countdown is
+`screen_menu_timed` on BIOS and a timed `menu` on UEFI, which it lacks today.
 
-For BIOS the stages go where they go on a stick, stage 1 in LBA 0's boot
-code and stages 2 and 3 in LBA 34-1121, which a GPT with a 128-entry array
-and its first partition at 2048 leaves free. That gap is claimed as a BIOS
-boot partition (type `21686148-6449-6E6F-744E-656564454649`, named
-`FALCON-BIOS`, LBA 34-2047), as `mkstick bios` claims it on a stick, so no
-partitioning tool later puts a partition over the stages.
+### 13.8 Next boot
 
-**Installed by hand, for now.** There is no `mkstick` mode for this: the
-disk is the machine's, and a tool that partitions it is a tool that can
-destroy an OS the user meant to keep. The Manual carries the procedure
-(partition types, the shelf's GUID, the ESP's files and boot entry, the BIOS
-stages written at `biosdefs.h`'s LBAs, with `falcon-bios-station-stage3.bin`
-as stage 3, MOK enrollment). Kernel updates are
-the OS's: the shelf mounted at `/efi` and a hook that builds and signs the
-UKI with the MOK key on it, as the personal OS on the stick already does.
+Linux asks for one boot of a given entry with `falcon-boot-mkstick next-boot
+<section>`: on UEFI it sets the `FalconNextBoot` variable, on BIOS it writes
+the marker sector in the station partition (Section 6.3.1). The loader
+takes it as the stick does, cleared before it is believed and dated on BIOS,
+and boots that entry without the menu. It is how "restart into Windows"
+works from the Linux side.
 
-The MOK private key lives on the stationary shelf, under LUKS: invariant 4
-is kept on the same terms as on a stick.
+### 13.9 The installer
 
-### 13.3 The boot disk's shelf wins
+`falcon-boot-mkstick station install | remove | status`, the stick maker's
+disk I/O, backups and stage splicing reused.
 
-A machine with a stationary install and a falcon stick plugged in has two
-shelves, and both are the personal OS of somebody's. The rule, for **both
-builds**: when the disk the loader was booted from carries a usable shelf
-(a LUKS2 volume with a pbkdf2 keyslot, or a plaintext one with a UKI on
-it), only that disk's shelves are considered; the others are considered
-only when the boot disk has none. The stick's loader boots the stick's OS, the internal
-disk's boots the machine's.
+- **install** takes the disk (and, on UEFI, finds its ESP), draws the install
+  ID, and writes: on UEFI the files in `\EFI\falcon\`, the firmware entry and
+  the ESP's record; on BIOS stage 1 into LBA 0's boot code, stage 2 before the
+  first partition, the station partition in space that is already free (MBR
+  0x1C or the falcon type on GPT), its record, stage 3 and the files. It
+  writes a signature on any disk the station will name that has none, and
+  stamps the shelf it is pointed at (the falcon token, or `/.falcon`). It
+  writes `STATION.INI` from what it found (13.7).
+- **Backups first.** Everything it will change is copied to a file the user
+  keeps before anything is written: LBA 0 through the first partition's
+  start, the station partition's first sectors, the ESP's boot sector, the
+  firmware entries. LBA 0 is written last, so an interrupted install leaves
+  the old boot code in place.
+- **remove** restores from that file: the old boot code, the firmware entry
+  removed, falcon's files deleted. The station partition itself is left for
+  the user to delete.
+- **Refusals.** No free space for the station partition (it says how much it
+  needs); stage 2 not fitting before the first partition; a disk with a
+  mounted filesystem it would write. It warns when the station partition or
+  the shelf would sit past 8 GB or 128 GiB (Section 3.4).
+- **status** reads the records, the stages and the INI, and says what boots.
 
-Exclusive rather than first-in-order, because `pos` tries one passphrase
-against every candidate shelf (`unlock_any`, Section 5): with an order, the
-passphrase for the machine, mistyped into the stick's, would boot the other
-OS without a word. Exclusive, one passphrase has one meaning.
+It never resizes a filesystem. A tool that shrinks NTFS or ext4 on
+someone's OS disk is a different tool with a different risk, and
+ntfsresize and resize2fs already exist.
 
-- UEFI: `discover_scan` marks each row `boot_disk` when it and the
-  loader's own `LoadedImage->DeviceHandle` are partitions of one disk: the
-  device paths in front of their HARDDRIVE nodes are byte-identical
-  (`part_same_disk`, `partefi.c`). `pos_scan` then takes the boot disk's
-  rows, and the others only when those gave it nothing. A handle whose path
-  cannot be compared is not on the boot disk. Measured in the rig
-  (2026-09-24): two falcon disks with different passphrases, each booted
-  first in turn, accept only their own; the loader before the rule opened
-  the second disk's shelf with the second disk's passphrase.
-- BIOS: the stick build's `claim_roles` asks the boot disk first (fix
-  `b007efb`) and takes a shelf only when `pos_probe` opens it; the
-  stationary build's `pick_shelf` is the same rule over every disk the BDA
-  counts.
+### 13.10 station-legacy
 
-The rig and any stick nobody stamped still get Section 3's probe-everything
-fallback, unchanged: the rule narrows only when roles were identified.
+The BIOS station plus the rows jump offers: **CD drive**, **USB stick**, **CF
+card (PC Card)**, each when its controller is on the PCI bus and its driver
+is in the station partition. The drivers, the reverse thunk, the virtual CD
+and the routes are jump's (Section 14.4-14.6), lifted out of
+`apps/jump/bios_main.c` into a falcon-bios module both link. Jump keeps its
+floppy and its menu; station-legacy reads the same `*.MOD` files from its
+station partition instead. A falcon stick found on USB is booted as jump
+boots it (its own stages, served as the next BIOS disk); a CD as the stick's
+virtual CD serves it. The ATA disk driver gains 48-bit LBA here, since an IDE
+disk or CF card in an old laptop can be larger than 128 GiB today.
 
-### 13.4 The other operating systems
+The first target is the ThinkPad A21m: Windows 2000 on its only disk, and the
+CD, USB and CF routes jump already boots on it.
 
-The screen offers the machine's other systems, on the assumption the
-motivating case makes: a second internal disk with an ordinary install,
-typically Windows, whose boot loader is not on falcon's ESP. The loader
-starts them and does not look inside them.
+### 13.11 The rig
 
-**UEFI: `NXT`, the firmware's own entry through `BootNext`.** Every active,
-not hidden, boot-category (`LOAD_OPTION_CATEGORY_BOOT`) entry in
-`BootOrder` except `BootCurrent` (falcon's own) is a row, labelled with its
-description. Choosing one writes `BootNext` and resets, and the firmware
-boots it as if falcon had never run. The write is the one Section 6.3.1
-already makes to return to the stick (`loader_boot_next_self`), in the same
-class and with the same attributes.
+Every cell of docs/notes/station-rework.md section 6 has a rig case before
+the build is called done. New ones:
 
-Not a chainload, and BitLocker is why. BitLocker with a TPM on a Secure Boot
-machine seals to PCR 7, which records the authorities that verified the
-boot. bootmgfw started through shim is verified under a different chain than
-bootmgfw started by the firmware, PCR 7 differs, and Windows asks for its
-recovery key. `BootNext` leaves the measured boot exactly what Windows
-sealed against. It also costs nothing extra to generalize: another distro,
-a vendor recovery partition and a network boot entry are rows by the same
-code.
+- **A copy of the A21m's disk image** (Windows 2000 SP4, MBR, NTFS at 63)
+  under SeaBIOS, with falcon installed on the copy by the installer: the real
+  `NTLDR` path and the real installer on a real disk.
+- **Synthetic boot sectors** that print DL, DS:SI and the entry they were
+  handed on serial: every chain case (a partition, another disk, swap on and
+  off, a logical partition refused) without an OS.
+- **A 4Kn disk** under both firmwares.
+- **Two disks**: a station with Windows on the second; a station with a falcon
+  stick plugged in, which must change nothing.
 
-The load-option parse (attributes, description, file path length, taken
-out of a variable's bytes) is host-tested, in the pattern of `blesscore.c`:
-`nxt/nxtcore.c`, with `nxt/nxt.c` its firmware half. The BootNext write is
-`loadops.c`'s `loader_boot_next_set`, the one `loader_boot_next_self` now
-makes too. Measured in the rig (2026-09-24): the row for a second disk's
-firmware entry set BootNext, and after the reset the firmware started that
-disk's `BOOTX64.EFI`.
+### 13.12 Considered and rejected
 
-**UEFI: `ESP`, a chainload, when there is no entry (not built yet).** Other disks' ESPs
-carrying `\EFI\Microsoft\Boot\bootmgfw.efi` and no firmware entry naming it
-(a disk moved in, an NVRAM reset on firmware that does not regenerate
-entries) get a row, and it is loaded by device path through `loadops`, the
-shim-verified path, like any other launch. The row says so, since this is
-the route BitLocker will object to.
+Reversed on 2026-09-26, each for the new scope's reason:
 
-**BIOS: `MBR`, the other disk's LBA 0 (`mbr.c`).** Every BIOS disk (the BDA's count
-at 0x475) other than the boot disk whose LBA 0 ends in `0x55AA` is a row.
-Measured in the rig (2026-09-24): chaining drive 0x81, a falcon-bios stick,
-started its own stages, which reported booting from 0x81.
-Choosing one reads that sector to 0x7C00, sets DL to that drive, and drops
-to real mode through `boot16`, the one-way exit CHN already takes. With no
-resident in this build the IVT is as the BIOS left it. Windows 7 and later
-boot from 0x81 as they are. If one is measured that insists on 0x80, the
-answer is a drive swap in a small resident INT 13h hook (GRUB's
-`drivemap`), added then; it is not built ahead of the need.
+- *"A config file for a default and a timeout"* (rejected 2026-09-21: a
+  default matters only when nobody is there, and the personal OS needs a
+  person). The station now boots Windows and memtest, which need nobody,
+  and an unattended reboot has to come back to its system. `STATION.INI`
+  lives on the ESP or the station partition, never on the sealed shelf.
+- *"An `mkstick install` mode"* (deferred). The station replaces a machine's
+  boot loader; a hand procedure that starts with `sgdisk -Z` is not how that
+  is done. The installer's answer to "a tool trusted with a disk it did not
+  create" is 13.9: free space only, everything backed up first, a remove.
+- *"A drive swap for BIOS chains by default"* (deferred until measured).
+  DOS, Windows 9x and `NTLDR` are now in scope and all need 0x80.
+- *"Chainloading bootmgfw by default"* stays rejected; per entry it is 13.4.
 
-BIOS machines are taken to be in the standard configuration, with no TPM
-sealing: the BIOS measured falcon's MBR into PCR 4, not Windows', and
-nothing on BIOS can hand that back.
+Still rejected:
 
-### 13.5 The screen
+- **A runtime option on the stick's loader** (13.1).
+- **Resizing filesystems in the installer** (13.9).
+- **A probe-everything fallback for a disk with no record** (Section 3.1). It
+  is what let a plugged-in stick's shelf stand in for a station's.
+- **MBR sticks.** Sticks stay GPT; only stations meet MBR disks.
 
-It opens at the passphrase prompt for the boot disk's shelf, with Escape to
-the list. There is no menu first, because the machine's own OS is what it
-is for; and no default and no timeout, because booting the personal OS needs
-a person at the keyboard anyway.
+### 13.13 Build order
 
-- **The prompt.** Three tries, as Section 5. More than one UKI on the shelf
-  is a chooser after the unlock, as it is on a stick.
-- **The list.** The personal OS, the other systems (13.4), Firmware Setup
-  where the firmware supports it (UEFI). Escape leaves to the firmware (on
-  BIOS, INT 18h). Every failure
-  lands here after its message and a key.
-- **No shelf.** Straight to the list.
+1. **Core** (docs/notes/station-rework.md decisions 1-9, 15, 16, 20-22): the
+   partition reader for both tables, identity records and install IDs, 4Kn,
+   the single BIOS layout with stage 3 and the marker found by record, stage
+   1's CHS path, the stick and jump moved onto it, the extent map and the
+   appliance keyed by install ID, the corpus sticks carrying their own
+   stages, the 32-bit stick's tooling removed. Both sticks rewritten.
+2. **The station**, UEFI and BIOS, with the installer, `STATION.INI`, the
+   partition chain, the drive swap and next boot.
+3. **station-legacy**, installed on the A21m.
 
-An unattended reboot, Windows Update's included, stops at the prompt. That
-was weighed and accepted (13.6).
-
-### 13.6 Considered and rejected
-
-- **A runtime option on the stick's loader.** It hides the code without
-  removing it (13.1).
-- **Chainloading bootmgfw by default.** BitLocker recovery on every boot of
-  a sealed Windows (13.4). Kept only as the fallback for a disk the firmware
-  has no entry for.
-- **A config file for a default and a timeout.** On the shelf it cannot
-  work: the shelf is sealed until the passphrase is typed, and a default
-  matters exactly when nobody is there to type it. (LUKS2 as used here also
-  gives confidentiality, not integrity: AES-XTS with no dm-integrity lets a
-  modified ciphertext through as scrambled plaintext.) On the ESP it can
-  only choose among routes already allowed, so it is harmless, but it
-  answers a need nobody has on a machine whose main OS needs a person at
-  the keyboard. Remembering the last choice in an EFI variable was
-  rejected with it, and on BIOS it would have meant the loader writing to a
-  disk.
-- **An `mkstick install` mode.** Deferred, not rejected. A tool that lays
-  out a machine's disk has to be trusted with a disk it did not create; the
-  hand procedure comes first, and a tool may follow it once the procedure
-  has been done on a few machines.
-- **A drive swap for BIOS chains by default.** Built when a Windows is
-  measured that needs it (13.4), not before.
+Each is merged and rig-proven before the next starts.
 
 ## 14. falcon jump: a boot floppy (decided 2026-09-25)
 
@@ -3944,6 +4205,14 @@ fixed range and parses no filesystem. FAT12 in 512 bytes of assembly is
 possible (DOS does it), and is the kind of decision
 docs/notes/bios-route.md Section 5.3 keeps out of assembly. Everything
 after the core is read as files, through falcon-core's `fat.c`.
+
+**The floppy is the layout every install has (decision 2026-09-26).** Section
+3.3 made this arrangement, stage 3 in a FAT volume's reserved sectors, the
+BIOS layout of the stick and the station too. The floppy's boot sector
+carries a `boot` identity record at 0x1DC (Section 3.1), and stage 2 finds
+stage 3 by it as it does on a disk; the floppy is a volume with no
+partition table in front of it. The USB route recognises a falcon stick by
+its records rather than its GPT roles.
 
 **CHS, not LBA.** A BIOS's floppy support rarely answers INT 13h AH=41h/42h,
 so jump's stage 1 reads by AH=02h with the geometry from the BPB, three
@@ -4164,13 +4433,12 @@ itself and takes them from the BIOS) enumerate their root ports in turn.
 EHCI goes first because a device that is not high speed does not enable on
 its port after a reset: `EHCI.MOD` hands that port to its companion (the
 port owner bit), and the UHCI or OHCI module after it finds the device
-there. Then and the first stick whose
-GPT is a falcon stick's (an ISO
-library or a shelf, `gpt_has_role`) is booted. It becomes the next BIOS disk
+there. Then the first stick with a partition carrying a `boot` record
+(`bootpart_find`, as stage 2 finds one) is booted. It becomes the next BIOS disk
 after the ones the BIOS has (the BDA's count at 0x475 goes up by one), not
-0x80 with the BIOS's disks moved up: falcon-bios never assumes 0x80, and a
-drive swap is added when something on a stick is measured to need one, as
-the station decides for its chains (13.4). The reverse thunk answers that
+0x80 with the BIOS's disks moved up: falcon-bios never assumes 0x80, and
+the station's drive swap (13.4) is for chaining an OS that expects 0x80,
+not for a falcon stick, whose stages take the drive DL names. The reverse thunk answers that
 drive, and since there is no virtual CD on this route, its own INT 15h half
 carves the block and the module region out of the memory map (E820, E801's
 two halves, AH=88h). Then the stick's LBA 0 goes to 0x7C00 with DL naming
@@ -4189,6 +4457,13 @@ an ATA disk (`hw/ata/atadisk.c`). It boots as any disk does, whatever is
 on it: its LBA 0, as the next BIOS disk, through the reverse thunk with
 its INT 15h half, as `USB` does (`boot_module_disk`).
 
+**Shared with station-legacy (decision 2026-09-26).** The routes above live
+today in `apps/jump/bios_main.c` as statics (`pci_scan`, `boot_cd`,
+`boot_usb`, `boot_cf`, `boot_module_disk`, `is_falcon_stick`). They move into
+a falcon-bios module that jump and station-legacy (Section 13.10) both link,
+so a route is written once; each app keeps its own menu and reads the
+drivers from its own FAT volume.
+
 ### 14.7 JUMP.INI
 
 Optional. Without it there is no default and no countdown: the menu waits.
@@ -4201,12 +4476,13 @@ A key the file does not know, or a value it cannot parse, is a line on the
 screen naming it, and the menu then waits as if there were no file: a typo
 must not become a different default silently.
 
-This is the second reversal of "no config file, no default, no timeout"
-(13.6), and the reasons differ. The station's default would boot a system
-that needs a person at the keyboard anyway, and its config would sit where
-it cannot be read. Jump's default boots the machine's own disk, which is
-what a floppy that stays in the drive should do when nobody is there, and
-the file sits on a volume anyone can edit.
+This was the second reversal of "no config file, no default, no timeout".
+The station's own rejection (2026-09-21) was that its default would boot a
+system that needs a person at the keyboard and its config would sit where it
+cannot be read; jump's default boots the machine's own disk, which is what a
+floppy that stays in the drive should do when nobody is there. The station
+reversed it too on 2026-09-26, once it booted Windows and memtest (13.12),
+and `STATION.INI` is this file's parser generalised (13.7).
 
 ### 14.8 Processor floor
 

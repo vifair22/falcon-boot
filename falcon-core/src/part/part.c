@@ -14,8 +14,8 @@
 const uint8_t gpt_guid_msbasic[GPT_GUID_LEN] = {
     /* ebd0a0a2-b9e5-4433-87c0-68b6b72699c7, Microsoft basic data: what p2
      * wears so that Windows will give it a drive letter. Shared with every
-     * NTFS/exFAT data partition in the world, which is why matching p2 needs
-     * the partition name as well (part_match_role). */
+     * NTFS/exFAT data partition in the world, which is why p2 is known by
+     * its record (DESIGN Section 3.1) and never by its type. */
     0xa2, 0xa0, 0xd0, 0xeb, 0xe5, 0xb9, 0x33, 0x44,
     0x87, 0xc0, 0x68, 0xb6, 0xb7, 0x26, 0x99, 0xc7
 };
@@ -24,6 +24,12 @@ const uint8_t falcon_guid_shelf[GPT_GUID_LEN] = {
     /* 9cb02e90-85f4-4af7-9af3-1f9d6a95feaf */
     0x90, 0x2e, 0xb0, 0x9c, 0xf4, 0x85, 0xf7, 0x4a,
     0x9a, 0xf3, 0x1f, 0x9d, 0x6a, 0x95, 0xfe, 0xaf
+};
+
+const uint8_t falcon_guid_boot[GPT_GUID_LEN] = {
+    /* d0acb249-f895-4e0d-ab0d-cfbb6f48ae36 */
+    0x49, 0xb2, 0xac, 0xd0, 0x95, 0xf8, 0x0d, 0x4e,
+    0xab, 0x0d, 0xcf, 0xbb, 0x6f, 0x48, 0xae, 0x36
 };
 
 const uint8_t gpt_guid_esp[GPT_GUID_LEN] = {
@@ -39,8 +45,10 @@ const uint8_t gpt_guid_esp[GPT_GUID_LEN] = {
 #define HDR_HEADER_SIZE   12u
 #define HDR_HEADER_CRC32  16u
 #define HDR_MY_LBA        24u
+#define HDR_ALT_LBA       32u
 #define HDR_FIRST_USABLE  40u
 #define HDR_LAST_USABLE   48u
+#define HDR_DISK_GUID     56u
 #define HDR_ENTRY_LBA     72u
 #define HDR_ENTRY_COUNT   80u
 #define HDR_ENTRY_SIZE    84u
@@ -120,36 +128,6 @@ int gpt_name_eq(const uint16_t *name, const char *ascii)
     return 1;
 }
 
-const char *part_role_name(part_role role)
-{
-    if (role == PART_ROLE_ISO)
-        return FALCON_PART_NAME_ISO;
-    return NULL;
-}
-
-int part_match_role(const uint8_t *type, const uint16_t *name, part_role role)
-{
-    switch (role) {
-    case PART_ROLE_ISO:
-        /* Both halves, per part.h: the type is the world's and the name is
-         * ours, so neither identifies p2 on its own. */
-        if (!gpt_guid_eq(type, gpt_guid_msbasic))
-            return 0;
-        return gpt_name_eq(name, FALCON_PART_NAME_ISO);
-    case PART_ROLE_SHELF:
-        return gpt_guid_eq(type, falcon_guid_shelf);
-    default:
-        return 0;
-    }
-}
-
-int gpt_part_is_role(const gpt_part *p, part_role role)
-{
-    if (p == NULL)
-        return 0;
-    return part_match_role(p->type, p->name, role);
-}
-
 /* An all-zero type GUID marks an unused entry (spec 5.3.3); such entries are
  * not partitions and never reach the caller's table. */
 static int guid_is_zero(const uint8_t *g)
@@ -163,25 +141,28 @@ static int guid_is_zero(const uint8_t *g)
     return 1;
 }
 
-int gpt_parse(gpt_table *t, gpt_read_fn read, void *ctx, uint32_t block_size)
+/* The one GPT reader: gpt_parse wraps it for the primary table, and
+ * part/table.c calls it for the primary and then the backup. */
+int gpt_read_at(gpt_read_fn read, void *ctx, uint32_t block_size, uint64_t lba,
+                gpt_header *h, gpt_entry_fn fn, void *cb_ctx)
 {
     uint8_t sec[GPT_MAX_SECTOR];
     uint32_t hdr_size, ent_size, ent_count, per_block, idx, crc, want;
     uint64_t ent_lba, ent_base, array_bytes, done;
 
-    if (t == NULL || t->parts == NULL || t->cap == 0 || read == NULL)
+    if (h == NULL)
+        return GPT_ERR_BAD_ARG;
+    memset(h, 0, sizeof(*h));
+    if (read == NULL)
         return GPT_ERR_BAD_ARG;
     if (block_size < 512u || block_size > GPT_MAX_SECTOR ||
         (block_size & (block_size - 1u)) != 0u)
         return GPT_ERR_BAD_ARG;
+    /* The header's byte offset has to fit, and LBA 0 is the MBR's. */
+    if (lba == 0u || lba > UINT64_MAX / block_size)
+        return GPT_ERR_BAD_ARG;
 
-    t->count = 0;
-    t->truncated = 0;
-    t->first_usable = 0;
-    t->last_usable = 0;
-
-    /* The primary header is always LBA 1, whatever the block size. */
-    if (read(ctx, block_size, block_size, sec) != 0)
+    if (read(ctx, lba * block_size, block_size, sec) != 0)
         return GPT_ERR_IO;
     if (memcmp(sec + HDR_SIGNATURE, "EFI PART", 8) != 0)
         return GPT_ERR_NOT_GPT;
@@ -199,20 +180,23 @@ int gpt_parse(gpt_table *t, gpt_read_fn read, void *ctx, uint32_t block_size)
         return GPT_ERR_CRC;
 
     /* A header that claims to live somewhere other than where we read it is
-     * a backup header copied into place, or corruption the CRC happens to
-     * agree with. Either way it does not describe this disk's primary table. */
-    if (get_le64(sec + HDR_MY_LBA) != 1u)
+     * the other copy moved into place, or corruption the CRC happens to
+     * agree with. Either way it does not describe this copy of the table. */
+    if (get_le64(sec + HDR_MY_LBA) != lba)
         return GPT_ERR_NOT_GPT;
 
-    t->first_usable = get_le64(sec + HDR_FIRST_USABLE);
-    t->last_usable = get_le64(sec + HDR_LAST_USABLE);
+    h->my_lba = lba;
+    h->alt_lba = get_le64(sec + HDR_ALT_LBA);
+    h->first_usable = get_le64(sec + HDR_FIRST_USABLE);
+    h->last_usable = get_le64(sec + HDR_LAST_USABLE);
+    memcpy(h->disk_guid, sec + HDR_DISK_GUID, GPT_GUID_LEN);
 
     ent_lba = get_le64(sec + HDR_ENTRY_LBA);
     ent_count = get_le32(sec + HDR_ENTRY_COUNT);
     ent_size = get_le32(sec + HDR_ENTRY_SIZE);
     want = get_le32(sec + HDR_ENTRY_CRC32);
 
-    if (ent_lba < 2u)
+    if (ent_lba < 2u || ent_lba > (UINT64_MAX - GPT_ARRAY_MAX) / block_size)
         return GPT_ERR_UNSUPPORTED;
     /* Requiring the entry size to divide the block size is what guarantees no
      * entry ever straddles a block boundary, which in turn is what lets the
@@ -241,6 +225,8 @@ int gpt_parse(gpt_table *t, gpt_read_fn read, void *ctx, uint32_t block_size)
     }
     if ((crc ^ 0xFFFFFFFFu) != want)
         return GPT_ERR_CRC;
+    if (fn == NULL)
+        return GPT_OK;
 
     /* Pass 2: decode. */
     per_block = block_size / ent_size;
@@ -257,33 +243,64 @@ int gpt_parse(gpt_table *t, gpt_read_fn read, void *ctx, uint32_t block_size)
              * only be checked by reasoning is the kind this tree does not
              * leave to the reader (or to clang-tidy). */
             const uint8_t *e = sec + ((size_t)j * ent_size);
-            gpt_part *p;
+            gpt_part p;
             unsigned k;
 
             idx++;
             if (guid_is_zero(e + ENT_TYPE_GUID))
                 continue;
-            if (t->count >= t->cap) {
-                t->truncated = 1;
-                continue;
-            }
-            p = &t->parts[t->count++];
-            p->number = idx;
-            memcpy(p->type, e + ENT_TYPE_GUID, GPT_GUID_LEN);
-            memcpy(p->unique, e + ENT_UNIQUE_GUID, GPT_GUID_LEN);
-            p->start_lba = get_le64(e + ENT_START_LBA);
-            p->end_lba = get_le64(e + ENT_END_LBA);
+            p.number = idx;
+            memcpy(p.type, e + ENT_TYPE_GUID, GPT_GUID_LEN);
+            memcpy(p.unique, e + ENT_UNIQUE_GUID, GPT_GUID_LEN);
+            p.start_lba = get_le64(e + ENT_START_LBA);
+            p.end_lba = get_le64(e + ENT_END_LBA);
             /* The name is copied verbatim, terminator or not: identification
              * is p2's half of DESIGN Section 3, and deciding what the units
              * mean is gpt_name_eq's job, not the decoder's. Entirely inside
              * the entry, since ENT_SIZE_MIN is 128 and the field ends at
              * byte 127. */
             for (k = 0; k < GPT_NAME_LEN; k++)
-                p->name[k] = get_le16(e + ENT_NAME + (size_t)k * 2u);
+                p.name[k] = get_le16(e + ENT_NAME + (size_t)k * 2u);
+            fn(cb_ctx, &p);
         }
     }
 
     return GPT_OK;
+}
+
+/* gpt_parse's sink: the caller's fixed table, with the overflow counted
+ * rather than written. */
+static void table_add(void *cb_ctx, const gpt_part *p)
+{
+    gpt_table *t = cb_ctx;
+
+    if (t->count >= t->cap) {
+        t->truncated = 1;
+        return;
+    }
+    t->parts[t->count++] = *p;
+}
+
+int gpt_parse(gpt_table *t, gpt_read_fn read, void *ctx, uint32_t block_size)
+{
+    gpt_header h;
+    int rc;
+
+    if (t == NULL || t->parts == NULL || t->cap == 0 || read == NULL)
+        return GPT_ERR_BAD_ARG;
+
+    t->count = 0;
+    t->truncated = 0;
+    t->first_usable = 0;
+    t->last_usable = 0;
+
+    /* The primary header is always LBA 1, whatever the block size. The
+     * usable range is copied whatever the outcome, as it always was: set
+     * once the header's CRC passed, zero before that. */
+    rc = gpt_read_at(read, ctx, block_size, 1, &h, table_add, t);
+    t->first_usable = h.first_usable;
+    t->last_usable = h.last_usable;
+    return rc;
 }
 
 const gpt_part *gpt_find_start(const gpt_table *t, uint64_t start_lba)
@@ -297,17 +314,4 @@ const gpt_part *gpt_find_start(const gpt_table *t, uint64_t start_lba)
             return &t->parts[i];
     }
     return NULL;
-}
-
-int gpt_has_role(const gpt_table *t, part_role role)
-{
-    uint32_t i;
-
-    if (t == NULL)
-        return 0;
-    for (i = 0; i < t->count; i++) {
-        if (gpt_part_is_role(&t->parts[i], role))
-            return 1;
-    }
-    return 0;
 }

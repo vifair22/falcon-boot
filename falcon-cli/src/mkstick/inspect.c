@@ -2,19 +2,22 @@
  *
  * The point of this command is to answer "will the loader recognise this stick,
  * and why not" without booting anything. So it deliberately runs the LOADER'S
- * OWN parsers rather than a second opinion: falcon-core/src/part/part.c reads
- * the GPT, falcon-core/src/luks reads the LUKS2 headers,
- * falcon-core/src/fs/exfat.c reads p2. All three are EFI-free by construction
- * (every device access is a byte-read callback), so the code that answers here
- * is the code that will answer at boot. A separate implementation could agree
- * with the disk and still disagree with the loader, which is the only
- * disagreement that matters.
+ * OWN parsers rather than a second opinion: falcon-core/src/part/table.c reads
+ * the table (MBR or GPT), falcon-core/src/ident the identity records,
+ * falcon-core/src/luks the LUKS2 headers and tokens, falcon-core/src/fs the
+ * filesystems. All are EFI-free by construction (every device access is a
+ * byte-read callback), so the code that answers here is the code that will
+ * answer at boot.
  *
- * It writes nothing, opens nothing for writing, and needs no privileges for
- * three of the four partitions. p1 is the exception: FAT is the one
- * filesystem this repo has no reader for (the firmware supplies it at boot),
- * so listing the ESP means a read-only loop mount, and that needs root. When
- * it cannot, it says so rather than reporting a pass it did not perform.
+ * What a partition is comes from its identity record (DESIGN Section 3.1),
+ * never from its number or its type: the boot partition's record names the
+ * install, and every other partition is judged by whether it carries the
+ * same install ID. The BIOS stages are found the way the loaders find them:
+ * stage 2 where stage 1 says, stage 3 where the boot record says.
+ *
+ * It writes nothing and opens nothing for writing. Listing the ESP's files
+ * is a read-only loop mount, which needs root; without it, it says so rather
+ * than reporting a pass it did not perform.
  */
 
 #include <mkstick/mkstick.h>
@@ -33,12 +36,19 @@
 #include <mkstick/bioscore.h>
 #include <mkstick/cleanup.h>
 #include <mkstick/disk.h>
+#include <mkstick/records.h>
 #include <mkstick/shimname.h>
 
 #include <fs/exfat.h>
 #include <fs/fs.h>
+#include <ident/ident.h>
 #include <luks/luks.h>
+#include <media/nextboot.h>
 #include <part/part.h>
+#include <part/table.h>
+
+/* Where stage 1 keeps stage 2's location (DESIGN Section 3.3). */
+#include <falcon-bios/src/start/biosdefs.h>
 
 static const cli_opt status_opts[] = {
     { "no-esp", CLI_OPT_FLAG, 0, NULL,
@@ -117,7 +127,7 @@ static void guid_text(const uint8_t *g, char *out, size_t cap)
  * hostile name off somebody's disk cannot scribble on this report. Nothing
  * ever matches on the result - that is gpt_name_eq's job, over the raw
  * units. */
-static void name_text(const gpt_part *p, char *out, size_t cap)
+static void name_text(const part_entry *p, char *out, size_t cap)
 {
     size_t n = 0;
     unsigned i;
@@ -145,7 +155,7 @@ static const char *kdf_name(luks_kdf_type k)
     return "unknown";
 }
 
-static void check_luks(tally *t, const char *path, const gpt_part *p,
+static void check_luks(tally *t, const char *path, const part_entry *p,
                        uint32_t sector, int want_pbkdf2)
 {
     static char json[LUKS_JSON_CAP];
@@ -215,17 +225,6 @@ static void check_luks(tally *t, const char *path, const gpt_part *p,
  * rest of this file uses the loader's parsers: the question is not "what does
  * this partition hold" but "what will the boot menu make of it", and the only
  * way to answer that is with the code that will be asked. */
-
-static const uint8_t luks2_magic[6] = { 'L', 'U', 'K', 'S', 0xba, 0xbe };
-
-static int shelf_is_luks(disk_io *io)
-{
-    uint8_t blk[512];
-
-    if (disk_io_read(io, 0, sizeof blk, blk) != 0)
-        return 0;
-    return memcmp(blk, luks2_magic, sizeof luks2_magic) == 0;
-}
 
 /* Counts what is in the UKI directory and reports the two facts that decide
  * whether this shelf can boot anything: a *.efi to launch, and the private
@@ -359,7 +358,8 @@ static int find_child(exfat_vol *v, exfat_dir *d, const char *name,
     return (rc < 0) ? rc : 0;
 }
 
-static void check_iso_library(tally *t, const char *path, const gpt_part *p,
+static void check_iso_library(tally *t, const char *path,
+                              const part_entry *p,
                               uint32_t sector)
 {
     static exfat_vol vol;
@@ -426,11 +426,11 @@ static void check_iso_library(tally *t, const char *path, const gpt_part *p,
     disk_io_close(&io);
 }
 
-/* ---- p1: the ESP ----
+/* ---- the ESP ----
  *
- * The only check that needs privileges, and the only one that goes through
- * the kernel rather than through a parser in this repo, because FAT is what
- * the firmware reads for us at boot and there is no in-repo reader to reuse.
+ * The only check that needs privileges: the files are listed through a
+ * read-only loop mount of the boot partition, because this is what the
+ * firmware reads, and the kernel's FAT is the reader nearest to it.
  */
 
 static void esp_file(tally *t, const char *mnt, const char *rel,
@@ -452,9 +452,10 @@ static void esp_file(tally *t, const char *mnt, const char *rel,
           util_format_size((uint64_t)st.st_size, size, sizeof size), what);
 }
 
-static void status_check_esp(tally *t, mks_disk *d)
+static void status_check_esp(tally *t, mks_disk *d, unsigned number)
 {
     char tmpl[] = "/tmp/falcon-mkstick-esp.XXXXXX";
+    char node[MKS_PATH_MAX];
     char shim_path[MKS_PATH_MAX];
     char next_stage[SHIM_NEXT_STAGE_MAX];
     char mm_name[SHIM_NEXT_STAGE_MAX];
@@ -462,8 +463,7 @@ static void status_check_esp(tally *t, mks_disk *d)
     int mounted = 0;
 
     if (geteuid() != 0) {
-        skip(t, "listing p1 needs root: FAT is the one filesystem this repo "
-                "has no reader for, so it has to be loop-mounted");
+        skip(t, "listing the ESP needs root: it is loop-mounted read-only");
         return;
     }
     if (mkdtemp(tmpl) == NULL) {
@@ -471,11 +471,13 @@ static void status_check_esp(tally *t, mks_disk *d)
         return;
     }
 
-    if (disk_attach(d) != CLI_OK || disk_settle(d) != CLI_OK) {
+    if (disk_attach(d) != CLI_OK ||
+        disk_partition_name(d->base, number, node, sizeof node) != CLI_OK ||
+        disk_settle_node(node) != CLI_OK) {
         check(t, 0, "%s", cli_error_msg());
         goto out;
     }
-    if (proc_runl_quiet("mount", "-o", "ro", d->part[0], tmpl, PROC_END) != CLI_OK) {
+    if (proc_runl_quiet("mount", "-o", "ro", node, tmpl, PROC_END) != CLI_OK) {
         check(t, 0, "%s", cli_error_msg());
         goto out;
     }
@@ -525,62 +527,133 @@ out:
 
 /* ---- the BIOS stages ----
  *
- * Read by their magic numbers rather than compared with a build: status is
- * read-only and runs where no build may be. Stage 2 carries "BOS2" four bytes
- * in (what stage 1 checks before it jumps) and stage 3 starts with "BOSZ"
- * (what stage 2 checks), at the LBAs falcon-bios/src/start/biosdefs.h fixes.
- * Nonzero when both are there. */
-#define STATUS_STAGE2_LBA 34u
-#define STATUS_STAGE3_LBA 98u
+ * Found the way the loaders find them, not at numbers written here: stage 1
+ * carries stage 2's LBA and length, stage 2 starts with the gate whose magic
+ * ("BOS2", four bytes in) stage 1 checks, and stage 3 starts with "BOSZ" at
+ * the sector the boot record names. Read by magic rather than compared with
+ * a build: status is read-only and runs where no build may be. */
 
-static int bios_stages_present(const mks_disk *d)
+static void check_bios(tally *t, const mks_disk *d, const mks_records *r,
+                       int boot)
 {
-    uint8_t s2[512];
-    uint8_t s3[512];
+    uint8_t mbr[BIOS_SECTOR_BYTES];
+    uint8_t sec[BIOS_SECTOR_BYTES];
+    uint64_t s2_lba = 0;
+    uint64_t s2_n = 0;
+    uint64_t first = 0;
+    uint32_t i;
     disk_io io;
-    int ok;
 
-    if (d->sector != 512u)
-        return 0;
-    if (disk_io_open(&io, d->path, 0, d->size) != CLI_OK)
-        return 0;
-    ok = disk_io_read(&io, (uint64_t)STATUS_STAGE2_LBA * 512u, sizeof s2,
-                      s2) == 0 &&
-         disk_io_read(&io, (uint64_t)STATUS_STAGE3_LBA * 512u, sizeof s3,
-                      s3) == 0 &&
-         memcmp(s2 + 4, "BOS2", 4) == 0 && memcmp(s3, "BOSZ", 4) == 0;
+    if (d->sector != BIOS_SECTOR_BYTES && d->sector != BIOS_SECTOR_MAX) {
+        skip(t, "%u-byte sectors: the BIOS route reads 512- and 4096-byte "
+             "ones", d->sector);
+        return;
+    }
+    if (disk_io_open(&io, d->path, 0, d->size) != CLI_OK) {
+        check(t, 0, "%s", cli_error_msg());
+        return;
+    }
+    if (disk_io_read(&io, 0, sizeof mbr, mbr) != 0) {
+        check(t, 0, "LBA 0 could not be read");
+        disk_io_close(&io);
+        return;
+    }
+    if (!bioscore_stage1_fields(mbr, STAGE1_S2_LBA_OFF, STAGE1_S2_SECTORS_OFF,
+                                &s2_lba, &s2_n)) {
+        note(t, "not installed (LBA 0 names no stage 2); `mkstick bios` puts "
+                "it on");
+        disk_io_close(&io);
+        return;
+    }
+    /* The first partition stage 2 must end before is the first real one:
+     * `mkstick bios --reserve`'s partition covers stage 2 on purpose. */
+    for (i = 0; i < r->table.count; i++) {
+        if (!bioscore_is_reserve(&r->table, &r->parts[i]) &&
+            (first == 0u || r->parts[i].start_lba < first))
+            first = r->parts[i].start_lba;
+    }
+    check(t, 1, "stage 1 in LBA 0 names stage 2 at LBA %llu, %llu sector(s)",
+          (unsigned long long)s2_lba, (unsigned long long)s2_n);
+    check(t, s2_lba + s2_n <= first,
+          "stage 2 ends before the first partition (LBA %llu)",
+          (unsigned long long)first);
+    check(t, disk_io_read(&io, s2_lba * d->sector, sizeof sec,
+                          sec) == 0 && memcmp(sec + 4, "BOS2", 4) == 0,
+          "stage 2 is at LBA %llu", (unsigned long long)s2_lba);
+
+    if (boot < 0) {
+        check(t, 0, "no boot partition to hold stage 3");
+    } else {
+        const part_entry *bp = &r->parts[boot];
+        const ident_rec *rec = &r->recs[boot].rec;
+        uint64_t s3 = bp->start_lba + rec->stage3_sector;
+
+        check(t, disk_io_read(&io, s3 * d->sector, sizeof sec,
+                              sec) == 0 && memcmp(sec, "BOSZ", 4) == 0,
+              "stage 3 is at sector %u of p%u (LBA %llu)",
+              (unsigned)rec->stage3_sector, bp->number,
+              (unsigned long long)s3);
+        if (rec->marker_sector != 0u) {
+            uint64_t m = bp->start_lba + rec->marker_sector;
+            size_t k;
+            int zero = 1;
+
+            if (disk_io_read(&io, m * d->sector, sizeof sec,
+                             sec) != 0) {
+                check(t, 0, "the marker sector could not be read");
+            } else {
+                for (k = 0; k < sizeof sec; k++)
+                    zero &= (sec[k] == 0u);
+                if (zero)
+                    log_info("  %-4s next-boot marker (p%u sector %u): empty",
+                             "--", bp->number, (unsigned)rec->marker_sector);
+                else if (nextboot_sector_is_marker(sec, sizeof sec))
+                    note(t, "next-boot marker (p%u sector %u) is set",
+                         bp->number, (unsigned)rec->marker_sector);
+                else
+                    check(t, 0, "the marker sector (p%u sector %u) holds "
+                                "something that is not a marker",
+                          bp->number, (unsigned)rec->marker_sector);
+            }
+        }
+    }
     disk_io_close(&io);
-    return ok;
 }
 
 /* ---- the command ---- */
 
-/* p2 is named as well as typed, so this takes the whole entry: its Microsoft
- * basic data type is shared with every Windows data partition and identifies
- * nothing by itself (DESIGN Section 3). */
-static const char *role_text(const gpt_part *p)
+static void type_text(const part_table *t, const part_entry *p, char *out,
+                      size_t cap)
 {
-    if (gpt_part_is_role(p, PART_ROLE_ISO))
-        return "falcon ISO library";
-    if (gpt_part_is_role(p, PART_ROLE_SHELF))
-        return "falcon UKI shelf";
-    if (gpt_guid_eq(p->type, gpt_guid_esp))
-        return "EFI system partition";
-    return NULL;
+    if (t->id.kind == PART_KIND_MBR) {
+        (void)snprintf(out, cap, "MBR type 0x%02x", p->mbr_type);
+        return;
+    }
+    if (gpt_guid_eq(p->type_guid, gpt_guid_esp))
+        (void)snprintf(out, cap, "EFI system");
+    else if (gpt_guid_eq(p->type_guid, falcon_guid_boot))
+        (void)snprintf(out, cap, "falcon boot");
+    else if (gpt_guid_eq(p->type_guid, falcon_guid_shelf))
+        (void)snprintf(out, cap, "falcon shelf");
+    else if (gpt_guid_eq(p->type_guid, gpt_guid_msbasic))
+        (void)snprintf(out, cap, "Microsoft basic data");
+    else if (bioscore_is_reserve(t, p))
+        (void)snprintf(out, cap, "BIOS boot (stage 2)");
+    else
+        guid_text(p->type_guid, out, cap);
 }
 
 static cli_status status_run(const cli_args *a)
 {
-    gpt_part parts[32];
-    gpt_table table;
+    static mks_records r;
     mks_disk disk;
-    disk_io io;
     tally t;
     cli_status rc;
-    int gpt_rc;
     uint32_t i;
-    uint32_t reserved = 0;
-    int has_esp = 0;
+    int boot;
+    int roles[4] = { 0, 0, 0, 0 };
+    char idhex[33];
+    char dtext[PART_DISK_ID_TEXT];
 
     memset(&t, 0, sizeof t);
 
@@ -592,133 +665,126 @@ static cli_status status_run(const cli_args *a)
         return rc;
     disk_describe(&disk);
 
-    memset(&table, 0, sizeof table);
-    table.parts = parts;
-    table.cap = (uint32_t)(sizeof parts / sizeof parts[0]);
-
-    rc = disk_io_open(&io, disk.path, 0, disk.size);
+    rc = records_read(&r, disk.path, disk.sector, disk.size);
     if (rc != CLI_OK)
         return rc;
-    gpt_rc = gpt_parse(&table, disk_io_read, &io, disk.sector);
-    disk_io_close(&io);
-
-    if (gpt_rc != GPT_OK)
+    if (r.rc != PART_OK)
         return set_error(CLI_ERR_INVALID,
-                         "%s carries no usable GPT (gpt_parse returned %d)",
-                         disk.path, gpt_rc);
+                         "%s carries no usable partition table "
+                         "(part_read_table returned %d)", disk.path, r.rc);
 
+    part_disk_id_format(&r.table.id, dtext);
     cli_log_blank();
-    log_info("GPT (DESIGN Section 3)");
-    /* `mkstick bios --reserve`'s partition over the gap is this tool's own
-     * and not one of the four, so it is not counted against them. */
-    for (i = 0; i < table.count; i++) {
-        if (bioscore_is_reserve(&table.parts[i]))
-            reserved++;
-        if (gpt_guid_eq(table.parts[i].type, gpt_guid_esp))
-            has_esp = 1;
+    log_info("partitions (DESIGN Sections 3.1, 3.2): %s", dtext);
+    if (r.table.used_backup)
+        note(&t, "the primary GPT failed its CRC; read from the backup");
+
+    /* The boot partition names the install; everything else is measured
+     * against it. */
+    boot = records_boot(&r);
+    if (boot >= 0) {
+        records_id_hex(r.recs[boot].rec.install_id, idhex);
+        check(&t, 1, "install ID %s (from p%u's boot record)", idhex,
+              r.parts[boot].number);
+    } else {
+        check(&t, 0, "no partition carries a boot record; nothing names "
+                     "this install");
     }
-    /* A stick with no ESP is `mkstick create --bios-only`'s: three
-     * partitions, slot 1 empty, and falcon-bios the only way in. */
-    if (table.count - reserved != (has_esp ? MKS_PARTS : MKS_PARTS - 1u))
-        note(&t, "%u partitions, not the %s DESIGN Section 3 describes",
-             table.count - reserved,
-             has_esp ? "four" : "three of a BIOS-only stick");
-    for (i = 0; i < table.count; i++) {
-        const gpt_part *p = &table.parts[i];
-        const char *role = role_text(p);
-        char guid[40];
+
+    for (i = 0; i < r.table.count; i++) {
+        const part_entry *p = &r.parts[i];
+        const mks_rec *rec = &r.recs[i];
         char size[32];
+        char type[48];
+        char name[GPT_NAME_LEN + 1u];
+        char line[256];
         uint64_t bytes = (p->end_lba - p->start_lba + 1u) * disk.sector;
 
-        char name[GPT_NAME_LEN + 1u];
-
-        guid_text(p->unique, guid, sizeof guid);
-        /* The name is reported for every partition, not just p2, because p2's
-         * name is now part of what identifies it: when the ISO library check
-         * below fails, the first question is what the name actually says. */
+        type_text(&r.table, p, type, sizeof type);
         name_text(p, name, sizeof name);
-        if (role != NULL)
-            check(&t, 1, "p%u  %-22s %10s  name %-12s PARTUUID %s", p->number,
-                  role, util_format_size(bytes, size, sizeof size), name,
-                  guid);
-        else if (bioscore_is_reserve(p))
-            check(&t, 1, "p%u  %-22s %10s  name %-12s PARTUUID %s", p->number,
-                  "falcon-bios's gap", util_format_size(bytes, size, sizeof size),
-                  name, guid);
-        else {
-            char type[40];
+        (void)snprintf(line, sizeof line, "p%-2u LBA %-10llu %10s  %-20s %s",
+                       p->number, (unsigned long long)p->start_lba,
+                       util_format_size(bytes, size, sizeof size), type,
+                       name);
 
-            guid_text(p->type, type, sizeof type);
-            check(&t, p->number == 4u,
-                  "p%u  %-22s %10s  name %-12s PARTUUID %s", p->number,
-                  (p->number == 4u) ? "Linux LUKS (root)" : type,
-                  util_format_size(bytes, size, sizeof size), name, guid);
+        if (rec->state == REC_OK) {
+            char hex[33];
+
+            records_id_hex(rec->rec.install_id, hex);
+            if ((unsigned)rec->rec.role < 4u)
+                roles[rec->rec.role]++;
+            if (boot >= 0 && !ident_same_install(&rec->rec,
+                                                 &r.recs[boot].rec))
+                check(&t, 0, "%s  %s record (%s), install ID %s: a "
+                             "different install", line,
+                      ident_role_name(rec->rec.role), rec->where, hex);
+            else
+                check(&t, 1, "%s  %s (%s)", line,
+                      ident_role_name(rec->rec.role), rec->where);
+        } else if (rec->state == REC_BAD) {
+            check(&t, 0, "%s  a %s that does not decode", line,
+                  rec->where != NULL ? rec->where : "record");
+        } else {
+            log_info("  %-4s %s  no record%s", "--", line,
+                     rec->luks ? " (LUKS2)" : "");
         }
     }
-    check(&t, gpt_has_role(&table, PART_ROLE_ISO),
-          "the ISO library is Microsoft-basic-data typed and named %s (the "
-          "loader matches on that pair)", MKS_LABEL_P2);
-    check(&t, gpt_has_role(&table, PART_ROLE_SHELF),
-          "a falcon-typed UKI shelf is present (an unrecognised type, so "
-          "Windows never offers to format it)");
+    check(&t, roles[IDENT_ROLE_LIBRARY] >= 1, "an ISO library (role library)");
+    check(&t, roles[IDENT_ROLE_SHELF] >= 1, "a UKI shelf (role shelf)");
+    if (roles[IDENT_ROLE_BOOT] > 1 || roles[IDENT_ROLE_LIBRARY] > 1 ||
+        roles[IDENT_ROLE_SHELF] > 1)
+        note(&t, "a role appears on more than one partition; the loaders "
+                 "take the first");
 
-    for (i = 0; i < table.count; i++) {
-        const gpt_part *p = &table.parts[i];
+    for (i = 0; i < r.table.count; i++) {
+        const part_entry *p = &r.parts[i];
+        const mks_rec *rec = &r.recs[i];
 
-        if (gpt_part_is_role(p, PART_ROLE_ISO)) {
+        if (rec->state == REC_OK && rec->rec.role == IDENT_ROLE_LIBRARY) {
             cli_log_blank();
-            log_info("p%u: the exFAT ISO library (DESIGN Sections 6.2, 8.1)",
+            log_info("p%u: the ISO library (DESIGN Sections 6.2, 8.1)",
                      p->number);
             check_iso_library(&t, disk.path, p, disk.sector);
-        } else if (gpt_part_is_role(p, PART_ROLE_SHELF)) {
-            disk_io shelf_io;
-
+        } else if (rec->state == REC_OK && rec->rec.role == IDENT_ROLE_SHELF) {
             cli_log_blank();
             log_info("p%u: the UKI shelf (DESIGN Sections 3, 5)", p->number);
-            if (disk_io_open(&shelf_io, disk.path, p->start_lba * disk.sector,
-                             (p->end_lba - p->start_lba + 1u) * disk.sector)
-                != CLI_OK) {
-                check(&t, 0, "%s", cli_error_msg());
+            if (rec->luks) {
+                check_luks(&t, disk.path, p, disk.sector, 1);
             } else {
-                /* Which of the two shapes DESIGN Section 3 allows this is,
-                 * decided the same way the loader decides it: by looking for
-                 * the LUKS2 magic, not by trusting a flag somewhere. */
-                int encrypted = shelf_is_luks(&shelf_io);
+                disk_io shelf_io;
 
-                if (encrypted) {
-                    disk_io_close(&shelf_io);
-                    check_luks(&t, disk.path, p, disk.sector, 1);
+                if (disk_io_open(&shelf_io, disk.path,
+                                 p->start_lba * disk.sector,
+                                 (p->end_lba - p->start_lba + 1u) *
+                                     disk.sector) != CLI_OK) {
+                    check(&t, 0, "%s", cli_error_msg());
                 } else {
                     check_plain_shelf(&t, &shelf_io);
                     disk_io_close(&shelf_io);
                 }
             }
-        } else if (p->number == 4u) {
+        } else if (rec->state == REC_NONE && rec->luks) {
+            /* A LUKS2 volume with no record is the root the personal OS
+             * opens itself (p4 on a stick); the loaders never read it. */
             cli_log_blank();
-            log_info("p%u: LUKS2 root and home", p->number);
+            log_info("p%u: LUKS2 with no record (root and home)", p->number);
             check_luks(&t, disk.path, p, disk.sector, 0);
         }
     }
 
     cli_log_blank();
-    log_info("falcon-bios (docs/notes/bios-route.md)");
-    if (bios_stages_present(&disk))
-        check(&t, 1, "stages 2 and 3 are in the gap (LBA %u and %u)",
-              STATUS_STAGE2_LBA, STATUS_STAGE3_LBA);
-    else if (has_esp)
-        note(&t, "not installed; `mkstick bios` puts it on");
-    else
-        check(&t, 0, "not installed, and a stick with no ESP boots through "
-                     "nothing else; run `mkstick bios`");
+    log_info("falcon-bios (DESIGN Section 3.3)");
+    check_bios(&t, &disk, &r, boot);
 
     cli_log_blank();
-    log_info("p1: the ESP and the Secure Boot chain (DESIGN Section 4)");
-    if (!has_esp)
-        check(&t, 1, "none: a BIOS-only stick (mkstick create --bios-only)");
+    log_info("the ESP and the Secure Boot chain (DESIGN Section 4)");
+    if (boot < 0 || r.table.id.kind != PART_KIND_GPT ||
+        !gpt_guid_eq(r.parts[boot].type_guid, gpt_guid_esp))
+        check(&t, 0, "the boot partition is not an EFI System Partition");
     else if (cli_flag(a, "no-esp"))
         skip(&t, "skipped (--no-esp)");
     else
-        status_check_esp(&t, &disk);
+        status_check_esp(&t, &disk, r.parts[boot].number);
 
     cli_log_blank();
     log_info("%u checks passed, %u warnings, %u failures, %u skipped",
@@ -737,10 +803,12 @@ const cli_cmd mks_cmd_status = {
     status_opts,
     sizeof status_opts / sizeof status_opts[0],
     1, 1,
-    "Read-only. The GPT, LUKS2 and exFAT checks are performed by the loader's\n"
-    "own parsers (falcon-core/src/part/part.c, falcon-core/src/luks,\n"
-    "falcon-core/src/fs/exfat.c), so they answer the question the boot menu\n"
-    "will ask. Listing p1 needs a read-only loop mount, and so\n"
-    "needs root; --no-esp skips it.\n",
+    "Read-only. The table (MBR or GPT), the identity records, LUKS2 and the\n"
+    "filesystems are read by the loader's own parsers (falcon-core/src/part,\n"
+    "ident, luks, fs), so they answer the question the boot menu will ask.\n"
+    "The install ID is the boot partition's; a partition carrying another is\n"
+    "flagged. The BIOS stages are checked where stage 1 and the boot record\n"
+    "say they are. Listing the ESP's files needs a read-only loop mount, and\n"
+    "so needs root; --no-esp skips it.\n",
     status_run
 };

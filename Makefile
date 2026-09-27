@@ -393,7 +393,11 @@ check-tools:
 
 # Static analysis gate: cppcheck + gcc -fanalyzer + clang-tidy, baseline
 # managed in docs/notes/analyze-baseline.txt (see docs/notes/analyze.md).
-analyze:
+# Built first: cppcheck reads compile_commands.json, whose entries include the
+# generated blob sources (build/gen/*_blob.c). Without them it loads no
+# project, checks nothing and reports zero findings, which is how the gate
+# passed for a week without running cppcheck at all (found 2026-09-26).
+analyze: all bios
 	tools/analyze.sh
 
 # ---- compile_commands.json ----

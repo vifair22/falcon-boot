@@ -122,7 +122,7 @@ static int cftable(const uint8_t *p, const uint8_t *end, pcc_cis *into)
 int pcc_cis_parse(const uint8_t *cis, size_t n, pcc_cis *out)
 {
     const uint8_t *p = cis;
-    const uint8_t *end = cis + n;
+    const uint8_t *end;
     int have_config = 0;
     int have_any = 0;
     int have_fixed = 0;
@@ -131,6 +131,7 @@ int pcc_cis_parse(const uint8_t *cis, size_t n, pcc_cis *out)
 
     if (cis == (const uint8_t *)0 || out == (pcc_cis *)0)
         return -1;
+    end = cis + n;
     out->funcid = 0xFFu;
     out->config_base = 0;
     fixed.funcid = 0xFFu;

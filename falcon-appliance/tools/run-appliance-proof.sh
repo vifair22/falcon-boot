@@ -48,6 +48,7 @@
 set -euo pipefail
 
 cd "$(dirname "$0")/../.."
+. tools/rig-part.sh
 
 OUT=build/appliance
 IMG="$OUT/appliance-stick.img"
@@ -105,6 +106,9 @@ done
     echo "ERROR: $IMG missing (run: falcon-appliance/tools/mk-test-appliance-stick.sh)" >&2
     exit 1
 }
+# p2 is the partition whose identity record says library (DESIGN Section
+# 3.1), read off the image before anything attaches it.
+P2="p$(rig_part "$IMG" library)"
 
 # ---- helpers ----
 
@@ -346,15 +350,15 @@ attach_img() {
     for j in 1 2 3 4 5; do
         l=$(sudo losetup --show -f -P "$IMG")
         for i in $(seq 1 20); do
-            if [[ -b "${l}p2" ]]; then
+            if [[ -b "${l}$P2" ]]; then
                 break
             fi
             sudo udevadm settle 2>/dev/null || true
             sleep 0.25
         done
-        if [[ -b "${l}p2" ]]; then
+        if [[ -b "${l}$P2" ]]; then
             sudo blockdev --flushbufs "$l" 2>/dev/null || true
-            sudo blockdev --flushbufs "${l}p2" 2>/dev/null || true
+            sudo blockdev --flushbufs "${l}$P2" 2>/dev/null || true
             printf '%s\n' "$l"
             return 0
         fi
@@ -389,7 +393,7 @@ detach_img() {
 LOOP=$(attach_img)
 sudo udevadm settle 2>/dev/null || sleep 1
 MNT=$(mktemp -d)
-sudo mount -o ro "${LOOP}p2" "$MNT"
+sudo mount -o ro "${LOOP}$P2" "$MNT"
 if [[ -f "$MNT/falcon/blessed/manifest" ]]; then
     sudo umount "$MNT"; rmdir "$MNT"; MNT=
     detach_img "$LOOP"; LOOP=
@@ -591,9 +595,9 @@ echo
 echo "== checking p2 on the host"
 LOOP=$(attach_img)
 sudo udevadm settle 2>/dev/null || sleep 1
-P2_UUID=$(sudo blkid -s UUID -o value "${LOOP}p2")
+P2_UUID=$(sudo blkid -s UUID -o value "${LOOP}$P2")
 MNT=$(mktemp -d)
-sudo mount -o ro,uid="$(id -u)",gid="$(id -g)" "${LOOP}p2" "$MNT"
+sudo mount -o ro,uid="$(id -u)",gid="$(id -g)" "${LOOP}$P2" "$MNT"
 
 UKI="$MNT/falcon/blessed/$BLESSED_UKI"
 [[ -f "$UKI" ]] || fail "no $BLESSED_UKI on p2"

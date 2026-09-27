@@ -73,10 +73,12 @@
  *     nothing here would use one), so the decrypted-key window cannot be
  *     reached from outside the machine.
  *
- * The partitions are identified out of the GPT through
- * falcon-core/src/part/part.c, the same parser AND the same matcher
- * (part_match_role) the loader uses, so the appliance and the loader cannot
- * disagree about which partition is which. The manifest is read through
+ * The partitions are identified by their records (DESIGN Section 3.1): the
+ * loader hands over the stick's install ID as a credential, and only the
+ * exFAT library and the LUKS2 shelf whose records carry it are opened
+ * (stickid.c), read with the loader's own record, exFAT and LUKS2 readers,
+ * so the appliance and the loader cannot disagree about which partition is
+ * which, and a second stick plugged in beside this one is never touched. The manifest is read through
  * falcon-core/src/manifest/manifest.c, the same parser the loader will use, so
  * "already blessed" means here exactly what it will mean at the menu. Each ISO
  * is classified through falcon-cli/src/sign/isoprobe.c and
@@ -96,6 +98,8 @@
 
 
 #include "appliance.h"
+
+#include <ident/ident.h>
 
 #include <sign/sign.h>
 
@@ -273,11 +277,22 @@ int main(void)
 
     load_modules();
 
-    if (!find_stick(&parts)) {
-        say("ERROR: no falcon stick found (need an exFAT p2 and a LUKS p3 on\n"
-            "       one disk). Nothing was unlocked.\n");
+    switch (find_stick(&parts)) {
+    case STICK_FOUND:
+        break;
+    case STICK_NO_ID:
+        say("ERROR: the loader passed no install ID (" IDENT_CRED ").\n"
+            "       Start the appliance from the falcon-boot menu. Nothing "
+            "was unlocked.\n");
+        finish(0, 1);
+        break;
+    case STICK_NOT_FOUND:
+    default:
+        say("ERROR: no ISO library and LUKS shelf carry this stick's install "
+            "ID.\n       Nothing was unlocked.\n");
         say_block_devices();
         finish(0, 1);
+        break;
     }
     say("  p2 (ISO library): %s\n  p3 (UKI shelf):   %s\n\n",
         parts.p2, parts.p3);

@@ -135,11 +135,10 @@ if [[ "$STATE_SECURE" -eq 1 ]]; then
 fi
 
 # What the guest boots from. Under OVMF that is the firmware in pflash and the
-# stick as the only disk; under SeaBIOS there is no pflash at all, and
-# falcon-bios comes off a second disk that is first in the boot order
-# (states.sh says why the stick is not that disk). i440fx rather than q35,
-# because q35 is a UEFI-era chipset and SeaBIOS on it is a combination nobody
-# ships.
+# stick as the only disk; under SeaBIOS there is no pflash at all, and the
+# stick is still the only disk: its own stage 1 in LBA 0 is what SeaBIOS
+# runs (stage-loader.sh put it there). i440fx rather than q35, because q35
+# is a UEFI-era chipset and SeaBIOS on it is a combination nobody ships.
 FIRMWARE=(-drive if=pflash,format=raw,readonly=on,file="$STATE_CODE"
           -drive if=pflash,format=raw,file="$VARS")
 DRIVES=(-drive if=none,id=stick,format=raw,file="$STICK",snapshot=on
@@ -148,9 +147,9 @@ if [[ "$STATE_BIOS" -eq 1 ]]; then
     MACHINE=(-machine pc)
     FIRMWARE=()
     # The stick keeps its id: stick_read finds it by that name, and the
-    # Windows Setup probe judges by what is read from it.
-    DRIVES=(-drive "format=raw,file=build/test-bios.img,snapshot=on"
-            -drive "id=stick,format=raw,file=$STICK,snapshot=on")
+    # Windows Setup probe judges by what is read from it. The first IDE
+    # disk, so the BIOS boots it as 0x80.
+    DRIVES=(-drive "id=stick,format=raw,file=$STICK,snapshot=on")
 fi
 
 QPID=

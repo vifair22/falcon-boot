@@ -62,8 +62,8 @@ the personal OS end to end, blessed Linux ISOs (blessed from the menu, with
 D3a (an unblessed Fedora) and D3b (an unblessed Kubuntu). Measured on real
 hardware (2026-09-23), BIOS through CSM: the personal OS end to end, p4
 unlocked from the credential with no second prompt. Measured on real
-hardware (2026-09-24), BIOS: the 32-bit stick (docs/notes/stick32.md) to its
-Arch Linux 32 personal OS on a Windows 7 era machine. Still unmeasured on
+hardware (2026-09-24), BIOS: the since-retired 32-bit stick to its Arch
+Linux 32 personal OS on a Windows 7 era machine. Still unmeasured on
 hardware: the other four BIOS routes, and any route on a processor without
 a 64-bit mode.
 
@@ -143,8 +143,11 @@ falcon-efi and falcon-bios, which never share a set, may both have a `pos/`.
     one; `fs_lookup` resolves a path. `udf.c` also carries the few record edits the Windows patch needs
     (a File Entry's extents, a Partition Descriptor's length, an anchor),
     applied to caller buffers, never to media.
-  - `luks/` LUKS2 header parse, keyslot unlock, AF merge.
-  - `part/` GPT parsing and falcon partition identification.
+  - `luks/` LUKS2 header parse, keyslot unlock, AF merge, the falcon token.
+  - `part/` MBR and GPT read as one partition table (`table.c`).
+  - `ident/` the identity record (DESIGN Section 3.1): its three encodings
+    (`ident.c`) and the `/.falcon` reader over the fs registry
+    (`identfs.c`). What a partition is, and whose, comes from here.
   - `pe/` PE/COFF header layout read from a file's bytes; the one PE walker.
   - `trust/` the boot predictions (DESIGN Section 7.8): `der`, `x509` and
     `authenticode` read an image's signature block and Authenticode hash,
@@ -154,7 +157,9 @@ falcon-efi and falcon-bios, which never share a set, may both have a `pos/`.
   - `media/` what an image is: family detection (`family.c`), the initrd cpio
     writer (`cpio.c`), `.osrel`/`.uname` reading (`osrel.c`), an ISO's own
     boot configuration (`bootcfg.c`, read through `bootfs.c` over a mounted
-    image), the extent map handed to falcon-hook (`extmap.c`) and the hooked
+    image), the extent map handed to falcon-hook (`extmap.c`), which disk
+    holds the library a map names (`extfind.c`, for the hook, winjump and
+    falcon-vdisk) and the hooked
     boot's cmdline (`hookcmd.c`), the grub.cfg D3b serves in place of
     an ISO's own (`grubcfg.c`) and the two edits that make a BSD medium boot
     itself as a memory disk (`bsdmd.c`). `survey.c` is what a menu is built
@@ -208,9 +213,11 @@ falcon-efi and falcon-bios, which never share a set, may both have a `pos/`.
   - `console/` the text menu over Simple Text Output/Input, drawn from core's
     `tui`, plus the masked passphrase prompt (`prompt.c`, its own TU so
     "what has held the secret" has a one-file answer).
-  - `discover/` the single device-discovery pass (`discover.c`) and GPT
-    identification's firmware half (`partefi.c`): enumerates the Block I/O
-    handles once, classifies each, and hands every consumer one inventory.
+  - `discover/` the single device-discovery pass (`discover.c`) and the
+    device-path half (`partefi.c`: same disk, start LBA): reads the boot
+    partition's record for the install ID, enumerates the Block I/O handles
+    once (the boot disk's first), reads each one's record, and hands every
+    consumer the rows that carry the install ID.
   - `secboot/` Secure Boot state for UX (`sb.c`) and the variable reads the
     boot predictions judge against (`trustefi.c`).
   - `bsd/` BSD media served as its own memory disk (Section 6.4; M7):
@@ -280,7 +287,9 @@ falcon-efi and falcon-bios, which never share a set, may both have a `pos/`.
   (`falcon-hook`) and i686 (`falcon-hook32`) from the same source: `src/sys.c`
   is its system calls and startup, and the only file that knows the width. It runs as `rdinit=`, reads the extent map from
   the initrd (a direct boot, or the credential sd-stub packs beside a
-  blessed wrap) or efivarfs (an older wrap), maps the ISO
+  blessed wrap) or efivarfs (an older wrap), finds the ISO library it names
+  by the `/.falcon` record at the map's LBA (core's `media/extfind.c`, with
+  exFAT alone behind the registry), maps the ISO
   read-only with dm-linear as `/dev/mapper/falcon-iso` under the ISO's label
   (a loop device when the kernel has no dm and the ISO is contiguous;
   `src/dimod.c` brings loop in from a Debian installer ISO's own pool), makes
@@ -291,15 +300,18 @@ falcon-efi and falcon-bios, which never share a set, may both have a `pos/`.
   `tools/run-hook-rig.sh` boots it under QEMU without the loader.
 - `falcon-bios/` the BIOS loader (docs/notes/bios-route.md). The image is
   opt-in and not built by `all`, and so is putting it on a stick: `mkstick
-  bios <target>` installs it, `mkstick create` does not, except with
-  `--bios-only`, which makes a stick with no ESP and no MOK that boots only
-  this way (DESIGN Section 3). A BIOS machine has
+  bios <target>` installs it, `mkstick create` does not. A BIOS machine has
   no Secure Boot, no shim and no db, so this route has no blessed path and
   installing it changes what a stick can reach (bios-route.md Section 7.3).
-  It is NOT a layout change: stage 1 goes in the 440 bytes of boot code at
-  the head of LBA 0 and stages 2 and 3 into the 2014 sectors a GPT leaves
-  between its entry array and the first 2048-aligned partition, which are
-  unallocated on every stick already written. Its host-testable C is in
+  One layout for every BIOS install (DESIGN Section 3.3): stage 1 in the
+  440 bytes of boot code at the head of LBA 0, with stage 2's place patched
+  in by the installer (LBA and length, read by AH=42h or by CHS); stage 2
+  before the first partition (LBA 34 on GPT, 1 on MBR); stage 3 and the
+  next-boot marker in the reserved sectors of the FAT `boot` partition (a
+  stick's ESP), at the sectors its identity record names. Stage 2 finds that
+  partition by record (`src/disk/bootpart.c`), and stage 3 takes only
+  partitions carrying the boot record's install ID, on any disk
+  (`src/disk/install.c`). Its host-testable C is in
   `make test` and in `compile_commands.json` like everything else: the three
   halves with no BIOS in them are `vcdcore.c` (the virtual CD's run and
   overlay arithmetic), `linuxcore.c` (the addresses the x86 boot protocol is
@@ -316,9 +328,13 @@ falcon-efi and falcon-bios, which never share a set, may both have a `pos/`.
   (`tools/run-jump-rig.sh`); its CF case runs on a QEMU that
   `tools/qemu-pcc/build-qemu.sh` builds with `falcon-pcc.c`, a model of the
   A21m's PC Card bridge, since QEMU has none. `make station` links the
-  stationary build's stage 3 (DESIGN Section 13) from
-  `apps/station/bios_main.c`: the personal OS and `src/mbr/mbr.c`, another
-  disk's own boot code started from 0x7C00, with nothing resident.
+  station's stage 3 (DESIGN Section 13) from `apps/station/bios_main.c`:
+  the personal OS off the shelf carrying its install ID and
+  `src/mbr/mbr.c`, another disk's own boot code started from 0x7C00, with
+  nothing resident. `make test-core` boots the core matrix cells (the stick
+  under both firmwares alone, beside a second stick, an MBR disk and another
+  install's records; a 4Kn stick on NVMe; the station) and judges each from
+  serial (`falcon-efi/tools/run-core-rig.sh`).
 
   `src/` is grouped by job, and a job the UEFI loader also does carries
   that module's name, so the two halves of a route sit side by side:
@@ -380,9 +396,9 @@ falcon-efi and falcon-bios, which never share a set, may both have a `pos/`.
   Haiku) as a memory disk instead, its resident `src/vfd/vfdres.S` and its
   geometry `src/vfd/vfdcore.c`. `src/mem/heap.c` is the one
   allocator, for that tail and that image. `src/disk/marker.c` takes the next-boot marker
-  (DESIGN Section 6.3.1): LBA 2047 of the boot disk, written from Linux,
-  cleared before it is believed and honoured only within ten minutes by the
-  RTC. It is the only code in falcon-bios that writes a disk (one sector,
+  (DESIGN Section 6.3.1): the sector of the boot partition its record
+  names, written from Linux by `mkstick next-boot`, cleared before it is
+  believed and honoured only within ten minutes by the RTC. It is the only code in falcon-bios that writes a disk (one sector,
   INT 13h AH=43h), and only the stick's stage 3 links it.
 
   No failure ends in a halt, which on a machine with no serial cable is a
