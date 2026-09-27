@@ -261,7 +261,8 @@ rigs, never written again as literals).
   are never written. Stage 1 reads with AH=42h when AH=41h reports the
   extensions, else by CHS from AH=08h's geometry. Jump's floppy stage 1
   keeps its own layout (`FD_S2_SECTORS_OFF` 508; stage 2 at LBA 34 of the
-  floppy).
+  floppy); its code ends at 0x1DA (`fd_code_end`, checked by the build),
+  before the record at 0x1DC.
 - **Stage 2's place:** LBA 34 on GPT (the `FALCON-BIOS` EF02 partition),
   LBA 1 on MBR; either way it must end before the first partition.
 - **The `boot` partition** is FAT (FAT32 on a stick's ESP and a station

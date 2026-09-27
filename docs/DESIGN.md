@@ -3620,15 +3620,14 @@ How each family then finds its root on the device the hook made:
 
 ### 12.5 The stationary build
 
-*The 2026-09-21 station, as built. Section 13 replaced its design on
-2026-09-26; these diagrams are redrawn as the new station is built, in the
-same commits.*
+*The 2026-09-21 station, on the core step's records and single BIOS
+layout. Section 13 replaced its design on 2026-09-26; these diagrams are
+redrawn as the new station is built, in the same commits.*
 
 Section 13's second build of each loader. Its POS route is the stick's
 (12.2.4, 12.3.7); what is new is how it gets there and the routes out to
-the machine's other systems. The UEFI build exists and 12.5.1 is traced
-from its code; the BIOS build is not built yet (Section 13's status), so
-12.5.2 is its design.
+the machine's other systems. Both builds exist (`make station`) and both
+diagrams are traced from their code.
 
 #### 12.5.1 UEFI
 
@@ -4416,9 +4415,8 @@ itself and takes them from the BIOS) enumerate their root ports in turn.
 EHCI goes first because a device that is not high speed does not enable on
 its port after a reset: `EHCI.MOD` hands that port to its companion (the
 port owner bit), and the UHCI or OHCI module after it finds the device
-there. Then and the first stick whose
-GPT is a falcon stick's (an ISO
-library or a shelf, `gpt_has_role`) is booted. It becomes the next BIOS disk
+there. Then the first stick with a partition carrying a `boot` record
+(`bootpart_find`, as stage 2 finds one) is booted. It becomes the next BIOS disk
 after the ones the BIOS has (the BDA's count at 0x475 goes up by one), not
 0x80 with the BIOS's disks moved up: falcon-bios never assumes 0x80, and
 the station's drive swap (13.4) is for chaining an OS that expects 0x80,

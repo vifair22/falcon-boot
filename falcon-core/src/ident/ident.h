@@ -24,8 +24,10 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define IDENT_BIN_OFF   0x1DCu   /* clears jump's floppy stage 1 (ends 0x1D9)
-                                    and its stage 2 length word at 0x1FC */
+#define IDENT_BIN_OFF   0x1DCu   /* clears jump's floppy stage 1 (its code
+                                    ends at 0x1DA, fd_code_end, which the
+                                    build checks) and its stage 2 length
+                                    word at 0x1FC */
 #define IDENT_BIN_LEN   32u
 #define IDENT_ID_LEN    16u
 #define IDENT_VERSION   1u

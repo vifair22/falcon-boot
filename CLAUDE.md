@@ -303,10 +303,15 @@ falcon-efi and falcon-bios, which never share a set, may both have a `pos/`.
   bios <target>` installs it, `mkstick create` does not. A BIOS machine has
   no Secure Boot, no shim and no db, so this route has no blessed path and
   installing it changes what a stick can reach (bios-route.md Section 7.3).
-  It is NOT a layout change: stage 1 goes in the 440 bytes of boot code at
-  the head of LBA 0 and stages 2 and 3 into the 2014 sectors a GPT leaves
-  between its entry array and the first 2048-aligned partition, which are
-  unallocated on every stick already written. Its host-testable C is in
+  One layout for every BIOS install (DESIGN Section 3.3): stage 1 in the
+  440 bytes of boot code at the head of LBA 0, with stage 2's place patched
+  in by the installer (LBA and length, read by AH=42h or by CHS); stage 2
+  before the first partition (LBA 34 on GPT, 1 on MBR); stage 3 and the
+  next-boot marker in the reserved sectors of the FAT `boot` partition (a
+  stick's ESP), at the sectors its identity record names. Stage 2 finds that
+  partition by record (`src/disk/bootpart.c`), and stage 3 takes only
+  partitions carrying the boot record's install ID, on any disk
+  (`src/disk/install.c`). Its host-testable C is in
   `make test` and in `compile_commands.json` like everything else: the three
   halves with no BIOS in them are `vcdcore.c` (the virtual CD's run and
   overlay arithmetic), `linuxcore.c` (the addresses the x86 boot protocol is
@@ -323,9 +328,10 @@ falcon-efi and falcon-bios, which never share a set, may both have a `pos/`.
   (`tools/run-jump-rig.sh`); its CF case runs on a QEMU that
   `tools/qemu-pcc/build-qemu.sh` builds with `falcon-pcc.c`, a model of the
   A21m's PC Card bridge, since QEMU has none. `make station` links the
-  stationary build's stage 3 (DESIGN Section 13) from
-  `apps/station/bios_main.c`: the personal OS and `src/mbr/mbr.c`, another
-  disk's own boot code started from 0x7C00, with nothing resident.
+  station's stage 3 (DESIGN Section 13) from `apps/station/bios_main.c`:
+  the personal OS off the shelf carrying its install ID and
+  `src/mbr/mbr.c`, another disk's own boot code started from 0x7C00, with
+  nothing resident.
 
   `src/` is grouped by job, and a job the UEFI loader also does carries
   that module's name, so the two halves of a route sit side by side:
@@ -387,9 +393,9 @@ falcon-efi and falcon-bios, which never share a set, may both have a `pos/`.
   Haiku) as a memory disk instead, its resident `src/vfd/vfdres.S` and its
   geometry `src/vfd/vfdcore.c`. `src/mem/heap.c` is the one
   allocator, for that tail and that image. `src/disk/marker.c` takes the next-boot marker
-  (DESIGN Section 6.3.1): LBA 2047 of the boot disk, written from Linux,
-  cleared before it is believed and honoured only within ten minutes by the
-  RTC. It is the only code in falcon-bios that writes a disk (one sector,
+  (DESIGN Section 6.3.1): the sector of the boot partition its record
+  names, written from Linux by `mkstick next-boot`, cleared before it is
+  believed and honoured only within ten minutes by the RTC. It is the only code in falcon-bios that writes a disk (one sector,
   INT 13h AH=43h), and only the stick's stage 3 links it.
 
   No failure ends in a halt, which on a machine with no serial cable is a
