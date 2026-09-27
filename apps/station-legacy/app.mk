@@ -66,4 +66,12 @@ devlink-uki: $(DEVLINK_UKI)
 test-station-legacy: station-legacy devlink-uki $(MKSTICK)
 	falcon-bios/tools/run-legacy-rig.sh
 
-.PHONY: station-legacy devlink-uki test-station-legacy
+# station-legacy on a CF card, reached through falcon jump's CF route as the
+# A21m reaches it (it cannot boot a PC Card), with the A21m's own disk behind
+# it: the menu, and Windows 2000 chained from the card
+# (falcon-bios/tools/run-cfstation-rig.sh). Needs the A21m image and the rig
+# QEMU.
+test-cfstation: station-legacy devlink-uki jump $(MKSTICK)
+	falcon-bios/tools/run-cfstation-rig.sh
+
+.PHONY: station-legacy devlink-uki test-station-legacy test-cfstation
