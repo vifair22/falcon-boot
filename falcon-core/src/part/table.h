@@ -21,6 +21,12 @@
  *     1-4 primary by slot, 5 onward logical in chain order. The chain is
  *     bounded (PART_MAX_LOGICAL) and every link must stay inside the
  *     extended partition, so a looping or escaping chain ends the walk.
+ *     The extended partition itself is listed too, as Linux lists it, with
+ *     its type byte (part_mbr_is_extended); it is a container, not a
+ *     volume, and the logicals inside it are not overlaps.
+ *   - Either table: every entry must lie inside the disk (when its length
+ *     is known), start after LBA 0, and share no block with another, or
+ *     the table is PART_ERR_CORRUPT.
  *   - Neither: PART_ERR_NO_TABLE. A floppy or superfloppy is not an error
  *     to its callers, who then treat the disk as one volume from LBA 0.
  *
@@ -75,7 +81,8 @@ typedef struct {
     uint8_t      used_backup;        /* GPT: the primary failed its CRC */
     part_disk_id id;
     uint64_t     first_usable;       /* GPT: header's range; MBR: 1 and the
-                                        last block before disk_blocks */
+                                        last block before disk_blocks, or
+                                        0 when disk_blocks is unknown */
     uint64_t     last_usable;
     uint64_t     first_start;        /* lowest partition start: what lies
                                         before it is the boot area (3.3) */
@@ -85,8 +92,9 @@ enum {
     PART_OK           =  0,
     PART_ERR_IO       = -1,
     PART_ERR_NO_TABLE = -2,  /* neither an MBR nor a GPT */
-    PART_ERR_CORRUPT  = -3,  /* GPT with both copies failing, or an MBR
-                                whose entries overlap or leave the disk */
+    PART_ERR_CORRUPT  = -3,  /* GPT with both copies failing, or either
+                                table's entries overlapping or leaving
+                                the disk */
     PART_ERR_ARG      = -4,
     PART_ERR_UNSUPPORTED = -5
 };
@@ -97,18 +105,24 @@ enum {
 int part_read_table(part_table *t, gpt_read_fn read, void *ctx,
                     uint32_t block_size, uint64_t disk_blocks);
 
+/* Nonzero for the MBR types that hold an extended chain: 0x05, 0x0F,
+ * 0x85. */
+int part_mbr_is_extended(uint8_t type);
+
 /* The entry starting at exactly this LBA, or NULL. */
 const part_entry *part_find_start(const part_table *t, uint64_t start_lba);
 
 /* Parses "gpt:<DiskGUID as text>" or "mbr:<8 hex digits>" (STATION.INI's
- * spelling) into `out`; 0 on success. And the reverse, into `buf` (at least
+ * spelling) into `out`; 0 on success, PART_ERR_ARG for anything else. The
+ * GUID is the standard 8-4-4-4-12 text, either case in; the output is
+ * lowercase. And the reverse, into `buf` (at least
  * PART_DISK_ID_TEXT bytes, NUL-terminated). */
 #define PART_DISK_ID_TEXT 42u
 int  part_disk_id_parse(const char *s, size_t len, part_disk_id *out);
 void part_disk_id_format(const part_disk_id *id, char *buf);
 
-/* Nonzero when both name the same disk. An MBR id with signature 0 names
- * nothing and never matches. */
+/* Nonzero when both name the same disk. An MBR id with signature 0, or a
+ * GPT id whose DiskGUID is all zero, names nothing and never matches. */
 int part_disk_id_eq(const part_disk_id *a, const part_disk_id *b);
 
 #endif /* FALCON_PART_TABLE_H */
