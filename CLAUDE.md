@@ -331,7 +331,10 @@ falcon-efi and falcon-bios, which never share a set, may both have a `pos/`.
   station's stage 3 (DESIGN Section 13) from `apps/station/bios_main.c`:
   the personal OS off the shelf carrying its install ID and
   `src/mbr/mbr.c`, another disk's own boot code started from 0x7C00, with
-  nothing resident.
+  nothing resident. `make test-core` boots the core matrix cells (the stick
+  under both firmwares alone, beside a second stick, an MBR disk and another
+  install's records; a 4Kn stick on NVMe; the station) and judges each from
+  serial (`falcon-efi/tools/run-core-rig.sh`).
 
   `src/` is grouped by job, and a job the UEFI loader also does carries
   that module's name, so the two halves of a route sit side by side:

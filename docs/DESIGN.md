@@ -348,6 +348,18 @@ disk is not a whole sector, so today a 4Kn disk neither unlocks nor mounts.
 Core gains one re-blocking layer under the callback, and every driver reads
 any length at any offset on either sector size.
 
+On BIOS the same holds wherever the firmware presents the disk: every
+count of the BIOS layout is of the disk's own sectors (stage 1's LBA and
+length, stage 2 at LBA 34, the record's stage 3 and marker sectors), so
+`mkstick bios` installs onto a 4Kn stick as onto any other, with stage 2
+rounded to whole 4096-byte sectors inside the same 32 KB stage 1 reads to.
+Whether a BIOS offers a 4Kn disk at all is the firmware's: SeaBIOS 1.17
+does through its NVMe driver (AH=48h reports 4096) and not through
+virtio-blk, virtio-scsi, LSI, MegaRAID or USB mass storage, which drop the
+disk, nor IDE, which QEMU refuses at 4096. The rig boots its 4Kn stick
+from NVMe under both firmwares (`make test-core`). The BIOS next-boot marker
+is one 512-byte sector by format, and a 4Kn disk has none.
+
 A BIOS reaches only so much of a disk: about 8 GB by CHS, 128 GiB with
 28-bit LBA. falcon-bios keeps each disk's size from AH=48h and refuses a
 read past what the BIOS offers, with a sentence naming the limit; the
@@ -2464,6 +2476,12 @@ are (both measured 2026-09-13):
 - Buildable disk image with the four-partition layout, populated by the host
   tool, booted under QEMU with a writable copy of OVMF_VARS for MOK enrollment
   testing.
+- The core matrix cells (`make test-core`, `falcon-efi/tools/run-core-rig.sh`):
+  the rig stick under OVMF (Secure Boot off and on) and SeaBIOS, beside a
+  second stick, an MBR data disk and a disk of another install's records; a
+  4Kn stick on NVMe under both firmwares; the station disk under both. Each
+  case is judged from serial, through the personal OS to the fixture UKI's
+  report of both credentials.
 - Real hardware last, for the shim/MokManager enrollment flow, which is the
   least QEMU-friendly step.
 
