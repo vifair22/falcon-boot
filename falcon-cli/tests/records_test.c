@@ -362,6 +362,52 @@ static void test_write_raw_volume(void **state)
     (void)unlink(path);
 }
 
+/* A 4Kn stick's ESP: FAT32 of 4096-byte sectors, the backup boot sector
+ * six of them in. The record goes in both copies, the backup found by the
+ * FAT's own sector size. */
+static void test_write_4k_fat(void **state)
+{
+    char path[] = "/tmp/falcon-records-4k.XXXXXX";
+    uint8_t sec[512];
+    ident_rec rec;
+    ident_rec got;
+    int fd = mkstemp(path);
+
+    (void)state;
+    assert_true(fd >= 0);
+    assert_int_equal(ftruncate(fd, 64 * 4096), 0);
+    memset(sec, 0, sizeof sec);
+    sec[0] = 0xEB;
+    sec[1] = 0x58;
+    sec[2] = 0x90;
+    sec[0x0C] = 0x10;         /* 4096 bytes per sector */
+    sec[0x0D] = 1;
+    sec[0x0E] = 40;
+    sec[0x10] = 2;
+    sec[0x30] = 1;
+    sec[0x32] = 6;
+    sec[510] = 0x55;
+    sec[511] = 0xAA;
+    assert_int_equal(pwrite(fd, sec, sizeof sec, 0), 512);
+    assert_int_equal(pwrite(fd, sec, sizeof sec, 6 * 4096), 512);
+    /* A decoy where a 512-byte reading of the backup's number would land. */
+    assert_int_equal(pwrite(fd, sec, sizeof sec, 6 * 512), 512);
+    (void)close(fd);
+
+    boot_rec(&rec, 0x4B);
+    assert_int_equal(records_write_boot(path, 0, &rec), CLI_OK);
+
+    fd = open(path, O_RDONLY);
+    assert_true(fd >= 0);
+    assert_int_equal(pread(fd, sec, sizeof sec, 6 * 4096), 512);
+    assert_int_equal(ident_decode_bin(sec, &got), IDENT_OK);
+    assert_true(ident_same_install(&rec, &got));
+    assert_int_equal(pread(fd, sec, sizeof sec, 6 * 512), 512);
+    assert_int_equal(ident_decode_bin(sec, &got), IDENT_ERR_NONE);
+    (void)close(fd);
+    (void)unlink(path);
+}
+
 static void test_nextcore(void **state)
 {
     uint8_t buf[64];
@@ -412,6 +458,7 @@ int run_records_tests(void)
         cmocka_unit_test(test_boot_candidate_gpt),
         cmocka_unit_test(test_boot_args),
         cmocka_unit_test(test_write_raw_volume),
+        cmocka_unit_test(test_write_4k_fat),
         cmocka_unit_test(test_nextcore),
     };
 

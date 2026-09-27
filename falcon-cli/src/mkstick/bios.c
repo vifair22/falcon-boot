@@ -163,11 +163,11 @@ static cli_status dev_write_stage(const bios_dev *dev, uint64_t lba,
     if (whole > 0u)
         rc = dev_write(dev, lba, img, whole);
     if (rc == CLI_OK && whole < len) {
-        uint8_t tail[BIOS_SECTOR_BYTES];
+        uint8_t tail[BIOS_SECTOR_MAX];
 
         memset(tail, 0, sizeof tail);
         memcpy(tail, img + whole, len - whole);
-        rc = dev_write(dev, lba + whole / dev->sector, tail, sizeof tail);
+        rc = dev_write(dev, lba + whole / dev->sector, tail, dev->sector);
     }
     if (rc == CLI_OK && sectors * dev->sector < len)
         rc = set_error(CLI_ERR_INTERNAL, "a stage longer than its plan");
@@ -197,7 +197,7 @@ typedef struct {
 static cli_status survey(bios_dev *dev, const mks_disk *d, mks_records *recs,
                          bios_survey *out)
 {
-    uint8_t bs[BIOS_SECTOR_BYTES];
+    uint8_t bs[BIOS_SECTOR_MAX];
     const part_entry *bp;
     const ident_rec *rec;
     uint32_t i;
@@ -251,7 +251,7 @@ static cli_status survey(bios_dev *dev, const mks_disk *d, mks_records *recs,
     if (bioscore_fat_bpb(bs, &out->disk.fat) != BIOSCORE_OK)
         return set_error(CLI_ERR_INVALID,
                          "p%u of %s carries a boot record but is not a FAT "
-                         "volume with 512-byte sectors", bp->number, d->path);
+                         "volume", bp->number, d->path);
 
     out->mounted = (disk_check_not_mounted(d) != CLI_OK);
     cli_error_clear();
@@ -385,7 +385,7 @@ static cli_status backup_restore(const bios_dev *dev, const char *path)
 static cli_status clear_install(const bios_dev *dev, const mks_disk *d,
                                 const bios_survey *s, uint8_t *mbr)
 {
-    uint8_t sec[BIOS_SECTOR_BYTES];
+    uint8_t sec[BIOS_SECTOR_MAX];
     uint64_t s2_lba = 0;
     uint64_t s2_n = 0;
     uint64_t s3_lba = s->disk.boot_start + s->disk.stage3_sector;
@@ -414,8 +414,7 @@ static cli_status clear_install(const bios_dev *dev, const mks_disk *d,
     if (memcmp(sec, "BOSZ", 4) == 0) {
         uint32_t len = (uint32_t)sec[4] | ((uint32_t)sec[5] << 8) |
                        ((uint32_t)sec[6] << 16) | ((uint32_t)sec[7] << 24);
-        uint64_t n = ((uint64_t)len + BIOS_SECTOR_BYTES - 1u) /
-                     BIOS_SECTOR_BYTES;
+        uint64_t n = ((uint64_t)len + dev->sector - 1u) / dev->sector;
         uint64_t room = s->disk.fat.reserved - s->disk.stage3_sector;
 
         rc = dev_zero(dev, s3_lba, n < room ? n : room);
@@ -433,7 +432,7 @@ static cli_status clear_install(const bios_dev *dev, const mks_disk *d,
     /* The boot code area goes to zero, which is what a disk no MBR loader
      * has touched looks like. The table and signature stay. */
     memset(mbr, 0, BIOS_MBR_CODE_LEN);
-    rc = dev_write(dev, 0, mbr, BIOS_SECTOR_BYTES);
+    rc = dev_write(dev, 0, mbr, dev->sector);
     if (rc == CLI_OK)
         log_info("cleared LBA 0's boot code on %s", d->path);
     return rc;
@@ -552,7 +551,7 @@ cli_status mks_bios_install(const mks_bios_req *req)
     char derived[MKS_PATH_MAX];
     void *b1 = NULL, *b2 = NULL, *b3 = NULL;
     size_t l1 = 0, l2 = 0, l3 = 0;
-    uint8_t mbr[BIOS_SECTOR_BYTES];
+    uint8_t mbr[BIOS_SECTOR_MAX];
     bios_run runs[4];
     size_t nruns = 0;
     mks_disk d;
@@ -587,7 +586,7 @@ cli_status mks_bios_install(const mks_bios_req *req)
     if (rc != CLI_OK)
         goto out;
     disk_describe(&d);
-    if (d.sector != BIOS_SECTOR_BYTES) {
+    if (d.sector != BIOS_SECTOR_BYTES && d.sector != BIOS_SECTOR_MAX) {
         rc = set_error(CLI_ERR_INVALID, "%s: %s", d.path,
                        bioscore_strerror(BIOSCORE_ERR_SECTOR));
         goto out;
@@ -706,7 +705,7 @@ cli_status mks_bios_install(const mks_bios_req *req)
                        bioscore_strerror(bs));
         goto close_out;
     }
-    rc = dev_write(&dev, 0, mbr, sizeof mbr);
+    rc = dev_write(&dev, 0, mbr, dev.sector);
     if (rc != CLI_OK)
         goto close_out;
 

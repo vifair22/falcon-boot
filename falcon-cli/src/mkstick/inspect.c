@@ -544,9 +544,9 @@ static void check_bios(tally *t, const mks_disk *d, const mks_records *r,
     uint32_t i;
     disk_io io;
 
-    if (d->sector != BIOS_SECTOR_BYTES) {
-        skip(t, "%u-byte sectors: the BIOS route reads 512-byte ones",
-             d->sector);
+    if (d->sector != BIOS_SECTOR_BYTES && d->sector != BIOS_SECTOR_MAX) {
+        skip(t, "%u-byte sectors: the BIOS route reads 512- and 4096-byte "
+             "ones", d->sector);
         return;
     }
     if (disk_io_open(&io, d->path, 0, d->size) != CLI_OK) {
@@ -577,7 +577,7 @@ static void check_bios(tally *t, const mks_disk *d, const mks_records *r,
     check(t, s2_lba + s2_n <= first,
           "stage 2 ends before the first partition (LBA %llu)",
           (unsigned long long)first);
-    check(t, disk_io_read(&io, s2_lba * BIOS_SECTOR_BYTES, sizeof sec,
+    check(t, disk_io_read(&io, s2_lba * d->sector, sizeof sec,
                           sec) == 0 && memcmp(sec + 4, "BOS2", 4) == 0,
           "stage 2 is at LBA %llu", (unsigned long long)s2_lba);
 
@@ -588,7 +588,7 @@ static void check_bios(tally *t, const mks_disk *d, const mks_records *r,
         const ident_rec *rec = &r->recs[boot].rec;
         uint64_t s3 = bp->start_lba + rec->stage3_sector;
 
-        check(t, disk_io_read(&io, s3 * BIOS_SECTOR_BYTES, sizeof sec,
+        check(t, disk_io_read(&io, s3 * d->sector, sizeof sec,
                               sec) == 0 && memcmp(sec, "BOSZ", 4) == 0,
               "stage 3 is at sector %u of p%u (LBA %llu)",
               (unsigned)rec->stage3_sector, bp->number,
@@ -598,7 +598,7 @@ static void check_bios(tally *t, const mks_disk *d, const mks_records *r,
             size_t k;
             int zero = 1;
 
-            if (disk_io_read(&io, m * BIOS_SECTOR_BYTES, sizeof sec,
+            if (disk_io_read(&io, m * d->sector, sizeof sec,
                              sec) != 0) {
                 check(t, 0, "the marker sector could not be read");
             } else {

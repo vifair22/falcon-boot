@@ -241,8 +241,8 @@ cli_status records_write_boot(const char *path, uint64_t base,
     if (bioscore_fat_bpb(sec, &fat) != BIOSCORE_OK) {
         (void)close(fd);
         return set_error(CLI_ERR_INVALID,
-                         "%s at byte %llu is not a FAT volume with 512-byte "
-                         "sectors", path, (unsigned long long)base);
+                         "%s at byte %llu is not a FAT volume", path,
+                         (unsigned long long)base);
     }
     /* The record's stage 3 and marker sectors are inside this volume's
      * reserved area, or the record is lying about where they are. */
@@ -258,9 +258,11 @@ cli_status records_write_boot(const char *path, uint64_t base,
                          (unsigned)rec->marker_sector);
     }
 
+    /* The record is in the first 512 bytes of the boot sector whatever the
+     * FAT's sector size, but the backup is a number of the FAT's sectors. */
     rc = write_at(fd, path, base, rec);
     if (rc == CLI_OK && fat.fat32 && fat.backup != 0u)
-        rc = write_at(fd, path, base + (uint64_t)fat.backup * BIOS_SECTOR_BYTES,
+        rc = write_at(fd, path, base + (uint64_t)fat.backup * fat.sector,
                       rec);
     if (rc == CLI_OK && fsync(fd) != 0)
         rc = set_error_errno(CLI_ERR_IO, "flushing %s", path);
