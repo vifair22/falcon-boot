@@ -195,7 +195,7 @@ Layout
    record; the loader clears it with one sector write. A falcon-cli command
    writes it and replaces archusb's `dd` writer. (C4)
 10. BIOS station: the station partition holds stage 3, STATION.INI,
-    memtest, `classic` and (legacy) the drivers. On MBR it is hidden FAT32
+    memtest, DevLink recovery and (legacy) the drivers. On MBR it is hidden FAT32
     (0x1C). UEFI station: the machine's ESP, `\EFI\falcon\`; no extra
     partition.
 
@@ -235,7 +235,8 @@ Pulled in, the same day
     refusing an MBR disk (A13, also decision 7), sign's `PARTLABEL` help
     (E5), boot.S's DAP comment ("built on the stack"; it is in .text),
     bioscore's size comment, DESIGN 12.5/12.5.1/13.1 staleness (D15).
-21. `classic` (devlink-rescue's 32-bit kernel and initrd) is wrapped as a
+21. DevLink recovery (devlink-rescue's 32-bit kernel and initrd, the
+    image that repo builds as "classic") is wrapped as a
     UKI by falcon's sign tool and is a Linux entry on the station shelf and
     the stick's; the BIOS loader unwraps it as it does any UKI.
 22. The 32-bit stick is retired; every machine goes through the 64-bit
