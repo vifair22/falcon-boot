@@ -73,6 +73,7 @@ int run_iso_overlay_tests(void);
 int run_part_tests(void);
 int run_table_tests(void);
 int run_ident_tests(void);
+int run_identfs_tests(void);
 int run_sb_tests(void);
 int run_osrel_tests(void);
 int run_pe_tests(void);
