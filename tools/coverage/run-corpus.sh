@@ -32,6 +32,12 @@
 #                             same stick. Disk contention starves a guest
 #                             into failures that read as product bugs, and a
 #                             flaky cell is worse than a slow run.
+#                             2026-09-26: --jobs 8 over the UEFI columns
+#                             (339 cases) matched the baseline exactly; at
+#                             --jobs 12 over the BIOS columns 3 of 372
+#                             failed (two panics, one timeout) and all three
+#                             passed alone. Run wide, then rerun every
+#                             changed case alone before calling it.
 #   --timeout S               seconds from the keypress to a verdict (300)
 #   --force                   rerun cases that already have a result
 #   --no-scorecard            leave docs/coverage.md alone
