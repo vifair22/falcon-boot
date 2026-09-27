@@ -51,7 +51,7 @@ int nextcore_sector_ours(const uint8_t *sec, size_t len)
 {
     size_t i;
 
-    if (sec == NULL || len != NEXTBOOT_SECTOR_BYTES)
+    if (sec == NULL || !nextboot_sector_size_ok(len))
         return 0;
     if (nextboot_sector_is_marker(sec, len))
         return 1;

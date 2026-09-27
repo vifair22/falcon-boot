@@ -444,11 +444,14 @@ it finds, as a menu pick would be. Needs root.
       <the RTC's reading, /sys/class/rtc/rtc0/since_epoch>
       <the value>
 
-  and zeros to the end of the sector. The loader honours it for ten
-  minutes after it was written. The disk is the one whose partitions carry
-  a `boot` record; `--disk` names it when more than one does, or names an
-  image file. The sector is written only when it is empty or already a
-  marker. `--clear` zeros it.
+  and zeros to the end of the sector. The marker is one whole sector of the
+  disk: 512 bytes, or 4096 on a 4Kn disk, the text in its first 512. The
+  loader honours it for ten minutes after it was written. Without `--disk`
+  every disk is looked at and exactly one must carry a `boot` record. With
+  `--disk <dev>` (a disk or an image file) only that disk is looked at,
+  whatever else is attached, and it is an error if it has no `boot` record.
+  The sector is written only when it is empty or already a marker.
+  `--clear` zeros it.
 
 This replaces archusb's `archusb-boot-next`, which wrote the BIOS marker to
 LBA 2047 with `dd`; a pending marker there is no longer read.

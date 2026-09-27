@@ -39,7 +39,8 @@ int nextcore_parse_epoch(const char *text, size_t len, uint64_t *out);
 
 /* Nonzero when the sector may be written by next-boot: all zeros (what
  * `mkstick bios` left), or already a marker. Anything else is not falcon's
- * marker sector and is left alone. */
+ * marker sector and is left alone. len is the disk's whole sector (512, or
+ * 4096 on a 4Kn disk), every byte of which is judged. */
 int nextcore_sector_ours(const uint8_t *sec, size_t len);
 
 #endif /* FALCON_MKSTICK_NEXTCORE_H */
