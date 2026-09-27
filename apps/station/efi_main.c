@@ -420,12 +420,13 @@ static void rows_find(void)
 
     /* Linux: the encrypted shelf as one row that prompts, each plaintext
      * UKI as its own. */
-    if (pos_has_encrypted() &&
-        (w = strows_add(&g_rows, STROW_POS)) != (strow *)0)
+    w = pos_has_encrypted() ? strows_add(&g_rows, STROW_POS) : (strow *)0;
+    if (w != (strow *)0)
         ucs2_copy(w->label, STROWS_LABEL_MAX, pos_entry_label());
     g_img_n = pos_plain_images(g_st, g_img, IMG_MAX);
     for (i = 0; i < g_img_n; i++) {
-        if ((w = strows_add(&g_rows, STROW_UKI)) == (strow *)0)
+        w = strows_add(&g_rows, STROW_UKI);
+        if (w == (strow *)0)
             break;
         ucs2_copy(w->label, STROWS_LABEL_MAX, g_img[i].label);
         copy_ascii(w->file, sizeof w->file, g_img[i].file);
@@ -439,7 +440,8 @@ static void rows_find(void)
         const nxt_target *t = &g_nxt[i].target;
         disks_part p;
 
-        if ((w = strows_add(&g_rows, STROW_NXT)) == (strow *)0)
+        w = strows_add(&g_rows, STROW_NXT);
+        if (w == (strow *)0)
             break;
         ucs2_copy(w->label, STROWS_LABEL_MAX, g_nxt[i].label);
         strows_name_nxt(w->name, g_nxt[i].option);
@@ -460,7 +462,8 @@ static void rows_find(void)
     for (i = 0; i < g_esp_n; i++) {
         if (esp_has_entry(&g_esp[i]))
             continue;
-        if ((w = strows_add(&g_rows, STROW_ESP)) == (strow *)0)
+        w = strows_add(&g_rows, STROW_ESP);
+        if (w == (strow *)0)
             break;
         w->has_part = 1;
         w->disk = g_esp[i].part.disk;
@@ -472,8 +475,10 @@ static void rows_find(void)
         w->ref = i;
     }
 
-    if (g_own != (EFI_HANDLE)0 && esp_has_file(g_st, g_own, MEMTEST_PATH) &&
-        (w = strows_add(&g_rows, STROW_MEMTEST)) != (strow *)0) {
+    w = (strow *)0;
+    if (g_own != (EFI_HANDLE)0 && esp_has_file(g_st, g_own, MEMTEST_PATH))
+        w = strows_add(&g_rows, STROW_MEMTEST);
+    if (w != (strow *)0) {
         copy_ascii(w->file, sizeof w->file, "\\EFI\\falcon\\memtest.efi");
         copy_ascii(w->name, sizeof w->name, "memtest");
         w->own_esp = 1;
@@ -484,8 +489,9 @@ static void rows_find(void)
     /* Firmware Setup last for the stick's reason: a mistimed Enter lands
      * on the first row, and that row must not reboot into the firmware.
      * strows_arrange keeps it last whatever STATION.INI's order says. */
-    if (fw_setup_available(g_st) &&
-        (w = strows_add(&g_rows, STROW_FWSETUP)) != (strow *)0)
+    w = fw_setup_available(g_st) ? strows_add(&g_rows, STROW_FWSETUP)
+                                  : (strow *)0;
+    if (w != (strow *)0)
         ucs2_copy(w->label, STROWS_LABEL_MAX, L"" STROWS_LABEL_FWSETUP);
 }
 

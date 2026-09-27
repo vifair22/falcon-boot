@@ -868,8 +868,12 @@ static void label_ascii(const uint16_t *in, char *out, size_t cap)
 {
     size_t i;
 
-    for (i = 0; in[i] != 0 && i + 1u < cap; i++)
-        out[i] = (in[i] >= 0x20u && in[i] < 0x7Fu) ? (char)in[i] : '?';
+    for (i = 0; in[i] != 0 && i + 1u < cap; i++) {
+        if (in[i] >= 0x20u && in[i] < 0x7Fu)
+            out[i] = (char)in[i];
+        else
+            out[i] = '?';
+    }
     out[i] = '\0';
 }
 
@@ -900,8 +904,11 @@ static void print_rows(const stn_scan *s, const stationini *ini, int have_ini,
     strow *w;
 
     strows_init(&rows);
-    if (encrypted && (w = strows_add(&rows, STROW_POS)) != NULL)
-        label_wide(w->label, STROWS_LABEL_MAX, STROWS_LABEL_POS);
+    if (encrypted) {
+        w = strows_add(&rows, STROW_POS);
+        if (w != NULL)
+            label_wide(w->label, STROWS_LABEL_MAX, STROWS_LABEL_POS);
+    }
     for (i = 0; i < s->n_found; i++) {
         const stn_found *f = &s->found[i];
         strow_kind kind;
@@ -914,7 +921,8 @@ static void print_rows(const stn_scan *s, const stationini *ini, int have_ini,
         case STN_F_EFIWIN:  kind = STROW_ESP; break;
         default:            continue;
         }
-        if ((w = strows_add(&rows, kind)) == NULL)
+        w = strows_add(&rows, kind);
+        if (w == NULL)
             break;
         (void)snprintf(w->name, sizeof w->name, "%s", f->name);
         label_wide(w->label, STROWS_LABEL_MAX,
@@ -929,7 +937,8 @@ static void print_rows(const stn_scan *s, const stationini *ini, int have_ini,
             w->part = f->part;
         }
     }
-    if (memtest && (w = strows_add(&rows, STROW_MEMTEST)) != NULL) {
+    w = memtest ? strows_add(&rows, STROW_MEMTEST) : NULL;
+    if (w != NULL) {
         (void)snprintf(w->name, sizeof w->name, "memtest");
         label_wide(w->label, STROWS_LABEL_MAX, STROWS_LABEL_MEMTEST);
         w->own_esp = (uint8_t)(fw == STROWS_UEFI);
