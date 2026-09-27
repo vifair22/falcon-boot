@@ -8,7 +8,8 @@
  * helpers of util.c. Plus mkstick's bioscore.c, which is where the sectors
  * the BIOS stages take are measured before anything is written to them, and
  * records.c, nextcore.c and nextio.c, the identity records and the
- * next-boot marker.
+ * next-boot marker, and stationcore.c, where `station install` puts a
+ * station and what its STATION.INI says.
  */
 
 #include "tests.h"
@@ -24,6 +25,7 @@ int main(void)
     failed += run_payload_tests();
     failed += run_records_tests();
     failed += run_nextio_tests();
+    failed += run_stationcore_tests();
     failed += run_uki_tests();
     failed += run_util_tests();
 

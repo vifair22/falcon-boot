@@ -377,77 +377,6 @@ static cli_status plan_layout(const cli_args *a, uint64_t disk_bytes,
 
 /* ---- shim discovery ---- */
 
-/* Picks the shim binary out of a directory. `build/shim/bins`, which is what
- * falcon-efi/tools/shim-spike/fetch-shims.sh fills, holds several vendors'
- * shims side by side, so "the only *shimx64.efi in there" is not a rule that
- * works. The order is: an unprefixed shimx64.efi (what a user who staged one
- * file themselves would have), then the vendor and version DESIGN Section 4
- * pins, then a unique match, then a refusal that lists what it saw. */
-static cli_status find_shim(const char *dir, char *out, size_t cap)
-{
-    static const char *const preferred[] = {
-        "shimx64.efi", "fedora-16.1-shimx64.efi"
-    };
-    size_t i;
-
-    for (i = 0; i < sizeof preferred / sizeof preferred[0]; i++) {
-        char path[MKS_PATH_MAX];
-
-        if (util_join(path, sizeof path, dir, preferred[i]) != CLI_OK)
-            continue;
-        if (util_is_file(path)) {
-            if (snprintf(out, cap, "%s", path) < 0)
-                return set_error(CLI_ERR_RANGE, "shim path too long");
-            return CLI_OK;
-        }
-    }
-    return set_error(CLI_ERR_NOTFOUND,
-                     "no shim found in %s (looked for shimx64.efi and "
-                     "fedora-16.1-shimx64.efi); run "
-                     "falcon-efi/tools/shim-spike/fetch-shims.sh to stage "
-                     "the pinned packages, or pass --shim <dir>", dir);
-}
-
-/* MokManager sits beside the shim under the same vendor prefix, which is how
- * fetch-shims.sh stages it. `wanted` is the name shim itself will look for at
- * boot, read out of the shim binary. */
-static cli_status find_mokmanager(const char *shim_path, const char *wanted,
-                                  char *out, size_t cap)
-{
-    char dir[MKS_PATH_MAX];
-    const char *base = util_basename(shim_path);
-    size_t dirlen = (size_t)(base - shim_path);
-    const char *tail = "shimx64.efi";
-    size_t baselen = strlen(base);
-    size_t taillen = strlen(tail);
-    char candidate[MKS_PATH_MAX];
-
-    if (dirlen >= sizeof dir)
-        return set_error(CLI_ERR_RANGE, "shim path too long");
-    (void)snprintf(dir, sizeof dir, "%.*s", (int)dirlen, shim_path);
-    if (dir[0] == '\0')
-        (void)snprintf(dir, sizeof dir, "./");
-
-    /* fedora-16.1-shimx64.efi -> fedora-16.1-mmx64.efi */
-    if (baselen > taillen && strcmp(base + baselen - taillen, tail) == 0) {
-        if (snprintf(candidate, sizeof candidate, "%s%.*s%s", dir,
-                     (int)(baselen - taillen), base, wanted) > 0 &&
-            util_is_file(candidate)) {
-            (void)snprintf(out, cap, "%s", candidate);
-            return CLI_OK;
-        }
-    }
-    if (snprintf(candidate, sizeof candidate, "%s%s", dir, wanted) > 0 &&
-        util_is_file(candidate)) {
-        (void)snprintf(out, cap, "%s", candidate);
-        return CLI_OK;
-    }
-    return set_error(CLI_ERR_NOTFOUND,
-                     "shim launches MokManager as %s, but no such file sits "
-                     "beside %s; without it a user cannot enroll the cert on "
-                     "first boot", wanted, shim_path);
-}
-
 /* ---- the target ---- */
 
 static cli_status ensure_target(const cli_args *a, mks_disk *d,
@@ -1129,7 +1058,7 @@ static cli_status create_run(const cli_args *a)
         return set_error(CLI_ERR_NOTFOUND,
                          "no loader at %s (run make), or pass --loader",
                          loader);
-    rc = find_shim(shim_dir, shim_path, sizeof shim_path);
+    rc = shim_find(shim_dir, shim_path, sizeof shim_path);
     if (rc != CLI_OK)
         return rc;
 
@@ -1141,7 +1070,7 @@ static cli_status create_run(const cli_args *a)
     rc = shim_mokmanager_name(shim_path, mm_name, sizeof mm_name);
     if (rc != CLI_OK)
         return rc;
-    rc = find_mokmanager(shim_path, mm_name, mm_path, sizeof mm_path);
+    rc = shim_find_mokmanager(shim_path, mm_name, mm_path, sizeof mm_path);
     if (rc != CLI_OK)
         return rc;
     log_info("shim:     %s", shim_path);

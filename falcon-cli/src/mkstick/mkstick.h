@@ -34,6 +34,7 @@
 #define MKS_TYPE_ISO   "EBD0A0A2-B9E5-4433-87C0-68B6B72699C7"  /* p2, MS basic */
 #define MKS_TYPE_SHELF "9CB02E90-85F4-4AF7-9AF3-1F9D6A95FEAF"  /* p3, falcon */
 #define MKS_TYPE_LUKS  "CA7D7CCB-63ED-4C53-861C-1742536059CC"  /* p4, stock */
+#define MKS_TYPE_BOOT  "D0ACB249-F895-4E0D-AB0D-CFBB6F48AE36"  /* station */
 
 /* Verifies the strings above against falcon-core/src/part/part.h (and, for the
  * standard types, against the values DESIGN Section 3 records). Called at
@@ -110,7 +111,12 @@ extern const cli_cmd mks_cmd_create;
 extern const cli_cmd mks_cmd_ident;
 extern const cli_cmd mks_cmd_keygen;
 extern const cli_cmd mks_cmd_next_boot;
+extern const cli_cmd mks_cmd_station;
 extern const cli_cmd mks_cmd_status;
 extern const cli_cmd mks_cmd_varstore;
+
+/* `station install|remove|status`: a second level of dispatch, so main.c
+ * hands it the arguments after "station". */
+cli_status mks_station_main(int argc, char **argv);
 
 #endif /* FALCON_MKSTICK_H */

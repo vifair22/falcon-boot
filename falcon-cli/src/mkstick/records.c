@@ -96,9 +96,13 @@ static void read_falcon_file(mks_rec *out, disk_io *io)
     if (fs_lookup(&vol, IDENT_FILE, &scratch, &ent) != FS_OK)
         return;
     out->where = IDENT_FILE;
-    size = ent.size;
-    if (ent.is_dir || size == 0u || size >= sizeof text ||
-        fs_file_open(&vol, &file, &ent) != FS_OK ||
+    /* The open file's size: an ext4 directory entry carries none. */
+    if (ent.is_dir || fs_file_open(&vol, &file, &ent) != FS_OK) {
+        out->state = REC_BAD;
+        return;
+    }
+    size = fs_file_size(&file);
+    if (size == 0u || size >= sizeof text ||
         fs_file_read(&file, 0, size, text) != FS_OK) {
         out->state = REC_BAD;
         return;
