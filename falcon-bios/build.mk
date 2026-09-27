@@ -126,6 +126,9 @@ BIOS_MOD_jmod    := $(BIOS)/jump/jmod.c $(BIOS)/jump/jmodload.c $(BIOS)/jump/jre
 # The CD, USB and CF routes through those drivers (DESIGN Sections 14.6 and
 # 13.10), for jump and station-legacy alike; each app keeps its own menu.
 BIOS_MOD_jroutes := $(BIOS)/jump/routes.c
+# The BIOS station's list and routes (DESIGN Section 13), run by the station
+# and station-legacy apps.
+BIOS_MOD_station := $(BIOS)/station/station.c
 
 # Every C source some image links, for compile_commands.json and the analyzers.
 BIOS_CSRCS := $(BIOS_S2_CSRCS)

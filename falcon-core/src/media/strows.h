@@ -40,6 +40,10 @@
 #define STROWS_LABEL_PARTITION "Partition"
 #define STROWS_LABEL_BOOTMGR   "Windows Boot Manager"
 #define STROWS_LABEL_FWSETUP   "Reboot to firmware setup"
+/* station-legacy's routes, as jump labels them (DESIGN Section 13.10). */
+#define STROWS_LABEL_CD        "CD drive"
+#define STROWS_LABEL_USB       "USB stick"
+#define STROWS_LABEL_CF        "CF card (PC Card)"
 
 /* Windows Boot Manager's path, the default of a `method = efi` entry. */
 #define STROWS_BOOTMGFW "\\EFI\\Microsoft\\Boot\\bootmgfw.efi"
@@ -54,7 +58,9 @@ typedef enum {
                         MEMTEST.BIN in the station partition (BIOS) */
     STROW_FWSETUP,   /* the firmware's setup */
     STROW_VBR,       /* BIOS: a primary partition's boot sector, chained */
-    STROW_MBR        /* BIOS: another disk's MBR, chained */
+    STROW_MBR,       /* BIOS: another disk's MBR, chained */
+    STROW_ROUTE      /* BIOS, station-legacy: one of jump's routes (DESIGN
+                        Section 13.10); ref says which */
 } strow_kind;
 
 /* Which loader's rules strows_apply follows where the two differ: what a

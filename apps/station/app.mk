@@ -34,7 +34,7 @@ $(EFI_OBJ)/$(STATION)/efi_main.o: build/version.h
 # The routes: POS off the shelves, VBR and MBR (chain.c) with the drive swap,
 # the one resident, and MEM through linux.c. No ISO scan, and so neither
 # falcon-hook blob.
-STATION_BIOS := $(STATION)/bios_main.c
+STATION_BIOS := $(STATION)/bios_main.c $(BIOS_MOD_station)
 STATION_BIOS += $(BIOS_MOD_pos) $(BIOS_MOD_prompt) $(BIOS_MOD_console) $(BIOS_MOD_linux)
 STATION_BIOS += $(BIOS_MOD_chain) $(BIOS_MOD_lowmem)  # partition and disk chains, the swap's memory
 STATION_BIOS += $(CORE_STROWS) $(CORE_STATIONINI)   # the list, and STATION.INI
