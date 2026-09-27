@@ -8,6 +8,7 @@
 
 #include <common/log.h>
 #include <common/util.h>
+#include <mkstick/disk.h>
 
 /* A signed shim is around one megabyte; the cap is generous enough that a
  * fatter future one still parses and small enough that pointing this at the
@@ -263,4 +264,75 @@ cli_status shim_mokmanager_name(const char *shim_path, char *out, size_t cap)
     if (snprintf(out, cap, "%s", "mmx64.efi") < 0)
         return set_error(CLI_ERR_INTERNAL, "formatting the MM name");
     return CLI_OK;
+}
+
+/* Picks the shim binary out of a directory. `build/shim/bins`, which is what
+ * falcon-efi/tools/shim-spike/fetch-shims.sh fills, holds several vendors'
+ * shims side by side, so "the only *shimx64.efi in there" is not a rule that
+ * works. The order is: an unprefixed shimx64.efi (what a user who staged one
+ * file themselves would have), then the vendor and version DESIGN Section 4
+ * pins, then a unique match, then a refusal that lists what it saw. */
+cli_status shim_find(const char *dir, char *out, size_t cap)
+{
+    static const char *const preferred[] = {
+        "shimx64.efi", "fedora-16.1-shimx64.efi"
+    };
+    size_t i;
+
+    for (i = 0; i < sizeof preferred / sizeof preferred[0]; i++) {
+        char path[MKS_PATH_MAX];
+
+        if (util_join(path, sizeof path, dir, preferred[i]) != CLI_OK)
+            continue;
+        if (util_is_file(path)) {
+            if (snprintf(out, cap, "%s", path) < 0)
+                return set_error(CLI_ERR_RANGE, "shim path too long");
+            return CLI_OK;
+        }
+    }
+    return set_error(CLI_ERR_NOTFOUND,
+                     "no shim found in %s (looked for shimx64.efi and "
+                     "fedora-16.1-shimx64.efi); run "
+                     "falcon-efi/tools/shim-spike/fetch-shims.sh to stage "
+                     "the pinned packages, or pass --shim <dir>", dir);
+}
+
+/* MokManager sits beside the shim under the same vendor prefix, which is how
+ * fetch-shims.sh stages it. `wanted` is the name shim itself will look for at
+ * boot, read out of the shim binary. */
+cli_status shim_find_mokmanager(const char *shim_path, const char *wanted,
+                                char *out, size_t cap)
+{
+    char dir[MKS_PATH_MAX];
+    const char *base = util_basename(shim_path);
+    size_t dirlen = (size_t)(base - shim_path);
+    const char *tail = "shimx64.efi";
+    size_t baselen = strlen(base);
+    size_t taillen = strlen(tail);
+    char candidate[MKS_PATH_MAX];
+
+    if (dirlen >= sizeof dir)
+        return set_error(CLI_ERR_RANGE, "shim path too long");
+    (void)snprintf(dir, sizeof dir, "%.*s", (int)dirlen, shim_path);
+    if (dir[0] == '\0')
+        (void)snprintf(dir, sizeof dir, "./");
+
+    /* fedora-16.1-shimx64.efi -> fedora-16.1-mmx64.efi */
+    if (baselen > taillen && strcmp(base + baselen - taillen, tail) == 0) {
+        if (snprintf(candidate, sizeof candidate, "%s%.*s%s", dir,
+                     (int)(baselen - taillen), base, wanted) > 0 &&
+            util_is_file(candidate)) {
+            (void)snprintf(out, cap, "%s", candidate);
+            return CLI_OK;
+        }
+    }
+    if (snprintf(candidate, sizeof candidate, "%s%s", dir, wanted) > 0 &&
+        util_is_file(candidate)) {
+        (void)snprintf(out, cap, "%s", candidate);
+        return CLI_OK;
+    }
+    return set_error(CLI_ERR_NOTFOUND,
+                     "shim launches MokManager as %s, but no such file sits "
+                     "beside %s; without it a user cannot enroll the cert on "
+                     "first boot", wanted, shim_path);
 }

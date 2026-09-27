@@ -1,0 +1,121 @@
+/* falcon-boot mkstick: `station`, the station's installer (docs/DESIGN.md
+ * Section 13.9), shared between its three subcommands.
+ *
+ * station.c holds the dispatch, what the installer finds on the machine's
+ * disks (the scan), the FAT reads and mtools writes both install and status
+ * need, and `remove` and `status`; stationinst.c is `install`. The
+ * decisions (where, what, which name) are stationcore.c's.
+ */
+
+#ifndef FALCON_MKSTICK_STATION_H
+#define FALCON_MKSTICK_STATION_H
+
+#include <stddef.h>
+#include <stdint.h>
+
+#include <common/opt.h>
+#include <common/status.h>
+#include <mkstick/devio.h>
+#include <mkstick/disk.h>
+#include <mkstick/records.h>
+#include <mkstick/stationcore.h>
+
+#define STN_MAX_DISKS 8u
+#define STN_MAX_FOUND 32u
+
+/* The files a station carries (docs/notes/station-rework.md section 10). */
+#define STN_ESP_DIR       "EFI/falcon"
+#define STN_ESP_SHIM      "shimx64.efi"
+#define STN_ESP_CERT      "falcon-boot.cer"
+#define STN_ESP_MEMTEST   "memtest.efi"
+#define STN_BIOS_MEMTEST  "MEMTEST.BIN"
+#define STN_FW_LABEL      "falcon"
+#define STN_FAT_LABEL     "FALCONSTN"
+#define STN_GPT_NAME      "FALCON-STATION"
+#define STN_TIMEOUT       5u
+
+/* The first sectors of a new station partition kept in the backup: its
+ * reserved sectors, then this many bytes past them. What mkfs.fat and the
+ * installer write (both FATs, the root cluster and the files) lies inside
+ * them for any size the installer makes, at either sector size: the
+ * reserved area alone is 8 MiB on a 4Kn disk (bioscore_reserved_for counts
+ * its MiB in 512-byte sectors). */
+#define STN_REGION_BACKUP_BYTES (8u * 1024u * 1024u)
+
+/* One disk the scan read. */
+typedef struct {
+    mks_disk    d;
+    mks_records r;
+    uint8_t     lba0[512];
+    int         is_target;
+    int         needs_sig;      /* signature 0, and the INI names it */
+    uint32_t    new_sig;
+} stn_disk;
+
+typedef struct {
+    stn_disk  disks[STN_MAX_DISKS];
+    size_t    n_disks;
+    stn_found found[STN_MAX_FOUND];
+    size_t    n_found;
+    /* The shelf, when there is one: its disk (index into disks) and the
+     * partition's index in that disk's records. */
+    int       shelf_disk;
+    int       shelf_part;
+    int       shelf_luks;
+} stn_scan;
+
+/* Reads the target (disks[0]) and every other disk the machine has (a
+ * block-device target, unless `only_named`) and what --also names. An
+ * image target's machine is the image and what --also names. */
+cli_status stn_scan_disks(stn_scan *s, const char *target,
+                          const char *const *also, size_t n_also,
+                          int only_named);
+
+/* What the loaders will find on those disks (DESIGN Section 13.3): the
+ * partitions whose boot sector names a loader, the other disks whose MBR is
+ * worth chaining; with `uefi`, Windows on a disk's ESP. The target's own
+ * MBR and falcon's partitions are not offered. */
+void stn_scan_found(stn_scan *s, int uefi);
+
+/* The firmware's boot entries on the running machine (efibootmgr), when it
+ * booted with UEFI: Windows Boot Manager as a found entry, and the number
+ * of an entry already labelled falcon. */
+void stn_scan_firmware(stn_scan *s, int *falcon_entry);
+
+/* FAT and the other filesystems core reads, over a partition of a disk or
+ * image: a whole file into a buffer. FS_OK or the driver's status. */
+int stn_read_file(const char *disk, uint64_t off, uint64_t len,
+                  const char *path, char *buf, size_t cap, size_t *got);
+
+/* mtools over a FAT volume at a byte offset of a disk or image: no mount
+ * and no root for an image. */
+cli_status stn_mtools_mkdir(const char *disk, uint64_t off, const char *dir);
+cli_status stn_mtools_put(const char *disk, uint64_t off, const char *src,
+                          const char *dst);
+cli_status stn_mtools_put_text(const char *disk, uint64_t off,
+                               const char *text, size_t len, const char *dst);
+cli_status stn_mtools_deltree(const char *disk, uint64_t off,
+                              const char *dir);
+
+/* Is partition `number` of this disk mounted? Always 0 for an image. */
+int stn_part_mounted(const mks_disk *d, uint32_t number, char *where,
+                     size_t cap);
+
+/* Nonzero for a disk of the machine the command runs on: a block device
+ * that is not a loop device. An image, attached or not, is its own
+ * machine's, whose disks and firmware entries this one cannot see. */
+int stn_is_machine(const mks_disk *d);
+
+/* The index in r of the partition numbered n, or -1. */
+int stn_part_index(const mks_records *r, uint32_t n);
+
+/* The disk's first boot partition with a BIOS stage 3 (the station
+ * partition; an ESP's station record carries stage 3 at 0), or -1. */
+int stn_bios_boot(const mks_records *r);
+
+/* The ESP: GPT's type, or MBR 0xEF; -1 when there is none. */
+int stn_find_esp(const mks_records *r);
+
+extern const cli_cmd stn_cmd_install;
+
+#endif /* FALCON_MKSTICK_STATION_H */

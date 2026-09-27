@@ -46,7 +46,10 @@ enum {
 int bootpart_candidate(const part_entry *p);
 
 /* Reads the disk's table and returns, in *out, the first candidate whose
- * boot sector decodes as a `boot` record, in table order. A disk with no
+ * boot sector decodes as a `boot` record naming a stage 3 (its stage 3
+ * sector not 0), in table order: a station installed for UEFI and BIOS both
+ * has a boot record with no stage 3 on its ESP, which comes first on a GPT
+ * disk, and the real one on its station partition. A disk with no
  * table is one volume: its LBA 0 is asked instead. On success `sec` holds
  * that boot sector (block_size bytes; the caller's, at least block_size
  * long), for bootpart_stage3_room.

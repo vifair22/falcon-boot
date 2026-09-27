@@ -45,6 +45,9 @@ int main(void)
     failed += run_tui_tests();
     failed += run_shelf_tests();
     failed += run_nextboot_tests();
+    failed += run_stationini_tests();
+    failed += run_strows_tests();
+    failed += run_vbr_tests();
     failed += run_synth_tests();
     failed += run_file_tests();
     failed += run_extent_tests();

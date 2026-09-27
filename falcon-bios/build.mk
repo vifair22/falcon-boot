@@ -15,9 +15,9 @@
 # code is position dependent and nothing relocates it, so link address and run
 # address have to agree.
 #
-# Everything is i686: 16-bit real-mode code and 32-bit protected-mode code in
-# ELF32 objects, which gas takes perfectly well with .code16 and .code32. One
-# image runs on every processor from the Pentium Pro on; what a newer one
+# Everything is 32-bit x86: 16-bit real-mode code and 32-bit protected-mode
+# code in ELF32 objects, which gas takes perfectly well with .code16 and
+# .code32. One image runs on every processor from the Pentium on; what a newer one
 # adds (SSE, AES-NI) is switched on by asking CPUID at run time, not by a
 # second build (docs/notes/bios-route.md Section 6h).
 #
@@ -49,16 +49,23 @@ STAGE1_S2_LBA_OFF_CHECK := $(call BIOS_DEF_HEX,STAGE1_S2_LBA_OFF)
 STAGE1_S2_SECTORS_OFF_CHECK := $(call BIOS_DEF_HEX,STAGE1_S2_SECTORS_OFF)
 BOOTPART_MARKER_CHECK := $(call BIOS_DEF,BOOTPART_MARKER_SECTOR)
 BOOTPART_STAGE3_CHECK := $(call BIOS_DEF,BOOTPART_STAGE3_SECTOR)
+SWAP_BYTES_CHECK := $(call BIOS_DEF_HEX,SWAP_BYTES)
 
 BIOS_ASFLAGS := -m32 -c -Wa,--fatal-warnings -I$(BIOS) $(CORE_INC)
 
-# The C half. Freestanding and i686, with the repo warning set.
+# The C half. Freestanding and i586, with the repo warning set.
 #
-# -march=i686 is the floor the loader runs on (stage2.S checks for its CMOV
-# before protected mode). -mtune=generic because -march=i686 alone also
-# schedules for a Pentium Pro, which cost the p3 unlock 6% on a current
-# processor (233 ms against 220 in a benchmark of luks_unlock); tuning
-# changes no instruction the floor lacks. -mno-sse and -mgeneral-regs-only
+# -march=i586 is the floor the loader runs on: a Pentium, which stage2.S
+# checks for (CPUID) before protected mode, and which DevLink recovery's
+# machines need (DESIGN Section 13.5). It was i686 until 2026-09-27; what
+# that allowed and a Pentium lacks is CMOV, and dropping it cost nothing
+# measurable (PBKDF2-SHA256 and portable AES-XTS within 1% either way, -m32
+# on a current processor). tools/check-floor.sh holds every linked image to
+# it, since an object built before a flag change is not rebuilt by one.
+# -mtune=generic because -march alone also schedules for that processor,
+# which cost the p3 unlock 6% on a current one (233 ms against 220 in a
+# benchmark of luks_unlock, measured at i686); tuning changes no instruction
+# the floor lacks. -mno-sse and -mgeneral-regs-only
 # are not style:
 # the mode switch enables SSE only on a processor that has it, and never the
 # x87, so a compiler that decided to use either would fault on an
@@ -66,7 +73,7 @@ BIOS_ASFLAGS := -m32 -c -Wa,--fatal-warnings -I$(BIOS) $(CORE_INC)
 # link addresses are fixed by biosdefs.h.
 BIOS_CFLAGS := -std=c11 -O2 -ffreestanding -fno-stack-protector \
 	-fno-pie -fno-asynchronous-unwind-tables -fno-unwind-tables \
-	-m32 -march=i686 -mtune=generic -mno-sse -mno-mmx -mgeneral-regs-only \
+	-m32 -march=i586 -mtune=generic -mno-sse -mno-mmx -mgeneral-regs-only \
 	-Wall -Wextra -Wpedantic -Wshadow -Wunused -Wdouble-promotion \
 	-Wformat=2 -Wmissing-prototypes -Wstrict-prototypes \
 	-Wmissing-declarations -Wcast-align -Wcast-qual -Wnull-dereference \
@@ -91,7 +98,7 @@ BIOS_S2_COBJS := $(patsubst %.c,$(BIOS_OBJ)/%.o,$(BIOS_S2_CSRCS))
 # stage 2's 33 KB ceiling that had to be one driver called by name.
 BIOS_MOD_serial  := $(BIOS)/console/console.c
 BIOS_MOD_prompt  := $(BIOS)/console/prompt.c  # the passphrase, and nothing else
-BIOS_MOD_console := $(BIOS)/console/screen.c
+BIOS_MOD_console := $(BIOS)/console/screen.c $(BIOS)/console/cdclock.c
 BIOS_MOD_disk    := $(BIOS)/disk/disk.c $(BIOS)/vfd/vfdcore.c
 BIOS_MOD_marker  := $(BIOS)/disk/marker.c
 BIOS_MOD_install := $(BIOS)/disk/install.c   # the install's partitions, by record
@@ -110,8 +117,18 @@ BIOS_MOD_pos     := $(BIOS)/pos/pos.c
 BIOS_MOD_bsd     := $(BIOS)/bsd/bsd.c
 BIOS_MOD_win     := $(BIOS)/win/win.c
 BIOS_MOD_mbr     := $(BIOS)/mbr/mbr.c
+# The station's chains, a partition's boot sector and another disk's MBR,
+# with the drive swap (DESIGN Section 13.4); vbrcore.c is the tested half,
+# and core's vbr.c what a boot sector is.
+BIOS_MOD_chain   := $(BIOS)/mbr/chain.c $(BIOS)/mbr/vbrcore.c $(CORE_VBR)
 BIOS_MOD_jumpini := $(BIOS)/jump/jumpini.c
 BIOS_MOD_jmod    := $(BIOS)/jump/jmod.c $(BIOS)/jump/jmodload.c $(BIOS)/jump/jres.c
+# The CD, USB and CF routes through those drivers (DESIGN Sections 14.6 and
+# 13.10), for jump and station-legacy alike; each app keeps its own menu.
+BIOS_MOD_jroutes := $(BIOS)/jump/routes.c
+# The BIOS station's list and routes (DESIGN Section 13), run by the station
+# and station-legacy apps.
+BIOS_MOD_station := $(BIOS)/station/station.c
 
 # Every C source some image links, for compile_commands.json and the analyzers.
 BIOS_CSRCS := $(BIOS_S2_CSRCS)
@@ -123,7 +140,7 @@ $(BIOS_OBJ)/%.o: %.c
 # AES-NI, this object only, as in the other two flavours (root Makefile). It
 # needs the instructions it is named for and the SSE registers they use, so
 # the three flags that forbid those come back out for it and nothing else,
-# and SSE2 goes in, which i686 does not imply and every AES-NI processor has.
+# and SSE2 goes in, which i586 does not imply and every AES-NI processor has.
 # The CPUID probe that gates the path is in crypto.c, built with the baseline
 # flags precisely so it cannot fault on the CPUs it exists to detect.
 $(BIOS_OBJ)/falcon-core/src/crypto/aesni.o: BIOS_CFLAGS := \
@@ -133,7 +150,7 @@ $(BIOS_OBJ)/falcon-core/src/crypto/aesni.o: BIOS_CFLAGS := \
 # --no-warn-rwx-segments: the output is a flat image loaded by a jump, with
 # one segment holding code and data together. There is nothing to separate
 # them into and nothing that would enforce it if there were.
-# 64-bit division and shifts in i686 code are calls into libgcc
+# 64-bit division and shifts in 32-bit code are calls into libgcc
 # (__udivdi3 and its siblings); -nostdlib drops it, so it goes back in by
 # name, after the objects that need it. A gcc with no 32-bit multilib
 # answers with its 64-bit libgcc instead, and the link then fails on
@@ -212,6 +229,7 @@ $(BIOS_STAGE2): $(BIOS_STAGE2_OBJS) $(BIOS)/start/bios.ld
 	@mkdir -p $(@D)
 	$(CC_HOST) $(BIOS_LDFLAGS) -Wl,-Ttext,0x7E00 -Wl,-e,stage2_start -o $@.elf $(BIOS_STAGE2_OBJS) \
 		$(BIOS_LIBGCC)
+	@tools/check-floor.sh $@.elf
 	objcopy -O binary -j .text $@.elf $@
 	@# Stage 2 checks itself (stage2.S, stage2_begin): its length into the
 	@# gate's GATE_S2LEN word, then the CRC-32 of those bytes, length
@@ -246,7 +264,7 @@ $(BIOS_STAGE2): $(BIOS_STAGE2_OBJS) $(BIOS)/start/bios.ld
 	@# moved would be stage 3 calling into whatever is at 0x7400 instead.
 	@for pair in gate_magic:7e04 gate_entry:7e08 gate_boot16:7e10 \
 	            gate_bootpart:7e18 thunk_regs:7e20 \
-	            thunk_vector:7e40 gate_drive:7e41 gate_marker:7e42 \
+	            thunk_vector:7e40 gate_drive:7e41 gate_marker:7e42 gate_si:7e44 \
 	            gate_target:7e48 gate_s2len:7e4c; do \
 		sym=$${pair%%:*}; want=$${pair##*:}; \
 		got=$$(nm $@.elf | awk -v s="$$sym" '$$3 == s { print $$1 }'); \
@@ -263,10 +281,11 @@ $(BIOS_STAGE2): $(BIOS_STAGE2_OBJS) $(BIOS)/start/bios.ld
 BIOS_RES_iso := $(BIOS_OBJ)/$(BIOS)/iso/vcdres.o
 BIOS_RES_vfd := $(BIOS_OBJ)/$(BIOS)/vfd/vfdres.o
 BIOS_RES_jres := $(BIOS_OBJ)/$(BIOS)/jump/rthunk.o
+BIOS_RES_swap := $(BIOS_OBJ)/$(BIOS)/mbr/swapres.o
 
 # The hook's blobs, which are generated (falcon-hook/build.mk). The x86-64
 # one is the same object the UEFI loader embeds: falcon-hook runs in the
-# initramfs and does not know which firmware started the kernel. The i686 one
+# initramfs and does not know which firmware started the kernel. The 32-bit one
 # is for the 32-bit kernels only this loader boots, and iso/scan.c appends
 # whichever matches the kernel.
 BIOS_HOOK_OBJ := $(BIOS_OBJ)/$(HOOK_BLOB).o
@@ -316,10 +335,12 @@ $(1)_BIOS_OBJS := $$(BIOS_OBJ)/$$(BIOS)/start/stage3.o $(3) \
 	$$(patsubst %.c,$$(BIOS_OBJ)/%.o,$(4)) $(5)
 BIOS_CSRCS += $(4)
 
-$(2): $$($(1)_BIOS_OBJS) $$(BIOS)/start/bios.ld falcon-bios/tools/mk-stage3z.sh
+$(2): $$($(1)_BIOS_OBJS) $$(BIOS)/start/bios.ld falcon-bios/tools/mk-stage3z.sh \
+		tools/check-floor.sh
 	@mkdir -p $$(@D)
 	$$(CC_HOST) $$(BIOS_LDFLAGS) -Wl,-Ttext,0x100000 -Wl,-e,stage3_entry \
 		-o $$@.elf $$($(1)_BIOS_OBJS) $$(BIOS_LIBGCC)
+	@tools/check-floor.sh $$@.elf
 	objcopy -O binary -j .text $$@.elf $$@.raw
 	@# What goes on the disk is the image compressed (load3.c, biosdefs.h
 	@# STAGE3_MAGIC_GZ), for every app: the gzip member's CRC-32 is the
@@ -334,6 +355,17 @@ $(2): $$($(1)_BIOS_OBJS) $$(BIOS)/start/bios.ld falcon-bios/tools/mk-stage3z.sh
 		echo "ERROR: the INT 13h resident is $$$$(( 0x$$$$e - 0x$$$$s )) bytes, past VCD_BYTES"; \
 		echo "       raise VCD_BYTES in falcon-bios/src/start/biosdefs.h"; \
 		exit 1; \
+	fi
+	@# The drive swap likewise, in its SWAP_BYTES.
+	@s=$$$$(nm $$@.elf | awk '$$$$3 == "swap_blob_start" { print $$$$1 }'); \
+	e=$$$$(nm $$@.elf | awk '$$$$3 == "swap_blob_end" { print $$$$1 }'); \
+	if [ -n "$$$$s" ]; then \
+		n=$$$$(( 0x$$$$e - 0x$$$$s )); \
+		if [ $$$$n -gt $$$$(( $(SWAP_BYTES_CHECK) )) ]; then \
+			echo "ERROR: the drive swap is $$$$n bytes, past SWAP_BYTES"; \
+			exit 1; \
+		fi; \
+		echo "   drive swap: $$$$n of $$$$(( $(SWAP_BYTES_CHECK) )) bytes"; \
 	fi
 	@# Inflated, image and .bss, it has to end below where stage 2 reads
 	@# the compressed copy to (GZ_STAGE_ADDR, 5 MB above STAGE3_LOAD).
@@ -367,6 +399,7 @@ $$($(1)_MOD): $$($(1)_MOD_OBJS) build/gen/jmod-$(1).ld
 	$$(CC_HOST) -m32 -nostdlib -static -no-pie -Wl,--build-id=none \
 		-Wl,--no-warn-rwx-segments -Wl,-T,build/gen/jmod-$(1).ld \
 		-o $$@.elf $$($(1)_MOD_OBJS) $$(BIOS_LIBGCC)
+	@tools/check-floor.sh $$@.elf
 	objcopy -O binary -j .image $$@.elf $$@
 
 # What goes on the floppy (DESIGN Section 14.3): the module as a gzip
@@ -387,14 +420,16 @@ endef
 # long-mode days triple-faulted.
 BIOS_TESTS := $(addprefix falcon-bios/tests/,main.c vcdcore_test.c vfdcore_test.c \
 	linuxcore_test.c e820_test.c jumpini_test.c jmod_test.c lowmem_test.c \
-	atacore_test.c usbcore_test.c pcccore_test.c bootpart_test.c)
+	atacore_test.c usbcore_test.c pcccore_test.c bootpart_test.c \
+	vbrcore_test.c cdclock_test.c)
 BIOS_UUT := $(BIOS)/iso/vcdcore.c $(BIOS)/vfd/vfdcore.c $(BIOS)/linux/linuxcore.c $(BIOS)/mem/e820.c \
 	$(BIOS)/jump/jumpini.c $(BIOS)/jump/jmod.c $(BIOS)/mem/lowmem.c \
 	$(BIOS)/hw/ata/atacore.c $(BIOS)/hw/scsi/scsi.c $(BIOS)/hw/usb/usbcore.c \
-	$(BIOS)/hw/pcc/pcccore.c $(BIOS)/disk/bootpart.c
-# What bootpart.c is built on, linked into the test binary but counted under
-# core's own tests.
-BIOS_TEST_CORE := $(CORE_PART) $(CORE_IDENT)
+	$(BIOS)/hw/pcc/pcccore.c $(BIOS)/disk/bootpart.c $(BIOS)/mbr/vbrcore.c \
+	$(BIOS)/console/cdclock.c
+# What bootpart.c and vbrcore.c are built on, linked into the test binary
+# but counted under core's own tests.
+BIOS_TEST_CORE := $(CORE_PART) $(CORE_IDENT) $(CORE_VBR)
 
 $(eval $(call test_bin,bios,$(BIOS_TESTS) $(BIOS_UUT) $(BIOS_TEST_CORE)))
 
@@ -446,4 +481,54 @@ $(BIOS_PROBE_ISO): $(BIOS_PROBE_BIN)
 
 test-bios-probe: $(BIOS_PROBE_ISO)
 
-.PHONY: test-bios-img test-bios-probe
+# The station rig's synthetic boot sector (falcon-bios/tools/rigboot.S):
+# installed in the rig disks' partitions and MBRs, it reports on serial
+# what the partition chain and the drive swap handed it. Its code has to end
+# before the tag the rig writes a loader's name into.
+BIOS_RIGBOOT := build/rigboot.bin
+
+$(BIOS_RIGBOOT): $(BIOS_OBJ)/falcon-bios/tools/rigboot.o $(BIOS)/start/bios.ld
+	@mkdir -p $(@D)
+	$(CC_HOST) $(BIOS_LDFLAGS) -Wl,-Ttext,0x7C00 -Wl,-e,_start -o $@.elf $<
+	objcopy -O binary -j .text $@.elf $@
+	@sz=$$(stat -c %s $@); \
+	if [ "$$sz" -ne 512 ]; then \
+		echo "ERROR: $@ is $$sz bytes, not 512"; exit 1; \
+	fi
+
+# The station rig's no-ticks floppy (falcon-bios/tools/tickstop.S): masks
+# IRQ0 and boots drive 0x80, so the station's countdown runs with the BIOS's
+# tick count standing still.
+BIOS_TICKSTOP := build/tickstop.bin
+
+$(BIOS_TICKSTOP): $(BIOS_OBJ)/falcon-bios/tools/tickstop.o $(BIOS)/start/bios.ld
+	@mkdir -p $(@D)
+	$(CC_HOST) $(BIOS_LDFLAGS) -Wl,-Ttext,0x7C00 -Wl,-e,_start -o $@.elf $<
+	objcopy -O binary -j .text $@.elf $@
+	@sz=$$(stat -c %s $@); \
+	if [ "$$sz" -ne 512 ]; then \
+		echo "ERROR: $@ is $$sz bytes, not 512"; exit 1; \
+	fi
+
+# The BIOS station rig (DESIGN Section 13.11): the partition chain, the
+# drive swap, STATION.INI and next boot under SeaBIOS, judged from serial.
+test-station-bios: station $(BIOS_RIGBOOT) $(BIOS_TICKSTOP) $(MKSTICK)
+	falcon-bios/tools/run-station-rig.sh
+
+# The BIOS station in front of real systems (DESIGN Section 13.11): the
+# fixture disks of tools/fixtures/README.md (FreeDOS, Windows 98 SE, Windows
+# 95 when there is one) with the station installed by `mkstick station
+# install`, as the station's own disk and as a second disk behind the drive
+# swap, judged by the prompt or desktop on screen. Needs sudo (qemu-nbd).
+test-station-fixtures: station $(MKSTICK)
+	falcon-bios/tools/run-station-fixture-rig.sh
+
+# DevLink recovery (DESIGN Section 13.5) off the rig stick on a Pentium with
+# 32 MB, by both BIOS routes and both of its entries, the agent reached on
+# COM1 (falcon-bios/tools/run-devlink-rig.sh). Skipped when the ISO or the
+# devlink client is not there.
+test-devlink: all bios cli payload
+	falcon-bios/tools/run-devlink-rig.sh
+
+.PHONY: test-bios-img test-bios-probe test-station-bios test-station-fixtures \
+	test-devlink

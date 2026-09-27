@@ -9,6 +9,8 @@ EFI_SRC := falcon-efi/src
 EFI_MOD_loader        := $(EFI_SRC)/loader/loadops.c $(EFI_SRC)/loader/credfs.c
 EFI_MOD_console       := $(EFI_SRC)/console/menu.c $(EFI_SRC)/console/prompt.c
 EFI_MOD_discover      := $(EFI_SRC)/discover/discover.c $(EFI_SRC)/discover/partefi.c
+# Partitions named as STATION.INI names them: disk id and number.
+EFI_MOD_disks         := $(EFI_SRC)/discover/disks.c
 # Secure Boot state, for UX. The variable reads the boot predictions judge
 # against are their own module, so a build without predictions leaves them out.
 EFI_MOD_secboot       := $(EFI_SRC)/secboot/sb.c
@@ -20,6 +22,7 @@ EFI_MOD_win           := $(EFI_SRC)/win/winpatch.c
 EFI_MOD_pos           := $(EFI_SRC)/pos/pos.c
 EFI_MOD_bless         := $(EFI_SRC)/bless/bless.c $(EFI_SRC)/bless/blesscore.c
 EFI_MOD_nxt           := $(EFI_SRC)/nxt/nxt.c $(EFI_SRC)/nxt/nxtcore.c
+EFI_MOD_esp           := $(EFI_SRC)/esp/esp.c
 
 # Every source some app links, for compile_commands.json and the analyzers.
 EFI_APP_SRCS :=
@@ -89,6 +92,19 @@ $(PAYLOAD): $(EFI_OBJ)/$(PAYLOAD_SRC:.c=.o)
 	@mkdir -p $(@D)
 	$(CC) $(EFI_LDFLAGS) -o $@ $<
 
+# The station rig's stand-in for bootmgfw.efi and memtest.efi: it prints
+# the path it was started as. Signed with the test MOK for Secure Boot on.
+STANDIN_SRC := falcon-efi/tools/payload/standin.c
+STANDIN := build/test/standin.efi
+STANDIN_SIGNED := build/test/standin-signed.efi
+
+$(STANDIN): $(EFI_OBJ)/$(STANDIN_SRC:.c=.o)
+	@mkdir -p $(@D)
+	$(CC) $(EFI_LDFLAGS) -o $@ $<
+
+$(STANDIN_SIGNED): $(STANDIN) $(MOK_KEY)
+	sbsign --key $(MOK_KEY) --cert $(MOK_CRT) --output $@ $<
+
 # Stage the loader as the removable-media default path on a vvfat-backed ESP,
 # alongside a writable per-checkout copy of the OVMF varstore.
 esp: $(EFI)
@@ -136,9 +152,10 @@ $(FIXTURE_UKI): falcon-efi/tools/mk-test-uki.sh \
 test-stick: $(EFI_SIGNED) test-iso test-uki cli bios
 	falcon-efi/tools/mk-test-stick.sh
 
-# A disk laid out as the Manual's stationary install (Section 2), made by
-# following that procedure; the rig boots it under both firmwares.
-test-station: $(EFI_STATION_SIGNED) station test-uki cli
+# The rig's station disk: a machine's disk with the station put on it by
+# `mkstick station install` (DESIGN Section 13.9); the rigs boot it under
+# both firmwares.
+test-station: $(STANDIN) station test-uki cli
 	falcon-efi/tools/mk-test-station.sh
 
 # The core step's matrix cells (docs/notes/station-rework.md section 6), each
@@ -148,6 +165,23 @@ test-station: $(EFI_STATION_SIGNED) station test-uki cli
 # devices on image files); the fixture UKI and test MOK must exist.
 test-core: all bios station cli payload
 	falcon-efi/tools/run-core-rig.sh
+
+# The UEFI station's own cases (DESIGN Sections 13.3-13.8), under OVMF with
+# Secure Boot off and on: the list, STATION.INI's default and countdown,
+# BootNext into a fake Windows Boot Manager, the same loaded off its ESP,
+# memtest, next boot and the error pages. It boots copies of the disk
+# test-station made, with the loader as built now put onto each.
+test-station-uefi: $(EFI_STATION_SIGNED) $(STANDIN) $(STANDIN_SIGNED) cli
+	@test -f build/test-station.img || $(MAKE) --no-print-directory test-station
+	falcon-efi/tools/run-station-rig.sh
+
+# Stations the installer put on a machine's disk, booted (DESIGN Section
+# 13.11): a GPT disk with Windows under OVMF, Secure Boot off and on, to
+# its menu, its default and the shelf's UKI; a 4Kn GPT disk with both
+# stations under OVMF and SeaBIOS (NVMe), and its remove --full; a 4Kn MBR
+# disk under SeaBIOS. Builds its own disks (sudo, loop devices).
+test-station-installed: station cli $(STANDIN) $(STANDIN_SIGNED)
+	falcon-efi/tools/run-installed-rig.sh
 
 # No prerequisite on $(TEST_STICK): rebuilding it needs sudo and takes seconds
 # of cryptsetup, so it stays an explicit `make test-stick`. The rig says so if
@@ -159,7 +193,8 @@ run-stick-secboot:
 	falcon-efi/tools/run-qemu.sh --stick --secboot
 
 .PHONY: test-station payload esp run mok-test sign run-secboot test-iso \
-	test-img test-uki test-stick run-stick run-stick-secboot test-core
+	test-img test-uki test-stick run-stick run-stick-secboot test-core \
+	test-station-uefi test-station-installed
 
 # ---- tests ----
 #
@@ -172,7 +207,7 @@ EFI_TESTS := $(addprefix falcon-efi/tests/,main.c bless_test.c \
 
 EFI_UUT := $(EFI_SRC)/bless/blesscore.c $(EFI_SRC)/secboot/sb.c \
 	$(EFI_SRC)/nxt/nxtcore.c \
-	$(CORE_MANIFEST) $(CORE)/media/family.c
+	$(CORE_MANIFEST) $(CORE)/media/family.c $(CORE_PART)
 
 $(eval $(call test_bin,efi,$(EFI_TESTS) $(EFI_UUT)))
 

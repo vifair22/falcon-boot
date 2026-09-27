@@ -1,7 +1,7 @@
 # falcon-boot
 
 A single-purpose, auditable multi-boot loader for x86-64 UEFI, with an opt-in
-BIOS loader that is i686 and so runs on 32-bit machines too. A distilled Ventoy: drag-and-drop ISO booting plus a personal
+BIOS loader that is i586 and so runs on 32-bit machines too. A distilled Ventoy: drag-and-drop ISO booting plus a personal
 LUKS-backed OS booted via a UKI.
 
 ## Read this first
@@ -117,7 +117,9 @@ falcon-efi and falcon-bios, which never share a set, may both have a `pos/`.
 - `apps/` the loaders, one directory per build: `stick/` (every route, the
   loader on a falcon stick; `all` builds its UEFI image, `make bios` its
   BIOS one), `station/` (DESIGN Section 13, falcon as a machine's own
-  boot loader; `make station`) and `jump/` (DESIGN Section 14, a boot
+  boot loader; `make station`), `station-legacy/` (Section 13.10, the
+  BIOS station plus jump's CD, USB and CF routes and DevLink recovery's
+  UKI; `make station-legacy`, `make devlink-uki`) and `jump/` (DESIGN Section 14, a boot
   floppy for an old BIOS machine; `make jump` builds the whole 1.44 MB
   image with mtools, its core in the FAT12 volume's reserved sectors). An app is its entry points (`efi_main.c`,
   `efi_sbat.c`, `bios_main.c`) and an `app.mk` that lists, one line per
@@ -138,8 +140,9 @@ falcon-efi and falcon-bios, which never share a set, may both have a `pos/`.
     differs), `iso9660.c` (Rock Ridge, Joliet) and `udf.c`. Each driver's
     adapter to the vtable is its own file (`fs_<driver>.c`), and the table
     is one a build picks: `fs_reg_all.c` everywhere, `fs_reg_ext4.c` in the
-    stationary build (`CORE_FS_EXT4`), which is how that build links ext4
-    alone. Consumers select a driver through the registry and never name
+    UEFI station (`CORE_FS_EXT4`) and `fs_reg_station.c`, ext4 and FAT, in
+    the BIOS one (`CORE_FS_STATION`), which is how those builds link only
+    what they mount. Consumers select a driver through the registry and never name
     one; `fs_lookup` resolves a path. `udf.c` also carries the few record edits the Windows patch needs
     (a File Entry's extents, a Partition Descriptor's length, an anchor),
     applied to caller buffers, never to media.
@@ -167,7 +170,14 @@ falcon-efi and falcon-bios, which never share a set, may both have a `pos/`.
     sort and the folder view. Both loaders use it, so neither can have its
     own idea of what is on a stick. `shelf.c` is the personal-OS chooser's
     rows: the UKIs in p3's `/uki` (or `/EFI/Linux`), their `.osrel` names,
-    order and qualifiers, again for both loaders. `nextboot.c` is the
+    order and qualifiers, again for both loaders. `strows.c` is the
+    station's list as data, both stations' (DESIGN Section 13.7): the
+    generated names, what a STATION.INI section changes or adds (a
+    firmware entry or an ESP on UEFI, a chain on BIOS), the order and the
+    default, and the rows' words (`STROWS_LABEL_*`), which `station
+    install` and `status` use too; `vbr.c` what a partition's boot sector
+    starts, for the BIOS station and the installer; `stationini.c` parses
+    and writes the file. `nextboot.c` is the
     next-boot marker's value rules (decode, path match, the `:` reserved
     names) for both loaders, and the BIOS marker sector's format and dating.
     `eltorito.c` reads a medium's boot
@@ -203,7 +213,12 @@ falcon-efi and falcon-bios, which never share a set, may both have a `pos/`.
     sections are the apps' (`apps/stick/`, `apps/station/`).
   - `nxt/` the stationary build's route to the firmware's other boot
     entries (NXT, BootNext and a reset): `nxtcore.c` parses BootOrder and
-    Boot#### and is host-tested, `nxt.c` reads the variables.
+    Boot#### (the description, and the partition and file its device path
+    names) and is host-tested, `nxt.c` reads the variables.
+  - `esp/` the station's other way into a system (DESIGN Sections 13.4,
+    13.6; routes ESP and MEM): a file on a firmware-mounted volume
+    (`bootmgfw.efi`, `memtest.efi`) loaded by device path through
+    `loadops`, and the reads STATION.INI and the ESP rows need.
   - `loader/` the shim-verified load path (`loadops.c`, DESIGN Section 7.6)
     and `credfs.c`, the synthetic read-only filesystem a UKI is published on
     so it can be loaded by device path and sd-stub finds the passphrase
@@ -217,7 +232,9 @@ falcon-efi and falcon-bios, which never share a set, may both have a `pos/`.
     device-path half (`partefi.c`: same disk, start LBA): reads the boot
     partition's record for the install ID, enumerates the Block I/O handles
     once (the boot disk's first), reads each one's record, and hands every
-    consumer the rows that carry the install ID.
+    consumer the rows that carry the install ID. `disks.c` (the station
+    only) reads each whole disk's table so a partition handle or a firmware
+    entry's HARDDRIVE node can be named as STATION.INI names it.
   - `secboot/` Secure Boot state for UX (`sb.c`) and the variable reads the
     boot predictions judge against (`trustefi.c`).
   - `bsd/` BSD media served as its own memory disk (Section 6.4; M7):
@@ -239,8 +256,8 @@ falcon-efi and falcon-bios, which never share a set, may both have a `pos/`.
     and `--headless`; `ovmf.sh`; `rig-shot.sh`), its fixtures (the payload
     ISO and images, the throwaway test MOK, the sd-stub fixture UKI with its
     `/init` in `uki-init/`, the four-partition test stick, and
-    `mk-test-station.sh`, a disk made by following the Manual's stationary
-    install procedure, `make test-station`) and the two spikes
+    `mk-test-station.sh`, a disk `mkstick station install` puts the station
+    on, `make test-station`) and the two spikes
     whose findings are in `docs/notes/`.
 - `falcon-cli/` host tooling, Linux userland C never linked into the loader:
   `src/mkstick`, `src/sign`, and their shared `src/common`. May shell out to
@@ -284,7 +301,7 @@ falcon-efi and falcon-bios, which never share a set, may both have a `pos/`.
   the installed Windows keeps signing enforcement.
 - `falcon-hook/` the program the loader appends to an ISO's initrd (DESIGN
   Section 6.4): freestanding static Linux, no libc, built twice, x86-64
-  (`falcon-hook`) and i686 (`falcon-hook32`) from the same source: `src/sys.c`
+  (`falcon-hook`) and i586 (`falcon-hook32`) from the same source: `src/sys.c`
   is its system calls and startup, and the only file that knows the width. It runs as `rdinit=`, reads the extent map from
   the initrd (a direct boot, or the credential sd-stub packs beside a
   blessed wrap) or efivarfs (an older wrap), finds the ISO library it names
@@ -327,14 +344,43 @@ falcon-efi and falcon-bios, which never share a set, may both have a `pos/`.
   falcon jump route under SeaBIOS and judges it from serial
   (`tools/run-jump-rig.sh`); its CF case runs on a QEMU that
   `tools/qemu-pcc/build-qemu.sh` builds with `falcon-pcc.c`, a model of the
-  A21m's PC Card bridge, since QEMU has none. `make station` links the
-  station's stage 3 (DESIGN Section 13) from `apps/station/bios_main.c`:
-  the personal OS off the shelf carrying its install ID and
-  `src/mbr/mbr.c`, another disk's own boot code started from 0x7C00, with
-  nothing resident. `make test-core` boots the core matrix cells (the stick
+  A21m's PC Card bridge, since QEMU has none (its `lba48=on` card is the
+  `cf48` case, a sparse card past 128 GiB that `hw/ata/atadisk.c` reads
+  with 48-bit commands). `make station` links the
+  station's stage 3 (DESIGN Section 13) from `src/station/station.c`,
+  which `apps/station/bios_main.c` and `apps/station-legacy/bios_main.c`
+  both run (`station_main`, with a hook for station-legacy's own rows):
+  the UKIs off the shelves carrying its install ID, memtest86+, and
+  `src/mbr/chain.c`, a primary partition's boot sector (the MBR copy at
+  0000:0600, DS:SI at its entry, the BPB made to agree) or another disk's
+  MBR, with `src/mbr/swapres.S` the one resident, an 84-byte INT 13h hook
+  that swaps a chained disk with 0x80; `src/mbr/vbrcore.c` (the BPB fix,
+  the entry) is its host-tested half, core's `media/vbr.c` what a boot
+  sector is (the loader signatures and their words, shared with the
+  installer), and core's `media/strows.c` the list both stations and
+  `station status` share. `make
+  test-station-bios` boots every chain under SeaBIOS
+  (`tools/run-station-rig.sh`, with `tools/rigboot.S`, a boot sector that
+  reports what it was handed), and `make test-station-fixtures` real
+  systems behind the station, FreeDOS and Windows 98 SE from the fixture
+  disks of `tools/fixtures/`, put on by the installer through qemu-nbd
+  (`tools/run-station-fixture-rig.sh`). `make test-station-legacy` puts
+  station-legacy on a copy of the A21m's disk with the installer through
+  qemu-nbd (`tools/mk-a21m-station.sh`, a qcow2 overlay, the original never
+  written) and boots every row of its menu (`tools/run-legacy-rig.sh`).
+  The menu's countdown is timed by the tick count and the RTC together
+  (`src/console/cdclock.c`, host-tested), since a machine can reach it
+  with IRQ0 never delivered; the station rig's `no-ticks` case boots
+  through `tools/tickstop.S`, which masks IRQ0 first. `make test-core` boots the core matrix cells (the stick
   under both firmwares alone, beside a second stick, an MBR disk and another
-  install's records; a 4Kn stick on NVMe; the station) and judges each from
-  serial (`falcon-efi/tools/run-core-rig.sh`).
+  install's records; a 4Kn stick on NVMe; the station, alone and with a
+  stick plugged in) and judges each from
+  serial (`falcon-efi/tools/run-core-rig.sh`); `make test-station-uefi`
+  does the same for the UEFI station's own cases
+  (`falcon-efi/tools/run-station-rig.sh`), and `make
+  test-station-installed` for stations the installer put on a disk, 4Kn
+  GPT and MBR, an ESP on MBR and Windows on a second disk included
+  (`falcon-efi/tools/run-installed-rig.sh`).
 
   `src/` is grouped by job, and a job the UEFI loader also does carries
   that module's name, so the two halves of a route sit side by side:
@@ -343,9 +389,11 @@ falcon-efi and falcon-bios, which never share a set, may both have a `pos/`.
   virtual CD and the ISO scan), `vfd/`, `mem/` (E820 and the heap),
   `disk/` (the read callback and the marker), `linux/`, `pos/`, `bsd/`,
   `win/` and `mbr/`; `jump/` (falcon jump's JUMP.INI parser, the module
-  format and loader `jmod.c`/`jmodload.c`, and the reverse thunk:
+  format and loader `jmod.c`/`jmodload.c`, the reverse thunk:
   `rthunk.S`, a real-mode INT 13h entry that calls a module's protected-mode
-  `int13`, installed by `jres.c`); and `hw/`, jump's drivers, each built as
+  `int13`, installed by `jres.c`, and `routes.c`, the CD, USB and CF routes
+  jump and station-legacy both boot); `station/` (the BIOS station's list
+  and routes, both station apps'); and `hw/`, jump's drivers, each built as
   a module linked at its slot (`jmod.ld.S`, `jump_module`): `hw/ata/` is
   ATA.MOD, ATAPI over the legacy IDE channels, with `atacore.c` its
   host-tested half; `hw/usb/` is the USB modules, `uhci.c`, `ohci.c` and
@@ -363,9 +411,10 @@ falcon-efi and falcon-bios, which never share a set, may both have a `pos/`.
   CHS; `disk.c` reads by CHS too (AH=02h, `vfdcore.c`'s arithmetic) when a
   drive answers neither AH=48h nor AH=41h, which is a floppy.
 
-  It is i686 code in flat 32-bit protected mode, paging off, and one image
-  runs on every processor from the Pentium Pro on (docs/notes/bios-route.md
-  Section 6h): what a newer processor adds is taken by asking CPUID at run
+  It is i586 code in flat 32-bit protected mode, paging off, and one image
+  runs on every processor from the Pentium on (docs/notes/bios-route.md
+  Section 6h; DESIGN Section 14.8 for the floor, which
+  `tools/check-floor.sh` holds every linked image to): what a newer processor adds is taken by asking CPUID at run
   time, not by a second build. `pmode.S` switches the SSE state on only when
   CPUID reports SSE, falcon-core's AES path picks AES-NI by CPUID, and a
   64-bit kernel is refused with a sentence on a processor without long mode.
@@ -399,12 +448,12 @@ falcon-efi and falcon-bios, which never share a set, may both have a `pos/`.
   (DESIGN Section 6.3.1): the sector of the boot partition its record
   names, written from Linux by `mkstick next-boot`, cleared before it is
   believed and honoured only within ten minutes by the RTC. It is the only code in falcon-bios that writes a disk (one sector,
-  INT 13h AH=43h), and only the stick's stage 3 links it.
+  INT 13h AH=43h), and the stick's and the station's stage 3 link it.
 
   No failure ends in a halt, which on a machine with no serial cable is a
   hang: it ends in `bios_fatal` (`fatal_rm` before there is C), the reason
-  on screen and serial, a key, then a reset. Stage 2 asks CPUID for CMOV
-  (the i686 floor) and the BDA whether the EBDA reaches memory it writes
+  on screen and serial, a key, then a reset. Stage 2 asks for CPUID
+  (the i586 floor) and the BDA whether the EBDA reaches memory it writes
   before it enters protected mode, and `src/start/idt.S` gives protected mode an
   IDT, so a processor exception is reported through the same path
   (`src/start/fault.c`) rather than triple faulting.
@@ -420,7 +469,7 @@ falcon-efi and falcon-bios, which never share a set, may both have a `pos/`.
   <stage>" and the advice.
 
   It shares falcon-core unchanged: the read callback is the per-platform
-  boundary, and core compiles clean as i686 because this build links all of
+  boundary, and core compiles clean as i586 because this build links all of
   it at that width. What a BIOS build had to provide that firmware used to
   is the thing to remember here - `pmode.S` sets CR4.OSFXSR because
   falcon-core's AES-NI path needs it, and nothing is placed at or above

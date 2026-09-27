@@ -48,4 +48,12 @@ cli_status shim_next_stage_name(const char *shim_path, char *out, size_t cap);
  * boot. */
 cli_status shim_mokmanager_name(const char *shim_path, char *out, size_t cap);
 
+/* The shim binary in a directory: an unprefixed shimx64.efi, else the
+ * pinned vendor's (fedora-16.1-shimx64.efi). */
+cli_status shim_find(const char *dir, char *out, size_t cap);
+
+/* MokManager beside that shim, under the name shim launches it by. */
+cli_status shim_find_mokmanager(const char *shim_path, const char *wanted,
+                                char *out, size_t cap);
+
 #endif /* FALCON_MKSTICK_SHIMNAME_H */

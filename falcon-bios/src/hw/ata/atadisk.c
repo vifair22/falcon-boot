@@ -22,6 +22,8 @@
 
 #define CMD_READ     0x20u
 #define CMD_WRITE    0x30u
+#define CMD_READ48   0x24u
+#define CMD_WRITE48  0x34u
 #define CMD_IDENTIFY 0xECu
 
 /* 10 us steps: 5 s, for a card or disk still spinning up. */
@@ -49,20 +51,30 @@ static void settle(const atadisk *d)
     (void)inb(d->ctrl);
 }
 
-/* Selects the drive and loads the LBA and count registers. */
-static int setup(const atadisk *d, uint64_t lba, uint32_t count)
+/* Selects the drive and loads the LBA and count registers, as `mode` says:
+ * LBA28's four bits in the device register, or LBA48's two passes through
+ * each register's FIFO, the high bytes first. */
+static int setup(const atadisk *d, uint64_t lba, uint32_t count,
+                 ata_addr mode)
 {
-    if (lba + count > 0x10000000u || count == 0 || count > 256u)
+    if (mode == ATA_ADDR_NONE)
         return -1;
     if (wait_ready(d) == 0xFFu)
         return -1;
     outb((uint16_t)(d->base + REG_DEVICE),
          (uint8_t)(0xE0u | ((unsigned)d->slave << 4) |
-                   ((uint32_t)(lba >> 24) & 0x0Fu)));
+                   (mode == ATA_ADDR_LBA28
+                        ? ((uint32_t)(lba >> 24) & 0x0Fu) : 0u)));
     settle(d);
     if (wait_ready(d) == 0xFFu)
         return -1;
     outb(d->ctrl, CTL_NIEN);
+    if (mode == ATA_ADDR_LBA48) {
+        outb((uint16_t)(d->base + REG_COUNT), (uint8_t)((count >> 8) & 0xFFu));
+        outb((uint16_t)(d->base + REG_LBA0), (uint8_t)((lba >> 24) & 0xFFu));
+        outb((uint16_t)(d->base + REG_LBA1), (uint8_t)((lba >> 32) & 0xFFu));
+        outb((uint16_t)(d->base + REG_LBA2), (uint8_t)((lba >> 40) & 0xFFu));
+    }
     outb((uint16_t)(d->base + REG_COUNT), (uint8_t)(count & 0xFFu));
     outb((uint16_t)(d->base + REG_LBA0), (uint8_t)(lba & 0xFFu));
     outb((uint16_t)(d->base + REG_LBA1), (uint8_t)((lba >> 8) & 0xFFu));
@@ -94,14 +106,14 @@ int atadisk_identify(atadisk *d)
 
     if (inb(d->ctrl) == 0xFFu)
         return -1;                   /* a floating bus: nothing there */
-    if (setup(d, 0, 1) != 0)
+    if (setup(d, 0, 1, ATA_ADDR_LBA28) != 0)
         return -1;
     outb((uint16_t)(d->base + REG_COMMAND), CMD_IDENTIFY);
     settle(d);
     if (drq(d) == 0) {
         for (i = 0; i < 256u; i++)
             w[i] = inw((uint16_t)(d->base + REG_DATA));
-        rc = ata_parse_identify_disk(w, &d->sectors, d->model,
+        rc = ata_parse_identify_disk(w, &d->sectors, &d->lba48, d->model,
                                      sizeof d->model);
     }
     done(d);
@@ -113,12 +125,15 @@ static int transfer(const atadisk *d, uint64_t lba, uint32_t count,
 {
     while (count > 0) {
         uint32_t n = count > 256u ? 256u : count;
+        ata_addr mode = ata_addressing(d->lba48, lba, n);
         uint32_t s;
         int rc = 0;
 
-        if (setup(d, lba, n) != 0)
+        if (lba + n > d->sectors || setup(d, lba, n, mode) != 0)
             return -1;
-        outb((uint16_t)(d->base + REG_COMMAND), write ? CMD_WRITE : CMD_READ);
+        outb((uint16_t)(d->base + REG_COMMAND),
+             mode == ATA_ADDR_LBA48 ? (write ? CMD_WRITE48 : CMD_READ48)
+                                    : (write ? CMD_WRITE : CMD_READ));
         settle(d);
         for (s = 0; s < n && rc == 0; s++) {
             unsigned i;

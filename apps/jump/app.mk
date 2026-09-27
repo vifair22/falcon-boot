@@ -11,6 +11,7 @@ JUMP_BIOS += $(BIOS_MOD_console) $(BIOS_MOD_jumpini)
 JUMP_BIOS += $(BIOS_MOD_mbr)          # the disks the BIOS already sees
 JUMP_BIOS += $(BIOS_MOD_linux)        # memtest86+, through the boot protocol
 JUMP_BIOS += $(BIOS_MOD_jmod)         # the drivers, read off the floppy
+JUMP_BIOS += $(BIOS_MOD_jroutes)      # CD, USB and CF through them
 JUMP_BIOS += $(BIOS_MOD_bootpart) $(CORE_IDENT)  # is a USB disk a falcon stick
 JUMP_BIOS += $(BIOS_MOD_iso) $(BIOS_MOD_vfd) $(BIOS_MOD_lowmem) $(BIOS_MOD_heap)  # CDR: the stick's virtual CD over ATA.MOD
 JUMP_BIOS += $(CORE)/media/eltorito.c

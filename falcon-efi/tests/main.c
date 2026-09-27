@@ -8,7 +8,8 @@
  * (falcon-efi/src/secboot/sb.c): its whole input is one runtime services
  * function pointer, so a fake GetVariable reaches every state it can report.
  * The stationary build's boot-entry parsing (falcon-efi/src/nxt/nxtcore.c):
- * NVRAM bytes in, a row or a refusal out.
+ * NVRAM bytes in, a row or a refusal out. The station's list is both
+ * loaders' and is tested with falcon-core (falcon-core/src/media/strows.c).
  */
 
 #include "tests.h"

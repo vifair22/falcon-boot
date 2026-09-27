@@ -59,7 +59,7 @@ The BIOS loader mirrors its screen to serial (COM1) as the ANSI sequences
 OVMF's terminal sends for the UEFI loader, so the code is on serial for
 either loader, drawn where it is on the screen.
 
-The BIOS loader is one image for every processor from the Pentium Pro on,
+The BIOS loader is one image for every processor from the Pentium on,
 and boots 32-bit and 64-bit kernels alike. On a processor with no 64-bit
 mode, a 64-bit kernel is refused before it starts, on `DIR` or `POS`:
 
@@ -68,10 +68,10 @@ mode, a 64-bit kernel is refused before it starts, on `DIR` or `POS`:
     the kernel is 64-bit and this processor has no 64-bit mode
 
 (`personal OS boot failed while starting the kernel` on `POS`). A key
-returns to the menu. A processor older than a Pentium Pro stops before the
+returns to the menu. A processor older than a Pentium stops before the
 menu, on screen and serial:
 
-    falcon-bios: this processor is older than a Pentium Pro, which this loader needs
+    falcon-bios: this processor is older than a Pentium, which this loader needs
     press any key to reboot.
 
 ### 1.3 Fallthrough
@@ -96,28 +96,53 @@ route.
 
 The build for a machine's own disk (`docs/DESIGN.md` Section 13):
 `falcon-boot-station.efi` for UEFI, and `falcon-bios-station-stage3.bin` as stage 3
-behind the stick's stages 1 and 2 for BIOS. Either opens at the passphrase
-prompt; Escape there goes to the list.
+behind the stick's stages 1 and 2 for BIOS.
 
-UEFI:
+UEFI opens at its list, with `STATION.INI`'s default highlighted and, when
+it sets a timeout, "Booting in 5 s. Any key stops the countdown." in the key
+line (`docs/DESIGN.md` Sections 13.3 and 13.7):
 
 | code | route | reached by |
 |---|---|---|
-| `POS` | personal OS, as on the stick, from the boot disk's shelf | the prompt it opens at, or the Personal OS row |
+| `POS` | a UKI from a shelf of this install, as on the stick | `Personal OS (encrypted)` (the prompt, then the chooser), or a plaintext shelf's own row per UKI |
 | `NXT` | a firmware boot entry: BootNext is set to it and the machine restarts | its row, labelled with the entry's own description |
+| `ESP` | an image on an ESP, loaded by device path: Windows Boot Manager, or a `STATION.INI` entry's `efi` | a `method = efi` entry, or `Windows Boot Manager (disk gpt:1a2b3c4d, partition 1)` for an ESP no firmware entry names |
+| `MEM` | memtest86+, `\EFI\falcon\memtest.efi` on the station's ESP | `Memory test (memtest86+)` |
 
 Every entry the firmware's own boot menu offers is a row (active, not
-hidden, boot category), except the one this boot came through.
+hidden, boot category), except the one this boot came through and the
+station's own (`falcon`). A `FalconNextBoot` naming an entry boots it with
+no list. `ESP` says, before it loads `bootmgfw.efi`:
 
-BIOS:
+    BitLocker will ask for the recovery key if the volume is sealed.
+
+A `STATION.INI` that cannot be taken is said once, before the list, which
+then waits with no default:
+
+    STATION.INI line 2: unknown key 'bogus'.
+
+    The menu will wait with no default.
+
+BIOS opens at the passphrase prompt; Escape there goes to the list.
+
+BIOS opens at its list the same way, `STATION.INI` read from the station
+partition's root (`docs/DESIGN.md` Sections 12.5.2 and 13):
 
 | code | route | reached by |
 |---|---|---|
-| `POS` | personal OS, as on the stick, from the boot disk's shelf | the prompt it opens at, or the Personal OS row |
-| `MBR` | another disk's own boot code, started from 0x7C00 with DL naming that disk | its row, `Disk 0x81` and so on |
+| `POS` | a UKI off a shelf carrying the station's install ID, as the stick's personal OS | a plaintext shelf's UKI rows, or an encrypted shelf's `Personal OS (encrypted)` row (the prompt, then the chooser) |
+| `VBR` | a primary partition's boot sector: the disk's LBA 0 at 0000:0600 with the entry marked active, DS:SI at it, the boot sector at 0000:7C00 with its BPB's hidden sectors and drive number made to agree | a row such as `Windows (NTLDR) (disk mbr:cdcccdcc, partition 1)` |
+| `MBR` | another disk's own boot code, started from 0x7C00 | a row such as `Boot code (disk mbr:1a2b3c4d)` |
+| `MEM` | memtest86+, `MEMTEST.BIN` in the station partition, as jump starts it | the Memory test row |
 
-Every BIOS disk but the boot disk whose first sector carries the boot
-signature is a row.
+A partition is a row when its boot sector names a known loader (BOOTMGR,
+NTLDR, WINBOOT.SYS, FreeDOS's KERNEL.SYS, IO.SYS or IBMBIO.COM, GRUB,
+SYSLINUX); another disk is a row when its LBA 0 has boot code and an active
+entry. `STATION.INI` adds the rest. A chain of a disk that is not 0x80
+swaps that disk with 0x80 for everything it boots (`swap = no` in its
+section turns that off), and leaves 1 KB of conventional memory taken: the
+BDA's count at 0x413 reads 1 KB less. `docs/notes/station-rework.md`
+section 11 lists every sentence these screens say.
 
 ### 1.5 falcon jump
 
@@ -166,154 +191,84 @@ is not on the menu, the menu waits. A line the file cannot take is named on
 screen before the menu, which then waits with no default. `make jump
 JUMP_INI=<file>` copies one on.
 
-## 2. Installing the stationary build by hand
+## 2. Installing the station
 
-The stationary build (`docs/DESIGN.md` Section 13) is a machine's own boot
-loader on its internal disk. There is no tool for this install: every step
-below is run by hand, from a Linux live system, against a disk whose
-contents are about to be replaced. Read the whole section before the first
-command. `/dev/X` stands for the target disk and `/dev/X1`..`/dev/X3` for its
-partitions (`/dev/nvme0n1p1` and so on for NVMe).
+The station (`docs/DESIGN.md` Section 13) is falcon as a machine's own boot
+loader, beside the systems already on its disks. `falcon-boot-mkstick
+station install` puts it there (3.6); this section is the order a person
+does it in. `/dev/X` is the machine's disk.
 
 ### 2.1 What it needs
 
 | item | where it comes from |
 |---|---|
-| `falcon-boot-station.efi`, `falcon-bios-station-stage3.bin` | `make station` |
-| `falcon-bios-stage1.bin`, `falcon-bios-stage2.bin` | `make bios`; the stick's, unchanged |
-| `falcon-boot-mkstick` | `make`; used here for `keygen`, `ident` and `bios` |
-| Fedora shim 16.1 and its MokManager | `falcon-efi/tools/shim-spike/fetch-shims.sh`, into `build/shim/bins/` |
-| a MOK key pair | an existing one, or `falcon-boot-mkstick keygen <dir>` |
+| `falcon-bios-stage1.bin`, `falcon-bios-stage2.bin` | `make bios` |
+| `falcon-bios-station-stage3.bin`, `falcon-boot-station.efi` | `make station` |
+| `falcon-boot-mkstick` | `make` |
+| Fedora shim 16.1 and its MokManager (UEFI) | `falcon-efi/tools/shim-spike/fetch-shims.sh`, into `build/shim/bins/` |
+| a MOK key pair (UEFI) | the shelf's (`/falcon-mok.key`, `/falcon-mok.crt`), or `--key` and `--cert` |
+| `mkfs.fat`, mtools; `sgdisk` on GPT; `sbsign`, `openssl` on UEFI; `cryptsetup` or `debugfs` for a shelf | the distribution |
 
-One MOK pair can serve several machines; each machine enrolls its
-certificate once.
+### 2.2 Free space
 
-Every falcon partition carries an identity record with one install ID for
-the whole install (`docs/DESIGN.md` Section 3.1). Draw it once and use it
-in 2.3 and 2.6:
-
-```sh
-ID=$(od -An -tx1 -N16 /dev/urandom | tr -d ' \n')
-```
-
-### 2.2 Layout
-
-| part | type GUID | size | holds |
-|---|---|---|---|
-| p1 | `C12A7328-F81F-11D2-BA4B-00A0C93EC93B` (ESP) | 512 MiB | shim, MokManager, the loader |
-| p2 | `9CB02E90-85F4-4AF7-9AF3-1F9D6A95FEAF` (falcon shelf) | 1 GiB | LUKS2, pbkdf2 keyslot, ext4: `/uki/*.efi`, the MOK pair |
-| p3 | `CA7D7CCB-63ED-4C53-861C-1742536059CC` (Linux LUKS) | the rest | LUKS2, the OS's root |
-
-The shelf is found by its identity record, never by its number. The first
-partition must start at LBA 2048: BIOS stage 2 lives in the sectors before
-it. The ESP is the `boot` partition: BIOS stage 3 and the next-boot marker
-live in its reserved sectors, so it is formatted with room for them (`-R`,
-the count `mkstick create` uses).
+The installer resizes nothing. A BIOS station needs a partition of its own,
+64 MiB by default (288 MiB on a disk of 4096-byte sectors), in space no
+partition holds, and on MBR a free primary slot; it refuses and says how
+much it needs when there is none. On a disk
+one Windows partition fills (the A21m's), shrink it first, from any Linux:
 
 ```sh
-sgdisk -Z /dev/X
-sgdisk -n 1:2048:+512M -t 1:EF00 -c 1:ESP \
-       -n 2:0:+1G -t 2:9CB02E90-85F4-4AF7-9AF3-1F9D6A95FEAF -c 2:FALCON-UKI \
-       -n 3:0:0 -t 3:CA7D7CCB-63ED-4C53-861C-1742536059CC -c 3:root /dev/X
-mkfs.fat -F 32 -n ESP -R "$(falcon-boot-mkstick ident --reserved-sectors \
-    --stage3 build/bin/falcon-bios-station-stage3.bin)" /dev/X1
+ntfsresize -n -s <new size in bytes> /dev/X1    # a dry run
+ntfsresize -s <new size in bytes> /dev/X1
+echo '63,<new size in sectors>,7,*' | sfdisk -N 1 /dev/X
 ```
 
-### 2.3 The shelf
+Windows runs chkdsk once on its next boot. A UEFI station needs no new
+partition: it goes into the machine's ESP, which must not be mounted.
 
-pbkdf2 with the pinned iteration count, because the loader unlocks it
-(DESIGN Section 3). The passphrase must be the root's too: it is handed to
-the initramfs, which opens p3 with it.
-
-The shelf's record is a `falcon` token in its LUKS2 header.
+### 2.3 Install
 
 ```sh
-cryptsetup luksFormat --type luks2 --pbkdf pbkdf2 \
-    --pbkdf-force-iterations 200000 /dev/X2
-printf '{"type":"falcon","keyslots":[],"version":1,"role":"shelf","install_id":"%s"}' \
-    "$ID" | cryptsetup token import /dev/X2
-cryptsetup open /dev/X2 shelf
-mkfs.ext4 -L FALCON-UKI /dev/mapper/shelf
-mkdir -p /mnt/shelf
-mount /dev/mapper/shelf /mnt/shelf
-mkdir /mnt/shelf/uki
-install -m 0600 falcon-mok.key /mnt/shelf/
-install -m 0644 falcon-mok.crt /mnt/shelf/
+falcon-boot-mkstick station install /dev/X --dry-run
+falcon-boot-mkstick station install /dev/X --backup station.bak
 ```
 
-The OS mounts the shelf at `/efi`, and its kernel hook builds the UKI into
-`/efi/uki/` and signs it with the MOK pair there. The archusb repository
-has the hook, the initramfs's credential drop-in, and the cmdline that
-names p3 and root; the loader's half of the handoff is DESIGN Section 5.1.
+The dry run prints the plan: where the station partition goes, the stage
+sectors, the `STATION.INI` it will write and any disk signature it will
+give. Both firmwares are installed where the disk allows it; `--bios` or
+`--uefi` asks for one. `--shelf` names the shelf the station boots Linux
+from, which is stamped with the station's install ID. Keep the backup file
+off the disk it describes.
 
-### 2.4 The root
+With Secure Boot on, the first boot through the new firmware entry stops in
+MokManager: enroll `\EFI\falcon\falcon-boot.cer` (or run `mokutil --import`
+on it before rebooting).
 
-Default LUKS2 (argon2id), the same passphrase, and whatever the OS puts
-inside. The loader never touches it.
+### 2.4 Check and remove
 
 ```sh
-cryptsetup luksFormat --type luks2 /dev/X3
+falcon-boot-mkstick station status /dev/X
+falcon-boot-mkstick station remove --backup station.bak
 ```
 
-### 2.5 UEFI
-
-Shim loads its next stage and MokManager from its own directory, so all
-three go in `\EFI\falcon\`, and the firmware gets an entry of its own
-rather than the removable-media path.
-
-```sh
-mkdir -p /mnt/esp
-mount /dev/X1 /mnt/esp
-mkdir -p /mnt/esp/EFI/falcon
-cp build/shim/bins/fedora-16.1-shimx64.efi /mnt/esp/EFI/falcon/shimx64.efi
-cp build/shim/bins/fedora-16.1-mmx64.efi   /mnt/esp/EFI/falcon/mmx64.efi
-sbsign --key falcon-mok.key --cert falcon-mok.crt \
-       --output /mnt/esp/EFI/falcon/grubx64.efi build/bin/falcon-boot-station.efi
-efibootmgr --create --disk /dev/X --part 1 --label falcon \
-           --loader '\EFI\falcon\shimx64.efi'
-mokutil --import falcon-mok.cer
-```
-
-`mokutil --import` asks for a one-time password; the next boot stops in
-MokManager, where Enroll MOK and that password finish the enrollment.
-`falcon-mok.cer` is the DER form `keygen` writes beside the pair
-(`openssl x509 -in falcon-mok.crt -outform DER -out falcon-mok.cer`
-makes it from the PEM).
-
-A Windows install on another disk needs nothing: its firmware entry,
-Windows Boot Manager, is a row (`NXT`, Section 1.4).
-
-### 2.6 BIOS
-
-Stages 1 and 2 are the stick's, stage 3 is the stationary one. The ESP
-gets its `boot` record first; `bios` finds it by that record and puts stage
-3 in its reserved sectors. `--reserve` claims stage 2's gap as a BIOS boot
-partition named `FALCON-BIOS`, so no partitioning tool later puts a
-partition over it.
-
-`--reserve` rewrites the partition table, so nothing on the disk may be
-mounted:
-
-```sh
-umount /mnt/esp /mnt/shelf
-cryptsetup close shelf
-falcon-boot-mkstick ident /dev/X --write-boot 1 --id "$ID"
-falcon-boot-mkstick bios --reserve \
-    --stage1 build/bin/falcon-bios-stage1.bin \
-    --stage2 build/bin/falcon-bios-stage2.bin \
-    --stage3 build/bin/falcon-bios-station-stage3.bin \
-    --backup bios.bak /dev/X
-```
-
-The backup is every sector `bios` wrote, as it was; `--remove --backup
-bios.bak` puts them back. A second disk with its own boot code is a row
-(`MBR`, Section 1.4).
+`status` says what is installed and what each menu offers. `remove` puts
+the old boot code back and deletes falcon's files and firmware entry; the
+station partition stays until it is deleted. `remove --full` also puts the
+partition table back as it was.
 
 ## 3. falcon-boot-mkstick
 
 The stick maker (`docs/DESIGN.md` Section 8). `falcon-boot-mkstick
 <command> --help` prints a command's options. Every command takes
 `--verbose` and `--quiet`.
+
+`make install` puts it and `falcon-boot-sign` in `$(PREFIX)/bin`, building
+them first:
+
+    make install                     # /usr/local/bin, mode 0755
+    make install PREFIX=/usr         # /usr/bin
+    make install DESTDIR=/tmp/pkg    # /tmp/pkg/usr/local/bin, for a package
+    make uninstall                   # removes both, same PREFIX and DESTDIR
 
 ### 3.1 create
 
@@ -418,6 +373,7 @@ token of 3.1.
 
     falcon-boot-mkstick next-boot [--sector] [--disk <dev>] <value>
     falcon-boot-mkstick next-boot [--sector] [--disk <dev>] --clear
+    falcon-boot-mkstick next-boot [--sector] [--disk <dev>] --print
 
 Asks the loader to start one entry on the next boot instead of drawing the
 menu (DESIGN Section 6.3.1). The value is a path on p2, as the menu lists
@@ -436,11 +392,165 @@ it finds, as a menu pick would be. Needs root.
       <the RTC's reading, /sys/class/rtc/rtc0/since_epoch>
       <the value>
 
-  and zeros to the end of the sector. The loader honours it for ten
-  minutes after it was written. The disk is the one whose partitions carry
-  a `boot` record; `--disk` names it when more than one does, or names an
-  image file. The sector is written only when it is empty or already a
-  marker. `--clear` zeros it.
+  and zeros to the end of the sector. The marker is one whole sector of the
+  disk: 512 bytes, or 4096 on a 4Kn disk, the text in its first 512. The
+  loader honours it for ten minutes after it was written. Without `--disk`
+  every disk is looked at and exactly one must carry a `boot` record. With
+  `--disk <dev>` (a disk or an image file) only that disk is looked at,
+  whatever else is attached, and it is an error if it has no `boot` record.
+  The sector is written only when it is empty or already a marker.
+  `--clear` zeros it.
+
+`--print` reports what is queued and changes nothing. It writes one
+`key=value` per line to stdout and exits 0 whether or not anything is
+queued; it exits 1 only on an error (no boot partition, a disk it cannot
+read). Keys may be added later; a script reads the ones it wants and
+ignores the rest. For the variable (UEFI):
+
+| key | value |
+|---|---|
+| `source` | `efivar` |
+| `queued` | `yes`, `no`, or `invalid` (set, but not a value the loader accepts; it deletes it and draws the menu) |
+| `value` | the value; only with `queued=yes` |
+
+For the sector (BIOS, or `--sector`):
+
+| key | value |
+|---|---|
+| `source` | `sector` |
+| `disk` | the disk it was read from |
+| `lba` | the marker's LBA, in the disk's sectors |
+| `sector_size` | the disk's sector size, `512` or `4096` |
+| `queued` | `yes`, `no` (all zeros, or not a marker, which the loader leaves alone), or `invalid` (a marker the loader clears and does not act on) |
+| `value` | the value; this and the keys below only with `queued=yes` |
+| `set_rtc` | the RTC's reading when it was set, seconds |
+| `age` | seconds since then by the RTC now; negative when the clock went back |
+| `window` | `yes` when the loader would honour it now (within ten minutes, or up to two minutes in the future), else `no` |
+
+`age` and `window` are `unknown` when `/sys/class/rtc/rtc0/since_epoch`
+cannot be read. For example:
+
+    $ falcon-boot-mkstick next-boot --print --sector --disk /dev/sdb
+    source=sector
+    disk=/dev/sdb
+    lba=2056
+    sector_size=512
+    queued=yes
+    value=:personal
+    set_rtc=1790495324
+    age=37
+    window=yes
 
 This replaces archusb's `archusb-boot-next`, which wrote the BIOS marker to
 LBA 2047 with `dd`; a pending marker there is no longer read.
+
+### 3.6 station
+
+    falcon-boot-mkstick station install <disk> [--bios] [--uefi]
+        [--size <MiB>] [--shelf <n|disk:n|partition>] [--esp <n>]
+        [--memtest <file>] [--memtest-efi <file>] [--key <file> --cert <file>]
+        [--passphrase-file <file>] [--legacy [--uki <file>]... [--mods <dir>]]
+        [--also <disk>]... [--no-scan] [--backup <file>] [--force] [--dry-run]
+    falcon-boot-mkstick station remove [<disk>] --backup <file> [--full]
+        [--force] [--dry-run]
+    falcon-boot-mkstick station status <disk> [--also <disk>]... [--no-scan]
+
+Installs the station on a machine's disk (DESIGN Section 13.9). One new
+install ID is drawn and written into every record the station has: the
+station partition's, the ESP's and the shelf's.
+
+**BIOS.** What it writes:
+
+| what | MBR disk | GPT disk |
+|---|---|---|
+| station partition | a free primary slot, type `0x1C` (hidden FAT32), in free space | the falcon boot type `D0ACB249-F895-4E0D-AB0D-CFBB6F48AE36`, named `FALCON-STATION` |
+| stage 2 | LBA 1, before the first partition | the `FALCON-BIOS` partition (EF02), made at LBA 34 when the disk has none |
+| stage 1 | LBA 0's boot code, table and signature kept | the same |
+
+The station partition goes in the highest free run that holds `--size`
+(64 MiB, at least 40), on a MiB boundary where the run allows it and a
+4 KiB one where it does not. It is formatted FAT32 with one sector a
+cluster and the reserved sectors `bios` uses (3.1): its boot record at byte
+0x1DC, the marker at reserved sector 8, stage 3 from 32.
+
+**Sector sizes.** Disks of 512- and 4096-byte sectors, MBR or GPT. Every
+LBA above is the disk's own sector: on a 4Kn disk stage 2 is still at LBA
+34 on GPT (byte 139264) and LBA 1 on MBR, the reserved sectors, the marker
+and stage 3 are 4096-byte sectors, and the station partition's FAT has
+4096-byte sectors. FAT32 needs 65525 clusters, and a cluster cannot be
+smaller than a sector, so the station partition there is 288 MiB by default
+and 272 MiB at least, as a 4Kn disk's ESP is 260 MB. An image file is taken
+as 512-byte sectors; a 4Kn image is written through a loop device made with
+`losetup --sector-size 4096 -P`. A loop device is an image's: nothing else
+of this machine is scanned for it and no firmware entry is made. Its files are
+`STATION.INI`, `MEMTEST.BIN` (`--memtest`), and with `--legacy`
+(station-legacy, whose stage 3 is `falcon-bios-station-legacy-stage3.bin`)
+jump's drivers from `--mods` (default `build/bin/mod`) as `*.MOD` and each
+`--uki` in `/uki`.
+
+**UEFI.** Into `\EFI\falcon\` on the disk's ESP (`--esp` names it):
+`shimx64.efi`, MokManager under the name shim launches it by, the station
+loader under shim's next-stage name (`grubx64.efi`) signed with the MOK,
+`falcon-boot.cer`, `STATION.INI` and `memtest.efi` (`--memtest-efi`, signed
+with the MOK). The ESP's boot sector gets the station's boot record, with
+stage 3 and marker 0. On a block device of a machine that booted with UEFI
+a firmware entry named `falcon` is created for `\EFI\falcon\shimx64.efi`;
+for an image it prints the `efibootmgr` line to run on its machine. The MOK
+pair is `--key` and `--cert`, or read off the shelf (a LUKS2 shelf with
+`--passphrase-file` or a prompt).
+
+**What it finds.** Every disk of the machine (a block-device target; an
+image's machine is the image and `--also`; `--no-scan` limits a block
+device to itself and `--also`) is read as the loaders read it:
+
+- each primary partition whose boot sector names a loader: `BOOTMGR`,
+  `NTLDR`, `WINBOOT.SYS`, `IO.SYS`, `KERNEL.SYS`, GRUB, SYSLINUX;
+- each other disk whose MBR has boot code, an active entry and no `0xEE`
+  entry;
+- with UEFI, `\EFI\Microsoft\Boot\bootmgfw.efi` on a disk's ESP, and on
+  this machine the firmware's Windows Boot Manager entry;
+- the shelf's UKIs, when it can be read.
+
+`STATION.INI` is written from that: a section per partition, disk and ESP
+Windows found (`windows`, `dos`, `grub`, `syslinux`, `disk`, numbered when
+repeated) with its `disk`, `part` and label, and `default` naming the first
+Windows or DOS, else the first UKI (`uki-<name>`), else the first other
+loader, with `timeout = 5`. A UKI default on a LUKS2 shelf is a `[linux]`
+section with `uki = <file>` instead of its generated name: before the
+shelf is unlocked the UEFI loader has no row named `uki-<name>`, and a
+`uki` section is the row that prompts for the shelf and boots that file.
+Nothing found is no default and no countdown, and the file is one comment
+line.
+Each disk the file names that has signature 0 is given a random one.
+
+**Refusals.** No partition table; sectors other than 512 or 4096 bytes; a
+disk already carrying a falcon boot record; no free space for the station
+partition (it names the size it needs and the largest free run); no free
+primary slot; no room before the first partition for stage 2; a mounted
+ESP; `--size` above 4096, or under 40 (272 on a 4Kn disk). It warns when the station partition or
+the shelf ends past 8 GB or 128 GiB.
+
+**The backup** (`--backup`, default `falcon-station-backup-<disk>.bin`;
+refused when it exists, without `--force`) is written before anything else
+and holds, in the disk's sectors: LBA 0; from the table's end to the first partition (stage 2's
+area); on GPT the primary and backup tables; the station partition's
+reserved sectors and 8 MiB after them; the ESP's boot sector and its FAT32 backup; each other
+disk's LBA 0 before its signature. Then, in order: the shelf's stamp, the
+station partition, its files, record and stages, the ESP, other disks'
+signatures, and LBA 0 last.
+
+**remove** reads the backup (its disk, or `<disk>` when named now), checks
+that a partition there carries the backup's install ID (`--force` skips
+that), and puts back LBA 0's boot code, stage 2's area and the ESP's boot
+sectors; deletes `\EFI\falcon` and the `falcon` firmware entry it made;
+deletes the `FALCON-BIOS` partition it made. The station partition stays.
+`--full` restores every run: the partition tables whole (the station
+partition's entry goes), the station partition's first sectors, and the
+other disks' signatures.
+
+**status** is read-only: the install ID and every partition's record, the
+BIOS stages where stage 1 and the station partition's record put them, the
+ESP's files, each `STATION.INI` as the loaders parse it (or the line it
+fails at), the shelf carrying the install ID, and the rows each menu shows
+with the default marked. It exits nonzero when a stage or file is missing.
+

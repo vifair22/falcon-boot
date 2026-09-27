@@ -156,6 +156,25 @@ static void gpt_disk(tdisk *d, const uint8_t *const *types, unsigned n)
     put_le32(hdr + 16, ref_crc32(hdr, 92));
 }
 
+/* A boot record whose stage 3 sector is `stage3`: 0 is an ESP's on a
+ * station installed for UEFI as well (DESIGN Section 13.2). */
+static void fat_boot_s3(tdisk *d, uint32_t lba, uint16_t reserved,
+                        uint8_t id0, uint16_t stage3)
+{
+    uint8_t *s = d->buf + (size_t)lba * BS;
+    ident_rec r;
+
+    fat_boot(d, lba, reserved, 0, 0);
+    memset(&r, 0, sizeof r);
+    r.version = IDENT_VERSION;
+    r.role = IDENT_ROLE_BOOT;
+    r.stage3_sector = stage3;
+    r.marker_sector = stage3 != 0 ? 8 : 0;
+    memset(r.install_id, 0x5A, sizeof r.install_id);
+    r.install_id[0] = id0;
+    ident_encode_bin(&r, s);
+}
+
 static part_entry g_parts[16];
 static uint8_t g_sec[BS];
 
@@ -346,6 +365,35 @@ static void test_gpt(void **state)
     free(d);
 }
 
+/* A GPT station installed for UEFI and BIOS both: the ESP first, its boot
+ * record naming no stage 3, then the station partition with the real one.
+ * Stage 2 takes the second; with the station partition gone there is no
+ * stage 3 to take, whatever the ESP says. */
+static void test_gpt_esp_without_stage3(void **state)
+{
+    const uint8_t *types[2];
+    tdisk *d = tdisk_new();
+    bootpart bp;
+
+    (void)state;
+    types[0] = gpt_guid_esp;
+    types[1] = falcon_guid_boot;
+    gpt_disk(d, types, 2);
+    fat_boot_s3(d, 2048, 40, 7, 0);
+    fat_boot_s3(d, 2112, 48, 7, 32);
+
+    assert_int_equal(find(d, &bp), BOOTPART_OK);
+    assert_int_equal(bp.start_lba, 2112);
+    assert_int_equal(bp.number, 2);
+    assert_int_equal(bp.rec.stage3_sector, 32);
+    assert_int_equal(bootpart_stage3_room(g_sec, &bp.rec), 16);
+
+    memset(d->buf + 2112u * BS, 0, BS);
+    fat_boot(d, 2112, 48, 0, 0);
+    assert_int_equal(find(d, &bp), BOOTPART_ERR_NONE);
+    free(d);
+}
+
 static void test_errors(void **state)
 {
     tdisk *d = tdisk_new();
@@ -403,6 +451,7 @@ int run_bootpart_tests(void)
         cmocka_unit_test(test_mbr_logical),
         cmocka_unit_test(test_no_table),
         cmocka_unit_test(test_gpt),
+        cmocka_unit_test(test_gpt_esp_without_stage3),
         cmocka_unit_test(test_errors),
         cmocka_unit_test(test_room),
     };

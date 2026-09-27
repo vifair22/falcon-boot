@@ -499,7 +499,7 @@ typedef struct {
     int      have_uname;
 } kernel_facts;
 
-static int read_kernel(const char *path, kernel_facts *kf)
+static int read_kernel(const char *path, int bios_only, kernel_facts *kf)
 {
     uint8_t *head = NULL;
     size_t head_len;
@@ -538,12 +538,28 @@ static int read_kernel(const char *path, kernel_facts *kf)
     if (rc != SGN_OK)
         goto out;
 
+    /* A bzImage with no EFI stub, asked for: nothing of it is PE, so it
+     * carries no NX flag and no .sbat; its setup header is what falcon-bios
+     * boots, and its version is read from there as for any kernel. */
+    if (bios_only && pe_parse(head, head_len, &h) != PE_OK) {
+        if (memcmp(head + 0x202, "HdrS", 4) != 0) {
+            sgn_set_error(SGN_ERR_FORMAT,
+                          "%s is not a bzImage (no HdrS setup header)", path);
+            rc = SGN_ERR_FORMAT;
+            goto out;
+        }
+        kf->have_uname = uki_uname(head, head_len, kf->uname,
+                                   sizeof(kf->uname));
+        goto out;
+    }
+
     /* sd-stub starts the kernel through its PE entry point; a kernel without
      * one (no EFI stub, or compressed as a whole) would build and not boot. */
     if (pe_parse(head, head_len, &h) != PE_OK || h.magic != PE_MAGIC_PE32P ||
         h.opt_size < OPT_DLLCHAR + 2u || h.opt + h.opt_size > head_len) {
         sgn_set_error(SGN_ERR_FORMAT,
-                      "%s is not an EFI-stub kernel (no PE32+ header)", path);
+                      "%s is not an EFI-stub kernel (no PE32+ header); "
+                      "--bios-only wraps one for falcon-bios alone", path);
         rc = SGN_ERR_FORMAT;
         goto out;
     }
@@ -616,7 +632,7 @@ int uki_build(const uki_spec *spec)
         return SGN_ERR_INTERNAL;
     }
 
-    rc = read_kernel(spec->kernel, &kf);
+    rc = read_kernel(spec->kernel, spec->bios_only, &kf);
     if (rc != SGN_OK)
         return rc;
     if (spec->initrd != NULL) {
@@ -746,6 +762,7 @@ static void uki_usage(FILE *f)
 "usage: falcon-boot-sign uki --linux <kernel> --cmdline <string>\n"
 "                            --os-release <file> --output <uki>\n"
 "                            [--initrd <file>] [--stub <sd-stub>]\n"
+"                            [--bios-only]\n"
 "\n"
 "Builds an unsigned UKI: sd-stub with .osrel, .cmdline, .uname (read from the\n"
 "kernel), .linux and .initrd appended and .sbat merged, laid out as ukify\n"
@@ -753,7 +770,9 @@ static void uki_usage(FILE *f)
 "the tool does not bless, such as the signing appliance itself. Sign the\n"
 "result with sbsign.\n"
 "\n"
-"  --stub <file>   default: " UKI_DEFAULT_STUB "\n");
+"  --stub <file>   default: " UKI_DEFAULT_STUB "\n"
+"  --bios-only     the kernel is a bzImage with no EFI stub; the UKI boots\n"
+"                  only where falcon-bios unwraps it, never through sd-stub\n");
 }
 
 int sgn_uki_main(int argc, char **argv)
@@ -775,6 +794,10 @@ int sgn_uki_main(int argc, char **argv)
         if (strcmp(a, "--help") == 0) {
             uki_usage(stdout);
             return SGN_OK;
+        }
+        if (strcmp(a, "--bios-only") == 0) {
+            spec.bios_only = 1;
+            continue;
         }
         if (strcmp(a, "--linux") == 0)
             slot = &spec.kernel;

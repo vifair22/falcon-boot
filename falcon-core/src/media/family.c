@@ -36,17 +36,17 @@ static const family_desc g_families[] = {
      * medium we claim nothing. Callers must branch on the id, not on the
      * flags, before acting on an unknown. */
     { FAMILY_UNKNOWN, "unknown", (void *)0, 0,
-      FAMILY_TRI_UNKNOWN, FAMILY_TRI_UNKNOWN },
+      FAMILY_TRI_UNKNOWN, FAMILY_TRI_UNKNOWN, 0 },
 
     { FAMILY_DEBIAN_CASPER, "Ubuntu/casper",
       "iso-scan/filename=%ISO%", 0,
-      FAMILY_TRI_UNKNOWN, FAMILY_TRI_UNKNOWN },
+      FAMILY_TRI_UNKNOWN, FAMILY_TRI_UNKNOWN, 0 },
 
     /* live-boot's own option; casper's iso-scan is a different implementation
      * with a different name, so the two cannot share a row. */
     { FAMILY_DEBIAN_LIVE, "Debian live",
       "findiso=%ISO%", 0,
-      FAMILY_TRI_UNKNOWN, FAMILY_TRI_UNKNOWN },
+      FAMILY_TRI_UNKNOWN, FAMILY_TRI_UNKNOWN, 0 },
 
     /* dracut's 90dmsquash-live module stacks the live overlay on a
      * device-mapper snapshot, so device-mapper is present in every dracut
@@ -54,21 +54,21 @@ static const family_desc g_families[] = {
      * guarantees it is included; unknown until measured. */
     { FAMILY_FEDORA_DRACUT, "Fedora/dracut",
       "iso-scan/filename=%ISO%", 0,
-      FAMILY_TRI_UNKNOWN, FAMILY_TRI_YES },
+      FAMILY_TRI_UNKNOWN, FAMILY_TRI_YES, 0 },
 
     /* exfat/dm both YES: measured on the archiso 2026.01.01 initramfs,
      * which ships exfat.ko.zst, loop.ko.zst and dm-mod.ko.zst (bless-tool
      * verification, 2026-09-13). */
     { FAMILY_ARCH, "Arch/archiso",
       "img_dev=%DEV% img_loop=%ISO%", 0,
-      FAMILY_TRI_YES, FAMILY_TRI_YES },
+      FAMILY_TRI_YES, FAMILY_TRI_YES, 0 },
 
     /* archiso derivative with its own base directory; without the
      * archisobasedir override the stock hook looks in /arch and finds
      * nothing (bless-tool verification, 2026-09-13). */
     { FAMILY_SYSTEMRESCUE, "SystemRescue",
       "img_dev=%DEV% img_loop=%ISO% archisobasedir=sysresccd", 0,
-      FAMILY_TRI_UNKNOWN, FAMILY_TRI_UNKNOWN },
+      FAMILY_TRI_UNKNOWN, FAMILY_TRI_UNKNOWN, 0 },
 
     /* Another archiso derivative, built by manjaro-tools, whose hook reads
      * misobasedir rather than archisobasedir and whose tree is /manjaro.
@@ -82,7 +82,7 @@ static const family_desc g_families[] = {
      * Manjaro ships beside itself. */
     { FAMILY_MANJARO, "Manjaro",
       (void *)0, 0,
-      FAMILY_TRI_UNKNOWN, FAMILY_TRI_UNKNOWN },
+      FAMILY_TRI_UNKNOWN, FAMILY_TRI_UNKNOWN, 0 },
 
     /* antiX and MX. Neither is live-boot nor casper: the tree is /antiX and
      * the initrd finds linuxfs in it by searching mounted media, which is
@@ -90,7 +90,7 @@ static const family_desc g_families[] = {
      * history as Manjaro above, including the memtest misread. */
     { FAMILY_ANTIX, "antiX/MX",
       (void *)0, 0,
-      FAMILY_TRI_UNKNOWN, FAMILY_TRI_UNKNOWN },
+      FAMILY_TRI_UNKNOWN, FAMILY_TRI_UNKNOWN, 0 },
 
     /* The five below are labels and nothing more, and every behaviour column
      * is deliberately the same as the unknown row's.
@@ -105,19 +105,19 @@ static const family_desc g_families[] = {
      * a medium turns up that needs otherwise. */
     { FAMILY_ALPINE, "Alpine",
       (void *)0, 0,
-      FAMILY_TRI_UNKNOWN, FAMILY_TRI_UNKNOWN },
+      FAMILY_TRI_UNKNOWN, FAMILY_TRI_UNKNOWN, 0 },
 
     { FAMILY_DEBIAN_INSTALLER, "Debian installer",
       (void *)0, 0,
-      FAMILY_TRI_UNKNOWN, FAMILY_TRI_UNKNOWN },
+      FAMILY_TRI_UNKNOWN, FAMILY_TRI_UNKNOWN, 0 },
 
     { FAMILY_NIXOS, "NixOS",
       (void *)0, 0,
-      FAMILY_TRI_UNKNOWN, FAMILY_TRI_UNKNOWN },
+      FAMILY_TRI_UNKNOWN, FAMILY_TRI_UNKNOWN, 0 },
 
     { FAMILY_PROXMOX, "Proxmox VE",
       (void *)0, 0,
-      FAMILY_TRI_UNKNOWN, FAMILY_TRI_UNKNOWN },
+      FAMILY_TRI_UNKNOWN, FAMILY_TRI_UNKNOWN, 0 },
 
     /* ESXi is the one of the five that boots no Linux kernel at all, like
      * Windows media. It is absent from the sign tool's kernel table for that
@@ -125,7 +125,7 @@ static const family_desc g_families[] = {
      * family", which is a better sentence about the same outcome. */
     { FAMILY_ESXI, "VMware ESXi",
       (void *)0, 0,
-      FAMILY_TRI_NO, FAMILY_TRI_NO },
+      FAMILY_TRI_NO, FAMILY_TRI_NO, 0 },
 
     /* memtest is a bare EFI binary: it needs no cmdline, no initramfs and no
      * backing media once loaded, which is what the three columns below say.
@@ -134,9 +134,16 @@ static const family_desc g_families[] = {
      * it however self-contained it is (DESIGN Section 7.2, decided 2026-09-13
      * after this family proved unbootable on a db with no Microsoft CA). That
      * is the bless tool's business and not a column here. */
+    /* devlink-rescue's 32-bit RAM-only Linux (DESIGN Section 13.5). It needs
+     * nothing from its medium once the kernel runs (its squashfs is inside
+     * its initramfs), and its agent owns COM1. */
+    { FAMILY_DEVLINK, "DevLink recovery",
+      (void *)0, 0,
+      FAMILY_TRI_NO, FAMILY_TRI_NO, 1 },
+
     { FAMILY_MEMTEST, "memtest",
       (void *)0, 0,
-      FAMILY_TRI_NO, FAMILY_TRI_NO },
+      FAMILY_TRI_NO, FAMILY_TRI_NO, 0 },
 
     /* No cmdline and no injection. The injection column means one specific
      * mechanism, the extent-map/device-mapper hook of DESIGN Section 6.2, and
@@ -147,7 +154,7 @@ static const family_desc g_families[] = {
      * and is not this field. */
     { FAMILY_WINDOWS, "Windows media",
       (void *)0, 0,
-      FAMILY_TRI_NO, FAMILY_TRI_NO },
+      FAMILY_TRI_NO, FAMILY_TRI_NO, 0 },
 
     /* Gentoo's live media boots dracut's dmsquash-live, which finds its root
      * by the ISO's volume label, and that label carries the release date
@@ -158,7 +165,7 @@ static const family_desc g_families[] = {
     { FAMILY_GENTOO, "Gentoo",
       "dokeymap nodhcp root=live:CDLABEL=%LABEL% rd.live.dir=/ "
       "rd.live.squashimg=image.squashfs cdroot iso-scan/filename=%ISO%", 0,
-      FAMILY_TRI_YES, FAMILY_TRI_YES },
+      FAMILY_TRI_YES, FAMILY_TRI_YES, 0 },
 
     /* No cmdline and no injection, and for the same reason the Windows row
      * gives: the injection column means the extent-map/device-mapper hook of
@@ -168,7 +175,7 @@ static const family_desc g_families[] = {
      * (falcon-efi/src/bsd, docs/notes/bsd-route.md). */
     { FAMILY_BSD, "FreeBSD family",
       (void *)0, 0,
-      FAMILY_TRI_NO, FAMILY_TRI_NO },
+      FAMILY_TRI_NO, FAMILY_TRI_NO, 0 },
 };
 
 #define FAMILY_COUNT (sizeof(g_families) / sizeof(g_families[0]))
@@ -425,6 +432,13 @@ const family_desc *family_detect(const family_probe *p)
     if (probe_exists(p, "/antiX/linuxfs") ||
         (probe_exists(p, "/antiX") && probe_exists(p, "/antiX/vmlinuz")))
         return family_by_id(FAMILY_ANTIX);
+
+    /* devlink-rescue's isolinux layout, and its config naming it: the file
+     * names alone are generic 8.3 spellings another medium could use. */
+    if (probe_exists(p, "/isolinux/bzimage") &&
+        probe_exists(p, "/isolinux/initrd.xz") &&
+        probe_head_contains(p, "/isolinux/isolinux.cfg", "DevLink recovery"))
+        return family_by_id(FAMILY_DEVLINK);
 
     /* memtest last: its fingerprints are the weakest, so anything with a real
      * base directory has already claimed the medium by now. */

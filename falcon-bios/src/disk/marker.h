@@ -21,10 +21,12 @@ typedef enum {
 
 /* Reads the marker sector, `sector` of the boot partition that starts at
  * `part_lba` on the boot disk (the record's marker field; 0 for an install
- * with none), and, if it is a marker, CLEARS it, before anything else is
+ * with none), one whole sector of the disk's size (512, or 4096 on a 4Kn
+ * disk), and, if it is a marker, CLEARS it, before anything else is
  * decided about it. Every state but NONE and STUCK means the sector is
  * zero now. Only MARKER_VALUE fills out (NUL-terminated); it is still only a
- * name, matched against the survey by the caller. */
+ * name, matched against the survey by the caller. Without an out of at least
+ * one byte the sector is not read and the answer is MARKER_NONE. */
 marker_state marker_take(const bios_disk *d, uint64_t part_lba,
                          uint16_t sector, char *out, size_t cap);
 

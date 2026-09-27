@@ -112,6 +112,7 @@ static void test_identify_disk(void **state)
 {
     uint16_t w[256];
     uint64_t n = 0;
+    int big = 1;
     char model[41];
 
     (void)state;
@@ -121,21 +122,105 @@ static void test_identify_disk(void **state)
     w[60] = 0x0000u;
     w[61] = 0x0020u;                    /* 0x200000 sectors */
     w[27] = (uint16_t)(('C' << 8) | 'F');
-    assert_int_equal(ata_parse_identify_disk(w, &n, model, sizeof model), 0);
+    assert_int_equal(ata_parse_identify_disk(w, &n, &big, model, sizeof model), 0);
     assert_int_equal(n, 0x200000u);
+    assert_int_equal(big, 0);
     assert_string_equal(model, "CF");
 
     w[0] = 0x0040u;                     /* an ordinary fixed disk */
-    assert_int_equal(ata_parse_identify_disk(w, &n, model, sizeof model), 0);
+    assert_int_equal(ata_parse_identify_disk(w, &n, &big, model, sizeof model), 0);
     w[0] = 0x85C0u;                     /* a CD drive */
-    assert_int_equal(ata_parse_identify_disk(w, &n, model, sizeof model), -1);
+    assert_int_equal(ata_parse_identify_disk(w, &n, &big, model, sizeof model), -1);
     w[0] = 0x0040u;
     w[49] = 0;                          /* CHS only */
-    assert_int_equal(ata_parse_identify_disk(w, &n, model, sizeof model), -1);
+    assert_int_equal(ata_parse_identify_disk(w, &n, &big, model, sizeof model), -1);
     w[49] = 1u << 9;
     w[60] = 0;
     w[61] = 0;
-    assert_int_equal(ata_parse_identify_disk(w, &n, model, sizeof model), -1);
+    assert_int_equal(ata_parse_identify_disk(w, &n, &big, model, sizeof model), -1);
+}
+
+/* A disk past 128 GiB: words 60-61 stop at 0x0FFFFFFF and the 48-bit
+ * count is in words 100-103, used only when words 83 and 86 say the
+ * feature set is there and on. */
+static void test_identify_lba48(void **state)
+{
+    uint16_t w[256];
+    uint64_t n = 0;
+    int big = 0;
+
+    (void)state;
+    memset(w, 0, sizeof w);
+    w[0] = 0x0040u;
+    w[49] = 1u << 9;
+    w[60] = 0xFFFFu;
+    w[61] = 0x0FFFu;
+    w[83] = 0x4400u;                    /* valid, 48-bit supported */
+    w[86] = 0x0400u;                    /* 48-bit enabled */
+    w[100] = 0x0000u;
+    w[101] = 0x1020u;                   /* 0x10200000: 129 GiB */
+    assert_int_equal(ata_parse_identify_disk(w, &n, &big, NULL, 0), 0);
+    assert_int_equal(n, 0x10200000u);
+    assert_int_equal(big, 1);
+
+    /* Words above 2^32 sectors. */
+    w[102] = 0x0001u;
+    assert_int_equal(ata_parse_identify_disk(w, &n, &big, NULL, 0), 0);
+    assert_true(n == 0x110200000ull);
+    w[102] = 0;
+
+    /* Supported but not enabled: the 28-bit count, no 48-bit commands. */
+    w[86] = 0;
+    assert_int_equal(ata_parse_identify_disk(w, &n, &big, NULL, 0), 0);
+    assert_int_equal(n, 0x0FFFFFFFu);
+    assert_int_equal(big, 0);
+
+    /* Word 83 not valid (bits 15-14 not 01b): its bit 10 means nothing. */
+    w[86] = 0x0400u;
+    w[83] = 0xC400u;
+    assert_int_equal(ata_parse_identify_disk(w, &n, &big, NULL, 0), 0);
+    assert_int_equal(big, 0);
+    w[83] = 0x0400u;
+    assert_int_equal(ata_parse_identify_disk(w, &n, &big, NULL, 0), 0);
+    assert_int_equal(big, 0);
+
+    /* 48-bit, but no 48-bit count: taken at its 28-bit one. */
+    w[83] = 0x4400u;
+    w[100] = w[101] = 0;
+    assert_int_equal(ata_parse_identify_disk(w, &n, &big, NULL, 0), 0);
+    assert_int_equal(n, 0x0FFFFFFFu);
+    assert_int_equal(big, 1);
+
+    assert_int_equal(ata_parse_identify_disk(w, &n, NULL, NULL, 0), -1);
+}
+
+static void test_addressing(void **state)
+{
+    (void)state;
+    /* Below 128 GiB, LBA28 whether or not the disk has 48-bit. */
+    assert_int_equal(ata_addressing(0, 0, 1), ATA_ADDR_LBA28);
+    assert_int_equal(ata_addressing(1, 0, 256), ATA_ADDR_LBA28);
+    assert_int_equal(ata_addressing(1, 0x0FFFFF00u, 255), ATA_ADDR_LBA28);
+    /* The last sector LBA28 reaches is 0x0FFFFFFE. */
+    assert_int_equal(ata_addressing(0, 0x0FFFFFFEu, 1), ATA_ADDR_LBA28);
+    assert_int_equal(ata_addressing(0, 0x0FFFFFFFu, 1), ATA_ADDR_NONE);
+    assert_int_equal(ata_addressing(1, 0x0FFFFFFFu, 1), ATA_ADDR_LBA48);
+    /* A transfer that crosses the line, or starts past it. */
+    assert_int_equal(ata_addressing(1, 0x0FFFFF80u, 256), ATA_ADDR_LBA48);
+    assert_int_equal(ata_addressing(0, 0x0FFFFF80u, 256), ATA_ADDR_NONE);
+    assert_int_equal(ata_addressing(1, 0x10200000u, 8), ATA_ADDR_LBA48);
+    assert_int_equal(ata_addressing(0, 0x10200000u, 8), ATA_ADDR_NONE);
+    /* More than 256 sectors needs 48-bit's count. */
+    assert_int_equal(ata_addressing(1, 0, 257), ATA_ADDR_LBA48);
+    assert_int_equal(ata_addressing(0, 0, 257), ATA_ADDR_NONE);
+    assert_int_equal(ata_addressing(1, 0, 65536), ATA_ADDR_LBA48);
+    assert_int_equal(ata_addressing(1, 0, 65537), ATA_ADDR_NONE);
+    /* 48 bits is the end. */
+    assert_int_equal(ata_addressing(1, ((uint64_t)1 << 48) - 1u, 1),
+                     ATA_ADDR_LBA48);
+    assert_int_equal(ata_addressing(1, ((uint64_t)1 << 48) - 1u, 2),
+                     ATA_ADDR_NONE);
+    assert_int_equal(ata_addressing(1, 0, 0), ATA_ADDR_NONE);
 }
 
 int run_atacore_tests(void)
@@ -146,6 +231,8 @@ int run_atacore_tests(void)
         cmocka_unit_test(test_sense),
         cmocka_unit_test(test_identify),
         cmocka_unit_test(test_identify_disk),
+        cmocka_unit_test(test_identify_lba48),
+        cmocka_unit_test(test_addressing),
     };
 
     return cmocka_run_group_tests_name("atacore", tests, NULL, NULL);

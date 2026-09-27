@@ -35,6 +35,7 @@
 #include <console/screen.h>
 
 #include <part/table.h>
+#include <media/strows.h>
 #include <fs/fs.h>
 #include <luks/luks.h>
 #include <pe/pe.h>
@@ -450,7 +451,7 @@ const uint16_t *pos_entry_label(void)
     /* The UEFI loader's labels (falcon-efi/src/pos/pos.c). */
     if (g_plain)
         return u"Personal OS (plaintext shelf)";
-    return u"Personal OS (encrypted)";
+    return u"" STROWS_LABEL_POS;
 }
 
 /* Unlocks the encrypted shelf and mounts what is inside it into g_fs.
@@ -509,7 +510,28 @@ static int open_encrypted(boot_result *r)
     return LUKS_OK;
 }
 
-int pos_run(bios_disk *d, const part_entry *shelf, boot_result *r)
+int pos_list(bios_disk *d, const part_entry *shelf, pos_list_fn fn,
+             void *ctx)
+{
+    size_t i;
+    int n;
+
+    if (!pos_probe(d, shelf) || !g_plain)
+        return -1;
+    if (shelf_collect(&g_images, &g_fs) != 1) {
+        shelf_wipe(&g_images);
+        return 0;
+    }
+    shelf_label(&g_images, &g_fs);
+    for (i = 0; i < g_images.n; i++)
+        fn(&g_images.uki[i], ctx);
+    n = (int)g_images.n;
+    shelf_wipe(&g_images);
+    return n;
+}
+
+int pos_run_pick(bios_disk *d, const part_entry *shelf, pos_pick_fn want,
+                 void *ctx, boot_result *r)
 {
     const fs_dirent *uki;
     int pick;
@@ -533,11 +555,26 @@ int pos_run(bios_disk *d, const part_entry *shelf, boot_result *r)
         return -1;
     }
 
-    pick = choose_uki();
-    if (pick < 0) {
-        r->stage = "choosing an image";
-        wipe_secrets();
-        return POS_ABORTED;
+    if (want != (pos_pick_fn)0) {
+        size_t i;
+
+        pick = -1;
+        for (i = 0; i < g_images.n && pick < 0; i++) {
+            if (want(&g_images.uki[i].ent, ctx))
+                pick = (int)i;
+        }
+        if (pick < 0) {
+            r->advice = "the image this entry names is not on the shelf.";
+            wipe_secrets();
+            return -1;
+        }
+    } else {
+        pick = choose_uki();
+        if (pick < 0) {
+            r->stage = "choosing an image";
+            wipe_secrets();
+            return POS_ABORTED;
+        }
     }
     uki = &g_images.uki[pick].ent;
 
@@ -548,4 +585,9 @@ int pos_run(bios_disk *d, const part_entry *shelf, boot_result *r)
     rc = boot_uki(uki, r);
     wipe_secrets();
     return rc;
+}
+
+int pos_run(bios_disk *d, const part_entry *shelf, boot_result *r)
+{
+    return pos_run_pick(d, shelf, (pos_pick_fn)0, (void *)0, r);
 }

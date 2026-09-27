@@ -22,19 +22,51 @@ static const jmod_services g_svc = {
     JMOD_ABI, svc_log, svc_log_hex
 };
 
+/* What the modules are read off, as the sentences name it. */
+static const char *g_medium = "floppy";
+static char g_why[192];
+
+void jmod_set_medium(const char *noun)
+{
+    if (noun != (const char *)0 && noun[0] != '\0')
+        g_medium = noun;
+}
+
+/* a, the medium's name, then b: a sentence naming what the module was read
+ * off. */
+static const char *say(const char *a, const char *b)
+{
+    size_t n = 0;
+    const char *parts[3];
+    size_t i;
+
+    parts[0] = a;
+    parts[1] = g_medium;
+    parts[2] = b;
+    for (i = 0; i < 3u; i++) {
+        const char *p = parts[i];
+
+        while (*p != '\0' && n + 1u < sizeof g_why)
+            g_why[n++] = *p++;
+    }
+    g_why[n] = '\0';
+    return g_why;
+}
+
 static const char *check_why(jmod_status rc)
 {
     switch (rc) {
     case JMOD_ERR_MAGIC: return "the file is not a falcon jump module.";
     case JMOD_ERR_ABI:
-        return "the module is from another build of falcon jump. Copy the "
-               "floppy's modules from the same build as its boot sector.";
+        return say("the module is from another build of falcon jump. Copy "
+                   "the ", "'s modules from the same build as its boot "
+                   "sector.");
     case JMOD_ERR_SLOT:
         return "the module is built for another slot; it may have been "
                "copied under the wrong name.";
     case JMOD_ERR_SIZE:
-        return "the module is cut short on the floppy, or does not fit its "
-               "slot.";
+        return say("the module is cut short on the ", ", or does not fit its "
+                   "slot.");
     case JMOD_ERR_ENTRY: return "the module's entry point is not inside it.";
     case JMOD_ERR_ARG:
     case JMOD_OK:
@@ -68,12 +100,12 @@ int jmod_load(fs_vol *vol, const char *path, unsigned slot_idx,
         return -1;
     }
     if (fs_lookup(vol, path, &scratch, &e) != FS_OK || e.is_dir) {
-        *why = "the driver is not on the floppy.";
+        *why = say("the driver is not on the ", ".");
         return -1;
     }
     if (e.size > JMOD_SLOT_BYTES ||
         !e820_is_ram(JMOD_GZ_STAGE, JMOD_SLOT_BYTES)) {
-        *why = "the driver could not be read off the floppy.";
+        *why = say("the driver could not be read off the ", ".");
         return -1;
     }
     /* A module is always a gzip member: its CRC-32 is the check that the
@@ -83,7 +115,7 @@ int jmod_load(fs_vol *vol, const char *path, unsigned slot_idx,
     for (attempt = 0; ; attempt++) {
         if (fs_file_open(vol, &f, &e) != FS_OK ||
             fs_file_read(&f, 0, e.size, stage) != FS_OK) {
-            *why = "the driver could not be read off the floppy.";
+            *why = say("the driver could not be read off the ", ".");
             return -1;
         }
         if (e.size < 2u || stage[0] != 0x1Fu || stage[1] != 0x8Bu) {
@@ -94,8 +126,8 @@ int jmod_load(fs_vol *vol, const char *path, unsigned slot_idx,
                       &len) == GZ_OK)
             break;
         if (attempt == 1) {
-            *why = "the driver did not read back as it was written, twice. "
-                   "The floppy may be failing.";
+            *why = say("the driver did not read back as it was written, "
+                       "twice. The ", " may be failing.");
             return -1;
         }
         bios_puts("falcon-bios: ");

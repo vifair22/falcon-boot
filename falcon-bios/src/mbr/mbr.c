@@ -1,9 +1,9 @@
-/* falcon-bios: another disk's own boot code (docs/DESIGN.md Section 13.4,
- * route MBR).
+/* falcon-bios: a disk's own boot code (docs/DESIGN.md Section 14, route
+ * MBR), falcon jump's. The station's chains, with the drive swap and the
+ * partition boot sector, are chain.c's (Section 13.4).
  *
- * The stationary build's way to the machine's other systems on a BIOS: a
- * Windows install on a second disk is started exactly as the BIOS would
- * start it had that disk been first in its boot order. Its LBA 0 goes to
+ * A disk is started exactly as the BIOS would start it had that disk been
+ * first in its boot order. Its LBA 0 goes to
  * 0x7C00, DL names its drive, and boot16 drops to real mode and jumps.
  *
  * Nothing is resident at the handoff. This build hooks no interrupt and
@@ -18,9 +18,9 @@
  * jump, so the thunk's bounce buffer cannot overwrite it.
  *
  * The drive number is the one the BIOS gave the disk, typically 0x81 for a
- * second internal disk. Windows since 7 boots from 0x81 as it is; one that
- * insists on 0x80 would want the two drives swapped by a resident INT 13h
- * hook (GRUB's drivemap), which is not built until a machine needs it.
+ * second internal disk. Jump boots the machine's disks as they are; the
+ * station, which boots systems that insist on 0x80, swaps the two numbers
+ * with a resident (chain.c, swapres.S).
  */
 
 #include <mbr/mbr.h>

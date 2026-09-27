@@ -6,8 +6,10 @@
  * default and countdown from JUMP.INI. MBR and MEM load nothing and leave
  * nothing resident; CDR reads ATA.MOD off the floppy and leaves it behind
  * the reverse thunk, under the stick's own virtual CD (Section 14.6). USB
- * reads UHCI.MOD and leaves it behind the thunk, serving a falcon stick as
- * the next BIOS disk.
+ * reads a host controller's module and leaves it behind the thunk, serving
+ * a falcon stick as the next BIOS disk; PCC does the same with PCC.MOD and
+ * a CompactFlash card. Those three routes are falcon-bios's jump/routes.c,
+ * which station-legacy links too; this file is jump's menu and pages.
  *
  * Stages 1 and 2: the floppy's own boot sector (start/boot_fd.S) and the
  * stick's stage 2, both reading by CHS from the volume's reserved sectors.
@@ -22,18 +24,9 @@
 #include <linux/linux.h>
 #include <mem/e820.h>
 #include <jump/jumpini.h>
-#include <jump/jmodload.h>
-#include <jump/jres.h>
-#include <iso/vcd.h>
-#include <vfd/vfd.h>
-
-#include <hw/pci.h>
-
-#include <disk/bootpart.h>
+#include <jump/routes.h>
 
 #include <fs/fs.h>
-#include <part/table.h>
-#include <media/eltorito.h>
 #include <tui/tui.h>
 #include <lib/string.h>
 
@@ -50,19 +43,11 @@
 /* One row per disk, the CD, USB, the CF card, and memtest86+. */
 #define LIST_MAX (DISKS_MAX + 4u)
 
-/* The drive number ATA.MOD answers for through the reverse thunk: private,
- * raw 2048-byte sectors, never offered to anything but the virtual CD that
- * serves the disc from it as VCD_DRIVE. */
-#define CD_RAW_DRIVE 0xEFu
-
 /* What a row of the list is. */
 #define ROW_MEMTEST (-1)
 #define ROW_CD      (-2)
 #define ROW_USB     (-3)
 #define ROW_CF      (-4)
-
-/* The partition entries read to find a falcon stick. */
-#define PARTS_MAX 16u
 
 /* JUMP.INI is a few lines; anything longer is not one. */
 #define INI_MAX 4096u
@@ -81,71 +66,7 @@ static fs_vol    g_vol;
 static int       g_have_vol;
 static fs_dirent g_memtest;
 static int       g_have_memtest;
-static int       g_have_ata;
-static int       g_have_pcc;
 
-/* What the PCI scan found (DESIGN Section 14.2): the routes a controller
- * exists for. A row needs its module on the floppy and its controller in
- * the machine; nothing is loaded to find out. */
-static int g_pci_ide;
-static int g_pci_cardbus;
-
-/* The PCI classes, class << 16 | subclass << 8 | programming interface. */
-#define PCI_UHCI 0x0C0300u
-#define PCI_OHCI 0x0C0310u
-#define PCI_EHCI 0x0C0320u
-
-/* The USB modules, in the order the route tries them: each needs its file
- * on the floppy and its controller on the bus. */
-typedef struct {
-    const char *name;
-    const char *path;
-    unsigned    slot;
-    uint32_t    pci;
-    int         have;           /* file and controller both there */
-} usb_mod;
-
-static usb_mod g_usb[] = {
-    /* EHCI first: it hands a device that is not high speed to its
-     * companion, where the UHCI or OHCI module after it finds it. */
-    { "EHCI", "/EHCI.MOD", JMOD_SLOT_EHCI, PCI_EHCI, 0 },
-    { "UHCI", "/UHCI.MOD", JMOD_SLOT_UHCI, PCI_UHCI, 0 },
-    { "OHCI", "/OHCI.MOD", JMOD_SLOT_OHCI, PCI_OHCI, 0 },
-};
-#define N_USB (sizeof g_usb / sizeof g_usb[0])
-
-static int any_usb(void)
-{
-    unsigned i;
-
-    for (i = 0; i < N_USB; i++) {
-        if (g_usb[i].have)
-            return 1;
-    }
-    return 0;
-}
-
-static void pci_scan(void)
-{
-    pci_loc loc;
-    unsigned pi;
-
-    /* Any IDE controller, whatever its programming interface says about
-     * its modes: one pass, the interface masked off. */
-    g_pci_ide = pci_find_class_mask(0x010100u, 0xFFFF00u, 0, &loc) == 0;
-    g_pci_cardbus = pci_find_class(0x060700u, 0, &loc) == 0;
-    bios_puts("falcon-bios: PCI: ");
-    bios_puts(g_pci_ide ? "IDE " : "");
-    bios_puts(g_pci_cardbus ? "CardBus " : "");
-    for (pi = 0; pi < N_USB; pi++) {
-        int found = pci_find_class(g_usb[pi].pci, 0, &loc) == 0;
-
-        bios_puts(found ? g_usb[pi].name : "");
-        bios_puts(found ? " " : "");
-        g_usb[pi].have = g_usb[pi].have && found;
-    }
-    bios_puts("\n");
-}
 
 static jump_cfg g_cfg;
 static char     g_ini[INI_MAX];
@@ -235,7 +156,6 @@ static void read_floppy(uint8_t drive)
     fs_dir scratch;
     fs_dirent ini;
     fs_file f;
-    unsigned i;
 
     g_cfg.def = JUMP_DEF_NONE;
     g_cfg.timeout = 0;
@@ -256,18 +176,6 @@ static void read_floppy(uint8_t drive)
     g_have_memtest =
         fs_lookup(&g_vol, "/MEMTEST.BIN", &scratch, &g_memtest) == FS_OK &&
         !g_memtest.is_dir && g_memtest.size > 0;
-
-    {
-        fs_dirent mod;
-
-        g_have_ata = fs_lookup(&g_vol, "/ATA.MOD", &scratch, &mod) == FS_OK &&
-                     !mod.is_dir;
-        g_have_pcc = fs_lookup(&g_vol, "/PCC.MOD", &scratch, &mod) == FS_OK &&
-                     !mod.is_dir;
-        for (i = 0; i < N_USB; i++)
-            g_usb[i].have = fs_lookup(&g_vol, g_usb[i].path, &scratch, &mod) ==
-                                FS_OK && !mod.is_dir;
-    }
 
     if (fs_lookup(&g_vol, "/JUMP.INI", &scratch, &ini) != FS_OK || ini.is_dir)
         return;
@@ -333,263 +241,21 @@ static void boot_memtest(void)
     screen_out(k_press_any);
 }
 
-/* A disc read straight through the module, in protected mode, before
- * anything is resident: the catalog, and a floppy-emulation image. */
-static struct {
-    jmod_ops *ops;
-    unsigned  idx;
-} g_disc;
-
-static uint32_t g_disc_sector = 2048u;
-
-static int disc_read(void *ctx, uint64_t off, uint64_t len, void *buf)
+/* CD, USB and CF: jump/routes.c between this app's two pages. */
+static void boot_route(jroute k, const char *name)
 {
-    uint32_t ss = g_disc_sector;
-
-    (void)ctx;
-    if (off % ss != 0 || len % ss != 0)
-        return -1;
-    return g_disc.ops->read(g_disc.idx, off / ss, (uint32_t)(len / ss),
-                            buf) == 0 ? 0 : -1;
-}
-
-/* CDR: ATA.MOD off the floppy, the first drive with a disc, and the disc
- * booted as its catalog says. A no-emulation disc is served by the stick's
- * virtual CD from the module's private drive, with the module left resident
- * behind the reverse thunk; a floppy-emulation disc's image is read into
- * memory through the module and served by the stick's virtual floppy, and
- * nothing of the module stays. Returns only when it could not hand over,
- * with everything it installed taken back. */
-static void boot_cd(void)
-{
-    static jmod_ops ops;
-    static elt_catalog cat;
-    const elt_entry *e;
     boot_result r;
-    bios_disk raw;
-    jmod_dev dev;
-    const char *why = (const char *)0;
-    uint32_t base = 0;
-    unsigned n;
-    unsigned i;
 
     boot_result_init(&r);
-    screen_mode("CDR");
+    screen_mode(jroute_code(k));
     screen_page();
-    screen_out("booting: CD\n\n");
-
-    r.stage = "loading ATA.MOD";
-    if (jmod_load(&g_vol, "/ATA.MOD", JMOD_SLOT_ATA, &ops, &why) != 0) {
-        r.advice = why;
-        goto fail;
-    }
-    r.stage = "looking for a CD drive";
-    n = ops.probe();
-    for (i = 0; i < n; i++) {
-        if (ops.dev(i, &dev) == 0 && dev.sectors != 0)
-            break;
-    }
-    if (i == n) {
-        r.advice = n == 0 ? "there is no CD drive on the IDE channels."
-                          : "there is no disc in the CD drive.";
-        goto fail;
-    }
-    screen_out(dev.label);
+    screen_out("booting: ");
+    screen_out(name);
     screen_out("\n\n");
+    jroute_boot(k, &r);
 
-    r.stage = "reading the disc's boot catalog";
-    g_disc.ops = &ops;
-    g_disc.idx = i;
-    g_disc_sector = 2048u;
-    if (elt_parse(&cat, disc_read, &g_disc, dev.sectors * 2048u) != ELT_OK) {
-        r.advice = "the disc has no El Torito boot catalog.";
-        goto fail;
-    }
-    e = vcd_boot_entry(&cat);
-    if (e == (const elt_entry *)0) {
-        r.advice = "the disc boots only on UEFI.";
-        goto fail;
-    }
-    if (e->media == ELT_MEDIA_1200K || e->media == ELT_MEDIA_1440K ||
-        e->media == ELT_MEDIA_2880K) {
-        /* Never returns on success. */
-        (void)vfd_serve(disc_read, &g_disc, e, &r);
-        goto fail;
-    }
-    if (e->media != ELT_MEDIA_NONE) {
-        r.advice = "the disc's boot image asks for hard-disk emulation, "
-                   "which this loader does not do.";
-        goto fail;
-    }
-
-    r.stage = "installing the CD driver";
-    if (ops.serve(i, (uint8_t)CD_RAW_DRIVE) != 0 ||
-        jres_install((uint8_t)CD_RAW_DRIVE, (uint32_t)(uintptr_t)ops.int13,
-                     JMOD_SLOT_ADDR(JMOD_SLOT_ATA) + JMOD_SLOT_BYTES,
-                     (const e820_range *)0, 0, &base) != 0) {
-        r.advice = "this machine will not give up the conventional memory "
-                   "the CD driver needs.";
-        goto fail;
-    }
-    /* Through the thunk, as the disc's own bootloader will reach it. */
-    if (!bios_disk_probe(&raw, (uint8_t)CD_RAW_DRIVE)) {
-        r.advice = "the CD driver did not answer through INT 13h.";
-        jres_remove();
-        goto fail;
-    }
-    vcd_keep_reset();
-    (void)vcd_keep(base, JRES_BYTES);
-    (void)vcd_keep(JMOD_REGION, JMOD_REGION_END - JMOD_REGION);
-    (void)vcd_chainload_drive(&raw, dev.sectors, &r);
-    jres_remove();
-
-fail:
     screen_page();
-    screen_out("CD");
-    failed("boot", &r);
-    screen_out(k_press_any);
-}
-
-/* Whether the device the module calls `idx` is a falcon stick: a partition
- * on it, read through the module, carries a `boot` record, which is what
- * the stick's own stage 2 will look for once it is started (DESIGN Section
- * 3.3). Any install's: jump has none of its own to match. */
-static int is_falcon_stick(jmod_ops *ops, unsigned idx)
-{
-    static part_entry parts[PARTS_MAX];
-    static uint8_t sec[512];
-    bootpart bp;
-
-    g_disc.ops = ops;
-    g_disc.idx = idx;
-    g_disc_sector = 512u;
-    return bootpart_find(disc_read, &g_disc, 512u, 0, parts, PARTS_MAX, sec,
-                         &bp) == BOOTPART_OK;
-}
-
-/* A disk a module serves, booted as the BIOS disk after the machine's own:
- * the module resident behind the reverse thunk with its memory carved out
- * of INT 15h, the BDA's disk count one higher while it runs, and the disk's
- * LBA 0 at 0x7C00 with DL naming it. Returns only when it could not hand
- * over, with everything it installed taken back; r says why. */
-static void boot_module_disk(jmod_ops *ops, unsigned idx, unsigned slot,
-                             boot_result *r)
-{
-    static const e820_range keep = {
-        JMOD_REGION, JMOD_REGION_END - JMOD_REGION
-    };
-    bios_disk disk;
-    uint32_t base = 0;
-    uint8_t ndisks = peek8(BDA_NDISKS);
-    uint8_t drive = (uint8_t)(0x80u + ndisks);
-
-    r->stage = "installing the driver";
-    if (ndisks >= 0x7Fu || ops->serve(idx, drive) != 0 ||
-        jres_install(drive, (uint32_t)(uintptr_t)ops->int13,
-                     JMOD_SLOT_ADDR(slot) + JMOD_SLOT_BYTES, &keep, 1u,
-                     &base) != 0) {
-        r->advice = "this machine will not give up the conventional memory "
-                    "the driver needs.";
-        return;
-    }
-    poke8(BDA_NDISKS, (uint8_t)(ndisks + 1u));
-    if (!bios_disk_probe(&disk, drive)) {
-        r->advice = "the driver did not answer through INT 13h.";
-    } else {
-        r->stage = "starting the disk";
-        (void)mbr_boot(&disk, r);
-    }
-    poke8(BDA_NDISKS, ndisks);
-    jres_remove();
-}
-
-/* CF: PCC.MOD off the floppy, the first CompactFlash card in a PC Card
- * slot, booted as a disk: its own MBR, whatever it holds, as the internal
- * disks are. */
-static void boot_cf(void)
-{
-    static jmod_ops ops;
-    boot_result r;
-    jmod_dev dev;
-    const char *why = (const char *)0;
-    unsigned n;
-
-    boot_result_init(&r);
-    screen_mode("PCC");
-    screen_page();
-    screen_out("booting: CF card\n\n");
-
-    r.stage = "loading PCC.MOD";
-    if (jmod_load(&g_vol, "/PCC.MOD", JMOD_SLOT_PCC, &ops, &why) != 0) {
-        r.advice = why;
-        goto fail;
-    }
-    r.stage = "bringing up the PC Card slots";
-    n = ops.probe();
-    if (n == 0 || ops.dev(0, &dev) != 0) {
-        r.advice = "there is no CompactFlash card in a PC Card slot.";
-        goto fail;
-    }
-    screen_out(dev.label);
-    screen_out("\n\n");
-    boot_module_disk(&ops, 0, JMOD_SLOT_PCC, &r);
-
-fail:
-    screen_page();
-    screen_out("CF card");
-    failed("boot", &r);
-    screen_out(k_press_any);
-}
-
-/* USB: the first falcon stick on the root ports of any controller a module
- * is on the floppy for (EHCI, then UHCI, then OHCI), booted as the next BIOS
- * disk (boot_module_disk); the stick's own stage 1 takes it from there. */
-static void boot_usb(void)
-{
-    static jmod_ops ops;
-    boot_result r;
-    jmod_dev dev;
-    const char *why = (const char *)0;
-    unsigned found_any = 0;
-    unsigned m;
-    unsigned n = 0;
-    unsigned i = 0;
-
-    boot_result_init(&r);
-    screen_mode("USB");
-    screen_page();
-    screen_out("booting: USB stick\n\n");
-
-    for (m = 0; m < N_USB; m++) {
-        if (!g_usb[m].have)
-            continue;
-        r.stage = "loading a USB driver";
-        if (jmod_load(&g_vol, g_usb[m].path, g_usb[m].slot, &ops, &why) != 0) {
-            r.advice = why;
-            goto fail;
-        }
-        r.stage = "looking for a falcon stick";
-        n = ops.probe();
-        found_any += n;
-        for (i = 0; i < n; i++) {
-            if (ops.dev(i, &dev) == 0 && is_falcon_stick(&ops, i))
-                break;
-        }
-        if (i < n)
-            break;
-    }
-    if (m == N_USB) {
-        r.advice = found_any == 0 ? "there is no USB storage on the ports."
-                                  : "none of the USB storage is a falcon stick.";
-        goto fail;
-    }
-    screen_out(dev.label);
-    screen_out("\n\n");
-    boot_module_disk(&ops, i, g_usb[m].slot, &r);
-
-fail:
-    screen_page();
-    screen_out("USB stick");
+    screen_out(name);
     failed("boot", &r);
     screen_out(k_press_any);
 }
@@ -645,7 +311,7 @@ static void list_run(void)
             kind[n] = (int)i;
             n++;
         }
-        if (g_have_ata && g_pci_ide) {
+        if (jroute_offered(JROUTE_CD)) {
             if (g_cfg.def == JUMP_DEF_CD) {
                 def = n;
                 have_def = 1;
@@ -654,7 +320,7 @@ static void list_run(void)
             kind[n] = ROW_CD;
             n++;
         }
-        if (g_have_pcc && g_pci_cardbus) {
+        if (jroute_offered(JROUTE_CF)) {
             if (g_cfg.def == JUMP_DEF_CF) {
                 def = n;
                 have_def = 1;
@@ -663,7 +329,7 @@ static void list_run(void)
             kind[n] = ROW_CF;
             n++;
         }
-        if (any_usb()) {
+        if (jroute_offered(JROUTE_USB)) {
             if (g_cfg.def == JUMP_DEF_USB) {
                 def = n;
                 have_def = 1;
@@ -699,11 +365,11 @@ static void list_run(void)
         if (kind[pick] == ROW_MEMTEST)
             boot_memtest();
         else if (kind[pick] == ROW_CD)
-            boot_cd();
+            boot_route(JROUTE_CD, "CD");
         else if (kind[pick] == ROW_USB)
-            boot_usb();
+            boot_route(JROUTE_USB, "USB stick");
         else if (kind[pick] == ROW_CF)
-            boot_cf();
+            boot_route(JROUTE_CF, "CF card");
         else
             boot_disk(&g_disks[kind[pick]]);
         (void)screen_key();
@@ -723,7 +389,7 @@ void bios_main(uint8_t drive)
     bios_puts(" E820 entries\n");
 
     read_floppy(drive);
-    pci_scan();
+    jroute_init(g_have_vol ? &g_vol : (fs_vol *)0, "floppy");
     scan_disks();
 
     screen_init();

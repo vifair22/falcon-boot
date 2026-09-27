@@ -32,10 +32,10 @@
  * not the time: see nextboot.h for why that makes the zone irrelevant.
  *
  * THE LOADER'S ONLY DISK WRITE IS HERE. Everything else falcon-bios does to
- * a disk is a read (disk.c), and this file is linked into the stick's stage 3
- * alone: stage 2 and the stationary build (DESIGN Section 13) carry no code
- * that can write a disk at all, rather than code that happens not to be
- * called.
+ * a disk is a read (disk.c), and this file is linked into the stick's and
+ * the station's stage 3 alone (the station's marker is how "restart into
+ * Windows" works, DESIGN Section 13.8): stage 2 and jump carry no code that
+ * can write a disk at all, rather than code that happens not to be called.
  */
 
 #include <disk/marker.h>
@@ -43,17 +43,19 @@
 #include <media/nextboot.h>
 #include <lib/string.h>
 
-static uint8_t g_sec[NEXTBOOT_SECTOR_BYTES];
+/* A whole sector of the disk, 512 bytes or a 4Kn disk's 4096: the marker
+ * fills one (nextboot.h), and INT 13h moves nothing smaller. */
+static uint8_t g_sec[NEXTBOOT_SECTOR_MAX];
 
-/* One sector, INT 13h AH=43h, through the bounce buffer disk.c reads
- * through. AH=43h is in the same subset of the extensions as the AH=42h
+/* One sector of `d`'s size, INT 13h AH=43h, through the bounce buffer
+ * disk.c reads through. AH=43h is in the same subset of the extensions as the AH=42h
  * every read already depends on, so a BIOS that reads the stick through them
  * writes it through them too. AL=0, no verify: the caller reads the sector
  * back instead, which checks what the stick holds rather than what the BIOS
  * says it did. */
 static int write_sector(const bios_disk *d, uint64_t lba, const uint8_t *buf)
 {
-    memcpy((void *)(uintptr_t)BOUNCE_ADDR, buf, NEXTBOOT_SECTOR_BYTES);
+    memcpy((void *)(uintptr_t)BOUNCE_ADDR, buf, d->sector_size);
 
     bios_dap_at.size = 16;
     bios_dap_at.reserved = 0;
@@ -140,42 +142,45 @@ marker_state marker_take(const bios_disk *d, uint64_t part_lba,
     uint64_t stamp = 0;
     uint64_t now = 0;
     nextboot_sector parsed;
+    uint32_t ss;
     size_t i;
 
-    if (out != (char *)0 && cap != 0)
-        out[0] = '\0';
-    /* The format is one 512-byte sector. A disk that reports another size
-     * is not one a writer of this format addressed. Sector 0 is the boot
+    /* No buffer, nothing read: every state past this point may write out,
+     * and nextboot_sector_parse, which would refuse a null one as BAD, is
+     * in another translation unit, where clang's analyzer cannot follow. */
+    if (out == (char *)0 || cap == 0)
+        return MARKER_NONE;
+    out[0] = '\0';
+    /* The marker is one whole sector of the disk, 512 or 4096 bytes (a 4Kn
+     * disk's), and a disk of any other size has none. Sector 0 is the boot
      * sector itself, which a record never names: 0 is "no marker" (jump's
      * floppy). */
-    if (d == (const bios_disk *)0 || d->sector_size != NEXTBOOT_SECTOR_BYTES ||
-        sector == 0 || lba < part_lba ||
-        lba > ~(uint64_t)0 / NEXTBOOT_SECTOR_BYTES)
+    if (d == (const bios_disk *)0)
         return MARKER_NONE;
-    if (bios_disk_read((void *)(uintptr_t)d, lba * NEXTBOOT_SECTOR_BYTES,
-                       sizeof g_sec, g_sec) != 0)
+    ss = d->sector_size;
+    if (!nextboot_sector_size_ok(ss) || ss > sizeof g_sec ||
+        sector == 0 || lba < part_lba || lba > ~(uint64_t)0 / ss)
         return MARKER_NONE;
-    if (!nextboot_sector_is_marker(g_sec, sizeof g_sec))
+    if (bios_disk_read((void *)(uintptr_t)d, lba * ss, ss, g_sec) != 0)
+        return MARKER_NONE;
+    if (!nextboot_sector_is_marker(g_sec, ss))
         return MARKER_NONE;
 
     /* Parsed into this function's own copy, then the sector is cleared, and
      * only then is anything decided. */
-    parsed = nextboot_sector_parse(g_sec, sizeof g_sec, &stamp, out, cap);
+    parsed = nextboot_sector_parse(g_sec, ss, &stamp, out, cap);
 
-    memset(g_sec, 0, sizeof g_sec);
+    memset(g_sec, 0, ss);
     if (write_sector(d, lba, g_sec) != 0 ||
-        bios_disk_read((void *)(uintptr_t)d, lba * NEXTBOOT_SECTOR_BYTES,
-                       sizeof g_sec, g_sec) != 0) {
+        bios_disk_read((void *)(uintptr_t)d, lba * ss, ss, g_sec) != 0) {
         log_state("could not be cleared");
-        if (out != (char *)0 && cap != 0)
-            out[0] = '\0';
+        out[0] = '\0';
         return MARKER_STUCK;
     }
-    for (i = 0; i < sizeof g_sec; i++) {
+    for (i = 0; i < ss; i++) {
         if (g_sec[i] != 0u) {
             log_state("the clear did not take");
-            if (out != (char *)0 && cap != 0)
-                out[0] = '\0';
+            out[0] = '\0';
             return MARKER_STUCK;
         }
     }

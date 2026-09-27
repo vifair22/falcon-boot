@@ -1,5 +1,5 @@
-/* falcon-bios: another disk's own boot code, the stationary build's MBR
- * route (docs/DESIGN.md Section 13.4). See mbr.c. */
+/* falcon-bios: a disk's own boot code, falcon jump's MBR route
+ * (docs/DESIGN.md Section 14). See mbr.c. */
 
 #ifndef FALCON_BIOS_MBR_H
 #define FALCON_BIOS_MBR_H

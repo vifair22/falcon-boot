@@ -14,6 +14,7 @@
  */
 
 #include <stdio.h>
+#include <string.h>
 
 #include <common/log.h>
 #include <common/opt.h>
@@ -26,6 +27,7 @@ static const cli_cmd *const commands[] = {
     &mks_cmd_ident,
     &mks_cmd_keygen,
     &mks_cmd_next_boot,
+    &mks_cmd_station,
     &mks_cmd_status,
     &mks_cmd_varstore
 };
@@ -46,8 +48,11 @@ int main(int argc, char **argv)
                       sizeof commands / sizeof commands[0], global_help);
     cleanup_init();
 
-    rc = cli_dispatch(commands, sizeof commands / sizeof commands[0],
-                      "falcon-boot-mkstick", argc - 1, argv + 1);
+    if (argc >= 2 && strcmp(argv[1], "station") == 0)
+        rc = mks_station_main(argc - 2, argv + 2);
+    else
+        rc = cli_dispatch(commands, sizeof commands / sizeof commands[0],
+                          "falcon-boot-mkstick", argc - 1, argv + 1);
     if (rc == CLI_OK)
         return 0;
 

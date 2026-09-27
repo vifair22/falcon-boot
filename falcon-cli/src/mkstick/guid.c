@@ -102,5 +102,7 @@ cli_status mkstick_guid_selfcheck(void)
     if (rc != CLI_OK)
         return rc;
     rc = check_one(MKS_TYPE_ESP, gpt_guid_esp, "p1 (EFI system partition)");
-    return rc;
+    if (rc != CLI_OK)
+        return rc;
+    return check_one(MKS_TYPE_BOOT, falcon_guid_boot, "station partition");
 }
