@@ -222,6 +222,7 @@ int hook_dm_table(const extmap_hdr *hdr, const uint8_t *map, uint32_t maj,
     struct dm_ioctl *io = (struct dm_ioctl *)buf;
     uint8_t *p;
     uint64_t logical = 0;
+    uint64_t unit;
     size_t need;
     uint32_t i;
 
@@ -229,7 +230,16 @@ int hook_dm_table(const extmap_hdr *hdr, const uint8_t *map, uint32_t maj,
         buf == (void *)0 || len == (size_t *)0 || hdr->n_extents == 0)
         return HOOK_ERR_BAD_ARG;
     *len = 0;
-    if ((base % 512u) != 0)
+    /* A table is counted in 512-byte sectors whatever the disk, but the
+     * kernel refuses to load one whose targets do not start and end on the
+     * disk's logical block (dm-table's hardware alignment check). On a 4Kn
+     * disk that is 4096, and an ISO is only a multiple of 2048, so the last
+     * run is rounded up to the block rather than to 512; the tail of the
+     * file's last cluster is still the file's. */
+    unit = hdr->block_size;
+    if (unit < 512u || (unit % 512u) != 0)
+        unit = 512u;
+    if ((base % unit) != 0)
         return HOOK_ERR_RANGE;
     need = hook_dm_table_size(hdr->n_extents);
     if (cap < need)
@@ -248,11 +258,12 @@ int hook_dm_table(const extmap_hdr *hdr, const uint8_t *map, uint32_t maj,
         size_t n = 0;
 
         extmap_extent_at(map, i, &e);
-        if ((e.offset % 512u) != 0 ||
-            (i + 1u < hdr->n_extents && (e.length % 512u) != 0) ||
-            e.offset > (~(uint64_t)0) - base)
+        if ((e.offset % unit) != 0 ||
+            (i + 1u < hdr->n_extents && (e.length % unit) != 0) ||
+            e.offset > (~(uint64_t)0) - base ||
+            e.length > (~(uint64_t)0) - unit)
             return HOOK_ERR_RANGE;
-        sectors = (e.length + 511u) / 512u;
+        sectors = (e.length + unit - 1u) / unit * (unit / 512u);
         dev_off = (base + e.offset) / 512u;
 
         memset(t, 0, SPEC_SIZE);

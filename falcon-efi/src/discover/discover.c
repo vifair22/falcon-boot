@@ -6,14 +6,11 @@
 #include <discover/discover.h>
 
 #include <lib/string.h>
+#include <blk/rebl.h>
 #include <discover/partefi.h>
 #include <efi/loadedimage.h>
 #include <ident/identfs.h>
 #include <luks/luks.h>
-
-/* Largest block size any firmware Block I/O instance we care about reports,
- * and therefore the size of the one-block probe buffer. */
-#define PROBE_BUF 4096u
 
 static const uint8_t luks2_magic[6] = { 'L', 'U', 'K', 'S', 0xba, 0xbe };
 
@@ -32,15 +29,21 @@ static ident_fs_scratch g_rec_fs;
 static luks_vol g_rec_luks;
 static char g_rec_json[LUKS_JSON_CAP];
 
-int discover_read(void *ctx, uint64_t off, uint64_t len, void *buf)
+/* The ragged ends of every read the drivers make, one sector of the largest
+ * block size we take (4096, a 4Kn disk). One buffer for every device: the
+ * loader makes one read at a time, and blk_rebl_read copies out of it before
+ * it returns. A device with larger blocks still gets its whole-block reads,
+ * and fails the others. */
+static UINT8 g_bounce[4096];
+
+/* Block I/O itself: whole blocks at block-aligned offsets, which is the only
+ * thing blk_rebl_read asks of it. */
+static int read_blocks(void *ctx, uint64_t off, uint64_t len, void *buf)
 {
     discover_dev *d = ctx;
-    UINT32 bs;
+    UINT32 bs = d->bio->Media->BlockSize;
 
-    if (d == (discover_dev *)0 || d->bio == (EFI_BLOCK_IO_PROTOCOL *)0)
-        return -1;
-    bs = d->bio->Media->BlockSize;
-    if (bs == 0 || off % bs != 0 || len % bs != 0)
+    if (off % bs != 0 || len % bs != 0)
         return -1;
     if (d->bio->ReadBlocks(d->bio, d->bio->Media->MediaId, off / bs,
                            (UINTN)len, buf) != EFI_SUCCESS)
@@ -48,20 +51,37 @@ int discover_read(void *ctx, uint64_t off, uint64_t len, void *buf)
     return 0;
 }
 
+/* The one place the UEFI loader meets the drivers, so the one place the
+ * re-blocking layer goes (DESIGN Section 3.4): every consumer that mounts,
+ * probes or unlocks a row reads through here, and none of them needs to
+ * know the disk's block size. Built per call rather than kept per row, so a
+ * medium changed under a row is read at the block size it has now. */
+int discover_read(void *ctx, uint64_t off, uint64_t len, void *buf)
+{
+    discover_dev *d = ctx;
+    blk_rebl r;
+
+    if (d == (discover_dev *)0 || d->bio == (EFI_BLOCK_IO_PROTOCOL *)0 ||
+        d->bio->Media->BlockSize == 0)
+        return -1;
+    r.read = read_blocks;
+    r.ctx = d;
+    r.sector_size = d->bio->Media->BlockSize;
+    r.bounce = g_bounce;
+    r.bounce_len = (uint32_t)sizeof g_bounce;
+    return blk_rebl_read(&r, off, len, buf);
+}
+
 /* Cheap first question about an unknown volume: is there a LUKS2 primary
  * header here at all? One block read, before any parse, because the common
  * case on a real machine is a handle for something that is not ours. */
 static uint8_t probe_luks(discover_dev *d)
 {
-    static UINT8 blk[PROBE_BUF];
-    UINT32 bs = d->bio->Media->BlockSize;
+    uint8_t magic[sizeof luks2_magic];
 
-    if (bs == 0 || bs > PROBE_BUF)
+    if (discover_read(d, 0, sizeof magic, magic) != 0)
         return 0;
-    if (d->bio->ReadBlocks(d->bio, d->bio->Media->MediaId, 0, bs, blk) !=
-        EFI_SUCCESS)
-        return 0;
-    return (uint8_t)(memcmp(blk, luks2_magic, sizeof luks2_magic) == 0);
+    return (uint8_t)(memcmp(magic, luks2_magic, sizeof luks2_magic) == 0);
 }
 
 /* The record a row carries, if any: the falcon token for a LUKS2 volume

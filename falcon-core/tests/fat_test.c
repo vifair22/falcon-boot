@@ -27,6 +27,9 @@
 
 #include <fs/fat.h>
 #include <fs/fs.h>
+#include <blk/rebl.h>
+
+#include "kndev.h"
 
 #define IMG12 "build/test-fat12.img"
 #define IMG16 "build/test-fat16.img"
@@ -649,6 +652,64 @@ static void test_fat_arg_errors(void **state)
     assert_int_equal(fat_dir_open(&v, &d, &e), FAT_ERR_BAD_ARG);
 }
 
+/* Every width on a 4096-byte-sector disk (docs/DESIGN.md Section 3.4):
+ * whole 4096-byte sectors only, under the core's re-blocking layer as the
+ * loaders hand it to the drivers. The volumes keep their 512-byte sectors,
+ * so the boot sector, every FAT sector and every directory sector is a
+ * piece of a device sector, and the FAT12 floppy image is the jump
+ * floppy's shape on a disk it would never be written to. */
+static void test_fat_on_4kn(void **state)
+{
+    size_t i;
+
+    (void)state;
+    for (i = 0; i < FIXTURE_N; i++) {
+        kn_dev k;
+        const fs_ops *ops;
+        fs_vol vol;
+        fs_file file;
+        fs_dirent ent;
+        fs_dir scratch;
+        fat_vol v;
+        unsigned char *buf = malloc(BIG_SIZE);
+        unsigned n;
+
+        assert_non_null(buf);
+        g_fp = open_img(g_fixtures[i].path);
+        kn_init(&k, img_read, g_fp);
+
+        ops = fs_identify(blk_rebl_read, &k.rebl, FS_HINT_NONE);
+        assert_ptr_equal(ops, &fs_ops_fat);
+        assert_int_equal(fs_mount(&vol, ops, blk_rebl_read, &k.rebl), FS_OK);
+        assert_string_equal(fs_vol_label(&vol), "FALCON-FAT");
+
+        assert_int_equal(fs_lookup(&vol, "/sub/deeper/leaf.txt", &scratch,
+                                   &ent), FS_OK);
+        assert_int_equal(fs_file_open(&vol, &file, &ent), FS_OK);
+        memset(buf, 0, 8);
+        assert_int_equal(fs_file_read(&file, 0, 5, buf), FS_OK);
+        assert_memory_equal(buf, "leaf\n", 5);
+
+        assert_int_equal(fs_lookup(&vol, "/big.bin", &scratch, &ent), FS_OK);
+        assert_int_equal(fs_file_open(&vol, &file, &ent), FS_OK);
+        memset(buf, 0xAA, BIG_SIZE);
+        assert_int_equal(fs_file_read(&file, 0, BIG_SIZE, buf), FS_OK);
+        for (n = 0; n < BIG_SIZE; n++)
+            assert_int_equal(buf[n], (unsigned char)(n % 251u));
+        assert_int_equal(fs_file_read(&file, 4095u, 5000u, buf), FS_OK);
+        for (n = 0; n < 5000u; n++)
+            assert_int_equal(buf[n], (unsigned char)((4095u + n) % 251u));
+        assert_int_equal(k.strict.refused, 0);
+
+        /* Without the layer, the 512-byte boot sector read is refused. */
+        assert_int_equal(fat_mount(&v, kn_strict_read, &k.strict),
+                         FAT_ERR_IO);
+        assert_int_equal(k.strict.refused, 1);
+        free(buf);
+        fclose(g_fp);
+    }
+}
+
 int run_fat_tests(void)
 {
     const struct CMUnitTest tests[] = {
@@ -663,6 +724,7 @@ int run_fat_tests(void)
         cmocka_unit_test(test_fat_nested_directory),
         cmocka_unit_test(test_fat_extents),
         cmocka_unit_test(test_fat_through_registry),
+        cmocka_unit_test(test_fat_on_4kn),
         cmocka_unit_test(test_fat_rejects_non_fat),
         cmocka_unit_test(test_fat_arg_errors),
         cmocka_unit_test(test_fat_looping_directory),
