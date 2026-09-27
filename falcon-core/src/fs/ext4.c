@@ -232,8 +232,10 @@ static int group_desc(ext4_vol *v, uint32_t group, const uint8_t **out)
 
     if (v->gd_cache_group != group) {
         off = v->gdt_off + (uint64_t)group * v->desc_size;
-        /* Descriptors are 32 or 64 bytes, so several share a 512-byte device
-         * block; the callback contract requires the aligned read.
+        /* Descriptors are 32 or 64 bytes, so several share a 512-byte
+         * sector, and that sector is what is read: on a 512-byte disk it is
+         * a whole device sector and the callback's re-blocking layer (DESIGN
+         * Section 3.4) passes it straight through.
          *
          * One sector always suffices: gdt_off is block-aligned, desc_size is
          * a power of two no larger than 64 (checked at mount), and both 32
@@ -861,8 +863,8 @@ uint64_t ext4_file_size(const ext4_file *f)
  * The split between this and ext4_file_read is one of coordinates. That one
  * works in logical blocks and calls the extent tree, so it is where holes and
  * tree descents happen; this one has a physical byte range already known to be
- * contiguous, so it only has to satisfy the callback's 512-byte alignment
- * contract. Keeping them apart is why a 90 MiB read copies through f->buf at
+ * contiguous, so it only has to read whole filesystem blocks where it can.
+ * Keeping them apart is why a 90 MiB read copies through f->buf at
  * most twice rather than once per extent. */
 static int file_read_span(ext4_file *f, uint64_t abs, uint64_t run,
                           uint8_t *dst)

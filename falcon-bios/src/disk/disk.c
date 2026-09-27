@@ -171,10 +171,9 @@ int bios_disk_read(void *ctx, uint64_t off, uint64_t len, void *buf)
     ss = d->sector_size;
     if (ss == 0)
         return -1;
-    /* Aligned reads only, which is the same contract the loader's own
-     * callback has (falcon-efi/src/discover/discover.c refuses anything
-     * else, because Block I/O does). A driver that wants part of a sector
-     * reads the sector. */
+    /* Whole sectors only, which is what INT 13h moves. A driver that wants
+     * part of a sector is handed bios_disk_bytes (disk/bytes.c), which
+     * re-blocks its reads into these. */
     if (off % ss != 0 || len % ss != 0)
         return -1;
 
