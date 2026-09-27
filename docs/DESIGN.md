@@ -3684,9 +3684,9 @@ How each family then finds its root on the device the hook made:
 
 ### 12.5 The stationary build
 
-*The 2026-09-21 station, on the core step's records and single BIOS
-layout. Section 13 replaced its design on 2026-09-26; these diagrams are
-redrawn as the new station is built, in the same commits.*
+*12.5.2 is the Section 13 station as built (2026-09-27). 12.5.1 is still
+the 2026-09-21 station on the core step's records and single BIOS layout,
+redrawn as the UEFI half of Section 13 is built, in the same commits.*
 
 Section 13's second build of each loader. Its POS route is the stick's
 (12.2.4, 12.3.7); what is new is how it gets there and the routes out to
@@ -3723,29 +3723,53 @@ is not drawn.
 
 #### 12.5.2 BIOS
 
+Traced from `apps/station/bios_main.c` as built on 2026-09-27 (Section 13).
+
 ```mermaid
 flowchart TD
-    S12["stages 1 and 2, as 12.3.2"] --> BM["bios_main (apps/station/bios_main.c)<br/>e820_read"]
-    BM --> DSK["scan_disks: the boot drive, then every drive the BDA counts (0x475)<br/>its table (MBR or GPT), and whether LBA 0 ends in 0x55AA;<br/>the boot partition's record, from the gate"]
-    DSK --> P3["pick_shelf: the partition whose LUKS2 token or /.falcon is a shelf<br/>record of that install, the boot disk asked first; pos_probe opens it"]
-    P3 --> SH{"shelf found?"}
-    SH -- yes --> PR["passphrase prompt (INT 16h)<br/>Escape to the list"]
-    SH -- no --> LIST
-    PR -- "unlocked" --> POS["POS (12.3.7)"]
-    PR -- "Escape, or 3 wrong" --> LIST{"list"}
-    POS -- "fails" --> LIST
-    LIST -- "Personal OS" --> PR
+    S12["stages 1 and 2, as 12.3.2<br/>the boot partition is the station partition"] --> BM["bios_main (apps/station/bios_main.c)<br/>e820_read"]
+    BM --> DSK["scan_disks: the boot drive, then every drive the BDA counts (0x475)<br/>each one's table (MBR or GPT) and disk id"]
+    DSK --> IR["on the boot drive: install_boot_record (the install ID),<br/>marker_take (the marker sector, cleared before it is believed)"]
+    IR --> SP["read_station: the station partition mounted (FAT)<br/>/MEMTEST.BIN present? /STATION.INI parsed (stationini.c)"]
+    SP --> SH["find_shelves: partitions whose LUKS2 token or /.falcon is a shelf<br/>record of the install; pos_list: a plaintext shelf's UKIs are rows<br/>(uki-&lt;stem&gt;), an encrypted shelf one row (shelf)"]
+    SH --> CH["find_chains: each MBR primary but the station partition whose boot<br/>sector (FAT32: and its sectors 2, 12) carries a known loader<br/>(vbrcore.c): mbr-&lt;sig&gt;-p&lt;n&gt;; each other disk whose LBA 0 has<br/>boot code and an active entry: mbr-&lt;sig&gt; or gpt-&lt;8&gt;"]
+    CH --> MT["memtest when MEMTEST.BIN is there"]
+    MT --> INI["rows_apply_ini: sections change, hide or add rows;<br/>rows_arrange: order, the default, its timeout (rows.c)"]
+    INI --> SI["screen_init: 80x25 text, VGA memory"]
+    SI --> NOTE{"install unknown, STATION.INI line refused,<br/>or a default naming nothing here?"}
+    NOTE -- "yes" --> NS["the sentence, a key; no default"]
+    NOTE -- "no" --> NB
+    NS --> NB{"a marker taken?"}
+    NB -- "a fresh value naming a row<br/>(:personal the first Linux row)" --> ROW
+    NB -- "bad, stale, undated, stuck,<br/>or naming nothing here" --> NN["a note, a key"]
+    NB -- "no" --> LIST
+    NN --> LIST{"menu: screen_menu_timed<br/>a countdown on the default, the first menu only"}
     LIST -- "Escape" --> RF["INT 18h, else bios_reboot"]
-    LIST -- "a disk" --> MBR["MBR (mbr.c): LBA 0 to 0x7C00, DL = that drive<br/>boot16: real mode, jump 0000:7C00"]
-    MBR -- "unreadable, no 0x55AA" --> LIST
-    MBR --> WIN["the disk's own MBR code<br/>active partition's boot sector, bootmgr"]
+    LIST -- "a row, or the countdown" --> ROW{"the row's kind"}
+    ROW -- "shelf or UKI" --> POS["POS (12.3.7): pos_run_pick,<br/>a UKI row boots its file without the chooser"]
+    ROW -- "memtest" --> MEM["MEM: MEMTEST.BIN through linux_boot, as jump's (12.6)"]
+    ROW -- "partition" --> VBR["VBR (chain.c): primary, MBR disk, 512-byte sectors?<br/>LBA 0 read, the entry marked active in the copy,<br/>the boot sector read, 0x55AA, the swap's 1 KB asked for"]
+    VBR -- "refused, unreadable, no 0x55AA,<br/>no memory for the swap" --> FAIL["failed while ..., a key"]
+    VBR --> FIX["vbr_fix_bpb: hidden sectors = the entry's start,<br/>the BPB's drive number = DL, in memory, said on serial"]
+    FIX --> CP["LBA 0 to 0000:0600, the boot sector to 0000:7C00"]
+    ROW -- "disk" --> MBR["MBR (chain.c): LBA 0, 0x55AA, the swap's 1 KB asked for;<br/>LBA 0 to 0000:7C00"]
+    MBR -- "unreadable, no 0x55AA" --> FAIL
+    CP --> SW{"the disk not 0x80, swap not no?"}
+    MBR --> SW
+    SW -- "yes" --> RES["swapres.S to the BDA top - 1 KB (lowmem.c),<br/>IVT 13h to it; DL 0x80"]
+    SW -- "no" --> JMP
+    RES --> JMP["boot16: real mode, DS = ES = SS = 0, SP 0x7000,<br/>DL, SI = 0x7BE + 16 x slot (VBR) or 0 (MBR), jmp 0000:7C00"]
+    POS -- "fails" --> FAIL
+    MEM -- "refused or unreadable" --> FAIL
+    FAIL --> LIST
 ```
 
-Nothing is resident at either handoff: no INT 13h or INT 15h hook exists in
-this build, so the other disk's boot code finds the IVT, the BDA and the
-memory map as the BIOS left them. A disk row is every drive but the boot
-drive whose LBA 0 carries the boot signature.
-
+The drive swap is the only thing the station leaves behind, and only on a
+chain of a disk that is not 0x80 (Section 13.4): 84 bytes in the kilobyte
+taken off the BDA's count, the IVT's INT 13h pointing at it, and nothing
+else changed. A chain of the disk that is already 0x80, and every other
+route, leave the IVT, the BDA and the memory map as the BIOS left them.
+MEM hands over as jump's does; POS as the stick's.
 
 ### 12.6 falcon jump
 
@@ -3816,7 +3840,9 @@ the rig exercises the same path an old machine takes.
 
 ## 13. The station: falcon as a machine's boot loader (decided 2026-09-26)
 
-Status (2026-09-26): designed, not built. This replaces the stationary build
+Status (2026-09-27): the BIOS station is built (`apps/station/bios_main.c`)
+and rig-proven under SeaBIOS (`make test-station-bios`, 13.11); the UEFI
+station and the installer are being built. This replaces the stationary build
 of 2026-09-21, which was the stick's loader with the ISO library taken out: it
 booted a personal OS off a shelf and handed the machine to other disks, but
 leaned on the stick's view of the world (a shelf found by rule on any disk,
@@ -3908,14 +3934,29 @@ BIOS: the partition stage 2 found), reads the install ID, and builds rows:
 
 - **Linux:** every UKI on every shelf carrying that install ID, labelled
   from each UKI's `.osrel` (`media/shelf.c`), with one passphrase prompt per
-  locked shelf when a row on it is chosen.
+  locked shelf when a row on it is chosen. What is on a locked shelf is not
+  known until it is unlocked, so the BIOS loader lists a plaintext shelf's
+  UKIs as rows of their own (`uki-<stem>`, booted without the chooser) and
+  a LUKS2 shelf as one row (`shelf`) that prompts and then offers the
+  chooser; a `uki-<stem>` named by next boot or `STATION.INI` on a locked
+  shelf is found after the unlock.
 - **Windows and other systems, UEFI:** every active, not hidden, boot-category
   firmware entry but falcon's own (`nxt/`), labelled with its description.
-- **Windows and other systems, BIOS:** on every disk, each primary partition
-  whose boot sector is a known loader (`IO.SYS`/`WINBOOT.SYS` for DOS and
-  Windows 9x, `NTLDR`, `BOOTMGR`, GRUB's and syslinux's signatures), labelled
-  by what was found and where ("Windows 2000 (disk mbr:cdcccdcc, partition
-  1)"); and each other disk whose MBR carries boot code and an active entry.
+- **Windows and other systems, BIOS:** on every disk, each MBR primary
+  partition whose boot sector is a known loader, labelled by what was found
+  and where ("Windows (NTLDR) (disk mbr:cdcccdcc, partition 1)"); and each
+  other disk whose MBR carries boot code (its first 440 bytes not all zero)
+  and an active entry ("Boot code (disk mbr:1a2b3c4d)"). The loaders, by
+  the file names and messages their boot code holds (`mbr/vbrcore.c`,
+  host-tested), first match winning: `BOOTMGR` (Windows (BOOTMGR), Vista
+  on), `NTLDR` (Windows (NTLDR), NT to XP), `WINBOOT SYS` (Windows 9x),
+  `KERNEL  SYS` (FreeDOS), `IO      SYS` or `IBMBIO  COM` (MS-DOS), `GRUB `
+  (GRUB) and `SYSLINUX`/`EXTLINUX` (SYSLINUX). FAT32 boot code runs on into
+  the reserved sectors, so a FAT32 sector 0 with no match is asked again in
+  its sectors 2 (Windows 98's name) and 12 (NT's). The station partition
+  itself, logical partitions, extended containers, GPT partitions (Windows
+  boots GPT only through UEFI) and disks whose sectors are not 512 bytes
+  are never rows.
   A disk whose LBA 0 merely ends in `0x55AA` is not offered: a GPT data disk,
   a table with no active entry and a UEFI-only Windows disk all end that way
   and fail after the jump.
@@ -4032,7 +4073,8 @@ mounted at `/efi` and a hook that builds and signs each UKI with the MOK.
 
 BIOS: `MEMTEST.BIN` in the station partition, any build carrying the x86
 boot protocol header, booted through `linux.c` as jump boots it (Section 14),
-staged and moved when it is fixed at 1 MB. UEFI: memtest86+'s `.efi`, signed
+staged and moved when it is fixed at 1 MB: the row `memtest`, route
+`MEM`. UEFI: memtest86+'s `.efi`, signed
 with the MOK by the installer (13.9) as the POS hook signs UKIs, so it boots
 in every Secure Boot state, and loaded through `loadops`.
 
@@ -4170,7 +4212,18 @@ the build is called done. New ones:
   `NTLDR` path and the real installer on a real disk.
 - **Synthetic boot sectors** that print DL, DS:SI and the entry they were
   handed on serial: every chain case (a partition, another disk, swap on and
-  off, a logical partition refused) without an OS.
+  off, a logical partition refused) without an OS. Built:
+  `falcon-bios/tools/rigboot.S` reports DL, DS:SI, the 16-byte entry, its
+  BPB's hidden sectors, the entry's type and which disk INT 13h answers for
+  0x80 and for DL; `falcon-bios/tools/run-station-rig.sh` (`make
+  test-station-bios`) installs it in two rig disks' partitions and MBRs and
+  judges own-disk primaries of type 0x0C (hidden sectors patched) and 0x0B,
+  a logical partition refused, a second disk's partition with the swap on
+  and off, a second disk's MBR, a `STATION.INI` error line, a next-boot
+  marker over a default, and memtest86+. FreeDOS 1.4 (the LiteUSB image,
+  checked against FreeDOS's published hash) boots as the station's own disk,
+  as a second disk's partition and as a second disk's MBR behind the swap,
+  judged from the VGA text it leaves on screen.
 - **A 4Kn disk** under both firmwares.
 - **Two disks**: a station with Windows on the second; a station with a falcon
   stick plugged in, which must change nothing.

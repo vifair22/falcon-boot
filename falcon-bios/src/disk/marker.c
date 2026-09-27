@@ -32,10 +32,10 @@
  * not the time: see nextboot.h for why that makes the zone irrelevant.
  *
  * THE LOADER'S ONLY DISK WRITE IS HERE. Everything else falcon-bios does to
- * a disk is a read (disk.c), and this file is linked into the stick's stage 3
- * alone: stage 2 and the stationary build (DESIGN Section 13) carry no code
- * that can write a disk at all, rather than code that happens not to be
- * called.
+ * a disk is a read (disk.c), and this file is linked into the stick's and
+ * the station's stage 3 alone (the station's marker is how "restart into
+ * Windows" works, DESIGN Section 13.8): stage 2 and jump carry no code that
+ * can write a disk at all, rather than code that happens not to be called.
  */
 
 #include <disk/marker.h>

@@ -15,6 +15,10 @@ CORE_FS       := $(addprefix $(CORE)/fs/,exfat.c ext4.c fat.c iso9660.c udf.c fs
 # The stationary build's (DESIGN Section 13): ext4 and its adapter, and a
 # registry that names nothing else.
 CORE_FS_EXT4  := $(addprefix $(CORE)/fs/,ext4.c fs.c fs_ext4.c fs_reg_ext4.c)
+# The station's (DESIGN Section 13): ext4 for the shelf and FAT for the
+# station partition or the ESP it reads STATION.INI and memtest86+ from.
+CORE_FS_STATION := $(addprefix $(CORE)/fs/,ext4.c fat.c fs.c fs_ext4.c fs_fat.c \
+	fs_reg_station.c)
 # falcon jump's (DESIGN Section 14.3): FAT, for the floppy it boots from.
 CORE_FS_FAT   := $(addprefix $(CORE)/fs/,fat.c fs.c fs_fat.c fs_reg_fat.c)
 # The extent map's readers (falcon-hook, falcon-winjump, falcon-vdisk):
