@@ -299,3 +299,37 @@ rigs, never written again as literals).
 - **Removed:** `STAGE3_LBA`, `STAGE3_MAX_SECTORS`, `NEXTBOOT_LBA`, the EF02
   partition's use for stage 3, and every literal 34/98/2047 in tools and
   rigs. `STAGE2_SECTORS` becomes the reservation's upper bound only.
+
+## 10. The station step's contract (2026-09-27)
+
+Fixed before the station streams start, so the BIOS loader, the UEFI loader
+and the installer agree.
+
+- **STATION.INI**: `falcon-core/src/media/stationini.h` is the interface;
+  one parser, both loaders, and the installer's writer.
+- **Where things live.**
+  - BIOS station partition (MBR type 0x1C hidden FAT32, or GPT
+    `falcon_guid_boot`; the `boot` record; stage 3 at reserved sector 32,
+    the marker at 8): `/STATION.INI`, `/MEMTEST.BIN`, and on
+    station-legacy `/*.MOD` (jump's drivers) and `/uki/*.efi` (DevLink
+    recovery, read as a plaintext shelf).
+  - UEFI: the machine's ESP, `\EFI\falcon\`: `shimx64.efi`, `mmx64.efi`,
+    `grubx64.efi` (the station loader, MOK-signed), `falcon-boot.cer`,
+    `STATION.INI`, `memtest.efi` (MOK-signed by the installer). Its firmware
+    entry is named `falcon` and points at `\EFI\falcon\shimx64.efi`. The
+    ESP carries the station's `boot` record (stage3 and marker fields 0).
+  - The shelf: any partition with the station's install ID (LUKS2 token or
+    plaintext ext4 `/.falcon`).
+- **Stage 2 on a GPT BIOS station**: the `FALCON-BIOS` EF02 partition at LBA
+  34; the installer creates it in the free space before the first partition
+  when absent, and refuses when there is none.
+- **Next boot**: the value is an entry's name (a STATION.INI section, or an
+  autodetected entry's generated name). BIOS: the marker sector of the
+  station partition; UEFI: `FalconNextBoot`. Written by
+  `falcon-boot-mkstick next-boot <name>`.
+- **Autodetected entry names** (so the INI and next-boot can name them):
+  `mbr-<sig>-p<n>` / `gpt-<first 8 of DiskGUID>-p<n>` for a partition,
+  `mbr-<sig>` / `gpt-<8>` for another disk's MBR, `nxt-<hex4>` for a
+  firmware entry Boot####, `uki-<file stem>` for a UKI, `memtest`.
+- **Row labels**: "<what> (disk <id>, partition <n>)" for a found OS, the
+  INI label when given.
