@@ -168,7 +168,7 @@ static cli_status list_disks(char (*paths)[MKS_PATH_MAX], size_t cap,
 static cli_status find_target(const char *disk, next_target *out)
 {
     static char paths[NEXT_MAX_DISKS][MKS_PATH_MAX];
-    const char *cands[NEXT_MAX_DISKS];
+    const char *cands[NEXT_MAX_DISKS] = { NULL };
     size_t n = 0;
     size_t i;
     cli_status rc;
