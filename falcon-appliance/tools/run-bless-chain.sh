@@ -33,6 +33,7 @@
 set -euo pipefail
 
 cd "$(dirname "$0")/../.."
+. tools/rig-part.sh
 
 OUT=build/appliance
 RUN=build/bless-chain
@@ -75,6 +76,8 @@ trap cleanup EXIT
     echo "ERROR: $IMG missing (make test-appliance-stick)" >&2
     exit 1
 }
+# p2 by its identity record (DESIGN Section 3.1).
+P2="p$(rig_part "$IMG" library)"
 mkdir -p "$RUN"
 
 fail() {
@@ -121,7 +124,7 @@ p2_mount() {   # p2_mount ro|rw
     LOOP=$(sudo losetup --show -f -P "$IMG")
     sudo udevadm settle 2>/dev/null || sleep 1
     MNT=$(mktemp -d)
-    sudo mount -o "$1,uid=$(id -u),gid=$(id -g)" "${LOOP}p2" "$MNT"
+    sudo mount -o "$1,uid=$(id -u),gid=$(id -g)" "${LOOP}$P2" "$MNT"
 }
 p2_umount() {
     sudo umount "$MNT"; rmdir "$MNT"; MNT=

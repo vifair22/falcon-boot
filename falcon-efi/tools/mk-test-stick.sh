@@ -8,11 +8,19 @@
 # parsing and the loader sees the same per-partition Block I/O handles it will
 # see on hardware.
 #
-#   p1  ESP   FAT32   64 MiB  shim -> mmx64.efi -> our loader as grubx64.efi
-#   p2  ISOs  exFAT   64 MiB  two fake ISOs, plus the real payload ISO if built
-#                             (basic-data typed, named FALCON-ISO: see below)
-#   p3  UKI   LUKS2   64 MiB  pbkdf2 keyslot, ext4 inside, /uki/*.efi
+#   p1  ESP   FAT32   64 MiB  shim -> mmx64.efi -> our loader as grubx64.efi;
+#                             the boot record, and BIOS stage 3 in its
+#                             reserved sectors
+#   p2  ISOs  exFAT   64 MiB  two fake ISOs, plus the real payload ISO if built,
+#                             and /.falcon (role library)
+#   p3  UKI   LUKS2   64 MiB  pbkdf2 keyslot and a falcon token (role shelf),
+#                             ext4 inside, /uki/*.efi
 #   p4  root  LUKS2   32 MiB  argon2id keyslot, deliberately empty
+#   p5  BIOS  EF02            stage 2 (mkstick bios --reserve); stage 1 in LBA 0
+#
+# Every record carries one install ID, drawn per build (DESIGN Section 3.1),
+# and the BIOS stages are put on by `mkstick bios`, so the same image boots
+# under OVMF and under SeaBIOS (DESIGN Section 3.3).
 #
 # p3's keyslot is pbkdf2 with a pinned iteration count because DESIGN Section 3
 # mandates it: argon2id is memory-hard and brutal single-threaded in EFI-land.
@@ -49,8 +57,9 @@
 # private key encrypted on p3. Nothing here is that; everything lands under
 # build/ and the passphrase is a well-known string on purpose.
 #
-# Needs sgdisk, mkfs.fat, mkfs.exfat, cryptsetup, mkfs.ext4 and passwordless
-# sudo (loop devices and device-mapper).
+# Needs sgdisk, mkfs.fat, mkfs.exfat, cryptsetup, mkfs.ext4, the mkstick
+# and BIOS stage builds (make cli bios) and passwordless sudo (loop devices
+# and device-mapper).
 
 set -euo pipefail
 
@@ -79,6 +88,10 @@ PAYLOAD_ISO=build/test-payload.iso
 FIXTURE_UKI=build/test/fixture-uki.efi
 WORK_LABELS=build/test/labels
 FIXTURE_UKI_SIGNED=build/test/fixture-uki-signed.efi
+MKSTICK=build/bin/falcon-boot-mkstick
+STAGE1=build/bin/falcon-bios-stage1.bin
+STAGE2=build/bin/falcon-bios-stage2.bin
+STAGE3=build/bin/falcon-bios-stage3.bin
 
 UNSIGNED=0
 PAYLOAD_UKI=0
@@ -131,6 +144,12 @@ done
     echo "ERROR: $PAYLOAD not built (run: make payload)" >&2
     exit 1
 }
+for f in "$MKSTICK" "$STAGE1" "$STAGE2" "$STAGE3"; do
+    [[ -f "$f" ]] || { echo "ERROR: $f not built (run: make cli bios)" >&2; exit 1; }
+done
+
+# One install ID for every record on the stick (DESIGN Section 3.1).
+INSTALL_ID=$(od -An -tx1 -N16 /dev/urandom | tr -d ' \n')
 
 if [[ "$UNSIGNED" -eq 0 && ! -f "$MOK_KEY" ]]; then
     echo "note: no test MOK at $MOK_KEY; falling back to --unsigned" >&2
@@ -212,8 +231,11 @@ unmount_rw() {
 # partition rather than a vvfat directory: BOOTX64.EFI is Fedora's shim, and our
 # loader goes under grubx64.efi because that is the next-stage name compiled
 # into it.
+# The reserved sectors hold BIOS stage 3 and the marker, sized by the rule
+# mkstick create uses (DESIGN Section 3.3).
 echo "== p1: FAT32 ESP"
-sudo mkfs.fat -F 32 -n FALCONESP "$P1" >/dev/null
+sudo mkfs.fat -F 32 -R "$("$MKSTICK" ident --reserved-sectors --stage3 "$STAGE3")" \
+    -n FALCONESP "$P1" >/dev/null
 mount_rw "$P1"
 mkdir -p "$MNT/EFI/BOOT"
 if [[ "$UNSIGNED" -eq 1 ]]; then
@@ -240,6 +262,7 @@ if [[ -f "$PAYLOAD_ISO" ]]; then
     cp "$PAYLOAD_ISO" "$MNT/payload-test.iso"
     echo "   payload-test.iso staged (real El Torito, bootable)"
 fi
+printf 'falcon 1 library %s\n' "$INSTALL_ID" > "$MNT/.falcon"
 unmount_rw
 
 # ---- p3: LUKS2 with a pbkdf2 keyslot, ext4 inside ----
@@ -249,6 +272,8 @@ printf '%s' "$PASS" | sudo cryptsetup luksFormat \
     --pbkdf pbkdf2 --pbkdf-force-iterations "$P3_ITER" \
     --cipher aes-xts-plain64 --key-size 512 \
     --batch-mode "$P3" -
+printf '{"type":"falcon","keyslots":[],"version":1,"role":"shelf","install_id":"%s"}' \
+    "$INSTALL_ID" | sudo cryptsetup token import "$P3"
 MAPPER=falcon-test-p3
 printf '%s' "$PASS" | sudo cryptsetup open "$P3" "$MAPPER" -
 sudo mkfs.ext4 -q -L FALCON-UKI "/dev/mapper/$MAPPER"
@@ -324,8 +349,20 @@ printf '%s' "$PASS" | sudo cryptsetup luksFormat \
 sudo losetup -d "$LOOP"
 LOOP=
 
+# ---- the boot record and the BIOS stages ----
+#
+# On the image file, with nothing attached: p1's boot sector (and its FAT32
+# backup) gets the binary record, then `mkstick bios` finds p1 by it and
+# puts stage 1 in LBA 0, stage 2 at the GPT place in a FALCON-BIOS
+# partition, and stage 3 in p1's reserved sectors.
+echo "== p1: boot record; the BIOS stages"
+"$MKSTICK" --quiet ident "$IMG" --write-boot 1 --id "$INSTALL_ID" >/dev/null
+"$MKSTICK" --quiet bios --reserve --no-backup --stage1 "$STAGE1" \
+    --stage2 "$STAGE2" --stage3 "$STAGE3" "$IMG"
+
 echo
-echo "created $IMG (${SIZE_MIB} MiB, GPT, four partitions)"
+echo "created $IMG (${SIZE_MIB} MiB, GPT, four partitions and the BIOS stages)"
+echo "  install ID: $INSTALL_ID"
 echo "  passphrase: $PASS  (override with FALCON_TEST_PASS)"
 echo
 echo "expected menu:"
