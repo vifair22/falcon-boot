@@ -64,6 +64,10 @@ cli_status disk_detach(mks_disk *d);
  * first mkfs races udev and fails with a confusing ENOENT. */
 cli_status disk_settle(const mks_disk *d);
 
+/* The same wait for one partition node, for a disk whose partitions are not
+ * the four of a stick (a station's, or any table status reads). */
+cli_status disk_settle_node(const char *node);
+
 cli_status disk_partition_name(const char *base, unsigned n,
                                char *out, size_t cap);
 

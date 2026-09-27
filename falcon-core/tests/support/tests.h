@@ -39,6 +39,7 @@ int run_cpio_tests(void);
 int run_family_tests(void);
 int run_survey_tests(void);
 int run_bioscore_tests(void);
+int run_records_tests(void);
 int run_isoprobe_tests(void);
 int run_payload_tests(void);
 int run_uki_tests(void);
