@@ -4076,8 +4076,29 @@ hide = yes
   Update's included, comes back to that system. With no file the menu
   waits.
 
-One parser serves both (`jumpini.c` generalised), and the countdown is
-`screen_menu_timed` on BIOS and a timed `menu` on UEFI, which it lacks today.
+One parser serves both (`falcon-core/src/media/stationini.c`), and the
+countdown is `screen_menu_timed` on BIOS and a timed `menu` on UEFI, which
+it lacks today.
+
+How the BIOS loader applies it (`falcon-bios/src/station/rows.c`,
+host-tested):
+
+- A section matches a found row by `disk` and `part` (a disk named by its
+  id, whichever BIOS number it has today), else by `uki` (the file name,
+  case aside, any directory before it ignored), else by its own name
+  against the autodetected names. A matched section's name becomes the
+  row's second name, so `default` and next boot can use either.
+- Names match exactly, as the parser's `stationini_find` does.
+- `efi`, a disk that is not attached, a `uki` with no shelf, and a name that
+  matches nothing are said on serial (`falcon-bios: STATION.INI [section]:
+  why`) and skipped; the rest still apply.
+- `order`'s names come first, then every other row as found: Linux, then
+  partitions disk by disk, then other disks' MBRs, then memtest.
+- A `default` that names a hidden row shows it, since a countdown runs on a
+  row a person can see and stop. A `default` that names nothing on this
+  machine is said on screen before the menu, which then waits.
+- The countdown runs on the first menu only; a boot that fails and comes
+  back finds the menu waiting.
 
 ### 13.8 Next boot
 
