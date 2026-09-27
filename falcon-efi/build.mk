@@ -153,9 +153,10 @@ $(FIXTURE_UKI): falcon-efi/tools/mk-test-uki.sh \
 test-stick: $(EFI_SIGNED) test-iso test-uki cli bios
 	falcon-efi/tools/mk-test-stick.sh
 
-# A disk laid out as the Manual's stationary install (Section 2), made by
-# following that procedure; the rig boots it under both firmwares.
-test-station: $(EFI_STATION_SIGNED) $(STANDIN_SIGNED) station test-uki cli
+# The rig's station disk: a machine's disk with the station put on it by
+# `mkstick station install` (DESIGN Section 13.9); the rigs boot it under
+# both firmwares.
+test-station: $(STANDIN) station test-uki cli
 	falcon-efi/tools/mk-test-station.sh
 
 # The core step's matrix cells (docs/notes/station-rework.md section 6), each

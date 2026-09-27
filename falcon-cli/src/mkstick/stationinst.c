@@ -769,6 +769,18 @@ static cli_status make_ini(const stn_found *all, size_t n, int uefi,
     if (stn_ini_build(pick, m, STN_TIMEOUT, &ini) != STN_OK)
         return set_error(CLI_ERR_INTERNAL, "STATION.INI did not build");
     *len = stationini_format(&ini, buf, cap);
+    /* Nothing found to name: no default and no section, which formats to
+     * no text at all. The file is still written, so status and a person
+     * find it where the next section goes. */
+    if (*len == 0u && ini.n_entries == 0u && ini.default_name[0] == '\0') {
+        static const char none[] =
+            "# No default: the install found no system to name.\n";
+
+        if (cap < sizeof none)
+            return set_error(CLI_ERR_INTERNAL, "STATION.INI did not format");
+        memcpy(buf, none, sizeof none);
+        *len = sizeof none - 1u;
+    }
     if (*len == 0u)
         return set_error(CLI_ERR_INTERNAL, "STATION.INI did not format");
     /* What the loader will make of it, before it is written. */

@@ -264,7 +264,7 @@ MENU_UP="up/down select | enter choose"
 
 case_menu() {
     local c=$1 fw=$2 why= id
-    id=$("$MKSTICK" ident "$STATION" | awk -F '\t' '$2 == "boot" { print $3 }')
+    id=$("$MKSTICK" ident "$STATION" | awk -F '\t' '$2 == "boot" { print $3; exit }')
     station_image ""
     NEXT= NO_WIN_ENTRY=0 boot "$fw"
     wait_for "$MENU_UP" 90 || why="no menu"
