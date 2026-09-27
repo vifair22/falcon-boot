@@ -203,7 +203,15 @@ falcon-efi and falcon-bios, which never share a set, may both have a `pos/`.
     sections are the apps' (`apps/stick/`, `apps/station/`).
   - `nxt/` the stationary build's route to the firmware's other boot
     entries (NXT, BootNext and a reset): `nxtcore.c` parses BootOrder and
-    Boot#### and is host-tested, `nxt.c` reads the variables.
+    Boot#### (the description, and the partition and file its device path
+    names) and is host-tested, `nxt.c` reads the variables.
+  - `esp/` the station's other way into a system (DESIGN Sections 13.4,
+    13.6; routes ESP and MEM): a file on a firmware-mounted volume
+    (`bootmgfw.efi`, `memtest.efi`) loaded by device path through
+    `loadops`, and the reads STATION.INI and the ESP rows need.
+  - `station/` the UEFI station's list as data (`strows.c`, host-tested):
+    the generated names, what a STATION.INI section changes or adds, the
+    order and the default.
   - `loader/` the shim-verified load path (`loadops.c`, DESIGN Section 7.6)
     and `credfs.c`, the synthetic read-only filesystem a UKI is published on
     so it can be loaded by device path and sd-stub finds the passphrase
@@ -217,7 +225,9 @@ falcon-efi and falcon-bios, which never share a set, may both have a `pos/`.
     device-path half (`partefi.c`: same disk, start LBA): reads the boot
     partition's record for the install ID, enumerates the Block I/O handles
     once (the boot disk's first), reads each one's record, and hands every
-    consumer the rows that carry the install ID.
+    consumer the rows that carry the install ID. `disks.c` (the station
+    only) reads each whole disk's table so a partition handle or a firmware
+    entry's HARDDRIVE node can be named as STATION.INI names it.
   - `secboot/` Secure Boot state for UX (`sb.c`) and the variable reads the
     boot predictions judge against (`trustefi.c`).
   - `bsd/` BSD media served as its own memory disk (Section 6.4; M7):
@@ -334,7 +344,9 @@ falcon-efi and falcon-bios, which never share a set, may both have a `pos/`.
   nothing resident. `make test-core` boots the core matrix cells (the stick
   under both firmwares alone, beside a second stick, an MBR disk and another
   install's records; a 4Kn stick on NVMe; the station) and judges each from
-  serial (`falcon-efi/tools/run-core-rig.sh`).
+  serial (`falcon-efi/tools/run-core-rig.sh`); `make test-station-uefi`
+  does the same for the UEFI station's own cases
+  (`falcon-efi/tools/run-station-rig.sh`).
 
   `src/` is grouped by job, and a job the UEFI loader also does carries
   that module's name, so the two halves of a route sit side by side:
