@@ -246,8 +246,8 @@ passphrase and without the partition table's help:
   byte 0x1DC, 32 bytes, inside the boot-code area. Nothing executes a data
   partition's boot code and FAT has no checksum over it; stage 2 identifies
   a `boot` partition with one sector read. 0x1DC is the one offset that
-  clears jump's floppy stage 1 (it ends at 0x1D9, and its stage 2 length is
-  the word at 0x1FC).
+  clears jump's floppy stage 1 (its code ends at 0x1DA, which the build
+  checks, and its stage 2 length is the word at 0x1FC).
 - **LUKS2** (p3): a token of type `falcon` in the header's JSON area,
   `{"type":"falcon","keyslots":[],"version":1,"role":"shelf","install_id":"<32 hex>"}`.
   It is read before any key is known, survives cryptsetup's own operations
@@ -2685,32 +2685,24 @@ line numbers are left out because they would be stale within a week.
 
 ### 12.1 The stick, as the loaders see it
 
-*As built. Section 3 (2026-09-26) moves stage 3 and the marker into p1's
-reserved sectors and identifies every partition by its record; this table
-and 12.3's diagrams change with the code that does it.*
-
 | region | holds | read by |
 |---|---|---|
-| LBA 0, bytes 0-439 | BIOS stage 1 (`falcon-bios/src/start/boot.S`) | a BIOS |
-| LBA 0, bytes 440-511 | disk signature, protective MBR entry, `0x55AA` | everything; `mkstick bios` keeps them |
+| LBA 0, bytes 0-439 | BIOS stage 1 (`falcon-bios/src/start/boot.S`); stage 2's first LBA (0x1B2) and length in sectors (0x1B6), written by the installer | a BIOS |
+| LBA 0, bytes 440-511 | disk signature, protective MBR entry, `0x55AA` | everything; the installer keeps them |
 | LBA 1-33 | GPT header and 128-entry array | both loaders, falcon-hook, the appliance |
-| LBA 34-97 | BIOS stage 2, 64 sectors | stage 1 |
-| LBA 98-1121 | BIOS stage 3, at most 1024 sectors; its header gives the length | stage 2 (`load3.c`) |
-| LBA 1122-2046 | unused; inside the `FALCON-BIOS` EF02 partition (LBA 34-2047) when `mkstick bios --reserve` made one | |
-| LBA 2047 | the BIOS next-boot marker when one is pending, zero otherwise (Section 6.3.1) | falcon-bios, which clears it; written by archusb |
-| p1 `FALCON-ESP` | FAT32 ESP: shim as `EFI\BOOT\BOOTX64.EFI`, MokManager, falcon-boot as `grubx64.efi`, `falcon-boot.cer` | UEFI firmware, shim |
-| p2 `FALCON-ISO` | exFAT: the media, `falcon/blessed/`, the manifest, `falcon/windows.cfg` | both loaders, falcon-hook (as raw extents), winjump, the appliance |
-| p3 | LUKS2 + ext4: UKIs in `/uki`, the MOK key pair | both loaders, the appliance |
+| LBA 34 on | BIOS stage 2, its real length (at most 62 sectors); inside the `FALCON-BIOS` EF02 partition when the installer made one | stage 1 |
+| p1 `FALCON-ESP` | FAT32 ESP: shim as `EFI\BOOT\BOOTX64.EFI`, MokManager, falcon-boot as `grubx64.efi`, `falcon-boot.cer`; the `boot` record at byte 0x1DC of its boot sector; in its reserved sectors the BIOS next-boot marker (sector 8) and BIOS stage 3 (from sector 32) | UEFI firmware, shim; stage 2 (`load3.c`) and `marker.c` |
+| p2 `FALCON-ISO` | exFAT: the media, `falcon/blessed/`, the manifest, `falcon/windows.cfg`; `/.falcon`, the `library` record | both loaders, falcon-hook (as raw extents), winjump, the appliance |
+| p3 | LUKS2 + ext4: UKIs in `/uki`, the MOK key pair; the `falcon` token, the `shelf` record | both loaders, the appliance |
 | p4 | LUKS2: the personal OS's LVM (root, home) | the personal OS's initramfs |
 
-The BIOS stages live in the gap a GPT leaves between its entry array and the
-first 2048-aligned partition, so installing them changes no partition
-(Section 12.3.1). The UEFI loader, falcon-hook, winjump, falcon-vdisk and
-the appliance identify p2 and p3 by their records (Section 3.1): p1's `boot`
-record names the install, p2's `/.falcon` and p3's LUKS2 token must carry
-its ID. falcon-bios still identifies them by the Microsoft basic-data type
-plus the GPT name `FALCON-ISO` and the falcon shelf type GUID
-(`part_match_role`) until its boot chain moves to records (12.3). p4 has no
+Stages 1 and 2 live in front of p1 and stage 3 inside it, so installing
+them changes no partition (Section 12.3.1). Every reader identifies p2 and
+p3 by their records (Section 3.1): p1's `boot` record names the install,
+and p2's `/.falcon` and p3's LUKS2 token must carry its ID. The UEFI loader,
+falcon-hook, winjump, falcon-vdisk and the appliance do; so does
+falcon-bios, which finds p1 by its record (`falcon-bios/src/disk/bootpart.c`,
+in stage 2) and p2 and p3 on any BIOS disk (`disk/install.c`). p4 has no
 role any loader needs.
 
 ### 12.2 UEFI
@@ -3173,23 +3165,41 @@ firmware rather than spinning.
 
 #### 12.3.1 The boot area
 
-*As built; Section 3.3 is the layout that replaces it.*
+Section 3.3's layout. Stage 1 goes in the 440 bytes of boot code in LBA 0,
+with stage 2's first LBA (LE32 at 0x1B2) and its length in sectors (LE16 at
+0x1B6) written into its last six by the installer; the table behind is
+kept. Stage 2 goes in front of the first partition: LBA 34 on a GPT disk,
+LBA 1 on an MBR disk, and it is at most 62 sectors (the build checks), which
+is what an old MBR disk with its first partition at 63 leaves it. Stage 3
+goes in the `boot` partition's reserved sectors, from the sector its record
+names (32 as the installers write it) to no further than the reserved count
+in the FAT BPB, and the next-boot marker is the sector the record names (8).
+jump's floppy keeps its own layout: stage 2 at LBA 34 and stage 3 at 98 of
+the FAT12 volume, which is the `boot` volume itself (12.6).
 
-Stage 1 goes in the 440 bytes of boot code in LBA 0; the partition table
-behind it is kept. Stages 2 and 3 go in LBA 34-1121 (12.1). `mkstick bios`
-(`falcon-cli/src/mkstick/bios.c`) backs up LBA 0 and the gap first, checks
-the gap is free, zeroes it, writes stage 2 and stage 3, and writes LBA 0
-last, so an interrupted install leaves the old LBA 0 in place. A falcon
-stage 1 in front of a half-written stage 2 fails its `BOS2` check and says
-so rather than running it.
+A stage 1 whose fields are zero says `no stage 2` rather than reading
+anything, and a falcon stage 1 in front of a half-written stage 2 fails its
+`BOS2` check and says so rather than running it. The rig disks are made by
+`falcon-bios/tools/mk-rig-disk.sh` from files alone (`sfdisk`, `sgdisk`,
+`mkfs.fat --offset`, `mkfs.exfat` on a file, and `mkstick ident` for the
+reserved count and the boot record); jump's floppy, which has no table,
+gets its record from `falcon-bios-mkident`, which writes one at any offset
+with every field given.
 
 #### 12.3.2 Power-on to the menu
 
 ```mermaid
 flowchart TD
     BIOS["BIOS<br/>LBA 0 to 0x7C00, DL = boot drive"] --> S1["Stage 1, boot.S (real mode)<br/>segments 0, SP 0x7C00, COM1 up"]
-    S1 --> RD{"INT 13h AH=42h<br/>LBA 34, 64 sectors to 0x7E00<br/>3 tries, AH=00h reset between"}
-    RD -- fails --> F1["fail: reason, key, jump to FFFF:0"]
+    S1 --> PL{"stage 2's LBA and length<br/>(0x1B2, 0x1B6) written?"}
+    PL -- "no" --> F1["fail: reason, key, jump to FFFF:0"]
+    PL -- "yes" --> EXT{"INT 13h AH=41h:<br/>the extensions?"}
+    EXT -- "yes" --> RD{"AH=42h: all of stage 2<br/>to 0x7E00 in one call"}
+    EXT -- "no" --> GEO1["AH=08h: sectors per track, heads"]
+    GEO1 --> RC{"AH=02h: one sector a call<br/>to 0x7E00 on"}
+    RD -- "3 tries, AH=00h reset between, all fail" --> F1
+    RC -- "3 tries, AH=00h reset between, all fail" --> F1
+    RC -- ok --> MG
     RD -- ok --> MG{"0x7E04 holds BOS2?"}
     MG -- no --> F1
     MG -- yes --> S2["Stage 2, stage2.S at 0x7E00 (real mode)"]
@@ -3205,9 +3215,13 @@ flowchart TD
     SSE -- yes --> OSX["CR4 OSFXSR, OSXMMEXCPT"]
     SSE -- no --> PE
     OSX --> PE["pmode.S<br/>flat GDT, CR0.PE, paging off"]
-    PE --> PM["32-bit protected mode, stage2_32<br/>fault_install: IDT, 32 vectors"]
-    PM --> L3["stage3_load, load3.c<br/>AH=48h sector size, header at LBA 98 to 1 MiB"]
-    L3 --> H3{"BOSZ, lengths and<br/>memory in bounds?"}
+    PE --> PM["32-bit protected mode, stage2_32, ESP 0x800000<br/>fault_install: IDT, 32 vectors"]
+    PM --> BP["stage3_load, load3.c: AH=48h sector size<br/>find_boot: part_read_table on the boot drive;<br/>no table (a floppy): LBA 0 is the volume"]
+    BP --> BR{"bootpart_find: the first FAT-typed partition<br/>(GPT: ESP or the falcon boot type) whose<br/>boot sector's record is role boot?"}
+    BR -- no --> BF
+    BR -- yes --> GT["gate: 0x7E18 its first LBA,<br/>0x7E42 the record's marker sector"]
+    GT --> L3["header: one sector at start + the record's<br/>stage 3 sector, to 1 MiB"]
+    L3 --> H3{"BOSZ, length inside the volume's<br/>reserved sectors, memory in bounds?"}
     H3 -- no --> BF["bios_fatal: reason, key, reset"]
     H3 -- yes --> RZ["read the member to 6 MiB,<br/>inflate to 1 MiB (gz_member)"]
     RZ --> CZ{"CRC-32 and length match,<br/>BOS3 inside?"}
@@ -3215,11 +3229,14 @@ flowchart TD
     CZ -- "no, again" --> BF
     CZ -- yes --> S3["zero its .bss<br/>call 0x100010, ESP 0x800000"]
     S3 --> BM["bios_main<br/>E820, boot disk"]
-    BM --> MK["marker_take: LBA 2047 of the boot disk<br/>a marker is zeroed, read back, then parsed and dated (6.3.1)"]
-    MK --> GPT["GPT: p2, p3"]
-    GPT --> P2["p2: fs_mount (exFAT), survey_volume (.iso, .img)"]
-    P2 --> P3["pos_probe: p3 is LUKS2?"]
-    P3 --> SI["screen_init: 80x25 text, VGA memory"]
+    BM --> IR["install_boot_record: the boot partition's<br/>record, from the gate: the install ID"]
+    IR --> MK["marker_take: the boot partition's marker sector<br/>a marker is zeroed, read back, then parsed and dated (6.3.1)"]
+    MK --> DSK["install_drives: the boot drive, then every drive<br/>the BDA counts; each one's table, MBR or GPT"]
+    DSK --> REC["install_part_record per partition: a LUKS2 falcon token,<br/>or /.falcon on what the registry mounts;<br/>only the boot record's install ID counts"]
+    REC --> P2["library: fs_mount (exFAT), survey_volume (.iso, .img)"]
+    REC --> P3["shelf: pos_probe, LUKS2 or plaintext"]
+    P2 --> SI["screen_init: 80x25 text, VGA memory"]
+    P3 --> SI
     SI --> NB{"a marker taken?"}
     NB -- "no" --> MENU["menu"]
     NB -- "a fresh value" --> RUN["next_boot_run: :personal is POS,<br/>a path the survey found boots as Enter on its row"]
@@ -3247,9 +3264,11 @@ it:
 | 0x7E04 | `BOS2`, what stage 1 checks |
 | 0x7E08 | `jmp thunk_bios`: C calls a BIOS interrupt through here |
 | 0x7E10 | `jmp boot16`: the one-way drop to real mode a chainload takes |
+| 0x7E18 | the boot partition's first LBA, 64 bits (0 on a floppy), written by `load3.c` |
 | 0x7E20 | the register block, 32 bytes |
 | 0x7E40 | the interrupt vector |
 | 0x7E41 | the boot drive |
+| 0x7E42 | the boot record's marker sector, 16 bits (0 for none), written by `load3.c` |
 | 0x7E48 | the real-mode target of `boot16`, offset then segment |
 | 0x7E4C | stage 2's length, written by the build; its CRC-32 follows the image |
 
@@ -3259,8 +3278,8 @@ Stage 2 checks itself before it runs past the gate. The build writes its
 length into 0x7E4C and appends the CRC-32 of that many bytes (gzip's,
 taken from gzip's trailer, so no other tool computes it); `stage2_begin`
 recomputes it, bitwise, over what stage 1 read, and a mismatch is
-`fatal_rm` with the reason. Stage 1 has no room for the check (jump's is
-508 bytes of 510), and a medium that reads back wrong without an error is
+`fatal_rm` with the reason. Stage 1 has no room for the check (its code is
+413 of the 434 bytes it may use), and a medium that reads back wrong without an error is
 the reason for it: falcon jump's floppies did, on the A21m (14.3).
 
 #### 12.3.3 The thunk: a BIOS call from protected mode
@@ -3307,10 +3326,9 @@ resident CD handler, from real mode.
 | 0x1000-0x10FF | disk packet, drive parameters, E820 slot | per call |
 | below 0x7000 | real-mode stack during a thunk | per call |
 | 0x3000-0x311F | the Linux handoff: the move stub at 0x3000, the handoff GDT at 0x3100 | copied at the handoff, handed to the kernel |
-| 0x7000-0x7BFF | stage 2's protected-mode stack | until stage 3 |
 | 0xD0000-0xD0FFF (falcon jump) | a PC Card's attribute memory, through the bridge's memory window 0 | while `PCC.MOD` reads the CIS; closed before the handoff |
 | 0x7C00-0x7DFF | stage 1; later the chainloaded boot image | stage 1 dies at the jump |
-| 0x7E00-0xFDFF | stage 2 (64 sectors; 8 KiB used): gate, thunk, GDT, IDT, fault reporting | until the target starts |
+| 0x7E00-0xFDFF | stage 2 (at most 62 sectors; 25 KiB used): gate, thunk, GDT, IDT, fault reporting, the boot partition search | until the target starts |
 | 0x10000-0x10FFF | Linux zero page | handed to the kernel |
 | 0x20000 | Linux cmdline; or the staged El Torito boot image (up to 63 KiB) on a chainload | handed over |
 | 0x90000-0x97FFF | bounce buffer | every read |
@@ -3318,7 +3336,8 @@ resident CD handler, from real mode.
 | BDA top - 3 KiB (falcon jump) | the reverse thunk (`rthunk.S`): far pointers, its GDT, the saved caller, the INT 13h entry at +0x90, the INT 15h entry at +0x300 and its carved map at +0x400 (the `USB` route's); below it the virtual CD's block on `CDR` | permanent after `CDR` hands over; reserved in the map it hands on |
 | 0x100000 | stage 3: 16-byte header, entry at +0x10, then its image and `.bss` (at most 0x6F0000 together) | whole loader |
 | 0xB8000-0xB8F9F | VGA text memory, the 80x25 screen stage 3 draws | whole loader |
-| 0x7F0000-0x7FFFFF | stage 3 stack, ESP from 0x800000 | whole loader |
+| 0x600000 | stage 2's partition list and sector buffer while it looks for the boot partition (`STAGE2_SCRATCH`), then the compressed stage 3 it inflates | until stage 3 runs |
+| 0x7F0000-0x7FFFFF | stage 2's protected-mode stack, then stage 3's, ESP from 0x800000 | whole loader |
 | 0xF00000-0xFFFFFF (falcon jump) | the module slots, eight of 128 KiB (`JMOD_REGION`): `ATA.MOD` at 0xF00000, `UHCI.MOD` at 0xF20000, `OHCI.MOD` at 0xF40000, `EHCI.MOD` at 0xF60000, `PCC.MOD` at 0xFA0000 | from the module's load; permanent after `CDR` hands over, reserved in E820, E801 and AH=88h |
 | 0x1000000 | the kernel's protected-mode part (aligned up; `pref_address` for a non-relocatable kernel); one fixed below here, at 1 MB (memtest86+), is staged here instead, above its own footprint, and moved down at the handoff | handed to the kernel |
 | highest fit below the kernel's `initrd_addr_max` | the initrds, placed from E820 | handed to the kernel |
@@ -3409,8 +3428,12 @@ sequenceDiagram
     participant K as kernel
     participant I as initramfs (systemd)
     U->>L: Enter on Personal OS
-    L->>U: masked passphrase (INT 16h), three attempts
-    L->>FC: luks_unlock p3, luks_dev_open, fs_mount ext4
+    alt LUKS2 shelf
+        L->>U: masked passphrase (INT 16h), three attempts
+        L->>FC: luks_unlock p3, luks_dev_open, fs_mount ext4
+    else plaintext shelf
+        L->>FC: fs_mount straight off the partition, no prompt and no credential
+    end
     FC-->>L: shelf_collect: /uki or /EFI/Linux, *.efi (at most 8)
     L->>U: chooser, shelf_label's rows (one image boots without asking)
     L->>FC: pe_parse: .linux, .initrd, .cmdline
@@ -3539,7 +3562,7 @@ hang.
 |---|---|
 | stage 1 | reason on screen and serial, a key, `jmp FFFF:0` |
 | stage 2, real mode (`fatal_rm`) | older than i686 (no CMOV), EBDA too low, A20 closed: reason, a key, reset |
-| stage 2 and 3, protected mode (`bios_fatal`) | stage 3 missing or malformed, or `stage 3 returned`: reason, a key, reset |
+| stage 2 and 3, protected mode (`bios_fatal`) | no partition with a boot record, a damaged table, stage 3 missing, malformed or past its volume's reserved sectors, or `stage 3 returned`: reason, a key, reset |
 | a processor exception (`idt.S`, `fault.c`) | vector and name, EIP, error code, through `bios_fatal`; a second fault while reporting resets at once |
 | a route | message, "press any key to return to the menu" |
 | the POS | wrong passphrase, no `/uki`, no images: message, secrets wiped, back to the menu |
@@ -3640,8 +3663,8 @@ is not drawn.
 ```mermaid
 flowchart TD
     S12["stages 1 and 2, as 12.3.2"] --> BM["bios_main (apps/station/bios_main.c)<br/>e820_read"]
-    BM --> DSK["scan_disks: every drive the BDA counts (0x475)<br/>its GPT, and whether LBA 0 ends in 0x55AA"]
-    DSK --> P3["pick_shelf: the boot disk's shelf if pos_probe opens it,<br/>else the first other disk's that does"]
+    BM --> DSK["scan_disks: the boot drive, then every drive the BDA counts (0x475)<br/>its table (MBR or GPT), and whether LBA 0 ends in 0x55AA;<br/>the boot partition's record, from the gate"]
+    DSK --> P3["pick_shelf: the partition whose LUKS2 token or /.falcon is a shelf<br/>record of that install, the boot disk asked first; pos_probe opens it"]
     P3 --> SH{"shelf found?"}
     SH -- yes --> PR["passphrase prompt (INT 16h)<br/>Escape to the list"]
     SH -- no --> LIST
@@ -3680,7 +3703,7 @@ flowchart TD
     S2 --> PR{"bios_disk_probe (disk.c)<br/>AH=48h, then AH=41h"}
     PR -- "neither" --> GEO["AH=08h: the geometry, vfd_geometry_int13<br/>reads by AH=02h from here on"]
     PR -- "either" --> L3
-    GEO --> L3["stage3_load: header at STAGE3_LBA, then the image"]
+    GEO --> L3["stage3_load: no partition table, so the floppy's own boot record:<br/>stage 3 at sector 98 (FD_STAGE3_SECTOR), no marker"]
     L3 --> BM["bios_main (apps/jump/bios_main.c)<br/>e820_read"]
     BM --> FAT["read_floppy: fs_identify, fs_mount (FAT12; sector 0 from 0x7C00)<br/>MEMTEST.BIN present? JUMP.INI parsed (jumpini.c)"]
     FAT --> PCI["pci_scan: an IDE controller? a UHCI one?<br/>class codes through 0xCF8/0xCFC; nothing loaded"]
@@ -3708,7 +3731,7 @@ flowchart TD
     RM --> MENU
     MENU -- "USB stick" --> LU["for EHCI.MOD, UHCI.MOD, OHCI.MOD, each on the floppy with its controller on the bus:<br/>jmod_load to its slot; init: msc.c over ehci.c, uhci.c or ohci.c<br/>EHCI hands a port whose device does not enable to its companion"]
     LU --> EN["ops.probe: every controller of that kind (up to four), taken from the BIOS, reset;<br/>each root port reset, enumerated, INQUIRY, READ CAPACITY"]
-    EN --> GPT{"gpt_parse through ops.read:<br/>an ISO library or a shelf?"}
+    EN --> GPT{"bootpart_find through ops.read:<br/>a partition with a boot record?"}
     GPT -- "no falcon stick" --> MENU
     GPT -- "yes" --> RU["jres_install for the next BIOS disk (BDA 0x475 + 0x80),<br/>INT 15h hooked too: the block and 15-16 MB carved;<br/>INT 18h, 19h: a cold reset"]
     RU --> MB["BDA count + 1; mbr_boot: LBA 0 through the thunk to 0x7C00,<br/>DL = that drive; the stick's falcon-bios from there (12.3)"]

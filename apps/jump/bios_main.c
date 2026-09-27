@@ -29,8 +29,10 @@
 
 #include <hw/pci.h>
 
+#include <disk/bootpart.h>
+
 #include <fs/fs.h>
-#include <part/part.h>
+#include <part/table.h>
 #include <media/eltorito.h>
 #include <tui/tui.h>
 #include <lib/string.h>
@@ -59,7 +61,7 @@
 #define ROW_USB     (-3)
 #define ROW_CF      (-4)
 
-/* The GPT entries read to find a falcon stick. */
+/* The partition entries read to find a falcon stick. */
 #define PARTS_MAX 16u
 
 /* JUMP.INI is a few lines; anything longer is not one. */
@@ -448,23 +450,21 @@ fail:
     screen_out(k_press_any);
 }
 
-/* Whether the device the module calls `idx` is a falcon stick: its GPT, read
- * through the module, has an ISO library or a shelf. */
+/* Whether the device the module calls `idx` is a falcon stick: a partition
+ * on it, read through the module, carries a `boot` record, which is what
+ * the stick's own stage 2 will look for once it is started (DESIGN Section
+ * 3.3). Any install's: jump has none of its own to match. */
 static int is_falcon_stick(jmod_ops *ops, unsigned idx)
 {
-    static gpt_part parts[PARTS_MAX];
-    gpt_table t;
+    static part_entry parts[PARTS_MAX];
+    static uint8_t sec[512];
+    bootpart bp;
 
     g_disc.ops = ops;
     g_disc.idx = idx;
     g_disc_sector = 512u;
-    t.parts = parts;
-    t.cap = PARTS_MAX;
-    t.count = 0;
-    t.truncated = 0;
-    if (gpt_parse(&t, disc_read, &g_disc, 512u) != GPT_OK)
-        return 0;
-    return gpt_has_role(&t, PART_ROLE_ISO) || gpt_has_role(&t, PART_ROLE_SHELF);
+    return bootpart_find(disc_read, &g_disc, 512u, 0, parts, PARTS_MAX, sec,
+                         &bp) == BOOTPART_OK;
 }
 
 /* A disk a module serves, booted as the BIOS disk after the machine's own:

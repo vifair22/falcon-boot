@@ -122,7 +122,7 @@ static int staging_fits(uint64_t iso_size)
     return 0;
 }
 
-int bsd_boot(bios_disk *d, fs_vol *p2, const gpt_part *p2part,
+int bsd_boot(bios_disk *d, fs_vol *p2, const part_entry *p2part,
              const fs_dirent *iso, boot_result *r, int *not_bsd)
 {
     bsdmd_record_edit rec;

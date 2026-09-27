@@ -34,31 +34,37 @@
  * bigger stage 2. */
 #define STAGE2_LOAD     0x7E00
 
-/* The sector stage 2 starts at, and how many it occupies.
+/* Stage 2's place on a GPT disk, and the ceiling on its length.
  *
- * 34, and the number is the GPT's, not ours. On a falcon stick LBA 0 is the
- * protective MBR (stage 1), LBA 1 is the GPT header and LBA 2..33 are the
- * 128-entry partition array; 34 is the first sector the header declares
- * usable, and the first partition is aligned to 2048. The 2014 sectors
- * between them belong to nobody, which is where the stages that do not fit
- * in a boot sector live. Writing stage 2 at LBA 1 would land it on the GPT
- * header.
+ * 34, and the number is the GPT's, not ours: LBA 0 is the protective MBR
+ * (stage 1), LBA 1 the GPT header and LBA 2..33 the 128-entry array, and
+ * 34 is the first sector the header declares usable, in front of the first
+ * 2048-aligned partition (on a stick, inside the FALCON-BIOS EF02
+ * partition). An MBR disk's is STAGE2_LBA_MBR below.
  *
- * Stage 1 reads a fixed range rather than looking anything up, which is what
- * keeps it inside 512 bytes, so this is a compile-time constant on both
- * sides: falcon-cli/src/mkstick/bioscore.c takes the same number and places
- * the stages where stage 1 will go looking for them. The count is the cap,
- * not the size; the image is padded to it so a short stage 2 still reads
- * cleanly. */
+ * Stage 1 does not use either number: it reads what the installer wrote
+ * into it (STAGE1_S2_LBA_OFF), so this is what the installers and the rigs
+ * write, and what jump's floppy stage 1 (boot_fd.S) reads, since the floppy
+ * keeps its own fixed layout. STAGE2_SECTORS is the reservation's upper
+ * bound only, not a read length: 32 KB puts the end of stage 2 at 0xFE00,
+ * inside the segment it is addressed through, so no single INT 13h transfer
+ * into it crosses a 64 KB boundary. */
 #define STAGE2_LBA      34
-/* 32 KB, which puts the end of stage 2 at 0xFE00: inside the segment it is
- * addressed through. A single INT 13h transfer may not cross a 64 KB boundary
- * and this one does not. */
 #define STAGE2_SECTORS  64
+/* What an old MBR disk leaves stage 2: LBA 1 to 62, in front of a first
+ * partition at 63 (the A21m's Windows 2000 partition). The build refuses a
+ * stage 2 longer than this, so one stage 2 fits every disk. */
+#define STAGE2_MBR_MAX_SECTORS 62
 /* Where the floppy boot sector (boot_fd.S) keeps the count of stage 2's
  * sectors it reads, which the build writes after mformat: the two bytes
  * before the boot signature. */
 #define FD_S2_SECTORS_OFF 508
+/* Jump's floppy keeps the layout it had: stage 2 at STAGE2_LBA of the
+ * volume and stage 3 at this sector, both inside the FAT12 volume's
+ * reserved sectors. Its identity record names this sector as stage 3's, as
+ * every boot partition's record names its own; this is what the floppy's
+ * recipe writes (apps/jump/app.mk). */
+#define FD_STAGE3_SECTOR 98
 
 /* The single BIOS layout (docs/DESIGN.md Section 3.3; the contract is
  * docs/notes/station-rework.md section 9). The core rework's streams build
@@ -66,8 +72,9 @@
  *
  * Stage 1 does not know where stage 2 is: the installer writes stage 2's
  * first LBA (LE32) and its real length in sectors (LE16) into stage 1 at
- * these offsets, inside the 440 bytes of boot code, which ends before them.
- * STAGE2_LBA above stays the GPT place (LBA 34); an MBR disk's is LBA 1. */
+ * these offsets, inside the 440 bytes of boot code, which ends before them
+ * (boot.S; build.mk checks the symbols). STAGE2_LBA above is the GPT place
+ * (LBA 34); an MBR disk's is LBA 1. */
 #define STAGE1_S2_LBA_OFF      0x1B2
 #define STAGE1_S2_SECTORS_OFF  0x1B6
 #define STAGE2_LBA_MBR         1
@@ -129,9 +136,13 @@
 #define GATE_MAGIC      (GATE_ADDR + 0x04)   /* STAGE2_MAGIC, for stage 1 */
 #define GATE_THUNK      (GATE_ADDR + 0x08)   /* jmp thunk_bios */
 #define GATE_BOOT16     (GATE_ADDR + 0x10)   /* jmp boot16, and never back */
+#define GATE_BOOTPART   (GATE_ADDR + 0x18)   /* LE64: the boot partition's */
+                                             /* first LBA; 0 on a floppy */
 #define GATE_REGS       (GATE_ADDR + 0x20)   /* the register block */
 #define GATE_VECTOR     (GATE_ADDR + 0x40)   /* the interrupt to raise */
 #define GATE_DRIVE      (GATE_ADDR + 0x41)   /* the drive to hand over in DL */
+#define GATE_MARKER     (GATE_ADDR + 0x42)   /* LE16: the next-boot marker's */
+                                             /* sector in it; 0 for none */
 #define GATE_TARGET     (GATE_ADDR + 0x48)   /* where boot16 lands: off, seg */
 #define GATE_S2LEN      (GATE_ADDR + 0x4C)   /* stage 2's length, CRC-32 after */
 
@@ -177,22 +188,21 @@
 #define LINUX_GDT_ADDR  0x00003100
 
 #define STAGE3_LOAD     0x100000
-#define STAGE3_LBA      (STAGE2_LBA + STAGE2_SECTORS)
-/* 512 KB, which is far more than the loader needs and costs only the sectors
- * actually read: stage 2 reads the size out of the header stage 3 starts
- * with rather than reading the cap. */
-#define STAGE3_MAX_SECTORS 1024
 
-/* The next-boot marker (DESIGN Section 6.3.1; falcon-core/src/media/
- * nextboot.h has the format, src/disk/marker.c the reading and clearing). The last
- * sector of the gap in front of the first 2048-aligned partition: as far from
- * the stages as the gap allows, so stage 3 can grow toward it for a long time
- * before the two meet, and inside the FALCON-BIOS reservation when `mkstick
- * bios --reserve` made one. mkstick writes and zeroes only the stages' range
- * (STAGE2_LBA up to STAGE3_LBA + STAGE3_MAX_SECTORS), so an install leaves a
- * pending marker where it is. Writers on the Linux side seek to this number
- * times 512, which is why it is a constant rather than something looked up. */
-#define NEXTBOOT_LBA    2047
+/* Stage 2's own memory once it is in protected mode, both borrowed from
+ * stage 3's, which is not there yet.
+ *
+ * Its stack is stage 3's. Below 0x7C00 was room for reading one header, but
+ * finding the boot partition reads a partition table, whose readers keep a
+ * sector or two on the stack, and the thunk's real-mode stack starts at
+ * 0x7000: a protected-mode frame below that is written over by the BIOS
+ * call it is waiting on.
+ *
+ * The partition list and the sector buffer it searches with (load3.c) go at
+ * GZ_STAGE_ADDR, which stage 2 is done with before the compressed stage 3 is
+ * read there. Stage 2 has no .bss, so they cannot be statics. */
+#define STAGE2_STACK    STAGE3_STACK
+#define STAGE2_SCRATCH  GZ_STAGE_ADDR
 
 /* Where the BIOS is asked to put what it reads, and take what it writes.
  *

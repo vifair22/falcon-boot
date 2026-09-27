@@ -34,12 +34,13 @@
 #include <linux/linux.h>
 #include <console/screen.h>
 
-#include <part/part.h>
+#include <part/table.h>
 #include <fs/fs.h>
 #include <luks/luks.h>
 #include <pe/pe.h>
 #include <crypto/crypto.h>
 #include <media/cpio.h>
+#include <ident/ident.h>
 #include <media/shelf.h>
 #include <tui/tui.h>
 #include <lib/string.h>
@@ -49,6 +50,7 @@
 #define CRED_SUBDIR  ".extra/credentials"
 #define CRED_FILE    "cryptsetup.passphrase.cred"
 #define CRED_PATH    CRED_SUBDIR "/" CRED_FILE
+#define IDENT_PATH   CRED_SUBDIR "/" IDENT_CRED
 
 #define PASS_MAX     256u
 
@@ -71,6 +73,9 @@ static fs_vol    g_fs;
 static fs_file   g_file;
 static int       g_opened;
 static int       g_dev_open;
+/* The shelf is plaintext (DESIGN Section 3, --p3-plain): mounted straight
+ * off the partition, no passphrase, and so no credential. */
+static int       g_plain;
 
 /* The images on the shelf and what the chooser calls them, from the same
  * module the UEFI loader's chooser uses (falcon-core/src/media/shelf.h). */
@@ -90,6 +95,11 @@ static char   g_pass[PASS_MAX];
 static size_t g_pass_len;
 
 static luks_master_key g_mk;
+
+/* The boot partition's record as text, for IDENT_CRED; empty until the
+ * caller has handed it over (pos_set_install). */
+static char   g_ident[IDENT_TEXT_MAX];
+static size_t g_ident_len;
 
 /* Everything the unlock produced: the passphrase and the key, the
  * credential, the keyboard ring the passphrase was typed through, and the
@@ -124,35 +134,55 @@ static int part_read(void *ctx, uint64_t off, uint64_t len, void *buf)
     return bios_disk_bytes(p->disk, p->base + off, len, buf);
 }
 
-int pos_probe(bios_disk *d, const gpt_part *p3)
+/* A plaintext shelf's filesystem, mounted into g_fs. */
+static int mount_plain(void)
 {
-    if (d == (bios_disk *)0 || p3 == (const gpt_part *)0)
+    const fs_ops *ops = fs_identify(part_read, &g_src, FS_HINT_SHELF);
+
+    return ops != (const fs_ops *)0 &&
+           fs_mount(&g_fs, ops, part_read, &g_src) == FS_OK;
+}
+
+int pos_probe(bios_disk *d, const part_entry *shelf)
+{
+    if (d == (bios_disk *)0 || shelf == (const part_entry *)0)
         return 0;
     g_src.disk = d;
-    g_src.base = p3->start_lba * (uint64_t)d->sector_size;
+    g_src.base = shelf->start_lba * (uint64_t)d->sector_size;
+    g_plain = 0;
     g_opened = luks_open(&g_vol, part_read, &g_src, g_json, sizeof g_json) ==
                LUKS_OK;
+    if (!g_opened && mount_plain()) {
+        g_plain = 1;
+        g_opened = 1;
+    }
     return g_opened;
 }
 
-/* The credential sd-stub would have packed, as the cpio it would have made.
+/* The credentials sd-stub would have packed, as the cpio it would have made.
  *
- * Its content is the passphrase that just opened p3, because that is the one
- * that opens p4 as well (DESIGN Section 5.1). The UEFI loader synthesises the
- * same thing: it publishes the UKI on a filesystem of its own with a drop-in
- * directory beside it holding the passphrase as a .cred file, and sd-stub
- * turns that into exactly this cpio. Here there is no sd-stub, so the cpio is
- * written directly and concatenated onto .initrd.
+ * The passphrase that just opened p3, because that is the one that opens p4
+ * as well (DESIGN Section 5.1). The UEFI loader synthesises the same thing:
+ * it publishes the UKI on a filesystem of its own with a drop-in directory
+ * beside it holding the passphrase as a .cred file, and sd-stub turns that
+ * into exactly this cpio. Here there is no sd-stub, so the cpio is written
+ * directly and concatenated onto .initrd.
  *
- * Returns its length, or 0 when there is no passphrase to pack, which is not
- * an error: an image whose root needs none has none.
+ * And the install's identity, IDENT_CRED: the boot partition's record in its
+ * text form, which the UEFI loader publishes beside every UKI and the
+ * signing appliance opens its stick's partitions by (DESIGN Section 3.1).
+ * Not a secret, and there on a plaintext shelf too.
+ *
+ * Returns its length, or 0 when there is neither to pack, which is not an
+ * error.
  */
 static size_t build_credential(void)
 {
-    cpio_entry e[3];
+    cpio_entry e[4];
+    size_t n = 2;
     size_t wrote = 0;
 
-    if (g_pass_len == 0)
+    if (g_pass_len == 0 && g_ident_len == 0)
         return 0;
 
     /* Every parent directory has to be named, because the kernel's unpacker
@@ -165,15 +195,33 @@ static size_t build_credential(void)
     e[1].data = (const void *)0;
     e[1].len = 0;
     e[1].mode = CPIO_MODE_DIR;
-    e[2].path = CRED_PATH;
-    e[2].data = g_pass;
-    e[2].len = g_pass_len;
-    /* 0600: it is a passphrase, and the initramfs it lands in is root's. */
-    e[2].mode = 0100600u;
+    if (g_pass_len != 0) {
+        e[n].path = CRED_PATH;
+        e[n].data = g_pass;
+        e[n].len = g_pass_len;
+        /* 0600: it is a passphrase, and the initramfs it lands in is
+         * root's. */
+        e[n].mode = 0100600u;
+        n++;
+    }
+    if (g_ident_len != 0) {
+        e[n].path = IDENT_PATH;
+        e[n].data = g_ident;
+        e[n].len = g_ident_len;
+        e[n].mode = 0100644u;
+        n++;
+    }
 
-    if (cpio_write(e, 3, g_credcpio, sizeof g_credcpio, &wrote) != CPIO_OK)
+    if (cpio_write(e, n, g_credcpio, sizeof g_credcpio, &wrote) != CPIO_OK)
         return 0;
     return wrote;
+}
+
+void pos_set_install(const ident_rec *rec)
+{
+    g_ident_len = 0;
+    if (rec != (const ident_rec *)0)
+        g_ident_len = ident_encode_text(rec, g_ident, sizeof g_ident);
 }
 
 /* A linux_object over a section of an open file. */
@@ -318,7 +366,9 @@ static int boot_uki(const fs_dirent *uki, boot_result *r)
         initrd[n_initrd].ctx = &g_credsrc;
         initrd[n_initrd].size = credlen;
         n_initrd++;
-        bios_puts("falcon-bios: passphrase credential packed\n");
+        bios_puts(g_pass_len > 0 ? "falcon-bios: passphrase and identity "
+                                    "credentials packed\n"
+                                  : "falcon-bios: identity credential packed\n");
     } else if (g_pass_len > 0) {
         screen_out("warning: the passphrase credential could not be packed."
                    "\n         The initramfs will ask for the passphrase "
@@ -397,21 +447,19 @@ static int choose_uki(void)
 
 const uint16_t *pos_entry_label(void)
 {
+    /* The UEFI loader's labels (falcon-efi/src/pos/pos.c). */
+    if (g_plain)
+        return u"Personal OS (plaintext shelf)";
     return u"Personal OS (encrypted)";
 }
 
-int pos_run(bios_disk *d, const gpt_part *p3, boot_result *r)
+/* Unlocks the encrypted shelf and mounts what is inside it into g_fs.
+ * LUKS_OK, or POS_ABORTED or -1 with *r filled in; secrets wiped on every
+ * failure. */
+static int open_encrypted(boot_result *r)
 {
     const fs_ops *ops;
-    const fs_dirent *uki;
-    int pick;
     int rc;
-
-    boot_result_init(r);
-    if (!pos_probe(d, p3)) {
-        r->stage = "looking for a UKI shelf";
-        return -1;
-    }
 
     r->stage = "unlocking the encrypted partition";
     rc = prompt_and_unlock();
@@ -456,6 +504,26 @@ int pos_run(bios_disk *d, const gpt_part *p3, boot_result *r)
                         "loader can read.";
         wipe_secrets();
         return -1;
+    }
+
+    return LUKS_OK;
+}
+
+int pos_run(bios_disk *d, const part_entry *shelf, boot_result *r)
+{
+    const fs_dirent *uki;
+    int pick;
+    int rc;
+
+    boot_result_init(r);
+    if (!pos_probe(d, shelf)) {
+        r->stage = "looking for a UKI shelf";
+        return -1;
+    }
+    if (!g_plain) {
+        rc = open_encrypted(r);
+        if (rc != LUKS_OK)
+            return rc;
     }
 
     r->stage = "looking for a UKI";

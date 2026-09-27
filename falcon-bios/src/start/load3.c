@@ -1,5 +1,5 @@
-/* falcon-bios: stage 2's last job, reading stage 3 in
- * (docs/notes/bios-route.md Section 6).
+/* falcon-bios: stage 2's last job, finding stage 3 and reading it in
+ * (docs/notes/bios-route.md Section 6; docs/DESIGN.md Section 3.3).
  *
  * This is C rather than more assembly for the reason Section 5.3 gives: it
  * decides things - whether the header is a header, how many sectors that
@@ -14,12 +14,66 @@
 
 #include <start/bios.h>
 
+#include <disk/bootpart.h>
 #include <lib/string.h>
 #include <gz/gz.h>
 
 static __attribute__((noreturn)) void die(const char *why)
 {
     bios_fatal(why);
+}
+
+/* The partition list bootpart_find searches, and the sector it reads with,
+ * at STAGE2_SCRATCH: no .bss here. 256 entries is a full GPT array and then
+ * some; a longer list is searched as far as it fits. */
+#define S2_PARTS_MAX 256u
+
+/* The boot partition on the disk stage 1 was read from (DESIGN Section
+ * 3.3): the disk's table, then the first FAT-typed partition whose boot
+ * sector carries a `boot` record; a disk with no table (a floppy) is one
+ * volume from LBA 0. What is published in the gate for stage 3 is the
+ * partition's first LBA and the record's marker sector. Returns how many
+ * sectors stage 3 may occupy, from the record's stage 3 sector to the end of
+ * the volume's reserved sectors. */
+static uint32_t find_boot(bios_disk *d, bootpart *bp)
+{
+    part_entry *parts = (part_entry *)(uintptr_t)STAGE2_SCRATCH;
+    uint8_t *sec = (uint8_t *)(uintptr_t)(STAGE2_SCRATCH +
+                                          S2_PARTS_MAX * sizeof(part_entry));
+    uint32_t room;
+    int rc;
+
+    rc = bootpart_find(bios_disk_read, d, d->sector_size, 0, parts,
+                       S2_PARTS_MAX, sec, bp);
+    if (rc == BOOTPART_ERR_IO)
+        die("the boot disk's partition table or a boot sector would not read");
+    if (rc == BOOTPART_ERR_TABLE)
+        die("the boot disk's partition table is damaged");
+    if (rc != BOOTPART_OK)
+        die("no partition on the boot disk carries falcon's boot record");
+    room = bootpart_stage3_room(sec, &bp->rec);
+    if (room == 0)
+        die("the boot record's stage 3 is outside its volume's reserved "
+            "sectors");
+
+    *(volatile uint64_t *)(uintptr_t)GATE_BOOTPART = bp->start_lba;
+    *(volatile uint16_t *)(uintptr_t)GATE_MARKER = bp->rec.marker_sector;
+
+    bios_puts("falcon-bios: boot partition ");
+    if (bp->number != 0) {
+        bios_puts("p");
+        bios_put_dec(bp->number);
+        bios_puts(" at LBA ");
+    } else {
+        bios_puts("(no table) at LBA ");
+    }
+    bios_put_dec(bp->start_lba);
+    bios_puts(", stage 3 at +");
+    bios_put_dec(bp->rec.stage3_sector);
+    bios_puts(", marker at +");
+    bios_put_dec(bp->rec.marker_sector);
+    bios_puts("\n");
+    return room;
 }
 
 /* Entered from stage2.S in 32-bit protected mode with the drive the BIOS
@@ -39,6 +93,8 @@ void stage3_load(uint8_t drive)
     uint32_t *hdr = (uint32_t *)(uintptr_t)STAGE3_LOAD;
     uint8_t *packed = (uint8_t *)(uintptr_t)GZ_STAGE_ADDR;
     bios_disk d;
+    bootpart bp;
+    uint32_t room;
     uint64_t base;
     uint64_t file;
     uint64_t mem;
@@ -60,22 +116,21 @@ void stage3_load(uint8_t drive)
     else if (d.geom.sectors != 0)
         bios_puts("falcon-bios: the boot drive has no INT 13h extensions, reading by CHS\n");
 
-    base = (uint64_t)STAGE3_LBA * d.sector_size;
+    room = find_boot(&d, &bp);
+    base = (bp.start_lba + bp.rec.stage3_sector) * d.sector_size;
     if (bios_disk_read(&d, base, d.sector_size, (void *)(uintptr_t)zh) != 0)
         die("stage 3 could not be read");
     if (zh[0] != (uint32_t)STAGE3_MAGIC_GZ)
-        die("stage 3 is not where the header says it should be");
+        die("stage 3 is not where the boot record says it is");
 
     file = zh[1];
     mem = zh[2];
     want = zh[3];
-    if (file <= STAGE3_HDR ||
-        file > (uint64_t)STAGE3_MAX_SECTORS * d.sector_size)
-        die("stage 3 declares a length this stage will not read");
+    if (file <= STAGE3_HDR || file > (uint64_t)room * d.sector_size)
+        die("stage 3 declares a length past its volume's reserved sectors");
     if (want < STAGE3_HDR || mem < want ||
         mem > GZ_STAGE_ADDR - STAGE3_LOAD)
         die("stage 3 declares a size that will not fit below its staging");
-
     /* Twice, the second time from the disk rather than the track cache: a
      * floppy that misread once often reads right the next time, and the
      * member's CRC-32 is what tells the two apart. */

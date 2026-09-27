@@ -37,12 +37,13 @@ STICK_BIOS += $(BIOS_MOD_iso) $(BIOS_MOD_vfd) $(BIOS_MOD_bsd) $(BIOS_MOD_win)
 STICK_BIOS += $(BIOS_MOD_lowmem)       # the residents' blocks
 STICK_BIOS += $(BIOS_MOD_heap)         # the Windows tail and the floppy image
 STICK_BIOS += $(BIOS_MOD_marker)       # the only disk write in falcon-bios
+STICK_BIOS += $(BIOS_MOD_install)      # p2 and p3 by their records
 STICK_BIOS += $(BIOS_MOD_e820) $(BIOS_MOD_disk) $(BIOS_MOD_serial)
 STICK_BIOS += $(BIOS_MOD_bytes)        # the drivers read parts of a 4Kn sector
 STICK_BIOS += $(CORE_PART) $(CORE_FS) $(CORE_MEDIA) $(CORE_PE) $(CORE_CRYPTO)
 STICK_BIOS += $(CORE_LUKS) $(CORE_WIM) $(CORE_LIBC) $(CORE_UCS2) $(CORE_TUI)
 STICK_BIOS += $(CORE)/manifest/manifest.c
-STICK_BIOS += $(CORE_IDENT) $(CORE_IDENT_FS)  # the library's ID, for the extent map
+STICK_BIOS += $(CORE_IDENT) $(CORE_IDENT_FS)  # the records, and the library's ID for the extent map
 
 $(eval $(call bios_app,stick,$(BIOS_STAGE3),\
 	$(BIOS_RES_iso) $(BIOS_RES_vfd),\

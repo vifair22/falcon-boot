@@ -232,7 +232,7 @@ static size_t put_dec(char *out, uint64_t v)
 static ident_fs_scratch g_rec;
 
 static size_t build_win_map(const bios_disk *d, fs_vol *p2,
-                            const gpt_part *p2part, const fs_dirent *iso)
+                            const part_entry *p2part, const fs_dirent *iso)
 {
     extmap_hdr hdr;
     ident_rec rec;
@@ -295,7 +295,7 @@ static size_t make_cfg(const char *rel, uint64_t size, const uint8_t *map,
     return n;
 }
 
-int win_boot(bios_disk *d, fs_vol *p2, const gpt_part *p2part,
+int win_boot(bios_disk *d, fs_vol *p2, const part_entry *p2part,
              const fs_dirent *iso, const char *iso_rel, boot_result *r,
              int *unpatchable)
 {
@@ -647,7 +647,7 @@ static void xp_bake_map(uint8_t *sys, size_t sys_len,
  * This wires the driver in; giving its DriverEntry the stick's extents at
  * boot-start with no winjump (piece 3, windows-route.md 7.4) is separate, so
  * for now setup loads the driver and then cannot reach its boot device. */
-int win_xp_boot(bios_disk *d, fs_vol *p2, const gpt_part *p2part,
+int win_xp_boot(bios_disk *d, fs_vol *p2, const part_entry *p2part,
                 const fs_dirent *iso, boot_result *r, int *not_xp)
 {
     static uint8_t pvd[BLK], i386rec[BLK], dirblk[BLK];
