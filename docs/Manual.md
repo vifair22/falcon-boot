@@ -315,6 +315,14 @@ The stick maker (`docs/DESIGN.md` Section 8). `falcon-boot-mkstick
 <command> --help` prints a command's options. Every command takes
 `--verbose` and `--quiet`.
 
+`make install` puts it and `falcon-boot-sign` in `$(PREFIX)/bin`, building
+them first:
+
+    make install                     # /usr/local/bin, mode 0755
+    make install PREFIX=/usr         # /usr/bin
+    make install DESTDIR=/tmp/pkg    # /tmp/pkg/usr/local/bin, for a package
+    make uninstall                   # removes both, same PREFIX and DESTDIR
+
 ### 3.1 create
 
     falcon-boot-mkstick create <target> [--size <size>] [--force] ...

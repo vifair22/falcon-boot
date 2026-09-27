@@ -62,6 +62,21 @@ test-isoview:
 
 .PHONY: cli test-isoview
 
+# `make install` puts the two host tools on a machine's PATH, built first.
+# The static sign tool is the appliance's and stays in build/bin. DESTDIR
+# stages the install for a package; PREFIX is where it will live.
+PREFIX ?= /usr/local
+CLI_BINDIR = $(DESTDIR)$(PREFIX)/bin
+
+install: $(MKSTICK) $(SIGN)
+	install -d $(CLI_BINDIR)
+	install -m 0755 $(MKSTICK) $(SIGN) $(CLI_BINDIR)/
+
+uninstall:
+	rm -f $(CLI_BINDIR)/$(notdir $(MKSTICK)) $(CLI_BINDIR)/$(notdir $(SIGN))
+
+.PHONY: install uninstall
+
 # ---- tests ----
 #
 # The bless tool's logic, split out of the code that spawns helpers and loop
