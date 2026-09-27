@@ -165,6 +165,13 @@ for m in ATA EHCI UHCI OHCI PCC; do
         cmp -s <(mtype -i "$M@@$((start * 512))" "::/$m.MOD") "$W/mods/$m.MOD.gz"
 done
 check "legacy: /uki/devlink.efi" mtype -i "$M@@$((start * 512))" ::/uki/devlink.efi
+"$MK" station status "$M" >"$W/legacy-status.log" 2>&1 ||
+    { cat "$W/legacy-status.log"; bad "legacy: status"; }
+lrows=$(sed -n '/what the BIOS menu offers/,/^$/p' "$W/legacy-status.log")
+check "legacy: status lists the CD row" grep -q '^.* cd  *CD drive' <<<"$lrows"
+check "legacy: status lists the CF row" grep -q '^.* cf  *CF card (PC Card)' <<<"$lrows"
+check "legacy: status lists the USB row" grep -q '^.* usb  *USB stick' <<<"$lrows"
+check "legacy: status lists /uki's image" grep -q 'uki-devlink  *devlink' <<<"$lrows"
 "$MK" station remove --backup "$W/legacy.bak" --full >/dev/null 2>&1
 check "legacy: remove --full is the original disk" cmp -s "$M" "$W/mbr.orig"
 

@@ -886,6 +886,36 @@ static void label_wide(uint16_t *out, size_t cap, const char *in)
     out[i] = 0;
 }
 
+/* What station-legacy adds to the BIOS list (DESIGN Section 13.10;
+ * apps/station-legacy/bios_main.c, legacy_rows): jump's routes, each when
+ * its driver is in the station partition, and the partition's own /uki. A
+ * route's row also needs its controller on the machine's PCI bus, which is
+ * known only at boot, so the list shows every route whose driver is there. */
+#define STN_LEGACY_UKI_MAX 16u
+
+typedef struct {
+    int    any;           /* a driver is there: --legacy installed it */
+    int    cd;            /* ATA.MOD */
+    int    cf;            /* PCC.MOD */
+    int    usb;           /* EHCI.MOD, UHCI.MOD or OHCI.MOD */
+    size_t n_uki;
+    struct {
+        char name[STATIONINI_NAME_MAX];
+        char file[STATIONINI_PATH_MAX];
+        char title[STATIONINI_LABEL_MAX];
+    } uki[STN_LEGACY_UKI_MAX];
+} stn_legacy;
+
+static void add_route_row(strows *rows, const char *name, const char *label)
+{
+    strow *w = strows_add(rows, STROW_ROUTE);
+
+    if (w == NULL)
+        return;
+    (void)snprintf(w->name, sizeof w->name, "%s", name);
+    label_wide(w->label, STROWS_LABEL_MAX, label);
+}
+
 /* The list a station shows, built as the loader builds it (DESIGN Section
  * 13.3; apps/station/efi_main.c and bios_main.c, rows_find and
  * build_rows) from what was found, then STATION.INI applied, ordered and
@@ -893,7 +923,8 @@ static void label_wide(uint16_t *out, size_t cap, const char *in)
  * firmware-setup row is left out: whether the firmware offers it is known
  * only at boot. */
 static void print_rows(const stn_scan *s, const stationini *ini, int have_ini,
-                       int memtest, strows_fw fw, int encrypted)
+                       int memtest, strows_fw fw, int encrypted,
+                       const stn_legacy *lg)
 {
     static strows rows;
     size_t view[STROWS_MAX];
@@ -936,6 +967,23 @@ static void print_rows(const stn_scan *s, const stationini *ini, int have_ini,
             w->disk = f->disk;
             w->part = f->part;
         }
+    }
+    if (lg != NULL && lg->any) {
+        /* jump's order, then the station partition's shelf. */
+        if (lg->cd)
+            add_route_row(&rows, "cd", STROWS_LABEL_CD);
+        if (lg->cf)
+            add_route_row(&rows, "cf", STROWS_LABEL_CF);
+        if (lg->usb)
+            add_route_row(&rows, "usb", STROWS_LABEL_USB);
+    }
+    for (i = 0; lg != NULL && i < lg->n_uki; i++) {
+        w = strows_add(&rows, STROW_UKI);
+        if (w == NULL)
+            break;
+        (void)snprintf(w->name, sizeof w->name, "%s", lg->uki[i].name);
+        (void)snprintf(w->file, sizeof w->file, "%s", lg->uki[i].file);
+        label_wide(w->label, STROWS_LABEL_MAX, lg->uki[i].title);
     }
     w = memtest ? strows_add(&rows, STROW_MEMTEST) : NULL;
     if (w != NULL) {
@@ -987,8 +1035,56 @@ static void show_ini(stn_tally *t, const char *where, const char *text,
             ini->timeout);
 }
 
+/* The station partition's /uki, as station-legacy lists it: shelf.c's
+ * labels without the "Personal OS: " they start with, since these are not
+ * the personal OS (falcon-bios station.c, add_own_uki). */
+static void legacy_shelf(const char *disk, uint64_t off, uint64_t len,
+                         stn_legacy *lg)
+{
+    static const char prefix[] = "Personal OS: ";
+    static fs_vol vol;
+    static shelf_list list;
+    const fs_ops *ops;
+    disk_io io;
+    size_t u;
+
+    if (disk_io_open(&io, disk, off, len) != CLI_OK) {
+        cli_error_clear();
+        return;
+    }
+    ops = fs_identify(disk_io_read, &io, FS_HINT_NONE);
+    if (ops != NULL && fs_mount(&vol, ops, disk_io_read, &io) == FS_OK &&
+        shelf_collect(&list, &vol) > 0) {
+        shelf_label(&list, &vol);
+        for (u = 0; u < list.n && lg->n_uki < STN_LEGACY_UKI_MAX; u++) {
+            uint8_t name[FS_NAME_MAX + 1u];
+            size_t n = fs_name_to_bytes(list.uki[u].ent.name, name,
+                                        sizeof name - 1u);
+            char title[STATIONINI_LABEL_MAX];
+            size_t k = lg->n_uki++;
+            const char *words = title;
+
+            name[n] = '\0';
+            if (stn_name_uki((const char *)name, lg->uki[k].name,
+                             sizeof lg->uki[k].name) != 0)
+                (void)snprintf(lg->uki[k].name, sizeof lg->uki[k].name,
+                               "uki");
+            (void)snprintf(lg->uki[k].file, sizeof lg->uki[k].file,
+                           "%.127s", (const char *)name);
+            label_ascii(list.uki[u].label, title, sizeof title);
+            if (strncmp(title, prefix, sizeof prefix - 1u) == 0 &&
+                title[sizeof prefix - 1u] != '\0')
+                words = title + sizeof prefix - 1u;
+            (void)snprintf(lg->uki[k].title, sizeof lg->uki[k].title, "%s",
+                           words);
+        }
+        shelf_wipe(&list);
+    }
+    disk_io_close(&io);
+}
+
 static void status_bios(stn_tally *t, stn_scan *s, stationini *ini,
-                        int *have_ini, int *memtest)
+                        int *have_ini, int *memtest, stn_legacy *lg)
 {
     static char text[16384];
     stn_disk *sd = &s->disks[0];
@@ -1052,6 +1148,38 @@ static void status_bios(stn_tally *t, stn_scan *s, stationini *ini,
                               text, 16, &got) == FS_ERR_RANGE);
     if (*memtest)
         log_info("  --   %s present", STN_BIOS_MEMTEST);
+    {
+        static const char *const mods[] = {
+            "ATA.MOD", "PCC.MOD", "EHCI.MOD", "UHCI.MOD", "OHCI.MOD"
+        };
+        char path[16];
+        size_t i;
+
+        for (i = 0; i < sizeof mods / sizeof mods[0]; i++) {
+            int have;
+
+            (void)snprintf(path, sizeof path, "/%s", mods[i]);
+            have = stn_read_file(sd->d.path, off, len, path, text, 16,
+                                 &got) == FS_ERR_RANGE;
+            if (!have)
+                continue;
+            lg->any = 1;
+            if (i == 0u)
+                lg->cd = 1;
+            else if (i == 1u)
+                lg->cf = 1;
+            else
+                lg->usb = 1;
+        }
+        if (lg->any) {
+            log_info("  --   station-legacy's drivers:%s%s%s",
+                     lg->cd ? " CD (ATA.MOD)" : "",
+                     lg->cf ? " CF (PCC.MOD)" : "",
+                     lg->usb ? " USB" : "");
+            legacy_shelf(sd->d.path, off, len, lg);
+            log_info("  --   /uki: %zu image(s)", lg->n_uki);
+        }
+    }
     if (stn_read_file(sd->d.path, off, len, "/" STATIONINI_FILE, text,
                       sizeof text, &got) == FS_OK)
         show_ini(t, "/" STATIONINI_FILE, text, got, ini, have_ini);
@@ -1200,6 +1328,7 @@ static cli_status status_run(const cli_args *a)
 {
     static stn_scan s;
     static stationini ini_bios;
+    static stn_legacy legacy;
     static stationini ini_uefi;
     const char *also[CLI_MAX_VALUES] = { NULL };
     size_t n_also = cli_count(a, "also");
@@ -1264,7 +1393,7 @@ static cli_status status_run(const cli_args *a)
         }
     }
 
-    status_bios(&t, &s, &ini_bios, &have_bios, &mem_bios);
+    status_bios(&t, &s, &ini_bios, &have_bios, &mem_bios, &legacy);
     status_uefi(&t, &s, &ini_uefi, &have_uefi, &mem_uefi);
     encrypted = status_shelf(&s, id);
 
@@ -1273,7 +1402,10 @@ static cli_status status_run(const cli_args *a)
         cli_log_blank();
         log_info("what the BIOS menu offers");
         print_rows(&s, &ini_bios, have_bios, mem_bios, STROWS_BIOS,
-                   encrypted);
+                   encrypted, &legacy);
+        if (legacy.cd || legacy.cf || legacy.usb)
+            log_info("  (CD, CF and USB are rows when the machine has the "
+                     "controller)");
     }
     if (esp >= 0 && have_uefi) {
         int ours = -1;
@@ -1309,7 +1441,7 @@ static cli_status status_run(const cli_args *a)
                      ? " (this machine did not boot with UEFI: its firmware "
                        "entries are not listed)" : "");
         print_rows(&s, &ini_uefi, have_uefi, mem_uefi, STROWS_UEFI,
-                   encrypted);
+                   encrypted, NULL);
     }
 
     cli_log_blank();
