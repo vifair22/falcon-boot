@@ -18,9 +18,10 @@ change it.
 ### In scope (MVP)
 
 1. UEFI x64 firmware, and x86 BIOS through a separate, opt-in loader
-   (`falcon-bios/`; decision 2026-09-20, below). The BIOS loader is i686
-   and runs on every processor from the Pentium Pro on, booting 32-bit and
-   64-bit kernels (decision 2026-09-24, item 6). No IA32 UEFI, ever (see
+   (`falcon-bios/`; decision 2026-09-20, below). The BIOS loader is i586
+   and runs on every processor from the Pentium on, booting 32-bit and
+   64-bit kernels (decision 2026-09-24, item 6; the floor lowered from the
+   Pentium Pro on 2026-09-27, Section 14.8). No IA32 UEFI, ever (see
    Non-goals).
 2. Drag-and-drop ISO booting from an exFAT partition, Ventoy-style: copy an
    `.iso` onto the stick from any OS, it appears in the menu, it boots. No
@@ -3266,7 +3267,7 @@ flowchart TD
     MG -- yes --> S2["Stage 2, stage2.S at 0x7E00 (real mode)"]
     S2 --> CRC{"CRC-32 of GATE_S2LEN bytes<br/>matches the one after them?"}
     CRC -- no --> FR
-    CRC -- yes --> CPU{"cpu_check<br/>CPUID, CMOV (the i686 floor)"}
+    CRC -- yes --> CPU{"cpu_check<br/>CPUID (the i586 floor)"}
     CPU -- no --> FR["fatal_rm: reason, key, reset"]
     CPU -- yes --> MEM{"mem_check<br/>BDA 0x413 at least 608 KiB"}
     MEM -- no --> FR
@@ -3306,8 +3307,8 @@ flowchart TD
     NOTE --> MENU
 ```
 
-The whole loader is i686 code in flat 32-bit protected mode, and one image
-runs on every processor from the Pentium Pro on. What a newer processor
+The whole loader is i586 code in flat 32-bit protected mode, and one image
+runs on every processor from the Pentium on. What a newer processor
 adds is taken by asking CPUID, not by a second build: the SSE state above,
 AES-NI in falcon-core's AES path, and long mode, which only a 64-bit kernel
 needs and 12.3.6 checks for. Paging stays off, so everything the loader
@@ -3622,7 +3623,7 @@ hang.
 | where | what happens |
 |---|---|
 | stage 1 | reason on screen and serial, a key, `jmp FFFF:0` |
-| stage 2, real mode (`fatal_rm`) | older than i686 (no CMOV), EBDA too low, A20 closed: reason, a key, reset |
+| stage 2, real mode (`fatal_rm`) | older than a Pentium (no CPUID), EBDA too low, A20 closed: reason, a key, reset |
 | stage 2 and 3, protected mode (`bios_fatal`) | no partition with a boot record, a damaged table, stage 3 missing, malformed or past its volume's reserved sectors, or `stage 3 returned`: reason, a key, reset |
 | a processor exception (`idt.S`, `fault.c`) | vector and name, EIP, error code, through `bios_fatal`; a second fault while reporting resets at once |
 | a route | message, "press any key to return to the menu" |
@@ -3988,6 +3989,14 @@ marks it `{BIOS ONLY}` (7.8), as it marks every ISO with no UEFI boot image
 and no kernel it could start directly. On a
 station it appears only on station-legacy (13.10): a machine modern enough
 for the plain station boots the stick's ISO from USB, or has no use for it.
+
+`make test-devlink` (falcon-bios/tools/run-devlink-rig.sh) boots it off the
+rig stick under SeaBIOS on a Pentium with 32 MB, by the direct route and the
+chainload and with both of its entries, and passes when the devlink client
+reaches the agent on COM1 (and, for the serial entry, the kernel log is on
+COM2); under OVMF it checks the `{BIOS ONLY}` row. The direct route boots
+the first entry whose files exist, which is `rescue`; its serial case runs
+on a copy whose `rescue` kernel is renamed away.
 
 The OS keeps its UKIs up to date the way the personal OS does: the shelf
 mounted at `/efi` and a hook that builds and signs each UKI with the MOK.
@@ -4543,10 +4552,17 @@ and `STATION.INI` is this file's parser generalised (13.7).
 
 ### 14.8 Processor floor
 
-The MVP is i686, the floor stage 2 already enforces. Nothing in jump's own
-code assumes more than a Pentium (no CMOV in its assembly, no SSE), so a 586
-build is a compiler flag and stage 2's check, taken when a machine needs it.
-Few machines are older than a Pentium and have a CD drive or USB.
+The floor is the Pentium (i586), for jump, the stick's loader and
+falcon-hook32 alike. The MVP was i686; nothing in the loader's own code
+assumed more than a Pentium (no CMOV in its assembly, no SSE), so the 586
+build was a compiler flag and stage 2's check, taken on 2026-09-27 when
+DevLink recovery (13.5) needed it: its machines start at the Pentium, and
+the stick is how it reaches them. Stage 2 asks for CPUID, and
+`tools/check-floor.sh` refuses any linked image that carries CMOV, FCMOV or
+FCOMI, which is what catches an object built before the flag changed.
+Dropping CMOV cost nothing measurable (PBKDF2-SHA256 and portable AES-XTS
+within 1%). Few machines are older than a Pentium and have a CD drive or
+USB.
 
 ### 14.9 The rig
 

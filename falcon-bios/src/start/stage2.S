@@ -113,7 +113,7 @@ stage2_begin:
 	 *
 	 * Bitwise, no table: a table is a kilobyte stage 2 would carry to save
 	 * a few milliseconds once. 32-bit registers in real mode are the
-	 * 386's; the i686 floor is checked just after, by code this has
+	 * 386's; the Pentium floor is checked just after, by code this has
 	 * already vouched for. */
 	movw    %dx, %bp             /* the boot drive, kept across the loop */
 	movw    $STAGE2_LOAD, %si
@@ -231,12 +231,15 @@ puts_rm:
 
 /* ---- what the machine has to have ----
  *
- * The loader is built for i686 (the Pentium Pro and everything since), and
- * the one instruction that build uses and a Pentium does not have is CMOV,
- * so CMOV is what is asked for: a processor without it would take #UD
- * somewhere in C and report it as a fault, which names the wrong thing.
- * CPUID is asked for first because CPUID itself is #UD on a processor too
- * old to have it, and pmode.S asks it about SSE afterwards.
+ * The loader is built for i586 (the Pentium and everything since; it was
+ * i686 until DevLink recovery's machines needed less, DESIGN Section 13.5).
+ * What is asked for is CPUID, which every Pentium has, which marks the
+ * floor better than any instruction the compiler might pick, and which the
+ * rest of the loader asks things of
+ * (pmode.S about SSE, crypto.c about AES-NI, linux.c about long mode): a
+ * processor without it is refused here rather than faulting in whichever
+ * of those runs first. tools/check-floor.sh keeps CMOV and the other
+ * Pentium Pro instructions out of every image the build links.
  */
 cpu_check:
 	pushfl
@@ -251,10 +254,6 @@ cpu_check:
 	popfl
 	xorl    %ecx, %eax
 	jz      1f
-	movl    $1, %eax
-	cpuid
-	btl     $15, %edx            /* CMOV */
-	jnc     1f
 	ret
 1:	movw    $msg_old_cpu, %si
 	jmp     fatal_rm
@@ -381,7 +380,7 @@ msg_pmode:
 msg_s2crc:
 	.asciz  "falcon-bios: stage 2 did not read back as it was written; the disk may be failing\r\n"
 msg_old_cpu:
-	.asciz  "falcon-bios: this processor is older than a Pentium Pro, which this loader needs\r\n"
+	.asciz  "falcon-bios: this processor is older than a Pentium, which this loader needs\r\n"
 msg_lowmem:
 	.asciz  "falcon-bios: the BIOS keeps memory below 608 KiB that this loader uses\r\n"
 msg_key:

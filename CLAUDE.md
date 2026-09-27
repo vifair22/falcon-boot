@@ -1,7 +1,7 @@
 # falcon-boot
 
 A single-purpose, auditable multi-boot loader for x86-64 UEFI, with an opt-in
-BIOS loader that is i686 and so runs on 32-bit machines too. A distilled Ventoy: drag-and-drop ISO booting plus a personal
+BIOS loader that is i586 and so runs on 32-bit machines too. A distilled Ventoy: drag-and-drop ISO booting plus a personal
 LUKS-backed OS booted via a UKI.
 
 ## Read this first
@@ -284,7 +284,7 @@ falcon-efi and falcon-bios, which never share a set, may both have a `pos/`.
   the installed Windows keeps signing enforcement.
 - `falcon-hook/` the program the loader appends to an ISO's initrd (DESIGN
   Section 6.4): freestanding static Linux, no libc, built twice, x86-64
-  (`falcon-hook`) and i686 (`falcon-hook32`) from the same source: `src/sys.c`
+  (`falcon-hook`) and i586 (`falcon-hook32`) from the same source: `src/sys.c`
   is its system calls and startup, and the only file that knows the width. It runs as `rdinit=`, reads the extent map from
   the initrd (a direct boot, or the credential sd-stub packs beside a
   blessed wrap) or efivarfs (an older wrap), finds the ISO library it names
@@ -363,9 +363,10 @@ falcon-efi and falcon-bios, which never share a set, may both have a `pos/`.
   CHS; `disk.c` reads by CHS too (AH=02h, `vfdcore.c`'s arithmetic) when a
   drive answers neither AH=48h nor AH=41h, which is a floppy.
 
-  It is i686 code in flat 32-bit protected mode, paging off, and one image
-  runs on every processor from the Pentium Pro on (docs/notes/bios-route.md
-  Section 6h): what a newer processor adds is taken by asking CPUID at run
+  It is i586 code in flat 32-bit protected mode, paging off, and one image
+  runs on every processor from the Pentium on (docs/notes/bios-route.md
+  Section 6h; DESIGN Section 14.8 for the floor, which
+  `tools/check-floor.sh` holds every linked image to): what a newer processor adds is taken by asking CPUID at run
   time, not by a second build. `pmode.S` switches the SSE state on only when
   CPUID reports SSE, falcon-core's AES path picks AES-NI by CPUID, and a
   64-bit kernel is refused with a sentence on a processor without long mode.
@@ -403,8 +404,8 @@ falcon-efi and falcon-bios, which never share a set, may both have a `pos/`.
 
   No failure ends in a halt, which on a machine with no serial cable is a
   hang: it ends in `bios_fatal` (`fatal_rm` before there is C), the reason
-  on screen and serial, a key, then a reset. Stage 2 asks CPUID for CMOV
-  (the i686 floor) and the BDA whether the EBDA reaches memory it writes
+  on screen and serial, a key, then a reset. Stage 2 asks for CPUID
+  (the i586 floor) and the BDA whether the EBDA reaches memory it writes
   before it enters protected mode, and `src/start/idt.S` gives protected mode an
   IDT, so a processor exception is reported through the same path
   (`src/start/fault.c`) rather than triple faulting.
@@ -420,7 +421,7 @@ falcon-efi and falcon-bios, which never share a set, may both have a `pos/`.
   <stage>" and the advice.
 
   It shares falcon-core unchanged: the read callback is the per-platform
-  boundary, and core compiles clean as i686 because this build links all of
+  boundary, and core compiles clean as i586 because this build links all of
   it at that width. What a BIOS build had to provide that firmware used to
   is the thing to remember here - `pmode.S` sets CR4.OSFXSR because
   falcon-core's AES-NI path needs it, and nothing is placed at or above
