@@ -246,3 +246,41 @@ Pulled in, the same day
     corpus column stays: it tests falcon-bios on a Pentium III.
 23. Left on their own tracks: the loader replaying a dirty ext4 shelf, the
     corpus harness's fresh-directory failures.
+
+## 9. The core step's layout contract (2026-09-26)
+
+Fixed before the parallel streams start, so the BIOS chain, the tools and
+the loaders agree without guessing. Implemented as named constants in
+`falcon-bios/src/start/biosdefs.h` (and read from there by mkstick and the
+rigs, never written again as literals).
+
+- **Stage 1 (MBR, `boot.S`)** carries stage 2's location, written by the
+  installer: `STAGE1_S2_LBA_OFF` 0x1B2, LE32, stage 2's first LBA; and
+  `STAGE1_S2_SECTORS_OFF` 0x1B6, LE16, its real length in sectors. Stage 1's
+  code ends at or before 0x1B1; bytes 440-511 (signature, table, 0x55AA)
+  are never written. Stage 1 reads with AH=42h when AH=41h reports the
+  extensions, else by CHS from AH=08h's geometry. Jump's floppy stage 1
+  keeps its own layout (`FD_S2_SECTORS_OFF` 508; stage 2 at LBA 34 of the
+  floppy).
+- **Stage 2's place:** LBA 34 on GPT (the `FALCON-BIOS` EF02 partition),
+  LBA 1 on MBR; either way it must end before the first partition.
+- **The `boot` partition** is FAT (FAT32 on a stick's ESP and a station
+  partition, FAT12 on jump's floppy). Its record (Section 3.1 of DESIGN) is
+  at boot-sector byte 0x1DC. In FAT32 volumes the installer formats with
+  `mkfs.fat -R <32 + stage 3's sectors>`; reserved sectors 0 (boot), 1
+  (FSInfo), 6 and 7 (backups) are FAT's; **the marker is reserved sector
+  8**; **stage 3 starts at reserved sector 32**. The record's stage3 and
+  marker fields carry 32 and 8, and the loaders read them from the record,
+  not from these numbers. On jump's floppy stage 3 stays at sector 98 of the
+  volume and the marker field is 0 (jump has no marker).
+- **Finding it (stage 2):** read the boot disk's table (`part_read_table`;
+  none on a floppy, where the volume is LBA 0); for each partition read its
+  first sector and take the first whose record decodes with role `boot`. On
+  GPT only partitions typed ESP or the falcon boot type are read; on MBR
+  only FAT type bytes (0x01, 0x04, 0x06, 0x0B, 0x0C, 0x0E, 0xEF and their
+  hidden forms 0x11, 0x14, 0x16, 0x1B, 0x1C, 0x1E).
+- **The falcon boot type GUID** (a station's `boot` partition on a GPT disk,
+  so Windows gives it no volume): `d0acb249-f895-4e0d-ab0d-cfbb6f48ae36`.
+- **Removed:** `STAGE3_LBA`, `STAGE3_MAX_SECTORS`, `NEXTBOOT_LBA`, the EF02
+  partition's use for stage 3, and every literal 34/98/2047 in tools and
+  rigs. `STAGE2_SECTORS` becomes the reservation's upper bound only.
