@@ -466,4 +466,25 @@ $(BIOS_PROBE_ISO): $(BIOS_PROBE_BIN)
 
 test-bios-probe: $(BIOS_PROBE_ISO)
 
-.PHONY: test-bios-img test-bios-probe
+# The station rig's synthetic boot sector (falcon-bios/tools/rigboot.S):
+# installed in the rig disks' partitions and MBRs, it reports on serial
+# what the partition chain and the drive swap handed it. Its code has to end
+# before the tag the rig writes a loader's name into.
+BIOS_RIGBOOT := build/rigboot.bin
+
+$(BIOS_RIGBOOT): $(BIOS_OBJ)/falcon-bios/tools/rigboot.o $(BIOS)/start/bios.ld
+	@mkdir -p $(@D)
+	$(CC_HOST) $(BIOS_LDFLAGS) -Wl,-Ttext,0x7C00 -Wl,-e,_start -o $@.elf $<
+	objcopy -O binary -j .text $@.elf $@
+	@sz=$$(stat -c %s $@); \
+	if [ "$$sz" -ne 512 ]; then \
+		echo "ERROR: $@ is $$sz bytes, not 512"; exit 1; \
+	fi
+
+# The BIOS station rig (DESIGN Section 13.11): the partition chain, the
+# drive swap, STATION.INI and next boot under SeaBIOS, judged from serial,
+# and FreeDOS from the VGA text it leaves on screen.
+test-station-bios: station $(BIOS_RIGBOOT) $(MKSTICK)
+	falcon-bios/tools/run-station-rig.sh
+
+.PHONY: test-bios-img test-bios-probe test-station-bios

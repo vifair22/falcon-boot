@@ -4151,6 +4151,13 @@ takes it as the stick does, cleared before it is believed and dated on BIOS,
 and boots that entry without the menu. It is how "restart into Windows"
 works from the Linux side.
 
+The value is any row's name: a section, an autodetected name, or a hidden
+row's. `:personal`, the stick's reserved value, is the first Linux row. A
+`uki-<stem>` on a locked shelf, which the menu could not list, prompts for
+that shelf and boots the image of that name. A value naming nothing here,
+or a marker that is stale, undated, damaged or would not clear, is a note
+and a key, and the menu follows.
+
 ### 13.9 The installer
 
 `falcon-boot-mkstick station install | remove | status`, the stick maker's
