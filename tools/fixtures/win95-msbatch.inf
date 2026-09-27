@@ -1,0 +1,45 @@
+; falcon-boot: Windows 95 OSR2.x Setup answers for the station rig's fixture
+; disk (tools/fixtures/mk-win9x-fixture.sh). @PRODUCTKEY@ is filled in from a
+; key file at install time and exists only on the install's throwaway source
+; disk. Windows 95 takes it as ProductID (98 renamed the key ProductKey).
+;
+; Networking is left out entirely (the guest has no NIC), so there is no
+; logon dialog on the first boot and the desktop comes up on its own.
+
+[Setup]
+Express=1
+InstallDir="C:\WINDOWS"
+InstallType=1
+ProductID="@PRODUCTKEY@"
+EBD=0
+ChangeDir=0
+OptionalComponents=1
+Network=0
+System=0
+CCP=0
+CleanBoot=0
+Display=0
+PenWinWarning=0
+Uninstall=0
+VRC=0
+NoPrompt2Boot=1
+TimeZone="Pacific"
+Restart=1
+
+[System]
+Locale=L0409
+SelectedKeyboard=KEYBOARD_00000409
+
+[NameAndOrg]
+Name="falcon"
+Org="falcon"
+Display=0
+
+[OptionalComponents]
+"Dial-Up Networking"=0
+"Direct Cable Connection"=0
+"HyperTerminal"=0
+"Online Services"=0
+"Microsoft Exchange"=0
+"Microsoft Fax Services"=0
+"Microsoft Fax Viewer"=0
