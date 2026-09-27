@@ -93,6 +93,19 @@ $(PAYLOAD): $(EFI_OBJ)/$(PAYLOAD_SRC:.c=.o)
 	@mkdir -p $(@D)
 	$(CC) $(EFI_LDFLAGS) -o $@ $<
 
+# The station rig's stand-in for bootmgfw.efi and memtest.efi: it prints
+# the path it was started as. Signed with the test MOK for Secure Boot on.
+STANDIN_SRC := falcon-efi/tools/payload/standin.c
+STANDIN := build/test/standin.efi
+STANDIN_SIGNED := build/test/standin-signed.efi
+
+$(STANDIN): $(EFI_OBJ)/$(STANDIN_SRC:.c=.o)
+	@mkdir -p $(@D)
+	$(CC) $(EFI_LDFLAGS) -o $@ $<
+
+$(STANDIN_SIGNED): $(STANDIN) $(MOK_KEY)
+	sbsign --key $(MOK_KEY) --cert $(MOK_CRT) --output $@ $<
+
 # Stage the loader as the removable-media default path on a vvfat-backed ESP,
 # alongside a writable per-checkout copy of the OVMF varstore.
 esp: $(EFI)
@@ -142,7 +155,7 @@ test-stick: $(EFI_SIGNED) test-iso test-uki cli bios
 
 # A disk laid out as the Manual's stationary install (Section 2), made by
 # following that procedure; the rig boots it under both firmwares.
-test-station: $(EFI_STATION_SIGNED) station test-uki cli
+test-station: $(EFI_STATION_SIGNED) $(STANDIN_SIGNED) station test-uki cli
 	falcon-efi/tools/mk-test-station.sh
 
 # The core step's matrix cells (docs/notes/station-rework.md section 6), each
@@ -152,6 +165,15 @@ test-station: $(EFI_STATION_SIGNED) station test-uki cli
 # devices on image files); the fixture UKI and test MOK must exist.
 test-core: all bios station cli payload
 	falcon-efi/tools/run-core-rig.sh
+
+# The UEFI station's own cases (DESIGN Sections 13.3-13.8), under OVMF with
+# Secure Boot off and on: the list, STATION.INI's default and countdown,
+# BootNext into a fake Windows Boot Manager, the same loaded off its ESP,
+# memtest, next boot and the error pages. It boots copies of the disk
+# test-station made, with the loader as built now put onto each.
+test-station-uefi: $(EFI_STATION_SIGNED) $(STANDIN) $(STANDIN_SIGNED) cli
+	@test -f build/test-station.img || $(MAKE) --no-print-directory test-station
+	falcon-efi/tools/run-station-rig.sh
 
 # No prerequisite on $(TEST_STICK): rebuilding it needs sudo and takes seconds
 # of cryptsetup, so it stays an explicit `make test-stick`. The rig says so if
@@ -163,7 +185,8 @@ run-stick-secboot:
 	falcon-efi/tools/run-qemu.sh --stick --secboot
 
 .PHONY: test-station payload esp run mok-test sign run-secboot test-iso \
-	test-img test-uki test-stick run-stick run-stick-secboot test-core
+	test-img test-uki test-stick run-stick run-stick-secboot test-core \
+	test-station-uefi
 
 # ---- tests ----
 #
