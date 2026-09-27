@@ -143,8 +143,11 @@ falcon-efi and falcon-bios, which never share a set, may both have a `pos/`.
     one; `fs_lookup` resolves a path. `udf.c` also carries the few record edits the Windows patch needs
     (a File Entry's extents, a Partition Descriptor's length, an anchor),
     applied to caller buffers, never to media.
-  - `luks/` LUKS2 header parse, keyslot unlock, AF merge.
-  - `part/` GPT parsing and falcon partition identification.
+  - `luks/` LUKS2 header parse, keyslot unlock, AF merge, the falcon token.
+  - `part/` MBR and GPT read as one partition table (`table.c`).
+  - `ident/` the identity record (DESIGN Section 3.1): its three encodings
+    (`ident.c`) and the `/.falcon` reader over the fs registry
+    (`identfs.c`). What a partition is, and whose, comes from here.
   - `pe/` PE/COFF header layout read from a file's bytes; the one PE walker.
   - `trust/` the boot predictions (DESIGN Section 7.8): `der`, `x509` and
     `authenticode` read an image's signature block and Authenticode hash,
@@ -154,7 +157,9 @@ falcon-efi and falcon-bios, which never share a set, may both have a `pos/`.
   - `media/` what an image is: family detection (`family.c`), the initrd cpio
     writer (`cpio.c`), `.osrel`/`.uname` reading (`osrel.c`), an ISO's own
     boot configuration (`bootcfg.c`, read through `bootfs.c` over a mounted
-    image), the extent map handed to falcon-hook (`extmap.c`) and the hooked
+    image), the extent map handed to falcon-hook (`extmap.c`), which disk
+    holds the library a map names (`extfind.c`, for the hook, winjump and
+    falcon-vdisk) and the hooked
     boot's cmdline (`hookcmd.c`), the grub.cfg D3b serves in place of
     an ISO's own (`grubcfg.c`) and the two edits that make a BSD medium boot
     itself as a memory disk (`bsdmd.c`). `survey.c` is what a menu is built
@@ -208,9 +213,11 @@ falcon-efi and falcon-bios, which never share a set, may both have a `pos/`.
   - `console/` the text menu over Simple Text Output/Input, drawn from core's
     `tui`, plus the masked passphrase prompt (`prompt.c`, its own TU so
     "what has held the secret" has a one-file answer).
-  - `discover/` the single device-discovery pass (`discover.c`) and GPT
-    identification's firmware half (`partefi.c`): enumerates the Block I/O
-    handles once, classifies each, and hands every consumer one inventory.
+  - `discover/` the single device-discovery pass (`discover.c`) and the
+    device-path half (`partefi.c`: same disk, start LBA): reads the boot
+    partition's record for the install ID, enumerates the Block I/O handles
+    once (the boot disk's first), reads each one's record, and hands every
+    consumer the rows that carry the install ID.
   - `secboot/` Secure Boot state for UX (`sb.c`) and the variable reads the
     boot predictions judge against (`trustefi.c`).
   - `bsd/` BSD media served as its own memory disk (Section 6.4; M7):
@@ -280,7 +287,9 @@ falcon-efi and falcon-bios, which never share a set, may both have a `pos/`.
   (`falcon-hook`) and i686 (`falcon-hook32`) from the same source: `src/sys.c`
   is its system calls and startup, and the only file that knows the width. It runs as `rdinit=`, reads the extent map from
   the initrd (a direct boot, or the credential sd-stub packs beside a
-  blessed wrap) or efivarfs (an older wrap), maps the ISO
+  blessed wrap) or efivarfs (an older wrap), finds the ISO library it names
+  by the `/.falcon` record at the map's LBA (core's `media/extfind.c`, with
+  exFAT alone behind the registry), maps the ISO
   read-only with dm-linear as `/dev/mapper/falcon-iso` under the ISO's label
   (a loop device when the kernel has no dm and the ISO is contiguous;
   `src/dimod.c` brings loop in from a Debian installer ISO's own pool), makes
