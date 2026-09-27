@@ -324,8 +324,11 @@ One layout for every BIOS install, stick, station and jump's floppy:
 | the `boot` partition's reserved sectors | stage 3 (compressed, Section 12.3.2) and the next-boot marker, at the offsets its record gives |
 
 Stage 2 finds stage 3 by reading the boot disk's table (none on a floppy: the
-volume starts at LBA 0) and taking the partition whose boot sector carries a
-`boot` record. Stage 2 no longer has a stage 3 LBA of its own, and nothing
+volume starts at LBA 0) and taking the first partition whose boot sector
+carries a `boot` record naming a stage 3. A station installed for UEFI and
+BIOS both has a `boot` record with no stage 3 (stage 3 sector 0) on its
+ESP, which comes first on a GPT disk, and the real one on its station
+partition. Stage 2 no longer has a stage 3 LBA of its own, and nothing
 is written at LBA 98 or 2047 any more. The marker is a sector of the `boot`
 partition (Section 6.3.1).
 
@@ -3285,7 +3288,7 @@ flowchart TD
     OSX --> PE["pmode.S<br/>flat GDT, CR0.PE, paging off"]
     PE --> PM["32-bit protected mode, stage2_32, ESP 0x800000<br/>fault_install: IDT, 32 vectors"]
     PM --> BP["stage3_load, load3.c: AH=48h sector size<br/>find_boot: part_read_table on the boot drive;<br/>no table (a floppy): LBA 0 is the volume"]
-    BP --> BR{"bootpart_find: the first FAT-typed partition<br/>(GPT: ESP or the falcon boot type) whose<br/>boot sector's record is role boot?"}
+    BP --> BR{"bootpart_find: the first FAT-typed partition<br/>(GPT: ESP or the falcon boot type) whose<br/>boot sector's record is role boot<br/>with a stage 3 sector (not an ESP's 0)?"}
     BR -- no --> BF
     BR -- yes --> GT["gate: 0x7E18 its first LBA,<br/>0x7E42 the record's marker sector"]
     GT --> L3["header: one sector at start + the record's<br/>stage 3 sector, to 1 MiB"]

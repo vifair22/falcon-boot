@@ -30,7 +30,10 @@ int bootpart_candidate(const part_entry *p)
     }
 }
 
-/* The record in one volume's boot sector, if it is a boot record. */
+/* The record in one volume's boot sector, if it is a boot record that
+ * names a stage 3. A boot record with none (stage 3 sector 0) is the ESP's
+ * of a station installed for UEFI as well as BIOS: its install is this
+ * one, but stage 3 is in the station partition, later in the table. */
 static int read_boot(gpt_read_fn read, void *ctx, uint32_t bs, uint64_t lba,
                      uint8_t *sec, ident_rec *rec)
 {
@@ -38,7 +41,8 @@ static int read_boot(gpt_read_fn read, void *ctx, uint32_t bs, uint64_t lba,
         return BOOTPART_ERR_ARG;
     if (read(ctx, lba * bs, bs, sec) != 0)
         return BOOTPART_ERR_IO;
-    if (ident_decode_bin(sec, rec) != IDENT_OK || rec->role != IDENT_ROLE_BOOT)
+    if (ident_decode_bin(sec, rec) != IDENT_OK ||
+        rec->role != IDENT_ROLE_BOOT || rec->stage3_sector == 0u)
         return BOOTPART_ERR_NONE;
     return BOOTPART_OK;
 }
