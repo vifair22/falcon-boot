@@ -274,11 +274,16 @@ $(1)_BIOS_OBJS := $$(BIOS_OBJ)/$$(BIOS)/start/stage3.o $(3) \
 	$$(patsubst %.c,$$(BIOS_OBJ)/%.o,$(4)) $(5)
 BIOS_CSRCS += $(4)
 
-$(2): $$($(1)_BIOS_OBJS) $$(BIOS)/start/bios.ld
+$(2): $$($(1)_BIOS_OBJS) $$(BIOS)/start/bios.ld falcon-bios/tools/mk-stage3z.sh
 	@mkdir -p $$(@D)
 	$$(CC_HOST) $$(BIOS_LDFLAGS) -Wl,-Ttext,0x100000 -Wl,-e,stage3_entry \
 		-o $$@.elf $$($(1)_BIOS_OBJS) $$(BIOS_LIBGCC)
-	objcopy -O binary -j .text $$@.elf $$@
+	objcopy -O binary -j .text $$@.elf $$@.raw
+	@# What goes on the disk is the image compressed (load3.c, biosdefs.h
+	@# STAGE3_MAGIC_GZ), for every app: the gzip member's CRC-32 is the
+	@# check that the medium gave back what was written, and it is half
+	@# the bytes to read.
+	@falcon-bios/tools/mk-stage3z.sh $$@.raw $$@
 	@# A resident has to fit the conventional memory it takes, which is
 	@# VCD_BYTES and is what the BIOS data area is told it no longer has.
 	@s=$$$$(nm $$@.elf | awk '$$$$3 == "vcd_blob_start" { print $$$$1 }'); \
@@ -293,6 +298,13 @@ $(2): $$($(1)_BIOS_OBJS) $$(BIOS)/start/bios.ld
 	if [ "$$$$sz" -gt "$$$$max" ]; then \
 		echo "ERROR: $$@ is $$$$sz bytes, past the $$$$max stage 2 will read"; \
 		echo "       raise STAGE3_MAX_SECTORS in falcon-bios/src/start/biosdefs.h"; \
+		exit 1; \
+	fi
+	@# Inflated, image and .bss, it has to end below where stage 2 reads
+	@# the compressed copy to (GZ_STAGE_ADDR, 5 MB above STAGE3_LOAD).
+	@mem=$$$$(od -An -tu4 -j8 -N4 $$@ | tr -d ' '); \
+	if [ "$$$$mem" -gt $$$$((0x600000 - 0x100000)) ]; then \
+		echo "ERROR: $$@ takes $$$$mem bytes inflated, past GZ_STAGE_ADDR"; \
 		exit 1; \
 	fi
 endef

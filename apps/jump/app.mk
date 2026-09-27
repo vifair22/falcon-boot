@@ -23,13 +23,6 @@ $(eval $(call bios_app,jump,$(BIOS_JUMP_STAGE3),\
 
 $(BIOS_OBJ)/$(JUMP)/bios_main.o: build/version.h
 
-# On the floppy compressed (DESIGN Section 14.3): stage 2 inflates it. Half
-# the bytes, and on a floppy the bytes read are the time taken.
-JUMP_STAGE3Z := $(BIN)/falcon-bios-jump-stage3z.bin
-
-$(JUMP_STAGE3Z): $(BIOS_JUMP_STAGE3) falcon-bios/tools/mk-stage3z.sh
-	@falcon-bios/tools/mk-stage3z.sh $< $@
-
 # The drivers (DESIGN Section 14.4), each a module read off the floppy only
 # for the route that needs it.
 $(eval $(call jump_module,ATA,JMOD_SLOT_ATA,\
@@ -80,7 +73,7 @@ jump-files-stamp:
 
 $(JUMP_FILES_STAMP): jump-files-stamp ;
 
-$(JUMP_IMG): $(BIOS_FD_STAGE1) $(BIOS_STAGE2) $(JUMP_STAGE3Z) \
+$(JUMP_IMG): $(BIOS_FD_STAGE1) $(BIOS_STAGE2) $(BIOS_JUMP_STAGE3) \
 		$(JUMP_MODS) $(MEMTEST) $(JUMP_INI) $(JUMP_FILES_STAMP)
 	@mkdir -p $(@D)
 	@rm -f $@.tmp
@@ -90,7 +83,7 @@ $(JUMP_IMG): $(BIOS_FD_STAGE1) $(BIOS_STAGE2) $(JUMP_STAGE3Z) \
 	@# than one per file (DESIGN Section 14.3). The FAT's length depends on
 	@# the reserved count, so the pad is taken from a first format and the
 	@# second is checked.
-	@s3=$$(( ($$(stat -c %s $(JUMP_STAGE3Z)) + 511) / 512 )); \
+	@s3=$$(( ($$(stat -c %s $(BIOS_JUMP_STAGE3)) + 511) / 512 )); \
 	reserved=$$(( $(STAGE3_LBA_CHECK) + s3 )); \
 	fmt() { rm -f $@.tmp; mformat -C -i $@.tmp -f 1440 -R $$1 \
 		-B $(BIOS_FD_STAGE1) -v "FALCON JUMP" ::; }; \
@@ -120,7 +113,7 @@ $(JUMP_IMG): $(BIOS_FD_STAGE1) $(BIOS_STAGE2) $(JUMP_STAGE3Z) \
 		status=none
 	dd if=$(BIOS_STAGE2) of=$@.tmp bs=512 seek=$(STAGE2_LBA_CHECK) \
 		conv=notrunc status=none
-	dd if=$(JUMP_STAGE3Z) of=$@.tmp bs=512 seek=$(STAGE3_LBA_CHECK) \
+	dd if=$(BIOS_JUMP_STAGE3) of=$@.tmp bs=512 seek=$(STAGE3_LBA_CHECK) \
 		conv=notrunc status=none
 	@# JUMP.INI first, into the root directory's track; the rest are read
 	@# only once a route is chosen.

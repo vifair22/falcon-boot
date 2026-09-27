@@ -193,25 +193,22 @@
 #define TRACK_CACHE_ADDR  0x88000
 #define TRACK_CACHE_BYTES 0x8000
 
-/* Stage 3 begins with a header rather than code, so stage 2 can read one
- * sector, learn how long the rest is, and read exactly that. The alternative
- * is a build step that patches a sector count into stage 2, which is a second
- * place the size is written and a second place it can be wrong. */
+/* Stage 3 as linked begins with a header rather than code: the magic, its
+ * length, and the memory it takes with its .bss. STAGE3_HDR bytes. */
 #define STAGE3_MAGIC    0x33534F42   /* "BOS3" */
 #define STAGE3_HDR      16           /* magic, two lengths, room to grow */
 
-/* A stage 3 stored compressed (falcon jump's, DESIGN Section 14.3): its own
- * header, then a gzip member of the whole ordinary stage 3, "BOS3" header
- * and all. The header is the magic, the file's length, the memory the
- * inflated stage 3 takes with its .bss, and the inflated length. Stage 2
- * reads the member to GZ_STAGE_ADDR and inflates it to STAGE3_LOAD, which
- * it may fill up to GZ_STAGE_ADDR. */
+/* Stage 3 as it is on the disk, for every app: its own header, then a gzip
+ * member of the linked image, "BOS3" header and all. The header is the
+ * magic, the file's length, the memory the inflated stage 3 takes with its
+ * .bss, and the inflated length, so stage 2 reads one sector, learns how
+ * much to read, and reads exactly that. It reads the member to
+ * GZ_STAGE_ADDR and inflates it to STAGE3_LOAD, which stage 3 may fill up
+ * to GZ_STAGE_ADDR; the member's CRC-32 is the check that the disk gave
+ * back what was written. */
 #define STAGE3_MAGIC_GZ 0x5A534F42   /* "BOSZ" */
 #define GZ_STAGE_ADDR   0x00600000
 
-/* How far above STAGE3_LOAD stage 3 may occupy, image and .bss together.
- * The stack is above it and nothing else is below the stack. */
-#define STAGE3_MAX_MEM  (STAGE3_STACK - STAGE3_LOAD - 0x10000)
 
 /* ---- the virtual CD's resident (bios-route.md Section 7.1) ----
  *
@@ -401,8 +398,8 @@
 #define JRES_BYTES        0xC00  /* 3 KB, what the BDA loses */
 
 /* Stage 3's stack. Above the image and below anything a payload is loaded
- * into (KERNEL_ADDR is 16 MB). Everything between STAGE3_LOAD and here is
- * stage 3's to use, which is what STAGE3_MAX_MEM bounds. */
+ * into (KERNEL_ADDR is 16 MB). Stage 3's image and .bss end below
+ * GZ_STAGE_ADDR, and the rest up to here is its to use. */
 #define STAGE3_STACK    0x00800000
 
 /* COM1 and 115200 8N1. The divisor is 115200 / 115200 = 1.

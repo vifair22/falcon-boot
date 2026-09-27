@@ -3083,9 +3083,13 @@ flowchart TD
     OSX --> PE["pmode.S<br/>flat GDT, CR0.PE, paging off"]
     PE --> PM["32-bit protected mode, stage2_32<br/>fault_install: IDT, 32 vectors"]
     PM --> L3["stage3_load, load3.c<br/>AH=48h sector size, header at LBA 98 to 1 MiB"]
-    L3 --> H3{"BOS3, length and<br/>memory in bounds?"}
+    L3 --> H3{"BOSZ, lengths and<br/>memory in bounds?"}
     H3 -- no --> BF["bios_fatal: reason, key, reset"]
-    H3 -- yes --> S3["read stage 3, zero its .bss<br/>call 0x100010, ESP 0x800000"]
+    H3 -- yes --> RZ["read the member to 6 MiB,<br/>inflate to 1 MiB (gz_member)"]
+    RZ --> CZ{"CRC-32 and length match,<br/>BOS3 inside?"}
+    CZ -- "no, first time" --> RZ
+    CZ -- "no, again" --> BF
+    CZ -- yes --> S3["zero its .bss<br/>call 0x100010, ESP 0x800000"]
     S3 --> BM["bios_main<br/>E820, boot disk"]
     BM --> MK["marker_take: LBA 2047 of the boot disk<br/>a marker is zeroed, read back, then parsed and dated (6.3.1)"]
     MK --> GPT["GPT: p2, p3"]
@@ -3972,9 +3976,11 @@ not LZ4 (44 KB, a smaller decoder) nor LZMA (34 KB, a decoder twice the
 size): at a floppy's rate the decoder is read on every boot too, and
 deflate's 4 KB in stage 2 buys back the most. The gzip member's CRC-32 and
 length cover the inflated stage 3, so a floppy that reads wrong stops with
-a sentence instead of running what it read. Only jump's stage 3 is
-compressed; the stick's and the station's are read off media where the
-bytes cost nothing, and stage 2 takes either.
+a sentence instead of running what it read. Every app's stage 3 is stored
+this way, the stick's and the station's too (`bios_app` in
+`falcon-bios/build.mk` packs each one), and it is the only form stage 2
+loads: every build gets the check, and the stick's stage 3 is 197 KB to
+read instead of 429 KB, which on USB 1.1 is most of stage 2's time.
 
 What stage 3 reads before its menu is laid out to cost one revolution.
 Stage 3 needs three things off the floppy: the BPB in sector 0, the root

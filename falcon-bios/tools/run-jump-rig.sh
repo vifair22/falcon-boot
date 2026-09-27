@@ -27,6 +27,8 @@
 #             CRC-32 stops it before it runs past its first sector
 #   s3crc     one byte of the compressed stage 3 flipped: stage 2 reads it
 #             twice and stops
+#   stick3crc one byte of the rig stick's stage 3 flipped, the usb route
+#             chosen: the stick's stage 2 reads it twice and stops
 #   modcrc    one byte of UHCI.MOD flipped, the usb route chosen: the module
 #             is read twice and refused
 #   menu      the countdown interrupted: a five-second default=hdd, a Down
@@ -184,7 +186,7 @@ FAILED=0
 CASES=("$@")
 [[ ${#CASES[@]} -gt 0 ]] ||
     CASES=(hdd cd usb-uhci usb-ohci usb-ehci cf cf3v giveup mem s2crc s3crc
-           modcrc menu)
+           stick3crc modcrc menu)
 
 for c in "${CASES[@]}"; do
     case $c in
@@ -246,6 +248,19 @@ for c in "${CASES[@]}"; do
         flip $((98 * 512 + 0x2000))
         boot "$QEMU"
         judge s3crc 'stage 3 did not read back as it was written, twice'
+        ;;
+    stick3crc)
+        floppy usb
+        cp "$R/stick.img" "$R/stick-ok.img"
+        b=$(od -An -tu1 -j $((98 * 512 + 0x4000)) -N1 "$R/stick.img" | tr -d ' ')
+        printf "\\$(printf %03o $((b ^ 0xFF)))" |
+            dd of="$R/stick.img" bs=1 seek=$((98 * 512 + 0x4000)) \
+                conv=notrunc status=none
+        boot "$QEMU" -device piix3-usb-uhci,id=hc \
+            -drive if=none,id=stick,format=raw,file="$R/stick.img" \
+            -device usb-storage,bus=hc.0,drive=stick
+        mv "$R/stick-ok.img" "$R/stick.img"
+        judge stick3crc 'stage 3 did not read back as it was written, twice'
         ;;
     modcrc)
         floppy usb

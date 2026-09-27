@@ -527,7 +527,7 @@ out:
  *
  * Read by their magic numbers rather than compared with a build: status is
  * read-only and runs where no build may be. Stage 2 carries "BOS2" four bytes
- * in (what stage 1 checks before it jumps) and stage 3 starts with "BOS3"
+ * in (what stage 1 checks before it jumps) and stage 3 starts with "BOSZ"
  * (what stage 2 checks), at the LBAs falcon-bios/src/start/biosdefs.h fixes.
  * Nonzero when both are there. */
 #define STATUS_STAGE2_LBA 34u
@@ -548,7 +548,7 @@ static int bios_stages_present(const mks_disk *d)
                       s2) == 0 &&
          disk_io_read(&io, (uint64_t)STATUS_STAGE3_LBA * 512u, sizeof s3,
                       s3) == 0 &&
-         memcmp(s2 + 4, "BOS2", 4) == 0 && memcmp(s3, "BOS3", 4) == 0;
+         memcmp(s2 + 4, "BOS2", 4) == 0 && memcmp(s3, "BOSZ", 4) == 0;
     disk_io_close(&io);
     return ok;
 }
