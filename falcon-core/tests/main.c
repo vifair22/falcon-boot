@@ -75,6 +75,7 @@ int main(void)
     failed += run_fs_tests();
     failed += run_part_tests();
     failed += run_table_tests();
+    failed += run_ident_tests();
     failed += run_osrel_tests();
     failed += run_pe_tests();
     failed += run_trust_tests();
