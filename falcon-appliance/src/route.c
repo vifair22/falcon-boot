@@ -15,9 +15,13 @@ appl_job appl_route(manifest_bless state, family_id fam)
      * front of the user that can only ever fail. What ESXi needs is Secure
      * Boot off, and that is not something the appliance can hand it.
      *
+     * DevLink recovery, because it is BIOS-only: its 32-bit kernel has no
+     * EFI stub, so a wrap would be a UKI nothing on UEFI can start, and on
+     * BIOS nothing is verified (DESIGN Section 13.5).
+     *
      * Everything else is blessed, BSD included, though what is signed there
      * is the medium's own loader rather than a wrap (M7 part 2). */
-    if (fam == FAMILY_WINDOWS || fam == FAMILY_ESXI)
+    if (fam == FAMILY_WINDOWS || fam == FAMILY_ESXI || fam == FAMILY_DEVLINK)
         return APPL_JOB_BOOTS_AS_IS;
     return (state == MANIFEST_BLESS_FRESH) ? APPL_JOB_DONE_BLESSED
                                            : APPL_JOB_SIGN;

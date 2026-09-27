@@ -488,6 +488,41 @@ static void test_family_installer_media(void **state)
     expect_family(esxi, 3, FAMILY_ESXI, NULL);
 }
 
+/* DevLink recovery: its isolinux layout and a config naming it. It owns
+ * COM1 (its agent's port), and it is the only family that does. A medium
+ * with the same generic 8.3 file names but another config is not it. */
+static void test_family_devlink(void **state)
+{
+    static const fake_file devlink[] = {
+        { "/isolinux/isolinux.bin", NULL },
+        { "/isolinux/bzimage", NULL },
+        { "/isolinux/initrd.xz", NULL },
+        { "/isolinux/isolinux.cfg",
+          "UI menu.c32\nDEFAULT rescue\nLABEL rescue\n"
+          "  MENU LABEL DevLink recovery\n  KERNEL /isolinux/bzimage\n" },
+    };
+    static const fake_file other[] = {
+        { "/isolinux/isolinux.bin", NULL },
+        { "/isolinux/bzimage", NULL },
+        { "/isolinux/initrd.xz", NULL },
+        { "/isolinux/isolinux.cfg",
+          "DEFAULT linux\nLABEL linux\n  KERNEL /isolinux/bzimage\n" },
+    };
+    const family_desc *d;
+    size_t i, n;
+
+    (void)state;
+    expect_family(devlink, 4, FAMILY_DEVLINK, NULL);
+    d = family_by_id(FAMILY_DEVLINK);
+    assert_int_equal(d->owns_serial, 1);
+    assert_int_equal(d->needs_injection, 0);
+    expect_family(other, 4, FAMILY_UNKNOWN, NULL);
+
+    d = family_table(&n);
+    for (i = 0; i < n; i++)
+        assert_int_equal(d[i].owns_serial, d[i].id == FAMILY_DEVLINK);
+}
+
 /* BOOT.CFG on its own is a name another medium could plausibly use, so the
  * ESXi fingerprint needs both halves. */
 static void test_family_esxi_needs_both_halves(void **state)
@@ -873,7 +908,7 @@ static void test_family_registry_round_trip(void **state)
 
     (void)state;
     assert_non_null(t);
-    assert_int_equal(count, 17);
+    assert_int_equal(count, 18);
 
     for (i = 0; i < count; i++) {
         /* Every row is reachable by its own id, and reachable as the same
@@ -1029,6 +1064,7 @@ int run_family_tests(void)
         cmocka_unit_test(test_family_memtest_extra_on_nixos),
         cmocka_unit_test(test_family_installer_media),
         cmocka_unit_test(test_family_esxi_needs_both_halves),
+        cmocka_unit_test(test_family_devlink),
         cmocka_unit_test(test_family_gentoo),
         cmocka_unit_test(test_family_memtest_usb_image_volume),
         cmocka_unit_test(test_family_payload_by_name),

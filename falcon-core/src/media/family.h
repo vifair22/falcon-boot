@@ -43,6 +43,7 @@ typedef enum {
     FAMILY_NIXOS,           /* NixOS installer media */
     FAMILY_PROXMOX,         /* Proxmox VE installer */
     FAMILY_ESXI,            /* VMware ESXi; boots no Linux kernel */
+    FAMILY_DEVLINK,         /* DevLink recovery (devlink-rescue's ISO) */
 } family_id;
 
 /* Three-valued, because "we have not checked" and "no" lead to different
@@ -82,6 +83,13 @@ typedef struct {
      * media; unknown until then, on purpose. */
     family_tri  initramfs_has_exfat;
     family_tri  initramfs_has_dm;
+
+    /* 1 when the medium's system owns the first serial port, so the loader
+     * must not put a console on it: DevLink recovery's agent speaks its
+     * framed protocol on COM1, and kernel messages there cost it
+     * retransmissions and can land in its session sync. The loader then
+     * appends console=tty0 alone (falcon-bios/src/iso/scan.c). */
+    uint8_t     owns_serial;
 } family_desc;
 
 /* Filesystem probe. Paths are absolute, '/'-separated, ASCII, and carry no

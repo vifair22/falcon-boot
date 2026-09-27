@@ -78,10 +78,13 @@ static void test_route_windows_boots_as_is(void **state)
          * ever fail in front of the user. */
         assert_int_equal(appl_route(all[i], FAMILY_ESXI),
                          APPL_JOB_BOOTS_AS_IS);
+        /* DevLink recovery: BIOS-only, no EFI stub to wrap. */
+        assert_int_equal(appl_route(all[i], FAMILY_DEVLINK),
+                         APPL_JOB_BOOTS_AS_IS);
     }
 }
 
-static void test_route_only_windows_and_esxi_boot_as_is(void **state)
+static void test_route_only_unblessable_families_boot_as_is(void **state)
 {
     size_t i;
     size_t n = 0;
@@ -96,9 +99,10 @@ static void test_route_only_windows_and_esxi_boot_as_is(void **state)
     /* The list above must stay the registry's, minus Windows and ESXi: a
      * family added to family.c and not to it would go untested here and
      * unnoticed. */
-    assert_int_equal(n, LINUX_N + 2u);
+    assert_int_equal(n, LINUX_N + 3u);
     for (i = 0; i < n; i++) {
-        if (tab[i].id == FAMILY_WINDOWS || tab[i].id == FAMILY_ESXI)
+        if (tab[i].id == FAMILY_WINDOWS || tab[i].id == FAMILY_ESXI ||
+            tab[i].id == FAMILY_DEVLINK)
             continue;
         assert_int_not_equal(appl_route(MANIFEST_BLESS_NONE, tab[i].id),
                              APPL_JOB_BOOTS_AS_IS);
@@ -183,7 +187,7 @@ int run_appliance_route_tests(void)
 {
     const struct CMUnitTest tests[] = {
         cmocka_unit_test(test_route_windows_boots_as_is),
-        cmocka_unit_test(test_route_only_windows_and_esxi_boot_as_is),
+        cmocka_unit_test(test_route_only_unblessable_families_boot_as_is),
         cmocka_unit_test(test_route_unrecorded_is_signed),
         cmocka_unit_test(test_route_stale_is_signed_again),
         cmocka_unit_test(test_route_fresh_is_done),

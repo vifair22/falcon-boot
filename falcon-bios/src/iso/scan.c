@@ -77,6 +77,7 @@ static char g_scratch[512u * 1024u];
  * and leaves the interactive console on the screen. */
 #define CONSOLE_ARGS " console=ttyS0,115200 console=tty0"
 
+static int          g_owns_serial;
 static fs_file      g_kernel;
 static fs_file      g_initrd[BOOTCFG_INITRD_MAX];
 /* One more than the entry's initrds: the last is the hook's archive. */
@@ -283,8 +284,10 @@ static int boot_entry(const bootcfg_entry *e, fs_vol *p2,
                    "medium by itself.\n\n");
     }
 
+    /* A system that owns COM1 (family.h, owns_serial) gets the screen
+     * console alone: DevLink recovery's agent speaks on that port. */
     if (append(cmd, cmd == g_cmd ? sizeof g_cmd : sizeof g_hooked,
-               CONSOLE_ARGS) != 0)
+               g_owns_serial ? " console=tty0" : CONSOLE_ARGS) != 0)
         return -1;
     log_str("cmdline: ", cmd);
 
@@ -364,6 +367,14 @@ int scan_direct(fs_vol *p2, const part_entry *p2part, const fs_dirent *ent,
         r->advice = "the ISO has no boot entry this loader can take.";
         r->fallthrough = 1;
         return -1;
+    }
+    {
+        family_probe probe;
+        const family_desc *fam;
+
+        bootfs_probe(&g_bctx, cfgvol, &probe);
+        fam = family_detect(&probe);
+        g_owns_serial = fam != (const family_desc *)0 && fam->owns_serial;
     }
     e = &g_cfg.entry[g_cfg.pick];
     for (i = 0; i + 1u < sizeof r->title && e->title[i] != '\0'; i++)
