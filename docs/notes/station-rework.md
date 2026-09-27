@@ -470,3 +470,83 @@ VBR and MBR (BIOS):
 **Escape** at the list: `falcon-boot: returning to firmware.`, and when
 the list was empty, `note: no personal OS shelf and no other boot entry was
 found.`
+
+## 12. Status and what is next (2026-09-27)
+
+Written at the end of the session that finished the rework, for the next
+one, which starts on another machine without this one's memory.
+
+### Where it stands
+
+Steps 1-3 are done and on master (pushed, 64b2c16): the core layout, the
+station (both loaders), station-legacy, falcon jump on the shared route
+module, `mkstick station install|status|remove`, next boot, DevLink
+recovery as a UKI, the Win95/98/FreeDOS fixtures, `mkstick32`. Every rig
+passed on the final tip, the analyzer gate passed on binhost-builder, and
+the corpus matched the baseline (UEFI columns identical, BIOS columns no
+regressions, five cases improved).
+
+On real hardware (the A21m, 2026-09-27): falcon jump off the floppy (ca698c4
+build), then its CF route into a CF card carrying station-legacy
+(`make test-cfstation` is the same shape in the rig), then station-legacy's
+menu, all seven rows drawn as the rig draws them, and DevLink recovery
+booted from it. The card now holds DevLink recovery built from
+devlink-rescue 5f04f69 (UKI sha256 c71e7df0...97ec1), not yet booted.
+
+### Next
+
+1. The A21m's internal install, driven from DevLink recovery (the user
+   images the disk first). The recovery image needs
+   `build/bin/falcon-boot-mkstick32` (`tools/coverage/harness.sh make
+   mkstick32`; no host here has a 32-bit static libc), `mkfs.fat` with
+   `--offset`, mtools (`mcopy`, `mmd`, `mdir`, `mdeltree`), and `ntfsresize`
+   and `ntfsfix` to make room (the rig's recipe: `ntfsresize`, then
+   `ntfsfix -d`, `falcon-bios/tools/mk-a21m-station.sh`). `station remove
+   --full` restores every byte the install wrote; the NTFS shrink is the
+   one step it does not.
+2. The new DevLink build on the card, on the A21m: the CF card is a disk,
+   Ctrl-Alt-Del and the power button work, NTFS writes work. Its kernel now
+   takes the PCI1450 over from jump's resident on the CF route.
+3. station-legacy's other rows on the hardware: Windows 2000, CD, USB,
+   memtest (only the menu and DevLink have run there).
+
+Not wanted (decided 2026-09-27): Windows-side tools for updating a station
+(updates are driven from DevLink recovery), and a second, serial-debug
+DevLink UKI.
+
+### Open decisions
+
+- `falcon-boot-sign uki --bios-only` (added for DevLink's kernel, which has
+  no EFI stub): keep as it is, or rework.
+- Windows 95 and 98 say "the Master Boot Record has been modified" when
+  booted as a second disk behind the drive swap (they still reach the
+  desktop).
+- Whether the direct route honours an ISO's isolinux `DEFAULT`.
+- Whether OVMF's own "UEFI QEMU HARDDISK" firmware entries are station rows.
+
+### What the rigs need on a fresh machine
+
+- `make test-jump` case `cf48` needs the rig QEMU rebuilt with the model's
+  `lba48` property (`falcon-bios/tools/qemu-pcc/build-qemu.sh`); `mem`
+  needs `MEMTEST=build/memtest/mt86p_810_i586`.
+- `make test-devlink` and the legacy rig's `devlink` case need the devlink
+  client (`DEVLINK_CLIENT=`).
+- `make test-station-fixtures` needs `freedos.img`, `win98se.img` and
+  `win95.img` in `build/fixtures/`, copied sparse from binhost-builder
+  (`tools/fixtures/README.md`); the Win95 cases run at 250 MHz
+  (`-icount shift=2`).
+- `make test-station-legacy`, `make test-cfstation` and the A21m rigs need
+  the A21m's disk image (`A21M_IMG`, default `~/a21m-image/DJSA-210.img`),
+  opened read-only through qcow2 overlays; another session's VM backs onto
+  the original, so it is never written.
+
+### The corpus on binhost-builder
+
+Run it in the canonical build directory, `/srv/falcon/build`, with
+`--force`: a fresh `FALCON_BUILD_DIR` builds a second copy of the ~190 GB
+stick set and filled the disk once. It needs `make all bios` first (it
+reads `build/version.h`). The default run is the UEFI columns (339 cases);
+the BIOS columns are a second run, `--states "bios bios32"`. `--jobs 12`
+has given a few contention failures, so any case that differs from the
+baseline (`/srv/falcon/baseline-all-0926`) is rerun alone at `--jobs 1`
+before it counts.
