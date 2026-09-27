@@ -20,12 +20,15 @@ int ident_read_vol(fs_vol *v, ident_fs_scratch *s, ident_rec *out)
         return IDENT_ERR_NONE;
     /* The record is one short line; anything the size of a real file is
      * not one, and is refused before a byte of it is read. The terminator's
-     * byte is kept back so the length check below is the decoder's. */
-    size = s->ent.size;
+     * byte is kept back so the length check below is the decoder's. The
+     * size is the open file's: an ext4 directory entry carries none, so a
+     * plaintext shelf's record would otherwise read as empty. */
+    if (fs_file_open(v, &s->file, &s->ent) != FS_OK)
+        return IDENT_ERR_BAD;
+    size = fs_file_size(&s->file);
     if (size == 0u || size >= (uint64_t)sizeof text)
         return IDENT_ERR_BAD;
-    if (fs_file_open(v, &s->file, &s->ent) != FS_OK ||
-        fs_file_read(&s->file, 0, size, text) != FS_OK)
+    if (fs_file_read(&s->file, 0, size, text) != FS_OK)
         return IDENT_ERR_BAD;
     return ident_decode_text(text, (size_t)size, out);
 }
