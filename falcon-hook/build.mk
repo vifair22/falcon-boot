@@ -57,14 +57,16 @@ $(HOOK_BLOB): $(HOOK_BIN)
 	       -e 's/^unsigned int falcon_hook_bin_len/const size_t falcon_hook_bin_len/'; \
 	} > $@
 
-# ---- the i686 build ----
+# ---- the 32-bit build ----
 #
 # The same sources for a 32-bit kernel's initramfs, which falcon-bios boots
 # (docs/notes/bios-route.md Section 6h). src/sys.c is the only file that
-# knows the width. libgcc goes back in by name for the 64-bit division i686
-# code calls out for, which -nostdlib drops.
+# knows the width. i586 as falcon-bios is, since it runs on the same
+# machine, and tools/check-floor.sh holds it to that. libgcc goes back in by
+# name for the 64-bit division 32-bit code calls out for, which -nostdlib
+# drops.
 HOOK32_OBJ := $(OBJ)/hook32
-HOOK32_CFLAGS := $(HOOK_CFLAGS) -m32 -march=i686
+HOOK32_CFLAGS := $(HOOK_CFLAGS) -m32 -march=i586
 HOOK32_LDFLAGS := -m32 $(HOOK_LDFLAGS)
 HOOK32_LIBGCC := $(shell $(CC_HOST) -m32 -print-libgcc-file-name)
 
@@ -79,6 +81,7 @@ HOOK32_OBJS := $(patsubst %.c,$(HOOK32_OBJ)/%.o,$(HOOK_SRCS))
 $(HOOK32_BIN): $(HOOK32_OBJS)
 	@mkdir -p $(@D)
 	$(CC_HOST) $(HOOK32_LDFLAGS) -o $@ $(HOOK32_OBJS) $(HOOK32_LIBGCC)
+	@tools/check-floor.sh $@
 	strip -s $@
 
 HOOK32_BLOB := build/gen/falcon_hook32_blob.c
