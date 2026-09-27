@@ -18,6 +18,9 @@
 # disk and none of this machine's.
 #
 # Usage: falcon-bios/tools/mk-a21m-station.sh [extra install args]
+#   A21M_DIR      where the overlay and the backup go (default build/a21m;
+#                 the station-legacy rig uses build/a21m-legacy with
+#                 --legacy, so the two installs never share an overlay)
 #   A21M_ORIG     the original image
 #   A21M_SHRINK   MiB taken off the end of the NTFS partition (default 64)
 #   MEMTEST       memtest86+ for MEMTEST.BIN (optional)
@@ -28,7 +31,7 @@ set -euo pipefail
 cd "$(dirname "$0")/../.."
 ORIG=${A21M_ORIG:-/home/vifair/a21m-image/DJSA-210.img}
 SHRINK=${A21M_SHRINK:-64}
-D=build/a21m
+D=${A21M_DIR:-build/a21m}
 Q=$D/a21m.qcow2
 MK=$(realpath build/bin/falcon-boot-mkstick)
 
@@ -66,6 +69,13 @@ if [ $((start + size)) -ge "$total" ]; then
     sudo ntfsresize -f -n -s $((new * 512)) "${nbd}p1" >/dev/null
     echo y | sudo ntfsresize -f -s $((new * 512)) "${nbd}p1" |
         tr '\r' '\n' | grep -v "percent completed" | tail -3
+    # ntfsresize marks the volume dirty so that Windows checks it, and the
+    # check ends in a reboot: every rig boot would then be CHKDSK and a
+    # second trip through the station, the case the rig is not asking
+    # about. ntfsresize leaves the volume consistent (it relocates what it
+    # must before it cuts), and the flag is only its request for a check, so
+    # the flag goes.
+    sudo ntfsfix -d "${nbd}p1" >/dev/null
     echo "$start,$new,7,*" | sudo sfdisk -q -N 1 --no-reread "$nbd"
     sudo blockdev --rereadpt "$nbd" || true
 fi

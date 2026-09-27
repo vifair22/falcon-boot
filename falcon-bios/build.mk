@@ -98,7 +98,7 @@ BIOS_S2_COBJS := $(patsubst %.c,$(BIOS_OBJ)/%.o,$(BIOS_S2_CSRCS))
 # stage 2's 33 KB ceiling that had to be one driver called by name.
 BIOS_MOD_serial  := $(BIOS)/console/console.c
 BIOS_MOD_prompt  := $(BIOS)/console/prompt.c  # the passphrase, and nothing else
-BIOS_MOD_console := $(BIOS)/console/screen.c
+BIOS_MOD_console := $(BIOS)/console/screen.c $(BIOS)/console/cdclock.c
 BIOS_MOD_disk    := $(BIOS)/disk/disk.c $(BIOS)/vfd/vfdcore.c
 BIOS_MOD_marker  := $(BIOS)/disk/marker.c
 BIOS_MOD_install := $(BIOS)/disk/install.c   # the install's partitions, by record
@@ -123,6 +123,12 @@ BIOS_MOD_mbr     := $(BIOS)/mbr/mbr.c
 BIOS_MOD_chain   := $(BIOS)/mbr/chain.c $(BIOS)/mbr/vbrcore.c $(CORE_VBR)
 BIOS_MOD_jumpini := $(BIOS)/jump/jumpini.c
 BIOS_MOD_jmod    := $(BIOS)/jump/jmod.c $(BIOS)/jump/jmodload.c $(BIOS)/jump/jres.c
+# The CD, USB and CF routes through those drivers (DESIGN Sections 14.6 and
+# 13.10), for jump and station-legacy alike; each app keeps its own menu.
+BIOS_MOD_jroutes := $(BIOS)/jump/routes.c
+# The BIOS station's list and routes (DESIGN Section 13), run by the station
+# and station-legacy apps.
+BIOS_MOD_station := $(BIOS)/station/station.c
 
 # Every C source some image links, for compile_commands.json and the analyzers.
 BIOS_CSRCS := $(BIOS_S2_CSRCS)
@@ -415,11 +421,12 @@ endef
 BIOS_TESTS := $(addprefix falcon-bios/tests/,main.c vcdcore_test.c vfdcore_test.c \
 	linuxcore_test.c e820_test.c jumpini_test.c jmod_test.c lowmem_test.c \
 	atacore_test.c usbcore_test.c pcccore_test.c bootpart_test.c \
-	vbrcore_test.c)
+	vbrcore_test.c cdclock_test.c)
 BIOS_UUT := $(BIOS)/iso/vcdcore.c $(BIOS)/vfd/vfdcore.c $(BIOS)/linux/linuxcore.c $(BIOS)/mem/e820.c \
 	$(BIOS)/jump/jumpini.c $(BIOS)/jump/jmod.c $(BIOS)/mem/lowmem.c \
 	$(BIOS)/hw/ata/atacore.c $(BIOS)/hw/scsi/scsi.c $(BIOS)/hw/usb/usbcore.c \
-	$(BIOS)/hw/pcc/pcccore.c $(BIOS)/disk/bootpart.c $(BIOS)/mbr/vbrcore.c
+	$(BIOS)/hw/pcc/pcccore.c $(BIOS)/disk/bootpart.c $(BIOS)/mbr/vbrcore.c \
+	$(BIOS)/console/cdclock.c
 # What bootpart.c and vbrcore.c are built on, linked into the test binary
 # but counted under core's own tests.
 BIOS_TEST_CORE := $(CORE_PART) $(CORE_IDENT) $(CORE_VBR)
@@ -489,9 +496,23 @@ $(BIOS_RIGBOOT): $(BIOS_OBJ)/falcon-bios/tools/rigboot.o $(BIOS)/start/bios.ld
 		echo "ERROR: $@ is $$sz bytes, not 512"; exit 1; \
 	fi
 
+# The station rig's no-ticks floppy (falcon-bios/tools/tickstop.S): masks
+# IRQ0 and boots drive 0x80, so the station's countdown runs with the BIOS's
+# tick count standing still.
+BIOS_TICKSTOP := build/tickstop.bin
+
+$(BIOS_TICKSTOP): $(BIOS_OBJ)/falcon-bios/tools/tickstop.o $(BIOS)/start/bios.ld
+	@mkdir -p $(@D)
+	$(CC_HOST) $(BIOS_LDFLAGS) -Wl,-Ttext,0x7C00 -Wl,-e,_start -o $@.elf $<
+	objcopy -O binary -j .text $@.elf $@
+	@sz=$$(stat -c %s $@); \
+	if [ "$$sz" -ne 512 ]; then \
+		echo "ERROR: $@ is $$sz bytes, not 512"; exit 1; \
+	fi
+
 # The BIOS station rig (DESIGN Section 13.11): the partition chain, the
 # drive swap, STATION.INI and next boot under SeaBIOS, judged from serial.
-test-station-bios: station $(BIOS_RIGBOOT) $(MKSTICK)
+test-station-bios: station $(BIOS_RIGBOOT) $(BIOS_TICKSTOP) $(MKSTICK)
 	falcon-bios/tools/run-station-rig.sh
 
 # The BIOS station in front of real systems (DESIGN Section 13.11): the

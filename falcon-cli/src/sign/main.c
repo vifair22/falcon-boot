@@ -1044,6 +1044,7 @@ static int bless(const options *o)
     {
         uki_spec spec;
 
+        memset(&spec, 0, sizeof(spec));
         spec.stub = o->stub;
         spec.kernel = work_kernel;
         spec.initrd = o->embed_initrd ? work_initrd : NULL;

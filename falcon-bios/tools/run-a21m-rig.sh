@@ -32,12 +32,15 @@
 # Usage: falcon-bios/tools/run-a21m-rig.sh [menu|default|enter] [SECONDS]
 #   A21M_IMG   the installed disk (default build/a21m/a21m.qcow2)
 #   QEMU       qemu-system-i386
+#   A21M_MACHINE  the machine (default pc,x-south-bridge=piix4-isa: the
+#              A21m's PIIX4, which the image's Windows 2000 was set up on)
 
 set -euo pipefail
 
 cd "$(dirname "$0")/../.."
 IMG=${A21M_IMG:-build/a21m/a21m.qcow2}
 QEMU=${QEMU:-qemu-system-i386}
+MACHINE=${A21M_MACHINE:-pc,x-south-bridge=piix4-isa}
 CASE=${1:-menu}
 SECS=${2:-90}
 R=build/a21m-rig
@@ -59,7 +62,7 @@ shot() {      # shot NAME
     fi
 }
 
-timeout $((SECS + 60)) "$QEMU" -L /usr/share/qemu -machine pc -cpu pentium3 \
+timeout $((SECS + 60)) "$QEMU" -L /usr/share/qemu -machine "$MACHINE" -cpu pentium3 \
     -m 512 -display none \
     -drive if=none,id=d0,file="$R/overlay.qcow2",format=qcow2 \
     -device ide-hd,drive=d0,bus=ide.0,unit=0,cyls=20784,heads=15,secs=63,bios-chs-trans=large \

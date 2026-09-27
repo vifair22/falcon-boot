@@ -486,7 +486,7 @@ static void test_uki_build_end_to_end(void **state)
     char kernel[256];
     char initrd[256];
     char out[256];
-    uki_spec spec;
+    uki_spec spec = { 0 };
     uint8_t *img = NULL;
     uint8_t *rd = NULL;
     size_t len = 0;
@@ -539,6 +539,48 @@ static void test_uki_build_end_to_end(void **state)
     }
 }
 
+/* A bzImage with no EFI stub, for falcon-bios's /uki (DESIGN Section
+ * 13.10): refused as it always was, taken with bios_only, and a file that
+ * is not a bzImage refused either way. */
+static void test_uki_build_bios_only(void **state)
+{
+    char stub[256];
+    char kernel[256];
+    char initrd[256];
+    char out[256];
+    uint8_t k[0x800];
+    uki_spec spec = { 0 };
+    uint8_t *img = NULL;
+    size_t len = 0;
+
+    (void)state;
+    make_inputs(stub, kernel, initrd, sizeof(stub));
+    memset(k, 0, sizeof(k));
+    add_bzimage(k, "6.6.0-devlink (me@host) #1");
+    put("bzImage", k, sizeof(k), kernel, sizeof(kernel));
+    (void)snprintf(out, sizeof(out), "%s/bios.efi", g_dir);
+
+    spec.stub = stub;
+    spec.kernel = kernel;
+    spec.initrd = initrd;
+    spec.cmdline = "";
+    spec.osrel = "NAME=\"DevLink recovery\"\n";
+    spec.out = out;
+    assert_int_equal(uki_build(&spec), SGN_ERR_FORMAT);
+
+    spec.bios_only = 1;
+    assert_int_equal(uki_build(&spec), SGN_OK);
+    read_back(out, &img, &len);
+    expect_section(img, len, ".linux", k, sizeof(k));
+    expect_section(img, len, ".uname", "6.6.0-devlink", 13);
+    expect_section(img, len, ".osrel", "NAME=", 5);
+    free(img);
+
+    memset(k, 0, sizeof(k));
+    put("notbz", k, sizeof(k), kernel, sizeof(kernel));
+    assert_int_equal(uki_build(&spec), SGN_ERR_FORMAT);
+}
+
 static void test_uki_build_merges_the_kernel_sbat(void **state)
 {
     static const char ksbat[] = "sbat,1,x\nlinux,1,L,linux,1,y\n";
@@ -547,7 +589,7 @@ static void test_uki_build_merges_the_kernel_sbat(void **state)
     char initrd[256];
     char out[256];
     uint8_t k[0x800];
-    uki_spec spec;
+    uki_spec spec = { 0 };
     uint8_t *img = NULL;
     size_t len = 0;
 
@@ -587,7 +629,7 @@ static void test_uki_build_refuses_bad_inputs(void **state)
     char initrd[256];
     char junk[256];
     char out[256];
-    uki_spec spec;
+    uki_spec spec = { 0 };
     struct stat st;
 
     (void)state;
@@ -719,6 +761,7 @@ int run_uki_tests(void)
         cmocka_unit_test_setup(test_uki_layout_refuses_what_does_not_fit,
                                setup_stub),
         cmocka_unit_test(test_uki_build_end_to_end),
+        cmocka_unit_test(test_uki_build_bios_only),
         cmocka_unit_test(test_uki_build_merges_the_kernel_sbat),
         cmocka_unit_test(test_uki_build_refuses_bad_inputs),
         cmocka_unit_test(test_uki_main_arguments),

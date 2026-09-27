@@ -3756,17 +3756,21 @@ first list only; a boot that comes back to the list gets neither.
 
 #### 12.5.2 BIOS
 
-Traced from `apps/station/bios_main.c` as built on 2026-09-27 (Section 13).
+Traced from `falcon-bios/src/station/station.c` as built on 2026-09-27
+(Section 13), which `apps/station/bios_main.c` and
+`apps/station-legacy/bios_main.c` both run (`station_main`); station-legacy
+adds its rows and their route at the two places marked.
 
 ```mermaid
 flowchart TD
-    S12["stages 1 and 2, as 12.3.2<br/>the boot partition is the station partition"] --> BM["bios_main (apps/station/bios_main.c)<br/>e820_read"]
+    S12["stages 1 and 2, as 12.3.2<br/>the boot partition is the station partition"] --> BM["bios_main, station_main (station/station.c)<br/>e820_read"]
     BM --> DSK["scan_disks: the boot drive, then every drive the BDA counts (0x475)<br/>each one's table (MBR or GPT) and disk id"]
     DSK --> IR["on the boot drive: install_boot_record (the install ID),<br/>marker_take (the marker sector, cleared before it is believed)"]
     IR --> SP["read_station: the station partition mounted (FAT)<br/>/MEMTEST.BIN present? /STATION.INI parsed (stationini.c)"]
     SP --> SH["find_shelves: partitions whose LUKS2 token or /.falcon is a shelf<br/>record of the install; pos_list: a plaintext shelf's UKIs are rows<br/>(uki-&lt;stem&gt;), an encrypted shelf one row, Personal OS (encrypted)"]
     SH --> CH["find_chains: each MBR primary but the station partition whose boot<br/>sector (FAT32: and its sectors 2, 12) carries a known loader<br/>(vbr_identify): mbr-&lt;sig&gt;-p&lt;n&gt;; each other disk whose LBA 0 has<br/>boot code and an active entry: mbr-&lt;sig&gt; or gpt-&lt;8&gt;<br/>(core's media/vbr.c, which the installer shares)"]
-    CH --> MT["memtest when MEMTEST.BIN is there"]
+    CH --> APP["station-legacy only (legacy_rows): jroute_init over the station<br/>partition, the rows cd, cf, usb whose driver and controller are there;<br/>station_add_own_shelf: each UKI in its /uki a row by its .osrel name"]
+    APP --> MT["memtest when MEMTEST.BIN is there"]
     MT --> INI["strows_apply (media/strows.c, STROWS_BIOS):<br/>the INI's sections change, hide or add rows"]
     INI --> SI["screen_init: 80x25 text, VGA memory"]
     SI --> NOTE{"install unknown, STATION.INI line refused,<br/>or a default naming nothing here?"}
@@ -3783,6 +3787,8 @@ flowchart TD
     LIST -- "a row, or the countdown" --> ROW{"the row's kind"}
     ROW -- "shelf or UKI" --> POS["POS (12.3.7): pos_run_pick,<br/>a UKI row boots its file without the chooser"]
     ROW -- "memtest" --> MEM["MEM: MEMTEST.BIN through linux_boot, as jump's (12.6)"]
+    ROW -- "cd, cf, usb (station-legacy)" --> JR["CDR, PCC, USB: jroute_boot, jump's routes (12.6),<br/>the drivers read off the station partition"]
+    JR -- "comes back" --> FAIL
     ROW -- "partition" --> VBR["VBR (chain.c): primary, MBR disk, 512-byte sectors?<br/>LBA 0 read, the entry marked active in the copy,<br/>the boot sector read, 0x55AA, the swap's 1 KB asked for"]
     VBR -- "refused, unreadable, no 0x55AA,<br/>no memory for the swap" --> FAIL["&lt;route&gt; failed while ..., a key"]
     VBR --> FIX["vbr_fix_bpb: hidden sectors = the entry's start,<br/>the BPB's drive number = DL, in memory, said on serial"]
@@ -3804,7 +3810,9 @@ chain of a disk that is not 0x80 (Section 13.4): 84 bytes in the kilobyte
 taken off the BDA's count, the IVT's INT 13h pointing at it, and nothing
 else changed. A chain of the disk that is already 0x80, and every other
 route, leave the IVT, the BDA and the memory map as the BIOS left them.
-MEM hands over as jump's does; POS as the stick's.
+MEM hands over as jump's does; POS as the stick's. On station-legacy,
+CDR, USB and PCC leave what they leave under jump (12.6): the reverse
+thunk and the driver's slot, and on CDR the virtual CD over them.
 
 ### 12.6 falcon jump
 
@@ -3828,7 +3836,7 @@ flowchart TD
     GEO --> L3["stage3_load: no partition table, so the floppy's own boot record:<br/>stage 3 at sector 98 (FD_STAGE3_SECTOR), no marker"]
     L3 --> BM["bios_main (apps/jump/bios_main.c)<br/>e820_read"]
     BM --> FAT["read_floppy: fs_identify, fs_mount (FAT12; sector 0 from 0x7C00)<br/>MEMTEST.BIN present? JUMP.INI parsed (jumpini.c)"]
-    FAT --> PCI["pci_scan: an IDE controller? a UHCI one?<br/>class codes through 0xCF8/0xCFC; nothing loaded"]
+    FAT --> PCI["jroute_init (jump/routes.c): the modules on the floppy,<br/>an IDE controller? a USB one? a CardBus bridge?<br/>class codes through 0xCF8/0xCFC; nothing loaded"]
     PCI --> DSK["scan_disks: every drive the BDA counts (0x475)<br/>whose LBA 0 ends in 0x55AA; the CD and USB rows when<br/>their module is on the floppy and their controller in the machine"]
     DSK --> INI{"JUMP.INI taken?"}
     INI -- "a line it cannot take" --> REP["the line and why, a key<br/>no default"]
@@ -3839,7 +3847,7 @@ flowchart TD
     MENU -- "Escape" --> RF["INT 18h, else bios_reboot"]
     MBR -- "unreadable, no 0x55AA" --> MENU
     MEM -- "refused or unreadable" --> MENU
-    MENU -- "CD drive" --> LD["jmod_load: ATA.MOD read to 6 MB, inflated to JMOD_SLOT_ATA (15 MB)<br/>E820 says 15-16 MB is RAM; header checked; .bss zeroed; init"]
+    MENU -- "CD drive" --> LD["jroute_boot, jmod_load: ATA.MOD read to 6 MB, inflated to JMOD_SLOT_ATA (15 MB)<br/>E820 says 15-16 MB is RAM; header checked; .bss zeroed; init"]
     LD --> PB["ops.probe: IDENTIFY PACKET DEVICE on 0x1F0 and 0x170,<br/>master and slave; READ CAPACITY; the first with a disc"]
     PB --> CAT{"the catalog through ops.read (disc_read)<br/>vcd_boot_entry: its media type"}
     CAT -- "floppy emulation" --> VFD["vfd_serve over disc_read: the image to the heap above 64 MB,<br/>vfdres.S as drive 0x00; nothing of the module stays (12.3.8)"]
@@ -3866,6 +3874,11 @@ flowchart TD
     CI -- "yes" --> IO["its index to the COR; I/O window 0 at 0x1E0, the memory window closed;<br/>atadisk.c: IDENTIFY DEVICE"]
     IO --> MB2["boot_module_disk: as the USB branch, from jres_install on"]
 ```
+
+The CD, USB and CF branches are falcon-bios's `jump/routes.c`
+(`jroute_init`, `jroute_offered`, `jroute_boot`), which station-legacy
+links too (13.10); `apps/jump/bios_main.c` is the menu, `JUMP.INI`, `MBR`,
+`MEM` and the pages around a route.
 
 `MBR` and `MEM` leave nothing resident, as the station's do but for its drive swap (12.5.2).
 `CDR` leaves two: the stick's virtual CD, unchanged but for serving a whole
@@ -3929,7 +3942,7 @@ What each links, beyond the shared console, disk and loader plumbing:
 | | station | station-legacy |
 |---|---|---|
 | UEFI | `pos/`, `nxt/`, `esp/` (bootmgfw and memtest through `loadops`), core's `media/strows.c` (the list, both loaders'), `discover/disks.c` (disks named as the INI names them), core `luks`, `fs` (ext4; an ESP is read by the firmware's own FAT driver), `part`, `media/shelf.c`, `media/stationini.c` | none: legacy is BIOS only |
-| BIOS | `pos.c`, `linux.c` (UKIs, memtest), `mbr/chain.c` and `vbrcore.c` (13.4's partition chain and another disk's MBR) with core's `media/vbr.c` (what a boot sector is), `mbr/swapres.S` (the drive swap), `marker.c`, core's `media/strows.c` and `media/stationini.c` as UEFI's, `fs` (ext4 and FAT, for the station partition) and `media/cpio.c` | the station's, plus the route module lifted out of jump (13.10), `jmod`, `jres`, the virtual CD and `vfd` |
+| BIOS | `pos.c`, `linux.c` (UKIs, memtest), `mbr/chain.c` and `vbrcore.c` (13.4's partition chain and another disk's MBR) with core's `media/vbr.c` (what a boot sector is), `mbr/swapres.S` (the drive swap), `marker.c`, core's `media/strows.c` and `media/stationini.c` as UEFI's, `fs` (ext4 and FAT, for the station partition) and `media/cpio.c` | the station's, plus the route module lifted out of jump (`jump/routes.c`, 13.10), `jmod`, `jres`, `mbr.c` and `bootpart.c` (a stick or a card started from its LBA 0), the virtual CD, `vfd`, the heap and `gz` |
 | leaves out | the ISO library, direct boot, Windows and BSD media, blessing, boot predictions, falcon-hook, falcon-winjump | as the station |
 
 No boot predictions are linked, so no row carries a trust tag. The version
@@ -4342,20 +4355,44 @@ header). The Manual's Section 3.6 is its reference. What the code settled:
 
 ### 13.10 station-legacy
 
+Status (2026-09-27): built and rig-proven on a copy of the A21m's disk
+(13.11, `make test-station-legacy`).
+
 The BIOS station plus the rows jump offers: **CD drive**, **USB stick**, **CF
 card (PC Card)**, each when its controller is on the PCI bus and its driver
 is in the station partition. The drivers, the reverse thunk, the virtual CD
 and the routes are jump's (Section 14.4-14.6), lifted out of
-`apps/jump/bios_main.c` into a falcon-bios module both link. Jump keeps its
-floppy and its menu; station-legacy reads the same `*.MOD` files from its
-station partition instead. A falcon stick found on USB is booted as jump
-boots it (its own stages, served as the next BIOS disk); a CD as the stick's
-virtual CD serves it. The ATA disk driver gains 48-bit LBA here, since an IDE
-disk or CF card in an old laptop can be larger than 128 GiB today.
+`apps/jump/bios_main.c` into a falcon-bios module both link
+(`falcon-bios/src/jump/routes.c`). Jump keeps its floppy and its menu;
+station-legacy reads the same `*.MOD` files from its station partition
+instead, which `mkstick station install --bios --legacy` copies there. A
+falcon stick found on USB is booted as jump boots it (its own stages, served
+as the next BIOS disk); a CD as the stick's virtual CD serves it; a CF card
+as the next BIOS disk through `PCC.MOD`. The ATA disk driver gained 48-bit
+LBA here (`hw/ata/atadisk.c`, `atacore.c`'s `ata_addressing`): LBA28 for any
+transfer it reaches, 48-bit commands for one past sector 0x0FFFFFFE on a
+disk whose IDENTIFY says it takes them, since an IDE disk or CF card in an
+old laptop can be larger than 128 GiB today.
+
+The station itself is one module, `falcon-bios/src/station/station.c`,
+which both station apps run: station-legacy's `bios_main.c` adds its rows
+through a hook after the rows the station finds and before memtest and
+`STATION.INI` (so a section can relabel, hide, order or default them like
+any found row), and boots them itself. The rows' generated names are `cd`,
+`cf` and `usb`; they are listed Windows and the other chains first, then
+CD drive, CF card, USB stick (jump's order), the station partition's UKIs,
+and memtest. Its version type is `station-legacy-release`; its stages 1
+and 2 are every app's, and the installer's `--legacy` takes its stage 3
+(`build/bin/falcon-bios-station-legacy-stage3.bin`).
 
 DevLink recovery (13.5) is a row here and nowhere else on a station: its
-kernel and initrd wrapped as a UKI by `falcon-boot-sign uki`, in the station
-partition's `/uki`, read as a plaintext shelf, with no prompt.
+kernel and initrd wrapped as a UKI by `falcon-boot-sign uki --bios-only`
+(the kernel has no EFI stub, so the UKI is one only falcon-bios, which
+unwraps it and never runs sd-stub, can start; `make devlink-uki` builds it
+from devlink-rescue's images, empty command line, `NAME="DevLink
+recovery"`), in the station partition's `/uki`, read as a plaintext shelf
+(`station_add_own_shelf`) with no prompt, the row labelled by its
+`.osrel` name alone.
 
 The first target is the ThinkPad A21m: Windows 2000 on its only disk, and the
 CD, USB and CF routes jump already boots on it.
@@ -4458,10 +4495,38 @@ A21m's disk:
   or written. The disk is given the A21m's geometry (15 heads, 63 sectors,
   translated LARGE to the 240 heads its BPB carries); under SeaBIOS's
   default the untouched image stops at "NTLDR is missing" with its own
-  MBR. The station's countdown boots its default through the partition
-  chain to NTLDR, "Starting Windows" and the Windows 2000 splash
-  (2026-09-27); the stop 0x7B that follows is the untouched image's too,
-  Windows 2000's IDE driver meeting QEMU's controller, not falcon's.
+  MBR. The machine is QEMU's `pc` with a PIIX4 south bridge
+  (`x-south-bridge=piix4-isa`), the A21m's: under the default PIIX3 the
+  image's Windows 2000, set up on a PIIX4, stops 0x7B after its splash. The
+  installer's shrink clears the dirty flag ntfsresize sets (`ntfsfix -d`),
+  so a boot is not a CHKDSK and a reboot. The station's countdown boots its
+  default through the partition chain to NTLDR, the Windows 2000 splash and
+  its desktop, where the first boot opens the Found New Hardware wizard
+  (2026-09-27).
+- **A machine whose tick count stands still** (`no-ticks`): once Windows
+  2000 had reset the rig's machine, SeaBIOS answered every INT 16h with
+  interrupts off and IRQ0 stayed pending, so the tick count at 0040:006C
+  never moved and a countdown timed by it stood at five seconds for good.
+  The countdown now takes whichever of the ticks and the RTC's seconds
+  (INT 1Ah) says more time has gone (`console/cdclock.c`, host-tested). The
+  case boots the station through a floppy that masks IRQ0 first
+  (`falcon-bios/tools/tickstop.S`) and expects the default to boot.
+- **station-legacy on a copy of the A21m's disk** (`make
+  test-station-legacy`, `falcon-bios/tools/run-legacy-rig.sh`): installed
+  by `mkstick station install --bios --legacy` with DevLink recovery's UKI
+  and memtest86+ through the same qcow2 overlay path
+  (`A21M_DIR=build/a21m-legacy`), each boot a throwaway overlay, the PIIX4
+  machine. Each case stops the countdown and takes its row with keys sent
+  through the monitor, the rows' order read off serial. The cases
+  (2026-09-27): the menu with every device attached (Windows, CD drive,
+  CF card, USB stick, DevLink recovery, memtest); the rig's memprobe disc
+  in an IDE ATAPI drive on the secondary channel, booted and reporting its
+  memory map; the jump rig's falcon stick on UHCI, OHCI and EHCI, its own
+  stages off the drive the thunk serves and its library mounted; a CF card
+  in the rig's PC Card bridge, 5 V and 3.3 V-only, its stage 3 off drive
+  0x81; DevLink recovery on `-cpu pentium -m 32`, the devlink client
+  reaching its agent on COM1; and Windows 2000 through the partition chain
+  to its splash and desktop, judged from screendumps.
 - **The installer on images** (`make test-station-install`): an MBR disk of
   the A21m's shape with a Windows 98 second disk and a LUKS2 shelf, a GPT
   disk with an ESP, Windows and a plaintext shelf; install, status, remove,
@@ -4511,7 +4576,8 @@ Still rejected:
    stages, the 32-bit stick's tooling removed. Both sticks rewritten.
 2. **The station**, UEFI and BIOS, with the installer, `STATION.INI`, the
    partition chain, the drive swap and next boot.
-3. **station-legacy**, installed on the A21m.
+3. **station-legacy**, installed on the A21m (built and rig-proven
+   2026-09-27, 13.10).
 
 Each is merged and rig-proven before the next starts.
 
@@ -4872,12 +4938,13 @@ an ATA disk (`hw/ata/atadisk.c`). It boots as any disk does, whatever is
 on it: its LBA 0, as the next BIOS disk, through the reverse thunk with
 its INT 15h half, as `USB` does (`boot_module_disk`).
 
-**Shared with station-legacy (decision 2026-09-26).** The routes above live
-today in `apps/jump/bios_main.c` as statics (`pci_scan`, `boot_cd`,
-`boot_usb`, `boot_cf`, `boot_module_disk`, `is_falcon_stick`). They move into
-a falcon-bios module that jump and station-legacy (Section 13.10) both link,
-so a route is written once; each app keeps its own menu and reads the
-drivers from its own FAT volume.
+**Shared with station-legacy (decision 2026-09-26, built 2026-09-27).** The
+routes above are `falcon-bios/src/jump/routes.c` (`BIOS_MOD_jroutes`),
+lifted out of `apps/jump/bios_main.c`, which jump and station-legacy
+(Section 13.10) both link, so a route is written once. Each app keeps its
+own menu and pages and hands the module its own FAT volume: jump its
+floppy, station-legacy its station partition. `jmod_load`'s sentences name
+that volume ("the floppy", "the disk").
 
 ### 14.7 JUMP.INI
 
@@ -4943,7 +5010,15 @@ real mappings in QEMU's address spaces, moved and enabled as the ExCA
 registers are written, so `PCC.MOD` meets the register interface it will
 meet on silicon, not a shortcut past it. `build-qemu.sh` builds the QEMU
 release the machine runs with that one device added, into
-`build/qemu-pcc/`; the `cf` case of the rig runs on it. It is test
+`build/qemu-pcc/`; the `cf` case of the rig runs on it. With `lba48=on`
+the card has the 48-bit feature set (READ and WRITE SECTORS EXT, the task
+file's registers as two-deep FIFOs), and the `cf48` case boots a sparse
+card past 128 GiB whose boot partition starts past sector 2^28
+(`mk-rig-disk.sh big`): its stage 2 reads stage 3 from there through
+`PCC.MOD`, which `atadisk.c` addresses with 48-bit commands for any
+transfer LBA28 cannot reach (`atacore.c`'s `ata_addressing`, host-tested),
+and LBA28 everywhere else. Without them the case fails at stage 2's
+partition table read. It is test
 equipment, GPL-2.0-or-later as QEMU is, and never part of falcon.
 
 The first machine is the ThinkPad A21m (its repository's

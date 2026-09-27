@@ -117,7 +117,9 @@ falcon-efi and falcon-bios, which never share a set, may both have a `pos/`.
 - `apps/` the loaders, one directory per build: `stick/` (every route, the
   loader on a falcon stick; `all` builds its UEFI image, `make bios` its
   BIOS one), `station/` (DESIGN Section 13, falcon as a machine's own
-  boot loader; `make station`) and `jump/` (DESIGN Section 14, a boot
+  boot loader; `make station`), `station-legacy/` (Section 13.10, the
+  BIOS station plus jump's CD, USB and CF routes and DevLink recovery's
+  UKI; `make station-legacy`, `make devlink-uki`) and `jump/` (DESIGN Section 14, a boot
   floppy for an old BIOS machine; `make jump` builds the whole 1.44 MB
   image with mtools, its core in the FAT12 volume's reserved sectors). An app is its entry points (`efi_main.c`,
   `efi_sbat.c`, `bios_main.c`) and an `app.mk` that lists, one line per
@@ -342,8 +344,12 @@ falcon-efi and falcon-bios, which never share a set, may both have a `pos/`.
   falcon jump route under SeaBIOS and judges it from serial
   (`tools/run-jump-rig.sh`); its CF case runs on a QEMU that
   `tools/qemu-pcc/build-qemu.sh` builds with `falcon-pcc.c`, a model of the
-  A21m's PC Card bridge, since QEMU has none. `make station` links the
-  station's stage 3 (DESIGN Section 13) from `apps/station/bios_main.c`:
+  A21m's PC Card bridge, since QEMU has none (its `lba48=on` card is the
+  `cf48` case, a sparse card past 128 GiB that `hw/ata/atadisk.c` reads
+  with 48-bit commands). `make station` links the
+  station's stage 3 (DESIGN Section 13) from `src/station/station.c`,
+  which `apps/station/bios_main.c` and `apps/station-legacy/bios_main.c`
+  both run (`station_main`, with a hook for station-legacy's own rows):
   the UKIs off the shelves carrying its install ID, memtest86+, and
   `src/mbr/chain.c`, a primary partition's boot sector (the MBR copy at
   0000:0600, DS:SI at its entry, the BPB made to agree) or another disk's
@@ -358,7 +364,14 @@ falcon-efi and falcon-bios, which never share a set, may both have a `pos/`.
   reports what it was handed), and `make test-station-fixtures` real
   systems behind the station, FreeDOS and Windows 98 SE from the fixture
   disks of `tools/fixtures/`, put on by the installer through qemu-nbd
-  (`tools/run-station-fixture-rig.sh`). `make test-core` boots the core matrix cells (the stick
+  (`tools/run-station-fixture-rig.sh`). `make test-station-legacy` puts
+  station-legacy on a copy of the A21m's disk with the installer through
+  qemu-nbd (`tools/mk-a21m-station.sh`, a qcow2 overlay, the original never
+  written) and boots every row of its menu (`tools/run-legacy-rig.sh`).
+  The menu's countdown is timed by the tick count and the RTC together
+  (`src/console/cdclock.c`, host-tested), since a machine can reach it
+  with IRQ0 never delivered; the station rig's `no-ticks` case boots
+  through `tools/tickstop.S`, which masks IRQ0 first. `make test-core` boots the core matrix cells (the stick
   under both firmwares alone, beside a second stick, an MBR disk and another
   install's records; a 4Kn stick on NVMe; the station, alone and with a
   stick plugged in) and judges each from
@@ -376,9 +389,11 @@ falcon-efi and falcon-bios, which never share a set, may both have a `pos/`.
   virtual CD and the ISO scan), `vfd/`, `mem/` (E820 and the heap),
   `disk/` (the read callback and the marker), `linux/`, `pos/`, `bsd/`,
   `win/` and `mbr/`; `jump/` (falcon jump's JUMP.INI parser, the module
-  format and loader `jmod.c`/`jmodload.c`, and the reverse thunk:
+  format and loader `jmod.c`/`jmodload.c`, the reverse thunk:
   `rthunk.S`, a real-mode INT 13h entry that calls a module's protected-mode
-  `int13`, installed by `jres.c`); and `hw/`, jump's drivers, each built as
+  `int13`, installed by `jres.c`, and `routes.c`, the CD, USB and CF routes
+  jump and station-legacy both boot); `station/` (the BIOS station's list
+  and routes, both station apps'); and `hw/`, jump's drivers, each built as
   a module linked at its slot (`jmod.ld.S`, `jump_module`): `hw/ata/` is
   ATA.MOD, ATAPI over the legacy IDE channels, with `atacore.c` its
   host-tested half; `hw/usb/` is the USB modules, `uhci.c`, `ohci.c` and
