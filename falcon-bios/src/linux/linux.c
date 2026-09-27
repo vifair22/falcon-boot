@@ -312,12 +312,19 @@ __asm__(
     "\txorl   %edi, %edi\n"
     "\txorl   %ebx, %ebx\n"
     "\tjmp    *%edx\n"
-    "\t.globl linux_move_stub_end\n"
     "linux_move_stub_end:\n"
+    "\t.previous\n"
+    /* Its length, computed by the assembler: C subtracting two symbols is
+     * pointer arithmetic across objects, which C does not define. */
+    "\t.section .rodata.linux_move, \"a\"\n"
+    "\t.globl linux_move_stub_len\n"
+    "\t.balign 4\n"
+    "linux_move_stub_len:\n"
+    "\t.long linux_move_stub_end - linux_move_stub\n"
     "\t.previous\n");
 
 extern const uint8_t linux_move_stub[];
-extern const uint8_t linux_move_stub_end[];
+extern const uint32_t linux_move_stub_len;
 
 /* Never returns. Everything the kernel needs is in memory; this is the
  * handoff itself, and it is the fifth and last of Section 5.3's assembly
@@ -337,7 +344,7 @@ static void enter_kernel(uint32_t entry, uint32_t zeropage, uint32_t from,
 
     if (move != 0) {
         memcpy((void *)(uintptr_t)LINUX_STUB_ADDR, linux_move_stub,
-               (size_t)(linux_move_stub_end - linux_move_stub));
+               (size_t)linux_move_stub_len);
         __asm__ __volatile__(
             "cli\n\t"
             "lgdt   %[gdtr]\n\t"
