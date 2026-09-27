@@ -1,4 +1,4 @@
-/* falcon-boot: device discovery (docs/DESIGN.md Section 9).
+/* falcon-boot: device discovery (docs/DESIGN.md Sections 3.1, 9).
  *
  * ONE pass, one inventory, every consumer reads it.
  *
@@ -10,17 +10,26 @@
  * missed for another, with nothing on screen to say so.
  *
  * So the Block I/O handles are enumerated exactly once, at startup, and every
- * handle is classified there and then: is media present, which falcon role
- * does its GPT entry give it (Section 3), does it carry a LUKS2 header,
- * and which registered filesystem driver claims its bytes. Classification is
- * eager because it is cheap - a couple of sector reads per handle - and
- * mounting stays lazy, because mounting is not: each consumer mounts the rows
- * it cares about, when it cares about them.
+ * handle is classified there and then: is media present, does it carry a
+ * LUKS2 header, which registered filesystem driver claims its bytes, and what
+ * its identity record says (DESIGN Section 3.1). Classification is eager
+ * because it is cheap - a few sector reads per handle - and mounting for use
+ * stays lazy: each consumer mounts the rows it cares about, when it cares
+ * about them.
  *
- * A rescan is this same entry point run again. It drops
- * falcon-core/src/part/part.c's cached view of the machine first, so media the
- * firmware enumerated after the first look is judged against a current picture
- * rather than a stale one.
+ * Which rows are this install's. The loader reads the record in its own boot
+ * partition first (LoadedImage->DeviceHandle, the ESP it was read from, whose
+ * boot sector carries a `boot` record) and takes that record's install ID.
+ * A row belongs to this install only when its own record carries the same
+ * ID: the ISO library by the /.falcon file on its exFAT volume, the shelf by
+ * the falcon token in its LUKS2 header or by /.falcon on a plaintext ext4.
+ * Rows are looked for on every disk, since a station's shelf may sit on
+ * another disk than its ESP, but only matching IDs are taken, so a second
+ * stick's library or shelf never enters this loader's menu. A boot partition
+ * with no record makes no row this install's: there is no fallback to "any
+ * exFAT volume" or "any LUKS2 volume" (DESIGN Section 3.1).
+ *
+ * A rescan is this same entry point run again.
  */
 
 #ifndef FALCON_DISCOVER_H
@@ -30,13 +39,16 @@
 #include <efi/blockio.h>
 
 #include <fs/fs.h>
-#include <part/part.h>
+#include <ident/ident.h>
 
 /* Inventory cap. A machine with more than this many Block I/O handles is a
  * server with a disk shelf, not a laptop with a stick in it; the rows past
  * the cap are counted (discover_skipped) and reported rather than silently
- * dropped. Each row is small, but the scan itself costs reads per handle, so
- * an unbounded inventory would also be an unbounded startup delay. */
+ * dropped. The boot disk's handles are enumerated first, so the cap never
+ * costs this install its own library or shelf when they share the loader's
+ * disk (a stick, always). Each row is small, but the scan itself costs reads
+ * per handle, so an unbounded inventory would also be an unbounded startup
+ * delay. */
 #define DISCOVER_MAX 32u
 
 typedef struct discover_dev {
@@ -44,24 +56,12 @@ typedef struct discover_dev {
     EFI_BLOCK_IO_PROTOCOL *bio;
 
     uint8_t media_present;
-    /* DESIGN Section 3's scan filter, evaluated once per role: "only
-     * identified partitions if any exist, everything otherwise". Both can be
-     * true on a machine with no falcon partition at all, which is exactly the
-     * QEMU rig and any hand-made stick. */
-    uint8_t accept[PART_ROLE_COUNT];
-    uint8_t has_type;        /* type below was established */
     uint8_t luks2;           /* LUKS2 primary header magic at offset 0 */
-
-    EFI_GUID type;           /* GPT partition type GUID. Reporting only: p2's
-                                type is Microsoft basic data and says nothing
-                                on its own (see falcon-core/src/part/part.h), so `role`
-                                below is the answer, never this field. */
-    fs_hint  role;           /* the falcon role its GPT entry names, or
-                                FS_HINT_NONE for anything else */
-    uint8_t  boot_disk;      /* a partition of the disk the loader itself
-                                was started from (DESIGN Section 3, "the
-                                boot disk's shelf wins"); 0 when that could
-                                not be established either way */
+    uint8_t has_rec;         /* rec below was read: a LUKS2 falcon token, or
+                                /.falcon on the volume `fs` claimed */
+    uint8_t ours;            /* has_rec, and rec carries the install ID of
+                                the loader's own boot partition */
+    ident_rec rec;
 
     /* The driver that claimed the PLAINTEXT bytes of this device, or NULL.
      * NULL for an encrypted volume by construction: a LUKS2 volume's bytes
@@ -71,10 +71,28 @@ typedef struct discover_dev {
     const fs_ops *fs;
 } discover_dev;
 
+/* What the loader's own boot partition said, for the screen. */
+typedef enum {
+    DISCOVER_ID_OK = 0,      /* a `boot` record: its install ID is in use */
+    DISCOVER_ID_NO_DEVICE,   /* the firmware named no readable device for
+                                the loader's image */
+    DISCOVER_ID_NONE,        /* the boot partition carries no record */
+    DISCOVER_ID_BAD          /* a record that is damaged, of a version this
+                                loader does not read, or not role `boot` */
+} discover_id_state;
+
 /* Enumerates and classifies. Safe to call again; the inventory is rebuilt.
  * image is the loader's own image handle: its LoadedImage->DeviceHandle is
- * what each row's boot_disk is judged against. */
+ * the boot partition whose record names this install. */
 void discover_scan(EFI_SYSTEM_TABLE *st, EFI_HANDLE image);
+
+/* The boot partition's record as the last scan read it. *out (may be NULL)
+ * is filled on DISCOVER_ID_OK only. */
+discover_id_state discover_install(ident_rec *out);
+
+/* The sentence for the screen when the state is not DISCOVER_ID_OK, or NULL:
+ * what is missing and what to do. falcon-bios says the same sentences. */
+const CHAR16 *discover_install_problem(discover_id_state state);
 
 UINTN discover_count(void);
 /* Handles seen after the inventory filled up. Nonzero means the machine had
@@ -82,10 +100,10 @@ UINTN discover_count(void);
 UINTN discover_skipped(void);
 discover_dev *discover_at(UINTN i);
 
-/* Iterates the rows a role's scan should look at: media present and accepted
- * by DESIGN Section 3's filter. *cursor starts at 0 and is opaque; returns
- * NULL when there are no more. */
-discover_dev *discover_next(part_role role, UINTN *cursor);
+/* Iterates this install's rows of one role: media present and a record of
+ * that role carrying the boot partition's install ID. *cursor starts at 0
+ * and is opaque; returns NULL when there are no more. */
+discover_dev *discover_next(ident_role role, UINTN *cursor);
 
 /* The byte-read callback over a row's Block I/O instance, in the shape every
  * driver in this tree takes. ctx is the discover_dev. Any offset and any

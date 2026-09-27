@@ -108,7 +108,13 @@ void console_open(void);
 ssize_t read_line(char *buf, size_t cap);
 ssize_t read_secret(char *buf, size_t cap);
 
-/* stick.c: finding the stick */
+/* stick.c: finding the stick, by the install ID the loader handed over
+ * (stickid.h). */
+enum {
+    STICK_FOUND     = 1,
+    STICK_NOT_FOUND = 0,   /* no p2 and p3 carrying the ID appeared */
+    STICK_NO_ID     = -1   /* the loader handed over no install ID */
+};
 int find_stick(stick_parts *out);
 void say_block_devices(void);
 int exfat_uuid(const char *node, char *out, size_t cap);

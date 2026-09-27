@@ -30,6 +30,7 @@
 #include <media/bootfs.h>
 #include <media/bootcfg.h>
 #include <media/family.h>
+#include <ident/identfs.h>
 #include <media/extmap.h>
 #include <media/hookcmd.h>
 #include <part/part.h>
@@ -160,20 +161,27 @@ static void dir_handoff(void)
 
 /* Where the ISO sits on p2, encoded for the hook (DESIGN Section 6.4).
  *
- * The UEFI loader reads the partition's GUID and first LBA out of the Hard
- * Drive node of its device path; here they come straight off the GPT entry
- * falcon-core already parsed, which is the same two numbers by a shorter
- * road. Returns the encoded length, or 0. */
+ * The library is named as the UEFI loader names it (DESIGN Section 3.1):
+ * its install ID, read here off p2's own /.falcon record, so whoever found
+ * p2 owes this nothing but the mounted volume, and its first LBA, off the
+ * table entry falcon-core already parsed. Returns the encoded length, or 0
+ * (no record on p2 included). */
+static ident_fs_scratch g_rec;
+
 static size_t build_map(fs_vol *p2, const gpt_part *part, const fs_dirent *iso,
                         uint32_t block_size)
 {
     extmap_hdr hdr;
+    ident_rec rec;
     size_t n = 0;
     size_t i;
     size_t mlen = 0;
 
     memset(&hdr, 0, sizeof hdr);
-    memcpy(hdr.part_guid, part->unique, sizeof hdr.part_guid);
+    if (ident_read_vol(p2, &g_rec, &rec) != IDENT_OK ||
+        rec.role != IDENT_ROLE_LIBRARY)
+        return 0;
+    memcpy(hdr.install_id, rec.install_id, sizeof hdr.install_id);
     hdr.part_lba = part->start_lba;
     hdr.block_size = block_size;
     hdr.iso_size = iso->size;
@@ -195,7 +203,7 @@ static size_t build_map(fs_vol *p2, const gpt_part *part, const fs_dirent *iso,
  * The cmdline is rendered without an ISO path: finding the medium is
  * falcon-hook's job (DESIGN Section 12.4), and it is told where the ISO is
  * by the extent map in its own cpio, appended after the entry's initrds.
- * A map that cannot be built (too many fragments, no GPT entry) boots the
+ * A map that cannot be built (too many fragments, no record on p2) boots the
  * entry without the hook rather than not at all, and says so; the kernel
  * then finds its medium by its own means or not. */
 static int boot_entry(const bootcfg_entry *e, fs_vol *p2,

@@ -62,18 +62,16 @@ typedef struct {
 } pos_result;
 
 /* Reads the shelf-role rows of the one device inventory
- * (falcon-efi/src/discover/discover.c, DESIGN Section 9) and records the ones
- * this loader could actually boot from:
+ * (falcon-efi/src/discover/discover.c, DESIGN Section 9), which are this
+ * install's shelves by record (Section 3.1), and records the ones this
+ * loader could actually boot from:
  *
  *   - an encrypted shelf, i.e. a LUKS2 volume with at least one pbkdf2
  *     keyslot (DESIGN Section 3: p3 is created that way precisely so EFI-land
- *     can open it; p4's argon2id slots are recognised and skipped). Its
- *     contents are unreadable here, so the header is all that is judged;
+ *     can open it). Its contents are unreadable here, so the header is all
+ *     that is judged;
  *   - a plaintext shelf (Section 3's --p3-plain), which IS readable here, and
  *     is therefore recorded only when a UKI is actually on it.
- *
- * Only the boot disk's shelves are recorded when it has a usable one; the
- * other disks' are looked at only when it has none (DESIGN Section 13.3).
  *
  * Costs a header parse or a short directory walk per row, and never asks for
  * a passphrase, so it is safe to run as part of the startup scan. Call
@@ -123,6 +121,11 @@ EFI_STATUS pos_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
  * appliance there at all). */
 EFI_STATUS pos_boot_pick(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
                          pos_pick want, pos_result *result);
+
+/* Every launch also carries the install's identity, as IDENT_CRED beside
+ * the passphrase: the boot partition's record (discover_install) in its text
+ * form. The signing appliance opens only partitions carrying that ID (DESIGN
+ * Section 3.1); any other image ignores the file. Not a secret. */
 
 /* A second credential for the next launch: the bless list the menu built
  * (falcon-core/src/manifest/blesslist.h), published beside the passphrase as

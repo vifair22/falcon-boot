@@ -31,6 +31,11 @@
 #define IDENT_VERSION   1u
 #define IDENT_TEXT_MAX  64u      /* "falcon 1 library <32 hex>\n" and a NUL */
 #define IDENT_FILE      "/.falcon"
+/* The loaders hand a UKI they start the boot partition's record, in the text
+ * form, as a systemd credential of this name (sd-stub packs it into the
+ * initrd at /.extra/credentials/); the signing appliance reads its stick's
+ * install ID there (DESIGN Section 3.1). */
+#define IDENT_CRED      "falcon.ident.cred"
 
 typedef enum {
     IDENT_ROLE_BOOT    = 1,  /* FAT: BIOS stage 3 and the marker; the ESP */

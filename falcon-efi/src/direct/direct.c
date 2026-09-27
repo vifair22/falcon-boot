@@ -12,6 +12,8 @@
 #include <pe/pe.h>
 #include <media/bootfs.h>
 #include <media/extmap.h>
+#include <ident/identfs.h>
+#include <discover/partefi.h>
 #include <media/hookcmd.h>
 #include <media/grubcfg.h>
 #include <iso/iso.h>
@@ -36,6 +38,7 @@ static fs_file g_part;
 static fs_extent g_ext[EXTMAP_MAX_EXTENTS];
 static extmap_extent g_mext[EXTMAP_MAX_EXTENTS];
 static UINT8 g_map[EXTMAP_HDR_LEN + EXTMAP_MAX_EXTENTS * EXTMAP_EXT_LEN];
+static ident_fs_scratch g_rec;
 static char g_cmd[BOOTCFG_CMDLINE_MAX];
 static char g_hooked[BOOTCFG_CMDLINE_MAX + 128u];
 static CHAR16 g_opts[BOOTCFG_CMDLINE_MAX + 160u];
@@ -238,50 +241,31 @@ static EFI_STATUS build_initrd(EFI_BOOT_SERVICES *bs, const bootcfg_entry *e,
     return EFI_SUCCESS;
 }
 
-/* The Hard Drive node of p2's device path: the partition's unique GUID and
- * its first LBA, which is how the hook finds the same partition from Linux. */
-static EFI_STATUS part_node(EFI_BOOT_SERVICES *bs, EFI_HANDLE h,
-                            extmap_hdr *hdr)
-{
-    EFI_GUID dp_guid = EFI_DEVICE_PATH_PROTOCOL_GUID;
-    EFI_DEVICE_PATH_PROTOCOL *dp;
-    const UINT8 *p;
-
-    if (bs->HandleProtocol(h, &dp_guid, (void **)&dp) != EFI_SUCCESS)
-        return EFI_NOT_FOUND;
-    p = (const UINT8 *)dp;
-    for (;;) {
-        const EFI_DEVICE_PATH_PROTOCOL *n = (const EFI_DEVICE_PATH_PROTOCOL *)p;
-        UINT16 len = dp_node_len(n);
-
-        if (dp_is_end(n) || len < sizeof(*n))
-            return EFI_NOT_FOUND;
-        if (n->Type == MEDIA_DEVICE_PATH && n->SubType == MEDIA_HARDDRIVE_DP &&
-            len >= HD_DP_LEN) {
-            if (p[HD_DP_OFF_SIGTYPE] != HD_DP_SIGTYPE_GUID)
-                return EFI_UNSUPPORTED;
-            memcpy(&hdr->part_lba, p + HD_DP_OFF_START, sizeof hdr->part_lba);
-            memcpy(hdr->part_guid, p + HD_DP_OFF_SIG, sizeof hdr->part_guid);
-            return EFI_SUCCESS;
-        }
-        p += len;
-    }
-}
-
-/* Where the ISO sits on p2, encoded for the hook. */
-static EFI_STATUS build_map(EFI_BOOT_SERVICES *bs, fs_vol *p2,
+/* Where the ISO sits on p2, encoded for the hook: the library's install ID
+ * off its own record, the partition's first LBA off its handle's HARDDRIVE
+ * node (an MBR partition's as a GPT one's), and the runs (DESIGN Section
+ * 3.1; media/extmap.h). */
+static EFI_STATUS build_map(EFI_SYSTEM_TABLE *st, fs_vol *p2,
                             EFI_HANDLE p2_handle, UINT32 block_size,
                             const fs_dirent *iso, UINTN *len,
                             direct_result *r)
 {
     extmap_hdr hdr;
+    ident_rec rec;
     size_t n = 0, i, mlen = 0;
     int rc;
 
     memset(&hdr, 0, sizeof hdr);
-    r->stage = L"finding p2's GPT entry";
-    if (EFI_ERROR(part_node(bs, p2_handle, &hdr))) {
-        r->advice = L"the ISO's partition has no GPT entry this loader can "
+    r->stage = L"reading the ISO library's record";
+    if (ident_read_vol(p2, &g_rec, &rec) != IDENT_OK ||
+        rec.role != IDENT_ROLE_LIBRARY) {
+        r->advice = L"the ISO library has no readable /.falcon record.";
+        return EFI_NOT_FOUND;
+    }
+    memcpy(hdr.install_id, rec.install_id, sizeof hdr.install_id);
+    r->stage = L"finding the ISO library's partition";
+    if (EFI_ERROR(part_start_lba(st, p2_handle, &hdr.part_lba))) {
+        r->advice = L"the ISO library is not a partition this loader can "
                     L"name to Linux.";
         return EFI_UNSUPPORTED;
     }
@@ -322,8 +306,7 @@ EFI_STATUS direct_map_build(EFI_SYSTEM_TABLE *st, fs_vol *p2,
     if (len != (UINTN *)0)
         *len = 0;
     r.advice = (const CHAR16 *)0;
-    status = build_map(st->BootServices, p2, p2_handle, block_size, iso, &n,
-                       &r);
+    status = build_map(st, p2, p2_handle, block_size, iso, &n, &r);
     if (EFI_ERROR(status))
         return status;
     if (map != (const UINT8 **)0)
@@ -426,7 +409,7 @@ EFI_STATUS direct_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent, fs_vol *p2,
     if (EFI_ERROR(status))
         goto out;
 
-    status = build_map(bs, p2, p2_handle, block_size, iso, &map_len, r);
+    status = build_map(st, p2, p2_handle, block_size, iso, &map_len, r);
     if (EFI_ERROR(status))
         goto out;
 
@@ -660,7 +643,7 @@ EFI_STATUS direct_grub_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent,
         next != 1 || cfg_ext[0].len != cfg_ent.size)
         goto out;
 
-    status = build_map(bs, p2, p2_handle, block_size, iso, &map_len, r);
+    status = build_map(st, p2, p2_handle, block_size, iso, &map_len, r);
     if (EFI_ERROR(status))
         goto out;
 

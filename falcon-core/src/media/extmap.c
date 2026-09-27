@@ -26,6 +26,19 @@ static int block_size_ok(uint32_t bs)
     return bs == 512u || bs == 1024u || bs == 2048u || bs == 4096u;
 }
 
+/* An all-zero install ID names no library: every record decoder refuses
+ * one, so a map carrying it could only ever match nothing. */
+static int id_is_zero(const uint8_t *id)
+{
+    unsigned i;
+
+    for (i = 0; i < 16u; i++) {
+        if (id[i] != 0u)
+            return 0;
+    }
+    return 1;
+}
+
 size_t extmap_size(uint32_t n_extents)
 {
     return EXTMAP_HDR_LEN + (size_t)n_extents * EXTMAP_EXT_LEN;
@@ -43,7 +56,7 @@ int extmap_encode(const extmap_hdr *hdr, const extmap_extent *ext,
         return EXTMAP_ERR_BAD_ARG;
     *len = 0;
     if (hdr->n_extents == 0 || hdr->n_extents > EXTMAP_MAX_EXTENTS ||
-        !block_size_ok(hdr->block_size))
+        !block_size_ok(hdr->block_size) || id_is_zero(hdr->install_id))
         return EXTMAP_ERR_RANGE;
     for (i = 0; i < hdr->n_extents; i++) {
         if (ext[i].length == 0 || ext[i].length > ~sum)
@@ -58,9 +71,9 @@ int extmap_encode(const extmap_hdr *hdr, const extmap_extent *ext,
 
     memset(buf, 0, EXTMAP_HDR_LEN);
     memcpy(buf, g_magic, sizeof g_magic);
-    put32(buf + 8, 1);
+    put32(buf + 8, EXTMAP_VERSION);
     put32(buf + 12, EXTMAP_HDR_LEN);
-    memcpy(buf + 16, hdr->part_guid, 16);
+    memcpy(buf + 16, hdr->install_id, 16);
     put64(buf + 32, hdr->part_lba);
     put32(buf + 40, hdr->block_size);
     put32(buf + 44, hdr->n_extents);
@@ -83,14 +96,15 @@ int extmap_decode(const uint8_t *buf, size_t len, extmap_hdr *hdr)
     if (buf == (const uint8_t *)0 || hdr == (extmap_hdr *)0)
         return EXTMAP_ERR_BAD_ARG;
     if (len < EXTMAP_HDR_LEN || memcmp(buf, g_magic, sizeof g_magic) != 0 ||
-        get_le32(buf + 8) != 1u || get_le32(buf + 12) != EXTMAP_HDR_LEN)
+        get_le32(buf + 8) != EXTMAP_VERSION || get_le32(buf + 12) != EXTMAP_HDR_LEN)
         return EXTMAP_ERR_FORMAT;
-    memcpy(hdr->part_guid, buf + 16, 16);
+    memcpy(hdr->install_id, buf + 16, 16);
     hdr->part_lba = get_le64(buf + 32);
     hdr->block_size = get_le32(buf + 40);
     hdr->n_extents = get_le32(buf + 44);
     hdr->iso_size = get_le64(buf + 48);
-    if (!block_size_ok(hdr->block_size) || hdr->n_extents == 0 ||
+    if (!block_size_ok(hdr->block_size) || id_is_zero(hdr->install_id) ||
+        hdr->n_extents == 0 ||
         hdr->n_extents > EXTMAP_MAX_EXTENTS ||
         len < extmap_size(hdr->n_extents))
         return EXTMAP_ERR_FORMAT;
