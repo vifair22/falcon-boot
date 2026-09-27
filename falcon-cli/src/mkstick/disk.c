@@ -285,10 +285,21 @@ cli_status disk_settle_node(const char *node)
 cli_status disk_io_open(disk_io *io, const char *path, uint64_t base,
                         uint64_t len)
 {
+    struct stat st;
+
     memset(io, 0, sizeof *io);
     io->fd = open(path, O_RDONLY | O_CLOEXEC);
     if (io->fd < 0)
         return set_error_errno(CLI_ERR_IO, "opening %s", path);
+    /* A whole disk and each of its partition nodes keep separate buffer
+     * caches, so a disk read right after mkfs wrote through /dev/sdX1 can
+     * return the sectors from before the format (measured 2026-09-26: the
+     * boot record's reserved-sector check saw mkfs's old 32 in place of
+     * 2080). Flushing drops this device's cached sectors, so what follows
+     * reads the medium. Needs CAP_SYS_ADMIN, which every command that
+     * reads a block device already has; an image file has no such cache. */
+    if (fstat(io->fd, &st) == 0 && S_ISBLK(st.st_mode))
+        (void)ioctl(io->fd, BLKFLSBUF, 0);
     io->base = base;
     io->len = len;
     (void)snprintf(io->name, sizeof io->name, "%s", path);
