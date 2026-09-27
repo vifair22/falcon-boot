@@ -475,6 +475,7 @@ static int boot_shelf(int shelf, const uint16_t *label, const char *file)
 
     screen_mode("POS");
     screen_page();
+    screen_out("booting: ");
     screen_out16(label);
     screen_out("\n\n");
     if (shelf < 0 || (unsigned)shelf >= g_nshelves) {
