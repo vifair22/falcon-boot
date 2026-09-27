@@ -179,3 +179,49 @@ cli_status nextio_write(const next_target *t, const char *value,
                          t->path);
     return CLI_OK;
 }
+
+void nextio_print_sector(FILE *f, const next_target *t, const next_queued *q,
+                         int have_now, uint64_t now)
+{
+    static const char *const queued[] = { "no", "yes", "invalid" };
+
+    fprintf(f, "source=sector\n");
+    fprintf(f, "disk=%s\n", t->path);
+    fprintf(f, "lba=%" PRIu64 "\n", t->marker_lba);
+    fprintf(f, "sector_size=%" PRIu32 "\n", t->sector);
+    fprintf(f, "queued=%s\n", queued[q->state]);
+    if (q->state != NEXTBOOT_SECTOR_VALUE)
+        return;
+    fprintf(f, "value=%s\n", q->value);
+    fprintf(f, "set_rtc=%" PRIu64 "\n", q->stamp);
+    if (!have_now) {
+        fprintf(f, "age=unknown\nwindow=unknown\n");
+        return;
+    }
+    /* Signed: an RTC corrected backwards reads a marker as set after now,
+     * which the loader forgives within NEXTBOOT_SKEW_SECONDS. */
+    if (now >= q->stamp)
+        fprintf(f, "age=%" PRIu64 "\n", now - q->stamp);
+    else
+        fprintf(f, "age=-%" PRIu64 "\n", q->stamp - now);
+    fprintf(f, "window=%s\n",
+            nextboot_age_of(q->stamp, now, NEXTBOOT_WINDOW_SECONDS,
+                            NEXTBOOT_SKEW_SECONDS) == NEXTBOOT_AGE_FRESH
+                ? "yes" : "no");
+}
+
+void nextio_print_efivar(FILE *f, const uint8_t *buf, size_t len)
+{
+    char value[NEXTBOOT_MAX];
+
+    fprintf(f, "source=efivar\n");
+    if (buf == NULL) {
+        fprintf(f, "queued=no\n");
+        return;
+    }
+    if (nextcore_efivar_value(buf, len, value, sizeof value) != 0) {
+        fprintf(f, "queued=invalid\n");
+        return;
+    }
+    fprintf(f, "queued=yes\nvalue=%s\n", value);
+}

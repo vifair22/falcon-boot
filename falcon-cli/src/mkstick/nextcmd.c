@@ -14,8 +14,12 @@
  * The value is checked with the loaders' own rule (nextboot_decode) before
  * anything is written, and the sector is written only when it is empty or
  * already a marker: a sector holding anything else is not the one the
- * record meant, and is left alone. The sector's I/O and the choice of disk
- * are nextio.c, where the tests reach them.
+ * record meant, and is left alone. The sector's I/O, the choice of disk and
+ * the --print report are nextio.c, where the tests reach them.
+ *
+ * --print reads whichever marker this machine would use and reports it as
+ * key=value lines for a script (the format is in the help below and in
+ * docs/Manual.md Section 3.5), changing nothing.
  *
  * This replaces archusb's `archusb-boot-next` writer, which wrote the BIOS
  * marker to LBA 2047 of the disk with dd: that sector is inside the first
@@ -49,7 +53,9 @@ static const cli_opt next_opts[] = {
     { "sector", CLI_OPT_FLAG, 0, NULL,
       "use the BIOS marker sector even on a UEFI machine" },
     { "clear", CLI_OPT_FLAG, 0, NULL,
-      "remove a pending marker instead of setting one" }
+      "remove a pending marker instead of setting one" },
+    { "print", CLI_OPT_FLAG, 0, NULL,
+      "print what is queued, as key=value lines, and change nothing" }
 };
 
 /* ---- UEFI: the variable ---- */
@@ -232,22 +238,76 @@ static cli_status set_sector(const char *disk, const char *value, int clear)
     return CLI_OK;
 }
 
+/* ---- --print ---- */
+
+static cli_status print_sector(const char *disk)
+{
+    next_target t;
+    next_queued q;
+    uint64_t now = 0;
+    int have_now;
+    cli_status rc;
+
+    rc = find_target(disk, &t);
+    if (rc == CLI_OK)
+        rc = nextio_read(&t, &q);
+    if (rc != CLI_OK)
+        return rc;
+    have_now = (read_rtc(&now) == CLI_OK);
+    if (!have_now)
+        cli_error_clear();
+    nextio_print_sector(stdout, &t, &q, have_now, now);
+    return CLI_OK;
+}
+
+static cli_status print_variable(void)
+{
+    char path[MKS_PATH_MAX];
+    uint8_t buf[4u + NEXTBOOT_MAX + 1u];
+    ssize_t n;
+    int fd;
+
+    (void)snprintf(path, sizeof path, "%s/%s", NEXTCORE_EFIVARS_DIR,
+                   NEXTCORE_EFIVAR);
+    fd = open(path, O_RDONLY | O_CLOEXEC);
+    if (fd < 0) {
+        if (errno != ENOENT)
+            return set_error_errno(CLI_ERR_IO, "opening %s", path);
+        nextio_print_efivar(stdout, NULL, 0);
+        return CLI_OK;
+    }
+    n = read(fd, buf, sizeof buf);
+    (void)close(fd);
+    if (n < 0)
+        return set_error_errno(CLI_ERR_IO, "reading %s", path);
+    /* A value too long to fill the buffer exactly is longer than any the
+     * loader accepts; the decode refuses it as it would. */
+    nextio_print_efivar(stdout, buf, (size_t)n);
+    return CLI_OK;
+}
+
 static cli_status next_run(const cli_args *a)
 {
     const char *value = (a->npos > 0u) ? a->pos[0] : NULL;
     const char *disk = cli_value(a, "disk", NULL);
     int clear = cli_flag(a, "clear");
+    int print = cli_flag(a, "print");
     int sector = cli_flag(a, "sector") || !util_is_dir("/sys/firmware/efi");
 
+    if (print && (clear || value != NULL))
+        return set_error(CLI_ERR_USAGE, "--print takes no value and no "
+                                        "--clear");
     if (clear && value != NULL)
         return set_error(CLI_ERR_USAGE, "--clear takes no value");
-    if (!clear && value == NULL)
+    if (!clear && !print && value == NULL)
         return set_error(CLI_ERR_USAGE, "which entry? a path on p2, or %s",
                          NEXTBOOT_PERSONAL);
     if (!sector && disk != NULL)
         return set_error(CLI_ERR_USAGE,
                          "this machine booted with UEFI and keeps the marker "
                          "in a variable; --disk is for the sector (--sector)");
+    if (print)
+        return sector ? print_sector(disk) : print_variable();
     if (sector)
         return set_sector(disk, value, clear);
     return set_variable(value, clear);
@@ -274,7 +334,29 @@ const cli_cmd mks_cmd_next_boot = {
     "partition. With --disk only that disk is looked at, whatever else is\n"
     "attached.\n"
     "\n"
-    "--clear removes a pending marker. Needs root (or write access to the\n"
-    "disk).\n",
+    "--clear removes a pending marker. Both need root (or write access to\n"
+    "the disk).\n"
+    "\n"
+    "--print writes what is queued to stdout, one key=value per line, and\n"
+    "exits 0 whether or not anything is. The UEFI variable:\n"
+    "\n"
+    "  source=efivar\n"
+    "  queued=yes|no|invalid\n"
+    "  value=<the value>            (queued=yes only)\n"
+    "\n"
+    "The sector (a BIOS machine, or --sector):\n"
+    "\n"
+    "  source=sector\n"
+    "  disk=<the disk>\n"
+    "  lba=<the marker's LBA, in the disk's sectors>\n"
+    "  sector_size=<512 or 4096>\n"
+    "  queued=yes|no|invalid\n"
+    "  value=<the value>            (this and the rest: queued=yes only)\n"
+    "  set_rtc=<the RTC's reading when it was set>\n"
+    "  age=<seconds since; negative if the clock went back>\n"
+    "  window=yes|no                (the loader would honour it now)\n"
+    "\n"
+    "invalid is a marker the loader would clear and not act on. age and\n"
+    "window are unknown when the RTC cannot be read.\n",
     next_run
 };

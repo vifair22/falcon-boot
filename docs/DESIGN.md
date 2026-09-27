@@ -2173,7 +2173,8 @@ than reimplementing cryptography or filesystem creation:
   onto a FAT partition (the rig and corpus images use both, so every rig
   image carries records and its own BIOS stages). `mkstick next-boot` sets
   the next-boot marker (Section 6.3.1): the variable on UEFI, the boot
-  partition's marker sector on BIOS. docs/Manual.md Section 3 is the
+  partition's marker sector on BIOS; `--print` reports what is queued as
+  `key=value` lines for a script. docs/Manual.md Section 3 is the
   reference for all of them.
 - Generate the MOK keypair; keep the private key encrypted on p3 (Section 7.5),
   export the public cert to p1 for enrollment.
