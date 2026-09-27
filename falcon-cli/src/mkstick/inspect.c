@@ -162,6 +162,7 @@ static void check_luks(tally *t, const char *path, const part_entry *p,
     disk_io io;
     luks_vol vol;
     size_t slots = 0;
+    size_t loader_slots = 0;
     size_t i;
     int rc;
 
@@ -192,16 +193,21 @@ static void check_luks(tally *t, const char *path, const part_entry *p,
             continue;
         }
         if (want_pbkdf2) {
-            /* p3 is the partition the LOADER opens, so its keyslot has to be
-             * one the in-EFI unlock can process at all (DESIGN Section 3),
-             * and at an iteration count budgeted for that implementation
-             * rather than for cryptsetup's host benchmark (Section 8). */
-            check(t, info.kdf == LUKS_KDF_PBKDF2 && info.usable,
-                  "keyslot %u: %s, %u iterations, %u-byte key%s",
-                  info.id, kdf_name(info.kdf), info.kdf_iterations,
-                  info.key_size,
-                  (info.kdf == LUKS_KDF_PBKDF2 && info.usable)
-                      ? "" : "  <- the loader cannot open this");
+            /* p3 is the partition the LOADER opens, so it needs at least one
+             * keyslot the in-EFI unlock can process at all (DESIGN Section
+             * 3), at an iteration count budgeted for that implementation
+             * rather than for cryptsetup's host benchmark (Section 8). Other
+             * slots are the OS's business: archusb adds an argon2id keyfile
+             * slot so /efi mounts itself, and the loader skips it. */
+            if (info.kdf == LUKS_KDF_PBKDF2 && info.usable) {
+                check(t, 1, "keyslot %u: %s, %u iterations, %u-byte key",
+                      info.id, kdf_name(info.kdf), info.kdf_iterations,
+                      info.key_size);
+                loader_slots++;
+            } else {
+                note(t, "keyslot %u: %s, %u-byte key; the loader skips it",
+                     info.id, kdf_name(info.kdf), info.key_size);
+            }
             if (info.kdf == LUKS_KDF_PBKDF2 &&
                 info.kdf_iterations > 4u * 200000u)
                 note(t, "keyslot %u costs %u iterations; unlock will be slow "
@@ -216,6 +222,8 @@ static void check_luks(tally *t, const char *path, const part_entry *p,
                   info.id, kdf_name(info.kdf));
         }
     }
+    if (want_pbkdf2 && slots != 0 && loader_slots == 0)
+        check(t, 0, "no pbkdf2 keyslot: the loader cannot open this shelf");
     disk_io_close(&io);
 }
 
