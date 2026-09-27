@@ -123,6 +123,9 @@ BIOS_MOD_mbr     := $(BIOS)/mbr/mbr.c
 BIOS_MOD_chain   := $(BIOS)/mbr/chain.c $(BIOS)/mbr/vbrcore.c $(CORE_VBR)
 BIOS_MOD_jumpini := $(BIOS)/jump/jumpini.c
 BIOS_MOD_jmod    := $(BIOS)/jump/jmod.c $(BIOS)/jump/jmodload.c $(BIOS)/jump/jres.c
+# The CD, USB and CF routes through those drivers (DESIGN Sections 14.6 and
+# 13.10), for jump and station-legacy alike; each app keeps its own menu.
+BIOS_MOD_jroutes := $(BIOS)/jump/routes.c
 
 # Every C source some image links, for compile_commands.json and the analyzers.
 BIOS_CSRCS := $(BIOS_S2_CSRCS)

@@ -3828,7 +3828,7 @@ flowchart TD
     GEO --> L3["stage3_load: no partition table, so the floppy's own boot record:<br/>stage 3 at sector 98 (FD_STAGE3_SECTOR), no marker"]
     L3 --> BM["bios_main (apps/jump/bios_main.c)<br/>e820_read"]
     BM --> FAT["read_floppy: fs_identify, fs_mount (FAT12; sector 0 from 0x7C00)<br/>MEMTEST.BIN present? JUMP.INI parsed (jumpini.c)"]
-    FAT --> PCI["pci_scan: an IDE controller? a UHCI one?<br/>class codes through 0xCF8/0xCFC; nothing loaded"]
+    FAT --> PCI["jroute_init (jump/routes.c): the modules on the floppy,<br/>an IDE controller? a USB one? a CardBus bridge?<br/>class codes through 0xCF8/0xCFC; nothing loaded"]
     PCI --> DSK["scan_disks: every drive the BDA counts (0x475)<br/>whose LBA 0 ends in 0x55AA; the CD and USB rows when<br/>their module is on the floppy and their controller in the machine"]
     DSK --> INI{"JUMP.INI taken?"}
     INI -- "a line it cannot take" --> REP["the line and why, a key<br/>no default"]
@@ -3839,7 +3839,7 @@ flowchart TD
     MENU -- "Escape" --> RF["INT 18h, else bios_reboot"]
     MBR -- "unreadable, no 0x55AA" --> MENU
     MEM -- "refused or unreadable" --> MENU
-    MENU -- "CD drive" --> LD["jmod_load: ATA.MOD read to 6 MB, inflated to JMOD_SLOT_ATA (15 MB)<br/>E820 says 15-16 MB is RAM; header checked; .bss zeroed; init"]
+    MENU -- "CD drive" --> LD["jroute_boot, jmod_load: ATA.MOD read to 6 MB, inflated to JMOD_SLOT_ATA (15 MB)<br/>E820 says 15-16 MB is RAM; header checked; .bss zeroed; init"]
     LD --> PB["ops.probe: IDENTIFY PACKET DEVICE on 0x1F0 and 0x170,<br/>master and slave; READ CAPACITY; the first with a disc"]
     PB --> CAT{"the catalog through ops.read (disc_read)<br/>vcd_boot_entry: its media type"}
     CAT -- "floppy emulation" --> VFD["vfd_serve over disc_read: the image to the heap above 64 MB,<br/>vfdres.S as drive 0x00; nothing of the module stays (12.3.8)"]
@@ -3866,6 +3866,11 @@ flowchart TD
     CI -- "yes" --> IO["its index to the COR; I/O window 0 at 0x1E0, the memory window closed;<br/>atadisk.c: IDENTIFY DEVICE"]
     IO --> MB2["boot_module_disk: as the USB branch, from jres_install on"]
 ```
+
+The CD, USB and CF branches are falcon-bios's `jump/routes.c`
+(`jroute_init`, `jroute_offered`, `jroute_boot`), which station-legacy
+links too (13.10); `apps/jump/bios_main.c` is the menu, `JUMP.INI`, `MBR`,
+`MEM` and the pages around a route.
 
 `MBR` and `MEM` leave nothing resident, as the station's do but for its drive swap (12.5.2).
 `CDR` leaves two: the stick's virtual CD, unchanged but for serving a whole
@@ -4884,12 +4889,13 @@ an ATA disk (`hw/ata/atadisk.c`). It boots as any disk does, whatever is
 on it: its LBA 0, as the next BIOS disk, through the reverse thunk with
 its INT 15h half, as `USB` does (`boot_module_disk`).
 
-**Shared with station-legacy (decision 2026-09-26).** The routes above live
-today in `apps/jump/bios_main.c` as statics (`pci_scan`, `boot_cd`,
-`boot_usb`, `boot_cf`, `boot_module_disk`, `is_falcon_stick`). They move into
-a falcon-bios module that jump and station-legacy (Section 13.10) both link,
-so a route is written once; each app keeps its own menu and reads the
-drivers from its own FAT volume.
+**Shared with station-legacy (decision 2026-09-26, built 2026-09-27).** The
+routes above are `falcon-bios/src/jump/routes.c` (`BIOS_MOD_jroutes`),
+lifted out of `apps/jump/bios_main.c`, which jump and station-legacy
+(Section 13.10) both link, so a route is written once. Each app keeps its
+own menu and pages and hands the module its own FAT volume: jump its
+floppy, station-legacy its station partition. `jmod_load`'s sentences name
+that volume ("the floppy", "the disk").
 
 ### 14.7 JUMP.INI
 
