@@ -11,6 +11,7 @@ on binhost-builder, with the media they were made from:
     /srv/falcon/fixtures/station/
         freedos.img      FreeDOS 1.4, FAT16, 32 MiB
         win98se.img      Windows 98 SE, FAT32, 2 GiB
+        win95.img        Windows 95 OSR2.5, FAT32, 2 GiB
         media/           the source media, checked as below
         shots/           the verification screenshots
         scripts/         a copy of this directory
@@ -19,7 +20,7 @@ on binhost-builder, with the media they were made from:
 |---|---|---|
 | `freedos.img` | `e613044e31d9ec6cb2a6629204ed98c14db7308faa6a78158554fec99befa695` | `shots/freedos.png`: `C:\>` prompt |
 | `win98se.img` | `10b65fab638ecda8ec813d6d237943d028d2dfbce78a6932b6f9b351b4a03cc8` | `shots/win98se.png`: desktop |
-| `win95.img` | not made | no Windows 95 key on record (see below) |
+| `win95.img` | `b7836584be52a7b10ee013daa8fa1c55bf818b4d6e928caaf7221cc31fcc1ff2` | `shots/win95.png`: desktop (`fixture-shot.sh --mem 64 --icount 2`) |
 
 ## Use
 
@@ -72,17 +73,34 @@ under TCG on binhost-builder. The key file is written from the
 thinkpad-a21m repository's `docs/LICENSES.md` for the run and deleted after
 it; the image's registry holds the key, as any installed Windows does.
 
-Windows 95 OSR2.5, once a key file exists (LICENSES.md has no Windows 95
-key, in any revision):
+Windows 95 OSR2.5 (the OEM key in the thinkpad-a21m repository's
+`docs/LICENSES.md`, 6ba8bf4 there):
 
     scripts/mk-win9x-fixture.sh --iso media/win95osr25.iso \
         --floppy media/win95osr25-ebd.img --srcdir WIN95 \
         --inf scripts/win95-msbatch.inf --key-file secret/win95.key \
-        --mem 64 --setup-args "/is /iq" --nudge "alt-y ret" win95.img
+        --mem 64 --icount 2 --setup-args "/is /iq" --nudge "alt-y ret" \
+        --still 6 win95.img
 
-A trial run with a placeholder key reached Setup's licence page (FDISK /MBR,
-FORMAT, the copy to `C:\WIN95` and Setup's DOS stage all worked). Its licence
-dialog is Yes/No, hence `alt-y`.
+Two things this one needs that 98 SE does not:
+
+- `--icount 2`. TCG on binhost-builder's i9 is still fast enough to fault
+  Windows 95's IOS timing loop at the first boot from C: ("While initializing
+  device IOS: Windows protection error"); `-icount shift=2` holds the guest
+  at 250 MHz. The station rig boots the image the same way (its `w95-own`
+  and `w95-second` cases).
+- The key typed by hand. This OEM CD's Certificate of Authenticity page
+  stays empty whether msbatch.inf gives the key as `ProductID` or
+  `ProductKey`, and batch mode presses Next on it, which raises "not valid".
+  At that dialog (about five minutes in), Enter for Re-enter, then the
+  key's three digit groups typed through the QEMU monitor (`sendkey`, one
+  digit at a time, the boxes advance on their own), then Enter. `--still 6`
+  keeps the nudge from firing while that is done. Screenshots taken while
+  the key is on screen are deleted afterwards.
+
+Setup's last stage stops on the Add Printer Wizard once; Esc cancels it.
+About 25 minutes on binhost-builder. The licence dialog is Yes/No, hence
+`alt-y`.
 
 ## Media
 

@@ -51,6 +51,11 @@
 #   --setup-args ARGS  extra Setup switches (default "/is /ie")
 #   --cpu MODEL        QEMU CPU model (default pentium2)
 #   --mem MB           guest memory (default 128)
+#   --icount SHIFT     run the guest at one instruction per 2^SHIFT ns of
+#                      its own time (QEMU -icount): Windows 95 needs 2, a
+#                      250 MHz processor, since TCG on a fast host is still
+#                      fast enough to fault its IOS timing loop ("While
+#                      initializing device IOS: Windows protection error")
 #   --timeout MIN      give up after this long (default 240)
 #   --shots DIR        keep a screenshot every poll here (default: none)
 #   --nudge KEYS       sendkey names sent to a screen that has stopped
@@ -63,7 +68,7 @@
 set -euo pipefail
 
 ISO= SRCDIR= FLOPPY= INF= KEYFILE= SIZE_MB=2048 SETUP_ARGS="/is /ie"
-CPU=pentium2 MEM=128 TIMEOUT_MIN=240 SHOTS= NUDGE="alt-a ret" STILL=3
+CPU=pentium2 MEM=128 ICOUNT= TIMEOUT_MIN=240 SHOTS= NUDGE="alt-a ret" STILL=3
 while [[ $# -gt 0 ]]; do
     case "$1" in
     --iso) ISO=$2; shift 2 ;;
@@ -75,6 +80,7 @@ while [[ $# -gt 0 ]]; do
     --setup-args) SETUP_ARGS=$2; shift 2 ;;
     --cpu) CPU=$2; shift 2 ;;
     --mem) MEM=$2; shift 2 ;;
+    --icount) ICOUNT=$2; shift 2 ;;
     --timeout) TIMEOUT_MIN=$2; shift 2 ;;
     --shots) SHOTS=$2; shift 2 ;;
     --nudge) NUDGE=$2; shift 2 ;;
@@ -203,8 +209,11 @@ mbr_table "$OUT" 0c 63
 
 # --- 4. install ------------------------------------------------------------
 # TCG and a period CPU model: 9x's timing loops fault on a host-speed CPU.
+ICOUNT_ARGS=()
+[[ -n $ICOUNT ]] && ICOUNT_ARGS=(-icount "shift=$ICOUNT,sleep=off")
 qemu_start() { # BOOT (-boot argument)
     qemu-system-i386 -machine pc -accel tcg -cpu "$CPU" -m "$MEM" \
+        "${ICOUNT_ARGS[@]}" \
         -vga cirrus -nic none -rtc base=localtime -display none \
         -drive file="$OUT",format=raw,if=ide,index=0 \
         -drive file="$SRC",format=raw,if=ide,index=1 \

@@ -197,6 +197,10 @@ PY
 
 # The machine tools/fixtures/fixture-shot.sh verified each fixture on. TCG,
 # for the reason that script gives.
+# Windows 95 faults in its IOS timing loop on a processor much past 2 GHz,
+# and TCG on this host is past it; -icount pins the guest at 250 MHz
+# (tools/fixtures/mk-win9x-fixture.sh --icount). Set per case by run_case.
+ICOUNT_ARGS=()
 start() {     # start DISK0 [DISK1]
     local drives=() d i=0
     for d in "$@"; do
@@ -208,6 +212,7 @@ start() {     # start DISK0 [DISK1]
     done
     rm -f "$R/serial.log" "$R/mon.sock"
     "$QEMU" -L /usr/share/qemu -machine pc -accel tcg -cpu pentium2 -m 128 \
+        "${ICOUNT_ARGS[@]}" \
         -vga cirrus -nic none -rtc base=localtime -display none \
         "${drives[@]}" -snapshot -boot order=c \
         -serial file:"$R/serial.log" \
@@ -364,14 +369,17 @@ CASES=("$@")
     CASES=(fd-own fd-second fd-mbr w98-own w98-second w95-own w95-second)
 
 for c in "${CASES[@]}"; do
+    ICOUNT_ARGS=()
     case $c in
     fd-own)     run_case "$c" freedos.img FreeDOS dos own ;;
     fd-second)  run_case "$c" freedos.img FreeDOS dos second ;;
     fd-mbr)     run_case "$c" freedos.img FreeDOS dos mbr ;;
     w98-own)    run_case "$c" win98se.img 'Windows 9x' win own ;;
     w98-second) run_case "$c" win98se.img 'Windows 9x' win second ;;
-    w95-own)    run_case "$c" win95.img 'Windows 9x' win own ;;
-    w95-second) run_case "$c" win95.img 'Windows 9x' win second ;;
+    w95-own)    ICOUNT_ARGS=(-icount shift=2,sleep=off)
+                run_case "$c" win95.img 'Windows 9x' win own ;;
+    w95-second) ICOUNT_ARGS=(-icount shift=2,sleep=off)
+                run_case "$c" win95.img 'Windows 9x' win second ;;
     *)
         echo "unknown case: $c" >&2
         exit 2
