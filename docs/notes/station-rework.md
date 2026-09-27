@@ -187,7 +187,8 @@ Layout
    length written into stage 1 by the installer; stage 3 in the reserved
    sectors of a FAT partition, found by stage 2 through the table and the
    record. On a stick that partition is the ESP (a --bios-only stick gets a
-   small falcon FAT partition); on a BIOS station it is the station
+   small falcon FAT partition, until decision 22 removes --bios-only); on a
+   BIOS station it is the station
    partition; on jump it is the floppy's volume. STAGE3_LBA and
    NEXTBOOT_LBA go. (C1-C3, C5)
 9. The next-boot marker is a sector in that FAT partition, found by the
@@ -228,3 +229,19 @@ Station
 19. Order: core (1-9, 15, 16, the stick rewrite), then the station (UEFI
     and BIOS, the installer), then legacy on the A21m. Each merged and
     rig-proven before the next.
+
+Pulled in, the same day
+20. The audit's small fixes go in with the core step: mkstick create
+    refusing an MBR disk (A13, also decision 7), sign's `PARTLABEL` help
+    (E5), boot.S's DAP comment ("built on the stack"; it is in .text),
+    bioscore's size comment, DESIGN 12.5/12.5.1/13.1 staleness (D15).
+21. `classic` (devlink-rescue's 32-bit kernel and initrd) is wrapped as a
+    UKI by falcon's sign tool and is a Linux entry on the station shelf and
+    the stick's; the BIOS loader unwraps it as it does any UKI.
+22. The 32-bit stick is retired; every machine goes through the 64-bit
+    stick. Removed with it: falcon-bios/tools/mk-stick32-pos.sh,
+    docs/notes/stick32.md, `mkstick create --bios-only` (so every stick has
+    an ESP, which holds its BIOS stage 3) and `--p4-kdf-memory`. The bios32
+    corpus column stays: it tests falcon-bios on a Pentium III.
+23. Left on their own tracks: the loader replaying a dirty ext4 shelf, the
+    corpus harness's fresh-directory failures.
