@@ -2687,10 +2687,13 @@ and 12.3's diagrams change with the code that does it.*
 
 The BIOS stages live in the gap a GPT leaves between its entry array and the
 first 2048-aligned partition, so installing them changes no partition
-(Section 12.3.1). p2 is identified by the Microsoft basic-data type plus the
-GPT name `FALCON-ISO`, p3 by the falcon shelf type GUID
-(`falcon-core/src/part/part.c`, `part_match_role`); p1 and p4 have no role
-either loader needs.
+(Section 12.3.1). The UEFI loader, falcon-hook, winjump, falcon-vdisk and
+the appliance identify p2 and p3 by their records (Section 3.1): p1's `boot`
+record names the install, p2's `/.falcon` and p3's LUKS2 token must carry
+its ID. falcon-bios still identifies them by the Microsoft basic-data type
+plus the GPT name `FALCON-ISO` and the falcon shelf type GUID
+(`part_match_role`) until its boot chain moves to records (12.3). p4 has no
+role any loader needs.
 
 ### 12.2 UEFI
 
@@ -2851,10 +2854,11 @@ sequenceDiagram
     L->>U: the list, y to confirm
     L->>F: FalconNextBoot = the entry, BootNext = this stick
     L->>L: unlock p3 as POS does, pick appliance*.efi
-    L->>L: credfs: uki, passphrase .cred, falcon.bless.cred (the list)
+    L->>L: credfs: uki, passphrase .cred, falcon.bless.cred (the list), falcon.ident.cred (the install ID)
     L->>S: LoadImage by path (MOK-signed), StartImage
     S->>A: sd-stub, kernel, /init = falcon-boot-appliance-init
-    A->>A: modules, find the stick (30 s), mount p2 (exFAT), read the manifest
+    A->>A: modules; the install ID from falcon.ident.cred (none: refuse, unlock nothing)
+    A->>A: find_stick (30 s): the exFAT /.falcon and the LUKS2 token carrying it, any disk; mount p2, read the manifest
     A->>A: survey only the listed paths
     A->>A: shelf_open p3 read-only in process (core LUKS2, ext4) with the passphrase .cred
     A->>A: MOK key and cert into sealed memfds

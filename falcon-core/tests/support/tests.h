@@ -44,6 +44,7 @@ int run_payload_tests(void);
 int run_uki_tests(void);
 int run_util_tests(void);
 int run_appliance_route_tests(void);
+int run_appliance_stickid_tests(void);
 int run_manifest_tests(void);
 int run_bless_tests(void);
 int run_nxt_tests(void);
