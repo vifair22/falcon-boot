@@ -37,6 +37,9 @@
 #   next-miss  a marker naming nothing here: the sentence, and no boot
 #   mem        MEMTEST.BIN in the station partition, the default: the
 #              handoff to it (skipped without MEMTEST)
+#   no-ticks   booted through a floppy (tools/tickstop.S) that masks IRQ0
+#              first, so the BIOS's tick count stands still: the countdown
+#              runs by the RTC and boots A p1 (console/cdclock.c)
 #
 # Usage: falcon-bios/tools/run-station-rig.sh [case...]   (default: all)
 # Env:   MEMTEST  memtest86+ for the mem case (skipped without it)
@@ -60,7 +63,7 @@ SIG_B=5a7a0b02
 ID=f41c0b1057a6e0000000000000000010
 
 mkdir -p "$R"
-make --no-print-directory station build/rigboot.bin "$MKSTICK" >/dev/null
+make --no-print-directory station build/rigboot.bin build/tickstop.bin "$MKSTICK" >/dev/null
 
 def() {       # def NAME: its value in biosdefs.h, hex or decimal
     local v
@@ -189,11 +192,15 @@ mon() {
 # when UNTIL is empty, then saves the VGA text and a screendump and stops.
 boot() {      # boot NAME UNTIL SECONDS DISK0 [DISK1]
     local name=$1 until=$2 secs=$3 i qpid
-    local drives=(-drive file="$4",format=raw,if=ide,index=0)
+    local drives=(-drive file="$4",format=raw,if=ide,index=0) order=c
     [[ -n "${5:-}" ]] && drives+=(-drive file="$5",format=raw,if=ide,index=1)
+    if [[ -n "${FLOPPY:-}" ]]; then
+        drives+=(-drive if=floppy,format=raw,file="$FLOPPY")
+        order=a
+    fi
     rm -f "$R/serial.log" "$R/mon.sock" "$R/$name.vga" "$R/$name.png"
     "$QEMU" -L /usr/share/qemu -machine pc -cpu pentium3 -m 128 \
-        -display none -boot c "${drives[@]}" -rtc base=utc \
+        -display none -boot "$order" "${drives[@]}" -rtc base=utc \
         -serial file:"$R/serial.log" \
         -monitor unix:"$R/mon.sock",server,nowait >/dev/null 2>&1 &
     qpid=$!
@@ -250,7 +257,7 @@ run_rig_case() {  # run_rig_case NAME INI [MARKER]
 CASES=("$@")
 [[ ${#CASES[@]} -gt 0 ]] ||
     CASES=(own-p1 own-p2 logical b-p1-swap b-p1-noswap b-mbr ini-error
-           next-boot next-miss mem)
+           next-boot next-miss mem no-ticks)
 
 build_disks
 
@@ -333,6 +340,14 @@ for c in "${CASES[@]}"; do
         fi
         run_rig_case mem $'[general]\ndefault = memtest\ntimeout = 1\n'
         judge mem 'booting: Memory test' 'entering the kernel'
+        ;;
+    no-ticks)
+        head -c 1474560 /dev/zero > "$R/tickstop.img"
+        dd if=build/tickstop.bin of="$R/tickstop.img" conv=notrunc status=none
+        FLOPPY=$R/tickstop.img run_rig_case no-ticks \
+            $'[general]\ndefault = mbr-'"$SIG_A"$'-p1\ntimeout = 3\n'
+        judge no-ticks 'TICKSTOP: IRQ0 masked' 'Booting in 3' 'Booting in 1' \
+            "RIGBOOT dl=80 dssi=0000:07be"
         ;;
     *)
         echo "unknown case: $c" >&2

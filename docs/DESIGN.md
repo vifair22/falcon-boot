@@ -4458,10 +4458,22 @@ A21m's disk:
   or written. The disk is given the A21m's geometry (15 heads, 63 sectors,
   translated LARGE to the 240 heads its BPB carries); under SeaBIOS's
   default the untouched image stops at "NTLDR is missing" with its own
-  MBR. The station's countdown boots its default through the partition
-  chain to NTLDR, "Starting Windows" and the Windows 2000 splash
-  (2026-09-27); the stop 0x7B that follows is the untouched image's too,
-  Windows 2000's IDE driver meeting QEMU's controller, not falcon's.
+  MBR. The machine is QEMU's `pc` with a PIIX4 south bridge
+  (`x-south-bridge=piix4-isa`), the A21m's: under the default PIIX3 the
+  image's Windows 2000, set up on a PIIX4, stops 0x7B after its splash. The
+  installer's shrink clears the dirty flag ntfsresize sets (`ntfsfix -d`),
+  so a boot is not a CHKDSK and a reboot. The station's countdown boots its
+  default through the partition chain to NTLDR, the Windows 2000 splash and
+  its desktop, where the first boot opens the Found New Hardware wizard
+  (2026-09-27).
+- **A machine whose tick count stands still** (`no-ticks`): once Windows
+  2000 had reset the rig's machine, SeaBIOS answered every INT 16h with
+  interrupts off and IRQ0 stayed pending, so the tick count at 0040:006C
+  never moved and a countdown timed by it stood at five seconds for good.
+  The countdown now takes whichever of the ticks and the RTC's seconds
+  (INT 1Ah) says more time has gone (`console/cdclock.c`, host-tested). The
+  case boots the station through a floppy that masks IRQ0 first
+  (`falcon-bios/tools/tickstop.S`) and expects the default to boot.
 - **The installer on images** (`make test-station-install`): an MBR disk of
   the A21m's shape with a Windows 98 second disk and a LUKS2 shelf, a GPT
   disk with an ESP, Windows and a plaintext shelf; install, status, remove,

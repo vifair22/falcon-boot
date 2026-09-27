@@ -20,6 +20,7 @@
 
 #include <start/bios.h>
 #include <console/screen.h>
+#include <console/cdclock.h>
 
 #include <tui/tui.h>
 
@@ -416,18 +417,24 @@ static void restore(void)
 
 /* ---- the countdown (DESIGN Section 14.7) ----
  *
- * Timed off the BIOS's tick count in the data area, 18.2 a second, which
- * IRQ0 advances while the thunk is in real mode with interrupts on: the key
- * poll below is itself what lets the count move. It resets at midnight
- * (0x1800B0 ticks), which the arithmetic allows for. */
+ * Timed by console/cdclock.c: the BIOS's tick count in the data area, 18.2
+ * a second, which IRQ0 advances while the thunk is in real mode, and the
+ * RTC's seconds through INT 1Ah, whichever says more has gone, since a
+ * machine can reach the menu with IRQ0 never delivered (cdclock.h). */
 #define BDA_TICKS      0x46Cu
-#define TICKS_PER_DAY  0x1800B0u
 
-static uint32_t ticks_since(uint32_t start)
+/* The RTC's seconds byte, or CDCLOCK_NO_RTC when the call says the clock
+ * is not running. */
+static int rtc_seconds(void)
 {
-    uint32_t now = peek32(BDA_TICKS);
-
-    return now >= start ? now - start : now + TICKS_PER_DAY - start;
+    thunk_regs.eax = 0x0200u;
+    thunk_regs.ecx = 0;
+    thunk_regs.edx = 0;
+    thunk_vector = 0x1A;
+    thunk_bios();
+    if ((thunk_regs.flags & BIOS_FLAG_CARRY) != 0)
+        return CDCLOCK_NO_RTC;
+    return (int)((thunk_regs.edx >> 8) & 0xFFu);
 }
 
 /* "Booting in 5 seconds. Any key stops the countdown." in the key line. */
@@ -511,12 +518,14 @@ int screen_menu_timed(const screen_banner *banner,
         /* The countdown runs until it ends or a key arrives, whichever is
          * first; a key stops it for good, and is then taken as any key is. */
         if (seconds != 0) {
-            uint32_t start = peek32(BDA_TICKS);
-            uint32_t total = seconds * 182u / 10u;
+            uint32_t total = seconds * 10u;
             unsigned shown = seconds + 1u;
+            cdclock clk;
 
+            cdclock_start(&clk, peek32(BDA_TICKS), rtc_seconds());
             while (!key_waiting()) {
-                uint32_t gone = ticks_since(start);
+                uint32_t gone = cdclock_tenths(&clk, peek32(BDA_TICKS),
+                                               rtc_seconds());
                 unsigned left;
 
                 if (gone >= total) {
@@ -525,7 +534,7 @@ int screen_menu_timed(const screen_banner *banner,
                         *which = '\r';
                     return (int)sel;
                 }
-                left = (unsigned)((total - gone) * 10u / 182u) + 1u;
+                left = (unsigned)((total - gone + 9u) / 10u);
                 if (left > seconds)
                     left = seconds;
                 if (left != shown) {
