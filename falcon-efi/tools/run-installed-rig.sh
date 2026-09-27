@@ -482,9 +482,19 @@ case_bios() {           # case_bios CASE IMG PART
         WHY="stage 2 did not take partition $part"
     [[ -z "$WHY" ]] && { wait_for "install $id" 30 ||
         WHY="stage 3 did not report install $id"; }
-    [[ -z "$WHY" ]] && unlock "$id" 60
+    # The installer's STATION.INI counts down to its default, which on the
+    # MBR disk is the Windows placeholder (no boot code, and a 4Kn disk's
+    # partition chain is refused by design). Up stops the count and moves
+    # to the Personal OS, the first row, as case_uefi_pos does.
+    [[ -z "$WHY" ]] && { wait_for "Booting in 5 s" 60 || WHY="no countdown"; }
+    if [[ -z "$WHY" ]]; then
+        mon "sendkey up"
+        sleep 0.5
+        mon "sendkey ret"
+        unlock "$id" 60
+    fi
     halt
-    result "$c" "$WHY" "4096-byte sectors: stage 2 took p$part, the shelf unlocked to the UKI"
+    result "$c" "$WHY" "4096-byte sectors: stage 2 took p$part, a key stopped the count, the shelf unlocked to the UKI"
 }
 
 case_4kn_remove() {
