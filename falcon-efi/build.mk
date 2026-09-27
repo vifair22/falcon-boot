@@ -141,6 +141,14 @@ test-stick: $(EFI_SIGNED) test-iso test-uki cli bios
 test-station: $(EFI_STATION_SIGNED) station test-uki cli
 	falcon-efi/tools/mk-test-station.sh
 
+# The core step's matrix cells (docs/notes/station-rework.md section 6), each
+# booted headless and judged from serial: the stick alone, beside a second
+# stick, an MBR data disk and another install's records, a 4Kn stick, and
+# the station, under both firmwares. Builds its own disks (sudo, loop
+# devices on image files); the fixture UKI and test MOK must exist.
+test-core: all bios station cli payload
+	falcon-efi/tools/run-core-rig.sh
+
 # No prerequisite on $(TEST_STICK): rebuilding it needs sudo and takes seconds
 # of cryptsetup, so it stays an explicit `make test-stick`. The rig says so if
 # the image is missing.
@@ -151,7 +159,7 @@ run-stick-secboot:
 	falcon-efi/tools/run-qemu.sh --stick --secboot
 
 .PHONY: test-station payload esp run mok-test sign run-secboot test-iso \
-	test-img test-uki test-stick run-stick run-stick-secboot
+	test-img test-uki test-stick run-stick run-stick-secboot test-core
 
 # ---- tests ----
 #

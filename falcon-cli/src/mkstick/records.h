@@ -76,6 +76,17 @@ int records_boot(const mks_records *r);
 cli_status records_write_boot(const char *path, uint64_t base,
                               const ident_rec *rec);
 
+/* A boot record's placement as a command line gives it (`mkstick ident
+ * --write-boot-at`, for a volume with no partition table: jump's floppy):
+ * a byte offset, decimal or 0x hex and a multiple of 512, and the stage 3
+ * and marker sectors, relative to the volume, below 65536. Stage 3 is at
+ * least sector 1; a marker of 0 is none. Fills *off, and the record's
+ * version, role and sectors; the install ID is left to the caller. 1 on
+ * success; 0 with *why naming what was wrong. */
+int records_boot_args(const char *offset, const char *stage3,
+                      const char *marker, uint64_t *off, ident_rec *rec,
+                      const char **why);
+
 /* A fresh install ID from the kernel's random source. */
 cli_status records_new_id(uint8_t id[IDENT_ID_LEN]);
 

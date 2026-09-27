@@ -51,6 +51,11 @@ static uint64_t sectors_of(size_t len)
     return ((uint64_t)len + BIOS_SECTOR_BYTES - 1u) / BIOS_SECTOR_BYTES;
 }
 
+static uint64_t sectors_in(size_t len, uint32_t bytes)
+{
+    return ((uint64_t)len + bytes - 1u) / bytes;
+}
+
 const char *bioscore_strerror(bioscore_status s)
 {
     switch (s) {
@@ -63,9 +68,10 @@ const char *bioscore_strerror(bioscore_status s)
     case BIOSCORE_ERR_GPT:    return "stage 2 would land on the GPT";
     case BIOSCORE_ERR_GAP:    return "stage 2 would reach the first partition";
     case BIOSCORE_ERR_BACKUP: return "not a falcon-bios backup";
-    case BIOSCORE_ERR_SECTOR: return "the disk's sectors are not 512 bytes";
+    case BIOSCORE_ERR_SECTOR: return "the disk's sectors are neither 512 nor "
+                                     "4096 bytes";
     case BIOSCORE_ERR_FAT:    return "the boot partition is not a FAT volume "
-                                     "with 512-byte sectors";
+                                     "with the disk's sector size";
     case BIOSCORE_ERR_RECORD: return "the boot record's stage 3 or marker "
                                      "sector is one of FAT's own";
     case BIOSCORE_ERR_RESERVED:
@@ -92,8 +98,9 @@ bioscore_status bioscore_fat_bpb(const uint8_t *bs, bios_fat *out)
     if (bs[510] != 0x55u || bs[511] != 0xAAu)
         return BIOSCORE_ERR_FAT;
     bytes = get_le16(bs + 0x0B);
-    if (bytes != BIOS_SECTOR_BYTES)
+    if (bytes != 512u && bytes != 1024u && bytes != 2048u && bytes != 4096u)
         return BIOSCORE_ERR_FAT;
+    out->sector = bytes;
     if (bs[0x0D] == 0u || bs[0x10] == 0u)   /* sectors/cluster, FAT count */
         return BIOSCORE_ERR_FAT;
     out->reserved = get_le16(bs + 0x0E);
@@ -160,14 +167,19 @@ bioscore_status bioscore_plan(const bios_disk *d, uint64_t stage2_gpt_lba,
         return BIOSCORE_ERR_ARG;
     memset(out, 0, sizeof *out);
 
-    /* Everything here counts 512-byte sectors, because that is what stage 1
-     * and the record count and what a BIOS reads. */
-    if (d->sector_bytes != BIOS_SECTOR_BYTES)
+    /* Everything here counts the disk's sectors, because that is what
+     * stage 1's packet, the record and a BIOS's AH=42h count: 512 bytes, or
+     * 4096 on a 4Kn disk (DESIGN Section 3.4). */
+    if (d->sector_bytes != BIOS_SECTOR_BYTES &&
+        d->sector_bytes != BIOS_SECTOR_MAX)
         return BIOSCORE_ERR_SECTOR;
 
     /* ---- stage 2: after LBA 0, before the first partition ---- */
-    s2_n = sectors_of(stage2_len);
-    if (s2_n > stage2_max || s2_n > 0xFFFFu)
+    /* stage2_max bounds the bytes stage 1 reads to STAGE2_LOAD, in 512-byte
+     * units; whole disk sectors of stage 2 must fit it. */
+    s2_n = sectors_in(stage2_len, d->sector_bytes);
+    if (s2_n * d->sector_bytes > stage2_max * BIOS_SECTOR_BYTES ||
+        s2_n > 0xFFFFu)
         return BIOSCORE_ERR_STAGE2;
     if (d->kind == PART_KIND_GPT) {
         s2_lba = stage2_gpt_lba;
@@ -187,7 +199,8 @@ bioscore_status bioscore_plan(const bios_disk *d, uint64_t stage2_gpt_lba,
 
     /* ---- stage 3 and the marker: the boot partition's reserved sectors ---- */
     if (d->fat.reserved == 0u || d->boot_start == 0u ||
-        d->fat.reserved > d->boot_sectors)
+        d->fat.reserved > d->boot_sectors ||
+        d->fat.sector != d->sector_bytes)
         return BIOSCORE_ERR_FAT;
     if (d->stage3_sector == 0u || d->stage3_sector >= d->fat.reserved)
         return BIOSCORE_ERR_RECORD;
@@ -196,7 +209,7 @@ bioscore_status bioscore_plan(const bios_disk *d, uint64_t stage2_gpt_lba,
          fat_owns(&d->fat, d->marker_sector)))
         return BIOSCORE_ERR_RECORD;
 
-    s3_n = sectors_of(stage3_len);
+    s3_n = sectors_in(stage3_len, d->sector_bytes);
     if (s3_n > (uint64_t)d->fat.reserved - d->stage3_sector)
         return BIOSCORE_ERR_RESERVED;
     for (s = d->stage3_sector; s < d->stage3_sector + s3_n; s++) {

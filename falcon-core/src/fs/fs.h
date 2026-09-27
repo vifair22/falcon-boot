@@ -167,13 +167,13 @@ typedef struct fs_file {
 } fs_file;
 
 /* Which role's partition a driver is the primary answer for, and the value a
- * caller passes when it has no idea. The two role values are
- * falcon-core/src/part/part.c's, so a discovery row's role and an
- * identification hint are the same number. */
+ * caller passes when it has no idea: a hint for the order drivers are tried
+ * in, never an identification (that is the partition's record, DESIGN
+ * Section 3.1). */
 typedef enum {
     FS_HINT_NONE  = -1,
-    FS_HINT_ISO   = (int)PART_ROLE_ISO,
-    FS_HINT_SHELF = (int)PART_ROLE_SHELF
+    FS_HINT_ISO   = 0,
+    FS_HINT_SHELF = 1
 } fs_hint;
 
 typedef struct fs_ops {

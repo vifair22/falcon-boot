@@ -49,12 +49,12 @@ $(eval $(call jump_module,OHCI,JMOD_SLOT_OHCI,\
 # The floppy (Section 14.3): a 1.44 MB FAT12 volume whose reserved sectors
 # hold stage 2 at STAGE2_LBA and stage 3 at FD_STAGE3_SECTOR, behind jump's
 # boot sector. mformat -B keeps the boot sector's code and writes the BPB,
-# the reserved count included, for the volume it makes; falcon-bios-mkident
-# then writes the volume's identity record into that sector (DESIGN Section
-# 3.1): role boot, stage 3 at FD_STAGE3_SECTOR, no marker, and an install ID
-# drawn for this build, which is how stage 2 finds stage 3 on a disk with no
-# partition table. mtools writes into the image directly: no loop device, no
-# sudo.
+# the reserved count included, for the volume it makes; `mkstick ident
+# --write-boot-at` then writes the volume's identity record into that sector
+# (DESIGN Section 3.1): role boot, stage 3 at FD_STAGE3_SECTOR, no marker,
+# and an install ID drawn for this build, which is how stage 2 finds stage 3
+# on a disk with no partition table. mtools writes into the image directly:
+# no loop device, no sudo.
 #
 # MEMTEST names a memtest86+ build carrying the x86 boot protocol header to
 # copy on as MEMTEST.BIN, and JUMP_INI a JUMP.INI; both are optional, and a
@@ -79,7 +79,7 @@ jump-files-stamp:
 $(JUMP_FILES_STAMP): jump-files-stamp ;
 
 $(JUMP_IMG): $(BIOS_FD_STAGE1) $(BIOS_STAGE2) $(BIOS_JUMP_STAGE3) \
-		$(JUMP_MODS) $(MEMTEST) $(JUMP_INI) $(JUMP_FILES_STAMP) $(BIOS_MKIDENT)
+		$(JUMP_MODS) $(MEMTEST) $(JUMP_INI) $(JUMP_FILES_STAMP) $(MKSTICK)
 	@mkdir -p $(@D)
 	@rm -f $@.tmp
 	@# The reserved sectors end where stage 3 does, padded so the root
@@ -110,9 +110,9 @@ $(JUMP_IMG): $(BIOS_FD_STAGE1) $(BIOS_STAGE2) $(BIOS_JUMP_STAGE3) \
 	@cmp -s -i 62:62 -n 448 $(BIOS_FD_STAGE1) $@.tmp || { \
 		echo "ERROR: mformat did not keep the boot sector's code"; \
 		rm -f $@.tmp; exit 1; }
-	@$(BIOS_MKIDENT) $@.tmp 0 boot \
-		$$(od -An -tx1 -N16 /dev/urandom | tr -d ' \n') \
-		$(FD_STAGE3_SECTOR_CHECK) 0
+	@$(MKSTICK) ident $@.tmp --write-boot-at 0 \
+		--stage3-sector $(FD_STAGE3_SECTOR_CHECK) --marker-sector 0 \
+		--id new >/dev/null
 	@# Stage 2's real length, for the boot sector to read no more than
 	@# that (boot_fd.S, FD_S2_SECTORS_OFF): little endian, two bytes.
 	@n=$$(( ($$(stat -c %s $(BIOS_STAGE2)) + 511) / 512 )); \

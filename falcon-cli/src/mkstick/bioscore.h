@@ -40,6 +40,11 @@
 
 #define BIOS_SECTOR_BYTES 512u
 
+/* The largest disk sector an install handles: a 4Kn disk (DESIGN Section
+ * 3.4). The BIOS reads and the record's sectors are the disk's own, so on
+ * one every count below is of 4096-byte sectors. */
+#define BIOS_SECTOR_MAX 4096u
+
 /* The split of LBA 0. Bytes 0..439 are boot code; 440..443 are the disk
  * signature, 444..445 reserved, 446..509 the four MBR partition records and
  * 510..511 the 0xAA55 signature. On GPT the records hold the protective 0xEE
@@ -81,16 +86,20 @@ const char *bioscore_strerror(bioscore_status s);
 /* ---- the boot partition's FAT boot sector ---- */
 
 typedef struct {
+    uint32_t sector;       /* bytes per sector: 512, 1024, 2048 or 4096 */
     uint32_t reserved;     /* BPB reserved sector count */
     uint32_t fsinfo;       /* FAT32: the FSInfo sector; 0 on FAT12/16 */
     uint32_t backup;       /* FAT32: the backup boot sector; 0 when none */
     int      fat32;
 } bios_fat;
 
-/* Reads what the plan needs out of a FAT boot sector: 512-byte sectors, the
- * reserved count, and on FAT32 the FSInfo and backup boot sector numbers.
- * BIOSCORE_ERR_FAT for anything that is not a FAT boot sector of 512-byte
- * sectors. */
+/* Reads what the plan needs out of a FAT boot sector (its first 512 bytes
+ * are enough, whatever its sector size): the sector size, the reserved
+ * count, and on FAT32 the FSInfo and backup boot sector numbers.
+ * BIOSCORE_ERR_FAT for anything that is not a FAT boot sector. A FAT of
+ * 4096-byte sectors is what mkfs.fat makes on a 4Kn disk: it carries a boot
+ * record (the UEFI loader reads it), but no BIOS stages, which the caller
+ * checks. */
 bioscore_status bioscore_fat_bpb(const uint8_t *bs, bios_fat *out);
 
 /* The reserved sector count a `boot` partition is formatted with
@@ -131,9 +140,11 @@ typedef struct {
 } bios_plan;
 
 /* The plan for this disk. stage2_gpt_lba and stage2_mbr_lba are the
- * contract's places for stage 2 (biosdefs.h STAGE2_LBA, STAGE2_LBA_MBR) and
- * stage2_max its reservation (STAGE2_SECTORS): stage 1's read is bounded by
- * it, whatever the gap would allow. Refuses a stage 2 below the GPT's first
+ * contract's places for stage 2 (biosdefs.h STAGE2_LBA, STAGE2_LBA_MBR),
+ * in the disk's sectors, and stage2_max its reservation (STAGE2_SECTORS) in
+ * 512-byte sectors, since it bounds the memory stage 1 reads into: stage 1's
+ * read is bounded by it, whatever the gap would allow. Sectors are 512 or
+ * 4096 bytes, and the boot partition's FAT must use the disk's. Refuses a stage 2 below the GPT's first
  * usable LBA or reaching the first partition, a record whose stage 3 or
  * marker sector lands on one of FAT's own sectors or outside the reserved
  * area, and a stage 3 that does not fit between its first sector and the end

@@ -128,13 +128,23 @@ gap to close before the build is called done.
 | BIOS | MBR | 512 | i686 | station | Windows 98/2000/XP alone on the disk | none | SeaBIOS + a Windows boot-sector fixture on an MBR disk |
 | BIOS | MBR | 512 | i686 | legacy | the A21m: Windows 2000 + CD/USB/CF | none | as above + jump's rig cases |
 | BIOS | MBR | 512 | x86-64 | station | Windows 7 + Linux UKIs | none | |
-| BIOS | GPT | 512 | x86-64 | station | Linux UKIs + Windows on a second disk | mk-test-station (POS only) | + second disk |
-| UEFI | GPT | 512 | x86-64 | station | Windows 10/11 + Linux UKIs, one disk | mk-test-station (POS only) | + a bootmgfw fixture |
+| BIOS | GPT | 512 | x86-64 | station | Linux UKIs + Windows on a second disk | test-core station-bios (to the passphrase prompt, its install) | + second disk |
+| UEFI | GPT | 512 | x86-64 | station | Windows 10/11 + Linux UKIs, one disk | test-core station-uefi (to the passphrase prompt) | + a bootmgfw fixture |
 | UEFI | GPT | 512 | x86-64 | station | Windows on a second disk | none (NXT measured by hand) | |
 | UEFI | MBR | 512 | x86-64 | station | Windows 7-11 on MBR | none | |
-| any | GPT | 4096 | x86-64 | station | Linux UKIs | none | a 4Kn disk image under both firmwares |
-| BIOS | GPT | 512 | any | stick | full four-partition stick | none scripted | E3 |
+| any | GPT | 4096 | x86-64 | station | Linux UKIs | none (the stick's 4Kn cells below cover core) | a 4Kn station disk under both firmwares |
+| UEFI | GPT | 512 | x86-64 | stick | full four-partition stick | test-core uefi-stick, uefi-stick-sb (Secure Boot off, on) | |
+| BIOS | GPT | 512 | any | stick | full four-partition stick | test-core bios-stick (the same image as the only disk) | |
+| any | GPT | 512 | x86-64 | stick | a second stick of another install attached | test-core two-sticks-uefi, two-sticks-bios | |
+| any | GPT + MBR | 512 | x86-64 | stick | an MBR data disk attached (FAT32, exFAT, a logical FAT16) | test-core mbr-disk-uefi, mbr-disk-bios | |
+| any | GPT | 512 | x86-64 | stick | a disk carrying another install's records | test-core foreign-uefi, foreign-bios | |
+| any | GPT | 4096 | x86-64 | stick | full stick, `mkstick create` and `mkstick bios` on a 4Kn device | test-core 4kn-uefi, 4kn-bios (NVMe: the one QEMU disk SeaBIOS offers at 4096, DESIGN 3.4) | |
 | any | MBR | 512 | any | stick | a stick on an MBR table | none | if sticks get MBR at all (decide) |
+
+The test-core cells boot to the fixture UKI's report of both credentials
+(the passphrase, and `falcon.ident.cred` naming the booted install), so a
+cell passes only when the library listed, the shelf that unlocked and the
+identity handed on are all the booted install's.
 
 Out of scope, stated so they are not gaps: Windows 98/ME/2000/XP under UEFI;
 the legacy build under UEFI; a station on a CD or floppy.
@@ -261,7 +271,8 @@ rigs, never written again as literals).
   are never written. Stage 1 reads with AH=42h when AH=41h reports the
   extensions, else by CHS from AH=08h's geometry. Jump's floppy stage 1
   keeps its own layout (`FD_S2_SECTORS_OFF` 508; stage 2 at LBA 34 of the
-  floppy).
+  floppy); its code ends at 0x1DA (`fd_code_end`, checked by the build),
+  before the record at 0x1DC.
 - **Stage 2's place:** LBA 34 on GPT (the `FALCON-BIOS` EF02 partition),
   LBA 1 on MBR; either way it must end before the first partition.
 - **The `boot` partition** is FAT (FAT32 on a stick's ESP and a station

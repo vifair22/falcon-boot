@@ -69,6 +69,7 @@ static void stick(bios_disk *d)
     d->first_part_lba = 2048;
     d->boot_start = 2048;
     d->boot_sectors = 131072;
+    d->fat.sector = 512;
     d->fat.reserved = 2080;
     d->fat.fsinfo = 1;
     d->fat.backup = 6;
@@ -135,6 +136,40 @@ static void test_plan_mbr(void **state)
                                    &p), BIOSCORE_ERR_GAP);
 }
 
+/* A 4Kn stick as mkstick create makes one on a 4096-byte-sector disk: the
+ * GPT's array ends at LBA 5, the ESP starts at 1 MiB (LBA 256), and every
+ * count is of 4096-byte sectors, the record's included. */
+static void test_plan_4kn(void **state)
+{
+    bios_disk d;
+    bios_plan p;
+
+    (void)state;
+    stick(&d);
+    d.sector_bytes = 4096;
+    d.first_usable = 6;
+    d.first_part_lba = 256;
+    d.boot_start = 256;
+    d.boot_sectors = 76800;
+    d.fat.sector = 4096;
+    assert_int_equal(bioscore_plan(&d, S2_GPT, S2_MBR, S2_MAX, 14100, 201215,
+                                   &p), BIOSCORE_OK);
+    assert_int_equal(p.stage2_lba, 34);
+    assert_int_equal(p.stage2_sectors, 4);
+    assert_int_equal(p.stage3_lba, 256 + 32);
+    assert_int_equal(p.stage3_sectors, 50);
+    assert_int_equal(p.marker_lba, 256 + 8);
+
+    /* Stage 1 reads whole sectors to STAGE2_LOAD: stage 2 rounded up to
+     * 4096 bytes must still fit the reservation. */
+    assert_int_equal(bioscore_plan(&d, S2_GPT, S2_MBR, S2_MAX, S2_MAX * 512,
+                                   512, &p), BIOSCORE_OK);
+    assert_int_equal(p.stage2_sectors, S2_MAX * 512 / 4096);
+    assert_int_equal(bioscore_plan(&d, S2_GPT, S2_MBR, S2_MAX,
+                                   S2_MAX * 512 + 1, 512, &p),
+                     BIOSCORE_ERR_STAGE2);
+}
+
 static void test_plan_refusals(void **state)
 {
     bios_disk d;
@@ -198,11 +233,17 @@ static void test_plan_refusals(void **state)
     assert_int_equal(bioscore_plan(&d, S2_GPT, S2_MBR, S2_MAX, 512, 512, &p),
                      BIOSCORE_ERR_RECORD);
 
-    /* 4 KiB sectors are not the BIOS route's. */
+    /* Sectors of neither 512 nor 4096 bytes, and a FAT whose sectors are
+     * not the disk's. */
+    stick(&d);
+    d.sector_bytes = 2048;
+    d.fat.sector = 2048;
+    assert_int_equal(bioscore_plan(&d, S2_GPT, S2_MBR, S2_MAX, 512, 512, &p),
+                     BIOSCORE_ERR_SECTOR);
     stick(&d);
     d.sector_bytes = 4096;
     assert_int_equal(bioscore_plan(&d, S2_GPT, S2_MBR, S2_MAX, 512, 512, &p),
-                     BIOSCORE_ERR_SECTOR);
+                     BIOSCORE_ERR_FAT);
 
     stick(&d);
     assert_int_equal(bioscore_plan(&d, S2_GPT, S2_MBR, S2_MAX, 0, 512, &p),
@@ -233,8 +274,18 @@ static void test_fat_bpb(void **state)
     assert_false(f.fat32);
     assert_int_equal(f.backup, 0);
 
+    assert_int_equal(f.sector, 512);
+
+    /* A 4Kn disk's FAT: taken, with its sector size (mkstick bios refuses
+     * it, records_write_boot does not). */
     fill_fat32(bs, 2080);
     bs[0x0C] = 0x10;                   /* 4096-byte sectors */
+    assert_int_equal(bioscore_fat_bpb(bs, &f), BIOSCORE_OK);
+    assert_int_equal(f.sector, 4096);
+    bs[0x0C] = 0x06;                   /* 1536: not a power of two */
+    assert_int_equal(bioscore_fat_bpb(bs, &f), BIOSCORE_ERR_FAT);
+    bs[0x0B] = 0x00;
+    bs[0x0C] = 0x01;                   /* 256 */
     assert_int_equal(bioscore_fat_bpb(bs, &f), BIOSCORE_ERR_FAT);
     fill_fat32(bs, 2080);
     bs[510] = 0;
@@ -425,6 +476,7 @@ int run_bioscore_tests(void)
     const struct CMUnitTest tests[] = {
         cmocka_unit_test(test_plan_gpt),
         cmocka_unit_test(test_plan_mbr),
+        cmocka_unit_test(test_plan_4kn),
         cmocka_unit_test(test_plan_refusals),
         cmocka_unit_test(test_fat_bpb),
         cmocka_unit_test(test_reserved_for),
