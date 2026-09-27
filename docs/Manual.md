@@ -96,18 +96,34 @@ route.
 
 The build for a machine's own disk (`docs/DESIGN.md` Section 13):
 `falcon-boot-station.efi` for UEFI, and `falcon-bios-station-stage3.bin` as stage 3
-behind the stick's stages 1 and 2 for BIOS. Either opens at the passphrase
-prompt; Escape there goes to the list.
+behind the stick's stages 1 and 2 for BIOS.
 
-UEFI:
+UEFI opens at its list, with `STATION.INI`'s default highlighted and, when
+it sets a timeout, "Booting in 5 s. Any key stops the countdown." in the key
+line (`docs/DESIGN.md` Sections 13.3 and 13.7):
 
 | code | route | reached by |
 |---|---|---|
-| `POS` | personal OS, as on the stick, from the boot disk's shelf | the prompt it opens at, or the Personal OS row |
+| `POS` | a UKI from a shelf of this install, as on the stick | `Personal OS (encrypted)` (the prompt, then the chooser), or a plaintext shelf's own row per UKI |
 | `NXT` | a firmware boot entry: BootNext is set to it and the machine restarts | its row, labelled with the entry's own description |
+| `ESP` | an image on an ESP, loaded by device path: Windows Boot Manager, or a `STATION.INI` entry's `efi` | a `method = efi` entry, or `Windows Boot Manager (disk gpt:1a2b3c4d, partition 1)` for an ESP no firmware entry names |
+| `MEM` | memtest86+, `\EFI\falcon\memtest.efi` on the station's ESP | `Memory test (memtest86+)` |
 
 Every entry the firmware's own boot menu offers is a row (active, not
-hidden, boot category), except the one this boot came through.
+hidden, boot category), except the one this boot came through and the
+station's own (`falcon`). A `FalconNextBoot` naming an entry boots it with
+no list. `ESP` says, before it loads `bootmgfw.efi`:
+
+    BitLocker will ask for the recovery key if the volume is sealed.
+
+A `STATION.INI` that cannot be taken is said once, before the list, which
+then waits with no default:
+
+    STATION.INI line 2: unknown key 'bogus'.
+
+    The menu will wait with no default.
+
+BIOS opens at the passphrase prompt; Escape there goes to the list.
 
 BIOS:
 

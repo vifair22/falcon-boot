@@ -333,3 +333,88 @@ and the installer agree.
   firmware entry Boot####, `uki-<file stem>` for a UKI, `memtest`.
 - **Row labels**: "<what> (disk <id>, partition <n>)" for a found OS, the
   INI label when given.
+
+## 11. Station screen text (2026-09-27)
+
+What the station says, so the UEFI and BIOS stations say it the same way
+(CLAUDE.md, "One screen, two loaders"). Written by the UEFI stream from
+`apps/station/efi_main.c`; the BIOS stream aligns to it or amends it here,
+and a change to one loader's line is a change to the other's. Lines only
+one platform has are marked.
+
+**Rows.**
+
+| row | label |
+|---|---|
+| the encrypted shelf | `Personal OS (encrypted)`: the prompt, then shelf.c's chooser |
+| a plaintext shelf's UKI | shelf.c's label (`Personal OS: Arch Linux`), one row per UKI |
+| a found OS on a partition | `<what> (disk <id>, partition <n>)`; UEFI's `<what>` is `Windows Boot Manager` |
+| another disk's MBR (BIOS) | `<what> (disk <id>)` |
+| a firmware entry (UEFI) | the entry's description |
+| memtest86+ | `Memory test (memtest86+)` (jump's) |
+| firmware setup (UEFI) | `Reboot to firmware setup`, always last |
+
+`<id>` is the short form: `gpt:` and the DiskGUID's first 8 hex digits as
+the GUID is written, or `mbr:` and the 8-digit signature, lower case. A
+STATION.INI `label` replaces any of these. Generated names follow section
+10: lower-case hex (`nxt-000a`, `gpt-1a2b3c4d-p1`); `uki-<file name less
+.efi>` with every character outside `[A-Za-z0-9_-]` made `-` and the whole
+cut to 31 characters. The encrypted shelf's row has no name; next boot's
+`uki-<stem>`, when no row carries it, is `<stem>.efi` on that shelf, behind
+the prompt.
+
+**The countdown**, in the key line, counting down each second:
+
+    Booting in 5 s. Any key stops the countdown.
+
+Any key stops it and restores the ordinary key line; the key is then taken
+as any key is (Enter boots the highlighted row). It runs on the first list
+only.
+
+**STATION.INI that cannot be taken**, a page before the list, then a key:
+
+    STATION.INI line <n>: <the parser's why>.
+
+    The menu will wait with no default.
+
+    press any key to continue.
+
+with, in place of the first line, `STATION.INI is larger than 16 KB and was
+not read.` or `STATION.INI could not be read.` The entries before a parse
+error still apply.
+
+**A default that names nothing** on this machine, the same page:
+
+    STATION.INI's default, <name>, names no entry on this machine.
+
+A default naming a hidden row is no countdown, and says nothing.
+
+**Next boot**, a page, then the list:
+
+    the next-boot marker held something that is not an entry name.
+    It has been cleared; nothing was booted from it.
+
+    press any key for the menu.
+
+    the next-boot marker names <name>, and no entry has that name.
+    It has been cleared; nothing was booted from it.
+
+    press any key for the menu.
+
+**Route pages.** The code, a page, `booting: <label>`, the route's lines,
+and when it comes back a new page: the label, `<route> failed while
+<stage>` (`: 0x<status>` on UEFI), the advice, and `press any key to return
+to the menu.` Route words: `personal OS boot` (POS), `NXT`, `ESP`, `MEM`
+(UEFI; BIOS says `boot` for memtest, as jump does). Stages and advice the
+station adds:
+
+- ESP, before the load of `bootmgfw.efi` (UEFI): `BitLocker will ask for
+  the recovery key if the volume is sealed.`
+- ESP or MEM, no volume carries the file: stage `finding its ESP`, advice
+  `No partition of that disk carries the file.`
+- ESP or MEM, refused under Secure Boot: advice `the image is not signed
+  with a key this machine trusts.`
+- NXT for an INI entry with no firmware entry (UEFI): stage `finding its
+  firmware entry`, advice `No firmware boot entry names this disk. Set
+  method = efi in STATION.INI to start its bootmgfw.efi.`
+- An image that returns (UEFI): `the image exited, status 0x<n>`.

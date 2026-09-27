@@ -8,7 +8,9 @@
  * (falcon-efi/src/secboot/sb.c): its whole input is one runtime services
  * function pointer, so a fake GetVariable reaches every state it can report.
  * The stationary build's boot-entry parsing (falcon-efi/src/nxt/nxtcore.c):
- * NVRAM bytes in, a row or a refusal out.
+ * NVRAM bytes in, a row or a refusal out. The UEFI station's list
+ * (falcon-efi/src/station/strows.c): found rows and a STATION.INI in, names,
+ * matches and an order out.
  */
 
 #include "tests.h"
@@ -23,6 +25,7 @@ int main(void)
     failed += run_iso_overlay_tests();
     failed += run_sb_tests();
     failed += run_nxt_tests();
+    failed += run_strows_tests();
 
     printf("\nfalcon-efi: total failed: %d\n", failed);
     return failed == 0 ? 0 : 1;

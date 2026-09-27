@@ -79,6 +79,18 @@ INTN menu_run_keys(EFI_SYSTEM_TABLE *st, const menu_banner *banner,
                    const menu_entry *entries, UINTN count,
                    const menu_keys *keys, CHAR16 *which);
 
+/* menu_run_keys with `sel` highlighted first and, when `seconds` is nonzero,
+ * a countdown in the key line: when it runs out, `sel` is returned as if
+ * enter had been pressed (*which = L'\r'), and any key stops it for the
+ * rest of the menu's life. The station's STATION.INI default and timeout
+ * (DESIGN Section 13.7); falcon-bios's screen_menu_timed is the same menu,
+ * line for line. A firmware that will not make a timer gets no countdown:
+ * the menu then waits, which is what a menu with no timeout does anyway. */
+INTN menu_run_timed(EFI_SYSTEM_TABLE *st, const menu_banner *banner,
+                    const menu_entry *entries, UINTN count,
+                    const menu_keys *keys, CHAR16 *which, UINTN sel,
+                    UINTN seconds);
+
 /* Masked line editor, for the p3 passphrase (DESIGN Section 5 step 2).
  *
  * Lives in the menu module because it is console presentation and nothing

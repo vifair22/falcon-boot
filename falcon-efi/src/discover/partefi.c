@@ -90,3 +90,23 @@ EFI_STATUS part_start_lba(EFI_SYSTEM_TABLE *st, EFI_HANDLE h, UINT64 *lba)
     memcpy(lba, hd + HD_DP_OFF_START, sizeof *lba);
     return EFI_SUCCESS;
 }
+
+BOOLEAN part_on_disk(EFI_SYSTEM_TABLE *st, EFI_HANDLE disk, EFI_HANDLE part)
+{
+    EFI_DEVICE_PATH_PROTOCOL *dd;
+    EFI_DEVICE_PATH_PROTOCOL *dp;
+    UINTN lp = 0;
+    UINTN ld;
+
+    if (st == NULL || disk == NULL || part == NULL)
+        return FALSE;
+    dd = path_of(st, disk);
+    dp = path_of(st, part);
+    if (dd == NULL || hd_node(dp, &lp) == NULL || lp == 0)
+        return FALSE;
+    ld = dp_total_len(dd);
+    if (ld < sizeof(EFI_DEVICE_PATH_PROTOCOL))
+        return FALSE;
+    ld -= sizeof(EFI_DEVICE_PATH_PROTOCOL);
+    return (BOOLEAN)(ld == lp && memcmp(dd, dp, lp) == 0);
+}

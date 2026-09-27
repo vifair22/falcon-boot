@@ -358,16 +358,93 @@ static BOOLEAN is_commit_key(const menu_keys *keys, CHAR16 c)
     return FALSE;
 }
 
+/* ---- the countdown (DESIGN Section 13.7) ----
+ *
+ * One periodic timer at a second, waited on beside the keyboard. The key
+ * line carries the count while it runs, in falcon-bios's words
+ * (screen_menu_timed), and goes back to the ordinary hint when a key stops
+ * it. */
+#define TICK_100NS 10000000u   /* one second in SetTimer's unit */
+
+static void paint_countdown(const menu_view *v, UINTN left)
+{
+    static const CHAR16 head[] = L"Booting in ";
+    static const CHAR16 tail[] = L" s. Any key stops the countdown.";
+    CHAR16 text[80];
+    CHAR16 digits[6];
+    UINTN n = 0;
+    UINTN d = 0;
+    UINTN i;
+
+    do {
+        digits[d++] = (CHAR16)(L'0' + left % 10u);
+        left /= 10u;
+    } while (left != 0 && d < sizeof digits / sizeof digits[0]);
+    for (i = 0; head[i] != 0; i++)
+        text[n++] = head[i];
+    while (d > 0)
+        text[n++] = digits[--d];
+    for (i = 0; tail[i] != 0 && n + 1u < sizeof text / sizeof text[0]; i++)
+        text[n++] = tail[i];
+    text[n] = 0;
+    v->st->ConOut->SetAttribute(v->st->ConOut, TUI_ATTR_TEXT);
+    draw_row(v->st, v->m.hint_row, v->m.left, v->m.width, text);
+}
+
+static EFI_EVENT countdown_start(EFI_SYSTEM_TABLE *st)
+{
+    EFI_EVENT ev = (EFI_EVENT)0;
+
+    if (st->BootServices->CreateEvent(EVT_TIMER, 0, (EFI_EVENT_NOTIFY)0,
+                                      (void *)0, &ev) != EFI_SUCCESS)
+        return (EFI_EVENT)0;
+    if (st->BootServices->SetTimer(ev, TimerPeriodic, TICK_100NS) !=
+        EFI_SUCCESS) {
+        st->BootServices->CloseEvent(ev);
+        return (EFI_EVENT)0;
+    }
+    return ev;
+}
+
+static void countdown_stop(EFI_SYSTEM_TABLE *st, EFI_EVENT *ev)
+{
+    if (*ev == (EFI_EVENT)0)
+        return;
+    st->BootServices->SetTimer(*ev, TimerCancel, 0);
+    st->BootServices->CloseEvent(*ev);
+    *ev = (EFI_EVENT)0;
+}
+
 INTN menu_run_keys(EFI_SYSTEM_TABLE *st, const menu_banner *banner,
                    const menu_entry *entries, UINTN count,
                    const menu_keys *keys, CHAR16 *which)
 {
+    return menu_run_timed(st, banner, entries, count, keys, which, 0, 0);
+}
+
+INTN menu_run_timed(EFI_SYSTEM_TABLE *st, const menu_banner *banner,
+                    const menu_entry *entries, UINTN count,
+                    const menu_keys *keys, CHAR16 *which, UINTN sel,
+                    UINTN seconds)
+{
     menu_view v;
-    UINTN top = 0, sel = 0, painted = 0;
+    UINTN top = 0, painted = 0;
+    const CHAR16 *line = !count ? tui_hint_empty
+                         : (keys != (const menu_keys *)0 &&
+                            keys->hint != (const CHAR16 *)0)
+                             ? keys->hint
+                             : tui_hint_default;
+    EFI_EVENT tick = (EFI_EVENT)0;
+    UINTN left = 0;
     /* Set whenever every slot has to be redrawn: the first paint, and any
      * keystroke that scrolled the window. A plain highlight move does not
      * set it, and repaints two rows instead of the whole window. */
     BOOLEAN full = TRUE;
+
+    if (sel >= count)
+        sel = 0;
+    if (count == 0)
+        seconds = 0;
 
     v.st = st;
     v.entries = entries;
@@ -400,16 +477,20 @@ INTN menu_run_keys(EFI_SYSTEM_TABLE *st, const menu_banner *banner,
     /* "expected" is the whole claim of the default hint: the tags are a
      * prediction and the platform decides at load time (DESIGN Section
      * 7.8). */
-    draw_row(st, v.m.hint_row, v.m.left, v.m.width,
-             !count ? tui_hint_empty
-             : (keys != (const menu_keys *)0 &&
-                keys->hint != (const CHAR16 *)0)
-                 ? keys->hint
-                 : tui_hint_default);
+    draw_row(st, v.m.hint_row, v.m.left, v.m.width, line);
+
+    if (seconds != 0) {
+        tick = countdown_start(st);
+        if (tick != (EFI_EVENT)0) {
+            left = seconds;
+            paint_countdown(&v, left);
+        }
+    }
 
     for (;;) {
         UINTN i;
         EFI_INPUT_KEY key;
+        EFI_EVENT events[2];
 
         /* Keep the selection inside the window before painting. Scrolling
          * changes what every slot shows, so it is the one case that still
@@ -433,10 +514,36 @@ INTN menu_run_keys(EFI_SYSTEM_TABLE *st, const menu_banner *banner,
          * the read below would then spin on EFI_NOT_READY forever. Backing
          * out is what ESC does, which on the main menu hands the machine
          * back to the firmware's next boot option. */
-        if (st->BootServices->WaitForEvent(1, &st->ConIn->WaitForKey, &i) !=
-            EFI_SUCCESS) {
+        events[0] = st->ConIn->WaitForKey;
+        events[1] = tick;
+        if (st->BootServices->WaitForEvent(tick != (EFI_EVENT)0 ? 2u : 1u,
+                                           events, &i) != EFI_SUCCESS) {
+            countdown_stop(st, &tick);
             restore_console(st);
             return -1;
+        }
+
+        /* A second of the countdown: nothing else on screen moves. When it
+         * runs out the highlighted row is taken as though enter had been
+         * pressed on it. */
+        if (i == 1u) {
+            if (--left != 0) {
+                paint_countdown(&v, left);
+                continue;
+            }
+            countdown_stop(st, &tick);
+            if (which != (CHAR16 *)0)
+                *which = L'\r';
+            restore_console(st);
+            return (INTN)sel;
+        }
+
+        /* Any key stops the countdown for good, and is then taken as any
+         * key is: enter on the default boots it at once. */
+        if (tick != (EFI_EVENT)0) {
+            countdown_stop(st, &tick);
+            st->ConOut->SetAttribute(st->ConOut, TUI_ATTR_TEXT);
+            draw_row(st, v.m.hint_row, v.m.left, v.m.width, line);
         }
 
         /* Drain the queue, then paint once.
