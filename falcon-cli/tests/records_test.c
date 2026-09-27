@@ -272,6 +272,96 @@ static void test_boot_candidate_gpt(void **state)
     assert_false(records_boot_candidate(NULL, &e));
 }
 
+/* --write-boot-at's words: what jump's floppy recipe passes, and what a
+ * slip of the recipe would pass instead. */
+static void test_boot_args(void **state)
+{
+    const char *why = NULL;
+    uint64_t off = 1;
+    ident_rec r;
+
+    (void)state;
+    assert_true(records_boot_args("0", "98", "0", &off, &r, &why));
+    assert_int_equal(off, 0);
+    assert_int_equal(r.role, IDENT_ROLE_BOOT);
+    assert_int_equal(r.version, IDENT_VERSION);
+    assert_int_equal(r.stage3_sector, 98);
+    assert_int_equal(r.marker_sector, 0);
+    assert_true(records_boot_args("0x100000", "0x20", "8", &off, &r, &why));
+    assert_int_equal(off, 1048576u);
+    assert_int_equal(r.stage3_sector, 32);
+    assert_int_equal(r.marker_sector, 8);
+
+    assert_false(records_boot_args("513", "98", "0", &off, &r, &why));
+    assert_non_null(why);
+    assert_false(records_boot_args("-512", "98", "0", &off, &r, &why));
+    assert_false(records_boot_args("", "98", "0", &off, &r, &why));
+    assert_false(records_boot_args("0", "0", "0", &off, &r, &why));
+    assert_false(records_boot_args("0", "65536", "0", &off, &r, &why));
+    assert_false(records_boot_args("0", "98x", "0", &off, &r, &why));
+    assert_false(records_boot_args("0", "98", "+1", &off, &r, &why));
+    assert_false(records_boot_args("0", "98", NULL, &off, &r, &why));
+    assert_false(records_boot_args("0", "98", "0", NULL, &r, &why));
+}
+
+/* A floppy-shaped image: a FAT12 volume at LBA 0 with no table around it,
+ * its record written at byte 0 with jump's own sectors, as the recipe in
+ * apps/jump/app.mk writes it. */
+static void test_write_raw_volume(void **state)
+{
+    static mks_records r;
+    char path[] = "/tmp/falcon-records-fd.XXXXXX";
+    const char *why = NULL;
+    uint8_t sec[512];
+    uint64_t off = 0;
+    ident_rec rec;
+    ident_rec got;
+    int fd = mkstemp(path);
+
+    (void)state;
+    assert_true(fd >= 0);
+    assert_int_equal(ftruncate(fd, 2880 * 512), 0);
+    memset(sec, 0, sizeof sec);
+    sec[0] = 0xEB;
+    sec[1] = 0x3C;
+    sec[2] = 0x90;
+    sec[0x0C] = 0x02;
+    sec[0x0D] = 1;
+    sec[0x0E] = 144;          /* reserved: stage 3 at 98 and its sectors */
+    sec[0x10] = 2;
+    sec[0x16] = 9;            /* a 16-bit FAT size: not FAT32, no backup */
+    sec[0x1D9] = 0xC3;        /* the last byte of the floppy's stage 1 */
+    sec[510] = 0x55;
+    sec[511] = 0xAA;
+    assert_int_equal(pwrite(fd, sec, sizeof sec, 0), 512);
+    (void)close(fd);
+
+    assert_true(records_boot_args("0", "98", "0", &off, &rec, &why));
+    memset(rec.install_id, 0x5A, sizeof rec.install_id);
+    assert_int_equal(records_write_boot(path, off, &rec), CLI_OK);
+
+    fd = open(path, O_RDONLY);
+    assert_true(fd >= 0);
+    assert_int_equal(pread(fd, sec, sizeof sec, 0), 512);
+    (void)close(fd);
+    assert_int_equal(ident_decode_bin(sec, &got), IDENT_OK);
+    assert_true(ident_same_install(&rec, &got));
+    assert_int_equal(got.stage3_sector, 98);
+    assert_int_equal(got.marker_sector, 0);
+    /* The code before the record and the BPB are left alone. */
+    assert_int_equal(sec[0x1D9], 0xC3);
+    assert_int_equal(sec[0x0E], 144);
+    /* The volume is not a partitioned disk, and mkstick does not say it is. */
+    assert_int_equal(records_read(&r, path, 512, 2880 * 512), CLI_OK);
+    assert_int_not_equal(r.rc, PART_OK);
+
+    /* Stage 3 past the reserved area is refused, as on a partition. */
+    assert_true(records_boot_args("0", "144", "0", &off, &rec, &why));
+    memset(rec.install_id, 0x5A, sizeof rec.install_id);
+    assert_int_not_equal(records_write_boot(path, off, &rec), CLI_OK);
+    (void)unlink(path);
+}
+
 static void test_nextcore(void **state)
 {
     uint8_t buf[64];
@@ -320,6 +410,8 @@ int run_records_tests(void)
         cmocka_unit_test(test_no_table),
         cmocka_unit_test(test_id_text),
         cmocka_unit_test(test_boot_candidate_gpt),
+        cmocka_unit_test(test_boot_args),
+        cmocka_unit_test(test_write_raw_volume),
         cmocka_unit_test(test_nextcore),
     };
 

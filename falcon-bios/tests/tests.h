@@ -14,6 +14,5 @@ int run_atacore_tests(void);
 int run_usbcore_tests(void);
 int run_pcccore_tests(void);
 int run_bootpart_tests(void);
-int run_mkident_tests(void);
 
 #endif /* FALCON_BIOS_TESTS_H */

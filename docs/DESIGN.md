@@ -3183,8 +3183,8 @@ anything, and a falcon stage 1 in front of a half-written stage 2 fails its
 `falcon-bios/tools/mk-rig-disk.sh` from files alone (`sfdisk`, `sgdisk`,
 `mkfs.fat --offset`, `mkfs.exfat` on a file, and `mkstick ident` for the
 reserved count and the boot record); jump's floppy, which has no table,
-gets its record from `falcon-bios-mkident`, which writes one at any offset
-with every field given.
+gets its record from `mkstick ident --write-boot-at`, which writes one at a
+byte offset with the sectors given.
 
 #### 12.3.2 Power-on to the menu
 
