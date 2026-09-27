@@ -181,12 +181,20 @@ partitions (`/dev/nvme0n1p1` and so on for NVMe).
 |---|---|
 | `falcon-boot-station.efi`, `falcon-bios-station-stage3.bin` | `make station` |
 | `falcon-bios-stage1.bin`, `falcon-bios-stage2.bin` | `make bios`; the stick's, unchanged |
-| `falcon-boot-mkstick` | `make`; used here only for `keygen` and `bios` |
+| `falcon-boot-mkstick` | `make`; used here for `keygen`, `ident` and `bios` |
 | Fedora shim 16.1 and its MokManager | `falcon-efi/tools/shim-spike/fetch-shims.sh`, into `build/shim/bins/` |
 | a MOK key pair | an existing one, or `falcon-boot-mkstick keygen <dir>` |
 
 One MOK pair can serve several machines; each machine enrolls its
 certificate once.
+
+Every falcon partition carries an identity record with one install ID for
+the whole install (`docs/DESIGN.md` Section 3.1). Draw it once and use it
+in 2.3 and 2.6:
+
+```sh
+ID=$(od -An -tx1 -N16 /dev/urandom | tr -d ' \n')
+```
 
 ### 2.2 Layout
 
@@ -196,16 +204,19 @@ certificate once.
 | p2 | `9CB02E90-85F4-4AF7-9AF3-1F9D6A95FEAF` (falcon shelf) | 1 GiB | LUKS2, pbkdf2 keyslot, ext4: `/uki/*.efi`, the MOK pair |
 | p3 | `CA7D7CCB-63ED-4C53-861C-1742536059CC` (Linux LUKS) | the rest | LUKS2, the OS's root |
 
-The shelf is found by its type GUID, never by its number. The first
-partition must start at LBA 2048: the BIOS stages live in the sectors
-before it.
+The shelf is found by its identity record, never by its number. The first
+partition must start at LBA 2048: BIOS stage 2 lives in the sectors before
+it. The ESP is the `boot` partition: BIOS stage 3 and the next-boot marker
+live in its reserved sectors, so it is formatted with room for them (`-R`,
+the count `mkstick create` uses).
 
 ```sh
 sgdisk -Z /dev/X
 sgdisk -n 1:2048:+512M -t 1:EF00 -c 1:ESP \
        -n 2:0:+1G -t 2:9CB02E90-85F4-4AF7-9AF3-1F9D6A95FEAF -c 2:FALCON-UKI \
        -n 3:0:0 -t 3:CA7D7CCB-63ED-4C53-861C-1742536059CC -c 3:root /dev/X
-mkfs.fat -F 32 -n ESP /dev/X1
+mkfs.fat -F 32 -n ESP -R "$(falcon-boot-mkstick ident --reserved-sectors \
+    --stage3 build/bin/falcon-bios-station-stage3.bin)" /dev/X1
 ```
 
 ### 2.3 The shelf
@@ -214,9 +225,13 @@ pbkdf2 with the pinned iteration count, because the loader unlocks it
 (DESIGN Section 3). The passphrase must be the root's too: it is handed to
 the initramfs, which opens p3 with it.
 
+The shelf's record is a `falcon` token in its LUKS2 header.
+
 ```sh
 cryptsetup luksFormat --type luks2 --pbkdf pbkdf2 \
     --pbkdf-force-iterations 200000 /dev/X2
+printf '{"type":"falcon","keyslots":[],"version":1,"role":"shelf","install_id":"%s"}' \
+    "$ID" | cryptsetup token import /dev/X2
 cryptsetup open /dev/X2 shelf
 mkfs.ext4 -L FALCON-UKI /dev/mapper/shelf
 mkdir -p /mnt/shelf
@@ -270,9 +285,11 @@ Windows Boot Manager, is a row (`NXT`, Section 1.4).
 
 ### 2.6 BIOS
 
-Stages 1 and 2 are the stick's, stage 3 is the stationary one. `--reserve`
-claims the gap as a BIOS boot partition named `FALCON-BIOS`, so no
-partitioning tool later puts a partition over the stages.
+Stages 1 and 2 are the stick's, stage 3 is the stationary one. The ESP
+gets its `boot` record first; `bios` finds it by that record and puts stage
+3 in its reserved sectors. `--reserve` claims stage 2's gap as a BIOS boot
+partition named `FALCON-BIOS`, so no partitioning tool later puts a
+partition over it.
 
 `--reserve` rewrites the partition table, so nothing on the disk may be
 mounted:
@@ -280,13 +297,150 @@ mounted:
 ```sh
 umount /mnt/esp /mnt/shelf
 cryptsetup close shelf
+falcon-boot-mkstick ident /dev/X --write-boot 1 --id "$ID"
 falcon-boot-mkstick bios --reserve \
     --stage1 build/bin/falcon-bios-stage1.bin \
     --stage2 build/bin/falcon-bios-stage2.bin \
     --stage3 build/bin/falcon-bios-station-stage3.bin \
-    --backup lba0-gap.bak /dev/X
+    --backup bios.bak /dev/X
 ```
 
-The backup is LBA 0 and the gap as they were; `--remove --backup
-lba0-gap.bak` puts them back. A second disk with its own boot code is a
-row (`MBR`, Section 1.4).
+The backup is every sector `bios` wrote, as it was; `--remove --backup
+bios.bak` puts them back. A second disk with its own boot code is a row
+(`MBR`, Section 1.4).
+
+## 3. falcon-boot-mkstick
+
+The stick maker (`docs/DESIGN.md` Section 8). `falcon-boot-mkstick
+<command> --help` prints a command's options. Every command takes
+`--verbose` and `--quiet`.
+
+### 3.1 create
+
+    falcon-boot-mkstick create <target> [--size <size>] [--force] ...
+
+Makes the four-partition stick of DESIGN Section 3 on a block device or an
+image file. It draws one random 128-bit install ID and writes it into every
+partition's identity record (DESIGN Section 3.1):
+
+| partition | record |
+|---|---|
+| p1, ESP, FAT32 | role `boot`, in its boot sector at byte 0x1DC and in the FAT32 backup boot sector; stage 3 at sector 32, the marker at sector 8 |
+| p2, exFAT | `/.falcon`, role `library` |
+| p3, LUKS2 | a `falcon` token in the header, role `shelf` (`cryptsetup token export --token-id 0 /dev/X3` shows it) |
+| p3, `--p3-plain` | `/.falcon`, role `shelf` |
+| p4 | none |
+
+p1 is formatted with `mkfs.fat -R <n>`: 32 sectors, then room for BIOS
+stage 3 of twice the size of `--stage3` (default
+`build/bin/falcon-bios-stage3.bin`), rounded up to a whole MiB and never
+less than 1 MiB. The stick's stage 3 is about 200 KB, so the room is 1 MiB
+(2080 reserved sectors in all). A later stage 3 up to that size installs
+without reformatting p1. With no stage 3 built, the 1 MiB floor is used.
+
+A target that already carries an MBR or a GPT partition table, or a table
+that does not read cleanly, is refused without `--force`. The GPT names
+(`FALCON-ESP`, `FALCON-ISO`, `FALCON-UKI`, `FALCON-ROOT`) are for people;
+nothing reads them.
+
+### 3.2 bios
+
+    falcon-boot-mkstick bios <target> [--backup <file> | --no-backup]
+        [--reserve] [--remove] [--dry-run] [--force]
+        [--stage1 <file>] [--stage2 <file>] [--stage3 <file>]
+
+Installs falcon-bios on a disk whose `boot` partition exists (DESIGN
+Section 3.3). It finds that partition the way stage 2 does: the first ESP-
+or falcon-boot-typed partition (GPT) or FAT-typed one (MBR) whose boot
+sector carries a `boot` record. It writes:
+
+| what | where |
+|---|---|
+| stage 1 | LBA 0, bytes 0-439, with stage 2's first LBA (LE32 at 0x1B2) and length in sectors (LE16 at 0x1B6); the disk signature, table and `0x55AA` are kept |
+| stage 2 | LBA 34 on GPT, LBA 1 on MBR, its real length; it must end before the first partition |
+| stage 3 | the boot partition's reserved sectors, from the sector its record names; it must end inside them |
+| the marker sector | the one the record names, zeroed |
+
+It refuses a disk whose sectors are not 512 bytes, a stage 2 that would
+reach the first partition, and a stage 3 that does not fit the reserved
+sectors (it prints the `mkfs.fat -R` count that would fit).
+
+Every sector it writes is saved first to `--backup` (default
+`falcon-bios-backup-<target>.bin` in the current directory). `--remove`
+restores that file, LBA 0 last; with no backup it clears what an install
+wrote (the stage 2 run LBA 0 names, stage 3 by its header's length, the
+marker, LBA 0's boot code). `--reserve` (GPT only) claims stage 2's gap
+as a BIOS boot partition, slot 5, named `FALCON-BIOS`; `--remove` deletes
+it again.
+
+### 3.3 status
+
+    falcon-boot-mkstick status <target> [--no-esp]
+
+Read-only. Reads the table (MBR or GPT) and every partition's record with
+the loaders' own code, and reports:
+
+- the install ID, from the boot partition's record; a partition carrying a
+  different install ID, or a record that does not decode, is a FAIL, and a
+  partition with none is listed as such;
+- the ISO library (p2's files), the shelf (its keyslots, or a plaintext
+  shelf's contents), and a LUKS2 volume with no record (the root);
+- the BIOS stages where the loaders look for them: stage 2 at the LBA stage
+  1 names, stage 3 at the sector the boot record names, and whether a
+  next-boot marker is pending;
+- the ESP's files, through a read-only loop mount, which needs root
+  (`--no-esp` skips it).
+
+It exits nonzero when anything fails.
+
+### 3.4 ident
+
+    falcon-boot-mkstick ident <target>
+    falcon-boot-mkstick ident <target> --write-boot <n> --id <hex|new>
+    falcon-boot-mkstick ident --reserved-sectors [--stage3 <file>]
+
+With a target alone, prints one line per partition, tab-separated: number,
+role (`boot`, `library`, `shelf`; `-` for none; `bad` for a record that
+does not decode), install ID (`-` for none) and first LBA. Scripts find a
+partition by its role this way; the rig and corpus scripts do
+(`tools/rig-part.sh`). No root is needed on an image file.
+
+`--write-boot <n>` writes the `boot` record, with the given install ID or a
+new one, into partition n's FAT boot sector and its FAT32 backup, and prints
+the ID. The partition must be ESP-, falcon-boot- or FAT-typed, and
+formatted with enough reserved sectors. The other two records are text: a
+`/.falcon` file holding `falcon 1 <role> <32 hex digits>`, and the LUKS2
+token of 3.1.
+
+`--reserved-sectors` prints the `mkfs.fat -R` count of 3.1 for `--stage3`.
+
+### 3.5 next-boot
+
+    falcon-boot-mkstick next-boot [--sector] [--disk <dev>] <value>
+    falcon-boot-mkstick next-boot [--sector] [--disk <dev>] --clear
+
+Asks the loader to start one entry on the next boot instead of drawing the
+menu (DESIGN Section 6.3.1). The value is a path on p2, as the menu lists
+it, or `:personal` for the personal OS. It must be printable ASCII; the
+loader clears the marker before acting on it and matches it against what
+it finds, as a menu pick would be. Needs root.
+
+- **UEFI** (the machine booted with UEFI: `/sys/firmware/efi` exists): sets
+  the `FalconNextBoot` variable (vendor GUID
+  `50614485-081b-4b7c-8b54-2abeffdf2fb3`; non-volatile, boot service and
+  runtime access) through efivarfs. `--clear` deletes it.
+- **BIOS** (no `/sys/firmware/efi`, or `--sector`): writes the marker
+  sector of the disk's `boot` partition, at the sector its record names:
+
+      falcon-next-boot 1
+      <the RTC's reading, /sys/class/rtc/rtc0/since_epoch>
+      <the value>
+
+  and zeros to the end of the sector. The loader honours it for ten
+  minutes after it was written. The disk is the one whose partitions carry
+  a `boot` record; `--disk` names it when more than one does, or names an
+  image file. The sector is written only when it is empty or already a
+  marker. `--clear` zeros it.
+
+This replaces archusb's `archusb-boot-next`, which wrote the BIOS marker to
+LBA 2047 with `dd`; a pending marker there is no longer read.

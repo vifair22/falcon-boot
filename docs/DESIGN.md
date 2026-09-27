@@ -2100,6 +2100,24 @@ than reimplementing cryptography or filesystem creation:
   cost 3-6 s per unlock. Revisit only if real-hardware timing disagrees.
 - Install shim + MokManager + our loader + cert onto p1, naming our loader to
   match the shim's embedded next-stage path (Section 4).
+- Write the identity records (Section 3.1): one random install ID per
+  stick, in p1's boot sector (binary, and in FAT32's backup boot sector so
+  `fsck.fat` cannot copy it away), p2's `/.falcon`, and p3's LUKS2 `falcon`
+  token (`cryptsetup token import`) or a plaintext p3's `/.falcon`. p1 is
+  formatted with `mkfs.fat -R`: stage 3's first sector plus room for twice
+  the stage 3 the build has, rounded up to a whole MiB and at least one,
+  so a later, larger stage 3 installs without reformatting p1. `mkstick
+  create` refuses a disk carrying any MBR or GPT table without `--force`.
+- `mkstick bios` installs falcon-bios by the layout of Section 3.3, finding
+  the boot partition by its record as stage 2 does, backing up exactly the
+  sectors it writes and restoring them on `--remove`. `mkstick status`
+  reads every record and checks the stages where the loaders look for them;
+  `mkstick ident` lists the records for scripts and stamps a boot record
+  onto a FAT partition (the rig and corpus images use both, so every rig
+  image carries records and its own BIOS stages). `mkstick next-boot` sets
+  the next-boot marker (Section 6.3.1): the variable on UEFI, the boot
+  partition's marker sector on BIOS. docs/Manual.md Section 3 is the
+  reference for all of them.
 - Generate the MOK keypair; keep the private key encrypted on p3 (Section 7.5),
   export the public cert to p1 for enrollment.
 - Sign our loader, the personal-OS UKI, and the signing-appliance UKI with the
