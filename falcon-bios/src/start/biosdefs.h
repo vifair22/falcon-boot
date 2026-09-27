@@ -60,6 +60,26 @@
  * before the boot signature. */
 #define FD_S2_SECTORS_OFF 508
 
+/* The single BIOS layout (docs/DESIGN.md Section 3.3; the contract is
+ * docs/notes/station-rework.md section 9). The core rework's streams build
+ * against these names; nothing else writes the numbers.
+ *
+ * Stage 1 does not know where stage 2 is: the installer writes stage 2's
+ * first LBA (LE32) and its real length in sectors (LE16) into stage 1 at
+ * these offsets, inside the 440 bytes of boot code, which ends before them.
+ * STAGE2_LBA above stays the GPT place (LBA 34); an MBR disk's is LBA 1. */
+#define STAGE1_S2_LBA_OFF      0x1B2
+#define STAGE1_S2_SECTORS_OFF  0x1B6
+#define STAGE2_LBA_MBR         1
+
+/* Inside the `boot` partition (FAT; a stick's ESP, a station partition),
+ * counted in sectors from its start. FAT32's own reserved sectors are 0
+ * (boot), 1 (FSInfo), 6 and 7 (backups); the marker takes 8 and stage 3
+ * starts at 32. The identity record carries both, and the loaders read them
+ * from the record; these are what the installers write. */
+#define BOOTPART_MARKER_SECTOR 8
+#define BOOTPART_STAGE3_SECTOR 32
+
 /* "BOS2", at GATE_MAGIC: what stage 1 checks before it jumps, so sectors
  * that are not stage 2 (a stick whose gap was written over, a disk with
  * 4 KiB sectors that put LBA 34 somewhere else) stop with a message rather

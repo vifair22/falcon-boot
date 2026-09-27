@@ -26,6 +26,12 @@ const uint8_t falcon_guid_shelf[GPT_GUID_LEN] = {
     0x9a, 0xf3, 0x1f, 0x9d, 0x6a, 0x95, 0xfe, 0xaf
 };
 
+const uint8_t falcon_guid_boot[GPT_GUID_LEN] = {
+    /* d0acb249-f895-4e0d-ab0d-cfbb6f48ae36 */
+    0x49, 0xb2, 0xac, 0xd0, 0x95, 0xf8, 0x0d, 0x4e,
+    0xab, 0x0d, 0xcf, 0xbb, 0x6f, 0x48, 0xae, 0x36
+};
+
 const uint8_t gpt_guid_esp[GPT_GUID_LEN] = {
     /* c12a7328-f81f-11d2-ba4b-00a0c93ec93b, the standard EFI system
      * partition type. Present so the tests can name it and so nobody is
