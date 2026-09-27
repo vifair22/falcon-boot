@@ -8,13 +8,16 @@ CLI_COMMON := $(addprefix $(CLI)/common/,status.c log.c opt.c proc.c util.c)
 
 MKSTICK_SRCS := $(CLI_COMMON) $(addprefix $(CLI)/mkstick/,main.c cleanup.c \
 	disk.c guid.c keys.c pass.c shimname.c create.c keygen.c inspect.c \
-	varstore.c bios.c bioscore.c)
+	varstore.c bios.c bioscore.c records.c identcmd.c nextcmd.c nextcore.c)
 
 # The core modules `mkstick status` reuses verbatim. Every one is EFI-free by
 # construction (device access through a byte-read callback), which is exactly
 # what makes the inspection answer the question the boot menu will ask rather
 # than a second opinion about the same disk.
-MKSTICK_CORE := $(CORE_PART) $(CORE_FS) $(CORE_LUKS) $(CORE_CRYPTO)
+# The identity record and the next-boot marker's format are the loaders' own
+# too (ident, media/nextboot.c, which matches paths with the manifest's rule).
+MKSTICK_CORE := $(CORE_PART) $(CORE_FS) $(CORE_LUKS) $(CORE_CRYPTO) \
+	$(CORE_IDENT) $(CORE)/media/nextboot.c $(CORE_MANIFEST)
 
 SIGN_SRCS := $(addprefix $(CLI)/sign/,main.c util.c isoprobe.c manifestio.c \
 	payload.c uki.c)
@@ -75,14 +78,18 @@ test-isoview:
 # compromise rather than an oversight.
 
 CLI_TESTS := $(addprefix falcon-cli/tests/,main.c isoprobe_test.c \
-	payload_test.c uki_test.c util_test.c bioscore_test.c)
+	payload_test.c uki_test.c util_test.c bioscore_test.c records_test.c)
 
+# records.c reads through disk.c's byte reader, which brings the process and
+# cleanup helpers disk.c also holds; they are linked, not tested, here.
 CLI_UUT := $(addprefix $(CLI)/sign/,isoprobe.c payload.c uki.c util.c) \
-	$(CLI)/mkstick/bioscore.c \
-	$(CORE)/media/family.c $(CORE)/media/bootcfg.c \
+	$(addprefix $(CLI)/mkstick/,bioscore.c records.c nextcore.c disk.c \
+		cleanup.c) \
+	$(addprefix $(CLI)/common/,status.c log.c proc.c util.c) \
+	$(CORE)/media/family.c $(CORE)/media/bootcfg.c $(CORE)/media/nextboot.c \
 	$(CORE_MANIFEST) $(CORE_MANIFEST_WRITE) \
-	$(CORE_PART) $(CORE_PE) $(CORE_FS) \
-	$(CORE)/crypto/sha256.c $(CORE)/crypto/crypto.c
+	$(CORE_PART) $(CORE_PE) $(CORE_FS) $(CORE_LUKS) $(CORE_IDENT) \
+	$(CORE_CRYPTO)
 
 $(eval $(call test_bin,cli,$(CLI_TESTS) $(CLI_UUT)))
 
@@ -90,6 +97,12 @@ $(eval $(call test_bin,cli,$(CLI_TESTS) $(CLI_UUT)))
 # _GNU_SOURCE; the tool's own build uses the latter. The tests stay on the
 # narrower _POSIX_C_SOURCE, so the widening is confined to this one object.
 $(TEST_OBJ)/$(CLI)/sign/util.o: TEST_CFLAGS += -D_XOPEN_SOURCE=700
+# The mkstick objects the records tests link are built for the tool with
+# _GNU_SOURCE (realpath, usleep, sync); the same for their test objects.
+$(addprefix $(TEST_OBJ)/$(CLI)/,mkstick/disk.o mkstick/cleanup.o \
+	mkstick/records.o common/proc.o common/log.o common/status.o \
+	common/util.o): \
+	TEST_CFLAGS += -D_GNU_SOURCE
 
 ALL_TEST_SRCS += $(CLI_TESTS)
 ALL_UUT_SRCS  += $(CLI_UUT)

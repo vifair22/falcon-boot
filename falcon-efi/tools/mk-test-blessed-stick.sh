@@ -43,11 +43,13 @@
 # Env:   STICK_IMG  the stick to modify (default: build/test-stick.img)
 #        SIGN       the bless tool (default: build/bin/falcon-boot-sign)
 #
-# Needs xorriso, sbsign/sbverify, losetup and passwordless sudo.
+# Needs xorriso, sbsign/sbverify, losetup, mkstick (p2 is found by its
+# identity record: tools/rig-part.sh) and passwordless sudo.
 
 set -euo pipefail
 
 cd "$(dirname "$0")/../.."
+. tools/rig-part.sh
 
 STICK_IMG="${STICK_IMG:-build/test-stick.img}"
 SIGN="${SIGN:-build/bin/falcon-boot-sign}"
@@ -129,11 +131,12 @@ xorriso -as mkisofs -r -J -V FALCON_BLESSED -o "$ISO" "$STAGE" >/dev/null 2>&1
 rm -rf "$STAGE"
 echo "   $ISO ($(stat -c%s "$ISO") bytes)"
 
-# ---- p2 ----
+# ---- p2, found by its record ----
+P2N=$(rig_part "$STICK_IMG" library)
 LOOP=$(sudo losetup --show -f -P "$STICK_IMG")
 sudo udevadm settle 2>/dev/null || sleep 1
 MNT=$(mktemp -d)
-sudo mount -o uid="$(id -u)",gid="$(id -g)" "${LOOP}p2" "$MNT"
+sudo mount -o uid="$(id -u)",gid="$(id -g)" "${LOOP}p$P2N" "$MNT"
 
 echo
 echo "== staging $ISO_NAME on p2"
