@@ -39,6 +39,7 @@
 #include <common/proc.h>
 #include <common/util.h>
 #include <mkstick/bioscore.h>
+#include <mkstick/devio.h>
 #include <mkstick/disk.h>
 #include <mkstick/records.h>
 
@@ -52,11 +53,6 @@
 
 /* Big enough for the largest stage; the plan checks what actually fits. */
 #define STAGE_MAX ((size_t)4 * 1024 * 1024)
-
-typedef struct {
-    int      fd;
-    uint32_t sector;
-} bios_dev;
 
 static const cli_opt bios_opts[] = {
     { "stage1", CLI_OPT_VALUE, 0, "<file>",
@@ -82,98 +78,6 @@ static const cli_opt bios_opts[] = {
       "with mounted partitions" }
 };
 
-/* ---- byte I/O over the target ---- */
-
-static cli_status dev_read(const bios_dev *dev, uint64_t lba, uint64_t sectors,
-                           uint8_t *buf)
-{
-    uint64_t want = sectors * dev->sector;
-    uint64_t done = 0;
-
-    /* A zero-length read would return success having left the caller's
-     * buffer untouched. Written as a statement and a literal return because
-     * clang-tidy does not track what the variadic set_error hands back. */
-    if (want == 0u) {
-        (void)set_error(CLI_ERR_INTERNAL, "a read of no sectors at LBA %llu",
-                        (unsigned long long)lba);
-        return CLI_ERR_INTERNAL;
-    }
-
-    while (done < want) {
-        ssize_t n = pread(dev->fd, buf + done, (size_t)(want - done),
-                          (off_t)(lba * dev->sector + done));
-
-        if (n < 0)
-            return set_error_errno(CLI_ERR_IO, "reading LBA %llu",
-                                   (unsigned long long)lba);
-        if (n == 0)
-            return set_error(CLI_ERR_IO, "short read at LBA %llu",
-                             (unsigned long long)lba);
-        done += (uint64_t)n;
-    }
-    return CLI_OK;
-}
-
-static cli_status dev_write(const bios_dev *dev, uint64_t lba,
-                            const uint8_t *buf, uint64_t len)
-{
-    uint64_t done = 0;
-
-    while (done < len) {
-        ssize_t n = pwrite(dev->fd, buf + done, (size_t)(len - done),
-                           (off_t)(lba * dev->sector + done));
-
-        if (n <= 0)
-            return set_error_errno(CLI_ERR_IO, "writing LBA %llu",
-                                   (unsigned long long)lba);
-        done += (uint64_t)n;
-    }
-    return CLI_OK;
-}
-
-static cli_status dev_zero(const bios_dev *dev, uint64_t lba, uint64_t sectors)
-{
-    uint8_t buf[64u * 1024u];
-    uint64_t left = sectors * dev->sector;
-    uint64_t at = lba;
-    cli_status rc;
-
-    memset(buf, 0, sizeof buf);
-    while (left > 0u) {
-        uint64_t use = (left < sizeof buf) ? left : sizeof buf;
-
-        rc = dev_write(dev, at, buf, use);
-        if (rc != CLI_OK)
-            return rc;
-        at += use / dev->sector;
-        left -= use;
-    }
-    return CLI_OK;
-}
-
-/* A stage written as a whole number of sectors: the image, then zeros to
- * the end of its last sector, so the run on disk is exactly the plan's. */
-static cli_status dev_write_stage(const bios_dev *dev, uint64_t lba,
-                                  const uint8_t *img, size_t len,
-                                  uint64_t sectors)
-{
-    size_t whole = len - (len % dev->sector);
-    cli_status rc = CLI_OK;
-
-    if (whole > 0u)
-        rc = dev_write(dev, lba, img, whole);
-    if (rc == CLI_OK && whole < len) {
-        uint8_t tail[BIOS_SECTOR_MAX];
-
-        memset(tail, 0, sizeof tail);
-        memcpy(tail, img + whole, len - whole);
-        rc = dev_write(dev, lba + whole / dev->sector, tail, dev->sector);
-    }
-    if (rc == CLI_OK && sectors * dev->sector < len)
-        rc = set_error(CLI_ERR_INTERNAL, "a stage longer than its plan");
-    return rc;
-}
-
 static int mbr_has_code(const uint8_t *mbr)
 {
     size_t i;
@@ -194,7 +98,7 @@ typedef struct {
     bios_disk disk;
 } bios_survey;
 
-static cli_status survey(bios_dev *dev, const mks_disk *d, mks_records *recs,
+static cli_status survey(mks_dev *dev, const mks_disk *d, mks_records *recs,
                          bios_survey *out)
 {
     uint8_t bs[BIOS_SECTOR_MAX];
@@ -260,7 +164,7 @@ static cli_status survey(bios_dev *dev, const mks_disk *d, mks_records *recs,
 
 /* ---- backup ---- */
 
-static cli_status backup_write(const bios_dev *dev, const char *path,
+static cli_status backup_write(const mks_dev *dev, const char *path,
                                const bios_run *runs, size_t n, int force)
 {
     uint8_t hdr[BIOS_BACKUP_HDR];
@@ -309,7 +213,7 @@ static cli_status backup_write(const bios_dev *dev, const char *path,
     return rc;
 }
 
-static cli_status backup_restore(const bios_dev *dev, const char *path)
+static cli_status backup_restore(const mks_dev *dev, const char *path)
 {
     uint8_t hdr[BIOS_BACKUP_HDR];
     bios_run runs[BIOS_BACKUP_MAX_RUNS];
@@ -336,6 +240,12 @@ static cli_status backup_restore(const bios_dev *dev, const char *path)
         (void)close(fd);
         return set_error(CLI_ERR_INVALID, "%s: %s", path,
                          bioscore_strerror(bs));
+    }
+    /* The parse bounds n by the array; said again here, where the loops
+     * that index by it are, for the analyzer that cannot see into it. */
+    if (n > BIOS_BACKUP_MAX_RUNS) {
+        (void)close(fd);
+        return set_error(CLI_ERR_INVALID, "%s: too many runs", path);
     }
     if (sector_bytes != dev->sector) {
         (void)close(fd);
@@ -373,7 +283,7 @@ static cli_status backup_restore(const bios_dev *dev, const char *path)
         if (runs[i].lba == 0u)
             rc = dev_write(dev, 0, data[i], runs[i].sectors * sector_bytes);
     }
-    for (i = 0; i < n; i++)
+    for (i = 0; i < BIOS_BACKUP_MAX_RUNS; i++)
         free(data[i]);
     if (rc == CLI_OK)
         log_info("restored %zu run(s) from %s", n, path);
@@ -382,7 +292,7 @@ static cli_status backup_restore(const bios_dev *dev, const char *path)
 
 /* ---- --remove with no backup: clear what an install wrote ---- */
 
-static cli_status clear_install(const bios_dev *dev, const mks_disk *d,
+static cli_status clear_install(const mks_dev *dev, const mks_disk *d,
                                 const bios_survey *s, uint8_t *mbr)
 {
     uint8_t sec[BIOS_SECTOR_MAX];
@@ -555,7 +465,7 @@ cli_status mks_bios_install(const mks_bios_req *req)
     bios_run runs[4];
     size_t nruns = 0;
     mks_disk d;
-    bios_dev dev;
+    mks_dev dev;
     bios_survey s;
     bios_plan plan;
     bioscore_status bs;

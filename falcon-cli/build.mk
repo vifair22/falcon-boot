@@ -8,7 +8,8 @@ CLI_COMMON := $(addprefix $(CLI)/common/,status.c log.c opt.c proc.c util.c)
 
 MKSTICK_SRCS := $(CLI_COMMON) $(addprefix $(CLI)/mkstick/,main.c cleanup.c \
 	disk.c guid.c keys.c pass.c shimname.c create.c keygen.c inspect.c \
-	varstore.c bios.c bioscore.c records.c identcmd.c nextcmd.c nextcore.c)
+	varstore.c bios.c bioscore.c records.c identcmd.c nextcmd.c nextcore.c \
+	devio.c)
 
 # The core modules `mkstick status` reuses verbatim. Every one is EFI-free by
 # construction (device access through a byte-read callback), which is exactly
