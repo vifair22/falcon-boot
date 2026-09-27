@@ -225,6 +225,29 @@ typedef struct {
  * block_size must be a power of two in 512..GPT_MAX_SECTOR. */
 int gpt_parse(gpt_table *t, gpt_read_fn read, void *ctx, uint32_t block_size);
 
+/* The header fields a caller past gpt_parse needs: part/table.c keeps the
+ * disk's GUID (DESIGN Section 3.2) and reads the backup copy, which is why
+ * the header's own LBA is a parameter below rather than fixed at 1. */
+typedef struct {
+    uint64_t my_lba;
+    uint64_t alt_lba;
+    uint64_t first_usable;
+    uint64_t last_usable;
+    uint8_t  disk_guid[GPT_GUID_LEN];
+} gpt_header;
+
+/* Called once per used entry, in array order, only after both CRCs have
+ * passed. */
+typedef void (*gpt_entry_fn)(void *cb_ctx, const gpt_part *p);
+
+/* gpt_parse's engine, for a header at any LBA: the header must say it lives
+ * at `lba` (MyLBA), so a primary is read at 1 and a backup at the disk's
+ * last block. The same checks and status codes as gpt_parse; *h is filled
+ * once the header's own CRC has passed, the entries only once the array's
+ * has too. `fn` may be NULL to validate without decoding. */
+int gpt_read_at(gpt_read_fn read, void *ctx, uint32_t block_size, uint64_t lba,
+                gpt_header *h, gpt_entry_fn fn, void *cb_ctx);
+
 /* The partition starting at exactly this LBA, or NULL. The starting LBA is
  * what a HARDDRIVE device path node carries, so it is the key that ties a
  * firmware partition handle back to its entry in the parent disk's table. */
