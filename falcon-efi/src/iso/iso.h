@@ -20,6 +20,7 @@
 
 #include <efi/uefi.h>
 #include <media/family.h>
+#include <media/uefiboot.h>
 #include <trust/trust.h>
 #include <fs/fs.h>
 #include <iso/overlay.h>
@@ -72,6 +73,11 @@ typedef struct {
     /* The boot prediction for the default loader (DESIGN Section 7.8), or
      * TRUST_NO_VERDICT. A label, like everything else in this struct. */
     trust_result       trust;
+    /* Whether this machine could boot the medium at all
+     * (falcon-core/src/media/uefiboot.h). Asked only of a CD with no default
+     * loader (sig NO_EFI); UEFIBOOT_YES or UNKNOWN for everything else, and
+     * NO is the {BIOS ONLY} row. */
+    uefiboot_answer    uefi;
 } iso_survey;
 
 /* Signature presence read out of the head of a PE image: data directory 4,

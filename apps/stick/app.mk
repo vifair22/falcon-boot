@@ -20,6 +20,7 @@ STICK_EFI += $(EFI_MOD_direct) $(EFI_MOD_bsd)
 STICK_EFI += $(EFI_MOD_win) $(CORE_WIM) $(WINJUMP_BLOB)
 STICK_EFI += $(addprefix $(CORE)/media/,bootcfg.c bootfs.c eltorito.c medium.c \
 	hookcmd.c grubcfg.c bsdmd.c extmap.c survey.c)
+STICK_EFI += $(CORE_UEFIBOOT)          # the {BIOS ONLY} tag
 STICK_EFI += $(HOOK_BLOB)              # appended to a direct boot's initrd
 STICK_EFI += $(EFI_MOD_pos) $(addprefix $(CORE)/media/,osrel.c shelf.c nextboot.c)
 STICK_EFI += $(EFI_MOD_bless) $(CORE_MANIFEST)

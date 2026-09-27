@@ -368,7 +368,7 @@ coverage: test
 # clean checkout ran 392 tests, reported green, and left the ext4 and LUKS
 # readers at zero coverage.
 test-fixtures: test-image test-ext4 test-fat test-luks test-isoview test-trust \
-	test-iso9660 test-udf test-wim
+	test-iso9660 test-udf test-wim test-uefiboot
 
 # Verify the toolchain before attempting a build. The EFI target needs the
 # mingw cross-gcc that emits PE32+ directly; the test rig and the host tooling

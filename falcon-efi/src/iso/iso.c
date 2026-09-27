@@ -1230,6 +1230,34 @@ static medium     g_survey_medium;
 static fs_file    g_survey_file;
 static bootfs_ctx g_survey_ctx;
 
+/* bootcfg_read's scratch for the BIOS-only question, the direct route's
+ * size. Pool, and only for a medium with no default loader: most rows never
+ * ask it. */
+#define SURVEY_CFG_SCRATCH ((UINTN)256u * 1024u)
+
+/* Whether the machine can boot a CD with no default loader at all: its
+ * kernel, directly, or nothing (DESIGN Section 7.8, {BIOS ONLY}). The
+ * medium is g_survey_medium, already open. UNKNOWN when the pool cannot
+ * spare the scratch: an unanswered question marks nothing. */
+static uefiboot_answer survey_uefi(EFI_BOOT_SERVICES *bs, family_id fam)
+{
+    uefiboot_work *w = (uefiboot_work *)0;
+    char *scratch = (char *)0;
+    uefiboot_answer a = UEFIBOOT_UNKNOWN;
+
+    if (bs->AllocatePool(EfiLoaderData, sizeof *w, (void **)&w) !=
+        EFI_SUCCESS)
+        return UEFIBOOT_UNKNOWN;
+    if (bs->AllocatePool(EfiLoaderData, SURVEY_CFG_SCRATCH,
+                         (void **)&scratch) == EFI_SUCCESS) {
+        a = uefiboot_medium(&g_survey_medium, fam, w, scratch,
+                            SURVEY_CFG_SCRATCH);
+        bs->FreePool(scratch);
+    }
+    bs->FreePool(w);
+    return a;
+}
+
 /* The medium's default loader, opened on whichever volume carries it.
  *
  * The El Torito boot image first, because that is where it lives on optical
@@ -1271,14 +1299,16 @@ EFI_STATUS iso_survey_media(EFI_SYSTEM_TABLE *st, fs_vol *vol,
         return EFI_INVALID_PARAMETER;
     out->family = family_by_id(FAMILY_UNKNOWN);
     out->sig = ISO_SIG_UNKNOWN;
+    out->uefi = UEFIBOOT_UNKNOWN;
     memset(&out->trust, 0, sizeof(out->trust));
     if (st == (void *)0 || vol == (void *)0 || file == (void *)0)
         return EFI_INVALID_PARAMETER;
 
     /* The flavour is a hint to the FIRMWARE about how to parse a published
      * device (iso.h), and there is no published device here: medium_open
-     * works out what the bytes are. */
-    (void)kind;
+     * works out what the bytes are. Only the BIOS-only question below reads
+     * it: the direct route that question is about takes a CD and nothing
+     * else. */
 
     if (fs_file_open(vol, &g_survey_file, file) != FS_OK)
         return EFI_NOT_FOUND;
@@ -1309,8 +1339,11 @@ EFI_STATUS iso_survey_media(EFI_SYSTEM_TABLE *st, fs_vol *vol,
 
     if (!survey_open_loader(&g_survey_medium, &loader, &loader_size)) {
         out->sig = ISO_SIG_NO_EFI;
+        if (kind == ISO_MEDIA_CD)
+            out->uefi = survey_uefi(st->BootServices, out->family->id);
         return EFI_SUCCESS;
     }
+    out->uefi = UEFIBOOT_YES;
     {
         uint8_t head[PE_HEAD_MAX];
         uint64_t want = loader_size < sizeof head ? loader_size

@@ -60,6 +60,9 @@
 #                        "archlinux-fake.iso systemrescue-fake.iso"); the
 #                        core rig names a second stick's apart from the
 #                        first's
+#      STICK_ISO_FILES   real images to copy onto p2 beside those,
+#                        space-separated SRC:NAME pairs (the core rig's
+#                        BIOS-only case)
 #
 # THIS IS RIG SCAFFOLDING. The product's stick is built by the host tooling of
 # DESIGN Section 8 (step 7), which generates a real MOK keypair and keeps the
@@ -166,6 +169,10 @@ INSTALL_ID=${STICK_ID:-$(od -An -tx1 -N16 /dev/urandom | tr -d ' \n')}
     exit 1
 }
 read -r -a ISOS <<< "${STICK_ISOS:-archlinux-fake.iso systemrescue-fake.iso}"
+read -r -a ISO_FILES <<< "${STICK_ISO_FILES:-}"
+for f in "${ISO_FILES[@]}"; do
+    [[ -f "${f%%:*}" ]] || { echo "ERROR: ${f%%:*} missing" >&2; exit 1; }
+done
 
 if [[ "$UNSIGNED" -eq 0 && ! -f "$MOK_KEY" ]]; then
     echo "note: no test MOK at $MOK_KEY; falling back to --unsigned" >&2
@@ -272,6 +279,10 @@ sudo mkfs.exfat -n FALCON-ISO "$P2" >/dev/null
 mount_rw "$P2"
 for iso in "${ISOS[@]}"; do
     dd if=/dev/zero of="$MNT/$iso" bs=1M count=1 status=none
+done
+for f in "${ISO_FILES[@]}"; do
+    cp "${f%%:*}" "$MNT/${f#*:}"
+    echo "   ${f#*:} staged (from ${f%%:*})"
 done
 if [[ -f "$PAYLOAD_ISO" ]]; then
     cp "$PAYLOAD_ISO" "$MNT/payload-test.iso"
