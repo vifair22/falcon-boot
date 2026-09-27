@@ -3286,7 +3286,7 @@ flowchart TD
     OSX --> PE["pmode.S<br/>flat GDT, CR0.PE, paging off"]
     PE --> PM["32-bit protected mode, stage2_32, ESP 0x800000<br/>fault_install: IDT, 32 vectors"]
     PM --> BP["stage3_load, load3.c: AH=48h sector size<br/>find_boot: part_read_table on the boot drive;<br/>no table (a floppy): LBA 0 is the volume"]
-    BP --> BR{"bootpart_find: the first FAT-typed partition<br/>(GPT: ESP or the falcon boot type) whose<br/>boot sector's record is role boot?"}
+    BP --> BR{"bootpart_find: the first FAT-typed partition<br/>(GPT: ESP or the falcon boot type) whose<br/>boot sector's record is role boot<br/>and names a stage 3 sector?"}
     BR -- no --> BF
     BR -- yes --> GT["gate: 0x7E18 its first LBA,<br/>0x7E42 the record's marker sector"]
     GT --> L3["header: one sector at start + the record's<br/>stage 3 sector, to 1 MiB"]
@@ -4192,8 +4192,9 @@ header). The Manual's Section 3.6 is its reference. What the code settled:
 - **Two boot records on one disk.** A GPT disk with both stations carries
   the ESP's record (stage 3 and marker 0) and the station partition's.
   The one with a stage 3 is the BIOS one, as the installer and `status`
-  take it; stage 2's `bootpart_find` takes the first candidate today, which
-  on such a disk is the ESP (open).
+  take it, and as stage 2's `bootpart_find` does: it passes over a boot
+  record whose stage 3 sector is 0, so the ESP, first in the table, is not
+  taken for the station partition.
 - **What it finds** is 13.3's rule, run over every disk of the machine (a
   block device) or the image and `--also`; the firmware's entries only on
   the machine that booted. `--no-scan` limits a block device to itself, for

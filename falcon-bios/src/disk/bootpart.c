@@ -82,7 +82,10 @@ int bootpart_find(gpt_read_fn read, void *ctx, uint32_t block_size,
         rc = read_boot(read, ctx, block_size, p->start_lba, sec, &out->rec);
         if (rc == BOOTPART_ERR_IO)
             return rc;
-        if (rc != BOOTPART_OK)
+        /* A boot record with no stage 3 is a UEFI station's ESP: on a disk
+         * carrying both stations it comes before the station partition in
+         * the table, and it is the station partition that holds stage 3. */
+        if (rc != BOOTPART_OK || out->rec.stage3_sector == 0u)
             continue;
         out->start_lba = p->start_lba;
         out->number = p->number;

@@ -346,6 +346,39 @@ static void test_gpt(void **state)
     free(d);
 }
 
+/* Both stations on one disk: the ESP's record (stage 3 sector 0, UEFI's)
+ * comes first in the table, and the station partition's is the one taken. */
+static void test_gpt_both_stations(void **state)
+{
+    const uint8_t *types[2];
+    tdisk *d = tdisk_new();
+    ident_rec r;
+    bootpart bp;
+
+    (void)state;
+    types[0] = gpt_guid_esp;
+    types[1] = falcon_guid_boot;
+    gpt_disk(d, types, 2);
+    fat_boot(d, 2048, 32, IDENT_ROLE_BOOT, 1);
+    memset(&r, 0, sizeof r);
+    r.version = IDENT_VERSION;
+    r.role = IDENT_ROLE_BOOT;
+    memset(r.install_id, 0x5A, sizeof r.install_id);
+    r.install_id[0] = 1;
+    ident_encode_bin(&r, d->buf + 2048u * BS);
+    fat_boot(d, 2112, 48, IDENT_ROLE_BOOT, 1);
+
+    assert_int_equal(find(d, &bp), BOOTPART_OK);
+    assert_int_equal(bp.start_lba, 2112);
+    assert_int_equal(bp.number, 2);
+    assert_int_equal(bp.rec.stage3_sector, 32);
+
+    /* The ESP's record alone: no boot partition for BIOS. */
+    memset(d->buf + 2112u * BS, 0, BS);
+    assert_int_equal(find(d, &bp), BOOTPART_ERR_NONE);
+    free(d);
+}
+
 static void test_errors(void **state)
 {
     tdisk *d = tdisk_new();
@@ -403,6 +436,7 @@ int run_bootpart_tests(void)
         cmocka_unit_test(test_mbr_logical),
         cmocka_unit_test(test_no_table),
         cmocka_unit_test(test_gpt),
+        cmocka_unit_test(test_gpt_both_stations),
         cmocka_unit_test(test_errors),
         cmocka_unit_test(test_room),
     };

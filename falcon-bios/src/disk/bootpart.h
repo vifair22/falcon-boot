@@ -46,7 +46,9 @@ enum {
 int bootpart_candidate(const part_entry *p);
 
 /* Reads the disk's table and returns, in *out, the first candidate whose
- * boot sector decodes as a `boot` record, in table order. A disk with no
+ * boot sector decodes as a `boot` record naming a stage 3 sector, in table
+ * order: a record whose stage 3 sector is 0 (a UEFI station's ESP, DESIGN
+ * Section 13.9) is passed over. A disk with no
  * table is one volume: its LBA 0 is asked instead. On success `sec` holds
  * that boot sector (block_size bytes; the caller's, at least block_size
  * long), for bootpart_stage3_room.
