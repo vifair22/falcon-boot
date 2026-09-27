@@ -145,8 +145,12 @@ marker_state marker_take(const bios_disk *d, uint64_t part_lba,
     uint32_t ss;
     size_t i;
 
-    if (out != (char *)0 && cap != 0)
-        out[0] = '\0';
+    /* No buffer, nothing read: every state past this point may write out,
+     * and nextboot_sector_parse, which would refuse a null one as BAD, is
+     * in another translation unit, where clang's analyzer cannot follow. */
+    if (out == (char *)0 || cap == 0)
+        return MARKER_NONE;
+    out[0] = '\0';
     /* The marker is one whole sector of the disk, 512 or 4096 bytes (a 4Kn
      * disk's), and a disk of any other size has none. Sector 0 is the boot
      * sector itself, which a record never names: 0 is "no marker" (jump's
@@ -170,15 +174,13 @@ marker_state marker_take(const bios_disk *d, uint64_t part_lba,
     if (write_sector(d, lba, g_sec) != 0 ||
         bios_disk_read((void *)(uintptr_t)d, lba * ss, ss, g_sec) != 0) {
         log_state("could not be cleared");
-        if (out != (char *)0 && cap != 0)
-            out[0] = '\0';
+        out[0] = '\0';
         return MARKER_STUCK;
     }
     for (i = 0; i < ss; i++) {
         if (g_sec[i] != 0u) {
             log_state("the clear did not take");
-            if (out != (char *)0 && cap != 0)
-                out[0] = '\0';
+            out[0] = '\0';
             return MARKER_STUCK;
         }
     }
