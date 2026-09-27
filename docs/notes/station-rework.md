@@ -246,9 +246,13 @@ Pulled in, the same day
     (E5), boot.S's DAP comment ("built on the stack"; it is in .text),
     bioscore's size comment, DESIGN 12.5/12.5.1/13.1 staleness (D15).
 21. DevLink recovery (devlink-rescue's 32-bit kernel and initrd, the
-    image that repo builds as "classic") is wrapped as a
-    UKI by falcon's sign tool and is a Linux entry on the station shelf and
-    the stick's; the BIOS loader unwraps it as it does any UKI.
+    image that repo builds as "classic"). Amended 2026-09-27: never on an
+    encrypted shelf, since the machines it is for should not have to unlock
+    anything. On the stick it is an ISO on p2 (devlink-rescue builds it,
+    isolinux, BIOS El Torito only); the UEFI loader marks BIOS-only ISOs
+    unbootable. On a station it is only on station-legacy, a plain UKI in
+    the station partition's /uki; a modern machine boots the stick's ISO
+    from USB or has no use for it.
 22. The 32-bit stick is retired; every machine goes through the 64-bit
     stick. Removed with it: falcon-bios/tools/mk-stick32-pos.sh,
     docs/notes/stick32.md, `mkstick create --bios-only` (so every stick has

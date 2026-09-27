@@ -3851,9 +3851,9 @@ the station partition as on MBR, typed with a falcon type GUID of its own
 
 **The shelf** is a partition on any of the machine's disks carrying the
 station's install ID: LUKS2 with the falcon token, or plaintext ext4 with
-`/.falcon`. The station partition may also carry a `/uki` directory, read
-as a plaintext shelf: that is how a machine with no Linux of its own (the
-A21m) still has DevLink recovery (13.5).
+`/.falcon`. On station-legacy the station partition may also carry a `/uki`
+directory, read as a plaintext shelf, which is where DevLink recovery lives
+(13.10).
 
 ### 13.3 What the menu offers without being told
 
@@ -3930,11 +3930,20 @@ unlocked with a pbkdf2 keyslot and the passphrase is handed to the UKI as an
 sd-stub credential (5.1), or the shelf is plaintext and there is no prompt.
 The BIOS loader unwraps a UKI (`.linux`, `.initrd`, `.cmdline`) and boots it
 through the x86 boot protocol, never running its EFI stub, so a UKI built
-around a 32-bit kernel is a BIOS row like any other. That is DevLink
-recovery: devlink-rescue's 32-bit kernel and initrd (the image that repository
-builds as "classic"), wrapped as a UKI by `falcon-boot-sign`, on the shelf or
-in the station partition's `/uki`. A 64-bit UKI on a processor without long
-mode is refused with a sentence, as the stick refuses one.
+around a 32-bit kernel is a BIOS row like any other. A 64-bit UKI on a
+processor without long mode is refused with a sentence, as the stick refuses
+one.
+
+**DevLink recovery** (decision 2026-09-27) is devlink-rescue's 32-bit kernel
+and initrd, the image that repository builds as "classic": a RAM-only Linux
+carrying the devlink agent, for a Pentium-class to XP-era machine whose own
+system will not boot, in as little as 32 MB. It is never on an encrypted
+shelf: the machines it is for should not have to unlock anything. On the
+stick it is an ISO in the library (devlink-rescue builds it with isolinux,
+BIOS El Torito only), booted like any ISO; the UEFI loader lists it and
+marks it unbootable, as it marks every ISO with no UEFI boot image. On a
+station it appears only on station-legacy (13.10): a machine modern enough
+for the plain station boots the stick's ISO from USB, or has no use for it.
 
 The OS keeps its UKIs up to date the way the personal OS does: the shelf
 mounted at `/efi` and a hook that builds and signs each UKI with the MOK.
@@ -4042,6 +4051,10 @@ station partition instead. A falcon stick found on USB is booted as jump
 boots it (its own stages, served as the next BIOS disk); a CD as the stick's
 virtual CD serves it. The ATA disk driver gains 48-bit LBA here, since an IDE
 disk or CF card in an old laptop can be larger than 128 GiB today.
+
+DevLink recovery (13.5) is a row here and nowhere else on a station: its
+kernel and initrd wrapped as a UKI by `falcon-boot-sign uki`, in the station
+partition's `/uki`, read as a plaintext shelf, with no prompt.
 
 The first target is the ThinkPad A21m: Windows 2000 on its only disk, and the
 CD, USB and CF routes jump already boots on it.
