@@ -49,6 +49,7 @@ STAGE1_S2_LBA_OFF_CHECK := $(call BIOS_DEF_HEX,STAGE1_S2_LBA_OFF)
 STAGE1_S2_SECTORS_OFF_CHECK := $(call BIOS_DEF_HEX,STAGE1_S2_SECTORS_OFF)
 BOOTPART_MARKER_CHECK := $(call BIOS_DEF,BOOTPART_MARKER_SECTOR)
 BOOTPART_STAGE3_CHECK := $(call BIOS_DEF,BOOTPART_STAGE3_SECTOR)
+SWAP_BYTES_CHECK := $(call BIOS_DEF_HEX,SWAP_BYTES)
 
 BIOS_ASFLAGS := -m32 -c -Wa,--fatal-warnings -I$(BIOS) $(CORE_INC)
 
@@ -116,6 +117,9 @@ BIOS_MOD_pos     := $(BIOS)/pos/pos.c
 BIOS_MOD_bsd     := $(BIOS)/bsd/bsd.c
 BIOS_MOD_win     := $(BIOS)/win/win.c
 BIOS_MOD_mbr     := $(BIOS)/mbr/mbr.c
+# The station's chains, a partition's boot sector and another disk's MBR,
+# with the drive swap (DESIGN Section 13.4); vbrcore.c is the tested half.
+BIOS_MOD_chain   := $(BIOS)/mbr/chain.c $(BIOS)/mbr/vbrcore.c
 BIOS_MOD_jumpini := $(BIOS)/jump/jumpini.c
 BIOS_MOD_jmod    := $(BIOS)/jump/jmod.c $(BIOS)/jump/jmodload.c $(BIOS)/jump/jres.c
 
@@ -253,7 +257,7 @@ $(BIOS_STAGE2): $(BIOS_STAGE2_OBJS) $(BIOS)/start/bios.ld
 	@# moved would be stage 3 calling into whatever is at 0x7400 instead.
 	@for pair in gate_magic:7e04 gate_entry:7e08 gate_boot16:7e10 \
 	            gate_bootpart:7e18 thunk_regs:7e20 \
-	            thunk_vector:7e40 gate_drive:7e41 gate_marker:7e42 \
+	            thunk_vector:7e40 gate_drive:7e41 gate_marker:7e42 gate_si:7e44 \
 	            gate_target:7e48 gate_s2len:7e4c; do \
 		sym=$${pair%%:*}; want=$${pair##*:}; \
 		got=$$(nm $@.elf | awk -v s="$$sym" '$$3 == s { print $$1 }'); \
@@ -270,6 +274,7 @@ $(BIOS_STAGE2): $(BIOS_STAGE2_OBJS) $(BIOS)/start/bios.ld
 BIOS_RES_iso := $(BIOS_OBJ)/$(BIOS)/iso/vcdres.o
 BIOS_RES_vfd := $(BIOS_OBJ)/$(BIOS)/vfd/vfdres.o
 BIOS_RES_jres := $(BIOS_OBJ)/$(BIOS)/jump/rthunk.o
+BIOS_RES_swap := $(BIOS_OBJ)/$(BIOS)/mbr/swapres.o
 
 # The hook's blobs, which are generated (falcon-hook/build.mk). The x86-64
 # one is the same object the UEFI loader embeds: falcon-hook runs in the
@@ -344,6 +349,17 @@ $(2): $$($(1)_BIOS_OBJS) $$(BIOS)/start/bios.ld falcon-bios/tools/mk-stage3z.sh 
 		echo "       raise VCD_BYTES in falcon-bios/src/start/biosdefs.h"; \
 		exit 1; \
 	fi
+	@# The drive swap likewise, in its SWAP_BYTES.
+	@s=$$$$(nm $$@.elf | awk '$$$$3 == "swap_blob_start" { print $$$$1 }'); \
+	e=$$$$(nm $$@.elf | awk '$$$$3 == "swap_blob_end" { print $$$$1 }'); \
+	if [ -n "$$$$s" ]; then \
+		n=$$$$(( 0x$$$$e - 0x$$$$s )); \
+		if [ $$$$n -gt $$$$(( $(SWAP_BYTES_CHECK) )) ]; then \
+			echo "ERROR: the drive swap is $$$$n bytes, past SWAP_BYTES"; \
+			exit 1; \
+		fi; \
+		echo "   drive swap: $$$$n of $$$$(( $(SWAP_BYTES_CHECK) )) bytes"; \
+	fi
 	@# Inflated, image and .bss, it has to end below where stage 2 reads
 	@# the compressed copy to (GZ_STAGE_ADDR, 5 MB above STAGE3_LOAD).
 	@mem=$$$$(od -An -tu4 -j8 -N4 $$@ | tr -d ' '); \
@@ -397,11 +413,12 @@ endef
 # long-mode days triple-faulted.
 BIOS_TESTS := $(addprefix falcon-bios/tests/,main.c vcdcore_test.c vfdcore_test.c \
 	linuxcore_test.c e820_test.c jumpini_test.c jmod_test.c lowmem_test.c \
-	atacore_test.c usbcore_test.c pcccore_test.c bootpart_test.c)
+	atacore_test.c usbcore_test.c pcccore_test.c bootpart_test.c \
+	vbrcore_test.c)
 BIOS_UUT := $(BIOS)/iso/vcdcore.c $(BIOS)/vfd/vfdcore.c $(BIOS)/linux/linuxcore.c $(BIOS)/mem/e820.c \
 	$(BIOS)/jump/jumpini.c $(BIOS)/jump/jmod.c $(BIOS)/mem/lowmem.c \
 	$(BIOS)/hw/ata/atacore.c $(BIOS)/hw/scsi/scsi.c $(BIOS)/hw/usb/usbcore.c \
-	$(BIOS)/hw/pcc/pcccore.c $(BIOS)/disk/bootpart.c
+	$(BIOS)/hw/pcc/pcccore.c $(BIOS)/disk/bootpart.c $(BIOS)/mbr/vbrcore.c
 # What bootpart.c is built on, linked into the test binary but counted under
 # core's own tests.
 BIOS_TEST_CORE := $(CORE_PART) $(CORE_IDENT)
@@ -456,6 +473,27 @@ $(BIOS_PROBE_ISO): $(BIOS_PROBE_BIN)
 
 test-bios-probe: $(BIOS_PROBE_ISO)
 
+# The station rig's synthetic boot sector (falcon-bios/tools/rigboot.S):
+# installed in the rig disks' partitions and MBRs, it reports on serial
+# what the partition chain and the drive swap handed it. Its code has to end
+# before the tag the rig writes a loader's name into.
+BIOS_RIGBOOT := build/rigboot.bin
+
+$(BIOS_RIGBOOT): $(BIOS_OBJ)/falcon-bios/tools/rigboot.o $(BIOS)/start/bios.ld
+	@mkdir -p $(@D)
+	$(CC_HOST) $(BIOS_LDFLAGS) -Wl,-Ttext,0x7C00 -Wl,-e,_start -o $@.elf $<
+	objcopy -O binary -j .text $@.elf $@
+	@sz=$$(stat -c %s $@); \
+	if [ "$$sz" -ne 512 ]; then \
+		echo "ERROR: $@ is $$sz bytes, not 512"; exit 1; \
+	fi
+
+# The BIOS station rig (DESIGN Section 13.11): the partition chain, the
+# drive swap, STATION.INI and next boot under SeaBIOS, judged from serial,
+# and FreeDOS from the VGA text it leaves on screen.
+test-station-bios: station $(BIOS_RIGBOOT) $(MKSTICK)
+	falcon-bios/tools/run-station-rig.sh
+
 # DevLink recovery (DESIGN Section 13.5) off the rig stick on a Pentium with
 # 32 MB, by both BIOS routes and both of its entries, the agent reached on
 # COM1 (falcon-bios/tools/run-devlink-rig.sh). Skipped when the ISO or the
@@ -463,4 +501,4 @@ test-bios-probe: $(BIOS_PROBE_ISO)
 test-devlink: all bios cli payload
 	falcon-bios/tools/run-devlink-rig.sh
 
-.PHONY: test-bios-img test-bios-probe test-devlink
+.PHONY: test-bios-img test-bios-probe test-station-bios test-devlink

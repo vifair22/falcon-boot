@@ -125,15 +125,24 @@ then waits with no default:
 
 BIOS opens at the passphrase prompt; Escape there goes to the list.
 
-BIOS:
+BIOS opens at its list the same way, `STATION.INI` read from the station
+partition's root (`docs/DESIGN.md` Sections 12.5.2 and 13):
 
 | code | route | reached by |
 |---|---|---|
-| `POS` | personal OS, as on the stick, from the boot disk's shelf | the prompt it opens at, or the Personal OS row |
-| `MBR` | another disk's own boot code, started from 0x7C00 with DL naming that disk | its row, `Disk 0x81` and so on |
+| `POS` | a UKI off a shelf carrying the station's install ID, as the stick's personal OS | a plaintext shelf's UKI rows, or an encrypted shelf's `Personal OS (encrypted)` row (the prompt, then the chooser) |
+| `VBR` | a primary partition's boot sector: the disk's LBA 0 at 0000:0600 with the entry marked active, DS:SI at it, the boot sector at 0000:7C00 with its BPB's hidden sectors and drive number made to agree | a row such as `Windows (NTLDR) (disk mbr:cdcccdcc, partition 1)` |
+| `MBR` | another disk's own boot code, started from 0x7C00 | a row such as `Boot code (disk mbr:1a2b3c4d)` |
+| `MEM` | memtest86+, `MEMTEST.BIN` in the station partition, as jump starts it | the Memory test row |
 
-Every BIOS disk but the boot disk whose first sector carries the boot
-signature is a row.
+A partition is a row when its boot sector names a known loader (BOOTMGR,
+NTLDR, WINBOOT.SYS, FreeDOS's KERNEL.SYS, IO.SYS or IBMBIO.COM, GRUB,
+SYSLINUX); another disk is a row when its LBA 0 has boot code and an active
+entry. `STATION.INI` adds the rest. A chain of a disk that is not 0x80
+swaps that disk with 0x80 for everything it boots (`swap = no` in its
+section turns that off), and leaves 1 KB of conventional memory taken: the
+BDA's count at 0x413 reads 1 KB less. `docs/notes/station-rework.md`
+section 11 lists every sentence these screens say.
 
 ### 1.5 falcon jump
 

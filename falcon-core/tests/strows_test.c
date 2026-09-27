@@ -1,4 +1,4 @@
-/* Tests for falcon-efi/src/station/strows.c: the UEFI station's rows, their
+/* Tests for falcon-core/src/media/strows.c: the stations' rows, their
  * names, what a STATION.INI section does to them, and the order they are
  * shown in (docs/DESIGN.md Sections 13.3, 13.7, 13.8).
  *
@@ -17,7 +17,7 @@
 
 #include <string.h>
 
-#include <station/strows.h>
+#include <media/strows.h>
 
 static const uint8_t k_guid_a[16] = {
     0x4d, 0x3c, 0x2b, 0x1a, 0x6f, 0x5e, 0x80, 0x7f,
@@ -195,7 +195,7 @@ static void test_order_default_hide(void **state)
         strcpy(e->label, "Windows 11");
     }
     entry(&c, "nxt-000a")->hide = STATIONINI_TRI_YES;
-    strows_apply(&r, &c);
+    strows_apply(&r, &c, STROWS_UEFI);
 
     /* The firmware entry on that disk took the section. */
     assert_string_equal(r.row[1].section, "win");
@@ -258,7 +258,7 @@ static void test_method_efi(void **state)
     e->part = 1;
     e->method = STATIONINI_METHOD_EFI;
     strcpy(e->label, "Windows 10 (old disk)");
-    strows_apply(&r, &c);
+    strows_apply(&r, &c, STROWS_UEFI);
 
     assert_int_equal(r.n, 7);
     assert_int_equal(r.row[6].kind, STROW_ESP);
@@ -286,7 +286,7 @@ static void test_disk_without_entry(void **state)
     e = entry(&c, "old");
     e->has_disk = 1;
     e->disk = mbr(0xcdcccdccu);
-    strows_apply(&r, &c);
+    strows_apply(&r, &c, STROWS_UEFI);
     assert_int_equal(r.n, 6);
     assert_string_equal(r.row[3].section, "old");
 
@@ -295,7 +295,7 @@ static void test_disk_without_entry(void **state)
     e->has_disk = 1;
     e->disk = mbr(0x11223344u);
     e->part = 2;
-    strows_apply(&r, &c);
+    strows_apply(&r, &c, STROWS_UEFI);
     assert_int_equal(r.n, 7);
     assert_int_equal(r.row[6].kind, STROW_NXT);
     assert_int_equal(r.row[6].ref_none, 1);
@@ -323,7 +323,7 @@ static void test_uki_and_efi(void **state)
     e = entry(&c, "memtest");
     e->hide = STATIONINI_TRI_YES;
     e = entry(&c, "nothing");   /* names nothing found, adds nothing */
-    strows_apply(&r, &c);
+    strows_apply(&r, &c, STROWS_UEFI);
 
     assert_string_equal(r.row[0].section, "arch");
     assert_int_equal(r.n, 8);
@@ -352,6 +352,149 @@ static void test_full(void **state)
     assert_null(strows_add(&r, STROW_UKI));
 }
 
+/* What the BIOS station finds on the rig's two disks (DESIGN Section
+ * 13.3): the encrypted shelf's row (no name), Windows on disk A's first
+ * partition, disk B's MBR, memtest. */
+static void found_bios(strows *r)
+{
+    strow *w;
+
+    strows_init(r);
+    w = strows_add(r, STROW_POS);
+    set_label(w->label, "Personal OS (encrypted)");
+
+    w = strows_add(r, STROW_VBR);
+    w->has_part = 1;
+    w->disk = mbr(0xcdcccdccu);
+    w->part = 1;
+    strows_name_part(w->name, &w->disk, w->part);
+    strows_label_part(w->label, STROWS_LABEL_MAX, u"Windows (NTLDR)",
+                      &w->disk, w->part);
+
+    w = strows_add(r, STROW_MBR);
+    w->has_part = 1;
+    w->disk = mbr(0x1a2b3c4du);
+    strows_name_part(w->name, &w->disk, 0);
+    strows_label_part(w->label, STROWS_LABEL_MAX, u"Boot code", &w->disk, 0);
+
+    w = strows_add(r, STROW_MEMTEST);
+    strcpy(w->name, "memtest");
+    set_label(w->label, "Memory test (memtest86+)");
+}
+
+static void test_bios_found(void **state)
+{
+    strows r;
+    size_t view[STROWS_MAX];
+
+    (void)state;
+    found_bios(&r);
+    assert_string_equal(r.row[1].name, "mbr-cdcccdcc-p1");
+    assert_true(label_is(r.row[1].label,
+                         "Windows (NTLDR) (disk mbr:cdcccdcc, partition 1)"));
+    assert_string_equal(r.row[2].name, "mbr-1a2b3c4d");
+    assert_true(label_is(r.row[2].label, "Boot code (disk mbr:1a2b3c4d)"));
+    assert_int_equal(strows_arrange(&r, NULL, view, STROWS_MAX), 4);
+    /* The encrypted shelf has no generated name to be found by. */
+    assert_null(strows_find(&r, ""));
+}
+
+/* A section with disk (+part) on BIOS: the chain row of exactly that disk
+ * and partition, its label, swap and name; or a new one, looked for when it
+ * is chosen. part 0 is the disk's MBR, not "any partition". */
+static void test_bios_disk(void **state)
+{
+    strows r;
+    stationini c;
+    stationini_entry *e;
+    strow *w;
+
+    (void)state;
+    found_bios(&r);
+    memset(&c, 0, sizeof c);
+    e = entry(&c, "win2k");
+    e->has_disk = 1;
+    e->disk = mbr(0xcdcccdccu);
+    e->part = 1;
+    strcpy(e->label, "Windows 2000");
+    e = entry(&c, "second");
+    e->has_disk = 1;
+    e->disk = mbr(0x1a2b3c4du);
+    e->part = 1;
+    e->swap = STATIONINI_TRI_NO;
+    e = entry(&c, "b-mbr");
+    e->has_disk = 1;
+    e->disk = mbr(0x1a2b3c4du);
+    e->swap = STATIONINI_TRI_NO;
+    e = entry(&c, "logical");
+    e->has_disk = 1;
+    e->disk = mbr(0xcdcccdccu);
+    e->part = 5;
+    strows_apply(&r, &c, STROWS_BIOS);
+
+    w = strows_find(&r, "win2k");
+    assert_ptr_equal(w, &r.row[1]);
+    assert_true(label_is(w->label, "Windows 2000"));
+    assert_false(w->no_swap);
+
+    w = strows_find(&r, "second");
+    assert_non_null(w);
+    assert_int_equal(w->kind, STROW_VBR);
+    assert_true(w->added);
+    assert_true(w->ref_none);
+    assert_int_equal(w->part, 1);
+    assert_true(w->no_swap);
+    assert_string_equal(w->name, "mbr-1a2b3c4d-p1");
+    assert_true(label_is(w->label, "Partition (disk mbr:1a2b3c4d, partition 1)"));
+
+    /* The disk alone is its MBR row, found. */
+    w = strows_find(&r, "b-mbr");
+    assert_ptr_equal(w, &r.row[2]);
+    assert_true(w->no_swap);
+
+    /* A logical partition is a row, refused when it is chosen. */
+    w = strows_find(&r, "logical");
+    assert_non_null(w);
+    assert_int_equal(w->part, 5);
+    assert_int_equal(r.n, 6);
+}
+
+/* efi and method = efi are UEFI's: on BIOS such a section is left out, and
+ * on UEFI a disk section is never a chain. */
+static void test_bios_efi_left_out(void **state)
+{
+    strows r;
+    stationini c;
+    stationini_entry *e;
+
+    (void)state;
+    found_bios(&r);
+    memset(&c, 0, sizeof c);
+    e = entry(&c, "uefi");
+    strcpy(e->efi, "\\EFI\\Microsoft\\Boot\\bootmgfw.efi");
+    e = entry(&c, "bm");
+    e->has_disk = 1;
+    e->disk = mbr(0xcdcccdccu);
+    e->part = 1;
+    e->method = STATIONINI_METHOD_EFI;
+    e = entry(&c, "memtest");
+    e->hide = STATIONINI_TRI_YES;
+    strows_apply(&r, &c, STROWS_BIOS);
+    assert_int_equal(r.n, 4);
+    assert_null(strows_find(&r, "uefi"));
+    assert_null(strows_find(&r, "bm"));
+    assert_true(r.row[3].hidden);
+
+    found(&r);
+    memset(&c, 0, sizeof c);
+    e = entry(&c, "win");
+    e->has_disk = 1;
+    e->disk = mbr(0xcdcccdccu);
+    e->part = 1;
+    strows_apply(&r, &c, STROWS_UEFI);
+    assert_int_not_equal(strows_find(&r, "win")->kind, STROW_VBR);
+}
+
 int run_strows_tests(void)
 {
     const struct CMUnitTest tests[] = {
@@ -363,6 +506,9 @@ int run_strows_tests(void)
         cmocka_unit_test(test_disk_without_entry),
         cmocka_unit_test(test_uki_and_efi),
         cmocka_unit_test(test_full),
+        cmocka_unit_test(test_bios_found),
+        cmocka_unit_test(test_bios_disk),
+        cmocka_unit_test(test_bios_efi_left_out),
     };
 
     return cmocka_run_group_tests_name("strows", tests, NULL, NULL);

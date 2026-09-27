@@ -12,7 +12,7 @@
 #
 #   menu     the station's menu is drawn (serial), and its screen saved;
 #   default  nothing pressed: the countdown boots the default, Windows
-#            2000, and screens are saved every few seconds until SECONDS
+#            2000, and screens are saved every two seconds until SECONDS
 #            run out, for NTLDR's menu or the Windows 2000 splash to be
 #            looked at;
 #   enter    Enter on the menu's first row, then the same.
@@ -21,6 +21,13 @@
 # lines). Windows writes nothing to serial, so its half is the screens in
 # build/a21m-rig/<case>-NN.png; a person, or an agent reading the image,
 # says whether it is NTLDR's boot menu or the Windows 2000 splash.
+#
+# The disk is given the A21m's own geometry: 15 heads and 63 sectors
+# physical, translated LARGE (ECHS) to the 240 heads its NTFS BPB and MBR
+# were written with. SeaBIOS's default translation reports 255, and
+# Windows 2000's NTFS boot code converts by the BPB's 240 but reads by
+# CHS below the BIOS's cylinder limit, so under the default the untouched
+# image stops at "NTLDR is missing" before falcon is involved at all.
 #
 # Usage: falcon-bios/tools/run-a21m-rig.sh [menu|default|enter] [SECONDS]
 #   A21M_IMG   the installed disk (default build/a21m/a21m.qcow2)
@@ -54,7 +61,8 @@ shot() {      # shot NAME
 
 timeout $((SECS + 60)) "$QEMU" -L /usr/share/qemu -machine pc -cpu pentium3 \
     -m 512 -display none \
-    -drive file="$R/overlay.qcow2",format=qcow2,if=ide,index=0 \
+    -drive if=none,id=d0,file="$R/overlay.qcow2",format=qcow2 \
+    -device ide-hd,drive=d0,bus=ide.0,unit=0,cyls=20784,heads=15,secs=63,bios-chs-trans=large \
     -serial file:"$R/serial.log" \
     -monitor unix:"$R/mon.sock",server,nowait >/dev/null 2>&1 &
 qpid=$!
@@ -77,7 +85,7 @@ if [ "$CASE" != menu ]; then
     n=1
     end=$((SECONDS + SECS))
     while [ $SECONDS -lt $end ]; do
-        sleep 5
+        sleep 2
         shot "$(printf '%s-%02d' "$CASE" "$n")"
         n=$((n + 1))
     done

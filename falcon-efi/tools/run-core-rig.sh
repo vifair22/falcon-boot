@@ -42,9 +42,9 @@
 #                  afterwards finds nothing queued
 #   station-uefi, station-bios
 #                  the station disk (mk-test-station.sh): reaches its
-#                  passphrase prompt, from the shelf of its install (on
-#                  UEFI through the list's Personal OS row;
-#                  run-station-rig.sh has the rest of the UEFI station)
+#                  passphrase prompt, from the shelf of its install, through
+#                  the Personal OS row of the menu either opens at
+#                  (run-station-rig.sh under each firmware has the rest)
 #   bios-only-uefi, bios-only-uefi-sb
 #                  the rig stick under OVMF, Secure Boot off and on: a
 #                  BIOS-only ISO on its library (isolinux, a kernel with no
@@ -487,13 +487,11 @@ case_station() { # case_station CASE FIRMWARE
     id=$("$MKSTICK" ident build/test-station.img |
          awk -F '\t' '$2 == "boot" { print $3 }')
     boot "$2" build/test-station.img:boot
-    # The UEFI station opens at its list (DESIGN Section 13.3), the
-    # Personal OS row first and chosen with Enter.
-    if [[ "$2" == uefi ]]; then
-        wait_for "Personal OS (encrypted)" 90 || why="no Personal OS row"
-        sleep 1
-        mon "sendkey ret"
-    fi
+    # Either station opens at its menu (DESIGN Section 13.3), the shelf's
+    # row first; Enter on it is the prompt.
+    wait_for "Personal OS (encrypted)" 90 || why="no Personal OS row"
+    sleep 1
+    [[ -z "$why" ]] && mon "sendkey ret"
     [[ -n "$why" ]] || wait_for "passphrase for the encrypted partition" 90 ||
         why="no passphrase prompt"
     if [[ -z "$why" && "$2" == bios ]]; then

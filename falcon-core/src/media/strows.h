@@ -1,12 +1,13 @@
-/* falcon-boot: the UEFI station's list, as data (docs/DESIGN.md Sections
- * 13.3, 13.7 and 13.8).
+/* falcon-boot: the station's list, as data (docs/DESIGN.md Sections 13.3,
+ * 13.7 and 13.8). Shared by both loaders.
  *
- * The EFI-free half of apps/station/efi_main.c: the rows the loader found,
- * the names STATION.INI, the default and next boot call them by
- * (docs/notes/station-rework.md section 10), what a STATION.INI section
- * changes or adds, and the order the menu shows them in. The firmware half
- * finds the rows and boots them; everything here is decided on bytes a test
- * can write, which is why it is its own file.
+ * The firmware-free half of apps/station/efi_main.c and bios_main.c: the
+ * rows the loader found, the names STATION.INI, the default and next boot
+ * call them by (docs/notes/station-rework.md section 10), what a STATION.INI
+ * section changes or adds, and the order the menu shows them in. Each
+ * loader finds its rows and boots them; everything here is decided on bytes
+ * a test can write, which is why it is its own file, and one file, so the
+ * two stations cannot come to read one STATION.INI two ways.
  *
  * A row is found or added; either way it may carry two names: the one the
  * loader generates for what it found (`nxt-0003`, `gpt-1a2b3c4d-p1`,
@@ -37,9 +38,20 @@ typedef enum {
                         encrypted shelf's after the prompt (ref_none) */
     STROW_NXT,       /* a firmware boot entry: BootNext and a reset */
     STROW_ESP,       /* an image on an ESP, loaded by device path */
-    STROW_MEMTEST,   /* memtest86+ on the station's own ESP */
-    STROW_FWSETUP    /* the firmware's setup */
+    STROW_MEMTEST,   /* memtest86+: on the station's own ESP (UEFI), or
+                        MEMTEST.BIN in the station partition (BIOS) */
+    STROW_FWSETUP,   /* the firmware's setup */
+    STROW_VBR,       /* BIOS: a primary partition's boot sector, chained */
+    STROW_MBR        /* BIOS: another disk's MBR, chained */
 } strow_kind;
+
+/* Which loader's rules strows_apply follows where the two differ: what a
+ * section with `disk` means (a firmware entry or an ESP on UEFI, a chain on
+ * BIOS) and whether `efi` means anything. */
+typedef enum {
+    STROWS_UEFI = 0,
+    STROWS_BIOS = 1
+} strows_fw;
 
 typedef struct {
     strow_kind   kind;
@@ -52,6 +64,7 @@ typedef struct {
     part_disk_id disk;
     uint32_t     part;       /* 0: any partition of the disk */
     uint8_t      own_esp;    /* ESP: the station's own ESP */
+    uint8_t      no_swap;    /* VBR, MBR: swap = no, no drive swap */
     char         file[STATIONINI_PATH_MAX];     /* UKI: its file name;
                                                    ESP, NXT: the path on
                                                    the ESP, '\' separated */
@@ -94,19 +107,23 @@ int strows_path_eq(const char *a, const char *b);
 /* Applies STATION.INI's entry sections (DESIGN Section 13.7):
  *
  *   - `uki`: the UKI row of that file, or a new one behind the prompt;
- *   - `disk` with `method = efi` or `efi`: the ESP row on that disk (and
- *     partition) loading that path (Windows Boot Manager by default), or a
- *     new one;
- *   - `disk` otherwise: the firmware entry on that disk (and partition),
- *     else an ESP row found there, else a new firmware-entry row that has
- *     no entry to boot (ref_none);
- *   - `efi` alone: that path on the station's own ESP;
+ *   - UEFI, `disk` with `method = efi` or `efi`: the ESP row on that disk
+ *     (and partition) loading that path (Windows Boot Manager by default),
+ *     or a new one;
+ *   - UEFI, `disk` otherwise: the firmware entry on that disk (and
+ *     partition), else an ESP row found there, else a new firmware-entry
+ *     row that has no entry to boot (ref_none);
+ *   - UEFI, `efi` alone: that path on the station's own ESP;
+ *   - BIOS, `disk` with `part`: the VBR row of that disk and partition, or
+ *     a new one (ref_none); `disk` alone: that disk's MBR row, or a new
+ *     one; `efi` and `method = efi` are UEFI's, and a section they are all
+ *     of is left out;
  *   - none of these: the found row whose generated name is the section's.
  *
  * The matched or new row takes the section's name, and its label and hide
- * when given. A section that matches nothing and says nothing to boot is
- * left out. */
-void strows_apply(strows *r, const stationini *c);
+ * when given, and on BIOS its swap. A section that matches nothing and says
+ * nothing to boot is left out. */
+void strows_apply(strows *r, const stationini *c, strows_fw fw);
 
 /* The row a name names, by section name first and generated name second,
  * without regard to case; hidden rows included. NULL when none. */

@@ -138,8 +138,9 @@ falcon-efi and falcon-bios, which never share a set, may both have a `pos/`.
     differs), `iso9660.c` (Rock Ridge, Joliet) and `udf.c`. Each driver's
     adapter to the vtable is its own file (`fs_<driver>.c`), and the table
     is one a build picks: `fs_reg_all.c` everywhere, `fs_reg_ext4.c` in the
-    stationary build (`CORE_FS_EXT4`), which is how that build links ext4
-    alone. Consumers select a driver through the registry and never name
+    UEFI station (`CORE_FS_EXT4`) and `fs_reg_station.c`, ext4 and FAT, in
+    the BIOS one (`CORE_FS_STATION`), which is how those builds link only
+    what they mount. Consumers select a driver through the registry and never name
     one; `fs_lookup` resolves a path. `udf.c` also carries the few record edits the Windows patch needs
     (a File Entry's extents, a Partition Descriptor's length, an anchor),
     applied to caller buffers, never to media.
@@ -167,7 +168,11 @@ falcon-efi and falcon-bios, which never share a set, may both have a `pos/`.
     sort and the folder view. Both loaders use it, so neither can have its
     own idea of what is on a stick. `shelf.c` is the personal-OS chooser's
     rows: the UKIs in p3's `/uki` (or `/EFI/Linux`), their `.osrel` names,
-    order and qualifiers, again for both loaders. `nextboot.c` is the
+    order and qualifiers, again for both loaders. `strows.c` is the
+    station's list as data, both stations' (DESIGN Section 13.7): the
+    generated names, what a STATION.INI section changes or adds (a
+    firmware entry or an ESP on UEFI, a chain on BIOS), the order and the
+    default; `stationini.c` parses and writes the file. `nextboot.c` is the
     next-boot marker's value rules (decode, path match, the `:` reserved
     names) for both loaders, and the BIOS marker sector's format and dating.
     `eltorito.c` reads a medium's boot
@@ -209,9 +214,6 @@ falcon-efi and falcon-bios, which never share a set, may both have a `pos/`.
     13.6; routes ESP and MEM): a file on a firmware-mounted volume
     (`bootmgfw.efi`, `memtest.efi`) loaded by device path through
     `loadops`, and the reads STATION.INI and the ESP rows need.
-  - `station/` the UEFI station's list as data (`strows.c`, host-tested):
-    the generated names, what a STATION.INI section changes or adds, the
-    order and the default.
   - `loader/` the shim-verified load path (`loadops.c`, DESIGN Section 7.6)
     and `credfs.c`, the synthetic read-only filesystem a UKI is published on
     so it can be loaded by device path and sd-stub finds the passphrase
@@ -339,9 +341,16 @@ falcon-efi and falcon-bios, which never share a set, may both have a `pos/`.
   `tools/qemu-pcc/build-qemu.sh` builds with `falcon-pcc.c`, a model of the
   A21m's PC Card bridge, since QEMU has none. `make station` links the
   station's stage 3 (DESIGN Section 13) from `apps/station/bios_main.c`:
-  the personal OS off the shelf carrying its install ID and
-  `src/mbr/mbr.c`, another disk's own boot code started from 0x7C00, with
-  nothing resident. `make test-core` boots the core matrix cells (the stick
+  the UKIs off the shelves carrying its install ID, memtest86+, and
+  `src/mbr/chain.c`, a primary partition's boot sector (the MBR copy at
+  0000:0600, DS:SI at its entry, the BPB made to agree) or another disk's
+  MBR, with `src/mbr/swapres.S` the one resident, an 84-byte INT 13h hook
+  that swaps a chained disk with 0x80; `src/mbr/vbrcore.c` (the loader
+  signatures, the BPB fix, the entry) is its host-tested half, and
+  core's `media/strows.c` the list both stations share, and `make
+  test-station-bios` boots every chain under SeaBIOS
+  (`tools/run-station-rig.sh`, with `tools/rigboot.S`, a boot sector that
+  reports what it was handed, and FreeDOS). `make test-core` boots the core matrix cells (the stick
   under both firmwares alone, beside a second stick, an MBR disk and another
   install's records; a 4Kn stick on NVMe; the station) and judges each from
   serial (`falcon-efi/tools/run-core-rig.sh`); `make test-station-uefi`
@@ -412,7 +421,7 @@ falcon-efi and falcon-bios, which never share a set, may both have a `pos/`.
   (DESIGN Section 6.3.1): the sector of the boot partition its record
   names, written from Linux by `mkstick next-boot`, cleared before it is
   believed and honoured only within ten minutes by the RTC. It is the only code in falcon-bios that writes a disk (one sector,
-  INT 13h AH=43h), and only the stick's stage 3 links it.
+  INT 13h AH=43h), and the stick's and the station's stage 3 link it.
 
   No failure ends in a halt, which on a machine with no serial cable is a
   hang: it ends in `bios_fatal` (`fatal_rm` before there is C), the reason

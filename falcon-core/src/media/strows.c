@@ -1,6 +1,6 @@
-/* The UEFI station's list, as data. See strows.h. */
+/* falcon-boot: the station's list, as data. See strows.h. */
 
-#include <station/strows.h>
+#include <media/strows.h>
 
 #include <lib/string.h>
 
@@ -226,9 +226,38 @@ static strow *first(strows *r, strow_kind kind, const stationini_entry *e,
     return (strow *)0;
 }
 
+/* BIOS: the chain row of that disk and exactly that partition (0: the
+ * disk's MBR), or a new one, looked for when it is chosen. */
+static strow *match_chain(strows *r, const stationini_entry *e)
+{
+    strow_kind kind = e->part != 0 ? STROW_VBR : STROW_MBR;
+    strow *w;
+    size_t i;
+
+    for (i = 0; i < r->n; i++) {
+        w = &r->row[i];
+        if (w->kind == kind && w->has_part &&
+            part_disk_id_eq(&w->disk, &e->disk) && w->part == e->part)
+            return w;
+    }
+    w = strows_add(r, kind);
+    if (w == (strow *)0)
+        return w;
+    w->has_part = 1;
+    w->disk = e->disk;
+    w->part = e->part;
+    strows_name_part(w->name, &e->disk, e->part);
+    strows_label_part(w->label, STROWS_LABEL_MAX,
+                      e->part != 0 ? u"Partition" : u"Boot code", &e->disk,
+                      e->part);
+    w->added = 1;
+    w->ref_none = 1;
+    return w;
+}
+
 /* The row a section changes, or a new one it adds; NULL when it names
  * nothing and adds nothing. */
-static strow *match(strows *r, const stationini_entry *e)
+static strow *match(strows *r, const stationini_entry *e, strows_fw fw)
 {
     strow *w;
 
@@ -242,6 +271,13 @@ static strow *match(strows *r, const stationini_entry *e)
             w->ref_none = 1;
         }
         return w;
+    }
+    if (fw == STROWS_BIOS) {
+        if (e->efi[0] != '\0' || e->method == STATIONINI_METHOD_EFI)
+            return (strow *)0;
+        if (e->has_disk)
+            return match_chain(r, e);
+        return strows_find(r, e->name);
     }
     if (e->has_disk) {
         const char *path = e->efi[0] != '\0' ? e->efi : STROWS_BOOTMGFW;
@@ -292,7 +328,7 @@ static strow *match(strows *r, const stationini_entry *e)
     return strows_find(r, e->name);
 }
 
-void strows_apply(strows *r, const stationini *c)
+void strows_apply(strows *r, const stationini *c, strows_fw fw)
 {
     unsigned i;
 
@@ -300,7 +336,7 @@ void strows_apply(strows *r, const stationini *c)
         return;
     for (i = 0; i < c->n_entries; i++) {
         const stationini_entry *e = &c->entries[i];
-        strow *w = match(r, e);
+        strow *w = match(r, e, fw);
 
         if (w == (strow *)0)
             continue;
@@ -311,6 +347,10 @@ void strows_apply(strows *r, const stationini *c)
             w->hidden = 1;
         else if (e->hide == STATIONINI_TRI_NO)
             w->hidden = 0;
+        if (e->swap == STATIONINI_TRI_NO)
+            w->no_swap = 1;
+        else if (e->swap == STATIONINI_TRI_YES)
+            w->no_swap = 0;
     }
 }
 
