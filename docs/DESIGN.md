@@ -3765,7 +3765,7 @@ flowchart TD
     DSK --> IR["on the boot drive: install_boot_record (the install ID),<br/>marker_take (the marker sector, cleared before it is believed)"]
     IR --> SP["read_station: the station partition mounted (FAT)<br/>/MEMTEST.BIN present? /STATION.INI parsed (stationini.c)"]
     SP --> SH["find_shelves: partitions whose LUKS2 token or /.falcon is a shelf<br/>record of the install; pos_list: a plaintext shelf's UKIs are rows<br/>(uki-&lt;stem&gt;), an encrypted shelf one row, Personal OS (encrypted)"]
-    SH --> CH["find_chains: each MBR primary but the station partition whose boot<br/>sector (FAT32: and its sectors 2, 12) carries a known loader<br/>(vbrcore.c): mbr-&lt;sig&gt;-p&lt;n&gt;; each other disk whose LBA 0 has<br/>boot code and an active entry: mbr-&lt;sig&gt; or gpt-&lt;8&gt;"]
+    SH --> CH["find_chains: each MBR primary but the station partition whose boot<br/>sector (FAT32: and its sectors 2, 12) carries a known loader<br/>(vbr_identify): mbr-&lt;sig&gt;-p&lt;n&gt;; each other disk whose LBA 0 has<br/>boot code and an active entry: mbr-&lt;sig&gt; or gpt-&lt;8&gt;<br/>(core's media/vbr.c, which the installer shares)"]
     CH --> MT["memtest when MEMTEST.BIN is there"]
     MT --> INI["strows_apply (media/strows.c, STROWS_BIOS):<br/>the INI's sections change, hide or add rows"]
     INI --> SI["screen_init: 80x25 text, VGA memory"]
@@ -3929,7 +3929,7 @@ What each links, beyond the shared console, disk and loader plumbing:
 | | station | station-legacy |
 |---|---|---|
 | UEFI | `pos/`, `nxt/`, `esp/` (bootmgfw and memtest through `loadops`), core's `media/strows.c` (the list, both loaders'), `discover/disks.c` (disks named as the INI names them), core `luks`, `fs` (ext4; an ESP is read by the firmware's own FAT driver), `part`, `media/shelf.c`, `media/stationini.c` | none: legacy is BIOS only |
-| BIOS | `pos.c`, `linux.c` (UKIs, memtest), `mbr/chain.c` and `vbrcore.c` (13.4's partition chain and another disk's MBR), `mbr/swapres.S` (the drive swap), `marker.c`, core's `media/strows.c` and `media/stationini.c` as UEFI's, `fs` (ext4 and FAT, for the station partition) and `media/cpio.c` | the station's, plus the route module lifted out of jump (13.10), `jmod`, `jres`, the virtual CD and `vfd` |
+| BIOS | `pos.c`, `linux.c` (UKIs, memtest), `mbr/chain.c` and `vbrcore.c` (13.4's partition chain and another disk's MBR) with core's `media/vbr.c` (what a boot sector is), `mbr/swapres.S` (the drive swap), `marker.c`, core's `media/strows.c` and `media/stationini.c` as UEFI's, `fs` (ext4 and FAT, for the station partition) and `media/cpio.c` | the station's, plus the route module lifted out of jump (13.10), `jmod`, `jres`, the virtual CD and `vfd` |
 | leaves out | the ISO library, direct boot, Windows and BSD media, blessing, boot predictions, falcon-hook, falcon-winjump | as the station |
 
 No boot predictions are linked, so no row carries a trust tag. The version
@@ -3993,8 +3993,10 @@ BIOS: the partition stage 2 found), reads the install ID, and builds rows:
   and where ("Windows (NTLDR) (disk mbr:cdcccdcc, partition 1)"); and each
   other disk whose MBR carries boot code (its first 440 bytes not all zero)
   and an active entry ("Boot code (disk mbr:1a2b3c4d)"). The loaders, by
-  the file names and messages their boot code holds (`mbr/vbrcore.c`,
-  host-tested), first match winning: `BOOTMGR` (Windows (BOOTMGR), Vista
+  the file names and messages their boot code holds (core's
+  `media/vbr.c`, host-tested, and the installer's reading too, so
+  `STATION.INI` names the rows the loader finds, in its words), first
+  match winning: `BOOTMGR` (Windows (BOOTMGR), Vista
   on), `NTLDR` (Windows (NTLDR), NT to XP), `WINBOOT SYS` (Windows 9x),
   `KERNEL  SYS` (FreeDOS), `IO      SYS` or `IBMBIO  COM` (MS-DOS), `GRUB `
   (GRUB) and `SYSLINUX`/`EXTLINUX` (SYSLINUX). FAT32 boot code runs on into
@@ -4040,7 +4042,12 @@ sentence before anything is copied: a logical partition, an extended
 container, a partition on a GPT disk, a disk whose sectors are not 512
 bytes, and a table that no longer has the entry the row was built from.
 What 9x needs beyond this is measured on hardware before it is called
-done.
+done. Under QEMU (2026-09-27, `make test-station-fixtures`) Windows 98 SE
+reaches its desktop through this chain from the station's own disk, and
+from a second disk behind the swap; behind the swap it then shows its
+"Performance Warning" (the Master Boot Record has been modified), which
+Windows 9x raises when it finds INT 13h hooked by code it does not know,
+and with which it runs that disk in MS-DOS compatibility mode.
 
 **BIOS, another disk: its MBR, with a drive swap** (route `MBR`, also
 `chain.c`). The disk's LBA 0 to 0000:7C00, DL as above and SI 0, but the
@@ -4373,16 +4380,12 @@ with no entry; next boot of memtest, of a UKI on the encrypted shelf (the
 prompt, no list) and of nothing; the INI error page; a default naming nothing; and an unsigned `memtest.efi`, which boots
 with Secure Boot off and is refused with it on.
 
-The BIOS station's are `make test-station-bios`
-(`falcon-bios/tools/run-station-rig.sh`), under SeaBIOS, and the A21m's
-disk:
-
-`make test-station` makes that station disk the way a user does
-(`falcon-efi/tools/mk-test-station.sh`): an ESP, a LUKS2 shelf and a root
-partition on GPT with free space after them, and `mkstick station install`
-putting both stations on it. The one addition is shim, MokManager and the
-loader copied to `\EFI\BOOT\`, since an image has no firmware entry and
-the rigs boot it by the removable-media path.
+`make test-station` makes the station disk the rigs share the way a user
+does (`falcon-efi/tools/mk-test-station.sh`): an ESP, a LUKS2 shelf and a
+root partition on GPT with free space after them, and `mkstick station
+install` putting both stations on it. The one addition is shim, MokManager
+and the loader copied to `\EFI\BOOT\`, since an image has no firmware entry
+and the rigs boot it by the removable-media path.
 
 `make test-station-installed` (`falcon-efi/tools/run-installed-rig.sh`)
 boots stations the installer made through the `falcon` Boot0001 that
@@ -4394,6 +4397,14 @@ boots stations the installer made through the `falcon` Boot0001 that
   `STATION.INI` counts down to Windows (its `[windows]` section matching
   the entry by disk) through BootNext; a key stops it and the Personal OS
   unlocks to the fixture UKI;
+- Windows on a second disk: the station's GPT disk (an ESP, a LUKS2 shelf)
+  and a GPT disk behind it whose own ESP carries the stand-in, `--uefi
+  --also` that disk. With Windows's firmware entry the `[windows]` default
+  boots it through BootNext; with none it is the second disk's ESP row and
+  `bootmgfw.efi` is loaded from there by device path, no reset. Off and on;
+- an ESP (type 0xEF) on an MBR disk, `--uefi`, falcon's entry naming it by
+  the disk signature: the list, and the `[linux]` default to the prompt and
+  the UKI, off and on;
 - a 4Kn GPT disk, both stations, booted as NVMe with 4096-byte blocks: under
   OVMF, off and on, the `[linux]` default counts down to the prompt and the
   UKI; under SeaBIOS stage 2 takes the station partition over the ESP and
@@ -4401,17 +4412,44 @@ boots stations the installer made through the `falcon` Boot0001 that
   byte outside the ESP and the shelf;
 - a 4Kn MBR disk, `--bios`, under SeaBIOS to the UKI.
 
-- **Synthetic boot sectors**: `falcon-bios/tools/rigboot.S` reports on
+OVMF connects only the disks QEMU's boot order lists, so every disk these
+rigs attach has a bootindex; a disk without one is one the UEFI loader
+never sees.
+
+`make test-core` (`falcon-efi/tools/run-core-rig.sh`) has a station with
+a falcon stick plugged in, under both firmwares: the station disk with a
+`STATION.INI` booted beside a blank disk and then beside a stick of
+another install with the same passphrase. The first list is the same text
+both times, the same default counts down, one prompt unlocks the station's
+shelf (no chooser, which the stick's shelf would bring) and nothing of the
+stick's library is listed.
+
+The BIOS station's are `make test-station-bios`
+(`falcon-bios/tools/run-station-rig.sh`) and `make test-station-fixtures`
+(`falcon-bios/tools/run-station-fixture-rig.sh`), under SeaBIOS, and the
+A21m's disk:
+
+- **Synthetic boot sectors** (`test-station-bios`):
+  `falcon-bios/tools/rigboot.S` reports on
   serial DL, DS:SI, the 16-byte entry, its BPB's hidden sectors, the
   entry's type and which disk INT 13h answers for 0x80 and for DL. The rig
   installs it in two rig disks' partitions and MBRs and judges own-disk
   primaries of type 0x0C (hidden sectors patched) and 0x0B, a logical
   partition refused, a second disk's partition with the swap on and off, a
   second disk's MBR, a `STATION.INI` error line, a next-boot marker over a
-  default, one naming nothing here, and memtest86+. FreeDOS 1.4 (the
-  LiteUSB image, checked against FreeDOS's published hash) boots as the
-  station's own disk, as a second disk's partition and as a second disk's
-  MBR behind the swap, judged from the VGA text it leaves on screen.
+  default, one naming nothing here, and memtest86+.
+- **Real systems** (`test-station-fixtures`): the fixture disks of
+  `tools/fixtures/README.md`, checked against their recorded sha256, each
+  the backing file of a qcow2 overlay grown for the station partition and
+  presented by `qemu-nbd` to `mkstick station install --bios`, each boot a
+  throwaway overlay on that, on the machine the fixture was verified on
+  (i440fx, a Pentium II, 128 MB, TCG). Every system twice: as the station's
+  own disk, its default found and counted down to, and as a second disk
+  behind the drive swap, given to the installer with `--also`. FreeDOS 1.4
+  reaches `C:\>` both ways and by its own MBR behind the swap, judged from
+  VGA text; Windows 98 SE reaches its desktop both ways, judged by the
+  taskbar in a screendump (13.4 has what it says behind the swap). Windows
+  95 OSR2's cases skip until `win95.img` exists.
 - **A copy of the A21m's disk image** (Windows 2000 SP4, MBR, NTFS at 63)
   with the station installed on it by the installer: a qcow2 overlay of the
   image, presented by `qemu-nbd` for ntfsresize, sfdisk and the installer
@@ -4427,12 +4465,16 @@ boots stations the installer made through the `falcon` Boot0001 that
 - **The installer on images** (`make test-station-install`): an MBR disk of
   the A21m's shape with a Windows 98 second disk and a LUKS2 shelf, a GPT
   disk with an ESP, Windows and a plaintext shelf; install, status, remove,
-  and `remove --full` back to the original bytes.
+  and `remove --full` back to the original bytes. `status` shows each list
+  as the loader builds it, through `media/strows.c`, in the loaders' words.
 
 Still to be written:
 
-- **Two disks**: a station with Windows on the second; a station with a falcon
-  stick plugged in, which must change nothing.
+- **Windows 95 OSR2**, once there is a key to install it with, and
+  **Windows XP** behind the BIOS station.
+- **Windows on a second disk of a GPT BIOS station**, and Windows 7-11 on
+  an MBR disk under UEFI (the station on MBR is rigged, Windows beside it
+  is not).
 
 ### 13.12 Considered and rejected
 

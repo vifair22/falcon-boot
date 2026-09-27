@@ -172,7 +172,10 @@ falcon-efi and falcon-bios, which never share a set, may both have a `pos/`.
     station's list as data, both stations' (DESIGN Section 13.7): the
     generated names, what a STATION.INI section changes or adds (a
     firmware entry or an ESP on UEFI, a chain on BIOS), the order and the
-    default; `stationini.c` parses and writes the file. `nextboot.c` is the
+    default, and the rows' words (`STROWS_LABEL_*`), which `station
+    install` and `status` use too; `vbr.c` what a partition's boot sector
+    starts, for the BIOS station and the installer; `stationini.c` parses
+    and writes the file. `nextboot.c` is the
     next-boot marker's value rules (decode, path match, the `:` reserved
     names) for both loaders, and the BIOS marker sector's format and dating.
     `eltorito.c` reads a medium's boot
@@ -345,19 +348,26 @@ falcon-efi and falcon-bios, which never share a set, may both have a `pos/`.
   `src/mbr/chain.c`, a primary partition's boot sector (the MBR copy at
   0000:0600, DS:SI at its entry, the BPB made to agree) or another disk's
   MBR, with `src/mbr/swapres.S` the one resident, an 84-byte INT 13h hook
-  that swaps a chained disk with 0x80; `src/mbr/vbrcore.c` (the loader
-  signatures, the BPB fix, the entry) is its host-tested half, and
-  core's `media/strows.c` the list both stations share, and `make
+  that swaps a chained disk with 0x80; `src/mbr/vbrcore.c` (the BPB fix,
+  the entry) is its host-tested half, core's `media/vbr.c` what a boot
+  sector is (the loader signatures and their words, shared with the
+  installer), and core's `media/strows.c` the list both stations and
+  `station status` share. `make
   test-station-bios` boots every chain under SeaBIOS
   (`tools/run-station-rig.sh`, with `tools/rigboot.S`, a boot sector that
-  reports what it was handed, and FreeDOS). `make test-core` boots the core matrix cells (the stick
+  reports what it was handed), and `make test-station-fixtures` real
+  systems behind the station, FreeDOS and Windows 98 SE from the fixture
+  disks of `tools/fixtures/`, put on by the installer through qemu-nbd
+  (`tools/run-station-fixture-rig.sh`). `make test-core` boots the core matrix cells (the stick
   under both firmwares alone, beside a second stick, an MBR disk and another
-  install's records; a 4Kn stick on NVMe; the station) and judges each from
+  install's records; a 4Kn stick on NVMe; the station, alone and with a
+  stick plugged in) and judges each from
   serial (`falcon-efi/tools/run-core-rig.sh`); `make test-station-uefi`
   does the same for the UEFI station's own cases
   (`falcon-efi/tools/run-station-rig.sh`), and `make
   test-station-installed` for stations the installer put on a disk, 4Kn
-  GPT and MBR included (`falcon-efi/tools/run-installed-rig.sh`).
+  GPT and MBR, an ESP on MBR and Windows on a second disk included
+  (`falcon-efi/tools/run-installed-rig.sh`).
 
   `src/` is grouped by job, and a job the UEFI loader also does carries
   that module's name, so the two halves of a route sit side by side:

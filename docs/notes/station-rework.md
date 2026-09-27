@@ -125,13 +125,15 @@ gap to close before the build is called done.
 
 | Firmware | Table | Sectors | CPU | Build | Installed | Rig today | Rig needed |
 |---|---|---|---|---|---|---|---|
-| BIOS | MBR | 512 | i686 | station | Windows 98/2000/XP alone on the disk | none | SeaBIOS + a Windows boot-sector fixture on an MBR disk |
+| BIOS | MBR | 512 | i686 | station | Windows 98/2000/XP alone on the disk | test-station-fixtures w98-own (Windows 98 SE to its desktop), fd-own (FreeDOS 1.4 to `C:\>`): the fixture disk, `station install --bios` into free space, the INI's default counted down to, on the fixtures' Pentium II; w95-own (skips: no `win95.img`); test-station-bios own-p1, own-p2 (rigboot); run-a21m-rig (Windows 2000 SP4 to its splash) | Windows 95 OSR2 (no key yet), Windows XP |
+| BIOS | MBR | 512 | i686 | station | Windows 9x or DOS on a second disk | test-station-fixtures w98-second (the desktop, then 9x's "Performance Warning": INT 13h hooked, the disk in compatibility mode; DESIGN 13.4), fd-second, fd-mbr (its own MBR code): a station disk of its own, the fixture behind the drive swap, `--also`; test-station-bios b-p1-swap, b-p1-noswap, b-mbr (rigboot) | 9x without the warning, or the warning accepted; w95-second (skips) |
 | BIOS | MBR | 512 | i686 | legacy | the A21m: Windows 2000 + CD/USB/CF | none | as above + jump's rig cases |
 | BIOS | MBR | 512 | x86-64 | station | Windows 7 + Linux UKIs | none | |
-| BIOS | GPT | 512 | x86-64 | station | Linux UKIs + Windows on a second disk | test-core station-bios (to the passphrase prompt, its install; the disk `station install` made) | + second disk |
+| BIOS | GPT | 512 | x86-64 | station | Linux UKIs + Windows on a second disk | test-core station-bios (to the passphrase prompt, its install; the disk `station install` made) | + Windows on the second disk |
+| any | GPT | 512 | x86-64 | station | a falcon stick of another install plugged in | test-core station-stick-uefi, station-stick-bios (the first list the same text beside a blank disk and beside the stick, the same default counted down, one prompt, the station's shelf and no chooser, none of the stick's library) | |
 | UEFI | GPT | 512 | x86-64 | station | Windows 10/11 + Linux UKIs, one disk | test-core station-uefi (to the passphrase prompt); test-station-installed uefi-default, uefi-sb-default (`station install --uefi` beside a bootmgfw stand-in, its entry and Windows's in the varstore: the installer's INI counts down to Windows through BootNext), uefi-pos, uefi-sb-pos (a key, then the Personal OS to the UKI) | |
-| UEFI | GPT | 512 | x86-64 | station | Windows on a second disk | none (NXT measured by hand) | |
-| UEFI | MBR | 512 | x86-64 | station | Windows 7-11 on MBR | none | |
+| UEFI | GPT | 512 | x86-64 | station | Windows on a second disk | test-station-installed second-nxt, second-sb-nxt (`station install --uefi --also` the Windows disk; its firmware entry: the `[windows]` default through BootNext), second-esp, second-sb-esp (no entry: the second disk's ESP row, `bootmgfw.efi` by device path, no reset); test-station-uefi nxt, method-efi, esp-found (the fake Windows disk is the second) | |
+| UEFI | MBR | 512 | x86-64 | station | Windows 7-11 on MBR | test-station-installed mbr-uefi, mbr-uefi-sb (an ESP of type 0xEF on MBR, `station install --uefi`, falcon's entry by the disk signature: the list, the `[linux]` default to the prompt and the UKI) | Windows Boot Manager on the MBR ESP |
 | any | GPT | 4096 | x86-64 | station | Linux UKIs | test-station-installed 4kn-uefi, 4kn-uefi-sb (OVMF, NVMe at 4096: the installer's `[linux]` default to the prompt and the UKI), 4kn-bios (SeaBIOS, NVMe: stage 2 takes the station partition over the ESP, the shelf to the UKI), 4kn-remove (status, `remove --full`); both stations put on by `station install` | |
 | BIOS | MBR | 4096 | x86-64 | station | Linux UKIs | test-station-installed mbr4k-bios (`station install --bios`, SeaBIOS, NVMe, to the UKI) | |
 | UEFI | GPT | 512 | x86-64 | stick | full four-partition stick | test-core uefi-stick, uefi-stick-sb (Secure Boot off, on) | |
@@ -347,7 +349,10 @@ The BIOS screen breaks a line where its 74-column block would split a
 word; the sentences are given here unbroken.
 
 **Rows.** The names and the list's rules are one module,
-`falcon-core/src/media/strows.c`, for both loaders.
+`falcon-core/src/media/strows.c`, for both loaders and for `mkstick station
+install` and `status`, which write and show the same rows. The words are
+written once: `STROWS_LABEL_*` in `strows.h`, and a boot sector's loader
+in `media/vbr.c` (`vbr_loader_name`).
 
 | row | label |
 |---|---|

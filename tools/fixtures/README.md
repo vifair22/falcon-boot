@@ -21,6 +21,19 @@ on binhost-builder, with the media they were made from:
 | `win98se.img` | `10b65fab638ecda8ec813d6d237943d028d2dfbce78a6932b6f9b351b4a03cc8` | `shots/win98se.png`: desktop |
 | `win95.img` | not made | no Windows 95 key on record (see below) |
 
+## Use
+
+`make test-station-fixtures` (falcon-bios/tools/run-station-fixture-rig.sh,
+docs/DESIGN.md Section 13.11) boots each image behind the BIOS station. It
+reads them from `build/fixtures/` and checks each against the sha256 above;
+copy them there sparse (scp would write the 2 GB image whole):
+
+    ssh vifair@172.20.0.170 \
+        'tar -cSf - -C /srv/falcon/fixtures/station freedos.img win98se.img' |
+        tar -xSf - -C build/fixtures/
+
+The rig only reads them: every write goes into a qcow2 overlay.
+
 ## Scripts
 
 Everything runs inside the coverage harness image
