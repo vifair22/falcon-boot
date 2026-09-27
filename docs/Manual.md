@@ -59,7 +59,7 @@ The BIOS loader mirrors its screen to serial (COM1) as the ANSI sequences
 OVMF's terminal sends for the UEFI loader, so the code is on serial for
 either loader, drawn where it is on the screen.
 
-The BIOS loader is one image for every processor from the Pentium Pro on,
+The BIOS loader is one image for every processor from the Pentium on,
 and boots 32-bit and 64-bit kernels alike. On a processor with no 64-bit
 mode, a 64-bit kernel is refused before it starts, on `DIR` or `POS`:
 
@@ -68,10 +68,10 @@ mode, a 64-bit kernel is refused before it starts, on `DIR` or `POS`:
     the kernel is 64-bit and this processor has no 64-bit mode
 
 (`personal OS boot failed while starting the kernel` on `POS`). A key
-returns to the menu. A processor older than a Pentium Pro stops before the
+returns to the menu. A processor older than a Pentium stops before the
 menu, on screen and serial:
 
-    falcon-bios: this processor is older than a Pentium Pro, which this loader needs
+    falcon-bios: this processor is older than a Pentium, which this loader needs
     press any key to reboot.
 
 ### 1.3 Fallthrough

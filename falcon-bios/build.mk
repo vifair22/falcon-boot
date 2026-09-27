@@ -15,9 +15,9 @@
 # code is position dependent and nothing relocates it, so link address and run
 # address have to agree.
 #
-# Everything is i686: 16-bit real-mode code and 32-bit protected-mode code in
-# ELF32 objects, which gas takes perfectly well with .code16 and .code32. One
-# image runs on every processor from the Pentium Pro on; what a newer one
+# Everything is 32-bit x86: 16-bit real-mode code and 32-bit protected-mode
+# code in ELF32 objects, which gas takes perfectly well with .code16 and
+# .code32. One image runs on every processor from the Pentium on; what a newer one
 # adds (SSE, AES-NI) is switched on by asking CPUID at run time, not by a
 # second build (docs/notes/bios-route.md Section 6h).
 #
@@ -53,13 +53,19 @@ SWAP_BYTES_CHECK := $(call BIOS_DEF_HEX,SWAP_BYTES)
 
 BIOS_ASFLAGS := -m32 -c -Wa,--fatal-warnings -I$(BIOS) $(CORE_INC)
 
-# The C half. Freestanding and i686, with the repo warning set.
+# The C half. Freestanding and i586, with the repo warning set.
 #
-# -march=i686 is the floor the loader runs on (stage2.S checks for its CMOV
-# before protected mode). -mtune=generic because -march=i686 alone also
-# schedules for a Pentium Pro, which cost the p3 unlock 6% on a current
-# processor (233 ms against 220 in a benchmark of luks_unlock); tuning
-# changes no instruction the floor lacks. -mno-sse and -mgeneral-regs-only
+# -march=i586 is the floor the loader runs on: a Pentium, which stage2.S
+# checks for (CPUID) before protected mode, and which DevLink recovery's
+# machines need (DESIGN Section 13.5). It was i686 until 2026-09-27; what
+# that allowed and a Pentium lacks is CMOV, and dropping it cost nothing
+# measurable (PBKDF2-SHA256 and portable AES-XTS within 1% either way, -m32
+# on a current processor). tools/check-floor.sh holds every linked image to
+# it, since an object built before a flag change is not rebuilt by one.
+# -mtune=generic because -march alone also schedules for that processor,
+# which cost the p3 unlock 6% on a current one (233 ms against 220 in a
+# benchmark of luks_unlock, measured at i686); tuning changes no instruction
+# the floor lacks. -mno-sse and -mgeneral-regs-only
 # are not style:
 # the mode switch enables SSE only on a processor that has it, and never the
 # x87, so a compiler that decided to use either would fault on an
@@ -67,7 +73,7 @@ BIOS_ASFLAGS := -m32 -c -Wa,--fatal-warnings -I$(BIOS) $(CORE_INC)
 # link addresses are fixed by biosdefs.h.
 BIOS_CFLAGS := -std=c11 -O2 -ffreestanding -fno-stack-protector \
 	-fno-pie -fno-asynchronous-unwind-tables -fno-unwind-tables \
-	-m32 -march=i686 -mtune=generic -mno-sse -mno-mmx -mgeneral-regs-only \
+	-m32 -march=i586 -mtune=generic -mno-sse -mno-mmx -mgeneral-regs-only \
 	-Wall -Wextra -Wpedantic -Wshadow -Wunused -Wdouble-promotion \
 	-Wformat=2 -Wmissing-prototypes -Wstrict-prototypes \
 	-Wmissing-declarations -Wcast-align -Wcast-qual -Wnull-dereference \
@@ -127,7 +133,7 @@ $(BIOS_OBJ)/%.o: %.c
 # AES-NI, this object only, as in the other two flavours (root Makefile). It
 # needs the instructions it is named for and the SSE registers they use, so
 # the three flags that forbid those come back out for it and nothing else,
-# and SSE2 goes in, which i686 does not imply and every AES-NI processor has.
+# and SSE2 goes in, which i586 does not imply and every AES-NI processor has.
 # The CPUID probe that gates the path is in crypto.c, built with the baseline
 # flags precisely so it cannot fault on the CPUs it exists to detect.
 $(BIOS_OBJ)/falcon-core/src/crypto/aesni.o: BIOS_CFLAGS := \
@@ -137,7 +143,7 @@ $(BIOS_OBJ)/falcon-core/src/crypto/aesni.o: BIOS_CFLAGS := \
 # --no-warn-rwx-segments: the output is a flat image loaded by a jump, with
 # one segment holding code and data together. There is nothing to separate
 # them into and nothing that would enforce it if there were.
-# 64-bit division and shifts in i686 code are calls into libgcc
+# 64-bit division and shifts in 32-bit code are calls into libgcc
 # (__udivdi3 and its siblings); -nostdlib drops it, so it goes back in by
 # name, after the objects that need it. A gcc with no 32-bit multilib
 # answers with its 64-bit libgcc instead, and the link then fails on
@@ -216,6 +222,7 @@ $(BIOS_STAGE2): $(BIOS_STAGE2_OBJS) $(BIOS)/start/bios.ld
 	@mkdir -p $(@D)
 	$(CC_HOST) $(BIOS_LDFLAGS) -Wl,-Ttext,0x7E00 -Wl,-e,stage2_start -o $@.elf $(BIOS_STAGE2_OBJS) \
 		$(BIOS_LIBGCC)
+	@tools/check-floor.sh $@.elf
 	objcopy -O binary -j .text $@.elf $@
 	@# Stage 2 checks itself (stage2.S, stage2_begin): its length into the
 	@# gate's GATE_S2LEN word, then the CRC-32 of those bytes, length
@@ -271,7 +278,7 @@ BIOS_RES_swap := $(BIOS_OBJ)/$(BIOS)/mbr/swapres.o
 
 # The hook's blobs, which are generated (falcon-hook/build.mk). The x86-64
 # one is the same object the UEFI loader embeds: falcon-hook runs in the
-# initramfs and does not know which firmware started the kernel. The i686 one
+# initramfs and does not know which firmware started the kernel. The 32-bit one
 # is for the 32-bit kernels only this loader boots, and iso/scan.c appends
 # whichever matches the kernel.
 BIOS_HOOK_OBJ := $(BIOS_OBJ)/$(HOOK_BLOB).o
@@ -321,10 +328,12 @@ $(1)_BIOS_OBJS := $$(BIOS_OBJ)/$$(BIOS)/start/stage3.o $(3) \
 	$$(patsubst %.c,$$(BIOS_OBJ)/%.o,$(4)) $(5)
 BIOS_CSRCS += $(4)
 
-$(2): $$($(1)_BIOS_OBJS) $$(BIOS)/start/bios.ld falcon-bios/tools/mk-stage3z.sh
+$(2): $$($(1)_BIOS_OBJS) $$(BIOS)/start/bios.ld falcon-bios/tools/mk-stage3z.sh \
+		tools/check-floor.sh
 	@mkdir -p $$(@D)
 	$$(CC_HOST) $$(BIOS_LDFLAGS) -Wl,-Ttext,0x100000 -Wl,-e,stage3_entry \
 		-o $$@.elf $$($(1)_BIOS_OBJS) $$(BIOS_LIBGCC)
+	@tools/check-floor.sh $$@.elf
 	objcopy -O binary -j .text $$@.elf $$@.raw
 	@# What goes on the disk is the image compressed (load3.c, biosdefs.h
 	@# STAGE3_MAGIC_GZ), for every app: the gzip member's CRC-32 is the
@@ -383,6 +392,7 @@ $$($(1)_MOD): $$($(1)_MOD_OBJS) build/gen/jmod-$(1).ld
 	$$(CC_HOST) -m32 -nostdlib -static -no-pie -Wl,--build-id=none \
 		-Wl,--no-warn-rwx-segments -Wl,-T,build/gen/jmod-$(1).ld \
 		-o $$@.elf $$($(1)_MOD_OBJS) $$(BIOS_LIBGCC)
+	@tools/check-floor.sh $$@.elf
 	objcopy -O binary -j .image $$@.elf $$@
 
 # What goes on the floppy (DESIGN Section 14.3): the module as a gzip
@@ -484,4 +494,11 @@ $(BIOS_RIGBOOT): $(BIOS_OBJ)/falcon-bios/tools/rigboot.o $(BIOS)/start/bios.ld
 test-station-bios: station $(BIOS_RIGBOOT) $(MKSTICK)
 	falcon-bios/tools/run-station-rig.sh
 
-.PHONY: test-bios-img test-bios-probe test-station-bios
+# DevLink recovery (DESIGN Section 13.5) off the rig stick on a Pentium with
+# 32 MB, by both BIOS routes and both of its entries, the agent reached on
+# COM1 (falcon-bios/tools/run-devlink-rig.sh). Skipped when the ISO or the
+# devlink client is not there.
+test-devlink: all bios cli payload
+	falcon-bios/tools/run-devlink-rig.sh
+
+.PHONY: test-bios-img test-bios-probe test-station-bios test-devlink
