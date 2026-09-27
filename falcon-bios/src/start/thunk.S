@@ -221,7 +221,10 @@ saved_esp:
  *
  * Reached through the gate at GATE_BOOT16. GATE_TARGET holds where to land,
  * offset then segment, and GATE_DRIVE the number to hand over in DL, which
- * is how the program about to run knows which drive it came off.
+ * is how the program about to run knows which drive it came off. GATE_SI is
+ * SI, with DS zero: a partition's boot sector started the way a DOS or
+ * Windows MBR starts it reads its own partition table entry at DS:SI
+ * (mbr/chain.c puts one at 0000:07BE and up). Zero for every other route.
  */
 	.code32
 	.globl  boot16
@@ -258,5 +261,6 @@ boot16_real:
 	/* DL is the contract: a bootloader reads the drive it was started
 	 * from out of it and has no other way to know. */
 	movb    GATE_DRIVE, %dl
+	movw    GATE_SI, %si
 	sti
 	ljmp    *GATE_TARGET

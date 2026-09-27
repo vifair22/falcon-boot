@@ -3330,6 +3330,7 @@ it:
 | 0x7E40 | the interrupt vector |
 | 0x7E41 | the boot drive |
 | 0x7E42 | the boot record's marker sector, 16 bits (0 for none), written by `load3.c` |
+| 0x7E44 | SI at `boot16`'s jump, 16 bits, DS 0: the partition chain's entry (13.4), 0 for every other route |
 | 0x7E48 | the real-mode target of `boot16`, offset then segment |
 | 0x7E4C | stage 2's length, written by the build; its CRC-32 follows the image |
 

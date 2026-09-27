@@ -143,6 +143,9 @@
 #define GATE_DRIVE      (GATE_ADDR + 0x41)   /* the drive to hand over in DL */
 #define GATE_MARKER     (GATE_ADDR + 0x42)   /* LE16: the next-boot marker's */
                                              /* sector in it; 0 for none */
+#define GATE_SI         (GATE_ADDR + 0x44)   /* LE16: SI at boot16's jump, */
+                                             /* DS 0; 0 but for a partition */
+                                             /* chain (mbr/chain.c) */
 #define GATE_TARGET     (GATE_ADDR + 0x48)   /* where boot16 lands: off, seg */
 #define GATE_S2LEN      (GATE_ADDR + 0x4C)   /* stage 2's length, CRC-32 after */
 

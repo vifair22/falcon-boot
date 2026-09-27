@@ -246,7 +246,7 @@ $(BIOS_STAGE2): $(BIOS_STAGE2_OBJS) $(BIOS)/start/bios.ld
 	@# moved would be stage 3 calling into whatever is at 0x7400 instead.
 	@for pair in gate_magic:7e04 gate_entry:7e08 gate_boot16:7e10 \
 	            gate_bootpart:7e18 thunk_regs:7e20 \
-	            thunk_vector:7e40 gate_drive:7e41 gate_marker:7e42 \
+	            thunk_vector:7e40 gate_drive:7e41 gate_marker:7e42 gate_si:7e44 \
 	            gate_target:7e48 gate_s2len:7e4c; do \
 		sym=$${pair%%:*}; want=$${pair##*:}; \
 		got=$$(nm $@.elf | awk -v s="$$sym" '$$3 == s { print $$1 }'); \

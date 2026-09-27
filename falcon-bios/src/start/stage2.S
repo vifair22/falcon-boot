@@ -30,6 +30,7 @@
 	.globl  gate_drive
 	.globl  gate_bootpart
 	.globl  gate_marker
+	.globl  gate_si
 	.globl  putc
 	.globl  fatal_rm
 	.extern pmode_enter
@@ -91,6 +92,8 @@ gate_drive:
 	.byte   0                    /* GATE_DRIVE */
 gate_marker:
 	.word   0                    /* GATE_MARKER: written by load3.c */
+gate_si:
+	.word   0                    /* GATE_SI: written by mbr/chain.c */
 
 	.org    0x48
 gate_target:
