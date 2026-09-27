@@ -9,7 +9,7 @@ CLI_COMMON := $(addprefix $(CLI)/common/,status.c log.c opt.c proc.c util.c)
 MKSTICK_SRCS := $(CLI_COMMON) $(addprefix $(CLI)/mkstick/,main.c cleanup.c \
 	disk.c guid.c keys.c pass.c shimname.c create.c keygen.c inspect.c \
 	varstore.c bios.c bioscore.c records.c identcmd.c nextcmd.c nextcore.c \
-	devio.c)
+	devio.c station.c stationinst.c stationcore.c)
 
 # The core modules `mkstick status` reuses verbatim. Every one is EFI-free by
 # construction (device access through a byte-read callback), which is exactly
@@ -18,7 +18,9 @@ MKSTICK_SRCS := $(CLI_COMMON) $(addprefix $(CLI)/mkstick/,main.c cleanup.c \
 # The identity record and the next-boot marker's format are the loaders' own
 # too (ident, media/nextboot.c, which matches paths with the manifest's rule).
 MKSTICK_CORE := $(CORE_PART) $(CORE_FS) $(CORE_LUKS) $(CORE_CRYPTO) \
-	$(CORE_IDENT) $(CORE)/media/nextboot.c $(CORE_MANIFEST)
+	$(CORE_IDENT) $(CORE)/media/nextboot.c $(CORE_MANIFEST) \
+	$(CORE_STATIONINI) $(CORE)/media/shelf.c $(CORE)/media/osrel.c \
+	$(CORE_PE) $(CORE_UCS2)
 
 SIGN_SRCS := $(addprefix $(CLI)/sign/,main.c util.c isoprobe.c manifestio.c \
 	payload.c uki.c)
@@ -61,7 +63,12 @@ $(SIGN_STATIC): $(SIGN_OBJS)
 test-isoview:
 	falcon-cli/tools/mk-test-isoview.sh
 
-.PHONY: cli test-isoview
+# `mkstick station install|status|remove` end to end on image files, MBR
+# and GPT, BIOS and UEFI (docs/DESIGN.md Section 13.9). No root.
+test-station-install: $(MKSTICK) bios station
+	falcon-cli/tools/test-station-install.sh
+
+.PHONY: cli test-isoview test-station-install
 
 # ---- tests ----
 #
@@ -79,18 +86,19 @@ test-isoview:
 # compromise rather than an oversight.
 
 CLI_TESTS := $(addprefix falcon-cli/tests/,main.c isoprobe_test.c \
-	payload_test.c uki_test.c util_test.c bioscore_test.c records_test.c)
+	payload_test.c uki_test.c util_test.c bioscore_test.c records_test.c \
+	stationcore_test.c)
 
 # records.c reads through disk.c's byte reader, which brings the process and
 # cleanup helpers disk.c also holds; they are linked, not tested, here.
 CLI_UUT := $(addprefix $(CLI)/sign/,isoprobe.c payload.c uki.c util.c) \
 	$(addprefix $(CLI)/mkstick/,bioscore.c records.c nextcore.c disk.c \
-		cleanup.c) \
+		cleanup.c stationcore.c) \
 	$(addprefix $(CLI)/common/,status.c log.c proc.c util.c) \
 	$(CORE)/media/family.c $(CORE)/media/bootcfg.c $(CORE)/media/nextboot.c \
 	$(CORE_MANIFEST) $(CORE_MANIFEST_WRITE) \
 	$(CORE_PART) $(CORE_PE) $(CORE_FS) $(CORE_LUKS) $(CORE_IDENT) \
-	$(CORE_CRYPTO)
+	$(CORE_CRYPTO) $(CORE_STATIONINI)
 
 $(eval $(call test_bin,cli,$(CLI_TESTS) $(CLI_UUT)))
 
