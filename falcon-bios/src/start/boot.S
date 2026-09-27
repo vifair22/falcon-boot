@@ -53,8 +53,9 @@ _start:
 	call    serial_puts
 
 	/* Stage 2 comes off the sectors immediately after this one. The
-	 * packet is built on the stack rather than in .data: .data would cost
-	 * bytes in a 512-byte sector that has none to spare. */
+	 * packet is `dap` below, a fixed block in .text that this fills in:
+	 * a separate .data would cost bytes in a 512-byte sector that has
+	 * none to spare. */
 	movw    $dap, %si
 	movw    $STAGE2_SECTORS, 2(%si)
 	movw    $STAGE2_LOAD, 4(%si)
