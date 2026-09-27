@@ -32,6 +32,8 @@
 # Usage: falcon-bios/tools/run-a21m-rig.sh [menu|default|enter] [SECONDS]
 #   A21M_IMG   the installed disk (default build/a21m/a21m.qcow2)
 #   QEMU       qemu-system-i386
+#   A21M_MACHINE  the machine (default pc,x-south-bridge=piix4-isa: the
+#              A21m's PIIX4, which the image's Windows 2000 was set up on)
 
 set -euo pipefail
 
