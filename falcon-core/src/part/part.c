@@ -14,8 +14,8 @@
 const uint8_t gpt_guid_msbasic[GPT_GUID_LEN] = {
     /* ebd0a0a2-b9e5-4433-87c0-68b6b72699c7, Microsoft basic data: what p2
      * wears so that Windows will give it a drive letter. Shared with every
-     * NTFS/exFAT data partition in the world, which is why matching p2 needs
-     * the partition name as well (part_match_role). */
+     * NTFS/exFAT data partition in the world, which is why p2 is known by
+     * its record (DESIGN Section 3.1) and never by its type. */
     0xa2, 0xa0, 0xd0, 0xeb, 0xe5, 0xb9, 0x33, 0x44,
     0x87, 0xc0, 0x68, 0xb6, 0xb7, 0x26, 0x99, 0xc7
 };
@@ -126,36 +126,6 @@ int gpt_name_eq(const uint16_t *name, const char *ascii)
             return 0;
     }
     return 1;
-}
-
-const char *part_role_name(part_role role)
-{
-    if (role == PART_ROLE_ISO)
-        return FALCON_PART_NAME_ISO;
-    return NULL;
-}
-
-int part_match_role(const uint8_t *type, const uint16_t *name, part_role role)
-{
-    switch (role) {
-    case PART_ROLE_ISO:
-        /* Both halves, per part.h: the type is the world's and the name is
-         * ours, so neither identifies p2 on its own. */
-        if (!gpt_guid_eq(type, gpt_guid_msbasic))
-            return 0;
-        return gpt_name_eq(name, FALCON_PART_NAME_ISO);
-    case PART_ROLE_SHELF:
-        return gpt_guid_eq(type, falcon_guid_shelf);
-    default:
-        return 0;
-    }
-}
-
-int gpt_part_is_role(const gpt_part *p, part_role role)
-{
-    if (p == NULL)
-        return 0;
-    return part_match_role(p->type, p->name, role);
 }
 
 /* An all-zero type GUID marks an unused entry (spec 5.3.3); such entries are
@@ -344,17 +314,4 @@ const gpt_part *gpt_find_start(const gpt_table *t, uint64_t start_lba)
             return &t->parts[i];
     }
     return NULL;
-}
-
-int gpt_has_role(const gpt_table *t, part_role role)
-{
-    uint32_t i;
-
-    if (t == NULL)
-        return 0;
-    for (i = 0; i < t->count; i++) {
-        if (gpt_part_is_role(&t->parts[i], role))
-            return 1;
-    }
-    return 0;
 }

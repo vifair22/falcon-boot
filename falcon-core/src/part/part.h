@@ -1,20 +1,14 @@
-/* falcon-boot: GPT partition identification (docs/DESIGN.md Section 3).
+/* falcon-boot: the GPT parser and the partition type GUIDs (docs/DESIGN.md
+ * Sections 3.1 and 3.2).
  *
- * Why this module exists. On real hardware the stick sits next to internal
- * disks that may well carry an exFAT volume and a LUKS2 volume of their own,
- * so "any exFAT volume is p2" and "any LUKS2 volume is p3" are both wrong.
- * mkstick creates every partition on the stick, so the loader identifies its
- * own partitions out of the GPT entry: p3 by its falcon type GUID, p2 by the
- * pair (Microsoft basic data type, partition name FALCON-ISO). See
- * part_match_role below for why p2 is the odd one out and why both halves of
- * its rule are required.
+ * What a partition IS is its identity record (falcon-core/src/ident), not
+ * anything here: the types below only narrow the search, and the table-
+ * neutral view every consumer uses is part/table.h, which calls this parser
+ * for a GPT disk.
  *
  * Deliberately EFI-free, like falcon-core/src/fs/exfat.c: the disk is reached
  * through a byte read callback, so the same parser runs over a firmware BlockIO
- * handle in the loader and over a plain image file in the host tests. The
- * firmware plumbing (PartitionInfo, device paths, handle enumeration) lives
- * next door in falcon-efi/src/discover/partefi.c, which is the only half that
- * cannot be host-tested.
+ * handle in the loader and over a plain image file in the host tests.
  */
 
 #ifndef FALCON_PART_H
@@ -35,12 +29,11 @@
  *
  * DO NOT CHANGE THESE VALUES. EVER.
  *
- * They are ABI with every stick that has ever been written: a loader built
- * with a different value cannot find the partitions on a stick stamped with
- * the old one, and a stick stamped with a new value is invisible to every
- * loader already in the field. There is no version negotiation here and no
- * room for one, because the whole point of the constant is that it is the
- * thing both sides already agree on.
+ * They are ABI with every stick that has ever been written: the readers
+ * narrow their search for records by them (stage 2 reads a boot record only
+ * off an ESP- or falcon-boot-typed GPT partition), and Windows decides by
+ * them which partitions get a volume. A changed value strands every stick
+ * already in the field.
  *
  *   p2  ISO library (exFAT)   ebd0a0a2-b9e5-4433-87c0-68b6b72699c7
  *       Microsoft basic data. NOT a falcon-minted GUID, and that is the
@@ -85,26 +78,6 @@ extern const uint8_t gpt_guid_esp[GPT_GUID_LEN];
  * partitions on GPT when it looks for the `boot` record. */
 extern const uint8_t falcon_guid_boot[GPT_GUID_LEN];
 
-/* p2's discriminator, since its type GUID is one half the world shares. mkstick
- * writes this into the GPT entry's name field and the loader matches it there;
- * MKS_LABEL_P2 in falcon-cli/src/mkstick/mkstick.h is the same string and is
- * checked against this one at startup. */
-#define FALCON_PART_NAME_ISO "FALCON-ISO"
-
-/* Which of our partitions a scan is looking for. Used by the filter policy
- * below and by falcon-efi/src/discover/partefi.c; p1 and p4 have no role here
- * on purpose. */
-typedef enum {
-    PART_ROLE_ISO   = 0,   /* p2, the exFAT ISO library */
-    PART_ROLE_SHELF = 1    /* p3, the LUKS2 UKI shelf */
-} part_role;
-
-#define PART_ROLE_COUNT 2u
-
-/* The GPT partition name a role is identified by, or NULL for a role that is
- * identified by its type GUID alone (p3) and for a role outside the enum. */
-const char *part_role_name(part_role role);
-
 /* Nonzero when two 16-byte type GUIDs are the same one. */
 int gpt_guid_eq(const uint8_t *a, const uint8_t *b);
 
@@ -121,22 +94,6 @@ int gpt_guid_eq(const uint8_t *a, const uint8_t *b);
  * case-insensitive is the kind of half-rule that surprises somebody later. We
  * write the name ourselves (mkstick), so we can afford to match it exactly. */
 int gpt_name_eq(const uint16_t *name, const char *ascii);
-
-/* THE identification rule of DESIGN Section 3, in one place so the firmware
- * side (falcon-efi/src/discover/partefi.c, off the PartitionInfo protocol) and
- * the host side (a parsed gpt_part) cannot drift apart:
- *
- *   p2  Microsoft basic data type AND the name FALCON-ISO. BOTH, because the
- *       type alone is worn by every Windows data partition in the machine,
- *       and the name alone on a partition of some unrelated type is far more
- *       likely to be a coincidence (or a hostile label on somebody's disk)
- *       than it is to be ours. Requiring both costs nothing - we write both -
- *       and a wrong guess here aims the ISO scan at a stranger's volume.
- *   p3  its falcon type GUID, which no one else wears.
- *
- * `name` may be NULL when the caller could not establish one; p2 then never
- * matches, because half the rule is missing. */
-int part_match_role(const uint8_t *type, const uint16_t *name, part_role role);
 
 /* ---- the GPT parser ---- */
 
@@ -257,13 +214,5 @@ int gpt_read_at(gpt_read_fn read, void *ctx, uint32_t block_size, uint64_t lba,
  * what a HARDDRIVE device path node carries, so it is the key that ties a
  * firmware partition handle back to its entry in the parent disk's table. */
 const gpt_part *gpt_find_start(const gpt_table *t, uint64_t start_lba);
-
-/* Does this decoded entry satisfy part_match_role for the role? */
-int gpt_part_is_role(const gpt_part *p, part_role role);
-
-/* Nonzero when the table holds at least one partition of this role. Drives
- * the fallback rule of DESIGN Section 3: the loader restricts itself to
- * falcon partitions only when some exist. */
-int gpt_has_role(const gpt_table *t, part_role role);
 
 #endif /* FALCON_PART_H */

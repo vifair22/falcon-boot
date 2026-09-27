@@ -36,19 +36,13 @@
 #define MKS_TYPE_LUKS  "CA7D7CCB-63ED-4C53-861C-1742536059CC"  /* p4, stock */
 
 /* Verifies the strings above against falcon-core/src/part/part.h (and, for the
- * standard types, against the values DESIGN Section 3 records), and
- * MKS_LABEL_P2 against the name the loader looks for. Called at the top of
- * every command that writes or reads a partition table. */
+ * standard types, against the values DESIGN Section 3 records). Called at
+ * the top of every command that writes or reads a partition table. */
 cli_status mkstick_guid_selfcheck(void);
 
-/* Partition names, written into the GPT entry's name field and shown by
- * `lsblk` when something has gone wrong.
- *
- * MKS_LABEL_P2 IS NOT COSMETIC. p2 wears a type GUID the whole world shares, so
- * its name is the other half of what identifies it to the loader
- * (FALCON_PART_NAME_ISO in falcon-core/src/part/part.h, checked against this
- * string at startup). Renaming p2 outside this tool makes its ISO library
- * invisible. */
+/* Partition names, written into the GPT entry's name field for a person
+ * reading lsblk or a partition editor. Nothing reads them to identify a
+ * partition; its record does that (DESIGN Section 3.1). */
 #define MKS_LABEL_P1 "FALCON-ESP"
 #define MKS_LABEL_P2 "FALCON-ISO"
 #define MKS_LABEL_P3 "FALCON-UKI"

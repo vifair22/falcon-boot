@@ -287,26 +287,18 @@ static void test_partition_types_are_frozen(void **state)
 
     /* p3's minted type must never collide with a standard one; a stick
      * stamped with a duplicate would be ambiguous. p2's type deliberately IS
-     * a standard one, which is exactly why its name is half its identity. */
+     * a standard one, so that Windows gives it a volume; its identity is its
+     * record (DESIGN Section 3.1), not its type. */
     assert_int_equal(gpt_guid_eq(gpt_guid_msbasic, falcon_guid_shelf), 0);
     assert_int_equal(gpt_guid_eq(gpt_guid_msbasic, gpt_guid_esp), 0);
     assert_int_equal(gpt_guid_eq(falcon_guid_shelf, guid_linux_luks), 0);
-
-    /* p2's name is the discriminator, and mkstick's MKS_LABEL_P2 is checked
-     * against this same string at tool startup (falcon-cli/src/mkstick/guid.c).
-     * */
-    assert_string_equal(part_role_name(PART_ROLE_ISO), "FALCON-ISO");
-    assert_string_equal(part_role_name(PART_ROLE_ISO), FALCON_PART_NAME_ISO);
-    /* p3 is its type GUID and nothing else, so it has no name to match. */
-    assert_null(part_role_name(PART_ROLE_SHELF));
-    assert_null(part_role_name((part_role)7));
 
     assert_int_equal(gpt_guid_eq(gpt_guid_msbasic, gpt_guid_msbasic), 1);
     assert_int_equal(gpt_guid_eq(NULL, gpt_guid_msbasic), 0);
     assert_int_equal(gpt_guid_eq(gpt_guid_msbasic, NULL), 0);
 }
 
-/* ---- the identification rule (DESIGN Section 3) ---- */
+/* ---- the name field ---- */
 
 /* Builds a 36-unit name field the way the disk carries one: no terminator is
  * implied, so `pad` says what fills the rest. */
@@ -389,90 +381,10 @@ static void test_name_match_is_exact(void **state)
     assert_int_equal(gpt_name_eq(name, NULL), 0);
 }
 
-/* p2 needs BOTH halves: the type is Microsoft basic data, which every Windows
- * data partition in the machine wears, and the name is ours. Either alone
- * would aim the ISO scan at a stranger's volume. */
-static void test_role_match_needs_type_and_name(void **state)
-{
-    uint16_t ours[GPT_NAME_LEN];
-    uint16_t theirs[GPT_NAME_LEN];
-    gpt_part p;
-
-    (void)state;
-    make_name(ours, "FALCON-ISO", 0);
-    make_name(theirs, "Basic data partition", 0);
-
-    /* Both halves: ours. */
-    assert_int_equal(part_match_role(gpt_guid_msbasic, ours, PART_ROLE_ISO), 1);
-    /* Right type, someone else's name: a Windows data partition. */
-    assert_int_equal(part_match_role(gpt_guid_msbasic, theirs, PART_ROLE_ISO),
-                     0);
-    /* Right name, wrong type: a coincidence, or a label somebody chose. */
-    assert_int_equal(part_match_role(falcon_guid_shelf, ours, PART_ROLE_ISO),
-                     0);
-    assert_int_equal(part_match_role(guid_linux_luks, ours, PART_ROLE_ISO), 0);
-    assert_int_equal(part_match_role(gpt_guid_esp, ours, PART_ROLE_ISO), 0);
-    /* No name established at all (the firmware route that could not read
-     * one): half the rule is missing, so p2 does not match. */
-    assert_int_equal(part_match_role(gpt_guid_msbasic, NULL, PART_ROLE_ISO), 0);
-
-    /* p3 is its type GUID alone, whatever it is called. */
-    assert_int_equal(part_match_role(falcon_guid_shelf, theirs,
-                                     PART_ROLE_SHELF), 1);
-    assert_int_equal(part_match_role(falcon_guid_shelf, NULL,
-                                     PART_ROLE_SHELF), 1);
-    assert_int_equal(part_match_role(gpt_guid_msbasic, ours,
-                                     PART_ROLE_SHELF), 0);
-
-    /* A role outside the enum matches nothing. */
-    assert_int_equal(part_match_role(gpt_guid_msbasic, ours, (part_role)9), 0);
-
-    /* The same rule over a decoded entry. */
-    memset(&p, 0, sizeof p);
-    memcpy(p.type, gpt_guid_msbasic, GPT_GUID_LEN);
-    memcpy(p.name, ours, sizeof p.name);
-    assert_int_equal(gpt_part_is_role(&p, PART_ROLE_ISO), 1);
-    assert_int_equal(gpt_part_is_role(&p, PART_ROLE_SHELF), 0);
-    memcpy(p.name, theirs, sizeof p.name);
-    assert_int_equal(gpt_part_is_role(&p, PART_ROLE_ISO), 0);
-    assert_int_equal(gpt_part_is_role(NULL, PART_ROLE_ISO), 0);
-}
-
-/* An internal disk with a Windows data partition on it is the case the name
- * half exists for: same type GUID as our p2, and it must not be claimed. */
-static void test_windows_data_partition_is_not_ours(void **state)
-{
-    tdisk d;
-    ttable tt;
-    tgeom g;
-    const tpart parts[] = {
-        { gpt_guid_esp,     "EFI system partition",  2048, 34815, 0 },
-        { gpt_guid_msbasic, "Basic data partition", 34816, 67583, 1 },
-        /* And the mirror image: our name on a partition of a type we never
-         * stamp it on. */
-        { guid_linux_luks,  "FALCON-ISO",           67584, 100351, 2 }
-    };
-
-    (void)state;
-    tdisk_init(&d, 512);
-    geom_default(&g);
-    build_gpt(&d, &g, parts, 3);
-    ttable_init(&tt, TABLE_CAP);
-
-    assert_int_equal(gpt_parse(&tt.t, tdisk_read, &d, 512), GPT_OK);
-    assert_int_equal(tt.t.count, 3);
-    assert_int_equal(gpt_part_is_role(&tt.t.parts[1], PART_ROLE_ISO), 0);
-    assert_int_equal(gpt_part_is_role(&tt.t.parts[2], PART_ROLE_ISO), 0);
-    assert_int_equal(gpt_has_role(&tt.t, PART_ROLE_ISO), 0);
-    assert_int_equal(gpt_has_role(&tt.t, PART_ROLE_SHELF), 0);
-
-    tdisk_free(&d);
-}
-
 /* The decoder's own job: 36 units, little-endian, copied verbatim with no
  * terminator assumed. The shapes below are the ones a hand-edited or hostile
- * table produces, and the parser must carry them through unchanged so the
- * matcher gets to make the decision. */
+ * table produces, and the parser must carry them through unchanged so a
+ * reader of the name (mkstick's EF02 check, gpt_name_eq) sees what is there. */
 static void test_name_field_decodes_verbatim(void **state)
 {
     tdisk d;
@@ -492,7 +404,7 @@ static void test_name_field_decodes_verbatim(void **state)
     assert_int_equal(tt.t.parts[1].name[9], 'O');
     assert_int_equal(tt.t.parts[1].name[10], 0);
     assert_int_equal(tt.t.parts[1].name[GPT_NAME_LEN - 1u], 0);
-    assert_int_equal(gpt_part_is_role(&tt.t.parts[1], PART_ROLE_ISO), 1);
+    assert_int_equal(gpt_name_eq(tt.t.parts[1].name, "FALCON-ISO"), 1);
 
     /* All 36 units occupied, no NUL anywhere in the field. */
     build_stick(&d);
@@ -504,7 +416,7 @@ static void test_name_field_decodes_verbatim(void **state)
     assert_int_equal(gpt_parse(&tt.t, tdisk_read, &d, 512), GPT_OK);
     assert_int_equal(tt.t.parts[1].name[GPT_NAME_LEN - 1u],
                      (uint16_t)('A' + ((GPT_NAME_LEN - 1u) % 26u)));
-    assert_int_equal(gpt_part_is_role(&tt.t.parts[1], PART_ROLE_ISO), 0);
+    assert_int_equal(gpt_name_eq(tt.t.parts[1].name, "FALCON-ISO"), 0);
 
     /* Our name, a NUL, then more text: the padding is not padding. */
     build_stick(&d);
@@ -514,10 +426,7 @@ static void test_name_field_decodes_verbatim(void **state)
     ttable_init(&tt, TABLE_CAP);
     assert_int_equal(gpt_parse(&tt.t, tdisk_read, &d, 512), GPT_OK);
     assert_int_equal(tt.t.parts[1].name[11], 'X');
-    assert_int_equal(gpt_part_is_role(&tt.t.parts[1], PART_ROLE_ISO), 0);
-    assert_int_equal(gpt_has_role(&tt.t, PART_ROLE_ISO), 0);
-    /* p3 is unaffected: its identity never involved a name. */
-    assert_int_equal(gpt_has_role(&tt.t, PART_ROLE_SHELF), 1);
+    assert_int_equal(gpt_name_eq(tt.t.parts[1].name, "FALCON-ISO"), 0);
 
     /* A unit above the ASCII range, stored little-endian, survives the
      * decode rather than being folded into a byte. */
@@ -528,7 +437,7 @@ static void test_name_field_decodes_verbatim(void **state)
     ttable_init(&tt, TABLE_CAP);
     assert_int_equal(gpt_parse(&tt.t, tdisk_read, &d, 512), GPT_OK);
     assert_int_equal(tt.t.parts[1].name[1], 0x00E9u);
-    assert_int_equal(gpt_part_is_role(&tt.t.parts[1], PART_ROLE_ISO), 0);
+    assert_int_equal(gpt_name_eq(tt.t.parts[1].name, "FALCON-ISO"), 0);
 
     tdisk_free(&d);
 }
@@ -575,10 +484,7 @@ static void test_parse_falcon_stick(void **state)
     assert_int_equal(tt.t.parts[1].number, 2);
     assert_memory_equal(tt.t.parts[1].type, gpt_guid_msbasic, GPT_GUID_LEN);
     assert_int_equal(tt.t.parts[1].start_lba, 34816);
-    /* p2 is the one entry whose type does not identify it. */
     assert_int_equal(gpt_name_eq(tt.t.parts[1].name, "FALCON-ISO"), 1);
-    assert_int_equal(gpt_part_is_role(&tt.t.parts[1], PART_ROLE_ISO), 1);
-    assert_int_equal(gpt_part_is_role(&tt.t.parts[0], PART_ROLE_ISO), 0);
 
     assert_int_equal(tt.t.parts[2].number, 3);
     assert_memory_equal(tt.t.parts[2].type, falcon_guid_shelf, GPT_GUID_LEN);
@@ -591,11 +497,6 @@ static void test_parse_falcon_stick(void **state)
     /* The PARTUUID the install manifest keeps as a tiebreaker survives the
      * round trip, entry by entry. */
     assert_int_equal(tt.t.parts[1].unique[0], 0xA0u + 16u);
-
-    assert_int_equal(gpt_has_role(&tt.t, PART_ROLE_ISO), 1);
-    assert_int_equal(gpt_has_role(&tt.t, PART_ROLE_SHELF), 1);
-    assert_int_equal(gpt_has_role(&tt.t, (part_role)9), 0);
-    assert_int_equal(gpt_has_role(NULL, PART_ROLE_ISO), 0);
 
     tdisk_free(&d);
 }
@@ -623,32 +524,6 @@ static void test_find_by_start_lba(void **state)
     assert_null(gpt_find_start(&tt.t, 34817));
     assert_null(gpt_find_start(&tt.t, 0));
     assert_null(gpt_find_start(NULL, 34816));
-
-    tdisk_free(&d);
-}
-
-/* A disk carrying only standard types is the internal drive the loader must
- * not claim: nothing on it is ours, and the role queries must say so. */
-static void test_foreign_disk_has_no_roles(void **state)
-{
-    tdisk d;
-    ttable tt;
-    tgeom g;
-    const tpart parts[] = {
-        { gpt_guid_esp,     NULL,  2048, 34815, 0 },
-        { guid_linux_luks, NULL, 34816, 67583, 1 }
-    };
-
-    (void)state;
-    tdisk_init(&d, 512);
-    geom_default(&g);
-    build_gpt(&d, &g, parts, 2);
-    ttable_init(&tt, TABLE_CAP);
-
-    assert_int_equal(gpt_parse(&tt.t, tdisk_read, &d, 512), GPT_OK);
-    assert_int_equal(tt.t.count, 2);
-    assert_int_equal(gpt_has_role(&tt.t, PART_ROLE_ISO), 0);
-    assert_int_equal(gpt_has_role(&tt.t, PART_ROLE_SHELF), 0);
 
     tdisk_free(&d);
 }
@@ -1031,15 +906,9 @@ static void test_sgdisk_written_table(void **state)
     assert_int_equal(tt.t.first_usable, 34);
     assert_true(tt.t.last_usable > tt.t.first_usable);
 
-    /* The whole point of the change of 2026-09-13: sgdisk's -c lands in the
-     * name field the parser reads, so the identification rule holds over a
-     * table we did not write ourselves. */
+    /* sgdisk's -c lands in the name field the parser reads. */
     assert_int_equal(gpt_name_eq(tt.t.parts[1].name, "FALCON-ISO"), 1);
-    assert_int_equal(gpt_part_is_role(&tt.t.parts[1], PART_ROLE_ISO), 1);
     assert_int_equal(gpt_name_eq(tt.t.parts[2].name, "FALCON-UKI"), 1);
-
-    assert_int_equal(gpt_has_role(&tt.t, PART_ROLE_ISO), 1);
-    assert_int_equal(gpt_has_role(&tt.t, PART_ROLE_SHELF), 1);
 
     p = gpt_find_start(&tt.t, 34816);
     assert_non_null(p);
@@ -1079,12 +948,9 @@ int run_part_tests(void)
         cmocka_unit_test(test_partition_types_are_frozen),
         cmocka_unit_test(test_reference_crc32_is_ieee),
         cmocka_unit_test(test_name_match_is_exact),
-        cmocka_unit_test(test_role_match_needs_type_and_name),
-        cmocka_unit_test(test_windows_data_partition_is_not_ours),
         cmocka_unit_test(test_name_field_decodes_verbatim),
         cmocka_unit_test(test_parse_falcon_stick),
         cmocka_unit_test(test_find_by_start_lba),
-        cmocka_unit_test(test_foreign_disk_has_no_roles),
         cmocka_unit_test(test_sparse_entries_keep_numbers),
         cmocka_unit_test(test_parse_4k_blocks),
         cmocka_unit_test(test_table_truncation_is_flagged),
