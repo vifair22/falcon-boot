@@ -535,6 +535,20 @@ static void test_ini_linux(void **state)
     roundtrip(&ini, &back);
     assert_string_equal(back.default_name, "uki-arch");
 
+    /* On an encrypted shelf no row carries uki-arch before the prompt:
+     * the default is a section naming the file, which is that row. */
+    f[1].locked = 1;
+    f[2].locked = 1;
+    assert_int_equal(stn_ini_build(f, 3, 5, &ini), STN_OK);
+    assert_string_equal(ini.default_name, "linux");
+    roundtrip(&ini, &back);
+    assert_string_equal(back.default_name, "linux");
+    assert_non_null(stationini_find(&back, "linux"));
+    assert_string_equal(stationini_find(&back, "linux")->uki, "arch.efi");
+    assert_int_equal(stationini_find(&back, "linux")->has_disk, 0);
+    f[1].locked = 0;
+    f[2].locked = 0;
+
     /* A UKI whose name the INI cannot say is passed over. */
     f[1].name[0] = '\0';
     assert_int_equal(stn_ini_build(f, 3, 5, &ini), STN_OK);

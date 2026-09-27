@@ -518,6 +518,20 @@ stn_status stn_ini_build(const stn_found *f, size_t n, unsigned timeout,
         }
     }
     if (pick != NULL) {
+        for (i = 0; i < n; i++) {
+            stationini_entry *e;
+
+            if (f[i].kind != STN_F_UKI || !f[i].locked ||
+                strcmp(f[i].name, pick) != 0)
+                continue;
+            if (out->n_entries >= STATIONINI_ENTRIES_MAX)
+                return STN_ERR_FULL;
+            e = &out->entries[out->n_entries++];
+            (void)snprintf(e->name, sizeof e->name, "linux");
+            (void)snprintf(e->uki, sizeof e->uki, "%s", f[i].label);
+            pick = e->name;
+            break;
+        }
         (void)snprintf(out->default_name, sizeof out->default_name, "%s",
                        pick);
         out->timeout = timeout;

@@ -322,6 +322,7 @@ static cli_status shelf_read(const shelf_ref *sh, const mks_pass *pass,
             name[n] = '\0';
             memset(f, 0, sizeof *f);
             f->kind = STN_F_UKI;
+            f->locked = (uint8_t)(sh->luks != 0);
             if (stn_name_uki((const char *)name, f->name, sizeof f->name) !=
                 0) {
                 log_warn("shelf: %s has a name the INI cannot use as a "

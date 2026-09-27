@@ -192,7 +192,11 @@ typedef struct {
                                                      one id until they are
                                                      given theirs */
     char           name[STATIONINI_NAME_MAX];     /* the loader's name */
-    char           label[STATIONINI_LABEL_MAX];
+    char           label[STATIONINI_LABEL_MAX];   /* UKI: its file name */
+    uint8_t        locked;                        /* UKI: on an encrypted
+                                                     shelf, so no row
+                                                     carries it at boot
+                                                     until the prompt */
 } stn_found;
 
 /* The row label the loaders give a found OS: "<what> (disk <id>, partition
@@ -207,7 +211,10 @@ void stn_found_label(stn_found *f);
  * the loader finds them itself and their generated names are enough to be
  * a default. The default is the first Windows or DOS, else the first UKI,
  * else the first other loader; `timeout` seconds when there is one, and no
- * countdown when there is not. */
+ * countdown when there is not. A UKI default on an encrypted shelf is a
+ * section of its own, `linux` with `uki = <file>`: the loader has no row
+ * named uki-<stem> before the shelf is unlocked, and a `uki` section is
+ * the row that prompts for the shelf and boots that file (Section 13.7). */
 stn_status stn_ini_build(const stn_found *f, size_t n, unsigned timeout,
                          stationini *out);
 
