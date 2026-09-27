@@ -4253,6 +4253,50 @@ It never resizes a filesystem. A tool that shrinks NTFS or ext4 on
 someone's OS disk is a different tool with a different risk, and
 ntfsresize and resize2fs already exist.
 
+Built (2026-09-27): `falcon-cli/src/mkstick/station.c` (the dispatch, the
+scan, `remove`, `status`), `stationinst.c` (`install`) and `stationcore.c`,
+the host-tested half that decides where and what (free space, the MBR entry
+and its CHS, a boot sector's loader, entry names, the INI, the backup's
+header). The Manual's Section 3.6 is its reference. What the code settled:
+
+- **Where.** The station partition takes the highest free run that holds it,
+  MiB-aligned where the run allows and 4 KiB-aligned where it does not (the
+  A21m's free space ends where its last cylinder did). On MBR it is a
+  primary, `0x1C`, its CHS fields from the geometry the disk's own entries
+  use; the entry is part of LBA 0 and so written last with stage 1. On GPT
+  `sgdisk` adds it, and the `FALCON-BIOS` partition when the disk has none,
+  before anything is formatted. `mkfs.fat` formats it at its offset of the
+  whole disk and mtools writes its files, so nothing is mounted and an
+  image needs no root.
+- **Two boot records on one disk.** A GPT disk with both stations carries
+  the ESP's record (stage 3 and marker 0) and the station partition's.
+  The one with a stage 3 is the BIOS one, as the installer and `status`
+  take it; stage 2's `bootpart_find` takes the first candidate today, which
+  on such a disk is the ESP (open).
+- **What it finds** is 13.3's rule, run over every disk of the machine (a
+  block device) or the image and `--also`; the firmware's entries only on
+  the machine that booted. `--no-scan` limits a block device to itself, for
+  a disk prepared for another machine. A disk the INI names with signature
+  0 gets one; two such disks are told apart by which was read, not by the
+  id they share until then.
+- **The INI** has a section only for what the loader chains (a partition, a
+  disk's MBR, Windows on an ESP), named by what it is, so a person edits a
+  label without looking up a signature; a UKI or firmware entry is named by
+  its generated name when it is the default. It is formatted with
+  `stationini_format` and parsed back before it is written.
+- **The backup** is one file for every disk the install touches: a header
+  naming the disks and each saved run with what it is (LBA 0, stage 2's
+  area, the primary and backup GPT, the station partition's first sectors,
+  the ESP's boot sectors, another disk's LBA 0), then the runs. `remove`
+  writes back what undoes the install and leaves what the user owns: LBA
+  0's boot code but not its table, so the station partition stays listed
+  until the user deletes it. `--full` writes back everything, which is the
+  disk as it was.
+- **The shelf** is stamped through the tools that own its format:
+  `cryptsetup token` (an earlier falcon token removed first) or `debugfs`
+  writing `/.falcon` into the unmounted ext4, and read back with the
+  loaders' code before the install goes on.
+
 ### 13.10 station-legacy
 
 The BIOS station plus the rows jump offers: **CD drive**, **USB stick**, **CF
@@ -4297,7 +4341,15 @@ Still to be written:
 
 - **A copy of the A21m's disk image** (Windows 2000 SP4, MBR, NTFS at 63)
   under SeaBIOS, with falcon installed on the copy by the installer: the real
-  `NTLDR` path and the real installer on a real disk.
+  `NTLDR` path and the real installer on a real disk. The copy is a qcow2
+  overlay of the image, presented by `qemu-nbd` for ntfsresize, sfdisk and
+  the installer (`falcon-bios/tools/mk-a21m-station.sh`), and each boot a
+  throwaway overlay on that (`run-a21m-rig.sh`), so the 10 GB image is
+  never copied or written.
+- **The installer on images** (`make test-station-install`): an MBR disk of
+  the A21m's shape with a Windows 98 second disk and a LUKS2 shelf, a GPT
+  disk with an ESP, Windows and a plaintext shelf; install, status, remove,
+  and `remove --full` back to the original bytes.
 - **Synthetic boot sectors** that print DL, DS:SI and the entry they were
   handed on serial: every chain case (a partition, another disk, swap on and
   off, a logical partition refused) without an OS. Built:
