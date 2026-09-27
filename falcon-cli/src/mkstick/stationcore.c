@@ -4,6 +4,8 @@
 
 #include <mkstick/stationcore.h>
 
+#include <media/strows.h>
+
 #include <stdio.h>
 #include <string.h>
 
@@ -237,89 +239,16 @@ void stn_mbr_set_sig(uint8_t *lba0, uint32_t sig)
 
 int stn_mbr_chainable(const uint8_t *lba0)
 {
-    unsigned i;
-    int active = 0;
-    int code = 0;
-
-    if (lba0 == NULL || lba0[510] != 0x55u || lba0[511] != 0xAAu)
-        return 0;
-    for (i = 0; i < 4u; i++) {
-        const uint8_t *e = lba0 + MBR_TABLE_OFF + (size_t)i * MBR_ENTRY_LEN;
-
-        if (e[4] == 0xEEu)
-            return 0;
-        if (e[4] != 0u && e[0] == 0x80u)
-            active = 1;
-    }
-    for (i = 0; i < MBR_CODE_LEN; i++) {
-        if (lba0[i] != 0u) {
-            code = 1;
-            break;
-        }
-    }
-    return active && code;
+    return lba0 != NULL && vbr_mbr_bootable(lba0);
 }
 
 /* ---- boot sectors ---- */
 
-static int has(const uint8_t *sec, size_t len, const char *s)
+int stn_is_windows_or_dos(vbr_loader l)
 {
-    size_t n = strlen(s);
-    size_t i;
-
-    if (n == 0u || n > len)
-        return 0;
-    for (i = 0; i + n <= len; i++) {
-        if (memcmp(sec + i, s, n) == 0)
-            return 1;
-    }
-    return 0;
-}
-
-stn_os stn_classify(const uint8_t *sec, size_t len)
-{
-    if (sec == NULL || len < 512u || sec[510] != 0x55u || sec[511] != 0xAAu)
-        return STN_OS_NONE;
-    len = 512u;
-    /* In the order that keeps a name from shadowing a later one: a Vista
-     * boot sector names only BOOTMGR, a 2000 one only NTLDR; a Windows 98
-     * FAT32 one names IO.SYS and WINBOOT.SYS both. */
-    if (has(sec, len, "BOOTMGR"))
-        return STN_OS_BOOTMGR;
-    if (has(sec, len, "NTLDR"))
-        return STN_OS_NTLDR;
-    if (has(sec, len, "WINBOOT SYS"))
-        return STN_OS_WIN9X;
-    if (has(sec, len, "IO      SYS"))
-        return STN_OS_DOS;
-    if (has(sec, len, "KERNEL  SYS"))
-        return STN_OS_FREEDOS;
-    if (has(sec, len, "GRUB"))
-        return STN_OS_GRUB;
-    if (has(sec, len, "SYSLINUX") || has(sec, len, "EXTLINUX"))
-        return STN_OS_SYSLINUX;
-    return STN_OS_NONE;
-}
-
-const char *stn_os_label(stn_os os)
-{
-    switch (os) {
-    case STN_OS_BOOTMGR:  return "Windows";
-    case STN_OS_NTLDR:    return "Windows NT/2000/XP";
-    case STN_OS_WIN9X:    return "Windows 9x";
-    case STN_OS_DOS:      return "MS-DOS or Windows 9x";
-    case STN_OS_FREEDOS:  return "FreeDOS";
-    case STN_OS_GRUB:     return "GRUB";
-    case STN_OS_SYSLINUX: return "SYSLINUX";
-    case STN_OS_NONE:     break;
-    }
-    return "Boot sector";
-}
-
-int stn_os_is_windows_or_dos(stn_os os)
-{
-    return os == STN_OS_BOOTMGR || os == STN_OS_NTLDR ||
-           os == STN_OS_WIN9X || os == STN_OS_DOS || os == STN_OS_FREEDOS;
+    return l == VBR_LOADER_BOOTMGR || l == VBR_LOADER_NTLDR ||
+           l == VBR_LOADER_WIN9X || l == VBR_LOADER_MSDOS ||
+           l == VBR_LOADER_FREEDOS;
 }
 
 /* ---- names ---- */
@@ -386,36 +315,32 @@ int stn_name_uki(const char *file, char *buf, size_t cap)
 
 void stn_found_label(stn_found *f)
 {
-    char id[PART_DISK_ID_TEXT];
-    char line[160];
-    int n = 0;
+    const char *what;
+    uint32_t part;
 
     if (f == NULL)
         return;
-    part_disk_id_format(&f->disk, id);
-    /* A GPT disk's whole DiskGUID does not leave a row label room for the
-     * rest; its first eight digits are what the entry's name carries. */
-    if (f->disk.kind == PART_KIND_GPT)
-        id[12] = '\0';
     switch (f->kind) {
     case STN_F_PART:
-        n = snprintf(line, sizeof line, "%s (disk %s, partition %u)",
-                     stn_os_label(f->os), id, (unsigned)f->part);
+        what = vbr_loader_name(f->os);
+        if (what == NULL)
+            what = STROWS_LABEL_PARTITION;
+        part = f->part;
         break;
     case STN_F_DISK:
-        n = snprintf(line, sizeof line, "Disk %s", id);
+        what = STROWS_LABEL_BOOTCODE;
+        part = 0;
         break;
     case STN_F_EFIWIN:
-        n = snprintf(line, sizeof line, "Windows (disk %s)", id);
+        what = STROWS_LABEL_BOOTMGR;
+        part = f->part;
         break;
     case STN_F_UKI:
     case STN_F_FWENTRY:
+    default:
         return;
     }
-    if (n < 0)
-        return;
-    memcpy(f->label, line, sizeof f->label - 1u);
-    f->label[sizeof f->label - 1u] = '\0';
+    strows_label_part_ascii(f->label, sizeof f->label, what, &f->disk, part);
 }
 
 /* ---- the INI ---- */
@@ -427,18 +352,19 @@ static const char *family(const stn_found *f)
     if (f->kind == STN_F_EFIWIN)
         return "windows";
     switch (f->os) {
-    case STN_OS_BOOTMGR:
-    case STN_OS_NTLDR:
-    case STN_OS_WIN9X:
+    case VBR_LOADER_BOOTMGR:
+    case VBR_LOADER_NTLDR:
+    case VBR_LOADER_WIN9X:
         return "windows";
-    case STN_OS_DOS:
-    case STN_OS_FREEDOS:
+    case VBR_LOADER_MSDOS:
+    case VBR_LOADER_FREEDOS:
         return "dos";
-    case STN_OS_GRUB:
+    case VBR_LOADER_GRUB:
         return "grub";
-    case STN_OS_SYSLINUX:
+    case VBR_LOADER_SYSLINUX:
         return "syslinux";
-    case STN_OS_NONE:
+    case VBR_LOADER_NONE:
+    default:
         break;
     }
     return "other";
@@ -449,7 +375,7 @@ static int windows_like(const stn_found *f)
     if (f->kind == STN_F_EFIWIN)
         return 1;
     if (f->kind == STN_F_PART || f->kind == STN_F_FWENTRY)
-        return stn_os_is_windows_or_dos(f->os);
+        return stn_is_windows_or_dos(f->os);
     return 0;
 }
 

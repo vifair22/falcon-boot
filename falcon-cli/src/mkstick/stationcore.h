@@ -33,6 +33,7 @@
 #include <stdint.h>
 
 #include <media/stationini.h>
+#include <media/vbr.h>
 #include <part/table.h>
 
 /* The station partition: 64 MiB by default, FAT32 hidden (0x1C) on MBR.
@@ -131,32 +132,19 @@ uint32_t stn_mbr_sig(const uint8_t *lba0);
 void     stn_mbr_set_sig(uint8_t *lba0, uint32_t sig);
 
 /* Nonzero when another disk's LBA 0 is worth offering as a chain (DESIGN
- * Section 13.3): 0x55AA, boot code in the first 440 bytes, an active
- * entry, and no 0xEE entry (a GPT disk's protective MBR). A disk that
- * merely ends in 0x55AA fails after the jump. */
+ * Section 13.3): the BIOS station's own rule, media/vbr.c's
+ * vbr_mbr_bootable (0x55AA, boot code in the first 440 bytes, an active
+ * entry). A disk that merely ends in 0x55AA fails after the jump. */
 int stn_mbr_chainable(const uint8_t *lba0);
 
 /* ---- what a partition's boot sector names ---- */
 
-typedef enum {
-    STN_OS_NONE = 0,
-    STN_OS_BOOTMGR,     /* Windows Vista and later */
-    STN_OS_NTLDR,       /* Windows NT 4, 2000, XP, Server 2003 */
-    STN_OS_WIN9X,       /* WINBOOT.SYS: Windows 95 OSR2, 98, ME */
-    STN_OS_DOS,         /* IO.SYS: MS-DOS, or Windows 9x */
-    STN_OS_FREEDOS,     /* KERNEL.SYS */
-    STN_OS_GRUB,
-    STN_OS_SYSLINUX
-} stn_os;
-
-/* The loader a partition's first sector names, by the strings its boot
- * code carries, or STN_OS_NONE (no 0x55AA, or nothing known). */
-stn_os stn_classify(const uint8_t *sec, size_t len);
-
-const char *stn_os_label(stn_os os);
+/* What a partition's boot sector starts is media/vbr.c's vbr_identify, the
+ * BIOS station's own reading, so a row the installer names is one the
+ * loader offers, under the same words (vbr_loader_name). */
 
 /* Nonzero for what the installer makes the default: a Windows or a DOS. */
-int stn_os_is_windows_or_dos(stn_os os);
+int stn_is_windows_or_dos(vbr_loader l);
 
 /* ---- entry names (docs/notes/station-rework.md section 10) ---- */
 
@@ -182,7 +170,7 @@ typedef enum {
 
 typedef struct {
     stn_found_kind kind;
-    stn_os         os;
+    vbr_loader     os;
     part_disk_id   disk;
     uint32_t       part;
     uint16_t       boot_num;                      /* FWENTRY: Boot#### */
@@ -193,14 +181,19 @@ typedef struct {
                                                      given theirs */
     char           name[STATIONINI_NAME_MAX];     /* the loader's name */
     char           label[STATIONINI_LABEL_MAX];   /* UKI: its file name */
+    char           title[STATIONINI_LABEL_MAX];   /* UKI: the row's words
+                                                     (shelf.c's label), when
+                                                     `status` read them */
     uint8_t        locked;                        /* UKI: on an encrypted
                                                      shelf, so no row
                                                      carries it at boot
                                                      until the prompt */
 } stn_found;
 
-/* The row label the loaders give a found OS: "<what> (disk <id>, partition
- * <n>)", or "Disk <id>" for a disk's MBR. */
+/* The row label the loaders give what was found (strows.h's words):
+ * "<loader> (disk <id>, partition <n>)" for a partition, "Boot code (disk
+ * <id>)" for a disk's MBR, "Windows Boot Manager (disk <id>, partition
+ * <n>)" for an ESP's bootmgfw.efi. */
 void stn_found_label(stn_found *f);
 
 /* STATION.INI from what was found (DESIGN Section 13.7). One section per

@@ -291,9 +291,10 @@ static void test_chainable(void **state)
     lba0[0] = 0;
     assert_false(stn_mbr_chainable(lba0));
     lba0[0] = 0xFA;
-    /* A protective MBR is GPT's. */
+    /* The loader's rule (media/vbr.c): an active entry and code are what
+     * count, so a hybrid table beside a protective entry is offered too. */
     put_entry(lba0, 2, 0x00, 0xEE, NULL);
-    assert_false(stn_mbr_chainable(lba0));
+    assert_true(stn_mbr_chainable(lba0));
     put_entry(lba0, 2, 0x00, 0x00, NULL);
     lba0[511] = 0;
     assert_false(stn_mbr_chainable(lba0));
@@ -302,60 +303,19 @@ static void test_chainable(void **state)
 
 /* ---- boot sectors ---- */
 
-static void sector_with(uint8_t *sec, const char *s, size_t at)
+/* Which loader a boot sector names is core's vbr_identify, tested there;
+ * what the installer adds is which of them it makes the default. */
+static void test_windows_or_dos(void **state)
 {
-    memset(sec, 0, 512);
-    sec[0] = 0xEB;
-    sec[510] = 0x55;
-    sec[511] = 0xAA;
-    if (s != NULL)
-        memcpy(sec + at, s, strlen(s));
-}
-
-static void test_classify(void **state)
-{
-    uint8_t sec[512];
-
     (void)state;
-    sector_with(sec, "NTLDR is missing", 0x180);
-    assert_int_equal(stn_classify(sec, sizeof sec), STN_OS_NTLDR);
-    sector_with(sec, "BOOTMGR is compressed", 0x180);
-    assert_int_equal(stn_classify(sec, sizeof sec), STN_OS_BOOTMGR);
-    sector_with(sec, "IO      SYSMSDOS   SYSWINBOOT SYS", 0x1C0);
-    assert_int_equal(stn_classify(sec, sizeof sec), STN_OS_WIN9X);
-    sector_with(sec, "IO      SYSMSDOS   SYS", 0x1C0);
-    assert_int_equal(stn_classify(sec, sizeof sec), STN_OS_DOS);
-    sector_with(sec, "KERNEL  SYS", 0x1C0);
-    assert_int_equal(stn_classify(sec, sizeof sec), STN_OS_FREEDOS);
-    sector_with(sec, "GRUB ", 0x180);
-    assert_int_equal(stn_classify(sec, sizeof sec), STN_OS_GRUB);
-    sector_with(sec, "SYSLINUX", 3);
-    assert_int_equal(stn_classify(sec, sizeof sec), STN_OS_SYSLINUX);
-    sector_with(sec, "EXTLINUX", 3);
-    assert_int_equal(stn_classify(sec, sizeof sec), STN_OS_SYSLINUX);
-    /* A name at the very end of the code still counts. */
-    sector_with(sec, "NTLDR", 505);
-    assert_int_equal(stn_classify(sec, sizeof sec), STN_OS_NTLDR);
-    sector_with(sec, "mkfs.fat", 3);
-    assert_int_equal(stn_classify(sec, sizeof sec), STN_OS_NONE);
-    sector_with(sec, "NTLDR", 0x180);
-    sec[511] = 0;
-    assert_int_equal(stn_classify(sec, sizeof sec), STN_OS_NONE);
-    assert_int_equal(stn_classify(sec, 100), STN_OS_NONE);
-    assert_int_equal(stn_classify(NULL, 512), STN_OS_NONE);
-
-    assert_true(stn_os_is_windows_or_dos(STN_OS_NTLDR));
-    assert_true(stn_os_is_windows_or_dos(STN_OS_DOS));
-    assert_false(stn_os_is_windows_or_dos(STN_OS_GRUB));
-    assert_false(stn_os_is_windows_or_dos(STN_OS_NONE));
-    assert_string_equal(stn_os_label(STN_OS_NTLDR), "Windows NT/2000/XP");
-    assert_string_equal(stn_os_label(STN_OS_NONE), "Boot sector");
-    assert_string_equal(stn_os_label(STN_OS_BOOTMGR), "Windows");
-    assert_string_equal(stn_os_label(STN_OS_WIN9X), "Windows 9x");
-    assert_string_equal(stn_os_label(STN_OS_DOS), "MS-DOS or Windows 9x");
-    assert_string_equal(stn_os_label(STN_OS_FREEDOS), "FreeDOS");
-    assert_string_equal(stn_os_label(STN_OS_GRUB), "GRUB");
-    assert_string_equal(stn_os_label(STN_OS_SYSLINUX), "SYSLINUX");
+    assert_true(stn_is_windows_or_dos(VBR_LOADER_NTLDR));
+    assert_true(stn_is_windows_or_dos(VBR_LOADER_BOOTMGR));
+    assert_true(stn_is_windows_or_dos(VBR_LOADER_WIN9X));
+    assert_true(stn_is_windows_or_dos(VBR_LOADER_MSDOS));
+    assert_true(stn_is_windows_or_dos(VBR_LOADER_FREEDOS));
+    assert_false(stn_is_windows_or_dos(VBR_LOADER_GRUB));
+    assert_false(stn_is_windows_or_dos(VBR_LOADER_SYSLINUX));
+    assert_false(stn_is_windows_or_dos(VBR_LOADER_NONE));
 }
 
 /* ---- names ---- */
@@ -406,29 +366,39 @@ static void test_labels(void **state)
 
     (void)state;
     memset(&f, 0, sizeof f);
+    /* The loaders' words (station-rework.md section 11). */
     f.kind = STN_F_PART;
-    f.os = STN_OS_NTLDR;
+    f.os = VBR_LOADER_NTLDR;
     f.disk.kind = PART_KIND_MBR;
     f.disk.mbr_sig = 0xcccdcccdu;
     f.part = 1;
     stn_found_label(&f);
     assert_string_equal(f.label,
-                        "Windows NT/2000/XP (disk mbr:cccdcccd, partition 1)");
+                        "Windows (NTLDR) (disk mbr:cccdcccd, partition 1)");
+    f.os = VBR_LOADER_WIN9X;
+    stn_found_label(&f);
+    assert_string_equal(f.label,
+                        "Windows 9x (disk mbr:cccdcccd, partition 1)");
+    f.os = VBR_LOADER_NONE;
+    stn_found_label(&f);
+    assert_string_equal(f.label,
+                        "Partition (disk mbr:cccdcccd, partition 1)");
     f.kind = STN_F_DISK;
     stn_found_label(&f);
-    assert_string_equal(f.label, "Disk mbr:cccdcccd");
+    assert_string_equal(f.label, "Boot code (disk mbr:cccdcccd)");
     /* A GPT id is cut to its first eight digits, and the label fits. */
     gpt_id(&f.disk);
     f.kind = STN_F_PART;
-    f.os = STN_OS_DOS;
+    f.os = VBR_LOADER_MSDOS;
     f.part = 9999;
     stn_found_label(&f);
     assert_string_equal(f.label,
-                        "MS-DOS or Windows 9x (disk gpt:1a2b3c4d, partition "
-                        "9999)");
+                        "MS-DOS (disk gpt:1a2b3c4d, partition 9999)");
     f.kind = STN_F_EFIWIN;
+    f.part = 1;
     stn_found_label(&f);
-    assert_string_equal(f.label, "Windows (disk gpt:1a2b3c4d)");
+    assert_string_equal(f.label,
+                        "Windows Boot Manager (disk gpt:1a2b3c4d, partition 1)");
     f.kind = STN_F_UKI;
     f.label[0] = 'x';
     f.label[1] = '\0';
@@ -439,7 +409,7 @@ static void test_labels(void **state)
 
 /* ---- the INI ---- */
 
-static stn_found found_part(stn_os os, uint32_t sig, uint32_t part)
+static stn_found found_part(vbr_loader os, uint32_t sig, uint32_t part)
 {
     stn_found f;
 
@@ -484,9 +454,9 @@ static void test_ini_windows(void **state)
 
     (void)state;
     f[0] = found_uki("arch.efi");
-    f[1] = found_part(STN_OS_GRUB, 0x11111111u, 2);
-    f[2] = found_part(STN_OS_NTLDR, 0xcccdcccdu, 1);
-    f[3] = found_part(STN_OS_BOOTMGR, 0x22222222u, 1);
+    f[1] = found_part(VBR_LOADER_GRUB, 0x11111111u, 2);
+    f[2] = found_part(VBR_LOADER_NTLDR, 0xcccdcccdu, 1);
+    f[3] = found_part(VBR_LOADER_BOOTMGR, 0x22222222u, 1);
     memset(&f[4], 0, sizeof f[4]);
     f[4].kind = STN_F_DISK;
     f[4].disk.kind = PART_KIND_MBR;
@@ -515,7 +485,7 @@ static void test_ini_windows(void **state)
     assert_int_equal(e->disk.mbr_sig, 0xcccdcccdu);
     assert_int_equal(e->part, 1);
     assert_string_equal(e->label,
-                        "Windows NT/2000/XP (disk mbr:cccdcccd, partition 1)");
+                        "Windows (NTLDR) (disk mbr:cccdcccd, partition 1)");
     assert_non_null(stationini_find(&back, "disk"));
 }
 
@@ -527,7 +497,7 @@ static void test_ini_linux(void **state)
 
     (void)state;
     /* No Windows: the first UKI, by the name the loader gives it. */
-    f[0] = found_part(STN_OS_GRUB, 0x11111111u, 2);
+    f[0] = found_part(VBR_LOADER_GRUB, 0x11111111u, 2);
     f[1] = found_uki("arch.efi");
     f[2] = found_uki("lts.efi");
     assert_int_equal(stn_ini_build(f, 3, 5, &ini), STN_OK);
@@ -577,7 +547,7 @@ static void test_ini_uefi(void **state)
     memset(f, 0, sizeof f);
     f[0] = found_uki("arch.efi");
     f[1].kind = STN_F_FWENTRY;
-    f[1].os = STN_OS_BOOTMGR;
+    f[1].os = VBR_LOADER_BOOTMGR;
     (void)snprintf(f[1].name, sizeof f[1].name, "nxt-0001");
     (void)snprintf(f[1].label, sizeof f[1].label, "Windows Boot Manager");
     assert_int_equal(stn_ini_build(f, 2, 5, &ini), STN_OK);
@@ -608,7 +578,7 @@ static void test_ini_many(void **state)
 
     (void)state;
     for (i = 0; i < STATIONINI_ENTRIES_MAX + 1u; i++)
-        f[i] = found_part(STN_OS_DOS, 0x10000000u + i, 1);
+        f[i] = found_part(VBR_LOADER_MSDOS, 0x10000000u + i, 1);
     assert_int_equal(stn_ini_build(f, STATIONINI_ENTRIES_MAX, 5, &ini),
                      STN_OK);
     assert_string_equal(ini.entries[2].name, "dos-3");
@@ -801,7 +771,7 @@ int run_stationcore_tests(void)
         cmocka_unit_test(test_mbr_slots),
         cmocka_unit_test(test_mbr_put),
         cmocka_unit_test(test_chainable),
-        cmocka_unit_test(test_classify),
+        cmocka_unit_test(test_windows_or_dos),
         cmocka_unit_test(test_names),
         cmocka_unit_test(test_labels),
         cmocka_unit_test(test_ini_windows),

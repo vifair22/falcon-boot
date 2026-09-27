@@ -513,14 +513,20 @@ case_uefi_default() {   # case_uefi_default CASE FIRMWARE
     boot "$fw" "$R/gpt.img" sata "$(cat "$R/gpt.esp")" 1
     wait_for "Booting in 5 s. Any key stops the countdown." 90 ||
         WHY="no countdown"
-    [[ -z "$WHY" ]] && { has "Personal OS (encrypted)" || WHY="no Personal OS row"; }
+    # OVMF's terminal gets the countdown line before the rows; by the
+    # count's second line every row has been drawn.
+    [[ -z "$WHY" ]] && { wait_for "Booting in 4 s" 5 || WHY="the count stopped"; }
+    [[ -z "$WHY" ]] && { wait_for "Personal OS (encrypted)" 5 || WHY="no Personal OS row"; }
     # The INI's [windows] names the disk, matches the firmware entry, and
     # labels its row.
-    [[ -z "$WHY" ]] && { has "Windows (disk gpt:" || WHY="no Windows row"; }
-    [[ -z "$WHY" ]] && has "Windows Boot Manager" &&
+    [[ -z "$WHY" ]] && { has "Windows Boot Manager (disk gpt:" || WHY="no Windows row"; }
+    # The entry's own label, "Windows Boot Manager" and nothing after it
+    # but the row's padding, would be a second row.
+    [[ -z "$WHY" ]] &&
+        log_text "$R/serial.log" | grep -aqE 'Windows Boot Manager( {2,}|$)' &&
         WHY="the firmware entry is a row of its own beside the INI's"
     [[ -z "$WHY" ]] && { wait_for "Memory test (memtest86+)" 5 || WHY="no memtest row"; }
-    [[ -z "$WHY" ]] && { wait_for "booting: Windows (disk gpt:" 15 ||
+    [[ -z "$WHY" ]] && { wait_for "booting: Windows Boot Manager (disk gpt:" 15 ||
         WHY="the default was not Windows"; }
     [[ -z "$WHY" ]] && { has "restarting into it" || WHY="no NXT page"; }
     [[ -z "$WHY" ]] && { wait_for "FALCON-STANDIN $BOOTMGFW" 90 ||
@@ -555,7 +561,10 @@ case_4kn_uefi() {       # case_4kn_uefi CASE FIRMWARE
     boot "$fw" "$R/4kn.img" nvme "$(cat "$R/4kn.esp")" 0
     wait_for "Booting in 5 s. Any key stops the countdown." 90 ||
         WHY="no countdown"
-    [[ -z "$WHY" ]] && { has "personal.efi" || WHY="no row for the INI's [linux]"; }
+    # OVMF's terminal gets the countdown line before the rows; by the
+    # count's second line every row has been drawn.
+    [[ -z "$WHY" ]] && { wait_for "Booting in 4 s" 5 || WHY="the count stopped"; }
+    [[ -z "$WHY" ]] && { wait_for "personal.efi" 5 || WHY="no row for the INI's [linux]"; }
     [[ -z "$WHY" ]] && { wait_for "booting: personal.efi" 15 ||
         WHY="the default was not the shelf's UKI"; }
     [[ -z "$WHY" ]] && unlock "$id" 30
@@ -597,7 +606,10 @@ case_second() {         # case_second CASE FIRMWARE nxt|esp
         "$win" "$(cat "$R/win2.esp")"
     wait_for "Booting in 5 s. Any key stops the countdown." 90 ||
         WHY="no countdown"
-    [[ -z "$WHY" ]] && { has "Personal OS (encrypted)" || WHY="no Personal OS row"; }
+    # OVMF's terminal gets the countdown line before the rows; by the
+    # count's second line every row has been drawn.
+    [[ -z "$WHY" ]] && { wait_for "Booting in 4 s" 5 || WHY="the count stopped"; }
+    [[ -z "$WHY" ]] && { wait_for "Personal OS (encrypted)" 5 || WHY="no Personal OS row"; }
     [[ -z "$WHY" ]] && { wait_for "booting: Windows" 15 ||
         WHY="the default was not Windows"; }
     if [[ -z "$WHY" && $how == nxt ]]; then
@@ -627,8 +639,11 @@ case_mbr_uefi() {       # case_mbr_uefi CASE FIRMWARE
     boot "$fw" "$R/mbr.img" sata "$(cat "$R/mbr.esp")" 0
     wait_for "Booting in 5 s. Any key stops the countdown." 90 ||
         WHY="no countdown"
-    [[ -z "$WHY" ]] && { has "personal.efi" || WHY="no row for the INI's [linux]"; }
-    [[ -z "$WHY" ]] && { has "Memory test (memtest86+)" || WHY="no memtest row"; }
+    # OVMF's terminal gets the countdown line before the rows; by the
+    # count's second line every row has been drawn.
+    [[ -z "$WHY" ]] && { wait_for "Booting in 4 s" 5 || WHY="the count stopped"; }
+    [[ -z "$WHY" ]] && { wait_for "personal.efi" 5 || WHY="no row for the INI's [linux]"; }
+    [[ -z "$WHY" ]] && { wait_for "Memory test (memtest86+)" 5 || WHY="no memtest row"; }
     [[ -z "$WHY" ]] && { wait_for "booting: personal.efi" 15 ||
         WHY="the default was not the shelf's UKI"; }
     [[ -z "$WHY" ]] && unlock "$id" 30

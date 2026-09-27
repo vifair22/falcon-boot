@@ -16,11 +16,14 @@ MKSTICK_SRCS := $(CLI_COMMON) $(addprefix $(CLI)/mkstick/,main.c cleanup.c \
 # what makes the inspection answer the question the boot menu will ask rather
 # than a second opinion about the same disk.
 # The identity record and the next-boot marker's format are the loaders' own
-# too (ident, media/nextboot.c, which matches paths with the manifest's rule).
+# too (ident, media/nextboot.c, which matches paths with the manifest's rule),
+# and so is what the station's list says: what a boot sector is
+# (media/vbr.c) and the rows, names and words (media/strows.c).
 MKSTICK_CORE := $(CORE_PART) $(CORE_FS) $(CORE_LUKS) $(CORE_CRYPTO) \
 	$(CORE_IDENT) $(CORE)/media/nextboot.c $(CORE_MANIFEST) \
 	$(CORE_STATIONINI) $(CORE)/media/shelf.c $(CORE)/media/osrel.c \
-	$(CORE_PE) $(CORE_UCS2)
+	$(CORE_PE) $(CORE_UCS2) \
+	$(CORE_VBR) $(CORE_STROWS)
 
 SIGN_SRCS := $(addprefix $(CLI)/sign/,main.c util.c isoprobe.c manifestio.c \
 	payload.c uki.c)
@@ -113,7 +116,7 @@ CLI_UUT := $(addprefix $(CLI)/sign/,isoprobe.c payload.c uki.c util.c) \
 	$(CORE)/media/family.c $(CORE)/media/bootcfg.c $(CORE)/media/nextboot.c \
 	$(CORE_MANIFEST) $(CORE_MANIFEST_WRITE) \
 	$(CORE_PART) $(CORE_PE) $(CORE_FS) $(CORE_LUKS) $(CORE_IDENT) \
-	$(CORE_CRYPTO) $(CORE_STATIONINI)
+	$(CORE_CRYPTO) $(CORE_STATIONINI) $(CORE_VBR) $(CORE_STROWS)
 
 $(eval $(call test_bin,cli,$(CLI_TESTS) $(CLI_UUT)))
 
