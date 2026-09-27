@@ -3385,6 +3385,7 @@ resident CD handler, from real mode.
 |---|---|---|
 | 0x0000-0x03FF | real-mode IVT; INT 13h hooked by a chainload | permanent |
 | 0x0400-0x04FF | BDA; 0x413 is conventional memory in KiB, lowered 16 by a chainload | permanent |
+| 0x0600-0x07FF | the station's partition chain: the disk's LBA 0, its entry marked active, DS:SI at the entry (13.4) | handed over |
 | 0x1000-0x10FF | disk packet, drive parameters, E820 slot | per call |
 | below 0x7000 | real-mode stack during a thunk | per call |
 | 0x3000-0x311F | the Linux handoff: the move stub at 0x3000, the handoff GDT at 0x3100 | copied at the handoff, handed to the kernel |
@@ -3395,6 +3396,7 @@ resident CD handler, from real mode.
 | 0x20000 | Linux cmdline; or the staged El Torito boot image (up to 63 KiB) on a chainload | handed over |
 | 0x90000-0x97FFF | bounce buffer | every read |
 | BDA top - 16 KiB | the resident CD handler: data, runs, El Torito packet, launch stub at +0x530, INT 13h entry at +0x570, INT 15h entry at +0xA00, carved E820 map at +0xB00, overlay pool at +0x1000; never below 0x98000 | permanent after a chainload; reserved in the map it hands on |
+| BDA top - 1 KiB (station) | the drive swap (`swapres.S`): the previous INT 13h vector, the drive, the handler at +0x10, 84 bytes | permanent after a chain of a disk that is not 0x80 |
 | BDA top - 3 KiB (falcon jump) | the reverse thunk (`rthunk.S`): far pointers, its GDT, the saved caller, the INT 13h entry at +0x90, the INT 15h entry at +0x300 and its carved map at +0x400 (the `USB` route's); below it the virtual CD's block on `CDR` | permanent after `CDR` hands over; reserved in the map it hands on |
 | 0x100000 | stage 3: 16-byte header, entry at +0x10, then its image and `.bss` (at most 0x6F0000 together) | whole loader |
 | 0xB8000-0xB8F9F | VGA text memory, the 80x25 screen stage 3 draws | whole loader |
@@ -3806,7 +3808,7 @@ flowchart TD
     IO --> MB2["boot_module_disk: as the USB branch, from jres_install on"]
 ```
 
-`MBR` and `MEM` leave nothing resident, as the station's routes do (12.5.2).
+`MBR` and `MEM` leave nothing resident, as the station's do but for its drive swap (12.5.2).
 `CDR` leaves two: the stick's virtual CD, unchanged but for serving a whole
 drive as one run, and under it the reverse thunk and `ATA.MOD`. The floppy
 is read by CHS wherever its BIOS has no extensions, SeaBIOS's included, so
@@ -3924,28 +3926,61 @@ Anything else is added in `STATION.INI`.
 
 ### 13.4 Windows
 
-**BIOS, a partition on any disk: the boot-sector chain.** The Windows MBR's
-own job, done by falcon: the disk's LBA 0 is copied to 0000:0600 and the
-chosen primary's entry marked active in that copy only, DS:SI points at the
-entry in it, the partition's first sector is read to 0000:7C00 and must end
-in `0x55AA`, DL names the disk, and `boot16` drops to real mode and jumps.
-DOS's `IO.SYS`, NT's `NTLDR` and Vista's `BOOTMGR` boot sectors all read
-DS:SI or the hidden-sectors field of their own BPB to find themselves; the
-field is checked against the entry's start and, when they disagree, patched
-in the copy in memory (never on the disk) and said on serial. Windows 9x's
-FAT32 boot sector reads its second sector by LBA or CHS according to the
-partition's type byte, which the entry carries unchanged. What 9x needs
-beyond this is measured on hardware before it is called done.
+**BIOS, a partition on any disk: the boot-sector chain** (route `VBR`,
+`falcon-bios/src/mbr/chain.c`). The Windows MBR's own job, done by falcon.
+What the boot sector finds when it starts:
 
-**BIOS, another disk: its MBR, with a drive swap.** The disk's LBA 0 to
-0000:7C00 as `mbr.c` does today, but the disk is made 0x80 first: a small
-resident INT 13h hook swaps the chosen disk's number with 0x80 for every
-call, as a BIOS booting that disk directly would have numbered it. DOS,
-Windows 9x and `NTLDR`'s `boot.ini` (`rdisk(N)`) resolve disks by BIOS order
-and expect their own to be 0x80; Windows 7 and later do not care, and an
-entry turns the swap off with `swap = no`. The hook takes 1 KB of
-conventional memory off the BDA's count, the way the virtual CD's resident
-does (`mem/lowmem.c`), and is the only resident the station has.
+| where | what |
+|---|---|
+| 0000:0600-07FF | the disk's LBA 0, the chosen primary's entry marked active (0x80) and every other entry inactive, in this copy only |
+| DS:SI | 0000:07BE + 16 x slot, that entry in the copy |
+| 0000:7C00 | the partition's first sector, which must end in `0x55AA`, its BPB made to agree (below) |
+| DL | the drive: 0x80 behind the swap, else the disk's own number |
+| CS:IP | 0000:7C00, from `boot16` (12.3.2): real mode, DS = ES = SS = 0, SP 0x7000, interrupts on |
+
+DOS's `IO.SYS`, NT's `NTLDR` and Vista's `BOOTMGR` boot sectors find
+themselves through DS:SI or through their own BPB's hidden-sectors field
+and drive number. Both fields are checked, the first against the entry's
+start and the second against DL (where the BPB has one: FAT with extended
+signature 0x28 or 0x29, and NTFS), and when they disagree they are patched
+in the copy in memory, never on the disk, and said on serial; a volume
+imaged from another machine, or a disk moved behind the swap, carries
+stale ones. Windows 98's FAT32 boot sector reads the disk's LBA 0 for the
+entry that starts at its hidden sectors and takes that entry's type byte
+(0x0C by LBA, 0x0B by CHS), so the patched field and the entry, handed over
+unchanged but for its status byte, are what it needs. Refused with a
+sentence before anything is copied: a logical partition, an extended
+container, a partition on a GPT disk, a disk whose sectors are not 512
+bytes, and a table that no longer has the entry the row was built from.
+What 9x needs beyond this is measured on hardware before it is called
+done.
+
+**BIOS, another disk: its MBR, with a drive swap** (route `MBR`, also
+`chain.c`). The disk's LBA 0 to 0000:7C00, DL as above and SI 0, but the
+disk is made 0x80 first: a small resident INT 13h hook swaps the chosen
+disk's number with 0x80 for every call, as a BIOS booting that disk
+directly would have numbered it. DOS, Windows 9x and `NTLDR`'s `boot.ini`
+(`rdisk(N)`) resolve disks by BIOS order and expect their own to be 0x80;
+Windows 7 and later do not care, and an entry turns the swap off with `swap
+= no`. The same swap stands behind a partition chain on a disk that is not
+0x80. The rule is the drive number, not which disk the station is on: the
+swap goes in whenever the chained disk is not 0x80 and the entry does not
+say `swap = no`, so a station whose own disk is not 0x80 swaps for its own
+partitions too.
+
+The hook (`falcon-bios/src/mbr/swapres.S`) is 84 bytes in the 1 KB it takes
+off the BDA's count, the way the virtual CD's resident does
+(`mem/lowmem.c`), and is the only resident the station has. It is
+installed after the last read, since from then on stage 3's own calls
+would be redirected too. On every call it maps DL (the chosen disk to 0x80,
+0x80 to the chosen disk, anything else through), calls the previous
+handler, and returns that handler's flags with the caller's interrupt flag
+and the caller's DL, except after AH=08h and AH=15h, which answer in DL
+(the drive count, a sector count's low word). So AH=41h, 48h and 08h are
+answered for the swapped numbers, which is what the booted system asks.
+The BDA's disk count is left alone, since both disks exist either way, and
+so are the fixed disk parameter tables behind INT 41h and 46h, which
+nothing in scope reads for a disk INT 13h answers for.
 
 BIOS machines are taken to have no TPM sealing: the BIOS measured falcon's
 MBR, not Windows', and nothing on BIOS can hand that back.

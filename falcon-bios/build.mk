@@ -49,6 +49,7 @@ STAGE1_S2_LBA_OFF_CHECK := $(call BIOS_DEF_HEX,STAGE1_S2_LBA_OFF)
 STAGE1_S2_SECTORS_OFF_CHECK := $(call BIOS_DEF_HEX,STAGE1_S2_SECTORS_OFF)
 BOOTPART_MARKER_CHECK := $(call BIOS_DEF,BOOTPART_MARKER_SECTOR)
 BOOTPART_STAGE3_CHECK := $(call BIOS_DEF,BOOTPART_STAGE3_SECTOR)
+SWAP_BYTES_CHECK := $(call BIOS_DEF_HEX,SWAP_BYTES)
 
 BIOS_ASFLAGS := -m32 -c -Wa,--fatal-warnings -I$(BIOS) $(CORE_INC)
 
@@ -110,6 +111,9 @@ BIOS_MOD_pos     := $(BIOS)/pos/pos.c
 BIOS_MOD_bsd     := $(BIOS)/bsd/bsd.c
 BIOS_MOD_win     := $(BIOS)/win/win.c
 BIOS_MOD_mbr     := $(BIOS)/mbr/mbr.c
+# The station's chains, a partition's boot sector and another disk's MBR,
+# with the drive swap (DESIGN Section 13.4); vbrcore.c is the tested half.
+BIOS_MOD_chain   := $(BIOS)/mbr/chain.c $(BIOS)/mbr/vbrcore.c
 BIOS_MOD_jumpini := $(BIOS)/jump/jumpini.c
 BIOS_MOD_jmod    := $(BIOS)/jump/jmod.c $(BIOS)/jump/jmodload.c $(BIOS)/jump/jres.c
 
@@ -263,6 +267,7 @@ $(BIOS_STAGE2): $(BIOS_STAGE2_OBJS) $(BIOS)/start/bios.ld
 BIOS_RES_iso := $(BIOS_OBJ)/$(BIOS)/iso/vcdres.o
 BIOS_RES_vfd := $(BIOS_OBJ)/$(BIOS)/vfd/vfdres.o
 BIOS_RES_jres := $(BIOS_OBJ)/$(BIOS)/jump/rthunk.o
+BIOS_RES_swap := $(BIOS_OBJ)/$(BIOS)/mbr/swapres.o
 
 # The hook's blobs, which are generated (falcon-hook/build.mk). The x86-64
 # one is the same object the UEFI loader embeds: falcon-hook runs in the
@@ -335,6 +340,17 @@ $(2): $$($(1)_BIOS_OBJS) $$(BIOS)/start/bios.ld falcon-bios/tools/mk-stage3z.sh
 		echo "       raise VCD_BYTES in falcon-bios/src/start/biosdefs.h"; \
 		exit 1; \
 	fi
+	@# The drive swap likewise, in its SWAP_BYTES.
+	@s=$$$$(nm $$@.elf | awk '$$$$3 == "swap_blob_start" { print $$$$1 }'); \
+	e=$$$$(nm $$@.elf | awk '$$$$3 == "swap_blob_end" { print $$$$1 }'); \
+	if [ -n "$$$$s" ]; then \
+		n=$$$$(( 0x$$$$e - 0x$$$$s )); \
+		if [ $$$$n -gt $$$$(( $(SWAP_BYTES_CHECK) )) ]; then \
+			echo "ERROR: the drive swap is $$$$n bytes, past SWAP_BYTES"; \
+			exit 1; \
+		fi; \
+		echo "   drive swap: $$$$n of $$$$(( $(SWAP_BYTES_CHECK) )) bytes"; \
+	fi
 	@# Inflated, image and .bss, it has to end below where stage 2 reads
 	@# the compressed copy to (GZ_STAGE_ADDR, 5 MB above STAGE3_LOAD).
 	@mem=$$$$(od -An -tu4 -j8 -N4 $$@ | tr -d ' '); \
@@ -387,11 +403,12 @@ endef
 # long-mode days triple-faulted.
 BIOS_TESTS := $(addprefix falcon-bios/tests/,main.c vcdcore_test.c vfdcore_test.c \
 	linuxcore_test.c e820_test.c jumpini_test.c jmod_test.c lowmem_test.c \
-	atacore_test.c usbcore_test.c pcccore_test.c bootpart_test.c)
+	atacore_test.c usbcore_test.c pcccore_test.c bootpart_test.c \
+	vbrcore_test.c)
 BIOS_UUT := $(BIOS)/iso/vcdcore.c $(BIOS)/vfd/vfdcore.c $(BIOS)/linux/linuxcore.c $(BIOS)/mem/e820.c \
 	$(BIOS)/jump/jumpini.c $(BIOS)/jump/jmod.c $(BIOS)/mem/lowmem.c \
 	$(BIOS)/hw/ata/atacore.c $(BIOS)/hw/scsi/scsi.c $(BIOS)/hw/usb/usbcore.c \
-	$(BIOS)/hw/pcc/pcccore.c $(BIOS)/disk/bootpart.c
+	$(BIOS)/hw/pcc/pcccore.c $(BIOS)/disk/bootpart.c $(BIOS)/mbr/vbrcore.c
 # What bootpart.c is built on, linked into the test binary but counted under
 # core's own tests.
 BIOS_TEST_CORE := $(CORE_PART) $(CORE_IDENT)

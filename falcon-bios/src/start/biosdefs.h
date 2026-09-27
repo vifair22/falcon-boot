@@ -324,6 +324,19 @@
 
 #define VCD_STAGE_ADDR   0x00020000
 
+/* The drive swap (falcon-bios/src/mbr/swapres.S, chain.c; DESIGN Section
+ * 13.4): the station's one resident, an INT 13h hook that exchanges one
+ * disk's number with 0x80 on every call, so a system chained off a second
+ * disk finds itself at 0x80 as it would had the BIOS booted it. The whole
+ * block is the old vector, the drive and the handler, under a hundred
+ * bytes; SWAP_BYTES is what the BDA loses, since conventional memory is
+ * taken in whole kilobytes. The offsets, as swapres.S lays them out with
+ * .org and the build checks: */
+#define SWAP_OFF_OLDINT13 0x0000  /* far pointer to the previous handler */
+#define SWAP_OFF_DRIVE    0x0004  /* byte: the disk exchanged with 0x80 */
+#define SWAP_OFF_CODE     0x0010  /* the INT 13h handler */
+#define SWAP_BYTES        0x0400  /* 1 KB, what the BDA loses */
+
 /* The floppy-emulation resident (falcon-bios/src/vfd/vfdres.S, vfd.c), for a
  * medium whose El Torito BIOS entry is a floppy image rather than a
  * no-emulation CD. It is a memory disk: the whole image (2.88 MB at most)
