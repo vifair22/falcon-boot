@@ -4034,6 +4034,12 @@ and no kernel it could start directly. On a
 station it appears only on station-legacy (13.10): a machine modern enough
 for the plain station boots the stick's ISO from USB, or has no use for it.
 
+Its agent owns COM1, so the direct route recognises the medium (a family of
+its own in `media/family.c`, with `owns_serial` set) and appends
+`console=tty0` alone, leaving the serial console to the entry: none for
+`rescue`, `ttyS1` for `serial`. Its family also routes it past blessing: a
+32-bit kernel with no EFI stub has nothing to wrap.
+
 `make test-devlink` (falcon-bios/tools/run-devlink-rig.sh) boots it off the
 rig stick under SeaBIOS on a Pentium with 32 MB, by the direct route and the
 chainload and with both of its entries, and passes when the devlink client
