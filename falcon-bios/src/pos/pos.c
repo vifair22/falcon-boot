@@ -34,7 +34,7 @@
 #include <linux/linux.h>
 #include <console/screen.h>
 
-#include <part/part.h>
+#include <part/table.h>
 #include <fs/fs.h>
 #include <luks/luks.h>
 #include <pe/pe.h>
@@ -71,6 +71,9 @@ static fs_vol    g_fs;
 static fs_file   g_file;
 static int       g_opened;
 static int       g_dev_open;
+/* The shelf is plaintext (DESIGN Section 3, --p3-plain): mounted straight
+ * off the partition, no passphrase, and so no credential. */
+static int       g_plain;
 
 /* The images on the shelf and what the chooser calls them, from the same
  * module the UEFI loader's chooser uses (falcon-core/src/media/shelf.h). */
@@ -121,14 +124,28 @@ static int part_read(void *ctx, uint64_t off, uint64_t len, void *buf)
     return bios_disk_read(p->disk, p->base + off, len, buf);
 }
 
-int pos_probe(bios_disk *d, const gpt_part *p3)
+/* A plaintext shelf's filesystem, mounted into g_fs. */
+static int mount_plain(void)
 {
-    if (d == (bios_disk *)0 || p3 == (const gpt_part *)0)
+    const fs_ops *ops = fs_identify(part_read, &g_src, FS_HINT_SHELF);
+
+    return ops != (const fs_ops *)0 &&
+           fs_mount(&g_fs, ops, part_read, &g_src) == FS_OK;
+}
+
+int pos_probe(bios_disk *d, const part_entry *shelf)
+{
+    if (d == (bios_disk *)0 || shelf == (const part_entry *)0)
         return 0;
     g_src.disk = d;
-    g_src.base = p3->start_lba * (uint64_t)d->sector_size;
+    g_src.base = shelf->start_lba * (uint64_t)d->sector_size;
+    g_plain = 0;
     g_opened = luks_open(&g_vol, part_read, &g_src, g_json, sizeof g_json) ==
                LUKS_OK;
+    if (!g_opened && mount_plain()) {
+        g_plain = 1;
+        g_opened = 1;
+    }
     return g_opened;
 }
 
@@ -394,21 +411,19 @@ static int choose_uki(void)
 
 const uint16_t *pos_entry_label(void)
 {
+    /* The UEFI loader's labels (falcon-efi/src/pos/pos.c). */
+    if (g_plain)
+        return u"Personal OS (plaintext shelf)";
     return u"Personal OS (encrypted)";
 }
 
-int pos_run(bios_disk *d, const gpt_part *p3, boot_result *r)
+/* Unlocks the encrypted shelf and mounts what is inside it into g_fs.
+ * LUKS_OK, or POS_ABORTED or -1 with *r filled in; secrets wiped on every
+ * failure. */
+static int open_encrypted(boot_result *r)
 {
     const fs_ops *ops;
-    const fs_dirent *uki;
-    int pick;
     int rc;
-
-    boot_result_init(r);
-    if (!pos_probe(d, p3)) {
-        r->stage = "looking for a UKI shelf";
-        return -1;
-    }
 
     r->stage = "unlocking the encrypted partition";
     rc = prompt_and_unlock();
@@ -453,6 +468,26 @@ int pos_run(bios_disk *d, const gpt_part *p3, boot_result *r)
                         "loader can read.";
         wipe_secrets();
         return -1;
+    }
+
+    return LUKS_OK;
+}
+
+int pos_run(bios_disk *d, const part_entry *shelf, boot_result *r)
+{
+    const fs_dirent *uki;
+    int pick;
+    int rc;
+
+    boot_result_init(r);
+    if (!pos_probe(d, shelf)) {
+        r->stage = "looking for a UKI shelf";
+        return -1;
+    }
+    if (!g_plain) {
+        rc = open_encrypted(r);
+        if (rc != LUKS_OK)
+            return rc;
     }
 
     r->stage = "looking for a UKI";

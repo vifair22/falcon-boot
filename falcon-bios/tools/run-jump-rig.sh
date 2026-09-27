@@ -5,13 +5,15 @@
 # One case per route, each a JUMP.INI naming it with a one-second countdown,
 # so nothing waits for a key:
 #
-#   hdd       an IDE disk carrying falcon-bios (build/test-bios.img): its
-#             stage 3 loads off drive 0x80
+#   hdd       an IDE disk carrying falcon-bios (build/test-bios.img, an MBR
+#             disk with its boot partition at LBA 63): its stage 3 loads off
+#             drive 0x80
 #   cd        the rig's memprobe disc in an IDE CD drive: it boots and
 #             reports the memory map it was handed
-#   usb-uhci  the rig stick (a GPT falcon stick with the stick's stages)
-#   usb-ohci  on each controller: the stick's own stage 3 loads off the
-#   usb-ehci  drive the reverse thunk serves
+#   usb-uhci  the rig stick (build/test-bios-gpt.img, a GPT falcon stick)
+#   usb-ohci  on each controller: jump knows it by its boot record, and the
+#   usb-ehci  stick's own stage 3 loads off the drive the reverse thunk
+#             serves and finds its library by record
 #   cf        a CompactFlash card in the PC Card bridge falcon-pcc.c models,
 #             carrying falcon-bios: its stage 3 loads off the card
 #   cf3v      the same with a card that takes only 3.3 V, as the A21m's
@@ -31,6 +33,9 @@
 #             chosen: the stick's stage 2 reads it twice and stops
 #   modcrc    one byte of UHCI.MOD flipped, the usb route chosen: the module
 #             is read twice and refused
+#   chs       no floppy of jump's: the stick's stages on an MBR-partitioned
+#             2.88 MB floppy image, which the BIOS serves without INT 13h
+#             extensions, so stage 1 and stage 2 read it by CHS
 #   menu      the countdown interrupted: a five-second default=hdd, a Down
 #             key two seconds in, then nothing may boot for six seconds;
 #             Enter then boots the row Down moved to (the CD drive, empty in
@@ -54,15 +59,19 @@ TIMEOUT=45
 mkdir -p "$R"
 make --no-print-directory bios test-bios-img test-bios-probe >/dev/null
 
-# The rig stick: the GPT rig disk with the stick's three stages written
-# where mkstick bios puts them.
+def() {       # def NAME: its value in biosdefs.h
+    sed -n "s/^#define[ \t]*$1[ \t]*\([0-9]*\).*/\1/p" \
+        falcon-bios/src/start/biosdefs.h | head -1
+}
+STAGE2_LBA=$(def STAGE2_LBA)
+FD_STAGE3_SECTOR=$(def FD_STAGE3_SECTOR)
+BOOTPART_STAGE3_SECTOR=$(def BOOTPART_STAGE3_SECTOR)
+
+# The rig stick, as build.mk makes it: stages and records already on it.
 cp build/test-bios-gpt.img "$R/stick.img"
-dd if=build/bin/falcon-bios-stage1.bin of="$R/stick.img" bs=440 count=1 \
-    conv=notrunc status=none
-dd if=build/bin/falcon-bios-stage2.bin of="$R/stick.img" bs=512 seek=34 \
-    conv=notrunc status=none
-dd if=build/bin/falcon-bios-stage3.bin of="$R/stick.img" bs=512 seek=98 \
-    conv=notrunc status=none
+# Where its stage 3 is: the ESP's start plus the record's stage 3 sector.
+STICK_S3=$(( $(sgdisk -i 1 "$R/stick.img" |
+    sed -n 's/^First sector: \([0-9]*\).*/\1/p') + BOOTPART_STAGE3_SECTOR ))
 
 floppy() {    # floppy DEFAULT [SECONDS]
     printf 'default=%s\ntimeout=%s\n' "$1" "${2:-1}" > "$R/JUMP.INI"
@@ -159,9 +168,17 @@ menu_case() {
     fi
 }
 
-# PASS when the log carries `want`, the boot the case is for.
-judge() {     # judge CASE WANT
-    if grep -aq -- "$2" "$R/serial.txt"; then
+# PASS when the log carries `want`, the boot the case is for, and every
+# `also` besides.
+judge() {     # judge CASE WANT [ALSO...]
+    local c=$1 want=$2 also ok=1
+    shift 2
+    grep -aq -- "$want" "$R/serial.txt" || ok=0
+    for also in "$@"; do
+        grep -aq -- "$also" "$R/serial.txt" || ok=0
+    done
+    set -- "$c" "$want"
+    if [[ $ok -eq 1 ]]; then
         printf 'PASS  %-9s %s\n' "$1" "$(grep -ao -- "$2.\{0,40\}" \
             "$R/serial.txt" | tail -1)"
     else
@@ -179,21 +196,24 @@ usb() {       # usb CASE HC-DEVICES...
     floppy usb
     boot "$QEMU" "$@" -drive if=none,id=stick,format=raw,file="$R/stick.img" \
         -device usb-storage,bus=hc.0,drive=stick
-    judge "$c" 'boot drive 0x8[1-9a-f], sector size 512'
+    judge "$c" 'boot drive 0x8[1-9a-f], sector size 512' \
+        'boot partition p1 at LBA' 'p2  LBA [0-9.]*  \[library\]' \
+        'p2 mounted as exfat'
 }
 
 FAILED=0
 CASES=("$@")
 [[ ${#CASES[@]} -gt 0 ]] ||
     CASES=(hdd cd usb-uhci usb-ohci usb-ehci cf cf3v giveup mem s2crc s3crc
-           stick3crc modcrc menu)
+           stick3crc modcrc chs menu)
 
 for c in "${CASES[@]}"; do
     case $c in
     hdd)
         floppy hdd
         boot "$QEMU"
-        judge hdd 'boot drive 0x80, sector size 512'
+        judge hdd 'boot drive 0x80, sector size 512' \
+            'boot partition p1 at LBA 63'
         ;;
     cd)
         floppy cd
@@ -239,22 +259,23 @@ for c in "${CASES[@]}"; do
         ;;
     s2crc)
         floppy hdd
-        flip $((34 * 512 + 0x1000))
+        flip $((STAGE2_LBA * 512 + 0x1000))
         boot "$QEMU"
         judge s2crc 'stage 2 did not read back as it was written'
         ;;
     s3crc)
         floppy hdd
-        flip $((98 * 512 + 0x2000))
+        flip $((FD_STAGE3_SECTOR * 512 + 0x2000))
         boot "$QEMU"
         judge s3crc 'stage 3 did not read back as it was written, twice'
         ;;
     stick3crc)
         floppy usb
         cp "$R/stick.img" "$R/stick-ok.img"
-        b=$(od -An -tu1 -j $((98 * 512 + 0x4000)) -N1 "$R/stick.img" | tr -d ' ')
+        b=$(od -An -tu1 -j $((STICK_S3 * 512 + 0x4000)) -N1 "$R/stick.img" |
+            tr -d ' ')
         printf "\\$(printf %03o $((b ^ 0xFF)))" |
-            dd of="$R/stick.img" bs=1 seek=$((98 * 512 + 0x4000)) \
+            dd of="$R/stick.img" bs=1 seek=$((STICK_S3 * 512 + 0x4000)) \
                 conv=notrunc status=none
         boot "$QEMU" -device piix3-usb-uhci,id=hc \
             -drive if=none,id=stick,format=raw,file="$R/stick.img" \
@@ -267,6 +288,17 @@ for c in "${CASES[@]}"; do
         flip $(( $(file_off build/bin/mod/UHCI.MOD.gz) + 0x400 ))
         boot "$QEMU" -device piix3-usb-uhci,id=hc
         judge modcrc 'did not read back as it was written, twice'
+        ;;
+    chs)
+        falcon-bios/tools/mk-rig-disk.sh chs "$R/chs.img" >/dev/null
+        rm -f "$R/serial.log"
+        timeout "$TIMEOUT" "$QEMU" -L /usr/share/qemu -machine pc \
+            -cpu pentium3 -m 128 -display none -boot a \
+            -drive if=floppy,format=raw,file="$R/chs.img" \
+            -serial file:"$R/serial.log" -monitor none >/dev/null 2>&1 || true
+        log_text > "$R/serial.txt"
+        judge chs 'boot partition p1 at LBA 63' \
+            'no INT 13h extensions, reading by CHS' 'C is running'
         ;;
     menu) menu_case ;;
     mem)

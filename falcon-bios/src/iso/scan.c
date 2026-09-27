@@ -32,7 +32,7 @@
 #include <media/family.h>
 #include <media/extmap.h>
 #include <media/hookcmd.h>
-#include <part/part.h>
+#include <part/table.h>
 #include <lib/string.h>
 
 /* The hook, as make embeds it (falcon-hook/build.mk), in both widths. The
@@ -164,7 +164,7 @@ static void dir_handoff(void)
  * Drive node of its device path; here they come straight off the GPT entry
  * falcon-core already parsed, which is the same two numbers by a shorter
  * road. Returns the encoded length, or 0. */
-static size_t build_map(fs_vol *p2, const gpt_part *part, const fs_dirent *iso,
+static size_t build_map(fs_vol *p2, const part_entry *part, const fs_dirent *iso,
                         uint32_t block_size)
 {
     extmap_hdr hdr;
@@ -199,7 +199,7 @@ static size_t build_map(fs_vol *p2, const gpt_part *part, const fs_dirent *iso,
  * entry without the hook rather than not at all, and says so; the kernel
  * then finds its medium by its own means or not. */
 static int boot_entry(const bootcfg_entry *e, fs_vol *p2,
-                      const gpt_part *p2part, const fs_dirent *iso,
+                      const part_entry *p2part, const fs_dirent *iso,
                       uint32_t block_size, boot_result *r)
 {
     linux_object kernel;
@@ -250,7 +250,7 @@ static int boot_entry(const bootcfg_entry *e, fs_vol *p2,
     /* The hook, and the map that tells it where the ISO is. Without them the
      * kernel starts and its initramfs has no medium to find, which is what
      * this route does when p2's own GPT entry is not to hand. */
-    if (p2part != (const gpt_part *)0)
+    if (p2part != (const part_entry *)0)
         map_len = build_map(p2, p2part, iso, block_size);
 
     if (map_len > 0 &&
@@ -335,7 +335,7 @@ const family_desc *scan_family(fs_vol *p2, const fs_dirent *ent)
     return fam;
 }
 
-int scan_direct(fs_vol *p2, const gpt_part *p2part, const fs_dirent *ent,
+int scan_direct(fs_vol *p2, const part_entry *p2part, const fs_dirent *ent,
                 uint32_t block_size, boot_result *r)
 {
     const bootcfg_entry *e;
@@ -371,11 +371,11 @@ int scan_direct(fs_vol *p2, const gpt_part *p2part, const fs_dirent *ent,
     return boot_entry(e, p2, p2part, ent, block_size, r);
 }
 
-int scan_chain(bios_disk *d, fs_vol *p2, const gpt_part *p2part,
+int scan_chain(bios_disk *d, fs_vol *p2, const part_entry *p2part,
                const fs_dirent *ent, boot_result *r)
 {
     r->stage = "finding p2's GPT entry";
-    if (p2part == (const gpt_part *)0) {
+    if (p2part == (const part_entry *)0) {
         r->advice = "the ISO's partition has no GPT entry this loader can "
                     "serve it from.";
         return -1;

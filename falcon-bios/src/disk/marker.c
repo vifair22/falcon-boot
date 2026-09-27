@@ -2,8 +2,9 @@
  * 6.3.1).
  *
  * The UEFI loader keeps "boot this next" in an EFI variable, which it reads
- * and deletes. A BIOS has no variable store, so the marker is one sector in
- * the gap in front of p1 (biosdefs.h, NEXTBOOT_LBA), written from Linux and
+ * and deletes. A BIOS has no variable store, so the marker is one sector of
+ * the `boot` partition, at the sector its identity record names (DESIGN
+ * Section 3.3; stage 2 publishes both in the gate), written from Linux and
  * read here. falcon-core/src/media/nextboot.h has its format; this file is
  * the half that needs a BIOS: the sector read, the write that clears it, and
  * the clock that dates it.
@@ -41,11 +42,6 @@
 
 #include <media/nextboot.h>
 #include <lib/string.h>
-
-_Static_assert(NEXTBOOT_LBA >= STAGE3_LBA + STAGE3_MAX_SECTORS,
-               "the marker sector must be clear of the stages");
-_Static_assert(NEXTBOOT_LBA < 2048,
-               "the marker sector must be in front of the first partition");
 
 static uint8_t g_sec[NEXTBOOT_SECTOR_BYTES];
 
@@ -137,8 +133,10 @@ static void log_state(const char *what)
     bios_puts("\n");
 }
 
-marker_state marker_take(const bios_disk *d, char *out, size_t cap)
+marker_state marker_take(const bios_disk *d, uint64_t part_lba,
+                         uint16_t sector, char *out, size_t cap)
 {
+    uint64_t lba = part_lba + sector;
     uint64_t stamp = 0;
     uint64_t now = 0;
     nextboot_sector parsed;
@@ -146,12 +144,15 @@ marker_state marker_take(const bios_disk *d, char *out, size_t cap)
 
     if (out != (char *)0 && cap != 0)
         out[0] = '\0';
-    /* The LBA is a count of 512-byte sectors on both sides. A disk that
-     * reports another size is not one a writer of this format addressed. */
-    if (d == (const bios_disk *)0 || d->sector_size != NEXTBOOT_SECTOR_BYTES)
+    /* The format is one 512-byte sector. A disk that reports another size
+     * is not one a writer of this format addressed. Sector 0 is the boot
+     * sector itself, which a record never names: 0 is "no marker" (jump's
+     * floppy). */
+    if (d == (const bios_disk *)0 || d->sector_size != NEXTBOOT_SECTOR_BYTES ||
+        sector == 0 || lba < part_lba ||
+        lba > ~(uint64_t)0 / NEXTBOOT_SECTOR_BYTES)
         return MARKER_NONE;
-    if (bios_disk_read((void *)(uintptr_t)d,
-                       (uint64_t)NEXTBOOT_LBA * NEXTBOOT_SECTOR_BYTES,
+    if (bios_disk_read((void *)(uintptr_t)d, lba * NEXTBOOT_SECTOR_BYTES,
                        sizeof g_sec, g_sec) != 0)
         return MARKER_NONE;
     if (!nextboot_sector_is_marker(g_sec, sizeof g_sec))
@@ -162,9 +163,8 @@ marker_state marker_take(const bios_disk *d, char *out, size_t cap)
     parsed = nextboot_sector_parse(g_sec, sizeof g_sec, &stamp, out, cap);
 
     memset(g_sec, 0, sizeof g_sec);
-    if (write_sector(d, NEXTBOOT_LBA, g_sec) != 0 ||
-        bios_disk_read((void *)(uintptr_t)d,
-                       (uint64_t)NEXTBOOT_LBA * NEXTBOOT_SECTOR_BYTES,
+    if (write_sector(d, lba, g_sec) != 0 ||
+        bios_disk_read((void *)(uintptr_t)d, lba * NEXTBOOT_SECTOR_BYTES,
                        sizeof g_sec, g_sec) != 0) {
         log_state("could not be cleared");
         if (out != (char *)0 && cap != 0)

@@ -11,6 +11,7 @@ JUMP_BIOS += $(BIOS_MOD_console) $(BIOS_MOD_jumpini)
 JUMP_BIOS += $(BIOS_MOD_mbr)          # the disks the BIOS already sees
 JUMP_BIOS += $(BIOS_MOD_linux)        # memtest86+, through the boot protocol
 JUMP_BIOS += $(BIOS_MOD_jmod)         # the drivers, read off the floppy
+JUMP_BIOS += $(BIOS_MOD_bootpart) $(CORE_IDENT)  # is a USB disk a falcon stick
 JUMP_BIOS += $(BIOS_MOD_iso) $(BIOS_MOD_vfd) $(BIOS_MOD_lowmem) $(BIOS_MOD_heap)  # CDR: the stick's virtual CD over ATA.MOD
 JUMP_BIOS += $(CORE)/media/eltorito.c
 JUMP_BIOS += $(BIOS_MOD_e820) $(BIOS_MOD_disk) $(BIOS_MOD_serial)
@@ -46,10 +47,14 @@ $(eval $(call jump_module,OHCI,JMOD_SLOT_OHCI,\
 	$(CORE_LIBC)))
 
 # The floppy (Section 14.3): a 1.44 MB FAT12 volume whose reserved sectors
-# hold stage 2 at STAGE2_LBA and stage 3 at STAGE3_LBA, the stick's own
-# positions, behind jump's boot sector. mformat -B keeps the boot sector's
-# code and writes the BPB, the reserved count included, for the volume it
-# makes. mtools writes into the image directly: no loop device, no sudo.
+# hold stage 2 at STAGE2_LBA and stage 3 at FD_STAGE3_SECTOR, behind jump's
+# boot sector. mformat -B keeps the boot sector's code and writes the BPB,
+# the reserved count included, for the volume it makes; falcon-bios-mkident
+# then writes the volume's identity record into that sector (DESIGN Section
+# 3.1): role boot, stage 3 at FD_STAGE3_SECTOR, no marker, and an install ID
+# drawn for this build, which is how stage 2 finds stage 3 on a disk with no
+# partition table. mtools writes into the image directly: no loop device, no
+# sudo.
 #
 # MEMTEST names a memtest86+ build carrying the x86 boot protocol header to
 # copy on as MEMTEST.BIN, and JUMP_INI a JUMP.INI; both are optional, and a
@@ -74,7 +79,7 @@ jump-files-stamp:
 $(JUMP_FILES_STAMP): jump-files-stamp ;
 
 $(JUMP_IMG): $(BIOS_FD_STAGE1) $(BIOS_STAGE2) $(BIOS_JUMP_STAGE3) \
-		$(JUMP_MODS) $(MEMTEST) $(JUMP_INI) $(JUMP_FILES_STAMP)
+		$(JUMP_MODS) $(MEMTEST) $(JUMP_INI) $(JUMP_FILES_STAMP) $(BIOS_MKIDENT)
 	@mkdir -p $(@D)
 	@rm -f $@.tmp
 	@# The reserved sectors end where stage 3 does, padded so the root
@@ -84,7 +89,7 @@ $(JUMP_IMG): $(BIOS_FD_STAGE1) $(BIOS_STAGE2) $(BIOS_JUMP_STAGE3) \
 	@# the reserved count, so the pad is taken from a first format and the
 	@# second is checked.
 	@s3=$$(( ($$(stat -c %s $(BIOS_JUMP_STAGE3)) + 511) / 512 )); \
-	reserved=$$(( $(STAGE3_LBA_CHECK) + s3 )); \
+	reserved=$$(( $(FD_STAGE3_SECTOR_CHECK) + s3 )); \
 	fmt() { rm -f $@.tmp; mformat -C -i $@.tmp -f 1440 -R $$1 \
 		-B $(BIOS_FD_STAGE1) -v "FALCON JUMP" ::; }; \
 	root() { minfo -i $@.tmp :: | awk -v r=$$1 \
@@ -105,6 +110,9 @@ $(JUMP_IMG): $(BIOS_FD_STAGE1) $(BIOS_STAGE2) $(BIOS_JUMP_STAGE3) \
 	@cmp -s -i 62:62 -n 448 $(BIOS_FD_STAGE1) $@.tmp || { \
 		echo "ERROR: mformat did not keep the boot sector's code"; \
 		rm -f $@.tmp; exit 1; }
+	@$(BIOS_MKIDENT) $@.tmp 0 boot \
+		$$(od -An -tx1 -N16 /dev/urandom | tr -d ' \n') \
+		$(FD_STAGE3_SECTOR_CHECK) 0
 	@# Stage 2's real length, for the boot sector to read no more than
 	@# that (boot_fd.S, FD_S2_SECTORS_OFF): little endian, two bytes.
 	@n=$$(( ($$(stat -c %s $(BIOS_STAGE2)) + 511) / 512 )); \
@@ -113,7 +121,7 @@ $(JUMP_IMG): $(BIOS_FD_STAGE1) $(BIOS_STAGE2) $(BIOS_JUMP_STAGE3) \
 		status=none
 	dd if=$(BIOS_STAGE2) of=$@.tmp bs=512 seek=$(STAGE2_LBA_CHECK) \
 		conv=notrunc status=none
-	dd if=$(BIOS_JUMP_STAGE3) of=$@.tmp bs=512 seek=$(STAGE3_LBA_CHECK) \
+	dd if=$(BIOS_JUMP_STAGE3) of=$@.tmp bs=512 seek=$(FD_STAGE3_SECTOR_CHECK) \
 		conv=notrunc status=none
 	@# JUMP.INI first, into the root directory's track; the rest are read
 	@# only once a route is chosen.

@@ -462,7 +462,7 @@ static int launch(bios_disk *d, const elt_entry *e, fs_read_fn read,
     return -1;
 }
 
-int vcd_chainload(bios_disk *d, fs_vol *p2, const gpt_part *p2part,
+int vcd_chainload(bios_disk *d, fs_vol *p2, const part_entry *p2part,
                   const fs_dirent *iso, fs_file *isofile, boot_result *r)
 {
     elt_catalog cat;

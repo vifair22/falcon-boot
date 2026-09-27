@@ -29,6 +29,7 @@ $(EFI_OBJ)/$(STATION)/efi_main.o: build/version.h
 STATION_BIOS := $(STATION)/bios_main.c
 STATION_BIOS += $(BIOS_MOD_pos) $(BIOS_MOD_prompt) $(BIOS_MOD_console) $(BIOS_MOD_linux)
 STATION_BIOS += $(BIOS_MOD_mbr)         # another disk's own boot code
+STATION_BIOS += $(BIOS_MOD_install) $(CORE_IDENT)  # the shelf by its record
 STATION_BIOS += $(BIOS_MOD_e820) $(BIOS_MOD_disk) $(BIOS_MOD_serial)
 STATION_BIOS += $(CORE_PART) $(CORE_FS_EXT4) $(CORE_PE) $(CORE_CRYPTO) $(CORE_LUKS)
 STATION_BIOS += $(addprefix $(CORE)/media/,cpio.c osrel.c shelf.c)

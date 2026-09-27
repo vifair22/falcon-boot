@@ -54,6 +54,12 @@
  * consumed at rather than in int and widened afterwards. */
 #define STAGE_MAX ((size_t)4 * 1024 * 1024)
 
+/* The cap the gap layout gave stage 3, which biosdefs.h no longer names:
+ * stage 3 now lives in the boot partition's reserved sectors (DESIGN
+ * Section 3.3), and this install is rewritten for that layout by the
+ * installer's own change. Kept only so the old install still builds. */
+#define GAP_STAGE3_MAX_SECTORS 1024
+
 typedef struct {
     int      fd;
     uint32_t sector;
@@ -505,7 +511,7 @@ cli_status mks_bios_install(const mks_bios_req *req)
     if (rc != CLI_OK)
         return rc;
 
-    bs = bioscore_plan(STAGE2_LBA, STAGE2_SECTORS, STAGE3_MAX_SECTORS, &plan);
+    bs = bioscore_plan(STAGE2_LBA, STAGE2_SECTORS, GAP_STAGE3_MAX_SECTORS, &plan);
     if (bs != BIOSCORE_OK)
         return set_error(CLI_ERR_INTERNAL,
                          "falcon-bios/src/start/biosdefs.h describes a layout that "

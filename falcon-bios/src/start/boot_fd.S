@@ -3,9 +3,13 @@
  *
  * The same job as boot.S, on a different medium: get stage 2 into memory at
  * STAGE2_LOAD and jump to it with DL naming the boot drive. Stage 2 is the
- * stick's, unchanged, at the same sectors (STAGE2_LBA onwards), which sit in
- * the FAT12 volume's reserved area; so does stage 3, at STAGE3_LBA. Nothing
- * here knows FAT12. The volume's files are the core's business, in C.
+ * stick's, unchanged, at STAGE2_LBA onwards, in the FAT12 volume's reserved
+ * area; so is stage 3, at FD_STAGE3_SECTOR, which stage 2 learns from the
+ * identity record the build writes into this sector at IDENT_BIN_OFF
+ * (0x1DC), after this code's end: stage 2 finds no partition table on a
+ * floppy and reads the volume's own boot sector (DESIGN Section 3.3).
+ * Nothing here knows FAT12. The volume's files are the core's business, in
+ * C.
  *
  * WHY CHS HERE, when boot.S refuses it. A floppy is the one drive whose BIOS
  * support rarely answers INT 13h AH=41h/42h, so the extended read boot.S
@@ -30,6 +34,7 @@
 	.code16
 	.section .text.stage1, "ax"
 	.globl  _start
+	.globl  fd_code_end
 
 _start:
 	jmp     start
@@ -221,11 +226,16 @@ chs_dx:
 msg_stage1:
 	.asciz  "falcon-bios: stage 1, floppy\r\n"
 msg_readfail:
-	.asciz  "falcon-bios: floppy read failed\r\n"
+	.asciz  "falcon-bios: read error\r\n"
 msg_notstage2:
-	.asciz  "falcon-bios: no stage 2 here\r\n"
+	.asciz  "falcon-bios: no stage 2\r\n"
 msg_key:
-	.asciz  "press any key to reboot.\r\n"
+	.asciz  "press a key\r\n"
+
+fd_code_end:
+	/* The identity record goes at 0x1DC (falcon-core/src/ident/ident.h,
+	 * IDENT_BIN_OFF), between here and the length word below; build.mk
+	 * checks this code ends before it. */
 
 	/* How many sectors stage 2 takes, which the build writes here once it
 	 * knows (apps/jump/app.mk): stage 2 is about 19 sectors, and the 64 the

@@ -8,8 +8,9 @@
  *
  *   - UEFI: the FalconNextBoot variable, read and deleted by
  *     falcon-efi/src/loader/loadops.c. The variable's bytes are the value.
- *   - BIOS: one sector at a fixed LBA in the gap in front of p1, read and
- *     zeroed by falcon-bios/src/disk/marker.c. The sector carries the value
+ *   - BIOS: one sector of the `boot` partition, at the sector its identity
+ *     record names (DESIGN Section 3.3), read and zeroed by
+ *     falcon-bios/src/disk/marker.c. The sector carries the value
  *     inside a small text record, below.
  *
  * This module is the part with no firmware in it: what a value may be, how
