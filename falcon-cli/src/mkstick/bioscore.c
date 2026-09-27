@@ -99,9 +99,10 @@ bioscore_status bioscore_check_images(const uint8_t *stage1, size_t stage1_len,
 
     /* The splice keeps bytes 440..511 of the DISK, so anything stage 1 put
      * there would be dropped on the way to the platter and the loader would
-     * run with its tail missing. 286 bytes today against a 440-byte budget,
-     * so this is headroom rather than a constraint; it is checked because a
-     * stage 1 that quietly outgrew it is a boot failure with no message. */
+     * run with its tail missing. boot.S's `.org _start + 440` already
+     * refuses to assemble a stage 1 past that budget; it is checked again
+     * here because a stage 1 that quietly outgrew it (a --stage1 file from
+     * elsewhere) is a boot failure with no message. */
     {
         size_t i;
 

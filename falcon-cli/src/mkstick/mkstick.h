@@ -71,11 +71,6 @@ cli_status mkstick_guid_selfcheck(void);
  * created by this tool and never by a plain `cryptsetup luksFormat`. */
 #define MKS_P3_PBKDF2_ITERATIONS "200000"
 
-/* p4's argon2id time cost under --p4-kdf-memory, the one place this tool
- * pins it. The default is cryptsetup's tuning on the host building the
- * stick; this is for a stick whose p4 an old, slow machine opens. */
-#define MKS_P4_LOWMEM_ITERATIONS "4"
-
 /* Default partition sizes (DESIGN Section 3: p1 ~64 MB, p3 ~1 GB, p2 and p4
  * bulk). p2 and p4 have no default size: they split whatever is left. */
 #define MKS_DEFAULT_P1 ((uint64_t)64 * 1024 * 1024)
@@ -95,8 +90,9 @@ cli_status mkstick_guid_selfcheck(void);
 
 /* ---- putting falcon-bios on a stick (bios.c) ----
  *
- * `mkstick bios`'s install, as a call, so that `mkstick create --bios-only`
- * runs the same one rather than a second copy. NULL stages mean the build's
+ * `mkstick bios`'s install, as a call, so that any other command that puts
+ * the stages on a stick runs the same one rather than a second copy. NULL
+ * stages mean the build's
  * (build/bin/falcon-bios-stage{1,2,3}.bin); a NULL backup with no_backup
  * clear means a file named after the target. */
 typedef struct {

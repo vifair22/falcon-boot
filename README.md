@@ -22,8 +22,7 @@ bios`): a BIOS machine has no Secure Boot, so on that route nothing is
 verified and nothing needs blessing. It is i686 code and runs on any
 processor from the Pentium Pro on, booting 32-bit and 64-bit kernels, and
 takes what a newer processor adds (SSE, AES-NI) by asking CPUID at run
-time. `docs/notes/stick32.md` builds a stick for machines with no 64-bit
-mode.
+time.
 
 ## Security note
 

@@ -62,8 +62,8 @@ the personal OS end to end, blessed Linux ISOs (blessed from the menu, with
 D3a (an unblessed Fedora) and D3b (an unblessed Kubuntu). Measured on real
 hardware (2026-09-23), BIOS through CSM: the personal OS end to end, p4
 unlocked from the credential with no second prompt. Measured on real
-hardware (2026-09-24), BIOS: the 32-bit stick (docs/notes/stick32.md) to its
-Arch Linux 32 personal OS on a Windows 7 era machine. Still unmeasured on
+hardware (2026-09-24), BIOS: the since-retired 32-bit stick to its Arch
+Linux 32 personal OS on a Windows 7 era machine. Still unmeasured on
 hardware: the other four BIOS routes, and any route on a processor without
 a 64-bit mode.
 
@@ -291,9 +291,7 @@ falcon-efi and falcon-bios, which never share a set, may both have a `pos/`.
   `tools/run-hook-rig.sh` boots it under QEMU without the loader.
 - `falcon-bios/` the BIOS loader (docs/notes/bios-route.md). The image is
   opt-in and not built by `all`, and so is putting it on a stick: `mkstick
-  bios <target>` installs it, `mkstick create` does not, except with
-  `--bios-only`, which makes a stick with no ESP and no MOK that boots only
-  this way (DESIGN Section 3). A BIOS machine has
+  bios <target>` installs it, `mkstick create` does not. A BIOS machine has
   no Secure Boot, no shim and no db, so this route has no blessed path and
   installing it changes what a stick can reach (bios-route.md Section 7.3).
   It is NOT a layout change: stage 1 goes in the 440 bytes of boot code at

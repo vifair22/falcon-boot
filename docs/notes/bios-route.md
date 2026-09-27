@@ -838,17 +838,17 @@ and docs/coverage.md carries the bios32 column beside bios (run on
 binhost-builder, 2026-09-24). Chain fails in both BIOS columns for most of
 the corpus, 64-bit and 32-bit alike, so it is not a width problem.
 
-**The 32-bit stick.** docs/notes/stick32.md is the second stick, built and
-booted: Arch Linux 32 as its personal OS and 32-bit ISOs on p2, read-only in
-QEMU on a Pentium III with 512 MB, to a login prompt each way. Building it
-found the one thing the loader's side could not: `mkstick create`'s stock
-argon2id on p4 is tuned on the building host and cannot run on an old
-machine, hence `mkstick create --p4-kdf-memory`.
+**The 32-bit stick** (retired 2026-09-26, DESIGN Section 1) was a second
+stick, built and booted: Arch Linux 32 as its personal OS and 32-bit ISOs
+on p2, read-only in QEMU on a Pentium III with 512 MB, to a login prompt
+each way. Building it found the one thing the loader's side could not:
+`mkstick create`'s stock argon2id on p4 is tuned on the building host and
+cannot run on an old machine. Every machine now goes through the one
+stick, and the 32-bit ISOs live on its p2.
 
 **On hardware** (2026-09-24): a Windows 7 era machine in BIOS mode booted
-the 32-bit stick to its personal OS (stick32.md, which also records the
-retry-prompt wrap it found). Still unmeasured: a processor without a
-64-bit mode, and the 32-bit ISOs.
+the 32-bit stick to its personal OS. Still unmeasured: a processor without
+a 64-bit mode, and the 32-bit ISOs.
 
 **Building it.** falcon-bios and `falcon-hook32` link against the host
 compiler's 32-bit libgcc (64-bit division and shifts in i686 code are calls

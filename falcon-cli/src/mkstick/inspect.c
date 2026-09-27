@@ -617,12 +617,9 @@ static cli_status status_run(const cli_args *a)
         if (gpt_guid_eq(table.parts[i].type, gpt_guid_esp))
             has_esp = 1;
     }
-    /* A stick with no ESP is `mkstick create --bios-only`'s: three
-     * partitions, slot 1 empty, and falcon-bios the only way in. */
-    if (table.count - reserved != (has_esp ? MKS_PARTS : MKS_PARTS - 1u))
-        note(&t, "%u partitions, not the %s DESIGN Section 3 describes",
-             table.count - reserved,
-             has_esp ? "four" : "three of a BIOS-only stick");
+    if (table.count - reserved != MKS_PARTS)
+        note(&t, "%u partitions, not the four DESIGN Section 3 describes",
+             table.count - reserved);
     for (i = 0; i < table.count; i++) {
         const gpt_part *p = &table.parts[i];
         const char *role = role_text(p);
@@ -705,16 +702,13 @@ static cli_status status_run(const cli_args *a)
     if (bios_stages_present(&disk))
         check(&t, 1, "stages 2 and 3 are in the gap (LBA %u and %u)",
               STATUS_STAGE2_LBA, STATUS_STAGE3_LBA);
-    else if (has_esp)
-        note(&t, "not installed; `mkstick bios` puts it on");
     else
-        check(&t, 0, "not installed, and a stick with no ESP boots through "
-                     "nothing else; run `mkstick bios`");
+        note(&t, "not installed; `mkstick bios` puts it on");
 
     cli_log_blank();
     log_info("p1: the ESP and the Secure Boot chain (DESIGN Section 4)");
     if (!has_esp)
-        check(&t, 1, "none: a BIOS-only stick (mkstick create --bios-only)");
+        check(&t, 0, "no EFI System Partition on the stick");
     else if (cli_flag(a, "no-esp"))
         skip(&t, "skipped (--no-esp)");
     else
