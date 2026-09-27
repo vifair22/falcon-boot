@@ -490,8 +490,7 @@ $(BIOS_RIGBOOT): $(BIOS_OBJ)/falcon-bios/tools/rigboot.o $(BIOS)/start/bios.ld
 	fi
 
 # The BIOS station rig (DESIGN Section 13.11): the partition chain, the
-# drive swap, STATION.INI and next boot under SeaBIOS, judged from serial,
-# and FreeDOS from the VGA text it leaves on screen.
+# drive swap, STATION.INI and next boot under SeaBIOS, judged from serial.
 test-station-bios: station $(BIOS_RIGBOOT) $(MKSTICK)
 	falcon-bios/tools/run-station-rig.sh
 
