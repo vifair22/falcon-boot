@@ -43,9 +43,10 @@ station-legacy: $(BIOS_STAGE1) $(BIOS_STAGE2) $(BIOS_STATION_LEGACY_STAGE3) \
 # classic kernel and initrd wrapped as a UKI for the station partition's
 # /uki, built here from that repository's images rather than kept as a
 # binary. Its kernel has no EFI stub, so the UKI is --bios-only: falcon-bios
-# unwraps it and never runs sd-stub. An empty command line, as the ISO's
-# rescue entry leaves the console on the screen; the name on the row is the
-# os-release NAME. `make devlink-uki DEVLINK_IMAGES=...` for another build.
+# unwraps it and never runs sd-stub. loglevel=3: the console stays on the
+# screen as the ISO's rescue entry leaves it, but only errors reach it, so
+# the kernel's messages do not draw over the agent's status screen on tty1;
+# the name on the row is the os-release NAME. `make devlink-uki DEVLINK_IMAGES=...` for another build.
 DEVLINK_IMAGES ?= $(HOME)/git/home/devlink-rescue/build/classic/images
 DEVLINK_UKI := build/devlink/devlink-recovery.efi
 
@@ -53,7 +54,7 @@ $(DEVLINK_UKI): $(SIGN) $(DEVLINK_IMAGES)/bzImage $(DEVLINK_IMAGES)/rootfs.cpio.
 	@mkdir -p $(@D)
 	printf 'NAME="DevLink recovery"\nID=devlink-recovery\n' > $(@D)/os-release
 	$(SIGN) uki --bios-only --linux $(DEVLINK_IMAGES)/bzImage \
-		--initrd $(DEVLINK_IMAGES)/rootfs.cpio.xz --cmdline "" \
+		--initrd $(DEVLINK_IMAGES)/rootfs.cpio.xz --cmdline "loglevel=3" \
 		--os-release $(@D)/os-release --output $@
 
 devlink-uki: $(DEVLINK_UKI)
