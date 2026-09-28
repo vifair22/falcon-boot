@@ -30,7 +30,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         gcc-multilib \
         gcc-mingw-w64-x86-64 gcc-mingw-w64-i686 \
         libcmocka-dev \
-        qemu-system-x86 qemu-utils ovmf \
+        qemu-system-x86 qemu-utils ovmf swtpm \
         tcpdump \
         python3-venv python3-dev libcrypt-dev \
         gdisk util-linux \
@@ -102,7 +102,7 @@ RUN set -eu; \
              mkfs.ext4 mkudffs mformat bsdtar ukify wimlib-imagex xorriso \
              cpio zstd socat aria2c readelf sha256sum virt-fw-vars 7z sudo \
              pkg-config xxd tcpdump qemu-img mcopy mmd fsck.ext4 truncate \
-             cmp find xargs; do \
+             cmp find xargs swtpm; do \
         command -v "$t" >/dev/null 2>&1 || { echo "MISSING: $t"; missing=1; }; \
     done; \
     test -n "$(pkg-config --libs cmocka)" || { \
