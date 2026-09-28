@@ -132,12 +132,15 @@ fi
 # wherever the tree is mounted, and a mount point named like a directory the
 # tree uses would put everything in the gate (tools/coverage/harness.sh has
 # the story). Test sources and falcon-efi/tools/payload, a throwaway test
-# artifact never linked into a loader, are outside both.
+# artifact never linked into a loader, are outside both. The database also
+# carries falcon-bios's .S files, for editors; the analyzers are C tools and
+# take the .c entries only.
 GATED_PY='
 import os, re
 def gated(path, root):
     rel = os.path.relpath(path, root)
-    return re.match(r"(falcon-[^/]+/src|apps)/", rel) is not None
+    return (rel.endswith(".c") and
+            re.match(r"(falcon-[^/]+/src|apps)/", rel) is not None)
 '
 
 # Every gated source, absolute, from the database.
