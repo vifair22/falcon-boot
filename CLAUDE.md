@@ -63,9 +63,14 @@ D3a (an unblessed Fedora) and D3b (an unblessed Kubuntu). Measured on real
 hardware (2026-09-23), BIOS through CSM: the personal OS end to end, p4
 unlocked from the credential with no second prompt. Measured on real
 hardware (2026-09-24), BIOS: the since-retired 32-bit stick to its Arch
-Linux 32 personal OS on a Windows 7 era machine. Still unmeasured on
-hardware: the other four BIOS routes, and any route on a processor without
-a 64-bit mode.
+Linux 32 personal OS on a Windows 7 era machine. Measured on real
+hardware (2026-09-26 and 27), BIOS on a Pentium III with no 64-bit mode
+(the ThinkPad A21m): falcon jump's five routes, and station-legacy
+installed on its internal disk with every row (the chains to Windows 2000,
+memtest, DevLink recovery's UKI, jump's CD, USB and CF routes), updated in
+place from a station bundle (DESIGN Section 13.14). Still unmeasured on
+hardware: the stick's other four BIOS routes (direct boot, the virtual CD,
+Windows media, BSD).
 
 ## Non-negotiable security invariants (DESIGN.md Section 7)
 

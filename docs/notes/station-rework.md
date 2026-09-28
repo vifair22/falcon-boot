@@ -495,28 +495,39 @@ devlink-rescue 5f04f69 (UKI sha256 c71e7df0...97ec1), not yet booted.
 The same day station-legacy's CD, USB and memtest rows booted there too,
 off the card through jump's CF route.
 
+### Where the A21m stands (2026-09-27, end of day)
+
+- station-legacy is on the A21m's internal disk and boots it: the menu, the
+  countdown into Windows 2000, and every row (CD, CF, USB, DevLink
+  recovery, memtest, Windows). It went on from the desktop, the disk on a
+  USB-IDE bridge, by the rig's recipe (`falcon-bios/tools/mk-a21m-station.sh`)
+  with the 64-bit mkstick: `ntfsresize` 64 MiB off NTFS (no relocations),
+  `ntfsfix -d`, the entry shortened with `sfdisk`, then `station install
+  --bios --legacy --no-scan` (station partition at LBA 19509808,
+  STATION.INI default windows, 5 s). The disk image taken first
+  (`~/a21m-image/2026-09-27/`, and on Unraid) is the way back; the
+  install's own backup file was deleted by choice.
+- It has since been updated in place from a station bundle (DESIGN 13.14,
+  bundle 0316, the logo), run from DevLink recovery; the update's backup is
+  in `~/a21m-bootlog/station-backups/`.
+- DevLink recovery in its /uki is devlink-rescue 4578a99 (UKI 7ac00bd7:
+  exFAT and the ACPI EC driver added); the previous one is kept as
+  `/uki/devlink.old`, off the menu. On the A21m: disks, idle init, NTFS
+  writes, exFAT and mkstick32 all pass; the power button raises no ACPI
+  event under Windows 2000 either, so it is the machine's BIOS setting.
+- The jump floppy is the logo build with the resident's release record
+  (6139ed39...), JUMP.INI default=hdd, timeout 5.
+
 ### Next
 
-1. The A21m's first boot from its internal disk with station-legacy on it
-   (the station menu, the countdown into Windows 2000, then the CD, CF, USB
-   and DevLink rows from the internal disk). Installed 2026-09-27, not
-   through DevLink recovery after all: the disk came out of the A21m onto a
-   USB-IDE bridge on the desktop, and the rig's recipe
-   (`falcon-bios/tools/mk-a21m-station.sh`) ran against it with the 64-bit
-   mkstick: `ntfsresize` 64 MiB off NTFS (no relocations), `ntfsfix -d`,
-   the entry shortened with `sfdisk`, then `station install --bios --legacy
-   --no-scan` (station partition at LBA 19509808, STATION.INI default
-   windows, 5 s). The disk was imaged first (2026-09-27, on Unraid and in
-   `~/a21m-image/2026-09-27/`); `station remove --backup` with the backup
-   the install wrote undoes all but the shrink. mkstick32
-   (`tools/coverage/harness.sh make mkstick32`) stays for updating the
-   station from DevLink recovery later.
-2. The new DevLink build on the card, on the A21m: the CF card is a disk,
-   Ctrl-Alt-Del and the power button work, NTFS writes work. Its kernel now
-   takes the PCI1450 over from jump's resident on the CF route.
-3. Nothing open on the hardware for station-legacy's rows (the menu, DevLink,
-   CD, USB, memtest, and both Windows rows through the CF path, have run on
-   the A21m).
+1. The desktop's rigs that do not pass there yet: `make
+   test-station-fixtures` fails its second nbd reconnect ("reading LBA 0
+   of /dev/nbd0"), so the Windows 9x cases have not run there; and
+   `run-devlink-rig.sh`'s direct and chainload cases fail for the old and
+   the new DevLink ISO alike (the agent never answers; isolinux's menu
+   never draws). Both passed on the stick.
+2. devlink-rescue d98d8a8 and 4578a99, and w98link 9caa3ef, are committed
+   and not pushed (the DevLink session's).
 
 Found on the A21m (2026-09-27): Windows 2000 chained from station-legacy
 on the CF card, started through jump's CF route, froze solid (Caps Lock
@@ -563,9 +574,26 @@ DevLink UKI.
   (`tools/fixtures/README.md`); the Win95 cases run at 250 MHz
   (`-icount shift=2`).
 - `make test-station-legacy`, `make test-cfstation` and the A21m rigs need
-  the A21m's disk image (`A21M_IMG`, default `~/a21m-image/DJSA-210.img`),
-  opened read-only through qcow2 overlays; another session's VM backs onto
-  the original, so it is never written.
+  the A21m's disk image (`A21M_IMG`; on the desktop
+  `~/a21m-image/2026-09-27/DJSA-210.img`), opened read-only through qcow2
+  overlays, never written.
+- The devlink client for the rigs is `~/.local/share/a21m/devlink` on the
+  desktop (the DevLink session's build); devlink and devlink-rescue are
+  that session's repositories, not this one's to build.
+- The rigs rebuild the DevLink UKI from devlink-rescue's images when those
+  are newer; where they are not on the machine, run them with
+  `MAKEFLAGS='-o build/devlink/devlink-recovery.efi'`.
+- `build/` copied from another machine brings its OVMF varstores with it:
+  `build/OVMF_VARS*.fd` and `build/mok-test/OVMF_VARS.secboot.mo*.fd` made
+  for Arch's 4M OVMF made Gentoo's edk2-bin fault at start (#GP before any
+  falcon code). Delete them and rerun `falcon-efi/tools/mk-test-mok.sh`,
+  which keeps the MOK; delete `build/shim/venv` too if it came along.
+  `run-station-rig.sh` wants `virt-fw-vars` on PATH
+  (`PATH=build/shim/venv/bin:$PATH`).
+- The station bundle is built in the harness container
+  (`tools/coverage/harness.sh make station-bundle`), never on a workstation
+  whose 32-bit libc is tuned for it (DESIGN 13.14); `make
+  test-station-bundle` takes it as `BUNDLE=` and needs sudo.
 
 ### The corpus on binhost-builder
 
