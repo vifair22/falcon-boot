@@ -171,7 +171,12 @@ falcon-efi and falcon-bios, which never share a set, may both have a `pos/`.
     falcon-vdisk) and the hooked
     boot's cmdline (`hookcmd.c`), the grub.cfg D3b serves in place of
     an ISO's own (`grubcfg.c`) and the two edits that make a BSD medium boot
-    itself as a memory disk (`bsdmd.c`). `survey.c` is what a menu is built
+    itself as a memory disk (`bsdmd.c`). `uefiboot.c` and `biosboot.c`
+    are what a row's platform tags are read from (DESIGN Section 7.8):
+    whether a UEFI machine can boot the medium at all (`{BIOS ONLY}`), and
+    whether falcon-bios can (`{EFI ONLY}`) and needs long mode for it
+    (`{64-BIT ONLY}`), each from the medium's own bytes, UNKNOWN unless
+    proved. `survey.c` is what a menu is built
     from: the directory walk over a mounted volume, the extension rule, the
     sort and the folder view. Both loaders use it, so neither can have its
     own idea of what is on a stick. `shelf.c` is the personal-OS chooser's
@@ -467,7 +472,9 @@ falcon-efi and falcon-bios, which never share a set, may both have a `pos/`.
 
   Stage 3 draws every screen through `src/console/screen.c`, the UEFI console's
   calls one for one (`screen_page` is `menu_screen`, `screen_menu` is
-  `menu_run_keys`) over core's `tui`: cells and colours go straight into
+  `menu_run_keys`, `screen_menu_tagged` is `menu_run_probed`: tag columns,
+  filled by a per-row probe as the rows first come into view) over core's
+  `tui`: cells and colours go straight into
   VGA text memory, and serial gets the ANSI sequences OVMF's terminal sends
   for the same calls, so the coverage harness reads both loaders one way.
   Diagnostics (volumes, config, addresses, cmdline) go to serial only, as
@@ -516,7 +523,10 @@ the chooser's (`media/shelf.c`). The sentences are written twice, once per
 loader, so a screen or a line changed on one loader is changed on the other
 in the same commit. Where the platforms really differ (no trust tags, no
 firmware-setup row, no status code on BIOS) the screen leaves the part out
-rather than saying something else.
+rather than saying something else. The platform tags are each loader's own
+(`{BIOS ONLY}` on UEFI, `{EFI ONLY}` and `{64-BIT ONLY}` on BIOS), in the
+same column and colours, and both menus probe a row as it first comes into
+view rather than before the menu.
 
 The pattern every route follows: its code, a page, `booting: <label>`; the
 route's own lines up to the handover; and when it comes back, a new page

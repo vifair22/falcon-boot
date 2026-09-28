@@ -1967,14 +1967,13 @@ entry's path on p2 (which retired the old "suffix clipped the path" case).
 
 Bracket vocabulary: `[blessed]`, `[blessed, stale]`, `[unsigned]`, `[MS UEFI
 CA]`, `[MS Windows]`, `[MOK]` for a MOK-signed first stage that is not a
-bless (the personal OS, the appliance), `[?]` for an entry past
-`PROBE_LIMIT`, `[no efi]` for a medium with no `\EFI\BOOT\BOOTX64.EFI` on
-any of its volumes, and otherwise the CN of the topmost certificate in the
+bless (the personal OS, the appliance), `[no efi]` for a medium with no
+`\EFI\BOOT\BOOTX64.EFI` on any of its volumes, and otherwise the CN of the topmost certificate in the
 signer's chain, cut to 16 columns. (`[not prepared]`, a media-finding fact
 about Windows rather than a signature fact, left with preparation on
 2026-09-19.) Yellow is reserved for "this will not boot here"
-(shim refusing the first stage, or `{BIOS ONLY}`) so that it always answers
-one question.
+(shim refusing the first stage, `{BIOS ONLY}`, or on falcon-bios `{EFI
+ONLY}` and `{64-BIT ONLY}`) so that it always answers one question.
 
 Reasons, exhaustive:
 
@@ -1986,6 +1985,8 @@ Reasons, exhaustive:
 | `{REVOKED}` | a signer certificate or the image hash is in `dbx` or `MokListXRT`, or an SBAT generation is below `SbatLevelRT` | newer media |
 | `{VALIDATION OFF}` | a UKI entry (personal OS, fresh bless, appliance) with validation disabled (Section 7.4) | re-enable validation |
 | `{BIOS ONLY}` | an ISO this machine cannot boot at all, in any Secure Boot state (below) | boot the stick in BIOS mode |
+| `{EFI ONLY}` | falcon-bios only: an ISO no BIOS route can boot (below) | boot the stick in UEFI mode |
+| `{64-BIT ONLY}` | falcon-bios only, on a processor without long mode: an ISO every way into which needs one (below) | boot it on a 64-bit machine |
 
 `{BIOS ONLY}` (decided 2026-09-27) is the one reason that is not a
 prediction about a signature. It is a fact about the medium, read by
@@ -2006,7 +2007,7 @@ loader boots an ISO can reach it:
 
 Anything the medium does not prove is not marked: no boot configuration, a
 kernel that cannot be read, bytes that are neither a PE nor a bzImage, a
-`.img`, an entry past `PROBE_LIMIT` until it is chosen. What that marks, by
+`.img`. What that marks, by
 the known layouts of the corpus's Windows media: 2000, XP (both), Vista RTM
 x86 and 7 x86; and DevLink recovery (13.5), an isolinux medium around a
 32-bit kernel.
@@ -2028,6 +2029,72 @@ dark yellow): the bar itself changes colour rather than the text on it.
 not boot on this machine", and for every other reason that is because shim
 will refuse its first stage.
 
+#### The BIOS menu's tags (decided 2026-09-27)
+
+falcon-bios has no signatures to predict, and until now its rows carried no
+tags at all, so a medium it cannot boot looked like any other until it was
+chosen. Two reasons, both facts about the medium read by
+`falcon-core/src/media/biosboot.c`, and both drawn in the colours above:
+
+- `{EFI ONLY}`: no BIOS route can reach the medium. Its El Torito catalog
+  has no entry the virtual CD boots from (`elt_bios_entry`, the one rule
+  the virtual CD and the tag share: the default entry unless it says 0xEF,
+  else the first x86 entry), AND no entry of its boot configuration's CD
+  reading names a kernel with the x86 boot protocol's setup header ("HdrS"
+  at 0x202), which is what the direct route (12.3.6) starts. Every entry
+  counts, not only the default: the rule would rather miss a mark than make
+  a false one. For the Windows family the first test is the whole rule. A
+  hard-disk emulation image is one the virtual CD refuses today, but it is
+  a BIOS boot image, and a medium carrying one is not marked.
+- `{64-BIT ONLY}`: shown only when the processor has no long mode
+  (`linux_cpu_is_64`), and only for a medium that proves every way in
+  needs one. Linux: every entry of the CD configuration names a kernel that
+  could be read, every one is a bzImage whose header is new enough to say
+  its width (protocol 2.12, xloadflags), and every one says 64-bit. One
+  32-bit entry is enough to leave a medium unmarked, which is the point: a
+  multi-arch medium (Debian netinst) boots on either processor. BSD: the
+  kernel at `/boot/kernel/kernel` is an ELF64 for x86-64. Windows is never
+  marked, because its width is boot.wim's and reading that is too heavy for
+  a label; the Windows route refuses a 64-bit WinPE after it is chosen.
+
+In both rules the tools a medium carries beside the OS (a memory tester, a
+`.c32` module) are not asked, since `bootcfg_read` never picks one. Anything
+unproven is not marked: a catalog or a kernel that did not read, a kernel
+path GRUB would compute, a header too old to state its width, a `.img`.
+
+The rows stay selectable. Enter, `c` and `d` all show a page with the label,
+what the medium needs, and what to do, then return to the menu; nothing is
+handed to a route, since none of them could start what is on it. The BSD
+route asks the same question at boot time for a medium that reaches it
+unmarked (the next-boot marker, a row not yet drawn): an amd64 kernel on a
+processor without long mode is refused with the same sentence, as
+`linux_boot` refuses a 64-bit kernel.
+
+#### Lazy probing (decided 2026-09-27)
+
+Both menus look inside an entry when its row is first about to be drawn,
+not before the menu appears. The menu (`menu_run_probed` in
+falcon-efi/src/console/menu.c, `screen_menu_tagged` in
+falcon-bios/src/console/screen.c) takes a per-row probe callback; before it
+paints a window of rows, on the first draw and on every repaint a scroll
+causes, it calls the probe for each row in the window not yet probed, then
+sizes the tag columns to that window's widest tags, then paints. The first
+page waits for its rows. Moving the highlight within a window probes
+nothing. A menu with no callback (the station, the personal-OS chooser,
+falcon jump) draws as it always did.
+
+This replaced `PROBE_LIMIT` (256 on the UEFI loader), which probed that many
+media before the menu and left the rest with a `[?]` bracket until chosen.
+The cost of a probe is a handful of reads off p2, so a stick of any size now
+reaches its menu in the time one screenful takes, and no row is ever drawn
+unprobed. What needs an entry looked inside before its row has been drawn
+does the look itself, through the same function the menu calls
+(`target_probe` in apps/stick/efi_main.c, `probe_entry` in
+apps/stick/bios_main.c): a boot from the next-boot marker, `b`, and `a`,
+which looks inside every image it might list so its list is the one it was
+before. The bless lookup and the next-boot match read no medium and still
+run for every entry before the menu.
+
 The evidence goes on the screen shown when the platform refuses an entry,
 which is where the question gets asked (there is no per-entry details
 screen): one line per certificate-table entry, `signer <- anchor (list)`,
@@ -2046,7 +2113,8 @@ costs a possible `{REVOKED}` and makes nothing else uncertain.
 
 #### Verdict rules
 
-Evaluated once per entry at menu build, only when the mode is Secure Boot
+Evaluated once per entry, when its row is first drawn (lazy probing, above),
+only when the mode is Secure Boot
 on with validation on, except the `{VALIDATION OFF}` rule which applies only
 in that mode:
 
@@ -2792,7 +2860,7 @@ flowchart TD
     NOTE --> POSS
     ID -- yes --> POSS["pos_scan<br/>shelves whose record carries the install ID, any disk:<br/>LUKS2 with a pbkdf2 keyslot, or plaintext with a UKI<br/>: the pinned Personal OS row"]
     POSS --> VOLS["scan_all_volumes, up to 4 libraries whose record<br/>carries the install ID, any disk<br/>fs_mount, bless_load (manifest), survey_volume"]
-    VOLS --> PROBE["probe_entries<br/>medium_open, family_detect,<br/>the loader's PE signature, trust_probe;<br/>no loader: uefiboot_medium (BIOS ONLY): row tags"]
+    VOLS --> PROBE["resolve_entries<br/>bless_lookup, the next-boot match;<br/>no medium is read"]
     PROBE --> PEND{"next-boot marker<br/>pending?"}
     PEND -- yes --> NBR["next_boot_run<br/>boot the named entry as Enter would"]
     NBR --> MENU
@@ -2803,7 +2871,10 @@ flowchart TD
 is 1 and MokSBStateRT is not; validation disabled, setup mode and unreadable
 variables are all treated as not enforcing. The survey runs on falcon-core
 alone (`media/medium.c` over the p2 file): nothing is published to the
-firmware to build the menu.
+firmware to build the menu. No medium is looked inside before the menu:
+`target_probe` (`medium_open`, `family_detect`, the loader's PE signature,
+`trust_probe`, and with no loader `uefiboot_medium` for `{BIOS ONLY}`) runs
+from the menu as each row is first drawn (7.8, lazy probing).
 
 The only failure before the menu is the pool allocation. A missing p2 or p3
 gives a shorter menu, not an error. A boot partition with no readable
@@ -2854,9 +2925,10 @@ flowchart TD
 
 `boot_plain` (`apps/stick/efi_main.c`) runs the tests in this order.
 `d` and Enter are the same on an unblessed row; `c` and `d` on a blessed row
-skip the blessing. A `{BIOS ONLY}` row (7.8) is surveyed first if it was
-past `PROBE_LIMIT`, and then takes no route on any key: its page says so and
-the menu comes back.
+skip the blessing. Every route starts with `target_probe`, which is a no-op
+for a row the menu drew and a look inside for one it did not (the next-boot
+marker's). A `{BIOS ONLY}` row (7.8) then takes no route on any key: its
+page says so and the menu comes back.
 
 A route falls through only while it has not yet committed. Each one keeps a
 flag, set at the start and cleared once it has decided the medium is its own:
@@ -3307,7 +3379,7 @@ flowchart TD
     DSK --> REC["install_part_record per partition: a LUKS2 falcon token,<br/>or /.falcon on what the registry mounts;<br/>only the boot record's install ID counts"]
     REC --> P2["library: fs_mount (exFAT), survey_volume (.iso, .img)"]
     REC --> P3["shelf: pos_probe, LUKS2 or plaintext"]
-    P2 --> SI["screen_init: 80x25 text, VGA memory"]
+    P2 --> SI["linux_cpu_is_64, once: {64-BIT ONLY} is drawn only without it<br/>screen_init: 80x25 text, VGA memory"]
     P3 --> SI
     SI --> NB{"a marker taken?"}
     NB -- "no" --> MENU["menu"]
@@ -3321,7 +3393,8 @@ The whole loader is i586 code in flat 32-bit protected mode, and one image
 runs on every processor from the Pentium on. What a newer processor
 adds is taken by asking CPUID, not by a second build: the SSE state above,
 AES-NI in falcon-core's AES path, and long mode, which only a 64-bit kernel
-needs and 12.3.6 checks for. Paging stays off, so everything the loader
+needs and 12.3.6 checks for (the menu's `{64-BIT ONLY}`, 7.8, asks the
+same question before a row is chosen). Paging stays off, so everything the loader
 places is below 4 GiB (`ADDR_END`). docs/notes/bios-route.md Section 6h has
 why this replaced long mode.
 
@@ -3438,8 +3511,10 @@ flowchart TD
     ROW{"row, key"}
     ROW -- "Personal OS" --> POS[POS]
     ROW -- "Escape at the root" --> FW["INT 18h"]
-    ROW -- "c on an image" --> CHN[CHN]
-    ROW -- "Enter or d on an image" --> MED["scan_family<br/>medium_open, family_detect"]
+    ROW -- "image, Enter / c / d" --> TAG{"{EFI ONLY}, or<br/>{64-BIT ONLY} here?"}
+    TAG -- yes --> TP["page: what it needs, what to do"]
+    TAG -- "no, c" --> CHN[CHN]
+    TAG -- "no, Enter or d" --> MED["scan_family<br/>medium_open, family_detect"]
     MED --> W{"Windows?"}
     W -- "yes, patched" --> WIN[WIN]
     W -- "unpatchable, or a path winjump cannot carry" --> CHN
@@ -3449,6 +3524,12 @@ flowchart TD
     B -- no --> DIR[DIR]
     DIR -- "no CD boot entry, or not a Linux kernel it can start" --> CHN
 ```
+
+The rows carry `{EFI ONLY}` and, on a processor without long mode, `{64-BIT
+ONLY}` (7.8), filled by `probe_entry` (`scan_probe`, then
+`biosboot_medium`) as the menu first draws each row. `boot_plain` reads the
+same answer first on every key, so a tagged row takes no route: its page
+says what the medium needs and the menu comes back.
 
 Unlike the UEFI loader, a BSD medium that is not one the memory-disk route
 applies to goes on to the direct boot. `DIR` goes on to `CHN`, as on the
@@ -3621,7 +3702,10 @@ sequenceDiagram
 #### 12.3.10 BSD: a BSD medium as its own memory disk
 
 The same two edits as the UEFI route (12.2.12), laid into the resident's
-overlay pool. The staging check looks for one usable E820 run below 4 GiB
+overlay pool. Once the medium is known to be one the route applies to, an
+amd64 kernel (`/boot/kernel/kernel`, `biosboot_elf_is_64`) on a processor
+without long mode is refused ("checking the processor"), as `linux_boot`
+refuses a 64-bit kernel. The staging check looks for one usable E820 run below 4 GiB
 holding the ISO plus 192 MiB. The settings add
 `console="comconsole,vidconsole"`. FreeBSD's `cdboot` loads `/boot/loader`
 through the handler, the loader reads `FALCONBS.IMG;1` whole through it (the

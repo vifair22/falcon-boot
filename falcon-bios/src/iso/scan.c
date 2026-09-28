@@ -30,6 +30,7 @@
 #include <media/bootfs.h>
 #include <media/bootcfg.h>
 #include <media/family.h>
+#include <media/biosboot.h>
 #include <ident/identfs.h>
 #include <media/extmap.h>
 #include <media/hookcmd.h>
@@ -344,6 +345,32 @@ const family_desc *scan_family(fs_vol *p2, const fs_dirent *ent)
     log_str("family: ", fam != (const family_desc *)0 ? fam->name
                                                        : "unrecognised");
     return fam;
+}
+
+/* The menu's probe reads the same medium state a boot does, one at a time,
+ * so it shares the medium, the family context and the configuration scratch
+ * with the routes above; its own work area is the configuration it parses
+ * and a kernel head. */
+static biosboot_work g_probe;
+
+void scan_probe(fs_vol *p2, const fs_dirent *ent, biosboot_result *out)
+{
+    family_probe probe;
+    const family_desc *fam;
+
+    out->boots = BIOSBOOT_UNKNOWN;
+    out->needs64 = BIOSBOOT_UNKNOWN;
+    if (fs_file_open(p2, &g_iso, ent) != FS_OK ||
+        medium_open(&g_medium, fs_file_read_cb, &g_iso, ent->size) != 0 ||
+        medium_count(&g_medium) == 0)
+        return;
+    /* The family as scan_family finds it, off the medium's first volume, so
+     * the tag and the route read the medium the same way. */
+    bootfs_probe(&g_bctx, medium_vol_at(&g_medium, 0), &probe);
+    fam = family_detect(&probe);
+    biosboot_medium(&g_medium,
+                    fam != (const family_desc *)0 ? fam->id : FAMILY_UNKNOWN,
+                    &g_probe, g_scratch, sizeof g_scratch, out);
 }
 
 int scan_direct(fs_vol *p2, const part_entry *p2part, const fs_dirent *ent,

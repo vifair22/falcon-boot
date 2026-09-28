@@ -61,6 +61,16 @@
 #                  EFI stub) is listed with {BIOS ONLY}, one whose kernel has
 #                  a stub is not, and choosing the first shows its page and
 #                  returns to the menu
+#   efi-only-bios  the rig stick under SeaBIOS: an ISO with only a UEFI El
+#                  Torito image and no kernel is listed with {EFI ONLY}, the
+#                  BIOS-only one and the 64-bit-only one are not (this
+#                  processor has long mode), and choosing the first shows its
+#                  page and returns to the menu
+#   64-only-bios32 the same stick under SeaBIOS on a Pentium III (no long
+#                  mode): an ISO whose every kernel is 64-bit is listed with
+#                  {64-BIT ONLY}, a multi-arch one (a 64-bit and a 32-bit
+#                  kernel) is not, and choosing the first shows its page and
+#                  returns to the menu
 #
 # Every image is built from image files; loop devices on them need sudo, as
 # mk-test-stick.sh does. Nothing touches a real disk.
@@ -139,10 +149,15 @@ detach() {
 # right under the Personal OS row.
 BIOS_ONLY_ISO=a-bios-only.iso
 STUB_ISO=a-efi-stub.iso
+# The BIOS tag cases' three (media/biosboot.h), named to sort after them so
+# the BIOS-only case's rows keep their places.
+EFI_ONLY_ISO=b-efi-only.iso
+X64_ISO=b-64-only.iso
+MULTI_ISO=b-multi.iso
 
 build_sticks() {
     STICK_ID=$ID_A TEST_STICK_IMG=$R/stick-a.img \
-        STICK_ISO_FILES="build/test-uefi-biosonly.iso:$BIOS_ONLY_ISO build/test-uefi-stub.iso:$STUB_ISO" \
+        STICK_ISO_FILES="build/test-uefi-biosonly.iso:$BIOS_ONLY_ISO build/test-uefi-stub.iso:$STUB_ISO build/test-bios-efionly.iso:$EFI_ONLY_ISO build/test-bios-64.iso:$X64_ISO build/test-bios-multi.iso:$MULTI_ISO" \
         falcon-efi/tools/mk-test-stick.sh --no-labels >"$R/stick-a.build" 2>&1
     STICK_ID=$ID_B TEST_STICK_IMG=$R/stick-b.img FALCON_TEST_PASS=$PASS_B \
         STICK_ISOS="second-stick.iso" \
@@ -253,7 +268,7 @@ build_4kn() {
 
 build_all() {
     make --no-print-directory all bios station cli payload test-iso \
-        test-uefiboot >/dev/null
+        test-uefiboot test-biosboot >/dev/null
     # The fixture UKI and the test MOK are built once (make test-uki,
     # make sign) and reused; this rig never rebuilds them.
     for f in build/test/fixture-uki.efi build/mok-test/falcon-test-mok.key \
@@ -311,7 +326,7 @@ send_keys() {   # send_keys TEXT: one sendkey per character, then Enter
 # only the disks QEMU's boot order lists, so a disk with no bootindex is
 # one the UEFI loader never sees.
 boot() {
-    local fw=$1 d img opts n=0 idx=1 args=() fwargs=() vars code
+    local fw=$1 d img opts n=0 idx=1 args=() fwargs=() vars code cpu=host
     shift
     for d in "$@"; do
         img=${d%%:*}
@@ -324,7 +339,7 @@ boot() {
             # SeaBIOS offers through INT 13h (virtio-blk, SCSI, USB and
             # IDE do not; DESIGN Section 3.4), and OVMF reads it too.
             dev="nvme,drive=d$n,serial=falcon4k$n,logical_block_size=4096,physical_block_size=4096"
-        elif [[ "$fw" == bios ]]; then
+        elif [[ "$fw" == bios || "$fw" == bios32 ]]; then
             dev="ide-hd,drive=d$n,bus=ide.$(( n / 2 )),unit=$(( n % 2 ))"
         else
             dev="ide-hd,drive=d$n,bus=ide.$n"
@@ -354,10 +369,12 @@ boot() {
                 -drive "if=pflash,format=raw,file=$R/vars.fd")
         ;;
     bios) fwargs=(-machine pc) ;;
+    # The coverage harness's bios32 column: a Pentium III, no long mode.
+    bios32) fwargs=(-machine pc); cpu=pentium3 ;;
     esac
     rm -f "$R/serial.log" "$R/mon.sock"
     timeout "$TIMEOUT" qemu-system-x86_64 "${fwargs[@]}" -m 1024 \
-        -enable-kvm -cpu host -display none -net none "${args[@]}" \
+        -enable-kvm -cpu "$cpu" -display none -net none "${args[@]}" \
         -serial "file:$R/serial.log" \
         -monitor "unix:$R/mon.sock,server,nowait" >"$R/qemu.log" 2>&1 &
     QPID=$!
@@ -647,6 +664,75 @@ case_bios_only() { # case_bios_only CASE FIRMWARE
     fi
 }
 
+# The serial as text with every run of spaces one space, so a row reads as
+# its label, then its tags.
+squeezed() { log_text "$R/serial.log" | tr -s ' '; }
+
+# The row a name is on, the Personal OS being row 0: the root screen's
+# images in the order the serial first drew them.
+row_of() {      # row_of NAME
+    local i
+    i=$(log_text "$R/serial.log" | grep -aoE '[A-Za-z0-9_.-]+\.iso' |
+        awk '!seen[$0]++' | grep -nxF -- "$1" | head -1 | cut -d: -f1)
+    [[ -n "$i" ]] && echo "$i"
+}
+
+# falcon-bios's tags (DESIGN Section 7.8): TAGGED is drawn with TAG,
+# every name in PLAIN without one, and choosing TAGGED shows PAGE and
+# returns to the menu. The rows are read off the serial mirror, where each
+# row's text lands with its tag column after the label.
+case_bios_tags() { # case_bios_tags CASE FIRMWARE TAGGED TAG PAGE PLAIN...
+    local c=$1 fw=$2 tagged=$3 tag=$4 page=$5 why= n row one i
+    shift 5
+    boot "$fw" "$R/stick-a.img:boot"
+    wait_for "systemrescue-fake.iso" 90 || why="the menu never listed its last row"
+    sleep 1
+    if [[ -z "$why" ]]; then
+        squeezed | grep -aqF -- "$tagged $tag" ||
+            why="$tagged is not drawn with $tag"
+    fi
+    for one in "$@"; do
+        [[ -n "$why" ]] && break
+        if squeezed | grep -aoE -- "$one [^ ]*" | grep -aqF "{"; then
+            why="$one is drawn with a tag"
+        fi
+    done
+    if [[ -z "$why" ]]; then
+        row=$(row_of "$tagged") || true
+        [[ -n "$row" ]] || why="no row for $tagged"
+    fi
+    if [[ -z "$why" ]]; then
+        for (( i = 0; i < row; i++ )); do
+            mon "sendkey down"
+            sleep 0.2
+        done
+        sleep 0.3
+        mon "sendkey ret"
+        wait_for "$page" 30 || why="choosing $tagged did not show its page"
+    fi
+    if [[ -z "$why" ]]; then
+        has "booting: $tagged" && why="the page started a route"
+        wait_for "press any key to return to the menu" 10 ||
+            why="${why:-the page has no way back}"
+    fi
+    if [[ -z "$why" ]]; then
+        n=$(log_text "$R/serial.log" | grep -aoF "c chain | d direct" | wc -l)
+        mon "sendkey spc"
+        for (( i = 0; i < 100; i++ )); do
+            (( $(log_text "$R/serial.log" | grep -aoF "c chain | d direct" |
+                 wc -l) > n )) && break
+            sleep 0.1
+        done
+        (( i < 100 )) || why="the menu did not come back"
+    fi
+    halt
+    if [[ -z "$why" ]]; then
+        result "$c" 1 "$tagged tagged $tag and refused with its page; $* untagged"
+    else
+        result "$c" 0 "$why"
+    fi
+}
+
 build_all
 
 A_ISOS="archlinux-fake.iso"
@@ -656,7 +742,7 @@ CASES=("$@")
            mbr-disk-uefi mbr-disk-bios foreign-uefi foreign-bios 4kn-uefi
            4kn-bios 4kn-bios-marker station-uefi station-bios
            station-stick-uefi station-stick-bios bios-only-uefi
-           bios-only-uefi-sb)
+           bios-only-uefi-sb efi-only-bios 64-only-bios32)
 
 for c in "${CASES[@]}"; do
     case $c in
@@ -690,6 +776,14 @@ for c in "${CASES[@]}"; do
     station-stick-bios) case_station_stick "$c" bios ;;
     bios-only-uefi)    case_bios_only "$c" uefi ;;
     bios-only-uefi-sb) case_bios_only "$c" uefi-sb ;;
+    efi-only-bios)
+        case_bios_tags "$c" bios "$EFI_ONLY_ISO" "{EFI ONLY}" \
+            "this image boots only on a UEFI machine" \
+            "$BIOS_ONLY_ISO" "$STUB_ISO" "$X64_ISO" "$MULTI_ISO" ;;
+    64-only-bios32)
+        case_bios_tags "$c" bios32 "$X64_ISO" "{64-BIT ONLY}" \
+            "this image needs a 64-bit processor" \
+            "$MULTI_ISO" "$BIOS_ONLY_ISO" "$STUB_ISO" ;;
     *) echo "unknown case: $c" >&2; exit 2 ;;
     esac
 done

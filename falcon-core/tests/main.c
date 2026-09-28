@@ -74,6 +74,7 @@ int main(void)
     failed += run_medium_tests();
     failed += run_bootfs_tests();
     failed += run_uefiboot_tests();
+    failed += run_biosboot_tests();
     failed += run_blesslist_tests();
     failed += run_wim_tests();
     failed += run_fs_tests();

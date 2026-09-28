@@ -154,6 +154,12 @@ int bootcfg_read(const bootcfg_src *src, bootcfg_kind kind, char *scratch,
 int bootcfg_render(const bootcfg_entry *e, const char *iso_path, char *out,
                    size_t cap);
 
+/* Nonzero when the entry could be what a boot of the ISO means: it names a
+ * kernel, and not one of the tools install media carries beside the OS (a
+ * memory tester, hardware detection, a .c32 module). The rule bootcfg_read
+ * picks by, for a caller that judges every entry (media/biosboot.c). */
+int bootcfg_entry_bootable(const bootcfg_entry *e);
+
 /* Nonzero when the entry's cmdline carries ${iso_path}: it finds its own ISO
  * as a file, given the path. */
 int bootcfg_takes_iso_path(const bootcfg_entry *e);

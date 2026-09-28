@@ -15,12 +15,15 @@
  * columns (DESIGN Section 7.8). `sig` says who signed what the entry boots;
  * `why` says why the platform is expected to refuse it, and is set only
  * together with `caution`, which draws the row in the caution colours. The
- * menu renders them and knows nothing of what they mean. */
+ * menu renders them and knows nothing of what they mean. `probed` is the
+ * menu's, for menu_run_probed: it sets it once the probe has filled the row,
+ * and a caller building rows for that call clears it. */
 typedef struct {
     CHAR16 label[MENU_PATH_MAX];
     CHAR16 sig[MENU_TAG_MAX];
     CHAR16 why[MENU_TAG_MAX];
     UINT8  caution;
+    UINT8  probed;
 } menu_entry;
 
 /* The banner is two segments so the Secure Boot state can be coloured apart
@@ -90,6 +93,26 @@ INTN menu_run_timed(EFI_SYSTEM_TABLE *st, const menu_banner *banner,
                     const menu_entry *entries, UINTN count,
                     const menu_keys *keys, CHAR16 *which, UINTN sel,
                     UINTN seconds);
+
+/* Fills row idx's tag columns. The menu calls it once per row, the first
+ * time the row is about to be drawn, so a menu of many rows pays only for
+ * the ones it shows (DESIGN Section 7.8, lazy probing). */
+typedef void (*menu_probe_fn)(void *ctx, UINTN idx, menu_entry *e);
+
+typedef struct {
+    menu_probe_fn fn;
+    void         *ctx;
+} menu_probe;
+
+/* menu_run_keys with the rows' tags filled as they come into view: before a
+ * window of rows is painted (the first draw, and every repaint a scroll
+ * causes) the rows in it not yet probed are, and the tag columns are sized
+ * to that window's widest tags. A highlight move within the window probes
+ * nothing. probe may be NULL, which is menu_run_keys, with the columns
+ * still sized per window. */
+INTN menu_run_probed(EFI_SYSTEM_TABLE *st, const menu_banner *banner,
+                     menu_entry *entries, UINTN count, const menu_keys *keys,
+                     CHAR16 *which, const menu_probe *probe);
 
 /* Masked line editor, for the p3 passphrase (DESIGN Section 5 step 2).
  *

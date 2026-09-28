@@ -199,3 +199,21 @@ int elt_parse(elt_catalog *out, elt_read_fn read, void *ctx, uint64_t size)
     }
     return ELT_OK;
 }
+
+const elt_entry *elt_bios_entry(const elt_catalog *cat)
+{
+    unsigned i;
+
+    if (cat == (const elt_catalog *)0)
+        return (const elt_entry *)0;
+    for (i = 0; i < cat->n; i++) {
+        if (cat->entry[i].is_default &&
+            cat->entry[i].platform != ELT_PLATFORM_UEFI)
+            return &cat->entry[i];
+    }
+    for (i = 0; i < cat->n; i++) {
+        if (cat->entry[i].platform == ELT_PLATFORM_X86)
+            return &cat->entry[i];
+    }
+    return (const elt_entry *)0;
+}

@@ -196,24 +196,12 @@ int vcd_overlay(fs_file *isofile, uint64_t iso_off, const void *bytes,
     return 0;
 }
 
-/* The medium's BIOS boot image: the default entry, or the first entry that
- * says x86. The platform byte is reported rather than trusted for filtering
- * (media/eltorito.c's header says why), so the default entry comes first and
- * the platform is only a fallback. */
+/* The medium's BIOS boot image. The rule is core's (media/eltorito.h), so
+ * the menu's {EFI ONLY} tag (media/biosboot.c) and this route cannot
+ * disagree about which entry a medium boots from. */
 const elt_entry *vcd_boot_entry(const elt_catalog *cat)
 {
-    size_t i;
-
-    for (i = 0; i < cat->n; i++) {
-        if (cat->entry[i].is_default &&
-            cat->entry[i].platform != ELT_PLATFORM_UEFI)
-            return &cat->entry[i];
-    }
-    for (i = 0; i < cat->n; i++) {
-        if (cat->entry[i].platform == ELT_PLATFORM_X86)
-            return &cat->entry[i];
-    }
-    return (const elt_entry *)0;
+    return elt_bios_entry(cat);
 }
 
 /* Writes the El Torito status packet AH=4Bh returns, at the offset vcd.S

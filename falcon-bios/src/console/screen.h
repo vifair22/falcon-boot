@@ -52,10 +52,43 @@ typedef struct {
  * escape. `keys` lists extra commit keys in lower case (either case is
  * accepted) and `hint` replaces the key line; *which receives '\r' for enter
  * or the key. keys, hint and which may be NULL. The rows carry no tag
- * columns: a BIOS machine has no signature for them to predict. */
+ * columns (screen_menu_tagged draws them). */
 int screen_menu(const screen_banner *banner, const uint16_t *const *labels,
                 size_t count, const char *keys, const uint16_t *hint,
                 int *which);
+
+/* A row's tag columns (DESIGN Section 7.8), the UEFI menu's menu_entry
+ * fields: `sig` and `why` are drawn right of the name in aligned columns,
+ * either may be NULL, and `caution` draws the row in the caution colours
+ * (tui_entry_attr). `probed` is the menu's: it sets it once the probe has
+ * filled the row, and a caller building rows clears it. */
+typedef struct {
+    const uint16_t *sig;
+    const uint16_t *why;
+    uint8_t         caution;
+    uint8_t         probed;
+} screen_tags;
+
+/* Fills row idx's tags. The menu calls it once per row, the first time the
+ * row is about to be drawn, so a menu of many rows pays only for the ones
+ * it shows (DESIGN Section 7.8, lazy probing). */
+typedef void (*screen_probe_fn)(void *ctx, size_t idx, screen_tags *tags);
+
+typedef struct {
+    screen_tags    *tags;    /* one per row */
+    screen_probe_fn probe;   /* NULL when the tags are complete as given */
+    void           *ctx;
+} screen_rows;
+
+/* screen_menu with tag columns. Before a window of rows is painted (the
+ * first draw, and every repaint a scroll causes) the rows in it that have
+ * not been probed are, and the columns are sized to that window's widest
+ * tags. A highlight move within the window probes nothing. rows may be NULL,
+ * which is screen_menu. */
+int screen_menu_tagged(const screen_banner *banner,
+                       const uint16_t *const *labels, size_t count,
+                       const screen_rows *rows, const char *keys,
+                       const uint16_t *hint, int *which);
 
 /* screen_menu with `empty` as the line an empty list shows, `sel`
  * highlighted first and, when `seconds` is nonzero, a countdown in the key

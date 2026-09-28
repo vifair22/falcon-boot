@@ -25,6 +25,7 @@
 #include <pos/pos.h>
 #include <win/win.h>
 #include <bsd/bsd.h>
+#include <linux/linux.h>
 #include <console/screen.h>
 #include <mem/e820.h>
 #include <disk/marker.h>
@@ -103,6 +104,22 @@ static survey_entry g_entries[MENU_MAX];
 static survey_list  g_survey;
 static survey_row   g_view[VIEW_MAX];
 
+/* What the menu's probe found for each survey entry (media/biosboot.h), kept
+ * for the run: a row is probed the first time the menu is about to draw it,
+ * and choosing it, or the next-boot marker naming it, reads the same answer
+ * rather than a second one. */
+typedef struct {
+    uint8_t done;
+    uint8_t efi_only;   /* no route here reaches it: {EFI ONLY} */
+    uint8_t needs64;    /* every way in needs long mode */
+} entry_probe;
+
+static entry_probe g_probe[MENU_MAX];
+
+/* Whether this processor has long mode, asked once: {64-BIT ONLY} is shown
+ * only where it has not. */
+static int g_cpu64;
+
 /* Where the menu is. Empty at p2's root. */
 static uint16_t g_cur[SURVEY_PATH_MAX];
 static size_t   g_cur_len;
@@ -157,6 +174,8 @@ typedef enum {
 static const uint16_t *g_labels[VIEW_MAX];
 static row_kind        g_kind[VIEW_MAX];
 static size_t          g_row_index[VIEW_MAX];
+/* The rows' tag columns, filled by row_probe as the menu reaches them. */
+static screen_tags     g_tags[VIEW_MAX];
 
 /* The ".." row doubles as the only place the current folder is named, as
  * on the UEFI menu. */
@@ -176,11 +195,60 @@ static void up_label(void)
     g_up_label[n] = 0;
 }
 
+/* Looks inside survey entry idx once, silently (iso/scan.h). A .img is a
+ * disk, not a CD: neither question is asked of it. */
+static const entry_probe *probe_entry(size_t idx)
+{
+    entry_probe *p = &g_probe[idx];
+    const survey_entry *e = &g_survey.entries[idx];
+    biosboot_result r;
+
+    if (p->done)
+        return p;
+    p->done = 1;
+    if (e->media != SURVEY_MEDIA_CD)
+        return p;
+    scan_probe(&g_p2, &e->ent, &r);
+    p->efi_only = r.boots == BIOSBOOT_NO;
+    p->needs64 = r.needs64 == BIOSBOOT_YES;
+    return p;
+}
+
+/* The row's reason, or NULL (DESIGN Section 7.8): {EFI ONLY} for a medium
+ * nothing here can start, {64-BIT ONLY} for one only a processor this one is
+ * not can run. */
+static const uint16_t *entry_why(const entry_probe *p)
+{
+    if (p->efi_only)
+        return u"{EFI ONLY}";
+    if (p->needs64 && !g_cpu64)
+        return u"{64-BIT ONLY}";
+    return (const uint16_t *)0;
+}
+
+/* The menu's probe (console/screen.h): only an image row has anything to
+ * look inside. */
+static void row_probe(void *ctx, size_t row, screen_tags *t)
+{
+    (void)ctx;
+    if (g_kind[row] != ROW_IMAGE)
+        return;
+    t->why = entry_why(probe_entry(g_row_index[row]));
+    t->caution = t->why != (const uint16_t *)0;
+}
+
 static size_t view_build(void)
 {
     size_t n = 0;
     size_t j;
     size_t i;
+
+    for (i = 0; i < VIEW_MAX; i++) {
+        g_tags[i].sig = (const uint16_t *)0;
+        g_tags[i].why = (const uint16_t *)0;
+        g_tags[i].caution = 0;
+        g_tags[i].probed = 0;
+    }
 
     if (g_cur_len == 0u) {
         if (g_pos_row) {
@@ -231,6 +299,21 @@ static void failed(const char *what, const boot_result *r)
         screen_out(r->advice);
         screen_out("\n");
     }
+}
+
+/* The page a tagged row shows instead of a route: nothing is loaded, so
+ * there is no route code, only what the medium is and what to do. */
+static void refuse(const survey_entry *e, const char *why, const char *what)
+{
+    screen_mode((const char *)0);
+    screen_page();
+    screen_out16(e->label);
+    screen_out("\n");
+    screen_out(why);
+    screen_out("\n\n");
+    screen_out(what);
+    screen_out("\n");
+    screen_out(k_press_any);
 }
 
 /* Windows install media with boot.wim patched in memory (DESIGN Section
@@ -363,9 +446,28 @@ static void boot_target(const survey_entry *e, const family_desc *fam)
 static void boot_plain(size_t idx, int which)
 {
     const survey_entry *e = &g_survey.entries[idx];
-    const family_desc *fam = scan_family(&g_p2, &e->ent);
+    const entry_probe *p = probe_entry(idx);
+    const family_desc *fam;
     int chain = (which == 'c');
-    int id = (fam != (const family_desc *)0) ? (int)fam->id : -1;
+    int id;
+
+    /* Every key, c included: the chainload wants a BIOS boot image this
+     * medium does not have, and direct a kernel it does not carry, or one
+     * this processor cannot run (DESIGN Section 7.8). */
+    if (p->efi_only) {
+        refuse(e, "this image boots only on a UEFI machine: it has no BIOS "
+                  "boot image,\nand no kernel falcon-bios can start.",
+               "Start the machine from this stick in UEFI mode instead.");
+        return;
+    }
+    if (p->needs64 && !g_cpu64) {
+        refuse(e, "this image needs a 64-bit processor, and this one has no "
+                  "64-bit mode.",
+               "Start it on a machine with a 64-bit processor instead.");
+        return;
+    }
+    fam = scan_family(&g_p2, &e->ent);
+    id = (fam != (const family_desc *)0) ? (int)fam->id : -1;
 
     if (!chain && id == (int)FAMILY_WINDOWS) {
         /* boot.wim media (Vista and later) go through win_boot; 2000/XP have
@@ -530,6 +632,7 @@ static void menu_run(void)
      * as enter. */
     static const uint16_t hint[] =
         u"enter boot | c chain | d direct | esc back";
+    static const screen_rows rows = { g_tags, row_probe, (void *)0 };
 
     for (;;) {
         size_t n;
@@ -539,7 +642,8 @@ static void menu_run(void)
         /* Whatever route the last boot took, it is over. */
         screen_mode((const char *)0);
         n = view_build();
-        pick = screen_menu(&banner, g_labels, n, "cd", hint, &which);
+        pick = screen_menu_tagged(&banner, g_labels, n, &rows, "cd", hint,
+                                  &which);
 
         if (pick < 0) {
             /* Escape is "back": out of the folder while there is one to
@@ -804,6 +908,7 @@ void bios_main(uint8_t drive)
     if (g_p3_part != (const part_entry *)0)
         g_pos_row = pos_probe(g_p3_disk, g_p3_part);
 
+    g_cpu64 = linux_cpu_is_64();
     bios_puts("falcon-bios: done\n");
     screen_init();
     install_notice();

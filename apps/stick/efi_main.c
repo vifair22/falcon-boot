@@ -40,21 +40,6 @@
 #define MAX_ISOS  128u
 #define MAX_VOLS  4u
 
-/* How many entries get looked inside before the menu appears.
- *
- * This was 24, and the number was the firmware's price rather than ours: a
- * probe used to publish a virtual medium, make the firmware bind its
- * partition and filesystem drivers to it, and tear the whole thing down
- * again, once per entry. Since the survey moved onto falcon-core
- * (docs/notes/iso-reader-route.md) a probe is a handful of reads off p2, so
- * the cap is no longer paying for anything.
- *
- * It is raised rather than removed, because the cost is still linear in the
- * number of images and a stick can hold a great many. This bounds the
- * pathological case and nothing else; the rest are shown with an unprobed
- * label, which is honest and instant. */
-#define PROBE_LIMIT 256u
-
 static EFI_SYSTEM_TABLE *g_st;
 
 /* What the platform trusts and whether it is enforcing, read once at startup
@@ -187,11 +172,10 @@ typedef struct {
     bless_hit   hit;
     UINTN dir_len;
     /* What the medium turned out to be, as the survey found it, and whether
-     * it was looked at in the first place. Carried because the Windows
-     * auto-prep offer (DESIGN Section 6.3.1) turns on the family and the
-     * survey runs at most PROBE_LIMIT times; FAMILY_UNKNOWN with probed 0
-     * means "nobody has looked", which is a different thing from "looked and
-     * recognised nothing". */
+     * it was looked at in the first place. An entry is looked inside when
+     * the menu is about to draw its row, or when something acts on it first
+     * (target_probe); FAMILY_UNKNOWN with probed 0 means "nobody has looked",
+     * which is a different thing from "looked and recognised nothing". */
     family_id fam;
     UINT8 probed;
     /* The medium boots only on a BIOS machine: no UEFI boot image and no
@@ -327,12 +311,22 @@ typedef struct {
     UINTN   len;
 } wbuf;
 
+/* gcc's analyzer reports a read past the end of a short literal here (L"[",
+ * from tags_build) on every path that reaches the loop, seventeen of them
+ * once the rows were probed lazily. It cannot happen: *s is tested before
+ * each read and s advances only in the body, so a literal is read up to its
+ * terminator and no further. The analyzer loses the literal's extent over a
+ * long call chain (docs/notes/analyze-baseline.txt, section 5). Scoped to
+ * this function, as falcon-cli/src/common/proc.c scopes its fd-leak one. */
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wanalyzer-out-of-bounds"
 static void wbuf_ucs2(wbuf *w, const CHAR16 *s)
 {
     while (*s != 0 && w->len + 1 < w->cap)
         w->buf[w->len++] = *s++;
     w->buf[w->len] = 0;
 }
+#pragma GCC diagnostic pop
 
 static void wbuf_ascii(wbuf *w, const char *s)
 {
@@ -382,9 +376,7 @@ static const CHAR16 *why_refused(const iso_target *t, BOOLEAN uki)
  * selectable, no boot path sees t->trust, and a wrong prediction costs a line
  * of text before shim gives the real answer. Where the prediction has
  * nothing to say, the bracket falls back to what was found on the medium
- * ("signed", "unsigned"), which is all the older labels ever claimed.
- *
- * survey NULL means the entry was past PROBE_LIMIT and was never looked at. */
+ * ("signed", "unsigned"), which is all the older labels ever claimed. */
 static void tags_build(iso_target *t, const iso_survey *survey)
 {
     const CHAR16 *state = bless_suffix(&t->hit);
@@ -394,7 +386,7 @@ static void tags_build(iso_target *t, const iso_survey *survey)
 
     if (uki)
         bless_uki_trust(&t->hit, &g_stores, &t->trust);
-    else if (survey != (const iso_survey *)0)
+    else
         t->trust = survey->trust;
 
     if (uki && state != (const CHAR16 *)0) {
@@ -404,9 +396,7 @@ static void tags_build(iso_target *t, const iso_survey *survey)
         wbuf_ucs2(&w, state + 2);
     } else {
         wbuf_ucs2(&w, L"[");
-        if (survey == (const iso_survey *)0)
-            wbuf_ucs2(&w, L"?");
-        else if (survey->sig == ISO_SIG_NO_EFI)
+        if (survey->sig == ISO_SIG_NO_EFI)
             wbuf_ucs2(&w, L"no efi");
         else if (t->shape == ENTRY_PAYLOAD && t->trust.verdict == TRUST_OK &&
                  t->trust.own_mok)
@@ -425,7 +415,7 @@ static void tags_build(iso_target *t, const iso_survey *survey)
             wbuf_ucs2(&w, state);
     }
 
-    if (survey != (const iso_survey *)0 && t->shape == ENTRY_MEDIA)
+    if (t->shape == ENTRY_MEDIA)
         t->bios_only = survey->uefi == UEFIBOOT_NO ? 1 : 0;
     why = why_refused(t, uki);
     /* In every Secure Boot state: it is not a prediction about a signature
@@ -455,9 +445,9 @@ static fs_file g_payload_file;
  * found for a payload: the family from the file name, because a lone PE has
  * no tree to fingerprint, and the signature from the file's own headers.
  *
- * Cheap on purpose, and not subject to PROBE_LIMIT: this is one short read off
- * a volume that is already mounted, where an ISO's survey assembles the
- * medium's volumes in falcon-core and reads its boot configuration.
+ * Cheap on purpose: this is one short read off a volume that is already
+ * mounted, where an ISO's survey assembles the medium's volumes in
+ * falcon-core and reads its boot configuration.
  *
  * *out is always filled in, so an unreadable payload is still an entry. */
 static void payload_survey(fs_vol *vol, const fs_dirent *ent, iso_survey *out)
@@ -504,51 +494,22 @@ static void payload_survey(fs_vol *vol, const fs_dirent *ent, iso_survey *out)
                     &out->trust);
 }
 
-/* Look inside the first PROBE_LIMIT ISOs and label every entry.
- *
- * This is the slow part of startup, so it says so: each probe reads the
- * medium's descriptors and boot configuration off p2, and on a stick with
- * many images a quiet pause with no explanation reads as a hang. */
-static void probe_entries(iso_list *list)
+/* What every entry needs before the menu, none of which reads a medium: the
+ * stick's bless record for it and whether the next-boot marker names it.
+ * Looking inside an entry is left to target_probe, which the menu calls as
+ * a row comes into view (DESIGN Section 7.8), so a stick of any size reaches
+ * its menu in the time a screenful of probes takes. */
+static void resolve_entries(iso_list *list)
 {
-    UINTN media = 0;
-    UINTN probed;
-    UINTN done = 0;
     UINTN i;
-
-    if (list->count == 0)
-        return;
-
-    /* The budget is spent on media only, and counted rather than taken as the
-     * first PROBE_LIMIT indices: a payload's survey is one short read off a
-     * volume that is already mounted, so it neither costs the budget anything
-     * nor may consume it. */
-    for (i = 0; i < list->count; i++) {
-        if (list->targets[i].shape == ENTRY_MEDIA)
-            media++;
-    }
-    probed = media < PROBE_LIMIT ? media : PROBE_LIMIT;
-
-    out(L"falcon-boot: probing ");
-    out_dec(probed);
-    out(L" image(s) for family and signature");
-    if (probed < media) {
-        out(L" (");
-        out_dec(media - probed);
-        out(L" left unprobed)");
-    }
-    out(L"\r\n");
 
     for (i = 0; i < list->count; i++) {
         iso_target *t = &list->targets[i];
-        iso_survey survey;
 
-        /* Before tags_build, which reads the hit. The lookup takes the
-         * entry's path, which the label still is: the tags live in their
-         * own columns and never touch it. The
-         * cost is a string compare per record, so it runs for every entry
-         * rather than only the probed ones: PROBE_LIMIT exists to bound
-         * firmware work, and there is none here.
+        /* The lookup takes the entry's path, which the label still is: the
+         * tags live in their own columns and never touch it. Every entry,
+         * because the dispatch, the `a` key and the next-boot marker all
+         * read the hit, and it costs a string compare per record.
          *
          * Not for a payload, though, and not as an optimisation: no record
          * can stand behind one (DESIGN Section 7.2). Blessing a payload signs
@@ -559,35 +520,36 @@ static void probe_entries(iso_list *list)
             (void)bless_lookup(&g_vols[t->vol], entry_label(list, i),
                                t->ent.size, &t->hit);
 
-        /* The next-boot marker is matched here, once, with the rest of the
-         * per-entry work: the value names a path on p2 and the label is that
-         * path. A compare
-         * against a path the scan found is also the only use the value ever
-         * gets - nothing indexes anything with it (DESIGN Section 6.3.1). */
+        /* The next-boot marker is matched here, once: the value names a path
+         * on p2 and the label is that path. A compare against a path the
+         * scan found is also the only use the value ever gets - nothing
+         * indexes anything with it (DESIGN Section 6.3.1). */
         if (g_next_idx >= MAX_ISOS && g_next_path[0] != '\0' &&
             nextboot_names(entry_label(list, i), g_next_path))
             g_next_idx = i;
+    }
+}
 
-        if (t->shape == ENTRY_PAYLOAD) {
-            payload_survey(&g_vols[t->vol], &t->ent, &survey);
-            t->fam = survey.family->id;
-            t->probed = 1;
-            tags_build(t, &survey);
-            continue;
-        }
-        if (done >= probed) {
-            tags_build(t, (const iso_survey *)0);
-            continue;
-        }
-        done++;
+/* Look inside one entry, once: its family, its signature and prediction,
+ * whether it is BIOS-only, and the tag columns built from them. Called by
+ * the menu when the entry's row is about to be drawn, and by anything that
+ * acts on an entry the menu has not drawn (a boot from the next-boot marker,
+ * `a` over the whole stick), so every consumer of these fields finds them
+ * filled. Silent: it runs while the menu is on screen. */
+static void target_probe(iso_target *t)
+{
+    iso_survey survey;
+
+    if (t->probed)
+        return;
+    if (t->shape == ENTRY_PAYLOAD)
+        payload_survey(&g_vols[t->vol], &t->ent, &survey);
+    else
         iso_survey_media(g_st, &g_vols[t->vol], &t->ent, t->kind, &g_stores,
                          &survey);
-        t->fam = survey.family->id;
-        t->probed = 1;
-        tags_build(t, &survey);
-        out(L".");
-    }
-    out(L"\r\n");
+    t->fam = survey.family->id;
+    t->probed = 1;
+    tags_build(t, &survey);
 }
 
 /* ---- folder view (DESIGN Section 6 stage 1) ---- */
@@ -647,9 +609,12 @@ static void up_label(CHAR16 *dst, const CHAR16 *cur)
 /* A view row's tag columns: an image row carries its list entry's, every
  * other row (folders, "..", the personal OS, firmware setup) starts with none.
  * Set on every row, because the view array is pool memory rewritten per
- * folder and a stale tag would draw on the row that inherited its slot. */
+ * folder and a stale tag would draw on the row that inherited its slot. The
+ * row starts unprobed, so the menu asks row_probe for it before drawing it,
+ * which fills an image row the target has not yet been looked inside for. */
 static void row_tags(menu_entry *row, const iso_target *from)
 {
+    row->probed = 0;
     if (from == (const iso_target *)0) {
         row->sig[0] = 0;
         row->why[0] = 0;
@@ -739,6 +704,27 @@ static UINTN view_build(const iso_list *list, const CHAR16 *cur, UINTN cur_len,
     }
 
     return n;
+}
+
+/* The menu's probe (console/menu.h): an image row's target is looked
+ * inside, once, and its tags copied onto the row; every other row keeps what
+ * view_build gave it. ctx is the list and the rows the menu call was built
+ * from. */
+typedef struct {
+    iso_list       *list;
+    const view_row *rows;
+} probe_ctx;
+
+static void row_probe(void *ctx, UINTN idx, menu_entry *e)
+{
+    const probe_ctx *pc = ctx;
+    iso_target *t;
+
+    if (pc->rows[idx].kind != VIEW_IMAGE)
+        return;
+    t = &pc->list->targets[pc->rows[idx].idx];
+    target_probe(t);
+    row_tags(e, t);
 }
 
 /* ---- entry point ---- */
@@ -903,15 +889,7 @@ static void boot_blessed(EFI_HANDLE image_handle, const CHAR16 *label,
      * family here is the loader's own from the survey, never the manifest's
      * field: the manifest is editable, and this decides how the boot is
      * staged. What may RUN is the platform's decision on either route. */
-    if (!target->probed) {
-        iso_survey survey;
-
-        iso_survey_media(g_st, &g_vols[target->vol], &target->ent,
-                         target->kind, &g_stores, &survey);
-        target->fam = survey.family->id;
-        target->bios_only = survey.uefi == UEFIBOOT_NO ? 1 : 0;
-        target->probed = 1;
-    }
+    target_probe(target);
     menu_mode(g_st, target->fam == FAMILY_BSD ? L"BLB" : L"BLS");
 
     if (target->fam == FAMILY_BSD) {
@@ -1210,9 +1188,9 @@ static BOOLEAN entry_path_ascii(const CHAR16 *label, char *out_path, UINTN cap)
 /* ---- blessing from the menu (DESIGN Section 7.5) ---- */
 
 /* What the appliance can bless from here: an ISO that is not Windows media
- * (the loader patches Windows as it boots it) and has no fresh blessing
- * already. An
- * unprobed ISO counts; the sign tool refuses what it cannot wrap. */
+ * (the loader patches Windows as it boots it), not BIOS-only, and has no
+ * fresh blessing already. The caller has looked inside it first
+ * (target_probe); the sign tool refuses what it cannot wrap. */
 static BOOLEAN blessable(const iso_target *t)
 {
     if (t->shape != ENTRY_MEDIA || t->kind != ISO_MEDIA_CD)
@@ -1247,10 +1225,29 @@ static BOOLEAN bless_from_menu(EFI_HANDLE image_handle, const iso_list *list,
     EFI_INPUT_KEY key;
     EFI_STATUS status;
     EFI_STATUS back;
-    UINTN len = 0, count = 0, i;
+    UINTN len = 0, count = 0, unprobed = 0, i;
 
     next[0] = '\0';
     menu_screen(g_st);
+    /* blessable() turns on the family and on {BIOS ONLY}, which only a look
+     * inside the medium knows, and `a` covers rows the menu never drew. The
+     * look is what the menu would have done drawing them, so the list is the
+     * one it was before the menu probed lazily. */
+    for (i = 0; i < list->count; i++) {
+        if ((all || i == pick) && !list->targets[i].probed)
+            unprobed++;
+    }
+    if (unprobed > 1) {
+        out(L"reading ");
+        out_dec(unprobed);
+        out(L" images\r\n");
+    }
+    for (i = 0; i < list->count; i++) {
+        if (all || i == pick)
+            target_probe(&list->targets[i]);
+    }
+    if (unprobed > 1)
+        menu_screen(g_st);
     for (i = 0; i < list->count; i++) {
         if ((all ? FALSE : i != pick) || !blessable(&list->targets[i]))
             continue;
@@ -1402,18 +1399,10 @@ static void boot_bios_only(const CHAR16 *label)
 static BOOLEAN boot_plain(EFI_HANDLE image_handle, const CHAR16 *label,
                           iso_target *t, boot_route route)
 {
-    /* An entry past PROBE_LIMIT was never looked inside, so nothing yet knows
-     * whether it is Windows media. Looking now costs one survey of the
-     * medium, on an explicit user action rather than at draw time. */
-    if (!t->probed) {
-        iso_survey survey;
-
-        iso_survey_media(g_st, &g_vols[t->vol], &t->ent, t->kind, &g_stores,
-                         &survey);
-        t->fam = survey.family->id;
-        t->bios_only = survey.uefi == UEFIBOOT_NO ? 1 : 0;
-        t->probed = 1;
-    }
+    /* A row the menu drew was looked inside then; one it did not (the
+     * next-boot marker's) is looked inside now, since nothing yet knows
+     * whether it is Windows media or BIOS-only. */
+    target_probe(t);
 
     /* Every route, c included: the chainload wants the UEFI boot image this
      * medium does not have, and direct wants a kernel this one's is not. */
@@ -1804,11 +1793,11 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
         pinned = 1;
 
     scan_all_volumes(&list, &vols);
-    /* Sort first: probing appends to the labels, and sorting after that would
-     * order the list by what was found rather than by path. */
+    /* Sort first: every index into targets, and the order the menu probes
+     * rows in, is the path order. */
     survey_sort(&list.survey);
     targets_build(&list);
-    probe_entries(&list);
+    resolve_entries(&list);
 
     /* The queued entry, if there was one, boots here: before the menu is ever
      * drawn, which is what makes the whole flow cost one confirmation and one
@@ -1825,6 +1814,8 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
             L"enter boot | c chain | d direct | b bless | a bless new | "
             L"esc back"
         };
+        probe_ctx pctx = { &list, rows };
+        const menu_probe probe = { row_probe, &pctx };
         UINTN shown;
         CHAR16 which = L'\r';
         INTN pick;
@@ -1837,7 +1828,8 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
          * its code. */
         menu_mode(st, (const CHAR16 *)0);
         shown = view_build(&list, cur, cur_len, pinned, view, rows);
-        pick = menu_run_keys(st, &banner, view, shown, &keys, &which);
+        pick = menu_run_probed(st, &banner, view, shown, &keys, &which,
+                               &probe);
         route = which == L'c'   ? ROUTE_CHAIN
                 : which == L'd' ? ROUTE_DIRECT
                                 : default_route();

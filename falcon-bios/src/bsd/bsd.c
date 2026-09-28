@@ -21,9 +21,11 @@
 #include <iso/vcd.h>
 #include <console/screen.h>
 #include <mem/e820.h>
+#include <linux/linux.h>
 
 #include <fs/fs.h>
 #include <media/bsdmd.h>
+#include <media/biosboot.h>
 #include <lib/string.h>
 
 /* What loader.conf names as the console. A BIOS machine publishes none of
@@ -79,20 +81,36 @@ static int iso_read(void *ctx, uint64_t off, uint64_t len, void *buf)
  * kernel always is. An ISO whose kernel cannot be read is treated as amd64,
  * the permissive ceiling: the crash it would then meet is no worse than
  * today. */
-static int loader_is_i386(void)
+static int kernel_head(uint8_t hdr[20])
 {
     fs_dir dir;
     fs_dirent le;
     fs_file lf;
+
+    return fs_lookup(&g_isovol, "/boot/kernel/kernel", &dir, &le) == FS_OK &&
+           !le.is_dir && fs_file_open(&g_isovol, &lf, &le) == FS_OK &&
+           fs_file_read(&lf, 0, 20, hdr) == FS_OK;
+}
+
+static int loader_is_i386(void)
+{
     uint8_t hdr[20];
 
-    if (fs_lookup(&g_isovol, "/boot/kernel/kernel", &dir, &le) != FS_OK ||
-        le.is_dir || fs_file_open(&g_isovol, &lf, &le) != FS_OK ||
-        fs_file_read(&lf, 0, sizeof hdr, hdr) != FS_OK)
+    if (!kernel_head(hdr))
         return 0;
     if (hdr[0] != 0x7Fu || hdr[1] != 'E' || hdr[2] != 'L' || hdr[3] != 'F')
         return 0;
     return hdr[18] == 3u && hdr[19] == 0u;
+}
+
+/* An amd64 kernel, by the rule the menu's {64-BIT ONLY} reads
+ * (media/biosboot.h). */
+static int kernel_is_amd64(void)
+{
+    uint8_t hdr[20];
+
+    return kernel_head(hdr) && biosboot_elf_is_64(hdr, sizeof hdr) ==
+                                   BIOSBOOT_YES;
 }
 
 /* Is there one run of usable memory below the loader's ceiling that the whole
@@ -170,6 +188,18 @@ int bsd_boot(bios_disk *d, fs_vol *p2, const part_entry *p2part,
      * real failure rather than a cue to chainload. */
     if (not_bsd != (int *)0)
         *not_bsd = 0;
+
+    /* Asked here rather than found out, as linux.c asks before a 64-bit
+     * kernel: an amd64 FreeBSD kernel on a processor without long mode dies
+     * after the memory disk is loaded, with nothing on the screen that says
+     * why. The medium's own loader would start the same kernel, so this is
+     * a refusal, not a cue to chainload. */
+    r->stage = "checking the processor";
+    if (kernel_is_amd64() && !linux_cpu_is_64()) {
+        r->advice = "this image needs a 64-bit processor, and this one has "
+                    "no 64-bit mode.";
+        return -1;
+    }
 
     r->stage = "checking memory for the image";
     if (!staging_fits(iso->size)) {

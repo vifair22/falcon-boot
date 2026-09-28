@@ -44,6 +44,7 @@ STICK_BIOS += $(BIOS_MOD_bytes)        # the drivers read parts of a 4Kn sector
 STICK_BIOS += $(CORE_PART) $(CORE_FS) $(CORE_MEDIA) $(CORE_PE) $(CORE_CRYPTO)
 STICK_BIOS += $(CORE_LUKS) $(CORE_WIM) $(CORE_LIBC) $(CORE_UCS2) $(CORE_TUI)
 STICK_BIOS += $(CORE)/manifest/manifest.c
+STICK_BIOS += $(CORE_BIOSBOOT)         # the {EFI ONLY} and {64-BIT ONLY} tags
 STICK_BIOS += $(CORE_IDENT) $(CORE_IDENT_FS)  # the records, and the library's ID for the extent map
 
 $(eval $(call bios_app,stick,$(BIOS_STAGE3),\

@@ -73,6 +73,7 @@ int run_fat_tests(void);
 int run_medium_tests(void);
 int run_bootfs_tests(void);
 int run_uefiboot_tests(void);
+int run_biosboot_tests(void);
 int run_blesslist_tests(void);
 int run_wim_tests(void);
 int run_hookcore_tests(void);

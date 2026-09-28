@@ -385,20 +385,83 @@ static void draw_banner(const tui_menu *m, const screen_banner *banner)
     run(m->banner_row, m->left, end, m->width, TUI_ATTR_TITLE);
 }
 
-static void paint_slot(const tui_menu *m, const uint16_t *const *labels,
-                       size_t count, size_t slot, size_t top, size_t sel,
-                       const uint16_t *empty)
+/* What one menu call draws, bundled because paint_slot is called from two
+ * places and the alternative is a ten-argument function. sig_w and why_w
+ * are the widest tags in the window last prepared (window_prepare). */
+typedef struct {
+    tui_menu               m;
+    const uint16_t *const *labels;
+    size_t                 count;
+    const screen_rows     *rows;
+    const uint16_t        *empty;
+    size_t                 sig_w;
+    size_t                 why_w;
+} menu_view;
+
+static size_t len16(const uint16_t *s)
 {
+    size_t n = 0;
+
+    if (s == (const uint16_t *)0)
+        return 0;
+    while (s[n] != 0)
+        n++;
+    return n;
+}
+
+/* Before a window is painted whole: the rows in it that have not been
+ * probed are, and the tag columns are sized to the window, so a page is
+ * laid out by what is on it. */
+static void window_prepare(menu_view *v, size_t top)
+{
+    size_t i;
+
+    v->sig_w = 0;
+    v->why_w = 0;
+    if (v->rows == (const screen_rows *)0 ||
+        v->rows->tags == (screen_tags *)0)
+        return;
+    for (i = top; i < top + v->m.win && i < v->count; i++) {
+        screen_tags *t = &v->rows->tags[i];
+        size_t a;
+        size_t b;
+
+        if (!t->probed && v->rows->probe != (screen_probe_fn)0)
+            v->rows->probe(v->rows->ctx, i, t);
+        t->probed = 1;
+        a = len16(t->sig);
+        b = len16(t->why);
+        if (a > v->sig_w)
+            v->sig_w = a;
+        if (b > v->why_w)
+            v->why_w = b;
+    }
+}
+
+static void paint_slot(const menu_view *v, size_t slot, size_t top,
+                       size_t sel)
+{
+    const tui_menu *m = &v->m;
     size_t idx = top + slot;
 
-    if (idx < count) {
-        tui_row_entry(g_row, m->list_width, labels[idx], (const uint16_t *)0,
-                      (const uint16_t *)0, 0, 0);
+    if (idx < v->count) {
+        const screen_tags *t = (v->rows != (const screen_rows *)0 &&
+                                v->rows->tags != (screen_tags *)0)
+                                   ? &v->rows->tags[idx]
+                                   : (const screen_tags *)0;
+
+        tui_row_entry(g_row, m->list_width, v->labels[idx],
+                      t != (const screen_tags *)0 ? t->sig
+                                                  : (const uint16_t *)0,
+                      t != (const screen_tags *)0 ? t->why
+                                                  : (const uint16_t *)0,
+                      v->sig_w, v->why_w);
         emit_row(m->list_top + slot, m->list_left,
-                 tui_entry_attr(0, idx == sel));
+                 tui_entry_attr(t != (const screen_tags *)0 && t->caution,
+                                idx == sel));
     } else {
         tui_row_text(g_row, m->list_width,
-                     (idx == 0) ? empty : (const uint16_t *)0);
+                     (idx == 0) ? v->empty : (const uint16_t *)0);
         emit_row(m->list_top + slot, m->list_left, TUI_ATTR_TEXT);
     }
 }
@@ -472,12 +535,27 @@ static void paint_countdown(const tui_menu *m, unsigned left)
     emit_row(m->hint_row, m->left, TUI_ATTR_TEXT);
 }
 
+static int menu_loop(const screen_banner *banner,
+                     const uint16_t *const *labels, size_t count,
+                     const screen_rows *rows, const char *keys,
+                     const uint16_t *hint, int *which,
+                     const uint16_t *empty, size_t sel, unsigned seconds);
+
 int screen_menu(const screen_banner *banner, const uint16_t *const *labels,
                 size_t count, const char *keys, const uint16_t *hint,
                 int *which)
 {
-    return screen_menu_timed(banner, labels, count, keys, hint, which,
-                             tui_list_empty, 0, 0);
+    return menu_loop(banner, labels, count, (const screen_rows *)0, keys,
+                     hint, which, tui_list_empty, 0, 0);
+}
+
+int screen_menu_tagged(const screen_banner *banner,
+                       const uint16_t *const *labels, size_t count,
+                       const screen_rows *rows, const char *keys,
+                       const uint16_t *hint, int *which)
+{
+    return menu_loop(banner, labels, count, rows, keys, hint, which,
+                     tui_list_empty, 0, 0);
 }
 
 int screen_menu_timed(const screen_banner *banner,
@@ -485,7 +563,18 @@ int screen_menu_timed(const screen_banner *banner,
                       const char *keys, const uint16_t *hint, int *which,
                       const uint16_t *empty, size_t sel, unsigned seconds)
 {
-    tui_menu m;
+    return menu_loop(banner, labels, count, (const screen_rows *)0, keys,
+                     hint, which, empty, sel, seconds);
+}
+
+static int menu_loop(const screen_banner *banner,
+                     const uint16_t *const *labels, size_t count,
+                     const screen_rows *rows, const char *keys,
+                     const uint16_t *hint, int *which,
+                     const uint16_t *empty, size_t sel, unsigned seconds)
+{
+    menu_view v;
+    tui_menu *mp = &v.m;
     size_t top = 0;
     size_t painted = 0;
     int full = 1;
@@ -498,27 +587,32 @@ int screen_menu_timed(const screen_banner *banner,
     if (count == 0)
         seconds = 0;
 
-    tui_menu_layout(&g_frame, count, &m);
+    v.labels = labels;
+    v.count = count;
+    v.rows = rows;
+    v.empty = empty;
+    tui_menu_layout(&g_frame, count, mp);
     screen_cursor(0);
     clear();
 
-    draw_banner(&m, banner);
-    tui_row_text(g_row, m.width, line);
-    emit_row(m.hint_row, m.left, TUI_ATTR_TEXT);
+    draw_banner(mp, banner);
+    tui_row_text(g_row, mp->width, line);
+    emit_row(mp->hint_row, mp->left, TUI_ATTR_TEXT);
 
     for (;;) {
         size_t i;
         int key;
 
-        if (tui_menu_scroll(&top, sel, m.win))
+        if (tui_menu_scroll(&top, sel, mp->win))
             full = 1;
         if (full) {
-            for (i = 0; i < m.win; i++)
-                paint_slot(&m, labels, count, i, top, sel, empty);
+            window_prepare(&v, top);
+            for (i = 0; i < mp->win; i++)
+                paint_slot(&v, i, top, sel);
             full = 0;
         } else if (painted != sel) {
-            paint_slot(&m, labels, count, painted - top, top, sel, empty);
-            paint_slot(&m, labels, count, sel - top, top, sel, empty);
+            paint_slot(&v, painted - top, top, sel);
+            paint_slot(&v, sel - top, top, sel);
         }
         painted = sel;
 
@@ -545,13 +639,13 @@ int screen_menu_timed(const screen_banner *banner,
                 if (left > seconds)
                     left = seconds;
                 if (left != shown) {
-                    paint_countdown(&m, left);
+                    paint_countdown(mp, left);
                     shown = left;
                 }
             }
             seconds = 0;
-            tui_row_text(g_row, m.width, line);
-            emit_row(m.hint_row, m.left, TUI_ATTR_TEXT);
+            tui_row_text(g_row, mp->width, line);
+            emit_row(mp->hint_row, mp->left, TUI_ATTR_TEXT);
         }
 
         /* Drain the queue, then paint once: a held arrow arrives as a run

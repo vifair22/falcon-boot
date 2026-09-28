@@ -139,4 +139,12 @@ typedef int (*elt_read_fn)(void *ctx, uint64_t off, uint64_t len, void *buf);
  * A catalog whose every entry is non-bootable therefore succeeds with n == 0. */
 int elt_parse(elt_catalog *out, elt_read_fn read, void *ctx, uint64_t size);
 
+/* The entry a BIOS boots: the default entry unless it says 0xEF, else the
+ * first entry that says x86. The platform byte is reported rather than
+ * trusted for filtering (the header comment says why), so the default entry
+ * comes first and the platform is only a fallback. NULL when the catalog
+ * holds no BIOS boot image. falcon-bios's virtual CD serves this entry, and
+ * media/biosboot.c judges a medium by it, so both read one rule. */
+const elt_entry *elt_bios_entry(const elt_catalog *cat);
+
 #endif /* FALCON_ELTORITO_H */

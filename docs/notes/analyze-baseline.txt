@@ -157,7 +157,7 @@
 #       the only path that reaches the join. An API-output modelling limit.
 #
 # ==========================================================================
-# 5. -Wanalyzer-out-of-bounds in wbuf_ucs2 (1 entry)
+# 5. -Wanalyzer-out-of-bounds in wbuf_ucs2 (0 entries: a scoped pragma)
 # ==========================================================================
 #
 # apps/stick/efi_main.c, the copy loop behind every menu tag:
@@ -177,12 +177,14 @@
 # the loop, and the analyzer has lost the literal's extent by the end of it.
 # It appeared when the survey moved into falcon-core (media/survey.c) and
 # the call graph in front of the loop changed shape; the loop itself has not
-# been touched.
+# been touched. When the rows came to be probed lazily (2026-09-28) the one
+# entry became seventeen, one per path into the loop, so the finding is now
+# silenced where it arises, with a scoped pragma on wbuf_ucs2 (the pattern
+# falcon-cli/src/common/proc.c uses), rather than counted here.
 
 fanalyzer	falcon-cli/src/sign/util.c	-Wanalyzer-fd-leak	leak of file descriptor 'dup2(fds[1], 1)' [CWE-775]
 fanalyzer	falcon-cli/src/sign/util.c	-Wanalyzer-fd-leak	leak of file descriptor 'dup2(out_fd, 1)' [CWE-775]
 fanalyzer	falcon-cli/src/sign/util.c	-Wanalyzer-fd-leak	leak of file descriptor 'dup2(out_fd, 1)' [CWE-775]
-fanalyzer	apps/stick/efi_main.c	-Wanalyzer-out-of-bounds	buffer over-read [CWE-126]
 fanalyzer	falcon-core/src/crypto/sha256.c	-Wanalyzer-use-of-uninitialized-value	use of uninitialized value 'w[<unknown>]' [CWE-457]
 fanalyzer	falcon-core/src/crypto/sha512.c	-Wanalyzer-use-of-uninitialized-value	use of uninitialized value 'w[<unknown>]' [CWE-457]
 tidy	falcon-cli/src/mkstick/inspect.c	bugprone-narrowing-conversions	narrowing conversion from 'int' to signed type 'char' is implementation-defined

@@ -49,6 +49,10 @@ CORE_MEDIA    := $(addprefix $(CORE)/media/,family.c cpio.c osrel.c bootcfg.c \
 # {BIOS ONLY} tag). Apart from CORE_MEDIA because only the UEFI stick asks,
 # and falcon-bios links CORE_MEDIA whole.
 CORE_UEFIBOOT := $(CORE)/media/uefiboot.c
+# Whether falcon-bios can boot a medium at all, and whether it needs a 64-bit
+# processor (the BIOS menu's {EFI ONLY} and {64-BIT ONLY}). Apart from
+# CORE_MEDIA for the same reason: only the BIOS stick asks.
+CORE_BIOSBOOT := $(CORE)/media/biosboot.c
 # STATION.INI (DESIGN Section 13.7): the station's configuration, one
 # parser for both loaders and the installer's writer. Apart from CORE_MEDIA
 # because only the station and mkstick read it.
@@ -116,6 +120,12 @@ test-wim:
 test-uefiboot:
 	falcon-core/tools/mk-test-uefiboot.sh
 
+# The media biosboot_test.c judges: EFI-only and BIOS-bootable ISOs, and
+# Linux kernels of each width, Linux-, BSD- and Windows-shaped. xorriso and
+# mtools, no sudo.
+test-biosboot:
+	falcon-core/tools/mk-test-biosboot.sh
+
 test-luks:
 	falcon-core/tools/mk-test-luks.sh
 
@@ -126,7 +136,7 @@ test-trust: $(EFI)
 	falcon-core/tools/mk-test-trust.sh
 
 .PHONY: test-image test-ext4 test-fat test-luks test-trust test-iso9660 test-udf \
-	test-wim test-uefiboot
+	test-wim test-uefiboot test-biosboot
 
 # ---- tests ----
 
@@ -135,7 +145,7 @@ CORE_TESTS := $(addprefix falcon-core/tests/,main.c \
 	exfat_fixture_test.c cpio_test.c family_test.c manifest_test.c \
 	crypto_test.c json_test.c luks_test.c ext4_test.c fs_test.c \
 	iso9660_test.c udf_test.c udfedit_test.c media_fs_test.c bootcfg_test.c extmap_test.c \
-	hookcmd_test.c grubcfg_test.c bsdmd_test.c xpsetup_test.c eltorito_test.c fat_test.c medium_test.c bootfs_test.c uefiboot_test.c blesslist_test.c wim_test.c part_test.c \
+	hookcmd_test.c grubcfg_test.c bsdmd_test.c xpsetup_test.c eltorito_test.c fat_test.c medium_test.c bootfs_test.c uefiboot_test.c biosboot_test.c blesslist_test.c wim_test.c part_test.c \
 	osrel_test.c pe_test.c trust_test.c survey_test.c tui_test.c shelf_test.c \
 	nextboot_test.c stationini_test.c strows_test.c vbr_test.c gz_test.c table_test.c ident_test.c identfs_test.c extfind_test.c \
 	rebl_test.c kndev.c)
@@ -143,7 +153,7 @@ CORE_TESTS := $(addprefix falcon-core/tests/,main.c \
 CORE_UUT := $(CORE_CRYPTO) $(CORE_FS) $(CORE_LUKS) $(CORE_PART) $(CORE_IDENT) \
 	$(CORE_IDENT_FS) $(CORE)/media/extfind.c $(CORE_BLK) $(CORE_PE) \
 	$(CORE_WIM) $(CORE_UCS2) $(CORE_TUI) \
-	$(CORE_TRUST) $(CORE_MEDIA) $(CORE_UEFIBOOT) $(CORE_STATIONINI) $(CORE_STROWS) $(CORE_VBR) $(CORE_MANIFEST) \
+	$(CORE_TRUST) $(CORE_MEDIA) $(CORE_UEFIBOOT) $(CORE_BIOSBOOT) $(CORE_STATIONINI) $(CORE_STROWS) $(CORE_VBR) $(CORE_MANIFEST) \
 	$(CORE_MANIFEST_WRITE) $(CORE_GZ)
 
 $(eval $(call test_bin,core,$(CORE_TESTS) $(CORE_UUT)))

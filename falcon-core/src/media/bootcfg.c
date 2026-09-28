@@ -1477,6 +1477,11 @@ static int entry_bootable(const bootcfg_entry *e)
     return 1;
 }
 
+int bootcfg_entry_bootable(const bootcfg_entry *e)
+{
+    return e != (const bootcfg_entry *)0 && entry_bootable(e);
+}
+
 int bootcfg_takes_iso_path(const bootcfg_entry *e)
 {
     return e != (const bootcfg_entry *)0 &&

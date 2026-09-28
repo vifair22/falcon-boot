@@ -58,8 +58,12 @@ typedef struct {
     const menu_entry *entries;
     UINTN             count;
     tui_menu          m;
-    UINTN             sig_w;     /* widest sig tag in this list */
-    UINTN             why_w;     /* widest why tag in this list */
+    UINTN             sig_w;     /* widest sig tag in the window on screen */
+    UINTN             why_w;     /* widest why tag in the window on screen */
+    /* The same rows, writable, and what fills their tags, for
+     * menu_run_probed; NULL for every other caller. */
+    menu_entry       *rows;
+    const menu_probe *probe;
 } menu_view;
 
 static void out(EFI_SYSTEM_TABLE *st, CHAR16 *s)
@@ -422,17 +426,68 @@ static void countdown_stop(EFI_SYSTEM_TABLE *st, EFI_EVENT *ev)
     *ev = (EFI_EVENT)0;
 }
 
+/* Before a window is painted whole: the rows in it that have not been
+ * probed are, and the tag columns are sized to the window, so a page is laid
+ * out by what is on it. */
+static void window_prepare(menu_view *v, UINTN top)
+{
+    UINTN i;
+
+    v->sig_w = 0;
+    v->why_w = 0;
+    for (i = top; i < top + v->m.win && i < v->count; i++) {
+        UINTN a;
+        UINTN b;
+
+        if (v->rows != (menu_entry *)0 && !v->rows[i].probed) {
+            if (v->probe != (const menu_probe *)0 &&
+                v->probe->fn != (menu_probe_fn)0)
+                v->probe->fn(v->probe->ctx, i, &v->rows[i]);
+            v->rows[i].probed = 1;
+        }
+        a = ucs2_len(v->entries[i].sig);
+        b = ucs2_len(v->entries[i].why);
+        if (a > v->sig_w)
+            v->sig_w = a;
+        if (b > v->why_w)
+            v->why_w = b;
+    }
+}
+
+static INTN run(EFI_SYSTEM_TABLE *st, const menu_banner *banner,
+                const menu_entry *entries, menu_entry *rows, UINTN count,
+                const menu_keys *keys, CHAR16 *which, UINTN sel,
+                UINTN seconds, const menu_probe *probe);
+
 INTN menu_run_keys(EFI_SYSTEM_TABLE *st, const menu_banner *banner,
                    const menu_entry *entries, UINTN count,
                    const menu_keys *keys, CHAR16 *which)
 {
-    return menu_run_timed(st, banner, entries, count, keys, which, 0, 0);
+    return run(st, banner, entries, (menu_entry *)0, count, keys, which, 0,
+               0, (const menu_probe *)0);
 }
 
 INTN menu_run_timed(EFI_SYSTEM_TABLE *st, const menu_banner *banner,
                     const menu_entry *entries, UINTN count,
                     const menu_keys *keys, CHAR16 *which, UINTN sel,
                     UINTN seconds)
+{
+    return run(st, banner, entries, (menu_entry *)0, count, keys, which, sel,
+               seconds, (const menu_probe *)0);
+}
+
+INTN menu_run_probed(EFI_SYSTEM_TABLE *st, const menu_banner *banner,
+                     menu_entry *entries, UINTN count, const menu_keys *keys,
+                     CHAR16 *which, const menu_probe *probe)
+{
+    return run(st, banner, entries, entries, count, keys, which, 0, 0,
+               probe);
+}
+
+static INTN run(EFI_SYSTEM_TABLE *st, const menu_banner *banner,
+                const menu_entry *entries, menu_entry *rows, UINTN count,
+                const menu_keys *keys, CHAR16 *which, UINTN sel,
+                UINTN seconds, const menu_probe *probe)
 {
     menu_view v;
     UINTN top = 0, painted = 0;
@@ -456,23 +511,12 @@ INTN menu_run_timed(EFI_SYSTEM_TABLE *st, const menu_banner *banner,
     v.st = st;
     v.entries = entries;
     v.count = count;
+    v.rows = rows;
+    v.probe = probe;
     frame_ensure(st);
     tui_menu_layout(&g_frame.f, count, &v.m);
     v.sig_w = 0;
     v.why_w = 0;
-    {
-        UINTN i;
-
-        for (i = 0; i < count; i++) {
-            UINTN a = ucs2_len(entries[i].sig);
-            UINTN b = ucs2_len(entries[i].why);
-
-            if (a > v.sig_w)
-                v.sig_w = a;
-            if (b > v.why_w)
-                v.why_w = b;
-        }
-    }
 
     st->ConOut->EnableCursor(st->ConOut, FALSE);
     /* The one ClearScreen per screen, and what blanks the margins. Nothing
@@ -506,6 +550,7 @@ INTN menu_run_timed(EFI_SYSTEM_TABLE *st, const menu_banner *banner,
             full = TRUE;
 
         if (full) {
+            window_prepare(&v, top);
             for (i = 0; i < v.m.win; i++)
                 paint_slot(&v, i, top, sel);
             full = FALSE;

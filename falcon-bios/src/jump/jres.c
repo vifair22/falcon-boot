@@ -205,7 +205,7 @@ uint8_t jres_release(void)
     bios_puts("falcon-bios: released falcon jump's resident for drive ");
     bios_put_hex64(drive);
     bios_puts(" at ");
-    bios_put_hex64((uint32_t)seg * 16u);
+    bios_put_hex64((uint64_t)seg * 16u);
     bios_puts("\n");
     return drive;
 }
