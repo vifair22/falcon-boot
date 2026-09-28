@@ -8,7 +8,9 @@
 # Before the install:
 #
 #   p1  ESP                 FAT32, empty
-#   p2  falcon shelf GUID   LUKS2, pbkdf2 at 200000 iterations, ext4,
+#   p2  falcon shelf GUID   LUKS2, argon2id (64 MiB, time 4, 4 lanes:
+#                           cryptsetup's shape, its memory pinned so the
+#                           rig's machines can meet it), ext4,
 #                           /uki/personal.efi (the sd-stub fixture UKI,
 #                           signed) and the test MOK pair
 #   p3  Linux LUKS          LUKS2, argon2id, empty
@@ -111,7 +113,8 @@ sudo udevadm settle 2>/dev/null || sleep 1
 sudo mkfs.fat -F 32 -n ESP "${LOOP}p1" >/dev/null
 
 printf '%s' "$PASS" | sudo cryptsetup luksFormat --type luks2 \
-    --pbkdf pbkdf2 --pbkdf-force-iterations 200000 --batch-mode "${LOOP}p2" -
+    --pbkdf argon2id --pbkdf-memory 65536 --pbkdf-force-iterations 4 \
+    --pbkdf-parallel 4 --batch-mode "${LOOP}p2" -
 MAPPER=falcon-test-station
 printf '%s' "$PASS" | sudo cryptsetup open "${LOOP}p2" "$MAPPER" -
 sudo mkfs.ext4 -q -L FALCON-UKI "/dev/mapper/$MAPPER"

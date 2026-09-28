@@ -6,9 +6,11 @@
 #
 #   uefi-stick     the rig stick (mk-test-stick.sh) as the only disk under
 #                  OVMF, Secure Boot off: the menu lists its library, the
-#                  personal OS unlocks, and the fixture UKI reports the
-#                  passphrase credential and falcon.ident.cred carrying the
-#                  stick's install ID
+#                  personal OS unlocks (p3 is argon2id at the stick's cost),
+#                  and the fixture UKI reports the passphrase credential and
+#                  falcon.ident.cred carrying the stick's install ID. Every
+#                  unlocking case's line gives the time from "unlocking..."
+#                  to the next screen, read off the serial log
 #   uefi-stick-sb  the same under Secure Boot, the test MOK enrolled
 #   bios-stick     the same image under SeaBIOS: stage 2 reports the boot
 #                  partition, stage 3 the install, the library and the
@@ -66,6 +68,11 @@
 #                  BIOS-only one and the 64-bit-only one are not (this
 #                  processor has long mode), and choosing the first shows its
 #                  page and returns to the menu
+#   kdf-memory-uefi, kdf-memory-bios
+#                  a stick whose p3 argon2id slot asks for 512 MiB, in a
+#                  384 MiB machine: the passphrase is refused with the page
+#                  that says how much the slot needs and how much is free
+#                  (docs/notes/argon2-totp.md Section 1)
 #   64-only-bios32 the same stick under SeaBIOS on a Pentium III (no long
 #                  mode): an ISO whose every kernel is 64-bit is listed with
 #                  {64-BIT ONLY}, a multi-arch one (a 64-bit and a 32-bit
@@ -89,11 +96,14 @@ PASS="${FALCON_TEST_PASS:-falcon-test}"
 PASS_B=falcon-other
 MKSTICK=build/bin/falcon-boot-mkstick
 TIMEOUT=180
+# The machine's memory, in MiB; the refusal cases boot a smaller one.
+MEM=1024
 
 # Fixed install IDs, so a log names the same install every run.
 ID_A=c0de0000000000000000000000000a0a
 ID_B=c0de0000000000000000000000000b0b
 ID_F=c0de0000000000000000000000000f0f
+ID_K=c0de0000000000000000000000000c0c
 
 mkdir -p "$R"
 
@@ -162,6 +172,9 @@ build_sticks() {
     STICK_ID=$ID_B TEST_STICK_IMG=$R/stick-b.img FALCON_TEST_PASS=$PASS_B \
         STICK_ISOS="second-stick.iso" \
         falcon-efi/tools/mk-test-stick.sh --no-labels >"$R/stick-b.build" 2>&1
+    STICK_ID=$ID_K TEST_STICK_IMG=$R/stick-kdf.img \
+        P3_KDF_MEMORY_KIB=$((512 * 1024)) STICK_ISOS="kdf-stick.iso" \
+        falcon-efi/tools/mk-test-stick.sh --no-labels >"$R/stick-kdf.build" 2>&1
 }
 
 # MBR: p1 FAT32 (0x0C), p2 exFAT (0x07), p3 extended holding p5 FAT16
@@ -373,7 +386,7 @@ boot() {
     bios32) fwargs=(-machine pc); cpu=pentium3 ;;
     esac
     rm -f "$R/serial.log" "$R/mon.sock"
-    timeout "$TIMEOUT" qemu-system-x86_64 "${fwargs[@]}" -m 1024 \
+    timeout "$TIMEOUT" qemu-system-x86_64 "${fwargs[@]}" -m "$MEM" \
         -enable-kvm -cpu "$cpu" -display none -net none "${args[@]}" \
         -serial "file:$R/serial.log" \
         -monitor "unix:$R/mon.sock,server,nowait" >"$R/qemu.log" 2>&1 &
@@ -406,10 +419,15 @@ pos_unlock() {
         { POS_WHY="no passphrase prompt"; return 1; }
     sleep 0.5
     send_keys "$PASS"
-    for (( i = 0; i < 300; i++ )); do
+    UNLOCK_S=
+    local t0=
+    wait_for "unlocking..." 10 && t0=$(date +%s.%N)
+    for (( i = 0; i < 3000; i++ )); do
         log_text "$R/serial.log" | grep -aq 'personal\.efi\|FALCON-UKI-INIT' && break
-        sleep 0.1
+        sleep 0.01
     done
+    [[ -n "$t0" ]] && UNLOCK_S=$(awk -v a="$t0" -v b="$(date +%s.%N)" \
+        'BEGIN { printf "%.2f", b - a }')
     sleep 1
     if ! log_text "$R/serial.log" | grep -aq FALCON-UKI-INIT; then
         rows=$(log_text "$R/serial.log" | grep -aoE '[A-Za-z ]+\([a-z0-9-]+\.efi\)' |
@@ -426,7 +444,10 @@ pos_unlock() {
     return 0
 }
 
-has() { log_text "$R/serial.log" | grep -aqF -- "$1"; }
+# grep reads to the end rather than -q: under pipefail, a grep that quits at
+# its first match leaves log_text writing into a closed pipe, and the SIGPIPE
+# fails the check on a log that has the line.
+has() { log_text "$R/serial.log" | grep -aF -- "$1" >/dev/null; }
 
 FAILED=0
 result() {      # result CASE OK DETAIL
@@ -474,7 +495,7 @@ stick_case() {  # stick_case CASE FIRMWARE ID ISO ABSENT SEEN DISK...
     fi
     halt
     if [[ -z "$why" ]]; then
-        result "$c" 1 "listed $iso; UKI got both credentials, install ${id:0:8}..."
+        result "$c" 1 "listed $iso; UKI got both credentials, install ${id:0:8}...; unlock ${UNLOCK_S:-?} s"
     else
         result "$c" 0 "$why"
     fi
@@ -511,6 +532,46 @@ case_4kn_marker() { # case_4kn_marker CASE
     fi
     if [[ -z "$why" ]]; then
         result "$1" 1 "4096-byte marker taken and cleared; the personal OS booted from it"
+    else
+        result "$1" 0 "$why"
+    fi
+}
+
+# The refusal page: a slot asking for more memory than the machine has.
+case_kdf_memory() { # case_kdf_memory CASE FIRMWARE
+    local why=
+    MEM=384
+    boot "$2" "$R/stick-kdf.img:boot"
+    MEM=1024
+    wait_for "kdf-stick.iso" 90 || why="the menu never listed kdf-stick.iso"
+    if [[ -z "$why" ]]; then
+        wait_for "Personal OS (encrypted)" 30 || why="no Personal OS row"
+    fi
+    if [[ -z "$why" ]]; then
+        sleep 1
+        mon "sendkey ret"
+        wait_for "passphrase for the encrypted partition" 30 ||
+            why="no passphrase prompt"
+    fi
+    if [[ -z "$why" ]]; then
+        sleep 0.5
+        send_keys "$PASS"
+        wait_for "press any key to return to the menu" 30 ||
+            why="no failure page"
+    fi
+    if [[ -z "$why" ]]; then
+        has "failed while unlocking the encrypted partition" ||
+            why="the page does not name the unlock"
+        log_text "$R/serial.log" | grep -aqE \
+            "this keyslot needs 512 MiB of memory; this machine has [0-9]+ MiB free\." ||
+            why="${why:-the page does not say the memory}"
+        has "FALCON-UKI-INIT" && why="${why:-a UKI started}"
+    fi
+    local said
+    said=$(log_text "$R/serial.log" | grep -aoE "this machine has [0-9]+ MiB free" | head -1)
+    halt
+    if [[ -z "$why" ]]; then
+        result "$1" 1 "refused: needs 512 MiB; ${said#this machine }"
     else
         result "$1" 0 "$why"
     fi
@@ -742,7 +803,8 @@ CASES=("$@")
            mbr-disk-uefi mbr-disk-bios foreign-uefi foreign-bios 4kn-uefi
            4kn-bios 4kn-bios-marker station-uefi station-bios
            station-stick-uefi station-stick-bios bios-only-uefi
-           bios-only-uefi-sb efi-only-bios 64-only-bios32)
+           bios-only-uefi-sb efi-only-bios 64-only-bios32 kdf-memory-uefi
+           kdf-memory-bios)
 
 for c in "${CASES[@]}"; do
     case $c in
@@ -770,6 +832,8 @@ for c in "${CASES[@]}"; do
         stick_case "$c" bios "$(cat "$R/stick-4kn.id")" fourk.iso "" \
             "sector size 4096" "$R/stick-4kn.img:boot:4k" ;;
     4kn-bios-marker) case_4kn_marker "$c" ;;
+    kdf-memory-uefi) case_kdf_memory "$c" uefi ;;
+    kdf-memory-bios) case_kdf_memory "$c" bios ;;
     station-uefi)  case_station "$c" uefi ;;
     station-bios)  case_station "$c" bios ;;
     station-stick-uefi) case_station_stick "$c" uefi ;;

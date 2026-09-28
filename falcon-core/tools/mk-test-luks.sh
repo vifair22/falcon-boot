@@ -7,29 +7,29 @@
 # them with our own code. That is the same argument
 # falcon-core/tools/mk-test-exfat.sh makes for mkfs.exfat.
 #
-# Two images, because the loader has two distinct answers to give:
+# Two images, one per KDF the loaders unlock:
 #
 #   build/test-luks.img        48 MiB, LUKS2, aes-xts-plain64, --key-size 512,
 #                              one pbkdf2 keyslot, passphrase "falcon-test".
 #                              An ordinary ext4 filesystem inside it with two
 #                              known files, so the ext4 driver can be stacked
 #                              on luks_read exactly as the loader stacks it.
-#                              This is the shape DESIGN Section 3 mandates for
-#                              p3 and the one that must unlock.
 #
 #   build/test-luks-argon.img  20 MiB, LUKS2, argon2id keyslot, no filesystem.
-#                              The loader must recognise this and report
-#                              LUKS_ERR_UNSUPPORTED_KDF with the slot named,
-#                              never misread it as a wrong passphrase. Empty
-#                              because nothing past the keyslot is ever
-#                              reached.
+#                              The kind of keyslot DESIGN Section 3 gives p3
+#                              and cryptsetup gives a station's shelf: the
+#                              tests unlock it with the caller's memory, and
+#                              refuse it with LUKS_ERR_KDF_MEMORY when that
+#                              memory is not supplied. Empty because the
+#                              keyslot is all that is tested.
 #
 # ITERATION COUNT. --pbkdf-force-iterations 10000 is deliberately far below
 # anything that belongs on real media: cryptsetup's own floor for pbkdf2 is
 # 1000 and its benchmarked default is in the millions. 10000 keeps a fixture
-# build and every unlock in the test suite down to milliseconds. mkstick pins
-# the real p3 count by benchmark, and nothing here is evidence about that
-# number; this only exercises the code path.
+# build and every unlock in the test suite down to milliseconds. The argon2id
+# slot is likewise far below the stick's cost (mkstick.h, MKS_STICK_KDF_*);
+# nothing here is evidence about that number, this only exercises the code
+# path.
 #
 # The passphrase is a literal in this script and in the tests. That is correct
 # for a throwaway fixture and must never be copied anywhere near a real
@@ -177,9 +177,9 @@ rm -f "$ARGON_IMG"
 truncate -s "${ARGON_SIZE_MIB}M" "$ARGON_IMG"
 
 # Default argon2id parameters are benchmarked against the builder's machine
-# and would make this the slowest step in the whole fixture build for no
-# benefit: the loader refuses the slot without ever running the KDF, so only
-# the recorded type and parameters matter.
+# and would make this the slowest step in the whole fixture build, and every
+# test that unlocks it, for no benefit: small parameters exercise the same
+# code.
 printf '%s' "$PASS" | sudo cryptsetup luksFormat \
     --type luks2 \
     --cipher aes-xts-plain64 \

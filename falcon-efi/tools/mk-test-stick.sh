@@ -13,7 +13,8 @@
 #                             reserved sectors
 #   p2  ISOs  exFAT   64 MiB  two fake ISOs, plus the real payload ISO if built,
 #                             and /.falcon (role library)
-#   p3  UKI   LUKS2   64 MiB  pbkdf2 keyslot and a falcon token (role shelf),
+#   p3  UKI   LUKS2   64 MiB  argon2id keyslot at the stick's fixed cost and a
+#                             falcon token (role shelf),
 #                             ext4 inside, /uki/*.efi
 #   p4  root  LUKS2   32 MiB  argon2id keyslot, deliberately empty
 #   p5  BIOS  EF02            stage 2 (mkstick bios --reserve); stage 1 in LBA 0
@@ -22,11 +23,11 @@
 # and the BIOS stages are put on by `mkstick bios`, so the same image boots
 # under OVMF and under SeaBIOS (DESIGN Section 3.3).
 #
-# p3's keyslot is pbkdf2 with a pinned iteration count because DESIGN Section 3
-# mandates it: argon2id is memory-hard and brutal single-threaded in EFI-land.
-# p4 is here precisely so the loader's probe-and-skip is tested honestly rather
-# than assumed: it is a genuine LUKS2 volume that our in-EFI unlock cannot open,
-# so the scan has to recognise it and leave it alone without prompting for it.
+# p3's keyslot is argon2id at the cost mkstick create gives a stick (DESIGN
+# Section 3), read out of falcon-cli/src/mkstick/mkstick.h so the rig and the
+# product cannot drift apart. p4 is here so the loader's scan is tested
+# honestly: a genuine LUKS2 volume with no record, which the scan has to leave
+# alone without prompting for it.
 #
 # /uki holds two images so both halves of the Secure Boot story are in one
 # fixture: personal.efi signed with the test MOK (the one that must boot) and
@@ -60,6 +61,9 @@
 #                        "archlinux-fake.iso systemrescue-fake.iso"); the
 #                        core rig names a second stick's apart from the
 #                        first's
+#      P3_KDF_MEMORY_KIB p3's argon2id memory instead of the stick's (the
+#                        core rig's refusal case asks for more than its
+#                        machine has)
 #      STICK_ISO_FILES   real images to copy onto p2 beside those,
 #                        space-separated SRC:NAME pairs (the core rig's
 #                        BIOS-only case)
@@ -81,11 +85,17 @@ IMG=${TEST_STICK_IMG:-build/test-stick.img}
 SIZE_MIB=256
 PASS="${FALCON_TEST_PASS:-falcon-test}"
 
-# DESIGN Section 3 mandates pbkdf2 on p3. The iteration count is pinned rather
-# than benchmarked: cryptsetup's own benchmark picks millions, which is seconds
-# of unlock in unoptimised freestanding C. 100k is the rig's working number;
-# Section 8 records the shipped one once the EFI implementation is measured.
-P3_ITER=100000
+# The stick's argon2id cost, from the one place it is written.
+kdf_def() {     # kdf_def NAME: its value in mkstick.h
+    local v
+    v=$(sed -n "s/^#define[ \t]*$1[ \t]*\([0-9]*\).*/\1/p" \
+        falcon-cli/src/mkstick/mkstick.h | head -1)
+    [[ -n "$v" ]] || { echo "ERROR: $1 is not in mkstick.h" >&2; exit 1; }
+    echo "$v"
+}
+P3_KDF_MEMORY=${P3_KDF_MEMORY_KIB:-$(kdf_def MKS_STICK_KDF_MEMORY_KIB)}
+P3_KDF_TIME=$(kdf_def MKS_STICK_KDF_TIME)
+P3_KDF_LANES=$(kdf_def MKS_STICK_KDF_LANES)
 
 SHIM_BINS=build/shim/bins
 SHIM_EFI="$SHIM_BINS/fedora-16.1-shimx64.efi"
@@ -291,11 +301,13 @@ fi
 printf 'falcon 1 library %s\n' "$INSTALL_ID" > "$MNT/.falcon"
 unmount_rw
 
-# ---- p3: LUKS2 with a pbkdf2 keyslot, ext4 inside ----
-echo "== p3: LUKS2 (pbkdf2, $P3_ITER iterations) + ext4"
+# ---- p3: LUKS2 with an argon2id keyslot, ext4 inside ----
+echo "== p3: LUKS2 (argon2id, $P3_KDF_MEMORY KiB, time $P3_KDF_TIME, $P3_KDF_LANES lanes) + ext4"
 printf '%s' "$PASS" | sudo cryptsetup luksFormat \
     --type luks2 \
-    --pbkdf pbkdf2 --pbkdf-force-iterations "$P3_ITER" \
+    --pbkdf argon2id --pbkdf-memory "$P3_KDF_MEMORY" \
+    --pbkdf-force-iterations "$P3_KDF_TIME" \
+    --pbkdf-parallel "$P3_KDF_LANES" \
     --cipher aes-xts-plain64 --key-size 512 \
     --batch-mode "$P3" -
 printf '{"type":"falcon","keyslots":[],"version":1,"role":"shelf","install_id":"%s"}' \
@@ -367,9 +379,8 @@ MAPPER=
 
 # ---- p4: LUKS2 argon2id, empty on purpose ----
 #
-# Nothing inside it. Its whole job is to be a LUKS2 volume the in-EFI unlock
-# must recognise and skip, so the "argon2id is reported, never misread" contract
-# in falcon-core/src/luks/luks.h is exercised by the rig and not just asserted.
+# Nothing inside it, and no record: its job is to be a LUKS2 volume the scan
+# passes over because it is not this install's shelf.
 echo "== p4: LUKS2 (argon2id, stock defaults), left empty"
 printf '%s' "$PASS" | sudo cryptsetup luksFormat \
     --type luks2 --batch-mode "$P4" -
@@ -394,7 +405,7 @@ echo "  install ID: $INSTALL_ID"
 echo "  passphrase: $PASS  (override with FALCON_TEST_PASS)"
 echo
 echo "expected menu:"
-echo "  Personal OS (encrypted)       <- pinned first, from p3's pbkdf2 slot"
+echo "  Personal OS (encrypted)       <- pinned first, from p3's argon2id slot"
 for iso in "${ISOS[@]}" $([[ -f "$PAYLOAD_ISO" ]] && echo payload-test.iso); do
     echo "  $iso"
 done | sort
