@@ -74,4 +74,38 @@ test-station-legacy: station-legacy devlink-uki $(MKSTICK)
 test-cfstation: station-legacy devlink-uki jump $(MKSTICK)
 	falcon-bios/tools/run-cfstation-rig.sh
 
-.PHONY: station-legacy devlink-uki test-station-legacy test-cfstation
+# A station update for a machine in the field (DESIGN Section 13.14): one
+# tar per version with everything update.sh writes, a MANIFEST it checks
+# first, and the static i686 mkstick that does the writing, so the machine
+# needs sh, tar, sha256sum and mtools and no falcon of its own. Both stage
+# 3s ride along; update.sh picks the one the station already is. MEMTEST=
+# adds memtest86+. Not in `all`.
+STATION_BUNDLE_DIR := build/station-bundle
+STATION_BUNDLE := $(BIN)/falcon-station-$(VERSION_STATION_LEGACY).tar.gz
+
+station-bundle: station-legacy station $(MKSTICK32) $(STATION_LEGACY)/update.sh
+	@rm -rf $(STATION_BUNDLE_DIR)
+	@mkdir -p $(STATION_BUNDLE_DIR)/mod
+	cp $(BIOS_STAGE1) $(STATION_BUNDLE_DIR)/stage1.bin
+	cp $(BIOS_STAGE2) $(STATION_BUNDLE_DIR)/stage2.bin
+	cp $(BIOS_STATION_STAGE3) $(STATION_BUNDLE_DIR)/stage3-station.bin
+	cp $(BIOS_STATION_LEGACY_STAGE3) $(STATION_BUNDLE_DIR)/stage3-legacy.bin
+	cp $(JUMP_MODS) $(STATION_BUNDLE_DIR)/mod/
+	strip -o $(STATION_BUNDLE_DIR)/falcon-boot-mkstick32 $(MKSTICK32)
+	cp $(STATION_LEGACY)/update.sh $(STATION_BUNDLE_DIR)/update.sh
+	$(if $(MEMTEST),cp $(MEMTEST) $(STATION_BUNDLE_DIR)/MEMTEST.BIN)
+	echo '$(VERSION_STATION_LEGACY)' > $(STATION_BUNDLE_DIR)/VERSION
+	cd $(STATION_BUNDLE_DIR) && find . -type f ! -name MANIFEST | \
+		sed 's|^\./||' | LC_ALL=C sort | xargs sha256sum > MANIFEST
+	tar -C build -czf $(STATION_BUNDLE) --owner=0 --group=0 --sort=name \
+		station-bundle
+	@echo "$(STATION_BUNDLE): $$(stat -c%s $(STATION_BUNDLE)) bytes"
+
+# A station-legacy on a scratch disk, aged, updated from the bundle with its
+# own update.sh and booted under SeaBIOS; and the refusals
+# (falcon-bios/tools/run-bundle-rig.sh).
+test-station-bundle: $(MKSTICK)
+	falcon-bios/tools/run-bundle-rig.sh
+
+.PHONY: station-legacy devlink-uki test-station-legacy test-cfstation \
+	station-bundle test-station-bundle

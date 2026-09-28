@@ -119,7 +119,8 @@ falcon-efi and falcon-bios, which never share a set, may both have a `pos/`.
   BIOS one), `station/` (DESIGN Section 13, falcon as a machine's own
   boot loader; `make station`), `station-legacy/` (Section 13.10, the
   BIOS station plus jump's CD, USB and CF routes and DevLink recovery's
-  UKI; `make station-legacy`, `make devlink-uki`) and `jump/` (DESIGN Section 14, a boot
+  UKI; `make station-legacy`, `make devlink-uki`, and `make station-bundle`,
+  the update a station in the field takes, Section 13.14) and `jump/` (DESIGN Section 14, a boot
   floppy for an old BIOS machine; `make jump` builds the whole 1.44 MB
   image with mtools, its core in the FAT12 volume's reserved sectors). An app is its entry points (`efi_main.c`,
   `efi_sbat.c`, `bios_main.c`) and an `app.mk` that lists, one line per

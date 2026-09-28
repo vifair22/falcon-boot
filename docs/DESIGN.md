@@ -4596,6 +4596,53 @@ Still rejected:
 
 Each is merged and rig-proven before the next starts.
 
+### 13.14 Updating a station
+
+A station in the field is updated from a **station bundle**, one file per
+falcon version (`make station-bundle`,
+`build/bin/falcon-station-<version>.tar.gz`), not by reinstalling and not
+by rebuilding the machine's recovery image. The bundle carries what a falcon
+version changes: stage 1, stage 2, both stage 3s (the plain station's and
+station-legacy's), station-legacy's drivers, memtest86+ when the build was
+given one, the static i686 mkstick that does the writing, a `VERSION` and a
+sha256 `MANIFEST` of all of it, and `update.sh`
+(`apps/station-legacy/update.sh`).
+
+`sh update.sh <disk>` checks the manifest, finds the station partition by
+its boot record (`mkstick ident`), refuses a boot partition with no
+`STATION.INI` (a falcon stick's), says what it will write and what it
+keeps, asks, and then:
+
+- rewrites the stages with the bundle's `mkstick bios` (13.9's stage
+  layout, found by record, every sector it overwrites saved to a backup
+  beside the bundle first, LBA 0 last), with station-legacy's stage 3 when
+  the station partition carries any `*.MOD` and the plain station's
+  otherwise;
+- replaces the drivers and `MEMTEST.BIN` as files on the station partition
+  (mtools);
+- ends with `station status`.
+
+It keeps the install ID, `STATION.INI`, `/uki`, the marker and every other
+partition. Undoing it is `mkstick bios <disk> --remove --backup <that
+backup>`, or the previous version's bundle.
+
+The bundle brings its own mkstick so that the machine needs only `sh`,
+`tar`, `sha256sum` and mtools, which DevLink recovery has, and so that a
+falcon whose update steps change brings the tool that knows them. The
+recovery image (13.5) changes only when what is around devlink does:
+devlink updates itself in place. A bundle is BIOS only: the UEFI station's
+loader is signed with the MOK (13.9), which a machine being updated does not
+hold. A bundle is not signed: the manifest catches a damaged copy, and on a
+BIOS machine, which enforces nothing, a signature would guard only the
+transfer. `make test-station-bundle` (`falcon-bios/tools/run-bundle-rig.sh`)
+updates an aged station-legacy on a scratch disk and boots it.
+
+From DevLink recovery:
+
+    devlink put falcon-station-<version>.tar.gz /tmp/ --force
+    devlink exec 'cd /tmp && tar xzf falcon-station-<version>.tar.gz &&
+                  sh station-bundle/update.sh /dev/sda --yes'
+
 ## 14. falcon jump: a boot floppy (decided 2026-09-25)
 
 Status (2026-09-26): steps 1 to 6 of 14.11 are built and rig-proven under
