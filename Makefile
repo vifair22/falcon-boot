@@ -460,6 +460,16 @@ CC_DB_BIOS_ASM := $(foreach s,$(sort $(filter-out %.ld.S,$(shell find falcon-bio
 CC_DB_HOOK := $(foreach s,$(filter-out $(EFI_APP_SRCS) $(HOST_SRCS) $(BIOS_CSRCS),$(sort $(HOOK_SRCS))),$(s):$(HOOK_OBJ)/$(s:.c=.o))
 CC_DB_VDISK := $(VDISK_SRC):$(OBJ)/vdisk-x64/vdisk.o
 
+# The flags as the JSON string's content, through the single-quoted shell
+# word printf is given them in. A flag that carries quotes of its own (the
+# tests' -DTRUST_DIR='"..."') closed that word, and the shell took both sets
+# off, so the database recorded a bare path where the compiler is given a
+# string, and clang read the path as identifiers. Double quotes become \"
+# for JSON; single quotes become '\'' to survive the shell. What a reader
+# then splits back (clang, analyze.sh's shlex) is the flag the build uses.
+cc_db_sq := '\''
+cc_db_q = $(subst ',$(cc_db_sq),$(subst ",\",$(1)))
+
 # $(call cc_db_emit,<entries>,<compiler>,<flags>[,<shell setting inc per entry>])
 define cc_db_emit
 	@for entry in $(1); do \
@@ -472,7 +482,7 @@ define cc_db_emit
 		printf '  {\n' >> $@; \
 		printf '    "directory": "%s",\n' '$(CURDIR)' >> $@; \
 		printf '    "command": "%s %s%s%s -MMD -MF %s.d -c -o %s %s/%s",\n' \
-			'$(2)' '$(strip $(3))' "$$inc" "$$extra" "$$obj" "$$obj" \
+			'$(2)' '$(call cc_db_q,$(strip $(3)))' "$$inc" "$$extra" "$$obj" "$$obj" \
 			'$(CURDIR)' "$$src" >> $@; \
 		printf '    "file": "%s/%s"\n' '$(CURDIR)' "$$src" >> $@; \
 		printf '  },\n' >> $@; \
