@@ -28,6 +28,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
 #include <unistd.h>
@@ -84,6 +85,23 @@ int shelf_open(const char *p3)
     return SHELF_OK;
 }
 
+/* An argon2id keyslot's memory. The appliance runs on the machine it
+ * blesses from, which has what the slot asks for or refuses it here. */
+static void *kdf_get(void *ctx, uint32_t kib)
+{
+    (void)ctx;
+    return malloc((size_t)kib * 1024u);
+}
+
+static void kdf_put(void *ctx, void *mem, uint32_t kib)
+{
+    (void)ctx;
+    (void)kib;
+    free(mem);
+}
+
+static const luks_kdf_mem g_kdf_mem = { kdf_get, kdf_put, (void *)0 };
+
 int shelf_unlock(const void *pass, size_t len)
 {
     luks_master_key mk;
@@ -93,7 +111,7 @@ int shelf_unlock(const void *pass, size_t len)
 
     if (g_dev_fd < 0)
         return SHELF_ERR;
-    rc = luks_unlock(&g_vol, pass, len, &mk, &slot);
+    rc = luks_unlock(&g_vol, pass, len, &g_kdf_mem, &mk, &slot);
     if (rc == LUKS_ERR_NOKEY) {
         crypto_wipe(&mk, sizeof mk);
         return SHELF_WRONG;

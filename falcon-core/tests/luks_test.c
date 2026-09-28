@@ -9,9 +9,10 @@
  *                              pbkdf2 keyslot, passphrase "falcon-test", an
  *                              ext4 filesystem inside. The shape DESIGN
  *                              Section 3 mandates for p3.
- *   build/test-luks-argon.img  LUKS2 with an argon2id keyslot and nothing
- *                              inside. The shape the loader must recognise
- *                              and refuse by name.
+ *   build/test-luks-argon.img  LUKS2 with an argon2id keyslot (t=4,
+ *                              m=64 MiB, 4 lanes) and nothing inside. The
+ *                              shape of a shelf made by cryptsetup's
+ *                              defaults.
  *   build/test-luks.ref64k     64 KiB of plaintext, decrypted by dm-crypt.
  *
  * That last file is the whole point of the exercise. falcon-core/src/crypto's
@@ -45,6 +46,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 
 #include <luks/luks.h>
@@ -323,7 +325,7 @@ static void test_luks_unlock_correct_passphrase(void **state)
     (void)state;
     open_fixture(&v);
 
-    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, &mk, &slot), LUKS_OK);
+    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, NULL, &mk, &slot), LUKS_OK);
     assert_int_equal(slot, 0);
     assert_int_equal(mk.len, KEY_BYTES);
 
@@ -340,7 +342,7 @@ static void test_luks_unlock_correct_passphrase(void **state)
     assert_true(nonzero > mk.len / 2u);
 
     /* slot_id is optional. */
-    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, &mk, NULL), LUKS_OK);
+    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, NULL, &mk, NULL), LUKS_OK);
 
     crypto_wipe(&mk, sizeof mk);
 }
@@ -356,7 +358,7 @@ static void test_luks_unlock_wrong_passphrase(void **state)
     open_fixture(&v);
     memset(zero, 0, sizeof zero);
 
-    assert_int_equal(luks_unlock(&v, "wrong", 5, &mk, &slot),
+    assert_int_equal(luks_unlock(&v, "wrong", 5, NULL, &mk, &slot),
                      LUKS_ERR_NOKEY);
     /* The key buffer must not survive a failed attempt. The loader is about
      * to loop and ask again, and in EFI-land the memory is not unmapped
@@ -366,32 +368,32 @@ static void test_luks_unlock_wrong_passphrase(void **state)
 
     /* Off-by-one variants of the right passphrase, which is the closest an
      * attacker gets without the real one. */
-    assert_int_equal(luks_unlock(&v, "falcon-tes", 10, &mk, &slot),
+    assert_int_equal(luks_unlock(&v, "falcon-tes", 10, NULL, &mk, &slot),
                      LUKS_ERR_NOKEY);
     assert_memory_equal(mk.key, zero, sizeof zero);
-    assert_int_equal(luks_unlock(&v, "falcon-testt", 12, &mk, &slot),
+    assert_int_equal(luks_unlock(&v, "falcon-testt", 12, NULL, &mk, &slot),
                      LUKS_ERR_NOKEY);
     assert_memory_equal(mk.key, zero, sizeof zero);
-    assert_int_equal(luks_unlock(&v, "Falcon-test", 11, &mk, &slot),
+    assert_int_equal(luks_unlock(&v, "Falcon-test", 11, NULL, &mk, &slot),
                      LUKS_ERR_NOKEY);
     assert_memory_equal(mk.key, zero, sizeof zero);
 
     /* The passphrase is bytes, not a C string: an empty one is a legal
      * attempt and must simply fail. */
-    assert_int_equal(luks_unlock(&v, "", 0, &mk, &slot), LUKS_ERR_NOKEY);
+    assert_int_equal(luks_unlock(&v, "", 0, NULL, &mk, &slot), LUKS_ERR_NOKEY);
     assert_memory_equal(mk.key, zero, sizeof zero);
 
     /* The right bytes with a length that stops short must not open it
      * either, which is what proves the length is used rather than a
      * terminator. */
-    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN - 1u, &mk, &slot),
+    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN - 1u, NULL, &mk, &slot),
                      LUKS_ERR_NOKEY);
 
-    assert_int_equal(luks_unlock(NULL, PASS, PASS_LEN, &mk, &slot),
+    assert_int_equal(luks_unlock(NULL, PASS, PASS_LEN, NULL, &mk, &slot),
                      LUKS_ERR_BAD_ARG);
-    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, NULL, &slot),
+    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, NULL, NULL, &slot),
                      LUKS_ERR_BAD_ARG);
-    assert_int_equal(luks_unlock(&v, NULL, 4, &mk, &slot),
+    assert_int_equal(luks_unlock(&v, NULL, 4, NULL, &mk, &slot),
                      LUKS_ERR_BAD_ARG);
 }
 
@@ -406,7 +408,7 @@ static void test_luks_read_matches_dm_crypt(void **state)
 
     (void)state;
     open_fixture(&v);
-    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, &mk, NULL), LUKS_OK);
+    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, NULL, &mk, NULL), LUKS_OK);
     assert_int_equal(luks_dev_open(&dev, &v, &mk), LUKS_OK);
 
     /* The aligned bulk path: sixteen 4096-byte data units in one call. Any
@@ -457,7 +459,7 @@ static void test_luks_read_unaligned(void **state)
 
     (void)state;
     open_fixture(&v);
-    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, &mk, NULL), LUKS_OK);
+    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, NULL, &mk, NULL), LUKS_OK);
     assert_int_equal(luks_dev_open(&dev, &v, &mk), LUKS_OK);
 
     for (i = 0; i < sizeof offs / sizeof offs[0]; i++) {
@@ -535,7 +537,7 @@ static void test_luks_secondary_header_fallback(void **state)
     assert_int_equal(v.seg_sector_size, SEG_SECTOR);
 
     /* And it is a working header, not just a parseable one. */
-    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, &mk, NULL), LUKS_OK);
+    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, NULL, &mk, NULL), LUKS_OK);
     assert_int_equal(mk.len, KEY_BYTES);
     crypto_wipe(&mk, sizeof mk);
 
@@ -586,17 +588,59 @@ static void test_luks_secondary_header_fallback(void **state)
 
 /* ----------------------------------------------------------- argon2id */
 
-/* p4 and any default `cryptsetup luksFormat` produce an argon2id keyslot.
- * DESIGN Section 3 rules argon2id out of the loader on purpose: it is
- * memory-hard and brutal in single-threaded EFI-land with no tuned
- * allocator. What matters is that the refusal is specific. A user whose
- * volume cannot be opened because of its KDF needs to be told that, not told
- * their passphrase was wrong. */
-static void test_luks_argon_slot_is_named_not_guessed(void **state)
+/* The memory argon2id slots ask for, as the loaders will supply it: a
+ * provider that hands out up to cap KiB and counts what it was asked. */
+typedef struct {
+    uint32_t cap;       /* KiB; 0 refuses everything */
+    unsigned gets;
+    unsigned puts;
+    uint32_t last_kib;
+    void    *last;
+} test_mem;
+
+static void *test_mem_get(void *ctx, uint32_t kib)
+{
+    test_mem *m = ctx;
+
+    m->gets++;
+    m->last_kib = kib;
+    if (kib > m->cap) {
+        return NULL;
+    }
+    m->last = malloc((size_t)kib * 1024u);
+    return m->last;
+}
+
+static void test_mem_put(void *ctx, void *mem, uint32_t kib)
+{
+    test_mem *m = ctx;
+    const uint8_t *b = mem;
+    size_t i;
+
+    m->puts++;
+    assert_int_equal(kib, m->last_kib);
+    /* argon2id wipes the block before handing it back. */
+    for (i = 0; i < (size_t)kib * 1024u; i += 4093u) {
+        assert_int_equal(b[i], 0);
+    }
+    free(mem);
+}
+
+/* A default `cryptsetup luksFormat` makes an argon2id keyslot, and a
+ * station's shelf is made that way (docs/notes/argon2-totp.md Section 1).
+ * The fixture is t=4, m=65536 KiB, 4 lanes: the unlock has to agree with
+ * cryptsetup's own derivation, through the digest, and a caller that cannot
+ * supply 64 MiB has to be told so with the amount rather than told its
+ * passphrase was wrong. */
+static void test_luks_argon_slot_unlocks(void **state)
 {
     luks_vol v;
     luks_slot_info s;
     luks_master_key mk;
+    test_mem tm;
+    luks_kdf_mem mem = { test_mem_get, test_mem_put, &tm };
+    struct timespec t0, t1;
+    uint32_t slot = 99;
     size_t count = 0;
 
     (void)state;
@@ -610,17 +654,50 @@ static void test_luks_argon_slot_is_named_not_guessed(void **state)
     assert_int_equal(s.kdf, LUKS_KDF_ARGON2ID);
     assert_int_equal(s.key_size, KEY_BYTES);
     assert_int_equal(s.af_stripes, AF_STRIPES);
-    assert_int_equal(s.usable, 0);
-    /* iterations is only filled in for a pbkdf2 slot; argon2's time cost is
-     * a different quantity and reporting it in that field would be a lie. */
+    assert_int_equal(s.usable, 1);
+    assert_int_equal(s.kdf_time, 4);
+    assert_int_equal(s.kdf_memory_kib, 65536);
+    assert_int_equal(s.kdf_lanes, 4);
+    /* iterations is a pbkdf2 quantity; the time cost is not reported as
+     * one. */
     assert_int_equal(s.kdf_iterations, 0);
 
-    /* The correct passphrase does not change the answer: this is about the
-     * keyslot's KDF, not about the passphrase. */
-    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, &mk, NULL),
-                     LUKS_ERR_UNSUPPORTED_KDF);
-    assert_int_equal(luks_unlock(&v, "wrong", 5, &mk, NULL),
-                     LUKS_ERR_UNSUPPORTED_KDF);
+    /* No provider at all: the slot's need, not a wrong passphrase. */
+    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, NULL, &mk, NULL),
+                     LUKS_ERR_KDF_MEMORY);
+    assert_int_equal(v.kdf_need_kib, 65536);
+
+    /* A provider with less than the slot needs. */
+    memset(&tm, 0, sizeof tm);
+    tm.cap = 65535;
+    assert_int_equal(luks_unlock(&v, "wrong", 5, &mem, &mk, NULL),
+                     LUKS_ERR_KDF_MEMORY);
+    assert_int_equal(v.kdf_need_kib, 65536);
+    assert_int_equal(tm.gets, 1);
+    assert_int_equal(tm.puts, 0);
+
+    /* Enough memory: cryptsetup's key, verified by the header's digest. */
+    memset(&tm, 0, sizeof tm);
+    tm.cap = 65536;
+    clock_gettime(CLOCK_MONOTONIC, &t0);
+    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, &mem, &mk, &slot),
+                     LUKS_OK);
+    clock_gettime(CLOCK_MONOTONIC, &t1);
+    printf("[ INFO     ] argon2id unlock (t=4, m=64 MiB, p=4): %.1f ms\n",
+           (double)(t1.tv_sec - t0.tv_sec) * 1e3 +
+           (double)(t1.tv_nsec - t0.tv_nsec) / 1e6);
+    assert_int_equal(slot, 0);
+    assert_int_equal(mk.len, KEY_BYTES);
+    assert_int_equal(v.kdf_need_kib, 0);
+    assert_int_equal(tm.gets, 1);
+    assert_int_equal(tm.puts, 1);
+    crypto_wipe(&mk, sizeof mk);
+
+    /* The wrong passphrase runs the same derivation and fails the digest. */
+    assert_int_equal(luks_unlock(&v, "wrong", 5, &mem, &mk, NULL),
+                     LUKS_ERR_NOKEY);
+    assert_int_equal(tm.gets, 2);
+    assert_int_equal(tm.puts, 2);
 }
 
 /* ------------------------------------------------------ ext4 over luks */
@@ -644,7 +721,7 @@ static void ext4_over_luks(luks_read_fn read, void *read_ctx)
 
     assert_int_equal(luks_open(&v, read, read_ctx, json_buf,
                                sizeof json_buf), LUKS_OK);
-    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, &mk, NULL), LUKS_OK);
+    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, NULL, &mk, NULL), LUKS_OK);
     assert_int_equal(luks_dev_open(&dev, &v, &mk), LUKS_OK);
 
     assert_int_equal(ext4_mount(&fs, luks_read, &dev), EXT4_OK);
@@ -736,7 +813,7 @@ static void test_ext4_over_luks_4kn(void **state)
      * header opens (it is 4096 bytes at 0), the keyslot reads do not. */
     assert_int_equal(luks_open(&v, kn_strict_read, &k.strict, json_buf,
                                sizeof json_buf), LUKS_OK);
-    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, &mk, NULL),
+    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, NULL, &mk, NULL),
                      LUKS_ERR_IO);
     assert_true(k.strict.refused > 0);
 }
@@ -828,6 +905,78 @@ static int open_sub(luks_vol *v, const char *needle, const char *repl)
 
     mem_json_sub(needle, repl);
     return luks_open(v, mem_read, &mem_ctx, json_buf, sizeof json_buf);
+}
+
+/* argon2id slots whose fields are wrong, made by rewriting the pbkdf2
+ * fixture's keyslot KDF. None of them reaches the memory provider. */
+static void test_luks_argon_slot_fields(void **state)
+{
+    static const char kdf[] =
+        "\"type\":\"pbkdf2\",\"hash\":\"sha256\",\"iterations\":10000";
+    luks_vol v;
+    luks_master_key mk;
+    test_mem tm;
+    luks_kdf_mem mem = { test_mem_get, test_mem_put, &tm };
+
+    (void)state;
+    load_orig_json();
+    memset(&tm, 0, sizeof tm);
+    tm.cap = 1024;
+
+    /* Zero passes, too little memory for the lanes, a missing field: a
+     * header no producer writes. The one slot is unusable, so nothing is. */
+    assert_int_equal(open_sub(&v, kdf, "\"type\":\"argon2id\",\"time\":0,"
+                              "\"memory\":64,\"cpus\":1"), LUKS_OK);
+    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, &mem, &mk, NULL),
+                     LUKS_ERR_UNSUPPORTED);
+    assert_int_equal(open_sub(&v, kdf, "\"type\":\"argon2id\",\"time\":1,"
+                              "\"memory\":15,\"cpus\":2"), LUKS_OK);
+    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, &mem, &mk, NULL),
+                     LUKS_ERR_UNSUPPORTED);
+    assert_int_equal(open_sub(&v, kdf, "\"type\":\"argon2id\",\"time\":1,"
+                              "\"cpus\":1"), LUKS_OK);
+    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, &mem, &mk, NULL),
+                     LUKS_ERR_UNSUPPORTED);
+    /* Costs past the ceilings. */
+    assert_int_equal(open_sub(&v, kdf, "\"type\":\"argon2id\",\"time\":257,"
+                              "\"memory\":64,\"cpus\":1"), LUKS_OK);
+    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, &mem, &mk, NULL),
+                     LUKS_ERR_UNSUPPORTED);
+    assert_int_equal(open_sub(&v, kdf, "\"type\":\"argon2id\",\"time\":1,"
+                              "\"memory\":4194305,\"cpus\":1"), LUKS_OK);
+    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, &mem, &mk, NULL),
+                     LUKS_ERR_UNSUPPORTED);
+    assert_int_equal(open_sub(&v, kdf, "\"type\":\"argon2id\",\"time\":1,"
+                              "\"memory\":256,\"cpus\":17"), LUKS_OK);
+    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, &mem, &mk, NULL),
+                     LUKS_ERR_UNSUPPORTED);
+    assert_int_equal(tm.gets, 0);
+
+    /* Well formed, but not the KDF this keyslot was written with: the
+     * derivation runs, in 60 KiB of the provider's (m'=60 for m=63, p=3),
+     * and the digest says no. */
+    assert_int_equal(open_sub(&v, kdf, "\"type\":\"argon2id\",\"time\":1,"
+                              "\"memory\":63,\"cpus\":3"), LUKS_OK);
+    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, &mem, &mk, NULL),
+                     LUKS_ERR_NOKEY);
+    assert_int_equal(tm.gets, 1);
+    assert_int_equal(tm.last_kib, 60);
+    assert_int_equal(tm.puts, 1);
+    /* ... and without a provider, the need is m', not the header's m. */
+    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, NULL, &mk, NULL),
+                     LUKS_ERR_KDF_MEMORY);
+    assert_int_equal(v.kdf_need_kib, 60);
+    /* A provider may leave put out. */
+    {
+        luks_kdf_mem noput = { test_mem_get, NULL, &tm };
+
+        assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, &noput, &mk, NULL),
+                         LUKS_ERR_NOKEY);
+        assert_int_equal(tm.gets, 2);
+        assert_int_equal(tm.puts, 1);
+        free(tm.last);
+    }
+    mem_reset();
 }
 
 static void test_luks_segment_refusals(void **state)
@@ -951,7 +1100,7 @@ static void test_luks_fixed_size_segment(void **state)
 
     /* The plaintext is unchanged, which is what proves the substitution
      * machinery did not disturb anything that matters. */
-    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, &mk, NULL), LUKS_OK);
+    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, NULL, &mk, NULL), LUKS_OK);
     assert_int_equal(luks_dev_open(&dev, &v, &mk), LUKS_OK);
     assert_int_equal(luks_read(&dev, 0, REF_BYTES, buf), LUKS_OK);
     assert_memory_equal(buf, ref, REF_BYTES);
@@ -979,7 +1128,7 @@ static void test_luks_keyslot_refusals(void **state)
      * KDF rather than as a wrong passphrase. */
     assert_int_equal(open_sub(&v, "\"kdf\":{\"type\":\"pbkdf2\"",
                               "\"kdf\":{\"type\":\"argon2i\""), LUKS_OK);
-    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, &mk, NULL),
+    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, NULL, &mk, NULL),
                      LUKS_ERR_UNSUPPORTED_KDF);
 
     /* A KDF nobody has heard of is not an argon2 slot, so it is reported as
@@ -987,21 +1136,21 @@ static void test_luks_keyslot_refusals(void **state)
      * what tells the user whether a different tool could have opened it. */
     assert_int_equal(open_sub(&v, "\"kdf\":{\"type\":\"pbkdf2\"",
                               "\"kdf\":{\"type\":\"scrypt\""), LUKS_OK);
-    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, &mk, NULL),
+    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, NULL, &mk, NULL),
                      LUKS_ERR_UNSUPPORTED_KDF);
 
     /* Slot, af and area types outside the format's one legal spelling. */
     assert_int_equal(open_sub(&v, "\"0\":{\"type\":\"luks2\"",
                               "\"0\":{\"type\":\"luks9\""), LUKS_OK);
-    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, &mk, NULL),
+    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, NULL, &mk, NULL),
                      LUKS_ERR_UNSUPPORTED);
     assert_int_equal(open_sub(&v, "\"af\":{\"type\":\"luks1\"",
                               "\"af\":{\"type\":\"luks2\""), LUKS_OK);
-    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, &mk, NULL),
+    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, NULL, &mk, NULL),
                      LUKS_ERR_UNSUPPORTED);
     assert_int_equal(open_sub(&v, "\"area\":{\"type\":\"raw\"",
                               "\"area\":{\"type\":\"checksum\""), LUKS_OK);
-    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, &mk, NULL),
+    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, NULL, &mk, NULL),
                      LUKS_ERR_UNSUPPORTED);
 
     /* Hashes outside the two this loader implements, in the keyslot KDF and
@@ -1010,47 +1159,47 @@ static void test_luks_keyslot_refusals(void **state)
                                   "\"iterations\":10000",
                               "\"type\":\"pbkdf2\",\"hash\":\"ripemd160\","
                               "\"iterations\":10000"), LUKS_OK);
-    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, &mk, NULL),
+    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, NULL, &mk, NULL),
                      LUKS_ERR_UNSUPPORTED);
     assert_int_equal(open_sub(&v, "\"stripes\":4000,\"hash\":\"sha256\"",
                               "\"stripes\":4000,\"hash\":\"sha1\""),
                      LUKS_OK);
-    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, &mk, NULL),
+    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, NULL, &mk, NULL),
                      LUKS_ERR_UNSUPPORTED);
 
     /* A master key longer than the loader's buffer. */
     assert_int_equal(open_sub(&v, "\"type\":\"luks2\",\"key_size\":64",
                               "\"type\":\"luks2\",\"key_size\":65"),
                      LUKS_OK);
-    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, &mk, NULL),
+    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, NULL, &mk, NULL),
                      LUKS_ERR_UNSUPPORTED);
 
     /* Zero stripes, and more stripes than the declared area can hold. Both
      * are self-inconsistent metadata, not a feature. */
     assert_int_equal(open_sub(&v, "\"stripes\":4000", "\"stripes\":0"),
                      LUKS_OK);
-    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, &mk, NULL),
+    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, NULL, &mk, NULL),
                      LUKS_ERR_UNSUPPORTED);
     assert_int_equal(open_sub(&v, "\"stripes\":4000", "\"stripes\":8000"),
                      LUKS_OK);
-    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, &mk, NULL),
+    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, NULL, &mk, NULL),
                      LUKS_ERR_UNSUPPORTED);
 
     /* Zero iterations would make the KDF a no-op. */
     assert_int_equal(open_sub(&v, "\"iterations\":10000",
                               "\"iterations\":0"), LUKS_OK);
-    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, &mk, NULL),
+    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, NULL, &mk, NULL),
                      LUKS_ERR_UNSUPPORTED);
 
     /* One past the cap, refused before any derivation runs. Run, 2^32 of
      * them would hold the machine for over an hour on a slow CPU. */
     assert_int_equal(open_sub(&v, "\"iterations\":10000",
                               "\"iterations\":16777217"), LUKS_OK);
-    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, &mk, NULL),
+    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, NULL, &mk, NULL),
                      LUKS_ERR_UNSUPPORTED);
     assert_int_equal(open_sub(&v, "\"iterations\":10000",
                               "\"iterations\":4294967295"), LUKS_OK);
-    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, &mk, NULL),
+    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, NULL, &mk, NULL),
                      LUKS_ERR_UNSUPPORTED);
 
     /* No keyslots member at all. luks_open does not look at the keyslots, so
@@ -1059,7 +1208,7 @@ static void test_luks_keyslot_refusals(void **state)
      * the menu. */
     assert_int_equal(open_sub(&v, "\"keyslots\":{\"0\"",
                               "\"unused\":{\"0\""), LUKS_OK);
-    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, &mk, NULL),
+    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, NULL, &mk, NULL),
                      LUKS_ERR_CORRUPT);
     assert_int_equal(luks_slot_count(&v, &count), LUKS_ERR_CORRUPT);
     {
@@ -1092,7 +1241,7 @@ static void test_luks_keyslot_refusals(void **state)
 
             assert_int_equal(luks_slot_at(&v, 0, &s), LUKS_ERR_RANGE);
         }
-        assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, &mk, NULL),
+        assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, NULL, &mk, NULL),
                          LUKS_ERR_UNSUPPORTED);
     }
 
@@ -1116,7 +1265,7 @@ static void test_luks_digest_refusals(void **state)
 
     /* No digests object at all. */
     assert_int_equal(open_sub(&v, "\"digests\"", "\"digeztz\""), LUKS_OK);
-    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, &mk, NULL),
+    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, NULL, &mk, NULL),
                      LUKS_ERR_CORRUPT);
 
     /* A digest that covers no keyslot this header has: there is nothing to
@@ -1127,21 +1276,21 @@ static void test_luks_digest_refusals(void **state)
      * final answer describes the header as a whole. */
     assert_int_equal(open_sub(&v, "\"keyslots\":[\"0\"]",
                               "\"keyslots\":[\"7\"]"), LUKS_OK);
-    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, &mk, NULL),
+    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, NULL, &mk, NULL),
                      LUKS_ERR_UNSUPPORTED);
 
     /* A digest type the loader cannot compute. */
     assert_int_equal(open_sub(&v, "\"digests\":{\"0\":{\"type\":\"pbkdf2\"",
                               "\"digests\":{\"0\":{\"type\":\"argon2id\""),
                      LUKS_OK);
-    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, &mk, NULL),
+    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, NULL, &mk, NULL),
                      LUKS_ERR_UNSUPPORTED);
 
     /* A digest that does not cover segment 0, which is the only segment the
      * loader reads. */
     assert_int_equal(open_sub(&v, "\"segments\":[\"0\"]",
                               "\"segments\":[\"1\"]"), LUKS_OK);
-    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, &mk, NULL),
+    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, NULL, &mk, NULL),
                      LUKS_ERR_UNSUPPORTED);
 
     /* A digest hash outside the closed table. The needle carries the
@@ -1152,7 +1301,7 @@ static void test_luks_digest_refusals(void **state)
                               "\"segments\":[\"0\"],\"hash\":\"sha256\"",
                               "\"segments\":[\"0\"],\"hash\":\"sha384\""),
                      LUKS_OK);
-    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, &mk, NULL),
+    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, NULL, &mk, NULL),
                      LUKS_ERR_UNSUPPORTED);
 
     /* A zero iteration count on the digest, which would make the check a
@@ -1162,7 +1311,7 @@ static void test_luks_digest_refusals(void **state)
     assert_int_equal(open_sub(&v, "\"iterations\":1000,\"salt\"",
                               "\"iterations\":0,\"salt\""),
                      LUKS_OK);
-    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, &mk, NULL),
+    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, NULL, &mk, NULL),
                      LUKS_ERR_UNSUPPORTED);
 
     /* And one past the cap on the digest, where the count is run once per
@@ -1170,7 +1319,7 @@ static void test_luks_digest_refusals(void **state)
     assert_int_equal(open_sub(&v, "\"iterations\":1000,\"salt\"",
                               "\"iterations\":16777217,\"salt\""),
                      LUKS_OK);
-    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, &mk, NULL),
+    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, NULL, &mk, NULL),
                      LUKS_ERR_UNSUPPORTED);
 
     /* A digest that is the right shape and the wrong value: the derivation
@@ -1196,7 +1345,7 @@ static void test_luks_digest_refusals(void **state)
             needle[24] = '\0';
             assert_int_equal(open_sub(&v, needle, sub), LUKS_OK);
         }
-        assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, &mk, NULL),
+        assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, NULL, &mk, NULL),
                          LUKS_ERR_NOKEY);
     }
 }
@@ -1231,7 +1380,7 @@ static void test_luks_io_failures(void **state)
     io_cut = 32768u;
     assert_int_equal(luks_open(&v, cut_read, &img_fd, json_buf,
                                sizeof json_buf), LUKS_OK);
-    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, &mk, NULL),
+    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, NULL, &mk, NULL),
                      LUKS_ERR_IO);
 
     /* The keyslot area reads, the data segment does not. */
@@ -1242,7 +1391,7 @@ static void test_luks_io_failures(void **state)
         io_cut = SEG_OFFSET;
         assert_int_equal(luks_open(&v, cut_read, &img_fd, json_buf,
                                    sizeof json_buf), LUKS_OK);
-        assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, &mk, NULL),
+        assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, NULL, &mk, NULL),
                          LUKS_OK);
         assert_int_equal(luks_dev_open(&dev, &v, &mk), LUKS_OK);
         assert_int_equal(luks_read(&dev, 0, sizeof buf, buf),
@@ -1363,6 +1512,7 @@ static int luks_status_known(int rc)
     case LUKS_ERR_UNSUPPORTED:
     case LUKS_ERR_UNSUPPORTED_KDF:
     case LUKS_ERR_NOKEY:
+    case LUKS_ERR_KDF_MEMORY:
         return 1;
     default:
         return 0;
@@ -1757,7 +1907,7 @@ static void test_luks_keyslot_field_refusals(void **state)
 
         assert_int_equal(luks_open(&v, mem_read, NULL, json_buf,
                                    sizeof json_buf), LUKS_OK);
-        rc = luks_unlock(&v, PASS, PASS_LEN, &mk, NULL);
+        rc = luks_unlock(&v, PASS, PASS_LEN, NULL, &mk, NULL);
         if (rc != cases[i].want) {
             fail_msg("'%s' -> '%s' gave %d, want %d", cases[i].find,
                      cases[i].repl, rc, cases[i].want);
@@ -1808,7 +1958,7 @@ static void test_luks_digest_field_refusals(void **state)
 
         assert_int_equal(luks_open(&v, mem_read, NULL, json_buf,
                                    sizeof json_buf), LUKS_OK);
-        rc = luks_unlock(&v, PASS, PASS_LEN, &mk, NULL);
+        rc = luks_unlock(&v, PASS, PASS_LEN, NULL, &mk, NULL);
         if (rc != cases[i].want) {
             fail_msg("'%s' -> '%s' gave %d, want %d", cases[i].find,
                      cases[i].repl, rc, cases[i].want);
@@ -1885,7 +2035,7 @@ static void test_luks_iv_large_sectors(void **state)
     assert_int_equal(luks_open(&v, mem_read, NULL, json_buf, sizeof json_buf),
                      LUKS_OK);
     assert_int_equal(v.seg_iv_large, 0);
-    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, &mk, NULL), LUKS_OK);
+    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, NULL, &mk, NULL), LUKS_OK);
     assert_int_equal(luks_dev_open(&d, &v, &mk), LUKS_OK);
     assert_int_equal(luks_read(&d, 0, sizeof plain, plain), LUKS_OK);
     luks_dev_close(&d);
@@ -1900,7 +2050,7 @@ static void test_luks_iv_large_sectors(void **state)
     assert_int_equal(luks_open(&v, mem_read, NULL, json_buf, sizeof json_buf),
                      LUKS_OK);
     assert_int_equal(v.seg_iv_large, 1);
-    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, &mk, NULL), LUKS_OK);
+    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, NULL, &mk, NULL), LUKS_OK);
     assert_int_equal(luks_dev_open(&d, &v, &mk), LUKS_OK);
     assert_int_equal(luks_read(&d, 0, sizeof large, large), LUKS_OK);
     luks_dev_close(&d);
@@ -1915,7 +2065,7 @@ static void test_luks_iv_large_sectors(void **state)
     mem_reset();
     assert_int_equal(luks_open(&v, mem_read, NULL, json_buf, sizeof json_buf),
                      LUKS_OK);
-    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, &mk, NULL), LUKS_OK);
+    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, NULL, &mk, NULL), LUKS_OK);
     assert_int_equal(luks_dev_open(&d, &v, &mk), LUKS_OK);
     assert_int_equal(luks_read(&d, 4096u, sizeof plain, plain), LUKS_OK);
     luks_dev_close(&d);
@@ -1926,7 +2076,7 @@ static void test_luks_iv_large_sectors(void **state)
                "\"sector_size\":4096,\"flags\":[\"iv_large_sectors\"]");
     assert_int_equal(luks_open(&v, mem_read, NULL, json_buf, sizeof json_buf),
                      LUKS_OK);
-    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, &mk, NULL), LUKS_OK);
+    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, NULL, &mk, NULL), LUKS_OK);
     assert_int_equal(luks_dev_open(&d, &v, &mk), LUKS_OK);
     assert_int_equal(luks_read(&d, 4096u, sizeof large, large), LUKS_OK);
     luks_dev_close(&d);
@@ -1962,7 +2112,7 @@ static void test_luks_container_shape_refusals(void **state)
     assert_int_equal(luks_open(&v, mem_read, NULL, json_buf, sizeof json_buf),
                      LUKS_OK);
     assert_int_equal(luks_slot_count(&v, &count), LUKS_ERR_CORRUPT);
-    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, &mk, NULL),
+    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, NULL, &mk, NULL),
                      LUKS_ERR_CORRUPT);
     crypto_wipe(&mk, sizeof mk);
 
@@ -1972,7 +2122,7 @@ static void test_luks_container_shape_refusals(void **state)
     assert_int_equal(luks_open(&v, mem_read, NULL, json_buf, sizeof json_buf),
                      LUKS_OK);
     assert_int_equal(luks_slot_count(&v, &count), LUKS_ERR_CORRUPT);
-    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, &mk, NULL),
+    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, NULL, &mk, NULL),
                      LUKS_ERR_CORRUPT);
     crypto_wipe(&mk, sizeof mk);
 
@@ -1982,7 +2132,7 @@ static void test_luks_container_shape_refusals(void **state)
     json_patch("\"digests\":{", "\"digestX\":{");
     assert_int_equal(luks_open(&v, mem_read, NULL, json_buf, sizeof json_buf),
                      LUKS_OK);
-    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, &mk, NULL),
+    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, NULL, &mk, NULL),
                      LUKS_ERR_CORRUPT);
     crypto_wipe(&mk, sizeof mk);
 
@@ -2031,7 +2181,7 @@ static void test_luks_awkward_key_sizes(void **state)
                "\"type\":\"luks2\",\"key_size\":48");
     assert_int_equal(luks_open(&v, mem_read, NULL, json_buf, sizeof json_buf),
                      LUKS_OK);
-    rc = luks_unlock(&v, PASS, PASS_LEN, &mk, NULL);
+    rc = luks_unlock(&v, PASS, PASS_LEN, NULL, &mk, NULL);
     assert_true(rc == LUKS_ERR_UNSUPPORTED || rc == LUKS_ERR_NOKEY);
     crypto_wipe(&mk, sizeof mk);
 
@@ -2044,7 +2194,7 @@ static void test_luks_awkward_key_sizes(void **state)
                "\"encryption\":\"aes-xts-plain64\",\"key_size\":48");
     assert_int_equal(luks_open(&v, mem_read, NULL, json_buf, sizeof json_buf),
                      LUKS_OK);
-    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, &mk, NULL),
+    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, NULL, &mk, NULL),
                      LUKS_ERR_UNSUPPORTED);
     crypto_wipe(&mk, sizeof mk);
 
@@ -2055,7 +2205,7 @@ static void test_luks_awkward_key_sizes(void **state)
                "\"type\":\"luks2\",\"key_size\":65");
     assert_int_equal(luks_open(&v, mem_read, NULL, json_buf, sizeof json_buf),
                      LUKS_OK);
-    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, &mk, NULL),
+    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, NULL, &mk, NULL),
                      LUKS_ERR_UNSUPPORTED);
     crypto_wipe(&mk, sizeof mk);
 
@@ -2083,7 +2233,7 @@ static void test_luks_dev_open_guards(void **state)
     mem_reset();
     assert_int_equal(luks_open(&v, mem_read, NULL, json_buf, sizeof json_buf),
                      LUKS_OK);
-    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, &mk, NULL), LUKS_OK);
+    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, NULL, &mk, NULL), LUKS_OK);
 
     assert_int_equal(luks_dev_open(NULL, &v, &mk), LUKS_ERR_BAD_ARG);
     assert_int_equal(luks_dev_open(&d, NULL, &mk), LUKS_ERR_BAD_ARG);
@@ -2199,7 +2349,7 @@ static void test_luks_guard_arms(void **state)
     {
         luks_master_key mk;
 
-        assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, &mk, NULL),
+        assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, NULL, &mk, NULL),
                          LUKS_ERR_UNSUPPORTED_KDF);
         crypto_wipe(&mk, sizeof mk);
     }
@@ -2245,7 +2395,8 @@ int run_luks_tests(void)
         cmocka_unit_test(test_luks_dev_open_guards),
         cmocka_unit_test(test_luks_guard_arms),
         cmocka_unit_test(test_luks_secondary_header_fallback),
-        cmocka_unit_test(test_luks_argon_slot_is_named_not_guessed),
+        cmocka_unit_test(test_luks_argon_slot_unlocks),
+        cmocka_unit_test(test_luks_argon_slot_fields),
         cmocka_unit_test(test_ext4_over_luks),
         cmocka_unit_test(test_ext4_over_luks_4kn),
         cmocka_unit_test(test_luks_segment_refusals),

@@ -12,19 +12,20 @@
  * cryptsetup itself created. Hand-written crypto that has not been checked
  * against the real producer is not worth having.
  *
- * Scope. Read only, one passphrase attempt at a time, pbkdf2 keyslots and
- * aes-xts-plain64 segments. That is p3 by construction: DESIGN Section 3
- * mandates a pbkdf2 keyslot there because argon2id is memory-hard and
- * brutal in single-threaded EFI-land, and Section 8 makes mkstick create
- * the volume that way. An argon2id keyslot (which is what p4 has, and what
- * a default `cryptsetup luksFormat` produces) is recognised and reported as
- * LUKS_ERR_UNSUPPORTED_KDF with the slot named, never misread and never
- * silently skipped into a wrong-passphrase message.
+ * Scope. Read only, one passphrase attempt at a time, pbkdf2 and argon2id
+ * keyslots and aes-xts-plain64 segments. An argon2id slot is what a default
+ * `cryptsetup luksFormat` produces, which is how a station's shelf is made
+ * (docs/notes/argon2-totp.md Section 1). Its memory is the caller's
+ * (luks_kdf_mem): this module allocates nothing, and the three places it
+ * runs get memory three different ways. A slot that needs more than the
+ * caller can give is reported as LUKS_ERR_KDF_MEMORY with the amount, never
+ * as a wrong passphrase. argon2i is recognised and refused as
+ * LUKS_ERR_UNSUPPORTED_KDF: LUKS2 accepts it, and nothing here makes it.
  *
  * The loader never writes a LUKS volume, never adds or kills a keyslot and
  * never re-encrypts. All of that is Section 8 host tooling.
  *
- * Interactions. Built on falcon-core/src/crypto (hash, pbkdf2, xts),
+ * Interactions. Built on falcon-core/src/crypto (hash, pbkdf2, argon2, xts),
  * falcon-core/src/luks/json.c and falcon-core/src/luks/af.c. Its output feeds
  * the read-only ext4 driver and, above that, the UKI load path of Section 5.
  */
@@ -47,9 +48,11 @@ enum {
     LUKS_ERR_RANGE           = -5,  /* read outside the data segment */
     LUKS_ERR_NOSPACE         = -6,  /* caller's buffer too small */
     LUKS_ERR_UNSUPPORTED     = -7,  /* well-formed, but a feature we lack */
-    LUKS_ERR_UNSUPPORTED_KDF = -8,  /* argon2* keyslot; see the scope note */
+    LUKS_ERR_UNSUPPORTED_KDF = -8,  /* argon2i or unknown; see the scope note */
     LUKS_ERR_NOKEY           = -9,  /* no keyslot opened with this passphrase */
     LUKS_ERR_NOTFOUND        = -10, /* no token of the type asked for */
+    LUKS_ERR_KDF_MEMORY      = -11, /* argon2id slot, memory not supplied;
+                                     * luks_vol.kdf_need_kib says how much */
 };
 
 /* Reads len bytes at byte offset off, relative to the start of the LUKS
@@ -70,6 +73,14 @@ typedef int (*luks_read_fn)(void *ctx, uint64_t off, uint64_t len, void *buf);
  * millions, so this is far above anything a real volume carries. */
 #define LUKS_MAX_ITERATIONS (1u << 24)
 #define LUKS_KEYSLOT_UNIT  512u      /* keyslot areas are always 512-based */
+/* argon2id costs above these are refused as unsupported rather than run,
+ * for the reason LUKS_MAX_ITERATIONS gives. The memory is cryptsetup's own
+ * ceiling (4 GiB), and so is the lane count's order: it writes at most 4.
+ * cryptsetup's benchmark puts time between 4 and the low tens; 256 passes
+ * over a gigabyte is minutes on a fast machine. */
+#define LUKS_MAX_ARGON2_KIB   (4u * 1024u * 1024u)
+#define LUKS_MAX_ARGON2_TIME  256u
+#define LUKS_MAX_ARGON2_LANES 16u
 
 /* A JSON area this size covers cryptsetup's 12 KB default with room to
  * spare. luks_open takes the buffer from the caller rather than embedding
@@ -107,7 +118,24 @@ typedef struct {
     uint32_t seg_sector_size; /* 512 or 4096 */
     uint8_t  seg_dynamic;
     uint8_t  seg_iv_large;    /* the segment's iv_large_sectors flag */
+
+    /* Set by luks_unlock when it returns LUKS_ERR_KDF_MEMORY: the KiB the
+     * least demanding argon2id slot it could not run asked for. 0 otherwise. */
+    uint32_t kdf_need_kib;
 } luks_vol;
+
+/* Where an argon2id keyslot's memory comes from.
+ *
+ * get returns a block of kib KiB, 8-byte aligned, or NULL when it cannot be
+ * had; put takes it back, already wiped, and may be NULL. The UEFI loader
+ * answers with AllocatePages, falcon-bios with its heap, a host tool with
+ * malloc. One block is outstanding at a time, and it is put back before
+ * luks_unlock moves to the next slot. */
+typedef struct {
+    void *(*get)(void *ctx, uint32_t kib);
+    void  (*put)(void *ctx, void *mem, uint32_t kib);
+    void  *ctx;
+} luks_kdf_mem;
 
 /* The recovered volume key. Contains key material: crypto_wipe it when the
  * device it opened is closed. */
@@ -121,7 +149,10 @@ typedef struct {
 typedef struct {
     uint32_t      id;          /* the slot's JSON member name as a number */
     luks_kdf_type kdf;
-    uint32_t      kdf_iterations;
+    uint32_t      kdf_iterations;  /* pbkdf2 only */
+    uint32_t      kdf_time;        /* argon2 only: passes */
+    uint32_t      kdf_memory_kib;  /* argon2 only: the header's memory */
+    uint32_t      kdf_lanes;       /* argon2 only: the header's cpus */
     uint32_t      key_size;    /* bytes of master key stored */
     uint32_t      af_stripes;
     uint8_t       usable;      /* 0 when this loader cannot process it */
@@ -146,16 +177,27 @@ int luks_slot_at(const luks_vol *v, size_t i, luks_slot_info *out);
  * verifies it, so a success here means the passphrase was right, not merely
  * that a decryption produced bytes.
  *
- * Failure modes worth distinguishing at the UX layer:
+ * mem supplies an argon2id slot's memory; NULL is allowed, and then every
+ * argon2id slot is one the caller could not supply.
+ *
+ * Failure modes worth distinguishing at the UX layer, in the order they
+ * take precedence:
+ *   LUKS_ERR_KDF_MEMORY       an argon2id slot could not be run for want of
+ *                             memory; v->kdf_need_kib is the smallest ask.
+ *                             It outranks NOKEY because the passphrase may
+ *                             be that slot's, and nothing else can tell
  *   LUKS_ERR_NOKEY            every usable keyslot rejected the passphrase
- *   LUKS_ERR_UNSUPPORTED_KDF  no usable keyslot existed; all were argon2*
+ *   LUKS_ERR_UNSUPPORTED_KDF  no usable keyslot existed; all were argon2i
+ *                             or a KDF nobody here knows
  *   LUKS_ERR_UNSUPPORTED      the cipher or a hash is outside our scope
  *
  * Stack cost is a few kilobytes: the keyslot area is streamed one
  * LUKS_KEYSLOT_UNIT sector at a time straight into the AF merge, so the
- * 250 KB anti-forensic expansion is never held. */
+ * 250 KB anti-forensic expansion is never held, and argon2id works in the
+ * caller's block with about 3.5 KiB of its own. */
 int luks_unlock(luks_vol *v, const void *pass, size_t pass_len,
-                luks_master_key *mk, uint32_t *slot_id);
+                const luks_kdf_mem *mem, luks_master_key *mk,
+                uint32_t *slot_id);
 
 /* The falcon identity token (DESIGN Section 3.1), read from the header's
  * JSON with no key:

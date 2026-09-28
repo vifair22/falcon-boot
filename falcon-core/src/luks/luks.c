@@ -31,6 +31,7 @@
 #include <crypto/crypto.h>
 #include <crypto/hash.h>
 #include <crypto/pbkdf2.h>
+#include <crypto/argon2.h>
 #include <crypto/xts.h>
 #include <lib/string.h>
 
@@ -474,12 +475,18 @@ static int slot_describe(const json_value *name, const json_value *slot,
             obj_u32(&kdf, "iterations", 0xffffffffu, &iters) == LUKS_OK) {
             out->kdf_iterations = iters;
         }
+        if (out->kdf == LUKS_KDF_ARGON2ID || out->kdf == LUKS_KDF_ARGON2I) {
+            (void)obj_u32(&kdf, "time", 0xffffffffu, &out->kdf_time);
+            (void)obj_u32(&kdf, "memory", 0xffffffffu, &out->kdf_memory_kib);
+            (void)obj_u32(&kdf, "cpus", 0xffffffffu, &out->kdf_lanes);
+        }
     }
     (void)obj_u32(slot, "key_size", LUKS_MAX_KEY, &out->key_size);
     if (obj_get(slot, "af", &af) == LUKS_OK) {
         (void)obj_u32(&af, "stripes", LUKS_MAX_STRIPES, &out->af_stripes);
     }
-    out->usable = (uint8_t)((out->kdf == LUKS_KDF_PBKDF2 &&
+    out->usable = (uint8_t)(((out->kdf == LUKS_KDF_PBKDF2 ||
+                              out->kdf == LUKS_KDF_ARGON2ID) &&
                              obj_str_is(slot, "type", "luks2") &&
                              out->key_size != 0u &&
                              out->af_stripes != 0u) ? 1u : 0u);
@@ -712,6 +719,106 @@ static int verify_digest(const json_value *digests, const json_value *name,
     return LUKS_ERR_CORRUPT;
 }
 
+/* The keyslot KDF's parameters, parsed before anything is derived so a
+ * malformed slot is refused before any memory is asked for. */
+typedef struct {
+    luks_kdf_type    type;
+    const hash_desc *hash;        /* pbkdf2 */
+    uint32_t         iters;       /* pbkdf2 */
+    uint32_t         time;        /* argon2id */
+    uint32_t         memory;      /* argon2id, KiB as the header gives it */
+    uint32_t         lanes;       /* argon2id */
+    uint8_t          salt[LUKS_MAX_SALT];
+    size_t           salt_len;
+} kdf_in;
+
+static int kdf_parse(const json_value *kdf, kdf_in *k)
+{
+    int rc;
+
+    k->type = kdf_of(kdf);
+    if (k->type == LUKS_KDF_PBKDF2) {
+        rc = obj_hash(kdf, "hash", &k->hash);
+        if (rc != LUKS_OK) {
+            return rc;
+        }
+        rc = obj_u32(kdf, "iterations", 0xffffffffu, &k->iters);
+        if (rc != LUKS_OK) {
+            return rc;
+        }
+        if (k->iters > LUKS_MAX_ITERATIONS) {
+            return LUKS_ERR_UNSUPPORTED;
+        }
+    } else if (k->type == LUKS_KDF_ARGON2ID) {
+        rc = obj_u32(kdf, "time", LUKS_MAX_ARGON2_TIME, &k->time);
+        if (rc != LUKS_OK) {
+            return rc;
+        }
+        rc = obj_u32(kdf, "memory", LUKS_MAX_ARGON2_KIB, &k->memory);
+        if (rc != LUKS_OK) {
+            return rc;
+        }
+        rc = obj_u32(kdf, "cpus", LUKS_MAX_ARGON2_LANES, &k->lanes);
+        if (rc != LUKS_OK) {
+            return rc;
+        }
+    } else {
+        return LUKS_ERR_UNSUPPORTED_KDF;
+    }
+    return obj_b64(kdf, "salt", k->salt, sizeof k->salt, &k->salt_len);
+}
+
+/* The keyslot key, out_len bytes of it, by the slot's KDF. salt is wiped on
+ * every path. An argon2id slot's memory is asked of mem here, after every
+ * field of the slot has parsed, and given back before return; when it cannot
+ * be had the slot is LUKS_ERR_KDF_MEMORY and v remembers the smallest ask. */
+static int kdf_derive(luks_vol *v, kdf_in *k, const void *pass,
+                      size_t pass_len, const luks_kdf_mem *mem,
+                      uint8_t *out, uint32_t out_len)
+{
+    argon2_params ap;
+    uint32_t kib;
+    void *block = NULL;
+    int rc;
+
+    if (k->type == LUKS_KDF_PBKDF2) {
+        rc = pbkdf2(k->hash, pass, pass_len, k->salt, k->salt_len, k->iters,
+                    out, out_len);
+        crypto_wipe(k->salt, sizeof k->salt);
+        return (rc == CRYPTO_OK) ? LUKS_OK : LUKS_ERR_UNSUPPORTED;
+    }
+
+    kib = argon2_mem_kib(k->memory, k->lanes);
+    if (mem != NULL && mem->get != NULL) {
+        block = mem->get(mem->ctx, kib);
+    }
+    if (block == NULL) {
+        if (v->kdf_need_kib == 0u || kib < v->kdf_need_kib) {
+            v->kdf_need_kib = kib;
+        }
+        crypto_wipe(k->salt, sizeof k->salt);
+        return LUKS_ERR_KDF_MEMORY;
+    }
+    memset(&ap, 0, sizeof ap);
+    ap.pwd = pass;
+    ap.pwd_len = pass_len;
+    ap.salt = k->salt;
+    ap.salt_len = k->salt_len;
+    ap.t_cost = k->time;
+    ap.m_cost = k->memory;
+    ap.lanes = k->lanes;
+    rc = argon2id(&ap, block, kib, out, out_len);
+    if (mem->put != NULL) {
+        mem->put(mem->ctx, block, kib);
+    }
+    crypto_wipe(&ap, sizeof ap);
+    crypto_wipe(k->salt, sizeof k->salt);
+    if (rc == CRYPTO_ERR_BAD_ARG) {
+        return LUKS_ERR_CORRUPT;      /* a salt argon2 will not take */
+    }
+    return (rc == CRYPTO_OK) ? LUKS_OK : LUKS_ERR_UNSUPPORTED;
+}
+
 /* Attempt one keyslot. LUKS_OK means the master key in *mk is verified
  * against a digest; every other return leaves *mk wiped.
  *
@@ -728,18 +835,18 @@ static int verify_digest(const json_value *digests, const json_value *name,
  * keyslot layout are public, and which slot matched is not a secret. */
 static int try_slot(luks_vol *v, const json_value *name,
                     const json_value *slot, const json_value *digests,
-                    const void *pass, size_t pass_len, luks_master_key *mk)
+                    const void *pass, size_t pass_len,
+                    const luks_kdf_mem *mem, luks_master_key *mk)
 {
     json_value kdf, af, area;
-    const hash_desc *kdf_hash, *af_hash;
-    uint8_t salt[LUKS_MAX_SALT];
+    const hash_desc *af_hash;
+    kdf_in k;
     uint8_t derived[LUKS_MAX_KEY];
     uint8_t stripe[LUKS_MAX_KEY];
     uint8_t sec[LUKS_KEYSLOT_UNIT];
     af_merge_ctx merge;
     xts_ctx xts;
-    size_t salt_len = 0;
-    uint32_t key_size = 0, stripes = 0, area_key_size = 0, iters = 0;
+    uint32_t key_size = 0, stripes = 0, area_key_size = 0;
     uint64_t area_off = 0, area_size = 0;
     uint64_t material, consumed = 0, s;
     uint32_t sfill = 0;
@@ -752,25 +859,15 @@ static int try_slot(luks_vol *v, const json_value *name,
     if (rc != LUKS_OK) {
         return rc;
     }
-    if (kdf_of(&kdf) != LUKS_KDF_PBKDF2) {
+    k.type = kdf_of(&kdf);
+    if (k.type != LUKS_KDF_PBKDF2 && k.type != LUKS_KDF_ARGON2ID) {
         return LUKS_ERR_UNSUPPORTED_KDF;
     }
     rc = obj_u32(slot, "key_size", LUKS_MAX_KEY, &key_size);
     if (rc != LUKS_OK) {
         return rc;
     }
-    rc = obj_hash(&kdf, "hash", &kdf_hash);
-    if (rc != LUKS_OK) {
-        return rc;
-    }
-    rc = obj_u32(&kdf, "iterations", 0xffffffffu, &iters);
-    if (rc != LUKS_OK) {
-        return rc;
-    }
-    if (iters > LUKS_MAX_ITERATIONS) {
-        return LUKS_ERR_UNSUPPORTED;
-    }
-    rc = obj_b64(&kdf, "salt", salt, sizeof salt, &salt_len);
+    rc = kdf_parse(&kdf, &k);
     if (rc != LUKS_OK) {
         return rc;
     }
@@ -811,7 +908,13 @@ static int try_slot(luks_vol *v, const json_value *name,
     if (rc != LUKS_OK) {
         return rc;
     }
-    if (key_size == 0u || stripes == 0u || iters == 0u) {
+    /* A zero cost, or less argon2 memory than its lanes need, is a header
+     * no producer writes. Checked here, after the af and area objects,
+     * which is where a zero pbkdf2 count has always been refused. */
+    if (key_size == 0u || stripes == 0u ||
+        (k.type == LUKS_KDF_PBKDF2 && k.iters == 0u) ||
+        (k.type == LUKS_KDF_ARGON2ID &&
+         (k.time == 0u || argon2_mem_kib(k.memory, k.lanes) == 0u))) {
         return LUKS_ERR_CORRUPT;
     }
 
@@ -825,11 +928,10 @@ static int try_slot(luks_vol *v, const json_value *name,
      * the XTS key that encrypts the stored expansion. They are both 64 for
      * every volume in scope, and conflating them would work by accident
      * until someone made a --key-size 256 volume. */
-    rc = pbkdf2(kdf_hash, pass, pass_len, salt, salt_len, iters,
-                derived, area_key_size);
-    crypto_wipe(salt, sizeof salt);
-    if (rc != CRYPTO_OK) {
-        return LUKS_ERR_UNSUPPORTED;
+    rc = kdf_derive(v, &k, pass, pass_len, mem, derived, area_key_size);
+    if (rc != LUKS_OK) {
+        crypto_wipe(derived, sizeof derived);
+        return rc;
     }
     rc = xts_setkey(&xts, derived, area_key_size);
     crypto_wipe(derived, sizeof derived);
@@ -909,18 +1011,21 @@ static int try_slot(luks_vol *v, const json_value *name,
 }
 
 int luks_unlock(luks_vol *v, const void *pass, size_t pass_len,
-                luks_master_key *mk, uint32_t *slot_id)
+                const luks_kdf_mem *mem, luks_master_key *mk,
+                uint32_t *slot_id)
 {
     json_value root, slots, digests;
     json_iter it;
     int saw_usable = 0;
-    int saw_argon2 = 0;
+    int saw_other_kdf = 0;
+    int saw_memory = 0;
     int rc;
 
     if (v == NULL || mk == NULL || (pass == NULL && pass_len != 0)) {
         return LUKS_ERR_BAD_ARG;
     }
     memset(mk, 0, sizeof *mk);
+    v->kdf_need_kib = 0;
 
     rc = root_of(v, &root);
     if (rc != LUKS_OK) {
@@ -948,7 +1053,7 @@ int luks_unlock(luks_vol *v, const void *pass, size_t pass_len,
         if (r == 0) {
             break;
         }
-        rc = try_slot(v, &name, &slot, &digests, pass, pass_len, mk);
+        rc = try_slot(v, &name, &slot, &digests, pass, pass_len, mem, mk);
         if (rc == LUKS_OK) {
             if (slot_id != NULL) {
                 uint64_t id = 0;
@@ -959,7 +1064,11 @@ int luks_unlock(luks_vol *v, const void *pass, size_t pass_len,
             return LUKS_OK;
         }
         if (rc == LUKS_ERR_UNSUPPORTED_KDF) {
-            saw_argon2 = 1;
+            saw_other_kdf = 1;
+            continue;
+        }
+        if (rc == LUKS_ERR_KDF_MEMORY) {
+            saw_memory = 1;
             continue;
         }
         if (rc == LUKS_ERR_IO) {
@@ -978,23 +1087,30 @@ int luks_unlock(luks_vol *v, const void *pass, size_t pass_len,
      * screen, so getting the precedence wrong would tell the user to do the
      * wrong thing.
      *
-     * saw_usable wins: at least one pbkdf2 slot was read, derived and
+     * saw_memory wins: an argon2id slot was never run, so whether this
+     * passphrase is its passphrase is unknown, and "wrong passphrase" would
+     * send the user to retype one that may be right. What they can act on is
+     * the memory the slot asked for.
+     *
+     * saw_usable next: at least one slot was read, derived and
      * digest-checked, and rejected this passphrase. That is a wrong
      * passphrase and the user should retype it.
      *
-     * saw_argon2 only if nothing was usable: every slot is memory-hard, so
-     * there is nothing here this loader can open however correct the
-     * passphrase is. This is p4, which mkstick deliberately formats with
-     * argon2id, and answering NOKEY would send the user to retype a
-     * passphrase that was never going to work.
+     * saw_other_kdf only if nothing was usable: every slot is argon2i or a KDF
+     * nobody here knows, so there is nothing this loader can open however
+     * correct the passphrase is, and answering NOKEY would send the user to
+     * retype a passphrase that was never going to work.
      *
      * Otherwise the header parsed but held no slot of any recognised shape,
      * which is a volume outside this driver's scope rather than a secret we
      * failed to guess. */
+    if (saw_memory) {
+        return LUKS_ERR_KDF_MEMORY;
+    }
     if (saw_usable) {
         return LUKS_ERR_NOKEY;
     }
-    return saw_argon2 ? LUKS_ERR_UNSUPPORTED_KDF : LUKS_ERR_UNSUPPORTED;
+    return saw_other_kdf ? LUKS_ERR_UNSUPPORTED_KDF : LUKS_ERR_UNSUPPORTED;
 }
 
 /* ---- decrypting reader ------------------------------------------------ */

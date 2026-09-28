@@ -56,6 +56,7 @@ int main(void)
     failed += run_family_tests();
     failed += run_manifest_tests();
     failed += run_crypto_tests();
+    failed += run_argon2_tests();
     failed += run_json_tests();
     failed += run_luks_tests();
     failed += run_ext4_tests();

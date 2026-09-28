@@ -43,6 +43,7 @@ STATION_BIOS += $(CORE)/manifest/manifest.c  # nextboot.c's path rules
 STATION_BIOS += $(BIOS_MOD_install) $(CORE_IDENT) $(CORE_IDENT_FS)  # the shelf by its record
 STATION_BIOS += $(BIOS_MOD_e820) $(BIOS_MOD_disk) $(BIOS_MOD_serial)
 STATION_BIOS += $(BIOS_MOD_bytes)      # the drivers read parts of a 4Kn sector
+STATION_BIOS += $(BIOS_MOD_heap)       # an argon2id keyslot's memory
 STATION_BIOS += $(CORE_PART) $(CORE_FS_STATION) $(CORE_PE) $(CORE_CRYPTO) $(CORE_LUKS)
 STATION_BIOS += $(addprefix $(CORE)/media/,cpio.c osrel.c shelf.c)
 STATION_BIOS += $(CORE_LIBC) $(CORE_UCS2) $(CORE_TUI)

@@ -40,6 +40,7 @@
 #include <luks/luks.h>
 #include <pe/pe.h>
 #include <crypto/crypto.h>
+#include <mem/heap.h>
 #include <media/cpio.h>
 #include <ident/ident.h>
 #include <media/shelf.h>
@@ -393,6 +394,30 @@ static int boot_uki(const fs_dirent *uki, boot_result *r)
     return -1;
 }
 
+/* An argon2id keyslot's memory: the heap, opened over the E820 map for the
+ * one derivation and forgotten after it. Nothing else holds the heap while
+ * a passphrase is being tried. */
+static void *kdf_get(void *ctx, uint32_t kib)
+{
+    uint64_t n = (uint64_t)kib * 1024u;
+
+    (void)ctx;
+    heap_reset();
+    if (!heap_open(n))
+        return (void *)0;
+    return heap_alloc(n);
+}
+
+static void kdf_put(void *ctx, void *mem, uint32_t kib)
+{
+    (void)ctx;
+    (void)mem;
+    (void)kib;
+    heap_reset();
+}
+
+static const luks_kdf_mem g_kdf_mem = { kdf_get, kdf_put, (void *)0 };
+
 /* Prompt, retry, and report, as the UEFI loader does. LUKS_OK, POS_ABORTED
  * for escape, or the LUKS status to report. */
 static int prompt_and_unlock(void)
@@ -417,7 +442,8 @@ static int prompt_and_unlock(void)
             return POS_ABORTED;
 
         screen_out("unlocking...\n");
-        rc = luks_unlock(&g_vol, g_pass, g_pass_len, &g_mk, &slot);
+        rc = luks_unlock(&g_vol, g_pass, g_pass_len, &g_kdf_mem, &g_mk,
+                         &slot);
         if (rc == LUKS_OK)
             return LUKS_OK;
         if (rc != LUKS_ERR_NOKEY)

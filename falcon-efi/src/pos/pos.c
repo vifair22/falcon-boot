@@ -288,6 +288,41 @@ UINTN pos_scan(EFI_SYSTEM_TABLE *st)
  * which is not; so a NOKEY anywhere outranks a device error elsewhere,
  * because a mistyped passphrase is by far the likelier explanation and is the
  * one the user can act on. */
+/* An argon2id keyslot's memory, from the firmware as pages. One block is
+ * out at a time (luks.h), so the page count is kept here rather than asked
+ * of the caller again. */
+static EFI_PHYSICAL_ADDRESS g_kdf_addr;
+static UINTN                g_kdf_pages;
+
+static void *kdf_get(void *ctx, uint32_t kib)
+{
+    EFI_BOOT_SERVICES *bs = g_st->BootServices;
+    UINTN pages = (UINTN)(((uint64_t)kib * 1024u + EFI_PAGE_SIZE - 1u) /
+                          EFI_PAGE_SIZE);
+
+    (void)ctx;
+    g_kdf_addr = 0;
+    g_kdf_pages = 0;
+    if (pages == 0 ||
+        bs->AllocatePages(AllocateAnyPages, EfiLoaderData, pages,
+                          &g_kdf_addr) != EFI_SUCCESS)
+        return (void *)0;
+    g_kdf_pages = pages;
+    return (void *)(uintptr_t)g_kdf_addr;
+}
+
+static void kdf_put(void *ctx, void *mem, uint32_t kib)
+{
+    (void)ctx;
+    (void)mem;
+    (void)kib;
+    if (g_kdf_pages != 0)
+        (void)g_st->BootServices->FreePages(g_kdf_addr, g_kdf_pages);
+    g_kdf_pages = 0;
+}
+
+static const luks_kdf_mem g_kdf_mem = { kdf_get, kdf_put, (void *)0 };
+
 static int unlock_any(UINTN *which)
 {
     int other_err = LUKS_OK;
@@ -301,8 +336,8 @@ static int unlock_any(UINTN *which)
 
         if (!g_shelf[i].encrypted || !g_shelf[i].usable)
             continue;
-        rc = luks_unlock(&g_shelf[i].vol, g_pass, (size_t)g_pass_len, &g_mk,
-                         &slot);
+        rc = luks_unlock(&g_shelf[i].vol, g_pass, (size_t)g_pass_len,
+                         &g_kdf_mem, &g_mk, &slot);
         if (rc == LUKS_OK) {
             *which = i;
             return LUKS_OK;

@@ -266,6 +266,23 @@ static cli_status shelf_copy(shelf_read_ctx *c, const char *path,
     return rc;
 }
 
+/* An argon2id keyslot's memory: the install runs on a machine with a
+ * libc, so it is malloc's. */
+static void *kdf_get(void *ctx, uint32_t kib)
+{
+    (void)ctx;
+    return malloc((size_t)kib * 1024u);
+}
+
+static void kdf_put(void *ctx, void *mem, uint32_t kib)
+{
+    (void)ctx;
+    (void)kib;
+    free(mem);
+}
+
+static const luks_kdf_mem kdf_mem = { kdf_get, kdf_put, NULL };
+
 static cli_status shelf_read(const shelf_ref *sh, const mks_pass *pass,
                              stn_scan *s, const char *keydir)
 {
@@ -289,8 +306,8 @@ static cli_status shelf_read(const shelf_ref *sh, const mks_pass *pass,
                            "not read");
             goto out;
         }
-        if (luks_unlock(&c.vol, pass->buf, pass->len, &c.mk, &slot) !=
-            LUKS_OK) {
+        if (luks_unlock(&c.vol, pass->buf, pass->len, &kdf_mem, &c.mk,
+                        &slot) != LUKS_OK) {
             rc = set_error(CLI_ERR_PERM, "the passphrase does not unlock "
                            "the shelf");
             goto out;

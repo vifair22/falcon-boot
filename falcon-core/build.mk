@@ -9,7 +9,7 @@
 CORE := falcon-core/src
 
 CORE_CRYPTO   := $(addprefix $(CORE)/crypto/,crypto.c sha1.c sha256.c sha512.c \
-	hash.c hmac.c pbkdf2.c aes.c xts.c aesni.c)
+	hash.c hmac.c pbkdf2.c aes.c xts.c aesni.c blake2b.c argon2.c)
 CORE_FS       := $(addprefix $(CORE)/fs/,exfat.c ext4.c fat.c iso9660.c udf.c fs.c \
 	fs_exfat.c fs_ext4.c fs_fat.c fs_iso9660.c fs_udf.c fs_reg_all.c)
 # The stationary build's (DESIGN Section 13): ext4 and its adapter, and a
@@ -143,7 +143,7 @@ test-trust: $(EFI)
 CORE_TESTS := $(addprefix falcon-core/tests/,main.c \
 	exfat_synth_test.c exfat_file_test.c exfat_extent_test.c \
 	exfat_fixture_test.c cpio_test.c family_test.c manifest_test.c \
-	crypto_test.c json_test.c luks_test.c ext4_test.c fs_test.c \
+	crypto_test.c argon2_test.c json_test.c luks_test.c ext4_test.c fs_test.c \
 	iso9660_test.c udf_test.c udfedit_test.c media_fs_test.c bootcfg_test.c extmap_test.c \
 	hookcmd_test.c grubcfg_test.c bsdmd_test.c xpsetup_test.c eltorito_test.c fat_test.c medium_test.c bootfs_test.c uefiboot_test.c biosboot_test.c blesslist_test.c wim_test.c part_test.c \
 	osrel_test.c pe_test.c trust_test.c survey_test.c tui_test.c shelf_test.c \

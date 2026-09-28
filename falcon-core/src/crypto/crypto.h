@@ -1,7 +1,8 @@
 /* falcon-boot: shared crypto plumbing (docs/DESIGN.md Sections 5, 9).
  *
  * Purpose. The LUKS2 unlock of p3 is the one place in EFI-land where this
- * repo writes cryptography, and Section 9 fixes the scope: SHA-2, PBKDF2-HMAC
+ * repo writes cryptography, and Section 9 fixes the scope: SHA-2, PBKDF2-HMAC,
+ * Argon2id with the BLAKE2b under it (docs/notes/argon2-totp.md Section 1),
  * and AES-XTS *decrypt*, nothing else. This header holds the three things
  * every primitive here needs and nothing that belongs to one of them.
  *
@@ -13,9 +14,10 @@
  * hand-written crypto.
  *
  * Interactions.
- * falcon-core/src/crypto/{sha256,sha512,hash,hmac,pbkdf2,aes,xts,aesni} all
- * include this; falcon-core/src/luks consumes the module through hash.h,
- * pbkdf2.h and xts.h and is the only in-repo caller.
+ * falcon-core/src/crypto/{sha256,sha512,hash,hmac,pbkdf2,blake2b,argon2,aes,
+ * xts,aesni} all include this; falcon-core/src/luks consumes the module
+ * through hash.h, pbkdf2.h, argon2.h and xts.h and is the only in-repo
+ * caller.
  */
 
 #ifndef FALCON_CRYPTO_H
@@ -29,6 +31,7 @@ enum {
     CRYPTO_OK              = 0,
     CRYPTO_ERR_BAD_ARG     = -1,
     CRYPTO_ERR_UNSUPPORTED = -2, /* a key length or hash we do not implement */
+    CRYPTO_ERR_NOSPACE     = -3, /* the caller's memory is smaller than asked */
 };
 
 /* Zeroes n bytes and is not allowed to be optimised away.
