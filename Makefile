@@ -390,6 +390,15 @@ check-tools:
 		echo "missing (make bios links the i686 loader and falcon-hook32 against it): a 32-bit libgcc, gcc-multilib on Debian"; \
 	command -v $(CC_WIN32) >/dev/null 2>&1 || \
 		echo "missing (make bios embeds the i686 winjump for 32-bit Windows media): $(CC_WIN32)"; \
+	for t in mcopy mmd mdeltree; do \
+		command -v $$t >/dev/null 2>&1 || echo "missing (make jump and station install write FAT with mtools): $$t"; \
+	done; \
+	command -v qemu-system-i386 >/dev/null 2>&1 || \
+		echo "missing (the BIOS rigs boot SeaBIOS on a Pentium III with it): qemu-system-i386"; \
+	command -v magick >/dev/null 2>&1 || \
+		echo "missing (the BIOS rigs save their screendumps with it): magick (ImageMagick)"; \
+	command -v socat >/dev/null 2>&1 || \
+		echo "missing (the BIOS rigs drive the QEMU monitor with it): socat"; \
 	if [ $$missing -ne 0 ]; then echo "Required toolchain incomplete."; exit 1; fi; \
 	echo "Toolchain OK."
 

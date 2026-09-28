@@ -150,6 +150,10 @@ $(BIOS_OBJ)/falcon-core/src/crypto/aesni.o: BIOS_CFLAGS := \
 # --no-warn-rwx-segments: the output is a flat image loaded by a jump, with
 # one segment holding code and data together. There is nothing to separate
 # them into and nothing that would enforce it if there were.
+# -z noexecstack: likewise for the stack. The assembly carries no
+# .note.GNU-stack, which newer ld reports as an executable stack; there is
+# no loader to read the flag, so it is set rather than a note added to every
+# .S file.
 # 64-bit division and shifts in 32-bit code are calls into libgcc
 # (__udivdi3 and its siblings); -nostdlib drops it, so it goes back in by
 # name, after the objects that need it. A gcc with no 32-bit multilib
@@ -158,7 +162,7 @@ $(BIOS_OBJ)/falcon-core/src/crypto/aesni.o: BIOS_CFLAGS := \
 BIOS_LIBGCC := $(shell $(CC_HOST) -m32 -print-libgcc-file-name)
 
 BIOS_LDFLAGS := -m32 -nostdlib -static -no-pie -Wl,--build-id=none \
-	-Wl,--no-warn-rwx-segments -Wl,-T,$(BIOS)/start/bios.ld
+	-Wl,--no-warn-rwx-segments -Wl,-z,noexecstack -Wl,-T,$(BIOS)/start/bios.ld
 
 # -MMD on the assembly too, and it is not a nicety: every address in this
 # component is a macro in biosdefs.h, and an object that kept an old one
@@ -397,7 +401,7 @@ build/gen/jmod-$(1).ld: $$(BIOS)/hw/jmod.ld.S $$(BIOS)/start/biosdefs.h
 $$($(1)_MOD): $$($(1)_MOD_OBJS) build/gen/jmod-$(1).ld
 	@mkdir -p $$(@D)
 	$$(CC_HOST) -m32 -nostdlib -static -no-pie -Wl,--build-id=none \
-		-Wl,--no-warn-rwx-segments -Wl,-T,build/gen/jmod-$(1).ld \
+		-Wl,--no-warn-rwx-segments -Wl,-z,noexecstack -Wl,-T,build/gen/jmod-$(1).ld \
 		-o $$@.elf $$($(1)_MOD_OBJS) $$(BIOS_LIBGCC)
 	@tools/check-floor.sh $$@.elf
 	objcopy -O binary -j .image $$@.elf $$@
