@@ -492,23 +492,50 @@ build), then its CF route into a CF card carrying station-legacy
 menu, all seven rows drawn as the rig draws them, and DevLink recovery
 booted from it. The card now holds DevLink recovery built from
 devlink-rescue 5f04f69 (UKI sha256 c71e7df0...97ec1), not yet booted.
+The same day station-legacy's CD, USB and memtest rows booted there too,
+off the card through jump's CF route.
 
 ### Next
 
-1. The A21m's internal install, driven from DevLink recovery (the user
-   images the disk first). The recovery image needs
-   `build/bin/falcon-boot-mkstick32` (`tools/coverage/harness.sh make
-   mkstick32`; no host here has a 32-bit static libc), `mkfs.fat` with
-   `--offset`, mtools (`mcopy`, `mmd`, `mdir`, `mdeltree`), and `ntfsresize`
-   and `ntfsfix` to make room (the rig's recipe: `ntfsresize`, then
-   `ntfsfix -d`, `falcon-bios/tools/mk-a21m-station.sh`). `station remove
-   --full` restores every byte the install wrote; the NTFS shrink is the
-   one step it does not.
+1. The A21m's first boot from its internal disk with station-legacy on it
+   (the station menu, the countdown into Windows 2000, then the CD, CF, USB
+   and DevLink rows from the internal disk). Installed 2026-09-27, not
+   through DevLink recovery after all: the disk came out of the A21m onto a
+   USB-IDE bridge on the desktop, and the rig's recipe
+   (`falcon-bios/tools/mk-a21m-station.sh`) ran against it with the 64-bit
+   mkstick: `ntfsresize` 64 MiB off NTFS (no relocations), `ntfsfix -d`,
+   the entry shortened with `sfdisk`, then `station install --bios --legacy
+   --no-scan` (station partition at LBA 19509808, STATION.INI default
+   windows, 5 s). The disk was imaged first (2026-09-27, on Unraid and in
+   `~/a21m-image/2026-09-27/`); `station remove --backup` with the backup
+   the install wrote undoes all but the shrink. mkstick32
+   (`tools/coverage/harness.sh make mkstick32`) stays for updating the
+   station from DevLink recovery later.
 2. The new DevLink build on the card, on the A21m: the CF card is a disk,
    Ctrl-Alt-Del and the power button work, NTFS writes work. Its kernel now
    takes the PCI1450 over from jump's resident on the CF route.
-3. station-legacy's other rows on the hardware: Windows 2000, CD, USB,
-   memtest (only the menu and DevLink have run there).
+3. Nothing open on the hardware for station-legacy's rows (the menu, DevLink,
+   CD, USB, memtest, and both Windows rows through the CF path, have run on
+   the A21m).
+
+Found on the A21m (2026-09-27): Windows 2000 chained from station-legacy
+on the CF card, started through jump's CF route, froze solid (Caps Lock
+dead, no boot log, no event) right after the boot progress bar filled,
+with the NTLDR row and the Boot code row alike; jump's HDD route to the
+same disk boots. `/basevideo` froze the same way, so it was not the video
+BIOS. A diagnostic build (not committed) bisected it: releasing jump's
+resident (INT 13h/15h and the BDA counts) reached the desktop, powering
+the PC Card slot down alone did not. Whether the INT 13h hook, the INT 15h
+hook or the counts is the one Windows trips on was not split further, since
+the fix releases all of them: jump keeps a release record in its block
+(`JRES_OFF_MAGIC`, biosdefs.h) and station-legacy's chains to another drive
+release it after their last read (`jres_release`, DESIGN 12.5.2).
+`make test-cfstation`'s windows case now requires the release on serial;
+QEMU's video BIOS never froze, so the rig could not show the hang itself.
+On the A21m with the fix (a new jump floppy, the fixed card; the same
+day): the Windows (NTLDR) row reaches the desktop, serial showing
+`released falcon jump's resident for drive 0x81 at 0x9ec00` before the
+handover; the Boot code row the same.
 
 Not wanted (decided 2026-09-27): Windows-side tools for updating a station
 (updates are driven from DevLink recovery), and a second, serial-debug
