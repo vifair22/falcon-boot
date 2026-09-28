@@ -8,7 +8,7 @@
 
 set -uo pipefail
 
-cd "$(dirname "$0")/../../.."
+cd "$(dirname "$0")/../../.." || exit 1
 
 TAG=${1:?usage: drive-spike.sh <tag> <settle> <keys> [qemu args...]}
 SETTLE=${2:?}

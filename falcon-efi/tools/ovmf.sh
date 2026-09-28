@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 # Shared OVMF discovery, sourced by the rig scripts.
 #
 # Distros disagree about both the directory and the file names, and this stick

@@ -594,8 +594,8 @@ case_station_stick() { # case_station_stick CASE FIRMWARE
             has "FALCON-CRED-OK" || why="the passphrase credential is wrong"
             has "FALCON-CRED-HEAD falcon.ident.cred [falcon 1 boot $id" ||
                 why="${why:-falcon.ident.cred missing or not install $id}"
-            has "unsigned.efi" && why="${why:-a chooser listed the stick's UKIs}"
-            has "$A_ISOS" && why="${why:-the stick's library was listed}"
+            has "unsigned.efi" && why="${why:-a chooser listed the UKIs on the stick}"
+            has "$A_ISOS" && why="${why:-the library on the stick was listed}"
             prompts=$(log_text "$R/serial.log" |
                 grep -aoF "passphrase for the encrypted partition" | wc -l)
             (( prompts == 1 )) || why="${why:-$prompts passphrase prompts}"

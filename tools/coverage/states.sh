@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 # falcon-boot: the Secure Boot states the coverage harness boots under,
 # sourced by tools/coverage/run-case.sh and tools/coverage/stage-loader.sh.
 #

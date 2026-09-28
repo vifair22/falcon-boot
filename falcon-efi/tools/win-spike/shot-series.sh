@@ -8,7 +8,7 @@
 
 set -uo pipefail
 
-cd "$(dirname "$0")/../../.."
+cd "$(dirname "$0")/../../.." || exit 1
 
 TAG=${1:?usage: shot-series.sh <tag> <settle> <shots> [qemu args...]}
 SETTLE=${2:?}
