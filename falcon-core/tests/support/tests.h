@@ -90,6 +90,8 @@ int run_pe_tests(void);
 int run_trust_tests(void);
 int run_gz_tests(void);
 int run_rebl_tests(void);
+int run_tpmcrypto_tests(void);
+int run_tpm_tests(void);
 int run_tui_tests(void);
 int run_shelf_tests(void);
 int run_nextboot_tests(void);
