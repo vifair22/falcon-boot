@@ -137,7 +137,9 @@ falcon-efi and falcon-bios, which never share a set, may both have a `pos/`.
   every buffer is the caller's, which is what lets the loader, the host tools
   and the appliance run one implementation and the host tests exercise it.
   - `crypto/` SHA-1 (WIM stream names only), SHA-256/512, HMAC, PBKDF2,
-    AES-XTS (AES-NI with a portable fallback); the only crypto in the loader.
+    BLAKE2b and Argon2id (the memory block the caller's, lanes filled in
+    turn), AES-XTS (AES-NI with a portable fallback); the only crypto in the
+    loader.
   - `fs/` the filesystem driver registry (`fs.c`, DESIGN Section 9: one
     `fs_ops` vtable, opaque caller-allocated storage, unified dirents and
     status codes) and the read-only drivers only it calls, `exfat.c`,
@@ -152,7 +154,11 @@ falcon-efi and falcon-bios, which never share a set, may both have a `pos/`.
     one; `fs_lookup` resolves a path. `udf.c` also carries the few record edits the Windows patch needs
     (a File Entry's extents, a Partition Descriptor's length, an anchor),
     applied to caller buffers, never to media.
-  - `luks/` LUKS2 header parse, keyslot unlock, AF merge, the falcon token.
+  - `luks/` LUKS2 header parse, keyslot unlock (argon2id and pbkdf2; the
+    caller supplies argon2id's memory through `luks_kdf_mem`, and a slot it
+    cannot supply is `LUKS_ERR_KDF_MEMORY`, which both loaders turn into a
+    page giving what the slot needs and what is free), AF merge, the falcon
+    token.
   - `part/` MBR and GPT read as one partition table (`table.c`).
   - `ident/` the identity record (DESIGN Section 3.1): its three encodings
     (`ident.c`) and the `/.falcon` reader over the fs registry

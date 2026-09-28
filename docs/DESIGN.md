@@ -146,7 +146,7 @@ GPT, four partitions:
 ```
 p1  ESP        FAT32   ~64 MB   loader + shim + MokManager + our public cert; BIOS stage 3 in its reserved sectors
 p2  ISOs       exFAT   bulk     the ISO library (drag-and-drop target) + injection assets
-p3  UKI shelf  LUKS2 -> ext4    ~1 GB   personal-OS UKI + signing-appliance UKI + MOK private key, pbkdf2 keyslot
+p3  UKI shelf  LUKS2 -> ext4    ~1 GB   personal-OS UKI + signing-appliance UKI + MOK private key, argon2id keyslot at the stick's fixed cost
 p4  root+home  LUKS2 -> ext4    bulk    real root and home, argon2id keyslot
 ```
 
@@ -164,10 +164,18 @@ Rationale per partition:
 - **p2 exFAT.** exFAT so large ISOs (>4 GB) fit and any modern OS
   (Windows/macOS/Linux) can drop files on it. Firmware does not read exFAT, so
   we bring our own read-only exFAT driver (Section 6).
-- **p3 UKI shelf, pbkdf2.** LUKS2 here uses a **pbkdf2** keyslot, not the LUKS2
-  default argon2id. argon2id is memory-hard by design and brutal in a
-  single-threaded EFI environment with no tuned memory allocator. pbkdf2 reduces
-  the unlock to SHA-256 iteration, which is cheap. We control p3's creation
+- **p3 UKI shelf, argon2id at the stick's fixed cost.** LUKS2 here uses an
+  **argon2id** keyslot, but not at the cost `cryptsetup luksFormat`
+  benchmarks: that is sized for the machine running it (up to a gigabyte of
+  memory), and a stick is opened by whatever machine it is plugged into,
+  with falcon-core's single-threaded argon2id in either loader. mkstick
+  writes one fixed, conservative cost every machine the stick boots can meet
+  (64 MiB, time 4, 4 lanes; `MKS_STICK_KDF_*` in
+  `falcon-cli/src/mkstick/mkstick.h`, docs/notes/argon2-totp.md Section 1).
+  Until 2026-09-28 this was a pbkdf2 keyslot, because the loaders had no
+  argon2id; they now unlock argon2id and pbkdf2 both, and a slot that asks
+  for more memory than the machine can give is refused with a page saying
+  how much it needs and how much is free. We control p3's creation
   (Section 8), so we mandate this. p3 holds the personal-OS UKI, the
   signing-appliance UKI (Section 7.5), and the MOK private key, all encrypted at
   rest under this one keyslot. Roughly 1 GB. The private key living here (under
@@ -416,7 +424,7 @@ Flow:
 
 1. User selects the personal-OS entry in our menu.
 2. Loader prompts for the passphrase.
-3. Loader unlocks **p3** (LUKS2, pbkdf2) using our in-EFI LUKS + AES-XTS stack
+3. Loader unlocks **p3** (LUKS2, argon2id or pbkdf2) using our LUKS + AES-XTS stack
    (Section 6), and reads the UKI off the ext4 inside.
 4. Loader synthesizes a **virtual read-only filesystem** carrying the UKI plus
    a credential file holding the passphrase (Section 5.1), then
@@ -2217,16 +2225,19 @@ than reimplementing cryptography or filesystem creation:
 
 - `falcon-boot-mkstick` (or subcommands): partition (GPT), format p1 FAT32 and
   p2 exFAT (`mkfs.fat`, `mkfs.exfat`), and create p3/p4 via `cryptsetup
-  luksFormat` with the correct KDF per partition (`--pbkdf pbkdf2` on p3,
-  argon2id default on p4), then `mkfs.ext4` inside each. On p3, pin
-  `--pbkdf-force-iterations` to a value budgeted for our in-EFI PBKDF2
-  implementation: cryptsetup's host-side benchmark would pick around 2M
-  iterations, which is seconds of unlock time in unoptimized freestanding C.
-  **Measured and decided (2026-09-13): mkstick pins `--pbkdf-force-iterations
-  200000`.** The in-EFI implementation completes the whole unlock-to-mount at
-  100k iterations in 0.22 s under OVMF/KVM, so 200k lands near half a second
-  with margin for slower firmware clocks, while cryptsetup's 2M default would
-  cost 3-6 s per unlock. Revisit only if real-hardware timing disagrees.
+  luksFormat` with the correct KDF per partition (argon2id at the stick's
+  fixed cost on p3, `--pbkdf argon2id --pbkdf-memory 65536
+  --pbkdf-force-iterations 4 --pbkdf-parallel 4`; cryptsetup's benchmarked
+  argon2id on p4), then `mkfs.ext4` inside each. cryptsetup's host-side
+  benchmark would size p3's cost for the host, which the next machine may not
+  have. **Measured and decided (2026-09-28, docs/notes/argon2-totp.md open
+  item 1):** falcon-core's argon2id costs about 42 ms per MiB per pass on the
+  A21m (Pentium III, 548 MHz), linear, and lanes filled in turn cost nothing.
+  64 MiB, because a 512 MB Pentium III has it free several times over; 4
+  lanes, free for the loaders and parallel for Linux; time 4, cryptsetup's
+  floor for argon2 (the decision was time 2, which cryptsetup refuses), 10.5 s
+  on the A21m and 0.39 s on an i9. It replaces the pbkdf2 keyslot at 200000
+  iterations decided 2026-09-13, when the loaders had no argon2id.
 - Install shim + MokManager + our loader + cert onto p1, naming our loader to
   match the shim's embedded next-stage path (Section 4).
 - Write the identity records (Section 3.1): one random install ID per
@@ -2492,12 +2503,13 @@ are (both measured 2026-09-13):
   merges it, Section 8.1);
   images loaded through shim's hook (blessed kernels) are exempt from the
   requirement.
-- **Crypto in EFI:** LUKS2 unlock needs pbkdf2 and AES-XTS-512 sector
-  decryption. AES-NI intrinsics for XTS, with a portable C fallback selected
-  by CPUID at runtime. Keep the primitives small and self-contained; this is
-  the one place in EFI-land where we write crypto, and it is deliberately
-  the minimum: SHA-256 and SHA-512, HMAC and PBKDF2 parameterized over both,
-  AES-XTS decrypt. SHA-512 earns its ~150 lines because a LUKS2 header names
+- **Crypto in EFI:** LUKS2 unlock needs argon2id or pbkdf2 and AES-XTS-512
+  sector decryption. AES-NI intrinsics for XTS, with a portable C fallback
+  selected by CPUID at runtime. Keep the primitives small and
+  self-contained; this is the one place in EFI-land where we write crypto,
+  and it is deliberately the minimum: SHA-256 and SHA-512, HMAC and PBKDF2
+  parameterized over both, BLAKE2b and Argon2id (the caller's memory, lanes
+  filled in turn), AES-XTS decrypt. SHA-512 earns its ~150 lines because a LUKS2 header names
   its hash in four independent places and `cryptsetup --hash sha512` (which
   the user's own p4 header used for its digest) switches all four; a loader
   that cannot hash cannot unlock, and the parameterization costs less than
@@ -2551,7 +2563,8 @@ are (both measured 2026-09-13):
   - `fs` (core) - the driver registry above and its read-only drivers: `exfat.c`
     (file read + directory enumeration + extent map) and `ext4.c` (p3 only;
     constrained mkfs feature set at install).
-  - `luks` (core) - LUKS2 header parse, pbkdf2, AES-XTS decrypt. Unlocks p3 only; the
+  - `luks` (core) - LUKS2 header parse, argon2id and pbkdf2 keyslots (the
+    caller supplies argon2id's memory), AES-XTS decrypt. Unlocks p3 only; the
     module reads the UKI bytes off p3 and never exposes the p3 private key (that
     file is read by the signing appliance in userland, not by the loader).
   - `iso` - virtual BlockIO/DiskIO over an exFAT-backed image file; family
@@ -2705,7 +2718,8 @@ was struck: Windows needs no injector, for the reason in Section 6.1.
 4. SB-state UX (`sb` module) + injection framework: family detection, descriptor
    registry, extent map, cpio-append. Native-cmdline injectors for the tested
    families; per-entry verification labels; Secure Boot state banner.
-5. UKI path: read-only ext4 + LUKS2/pbkdf2/AES-XTS unlock of p3 + LoadImage the
+5. UKI path: read-only ext4 + LUKS2/pbkdf2/AES-XTS unlock of p3 (argon2id since
+   2026-09-28) + LoadImage the
    personal-OS UKI.
 6. Passphrase handoff: virtual credential filesystem synthesized by the
    loader, sd-stub `.cred` pickup, `systemd-cryptsetup` consumes the credential
@@ -2858,7 +2872,7 @@ flowchart TD
     DISC --> ID{"boot record<br/>read?"}
     ID -- no --> NOTE["install_notice: the sentence<br/>(no record, damaged, no device), a key<br/>no row is this install's"]
     NOTE --> POSS
-    ID -- yes --> POSS["pos_scan<br/>shelves whose record carries the install ID, any disk:<br/>LUKS2 with a pbkdf2 keyslot, or plaintext with a UKI<br/>: the pinned Personal OS row"]
+    ID -- yes --> POSS["pos_scan<br/>shelves whose record carries the install ID, any disk:<br/>LUKS2 with an argon2id or pbkdf2 keyslot, or plaintext with a UKI<br/>: the pinned Personal OS row"]
     POSS --> VOLS["scan_all_volumes, up to 4 libraries whose record<br/>carries the install ID, any disk<br/>fs_mount, bless_load (manifest), survey_volume"]
     VOLS --> PROBE["resolve_entries<br/>bless_lookup, the next-boot match;<br/>no medium is read"]
     PROBE --> PEND{"next-boot marker<br/>pending?"}
@@ -2972,7 +2986,7 @@ sequenceDiagram
     U->>L: Enter on Personal OS
     L->>U: masked passphrase prompt
     U->>L: passphrase (3 tries, Escape backs out)
-    L->>FC: luks_unlock p3 (PBKDF2, AES-XTS), luks_dev_open, fs_mount ext4
+    L->>FC: luks_unlock p3 (argon2id or PBKDF2, AES-XTS), luks_dev_open, fs_mount ext4
     FC-->>L: /uki/*.efi, else /EFI/Linux/*.efi
     L->>U: chooser (skipped for one image)
     L->>L: read the UKI into pages
@@ -4078,7 +4092,12 @@ the station partition as on MBR, typed with a falcon type GUID of its own
 station's install ID: LUKS2 with the falcon token, or plaintext ext4 with
 `/.falcon`. On station-legacy the station partition may also carry a `/uki`
 directory, read as a plaintext shelf, which is where DevLink recovery lives
-(13.10).
+(13.10). mkstick makes no shelf: one made with `cryptsetup luksFormat` is
+argon2id at the cost cryptsetup benchmarked on the machine that made it,
+and the loaders open it at that cost. `station status` shows each keyslot's
+KDF and cost, and warns when an argon2id slot asks for more memory than the
+machine running it has; a loader short of the memory refuses the slot with
+a page giving both numbers.
 
 ### 13.3 What the menu offers without being told
 
@@ -4216,7 +4235,7 @@ scope: none of them has a UEFI boot path.
 ### 13.5 Linux
 
 UKIs on a shelf, as Section 5 and the stick's personal OS: the shelf is
-unlocked with a pbkdf2 keyslot and the passphrase is handed to the UKI as an
+unlocked with an argon2id or pbkdf2 keyslot and the passphrase is handed to the UKI as an
 sd-stub credential (5.1), or the shelf is plaintext and there is no prompt.
 The BIOS loader unwraps a UKI (`.linux`, `.initrd`, `.cmdline`) and boots it
 through the x86 boot protocol, never running its EFI stub, so a UKI built

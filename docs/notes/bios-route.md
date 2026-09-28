@@ -259,9 +259,10 @@ Possible, but the verb is not "chainload". A UKI is PE32+ with no BIOS entry
 point. It is unwrapped instead.
 
 1. **Unlock p3.** `luks/` and `fs/ext4.c` over the `INT 13h` read callback.
-   p3's keyslot is pinned to pbkdf2 at 200,000 iterations with
-   aes-xts-plain64 (`falcon-cli/src/mkstick/mkstick.h`, `create.c`) precisely
-   so core's EFI-free unlock can open it. Identical code, identical prompt.
+   p3's keyslot is argon2id at the stick's fixed cost with aes-xts-plain64
+   (`falcon-cli/src/mkstick/mkstick.h`, `create.c`; pbkdf2 at 200,000
+   iterations until 2026-09-28), which core's EFI-free unlock opens with
+   the heap as argon2id's memory. Identical code, identical prompt.
 2. **Find the UKI.** As now.
 3. **Split it.** `pe_find_section` returns FILE offsets, which is what this
    needs: pull `.linux`, `.initrd` and `.cmdline`. The `.linux` section is a
