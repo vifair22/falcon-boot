@@ -4,6 +4,20 @@
 #include <crypto/crypto.h>
 #include <lib/string.h>
 
+static void s1_init(hash_ctx *c)     { sha1_init(&c->u.s1); }
+static void s1_update(hash_ctx *c, const void *d, size_t n)
+{
+    sha1_update(&c->u.s1, d, n);
+}
+static void s1_final(hash_ctx *c, uint8_t *out)
+{
+    sha1_final(&c->u.s1, out);
+    /* sha1.c was written for WIM stream names and leaves its state behind;
+     * under HMAC it has absorbed a key, so it is wiped here the way
+     * sha256_final wipes its own. */
+    crypto_wipe(&c->u.s1, sizeof c->u.s1);
+}
+
 static void s256_init(hash_ctx *c)   { sha256_init(&c->u.s256); }
 static void s256_update(hash_ctx *c, const void *d, size_t n)
 {
@@ -24,6 +38,11 @@ static void s512_final(hash_ctx *c, uint8_t *out)
     sha512_final(&c->u.s512, out);
 }
 
+static const hash_desc sha1_desc = {
+    "sha1", SHA1_DIGEST_LEN, SHA1_BLOCK_LEN,
+    s1_init, s1_update, s1_final
+};
+
 static const hash_desc sha256_desc = {
     "sha256", SHA256_DIGEST_LEN, SHA256_BLOCK_LEN,
     s256_init, s256_update, s256_final
@@ -41,6 +60,7 @@ static const hash_desc *const table[] = {
     &sha512_desc
 };
 
+const hash_desc *hash_sha1(void)   { return &sha1_desc; }
 const hash_desc *hash_sha256(void) { return &sha256_desc; }
 const hash_desc *hash_sha512(void) { return &sha512_desc; }
 

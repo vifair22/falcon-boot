@@ -28,6 +28,7 @@
 #include <stdint.h>
 #include <stddef.h>
 
+#include <crypto/sha1.h>
 #include <crypto/sha256.h>
 #include <crypto/sha512.h>
 
@@ -39,6 +40,7 @@ typedef struct hash_desc hash_desc;
 typedef struct {
     const hash_desc *d;
     union {
+        sha1_ctx   s1;
         sha256_ctx s256;
         sha512_ctx s512;
     } u;
@@ -60,6 +62,10 @@ const hash_desc *hash_by_name(const char *name, size_t len);
 
 const hash_desc *hash_sha256(void);
 const hash_desc *hash_sha512(void);
+/* SHA-1 is outside the name table on purpose: nothing in a LUKS2 header may
+ * select it. It is here for HMAC-SHA1, which TPM 1.2 authorisation and the
+ * RFC 6238 code are built on (falcon-core/src/tpm, crypto/otp.c). */
+const hash_desc *hash_sha1(void);
 
 /* Thin wrappers so callers that already hold a descriptor never have to
  * switch on which one it is. */
