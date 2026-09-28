@@ -183,9 +183,7 @@ void bn_mont_mul(bn_limb *r, const bn_limb *a, const bn_limb *b,
     size_t n = c->n;
     size_t i, j;
 
-    for (i = 0; i < n + 2u; i++) {
-        t[i] = 0;
-    }
+    memset(t, 0, sizeof t);
     /* CIOS (Koc, Acar, Kaliski 1996): interleave one row of the product with
      * one reduction step, so t never exceeds n + 2 limbs. */
     for (i = 0; i < n; i++) {

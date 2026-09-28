@@ -60,10 +60,8 @@ static void compress(blake2b_ctx *c, const uint8_t *block, int last)
     for (i = 0; i < 16u; i++) {
         m[i] = get_le64(block + (size_t)8u * i);
     }
-    for (i = 0; i < 8u; i++) {
-        v[i] = c->h[i];
-        v[i + 8u] = IV[i];
-    }
+    memcpy(v, c->h, sizeof c->h);
+    memcpy(v + 8, IV, sizeof IV);
     v[12] ^= c->t[0];
     v[13] ^= c->t[1];
     if (last) {

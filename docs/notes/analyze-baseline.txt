@@ -187,6 +187,8 @@ fanalyzer	falcon-cli/src/sign/util.c	-Wanalyzer-fd-leak	leak of file descriptor 
 fanalyzer	falcon-cli/src/sign/util.c	-Wanalyzer-fd-leak	leak of file descriptor 'dup2(out_fd, 1)' [CWE-775]
 fanalyzer	falcon-core/src/crypto/sha256.c	-Wanalyzer-use-of-uninitialized-value	use of uninitialized value 'w[<unknown>]' [CWE-457]
 fanalyzer	falcon-core/src/crypto/sha512.c	-Wanalyzer-use-of-uninitialized-value	use of uninitialized value 'w[<unknown>]' [CWE-457]
+fanalyzer	falcon-core/src/crypto/blake2b.c	-Wanalyzer-use-of-uninitialized-value	use of uninitialized value 'm[<unknown>]' [CWE-457]
+fanalyzer	falcon-core/src/crypto/blake2b.c	-Wanalyzer-use-of-uninitialized-value	use of uninitialized value 'm[<unknown>]' [CWE-457]
 tidy	falcon-cli/src/mkstick/inspect.c	bugprone-narrowing-conversions	narrowing conversion from 'int' to signed type 'char' is implementation-defined
 tidy	falcon-cli/src/sign/isoprobe.c	bugprone-narrowing-conversions	narrowing conversion from 'int' to signed type 'char' is implementation-defined
 tidy	falcon-cli/src/sign/isoprobe.c	bugprone-narrowing-conversions	narrowing conversion from 'int' to signed type 'char' is implementation-defined
@@ -255,11 +257,17 @@ tidy	falcon-winjump/src/winjump.c	clang-analyzer-optin.core.EnumCastOutOfRange	T
 # convention DESIGN Section 9 sets for the whole of falcon-core.
 #
 # ==========================================================================
-# 8. -Wanalyzer-use-of-uninitialized-value, sha256.c and sha512.c
+# 8. -Wanalyzer-use-of-uninitialized-value, sha256.c, sha512.c, blake2b.c
 # ==========================================================================
 #
 # The message schedule `w[]` is filled by a loop immediately before it is
 # read, and gcc's analyzer will not follow the loop far enough to see it.
+# BLAKE2b's message words `m[]` (2026-09-28, 2 entries: two call paths into
+# compress) are the same: sixteen
+# little-endian loads in a loop, then the rounds index them through SIGMA,
+# which the analyzer reads as an unknown subscript into an array it did not
+# see filled. A memcpy would satisfy it only by assuming the host's byte
+# order.
 # The same false positive appeared in falcon-core/src/fs/fat.c while it was
 # being written; there it was cheaper to write the code so the analyzer
 # could follow it than to baseline it. Here the loops are the published SHA

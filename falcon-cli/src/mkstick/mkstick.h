@@ -72,17 +72,20 @@ cli_status mkstick_guid_selfcheck(void);
  * 548 MHz), linear in memory and passes, so 64 MiB costs 5.4 s at time 2
  * and 10.5 s at time 4 there, against 0.20 s and 0.39 s on an i9.
  *
- * Memory 64 MiB: a 512 MB Pentium III has it free above falcon-bios's 64 MB
- * heap floor several times over, and so does any UEFI machine.
+ * Memory 32 MiB with time 4: the same work as the 64 MiB, time 2 first
+ * decided (about 5.4 s on the A21m at 548 MHz, 0.2 s on an i9), since
+ * cryptsetup will not go below time 4 (below). Half the memory an attacker
+ * needs per guess, still memory-hard, and a 512 MB Pentium III has it free
+ * above falcon-bios's 64 MB heap floor many times over.
  *
  * Lanes 4: the loaders and the appliance fill lanes in turn, and on the
  * A21m 4 lanes cost the same as 1 (10474 ms against 10458 ms at 64 MiB,
  * time 4), while cryptsetup on the personal OS runs them in parallel.
  *
- * Time 4: the decision was time 2 (5.4 s on the A21m), but cryptsetup
- * refuses --pbkdf-force-iterations below 4 for argon2 ("minimum is 4"), and
- * it is what formats p3. 4 is its floor, 10.5 s on the A21m. */
-#define MKS_STICK_KDF_MEMORY_KIB 65536
+ * Time 4: cryptsetup refuses --pbkdf-force-iterations below 4 for argon2
+ * ("minimum is 4"), and it is what formats p3, so the memory came down
+ * instead of the passes; 64 MiB at time 4 would be 10.5 s on the A21m. */
+#define MKS_STICK_KDF_MEMORY_KIB 32768
 #define MKS_STICK_KDF_TIME       4
 #define MKS_STICK_KDF_LANES      4
 

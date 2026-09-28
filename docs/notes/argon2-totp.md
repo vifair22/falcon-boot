@@ -61,18 +61,18 @@ slot, which throws away what argon2id buys.
   memory; this machine has M MiB free." M is the largest free conventional
   run in the UEFI memory map, and on falcon-bios the largest usable E820 run
   between 64 MB and 4 GiB, which is what the heap can take.
-- The stick: mkstick create writes p3 argon2id at 64 MiB, time 4, 4 lanes
+- The stick: mkstick create writes p3 argon2id at 32 MiB, time 4, 4 lanes
   (`MKS_STICK_KDF_*` in `falcon-cli/src/mkstick/mkstick.h`, the one place;
   the rig stick reads it from there). Open item 1 has the numbers.
 - `mkstick status` gives each p3 keyslot's KDF and cost, calls only argon2i
   and unknown KDFs unusable, and warns when an argon2id slot asks for more
-  than the stick's 64 MiB.
+  than the stick's 32 MiB.
 - Stations: mkstick creates and re-keys no shelf today (`station install
   --shelf` names an existing one), so the sizing above is not built.
   `station status` shows each shelf keyslot's KDF and cost, and warns when
   an argon2id slot needs more memory than the machine running it has.
-- Rigs: the rig stick's p3 and the station disk's shelf (64 MiB, time 4, 4
-  lanes) are argon2id; `make test-core` adds kdf-memory-uefi and
+- Rigs: the rig stick's p3 (32 MiB, time 4, 4 lanes) and the station
+  disk's shelf (64 MiB, time 4, 4 lanes) are argon2id; `make test-core` adds kdf-memory-uefi and
   kdf-memory-bios, a 512 MiB slot in a 384 MiB machine, refused with the
   page.
 
@@ -152,8 +152,9 @@ predictions (DESIGN Section 7.8): it enforces nothing and signs nothing.
 
 ## Open items
 
-1. Settled 2026-09-28: the stick's p3 is argon2id at 64 MiB, time 4, 4
-   lanes. Measured with falcon-core's argon2id built i586 -O2 static, the
+1. Settled 2026-09-28: the stick's p3 is argon2id at 32 MiB, time 4, 4
+   lanes, the same work as the 64 MiB, time 2 first chosen (about 5.4 s
+   on the A21m). Measured with falcon-core's argon2id built i586 -O2 static, the
    code both loaders run. On the A21m (Pentium III, 548 MHz): 16 MiB t=2
    1343 ms, 32 MiB t=2 2698 ms, 64 MiB t=2 5418 ms, 64 MiB t=4 10458 ms,
    64 MiB t=4 p=4 10474 ms, 128 MiB t=2 10812 ms, 256 MiB t=2 21594 ms:
@@ -162,11 +163,11 @@ predictions (DESIGN Section 7.8): it enforces nothing and signs nothing.
    385 ms. The decision was time 2; cryptsetup refuses
    `--pbkdf-force-iterations` below 4 for argon2 ("Forced iteration count
    is too low for argon2id (minimum is 4)"), and cryptsetup formats p3, so
-   time is 4, its floor: 10.5 s on the A21m. 32 MiB at time 4 would cost
-   what 64 MiB at time 2 did there (about 5.4 s) with half the memory, if
-   10.5 s is too long. The QEMU/KVM rig on the desktop, from "unlocking..."
-   to the chooser (64 MiB, time 4, 4 lanes, from `make test-core`, polled
-   at about 0.1 s): UEFI 0.23-0.24 s, falcon-bios 0.43-0.44 s. Both loaders
+   time is 4, its floor, and the memory came down to 32 MiB to keep the
+   A21m at about 5.4 s (64 MiB at time 4 would be 10.5 s). The QEMU/KVM
+   rig on the desktop, from "unlocking..." to the chooser (64 MiB, time 4,
+   4 lanes, from `make test-core`, polled at about 0.1 s): UEFI
+   0.23-0.24 s, falcon-bios 0.43-0.44 s. Both loaders
    refuse a 512 MiB slot in a 384 MiB machine with the page (UEFI: 295 MiB
    free; falcon-bios: 319 MiB).
 2. The station sizing's target time, and its conservative default for

@@ -170,7 +170,7 @@ Rationale per partition:
   memory), and a stick is opened by whatever machine it is plugged into,
   with falcon-core's single-threaded argon2id in either loader. mkstick
   writes one fixed, conservative cost every machine the stick boots can meet
-  (64 MiB, time 4, 4 lanes; `MKS_STICK_KDF_*` in
+  (32 MiB, time 4, 4 lanes; `MKS_STICK_KDF_*` in
   `falcon-cli/src/mkstick/mkstick.h`, docs/notes/argon2-totp.md Section 1).
   Until 2026-09-28 this was a pbkdf2 keyslot, because the loaders had no
   argon2id; they now unlock argon2id and pbkdf2 both, and a slot that asks
@@ -2226,7 +2226,7 @@ than reimplementing cryptography or filesystem creation:
 - `falcon-boot-mkstick` (or subcommands): partition (GPT), format p1 FAT32 and
   p2 exFAT (`mkfs.fat`, `mkfs.exfat`), and create p3/p4 via `cryptsetup
   luksFormat` with the correct KDF per partition (argon2id at the stick's
-  fixed cost on p3, `--pbkdf argon2id --pbkdf-memory 65536
+  fixed cost on p3, `--pbkdf argon2id --pbkdf-memory 32768
   --pbkdf-force-iterations 4 --pbkdf-parallel 4`; cryptsetup's benchmarked
   argon2id on p4), then `mkfs.ext4` inside each. cryptsetup's host-side
   benchmark would size p3's cost for the host, which the next machine may not
