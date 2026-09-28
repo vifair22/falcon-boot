@@ -107,8 +107,16 @@ nbd_connect() {  # nbd_connect QCOW2: sets NBD
     done
     [[ -n "$NBD" ]] || { echo "ERROR: no free nbd device" >&2; exit 2; }
     sudo qemu-nbd --connect="$NBD" -f qcow2 "$1"
-    for n in $(seq 1 50); do
-        [[ -e /sys/block/${NBD#/dev/}/pid ]] && break
+    # Connected is not readable: on some kernels the pid file is there, and
+    # udev has settled, while the device still has no size, and a scan of
+    # it then finds nothing (the installer named no system and set no
+    # default). So wait for the size and a read of LBA 0.
+    for n in $(seq 1 100); do
+        if [[ -e /sys/block/${NBD#/dev/}/pid ]] &&
+            [[ $(cat /sys/block/${NBD#/dev/}/size 2>/dev/null || echo 0) -gt 0 ]] &&
+            sudo dd if="$NBD" of=/dev/null bs=512 count=1 status=none 2>/dev/null; then
+            break
+        fi
         sleep 0.1
     done
     sudo udevadm settle 2>/dev/null || sleep 1

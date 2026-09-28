@@ -520,14 +520,9 @@ off the card through jump's CF route.
 
 ### Next
 
-1. The desktop's rigs that do not pass there yet: `make
-   test-station-fixtures` fails its second nbd reconnect ("reading LBA 0
-   of /dev/nbd0"), so the Windows 9x cases have not run there; and
-   `run-devlink-rig.sh`'s direct and chainload cases fail for the old and
-   the new DevLink ISO alike (the agent never answers; isolinux's menu
-   never draws). Both passed on the stick.
-2. devlink-rescue d98d8a8 and 4578a99, and w98link 9caa3ef, are committed
-   and not pushed (the DevLink session's).
+1. Nothing on the falcon side. The DevLink session's own: w98link 9caa3ef
+   (the client's gcc 15/16 build fixes) was unpushed as of 2026-09-27;
+   devlink-rescue is pushed through e27b3d5, the recovery on the A21m.
 
 Found on the A21m (2026-09-27): Windows 2000 chained from station-legacy
 on the CF card, started through jump's CF route, froze solid (Caps Lock
@@ -569,6 +564,13 @@ DevLink UKI.
   needs `MEMTEST=build/memtest/mt86p_810_i586`.
 - `make test-devlink` and the legacy rig's `devlink` case need the devlink
   client (`DEVLINK_CLIENT=`).
+- QEMU 10's monitor prints 16-digit addresses (`00000000000b8000:`);
+  `run-devlink-rig.sh`'s VGA-text reader takes any width now, and waits for
+  the agent's status-screen line (`serial /dev/ttyS0 at 115200: waiting for
+  a client`) as well as the older console one.
+- On a kernel where a just-connected nbd device has no size yet (the
+  desktop's 7.2), `run-station-fixture-rig.sh` waits for its size and a
+  read of LBA 0; before that, the installer scanned an empty disk.
 - `make test-station-fixtures` needs `freedos.img`, `win98se.img` and
   `win95.img` in `build/fixtures/`, copied sparse from binhost-builder
   (`tools/fixtures/README.md`); the Win95 cases run at 250 MHz

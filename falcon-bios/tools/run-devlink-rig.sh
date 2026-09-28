@@ -129,7 +129,7 @@ wait_for() {    # wait_for PATTERN SECONDS [LOG]
 screen() {
     printf 'xp /16384hx 0xb8000\n' |
         socat -t 3 - "UNIX-CONNECT:$R/mon.sock" 2>/dev/null |
-        tr -d '\r' | sed -n 's/^000b[89a-f][0-9a-f]*: //p' | tr ' ' '\n' |
+        tr -d '\r' | sed -n 's/^0*b[89a-f][0-9a-f]*: //p' | tr ' ' '\n' |
         sed -n 's/^0x..\(..\)$/\1/p' | xxd -r -p | tr -c '[:print:]' ' '
 }
 
@@ -191,21 +191,29 @@ row_of() {
 # The agent, through the client: `devlink info` until it answers. Sets
 # AGENT to the agent line.
 #
-# Only once the agent has said it is serving, on /dev/console: the screen,
-# or COM2 when the entry put the console there. A client that knocks while
+# Only once the agent has said it is serving: on the screen (its status
+# screen, or the console), or COM2 when the entry put the console there. A client that knocks while
 # the kernel is still starting can leave the agent unable to answer anyone
 # after it (seen with console=ttyS1, and with QEMU starting the kernel with
 # no falcon at all), which would fail a boot that worked.
 agent() {
     local i out
     AGENT=
+    # The agent says so two ways: an older one writes "serving on
+    # /dev/ttyS0" to the console; one with the status screen (devlink
+    # c992cb7 on) draws "serial /dev/ttyS0 at 115200: waiting for a client"
+    # on its second row once the port is open, and writes nothing to the
+    # console. A moment after it, since the screen is up a few milliseconds
+    # before the loop's first read.
     for (( i = 0; i < 120; i++ )); do
         has "serving on /dev/ttyS0" com2.log && break
-        screen | grep -aF "serving on /dev/ttyS0" >/dev/null && break
+        screen | grep -aE "serving on /dev/ttyS0|serial /dev/ttyS0 at 115200: waiting for a client" \
+            >/dev/null && break
         kill -0 "$QPID" 2>/dev/null || return 1
         sleep 1
     done
     (( i < 120 )) || return 1
+    sleep 1
     for (( i = 0; i < 24; i++ )); do
         out=$(timeout 10 "$CLIENT" info --line "$PTY" 2>&1) &&
             AGENT=$(printf '%s\n' "$out" | grep -a -m1 '^agent')
