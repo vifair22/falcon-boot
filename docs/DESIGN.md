@@ -4649,7 +4649,15 @@ carries its libc's code, and a libc built for the build host's processor
 gives a program the machine cannot run. The A21m took #UD on the first
 instruction of a mkstick linked against Gentoo's `-march=znver3` glibc;
 `make station-bundle` now runs `tools/check-floor.sh --userland` on it,
-which refuses SSE2 and later outside CPUID-dispatched code.
+which refuses SSE2 and later outside CPUID-dispatched code. The same
+mkstick then found no boot record on the A21m: built without
+`_FILE_OFFSET_BITS=64`, a 32-bit glibc's `off_t` stops at 2 GiB and the
+station partition starts at 9.99 GB. The 32-bit build defines it. And
+recovery's mtools, also 32-bit, wraps an `@@offset` past 4 GiB, so on a
+disk `update.sh` hands mtools the station partition's own node (checked
+against sysfs's start for it) and keeps `@@offset` for image files. The
+rig's disk is a sparse 12 GiB with the station partition past 4 GiB,
+updated through a loop device's partition node.
 
 ## 14. falcon jump: a boot floppy (decided 2026-09-25)
 

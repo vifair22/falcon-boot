@@ -70,7 +70,11 @@ HOST32_OBJ := $(OBJ)/host32
 MKSTICK32 := $(BIN)/falcon-boot-mkstick32
 MKSTICK32_OBJS := $(patsubst %.c,$(HOST32_OBJ)/%.o,$(sort $(MKSTICK_SRCS) $(MKSTICK_CORE)))
 
-HOST32_CFLAGS := -m32 -march=i686 $(HOST_CFLAGS)
+# A 32-bit glibc's off_t and time_t are 32 bits unless asked: a station
+# partition past 2 GiB (the A21m's is at 9.99 GB) then reads as nothing, and
+# the record on it is not found. musl's are always 64 bits.
+HOST32_CFLAGS := -m32 -march=i686 -D_FILE_OFFSET_BITS=64 -D_TIME_BITS=64 \
+	$(HOST_CFLAGS)
 
 $(HOST32_OBJ)/%.o: %.c
 	@mkdir -p $(@D)

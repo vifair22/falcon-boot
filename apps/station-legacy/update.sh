@@ -53,11 +53,34 @@ if [ $# -ne 2 ]; then
     exit 1
 fi
 part=$1
-sector=512
-if [ -b "$disk" ] && command -v blockdev >/dev/null 2>&1; then
-    sector=$(blockdev --getss "$disk")
+start=$2
+# mtools reaches the station partition's FAT two ways. On a disk, through
+# the partition's own node: a 32-bit mtools (DevLink recovery's) wraps an
+# @@offset past 4 GiB, and the A21m's station partition is at 9.99 GB. The
+# node is the one the kernel says starts where the record is (sysfs counts
+# in 512-byte units whatever the disk's sector). On an image file, @@offset,
+# which only a 64-bit host tool is ever given.
+if [ -b "$disk" ]; then
+    case $disk in
+    *[0-9]) node="${disk}p$part" ;;
+    *) node="$disk$part" ;;
+    esac
+    sys="/sys/class/block/$(basename "$node")/start"
+    sector=512
+    if command -v blockdev >/dev/null 2>&1; then
+        sector=$(blockdev --getss "$disk")
+    fi
+    if [ ! -b "$node" ] || [ ! -r "$sys" ] ||
+        [ "$(cat "$sys")" != "$((start * sector / 512))" ]; then
+        echo "$disk: partition $part's node ($node) is not the partition" \
+            "the station's record is on; reread the partition table" \
+            "(partx -u $disk) and run this again" >&2
+        exit 1
+    fi
+    img=$node
+else
+    img="$disk@@$((start * 512))"
 fi
-img="$disk@@$(($2 * sector))"
 
 # A falcon stick's boot partition carries the same record; only a station's
 # has STATION.INI.

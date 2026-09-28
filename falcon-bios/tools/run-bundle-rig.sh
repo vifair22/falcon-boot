@@ -2,12 +2,13 @@
 # falcon-boot: a station updated from a station bundle (docs/DESIGN.md
 # Section 13.14), the way DevLink recovery updates one in the field.
 #
-# A scratch MBR disk with a partition of its own gets station-legacy from the
-# installer, with memtest and the rig's fixture UKI in /uki; the install is then aged, its
-# stage 3 swapped for the plain station's and its drivers removed, so the
-# update has something to change that a boot can see. The bundle's update.sh
-# runs against the disk from the unpacked bundle, and the disk is booted
-# under SeaBIOS:
+# A scratch MBR disk (sparse, the station partition past 4 GiB) with a
+# partition of its own gets station-legacy from the installer, with memtest
+# and the rig's fixture UKI in /uki; the install is then aged, its stage 3
+# swapped for the plain station's and its drivers removed, so the update has
+# something to change that a boot can see. The bundle's update.sh runs
+# against the disk attached as a loop device with its partitions, as the
+# machine's disk is, and the disk is booted under SeaBIOS (needs sudo):
 #
 #   update   update.sh reports success, the stage 3 on disk is the bundle's,
 #            STATION.INI and /uki are byte for byte what the install wrote,
@@ -54,8 +55,12 @@ result() {      # result CASE OK DETAIL
 
 # The disk, and the station on it as an older falcon would have left it.
 D=$R/disk.img
-truncate -s 600M "$D"
-printf 'label: dos\nunit: sectors\nstart=2048, size=409600, type=7\n' |
+# Sparse, and the first partition large enough that the station partition
+# after it starts past 4 GiB: a 32-bit off_t stops at 2 GiB and a 32-bit
+# mtools' @@offset wraps at 4 GiB, and the A21m's starts at 9.99 GB, where
+# the first two bundles read nothing.
+truncate -s 12G "$D"
+printf 'label: dos\nunit: sectors\nstart=2048, size=16777216, type=7\n' |
     sfdisk -q "$D"
 "$MK" station install "$D" --bios --legacy --no-scan \
     --stage3 build/bin/falcon-bios-station-legacy-stage3.bin \
@@ -71,11 +76,15 @@ mcopy -i "$IMG" ::/STATION.INI "$R/ini.before"
 UKI=$(mdir -b -i "$IMG" ::/uki | head -1 | xargs basename)
 mcopy -i "$IMG" "::/uki/$UKI" "$R/uki.before"
 
-# update
+# update, on a block device as the machine's disk is, so mtools goes
+# through the partition's own node as it does there.
 WHY=
-if ! sh "$B/update.sh" "$ROOT/$D" --yes >"$R/update.log" 2>&1; then
+LOOP=$(sudo losetup -P -f --show "$D")
+sudo udevadm settle 2>/dev/null || sleep 1
+if ! sudo sh "$B/update.sh" "$LOOP" --yes >"$R/update.log" 2>&1; then
     WHY="update.sh failed ($R/update.log)"
 fi
+sudo losetup -d "$LOOP"
 if [[ -z "$WHY" ]]; then
     S=$B/stage3-legacy.bin
     dd if="$D" bs=512 skip=$((start + 32)) \
