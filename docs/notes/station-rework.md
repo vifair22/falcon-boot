@@ -510,11 +510,11 @@ off the card through jump's CF route.
 - It has since been updated in place from a station bundle (DESIGN 13.14,
   bundle 0316, the logo), run from DevLink recovery; the update's backup is
   in `~/a21m-bootlog/station-backups/`.
-- DevLink recovery in its /uki is devlink-rescue 4578a99 (UKI 7ac00bd7:
-  exFAT and the ACPI EC driver added); the previous one is kept as
-  `/uki/devlink.old`, off the menu. On the A21m: disks, idle init, NTFS
-  writes, exFAT and mkstick32 all pass; the power button raises no ACPI
-  event under Windows 2000 either, so it is the machine's BIOS setting.
+- DevLink recovery in its /uki is devlink-rescue 3555c14 (UKI 0d3131f5,
+  `loglevel=3`: exFAT, the ACPI EC driver, the agent's status screen on
+  tty1), the only file there. On the A21m: disks, idle init, NTFS writes,
+  exFAT and mkstick32 all pass; the power button raises no ACPI event under
+  Windows 2000 either, so it is the machine's BIOS setting.
 - The jump floppy is the logo build with the resident's release record
   (6139ed39...), JUMP.INI default=hdd, timeout 5.
 
