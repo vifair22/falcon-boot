@@ -518,6 +518,29 @@ off the card through jump's CF route.
 - The jump floppy is the logo build with the resident's release record
   (6139ed39...), JUMP.INI default=hdd, timeout 5.
 
+### The main stick (the Voyager GTX), updated 2026-09-27
+
+Both loaders went to 0.1.0_20260927.2314 (master 87003c0), with the logo,
+from the desktop with the stick attached. mkstick has no update mode for a
+stick (`create` must never run on one that holds the install), so it is two
+steps by hand:
+
+- BIOS: `mkstick bios /dev/sdX --backup <file>` rewrites stages 1-3 in place
+  (stage 3 in p1's reserved sectors, stage 2 in p5 at LBA 34) and saves
+  what it overwrites; `--remove --backup <file>` undoes it.
+- UEFI: open p3 read-only (`cryptsetup open --readonly`, the passphrase),
+  `sbsign --key <p3>/falcon-mok.key --cert <p3>/falcon-mok.crt` over
+  `build/bin/falcon-boot.efi`, check `sbverify --list` shows one signature
+  from `CN=falcon-boot MOK`, copy it over `EFI/BOOT/grubx64.efi` on p1
+  (mcopy), read it back, close p3. The key is read in place and never
+  copied.
+
+The backups are in `~/falcon-backups/` on the desktop
+(`stick-bios-2026-09-27.bin`, `grubx64-0126.efi`, the loader it replaced).
+p2's `Other/devlink-recovery.iso` was replaced with devlink-rescue's
+e27b3d5 build (sha256 eb76da4a...). Tested by the user: BIOS on a 32-bit
+and a 64-bit machine, and 64-bit UEFI.
+
 ### Next
 
 1. Nothing on the falcon side. The DevLink session's own: w98link 9caa3ef
