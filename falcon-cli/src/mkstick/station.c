@@ -1247,6 +1247,61 @@ static void status_uefi(stn_tally *t, stn_scan *s, stationini *ini,
                  STATIONINI_FILE);
 }
 
+/* A LUKS2 shelf's keyslots: each one's KDF and cost, what the loaders
+ * cannot use, and a slot asking for more memory than this machine has,
+ * which the loader refuses with a page saying so (docs/notes/argon2-totp.md
+ * Section 1). mkstick makes no shelf; one made by hand with cryptsetup has
+ * whatever cost cryptsetup benchmarked on the machine that made it. */
+static void shelf_slots(const stn_disk *sd, const part_entry *p)
+{
+    static char json[LUKS_JSON_CAP];
+    long pages = sysconf(_SC_PHYS_PAGES);
+    long psize = sysconf(_SC_PAGESIZE);
+    uint64_t have_mib = (pages > 0 && psize > 0)
+                            ? ((uint64_t)pages * (uint64_t)psize) >> 20
+                            : 0;
+    luks_vol vol;
+    disk_io io;
+    size_t n = 0;
+    size_t usable = 0;
+    size_t i;
+
+    if (disk_io_open(&io, sd->d.path, p->start_lba * sd->d.sector,
+                     (p->end_lba - p->start_lba + 1u) * sd->d.sector) !=
+        CLI_OK) {
+        cli_error_clear();
+        return;
+    }
+    if (luks_open(&vol, disk_io_read, &io, json, sizeof json) != LUKS_OK) {
+        log_warn("the shelf's LUKS2 header could not be read");
+        disk_io_close(&io);
+        return;
+    }
+    (void)luks_slot_count(&vol, &n);
+    for (i = 0; i < n; i++) {
+        luks_slot_info info;
+        char kdf[96];
+
+        if (luks_slot_at(&vol, i, &info) != LUKS_OK)
+            continue;
+        mks_slot_describe(&info, kdf, sizeof kdf);
+        log_info("       keyslot %u: %s%s", info.id, kdf,
+                 info.usable ? "" : "; the loaders cannot use it");
+        if (info.usable)
+            usable++;
+        if (info.kdf == LUKS_KDF_ARGON2ID && have_mib != 0 &&
+            (info.kdf_memory_kib + 1023u) / 1024u > have_mib)
+            log_warn("keyslot %u needs %u MiB; this machine has %llu MiB "
+                     "of memory", info.id,
+                     (info.kdf_memory_kib + 1023u) / 1024u,
+                     (unsigned long long)have_mib);
+    }
+    if (usable == 0)
+        log_warn("no keyslot of the shelf is argon2id or pbkdf2: the "
+                 "loaders cannot open it");
+    disk_io_close(&io);
+}
+
 /* The shelves carrying the install ID, said; a plaintext one's UKIs added
  * to what was found. Returns nonzero when one is LUKS2: the loader's
  * "Personal OS (encrypted)" row. */
@@ -1276,6 +1331,8 @@ static int status_shelf(stn_scan *s, const uint8_t *id)
                      rec->luks ? "LUKS2: its UKIs are rows once unlocked"
                                : "plaintext");
             reach_note("the shelf", (p->end_lba + 1u) * sd->d.sector);
+            if (rec->luks)
+                shelf_slots(sd, p);
             if (!rec->luks) {
                 static fs_vol vol;
                 static shelf_list list;

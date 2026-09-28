@@ -644,17 +644,22 @@ static cli_status make_filesystems(const mks_disk *d, const mks_pass *pass,
         goto p4;
     }
 
-    /* p3's pbkdf2 keyslot, with the iteration count DESIGN Section 8 pins.
-     * This is the one cryptsetup invocation whose every flag matters: the
-     * loader's in-EFI unlock handles pbkdf2 and aes-xts-plain64 and nothing
-     * else, so a default luksFormat here produces a partition the boot menu
-     * can see and cannot open. */
-    log_info("p3: LUKS2 (pbkdf2, %s iterations) + %s",
-             MKS_P3_PBKDF2_ITERATIONS, plan->p3_fs);
+    /* p3's argon2id keyslot, at the stick's fixed cost (mkstick.h,
+     * MKS_STICK_KDF_*). This is the one cryptsetup invocation whose every
+     * flag matters: a default luksFormat benchmarks this host and picks a
+     * cost sized for it, up to a gigabyte, which the next machine the stick
+     * boots may not have; and the loaders decrypt aes-xts-plain64 and
+     * nothing else. */
+    log_info("p3: LUKS2 (argon2id, %d MiB, time %d, %d lanes) + %s",
+             MKS_STICK_KDF_MEMORY_KIB / 1024, MKS_STICK_KDF_TIME,
+             MKS_STICK_KDF_LANES, plan->p3_fs);
     rc = proc_input_l(pass->buf, pass->len, "cryptsetup", "luksFormat",
                       "--type", "luks2",
-                      "--pbkdf", "pbkdf2",
-                      "--pbkdf-force-iterations", MKS_P3_PBKDF2_ITERATIONS,
+                      "--pbkdf", "argon2id",
+                      "--pbkdf-memory", MKS_STR(MKS_STICK_KDF_MEMORY_KIB),
+                      "--pbkdf-force-iterations",
+                      MKS_STR(MKS_STICK_KDF_TIME),
+                      "--pbkdf-parallel", MKS_STR(MKS_STICK_KDF_LANES),
                       "--cipher", "aes-xts-plain64",
                       "--key-size", "512",
                       "--batch-mode", d->part[2], "-", PROC_END);
@@ -684,9 +689,10 @@ static cli_status make_filesystems(const mks_disk *d, const mks_pass *pass,
         return rc;
 
 p4:
-    /* p4 keeps LUKS2's argon2id, because it is unlocked by the Linux kernel
-     * inside the UKI's initramfs (DESIGN Section 3). EFI-land never touches
-     * it. p4 is encrypted whether or not p3 is: it holds root and home, the
+    /* p4 keeps cryptsetup's own argon2id cost, benchmarked here, because it
+     * is unlocked by the Linux kernel inside the UKI's initramfs (DESIGN
+     * Section 3), on a machine that has booted, with its threads. The
+     * loaders never touch it. p4 is encrypted whether or not p3 is: it holds root and home, the
      * loader never reads it, and --p3-plain is a statement about the UKI
      * shelf alone. */
     log_info("p4: LUKS2 (argon2id, stock defaults) + ext4");
@@ -1239,9 +1245,11 @@ const cli_cmd mks_cmd_create = {
     "  p3  UKI shelf  LUKS2+ext4     default 1G    UKIs and the MOK private key\n"
     "  p4  root+home  LUKS2+ext4     the rest      never touched by EFI\n"
     "\n"
-    "p3's keyslot is pbkdf2 with a pinned iteration count because the loader's\n"
-    "in-EFI unlock must open it; p4 keeps LUKS2's argon2id because Linux opens\n"
-    "it. Both share one passphrase.\n"
+    "p3's keyslot is argon2id at the stick's fixed cost, which every machine\n"
+    "the stick boots can meet (" MKS_STR(MKS_STICK_KDF_MEMORY_KIB) " KiB, time "
+    MKS_STR(MKS_STICK_KDF_TIME) ", " MKS_STR(MKS_STICK_KDF_LANES) " lanes);\n"
+    "p4 keeps cryptsetup's benchmarked argon2id because Linux opens it. Both\n"
+    "share one passphrase.\n"
     "\n"
     "--p3-plain drops the LUKS layer on p3 (Section 3). The stick then has no\n"
     "on-stick private key and so no signing appliance, and the loader asks for\n"

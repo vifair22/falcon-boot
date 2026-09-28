@@ -155,8 +155,32 @@ static const char *kdf_name(luks_kdf_type k)
     return "unknown";
 }
 
+void mks_slot_describe(const luks_slot_info *info, char *buf, size_t cap)
+{
+    if (info->kdf == LUKS_KDF_PBKDF2) {
+        (void)snprintf(buf, cap, "pbkdf2, %u iterations",
+                       info->kdf_iterations);
+    } else if (info->kdf == LUKS_KDF_ARGON2ID ||
+               info->kdf == LUKS_KDF_ARGON2I) {
+        uint32_t kib = info->kdf_memory_kib;
+
+        if (kib % 1024u == 0u)
+            (void)snprintf(buf, cap, "%s, time %u, %u MiB, %u lane%s",
+                           kdf_name(info->kdf), info->kdf_time, kib / 1024u,
+                           info->kdf_lanes,
+                           info->kdf_lanes == 1u ? "" : "s");
+        else
+            (void)snprintf(buf, cap, "%s, time %u, %u KiB, %u lane%s",
+                           kdf_name(info->kdf), info->kdf_time, kib,
+                           info->kdf_lanes,
+                           info->kdf_lanes == 1u ? "" : "s");
+    } else {
+        (void)snprintf(buf, cap, "%s", kdf_name(info->kdf));
+    }
+}
+
 static void check_luks(tally *t, const char *path, const part_entry *p,
-                       uint32_t sector, int want_pbkdf2)
+                       uint32_t sector, int loader_opens)
 {
     static char json[LUKS_JSON_CAP];
     disk_io io;
@@ -187,43 +211,49 @@ static void check_luks(tally *t, const char *path, const part_entry *p,
 
     for (i = 0; i < slots; i++) {
         luks_slot_info info;
+        char kdf[96];
 
         if (luks_slot_at(&vol, i, &info) != LUKS_OK) {
             check(t, 0, "keyslot %zu could not be read", i);
             continue;
         }
-        if (want_pbkdf2) {
-            /* p3 is the partition the LOADER opens, so it needs at least one
-             * keyslot the in-EFI unlock can process at all (DESIGN Section
-             * 3), at an iteration count budgeted for that implementation
-             * rather than for cryptsetup's host benchmark (Section 8). Other
-             * slots are the OS's business: archusb adds an argon2id keyfile
-             * slot so /efi mounts itself, and the loader skips it. */
-            if (info.kdf == LUKS_KDF_PBKDF2 && info.usable) {
-                check(t, 1, "keyslot %u: %s, %u iterations, %u-byte key",
-                      info.id, kdf_name(info.kdf), info.kdf_iterations,
+        mks_slot_describe(&info, kdf, sizeof kdf);
+        if (loader_opens) {
+            /* p3 is the partition the LOADERS open, so it needs at least one
+             * keyslot falcon-core's unlock can process (DESIGN Section 3).
+             * argon2id and pbkdf2 both are; argon2i and anything unknown
+             * are not. A slot above the stick's fixed cost opens, but not
+             * on every machine the stick is meant to boot: falcon-bios on a
+             * small one refuses it for want of memory. */
+            if (info.usable) {
+                check(t, 1, "keyslot %u: %s, %u-byte key", info.id, kdf,
                       info.key_size);
                 loader_slots++;
             } else {
-                note(t, "keyslot %u: %s, %u-byte key; the loader skips it",
-                     info.id, kdf_name(info.kdf), info.key_size);
+                note(t, "keyslot %u: %s, %u-byte key; the loaders cannot "
+                        "use it", info.id, kdf, info.key_size);
             }
+            if (info.kdf == LUKS_KDF_ARGON2ID &&
+                info.kdf_memory_kib > (uint32_t)MKS_STICK_KDF_MEMORY_KIB)
+                note(t, "keyslot %u needs %u MiB, above the stick's %u MiB: "
+                        "a machine with less free memory refuses it",
+                     info.id, (info.kdf_memory_kib + 1023u) / 1024u,
+                     (unsigned)MKS_STICK_KDF_MEMORY_KIB / 1024u);
             if (info.kdf == LUKS_KDF_PBKDF2 &&
                 info.kdf_iterations > 4u * 200000u)
                 note(t, "keyslot %u costs %u iterations; unlock will be slow "
-                        "in EFI-land", info.id, info.kdf_iterations);
+                        "in the loaders", info.id, info.kdf_iterations);
         } else {
-            /* p4 is opened by the initramfs, never by EFI, so argon2id is
-             * what it should have and "the loader cannot use this" is the
-             * correct outcome rather than a fault. */
+            /* p4 is opened by the initramfs, never by a loader, so
+             * cryptsetup's own argon2id cost is what it should have. */
             check(t, info.kdf == LUKS_KDF_ARGON2ID ||
                      info.kdf == LUKS_KDF_ARGON2I,
-                  "keyslot %u: %s (opened by the initramfs, not by EFI)",
-                  info.id, kdf_name(info.kdf));
+                  "keyslot %u: %s (opened by the initramfs)", info.id, kdf);
         }
     }
-    if (want_pbkdf2 && slots != 0 && loader_slots == 0)
-        check(t, 0, "no pbkdf2 keyslot: the loader cannot open this shelf");
+    if (loader_opens && slots != 0 && loader_slots == 0)
+        check(t, 0, "no argon2id or pbkdf2 keyslot: the loaders cannot open "
+                    "this shelf");
     disk_io_close(&io);
 }
 

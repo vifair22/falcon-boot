@@ -12,10 +12,12 @@
 #ifndef FALCON_MKSTICK_H
 #define FALCON_MKSTICK_H
 
+#include <stddef.h>
 #include <stdint.h>
 
 #include <common/opt.h>
 #include <common/status.h>
+#include <luks/luks.h>
 
 /* ---- partition type GUIDs, in the textual form sgdisk takes ----
  *
@@ -58,13 +60,34 @@ cli_status mkstick_guid_selfcheck(void);
 #define MKS_P3_CERT_NAME   "falcon-mok.crt"
 #define MKS_P2_BLESSED_DIR "falcon/blessed"
 
-/* p3's keyslot iteration count. DESIGN Section 8 pins this number: the in-EFI
- * PBKDF2 completes unlock-to-mount at 100k in 0.22 s under OVMF/KVM, so 200k
- * lands near half a second with margin for slower firmware clocks, where
- * cryptsetup's own benchmark would pick ~2M and cost 3-6 s per boot. It is a
- * budget for OUR implementation, not a security ceiling, and it is why p3 is
- * created by this tool and never by a plain `cryptsetup luksFormat`. */
-#define MKS_P3_PBKDF2_ITERATIONS "200000"
+/* The stick's p3 keyslot cost: argon2id at one fixed cost every machine
+ * the stick boots can meet (DESIGN Section 3, docs/notes/argon2-totp.md
+ * Section 1 and open item 1). This is the one place it is written; mkstick
+ * create formats with it, status measures p3's slots against it, and
+ * falcon-efi/tools/mk-test-stick.sh reads the numbers out of this file for
+ * the rig stick.
+ *
+ * Measured 2026-09-28 with falcon-core's argon2id built i586 -O2, the code
+ * both loaders run: about 42 ms per MiB per pass on the A21m (Pentium III,
+ * 548 MHz), linear in memory and passes, so 64 MiB costs 5.4 s at time 2
+ * and 10.5 s at time 4 there, against 0.20 s and 0.39 s on an i9.
+ *
+ * Memory 64 MiB: a 512 MB Pentium III has it free above falcon-bios's 64 MB
+ * heap floor several times over, and so does any UEFI machine.
+ *
+ * Lanes 4: the loaders and the appliance fill lanes in turn, and on the
+ * A21m 4 lanes cost the same as 1 (10474 ms against 10458 ms at 64 MiB,
+ * time 4), while cryptsetup on the personal OS runs them in parallel.
+ *
+ * Time 4: the decision was time 2 (5.4 s on the A21m), but cryptsetup
+ * refuses --pbkdf-force-iterations below 4 for argon2 ("minimum is 4"), and
+ * it is what formats p3. 4 is its floor, 10.5 s on the A21m. */
+#define MKS_STICK_KDF_MEMORY_KIB 65536
+#define MKS_STICK_KDF_TIME       4
+#define MKS_STICK_KDF_LANES      4
+
+#define MKS_STR_(x) #x
+#define MKS_STR(x)  MKS_STR_(x)
 
 /* Default partition sizes (DESIGN Section 3: p1 ~64 MB, p3 ~1 GB, p2 and p4
  * bulk). p2 and p4 have no default size: they split whatever is left. */
@@ -104,6 +127,10 @@ typedef struct {
 } mks_bios_req;
 
 cli_status mks_bios_install(const mks_bios_req *req);
+
+/* One LUKS2 keyslot's KDF and cost, for a report: "argon2id, time 4,
+ * 64 MiB, 1 lane", "pbkdf2, 200000 iterations" (inspect.c). */
+void mks_slot_describe(const luks_slot_info *info, char *buf, size_t cap);
 
 /* ---- the commands ---- */
 extern const cli_cmd mks_cmd_bios;
