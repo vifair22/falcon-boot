@@ -106,9 +106,12 @@ predictions (DESIGN Section 7.8): it enforces nothing and signs nothing.
 - The seed (20 bytes) lives in a TPM NV index readable only when the PCRs
   match: a PolicyPCR read policy on 2.0, `pcrInfoRead` on 1.2. Nothing
   sealed sits on disk to keep in step.
-- Encrypted session: on 2.0, a session salted to a TPM key (ECDH, P-256)
-  with AES-128-CFB parameter encryption of the NV read's response; on 1.2,
-  a transport session (open item 4).
+- Encrypted session: on 2.0, a policy session salted to a TPM key (ECDH,
+  P-256) with AES-128-CFB parameter encryption of the NV read's response,
+  and the response HMAC checked; on 1.2, an encrypting transport session
+  (open item 4). The TPM key is pinned at enrollment: its name (2.0) or
+  its public key (1.2) goes into STATION.INI with the PCRs and the index,
+  so an interposer cannot hand falcon a key of its own.
 - The code: HMAC-SHA1 (already in core) over 30-second steps of UTC from the
   firmware's clock, 6 digits.
 - Enrollment, from the machine's OS or DevLink recovery:
@@ -131,11 +134,28 @@ predictions (DESIGN Section 7.8): it enforces nothing and signs nothing.
    512 MB machine.
 2. The station sizing's target time, and its conservative default for
    `--no-scan`.
-3. The TPM NV index handles (2.0 owner range; 1.2 index), and what
-   authorises writing them (owner auth, or an index auth kept by mkstick).
-4. The 1.2 encrypted session: transport session setup (TPM_EstablishTransport
-   needs RSA encryption to a TPM key; which key, and whether its public part
-   is readable without owner auth).
+3. Settled 2026-09-28, against swtpm 0.10.2 (`make test-tpm`). 2.0: index
+   0x01800FA1 in the owner range (tpm2-totp's default is 0x018094AF), SHA-256
+   name, attributes OWNERWRITE, WRITEALL, POLICYREAD and NO_DA, authPolicy
+   the PolicyPCR digest of the enrolled PCRs' SHA-256 values. 1.2: index
+   0x20000FA1 (the U bit, D clear), TPM_NV_PER_OWNERWRITE, `pcrInfoRead`
+   with the composite as digestAtRelease and every locality, no read
+   authorisation. On both, the owner authorises writing as well as defining
+   and removing, so enrollment needs the one secret it already needs and
+   mkstick keeps none; reseal is remove and define, since the policy is
+   fixed at definition. A 1.2 TPM with nvLocked clear skips every NV check,
+   PCRs included, so enrollment refuses it.
+4. Settled 2026-09-28, same rig: TPM_EstablishTransport with
+   TPM_TRANSPORT_ENCRYPT and TPM_ALG_MGF1 (the scheme every 1.2 TPM must
+   have; AES-CTR is optional), the session secret RSAES-OAEP-encrypted
+   (SHA-1, "TCPA") to the SRK, authorised with the SRK's usage secret, the
+   well-known 20 zero bytes. The SRK's public key is not readable at boot
+   (readSRKPub is off once the TPM is owned), so enrollment reads it with
+   the owner's authorisation (TPM_OwnerReadInternalPub) and STATION.INI
+   keeps it; that is also the pin. The NV read is wrapped with no
+   authorisation of its own. The 1.2 enrollment write travels in the clear
+   (from the machine's own OS); the 2.0 one is encrypted.
 5. The QR code at enrollment: a dependency (qrencode) or falcon's own.
-6. Tooling for the rigs: swtpm on the workstation and in the harness image,
-   and an OVMF build with TPM 1.2 and 2.0 support.
+6. Tooling for the rigs: swtpm on the workstation (`make test-tpm` uses
+   it, and skips without it) and in the harness image, and an OVMF build
+   with TPM 1.2 and 2.0 support.
