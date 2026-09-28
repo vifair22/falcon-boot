@@ -54,21 +54,9 @@
     { 0xdb47d7d3, 0xfe81, 0x11d3, \
       { 0x9a, 0x35, 0x00, 0x90, 0x27, 0x3f, 0xc1, 0x4d } }
 
-/* Spec 8.3. Carried whole because EFI_FILE_INFO embeds three of them and a
- * short transcription would shift Attribute and FileName. */
-typedef struct {
-    UINT16 Year;
-    UINT8  Month;
-    UINT8  Day;
-    UINT8  Hour;
-    UINT8  Minute;
-    UINT8  Second;
-    UINT8  Pad1;
-    UINT32 Nanosecond;
-    INT16  TimeZone;
-    UINT8  Daylight;
-    UINT8  Pad2;
-} EFI_TIME;
+/* EFI_TIME (spec 8.3) is efi/tables.h's, whole, since EFI_FILE_INFO
+ * embeds three of them and a short transcription would shift Attribute and
+ * FileName. */
 
 /* Spec 13.5.16. Size is the size of the WHOLE record, the name included,
  * which is why the name is a flexible array and not a fixed buffer. */

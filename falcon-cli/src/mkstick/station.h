@@ -118,4 +118,8 @@ int stn_find_esp(const mks_records *r);
 
 extern const cli_cmd stn_cmd_install;
 
+/* `station totp ...`, the UEFI station's TOTP check (totp.c): argv as
+ * `station` got it with the word totp taken out. */
+cli_status stn_totp_main(int argc, char **argv);
+
 #endif /* FALCON_MKSTICK_STATION_H */

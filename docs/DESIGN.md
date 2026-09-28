@@ -3790,7 +3790,8 @@ diagrams are traced from their code.
 #### 12.5.1 UEFI
 
 The station of Section 13, built (2026-09-27): the list of 13.3,
-`STATION.INI` (13.7) and next boot (13.8). `apps/station/efi_main.c` finds
+`STATION.INI` (13.7) and next boot (13.8); the TOTP check (13.15) added
+2026-09-28. `apps/station/efi_main.c` finds
 the rows and boots them; `media/strows.c` is the list as data (the names,
 what an INI section changes or adds, the order), host-tested.
 
@@ -3803,9 +3804,12 @@ flowchart TD
     DISC --> POSS["pos_scan<br/>shelves carrying the ESP's install ID, any disk (3.1)"]
     POSS --> INI{"\EFI\falcon\STATION.INI<br/>on the loader's ESP?"}
     INI -- "no" --> ROWS
-    INI -- "parses" --> ROWS
+    INI -- "parses" --> TOTP{"[totp] section? (13.15)"}
     INI -- "error, too large, unreadable" --> ERR["page: STATION.INI line n: why<br/>no default, no countdown; a key"]
     ERR --> ROWS
+    TOTP -- "no" --> ROWS
+    TOTP -- "yes" --> SEAL["totp_load: the TPM through EFI_TCG2 / EFI_TCG,<br/>the seed unsealed once, before anything is loaded;<br/>the code, or why not, under the banner from here on"]
+    SEAL --> ROWS
     ROWS["rows (13.3):<br/>Personal OS (encrypted), one row per plaintext UKI,<br/>nxt_scan: BootOrder's offered entries but BootCurrent and falcon,<br/>each ESP whose bootmgfw.efi no entry names,<br/>memtest.efi on the loader's ESP, Firmware Setup<br/>then strows_apply: the INI's sections change or add rows"]
     ROWS --> NX{"next boot named?"}
     NX -- "an entry" --> BOOT
@@ -3836,7 +3840,11 @@ this loader: it is verified by shim's loader when shim enforces and loaded
 by the firmware's otherwise, exactly as an ISO's own loader is (12.2.14),
 because Windows Boot Manager loads `winload.efi` through the firmware with
 its own handle as the parent. The default and its countdown belong to the
-first list only; a boot that comes back to the list gets neither.
+first list only; a boot that comes back to the list gets neither. With a
+`[totp]` section (13.15) every route out wipes the seed first (the ESP and
+MEM handover, the UKI's StartImage, `BootNext`, firmware setup, the return
+to firmware), and a list the user comes back to says the code is shown
+again after a restart.
 
 #### 12.5.2 BIOS
 
@@ -4294,7 +4302,9 @@ hide = yes
 - Keys: `disk` (`gpt:<DiskGUID>` or `mbr:<signature>`), `part` (a number;
   absent means the disk's own MBR), `uki` (a file on the shelf), `efi` (a
   path on an ESP), `method` (`firmware` or `efi`, UEFI Windows), `swap`,
-  `label`, `hide`; `[general]` has `default`, `timeout`, `order`.
+  `label`, `hide`; `[general]` has `default`, `timeout`, `order`;
+  `[totp]` is the UEFI station's TOTP check, which has keys of its own
+  (13.15).
 - Strict, as `JUMP.INI` is (Section 14.7): a key it does not know, a value it
   cannot parse, a key given twice, or a timeout with no default is an error
   naming the line, and the result is no default and no countdown. A typo
@@ -4742,6 +4752,154 @@ disk `update.sh` hands mtools the station partition's own node (checked
 against sysfs's start for it) and keeps `@@offset` for image files. The
 rig's disk is a sparse 12 GiB with the station partition past 4 GiB,
 updated through a loop device's partition node.
+
+### 13.15 The TOTP check (decided 2026-09-28)
+
+Status (2026-09-28): built for the UEFI station and rig-proven under OVMF
+with swtpm as a TPM 2.0 and a TPM 1.2, Secure Boot off and on (`make
+test-tpm-rig`, the `totp` cases). Unmeasured on hardware. Not in
+falcon-bios; `docs/notes/argon2-totp.md` Section 2 has the reasons and the
+settled details below.
+
+**What it is for.** The personal OS's passphrase is typed into the
+station's own prompt, so a check that the machine was not tampered with
+has to come before that prompt, and only the station can show one. Reading
+the PCRs and comparing them proves nothing, since a tampered firmware
+reports what it likes. What firmware cannot do is make the TPM release a
+secret sealed to values it never measured. So the seed of an RFC 6238 code
+is sealed to the PCRs of a known-good boot, the station asks the TPM for
+it and shows the code, and the user compares it with an authenticator
+before typing. A label, like the boot predictions (7.8): the station boots
+on whatever the TPM says, enforces nothing and signs nothing.
+
+**STATION.INI.** Enrollment writes a `[totp]` section, and the station
+does nothing without one:
+
+```
+[totp]
+tpm   = 2.0                    ; or 1.2
+index = 0x01800fa1             ; 0x20000fa1 on 1.2
+pcrs  = 0, 2, 4, 7             ; 0 to 15
+key   = 000b...                ; 2.0: the SRK's name; 1.2: its modulus
+label = falcon-station:desk    ; the authenticator's name for it
+srkauth = sha1-zero            ; 1.2 only, when the SRK's secret is SHA-1
+                               ; of 20 zero bytes rather than the bytes
+```
+
+One parser (`media/stationini.c`) for both stations and mkstick; the BIOS
+station parses the section and ignores it. It is as strict as the rest of
+the file: a key given twice, a key the version has no use for, or a key
+that is not a key of that version (a 2.0 name is 34 bytes, SHA-256 first;
+a 1.2 modulus 128 to 256) is an error naming the line.
+
+**The unseal.** `falcon-efi/src/tcg/` is core's `tpm/` transport through
+the firmware: `EFI_TCG2_PROTOCOL` SubmitCommand for 2.0, `EFI_TCG_PROTOCOL`
+PassThroughToTpm for 1.2. There is no TPM driver in falcon. On 2.0 the
+read is a policy session salted by ECDH P-256 to the SRK (the persistent
+0x81000001 when it is an ECC P-256 storage key, else a primary made from
+the standard ECC template, the same every boot), PolicyPCR over the
+enrolled PCRs, and NV_Read with AES-128-CFB response encryption and its
+HMAC checked; the salt key's name must be the one in `key`, or the read is
+refused as the wrong key, which is what stops an interposer handing the
+station a key of its own. On 1.2 it is an encrypting transport session
+(MGF1) whose secret is RSAES-OAEP-encrypted to the SRK public key in
+`key`, which is also the pin, authorised with the SRK's well-known secret,
+wrapping an NV_ReadValue the TPM answers only when the PCRs match
+(`pcrInfoRead`). Either way the seed crosses the bus as ciphertext.
+
+The session's randomness (the nonces, the ECDH scalar, the transport
+secret) is SHA-256 over every source the machine has: `EFI_RNG_PROTOCOL`,
+RDRAND, the TPM's GetRandom, the time-stamp counter and the clock. The
+TPM's own bytes cross the same bus as the seed, so they are never used
+alone.
+
+**The code and its lines.** HMAC-SHA1, six digits, thirty-second steps of
+the firmware clock read as UTC whatever time zone it names. The menu draws
+it on the line under the banner, `TOTP: 123 456  (falcon-station:desk)`,
+and asks for it every second on the countdown's timer, so it changes at
+each step with or without a countdown (`menu_run_timed`'s status lines,
+laid out by `tui_menu_layout_status`). The personal OS's page shows it
+again above the passphrase prompt (pos.c's hook). When the TPM will not
+release the seed, the same places say why instead:
+
+- a PCR mismatch: "The TPM did not release the code:" / "firmware, its
+  settings or the boot chain changed since enrollment."
+- the salt key is not the pinned one: "The TPM key is not the enrolled
+  one."
+- the firmware offers no protocol for the version: "No TPM 2.0 found." (or
+  1.2)
+- a response whose HMAC fails: "The TPM's answer did not verify."
+- any other refusal: "The TPM did not release the code: TPM error 0x...".
+
+**The seed's lifetime.** Read once, before the rows are found, and kept
+in `totp.c`'s static memory until another program is about to run: the
+ESP and MEM routes' handover, the UKI's StartImage (pos.c's second hook),
+`BootNext` and the firmware-setup reset, and the return to firmware all
+wipe it first. Reading once is not a saving but a necessity: anything the
+station loads extends PCR 4 whether it then runs or not, and a second read
+after that would be refused as a changed boot. Keeping it past a handover
+would leave it in memory the next program can read. A menu that comes back
+after a program ran says "The TOTP code is shown again after a restart."
+
+**Enrollment.** `mkstick station totp enroll <disk> [--pcrs 0,2,4,7]
+[--owner-auth-file F] [--label NAME]`, run on the station's machine from a
+system the station started, over `/dev/tpmrm0` (2.0) or `/dev/tpm0` (1.2)
+with the same `tpm/` code. The PCR values to seal to are not the ones the
+TPM holds when Linux runs: the station has since loaded a UKI (PCR 4) and
+shim has logged the key that verified it (PCR 7). They come from the
+firmware's event log (securityfs), replayed up to the event that measured
+the station's own image, found by the Authenticode hash of
+`\EFI\falcon\grubx64.efi` in the log's bank (`tpm/evlog.c`,
+`trust/authenticode.c`). Finding that event is also the proof that this
+system was started by that station; without it enrollment refuses. The
+whole log, replayed to its end, must equal the PCRs as the TPM holds them
+now, or enrollment refuses rather than seal to values the station will
+never see. A fresh 20-byte seed from `getrandom` is sealed (tpm2.h's
+`tpm2_seed_enroll_values`, tpm12.h's), `[totp]` is written into
+STATION.INI with every other line of the file left as it was (through the
+mount when the ESP is mounted, mtools when it is not), and the secret is
+printed once, as base32 and an `otpauth://totp/falcon-station:<name>` URI,
+and as a QR code when `qrencode` is installed.
+
+The owner authorises every NV operation (7.5's rule, one secret the user
+already holds): `--owner-auth-file` is the file's bytes on 2.0, and on 1.2
+exactly 20 bytes are the secret itself and anything else a passphrase whose
+SHA-1 it is; with no file, the empty authorisation on 2.0 and the 20 zero
+bytes on 1.2. A 1.2 TPM whose NV is not locked releases NV to anyone and
+is refused. A 1.2 TPM owned with a password of zero bytes (swtpm_setup's
+`--srk-well-known`) keeps SHA-1 of them as the SRK's secret; enrollment
+tries both forms through a transport session and records the second as
+`srkauth = sha1-zero`. Any other SRK secret is refused.
+
+`reseal` is enrollment over an existing one, after a firmware, shim or
+station update: the old seed cannot be read back from the OS, whose PCRs
+are not the station's, so a new one is made and the authenticator's entry
+replaced. `remove` deletes the index as the owner and the section.
+
+**The rig.** `falcon-efi/tools/run-tpm-rig.sh`'s `totp` cases boot the
+station disk four times over one swtpm state with the guest clock pinned:
+the probe, started by the station, saves the event log to the ESP; mkstick
+enrolls on the host against the same state (its test-only `--tpm-socket`
+and `--event-log`); the station shows the code the host computes from the
+printed secret, swtpm's own log shows the seed never crossed in the clear
+(on 1.2 the enrollment's plain write is the control), the menu drops the
+code once the probe has run, and the prompt page shows it; then the other
+OVMF build, which moves PCR 0 as a firmware update does, brings the
+warning, and the station still boots its default.
+
+Considered and rejected:
+
+- *Sealing to the PCRs as mkstick reads them.* Wrong for PCR 4 and 7 on
+  every machine: the OS runs after the station's own loads.
+- *Reading the seed every thirty seconds.* The first load after the first
+  read moves PCR 4, and the TPM rightly refuses every read after it.
+- *The TPM's GetRandom as the session's randomness.* An interposer reads
+  it and derives the salt.
+- *A check that refuses to boot.* Enforcement is the platform's (7.2); the
+  station has no business deciding what the user may start.
+- *Keeping a copy of the seed for reseal.* Anything sealed on disk has to
+  be kept in step with the TPM, and anything readable from the OS is
+  readable by what the check is for.
 
 ## 14. falcon jump: a boot floppy (decided 2026-09-25)
 

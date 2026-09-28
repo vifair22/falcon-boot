@@ -65,6 +65,11 @@ typedef struct {
 int tpm2_startup(tpm_dev *d);
 
 int tpm2_pcr_read(tpm_dev *d, unsigned int pcr, uint8_t out[TPM2_DIGEST_LEN]);
+/* n random bytes from the TPM (TPM2_GetRandom), at most 32. In the clear:
+ * a bus interposer sees them, so a caller mixes them with a source of its
+ * own rather than using them alone for a secret. */
+int tpm2_get_random(tpm_dev *d, uint8_t *out, size_t n);
+
 int tpm2_pcr_extend(tpm_dev *d, unsigned int pcr,
                     const uint8_t digest[TPM2_DIGEST_LEN]);
 
@@ -115,5 +120,17 @@ int tpm2_seed_enroll(tpm_dev *d, const uint8_t *owner_auth, size_t auth_len,
                      uint32_t index, uint32_t pcr_mask,
                      const uint8_t *seed, size_t len,
                      uint8_t key_name[TPM2_NAME_LEN]);
+
+/* The same with the PCR values given rather than read: the values the
+ * PCRs will hold when the station runs, which is not what they hold in the
+ * OS enrollment runs from (docs/DESIGN.md Section 13.15; mkstick replays
+ * the firmware's event log for them). values is one per set bit of
+ * pcr_mask, ascending. */
+int tpm2_seed_enroll_values(tpm_dev *d, const uint8_t *owner_auth,
+                            size_t auth_len, uint32_t index,
+                            uint32_t pcr_mask,
+                            const uint8_t (*values)[TPM2_DIGEST_LEN],
+                            const uint8_t *seed, size_t len,
+                            uint8_t key_name[TPM2_NAME_LEN]);
 
 #endif /* FALCON_TPM_TPM2_H */

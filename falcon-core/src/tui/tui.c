@@ -114,6 +114,13 @@ int tui_mode_at(const tui_frame *f, size_t len, size_t *row, size_t *col)
 
 void tui_menu_layout(const tui_frame *f, size_t count, tui_menu *m)
 {
+    tui_menu_layout_status(f, count, 0, m);
+}
+
+void tui_menu_layout_status(const tui_frame *f, size_t count,
+                            size_t status, tui_menu *m)
+{
+    size_t chrome;
     size_t avail;
     size_t list;
     size_t block;
@@ -135,8 +142,11 @@ void tui_menu_layout(const tui_frame *f, size_t count, tui_menu *m)
     /* What the margins leave, minus the chrome, is the most list the screen
      * can hold. A shorter list shrinks the block instead of padding it out;
      * a longer one fills the screen and scrolls. */
+    if (status > TUI_STATUS_ROWS)
+        status = TUI_STATUS_ROWS;
+    chrome = TUI_CHROME_ROWS + status;
     avail = f->rows - (size_t)2u * TUI_MARGIN_Y;
-    list = (avail > TUI_CHROME_ROWS) ? avail - TUI_CHROME_ROWS : 1u;
+    list = (avail > chrome) ? avail - chrome : 1u;
     if (count == 0)
         list = 1u;               /* the "nothing found" row still needs one */
     else if (count < list)
@@ -146,16 +156,19 @@ void tui_menu_layout(const tui_frame *f, size_t count, tui_menu *m)
     /* The logo and the blank under it, when the whole list fits with them
      * and the lettering fits across. */
     m->logo_rows = 0;
-    if (list + TUI_CHROME_ROWS + TUI_LOGO_ROWS + 1u <= avail &&
+    if (list + chrome + TUI_LOGO_ROWS + 1u <= avail &&
         list == (count == 0 ? 1u : count) && f->text_width >= TUI_LOGO_WIDTH)
         m->logo_rows = TUI_LOGO_ROWS;
 
-    block = list + TUI_CHROME_ROWS +
+    block = list + chrome +
             (m->logo_rows != 0 ? m->logo_rows + 1u : 0u);
     m->logo_row = (f->rows - block) / 2u;
     m->banner_row = m->logo_row +
                     (m->logo_rows != 0 ? m->logo_rows + 1u : 0u);
-    m->list_top = m->banner_row + 2u;      /* banner, then a blank row */
+    m->status_row = m->banner_row + 1u;    /* the status lines, if any */
+    m->status_rows = status;
+    /* banner, the status lines, then a blank row */
+    m->list_top = m->banner_row + 2u + status;
     m->hint_row = m->list_top + list + 1u; /* blank, then the hint */
 }
 

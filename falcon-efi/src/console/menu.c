@@ -64,6 +64,10 @@ typedef struct {
      * menu_run_probed; NULL for every other caller. */
     menu_entry       *rows;
     const menu_probe *probe;
+    /* The status lines under the banner, and what they were last drawn
+     * as, for menu_run_timed; status NULL for every other caller. */
+    const menu_status *status;
+    menu_status_text   shown;
 } menu_view;
 
 static void out(EFI_SYSTEM_TABLE *st, CHAR16 *s)
@@ -426,6 +430,49 @@ static void countdown_stop(EFI_SYSTEM_TABLE *st, EFI_EVENT *ev)
     *ev = (EFI_EVENT)0;
 }
 
+/* ---- the status lines ---- */
+
+static BOOLEAN status_same(const CHAR16 *a, const CHAR16 *b)
+{
+    UINTN i;
+
+    for (i = 0; i < MENU_STATUS_MAX; i++) {
+        if (a[i] != b[i])
+            return FALSE;
+        if (a[i] == 0)
+            return TRUE;
+    }
+    return TRUE;
+}
+
+/* Asks for the lines and repaints each that changed (all of them when
+ * `all`). The count stays what the layout gave them. */
+static void status_refresh(menu_view *v, BOOLEAN all)
+{
+    menu_status_text now;
+    UINTN i;
+
+    if (v->status == (const menu_status *)0 || v->m.status_rows == 0)
+        return;
+    memset(&now, 0, sizeof now);
+    v->status->fn(v->status->ctx, &now);
+    for (i = 0; i < v->m.status_rows && i < MENU_STATUS_ROWS; i++) {
+        now.line[i][MENU_STATUS_MAX - 1u] = 0;
+        if (i >= now.n) {
+            now.line[i][0] = 0;
+            now.attr[i] = TUI_ATTR_TEXT;
+        }
+        if (!all && now.attr[i] == v->shown.attr[i] &&
+            status_same(now.line[i], v->shown.line[i]))
+            continue;
+        v->st->ConOut->SetAttribute(v->st->ConOut, now.attr[i]);
+        draw_row(v->st, v->m.status_row + i, v->m.left, v->m.width,
+                 now.line[i]);
+    }
+    v->st->ConOut->SetAttribute(v->st->ConOut, TUI_ATTR_TEXT);
+    v->shown = now;
+}
+
 /* Before a window is painted whole: the rows in it that have not been
  * probed are, and the tag columns are sized to the window, so a page is laid
  * out by what is on it. */
@@ -457,23 +504,24 @@ static void window_prepare(menu_view *v, UINTN top)
 static INTN run(EFI_SYSTEM_TABLE *st, const menu_banner *banner,
                 const menu_entry *entries, menu_entry *rows, UINTN count,
                 const menu_keys *keys, CHAR16 *which, UINTN sel,
-                UINTN seconds, const menu_probe *probe);
+                UINTN seconds, const menu_probe *probe,
+                const menu_status *status);
 
 INTN menu_run_keys(EFI_SYSTEM_TABLE *st, const menu_banner *banner,
                    const menu_entry *entries, UINTN count,
                    const menu_keys *keys, CHAR16 *which)
 {
     return run(st, banner, entries, (menu_entry *)0, count, keys, which, 0,
-               0, (const menu_probe *)0);
+               0, (const menu_probe *)0, (const menu_status *)0);
 }
 
 INTN menu_run_timed(EFI_SYSTEM_TABLE *st, const menu_banner *banner,
                     const menu_entry *entries, UINTN count,
                     const menu_keys *keys, CHAR16 *which, UINTN sel,
-                    UINTN seconds)
+                    UINTN seconds, const menu_status *status)
 {
     return run(st, banner, entries, (menu_entry *)0, count, keys, which, sel,
-               seconds, (const menu_probe *)0);
+               seconds, (const menu_probe *)0, status);
 }
 
 INTN menu_run_probed(EFI_SYSTEM_TABLE *st, const menu_banner *banner,
@@ -481,15 +529,16 @@ INTN menu_run_probed(EFI_SYSTEM_TABLE *st, const menu_banner *banner,
                      CHAR16 *which, const menu_probe *probe)
 {
     return run(st, banner, entries, entries, count, keys, which, 0, 0,
-               probe);
+               probe, (const menu_status *)0);
 }
 
 static INTN run(EFI_SYSTEM_TABLE *st, const menu_banner *banner,
                 const menu_entry *entries, menu_entry *rows, UINTN count,
                 const menu_keys *keys, CHAR16 *which, UINTN sel,
-                UINTN seconds, const menu_probe *probe)
+                UINTN seconds, const menu_probe *probe,
+                const menu_status *status)
 {
-    menu_view v;
+    static menu_view v;
     UINTN top = 0, painted = 0;
     const CHAR16 *line = !count ? tui_hint_empty
                          : (keys != (const menu_keys *)0 &&
@@ -498,6 +547,10 @@ static INTN run(EFI_SYSTEM_TABLE *st, const menu_banner *banner,
                              : tui_hint_default;
     EFI_EVENT tick = (EFI_EVENT)0;
     UINTN left = 0;
+    /* The countdown is running; the timer may outlive it for the status
+     * lines. */
+    BOOLEAN counting = FALSE;
+    UINTN nstatus = 0;
     /* Set whenever every slot has to be redrawn: the first paint, and any
      * keystroke that scrolled the window. A plain highlight move does not
      * set it, and repaints two rows instead of the whole window. */
@@ -513,8 +566,17 @@ static INTN run(EFI_SYSTEM_TABLE *st, const menu_banner *banner,
     v.count = count;
     v.rows = rows;
     v.probe = probe;
+    v.status = (status != (const menu_status *)0 &&
+                status->fn != (menu_status_fn)0) ? status
+                                                 : (const menu_status *)0;
+    memset(&v.shown, 0, sizeof v.shown);
+    if (v.status != (const menu_status *)0) {
+        v.status->fn(v.status->ctx, &v.shown);
+        nstatus = v.shown.n < MENU_STATUS_ROWS ? v.shown.n
+                                               : MENU_STATUS_ROWS;
+    }
     frame_ensure(st);
-    tui_menu_layout(&g_frame.f, count, &v.m);
+    tui_menu_layout_status(&g_frame.f, count, nstatus, &v.m);
     v.sig_w = 0;
     v.why_w = 0;
 
@@ -529,11 +591,13 @@ static INTN run(EFI_SYSTEM_TABLE *st, const menu_banner *banner,
      * prediction and the platform decides at load time (DESIGN Section
      * 7.8). */
     draw_row(st, v.m.hint_row, v.m.left, v.m.width, line);
+    status_refresh(&v, TRUE);
 
-    if (seconds != 0) {
+    if (seconds != 0 || v.m.status_rows != 0) {
         tick = countdown_start(st);
-        if (tick != (EFI_EVENT)0) {
+        if (tick != (EFI_EVENT)0 && seconds != 0) {
             left = seconds;
+            counting = TRUE;
             paint_countdown(&v, left);
         }
     }
@@ -575,10 +639,13 @@ static INTN run(EFI_SYSTEM_TABLE *st, const menu_banner *banner,
             return -1;
         }
 
-        /* A second of the countdown: nothing else on screen moves. When it
-         * runs out the highlighted row is taken as though enter had been
-         * pressed on it. */
+        /* A second: the status lines are asked again, and the countdown
+         * steps. When it runs out the highlighted row is taken as though
+         * enter had been pressed on it. */
         if (i == 1u) {
+            status_refresh(&v, FALSE);
+            if (!counting)
+                continue;
             if (--left != 0) {
                 paint_countdown(&v, left);
                 continue;
@@ -591,9 +658,12 @@ static INTN run(EFI_SYSTEM_TABLE *st, const menu_banner *banner,
         }
 
         /* Any key stops the countdown for good, and is then taken as any
-         * key is: enter on the default boots it at once. */
-        if (tick != (EFI_EVENT)0) {
-            countdown_stop(st, &tick);
+         * key is: enter on the default boots it at once. The timer stays
+         * while there are status lines to keep current. */
+        if (counting) {
+            counting = FALSE;
+            if (v.m.status_rows == 0)
+                countdown_stop(st, &tick);
             st->ConOut->SetAttribute(st->ConOut, TUI_ATTR_TEXT);
             draw_row(st, v.m.hint_row, v.m.left, v.m.width, line);
         }
@@ -610,6 +680,7 @@ static INTN run(EFI_SYSTEM_TABLE *st, const menu_banner *banner,
                 break; /* EFI_NOT_READY: the queue is empty */
 
             if (key.ScanCode == EFI_SCAN_ESC) {
+                countdown_stop(st, &tick);
                 restore_console(st);
                 return -1;
             }
@@ -624,6 +695,7 @@ static INTN run(EFI_SYSTEM_TABLE *st, const menu_banner *banner,
                               key.UnicodeChar <= L'Z')
                                  ? (CHAR16)(key.UnicodeChar - L'A' + L'a')
                                  : key.UnicodeChar;
+                countdown_stop(st, &tick);
                 restore_console(st);
                 return (INTN)sel;
             }

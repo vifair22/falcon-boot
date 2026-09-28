@@ -20,6 +20,7 @@
 #define ORD_OIAP               0x0000000Au
 #define ORD_OSAP               0x0000000Bu
 #define ORD_EXTEND             0x00000014u
+#define ORD_GETRANDOM          0x00000046u
 #define ORD_PCRREAD            0x00000015u
 #define ORD_GETCAPABILITY      0x00000065u
 #define ORD_OWNERREADINTPUB    0x00000081u
@@ -277,6 +278,30 @@ int tpm12_pcr_read(tpm_dev *d, unsigned int pcr, uint8_t out[TPM12_DIGEST_LEN])
         return TPM_ERR_PROTO;
     }
     memcpy(out, rp, TPM12_DIGEST_LEN);
+    return TPM_OK;
+}
+
+int tpm12_get_random(tpm_dev *d, uint8_t *out, size_t n)
+{
+    uint8_t p[4];
+    const uint8_t *rp;
+    size_t rpl;
+    int rc;
+
+    if (d == NULL || out == NULL || n == 0 || n > TPM12_DIGEST_LEN) {
+        return TPM_ERR_ARG;
+    }
+    be32put(p, (uint32_t)n);
+    rc = run12(d, ORD_GETRANDOM, NULL, 0, p, sizeof p, NULL, 0, &rp, &rpl);
+    if (rc != TPM_OK) {
+        return rc;
+    }
+    /* randomBytesSize, then the bytes; a TPM may return fewer than asked,
+     * which is refused rather than padded. */
+    if (rpl != 4u + n || tpm_be32(rp) != n) {
+        return TPM_ERR_PROTO;
+    }
+    memcpy(out, rp + 4, n);
     return TPM_OK;
 }
 
@@ -808,39 +833,16 @@ int tpm12_seed_read(tpm_dev *d, uint32_t index,
     return tpm12_nv_read_transport(d, &t, index, seed, len);
 }
 
-int tpm12_seed_enroll(tpm_dev *d, const uint8_t owner_auth[TPM12_DIGEST_LEN],
-                      uint32_t index, uint32_t pcr_mask,
-                      const uint8_t *seed, size_t len, tpm12_pubkey *srk)
+/* The part of an enrollment after the PCR values are known. */
+static int enroll_values(tpm_dev *d, const uint8_t owner_auth[20],
+                         uint32_t index, uint32_t pcr_mask,
+                         const uint8_t (*values)[TPM12_DIGEST_LEN],
+                         const uint8_t *seed, size_t len, tpm12_pubkey *srk)
 {
-    uint8_t vals[TPM12_PCR_MAX][TPM12_DIGEST_LEN];
     uint8_t digest[TPM12_DIGEST_LEN];
-    unsigned int i, n = 0;
-    int owned = 0, locked = 0;
     int rc;
 
-    if (d == NULL || owner_auth == NULL || seed == NULL || srk == NULL ||
-        len == 0u || len > TPM12_NV_MAX || pcr_mask == 0u ||
-        !mask_ok(pcr_mask)) {
-        return TPM_ERR_ARG;
-    }
-    rc = tpm12_flags(d, &owned, &locked);
-    if (rc != TPM_OK) {
-        return rc;
-    }
-    if (!locked) {
-        return TPM_ERR_NVLOCK;
-    }
-    for (i = 0; i < TPM12_PCR_MAX; i++) {
-        if ((pcr_mask >> i) & 1u) {
-            rc = tpm12_pcr_read(d, i, vals[n++]);
-            if (rc != TPM_OK) {
-                return rc;
-            }
-        }
-    }
-    rc = tpm12_composite_digest(pcr_mask,
-                                (const uint8_t (*)[TPM12_DIGEST_LEN])vals,
-                                digest);
+    rc = tpm12_composite_digest(pcr_mask, values, digest);
     if (rc == TPM_OK) {
         rc = tpm12_srk_pub(d, owner_auth, srk);
     }
@@ -855,4 +857,74 @@ int tpm12_seed_enroll(tpm_dev *d, const uint8_t owner_auth[TPM12_DIGEST_LEN],
         }
     }
     return rc;
+}
+
+static int enroll_args_ok(const tpm_dev *d, const uint8_t *owner_auth,
+                          const uint8_t *seed, size_t len,
+                          const tpm12_pubkey *srk, uint32_t pcr_mask)
+{
+    return d != NULL && owner_auth != NULL && seed != NULL && srk != NULL &&
+           len != 0u && len <= TPM12_NV_MAX && pcr_mask != 0u &&
+           mask_ok(pcr_mask);
+}
+
+/* NV must be locked, or the PCR gate does not hold (tpm12.h). */
+static int nv_locked(tpm_dev *d)
+{
+    int owned = 0, locked = 0;
+    int rc = tpm12_flags(d, &owned, &locked);
+
+    if (rc != TPM_OK) {
+        return rc;
+    }
+    return locked ? TPM_OK : TPM_ERR_NVLOCK;
+}
+
+int tpm12_seed_enroll(tpm_dev *d, const uint8_t owner_auth[TPM12_DIGEST_LEN],
+                      uint32_t index, uint32_t pcr_mask,
+                      const uint8_t *seed, size_t len, tpm12_pubkey *srk)
+{
+    uint8_t vals[TPM12_PCR_MAX][TPM12_DIGEST_LEN];
+    unsigned int i, n = 0;
+    int rc;
+
+    if (!enroll_args_ok(d, owner_auth, seed, len, srk, pcr_mask)) {
+        return TPM_ERR_ARG;
+    }
+    rc = nv_locked(d);
+    if (rc != TPM_OK) {
+        return rc;
+    }
+    for (i = 0; i < TPM12_PCR_MAX; i++) {
+        if ((pcr_mask >> i) & 1u) {
+            rc = tpm12_pcr_read(d, i, vals[n++]);
+            if (rc != TPM_OK) {
+                return rc;
+            }
+        }
+    }
+    return enroll_values(d, owner_auth, index, pcr_mask,
+                         (const uint8_t (*)[TPM12_DIGEST_LEN])vals, seed,
+                         len, srk);
+}
+
+int tpm12_seed_enroll_values(tpm_dev *d,
+                             const uint8_t owner_auth[TPM12_DIGEST_LEN],
+                             uint32_t index, uint32_t pcr_mask,
+                             const uint8_t (*values)[TPM12_DIGEST_LEN],
+                             const uint8_t *seed, size_t len,
+                             tpm12_pubkey *srk)
+{
+    int rc;
+
+    if (!enroll_args_ok(d, owner_auth, seed, len, srk, pcr_mask) ||
+        values == NULL) {
+        return TPM_ERR_ARG;
+    }
+    rc = nv_locked(d);
+    if (rc != TPM_OK) {
+        return rc;
+    }
+    return enroll_values(d, owner_auth, index, pcr_mask, values, seed, len,
+                         srk);
 }

@@ -1,10 +1,14 @@
 /* falcon-boot: shared crypto plumbing (docs/DESIGN.md Sections 5, 9).
  *
- * Purpose. The LUKS2 unlock of p3 is the one place in EFI-land where this
- * repo writes cryptography, and Section 9 fixes the scope: SHA-2, PBKDF2-HMAC,
- * Argon2id with the BLAKE2b under it (docs/notes/argon2-totp.md Section 1),
- * and AES-XTS *decrypt*, nothing else. This header holds the three things
- * every primitive here needs and nothing that belongs to one of them.
+ * Purpose. The LUKS2 unlock of p3 is where EFI-land needs cryptography, and
+ * Section 9 fixes the scope: SHA-2, PBKDF2-HMAC, Argon2id with the BLAKE2b
+ * under it (docs/notes/argon2-totp.md Section 1), and AES-XTS *decrypt*.
+ * The UEFI station alone adds the TOTP check's (Section 13.15): SHA-1 and
+ * HMAC-SHA1 for the code and the TPM 1.2 session, and CORE_CRYPTO_TPM
+ * (AES-CFB, P-256 ECDH, the TPM 2.0 KDFs, RSAES-OAEP), which the stick
+ * does not link. None of it signs, and none of it verifies an image. This
+ * header holds the three things every primitive here needs and nothing
+ * that belongs to one of them.
  *
  * Reasoning. The module is EFI-free on purpose, exactly like
  * falcon-core/src/fs/exfat.c: it touches no firmware service, allocates
@@ -16,8 +20,8 @@
  * Interactions.
  * falcon-core/src/crypto/{sha256,sha512,hash,hmac,pbkdf2,blake2b,argon2,aes,
  * xts,aesni} all include this; falcon-core/src/luks consumes the module
- * through hash.h, pbkdf2.h, argon2.h and xts.h and is the only in-repo
- * caller.
+ * through hash.h, pbkdf2.h, argon2.h and xts.h, and falcon-core/src/tpm
+ * and crypto/otp.c through hmac.h and the CORE_CRYPTO_TPM modules.
  */
 
 #ifndef FALCON_CRYPTO_H

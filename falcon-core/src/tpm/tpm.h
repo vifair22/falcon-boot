@@ -24,8 +24,10 @@
  * tpm_dev the caller allocates (about 4 KB; the loader makes it static), and
  * there is no allocation anywhere.
  *
- * Interactions. tpm2.h and tpm12.h are the two command sets. mkstick and the
- * UEFI station are the consumers to come; today only the host tests link it.
+ * Interactions. tpm2.h and tpm12.h are the two command sets, evlog.h the
+ * firmware's event log replayed for enrollment. The UEFI station reads the
+ * seed (falcon-efi/src/totp, over falcon-efi/src/tcg) and mkstick's
+ * `station totp` enrolls it (docs/DESIGN.md Section 13.15).
  */
 
 #ifndef FALCON_TPM_TPM_H

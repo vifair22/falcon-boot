@@ -1493,6 +1493,7 @@ const cli_cmd mks_cmd_station = {
     "  station install <disk>   put the station on a machine's disk\n"
     "  station remove  [<disk>] --backup <file>\n"
     "  station status  <disk>\n"
+    "  station totp    enroll|reseal|remove <disk>   the UEFI station's TOTP\n"
     "\n"
     "`falcon-boot-mkstick station <command> --help` for each.\n",
     station_placeholder
@@ -1520,6 +1521,15 @@ cli_status mks_station_main(int argc, char **argv)
             return CLI_OK;
         }
         return set_error(CLI_ERR_USAGE, "station install, remove or status?");
+    }
+    if (strcmp(argv[i], "totp") == 0) {
+        int k;
+
+        /* A command set of its own (totp.c): the word goes, the options
+         * before it stay. */
+        for (k = i; k + 1 < argc; k++)
+            argv[k] = argv[k + 1];
+        return stn_totp_main(argc - 1, argv);
     }
     return cli_dispatch(station_cmds, sizeof station_cmds /
                                           sizeof station_cmds[0],

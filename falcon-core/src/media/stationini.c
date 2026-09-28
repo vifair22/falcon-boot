@@ -137,6 +137,7 @@ static int fail(stationini *out, unsigned line, const char *what,
     /* Last: the span may be the default itself. */
     out->default_name[0] = '\0';
     out->timeout = 0;
+    out->totp.present = 0;
     return -1;
 }
 
@@ -302,7 +303,13 @@ enum {
     SEEN_HIDE   = 1u << 7,
     SEEN_DEF    = 1u << 8,
     SEEN_TMO    = 1u << 9,
-    SEEN_ORDER  = 1u << 10
+    SEEN_ORDER  = 1u << 10,
+    SEEN_TPM    = 1u << 11,
+    SEEN_INDEX  = 1u << 12,
+    SEEN_PCRS   = 1u << 13,
+    SEEN_KEY    = 1u << 14,
+    SEEN_TLABEL = 1u << 15,
+    SEEN_SRKAUTH = 1u << 16
 };
 
 typedef struct {
@@ -319,6 +326,14 @@ static const key_def k_entry_keys[] = {
 static const key_def k_general_keys[] = {
     { "default", SEEN_DEF }, { "timeout", SEEN_TMO }, { "order", SEEN_ORDER }
 };
+
+static const key_def k_totp_keys[] = {
+    { "tpm", SEEN_TPM }, { "index", SEEN_INDEX }, { "pcrs", SEEN_PCRS },
+    { "key", SEEN_KEY }, { "label", SEEN_TLABEL },
+    { "srkauth", SEEN_SRKAUTH }
+};
+
+#define TOTP_REQUIRED (SEEN_TPM | SEEN_INDEX | SEEN_PCRS | SEEN_KEY)
 
 static unsigned key_bit(const key_def *keys, size_t n, const char *a,
                         const char *b, const char **word)
@@ -385,6 +400,127 @@ static int entry_value(stationini *out, stationini_entry *e, unsigned line,
     }
 }
 
+static unsigned hex_val(char c)
+{
+    if (c >= '0' && c <= '9')
+        return (unsigned)(c - '0');
+    if (c >= 'a' && c <= 'f')
+        return (unsigned)(c - 'a' + 10);
+    return (unsigned)(c - 'A' + 10);
+}
+
+/* pcrs = 0, 2, 4, 7: PCR numbers below STATIONINI_TOTP_PCRS, each once. */
+static int parse_pcrs(const char *a, const char *b, uint32_t *mask)
+{
+    uint32_t m = 0;
+
+    for (;;) {
+        const char *ia = a;
+        const char *ib;
+        uint32_t n;
+
+        while (a < b && *a != ',')
+            a++;
+        ib = a;
+        while (ia < ib && is_space(*ia))
+            ia++;
+        while (ib > ia && is_space(ib[-1]))
+            ib--;
+        if (parse_uint(ia, ib, STATIONINI_TOTP_PCRS - 1u, &n) != 0 ||
+            (m & (1u << n)) != 0)
+            return -1;
+        m |= 1u << n;
+        if (a == b)
+            break;
+        a++;
+    }
+    *mask = m;
+    return 0;
+}
+
+static int totp_value(stationini *out, unsigned line, unsigned bit,
+                      const char *va, const char *vb)
+{
+    stationini_totp *t = &out->totp;
+    size_t n = (size_t)(vb - va);
+    size_t i;
+
+    switch (bit) {
+    case SEEN_TPM:
+        if (span_eq(va, vb, "2.0"))
+            t->tpm = 20;
+        else if (span_eq(va, vb, "1.2"))
+            t->tpm = 12;
+        else
+            return fail(out, line, "tpm", va, vb, " is not 2.0 or 1.2");
+        return 0;
+    case SEEN_INDEX:
+        if (n < 3 || n > 10 || va[0] != '0' || lower(va[1]) != 'x' ||
+            !hex_run(va + 2, vb, n - 2u))
+            return fail(out, line, "index", va, vb,
+                        " is not 0x and up to 8 hex digits");
+        t->index = 0;
+        for (i = 2; i < n; i++)
+            t->index = (t->index << 4) | hex_val(va[i]);
+        return 0;
+    case SEEN_PCRS:
+        if (parse_pcrs(va, vb, &t->pcrs) != 0)
+            return fail(out, line, "pcrs", va, vb,
+                        " is not PCR numbers 0 to 15, each once");
+        return 0;
+    case SEEN_KEY:
+        if (n == 0 || (n & 1u) != 0 || n > (size_t)2 * STATIONINI_TOTP_KEY_MAX ||
+            !hex_run(va, vb, n))
+            return fail(out, line, "key", va, vb,
+                        " is not hex of up to 256 bytes");
+        for (i = 0; i < n; i += 2)
+            t->key[i / 2u] = (uint8_t)((hex_val(va[i]) << 4) |
+                                       hex_val(va[i + 1u]));
+        t->key_len = (uint16_t)(n / 2u);
+        return 0;
+    case SEEN_SRKAUTH:
+        if (word_eq(va, vb, "zero"))
+            t->srk_sha1 = 0;
+        else if (word_eq(va, vb, "sha1-zero"))
+            t->srk_sha1 = 1;
+        else
+            return fail(out, line, "srkauth", va, vb,
+                        " is not zero or sha1-zero");
+        return 0;
+    default: /* SEEN_TLABEL */
+        if (!text_ok(va, vb, STATIONINI_LABEL_MAX))
+            return fail(out, line, "label", va, vb,
+                        " is not text of up to 63 characters");
+        copy_span(t->label, va, vb);
+        return 0;
+    }
+}
+
+/* A key the version can use: a 2.0 SRK's name is its nameAlg (SHA-256,
+ * 0x000B) and the 32-byte digest; a 1.2 SRK's modulus is 1024 to 2048
+ * bits. */
+static int totp_key_ok(const stationini_totp *t)
+{
+    if (t->tpm == 20)
+        return t->key_len == 34u && t->key[0] == 0x00u &&
+               t->key[1] == 0x0Bu;
+    return t->key_len >= 128u && t->key_len <= STATIONINI_TOTP_KEY_MAX;
+}
+
+static int totp_close(stationini *out, unsigned line, unsigned seen)
+{
+    if ((seen & TOTP_REQUIRED) != TOTP_REQUIRED)
+        return fail_plain(out, line,
+                          "[totp] needs tpm, index, pcrs and key");
+    if (!totp_key_ok(&out->totp))
+        return fail_plain(out, line,
+                          "[totp] key is not a key that TPM version has");
+    if (out->totp.srk_sha1 && out->totp.tpm != 12)
+        return fail_plain(out, line, "[totp] srkauth is for a TPM 1.2");
+    out->totp.present = 1;
+    return 0;
+}
+
 /* What a finished section must hold. */
 static int entry_close(stationini *out, const stationini_entry *e)
 {
@@ -400,7 +536,9 @@ int stationini_parse(const char *text, size_t len, stationini *out)
     unsigned line = 0;
     unsigned seen = 0;
     int in_general = 0;
+    int in_totp = 0;
     unsigned general_line = GENERAL_LINE_NONE;
+    unsigned totp_line = 0;
     unsigned default_line = 0;
     unsigned timeout_line = 0;
     stationini_entry *cur = (stationini_entry *)0;
@@ -456,8 +594,20 @@ int stationini_parse(const char *text, size_t len, stationini *out)
                 nb--;
             if (entry_close(out, cur) != 0)
                 return -1;
+            if (in_totp && totp_close(out, totp_line, seen) != 0)
+                return -1;
             cur = (stationini_entry *)0;
             seen = 0;
+            in_totp = 0;
+            if (word_eq(na, nb, "totp")) {
+                if (totp_line != 0)
+                    return fail_plain(out, line,
+                                      "section [totp] is given twice");
+                totp_line = line;
+                in_totp = 1;
+                in_general = 0;
+                continue;
+            }
             if (word_eq(na, nb, "general")) {
                 if (general_line != GENERAL_LINE_NONE)
                     return fail_plain(out, line,
@@ -499,6 +649,10 @@ int stationini_parse(const char *text, size_t len, stationini *out)
             bit = key_bit(k_general_keys,
                           sizeof k_general_keys / sizeof k_general_keys[0],
                           ka, kb, &word);
+        else if (in_totp)
+            bit = key_bit(k_totp_keys,
+                          sizeof k_totp_keys / sizeof k_totp_keys[0],
+                          ka, kb, &word);
         else if (cur != (stationini_entry *)0)
             bit = key_bit(k_entry_keys,
                           sizeof k_entry_keys / sizeof k_entry_keys[0],
@@ -528,12 +682,17 @@ int stationini_parse(const char *text, size_t len, stationini *out)
         } else if (bit == SEEN_ORDER) {
             if (parse_order(out, line, va, vb) != 0)
                 return -1;
+        } else if (in_totp) {
+            if (totp_value(out, line, bit, va, vb) != 0)
+                return -1;
         } else if (entry_value(out, cur, line, bit, va, vb) != 0) {
             return -1;
         }
     }
 
     if (entry_close(out, cur) != 0)
+        return -1;
+    if (in_totp && totp_close(out, totp_line, seen) != 0)
         return -1;
     if (out->timeout != 0 && out->default_name[0] == '\0')
         return fail_plain(out, timeout_line,
@@ -671,7 +830,8 @@ static int format_ok(const stationini *c)
         const stationini_entry *e = &c->entries[i];
 
         if (!str_name_ok(e->name, sizeof e->name) ||
-            word_eq(e->name, e->name + str_len(e->name), "general"))
+            word_eq(e->name, e->name + str_len(e->name), "general") ||
+            word_eq(e->name, e->name + str_len(e->name), "totp"))
             return 0;
         for (j = 0; j < i; j++)
             if (str_eq(e->name, c->entries[j].name))
@@ -692,6 +852,135 @@ static int format_ok(const stationini *c)
     return 1;
 }
 
+static int totp_ok(const stationini_totp *t)
+{
+    if (!t->present)
+        return 1;
+    return (t->tpm == 12 || t->tpm == 20) && t->pcrs != 0 &&
+           (t->srk_sha1 == 0 || (t->srk_sha1 == 1 && t->tpm == 12)) &&
+           (t->pcrs >> STATIONINI_TOTP_PCRS) == 0 && totp_key_ok(t) &&
+           str_text_ok(t->label, sizeof t->label);
+}
+
+static void w_hex(wbuf *w, uint32_t v, unsigned digits)
+{
+    static const char xd[] = "0123456789abcdef";
+    char tmp[9];
+    unsigned i;
+
+    for (i = 0; i < digits && i < 8u; i++)
+        tmp[i] = xd[(v >> (4u * (digits - 1u - i))) & 0xFu];
+    tmp[i] = '\0';
+    w_str(w, tmp);
+}
+
+static void w_totp(wbuf *w, const stationini_totp *t)
+{
+    unsigned i;
+    int first = 1;
+
+    w_str(w, "[totp]\n");
+    w_kv(w, "tpm", t->tpm == 20 ? "2.0" : "1.2");
+    w_str(w, "index = 0x");
+    w_hex(w, t->index, 8);
+    w_str(w, "\npcrs = ");
+    for (i = 0; i < STATIONINI_TOTP_PCRS; i++) {
+        if ((t->pcrs & (1u << i)) == 0)
+            continue;
+        if (!first)
+            w_str(w, ", ");
+        w_uint(w, i);
+        first = 0;
+    }
+    w_str(w, "\nkey = ");
+    for (i = 0; i < t->key_len; i++)
+        w_hex(w, t->key[i], 2);
+    w_str(w, "\n");
+    if (t->label[0] != '\0')
+        w_kv(w, "label", t->label);
+    if (t->srk_sha1)
+        w_kv(w, "srkauth", "sha1-zero");
+}
+
+size_t stationini_format_totp(const stationini_totp *t, char *buf,
+                              size_t cap)
+{
+    wbuf w;
+
+    if (t == (const stationini_totp *)0 || buf == (char *)0 || cap == 0)
+        return 0;
+    buf[0] = '\0';
+    if (!t->present || !totp_ok(t))
+        return 0;
+    w.at = buf;
+    w.left = cap;
+    w.over = 0;
+    w_totp(&w, t);
+    if (w.over) {
+        buf[0] = '\0';
+        return 0;
+    }
+    *w.at = '\0';
+    return (size_t)(w.at - buf);
+}
+
+size_t stationini_drop_section(const char *text, size_t len,
+                               const char *name, char *out, size_t cap)
+{
+    const char *p;
+    const char *end;
+    size_t n = 0;
+    int dropping = 0;
+
+    if (text == (const char *)0 || name == (const char *)0 ||
+        out == (char *)0 || cap == 0)
+        return (size_t)-1;
+    p = text;
+    end = text + len;
+    while (p < end) {
+        const char *ls = p;
+        const char *le;
+        const char *a;
+        const char *b;
+
+        while (p < end && *p != '\n')
+            p++;
+        if (p < end)
+            p++;
+        le = p;
+        /* A header line, comments and spaces aside, starts or ends the
+         * section; every other line follows the header above it. */
+        a = ls;
+        b = le;
+        while (a < b && (is_space(*a) || *a == '\n'))
+            a++;
+        if (a < b && *a == '[') {
+            const char *c = a + 1;
+
+            while (c < b && *c != ']')
+                c++;
+            if (c < b) {
+                const char *na = a + 1;
+                const char *nb = c;
+
+                while (na < nb && is_space(*na))
+                    na++;
+                while (nb > na && is_space(nb[-1]))
+                    nb--;
+                dropping = word_eq(na, nb, name);
+            }
+        }
+        if (dropping)
+            continue;
+        if ((size_t)(le - ls) >= cap - n)
+            return (size_t)-1;
+        memcpy(out + n, ls, (size_t)(le - ls));
+        n += (size_t)(le - ls);
+    }
+    out[n] = '\0';
+    return n;
+}
+
 static const char *tri_text(stationini_tri t)
 {
     return t == STATIONINI_TRI_YES ? "yes" : "no";
@@ -705,7 +994,7 @@ size_t stationini_format(const stationini *c, char *buf, size_t cap)
     if (c == (const stationini *)0 || buf == (char *)0 || cap == 0)
         return 0;
     buf[0] = '\0';
-    if (!format_ok(c))
+    if (!format_ok(c) || !totp_ok(&c->totp))
         return 0;
     w.at = buf;
     w.left = cap;
@@ -729,6 +1018,11 @@ size_t stationini_format(const stationini *c, char *buf, size_t cap)
             }
             w_str(&w, "\n");
         }
+    }
+    if (c->totp.present) {
+        if (w.at != buf)
+            w_str(&w, "\n");
+        w_totp(&w, &c->totp);
     }
     for (i = 0; i < c->n_entries; i++) {
         const stationini_entry *e = &c->entries[i];

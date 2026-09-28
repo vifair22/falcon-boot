@@ -12,6 +12,16 @@
  *     label = Windows 2000
  *     swap  = no               ; BIOS chain of another disk: no drive swap
  *
+ *     [totp]                   ; the UEFI station's TOTP check (13.15)
+ *     tpm   = 2.0              ; or 1.2
+ *     index = 0x01800FA1       ; the seed's NV index
+ *     pcrs  = 0, 2, 4, 7       ; what it is sealed to, 0 to 15
+ *     key   = 000b...          ; the pinned TPM key: 2.0 the SRK's name
+ *                              ; (34 bytes), 1.2 the SRK's modulus
+ *     label = falcon-station:host   ; the authenticator's name for it
+ *     srkauth = sha1-zero      ; 1.2 only: the SRK's secret is SHA-1 of
+ *                              ; 20 zero bytes, not the zero bytes
+ *
  * Keys of an entry section: disk, part, uki (a file on the shelf), efi (a
  * path on an ESP; with disk, that disk's ESP), method (firmware | efi,
  * UEFI Windows), swap (yes | no), label, hide (yes | no).
@@ -50,6 +60,8 @@
 #define STATIONINI_WHY_MAX     80u
 #define STATIONINI_TIMEOUT_MAX 3600u
 #define STATIONINI_FILE        "STATION.INI"
+#define STATIONINI_TOTP_KEY_MAX 256u   /* a 2048-bit SRK modulus */
+#define STATIONINI_TOTP_PCRS   16u     /* 0 to 15: the boot's PCRs */
 
 typedef enum {
     STATIONINI_TRI_UNSET = 0,
@@ -77,6 +89,24 @@ typedef struct {
     unsigned          line;                    /* where the section began */
 } stationini_entry;
 
+/* [totp]: present only when the section parsed whole. tpm is 12 or 20;
+ * pcrs a bit per PCR; key the pinned key's bytes (a 2.0 name is 34, its
+ * nameAlg SHA-256 first; a 1.2 modulus 128 to 256, exponent 65537).
+ * srk_sha1 (1.2 only): the SRK's usage secret is SHA-1 of the well-known
+ * 20 zero bytes, as a TPM owned with a password of zeros has it (swtpm_setup
+ * --srk-well-known), rather than the zero bytes themselves (Windows,
+ * TrouSerS -z). Enrollment finds out which and says. */
+typedef struct {
+    uint8_t  present;
+    uint8_t  tpm;
+    uint8_t  srk_sha1;
+    uint32_t index;
+    uint32_t pcrs;
+    uint8_t  key[STATIONINI_TOTP_KEY_MAX];
+    uint16_t key_len;
+    char     label[STATIONINI_LABEL_MAX];
+} stationini_totp;
+
 typedef struct {
     char             default_name[STATIONINI_NAME_MAX];  /* "" none */
     unsigned         timeout;                             /* seconds */
@@ -84,12 +114,14 @@ typedef struct {
     unsigned         n_order;
     stationini_entry entries[STATIONINI_ENTRIES_MAX];
     unsigned         n_entries;
+    stationini_totp  totp;
     unsigned         err_line;                 /* 1-based; 0 no error */
     char             why[STATIONINI_WHY_MAX];  /* the error, a sentence */
 } stationini;
 
 /* Parses `len` bytes of `text` into `out`. 0 on success; -1 on an error,
- * with err_line and why set, default_name emptied and timeout 0. */
+ * with err_line and why set, default_name emptied, timeout 0 and no
+ * [totp]. */
 int stationini_parse(const char *text, size_t len, stationini *out);
 
 /* The entry section of this name, or NULL. */
@@ -99,5 +131,18 @@ const stationini_entry *stationini_find(const stationini *c,
 /* Writes a STATION.INI the parser accepts for `c` into buf (NUL-terminated);
  * returns its length, or 0 when it does not fit. The installer's writer. */
 size_t stationini_format(const stationini *c, char *buf, size_t cap);
+
+/* The [totp] section alone, header included, for t; 0 when t is not
+ * present, would not parse back, or does not fit. */
+size_t stationini_format_totp(const stationini_totp *t, char *buf,
+                              size_t cap);
+
+/* `text` with the section named `name` (its header to the next header or
+ * the end) taken out, everything else byte for byte, comments included:
+ * how mkstick replaces [totp] in a file a person may have edited. Returns
+ * the length written (NUL-terminated), or (size_t)-1 when it does not
+ * fit. */
+size_t stationini_drop_section(const char *text, size_t len,
+                               const char *name, char *out, size_t cap);
 
 #endif /* FALCON_STATIONINI_H */

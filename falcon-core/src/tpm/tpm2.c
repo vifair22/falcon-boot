@@ -30,6 +30,7 @@
 #define CC_PCR_READ      0x0000017Eu
 #define CC_POLICYPCR     0x0000017Fu
 #define CC_PCR_EXTEND    0x00000182u
+#define CC_GETRANDOM     0x0000017Bu
 
 #define RS_PW   0x40000009u
 #define RH_NULL 0x40000007u
@@ -442,6 +443,30 @@ int tpm2_pcr_read(tpm_dev *d, unsigned int pcr, uint8_t out[TPM2_DIGEST_LEN])
     }
     tpmr_2b(&r, out, TPM2_DIGEST_LEN, &n);
     return (r.err || n != TPM2_DIGEST_LEN) ? TPM_ERR_PROTO : TPM_OK;
+}
+
+int tpm2_get_random(tpm_dev *d, uint8_t *out, size_t n)
+{
+    uint8_t p[2];
+    tpmr r;
+    const uint8_t *rp;
+    size_t rpl;
+    uint16_t got;
+    int rc;
+
+    if (d == NULL || out == NULL || n == 0 || n > TPM2_DIGEST_LEN) {
+        return TPM_ERR_ARG;
+    }
+    p[0] = 0;
+    p[1] = (uint8_t)n;
+    rc = run(d, CC_GETRANDOM, NULL, NULL, 0, p, sizeof p, NULL, 0, NULL,
+             &rp, &rpl);
+    if (rc != TPM_OK) {
+        return rc;
+    }
+    tpmr_init(&r, rp, rpl);
+    tpmr_2b(&r, out, n, &got);
+    return (r.err || got != n) ? TPM_ERR_PROTO : TPM_OK;
 }
 
 int tpm2_pcr_extend(tpm_dev *d, unsigned int pcr,
@@ -1068,9 +1093,6 @@ int tpm2_seed_enroll(tpm_dev *d, const uint8_t *owner_auth, size_t auth_len,
                      uint8_t key_name[TPM2_NAME_LEN])
 {
     uint8_t vals[TPM2_PCR_MAX][TPM2_DIGEST_LEN];
-    uint8_t policy[TPM2_DIGEST_LEN];
-    tpm2_saltkey k;
-    tpm2_session s;
     unsigned int i, n = 0;
     int rc;
 
@@ -1086,7 +1108,28 @@ int tpm2_seed_enroll(tpm_dev *d, const uint8_t *owner_auth, size_t auth_len,
             }
         }
     }
-    rc = tpm2_policy_pcr_digest(pcr_mask, (const uint8_t (*)[32])vals, policy);
+    return tpm2_seed_enroll_values(d, owner_auth, auth_len, index, pcr_mask,
+                                   (const uint8_t (*)[TPM2_DIGEST_LEN])vals,
+                                   seed, len, key_name);
+}
+
+int tpm2_seed_enroll_values(tpm_dev *d, const uint8_t *owner_auth,
+                            size_t auth_len, uint32_t index,
+                            uint32_t pcr_mask,
+                            const uint8_t (*values)[TPM2_DIGEST_LEN],
+                            const uint8_t *seed, size_t len,
+                            uint8_t key_name[TPM2_NAME_LEN])
+{
+    uint8_t policy[TPM2_DIGEST_LEN];
+    tpm2_saltkey k;
+    tpm2_session s;
+    int rc;
+
+    if (d == NULL || seed == NULL || values == NULL || len == 0 ||
+        len > TPM2_NV_MAX || !mask_ok(pcr_mask)) {
+        return TPM_ERR_ARG;
+    }
+    rc = tpm2_policy_pcr_digest(pcr_mask, values, policy);
     if (rc != TPM_OK) {
         return rc;
     }

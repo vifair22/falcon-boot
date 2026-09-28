@@ -122,7 +122,8 @@ falcon-efi and falcon-bios, which never share a set, may both have a `pos/`.
 - `apps/` the loaders, one directory per build: `stick/` (every route, the
   loader on a falcon stick; `all` builds its UEFI image, `make bios` its
   BIOS one), `station/` (DESIGN Section 13, falcon as a machine's own
-  boot loader; `make station`), `station-legacy/` (Section 13.10, the
+  boot loader; `make station`; its UEFI build alone has the TPM-backed
+  TOTP check of Section 13.15), `station-legacy/` (Section 13.10, the
   BIOS station plus jump's CD, USB and CF routes and DevLink recovery's
   UKI; `make station-legacy`, `make devlink-uki`, and `make station-bundle`,
   the update a station in the field takes, Section 13.14) and `jump/` (DESIGN Section 14, a boot
@@ -136,8 +137,22 @@ falcon-efi and falcon-bios, which never share a set, may both have a `pos/`.
   here knows about firmware: device access goes through a read callback and
   every buffer is the caller's, which is what lets the loader, the host tools
   and the appliance run one implementation and the host tests exercise it.
-  - `crypto/` SHA-1 (WIM stream names only), SHA-256/512, HMAC, PBKDF2,
-    AES-XTS (AES-NI with a portable fallback); the only crypto in the loader.
+  - `crypto/` SHA-1 (WIM stream names, and HMAC-SHA1 for the TOTP code
+    and the TPM 1.2 session), SHA-256/512, HMAC, PBKDF2, BLAKE2b and
+    Argon2id, AES-XTS (AES-NI with a portable fallback): the only crypto
+    in the stick's loader. The UEFI station also links `CORE_CRYPTO_TPM`
+    (`cfb`, `bn`, `p256`, `kdf`, `rsa`, `otp`: AES-CFB, P-256 ECDH, the
+    TPM 2.0 KDFs, RSAES-OAEP and the RFC 6238 code) for its TOTP check
+    (DESIGN Section 13.15); nothing there signs or verifies an image.
+  - `tpm/` the TPM command layer, 2.0 and 1.2, over one transport
+    callback and one randomness callback (DESIGN Section 13.15): the
+    seed's NV index sealed to PCRs, the salted, encrypted session that
+    reads it (ECDH P-256 and AES-CFB on 2.0, an MGF1 transport to the SRK
+    on 1.2), the pinned key checks, and `evlog.c`, the firmware's event
+    log replayed to the station's own measurement, which is what
+    enrollment seals to. The UEFI station reads the seed with it through
+    the firmware, mkstick enrolls through `/dev/tpmrm0` or `/dev/tpm0`, and
+    `make test-tpm` runs it against swtpm directly.
   - `fs/` the filesystem driver registry (`fs.c`, DESIGN Section 9: one
     `fs_ops` vtable, opaque caller-allocated storage, unified dirents and
     status codes) and the read-only drivers only it calls, `exfat.c`,
@@ -206,7 +221,8 @@ falcon-efi and falcon-bios, which never share a set, may both have a `pos/`.
   - `manifest/` the blessed-artifact manifest parser and writer (DESIGN
     Section 8.1), shared by the loader and the sign tool.
   - `tui/` how a loader screen is laid out: the centred content block, a
-    menu's logo (left out when the list would not fit), banner, list and
+    menu's logo (left out when the list would not fit), banner, status
+    lines under it (the UEFI station's TOTP code), list and
     key hint, a page started a third of the way
     down, the route code's place, row composition and the colours. Geometry
     only, no drawing; both loaders draw from it, which is what keeps their
@@ -249,6 +265,14 @@ falcon-efi and falcon-bios, which never share a set, may both have a `pos/`.
     entry's HARDDRIVE node can be named as STATION.INI names it.
   - `secboot/` Secure Boot state for UX (`sb.c`) and the variable reads the
     boot predictions judge against (`trustefi.c`).
+  - `tcg/` and `totp/` the UEFI station's TOTP check (DESIGN Section
+    13.15), linked by that app alone: `tcg.c` is core's `tpm/` transport
+    through `EFI_TCG2_PROTOCOL` SubmitCommand or `EFI_TCG_PROTOCOL`
+    PassThroughToTpm (no TPM driver) and its randomness (EFI_RNG, RDRAND,
+    the TPM, the counter, hashed together); `totp.c` reads the seed once
+    before anything is loaded, keeps it until the next handover, and
+    composes the code line the menu draws under its banner and pos.c's
+    hook draws above the passphrase prompt. A label: it enforces nothing.
   - `bsd/` BSD media served as its own memory disk (Section 6.4; M7):
     the two byte edits core computes, laid over the virtual CD, and the
     memory check FreeBSD's staging area needs.
@@ -275,7 +299,9 @@ falcon-efi and falcon-bios, which never share a set, may both have a `pos/`.
   `src/mkstick`, `src/sign`, and their shared `src/common`. May shell out to
   `cryptsetup`, `sbsign`, `mkfs.*`; it builds UKIs itself (`sign/uki.c`,
   byte-identical to ukify). The sign tool is also linked
-  static for the appliance.
+  static for the appliance. `mkstick station totp enroll|reseal|remove`
+  (`mkstick/totp.c`, its pure half `totpcore.c`) enrolls the UEFI
+  station's TOTP seed from the machine's own OS (DESIGN Section 13.15).
 - `falcon-appliance/` the on-stick signing appliance. `src/` is PID 1, split
   by job (`appliance.h` has the map: `main`, `console`, `stick`, `run`,
   `survey`, `list`, `select`, `shelf` (p3 read in process with core's LUKS2
@@ -392,7 +418,12 @@ falcon-efi and falcon-bios, which never share a set, may both have a `pos/`.
   (`falcon-efi/tools/run-station-rig.sh`), and `make
   test-station-installed` for stations the installer put on a disk, 4Kn
   GPT and MBR, an ESP on MBR and Windows on a second disk included
-  (`falcon-efi/tools/run-installed-rig.sh`).
+  (`falcon-efi/tools/run-installed-rig.sh`). `make test-tpm-rig`
+  (`falcon-efi/tools/run-tpm-rig.sh`, swtpm through `swtpm.sh`) boots the
+  UEFI station with a TPM 2.0 and 1.2 in both Secure Boot states; its
+  `totp` cases enroll with mkstick between boots, from the event log the
+  probe (`tools/tpm-probe/`) saved, and judge the code, the wire, the wipe
+  at handover, the prompt page and the warning after a firmware change.
 
   `src/` is grouped by job, and a job the UEFI loader also does carries
   that module's name, so the two halves of a route sit side by side:

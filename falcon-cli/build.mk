@@ -9,7 +9,7 @@ CLI_COMMON := $(addprefix $(CLI)/common/,status.c log.c opt.c proc.c util.c)
 MKSTICK_SRCS := $(CLI_COMMON) $(addprefix $(CLI)/mkstick/,main.c cleanup.c \
 	disk.c guid.c keys.c pass.c shimname.c create.c keygen.c inspect.c \
 	varstore.c bios.c bioscore.c records.c identcmd.c nextcmd.c nextcore.c \
-	nextio.c devio.c station.c stationinst.c stationcore.c)
+	nextio.c devio.c station.c stationinst.c stationcore.c totp.c totpcore.c)
 
 # The core modules `mkstick status` reuses verbatim. Every one is EFI-free by
 # construction (device access through a byte-read callback), which is exactly
@@ -23,7 +23,12 @@ MKSTICK_CORE := $(CORE_PART) $(CORE_FS) $(CORE_LUKS) $(CORE_CRYPTO) \
 	$(CORE_IDENT) $(CORE)/media/nextboot.c $(CORE_MANIFEST) \
 	$(CORE_STATIONINI) $(CORE)/media/shelf.c $(CORE)/media/osrel.c \
 	$(CORE_PE) $(CORE_UCS2) \
-	$(CORE_VBR) $(CORE_STROWS)
+	$(CORE_VBR) $(CORE_STROWS) \
+	$(CORE_TPM) $(CORE_CRYPTO_TPM) $(CORE_TPM_EVLOG) \
+	$(addprefix $(CORE)/trust/,der.c x509.c authenticode.c)
+# The last two lines are `station totp` (DESIGN Section 13.15): the TPM
+# command layer the station reads the seed with, the event log replay, and
+# the Authenticode hash the station's measurement is found by.
 
 SIGN_SRCS := $(addprefix $(CLI)/sign/,main.c util.c isoprobe.c manifestio.c \
 	payload.c uki.c)
@@ -136,13 +141,13 @@ uninstall:
 
 CLI_TESTS := $(addprefix falcon-cli/tests/,main.c isoprobe_test.c \
 	payload_test.c uki_test.c util_test.c bioscore_test.c records_test.c \
-	nextio_test.c stationcore_test.c)
+	nextio_test.c stationcore_test.c totpcore_test.c)
 
 # records.c reads through disk.c's byte reader, which brings the process and
 # cleanup helpers disk.c also holds; they are linked, not tested, here.
 CLI_UUT := $(addprefix $(CLI)/sign/,isoprobe.c payload.c uki.c util.c) \
 	$(addprefix $(CLI)/mkstick/,bioscore.c records.c nextcore.c nextio.c \
-		disk.c cleanup.c stationcore.c) \
+		disk.c cleanup.c stationcore.c totpcore.c) \
 	$(addprefix $(CLI)/common/,status.c log.c proc.c util.c) \
 	$(CORE)/media/family.c $(CORE)/media/bootcfg.c $(CORE)/media/nextboot.c \
 	$(CORE_MANIFEST) $(CORE_MANIFEST_WRITE) \

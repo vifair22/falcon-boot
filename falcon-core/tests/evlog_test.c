@@ -1,0 +1,337 @@
+/* Tests for falcon-core/src/tpm/evlog.c: the event log replay the station's
+ * TOTP enrollment seals to (docs/DESIGN.md Section 13.15).
+ *
+ * The logs are built here, event by event, in both formats, and the
+ * expected PCRs are extended alongside by hand, so each test states what a
+ * replay must give. The real logs, OVMF's in both TPM versions, are the
+ * TPM rig's (falcon-efi/tools/run-tpm-rig.sh): an enrollment from them
+ * that the station then unseals is the proof that the replay agrees with
+ * the TPM.
+ */
+
+#include "tests.h"
+
+#include <stdarg.h>
+#include <stddef.h>
+#include <setjmp.h>
+#include <stdint.h>
+#include <cmocka.h>
+
+#include <string.h>
+
+#include <crypto/sha1.h>
+#include <crypto/sha256.h>
+#include <tpm/evlog.h>
+
+static uint8_t g_log[4096];
+static size_t g_len;
+
+static void put32(uint32_t v)
+{
+    g_log[g_len++] = (uint8_t)v;
+    g_log[g_len++] = (uint8_t)(v >> 8);
+    g_log[g_len++] = (uint8_t)(v >> 16);
+    g_log[g_len++] = (uint8_t)(v >> 24);
+}
+
+static void put16(uint16_t v)
+{
+    g_log[g_len++] = (uint8_t)v;
+    g_log[g_len++] = (uint8_t)(v >> 8);
+}
+
+static void putb(const void *p, size_t n)
+{
+    memcpy(g_log + g_len, p, n);
+    g_len += n;
+}
+
+/* A 1.2 event (TCG_PCR_EVENT). */
+static void ev12(uint32_t pcr, uint32_t type, const uint8_t d[20],
+                 const char *data)
+{
+    size_t n = strlen(data);
+
+    put32(pcr);
+    put32(type);
+    putb(d, 20);
+    put32((uint32_t)n);
+    putb(data, n);
+}
+
+/* The crypto-agile header: SHA-1 and SHA-256. */
+static void hdr2(void)
+{
+    static const uint8_t zero[20] = { 0 };
+    uint8_t data[64];
+    size_t n = 0;
+
+    memcpy(data, "Spec ID Event03", 16);
+    n = 16;
+    memset(data + n, 0, 8);         /* platformClass, versions, uintnSize */
+    n += 8;
+    data[n++] = 2;                  /* numberOfAlgorithms */
+    data[n++] = 0;
+    data[n++] = 0;
+    data[n++] = 0;
+    data[n++] = 0x04; data[n++] = 0; data[n++] = 20; data[n++] = 0;
+    data[n++] = 0x0B; data[n++] = 0; data[n++] = 32; data[n++] = 0;
+    data[n++] = 0;                  /* vendorInfoSize */
+    put32(0);
+    put32(EVLOG_EV_NO_ACTION);
+    putb(zero, 20);
+    put32((uint32_t)n);
+    putb(data, n);
+}
+
+/* A TCG_PCR_EVENT2 carrying both banks. */
+static void ev2(uint32_t pcr, uint32_t type, const uint8_t d1[20],
+                const uint8_t d256[32], const void *data, size_t n)
+{
+    put32(pcr);
+    put32(type);
+    put32(2);
+    put16(0x0004);
+    putb(d1, 20);
+    put16(0x000B);
+    putb(d256, 32);
+    put32((uint32_t)n);
+    putb(data, n);
+}
+
+static void ext1(uint8_t v[20], const uint8_t d[20])
+{
+    sha1_ctx h;
+
+    sha1_init(&h);
+    sha1_update(&h, v, 20);
+    sha1_update(&h, d, 20);
+    sha1_final(&h, v);
+}
+
+static void ext256(uint8_t v[32], const uint8_t d[32])
+{
+    sha256_ctx h;
+
+    sha256_init(&h);
+    sha256_update(&h, v, 32);
+    sha256_update(&h, d, 32);
+    sha256_final(&h, v);
+}
+
+static void digests(uint8_t tag, uint8_t d1[20], uint8_t d256[32])
+{
+    memset(d1, tag, 20);
+    memset(d256, tag, 32);
+}
+
+static void test_tcg12(void **state)
+{
+    uint8_t a[20], b[20], c[20], st[20];
+    uint8_t p0[20] = { 0 }, p4[20] = { 0 }, p7[20] = { 0 };
+    evlog_replay r;
+
+    (void)state;
+    g_len = 0;
+    memset(a, 1, 20);
+    memset(b, 2, 20);
+    memset(c, 3, 20);
+    memset(st, 0x5a, 20);
+    ev12(0, 0x08, a, "crtm");
+    ext1(p0, a);
+    ev12(7, 0x80000001u, b, "SecureBoot");
+    ext1(p7, b);
+    ev12(4, EVLOG_EV_EFI_BOOT_APP, c, "shim");
+    ext1(p4, c);
+    ev12(18, 0x1, a, "not a boot PCR");
+    ev12(4, EVLOG_EV_NO_ACTION, a, "not extended");
+    ev12(4, EVLOG_EV_EFI_BOOT_APP, st, "the station");
+    ext1(p4, st);
+    ev12(4, EVLOG_EV_EFI_BOOT_APP, c, "a UKI");
+    ev12(7, 0x800000E0u, b, "its authority");
+    memset(g_log + g_len, 0, 64);   /* trailing zeros end the log */
+    g_len += 64;
+
+    assert_int_equal(evlog_replay_run(g_log, g_len, EVLOG_ALG_SHA1, 4, st,
+                                      &r), EVLOG_OK);
+    assert_int_equal(r.format, EVLOG_FMT_TCG12);
+    assert_true(r.stopped);
+    assert_int_equal(r.events, 6);
+    assert_memory_equal(r.pcr[0], p0, 20);
+    assert_memory_equal(r.pcr[4], p4, 20);
+    assert_memory_equal(r.pcr[7], p7, 20);
+
+    /* To the end: the UKI and its authority are in. */
+    assert_int_equal(evlog_replay_run(g_log, g_len, EVLOG_ALG_SHA1, 0, NULL,
+                                      &r), EVLOG_OK);
+    ext1(p4, c);
+    ext1(p7, b);
+    assert_false(r.stopped);
+    assert_int_equal(r.events, 8);
+    assert_memory_equal(r.pcr[4], p4, 20);
+    assert_memory_equal(r.pcr[7], p7, 20);
+
+    /* A digest nothing carries is not found. */
+    memset(st, 0x77, 20);
+    assert_int_equal(evlog_replay_run(g_log, g_len, EVLOG_ALG_SHA1, 4, st,
+                                      &r), EVLOG_OK);
+    assert_false(r.stopped);
+
+    /* SHA-256 is not in a 1.2 log. */
+    assert_int_equal(evlog_replay_run(g_log, g_len, EVLOG_ALG_SHA256, 4, st,
+                                      &r), EVLOG_ERR_BANK);
+    /* An event that runs past the end. */
+    assert_int_equal(evlog_replay_run(g_log, 40, EVLOG_ALG_SHA1, 0, NULL,
+                                      &r), EVLOG_ERR_FORMAT);
+    g_log[28] = 0xFF;
+    assert_int_equal(evlog_replay_run(g_log, 200, EVLOG_ALG_SHA1, 0, NULL,
+                                      &r), EVLOG_ERR_FORMAT);
+}
+
+static void test_tcg2(void **state)
+{
+    uint8_t a1[20], a2[32], b1[20], b2[32], s1[20], s2[32], u1[20], u2[32];
+    uint8_t p0[32] = { 0 }, p4[32] = { 0 }, p7[32] = { 0 };
+    uint8_t q0[20] = { 0 }, q4[20] = { 0 };
+    uint8_t loc[17];
+    evlog_replay r;
+
+    (void)state;
+    g_len = 0;
+    hdr2();
+    digests(1, a1, a2);
+    digests(2, b1, b2);
+    digests(0x5a, s1, s2);
+    digests(3, u1, u2);
+    memcpy(loc, "StartupLocality", 16);
+    loc[16] = 3;
+    ev2(0, EVLOG_EV_NO_ACTION, a1, a2, loc, sizeof loc);
+    p0[31] = 3;
+    q0[19] = 3;
+    ev2(0, 0x08, a1, a2, "crtm", 4);
+    ext256(p0, a2);
+    ext1(q0, a1);
+    ev2(7, 0x80000001u, b1, b2, "SecureBoot", 10);
+    ext256(p7, b2);
+    ev2(4, EVLOG_EV_EFI_BOOT_APP, s1, s2, "the station", 11);
+    ext256(p4, s2);
+    ext1(q4, s1);
+    ev2(4, EVLOG_EV_EFI_BOOT_APP, u1, u2, "a UKI", 5);
+    ev2(20, 0x1, u1, u2, "", 0);
+
+    assert_int_equal(evlog_replay_run(g_log, g_len, EVLOG_ALG_SHA256, 4, s2,
+                                      &r), EVLOG_OK);
+    assert_int_equal(r.format, EVLOG_FMT_TCG2);
+    assert_true(r.stopped);
+    assert_int_equal(r.events, 5);
+    assert_memory_equal(r.pcr[0], p0, 32);
+    assert_memory_equal(r.pcr[4], p4, 32);
+    assert_memory_equal(r.pcr[7], p7, 32);
+
+    /* The SHA-1 bank of the same log. */
+    assert_int_equal(evlog_replay_run(g_log, g_len, EVLOG_ALG_SHA1, 4, s1,
+                                      &r), EVLOG_OK);
+    assert_true(r.stopped);
+    assert_memory_equal(r.pcr[0], q0, 20);
+    assert_memory_equal(r.pcr[4], q4, 20);
+
+    /* To the end. */
+    assert_int_equal(evlog_replay_run(g_log, g_len, EVLOG_ALG_SHA256, 0,
+                                      NULL, &r), EVLOG_OK);
+    ext256(p4, u2);
+    assert_false(r.stopped);
+    assert_int_equal(r.events, 7);
+    assert_memory_equal(r.pcr[4], p4, 32);
+
+    /* Cut inside the last event. */
+    assert_int_equal(evlog_replay_run(g_log, g_len - 3, EVLOG_ALG_SHA256, 0,
+                                      NULL, &r), EVLOG_ERR_FORMAT);
+}
+
+static void test_tcg2_bad(void **state)
+{
+    uint8_t a1[20], a2[32];
+    evlog_replay r;
+    size_t hdr;
+
+    (void)state;
+    g_len = 0;
+    hdr2();
+    hdr = g_len;
+    digests(1, a1, a2);
+    ev2(0, 0x08, a1, a2, "x", 1);
+
+    /* An event with an algorithm the header does not name. */
+    g_log[hdr + 12] = 0x0C;
+    assert_int_equal(evlog_replay_run(g_log, g_len, EVLOG_ALG_SHA256, 0,
+                                      NULL, &r), EVLOG_ERR_FORMAT);
+    g_log[hdr + 12] = 0x04;
+    /* Too many digests. */
+    g_log[hdr + 8] = 9;
+    assert_int_equal(evlog_replay_run(g_log, g_len, EVLOG_ALG_SHA256, 0,
+                                      NULL, &r), EVLOG_ERR_FORMAT);
+    /* A measurement carrying SHA-1 alone: the SHA-256 bank is missing. */
+    {
+        size_t keep = g_len;
+
+        g_len = hdr;
+        put32(0);
+        put32(0x08);
+        put32(1);
+        put16(0x0004);
+        putb(a1, 20);
+        put32(0);
+        assert_int_equal(evlog_replay_run(g_log, g_len, EVLOG_ALG_SHA256, 0,
+                                          NULL, &r), EVLOG_ERR_FORMAT);
+        /* The SHA-1 bank of it replays. */
+        assert_int_equal(evlog_replay_run(g_log, g_len, EVLOG_ALG_SHA1, 0,
+                                          NULL, &r), EVLOG_OK);
+        g_len = hdr;
+        ev2(0, 0x08, a1, a2, "x", 1);
+        assert_int_equal(g_len, keep);
+    }
+    /* A header whose table is empty. */
+    g_log[32 + 24] = 0;
+    assert_int_equal(evlog_replay_run(g_log, g_len, EVLOG_ALG_SHA256, 0,
+                                      NULL, &r), EVLOG_ERR_FORMAT);
+    g_log[32 + 24] = 2;
+    /* A bank the header does not carry. */
+    g_log[32 + 32] = 0x0C;
+    assert_int_equal(evlog_replay_run(g_log, g_len, EVLOG_ALG_SHA256, 0,
+                                      NULL, &r), EVLOG_ERR_BANK);
+    g_log[32 + 32] = 0x0B;
+    /* A digest size past what any bank has. */
+    g_log[32 + 34] = 99;
+    assert_int_equal(evlog_replay_run(g_log, g_len, EVLOG_ALG_SHA256, 0,
+                                      NULL, &r), EVLOG_ERR_FORMAT);
+    g_log[32 + 34] = 32;
+    /* A short tail after the header. */
+    assert_int_equal(evlog_replay_run(g_log, hdr + 7, EVLOG_ALG_SHA256, 0,
+                                      NULL, &r), EVLOG_ERR_FORMAT);
+    assert_int_equal(evlog_replay_run(g_log, hdr + 13, EVLOG_ALG_SHA256, 0,
+                                      NULL, &r), EVLOG_ERR_FORMAT);
+    assert_int_equal(evlog_replay_run(g_log, hdr + 12 + 22 + 34 + 2,
+                                      EVLOG_ALG_SHA256, 0, NULL, &r),
+                     EVLOG_ERR_FORMAT);
+
+    /* Arguments. */
+    assert_int_equal(evlog_replay_run(g_log, g_len, EVLOG_ALG_SHA256, 0,
+                                      NULL, NULL), EVLOG_ERR_ARG);
+    assert_int_equal(evlog_replay_run(NULL, g_len, EVLOG_ALG_SHA256, 0,
+                                      NULL, &r), EVLOG_ERR_ARG);
+    assert_int_equal(evlog_replay_run(g_log, 10, EVLOG_ALG_SHA256, 0, NULL,
+                                      &r), EVLOG_ERR_ARG);
+    assert_int_equal(evlog_replay_run(g_log, g_len, 0x000C, 0, NULL, &r),
+                     EVLOG_ERR_ARG);
+}
+
+int run_evlog_tests(void)
+{
+    const struct CMUnitTest tests[] = {
+        cmocka_unit_test(test_tcg12),
+        cmocka_unit_test(test_tcg2),
+        cmocka_unit_test(test_tcg2_bad),
+    };
+
+    return cmocka_run_group_tests_name("evlog", tests, NULL, NULL);
+}

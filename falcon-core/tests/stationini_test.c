@@ -409,6 +409,7 @@ static void round_trip(const char *text)
     for (unsigned i = 0; i < g_cfg.n_entries; i++)
         g_back.entries[i].line = g_cfg.entries[i].line;
     assert_memory_equal(g_back.entries, g_cfg.entries, sizeof g_cfg.entries);
+    assert_memory_equal(&g_back.totp, &g_cfg.totp, sizeof g_cfg.totp);
 }
 
 static void test_round_trip(void **state)
@@ -533,6 +534,193 @@ static void test_format_refusals(void **state)
 #undef REFUSED
 }
 
+/* ------------------------------------------------------------ [totp] */
+
+#define NAME2 "000b00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"
+
+static const char k_totp2[] =
+    "[general]\ndefault = memtest\n"
+    "[TOTP] ; the station's code\n"
+    "tpm   = 2.0\n"
+    "index = 0x01800FA1\n"
+    "pcrs  = 0, 2,4 , 7\n"
+    "key   = " NAME2 "\n"
+    "label = falcon-station:desk\n"
+    "[m]\nhide = yes\n";
+
+/* A 1.2 key: a 2048-bit modulus, 512 hex digits. */
+static void key12(char *out, size_t bytes)
+{
+    size_t i;
+
+    for (i = 0; i < bytes; i++)
+        sprintf(out + 2u * i, "%02x", (unsigned)(i & 0xFFu));
+}
+
+static void test_totp(void **state)
+{
+    char buf[2048];
+    char key[520];
+
+    (void)state;
+    assert_int_equal(parse(k_totp2), 0);
+    assert_true(g_cfg.totp.present);
+    assert_int_equal(g_cfg.totp.tpm, 20);
+    assert_true(g_cfg.totp.index == 0x01800FA1u);
+    assert_true(g_cfg.totp.pcrs == 0x95u);
+    assert_int_equal(g_cfg.totp.key_len, 34);
+    assert_int_equal(g_cfg.totp.key[1], 0x0B);
+    assert_int_equal(g_cfg.totp.key[33], 0xFF);
+    assert_string_equal(g_cfg.totp.label, "falcon-station:desk");
+    assert_int_equal(g_cfg.n_entries, 1);
+    round_trip(k_totp2);
+
+    key12(key, 256);
+    snprintf(buf, sizeof buf, "[totp]\ntpm = 1.2\nindex = 0x20000fa1\n"
+             "pcrs = 15\nkey = %s\n", key);
+    assert_int_equal(parse(buf), 0);
+    assert_int_equal(g_cfg.totp.tpm, 12);
+    assert_int_equal(g_cfg.totp.srk_sha1, 0);
+    assert_int_equal(g_cfg.totp.key_len, 256);
+    assert_true(g_cfg.totp.pcrs == 0x8000u);
+    assert_string_equal(g_cfg.totp.label, "");
+    round_trip(buf);
+    snprintf(buf, sizeof buf, "[totp]\ntpm = 1.2\nindex = 0x20000fa1\n"
+             "pcrs = 15\nkey = %s\nsrkauth = SHA1-zero\n", key);
+    assert_int_equal(parse(buf), 0);
+    assert_int_equal(g_cfg.totp.srk_sha1, 1);
+    round_trip(buf);
+    snprintf(buf, sizeof buf, "[totp]\ntpm = 1.2\nindex = 0x20000fa1\n"
+             "pcrs = 15\nkey = %s\nsrkauth = zero\n", key);
+    assert_int_equal(parse(buf), 0);
+    assert_int_equal(g_cfg.totp.srk_sha1, 0);
+
+    /* No section, no TOTP. */
+    assert_int_equal(parse(k_example), 0);
+    assert_false(g_cfg.totp.present);
+}
+
+static void test_totp_errors(void **state)
+{
+    char buf[2048];
+    char key[600];
+
+    (void)state;
+    expect_err("[totp]\ntpm = 2\n", 2, "not 2.0 or 1.2");
+    expect_err("[totp]\nindex = 1800FA1\n", 2, "index");
+    expect_err("[totp]\nindex = 0x\n", 2, "index");
+    expect_err("[totp]\nindex = 0x123456789\n", 2, "index");
+    expect_err("[totp]\nindex = 0xFG\n", 2, "index");
+    expect_err("[totp]\npcrs = 16\n", 2, "PCR numbers");
+    expect_err("[totp]\npcrs = 1, 1\n", 2, "PCR numbers");
+    expect_err("[totp]\npcrs = 1,\n", 2, "PCR numbers");
+    expect_err("[totp]\npcrs =\n", 2, "PCR numbers");
+    expect_err("[totp]\nkey = abc\n", 2, "hex");
+    expect_err("[totp]\nkey = zz\n", 2, "hex");
+    expect_err("[totp]\nlabel = a\tb\n", 2, "label");
+    expect_err("[totp]\nhide = yes\n", 2, "unknown key");
+    expect_err("[totp]\nsrkauth = one\n", 2, "zero or sha1-zero");
+    expect_err("[totp]\ntpm = 2.0\nindex = 0x1\npcrs = 0\nkey = " NAME2
+               "\nsrkauth = sha1-zero\n", 1, "for a TPM 1.2");
+    expect_err("[totp]\ntpm = 2.0\ntpm = 1.2\n", 3, "twice");
+    expect_err("[totp]\ntpm = 2.0\nindex = 0x1\npcrs = 0\nkey = " NAME2
+               "\n[totp]\n", 6, "twice");
+    expect_err("[general]\n[totp]\ntpm = 2.0\n", 2, "needs tpm");
+    expect_err("[totp]\ntpm = 2.0\nindex = 0x1\npcrs = 0\n[x]\n", 1,
+               "needs tpm");
+    expect_err("[general]\ndefault = memtest\n[totp]\ntpm = 1.2\n"
+               "index = 0x1\npcrs = 0\nkey = " NAME2 "\n", 3,
+               "not a key");
+    /* A 2.0 name whose algorithm is not SHA-256. */
+    expect_err("[totp]\ntpm = 2.0\nindex = 0x1\npcrs = 0\nkey = 000c"
+               "00112233445566778899aabbccddeeff00112233445566778899aabbccdd"
+               "eeff\n", 1, "not a key");
+    memset(key, 'a', 514);
+    key[514] = '\0';
+    snprintf(buf, sizeof buf, "[totp]\nkey = %s\n", key);
+    expect_err(buf, 2, "hex of up to 256");
+    assert_false(g_cfg.totp.present);
+}
+
+static void test_totp_format(void **state)
+{
+    char out[1024];
+    stationini_totp t;
+
+    (void)state;
+    assert_int_equal(parse(k_totp2), 0);
+    t = g_cfg.totp;
+    assert_true(stationini_format_totp(&t, out, sizeof out) > 0);
+    assert_string_equal(out, "[totp]\ntpm = 2.0\nindex = 0x01800fa1\n"
+                        "pcrs = 0, 2, 4, 7\nkey = " NAME2 "\n"
+                        "label = falcon-station:desk\n");
+    assert_int_equal(stationini_format_totp(&t, out, 20), 0);
+    assert_int_equal(stationini_format_totp(NULL, out, sizeof out), 0);
+    assert_int_equal(stationini_format_totp(&t, NULL, sizeof out), 0);
+    t.present = 0;
+    assert_int_equal(stationini_format_totp(&t, out, sizeof out), 0);
+    t = g_cfg.totp;
+    t.pcrs = 1u << 16;
+    assert_int_equal(stationini_format_totp(&t, out, sizeof out), 0);
+    t = g_cfg.totp;
+    t.tpm = 3;
+    assert_int_equal(stationini_format_totp(&t, out, sizeof out), 0);
+    t = g_cfg.totp;
+    t.key_len = 20;
+    assert_int_equal(stationini_format_totp(&t, out, sizeof out), 0);
+    t = g_cfg.totp;
+    strcpy(t.label, "a;b");
+    assert_int_equal(stationini_format_totp(&t, out, sizeof out), 0);
+    t = g_cfg.totp;
+    t.srk_sha1 = 1;
+    assert_int_equal(stationini_format_totp(&t, out, sizeof out), 0);
+    /* The whole file refuses a bad [totp] and an entry named totp. */
+    g_cfg.totp.tpm = 3;
+    assert_int_equal(stationini_format(&g_cfg, out, sizeof out), 0);
+    assert_int_equal(parse(k_totp2), 0);
+    strcpy(g_cfg.entries[0].name, "Totp");
+    assert_int_equal(stationini_format(&g_cfg, out, sizeof out), 0);
+}
+
+static void test_drop_section(void **state)
+{
+    static const char in[] =
+        "# kept\n"
+        "[general]\ndefault = memtest ; me too\n"
+        "\n"
+        "  [ totp ] ; old\n"
+        "tpm = 2.0\n"
+        "; a comment inside goes with it\n"
+        "[win]\nlabel = W\n"
+        "[totp]\nkey = 00\n";
+    char out[512];
+    size_t n;
+
+    (void)state;
+    n = stationini_drop_section(in, strlen(in), "totp", out, sizeof out);
+    assert_string_equal(out, "# kept\n[general]\ndefault = memtest ; me too"
+                        "\n\n[win]\nlabel = W\n");
+    assert_int_equal(n, strlen(out));
+    /* Nothing to drop: the text itself. A last line with no newline. */
+    n = stationini_drop_section("[a]\nx = 1", 9, "totp", out, sizeof out);
+    assert_int_equal(n, 9);
+    assert_string_equal(out, "[a]\nx = 1");
+    n = stationini_drop_section("[totp]\nx = 1", 12, "totp", out,
+                                sizeof out);
+    assert_int_equal(n, 0);
+    assert_string_equal(out, "");
+    /* Too small, and arguments. */
+    assert_true(stationini_drop_section(in, strlen(in), "totp", out, 10) ==
+                (size_t)-1);
+    assert_true(stationini_drop_section(NULL, 0, "totp", out, 10) ==
+                (size_t)-1);
+    assert_true(stationini_drop_section(in, 1, NULL, out, 10) == (size_t)-1);
+    assert_true(stationini_drop_section(in, 1, "totp", NULL, 10) ==
+                (size_t)-1);
+    assert_true(stationini_drop_section(in, 1, "totp", out, 0) ==
+                (size_t)-1);
+}
+
 int run_stationini_tests(void)
 {
     const struct CMUnitTest tests[] = {
@@ -553,6 +741,10 @@ int run_stationini_tests(void)
         cmocka_unit_test(test_format_exact),
         cmocka_unit_test(test_format_capacity),
         cmocka_unit_test(test_format_refusals),
+        cmocka_unit_test(test_totp),
+        cmocka_unit_test(test_totp_errors),
+        cmocka_unit_test(test_totp_format),
+        cmocka_unit_test(test_drop_section),
     };
 
     return cmocka_run_group_tests_name("stationini", tests, NULL, NULL);
