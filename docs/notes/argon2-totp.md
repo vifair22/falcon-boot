@@ -1,7 +1,9 @@
 # Argon2id keyslots and a TPM-backed TOTP check
 
 Status: 2026-09-28. Two pieces of one work stream, in this order: Argon2id
-first (it unblocks station installs), then TOTP. Section 2 is built for the
+first (it unblocks station installs), then TOTP. Both are built. Section 1
+is in every build and rig-proven under both loaders; the stick's p3 is
+argon2id at 32 MiB, time 4, 4 lanes (open item 1). Section 2 is built for the
 UEFI station and rig-proven under swtpm (2.0 and 1.2, Secure Boot off and
 on); docs/DESIGN.md Section 13.15 is now its record, and where the two
 differ the design section wins. Two things changed on the way, both in
