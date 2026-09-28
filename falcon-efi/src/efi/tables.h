@@ -238,11 +238,28 @@ typedef enum {
     EfiResetPlatformSpecific
 } EFI_RESET_TYPE;
 
+/* UEFI spec 8.3.1. TimeZone is minutes from UTC or
+ * EFI_UNSPECIFIED_TIMEZONE; the station's TOTP code reads the clock as UTC
+ * whatever it says (DESIGN Section 13.15). */
+typedef struct {
+    UINT16 Year;
+    UINT8  Month;
+    UINT8  Day;
+    UINT8  Hour;
+    UINT8  Minute;
+    UINT8  Second;
+    UINT8  Pad1;
+    UINT32 Nanosecond;
+    INT16  TimeZone;
+    UINT8  Daylight;
+    UINT8  Pad2;
+} EFI_TIME;
+
 typedef struct {
     EFI_TABLE_HEADER Hdr;
 
-    /* Time */
-    void *GetTime;
+    /* Time. GetTime is the TOTP code's clock, read and never set. */
+    EFI_STATUS (EFIAPI *GetTime)(EFI_TIME *Time, void *Capabilities);
     void *SetTime;
     void *GetWakeupTime;
     void *SetWakeupTime;

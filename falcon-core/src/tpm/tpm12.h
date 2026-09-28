@@ -65,6 +65,10 @@ typedef struct {
 int tpm12_startup(tpm_dev *d);
 
 int tpm12_pcr_read(tpm_dev *d, unsigned int pcr, uint8_t out[TPM12_DIGEST_LEN]);
+/* n random bytes from the TPM (TPM_GetRandom), at most 20. In the clear,
+ * as tpm2_get_random. */
+int tpm12_get_random(tpm_dev *d, uint8_t *out, size_t n);
+
 int tpm12_extend(tpm_dev *d, unsigned int pcr,
                  const uint8_t digest[TPM12_DIGEST_LEN]);
 
@@ -109,5 +113,14 @@ int tpm12_seed_read(tpm_dev *d, uint32_t index,
 int tpm12_seed_enroll(tpm_dev *d, const uint8_t owner_auth[TPM12_DIGEST_LEN],
                       uint32_t index, uint32_t pcr_mask,
                       const uint8_t *seed, size_t len, tpm12_pubkey *srk);
+
+/* The same with the PCR values given rather than read (tpm2.h's
+ * tpm2_seed_enroll_values has why). */
+int tpm12_seed_enroll_values(tpm_dev *d,
+                             const uint8_t owner_auth[TPM12_DIGEST_LEN],
+                             uint32_t index, uint32_t pcr_mask,
+                             const uint8_t (*values)[TPM12_DIGEST_LEN],
+                             const uint8_t *seed, size_t len,
+                             tpm12_pubkey *srk);
 
 #endif /* FALCON_TPM_TPM12_H */

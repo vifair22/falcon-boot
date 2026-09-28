@@ -382,6 +382,52 @@ static void test_hotp_rfc4226(void **state)
     assert_int_equal(hotp_sha1(NULL, 20, 0, 6, &code), CRYPTO_ERR_BAD_ARG);
 }
 
+/* The calendar to epoch conversion the station feeds the code with,
+ * checked against date -u +%s. */
+static void test_otp_unix_time(void **state)
+{
+    static const struct {
+        unsigned y, mo, d, h, mi, s;
+        uint64_t t;
+    } v[] = {
+        { 1970, 1, 1, 0, 0, 0, 0u },
+        { 1970, 1, 1, 0, 0, 59, 59u },
+        { 2000, 2, 29, 12, 0, 0, 951825600u },
+        { 2005, 3, 18, 1, 58, 29, 1111111109u },
+        { 2009, 2, 13, 23, 31, 30, 1234567890u },
+        { 2033, 5, 18, 3, 33, 20, 2000000000u },
+        { 2026, 9, 28, 12, 0, 0, 1790596800u },
+        { 2100, 3, 1, 0, 0, 0, 4107542400u },
+    };
+    uint64_t t = 0;
+    size_t i;
+
+    (void)state;
+    for (i = 0; i < sizeof v / sizeof v[0]; i++) {
+        assert_int_equal(otp_unix_time(v[i].y, v[i].mo, v[i].d, v[i].h,
+                                       v[i].mi, v[i].s, &t), CRYPTO_OK);
+        assert_true(t == v[i].t);
+    }
+    assert_int_equal(otp_unix_time(1969, 12, 31, 0, 0, 0, &t),
+                     CRYPTO_ERR_BAD_ARG);
+    assert_int_equal(otp_unix_time(2026, 13, 1, 0, 0, 0, &t),
+                     CRYPTO_ERR_BAD_ARG);
+    assert_int_equal(otp_unix_time(2026, 4, 31, 0, 0, 0, &t),
+                     CRYPTO_ERR_BAD_ARG);
+    assert_int_equal(otp_unix_time(2026, 4, 30, 24, 0, 0, &t),
+                     CRYPTO_ERR_BAD_ARG);
+    assert_int_equal(otp_unix_time(2026, 4, 30, 0, 60, 0, &t),
+                     CRYPTO_ERR_BAD_ARG);
+    assert_int_equal(otp_unix_time(2026, 4, 30, 0, 0, 60, &t),
+                     CRYPTO_ERR_BAD_ARG);
+    assert_int_equal(otp_unix_time(2026, 0, 1, 0, 0, 0, &t),
+                     CRYPTO_ERR_BAD_ARG);
+    assert_int_equal(otp_unix_time(2026, 1, 0, 0, 0, 0, &t),
+                     CRYPTO_ERR_BAD_ARG);
+    assert_int_equal(otp_unix_time(2026, 1, 1, 0, 0, 0, NULL),
+                     CRYPTO_ERR_BAD_ARG);
+}
+
 static void test_totp_rfc6238(void **state)
 {
     static const struct {
@@ -425,6 +471,7 @@ int run_tpmcrypto_tests(void)
         cmocka_unit_test(test_rsa_oaep),
         cmocka_unit_test(test_hotp_rfc4226),
         cmocka_unit_test(test_totp_rfc6238),
+        cmocka_unit_test(test_otp_unix_time),
     };
 
     return cmocka_run_group_tests_name("tpmcrypto", tests, NULL, NULL);

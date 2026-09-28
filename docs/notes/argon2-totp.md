@@ -1,8 +1,15 @@
 # Argon2id keyslots and a TPM-backed TOTP check
 
-Status: design, 2026-09-28. Nothing here is built yet. Two pieces of one
-work stream, in this order: Argon2id first (it unblocks station installs),
-then TOTP.
+Status: 2026-09-28. Two pieces of one work stream, in this order: Argon2id
+first (it unblocks station installs), then TOTP. Section 2 is built for the
+UEFI station and rig-proven under swtpm (2.0 and 1.2, Secure Boot off and
+on); docs/DESIGN.md Section 13.15 is now its record, and where the two
+differ the design section wins. Two things changed on the way, both in
+13.15: enrollment seals to PCR values replayed from the firmware's event
+log up to the station's own measurement, not to the PCRs the OS reads
+(which have moved on by then); and a 1.2 SRK whose secret is SHA-1 of the
+zero bytes (swtpm_setup's --srk-well-known) is found at enrollment and
+recorded as `srkauth = sha1-zero`.
 
 ## 1. Argon2id
 
@@ -193,7 +200,8 @@ predictions (DESIGN Section 7.8): it enforces nothing and signs nothing.
    keeps it; that is also the pin. The NV read is wrapped with no
    authorisation of its own. The 1.2 enrollment write travels in the clear
    (from the machine's own OS); the 2.0 one is encrypted.
-5. The QR code at enrollment: a dependency (qrencode) or falcon's own.
+5. Settled 2026-09-28: qrencode when it is on PATH, and the base32 secret
+   and the otpauth URI always; mkstick says when there is no QR code.
 6. Tooling for the rigs. Settled 2026-09-28: no OVMF build is needed.
    Measured with `falcon-efi/tools/tpm-probe/` under swtpm 0.10.2 and QEMU
    10.2, Gentoo's edk2-bin-202408 (`OVMF_CODE.fd`, `OVMF_CODE.secboot.fd`)

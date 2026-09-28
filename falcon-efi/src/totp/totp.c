@@ -1,0 +1,275 @@
+/* falcon-boot: the UEFI station's TOTP check. See totp.h. */
+
+#include <totp/totp.h>
+
+#include <crypto/crypto.h>
+#include <crypto/otp.h>
+#include <crypto/sha1.h>
+#include <lib/string.h>
+#include <tcg/tcg.h>
+#include <tpm/tpm12.h>
+#include <tpm/tpm2.h>
+#include <tui/tui.h>
+
+#define SEED_LEN 20u
+
+typedef enum {
+    ST_NONE = 0,        /* no [totp]: nothing is drawn */
+    ST_OK,              /* the seed is held */
+    ST_WIPED,           /* it was, until something else ran */
+    ST_NO_TPM,
+    ST_PCR,
+    ST_KEY,
+    ST_AUTH,
+    ST_REFUSED,         /* another response code, kept in g_rc */
+    ST_IO
+} totp_state;
+
+static totp_state g_state;
+static uint8_t g_seed[SEED_LEN];
+static uint32_t g_rc;
+static uint8_t g_ver;               /* 12 or 20, for "No TPM 2.0 found." */
+static char g_label[STATIONINI_LABEL_MAX];
+
+/* The code for the step last computed, so a refresh inside the same step
+ * costs a clock read and nothing else. */
+static uint64_t g_step = (uint64_t)-1;
+static uint32_t g_code;
+
+#define ATTR_CODE TUI_ATTR(TUI_WHITE, TUI_BLACK)
+#define ATTR_WARN TUI_ATTR(TUI_YELLOW, TUI_BLACK)
+
+void totp_load(EFI_SYSTEM_TABLE *st, const stationini_totp *cfg)
+{
+    tpm_dev *dev = (tpm_dev *)0;
+    tcg_status ts;
+    int rc;
+
+    g_state = ST_NONE;
+    if (cfg == (const stationini_totp *)0 || !cfg->present)
+        return;
+    memcpy(g_label, cfg->label, sizeof g_label);
+    g_label[sizeof g_label - 1u] = '\0';
+    g_ver = cfg->tpm;
+
+    ts = tcg_open(st, cfg->tpm == 20 ? TPM_VER_20 : TPM_VER_12, &dev);
+    if (ts != TCG_OK) {
+        g_state = ST_NO_TPM;
+        return;
+    }
+    if (cfg->tpm == 20) {
+        rc = tpm2_seed_read(dev, cfg->index, cfg->pcrs, cfg->key, g_seed,
+                            SEED_LEN);
+    } else {
+        tpm12_pubkey pk;
+
+        memset(&pk, 0, sizeof pk);
+        memcpy(pk.mod, cfg->key, cfg->key_len);
+        pk.mod_len = cfg->key_len;
+        pk.exp[0] = 0x01;
+        pk.exp[1] = 0x00;
+        pk.exp[2] = 0x01;
+        pk.exp_len = 3;
+        static const uint8_t zeros[20] = { 0 };
+        uint8_t srk_auth[20];
+
+        if (cfg->srk_sha1)
+            sha1(zeros, sizeof zeros, srk_auth);
+        else
+            memset(srk_auth, 0, sizeof srk_auth);
+        rc = tpm12_seed_read(dev, cfg->index, srk_auth, &pk, g_seed,
+                             SEED_LEN);
+    }
+    g_rc = dev->rc;
+    tcg_close();
+
+    switch (rc) {
+    case TPM_OK:
+        g_state = ST_OK;
+        return;
+    case TPM_ERR_PCR:
+        g_state = ST_PCR;
+        break;
+    case TPM_ERR_KEY:
+        g_state = ST_KEY;
+        break;
+    case TPM_ERR_AUTH:
+        g_state = ST_AUTH;
+        break;
+    case TPM_ERR_RC:
+        g_state = ST_REFUSED;
+        break;
+    default:
+        g_state = ST_IO;
+        break;
+    }
+    crypto_wipe(g_seed, sizeof g_seed);
+}
+
+BOOLEAN totp_configured(void)
+{
+    return g_state != ST_NONE;
+}
+
+void totp_wipe(void)
+{
+    crypto_wipe(g_seed, sizeof g_seed);
+    g_code = 0;
+    g_step = (uint64_t)-1;
+    if (g_state == ST_OK)
+        g_state = ST_WIPED;
+}
+
+/* ---- the lines ---- */
+
+typedef struct {
+    CHAR16 *at;
+    UINTN   left;
+} wbuf;
+
+static void put(wbuf *w, const char *s)
+{
+    while (*s != '\0' && w->left > 1u) {
+        *w->at++ = (CHAR16)(unsigned char)*s++;
+        w->left--;
+    }
+    *w->at = 0;
+}
+
+static void put_hex32(wbuf *w, uint32_t v)
+{
+    static const char xd[] = "0123456789abcdef";
+    char s[11];
+    unsigned i;
+
+    s[0] = '0';
+    s[1] = 'x';
+    for (i = 0; i < 8u; i++)
+        s[2 + i] = xd[(v >> (28u - 4u * i)) & 0xFu];
+    s[10] = '\0';
+    put(w, s);
+}
+
+/* Firmware time as seconds since the epoch, taken as UTC whatever time zone
+ * it names: the design's choice (docs/notes/argon2-totp.md Section 2), and
+ * what an authenticator on a phone compares against. */
+static int clock_now(EFI_SYSTEM_TABLE *st, uint64_t *now)
+{
+    EFI_TIME t;
+
+    memset(&t, 0, sizeof t);
+    if (st->RuntimeServices->GetTime(&t, (void *)0) != EFI_SUCCESS)
+        return -1;
+    return otp_unix_time(t.Year, t.Month, t.Day, t.Hour, t.Minute,
+                         t.Second, now) == CRYPTO_OK ? 0 : -1;
+}
+
+static void line_code(EFI_SYSTEM_TABLE *st, wbuf *w, UINTN *attr)
+{
+    char digits[8];
+    uint64_t now = 0;
+    uint64_t step;
+    uint32_t c;
+    int i;
+
+    *attr = ATTR_WARN;
+    if (clock_now(st, &now) != 0) {
+        put(w, "The firmware clock could not be read.");
+        return;
+    }
+    step = now / TOTP_STEP;
+    if (step != g_step) {
+        if (totp_sha1(g_seed, SEED_LEN, now, TOTP_STEP, TOTP_DIGITS,
+                      &g_code) != CRYPTO_OK) {
+            put(w, "The code could not be computed.");
+            return;
+        }
+        g_step = step;
+    }
+    c = g_code;
+    for (i = 6; i >= 4; i--) {
+        digits[i] = (char)('0' + c % 10u);
+        c /= 10u;
+    }
+    digits[3] = ' ';
+    for (i = 2; i >= 0; i--) {
+        digits[i] = (char)('0' + c % 10u);
+        c /= 10u;
+    }
+    digits[7] = '\0';
+    *attr = ATTR_CODE;
+    put(w, "TOTP: ");
+    put(w, digits);
+    if (g_label[0] != '\0') {
+        put(w, "  (");
+        put(w, g_label);
+        put(w, ")");
+    }
+}
+
+void totp_status(void *ctx, menu_status_text *out)
+{
+    EFI_SYSTEM_TABLE *st = (EFI_SYSTEM_TABLE *)ctx;
+    wbuf w;
+    wbuf w2;
+
+    out->n = 0;
+    if (g_state == ST_NONE)
+        return;
+    out->n = 1;
+    out->attr[0] = ATTR_WARN;
+    w.at = out->line[0];
+    w.left = MENU_STATUS_MAX;
+    w.at[0] = 0;
+    switch (g_state) {
+    case ST_OK:
+        line_code(st, &w, &out->attr[0]);
+        break;
+    case ST_WIPED:
+        put(&w, "The TOTP code is shown again after a restart.");
+        break;
+    case ST_NO_TPM:
+        put(&w, g_ver == 20 ? "No TPM 2.0 found." : "No TPM 1.2 found.");
+        break;
+    case ST_PCR:
+        put(&w, "The TPM did not release the code:");
+        w2.at = out->line[1];
+        w2.left = MENU_STATUS_MAX;
+        put(&w2, "firmware, its settings or the boot chain changed since "
+                 "enrollment.");
+        out->attr[1] = ATTR_WARN;
+        out->n = 2;
+        break;
+    case ST_KEY:
+        put(&w, "The TPM key is not the enrolled one.");
+        break;
+    case ST_AUTH:
+        put(&w, "The TPM's answer did not verify.");
+        break;
+    case ST_REFUSED:
+        put(&w, "The TPM did not release the code: TPM error ");
+        put_hex32(&w, g_rc);
+        put(&w, ".");
+        break;
+    default:
+        put(&w, "The TPM could not be read.");
+        break;
+    }
+}
+
+void totp_page(EFI_SYSTEM_TABLE *st)
+{
+    static menu_status_text lines;
+    UINTN i;
+
+    totp_status(st, &lines);
+    if (lines.n == 0)
+        return;
+    for (i = 0; i < lines.n && i < MENU_STATUS_ROWS; i++) {
+        st->ConOut->SetAttribute(st->ConOut, lines.attr[i]);
+        menu_out(st, lines.line[i]);
+        st->ConOut->SetAttribute(st->ConOut, TUI_ATTR_TEXT);
+        menu_out(st, L"\r\n");
+    }
+    menu_out(st, L"\r\n");
+}

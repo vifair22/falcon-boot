@@ -56,6 +56,10 @@
 
 static EFI_SYSTEM_TABLE *g_st;
 
+/* The station's TOTP lines (pos_set_station_hooks); NULL on the stick. */
+static void (*g_note)(void);
+static void (*g_handover)(void);
+
 /* ---- console ---- */
 
 /* Inside the content block, like every other screen; see
@@ -861,6 +865,8 @@ static EFI_STATUS launch_uki(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent,
      * nothing for a few seconds, and that silence is indistinguishable from
      * this loader having hung unless the boundary is on screen. Pairs with
      * the "the image exited" line main.c prints if it comes back. */
+    if (g_handover != (void (*)(void))0)
+        g_handover();
     out(L"handing over to the image; everything below is its own output."
         L"\r\n\r\n");
 
@@ -914,6 +920,8 @@ static int prompt_and_unlock(UINTN *which)
         INTN len;
         int rc;
 
+        if (attempt == 0 && g_note != (void (*)(void))0)
+            g_note();
         out(L"passphrase for the encrypted partition");
         if (attempt > 0) {
             out(L" (attempt ");
@@ -946,6 +954,12 @@ static int prompt_and_unlock(UINTN *which)
         out(L"wrong passphrase.\r\n\r\n");
     }
     return LUKS_ERR_NOKEY;
+}
+
+void pos_set_station_hooks(void (*note)(void), void (*handover)(void))
+{
+    g_note = note;
+    g_handover = handover;
 }
 
 const CHAR16 *pos_entry_label(void)

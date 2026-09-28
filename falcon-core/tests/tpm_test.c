@@ -569,6 +569,108 @@ static void test_detect_unknown(void **state)
     assert_int_equal(v, TPM_VER_NONE);
 }
 
+/* ---- GetRandom, against a canned exchange ---- */
+
+typedef struct {
+    const uint8_t *cmd;
+    size_t         cmd_len;
+    const uint8_t *rsp;
+    size_t         rsp_len;
+    int            bad;
+} canned;
+
+static int canned_xfer(void *ctx, const uint8_t *cmd, size_t cmd_len,
+                       uint8_t *rsp, size_t rsp_cap, size_t *rsp_len)
+{
+    canned *c = ctx;
+
+    if (cmd_len != c->cmd_len || memcmp(cmd, c->cmd, cmd_len) != 0) {
+        c->bad++;
+        return -1;
+    }
+    assert_true(c->rsp_len <= rsp_cap);
+    memcpy(rsp, c->rsp, c->rsp_len);
+    *rsp_len = c->rsp_len;
+    return 0;
+}
+
+static tpm_dev *canned_dev(canned *c)
+{
+    memset(&dev, 0, sizeof dev);
+    dev.xfer = canned_xfer;
+    dev.xfer_ctx = c;
+    return &dev;
+}
+
+static void test_get_random(void **state)
+{
+    /* TPM2_GetRandom(4): TPM_ST_NO_SESSIONS, size 12, code 0x17B. */
+    static const uint8_t c2[] = { 0x80, 0x01, 0, 0, 0, 12, 0, 0, 0x01, 0x7B,
+                                  0, 4 };
+    static const uint8_t r2[] = { 0x80, 0x01, 0, 0, 0, 16, 0, 0, 0, 0,
+                                  0, 4, 1, 2, 3, 4 };
+    static const uint8_t r2short[] = { 0x80, 0x01, 0, 0, 0, 15, 0, 0, 0, 0,
+                                       0, 3, 1, 2, 3 };
+    /* TPM_GetRandom(4): TPM_TAG_RQU_COMMAND, size 14, ordinal 0x46. */
+    static const uint8_t c12[] = { 0x00, 0xC1, 0, 0, 0, 14, 0, 0, 0, 0x46,
+                                   0, 0, 0, 4 };
+    static const uint8_t r12[] = { 0x00, 0xC4, 0, 0, 0, 18, 0, 0, 0, 0,
+                                   0, 0, 0, 4, 9, 8, 7, 6 };
+    static const uint8_t r12short[] = { 0x00, 0xC4, 0, 0, 0, 17, 0, 0, 0, 0,
+                                        0, 0, 0, 3, 9, 8, 7 };
+    canned c;
+    uint8_t out[4];
+
+    (void)state;
+    c = (canned){ c2, sizeof c2, r2, sizeof r2, 0 };
+    assert_int_equal(tpm2_get_random(canned_dev(&c), out, 4), TPM_OK);
+    assert_memory_equal(out, r2 + 12, 4);
+    c = (canned){ c2, sizeof c2, r2short, sizeof r2short, 0 };
+    assert_int_equal(tpm2_get_random(canned_dev(&c), out, 4), TPM_ERR_PROTO);
+    assert_int_equal(c.bad, 0);
+    assert_int_equal(tpm2_get_random(&dev, out, 0), TPM_ERR_ARG);
+    assert_int_equal(tpm2_get_random(&dev, out, 33), TPM_ERR_ARG);
+
+    c = (canned){ c12, sizeof c12, r12, sizeof r12, 0 };
+    assert_int_equal(tpm12_get_random(canned_dev(&c), out, 4), TPM_OK);
+    assert_memory_equal(out, r12 + 14, 4);
+    c = (canned){ c12, sizeof c12, r12short, sizeof r12short, 0 };
+    assert_int_equal(tpm12_get_random(canned_dev(&c), out, 4),
+                     TPM_ERR_PROTO);
+    assert_int_equal(c.bad, 0);
+    assert_int_equal(tpm12_get_random(&dev, out, 21), TPM_ERR_ARG);
+    assert_int_equal(tpm12_get_random(NULL, out, 4), TPM_ERR_ARG);
+}
+
+/* The enrollments with values given: the same checks as the ones that read
+ * the PCRs, before a byte is sent. */
+static void test_enroll_values_args(void **state)
+{
+    static const uint8_t v2[4][TPM2_DIGEST_LEN] = { { 0 } };
+    static const uint8_t v12[4][TPM12_DIGEST_LEN] = { { 0 } };
+    static const uint8_t owner[TPM12_DIGEST_LEN] = { 0 };
+    tpm12_pubkey pk;
+    tpm_dev *d = setup(t2_xchg, 0);
+
+    (void)state;
+    assert_int_equal(tpm2_seed_enroll_values(d, NULL, 0, 1, PCRS, NULL, SEED,
+                                             sizeof SEED, NULL),
+                     TPM_ERR_ARG);
+    assert_int_equal(tpm2_seed_enroll_values(d, NULL, 0, 1, PCRS, v2, SEED,
+                                             0, NULL),
+                     TPM_ERR_ARG);
+    assert_int_equal(tpm2_seed_enroll_values(d, NULL, 0, 1, 1u << 24, v2,
+                                             SEED, sizeof SEED, NULL),
+                     TPM_ERR_ARG);
+    assert_int_equal(tpm12_seed_enroll_values(d, owner, 1, PCRS, NULL, SEED,
+                                              sizeof SEED, &pk),
+                     TPM_ERR_ARG);
+    assert_int_equal(tpm12_seed_enroll_values(d, owner, 1, 0, v12, SEED,
+                                              sizeof SEED, &pk),
+                     TPM_ERR_ARG);
+    assert_int_equal(rp.i, 0);
+}
+
 int run_tpm_tests(void)
 {
     const struct CMUnitTest tests[] = {
@@ -586,6 +688,8 @@ int run_tpm_tests(void)
         cmocka_unit_test(test_tpm12_composite),
         cmocka_unit_test(test_tpmbuf),
         cmocka_unit_test(test_detect_unknown),
+        cmocka_unit_test(test_get_random),
+        cmocka_unit_test(test_enroll_values_args),
     };
 
     return cmocka_run_group_tests_name("tpm", tests, NULL, NULL);

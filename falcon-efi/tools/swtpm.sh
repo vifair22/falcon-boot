@@ -9,8 +9,8 @@
 # gets a TPM that has never been measured into: PCRs at their reset values,
 # no NV indices, no owner. That is the whole of the PCR reset between cases;
 # nothing is carried from one case to the next except by a case that asks
-# for the state to be kept (SWTPM_KEEP=1, for the reseal cases the TOTP work
-# will need, where the second boot must see the first boot's NV index).
+# for the state to be kept (SWTPM_KEEP=1: the TOTP cases, where later boots
+# must see the NV index the host enrolled between them).
 #
 # swtpm is started with only a control socket. QEMU hands it the data
 # channel over that socket (CMD_SET_DATAFD), which swtpm refuses when it
@@ -30,6 +30,14 @@
 #   swtpm_start VERSION DIR          start one; DIR is its own, under build/
 #   swtpm_stop                       stop it (also safe with none running)
 #   SWTPM_QEMU                       array: the QEMU arguments for it
+#   swtpm_setup12 DIR                a 1.2 state as a PC's TPM is: owned
+#                                    with the well-known secrets, NV locked;
+#                                    swtpm_setup keeps each as SHA-1 of the
+#                                    20 zero bytes, not the bytes
+#   swtpm_serve VERSION DIR          the same state for the host, on the
+#                                    data socket DIR/server.sock, between
+#                                    boots (the TOTP cases' enrollment)
+#   swtpm_serve_stop                 stop that one
 
 SWTPM_PID=
 # shellcheck disable=SC2034  # read by the rig that sources this
@@ -79,6 +87,52 @@ swtpm_start() {  # swtpm_start <2|2crb|1.2> <dir>
     SWTPM_QEMU=(-chardev "socket,id=chrtpm,path=$sock"
                 -tpmdev emulator,id=tpm0,chardev=chrtpm
                 -device "$dev,tpmdev=tpm0")
+}
+
+swtpm_setup12() {  # swtpm_setup12 <dir>
+    mkdir -p "$1/state"
+    rm -f "$1"/state/*
+    swtpm_setup --tpmstate "$1/state" --take-ownership --owner-well-known \
+        --srk-well-known --lock-nvram --logfile "$1/setup.log" >/dev/null
+}
+
+SWTPM_SERVE_PID=
+
+# A second process on the same state, never at the same time as QEMU's:
+# swtpm refuses a data socket to QEMU's instance (see above). It sends
+# TPM_Startup itself, as the firmware would.
+swtpm_serve() {  # swtpm_serve <2|1.2> <dir>
+    local ver=$1 dir=$2 sock=$2/server.sock i
+    local args=(socket --tpmstate "dir=$dir/state"
+                --server "type=unixio,path=$sock"
+                --ctrl "type=unixio,path=$dir/server.ctrl"
+                --flags not-need-init,startup-clear
+                --pid "file=$dir/serve.pid")
+
+    swtpm_serve_stop
+    [[ $ver == 2* ]] && args+=(--tpm2)
+    if [[ "${SWTPM_LOG_LEVEL:-0}" -gt 0 ]]; then
+        args+=(--log "file=$dir/serve.log,level=$SWTPM_LOG_LEVEL")
+    fi
+    rm -f "$sock" "$dir/server.ctrl"
+    swtpm "${args[@]}" >"$dir/serve.out" 2>&1 &
+    SWTPM_SERVE_PID=$!
+    for (( i = 0; i < 50; i++ )); do
+        [[ -S "$sock" ]] && return 0
+        kill -0 "$SWTPM_SERVE_PID" 2>/dev/null || break
+        sleep 0.1
+    done
+    echo "swtpm_serve: swtpm did not come up (see $dir/serve.out)" >&2
+    swtpm_serve_stop
+    return 1
+}
+
+swtpm_serve_stop() {
+    if [[ -n "$SWTPM_SERVE_PID" ]]; then
+        kill "$SWTPM_SERVE_PID" 2>/dev/null || true
+        wait "$SWTPM_SERVE_PID" 2>/dev/null || true
+    fi
+    SWTPM_SERVE_PID=
 }
 
 swtpm_stop() {

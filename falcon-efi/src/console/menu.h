@@ -82,17 +82,41 @@ INTN menu_run_keys(EFI_SYSTEM_TABLE *st, const menu_banner *banner,
                    const menu_entry *entries, UINTN count,
                    const menu_keys *keys, CHAR16 *which);
 
+/* Lines under the banner that the caller keeps current: the UEFI station's
+ * TOTP code (DESIGN Section 13.15). The menu asks for them when it opens
+ * and again every second while it waits, and repaints the lines whose text
+ * or colour changed; how many there are is fixed by the first answer (at
+ * most MENU_STATUS_ROWS, and the list gives up rows for them). The menu
+ * knows nothing of what they say. */
+#define MENU_STATUS_ROWS 2u
+#define MENU_STATUS_MAX  96u
+
+typedef struct {
+    CHAR16 line[MENU_STATUS_ROWS][MENU_STATUS_MAX];
+    UINTN  attr[MENU_STATUS_ROWS];
+    UINTN  n;
+} menu_status_text;
+
+typedef void (*menu_status_fn)(void *ctx, menu_status_text *out);
+
+typedef struct {
+    menu_status_fn fn;
+    void          *ctx;
+} menu_status;
+
 /* menu_run_keys with `sel` highlighted first and, when `seconds` is nonzero,
  * a countdown in the key line: when it runs out, `sel` is returned as if
  * enter had been pressed (*which = L'\r'), and any key stops it for the
  * rest of the menu's life. The station's STATION.INI default and timeout
  * (DESIGN Section 13.7); falcon-bios's screen_menu_timed is the same menu,
  * line for line. A firmware that will not make a timer gets no countdown:
- * the menu then waits, which is what a menu with no timeout does anyway. */
+ * the menu then waits, which is what a menu with no timeout does anyway.
+ * status, when given, is drawn under the banner and refreshed on the same
+ * one-second timer; the countdown's end is unchanged by it. */
 INTN menu_run_timed(EFI_SYSTEM_TABLE *st, const menu_banner *banner,
                     const menu_entry *entries, UINTN count,
                     const menu_keys *keys, CHAR16 *which, UINTN sel,
-                    UINTN seconds);
+                    UINTN seconds, const menu_status *status);
 
 /* Fills row idx's tag columns. The menu calls it once per row, the first
  * time the row is about to be drawn, so a menu of many rows pays only for

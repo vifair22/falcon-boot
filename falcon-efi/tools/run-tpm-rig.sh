@@ -25,10 +25,35 @@
 #             present, and PCR0 read through the protocol is not zero
 #   station   the UEFI station (make test-station's disk) with the probe as
 #             its memtest.efi, started as the default: the station boots
-#             with a TPM attached and what it starts still sees one. This
-#             is the shape the loader's own TPM cases take once that code
-#             exists (the TOTP under the banner, the warning after a
-#             changed PCR, ciphertext on the wire).
+#             with a TPM attached and what it starts still sees one.
+#   totp      the station's TOTP check (DESIGN Section 13.15), over four
+#             boots of one TPM state (SWTPM_KEEP) with the clock at
+#             RTC_BASE:
+#               1. the station starts the probe, which saves the firmware's
+#                  event log onto the ESP;
+#               2. on the host, between boots, `mkstick station totp
+#                  enroll` against the same state (--tpm-socket) with that
+#                  log (--event-log), sealing to PCRs 0, 2, 4 and 7 as the
+#                  station will see them, and writing [totp];
+#               3. the station shows the code the host computes from the
+#                  printed secret for the clock, and the seed's bytes never
+#                  cross the TPM's wire in the clear (swtpm's own log,
+#                  level 5; on 1.2 the enrollment's plain NV write is the
+#                  control that the search can see them); once the probe
+#                  has run and come back, the menu says the code is shown
+#                  after a restart, since the seed was wiped at handover;
+#                  then, in a boot of its own, the Personal OS row chosen
+#                  over the countdown shows the code above the passphrase
+#                  prompt;
+#               4. the same disk and varstore under the other OVMF build
+#                  (the Secure Boot one for uefi-*, the plain one for
+#                  uefi-sb-*), which moves PCR 0 as a firmware update
+#                  would: the station says the TPM did not release the
+#                  code, and still boots its default. A second db entry
+#                  would move PCR 7 instead, but OVMF's TPM 1.2 driver
+#                  does not measure db, so it would prove nothing there.
+#             The event-log replay, the seal and the unseal are the ones a
+#             machine runs; only the TPM's transport is swapped.
 #
 # A case whose firmware installs no protocol for its TPM version SKIPs and
 # says so: that is this OVMF, not falcon. OVMF_DIR points the rig at
@@ -39,7 +64,8 @@
 # directory under build/tpm-rig.
 #
 # Usage: falcon-efi/tools/run-tpm-rig.sh [case...]   (default: every case)
-# Env:   SWTPM_LOG_LEVEL  swtpm's log level into build/tpm-rig/swtpm/ (0)
+# Env:   SWTPM_LOG_LEVEL  swtpm's log level into build/tpm-rig/swtpm/ (0;
+#                         the totp cases set 5 for their wire check)
 set -euo pipefail
 
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)
@@ -54,7 +80,16 @@ STATION=build/test-station.img
 LOADER=build/bin/falcon-boot-station-signed.efi
 MOK_VARS=build/mok-test/OVMF_VARS.secboot.mok.fd
 MOK_CRT=build/mok-test/falcon-test-mok.crt
+MKSTICK=build/bin/falcon-boot-mkstick
 TIMEOUT=180
+
+# Where the running case's swtpm keeps its state; the totp cases use their
+# own. RTC_ARGS sets the guest's clock (the totp cases). OTHER_FW=1 boots
+# the other OVMF build with the same varstore, which moves PCR 0.
+TPM_DIR=$R/swtpm
+RTC_ARGS=()
+OTHER_FW=0
+RTC_BASE=2026-09-28T12:00:00
 
 # virt-fw-vars from PATH, else the venv mk-test-mok.sh makes when PATH has
 # none; only the Secure Boot cases need it.
@@ -66,6 +101,7 @@ QPID=
 cleanup() {
     [[ -n "$QPID" ]] && kill "$QPID" 2>/dev/null || true
     swtpm_stop
+    swtpm_serve_stop
 }
 trap cleanup EXIT
 
@@ -103,7 +139,8 @@ station_disk() {  # station_disk IMAGE EFI
         mcopy -o -i "$img@@1M" "$LOADER" ::/EFI/$dir/grubx64.efi
     done
     mcopy -o -i "$img@@1M" "$efi" ::/EFI/falcon/memtest.efi
-    printf '[general]\ndefault = memtest\ntimeout = 1\n' > "$R/STATION.INI"
+    printf '[general]\ndefault = memtest\ntimeout = %s\n' "${INI_TIMEOUT:-1}" \
+        > "$R/STATION.INI"
     mcopy -o -i "$img@@1M" "$R/STATION.INI" ::/EFI/falcon/STATION.INI
 }
 
@@ -145,9 +182,11 @@ boot_once() {
     if [[ $fw == uefi ]]; then
         code=$(ovmf_find CODE plain)
         vars=$(ovmf_find VARS plain)
+        [[ $OTHER_FW == 1 ]] && code=$(ovmf_find CODE secboot)
     else
         code=$(ovmf_find CODE secboot)
         vars=$MOK_VARS
+        [[ $OTHER_FW == 1 ]] && code=$(ovmf_find CODE plain)
     fi
     cp "$vars" "$R/vars.fd"
     chmod u+w "$R/vars.fd"
@@ -157,9 +196,9 @@ boot_once() {
             >/dev/null 2>&1
     fi
     case $tpm in
-    tpm2)    swtpm_start 2 "$R/swtpm" ;;
-    tpm2crb) swtpm_start 2crb "$R/swtpm" ;;
-    tpm12)   swtpm_start 1.2 "$R/swtpm" ;;
+    tpm2)    swtpm_start 2 "$TPM_DIR" ;;
+    tpm2crb) swtpm_start 2crb "$TPM_DIR" ;;
+    tpm12)   swtpm_start 1.2 "$TPM_DIR" ;;
     esac
     rm -f "$R/serial.log" "$R/mon.sock"
     timeout "$TIMEOUT" qemu-system-x86_64 -machine q35 -m 1024 \
@@ -168,7 +207,7 @@ boot_once() {
         -drive "if=pflash,format=raw,file=$R/vars.fd" \
         -drive "if=none,id=d0,format=raw,file=$disk" \
         -device ide-hd,drive=d0,bus=ide.0,bootindex=0 \
-        "${SWTPM_QEMU[@]}" \
+        "${SWTPM_QEMU[@]}" "${RTC_ARGS[@]}" \
         -serial "file:$R/serial.log" \
         -monitor "unix:$R/mon.sock,server,nowait" >"$R/qemu.log" 2>&1 &
     QPID=$!
@@ -284,12 +323,179 @@ case_station() {
     result "$c" "$why" "station started the probe; PCR0 $(pcr0_of "$tpm")"
 }
 
+# ---- the TOTP check ----
+
+# The codes an authenticator holding secret (base32) shows over the first
+# eight steps from epoch t, one per line as "123 456".
+codes_for() {   # codes_for SECRET T
+    python3 - "$1" "$2" <<'EOF'
+import base64, hashlib, hmac, struct, sys
+s = sys.argv[1]
+key = base64.b32decode(s + "=" * (-len(s) % 8))
+for k in range(8):
+    h = hmac.new(key, struct.pack(">Q", int(sys.argv[2]) // 30 + k),
+                 hashlib.sha1).digest()
+    o = h[-1] & 15
+    v = (struct.unpack(">I", h[o:o + 4])[0] & 0x7FFFFFFF) % 1000000
+    print("%03d %03d" % (v // 1000, v % 1000))
+EOF
+}
+
+# The seed's bytes as hex, from the secret.
+seed_hex() {
+    python3 -c 'import base64, sys; s = sys.argv[1]; print(base64.b32decode(s + "=" * (-len(s) % 8)).hex())' "$1"
+}
+
+# Does an swtpm log (level 5) carry these bytes, on the wire in either
+# direction? Its dumps are rows of space-separated hex bytes; the rows of
+# one exchange are joined before the search, so a run that crosses a row
+# is still found. grep reads to the end rather than -q: under pipefail an
+# awk cut short by an early exit would turn a hit into a miss.
+wire_has() {    # wire_has LOG HEX
+    [[ -f "$1" ]] || return 1
+    awk '{ line = $0; gsub(/^[ \t]+/, "", line)
+           if (line ~ /^([0-9a-fA-F][0-9a-fA-F]( |$))+$/) {
+               gsub(/ /, "", line); buf = buf line
+           } else { print tolower(buf); buf = "" } }
+         END { print tolower(buf) }' "$1" | grep -- "$2" >/dev/null
+}
+
+case_totp() {
+    local c=$1 fw=$2 tpm=$3 why= ver= out= secret= shown= want= hex= base= unseal=
+    why=$(fw_missing "$fw")
+    [[ -n $why ]] && { skip "$c" "$why"; return; }
+    [[ -f "$STATION" ]] || { skip "$c" "$STATION missing (make test-station)"; return; }
+    [[ -x "$MKSTICK" ]] || { skip "$c" "$MKSTICK missing (make cli)"; return; }
+    command -v python3 >/dev/null || { skip "$c" "python3 is not installed"; return; }
+    command -v swtpm_setup >/dev/null || { skip "$c" "swtpm_setup is not installed"; return; }
+
+    case $tpm in
+    tpm12) ver=1.2 ;;
+    *)     ver=2 ;;
+    esac
+    TPM_DIR=$R/$c
+    rm -rf "$TPM_DIR"
+    mkdir -p "$TPM_DIR/state"
+    [[ $tpm == tpm12 ]] && swtpm_setup12 "$TPM_DIR"
+    export SWTPM_KEEP=1
+    RTC_ARGS=(-rtc "base=$RTC_BASE")
+    # Three seconds: step 3b has to stop the countdown.
+    INI_TIMEOUT=3 station_disk "$R/totp.img" "$(probe_efi "$fw")"
+
+    # 1. the event log, as the station's boot writes it
+    boot "$fw" "$tpm" "$R/totp.img"
+    wait_for "FALCON-TPM-PROBE-DONE" 90 || why="the first boot did not reach the probe"
+    halt
+    log_text "$R/serial.log" > "$R/$c-1.log"
+    if [[ -z $why ]] && has "FALCON-TPM $(proto_of "$tpm") absent"; then
+        skip "$c" "this OVMF installs no EFI_$(proto_of "$tpm")_PROTOCOL"
+        TPM_DIR=$R/swtpm; RTC_ARGS=(); unset SWTPM_KEEP
+        return
+    fi
+    rm -f "$R/evlog.bin"
+    [[ -z $why ]] && { mcopy -i "$R/totp.img@@1M" ::/falcon-evlog.bin "$R/evlog.bin" 2>/dev/null ||
+        why="the probe saved no event log"; }
+
+    # 2. enrollment, on the host, against the same TPM state
+    if [[ -z $why ]]; then
+        SWTPM_LOG_LEVEL=5 swtpm_serve "$ver" "$TPM_DIR" || why="swtpm would not serve its state"
+    fi
+    # swtpm_setup's well-known owner secret is SHA-1 of 20 zero bytes, not
+    # the bytes (swtpm_setup12), so the 1.2 enrollment is given it as a
+    # 20-byte file, which --owner-auth-file takes as the secret itself.
+    local owner=()
+    if [[ $tpm == tpm12 ]]; then
+        python3 -c 'import hashlib, sys; sys.stdout.buffer.write(hashlib.sha1(bytes(20)).digest())' \
+            > "$TPM_DIR/owner.bin"
+        owner=(--owner-auth-file "$TPM_DIR/owner.bin")
+    fi
+    if [[ -z $why ]]; then
+        out=$("$MKSTICK" station totp enroll "$R/totp.img" --pcrs 0,2,4,7 \
+                --label rig --tpm-socket "$TPM_DIR/server.sock" \
+                --event-log "$R/evlog.bin" "${owner[@]}" 2>&1) || why="enroll failed: $(printf '%s' "$out" | tail -n 1)"
+        printf '%s\n' "$out" > "$R/$c-enroll.log"
+        swtpm_serve_stop
+        secret=$(printf '%s\n' "$out" | sed -n 's/^.*secret: *\([A-Z2-7]*\)$/\1/p' | head -n 1)
+        [[ -z $why && -z $secret ]] && why="enroll printed no secret"
+    fi
+    [[ -n $secret ]] && hex=$(seed_hex "$secret")
+
+    # 3. the code, and the seed off the wire
+    if [[ -z $why ]]; then
+        SWTPM_LOG_LEVEL=5 boot "$fw" "$tpm" "$R/totp.img"
+        wait_for "FALCON-TPM-PROBE-DONE" 120 || why="the second boot did not reach the probe"
+        if [[ -z $why ]]; then
+            wait_for "the image exited" 30 || why="the probe did not come back to the station"
+        fi
+        if [[ -z $why ]]; then
+            mon "sendkey ret"
+            wait_for "The TOTP code is shown again after a restart." 30 ||
+                why="the code was still shown after the probe ran"
+        fi
+        halt
+        log_text "$R/serial.log" > "$R/$c-3.log"
+        cp "$TPM_DIR/swtpm.log" "$R/$c-wire.log" 2>/dev/null || : > "$R/$c-wire.log"
+        # The unseal's own command, so a log that missed it cannot pass:
+        # NV_Read on 2.0, ExecuteTransport around it on 1.2.
+        if [[ $tpm == tpm12 ]]; then unseal=000000e7; else unseal=0000014e; fi
+        shown=$(grep -aoE 'TOTP: [0-9]{3} [0-9]{3}' "$R/$c-3.log" | head -n 1 | cut -c7-)
+        base=$(date -u -d "${RTC_BASE/T/ }" +%s)
+        want=$(codes_for "$secret" "$base")
+        if [[ -z $why && -z $shown ]]; then
+            why="no code under the banner: $(grep -aoE 'TPM[^|]{0,70}|No TPM[^|]{0,20}' "$R/$c-3.log" | head -n 1)"
+        elif [[ -z $why ]] && ! grep -qx -- "$shown" <<<"$want"; then
+            why="the code $shown is not the seed's for the clock"
+        elif [[ -z $why ]] && ! grep -aq "(falcon-station:rig)" "$R/$c-3.log"; then
+            why="the code's label is missing"
+        elif [[ -z $why ]] && ! wire_has "$R/$c-wire.log" "$unseal"; then
+            why="swtpm's log does not hold the unseal, so the wire check saw nothing"
+        elif [[ -z $why ]] && wire_has "$R/$c-wire.log" "$hex"; then
+            why="the seed crossed the TPM's wire in the clear"
+        elif [[ -z $why && $tpm == tpm12 ]] && ! wire_has "$TPM_DIR/serve.log" "$hex"; then
+            why="the wire check cannot see the seed even in the plain enrollment write"
+        fi
+    fi
+
+    # 3b. the code above the passphrase prompt: the countdown stopped, the
+    # first row (the encrypted shelf) chosen
+    if [[ -z $why ]]; then
+        boot "$fw" "$tpm" "$R/totp.img"
+        wait_for "TOTP: " 90 || why="the prompt boot showed no code"
+        for _ in 1 2 3 4 5 6 7 8; do mon "sendkey up"; done
+        mon "sendkey ret"
+        [[ -z $why ]] && { wait_for "passphrase for the encrypted partition" 30 ||
+            why="no passphrase prompt"; }
+        halt
+        log_text "$R/serial.log" > "$R/$c-3b.log"
+        [[ -z $why ]] && { awk '/booting: Personal OS/ { p = 1 } p' "$R/$c-3b.log" |
+            grep -aqE 'TOTP: [0-9]{3} [0-9]{3}' || why="no code above the passphrase prompt"; }
+    fi
+
+    # 4. a changed PCR
+    if [[ -z $why ]]; then
+        OTHER_FW=1 boot "$fw" "$tpm" "$R/totp.img"
+        wait_for "FALCON-TPM-PROBE-DONE" 120 || why="the third boot did not reach the probe"
+        halt
+        log_text "$R/serial.log" > "$R/$c-4.log"
+        if [[ -z $why ]] && ! { grep -aqF "The TPM did not release the code:" "$R/$c-4.log" &&
+                grep -aqF "firmware, its settings or the boot chain changed since enrollment." "$R/$c-4.log"; }; then
+            why="no warning after PCR 0 moved: $(grep -aoE 'TOTP: [0-9 ]{7}|TPM[^|]{0,60}' "$R/$c-4.log" | head -n 1)"
+        fi
+    fi
+
+    TPM_DIR=$R/swtpm
+    RTC_ARGS=()
+    unset SWTPM_KEEP
+    result "$c" "$why" "code $shown matches the seed, off the wire, gone after a handover, above the prompt; PCR 0 moved: warned"
+}
+
 # ---- run ----
 
 ALL=(uefi-tpm2-probe uefi-tpm2crb-probe uefi-tpm12-probe
      uefi-sb-tpm2-probe uefi-sb-tpm12-probe
      uefi-tpm2-station uefi-tpm12-station
-     uefi-sb-tpm2-station uefi-sb-tpm12-station)
+     uefi-sb-tpm2-station uefi-sb-tpm12-station
+     uefi-tpm2-totp uefi-tpm12-totp uefi-sb-tpm2-totp uefi-sb-tpm12-totp)
 CASES=("$@")
 [[ ${#CASES[@]} -eq 0 ]] && CASES=("${ALL[@]}")
 
@@ -308,6 +514,7 @@ for c in "${CASES[@]}"; do
     case $name in
     probe)   case_probe "$c" "$fw" "$tpm" ;;
     station) case_station "$c" "$fw" "$tpm" ;;
+    totp)    case_totp "$c" "$fw" "$tpm" ;;
     *) echo "unknown case: $c" >&2; exit 2 ;;
     esac
 done

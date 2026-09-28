@@ -91,6 +91,7 @@ int main(void)
     failed += run_rebl_tests();
     failed += run_tpmcrypto_tests();
     failed += run_tpm_tests();
+    failed += run_evlog_tests();
 
     printf("\nfalcon-core: total failed: %d\n", failed);
     return failed == 0 ? 0 : 1;

@@ -16,9 +16,12 @@ CORE_CRYPTO   := $(addprefix $(CORE)/crypto/,crypto.c sha1.c sha256.c sha512.c \
 # CORE_CRYPTO so the loaders that link that list whole do not carry it.
 CORE_CRYPTO_TPM := $(addprefix $(CORE)/crypto/,cfb.c bn.c p256.c kdf.c \
 	rsa.c otp.c)
-# The TPM command layer, 2.0 and 1.2, over a transport callback. Linked by
-# the tests and the swtpm rig only, for now.
+# The TPM command layer, 2.0 and 1.2, over a transport callback: the UEFI
+# station's TOTP read and mkstick's enrollment (DESIGN Section 13.15).
 CORE_TPM      := $(addprefix $(CORE)/tpm/,tpm.c tpm2.c tpm12.c)
+# The firmware's event log replayed to the station's own measurement, which
+# is what enrollment seals to. mkstick's alone: the loader never reads it.
+CORE_TPM_EVLOG := $(CORE)/tpm/evlog.c
 CORE_FS       := $(addprefix $(CORE)/fs/,exfat.c ext4.c fat.c iso9660.c udf.c fs.c \
 	fs_exfat.c fs_ext4.c fs_fat.c fs_iso9660.c fs_udf.c fs_reg_all.c)
 # The stationary build's (DESIGN Section 13): ext4 and its adapter, and a
@@ -157,13 +160,14 @@ CORE_TESTS := $(addprefix falcon-core/tests/,main.c \
 	hookcmd_test.c grubcfg_test.c bsdmd_test.c xpsetup_test.c eltorito_test.c fat_test.c medium_test.c bootfs_test.c uefiboot_test.c biosboot_test.c blesslist_test.c wim_test.c part_test.c \
 	osrel_test.c pe_test.c trust_test.c survey_test.c tui_test.c shelf_test.c \
 	nextboot_test.c stationini_test.c strows_test.c vbr_test.c gz_test.c table_test.c ident_test.c identfs_test.c extfind_test.c \
-	rebl_test.c tpmcrypto_test.c tpm_test.c kndev.c)
+	rebl_test.c tpmcrypto_test.c tpm_test.c evlog_test.c kndev.c)
 
 CORE_UUT := $(CORE_CRYPTO) $(CORE_FS) $(CORE_LUKS) $(CORE_PART) $(CORE_IDENT) \
 	$(CORE_IDENT_FS) $(CORE)/media/extfind.c $(CORE_BLK) $(CORE_PE) \
 	$(CORE_WIM) $(CORE_UCS2) $(CORE_TUI) \
 	$(CORE_TRUST) $(CORE_MEDIA) $(CORE_UEFIBOOT) $(CORE_BIOSBOOT) $(CORE_STATIONINI) $(CORE_STROWS) $(CORE_VBR) $(CORE_MANIFEST) \
-	$(CORE_MANIFEST_WRITE) $(CORE_GZ) $(CORE_CRYPTO_TPM) $(CORE_TPM)
+	$(CORE_MANIFEST_WRITE) $(CORE_GZ) $(CORE_CRYPTO_TPM) $(CORE_TPM) \
+	$(CORE_TPM_EVLOG)
 
 $(eval $(call test_bin,core,$(CORE_TESTS) $(CORE_UUT)))
 

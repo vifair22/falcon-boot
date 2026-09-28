@@ -23,6 +23,10 @@ EFI_MOD_pos           := $(EFI_SRC)/pos/pos.c
 EFI_MOD_bless         := $(EFI_SRC)/bless/bless.c $(EFI_SRC)/bless/blesscore.c
 EFI_MOD_nxt           := $(EFI_SRC)/nxt/nxt.c $(EFI_SRC)/nxt/nxtcore.c
 EFI_MOD_esp           := $(EFI_SRC)/esp/esp.c
+# The UEFI station's TOTP check (DESIGN Section 13.15): the TPM reached
+# through EFI_TCG2_PROTOCOL or EFI_TCG_PROTOCOL, and the code and its lines.
+EFI_MOD_tcg           := $(EFI_SRC)/tcg/tcg.c
+EFI_MOD_totp          := $(EFI_SRC)/totp/totp.c
 
 # Every source some app links, for compile_commands.json and the analyzers.
 EFI_APP_SRCS :=
@@ -189,8 +193,9 @@ test-station-uefi: $(EFI_STATION_SIGNED) $(STANDIN) $(STANDIN_SIGNED) cli
 	falcon-efi/tools/run-station-rig.sh
 
 # The TPM rig (docs/notes/argon2-totp.md Section 2): the probe, alone and
-# started by the UEFI station, under OVMF with swtpm as a TPM 2.0 (TIS and
-# CRB) and a TPM 1.2, Secure Boot off and on. With no swtpm it says so and
+# started by the UEFI station, and the station's TOTP check (DESIGN Section
+# 13.15) enrolled by mkstick between boots, under OVMF with swtpm as a TPM
+# 2.0 (TIS and CRB) and a TPM 1.2, Secure Boot off and on. With no swtpm it says so and
 # builds nothing; a case whose OVMF has no support for its TPM version
 # SKIPs. The station cases boot copies of the disk test-station made, and
 # SKIP without it: making it needs sudo and the Arch ISO, so it stays an
@@ -200,7 +205,7 @@ test-tpm-rig:
 		echo "SKIP  test-tpm-rig: swtpm is not installed (Gentoo app-crypt/swtpm, Debian swtpm)."; \
 	else \
 		$(MAKE) --no-print-directory $(TPM_PROBE) $(TPM_PROBE_SIGNED) \
-			$(EFI_STATION_SIGNED) && \
+			$(EFI_STATION_SIGNED) $(MKSTICK) && \
 		falcon-efi/tools/run-tpm-rig.sh; \
 	fi
 

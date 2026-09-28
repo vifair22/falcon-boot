@@ -422,6 +422,19 @@ static void test_layout(void **state)
         assert_int_equal(ac_hash(&a, mem_read, &ctx, big, sizeof(big), h2),
                          AC_OK);
         assert_memory_equal(h1, h2, 32);
+        /* ac_hash is ac_hash_with SHA-256; SHA-1, a TPM 1.2 log's, is the
+         * same walk under another hash, so it too is independent of the
+         * scratch size. The rig's 1.2 event log is its oracle. */
+        assert_int_equal(ac_hash_with(&a, hash_sha256(), mem_read, &ctx,
+                                      big, sizeof(big), h2), AC_OK);
+        assert_memory_equal(h1, h2, 32);
+        assert_int_equal(ac_hash_with(&a, hash_sha1(), mem_read, &ctx,
+                                      scratch, sizeof(scratch), h1), AC_OK);
+        assert_int_equal(ac_hash_with(&a, hash_sha1(), mem_read, &ctx,
+                                      big, sizeof(big), h2), AC_OK);
+        assert_memory_equal(h1, h2, 20);
+        assert_int_equal(ac_hash_with(&a, NULL, mem_read, &ctx, big,
+                                      sizeof(big), h2), AC_ERR_BAD_ARG);
     }
 
     /* A read failure is reported, not hashed around. */

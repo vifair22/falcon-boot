@@ -1,6 +1,6 @@
 #include <trust/authenticode.h>
 
-#include <crypto/sha256.h>
+#include <crypto/hash.h>
 #include <lib/string.h>
 #include <pe/pe.h>
 
@@ -101,7 +101,7 @@ int ac_layout_read(const void *head, size_t len, uint64_t total,
 
 /* ---- hash ---- */
 
-static int hash_range(sha256_ctx *c, ac_read_fn read, void *ctx,
+static int hash_range(hash_ctx *c, ac_read_fn read, void *ctx,
                       uint64_t off, uint64_t len, uint8_t *scratch,
                       size_t scratch_len)
 {
@@ -110,7 +110,7 @@ static int hash_range(sha256_ctx *c, ac_read_fn read, void *ctx,
 
         if (read(ctx, off, n, scratch) != 0)
             return AC_ERR_IO;
-        sha256_update(c, scratch, n);
+        hash_update(c, scratch, n);
         off += n;
         len -= n;
     }
@@ -120,16 +120,25 @@ static int hash_range(sha256_ctx *c, ac_read_fn read, void *ctx,
 int ac_hash(const ac_layout *l, ac_read_fn read, void *ctx, uint8_t *scratch,
             size_t scratch_len, uint8_t out[32])
 {
-    sha256_ctx c;
+    return ac_hash_with(l, hash_sha256(), read, ctx, scratch, scratch_len,
+                        out);
+}
+
+int ac_hash_with(const ac_layout *l, const hash_desc *h, ac_read_fn read,
+                 void *ctx, uint8_t *scratch, size_t scratch_len,
+                 uint8_t *out)
+{
+    hash_ctx c;
     uint64_t sum;
     uint16_t i;
     int rc;
 
-    if (l == (const ac_layout *)0 || read == (ac_read_fn)0 ||
-        scratch == (uint8_t *)0 || scratch_len == 0 || out == (uint8_t *)0)
+    if (l == (const ac_layout *)0 || h == (const hash_desc *)0 ||
+        read == (ac_read_fn)0 || scratch == (uint8_t *)0 ||
+        scratch_len == 0 || out == (uint8_t *)0)
         return AC_ERR_BAD_ARG;
 
-    sha256_init(&c);
+    hash_init(&c, h);
     /* Start to CheckSum; CheckSum to the security entry; the security entry
      * to the end of the headers. */
     rc = hash_range(&c, read, ctx, 0, l->checksum_off, scratch, scratch_len);
@@ -163,7 +172,7 @@ int ac_hash(const ac_layout *l, ac_read_fn read, void *ctx, uint8_t *scratch,
         if (rc != AC_OK)
             return rc;
     }
-    sha256_final(&c, out);
+    hash_final(&c, out);
     return AC_OK;
 }
 

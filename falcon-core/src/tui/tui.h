@@ -134,12 +134,22 @@ typedef struct {
     size_t logo_row;    /* the logo's first row */
     size_t logo_rows;   /* TUI_LOGO_ROWS, or 0 when it is left out */
     size_t banner_row;
+    size_t status_row;  /* first status line, under the banner */
+    size_t status_rows; /* how many; 0 for every menu but the station's */
     size_t list_top;    /* first list row */
     size_t win;         /* list rows */
     size_t hint_row;
 } tui_menu;
 
 void tui_menu_layout(const tui_frame *f, size_t count, tui_menu *m);
+
+/* The same with `status` lines directly under the banner, before the blank
+ * that precedes the list: the UEFI station's TOTP code (DESIGN Section
+ * 13.15). At most TUI_STATUS_ROWS; they come out of the list's rows when
+ * the screen is full. tui_menu_layout is this with none. */
+#define TUI_STATUS_ROWS 2u
+void tui_menu_layout_status(const tui_frame *f, size_t count,
+                            size_t status, tui_menu *m);
 
 /* Keeps the selection inside the list window. Returns nonzero when *top
  * moved, which is the one case that repaints every row of the window rather

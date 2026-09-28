@@ -190,6 +190,36 @@ static void test_menu_logo_edge(void **state)
     assert_int_equal(m.win, 14);
 }
 
+/* Status lines sit under the banner and push the list down by as many;
+ * none is the ordinary layout, and more than TUI_STATUS_ROWS is clipped. */
+static void test_menu_status(void **state)
+{
+    tui_frame f;
+    tui_menu m;
+    tui_menu z;
+
+    (void)state;
+    tui_frame_init(&f, 80, 25);
+    tui_menu_layout(&f, 3, &z);
+    tui_menu_layout_status(&f, 3, 0, &m);
+    assert_memory_equal(&m, &z, sizeof m);
+    assert_int_equal(z.status_rows, 0);
+    tui_menu_layout_status(&f, 3, 2, &m);
+    assert_int_equal(m.status_rows, 2);
+    assert_int_equal(m.status_row, m.banner_row + 1u);
+    assert_int_equal(m.list_top, m.banner_row + 4u);
+    assert_int_equal(m.hint_row, m.list_top + 3u + 1u);
+    assert_int_equal(m.logo_rows, TUI_LOGO_ROWS);
+    tui_menu_layout_status(&f, 3, 9, &m);
+    assert_int_equal(m.status_rows, TUI_STATUS_ROWS);
+    /* A full screen gives the status its rows out of the list. */
+    tui_menu_layout_status(&f, 50, 2, &m);
+    assert_int_equal(m.win, 17);
+    assert_int_equal(m.banner_row, 1);
+    assert_int_equal(m.list_top, 5);
+    assert_int_equal(m.hint_row, 23);
+}
+
 /* Every line of the lettering is inside the width the layout checks. */
 static void test_logo_width(void **state)
 {
@@ -372,6 +402,7 @@ int run_tui_tests(void)
         cmocka_unit_test(test_row_entry_name_wins),
         cmocka_unit_test(test_row_banner),
         cmocka_unit_test(test_attrs),
+        cmocka_unit_test(test_menu_status),
         cmocka_unit_test(test_strings),
     };
 
