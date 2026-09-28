@@ -446,6 +446,11 @@ CC_DB_TEST_INC = case "$$src" in \
 # clang-tidy, which is the one thing Section 7.2 of the BIOS note says not to
 # let happen.
 CC_DB_BIOS := $(foreach s,$(filter-out $(EFI_APP_SRCS) $(HOST_SRCS),$(sort $(BIOS_CSRCS))),$(s):$(BIOS_OBJ)/$(s:.c=.o))
+# falcon-bios's assembly, under the flags its pattern rule assembles with, so
+# an editor resolves biosdefs.h and the macros it defines. The analyzers are
+# C tools and take .c entries only (tools/analyze.sh). jmod.ld.S is a linker
+# script run through cpp, not assembly, and is left out.
+CC_DB_BIOS_ASM := $(foreach s,$(sort $(filter-out %.ld.S,$(shell find falcon-bios -name '*.S'))),$(s):$(BIOS_OBJ)/$(s:.S=.o))
 # falcon-hook's and falcon-vdisk's own C, each under its own freestanding
 # flags; the core they link is entered above. vdisk is entered at x64, the
 # width whose DDK headers every mingw ships.
@@ -475,6 +480,7 @@ compile_commands.json: Makefile $(wildcard falcon-*/build.mk apps/*/app.mk)
 	@echo '[' > $@
 	$(call cc_db_emit,$(CC_DB_EFI),$(CC),$(EFI_CFLAGS))
 	$(call cc_db_emit,$(CC_DB_BIOS),$(CC_HOST),$(BIOS_CFLAGS))
+	$(call cc_db_emit,$(CC_DB_BIOS_ASM),$(CC_HOST),$(BIOS_ASFLAGS))
 	$(call cc_db_emit,$(CC_DB_HOST),$(CC_HOST),$(HOST_CFLAGS))
 	$(call cc_db_emit,$(CC_DB_WINJUMP),$(CC),$(WINJUMP_CFLAGS))
 	$(call cc_db_emit,$(CC_DB_HOOK),$(CC_HOST),$(HOOK_CFLAGS) -ffunction-sections -fdata-sections)
