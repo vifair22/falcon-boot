@@ -4640,8 +4640,16 @@ updates an aged station-legacy on a scratch disk and boots it.
 From DevLink recovery:
 
     devlink put falcon-station-<version>.tar.gz /tmp/ --force
-    devlink exec 'cd /tmp && tar xzf falcon-station-<version>.tar.gz &&
-                  sh station-bundle/update.sh /dev/sda --yes'
+    devlink exec 'cd /tmp && gunzip -c falcon-station-<version>.tar.gz |
+                  tar xf - && sh station-bundle/update.sh /dev/sda --yes'
+
+(`gunzip | tar`, since busybox's tar may be built without `-z`.) The
+bundle is built in the harness container: its mkstick is static, so it
+carries its libc's code, and a libc built for the build host's processor
+gives a program the machine cannot run. The A21m took #UD on the first
+instruction of a mkstick linked against Gentoo's `-march=znver3` glibc;
+`make station-bundle` now runs `tools/check-floor.sh --userland` on it,
+which refuses SSE2 and later outside CPUID-dispatched code.
 
 ## 14. falcon jump: a boot floppy (decided 2026-09-25)
 

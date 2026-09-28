@@ -80,6 +80,12 @@ test-cfstation: station-legacy devlink-uki jump $(MKSTICK)
 # needs sh, tar, sha256sum and mtools and no falcon of its own. Both stage
 # 3s ride along; update.sh picks the one the station already is. MEMTEST=
 # adds memtest86+. Not in `all`.
+#
+# Build it in the harness container (`tools/coverage/harness.sh make
+# station-bundle`): a static mkstick carries its libc's code, and a
+# distribution that builds its 32-bit libc for the build host's processor
+# (Gentoo's -march=native) gives a program the machine in the field cannot
+# run. check-floor.sh --userland refuses such a mkstick here.
 STATION_BUNDLE_DIR := build/station-bundle
 STATION_BUNDLE := $(BIN)/falcon-station-$(VERSION_STATION_LEGACY).tar.gz
 
@@ -91,6 +97,7 @@ station-bundle: station-legacy station $(MKSTICK32) $(STATION_LEGACY)/update.sh
 	cp $(BIOS_STATION_STAGE3) $(STATION_BUNDLE_DIR)/stage3-station.bin
 	cp $(BIOS_STATION_LEGACY_STAGE3) $(STATION_BUNDLE_DIR)/stage3-legacy.bin
 	cp $(JUMP_MODS) $(STATION_BUNDLE_DIR)/mod/
+	tools/check-floor.sh --userland $(MKSTICK32)
 	strip -o $(STATION_BUNDLE_DIR)/falcon-boot-mkstick32 $(MKSTICK32)
 	cp $(STATION_LEGACY)/update.sh $(STATION_BUNDLE_DIR)/update.sh
 	$(if $(MEMTEST),cp $(MEMTEST) $(STATION_BUNDLE_DIR)/MEMTEST.BIN)

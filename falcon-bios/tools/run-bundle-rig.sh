@@ -17,6 +17,8 @@
 #            station's, and a bundle whose MANIFEST does not match
 #
 # Nothing touches a real disk. Usage: falcon-bios/tools/run-bundle-rig.sh
+# Env: BUNDLE  a bundle built elsewhere (the harness container, where
+#              make station-bundle can pass check-floor.sh --userland)
 set -euo pipefail
 
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)
@@ -28,12 +30,15 @@ MEMTEST=${MEMTEST:-build/memtest/mt86p_810_i586}
 command -v qemu-system-i386 >/dev/null ||
     { echo "no qemu-system-i386" >&2; exit 2; }
 [[ -f "$MEMTEST" ]] || { echo "no memtest86+ at $MEMTEST (MEMTEST)" >&2; exit 2; }
-make --no-print-directory station-bundle MEMTEST="$MEMTEST" "$MK" >/dev/null
-BUNDLE=$(ls -t build/bin/falcon-station-*.tar.gz | head -1)
+make --no-print-directory "$MK" >/dev/null
+if [[ -z "${BUNDLE:-}" ]]; then
+    make --no-print-directory station-bundle MEMTEST="$MEMTEST" >/dev/null
+    BUNDLE=$(ls -t build/bin/falcon-station-*.tar.gz | head -1)
+fi
 
 rm-guard rm -rf "$R" >/dev/null 2>&1 || true
 mkdir -p "$R/unpacked"
-tar -C "$R/unpacked" -xzf "$BUNDLE"
+gunzip -c "$BUNDLE" | tar -C "$R/unpacked" -xf -
 B=$R/unpacked/station-bundle
 VERSION=$(cat "$B/VERSION")
 
