@@ -853,6 +853,7 @@ void station_main(uint8_t drive, const station_app *app)
     unsigned n;
 
     g_app = app;
+    chain_before_handover = app->handover;
     bios_puts("falcon-bios: ");
     bios_puts(app->name);
     bios_puts(", protected mode\n");

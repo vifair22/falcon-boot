@@ -45,6 +45,8 @@ extern const unsigned char swap_blob_end[];
 
 #define IVT_INT13 (0x13u * 4u)
 
+void (*chain_before_handover)(uint8_t drive);
+
 static uint8_t g_mbr[VBR_SECTOR];
 static uint8_t g_vbr[VBR_SECTOR];
 
@@ -165,6 +167,8 @@ static void say_fix(const vbr_fix *f, uint64_t start, uint8_t dl)
 static void handover(uint8_t dl, uint16_t si, uint16_t swap_seg,
                      uint8_t drive)
 {
+    if (chain_before_handover != 0)
+        chain_before_handover(drive);
     if (swap_seg > 1u)
         swap_install(swap_seg, drive);
     bios_puts("falcon-bios: handing over\n");

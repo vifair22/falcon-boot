@@ -29,4 +29,18 @@ int jres_install(uint8_t drive, uint32_t entry, uint32_t stack_top,
  * the ones it left. */
 void jres_remove(void);
 
+/* The drive the resident on INT 13h answers, or 0 when INT 13h does not
+ * lead to one: a block this build or any other falcon jump installed, found
+ * by its magic. */
+uint8_t jres_drive(void);
+
+/* Releases the resident INT 13h leads to, whoever installed it: every hook
+ * and BDA count its release record holds goes back to what the BIOS left,
+ * where nothing has changed it since. For a system started on another disk,
+ * which reads no disk through the BIOS once it runs and must not inherit
+ * vectors into memory it is about to own: Windows 2000 froze on the A21m
+ * started on top of one (docs/notes/station-rework.md). The drive it
+ * answered, or 0 when there was none. */
+uint8_t jres_release(void);
+
 #endif /* FALCON_BIOS_JRES_H */

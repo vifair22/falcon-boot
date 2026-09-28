@@ -17,13 +17,9 @@
 extern const unsigned char jres_blob_start[];
 extern const unsigned char jres_blob_end[];
 
+#define BDA_NDISKS 0x475u
+
 static uint16_t g_seg;
-static uint32_t g_old13;
-static uint32_t g_old15;
-static uint32_t g_old18;
-static uint32_t g_old19;
-static int      g_hooked15;
-static uint16_t g_old_kb;
 static e820_entry g_carved[JRES_E820_MAX];
 
 static void put32(uint8_t *at, uint32_t v)
@@ -77,6 +73,7 @@ int jres_install(uint8_t drive, uint32_t entry, uint32_t stack_top,
     uint16_t seg = lowmem_segment(JRES_BYTES);
     uint32_t b;
     uint32_t v;
+    uint16_t kb;
     uint8_t *at;
     uint8_t *desc;
 
@@ -86,8 +83,7 @@ int jres_install(uint8_t drive, uint32_t entry, uint32_t stack_top,
     at = (uint8_t *)(uintptr_t)b;
     memcpy(at, jres_blob_start, len);
 
-    g_old13 = peek32(IVT_INT13);
-    put32(at + JRES_OFF_OLDINT13, g_old13);
+    put32(at + JRES_OFF_OLDINT13, peek32(IVT_INT13));
     at[JRES_OFF_DRIVE] = drive;
     put32(at + JRES_OFF_GDTR + 2u, b + JRES_OFF_GDT);
     put32(at + JRES_OFF_ENTRY, entry);
@@ -107,23 +103,25 @@ int jres_install(uint8_t drive, uint32_t entry, uint32_t stack_top,
     desc[4] = (uint8_t)((b >> 16) & 0xFFu);
     desc[7] = (uint8_t)(b >> 24);
 
-    g_hooked15 = 0;
     if (keep != (const e820_range *)0) {
         if (carve(at, b, keep, n_keep) != 0)
             return -1;
-        g_old15 = peek32(IVT_INT15);
-        put32(at + JRES_OFF_OLDINT15, g_old15);
-        g_hooked15 = 1;
+        put32(at + JRES_OFF_OLDINT15, peek32(IVT_INT15));
     }
 
-    g_old_kb = peek16(BDA_MEMSIZE);
+    /* The release record: everything outside the block this changes, and
+     * the disk count as it was before the route raises it. */
+    put32(at + JRES_OFF_OLDINT18, peek32(IVT_INT18));
+    put32(at + JRES_OFF_OLDINT19, peek32(IVT_INT19));
+    kb = peek16(BDA_MEMSIZE);
+    memcpy(at + JRES_OFF_OLDKB, &kb, 2);
+    at[JRES_OFF_OLDNDISK] = peek8(BDA_NDISKS);
+
     lowmem_take(seg);
     poke32(IVT_INT13, ((uint32_t)seg << 16) | (uint32_t)JRES_OFF_CODE);
-    if (g_hooked15)
+    if (keep != (const e820_range *)0)
         poke32(IVT_INT15, ((uint32_t)seg << 16) | (uint32_t)JRES_OFF_CODE15);
     /* No chaining: both end in a cold reset (rthunk.S, jres_reset). */
-    g_old18 = peek32(IVT_INT18);
-    g_old19 = peek32(IVT_INT19);
     poke32(IVT_INT18, ((uint32_t)seg << 16) | (uint32_t)JRES_OFF_RESET);
     poke32(IVT_INT19, ((uint32_t)seg << 16) | (uint32_t)JRES_OFF_RESET);
     g_seg = seg;
@@ -137,21 +135,77 @@ int jres_install(uint8_t drive, uint32_t entry, uint32_t stack_top,
     return 0;
 }
 
+/* Puts back what the block at `seg` changed outside itself, from its
+ * release record: each vector that still points into the block, the BDA's
+ * memory count when it still ends where the block starts, and the disk
+ * count when it is still the one the route raised. What something else
+ * changed since is left alone. */
+static void release(uint16_t seg)
+{
+    uint32_t b = (uint32_t)seg * 16u;
+    uint32_t hook = (uint32_t)seg << 16;
+    uint8_t ndisk = peek8(b + JRES_OFF_OLDNDISK);
+
+    if (peek32(IVT_INT13) == (hook | JRES_OFF_CODE))
+        poke32(IVT_INT13, peek32(b + JRES_OFF_OLDINT13));
+    if (peek16(b + JRES_OFF_NE820) != 0 &&
+        peek32(IVT_INT15) == (hook | JRES_OFF_CODE15))
+        poke32(IVT_INT15, peek32(b + JRES_OFF_OLDINT15));
+    if (peek32(IVT_INT18) == (hook | JRES_OFF_RESET))
+        poke32(IVT_INT18, peek32(b + JRES_OFF_OLDINT18));
+    if (peek32(IVT_INT19) == (hook | JRES_OFF_RESET))
+        poke32(IVT_INT19, peek32(b + JRES_OFF_OLDINT19));
+    if (peek16(BDA_MEMSIZE) == (uint16_t)(b / 1024u))
+        poke16(BDA_MEMSIZE, peek16(b + JRES_OFF_OLDKB));
+    if (peek8(BDA_NDISKS) == (uint8_t)(ndisk + 1u) &&
+        peek8(b + JRES_OFF_DRIVE) == (uint8_t)(0x80u + ndisk))
+        poke8(BDA_NDISKS, ndisk);
+}
+
 void jres_remove(void)
 {
     if (g_seg == 0)
         return;
-    if (peek32(IVT_INT13) == (((uint32_t)g_seg << 16) | JRES_OFF_CODE))
-        poke32(IVT_INT13, g_old13);
-    if (g_hooked15 &&
-        peek32(IVT_INT15) == (((uint32_t)g_seg << 16) | JRES_OFF_CODE15))
-        poke32(IVT_INT15, g_old15);
-    g_hooked15 = 0;
-    if (peek32(IVT_INT18) == (((uint32_t)g_seg << 16) | JRES_OFF_RESET))
-        poke32(IVT_INT18, g_old18);
-    if (peek32(IVT_INT19) == (((uint32_t)g_seg << 16) | JRES_OFF_RESET))
-        poke32(IVT_INT19, g_old19);
-    if (peek16(BDA_MEMSIZE) == (uint16_t)((uint32_t)g_seg * 16u / 1024u))
-        poke16(BDA_MEMSIZE, g_old_kb);
+    release(g_seg);
     g_seg = 0;
+}
+
+/* The segment of the falcon jump block INT 13h leads to, or 0. */
+static uint16_t found(void)
+{
+    uint32_t v13 = peek32(IVT_INT13);
+    uint16_t seg = (uint16_t)(v13 >> 16);
+    uint32_t b = (uint32_t)seg * 16u;
+
+    if ((v13 & 0xFFFFu) != JRES_OFF_CODE || b == 0 ||
+        b + JRES_BYTES > 0xA0000u ||
+        peek32(b + JRES_OFF_MAGIC) != JRES_MAGIC)
+        return 0;
+    return seg;
+}
+
+uint8_t jres_drive(void)
+{
+    uint16_t seg = found();
+
+    return seg != 0 ? peek8((uint32_t)seg * 16u + JRES_OFF_DRIVE) : 0;
+}
+
+uint8_t jres_release(void)
+{
+    uint16_t seg = found();
+    uint8_t drive;
+
+    if (seg == 0)
+        return 0;
+    drive = peek8((uint32_t)seg * 16u + JRES_OFF_DRIVE);
+    release(seg);
+    if (seg == g_seg)
+        g_seg = 0;
+    bios_puts("falcon-bios: released falcon jump's resident for drive ");
+    bios_put_hex64(drive);
+    bios_puts(" at ");
+    bios_put_hex64((uint32_t)seg * 16u);
+    bios_puts("\n");
+    return drive;
 }

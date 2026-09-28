@@ -15,7 +15,7 @@
 
 static const station_app k_app = {
     "station", u"falcon-boot " FALCON_VERSION_STATION,
-    0, 0
+    0, 0, 0
 };
 
 void bios_main(uint8_t drive)

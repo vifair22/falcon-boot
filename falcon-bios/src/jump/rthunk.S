@@ -362,6 +362,18 @@ jres_reset:
 jres_reset_msg:
 	.asciz  "falcon-bios: the booted medium returned to the BIOS; resetting\r\n"
 
+/* The release record (biosdefs.h): the magic here, the rest by jres.c. */
+	.org    JRES_OFF_MAGIC
+	.ascii  "FJRS"
+	.org    JRES_OFF_OLDINT18
+	.long   0
+	.org    JRES_OFF_OLDINT19
+	.long   0
+	.org    JRES_OFF_OLDKB
+	.word   0
+	.org    JRES_OFF_OLDNDISK
+	.byte   0
+
 	.org    JRES_BYTES - 1
 	.byte   0
 jres_blob_end:

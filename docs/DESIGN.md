@@ -3408,7 +3408,7 @@ resident CD handler, from real mode.
 | 0x90000-0x97FFF | bounce buffer | every read |
 | BDA top - 16 KiB | the resident CD handler: data, runs, El Torito packet, launch stub at +0x530, INT 13h entry at +0x570, INT 15h entry at +0xA00, carved E820 map at +0xB00, overlay pool at +0x1000; never below 0x98000 | permanent after a chainload; reserved in the map it hands on |
 | BDA top - 1 KiB (station) | the drive swap (`swapres.S`): the previous INT 13h vector, the drive, the handler at +0x10, 84 bytes | permanent after a chain of a disk that is not 0x80 |
-| BDA top - 3 KiB (falcon jump) | the reverse thunk (`rthunk.S`): far pointers, its GDT, the saved caller, the INT 13h entry at +0x90, the INT 15h entry at +0x300 and its carved map at +0x400 (the `USB` route's); below it the virtual CD's block on `CDR` | permanent after `CDR` hands over; reserved in the map it hands on |
+| BDA top - 3 KiB (falcon jump) | the reverse thunk (`rthunk.S`): far pointers, its GDT, the saved caller, the INT 13h entry at +0x90, the INT 15h entry at +0x300 and its carved map at +0x400 (the `USB` and `PCC` routes'), the release record at +0xB00 (`FJRS`, the vectors and BDA counts it replaced); below it the virtual CD's block on `CDR` | permanent after a route hands over, until station-legacy releases it for a chain to another disk (12.5.2); reserved in the map it hands on |
 | 0x100000 | stage 3: 16-byte header, entry at +0x10, then its image and `.bss` (at most 0x6F0000 together) | whole loader |
 | 0xB8000-0xB8F9F | VGA text memory, the 80x25 screen stage 3 draws | whole loader |
 | 0x600000 | stage 2's partition list and sector buffer while it looks for the boot partition (`STAGE2_SCRATCH`), then the compressed stage 3 it inflates | until stage 3 runs |
@@ -3759,7 +3759,8 @@ first list only; a boot that comes back to the list gets neither.
 Traced from `falcon-bios/src/station/station.c` as built on 2026-09-27
 (Section 13), which `apps/station/bios_main.c` and
 `apps/station-legacy/bios_main.c` both run (`station_main`); station-legacy
-adds its rows and their route at the two places marked.
+adds its rows, their route and the release of jump's reverse thunk at the
+three places marked.
 
 ```mermaid
 flowchart TD
@@ -3795,8 +3796,11 @@ flowchart TD
     FIX --> CP["LBA 0 to 0000:0600, the boot sector to 0000:7C00"]
     ROW -- "disk" --> MBR["MBR (chain.c): LBA 0, 0x55AA, the swap's 1 KB asked for;<br/>LBA 0 to 0000:7C00"]
     MBR -- "unreadable, no 0x55AA" --> FAIL
-    CP --> SW{"the disk not 0x80, swap not no?"}
-    MBR --> SW
+    CP --> JRL{"station-legacy only (legacy_handover, chain_before_handover):<br/>INT 13h leads to a falcon jump block (JRES_MAGIC)<br/>serving a drive other than this one?"}
+    MBR --> JRL
+    JRL -- "yes" --> JRR["jres_release: from the block's release record, IVT 13h, 15h, 18h, 19h<br/>and the BDA's memory and disk counts back where nothing changed them since"]
+    JRL -- "no" --> SW
+    JRR --> SW{"the disk not 0x80, swap not no?"}
     SW -- "yes" --> RES["swapres.S to the BDA top - 1 KB (lowmem.c),<br/>IVT 13h to it; DL 0x80"]
     SW -- "no" --> JMP
     RES --> JMP["boot16: real mode, DS = ES = SS = 0, SP 0x7000,<br/>DL, SI = 0x7BE + 16 x slot (VBR) or 0 (MBR), jmp 0000:7C00"]
@@ -3813,6 +3817,17 @@ route, leave the IVT, the BDA and the memory map as the BIOS left them.
 MEM hands over as jump's does; POS as the stick's. On station-legacy,
 CDR, USB and PCC leave what they leave under jump (12.6): the reverse
 thunk and the driver's slot, and on CDR the virtual CD over them.
+
+A station-legacy that jump's PCC or USB route started runs on top of that
+route's reverse thunk. A VBR or MBR chain to any other drive releases it
+first, after the chain's last read (`jres_release`, from the release record
+jump keeps in the block): the system then starts with the IVT and the BDA as
+the BIOS left them, and only the driver's slot at 15-16 MB, which nothing
+calls again, and a powered PC Card slot remain. Windows 2000 froze on the
+A21m started on top of the thunk (2026-09-27; neither the INT 13h and 15h
+hooks nor the counts were singled out, since the release undoes all of
+them). A chain to the drive the thunk serves keeps it, since it is how that
+system reads its disk.
 
 ### 12.6 falcon jump
 
@@ -3863,7 +3878,7 @@ flowchart TD
     LU --> EN["ops.probe: every controller of that kind (up to four), taken from the BIOS, reset;<br/>each root port reset, enumerated, INQUIRY, READ CAPACITY"]
     EN --> GPT{"bootpart_find through ops.read:<br/>a partition with a boot record?"}
     GPT -- "no falcon stick" --> MENU
-    GPT -- "yes" --> RU["jres_install for the next BIOS disk (BDA 0x475 + 0x80),<br/>INT 15h hooked too: the block and 15-16 MB carved;<br/>INT 18h, 19h: a cold reset"]
+    GPT -- "yes" --> RU["jres_install for the next BIOS disk (BDA 0x475 + 0x80),<br/>INT 15h hooked too: the block and 15-16 MB carved;<br/>INT 18h, 19h: a cold reset; what it changed kept in the block's release record"]
     RU --> MB["BDA count + 1; mbr_boot: LBA 0 through the thunk to 0x7C00,<br/>DL = that drive; the stick's falcon-bios from there (12.3)"]
     MB -- "unreadable, no 0x55AA" --> RM2["BDA count back, jres_remove"]
     RM2 --> MENU

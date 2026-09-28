@@ -37,4 +37,10 @@ int chain_part(bios_disk *d, const part_entry *p, int swap, boot_result *r);
  * installed with `swap`. Returns as chain_part. */
 int chain_disk(bios_disk *d, int swap, boot_result *r);
 
+/* Called with the disk's own drive number at the point of no return, after
+ * the last read and before the swap goes in: for what has to be undone
+ * only once nothing can fail (station-legacy releasing falcon jump's
+ * resident). NULL for nothing. */
+extern void (*chain_before_handover)(uint8_t drive);
+
 #endif /* FALCON_BIOS_CHAIN_H */

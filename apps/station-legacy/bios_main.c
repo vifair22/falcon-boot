@@ -18,6 +18,7 @@
 
 #include <station/station.h>
 #include <jump/routes.h>
+#include <jump/jres.h>
 #include <console/screen.h>
 
 #include <media/strows.h>
@@ -74,9 +75,24 @@ static int legacy_boot(const strow *w)
     return 1;
 }
 
+/* A Windows or Boot code row starting a system on a disk the BIOS serves
+ * itself: when falcon jump's CF or USB route started this station, its
+ * resident still hooks INT 13h and 15h and holds the BDA's memory and disk
+ * counts. The system never reads the card through it, and Windows 2000
+ * froze on the A21m started on top of it; with it released it starts
+ * (docs/notes/station-rework.md). A row on the drive jump serves keeps it,
+ * since that is the only way the system reads its disk. */
+static void legacy_handover(uint8_t drive)
+{
+    uint8_t served = jres_drive();
+
+    if (served != 0 && served != drive)
+        (void)jres_release();
+}
+
 static const station_app k_app = {
     "station-legacy", u"falcon-boot " FALCON_VERSION_STATION_LEGACY,
-    legacy_rows, legacy_boot
+    legacy_rows, legacy_boot, legacy_handover
 };
 
 void bios_main(uint8_t drive)

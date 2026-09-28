@@ -441,6 +441,17 @@
  * started on top of this block, its hooks and a powered PC Card slot. After
  * the carved map's 64 entries. */
 #define JRES_OFF_RESET    0x900
+/* The release record: what jres_install changed outside the block, so
+ * whoever runs after the route (jump's own failure path, or station-legacy
+ * chaining a system on another disk) can put the machine back as the BIOS
+ * left it. JRES_MAGIC is how a program that did not install the block
+ * recognises it behind the INT 13h vector. After the reset code. */
+#define JRES_OFF_MAGIC    0xB00  /* 4 bytes, JRES_MAGIC */
+#define JRES_OFF_OLDINT18 0xB04  /* far pointer */
+#define JRES_OFF_OLDINT19 0xB08  /* far pointer */
+#define JRES_OFF_OLDKB    0xB0C  /* word: the BDA's memory count before */
+#define JRES_OFF_OLDNDISK 0xB0E  /* byte: the BDA's disk count before */
+#define JRES_MAGIC        0x53524A46u  /* "FJRS", little-endian */
 #define JRES_BYTES        0xC00  /* 3 KB, what the BDA loses */
 
 /* Stage 3's stack. Above the image and below anything a payload is loaded

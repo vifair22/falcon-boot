@@ -21,9 +21,11 @@
 #   menu      the station's menu comes up off the card: its rows, in the
 #             order drawn, are recorded; the internal disk's boot code,
 #             DevLink recovery and memtest must be among them
-#   windows   the internal disk's boot code chained from the card:
-#             Windows 2000 from its own disk, judged from screendumps
-#             (build/cfstation-rig/windows-*.png)
+#   windows   the internal disk's Windows chained from the card: jump's
+#             resident must be released before the handover (Windows 2000
+#             froze on the A21m started on top of it; QEMU's video BIOS
+#             never shows that, so the release is judged from serial) and
+#             the screens are kept (build/cfstation-rig/windows-*.png)
 #   cf        the station's own CF card row, taken while jump's resident
 #             already drives the bridge: recorded, not judged, since two
 #             drivers for one bridge is the case this rig is here to see
@@ -87,6 +89,19 @@ wait_for() {    # wait_for PATTERN SECONDS
     for (( i = 0; i < $2 * 10; i++ )); do
         has "$1" && return 0
         kill -0 "$QPID" 2>/dev/null || { has "$1"; return; }
+        sleep 0.1
+    done
+    return 1
+}
+# after FIRST PATTERN: PATTERN in the serial log below FIRST's line.
+after() {
+    log_text "$R/com1.log" | sed -n "/$1/,\$p" | grep -aE -- "$2" >/dev/null
+}
+wait_after() {  # wait_after FIRST PATTERN SECONDS
+    local i
+    for (( i = 0; i < $3 * 10; i++ )); do
+        after "$1" "$2" && return 0
+        kill -0 "$QPID" 2>/dev/null || { after "$1" "$2"; return; }
         sleep 0.1
     done
     return 1
@@ -178,8 +193,14 @@ for c in "${CASES[@]}"; do
     windows)
         TIMEOUT=240 boot
         choose 'Windows (NTLDR)' || true
-        [[ -z "$WHY" ]] && { wait_for 'handing over' 30 ||
+        # jump's own route says "handing over" first; the chain's is the
+        # one after the row's entry line.
+        [[ -z "$WHY" ]] && { wait_for 'entry mbr-.*-p1' 30 &&
+            wait_after 'entry mbr-.*-p1' 'handing over' 30 ||
             WHY="the chain never handed over"; }
+        [[ -z "$WHY" ]] && ! after 'entry mbr-.*-p1' \
+            "released falcon jump's resident for drive 0x81" &&
+            WHY="jump's resident was not released before the handover" 
         if [[ -z "$WHY" ]]; then
             for (( i = 1; i <= 60; i++ )); do
                 sleep 3

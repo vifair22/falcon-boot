@@ -27,6 +27,10 @@ typedef struct {
     /* Boots one of those rows (STROW_ROUTE). Nonzero when a screen is
      * waiting for its key. May be NULL. */
     int  (*boot)(const strow *w);
+    /* Called when a VBR or MBR row hands over to the system on BIOS drive
+     * `drive`, after the chain's last read (mbr/chain.h,
+     * chain_before_handover). May be NULL. */
+    void (*handover)(uint8_t drive);
 } station_app;
 
 /* The station: the disks, the station partition, the rows, the notices,
