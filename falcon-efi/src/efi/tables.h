@@ -44,6 +44,20 @@ typedef UINT64 EFI_PHYSICAL_ADDRESS;
 
 #define EFI_PAGE_SIZE 4096u
 
+/* GetMemoryMap's entries (spec 7.2). Read only to say how much memory is
+ * free when an argon2id keyslot asks for more than AllocatePages gives
+ * (pos/pos.c). Entries are DescriptorSize apart, which the firmware may make
+ * larger than this struct, so they are never indexed as an array. */
+#define EfiConventionalMemory ((EFI_MEMORY_TYPE)7)
+
+typedef struct {
+    UINT32               Type;
+    EFI_PHYSICAL_ADDRESS PhysicalStart;
+    UINT64               VirtualStart;
+    UINT64               NumberOfPages;
+    UINT64               Attribute;
+} EFI_MEMORY_DESCRIPTOR;
+
 /* LocateHandleBuffer search types (spec 7.3). */
 typedef UINT32 EFI_LOCATE_SEARCH_TYPE;
 #define AllHandles       ((EFI_LOCATE_SEARCH_TYPE)0)
@@ -71,7 +85,11 @@ struct EFI_BOOT_SERVICES {
                                        EFI_PHYSICAL_ADDRESS *Memory);
     EFI_STATUS (EFIAPI *FreePages)(EFI_PHYSICAL_ADDRESS Memory,
                                    UINTN Pages);
-    void *GetMemoryMap;
+    EFI_STATUS (EFIAPI *GetMemoryMap)(UINTN *MemoryMapSize,
+                                      EFI_MEMORY_DESCRIPTOR *MemoryMap,
+                                      UINTN *MapKey,
+                                      UINTN *DescriptorSize,
+                                      UINT32 *DescriptorVersion);
     EFI_STATUS (EFIAPI *AllocatePool)(EFI_MEMORY_TYPE PoolType,
                                       UINTN Size,
                                       void **Buffer);

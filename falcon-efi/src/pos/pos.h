@@ -1,7 +1,7 @@
 /* falcon-boot: the personal-OS boot path (docs/DESIGN.md Section 5).
  *
  * Purpose. One menu entry's worth of work: prompt for the passphrase, unlock
- * p3 (LUKS2, pbkdf2 keyslot), mount the read-only ext4 inside it, read the
+ * p3 (LUKS2, an argon2id or pbkdf2 keyslot), mount the read-only ext4 inside it, read the
  * Unified Kernel Image off that filesystem, and launch it through the
  * shim-verified load path of Section 7.6.
  *
@@ -66,10 +66,10 @@ typedef struct {
  * install's shelves by record (Section 3.1), and records the ones this
  * loader could actually boot from:
  *
- *   - an encrypted shelf, i.e. a LUKS2 volume with at least one pbkdf2
- *     keyslot (DESIGN Section 3: p3 is created that way precisely so EFI-land
- *     can open it). Its contents are unreadable here, so the header is all
- *     that is judged;
+ *   - an encrypted shelf, i.e. a LUKS2 volume with at least one argon2id
+ *     or pbkdf2 keyslot (DESIGN Section 3). Its contents are unreadable
+ *     here, so the header is all that is judged, and whether an argon2id
+ *     slot's memory can be had is found out at the unlock;
  *   - a plaintext shelf (Section 3's --p3-plain), which IS readable here, and
  *     is therefore recorded only when a UKI is actually on it.
  *

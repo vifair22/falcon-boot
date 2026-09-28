@@ -49,6 +49,11 @@ int heap_open(uint64_t want)
     return 1;
 }
 
+uint64_t heap_largest(void)
+{
+    return e820_largest(HEAP_LOW, HEAP_HIGH);
+}
+
 void *heap_alloc(uint64_t n)
 {
     uint64_t at;

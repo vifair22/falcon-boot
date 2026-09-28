@@ -298,6 +298,37 @@ static void test_e801_cap_low(void **state)
     assert_int_equal(e820_e801_cap_low(NULL, 0), 0xFFFFu);
 }
 
+/* The largest usable run inside a window: what a refused heap request is
+ * compared with. Reserved entries are not counted, the window cuts an entry
+ * that straddles it, and a window with nothing usable answers 0. */
+static void test_largest(void **state)
+{
+    static const e820_entry split[] = {
+        { 0x00000000ull,   0x0009FC00ull, E820_USABLE,   0 },
+        { 0x00100000ull,   63ull * MIB,   E820_USABLE,   0 },
+        { 64ull * MIB,     1ull * MIB,    E820_RESERVED, 0 },
+        { 65ull * MIB,     200ull * MIB,  E820_USABLE,   0 },
+        { 300ull * MIB,    100ull * MIB,  E820_USABLE,   0 },
+        { 0xFEC00000ull,   0x01400000ull, E820_RESERVED, 0 }
+    };
+    const unsigned n = (unsigned)(sizeof split / sizeof split[0]);
+
+    (void)state;
+    assert_int_equal(e820_largest_in(split, n, 64ull * MIB,
+                                     4096ull * MIB), 200ull * MIB);
+    /* The window's floor cuts the 65 MB run below the 300 MB one. */
+    assert_int_equal(e820_largest_in(split, n, 180ull * MIB,
+                                     4096ull * MIB), 100ull * MIB);
+    /* The ceiling cuts it too. */
+    assert_int_equal(e820_largest_in(split, n, 64ull * MIB, 100ull * MIB),
+                     35ull * MIB);
+    assert_int_equal(e820_largest_in(split, n, 64ull * MIB, 65ull * MIB),
+                     0);
+    assert_int_equal(e820_largest_in(NULL, n, 0, 4096ull * MIB), 0);
+    assert_int_equal(e820_largest_in(g_simple, SIMPLE_N, 64ull * MIB,
+                                     4096ull * MIB), 2048ull * MIB - 64ull * MIB);
+}
+
 int run_e820_tests(void)
 {
     const struct CMUnitTest tests[] = {
@@ -311,6 +342,7 @@ int run_e820_tests(void)
         cmocka_unit_test(test_e801_cap),
         cmocka_unit_test(test_is_ram),
         cmocka_unit_test(test_e801_cap_low),
+        cmocka_unit_test(test_largest),
     };
 
     return cmocka_run_group_tests_name("bios e820", tests, NULL, NULL);

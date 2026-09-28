@@ -114,7 +114,7 @@ typedef struct {
     discover_dev *dev;
     const fs_ops *fs;        /* plaintext only: the driver that claimed it */
     uint8_t       encrypted; /* a LUKS2 header sits at offset 0 */
-    uint8_t       usable;    /* encrypted: a pbkdf2 keyslot we can process;
+    uint8_t       usable;    /* encrypted: a keyslot we can process;
                                 plaintext: a mountable volume with a UKI on
                                 it, checked at scan time because here, unlike
                                 the encrypted case, we CAN check */
@@ -185,10 +185,12 @@ static void wipe_shelf(void)
 /* The chooser's rows, filled from g_images' labels. */
 static menu_entry g_uki_entries[SHELF_MAX];
 
-/* Does this volume have a keyslot this loader can actually process? DESIGN
- * Section 3 makes p3 pbkdf2 for exactly this reason; p4's argon2id slots are
- * recognised by the LUKS module and reported, never misread. */
-static uint8_t has_pbkdf2_slot(const luks_vol *v)
+/* Does this volume have a keyslot this loader can use: pbkdf2 or argon2id?
+ * An argon2i slot, or a KDF the LUKS module does not know, is recognised
+ * and reported, never misread; a volume holding only those is not offered.
+ * Whether an argon2id slot's memory can be had is found out at the unlock,
+ * where the refusal can say how much it asked for. */
+static uint8_t has_usable_slot(const luks_vol *v)
 {
     size_t count = 0;
     size_t i;
@@ -236,7 +238,7 @@ static void scan_shelves(void)
             if (luks_open(&p->vol, discover_read, dev, p->json,
                           LUKS_JSON_CAP) != LUKS_OK)
                 continue;
-            p->usable = has_pbkdf2_slot(&p->vol);
+            p->usable = has_usable_slot(&p->vol);
             if (p->usable)
                 g_luks_usable++;
             g_shelf_n++;
@@ -280,8 +282,8 @@ UINTN pos_scan(EFI_SYSTEM_TABLE *st)
  * The same buffer is tried against each. DESIGN Section 3 gives p3 and p4 one
  * passphrase, and re-prompting per volume would make the user type the same
  * string twice to find out which partition the firmware happened to enumerate
- * first. Volumes with no pbkdf2 keyslot (p4) were already dropped by the
- * scan, so they are neither prompted for nor attempted.
+ * first. Volumes with no usable keyslot were already dropped by the scan, so
+ * they are neither prompted for nor attempted.
  *
  * *which receives the index that opened. The distinction the caller needs is
  * "nobody accepted it", which is worth retrying, against "something broke",
@@ -323,10 +325,100 @@ static void kdf_put(void *ctx, void *mem, uint32_t kib)
 
 static const luks_kdf_mem g_kdf_mem = { kdf_get, kdf_put, (void *)0 };
 
+/* The smallest ask of an argon2id slot the firmware could not supply, from
+ * the last unlock_any that returned LUKS_ERR_KDF_MEMORY. */
+static uint32_t g_kdf_need_kib;
+
+/* The largest run of free conventional memory, in bytes: the most one
+ * AllocatePages call could have returned. Adjacent runs are joined, since a
+ * firmware need not merge them in its map. 0 when the map cannot be read. */
+static UINT64 largest_free(void)
+{
+    EFI_BOOT_SERVICES *bs = g_st->BootServices;
+    EFI_MEMORY_DESCRIPTOR *map = (EFI_MEMORY_DESCRIPTOR *)0;
+    UINTN size = 0;
+    UINTN key = 0;
+    UINTN dsize = 0;
+    UINT32 dver = 0;
+    UINT64 best = 0;
+    UINT64 run_start = 0;
+    UINT64 run_end = 0;
+    UINTN off;
+    EFI_STATUS st;
+
+    st = bs->GetMemoryMap(&size, map, &key, &dsize, &dver);
+    if (st != EFI_BUFFER_TOO_SMALL || dsize < sizeof(EFI_MEMORY_DESCRIPTOR))
+        return 0;
+    /* The pool allocation below can split an entry into three. */
+    size += 4u * dsize;
+    if (bs->AllocatePool(EfiLoaderData, size, (void **)&map) != EFI_SUCCESS)
+        return 0;
+    st = bs->GetMemoryMap(&size, map, &key, &dsize, &dver);
+    if (st != EFI_SUCCESS) {
+        (void)bs->FreePool(map);
+        return 0;
+    }
+    for (off = 0; off + dsize <= size; off += dsize) {
+        const EFI_MEMORY_DESCRIPTOR *d =
+            (const EFI_MEMORY_DESCRIPTOR *)(const void *)((UINT8 *)map + off);
+        UINT64 len = d->NumberOfPages * EFI_PAGE_SIZE;
+
+        if (d->Type != EfiConventionalMemory)
+            continue;
+        if (d->PhysicalStart == run_end && run_end != 0) {
+            run_end += len;
+        } else {
+            run_start = d->PhysicalStart;
+            run_end = run_start + len;
+        }
+        if (run_end - run_start > best)
+            best = run_end - run_start;
+    }
+    (void)bs->FreePool(map);
+    return best;
+}
+
+static void advice_str(CHAR16 *buf, UINTN cap, UINTN *n, const char *s)
+{
+    while (*s != '\0' && *n + 1u < cap)
+        buf[(*n)++] = (CHAR16)*s++;
+}
+
+static void advice_dec(CHAR16 *buf, UINTN cap, UINTN *n, UINT64 v)
+{
+    char d[21];
+    UINTN k = 0;
+
+    do {
+        d[k++] = (char)('0' + (int)(v % 10u));
+        v /= 10u;
+    } while (v != 0u);
+    while (k > 0u && *n + 1u < cap)
+        buf[(*n)++] = (CHAR16)d[--k];
+}
+
+/* The refusal for an argon2id keyslot the firmware cannot give memory for,
+ * in falcon-bios's words (falcon-bios/src/pos/pos.c, kdf_advice). */
+static const CHAR16 *kdf_advice(void)
+{
+    static CHAR16 buf[96];
+    UINTN n = 0;
+    const UINTN cap = sizeof(buf) / sizeof(buf[0]);
+
+    advice_str(buf, cap, &n, "this keyslot needs ");
+    advice_dec(buf, cap, &n, ((UINT64)g_kdf_need_kib + 1023u) / 1024u);
+    advice_str(buf, cap, &n, " MiB of memory; this machine has ");
+    advice_dec(buf, cap, &n, largest_free() >> 20);
+    advice_str(buf, cap, &n, " MiB free.");
+    buf[n] = 0;
+    return buf;
+}
+
 static int unlock_any(UINTN *which)
 {
     int other_err = LUKS_OK;
     int saw_nokey = 0;
+    int saw_mem = 0;
     UINTN i;
 
     *which = 0;
@@ -342,12 +434,21 @@ static int unlock_any(UINTN *which)
             *which = i;
             return LUKS_OK;
         }
-        if (rc == LUKS_ERR_NOKEY)
+        if (rc == LUKS_ERR_NOKEY) {
             saw_nokey = 1;
-        else if (other_err == LUKS_OK)
+        } else if (rc == LUKS_ERR_KDF_MEMORY) {
+            /* Outranks NOKEY, as it does inside one volume (luks.h): the
+             * passphrase may be that slot's, and a retype cannot tell. */
+            if (!saw_mem || g_shelf[i].vol.kdf_need_kib < g_kdf_need_kib)
+                g_kdf_need_kib = g_shelf[i].vol.kdf_need_kib;
+            saw_mem = 1;
+        } else if (other_err == LUKS_OK) {
             other_err = rc;
+        }
     }
 
+    if (saw_mem)
+        return LUKS_ERR_KDF_MEMORY;
     if (saw_nokey)
         return LUKS_ERR_NOKEY;
     return (other_err != LUKS_OK) ? other_err : LUKS_ERR_NOKEY;
@@ -1007,6 +1108,10 @@ static EFI_STATUS boot_shelf(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
             if (rc == LUKS_ERR_IO) {
                 result->advice = L"the partition could not be read.";
                 return EFI_DEVICE_ERROR;
+            }
+            if (rc == LUKS_ERR_KDF_MEMORY) {
+                result->advice = kdf_advice();
+                return EFI_OUT_OF_RESOURCES;
             }
             result->advice =
                 L"the volume is outside what this loader supports.";

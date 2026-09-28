@@ -13,6 +13,10 @@
  * caller says so and does not go on. */
 int heap_open(uint64_t want);
 
+/* The most heap_open could take: the largest usable run between 64 MB and
+ * 4 GiB. */
+uint64_t heap_largest(void);
+
 /* A page-aligned block, or NULL when the run is exhausted. There is no free:
  * one of these boots happens at a time. What of it the handler serves after
  * the handoff is taken out of the map the payload is handed (vcd.c, the

@@ -121,6 +121,32 @@ uint64_t e820_place_in(const e820_entry *map, unsigned n, uint64_t size,
     return best;
 }
 
+uint64_t e820_largest_in(const e820_entry *map, unsigned n, uint64_t low,
+                         uint64_t high)
+{
+    uint64_t best = 0;
+    unsigned i;
+
+    if (map == (const e820_entry *)0)
+        return 0;
+    for (i = 0; i < n; i++) {
+        uint64_t start = map[i].base;
+        uint64_t end = map[i].base + map[i].len;
+
+        if (map[i].type != E820_USABLE)
+            continue;
+        if (end < start)
+            end = UINT64_MAX;
+        if (start < low)
+            start = low;
+        if (end > high)
+            end = high;
+        if (end > start && end - start > best)
+            best = end - start;
+    }
+    return best;
+}
+
 static int carve_emit(e820_entry *out, unsigned cap, unsigned *k,
                       uint64_t base, uint64_t end, uint32_t type,
                       uint32_t attrs)
@@ -280,6 +306,11 @@ uint64_t e820_place_high(uint64_t size, uint64_t align, uint64_t low,
                          uint64_t high)
 {
     return e820_place_in(g_map, g_count, size, align, low, high);
+}
+
+uint64_t e820_largest(uint64_t low, uint64_t high)
+{
+    return e820_largest_in(g_map, g_count, low, high);
 }
 
 uint16_t e820_e801_cap_low(const e820_range *res, unsigned n_res)

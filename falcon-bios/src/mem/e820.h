@@ -43,6 +43,15 @@ uint64_t e820_place_high(uint64_t size, uint64_t align, uint64_t low,
 uint64_t e820_place_in(const e820_entry *map, unsigned n, uint64_t size,
                        uint64_t align, uint64_t low, uint64_t high);
 
+/* The length of the largest usable entry's part inside [low, high), or 0.
+ * What heap_open could be given, said when a request is refused: an
+ * argon2id keyslot's memory against what this machine has (pos.c). */
+uint64_t e820_largest_in(const e820_entry *map, unsigned n, uint64_t low,
+                         uint64_t high);
+
+/* The same over the cached map. */
+uint64_t e820_largest(uint64_t low, uint64_t high);
+
 /* Whether every byte of [base, base + len) is usable memory: covered by
  * usable entries and overlapped by no other kind, since a real map can carry
  * a reserved entry inside a usable one. A fixed address this loader puts

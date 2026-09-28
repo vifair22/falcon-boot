@@ -418,6 +418,43 @@ static void kdf_put(void *ctx, void *mem, uint32_t kib)
 
 static const luks_kdf_mem g_kdf_mem = { kdf_get, kdf_put, (void *)0 };
 
+/* Appends v in decimal at r->buf + *n, cut to fit like boot_result_advise. */
+static void advise_dec(boot_result *r, size_t *n, uint64_t v)
+{
+    char d[21];
+    size_t k = 0;
+
+    do {
+        d[k++] = (char)('0' + (int)(v % 10u));
+        v /= 10u;
+    } while (v != 0u);
+    while (k > 0u && *n + 2u < BOOT_ADVICE_MAX)
+        r->buf[(*n)++] = d[--k];
+}
+
+static void advise_str(boot_result *r, size_t *n, const char *s)
+{
+    while (*s != '\0' && *n + 2u < BOOT_ADVICE_MAX)
+        r->buf[(*n)++] = *s++;
+}
+
+/* The refusal for an argon2id keyslot the heap cannot hold, in the UEFI
+ * loader's words (falcon-efi/src/pos/pos.c, kdf_advice). "Free" is the
+ * largest run heap_open could have taken, which is the number the request
+ * was measured against. */
+static void kdf_advice(boot_result *r, uint32_t need_kib)
+{
+    size_t n = 0;
+
+    advise_str(r, &n, "this keyslot needs ");
+    advise_dec(r, &n, ((uint64_t)need_kib + 1023u) / 1024u);
+    advise_str(r, &n, " MiB of memory; this machine has ");
+    advise_dec(r, &n, heap_largest() >> 20);
+    advise_str(r, &n, " MiB free.");
+    r->buf[n] = '\0';
+    r->advice = r->buf;
+}
+
 /* Prompt, retry, and report, as the UEFI loader does. LUKS_OK, POS_ABORTED
  * for escape, or the LUKS status to report. */
 static int prompt_and_unlock(void)
@@ -500,6 +537,8 @@ static int open_encrypted(boot_result *r)
             r->advice = "the passphrase did not open any keyslot.";
         else if (rc == LUKS_ERR_IO)
             r->advice = "the partition could not be read.";
+        else if (rc == LUKS_ERR_KDF_MEMORY)
+            kdf_advice(r, g_vol.kdf_need_kib);
         else
             r->advice = "the volume is outside what this loader supports.";
         return -1;
