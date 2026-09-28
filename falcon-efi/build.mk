@@ -105,6 +105,19 @@ $(STANDIN): $(EFI_OBJ)/$(STANDIN_SRC:.c=.o)
 $(STANDIN_SIGNED): $(STANDIN) $(MOK_KEY)
 	sbsign --key $(MOK_KEY) --cert $(MOK_CRT) --output $@ $<
 
+# The TPM rig's probe (falcon-efi/tools/run-tpm-rig.sh): what the firmware
+# offers for a TPM 2.0 and a TPM 1.2, and PCR0 read through each protocol.
+TPM_PROBE_SRC := falcon-efi/tools/tpm-probe/tpm-probe.c
+TPM_PROBE := build/test/tpm-probe.efi
+TPM_PROBE_SIGNED := build/test/tpm-probe-signed.efi
+
+$(TPM_PROBE): $(EFI_OBJ)/$(TPM_PROBE_SRC:.c=.o)
+	@mkdir -p $(@D)
+	$(CC) $(EFI_LDFLAGS) -o $@ $<
+
+$(TPM_PROBE_SIGNED): $(TPM_PROBE) $(MOK_KEY)
+	sbsign --key $(MOK_KEY) --cert $(MOK_CRT) --output $@ $<
+
 # Stage the loader as the removable-media default path on a vvfat-backed ESP,
 # alongside a writable per-checkout copy of the OVMF varstore.
 esp: $(EFI)
@@ -175,6 +188,22 @@ test-station-uefi: $(EFI_STATION_SIGNED) $(STANDIN) $(STANDIN_SIGNED) cli
 	@test -f build/test-station.img || $(MAKE) --no-print-directory test-station
 	falcon-efi/tools/run-station-rig.sh
 
+# The TPM rig (docs/notes/argon2-totp.md Section 2): the probe, alone and
+# started by the UEFI station, under OVMF with swtpm as a TPM 2.0 (TIS and
+# CRB) and a TPM 1.2, Secure Boot off and on. With no swtpm it says so and
+# builds nothing; a case whose OVMF has no support for its TPM version
+# SKIPs. The station cases boot copies of the disk test-station made, and
+# SKIP without it: making it needs sudo and the Arch ISO, so it stays an
+# explicit `make test-station`.
+test-tpm-rig:
+	@if ! command -v swtpm >/dev/null 2>&1; then \
+		echo "SKIP  test-tpm-rig: swtpm is not installed (Gentoo app-crypt/swtpm, Debian swtpm)."; \
+	else \
+		$(MAKE) --no-print-directory $(TPM_PROBE) $(TPM_PROBE_SIGNED) \
+			$(EFI_STATION_SIGNED) && \
+		falcon-efi/tools/run-tpm-rig.sh; \
+	fi
+
 # Stations the installer put on a machine's disk, booted (DESIGN Section
 # 13.11): a GPT disk with Windows under OVMF, Secure Boot off and on, to
 # its menu, its default and the shelf's UKI; a 4Kn GPT disk with both
@@ -194,7 +223,7 @@ run-stick-secboot:
 
 .PHONY: test-station payload esp run mok-test sign run-secboot test-iso \
 	test-img test-uki test-stick run-stick run-stick-secboot test-core \
-	test-station-uefi test-station-installed
+	test-station-uefi test-station-installed test-tpm-rig
 
 # ---- tests ----
 #

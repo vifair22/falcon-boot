@@ -137,5 +137,18 @@ predictions (DESIGN Section 7.8): it enforces nothing and signs nothing.
    needs RSA encryption to a TPM key; which key, and whether its public part
    is readable without owner auth).
 5. The QR code at enrollment: a dependency (qrencode) or falcon's own.
-6. Tooling for the rigs: swtpm on the workstation and in the harness image,
-   and an OVMF build with TPM 1.2 and 2.0 support.
+6. Tooling for the rigs. Settled 2026-09-28: no OVMF build is needed.
+   Measured with `falcon-efi/tools/tpm-probe/` under swtpm 0.10.2 and QEMU
+   10.2, Gentoo's edk2-bin-202408 (`OVMF_CODE.fd`, `OVMF_CODE.secboot.fd`)
+   and Debian trixie's ovmf 2025.02-8+deb13u1 (`OVMF_CODE_4M.fd`, the
+   harness image's) both support both versions: with a TPM 2.0 (TIS or
+   CRB) they install `EFI_TCG2_PROTOCOL`, with a TPM 1.2
+   `EFI_TCG_PROTOCOL`, and PCR0 read back through SubmitCommand or
+   PassThroughToTpm is measured. A fresh swtpm state needs no
+   `swtpm_setup`. EDK2's `EFI_TCG2_BOOT_SERVICE_CAPABILITY` is naturally
+   aligned (36 bytes), not packed. swtpm is installed on the workstation
+   and added to the harness image (not yet rebuilt). The rig is
+   `make test-tpm-rig` (`falcon-efi/tools/run-tpm-rig.sh`, swtpm through
+   `falcon-efi/tools/swtpm.sh`): the probe alone and started by the UEFI
+   station, 2.0 and 1.2, Secure Boot off and on; the loader's cases go
+   into it as station cases.
