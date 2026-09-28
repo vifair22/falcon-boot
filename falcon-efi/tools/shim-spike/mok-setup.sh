@@ -34,7 +34,7 @@ MOK_OWNER=605dab50-e046-4300-abb6-3dd810dd8b23
 if [[ ! -x $VENV/bin/virt-fw-vars ]]; then
     echo "== creating venv for virt-firmware"
     python3 -m venv "$VENV"
-    "$VENV/bin/pip" -q install virt-firmware
+    "$VENV/bin/pip" -q --disable-pip-version-check install virt-firmware
 fi
 
 if [[ ! -f $KEYS/spike.key ]]; then

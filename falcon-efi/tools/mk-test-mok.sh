@@ -77,7 +77,7 @@ if [[ -z $VFV ]]; then
     if [[ ! -x $VENV/bin/virt-fw-vars ]]; then
         echo "== creating venv for virt-firmware"
         python3 -m venv "$VENV"
-        "$VENV/bin/pip" -q install virt-firmware
+        "$VENV/bin/pip" -q --disable-pip-version-check install virt-firmware
     fi
     VFV=$VENV/bin/virt-fw-vars
 fi

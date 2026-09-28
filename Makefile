@@ -109,9 +109,12 @@ EFI_CFLAGS := -std=c11 -O2 -ffreestanding \
 	$(EFI_INC) $(CORE_INC) -Ibuild
 
 # Subsystem 10 is EFI_APPLICATION. -shared is how mingw emits a PE with no
-# CRT startup; --no-insert-timestamp keeps the output reproducible.
+# CRT startup; --no-insert-timestamp keeps the output reproducible. -s drops
+# the COFF symbol table ld would append after the last section: nothing
+# reads it (no firmware, no debugger here), and sbsign takes those bytes for
+# a gap between sections and warns on every image it signs.
 EFI_LDFLAGS := -nostdlib -shared -Wl,--subsystem,10 -e efi_main \
-	-Wl,--no-insert-timestamp
+	-Wl,--no-insert-timestamp -s
 
 EFI_OBJ := $(OBJ)/efi-$(VARIANT)
 
