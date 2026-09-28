@@ -99,9 +99,16 @@ static void draw_banner(const menu_view *v, const menu_banner *banner)
     UINTN at = 0;
     UINTN end = 0;
     CHAR16 keep;
+    size_t i;
 
-    st->ConOut->SetCursorPosition(st->ConOut, v->m.left, v->m.banner_row);
     st->ConOut->SetAttribute(st->ConOut, TUI_ATTR_TITLE);
+    for (i = 0; i < v->m.logo_rows; i++) {
+        st->ConOut->SetCursorPosition(st->ConOut, v->m.left,
+                                      v->m.logo_row + i);
+        tui_row_text(g_row, v->m.width, tui_logo[i]);
+        out(st, g_row);
+    }
+    st->ConOut->SetCursorPosition(st->ConOut, v->m.left, v->m.banner_row);
     if (banner == (void *)0) {
         tui_row_text(g_row, v->m.width, (const CHAR16 *)0);
         out(st, g_row);

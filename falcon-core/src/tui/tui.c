@@ -2,6 +2,15 @@
 
 #include <lib/ucs2.h>
 
+/* figlet -f slant falcon. */
+const uint16_t *const tui_logo[TUI_LOGO_ROWS] = {
+    u"    ____      __",
+    u"   / __/___ _/ /________  ____",
+    u"  / /_/ __ `/ / ___/ __ \\/ __ \\",
+    u" / __/ /_/ / / /__/ /_/ / / / /",
+    u"/_/  \\__,_/_/\\___/\\____/_/ /_/",
+};
+
 const uint16_t tui_hint_default[] =
     u"up/down select | enter choose | esc back | "
     u"[signed by] {expected refusal}";
@@ -134,8 +143,18 @@ void tui_menu_layout(const tui_frame *f, size_t count, tui_menu *m)
         list = count;
     m->win = list;
 
-    block = list + TUI_CHROME_ROWS;
-    m->banner_row = (f->rows - block) / 2u;
+    /* The logo and the blank under it, when the whole list fits with them
+     * and the lettering fits across. */
+    m->logo_rows = 0;
+    if (list + TUI_CHROME_ROWS + TUI_LOGO_ROWS + 1u <= avail &&
+        list == (count == 0 ? 1u : count) && f->text_width >= TUI_LOGO_WIDTH)
+        m->logo_rows = TUI_LOGO_ROWS;
+
+    block = list + TUI_CHROME_ROWS +
+            (m->logo_rows != 0 ? m->logo_rows + 1u : 0u);
+    m->logo_row = (f->rows - block) / 2u;
+    m->banner_row = m->logo_row +
+                    (m->logo_rows != 0 ? m->logo_rows + 1u : 0u);
     m->list_top = m->banner_row + 2u;      /* banner, then a blank row */
     m->hint_row = m->list_top + list + 1u; /* blank, then the hint */
 }

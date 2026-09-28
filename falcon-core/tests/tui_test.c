@@ -133,9 +133,11 @@ static void test_menu_short_list(void **state)
     assert_int_equal(m.list_left, 3);
     assert_int_equal(m.list_width, 74);
     assert_int_equal(m.win, 3);
-    assert_int_equal(m.banner_row, 9);
-    assert_int_equal(m.list_top, 11);
-    assert_int_equal(m.hint_row, 15);
+    assert_int_equal(m.logo_rows, TUI_LOGO_ROWS);
+    assert_int_equal(m.logo_row, 6);
+    assert_int_equal(m.banner_row, 12);
+    assert_int_equal(m.list_top, 14);
+    assert_int_equal(m.hint_row, 18);
 }
 
 static void test_menu_empty_list(void **state)
@@ -147,9 +149,11 @@ static void test_menu_empty_list(void **state)
     tui_frame_init(&f, 80, 25);
     tui_menu_layout(&f, 0, &m);
     assert_int_equal(m.win, 1);
-    assert_int_equal(m.banner_row, 10);
-    assert_int_equal(m.list_top, 12);
-    assert_int_equal(m.hint_row, 14);
+    assert_int_equal(m.logo_rows, TUI_LOGO_ROWS);
+    assert_int_equal(m.logo_row, 7);
+    assert_int_equal(m.banner_row, 13);
+    assert_int_equal(m.list_top, 15);
+    assert_int_equal(m.hint_row, 17);
 }
 
 static void test_menu_long_list_fills(void **state)
@@ -161,9 +165,43 @@ static void test_menu_long_list_fills(void **state)
     tui_frame_init(&f, 80, 25);
     tui_menu_layout(&f, 50, &m);
     assert_int_equal(m.win, 19);
+    assert_int_equal(m.logo_rows, 0);
     assert_int_equal(m.banner_row, 1);
     assert_int_equal(m.list_top, 3);
     assert_int_equal(m.hint_row, 23);
+}
+
+/* On 80x25 the logo, its blank and the chrome leave 13 rows: a list of 13
+ * keeps it, a list of 14 would scroll with it and gives the rows back. */
+static void test_menu_logo_edge(void **state)
+{
+    tui_frame f;
+    tui_menu m;
+
+    (void)state;
+    tui_frame_init(&f, 80, 25);
+    tui_menu_layout(&f, 13, &m);
+    assert_int_equal(m.logo_rows, TUI_LOGO_ROWS);
+    assert_int_equal(m.logo_row, 1);
+    assert_int_equal(m.banner_row, 7);
+    assert_int_equal(m.hint_row, 23);
+    tui_menu_layout(&f, 14, &m);
+    assert_int_equal(m.logo_rows, 0);
+    assert_int_equal(m.win, 14);
+}
+
+/* Every line of the lettering is inside the width the layout checks. */
+static void test_logo_width(void **state)
+{
+    size_t i;
+    size_t n;
+
+    (void)state;
+    for (i = 0; i < TUI_LOGO_ROWS; i++) {
+        for (n = 0; tui_logo[i][n] != 0; n++)
+            assert_true(tui_logo[i][n] >= 0x20 && tui_logo[i][n] < 0x7F);
+        assert_true(n <= TUI_LOGO_WIDTH);
+    }
 }
 
 static void test_menu_scroll(void **state)
@@ -325,6 +363,8 @@ int run_tui_tests(void)
         cmocka_unit_test(test_menu_short_list),
         cmocka_unit_test(test_menu_empty_list),
         cmocka_unit_test(test_menu_long_list_fills),
+        cmocka_unit_test(test_menu_logo_edge),
+        cmocka_unit_test(test_logo_width),
         cmocka_unit_test(test_menu_scroll),
         cmocka_unit_test(test_row_text),
         cmocka_unit_test(test_row_entry_aligned),

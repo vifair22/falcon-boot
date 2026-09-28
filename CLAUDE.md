@@ -195,7 +195,8 @@ falcon-efi and falcon-bios, which never share a set, may both have a `pos/`.
   - `manifest/` the blessed-artifact manifest parser and writer (DESIGN
     Section 8.1), shared by the loader and the sign tool.
   - `tui/` how a loader screen is laid out: the centred content block, a
-    menu's banner, list and key hint, a page started a third of the way
+    menu's logo (left out when the list would not fit), banner, list and
+    key hint, a page started a third of the way
     down, the route code's place, row composition and the colours. Geometry
     only, no drawing; both loaders draw from it, which is what keeps their
     screens the same cell for cell.

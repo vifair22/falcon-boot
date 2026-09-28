@@ -112,14 +112,27 @@ size_t tui_page_row(const tui_frame *f);
  * 0 when it does not fit, and the caller draws nothing. */
 int tui_mode_at(const tui_frame *f, size_t len, size_t *row, size_t *col);
 
-/* A menu resolved into the block: where the banner, the list window and the
- * hint go for `count` entries. The block's height is how many entries there
- * are; a longer list than the screen holds fills it and scrolls. */
+/* A menu resolved into the block: where the logo, the banner, the list
+ * window and the hint go for `count` entries. The block's height is how many
+ * entries there are; a longer list than the screen holds fills it and
+ * scrolls, and has no logo. */
+/* The logo drawn over every menu's banner: the name in figlet's slant
+ * lettering, TUI_LOGO_ROWS lines, none wider than TUI_LOGO_WIDTH, drawn in
+ * the title's colour at the banner's text column with a blank row under it.
+ * A menu shows it only when its whole list still fits beside it; a list the
+ * screen cannot hold with it gets the rows instead, since the list is what
+ * the screen is for. */
+#define TUI_LOGO_ROWS  5u
+#define TUI_LOGO_WIDTH 31u
+extern const uint16_t *const tui_logo[TUI_LOGO_ROWS];
+
 typedef struct {
     size_t left;        /* the block */
     size_t width;
     size_t list_left;   /* the block, stepped in by TUI_LIST_INDENT */
     size_t list_width;
+    size_t logo_row;    /* the logo's first row */
+    size_t logo_rows;   /* TUI_LOGO_ROWS, or 0 when it is left out */
     size_t banner_row;
     size_t list_top;    /* first list row */
     size_t win;         /* list rows */

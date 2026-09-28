@@ -364,7 +364,14 @@ static void draw_banner(const tui_menu *m, const screen_banner *banner)
 {
     size_t at = 0;
     size_t end = 0;
+    size_t i;
 
+    for (i = 0; i < m->logo_rows; i++) {
+        ser_goto(m->logo_row + i, m->left);
+        ser_attr(TUI_ATTR_TITLE);
+        tui_row_text(g_row, m->width, tui_logo[i]);
+        run(m->logo_row + i, m->left, 0, m->width, TUI_ATTR_TITLE);
+    }
     ser_goto(m->banner_row, m->left);
     ser_attr(TUI_ATTR_TITLE);
     if (banner == (const screen_banner *)0) {
