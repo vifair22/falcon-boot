@@ -11,8 +11,8 @@
  *
  * A row is found or added; either way it may carry two names: the one the
  * loader generates for what it found (`nxt-0003`, `gpt-1a2b3c4d-p1`,
- * `uki-arch`, `memtest`) and the section name of the STATION.INI entry that
- * matched or made it. Both name it everywhere a name is taken.
+ * `uki-arch`, `memtest`, `pos`) and the section name of the STATION.INI
+ * entry that matched or made it. Both name it everywhere a name is taken.
  */
 
 #ifndef FALCON_STROWS_H
@@ -44,6 +44,10 @@
 #define STROWS_LABEL_CD        "CD drive"
 #define STROWS_LABEL_USB       "USB stick"
 #define STROWS_LABEL_CF        "CF card (PC Card)"
+
+/* The encrypted shelf's row's generated name, the one row every station
+ * finds that has no file, disk or entry to be named after. */
+#define STROWS_NAME_POS "pos"
 
 /* Windows Boot Manager's path, the default of a `method = efi` entry. */
 #define STROWS_BOOTMGFW "\\EFI\\Microsoft\\Boot\\bootmgfw.efi"

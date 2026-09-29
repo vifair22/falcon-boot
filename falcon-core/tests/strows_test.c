@@ -364,7 +364,7 @@ static void test_full(void **state)
 }
 
 /* What the BIOS station finds on the rig's two disks (DESIGN Section
- * 13.3): the encrypted shelf's row (no name), Windows on disk A's first
+ * 13.3): the encrypted shelf's row, Windows on disk A's first
  * partition, disk B's MBR, memtest. */
 static void found_bios(strows *r)
 {
@@ -372,6 +372,7 @@ static void found_bios(strows *r)
 
     strows_init(r);
     w = strows_add(r, STROW_POS);
+    strcpy(w->name, STROWS_NAME_POS);
     set_label(w->label, "Personal OS (encrypted)");
 
     w = strows_add(r, STROW_VBR);
@@ -406,8 +407,66 @@ static void test_bios_found(void **state)
     assert_string_equal(r.row[2].name, "mbr-1a2b3c4d");
     assert_true(label_is(r.row[2].label, "Boot code (disk mbr:1a2b3c4d)"));
     assert_int_equal(strows_arrange(&r, NULL, view, STROWS_MAX), 4);
-    /* The encrypted shelf has no generated name to be found by. */
+    assert_ptr_equal(strows_find(&r, "POS"), &r.row[0]);
     assert_null(strows_find(&r, ""));
+}
+
+/* The encrypted shelf's row by its generated name: a section of that name
+ * hides it, relabels it, and default and order take it. A `uki` section
+ * beside it (the T430's: a default behind the prompt) is a row of its own,
+ * and with `[pos]` hidden it is the one prompt the list shows. */
+static void test_pos_by_name(void **state)
+{
+    static strows r;
+    static stationini c;
+    stationini_entry *e;
+    strow *w;
+    size_t view[STROWS_MAX];
+    size_t sel = 99;
+    size_t n;
+
+    (void)state;
+    found_bios(&r);
+    memset(&c, 0, sizeof c);
+    strcpy(c.default_name, "pos");
+    c.timeout = 5;
+    strcpy(c.order[c.n_order++], "memtest");
+    strcpy(c.order[c.n_order++], "pos");
+    e = entry(&c, "pos");
+    strcpy(e->label, "Gentoo");
+    strows_apply(&r, &c, STROWS_BIOS);
+    assert_int_equal(r.n, 4);
+    assert_ptr_equal(strows_find(&r, "pos"), &r.row[0]);
+    assert_string_equal(r.row[0].section, "pos");
+    assert_true(label_is(r.row[0].label, "Gentoo"));
+    n = strows_arrange(&r, &c, view, STROWS_MAX);
+    assert_int_equal(n, 4);
+    assert_int_equal(view[0], 3);   /* memtest */
+    assert_int_equal(view[1], 0);   /* pos */
+    assert_true(strows_default(&r, &c, view, n, &sel));
+    assert_int_equal(sel, 1);
+
+    found(&r);
+    w = strows_add(&r, STROW_POS);
+    strcpy(w->name, STROWS_NAME_POS);
+    memset(&c, 0, sizeof c);
+    strcpy(c.default_name, "linux");
+    c.timeout = 5;
+    strcpy(entry(&c, "linux")->uki, "gentoo.efi");
+    entry(&c, "pos")->hide = STATIONINI_TRI_YES;
+    strows_apply(&r, &c, STROWS_UEFI);
+    assert_true(strows_find(&r, "pos")->hidden);
+    assert_int_equal(strows_find(&r, "pos")->kind, STROW_POS);
+    assert_int_equal(strows_find(&r, "linux")->kind, STROW_UKI);
+    assert_true(strows_find(&r, "linux")->ref_none);
+    n = strows_arrange(&r, &c, view, STROWS_MAX);
+    assert_int_equal(n, 7);
+    assert_true(strows_default(&r, &c, view, n, &sel));
+    assert_ptr_equal(&r.row[view[sel]], strows_find(&r, "linux"));
+
+    /* A default naming the hidden pos gets no countdown. */
+    strcpy(c.default_name, "pos");
+    assert_false(strows_default(&r, &c, view, n, &sel));
 }
 
 /* A section with disk (+part) on BIOS: the chain row of exactly that disk
@@ -518,6 +577,7 @@ int run_strows_tests(void)
         cmocka_unit_test(test_uki_and_efi),
         cmocka_unit_test(test_full),
         cmocka_unit_test(test_bios_found),
+        cmocka_unit_test(test_pos_by_name),
         cmocka_unit_test(test_bios_disk),
         cmocka_unit_test(test_bios_efi_left_out),
     };

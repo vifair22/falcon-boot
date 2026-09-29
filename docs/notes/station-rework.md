@@ -333,7 +333,8 @@ and the installer agree.
 - **Autodetected entry names** (so the INI and next-boot can name them):
   `mbr-<sig>-p<n>` / `gpt-<first 8 of DiskGUID>-p<n>` for a partition,
   `mbr-<sig>` / `gpt-<8>` for another disk's MBR, `nxt-<hex4>` for a
-  firmware entry Boot####, `uki-<file stem>` for a UKI, `memtest`.
+  firmware entry Boot####, `uki-<file stem>` for a UKI, `memtest`, and
+  (added 2026-09-29) `pos` for the encrypted shelf's prompting row.
 - **Row labels**: "<what> (disk <id>, partition <n>)" for a found OS, the
   INI label when given.
 

@@ -123,6 +123,23 @@ then waits with no default:
 
     The menu will wait with no default.
 
+`STATION.INI` names a found row by its generated name: `memtest`,
+`nxt-<4 hex>` for a firmware entry, `uki-<stem>` for a plaintext UKI,
+`mbr-<signature>[-p<n>]` or `gpt-<8 hex>[-p<n>]` for a disk or partition,
+and `pos` for `Personal OS (encrypted)`. A section of that name changes the
+row; `default`, `order` and next boot take it. To keep one prompt on the
+list when a `uki` section sets the default:
+
+    [general]
+    default = linux
+    timeout = 5
+
+    [linux]
+    uki = gentoo.efi
+
+    [pos]
+    hide = yes
+
 BIOS opens at the passphrase prompt; Escape there goes to the list.
 
 BIOS opens at its list the same way, `STATION.INI` read from the station

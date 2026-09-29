@@ -427,8 +427,10 @@ static void rows_find(void)
     /* Linux: the encrypted shelf as one row that prompts, each plaintext
      * UKI as its own. */
     w = pos_has_encrypted() ? strows_add(&g_rows, STROW_POS) : (strow *)0;
-    if (w != (strow *)0)
+    if (w != (strow *)0) {
+        copy_ascii(w->name, sizeof w->name, STROWS_NAME_POS);
         ucs2_copy(w->label, STROWS_LABEL_MAX, pos_entry_label());
+    }
     g_img_n = pos_plain_images(g_st, g_img, IMG_MAX);
     for (i = 0; i < g_img_n; i++) {
         w = strows_add(&g_rows, STROW_UKI);

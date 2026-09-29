@@ -350,6 +350,8 @@ static void find_shelves(void)
                 g_shelves[idx].encrypted = 1;
                 if (w != (strow *)0) {
                     w->ref = idx;
+                    memcpy(w->name, STROWS_NAME_POS,
+                           sizeof STROWS_NAME_POS);
                     (void)pos_probe(&s->disk, &s->parts[i]);
                     (void)ucs2_copy(w->label, STROWS_LABEL_MAX,
                                     pos_entry_label());

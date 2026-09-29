@@ -201,7 +201,7 @@ static int disk_tail_ok(const char *a, const char *b)
  * already a name. */
 static int autoname_ok(const char *a, const char *b)
 {
-    if (span_eq(a, b, "memtest"))
+    if (span_eq(a, b, "memtest") || span_eq(a, b, "pos"))
         return 1;
     if (b - a < 5)
         return 0;
