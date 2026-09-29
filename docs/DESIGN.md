@@ -4388,7 +4388,12 @@ loaders), the first rule that applies:
   the row. `efi` and `method` are UEFI's: a BIOS section with nothing else
   to go on is left out.
 - none of these: the found row whose generated name is the section's name
-  (`[memtest]`, `[nxt-0003]`, `[mbr-cdcccdcc-p1]`).
+  (`[memtest]`, `[nxt-0003]`, `[mbr-cdcccdcc-p1]`, `[pos]`).
+
+The encrypted shelf's row, the one that prompts, is `pos`: `[pos]` with
+`hide = yes` leaves a `uki` section as the only prompt on the list, and
+`default = pos` counts down to the prompt itself. On BIOS, where each
+encrypted shelf carrying the install ID is a row, `pos` names the first.
 
 The matched or added row takes the section's name beside its generated one,
 and its label and hide when given; `default`, `order` and next boot take

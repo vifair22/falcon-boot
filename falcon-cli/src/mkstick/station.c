@@ -937,8 +937,10 @@ static void print_rows(const stn_scan *s, const stationini *ini, int have_ini,
     strows_init(&rows);
     if (encrypted) {
         w = strows_add(&rows, STROW_POS);
-        if (w != NULL)
+        if (w != NULL) {
+            (void)snprintf(w->name, sizeof w->name, "%s", STROWS_NAME_POS);
             label_wide(w->label, STROWS_LABEL_MAX, STROWS_LABEL_POS);
+        }
     }
     for (i = 0; i < s->n_found; i++) {
         const stn_found *f = &s->found[i];
