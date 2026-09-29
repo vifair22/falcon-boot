@@ -33,7 +33,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         qemu-system-x86 qemu-utils ovmf swtpm \
         tcpdump \
         python3-venv python3-dev libcrypt-dev \
-        gdisk util-linux \
+        gdisk util-linux fdisk \
         dosfstools exfatprogs e2fsprogs mtools udftools \
         cryptsetup-bin openssl sbsigntool \
         systemd-ukify systemd-boot-efi \
@@ -41,6 +41,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         socat aria2 curl \
         cppcheck clang-tidy \
     && rm -rf /var/lib/apt/lists/*
+
+# fdisk is for sfdisk, which mk-test-biosboot.sh partitions its fixtures with;
+# trixie moved it out of util-linux.
 
 # check-tools looks for 7z or 7zz; trixie's 7zip package installs only 7zz.
 RUN ln -sf /usr/bin/7zz /usr/local/bin/7z
