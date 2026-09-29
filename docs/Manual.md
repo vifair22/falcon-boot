@@ -571,3 +571,26 @@ ESP's files, each `STATION.INI` as the loaders parse it (or the line it
 fails at), the shelf carrying the install ID, and the rows each menu shows
 with the default marked. It exits nonzero when a stage or file is missing.
 
+**totp** (UEFI; DESIGN Section 13.15):
+
+    falcon-boot-mkstick station totp enroll <disk> [--pcrs 0,2,4,7]
+        [--owner-auth-file <file>] [--label <name>]
+    falcon-boot-mkstick station totp reseal <disk> [--pcrs ...]
+        [--owner-auth-file <file>]
+    falcon-boot-mkstick station totp remove <disk> [--owner-auth-file <file>]
+
+Run from a system the station started. The PCR values come from the
+firmware's event log, and on a TPM 1.2 from the log the station saved at
+boot (`FalconEvLog`) when there is one, alone or after the one Linux reads;
+enrollment says which. It refuses when the log has no measurement of
+`\EFI\falcon\grubx64.efi`, or does not account for the PCRs the TPM or
+the station read. A station older than the log save saves none: boot the
+new station once before enrolling.
+
+What the code is sealed to changes with what is in the chosen PCRs:
+firmware (0, 2), the station image (4), Secure Boot's keys and the
+authority that verified the station (7), and with 5, the GPT and the boot
+variables, so an `efibootmgr` change or a repartition moves it too. After
+any of these the station warns instead of showing the code; `reseal` makes
+a new one.
+

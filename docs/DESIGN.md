@@ -3832,7 +3832,7 @@ diagrams are traced from their code.
 
 The station of Section 13, built (2026-09-27): the list of 13.3,
 `STATION.INI` (13.7) and next boot (13.8); the TOTP check (13.15) added
-2026-09-28. `apps/station/efi_main.c` finds
+2026-09-28, and the saved event log it is enrolled from 2026-09-29. `apps/station/efi_main.c` finds
 the rows and boots them; `media/strows.c` is the list as data (the names,
 what an INI section changes or adds, the order), host-tested.
 
@@ -3843,7 +3843,8 @@ flowchart TD
     MAIN --> NB["loader_next_boot_take<br/>FalconNextBoot read, then deleted"]
     NB --> DISC["discover_scan: the ESP's boot record, every Block I/O handle<br/>disks_scan: each whole disk's table (MBR or GPT)<br/>esp_connect_all: a filesystem driver on every partition"]
     DISC --> POSS["pos_scan<br/>shelves carrying the ESP's install ID, any disk (3.1)"]
-    POSS --> INI{"\EFI\falcon\STATION.INI<br/>on the loader's ESP?"}
+    POSS --> SAVE["totp_save_log: on a TPM 1.2 behind EFI_TCG only,<br/>edk2's event log and PCRs 0-15 into FalconEvLog (13.15)"]
+    SAVE --> INI{"\EFI\falcon\STATION.INI<br/>on the loader's ESP?"}
     INI -- "no" --> ROWS
     INI -- "parses" --> TOTP{"[totp] section? (13.15)"}
     INI -- "error, too large, unreadable" --> ERR["page: STATION.INI line n: why<br/>no default, no countdown; a key"]
@@ -4912,6 +4913,34 @@ mount when the ESP is mounted, mtools when it is not), and the secret is
 printed once, as base32 and an `otpauth://totp/falcon-station:<name>` URI,
 and as a QR code when `qrencode` is installed.
 
+**Two logs.** coreboot with an edk2 payload and a TPM 1.2 (the T430) keeps
+two event logs, one per ACPI TCPA table: coreboot's, PCR 2 alone, which is
+the one Linux reads, and edk2's, which holds PCRs 0 to 7's separators, the
+images in PCR 4, the GPT and boot variables in PCR 5, and the authority in
+PCR 7, and which only `EFI_TCG_PROTOCOL` reaches. So on every boot where
+that protocol is the TPM's (a TPM 2.0 firmware's log reaches Linux whole),
+the station copies edk2's log as it stands and reads PCRs 0 to 15 after it,
+before it loads anything, and saves both in the volatile variable
+`FalconEvLog` (`tpm/evsave.h`, `tcg_evlog12`, `loader_evlog_set`). It does
+this with or without `[totp]`: the boot enrollment runs from is the one
+before there is one. Replayed to its end, that log is the state at the
+station's menu, with nothing to stop at: edk2 logs an image's PCR 7
+authority and the first GPT after its PCR 4 event, so stopping at the
+station's image, as the one-log path does, would leave out the station's
+own PCR 5 and 7 when no shim precedes it.
+
+On a TPM 1.2 with that record, enrollment seals to the PCRs the station
+read, after checking (`totpc_merge12`) that the saved log holds the
+station's measurement in PCR 4 and that a replay gives those PCRs: the
+saved log alone (one firmware log), else Linux's log and then the saved
+one. coreboot's events all precede its payload, so in turn is the right
+order in every PCR the two share. The live check covers the PCRs nothing
+extends after the menu, 0 to 3 and 6 (a later load moves PCR 4 and 7,
+ExitBootServices PCR 5), which also shows the record and Linux's log to be
+of this boot. The variable is writable by root, as the files enrollment
+reads are; root at enrollment already sees the seed. Without the record
+(an older station, a TPM 2.0), enrollment is the one-log path above.
+
 The owner authorises every NV operation (7.5's rule, one secret the user
 already holds): `--owner-auth-file` is the file's bytes on 2.0, and on 1.2
 exactly 20 bytes are the secret itself and anything else a passphrase whose
@@ -4930,8 +4959,9 @@ replaced. `remove` deletes the index as the owner and the section.
 **The rig.** `falcon-efi/tools/run-tpm-rig.sh`'s `totp` cases boot the
 station disk four times over one swtpm state with the guest clock pinned:
 the probe, started by the station, saves the event log to the ESP; mkstick
-enrolls on the host against the same state (its test-only `--tpm-socket`
-and `--event-log`); the station shows the code the host computes from the
+enrolls on the host against the same state (its test-only `--tpm-socket`,
+`--event-log` and, on 1.2, `--saved-log`: the probe also copies out the
+station's `FalconEvLog`, and a 2.0 boot must have none); the station shows the code the host computes from the
 printed secret, swtpm's own log shows the seed never crossed in the clear
 (on 1.2 the enrollment's plain write is the control), the menu drops the
 code once the probe has run, and the prompt page shows it; then the other

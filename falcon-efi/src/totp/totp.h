@@ -18,6 +18,11 @@
  * read after that would be refused as a changed boot. After the wipe the
  * lines say the code is shown again after a restart.
  *
+ * Enrollment's half. On a TPM 1.2 behind EFI_TCG_PROTOCOL, totp_save_log
+ * saves edk2's event log and the PCRs with it on every boot, [totp] or not:
+ * the boot enrollment needs it from is the one before there is a [totp]
+ * (tpm/evsave.h says why Linux cannot read it itself).
+ *
  * Interactions. tcg/ for the TPM, falcon-core's tpm/ for the unseal and
  * crypto/otp for the code; the menu's status lines (console/menu.h) and
  * pos.c's page hook are where it is drawn.
@@ -29,6 +34,10 @@
 #include <efi/uefi.h>
 #include <console/menu.h>
 #include <media/stationini.h>
+
+/* Saves the firmware's 1.2 event log for enrollment (FalconEvLog); nothing
+ * on any other TPM, or none. Before anything is loaded. */
+void totp_save_log(EFI_SYSTEM_TABLE *st);
 
 /* Reads the seed as cfg says (nothing when cfg is not present). */
 void totp_load(EFI_SYSTEM_TABLE *st, const stationini_totp *cfg);

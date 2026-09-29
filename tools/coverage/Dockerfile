@@ -30,7 +30,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         gcc-multilib \
         gcc-mingw-w64-x86-64 gcc-mingw-w64-i686 \
         libcmocka-dev \
-        qemu-system-x86 qemu-utils ovmf swtpm \
+        qemu-system-x86 qemu-utils ovmf swtpm swtpm-tools \
         tcpdump \
         python3-venv python3-dev libcrypt-dev \
         gdisk util-linux fdisk \
@@ -42,6 +42,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         cppcheck clang-tidy \
     && rm -rf /var/lib/apt/lists/*
 
+# swtpm-tools is for swtpm_setup, which the TPM rig's totp cases make their
+# TPM state with; without it they skip.
 # fdisk is for sfdisk, which mk-test-biosboot.sh partitions its fixtures with;
 # trixie moved it out of util-linux.
 
@@ -105,7 +107,7 @@ RUN set -eu; \
              mkfs.ext4 mkudffs mformat bsdtar ukify wimlib-imagex xorriso \
              cpio zstd socat aria2c readelf sha256sum virt-fw-vars 7z sudo \
              pkg-config xxd tcpdump qemu-img mcopy mmd fsck.ext4 truncate \
-             cmp find xargs swtpm; do \
+             cmp find xargs swtpm swtpm_setup sfdisk; do \
         command -v "$t" >/dev/null 2>&1 || { echo "MISSING: $t"; missing=1; }; \
     done; \
     test -n "$(pkg-config --libs cmocka)" || { \

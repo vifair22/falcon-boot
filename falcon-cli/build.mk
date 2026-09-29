@@ -24,11 +24,12 @@ MKSTICK_CORE := $(CORE_PART) $(CORE_FS) $(CORE_LUKS) $(CORE_CRYPTO) \
 	$(CORE_STATIONINI) $(CORE)/media/shelf.c $(CORE)/media/osrel.c \
 	$(CORE_PE) $(CORE_UCS2) \
 	$(CORE_VBR) $(CORE_STROWS) \
-	$(CORE_TPM) $(CORE_CRYPTO_TPM) $(CORE_TPM_EVLOG) \
+	$(CORE_TPM) $(CORE_CRYPTO_TPM) $(CORE_TPM_EVLOG) $(CORE_TPM_EVSAVE) \
 	$(addprefix $(CORE)/trust/,der.c x509.c authenticode.c)
 # The last two lines are `station totp` (DESIGN Section 13.15): the TPM
-# command layer the station reads the seed with, the event log replay, and
-# the Authenticode hash the station's measurement is found by.
+# command layer the station reads the seed with, the event log replay and
+# the record the station saves edk2's 1.2 log in, and the Authenticode hash
+# the station's measurement is found by.
 
 SIGN_SRCS := $(addprefix $(CLI)/sign/,main.c util.c isoprobe.c manifestio.c \
 	payload.c uki.c)
@@ -152,9 +153,14 @@ CLI_UUT := $(addprefix $(CLI)/sign/,isoprobe.c payload.c uki.c util.c) \
 	$(CORE)/media/family.c $(CORE)/media/bootcfg.c $(CORE)/media/nextboot.c \
 	$(CORE_MANIFEST) $(CORE_MANIFEST_WRITE) \
 	$(CORE_PART) $(CORE_PE) $(CORE_FS) $(CORE_LUKS) $(CORE_IDENT) \
-	$(CORE_CRYPTO) $(CORE_STATIONINI) $(CORE_VBR) $(CORE_STROWS)
+	$(CORE_CRYPTO) $(CORE_STATIONINI) $(CORE_VBR) $(CORE_STROWS) \
+	$(CORE_TPM_EVLOG) $(CORE_TPM_EVSAVE)
 
 $(eval $(call test_bin,cli,$(CLI_TESTS) $(CLI_UUT)))
+
+# The T430's event logs the two-log merge is tested on (tests/data/t430/).
+CLI_TEST_DATA := $(CURDIR)/falcon-cli/tests/data
+$(TEST_OBJ)/falcon-cli/tests/totpcore_test.o: TEST_CFLAGS += -DCLI_TEST_DATA='"$(CLI_TEST_DATA)"'
 
 # util.c calls realpath(), which glibc declares only under _XOPEN_SOURCE or
 # _GNU_SOURCE; the tool's own build uses the latter. The tests stay on the

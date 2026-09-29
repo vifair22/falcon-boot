@@ -27,6 +27,7 @@ STATION_EFI += $(EFI_MOD_esp)           # bootmgfw.efi and memtest through loado
 STATION_EFI += $(CORE_STROWS) $(CORE_STATIONINI)  # the list, and STATION.INI
 STATION_EFI += $(EFI_MOD_totp) $(EFI_MOD_tcg)  # the TOTP check, through the firmware's TPM
 STATION_EFI += $(CORE_TPM) $(CORE_CRYPTO_TPM)   # the unseal's sessions and the code
+STATION_EFI += $(CORE_TPM_EVSAVE)      # edk2's 1.2 log, saved for enrollment
 STATION_EFI += $(CORE_LIBC) $(CORE_UCS2)
 
 $(eval $(call efi_app,station,falcon-boot-station,$(STATION_EFI)))

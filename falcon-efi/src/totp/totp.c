@@ -6,7 +6,9 @@
 #include <crypto/otp.h>
 #include <crypto/sha1.h>
 #include <lib/string.h>
+#include <loader/loadops.h>
 #include <tcg/tcg.h>
+#include <tpm/evsave.h>
 #include <tpm/tpm12.h>
 #include <tpm/tpm2.h>
 #include <tui/tui.h>
@@ -38,6 +40,27 @@ static uint32_t g_code;
 
 #define ATTR_CODE TUI_ATTR(TUI_WHITE, TUI_BLACK)
 #define ATTR_WARN TUI_ATTR(TUI_YELLOW, TUI_BLACK)
+
+/* edk2's 1.2 log is a few kilobytes on the machines it has been read on
+ * (the T430's, the TPM rig's OVMF); a firmware whose log does not fit, or
+ * whose variable store takes no record this size, gets none, and
+ * enrollment says so. */
+#define EVLOG_CAP ((size_t)32 * 1024)
+
+void totp_save_log(EFI_SYSTEM_TABLE *st)
+{
+    static uint8_t log[EVLOG_CAP];
+    static uint8_t rec[EVSAVE_BODY + EVLOG_CAP];
+    uint8_t pcr[EVSAVE_PCRS][EVSAVE_DIGEST_LEN];
+    size_t len = 0;
+    size_t n = 0;
+
+    if (tcg_evlog12(st, log, sizeof log, &len, pcr) != TCG_OK)
+        return;
+    if (evsave_write(rec, sizeof rec, (const uint8_t (*)[EVSAVE_DIGEST_LEN])pcr,
+                     log, len, &n) == EVSAVE_OK)
+        (void)loader_evlog_set(st, rec, n);
+}
 
 void totp_load(EFI_SYSTEM_TABLE *st, const stationini_totp *cfg)
 {
