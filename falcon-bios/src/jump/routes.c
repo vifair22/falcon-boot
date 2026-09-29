@@ -52,6 +52,7 @@ static int g_pci_cardbus;
 typedef struct {
     const char *name;
     const char *path;
+    const char *loading;        /* the route's stage while it is read */
     unsigned    slot;
     uint32_t    pci;
     int         have;           /* file and controller both there */
@@ -60,9 +61,9 @@ typedef struct {
 static usb_mod g_usb[] = {
     /* EHCI first: it hands a device that is not high speed to its
      * companion, where the UHCI or OHCI module after it finds it. */
-    { "EHCI", "/EHCI.MOD", JMOD_SLOT_EHCI, PCI_EHCI, 0 },
-    { "UHCI", "/UHCI.MOD", JMOD_SLOT_UHCI, PCI_UHCI, 0 },
-    { "OHCI", "/OHCI.MOD", JMOD_SLOT_OHCI, PCI_OHCI, 0 },
+    { "EHCI", "/EHCI.MOD", "loading EHCI.MOD", JMOD_SLOT_EHCI, PCI_EHCI, 0 },
+    { "UHCI", "/UHCI.MOD", "loading UHCI.MOD", JMOD_SLOT_UHCI, PCI_UHCI, 0 },
+    { "OHCI", "/OHCI.MOD", "loading OHCI.MOD", JMOD_SLOT_OHCI, PCI_OHCI, 0 },
 };
 #define N_USB (sizeof g_usb / sizeof g_usb[0])
 
@@ -157,6 +158,16 @@ static int disc_read(void *ctx, uint64_t off, uint64_t len, void *buf)
                             buf) == 0 ? 0 : -1;
 }
 
+/* A stage that reads a module off the floppy or brings up a device, each
+ * of which can take seconds: said on the route's page as it starts, so the
+ * screen shows where the time goes, and kept as the stage a failure names. */
+static void step(boot_result *r, const char *what)
+{
+    r->stage = what;
+    screen_out(what);
+    screen_out("...\n");
+}
+
 /* CDR: ATA.MOD, the first drive with a disc, and the disc booted as its
  * catalog says. A no-emulation disc is served by the stick's virtual CD
  * from the module's private drive, with the module left resident behind
@@ -175,12 +186,12 @@ static void boot_cd(boot_result *r)
     unsigned n;
     unsigned i;
 
-    r->stage = "loading ATA.MOD";
+    step(r, "loading ATA.MOD");
     if (jmod_load(g_vol, "/ATA.MOD", JMOD_SLOT_ATA, &ops, &why) != 0) {
         r->advice = why;
         return;
     }
-    r->stage = "looking for a CD drive";
+    step(r, "looking for a CD drive");
     n = ops.probe();
     for (i = 0; i < n; i++) {
         if (ops.dev(i, &dev) == 0 && dev.sectors != 0)
@@ -303,12 +314,12 @@ static void boot_cf(boot_result *r)
     const char *why = (const char *)0;
     unsigned n;
 
-    r->stage = "loading PCC.MOD";
+    step(r, "loading PCC.MOD");
     if (jmod_load(g_vol, "/PCC.MOD", JMOD_SLOT_PCC, &ops, &why) != 0) {
         r->advice = why;
         return;
     }
-    r->stage = "bringing up the PC Card slots";
+    step(r, "bringing up the PC Card slots");
     n = ops.probe();
     if (n == 0 || ops.dev(0, &dev) != 0) {
         r->advice = "there is no CompactFlash card in a PC Card slot.";
@@ -335,12 +346,12 @@ static void boot_usb(boot_result *r)
     for (m = 0; m < N_USB; m++) {
         if (!g_usb[m].have)
             continue;
-        r->stage = "loading a USB driver";
+        step(r, g_usb[m].loading);
         if (jmod_load(g_vol, g_usb[m].path, g_usb[m].slot, &ops, &why) != 0) {
             r->advice = why;
             return;
         }
-        r->stage = "looking for a falcon stick";
+        step(r, "looking for a falcon stick");
         n = ops.probe();
         found_any += n;
         for (i = 0; i < n; i++) {

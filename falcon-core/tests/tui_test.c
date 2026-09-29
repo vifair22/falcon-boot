@@ -380,6 +380,38 @@ static void test_strings(void **state)
     assert_string_equal(narrow(tui_list_empty),
                         "(no ISOs found on the exFAT partition)");
     assert_true(strstr(narrow(tui_hint_default), "esc back") != NULL);
+    assert_string_equal(narrow(tui_tag_pending), "...");
+}
+
+static void test_busy_text(void **state)
+{
+    uint16_t buf[64];
+    uint16_t tiny[4];
+
+    (void)state;
+    tui_busy_text(buf, 64, tui_busy_disks);
+    assert_string_equal(narrow(buf), "finding disks...");
+    tui_busy_text(buf, 64, NULL);
+    assert_string_equal(narrow(buf), "...");
+    tui_busy_text(tiny, 4, tui_busy_tpm);
+    assert_string_equal(narrow(tiny), "rea");
+}
+
+static void test_hint_checking(void **state)
+{
+    uint16_t buf[64];
+    uint16_t tiny[6];
+
+    (void)state;
+    tui_hint_checking(buf, 64, 3, 12);
+    assert_string_equal(narrow(buf), "checking 3 of 12 | esc back");
+    tui_hint_checking(buf, 64, 0, 0);
+    assert_string_equal(narrow(buf), "checking 0 of 0 | esc back");
+    tui_hint_checking(buf, 64, 1024, 65535);
+    assert_string_equal(narrow(buf), "checking 1024 of 65535 | esc back");
+    /* Clipped and still terminated. */
+    tui_hint_checking(tiny, 6, 3, 12);
+    assert_string_equal(narrow(tiny), "check");
 }
 
 int run_tui_tests(void)
@@ -404,6 +436,8 @@ int run_tui_tests(void)
         cmocka_unit_test(test_attrs),
         cmocka_unit_test(test_menu_status),
         cmocka_unit_test(test_strings),
+        cmocka_unit_test(test_hint_checking),
+        cmocka_unit_test(test_busy_text),
     };
 
     return cmocka_run_group_tests_name("tui", tests, NULL, NULL);

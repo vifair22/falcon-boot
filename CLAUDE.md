@@ -509,7 +509,7 @@ falcon-efi and falcon-bios, which never share a set, may both have a `pos/`.
   Stage 3 draws every screen through `src/console/screen.c`, the UEFI console's
   calls one for one (`screen_page` is `menu_screen`, `screen_menu` is
   `menu_run_keys`, `screen_menu_tagged` is `menu_run_probed`: tag columns,
-  filled by a per-row probe as the rows first come into view) over core's
+  filled by a per-row probe a row at a time once the page is drawn) over core's
   `tui`: cells and colours go straight into
   VGA text memory, and serial gets the ANSI sequences OVMF's terminal sends
   for the same calls, so the coverage harness reads both loaders one way.
@@ -561,8 +561,11 @@ in the same commit. Where the platforms really differ (no trust tags, no
 firmware-setup row, no status code on BIOS) the screen leaves the part out
 rather than saying something else. The platform tags are each loader's own
 (`{BIOS ONLY}` on UEFI, `{EFI ONLY}` and `{64-BIT ONLY}` on BIOS), in the
-same column and colours, and both menus probe a row as it first comes into
-view rather than before the menu.
+same column and colours. Both menus draw a page first and then probe its
+rows one at a time, `...` in a row's tag column until it is filled and
+`checking k of n` in the key line, with the keys read between rows; every
+loader says each startup step on the page's first row (`menu_busy`,
+`screen_busy`) until its menu is up (DESIGN Section 7.8).
 
 The pattern every route follows: its code, a page, `booting: <label>`; the
 route's own lines up to the handover; and when it comes back, a new page

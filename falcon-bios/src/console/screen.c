@@ -251,6 +251,19 @@ void screen_page(void)
     hw_cursor_at(g_cur_row, g_cur_col);
 }
 
+/* One line at tui_page_row, overwritten by the next: the screen is whatever
+ * screen_page left, and nothing else on it moves. */
+void screen_busy(const uint16_t *step)
+{
+    uint16_t text[TUI_ROW_MAX + 1u];
+
+    tui_busy_text(text, sizeof text / sizeof text[0], step);
+    tui_row_text(g_row, g_frame.width, text);
+    emit_row(tui_page_row(&g_frame), g_frame.left, TUI_ATTR_TEXT);
+    ser_attr(TUI_ATTR_TEXT);
+    ser_goto(g_cur_row, g_cur_col);
+}
+
 void screen_mode(const char *code)
 {
     g_mode = code;
@@ -396,6 +409,11 @@ typedef struct {
     const uint16_t        *empty;
     size_t                 sig_w;
     size_t                 why_w;
+    /* How far the probe has got through the window on screen: the key line
+     * says "checking done+1 of total" while a row in it is unprobed. */
+    size_t                 pend_top;
+    size_t                 pend_total;
+    size_t                 pend_done;
 } menu_view;
 
 static size_t len16(const uint16_t *s)
@@ -409,33 +427,88 @@ static size_t len16(const uint16_t *s)
     return n;
 }
 
-/* Before a window is painted whole: the rows in it that have not been
- * probed are, and the tag columns are sized to the window, so a page is
- * laid out by what is on it. */
-static void window_prepare(menu_view *v, size_t top)
+/* A row the probe has not reached yet: its tags are not known, so it shows
+ * the placeholder in the first tag column instead of what the row holds. */
+static int pending(const menu_view *v, size_t idx)
+{
+    return v->rows != (const screen_rows *)0 &&
+           v->rows->tags != (screen_tags *)0 &&
+           v->rows->probe != (screen_probe_fn)0 && !v->rows->tags[idx].probed;
+}
+
+/* The tag columns, sized to the window on screen, so a page is laid out by
+ * what is on it; a row not probed yet counts as its placeholder. Says
+ * whether either width changed, which is when the whole window is
+ * repainted rather than the one row a probe filled. */
+static int window_widths(menu_view *v, size_t top)
+{
+    size_t sig_w = 0;
+    size_t why_w = 0;
+    size_t i;
+    int changed;
+
+    if (v->rows != (const screen_rows *)0 &&
+        v->rows->tags != (screen_tags *)0) {
+        for (i = top; i < top + v->m.win && i < v->count; i++) {
+            const screen_tags *t = &v->rows->tags[i];
+            size_t a;
+            size_t b = 0;
+
+            if (pending(v, i)) {
+                a = len16(tui_tag_pending);
+            } else {
+                a = len16(t->sig);
+                b = len16(t->why);
+            }
+            if (a > sig_w)
+                sig_w = a;
+            if (b > why_w)
+                why_w = b;
+        }
+    }
+    changed = sig_w != v->sig_w || why_w != v->why_w;
+    v->sig_w = sig_w;
+    v->why_w = why_w;
+    return changed;
+}
+
+/* The first row in the window the probe has not reached, or count. Top to
+ * bottom, the order the page is read in. */
+static size_t window_next(const menu_view *v, size_t top)
 {
     size_t i;
 
-    v->sig_w = 0;
-    v->why_w = 0;
-    if (v->rows == (const screen_rows *)0 ||
-        v->rows->tags == (screen_tags *)0)
-        return;
     for (i = top; i < top + v->m.win && i < v->count; i++) {
-        screen_tags *t = &v->rows->tags[i];
-        size_t a;
-        size_t b;
-
-        if (!t->probed && v->rows->probe != (screen_probe_fn)0)
-            v->rows->probe(v->rows->ctx, i, t);
-        t->probed = 1;
-        a = len16(t->sig);
-        b = len16(t->why);
-        if (a > v->sig_w)
-            v->sig_w = a;
-        if (b > v->why_w)
-            v->why_w = b;
+        if (pending(v, i))
+            return i;
     }
+    return v->count;
+}
+
+/* A window shown for the first time starts the count again. */
+static void window_count(menu_view *v, size_t top)
+{
+    size_t i;
+
+    if (v->pend_top == top && v->pend_total != 0)
+        return;
+    v->pend_top = top;
+    v->pend_total = 0;
+    v->pend_done = 0;
+    for (i = top; i < top + v->m.win && i < v->count; i++) {
+        if (pending(v, i))
+            v->pend_total++;
+    }
+}
+
+static void paint_checking(const menu_view *v)
+{
+    uint16_t text[80];
+
+    tui_hint_checking(text, sizeof text / sizeof text[0], v->pend_done + 1u,
+                      v->pend_total);
+    tui_row_text(g_row, v->m.width, text);
+    emit_row(v->m.hint_row, v->m.left, TUI_ATTR_TEXT);
 }
 
 static void paint_slot(const menu_view *v, size_t slot, size_t top,
@@ -449,12 +522,14 @@ static void paint_slot(const menu_view *v, size_t slot, size_t top,
                                 v->rows->tags != (screen_tags *)0)
                                    ? &v->rows->tags[idx]
                                    : (const screen_tags *)0;
+        int p = pending(v, idx);
 
         tui_row_entry(g_row, m->list_width, v->labels[idx],
-                      t != (const screen_tags *)0 ? t->sig
-                                                  : (const uint16_t *)0,
-                      t != (const screen_tags *)0 ? t->why
-                                                  : (const uint16_t *)0,
+                      p ? tui_tag_pending
+                        : t != (const screen_tags *)0 ? t->sig
+                                                      : (const uint16_t *)0,
+                      (p || t == (const screen_tags *)0) ? (const uint16_t *)0
+                                                         : t->why,
                       v->sig_w, v->why_w);
         emit_row(m->list_top + slot, m->list_left,
                  tui_entry_attr(t != (const screen_tags *)0 && t->caution,
@@ -591,6 +666,11 @@ static int menu_loop(const screen_banner *banner,
     v.count = count;
     v.rows = rows;
     v.empty = empty;
+    v.sig_w = 0;
+    v.why_w = 0;
+    v.pend_top = 0;
+    v.pend_total = 0;
+    v.pend_done = 0;
     tui_menu_layout(&g_frame, count, mp);
     screen_cursor(0);
     clear();
@@ -601,12 +681,14 @@ static int menu_loop(const screen_banner *banner,
 
     for (;;) {
         size_t i;
+        size_t next;
         int key;
 
         if (tui_menu_scroll(&top, sel, mp->win))
             full = 1;
         if (full) {
-            window_prepare(&v, top);
+            (void)window_widths(&v, top);
+            window_count(&v, top);
             for (i = 0; i < mp->win; i++)
                 paint_slot(&v, i, top, sel);
             full = 0;
@@ -615,6 +697,29 @@ static int menu_loop(const screen_banner *banner,
             paint_slot(&v, sel - top, top, sel);
         }
         painted = sel;
+
+        /* Rows in the window not looked inside yet: one per pass, with the
+         * page already on screen and the keys read between rows, so neither
+         * the page nor a keystroke ever waits on a whole window of probes.
+         * A tagged menu has no countdown, so the key line is free to say how
+         * far it has got. */
+        next = window_next(&v, top);
+        if (next < count) {
+            paint_checking(&v);
+            rows->probe(rows->ctx, next, &rows->tags[next]);
+            rows->tags[next].probed = 1;
+            v.pend_done++;
+            if (window_widths(&v, top))
+                full = 1;
+            else
+                paint_slot(&v, next - top, top, sel);
+            if (window_next(&v, top) >= count) {
+                tui_row_text(g_row, mp->width, line);
+                emit_row(mp->hint_row, mp->left, TUI_ATTR_TEXT);
+            }
+            if (!key_waiting())
+                continue;
+        }
 
         /* The countdown runs until it ends or a key arrives, whichever is
          * first; a key stops it for good, and is then taken as any key is. */

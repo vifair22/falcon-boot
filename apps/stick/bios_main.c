@@ -247,7 +247,10 @@ static size_t view_build(void)
         g_tags[i].sig = (const uint16_t *)0;
         g_tags[i].why = (const uint16_t *)0;
         g_tags[i].caution = 0;
-        g_tags[i].probed = 0;
+        /* Only an image row has anything to look inside; every other row
+         * is done as built, so it neither shows the pending placeholder nor
+         * counts in the menu's "checking k of n". */
+        g_tags[i].probed = 1;
     }
 
     if (g_cur_len == 0u) {
@@ -267,6 +270,14 @@ static size_t view_build(void)
         g_labels[n] = g_view[i].label;
         g_kind[n] = (g_view[i].kind == SURVEY_ROW_DIR) ? ROW_DIR : ROW_IMAGE;
         g_row_index[n] = (size_t)g_view[i].index;
+        /* An image already looked inside, on an earlier screen, has its
+         * answer kept: its tags are filled here and the menu skips it. */
+        if (g_kind[n] == ROW_IMAGE) {
+            if (g_probe[g_row_index[n]].done)
+                row_probe((void *)0, n, &g_tags[n]);
+            else
+                g_tags[n].probed = 0;
+        }
         n++;
     }
     return n;
@@ -446,10 +457,16 @@ static void boot_target(const survey_entry *e, const family_desc *fam)
 static void boot_plain(size_t idx, int which)
 {
     const survey_entry *e = &g_survey.entries[idx];
-    const entry_probe *p = probe_entry(idx);
+    const entry_probe *p;
     const family_desc *fam;
     int chain = (which == 'c');
     int id;
+
+    /* Looking inside the medium reads it, and the menu is still up: say so
+     * rather than leave it frozen until the route's page. */
+    screen_page();
+    screen_busy(tui_busy_image);
+    p = probe_entry(idx);
 
     /* Every key, c included: the chainload wants a BIOS boot image this
      * medium does not have, and direct a kernel it does not carry, or one
@@ -748,14 +765,18 @@ static void claim_roles(bios_disk *d, const part_table *t)
         bios_puts("\n");
         if (!mine)
             continue;
-        if (rec.role == IDENT_ROLE_SHELF && g_p3_part == (const part_entry *)0 &&
-            pos_probe(d, p)) {
-            g_p3_part = p;
-            g_p3_disk = d;
+        if (rec.role == IDENT_ROLE_SHELF && g_p3_part == (const part_entry *)0) {
+            screen_busy(tui_busy_shelf);
+            if (pos_probe(d, p)) {
+                g_p3_part = p;
+                g_p3_disk = d;
+            }
         } else if (rec.role == IDENT_ROLE_LIBRARY && !encrypted &&
                    g_p2_part == (const part_entry *)0) {
+            screen_busy(tui_busy_library);
             scan_iso_partition(d, p);
         }
+        screen_busy(tui_busy_disks);
     }
 }
 
@@ -880,6 +901,12 @@ void bios_main(uint8_t drive)
 
     bios_puts("falcon-bios: C is running in protected mode\n");
     show_memory();
+    /* The screen first, so every startup step can say itself on it: a slow
+     * disk or a large library shows where the time goes rather than leaving
+     * the BIOS's own text up. */
+    screen_init();
+    screen_page();
+    screen_busy(tui_busy_disks);
 
     if (!bios_disk_probe(&g_disks[0], drive))
         bios_puts("falcon-bios: the boot drive did not answer AH=48h\n");
@@ -910,7 +937,6 @@ void bios_main(uint8_t drive)
 
     g_cpu64 = linux_cpu_is_64();
     bios_puts("falcon-bios: done\n");
-    screen_init();
     install_notice();
     next_boot_run();
     menu_run();

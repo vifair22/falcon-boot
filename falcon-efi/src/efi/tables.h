@@ -110,7 +110,10 @@ struct EFI_BOOT_SERVICES {
                                       UINTN *Index);
     void *SignalEvent;
     EFI_STATUS (EFIAPI *CloseEvent)(EFI_EVENT Event);
-    void *CheckEvent;
+    /* The menu's key and tick poll while it fills a page's tags a row at a
+     * time (console/menu.c): EFI_SUCCESS when signalled, EFI_NOT_READY
+     * when not. */
+    EFI_STATUS (EFIAPI *CheckEvent)(EFI_EVENT Event);
 
     /* Protocol handler */
     /* InterfaceType 0 is EFI_NATIVE_INTERFACE, the only one there is. */

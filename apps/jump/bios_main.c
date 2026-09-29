@@ -388,11 +388,17 @@ void bios_main(uint8_t drive)
     bios_put_dec(n);
     bios_puts(" E820 entries\n");
 
+    /* The screen first, so every startup step can say itself on it: a
+     * floppy takes seconds to read, and the BIOS's own text would otherwise
+     * stay up the whole time. */
+    screen_init();
+    screen_page();
+    screen_busy(tui_busy_floppy);
     read_floppy(drive);
     jroute_init(g_have_vol ? &g_vol : (fs_vol *)0, "floppy");
+    screen_busy(tui_busy_disks);
     scan_disks();
 
-    screen_init();
     if (g_cfg.err_line != 0)
         report_ini();
     list_run();

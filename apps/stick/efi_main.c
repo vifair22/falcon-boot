@@ -25,6 +25,7 @@
 #include <lib/string.h>
 #include <lib/ucs2.h>
 #include <console/menu.h>
+#include <tui/tui.h>
 #include <pos/pos.h>
 #include <trust/probe.h>
 #include <secboot/sb.h>
@@ -609,12 +610,14 @@ static void up_label(CHAR16 *dst, const CHAR16 *cur)
 /* A view row's tag columns: an image row carries its list entry's, every
  * other row (folders, "..", the personal OS, firmware setup) starts with none.
  * Set on every row, because the view array is pool memory rewritten per
- * folder and a stale tag would draw on the row that inherited its slot. The
- * row starts unprobed, so the menu asks row_probe for it before drawing it,
- * which fills an image row the target has not yet been looked inside for. */
+ * folder and a stale tag would draw on the row that inherited its slot. An
+ * image row whose target has not been looked inside is left unprobed, so the
+ * menu shows it pending and asks row_probe for it; every other row has
+ * nothing to look inside and is marked done, so it neither shows the
+ * placeholder nor counts in the menu's "checking k of n". */
 static void row_tags(menu_entry *row, const iso_target *from)
 {
-    row->probed = 0;
+    row->probed = (from == (const iso_target *)0 || from->probed) ? 1u : 0u;
     if (from == (const iso_target *)0) {
         row->sig[0] = 0;
         row->why[0] = 0;
@@ -1399,9 +1402,14 @@ static void boot_bios_only(const CHAR16 *label)
 static BOOLEAN boot_plain(EFI_HANDLE image_handle, const CHAR16 *label,
                           iso_target *t, boot_route route)
 {
-    /* A row the menu drew was looked inside then; one it did not (the
-     * next-boot marker's) is looked inside now, since nothing yet knows
-     * whether it is Windows media or BIOS-only. */
+    /* A row the menu has looked inside is known; one it has not (chosen
+     * before the menu reached it, or the next-boot marker's) is looked
+     * inside now, since nothing yet knows whether it is Windows media or
+     * BIOS-only, and says so rather than leaving the menu frozen. */
+    if (!t->probed) {
+        menu_screen(g_st);
+        menu_busy(g_st, tui_busy_image);
+    }
     target_probe(t);
 
     /* Every route, c included: the chainload wants the UEFI boot image this
@@ -1775,7 +1783,10 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
                 SURVEY_ACCEPT_ISO | SURVEY_ACCEPT_IMG | SURVEY_ACCEPT_EFI);
 
     /* Before the banner, which names what the stores trust, and before the
-     * probes, which predict against them (DESIGN Section 7.8). */
+     * probes, which predict against them (DESIGN Section 7.8). Each startup
+     * step says itself on the page's first row, so a slow machine shows
+     * where the time goes (the permissive notice starts a row below it). */
+    menu_busy(st, tui_busy_keys);
     trust_stores_load(st, image_handle, &g_stores);
     permissive_notice(banner_init(&banner,
                                   L"falcon-boot " WIDEN(FALCON_VERSION)));
@@ -1783,15 +1794,18 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
     /* One pass over the Block I/O handles for the whole loader (DESIGN
      * Section 9): media, LUKS2 magic, filesystem and identity record for
      * every device, before any consumer looks at one. */
+    menu_busy(st, tui_busy_disks);
     discover_scan(st, image_handle);
     install_notice();
 
     /* Header probe only: it reads a block and parses metadata, and never asks
      * for a passphrase, so the entry's presence costs the user nothing and
      * promises nothing about whether they know the passphrase. */
+    menu_busy(st, tui_busy_shelf);
     if (pos_scan(st) != 0)
         pinned = 1;
 
+    menu_busy(st, tui_busy_library);
     scan_all_volumes(&list, &vols);
     /* Sort first: every index into targets, and the order the menu probes
      * rows in, is the path order. */

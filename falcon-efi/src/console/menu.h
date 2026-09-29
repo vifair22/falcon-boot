@@ -63,6 +63,11 @@ void menu_out(EFI_SYSTEM_TABLE *st, const CHAR16 *s);
  * code must outlive the boot (a literal). Null stops drawing it. */
 void menu_mode(EFI_SYSTEM_TABLE *st, const CHAR16 *code);
 
+/* "<step>..." on the page's first row, replacing whatever step was there
+ * (falcon-core's tui_busy_*): what the loader is doing while no menu is up.
+ * Call menu_screen first. */
+void menu_busy(EFI_SYSTEM_TABLE *st, const CHAR16 *step);
+
 /* Blocks until the user commits. Returns the selected entry index, or a
  * negative value if the user backed out (ESC). */
 INTN menu_run(EFI_SYSTEM_TABLE *st, const menu_banner *banner,
@@ -118,9 +123,9 @@ INTN menu_run_timed(EFI_SYSTEM_TABLE *st, const menu_banner *banner,
                     const menu_keys *keys, CHAR16 *which, UINTN sel,
                     UINTN seconds, const menu_status *status);
 
-/* Fills row idx's tag columns. The menu calls it once per row, the first
- * time the row is about to be drawn, so a menu of many rows pays only for
- * the ones it shows (DESIGN Section 7.8, lazy probing). */
+/* Fills row idx's tag columns. The menu calls it once per unprobed row, the
+ * first time the row is on screen, so a menu of many rows pays only for the
+ * ones it shows (DESIGN Section 7.8, lazy probing). */
 typedef void (*menu_probe_fn)(void *ctx, UINTN idx, menu_entry *e);
 
 typedef struct {
@@ -128,12 +133,14 @@ typedef struct {
     void         *ctx;
 } menu_probe;
 
-/* menu_run_keys with the rows' tags filled as they come into view: before a
- * window of rows is painted (the first draw, and every repaint a scroll
- * causes) the rows in it not yet probed are, and the tag columns are sized
- * to that window's widest tags. A highlight move within the window probes
- * nothing. probe may be NULL, which is menu_run_keys, with the columns
- * still sized per window. */
+/* menu_run_keys with the rows' tags filled as they come into view. A window
+ * is painted at once, its unprobed rows showing tui_tag_pending, and then
+ * probed a row at a time top to bottom, each row repainted as it is filled
+ * (the whole window when a tag column widens) and the keys read between
+ * rows; the key line says "checking k of n" until the window is done. A
+ * row the caller built with probed set is never probed and never pending.
+ * The tag columns are sized to the window's widest tags. probe may be NULL,
+ * which is menu_run_keys, with the columns still sized per window. */
 INTN menu_run_probed(EFI_SYSTEM_TABLE *st, const menu_banner *banner,
                      menu_entry *entries, UINTN count, const menu_keys *keys,
                      CHAR16 *which, const menu_probe *probe);

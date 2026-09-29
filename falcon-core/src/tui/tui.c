@@ -18,6 +18,64 @@ const uint16_t tui_hint_plain[] =
     u"up/down select | enter choose | esc back";
 const uint16_t tui_hint_empty[] = u"no entries | esc back";
 const uint16_t tui_list_empty[] = u"(no ISOs found on the exFAT partition)";
+const uint16_t tui_tag_pending[] = u"...";
+
+static size_t put_dec(uint16_t *dst, size_t at, size_t cap, size_t v)
+{
+    uint16_t d[20];
+    size_t n = 0;
+
+    do {
+        d[n++] = (uint16_t)(u'0' + v % 10u);
+        v /= 10u;
+    } while (v != 0 && n < sizeof d / sizeof d[0]);
+    while (n > 0 && at + 1u < cap)
+        dst[at++] = d[--n];
+    return at;
+}
+
+static size_t put_str(uint16_t *dst, size_t at, size_t cap,
+                      const uint16_t *s)
+{
+    while (*s != 0 && at + 1u < cap)
+        dst[at++] = *s++;
+    return at;
+}
+
+const uint16_t tui_busy_disks[]   = u"finding disks";
+const uint16_t tui_busy_keys[]    = u"reading the Secure Boot keys";
+const uint16_t tui_busy_shelf[]   = u"reading the shelf";
+const uint16_t tui_busy_library[] = u"reading the ISO library";
+const uint16_t tui_busy_tpm[]     = u"reading the TPM";
+const uint16_t tui_busy_entries[] = u"finding boot entries";
+const uint16_t tui_busy_floppy[]  = u"reading the floppy";
+const uint16_t tui_busy_image[]   = u"checking the image";
+
+void tui_busy_text(uint16_t *dst, size_t cap, const uint16_t *step)
+{
+    size_t at = 0;
+
+    if (cap == 0)
+        return;
+    if (step != (const uint16_t *)0)
+        at = put_str(dst, at, cap, step);
+    at = put_str(dst, at, cap, u"...");
+    dst[at] = 0;
+}
+
+void tui_hint_checking(uint16_t *dst, size_t cap, size_t k, size_t n)
+{
+    size_t at = 0;
+
+    if (cap == 0)
+        return;
+    at = put_str(dst, at, cap, u"checking ");
+    at = put_dec(dst, at, cap, k);
+    at = put_str(dst, at, cap, u" of ");
+    at = put_dec(dst, at, cap, n);
+    at = put_str(dst, at, cap, u" | esc back");
+    dst[at] = 0;
+}
 
 uint8_t tui_entry_attr(int caution, int selected)
 {

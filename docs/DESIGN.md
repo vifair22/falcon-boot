@@ -2078,18 +2078,45 @@ unmarked (the next-boot marker, a row not yet drawn): an amd64 kernel on a
 processor without long mode is refused with the same sentence, as
 `linux_boot` refuses a 64-bit kernel.
 
-#### Lazy probing (decided 2026-09-27)
+#### Lazy probing (decided 2026-09-27, filled a row at a time 2026-09-29)
 
-Both menus look inside an entry when its row is first about to be drawn,
-not before the menu appears. The menu (`menu_run_probed` in
+Both menus look inside an entry once its row is on screen, not before the
+menu appears. The menu (`menu_run_probed` in
 falcon-efi/src/console/menu.c, `screen_menu_tagged` in
-falcon-bios/src/console/screen.c) takes a per-row probe callback; before it
-paints a window of rows, on the first draw and on every repaint a scroll
-causes, it calls the probe for each row in the window not yet probed, then
-sizes the tag columns to that window's widest tags, then paints. The first
-page waits for its rows. Moving the highlight within a window probes
+falcon-bios/src/console/screen.c) takes a per-row probe callback. A window
+of rows is painted at once, every row not yet probed showing `...` in its
+first tag column (core's `tui_tag_pending`), and then the menu probes those
+rows one per pass of its loop, top to bottom, repainting each as it is
+filled, or the whole window when a tag column widens, since the columns are
+sized to the window's widest tags. The keys are read between rows, so a
+keystroke never waits on more than the one probe under way, and the key
+line says `checking k of n | esc back` until the window is done. A row the
+caller builds with nothing to look inside (a folder, `..`, the personal OS,
+firmware setup) or already looked inside on an earlier screen is built
+probed, and is never pending. Moving the highlight within a window probes
 nothing. A menu with no callback (the station, the personal-OS chooser,
 falcon jump) draws as it always did.
+
+The first version (2026-09-27) probed the whole window before painting it,
+so the first page waited for its rows with the list area empty and no key
+read: on real hardware, a folder of ISOs off a USB 2 stick looked hung.
+
+Enter on a row still pending looks inside it before the route's page,
+under `checking the image...` (below), rather than with the menu frozen.
+
+#### Startup steps (2026-09-29)
+
+Every loader says what it is doing between its first screen and its menu,
+one line at the page's first row (`menu_busy`, `screen_busy`, core's
+`tui_busy_*`), each step overwriting the last: `reading the Secure Boot
+keys`, `finding disks`, `reading the shelf`, `reading the ISO library`,
+`reading the TPM` (the UEFI station with `[totp]`), `finding boot entries`
+(the stations) and `reading the floppy` (falcon jump). The BIOS loaders set
+the screen up before their disk scans for this, where they used to set it
+up after. The line is also the only clue on a machine where one step is
+slow, which is how the slow one is found. falcon jump's CD, USB and CF
+routes say each module load and device bring-up on the route's page the
+same way (`loading ATA.MOD...`, `looking for a falcon stick...`).
 
 This replaced `PROBE_LIMIT` (256 on the UEFI loader), which probed that many
 media before the menu and left the rest with a `[?]` bracket until chosen.
@@ -2888,7 +2915,7 @@ alone (`media/medium.c` over the p2 file): nothing is published to the
 firmware to build the menu. No medium is looked inside before the menu:
 `target_probe` (`medium_open`, `family_detect`, the loader's PE signature,
 `trust_probe`, and with no loader `uefiboot_medium` for `{BIOS ONLY}`) runs
-from the menu as each row is first drawn (7.8, lazy probing).
+from the menu, a row at a time once the page is drawn (7.8, lazy probing).
 
 The only failure before the menu is the pool allocation. A missing p2 or p3
 gives a shorter menu, not an error. A boot partition with no readable

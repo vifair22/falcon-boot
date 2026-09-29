@@ -198,4 +198,28 @@ extern const uint16_t tui_hint_plain[];
 extern const uint16_t tui_hint_empty[];
 extern const uint16_t tui_list_empty[];
 
+/* A row whose tags are still being read shows tui_tag_pending in its first
+ * tag column, and the key line says how far the menu has got through the
+ * rows on screen: "checking k of n | esc back", written into dst (cap
+ * units, terminated, clipped). Both loaders fill a page this way, a row at a
+ * time with keys read between rows, so the page is drawn before any row is
+ * looked inside. */
+extern const uint16_t tui_tag_pending[];
+void tui_hint_checking(uint16_t *dst, size_t cap, size_t k, size_t n);
+
+/* What a loader is doing while nothing else is on screen: startup, before
+ * its menu, and a row being looked inside after Enter. Drawn as one line at
+ * tui_page_row, "<step>...", each step overwriting the last (menu_busy,
+ * screen_busy), so a slow machine shows where the time goes. tui_busy_text
+ * composes the line into dst (cap units, terminated, clipped). */
+extern const uint16_t tui_busy_disks[];
+extern const uint16_t tui_busy_keys[];
+extern const uint16_t tui_busy_shelf[];
+extern const uint16_t tui_busy_library[];
+extern const uint16_t tui_busy_tpm[];
+extern const uint16_t tui_busy_entries[];
+extern const uint16_t tui_busy_floppy[];
+extern const uint16_t tui_busy_image[];
+void tui_busy_text(uint16_t *dst, size_t cap, const uint16_t *step);
+
 #endif /* FALCON_TUI_H */

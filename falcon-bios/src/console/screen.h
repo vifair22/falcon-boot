@@ -42,6 +42,11 @@ void screen_raw(const char *s);
  * right now and by every screen_page after it. A literal, or NULL to stop. */
 void screen_mode(const char *code);
 
+/* "<step>..." on the page's first row, replacing whatever step was there
+ * (falcon-core's tui_busy_*): what the loader is doing while no menu is up.
+ * Call screen_init and screen_page first. */
+void screen_busy(const uint16_t *step);
+
 typedef struct {
     const uint16_t *title;
     const uint16_t *state;     /* NULL to draw the title alone */
@@ -69,8 +74,8 @@ typedef struct {
     uint8_t         probed;
 } screen_tags;
 
-/* Fills row idx's tags. The menu calls it once per row, the first time the
- * row is about to be drawn, so a menu of many rows pays only for the ones
+/* Fills row idx's tags. The menu calls it once per unprobed row, the first
+ * time the row is on screen, so a menu of many rows pays only for the ones
  * it shows (DESIGN Section 7.8, lazy probing). */
 typedef void (*screen_probe_fn)(void *ctx, size_t idx, screen_tags *tags);
 
@@ -80,10 +85,13 @@ typedef struct {
     void           *ctx;
 } screen_rows;
 
-/* screen_menu with tag columns. Before a window of rows is painted (the
- * first draw, and every repaint a scroll causes) the rows in it that have
- * not been probed are, and the columns are sized to that window's widest
- * tags. A highlight move within the window probes nothing. rows may be NULL,
+/* screen_menu with tag columns, the UEFI menu_run_probed. A window is
+ * painted at once, its unprobed rows showing tui_tag_pending, and then
+ * probed a row at a time top to bottom, each row repainted as it is filled
+ * (the whole window when a tag column widens) and the keys read between
+ * rows; the key line says "checking k of n" until the window is done. A
+ * row the caller built with probed set is never probed and never pending.
+ * The columns are sized to the window's widest tags. rows may be NULL,
  * which is screen_menu. */
 int screen_menu_tagged(const screen_banner *banner,
                        const uint16_t *const *labels, size_t count,

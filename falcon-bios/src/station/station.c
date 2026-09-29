@@ -468,7 +468,9 @@ static void find_chains(void)
 static void build_rows(void)
 {
     strows_init(&g_rows);
+    screen_busy(tui_busy_shelf);
     find_shelves();
+    screen_busy(tui_busy_entries);
     find_chains();
     if (g_app->rows != 0)
         g_app->rows(&g_rows, g_have_vol ? &g_svol : (fs_vol *)0);
@@ -864,11 +866,16 @@ void station_main(uint8_t drive, const station_app *app)
     bios_put_dec(n);
     bios_puts(" E820 entries\n");
 
+    /* The screen first, so every startup step can say itself on it: a slow
+     * disk shows where the time goes rather than leaving the BIOS's own text
+     * up. */
+    screen_init();
+    screen_page();
+    screen_busy(tui_busy_disks);
     scan_disks(drive);
     read_station();
     build_rows();
 
-    screen_init();
     install_notice();
     ini_notice();
     next_boot_run();

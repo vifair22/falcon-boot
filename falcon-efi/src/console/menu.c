@@ -64,6 +64,11 @@ typedef struct {
      * menu_run_probed; NULL for every other caller. */
     menu_entry       *rows;
     const menu_probe *probe;
+    /* How far the probe has got through the window on screen: the key line
+     * says "checking done+1 of total" while a row in it is unprobed. */
+    UINTN             pend_top;
+    UINTN             pend_total;
+    UINTN             pend_done;
     /* The status lines under the banner, and what they were last drawn
      * as, for menu_run_timed; status NULL for every other caller. */
     const menu_status *status;
@@ -90,9 +95,21 @@ static void draw_row(EFI_SYSTEM_TABLE *st, UINTN row, UINTN left, UINTN w,
     emit_row(st, row, left);
 }
 
-static void draw_entry(const menu_view *v, UINTN row, const menu_entry *e)
+/* A row the probe has not reached yet: its tags are not known, so it shows
+ * the placeholder in the first tag column instead of what the row holds. */
+static BOOLEAN pending(const menu_view *v, UINTN idx)
 {
-    tui_row_entry(g_row, v->m.list_width, e->label, e->sig, e->why,
+    return v->rows != (menu_entry *)0 && v->probe != (const menu_probe *)0 &&
+           v->probe->fn != (menu_probe_fn)0 && !v->rows[idx].probed;
+}
+
+static void draw_entry(const menu_view *v, UINTN row, UINTN idx)
+{
+    const menu_entry *e = &v->entries[idx];
+    BOOLEAN p = pending(v, idx);
+
+    tui_row_entry(g_row, v->m.list_width, e->label,
+                  p ? tui_tag_pending : e->sig, p ? (const CHAR16 *)L"" : e->why,
                   v->sig_w, v->why_w);
     emit_row(v->st, row, v->m.list_left);
 }
@@ -217,6 +234,22 @@ void menu_screen(EFI_SYSTEM_TABLE *st)
     mode_draw(st);
 }
 
+/* One line at tui_page_row, overwritten by the next: the screen is whatever
+ * menu_screen left, and nothing else on it moves. */
+void menu_busy(EFI_SYSTEM_TABLE *st, const CHAR16 *step)
+{
+    CHAR16 text[TUI_ROW_MAX + 1u];
+
+    if (st == (void *)0) {
+        return;
+    }
+    frame_ensure(st);
+    tui_busy_text(text, sizeof text / sizeof text[0], step);
+    st->ConOut->SetAttribute(st->ConOut, TUI_ATTR_TEXT);
+    draw_row(st, tui_page_row(&g_frame.f), g_frame.f.left, g_frame.f.width,
+             text);
+}
+
 void menu_mode(EFI_SYSTEM_TABLE *st, const CHAR16 *code)
 {
     g_mode = code;
@@ -335,7 +368,7 @@ static void paint_slot(const menu_view *v, UINTN slot, UINTN top, UINTN sel)
 
         v->st->ConOut->SetAttribute(v->st->ConOut,
                                     tui_entry_attr(e->caution, idx == sel));
-        draw_entry(v, v->m.list_top + slot, e);
+        draw_entry(v, v->m.list_top + slot, idx);
     } else {
         v->st->ConOut->SetAttribute(v->st->ConOut, TUI_ATTR_TEXT);
         draw_row(v->st, v->m.list_top + slot, v->m.list_left,
@@ -473,32 +506,75 @@ static void status_refresh(menu_view *v, BOOLEAN all)
     v->shown = now;
 }
 
-/* Before a window is painted whole: the rows in it that have not been
- * probed are, and the tag columns are sized to the window, so a page is laid
- * out by what is on it. */
-static void window_prepare(menu_view *v, UINTN top)
+/* The tag columns, sized to the window on screen, so a page is laid out by
+ * what is on it; a row not probed yet counts as its placeholder. Says
+ * whether either width changed, which is when the whole window is
+ * repainted rather than the one row a probe filled. */
+static BOOLEAN window_widths(menu_view *v, UINTN top)
+{
+    UINTN sig_w = 0;
+    UINTN why_w = 0;
+    UINTN i;
+    BOOLEAN changed;
+
+    for (i = top; i < top + v->m.win && i < v->count; i++) {
+        UINTN a;
+        UINTN b = 0;
+
+        if (pending(v, i)) {
+            a = ucs2_len(tui_tag_pending);
+        } else {
+            a = ucs2_len(v->entries[i].sig);
+            b = ucs2_len(v->entries[i].why);
+        }
+        if (a > sig_w)
+            sig_w = a;
+        if (b > why_w)
+            why_w = b;
+    }
+    changed = sig_w != v->sig_w || why_w != v->why_w;
+    v->sig_w = sig_w;
+    v->why_w = why_w;
+    return changed;
+}
+
+/* The first row in the window the probe has not reached, or count. Top to
+ * bottom, the order the page is read in. */
+static UINTN window_next(const menu_view *v, UINTN top)
 {
     UINTN i;
 
-    v->sig_w = 0;
-    v->why_w = 0;
     for (i = top; i < top + v->m.win && i < v->count; i++) {
-        UINTN a;
-        UINTN b;
-
-        if (v->rows != (menu_entry *)0 && !v->rows[i].probed) {
-            if (v->probe != (const menu_probe *)0 &&
-                v->probe->fn != (menu_probe_fn)0)
-                v->probe->fn(v->probe->ctx, i, &v->rows[i]);
-            v->rows[i].probed = 1;
-        }
-        a = ucs2_len(v->entries[i].sig);
-        b = ucs2_len(v->entries[i].why);
-        if (a > v->sig_w)
-            v->sig_w = a;
-        if (b > v->why_w)
-            v->why_w = b;
+        if (pending(v, i))
+            return i;
     }
+    return v->count;
+}
+
+/* A window shown for the first time starts the count again. */
+static void window_count(menu_view *v, UINTN top)
+{
+    UINTN i;
+
+    if (v->pend_top == top && v->pend_total != 0)
+        return;
+    v->pend_top = top;
+    v->pend_total = 0;
+    v->pend_done = 0;
+    for (i = top; i < top + v->m.win && i < v->count; i++) {
+        if (pending(v, i))
+            v->pend_total++;
+    }
+}
+
+static void paint_checking(const menu_view *v)
+{
+    CHAR16 text[80];
+
+    tui_hint_checking(text, sizeof text / sizeof text[0],
+                      v->pend_done + 1u, v->pend_total);
+    v->st->ConOut->SetAttribute(v->st->ConOut, TUI_ATTR_TEXT);
+    draw_row(v->st, v->m.hint_row, v->m.left, v->m.width, text);
 }
 
 static INTN run(EFI_SYSTEM_TABLE *st, const menu_banner *banner,
@@ -579,6 +655,9 @@ static INTN run(EFI_SYSTEM_TABLE *st, const menu_banner *banner,
     tui_menu_layout_status(&g_frame.f, count, nstatus, &v.m);
     v.sig_w = 0;
     v.why_w = 0;
+    v.pend_top = 0;
+    v.pend_total = 0;
+    v.pend_done = 0;
 
     st->ConOut->EnableCursor(st->ConOut, FALSE);
     /* The one ClearScreen per screen, and what blanks the margins. Nothing
@@ -604,6 +683,7 @@ static INTN run(EFI_SYSTEM_TABLE *st, const menu_banner *banner,
 
     for (;;) {
         UINTN i;
+        UINTN next;
         EFI_INPUT_KEY key;
         EFI_EVENT events[2];
 
@@ -614,7 +694,8 @@ static INTN run(EFI_SYSTEM_TABLE *st, const menu_banner *banner,
             full = TRUE;
 
         if (full) {
-            window_prepare(&v, top);
+            (void)window_widths(&v, top);
+            window_count(&v, top);
             for (i = 0; i < v.m.win; i++)
                 paint_slot(&v, i, top, sel);
             full = FALSE;
@@ -626,17 +707,47 @@ static INTN run(EFI_SYSTEM_TABLE *st, const menu_banner *banner,
         }
         painted = sel;
 
-        /* A failed wait means there is no console input to wait on, and
-         * the read below would then spin on EFI_NOT_READY forever. Backing
-         * out is what ESC does, which on the main menu hands the machine
-         * back to the firmware's next boot option. */
-        events[0] = st->ConIn->WaitForKey;
-        events[1] = tick;
-        if (st->BootServices->WaitForEvent(tick != (EFI_EVENT)0 ? 2u : 1u,
-                                           events, &i) != EFI_SUCCESS) {
-            countdown_stop(st, &tick);
-            restore_console(st);
-            return -1;
+        /* Rows in the window not looked inside yet: one per pass, with the
+         * page already on screen and the keys read between rows, so neither
+         * the page nor a keystroke ever waits on a whole window of probes.
+         * The key line says how far it has got, unless the countdown has
+         * it. */
+        next = window_next(&v, top);
+        if (next < count) {
+            if (!counting)
+                paint_checking(&v);
+            v.probe->fn(v.probe->ctx, next, &v.rows[next]);
+            v.rows[next].probed = 1;
+            v.pend_done++;
+            if (window_widths(&v, top))
+                full = TRUE;
+            else
+                paint_slot(&v, next - top, top, sel);
+            if (window_next(&v, top) >= count && !counting) {
+                st->ConOut->SetAttribute(st->ConOut, TUI_ATTR_TEXT);
+                draw_row(st, v.m.hint_row, v.m.left, v.m.width, line);
+            }
+            if (tick != (EFI_EVENT)0 &&
+                st->BootServices->CheckEvent(tick) == EFI_SUCCESS)
+                i = 1u;
+            else if (st->BootServices->CheckEvent(st->ConIn->WaitForKey) ==
+                     EFI_SUCCESS)
+                i = 0u;
+            else
+                continue;
+        } else {
+            /* A failed wait means there is no console input to wait on,
+             * and the read below would then spin on EFI_NOT_READY forever.
+             * Backing out is what ESC does, which on the main menu hands
+             * the machine back to the firmware's next boot option. */
+            events[0] = st->ConIn->WaitForKey;
+            events[1] = tick;
+            if (st->BootServices->WaitForEvent(tick != (EFI_EVENT)0 ? 2u : 1u,
+                                               events, &i) != EFI_SUCCESS) {
+                countdown_stop(st, &tick);
+                restore_console(st);
+                return -1;
+            }
         }
 
         /* A second: the status lines are asked again, and the countdown

@@ -656,6 +656,10 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
 
     permissive_notice(banner_init(&banner));
 
+    /* Each startup step says itself on the page's first row, so a slow
+     * machine shows where the time goes (the permissive notice starts a row
+     * below it). */
+    menu_busy(st, tui_busy_disks);
     discover_scan(st, image_handle);
     /* The shelves whose record carries the install ID of the partition this
      * loader started from, on any disk (DESIGN Section 3.1). */
@@ -673,16 +677,21 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
     (void)disks_scan(st);
     esp_connect_all(st);
     g_own = esp_own(st, image_handle);
+    menu_busy(st, tui_busy_shelf);
     (void)pos_scan(st);
 
     ini_read();
     /* Before anything is loaded: a load extends PCR 4, after which the TPM
      * would refuse the seed as if the boot had changed (totp.h). */
-    if (g_have_ini)
+    if (g_have_ini) {
+        if (g_ini.totp.present)
+            menu_busy(st, tui_busy_tpm);
         totp_load(st, &g_ini.totp);
+    }
     pos_set_station_hooks(totp_note, totp_wipe);
     status.fn = totp_status;
     status.ctx = st;
+    menu_busy(st, tui_busy_entries);
     rows_find();
     if (g_have_ini)
         strows_apply(&g_rows, &g_ini, STROWS_UEFI);
