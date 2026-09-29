@@ -702,9 +702,11 @@ static int menu_loop(const screen_banner *banner,
          * page already on screen and the keys read between rows, so neither
          * the page nor a keystroke ever waits on a whole window of probes.
          * A tagged menu has no countdown, so the key line is free to say how
-         * far it has got. */
+         * far it has got. window_next finds a row only when there is a
+         * probe, which the analyzer cannot see through, so rows is checked
+         * here as well. */
         next = window_next(&v, top);
-        if (next < count) {
+        if (next < count && rows != (const screen_rows *)0) {
             paint_checking(&v);
             rows->probe(rows->ctx, next, &rows->tags[next]);
             rows->tags[next].probed = 1;
