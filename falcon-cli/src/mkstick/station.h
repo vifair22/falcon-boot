@@ -26,6 +26,9 @@
 /* The files a station carries (docs/notes/station-rework.md section 10). */
 #define STN_ESP_DIR       "EFI/falcon"
 #define STN_ESP_SHIM      "shimx64.efi"
+/* The loader's name on the ESP: shim's next stage, and with --no-shim the
+ * file the firmware entry names itself. */
+#define STN_ESP_LOADER    "grubx64.efi"
 #define STN_ESP_CERT      "falcon-boot.cer"
 #define STN_ESP_MEMTEST   "memtest.efi"
 #define STN_BIOS_MEMTEST  "MEMTEST.BIN"

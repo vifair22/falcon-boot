@@ -33,6 +33,10 @@
 #   mbr   MBR, 512-byte sectors: an ESP of type 0xEF, a LUKS2 shelf, free
 #         space. `station install --uefi`; falcon's entry names the ESP by
 #         the disk's signature, as a firmware does on an MBR disk.
+#   noshim GPT, 512-byte sectors: an ESP, a LUKS2 shelf, free space.
+#         `station install --uefi --no-shim`; falcon's entry names
+#         \EFI\falcon\grubx64.efi, and with Secure Boot on the test MOK in
+#         db is what verifies it, as the machine's own key does on the T430.
 #
 # The cases:
 #
@@ -70,6 +74,13 @@
 #                 mbr under OVMF: the list has the shelf's UKI and memtest,
 #                 the installer's default (the UKI, a [linux] section)
 #                 counts down to the prompt, and the UKI reports
+#   noshim-uefi, noshim-uefi-sb
+#                 noshim under OVMF, the firmware starting the loader
+#                 itself: the default counts down to the prompt, and the UKI
+#                 reports
+#   noshim-status `station status` on noshim passes: no shim, the loader
+#                 signed by the cert beside it, and the ESP holds no shim or
+#                 MokManager
 #
 # The disks are image files; the 4096-byte-sector ones are written through
 # loop devices, which needs sudo, as do cryptsetup and the installer's
@@ -293,6 +304,22 @@ build_mbr() {
         > "$R/mbr.esp"
 }
 
+build_noshim() {
+    local img=$R/noshim.img
+
+    rm -f "$img"
+    truncate -s 256M "$img"
+    sgdisk -n 1:2048:+64M -t 1:EF00 -c 1:EFI \
+        -n 2:0:+64M -t 2:"$SHELF_GUID" -c 2:FALCON-UKI "$img" >/dev/null
+    mkfs.fat -F 32 --offset 2048 -n SYSTEM "$img" $(( 64 * 1024 )) >/dev/null 2>&1
+    attach "$img"
+    make_shelf "${LOOP}p2"
+    detach
+    install_station noshim "$img" --uefi --no-shim --shelf 2 \
+        --memtest-efi "$STANDIN"
+    part_facts "$img" 1 > "$R/noshim.esp"
+}
+
 build_all() {
     make --no-print-directory station cli "$STANDIN" "$STANDIN_SIGNED" \
         >/dev/null
@@ -302,7 +329,8 @@ build_all() {
         [[ -f "$f" ]] || { echo "ERROR: $f missing (make test-uki sign)" >&2; exit 1; }
     done
     if [[ "${KEEP:-0}" == 1 && -f "$R/gpt.img" && -f "$R/4kn.img" &&
-          -f "$R/mbr4k.img" && -f "$R/gpt2.img" && -f "$R/mbr.img" ]]; then
+          -f "$R/mbr4k.img" && -f "$R/gpt2.img" && -f "$R/mbr.img" &&
+          -f "$R/noshim.img" ]]; then
         return
     fi
     echo "== installing the rig's stations"
@@ -311,6 +339,7 @@ build_all() {
     build_mbr4k
     build_gpt2
     build_mbr
+    build_noshim
 }
 
 # ---- the machine ----
@@ -355,8 +384,8 @@ send_keys() {
 # one, in the disk's own sectors. The device path is the firmware's whole
 # path to the disk: OVMF drops a boot option whose path matches no device
 # QEMU's bootorder lists.
-vars_json() {   # vars_json sata|nvme FACTS WIN [WINFACTS]
-    python3 - "$1" "$2" "$3" "$FALCON_SHIM" "$BOOTMGFW" "$GLOBAL_GUID" \
+vars_json() {   # vars_json sata|nvme FACTS WIN [WINFACTS]; ENTRY: falcon's file
+    python3 - "$1" "$2" "$3" "${ENTRY:-$FALCON_SHIM}" "$BOOTMGFW" "$GLOBAL_GUID" \
         "$NVME_SLOT" "${4:-}" <<'EOF'
 import json, struct, sys, uuid
 bus, facts, win, shim, bootmgfw, gguid, slot, winfacts = sys.argv[1:9]
@@ -651,6 +680,38 @@ case_mbr_uefi() {       # case_mbr_uefi CASE FIRMWARE
     result "$c" "$WHY" "an ESP on MBR (mbr:$MBR_SIG): the default counted down to the prompt; UKI got both credentials"
 }
 
+# noshim: the firmware starts the loader itself, no shim in front of it.
+case_noshim() {         # case_noshim CASE FIRMWARE
+    local c=$1 fw=$2 id
+    WHY=
+    id=$(install_id "$R/noshim.img")
+    ENTRY='\EFI\falcon\grubx64.efi' boot "$fw" "$R/noshim.img" sata \
+        "$(cat "$R/noshim.esp")" 0
+    wait_for "Booting in 5 s. Any key stops the countdown." 90 ||
+        WHY="no countdown"
+    [[ -z "$WHY" ]] && { wait_for "booting: personal.efi" 15 ||
+        WHY="the default was not the shelf's UKI"; }
+    [[ -z "$WHY" ]] && unlock "$id" 30
+    halt
+    result "$c" "$WHY" "the firmware started grubx64.efi with no shim; the default counted down to the prompt; UKI got both credentials"
+}
+
+case_noshim_status() {
+    local c=$1
+    WHY=
+    : > "$R/serial.log"
+    # shellcheck disable=SC2024
+    sudo "$MKSTICK" station status "$R/noshim.img" --no-scan \
+        >"$R/noshim.status" 2>&1 || WHY="station status failed"
+    [[ -z "$WHY" ]] && { grep -q 'no shim: the firmware starts grubx64.efi' "$R/noshim.status" ||
+        WHY="status did not say there is no shim"; }
+    [[ -z "$WHY" ]] && { grep -q '^  OK .*grubx64.efi is signed by falcon-boot.cer' "$R/noshim.status" ||
+        WHY="status did not check the loader's signature"; }
+    [[ -z "$WHY" ]] && mdir -b -i "$R/noshim.img@@1M" ::/EFI/falcon 2>/dev/null |
+        grep -qiE 'shimx64|mmx64' && WHY="the ESP has a shim or MokManager"
+    result "$c" "$WHY" "status: no shim, the loader signed by the cert beside it"
+}
+
 case_4kn_remove() {
     local c=$1 out
     WHY=
@@ -698,7 +759,8 @@ CASES=("$@")
 [[ ${#CASES[@]} -gt 0 ]] ||
     CASES=(uefi-default uefi-sb-default uefi-pos uefi-sb-pos 4kn-uefi
            4kn-uefi-sb 4kn-bios 4kn-remove mbr4k-bios second-nxt
-           second-sb-nxt second-esp second-sb-esp mbr-uefi mbr-uefi-sb)
+           second-sb-nxt second-esp second-sb-esp mbr-uefi mbr-uefi-sb
+           noshim-uefi noshim-uefi-sb noshim-status)
 
 for c in "${CASES[@]}"; do
     case $c in
@@ -717,6 +779,9 @@ for c in "${CASES[@]}"; do
     second-sb-esp)   case_second "$c" uefi-sb esp ;;
     mbr-uefi)        case_mbr_uefi "$c" uefi ;;
     mbr-uefi-sb)     case_mbr_uefi "$c" uefi-sb ;;
+    noshim-uefi)     case_noshim "$c" uefi ;;
+    noshim-uefi-sb)  case_noshim "$c" uefi-sb ;;
+    noshim-status)   case_noshim_status "$c" ;;
     *) echo "unknown case: $c" >&2; exit 2 ;;
     esac
 done
