@@ -541,6 +541,13 @@ p2's `Other/devlink-recovery.iso` was replaced with devlink-rescue's
 e27b3d5 build (sha256 eb76da4a...). Tested by the user: BIOS on a 32-bit
 and a 64-bit machine, and 64-bit UEFI.
 
+Updated again 2026-09-28 to 0.1.0_20260928.2323 (master a90d4e6: the
+platform tags, Argon2id keyslots) by the same two steps; the stick was
+/dev/sdb that day. Backups: `stick-bios-2026-09-28.bin` and
+`grubx64-0927.efi` (the 87003c0 loader). Booted by the user. p3 stays
+pbkdf2 by decision (2026-09-28), which both loaders read; a stick made by
+`mkstick create` from now on gets argon2id.
+
 ### Next
 
 1. Nothing on the falcon side. The DevLink session's own: w98link 9caa3ef
