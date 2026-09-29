@@ -16,6 +16,14 @@
  * by the station, the log holds the station's own measurement and then the
  * probe's.
  *
+ * Every PCR is read, not only PCR0, and every line it prints is also saved
+ * as \falcon-tpm.txt. On real hardware that pair is the point: a log can
+ * only be checked against the PCRs as they stood when it was taken, which
+ * Linux cannot report later (the station and the UKI have extended PCR 4
+ * by then), and a firmware console is gone once the probe returns. The
+ * T430, whose coreboot and edk2 keep separate logs, is where this was
+ * needed.
+ *
  * The protocol layouts are transcribed here rather than taken from
  * falcon-efi/src/efi/tcg.h, so this file stays what it was written as:
  * test scaffolding with no dependency on the loader it checks.
@@ -104,14 +112,42 @@ struct TCG_PROTOCOL {
     void *HashLogExtendEvent;
 };
 
+/* PC Client platforms have 24 PCRs, on 1.2 and 2.0 alike. */
+#define PCR_COUNT 24u
+
 /* ---- output ---- */
 
 static EFI_SYSTEM_TABLE *g_st;
 static EFI_HANDLE g_image;
 
+/* What was said, as ASCII, for \falcon-tpm.txt. Every line is ASCII by
+ * construction; anything else would be a bug here, so it is kept as '?'
+ * rather than encoded. 24 PCRs of two banks and the header lines stay far
+ * below the size; a transcript that fills it is cut, not overrun. */
+static UINT8 g_txt[16384];
+static UINTN g_txt_len;
+
 static void say(const CHAR16 *s)
 {
+    const CHAR16 *c;
+
     g_st->ConOut->OutputString(g_st->ConOut, (CHAR16 *)(uintptr_t)s);
+    for (c = s; *c != 0 && g_txt_len < sizeof(g_txt); c++)
+        if (*c != L'\r')
+            g_txt[g_txt_len++] = *c < 0x80u ? (UINT8)*c : (UINT8)'?';
+}
+
+static void say_dec(unsigned v)
+{
+    CHAR16 buf[11];
+    unsigned i = sizeof(buf) / sizeof(buf[0]) - 1u;
+
+    buf[i] = 0;
+    do {
+        buf[--i] = (CHAR16)(L'0' + v % 10u);
+        v /= 10u;
+    } while (v != 0u && i > 0u);
+    say(buf + i);
 }
 
 static void say_hex(UINT64 v, unsigned digits)
@@ -178,10 +214,27 @@ static UINT32 le32(const UINT8 *p)
 
 typedef EFI_STATUS (EFIAPI *file_write_fn)(EFI_FILE_PROTOCOL *This,
                                            UINTN *BufferSize, void *Buffer);
+typedef EFI_STATUS (EFIAPI *file_delete_fn)(EFI_FILE_PROTOCOL *This);
+
+/* Write and Delete are placeholders in efi/sfs.h, which only reads; a slot
+ * is copied into a typed pointer byte by byte, since C has no cast from an
+ * object pointer to a function pointer. */
+static void slot_to_fn(void *slot, void *fn, unsigned size)
+{
+    UINT8 *d = (UINT8 *)fn;
+    const UINT8 *src = (const UINT8 *)&slot;
+    unsigned i;
+
+    for (i = 0; i < size; i++)
+        d[i] = src[i];
+}
 
 #define FILE_MODE_RW_CREATE 0x8000000000000003ULL
 
-static void save_log(const UINT8 *log, UINTN len)
+/* Writes data to name on the volume the probe was loaded from; the what
+ * names it in the line that says how it went. */
+static void save_file(const CHAR16 *name, const CHAR16 *what,
+                      const UINT8 *data, UINTN len)
 {
     EFI_GUID lig = EFI_LOADED_IMAGE_PROTOCOL_GUID;
     EFI_GUID sfg = EFI_SIMPLE_FILE_SYSTEM_PROTOCOL_GUID;
@@ -190,31 +243,37 @@ static void save_log(const UINT8 *log, UINTN len)
     EFI_FILE_PROTOCOL *root = (EFI_FILE_PROTOCOL *)0;
     EFI_FILE_PROTOCOL *f = (EFI_FILE_PROTOCOL *)0;
     file_write_fn wr;
+    file_delete_fn del;
     UINTN n = len;
     EFI_STATUS s;
 
-    say(L"FALCON-TPM evlog ");
+    say(L"FALCON-TPM ");
+    say(what);
+    say(L" ");
     if (g_st->BootServices->HandleProtocol(g_image, &lig, (void **)&li) !=
             EFI_SUCCESS ||
         g_st->BootServices->HandleProtocol(li->DeviceHandle, &sfg,
                                            (void **)&fs) != EFI_SUCCESS ||
-        fs->OpenVolume(fs, &root) != EFI_SUCCESS ||
-        root->Open(root, &f, L"\\falcon-evlog.bin", FILE_MODE_RW_CREATE, 0) !=
-            EFI_SUCCESS) {
+        fs->OpenVolume(fs, &root) != EFI_SUCCESS) {
         say(L"not saved: no writable volume\r\n");
         return;
     }
-    /* Write is a placeholder in efi/sfs.h, which only reads. */
-    {
-        void *slot = f->Write;
-        UINT8 *d = (UINT8 *)&wr;
-        const UINT8 *src = (const UINT8 *)&slot;
-        unsigned i;
-
-        for (i = 0; i < sizeof wr; i++)
-            d[i] = src[i];
+    /* Open with create keeps an older, longer file's tail past what this
+     * run writes, so an existing file is deleted first (Delete also closes
+     * the handle, whatever it returns). */
+    if (root->Open(root, &f, (CHAR16 *)(uintptr_t)name,
+                   FILE_MODE_RW_CREATE, 0) == EFI_SUCCESS) {
+        slot_to_fn(f->Delete, &del, sizeof del);
+        (void)del(f);
     }
-    s = wr(f, &n, (void *)(uintptr_t)log);
+    if (root->Open(root, &f, (CHAR16 *)(uintptr_t)name, FILE_MODE_RW_CREATE,
+                   0) != EFI_SUCCESS) {
+        root->Close(root);
+        say(L"not saved: cannot create the file\r\n");
+        return;
+    }
+    slot_to_fn(f->Write, &wr, sizeof wr);
+    s = wr(f, &n, (void *)(uintptr_t)data);
     f->Close(f);
     root->Close(root);
     if (s != EFI_SUCCESS || n != len) {
@@ -226,6 +285,11 @@ static void save_log(const UINT8 *log, UINTN len)
     say(L"saved 0x");
     say_hex(len, 8);
     say(L" bytes\r\n");
+}
+
+static void save_log(const UINT8 *log, UINTN len)
+{
+    save_file(L"\\falcon-evlog.bin", L"evlog", log, len);
 }
 
 /* The crypto-agile log's length: the header event, then TCG_PCR_EVENT2s up
@@ -277,9 +341,11 @@ static UINTN tcg2_log_len(const UINT8 *log, UINT64 last)
 
 /* ---- TPM 2.0 ---- */
 
-/* TPM2_PCR_Read of PCR0 in one bank (TPM 2.0 Part 3 Section 22.4): no
- * sessions, one TPMS_PCR_SELECTION with a 3-byte select naming PCR 0. */
-static void tcg2_pcr0(TCG2_PROTOCOL *t, UINT16 alg, const CHAR16 *name)
+/* TPM2_PCR_Read of one PCR in one bank (TPM 2.0 Part 3 Section 22.4): no
+ * sessions, one TPMS_PCR_SELECTION with a 3-byte select naming it. One
+ * PCR a call, since a read answers at most eight digests. */
+static void tcg2_pcr(TCG2_PROTOCOL *t, UINT16 alg, const CHAR16 *name,
+                     unsigned idx)
 {
     UINT8 cmd[20] = {
         0x80, 0x01,             /* TPM_ST_NO_SESSIONS */
@@ -287,7 +353,7 @@ static void tcg2_pcr0(TCG2_PROTOCOL *t, UINT16 alg, const CHAR16 *name)
         0x00, 0x00, 0x01, 0x7e, /* TPM_CC_PCR_Read */
         0x00, 0x00, 0x00, 0x01, /* one selection */
         0x00, 0x00,             /* hash, below */
-        0x03, 0x01, 0x00, 0x00  /* sizeofSelect, PCR 0 */
+        0x03, 0x00, 0x00, 0x00  /* sizeofSelect, the PCR's bit below */
     };
     UINT8 rsp[256];
     EFI_STATUS s;
@@ -296,8 +362,11 @@ static void tcg2_pcr0(TCG2_PROTOCOL *t, UINT16 alg, const CHAR16 *name)
 
     cmd[14] = (UINT8)(alg >> 8);
     cmd[15] = (UINT8)alg;
+    cmd[17u + idx / 8u] = (UINT8)(1u << (idx % 8u));
     s = t->SubmitCommand(t, sizeof(cmd), cmd, sizeof(rsp), rsp);
-    say(L"FALCON-TPM TCG2 PCR0 ");
+    say(L"FALCON-TPM TCG2 PCR");
+    say_dec(idx);
+    say(L" ");
     say(name);
     say(L" ");
     if (s != EFI_SUCCESS) {
@@ -335,6 +404,7 @@ static void probe_tcg2(EFI_BOOT_SERVICES *bs)
     UINT64 loc = 0, last = 0;
     BOOLEAN trunc = 0;
     EFI_STATUS s;
+    unsigned i;
 
     if (bs->LocateProtocol(&g, (void *)0, (void **)&t) != EFI_SUCCESS ||
         t == (TCG2_PROTOCOL *)0) {
@@ -394,13 +464,45 @@ static void probe_tcg2(EFI_BOOT_SERVICES *bs)
         }
     }
     /* TPM_ALG_SHA1 0x0004 is bitmap bit 0, TPM_ALG_SHA256 0x000b bit 1. */
-    if (cap.ActivePcrBanks & 0x1u)
-        tcg2_pcr0(t, 0x0004, L"sha1");
-    if (cap.ActivePcrBanks & 0x2u)
-        tcg2_pcr0(t, 0x000b, L"sha256");
+    for (i = 0; i < PCR_COUNT; i++) {
+        if (cap.ActivePcrBanks & 0x1u)
+            tcg2_pcr(t, 0x0004, L"sha1", i);
+        if (cap.ActivePcrBanks & 0x2u)
+            tcg2_pcr(t, 0x000b, L"sha256", i);
+    }
 }
 
 /* ---- TPM 1.2 ---- */
+
+/* TPM_PCRRead (TPM 1.2 Part 3 Section 16.2) of one PCR. */
+static void tcg_pcr(TCG_PROTOCOL *t, unsigned idx)
+{
+    UINT8 cmd[14] = {
+        0x00, 0xc1,             /* TPM_TAG_RQU_COMMAND */
+        0x00, 0x00, 0x00, 0x0e, /* size */
+        0x00, 0x00, 0x00, 0x15, /* TPM_ORD_PcrRead */
+        0x00, 0x00, 0x00, 0x00  /* the PCR, below */
+    };
+    UINT8 rsp[64];
+    EFI_STATUS s;
+
+    cmd[13] = (UINT8)idx;
+    s = t->PassThroughToTpm(t, sizeof(cmd), cmd, sizeof(rsp), rsp);
+    say(L"FALCON-TPM TCG PCR");
+    say_dec(idx);
+    say(L" sha1 ");
+    if (s != EFI_SUCCESS) {
+        say(L"PassThroughToTpm status 0x");
+        say_hex(s, 16);
+    } else if (be32(rsp + 6) != 0u) {
+        say(L"rc 0x");
+        say_hex(be32(rsp + 6), 8);
+    } else {
+        say_bytes(rsp + 10, 20);
+        say(all_zero(rsp + 10, 20) ? L" zero" : L" measured");
+    }
+    say(L"\r\n");
+}
 
 static void probe_tcg(EFI_BOOT_SERVICES *bs)
 {
@@ -410,15 +512,8 @@ static void probe_tcg(EFI_BOOT_SERVICES *bs)
     TCG_BOOT_SERVICE_CAPABILITY cap;
     UINT32 features = 0;
     UINT64 loc = 0, last = 0;
-    /* TPM_PCRRead (TPM 1.2 Part 3 Section 16.2) of PCR 0. */
-    UINT8 cmd[14] = {
-        0x00, 0xc1,             /* TPM_TAG_RQU_COMMAND */
-        0x00, 0x00, 0x00, 0x0e, /* size */
-        0x00, 0x00, 0x00, 0x15, /* TPM_ORD_PcrRead */
-        0x00, 0x00, 0x00, 0x00  /* PCR 0 */
-    };
-    UINT8 rsp[64];
     EFI_STATUS s;
+    unsigned i;
 
     if (bs->LocateProtocol(&g, (void *)0, (void **)&t) != EFI_SUCCESS ||
         t == (TCG_PROTOCOL *)0) {
@@ -457,19 +552,8 @@ static void probe_tcg(EFI_BOOT_SERVICES *bs)
                  (UINTN)(last - loc) + 32u +
                      le32((const UINT8 *)(uintptr_t)last + 28));
 
-    s = t->PassThroughToTpm(t, sizeof(cmd), cmd, sizeof(rsp), rsp);
-    say(L"FALCON-TPM TCG PCR0 sha1 ");
-    if (s != EFI_SUCCESS) {
-        say(L"PassThroughToTpm status 0x");
-        say_hex(s, 16);
-    } else if (be32(rsp + 6) != 0u) {
-        say(L"rc 0x");
-        say_hex(be32(rsp + 6), 8);
-    } else {
-        say_bytes(rsp + 10, 20);
-        say(all_zero(rsp + 10, 20) ? L" zero" : L" measured");
-    }
-    say(L"\r\n");
+    for (i = 0; i < PCR_COUNT; i++)
+        tcg_pcr(t, i);
 }
 
 EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
@@ -480,6 +564,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
     say(L"\r\nFALCON-TPM-PROBE\r\n");
     probe_tcg2(st->BootServices);
     probe_tcg(st->BootServices);
+    save_file(L"\\falcon-tpm.txt", L"report", g_txt, g_txt_len);
     say(L"FALCON-TPM-PROBE-DONE\r\n");
     st->BootServices->Stall(1000000);
     return EFI_SUCCESS;
