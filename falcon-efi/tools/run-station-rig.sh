@@ -42,6 +42,12 @@
 #   unsigned     memtest.efi replaced by the unsigned stand-in: it starts
 #                with Secure Boot off, and with it on the load is refused
 #                and the page says why
+#   idle-menu    poweroff = 5 and no default: the menu left alone, the
+#                machine powers off (QEMU exits), and not before the time
+#   idle-countdown  timeout = 8, poweroff = 3: a countdown longer than the
+#                idle time still boots its default
+#   idle-prompt  poweroff = 5: the passphrase prompt left with three
+#                characters typed, and the machine powers off
 #
 # Nothing touches a real disk or this machine's variables: every disk is an
 # image file and every varstore a copy under build/station-rig.
@@ -177,6 +183,17 @@ wait_for() {    # wait_for PATTERN SECONDS
 }
 
 has() { log_text "$R/serial.log" | grep -aqF -- "$1"; }
+
+# QEMU exits when the guest powers off; a reset would bring the firmware
+# back instead.
+wait_exit() {   # wait_exit SECONDS
+    local i
+    for (( i = 0; i < $1 * 10; i++ )); do
+        kill -0 "$QPID" 2>/dev/null || return 0
+        sleep 0.1
+    done
+    return 1
+}
 count() { log_text "$R/serial.log" | grep -aoF -- "$1" | wc -l; }
 
 send_keys() {
@@ -464,6 +481,50 @@ case_unsigned() {
     fi
 }
 
+case_idle_menu() {
+    local c=$1 fw=$2 why= t0 t1
+    station_image $'[general]\npoweroff = 5\n'
+    NEXT= NO_WIN_ENTRY=0 boot "$fw"
+    wait_for "$MENU_UP" 90 || why="no menu"
+    t0=$(date +%s)
+    [[ -z "$why" ]] && { wait_exit 30 || why="the machine was still on 30 s later"; }
+    t1=$(date +%s)
+    [[ -z "$why" ]] && (( t1 - t0 < 4 )) && why="powered off after $(( t1 - t0 )) s, before the time"
+    [[ -z "$why" ]] && (( $(count "BdsDxe: starting") > 1 )) && why="the firmware started again (a reset, not a power-off)"
+    halt
+    result "$c" "$why" "the menu left alone; powered off after $(( t1 - t0 )) s"
+}
+
+case_idle_countdown() {
+    local c=$1 fw=$2 why=
+    station_image $'[general]\ndefault = memtest\ntimeout = 8\npoweroff = 3\n'
+    NEXT= NO_WIN_ENTRY=0 boot "$fw"
+    wait_for "Booting in 8 s" 90 || why="no countdown"
+    [[ -z "$why" ]] && { wait_for "FALCON-STANDIN \\EFI\\falcon\\memtest.efi" 30 ||
+        why="memtest did not start (powered off during the count?)"; }
+    halt
+    result "$c" "$why" "an 8 s count with a 3 s idle time booted its default"
+}
+
+case_idle_prompt() {
+    local c=$1 fw=$2 why=
+    station_image $'[general]\npoweroff = 5\n'
+    NEXT= NO_WIN_ENTRY=0 boot "$fw"
+    wait_for "$MENU_UP" 90 || why="no menu"
+    if [[ -z "$why" ]]; then
+        mon "sendkey ret"
+        wait_for "passphrase for the encrypted partition" 30 || why="no passphrase prompt"
+    fi
+    if [[ -z "$why" ]]; then
+        sleep 0.5
+        send_keys abc
+        wait_exit 30 || why="the machine was still on 30 s later"
+    fi
+    [[ -z "$why" ]] && has "FALCON-UKI" && why="a UKI started"
+    halt
+    result "$c" "$why" "the prompt left with three characters typed; powered off"
+}
+
 # ---- run ----
 
 make --no-print-directory station cli "$STANDIN" "$LOADER" \
@@ -472,7 +533,8 @@ make --no-print-directory station cli "$STANDIN" "$LOADER" \
 build_win_disk
 
 ALL=(menu countdown key-stops nxt method-efi esp-found next-boot next-uki
-     next-unknown ini-error no-default unsigned)
+     next-unknown ini-error no-default unsigned idle-menu idle-countdown
+     idle-prompt)
 CASES=("$@")
 if [[ ${#CASES[@]} -eq 0 ]]; then
     for c in "${ALL[@]}"; do CASES+=("uefi-$c"); done
@@ -498,6 +560,9 @@ for c in "${CASES[@]}"; do
     ini-error)    case_ini_error "$c" "$fw" ;;
     no-default)   case_no_default "$c" "$fw" ;;
     unsigned)     case_unsigned "$c" "$fw" ;;
+    idle-menu)    case_idle_menu "$c" "$fw" ;;
+    idle-countdown) case_idle_countdown "$c" "$fw" ;;
+    idle-prompt)  case_idle_prompt "$c" "$fw" ;;
     *) echo "unknown case: $c" >&2; exit 2 ;;
     esac
 done

@@ -216,11 +216,18 @@ __attribute__((noreturn)) void bios_reboot(void)
         __asm__ __volatile__("hlt");
 }
 
+/* Stage 2 has no screen module and no idle power-off; a stage 3 with one
+ * gives the strong definition (console/screen.c). */
+__attribute__((weak)) int bios_wait_key(void)
+{
+    return bios_getkey();
+}
+
 __attribute__((noreturn)) void bios_fatal(const char *why)
 {
     bios_screen_puts("\nfalcon-bios: ");
     bios_screen_puts(why);
     bios_screen_puts("\npress any key to reboot.\n");
-    (void)bios_getkey();
+    (void)bios_wait_key();
     bios_reboot();
 }

@@ -98,7 +98,8 @@ BIOS_S2_COBJS := $(patsubst %.c,$(BIOS_OBJ)/%.o,$(BIOS_S2_CSRCS))
 # stage 2's 33 KB ceiling that had to be one driver called by name.
 BIOS_MOD_serial  := $(BIOS)/console/console.c
 BIOS_MOD_prompt  := $(BIOS)/console/prompt.c  # the passphrase, and nothing else
-BIOS_MOD_console := $(BIOS)/console/screen.c $(BIOS)/console/cdclock.c
+BIOS_MOD_console := $(BIOS)/console/screen.c $(BIOS)/console/cdclock.c \
+	$(BIOS)/power/power.c $(BIOS)/power/acpicore.c  # the idle power-off
 BIOS_MOD_disk    := $(BIOS)/disk/disk.c $(BIOS)/vfd/vfdcore.c
 BIOS_MOD_marker  := $(BIOS)/disk/marker.c
 BIOS_MOD_install := $(BIOS)/disk/install.c   # the install's partitions, by record
@@ -425,12 +426,12 @@ endef
 BIOS_TESTS := $(addprefix falcon-bios/tests/,main.c vcdcore_test.c vfdcore_test.c \
 	linuxcore_test.c e820_test.c jumpini_test.c jmod_test.c lowmem_test.c \
 	atacore_test.c usbcore_test.c pcccore_test.c bootpart_test.c \
-	vbrcore_test.c cdclock_test.c)
+	vbrcore_test.c cdclock_test.c acpicore_test.c)
 BIOS_UUT := $(BIOS)/iso/vcdcore.c $(BIOS)/vfd/vfdcore.c $(BIOS)/linux/linuxcore.c $(BIOS)/mem/e820.c \
 	$(BIOS)/jump/jumpini.c $(BIOS)/jump/jmod.c $(BIOS)/mem/lowmem.c \
 	$(BIOS)/hw/ata/atacore.c $(BIOS)/hw/scsi/scsi.c $(BIOS)/hw/usb/usbcore.c \
 	$(BIOS)/hw/pcc/pcccore.c $(BIOS)/disk/bootpart.c $(BIOS)/mbr/vbrcore.c \
-	$(BIOS)/console/cdclock.c
+	$(BIOS)/console/cdclock.c $(BIOS)/power/acpicore.c
 # What bootpart.c and vbrcore.c are built on, linked into the test binary
 # but counted under core's own tests.
 BIOS_TEST_CORE := $(CORE_PART) $(CORE_IDENT) $(CORE_VBR)

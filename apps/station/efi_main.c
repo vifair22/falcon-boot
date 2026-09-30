@@ -31,6 +31,7 @@
 #include <esp/esp.h>
 #include <lib/ucs2.h>
 #include <console/menu.h>
+#include <console/idle.h>
 #include <media/nextboot.h>
 #include <media/stationini.h>
 #include <pos/pos.h>
@@ -138,16 +139,10 @@ static void out_hex(UINT64 v)
     out(&buf[i]);
 }
 
+/* A page's "press any key", timed by the idle power-off. */
 static EFI_STATUS wait_key(EFI_INPUT_KEY *key)
 {
-    UINTN index;
-    EFI_STATUS status;
-
-    status = g_st->BootServices->WaitForEvent(1, &g_st->ConIn->WaitForKey,
-                                              &index);
-    if (EFI_ERROR(status))
-        return status;
-    return g_st->ConIn->ReadKeyStroke(g_st->ConIn, key);
+    return idle_wait_key(g_st, key);
 }
 
 /* The banner is the title and the Secure Boot state. The stick's banner
@@ -637,6 +632,8 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
     g_image = image_handle;
 
     st->BootServices->SetWatchdogTimer(0, 0, 0, (CHAR16 *)0);
+    /* STATION.INI may change the time once it is read. */
+    idle_start(st, TUI_IDLE_SECONDS);
     st->ConOut->Reset(st->ConOut, FALSE);
     menu_init(st);
     menu_screen(st);
@@ -692,6 +689,10 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
             menu_busy(st, tui_busy_tpm);
         totp_load(st, &g_ini.totp);
     }
+    idle_start(st, g_have_ini && g_ini.poweroff_set
+                       ? (UINT32)g_ini.poweroff
+                       : TUI_IDLE_SECONDS);
+    idle_set_hook(totp_wipe);
     pos_set_station_hooks(totp_note, totp_wipe);
     status.fn = totp_status;
     status.ctx = st;

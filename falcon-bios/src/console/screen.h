@@ -108,8 +108,19 @@ int screen_menu_timed(const screen_banner *banner,
                       const char *keys, const uint16_t *hint, int *which,
                       const uint16_t *empty, size_t sel, unsigned seconds);
 
-/* Blocks for a key, as bios_getkey. */
+/* Blocks for a key, as bios_getkey, and powers the machine off when none
+ * comes for the idle time (DESIGN Section 7.9): the time starts with each
+ * call, which is each page and each key. When the power-off does not take
+ * the screen is turned off until a key, which is swallowed, and
+ * BIOS_KEY_IDLE is returned. */
 int screen_key(void);
+
+/* The idle time in seconds (TUI_IDLE_SECONDS until set; 0 never). */
+void screen_idle_set(unsigned seconds);
+
+/* A buffer wiped before the idle power-off, for as long as it is set; NULL
+ * clears it. The passphrase prompt's. */
+void screen_idle_secret(void *buf, size_t len);
 
 /* Shows or hides the hardware cursor. */
 void screen_cursor(int on);

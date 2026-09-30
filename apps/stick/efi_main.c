@@ -25,6 +25,7 @@
 #include <lib/string.h>
 #include <lib/ucs2.h>
 #include <console/menu.h>
+#include <console/idle.h>
 #include <tui/tui.h>
 #include <pos/pos.h>
 #include <trust/probe.h>
@@ -106,16 +107,10 @@ static void out_ascii(const char *s)
     out(buf);
 }
 
+/* A page's "press any key", timed by the idle power-off. */
 static EFI_STATUS wait_key(EFI_INPUT_KEY *key)
 {
-    UINTN index;
-    EFI_STATUS status;
-
-    status = g_st->BootServices->WaitForEvent(1, &g_st->ConIn->WaitForKey,
-                                              &index);
-    if (EFI_ERROR(status))
-        return status;
-    return g_st->ConIn->ReadKeyStroke(g_st->ConIn, key);
+    return idle_wait_key(g_st, key);
 }
 
 /* ---- image scan ---- */
@@ -1730,6 +1725,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
     g_st = st;
 
     st->BootServices->SetWatchdogTimer(0, 0, 0, (CHAR16 *)0);
+    idle_start(st, TUI_IDLE_SECONDS);
     st->ConOut->Reset(st->ConOut, FALSE);
     /* Before anything is drawn, and once: SetMode clears the screen. */
     menu_init(st);

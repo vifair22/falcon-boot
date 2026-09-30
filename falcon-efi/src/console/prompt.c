@@ -7,6 +7,7 @@
  */
 
 #include <console/menu.h>
+#include <console/idle.h>
 #include <crypto/crypto.h>
 
 /* Control characters the console delivers in UnicodeChar with ScanCode 0
@@ -95,16 +96,32 @@ INTN menu_prompt_secret(EFI_SYSTEM_TABLE *st, const CHAR16 *prompt,
      * keystroke erases it, exactly as systemd's does. */
     out(st, hint);
     hint_shown = TRUE;
+    idle_touch();
 
     for (;;) {
         EFI_INPUT_KEY key;
+        EFI_EVENT events[2];
         UINTN index;
 
-        if (st->BootServices->WaitForEvent(1, &st->ConIn->WaitForKey,
-                                           &index) != EFI_SUCCESS)
+        events[0] = st->ConIn->WaitForKey;
+        events[1] = idle_event();
+        if (st->BootServices->WaitForEvent(events[1] != (EFI_EVENT)0 ? 2u
+                                                                     : 1u,
+                                           events, &index) != EFI_SUCCESS)
             break;
+        if (index == 1u) {
+            /* Nobody finished typing: what was typed goes before the
+             * machine does (console/idle.h). */
+            crypto_wipe(buf, (size_t)cap);
+            if (!silent)
+                erase_back(st, len);
+            len = 0;
+            idle_expired();
+            continue;
+        }
         if (st->ConIn->ReadKeyStroke(st->ConIn, &key) != EFI_SUCCESS)
             continue;
+        idle_touch();
 
         if (key.ScanCode == EFI_SCAN_ESC) {
             /* Cancel wipes here rather than leaving it to the caller: a

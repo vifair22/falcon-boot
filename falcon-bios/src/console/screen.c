@@ -21,6 +21,8 @@
 #include <start/bios.h>
 #include <console/screen.h>
 #include <console/cdclock.h>
+#include <hw/modrt.h>
+#include <power/power.h>
 
 #include <tui/tui.h>
 
@@ -354,11 +356,6 @@ void screen_raw(const char *s)
 
 /* ---- the keyboard ---- */
 
-int screen_key(void)
-{
-    return bios_getkey();
-}
-
 /* INT 16h AH=01h: the zero flag is clear when a key is waiting. It does not
  * take the key, so the read that follows is what consumes it. */
 #define FLAG_ZERO 0x0040u
@@ -369,6 +366,79 @@ static int key_waiting(void)
     thunk_vector = 0x16;
     thunk_bios();
     return (thunk_regs.flags & FLAG_ZERO) == 0;
+}
+
+static int rtc_seconds(void);
+#define BDA_TICKS      0x46Cu
+
+static unsigned g_idle = TUI_IDLE_SECONDS;
+static void *g_secret;
+static size_t g_secret_len;
+
+void screen_idle_set(unsigned seconds)
+{
+    g_idle = seconds;
+}
+
+void screen_idle_secret(void *buf, size_t len)
+{
+    g_secret = buf;
+    g_secret_len = buf != (void *)0 ? len : 0;
+}
+
+/* The VGA sequencer's clocking mode register, bit 5: the screen off, which
+ * blanks the signal (and puts most monitors to sleep) with text memory
+ * left as it is, so turning it back on shows the page again. */
+static void vga_screen(int on)
+{
+    uint8_t v;
+
+    outb(0x3C4u, 0x01u);
+    v = inb(0x3C5u);
+    outb(0x3C5u, on ? (uint8_t)(v & ~0x20u) : (uint8_t)(v | 0x20u));
+}
+
+/* No key for the idle time: what the page held goes, then the machine.
+ * The wipe is written here, through volatile, rather than taken from
+ * falcon-core's crypto, which falcon jump does not link. */
+static void idle_off(void)
+{
+    volatile uint8_t *w = (volatile uint8_t *)g_secret;
+    size_t i;
+
+    for (i = 0; w != (volatile uint8_t *)0 && i < g_secret_len; i++)
+        w[i] = 0;
+    bios_key_buffer_wipe();
+    bios_puts("falcon-bios: no key for the idle time, powering off\n");
+    power_off();
+    bios_puts("falcon-bios: screen off until a key\n");
+    vga_screen(0);
+    while (!key_waiting())
+        ;
+    (void)bios_getkey();
+    vga_screen(1);
+}
+
+int screen_key(void)
+{
+    cdclock clk;
+
+    if (g_idle != 0) {
+        cdclock_start(&clk, peek32(BDA_TICKS), rtc_seconds());
+        while (!key_waiting()) {
+            if (cdclock_tenths(&clk, peek32(BDA_TICKS), rtc_seconds()) >=
+                g_idle * 10u) {
+                idle_off();
+                return BIOS_KEY_IDLE;
+            }
+        }
+    }
+    return bios_getkey();
+}
+
+int bios_wait_key(void)
+{
+    return screen_key();
 }
 
 /* ---- the menu ---- */
@@ -566,8 +636,6 @@ static void restore(void)
  * a second, which IRQ0 advances while the thunk is in real mode, and the
  * RTC's seconds through INT 1Ah, whichever says more has gone, since a
  * machine can reach the menu with IRQ0 never delivered (cdclock.h). */
-#define BDA_TICKS      0x46Cu
-
 /* The RTC's seconds byte, or CDCLOCK_NO_RTC when the call says the clock
  * is not running. */
 static int rtc_seconds(void)

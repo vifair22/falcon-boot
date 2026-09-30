@@ -32,6 +32,11 @@
  * fifth of an 80-column one, which is every BIOS screen: there it left 64
  * columns of text, and the personal OS's retry prompt, 80 characters with
  * its TAB hint, did not fit a line. */
+/* Seconds a page waits for a key before the machine is powered off, on
+ * every loader (DESIGN Section 7.9); the station's STATION.INI may change
+ * it (`poweroff`). */
+#define TUI_IDLE_SECONDS    300u
+
 #define TUI_MARGIN_X        6u
 #define TUI_MARGIN_X_NARROW 1u
 #define TUI_NARROW_COLS     80u

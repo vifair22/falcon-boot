@@ -7,7 +7,8 @@
 EFI_SRC := falcon-efi/src
 
 EFI_MOD_loader        := $(EFI_SRC)/loader/loadops.c $(EFI_SRC)/loader/credfs.c
-EFI_MOD_console       := $(EFI_SRC)/console/menu.c $(EFI_SRC)/console/prompt.c
+EFI_MOD_console       := $(EFI_SRC)/console/menu.c $(EFI_SRC)/console/prompt.c \
+                         $(EFI_SRC)/console/idle.c
 EFI_MOD_discover      := $(EFI_SRC)/discover/discover.c $(EFI_SRC)/discover/partefi.c
 # Partitions named as STATION.INI names them: disk id and number.
 EFI_MOD_disks         := $(EFI_SRC)/discover/disks.c
