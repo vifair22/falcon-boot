@@ -664,6 +664,29 @@ static void test_ord(void **state)
     assert_string_equal(tpm12_ord_name(0xCF), "NV_ReadValue");
     assert_string_equal(tpm12_ord_name(0x0A), "OIAP");
     assert_null(tpm12_ord_name(0x17B));
+    assert_string_equal(tpm12_ord_name(0x53), "ContinueSelfTest");
+}
+
+/* TPM_ContinueSelfTest: no parameters, and a TPM still testing says so. */
+static void test_self_test(void **state)
+{
+    static const uint8_t c12[] = { 0x00, 0xC1, 0, 0, 0, 10, 0, 0, 0, 0x53 };
+    static const uint8_t ok[] = { 0x00, 0xC4, 0, 0, 0, 10, 0, 0, 0, 0 };
+    static const uint8_t doing[] = { 0x00, 0xC4, 0, 0, 0, 10, 0, 0, 0x08,
+                                     0x02 };
+    canned c;
+
+    (void)state;
+    c = (canned){ c12, sizeof c12, ok, sizeof ok, 0 };
+    assert_int_equal(tpm12_continue_self_test(canned_dev(&c)), TPM_OK);
+    c = (canned){ c12, sizeof c12, doing, sizeof doing, 0 };
+    assert_int_equal(tpm12_continue_self_test(canned_dev(&c)), TPM_ERR_RC);
+    assert_true(tpm12_rc_retry(dev.rc));
+    assert_int_equal(c.bad, 0);
+    assert_true(tpm12_rc_retry(0x800) && tpm12_rc_retry(0x801));
+    assert_false(tpm12_rc_retry(0x803) || tpm12_rc_retry(0x1) ||
+                 tpm12_rc_retry(0));
+    assert_int_equal(tpm12_continue_self_test(NULL), TPM_ERR_ARG);
 }
 
 /* The enrollments with values given: the same checks as the ones that read
@@ -714,6 +737,7 @@ int run_tpm_tests(void)
         cmocka_unit_test(test_detect_unknown),
         cmocka_unit_test(test_get_random),
         cmocka_unit_test(test_ord),
+        cmocka_unit_test(test_self_test),
         cmocka_unit_test(test_enroll_values_args),
     };
 

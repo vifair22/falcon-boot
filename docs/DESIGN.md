@@ -5019,6 +5019,15 @@ is refused. A 1.2 TPM owned with a password of zero bytes (swtpm_setup's
 tries both forms through a transport session and records the second as
 `srkauth = sha1-zero`. Any other SRK secret is refused.
 
+On a TPM 1.2 the station sends `TPM_ContinueSelfTest` before its read, and
+tries a command the TPM answers with `TPM_RETRY`, `TPM_NEEDS_SELFTEST` or
+`TPM_DOING_SELFTEST` again every 100 ms for three seconds. A firmware that
+sends `TPM_Startup` alone leaves the tests that cover RSA deferred, so
+EstablishTransport, the first command needing them, is refused with
+`TPM_NEEDS_SELFTEST` (the T430's coreboot and edk2, 2026-09-29). Linux's
+driver sends the command itself, which is why enrollment and `check` never
+see it, and OVMF sends it, which is why the TPM rig did not.
+
 `check` is the station's read run from the OS: it must end in the PCR
 refusal, since the OS's PCRs are not the station's, and any other answer
 names the TPM 1.2 command that refused (`tpm_dev.ord`), which the station's

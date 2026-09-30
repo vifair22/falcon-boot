@@ -103,6 +103,21 @@ int tpm12_transport_open(tpm_dev *d, const uint8_t srk_auth[TPM12_DIGEST_LEN],
 int tpm12_nv_read_transport(tpm_dev *d, tpm12_transport *t, uint32_t index,
                             uint8_t *out, size_t len);
 
+/* The response codes a 1.2 answers while it is not ready for a command
+ * (Part 2 Section 16): try again, run the rest of the self-test first, or
+ * the self-test is running. */
+#define TPM12_RC_RETRY          0x800u
+#define TPM12_RC_NEEDS_SELFTEST 0x801u
+#define TPM12_RC_DOING_SELFTEST 0x802u
+
+/* Nonzero for those three. */
+int tpm12_rc_retry(uint32_t rc);
+
+/* TPM_ContinueSelfTest: the tests a TPM defers past TPM_Startup, which the
+ * commands that need what they cover (RSA, for EstablishTransport) wait
+ * on. Linux's driver sends it when it starts; a firmware may not have. */
+int tpm12_continue_self_test(tpm_dev *d);
+
 /* The command a refusal came from, by name (dev->ord): the steps of the
  * seed's read and enrollment. NULL for any other ordinal. */
 const char *tpm12_ord_name(uint32_t ord);

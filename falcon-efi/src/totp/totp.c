@@ -96,13 +96,30 @@ void totp_load(EFI_SYSTEM_TABLE *st, const stationini_totp *cfg)
         pk.exp_len = 3;
         static const uint8_t zeros[20] = { 0 };
         uint8_t srk_auth[20];
+        unsigned tries;
 
         if (cfg->srk_sha1)
             sha1(zeros, sizeof zeros, srk_auth);
         else
             memset(srk_auth, 0, sizeof srk_auth);
-        rc = tpm12_seed_read(dev, cfg->index, srk_auth, &pk, g_seed,
-                             SEED_LEN);
+        /* A firmware that sent TPM_Startup and not TPM_ContinueSelfTest
+         * leaves the RSA engine untested, and EstablishTransport, the first
+         * command that needs it, answers TPM_NEEDS_SELFTEST (the T430's
+         * coreboot and edk2; Linux's driver sends the command, which is why
+         * the same read works from there). So it is sent here, and a
+         * command the TPM is not ready for is tried again for a few seconds
+         * while the tests run. */
+        (void)tpm12_continue_self_test(dev);
+        for (tries = 0;; tries++) {
+            rc = tpm12_seed_read(dev, cfg->index, srk_auth, &pk, g_seed,
+                                 SEED_LEN);
+            if (rc != TPM_ERR_RC || !tpm12_rc_retry(dev->rc) ||
+                tries == 30u)
+                break;
+            if (dev->rc == TPM12_RC_NEEDS_SELFTEST)
+                (void)tpm12_continue_self_test(dev);
+            st->BootServices->Stall(100000);
+        }
     }
     g_rc = dev->rc;
     g_ord = dev->ord;
