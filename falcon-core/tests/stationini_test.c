@@ -51,6 +51,7 @@ static void expect_err(const char *s, unsigned line, const char *frag)
         fail_msg("why '%s' lacks '%s'", g_cfg.why, frag);
     assert_string_equal(g_cfg.default_name, "");
     assert_int_equal(g_cfg.timeout, 0);
+    assert_false(g_cfg.poweroff_set);
 }
 
 static void test_example(void **state)
@@ -462,6 +463,29 @@ static void test_format_exact(void **state)
     assert_string_equal(out, "[m]\nhide = yes\n");
 }
 
+/* The idle power-off: seconds, 0 never, absent not set (the loader's
+ * default), and written back only when set. */
+static void test_poweroff(void **state)
+{
+    char out[256];
+
+    (void)state;
+    assert_int_equal(parse("[general]\ndefault = memtest\n"), 0);
+    assert_false(g_cfg.poweroff_set);
+    assert_int_equal(parse("[general]\npoweroff = 0\n"), 0);
+    assert_true(g_cfg.poweroff_set);
+    assert_int_equal(g_cfg.poweroff, 0);
+    assert_int_equal(parse("[general]\npoweroff = 86400\n"), 0);
+    assert_int_equal(g_cfg.poweroff, 86400);
+    assert_true(stationini_format(&g_cfg, out, sizeof out) > 0);
+    assert_string_equal(out, "[general]\npoweroff = 86400\n");
+
+    expect_err("[general]\npoweroff = 86401\n", 2, "up to 86400");
+    expect_err("[general]\npoweroff = 5m\n", 2, "poweroff");
+    expect_err("[general]\npoweroff = 5\npoweroff = 6\n", 3, "twice");
+    expect_err("[m]\npoweroff = 5\n", 2, "unknown key");
+}
+
 static void test_format_capacity(void **state)
 {
     char out[256];
@@ -730,6 +754,7 @@ int run_stationini_tests(void)
         cmocka_unit_test(test_empty_and_null),
         cmocka_unit_test(test_timeout_and_default),
         cmocka_unit_test(test_default_autonames),
+        cmocka_unit_test(test_poweroff),
         cmocka_unit_test(test_order),
         cmocka_unit_test(test_names),
         cmocka_unit_test(test_duplicates),

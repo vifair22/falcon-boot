@@ -123,6 +123,10 @@ then waits with no default:
 
     The menu will wait with no default.
 
+A page left waiting five minutes with no key powers the machine off, on
+every loader (`docs/DESIGN.md` Section 7.9); `[general] poweroff = <seconds>`
+changes that on the station, and `poweroff = 0` turns it off.
+
 `STATION.INI` names a found row by its generated name: `memtest`,
 `nxt-<4 hex>` for a firmware entry, `uki-<stem>` for a plaintext UKI,
 `mbr-<signature>[-p<n>]` or `gpt-<8 hex>[-p<n>]` for a disk or partition,

@@ -274,6 +274,8 @@ static void read_station(void)
         bios_puts(g_ini.why);
         bios_puts("\n");
     }
+    if (g_ini.poweroff_set)
+        screen_idle_set(g_ini.poweroff);
 }
 
 /* ---- the rows (DESIGN Section 13.3) ---- */

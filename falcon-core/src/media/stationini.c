@@ -137,6 +137,8 @@ static int fail(stationini *out, unsigned line, const char *what,
     /* Last: the span may be the default itself. */
     out->default_name[0] = '\0';
     out->timeout = 0;
+    out->poweroff = 0;
+    out->poweroff_set = 0;
     out->totp.present = 0;
     return -1;
 }
@@ -309,7 +311,8 @@ enum {
     SEEN_PCRS   = 1u << 13,
     SEEN_KEY    = 1u << 14,
     SEEN_TLABEL = 1u << 15,
-    SEEN_SRKAUTH = 1u << 16
+    SEEN_SRKAUTH = 1u << 16,
+    SEEN_POWEROFF = 1u << 17
 };
 
 typedef struct {
@@ -324,7 +327,8 @@ static const key_def k_entry_keys[] = {
 };
 
 static const key_def k_general_keys[] = {
-    { "default", SEEN_DEF }, { "timeout", SEEN_TMO }, { "order", SEEN_ORDER }
+    { "default", SEEN_DEF }, { "timeout", SEEN_TMO }, { "order", SEEN_ORDER },
+    { "poweroff", SEEN_POWEROFF }
 };
 
 static const key_def k_totp_keys[] = {
@@ -679,6 +683,14 @@ int stationini_parse(const char *text, size_t len, stationini *out)
                             " is not a number of seconds up to 3600");
             out->timeout = (unsigned)n;
             timeout_line = line;
+        } else if (bit == SEEN_POWEROFF) {
+            uint32_t n;
+
+            if (parse_uint(va, vb, STATIONINI_POWEROFF_MAX, &n) != 0)
+                return fail(out, line, "poweroff", va, vb,
+                            " is not a number of seconds up to 86400");
+            out->poweroff = (unsigned)n;
+            out->poweroff_set = 1;
         } else if (bit == SEEN_ORDER) {
             if (parse_order(out, line, va, vb) != 0)
                 return -1;
@@ -805,7 +817,8 @@ static int format_ok(const stationini *c)
 
     if (c->n_entries > STATIONINI_ENTRIES_MAX ||
         c->n_order > STATIONINI_ORDER_MAX ||
-        c->timeout > STATIONINI_TIMEOUT_MAX)
+        c->timeout > STATIONINI_TIMEOUT_MAX ||
+        (c->poweroff_set && c->poweroff > STATIONINI_POWEROFF_MAX))
         return 0;
     if (c->default_name[0] != '\0') {
         size_t n;
@@ -1000,13 +1013,19 @@ size_t stationini_format(const stationini *c, char *buf, size_t cap)
     w.left = cap;
     w.over = 0;
 
-    if (c->default_name[0] != '\0' || c->timeout != 0 || c->n_order != 0) {
+    if (c->default_name[0] != '\0' || c->timeout != 0 || c->n_order != 0 ||
+        c->poweroff_set) {
         w_str(&w, "[general]\n");
         if (c->default_name[0] != '\0')
             w_kv(&w, "default", c->default_name);
         if (c->timeout != 0) {
             w_str(&w, "timeout = ");
             w_uint(&w, c->timeout);
+            w_str(&w, "\n");
+        }
+        if (c->poweroff_set) {
+            w_str(&w, "poweroff = ");
+            w_uint(&w, c->poweroff);
             w_str(&w, "\n");
         }
         if (c->n_order != 0) {

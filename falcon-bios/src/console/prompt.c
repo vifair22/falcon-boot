@@ -42,19 +42,31 @@ int prompt_passphrase(char *out, size_t cap, size_t *len)
     screen_cursor(1);
     screen_out(k_hint);
     hint_shown = 1;
+    /* Wiped before an idle power-off (console/screen.h). */
+    screen_idle_secret(out, cap);
 
     for (;;) {
         int key = screen_key();
+
+        if (key == BIOS_KEY_IDLE) {
+            /* The power-off did not take; what was typed is gone. */
+            if (!silent)
+                erase_back(n);
+            n = 0;
+            continue;
+        }
 
         if (key == BIOS_KEY_ESC) {
             /* Cancel wipes here rather than leaving it to the caller: a
              * cancelled prompt is the one exit where the caller has no
              * reason to think it ever held anything. */
             crypto_wipe(out, cap);
+            screen_idle_secret((void *)0, 0);
             screen_out("\n");
             return -1;
         }
         if (key == BIOS_KEY_ENTER) {
+            screen_idle_secret((void *)0, 0);
             screen_out("\n");
             out[n] = '\0';
             if (len != (size_t *)0)

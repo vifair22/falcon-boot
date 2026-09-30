@@ -5,6 +5,8 @@
  *     default = win2k          ; a section name, or an autodetected entry's
  *     timeout = 5              ; seconds; 0 or absent: the menu waits
  *     order   = win2k, linux   ; names, first shown first; the rest follow
+ *     poweroff = 300           ; seconds with no key before the machine is
+ *                              ; powered off; 0 never; absent: 300
  *
  *     [win2k]                  ; one section per entry
  *     disk  = mbr:cdcccdcc     ; or gpt:<DiskGUID>
@@ -59,6 +61,9 @@
 #define STATIONINI_ORDER_MAX   32u
 #define STATIONINI_WHY_MAX     80u
 #define STATIONINI_TIMEOUT_MAX 3600u
+/* The idle power-off (DESIGN Section 7.9): a day at most; with no
+ * `poweroff` the station waits TUI_IDLE_SECONDS, as every loader does. */
+#define STATIONINI_POWEROFF_MAX     86400u
 #define STATIONINI_FILE        "STATION.INI"
 #define STATIONINI_TOTP_KEY_MAX 256u   /* a 2048-bit SRK modulus */
 #define STATIONINI_TOTP_PCRS   16u     /* 0 to 15: the boot's PCRs */
@@ -110,6 +115,8 @@ typedef struct {
 typedef struct {
     char             default_name[STATIONINI_NAME_MAX];  /* "" none */
     unsigned         timeout;                             /* seconds */
+    unsigned         poweroff;           /* seconds, when poweroff_set */
+    uint8_t          poweroff_set;
     char             order[STATIONINI_ORDER_MAX][STATIONINI_NAME_MAX];
     unsigned         n_order;
     stationini_entry entries[STATIONINI_ENTRIES_MAX];
@@ -120,8 +127,8 @@ typedef struct {
 } stationini;
 
 /* Parses `len` bytes of `text` into `out`. 0 on success; -1 on an error,
- * with err_line and why set, default_name emptied, timeout 0 and no
- * [totp]. */
+ * with err_line and why set, default_name emptied, timeout 0, no poweroff
+ * (the default then applies) and no [totp]. */
 int stationini_parse(const char *text, size_t len, stationini *out);
 
 /* The entry section of this name, or NULL. */

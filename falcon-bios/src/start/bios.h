@@ -151,6 +151,14 @@ void bios_key_buffer_wipe(void);
 #define BIOS_KEY_DOWN   0x101
 #define BIOS_KEY_ENTER  0x00D
 #define BIOS_KEY_ESC    0x01B
+/* screen_key's answer when the idle power-off did not take and a key
+ * woke the screen: that key is not the page's, and whatever the page held
+ * that registered with screen_idle_secret was wiped. */
+#define BIOS_KEY_IDLE   (-2)
+
+/* A page's wait for a key: screen_key where stage 3 has a screen (and so
+ * the idle power-off), bios_getkey where it does not. */
+int bios_wait_key(void);
 
 /* Resets the machine. Does not return. */
 __attribute__((noreturn)) void bios_reboot(void);

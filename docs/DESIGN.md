@@ -2244,6 +2244,50 @@ Rejected alternatives:
 - **Greying out or hiding predicted refusals.** Above.
 
 
+### 7.9 Idle power-off (decided 2026-09-29)
+
+A loader left at a page that waits for a key (a menu, a menu whose
+countdown a key stopped, the passphrase prompt, a "press any key" page)
+would show it until someone came, and a panel shown one image for days
+keeps it. So when a page has waited `TUI_IDLE_SECONDS` (300) with no key,
+the machine is powered off, as Windows does at its BitLocker prompt. On
+every loader: the stick and the station on both firmwares, and falcon jump.
+The station's `STATION.INI` may change the time (`[general] poweroff`, 0
+never, 13.7).
+
+- What restarts the time: a page starting to wait, each key, and each
+  second of a countdown (a countdown ends in a boot of its own, and one
+  longer than the idle time must not be cut short). The status lines'
+  refresh (the TOTP code) does not. A page starting to wait counts because
+  the time runs across what the loader launched: memtest quit after an hour
+  comes back to a fresh five minutes, not to a timer long fired.
+- Before the power-off: the passphrase prompt's buffer is wiped, the BIOS
+  keyboard ring too, and on the UEFI station the TOTP seed (`totp_wipe`).
+- UEFI: `console/idle.c`, a timer event every wait waits on beside
+  `WaitForKey`, then `ResetSystem(EfiResetShutdown)`.
+- BIOS: `screen_key` polls the keyboard against `cdclock` (the ticks and
+  the RTC, 13.7's reason) and calls `power/power.c`: APM's "all devices
+  off" (INT 15h AX=5307h), which the machines of the A21m's era answer and
+  SeaBIOS turns into ACPI S5 itself; then ACPI S5 directly, the sleep type
+  from the DSDT's `\_S5` into the FADT's PM1 control blocks, ACPI handed
+  over through the SMI command port first when the firmware left it off
+  (`power/acpicore.c`, host-tested, reads the tables). Stage 2, which has
+  no screen, keeps its plain wait.
+- When nothing powers the machine off (UEFI's `ResetSystem` returning, no
+  APM and no S5 on BIOS), BIOS turns the screen off (the VGA sequencer's
+  screen-off bit, text memory kept) until a key, which is swallowed; the
+  prompt then starts again empty. UEFI starts the time again.
+
+Considered and rejected:
+
+- *Blanking the screen and waiting.* It stops the burn-in and leaves a
+  machine on for nothing; off is what an unattended pre-boot screen wants,
+  and a key is all it costs to come back to on a machine that has to be
+  switched on anyway.
+- *Booting the default.* The page waiting is the one where a person chose
+  not to: a stopped countdown, or a passphrase nobody typed.
+- *Rebooting.* It lands on the same page.
+
 ## 8. Host tooling (userland, C)
 
 EFI-land stays freestanding and lean. The device-configuration tooling is
@@ -4348,7 +4392,9 @@ hide = yes
 - Keys: `disk` (`gpt:<DiskGUID>` or `mbr:<signature>`), `part` (a number;
   absent means the disk's own MBR), `uki` (a file on the shelf), `efi` (a
   path on an ESP), `method` (`firmware` or `efi`, UEFI Windows), `swap`,
-  `label`, `hide`; `[general]` has `default`, `timeout`, `order`;
+  `label`, `hide`; `[general]` has `default`, `timeout`, `order` and
+  `poweroff` (seconds with no key before the machine is powered off, 0
+  never, 300 when absent; 7.9);
   `[totp]` is the UEFI station's TOTP check, which has keys of its own
   (13.15).
 - Strict, as `JUMP.INI` is (Section 14.7): a key it does not know, a value it

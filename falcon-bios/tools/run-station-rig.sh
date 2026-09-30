@@ -40,6 +40,10 @@
 #   no-ticks   booted through a floppy (tools/tickstop.S) that masks IRQ0
 #              first, so the BIOS's tick count stands still: the countdown
 #              runs by the RTC and boots A p1 (console/cdclock.c)
+#   idle       poweroff = 4 and no default: the menu left alone, the
+#              machine powered off (APM, which SeaBIOS answers with ACPI
+#              S5), QEMU exiting by itself (DESIGN Section 7.9)
+#   idle-no-ticks  the same through tickstop: timed by the RTC alone
 #
 # Usage: falcon-bios/tools/run-station-rig.sh [case...]   (default: all)
 # Env:   MEMTEST  memtest86+ for the mem case (skipped without it)
@@ -204,9 +208,10 @@ boot() {      # boot NAME UNTIL SECONDS DISK0 [DISK1]
         -serial file:"$R/serial.log" \
         -monitor unix:"$R/mon.sock",server,nowait >/dev/null 2>&1 &
     qpid=$!
+    EXITED=0
     for ((i = 0; i < secs * 10; i++)); do
         [[ -n "$until" ]] && log_text | grep -aqE -- "$until" && break
-        kill -0 "$qpid" 2>/dev/null || break
+        kill -0 "$qpid" 2>/dev/null || { EXITED=1; break; }
         sleep 0.1
     done
     sleep 1
@@ -257,7 +262,7 @@ run_rig_case() {  # run_rig_case NAME INI [MARKER]
 CASES=("$@")
 [[ ${#CASES[@]} -gt 0 ]] ||
     CASES=(own-p1 own-p2 logical b-p1-swap b-p1-noswap b-mbr ini-error
-           next-boot next-miss mem no-ticks)
+           next-boot next-miss mem no-ticks idle idle-no-ticks)
 
 build_disks
 
@@ -348,6 +353,25 @@ for c in "${CASES[@]}"; do
             $'[general]\ndefault = mbr-'"$SIG_A"$'-p1\ntimeout = 3\n'
         judge no-ticks 'TICKSTOP: IRQ0 masked' 'Booting in 3' 'Booting in 1' \
             "RIGBOOT dl=80 dssi=0000:07be"
+        ;;
+    idle|idle-no-ticks)
+        FLOPPY=
+        if [[ $c == idle-no-ticks ]]; then
+            head -c 1474560 /dev/zero > "$R/tickstop.img"
+            dd if=build/tickstop.bin of="$R/tickstop.img" conv=notrunc status=none
+            FLOPPY=$R/tickstop.img
+        fi
+        case_ini "$c" $'[general]\npoweroff = 4\n'
+        FLOPPY=$FLOPPY boot "$c" '' 60 "$R/a-run.img" "$R/b-run.img"
+        if [[ $EXITED -ne 1 ]]; then
+            fail "$c" "the machine was still on after 60 s"
+        elif ! grep -aq 'no key for the idle time, powering off' "$R/serial.txt"; then
+            fail "$c" "QEMU exited, but not through the idle power-off"
+        elif grep -aq 'RIGBOOT' "$R/serial.txt"; then
+            fail "$c" "something booted"
+        else
+            pass "$c" "the menu left alone; powered off, QEMU exited"
+        fi
         ;;
     *)
         echo "unknown case: $c" >&2

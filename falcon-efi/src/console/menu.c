@@ -1,4 +1,5 @@
 #include <console/menu.h>
+#include <console/idle.h>
 
 #include <lib/string.h>
 #include <lib/ucs2.h>
@@ -672,6 +673,9 @@ static INTN run(EFI_SYSTEM_TABLE *st, const menu_banner *banner,
     draw_row(st, v.m.hint_row, v.m.left, v.m.width, line);
     status_refresh(&v, TRUE);
 
+    /* The page is up: the idle time starts (console/idle.h). */
+    idle_touch();
+
     if (seconds != 0 || v.m.status_rows != 0) {
         tick = countdown_start(st);
         if (tick != (EFI_EVENT)0 && seconds != 0) {
@@ -685,7 +689,7 @@ static INTN run(EFI_SYSTEM_TABLE *st, const menu_banner *banner,
         UINTN i;
         UINTN next;
         EFI_INPUT_KEY key;
-        EFI_EVENT events[2];
+        EFI_EVENT events[3];
 
         /* Keep the selection inside the window before painting. Scrolling
          * changes what every slot shows, so it is the one case that still
@@ -733,6 +737,10 @@ static INTN run(EFI_SYSTEM_TABLE *st, const menu_banner *banner,
             else if (st->BootServices->CheckEvent(st->ConIn->WaitForKey) ==
                      EFI_SUCCESS)
                 i = 0u;
+            else if (idle_event() != (EFI_EVENT)0 &&
+                     st->BootServices->CheckEvent(idle_event()) ==
+                         EFI_SUCCESS)
+                i = 2u;
             else
                 continue;
         } else {
@@ -740,14 +748,32 @@ static INTN run(EFI_SYSTEM_TABLE *st, const menu_banner *banner,
              * and the read below would then spin on EFI_NOT_READY forever.
              * Backing out is what ESC does, which on the main menu hands
              * the machine back to the firmware's next boot option. */
-            events[0] = st->ConIn->WaitForKey;
-            events[1] = tick;
-            if (st->BootServices->WaitForEvent(tick != (EFI_EVENT)0 ? 2u : 1u,
-                                               events, &i) != EFI_SUCCESS) {
+            UINTN n = 0;
+            UINTN at_tick = 3u;
+            UINTN at_idle = 3u;
+
+            events[n++] = st->ConIn->WaitForKey;
+            if (tick != (EFI_EVENT)0) {
+                at_tick = n;
+                events[n++] = tick;
+            }
+            if (idle_event() != (EFI_EVENT)0) {
+                at_idle = n;
+                events[n++] = idle_event();
+            }
+            if (st->BootServices->WaitForEvent(n, events, &i) !=
+                EFI_SUCCESS) {
                 countdown_stop(st, &tick);
                 restore_console(st);
                 return -1;
             }
+            i = i == at_tick ? 1u : i == at_idle ? 2u : 0u;
+        }
+
+        /* No key for the idle time: the machine goes off. */
+        if (i == 2u) {
+            idle_expired();
+            continue;
         }
 
         /* A second: the status lines are asked again, and the countdown
@@ -757,6 +783,8 @@ static INTN run(EFI_SYSTEM_TABLE *st, const menu_banner *banner,
             status_refresh(&v, FALSE);
             if (!counting)
                 continue;
+            /* A countdown ends in a boot; the idle time waits for it. */
+            idle_touch();
             if (--left != 0) {
                 paint_countdown(&v, left);
                 continue;
@@ -789,6 +817,7 @@ static INTN run(EFI_SYSTEM_TABLE *st, const menu_banner *banner,
         for (;;) {
             if (st->ConIn->ReadKeyStroke(st->ConIn, &key) != EFI_SUCCESS)
                 break; /* EFI_NOT_READY: the queue is empty */
+            idle_touch();
 
             if (key.ScanCode == EFI_SCAN_ESC) {
                 countdown_stop(st, &tick);
