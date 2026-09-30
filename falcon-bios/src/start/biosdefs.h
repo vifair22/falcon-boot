@@ -459,6 +459,19 @@
  * GZ_STAGE_ADDR, and the rest up to here is its to use. */
 #define STAGE3_STACK    0x00800000
 
+/* A shelf's journal table (falcon-core/src/fs/jbd2.h): the 7 MB between
+ * stage 3's stack and falcon jump's module slots. Every read of a replayed
+ * shelf goes through the table, including the kernel's and the initrd's, so
+ * it must be clear of where those land: the kernel is read at KERNEL_ADDR or
+ * staged above its own footprint there, and the initrd above that, so
+ * nothing this route reads lands in it. A kernel that runs at 1 MB is moved
+ * down over it only at the handoff, after the last read. Not the heap: that
+ * starts at 64 MB, which a machine the BIOS station runs on may not have,
+ * and is placed as high as the initrd is. 7 MB is a table for a journal of
+ * about 300,000 blocks; a shelf's is a few thousand. */
+#define JNL_REGION      STAGE3_STACK
+#define JNL_REGION_END  JMOD_REGION
+
 /* COM1 and 115200 8N1. The divisor is 115200 / 115200 = 1.
  *
  * Serial rather than INT 10h for anything a test reads: the rig captures it

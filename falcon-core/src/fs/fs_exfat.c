@@ -194,5 +194,8 @@ const fs_ops fs_ops_exfat = {
     exfat_file_read_op,
     exfat_file_size_op,
     exfat_extents_op,
-    (const char *(*)(const fs_vol *))0
+    (const char *(*)(const fs_vol *))0,
+    /* No journal to replay. */
+    (int (*)(fs_vol *, fs_read_fn, void *, const struct fs_jmem_s *,
+             struct fs_jinfo_s *))0
 };

@@ -23,15 +23,16 @@ CORE_TPM      := $(addprefix $(CORE)/tpm/,tpm.c tpm2.c tpm12.c)
 # is what enrollment seals to. mkstick's alone: the loader never reads it.
 CORE_TPM_EVLOG := $(CORE)/tpm/evlog.c
 CORE_TPM_EVSAVE := $(CORE)/tpm/evsave.c
-CORE_FS       := $(addprefix $(CORE)/fs/,exfat.c ext4.c fat.c iso9660.c udf.c fs.c \
-	fs_exfat.c fs_ext4.c fs_fat.c fs_iso9660.c fs_udf.c fs_reg_all.c)
+CORE_FS       := $(addprefix $(CORE)/fs/,exfat.c ext4.c jbd2.c crc32c.c fat.c iso9660.c \
+	udf.c fs.c fs_exfat.c fs_ext4.c fs_fat.c fs_iso9660.c fs_udf.c fs_reg_all.c)
 # The stationary build's (DESIGN Section 13): ext4 and its adapter, and a
 # registry that names nothing else.
-CORE_FS_EXT4  := $(addprefix $(CORE)/fs/,ext4.c fs.c fs_ext4.c fs_reg_ext4.c)
+CORE_FS_EXT4  := $(addprefix $(CORE)/fs/,ext4.c jbd2.c crc32c.c fs.c fs_ext4.c \
+	fs_reg_ext4.c)
 # The station's (DESIGN Section 13): ext4 for the shelf and FAT for the
 # station partition or the ESP it reads STATION.INI and memtest86+ from.
-CORE_FS_STATION := $(addprefix $(CORE)/fs/,ext4.c fat.c fs.c fs_ext4.c fs_fat.c \
-	fs_reg_station.c)
+CORE_FS_STATION := $(addprefix $(CORE)/fs/,ext4.c jbd2.c crc32c.c fat.c fs.c \
+	fs_ext4.c fs_fat.c fs_reg_station.c)
 # falcon jump's (DESIGN Section 14.3): FAT, for the floppy it boots from.
 CORE_FS_FAT   := $(addprefix $(CORE)/fs/,fat.c fs.c fs_fat.c fs_reg_fat.c)
 # The extent map's readers (falcon-hook, falcon-winjump, falcon-vdisk):
@@ -108,6 +109,11 @@ test-image: test-iso test-img
 test-ext4:
 	falcon-core/tools/mk-test-ext4.sh
 
+# ext4 images copied while still mounted, and what the kernel's recovery
+# makes of each: the journal replay's fixtures (jbd2_test.c).
+test-jbd2:
+	falcon-core/tools/mk-test-jbd2.sh
+
 # FAT12/16/32, one image each: the type is derived from the cluster count
 # rather than recorded, so each width needs its own volume to read.
 # No sudo and no loop device; mtools writes into the image directly.
@@ -148,7 +154,7 @@ test-luks:
 test-trust: $(EFI)
 	falcon-core/tools/mk-test-trust.sh
 
-.PHONY: test-image test-ext4 test-fat test-luks test-trust test-iso9660 test-udf \
+.PHONY: test-image test-ext4 test-jbd2 test-fat test-luks test-trust test-iso9660 test-udf \
 	test-wim test-uefiboot test-biosboot
 
 # ---- tests ----
@@ -156,7 +162,7 @@ test-trust: $(EFI)
 CORE_TESTS := $(addprefix falcon-core/tests/,main.c \
 	exfat_synth_test.c exfat_file_test.c exfat_extent_test.c \
 	exfat_fixture_test.c cpio_test.c family_test.c manifest_test.c \
-	crypto_test.c argon2_test.c json_test.c luks_test.c ext4_test.c fs_test.c \
+	crypto_test.c argon2_test.c json_test.c luks_test.c ext4_test.c jbd2_test.c fs_test.c \
 	iso9660_test.c udf_test.c udfedit_test.c media_fs_test.c bootcfg_test.c extmap_test.c \
 	hookcmd_test.c grubcfg_test.c bsdmd_test.c xpsetup_test.c eltorito_test.c fat_test.c medium_test.c bootfs_test.c uefiboot_test.c biosboot_test.c blesslist_test.c wim_test.c part_test.c \
 	osrel_test.c pe_test.c trust_test.c survey_test.c tui_test.c shelf_test.c \

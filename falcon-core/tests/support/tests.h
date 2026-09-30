@@ -60,6 +60,7 @@ int run_argon2_tests(void);
 int run_json_tests(void);
 int run_luks_tests(void);
 int run_ext4_tests(void);
+int run_jbd2_tests(void);
 int run_media_fs_tests(void);
 int run_iso9660_tests(void);
 int run_udf_tests(void);

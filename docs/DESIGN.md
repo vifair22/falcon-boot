@@ -721,6 +721,80 @@ in would.
 Considered and rejected: *three tries and back to the menu* (the earlier
 rule), which limits nothing, since the row can be chosen again at once.
 
+### 5.4 A shelf its OS left mounted (decided 2026-09-30)
+
+A shelf's OS mounts it read-write (the T430's is `/efi`), and ext4 sets
+incompat `recover` for as long as it is mounted that way: the journal may
+hold committed blocks the filesystem proper does not. Hibernation leaves it
+so every time, since the OS is asleep and not unmounted, and the image in
+swap counts on the shelf staying exactly as it left it. A power cut leaves
+it the same way. The ext4 driver refused such a volume, because reading
+around the journal hands back stale metadata, so a hibernated machine could
+not boot the UKI that would resume it. The advice the refusal gave, fsck
+from another system, is the one thing that corrupts a hibernated OS's shelf
+when it resumes.
+
+Every reader of a shelf now reads it in that state through its journal,
+replayed in memory and never written: `falcon-core/src/fs/jbd2.c`, reached
+through `fs_mount_journal`. It follows the kernel's recovery
+(`fs/jbd2/recovery.c`): a scan that finds where the valid log ends, the
+revoke records, then the block tags. The result is a table of the newest
+committed copy of each block rather than writes, and every read of the
+volume goes through it. Nothing reaches the disk, so the OS that resumes
+finds the shelf as it left it. Both loaders' shelf mounts and their
+discovery (a plaintext shelf's `/.falcon`) use it, and so do the appliance,
+`mkstick status` and `station install` (which, run on the machine it
+installs on, always meets a shelf mounted right now).
+
+- **A torn last transaction ends the log.** A commit block that is missing,
+  or fails its checksum, is where the kernel stops too, and the state at the
+  last good commit is consistent. It is not an error.
+- **Fast commits are not replayed.** They are ext4's own logical records
+  (inodes, extent ranges, directory entries), not block copies. The state
+  served is the one at the last full commit, which is consistent: a block
+  freed after a full commit is released for reuse only by the next one
+  (`ext4_journal_commit_callback` runs from jbd2's full-commit path alone),
+  so nothing the older view names has been overwritten. Hibernation never
+  leaves a live fast commit, since its sync forces a full commit; a power
+  cut after an fsync can, and the booting page says so:
+  `the shelf's last few seconds of changes were not read.`
+- **Refused:** a transaction that committed and fails its checksum, which is
+  corruption rather than a torn tail (a later transaction may already be
+  partly copied home, so stopping before it would not be consistent), and a
+  journal outside `jbd2.h`'s set (v1 checksums, unknown feature bits). The
+  page says `the shelf's journal is damaged; run fsck on it from another
+  system, then boot its OS once with noresume.`: fsck is only safe once
+  nothing counts on the shelf as it was.
+- **Revoke records are read whatever the journal superblock says.** jbd2
+  sets `incompat revoke` in memory at the first revoke and writes it to the
+  superblock later, so a crashed or hibernated journal can hold revoke
+  blocks its superblock does not admit to. Skipping them serves a freed
+  block's old copy after the block was reused (the fixture caught it).
+- **Memory.** The table is 24 bytes a tag in the replayed transactions,
+  counted by the scan, plus one block of scratch; a 64 MiB journal asks for
+  at most about 400 KiB. The caller supplies it, as argon2id's memory is
+  supplied (`fs_jmem`): the UEFI loader from `AllocatePages`
+  (`falcon-efi/src/mem/jnlmem.c`), released once the UKI is in memory;
+  falcon-bios from `JNL_REGION`, the 7 MB between stage 3's stack and jump's
+  module slots (`falcon-bios/src/mem/jnlmem.c`), which the kernel and
+  initrd, read through the table, are never placed in. Not the heap: it
+  starts at 64 MB, which a machine the BIOS station runs on may not have,
+  and it is placed as high as the initrd is. The host tools use malloc
+  (`falcon-cli/src/common/jmem.c`). The scratch block held plaintext from
+  the shelf, so each is wiped when it is given up. Memory that cannot be
+  had is a page like 5.2's argon2id one: what it needs, what is free.
+
+On the OS side, `/sys/power/freeze_filesystems` set to 1 makes the kernel
+freeze filesystems before it hibernates, and ext4's freeze empties the
+journal and clears `recover`, so the shelf is clean when the loader reads
+it. It is a defence, not a requirement.
+
+Considered and rejected: *the OS mounts the shelf read-only* and remounts it
+for a kernel install, which every machine has to remember and which a power
+cut still defeats; *replaying fast commits*, whose record format has changed
+across kernels, for a window of seconds; *ignoring `recover`*, which reads
+stale metadata.
+
 ### 5.3 What the shelf holds, and what it is not
 
 p3 is the shelf. Like p1 (Section 4.3) its contents are a closed list, for
@@ -2836,7 +2910,8 @@ are (both measured 2026-09-13):
     verification labels and the Secure Boot state banner.
   - `fs` (core) - the driver registry above and its read-only drivers: `exfat.c`
     (file read + directory enumeration + extent map) and `ext4.c` (p3 only;
-    constrained mkfs feature set at install).
+    constrained mkfs feature set at install), with `jbd2.c`, its journal
+    replayed in memory for a shelf an OS left mounted (Section 5.4).
   - `luks` (core) - LUKS2 header parse, argon2id and pbkdf2 keyslots (the
     caller supplies argon2id's memory), AES-XTS decrypt. Unlocks p3 only; the
     module reads the UKI bytes off p3 and never exposes the p3 private key (that
@@ -3268,7 +3343,7 @@ sequenceDiagram
     U->>L: Enter on Personal OS
     L->>U: masked passphrase prompt
     U->>L: passphrase (3 tries, Escape backs out)
-    L->>FC: luks_unlock p3 (argon2id or PBKDF2, AES-XTS), luks_dev_open, fs_mount ext4
+    L->>FC: luks_unlock p3 (argon2id or PBKDF2, AES-XTS), luks_dev_open, fs_mount_journal ext4 (a journal left by a hibernated OS replayed in memory, 5.4)
     FC-->>L: /uki/*.efi, else /EFI/Linux/*.efi
     L->>U: chooser (skipped for one image)
     L->>L: read the UKI into pages
@@ -3883,9 +3958,9 @@ sequenceDiagram
     U->>L: Enter on Personal OS
     alt LUKS2 shelf
         L->>U: masked passphrase (INT 16h), five a boot with a wait after each wrong one, then power off (5.2)
-        L->>FC: luks_unlock p3, luks_dev_open, fs_mount ext4
+        L->>FC: luks_unlock p3, luks_dev_open, fs_mount_journal ext4 (5.4)
     else plaintext shelf
-        L->>FC: fs_mount straight off the partition, no prompt and no credential
+        L->>FC: fs_mount_journal straight off the partition, no prompt and no credential
     end
     FC-->>L: shelf_collect: /uki or /EFI/Linux, *.efi (at most 8)
     L->>U: chooser, shelf_label's rows (one image boots without asking)

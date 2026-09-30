@@ -41,6 +41,7 @@
 #include <unistd.h>
 
 #include <common/log.h>
+#include <common/jmem.h>
 #include <common/proc.h>
 #include <common/util.h>
 #include <mkstick/bioscore.h>
@@ -293,6 +294,7 @@ static cli_status shelf_read(const shelf_ref *sh, const mks_pass *pass,
 {
     static shelf_read_ctx c;
     const fs_ops *ops;
+    fs_jinfo jinfo;
     fs_read_fn read = disk_io_read;
     void *ctx = &c.io;
     uint32_t slot = 0;
@@ -326,7 +328,8 @@ static cli_status shelf_read(const shelf_ref *sh, const mks_pass *pass,
         ctx = &c.dev;
     }
     ops = fs_identify(read, ctx, FS_HINT_SHELF);
-    if (ops == NULL || fs_mount(&c.fs, ops, read, ctx) != FS_OK) {
+    if (ops == NULL ||
+        fs_mount_journal(&c.fs, ops, read, ctx, &cli_jmem, &jinfo) != FS_OK) {
         rc = set_error(CLI_ERR_INVALID, "the shelf holds no filesystem the "
                        "loaders read");
         goto out;

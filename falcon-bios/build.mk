@@ -112,6 +112,7 @@ BIOS_MOD_iso     := $(BIOS)/iso/vcd.c $(BIOS)/iso/vcdcore.c
 BIOS_MOD_vfd     := $(BIOS)/vfd/vfd.c
 BIOS_MOD_e820    := $(BIOS)/mem/e820.c
 BIOS_MOD_heap    := $(BIOS)/mem/heap.c
+BIOS_MOD_jnlmem  := $(BIOS)/mem/jnlmem.c   # a shelf's journal table
 BIOS_MOD_lowmem  := $(BIOS)/mem/lowmem.c $(BIOS)/mem/lowmem_bda.c
 BIOS_MOD_linux   := $(BIOS)/linux/linux.c $(BIOS)/linux/linuxcore.c
 BIOS_MOD_pos     := $(BIOS)/pos/pos.c

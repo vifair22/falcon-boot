@@ -189,5 +189,8 @@ const fs_ops fs_ops_iso9660 = {
     iso9660_file_read_op,
     iso9660_file_size_op,
     iso9660_extents_op,
-    iso9660_label_op
+    iso9660_label_op,
+    /* No journal to replay. */
+    (int (*)(fs_vol *, fs_read_fn, void *, const struct fs_jmem_s *,
+             struct fs_jinfo_s *))0
 };

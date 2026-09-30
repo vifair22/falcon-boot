@@ -297,7 +297,9 @@ static void test_fs_status_map_ext4_total(void **state)
         { EXT4_ERR_CSUM,           FS_ERR_CSUM },
         { EXT4_ERR_INLINE,         FS_ERR_INLINE },
         { EXT4_ERR_SYMLINK,        FS_ERR_SYMLINK },
-        { EXT4_ERR_HOLE,           FS_ERR_HOLE }
+        { EXT4_ERR_HOLE,           FS_ERR_HOLE },
+        { EXT4_ERR_JOURNAL,        FS_ERR_JOURNAL },
+        { EXT4_ERR_NOMEM,          FS_ERR_NOMEM }
     };
     size_t i;
 
@@ -370,7 +372,7 @@ static void test_fs_status_map_sweeps(void **state)
         if (rc != EXFAT_ERR_CORRUPT)
             assert_int_not_equal(mapped, FS_ERR_CORRUPT);
     }
-    for (rc = -1; rc >= EXT4_ERR_HOLE; rc--) {
+    for (rc = -1; rc >= EXT4_ERR_NOMEM; rc--) {
         int mapped = fs_status_from_ext4(rc);
 
         assert_true(mapped < 0);

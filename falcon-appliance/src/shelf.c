@@ -24,6 +24,7 @@
 #include <luks/luks.h>
 #include <fs/fs.h>
 #include <crypto/crypto.h>
+#include <common/jmem.h>
 
 #include <errno.h>
 #include <fcntl.h>
@@ -107,6 +108,7 @@ int shelf_unlock(const void *pass, size_t len)
     luks_master_key mk;
     uint32_t slot = 0;
     const fs_ops *ops;
+    fs_jinfo jinfo;
     int rc;
 
     if (g_dev_fd < 0)
@@ -129,7 +131,8 @@ int shelf_unlock(const void *pass, size_t len)
 
     ops = fs_identify(luks_read, &g_luks, FS_HINT_SHELF);
     if (ops == (const fs_ops *)0 ||
-        fs_mount(&g_fs, ops, luks_read, &g_luks) != FS_OK)
+        fs_mount_journal(&g_fs, ops, luks_read, &g_luks, &cli_jmem,
+                         &jinfo) != FS_OK)
         return SHELF_ERR;
     g_fs_mounted = 1;
     return SHELF_OK;
@@ -198,6 +201,7 @@ void shelf_keys_close(shelf_keys *k)
 void shelf_close(void)
 {
     g_fs_mounted = 0;
+    cli_jmem_release();
     if (g_luks_open) {
         luks_dev_close(&g_luks);
         g_luks_open = 0;

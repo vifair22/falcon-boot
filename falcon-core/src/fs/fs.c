@@ -225,6 +225,26 @@ int fs_mount(fs_vol *v, const fs_ops *ops, fs_read_fn read, void *ctx)
     return rc;
 }
 
+int fs_mount_journal(fs_vol *v, const fs_ops *ops, fs_read_fn read, void *ctx,
+                     const fs_jmem *mem, fs_jinfo *info)
+{
+    int rc;
+
+    if (info == (fs_jinfo *)0)
+        return FS_ERR_BAD_ARG;
+    info->flags = 0;
+    info->need = 0;
+    if (v == (fs_vol *)0 || ops == (const fs_ops *)0)
+        return FS_ERR_BAD_ARG;
+    if (ops->mount_journal == 0)
+        return fs_mount(v, ops, read, ctx);
+    v->ops = (const fs_ops *)0;
+    rc = ops->mount_journal(v, read, ctx, mem, info);
+    if (rc == FS_OK)
+        v->ops = ops;
+    return rc;
+}
+
 int fs_dir_open_root(fs_vol *v, fs_dir *d)
 {
     if (v == (fs_vol *)0 || d == (fs_dir *)0 || v->ops == (const fs_ops *)0)

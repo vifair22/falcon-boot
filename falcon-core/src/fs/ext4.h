@@ -22,18 +22,22 @@
  *   including meta_bg, bigalloc, inline_data, encrypt, casefold, largedir,
  *   ea_inode, mmp and journal_dev.
  *
- *   Refused as not-cleanly-shut-down, which is a different answer because it
- *   describes the filesystem rather than the format: incompat recover as
- *   EXT4_ERR_NEEDS_RECOVERY, and ro_compat orphan_present or an unclean or
- *   error-flagged s_state as EXT4_ERR_DIRTY. A read-only driver that ignored
- *   any of them would hand back stale pre-journal data, which is worse than
- *   refusing to boot. The three are genuinely independent: an image snapshotted
- *   mid-write carries recover and orphan_present while s_state still reads
- *   clean, so s_state on its own would miss it.
+ *   Not cleanly shut down, which is a different answer because it describes
+ *   the filesystem rather than the format: incompat recover, and ro_compat
+ *   orphan_present. Both are set for as long as an OS has the filesystem
+ *   mounted read-write, so a hibernated or power-cut shelf carries them.
+ *   ext4_mount refuses them (EXT4_ERR_NEEDS_RECOVERY, EXT4_ERR_DIRTY), since
+ *   ignoring the journal would hand back stale metadata. ext4_mount_journal
+ *   replays the journal in memory instead (fs/jbd2.h) and then accepts both:
+ *   orphan_present only lists inodes that are unlinked and still open, which
+ *   no path reaches. An unclean or error-flagged s_state is EXT4_ERR_DIRTY
+ *   either way. These are independent: an image snapshotted mid-write
+ *   carries recover and orphan_present while s_state still reads clean, so
+ *   s_state on its own would miss it.
  *
- * Journal contents are never read. That is sound only because a needs-recovery
- * filesystem is refused outright; on a cleanly unmounted one the journal holds
- * nothing the main filesystem does not already have.
+ * The journal is read only by ext4_mount_journal, and never written. On a
+ * cleanly unmounted filesystem it holds nothing the filesystem proper does
+ * not already have.
  *
  * Checksum policy (metadata_csum, crc32c). Verified on read:
  *     superblock          yes  (seed ~0, covers the first 0x3FC bytes)
@@ -51,7 +55,10 @@
  *                              interprets. Telling the two apart needs the
  *                              record chain, not the tail's signature; see
  *                              dir_block_has_tail() before touching it.
- *     bitmaps, journal    not read at all, so not verified.
+ *     bitmaps             not read at all, so not verified.
+ *     journal             by fs/jbd2.c, when replayed: its superblock,
+ *                         descriptor, commit and revoke blocks, and each
+ *                         copy's tag checksum on the copy's first read.
  * When metadata_csum is absent nothing is verified and the mount still
  * succeeds; every image mkstick creates has it.
  *
@@ -70,6 +77,8 @@
 #include <stdint.h>
 #include <stddef.h>
 
+#include <fs/jbd2.h>
+
 /* Status codes, repo convention: OK zero, errors negative. */
 enum {
     EXT4_OK                 = 0,
@@ -85,6 +94,10 @@ enum {
     EXT4_ERR_INLINE         = -10, /* data lives in the inode; unsupported */
     EXT4_ERR_SYMLINK        = -11, /* symlink: not a byte stream to read */
     EXT4_ERR_HOLE           = -12, /* sparse hole or uninitialized extent */
+    EXT4_ERR_JOURNAL        = -13, /* the journal is damaged: a committed
+                                      transaction fails its checksum, or the
+                                      log violates its format */
+    EXT4_ERR_NOMEM          = -14, /* the replay's memory could not be had */
 };
 
 /* Read len bytes at byte offset off (volume-relative). Returns 0 on success,
@@ -124,6 +137,12 @@ typedef struct {
 
     uint32_t csum_seed;        /* crc32c seed for per-inode/per-group sums */
     uint8_t  has_csum;         /* metadata_csum present */
+    uint8_t  has_journal;      /* compat has_journal, internal */
+    uint32_t journal_ino;
+
+    /* The journal replayed (ext4_mount_journal); jmap.e is NULL when every
+     * read goes straight to the device. */
+    jbd2_map jmap;
 
     /* One-descriptor cache; ~0 marks it invalid. */
     uint32_t gd_cache_group;
@@ -184,6 +203,27 @@ typedef struct {
 
 /* Validates the superblock, the feature set and the clean-unmount state. */
 int ext4_mount(ext4_vol *v, ext4_read_fn read, void *read_ctx);
+
+/* What ext4_mount_journal did, for the caller to say. */
+#define EXT4_JNL_REPLAYED   0x1u  /* read through the journal */
+#define EXT4_JNL_FC_SKIPPED 0x2u  /* fast commits after the last full commit
+                                     were not read (jbd2.h) */
+
+typedef struct {
+    uint32_t flags;
+    size_t   need;   /* bytes the replay asked mem for; 0 when none */
+} ext4_jinfo;
+
+/* ext4_mount, except that a filesystem whose journal needs recovery is read
+ * as recovery would leave it, through a table of the journal's newer
+ * copies (fs/jbd2.h), rather than refused. The table's memory comes from
+ * mem, once, sized exactly; it is put back when the mount fails and is the
+ * caller's to release once the volume is no longer read, since every read
+ * goes through it. Also EXT4_ERR_JOURNAL, EXT4_ERR_NOMEM (info->need says
+ * how much was asked for), and EXT4_ERR_UNSUPPORTED for a journal outside
+ * jbd2.h's set. */
+int ext4_mount_journal(ext4_vol *v, ext4_read_fn read, void *read_ctx,
+                       const jbd2_mem *mem, ext4_jinfo *info);
 
 int ext4_dir_open_root(ext4_vol *v, ext4_dir *d);
 int ext4_dir_open(ext4_vol *v, ext4_dir *d, const ext4_dirent *e);

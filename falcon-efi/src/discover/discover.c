@@ -10,6 +10,7 @@
 #include <discover/partefi.h>
 #include <efi/loadedimage.h>
 #include <ident/identfs.h>
+#include <mem/jnlmem.h>
 #include <luks/luks.h>
 
 static const uint8_t luks2_magic[6] = { 'L', 'U', 'K', 'S', 0xba, 0xbe };
@@ -25,6 +26,8 @@ static ident_rec g_install;
 /* Scratch for reading one row's record at a time: a mounted volume and its
  * /.falcon, or a LUKS2 header's JSON. Static, being kilobytes each; the
  * scan reads one row at a time and keeps nothing mounted. */
+/* For the journal table a plaintext shelf's record is read through. */
+static EFI_BOOT_SERVICES *g_bs;
 static ident_fs_scratch g_rec_fs;
 static luks_vol g_rec_luks;
 static char g_rec_json[LUKS_JSON_CAP];
@@ -107,9 +110,17 @@ static void read_record(discover_dev *d)
             rc = ident_from_strings(version, role, role_len, id, id_len,
                                     &d->rec);
     } else if (d->fs != (const fs_ops *)0) {
-        if (fs_mount(&g_rec_fs.vol, d->fs, discover_read, d) == FS_OK)
+        fs_jmem mem;
+        fs_jinfo info;
+
+        /* A plaintext shelf its OS left mounted (hibernated, or the power
+         * went) is read through its journal, or it would not be a row. */
+        jnl_mem_make(&mem, g_bs);
+        if (fs_mount_journal(&g_rec_fs.vol, d->fs, discover_read, d, &mem,
+                             &info) == FS_OK)
             rc = ident_read_vol(&g_rec_fs.vol, &g_rec_fs, &d->rec);
         g_rec_fs.vol.ops = (const struct fs_ops *)0;
+        jnl_release();
     }
     d->has_rec = (uint8_t)(rc == IDENT_OK ? 1 : 0);
 }
@@ -216,6 +227,7 @@ void discover_scan(EFI_SYSTEM_TABLE *st, EFI_HANDLE image)
 
     if (st == (EFI_SYSTEM_TABLE *)0)
         return;
+    g_bs = st->BootServices;
     boot = boot_device(st, image);
     /* First, before any row is judged: every row is judged against it. */
     g_id_state = read_install(st, boot);

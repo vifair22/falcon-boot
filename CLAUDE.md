@@ -163,7 +163,12 @@ falcon-efi and falcon-bios, which never share a set, may both have a `pos/`.
     status codes) and the read-only drivers only it calls, `exfat.c`,
     `ext4.c`, `fat.c` (FAT12/16/32 with long names; one driver, since the
     width is derived from the cluster count and only the FAT entry read
-    differs), `iso9660.c` (Rock Ridge, Joliet) and `udf.c`. Each driver's
+    differs), `iso9660.c` (Rock Ridge, Joliet) and `udf.c`. `jbd2.c` is
+    ext4's journal replayed in memory and never written, for a shelf its OS
+    left mounted (hibernated, or the power went; DESIGN Section 5.4):
+    `fs_mount_journal` reads such a volume through a table of the journal's
+    newer copies, its memory the caller's (`fs_jmem`), where `fs_mount`
+    still refuses it. `crc32c.c` is the checksum both share. Each driver's
     adapter to the vtable is its own file (`fs_<driver>.c`), and the table
     is one a build picks: `fs_reg_all.c` everywhere, `fs_reg_ext4.c` in the
     UEFI station (`CORE_FS_EXT4`) and `fs_reg_station.c`, ext4 and FAT, in
@@ -285,6 +290,8 @@ falcon-efi and falcon-bios, which never share a set, may both have a `pos/`.
   - `bsd/` BSD media served as its own memory disk (Section 6.4; M7):
     the two byte edits core computes, laid over the virtual CD, and the
     memory check FreeBSD's staging area needs.
+  - `mem/jnlmem.c` the pages a shelf's journal table lives in (DESIGN
+    Section 5.4), shared by `pos/` and `discover/`.
   - `iso/`, `pos/`, `bless/` the three boot paths: virtual media over a p2
     file (DESIGN Section 6), the personal OS (Section 5; the only module that
     ever holds the passphrase, glue over core's `luks` and `fs`), and blessed
@@ -457,7 +464,9 @@ falcon-efi and falcon-bios, which never share a set, may both have a `pos/`.
   `hw/scsi/` the SCSI blocks both speak; `hw/blk13.c` the
   INT 13h answers every module's resident gives; `hw/pci.h` and
   `hw/modrt.h` the port I/O a module does itself. `mem/lowmem.c` is the one place a resident's block is
-  taken off the top of conventional memory. The
+  taken off the top of conventional memory, and `mem/jnlmem.c` hands a
+  shelf's journal table the fixed region between stage 3's stack and
+  jump's module slots (`JNL_REGION`, DESIGN Section 5.4). The
   entry points are the apps' (`apps/<app>/bios_main.c`). `start/boot_fd.S`
   is jump's stage 1, a FAT12 boot sector that reads the stick's stage 2 by
   CHS; `disk.c` reads by CHS too (AH=02h, `vfdcore.c`'s arithmetic) when a

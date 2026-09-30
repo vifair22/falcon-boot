@@ -4,6 +4,7 @@
 
 #include <fs/fs.h>
 #include <ident/identfs.h>
+#include <mem/jnlmem.h>
 #include <luks/luks.h>
 #include <lib/string.h>
 
@@ -138,6 +139,7 @@ int install_part_record(bios_disk *d, const part_entry *p, ident_rec *out,
     const char *id = (const char *)0;
     size_t role_len = 0;
     size_t id_len = 0;
+    int rc;
 
     *encrypted = 0;
     if (d == (bios_disk *)0 || p == (const part_entry *)0 ||
@@ -155,6 +157,9 @@ int install_part_record(bios_disk *d, const part_entry *p, ident_rec *out,
         return ident_from_strings(version, role, role_len, id, id_len,
                                   out) == IDENT_OK;
     }
-    /* A /.falcon at the root of whatever the registry mounts here. */
-    return ident_probe(part_read, &g_src, &g_fs, out) == IDENT_OK;
+    /* A /.falcon at the root of whatever the registry mounts here; a
+     * plaintext shelf its OS left mounted is read through its journal. */
+    rc = ident_probe_mem(part_read, &g_src, &g_fs, &jnl_mem, out);
+    jnl_wipe();
+    return rc == IDENT_OK;
 }

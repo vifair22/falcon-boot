@@ -18,6 +18,7 @@ LEGACY_BIOS += $(CORE_STROWS) $(CORE_STATIONINI)   # the list, and STATION.INI
 LEGACY_BIOS += $(BIOS_MOD_marker) $(CORE)/media/nextboot.c  # next boot (Section 13.8)
 LEGACY_BIOS += $(CORE)/manifest/manifest.c  # nextboot.c's path rules
 LEGACY_BIOS += $(BIOS_MOD_install) $(CORE_IDENT) $(CORE_IDENT_FS)  # the shelf by its record
+LEGACY_BIOS += $(BIOS_MOD_jnlmem)      # a hibernated shelf, read through its journal
 LEGACY_BIOS += $(BIOS_MOD_e820) $(BIOS_MOD_disk) $(BIOS_MOD_serial)
 LEGACY_BIOS += $(BIOS_MOD_bytes)      # the drivers read parts of a 4Kn sector
 LEGACY_BIOS += $(CORE_PART) $(CORE_FS_STATION) $(CORE_PE) $(CORE_CRYPTO) $(CORE_LUKS)

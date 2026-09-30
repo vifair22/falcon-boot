@@ -73,6 +73,16 @@
 #                  384 MiB machine: the passphrase is refused with the page
 #                  that says how much the slot needs and how much is free
 #                  (docs/notes/argon2-totp.md Section 1)
+#   hibernated-uefi, hibernated-bios
+#                  the station disk as a hibernated OS leaves it: its shelf
+#                  mounted read-write on this host, personal.efi copied to
+#                  resumed.efi and deleted, a commit, and the disk copied
+#                  with the shelf still mounted, so its superblock says the
+#                  journal needs recovery and resumed.efi is only in the
+#                  journal. The passphrase boots resumed.efi (a loader that
+#                  ignored the journal would find personal.efi, one before
+#                  this did not boot at all), and falcon-bios says on serial
+#                  that it read the shelf through its journal
 #   64-only-bios32 the same stick under SeaBIOS on a Pentium III (no long
 #                  mode): an ISO whose every kernel is 64-bit is listed with
 #                  {64-BIT ONLY}, a multi-arch one (a 64-bit and a 32-bit
@@ -577,6 +587,75 @@ case_kdf_memory() { # case_kdf_memory CASE FIRMWARE
     fi
 }
 
+# The station disk's copy, taken with its shelf mounted on this host as a
+# hibernated OS would have it: nothing unmounts it before the copy, and the
+# rename lives in the journal alone. commit=1 and a pause stand in for the
+# kernel's own commit; sync would also write the metadata home and leave
+# nothing for the journal to hold (falcon-core/tools/mk-test-jbd2.sh).
+hibernated_disk() {
+    local work=$R/station-hibernating.img img=$R/station-hibernated.img feat
+    rm -f "$work" "$img"
+    cp --sparse=always build/test-station.img "$work"
+    MAPPER=falcon-core-rig-hib
+    LOOP=$(sudo losetup -f --show -P "$work")
+    printf '%s' "$PASS" | sudo cryptsetup open "${LOOP}p2" "$MAPPER" -
+    MNT=$(mktemp -d)
+    sudo mount -o commit=1 "/dev/mapper/$MAPPER" "$MNT"
+    sudo cp "$MNT/uki/personal.efi" "$MNT/uki/resumed.efi"
+    sudo sync "$MNT/uki/resumed.efi"
+    sudo rm "$MNT/uki/personal.efi"
+    sleep 2
+    cp --sparse=always "$work" "$img"
+    sudo umount "$MNT"
+    rmdir "$MNT"
+    MNT=
+    sudo cryptsetup close "$MAPPER"
+    sudo losetup -d "$LOOP"
+    LOOP=
+    rm -f "$work"
+    # The copy is what it claims to be: a shelf that needs recovery.
+    LOOP=$(sudo losetup -f --show -r -P "$img")
+    printf '%s' "$PASS" | sudo cryptsetup open --readonly "${LOOP}p2" \
+        "$MAPPER" -
+    feat=$(sudo dumpe2fs -h "/dev/mapper/$MAPPER" 2>/dev/null |
+        sed -n 's/^Filesystem features://p')
+    sudo cryptsetup close "$MAPPER"
+    MAPPER=
+    sudo losetup -d "$LOOP"
+    LOOP=
+    [[ "$feat" == *needs_recovery* ]]
+}
+
+case_hibernated() { # case_hibernated CASE FIRMWARE
+    local why=
+    hibernated_disk || why="the copy's shelf does not need recovery"
+    [[ -z "$why" ]] && boot "$2" "$R/station-hibernated.img:boot"
+    [[ -z "$why" ]] && { wait_for "Personal OS (encrypted)" 90 || why="no Personal OS row"; }
+    if [[ -z "$why" ]]; then
+        sleep 1
+        mon "sendkey ret"
+        wait_for "passphrase for the encrypted partition" 90 ||
+            why="no passphrase prompt"
+    fi
+    if [[ -z "$why" ]]; then
+        sleep 0.5
+        send_keys "$PASS"
+        wait_for "FALCON-UKI-DONE" 120 || why="the UKI never reported"
+    fi
+    [[ -z "$why" ]] && { has "reading resumed.efi" ||
+        why="the loader did not read the UKI the journal names"; }
+    if [[ -z "$why" && "$2" == bios ]]; then
+        has "falcon-bios: the shelf is read through its journal" ||
+            why="stage 3 did not say it read the journal"
+    fi
+    halt
+    if [[ -z "$why" ]]; then
+        result "$1" 1 "the shelf read through its journal: resumed.efi booted"
+    else
+        result "$1" 0 "$why"
+    fi
+}
+
 case_station() { # case_station CASE FIRMWARE
     local id why=
     id=$("$MKSTICK" ident build/test-station.img |
@@ -804,7 +883,7 @@ CASES=("$@")
            4kn-bios 4kn-bios-marker station-uefi station-bios
            station-stick-uefi station-stick-bios bios-only-uefi
            bios-only-uefi-sb efi-only-bios 64-only-bios32 kdf-memory-uefi
-           kdf-memory-bios)
+           kdf-memory-bios hibernated-uefi hibernated-bios)
 
 for c in "${CASES[@]}"; do
     case $c in
@@ -834,6 +913,8 @@ for c in "${CASES[@]}"; do
     4kn-bios-marker) case_4kn_marker "$c" ;;
     kdf-memory-uefi) case_kdf_memory "$c" uefi ;;
     kdf-memory-bios) case_kdf_memory "$c" bios ;;
+    hibernated-uefi) case_hibernated "$c" uefi ;;
+    hibernated-bios) case_hibernated "$c" bios ;;
     station-uefi)  case_station "$c" uefi ;;
     station-bios)  case_station "$c" bios ;;
     station-stick-uefi) case_station_stick "$c" uefi ;;

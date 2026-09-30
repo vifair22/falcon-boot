@@ -45,4 +45,11 @@ int ident_read_vol(fs_vol *v, ident_fs_scratch *s, ident_rec *out);
 int ident_probe(fs_read_fn read, void *ctx, ident_fs_scratch *s,
                 ident_rec *out);
 
+/* ident_probe, mounting with fs_mount_journal and mem: a plaintext shelf's
+ * record is read through its journal when its OS left it mounted
+ * (hibernated, or the power went), rather than the shelf going unseen. The
+ * table stays mem's until the volume is given up. */
+int ident_probe_mem(fs_read_fn read, void *ctx, ident_fs_scratch *s,
+                    const fs_jmem *mem, ident_rec *out);
+
 #endif /* FALCON_IDENTFS_H */

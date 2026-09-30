@@ -33,17 +33,30 @@ int ident_read_vol(fs_vol *v, ident_fs_scratch *s, ident_rec *out)
     return ident_decode_text(text, (size_t)size, out);
 }
 
-int ident_probe(fs_read_fn read, void *ctx, ident_fs_scratch *s,
-                ident_rec *out)
+int ident_probe_mem(fs_read_fn read, void *ctx, ident_fs_scratch *s,
+                    const fs_jmem *mem, ident_rec *out)
 {
     const fs_ops *ops;
+    fs_jinfo info;
+    int rc;
 
     if (read == (fs_read_fn)0 || s == (ident_fs_scratch *)0 ||
         out == (ident_rec *)0)
         return IDENT_ERR_ARG;
     s->vol.ops = (const struct fs_ops *)0;
     ops = fs_identify(read, ctx, FS_HINT_NONE);
-    if (ops == (const fs_ops *)0 || fs_mount(&s->vol, ops, read, ctx) != FS_OK)
+    if (ops == (const fs_ops *)0)
+        return IDENT_ERR_NONE;
+    rc = (mem == (const fs_jmem *)0)
+             ? fs_mount(&s->vol, ops, read, ctx)
+             : fs_mount_journal(&s->vol, ops, read, ctx, mem, &info);
+    if (rc != FS_OK)
         return IDENT_ERR_NONE;
     return ident_read_vol(&s->vol, s, out);
+}
+
+int ident_probe(fs_read_fn read, void *ctx, ident_fs_scratch *s,
+                ident_rec *out)
+{
+    return ident_probe_mem(read, ctx, s, (const fs_jmem *)0, out);
 }
