@@ -419,7 +419,7 @@ static void test_unlock_delay(void **state)
 {
     (void)state;
     assert_int_equal(tui_unlock_delay(0), 0);
-    assert_int_equal(tui_unlock_delay(1), 2);
+    assert_int_equal(tui_unlock_delay(1), 0);
     assert_int_equal(tui_unlock_delay(2), 4);
     assert_int_equal(tui_unlock_delay(3), 8);
     assert_int_equal(tui_unlock_delay(4), 16);

@@ -204,7 +204,7 @@ void tui_row_banner(uint16_t *row, size_t w, const uint16_t *title,
  * list whose rows never carry one: the personal-OS chooser on both loaders,
  * and every menu of the stationary build, which links no predictions. */
 /* Seconds before the next attempt after `failures` wrong passphrases this
- * boot: 2, 4, 8, 16. 0 for none. */
+ * boot: none after the first, then 4, 8, 16. */
 unsigned tui_unlock_delay(unsigned failures);
 
 extern const uint16_t tui_hint_default[];

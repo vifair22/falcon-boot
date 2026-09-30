@@ -702,14 +702,22 @@ credential route fails.
 
 Both loaders count the wrong passphrases of a boot across every prompt,
 whichever shelf and however often the row is chosen again, and give
-`TUI_UNLOCK_TRIES` (5). After each of the first four the next attempt waits
-2, 4, 8 and 16 seconds (`tui_unlock_delay`), with the keys pressed during
-the wait thrown away; the fifth powers the machine off, the passphrase
+`TUI_UNLOCK_TRIES` (5). The first wrong one costs nothing, since it is
+nearly always the owner's typo; after the second, third and fourth the next
+attempt waits 4, 8 and 16 seconds (`tui_unlock_delay`), with the keys
+pressed during the wait thrown away; the fifth powers the machine off, the passphrase
 wiped first (UEFI: `idle_power_off`, EfiResetShutdown then a cold reset;
-BIOS: `screen_power_off`, 7.9's APM then ACPI S5, then a reset). The lines:
+BIOS: `screen_power_off`, 7.9's APM then ACPI S5, then a reset). Neither
+the wait nor the limit is said. The wait runs under `unlocking...`, before
+the refusal is printed, where it reads as a slow key derivation (an
+argon2id slot already takes a second or two), and every refusal, the fifth
+included, is the same line:
 
-    wrong passphrase. Next attempt in 4 s.
-    wrong passphrase. Too many attempts: powering off.
+    wrong passphrase.
+
+The prompt carries no attempt count either. Telling the person at the
+keyboard how long they wait and how many tries are left helps only the one
+guessing; the owner who mistyped needs neither number.
 
 What it buys is a rate, five guesses a power cycle and half a minute of
 waiting among them, against someone at the keyboard of a machine that

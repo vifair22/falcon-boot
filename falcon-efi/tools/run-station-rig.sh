@@ -48,9 +48,10 @@
 #                idle time still boots its default
 #   idle-prompt  poweroff = 5: the passphrase prompt left with three
 #                characters typed, and the machine powers off
-#   bad-pass     five wrong passphrases: 2, 4, 8 and 16 s waits between
-#                them, then the power-off (DESIGN Section 5.2)
-#   retry        a wrong passphrase, the wait, then the right one: the UKI
+#   bad-pass     five wrong passphrases: no wait after the first, 4, 8 and
+#                16 s after the next three, then the power-off (DESIGN
+#                Section 5.2)
+#   retry        a wrong passphrase, no wait, then the right one: the UKI
 #
 # Nothing touches a real disk or this machine's variables: every disk is an
 # image file and every varstore a copy under build/station-rig.
@@ -198,6 +199,19 @@ wait_exit() {   # wait_exit SECONDS
     return 1
 }
 count() { log_text "$R/serial.log" | grep -aoF -- "$1" | wc -l; }
+
+# wait_count PATTERN N SECONDS: until PATTERN has appeared N times. The
+# unlock's lines are the same after every wrong passphrase (DESIGN Section
+# 5.2 says nothing of the wait), so progress is counted, not matched.
+wait_count() {
+    local i
+    for (( i = 0; i < $3 * 10; i++ )); do
+        [[ $(log_text "$R/serial.log" | grep -aoF -- "$1" | wc -l) -ge $2 ]] && return 0
+        kill -0 "$QPID" 2>/dev/null || return 1
+        sleep 0.1
+    done
+    return 1
+}
 
 send_keys() {
     local s=$1 i c
@@ -529,7 +543,7 @@ case_idle_prompt() {
 }
 
 case_bad_pass() {
-    local c=$1 fw=$2 why= k d
+    local c=$1 fw=$2 why= k d t0
     station_image ""
     NEXT= NO_WIN_ENTRY=0 boot "$fw"
     wait_for "$MENU_UP" 90 || why="no menu"
@@ -539,21 +553,24 @@ case_bad_pass() {
     fi
     for k in 1 2 3 4; do
         [[ -n "$why" ]] && break
-        d=$(( 2 << (k - 1) ))
+        d=$(( k == 1 ? 0 : 2 << (k - 1) ))
         sleep 0.5
+        t0=$SECONDS
         send_keys "wrong$k"
-        wait_for "Next attempt in $d s." 60 || { why="no $d s wait after try $k"; break; }
-        wait_for "(attempt $(( k + 1 )) of 5)" $(( d + 30 )) || why="no attempt $(( k + 1 )) prompt"
+        wait_count "wrong passphrase." "$k" $(( d + 60 )) || { why="no refusal after try $k"; break; }
+        (( SECONDS - t0 >= d - 1 )) || { why="no $d s wait after try $k"; break; }
+        wait_count "passphrase for the encrypted partition" $(( k + 1 )) 30 ||
+            why="no prompt after try $k"
     done
     if [[ -z "$why" ]]; then
         sleep 0.5
         send_keys wrong5
-        wait_for "Too many attempts: powering off." 60 || why="no power-off line"
+        wait_count "wrong passphrase." 5 60 || why="no refusal after try 5"
     fi
     [[ -z "$why" ]] && { wait_exit 30 || why="the machine was still on"; }
     [[ -z "$why" ]] && has "FALCON-UKI" && why="a UKI started"
     halt
-    result "$c" "$why" "five wrong: waits of 2, 4, 8 and 16 s, then powered off"
+    result "$c" "$why" "five wrong: waits of 0, 4, 8 and 16 s, then powered off"
 }
 
 case_retry() {
@@ -568,16 +585,17 @@ case_retry() {
     if [[ -z "$why" ]]; then
         sleep 0.5
         send_keys "wrong"
-        wait_for "Next attempt in 2 s." 60 || why="no wait after a wrong one"
+        wait_count "wrong passphrase." 1 60 || why="no refusal after a wrong one"
     fi
-    [[ -z "$why" ]] && { wait_for "(attempt 2 of 5)" 30 || why="no second prompt"; }
+    [[ -z "$why" ]] && { wait_count "passphrase for the encrypted partition" 2 30 ||
+        why="no second prompt"; }
     if [[ -z "$why" ]]; then
         sleep 0.5
         send_keys "$PASS"
         wait_for "FALCON-UKI-DONE" 120 || why="the UKI never reported"
     fi
     halt
-    result "$c" "$why" "a wrong passphrase, a 2 s wait, then the right one: the UKI"
+    result "$c" "$why" "a wrong passphrase, no wait, then the right one: the UKI"
 }
 
 # ---- run ----

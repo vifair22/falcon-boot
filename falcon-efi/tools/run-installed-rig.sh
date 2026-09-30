@@ -63,7 +63,7 @@
 #                 shelf (its stamp)
 #   mbr4k-bios    mbr4k under SeaBIOS, to the UKI
 #   mbr4k-bios-bad  the same with five wrong passphrases: falcon-bios's
-#                 waits of 2, 4, 8 and 16 s, then its power-off, QEMU
+#                 waits of 0, 4, 8 and 16 s, then its power-off, QEMU
 #                 exiting (DESIGN Section 5.2)
 #   second-nxt, second-sb-nxt
 #                 gpt2 with Windows's firmware entry: the INI's [windows]
@@ -366,6 +366,19 @@ wait_for() {    # wait_for PATTERN SECONDS
 
 has() { log_text "$R/serial.log" | grep -aqF -- "$1"; }
 
+# wait_count PATTERN N SECONDS: until PATTERN has appeared N times. The
+# unlock's lines are the same after every wrong passphrase (DESIGN Section
+# 5.2 says nothing of the wait), so progress is counted, not matched.
+wait_count() {
+    local i
+    for (( i = 0; i < $3 * 10; i++ )); do
+        [[ $(log_text "$R/serial.log" | grep -aoF -- "$1" | wc -l) -ge $2 ]] && return 0
+        kill -0 "$QPID" 2>/dev/null || return 1
+        sleep 0.1
+    done
+    return 1
+}
+
 send_keys() {
     local s=$1 i c
     for (( i = 0; i < ${#s}; i++ )); do
@@ -639,7 +652,7 @@ wait_exit() {   # wait_exit SECONDS
 }
 
 case_bios_bad() {       # case_bios_bad CASE IMG
-    local c=$1 img=$2 k d
+    local c=$1 img=$2 k d t0
     WHY=
     boot bios "$img" nvme - 0
     wait_for "Booting in 5 s" 90 || WHY="no countdown"
@@ -651,21 +664,24 @@ case_bios_bad() {       # case_bios_bad CASE IMG
     fi
     for k in 1 2 3 4; do
         [[ -n "$WHY" ]] && break
-        d=$(( 2 << (k - 1) ))
+        d=$(( k == 1 ? 0 : 2 << (k - 1) ))
         sleep 0.5
+        t0=$SECONDS
         send_keys "wrong$k"
-        wait_for "Next attempt in $d s." 90 || { WHY="no $d s wait after try $k"; break; }
-        wait_for "(attempt $(( k + 1 )) of 5)" $(( d + 30 )) || WHY="no attempt $(( k + 1 )) prompt"
+        wait_count "wrong passphrase." "$k" $(( d + 60 )) || { WHY="no refusal after try $k"; break; }
+        (( SECONDS - t0 >= d - 1 )) || { WHY="no $d s wait after try $k"; break; }
+        wait_count "passphrase for the encrypted partition" $(( k + 1 )) 30 ||
+            WHY="no prompt after try $k"
     done
     if [[ -z "$WHY" ]]; then
         sleep 0.5
         send_keys wrong5
-        wait_for "Too many attempts: powering off." 90 || WHY="no power-off line"
+        wait_count "wrong passphrase." 5 60 || WHY="no refusal after try 5"
     fi
     [[ -z "$WHY" ]] && { wait_exit 30 || WHY="the machine was still on"; }
     [[ -z "$WHY" ]] && has "FALCON-UKI" && WHY="a UKI started"
     halt
-    result "$c" "$WHY" "BIOS: five wrong, waits of 2, 4, 8 and 16 s, then powered off"
+    result "$c" "$WHY" "BIOS: five wrong, waits of 0, 4, 8 and 16 s, then powered off"
 }
 
 # gpt2: Windows on the second disk, through its firmware entry (nxt) or

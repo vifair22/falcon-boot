@@ -44,11 +44,12 @@ rather than `BLS`.
 
 The passphrase prompt (`POS`, on every loader and station) takes five wrong
 passphrases a boot, however often the row is chosen again. After each of
-the first four the next attempt waits 2, 4, 8 and 16 seconds; the fifth
-powers the machine off (`docs/DESIGN.md` Section 5.2):
+the second, third and fourth the next attempt waits 4, 8 and 16 seconds
+(the first costs nothing); the fifth
+powers the machine off (`docs/DESIGN.md` Section 5.2). Neither is said on
+screen: the wait runs under `unlocking...`, and every refusal is
 
-    wrong passphrase. Next attempt in 4 s.
-    wrong passphrase. Too many attempts: powering off.
+    wrong passphrase.
 
 On the UEFI station the TOTP code above the prompt is redrawn when it
 rolls.
