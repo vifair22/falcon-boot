@@ -833,11 +833,40 @@ static EFI_STATUS launch_uki(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent,
      * spec asks for. With a device path the started image gets a
      * LoadedImage->DeviceHandle pointing at our filesystem, which is what
      * sd-stub scans for its `.extra.d` companions. */
-    result->stage = ops.via_shim ? L"LoadImage of the UKI (shim)"
-                                 : L"LoadImage of the UKI (firmware)";
-    status = ops.LoadImage(FALSE, parent, load_path,
-                           published ? (void *)0 : buf,
-                           published ? (UINTN)0 : (UINTN)size, &child);
+    /* Shim is here but not enforcing: load through the firmware, as
+     * falcon-efi/src/iso/iso.c and bless.c do and for the reason argued
+     * there (DESIGN Section 7.6). A UKI needs it as much: sd-stub loads its
+     * kernel through the firmware's LoadImage with the UKI as the parent,
+     * and an image shim's loader created is not a parent the firmware will
+     * take, so with Secure Boot off every current kernel failed with
+     * EFI_INVALID_PARAMETER (traced 2026-09-29). With Secure Boot on and
+     * only shim's validation off the firmware still enforces db and refuses
+     * a MOK-signed UKI; that is answered with shim's loader below, as
+     * before, and the inner-load warning the caller printed stands. */
+    status = EFI_NOT_FOUND;   /* not loaded yet */
+    if (ops.via_shim && ops.table_unhooked) {
+        result->stage = L"LoadImage of the UKI (firmware)";
+        status = bs->LoadImage(FALSE, parent, load_path,
+                               published ? (void *)0 : buf,
+                               published ? (UINTN)0 : (UINTN)size, &child);
+        if (status == EFI_SUCCESS) {
+            ops.LoadImage = bs->LoadImage;
+            ops.StartImage = bs->StartImage;
+            ops.UnloadImage = bs->UnloadImage;
+            ops.via_shim = FALSE;
+        } else {
+            if (status == EFI_SECURITY_VIOLATION && child != (EFI_HANDLE)0)
+                bs->UnloadImage(child);
+            child = (EFI_HANDLE)0;
+        }
+    }
+    if (status != EFI_SUCCESS) {
+        result->stage = ops.via_shim ? L"LoadImage of the UKI (shim)"
+                                     : L"LoadImage of the UKI (firmware)";
+        status = ops.LoadImage(FALSE, parent, load_path,
+                               published ? (void *)0 : buf,
+                               published ? (UINTN)0 : (UINTN)size, &child);
+    }
     if (load_path != (EFI_DEVICE_PATH_PROTOCOL *)0)
         bs->FreePool(load_path);
     if (EFI_ERROR(status)) {
