@@ -2719,6 +2719,14 @@ credential with no second prompt. Still unmeasured on hardware: the other
 four BIOS routes (a direct Linux ISO, an ISO's own loader through the
 virtual CD, BSD, Windows).
 
+MEASURED ON REAL HARDWARE (2026-09-29), UEFI with Secure Boot on: the
+ThinkPad T430 (coreboot and MrChromebox edk2, TPM 1.2 behind
+EFI_TCG_PROTOCOL, the machine's own key as PK, KEK and db, no shim) boots
+the UEFI station straight from its firmware entry (`station install
+--no-shim`, 13.2), and the station shows the TOTP code of 13.15: enrolled
+from coreboot's log and the edk2 log the station saved, sealed to PCRs 2,
+4, 5 and 7, read after the station sends `TPM_ContinueSelfTest`.
+
 I686 IN THE RIG (2026-09-24): falcon-bios is i686 in 32-bit protected mode
 and promotes at run time (docs/notes/bios-route.md Section 6h). On SeaBIOS
 with a Pentium III (the harness's `bios32` column) Alpine x86 and Arch Linux
