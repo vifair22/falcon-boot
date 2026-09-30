@@ -419,6 +419,31 @@ static void idle_off(void)
     vga_screen(1);
 }
 
+void screen_pause(unsigned seconds)
+{
+    cdclock clk;
+
+    cdclock_start(&clk, peek32(BDA_TICKS), rtc_seconds());
+    while (cdclock_tenths(&clk, peek32(BDA_TICKS), rtc_seconds()) <
+           seconds * 10u)
+        ;
+    while (key_waiting())
+        (void)bios_getkey();
+    bios_key_buffer_wipe();
+}
+
+void screen_power_off(void)
+{
+    volatile uint8_t *w = (volatile uint8_t *)g_secret;
+    size_t i;
+
+    for (i = 0; w != (volatile uint8_t *)0 && i < g_secret_len; i++)
+        w[i] = 0;
+    bios_key_buffer_wipe();
+    power_off();
+    bios_reboot();
+}
+
 int screen_key(void)
 {
     cdclock clk;

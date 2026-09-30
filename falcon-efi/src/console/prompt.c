@@ -67,8 +67,59 @@ static void erase_back(EFI_SYSTEM_TABLE *st, UINTN n)
     }
 }
 
+static void (*g_tick)(void);
+
+void menu_prompt_set_tick(void (*fn)(void))
+{
+    g_tick = fn;
+}
+
+/* A second, in 100 ns units. */
+#define TICK_100NS 10000000u
+
+static EFI_EVENT tick_start(EFI_SYSTEM_TABLE *st)
+{
+    EFI_EVENT ev = (EFI_EVENT)0;
+
+    if (g_tick == (void (*)(void))0 ||
+        st->BootServices->CreateEvent(EVT_TIMER, 0, (EFI_EVENT_NOTIFY)0,
+                                      (void *)0, &ev) != EFI_SUCCESS)
+        return (EFI_EVENT)0;
+    if (st->BootServices->SetTimer(ev, TimerPeriodic, TICK_100NS) !=
+        EFI_SUCCESS) {
+        st->BootServices->CloseEvent(ev);
+        return (EFI_EVENT)0;
+    }
+    return ev;
+}
+
+static void tick_stop(EFI_SYSTEM_TABLE *st, EFI_EVENT ev)
+{
+    if (ev == (EFI_EVENT)0)
+        return;
+    st->BootServices->SetTimer(ev, TimerCancel, 0);
+    st->BootServices->CloseEvent(ev);
+}
+
+static INTN prompt_run(EFI_SYSTEM_TABLE *st, const CHAR16 *prompt,
+                       char *buf, UINTN cap, EFI_EVENT tick);
+
 INTN menu_prompt_secret(EFI_SYSTEM_TABLE *st, const CHAR16 *prompt,
                         char *buf, UINTN cap)
+{
+    EFI_EVENT tick;
+    INTN r;
+
+    if (st == (void *)0 || buf == (void *)0 || cap == 0)
+        return -1;
+    tick = tick_start(st);
+    r = prompt_run(st, prompt, buf, cap, tick);
+    tick_stop(st, tick);
+    return r;
+}
+
+static INTN prompt_run(EFI_SYSTEM_TABLE *st, const CHAR16 *prompt,
+                       char *buf, UINTN cap, EFI_EVENT tick)
 {
     UINTN len = 0;
     /* systemd ask-password convention: Tab erases the asterisks already on
@@ -81,9 +132,6 @@ INTN menu_prompt_secret(EFI_SYSTEM_TABLE *st, const CHAR16 *prompt,
      * next to the asterisks pretending to be part of the passphrase. */
     static const CHAR16 hint[] = L"(press TAB for no echo)";
     BOOLEAN hint_shown = FALSE;
-
-    if (st == (void *)0 || buf == (void *)0 || cap == 0)
-        return -1;
 
     buf[0] = '\0';
     st->ConOut->EnableCursor(st->ConOut, TRUE);
@@ -100,16 +148,28 @@ INTN menu_prompt_secret(EFI_SYSTEM_TABLE *st, const CHAR16 *prompt,
 
     for (;;) {
         EFI_INPUT_KEY key;
-        EFI_EVENT events[2];
+        EFI_EVENT events[3];
+        UINTN n = 0;
+        UINTN at_idle = 3u;
+        UINTN at_tick = 3u;
         UINTN index;
 
-        events[0] = st->ConIn->WaitForKey;
-        events[1] = idle_event();
-        if (st->BootServices->WaitForEvent(events[1] != (EFI_EVENT)0 ? 2u
-                                                                     : 1u,
-                                           events, &index) != EFI_SUCCESS)
+        events[n++] = st->ConIn->WaitForKey;
+        if (idle_event() != (EFI_EVENT)0) {
+            at_idle = n;
+            events[n++] = idle_event();
+        }
+        if (tick != (EFI_EVENT)0) {
+            at_tick = n;
+            events[n++] = tick;
+        }
+        if (st->BootServices->WaitForEvent(n, events, &index) != EFI_SUCCESS)
             break;
-        if (index == 1u) {
+        if (index == at_tick) {
+            g_tick();
+            continue;
+        }
+        if (index == at_idle) {
             /* Nobody finished typing: what was typed goes before the
              * machine does (console/idle.h). */
             crypto_wipe(buf, (size_t)cap);

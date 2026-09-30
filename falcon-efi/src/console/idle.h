@@ -47,6 +47,11 @@ EFI_EVENT idle_event(void);
  * the firmware did not power off, with the timer started again. */
 void idle_expired(void);
 
+/* Off now, not on idle: the hook, EfiResetShutdown, and a cold reset should
+ * the firmware return from that. Does not return. The passphrase prompt's
+ * last wrong attempt (DESIGN Section 5.2). */
+__attribute__((noreturn)) void idle_power_off(void);
+
 /* A page's wait for one key: WaitForKey or the timer, the power-off on
  * the timer. Starts the idle time itself. */
 EFI_STATUS idle_wait_key(EFI_SYSTEM_TABLE *st, EFI_INPUT_KEY *key);

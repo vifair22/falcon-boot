@@ -115,6 +115,15 @@ int screen_menu_timed(const screen_banner *banner,
  * BIOS_KEY_IDLE is returned. */
 int screen_key(void);
 
+/* Waits `seconds`, timed as the countdown is (ticks and RTC), then throws
+ * away the keys pressed meanwhile: the wait after a wrong passphrase. */
+void screen_pause(unsigned seconds);
+
+/* Off now: what screen_idle_secret names wiped, the keyboard ring too,
+ * then power/power.c, and a reset when that does not take. Does not
+ * return. The passphrase prompt's last wrong attempt (DESIGN Section 5.2). */
+__attribute__((noreturn)) void screen_power_off(void);
+
 /* The idle time in seconds (TUI_IDLE_SECONDS until set; 0 never). */
 void screen_idle_set(unsigned seconds);
 

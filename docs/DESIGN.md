@@ -576,6 +576,29 @@ p3 and the MOK key. Strictly worse than the credential route; use only if the
 credential route fails.
 
 
+### 5.2 Wrong passphrases (decided 2026-09-29)
+
+Both loaders count the wrong passphrases of a boot across every prompt,
+whichever shelf and however often the row is chosen again, and give
+`TUI_UNLOCK_TRIES` (5). After each of the first four the next attempt waits
+2, 4, 8 and 16 seconds (`tui_unlock_delay`), with the keys pressed during
+the wait thrown away; the fifth powers the machine off, the passphrase
+wiped first (UEFI: `idle_power_off`, EfiResetShutdown then a cold reset;
+BIOS: `screen_power_off`, 7.9's APM then ACPI S5, then a reset). The lines:
+
+    wrong passphrase. Next attempt in 4 s.
+    wrong passphrase. Too many attempts: powering off.
+
+What it buys is a rate, five guesses a power cycle and half a minute of
+waiting among them, against someone at the keyboard of a machine that
+stays whole (a station's case). It does nothing against a copy of the
+shelf, which is ground offline, where argon2id's cost is the defence, and
+the count does not survive a power cycle: nothing the loader could keep it
+in would.
+
+Considered and rejected: *three tries and back to the menu* (the earlier
+rule), which limits nothing, since the row can be chosen again at once.
+
 ## 6. ISO path: drag-and-drop mechanism
 
 No host-side registration. The stages:
@@ -3096,7 +3119,8 @@ The OS half (the drop-in, the cmdline naming p4 and root) is the archusb
 repository's; Section 5 says why the drop-in exists.
 
 Resident at handoff: credfs and sd-stub's LoadFile2, both boot-services. On
-failure: a wrong passphrase retries, any other unlock error stops; a refused
+failure: a wrong passphrase retries after a wait, five a boot and then
+power off (5.2), any other unlock error stops; a refused
 UKI tears down credfs, wipes the credential and prints the refusal evidence.
 
 #### 12.2.5 APP: the signing appliance
@@ -3689,7 +3713,7 @@ sequenceDiagram
     participant I as initramfs (systemd)
     U->>L: Enter on Personal OS
     alt LUKS2 shelf
-        L->>U: masked passphrase (INT 16h), three attempts
+        L->>U: masked passphrase (INT 16h), five a boot with a wait after each wrong one, then power off (5.2)
         L->>FC: luks_unlock p3, luks_dev_open, fs_mount ext4
     else plaintext shelf
         L->>FC: fs_mount straight off the partition, no prompt and no credential
@@ -3828,7 +3852,7 @@ hang.
 | stage 2 and 3, protected mode (`bios_fatal`) | no partition with a boot record, a damaged table, stage 3 missing, malformed or past its volume's reserved sectors, or `stage 3 returned`: reason, a key, reset |
 | a processor exception (`idt.S`, `fault.c`) | vector and name, EIP, error code, through `bios_fatal`; a second fault while reporting resets at once |
 | a route | message, "press any key to return to the menu" |
-| the POS | wrong passphrase, no `/uki`, no images: message, secrets wiped, back to the menu |
+| the POS | no `/uki`, no images: message, secrets wiped, back to the menu; a wrong passphrase: the wait, and at the fifth the power-off of 5.2 |
 
 A reset is port 0xCF9, then the 8042's reset line, then an empty IDT and a
 fault, which triple-faults any processor. The window between entering

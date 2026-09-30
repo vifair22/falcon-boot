@@ -172,4 +172,8 @@ INTN menu_run_probed(EFI_SYSTEM_TABLE *st, const menu_banner *banner,
 INTN menu_prompt_secret(EFI_SYSTEM_TABLE *st, const CHAR16 *prompt,
                         char *buf, UINTN cap);
 
+/* Called once a second while menu_prompt_secret waits: the station's TOTP
+ * lines above the prompt, redrawn when the code rolls. NULL for none. */
+void menu_prompt_set_tick(void (*fn)(void));
+
 #endif /* FALCON_MENU_H */

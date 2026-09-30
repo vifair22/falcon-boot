@@ -57,6 +57,18 @@ void idle_expired(void)
     idle_touch();
 }
 
+void idle_power_off(void)
+{
+    if (g_hook != (void (*)(void))0)
+        g_hook();
+    g_st->RuntimeServices->ResetSystem(EfiResetShutdown, EFI_SUCCESS, 0,
+                                       (void *)0);
+    g_st->RuntimeServices->ResetSystem(EfiResetCold, EFI_SUCCESS, 0,
+                                       (void *)0);
+    for (;;)
+        __asm__ __volatile__("hlt");
+}
+
 EFI_STATUS idle_wait_key(EFI_SYSTEM_TABLE *st, EFI_INPUT_KEY *key)
 {
     EFI_EVENT events[2];

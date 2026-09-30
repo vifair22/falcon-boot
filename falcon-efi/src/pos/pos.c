@@ -20,6 +20,7 @@
 #include <lib/ucs2.h>
 #include <manifest/blesslist.h>
 #include <console/menu.h>
+#include <console/idle.h>
 #include <media/shelf.h>
 #include <tui/tui.h>
 
@@ -31,11 +32,13 @@
  * the format's; LUKS itself has no such cap. */
 #define POS_PASS_MAX 257u
 
-/* Wrong-passphrase retries before the attempt gives up and the menu comes
- * back. Re-prompting in place is what a user expects from an unlock prompt,
- * and there is nothing to rate-limit here: an attacker holding the stick
- * grinds the header offline, not through this prompt. */
-#define POS_ATTEMPTS 3u
+/* Wrong passphrases this boot, across every prompt: TUI_UNLOCK_TRIES of
+ * them powers the machine off, and each of the others costs a wait
+ * (tui_unlock_delay). An attacker holding the disk grinds the header
+ * offline, where argon2id's cost is the defence; this is the defence
+ * against one at the keyboard of a machine that stays whole, the station's
+ * case. Returning to the menu does not start the count again. */
+static unsigned g_failures;
 
 /* Read granularity for the UKI, and how often the read says it is alive. A
  * 1 MiB request costs one extent-tree descent and a run of block reads; the
@@ -941,22 +944,32 @@ static EFI_STATUS launch_uki(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent,
  * wipe and one return regardless of which of the several ways in this can
  * end. Returns LUKS_OK with *which set, POS_CANCELLED if the user pressed
  * ESC, or the LUKS status to report. */
+/* The wait after a wrong passphrase, with what was typed during it thrown
+ * away: a key pressed while waiting is not an answer to the next prompt. */
+static void unlock_wait(unsigned seconds)
+{
+    EFI_INPUT_KEY key;
+
+    g_st->BootServices->Stall((UINTN)seconds * 1000000u);
+    while (g_st->ConIn->ReadKeyStroke(g_st->ConIn, &key) == EFI_SUCCESS)
+        ;
+}
+
 static int prompt_and_unlock(UINTN *which)
 {
-    UINTN attempt;
-
-    for (attempt = 0; attempt < POS_ATTEMPTS; attempt++) {
+    for (;;) {
         INTN len;
         int rc;
+        unsigned wait;
 
-        if (attempt == 0 && g_note != (void (*)(void))0)
+        if (g_note != (void (*)(void))0)
             g_note();
         out(L"passphrase for the encrypted partition");
-        if (attempt > 0) {
+        if (g_failures > 0) {
             out(L" (attempt ");
-            out_dec(attempt + 1);
+            out_dec(g_failures + 1u);
             out(L" of ");
-            out_dec(POS_ATTEMPTS);
+            out_dec(TUI_UNLOCK_TRIES);
             out(L")");
         }
         out(L": ");
@@ -980,9 +993,18 @@ static int prompt_and_unlock(UINTN *which)
         }
         crypto_wipe(g_pass, sizeof g_pass);
         g_pass_len = 0;
-        out(L"wrong passphrase.\r\n\r\n");
+        g_failures++;
+        if (g_failures >= TUI_UNLOCK_TRIES) {
+            out(L"wrong passphrase. Too many attempts: powering off.\r\n");
+            g_st->BootServices->Stall(3000000u);
+            idle_power_off();
+        }
+        wait = tui_unlock_delay(g_failures);
+        out(L"wrong passphrase. Next attempt in ");
+        out_dec(wait);
+        out(L" s.\r\n\r\n");
+        unlock_wait(wait);
     }
-    return LUKS_ERR_NOKEY;
 }
 
 void pos_set_station_hooks(void (*note)(void), void (*handover)(void))

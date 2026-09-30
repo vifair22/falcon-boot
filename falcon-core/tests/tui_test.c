@@ -414,6 +414,19 @@ static void test_hint_checking(void **state)
     assert_string_equal(narrow(tiny), "check");
 }
 
+/* The wait after each wrong passphrase of a boot (DESIGN Section 5.2). */
+static void test_unlock_delay(void **state)
+{
+    (void)state;
+    assert_int_equal(tui_unlock_delay(0), 0);
+    assert_int_equal(tui_unlock_delay(1), 2);
+    assert_int_equal(tui_unlock_delay(2), 4);
+    assert_int_equal(tui_unlock_delay(3), 8);
+    assert_int_equal(tui_unlock_delay(4), 16);
+    assert_int_equal(tui_unlock_delay(9), 16);
+    assert_int_equal(TUI_UNLOCK_TRIES, 5);
+}
+
 int run_tui_tests(void)
 {
     const struct CMUnitTest tests[] = {
@@ -438,6 +451,7 @@ int run_tui_tests(void)
         cmocka_unit_test(test_strings),
         cmocka_unit_test(test_hint_checking),
         cmocka_unit_test(test_busy_text),
+        cmocka_unit_test(test_unlock_delay),
     };
 
     return cmocka_run_group_tests_name("tui", tests, NULL, NULL);

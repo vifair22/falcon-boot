@@ -562,6 +562,12 @@ static void totp_note(void)
     totp_page(g_st);
 }
 
+/* Each second the prompt waits: the code, when it has rolled. */
+static void totp_tick(void)
+{
+    totp_page_tick(g_st);
+}
+
 /* ---- next boot (DESIGN Section 13.8) ---- */
 
 /* The marker was read and deleted before anything else ran; this is the
@@ -693,6 +699,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
                        ? (UINT32)g_ini.poweroff
                        : TUI_IDLE_SECONDS);
     idle_set_hook(totp_wipe);
+    menu_prompt_set_tick(totp_tick);
     pos_set_station_hooks(totp_note, totp_wipe);
     status.fn = totp_status;
     status.ctx = st;

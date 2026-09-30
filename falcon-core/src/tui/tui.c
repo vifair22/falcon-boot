@@ -308,3 +308,12 @@ void tui_row_banner(uint16_t *row, size_t w, const uint16_t *title,
     *state_end = col;
     row_pad(row, col, w);
 }
+
+unsigned tui_unlock_delay(unsigned failures)
+{
+    if (failures == 0)
+        return 0;
+    if (failures > 4u)
+        return 16u;
+    return 2u << (failures - 1u);
+}
