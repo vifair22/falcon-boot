@@ -42,6 +42,17 @@ route's handoff. The cases are listed in Section 1.3.
 unblessed, so the code is one of `DIR`, `D3A`, `D3B`, `WIN`, `BSD` or `CHN`
 rather than `BLS`.
 
+The passphrase prompt (`POS`, on every loader and station) takes five wrong
+passphrases a boot, however often the row is chosen again. After each of
+the first four the next attempt waits 2, 4, 8 and 16 seconds; the fifth
+powers the machine off (`docs/DESIGN.md` Section 5.2):
+
+    wrong passphrase. Next attempt in 4 s.
+    wrong passphrase. Too many attempts: powering off.
+
+On the UEFI station the TOTP code above the prompt is redrawn when it
+rolls.
+
 ### 1.2 BIOS loader
 
 A BIOS machine has no Secure Boot, no shim and no blessing, so the BIOS

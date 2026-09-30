@@ -489,10 +489,15 @@ case_totp() {
         mon "sendkey ret"
         [[ -z $why ]] && { wait_for "passphrase for the encrypted partition" 30 ||
             why="no passphrase prompt"; }
+        # Past a 30-second step at the prompt: the code is redrawn in place.
+        [[ -z $why ]] && sleep 32
         halt
         log_text "$R/serial.log" > "$R/$c-3b.log"
         [[ -z $why ]] && { awk '/booting: Personal OS/ { p = 1 } p' "$R/$c-3b.log" |
             grep -aqE 'TOTP: [0-9]{3} [0-9]{3}' || why="no code above the passphrase prompt"; }
+        [[ -z $why ]] && (( $(awk '/booting: Personal OS/ { p = 1 } p' "$R/$c-3b.log" |
+            grep -aoE 'TOTP: [0-9]{3} [0-9]{3}' | sort -u | wc -l) >= 2 )) ||
+            why="${why:-the code above the prompt was not redrawn when it rolled}"
     fi
 
     # 4. a changed PCR

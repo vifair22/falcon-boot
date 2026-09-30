@@ -48,6 +48,9 @@
 #                idle time still boots its default
 #   idle-prompt  poweroff = 5: the passphrase prompt left with three
 #                characters typed, and the machine powers off
+#   bad-pass     five wrong passphrases: 2, 4, 8 and 16 s waits between
+#                them, then the power-off (DESIGN Section 5.2)
+#   retry        a wrong passphrase, the wait, then the right one: the UKI
 #
 # Nothing touches a real disk or this machine's variables: every disk is an
 # image file and every varstore a copy under build/station-rig.
@@ -525,6 +528,58 @@ case_idle_prompt() {
     result "$c" "$why" "the prompt left with three characters typed; powered off"
 }
 
+case_bad_pass() {
+    local c=$1 fw=$2 why= k d
+    station_image ""
+    NEXT= NO_WIN_ENTRY=0 boot "$fw"
+    wait_for "$MENU_UP" 90 || why="no menu"
+    if [[ -z "$why" ]]; then
+        mon "sendkey ret"
+        wait_for "passphrase for the encrypted partition" 30 || why="no passphrase prompt"
+    fi
+    for k in 1 2 3 4; do
+        [[ -n "$why" ]] && break
+        d=$(( 2 << (k - 1) ))
+        sleep 0.5
+        send_keys "wrong$k"
+        wait_for "Next attempt in $d s." 60 || { why="no $d s wait after try $k"; break; }
+        wait_for "(attempt $(( k + 1 )) of 5)" $(( d + 30 )) || why="no attempt $(( k + 1 )) prompt"
+    done
+    if [[ -z "$why" ]]; then
+        sleep 0.5
+        send_keys wrong5
+        wait_for "Too many attempts: powering off." 60 || why="no power-off line"
+    fi
+    [[ -z "$why" ]] && { wait_exit 30 || why="the machine was still on"; }
+    [[ -z "$why" ]] && has "FALCON-UKI" && why="a UKI started"
+    halt
+    result "$c" "$why" "five wrong: waits of 2, 4, 8 and 16 s, then powered off"
+}
+
+case_retry() {
+    local c=$1 fw=$2 why=
+    station_image ""
+    NEXT= NO_WIN_ENTRY=0 boot "$fw"
+    wait_for "$MENU_UP" 90 || why="no menu"
+    if [[ -z "$why" ]]; then
+        mon "sendkey ret"
+        wait_for "passphrase for the encrypted partition" 30 || why="no passphrase prompt"
+    fi
+    if [[ -z "$why" ]]; then
+        sleep 0.5
+        send_keys "wrong"
+        wait_for "Next attempt in 2 s." 60 || why="no wait after a wrong one"
+    fi
+    [[ -z "$why" ]] && { wait_for "(attempt 2 of 5)" 30 || why="no second prompt"; }
+    if [[ -z "$why" ]]; then
+        sleep 0.5
+        send_keys "$PASS"
+        wait_for "FALCON-UKI-DONE" 120 || why="the UKI never reported"
+    fi
+    halt
+    result "$c" "$why" "a wrong passphrase, a 2 s wait, then the right one: the UKI"
+}
+
 # ---- run ----
 
 make --no-print-directory station cli "$STANDIN" "$LOADER" \
@@ -534,7 +589,7 @@ build_win_disk
 
 ALL=(menu countdown key-stops nxt method-efi esp-found next-boot next-uki
      next-unknown ini-error no-default unsigned idle-menu idle-countdown
-     idle-prompt)
+     idle-prompt bad-pass retry)
 CASES=("$@")
 if [[ ${#CASES[@]} -eq 0 ]]; then
     for c in "${ALL[@]}"; do CASES+=("uefi-$c"); done
@@ -563,6 +618,8 @@ for c in "${CASES[@]}"; do
     idle-menu)    case_idle_menu "$c" "$fw" ;;
     idle-countdown) case_idle_countdown "$c" "$fw" ;;
     idle-prompt)  case_idle_prompt "$c" "$fw" ;;
+    bad-pass)     case_bad_pass "$c" "$fw" ;;
+    retry)        case_retry "$c" "$fw" ;;
     *) echo "unknown case: $c" >&2; exit 2 ;;
     esac
 done

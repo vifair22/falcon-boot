@@ -56,9 +56,9 @@
 
 #define PASS_MAX     256u
 
-/* Wrong-passphrase retries before the attempt gives up, as the UEFI
- * loader's (falcon-efi/src/pos/pos.c, POS_ATTEMPTS). */
-#define POS_ATTEMPTS 3u
+/* Wrong passphrases this boot, across every prompt, as the UEFI loader
+ * counts them (falcon-efi/src/pos/pos.c): TUI_UNLOCK_TRIES powers off. */
+static unsigned g_failures;
 /* Enough of a PE to hold its headers and section table. */
 #define PE_HDR_MAX   8192u
 
@@ -459,18 +459,17 @@ static void kdf_advice(boot_result *r, uint32_t need_kib)
  * for escape, or the LUKS status to report. */
 static int prompt_and_unlock(void)
 {
-    unsigned attempt;
-
-    for (attempt = 0; attempt < POS_ATTEMPTS; attempt++) {
+    for (;;) {
         uint32_t slot = 0;
         int rc;
+        unsigned wait;
 
         screen_out("passphrase for the encrypted partition");
-        if (attempt > 0) {
+        if (g_failures > 0) {
             screen_out(" (attempt ");
-            screen_out_dec(attempt + 1u);
+            screen_out_dec(g_failures + 1u);
             screen_out(" of ");
-            screen_out_dec(POS_ATTEMPTS);
+            screen_out_dec(TUI_UNLOCK_TRIES);
             screen_out(")");
         }
         screen_out(": ");
@@ -487,9 +486,18 @@ static int prompt_and_unlock(void)
             return rc;      /* not something a retype fixes */
         crypto_wipe(g_pass, sizeof g_pass);
         g_pass_len = 0;
-        screen_out("wrong passphrase.\n\n");
+        g_failures++;
+        if (g_failures >= TUI_UNLOCK_TRIES) {
+            screen_out("wrong passphrase. Too many attempts: powering off.\n");
+            screen_pause(3);
+            screen_power_off();
+        }
+        wait = tui_unlock_delay(g_failures);
+        screen_out("wrong passphrase. Next attempt in ");
+        screen_out_dec(wait);
+        screen_out(" s.\n\n");
+        screen_pause(wait);
     }
-    return LUKS_ERR_NOKEY;
 }
 
 /* Two or more images are offered; one is booted without asking. */

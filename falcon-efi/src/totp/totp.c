@@ -305,19 +305,81 @@ void totp_status(void *ctx, menu_status_text *out)
     }
 }
 
-void totp_page(EFI_SYSTEM_TABLE *st)
+/* The lines totp_page last drew, and where, for totp_page_tick. */
+static menu_status_text g_page;
+static UINTN g_page_col;
+static UINTN g_page_row;
+static BOOLEAN g_page_on;
+
+static BOOLEAN line_eq(const CHAR16 *a, const CHAR16 *b)
 {
-    static menu_status_text lines;
     UINTN i;
 
-    totp_status(st, &lines);
-    if (lines.n == 0)
+    for (i = 0; a[i] != 0 || b[i] != 0; i++)
+        if (a[i] != b[i])
+            return FALSE;
+    return TRUE;
+}
+
+void totp_page(EFI_SYSTEM_TABLE *st)
+{
+    UINTN i;
+    UINTN rows;
+
+    g_page_on = FALSE;
+    totp_status(st, &g_page);
+    if (g_page.n == 0)
         return;
-    for (i = 0; i < lines.n && i < MENU_STATUS_ROWS; i++) {
-        st->ConOut->SetAttribute(st->ConOut, lines.attr[i]);
-        menu_out(st, lines.line[i]);
+    g_page_col = (UINTN)st->ConOut->Mode->CursorColumn;
+    for (i = 0; i < g_page.n && i < MENU_STATUS_ROWS; i++) {
+        st->ConOut->SetAttribute(st->ConOut, g_page.attr[i]);
+        menu_out(st, g_page.line[i]);
         st->ConOut->SetAttribute(st->ConOut, TUI_ATTR_TEXT);
         menu_out(st, L"\r\n");
     }
     menu_out(st, L"\r\n");
+    /* Counted back from where the cursor ended, so a page that scrolled
+     * while these were written still names the right rows. */
+    rows = i + 1u;
+    if ((UINTN)st->ConOut->Mode->CursorRow >= rows) {
+        g_page_row = (UINTN)st->ConOut->Mode->CursorRow - rows;
+        g_page_on = TRUE;
+    }
+}
+
+void totp_page_tick(EFI_SYSTEM_TABLE *st)
+{
+    static menu_status_text now;
+    INT32 col;
+    INT32 row;
+    UINTN i;
+
+    if (!g_page_on)
+        return;
+    totp_status(st, &now);
+    if (now.n != g_page.n)
+        return;
+    col = st->ConOut->Mode->CursorColumn;
+    row = st->ConOut->Mode->CursorRow;
+    for (i = 0; i < now.n && i < MENU_STATUS_ROWS; i++) {
+        UINTN old = 0;
+        UINTN len = 0;
+
+        if (line_eq(now.line[i], g_page.line[i]))
+            continue;
+        while (g_page.line[i][old] != 0)
+            old++;
+        while (now.line[i][len] != 0)
+            len++;
+        st->ConOut->SetCursorPosition(st->ConOut, g_page_col, g_page_row + i);
+        st->ConOut->SetAttribute(st->ConOut, now.attr[i]);
+        st->ConOut->OutputString(st->ConOut, now.line[i]);
+        st->ConOut->SetAttribute(st->ConOut, TUI_ATTR_TEXT);
+        /* A shorter line clears what the longer one left. */
+        while (len++ < old)
+            st->ConOut->OutputString(st->ConOut, (CHAR16 *)(uintptr_t)L" ");
+        memcpy(g_page.line[i], now.line[i], sizeof now.line[i]);
+        g_page.attr[i] = now.attr[i];
+    }
+    st->ConOut->SetCursorPosition(st->ConOut, (UINTN)col, (UINTN)row);
 }

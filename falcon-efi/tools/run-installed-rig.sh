@@ -62,6 +62,9 @@
 #                 outside the ESP (mdeltree's deleted entries) and the
 #                 shelf (its stamp)
 #   mbr4k-bios    mbr4k under SeaBIOS, to the UKI
+#   mbr4k-bios-bad  the same with five wrong passphrases: falcon-bios's
+#                 waits of 2, 4, 8 and 16 s, then its power-off, QEMU
+#                 exiting (DESIGN Section 5.2)
 #   second-nxt, second-sb-nxt
 #                 gpt2 with Windows's firmware entry: the INI's [windows]
 #                 (the second disk) matches the entry, counts down, and
@@ -625,6 +628,46 @@ case_bios() {           # case_bios CASE IMG PART
     result "$c" "$WHY" "4096-byte sectors: stage 2 took p$part, a key stopped the count, the shelf unlocked to the UKI"
 }
 
+# QEMU exits when the guest powers off.
+wait_exit() {   # wait_exit SECONDS
+    local i
+    for (( i = 0; i < $1 * 10; i++ )); do
+        kill -0 "$QPID" 2>/dev/null || return 0
+        sleep 0.1
+    done
+    return 1
+}
+
+case_bios_bad() {       # case_bios_bad CASE IMG
+    local c=$1 img=$2 k d
+    WHY=
+    boot bios "$img" nvme - 0
+    wait_for "Booting in 5 s" 90 || WHY="no countdown"
+    if [[ -z "$WHY" ]]; then
+        mon "sendkey up"
+        sleep 0.5
+        mon "sendkey ret"
+        wait_for "passphrase for the encrypted partition" 60 || WHY="no passphrase prompt"
+    fi
+    for k in 1 2 3 4; do
+        [[ -n "$WHY" ]] && break
+        d=$(( 2 << (k - 1) ))
+        sleep 0.5
+        send_keys "wrong$k"
+        wait_for "Next attempt in $d s." 90 || { WHY="no $d s wait after try $k"; break; }
+        wait_for "(attempt $(( k + 1 )) of 5)" $(( d + 30 )) || WHY="no attempt $(( k + 1 )) prompt"
+    done
+    if [[ -z "$WHY" ]]; then
+        sleep 0.5
+        send_keys wrong5
+        wait_for "Too many attempts: powering off." 90 || WHY="no power-off line"
+    fi
+    [[ -z "$WHY" ]] && { wait_exit 30 || WHY="the machine was still on"; }
+    [[ -z "$WHY" ]] && has "FALCON-UKI" && WHY="a UKI started"
+    halt
+    result "$c" "$WHY" "BIOS: five wrong, waits of 2, 4, 8 and 16 s, then powered off"
+}
+
 # gpt2: Windows on the second disk, through its firmware entry (nxt) or
 # its ESP (esp).
 case_second() {         # case_second CASE FIRMWARE nxt|esp
@@ -760,7 +803,7 @@ CASES=("$@")
     CASES=(uefi-default uefi-sb-default uefi-pos uefi-sb-pos 4kn-uefi
            4kn-uefi-sb 4kn-bios 4kn-remove mbr4k-bios second-nxt
            second-sb-nxt second-esp second-sb-esp mbr-uefi mbr-uefi-sb
-           noshim-uefi noshim-uefi-sb noshim-status)
+           noshim-uefi noshim-uefi-sb noshim-status mbr4k-bios-bad)
 
 for c in "${CASES[@]}"; do
     case $c in
@@ -773,6 +816,7 @@ for c in "${CASES[@]}"; do
     4kn-bios)        case_bios "$c" "$R/4kn.img" 4 ;;
     4kn-remove)      case_4kn_remove "$c" ;;
     mbr4k-bios)      case_bios "$c" "$R/mbr4k.img" 3 ;;
+    mbr4k-bios-bad)  case_bios_bad "$c" "$R/mbr4k.img" ;;
     second-nxt)      case_second "$c" uefi nxt ;;
     second-sb-nxt)   case_second "$c" uefi-sb nxt ;;
     second-esp)      case_second "$c" uefi esp ;;

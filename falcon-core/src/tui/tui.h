@@ -37,6 +37,11 @@
  * it (`poweroff`). */
 #define TUI_IDLE_SECONDS    300u
 
+/* Wrong passphrases a boot takes, counted across every prompt, before the
+ * machine is powered off (DESIGN Section 5.2); after each of the others the
+ * next attempt waits tui_unlock_delay seconds. Both loaders, both builds. */
+#define TUI_UNLOCK_TRIES    5u
+
 #define TUI_MARGIN_X        6u
 #define TUI_MARGIN_X_NARROW 1u
 #define TUI_NARROW_COLS     80u
@@ -198,6 +203,10 @@ void tui_row_banner(uint16_t *row, size_t w, const uint16_t *title,
  * tui_hint_plain is the default less the legend for the trust tags, for a
  * list whose rows never carry one: the personal-OS chooser on both loaders,
  * and every menu of the stationary build, which links no predictions. */
+/* Seconds before the next attempt after `failures` wrong passphrases this
+ * boot: 2, 4, 8, 16. 0 for none. */
+unsigned tui_unlock_delay(unsigned failures);
+
 extern const uint16_t tui_hint_default[];
 extern const uint16_t tui_hint_plain[];
 extern const uint16_t tui_hint_empty[];

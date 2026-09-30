@@ -52,6 +52,10 @@ void totp_status(void *ctx, menu_status_text *out);
  * line break, and a blank line after them; nothing when not configured. */
 void totp_page(EFI_SYSTEM_TABLE *st);
 
+/* The passphrase prompt's tick (menu_prompt_set_tick): the lines totp_page
+ * drew, redrawn in place when the code has rolled. */
+void totp_page_tick(EFI_SYSTEM_TABLE *st);
+
 /* Wipes the seed; the lines then say the code is gone until a restart. */
 void totp_wipe(void);
 
