@@ -170,7 +170,7 @@ static int run2(const uint8_t *log, size_t len, unsigned int stop_pcr,
     if (!have) {
         return EVLOG_ERR_BANK;
     }
-    r->events = 1;
+    r->events++;
     off = EV12_HDR + le32(log + 28u);
 
     while (off < len) {
@@ -235,21 +235,30 @@ static int run2(const uint8_t *log, size_t len, unsigned int stop_pcr,
     return EVLOG_OK;
 }
 
-int evlog_replay_run(const uint8_t *log, size_t len, uint16_t alg,
-                     unsigned int stop_pcr, const uint8_t *stop_digest,
-                     evlog_replay *out)
+int evlog_replay_init(uint16_t alg, evlog_replay *out)
 {
     if (out == NULL) {
         return EVLOG_ERR_ARG;
     }
     memset(out, 0, sizeof *out);
-    if (log == NULL || len < EV12_HDR ||
-        (alg != EVLOG_ALG_SHA1 && alg != EVLOG_ALG_SHA256)) {
+    if (alg != EVLOG_ALG_SHA1 && alg != EVLOG_ALG_SHA256) {
         return EVLOG_ERR_ARG;
     }
     out->alg = alg;
     out->digest_len = alg == EVLOG_ALG_SHA1 ? SHA1_DIGEST_LEN
                                             : SHA256_DIGEST_LEN;
+    return EVLOG_OK;
+}
+
+int evlog_replay_more(const uint8_t *log, size_t len, unsigned int stop_pcr,
+                      const uint8_t *stop_digest, evlog_replay *r)
+{
+    evlog_format f;
+
+    if (r == NULL || r->digest_len == 0u || log == NULL || len < EV12_HDR) {
+        return EVLOG_ERR_ARG;
+    }
+    r->stopped = 0;
 
     /* The crypto-agile log opens with a TCG_PCR_EVENT of type EV_NO_ACTION
      * whose data is the Spec ID Event03; a 1.2 log opens with a
@@ -258,12 +267,32 @@ int evlog_replay_run(const uint8_t *log, size_t len, uint16_t alg,
         le32(log + 28u) >= sizeof SPEC_ID_SIG &&
         le32(log + 28u) <= len - EV12_HDR &&
         memcmp(log + EV12_HDR, SPEC_ID_SIG, sizeof SPEC_ID_SIG) == 0) {
-        out->format = EVLOG_FMT_TCG2;
-        return run2(log, len, stop_pcr, stop_digest, out);
+        f = EVLOG_FMT_TCG2;
+    } else {
+        f = EVLOG_FMT_TCG12;
     }
-    out->format = EVLOG_FMT_TCG12;
-    if (alg != EVLOG_ALG_SHA1) {
+    /* Two logs of one boot come from one TPM, so they share a format. */
+    if (r->format != EVLOG_FMT_NONE && r->format != f) {
+        return EVLOG_ERR_FORMAT;
+    }
+    r->format = f;
+    if (f == EVLOG_FMT_TCG2) {
+        return run2(log, len, stop_pcr, stop_digest, r);
+    }
+    if (r->alg != EVLOG_ALG_SHA1) {
         return EVLOG_ERR_BANK;
     }
-    return run12(log, len, stop_pcr, stop_digest, out);
+    return run12(log, len, stop_pcr, stop_digest, r);
+}
+
+int evlog_replay_run(const uint8_t *log, size_t len, uint16_t alg,
+                     unsigned int stop_pcr, const uint8_t *stop_digest,
+                     evlog_replay *out)
+{
+    int rc = evlog_replay_init(alg, out);
+
+    if (rc != EVLOG_OK) {
+        return rc;
+    }
+    return evlog_replay_more(log, len, stop_pcr, stop_digest, out);
 }

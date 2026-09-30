@@ -2,6 +2,7 @@
 #include <efi/shimguid.h>
 
 #include <media/extmap.h>
+#include <tpm/evsave.h>
 #include <secboot/sb.h>
 
 /* 50614485-081b-4b7c-8b54-2abeffdf2fb3: falcon-boot's own vendor GUID for EFI
@@ -166,6 +167,21 @@ EFI_STATUS loader_isomap_set(EFI_SYSTEM_TABLE *st, const void *map, UINTN len)
         return EFI_UNSUPPORTED;
     return rt->SetVariable((CHAR16 *)(uintptr_t)FALCON_ISOMAP_NAME, &vendor,
                            FALCON_ISOMAP_ATTRS, len, (void *)(uintptr_t)map);
+}
+
+EFI_STATUS loader_evlog_set(EFI_SYSTEM_TABLE *st, const void *rec, UINTN len)
+{
+    EFI_GUID vendor = FALCON_VENDOR_GUID;
+    EFI_RUNTIME_SERVICES *rt;
+
+    if (st == (EFI_SYSTEM_TABLE *)0 || rec == (const void *)0 || len == 0)
+        return EFI_INVALID_PARAMETER;
+    rt = st->RuntimeServices;
+    if (rt == (EFI_RUNTIME_SERVICES *)0 || rt->SetVariable == (void *)0)
+        return EFI_UNSUPPORTED;
+    return rt->SetVariable((CHAR16 *)(uintptr_t)ISOMAP_WIDEN(EVSAVE_VAR),
+                           &vendor,
+                           FALCON_ISOMAP_ATTRS, len, (void *)(uintptr_t)rec);
 }
 
 void loader_isomap_clear(EFI_SYSTEM_TABLE *st)

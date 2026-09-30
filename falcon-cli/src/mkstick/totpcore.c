@@ -6,6 +6,8 @@
 #include <string.h>
 
 #include <crypto/sha1.h>
+#include <tpm/evlog.h>
+#include <tpm/evsave.h>
 
 int totpc_parse_pcrs(const char *text, uint32_t *mask)
 {
@@ -195,4 +197,69 @@ int totpc_ini_update(const char *text, size_t len, const stationini_totp *t,
     }
     *out_len = n;
     return TOTPC_OK;
+}
+
+/* The first PCR of 0-15 where the replay and the station's reading differ,
+ * or EVSAVE_PCRS when none does. */
+static unsigned first_diff(const evlog_replay *r, const uint8_t *pcr)
+{
+    unsigned i;
+
+    for (i = 0; i < EVSAVE_PCRS; i++) {
+        if (memcmp(r->pcr[i], pcr + (size_t)i * EVSAVE_DIGEST_LEN,
+                   EVSAVE_DIGEST_LEN) != 0)
+            return i;
+    }
+    return EVSAVE_PCRS;
+}
+
+int totpc_merge12(const uint8_t *fw, size_t fw_len, const uint8_t *rec,
+                  size_t rec_len, const uint8_t station[20],
+                  uint8_t out[16][20], unsigned *from, unsigned *bad_pcr)
+{
+    static evlog_replay r;
+    evsave_view v;
+    unsigned bad;
+
+    if (rec == NULL || station == NULL || out == NULL || from == NULL ||
+        bad_pcr == NULL)
+        return TOTPC_ERR_ARG;
+    if (evsave_read(rec, rec_len, &v) != EVSAVE_OK)
+        return TOTPC_ERR_LOG;
+
+    /* The station's own measurement, in the log it saved: that log is the
+     * firmware's that started it. */
+    if (evlog_replay_run(v.log, v.log_len, EVLOG_ALG_SHA1, 4, station, &r) !=
+        EVLOG_OK)
+        return TOTPC_ERR_LOG;
+    if (!r.stopped)
+        return TOTPC_ERR_STATION;
+
+    /* One firmware log: the saved one is the whole story. */
+    if (evlog_replay_run(v.log, v.log_len, EVLOG_ALG_SHA1, 0, NULL, &r) !=
+        EVLOG_OK)
+        return TOTPC_ERR_LOG;
+    bad = first_diff(&r, v.pcr);
+    if (bad == EVSAVE_PCRS) {
+        *from = TOTPC_FROM_SAVED;
+        memcpy(out, v.pcr, EVSAVE_PCR_BYTES);
+        return TOTPC_OK;
+    }
+
+    /* Two: Linux's first, since what it holds ran before the payload whose
+     * log the station saved (tpm/evlog.h). */
+    if (fw != NULL && fw_len != 0) {
+        if (evlog_replay_init(EVLOG_ALG_SHA1, &r) != EVLOG_OK ||
+            evlog_replay_more(fw, fw_len, 0, NULL, &r) != EVLOG_OK ||
+            evlog_replay_more(v.log, v.log_len, 0, NULL, &r) != EVLOG_OK)
+            return TOTPC_ERR_LOG;
+        bad = first_diff(&r, v.pcr);
+        if (bad == EVSAVE_PCRS) {
+            *from = TOTPC_FROM_BOTH;
+            memcpy(out, v.pcr, EVSAVE_PCR_BYTES);
+            return TOTPC_OK;
+        }
+    }
+    *bad_pcr = bad;
+    return TOTPC_ERR_PCR;
 }

@@ -23,10 +23,20 @@
  * made and the authenticator's entry is replaced. Remove deletes the index
  * and the section.
  *
- * Two options are for the TPM rig only (falcon-efi/tools/run-tpm-rig.sh):
- * --tpm-socket talks to swtpm's socket instead of a device, and --event-log
- * reads the log from a file (the one the rig's probe saved in the VM). With
- * --tpm-socket the TPM is not the one that booted, so the log is not
+ * A TPM 1.2 behind edk2 on coreboot has two logs, and Linux reads only
+ * coreboot's. There the station saves edk2's at every boot, with the PCRs
+ * it found (tpm/evsave.h), and enrollment takes the PCRs from that record
+ * instead: checked to be what a replay of the saved log gives, alone or
+ * after the one Linux reads (totpc_merge12), and to hold the station's own
+ * measurement. The live check then covers only the PCRs nothing extends
+ * after the station's menu (TOTPC_STABLE_PCRS), which are also what show
+ * the record and Linux's log to be of this boot.
+ *
+ * Three options are for the TPM rig only (falcon-efi/tools/run-tpm-rig.sh):
+ * --tpm-socket talks to swtpm's socket instead of a device, --event-log
+ * reads the log from a file (the one the rig's probe saved in the VM), and
+ * --saved-log the station's record from a file (the probe saves that too).
+ * With --tpm-socket the TPM is not the one that booted, so the log is not
  * checked against its PCRs.
  */
 
@@ -54,6 +64,7 @@
 #include <ident/ident.h>
 #include <media/stationini.h>
 #include <tpm/evlog.h>
+#include <tpm/evsave.h>
 #include <tpm/tpm.h>
 #include <tpm/tpm12.h>
 #include <tpm/tpm2.h>
@@ -435,8 +446,104 @@ static cli_status station_digest(stn_esp *e, int sha1, uint8_t out[32])
     return CLI_OK;
 }
 
+/* The station's saved record: from efivarfs (its attribute bytes dropped),
+ * or a file. CLI_ERR_NOTFOUND when there is none, which is every machine
+ * but a TPM 1.2 behind EFI_TCG_PROTOCOL, and one booted by an older
+ * station. */
+static cli_status read_saved(const char *file, uint8_t **out, size_t *len)
+{
+    const char *path = file != NULL ? file : TOTPC_EVLOG_EFIVAR;
+    size_t skip = file != NULL ? 0u : 4u;
+    void *data = NULL;
+    size_t n = 0;
+    cli_status rc;
+
+    if (file == NULL && access(path, F_OK) != 0)
+        return CLI_ERR_NOTFOUND;
+    rc = util_read_file(path, &data, &n, EVSAVE_BODY + LOG_MAX);
+    if (rc != CLI_OK)
+        return rc;
+    if (n < skip) {
+        free(data);
+        return set_error(CLI_ERR_INVALID, "%s is too short", path);
+    }
+    memmove(data, (uint8_t *)data + skip, n - skip);
+    *out = data;
+    *len = n - skip;
+    return CLI_OK;
+}
+
+/* The PCR values at the station's menu on a TPM 1.2, from the record it
+ * saved (see the top of this file), checked. */
+static cli_status station_pcrs_saved(stn_esp *e, const char *log_file,
+                                     const uint8_t *rec, size_t rec_len,
+                                     int live, uint32_t mask,
+                                     uint8_t vals[][32])
+{
+    static uint8_t pcr[EVSAVE_PCRS][EVSAVE_DIGEST_LEN];
+    uint8_t digest[32];
+    uint8_t *log = NULL;
+    size_t len = 0;
+    unsigned from = 0;
+    unsigned bad = 0;
+    unsigned i;
+    size_t n = 0;
+    int rc;
+    cli_status st;
+
+    st = station_digest(e, 1, digest);
+    if (st != CLI_OK)
+        return st;
+    /* Linux's log is the second log when there is one; a machine without
+     * one may still have everything in the saved log. */
+    st = read_log(log_file, &log, &len);
+    if (st != CLI_OK && !(st == CLI_ERR_NOTFOUND && log_file == NULL))
+        return st;
+    rc = totpc_merge12(log, len, rec, rec_len, digest, pcr, &from, &bad);
+    free(log);
+    switch (rc) {
+    case TOTPC_OK:
+        break;
+    case TOTPC_ERR_STATION:
+        return set_error(CLI_ERR_INVALID, "this system was not started by "
+                         "the station on %s: the event log it saved has no "
+                         "measurement of its \\EFI\\falcon\\" STATION_EFI
+                         ". Enroll from a system the station started",
+                         e->s.disks[0].d.path);
+    case TOTPC_ERR_PCR:
+        return set_error(CLI_ERR_INVALID, "the event logs do not account for "
+                         "PCR %u as the station read it; enrolling would seal "
+                         "to values the station never sees", bad);
+    default:
+        return set_error(CLI_ERR_INVALID, "the event log the station saved "
+                         "does not parse");
+    }
+    log_info("PCRs from the event log the station saved%s",
+             from == TOTPC_FROM_BOTH ? ", after the kernel's" : "");
+    for (i = 0; i < STATIONINI_TOTP_PCRS; i++) {
+        uint8_t now[32];
+
+        if (live && ((TOTPC_STABLE_PCRS >> i) & 1u) != 0) {
+            rc = tpm12_pcr_read(&g_dev, i, now);
+            if (rc != TPM_OK)
+                return tpm_fail(rc, "reading the PCRs");
+            if (memcmp(now, pcr[i], EVSAVE_DIGEST_LEN) != 0)
+                return set_error(CLI_ERR_INVALID, "PCR %u is not what the "
+                                 "station read: the event log it saved is "
+                                 "not of this boot", i);
+        }
+        if (((mask >> i) & 1u) == 0)
+            continue;
+        memset(vals[n], 0, 32);
+        memcpy(vals[n], pcr[i], EVSAVE_DIGEST_LEN);
+        n++;
+    }
+    return CLI_OK;
+}
+
 /* The PCR values the station runs with, from the log, checked. */
-static cli_status station_pcrs(stn_esp *e, const char *log_file, int live,
+static cli_status station_pcrs(stn_esp *e, const char *log_file,
+                               const char *saved_file, int live,
                                tpm_version ver, uint32_t mask,
                                uint8_t vals[][32])
 {
@@ -452,6 +559,20 @@ static cli_status station_pcrs(stn_esp *e, const char *log_file, int live,
     int rc;
     cli_status st;
 
+    if (ver == TPM_VER_12) {
+        uint8_t *rec = NULL;
+        size_t rec_len = 0;
+
+        st = read_saved(saved_file, &rec, &rec_len);
+        if (st == CLI_OK) {
+            st = station_pcrs_saved(e, log_file, rec, rec_len, live, mask,
+                                    vals);
+            free(rec);
+            return st;
+        }
+        if (st != CLI_ERR_NOTFOUND)
+            return st;
+    }
     st = station_digest(e, ver == TPM_VER_12, digest);
     if (st != CLI_OK)
         return st;
@@ -509,7 +630,10 @@ static const cli_opt enroll_opts[] = {
     { "tpm-socket", CLI_OPT_VALUE, 0, "<path>",
       "TEST ONLY: swtpm's socket instead of /dev/tpmrm0 or /dev/tpm0" },
     { "event-log", CLI_OPT_VALUE, 0, "<file>",
-      "TEST ONLY: the firmware event log from a file instead of securityfs" }
+      "TEST ONLY: the firmware event log from a file instead of securityfs" },
+    { "saved-log", CLI_OPT_VALUE, 0, "<file>",
+      "TEST ONLY: the station's saved event log from a file instead of "
+      "efivarfs" }
 };
 
 static const cli_opt remove_opts[] = {
@@ -615,6 +739,7 @@ static cli_status enroll(const cli_args *a, int reseal)
     tpm_version ver = TPM_VER_NONE;
     const char *sock = cli_value(a, "tpm-socket", NULL);
     const char *logf = cli_value(a, "event-log", NULL);
+    const char *savedf = cli_value(a, "saved-log", NULL);
     const char *label = cli_value(a, "label", NULL);
     uint8_t seed[TOTP_SEED_LEN];
     char host[64];
@@ -627,8 +752,9 @@ static cli_status enroll(const cli_args *a, int reseal)
         TOTPC_OK)
         return set_error(CLI_ERR_USAGE, "--pcrs: PCR numbers 0 to 15, each "
                          "once, comma-separated");
-    if (sock != NULL && logf == NULL)
-        return set_error(CLI_ERR_USAGE, "--tpm-socket needs --event-log");
+    if (sock != NULL && logf == NULL && savedf == NULL)
+        return set_error(CLI_ERR_USAGE, "--tpm-socket needs --event-log or "
+                         "--saved-log");
     if (label == NULL) {
         if (gethostname(host, sizeof host) != 0)
             (void)snprintf(host, sizeof host, "station");
@@ -657,7 +783,7 @@ static cli_status enroll(const cli_args *a, int reseal)
 
     st = tpm_open(sock, &ver);
     if (st == CLI_OK)
-        st = station_pcrs(&e, logf, sock == NULL, ver, mask, vals);
+        st = station_pcrs(&e, logf, savedf, sock == NULL, ver, mask, vals);
     if (st != CLI_OK) {
         tpm_close();
         crypto_wipe(&o, sizeof o);

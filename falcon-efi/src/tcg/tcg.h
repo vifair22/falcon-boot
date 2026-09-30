@@ -17,6 +17,11 @@
  * nothing about it: the seed is still sealed to the PCRs, only its trip
  * across the bus is weaker. Output is SHA-256(pool || counter).
  *
+ * The 1.2 event log. tcg_evlog12 copies what edk2 has logged so far and
+ * reads PCRs 0 to 15 alongside, for the record the station saves on every
+ * boot (tpm/evsave.h); it runs only where EFI_TCG_PROTOCOL is the TPM's,
+ * since a TPM 2.0 firmware's log reaches Linux whole.
+ *
  * Interactions. The station's TOTP check (totp/totp.c) is the one caller.
  * The tpm_dev is this module's, static (4 KB of command and response
  * buffers), and tcg_close wipes it with the pool.
@@ -37,6 +42,13 @@ typedef enum {
 /* Opens the TPM of version `want` (TPM_VER_20 or TPM_VER_12) and seeds the
  * randomness. *dev is valid until tcg_close. */
 tcg_status tcg_open(EFI_SYSTEM_TABLE *st, tpm_version want, tpm_dev **dev);
+
+/* With EFI_TCG_PROTOCOL and no EFI_TCG2_PROTOCOL: the firmware's log as it
+ * stands (*len bytes into log, at most cap) and PCRs 0-15, read after it.
+ * TCG_NO_PROTOCOL when the TPM is not a 1.2 reached that way, or the log
+ * does not fit. Opens and closes the transport itself. */
+tcg_status tcg_evlog12(EFI_SYSTEM_TABLE *st, uint8_t *log, size_t cap,
+                       size_t *len, uint8_t pcr[16][20]);
 
 /* Wipes the command buffers and the randomness pool. */
 void tcg_close(void);

@@ -195,6 +195,64 @@ tcg_status tcg_open(EFI_SYSTEM_TABLE *st, tpm_version want, tpm_dev **dev)
     return TCG_OK;
 }
 
+tcg_status tcg_evlog12(EFI_SYSTEM_TABLE *st, uint8_t *log, size_t cap,
+                       size_t *len, uint8_t pcr[16][20])
+{
+    EFI_BOOT_SERVICES *bs = st->BootServices;
+    EFI_GUID g2 = EFI_TCG2_PROTOCOL_GUID;
+    EFI_GUID g12 = EFI_TCG_PROTOCOL_GUID;
+    EFI_TCG_BOOT_SERVICE_CAPABILITY cap12;
+    EFI_TCG2_PROTOCOL *p2 = (EFI_TCG2_PROTOCOL *)0;
+    EFI_TCG_PROTOCOL *p = (EFI_TCG_PROTOCOL *)0;
+    const uint8_t *last_ev;
+    UINT32 features = 0;
+    UINT64 loc = 0;
+    UINT64 last = 0;
+    uint64_t n;
+    unsigned i;
+
+    if (bs->LocateProtocol(&g2, (void *)0, (void **)&p2) == EFI_SUCCESS &&
+        p2 != (EFI_TCG2_PROTOCOL *)0)
+        return TCG_NO_PROTOCOL;
+    if (bs->LocateProtocol(&g12, (void *)0, (void **)&p) != EFI_SUCCESS ||
+        p == (EFI_TCG_PROTOCOL *)0)
+        return TCG_NO_PROTOCOL;
+    memset(&cap12, 0, sizeof cap12);
+    cap12.Size = (UINT8)sizeof cap12;
+    if (p->StatusCheck(p, &cap12, &features, &loc, &last) != EFI_SUCCESS ||
+        !cap12.TPMPresentFlag || cap12.TPMDeactivatedFlag)
+        return TCG_NOT_PRESENT;
+
+    /* A 1.2 log is TCG_PCR_EVENTs, 32 bytes of header and the event's
+     * data; last is where the last one starts. */
+    if (loc == 0 || last < loc || last - loc > cap)
+        return TCG_NO_PROTOCOL;
+    last_ev = (const uint8_t *)(uintptr_t)last;
+    n = (last - loc) + 32u + ((uint64_t)last_ev[28] |
+                              (uint64_t)last_ev[29] << 8 |
+                              (uint64_t)last_ev[30] << 16 |
+                              (uint64_t)last_ev[31] << 24);
+    if (n > cap)
+        return TCG_NO_PROTOCOL;
+    memcpy(log, (const void *)(uintptr_t)loc, (size_t)n);
+    *len = (size_t)n;
+
+    /* The PCRs after the copy: an event logged in between would be in them
+     * and not in the log, which enrollment then refuses rather than seal
+     * to. No randomness is needed for a PCR read. */
+    memset(&g_dev, 0, sizeof g_dev);
+    g_dev.xfer = xfer;
+    g_tcg = p;
+    for (i = 0; i < 16u; i++) {
+        if (tpm12_pcr_read(&g_dev, i, pcr[i]) != TPM_OK) {
+            tcg_close();
+            return TCG_NOT_PRESENT;
+        }
+    }
+    tcg_close();
+    return TCG_OK;
+}
+
 void tcg_close(void)
 {
     crypto_wipe(&g_dev, sizeof g_dev);

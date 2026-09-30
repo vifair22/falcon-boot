@@ -682,9 +682,11 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
     menu_busy(st, tui_busy_shelf);
     (void)pos_scan(st);
 
+    /* Before anything is loaded, both: the saved log must be the state at
+     * the menu, and after a load (PCR 4) the TPM would refuse the seed as
+     * if the boot had changed (totp.h). */
+    totp_save_log(st);
     ini_read();
-    /* Before anything is loaded: a load extends PCR 4, after which the TPM
-     * would refuse the seed as if the boot had changed (totp.h). */
     if (g_have_ini) {
         if (g_ini.totp.present)
             menu_busy(st, tui_busy_tpm);

@@ -4,7 +4,9 @@
  * The base32 vectors are RFC 4648 Section 10's; the URI is the Key Uri
  * Format authenticators read, checked whole; the STATION.INI update must
  * leave everything but [totp] byte for byte, and refuse a file that does
- * not parse rather than write over it.
+ * not parse rather than write over it. The two-log merge runs on the
+ * T430's own logs (tests/data/t430/), against the PCRs the probe read in
+ * the same boot.
  */
 
 #include "tests.h"
@@ -17,8 +19,13 @@
 
 #include <string.h>
 
+#include <stdio.h>
+#include <stdlib.h>
+
 #include <crypto/sha1.h>
 #include <mkstick/totpcore.h>
+#include <tpm/evlog.h>
+#include <tpm/evsave.h>
 
 static void test_pcrs(void **state)
 {
@@ -205,6 +212,161 @@ static void test_ini_update(void **state)
                                       &line, why), TOTPC_ERR_ARG);
 }
 
+/* ---- the two-log merge, on the T430's logs ---- */
+
+/* PCRs 0-7 as the probe read them after edk2's log was saved; 8-15 are
+ * zero. */
+static const char *const k_t430_pcr[8] = {
+    "b2a83b0ebf2f8374299a5b2bdfc31ea955ad7236",
+    "b2a83b0ebf2f8374299a5b2bdfc31ea955ad7236",
+    "cd0cc5fb51315f1bed4c6cf00d26d9e5e862b2ee",
+    "b2a83b0ebf2f8374299a5b2bdfc31ea955ad7236",
+    "e261826830c6814b4aa146604b180975df51b2f5",
+    "799d42c8e4f1e04515a202e0b057564ea3122aae",
+    "b2a83b0ebf2f8374299a5b2bdfc31ea955ad7236",
+    "273f46ed2c9483b2acf4a96b9d7efae2e250835c",
+};
+
+/* An image edk2 measured into PCR 4 after the separators, standing in for
+ * the station's (the probe ran from the Shell, not the station). */
+static const char k_t430_image[] = "942422fe19444f104d2426f17fa62590ec5bd495";
+
+static void unhex(const char *s, uint8_t *out, size_t n)
+{
+    size_t i;
+
+    for (i = 0; i < n; i++) {
+        unsigned v = 0;
+
+        assert_int_equal(sscanf(s + 2u * i, "%2x", &v), 1);
+        out[i] = (uint8_t)v;
+    }
+}
+
+static uint8_t *slurp(const char *name, size_t *len)
+{
+    char path[512];
+    uint8_t *buf;
+    FILE *f;
+    long n;
+
+    snprintf(path, sizeof path, "%s/t430/%s", CLI_TEST_DATA, name);
+    f = fopen(path, "rb");
+    assert_non_null(f);
+    assert_int_equal(fseek(f, 0, SEEK_END), 0);
+    n = ftell(f);
+    assert_true(n > 0);
+    rewind(f);
+    buf = malloc((size_t)n);
+    assert_non_null(buf);
+    assert_int_equal(fread(buf, 1, (size_t)n, f), (size_t)n);
+    fclose(f);
+    *len = (size_t)n;
+    return buf;
+}
+
+static uint8_t g_rec[EVSAVE_BODY + 8192];
+
+static size_t record(const uint8_t pcr[16][20], const uint8_t *log,
+                     size_t len)
+{
+    size_t n = 0;
+
+    assert_int_equal(evsave_write(g_rec, sizeof g_rec, pcr, log, len, &n),
+                     EVSAVE_OK);
+    return n;
+}
+
+static void test_merge_t430(void **state)
+{
+    static uint8_t pcr[16][20];
+    static uint8_t out[16][20];
+    uint8_t image[20];
+    size_t cb_len = 0;
+    size_t ek_len = 0;
+    uint8_t *cb = slurp("coreboot-evlog.bin", &cb_len);
+    uint8_t *ek = slurp("edk2-evlog.bin", &ek_len);
+    unsigned from = 0;
+    unsigned bad = 99;
+    size_t n;
+    unsigned i;
+
+    (void)state;
+    memset(pcr, 0, sizeof pcr);
+    for (i = 0; i < 8u; i++)
+        unhex(k_t430_pcr[i], pcr[i], 20);
+    unhex(k_t430_image, image, 20);
+    n = record((const uint8_t (*)[20])pcr, ek, ek_len);
+
+    /* coreboot's log first, then edk2's: the probe's PCRs. */
+    assert_int_equal(totpc_merge12(cb, cb_len, g_rec, n, image, out, &from,
+                                   &bad), TOTPC_OK);
+    assert_int_equal(from, TOTPC_FROM_BOTH);
+    assert_memory_equal(out, pcr, sizeof pcr);
+
+    /* edk2's alone leaves PCR 2 without coreboot's measurements. */
+    assert_int_equal(totpc_merge12(NULL, 0, g_rec, n, image, out, &from,
+                                   &bad), TOTPC_ERR_PCR);
+    assert_int_equal(bad, 2);
+
+    /* A second copy of edk2's log is not coreboot's: counted twice, PCR 0
+     * is wrong first. */
+    assert_int_equal(totpc_merge12(ek, ek_len, g_rec, n, image, out, &from,
+                                   &bad), TOTPC_ERR_PCR);
+    assert_int_equal(bad, 0);
+
+    /* The station's measurement must be in the saved log, not Linux's. */
+    memset(image, 0, sizeof image);
+    assert_int_equal(totpc_merge12(cb, cb_len, g_rec, n, image, out, &from,
+                                   &bad), TOTPC_ERR_STATION);
+    unhex(k_t430_image, image, 20);
+
+    /* A PCR the station read that no replay gives. */
+    pcr[7][0] ^= 1u;
+    n = record((const uint8_t (*)[20])pcr, ek, ek_len);
+    assert_int_equal(totpc_merge12(cb, cb_len, g_rec, n, image, out, &from,
+                                   &bad), TOTPC_ERR_PCR);
+    assert_int_equal(bad, 7);
+
+    /* Not a record. */
+    g_rec[0] = 'X';
+    assert_int_equal(totpc_merge12(cb, cb_len, g_rec, n, image, out, &from,
+                                   &bad), TOTPC_ERR_LOG);
+    assert_int_equal(totpc_merge12(cb, cb_len, NULL, 0, image, out, &from,
+                                   &bad), TOTPC_ERR_ARG);
+    free(cb);
+    free(ek);
+}
+
+/* One firmware log (edk2 without coreboot, or the TPM rig's OVMF): the
+ * saved log alone is the whole story, and Linux's is not needed. */
+static void test_merge_saved_alone(void **state)
+{
+    static evlog_replay r;
+    static uint8_t pcr[16][20];
+    static uint8_t out[16][20];
+    uint8_t image[20];
+    size_t ek_len = 0;
+    uint8_t *ek = slurp("edk2-evlog.bin", &ek_len);
+    unsigned from = 0;
+    unsigned bad = 0;
+    size_t n;
+    unsigned i;
+
+    (void)state;
+    assert_int_equal(evlog_replay_run(ek, ek_len, EVLOG_ALG_SHA1, 0, NULL, &r),
+                     EVLOG_OK);
+    for (i = 0; i < 16u; i++)
+        memcpy(pcr[i], r.pcr[i], 20);
+    unhex(k_t430_image, image, 20);
+    n = record((const uint8_t (*)[20])pcr, ek, ek_len);
+    assert_int_equal(totpc_merge12(NULL, 0, g_rec, n, image, out, &from,
+                                   &bad), TOTPC_OK);
+    assert_int_equal(from, TOTPC_FROM_SAVED);
+    assert_memory_equal(out, pcr, sizeof pcr);
+    free(ek);
+}
+
 int run_totpcore_tests(void)
 {
     const struct CMUnitTest tests[] = {
@@ -213,6 +375,8 @@ int run_totpcore_tests(void)
         cmocka_unit_test(test_uri),
         cmocka_unit_test(test_owner),
         cmocka_unit_test(test_ini_update),
+        cmocka_unit_test(test_merge_t430),
+        cmocka_unit_test(test_merge_saved_alone),
     };
 
     return cmocka_run_group_tests_name("totpcore", tests, NULL, NULL);

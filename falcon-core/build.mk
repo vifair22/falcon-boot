@@ -22,6 +22,7 @@ CORE_TPM      := $(addprefix $(CORE)/tpm/,tpm.c tpm2.c tpm12.c)
 # The firmware's event log replayed to the station's own measurement, which
 # is what enrollment seals to. mkstick's alone: the loader never reads it.
 CORE_TPM_EVLOG := $(CORE)/tpm/evlog.c
+CORE_TPM_EVSAVE := $(CORE)/tpm/evsave.c
 CORE_FS       := $(addprefix $(CORE)/fs/,exfat.c ext4.c fat.c iso9660.c udf.c fs.c \
 	fs_exfat.c fs_ext4.c fs_fat.c fs_iso9660.c fs_udf.c fs_reg_all.c)
 # The stationary build's (DESIGN Section 13): ext4 and its adapter, and a
@@ -167,7 +168,7 @@ CORE_UUT := $(CORE_CRYPTO) $(CORE_FS) $(CORE_LUKS) $(CORE_PART) $(CORE_IDENT) \
 	$(CORE_WIM) $(CORE_UCS2) $(CORE_TUI) \
 	$(CORE_TRUST) $(CORE_MEDIA) $(CORE_UEFIBOOT) $(CORE_BIOSBOOT) $(CORE_STATIONINI) $(CORE_STROWS) $(CORE_VBR) $(CORE_MANIFEST) \
 	$(CORE_MANIFEST_WRITE) $(CORE_GZ) $(CORE_CRYPTO_TPM) $(CORE_TPM) \
-	$(CORE_TPM_EVLOG)
+	$(CORE_TPM_EVLOG) $(CORE_TPM_EVSAVE)
 
 $(eval $(call test_bin,core,$(CORE_TESTS) $(CORE_UUT)))
 

@@ -29,6 +29,15 @@
  * not the whole story (a truncated log, events outside it); enrollment
  * checks that before it trusts the stopped replay.
  *
+ * Two logs, one boot. A firmware may keep more than one log: coreboot with
+ * an edk2 payload on a TPM 1.2 keeps coreboot's measurements (PCR 2) in one
+ * and edk2's in another, and Linux publishes only the first. A replay can
+ * take them in turn (evlog_replay_more), each extending the PCRs where the
+ * last left them. Only the order within a PCR matters to its value, so two
+ * logs replay correctly in turn when every event of one precedes, in each
+ * PCR they share, every event of the other: coreboot's all happen before
+ * the payload it starts.
+ *
  * Interactions. mkstick's `station totp enroll`, which hands over the log
  * from securityfs; crypto/sha1 and sha256 for the extends. EFI-free,
  * allocation-free.
@@ -71,6 +80,16 @@ typedef struct {
     size_t       events;     /* events read, including the stop event */
     int          stopped;    /* the stop event was found */
 } evlog_replay;
+
+/* Starts a replay in bank alg (EVLOG_ALG_SHA1 or EVLOG_ALG_SHA256), every
+ * PCR zero. */
+int evlog_replay_init(uint16_t alg, evlog_replay *out);
+
+/* Replays one more log into r from where it stands, stopping as
+ * evlog_replay_run does (r->stopped is this log's). The logs of one replay
+ * must share a format (EVLOG_ERR_FORMAT). */
+int evlog_replay_more(const uint8_t *log, size_t len, unsigned int stop_pcr,
+                      const uint8_t *stop_digest, evlog_replay *r);
 
 /* Replays `log` in bank `alg` (EVLOG_ALG_SHA1 or EVLOG_ALG_SHA256; a 1.2
  * log carries SHA-1 alone). With stop_digest, the replay ends after the

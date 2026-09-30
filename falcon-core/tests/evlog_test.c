@@ -22,6 +22,7 @@
 #include <crypto/sha1.h>
 #include <crypto/sha256.h>
 #include <tpm/evlog.h>
+#include <tpm/evsave.h>
 
 static uint8_t g_log[4096];
 static size_t g_len;
@@ -325,12 +326,116 @@ static void test_tcg2_bad(void **state)
                      EVLOG_ERR_ARG);
 }
 
+/* Two 1.2 logs replayed in turn (coreboot's, then its payload's) give what
+ * one log holding both would, and a TCG2 log cannot follow a 1.2 one. */
+static void test_more(void **state)
+{
+    static evlog_replay one;
+    static evlog_replay two;
+    static uint8_t first[512];
+    uint8_t a[20], b[20], c[20], d256[32];
+    size_t first_len;
+
+    (void)state;
+    memset(a, 0x11, 20);
+    memset(b, 0x22, 20);
+    memset(c, 0x33, 20);
+
+    g_len = 0;
+    ev12(2, 5, a, "CBFS: fallback/payload");
+    ev12(2, 5, b, "CBFS: bootblock");
+    memcpy(first, g_log, g_len);
+    first_len = g_len;
+    ev12(2, 4, c, "sep");
+    ev12(4, EVLOG_EV_EFI_BOOT_APP, a, "image");
+    assert_int_equal(evlog_replay_run(g_log, g_len, EVLOG_ALG_SHA1, 0, NULL,
+                                      &one), EVLOG_OK);
+
+    assert_int_equal(evlog_replay_init(EVLOG_ALG_SHA1, &two), EVLOG_OK);
+    assert_int_equal(evlog_replay_more(first, first_len, 0, NULL, &two),
+                     EVLOG_OK);
+    assert_int_equal(evlog_replay_more(g_log + first_len, g_len - first_len,
+                                       4, a, &two), EVLOG_OK);
+    assert_true(two.stopped);
+    assert_int_equal(two.events, 4);
+    assert_memory_equal(one.pcr, two.pcr, sizeof one.pcr);
+
+    /* In the other order PCR 2 differs. */
+    assert_int_equal(evlog_replay_init(EVLOG_ALG_SHA1, &two), EVLOG_OK);
+    assert_int_equal(evlog_replay_more(g_log + first_len, g_len - first_len,
+                                       0, NULL, &two), EVLOG_OK);
+    assert_int_equal(evlog_replay_more(first, first_len, 0, NULL, &two),
+                     EVLOG_OK);
+    assert_memory_not_equal(one.pcr[2], two.pcr[2], 20);
+    assert_memory_equal(one.pcr[4], two.pcr[4], 20);
+
+    /* A crypto-agile log after a 1.2 one. */
+    g_len = 0;
+    hdr2();
+    digests(0x44, c, d256);
+    ev2(4, EVLOG_EV_EFI_BOOT_APP, c, d256, "x", 1);
+    assert_int_equal(evlog_replay_more(g_log, g_len, 0, NULL, &two),
+                     EVLOG_ERR_FORMAT);
+    assert_int_equal(evlog_replay_more(NULL, 0, 0, NULL, &two),
+                     EVLOG_ERR_ARG);
+    assert_int_equal(evlog_replay_init(0x0012, &two), EVLOG_ERR_ARG);
+}
+
+/* The station's saved record: written and read back, and anything else
+ * refused. */
+static void test_evsave(void **state)
+{
+    static uint8_t pcr[EVSAVE_PCRS][EVSAVE_DIGEST_LEN];
+    static uint8_t buf[EVSAVE_BODY + 64];
+    static const uint8_t log[40] = { 1, 2, 3 };
+    evsave_view v;
+    size_t n = 0;
+    unsigned i;
+
+    (void)state;
+    for (i = 0; i < EVSAVE_PCRS; i++)
+        memset(pcr[i], (int)i, EVSAVE_DIGEST_LEN);
+    assert_int_equal(evsave_size(sizeof log), EVSAVE_BODY + sizeof log);
+    assert_int_equal(evsave_write(buf, sizeof buf,
+                                  (const uint8_t (*)[EVSAVE_DIGEST_LEN])pcr,
+                                  log, sizeof log, &n), EVSAVE_OK);
+    assert_int_equal(n, EVSAVE_BODY + sizeof log);
+    assert_memory_equal(buf, "FEVL", 4);
+    assert_int_equal(evsave_read(buf, n, &v), EVSAVE_OK);
+    assert_int_equal(v.log_len, sizeof log);
+    assert_memory_equal(v.log, log, sizeof log);
+    assert_memory_equal(v.pcr, pcr, sizeof pcr);
+
+    /* Short, long, or not a record. */
+    assert_int_equal(evsave_read(buf, n - 1u, &v), EVSAVE_ERR_FORMAT);
+    assert_int_equal(evsave_read(buf, n + 1u, &v), EVSAVE_ERR_FORMAT);
+    assert_int_equal(evsave_read(buf, 8, &v), EVSAVE_ERR_FORMAT);
+    buf[4] = 2;
+    assert_int_equal(evsave_read(buf, n, &v), EVSAVE_ERR_FORMAT);
+    buf[4] = 1;
+    buf[8] = 32;
+    assert_int_equal(evsave_read(buf, n, &v), EVSAVE_ERR_FORMAT);
+    buf[8] = 20;
+    buf[0] = 'X';
+    assert_int_equal(evsave_read(buf, n, &v), EVSAVE_ERR_FORMAT);
+    assert_int_equal(evsave_read(NULL, n, &v), EVSAVE_ERR_ARG);
+
+    assert_int_equal(evsave_write(buf, EVSAVE_BODY + 39u,
+                                  (const uint8_t (*)[EVSAVE_DIGEST_LEN])pcr,
+                                  log, sizeof log, &n), EVSAVE_ERR_SPACE);
+    assert_int_equal(evsave_write(buf, sizeof buf,
+                                  (const uint8_t (*)[EVSAVE_DIGEST_LEN])pcr,
+                                  log, 0, &n), EVSAVE_ERR_ARG);
+}
+
 int run_evlog_tests(void)
 {
     const struct CMUnitTest tests[] = {
         cmocka_unit_test(test_tcg12),
         cmocka_unit_test(test_tcg2),
         cmocka_unit_test(test_tcg2_bad),
+        cmocka_unit_test(test_more),
+        cmocka_unit_test(test_evsave),
     };
 
     return cmocka_run_group_tests_name("evlog", tests, NULL, NULL);

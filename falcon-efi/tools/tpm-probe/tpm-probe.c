@@ -16,6 +16,10 @@
  * by the station, the log holds the station's own measurement and then the
  * probe's.
  *
+ * And, when the station saved one (a TPM 1.2 behind EFI_TCG_PROTOCOL), its
+ * FalconEvLog record as \falcon-evsave.bin, which the 1.2 cases enroll from
+ * as mkstick would from efivarfs.
+ *
  * Every PCR is read, not only PCR0, and every line it prints is also saved
  * as \falcon-tpm.txt. On real hardware that pair is the point: a log can
  * only be checked against the PCRs as they stood when it was taken, which
@@ -556,6 +560,24 @@ static void probe_tcg(EFI_BOOT_SERVICES *bs)
         tcg_pcr(t, i);
 }
 
+/* The station's saved record (falcon-core/src/tpm/evsave.h), under
+ * falcon's vendor GUID, copied out as it is. */
+static void save_evsave(void)
+{
+    static UINT8 buf[65536];
+    EFI_GUID vendor = { 0x50614485, 0x081b, 0x4b7c,
+                        { 0x8b, 0x54, 0x2a, 0xbe, 0xff, 0xdf, 0x2f, 0xb3 } };
+    UINTN n = sizeof buf;
+
+    if (g_st->RuntimeServices->GetVariable((CHAR16 *)(uintptr_t)L"FalconEvLog",
+                                           &vendor, (UINT32 *)0, &n,
+                                           buf) != EFI_SUCCESS) {
+        say(L"FALCON-TPM evsave none\r\n");
+        return;
+    }
+    save_file(L"\\falcon-evsave.bin", L"evsave", buf, n);
+}
+
 EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
 {
     g_st = st;
@@ -564,6 +586,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
     say(L"\r\nFALCON-TPM-PROBE\r\n");
     probe_tcg2(st->BootServices);
     probe_tcg(st->BootServices);
+    save_evsave();
     save_file(L"\\falcon-tpm.txt", L"report", g_txt, g_txt_len);
     say(L"FALCON-TPM-PROBE-DONE\r\n");
     st->BootServices->Stall(1000000);

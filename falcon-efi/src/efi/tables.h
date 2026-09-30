@@ -279,7 +279,9 @@ typedef struct {
      * must stay short and deliberate.
      *
      * FalconNextBoot is ours, and its whole lifecycle belongs to this loader
-     * (DESIGN Section 6.3.1 and the `loader` module of Section 9).
+     * (DESIGN Section 6.3.1 and the `loader` module of Section 9). So are
+     * FalconIsoMap and the station's FalconEvLog, both volatile, both read
+     * by the booted OS (loader/loadops.h).
      *
      * OsIndications is the platform's, and is the one exception: setting
      * EFI_OS_INDICATIONS_BOOT_TO_FW_UI asks the firmware to show its own

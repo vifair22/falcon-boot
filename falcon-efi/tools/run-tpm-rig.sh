@@ -392,9 +392,21 @@ case_totp() {
         TPM_DIR=$R/swtpm; RTC_ARGS=(); unset SWTPM_KEEP
         return
     fi
-    rm -f "$R/evlog.bin"
+    rm -f "$R/evlog.bin" "$R/evsave.bin"
     [[ -z $why ]] && { mcopy -i "$R/totp.img@@1M" ::/falcon-evlog.bin "$R/evlog.bin" 2>/dev/null ||
         why="the probe saved no event log"; }
+    # The station saves edk2's log on a 1.2 behind EFI_TCG_PROTOCOL, and on
+    # nothing else (DESIGN Section 13.15); a 1.2 enrollment is from that.
+    local saved=()
+    if [[ -z $why && $tpm == tpm12 ]]; then
+        if mcopy -i "$R/totp.img@@1M" ::/falcon-evsave.bin "$R/evsave.bin" 2>/dev/null; then
+            saved=(--saved-log "$R/evsave.bin")
+        else
+            why="the station saved no event log on a TPM 1.2"
+        fi
+    elif [[ -z $why ]] && ! has "FALCON-TPM evsave none"; then
+        why="the station saved an event log on a TPM 2.0"
+    fi
 
     # 2. enrollment, on the host, against the same TPM state
     if [[ -z $why ]]; then
@@ -412,8 +424,11 @@ case_totp() {
     if [[ -z $why ]]; then
         out=$("$MKSTICK" station totp enroll "$R/totp.img" --pcrs 0,2,4,7 \
                 --label rig --tpm-socket "$TPM_DIR/server.sock" \
-                --event-log "$R/evlog.bin" "${owner[@]}" 2>&1) || why="enroll failed: $(printf '%s' "$out" | tail -n 1)"
+                --event-log "$R/evlog.bin" "${saved[@]}" "${owner[@]}" 2>&1) || why="enroll failed: $(printf '%s' "$out" | tail -n 1)"
         printf '%s\n' "$out" > "$R/$c-enroll.log"
+        [[ -z $why && $tpm == tpm12 ]] &&
+            ! grep -qF "PCRs from the event log the station saved" <<<"$out" &&
+            why="the 1.2 enrollment did not use the station's saved log"
         swtpm_serve_stop
         secret=$(printf '%s\n' "$out" | sed -n 's/^.*secret: *\([A-Z2-7]*\)$/\1/p' | head -n 1)
         [[ -z $why && -z $secret ]] && why="enroll printed no secret"
