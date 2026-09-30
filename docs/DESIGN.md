@@ -2719,6 +2719,14 @@ credential with no second prompt. Still unmeasured on hardware: the other
 four BIOS routes (a direct Linux ISO, an ISO's own loader through the
 virtual CD, BSD, Windows).
 
+MEASURED ON REAL HARDWARE (2026-09-29), UEFI with Secure Boot on: the
+ThinkPad T430 (coreboot and MrChromebox edk2, TPM 1.2 behind
+EFI_TCG_PROTOCOL, the machine's own key as PK, KEK and db, no shim) boots
+the UEFI station straight from its firmware entry (`station install
+--no-shim`, 13.2), and the station shows the TOTP code of 13.15: enrolled
+from coreboot's log and the edk2 log the station saved, sealed to PCRs 2,
+4, 5 and 7, read after the station sends `TPM_ContinueSelfTest`.
+
 I686 IN THE RIG (2026-09-24): falcon-bios is i686 in 32-bit protected mode
 and promotes at run time (docs/notes/bios-route.md Section 6h). On SeaBIOS
 with a Pentium III (the harness's `bios32` column) Alpine x86 and Arch Linux
@@ -5018,6 +5026,20 @@ is refused. A 1.2 TPM owned with a password of zero bytes (swtpm_setup's
 `--srk-well-known`) keeps SHA-1 of them as the SRK's secret; enrollment
 tries both forms through a transport session and records the second as
 `srkauth = sha1-zero`. Any other SRK secret is refused.
+
+On a TPM 1.2 the station sends `TPM_ContinueSelfTest` before its read, and
+tries a command the TPM answers with `TPM_RETRY`, `TPM_NEEDS_SELFTEST` or
+`TPM_DOING_SELFTEST` again every 100 ms for three seconds. A firmware that
+sends `TPM_Startup` alone leaves the tests that cover RSA deferred, so
+EstablishTransport, the first command needing them, is refused with
+`TPM_NEEDS_SELFTEST` (the T430's coreboot and edk2, 2026-09-29). Linux's
+driver sends the command itself, which is why enrollment and `check` never
+see it, and OVMF sends it, which is why the TPM rig did not.
+
+`check` is the station's read run from the OS: it must end in the PCR
+refusal, since the OS's PCRs are not the station's, and any other answer
+names the TPM 1.2 command that refused (`tpm_dev.ord`), which the station's
+own error line names too.
 
 `reseal` is enrollment over an existing one, after a firmware, shim or
 station update: the old seed cannot be read back from the OS, whose PCRs

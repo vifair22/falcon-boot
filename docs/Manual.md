@@ -590,6 +590,7 @@ with the default marked. It exits nonzero when a stage or file is missing.
     falcon-boot-mkstick station totp reseal <disk> [--pcrs ...]
         [--owner-auth-file <file>]
     falcon-boot-mkstick station totp remove <disk> [--owner-auth-file <file>]
+    falcon-boot-mkstick station totp check <disk>
 
 Run from a system the station started. The PCR values come from the
 firmware's event log, and on a TPM 1.2 from the log the station saved at
@@ -605,4 +606,10 @@ authority that verified the station (7), and with 5, the GPT and the boot
 variables, so an `efibootmgr` change or a repartition moves it too. After
 any of these the station warns instead of showing the code; `reseal` makes
 a new one.
+
+`check` runs the station's own read of the seed from the running system and
+changes nothing. The TPM refusing on the PCRs is the good answer there: the
+index, the storage key and (on 1.2) its secret are right. Any other refusal
+is printed with the step that got it, as the station's own line prints it
+(`TPM error 0x00000001 in EstablishTransport.`).
 

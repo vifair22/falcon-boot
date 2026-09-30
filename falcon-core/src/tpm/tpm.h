@@ -56,6 +56,9 @@ typedef struct {
     tpm_rng_fn  rng;
     void       *rng_ctx;
     uint32_t    rc;             /* the last response code a TPM returned */
+    uint32_t    ord;            /* the command rc answers: the last one
+                                   sent, or the one a transport session
+                                   wrapped when the refusal was its */
     uint8_t     cmd[TPM_BUF_MAX];
     uint8_t     rsp[TPM_BUF_MAX];
 } tpm_dev;

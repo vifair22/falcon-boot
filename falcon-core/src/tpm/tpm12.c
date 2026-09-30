@@ -25,6 +25,7 @@
 #define ORD_GETCAPABILITY      0x00000065u
 #define ORD_OWNERREADINTPUB    0x00000081u
 #define ORD_STARTUP            0x00000099u
+#define ORD_CONTINUESELFTEST   0x00000053u
 #define ORD_NV_DEFINE          0x000000CCu
 #define ORD_NV_WRITE           0x000000CDu
 #define ORD_NV_READ            0x000000CFu
@@ -801,6 +802,7 @@ int tpm12_nv_read_transport(tpm_dev *d, tpm12_transport *t, uint32_t index,
         }
         d->rc = tpm_be32(rcw);
         if (d->rc != 0u) {
+            d->ord = ORD_NV_READ;
             rc = TPM_ERR_RC;
         }
         rc = nv_read_result(d, rc, wrm + 10, wrl - 10u, out, len);
@@ -927,4 +929,37 @@ int tpm12_seed_enroll_values(tpm_dev *d,
     }
     return enroll_values(d, owner_auth, index, pcr_mask, values, seed, len,
                          srk);
+}
+
+const char *tpm12_ord_name(uint32_t ord)
+{
+    switch (ord) {
+    case ORD_CONTINUESELFTEST:   return "ContinueSelfTest";
+    case ORD_OIAP:               return "OIAP";
+    case ORD_OSAP:               return "OSAP";
+    case ORD_GETRANDOM:          return "GetRandom";
+    case ORD_PCRREAD:            return "PcrRead";
+    case ORD_OWNERREADINTPUB:    return "OwnerReadInternalPub";
+    case ORD_NV_DEFINE:          return "NV_DefineSpace";
+    case ORD_NV_WRITE:           return "NV_WriteValue";
+    case ORD_NV_READ:            return "NV_ReadValue";
+    case ORD_ESTABLISHTRANSPORT: return "EstablishTransport";
+    case ORD_EXECUTETRANSPORT:   return "ExecuteTransport";
+    default:                     return NULL;
+    }
+}
+
+int tpm12_continue_self_test(tpm_dev *d)
+{
+    if (d == NULL) {
+        return TPM_ERR_ARG;
+    }
+    return run12(d, ORD_CONTINUESELFTEST, NULL, 0, NULL, 0, NULL, 0, NULL,
+                 NULL);
+}
+
+int tpm12_rc_retry(uint32_t rc)
+{
+    return rc == TPM12_RC_RETRY || rc == TPM12_RC_NEEDS_SELFTEST ||
+           rc == TPM12_RC_DOING_SELFTEST;
 }

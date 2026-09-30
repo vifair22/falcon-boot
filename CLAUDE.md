@@ -68,8 +68,12 @@ hardware (2026-09-26 and 27), BIOS on a Pentium III with no 64-bit mode
 (the ThinkPad A21m): falcon jump's five routes, and station-legacy
 installed on its internal disk with every row (the chains to Windows 2000,
 memtest, DevLink recovery's UKI, jump's CD, USB and CF routes), updated in
-place from a station bundle (DESIGN Section 13.14). Still unmeasured on
-hardware: the stick's other four BIOS routes (direct boot, the virtual CD,
+place from a station bundle (DESIGN Section 13.14). Measured on real
+hardware (2026-09-29), UEFI with Secure Boot on (the ThinkPad T430:
+coreboot and edk2, its own key as PK, KEK and db, no shim): the UEFI
+station installed with `--no-shim`, and its TOTP code released by a TPM
+1.2, enrolled from the two event logs (DESIGN Section 13.15). Still
+unmeasured on hardware: the stick's other four BIOS routes (direct boot, the virtual CD,
 Windows media, BSD).
 
 ## Non-negotiable security invariants (DESIGN.md Section 7)

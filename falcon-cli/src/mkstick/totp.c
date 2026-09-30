@@ -18,6 +18,9 @@
  * station's measurement in the log is also the proof that this system was
  * started by the station on the named disk; without it enrollment refuses.
  *
+ * Check runs the station's read from here, which the TPM refuses on the
+ * PCRs when everything before them (index, key, secret) is right.
+ *
  * Reseal is enrollment again over an existing one: the seed cannot be read
  * back from this system (its PCRs are not the station's), so a new one is
  * made and the authenticator's entry is replaced. Remove deletes the index
@@ -928,6 +931,113 @@ static cli_status remove_run(const cli_args *a)
     return CLI_OK;
 }
 
+/* ---- check ---- */
+
+static const cli_opt check_opts[] = {
+    { "tpm-socket", CLI_OPT_VALUE, 0, "<path>",
+      "TEST ONLY: swtpm's socket instead of /dev/tpmrm0 or /dev/tpm0" }
+};
+
+/* The station's own read, from here: the same session, key and secret it
+ * uses at boot. This system's PCRs are not the station's, so the TPM
+ * refusing on the PCRs is the answer that shows everything before them
+ * (the index, the pinned key, the SRK's secret on 1.2) is right; any other
+ * refusal names the step. */
+static cli_status check_run(const cli_args *a)
+{
+    static stn_esp e;
+    const stationini_totp *t;
+    tpm_version ver = TPM_VER_NONE;
+    tpm_version want;
+    uint8_t seed[TOTP_SEED_LEN];
+    const char *step;
+    int rc;
+    cli_status st;
+
+    st = esp_open(&e, a->pos[0]);
+    if (st != CLI_OK)
+        return st;
+    t = &e.parsed.totp;
+    if (!t->present)
+        return set_error(CLI_ERR_NOTFOUND, "the station on %s has no TOTP "
+                         "enrolled", a->pos[0]);
+    st = tpm_open(cli_value(a, "tpm-socket", NULL), &ver);
+    if (st != CLI_OK) {
+        tpm_close();
+        return st;
+    }
+    want = t->tpm == 20 ? TPM_VER_20 : TPM_VER_12;
+    if (ver != want) {
+        tpm_close();
+        return set_error(CLI_ERR_INVALID, "STATION.INI names a TPM %s and "
+                         "this machine's is a %s",
+                         want == TPM_VER_20 ? "2.0" : "1.2",
+                         ver == TPM_VER_20 ? "2.0" : "1.2");
+    }
+    if (ver == TPM_VER_20) {
+        rc = tpm2_seed_read(&g_dev, t->index, t->pcrs, t->key, seed,
+                            sizeof seed);
+    } else {
+        static const uint8_t zeros[20] = { 0 };
+        tpm12_pubkey pk;
+        uint8_t auth[20];
+
+        memset(&pk, 0, sizeof pk);
+        memcpy(pk.mod, t->key, t->key_len);
+        pk.mod_len = t->key_len;
+        pk.exp[0] = 0x01;
+        pk.exp[1] = 0x00;
+        pk.exp[2] = 0x01;
+        pk.exp_len = 3;
+        if (t->srk_sha1)
+            sha1(zeros, sizeof zeros, auth);
+        else
+            memset(auth, 0, sizeof auth);
+        rc = tpm12_seed_read(&g_dev, t->index, auth, &pk, seed, sizeof seed);
+    }
+    crypto_wipe(seed, sizeof seed);
+    step = ver == TPM_VER_12 ? tpm12_ord_name(g_dev.ord) : NULL;
+    tpm_close();
+
+    switch (rc) {
+    case TPM_OK:
+        log_info("the TPM released the seed to this system: its PCRs now "
+                 "are the enrolled ones");
+        return CLI_OK;
+    case TPM_ERR_PCR:
+        log_info("the TPM refused on the PCRs, as it does outside the "
+                 "station: the index, the storage key%s recorded in "
+                 "STATION.INI are this TPM's",
+                 ver == TPM_VER_12 ? " and its secret" : "");
+        return CLI_OK;
+    case TPM_ERR_RC:
+        return set_error(CLI_ERR_IO, "the TPM refused: code 0x%08x%s%s",
+                         g_dev.rc, step != NULL ? " in " : "",
+                         step != NULL ? step : "");
+    case TPM_ERR_AUTH:
+        return set_error(CLI_ERR_INVALID, "the TPM's answer did not verify");
+    case TPM_ERR_KEY:
+        return set_error(CLI_ERR_INVALID, "the TPM's storage key is not the "
+                         "one STATION.INI pins");
+    default:
+        return tpm_fail(rc, "reading the seed");
+    }
+}
+
+static const cli_cmd totp_check = {
+    "check",
+    "run the station's read of the seed from here, and say where it stops",
+    "<disk>",
+    check_opts,
+    sizeof check_opts / sizeof check_opts[0],
+    1, 1,
+    "The station's own read with STATION.INI's [totp]: its index, pinned\n"
+    "key and, on 1.2, the storage key's secret. From a running system the\n"
+    "TPM refuses on the PCRs, which says everything before them is right;\n"
+    "any other refusal is named with the step that got it. Changes nothing.\n",
+    check_run
+};
+
 static const cli_cmd totp_enroll = {
     "enroll",
     "seal a new TOTP seed to this boot and record it in STATION.INI",
@@ -973,25 +1083,28 @@ static const cli_cmd totp_remove = {
 static const cli_cmd *const totp_cmds[] = {
     &totp_enroll,
     &totp_reseal,
-    &totp_remove
+    &totp_remove,
+    &totp_check
 };
 
 static cli_status totp_placeholder(const cli_args *a)
 {
     (void)a;
-    return set_error(CLI_ERR_USAGE, "station totp enroll, reseal or remove?");
+    return set_error(CLI_ERR_USAGE, "station totp enroll, reseal, remove or "
+                     "check?");
 }
 
 static const cli_cmd totp_topic = {
     "totp",
-    "the UEFI station's TOTP check: enroll, reseal, remove",
-    "enroll|reseal|remove <disk> ...",
+    "the UEFI station's TOTP check: enroll, reseal, remove, check",
+    "enroll|reseal|remove|check <disk> ...",
     NULL,
     0,
     0, 0,
     "  station totp enroll <disk> [--pcrs 0,2,4,7] [--owner-auth-file F]\n"
     "  station totp reseal <disk> [--pcrs ...] [--owner-auth-file F]\n"
     "  station totp remove <disk> [--owner-auth-file F]\n"
+    "  station totp check <disk>\n"
     "\n"
     "`falcon-boot-mkstick station totp <command> --help` for each.\n",
     totp_placeholder

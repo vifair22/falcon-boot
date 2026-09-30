@@ -30,6 +30,7 @@ typedef enum {
 static totp_state g_state;
 static uint8_t g_seed[SEED_LEN];
 static uint32_t g_rc;
+static uint32_t g_ord;              /* the command g_rc answered */
 static uint8_t g_ver;               /* 12 or 20, for "No TPM 2.0 found." */
 static char g_label[STATIONINI_LABEL_MAX];
 
@@ -95,15 +96,33 @@ void totp_load(EFI_SYSTEM_TABLE *st, const stationini_totp *cfg)
         pk.exp_len = 3;
         static const uint8_t zeros[20] = { 0 };
         uint8_t srk_auth[20];
+        unsigned tries;
 
         if (cfg->srk_sha1)
             sha1(zeros, sizeof zeros, srk_auth);
         else
             memset(srk_auth, 0, sizeof srk_auth);
-        rc = tpm12_seed_read(dev, cfg->index, srk_auth, &pk, g_seed,
-                             SEED_LEN);
+        /* A firmware that sent TPM_Startup and not TPM_ContinueSelfTest
+         * leaves the RSA engine untested, and EstablishTransport, the first
+         * command that needs it, answers TPM_NEEDS_SELFTEST (the T430's
+         * coreboot and edk2; Linux's driver sends the command, which is why
+         * the same read works from there). So it is sent here, and a
+         * command the TPM is not ready for is tried again for a few seconds
+         * while the tests run. */
+        (void)tpm12_continue_self_test(dev);
+        for (tries = 0;; tries++) {
+            rc = tpm12_seed_read(dev, cfg->index, srk_auth, &pk, g_seed,
+                                 SEED_LEN);
+            if (rc != TPM_ERR_RC || !tpm12_rc_retry(dev->rc) ||
+                tries == 30u)
+                break;
+            if (dev->rc == TPM12_RC_NEEDS_SELFTEST)
+                (void)tpm12_continue_self_test(dev);
+            st->BootServices->Stall(100000);
+        }
     }
     g_rc = dev->rc;
+    g_ord = dev->ord;
     tcg_close();
 
     switch (rc) {
@@ -272,6 +291,12 @@ void totp_status(void *ctx, menu_status_text *out)
     case ST_REFUSED:
         put(&w, "The TPM did not release the code: TPM error ");
         put_hex32(&w, g_rc);
+        /* Which step refused, on 1.2, where the read is several commands
+         * and the code alone does not say which of them it answered. */
+        if (g_ver == 12 && tpm12_ord_name(g_ord) != (const char *)0) {
+            put(&w, " in ");
+            put(&w, tpm12_ord_name(g_ord));
+        }
         put(&w, ".");
         break;
     default:
