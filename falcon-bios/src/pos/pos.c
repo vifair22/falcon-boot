@@ -497,15 +497,7 @@ static int prompt_and_unlock(void)
         int rc;
         unsigned wait;
 
-        screen_out("passphrase for the encrypted partition");
-        if (g_failures > 0) {
-            screen_out(" (attempt ");
-            screen_out_dec(g_failures + 1u);
-            screen_out(" of ");
-            screen_out_dec(TUI_UNLOCK_TRIES);
-            screen_out(")");
-        }
-        screen_out(": ");
+        screen_out("passphrase for the encrypted partition: ");
 
         if (prompt_passphrase(g_pass, sizeof g_pass, &g_pass_len) != 0)
             return POS_ABORTED;
@@ -520,16 +512,16 @@ static int prompt_and_unlock(void)
         crypto_wipe(g_pass, sizeof g_pass);
         g_pass_len = 0;
         g_failures++;
+        /* Not said, as the UEFI loader does not say it
+         * (falcon-efi/src/pos/pos.c): the wait runs under "unlocking...". */
         if (g_failures >= TUI_UNLOCK_TRIES) {
-            screen_out("wrong passphrase. Too many attempts: powering off.\n");
+            screen_out("wrong passphrase.\n");
             screen_pause(3);
             screen_power_off();
         }
         wait = tui_unlock_delay(g_failures);
-        screen_out("wrong passphrase. Next attempt in ");
-        screen_out_dec(wait);
-        screen_out(" s.\n\n");
         screen_pause(wait);
+        screen_out("wrong passphrase.\n\n");
     }
 }
 

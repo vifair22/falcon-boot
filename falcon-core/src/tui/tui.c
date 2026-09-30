@@ -311,7 +311,9 @@ void tui_row_banner(uint16_t *row, size_t w, const uint16_t *title,
 
 unsigned tui_unlock_delay(unsigned failures)
 {
-    if (failures == 0)
+    /* The first is free: it is nearly always the owner's typo, and the
+     * power-off after TUI_UNLOCK_TRIES is what bounds a guesser. */
+    if (failures <= 1u)
         return 0;
     if (failures > 4u)
         return 16u;

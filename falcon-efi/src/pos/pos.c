@@ -993,15 +993,7 @@ static int prompt_and_unlock(UINTN *which)
 
         if (g_note != (void (*)(void))0)
             g_note();
-        out(L"passphrase for the encrypted partition");
-        if (g_failures > 0) {
-            out(L" (attempt ");
-            out_dec(g_failures + 1u);
-            out(L" of ");
-            out_dec(TUI_UNLOCK_TRIES);
-            out(L")");
-        }
-        out(L": ");
+        out(L"passphrase for the encrypted partition: ");
 
         len = menu_prompt_secret(g_st, (const CHAR16 *)0, g_pass,
                                  POS_PASS_MAX);
@@ -1023,16 +1015,18 @@ static int prompt_and_unlock(UINTN *which)
         crypto_wipe(g_pass, sizeof g_pass);
         g_pass_len = 0;
         g_failures++;
+        /* The wait and the limit are not said (DESIGN Section 5.2): the wait
+         * runs under "unlocking...", where it reads as a slow key
+         * derivation, and the last wrong one powers off with the same
+         * sentence as the others. */
         if (g_failures >= TUI_UNLOCK_TRIES) {
-            out(L"wrong passphrase. Too many attempts: powering off.\r\n");
+            out(L"wrong passphrase.\r\n");
             g_st->BootServices->Stall(3000000u);
             idle_power_off();
         }
         wait = tui_unlock_delay(g_failures);
-        out(L"wrong passphrase. Next attempt in ");
-        out_dec(wait);
-        out(L" s.\r\n\r\n");
         unlock_wait(wait);
+        out(L"wrong passphrase.\r\n\r\n");
     }
 }
 
