@@ -182,5 +182,8 @@ const fs_ops fs_ops_fat = {
     fat_file_read_op,
     fat_file_size_op,
     fat_extents_op,
-    fat_label_op
+    fat_label_op,
+    /* No journal to replay. */
+    (int (*)(fs_vol *, fs_read_fn, void *, const struct fs_jmem_s *,
+             struct fs_jinfo_s *))0
 };

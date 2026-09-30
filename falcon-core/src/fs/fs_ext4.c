@@ -29,7 +29,9 @@ static const fs_status_row ext4_rows[] = {
     { EXT4_ERR_CSUM,           FS_ERR_CSUM },
     { EXT4_ERR_INLINE,         FS_ERR_INLINE },
     { EXT4_ERR_SYMLINK,        FS_ERR_SYMLINK },
-    { EXT4_ERR_HOLE,           FS_ERR_HOLE }
+    { EXT4_ERR_HOLE,           FS_ERR_HOLE },
+    { EXT4_ERR_JOURNAL,        FS_ERR_JOURNAL },
+    { EXT4_ERR_NOMEM,          FS_ERR_NOMEM }
 };
 
 int fs_status_from_ext4(int rc)
@@ -112,6 +114,34 @@ static int ext4_mount_op(fs_vol *v, fs_read_fn read, void *ctx)
     return fs_status_from_ext4(ext4_mount(evol(v), read, ctx));
 }
 
+/* fs_jmem and jbd2_mem are the same contract spelled twice, so that fs.h
+ * names no driver's header; the fields are copied rather than the pointer
+ * cast. */
+static int ext4_mount_journal_op(fs_vol *v, fs_read_fn read, void *ctx,
+                                 const fs_jmem *mem, fs_jinfo *info)
+{
+    jbd2_mem m = { 0, 0, 0 };
+    ext4_jinfo ji;
+    int rc;
+
+    if (mem != (const fs_jmem *)0) {
+        m.get = mem->get;
+        m.put = mem->put;
+        m.ctx = mem->ctx;
+    }
+    rc = ext4_mount_journal(evol(v), read, ctx,
+                            mem != (const fs_jmem *)0 ? &m
+                                                      : (const jbd2_mem *)0,
+                            &ji);
+    info->need = ji.need;
+    info->flags = 0;
+    if ((ji.flags & EXT4_JNL_REPLAYED) != 0)
+        info->flags |= FS_JNL_REPLAYED;
+    if ((ji.flags & EXT4_JNL_FC_SKIPPED) != 0)
+        info->flags |= FS_JNL_FC_SKIPPED;
+    return fs_status_from_ext4(rc);
+}
+
 static int ext4_dir_open_root_op(fs_vol *v, fs_dir *d)
 {
     return fs_status_from_ext4(ext4_dir_open_root(evol(v), edir(d)));
@@ -170,5 +200,6 @@ const fs_ops fs_ops_ext4 = {
      * the one consumer that needs it (the ISO injection framework) only ever
      * asks about p2. Writing one for p3 would be code with no caller. */
     (int (*)(fs_vol *, const fs_dirent *, fs_extent *, size_t, size_t *))0,
-    (const char *(*)(const fs_vol *))0
+    (const char *(*)(const fs_vol *))0,
+    ext4_mount_journal_op
 };

@@ -6,6 +6,7 @@
  */
 
 #include <fs/ext4.h>
+#include <fs/crc32c.h>
 #include <lib/string.h>
 
 #define OFF_INVALID (~(uint64_t)0)
@@ -29,6 +30,8 @@
 #define SB_FEATURE_INCOMPAT     0x60u
 #define SB_FEATURE_RO_COMPAT    0x64u
 #define SB_UUID                 0x68u
+#define SB_JOURNAL_INUM         0xE0u
+#define SB_JOURNAL_DEV          0xE4u
 #define SB_DESC_SIZE            0xFEu
 #define SB_BLOCKS_COUNT_HI      0x150u
 #define SB_CHECKSUM_TYPE        0x175u
@@ -40,6 +43,8 @@
 #define EXT4_ERROR_FS           0x0002u /* errors detected */
 #define EXT4_ORPHAN_FS          0x0004u /* orphan inodes being recovered */
 #define EXT4_CHECKSUM_CRC32C    1u
+
+#define COMPAT_HAS_JOURNAL      0x0004u
 
 /* Feature bits. The whitelists are exactly what a stock mkfs.ext4 sets on a
  * 1 GiB partition (ext4.h has the dumpe2fs evidence); anything outside them is
@@ -148,31 +153,6 @@
 #define FT_REG                  1u
 #define FT_DIR                  2u
 
-/* crc32c (Castagnoli, reflected), nibble table: 64 bytes of rodata and two
- * lookups per byte. Nothing here is on a hot path (ext4 checksums metadata
- * only, never file data), so the 1 KiB byte-wide table would buy nothing.
- * Entry i is the reflected polynomial 0x82F63B78 folded four times over i. */
-static const uint32_t crc32c_tab[16] = {
-    0x00000000U, 0x105EC76FU, 0x20BD8EDEU, 0x30E349B1U,
-    0x417B1DBCU, 0x5125DAD3U, 0x61C69362U, 0x7198540DU,
-    0x82F63B78U, 0x92A8FC17U, 0xA24BB5A6U, 0xB21572C9U,
-    0xC38D26C4U, 0xD3D3E1ABU, 0xE330A81AU, 0xF36E6F75U,
-};
-
-/* Running update, matching the kernel's ext4_chksum(): no initial or final
- * inversion, so callers chain pieces of a structure together. */
-static uint32_t crc32c(uint32_t crc, const uint8_t *p, size_t n)
-{
-    size_t i;
-
-    for (i = 0; i < n; i++) {
-        crc ^= p[i];
-        crc = (crc >> 4) ^ crc32c_tab[crc & 0xFu];
-        crc = (crc >> 4) ^ crc32c_tab[crc & 0xFu];
-    }
-    return crc;
-}
-
 /* Feed a little-endian u32 (inode number, group number, generation) the way
  * the kernel does, which is by hashing the on-disk representation. */
 static uint32_t crc32c_le32(uint32_t crc, uint32_t val)
@@ -186,16 +166,24 @@ static uint32_t crc32c_le32(uint32_t crc, uint32_t val)
     return crc32c(crc, b, sizeof(b));
 }
 
-static uint32_t crc32c_zeros(uint32_t crc, size_t n)
-{
-    static const uint8_t zeros[4] = { 0, 0, 0, 0 };
-
-    return crc32c(crc, zeros, n);
-}
-
 static uint64_t block_off(const ext4_vol *v, uint64_t blk)
 {
     return blk * v->block_size;
+}
+
+/* Every read of the volume, so that a replayed journal (ext4_mount_journal)
+ * stands in for the blocks it holds newer copies of. */
+static int vol_read(ext4_vol *v, uint64_t off, uint64_t len, void *buf)
+{
+    int rc;
+
+    if (v->jmap.e == (jbd2_ent *)0)
+        return (v->read(v->read_ctx, off, len, buf) != 0) ? EXT4_ERR_IO
+                                                          : EXT4_OK;
+    rc = jbd2_read(&v->jmap, off, len, buf);
+    if (rc == JBD2_OK)
+        return EXT4_OK;
+    return (rc == JBD2_ERR_CSUM) ? EXT4_ERR_JOURNAL : EXT4_ERR_IO;
 }
 
 /* Read one filesystem block of metadata through the volume's block cache. The
@@ -210,9 +198,11 @@ static int meta_block(ext4_vol *v, uint64_t blk, const uint8_t **out)
 
     off = block_off(v, blk);
     if (v->blk_cache_off != off) {
-        if (v->read(v->read_ctx, off, v->block_size, v->blk_cache) != 0) {
+        int rc = vol_read(v, off, v->block_size, v->blk_cache);
+
+        if (rc != EXT4_OK) {
             v->blk_cache_off = OFF_INVALID;
-            return EXT4_ERR_IO;
+            return rc;
         }
         v->blk_cache_off = off;
     }
@@ -243,9 +233,10 @@ static int group_desc(ext4_vol *v, uint32_t group, const uint8_t **out)
         {
             uint64_t sec = off & ~(uint64_t)511;
             uint8_t sector[512];
+            int rc = vol_read(v, sec, sizeof(sector), sector);
 
-            if (v->read(v->read_ctx, sec, sizeof(sector), sector) != 0)
-                return EXT4_ERR_IO;
+            if (rc != EXT4_OK)
+                return rc;
             memcpy(buf, sector + (off - sec), v->desc_size);
         }
 
@@ -268,7 +259,12 @@ static int group_desc(ext4_vol *v, uint32_t group, const uint8_t **out)
     return EXT4_OK;
 }
 
-int ext4_mount(ext4_vol *v, ext4_read_fn read, void *read_ctx)
+/* Reads the superblock and everything derived from it, through vol_read so
+ * that a replayed journal's copy of it is the one parsed. replayed says the
+ * journal has been (or is about to be) read, which is what makes recover and
+ * orphan_present acceptable; the caches are reset, the journal table is not
+ * touched. */
+static int sb_load(ext4_vol *v, int replayed)
 {
     uint8_t sb[SB_SIZE];
     uint32_t incompat;
@@ -276,29 +272,29 @@ int ext4_mount(ext4_vol *v, ext4_read_fn read, void *read_ctx)
     uint32_t log_bs;
     uint32_t state;
     uint64_t groups;
+    int rc;
 
-    if (v == (void *)0 || read == (void *)0)
-        return EXT4_ERR_BAD_ARG;
-
-    memset(v, 0, sizeof(*v));
-    v->read = read;
-    v->read_ctx = read_ctx;
     v->blk_cache_off = OFF_INVALID;
     v->gd_cache_group = IDX_INVALID;
+    v->has_csum = 0;
 
-    if (read(read_ctx, SB_OFF, SB_SIZE, sb) != 0)
-        return EXT4_ERR_IO;
+    rc = vol_read(v, SB_OFF, SB_SIZE, sb);
+    if (rc != EXT4_OK)
+        return rc;
 
     if (get_le16(sb + SB_MAGIC) != EXT4_MAGIC)
         return EXT4_ERR_BAD_SUPER;
     if (get_le32(sb + SB_REV_LEVEL) < 1)
         return EXT4_ERR_UNSUPPORTED; /* rev 0 has no feature flags at all */
 
-    /* Compat bits (has_journal, ext_attr, resize_inode, dir_index,
-     * orphan_file) never change how bytes are read, so they are not even
-     * fetched; SB_FEATURE_COMPAT exists above only to document the layout. */
+    /* Compat bits (ext_attr, resize_inode, dir_index, orphan_file) never
+     * change how bytes are read; has_journal only matters to a replay. */
     incompat = get_le32(sb + SB_FEATURE_INCOMPAT);
     ro_compat = get_le32(sb + SB_FEATURE_RO_COMPAT);
+    v->has_journal =
+        (uint8_t)((get_le32(sb + SB_FEATURE_COMPAT) & COMPAT_HAS_JOURNAL) != 0 &&
+                  get_le32(sb + SB_JOURNAL_DEV) == 0);
+    v->journal_ino = get_le32(sb + SB_JOURNAL_INUM);
 
     /* Checksum first: every later field is only worth trusting once the
      * superblock is known to be intact. */
@@ -312,11 +308,17 @@ int ext4_mount(ext4_vol *v, ext4_read_fn read, void *read_ctx)
 
     /* RECOVER is an incompat bit, but it means "the journal holds committed
      * data the filesystem does not", which deserves its own answer rather than
-     * the generic unsupported-feature one. */
-    if ((incompat & INCOMPAT_RECOVER) != 0)
-        return EXT4_ERR_NEEDS_RECOVERY;
-    if ((ro_compat & RO_COMPAT_ORPHAN_PRESENT) != 0)
-        return EXT4_ERR_DIRTY;
+     * the generic unsupported-feature one. A replayed copy of the superblock
+     * carries it too: the kernel journals the superblock as it has it in
+     * memory, which is while the bit is set. */
+    if (!replayed) {
+        if ((incompat & INCOMPAT_RECOVER) != 0)
+            return EXT4_ERR_NEEDS_RECOVERY;
+        if ((ro_compat & RO_COMPAT_ORPHAN_PRESENT) != 0)
+            return EXT4_ERR_DIRTY;
+    }
+    incompat &= ~(uint32_t)INCOMPAT_RECOVER;
+    ro_compat &= ~(uint32_t)RO_COMPAT_ORPHAN_PRESENT;
     if ((incompat & ~INCOMPAT_SUPPORTED) != 0)
         return EXT4_ERR_UNSUPPORTED;
     if ((ro_compat & ~RO_COMPAT_SUPPORTED) != 0)
@@ -327,7 +329,9 @@ int ext4_mount(ext4_vol *v, ext4_read_fn read, void *read_ctx)
 
     /* s_state alone is not enough and is checked last: a filesystem snapshot
      * taken mid-write still reads "clean" here while the incompat RECOVER bit
-     * above is what actually says the journal holds the truth. */
+     * above is what actually says the journal holds the truth. With a
+     * journal, the kernel leaves VALID_FS set on disk while mounted, so a
+     * replayed filesystem reads clean here too unless errors were flagged. */
     state = get_le16(sb + SB_STATE);
     if ((state & EXT4_VALID_FS) == 0 ||
         (state & (EXT4_ERROR_FS | EXT4_ORPHAN_FS)) != 0)
@@ -380,6 +384,17 @@ int ext4_mount(ext4_vol *v, ext4_read_fn read, void *read_ctx)
                            : crc32c(0xFFFFFFFFu, sb + SB_UUID, 16);
     }
     return EXT4_OK;
+}
+
+int ext4_mount(ext4_vol *v, ext4_read_fn read, void *read_ctx)
+{
+    if (v == (void *)0 || read == (void *)0)
+        return EXT4_ERR_BAD_ARG;
+
+    memset(v, 0, sizeof(*v));
+    v->read = read;
+    v->read_ctx = read_ctx;
+    return sb_load(v, 0);
 }
 
 /* Fill out from the on-disk inode, verifying its checksum. */
@@ -765,9 +780,10 @@ int ext4_dir_next(ext4_dir *d, ext4_dirent *out)
 
             if (rc != EXT4_OK)
                 return rc;
-            if (v->read(v->read_ctx, block_off(v, pblk), bs, d->buf) != 0) {
+            rc = vol_read(v, block_off(v, pblk), bs, d->buf);
+            if (rc != EXT4_OK) {
                 d->buf_lblk = IDX_INVALID;
-                return EXT4_ERR_IO;
+                return rc;
             }
             rc = dir_block_check(v, &d->inode, d->buf);
             if (rc != EXT4_OK) {
@@ -878,9 +894,10 @@ static int file_read_span(ext4_file *f, uint64_t abs, uint64_t run,
 
         if (in_blk == 0 && run >= bs) {
             uint64_t whole = (run / bs) * bs;
+            int rc = vol_read(v, abs, whole, dst);
 
-            if (v->read(v->read_ctx, abs, whole, dst) != 0)
-                return EXT4_ERR_IO;
+            if (rc != EXT4_OK)
+                return rc;
             dst += whole;
             abs += whole;
             run -= whole;
@@ -890,9 +907,11 @@ static int file_read_span(ext4_file *f, uint64_t abs, uint64_t run,
             if ((uint64_t)take > run)
                 take = (uint32_t)run;
             if (f->buf_off != blk_off) {
-                if (v->read(v->read_ctx, blk_off, bs, f->buf) != 0) {
+                int rc = vol_read(v, blk_off, bs, f->buf);
+
+                if (rc != EXT4_OK) {
                     f->buf_off = OFF_INVALID;
-                    return EXT4_ERR_IO;
+                    return rc;
                 }
                 f->buf_off = blk_off;
             }
@@ -948,5 +967,119 @@ int ext4_file_read(ext4_file *f, uint64_t off, uint64_t len, void *buf)
         off += take;
         len -= take;
     }
+    return EXT4_OK;
+}
+
+/* ---- the journal, replayed (fs/jbd2.h) ---- */
+
+typedef struct {
+    ext4_vol *v;
+    ext4_inode *jin;
+} journal_ctx;
+
+/* The journal is a file of this filesystem: a journal block is a logical
+ * block of its inode. Its extent tree is read as it is on disk, before any
+ * replay, which is what the kernel does too (the journal inode does not
+ * change while the filesystem is mounted). */
+static int journal_map(void *ctx, uint32_t jblk, uint64_t *fsblk)
+{
+    journal_ctx *c = ctx;
+    uint32_t run;
+
+    return extent_lookup(c->v, c->jin, jblk, fsblk, &run) != EXT4_OK;
+}
+
+static int status_from_jbd2(int rc)
+{
+    switch (rc) {
+    case JBD2_OK:              return EXT4_OK;
+    case JBD2_ERR_IO:          return EXT4_ERR_IO;
+    case JBD2_ERR_UNSUPPORTED: return EXT4_ERR_UNSUPPORTED;
+    case JBD2_ERR_NOMEM:       return EXT4_ERR_NOMEM;
+    case JBD2_ERR_BAD_ARG:     return EXT4_ERR_BAD_ARG;
+    default:                   return EXT4_ERR_JOURNAL;
+    }
+}
+
+int ext4_mount_journal(ext4_vol *v, ext4_read_fn read, void *read_ctx,
+                       const jbd2_mem *mem, ext4_jinfo *info)
+{
+    jbd2_log log;
+    ext4_inode jin;
+    journal_ctx jc;
+    void *table;
+    size_t need;
+    uint64_t nblocks;
+    int rc;
+
+    if (info == (ext4_jinfo *)0)
+        return EXT4_ERR_BAD_ARG;
+    memset(info, 0, sizeof(*info));
+
+    /* Only recover sends a mount here. orphan_present without it is still
+     * EXT4_ERR_DIRTY: with no journal to read there is nothing to say the
+     * orphan list is all an interrupted OS left behind. */
+    rc = ext4_mount(v, read, read_ctx);
+    if (rc != EXT4_ERR_NEEDS_RECOVERY)
+        return rc;
+
+    /* The geometry, from the superblock as it is on disk. */
+    rc = sb_load(v, 1);
+    if (rc != EXT4_OK)
+        return rc;
+    if (!v->has_journal || v->journal_ino == 0)
+        return EXT4_ERR_CORRUPT;
+
+    rc = inode_read(v, v->journal_ino, &jin);
+    if (rc != EXT4_OK)
+        return rc;
+    if ((jin.mode & S_IFMT) != S_IFREG || jin.size % v->block_size != 0)
+        return EXT4_ERR_CORRUPT;
+    nblocks = jin.size / v->block_size;
+    if (nblocks == 0 || nblocks > 0xFFFFFFFFu)
+        return EXT4_ERR_CORRUPT;
+
+    jc.v = v;
+    jc.jin = &jin;
+    rc = jbd2_open(&log, read, read_ctx, journal_map, &jc, v->block_size,
+                   (uint32_t)nblocks);
+    if (rc == JBD2_EMPTY) {
+        /* Recover set over an empty log: the kernel mounts it as it is and
+         * clears the bit, so there is nothing to read but the disk. */
+        return sb_load(v, 1);
+    }
+    if (rc == JBD2_OK)
+        rc = jbd2_scan(&log);
+    if (rc != JBD2_OK)
+        return status_from_jbd2(rc);
+
+    need = jbd2_need(&log);
+    info->need = need;
+    if (mem == (const jbd2_mem *)0 || mem->get == 0)
+        return EXT4_ERR_NOMEM;
+    table = mem->get(mem->ctx, need);
+    if (table == (void *)0)
+        return EXT4_ERR_NOMEM;
+
+    rc = status_from_jbd2(jbd2_build(&log, table, need, v->blocks_count,
+                                     &v->jmap));
+    /* The superblock again, as replayed: the journal usually holds a newer
+     * copy of it, and what it says is what the rest of the volume is read
+     * by. A copy that names fewer blocks than the table does is corrupt. */
+    if (rc == EXT4_OK)
+        rc = sb_load(v, 1);
+    if (rc == EXT4_OK && v->jmap.n > 0 &&
+        v->jmap.e[v->jmap.n - 1u].fsblk >= v->blocks_count)
+        rc = EXT4_ERR_JOURNAL;
+    if (rc != EXT4_OK) {
+        memset(&v->jmap, 0, sizeof(v->jmap));
+        if (mem->put != 0)
+            mem->put(mem->ctx, table, need);
+        return rc;
+    }
+
+    info->flags = EXT4_JNL_REPLAYED;
+    if (log.fc_live)
+        info->flags |= EXT4_JNL_FC_SKIPPED;
     return EXT4_OK;
 }

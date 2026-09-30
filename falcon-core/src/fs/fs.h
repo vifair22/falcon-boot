@@ -78,7 +78,9 @@ enum {
     FS_ERR_HOLE           = -13, /* sparse hole or uninitialized extent */
     FS_ERR_NO_CAPABILITY  = -14, /* the driver does not implement this call;
                                     today that is `extents` and nothing else */
-    FS_ERR_NOT_FOUND      = -15  /* fs_lookup: no such path */
+    FS_ERR_NOT_FOUND      = -15, /* fs_lookup: no such path */
+    FS_ERR_JOURNAL        = -16, /* the journal a replay needs is damaged */
+    FS_ERR_NOMEM          = -17  /* a replay's memory could not be had */
 };
 
 /* Read len bytes at byte offset off (volume-relative). Returns 0 on success,
@@ -111,6 +113,8 @@ typedef int (*fs_read_fn)(void *ctx, uint64_t off, uint64_t len, void *buf);
 #define FS_DIRENT_PRIV_SIZE 24u
 
 struct fs_ops;
+struct fs_jmem_s;
+struct fs_jinfo_s;
 
 /* One directory entry, driver-independent.
  *
@@ -208,7 +212,32 @@ typedef struct fs_ops {
      * by-label links), so the media drivers carry it; exFAT and ext4 have
      * labels too and no caller that wants them. */
     const char *(*label)(const fs_vol *v);
+
+    /* OPTIONAL. mount, except that a volume whose journal needs recovery is
+     * read as recovery would leave it rather than refused (fs_mount_journal).
+     * NULL for a driver with no journal; the wrapper then calls mount. */
+    int (*mount_journal)(fs_vol *v, fs_read_fn read, void *ctx,
+                         const struct fs_jmem_s *mem, struct fs_jinfo_s *info);
 } fs_ops;
+
+/* Where a journal replay's memory comes from, and what the replay did
+ * (fs_mount_journal). The memory is jbd2.h's contract: asked for once,
+ * sized exactly, put back when the mount fails, and the caller's to release
+ * after the last read of the volume, since every read goes through it. */
+typedef struct fs_jmem_s {
+    void *(*get)(void *ctx, size_t bytes);
+    void  (*put)(void *ctx, void *mem, size_t bytes);
+    void  *ctx;
+} fs_jmem;
+
+#define FS_JNL_REPLAYED   0x1u  /* the volume is read through its journal */
+#define FS_JNL_FC_SKIPPED 0x2u  /* its last fast commits were not read, so it
+                                   is the state of a few seconds earlier */
+
+typedef struct fs_jinfo_s {
+    uint32_t flags;
+    size_t   need;   /* bytes asked of fs_jmem; what FS_ERR_NOMEM wanted */
+} fs_jinfo;
 
 /* ---- the registry ---- */
 
@@ -232,6 +261,14 @@ const fs_ops *fs_identify(fs_read_fn read, void *ctx, fs_hint hint);
  * On success v->ops is set and every call below dispatches through it; on
  * failure v->ops is left NULL so a half-mounted volume cannot be used. */
 int fs_mount(fs_vol *v, const fs_ops *ops, fs_read_fn read, void *ctx);
+
+/* fs_mount for a shelf, which an OS may have left mounted (hibernated, or
+ * the power cut): a journal that needs recovery is replayed in memory and
+ * never written (fs/jbd2.h), with mem supplying the table. info is always
+ * filled. Beyond fs_mount's statuses: FS_ERR_JOURNAL, and FS_ERR_NOMEM with
+ * info->need the bytes that were asked for. */
+int fs_mount_journal(fs_vol *v, const fs_ops *ops, fs_read_fn read, void *ctx,
+                     const fs_jmem *mem, fs_jinfo *info);
 
 int fs_dir_open_root(fs_vol *v, fs_dir *d);
 int fs_dir_open(fs_vol *v, fs_dir *d, const fs_dirent *e);

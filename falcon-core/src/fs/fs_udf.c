@@ -173,5 +173,8 @@ const fs_ops fs_ops_udf = {
     udf_file_read_op,
     udf_file_size_op,
     udf_extents_op,
-    udf_label_op
+    udf_label_op,
+    /* No journal to replay. */
+    (int (*)(fs_vol *, fs_read_fn, void *, const struct fs_jmem_s *,
+             struct fs_jinfo_s *))0
 };

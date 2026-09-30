@@ -60,6 +60,7 @@ int main(void)
     failed += run_json_tests();
     failed += run_luks_tests();
     failed += run_ext4_tests();
+    failed += run_jbd2_tests();
     failed += run_iso9660_tests();
     failed += run_udf_tests();
     failed += run_udfedit_tests();

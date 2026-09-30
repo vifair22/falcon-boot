@@ -152,7 +152,7 @@ static uint64_t mock_file_size(const fs_file *f)
 static const fs_ops g_mock = {
     "mock", FS_HINT_NONE, mock_probe, mock_mount, mock_root, mock_open,
     mock_next, mock_file_open, mock_file_read, mock_file_size,
-    NULL, NULL
+    NULL, NULL, NULL
 };
 
 /* ---- images ---- */
