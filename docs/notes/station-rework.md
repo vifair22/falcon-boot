@@ -549,6 +549,14 @@ platform tags, Argon2id keyslots) by the same two steps; the stick was
 pbkdf2 by decision (2026-09-28), which both loaders read; a stick made by
 `mkstick create` from now on gets argon2id.
 
+Updated again 2026-09-30 to master c869513 (the page-first menu, idle
+power-off, the UKI through the firmware when shim is not enforcing, five
+wrong passphrases a boot with growing waits), from the T430 with the
+stick at /dev/sdb, by the same two steps. Built on binhost-builder; stage 3
+read back as d3b47100..., the signed loader as 2b2ec5e1.... Backups on the
+T430 in `~/falcon-backups/`: `stick-bios-2026-09-30.bin` and
+`grubx64-0928.efi` (the a90d4e6 loader).
+
 ### Next
 
 1. Nothing on the falcon side. The DevLink session's own: w98link 9caa3ef
