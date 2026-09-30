@@ -397,21 +397,23 @@ static void test_busy_text(void **state)
     assert_string_equal(narrow(tiny), "rea");
 }
 
-static void test_hint_checking(void **state)
+static void test_spinner(void **state)
 {
-    uint16_t buf[64];
-    uint16_t tiny[6];
+    tui_menu m;
 
     (void)state;
-    tui_hint_checking(buf, 64, 3, 12);
-    assert_string_equal(narrow(buf), "checking 3 of 12 | esc back");
-    tui_hint_checking(buf, 64, 0, 0);
-    assert_string_equal(narrow(buf), "checking 0 of 0 | esc back");
-    tui_hint_checking(buf, 64, 1024, 65535);
-    assert_string_equal(narrow(buf), "checking 1024 of 65535 | esc back");
-    /* Clipped and still terminated. */
-    tui_hint_checking(tiny, 6, 3, 12);
-    assert_string_equal(narrow(tiny), "check");
+    assert_int_equal(tui_spin(0), '/');
+    assert_int_equal(tui_spin(1), '-');
+    assert_int_equal(tui_spin(2), '\\');
+    assert_int_equal(tui_spin(3), '|');
+    assert_int_equal(tui_spin(4), '/');
+    memset(&m, 0, sizeof m);
+    m.left = 10;
+    m.width = 60;
+    /* The banner's last cell, which its right padding keeps free. */
+    assert_int_equal(tui_spin_col(&m), 69);
+    m.width = 0;
+    assert_int_equal(tui_spin_col(&m), 10);
 }
 
 /* The wait after each wrong passphrase of a boot (DESIGN Section 5.2). */
@@ -449,7 +451,7 @@ int run_tui_tests(void)
         cmocka_unit_test(test_attrs),
         cmocka_unit_test(test_menu_status),
         cmocka_unit_test(test_strings),
-        cmocka_unit_test(test_hint_checking),
+        cmocka_unit_test(test_spinner),
         cmocka_unit_test(test_busy_text),
         cmocka_unit_test(test_unlock_delay),
     };

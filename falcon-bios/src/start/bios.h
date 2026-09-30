@@ -208,11 +208,23 @@ typedef struct {
 
 int bios_disk_read(void *ctx, uint64_t off, uint64_t len, void *buf);
 
+
 /* bios_disk_read for any length at any offset (disk/bytes.c, DESIGN Section
  * 3.4): the callback a driver is handed, since a driver reads 512 or 1024
  * bytes where a 4Kn disk's sector is 4096. Stage 3 only; `ctx` as above. A
  * request of whole sectors is passed to bios_disk_read unchanged. */
 int bios_disk_bytes(void *ctx, uint64_t off, uint64_t len, void *buf);
+
+/* A bios_disk_bytes read longer than this is made in pieces of it, with the
+ * hook below called before each. */
+#define BIOS_DISK_PIECE 0x40000u   /* 256 KiB */
+
+/* Called before every bios_disk_bytes read and every piece of a long one;
+ * NULL (the default) for none. The stick's background probe yields to the
+ * menu from it (task/task.h). Between pieces the re-blocking holds nothing,
+ * so the main flow may read while the probe is suspended there. Stage 3's
+ * alone: stage 2 has no .bss to keep it in. */
+void bios_disk_set_hook(void (*hook)(void));
 
 /* Empties the track cache, so the next read of any sector goes to the disk.
  * For a read whose checksum failed: the retry has to read the medium again,

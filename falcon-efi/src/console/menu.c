@@ -65,11 +65,9 @@ typedef struct {
      * menu_run_probed; NULL for every other caller. */
     menu_entry       *rows;
     const menu_probe *probe;
-    /* How far the probe has got through the window on screen: the key line
-     * says "checking done+1 of total" while a row in it is unprobed. */
-    UINTN             pend_top;
-    UINTN             pend_total;
-    UINTN             pend_done;
+    /* The probe has more to do, and the spinner's phase while it does. */
+    BOOLEAN           busy;
+    unsigned          spin;
     /* The status lines under the banner, and what they were last drawn
      * as, for menu_run_timed; status NULL for every other caller. */
     const menu_status *status;
@@ -101,7 +99,7 @@ static void draw_row(EFI_SYSTEM_TABLE *st, UINTN row, UINTN left, UINTN w,
 static BOOLEAN pending(const menu_view *v, UINTN idx)
 {
     return v->rows != (menu_entry *)0 && v->probe != (const menu_probe *)0 &&
-           v->probe->fn != (menu_probe_fn)0 && !v->rows[idx].probed;
+           v->probe->fill != 0 && !v->rows[idx].probed;
 }
 
 static void draw_entry(const menu_view *v, UINTN row, UINTN idx)
@@ -440,19 +438,24 @@ static void paint_countdown(const menu_view *v, UINTN left)
     draw_row(v->st, v->m.hint_row, v->m.left, v->m.width, text);
 }
 
-static EFI_EVENT countdown_start(EFI_SYSTEM_TABLE *st)
+static EFI_EVENT timer_start(EFI_SYSTEM_TABLE *st, UINT64 period)
 {
     EFI_EVENT ev = (EFI_EVENT)0;
 
     if (st->BootServices->CreateEvent(EVT_TIMER, 0, (EFI_EVENT_NOTIFY)0,
                                       (void *)0, &ev) != EFI_SUCCESS)
         return (EFI_EVENT)0;
-    if (st->BootServices->SetTimer(ev, TimerPeriodic, TICK_100NS) !=
+    if (st->BootServices->SetTimer(ev, TimerPeriodic, period) !=
         EFI_SUCCESS) {
         st->BootServices->CloseEvent(ev);
         return (EFI_EVENT)0;
     }
     return ev;
+}
+
+static EFI_EVENT countdown_start(EFI_SYSTEM_TABLE *st)
+{
+    return timer_start(st, TICK_100NS);
 }
 
 static void countdown_stop(EFI_SYSTEM_TABLE *st, EFI_EVENT *ev)
@@ -539,44 +542,51 @@ static BOOLEAN window_widths(menu_view *v, UINTN top)
     return changed;
 }
 
-/* The first row in the window the probe has not reached, or count. Top to
- * bottom, the order the page is read in. */
-static UINTN window_next(const menu_view *v, UINTN top)
+/* Every pending row on screen takes what the probe knows of it. Says
+ * whether any became final; *full is set when a tag column widened, which
+ * repaints the whole window, and otherwise the rows that changed are
+ * repainted here. */
+static BOOLEAN fill_window(menu_view *v, UINTN top, UINTN sel, BOOLEAN *full)
 {
+    BOOLEAN any = FALSE;
     UINTN i;
 
     for (i = top; i < top + v->m.win && i < v->count; i++) {
-        if (pending(v, i))
-            return i;
+        if (!pending(v, i))
+            continue;
+        if (v->probe->fill(v->probe->ctx, i, &v->rows[i])) {
+            v->rows[i].probed = 1;
+            any = TRUE;
+        }
     }
-    return v->count;
+    if (!any)
+        return FALSE;
+    if (window_widths(v, top)) {
+        *full = TRUE;
+        return TRUE;
+    }
+    for (i = top; i < top + v->m.win && i < v->count; i++)
+        paint_slot(v, i - top, top, sel);
+    return TRUE;
 }
 
-/* A window shown for the first time starts the count again. */
-static void window_count(menu_view *v, UINTN top)
+/* The banner's last cell: the spinner while the probe has work, the
+ * banner's own padding once it has none. */
+static void paint_spin(const menu_view *v)
 {
-    UINTN i;
+    CHAR16 s[2];
 
-    if (v->pend_top == top && v->pend_total != 0)
-        return;
-    v->pend_top = top;
-    v->pend_total = 0;
-    v->pend_done = 0;
-    for (i = top; i < top + v->m.win && i < v->count; i++) {
-        if (pending(v, i))
-            v->pend_total++;
-    }
-}
-
-static void paint_checking(const menu_view *v)
-{
-    CHAR16 text[80];
-
-    tui_hint_checking(text, sizeof text / sizeof text[0],
-                      v->pend_done + 1u, v->pend_total);
+    s[0] = v->busy ? (CHAR16)tui_spin(v->spin) : (CHAR16)L' ';
+    s[1] = 0;
+    v->st->ConOut->SetAttribute(v->st->ConOut, TUI_ATTR_TITLE);
+    v->st->ConOut->SetCursorPosition(v->st->ConOut, tui_spin_col(&v->m),
+                                     v->m.banner_row);
+    out(v->st, s);
     v->st->ConOut->SetAttribute(v->st->ConOut, TUI_ATTR_TEXT);
-    draw_row(v->st, v->m.hint_row, v->m.left, v->m.width, text);
 }
+
+/* The spinner's step: a tenth of a second, in SetTimer's unit. */
+#define SPIN_100NS 1000000u
 
 static INTN run(EFI_SYSTEM_TABLE *st, const menu_banner *banner,
                 const menu_entry *entries, menu_entry *rows, UINTN count,
@@ -623,6 +633,7 @@ static INTN run(EFI_SYSTEM_TABLE *st, const menu_banner *banner,
                              ? keys->hint
                              : tui_hint_default;
     EFI_EVENT tick = (EFI_EVENT)0;
+    EFI_EVENT spin = (EFI_EVENT)0;
     UINTN left = 0;
     /* The countdown is running; the timer may outlive it for the status
      * lines. */
@@ -656,9 +667,9 @@ static INTN run(EFI_SYSTEM_TABLE *st, const menu_banner *banner,
     tui_menu_layout_status(&g_frame.f, count, nstatus, &v.m);
     v.sig_w = 0;
     v.why_w = 0;
-    v.pend_top = 0;
-    v.pend_total = 0;
-    v.pend_done = 0;
+    v.busy = (probe != (const menu_probe *)0 && probe->step != 0) ? TRUE
+                                                                 : FALSE;
+    v.spin = 0;
 
     st->ConOut->EnableCursor(st->ConOut, FALSE);
     /* The one ClearScreen per screen, and what blanks the margins. Nothing
@@ -672,6 +683,10 @@ static INTN run(EFI_SYSTEM_TABLE *st, const menu_banner *banner,
      * 7.8). */
     draw_row(st, v.m.hint_row, v.m.left, v.m.width, line);
     status_refresh(&v, TRUE);
+    if (v.busy) {
+        paint_spin(&v);
+        spin = timer_start(st, SPIN_100NS);
+    }
 
     /* The page is up: the idle time starts (console/idle.h). */
     idle_touch();
@@ -687,7 +702,6 @@ static INTN run(EFI_SYSTEM_TABLE *st, const menu_banner *banner,
 
     for (;;) {
         UINTN i;
-        UINTN next;
         EFI_INPUT_KEY key;
         EFI_EVENT events[3];
 
@@ -696,10 +710,17 @@ static INTN run(EFI_SYSTEM_TABLE *st, const menu_banner *banner,
          * costs a whole repaint. */
         if (tui_menu_scroll(&top, sel, v.m.win))
             full = TRUE;
+        /* What the probe has finished since the last pass. */
+        if (v.probe != (const menu_probe *)0 && !full)
+            (void)fill_window(&v, top, sel, &full);
 
         if (full) {
+            if (v.probe != (const menu_probe *)0) {
+                BOOLEAN ignored = FALSE;
+
+                (void)fill_window(&v, top, sel, &ignored);
+            }
             (void)window_widths(&v, top);
-            window_count(&v, top);
             for (i = 0; i < v.m.win; i++)
                 paint_slot(&v, i, top, sel);
             full = FALSE;
@@ -711,25 +732,19 @@ static INTN run(EFI_SYSTEM_TABLE *st, const menu_banner *banner,
         }
         painted = sel;
 
-        /* Rows in the window not looked inside yet: one per pass, with the
-         * page already on screen and the keys read between rows, so neither
-         * the page nor a keystroke ever waits on a whole window of probes.
-         * The key line says how far it has got, unless the countdown has
-         * it. */
-        next = window_next(&v, top);
-        if (next < count) {
-            if (!counting)
-                paint_checking(&v);
-            v.probe->fn(v.probe->ctx, next, &v.rows[next]);
-            v.rows[next].probed = 1;
-            v.pend_done++;
-            if (window_widths(&v, top))
-                full = TRUE;
-            else
-                paint_slot(&v, next - top, top, sel);
-            if (window_next(&v, top) >= count && !counting) {
-                st->ConOut->SetAttribute(st->ConOut, TUI_ATTR_TEXT);
-                draw_row(st, v.m.hint_row, v.m.left, v.m.width, line);
+        /* The probe, a slice at a time whenever nothing is waiting: it runs
+         * until its next read yields (at most a piece of one), so a key
+         * waits no longer than that. */
+        if (v.busy) {
+            if (spin != (EFI_EVENT)0 &&
+                st->BootServices->CheckEvent(spin) == EFI_SUCCESS) {
+                v.spin++;
+                paint_spin(&v);
+            }
+            if (!v.probe->step(v.probe->ctx, sel)) {
+                v.busy = FALSE;
+                countdown_stop(st, &spin);
+                paint_spin(&v);
             }
             if (tick != (EFI_EVENT)0 &&
                 st->BootServices->CheckEvent(tick) == EFI_SUCCESS)
@@ -764,6 +779,7 @@ static INTN run(EFI_SYSTEM_TABLE *st, const menu_banner *banner,
             if (st->BootServices->WaitForEvent(n, events, &i) !=
                 EFI_SUCCESS) {
                 countdown_stop(st, &tick);
+                countdown_stop(st, &spin);
                 restore_console(st);
                 return -1;
             }
@@ -790,6 +806,7 @@ static INTN run(EFI_SYSTEM_TABLE *st, const menu_banner *banner,
                 continue;
             }
             countdown_stop(st, &tick);
+            countdown_stop(st, &spin);
             if (which != (CHAR16 *)0)
                 *which = L'\r';
             restore_console(st);
@@ -821,6 +838,7 @@ static INTN run(EFI_SYSTEM_TABLE *st, const menu_banner *banner,
 
             if (key.ScanCode == EFI_SCAN_ESC) {
                 countdown_stop(st, &tick);
+                countdown_stop(st, &spin);
                 restore_console(st);
                 return -1;
             }
@@ -836,6 +854,7 @@ static INTN run(EFI_SYSTEM_TABLE *st, const menu_banner *banner,
                                  ? (CHAR16)(key.UnicodeChar - L'A' + L'a')
                                  : key.UnicodeChar;
                 countdown_stop(st, &tick);
+                countdown_stop(st, &spin);
                 restore_console(st);
                 return (INTN)sel;
             }

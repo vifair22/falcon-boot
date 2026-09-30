@@ -2363,28 +2363,54 @@ unmarked (the next-boot marker, a row not yet drawn): an amd64 kernel on a
 processor without long mode is refused with the same sentence, as
 `linux_boot` refuses a 64-bit kernel.
 
-#### Lazy probing (decided 2026-09-27, filled a row at a time 2026-09-29)
+#### Background probing (decided 2026-09-27, in the background 2026-09-30)
 
-Both menus look inside an entry once its row is on screen, not before the
-menu appears. The menu (`menu_run_probed` in
-falcon-efi/src/console/menu.c, `screen_menu_tagged` in
-falcon-bios/src/console/screen.c) takes a per-row probe callback. A window
-of rows is painted at once, every row not yet probed showing `...` in its
-first tag column (core's `tui_tag_pending`), and then the menu probes those
-rows one per pass of its loop, top to bottom, repainting each as it is
-filled, or the whole window when a tag column widens, since the columns are
-sized to the window's widest tags. The keys are read between rows, so a
-keystroke never waits on more than the one probe under way, and the key
-line says `checking k of n | esc back` until the window is done. A row the
-caller builds with nothing to look inside (a folder, `..`, the personal OS,
-firmware setup) or already looked inside on an earlier screen is built
-probed, and is never pending. Moving the highlight within a window probes
-nothing. A menu with no callback (the station, the personal-OS chooser,
-falcon jump) draws as it always did.
+Both sticks' menus look inside every entry on the stick in the background,
+for as long as a menu is up, instead of before the menu appears or only
+while a row is on screen. The probe runs on a task of its own
+(falcon-efi/src/task/task.c, falcon-bios/src/task/task.c): a coroutine on
+a stack of its own, 256 KiB on UEFI and 128 KiB on BIOS, switched to and
+from with the callee-saved registers and the stack pointer. It is not a
+thread. An application processor may not call boot services, a timer
+event's notify runs at raised TPL where the main flow cannot, and INT 13h
+is not re-entrant on a machine with one processor.
+
+- **It yields at the read layer.** Every read of the library goes through
+  `discover_read` (UEFI) or `bios_disk_bytes` (BIOS), which makes a long
+  read in pieces of 256 KiB and calls a hook before each. From inside the
+  task the hook switches back to the menu when a key is waiting or the
+  tick has passed (50 ms on UEFI; a new BIOS clock tick, or 32 reads
+  without one, since a machine can reach the menu with IRQ0 never
+  delivered). So a keystroke waits for at most one piece of one read.
+- **The menu steps it whenever no key is waiting** (`menu_run_probed`,
+  `screen_menu_tagged`, each with a `step` and a `fill` callback), fills
+  every pending row on screen from what it has found, and repaints those
+  rows, or the whole window when a tag column widens. Rows not looked
+  inside yet show `...` (core's `tui_tag_pending`). While there is work a
+  spinner, `/-\|`, turns in the banner's last cell, which the banner's
+  right padding keeps free. There is no progress line.
+- **The order is core's** (`survey_next_probe`), asked again before every
+  entry: the entry under the selection, then the files directly in the
+  folder on screen, then everything under that folder depth first, then
+  the rest of the library from the top. Moving the selection, or into
+  another folder, reorders what comes next; the entry being looked inside
+  is finished first.
+- **It outlives the menu call.** A folder change returns from the menu as
+  it always did, and the next call resumes the same task.
+- **What stops it:** anything that leaves the menu to act (a boot, `b`,
+  `a`, the personal OS, leaving the loader) shares the mounts and buffers
+  the probe uses, so it stops the probe first (`probe_stop`). The entry it
+  was inside is left unprobed (`probed` and `done` are set last) and looked
+  inside again later.
+- A menu with no probe (the stations, the personal-OS chooser, falcon jump)
+  draws as it always did.
 
 The first version (2026-09-27) probed the whole window before painting it,
 so the first page waited for its rows with the list area empty and no key
-read: on real hardware, a folder of ISOs off a USB 2 stick looked hung.
+read: on real hardware, a folder of ISOs off a USB 2 stick looked hung. The
+second (2026-09-29) probed the window a row at a time with the keys read
+between rows, which still held a key up for as long as one row took: seconds
+for a large medium over BIOS INT 13h.
 
 Enter on a row still pending looks inside it before the route's page,
 under `checking the image...` (below), rather than with the menu frozen.
@@ -2433,7 +2459,7 @@ costs a possible `{REVOKED}` and makes nothing else uncertain.
 
 #### Verdict rules
 
-Evaluated once per entry, when its row is first drawn (lazy probing, above),
+Evaluated once per entry, when the background probe reaches it (above),
 only when the mode is Secure Boot
 on with validation on, except the `{VALIDATION OFF}` rule which applies only
 in that mode:
@@ -3253,7 +3279,7 @@ alone (`media/medium.c` over the p2 file): nothing is published to the
 firmware to build the menu. No medium is looked inside before the menu:
 `target_probe` (`medium_open`, `family_detect`, the loader's PE signature,
 `trust_probe`, and with no loader `uefiboot_medium` for `{BIOS ONLY}`) runs
-from the menu, a row at a time once the page is drawn (7.8, lazy probing).
+in the background while the menu is up (7.8, background probing).
 
 The only failure before the menu is the pool allocation. A missing p2 or p3
 gives a shorter menu, not an error. A boot partition with no readable

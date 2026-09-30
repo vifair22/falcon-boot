@@ -27,6 +27,7 @@
 #include <bsd/bsd.h>
 #include <linux/linux.h>
 #include <console/screen.h>
+#include <task/task.h>
 #include <mem/e820.h>
 #include <disk/marker.h>
 #include <disk/install.h>
@@ -104,10 +105,9 @@ static survey_entry g_entries[MENU_MAX];
 static survey_list  g_survey;
 static survey_row   g_view[VIEW_MAX];
 
-/* What the menu's probe found for each survey entry (media/biosboot.h), kept
- * for the run: a row is probed the first time the menu is about to draw it,
- * and choosing it, or the next-boot marker naming it, reads the same answer
- * rather than a second one. */
+/* What the background probe found for each survey entry
+ * (media/biosboot.h), kept for the run: choosing an entry, or the next-boot
+ * marker naming it, reads the same answer rather than a second one. */
 typedef struct {
     uint8_t done;
     uint8_t efi_only;   /* no route here reaches it: {EFI ONLY} */
@@ -174,7 +174,7 @@ typedef enum {
 static const uint16_t *g_labels[VIEW_MAX];
 static row_kind        g_kind[VIEW_MAX];
 static size_t          g_row_index[VIEW_MAX];
-/* The rows' tag columns, filled by row_probe as the menu reaches them. */
+/* The rows' tag columns, filled from the background probe (probe_fill). */
 static screen_tags     g_tags[VIEW_MAX];
 
 /* The ".." row doubles as the only place the current folder is named, as
@@ -205,12 +205,14 @@ static const entry_probe *probe_entry(size_t idx)
 
     if (p->done)
         return p;
+    /* done is set last, so a probe abandoned part way (probe_stop) leaves
+     * the entry to be looked inside again. */
+    if (e->media == SURVEY_MEDIA_CD) {
+        scan_probe(&g_p2, &e->ent, &r);
+        p->efi_only = r.boots == BIOSBOOT_NO;
+        p->needs64 = r.needs64 == BIOSBOOT_YES;
+    }
     p->done = 1;
-    if (e->media != SURVEY_MEDIA_CD)
-        return p;
-    scan_probe(&g_p2, &e->ent, &r);
-    p->efi_only = r.boots == BIOSBOOT_NO;
-    p->needs64 = r.needs64 == BIOSBOOT_YES;
     return p;
 }
 
@@ -226,15 +228,94 @@ static const uint16_t *entry_why(const entry_probe *p)
     return (const uint16_t *)0;
 }
 
-/* The menu's probe (console/screen.h): only an image row has anything to
- * look inside. */
-static void row_probe(void *ctx, size_t row, screen_tags *t)
+/* The row's tags from its entry's answer. */
+static void row_tags(size_t row, screen_tags *t)
+{
+    t->why = entry_why(&g_probe[g_row_index[row]]);
+    t->caution = t->why != (const uint16_t *)0;
+}
+
+/* ---- the background probe (DESIGN Section 7.8) ----
+ *
+ * As the UEFI loader's (apps/stick/efi_main.c): every entry is looked
+ * inside on a task of its own (task/task.h) for as long as a menu is up, in
+ * core's order (survey_next_probe), yielding to the menu from the disk
+ * layer's hook on each new tick or every PROBE_YIELD_READS reads, since
+ * a machine can reach the menu with IRQ0 never delivered. Anything that
+ * leaves the menu to act stops it first (probe_stop). */
+#define PROBE_STACK_BYTES 0x20000u   /* 128 KiB */
+#define PROBE_YIELD_READS 32u
+
+static task     g_probe_task;
+static uint8_t  g_probe_stack[PROBE_STACK_BYTES];
+static size_t   g_probe_want = MENU_MAX;
+static uint32_t g_probe_tick;
+static unsigned g_probe_reads;
+
+static int probe_done(void *ctx, size_t i)
+{
+    (void)ctx;
+    return g_probe[i].done;
+}
+
+static size_t probe_next(void)
+{
+    return survey_next_probe(&g_survey, g_cur, g_cur_len, g_probe_want,
+                             probe_done, (void *)0);
+}
+
+static void probe_body(void *arg)
+{
+    size_t i;
+
+    (void)arg;
+    while ((i = probe_next()) < g_survey.count)
+        (void)probe_entry(i);
+}
+
+/* bios_disk_bytes' hook: from inside the probe, back to the menu on a new
+ * tick of the BIOS clock, or after enough reads without one. */
+static void probe_yield(void)
+{
+    uint32_t now;
+
+    if (!task_in())
+        return;
+    now = peek32(0x46Cu);    /* the BIOS data area's tick count */
+    if (now != g_probe_tick || ++g_probe_reads >= PROBE_YIELD_READS) {
+        g_probe_tick = now;
+        g_probe_reads = 0;
+        task_yield();
+    }
+}
+
+static void probe_stop(void)
+{
+    task_abandon(&g_probe_task);
+}
+
+static int probe_step(void *ctx, size_t sel)
+{
+    (void)ctx;
+    g_probe_want = g_kind[sel] == ROW_IMAGE ? g_row_index[sel] : MENU_MAX;
+    if (g_probe_task.state == TASK_IDLE) {
+        if (probe_next() >= g_survey.count)
+            return 0;
+        task_start(&g_probe_task, g_probe_stack, sizeof g_probe_stack,
+                   probe_body, (void *)0);
+    }
+    return task_resume(&g_probe_task);
+}
+
+static int probe_fill(void *ctx, size_t row, screen_tags *t)
 {
     (void)ctx;
     if (g_kind[row] != ROW_IMAGE)
-        return;
-    t->why = entry_why(probe_entry(g_row_index[row]));
-    t->caution = t->why != (const uint16_t *)0;
+        return 1;
+    if (!g_probe[g_row_index[row]].done)
+        return 0;
+    row_tags(row, t);
+    return 1;
 }
 
 static size_t view_build(void)
@@ -248,8 +329,7 @@ static size_t view_build(void)
         g_tags[i].why = (const uint16_t *)0;
         g_tags[i].caution = 0;
         /* Only an image row has anything to look inside; every other row
-         * is done as built, so it neither shows the pending placeholder nor
-         * counts in the menu's "checking k of n". */
+         * is done as built, so it never shows the pending placeholder. */
         g_tags[i].probed = 1;
     }
 
@@ -274,7 +354,7 @@ static size_t view_build(void)
          * answer kept: its tags are filled here and the menu skips it. */
         if (g_kind[n] == ROW_IMAGE) {
             if (g_probe[g_row_index[n]].done)
-                row_probe((void *)0, n, &g_tags[n]);
+                row_tags(n, &g_tags[n]);
             else
                 g_tags[n].probed = 0;
         }
@@ -649,7 +729,8 @@ static void menu_run(void)
      * as enter. */
     static const uint16_t hint[] =
         u"enter boot | c chain | d direct | esc back";
-    static const screen_rows rows = { g_tags, row_probe, (void *)0 };
+    static const screen_rows rows = { g_tags, probe_step, probe_fill,
+                                      (void *)0 };
 
     for (;;) {
         size_t n;
@@ -669,9 +750,14 @@ static void menu_run(void)
                 survey_up(g_cur, &g_cur_len);
                 continue;
             }
+            probe_stop();
             return_to_firmware();
         }
 
+        /* A folder change keeps the probe going; everything else acts, and
+         * shares the disk and buffers the probe uses. */
+        if (g_kind[pick] != ROW_UP && g_kind[pick] != ROW_DIR)
+            probe_stop();
         switch (g_kind[pick]) {
         case ROW_UP:
             survey_up(g_cur, &g_cur_len);
@@ -939,6 +1025,7 @@ void bios_main(uint8_t drive)
     bios_puts("falcon-bios: done\n");
     install_notice();
     next_boot_run();
+    bios_disk_set_hook(probe_yield);
     menu_run();
     for (;;)
         __asm__ __volatile__("hlt");

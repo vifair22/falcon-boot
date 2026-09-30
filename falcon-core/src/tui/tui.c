@@ -20,20 +20,6 @@ const uint16_t tui_hint_empty[] = u"no entries | esc back";
 const uint16_t tui_list_empty[] = u"(no ISOs found on the exFAT partition)";
 const uint16_t tui_tag_pending[] = u"...";
 
-static size_t put_dec(uint16_t *dst, size_t at, size_t cap, size_t v)
-{
-    uint16_t d[20];
-    size_t n = 0;
-
-    do {
-        d[n++] = (uint16_t)(u'0' + v % 10u);
-        v /= 10u;
-    } while (v != 0 && n < sizeof d / sizeof d[0]);
-    while (n > 0 && at + 1u < cap)
-        dst[at++] = d[--n];
-    return at;
-}
-
 static size_t put_str(uint16_t *dst, size_t at, size_t cap,
                       const uint16_t *s)
 {
@@ -63,18 +49,16 @@ void tui_busy_text(uint16_t *dst, size_t cap, const uint16_t *step)
     dst[at] = 0;
 }
 
-void tui_hint_checking(uint16_t *dst, size_t cap, size_t k, size_t n)
+uint16_t tui_spin(unsigned phase)
 {
-    size_t at = 0;
+    static const uint16_t glyph[4] = { u'/', u'-', u'\\', u'|' };
 
-    if (cap == 0)
-        return;
-    at = put_str(dst, at, cap, u"checking ");
-    at = put_dec(dst, at, cap, k);
-    at = put_str(dst, at, cap, u" of ");
-    at = put_dec(dst, at, cap, n);
-    at = put_str(dst, at, cap, u" | esc back");
-    dst[at] = 0;
+    return glyph[phase % 4u];
+}
+
+size_t tui_spin_col(const tui_menu *m)
+{
+    return m->width == 0 ? m->left : m->left + m->width - 1u;
 }
 
 uint8_t tui_entry_attr(int caution, int selected)

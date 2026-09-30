@@ -25,6 +25,7 @@
 #include <power/power.h>
 
 #include <tui/tui.h>
+#include <lib/string.h>
 
 #define VGA_TEXT  0xB8000u
 #define COLS      ((size_t)80u)
@@ -504,11 +505,9 @@ typedef struct {
     const uint16_t        *empty;
     size_t                 sig_w;
     size_t                 why_w;
-    /* How far the probe has got through the window on screen: the key line
-     * says "checking done+1 of total" while a row in it is unprobed. */
-    size_t                 pend_top;
-    size_t                 pend_total;
-    size_t                 pend_done;
+    /* The probe has more to do, and the spinner's phase while it does. */
+    int                    busy;
+    unsigned               spin;
 } menu_view;
 
 static size_t len16(const uint16_t *s)
@@ -528,7 +527,7 @@ static int pending(const menu_view *v, size_t idx)
 {
     return v->rows != (const screen_rows *)0 &&
            v->rows->tags != (screen_tags *)0 &&
-           v->rows->probe != (screen_probe_fn)0 && !v->rows->tags[idx].probed;
+           v->rows->fill != 0 && !v->rows->tags[idx].probed;
 }
 
 /* The tag columns, sized to the window on screen, so a page is laid out by
@@ -567,45 +566,6 @@ static int window_widths(menu_view *v, size_t top)
     return changed;
 }
 
-/* The first row in the window the probe has not reached, or count. Top to
- * bottom, the order the page is read in. */
-static size_t window_next(const menu_view *v, size_t top)
-{
-    size_t i;
-
-    for (i = top; i < top + v->m.win && i < v->count; i++) {
-        if (pending(v, i))
-            return i;
-    }
-    return v->count;
-}
-
-/* A window shown for the first time starts the count again. */
-static void window_count(menu_view *v, size_t top)
-{
-    size_t i;
-
-    if (v->pend_top == top && v->pend_total != 0)
-        return;
-    v->pend_top = top;
-    v->pend_total = 0;
-    v->pend_done = 0;
-    for (i = top; i < top + v->m.win && i < v->count; i++) {
-        if (pending(v, i))
-            v->pend_total++;
-    }
-}
-
-static void paint_checking(const menu_view *v)
-{
-    uint16_t text[80];
-
-    tui_hint_checking(text, sizeof text / sizeof text[0], v->pend_done + 1u,
-                      v->pend_total);
-    tui_row_text(g_row, v->m.width, text);
-    emit_row(v->m.hint_row, v->m.left, TUI_ATTR_TEXT);
-}
-
 static void paint_slot(const menu_view *v, size_t slot, size_t top,
                        size_t sel)
 {
@@ -634,6 +594,46 @@ static void paint_slot(const menu_view *v, size_t slot, size_t top,
                      (idx == 0) ? v->empty : (const uint16_t *)0);
         emit_row(m->list_top + slot, m->list_left, TUI_ATTR_TEXT);
     }
+}
+
+/* Every pending row on screen takes what the probe knows of it, as the UEFI
+ * menu's fill_window: *full is set when a tag column widened, and otherwise
+ * the window is repainted here when any row became final. */
+static void fill_window(menu_view *v, size_t top, size_t sel, int *full)
+{
+    int any = 0;
+    size_t i;
+
+    if (v->rows == (const screen_rows *)0 || v->rows->fill == 0)
+        return;
+    for (i = top; i < top + v->m.win && i < v->count; i++) {
+        if (!pending(v, i))
+            continue;
+        if (v->rows->fill(v->rows->ctx, i, &v->rows->tags[i])) {
+            v->rows->tags[i].probed = 1;
+            any = 1;
+        }
+    }
+    if (!any)
+        return;
+    if (window_widths(v, top)) {
+        *full = 1;
+        return;
+    }
+    for (i = top; i < top + v->m.win && i < v->count; i++)
+        paint_slot(v, i - top, top, sel);
+}
+
+/* The banner's last cell: the spinner while the probe has work, the
+ * banner's own padding once it has none. */
+static void paint_spin(const menu_view *v)
+{
+    size_t col = tui_spin_col(&v->m) - v->m.left;
+
+    g_row[col] = v->busy ? tui_spin(v->spin) : (uint16_t)' ';
+    ser_goto(v->m.banner_row, v->m.left + col);
+    ser_attr(TUI_ATTR_TITLE);
+    run(v->m.banner_row, v->m.left, col, col + 1u, TUI_ATTR_TITLE);
 }
 
 static int is_commit_key(const char *keys, int c)
@@ -746,6 +746,11 @@ static int menu_loop(const screen_banner *banner,
     size_t top = 0;
     size_t painted = 0;
     int full = 1;
+    /* While the probe runs the menu never blocks on a key, so it keeps the
+     * spinner's time and the idle time itself (screen_key keeps the idle
+     * time otherwise). */
+    cdclock spin;
+    cdclock idle;
     const uint16_t *line = count == 0 ? tui_hint_empty
                            : hint != (const uint16_t *)0 ? hint
                            : tui_hint_default;
@@ -761,9 +766,10 @@ static int menu_loop(const screen_banner *banner,
     v.empty = empty;
     v.sig_w = 0;
     v.why_w = 0;
-    v.pend_top = 0;
-    v.pend_total = 0;
-    v.pend_done = 0;
+    v.busy = rows != (const screen_rows *)0 && rows->step != 0;
+    v.spin = 0;
+    memset(&spin, 0, sizeof spin);
+    memset(&idle, 0, sizeof idle);
     tui_menu_layout(&g_frame, count, mp);
     screen_cursor(0);
     clear();
@@ -771,17 +777,26 @@ static int menu_loop(const screen_banner *banner,
     draw_banner(mp, banner);
     tui_row_text(g_row, mp->width, line);
     emit_row(mp->hint_row, mp->left, TUI_ATTR_TEXT);
+    if (v.busy) {
+        paint_spin(&v);
+        cdclock_start(&spin, peek32(BDA_TICKS), rtc_seconds());
+        idle = spin;
+    }
 
     for (;;) {
         size_t i;
-        size_t next;
         int key;
 
         if (tui_menu_scroll(&top, sel, mp->win))
             full = 1;
+        /* What the probe has finished since the last pass. */
+        if (!full)
+            fill_window(&v, top, sel, &full);
         if (full) {
+            int ignored = 0;
+
+            fill_window(&v, top, sel, &ignored);
             (void)window_widths(&v, top);
-            window_count(&v, top);
             for (i = 0; i < mp->win; i++)
                 paint_slot(&v, i, top, sel);
             full = 0;
@@ -791,29 +806,32 @@ static int menu_loop(const screen_banner *banner,
         }
         painted = sel;
 
-        /* Rows in the window not looked inside yet: one per pass, with the
-         * page already on screen and the keys read between rows, so neither
-         * the page nor a keystroke ever waits on a whole window of probes.
-         * A tagged menu has no countdown, so the key line is free to say how
-         * far it has got. window_next finds a row only when there is a
-         * probe, which the analyzer cannot see through, so rows is checked
-         * here as well. */
-        next = window_next(&v, top);
-        if (next < count && rows != (const screen_rows *)0) {
-            paint_checking(&v);
-            rows->probe(rows->ctx, next, &rows->tags[next]);
-            rows->tags[next].probed = 1;
-            v.pend_done++;
-            if (window_widths(&v, top))
-                full = 1;
-            else
-                paint_slot(&v, next - top, top, sel);
-            if (window_next(&v, top) >= count) {
-                tui_row_text(g_row, mp->width, line);
-                emit_row(mp->hint_row, mp->left, TUI_ATTR_TEXT);
+        /* The probe, a slice at a time whenever no key is waiting: it runs
+         * until its next read yields, so a key waits no longer than one
+         * transfer and a tick. The step is only taken with a probe, which
+         * the analyzer cannot see through v.busy, so rows is checked too. */
+        if (v.busy && rows != (const screen_rows *)0) {
+            uint32_t tenths = cdclock_tenths(&spin, peek32(BDA_TICKS),
+                                             rtc_seconds());
+
+            if (tenths != v.spin) {
+                v.spin = tenths;
+                paint_spin(&v);
+            }
+            if (!rows->step(rows->ctx, sel)) {
+                v.busy = 0;
+                paint_spin(&v);
+            }
+            if (g_idle != 0 &&
+                cdclock_tenths(&idle, peek32(BDA_TICKS), rtc_seconds()) >=
+                    g_idle * 10u) {
+                idle_off();
+                cdclock_start(&idle, peek32(BDA_TICKS), rtc_seconds());
+                continue;
             }
             if (!key_waiting())
                 continue;
+            cdclock_start(&idle, peek32(BDA_TICKS), rtc_seconds());
         }
 
         /* The countdown runs until it ends or a key arrives, whichever is

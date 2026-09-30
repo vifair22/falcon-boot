@@ -143,4 +143,20 @@ int survey_enter(uint16_t *cur, size_t *cur_len, const uint16_t *row);
 /* Up one level: drop the last component and its separator. */
 void survey_up(uint16_t *cur, size_t *cur_len);
 
+/* ---- the background probe's order (DESIGN Section 7.8) ----
+ *
+ * Which entry a loader looks inside next, of those done() says are not done
+ * yet: `want` (the entry under the selection, or l->count for none) first,
+ * then the files directly in folder `cur`, then everything under it, then
+ * the rest of the list, each in list order. The list is sorted by path, so
+ * "everything under it" in list order is its folders depth first, in the
+ * order the menu shows them. Asked again before every entry, so a move to
+ * another folder or row takes effect from the next one. l->count when there
+ * is nothing left. */
+typedef int (*survey_done_fn)(void *ctx, size_t index);
+
+size_t survey_next_probe(const survey_list *l, const uint16_t *cur,
+                         size_t cur_len, size_t want, survey_done_fn done,
+                         void *ctx);
+
 #endif /* FALCON_SURVEY_H */
