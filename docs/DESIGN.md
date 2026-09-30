@@ -1753,9 +1753,20 @@ enforcing. Nothing about what may run changes: in that state neither loader
 verifies what the other would refuse. The one asymmetry is Secure Boot on
 with `MokSBState` off, where the firmware still enforces db; that refusal is
 answered by loading through shim's loader as before, which is the user's
-platform opt-out honoured rather than overridden. Everything else in the
-loader (blessed wraps, the personal OS, the appliance) keeps shim's loader
-in every state, because those are MOK-signed images that need it.
+platform opt-out honoured rather than overridden.
+
+The same rule, firmware first when shim is not enforcing and shim's loader
+when the firmware refuses, now covers every image falcon launches: an ESP's
+`bootmgfw.efi` (`esp/esp.c`, Windows Boot Manager loads winload.efi with
+itself as the parent), a blessed image (`bless/bless.c`, 2026-09-19:
+shim's loader refuses pfSense's loader.efi outright), and the personal OS's
+UKI (`pos/pos.c`, 2026-09-29): sd-stub loads the kernel inside a UKI through
+the firmware's `LoadImage` with the UKI as the parent, so with Secure Boot
+off a UKI shim had loaded failed with `EFI_INVALID_PARAMETER` on every
+current kernel, which the station and installed rigs' Secure-Boot-off UKI
+cases showed. A MOK-signed image under Secure Boot on with `MokSBState` off
+is still the firmware's refusal answered with shim's loader, and still the
+inner-load limitation of 7.4.
 
 **Pairing rule** (measured, notes Section 11.4): the three members of a
 resolved load path - `LoadImage`, `StartImage`, `UnloadImage` - must come
