@@ -30,6 +30,7 @@ typedef enum {
 static totp_state g_state;
 static uint8_t g_seed[SEED_LEN];
 static uint32_t g_rc;
+static uint32_t g_ord;              /* the command g_rc answered */
 static uint8_t g_ver;               /* 12 or 20, for "No TPM 2.0 found." */
 static char g_label[STATIONINI_LABEL_MAX];
 
@@ -104,6 +105,7 @@ void totp_load(EFI_SYSTEM_TABLE *st, const stationini_totp *cfg)
                              SEED_LEN);
     }
     g_rc = dev->rc;
+    g_ord = dev->ord;
     tcg_close();
 
     switch (rc) {
@@ -272,6 +274,12 @@ void totp_status(void *ctx, menu_status_text *out)
     case ST_REFUSED:
         put(&w, "The TPM did not release the code: TPM error ");
         put_hex32(&w, g_rc);
+        /* Which step refused, on 1.2, where the read is several commands
+         * and the code alone does not say which of them it answered. */
+        if (g_ver == 12 && tpm12_ord_name(g_ord) != (const char *)0) {
+            put(&w, " in ");
+            put(&w, tpm12_ord_name(g_ord));
+        }
         put(&w, ".");
         break;
     default:

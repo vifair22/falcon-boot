@@ -176,6 +176,7 @@ int tpm_transact(tpm_dev *d, size_t cmd_len, size_t *rsp_len)
     /* Every command's header carries its own length; set it here once
      * rather than in each builder. */
     tpm_put_be32(d->cmd + 2, (uint32_t)cmd_len);
+    d->ord = tpm_be32(d->cmd + 6);
     if (d->xfer(d->xfer_ctx, d->cmd, cmd_len, d->rsp, sizeof d->rsp,
                 &got) != 0) {
         return TPM_ERR_IO;

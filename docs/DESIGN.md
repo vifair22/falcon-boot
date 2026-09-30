@@ -5019,6 +5019,11 @@ is refused. A 1.2 TPM owned with a password of zero bytes (swtpm_setup's
 tries both forms through a transport session and records the second as
 `srkauth = sha1-zero`. Any other SRK secret is refused.
 
+`check` is the station's read run from the OS: it must end in the PCR
+refusal, since the OS's PCRs are not the station's, and any other answer
+names the TPM 1.2 command that refused (`tpm_dev.ord`), which the station's
+own error line names too.
+
 `reseal` is enrollment over an existing one, after a firmware, shim or
 station update: the old seed cannot be read back from the OS, whose PCRs
 are not the station's, so a new one is made and the authenticator's entry

@@ -361,7 +361,7 @@ wire_has() {    # wire_has LOG HEX
 }
 
 case_totp() {
-    local c=$1 fw=$2 tpm=$3 why= ver= out= secret= shown= want= hex= base= unseal=
+    local c=$1 fw=$2 tpm=$3 why= ver= out= secret= shown= want= hex= base= unseal= chk=
     why=$(fw_missing "$fw")
     [[ -n $why ]] && { skip "$c" "$why"; return; }
     [[ -f "$STATION" ]] || { skip "$c" "$STATION missing (make test-station)"; return; }
@@ -426,6 +426,15 @@ case_totp() {
                 --label rig --tpm-socket "$TPM_DIR/server.sock" \
                 --event-log "$R/evlog.bin" "${saved[@]}" "${owner[@]}" 2>&1) || why="enroll failed: $(printf '%s' "$out" | tail -n 1)"
         printf '%s\n' "$out" > "$R/$c-enroll.log"
+        # The station's read from the host: this TPM's PCRs have moved past
+        # the station's, so everything before them must check out.
+        if [[ -z $why ]]; then
+            chk=$("$MKSTICK" station totp check "$R/totp.img" \
+                    --tpm-socket "$TPM_DIR/server.sock" 2>&1) || true
+            printf '%s\n' "$chk" > "$R/$c-check.log"
+            grep -qF "the TPM refused on the PCRs" <<<"$chk" ||
+                why="station totp check: $(printf '%s' "$chk" | tail -n 1)"
+        fi
         [[ -z $why && $tpm == tpm12 ]] &&
             ! grep -qF "PCRs from the event log the station saved" <<<"$out" &&
             why="the 1.2 enrollment did not use the station's saved log"

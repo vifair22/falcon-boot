@@ -103,6 +103,10 @@ int tpm12_transport_open(tpm_dev *d, const uint8_t srk_auth[TPM12_DIGEST_LEN],
 int tpm12_nv_read_transport(tpm_dev *d, tpm12_transport *t, uint32_t index,
                             uint8_t *out, size_t len);
 
+/* The command a refusal came from, by name (dev->ord): the steps of the
+ * seed's read and enrollment. NULL for any other ordinal. */
+const char *tpm12_ord_name(uint32_t ord);
+
 /* The whole unseal. srk_auth NULL means the well-known value. */
 int tpm12_seed_read(tpm_dev *d, uint32_t index,
                     const uint8_t *srk_auth, const tpm12_pubkey *srk,
