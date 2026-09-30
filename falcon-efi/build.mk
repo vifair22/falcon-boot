@@ -21,6 +21,7 @@ EFI_MOD_direct        := $(EFI_SRC)/direct/direct.c
 EFI_MOD_bsd           := $(EFI_SRC)/bsd/bsd.c
 EFI_MOD_win           := $(EFI_SRC)/win/winpatch.c
 EFI_MOD_pos           := $(EFI_SRC)/pos/pos.c
+EFI_MOD_jnlmem        := $(EFI_SRC)/mem/jnlmem.c
 EFI_MOD_bless         := $(EFI_SRC)/bless/bless.c $(EFI_SRC)/bless/blesscore.c
 EFI_MOD_nxt           := $(EFI_SRC)/nxt/nxt.c $(EFI_SRC)/nxt/nxtcore.c
 EFI_MOD_esp           := $(EFI_SRC)/esp/esp.c

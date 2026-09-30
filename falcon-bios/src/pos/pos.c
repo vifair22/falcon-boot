@@ -41,6 +41,7 @@
 #include <pe/pe.h>
 #include <crypto/crypto.h>
 #include <mem/heap.h>
+#include <mem/jnlmem.h>
 #include <media/cpio.h>
 #include <ident/ident.h>
 #include <media/shelf.h>
@@ -118,6 +119,7 @@ static void wipe_secrets(void)
     shelf_wipe(&g_images);
     crypto_wipe(&g_fs, sizeof g_fs);
     crypto_wipe(&g_file, sizeof g_file);
+    jnl_wipe();
     if (g_dev_open) {
         luks_dev_close(&g_dev);
         g_dev_open = 0;
@@ -136,13 +138,18 @@ static int part_read(void *ctx, uint64_t off, uint64_t len, void *buf)
     return bios_disk_bytes(p->disk, p->base + off, len, buf);
 }
 
+/* What the last shelf mount did (fs_mount_journal), for the booting page and
+ * a refusal's advice. */
+static fs_jinfo g_jinfo;
+
 /* A plaintext shelf's filesystem, mounted into g_fs. */
 static int mount_plain(void)
 {
     const fs_ops *ops = fs_identify(part_read, &g_src, FS_HINT_SHELF);
 
     return ops != (const fs_ops *)0 &&
-           fs_mount(&g_fs, ops, part_read, &g_src) == FS_OK;
+           fs_mount_journal(&g_fs, ops, part_read, &g_src, &jnl_mem,
+                            &g_jinfo) == FS_OK;
 }
 
 int pos_probe(bios_disk *d, const part_entry *shelf)
@@ -418,6 +425,7 @@ static void kdf_put(void *ctx, void *mem, uint32_t kib)
 
 static const luks_kdf_mem g_kdf_mem = { kdf_get, kdf_put, (void *)0 };
 
+
 /* Appends v in decimal at r->buf + *n, cut to fit like boot_result_advise. */
 static void advise_dec(boot_result *r, size_t *n, uint64_t v)
 {
@@ -453,6 +461,31 @@ static void kdf_advice(boot_result *r, uint32_t need_kib)
     advise_str(r, &n, " MiB free.");
     r->buf[n] = '\0';
     r->advice = r->buf;
+}
+
+/* The advice for a shelf that would not mount, in the UEFI loader's words
+ * (falcon-efi/src/pos/pos.c, mount_advice, which argues them). */
+static void mount_advice(boot_result *r, int rc, const char *otherwise)
+{
+    size_t n = 0;
+
+    if (rc == FS_ERR_JOURNAL) {
+        r->advice = "the shelf's journal is damaged; run fsck on it from "
+                    "another system, then boot its OS once with noresume.";
+    } else if (rc == FS_ERR_NOMEM) {
+        advise_str(r, &n, "reading the shelf's journal needs ");
+        advise_dec(r, &n, ((uint64_t)g_jinfo.need + 0xFFFFFu) >> 20);
+        advise_str(r, &n, " MiB of memory; this machine has ");
+        advise_dec(r, &n, jnl_free() >> 20);
+        advise_str(r, &n, " MiB free.");
+        r->buf[n] = '\0';
+        r->advice = r->buf;
+    } else if (rc == FS_ERR_NEEDS_RECOVERY || rc == FS_ERR_DIRTY) {
+        r->advice = "the filesystem was not cleanly unmounted; run fsck on it "
+                    "from Linux.";
+    } else {
+        r->advice = otherwise;
+    }
 }
 
 /* Prompt, retry, and report, as the UEFI loader does. LUKS_OK, POS_ABORTED
@@ -564,18 +597,13 @@ static int open_encrypted(boot_result *r)
 
     r->stage = "mounting the filesystem inside it";
     ops = fs_identify(luks_read, &g_dev, FS_HINT_SHELF);
-    rc = ops == (const fs_ops *)0 ? FS_ERR_BAD_SUPER
-                                  : fs_mount(&g_fs, ops, luks_read, &g_dev);
+    rc = ops == (const fs_ops *)0
+             ? FS_ERR_BAD_SUPER
+             : fs_mount_journal(&g_fs, ops, luks_read, &g_dev, &jnl_mem,
+                                &g_jinfo);
     if (rc != FS_OK) {
-        /* A shelf the personal OS left mounted when the power went is the
-         * common case, and the one the reader can fix; the generic sentence
-         * sent them looking for a format problem that is not there. */
-        if (rc == FS_ERR_NEEDS_RECOVERY || rc == FS_ERR_DIRTY)
-            r->advice = "the filesystem was not cleanly unmounted; run fsck "
-                        "on it from Linux.";
-        else
-            r->advice = "the decrypted volume is not a filesystem this "
-                        "loader can read.";
+        mount_advice(r, rc, "the decrypted volume is not a filesystem this "
+                            "loader can read.");
         wipe_secrets();
         return -1;
     }
@@ -652,6 +680,11 @@ int pos_run_pick(bios_disk *d, const part_entry *shelf, pos_pick_fn want,
     uki = &g_images.uki[pick].ent;
 
     screen_page();
+    /* As the UEFI loader says it (falcon-efi/src/pos/pos.c). */
+    if ((g_jinfo.flags & FS_JNL_FC_SKIPPED) != 0)
+        screen_out("the shelf's last few seconds of changes were not read.\n");
+    if ((g_jinfo.flags & FS_JNL_REPLAYED) != 0)
+        bios_puts("falcon-bios: the shelf is read through its journal\n");
     screen_out("reading ");
     screen_out16(uki->name);
     screen_out(" ");

@@ -23,6 +23,7 @@ STICK_EFI += $(addprefix $(CORE)/media/,bootcfg.c bootfs.c eltorito.c medium.c \
 STICK_EFI += $(CORE_UEFIBOOT)          # the {BIOS ONLY} tag
 STICK_EFI += $(HOOK_BLOB)              # appended to a direct boot's initrd
 STICK_EFI += $(EFI_MOD_pos) $(addprefix $(CORE)/media/,osrel.c shelf.c nextboot.c)
+STICK_EFI += $(EFI_MOD_jnlmem)         # a hibernated shelf, read through its journal
 STICK_EFI += $(EFI_MOD_bless) $(CORE_MANIFEST)
 STICK_EFI += $(CORE_LIBC) $(CORE_UCS2)
 
@@ -37,6 +38,7 @@ STICK_BIOS += $(BIOS_MOD_scan) $(BIOS_MOD_pos) $(BIOS_MOD_prompt) $(BIOS_MOD_con
 STICK_BIOS += $(BIOS_MOD_iso) $(BIOS_MOD_vfd) $(BIOS_MOD_bsd) $(BIOS_MOD_win)
 STICK_BIOS += $(BIOS_MOD_lowmem)       # the residents' blocks
 STICK_BIOS += $(BIOS_MOD_heap)         # the Windows tail, the floppy image, argon2id
+STICK_BIOS += $(BIOS_MOD_jnlmem)       # a hibernated shelf, read through its journal
 STICK_BIOS += $(BIOS_MOD_marker)       # the only disk write in falcon-bios
 STICK_BIOS += $(BIOS_MOD_install)      # p2 and p3 by their records
 STICK_BIOS += $(BIOS_MOD_e820) $(BIOS_MOD_disk) $(BIOS_MOD_serial)

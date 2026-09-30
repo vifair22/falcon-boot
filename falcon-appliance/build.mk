@@ -26,7 +26,7 @@ APPLIANCE_INIT_SRCS := $(addprefix $(APPLIANCE)/,main.c console.c stick.c \
 	$(CORE_PART) $(CORE_MANIFEST) $(CORE)/media/family.c $(CORE_FS) $(CORE_LUKS) \
 	$(CORE)/media/bootcfg.c \
 	$(addprefix $(CLI)/sign/,isoprobe.c payload.c util.c) \
-	$(CORE_CRYPTO)
+	$(CLI)/common/jmem.c $(CORE_CRYPTO)
 
 HOST_SRCS += $(APPLIANCE_INIT_SRCS)
 

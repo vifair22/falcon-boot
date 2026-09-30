@@ -11,6 +11,7 @@
 #include <unistd.h>
 
 #include <common/log.h>
+#include <common/jmem.h>
 #include <mkstick/bioscore.h>
 #include <mkstick/disk.h>
 
@@ -86,12 +87,16 @@ static void read_falcon_file(mks_rec *out, disk_io *io)
     const fs_ops *ops;
     char text[IDENT_TEXT_MAX];
     uint64_t size;
+    fs_jinfo jinfo;
 
     ops = fs_identify(disk_io_read, io, FS_HINT_NONE);
     if (ops == NULL)
         return;
     out->fs = ops->name;
-    if (fs_mount(&vol, ops, disk_io_read, io) != FS_OK)
+    /* A plaintext shelf its OS has mounted, or left mounted, is read through
+     * its journal as the loaders read it (common/jmem.h). */
+    if (fs_mount_journal(&vol, ops, disk_io_read, io, &cli_jmem, &jinfo) !=
+        FS_OK)
         return;
     if (fs_lookup(&vol, IDENT_FILE, &scratch, &ent) != FS_OK)
         return;

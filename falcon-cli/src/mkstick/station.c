@@ -26,6 +26,7 @@
 #include <unistd.h>
 
 #include <common/log.h>
+#include <common/jmem.h>
 #include <common/proc.h>
 #include <common/util.h>
 #include <mkstick/bioscore.h>
@@ -1046,6 +1047,7 @@ static void legacy_shelf(const char *disk, uint64_t off, uint64_t len,
     static const char prefix[] = "Personal OS: ";
     static fs_vol vol;
     static shelf_list list;
+    fs_jinfo jinfo;
     const fs_ops *ops;
     disk_io io;
     size_t u;
@@ -1055,7 +1057,9 @@ static void legacy_shelf(const char *disk, uint64_t off, uint64_t len,
         return;
     }
     ops = fs_identify(disk_io_read, &io, FS_HINT_NONE);
-    if (ops != NULL && fs_mount(&vol, ops, disk_io_read, &io) == FS_OK &&
+    if (ops != NULL &&
+        fs_mount_journal(&vol, ops, disk_io_read, &io, &cli_jmem, &jinfo) ==
+            FS_OK &&
         shelf_collect(&list, &vol) > 0) {
         shelf_label(&list, &vol);
         for (u = 0; u < list.n && lg->n_uki < STN_LEGACY_UKI_MAX; u++) {
@@ -1392,6 +1396,7 @@ static int status_shelf(stn_scan *s, const uint8_t *id)
             if (!rec->luks) {
                 static fs_vol vol;
                 static shelf_list list;
+                fs_jinfo jinfo;
                 disk_io io;
                 const fs_ops *ops;
                 size_t u;
@@ -1404,8 +1409,9 @@ static int status_shelf(stn_scan *s, const uint8_t *id)
                     continue;
                 }
                 ops = fs_identify(disk_io_read, &io, FS_HINT_SHELF);
-                if (ops != NULL && fs_mount(&vol, ops, disk_io_read, &io) ==
-                                       FS_OK &&
+                if (ops != NULL &&
+                    fs_mount_journal(&vol, ops, disk_io_read, &io, &cli_jmem,
+                                     &jinfo) == FS_OK &&
                     shelf_collect(&list, &vol) > 0) {
                     shelf_label(&list, &vol);
                     for (u = 0; u < list.n; u++) {

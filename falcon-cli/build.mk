@@ -4,7 +4,8 @@
 
 CLI := falcon-cli/src
 
-CLI_COMMON := $(addprefix $(CLI)/common/,status.c log.c opt.c proc.c util.c)
+CLI_COMMON := $(addprefix $(CLI)/common/,status.c log.c opt.c proc.c util.c \
+	jmem.c)
 
 MKSTICK_SRCS := $(CLI_COMMON) $(addprefix $(CLI)/mkstick/,main.c cleanup.c \
 	disk.c guid.c keys.c pass.c shimname.c create.c keygen.c inspect.c \
@@ -149,7 +150,7 @@ CLI_TESTS := $(addprefix falcon-cli/tests/,main.c isoprobe_test.c \
 CLI_UUT := $(addprefix $(CLI)/sign/,isoprobe.c payload.c uki.c util.c) \
 	$(addprefix $(CLI)/mkstick/,bioscore.c records.c nextcore.c nextio.c \
 		disk.c cleanup.c stationcore.c totpcore.c) \
-	$(addprefix $(CLI)/common/,status.c log.c proc.c util.c) \
+	$(addprefix $(CLI)/common/,status.c log.c proc.c util.c jmem.c) \
 	$(CORE)/media/family.c $(CORE)/media/bootcfg.c $(CORE)/media/nextboot.c \
 	$(CORE_MANIFEST) $(CORE_MANIFEST_WRITE) \
 	$(CORE_PART) $(CORE_PE) $(CORE_FS) $(CORE_LUKS) $(CORE_IDENT) \

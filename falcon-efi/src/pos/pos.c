@@ -14,6 +14,7 @@
 #include <crypto/crypto.h>
 #include <discover/discover.h>
 #include <fs/fs.h>
+#include <mem/jnlmem.h>
 #include <ident/ident.h>
 #include <luks/luks.h>
 #include <lib/string.h>
@@ -181,6 +182,7 @@ static shelf_list g_images;
 static void wipe_shelf(void)
 {
     crypto_wipe(&g_fs, sizeof g_fs);
+    jnl_release();
     shelf_wipe(&g_images);
     crypto_wipe(&g_file, sizeof g_file);
     if (g_dev_open) {
@@ -461,6 +463,11 @@ static int unlock_any(UINTN *which)
     return (other_err != LUKS_OK) ? other_err : LUKS_ERR_NOKEY;
 }
 
+/* What the last shelf mount did (fs_mount_journal), for the booting page and
+ * a refusal's advice. The table itself is mem/jnlmem.c's, released with the
+ * rest of the shelf's state (wipe_shelf) or at the next mount. */
+static fs_jinfo g_jinfo;
+
 /* Mount the shelf's filesystem through the registry rather than by naming a
  * driver (DESIGN Section 9). `known` is the identification
  * falcon-efi/src/discover/discover.c already made for a plaintext volume; the
@@ -469,20 +476,42 @@ static int unlock_any(UINTN *which)
 static int mount_shelf(fs_read_fn read, void *ctx, const fs_ops *known)
 {
     const fs_ops *ops = known;
+    fs_jmem mem;
 
     if (ops == (const fs_ops *)0)
         ops = fs_identify(read, ctx, FS_HINT_SHELF);
     if (ops == (const fs_ops *)0)
         return FS_ERR_BAD_SUPER;
-    return fs_mount(&g_fs, ops, read, ctx);
+    jnl_mem_make(&mem, g_st->BootServices);
+    return fs_mount_journal(&g_fs, ops, read, ctx, &mem, &g_jinfo);
 }
 
-/* The advice for a shelf that would not mount. A shelf the personal OS left
- * mounted when the power went is the common case, and the one the reader can
- * fix; `otherwise` sent them looking for a format problem that is not there.
- * falcon-bios/src/pos/pos.c says the same sentence. */
+/* The advice for a shelf that would not mount. A shelf its OS left mounted
+ * (hibernated, or the power went) is read through its journal and mounts;
+ * what is left is a journal that is damaged, or one this machine cannot give
+ * the memory to read, or errors the filesystem itself recorded. fsck is the
+ * answer to the first and the last, and it is only safe once nothing still
+ * counts on the shelf as it was: a hibernated OS resumed over a repaired
+ * shelf corrupts it, hence noresume. `otherwise` is for a format problem.
+ * falcon-bios/src/pos/pos.c says the same sentences. */
 static const CHAR16 *mount_advice(int rc, const CHAR16 *otherwise)
 {
+    static CHAR16 buf[112];
+    UINTN n = 0;
+    const UINTN cap = sizeof(buf) / sizeof(buf[0]);
+
+    if (rc == FS_ERR_JOURNAL)
+        return L"the shelf's journal is damaged; run fsck on it from another "
+               L"system, then boot its OS once with noresume.";
+    if (rc == FS_ERR_NOMEM) {
+        advice_str(buf, cap, &n, "reading the shelf's journal needs ");
+        advice_dec(buf, cap, &n, ((UINT64)g_jinfo.need + 0xFFFFFu) >> 20);
+        advice_str(buf, cap, &n, " MiB of memory; this machine has ");
+        advice_dec(buf, cap, &n, largest_free() >> 20);
+        advice_str(buf, cap, &n, " MiB free.");
+        buf[n] = 0;
+        return buf;
+    }
     if (rc == FS_ERR_NEEDS_RECOVERY || rc == FS_ERR_DIRTY)
         return L"the filesystem was not cleanly unmounted; run fsck on it "
                L"from Linux.";
@@ -1293,6 +1322,11 @@ static EFI_STATUS boot_shelf(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
         out(L"warning: this image is very unlikely to start on this machine;"
             L"\r\n         see the note after it exits.\r\n\r\n");
 
+    /* Its OS lost power after an fsync: the journal holds fast commits,
+     * which are not replayed (falcon-core/src/fs/jbd2.h), so what is read is
+     * the shelf as it was a few seconds earlier. The boot goes on. */
+    if ((g_jinfo.flags & FS_JNL_FC_SKIPPED) != 0)
+        out(L"the shelf's last few seconds of changes were not read.\r\n");
     out(L"reading ");
     out_name(g_images.uki[chosen].ent.name, g_images.uki[chosen].ent.name_len);
     out(L" ");

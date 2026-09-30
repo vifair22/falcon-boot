@@ -31,6 +31,7 @@
 #include <unistd.h>
 
 #include <common/log.h>
+#include <common/jmem.h>
 #include <common/proc.h>
 #include <common/util.h>
 #include <mkstick/bioscore.h>
@@ -278,6 +279,7 @@ static void check_plain_shelf(tally *t, disk_io *io)
     unsigned efis = 0;
     int found_uki = 0;
     int found_key = 0;
+    fs_jinfo jinfo;
     int rc;
 
     /* Stated as a WARN rather than a pass: the stick works, and the user gave
@@ -292,13 +294,16 @@ static void check_plain_shelf(tally *t, disk_io *io)
         check(t, 0, "no filesystem here that this loader recognises");
         return;
     }
-    rc = fs_mount(&vol, ops, disk_io_read, io);
+    rc = fs_mount_journal(&vol, ops, disk_io_read, io, &cli_jmem, &jinfo);
     if (rc != FS_OK) {
         check(t, 0, "%s volume does not mount (fs_mount returned %d)",
               ops->name, rc);
         return;
     }
     check(t, 1, "%s volume mounts", fs_vol_name(&vol));
+    if ((jinfo.flags & FS_JNL_REPLAYED) != 0)
+        note(t, "p3: read through its journal (an OS has it mounted, is "
+                "hibernated, or lost power)");
 
     if (fs_dir_open_root(&vol, &root) != FS_OK) {
         check(t, 0, "the root directory could not be read");
