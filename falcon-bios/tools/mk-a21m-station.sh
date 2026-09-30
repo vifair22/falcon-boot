@@ -43,7 +43,9 @@ if [ "${A21M_FRESH:-0}" = 1 ]; then
 fi
 [ -f "$Q" ] || qemu-img create -q -f qcow2 -F raw -b "$(realpath "$ORIG")" "$Q"
 
-sudo modprobe nbd max_part=8
+# Loaded already when this runs in the coverage harness, whose image has no
+# modprobe: the container shares the host's /dev and so its nbd devices.
+[ -d /sys/module/nbd ] || sudo modprobe nbd max_part=8
 nbd=
 for n in $(seq 0 15); do
     if [ ! -e "/sys/block/nbd$n/pid" ]; then

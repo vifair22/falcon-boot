@@ -34,18 +34,21 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         tcpdump \
         python3-venv python3-dev libcrypt-dev \
         gdisk util-linux fdisk \
-        dosfstools exfatprogs e2fsprogs mtools udftools \
+        dosfstools exfatprogs e2fsprogs mtools udftools ntfs-3g \
         cryptsetup-bin openssl sbsigntool \
         systemd-ukify systemd-boot-efi \
         wimtools 7zip libarchive-tools xorriso cpio zstd \
         socat aria2 curl \
-        cppcheck clang-tidy \
+        cppcheck clang-tidy gcovr \
     && rm -rf /var/lib/apt/lists/*
 
 # swtpm-tools is for swtpm_setup, which the TPM rig's totp cases make their
 # TPM state with; without it they skip.
 # fdisk is for sfdisk, which mk-test-biosboot.sh partitions its fixtures with;
 # trixie moved it out of util-linux.
+# ntfs-3g is for ntfsresize and ntfsfix, which mk-a21m-station.sh takes the
+# A21m's NTFS partition down with before station-legacy goes on.
+# gcovr is `make coverage`'s report.
 
 # check-tools looks for 7z or 7zz; trixie's 7zip package installs only 7zz.
 RUN ln -sf /usr/bin/7zz /usr/local/bin/7z
@@ -107,7 +110,8 @@ RUN set -eu; \
              mkfs.ext4 mkudffs mformat bsdtar ukify wimlib-imagex xorriso \
              cpio zstd socat aria2c readelf sha256sum virt-fw-vars 7z sudo \
              pkg-config xxd tcpdump qemu-img mcopy mmd fsck.ext4 truncate \
-             cmp find xargs swtpm swtpm_setup sfdisk; do \
+             cmp find xargs swtpm swtpm_setup sfdisk ntfsresize ntfsfix \
+             gcovr; do \
         command -v "$t" >/dev/null 2>&1 || { echo "MISSING: $t"; missing=1; }; \
     done; \
     test -n "$(pkg-config --libs cmocka)" || { \
