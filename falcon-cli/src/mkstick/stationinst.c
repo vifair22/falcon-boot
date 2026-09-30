@@ -19,7 +19,9 @@
  *   UEFI  \EFI\falcon\ on the machine's ESP: shim, MokManager, the station
  *         loader signed with the MOK, the public cert, STATION.INI and a
  *         signed memtest86+; the ESP's boot record; a firmware entry named
- *         falcon when the disk is this machine's.
+ *         falcon when the disk is this machine's. With --no-shim, no shim
+ *         and no MokManager: the entry names the loader, grubx64.efi, and
+ *         the firmware verifies it against db, which must hold the cert.
  *
  * Both are written by default where the disk allows them (an ESP for UEFI;
  * room before the first partition for BIOS's stage 2). The station's
@@ -114,7 +116,10 @@ static const cli_opt install_opts[] = {
     { "stage3", CLI_OPT_VALUE, 0, "<file>", "default " DEFAULT_STAGE3 },
     { "loader", CLI_OPT_VALUE, 0, "<file>", "default " DEFAULT_LOADER },
     { "shim", CLI_OPT_VALUE, 0, "<dir>",
-      "shimx64.efi and its MokManager (default " DEFAULT_SHIM_DIR ")" }
+      "shimx64.efi and its MokManager (default " DEFAULT_SHIM_DIR ")" },
+    { "no-shim", CLI_OPT_FLAG, 0, NULL,
+      "UEFI without shim: the firmware entry names the loader, which the "
+      "firmware's db must trust" }
 };
 
 /* ---- the shelf ---- */
@@ -515,6 +520,7 @@ typedef struct {
     /* what */
     int bios;
     int uefi;
+    int no_shim;                /* UEFI: the entry names the loader */
     /* BIOS */
     stn_region region;
     unsigned   slot;            /* MBR slot, or GPT entry number */
@@ -1075,23 +1081,27 @@ static cli_status write_uefi(const cli_args *a, const stn_disk *td,
     const char *shim_dir = cli_value(a, "shim", DEFAULT_SHIM_DIR);
     const char *loader = cli_value(a, "loader", DEFAULT_LOADER);
     const char *memtest = cli_value(a, "memtest-efi", NULL);
-    char shim[MKS_PATH_MAX];
-    char mm[MKS_PATH_MAX];
-    char mm_name[SHIM_NEXT_STAGE_MAX];
-    char next[SHIM_NEXT_STAGE_MAX];
+    char shim[MKS_PATH_MAX] = "";
+    char mm[MKS_PATH_MAX] = "";
+    char mm_name[SHIM_NEXT_STAGE_MAX] = "";
+    char next[SHIM_NEXT_STAGE_MAX] = "";
     char signed_loader[MKS_PATH_MAX];
     char signed_mt[MKS_PATH_MAX];
     char dst[MKS_PATH_MAX];
     ident_rec rec;
-    cli_status rc;
+    cli_status rc = CLI_OK;
 
-    rc = shim_find(shim_dir, shim, sizeof shim);
-    if (rc == CLI_OK)
-        rc = shim_next_stage_name(shim, next, sizeof next);
-    if (rc == CLI_OK)
-        rc = shim_mokmanager_name(shim, mm_name, sizeof mm_name);
-    if (rc == CLI_OK)
-        rc = shim_find_mokmanager(shim, mm_name, mm, sizeof mm);
+    if (p->no_shim) {
+        (void)snprintf(next, sizeof next, "%s", STN_ESP_LOADER);
+    } else {
+        rc = shim_find(shim_dir, shim, sizeof shim);
+        if (rc == CLI_OK)
+            rc = shim_next_stage_name(shim, next, sizeof next);
+        if (rc == CLI_OK)
+            rc = shim_mokmanager_name(shim, mm_name, sizeof mm_name);
+        if (rc == CLI_OK)
+            rc = shim_find_mokmanager(shim, mm_name, mm, sizeof mm);
+    }
     if (rc == CLI_OK)
         rc = util_join(signed_loader, sizeof signed_loader, workdir, next);
     if (rc == CLI_OK)
@@ -1106,11 +1116,11 @@ static cli_status write_uefi(const cli_args *a, const stn_disk *td,
         return rc;
 
     rc = stn_mtools_mkdir(td->d.path, off, STN_ESP_DIR);
-    if (rc == CLI_OK) {
+    if (rc == CLI_OK && !p->no_shim) {
         (void)snprintf(dst, sizeof dst, "%s/%s", STN_ESP_DIR, STN_ESP_SHIM);
         rc = stn_mtools_put(td->d.path, off, shim, dst);
     }
-    if (rc == CLI_OK) {
+    if (rc == CLI_OK && !p->no_shim) {
         (void)snprintf(dst, sizeof dst, "%s/%s", STN_ESP_DIR, mm_name);
         rc = stn_mtools_put(td->d.path, off, mm, dst);
     }
@@ -1135,9 +1145,14 @@ static cli_status write_uefi(const cli_args *a, const stn_disk *td,
     }
     if (rc != CLI_OK)
         return rc;
-    log_info("ESP (partition %u): \\EFI\\falcon\\ %s, %s, %s, %s, %s%s",
-             e->number, STN_ESP_SHIM, mm_name, next, STN_ESP_CERT,
-             STATIONINI_FILE, memtest != NULL ? ", " STN_ESP_MEMTEST : "");
+    if (p->no_shim)
+        log_info("ESP (partition %u): \\EFI\\falcon\\ %s, %s, %s%s",
+                 e->number, next, STN_ESP_CERT, STATIONINI_FILE,
+                 memtest != NULL ? ", " STN_ESP_MEMTEST : "");
+    else
+        log_info("ESP (partition %u): \\EFI\\falcon\\ %s, %s, %s, %s, %s%s",
+                 e->number, STN_ESP_SHIM, mm_name, next, STN_ESP_CERT,
+                 STATIONINI_FILE, memtest != NULL ? ", " STN_ESP_MEMTEST : "");
 
     memset(&rec, 0, sizeof rec);
     rec.version = IDENT_VERSION;
@@ -1150,16 +1165,19 @@ static cli_status firmware_entry(const stn_disk *td, const stn_plan *p,
                                  int *made)
 {
     static stn_scan fw;
+    const char *first = p->no_shim ? STN_ESP_LOADER : STN_ESP_SHIM;
+    char loader[64];
     char part[16];
     int ours = -1;
     cli_status rc;
 
     *made = -1;
+    (void)snprintf(loader, sizeof loader, "\\EFI\\falcon\\%s", first);
     if (!stn_is_machine(&td->d)) {
         log_info("firmware entry: none (an image; on its machine run "
                  "efibootmgr --create --disk <disk> --part %u --label %s "
-                 "--loader '\\EFI\\falcon\\%s')",
-                 td->r.parts[p->esp].number, STN_FW_LABEL, STN_ESP_SHIM);
+                 "--loader '%s')",
+                 td->r.parts[p->esp].number, STN_FW_LABEL, loader);
         return CLI_OK;
     }
     if (!util_is_dir("/sys/firmware/efi")) {
@@ -1176,7 +1194,7 @@ static cli_status firmware_entry(const stn_disk *td, const stn_plan *p,
     (void)snprintf(part, sizeof part, "%u", td->r.parts[p->esp].number);
     rc = proc_runl_quiet("efibootmgr", "--create", "--disk", td->d.path,
                          "--part", part, "--label", STN_FW_LABEL, "--loader",
-                         "\\EFI\\falcon\\" STN_ESP_SHIM, PROC_END);
+                         loader, PROC_END);
     if (rc != CLI_OK)
         return rc;
     stn_scan_firmware(&fw, &ours);
@@ -1442,6 +1460,12 @@ static cli_status install_run(const cli_args *a)
                          "station (--esp names one)", td->d.path);
     p.uefi = ask_uefi || (!ask_bios && p.esp >= 0);
     p.bios = ask_bios || !ask_uefi;
+    p.no_shim = cli_flag(a, "no-shim");
+    if (p.no_shim && !p.uefi)
+        return set_error(CLI_ERR_USAGE, "--no-shim is for the UEFI station, "
+                         "and %s is not getting one", td->d.path);
+    if (p.no_shim && cli_value(a, "shim", NULL) != NULL)
+        return set_error(CLI_ERR_USAGE, "--no-shim and --shim together");
 
     /* ---- BIOS: the stages and the plan ---- */
     if (p.bios) {
@@ -1652,8 +1676,10 @@ static cli_status install_run(const cli_args *a)
         }
     }
     if (p.uefi) {
-        log_info("UEFI:     \\EFI\\falcon\\ on the ESP (partition %u)",
-                 td->r.parts[p.esp].number);
+        log_info("UEFI:     \\EFI\\falcon\\ on the ESP (partition %u)%s",
+                 td->r.parts[p.esp].number,
+                 p.no_shim ? ", no shim: the entry names " STN_ESP_LOADER
+                           : "");
         print_ini("\\EFI\\falcon\\" STATIONINI_FILE, p.ini_uefi,
                   p.ini_uefi_len);
     }
@@ -1799,7 +1825,11 @@ static cli_status install_run(const cli_args *a)
     log_info("%s boots the station (install ID %s).", td->d.path, idhex);
     log_info("`falcon-boot-mkstick station remove --backup %s` undoes it.",
              backup);
-    if (p.uefi)
+    if (p.uefi && p.no_shim)
+        log_info("Secure Boot on: the firmware's db must hold "
+                 "\\EFI\\falcon\\%s; enroll it from firmware setup.",
+                 STN_ESP_CERT);
+    else if (p.uefi)
         log_info("Secure Boot on: enroll \\EFI\\falcon\\%s with MokManager "
                  "on the first boot (mokutil --import).", STN_ESP_CERT);
 
@@ -1848,7 +1878,9 @@ const cli_cmd stn_cmd_install = {
     "UEFI: \\EFI\\falcon\\ on the ESP (shim, MokManager, the loader signed\n"
     "with the MOK, the cert, STATION.INI, memtest.efi), the ESP's boot\n"
     "record, and a firmware entry named falcon when the disk is this\n"
-    "machine's. The MOK pair is --key/--cert or the shelf's.\n"
+    "machine's. The MOK pair is --key/--cert or the shelf's. --no-shim\n"
+    "leaves out shim and MokManager: the entry names the loader, and the\n"
+    "firmware's db must hold the cert.\n"
     "\n"
     "Both by default, where the disk allows. STATION.INI is written from\n"
     "what is on the machine's disks: the Windows or DOS found is the default\n"

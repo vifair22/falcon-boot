@@ -3838,7 +3838,8 @@ what an INI section changes or adds, the order), host-tested.
 
 ```mermaid
 flowchart TD
-    FW["Firmware<br/>boot entry falcon: \EFI\falcon\shimx64.efi"] --> SHIM["shim<br/>verifies grubx64.efi (falcon-boot-station.efi) against db / MokList"]
+    FW["Firmware<br/>boot entry falcon"] -- "\EFI\falcon\shimx64.efi" --> SHIM["shim<br/>verifies grubx64.efi (falcon-boot-station.efi) against db / MokList"]
+    FW -- "--no-shim: \EFI\falcon\grubx64.efi,<br/>verified against db (13.2)" --> MAIN
     SHIM --> MAIN["efi_main (apps/station/efi_main.c)"]
     MAIN --> NB["loader_next_boot_take<br/>FalconNextBoot read, then deleted"]
     NB --> DISC["discover_scan: the ESP's boot record, every Block I/O handle<br/>disks_scan: each whole disk's table (MBR or GPT)<br/>esp_connect_all: a filesystem driver on every partition"]
@@ -4109,6 +4110,16 @@ the public cert, memtest86+ signed with the MOK (13.6) and `STATION.INI`, all
 in `\EFI\falcon\`, named by a firmware boot entry of its own. The ESP's boot
 sector carries the station's `boot` record (Section 3.1) in bytes UEFI never
 executes; the installer backs up the sector it changes. No extra partition.
+
+**UEFI without shim** (`station install --no-shim`). The same, less shim and
+MokManager: the firmware entry names `grubx64.efi` itself, and the firmware
+verifies it against db, which must hold the cert. That is the user's to
+arrange through the platform (the T430 has its own key as PK, KEK and db,
+and no Microsoft keys). Nothing in the loader changes: with no shim in the
+chain, what it launches goes through the firmware's `LoadImage`, which is
+then the enforcing one (7.6, `loader/loadops.h`). `station status` takes
+`grubx64.efi` as the mark of a UEFI install, with or without shim before
+it, and checks its signature against the cert beside it with `sbverify`.
 
 **BIOS, MBR disk.** Stage 1 in LBA 0's boot code, the table, signature and
 `0x55AA` kept. Stage 2 from LBA 1, before the first partition. A **station

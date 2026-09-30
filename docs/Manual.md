@@ -222,7 +222,7 @@ does it in. `/dev/X` is the machine's disk.
 | `falcon-bios-stage1.bin`, `falcon-bios-stage2.bin` | `make bios` |
 | `falcon-bios-station-stage3.bin`, `falcon-boot-station.efi` | `make station` |
 | `falcon-boot-mkstick` | `make` |
-| Fedora shim 16.1 and its MokManager (UEFI) | `falcon-efi/tools/shim-spike/fetch-shims.sh`, into `build/shim/bins/` |
+| Fedora shim 16.1 and its MokManager (UEFI, unless `--no-shim`) | `falcon-efi/tools/shim-spike/fetch-shims.sh`, into `build/shim/bins/` |
 | a MOK key pair (UEFI) | the shelf's (`/falcon-mok.key`, `/falcon-mok.crt`), or `--key` and `--cert` |
 | `mkfs.fat`, mtools; `sgdisk` on GPT; `sbsign`, `openssl` on UEFI; `cryptsetup` or `debugfs` for a shelf | the distribution |
 
@@ -260,6 +260,10 @@ off the disk it describes.
 With Secure Boot on, the first boot through the new firmware entry stops in
 MokManager: enroll `\EFI\falcon\falcon-boot.cer` (or run `mokutil --import`
 on it before rebooting).
+
+`--no-shim` installs no shim and no MokManager: the firmware entry names
+`\EFI\falcon\grubx64.efi`, and with Secure Boot on the firmware's db must
+hold `falcon-boot.cer`. Enroll it from firmware setup before the first boot.
 
 ### 2.4 Check and remove
 
@@ -468,6 +472,7 @@ LBA 2047 with `dd`; a pending marker there is no longer read.
         [--memtest <file>] [--memtest-efi <file>] [--key <file> --cert <file>]
         [--passphrase-file <file>] [--legacy [--uki <file>]... [--mods <dir>]]
         [--also <disk>]... [--no-scan] [--backup <file>] [--force] [--dry-run]
+        [--no-shim | --shim <dir>]
     falcon-boot-mkstick station remove [<disk>] --backup <file> [--full]
         [--force] [--dry-run]
     falcon-boot-mkstick station status <disk> [--also <disk>]... [--no-scan]
@@ -514,7 +519,8 @@ stage 3 and marker 0. On a block device of a machine that booted with UEFI
 a firmware entry named `falcon` is created for `\EFI\falcon\shimx64.efi`;
 for an image it prints the `efibootmgr` line to run on its machine. The MOK
 pair is `--key` and `--cert`, or read off the shelf (a LUKS2 shelf with
-`--passphrase-file` or a prompt).
+`--passphrase-file` or a prompt). With `--no-shim` there is no
+`shimx64.efi` or MokManager, and the entry names `\EFI\falcon\grubx64.efi`.
 
 **What it finds.** Every disk of the machine (a block-device target; an
 image's machine is the image and `--also`; `--no-scan` limits a block
@@ -567,7 +573,9 @@ other disks' signatures.
 
 **status** is read-only: the install ID and every partition's record, the
 BIOS stages where stage 1 and the station partition's record put them, the
-ESP's files, each `STATION.INI` as the loaders parse it (or the line it
+ESP's files (`grubx64.efi` is the UEFI install, shim before it or not, and
+its signature is checked against `falcon-boot.cer` when `sbverify` and
+`openssl` are installed), each `STATION.INI` as the loaders parse it (or the line it
 fails at), the shelf carrying the install ID, and the rows each menu shows
 with the default marked. It exits nonzero when a stage or file is missing.
 

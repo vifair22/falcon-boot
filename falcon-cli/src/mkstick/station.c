@@ -1189,13 +1189,51 @@ static void status_bios(stn_tally *t, stn_scan *s, stationini *ini,
         log_info("  --   no /%s: the menu waits", STATIONINI_FILE);
 }
 
+/* Is \EFI\falcon\grubx64.efi signed by \EFI\falcon\falcon-boot.cer:
+ * both copied off the ESP, the cert made PEM, and sbverify asked. -1 when
+ * that cannot be asked (no sbverify or openssl, a copy that failed). */
+static int loader_signed(const char *disk, uint64_t off)
+{
+    char dir[] = "/tmp/falcon-status.XXXXXX";
+    char img[MKS_PATH_MAX + 32];
+    char efi[MKS_PATH_MAX];
+    char cer[MKS_PATH_MAX];
+    char pem[MKS_PATH_MAX];
+    int good = -1;
+
+    if (!proc_exists("sbverify") || !proc_exists("openssl") ||
+        mkdtemp(dir) == NULL)
+        return -1;
+    mtools_image(img, sizeof img, disk, off);
+    (void)snprintf(efi, sizeof efi, "%s/loader.efi", dir);
+    (void)snprintf(cer, sizeof cer, "%s/cert.cer", dir);
+    (void)snprintf(pem, sizeof pem, "%s/cert.pem", dir);
+    if (proc_runl_quiet("mcopy", "-n", "-i", img,
+                        "::/" STN_ESP_DIR "/" STN_ESP_LOADER, efi,
+                        PROC_END) == CLI_OK &&
+        proc_runl_quiet("mcopy", "-n", "-i", img,
+                        "::/" STN_ESP_DIR "/" STN_ESP_CERT, cer,
+                        PROC_END) == CLI_OK &&
+        proc_runl_quiet("openssl", "x509", "-inform", "DER", "-in", cer,
+                        "-out", pem, PROC_END) == CLI_OK)
+        good = proc_runl_quiet("sbverify", "--cert", pem, efi, PROC_END) ==
+               CLI_OK;
+    cli_error_clear();
+    (void)unlink(efi);
+    (void)unlink(cer);
+    (void)unlink(pem);
+    (void)rmdir(dir);
+    return good;
+}
+
 static void status_uefi(stn_tally *t, stn_scan *s, stationini *ini,
                         int *have_ini, int *memtest)
 {
     static char text[16384];
     static const char *const files[] = {
-        STN_ESP_SHIM, "grubx64.efi", STN_ESP_CERT
+        STN_ESP_LOADER, STN_ESP_CERT
     };
+    int signed_ok;
     stn_disk *sd = &s->disks[0];
     const mks_records *r = &sd->r;
     int e = stn_find_esp(r);
@@ -1215,23 +1253,39 @@ static void status_uefi(stn_tally *t, stn_scan *s, stationini *ini,
     p = &r->parts[e];
     off = p->start_lba * sd->d.sector;
     len = (p->end_lba - p->start_lba + 1u) * sd->d.sector;
-    (void)snprintf(path, sizeof path, "/%s/%s", STN_ESP_DIR, STN_ESP_SHIM);
+    /* The loader is the install; shim in front of it is optional. */
+    (void)snprintf(path, sizeof path, "/%s/%s", STN_ESP_DIR, STN_ESP_LOADER);
     if (stn_read_file(sd->d.path, off, len, path, text, 16, &got) !=
         FS_ERR_RANGE) {
-        log_info("  --   the ESP (partition %u) has no \\EFI\\falcon: UEFI "
-                 "is not installed", p->number);
+        log_info("  --   the ESP (partition %u) has no \\EFI\\falcon\\%s: "
+                 "UEFI is not installed", p->number, STN_ESP_LOADER);
         return;
     }
     verdict(t, r->recs[e].state == REC_OK &&
                    r->recs[e].rec.role == IDENT_ROLE_BOOT,
             "the ESP (partition %u) carries the station's boot record",
             p->number);
+    (void)snprintf(path, sizeof path, "/%s/%s", STN_ESP_DIR, STN_ESP_SHIM);
+    if (stn_read_file(sd->d.path, off, len, path, text, 16, &got) ==
+        FS_ERR_RANGE)
+        log_info("  --   \\EFI\\falcon\\%s present: shim starts the "
+                 "loader", STN_ESP_SHIM);
+    else
+        log_info("  --   no shim: the firmware starts %s and verifies it "
+                 "against db", STN_ESP_LOADER);
     for (i = 0; i < sizeof files / sizeof files[0]; i++) {
         (void)snprintf(path, sizeof path, "/%s/%s", STN_ESP_DIR, files[i]);
         verdict(t, stn_read_file(sd->d.path, off, len, path, text, 16,
                                  &got) == FS_ERR_RANGE,
                 "\\EFI\\falcon\\%s", files[i]);
     }
+    signed_ok = loader_signed(sd->d.path, off);
+    if (signed_ok < 0)
+        log_info("  --   the loader's signature is not checked (sbverify "
+                 "or openssl is not on PATH, or a file would not copy)");
+    else
+        verdict(t, signed_ok, "\\EFI\\falcon\\%s is signed by %s",
+                STN_ESP_LOADER, STN_ESP_CERT);
     (void)snprintf(path, sizeof path, "/%s/%s", STN_ESP_DIR,
                    STN_ESP_MEMTEST);
     *memtest = (stn_read_file(sd->d.path, off, len, path, text, 16, &got) ==
