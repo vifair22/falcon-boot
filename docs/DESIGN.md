@@ -146,7 +146,7 @@ GPT, four partitions:
 ```
 p1  ESP        FAT32   ~64 MB   loader + shim + MokManager + our public cert; BIOS stage 3 in its reserved sectors
 p2  ISOs       exFAT   bulk     the ISO library (drag-and-drop target) + injection assets
-p3  UKI shelf  LUKS2 -> ext4    ~1 GB   personal-OS UKI + signing-appliance UKI + MOK private key, argon2id keyslot at the stick's fixed cost
+p3  UKI shelf  LUKS2 -> ext4    ~1 GB   personal-OS UKI + signing-appliance UKI + MOK private key (closed list: Section 5.3), argon2id keyslot at the stick's fixed cost
 p4  root+home  LUKS2 -> ext4    bulk    real root and home, argon2id keyslot
 ```
 
@@ -381,12 +381,19 @@ installers warn when a `boot` partition or a shelf would sit past 8 GB or
 
 ## 4. ESP contents and the Secure Boot chain
 
-```
-p1:/EFI/BOOT/BOOTX64.EFI     Fedora shim-x64 16.1 (dual MS-signed, 2011+2023)
-p1:/EFI/BOOT/mmx64.efi       MokManager, shim's enrollment UI (Fedora naming)
-p1:/EFI/BOOT/grubx64.efi     OUR loader (see note on next-stage name)
-p1:/falcon-boot.cer          our public cert, for first-boot enrollment
-```
+p1 holds exactly four files. Section 4.3 says why that list is closed.
+
+| Path | What it is | Signatures it must carry |
+|---|---|---|
+| `/EFI/BOOT/BOOTX64.EFI` | Fedora shim-x64 16.1 | Microsoft UEFI CA 2011 and Microsoft UEFI CA 2023 as shipped, **plus ours appended** |
+| `/EFI/BOOT/mmx64.efi` | MokManager, shim's enrollment UI (Fedora naming) | Fedora Secure Boot CA as shipped, **plus ours appended** |
+| `/EFI/BOOT/grubx64.efi` | OUR loader (see note on next-stage name) | **ours, and nothing else** |
+| `/falcon-boot.cer` | our public cert, for first-boot enrollment | not signed; it is a certificate |
+
+"Ours" throughout means the MOK keypair whose public half is
+`falcon-boot.cer` on p1 and whose private half lives encrypted on p3. There
+is one such key per stick and it signs the loader, every UKI, and every
+blessed wrap.
 
 Shim vendor decision (2026-09-12, spike data in `docs/notes/shim-spike.md`):
 Fedora's shim-x64 16.1 over the earlier SUSE assumption. Rationale: dual
@@ -414,6 +421,121 @@ into the shim binary. The spike confirmed Fedora 16.1 uses `grubx64.efi`
 (Section 8) must still read the actual embedded default path out of the
 specific shim binary being installed and name our loader to match, rather
 than assuming, so a future shim swap stays a data change.
+
+
+### 4.1 How each binary is signed, and why
+
+Three rules. They are short, and every one of them has been got wrong at
+least once.
+
+**1. Our loader and our UKIs carry exactly one signature: ours.** Nothing
+else has any business signing them, and a second signature on them is a sign
+that `sbsign` was run twice (see 4.2).
+
+**2. shim and MokManager keep the signatures they shipped with, and gain
+ours on top.** Both halves matter, and they cover different machines:
+
+- The **vendor** signatures are what boot the stick on an ordinary machine,
+  whose db trusts the Microsoft CAs. This is the common case and the whole
+  reason for chaining through a Microsoft-signed shim at all.
+- **Ours** is what boots the stick on a machine whose owner has enrolled only
+  their own keys, where db holds no Microsoft CA and shim would otherwise be
+  refused by the firmware before it ever runs. Enrolling the stick's cert as
+  a MOK does not help here: MOK is read by shim, and shim is the binary being
+  rejected. The cert has to be reachable by the *firmware*, which means db,
+  and the binary has to carry a signature by it.
+
+Dropping either set halves the machines the stick boots, silently, and in a
+way that only shows up on the next machine it is carried to.
+
+MokManager is the weaker case of the two and is signed anyway. Fedora's shim
+carries the Fedora CA in its `.vendor_cert`, and that is the cert that signed
+`mmx64.efi`, so shim can already load MokManager on its own authority.
+Appending ours costs nothing and removes shim's vendor cert as the single
+point of failure for the enrollment UI.
+
+**3. Never a third party's key, and in particular never a machine's db key.**
+It is tempting, when a machine trusts only its own keys, to sign the stick's
+shim with that machine's db key, because it is right there and it works. It
+is the wrong trade twice over:
+
+- It makes the stick's boot chain depend on a key that belongs to one
+  machine, so the stick stops being portable in exactly the way that matters.
+- It puts a signature from a key that signs binaries that machine's firmware
+  trusts onto a device that leaves the house.
+
+Use the stick's own MOK key and enrol its public cert in that machine's db
+instead. The cert is public and enrolling it grants the machine nothing it
+did not already choose to grant.
+
+**Removed 2026-09-30.** `BOOTX64.EFI` carried a third signature by a
+self-signed certificate `CN=Database Key`, the Gentoo workstation's sbctl db
+key, generated 2026-09-02. It was added so that the stick would boot that
+workstation, whose db carries no Microsoft CA, and it is exactly rule 3. It
+was stripped and replaced with a signature by the stick's own MOK, which is
+enrolled in that workstation's db and in the T430's. The MS 2011 and MS 2023
+signatures were preserved through the rewrite.
+
+### 4.2 sbsign appends; it never replaces
+
+`sbsign` adds a certificate entry and leaves every existing one in place. Run
+it twice and the binary carries two identical signatures. This has bitten
+this project more than once, including on the UKI, and the symptom is never
+a failure: everything still boots, because firmware only needs one entry to
+verify, so it goes unnoticed until someone lists the signatures.
+
+`sbattach --remove` removes **one entry per call**, not the whole table, so
+stripping a binary with three signatures takes three calls. Check the result
+rather than assuming:
+
+```sh
+sbverify --list BOOTX64.EFI | grep '^signature'
+```
+
+Removing one signature from the middle of the table, while keeping the
+others valid, cannot be done with `sbattach` alone. Rebuild the certificate
+table directly: the Authenticode digest excludes the certificate table, so
+dropping an entry leaves every other signature valid. Prove it by stripping
+both the original and the rebuilt binary of all signatures and comparing:
+identical bytes means an identical digest, which means the surviving vendor
+signatures still verify.
+
+**`sbverify --cert` cannot be trusted on a multiply-signed binary.** It
+returns success for a certificate that signed nothing in the image; measured
+2026-09-30 against `BOOTX64.EFI` with a freshly generated unrelated
+certificate, which it passed. Use it only on a binary with exactly one
+signature. To answer "is this signed by the key in db", compare certificate
+fingerprints instead:
+
+```sh
+openssl x509 -in falcon-mok.crt -noout -fingerprint -sha256
+```
+
+`archusb`'s `archusb-status-collect` already identifies signers by subject
+for this reason.
+
+### 4.3 The ESP is not a storage location
+
+p1 holds the four files in the table above and nothing else. Not a backup of
+the binary being replaced, not a TPM event log, not a dump, not a note, not a
+spare copy of an ISO. There is room, and that is not a reason.
+
+- It is vfat with no journal, written by firmware and by every OS that
+  touches the machine, and it is the first thing a repair tool reformats.
+  Nothing whose loss would matter should be the only copy there.
+- Anything extra is something a reader has to classify. A stray
+  `BOOTX64.EFI.orig` beside `BOOTX64.EFI` is one hurried glance away from
+  being taken for part of the chain.
+- The partition is 64 MiB on purpose. A closed list is auditable at a glance,
+  and `mkstick` can assert it.
+
+Backups, captures and working files belong on p2 (exFAT, which is what the
+user-facing partition is for) or on p3 beside the key. A binary that came
+from a distribution does not need backing up at all: Fedora's shim is a
+pinnable Koji URL, recorded in `docs/notes/shim-spike.md`.
+
+Audited 2026-09-30: the stick's p1 held a `BOOTX64.EFI.orig` left behind by
+a signing session. Removed. p1 is 2.3 MiB of 62 MiB used.
 
 
 ## 5. Personal OS path: UKI on LUKS, with passphrase handoff
@@ -598,6 +720,50 @@ in would.
 
 Considered and rejected: *three tries and back to the menu* (the earlier
 rule), which limits nothing, since the row can be chosen again at once.
+
+### 5.3 What the shelf holds, and what it is not
+
+p3 is the shelf. Like p1 (Section 4.3) its contents are a closed list, for
+the same reasons: it is small, it is what has to be right for the stick to
+boot at all, and anything extra is something a later reader has to classify
+before they can trust what is there.
+
+| Path | What it is | Read by |
+|---|---|---|
+| `/falcon-mok.key` | the MOK private key, mode 0600 | the signing appliance, and the host `sign` tool |
+| `/falcon-mok.crt` | its public half, the same certificate as p1's `falcon-boot.cer` | signing and enrollment |
+| `/uki/<name>.efi` | every bootable UKI: the personal OS, its rollback, the signing appliance | the loader's shelf scan |
+| `/vmlinuz-<kernel>` | one plain kernel copy per installed kernel | mkinitcpio, never the loader |
+| `/lost+found` | ext4's own | the filesystem |
+
+**The kernel copies are load-bearing, not leftovers.** They look exactly like
+clutter and they are not. Arch's `linux` package ships the kernel only at
+`usr/lib/modules/<kver>/vmlinuz`, and mkinitcpio's pacman script maintains a
+copy at whatever absolute path `ALL_kver` names, provided no package owns
+that path. Pointing `ALL_kver` at `/efi/vmlinuz-linux` is therefore a
+supported idiom rather than a hack, and it is how the UKI gets rebuilt on a
+kernel upgrade. Delete them and the next upgrade rebuilds nothing, silently.
+The reasoning is recorded in full in archusb's `install/` presets.
+
+**Only `*.efi` directly under `/uki` is visible to the loader.**
+`falcon-core/src/media/shelf.c` matches on the `.efi` suffix and nothing
+else. A file named `appliance-uki.efi.prev` is consequently not a rollback:
+it is a copy the loader will never offer, recoverable only by unlocking p3
+from another machine and renaming it. A rollback has to end in `.efi`, and
+its name decides where it falls in the chooser's sort, which is plain
+ordering by name: `-` is 0x2D and `.` is 0x2E, so `arch-usb-prev.efi` sorts
+before `arch-usb.efi`.
+
+**Not on the shelf:** ISO images, captures, notes, and backups of anything
+that can be rebuilt. The signing appliance is built from this repository and
+the UKIs are regenerated by mkinitcpio, so neither needs a spare copy living
+next to the original. p2 is the partition for files, and it is 96 GiB.
+
+Audited 2026-09-30 on the main stick, 250 MiB of 974 MiB used. Two findings,
+both about the same thing: `uki/appliance-uki.efi.prev` is 21 MiB the loader
+cannot boot, and there is no `arch-usb-prev.efi`, so the personal OS has no
+rollback image even though a second kernel (`arch-lts.efi`) covers most of
+what one would be for.
 
 ## 6. ISO path: drag-and-drop mechanism
 
@@ -1381,9 +1547,11 @@ that distro's own MS-signed shim. shim checks db (no Microsoft CA), then MOK
 On such a machine the coverage inverts, and usefully so: **blessing is the
 only route, and it works**, because a blessed wrap is signed with the user's
 own MOK and shim verifies it against MOK independently of db. The stick's own
-chain (shim dual-signed with the user's db key, loader and UKIs MOK-signed)
-is unaffected, which is why the loader, the menu and the p3 unlock all work
-there while no unblessed ISO will start.
+chain (shim carrying our MOK signature alongside its Microsoft pair, loader
+and UKIs MOK-signed; Section 4.1) is unaffected, which is why the loader, the
+menu and the p3 unlock all work there while no unblessed ISO will start. It
+requires the stick's cert in that machine's db, not only in MOK, because the
+binary the firmware verifies is shim itself.
 
 The exception that cannot be blessed is **Windows install media**. The
 loader's patch (Section 6.4) signs nothing; the binary the firmware verifies is Microsoft's

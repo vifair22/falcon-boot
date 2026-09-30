@@ -624,3 +624,68 @@ index, the storage key and (on 1.2) its secret are right. Any other refusal
 is printed with the step that got it, as the station's own line prints it
 (`TPM error 0x00000001 in EstablishTransport.`).
 
+
+## 4. Signing, and what lives where
+
+`docs/DESIGN.md` argues all of this: its Section 4.1 for the signing rules,
+4.2 for the `sbsign` traps, 4.3 for the ESP and 5.3 for the shelf. What
+follows is the short operational form.
+
+### 4.1 What carries which signature
+
+| File | Signatures |
+|---|---|
+| p1 `/EFI/BOOT/BOOTX64.EFI` (shim) | its two Microsoft ones, **plus ours** |
+| p1 `/EFI/BOOT/mmx64.efi` (MokManager) | its Fedora one, **plus ours** |
+| p1 `/EFI/BOOT/grubx64.efi` (the loader) | **ours only** |
+| p3 `/uki/*.efi` | **ours only** |
+
+"Ours" is the stick's own MOK pair, `/falcon-mok.key` and `/falcon-mok.crt`
+on p3.
+
+Keeping the vendor signatures on shim and MokManager is what boots the stick
+on an ordinary machine, whose db trusts Microsoft. Adding ours is what boots
+it on a machine that trusts only its owner's keys, where shim is refused by
+the firmware before it can consult MOK at all. On such a machine, enrol
+`falcon-boot.cer` in **db**, not only as a MOK, and never sign the stick with
+that machine's own db key.
+
+```sh
+sbsign --key /efi/falcon-mok.key --cert /efi/falcon-mok.crt \
+       --output NEW.efi FILE.efi
+sbverify --list NEW.efi | grep '^signature'
+```
+
+Check the second line every time. `sbsign` appends and never replaces, so a
+second run leaves two identical signatures and nothing complains.
+`sbattach --remove` deletes one entry per call. `sbverify --cert` returns
+success on a multiply-signed binary for a certificate that signed nothing in
+it, so it cannot answer "who signed this": list the signers, or compare
+certificate fingerprints with `openssl x509 -noout -fingerprint -sha256`.
+
+### 4.2 Neither partition is a storage location
+
+p1 holds four files and p3 holds five kinds of file. Both lists are closed,
+and there being room is not a reason to add to them.
+
+```
+p1  EFI/BOOT/BOOTX64.EFI  EFI/BOOT/grubx64.efi  EFI/BOOT/mmx64.efi
+    falcon-boot.cer
+
+p3  falcon-mok.key  falcon-mok.crt  uki/*.efi  vmlinuz-*  lost+found
+```
+
+Two things on that list surprise people:
+
+- `vmlinuz-*` on p3 is **required**. It is the `ALL_kver` target mkinitcpio's
+  pacman script refreshes, and the UKI is rebuilt from it. Removing it breaks
+  kernel upgrades silently.
+- A UKI is only offered by the loader if its name ends in `.efi`. A rollback
+  saved as `something.efi.prev` is unbootable weight.
+
+Files, captures and backups go on p2. Check both with:
+
+```sh
+find /mnt/p1 -mindepth 1        # expect exactly the four above
+ls -A /efi                      # expect exactly the five kinds above
+```
