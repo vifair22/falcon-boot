@@ -82,6 +82,16 @@ static int str_eq(const char *a, const char *b)
     return *a == *b;
 }
 
+/* How the loaders match a name to a row (strows.c): ignoring case. */
+static int str_ieq(const char *a, const char *b)
+{
+    while (*a != '\0' && lower(*a) == lower(*b)) {
+        a++;
+        b++;
+    }
+    return lower(*a) == lower(*b);
+}
+
 static size_t str_len(const char *s)
 {
     size_t n = 0;
@@ -191,7 +201,7 @@ static int disk_tail_ok(const char *a, const char *b)
     a += 8;
     if (a == b)
         return 1;
-    if (b - a < 3 || a[0] != '-' || a[1] != 'p')
+    if (b - a < 3 || a[0] != '-' || lower(a[1]) != 'p')
         return 0;
     for (a += 2; a < b; a++)
         if (!is_digit(*a))
@@ -203,15 +213,15 @@ static int disk_tail_ok(const char *a, const char *b)
  * already a name. */
 static int autoname_ok(const char *a, const char *b)
 {
-    if (span_eq(a, b, "memtest") || span_eq(a, b, "pos"))
+    if (word_eq(a, b, "memtest") || word_eq(a, b, "pos"))
         return 1;
     if (b - a < 5)
         return 0;
-    if (span_eq(a, a + 4, "mbr-") || span_eq(a, a + 4, "gpt-"))
+    if (word_eq(a, a + 4, "mbr-") || word_eq(a, a + 4, "gpt-"))
         return disk_tail_ok(a + 4, b);
-    if (span_eq(a, a + 4, "nxt-"))
+    if (word_eq(a, a + 4, "nxt-"))
         return b - a == 8 && hex_run(a + 4, b, 4);
-    return span_eq(a, a + 4, "uki-");
+    return word_eq(a, a + 4, "uki-");
 }
 
 /* A value kept as text (label, uki, efi): printable ASCII, and shorter than
@@ -727,7 +737,7 @@ const stationini_entry *stationini_find(const stationini *c, const char *name)
     if (c == (const stationini *)0 || name == (const char *)0)
         return (const stationini_entry *)0;
     for (i = 0; i < c->n_entries && i < STATIONINI_ENTRIES_MAX; i++)
-        if (str_eq(c->entries[i].name, name))
+        if (str_ieq(c->entries[i].name, name))
             return &c->entries[i];
     return (const stationini_entry *)0;
 }
