@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# falcon-boot: DevLink recovery (docs/DESIGN.md Section 13.5) off the stick,
+# falcon-boot: DevLink recovery (docs/DESIGN.md Section 12.5) off the stick,
 # on the machine it is for: SeaBIOS, a Pentium (-cpu pentium, no CMOV) and
 # 32 MB. Each case boots the rig stick (mk-test-stick.sh) with the ISO in its
 # library and is judged from both serial ports: COM1 carries falcon-bios's
@@ -246,7 +246,7 @@ case_bios() {
     fi
     boot bios
     wait_for "payload-test.iso" 60 || why="the menu never listed the library"
-    has "older than a Pentium" && why="stage 2 refused the processor"
+    has "older than i586" && why="stage 2 refused the processor"
     if [[ -z "$why" ]]; then
         n=$(row_of "$iso")
         [[ -n "$n" ]] || why="$iso is not in the library"
