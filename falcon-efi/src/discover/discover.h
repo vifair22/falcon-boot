@@ -112,4 +112,14 @@ discover_dev *discover_next(ident_role role, UINTN *cursor);
  * 4096-byte-block disk mounts and unlocks as a 512-byte one does. */
 int discover_read(void *ctx, uint64_t off, uint64_t len, void *buf);
 
+/* A read longer than this is made in pieces of it, with the hook below
+ * called before each. */
+#define DISCOVER_READ_PIECE 0x40000u   /* 256 KiB */
+
+/* Called before every discover_read and every piece of a long one; NULL
+ * (the default) for none. The stick's background probe yields to the menu
+ * from it (task/task.h), so a read is where a probe can be interrupted and
+ * no read is long enough to hold a keystroke up. */
+void discover_set_read_hook(void (*hook)(void));
+
 #endif /* FALCON_DISCOVER_H */

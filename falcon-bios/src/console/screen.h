@@ -74,25 +74,27 @@ typedef struct {
     uint8_t         probed;
 } screen_tags;
 
-/* Fills row idx's tags. The menu calls it once per unprobed row, the first
- * time the row is on screen, so a menu of many rows pays only for the ones
- * it shows (DESIGN Section 7.8, lazy probing). */
-typedef void (*screen_probe_fn)(void *ctx, size_t idx, screen_tags *tags);
-
+/* The menu's background work (DESIGN Section 7.8), the UEFI menu_probe:
+ * the caller's probe, on a task of its own (task/task.h), so it outlives the
+ * menu call. step runs a slice of it, until the probe next yields, with
+ * `sel` the row highlighted, and returns nonzero while there is more; fill
+ * copies what is known of row idx's tags onto it and returns nonzero once
+ * they are final. Both NULL when the tags are complete as given. */
 typedef struct {
-    screen_tags    *tags;    /* one per row */
-    screen_probe_fn probe;   /* NULL when the tags are complete as given */
-    void           *ctx;
+    screen_tags *tags;    /* one per row */
+    int  (*step)(void *ctx, size_t sel);
+    int  (*fill)(void *ctx, size_t idx, screen_tags *tags);
+    void        *ctx;
 } screen_rows;
 
-/* screen_menu with tag columns, the UEFI menu_run_probed. A window is
- * painted at once, its unprobed rows showing tui_tag_pending, and then
- * probed a row at a time top to bottom, each row repainted as it is filled
- * (the whole window when a tag column widens) and the keys read between
- * rows; the key line says "checking k of n" until the window is done. A
- * row the caller built with probed set is never probed and never pending.
- * The columns are sized to the window's widest tags. rows may be NULL,
- * which is screen_menu. */
+/* screen_menu with tag columns, the UEFI menu_run_probed. The page is
+ * painted at once, a row whose tags are not known yet showing
+ * tui_tag_pending. Whenever no key is waiting the menu steps the probe,
+ * fills every pending row on screen and repaints the ones that became final
+ * (the whole window when a tag column widens); a spinner in the banner's
+ * last cell turns while step says there is more. A row the caller built
+ * with probed set is never pending. The columns are sized to the window's
+ * widest tags. rows may be NULL, which is screen_menu. */
 int screen_menu_tagged(const screen_banner *banner,
                        const uint16_t *const *labels, size_t count,
                        const screen_rows *rows, const char *keys,

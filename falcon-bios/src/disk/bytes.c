@@ -23,17 +23,44 @@
  * calls. */
 static uint8_t g_bounce[4096];
 
-int bios_disk_bytes(void *ctx, uint64_t off, uint64_t len, void *buf)
+static void (*g_hook)(void);
+
+void bios_disk_set_hook(void (*hook)(void))
+{
+    g_hook = hook;
+}
+
+static int read_piece(void *ctx, uint64_t off, uint64_t len, void *buf)
 {
     const bios_disk *d = ctx;
     blk_rebl r;
 
-    if (d == (const bios_disk *)0)
-        return -1;
     r.read = bios_disk_read;
     r.ctx = ctx;
     r.sector_size = d->sector_size;
     r.bounce = g_bounce;
     r.bounce_len = (uint32_t)sizeof g_bounce;
     return blk_rebl_read(&r, off, len, buf);
+}
+
+int bios_disk_bytes(void *ctx, uint64_t off, uint64_t len, void *buf)
+{
+    const bios_disk *d = ctx;
+    uint8_t *p = buf;
+
+    if (d == (const bios_disk *)0)
+        return -1;
+    if (g_hook == (void (*)(void))0)
+        return read_piece(ctx, off, len, buf);
+    while (len > 0) {
+        uint64_t n = len < BIOS_DISK_PIECE ? len : BIOS_DISK_PIECE;
+
+        g_hook();
+        if (read_piece(ctx, off, n, p) != 0)
+            return -1;
+        off += n;
+        p += n;
+        len -= n;
+    }
+    return 0;
 }

@@ -26,6 +26,7 @@
 #include <lib/ucs2.h>
 #include <console/menu.h>
 #include <console/idle.h>
+#include <task/task.h>
 #include <tui/tui.h>
 #include <pos/pos.h>
 #include <trust/probe.h>
@@ -528,10 +529,11 @@ static void resolve_entries(iso_list *list)
 
 /* Look inside one entry, once: its family, its signature and prediction,
  * whether it is BIOS-only, and the tag columns built from them. Called by
- * the menu when the entry's row is about to be drawn, and by anything that
- * acts on an entry the menu has not drawn (a boot from the next-boot marker,
- * `a` over the whole stick), so every consumer of these fields finds them
- * filled. Silent: it runs while the menu is on screen. */
+ * the background probe below, and by anything that acts on an entry before
+ * the probe reached it (a boot from the next-boot marker, `a` over the whole
+ * stick), so every consumer of these fields finds them filled. Silent: it
+ * runs while the menu is on screen. `probed` is set last, so a probe
+ * abandoned part way (probe_stop) leaves the entry as it found it. */
 static void target_probe(iso_target *t)
 {
     iso_survey survey;
@@ -607,9 +609,9 @@ static void up_label(CHAR16 *dst, const CHAR16 *cur)
  * Set on every row, because the view array is pool memory rewritten per
  * folder and a stale tag would draw on the row that inherited its slot. An
  * image row whose target has not been looked inside is left unprobed, so the
- * menu shows it pending and asks row_probe for it; every other row has
- * nothing to look inside and is marked done, so it neither shows the
- * placeholder nor counts in the menu's "checking k of n". */
+ * menu shows it pending until the background probe has been inside it
+ * (probe_fill); every other row has nothing to look inside and is marked
+ * done, so it never shows the placeholder. */
 static void row_tags(menu_entry *row, const iso_target *from)
 {
     row->probed = (from == (const iso_target *)0 || from->probed) ? 1u : 0u;
@@ -704,25 +706,144 @@ static UINTN view_build(const iso_list *list, const CHAR16 *cur, UINTN cur_len,
     return n;
 }
 
-/* The menu's probe (console/menu.h): an image row's target is looked
- * inside, once, and its tags copied onto the row; every other row keeps what
- * view_build gave it. ctx is the list and the rows the menu call was built
- * from. */
+/* ---- the background probe (DESIGN Section 7.8) ----
+ *
+ * Every entry on the stick is looked inside, in the background, for as long
+ * as a menu is up: the probe runs on a task of its own (task/task.h), so it
+ * outlives each menu call, and a folder change or a move of the selection
+ * reorders what it does next without losing what it is doing. The order is
+ * core's (survey_next_probe): the entry under the selection, then the
+ * current folder, then what is under it, then the rest. The task yields to
+ * the menu from discover's read hook whenever a key is waiting or the tick
+ * has passed, so no read holds a keystroke up.
+ *
+ * Anything that leaves the menu to act (a boot, a bless, the personal OS)
+ * uses the same mounts and buffers the probe does, so it stops the probe
+ * first (probe_stop): the entry it was inside is left unprobed and looked
+ * inside again later. */
+#define PROBE_STACK_BYTES 0x40000u   /* 256 KiB */
+/* How long the task may run before it gives the menu a turn, in SetTimer's
+ * unit: 50 ms, twice the spinner's rate. */
+#define PROBE_TICK_100NS 500000u
+
+static task      g_probe_task;
+static UINT8    *g_probe_stack;
+static EFI_EVENT g_probe_tick;
+/* What the task orders its work by. The folder is set before each menu call
+ * (probe_focus) and the selection by each step. */
+static uint16_t  g_probe_cur[SURVEY_PATH_MAX];
+static size_t    g_probe_cur_len;
+static size_t    g_probe_want = MAX_ISOS;
+
+static int probe_done(void *ctx, size_t i)
+{
+    const iso_list *list = ctx;
+
+    return list->targets[i].probed != 0;
+}
+
+static size_t probe_next(iso_list *list)
+{
+    return survey_next_probe(&list->survey, g_probe_cur, g_probe_cur_len,
+                             g_probe_want, probe_done, list);
+}
+
+static void probe_body(void *arg)
+{
+    iso_list *list = arg;
+    size_t i;
+
+    while ((i = probe_next(list)) < list->count)
+        target_probe(&list->targets[i]);
+}
+
+/* discover_read's hook: from inside the probe, back to the menu when a key
+ * is waiting or the tick has passed. Nothing in the main flow. */
+static void probe_yield(void)
+{
+    if (!task_in())
+        return;
+    if (g_st->BootServices->CheckEvent(g_st->ConIn->WaitForKey) ==
+            EFI_SUCCESS ||
+        g_probe_tick == (EFI_EVENT)0 ||
+        g_st->BootServices->CheckEvent(g_probe_tick) == EFI_SUCCESS)
+        task_yield();
+}
+
+static void probe_init(void)
+{
+    if (g_st->BootServices->AllocatePool(EfiLoaderData, PROBE_STACK_BYTES,
+                                         (void **)&g_probe_stack) !=
+        EFI_SUCCESS)
+        g_probe_stack = (UINT8 *)0;
+    if (g_st->BootServices->CreateEvent(EVT_TIMER, 0, (EFI_EVENT_NOTIFY)0,
+                                        (void *)0, &g_probe_tick) !=
+            EFI_SUCCESS ||
+        g_st->BootServices->SetTimer(g_probe_tick, TimerPeriodic,
+                                     PROBE_TICK_100NS) != EFI_SUCCESS)
+        g_probe_tick = (EFI_EVENT)0;
+    discover_set_read_hook(probe_yield);
+}
+
+/* The folder on screen, which the probe favours after the selection. */
+static void probe_focus(const uint16_t *cur, size_t cur_len)
+{
+    if (cur_len >= SURVEY_PATH_MAX)
+        cur_len = 0;
+    memcpy(g_probe_cur, cur, cur_len * sizeof(uint16_t));
+    g_probe_cur[cur_len] = 0;
+    g_probe_cur_len = cur_len;
+}
+
+/* Before anything that leaves the menu to act. */
+static void probe_stop(void)
+{
+    task_abandon(&g_probe_task);
+}
+
+/* The menu's side (console/menu.h). ctx is the list and the rows the menu
+ * call was built from. */
 typedef struct {
     iso_list       *list;
     const view_row *rows;
 } probe_ctx;
 
-static void row_probe(void *ctx, UINTN idx, menu_entry *e)
+static int probe_step(void *ctx, UINTN sel)
 {
     const probe_ctx *pc = ctx;
-    iso_target *t;
+    iso_list *list = pc->list;
+
+    g_probe_want = pc->rows[sel].kind == VIEW_IMAGE ? pc->rows[sel].idx
+                                                    : MAX_ISOS;
+    if (g_probe_task.state == TASK_IDLE) {
+        size_t i = probe_next(list);
+
+        if (i >= list->count)
+            return 0;
+        /* No stack for the task: the old way, an entry at a time on the
+         * menu's own stack, keys read between entries. */
+        if (g_probe_stack == (UINT8 *)0) {
+            target_probe(&list->targets[i]);
+            return probe_next(list) < list->count;
+        }
+        task_start(&g_probe_task, g_probe_stack, PROBE_STACK_BYTES,
+                   probe_body, list);
+    }
+    return task_resume(&g_probe_task);
+}
+
+static int probe_fill(void *ctx, UINTN idx, menu_entry *e)
+{
+    const probe_ctx *pc = ctx;
+    const iso_target *t;
 
     if (pc->rows[idx].kind != VIEW_IMAGE)
-        return;
+        return 1;
     t = &pc->list->targets[pc->rows[idx].idx];
-    target_probe(t);
+    if (!t->probed)
+        return 0;
     row_tags(e, t);
+    return 1;
 }
 
 /* ---- entry point ---- */
@@ -1816,6 +1937,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
     if (g_next_path[0] != '\0' || g_next_bad)
         next_boot_run(image_handle, &list);
 
+    probe_init();
     for (;;) {
         /* c and d choose the route for an ISO row, b and a bless; on any
          * other row c, d and b act as enter. */
@@ -1825,7 +1947,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
             L"esc back"
         };
         probe_ctx pctx = { &list, rows };
-        const menu_probe probe = { row_probe, &pctx };
+        const menu_probe probe = { probe_step, probe_fill, &pctx };
         UINTN shown;
         CHAR16 which = L'\r';
         INTN pick;
@@ -1838,6 +1960,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
          * its code. */
         menu_mode(st, (const CHAR16 *)0);
         shown = view_build(&list, cur, cur_len, pinned, view, rows);
+        probe_focus(cur, cur_len);
         pick = menu_run_probed(st, &banner, view, shown, &keys, &which,
                                &probe);
         route = which == L'c'   ? ROUTE_CHAIN
@@ -1851,6 +1974,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
                 survey_up(cur, &cur_len);
                 continue;
             }
+            probe_stop();
             menu_screen(st);
             out(L"falcon-boot: returning to firmware.\r\n");
             if (vols == 0)
@@ -1879,6 +2003,11 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
         }
 
         sel = (UINTN)pick;
+        /* A folder change keeps the probe going; everything else acts, and
+         * shares what the probe uses. */
+        if (which == L'a' || (rows[sel].kind != VIEW_UP &&
+                              rows[sel].kind != VIEW_DIR))
+            probe_stop();
         /* b blesses the image row it is pressed on (on any other row it acts
          * as enter); a blesses everything new from wherever it is pressed. */
         if (which == L'a' ||

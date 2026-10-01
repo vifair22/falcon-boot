@@ -73,6 +73,10 @@
 #                  384 MiB machine: the passphrase is refused with the page
 #                  that says how much the slot needs and how much is free
 #                  (docs/notes/argon2-totp.md Section 1)
+#   probe-keys-uefi, probe-keys-bios
+#                  stick-a on a disk QEMU throttles to SLOW_BPS: Esc at the
+#                  root, pressed while rows are still pending, acts within
+#                  KEY_MS (the probe yields at its reads, DESIGN Section 7.8)
 #   hibernated-uefi, hibernated-bios
 #                  the station disk as a hibernated OS leaves it: its shelf
 #                  mounted read-write on this host, personal.efi copied to
@@ -108,6 +112,10 @@ MKSTICK=build/bin/falcon-boot-mkstick
 TIMEOUT=180
 # The machine's memory, in MiB; the refusal cases boot a smaller one.
 MEM=1024
+# A throttled disk's bytes a second (the probe-keys cases), and how long a
+# key may take to act on a menu whose probe is reading from it.
+SLOW_BPS=${SLOW_BPS:-65536}
+KEY_MS=${KEY_MS:-500}
 
 # Fixed install IDs, so a log names the same install every run.
 ID_A=c0de0000000000000000000000000a0a
@@ -355,7 +363,11 @@ boot() {
         img=${d%%:*}
         opts=":${d#*:}:"
         [[ "$d" == *:* ]] || opts=::
-        args+=(-drive "if=none,id=d$n,format=raw,file=$img")
+        if [[ "$opts" == *:slow:* ]]; then
+            args+=(-drive "if=none,id=d$n,format=raw,file=$img,throttling.bps-total=$SLOW_BPS")
+        else
+            args+=(-drive "if=none,id=d$n,format=raw,file=$img")
+        fi
         local dev
         if [[ "$opts" == *:4k:* ]]; then
             # NVMe: the one QEMU disk with 4096-byte logical blocks that
@@ -582,6 +594,35 @@ case_kdf_memory() { # case_kdf_memory CASE FIRMWARE
     halt
     if [[ -z "$why" ]]; then
         result "$1" 1 "refused: needs 512 MiB; ${said#this machine }"
+    else
+        result "$1" 0 "$why"
+    fi
+}
+
+# The stick on a disk throttled to SLOW_BPS, so looking inside one entry
+# takes seconds; Esc at the root, pressed while rows are still pending, has
+# to take effect within KEY_MS. The probe yields at its reads (DESIGN
+# Section 7.8), so a key waits for one read, not for the entry.
+case_probe_keys() { # case_probe_keys CASE FIRMWARE
+    local why= t0 t1 ms=-
+    boot "$2" "$R/stick-a.img:boot:slow"
+    wait_for "enter boot | c chain" 170 || why="no menu"
+    [[ -z "$why" ]] && { has "..." || why="no row was pending"; }
+    if [[ -z "$why" ]]; then
+        sleep 2
+        t0=$(date +%s%N)
+        mon "sendkey esc"
+        if wait_for "falcon-boot: returning to firmware." 120; then
+            t1=$(date +%s%N)
+            ms=$(( (t1 - t0) / 1000000 ))
+            (( ms <= KEY_MS )) || why="Esc took $ms ms to act (limit $KEY_MS)"
+        else
+            why="Esc never acted"
+        fi
+    fi
+    halt
+    if [[ -z "$why" ]]; then
+        result "$1" 1 "Esc acted in $ms ms with the probe reading at $SLOW_BPS B/s"
     else
         result "$1" 0 "$why"
     fi
@@ -883,7 +924,8 @@ CASES=("$@")
            4kn-bios 4kn-bios-marker station-uefi station-bios
            station-stick-uefi station-stick-bios bios-only-uefi
            bios-only-uefi-sb efi-only-bios 64-only-bios32 kdf-memory-uefi
-           kdf-memory-bios hibernated-uefi hibernated-bios)
+           kdf-memory-bios hibernated-uefi hibernated-bios probe-keys-uefi
+           probe-keys-bios)
 
 for c in "${CASES[@]}"; do
     case $c in
@@ -913,6 +955,8 @@ for c in "${CASES[@]}"; do
     4kn-bios-marker) case_4kn_marker "$c" ;;
     kdf-memory-uefi) case_kdf_memory "$c" uefi ;;
     kdf-memory-bios) case_kdf_memory "$c" bios ;;
+    probe-keys-uefi) case_probe_keys "$c" uefi ;;
+    probe-keys-bios) case_probe_keys "$c" bios ;;
     hibernated-uefi) case_hibernated "$c" uefi ;;
     hibernated-bios) case_hibernated "$c" bios ;;
     station-uefi)  case_station "$c" uefi ;;

@@ -272,3 +272,36 @@ void survey_up(uint16_t *cur, size_t *cur_len)
     cur[n] = 0;
     *cur_len = n;
 }
+
+size_t survey_next_probe(const survey_list *l, const uint16_t *cur,
+                         size_t cur_len, size_t want, survey_done_fn done,
+                         void *ctx)
+{
+    size_t i;
+    unsigned pass;
+
+    if (l == (const survey_list *)0 || l->entries == (const survey_entry *)0 ||
+        done == (survey_done_fn)0)
+        return l == (const survey_list *)0 ? 0 : l->count;
+    if (want < l->count && !done(ctx, want))
+        return want;
+    if (cur == (const uint16_t *)0)
+        cur_len = 0;
+
+    /* 0: the files in cur; 1: everything under it; 2: the rest. */
+    for (pass = 0; pass < 3u; pass++) {
+        for (i = 0; i < l->count; i++) {
+            const survey_entry *e = &l->entries[i];
+            int in = e->dir_len >= cur_len &&
+                     (cur_len == 0 || under_cur(e->label, cur, cur_len));
+
+            if (pass == 0u && !(in && e->dir_len == cur_len))
+                continue;
+            if (pass == 1u && !in)
+                continue;
+            if (!done(ctx, i))
+                return i;
+        }
+    }
+    return l->count;
+}

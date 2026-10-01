@@ -97,6 +97,112 @@ static void assert_row(size_t i, survey_row_kind kind, const char *label)
     assert_string_equal(buf, label);
 }
 
+/* ---- the background probe's order ---- */
+
+static uint8_t g_done[TEST_ENTRIES];
+
+static int is_done(void *ctx, size_t i)
+{
+    (void)ctx;
+    return g_done[i];
+}
+
+/* The order entries come out in, as their labels, marking each done as a
+ * loader would once it had looked inside. */
+static void probe_order(const char *cur, size_t want, const char **expect,
+                        size_t n)
+{
+    uint16_t w[SURVEY_PATH_MAX];
+    char buf[256];
+    size_t k;
+
+    wide(w, cur);
+    for (k = 0; k < n; k++) {
+        size_t i = survey_next_probe(&g_list, w, strlen(cur), want, is_done,
+                                     NULL);
+
+        assert_true(i < g_list.count);
+        narrow(buf, sizeof buf, g_entries[i].label);
+        assert_string_equal(buf, expect[k]);
+        g_done[i] = 1;
+        want = g_list.count;
+    }
+    assert_int_equal(survey_next_probe(&g_list, w, strlen(cur), g_list.count,
+                                       is_done, NULL),
+                     g_list.count);
+}
+
+static void probe_list(void)
+{
+    survey_init(&g_list, g_entries, TEST_ENTRIES, SURVEY_ACCEPT_ISO);
+    add("arch.iso");
+    add("Linux/fedora.iso");
+    add("Linux/rescue/gparted.iso");
+    add("Linux/ubuntu.iso");
+    add("Linux/zz/alpine.iso");
+    add("Windows/win11.iso");
+    add("zorin.iso");
+    survey_sort(&g_list);
+    memset(g_done, 0, sizeof g_done);
+}
+
+static void test_probe_order_root(void **state)
+{
+    static const char *const want[] = {
+        "arch.iso", "zorin.iso", "Linux/fedora.iso",
+        "Linux/rescue/gparted.iso", "Linux/ubuntu.iso", "Linux/zz/alpine.iso",
+        "Windows/win11.iso"
+    };
+
+    (void)state;
+    probe_list();
+    probe_order("", g_list.count, (const char **)want, 7);
+}
+
+static void test_probe_order_folder(void **state)
+{
+    /* The folder's own files, then what is under it depth first, then the
+     * rest from the top. */
+    static const char *const want[] = {
+        "Linux/fedora.iso", "Linux/ubuntu.iso", "Linux/rescue/gparted.iso",
+        "Linux/zz/alpine.iso", "arch.iso", "Windows/win11.iso", "zorin.iso"
+    };
+
+    (void)state;
+    probe_list();
+    probe_order("Linux/", g_list.count, (const char **)want, 7);
+}
+
+static void test_probe_order_selection(void **state)
+{
+    uint16_t w[SURVEY_PATH_MAX];
+    size_t sel;
+
+    (void)state;
+    probe_list();
+    for (sel = 0; sel < g_list.count; sel++) {
+        char buf[256];
+
+        narrow(buf, sizeof buf, g_entries[sel].label);
+        if (strcmp(buf, "Windows/win11.iso") == 0)
+            break;
+    }
+    assert_true(sel < g_list.count);
+    /* The entry under the selection goes first, wherever it is. */
+    wide(w, "");
+    assert_int_equal(survey_next_probe(&g_list, w, 0, sel, is_done, NULL), sel);
+    /* Once done it no longer jumps the queue. */
+    g_done[sel] = 1;
+    assert_int_not_equal(survey_next_probe(&g_list, w, 0, sel, is_done, NULL),
+                         sel);
+    /* Out of range is no selection; no list, no callback, nothing to do. */
+    assert_true(survey_next_probe(&g_list, w, 0, 999, is_done, NULL) <
+                g_list.count);
+    assert_int_equal(survey_next_probe(&g_list, w, 0, 0, NULL, NULL),
+                     g_list.count);
+    assert_int_equal(survey_next_probe(NULL, w, 0, 0, is_done, NULL), 0);
+}
+
 /* ---- the view ---- */
 
 static void test_view_root(void **state)
@@ -429,6 +535,9 @@ static void test_walk_self_reference_budget(void **state)
 int run_survey_tests(void)
 {
     const struct CMUnitTest tests[] = {
+        cmocka_unit_test(test_probe_order_root),
+        cmocka_unit_test(test_probe_order_folder),
+        cmocka_unit_test(test_probe_order_selection),
         cmocka_unit_test(test_view_root),
         cmocka_unit_test(test_view_descend),
         cmocka_unit_test(test_view_case_is_a_difference),

@@ -59,9 +59,36 @@ static int read_blocks(void *ctx, uint64_t off, uint64_t len, void *buf)
  * probes or unlocks a row reads through here, and none of them needs to
  * know the disk's block size. Built per call rather than kept per row, so a
  * medium changed under a row is read at the block size it has now. */
+static void (*g_read_hook)(void);
+
+void discover_set_read_hook(void (*hook)(void))
+{
+    g_read_hook = hook;
+}
+
+static int read_piece(discover_dev *d, uint64_t off, uint64_t len, void *buf);
+
 int discover_read(void *ctx, uint64_t off, uint64_t len, void *buf)
 {
-    discover_dev *d = ctx;
+    uint8_t *p = buf;
+
+    if (g_read_hook == (void (*)(void))0)
+        return read_piece(ctx, off, len, buf);
+    while (len > 0) {
+        uint64_t n = len < DISCOVER_READ_PIECE ? len : DISCOVER_READ_PIECE;
+
+        g_read_hook();
+        if (read_piece(ctx, off, n, p) != 0)
+            return -1;
+        off += n;
+        p += n;
+        len -= n;
+    }
+    return 0;
+}
+
+static int read_piece(discover_dev *d, uint64_t off, uint64_t len, void *buf)
+{
     blk_rebl r;
 
     if (d == (discover_dev *)0 || d->bio == (EFI_BLOCK_IO_PROTOCOL *)0 ||

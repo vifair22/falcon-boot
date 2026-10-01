@@ -213,13 +213,13 @@ extern const uint16_t tui_hint_empty[];
 extern const uint16_t tui_list_empty[];
 
 /* A row whose tags are still being read shows tui_tag_pending in its first
- * tag column, and the key line says how far the menu has got through the
- * rows on screen: "checking k of n | esc back", written into dst (cap
- * units, terminated, clipped). Both loaders fill a page this way, a row at a
- * time with keys read between rows, so the page is drawn before any row is
- * looked inside. */
+ * tag column. The probe runs in the background for as long as a menu is up
+ * (DESIGN Section 7.8), and while it has work the banner's last cell, which
+ * is always padding (TUI_PAD_X), carries a spinner: tui_spin(phase) is its
+ * glyph, phase counting up, and tui_spin_col the column. */
 extern const uint16_t tui_tag_pending[];
-void tui_hint_checking(uint16_t *dst, size_t cap, size_t k, size_t n);
+uint16_t tui_spin(unsigned phase);
+size_t tui_spin_col(const tui_menu *m);
 
 /* What a loader is doing while nothing else is on screen: startup, before
  * its menu, and a row being looked inside after Enter. Drawn as one line at
