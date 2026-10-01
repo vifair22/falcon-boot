@@ -13,10 +13,12 @@
 # image with an MBR and a FAT32 data partition (a card's station goes
 # beside something, as it does on a machine's disk), then `mkstick station
 # install --bios --legacy` with DevLink recovery in /uki and memtest86+.
-# The internal disk is the A21m's own image (A21M_IMG) on a throwaway
-# qcow2 overlay, never opened for writing. The machine is QEMU's pc with
-# the A21m's PIIX4 south bridge, a Pentium III with 512 MB, the rig's PC
-# Card bridge (falcon-pcc.c) and a UHCI controller.
+# The internal disk is station-legacy on a stand-in for the A21m's disk
+# (mk-legacy-disk.sh: a Windows (NTLDR) partition at 63 whose boot sector
+# is rigboot.S), or the A21m's own image when A21M_IMG names it; either on
+# a throwaway qcow2 overlay, never opened for writing. The machine is
+# QEMU's pc with the A21m's PIIX4 south bridge, a Pentium III with 512 MB,
+# the rig's PC Card bridge (falcon-pcc.c) and a UHCI controller.
 #
 #   menu      the station's menu comes up off the card: its rows, in the
 #             order drawn, are recorded; the internal disk's boot code,
@@ -24,50 +26,103 @@
 #   windows   the internal disk's Windows chained from the card: jump's
 #             resident must be released before the handover (Windows 2000
 #             froze on the A21m started on top of it; QEMU's video BIOS
-#             never shows that, so the release is judged from serial) and
-#             the screens are kept (build/cfstation-rig/windows-*.png)
+#             never shows that, so the release is judged from serial). On
+#             the A21m's image the screens are kept
+#             (build/cfstation-rig/windows-*.png); on the stand-in its
+#             rigboot.S reports DL 0x80, the internal disk as 0x80 and one
+#             disk counted
 #   cf        the station's own CF card row, taken while jump's resident
 #             already drives the bridge: recorded, not judged, since two
 #             drivers for one bridge is the case this rig is here to see
 #
+# Cards that carry no falcon record, booted by jump's CF route behind the
+# drive swap (DESIGN Section 13.6):
+#
+#   foreign   a card whose LBA 0 is rigboot.S: DL 0x80, 0x80 reads the
+#             card, the BDA counts two disks and 0x81 reads the internal
+#             disk
+#   freedos   the FreeDOS fixture (tools/fixtures/README.md) as the card,
+#             for C:\> on the screen and the swap on serial. A known
+#             failure, reported as KNOWN and not counted: the kernel finds
+#             the card as C: and the internal disk as D:, then stops with
+#             an invalid opcode (with HIMEMX and DOS=HIGH) or a divide by
+#             zero (without) before COMMAND.COM is read
+#
 # Usage: falcon-bios/tools/run-cfstation-rig.sh [case...]   (default: all)
-# Env:   A21M_IMG  the A21m's disk image (default ~/a21m-image/DJSA-210.img)
-#        CF_IMG    a card image to use instead of building one
+# Env:   A21M_IMG  the A21m's disk image as the internal disk (default: the
+#                  stand-in, build/cfstation-rig/hdd.img)
+#        CF_IMG    a card image to use instead of building one, for the
+#                  station cases
+#        FIXTURES  where freedos.img is (default build/fixtures)
 set -euo pipefail
 
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)
 cd "$ROOT"
 R=build/cfstation-rig
-A21M_IMG=${A21M_IMG:-$HOME/a21m-image/DJSA-210.img}
+A21M_IMG=${A21M_IMG:-}
+FIX=${FIXTURES:-build/fixtures}
 QPCC=build/qemu-pcc/build/qemu-system-i386
 MEMTEST=${MEMTEST:-build/memtest/mt86p_810_i586}
 MACHINE=pc,x-south-bridge=piix4-isa
-DISK=cyls=20784,heads=15,secs=63,bios-chs-trans=large
 TIMEOUT=90
+SIG_FOREIGN=5a7a0cf1
+DEVLINK_UKI=build/devlink/devlink-recovery.efi
 
 command -v socat >/dev/null || { echo "socat is needed for the monitor" >&2; exit 2; }
 [[ -x "$QPCC" ]] || { echo "no rig QEMU (falcon-bios/tools/qemu-pcc/build-qemu.sh)" >&2; exit 2; }
-[[ -f "$A21M_IMG" ]] || { echo "no A21m image at $A21M_IMG (A21M_IMG)" >&2; exit 2; }
 mkdir -p "$R"
-make --no-print-directory station-legacy devlink-uki >/dev/null
+make --no-print-directory station-legacy build/rigboot.bin >/dev/null
 
-# The card.
-if [[ -n "${CF_IMG:-}" ]]; then
-    CARD=$CF_IMG
+# The internal disk: the A21m's image with its own geometry, or the
+# stand-in.
+if [[ -n "$A21M_IMG" ]]; then
+    [[ -f "$A21M_IMG" ]] || { echo "no A21m image at $A21M_IMG (A21M_IMG)" >&2; exit 2; }
+    HDD=$A21M_IMG
+    DISK=,cyls=20784,heads=15,secs=63,bios-chs-trans=large
 else
-    CARD=$R/cf.img
-    rm -f "$CARD" "$R/cf.bak"
-    truncate -s 2000M "$CARD"
-    printf 'label: dos\nunit: sectors\nstart=2048, size=1048576, type=c\n' |
-        sfdisk -q "$CARD"
-    mkfs.fat -F 32 --offset 2048 -n CFDATA "$CARD" 524288 >/dev/null 2>&1
-    extra=()
-    [[ -f "$MEMTEST" ]] && extra=(--memtest "$MEMTEST")
-    build/bin/falcon-boot-mkstick station install "$CARD" --bios --legacy \
-        --uki build/devlink/devlink-recovery.efi "${extra[@]}" \
-        --backup "$R/cf.bak" >"$R/install.log" 2>&1 ||
-        { tail -20 "$R/install.log"; exit 1; }
+    HDD=$R/hdd.img
+    DISK=
+    falcon-bios/tools/mk-legacy-disk.sh "$HDD" >"$R/hdd-install.log" 2>&1 ||
+        { tail -20 "$R/hdd-install.log"; exit 1; }
 fi
+SIG_HDD=$(od -An -tx4 -j440 -N4 "$HDD" | tr -d ' \n')
+
+# The card the station cases boot: station-legacy, built once.
+STATION_CARD=
+station_card() {
+    if [[ -n "${CF_IMG:-}" ]]; then
+        STATION_CARD=$CF_IMG
+    elif [[ -z "$STATION_CARD" ]]; then
+        STATION_CARD=$R/cf.img
+        rm -f "$STATION_CARD" "$R/cf.bak"
+        truncate -s 2000M "$STATION_CARD"
+        printf 'label: dos\nunit: sectors\nstart=2048, size=1048576, type=c\n' |
+            sfdisk -q "$STATION_CARD"
+        mkfs.fat -F 32 --offset 2048 -n CFDATA "$STATION_CARD" 524288 \
+            >/dev/null 2>&1
+        # DevLink recovery's UKI as built, or from its images when absent.
+        [[ -f "$DEVLINK_UKI" ]] ||
+            make --no-print-directory devlink-uki >/dev/null
+        extra=(--uki "$DEVLINK_UKI")
+        [[ -f "$MEMTEST" ]] && extra+=(--memtest "$MEMTEST")
+        build/bin/falcon-boot-mkstick station install "$STATION_CARD" --bios \
+            --legacy "${extra[@]}" \
+            --backup "$R/cf.bak" >"$R/install.log" 2>&1 ||
+            { tail -20 "$R/install.log"; exit 1; }
+    fi
+    CARD=$STATION_CARD
+}
+
+# A card with no falcon record: rigboot.S as its MBR code over a table
+# with one FAT32 partition.
+foreign_card() {
+    CARD=$R/foreign.img
+    rm -f "$CARD"
+    truncate -s 64M "$CARD"
+    printf 'label: dos\nlabel-id: 0x%s\nstart=2048, size=129024, type=c, bootable\n' \
+        "$SIG_FOREIGN" | sfdisk -q --no-reread --no-tell-kernel "$CARD" >/dev/null
+    dd if=build/rigboot.bin of="$CARD" bs=440 count=1 conv=notrunc status=none
+}
 
 # The floppy: jump straight to the CF route.
 printf 'default=cf\ntimeout=1\n' > "$R/JUMP.INI"
@@ -115,16 +170,16 @@ shot() {
 }
 
 # Both disks on throwaway overlays, so neither a run nor Windows writes the
-# card or the A21m's image.
+# card or the internal disk.
 boot() {
     rm -f "$R/com1.log" "$R/mon.sock" "$R/hdd.qcow2" "$R/cf.qcow2"
-    qemu-img create -q -f qcow2 -F raw -b "$(realpath "$A21M_IMG")" "$R/hdd.qcow2"
+    qemu-img create -q -f qcow2 -F raw -b "$(realpath "$HDD")" "$R/hdd.qcow2"
     qemu-img create -q -f qcow2 -F raw -b "$(realpath "$CARD")" "$R/cf.qcow2"
     timeout "$TIMEOUT" "$QPCC" -L /usr/share/qemu -machine "$MACHINE" \
         -cpu pentium3 -m 512 -display none -net none -vga cirrus -boot a \
         -drive if=floppy,format=raw,file="$R/jump.img",readonly=on \
         -drive if=none,id=d0,file="$R/hdd.qcow2",format=qcow2 \
-        -device ide-hd,drive=d0,bus=ide.0,unit=0,$DISK \
+        -device ide-hd,drive=d0,bus=ide.0,unit=0$DISK \
         -drive if=none,id=cf,file="$R/cf.qcow2",format=qcow2 \
         -device falcon-pcc,drive=cf -device piix3-usb-uhci,id=hc \
         -serial file:"$R/com1.log" -monitor unix:"$R/mon.sock",server,nowait \
@@ -135,6 +190,33 @@ halt() {
     mon quit
     wait "$QPID" 2>/dev/null || true
     QPID=
+}
+
+vga_text() {  # vga_text FILE: the 80x25 text screen dumped from 0xB8000
+    python3 - "$1" <<'PY'
+import sys
+b = open(sys.argv[1], 'rb').read()
+for r in range(25):
+    print(''.join(chr(c) if 32 <= c < 127 else ' '
+                  for c in b[r * 160:(r + 1) * 160:2]).rstrip())
+PY
+}
+
+# Waits for a DOS prompt in VGA text memory; 0 when it came. The text is
+# kept in $R/CASE.txt and a screendump in $R/CASE.png.
+wait_prompt() {  # wait_prompt CASE SECONDS
+    local i
+    for (( i = 0; i < $2; i++ )); do
+        sleep 1
+        kill -0 "$QPID" 2>/dev/null || break
+        mon "pmemsave 0xb8000 4000 $R/$1.vga"
+        sleep 0.2
+        [[ -s "$R/$1.vga" ]] || continue
+        vga_text "$R/$1.vga" > "$R/$1.txt"
+        grep -aq 'C:\\>' "$R/$1.txt" && break
+    done
+    shot "$1"
+    grep -aq 'C:\\>' "$R/$1.txt" 2>/dev/null
 }
 
 # The station's rows in the order drawn. With no default in STATION.INI
@@ -169,12 +251,24 @@ result() {      # result CASE OK DETAIL
     log_text "$R/com1.log" > "$R/$1.log"
 }
 
+# The lines of the CF route's handover to a card with no falcon record.
+SWAP_LINES=('drive 0x81 carries no falcon boot record; swapping it with 0x80'
+            'MBR of drive 0x81 to 0x7c00, DL 0x80'
+            'drive 0x81 swapped with 0x80')
+swap_missing() {
+    local p
+    for p in "${SWAP_LINES[@]}"; do
+        has "$p" || { echo "no '$p' on serial"; return; }
+    done
+}
+
 CASES=("$@")
-[[ ${#CASES[@]} -gt 0 ]] || CASES=(menu windows cf)
+[[ ${#CASES[@]} -gt 0 ]] || CASES=(menu windows cf foreign freedos)
 
 for c in "${CASES[@]}"; do
     case $c in
     menu)
+        station_card
         boot
         WHY=
         menu_up || WHY="station-legacy's menu never drew"
@@ -191,7 +285,8 @@ for c in "${CASES[@]}"; do
             "${WHY:+$WHY; }rows: $(paste -sd, <<<"$got")"
         ;;
     windows)
-        TIMEOUT=240 boot
+        station_card
+        if [[ -n "$A21M_IMG" ]]; then TIMEOUT=240 boot; else boot; fi
         choose 'Windows (NTLDR)' || true
         # jump's own route says "handing over" first; the chain's is the
         # one after the row's entry line.
@@ -201,17 +296,23 @@ for c in "${CASES[@]}"; do
         [[ -z "$WHY" ]] && ! after 'entry mbr-.*-p1' \
             "released falcon jump's resident for drive 0x81" &&
             WHY="jump's resident was not released before the handover" 
-        if [[ -z "$WHY" ]]; then
+        if [[ -z "$WHY" && -n "$A21M_IMG" ]]; then
             for (( i = 1; i <= 60; i++ )); do
                 sleep 3
                 shot "$(printf 'windows-%02d' "$i")"
             done
+            DONE="handed over; screens in $R/windows-*.png"
+        elif [[ -z "$WHY" ]]; then
+            want="RIGBOOT dl=80 .* sig80=$SIG_HDD sigdl=$SIG_HDD ndisks=01"
+            wait_for "$want" 20 || WHY="no /$want/ on serial"
+            DONE=$(log_text "$R/com1.log" | grep -ao 'RIGBOOT.*' | tail -1)
         fi
         halt
         result windows "$([[ -z "$WHY" ]] && echo 1 || echo 0)" \
-            "${WHY:-handed over; screens in $R/windows-*.png}"
+            "${WHY:-$DONE}"
         ;;
     cf)
+        station_card
         boot
         choose 'CF card' || true
         sleep 20
@@ -220,6 +321,38 @@ for c in "${CASES[@]}"; do
         echo "NOTE  cf       ${WHY:-taken; its serial is $R/cf.log, its screen $R/cf.png}"
         log_text "$R/com1.log" > "$R/cf.log"
         ;;
+    foreign)
+        foreign_card
+        boot
+        want="RIGBOOT dl=80 dssi=0000:0000 .* sig80=$SIG_FOREIGN sigdl=$SIG_FOREIGN ndisks=02 sig81=$SIG_HDD"
+        WHY=
+        wait_for 'RIGBOOT.*sig81=[0-9a-f-]{8}' 60 || WHY="rigboot never reported"
+        halt
+        [[ -z "$WHY" ]] && WHY=$(swap_missing)
+        [[ -z "$WHY" ]] && ! has "$want" && WHY="no /$want/ on serial"
+        result foreign "$([[ -z "$WHY" ]] && echo 1 || echo 0)" \
+            "${WHY:+$WHY; }$(log_text "$R/com1.log" | grep -ao 'RIGBOOT.*' | tail -1)"
+        ;;
+    freedos)
+        if [[ ! -f "$FIX/freedos.img" ]]; then
+            echo "SKIP  freedos  no $FIX/freedos.img (tools/fixtures/README.md)"
+            continue
+        fi
+        CARD=$FIX/freedos.img
+        rm -f "$R/freedos.vga" "$R/freedos.txt"
+        boot
+        WHY=
+        wait_prompt freedos 90 || WHY="no C:\\> on screen ($R/freedos.txt, $R/freedos.png)"
+        halt
+        [[ -z "$WHY" ]] && WHY=$(swap_missing)
+        log_text "$R/com1.log" > "$R/freedos.log"
+        if [[ -z "$WHY" ]]; then
+            result freedos 1 "C:\\> on screen, card swapped with 0x80 ($R/freedos.png)"
+        else
+            printf 'KNOWN %-8s %s; screen ends: %s\n' freedos "$WHY" \
+                "$(grep -v '^$' "$R/freedos.txt" 2>/dev/null | tail -2 | paste -sd' ')"
+        fi
+        ;;
     *)
         echo "unknown case: $c" >&2
         exit 2
@@ -227,4 +360,5 @@ for c in "${CASES[@]}"; do
     esac
     rm -f "$R/hdd.qcow2" "$R/cf.qcow2"
 done
+rm -f "$R/foreign.img"
 exit "$FAILED"

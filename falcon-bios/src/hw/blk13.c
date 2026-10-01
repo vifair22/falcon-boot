@@ -10,7 +10,22 @@
 #define FAKE_HEADS   255u
 #define FAKE_SECTORS 63u
 
+/* The BDA's count of fixed disks, which AH=08h answers in DL: DOS takes it
+ * as how many drives from 0x80 up to ask about. The route raised it for
+ * this disk before handing over. */
+#define BDA_NDISKS 0x475u
+
 static uint8_t g_last;
+
+/* A byte of low memory, read the way start/bios.h's peek8 does, so the
+ * compiler takes no view on an object at a small constant address. */
+static uint8_t low8(uint32_t addr)
+{
+    uint8_t v;
+
+    __asm__ __volatile__("movb (%1), %0" : "=q"(v) : "r"(addr) : "memory");
+    return v;
+}
 
 static uint8_t *linear(uint16_t seg, uint16_t off)
 {
@@ -115,7 +130,7 @@ void blk13_call(const blk13_dev *d, jmod_regs *r)
         r->ecx = (r->ecx & 0xFFFF0000u) | ((uint32_t)(cyls & 0xFFu) << 8) |
                  (uint32_t)((cyls >> 2) & 0xC0u) | FAKE_SECTORS;
         r->edx = (r->edx & 0xFFFF0000u) | ((FAKE_HEADS - 1u) << 8) |
-                 (r->edx & 0xFFu);
+                 low8(BDA_NDISKS);
         answer(r, 0, 0);
         return;
     }

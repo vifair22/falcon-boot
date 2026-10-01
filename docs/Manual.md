@@ -189,7 +189,7 @@ changed with `mcopy` or by mounting it.
 | `MEM` | memtest86+, `MEMTEST.BIN` on the floppy, started through the x86 boot protocol | the Memory test row |
 | `CDR` | the disc in an IDE CD drive, through `ATA.MOD` and the stick's virtual CD as drive 0xE0 | the CD drive row |
 | `USB` | a falcon stick on a USB port, through `EHCI.MOD`, `UHCI.MOD` or `OHCI.MOD`, as the next BIOS disk | the USB stick row |
-| `PCC` | a CompactFlash card in a PC Card slot, through `PCC.MOD`, as the next BIOS disk | the CF card (PC Card) row |
+| `PCC` | a CompactFlash card in a PC Card slot, through `PCC.MOD`: a falcon card as the next BIOS disk, any other as 0x80 | the CF card (PC Card) row |
 
 Every BIOS disk whose first sector carries the boot signature is a row, the
 CD drive row is there when the floppy holds `ATA.MOD` (which `make jump`
@@ -208,7 +208,12 @@ jump takes the controller from the BIOS, so the machine wants a PS/2 one. The CF
 holds `PCC.MOD` and the machine has a CardBus bridge; the route boots the
 first CompactFlash card in a slot as a disk, its own MBR whatever is on it,
 and needs 16 MB like the others. While it reads the card's configuration it
-uses memory at 0xD0000, and the card's registers sit at I/O 0x1E0-0x1EF. `make
+uses memory at 0xD0000, and the card's registers sit at I/O 0x1E0-0x1EF.
+A card with no falcon record on it (DOS, Windows 9x, any other system's
+MBR) boots as drive C: (0x80), and for that boot the machine's own first
+disk is 0x81; a falcon card or stick boots as the disk after the machine's
+own, which keep their numbers. DOS on the card reads it only in real mode:
+with EMM386 or another memory manager loaded, reads of C: fail. `make
 jump MEMTEST=<file>` copies one on; it has to be a build carrying the x86
 boot protocol header (memtest86+ 6 and later), and the 32-bit build for a
 processor with no 64-bit mode.
