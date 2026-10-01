@@ -131,7 +131,8 @@ typedef struct {
  * (the default then applies) and no [totp]. */
 int stationini_parse(const char *text, size_t len, stationini *out);
 
-/* The entry section of this name, or NULL. */
+/* The entry section of this name, ignoring case as the loaders do, or
+ * NULL. */
 const stationini_entry *stationini_find(const stationini *c,
                                         const char *name);
 

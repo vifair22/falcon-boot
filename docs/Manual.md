@@ -1057,7 +1057,7 @@ processor` with one of:
 Options for Setup, in `falcon/windows.cfg` on p2. Every key is optional;
 without the file nothing changes.
 
-    # one key=value a line, no spaces around =
+    # one key = value a line
     win11_bypass=1
     unattend=falcon/autounattend.xml
 
@@ -1066,8 +1066,9 @@ without the file nothing changes.
 | `win11_bypass` | `1`, `yes` or `true`: Setup skips Windows 11's TPM, Secure Boot, RAM, CPU and storage checks (`HKLM\SYSTEM\Setup\LabConfig`) |
 | `unattend` | an answer file, by its path from p2's root; copied to `X:\falcon-unattend.xml` and set as Setup's `UnattendFile` |
 
-Keys and values are case-sensitive. A line starting `#` is a comment, and
-an unknown key is logged and ignored. The file is read when WinPE attaches
+Keys and values are case-sensitive; spaces around the `=` and at either end
+of the line are ignored. A line starting `#` is a comment, and an unknown
+key is logged and ignored. The file is read when WinPE attaches
 the ISO itself; media whose WinPE needs falcon-vdisk (6.2) does not read it.
 What was applied is in the log, as `options:` lines.
 
@@ -1548,7 +1549,7 @@ installer writes one, and `station status` parses it as the loaders do.
 
 | key | value | absent |
 |---|---|---|
-| `default` | a name (8.4): a section of this file, or a found row's generated name | no default: the list waits |
+| `default` | a name (8.4): a section of this file, or a found row's generated name, matched without regard to case | no default: the list waits |
 | `timeout` | seconds, 0 to 3600; needs `default` | 0: no countdown |
 | `order` | names, comma-separated, each once, at most 32 | the order found |
 | `poweroff` | seconds with no key before the machine powers off, 0 to 86400; 0 never | 300 |
@@ -1573,8 +1574,9 @@ which matches the found row (8.5):
 
 A `default` that parses but names no row on this machine is said before the
 list, which waits (7.5). One that names a hidden row gets no countdown.
-On UEFI a default with no timeout is highlighted and the list waits; the
-BIOS station highlights its default only when `timeout` is set.
+When `default` names a row, the list opens with it selected on both
+loaders; `timeout` adds the countdown on it, and without one the list waits
+and Enter boots it.
 
 ### 8.3 Entry sections
 
@@ -2890,6 +2892,7 @@ followed by the signature lines of 12.2. The pages:
 | BLS, BLB | `the blessed image is not signed with a key this machine has enrolled.` then `Re-bless the ISO with the MOK key enrolled here, enroll this stick's certificate with MokManager, turn Secure Boot off in firmware setup, or run mokutil --disable-validation from Linux.` |
 | EFI | `this EFI payload is not signed with a key this machine has enrolled.` then `Bless it with the sign tool, which rewrites the payload file itself; or turn Secure Boot off in firmware setup, or run mokutil --disable-validation from Linux.` |
 | POS, APP | `the UKI is not signed with an enrolled key.` then `Sign it with the MOK key this machine has enrolled, turn Secure Boot off in firmware setup, or run mokutil --disable-validation from Linux.` |
+| WIN | `the platform refused to load this payload.` then `Windows media boots under Secure Boot only with Microsoft's Windows CA in db: enrol it, or turn Secure Boot off in firmware setup.` Windows media cannot be blessed. |
 | station ESP, MEM | `the image is not signed with a key this machine trusts.` |
 
 The ways out, all the platform's:

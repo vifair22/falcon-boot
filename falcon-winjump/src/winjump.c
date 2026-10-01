@@ -379,15 +379,6 @@ static BOOL module_dir(wchar_t *out, size_t cap)
     return FALSE;
 }
 
-static void trim(char *s)
-{
-    size_t n = strlen(s);
-
-    while (n > 0 && (s[n - 1] == '\r' || s[n - 1] == '\n' ||
-                     s[n - 1] == ' '  || s[n - 1] == '\t'))
-        s[--n] = '\0';
-}
-
 typedef void (*kv_fn)(void *ctx, const char *key, const char *value);
 
 /* Dead-simple ASCII key=value, one per line, '#' comments. FALSE when the
@@ -417,20 +408,14 @@ static BOOL read_kv(const wchar_t *path, kv_fn fn, void *ctx)
     buf[got] = '\0';
 
     for (line = buf; line != NULL && *line != '\0'; line = next) {
-        char *eq;
+        char *key;
+        char *value;
 
         next = jstrchr(line, '\n');
         if (next != NULL)
             *next++ = '\0';
-        trim(line);
-        if (*line == '\0' || *line == '#')
-            continue;
-
-        eq = jstrchr(line, '=');
-        if (eq == NULL)
-            continue;
-        *eq++ = '\0';
-        fn(ctx, line, eq);
+        if (wj_kv_line(line, &key, &value))
+            fn(ctx, key, value);
     }
     return TRUE;
 }

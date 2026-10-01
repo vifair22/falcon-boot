@@ -825,7 +825,7 @@ static void list_run(void)
     unsigned seconds = 0;
     size_t i;
 
-    if (c != (const stationini *)0 && c->timeout != 0 &&
+    if (c != (const stationini *)0 &&
         strows_default(&g_rows, c, view, shown, &sel))
         seconds = c->timeout;
     bios_puts("falcon-bios: ");

@@ -3235,7 +3235,7 @@ flowchart TD
     NB -- "bad, stale, undated, stuck,<br/>or naming nothing here" --> NN["a note, a key"]
     NB -- "no" --> LIST
     ENC --> LIST
-    NN --> LIST{"menu: strows_arrange, strows_default;<br/>screen_menu_timed, a countdown on the default, the first menu only"}
+    NN --> LIST{"menu: strows_arrange, strows_default: the default selected;<br/>screen_menu_timed, its countdown on the first menu only"}
     LIST -- "Escape" --> RF["INT 18h, else bios_reboot"]
     LIST -- "a row, or the countdown" --> ROW{"the row's kind"}
     ROW -- "shelf or UKI" --> POS["POS (11.3.7): pos_run_pick,<br/>a UKI row boots its file without the chooser"]

@@ -162,8 +162,9 @@ static void test_case_comments_crlf(void **state)
     assert_int_equal(e->method, STATIONINI_METHOD_EFI);
     assert_string_equal(e->label, "Arch Linux");
     assert_int_equal(e->line, 7);
-    /* Names are not matched without regard to case. */
-    assert_null(stationini_find(&g_cfg, "linux_1"));
+    /* Names match ignoring case, as the loaders match a row. */
+    assert_ptr_equal(stationini_find(&g_cfg, "linux_1"), e);
+    assert_ptr_equal(stationini_find(&g_cfg, "LINUX_1"), e);
     assert_non_null(stationini_find(&g_cfg, "x"));
 }
 
@@ -201,6 +202,13 @@ static void test_timeout_and_default(void **state)
     expect_err("[general]\ntimeout = 3601\ndefault=memtest\n", 2, "timeout");
     expect_err("[general]\ntimeout = \n", 2, "timeout");
     expect_err("[general]\ntimeout = 5s\n", 2, "3600");
+    /* The loaders match a default to a row ignoring case. */
+    assert_int_equal(parse("[general]\ndefault = WinXP\n[winxp]\n"), 0);
+    assert_string_equal(g_cfg.default_name, "WinXP");
+    assert_int_equal(parse("[general]\ndefault = MEMTEST\ntimeout = 5\n"), 0);
+    assert_int_equal(parse("[general]\ndefault = MBR-CDCCCDCC-P1\n"), 0);
+    assert_int_equal(parse("[general]\ndefault = Nxt-000A\n"), 0);
+    assert_int_equal(parse("[general]\ndefault = UKI-Arch\n"), 0);
     expect_err("[general]\ndefault = win2k\n", 2, "names no entry");
     expect_err("[general]\ndefault = win 2k\n", 2, "is not a name");
     expect_err("[general]\ndefault =\n", 2, "is not a name");

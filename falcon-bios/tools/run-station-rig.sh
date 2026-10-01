@@ -30,6 +30,9 @@
 #   b-p1-noswap  the same with swap = no: DL 0x81, 0x80 still A, and the
 #              BPB's drive number patched to 0x81
 #   b-mbr      B's own MBR code, autodetected: DL 0x80, 0x80 answering as B
+#   default-sel  a default (B's MBR) and no timeout, A p1 put first by
+#              order: no countdown, and Enter boots the default, the row
+#              the list opened on
 #   ini-error  a key STATION.INI does not know: the line and why on screen,
 #              and no countdown
 #   next-boot  a marker naming B's MBR, and a default naming A p1: B's MBR
@@ -194,8 +197,9 @@ mon() {
 
 # Boots disk 0 (and disk 1) until the log carries UNTIL, or for SECONDS
 # when UNTIL is empty, then saves the VGA text and a screendump and stops.
+# With KEYAT set, Enter is pressed once a second after the log carries it.
 boot() {      # boot NAME UNTIL SECONDS DISK0 [DISK1]
-    local name=$1 until=$2 secs=$3 i qpid
+    local name=$1 until=$2 secs=$3 i qpid sent=0
     local drives=(-drive file="$4",format=raw,if=ide,index=0) order=c
     [[ -n "${5:-}" ]] && drives+=(-drive file="$5",format=raw,if=ide,index=1)
     if [[ -n "${FLOPPY:-}" ]]; then
@@ -211,6 +215,12 @@ boot() {      # boot NAME UNTIL SECONDS DISK0 [DISK1]
     EXITED=0
     for ((i = 0; i < secs * 10; i++)); do
         [[ -n "$until" ]] && log_text | grep -aqE -- "$until" && break
+        if [[ -n "${KEYAT:-}" && $sent -eq 0 ]] &&
+           log_text | grep -aqE -- "$KEYAT"; then
+            sleep 1
+            mon "sendkey ret"
+            sent=1
+        fi
         kill -0 "$qpid" 2>/dev/null || { EXITED=1; break; }
         sleep 0.1
     done
@@ -261,7 +271,7 @@ run_rig_case() {  # run_rig_case NAME INI [MARKER]
 
 CASES=("$@")
 [[ ${#CASES[@]} -gt 0 ]] ||
-    CASES=(own-p1 own-p2 logical b-p1-swap b-p1-noswap b-mbr ini-error
+    CASES=(own-p1 own-p2 logical b-p1-swap b-p1-noswap b-mbr default-sel ini-error
            next-boot next-miss mem no-ticks idle idle-no-ticks)
 
 build_disks
@@ -305,6 +315,15 @@ for c in "${CASES[@]}"; do
         run_rig_case b-mbr $'[general]\ndefault = mbr-'"$SIG_B"$'\ntimeout = 1\n'
         judge b-mbr 'MBR of drive 0x81 to 0x7c00, DL 0x80' \
             "RIGBOOT dl=80 dssi=0000:0000 .* sig80=$SIG_B sigdl=$SIG_B"
+        ;;
+    default-sel)
+        KEYAT=' shown$' run_rig_case default-sel \
+            $'[general]\ndefault = mbr-'"$SIG_B"$'\norder = mbr-'"$SIG_A"$'-p1\n'
+        judge default-sel 'MBR of drive 0x81 to 0x7c00, DL 0x80' \
+            "RIGBOOT dl=80 dssi=0000:0000 .* sig80=$SIG_B sigdl=$SIG_B"
+        if grep -aq 'Booting in' "$R/serial.txt"; then
+            fail default-sel "a countdown ran with no timeout"
+        fi
         ;;
     ini-error)
         case_ini ini-error $'[general]\ndefault = mbr-'"$SIG_A"$'-p1\ntimeout = 1\nbogus = 1\n'

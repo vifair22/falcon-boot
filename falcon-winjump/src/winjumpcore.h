@@ -82,4 +82,10 @@ int wj_disk_holds(const extmap_hdr *hdr, wj_sector_read read, void *ctx,
 int wj_backing_extents(const extmap_hdr *hdr, const uint8_t *map, size_t map_len,
                        wj_extent *out, uint32_t cap, uint32_t *n);
 
+/* One line of a key=value file (falcon-winjump.cfg, windows.cfg), split in
+ * place: blanks around the key and the value are dropped, and a blank line,
+ * a '#' comment, a line with no '=' or an empty key is not a pair. 1 with
+ * *key and *value pointing into `line`, else 0. */
+int wj_kv_line(char *line, char **key, char **value);
+
 #endif /* FALCON_WINJUMPCORE_H */
