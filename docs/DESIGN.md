@@ -4011,8 +4011,10 @@ A21m's disk:
   chain; its own CF card row, recorded; and cards with no falcon record
   behind the drive swap (13.6): `rigboot.S` as the card's MBR, reporting DL
   0x80, the card as 0x80, two disks counted and the internal disk as 0x81;
-  and the FreeDOS fixture to `C:\>` with its own `FDCONFIG.SYS` (HIMEMX,
-  `DOS=HIGH`), judged from VGA text.
+  the FreeDOS fixture to `C:\>` with its own `FDCONFIG.SYS` (HIMEMX,
+  `DOS=HIGH`); and, given `W98_CF`, a Windows 98 SE system card (`FORMAT
+  /S`, FAT32 by LBA) answering `ver` at `C:\>`; both judged from VGA
+  text.
 - **The installer on images** (`make test-station-install`): an MBR disk of
   the A21m's shape with a Windows 98 second disk and a LUKS2 shelf, a GPT
   disk with an ESP, Windows and a plaintext shelf; install, status, remove,

@@ -43,6 +43,11 @@
 #             disk
 #   freedos   the FreeDOS fixture (tools/fixtures/README.md) as the card:
 #             C:\> on the screen, the swap on serial
+#   win98     a Windows 98 SE system card (W98_CF: one active FAT32 LBA
+#             partition at 63, FORMAT /S): its COMMAND.COM draws no prompt
+#             until a key, so `ver` is typed once the handover is on
+#             serial, and the answer and C:\> are judged from VGA text,
+#             the swap from serial. Skipped without the image
 #
 # Usage: falcon-bios/tools/run-cfstation-rig.sh [case...]   (default: all)
 # Env:   A21M_IMG  the A21m's disk image as the internal disk (default: the
@@ -50,6 +55,7 @@
 #        CF_IMG    a card image to use instead of building one, for the
 #                  station cases
 #        FIXTURES  where freedos.img is (default build/fixtures)
+#        W98_CF    the win98 case's card (default $FIXTURES/win98cf.img)
 set -euo pipefail
 
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)
@@ -57,6 +63,7 @@ cd "$ROOT"
 R=build/cfstation-rig
 A21M_IMG=${A21M_IMG:-}
 FIX=${FIXTURES:-build/fixtures}
+W98_CF=${W98_CF:-$FIX/win98cf.img}
 QPCC=build/qemu-pcc/build/qemu-system-i386
 MEMTEST=${MEMTEST:-build/memtest/mt86p_810_i586}
 MACHINE=pc,x-south-bridge=piix4-isa
@@ -259,7 +266,7 @@ swap_missing() {
 }
 
 CASES=("$@")
-[[ ${#CASES[@]} -gt 0 ]] || CASES=(menu windows cf foreign freedos)
+[[ ${#CASES[@]} -gt 0 ]] || CASES=(menu windows cf foreign freedos win98)
 
 for c in "${CASES[@]}"; do
     case $c in
@@ -329,20 +336,27 @@ for c in "${CASES[@]}"; do
         result foreign "$([[ -z "$WHY" ]] && echo 1 || echo 0)" \
             "${WHY:+$WHY; }$(log_text "$R/com1.log" | grep -ao 'RIGBOOT.*' | tail -1)"
         ;;
-    freedos)
-        if [[ ! -f "$FIX/freedos.img" ]]; then
-            echo "SKIP  freedos  no $FIX/freedos.img (tools/fixtures/README.md)"
+    freedos|win98)
+        if [[ $c == freedos ]]; then CARD=$FIX/freedos.img; else CARD=$W98_CF; fi
+        if [[ ! -f "$CARD" ]]; then
+            echo "SKIP  $c  no $CARD"
             continue
         fi
-        CARD=$FIX/freedos.img
-        rm -f "$R/freedos.vga" "$R/freedos.txt"
+        rm -f "$R/$c.vga" "$R/$c.txt"
         boot
         WHY=
-        wait_prompt freedos 90 || WHY="no C:\\> on screen ($R/freedos.txt, $R/freedos.png)"
+        if [[ $c == win98 ]]; then
+            wait_for 'handing over' 60 && sleep 20
+            for k in v e r ret; do mon "sendkey $k"; sleep 0.3; done
+            wait_prompt "$c" 30 && grep -aq 'Windows 98 \[Version' "$R/$c.txt" ||
+                WHY="no Windows 98 version line and C:\\> on screen ($R/$c.txt, $R/$c.png)"
+        else
+            wait_prompt "$c" 90 || WHY="no C:\\> on screen ($R/$c.txt, $R/$c.png)"
+        fi
         halt
         [[ -z "$WHY" ]] && WHY=$(swap_missing)
-        result freedos "$([[ -z "$WHY" ]] && echo 1 || echo 0)" \
-            "${WHY:-C:\\> on screen, card swapped with 0x80 ($R/freedos.png)}"
+        result "$c" "$([[ -z "$WHY" ]] && echo 1 || echo 0)" \
+            "${WHY:-C:\\> on screen, card swapped with 0x80 ($R/$c.png)}"
         ;;
     *)
         echo "unknown case: $c" >&2

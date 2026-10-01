@@ -73,7 +73,8 @@ test-station-legacy: station-legacy devlink-uki $(MKSTICK)
 # stand-in for the A21m's disk behind it (falcon-bios/tools/mk-legacy-disk.sh,
 # or the A21m's own image with A21M_IMG=): the menu, and Windows chained
 # from the card; and cards with no falcon record booted behind the drive
-# swap: rigboot.S and FreeDOS (falcon-bios/tools/run-cfstation-rig.sh). Needs the rig QEMU, and
+# swap: rigboot.S, FreeDOS and, given W98_CF=, a Windows 98 SE system
+# card (falcon-bios/tools/run-cfstation-rig.sh). Needs the rig QEMU, and
 # DevLink recovery's UKI or its images for the station card.
 test-cfstation: station-legacy jump $(MKSTICK) $(BIOS_RIGBOOT)
 	falcon-bios/tools/run-cfstation-rig.sh
