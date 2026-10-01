@@ -588,6 +588,13 @@ fields, and the rig's station update cases had passed `--key`, so they
 never looked. After the fix, rebooted: the code under the banner matched
 the new secret (the user, 2026-09-30).
 
+The stick again the same day to master d6d4036 (stage 2's loading spinner),
+by `mkstick update /dev/sdb`: stages 2 and 3 read back as the build's
+(cc64a3c4..., 95f9bee5...), the signed loader 3c4e0d39.... Backups on the
+T430 in `~/falcon-backups/`: `sdb-bios-20260930-215945.bin` and
+`sdb-stick-loader-20260930-215945.efi` (the 9dbb4d1 loader, 9f128372...).
+The A21m's station-legacy went to d6d4036 from a bundle (8d9a7940...).
+
 ### Next
 
 1. Nothing on the falcon side. The DevLink session's own: w98link 9caa3ef

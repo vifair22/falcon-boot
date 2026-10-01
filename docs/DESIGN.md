@@ -3017,9 +3017,9 @@ MEASURED ON REAL HARDWARE (2026-09-23), BIOS through CSM: falcon-bios stages
 protective MBR with no active flag (`docs/notes/bios-route.md` Section 6f).
 The same day, on an ASUS TP410UAR through CSM, the personal OS booted end to
 end over BIOS: p3 unlocked, the UKI unwrapped, p4 unlocked from the
-credential with no second prompt. Still unmeasured on hardware: the other
-four BIOS routes (a direct Linux ISO, an ISO's own loader through the
-virtual CD, BSD, Windows).
+credential with no second prompt. The other four BIOS routes (a direct
+Linux ISO, an ISO's own loader through the virtual CD, BSD, Windows) were
+measured on 2026-09-30, below.
 
 MEASURED ON REAL HARDWARE (2026-09-29), UEFI with Secure Boot on: the
 ThinkPad T430 (coreboot and MrChromebox edk2, TPM 1.2 behind
@@ -3039,7 +3039,9 @@ matched after the reboot. The library's background probe kept the menu's
 keys live over a USB 1.1 stick on BIOS (7.8). The A21m took station-legacy
 at 411611c from a station bundle, and its jump floppy shows stage 2's
 loading line and spinner (14.3); the idle power-off turned it off through
-APM (7.9).
+APM (7.9). The stick's four remaining BIOS routes booted on a BIOS machine:
+a Linux ISO direct, an ISO's own loader through the virtual CD, Windows
+install media, and BSD.
 
 I686 IN THE RIG (2026-09-24): falcon-bios is i686 in 32-bit protected mode
 and promotes at run time (docs/notes/bios-route.md Section 6h). On SeaBIOS
