@@ -11,7 +11,10 @@
  * the machine for code it never contained. Its own name keeps its own
  * generation.
  */
+#include <version.h>
+
 __attribute__((section(".sbat"), used))
 static const char sbat_csv[] =
     "sbat,1,SBAT Version,sbat,1,https://github.com/rhboot/shim/blob/main/SBAT.md\n"
-    "falcon-boot-pos,1,falcon,falcon-boot-pos,0.1.0,https://git.airies.net/vifair22/falcon-boot\n";
+    "falcon-boot-pos,1,falcon,falcon-boot-pos," FALCON_SEMVER
+    ",https://git.airies.net/vifair22/falcon-boot\n";

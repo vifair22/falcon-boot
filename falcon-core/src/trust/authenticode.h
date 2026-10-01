@@ -24,8 +24,8 @@
  * hash" produces, so shim's rule is the one that predicts correctly.
  */
 
-#ifndef FALCON_SECBOOT_AUTHENTICODE_H
-#define FALCON_SECBOOT_AUTHENTICODE_H
+#ifndef FALCON_TRUST_AUTHENTICODE_H
+#define FALCON_TRUST_AUTHENTICODE_H
 
 #include <crypto/hash.h>
 #include <trust/der.h>
@@ -121,4 +121,4 @@ int ac_signer_cert(const ac_signed *s, x509_cert *out);
  * issuer here. DER_OK or DER_ERR. */
 int ac_issuer_cert(const ac_signed *s, const x509_cert *c, x509_cert *out);
 
-#endif /* FALCON_SECBOOT_AUTHENTICODE_H */
+#endif /* FALCON_TRUST_AUTHENTICODE_H */

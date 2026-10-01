@@ -17,8 +17,8 @@
  * caller treats the rest of that variable as absent.
  */
 
-#ifndef FALCON_SECBOOT_SIGLIST_H
-#define FALCON_SECBOOT_SIGLIST_H
+#ifndef FALCON_TRUST_SIGLIST_H
+#define FALCON_TRUST_SIGLIST_H
 
 #include <trust/der.h>
 
@@ -52,4 +52,4 @@ int siglist_has_hash(der_span store, const uint8_t hash[32]);
  * not parse: a revocation is only reported when it is certain. */
 int sbat_revoked(der_span level, der_span img);
 
-#endif /* FALCON_SECBOOT_SIGLIST_H */
+#endif /* FALCON_TRUST_SIGLIST_H */

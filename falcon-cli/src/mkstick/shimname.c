@@ -230,8 +230,7 @@ cli_status shim_next_stage_name(const char *shim_path, char *out, size_t cap)
     return set_error(CLI_ERR_INVALID,
                      "could not read a next-stage loader name out of %s "
                      "(%zu ambiguous candidates); the shim layout this tool "
-                     "was measured against has changed, see "
-                     "docs/notes/shim-spike.md",
+                     "was measured against has changed",
                      shim_path, s.fallback.count);
 }
 

@@ -11,7 +11,7 @@ on an image blessed with the sign tool.
 
 BIOS is a fourth column and not a Secure Boot state: that machine has
 no db and no shim, so it has no blessed cell and nothing to refuse.
-BIOS, Pentium III is the same machine without a 64-bit mode, and is
+BIOS, i686 is the same machine without a 64-bit mode, and is
 where the 32-bit ISOs are judged; they are N/A under UEFI, whose loader
 is x86-64, and the 64-bit ISOs are N/A there.
 
@@ -36,7 +36,7 @@ Loader: 0.1.0_20260920.1824.release, 0.1.0_20260924.1655.release, 0.1.0_20260925
 
 ## Summary
 
-| tier | ISOs run | SB off, drop | target | SB on, MS CA | target | SB on, own keys | BIOS, drop | BIOS, Pentium III, drop |
+| tier | ISOs run | SB off, drop | target | SB on, MS CA | target | SB on, own keys | BIOS, drop | BIOS, i686, drop |
 |---|---|---|---|---|---|---|---|---|
 | A | 27 | 22/22 (100%) | 100% | 22/22 (100%) | 95% | 19/22 (86%) | 27/27 (100%) | 4/5 (80%) |
 | B | 13 | 9/9 (100%) | 90% | 9/9 (100%) | - | 9/9 (100%) | 13/13 (100%) | 3/4 (75%) |
@@ -44,7 +44,7 @@ Loader: 0.1.0_20260920.1824.release, 0.1.0_20260924.1655.release, 0.1.0_20260925
 
 ## Matrix
 
-| ISO | tier | family | SB off drop | SB off chain | SB off bless | SB on, MS CA drop | SB on, MS CA chain | SB on, MS CA bless | SB on, own keys drop | SB on, own keys chain | SB on, own keys bless | BIOS drop | BIOS chain | BIOS bless | BIOS, Pentium III drop | BIOS, Pentium III chain | BIOS, Pentium III bless |
+| ISO | tier | family | SB off drop | SB off chain | SB off bless | SB on, MS CA drop | SB on, MS CA chain | SB on, MS CA bless | SB on, own keys drop | SB on, own keys chain | SB on, own keys bless | BIOS drop | BIOS chain | BIOS bless | BIOS, i686 drop | BIOS, i686 chain | BIOS, i686 bless |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | debian-live-13.7 | A | debian-live | PASS | FAIL | PASS | PASS | FAIL | PASS | FAIL | FAIL | PASS | PASS | FAIL | - | N/A | N/A | N/A |
 | fedora-ws-44 | A | fedora-live | PASS | FAIL | PASS | PASS | FAIL | PASS | REFUSED | REFUSED | PASS | PASS | FAIL | - | N/A | N/A | N/A |

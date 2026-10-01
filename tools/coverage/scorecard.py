@@ -40,7 +40,7 @@ STATES = [('off', 'SB off'), ('ms', 'SB on, MS CA'), ('own', 'SB on, own keys'),
           ('bios', 'BIOS'),
           # The same on an i686: no long mode, so the 32-bit ISOs
           # (corpus.tsv, arch) and nothing else.
-          ('bios32', 'BIOS, Pentium III')]
+          ('bios32', 'BIOS, i686')]
 ROUTE_ORDER = ['dnd', 'chain', 'blessed']
 ROUTE_NAMES = {'dnd': 'drop', 'chain': 'chain', 'blessed': 'bless'}
 # Headline: Secure Boot off, and Secure Boot on where db trusts the Microsoft
@@ -107,7 +107,7 @@ def main():
     w('')
     w('BIOS is a fourth column and not a Secure Boot state: that machine has')
     w('no db and no shim, so it has no blessed cell and nothing to refuse.')
-    w('BIOS, Pentium III is the same machine without a 64-bit mode, and is')
+    w('BIOS, i686 is the same machine without a 64-bit mode, and is')
     w('where the 32-bit ISOs are judged; they are N/A under UEFI, whose loader')
     w('is x86-64, and the 64-bit ISOs are N/A there.')
     w('')
@@ -187,7 +187,7 @@ def main():
     w('## Summary')
     w('')
     w('| tier | ISOs run | SB off, drop | target | SB on, MS CA | target | '
-      'SB on, own keys | BIOS, drop | BIOS, Pentium III, drop |')
+      'SB on, own keys | BIOS, drop | BIOS, i686, drop |')
     w('|---|---|---|---|---|---|---|---|---|')
     def frac(t, st):
         passed, n = t.get(st, (0, 0))

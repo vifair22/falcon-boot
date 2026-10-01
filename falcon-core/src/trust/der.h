@@ -21,8 +21,8 @@
  * is tested off the firmware and fuzzed by the corruption sweep.
  */
 
-#ifndef FALCON_SECBOOT_DER_H
-#define FALCON_SECBOOT_DER_H
+#ifndef FALCON_TRUST_DER_H
+#define FALCON_TRUST_DER_H
 
 #include <stddef.h>
 #include <stdint.h>
@@ -78,4 +78,4 @@ int der_eq(der_span a, der_span b);
 /* Does an OID element's body equal the given encoded arc bytes? */
 int der_oid_is(der_span body, const uint8_t *oid, size_t oid_len);
 
-#endif /* FALCON_SECBOOT_DER_H */
+#endif /* FALCON_TRUST_DER_H */

@@ -119,7 +119,7 @@ done
 
 if [[ "${BIOS:-0}" -eq 1 && "$SECBOOT" -eq 1 ]]; then
     echo "ERROR: --bios and --secboot are exclusive: a BIOS machine has no db," \
-         "no shim and nothing to enforce (docs/notes/bios-route.md Section 3)" >&2
+         "no shim and nothing to enforce" >&2
     exit 1
 fi
 

@@ -15,8 +15,8 @@
  * hundred kilobytes and the loader's stack is no place for them.
  */
 
-#ifndef FALCON_SECBOOT_PROBE_H
-#define FALCON_SECBOOT_PROBE_H
+#ifndef FALCON_TRUST_PROBE_H
+#define FALCON_TRUST_PROBE_H
 
 #include <trust/authenticode.h>
 #include <trust/trust.h>
@@ -30,4 +30,4 @@
 void trust_probe(const trust_stores *st, ac_read_fn read, void *ctx,
                  uint64_t size, trust_result *out);
 
-#endif /* FALCON_SECBOOT_PROBE_H */
+#endif /* FALCON_TRUST_PROBE_H */

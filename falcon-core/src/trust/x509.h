@@ -19,8 +19,8 @@
  * Plus the subject's CN as ASCII, for the menu.
  */
 
-#ifndef FALCON_SECBOOT_X509_H
-#define FALCON_SECBOOT_X509_H
+#ifndef FALCON_TRUST_X509_H
+#define FALCON_TRUST_X509_H
 
 #include <trust/der.h>
 
@@ -62,4 +62,4 @@ size_t x509_cn(der_span name, char *out, size_t cap);
  * whose issuer IS included is judged through that issuer instead. */
 int x509_reaches(const x509_cert *c, const x509_cert *a);
 
-#endif /* FALCON_SECBOOT_X509_H */
+#endif /* FALCON_TRUST_X509_H */

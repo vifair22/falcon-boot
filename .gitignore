@@ -7,3 +7,4 @@
 
 # Claude Code worktrees: session state, never part of the tree.
 /.claude/worktrees/
+__pycache__/

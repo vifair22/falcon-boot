@@ -23,8 +23,8 @@
  * whole decision is table-tested on the host.
  */
 
-#ifndef FALCON_SECBOOT_TRUST_H
-#define FALCON_SECBOOT_TRUST_H
+#ifndef FALCON_TRUST_TRUST_H
+#define FALCON_TRUST_TRUST_H
 
 #include <trust/der.h>
 
@@ -99,4 +99,4 @@ typedef struct {
 
 void trust_summarize(const trust_stores *st, trust_summary *out);
 
-#endif /* FALCON_SECBOOT_TRUST_H */
+#endif /* FALCON_TRUST_TRUST_H */
