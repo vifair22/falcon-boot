@@ -57,6 +57,7 @@
 #include <common/proc.h>
 #include <common/util.h>
 #include <mkstick/mkstick.h>
+#include <mkstick/shimname.h>
 #include <mkstick/station.h>
 #include <mkstick/totpcore.h>
 
@@ -73,7 +74,6 @@
 #include <tpm/tpm2.h>
 #include <trust/authenticode.h>
 
-#define STATION_EFI      "grubx64.efi"
 #define EFI_MAX          ((size_t)16 * 1024 * 1024)
 #define LOG_MAX          ((size_t)4 * 1024 * 1024)
 #define INI_MAX          16384u
@@ -93,6 +93,8 @@ typedef struct {
     size_t    ini_len;
     int       have_ini;
     stationini parsed;
+    /* The loader's name in \EFI\falcon (stn_esp_loader_name). */
+    char      loader[SHIM_NEXT_STAGE_MAX];
 } stn_esp;
 
 /* A file under \EFI\falcon: through the mount when the ESP is mounted, off
@@ -170,6 +172,10 @@ static cli_status esp_open(stn_esp *e, const char *disk)
     e->len = (p->end_lba - p->start_lba + 1u) * e->s.disks[0].d.sector;
     e->mounted = stn_part_mounted(&e->s.disks[0].d, p->number, e->where,
                                   sizeof e->where);
+    rc = stn_esp_loader_name(e->s.disks[0].d.path, e->off, e->len, e->loader,
+                             sizeof e->loader);
+    if (rc != CLI_OK)
+        return rc;
     rc = esp_read(e, STATIONINI_FILE, e->ini, sizeof e->ini, &e->ini_len);
     if (rc == CLI_OK) {
         e->have_ini = 1;
@@ -417,35 +423,43 @@ static int mem_read(void *ctx, uint64_t off, uint64_t len, void *buf)
     return 0;
 }
 
+cli_status stn_image_digest(const uint8_t *img, size_t n, int sha1,
+                            uint8_t out[32])
+{
+    static uint8_t scratch[65536];
+    ac_layout l;
+    mem_file f;
+
+    f.p = img;
+    f.n = n;
+    if (ac_layout_read(img, n < 65536u ? n : 65536u, n, &l) != AC_OK ||
+        ac_hash_with(&l, sha1 ? hash_sha1() : hash_sha256(), mem_read, &f,
+                     scratch, sizeof scratch, out) != AC_OK)
+        return set_error(CLI_ERR_INVALID, "not a PE image");
+    return CLI_OK;
+}
+
 /* The station image's Authenticode digest in the log's bank: what shim and
  * the firmware record for an image they load. */
 static cli_status station_digest(stn_esp *e, int sha1, uint8_t out[32])
 {
-    static uint8_t scratch[65536];
     uint8_t *img = malloc(EFI_MAX);
-    ac_layout l;
-    mem_file f;
     size_t got = 0;
     cli_status rc;
 
     if (img == NULL)
         return set_error(CLI_ERR_NOMEM, "the station image");
-    rc = esp_read(e, STATION_EFI, img, EFI_MAX, &got);
+    rc = esp_read(e, e->loader, img, EFI_MAX, &got);
     if (rc != CLI_OK) {
         free(img);
-        return set_error(CLI_ERR_NOTFOUND, "\\EFI\\falcon\\" STATION_EFI
-                         " could not be read off the ESP");
+        return set_error(CLI_ERR_NOTFOUND, "\\EFI\\falcon\\%s could not "
+                         "be read off the ESP", e->loader);
     }
-    f.p = img;
-    f.n = got;
-    if (ac_layout_read(img, got < 65536u ? got : 65536u, got, &l) != AC_OK ||
-        ac_hash_with(&l, sha1 ? hash_sha1() : hash_sha256(), mem_read, &f,
-                     scratch, sizeof scratch, out) != AC_OK) {
-        free(img);
-        return set_error(CLI_ERR_INVALID, "\\EFI\\falcon\\" STATION_EFI
-                         " is not a PE image");
-    }
+    rc = stn_image_digest(img, got, sha1, out);
     free(img);
+    if (rc != CLI_OK)
+        return set_error(CLI_ERR_INVALID, "\\EFI\\falcon\\%s is not a "
+                         "PE image", e->loader);
     return CLI_OK;
 }
 
@@ -481,6 +495,7 @@ static cli_status read_saved(const char *file, uint8_t **out, size_t *len)
 static cli_status station_pcrs_saved(stn_esp *e, const char *log_file,
                                      const uint8_t *rec, size_t rec_len,
                                      int live, uint32_t mask,
+                                     const uint8_t *old1,
                                      uint8_t vals[][32])
 {
     static uint8_t pcr[EVSAVE_PCRS][EVSAVE_DIGEST_LEN];
@@ -502,7 +517,12 @@ static cli_status station_pcrs_saved(stn_esp *e, const char *log_file,
     st = read_log(log_file, &log, &len);
     if (st != CLI_OK && !(st == CLI_ERR_NOTFOUND && log_file == NULL))
         return st;
-    rc = totpc_merge12(log, len, rec, rec_len, digest, pcr, &from, &bad);
+    /* With old1, this boot ran the loader the ESP had before mkstick
+     * update: its measurement is found by old1 and taken as the new
+     * loader's, whose values the station will read after the reboot. */
+    rc = totpc_merge12_as(log, len, rec, rec_len,
+                          old1 != NULL ? old1 : digest,
+                          old1 != NULL ? digest : NULL, pcr, &from, &bad);
     free(log);
     switch (rc) {
     case TOTPC_OK:
@@ -510,9 +530,9 @@ static cli_status station_pcrs_saved(stn_esp *e, const char *log_file,
     case TOTPC_ERR_STATION:
         return set_error(CLI_ERR_INVALID, "this system was not started by "
                          "the station on %s: the event log it saved has no "
-                         "measurement of its \\EFI\\falcon\\" STATION_EFI
-                         ". Enroll from a system the station started",
-                         e->s.disks[0].d.path);
+                         "measurement of its \\EFI\\falcon\\%s. Enroll "
+                         "from a system the station started",
+                         e->s.disks[0].d.path, e->loader);
     case TOTPC_ERR_PCR:
         return set_error(CLI_ERR_INVALID, "the event logs do not account for "
                          "PCR %u as the station read it; enrolling would seal "
@@ -548,8 +568,10 @@ static cli_status station_pcrs_saved(stn_esp *e, const char *log_file,
 static cli_status station_pcrs(stn_esp *e, const char *log_file,
                                const char *saved_file, int live,
                                tpm_version ver, uint32_t mask,
+                               const uint8_t *old1, const uint8_t *old256,
                                uint8_t vals[][32])
 {
+    const uint8_t *old = ver == TPM_VER_20 ? old256 : old1;
     static evlog_replay rep;
     static evlog_replay all;
     uint8_t digest[32];
@@ -569,7 +591,7 @@ static cli_status station_pcrs(stn_esp *e, const char *log_file,
         st = read_saved(saved_file, &rec, &rec_len);
         if (st == CLI_OK) {
             st = station_pcrs_saved(e, log_file, rec, rec_len, live, mask,
-                                    vals);
+                                    old1, vals);
             free(rec);
             return st;
         }
@@ -582,7 +604,14 @@ static cli_status station_pcrs(stn_esp *e, const char *log_file,
     st = read_log(log_file, &log, &len);
     if (st != CLI_OK)
         return st;
-    rc = evlog_replay_run(log, len, alg, 4, digest, &rep);
+    /* With old, as in station_pcrs_saved: the replay stops at the old
+     * loader's measurement and takes it as the new one's. */
+    rc = evlog_replay_init(alg, &rep);
+    if (rc == EVLOG_OK) {
+        if (old != NULL)
+            evlog_replay_substitute(&rep, 4, old, digest);
+        rc = evlog_replay_more(log, len, 4, old != NULL ? old : digest, &rep);
+    }
     if (rc == EVLOG_OK)
         rc = evlog_replay_run(log, len, alg, 0, NULL, &all);
     free(log);
@@ -594,9 +623,9 @@ static cli_status station_pcrs(stn_esp *e, const char *log_file,
     if (!rep.stopped)
         return set_error(CLI_ERR_INVALID, "this system was not started by "
                          "the station on %s: the firmware's event log has no "
-                         "measurement of its \\EFI\\falcon\\" STATION_EFI
-                         ". Enroll from a system the station started",
-                         e->s.disks[0].d.path);
+                         "measurement of its \\EFI\\falcon\\%s. Enroll "
+                         "from a system the station started",
+                         e->s.disks[0].d.path, e->loader);
     for (i = 0; i < STATIONINI_TOTP_PCRS; i++) {
         if (((mask >> i) & 1u) == 0)
             continue;
@@ -716,8 +745,11 @@ static void show_secret(const char *account, const uint8_t *seed)
     char uri[TOTP_URI_MAX];
 
     if (totpc_base32(seed, TOTP_SEED_LEN, secret, sizeof secret) != TOTPC_OK ||
-        totpc_uri(account, seed, TOTP_SEED_LEN, uri, sizeof uri) != TOTPC_OK)
+        totpc_uri(account, seed, TOTP_SEED_LEN, uri, sizeof uri) != TOTPC_OK) {
+        log_error("the secret could not be shown; `station totp reseal` "
+                  "makes a new one");
         return;
+    }
     cli_log_blank();
     log_info("Add this to an authenticator now; it is not shown again.");
     log_info("  account: %s:%s", TOTP_ISSUER, account);
@@ -733,17 +765,38 @@ static void show_secret(const char *account, const uint8_t *seed)
     crypto_wipe(uri, sizeof uri);
 }
 
-static cli_status enroll(const cli_args *a, int reseal)
+/* What an enrollment is asked for: from the command line (enroll, reseal),
+ * or from mkstick update (stn_totp_reseal_update). */
+typedef struct {
+    const char    *disk;
+    const char    *pcrs;       /* NULL: TOTP_PCRS_DEFAULT */
+    const char    *label;      /* NULL: the host name */
+    const char    *owner;      /* --owner-auth-file, or NULL */
+    const char    *sock;
+    const char    *logf;
+    const char    *savedf;
+    int            reseal;
+    /* Keep the enrolled [totp]'s PCRs and label rather than pcrs and
+     * label: an update's reseal is the same enrollment, sealed again. */
+    int            keep;
+    /* The loader this boot ran, when it is no longer the one on the ESP
+     * (station_pcrs): SHA-1 and SHA-256 Authenticode digests, or NULL. */
+    const uint8_t *old1;
+    const uint8_t *old256;
+} enroll_in;
+
+static cli_status enroll(const enroll_in *in)
 {
     static stn_esp e;
     static uint8_t vals[STATIONINI_TOTP_PCRS][32];
     owner_auth o;
     stationini_totp t;
     tpm_version ver = TPM_VER_NONE;
-    const char *sock = cli_value(a, "tpm-socket", NULL);
-    const char *logf = cli_value(a, "event-log", NULL);
-    const char *savedf = cli_value(a, "saved-log", NULL);
-    const char *label = cli_value(a, "label", NULL);
+    const char *sock = in->sock;
+    const char *logf = in->logf;
+    const char *savedf = in->savedf;
+    const char *label = in->label;
+    const char *pcrs = in->pcrs != NULL ? in->pcrs : TOTP_PCRS_DEFAULT;
     uint8_t seed[TOTP_SEED_LEN];
     char host[64];
     uint32_t mask = 0;
@@ -751,42 +804,45 @@ static cli_status enroll(const cli_args *a, int reseal)
     int rc;
     cli_status st;
 
-    if (totpc_parse_pcrs(cli_value(a, "pcrs", TOTP_PCRS_DEFAULT), &mask) !=
-        TOTPC_OK)
+    if (!in->keep && totpc_parse_pcrs(pcrs, &mask) != TOTPC_OK)
         return set_error(CLI_ERR_USAGE, "--pcrs: PCR numbers 0 to 15, each "
                          "once, comma-separated");
     if (sock != NULL && logf == NULL && savedf == NULL)
         return set_error(CLI_ERR_USAGE, "--tpm-socket needs --event-log or "
                          "--saved-log");
-    if (label == NULL) {
+    if (label == NULL && !in->keep) {
         if (gethostname(host, sizeof host) != 0)
             (void)snprintf(host, sizeof host, "station");
         host[sizeof host - 1u] = '\0';
         label = host;
     }
-    if (strlen(TOTP_ISSUER ":") + strlen(label) >= STATIONINI_LABEL_MAX ||
-        strpbrk(label, ";#") != NULL)
+    if (!in->keep &&
+        (strlen(TOTP_ISSUER ":") + strlen(label) >= STATIONINI_LABEL_MAX ||
+         strpbrk(label, ";#") != NULL))
         return set_error(CLI_ERR_USAGE, "--label: up to %u characters, no ; "
                          "or #", (unsigned)(STATIONINI_LABEL_MAX - 16u));
 
-    st = esp_open(&e, a->pos[0]);
+    st = esp_open(&e, in->disk);
     if (st != CLI_OK)
         return st;
-    if (!reseal && e.parsed.totp.present)
+    if (!in->reseal && e.parsed.totp.present)
         return set_error(CLI_ERR_EXISTS, "the station on %s already has a "
                          "TOTP enrolled; `station totp reseal` replaces it",
-                         a->pos[0]);
-    if (reseal && !e.parsed.totp.present)
+                         in->disk);
+    if (in->reseal && !e.parsed.totp.present)
         return set_error(CLI_ERR_NOTFOUND, "the station on %s has no TOTP "
                          "enrolled; `station totp enroll` makes one",
-                         a->pos[0]);
-    st = owner_read(cli_value(a, "owner-auth-file", NULL), &o);
+                         in->disk);
+    if (in->keep)
+        mask = e.parsed.totp.pcrs;
+    st = owner_read(in->owner, &o);
     if (st != CLI_OK)
         return st;
 
     st = tpm_open(sock, &ver);
     if (st == CLI_OK)
-        st = station_pcrs(&e, logf, savedf, sock == NULL, ver, mask, vals);
+        st = station_pcrs(&e, logf, savedf, sock == NULL, ver, mask,
+                          in->old1, in->old256, vals);
     if (st != CLI_OK) {
         tpm_close();
         crypto_wipe(&o, sizeof o);
@@ -794,7 +850,7 @@ static cli_status enroll(const cli_args *a, int reseal)
     }
     index = ver == TPM_VER_20 ? TPM2_TOTP_INDEX : TPM12_TOTP_INDEX;
     log_info("TPM %s, index 0x%08x, PCRs %s", ver == TPM_VER_20 ? "2.0" : "1.2",
-             index, cli_value(a, "pcrs", TOTP_PCRS_DEFAULT));
+             index, in->keep ? "as enrolled" : pcrs);
 
     if (getrandom_rng(NULL, seed, sizeof seed) != 0) {
         tpm_close();
@@ -805,7 +861,10 @@ static cli_status enroll(const cli_args *a, int reseal)
     t.present = 1;
     t.index = index;
     t.pcrs = mask;
-    (void)snprintf(t.label, sizeof t.label, "%s:%s", TOTP_ISSUER, label);
+    if (in->keep)
+        (void)snprintf(t.label, sizeof t.label, "%s", e.parsed.totp.label);
+    else
+        (void)snprintf(t.label, sizeof t.label, "%s:%s", TOTP_ISSUER, label);
 
     /* An index left by an earlier enrollment, or by a reseal's old one, is
      * replaced: its policy is fixed at definition. */
@@ -865,19 +924,62 @@ static cli_status enroll(const cli_args *a, int reseal)
     crypto_wipe(&o, sizeof o);
     log_info("sealed; \\EFI\\falcon\\%s on %s partition %u has the [totp] "
              "section", STATIONINI_FILE, e.s.disks[0].d.path, e.number);
+    /* A kept label is the issuer's and the account together; the URI wants
+     * the account alone. */
+    if (in->keep) {
+        const char *colon = strchr(t.label, ':');
+
+        label = colon != NULL ? colon + 1 : t.label;
+    }
     show_secret(label, seed);
     crypto_wipe(seed, sizeof seed);
     return CLI_OK;
 }
 
+static void enroll_args(const cli_args *a, int reseal, enroll_in *in)
+{
+    memset(in, 0, sizeof *in);
+    in->disk = a->pos[0];
+    in->pcrs = cli_value(a, "pcrs", NULL);
+    in->label = cli_value(a, "label", NULL);
+    in->owner = cli_value(a, "owner-auth-file", NULL);
+    in->sock = cli_value(a, "tpm-socket", NULL);
+    in->logf = cli_value(a, "event-log", NULL);
+    in->savedf = cli_value(a, "saved-log", NULL);
+    in->reseal = reseal;
+}
+
+cli_status stn_totp_reseal_update(const stn_totp_update *u)
+{
+    enroll_in in;
+
+    memset(&in, 0, sizeof in);
+    in.disk = u->disk;
+    in.owner = u->owner_auth_file;
+    in.sock = u->tpm_socket;
+    in.logf = u->event_log;
+    in.savedf = u->saved_log;
+    in.reseal = 1;
+    in.keep = 1;
+    in.old1 = u->old_sha1;
+    in.old256 = u->old_sha256;
+    return enroll(&in);
+}
+
 static cli_status enroll_run(const cli_args *a)
 {
-    return enroll(a, 0);
+    enroll_in in;
+
+    enroll_args(a, 0, &in);
+    return enroll(&in);
 }
 
 static cli_status reseal_run(const cli_args *a)
 {
-    return enroll(a, 1);
+    enroll_in in;
+
+    enroll_args(a, 1, &in);
+    return enroll(&in);
 }
 
 static cli_status remove_run(const cli_args *a)

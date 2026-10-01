@@ -112,17 +112,45 @@ int stn_is_machine(const mks_disk *d);
 /* The index in r of the partition numbered n, or -1. */
 int stn_part_index(const mks_records *r, uint32_t n);
 
-/* The disk's first boot partition with a BIOS stage 3 (the station
- * partition; an ESP's station record carries stage 3 at 0), or -1. */
-int stn_bios_boot(const mks_records *r);
 
 /* The ESP: GPT's type, or MBR 0xEF; -1 when there is none. */
 int stn_find_esp(const mks_records *r);
+
+/* The loader's name in \EFI\falcon of the FAT volume at [off, off + len)
+ * of disk: the next stage shimx64.efi there names, or STN_ESP_LOADER when
+ * there is no shim (--no-shim). What install wrote, so what status, totp
+ * and update read. */
+cli_status stn_esp_loader_name(const char *disk, uint64_t off, uint64_t len,
+                               char *out, size_t cap);
 
 extern const cli_cmd stn_cmd_install;
 
 /* `station totp ...`, the UEFI station's TOTP check (totp.c): argv as
  * `station` got it with the word totp taken out. */
 cli_status stn_totp_main(int argc, char **argv);
+
+/* A PE image's Authenticode digest, SHA-1 (sha1) or SHA-256: what the
+ * firmware and shim measure it as. */
+cli_status stn_image_digest(const uint8_t *img, size_t n, int sha1,
+                            uint8_t out[32]);
+
+/* `station totp reseal` for mkstick update, run right after it wrote a new
+ * loader and before the reboot that would run it: this boot's measurement
+ * of the loader it replaced (old_sha1, old_sha256) is taken as the new
+ * one's, so the seal holds what the new loader will read (DESIGN Section
+ * 13.15). The enrolled [totp]'s PCRs and label are kept; the seed is new,
+ * and printed as enroll prints it. The last four are reseal's options, for
+ * the rig; NULL for the machine's own TPM and logs. */
+typedef struct {
+    const char    *disk;
+    const uint8_t *old_sha1;
+    const uint8_t *old_sha256;
+    const char    *owner_auth_file;
+    const char    *tpm_socket;
+    const char    *event_log;
+    const char    *saved_log;
+} stn_totp_update;
+
+cli_status stn_totp_reseal_update(const stn_totp_update *u);
 
 #endif /* FALCON_MKSTICK_STATION_H */

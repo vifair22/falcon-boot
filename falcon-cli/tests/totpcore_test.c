@@ -304,6 +304,28 @@ static void test_merge_t430(void **state)
     assert_int_equal(from, TOTPC_FROM_BOTH);
     assert_memory_equal(out, pcr, sizeof pcr);
 
+    /* A station image not booted yet (mkstick update): the station's own
+     * image as itself is the station's reading; another's moves PCR 4, and
+     * PCR 4 alone. */
+    {
+        static uint8_t as_out[16][20];
+        uint8_t other[20];
+
+        assert_int_equal(totpc_merge12_as(cb, cb_len, g_rec, n, image, image,
+                                          as_out, &from, &bad), TOTPC_OK);
+        assert_memory_equal(as_out, pcr, sizeof pcr);
+        memset(other, 0xA5, sizeof other);
+        assert_int_equal(totpc_merge12_as(cb, cb_len, g_rec, n, image, other,
+                                          as_out, &from, &bad), TOTPC_OK);
+        assert_int_equal(from, TOTPC_FROM_BOTH);
+        for (i = 0; i < 16u; i++) {
+            if (i == 4u)
+                assert_memory_not_equal(as_out[i], pcr[i], 20);
+            else
+                assert_memory_equal(as_out[i], pcr[i], 20);
+        }
+    }
+
     /* edk2's alone leaves PCR 2 without coreboot's measurements. */
     assert_int_equal(totpc_merge12(NULL, 0, g_rec, n, image, out, &from,
                                    &bad), TOTPC_ERR_PCR);

@@ -160,6 +160,13 @@ static void test_write_and_read(void **state)
     assert_true(records_boot_candidate(&r.table, &r.parts[0]));
     assert_false(records_boot_candidate(&r.table, &r.parts[1]));
 
+    /* falcon-bios boots only a record naming stage 3: an ESP's UEFI station
+     * record, stage 3 at 0, still names the install but is not stage 2's. */
+    assert_int_equal(records_bios_boot(&r), 0);
+    r.recs[0].rec.stage3_sector = 0;
+    assert_int_equal(records_boot(&r), 0);
+    assert_int_equal(records_bios_boot(&r), -1);
+
     /* A corrupted record reads as bad, not as absent. */
     fd = open(img, O_RDWR);
     assert_true(fd >= 0);

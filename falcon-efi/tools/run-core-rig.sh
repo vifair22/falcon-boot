@@ -77,6 +77,21 @@
 #                  stick-a on a disk QEMU throttles to SLOW_BPS: Esc at the
 #                  root, pressed while rows are still pending, acts within
 #                  KEY_MS (the probe yields at its reads, DESIGN Section 7.8)
+#   update-stick-uefi-sb, update-stick-bios
+#                  stick-a aged: its p1 loader replaced by the unsigned
+#                  stand-in and stage 3's first sector zeroed. `mkstick
+#                  update` with the passphrase signs the new loader with
+#                  p3's MOK (read into memory, never a file) and rewrites
+#                  the stages; stage 3 and the loader read back, the old
+#                  ones are in the backup directory, and the stick boots
+#                  its UKI under Secure Boot, and under SeaBIOS
+#   update-station-uefi-sb, update-station-bios
+#                  the station disk aged the same way, both halves: the
+#                  ESP's loader and the station partition's stage 3.
+#                  `mkstick update --key --cert` (its shelf holds no key),
+#                  then the station boots its UKI under each firmware
+#   update-refuse  `mkstick update` on a blank disk: refused, nothing
+#                  written
 #   hibernated-uefi, hibernated-bios
 #                  the station disk as a hibernated OS leaves it: its shelf
 #                  mounted read-write on this host, personal.efi copied to
@@ -599,6 +614,140 @@ case_kdf_memory() { # case_kdf_memory CASE FIRMWARE
     fi
 }
 
+# ---- mkstick update ----
+
+# First LBA of partition N of an image.
+part_start() { sgdisk -i "$2" "$1" | awk '/^First sector:/ { print $3 }'; }
+
+# The image aged: the loader at LOADER (an mtools path) replaced by the
+# unsigned stand-in, and stage 3's first sector in partition S3PART zeroed.
+age() {         # age IMG ESP-PART LOADER S3PART
+    local img=$1 esp s3
+    esp=$(part_start "$img" "$2")
+    s3=$(part_start "$img" "$4")
+    mcopy -o -i "$img@@$(( esp * 512 ))" build/test/standin.efi "::$3"
+    dd if=/dev/zero of="$img" bs=512 seek=$(( s3 + 32 )) count=1 \
+        conv=notrunc status=none
+}
+
+# What update left: stage 3's magic, the loader not the stand-in and signed
+# by the certificate, a backup of each. Empty when all is well.
+updated() {     # updated IMG ESP-PART LOADER S3PART
+    local img=$1 esp s3 got
+    esp=$(part_start "$img" "$2")
+    s3=$(part_start "$img" "$4")
+    got=$(dd if="$img" bs=512 skip=$(( s3 + 32 )) count=1 status=none |
+          head -c 4)
+    [[ "$got" == BOSZ ]] || { echo "stage 3 was not rewritten"; return; }
+    rm -f "$R/upd-loader.efi"
+    mcopy -n -i "$img@@$(( esp * 512 ))" "::$3" "$R/upd-loader.efi"
+    cmp -s "$R/upd-loader.efi" build/test/standin.efi &&
+        { echo "the loader is still the stand-in"; return; }
+    sbverify --cert build/mok-test/falcon-test-mok.crt "$R/upd-loader.efi" \
+        >/dev/null 2>&1 || { echo "the loader is not signed by the MOK"; return; }
+    ls "$R"/upd-backup/*-bios-*.bin >/dev/null 2>&1 ||
+        { echo "no backup of the BIOS sectors"; return; }
+    ls "$R"/upd-backup/*-loader-*.efi >/dev/null 2>&1 ||
+        { echo "no backup of the old loader"; return; }
+}
+
+# The rig's sticks are made by mk-test-stick.sh, which signs with the test
+# MOK and leaves it off p3; a stick `mkstick create` makes has it there,
+# which is the key update reads. The aged copy is given it.
+key_onto_p3() { # key_onto_p3 IMG
+    LOOP=$(sudo losetup -f --show -P "$1")
+    MAPPER=falcon-core-rig-upd
+    printf '%s' "$PASS" | sudo cryptsetup open "${LOOP}p3" "$MAPPER" -
+    MNT=$(mktemp -d)
+    sudo mount "/dev/mapper/$MAPPER" "$MNT"
+    sudo install -m 0600 build/mok-test/falcon-test-mok.key "$MNT/falcon-mok.key"
+    sudo install -m 0644 build/mok-test/falcon-test-mok.crt "$MNT/falcon-mok.crt"
+    sudo umount "$MNT"
+    rmdir "$MNT"
+    MNT=
+    sudo cryptsetup close "$MAPPER"
+    MAPPER=
+    sudo losetup -d "$LOOP"
+    LOOP=
+}
+
+case_update_stick() { # case_update_stick CASE FIRMWARE
+    local img=$R/stick-upd.img why=
+    cp --sparse=always "$R/stick-a.img" "$img"
+    key_onto_p3 "$img"
+    age "$img" 1 /EFI/BOOT/grubx64.efi 1
+    rm -rf "$R/upd-backup"
+    mkdir -p "$R/upd-backup"
+    ( umask 077; printf '%s' "$PASS" > "$R/pass" )
+    "$MKSTICK" update "$img" --from build/bin --passphrase-file "$R/pass" \
+        --backup-dir "$R/upd-backup" --yes >"$R/$1-update.log" 2>&1 ||
+        why="mkstick update failed: $(tail -1 "$R/$1-update.log")"
+    rm -f "$R/pass"
+    [[ -z "$why" ]] && why=$(updated "$img" 1 /EFI/BOOT/grubx64.efi 1)
+    if [[ -z "$why" ]]; then
+        boot "$2" "$img:boot"
+        pos || why=$POS_WHY
+        halt
+    fi
+    if [[ -z "$why" ]]; then
+        result "$1" 1 "aged stick updated from p3's MOK; the UKI booted"
+    else
+        result "$1" 0 "$why"
+    fi
+}
+
+case_update_station() { # case_update_station CASE FIRMWARE
+    local img=$R/station-upd.img why= stn
+    cp --sparse=always build/test-station.img "$img"
+    stn=$(sgdisk -p "$img" | awk '$7 == "FALCON-STATION" { print $1 }')
+    [[ -n "$stn" ]] || { result "$1" 0 "the station disk has no FALCON-STATION"; return; }
+    age "$img" 1 /EFI/falcon/grubx64.efi "$stn"
+    rm -rf "$R/upd-backup"
+    mkdir -p "$R/upd-backup"
+    "$MKSTICK" update "$img" --from build/bin \
+        --key build/mok-test/falcon-test-mok.key \
+        --cert build/mok-test/falcon-test-mok.crt \
+        --backup-dir "$R/upd-backup" --yes >"$R/$1-update.log" 2>&1 ||
+        why="mkstick update failed: $(tail -1 "$R/$1-update.log")"
+    [[ -z "$why" ]] && why=$(updated "$img" 1 /EFI/falcon/grubx64.efi "$stn")
+    if [[ -z "$why" ]]; then
+        # A station's judge is case_station's: its menu, then the shelf's
+        # prompt, which the new loader (signed, under Secure Boot) reached.
+        boot "$2" "$img:boot"
+        wait_for "Personal OS (encrypted)" 90 || why="no Personal OS row"
+        sleep 1
+        [[ -z "$why" ]] && mon "sendkey ret"
+        [[ -n "$why" ]] || wait_for "passphrase for the encrypted partition" 90 ||
+            why="no passphrase prompt"
+        halt
+    fi
+    if [[ -z "$why" ]]; then
+        result "$1" 1 "aged station updated, both halves; the prompt came up"
+    else
+        result "$1" 0 "$why"
+    fi
+}
+
+case_update_refuse() { # case_update_refuse CASE
+    local why= before after
+    rm -f "$R/blank-upd.img"
+    truncate -s 64M "$R/blank-upd.img"
+    sgdisk -n 1:2048:0 -t 1:0700 "$R/blank-upd.img" >/dev/null
+    before=$(sha256sum < "$R/blank-upd.img")
+    if "$MKSTICK" update "$R/blank-upd.img" --yes >"$R/$1.log" 2>&1; then
+        why="update did not refuse a disk with no falcon on it"
+    fi
+    after=$(sha256sum < "$R/blank-upd.img")
+    [[ "$before" == "$after" ]] || why="${why:-the refused disk was written}"
+    grep -q "no falcon boot record" "$R/$1.log" ||
+        why="${why:-the refusal does not say why}"
+    if [[ -z "$why" ]]; then
+        result "$1" 1 "refused, and the disk is as it was"
+    else
+        result "$1" 0 "$why"
+    fi
+}
+
 # The stick on a disk throttled to SLOW_BPS, so looking inside one entry
 # takes seconds; Esc at the root, pressed while rows are still pending, has
 # to take effect within KEY_MS. The probe yields at its reads (DESIGN
@@ -925,7 +1074,8 @@ CASES=("$@")
            station-stick-uefi station-stick-bios bios-only-uefi
            bios-only-uefi-sb efi-only-bios 64-only-bios32 kdf-memory-uefi
            kdf-memory-bios hibernated-uefi hibernated-bios probe-keys-uefi
-           probe-keys-bios)
+           probe-keys-bios update-stick-uefi-sb update-stick-bios
+           update-station-uefi-sb update-station-bios update-refuse)
 
 for c in "${CASES[@]}"; do
     case $c in
@@ -955,6 +1105,11 @@ for c in "${CASES[@]}"; do
     4kn-bios-marker) case_4kn_marker "$c" ;;
     kdf-memory-uefi) case_kdf_memory "$c" uefi ;;
     kdf-memory-bios) case_kdf_memory "$c" bios ;;
+    update-stick-uefi-sb)   case_update_stick "$c" uefi-sb ;;
+    update-stick-bios)      case_update_stick "$c" bios ;;
+    update-station-uefi-sb) case_update_station "$c" uefi-sb ;;
+    update-station-bios)    case_update_station "$c" bios ;;
+    update-refuse)          case_update_refuse "$c" ;;
     probe-keys-uefi) case_probe_keys "$c" uefi ;;
     probe-keys-bios) case_probe_keys "$c" bios ;;
     hibernated-uefi) case_hibernated "$c" uefi ;;

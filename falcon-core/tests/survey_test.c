@@ -109,8 +109,8 @@ static int is_done(void *ctx, size_t i)
 
 /* The order entries come out in, as their labels, marking each done as a
  * loader would once it had looked inside. */
-static void probe_order(const char *cur, size_t want, const char **expect,
-                        size_t n)
+static void probe_order(const char *cur, size_t want,
+                        const char *const *expect, size_t n)
 {
     uint16_t w[SURVEY_PATH_MAX];
     char buf[256];
@@ -156,7 +156,7 @@ static void test_probe_order_root(void **state)
 
     (void)state;
     probe_list();
-    probe_order("", g_list.count, (const char **)want, 7);
+    probe_order("", g_list.count, want, 7);
 }
 
 static void test_probe_order_folder(void **state)
@@ -170,7 +170,7 @@ static void test_probe_order_folder(void **state)
 
     (void)state;
     probe_list();
-    probe_order("Linux/", g_list.count, (const char **)want, 7);
+    probe_order("Linux/", g_list.count, want, 7);
 }
 
 static void test_probe_order_selection(void **state)

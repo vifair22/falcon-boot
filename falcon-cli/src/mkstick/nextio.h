@@ -33,7 +33,7 @@ typedef struct {
 
 /* The boot partition's marker on the disk or image at `path`, read as a disk
  * of `sector`-byte sectors and `size` bytes: the partition whose record
- * says boot (records_boot, the loaders' rule) and names a marker sector.
+ * says boot (records_bios_boot, stage 2's rule) and names a marker sector.
  * 1 with *out filled, or 0 when this disk has none. */
 int nextio_probe(const char *path, uint32_t sector, uint64_t size,
                  next_target *out);

@@ -38,6 +38,10 @@ typedef struct {
  * stripped), otherwise prompts twice on the controlling terminal. */
 cli_status pass_acquire(mks_pass *p, const char *file);
 
+/* One prompt, for a passphrase that exists already (an unlock): `prompt`
+ * on the controlling terminal, or `file` as pass_acquire reads it. */
+cli_status pass_unlock(mks_pass *p, const char *file, const char *prompt);
+
 void pass_wipe(mks_pass *p);
 
 #endif /* FALCON_MKSTICK_PASS_H */

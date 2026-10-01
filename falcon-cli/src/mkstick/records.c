@@ -210,6 +210,20 @@ int records_boot(const mks_records *r)
     return -1;
 }
 
+int records_bios_boot(const mks_records *r)
+{
+    uint32_t i;
+
+    for (i = 0; i < r->table.count; i++) {
+        if (records_boot_candidate(&r->table, &r->parts[i]) &&
+            r->recs[i].state == REC_OK &&
+            r->recs[i].rec.role == IDENT_ROLE_BOOT &&
+            r->recs[i].rec.stage3_sector != 0u)
+            return (int)i;
+    }
+    return -1;
+}
+
 static cli_status write_at(int fd, const char *path, uint64_t off,
                            const ident_rec *rec)
 {

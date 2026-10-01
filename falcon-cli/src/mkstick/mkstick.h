@@ -143,6 +143,7 @@ extern const cli_cmd mks_cmd_keygen;
 extern const cli_cmd mks_cmd_next_boot;
 extern const cli_cmd mks_cmd_station;
 extern const cli_cmd mks_cmd_status;
+extern const cli_cmd mks_cmd_update;
 extern const cli_cmd mks_cmd_varstore;
 
 /* `station install|remove|status`: a second level of dispatch, so main.c

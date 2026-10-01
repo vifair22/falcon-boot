@@ -1431,7 +1431,7 @@ static cli_status install_run(const cli_args *a)
         return set_error(CLI_ERR_INVALID, "%s has no partition table; the "
                          "station goes onto a machine's disk beside its "
                          "systems", td->d.path);
-    if (stn_bios_boot(&td->r) >= 0 || records_boot(&td->r) >= 0) {
+    if (records_bios_boot(&td->r) >= 0 || records_boot(&td->r) >= 0) {
         int b = records_boot(&td->r);
 
         records_id_hex(td->r.recs[b].rec.install_id, idhex);

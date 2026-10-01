@@ -316,7 +316,7 @@ int bioscore_is_reserve(const part_table *t, const part_entry *p)
 {
     if (t == NULL || p == NULL || t->id.kind != PART_KIND_GPT)
         return 0;
-    return p->number == BIOS_BOOT_SLOT && gpt_name_eq(p->name, BIOS_BOOT_NAME);
+    return gpt_name_eq(p->name, BIOS_BOOT_NAME);
 }
 
 /* ---- the backup ---- */

@@ -25,7 +25,7 @@ int nextio_probe(const char *path, uint32_t sector, uint64_t size,
         cli_error_clear();
         return 0;
     }
-    boot = records_boot(&r);
+    boot = records_bios_boot(&r);
     if (boot < 0 || r.recs[boot].rec.marker_sector == 0u)
         return 0;
     memset(out, 0, sizeof *out);

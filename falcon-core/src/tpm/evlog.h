@@ -79,11 +79,28 @@ typedef struct {
     uint8_t      pcr[EVLOG_PCRS][EVLOG_DIGEST_MAX];
     size_t       events;     /* events read, including the stop event */
     int          stopped;    /* the stop event was found */
+    /* evlog_replay_substitute's: an event in sub_pcr measuring sub_from
+     * is extended as sub_to, and counted in substituted. */
+    int          sub_on;
+    unsigned int sub_pcr;
+    uint8_t      sub_from[EVLOG_DIGEST_MAX];
+    uint8_t      sub_to[EVLOG_DIGEST_MAX];
+    size_t       substituted;
 } evlog_replay;
 
 /* Starts a replay in bank alg (EVLOG_ALG_SHA1 or EVLOG_ALG_SHA256), every
  * PCR zero. */
 int evlog_replay_init(uint16_t alg, evlog_replay *out);
+
+/* From here on, every event in PCR pcr whose digest is `from` is extended
+ * as `to` instead: the values the same boot would have reached had another
+ * image been measured in that one's place. mkstick update seals the TOTP
+ * seed to a station loader not booted yet this way, before the reboot that
+ * would run it (docs/DESIGN.md Section 13.15). A stop digest is still
+ * matched against what the log says. Digests are r's bank's length. Set
+ * after evlog_replay_init; it lasts for the replay. */
+void evlog_replay_substitute(evlog_replay *r, unsigned int pcr,
+                             const uint8_t *from, const uint8_t *to);
 
 /* Replays one more log into r from where it stands, stopping as
  * evlog_replay_run does (r->stopped is this log's). The logs of one replay

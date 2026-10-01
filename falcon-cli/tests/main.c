@@ -27,6 +27,7 @@ int main(void)
     failed += run_nextio_tests();
     failed += run_stationcore_tests();
     failed += run_totpcore_tests();
+    failed += run_updatecore_tests();
     failed += run_uki_tests();
     failed += run_util_tests();
 

@@ -213,9 +213,43 @@ static unsigned first_diff(const evlog_replay *r, const uint8_t *pcr)
     return EVSAVE_PCRS;
 }
 
+/* The replay that reproduced the station's reading, again, with the
+ * station's measurement taken as `as`'s: fw first when both logs were
+ * needed. The values it ends at are what the station will read. */
+static int replay_as(const uint8_t *fw, size_t fw_len, const evsave_view *v,
+                     unsigned from, const uint8_t station[20],
+                     const uint8_t as[20], uint8_t out[16][20])
+{
+    static evlog_replay r;
+    unsigned i;
+
+    if (evlog_replay_init(EVLOG_ALG_SHA1, &r) != EVLOG_OK)
+        return TOTPC_ERR_LOG;
+    evlog_replay_substitute(&r, 4, station, as);
+    if (from == TOTPC_FROM_BOTH &&
+        evlog_replay_more(fw, fw_len, 0, NULL, &r) != EVLOG_OK)
+        return TOTPC_ERR_LOG;
+    if (evlog_replay_more(v->log, v->log_len, 0, NULL, &r) != EVLOG_OK)
+        return TOTPC_ERR_LOG;
+    if (r.substituted == 0)
+        return TOTPC_ERR_STATION;
+    for (i = 0; i < EVSAVE_PCRS; i++)
+        memcpy(out[i], r.pcr[i], EVSAVE_DIGEST_LEN);
+    return TOTPC_OK;
+}
+
 int totpc_merge12(const uint8_t *fw, size_t fw_len, const uint8_t *rec,
                   size_t rec_len, const uint8_t station[20],
                   uint8_t out[16][20], unsigned *from, unsigned *bad_pcr)
+{
+    return totpc_merge12_as(fw, fw_len, rec, rec_len, station, NULL, out,
+                            from, bad_pcr);
+}
+
+int totpc_merge12_as(const uint8_t *fw, size_t fw_len, const uint8_t *rec,
+                     size_t rec_len, const uint8_t station[20],
+                     const uint8_t *as, uint8_t out[16][20], unsigned *from,
+                     unsigned *bad_pcr)
 {
     static evlog_replay r;
     evsave_view v;
@@ -242,6 +276,8 @@ int totpc_merge12(const uint8_t *fw, size_t fw_len, const uint8_t *rec,
     bad = first_diff(&r, v.pcr);
     if (bad == EVSAVE_PCRS) {
         *from = TOTPC_FROM_SAVED;
+        if (as != NULL)
+            return replay_as(fw, fw_len, &v, *from, station, as, out);
         memcpy(out, v.pcr, EVSAVE_PCR_BYTES);
         return TOTPC_OK;
     }
@@ -256,6 +292,8 @@ int totpc_merge12(const uint8_t *fw, size_t fw_len, const uint8_t *rec,
         bad = first_diff(&r, v.pcr);
         if (bad == EVSAVE_PCRS) {
             *from = TOTPC_FROM_BOTH;
+            if (as != NULL)
+                return replay_as(fw, fw_len, &v, *from, station, as, out);
             memcpy(out, v.pcr, EVSAVE_PCR_BYTES);
             return TOTPC_OK;
         }

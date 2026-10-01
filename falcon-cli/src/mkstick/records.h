@@ -68,6 +68,13 @@ int records_boot_candidate(const part_table *t, const part_entry *p);
  * with role boot. -1 when there is none. */
 int records_boot(const mks_records *r);
 
+/* The index of the partition falcon-bios boots from: the first candidate
+ * whose record says boot and names a stage 3 sector, which is stage 2's own
+ * rule (falcon-bios/src/disk/bootpart.c). An ESP's UEFI station record
+ * carries stage 3 at 0, so on a disk with both stations this is the BIOS
+ * station's partition where records_boot may be the ESP. -1 when none. */
+int records_bios_boot(const mks_records *r);
+
 /* Writes a `boot` record into the FAT boot sector at byte `base` of `path`
  * (a partition device, or a disk or image with the partition's offset), and
  * into FAT32's backup boot sector too, so fsck.fat, which compares the two

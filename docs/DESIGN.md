@@ -5122,7 +5122,59 @@ Each is merged and rig-proven before the next starts.
 
 ### 13.14 Updating a station
 
-A station in the field is updated from a **station bundle**, one file per
+There are two ways, and neither reinstalls. `mkstick update` runs on Linux
+beside a build and updates both halves of a station, and a stick too. The
+station bundle is the BIOS half alone, carried to a machine that has only
+DevLink recovery.
+
+**mkstick update.** `mkstick update <disk>` decides what the disk is from
+its records (`falcon-cli/src/mkstick/updatecore.c`, host-tested), says
+what it will write and what it keeps, asks for `yes` on the terminal, and
+brings each half to the loaders in `--from` (default `build/bin`):
+
+- *a stick*: a boot record with a library and a shelf carrying its
+  install ID, and no `STATION.INI`. The loader on p1, and the BIOS stages
+  when LBA 0 holds falcon's stage 1.
+- *a BIOS station*: a boot record naming a stage 3 sector with
+  `STATION.INI` beside it, station-legacy's stage 3 and drivers when the
+  partition carries any `*.MOD`. It is found by stage 2's own rule
+  (`records_bios_boot`, `falcon-bios/src/disk/bootpart.c`): an ESP's UEFI
+  station record carries stage 3 at 0, so on a disk with both stations
+  the first boot record is the ESP's, and `mkstick bios`, `next-boot` and
+  status went there before this rule was theirs too.
+- *a UEFI station*: an ESP carrying the install's record with a loader in
+  `\EFI\falcon`.
+- *both*: both halves. Any other disk is refused, and so is one whose
+  partitions it writes are mounted.
+
+The BIOS half is `mkstick bios`'s install called in process (13.9's
+layout, every sector saved to `--backup-dir` first, LBA 0 last), then
+stage 3 read back and compared. `mkstick bios` knows a `FALCON-BIOS`
+reservation by its name in any slot: the installer makes it in whatever
+slot is free, which on the rig's station is 4.
+
+The UEFI half signs, and signing needs the MOK private key, which lives on
+the install's shelf (7.5). update opens that shelf in process with core's
+LUKS2 and ext4 (through the journal when its OS left it mounted, 5.4),
+reads the key and certificate into two sealed memfds, and hands them to
+`sbsign` as `/proc/self/fd/N`: the key is never a file, and is gone when
+update exits. A station's shelf is the one carrying its install ID on any
+disk. `--key` and `--cert` name a keypair instead, for an install whose
+shelf holds none. The loader is named by shim (its next stage read out of
+`\EFI\falcon\shimx64.efi` or p1's `BOOTX64.EFI`), not taken to be
+`grubx64.efi`. The signed image must carry exactly one signature and
+verify against the certificate; the old loader is saved, the new one
+written with mtools and read back.
+
+A pending next-boot marker is cleared, since the stages are written as
+`mkstick bios` writes them. A UEFI station with `[totp]` is resealed in
+the same run (13.15). `make test-core`'s `update-*` cases age a stick and
+a station (a stand-in over the loader, stage 3's header zeroed), update
+them and boot each under OVMF with Secure Boot and under SeaBIOS; the
+refusal case checks a blank disk is left as it was.
+
+**The station bundle.** A station in the field is updated from a
+**station bundle**, one file per
 falcon version (`make station-bundle`,
 `build/bin/falcon-station-<version>.tar.gz`), not by reinstalling and not
 by rebuilding the machine's recovery image. The bundle carries what a falcon
@@ -5146,8 +5198,8 @@ keeps, asks, and then:
   (mtools);
 - ends with `station status`.
 
-It keeps the install ID, `STATION.INI`, `/uki`, the marker and every other
-partition. Undoing it is `mkstick bios <disk> --remove --backup <that
+It keeps the install ID, `STATION.INI`, `/uki` and every other partition,
+and clears a pending marker, since `mkstick bios` zeroes it. Undoing it is `mkstick bios <disk> --remove --backup <that
 backup>`, or the previous version's bundle.
 
 The bundle brings its own mkstick so that the machine needs only `sh`,
@@ -5347,6 +5399,16 @@ own error line names too.
 station update: the old seed cannot be read back from the OS, whose PCRs
 are not the station's, so a new one is made and the authenticator's entry
 replaced. `remove` deletes the index as the owner and the section.
+
+`mkstick update` (13.14) reseals before the reboot rather than after it.
+The new loader changes one event, the station's own image in PCR 4, so the
+replay that predicts the station's PCRs is run with the old loader's
+Authenticode digest replaced by the new one's there
+(`evlog_replay_substitute`; on 1.2, `totpc_merge12_as` checks the logs as
+they are and then replays them with the substitution). The certificate
+is the same, so PCR 7's authority event does not move. A reseal that fails
+leaves the loader written and says to run `reseal` from the updated
+system; until then the station warns instead of showing a code.
 
 **The rig.** `falcon-efi/tools/run-tpm-rig.sh`'s `totp` cases boot the
 station disk four times over one swtpm state with the guest clock pinned:

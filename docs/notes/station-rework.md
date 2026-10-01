@@ -557,6 +557,15 @@ read back as d3b47100..., the signed loader as 2b2ec5e1.... Backups on the
 T430 in `~/falcon-backups/`: `stick-bios-2026-09-30.bin` and
 `grubx64-0928.efi` (the a90d4e6 loader).
 
+Updated again 2026-09-30 to 1e340ee on feature/background-probe (a shelf
+its OS left mounted read through its journal, the unlock's wait and limit
+no longer said, the library probed in the background), from the T430 with
+the stick at /dev/sdb, by the same two steps. Built on binhost-builder;
+stages 1 and 2 were unchanged, stage 3 read back as a7814105..., the
+signed loader as e25925c7.... Backups on the T430 in `~/falcon-backups/`:
+`stick-bios-2026-09-30-1e340ee.bin` and `grubx64-c869513.efi` (the
+c869513 loader, 2b2ec5e1...).
+
 ### Next
 
 1. Nothing on the falcon side. The DevLink session's own: w98link 9caa3ef

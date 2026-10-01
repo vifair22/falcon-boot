@@ -344,7 +344,8 @@ nothing reads them.
 Installs falcon-bios on a disk whose `boot` partition exists (DESIGN
 Section 3.3). It finds that partition the way stage 2 does: the first ESP-
 or falcon-boot-typed partition (GPT) or FAT-typed one (MBR) whose boot
-sector carries a `boot` record. It writes:
+sector carries a `boot` record naming a stage 3 sector (an ESP holding a
+UEFI station's record, stage 3 at 0, is passed over). It writes:
 
 | what | where |
 |---|---|
@@ -363,7 +364,7 @@ restores that file, LBA 0 last; with no backup it clears what an install
 wrote (the stage 2 run LBA 0 names, stage 3 by its header's length, the
 marker, LBA 0's boot code). `--reserve` (GPT only) claims stage 2's gap
 as a BIOS boot partition, slot 5, named `FALCON-BIOS`; `--remove` deletes
-it again.
+a `FALCON-BIOS` partition in whatever slot it is.
 
 ### 3.3 status
 
@@ -608,7 +609,8 @@ Run from a system the station started. The PCR values come from the
 firmware's event log, and on a TPM 1.2 from the log the station saved at
 boot (`FalconEvLog`) when there is one, alone or after the one Linux reads;
 enrollment says which. It refuses when the log has no measurement of
-`\EFI\falcon\grubx64.efi`, or does not account for the PCRs the TPM or
+the station's loader (the one `\EFI\falcon\shimx64.efi` starts, else
+`\EFI\falcon\grubx64.efi`), or does not account for the PCRs the TPM or
 the station read. A station older than the log save saves none: boot the
 new station once before enrolling.
 
@@ -624,6 +626,53 @@ changes nothing. The TPM refusing on the PCRs is the good answer there: the
 index, the storage key and (on 1.2) its secret are right. Any other refusal
 is printed with the step that got it, as the station's own line prints it
 (`TPM error 0x00000001 in EstablishTransport.`).
+
+### 3.7 update
+
+    falcon-boot-mkstick update <disk> [--from <dir>] [--backup-dir <dir>]
+        [--passphrase-file <file>] [--key <file> --cert <file>]
+        [--owner-auth-file <file>] [--dry-run] [--yes]
+
+Brings a stick or a station to the loaders in `--from` (default
+`build/bin`), in place (DESIGN Section 13.14). What the disk is comes from
+its records:
+
+| disk | found by | written |
+|---|---|---|
+| stick | a boot record, with a library and a shelf of its install ID | the loader on p1; stages 1-3 when LBA 0 holds stage 1 |
+| BIOS station | a boot record naming stage 3, with `STATION.INI` | stages 1-3 (`falcon-bios-station-stage3.bin`) |
+| station-legacy | the same, with any `*.MOD` on the partition | stages 1-3 (`falcon-bios-station-legacy-stage3.bin`) and the drivers |
+| UEFI station | the ESP's boot record, with a loader in `\EFI\falcon` | that loader |
+
+A disk with both stations gets both halves. Anything else is refused, and
+so is a disk with a partition it writes mounted.
+
+The UEFI loader is signed with the install's MOK. update unlocks the shelf
+carrying the install ID (the passphrase is asked for once, or read from
+`--passphrase-file`) and reads the key into memory; it is never written to
+a file. `--key` and `--cert` name a keypair instead. The signed loader
+must verify against the certificate before it is written, and is read
+back after. `sbsign` and `sbverify` must be installed; mtools writes the
+ESP.
+
+Before writing, it prints the plan and asks for `yes` (`--yes` skips the
+question; `--dry-run` prints the plan and stops). What each half replaces
+is saved to `--backup-dir` (default `.`) first:
+
+| backup | undo |
+|---|---|
+| `<disk>-bios-<stamp>.bin` | `mkstick bios <disk> --remove --backup <file>` |
+| `<disk>-stick-loader-<stamp>.efi`, `<disk>-station-loader-<stamp>.efi` | copy it back over the loader with `mcopy` |
+
+It keeps every record, `STATION.INI`, `/uki`, shim, MokManager, the
+certificate and the firmware's boot entries. It clears a pending next-boot
+marker.
+
+A UEFI station with `[totp]` is resealed to the new loader in the same
+run, and prints a new secret for the authenticator (`--owner-auth-file` as
+for `station totp`). Run it from the system the station started. If the
+reseal fails, the loader is still updated; run `station totp reseal` after
+the next boot.
 
 
 ## 4. Signing, and what lives where
