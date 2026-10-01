@@ -118,6 +118,11 @@ static void screen_putc(char c)
     thunk_bios();
 }
 
+void bios_screen_putc(char c)
+{
+    screen_putc(c);
+}
+
 void bios_screen_puts(const char *s)
 {
     if (s == (const char *)0)

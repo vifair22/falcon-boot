@@ -124,6 +124,10 @@ void bios_puts(const char *s);
  * draws everything else through screen.h. */
 void bios_screen_puts(const char *s);
 
+/* One character to the screen alone, through teletype: stage 2's loading
+ * line and its spinner, which serial does not want. */
+void bios_screen_putc(char c);
+
 /* One character of a UCS-2 name as this build can print it.
  *
  * Written with an if rather than a conditional expression because the two
@@ -225,6 +229,12 @@ int bios_disk_bytes(void *ctx, uint64_t off, uint64_t len, void *buf);
  * so the main flow may read while the probe is suspended there. Stage 3's
  * alone: stage 2 has no .bss to keep it in. */
 void bios_disk_set_hook(void (*hook)(void));
+
+/* Called after every INT 13h read call that succeeds (a CHS track, an AH=42h
+ * bounce buffer); NULL (the default) for none. Stage 2's spinner turns from
+ * it while stage 3 is read in (start/load3.c). It lives in .data, so stage 2
+ * can keep it, and each stage's copy of disk.c has its own. */
+void bios_disk_on_call(void (*fn)(void));
 
 /* Empties the track cache, so the next read of any sector goes to the disk.
  * For a read whose checksum failed: the retry has to read the medium again,

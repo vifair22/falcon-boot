@@ -36,6 +36,21 @@ typedef struct {
 
 #define g_params (*(bios_driveparm *)(uintptr_t)DRIVEPARM_ADDR)
 
+/* bios_disk_on_call's function, in .data for the reason g_track below is. */
+static void (*g_on_call)(void) __attribute__((section(".data"))) =
+    (void (*)(void))0;
+
+void bios_disk_on_call(void (*fn)(void))
+{
+    g_on_call = fn;
+}
+
+static void called(void)
+{
+    if (g_on_call != (void (*)(void))0)
+        g_on_call();
+}
+
 /* One AH=02h call: `n` sectors from `at`, all on one track, to the real-mode
  * address `dest`. Three tries with a reset between, since a floppy's first
  * read can fail while its motor comes up to speed; that is what every BIOS's
@@ -60,8 +75,10 @@ static int chs_call(const bios_disk *d, uint32_t at, uint32_t n,
         thunk_regs.ebx = dest & 0x0Fu;
         thunk_vector = 0x13;
         thunk_bios();
-        if ((thunk_regs.flags & BIOS_FLAG_CARRY) == 0)
+        if ((thunk_regs.flags & BIOS_FLAG_CARRY) == 0) {
+            called();
             return 1;
+        }
         thunk_regs.eax = 0x0000u;              /* AH=00h, reset */
         thunk_regs.edx = d->drive;
         thunk_vector = 0x13;
@@ -157,7 +174,10 @@ static int read_sectors(const bios_disk *d, uint64_t lba, uint16_t count)
     thunk_vector = 0x13;
     thunk_bios();
 
-    return (thunk_regs.flags & BIOS_FLAG_CARRY) == 0;
+    if ((thunk_regs.flags & BIOS_FLAG_CARRY) != 0)
+        return 0;
+    called();
+    return 1;
 }
 
 int bios_disk_read(void *ctx, uint64_t off, uint64_t len, void *buf)

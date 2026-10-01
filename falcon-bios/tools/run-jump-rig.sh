@@ -32,7 +32,8 @@
 #   s2crc     one byte of stage 2 flipped on the floppy: stage 2's own
 #             CRC-32 stops it before it runs past its first sector
 #   s3crc     one byte of the compressed stage 3 flipped: stage 2 reads it
-#             twice and stops
+#             twice and stops; on the screen, stage 2's loading line with its
+#             spinner, and the fatal under it
 #   stick3crc one byte of the rig stick's stage 3 flipped, the usb route
 #             chosen: the stick's stage 2 reads it twice and stops
 #   modcrc    one byte of UHCI.MOD flipped, the usb route chosen: the module
@@ -95,6 +96,37 @@ boot() {      # boot QEMU-BINARY ARGS...
         -serial file:"$R/serial.log" -monitor none "$@" \
         >/dev/null 2>&1 || true
     log_text > "$R/serial.txt"
+}
+
+# boot, stopped once serial carries UNTIL: the VGA text memory saved first
+# (to $R/screen.txt, one row a line), for a case judged by what is on the
+# screen when a fatal is waiting for its key.
+boot_until() { # boot_until QEMU-BINARY UNTIL ARGS...
+    local q=$1 until=$2 qpid i
+    shift 2
+    cp build/test-bios.img "$R/disk.img"
+    rm -f "$R/serial.log" "$R/mon.sock" "$R/screen.vga" "$R/screen.txt"
+    "$q" -L /usr/share/qemu -machine pc -cpu pentium3 -m 128 -display none \
+        -boot a -drive if=floppy,format=raw,file="$R/jump.img" \
+        -drive file="$R/disk.img",format=raw,if=ide,index=0 \
+        -serial file:"$R/serial.log" \
+        -monitor unix:"$R/mon.sock",server,nowait "$@" >/dev/null 2>&1 &
+    qpid=$!
+    for ((i = 0; i < TIMEOUT * 10; i++)); do
+        [[ -f "$R/serial.log" ]] && log_text | grep -aqF -- "$until" && break
+        kill -0 "$qpid" 2>/dev/null || break
+        sleep 0.1
+    done
+    sleep 0.5
+    monitor "pmemsave 0xb8000 4000 $R/screen.vga"
+    sleep 0.5
+    monitor quit
+    wait "$qpid" 2>/dev/null || true
+    log_text > "$R/serial.txt"
+    [[ -f "$R/screen.vga" ]] &&
+        python3 -c 'import sys; d = open(sys.argv[1], "rb").read()[0::2]; print("\n".join(d[i:i + 80].decode("ascii", "replace").rstrip() for i in range(0, 2000, 80)))' \
+            "$R/screen.vga" > "$R/screen.txt"
+    return 0
 }
 
 # Flips one byte of the floppy image, at a byte offset.
@@ -281,10 +313,24 @@ for c in "${CASES[@]}"; do
         judge s2crc 'stage 2 did not read back as it was written'
         ;;
     s3crc)
+        # Stage 3 never draws here, so the screen is still stage 2's: its
+        # loading line, the spinner at a step, and the fatal under it.
         floppy hdd
         flip $((FD_STAGE3_SECTOR * 512 + 0x2000))
-        boot "$QEMU"
-        judge s3crc 'stage 3 did not read back as it was written, twice'
+        boot_until "$QEMU" 'stage 3 did not read back as it was written, twice'
+        if ! grep -aqF 'stage 3 did not read back as it was written, twice' "$R/serial.txt"; then
+            judge s3crc 'stage 3 did not read back as it was written, twice'
+        elif ! grep -qE '^falcon-boot: loading [-/|\\]$' "$R/screen.txt"; then
+            printf 'FAIL  %-9s %s\n' s3crc "no 'falcon-boot: loading' line with its spinner on the screen"
+            FAILED=1
+        elif ! awk '/^falcon-boot: loading/ { s = 1; next }
+                    s && /stage 3 did not read back as it was written, twice/ { f = 1 }
+                    END { exit !f }' "$R/screen.txt"; then
+            printf 'FAIL  %-9s %s\n' s3crc "the fatal is not on the screen under the loading line"
+            FAILED=1
+        else
+            printf 'PASS  %-9s %s\n' s3crc "the loading line and its spinner on screen, the fatal under it"
+        fi
         ;;
     stick3crc)
         floppy usb
