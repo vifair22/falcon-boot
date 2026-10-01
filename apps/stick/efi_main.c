@@ -1287,6 +1287,12 @@ static BOOLEAN boot_windows(EFI_HANDLE image_handle, const CHAR16 *label,
         out(L": ");
         out_hex(result.status);
         out(L"\r\n");
+        /* DESIGN Section 7.2: Windows media cannot be blessed. */
+        if (result.status == EFI_SECURITY_VIOLATION)
+            out(L"\r\nthe platform refused to load this payload.\r\n\r\n"
+                L"Windows media boots under Secure Boot only with Microsoft's "
+                L"Windows CA\r\nin db: enrol it, or turn Secure Boot off in "
+                L"firmware setup.\r\n");
     }
     refusal_evidence(status, result.status, &target->trust);
     out(L"\r\npress any key to return to the menu.\r\n");
