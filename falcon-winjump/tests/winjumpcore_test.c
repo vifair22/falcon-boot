@@ -12,6 +12,7 @@
 #include <stddef.h>
 #include <setjmp.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 #include <cmocka.h>
 
@@ -269,6 +270,49 @@ static void test_backing_bad_args(void **state)
                      WJ_ERR_BAD_ARG);
 }
 
+/* ---- the key=value lines ---- */
+
+static void kv(const char *in, int ok, const char *k, const char *v)
+{
+    char line[64];
+    char *key = NULL;
+    char *value = NULL;
+
+    snprintf(line, sizeof line, "%s", in);
+    assert_int_equal(wj_kv_line(line, &key, &value), ok);
+    if (ok) {
+        assert_string_equal(key, k);
+        assert_string_equal(value, v);
+    }
+}
+
+static void test_kv_line(void **state)
+{
+    char line[8] = "a=b";
+    char *key;
+    char *value;
+
+    (void)state;
+    kv("win11_bypass=1", 1, "win11_bypass", "1");
+    kv("win11_bypass = 1", 1, "win11_bypass", "1");
+    kv("  win11_bypass\t=\t1  \r", 1, "win11_bypass", "1");
+    kv("unattend = falcon\\my answers.xml\r\n", 1, "unattend",
+       "falcon\\my answers.xml");
+    kv("iso=a=b", 1, "iso", "a=b");
+    kv("shell=", 1, "shell", "");
+    kv("shell =   ", 1, "shell", "");
+    kv("", 0, NULL, NULL);
+    kv("   \r", 0, NULL, NULL);
+    kv("# win11_bypass=1", 0, NULL, NULL);
+    kv("  #x=1", 0, NULL, NULL);
+    kv("win11_bypass", 0, NULL, NULL);
+    kv("=1", 0, NULL, NULL);
+    kv("  = 1", 0, NULL, NULL);
+    assert_int_equal(wj_kv_line(NULL, &key, &value), 0);
+    assert_int_equal(wj_kv_line(line, NULL, &value), 0);
+    assert_int_equal(wj_kv_line(line, &key, NULL), 0);
+}
+
 int run_winjumpcore_tests(void)
 {
     const struct CMUnitTest tests[] = {
@@ -277,6 +321,7 @@ int run_winjumpcore_tests(void)
         cmocka_unit_test(test_backing_extents),
         cmocka_unit_test(test_backing_nospace),
         cmocka_unit_test(test_backing_bad_args),
+        cmocka_unit_test(test_kv_line),
     };
     return cmocka_run_group_tests_name("winjumpcore", tests, NULL, NULL);
 }

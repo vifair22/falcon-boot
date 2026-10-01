@@ -1,4 +1,5 @@
-/* The pure half of winjump's driver-mount fallback. See winjumpcore.h. */
+/* The pure half of winjump: the driver-mount fallback and the cfg lines.
+ * See winjumpcore.h. */
 
 #include "winjumpcore.h"
 
@@ -94,4 +95,42 @@ int wj_backing_extents(const extmap_hdr *hdr, const uint8_t *map, size_t map_len
     }
     *n = hdr->n_extents;
     return WJ_OK;
+}
+
+static int kv_space(char c)
+{
+    return c == ' ' || c == '\t' || c == '\r' || c == '\n';
+}
+
+int wj_kv_line(char *line, char **key, char **value)
+{
+    char *eq;
+    char *end;
+    char *v;
+
+    if (line == NULL || key == NULL || value == NULL)
+        return 0;
+    while (kv_space(*line))
+        line++;
+    if (*line == '\0' || *line == '#')
+        return 0;
+    for (eq = line; *eq != '\0' && *eq != '='; eq++)
+        ;
+    if (*eq == '\0')
+        return 0;
+    for (end = eq; end > line && kv_space(end[-1]); end--)
+        ;
+    if (end == line)
+        return 0;
+    *end = '\0';
+    for (v = eq + 1; kv_space(*v); v++)
+        ;
+    for (end = v; *end != '\0'; end++)
+        ;
+    while (end > v && kv_space(end[-1]))
+        end--;
+    *end = '\0';
+    *key = line;
+    *value = v;
+    return 1;
 }
