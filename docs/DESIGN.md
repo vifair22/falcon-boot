@@ -3320,7 +3320,7 @@ flowchart TD
     VCD -- "refused" --> RM["jres_remove"]
     RM --> MENU
     MENU -- "USB stick" --> LU["for EHCI.MOD, UHCI.MOD, OHCI.MOD in turn, each on the floppy with its controller on the bus:<br/>jmod_load to its slot; init: msc.c over ehci.c, uhci.c or ohci.c"]
-    LU --> EN["ops.probe: every controller of that kind (up to four), taken from the BIOS, reset;<br/>each root port, and each port of a hub on one, reset and enumerated:<br/>a stick: INQUIRY, READ CAPACITY; a boot keyboard: kept (hid.c), ops.int16 set<br/>EHCI hands a port whose device does not enable, or that holds a hub or a keyboard, to its companion"]
+    LU --> EN["ops.probe: every controller of that kind (up to four), taken from the BIOS, reset;<br/>each root port, and each port of up to two hubs below one, reset and enumerated:<br/>a stick: INQUIRY, READ CAPACITY; a boot keyboard: kept (hid.c), ops.int16 set<br/>EHCI hands a port whose device does not enable, or that holds a hub or a keyboard, to its companion"]
     EN --> GPT{"bootpart_find through ops.read, until one is:<br/>a partition with a boot record?<br/>the modules after it brought up all the same, for their keyboards"}
     GPT -- "no falcon stick" --> KG["the USB keyboards end with the route (serial)"]
     KG --> MENU
@@ -4494,29 +4494,30 @@ into memory and called.
   0x80), its own buffers. A module calls nothing in the core by symbol and
   links its own copy of the core routines it uses.
 - **The set.** `ATA.MOD` (ATAPI on the legacy IDE channels), `UHCI.MOD`,
-  `OHCI.MOD`, `EHCI.MOD` (one host controller each, its root ports and one
-  level of hub), and `PCC.MOD` (a CardBus bridge's PC Card socket and the
+  `OHCI.MOD`, `EHCI.MOD` (one host controller each, its root ports and two
+  levels of hub), and `PCC.MOD` (a CardBus bridge's PC Card socket and the
   ATA disk on the card in it). A USB module is its host controller and the
   whole device stack over the small interface `usbhc.h` a controller
-  offers: enumeration (`hw/usb/msc.c`), the hub level (`hub.c`), storage
+  offers: enumeration (`hw/usb/msc.c`), the hub levels (`hub.c`), storage
   (Bulk-Only Transport and SCSI, `msc.c`) and a boot-protocol keyboard
   (`hid.c`). One image per controller rather than a controller module and
   a separate `USB.MOD`, so there are no calls between modules and only the
   module for the controller that is there is read. The device half and the
   SCSI blocks (`hw/scsi`) are one source each; only the built images repeat
   them. A module's INT 13h answers are `hw/blk13.c`, shared by every module.
-- **The hub level.** A hub on a root port is configured, its ports
+- **The hub levels.** A hub on a root port is configured, its ports
   powered, and each port with a device reset, its speed read from the
-  port's status, and the device enumerated through the hub's root port
-  (`hub.c`); a hub behind a hub is not walked. The hub runs at full speed
-  on UHCI or OHCI, so a low-speed device behind it needs only the
-  low-speed marking on its transfers, as on a root port: no transaction
-  translator and no split transactions. EHCI has no interrupt transfers
+  port's status, and the device enumerated through the root port the hub
+  hangs from (`hub.c`). A hub on one of its ports is walked the same way,
+  a keyboard's own hub in a desk hub; a hub below that is not. The hubs run
+  at full speed on UHCI or OHCI, so a low-speed device behind them needs
+  only the low-speed marking on its transfers, as on a root port: no
+  transaction translator and no split transactions. EHCI has no interrupt transfers
   here, and a keyboard behind a high-speed hub would need split
   transactions, so `EHCI.MOD` hands a root port that holds a hub or a
-  keyboard to its companion controller (the port owner bit), where the
-  UHCI or OHCI module after it finds them. A stick behind a hub is found
-  the same way, at full speed.
+  keyboard to its companion controller (the port owner bit), and with it
+  the whole tree below the port, where the UHCI or OHCI module after it
+  finds them. A stick behind a hub is found the same way, at full speed.
 - **The keyboard.** A HID interface of the boot subclass and keyboard
   protocol is put into the boot protocol (SET_PROTOCOL) with no idle
   reports (SET_IDLE 0), and its interrupt IN endpoint read one packet at a
@@ -4630,7 +4631,7 @@ hardware and nothing about El Torito. The catalog's entry decides:
 **USB.** The modules for the controllers present (`EHCI.MOD`, then
 `UHCI.MOD`, then `OHCI.MOD`; each finds its controllers on the PCI bus
 itself, up to four of each kind, and takes them from the BIOS) enumerate
-their root ports, and one hub level, in turn (13.4). EHCI goes first
+their root ports, and two hub levels, in turn (13.4). EHCI goes first
 because a device that is not high speed does not enable on its port after
 a reset: `EHCI.MOD` hands that port to its companion (the port owner bit),
 and the UHCI or OHCI module after it finds the device there; so it does
@@ -4717,13 +4718,15 @@ stick (the rig's GPT disk with the stick's stages written in), and an
 a one-second countdown, judged from the serial log, and one case more for
 the menu itself: a five-second countdown stopped by a key sent through
 QEMU's monitor, which must boot nothing until Enter, and then the row the
-key moved to. Four cases more type on a `usb-kbd` (QEMU sends the
+key moved to. `usb-hub-stick` boots the rig stick from behind a
+`usb-hub`, judged as the other USB cases are. Five cases more type on a
+`usb-kbd` (QEMU sends the
 monitor's keys to the newest keyboard, and SeaBIOS's own USB keyboard ends
 when jump takes the controller): Escape on the rig stick's empty menu,
 which only the resident's INT 16h hook can deliver, and which the stick's
 loader answers with INT 18h and the resident with its reset. `kbd` puts
-the keyboard on a UHCI root port, `kbd-hub` behind a `usb-hub`, and
-`kbd-ehci` on a root port of an ICH9 EHCI with its three UHCI companions,
+the keyboard on a UHCI root port, `kbd-hub` behind a `usb-hub`, `kbd-hub2`
+behind a `usb-hub` behind another, and `kbd-ehci` on a root port of an ICH9 EHCI with its three UHCI companions,
 where it enables at high speed and `EHCI.MOD` hands it to the companion.
 `kbd-legacy` boots station-legacy from the stick instead (`mkstick station
 install --bios --legacy` on an image) and types Escape into its menu,
