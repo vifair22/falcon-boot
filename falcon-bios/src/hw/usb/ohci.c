@@ -38,6 +38,7 @@
 #define HC_BULKHEAD 0x28u
 #define HC_BULKCUR  0x2Cu
 #define HC_FMINT    0x34u
+#define HC_FMNUMBER 0x3Cu
 #define HC_PERSTART 0x40u
 #define HC_RHDA     0x48u
 #define HC_RHSTAT   0x50u
@@ -92,8 +93,10 @@
 #define PORTS_MAX   15u
 #define TD_MAX      32u
 #define WAIT_XFER   500000u      /* 10 us steps: 5 s */
-#define WAIT_INTR   300u         /* 10 us steps: three frames */
-#define FRAME_US    1000u
+/* An interrupt IN's wait, by the controller's frame number, as uhci.c's:
+ * three frames, and a step bound for a controller that has stopped. */
+#define INTR_FRAMES 3u
+#define WAIT_FRAMES 100000u
 
 typedef struct {
     volatile uint32_t ctl;
@@ -409,6 +412,7 @@ static int ohci_intr(unsigned port, uint8_t addr, uint8_t ep, uint16_t mps,
     uint32_t tail = phys(&g_td[1]);
     uint32_t steps;
     uint32_t cc;
+    uint16_t f0;
     unsigned local;
     ohci_ed *ed;
     int rc;
@@ -424,17 +428,24 @@ static int ohci_intr(unsigned port, uint8_t addr, uint8_t ep, uint16_t mps,
     memset((void *)&g_td[1], 0, sizeof g_td[1]);
     ed->tail = tail;
     ed->head = td0 | ((*toggle & 1u) ? ED_CARRY : 0u);
+    f0 = (uint16_t)rd(HC_FMNUMBER);
     ed->ctl &= ~ED_SKIP;
     wr(HC_CMDSTAT, CMD_BLF);
-    for (steps = 0; steps < WAIT_INTR &&
-                    (ed->head & ~0xFu) == td0 && (ed->head & ED_HALTED) == 0;
+    for (steps = 0; steps < WAIT_FRAMES &&
+                    (ed->head & ~0xFu) == td0 && (ed->head & ED_HALTED) == 0 &&
+                    (uint16_t)((uint16_t)rd(HC_FMNUMBER) - f0) < INTR_FRAMES;
          steps++)
         io_delay_us(10);
     ed->ctl |= ED_SKIP;
     /* The controller finishes a transaction it had started within the
-     * frame; after that it reads the skipped descriptor no further. */
-    if ((ed->head & ~0xFu) == td0 && (ed->head & ED_HALTED) == 0)
-        io_delay_us(FRAME_US);
+     * frame it is in; after that it reads the skipped descriptor no
+     * further. */
+    f0 = (uint16_t)rd(HC_FMNUMBER);
+    for (steps = 0; steps < WAIT_FRAMES &&
+                    (ed->head & ~0xFu) == td0 && (ed->head & ED_HALTED) == 0 &&
+                    (uint16_t)rd(HC_FMNUMBER) == f0;
+         steps++)
+        io_delay_us(10);
 
     cc = TD_CC(g_td[0].ctl);
     if ((ed->head & ~0xFu) == td0 && (ed->head & ED_HALTED) == 0)

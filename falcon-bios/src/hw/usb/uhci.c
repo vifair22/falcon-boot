@@ -82,12 +82,14 @@
 /* How long a transfer may take, in 10 us steps: 5 s. A stick that is still
  * spinning up its flash controller answers the first reads slowly. */
 #define WAIT_XFER  500000u
-/* How long an interrupt IN waits for a report, in 10 us steps: three
- * frames, then the device has nothing to say. */
-#define WAIT_INTR  300u
-/* A frame, in microseconds: what the controller may still take to finish
- * with a descriptor it had in hand when the queue head was emptied. */
-#define FRAME_US   1000u
+/* How long an interrupt IN waits for a report: three frames by the
+ * controller's own frame counter, then the device has nothing to say. The
+ * counter rather than a delay, because a port read is no clock on an
+ * emulator, and a window that closes before the controller has run a frame
+ * never sees a report. The step bound is for a controller that has stopped
+ * counting. */
+#define INTR_FRAMES 3u
+#define WAIT_FRAMES 100000u
 
 typedef struct {
     volatile uint32_t link;
@@ -396,23 +398,33 @@ static int uhci_intr(unsigned port, uint8_t addr, uint8_t ep, uint16_t mps,
 {
     uint32_t steps;
     uint32_t st;
+    uint16_t f0;
 
     *done = 0;
     if (mps == 0 || mps > 64u || len == 0 || len > mps ||
         port >= g_nctl * UHCI_PORTS)
         return USBHC_ERR;
     use(port);
+    if ((rd16(REG_STS) & STS_HALTED) != 0)
+        return USBHC_ERR;
     td_fill(&g_td[0], (uhci_td *)0, low, PID_IN, addr, ep, *toggle, data,
             len);
+    f0 = rd16(REG_FRNUM);
     g_qhp->element = phys(&g_td[0]);
-    for (steps = 0; steps < WAIT_INTR && (g_td[0].status & TD_ACTIVE) != 0;
+    for (steps = 0; steps < WAIT_FRAMES &&
+                    (g_td[0].status & TD_ACTIVE) != 0 &&
+                    ((rd16(REG_FRNUM) - f0) & 0x7FFu) < INTR_FRAMES;
          steps++)
         io_delay_us(10);
     g_qhp->element = LINK_T;
     /* A device that answered as the queue head was emptied: the controller
-     * writes the descriptor back within the frame. */
-    if ((g_td[0].status & TD_ACTIVE) != 0)
-        io_delay_us(FRAME_US);
+     * writes the descriptor back within the frame it is in. */
+    f0 = rd16(REG_FRNUM);
+    for (steps = 0; steps < WAIT_FRAMES &&
+                    (g_td[0].status & TD_ACTIVE) != 0 &&
+                    ((rd16(REG_FRNUM) - f0) & 0x7FFu) < 1u;
+         steps++)
+        io_delay_us(10);
     st = g_td[0].status;
     g_td[0].status &= ~TD_ACTIVE;
     if ((st & TD_ACTIVE) != 0)
