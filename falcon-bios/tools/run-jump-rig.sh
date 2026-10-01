@@ -66,6 +66,14 @@
 #             stick's loader (`mkstick station install --bios --legacy` on
 #             an image with one FAT32 partition): Escape on the station's
 #             menu, which runs on top of jump's resident, is its INT 18h
+#   kbd-giveup  the usb route with a usb-kbd and no stick: the route comes
+#             back with the keyboard up, and the keyboard alone answers the
+#             failure page (Enter) and then jump's menu (Escape, its INT
+#             18h, with the keyboards released first; DESIGN 13.6)
+#   kbd-hdd   the same start, then the disk row chosen on the keyboard (Up
+#             to the top, Enter): the disk (the hdd case's falcon-bios)
+#             starts with the keyboard block behind INT 16h, and Escape on
+#             its menu reaches it there and comes back to the block's reset
 #
 # The cf case needs the QEMU build-qemu.sh makes; the rest the system's.
 #
@@ -319,12 +327,84 @@ kbd_case() {  # kbd_case CASE FOUND MENU QEMU-ARGS...
     [[ -z ${LEDS:-} ]] || judge "$c-leds" "$LEDS"
 }
 
+# Waits until serial carries PATTERN (grep -E) at least N times, or QEMU
+# has gone. Nonzero when it timed out.
+wait_count() { # wait_count PATTERN N QEMU-PID
+    local i
+    for ((i = 0; i < TIMEOUT * 10; i++)); do
+        [[ -f "$R/serial.log" ]] &&
+            [[ $(log_text | grep -acE -- "$1") -ge $2 ]] && return 0
+        kill -0 "$3" 2>/dev/null || return 1
+        sleep 0.1
+    done
+    return 1
+}
+
+# The usb route with only a usb-kbd on the UHCI, no stick: it comes back
+# with the keyboard up (serial says it stays), and every key from here is
+# the keyboard's, polled by jump's stage 3 itself. Enter on the failure
+# page brings the menu back, a second hint line on serial. Then the case's
+# own keys: kbd-giveup Escape, kbd-hdd the disk row.
+kbd_back_case() { # kbd_back_case CASE
+    local c=$1 qpid i
+    local hint='up/down select \| enter choose \| esc back'
+    floppy usb
+    cp build/test-bios.img "$R/disk.img"
+    rm -f "$R/serial.log" "$R/mon.sock"
+    "$QEMU" -L /usr/share/qemu -machine pc -cpu pentium3 -m 128 \
+        -display none -boot a \
+        -drive if=floppy,format=raw,file="$R/jump.img" \
+        -drive file="$R/disk.img",format=raw,if=ide,index=0 \
+        -serial file:"$R/serial.log" \
+        -monitor unix:"$R/mon.sock",server,nowait \
+        -device piix3-usb-uhci,id=hc -device usb-kbd,bus=hc.0,port=2 \
+        >/dev/null 2>&1 &
+    qpid=$!
+    wait_count 'keyboards stay up' 1 "$qpid" || true
+    sleep 1
+    monitor "sendkey ret"
+    wait_count "$hint" 2 "$qpid" || true
+    sleep 1
+    if [[ $c == kbd-giveup ]]; then
+        monitor "sendkey esc"
+        wait_count 'returning to firmware' 1 "$qpid" || true
+        sleep 1
+    else
+        for i in 1 2 3 4; do
+            monitor "sendkey up"
+            sleep 0.3
+        done
+        monitor "sendkey ret"
+        # The disk's falcon-bios, up to its menu: its hint, after the
+        # handover.
+        wait_count 'handing over' 1 "$qpid" || true
+        wait_count 'd direct \| esc back|no entries \| esc back' 1 "$qpid" ||
+            true
+        sleep 1
+        monitor "sendkey esc"
+        wait_count 'returned to the BIOS; resetting' 1 "$qpid" || true
+    fi
+    monitor quit
+    wait "$qpid" 2>/dev/null || true
+    log_text > "$R/serial.txt"
+    if [[ $c == kbd-giveup ]]; then
+        judge kbd-giveup 'keyboards are released' 'a keyboard on root port' \
+            'there is no USB storage' 'keyboards stay up' \
+            'returning to firmware'
+    else
+        judge kbd-hdd 'returned to the BIOS; resetting' \
+            'a keyboard on root port' 'keyboards stay up' \
+            'reverse thunk for no drive at .*INT 16h for 1' \
+            'MBR of drive 0x80 to 0x7c00' 'boot drive 0x80, sector size 512'
+    fi
+}
+
 FAILED=0
 CASES=("$@")
 [[ ${#CASES[@]} -gt 0 ]] ||
     CASES=(hdd cd usb-uhci usb-ohci usb-ehci usb-hub-stick cf cf3v cf48 giveup
            mem s2crc s3crc stick3crc modcrc chs menu kbd kbd-hub kbd-hub2
-           kbd-ehci kbd-legacy)
+           kbd-ehci kbd-legacy kbd-giveup kbd-hdd)
 
 for c in "${CASES[@]}"; do
     case $c in
@@ -504,6 +584,7 @@ for c in "${CASES[@]}"; do
             -device usb-kbd,bus=hc.0,port=2
         rm -f "$R/legacy.img"
         ;;
+    kbd-giveup|kbd-hdd) kbd_back_case "$c" ;;
     mem)
         if [[ -z "${MEMTEST:-}" ]]; then
             echo "SKIP  mem       no MEMTEST"
