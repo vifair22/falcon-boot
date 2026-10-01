@@ -195,23 +195,38 @@ static int configure(uint16_t io)
 
     if (pcc_mem_window(ATTR_HOST, ATTR_SIZE, 0, 1, w) != 0)
         return -1;
+    /* What the window's addresses hold before the window exists: the same
+     * bytes afterwards mean something other than the bridge answers them
+     * (shadowed RAM, another decoder), not the card. */
+    for (i = 0; i < 16u; i += 4u)
+        log_v("before the window, 0xD0000 even bytes",
+              ((uint32_t)attr[2u * i] << 24) | ((uint32_t)attr[2u * i + 2u] << 16) |
+              ((uint32_t)attr[2u * i + 4u] << 8) | attr[2u * i + 6u]);
     for (i = 0; i < 6u; i++)
         exca_wr(X_MEM0 + i, w[i]);
     exca_wr(X_PAGE0, 0);
     exca_wr(X_ENABLE, EN_MEM0);
     io_delay_us(100);
+    for (i = 0; i < 6u; i++)
+        log_v("ExCA memory window 0 register read back", exca_rd(X_MEM0 + i));
+    log_v("ExCA enable read back", exca_rd(X_ENABLE));
 
     for (i = 0; i < CIS_BYTES; i++)
         cis[i] = attr[2u * i];       /* attribute memory: even bytes only */
     if (pcc_cis_parse(cis, sizeof cis, &c) != 0) {
         /* Which of two failures this is, bytes that never arrived (0xFF or
          * 0x00 throughout) or tuples the parser does not take, is told by
-         * the bytes themselves, so the first sixteen go to serial. */
+         * the bytes themselves: the first sixty-four even bytes, then the
+         * first sixteen odd ones, go to serial. */
         log_s("falcon-bios: PCC.MOD: the card's CIS could not be read\n");
-        for (i = 0; i < 16u; i += 4u)
+        for (i = 0; i < 64u; i += 4u)
             log_v("CIS bytes", ((uint32_t)cis[i] << 24) |
                                ((uint32_t)cis[i + 1u] << 16) |
                                ((uint32_t)cis[i + 2u] << 8) | cis[i + 3u]);
+        for (i = 0; i < 16u; i += 4u)
+            log_v("odd bytes",
+                  ((uint32_t)attr[2u * i + 1u] << 24) | ((uint32_t)attr[2u * i + 3u] << 16) |
+                  ((uint32_t)attr[2u * i + 5u] << 8) | attr[2u * i + 7u]);
         return -1;
     }
     if (c.funcid != FUNCID_FIXED_DISK) {
