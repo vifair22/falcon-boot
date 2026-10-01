@@ -268,7 +268,9 @@ kbd_case() {  # kbd_case CASE FOUND QEMU-ARGS...
         -monitor unix:"$R/mon.sock",server,nowait "$@" >/dev/null 2>&1 &
     qpid=$!
     for ((i = 0; i < TIMEOUT * 10; i++)); do
-        [[ -f "$R/serial.log" ]] && log_text | grep -aq 'esc back' && break
+        # The stick's empty menu; jump's own has esc in its hint too.
+        [[ -f "$R/serial.log" ]] &&
+            log_text | grep -aq 'no entries | esc back' && break
         kill -0 "$qpid" 2>/dev/null || break
         sleep 0.1
     done
