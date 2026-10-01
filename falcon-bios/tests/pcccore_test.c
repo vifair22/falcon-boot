@@ -165,10 +165,10 @@ static void test_pick(void **state)
     for (a = PCC_ROM_BASE; a < PCC_ROM_END; a += 0x8000u)
         rom_at(hdr, a, 0x8000u);
     assert_int_equal(pcc_attr_pick(hdr, 0), -1);
-    /* The last page is 0xEF000; nothing past it. */
+    /* The last page is 0xDF000; nothing past it. */
     memset(hdr, 0xFF, sizeof hdr);
-    assert_int_equal(pcc_attr_pick(hdr, 0xEE001u), 0xEF000);
-    assert_int_equal(pcc_attr_pick(hdr, 0xEF001u), -1);
+    assert_int_equal(pcc_attr_pick(hdr, 0xDE001u), 0xDF000);
+    assert_int_equal(pcc_attr_pick(hdr, 0xDF001u), -1);
     assert_int_equal(pcc_attr_pick(hdr, 0xFFFFFFFFu), -1);
     assert_int_equal(pcc_attr_pick(NULL, 0), -1);
 }

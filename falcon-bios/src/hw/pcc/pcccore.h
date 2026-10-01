@@ -57,9 +57,11 @@ int pcc_io_window(uint16_t base, uint16_t len, uint8_t regs[4]);
 
 /* The option-ROM area the attribute memory window is placed in, as the
  * caller reads it: the first three bytes at every 2 KB boundary from
- * PCC_ROM_BASE, PCC_ROM_SLOTS of them, three bytes each. */
+ * PCC_ROM_BASE, PCC_ROM_SLOTS of them, three bytes each. It stops at
+ * 0xE0000: on many machines (Phoenix, Award) 0xE0000-0xEFFFF is the system
+ * BIOS, with no header to find, and the BIOS flash may answer there too. */
 #define PCC_ROM_BASE   0x000C0000u
-#define PCC_ROM_END    0x000F0000u        /* exclusive */
+#define PCC_ROM_END    0x000E0000u        /* exclusive */
 #define PCC_ROM_SLOT   0x800u
 #define PCC_ROM_SLOTS  ((PCC_ROM_END - PCC_ROM_BASE) / PCC_ROM_SLOT)
 /* 0xC0000-0xC7FFF is the video BIOS's on every PC, and one built into the
