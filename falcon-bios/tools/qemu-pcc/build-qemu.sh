@@ -15,7 +15,11 @@
 set -euo pipefail
 
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../.." && pwd)
-VER=${QEMU_VERSION:-11.1.1}
+# The release qemu-system-i386 on PATH reports (Debian's "10.0.13+ds" is
+# upstream 10.0.13), so the BIOS files under /usr/share/qemu are its own.
+VER=${QEMU_VERSION:-$(qemu-system-i386 --version |
+    sed -n '1s/^QEMU emulator version \([0-9][0-9.]*\).*/\1/p')}
+[[ -n "$VER" ]] || { echo "ERROR: no qemu-system-i386 to take a version from; set QEMU_VERSION" >&2; exit 1; }
 DIR="$ROOT/build/qemu-pcc"
 SRC="$DIR/qemu-$VER"
 

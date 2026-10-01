@@ -40,6 +40,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         wimtools 7zip libarchive-tools xorriso cpio zstd \
         socat aria2 curl \
         cppcheck clang-tidy gcovr \
+        ninja-build libglib2.0-dev libpixman-1-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # swtpm-tools is for swtpm_setup, which the TPM rig's totp cases make their
@@ -49,6 +50,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # ntfs-3g is for ntfsresize and ntfsfix, which mk-a21m-station.sh takes the
 # A21m's NTFS partition down with before station-legacy goes on.
 # gcovr is `make coverage`'s report.
+# ninja-build, libglib2.0-dev and libpixman-1-dev are what QEMU's own build
+# needs (it brings its meson), for falcon-bios/tools/qemu-pcc/build-qemu.sh:
+# the jump rig's cf cases run on a QEMU with falcon-pcc.c built in.
 
 # check-tools looks for 7z or 7zz; trixie's 7zip package installs only 7zz.
 RUN ln -sf /usr/bin/7zz /usr/local/bin/7z
@@ -111,7 +115,7 @@ RUN set -eu; \
              cpio zstd socat aria2c readelf sha256sum virt-fw-vars 7z sudo \
              pkg-config xxd tcpdump qemu-img mcopy mmd fsck.ext4 truncate \
              cmp find xargs swtpm swtpm_setup sfdisk ntfsresize ntfsfix \
-             gcovr; do \
+             gcovr ninja; do \
         command -v "$t" >/dev/null 2>&1 || { echo "MISSING: $t"; missing=1; }; \
     done; \
     test -n "$(pkg-config --libs cmocka)" || { \
