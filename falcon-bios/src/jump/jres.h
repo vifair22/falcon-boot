@@ -31,21 +31,31 @@ void jres_keyboards(const uint32_t *entries, unsigned n);
 int jres_install(uint8_t drive, uint32_t entry, uint32_t stack_top,
                  const e820_range *keep, unsigned n_keep, uint32_t *base);
 
-/* Undoes the last jres_install, if the vector and the BDA's count are still
+/* The keyboard block: as jres_install with the keyboards jres_keyboards
+ * named (at least one) and INT 13h left alone, for a route that hands over
+ * to a disk the BIOS serves itself while USB keyboards are up (DESIGN
+ * Section 13.6). `stack_top` is a keyboard module's slot top. INT 15h is
+ * carved for the block and `keep`. 0, or -1 as jres_install. */
+int jres_install_keyboards(uint32_t stack_top, const e820_range *keep,
+                           unsigned n_keep);
+
+/* Undoes the last jres_install or jres_install_keyboards, if the vector and the BDA's count are still
  * the ones it left. */
 void jres_remove(void);
 
 /* The drive the resident on INT 13h answers, or 0 when INT 13h does not
- * lead to one: a block this build or any other falcon jump installed, found
- * by its magic. */
+ * lead to one (none, or only the keyboard block): a block this build or any
+ * other falcon jump installed, found by its magic. */
 uint8_t jres_drive(void);
 
-/* Releases the resident INT 13h leads to, whoever installed it: every hook
+/* Releases the resident INT 13h leads to, or the keyboard block INT 16h
+ * or 15h does, whoever installed it: every hook
  * and BDA count its release record holds goes back to what the BIOS left,
  * where nothing has changed it since. For a system started on another disk,
  * which reads no disk through the BIOS once it runs and must not inherit
  * vectors into memory it is about to own: Windows 2000 froze on the A21m
- * started on top of one. The drive it answered, or 0 when there was none. */
+ * started on top of one. The drive it answered, or 0 when it answered none
+ * or there was no block. */
 uint8_t jres_release(void);
 
 #endif /* FALCON_BIOS_JRES_H */
