@@ -22,7 +22,7 @@ typedef struct {
     char        buf[BOOT_ADVICE_MAX];      /* advice, when it is built */
     /* Set when the route stopped before it committed to the medium, because
      * the medium is not one it can take: the caller goes on to the next
-     * route, as the UEFI loader does (docs/Manual.md, Section 1.3). */
+     * route, as the UEFI loader does (docs/Manual.md, Section 2.3). */
     int         fallthrough;
 } boot_result;
 

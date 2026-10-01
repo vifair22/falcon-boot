@@ -479,7 +479,7 @@ static void boot_target(const survey_entry *e, const family_desc *fam);
 /* The ISO's kernel, directly, with falcon-hook (DESIGN Section 6.4). An ISO
  * this route cannot take (no boot entry it can read, a kernel that is not
  * one it can start) goes on to its own loader, as on the UEFI loader
- * (docs/Manual.md, Section 1.3): that is what Enter on DOS, BSD or anything
+ * (docs/Manual.md, Section 2.3): that is what Enter on DOS, BSD or anything
  * else that is not Linux means. A failure after the route committed is
  * reported here. */
 static void boot_direct(const survey_entry *e, const family_desc *fam)
@@ -529,7 +529,7 @@ static void boot_target(const survey_entry *e, const family_desc *fam)
  * patched, BSD media is served as a memory disk, anything else boots its
  * kernel directly, and c boots the medium's own loader. The one difference
  * is BSD media this route does not apply to, which goes on to the direct
- * boot here rather than to the chainload (docs/Manual.md, Section 1.3). */
+ * boot here rather than to the chainload (docs/Manual.md, Section 2.3). */
 static void boot_plain(size_t idx, int which)
 {
     const survey_entry *e = &g_survey.entries[idx];

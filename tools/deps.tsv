@@ -1,0 +1,58 @@
+# tool	check	debian package	group	need	purpose
+# package: space-separated when one tool needs several; a (pip) or (base)
+#          suffix marks one apt does not install.
+# check: cmd:<prog>[|<alt>] (on PATH), pkgconf:<name> (pkg-config finds it),
+#        file:<path>[|<alt>] (one exists), m32 (gcc -m32 has a libgcc).
+# Rendered into docs/Manual.md 13.1 by `tools/deps.sh markdown`; checked by
+# `make check-tools` and, against the Dockerfile and the Manual, by
+# `make check-deps`.
+x86_64-w64-mingw32-gcc	cmd:x86_64-w64-mingw32-gcc	gcc-mingw-w64-x86-64	build	required	the UEFI images, winjump.exe and the x64 vdisk driver
+gcc	cmd:gcc	build-essential	build	required	host tools, tests and the BIOS loader (CC_HOST)
+make	cmd:make	make	build	required	the one build
+pkg-config	cmd:pkg-config	pkg-config	build	required	finds cmocka for the test binaries
+cmocka	pkgconf:cmocka	libcmocka-dev	build	required	every test binary
+objcopy, nm	cmd:objcopy	binutils	build	required	flat images (the BIOS stages, jump's modules) and build.mk's symbol checks
+xxd	cmd:xxd	xxd	build	required	falcon-hook and winjump embedded as C arrays
+gzip	cmd:gzip	gzip(base)	build	required	stage 3 and jump's modules are gzip members
+cpio	cmd:cpio	cpio	build	required	the initrds the apps' fixtures carry
+32-bit libgcc	m32	gcc-multilib	build	optional	make bios: the i586 loader and falcon-hook32
+i686-w64-mingw32-gcc	cmd:i686-w64-mingw32-gcc	gcc-mingw-w64-i686	build	optional	make bios: the 32-bit winjump and vdisk driver
+mtools	cmd:mcopy	mtools	build	optional	make jump and station install write FAT with mtools
+sd-stub	file:/usr/lib/systemd/boot/efi/linuxx64.efi.stub	systemd-boot-efi	build	optional	the stub a UKI is built on (sign uki, the fixture UKI, the appliance)
+zstd	cmd:zstd	zstd	build	optional	the appliance image's initramfs
+cryptsetup	cmd:cryptsetup	cryptsetup-bin	host tools	required	mkstick create: p3's LUKS2
+openssl	cmd:openssl	openssl	host tools	required	mkstick keygen and create: the MOK keypair
+sbsign, sbverify, sbattach	cmd:sbsign	sbsigntool	host tools	required	MOK signatures, their check, and stripping one
+mkfs.exfat	cmd:mkfs.exfat	exfatprogs	host tools	required	p2
+mkfs.ext4	cmd:mkfs.ext4	e2fsprogs	host tools	required	p3 and the station partition
+mkfs.fat	cmd:mkfs.fat	dosfstools	host tools	required	p1 and a BIOS boot partition
+sgdisk	cmd:sgdisk	gdisk	host tools	required	GPT
+sfdisk	cmd:sfdisk	fdisk	host tools	required	MBR
+losetup, blockdev, partx	cmd:losetup	util-linux	host tools	required	images as block devices
+bsdtar	cmd:bsdtar	libarchive-tools	host tools	optional	reading archives in the fixtures and the appliance image
+ukify	cmd:ukify	systemd-ukify	host tools	optional	cross-checking sign uki's byte identity (cmp-ukify.sh)
+virt-fw-vars	cmd:virt-fw-vars	virt-firmware(pip) python3-venv python3-dev libcrypt-dev	tests and fixtures	optional	MOK varstores for the Secure Boot rigs (mkstick varstore); the venv and crypt_r build it needs
+xorriso	cmd:xorriso	xorriso	tests and fixtures	optional	the ISO fixtures and the rig's payload ISO
+mkudffs	cmd:mkudffs	udftools	tests and fixtures	optional	the UDF fixture
+wimlib-imagex	cmd:wimlib-imagex	wimtools	tests and fixtures	optional	the WIM fixture
+7z	cmd:7z|7zz	7zip	tests and fixtures	optional	cross-checks the UDF fixture
+ntfs-3g	cmd:ntfs-3g	ntfs-3g	tests and fixtures	optional	the A21m station rig's disk
+gcovr	cmd:gcovr	gcovr	analyzers	optional	make coverage
+cppcheck	cmd:cppcheck	cppcheck	analyzers	optional	make analyze
+clang-tidy	cmd:clang-tidy	clang-tidy	analyzers	optional	make analyze
+objdump, readelf	cmd:objdump	binutils	analyzers	optional	tools/check-floor.sh
+qemu-system-x86_64	cmd:qemu-system-x86_64	qemu-system-x86	rigs	optional	the UEFI rigs
+qemu-system-i386	cmd:qemu-system-i386	qemu-system-x86	rigs	optional	the BIOS rigs (SeaBIOS on an i686)
+qemu-img, qemu-nbd	cmd:qemu-img	qemu-utils	rigs	optional	rig disks, overlays and the station fixture disks
+OVMF	file:/usr/share/edk2/OvmfX64/OVMF_CODE.fd|/usr/share/edk2/x64/OVMF_CODE.4m.fd|/usr/share/OVMF/OVMF_CODE_4M.fd|/usr/share/edk2-ovmf/OVMF_CODE.fd	ovmf	rigs	optional	the UEFI rigs' firmware, plain and Secure Boot
+swtpm, swtpm_setup	cmd:swtpm	swtpm swtpm-tools	rigs	optional	the TPM rigs
+socat	cmd:socat	socat	rigs	optional	the BIOS rigs' QEMU monitor
+magick	cmd:magick	imagemagick	rigs	optional	the BIOS rigs' screendumps
+ninja	cmd:ninja	ninja-build	rigs	optional	building the PC Card rig's QEMU (build-qemu.sh)
+glib, pixman	pkgconf:glib-2.0	libglib2.0-dev	rigs	optional	building the PC Card rig's QEMU
+pixman	pkgconf:pixman-1	libpixman-1-dev	rigs	optional	building the PC Card rig's QEMU
+python3	cmd:python3	python3	harness	optional	the scorecard and the corpus tools
+tcpdump	cmd:tcpdump	tcpdump	harness	optional	the harness's DHCP capture
+curl	cmd:curl	curl	harness	optional	fetch-shims.sh, corpus-fetch.sh, build-qemu.sh
+aria2c	cmd:aria2c	aria2	harness	optional	corpus-fetch.sh
+git	cmd:git	git	harness	optional	build-qemu.sh fetches QEMU

@@ -377,31 +377,13 @@ test-fixtures: test-image test-ext4 test-jbd2 test-fat test-luks test-isoview te
 # mingw cross-gcc that emits PE32+ directly; the test rig and the host tooling
 # need the userland utilities we shell out to.
 check-tools:
-	@missing=0; \
-	for t in x86_64-w64-mingw32-gcc; do \
-		command -v $$t >/dev/null 2>&1 || { echo "MISSING (required): $$t"; missing=1; }; \
-	done; \
-	for t in qemu-system-x86_64 sgdisk losetup openssl cryptsetup sbsign \
-	         mkfs.fat mkfs.exfat mkfs.ext4 bsdtar ukify wimlib-imagex; do \
-		command -v $$t >/dev/null 2>&1 || echo "missing (needed for host tooling / tests): $$t"; \
-	done; \
-	command -v 7z >/dev/null 2>&1 || command -v 7zz >/dev/null 2>&1 || \
-		echo "missing (mk-test-isoview.sh cross-checks its UDF fixture with it): 7z"; \
-	[ "$$($(CC_HOST) -m32 -print-multi-directory 2>/dev/null)" = 32 ] || \
-		echo "missing (make bios links the i586 loader and falcon-hook32 against it): a 32-bit libgcc, gcc-multilib on Debian"; \
-	command -v $(CC_WIN32) >/dev/null 2>&1 || \
-		echo "missing (make bios embeds the i686 winjump for 32-bit Windows media): $(CC_WIN32)"; \
-	for t in mcopy mmd mdeltree; do \
-		command -v $$t >/dev/null 2>&1 || echo "missing (make jump and station install write FAT with mtools): $$t"; \
-	done; \
-	command -v qemu-system-i386 >/dev/null 2>&1 || \
-		echo "missing (the BIOS rigs boot SeaBIOS on an i686 with it): qemu-system-i386"; \
-	command -v magick >/dev/null 2>&1 || \
-		echo "missing (the BIOS rigs save their screendumps with it): magick (ImageMagick)"; \
-	command -v socat >/dev/null 2>&1 || \
-		echo "missing (the BIOS rigs drive the QEMU monitor with it): socat"; \
-	if [ $$missing -ne 0 ]; then echo "Required toolchain incomplete."; exit 1; fi; \
-	echo "Toolchain OK."
+	@tools/deps.sh check
+
+# tools/deps.tsv is the one list: the Dockerfile's packages and the Manual's
+# table are checked against it, so the inventory cannot drift three ways.
+check-deps:
+	@tools/deps.sh sync
+.PHONY: check-tools check-deps
 
 # Static analysis gate: cppcheck + gcc -fanalyzer + clang-tidy, baseline
 # managed in tools/analyze-baseline.txt (see tools/analyze.md).
@@ -409,7 +391,7 @@ check-tools:
 # generated blob sources (build/gen/*_blob.c). Without them it loads no
 # project, checks nothing and reports zero findings, which is how the gate
 # passed for a week without running cppcheck at all.
-analyze: all bios
+analyze: all bios check-deps
 	tools/analyze.sh
 
 # ---- compile_commands.json ----
@@ -485,6 +467,10 @@ define cc_db_emit
 		printf '  },\n' >> $@; \
 	done
 endef
+
+# `make compdb` for people; the file target is what everything depends on.
+compdb: compile_commands.json
+.PHONY: compdb
 
 compile_commands.json: Makefile $(wildcard falcon-*/build.mk apps/*/app.mk)
 	@echo '[' > $@

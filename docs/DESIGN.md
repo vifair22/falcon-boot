@@ -305,8 +305,8 @@ p1 holds exactly four files. Section 4.3 says why that list is closed.
 
 | Path | What it is | Signatures it must carry |
 |---|---|---|
-| `/EFI/BOOT/BOOTX64.EFI` | Fedora shim-x64 16.1 | Microsoft UEFI CA 2011 and Microsoft UEFI CA 2023 as shipped, **plus ours appended** |
-| `/EFI/BOOT/mmx64.efi` | MokManager, shim's enrollment UI (Fedora naming) | Fedora Secure Boot CA as shipped, **plus ours appended** |
+| `/EFI/BOOT/BOOTX64.EFI` | Fedora shim-x64 16.1 | Microsoft UEFI CA 2011 and Microsoft UEFI CA 2023 as shipped, plus ours when appended by hand (Manual Section 11.1) |
+| `/EFI/BOOT/mmx64.efi` | MokManager, shim's enrollment UI (Fedora naming) | Fedora Secure Boot CA as shipped, plus ours when appended by hand (Manual Section 11.1) |
 | `/EFI/BOOT/grubx64.efi` | OUR loader (see note on next-stage name) | **ours, and nothing else** |
 | `/falcon-boot.cer` | our public cert, for first-boot enrollment | not signed; it is a certificate |
 
@@ -346,8 +346,9 @@ change.
 **1. Our loader and our UKIs carry exactly one signature: ours.** A second
 signature on them means `sbsign` was run twice (see 4.2).
 
-**2. shim and MokManager keep the signatures they shipped with, and gain
-ours on top.** The two cover different machines:
+**2. shim and MokManager keep the signatures they shipped with; ours is
+appended by hand (Manual Section 11.1) for a machine whose db holds no
+Microsoft CA.** The two cover different machines:
 
 - The **vendor** signatures boot the stick on a machine whose db trusts the
   Microsoft CAs.
@@ -842,11 +843,10 @@ the UEFI `db`, but the driver runs only in the installer's WinPE:
 
 - 32-bit WinPE, which every 32-bit Windows installer boots, enforces no
   kernel-mode code signing: the unsigned `falcon-vdisk` loads.
-- 64-bit WinPE enforces KMCS and does not load the unsigned driver; the
-  loader does not put the served BCD into test-signing mode. On BIOS the
-  resident CD (below) makes the driver unnecessary. On UEFI the corpus's
-  64-bit media older than 8 fail before WinPE, with no EFI System Partition
-  found on the medium (docs/coverage.md).
+- The driver runs in 32-bit WinPE only. On BIOS the resident CD (below)
+  makes it unnecessary for 64-bit media; on UEFI the corpus's 64-bit media
+  older than 8 fail before WinPE, with no EFI System Partition found on the
+  medium (docs/coverage.md).
 
 On BIOS the ISO is a resident INT 13h CD that never vanishes, so WinPE
 reaches winpeshl and winjump runs; the BIOS winjump config carries the
@@ -1239,10 +1239,6 @@ enrol the CA or turn Secure Boot off for that job. The Manual says so.
     will be written to.
 - **Secure Boot ON, validation off (user opt-in, 7.4):** shim permits
   everything; every ISO boots with nothing signed, on that machine.
-
-Windows is the one path that covers all three states, including validation
-off, where no UKI boots (7.4): its chain is `db`-signed end to end through
-the firmware's own `LoadImage` and contains no MOK-signed image.
 
 An unsigned ISO with reliable media-finding and Secure Boot validation on is
 not a combination: it needs our signature on the kernel (blessing) or the
@@ -1875,7 +1871,7 @@ creation:
   image carries records and its own BIOS stages). `mkstick next-boot` sets
   the next-boot marker (Section 6.3.1): the variable on UEFI, the boot
   partition's marker sector on BIOS; `--print` reports what is queued as
-  `key=value` lines for a script. docs/Manual.md Section 3 is the
+  `key=value` lines for a script. docs/Manual.md Section 10 is the
   reference for all of them.
 - Generate the MOK keypair; keep the private key encrypted on p3 (Section 7.5),
   export the public cert to p1 for enrollment.
@@ -1956,10 +1952,11 @@ named UKI (served to LoadImage through the synthetic-filesystem machinery
 of Section 5.1, since exFAT has no firmware device path; shim verifies as
 always). A size mismatch means the ISO changed after blessing: the entry is
 labeled stale-blessed and boots as if unblessed. The `sha256=` field is
-for the *bless tool* (re-bless detection and appliance listing); the loader
-checks only the size, since hashing a multi-GB ISO at menu time is too slow
-and everything the manifest can influence is either signed (the UKI) or
-already-unverified data on p2 (the manifest itself, the initrd). Corrupt or
+recorded and nothing compares it: the loader and the appliance's survey
+check only the size, since hashing a multi-GB ISO at menu time or on every
+survey is too slow, and everything the manifest can influence is either
+signed (the UKI) or already-unverified data on p2 (the manifest itself, the
+initrd). Corrupt or
 absent manifest degrades to "nothing is blessed," never to an error.
 
 The host tools shell out to `cryptsetup`, `sbsign` and `mkfs.*`: they do
@@ -2013,7 +2010,8 @@ while every real file lives only in UDF.
   the stick is `falcon-boot`, the UEFI station `falcon-boot-pos` (its own
   name so a generation bump for a parser only the stick links does not
   revoke the station, Section 12.1). Both are at generation 1, vendor
-  `falcon`, with the version field a literal tracking `release_version`.
+  `falcon`, with the version field `release_version` (`FALCON_SEMVER`,
+  generated into `build/version.h`).
   The generation is the revocation lever, bumped only for a released
   security defect, never for an ordinary release. UKIs get `.sbat` from
   sd-stub for free (the wrap merges it, Section 8.1);
@@ -2164,6 +2162,14 @@ while every real file lives only in UDF.
   4Kn stick on NVMe under both firmwares; the station disk under both. Each
   case is judged from serial, through the personal OS to the fixture UKI's
   report of both credentials.
+- The coverage harness (`tools/coverage/`): one rig stick per ISO of a pinned
+  corpus (`corpus.tsv`), each booted under OVMF with Secure Boot off, on with
+  the Microsoft CA and on with the user's own keys, and under SeaBIOS on the
+  host CPU and on an i686, by every route; each case judged from serial, a
+  DHCP capture and the medium read after the kernel starts (`run-case.sh`),
+  and rendered to `docs/coverage.md` by `scorecard.py`. It runs in a
+  container (`harness.sh`, `Dockerfile`) on binhost-builder; `harness.sh
+  make test` runs the test suite in the same environment.
 - Real hardware for the shim/MokManager enrollment flow, which is the
   least QEMU-friendly step.
 
@@ -2181,7 +2187,7 @@ Traced from the code. A change to a route changes its diagram in the same
 commit.
 
 The three-letter names are the route codes the loaders draw on screen
-(Manual Section 1). Diagrams name functions, not line numbers.
+(Manual Section 2). Diagrams name functions, not line numbers.
 
 ### 11.1 The stick, as the loaders see it
 
@@ -3297,11 +3303,11 @@ flowchart TD
     L3 --> BM["bios_main (apps/jump/bios_main.c)<br/>e820_read"]
     BM --> FAT["read_floppy: fs_identify, fs_mount (FAT12; sector 0 from 0x7C00)<br/>MEMTEST.BIN present? JUMP.INI parsed (jumpini.c)"]
     FAT --> PCI["jroute_init (jump/routes.c): the modules on the floppy,<br/>an IDE controller? a USB one? a CardBus bridge?<br/>class codes through 0xCF8/0xCFC; nothing loaded"]
-    PCI --> DSK["scan_disks: every drive the BDA counts (0x475)<br/>whose LBA 0 ends in 0x55AA; the CD and USB rows when<br/>their module is on the floppy and their controller in the machine"]
+    PCI --> DSK["scan_disks: every drive the BDA counts (0x475)<br/>whose LBA 0 ends in 0x55AA; the CD, USB and CF rows when<br/>their module is on the floppy and their controller in the machine"]
     DSK --> INI{"JUMP.INI taken?"}
     INI -- "a line it cannot take" --> REP["the line and why, a key<br/>no default"]
     INI -- "yes, or no file" --> MENU
-    REP --> MENU{"menu: a disk row each, Memory test<br/>a countdown only for a default whose row is there"}
+    REP --> MENU{"menu: a disk row each, Memory test, CD, USB and CF when offered<br/>a countdown only for a default whose row is there"}
     MENU -- "a disk, or the countdown on it" --> MBR["MBR (mbr.c): LBA 0 to 0x7C00, DL = that drive<br/>boot16: real mode, jump 0000:7C00"]
     MENU -- "Memory test" --> MEM["MEM: MEMTEST.BIN through linux_boot<br/>no initrd, empty command line<br/>fixed at 1 MB: staged at 16 MB, moved down at the handoff"]
     MENU -- "Escape" --> RF["INT 18h, else bios_reboot"]
@@ -3767,7 +3773,7 @@ The code is `falcon-cli/src/mkstick/station.c` (the dispatch, the scan,
 `remove`, `status`), `stationinst.c` (`install`) and `stationcore.c`, the
 host-tested half that decides where and what (free space, the MBR entry
 and its CHS, a boot sector's loader, entry names, the INI, the backup's
-header). The Manual's Section 3.6 is its reference.
+header). The Manual's Section 10.6 is its reference.
 
 - **Where.** The station partition takes the highest free run that holds it,
   MiB-aligned where the run allows and 4 KiB-aligned where it does not

@@ -25,12 +25,12 @@ ENV DEBIAN_FRONTEND=noninteractive
 # question a reader of this file actually has. The command each one provides is
 # named when the package name does not give it away.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        ca-certificates git make python3 rsync sudo \
+        ca-certificates git make python3 sudo \
         build-essential binutils pkg-config xxd \
         gcc-multilib \
         gcc-mingw-w64-x86-64 gcc-mingw-w64-i686 \
         libcmocka-dev \
-        qemu-system-x86 qemu-utils ovmf swtpm swtpm-tools \
+        qemu-system-x86 qemu-utils ovmf swtpm swtpm-tools imagemagick \
         tcpdump \
         python3-venv python3-dev libcrypt-dev \
         gdisk util-linux fdisk \
