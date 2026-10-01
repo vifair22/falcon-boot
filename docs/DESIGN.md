@@ -5571,6 +5571,17 @@ ThinkPad A21m (2026-09-26), stage 1 to the menu: 7.3 s before these, 5.8 s
 after; of what remains, stage 3's 73 KB was 2.8 s, which only reading fewer
 bytes shortens.
 
+Those seconds were a blinking cursor: stage 1 and stage 2 log to serial
+only, and the screen is stage 3's. Stage 2 now puts one line on it,
+`falcon-boot: loading` and a `/-\|` spinner turned a step for every read
+call that returns (`bios_disk_on_call`), a track on a floppy and a 32 KB
+bounce buffer on anything AH=42h reads; teletype, screen only, the cursor
+column from the BDA so it starts on a line of its own. Stage 3 clears it
+with its first page, and a fatal before then is written under it. Every
+BIOS medium has it; only on a floppy is it there long enough to see. The
+jump rig's `s3crc` case reads the line and the fatal off VGA text memory.
+Seen on the A21m (2026-09-30).
+
 So stage 3 is on the floppy compressed: a "BOSZ" header and a gzip member
 of the whole ordinary stage 3 (`falcon-bios/tools/mk-stage3z.sh`, `gzip -9
 -n`), 37 KB in place of 73. Stage 2 reads it to 6 MB and inflates it to

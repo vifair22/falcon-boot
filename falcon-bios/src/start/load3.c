@@ -23,6 +23,35 @@ static __attribute__((noreturn)) void die(const char *why)
     bios_fatal(why);
 }
 
+/* ---- what a person sees until stage 3 draws ----
+ *
+ * Stage 3 is the loader's first screen, and on a floppy it is seconds away:
+ * eight tracks or so read by CHS, the motor spun up first. Until then this
+ * is the one line on the screen, its spinner turned a step for every read
+ * call that comes back (bios_disk_on_call), so a slow drive is seen to be
+ * moving. On a stick or a disk it is there for a blink. Screen only: serial
+ * has its own lines, and a backspace per step would be noise in a log. The
+ * cursor column is the BDA's (0x450, page 0), so the line starts on one of
+ * its own after whatever the BIOS printed, without a blank one before it.
+ * bios_fatal starts on a new line, under it. */
+#define BDA_CURSOR_COL 0x450u
+
+static const char k_spin[4] = { '/', '-', '\\', '|' };
+static uint32_t g_spin __attribute__((section(".data"))) = 0;
+
+static void screen_text(const char *s)
+{
+    while (*s != '\0')
+        bios_screen_putc(*s++);
+}
+
+static void spin(void)
+{
+    g_spin = (g_spin + 1u) & 3u;
+    bios_screen_putc('\b');
+    bios_screen_putc(k_spin[g_spin]);
+}
+
 /* The partition list bootpart_find searches, and the sector it reads with,
  * at STAGE2_SCRATCH: no .bss here. 256 entries is a full GPT array and then
  * some; a longer list is searched as far as it fits. */
@@ -107,6 +136,11 @@ void stage3_load(uint8_t drive)
      * linked separately and shares no symbol with the assembly. */
     bios_boot_drive = drive;
 
+    if (peek8(BDA_CURSOR_COL) != 0)
+        screen_text("\r\n");
+    screen_text("falcon-boot: loading /");
+    bios_disk_on_call(spin);
+
     /* A drive that does not answer is left at 512-byte sectors and AH=42h,
      * which is what a stick is, and what stage 3 assumes too; the read below
      * is what decides whether that was right. A floppy answers AH=08h and is
@@ -167,6 +201,8 @@ void stage3_load(uint8_t drive)
     bios_put_dec(mem - want);
     bios_puts(" zeroed\n");
 
+    bios_disk_on_call((void (*)(void))0);
+    screen_text("\b ");
     ((void (*)(void))(uintptr_t)(STAGE3_LOAD + STAGE3_HDR))();
     die("stage 3 returned");
 }
