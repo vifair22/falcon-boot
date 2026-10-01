@@ -37,11 +37,24 @@
 #include "qapi/error.h"
 #include "hw/pci/pci.h"
 #include "hw/pci/pci_device.h"
+/* QEMU 11 moved these four; 10.0, which the coverage harness's Debian runs,
+ * has them at the older paths. build-qemu.sh builds the release on PATH, so
+ * both have to compile. */
+#if __has_include("hw/core/qdev-properties.h")
 #include "hw/core/qdev-properties.h"
 #include "hw/core/qdev-properties-system.h"
+#else
+#include "hw/qdev-properties.h"
+#include "hw/qdev-properties-system.h"
+#endif
 #include "system/block-backend.h"
+#if __has_include("system/address-spaces.h")
 #include "system/address-spaces.h"
 #include "system/memory.h"
+#else
+#include "exec/address-spaces.h"
+#include "exec/memory.h"
+#endif
 
 #define TYPE_FALCON_PCC "falcon-pcc"
 OBJECT_DECLARE_SIMPLE_TYPE(FalconPccState, FALCON_PCC)
@@ -617,7 +630,15 @@ static const Property falcon_pcc_props[] = {
     DEFINE_PROP_BOOL("lba48", FalconPccState, lba48, false),
 };
 
-static void falcon_pcc_class_init(ObjectClass *klass, const void *data)
+/* class_init's data is const in QEMU 11 and not in 10.0 (the two this has
+ * been built against). */
+#if QEMU_VERSION_MAJOR >= 11
+#define FALCON_PCC_CLASS_DATA const void
+#else
+#define FALCON_PCC_CLASS_DATA void
+#endif
+
+static void falcon_pcc_class_init(ObjectClass *klass, FALCON_PCC_CLASS_DATA *data)
 {
     DeviceClass *dc = DEVICE_CLASS(klass);
     PCIDeviceClass *k = PCI_DEVICE_CLASS(klass);
