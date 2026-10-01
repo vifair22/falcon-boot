@@ -8,6 +8,7 @@
 
 #define IVT_INT13 (0x13u * 4u)
 #define IVT_INT15 (0x15u * 4u)
+#define IVT_INT16 (0x16u * 4u)
 #define IVT_INT18 (0x18u * 4u)
 #define IVT_INT19 (0x19u * 4u)
 
@@ -21,6 +22,18 @@ extern const unsigned char jres_blob_end[];
 
 static uint16_t g_seg;
 static e820_entry g_carved[JRES_E820_MAX];
+static uint32_t g_kbd[JRES_KBD_MAX];
+static unsigned g_nkbd;
+
+void jres_keyboards(const uint32_t *entries, unsigned n)
+{
+    unsigned i;
+
+    g_nkbd = 0;
+    for (i = 0; entries != (const uint32_t *)0 && i < n &&
+                i < JRES_KBD_MAX; i++)
+        g_kbd[g_nkbd++] = entries[i];
+}
 
 static void put32(uint8_t *at, uint32_t v)
 {
@@ -76,6 +89,7 @@ int jres_install(uint8_t drive, uint32_t entry, uint32_t stack_top,
     uint16_t kb;
     uint8_t *at;
     uint8_t *desc;
+    unsigned i;
 
     if (seg == 0 || len > JRES_BYTES)
         return -1;
@@ -116,6 +130,11 @@ int jres_install(uint8_t drive, uint32_t entry, uint32_t stack_top,
     kb = peek16(BDA_MEMSIZE);
     memcpy(at + JRES_OFF_OLDKB, &kb, 2);
     at[JRES_OFF_OLDNDISK] = peek8(BDA_NDISKS);
+    at[JRES_OFF_NKBD] = (uint8_t)g_nkbd;
+    for (i = 0; i < g_nkbd; i++)
+        put32(at + JRES_OFF_KBD + i * 4u, g_kbd[i]);
+    if (g_nkbd != 0)
+        put32(at + JRES_OFF_OLDINT16, peek32(IVT_INT16));
 
     lowmem_take(seg);
     poke32(IVT_INT13, ((uint32_t)seg << 16) | (uint32_t)JRES_OFF_CODE);
@@ -124,6 +143,8 @@ int jres_install(uint8_t drive, uint32_t entry, uint32_t stack_top,
     /* No chaining: both end in a cold reset (rthunk.S, jres_reset). */
     poke32(IVT_INT18, ((uint32_t)seg << 16) | (uint32_t)JRES_OFF_RESET);
     poke32(IVT_INT19, ((uint32_t)seg << 16) | (uint32_t)JRES_OFF_RESET);
+    if (g_nkbd != 0)
+        poke32(IVT_INT16, ((uint32_t)seg << 16) | (uint32_t)JRES_OFF_CODE16);
     g_seg = seg;
     if (base != (uint32_t *)0)
         *base = b;
@@ -131,7 +152,13 @@ int jres_install(uint8_t drive, uint32_t entry, uint32_t stack_top,
     bios_put_hex64(drive);
     bios_puts(" at ");
     bios_put_hex64(b);
+    if (g_nkbd != 0) {
+        bios_puts(", INT 16h for ");
+        bios_put_dec(g_nkbd);
+        bios_puts(g_nkbd == 1u ? " module's keyboards" : " modules' keyboards");
+    }
     bios_puts("\n");
+    g_nkbd = 0;
     return 0;
 }
 
@@ -155,6 +182,9 @@ static void release(uint16_t seg)
         poke32(IVT_INT18, peek32(b + JRES_OFF_OLDINT18));
     if (peek32(IVT_INT19) == (hook | JRES_OFF_RESET))
         poke32(IVT_INT19, peek32(b + JRES_OFF_OLDINT19));
+    if (peek8(b + JRES_OFF_NKBD) != 0 &&
+        peek32(IVT_INT16) == (hook | JRES_OFF_CODE16))
+        poke32(IVT_INT16, peek32(b + JRES_OFF_OLDINT16));
     if (peek16(BDA_MEMSIZE) == (uint16_t)(b / 1024u))
         poke16(BDA_MEMSIZE, peek16(b + JRES_OFF_OLDKB));
     if (peek8(BDA_NDISKS) == (uint8_t)(ndisk + 1u) &&

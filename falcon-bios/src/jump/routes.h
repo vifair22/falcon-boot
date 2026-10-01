@@ -3,7 +3,7 @@
  * station-legacy, off its station partition.
  *
  * CDR (the disc in an IDE CD drive, through ATA.MOD), USB (a falcon stick on
- * a USB root port, through EHCI.MOD, UHCI.MOD or OHCI.MOD) and PCC (a
+ * a USB port, through EHCI.MOD, UHCI.MOD or OHCI.MOD) and PCC (a
  * CompactFlash card in a PC Card slot, through PCC.MOD). Each app keeps its
  * own menu and pages; this is what happens between "booting:" and the page
  * that says why it came back: the driver read off the app's own FAT volume,

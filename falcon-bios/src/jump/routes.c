@@ -330,45 +330,67 @@ static void boot_cf(boot_result *r)
     boot_module_disk(&ops, 0, JMOD_SLOT_PCC, r);
 }
 
-/* USB: the first falcon stick on the root ports of any controller a module
- * is there for (EHCI, then UHCI, then OHCI), booted as the next BIOS disk
- * (boot_module_disk); the stick's own stage 1 takes it from there. */
+/* USB: the first falcon stick on any controller a module is there for
+ * (EHCI, then UHCI, then OHCI), booted as the next BIOS disk
+ * (boot_module_disk); the stick's own stage 1 takes it from there. Every
+ * module is brought up, the ones after the stick's too: taking a controller
+ * ends the BIOS's keyboard emulation on it and on EHCI's companions, and a
+ * module answers for the keyboards it found through the resident's INT 16h
+ * hook (DESIGN Section 13.6). */
 static void boot_usb(boot_result *r)
 {
-    static jmod_ops ops;
+    static jmod_ops ops[N_USB];
+    uint32_t kbd[N_USB];
+    unsigned nkbd = 0;
     jmod_dev dev;
     const char *why = (const char *)0;
     unsigned found_any = 0;
+    unsigned stick = N_USB;
+    unsigned at = 0;
     unsigned m;
-    unsigned n = 0;
-    unsigned i = 0;
 
     for (m = 0; m < N_USB; m++) {
+        unsigned n;
+        unsigned i;
+
         if (!g_usb[m].have)
             continue;
         step(r, g_usb[m].loading);
-        if (jmod_load(g_vol, g_usb[m].path, g_usb[m].slot, &ops, &why) != 0) {
-            r->advice = why;
-            return;
+        if (jmod_load(g_vol, g_usb[m].path, g_usb[m].slot, &ops[m],
+                      &why) != 0) {
+            if (stick == N_USB) {
+                r->advice = why;
+                return;
+            }
+            continue;
         }
-        step(r, "looking for a falcon stick");
-        n = ops.probe();
+        step(r, stick == N_USB ? "looking for a falcon stick"
+                               : "looking for a keyboard");
+        n = ops[m].probe();
         found_any += n;
-        for (i = 0; i < n; i++) {
-            if (ops.dev(i, &dev) == 0 && is_falcon_stick(&ops, i))
-                break;
+        if (ops[m].int16 != 0)
+            kbd[nkbd++] = (uint32_t)(uintptr_t)ops[m].int16;
+        for (i = 0; stick == N_USB && i < n; i++) {
+            if (ops[m].dev(i, &dev) == 0 && is_falcon_stick(&ops[m], i)) {
+                stick = m;
+                at = i;
+            }
         }
-        if (i < n)
-            break;
     }
-    if (m == N_USB) {
+    if (stick == N_USB) {
         r->advice = found_any == 0 ? "there is no USB storage on the ports."
                                    : "none of the USB storage is a falcon stick.";
-        return;
+    } else {
+        (void)ops[stick].dev(at, &dev);
+        screen_out(dev.label);
+        screen_out("\n\n");
+        jres_keyboards(kbd, nkbd);
+        boot_module_disk(&ops[stick], at, g_usb[stick].slot, r);
+        jres_keyboards((const uint32_t *)0, 0);
     }
-    screen_out(dev.label);
-    screen_out("\n\n");
-    boot_module_disk(&ops, i, g_usb[m].slot, r);
+    if (nkbd != 0)
+        bios_puts("falcon-bios: USB: the route is over, and its keyboards "
+                  "with it; a PS/2 keyboard still answers\n");
 }
 
 void jroute_boot(jroute k, boot_result *r)

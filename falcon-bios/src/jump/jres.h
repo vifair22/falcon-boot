@@ -3,7 +3,8 @@
  * After jres_install, an INT 13h call for `drive` from real mode reaches
  * `entry` (a module's jmod_ops.int13) in protected mode on the stack at
  * `stack_top`, and every other call reaches the handler that was there
- * before. The block is taken from the top of conventional memory
+ * before; with keyboards named (jres_keyboards), every INT 16h call polls
+ * them first. The block is taken from the top of conventional memory
  * (mem/lowmem.h); jres_remove gives it back and unhooks the vectors, for a
  * route that fails after installing and before it hands over.
  */
@@ -14,6 +15,11 @@
 #include <stdint.h>
 
 #include <mem/e820.h>
+
+/* The keyboard entries (modules' jmod_ops.int16, up to JRES_KBD_MAX) the
+ * next jres_install hooks INT 16h for, on the stack it is given; none, the
+ * default and what that install leaves set, hooks no INT 16h. */
+void jres_keyboards(const uint32_t *entries, unsigned n);
 
 /* 0 on success, with the block's linear address in *base. -1 when the
  * machine will not give up the memory, or the carved map will not fit.
