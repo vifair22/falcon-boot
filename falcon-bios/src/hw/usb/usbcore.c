@@ -147,6 +147,12 @@ void usb_setup_set_idle(uint8_t out[USB_SETUP_LEN], uint8_t iface)
     setup(out, 0x21u, 0x0Au, 0, iface, 0);
 }
 
+void usb_setup_set_report_out(uint8_t out[USB_SETUP_LEN], uint8_t iface,
+                              uint16_t len)
+{
+    setup(out, 0x21u, 0x09u, 0x0200u, iface, len);
+}
+
 int usb_find_kbd(const uint8_t *cfg, size_t len, usb_kbd_if *out)
 {
     size_t at;

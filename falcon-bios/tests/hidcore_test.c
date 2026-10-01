@@ -109,6 +109,19 @@ static void test_flags(void **state)
     assert_int_equal(hid_lock_bit(0x04), 0);
 }
 
+static void test_leds(void **state)
+{
+    (void)state;
+    assert_int_equal(hid_leds(0), 0);
+    assert_int_equal(hid_leds(KBD_NUM), 0x01);
+    assert_int_equal(hid_leds(KBD_CAPS), 0x02);
+    assert_int_equal(hid_leds(KBD_SCROLL), 0x04);
+    assert_int_equal(hid_leds(KBD_NUM | KBD_CAPS | KBD_SCROLL), 0x07);
+    /* The held keys and Insert (0x80) light nothing. */
+    assert_int_equal(hid_leds(KBD_HELD | 0x80u), 0);
+    assert_int_equal(hid_leds(0xFF), 0x07);
+}
+
 static void test_reports(void **state)
 {
     hid_kbd_state s;
@@ -256,6 +269,7 @@ int run_hidcore_tests(void)
     const struct CMUnitTest tests[] = {
         cmocka_unit_test(test_keys),
         cmocka_unit_test(test_flags),
+        cmocka_unit_test(test_leds),
         cmocka_unit_test(test_reports),
         cmocka_unit_test(test_repeat),
         cmocka_unit_test(test_ring),

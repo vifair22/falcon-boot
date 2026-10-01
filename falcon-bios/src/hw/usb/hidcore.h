@@ -38,6 +38,13 @@ uint8_t hid_shift_flags(uint8_t mods);
 /* The lock a usage toggles (KBD_CAPS, KBD_NUM, KBD_SCROLL), or 0. */
 uint8_t hid_lock_bit(uint8_t usage);
 
+/* The BDA's shift flags as the boot keyboard's LED output report: bit 0
+ * Num Lock, bit 1 Caps Lock, bit 2 Scroll Lock (HID 1.11 Section B.1). */
+#define HID_LED_NUM    0x01u
+#define HID_LED_CAPS   0x02u
+#define HID_LED_SCROLL 0x04u
+uint8_t hid_leds(uint8_t flags);
+
 /* Usage `usage` (HID usage page 7) with modifier byte `mods` and the BDA's
  * shift flags `flags` (the locks): the INT 16h word, scan code high and
  * character low, as the BIOS would ring it for the same key on a US

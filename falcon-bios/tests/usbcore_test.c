@@ -204,6 +204,7 @@ static void test_hid_requests(void **state)
 {
     static const uint8_t proto[] = { 0x21, 0x0B, 0, 0, 1, 0, 0, 0 };
     static const uint8_t idle[] = { 0x21, 0x0A, 0, 0, 1, 0, 0, 0 };
+    static const uint8_t report[] = { 0x21, 0x09, 0x00, 0x02, 1, 0, 1, 0 };
     uint8_t p[USB_SETUP_LEN];
 
     (void)state;
@@ -211,6 +212,8 @@ static void test_hid_requests(void **state)
     assert_memory_equal(p, proto, sizeof p);
     usb_setup_set_idle(p, 1u);
     assert_memory_equal(p, idle, sizeof p);
+    usb_setup_set_report_out(p, 1u, 1u);
+    assert_memory_equal(p, report, sizeof p);
 }
 
 static void test_bot(void **state)
