@@ -4764,8 +4764,9 @@ a 4 KB of the option-ROM area chosen when the probe runs, open only while
 the CIS is read: the first in 0xC8000-0xDFFFF that no option ROM claims (a
 55 AA header at a 2 KB boundary and its size; `pcccore.c`'s
 `pcc_attr_pick`) and whose bytes change when the window opens, since a
-chipset shadows in segments larger than a ROM. No fixed address there is free on every
-machine, because an added card's option ROM can be shadowed at any of them.
+chipset shadows in segments larger than a ROM. No fixed address there is
+free on every machine, because an added card's option ROM can be shadowed
+at any of them.
 Then the CIS parsed (`pcccore.c`) for a fixed-disk function and the
 configuration entry that decodes I/O at any base, written to the
 configuration option register; I/O window 0 at 0x1E0, and the card is then
