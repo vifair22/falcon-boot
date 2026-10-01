@@ -25,6 +25,12 @@
 #             partition starts past sector 2^28: its stage 2 reads stage 3
 #             from there through PCC.MOD, which takes 48-bit commands for
 #             it (the model's lba48=on), and stage 3's CRC-32 holds
+#   cf-rom    the cf case with option ROMs (-option-rom, dummies the rig
+#             makes) placed so that a 6 KB one starts at 0xD0000, as the
+#             A21m's mini-PCI boot agent does, and the model's shadow-roms=on
+#             hiding the bridge in every 16 KB segment a ROM touches: the
+#             probe names the ROMs, opens its window past them (trying the
+#             free pages the shadow still covers first) and the card boots
 #   mem       memtest86+, when MEMTEST names a build with the boot protocol
 #             header: the handoff to it
 #   giveup    the cf route to a card whose boot sector only calls INT 18h,
@@ -399,10 +405,81 @@ kbd_back_case() { # kbd_back_case CASE
     fi
 }
 
+# A dummy option ROM of SIZE bytes, a multiple of 512: 55 AA, its size in
+# 512-byte units, a far return at the init entry SeaBIOS far-calls, and its
+# last byte making the sum zero, which SeaBIOS checks before running it.
+mkrom() {     # mkrom FILE SIZE
+    local n=$(( $2 / 512 ))
+    head -c "$2" /dev/zero > "$1"
+    printf "\\x55\\xaa\\x$(printf %02x "$n")\\xcb" |
+        dd of="$1" conv=notrunc status=none
+    printf "\\x$(printf %02x $(( (256 - (0x55 + 0xAA + n + 0xCB) % 256) % 256 )))" |
+        dd of="$1" bs=1 seek=$(( $2 - 1 )) conv=notrunc status=none
+}
+
+# cf-rom: SeaBIOS puts the VGA BIOS at 0xC0000 and the -option-rom files
+# after it, each at the next 2 KB, in reverse order of their names (there
+# is no NIC, so no PCI ROM, and vapic=off leaves out QEMU's kvmvapic ROM).
+# A first boot with the 6 KB "boot agent" alone says, in the probe's own
+# lines, where it lands; a filler the size of the gap, named to come before
+# it, then puts it at 0xD0000, as the A21m's is, and the first free page is
+# 0xD2000, inside the agent's shadowed 16 KB segment. PASS needs a ROM at
+# 0xD0000, the probe to have tried a page the shadow covers and moved on,
+# the window that opened outside every segment a ROM touches, and the card
+# booted.
+cf_rom() {
+    local first gap at len chosen inside=0 q=(-nic none
+        -global apic-common.vapic=off)
+    mkrom "$R/rom1-agent.bin" 6144
+    cp build/test-bios.img "$R/cf.img"
+    floppy cf
+    boot "$QPCC" "${q[@]}" -option-rom "$R/rom1-agent.bin" \
+        -drive if=none,id=cf,format=raw,file="$R/cf.img" \
+        -device falcon-pcc,drive=cf
+    first=$(grep -ao 'an option ROM at 0x[0-9a-f]*, bytes 0x1800' \
+        "$R/serial.txt" | head -1 | sed 's/.* at \(0x[0-9a-f]*\),.*/\1/' ||
+        true)
+    gap=$(( 0xD0000 - ${first:-0xD0000} ))
+    ROMS=()
+    if (( gap > 0 )); then
+        mkrom "$R/rom2-filler.bin" "$gap"
+        ROMS+=(-option-rom "$R/rom2-filler.bin")
+    fi
+    ROMS+=(-option-rom "$R/rom1-agent.bin")
+    cp build/test-bios.img "$R/cf.img"
+    boot "$QPCC" "${q[@]}" "${ROMS[@]}" \
+        -drive if=none,id=cf,format=raw,file="$R/cf.img" \
+        -device falcon-pcc,drive=cf,shadow-roms=on
+    chosen=$(grep -ao 'attribute memory window at 0x[0-9a-f]*' \
+        "$R/serial.txt" | tail -1 | sed 's/.* //' || true)
+    while read -r at len; do
+        [[ -n "$at" && -n "$chosen" ]] || continue
+        (( chosen < ((at + len + 0x3FFF) & ~0x3FFF) &&
+           chosen + 0x1000 > (at & ~0x3FFF) )) && inside=1
+    done < <(grep -ao 'an option ROM at 0x[0-9a-f]*, bytes 0x[0-9a-f]*' \
+        "$R/serial.txt" | sed 's/.* at \(0x[0-9a-f]*\), bytes \(0x[0-9a-f]*\)/\1 \2/' ||
+        true)
+    if ! grep -aq 'an option ROM at 0xd0000, bytes 0x1800' "$R/serial.txt"; then
+        printf 'FAIL  %-9s %s\n' cf-rom "the agent ROM did not land at 0xD0000 (first boot: ${first:-none})"
+        FAILED=1
+    elif [[ -z "$chosen" ]] || (( inside == 1 )); then
+        printf 'FAIL  %-9s %s\n' cf-rom "the window opened at ${chosen:-no address}, not past the ROMs"
+        FAILED=1
+    else
+        judge cf-rom 'boot drive 0x81, sector size 512' \
+            "attribute memory window at $chosen" \
+            'the window reads what was there before it opened, at 0xd2000'
+        grep -ao 'PCC.MOD: \(an option ROM\|the window reads\|attribute memory window\).*' \
+            "$R/serial.txt" | sed 's/^/      /'
+    fi
+    cp "$R/serial.txt" "$R/cf-rom.log"
+}
+
 FAILED=0
 CASES=("$@")
 [[ ${#CASES[@]} -gt 0 ]] ||
-    CASES=(hdd cd usb-uhci usb-ohci usb-ehci usb-hub-stick cf cf3v cf48 giveup
+    CASES=(hdd cd usb-uhci usb-ohci usb-ehci usb-hub-stick cf cf3v cf48 cf-rom
+           giveup
            mem s2crc s3crc stick3crc modcrc chs menu kbd kbd-hub kbd-hub2
            kbd-ehci kbd-legacy kbd-giveup kbd-hdd)
 
@@ -446,6 +523,13 @@ for c in "${CASES[@]}"; do
         rm -f "$R/cf48.img"
         judge cf48 'boot partition p1 at LBA 268437504' \
             'stage 3 inflated' 'boot drive 0x81, sector size 512'
+        ;;
+    cf-rom)
+        if [[ ! -x "$QPCC" ]]; then
+            printf 'SKIP  %-9s no rig QEMU (falcon-bios/tools/qemu-pcc/build-qemu.sh)\n' "$c"
+            continue
+        fi
+        cf_rom
         ;;
     giveup)
         if [[ ! -x "$QPCC" ]]; then

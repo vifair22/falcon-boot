@@ -16,6 +16,10 @@
  *     are written: memory window 0 onto the card's attribute memory (its
  *     CIS, and the configuration option register at 0x200), I/O window 0
  *     onto its ATA task file once the card is configured for I/O;
+ *   - with `shadow-roms=on`, a chipset that shadows every 16 KB segment of
+ *     0xC0000-0xEFFFF an option ROM touches (the PAM granularity of the
+ *     A21m's 440BX): the bridge does not see memory window 0's accesses
+ *     there, and they reach whatever the segment holds;
  *   - the card: a CIS with the CompactFlash standard's entries (memory
  *     mapped, contiguous I/O, primary IDE), and ATA PIO over a drive:
  *     IDENTIFY DEVICE, READ SECTORS, WRITE SECTORS, LBA28, and with
@@ -88,6 +92,10 @@ OBJECT_DECLARE_SIMPLE_TYPE(FalconPccState, FALCON_PCC)
 #define CONFIG_BASE    0x200
 #define ATTR_SPAN      0x1000
 
+#define ROM_AREA       0xC0000u
+#define ROM_AREA_END   0xF0000u
+#define PAM_SEG        0x4000u
+
 /* ATA status. */
 #define A_BSY  0x80
 #define A_DRDY 0x40
@@ -117,6 +125,9 @@ struct FalconPccState {
     uint8_t hob_count;      /* what the previous write to each register was */
     uint8_t hob_lba[3];
     bool lba48;             /* the property: IDENTIFY says 48-bit */
+    bool shadow_roms;       /* the property: see the head of the file */
+    bool roms_scanned;
+    uint16_t shadowed;      /* bit n: segment ROM_AREA + n * PAM_SEG */
     uint8_t devctl;         /* bit 7: HOB, reads return the previous byte */
     uint8_t device;
     uint8_t status;
@@ -186,21 +197,62 @@ static bool running(FalconPccState *s)
     return powered(s) && (s->exca[X_INTCTL] & IC_RESET) != 0;
 }
 
+/* The segments an option ROM touches, read the first time the window
+ * opens: by then POST has placed every ROM, and the window has not yet
+ * covered any header. */
+static void scan_roms(FalconPccState *s)
+{
+    uint32_t a;
+
+    for (a = ROM_AREA; a < ROM_AREA_END; a += 0x800) {
+        uint8_t h[3];
+        uint32_t end;
+        uint32_t seg;
+
+        address_space_read(&address_space_memory, a, MEMTXATTRS_UNSPECIFIED,
+                           h, sizeof h);
+        if (h[0] != 0x55 || h[1] != 0xAA)
+            continue;
+        end = a + (h[2] != 0 ? (uint32_t)h[2] * 512u : 1u);
+        for (seg = a & ~(PAM_SEG - 1); seg < end && seg < ROM_AREA_END;
+             seg += PAM_SEG)
+            s->shadowed |= (uint16_t)(1u << ((seg - ROM_AREA) / PAM_SEG));
+    }
+    s->roms_scanned = true;
+}
+
+static bool shadowed(FalconPccState *s, uint32_t start, uint32_t stop)
+{
+    uint32_t seg;
+
+    for (seg = start & ~(PAM_SEG - 1); seg <= stop; seg += PAM_SEG) {
+        if (seg >= ROM_AREA && seg < ROM_AREA_END &&
+            (s->shadowed & (1u << ((seg - ROM_AREA) / PAM_SEG))) != 0)
+            return true;
+    }
+    return false;
+}
+
 static void remap(FalconPccState *s)
 {
     const uint8_t *x = s->exca;
     bool mem = (x[X_ENABLE] & EN_MEM0) != 0;
     bool io = (x[X_ENABLE] & EN_IO0) != 0 && (x[X_INTCTL] & IC_IOCARD) != 0;
+    uint32_t start = ((uint32_t)x[X_PAGE0] << 24) |
+                     ((uint32_t)(x[X_MEM0 + 1] & 0x0F) << 20) |
+                     ((uint32_t)x[X_MEM0] << 12);
+    uint32_t stop = ((uint32_t)x[X_PAGE0] << 24) |
+                    ((uint32_t)(x[X_MEM0 + 3] & 0x0F) << 20) |
+                    ((uint32_t)x[X_MEM0 + 2] << 12) | 0xFFF;
 
+    if (mem && s->shadow_roms) {
+        if (!s->roms_scanned)
+            scan_roms(s);
+        if (shadowed(s, start, stop))
+            mem = false;
+    }
     memory_region_transaction_begin();
     if (mem) {
-        uint32_t start = ((uint32_t)x[X_PAGE0] << 24) |
-                         ((uint32_t)(x[X_MEM0 + 1] & 0x0F) << 20) |
-                         ((uint32_t)x[X_MEM0] << 12);
-        uint32_t stop = ((uint32_t)x[X_PAGE0] << 24) |
-                        ((uint32_t)(x[X_MEM0 + 3] & 0x0F) << 20) |
-                        ((uint32_t)x[X_MEM0 + 2] << 12) | 0xFFF;
-
         memory_region_set_size(&s->attr, stop >= start ? stop - start + 1
                                                         : 0x1000);
         memory_region_set_address(&s->attr, start);
@@ -613,6 +665,11 @@ static void falcon_pcc_realize(PCIDevice *pdev, Error **errp)
                           4 * KiB);
     pci_register_bar(pdev, 0, PCI_BASE_ADDRESS_SPACE_MEMORY, &s->bar);
 
+    /* Placed where the window registers say once they are written (remap);
+     * the address here is only where it waits, disabled. Its priority puts
+     * it over the RAM or ROM the PAM registers map there, as a segment the
+     * chipset does not shadow passes to the bridge; shadow-roms is what
+     * takes that back for the segments a ROM touches. */
     memory_region_init_io(&s->attr, OBJECT(s), &attr_ops, s,
                           "falcon-pcc-attr", ATTR_SPAN);
     memory_region_add_subregion_overlap(get_system_memory(), 0xD0000,
@@ -628,6 +685,7 @@ static const Property falcon_pcc_props[] = {
     DEFINE_PROP_DRIVE("drive", FalconPccState, blk),
     DEFINE_PROP_UINT8("volts", FalconPccState, volts, 0),
     DEFINE_PROP_BOOL("lba48", FalconPccState, lba48, false),
+    DEFINE_PROP_BOOL("shadow-roms", FalconPccState, shadow_roms, false),
 };
 
 /* class_init's data is const in QEMU 11 and not in 10.0 (the two this has

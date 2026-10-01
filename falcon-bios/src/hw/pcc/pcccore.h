@@ -55,4 +55,26 @@ int pcc_mem_window(uint32_t host, uint32_t size, uint32_t card, int attr,
  * [base, base + len). -1 on a range the window cannot express. */
 int pcc_io_window(uint16_t base, uint16_t len, uint8_t regs[4]);
 
+/* The option-ROM area the attribute memory window is placed in, as the
+ * caller reads it: the first three bytes at every 2 KB boundary from
+ * PCC_ROM_BASE, PCC_ROM_SLOTS of them, three bytes each. It stops at
+ * 0xE0000: on many machines (Phoenix, Award) 0xE0000-0xEFFFF is the system
+ * BIOS, with no header to find, and the BIOS flash may answer there too. */
+#define PCC_ROM_BASE   0x000C0000u
+#define PCC_ROM_END    0x000E0000u        /* exclusive */
+#define PCC_ROM_SLOT   0x800u
+#define PCC_ROM_SLOTS  ((PCC_ROM_END - PCC_ROM_BASE) / PCC_ROM_SLOT)
+/* 0xC0000-0xC7FFF is the video BIOS's on every PC, and one built into the
+ * system BIOS need not leave a header there to find, so the window starts
+ * looking above it. */
+#define PCC_WIN_FIRST  0x000C8000u
+#define PCC_WIN_SIZE   0x1000u
+
+/* The first 4 KB-aligned, 4 KB host address at or above `from` (and at or
+ * above PCC_WIN_FIRST) that no option ROM in `hdr` claims and that ends
+ * below PCC_ROM_END. A ROM is a 55 AA header at a 2 KB boundary; it claims
+ * from there for its byte 2 in 512-byte units, rounded up to 2 KB, and at
+ * least the 2 KB its header is in. -1 when there is none. */
+int32_t pcc_attr_pick(const uint8_t *hdr, uint32_t from);
+
 #endif /* FALCON_BIOS_PCCCORE_H */

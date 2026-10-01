@@ -2837,7 +2837,7 @@ resident CD handler, from real mode.
 | 0x1000-0x10FF | disk packet, drive parameters, E820 slot | per call |
 | below 0x7000 | real-mode stack during a thunk | per call |
 | 0x3000-0x311F | the Linux handoff: the move stub at 0x3000, the handoff GDT at 0x3100 | copied at the handoff, handed to the kernel |
-| 0xD0000-0xD0FFF (falcon jump) | a PC Card's attribute memory, through the bridge's memory window 0 | while `PCC.MOD` reads the CIS; closed before the handoff |
+| a free 4 KB in the option-ROM area, chosen at run time (falcon jump) | a PC Card's attribute memory, through the bridge's memory window 0 | while `PCC.MOD` reads the CIS; closed before the handoff |
 | 0x7C00-0x7DFF | stage 1; later the chainloaded boot image | stage 1 dies at the jump |
 | 0x7E00-0xFDFF | stage 2 (at most 62 sectors; 25 KiB used): gate, thunk, GDT, IDT, fault reporting, the boot partition search | until the target starts |
 | 0x10000-0x10FFF | Linux zero page | handed to the kernel |
@@ -3343,7 +3343,7 @@ flowchart TD
     SW -- "unreadable, no 0x55AA,<br/>no memory for the swap" --> RM2
     RM2 --> KG
     MENU -- "CF card (PC Card)" --> LP["jmod_load: PCC.MOD to JMOD_SLOT_PCC"]
-    LP --> SK["ops.probe: each CardBus bridge (class 0x0607), BAR0: socket regs, ExCA at +0x800<br/>card detect, VCC, reset, READY; memory window 0 at 0xD0000 onto attribute memory"]
+    LP --> SK["ops.probe: each CardBus bridge (class 0x0607), BAR0: socket regs, ExCA at +0x800<br/>card detect, VCC, reset, READY; memory window 0 at a free 4 KB of the option-ROM area onto attribute memory"]
     SK --> CI{"pcccore.c: the CIS: a fixed disk, CONFIG,<br/>a contiguous-I/O entry?"}
     CI -- "no" --> MENU
     CI -- "yes" --> IO["its index to the COR; I/O window 0 at 0x1E0, the memory window closed;<br/>atadisk.c: IDENTIFY DEVICE"]
@@ -4760,9 +4760,15 @@ practice.
 16-bit card up as Linux's yenta and i82365 drivers do: card detect, VCC
 through the socket control register and the ExCA power register's output
 enable, reset, READY; memory window 0 onto the card's attribute memory at
-0xD0000 (where PC Card drivers have put it since DOS, open only while the
-CIS is read); the CIS parsed (`pcccore.c`) for a fixed-disk function and
-the configuration entry that decodes I/O at any base, written to the
+a 4 KB of the option-ROM area chosen when the probe runs, open only while
+the CIS is read: the first in 0xC8000-0xDFFFF that no option ROM claims (a
+55 AA header at a 2 KB boundary and its size; `pcccore.c`'s
+`pcc_attr_pick`) and whose bytes change when the window opens, since a
+chipset shadows in segments larger than a ROM. No fixed address there is
+free on every machine, because an added card's option ROM can be shadowed
+at any of them.
+Then the CIS parsed (`pcccore.c`) for a fixed-disk function and the
+configuration entry that decodes I/O at any base, written to the
 configuration option register; I/O window 0 at 0x1E0, and the card is then
 an ATA disk (`hw/ata/atadisk.c`). A card that takes only 3.3 V is powered
 by the bridge only when the socket control register and the ExCA power
@@ -4845,7 +4851,11 @@ standard's configuration entries, the configuration option register at
 0x200, an ATA task file over a drive image). Its memory and I/O windows are
 real mappings in QEMU's address spaces, moved and enabled as the ExCA
 registers are written, and it powers the card only as the real bridge does
-(13.6; the `cf3v` case is a 3.3 V card). `build-qemu.sh` builds the QEMU
+(13.6; the `cf3v` case is a 3.3 V card). With `shadow-roms=on` the
+16 KB segments an option ROM touches keep the window's accesses from it,
+as a chipset that shadows them does; the `cf-rom` case boots with dummy
+ROMs (`-option-rom`) placed so one starts at 0xD0000, and judges the window
+opened outside all of their segments. `build-qemu.sh` builds the QEMU
 release the machine runs with that one device added, into
 `build/qemu-pcc/`; the `cf` case of the rig runs on it. With `lba48=on`
 the card has the 48-bit feature set (READ and WRITE SECTORS EXT, the task

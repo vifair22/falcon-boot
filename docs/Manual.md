@@ -1791,9 +1791,11 @@ as drive 0xE0. A floppy-emulation disc (DOS and Win9x boot discs, vendor
 utility CDs) is read into memory above 64 MB and served as a floppy, so it
 needs more than 64 MB, and nothing of the CD driver stays. A disc that asks
 for hard-disk emulation is refused. `PCC` reads the card's configuration
-through memory at 0xD0000, and the first card's registers sit at I/O
-0x1E0-0x1EF. `USB` loads every USB driver on the floppy, and a USB keyboard
-works once the route has started, on a root port or behind up to two hubs
+through 4 KB of memory between 0xC8000 and 0xDFFFF that no option ROM
+uses, chosen when the route starts and named on serial, and the first
+card's registers sit at I/O 0x1E0-0x1EF. `USB` loads every USB driver on
+the floppy, and a USB keyboard works once the route has started, on a root
+port or behind up to two hubs
 (a hub inside the keyboard counts as one), its lock LEDs following
 Caps, Num and Scroll Lock, for the stick's loader and
 whatever it starts that reads the keyboard through the BIOS; DOS under
