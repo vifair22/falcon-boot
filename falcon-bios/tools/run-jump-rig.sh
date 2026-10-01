@@ -14,6 +14,8 @@
 #   usb-ohci  on each controller: jump knows it by its boot record, and the
 #   usb-ehci  stick's own stage 3 loads off the drive the reverse thunk
 #             serves and finds its library by record
+#   usb-hub-stick  the rig stick behind a usb-hub on the UHCI, found
+#             through the hub and booted the same way
 #   cf        a CompactFlash card in the PC Card bridge falcon-pcc.c models,
 #             carrying falcon-bios: its stage 3 loads off the card
 #   cf3v      the same with a card that takes only 3.3 V, as the A21m's
@@ -53,6 +55,7 @@
 #             takes the stick back to the BIOS (INT 18h), which the resident
 #             answers with its reset (DESIGN 13.6)
 #   kbd-hub   the same keyboard behind a usb-hub on the UHCI's second port
+#   kbd-hub2  and behind a usb-hub behind another, the deepest msc.c walks
 #   kbd-ehci  an ICH9 EHCI with its three UHCI companions, the stick and
 #             the keyboard on EHCI root ports: the keyboard enables there
 #             at high speed, EHCI.MOD hands its port to the companion, and
@@ -252,6 +255,19 @@ usb() {       # usb CASE HC-DEVICES...
         'p2 mounted as exfat'
 }
 
+# The stick behind a hub: as usb, with the hub between, and the module must
+# have walked it.
+usb_hub_stick() {
+    floppy usb
+    boot "$QEMU" -device piix3-usb-uhci,id=hc \
+        -device usb-hub,bus=hc.0,port=1 \
+        -drive if=none,id=stick,format=raw,file="$R/stick.img" \
+        -device usb-storage,bus=hc.0,port=1.1,drive=stick
+    judge usb-hub-stick 'boot drive 0x8[1-9a-f], sector size 512' \
+        'a hub on root port' 'boot partition p1 at LBA' \
+        'p2  LBA [0-9.]*  \[library\]' 'p2 mounted as exfat'
+}
+
 # The usb route with a USB keyboard and no PS/2 key: once the menu of what
 # the stick holds is up (serial carries `menu`), Escape through QEMU's
 # monitor, which goes to the newest keyboard, the USB one. The stick's
@@ -294,8 +310,9 @@ kbd_case() {  # kbd_case CASE FOUND MENU QEMU-ARGS...
 FAILED=0
 CASES=("$@")
 [[ ${#CASES[@]} -gt 0 ]] ||
-    CASES=(hdd cd usb-uhci usb-ohci usb-ehci cf cf3v cf48 giveup mem s2crc s3crc
-           stick3crc modcrc chs menu kbd kbd-hub kbd-ehci kbd-legacy)
+    CASES=(hdd cd usb-uhci usb-ohci usb-ehci usb-hub-stick cf cf3v cf48 giveup
+           mem s2crc s3crc stick3crc modcrc chs menu kbd kbd-hub kbd-hub2
+           kbd-ehci kbd-legacy)
 
 for c in "${CASES[@]}"; do
     case $c in
@@ -313,6 +330,7 @@ for c in "${CASES[@]}"; do
     usb-uhci) usb usb-uhci -device piix3-usb-uhci,id=hc ;;
     usb-ohci) usb usb-ohci -device pci-ohci,id=hc ;;
     usb-ehci) usb usb-ehci -device usb-ehci,id=hc ;;
+    usb-hub-stick) usb_hub_stick ;;
     cf|cf3v)
         if [[ ! -x "$QPCC" ]]; then
             printf 'SKIP  %-9s no rig QEMU (falcon-bios/tools/qemu-pcc/build-qemu.sh)\n' "$c"
@@ -425,11 +443,19 @@ for c in "${CASES[@]}"; do
             -device usb-kbd,bus=hc.0,port=2
         ;;
     kbd-hub)
-        kbd_case kbd-hub 'a keyboard, behind the hub on root port' \
+        kbd_case kbd-hub 'a keyboard, behind a hub on root port' \
             'no entries | esc back' -device piix3-usb-uhci,id=hc \
             -device usb-storage,bus=hc.0,port=1,drive=stick \
             -device usb-hub,bus=hc.0,port=2 \
             -device usb-kbd,bus=hc.0,port=2.1
+        ;;
+    kbd-hub2)
+        kbd_case kbd-hub2 'a keyboard, behind two hubs on root port' \
+            'no entries | esc back' -device piix3-usb-uhci,id=hc \
+            -device usb-storage,bus=hc.0,port=1,drive=stick \
+            -device usb-hub,bus=hc.0,port=2 \
+            -device usb-hub,bus=hc.0,port=2.1 \
+            -device usb-kbd,bus=hc.0,port=2.1.1
         ;;
     kbd-ehci)
         kbd_case kbd-ehci 'handed to the companion controller' \
