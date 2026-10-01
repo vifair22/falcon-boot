@@ -73,6 +73,10 @@ void usb_setup_set_protocol(uint8_t out[USB_SETUP_LEN], uint8_t iface,
                             uint8_t protocol);
 /* SET_IDLE with duration 0: a report only when something changes. */
 void usb_setup_set_idle(uint8_t out[USB_SETUP_LEN], uint8_t iface);
+/* SET_REPORT of an Output report, id 0, of `len` bytes, to interface
+ * `iface`: the boot keyboard's LEDs are its one byte. */
+void usb_setup_set_report_out(uint8_t out[USB_SETUP_LEN], uint8_t iface,
+                              uint16_t len);
 
 typedef struct {
     uint8_t  config;         /* bConfigurationValue */

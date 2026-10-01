@@ -1794,7 +1794,8 @@ for hard-disk emulation is refused. `PCC` reads the card's configuration
 through memory at 0xD0000, and the first card's registers sit at I/O
 0x1E0-0x1EF. `USB` loads every USB driver on the floppy, and a USB keyboard
 works once the route has started, on a root port or behind up to two hubs
-(a hub inside the keyboard counts as one), for the stick's loader and
+(a hub inside the keyboard counts as one), its lock LEDs following
+Caps, Num and Scroll Lock, for the stick's loader and
 whatever it starts that reads the keyboard through the BIOS; DOS under
 EMM386 does not see it. A hub or a keyboard on a USB 2.0 (EHCI) port is
 handed to that port's USB 1.1 companion controller, where the hub runs at

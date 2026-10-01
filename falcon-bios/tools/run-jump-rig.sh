@@ -53,7 +53,9 @@
 #             keyboard ends when jump takes the controller: Escape typed on
 #             the stick's menu, read through the resident's INT 16h hook,
 #             takes the stick back to the BIOS (INT 18h), which the resident
-#             answers with its reset (DESIGN 13.6)
+#             answers with its reset (DESIGN 13.6). Caps Lock first,
+#             which the resident answers with the LED report, said on
+#             serial as `usb kbd leds: 02` (judged as kbd-leds)
 #   kbd-hub   the same keyboard behind a usb-hub on the UHCI's second port
 #   kbd-hub2  and behind a usb-hub behind another, the deepest msc.c walks
 #   kbd-ehci  an ICH9 EHCI with its three UHCI companions, the stick and
@@ -275,6 +277,8 @@ usb_hub_stick() {
 # does on its list, and the resident answers that with a reset. PASS needs
 # the module to have found the keyboard (`found`), INT 16h hooked for it,
 # and the reset. The stick is $R/stick.img unless STICK names another.
+# LEDS, when set, is the serial line Caps Lock typed before the Escape must
+# bring, judged as CASE-leds.
 kbd_case() {  # kbd_case CASE FOUND MENU QEMU-ARGS...
     local c=$1 found=$2 menu=$3 stick=${STICK:-$R/stick.img} qpid i
     shift 3
@@ -295,6 +299,13 @@ kbd_case() {  # kbd_case CASE FOUND MENU QEMU-ARGS...
         sleep 0.1
     done
     sleep 1
+    if [[ -n ${LEDS:-} ]]; then
+        monitor "sendkey caps_lock"
+        for ((i = 0; i < 50; i++)); do
+            log_text | grep -aq -- "$LEDS" && break
+            sleep 0.1
+        done
+    fi
     monitor "sendkey esc"
     for ((i = 0; i < 100; i++)); do
         log_text | grep -aq 'returned to the BIOS; resetting' && break
@@ -305,6 +316,7 @@ kbd_case() {  # kbd_case CASE FOUND MENU QEMU-ARGS...
     log_text > "$R/serial.txt"
     judge "$c" 'returned to the BIOS; resetting' "$found" \
         'INT 16h for [0-9]'
+    [[ -z ${LEDS:-} ]] || judge "$c-leds" "$LEDS"
 }
 
 FAILED=0
@@ -437,7 +449,7 @@ for c in "${CASES[@]}"; do
         ;;
     menu) menu_case ;;
     kbd)
-        kbd_case kbd 'a keyboard on root port' 'no entries | esc back' \
+        LEDS='usb kbd leds: 02' kbd_case kbd 'a keyboard on root port' 'no entries | esc back' \
             -device piix3-usb-uhci,id=hc \
             -device usb-storage,bus=hc.0,port=1,drive=stick \
             -device usb-kbd,bus=hc.0,port=2

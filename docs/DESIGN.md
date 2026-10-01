@@ -4533,7 +4533,10 @@ into memory and called.
   `intr`, UHCI and OHCI only). The 8-byte report's new keys become what
   the PC keyboard would ring: US layout, scan code set 1 and the extended
   codes, Shift, Ctrl, Alt and the three locks, which are the BDA's bits at
-  0x417 and so shared with a PS/2 keyboard; the cursor keys ring 00h as the
+  0x417 and so shared with a PS/2 keyboard, whose lock bits the keyboards'
+  LEDs follow (SET_REPORT of the one-byte output report, sent to every
+  keyboard when a poll finds 0x417's locks changed, and said on serial);
+  the cursor keys ring 00h as the
   keypad's do, which is how an AH=00h caller tells an arrow. A held key
   repeats after half a second, about nine times a second, by the BIOS tick
   count. That decoding is `hidcore.c`, host-tested; `hid.c` reads the
@@ -4731,7 +4734,8 @@ monitor's keys to the newest keyboard, and SeaBIOS's own USB keyboard ends
 when jump takes the controller): Escape on the rig stick's empty menu,
 which only the resident's INT 16h hook can deliver, and which the stick's
 loader answers with INT 18h and the resident with its reset. `kbd` puts
-the keyboard on a UHCI root port, `kbd-hub` behind a `usb-hub`, `kbd-hub2`
+the keyboard on a UHCI root port and types Caps Lock first, judged by
+the LED report the resident says on serial (`kbd-leds`), `kbd-hub` behind a `usb-hub`, `kbd-hub2`
 behind a `usb-hub` behind another, and `kbd-ehci` on a root port of an ICH9 EHCI with its three UHCI companions,
 where it enables at high speed and `EHCI.MOD` hands it to the companion.
 `kbd-legacy` boots station-legacy from the stick instead (`mkstick station

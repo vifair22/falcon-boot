@@ -133,6 +133,19 @@ uint8_t hid_lock_bit(uint8_t usage)
     }
 }
 
+uint8_t hid_leds(uint8_t flags)
+{
+    uint8_t l = 0;
+
+    if ((flags & KBD_NUM) != 0)
+        l |= HID_LED_NUM;
+    if ((flags & KBD_CAPS) != 0)
+        l |= HID_LED_CAPS;
+    if ((flags & KBD_SCROLL) != 0)
+        l |= HID_LED_SCROLL;
+    return l;
+}
+
 /* Ctrl with a typing key: a letter's control character, and the few others
  * the PC keyboard gives one. */
 static uint16_t ctrl_key(uint8_t usage, const key3 *k)
