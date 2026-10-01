@@ -512,9 +512,24 @@ static cli_status do_uefi(upd_ctx *c, const cli_args *a, const mok_keys *keys,
 
 /* ---- the command ---- */
 
+/* dir/name as the ESP is named to a person, \EFI\BOOT\grubx64.efi. */
+static const char *dos_path(const char *dir, const char *name, char *out,
+                            size_t cap)
+{
+    char *q;
+
+    (void)snprintf(out, cap, "\\%s\\%s", dir, name);
+    for (q = out; *q != '\0'; q++) {
+        if (*q == '/')
+            *q = '\\';
+    }
+    return out;
+}
+
 static void describe(const upd_ctx *c)
 {
     const upd_plan *p = &c->p;
+    char path[MKS_PATH_MAX];
 
     log_info("%s is a %s", c->d.path,
              p->kind == UPD_STICK ? "falcon stick"
@@ -526,19 +541,24 @@ static void describe(const upd_ctx *c)
                  c->r.parts[c->f.boot].number,
                  p->legacy ? ", and the drivers" : "");
     if (p->uefi_stick)
-        log_info("  write: p%u \\%s\\%s, signed with the stick's MOK",
-                 c->r.parts[c->f.boot].number, MKS_ESP_BOOT_DIR,
-                 c->stick_name);
+        log_info("  write: p%u %s, signed with the stick's MOK",
+                 c->r.parts[c->f.boot].number,
+                 dos_path(MKS_ESP_BOOT_DIR, c->stick_name, path,
+                          sizeof path));
     if (p->uefi_station)
-        log_info("  write: partition %u \\%s\\%s, signed with the station's "
-                 "MOK", c->r.parts[c->f.esp_boot].number, STN_ESP_DIR,
-                 c->station_name);
+        log_info("  write: partition %u %s, signed with the station's MOK",
+                 c->r.parts[c->f.esp_boot].number,
+                 dos_path(STN_ESP_DIR, c->station_name, path, sizeof path));
     if (p->totp)
         log_info("  reseal: the TOTP seed, to the new loader; a new secret "
                  "for the authenticator");
-    log_info("  keep: every record, STATION.INI, /uki, shim, MokManager, "
-             "the certificate, the firmware's boot entries, the other "
-             "partitions");
+    if (p->kind == UPD_STICK)
+        log_info("  keep: every record, the library, the shelf, shim, "
+                 "MokManager, the certificate, the other partitions");
+    else
+        log_info("  keep: every record, STATION.INI, /uki, shim, MokManager, "
+                 "the certificate, the firmware's boot entries, the other "
+                 "partitions");
     if (p->bios)
         log_info("  clear: the next-boot marker");
 }
@@ -615,9 +635,11 @@ static cli_status update_run(const cli_args *a)
     if (rc != CLI_OK)
         return rc;
     if (dry_run) {
+        /* mkstick bios's dry run says it for itself. */
         if (c.p.bios)
             rc = do_bios(&c, a, from, 1);
-        log_info("--dry-run: nothing written");
+        else
+            log_info("--dry-run: nothing written");
         return rc;
     }
     if (!cli_flag(a, "yes") && !confirm())

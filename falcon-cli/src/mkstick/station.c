@@ -308,6 +308,37 @@ static void add_disk(stn_scan *s, const char *path)
     s->n_disks++;
 }
 
+/* The shelf: the first partition on any disk read whose record says shelf
+ * with the install ID of the target's boot record. Any boot record names
+ * the install, the ESP's stage-3-less one included, which is all a UEFI
+ * station has. */
+static void scan_shelf(stn_scan *s)
+{
+    const mks_records *t = &s->disks[0].r;
+    const uint8_t *id;
+    size_t k;
+    uint32_t i;
+    int b = records_boot(t);
+
+    if (b < 0)
+        return;
+    id = t->recs[b].rec.install_id;
+    for (k = 0; k < s->n_disks; k++) {
+        const mks_records *r = &s->disks[k].r;
+
+        for (i = 0; i < r->table.count; i++) {
+            if (r->recs[i].state == REC_OK &&
+                r->recs[i].rec.role == IDENT_ROLE_SHELF &&
+                memcmp(r->recs[i].rec.install_id, id, IDENT_ID_LEN) == 0) {
+                s->shelf_disk = (int)k;
+                s->shelf_part = (int)i;
+                s->shelf_luks = r->recs[i].luks;
+                return;
+            }
+        }
+    }
+}
+
 cli_status stn_scan_disks(stn_scan *s, const char *target,
                           const char *const *also, size_t n_also,
                           int only_named)
@@ -352,6 +383,7 @@ cli_status stn_scan_disks(stn_scan *s, const char *target,
     }
     for (i = 0; i < n_also; i++)
         add_disk(s, also[i]);
+    scan_shelf(s);
     return CLI_OK;
 }
 
