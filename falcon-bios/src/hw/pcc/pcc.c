@@ -18,11 +18,14 @@
  *      register, which makes the card an ATA device at any 16-byte base;
  *   5. I/O window 0 there, and from then on it is an ATA disk (atadisk.c).
  *
- * The attribute memory window goes at 0xD0000, below a megabyte, where PC
- * Card drivers have put it since DOS: it is only open while the CIS is
- * read, and closed before the machine is handed on. The I/O windows are
- * 0x1E0-0x1EF for the first card and 0x1C0-0x1CF for a second, a range the
- * machines Section 13 is for leave unused.
+ * The attribute memory window goes below a megabyte, in the option-ROM
+ * area, at a 4 KB no option ROM claims, found when the probe runs: no fixed
+ * address there is free on every machine (the A21m shadows a mini-PCI
+ * card's boot ROM at 0xD0000, where PC Card drivers have put it since DOS).
+ * It is only open while the CIS is read, and closed before the machine is
+ * handed on. The I/O windows are 0x1E0-0x1EF for the first card and
+ * 0x1C0-0x1CF for a second, a range the machines Section 13 is for leave
+ * unused.
  *
  * The resident half (int13 through hw/blk13.c) uses only this module, as
  * every module's must (jump/jmod.h).
@@ -66,8 +69,7 @@
 #define EN_IO0       0x40u
 #define IO0_16BIT    0x01u
 
-#define ATTR_HOST    0x000D0000u
-#define ATTR_SIZE    0x1000u
+#define ATTR_CHECK   16u     /* even bytes compared before and after */
 #define CIS_BYTES    256u
 
 #define SOCKETS_MAX  4u
@@ -183,34 +185,90 @@ static void power_down(void)
     sock_wr(SOCK_CONTROL, 0);
 }
 
+/* The option-ROM area's headers (pcccore.h), read once per probe before
+ * any window is open. */
+static uint8_t g_roms[3u * PCC_ROM_SLOTS];
+
+static void read_roms(void)
+{
+    const volatile uint8_t *area =
+        (const volatile uint8_t *)(uintptr_t)PCC_ROM_BASE;
+    unsigned i;
+
+    for (i = 0; i < PCC_ROM_SLOTS; i++) {
+        const volatile uint8_t *h = area + i * PCC_ROM_SLOT;
+
+        g_roms[3u * i] = h[0];
+        g_roms[3u * i + 1u] = h[1];
+        g_roms[3u * i + 2u] = h[2];
+        if (h[0] == 0x55u && h[1] == 0xAAu &&
+            g_svc != (const jmod_services *)0) {
+            g_svc->log("falcon-bios: PCC.MOD: an option ROM at ");
+            g_svc->log_hex(PCC_ROM_BASE + i * PCC_ROM_SLOT);
+            g_svc->log(", bytes ");
+            g_svc->log_hex((uint64_t)h[2] * 512u);
+            g_svc->log("\n");
+        }
+    }
+}
+
+/* Step 3: memory window 0 onto the card's attribute memory, at the first
+ * free 4 KB of the option-ROM area where the bridge is what answers. A free
+ * page can still be decoded by something else first (the chipset shadows
+ * in segments larger than a ROM), which shows as the window's addresses
+ * reading what they held before it opened; the next free page is tried
+ * then. The host address, or 0 when no page answers. */
+static uint32_t open_attr(void)
+{
+    int32_t a;
+
+    for (a = pcc_attr_pick(g_roms, 0); a >= 0;
+         a = pcc_attr_pick(g_roms, (uint32_t)a + PCC_WIN_SIZE)) {
+        volatile uint8_t *attr = (volatile uint8_t *)(uintptr_t)(uint32_t)a;
+        uint8_t before[ATTR_CHECK];
+        uint8_t w[6];
+        unsigned i;
+        int changed = 0;
+
+        if (pcc_mem_window((uint32_t)a, PCC_WIN_SIZE, 0, 1, w) != 0)
+            return 0;
+        for (i = 0; i < ATTR_CHECK; i++)
+            before[i] = attr[2u * i];
+        for (i = 0; i < 6u; i++)
+            exca_wr(X_MEM0 + i, w[i]);
+        exca_wr(X_PAGE0, 0);
+        exca_wr(X_ENABLE, EN_MEM0);
+        io_delay_us(100);
+        for (i = 0; i < ATTR_CHECK; i++)
+            if (attr[2u * i] != before[i])
+                changed = 1;
+        if (changed) {
+            log_v("attribute memory window at", (uint32_t)a);
+            return (uint32_t)a;
+        }
+        log_v("the window reads what was there before it opened, at",
+              (uint32_t)a);
+        exca_wr(X_ENABLE, 0);
+    }
+    log_s("falcon-bios: PCC.MOD: no free address in the option-ROM area "
+          "answers as the card\n");
+    return 0;
+}
+
 /* Steps 3 to 5: the CIS, the configuration, the I/O window. 0 with the
  * card an ATA disk at `io`. */
 static int configure(uint16_t io)
 {
-    volatile uint8_t *attr = (volatile uint8_t *)(uintptr_t)ATTR_HOST;
+    volatile uint8_t *attr;
     uint8_t cis[CIS_BYTES];
     uint8_t w[6];
     pcc_cis c;
     unsigned i;
+    uint32_t host = open_attr();
 
-    if (pcc_mem_window(ATTR_HOST, ATTR_SIZE, 0, 1, w) != 0)
+    if (host == 0)
         return -1;
-    /* What the window's addresses hold before the window exists: the same
-     * bytes afterwards mean something other than the bridge answers them
-     * (shadowed RAM, another decoder), not the card. */
-    for (i = 0; i < 16u; i += 4u)
-        log_v("before the window, 0xD0000 even bytes",
-              ((uint32_t)attr[2u * i] << 24) | ((uint32_t)attr[2u * i + 2u] << 16) |
-              ((uint32_t)attr[2u * i + 4u] << 8) | attr[2u * i + 6u]);
-    for (i = 0; i < 6u; i++)
-        exca_wr(X_MEM0 + i, w[i]);
-    exca_wr(X_PAGE0, 0);
-    exca_wr(X_ENABLE, EN_MEM0);
-    io_delay_us(100);
-    for (i = 0; i < 6u; i++)
-        log_v("ExCA memory window 0 register read back", exca_rd(X_MEM0 + i));
-    log_v("ExCA enable read back", exca_rd(X_ENABLE));
-
+    attr = (volatile uint8_t *)(uintptr_t)host;
     for (i = 0; i < CIS_BYTES; i++)
         cis[i] = attr[2u * i];       /* attribute memory: even bytes only */
     if (pcc_cis_parse(cis, sizeof cis, &c) != 0) {
@@ -233,7 +291,7 @@ static int configure(uint16_t io)
         log_s("falcon-bios: PCC.MOD: a card that is not a disk\n");
         return -1;
     }
-    if (c.io_len != 0 || c.io_lines != 4u || c.config_base >= ATTR_SIZE) {
+    if (c.io_len != 0 || c.io_lines != 4u || c.config_base >= PCC_WIN_SIZE) {
         log_s("falcon-bios: PCC.MOD: a card that offers no contiguous I/O\n");
         return -1;
     }
@@ -254,6 +312,7 @@ static int configure(uint16_t io)
 static unsigned pcc_probe(void)
 {
     unsigned nth;
+    int roms_read = 0;
 
     g_ndev = 0;
     for (nth = 0; nth < SOCKETS_MAX && g_ndev < SOCKETS_MAX; nth++) {
@@ -270,6 +329,10 @@ static unsigned pcc_probe(void)
         log_v("its socket registers (BAR0)", bar);
         if ((bar & 1u) != 0 || (bar & ~0xFFFu) == 0)
             continue;                /* no socket registers assigned */
+        if (!roms_read) {
+            read_roms();
+            roms_read = 1;
+        }
         cmd = pci_read32(loc.bus, loc.dev, loc.fn, 0x04);
         pci_write32(loc.bus, loc.dev, loc.fn, 0x04,
                     (cmd & 0xFFFFu) | 0x0003u);
