@@ -30,6 +30,7 @@ int main(void)
     failed += run_lowmem_tests();
     failed += run_atacore_tests();
     failed += run_usbcore_tests();
+    failed += run_hidcore_tests();
     failed += run_pcccore_tests();
     failed += run_bootpart_tests();
     failed += run_vbrcore_tests();

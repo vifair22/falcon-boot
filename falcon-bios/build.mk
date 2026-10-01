@@ -424,11 +424,12 @@ endef
 # long-mode days triple-faults, in ways the machine does not report.
 BIOS_TESTS := $(addprefix falcon-bios/tests/,main.c vcdcore_test.c vfdcore_test.c \
 	linuxcore_test.c e820_test.c jumpini_test.c jmod_test.c lowmem_test.c \
-	atacore_test.c usbcore_test.c pcccore_test.c bootpart_test.c \
+	atacore_test.c usbcore_test.c hidcore_test.c pcccore_test.c bootpart_test.c \
 	vbrcore_test.c cdclock_test.c acpicore_test.c)
 BIOS_UUT := $(BIOS)/iso/vcdcore.c $(BIOS)/vfd/vfdcore.c $(BIOS)/linux/linuxcore.c $(BIOS)/mem/e820.c \
 	$(BIOS)/jump/jumpini.c $(BIOS)/jump/jmod.c $(BIOS)/mem/lowmem.c \
 	$(BIOS)/hw/ata/atacore.c $(BIOS)/hw/scsi/scsi.c $(BIOS)/hw/usb/usbcore.c \
+	$(BIOS)/hw/usb/hidcore.c \
 	$(BIOS)/hw/pcc/pcccore.c $(BIOS)/disk/bootpart.c $(BIOS)/mbr/vbrcore.c \
 	$(BIOS)/console/cdclock.c $(BIOS)/power/acpicore.c
 # What bootpart.c and vbrcore.c are built on, linked into the test binary
