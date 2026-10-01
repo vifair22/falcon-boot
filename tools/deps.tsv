@@ -6,7 +6,7 @@
 # Rendered into docs/Manual.md 13.1 by `tools/deps.sh markdown`; checked by
 # `make check-tools` and, against the Dockerfile and the Manual, by
 # `make check-deps`.
-x86_64-w64-mingw32-gcc	cmd:x86_64-w64-mingw32-gcc	gcc-mingw-w64-x86-64	build	required	the UEFI images, winjump.exe and the x64 vdisk driver
+x86_64-w64-mingw32-gcc	cmd:x86_64-w64-mingw32-gcc	gcc-mingw-w64-x86-64	build	required	the UEFI images, winjump.exe and the x64 vdisk driver (or build in the harness image)
 gcc	cmd:gcc	build-essential	build	required	host tools, tests and the BIOS loader (CC_HOST)
 make	cmd:make	make	build	required	the one build
 pkg-config	cmd:pkg-config	pkg-config	build	required	finds cmocka for the test binaries
@@ -16,7 +16,7 @@ xxd	cmd:xxd	xxd	build	required	falcon-hook and winjump embedded as C arrays
 gzip	cmd:gzip	gzip(base)	build	required	stage 3 and jump's modules are gzip members
 cpio	cmd:cpio	cpio	build	required	the initrds the apps' fixtures carry
 32-bit libgcc	m32	gcc-multilib	build	optional	make bios: the i586 loader and falcon-hook32
-i686-w64-mingw32-gcc	cmd:i686-w64-mingw32-gcc	gcc-mingw-w64-i686	build	optional	make bios: the 32-bit winjump and vdisk driver
+i686-w64-mingw32-gcc	cmd:i686-w64-mingw32-gcc	gcc-mingw-w64-i686	build	optional	make bios: the 32-bit winjump and vdisk driver (or the harness image)
 mtools	cmd:mcopy	mtools	build	optional	make jump and station install write FAT with mtools
 sd-stub	file:/usr/lib/systemd/boot/efi/linuxx64.efi.stub	systemd-boot-efi	build	optional	the stub a UKI is built on (sign uki, the fixture UKI, the appliance)
 zstd	cmd:zstd	zstd	build	optional	the appliance image's initramfs

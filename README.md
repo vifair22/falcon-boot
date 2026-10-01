@@ -67,7 +67,9 @@ build need the host gcc's 32-bit libgcc (`gcc-multilib` on Debian) and
 `i686-w64-mingw32-gcc` for the 32-bit winjump; the host tools need
 `cryptsetup`, `sbsign` and `mkfs.exfat`/`mkfs.ext4`; the rigs need QEMU with
 OVMF and SeaBIOS, and the floppy needs mtools. `make check-tools` names what
-is missing.
+is missing. A machine without the toolchain builds in the harness container
+instead: `tools/coverage/harness.sh make` (docker; everything is in the
+container).
 
 ```sh
 make check-tools     # what is missing, and what each tool is for

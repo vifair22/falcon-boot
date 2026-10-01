@@ -3001,7 +3001,7 @@ the harness's Dockerfile and this table to it):
 <!-- deps:begin -->
 | tool | Debian package | group | needed for |
 |---|---|---|---|
-| `x86_64-w64-mingw32-gcc` (required) | gcc-mingw-w64-x86-64 | build | the UEFI images, winjump.exe and the x64 vdisk driver |
+| `x86_64-w64-mingw32-gcc` (required) | gcc-mingw-w64-x86-64 | build | the UEFI images, winjump.exe and the x64 vdisk driver (or build in the harness image) |
 | `gcc` (required) | build-essential | build | host tools, tests and the BIOS loader (CC_HOST) |
 | `make` (required) | make | build | the one build |
 | `pkg-config` (required) | pkg-config | build | finds cmocka for the test binaries |
@@ -3011,7 +3011,7 @@ the harness's Dockerfile and this table to it):
 | `gzip` (required) | gzip (base) | build | stage 3 and jump's modules are gzip members |
 | `cpio` (required) | cpio | build | the initrds the apps' fixtures carry |
 | `32-bit libgcc` | gcc-multilib | build | make bios: the i586 loader and falcon-hook32 |
-| `i686-w64-mingw32-gcc` | gcc-mingw-w64-i686 | build | make bios: the 32-bit winjump and vdisk driver |
+| `i686-w64-mingw32-gcc` | gcc-mingw-w64-i686 | build | make bios: the 32-bit winjump and vdisk driver (or the harness image) |
 | `mtools` | mtools | build | make jump and station install write FAT with mtools |
 | `sd-stub` | systemd-boot-efi | build | the stub a UKI is built on (sign uki, the fixture UKI, the appliance) |
 | `zstd` | zstd | build | the appliance image's initramfs |
@@ -3303,10 +3303,14 @@ With `--tpm-socket` the event log is not checked against the TPM's PCRs.
 | `--build` | | build the image even when it exists |
 | `--image NAME` | `FALCON_HARNESS_IMAGE` | `falcon-boot-harness` |
 | `--corpus DIR` | `FALCON_CORPUS` | `/srv/falcon/corpus` |
-| `--build-dir DIR` | `FALCON_BUILD_DIR` | `/srv/falcon/build`, bound over the repository's `build/`; empty uses the repository's own |
+| `--build-dir DIR` | `FALCON_BUILD_DIR` | `/srv/falcon/build` when that directory exists, bound over the repository's `build/`; else empty, the repository's own |
 
-The image is built when absent. It needs `docker` and `/dev/kvm`, and the
-corpus directory must exist. With a command it runs that command:
+The image is built when absent. It needs `docker`. The corpus directory and
+`/dev/kvm` are needed for the corpus run; with a command, a missing corpus
+is not mounted and a missing `/dev/kvm` is a warning (a build works, a rig
+does not). The container runs as root; what it wrote under `build/` and
+`compile_commands.json` is chowned to the caller afterwards. With a command
+it runs that command:
 
     tools/coverage/harness.sh make test
     tools/coverage/harness.sh bash

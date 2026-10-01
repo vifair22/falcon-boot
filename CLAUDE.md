@@ -129,8 +129,11 @@ unique within each such set, so `#include <fs/exfat.h>` means one file, and
   `test-tpm-rig`, `test-tpm`, `test-bios-img`, `test-bios-probe`,
   `test-jump`, `test-station-bios`, `test-station-fixtures`,
   `test-station-legacy`, `test-devlink`.
-- This laptop has no mingw toolchain. Builds, tests, analyzers and the corpus
-  run in the harness container on binhost-builder: ship the tree with
+- A machine without the toolchain builds in the harness container, which
+  carries all of it: `tools/coverage/harness.sh make test` (docker; `/dev/kvm`
+  for the rigs; the repo's own `build/` when the binhost's `/srv/falcon` is
+  not there; output chowned back to the caller). That is how the T430 builds.
+  Heavy runs and the corpus go to binhost-builder: ship the tree with
   `git archive HEAD | ssh vifair@172.20.0.170 'mkdir -p /srv/falcon/repo-<sha>
   && tar -x -C /srv/falcon/repo-<sha>'`, then there
   `tools/coverage/harness.sh --build-dir /srv/falcon/build-<sha> make test`

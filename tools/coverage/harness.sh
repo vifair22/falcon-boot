@@ -37,7 +37,13 @@ REPO=$PWD
 
 IMAGE="${FALCON_HARNESS_IMAGE:-falcon-boot-harness}"
 CORPUS="${FALCON_CORPUS:-/srv/falcon/corpus}"
-BUILD_DIR="${FALCON_BUILD_DIR-/srv/falcon/build}"
+# The binhost's layout is the default where it exists; elsewhere the repo's
+# own build/ and no corpus, which is enough for `harness.sh make ...`.
+if [[ -d /srv/falcon/build ]]; then
+    BUILD_DIR="${FALCON_BUILD_DIR-/srv/falcon/build}"
+else
+    BUILD_DIR="${FALCON_BUILD_DIR-}"
+fi
 BUILD=0
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -54,10 +60,16 @@ done
 
 command -v docker >/dev/null 2>&1 || {
     echo "ERROR: docker is not on PATH" >&2; exit 1; }
-[[ -e /dev/kvm ]] || {
-    echo "ERROR: /dev/kvm is absent; the harness boots every case under KVM" >&2
-    exit 1; }
-[[ -w /dev/kvm ]] || echo "warning: /dev/kvm is not writable by $(id -un)" >&2
+KVM=()
+if [[ -e /dev/kvm ]]; then
+    KVM=(--device /dev/kvm)
+    [[ -w /dev/kvm ]] || echo "warning: /dev/kvm is not writable by $(id -un)" >&2
+elif [[ $# -eq 0 ]]; then
+    echo "ERROR: /dev/kvm is absent; the corpus boots every case under KVM" >&2
+    exit 1
+else
+    echo "warning: no /dev/kvm; a build works, a rig will not" >&2
+fi
 
 if [[ $BUILD -eq 1 ]] || ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
     echo "building $IMAGE"
@@ -66,7 +78,9 @@ fi
 
 # A missing corpus is worth saying plainly: every case would be skipped and the
 # run would look like a pass with an empty scorecard.
-[[ -d $CORPUS ]] || { echo "ERROR: no corpus at $CORPUS" >&2; exit 1; }
+if [[ ! -d $CORPUS && $# -eq 0 ]]; then
+    echo "ERROR: no corpus at $CORPUS" >&2; exit 1
+fi
 
 # The host's /dev, not the container's private copy.
 #
@@ -81,7 +95,8 @@ fi
 # Sharing /dev lets the container see every device on the box. It is already
 # --privileged, so this widens nothing that was closed; it is listed here as
 # what it is rather than buried.
-MOUNTS=(-v "$REPO:/work" -v "$CORPUS:/corpus:ro" -v /dev:/dev)
+MOUNTS=(-v "$REPO:/work" -v /dev:/dev)
+[[ -d $CORPUS ]] && MOUNTS+=(-v "$CORPUS:/corpus:ro")
 if [[ -n $BUILD_DIR ]]; then
     mkdir -p "$BUILD_DIR"
     MOUNTS+=(-v "$BUILD_DIR:/work/build")
@@ -94,12 +109,15 @@ TTY=()
 
 CMD=("$@")
 [[ ${#CMD[@]} -eq 0 ]] && CMD=(tools/coverage/run-corpus.sh)
+# The container runs as root (losetup); what it wrote under /work is handed
+# back to the caller afterwards, whatever the command's exit status.
+CMDQ=$(printf '%q ' "${CMD[@]}")
 
 exec docker run --rm "${TTY[@]}" \
-    --privileged --device /dev/kvm \
+    --privileged "${KVM[@]}" \
     "${MOUNTS[@]}" \
     -e FALCON_CORPUS=/corpus \
     -e FALCON_CASE_WJLOG \
     -e FALCON_CASE_MEM \
     -w /work \
-    "$IMAGE" "${CMD[@]}"
+    "$IMAGE" bash -c "$CMDQ; rc=\$?; chown -R $(id -u):$(id -g) /work/build /work/compile_commands.json 2>/dev/null; exit \$rc"
