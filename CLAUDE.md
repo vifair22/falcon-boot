@@ -318,6 +318,10 @@ falcon-efi and falcon-bios, which never share a set, may both have a `pos/`.
   static for the appliance. `mkstick station totp enroll|reseal|remove`
   (`mkstick/totp.c`, its pure half `totpcore.c`) enrolls the UEFI
   station's TOTP seed from the machine's own OS (DESIGN Section 13.15).
+  `mkstick update` (`mkstick/update.c`, what a disk is in `updatecore.c`)
+  brings a stick or a station to the build in place, both halves, signing
+  with the MOK read off the shelf into sealed memfds (`shelfkey.c`) and
+  resealing a TOTP station to the new loader (DESIGN Section 13.14).
 - `falcon-appliance/` the on-stick signing appliance. `src/` is PID 1, split
   by job (`appliance.h` has the map: `main`, `console`, `stick`, `run`,
   `survey`, `list`, `select`, `shelf` (p3 read in process with core's LUKS2
@@ -439,7 +443,9 @@ falcon-efi and falcon-bios, which never share a set, may both have a `pos/`.
   UEFI station with a TPM 2.0 and 1.2 in both Secure Boot states; its
   `totp` cases enroll with mkstick between boots, from the event log the
   probe (`tools/tpm-probe/`) saved, and judge the code, the wire, the wipe
-  at handover, the prompt page and the warning after a firmware change.
+  at handover, the prompt page and the warning after a firmware change;
+  its `totp-update` cases run `mkstick update` to another loader between
+  boots and judge the resealed code.
 
   `src/` is grouped by job, and a job the UEFI loader also does carries
   that module's name, so the two halves of a route sit side by side:

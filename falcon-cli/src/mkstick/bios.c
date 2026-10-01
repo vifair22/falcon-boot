@@ -94,6 +94,7 @@ static int mbr_has_code(const uint8_t *mbr)
 typedef struct {
     int      boot;            /* index into recs of the boot partition */
     int      have_reserve;    /* the FALCON-BIOS reservation exists */
+    uint32_t reserve_slot;    /* and its slot, which --remove deletes */
     int      mounted;
     bios_disk disk;
 } bios_survey;
@@ -118,11 +119,11 @@ static cli_status survey(mks_dev *dev, const mks_disk *d, mks_records *recs,
                          "%s has no usable partition table (part_read_table "
                          "%d)", d->path, recs->rc);
 
-    out->boot = records_boot(recs);
+    out->boot = records_bios_boot(recs);
     if (out->boot < 0)
         return set_error(CLI_ERR_INVALID,
-                         "no partition on %s carries a boot record; `mkstick "
-                         "create` makes one, and `mkstick ident --write-boot` "
+                         "no partition on %s carries a boot record naming a "
+                         "stage 3 sector; `mkstick create` makes one, and `mkstick ident --write-boot` "
                          "stamps an existing FAT partition", d->path);
 
     out->disk.sector_bytes = d->sector;
@@ -135,6 +136,7 @@ static cli_status survey(mks_dev *dev, const mks_disk *d, mks_records *recs,
          * goes there, so it is not what the gap is measured against. */
         if (bioscore_is_reserve(&recs->table, p)) {
             out->have_reserve = 1;
+            out->reserve_slot = p->number;
             continue;
         }
         if (out->disk.first_part_lba == 0u ||
@@ -359,7 +361,7 @@ static cli_status reserve(const mks_disk *d, const bios_plan *p,
     cli_status rc;
 
     if (s->have_reserve) {
-        log_info("slot %u is already %s", (unsigned)BIOS_BOOT_SLOT,
+        log_info("slot %u is already %s", (unsigned)s->reserve_slot,
                  BIOS_BOOT_NAME);
         return CLI_OK;
     }
@@ -404,17 +406,19 @@ static cli_status unreserve(const mks_disk *d, const bios_survey *s, int force)
         return CLI_OK;
     if (s->mounted && !force) {
         log_warn("leaving slot %u in place: %s has mounted partitions",
-                 (unsigned)BIOS_BOOT_SLOT, d->path);
+                 (unsigned)s->reserve_slot, d->path);
         return CLI_OK;
     }
     if (!proc_exists("sgdisk"))
         return set_error(CLI_ERR_NOTFOUND, "sgdisk is not on PATH");
 
-    (void)snprintf(slot, sizeof slot, "%u", (unsigned)BIOS_BOOT_SLOT);
+    /* The slot the reservation is in, not BIOS_BOOT_SLOT: a station's is
+     * wherever install put it, and slot 5 there is the station partition. */
+    (void)snprintf(slot, sizeof slot, "%u", (unsigned)s->reserve_slot);
     rc = proc_runl_quiet("sgdisk", "-d", slot, d->path, PROC_END);
     if (rc != CLI_OK)
         return rc;
-    log_info("slot %u removed", (unsigned)BIOS_BOOT_SLOT);
+    log_info("slot %u removed", (unsigned)s->reserve_slot);
     return CLI_OK;
 }
 

@@ -54,6 +54,10 @@
 #                  does not measure db, so it would prove nothing there.
 #             The event-log replay, the seal and the unseal are the ones a
 #             machine runs; only the TPM's transport is swapped.
+#   totp-update  totp's steps 1 and 2, then `mkstick update` to a station
+#             loader with another Authenticode digest, resealing from the
+#             old loader's boot log (DESIGN Section 13.14); the next boot
+#             shows the code of the secret update printed.
 #
 # A case whose firmware installs no protocol for its TPM version SKIPs and
 # says so: that is this OVMF, not falcon. OVMF_DIR points the rig at
@@ -360,15 +364,11 @@ wire_has() {    # wire_has LOG HEX
          END { print tolower(buf) }' "$1" | grep -- "$2" >/dev/null
 }
 
-case_totp() {
-    local c=$1 fw=$2 tpm=$3 why= ver= out= secret= shown= want= hex= base= unseal= chk=
-    why=$(fw_missing "$fw")
-    [[ -n $why ]] && { skip "$c" "$why"; return; }
-    [[ -f "$STATION" ]] || { skip "$c" "$STATION missing (make test-station)"; return; }
-    [[ -x "$MKSTICK" ]] || { skip "$c" "$MKSTICK missing (make cli)"; return; }
-    command -v python3 >/dev/null || { skip "$c" "python3 is not installed"; return; }
-    command -v swtpm_setup >/dev/null || { skip "$c" "swtpm_setup is not installed"; return; }
-
+# Steps 1 and 2 of the totp cases: the station's first boot saves the event
+# log, and mkstick enrolls against the same TPM state. It fills the calling
+# case's locals (c, fw and tpm read; ver, why, out, chk, secret, saved and
+# owner set), and returns 1 when it has skipped the case.
+totp_enrolled() {
     case $tpm in
     tpm12) ver=1.2 ;;
     *)     ver=2 ;;
@@ -390,14 +390,14 @@ case_totp() {
     if [[ -z $why ]] && has "FALCON-TPM $(proto_of "$tpm") absent"; then
         skip "$c" "this OVMF installs no EFI_$(proto_of "$tpm")_PROTOCOL"
         TPM_DIR=$R/swtpm; RTC_ARGS=(); unset SWTPM_KEEP
-        return
+        return 1
     fi
     rm -f "$R/evlog.bin" "$R/evsave.bin"
     [[ -z $why ]] && { mcopy -i "$R/totp.img@@1M" ::/falcon-evlog.bin "$R/evlog.bin" 2>/dev/null ||
         why="the probe saved no event log"; }
     # The station saves edk2's log on a 1.2 behind EFI_TCG_PROTOCOL, and on
     # nothing else (DESIGN Section 13.15); a 1.2 enrollment is from that.
-    local saved=()
+    saved=()
     if [[ -z $why && $tpm == tpm12 ]]; then
         if mcopy -i "$R/totp.img@@1M" ::/falcon-evsave.bin "$R/evsave.bin" 2>/dev/null; then
             saved=(--saved-log "$R/evsave.bin")
@@ -415,7 +415,7 @@ case_totp() {
     # swtpm_setup's well-known owner secret is SHA-1 of 20 zero bytes, not
     # the bytes (swtpm_setup12), so the 1.2 enrollment is given it as a
     # 20-byte file, which --owner-auth-file takes as the secret itself.
-    local owner=()
+    owner=()
     if [[ $tpm == tpm12 ]]; then
         python3 -c 'import hashlib, sys; sys.stdout.buffer.write(hashlib.sha1(bytes(20)).digest())' \
             > "$TPM_DIR/owner.bin"
@@ -442,6 +442,20 @@ case_totp() {
         secret=$(printf '%s\n' "$out" | sed -n 's/^.*secret: *\([A-Z2-7]*\)$/\1/p' | head -n 1)
         [[ -z $why && -z $secret ]] && why="enroll printed no secret"
     fi
+    return 0
+}
+
+case_totp() {
+    local c=$1 fw=$2 tpm=$3 why= ver= out= secret= shown= want= hex= base= unseal= chk=
+    local saved=() owner=()
+    why=$(fw_missing "$fw")
+    [[ -n $why ]] && { skip "$c" "$why"; return; }
+    [[ -f "$STATION" ]] || { skip "$c" "$STATION missing (make test-station)"; return; }
+    [[ -x "$MKSTICK" ]] || { skip "$c" "$MKSTICK missing (make cli)"; return; }
+    command -v python3 >/dev/null || { skip "$c" "python3 is not installed"; return; }
+    command -v swtpm_setup >/dev/null || { skip "$c" "swtpm_setup is not installed"; return; }
+
+    totp_enrolled || return 0
     [[ -n $secret ]] && hex=$(seed_hex "$secret")
 
     # 3. the code, and the seed off the wire
@@ -518,13 +532,113 @@ case_totp() {
     result "$c" "$why" "code $shown matches the seed, off the wire, gone after a handover, above the prompt; PCR 0 moved: warned"
 }
 
+# A station loader whose Authenticode digest is not the build's: one byte
+# of a section's slack (past its VirtualSize, inside SizeOfRawData) is
+# hashed and never loaded, so the loader runs as before.
+other_loader() { # other_loader IN OUT
+    python3 - "$1" "$2" <<'EOF'
+import struct, sys
+d = bytearray(open(sys.argv[1], "rb").read())
+pe = struct.unpack_from("<I", d, 0x3C)[0]
+n = struct.unpack_from("<H", d, pe + 6)[0]
+sh = pe + 24 + struct.unpack_from("<H", d, pe + 20)[0]
+for i in range(n):
+    vs, va, rs, rp = struct.unpack_from("<IIII", d, sh + 40 * i + 8)
+    if rp and rs > vs:
+        d[rp + vs] ^= 0x5A
+        open(sys.argv[2], "wb").write(d)
+        sys.exit(0)
+sys.exit(1)
+EOF
+}
+
+case_totp_update() {
+    local c=$1 fw=$2 tpm=$3 why= ver= out= secret= chk= shown= want= base= new=
+    local saved=() owner=() f
+    why=$(fw_missing "$fw")
+    [[ -n $why ]] && { skip "$c" "$why"; return; }
+    [[ -f "$STATION" ]] || { skip "$c" "$STATION missing (make test-station)"; return; }
+    [[ -x "$MKSTICK" ]] || { skip "$c" "$MKSTICK missing (make cli)"; return; }
+    for f in falcon-boot-station.efi falcon-bios-stage1.bin \
+             falcon-bios-stage2.bin falcon-bios-station-stage3.bin; do
+        [[ -f build/bin/$f ]] || { skip "$c" "build/bin/$f missing (make station)"; return; }
+    done
+    command -v python3 >/dev/null || { skip "$c" "python3 is not installed"; return; }
+    command -v swtpm_setup >/dev/null || { skip "$c" "swtpm_setup is not installed"; return; }
+    command -v sbsign >/dev/null || { skip "$c" "sbsign is not installed"; return; }
+
+    totp_enrolled || return 0
+
+    # 3. the update, from the old loader's log. The station disk has the
+    # BIOS station too, so its stages come along.
+    if [[ -z $why ]]; then
+        rm -rf "$R/upd-from" "$R/upd-backup"
+        mkdir -p "$R/upd-from" "$R/upd-backup"
+        cp build/bin/falcon-bios-stage1.bin build/bin/falcon-bios-stage2.bin \
+           build/bin/falcon-bios-station-stage3.bin "$R/upd-from/"
+        other_loader build/bin/falcon-boot-station.efi \
+            "$R/upd-from/falcon-boot-station.efi" ||
+            why="the station loader has no section slack to change"
+    fi
+    if [[ -z $why ]]; then
+        swtpm_serve "$ver" "$TPM_DIR" || why="swtpm would not serve its state"
+    fi
+    if [[ -z $why ]]; then
+        out=$("$MKSTICK" update "$R/totp.img" --from "$R/upd-from" \
+                --key build/mok-test/falcon-test-mok.key --cert "$MOK_CRT" \
+                --backup-dir "$R/upd-backup" \
+                --tpm-socket "$TPM_DIR/server.sock" --event-log "$R/evlog.bin" \
+                "${saved[@]}" "${owner[@]}" --yes 2>&1) ||
+            why="update failed: $(printf '%s' "$out" | tail -n 1)"
+        printf '%s\n' "$out" > "$R/$c-update.log"
+        swtpm_serve_stop
+        grep -qF "was not resealed" <<<"$out" &&
+            why="${why:-update did not reseal: $(grep -F "was not resealed" <<<"$out")}"
+        new=$(printf '%s\n' "$out" | sed -n 's/^.*secret: *\([A-Z2-7]*\)$/\1/p' | head -n 1)
+        [[ -z $why && -z $new ]] && why="update printed no new secret"
+        [[ -z $why && $new == "$secret" ]] && why="the new secret is the old one"
+    fi
+    # The rig boots the removable path, whose copy of the loader
+    # station_disk keeps beside \EFI\falcon's; a machine boots the
+    # firmware's entry for \EFI\falcon.
+    if [[ -z $why ]]; then
+        rm -f "$R/upd-loader.efi"
+        mcopy -n -i "$R/totp.img@@1M" ::/EFI/falcon/grubx64.efi "$R/upd-loader.efi"
+        cmp -s "$R/upd-loader.efi" "$LOADER" && why="the loader on the ESP is the old one"
+        mcopy -o -i "$R/totp.img@@1M" "$R/upd-loader.efi" ::/EFI/BOOT/grubx64.efi
+    fi
+
+    # 4. the new loader shows the new secret's code
+    if [[ -z $why ]]; then
+        boot "$fw" "$tpm" "$R/totp.img"
+        wait_for "FALCON-TPM-PROBE-DONE" 120 || why="the boot after the update did not reach the probe"
+        halt
+        log_text "$R/serial.log" > "$R/$c-4.log"
+        shown=$(grep -aoE 'TOTP: [0-9]{3} [0-9]{3}' "$R/$c-4.log" | head -n 1 | cut -c7-)
+        base=$(date -u -d "${RTC_BASE/T/ }" +%s)
+        want=$(codes_for "$new" "$base")
+        if [[ -z $why && -z $shown ]]; then
+            why="no code after the update: $(grep -aoE 'The TPM did not release[^|]{0,60}|TPM[^|]{0,70}' "$R/$c-4.log" | head -n 1)"
+        elif [[ -z $why ]] && ! grep -qx -- "$shown" <<<"$want"; then
+            why="the code $shown is not the new seed's for the clock"
+        fi
+    fi
+
+    TPM_DIR=$R/swtpm
+    RTC_ARGS=()
+    unset SWTPM_KEEP
+    result "$c" "$why" "enrolled, updated to another loader and resealed from the old boot's log: code $shown is the new seed's"
+}
+
 # ---- run ----
 
 ALL=(uefi-tpm2-probe uefi-tpm2crb-probe uefi-tpm12-probe
      uefi-sb-tpm2-probe uefi-sb-tpm12-probe
      uefi-tpm2-station uefi-tpm12-station
      uefi-sb-tpm2-station uefi-sb-tpm12-station
-     uefi-tpm2-totp uefi-tpm12-totp uefi-sb-tpm2-totp uefi-sb-tpm12-totp)
+     uefi-tpm2-totp uefi-tpm12-totp uefi-sb-tpm2-totp uefi-sb-tpm12-totp
+     uefi-tpm2-totp-update uefi-tpm12-totp-update
+     uefi-sb-tpm2-totp-update uefi-sb-tpm12-totp-update)
 CASES=("$@")
 [[ ${#CASES[@]} -eq 0 ]] && CASES=("${ALL[@]}")
 
@@ -544,6 +658,7 @@ for c in "${CASES[@]}"; do
     probe)   case_probe "$c" "$fw" "$tpm" ;;
     station) case_station "$c" "$fw" "$tpm" ;;
     totp)    case_totp "$c" "$fw" "$tpm" ;;
+    totp-update) case_totp_update "$c" "$fw" "$tpm" ;;
     *) echo "unknown case: $c" >&2; exit 2 ;;
     esac
 done

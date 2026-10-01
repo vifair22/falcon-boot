@@ -29,6 +29,7 @@ static const cli_cmd *const commands[] = {
     &mks_cmd_next_boot,
     &mks_cmd_station,
     &mks_cmd_status,
+    &mks_cmd_update,
     &mks_cmd_varstore
 };
 

@@ -179,10 +179,14 @@ int bioscore_stage1_fields(const uint8_t *mbr, uint32_t lba_off,
 int bioscore_is_installed(const uint8_t *mbr, const uint8_t *stage1,
                           uint32_t lba_off, uint32_t sectors_off);
 
-/* Nonzero when this entry is the reservation `mkstick bios --reserve` makes
- * over the gap: GPT slot BIOS_BOOT_SLOT, named BIOS_BOOT_NAME. The one
- * definition, so the command that makes it and the report that reads it
- * back cannot disagree about what it looks like. */
+/* Nonzero when this entry is falcon's reservation over stage 2's gap: a GPT
+ * partition named BIOS_BOOT_NAME, in whatever slot it took. `mkstick bios
+ * --reserve` makes it in slot BIOS_BOOT_SLOT; `station install` in the
+ * first free one, which on a disk with four partitions before it is not
+ * slot 5, and a check on the slot took that one for a real partition in
+ * stage 2's way (mkstick update, 2026-09-30). The one definition, so the
+ * commands that make it and the report that reads it back cannot disagree
+ * about what it looks like. */
 int bioscore_is_reserve(const part_table *t, const part_entry *p);
 
 /* ---- the backup a write is preceded by ----

@@ -83,6 +83,17 @@ int totpc_merge12(const uint8_t *fw, size_t fw_len, const uint8_t *rec,
                   size_t rec_len, const uint8_t station[20],
                   uint8_t out[16][20], unsigned *from, unsigned *bad_pcr);
 
+/* totpc_merge12, with `as` the SHA-1 Authenticode digest of a station image
+ * not booted yet: the logs are checked as they are, then replayed again
+ * with the station's measurement taken as `as`'s (evlog_replay_substitute),
+ * and out is what the station will read once that image is the one
+ * booted. mkstick update reseals to it before the reboot. `as` NULL is
+ * totpc_merge12. */
+int totpc_merge12_as(const uint8_t *fw, size_t fw_len, const uint8_t *rec,
+                     size_t rec_len, const uint8_t station[20],
+                     const uint8_t *as, uint8_t out[16][20], unsigned *from,
+                     unsigned *bad_pcr);
+
 /* STATION.INI with its [totp] replaced by t, or removed when t is NULL.
  * The text there must parse (TOTPC_ERR_INI with *err_line and the reason
  * in why, STATIONINI_WHY_MAX bytes), and so must the result. */

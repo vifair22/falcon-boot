@@ -450,8 +450,9 @@ static void test_is_reserve(void **state)
         e.name[i] = (uint16_t)name[i];
     assert_true(bioscore_is_reserve(&t, &e));
 
-    e.number = 1;
-    assert_false(bioscore_is_reserve(&t, &e));
+    /* Any slot: station install takes the first free one. */
+    e.number = 4;
+    assert_true(bioscore_is_reserve(&t, &e));
     e.number = BIOS_BOOT_SLOT;
     e.name[0] = 'X';
     assert_false(bioscore_is_reserve(&t, &e));

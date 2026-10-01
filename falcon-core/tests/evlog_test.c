@@ -189,6 +189,78 @@ static void test_tcg12(void **state)
                                       &r), EVLOG_ERR_FORMAT);
 }
 
+/* The station's measurement replaced by a new loader's, as mkstick update
+ * seals to it: PCR 4 reaches what it would with the new image measured in
+ * the old one's place, the stop is still the old digest in the log, and
+ * no other PCR moves. */
+static void test_substitute(void **state)
+{
+    uint8_t a[20], c[20], st[20], nw[20];
+    uint8_t d256a[32], d256st[32], d256nw[32];
+    uint8_t p4[20] = { 0 };
+    uint8_t q4[32] = { 0 };
+    evlog_replay r;
+
+    (void)state;
+    g_len = 0;
+    memset(a, 1, 20);
+    memset(c, 3, 20);
+    memset(st, 0x5a, 20);
+    memset(nw, 0x6b, 20);
+    ev12(0, 0x08, a, "crtm");
+    ev12(4, EVLOG_EV_EFI_BOOT_APP, c, "shim");
+    ext1(p4, c);
+    ev12(4, EVLOG_EV_EFI_BOOT_APP, st, "the station");
+    ext1(p4, nw);
+    ev12(4, EVLOG_EV_EFI_BOOT_APP, c, "a UKI");
+    memset(g_log + g_len, 0, 64);
+    g_len += 64;
+
+    assert_int_equal(evlog_replay_init(EVLOG_ALG_SHA1, &r), EVLOG_OK);
+    evlog_replay_substitute(&r, 4, st, nw);
+    assert_int_equal(evlog_replay_more(g_log, g_len, 4, st, &r), EVLOG_OK);
+    assert_true(r.stopped);
+    assert_int_equal(r.substituted, 1);
+    assert_memory_equal(r.pcr[4], p4, 20);
+    {
+        uint8_t p0[20] = { 0 };
+
+        ext1(p0, a);
+        assert_memory_equal(r.pcr[0], p0, 20);
+    }
+
+    /* Another PCR's event with the same digest is not the station's. */
+    assert_int_equal(evlog_replay_init(EVLOG_ALG_SHA1, &r), EVLOG_OK);
+    evlog_replay_substitute(&r, 7, st, nw);
+    assert_int_equal(evlog_replay_more(g_log, g_len, 4, st, &r), EVLOG_OK);
+    assert_int_equal(r.substituted, 0);
+
+    /* Nothing to substitute with, or no replay: nothing happens. */
+    assert_int_equal(evlog_replay_init(EVLOG_ALG_SHA1, &r), EVLOG_OK);
+    evlog_replay_substitute(&r, 4, NULL, nw);
+    evlog_replay_substitute(NULL, 4, st, nw);
+    evlog_replay_substitute(&r, EVLOG_PCRS, st, nw);
+    assert_false(r.sub_on);
+
+    /* The crypto-agile log, in its SHA-256 bank. */
+    g_len = 0;
+    memset(d256a, 1, 32);
+    memset(d256st, 0x5a, 32);
+    memset(d256nw, 0x6b, 32);
+    hdr2();
+    ev2(4, EVLOG_EV_EFI_BOOT_APP, a, d256a, "shim", 4);
+    ext256(q4, d256a);
+    ev2(4, EVLOG_EV_EFI_BOOT_APP, st, d256st, "station", 7);
+    ext256(q4, d256nw);
+    assert_int_equal(evlog_replay_init(EVLOG_ALG_SHA256, &r), EVLOG_OK);
+    evlog_replay_substitute(&r, 4, d256st, d256nw);
+    assert_int_equal(evlog_replay_more(g_log, g_len, 4, d256st, &r),
+                     EVLOG_OK);
+    assert_true(r.stopped);
+    assert_int_equal(r.substituted, 1);
+    assert_memory_equal(r.pcr[4], q4, 32);
+}
+
 static void test_tcg2(void **state)
 {
     uint8_t a1[20], a2[32], b1[20], b2[32], s1[20], s2[32], u1[20], u2[32];
@@ -433,6 +505,7 @@ int run_evlog_tests(void)
     const struct CMUnitTest tests[] = {
         cmocka_unit_test(test_tcg12),
         cmocka_unit_test(test_tcg2),
+        cmocka_unit_test(test_substitute),
         cmocka_unit_test(test_tcg2_bad),
         cmocka_unit_test(test_more),
         cmocka_unit_test(test_evsave),

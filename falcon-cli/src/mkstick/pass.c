@@ -199,6 +199,29 @@ static cli_status from_terminal(mks_pass *p)
     return validate(p);
 }
 
+cli_status pass_unlock(mks_pass *p, const char *file, const char *prompt)
+{
+    cli_status rc;
+    int tty;
+
+    memset(p, 0, sizeof *p);
+    if (file != NULL)
+        return from_file(p, file);
+    tty = open("/dev/tty", O_RDONLY | O_CLOEXEC);
+    if (tty < 0)
+        return set_error_errno(CLI_ERR_IO,
+                               "opening /dev/tty to prompt for the "
+                               "passphrase (use --passphrase-file when there "
+                               "is no terminal)");
+    rc = read_line(tty, prompt, p->buf, sizeof p->buf, &p->len);
+    (void)close(tty);
+    if (rc != CLI_OK) {
+        pass_wipe(p);
+        return rc;
+    }
+    return validate(p);
+}
+
 cli_status pass_acquire(mks_pass *p, const char *file)
 {
     memset(p, 0, sizeof *p);

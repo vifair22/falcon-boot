@@ -88,7 +88,13 @@ static int apply(evlog_replay *r, uint32_t pcr, uint32_t type,
     if (pcr >= EVLOG_PCRS) {
         return 0;
     }
-    extend(r, pcr, digest);
+    if (r->sub_on && pcr == r->sub_pcr &&
+        memcmp(digest, r->sub_from, r->digest_len) == 0) {
+        extend(r, pcr, r->sub_to);
+        r->substituted++;
+    } else {
+        extend(r, pcr, digest);
+    }
     return stop_digest != NULL && pcr == stop_pcr &&
            memcmp(digest, stop_digest, r->digest_len) == 0;
 }
@@ -248,6 +254,19 @@ int evlog_replay_init(uint16_t alg, evlog_replay *out)
     out->digest_len = alg == EVLOG_ALG_SHA1 ? SHA1_DIGEST_LEN
                                             : SHA256_DIGEST_LEN;
     return EVLOG_OK;
+}
+
+void evlog_replay_substitute(evlog_replay *r, unsigned int pcr,
+                             const uint8_t *from, const uint8_t *to)
+{
+    if (r == NULL || from == NULL || to == NULL || pcr >= EVLOG_PCRS ||
+        r->digest_len == 0u) {
+        return;
+    }
+    r->sub_on = 1;
+    r->sub_pcr = pcr;
+    memcpy(r->sub_from, from, r->digest_len);
+    memcpy(r->sub_to, to, r->digest_len);
 }
 
 int evlog_replay_more(const uint8_t *log, size_t len, unsigned int stop_pcr,
