@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# falcon-boot: build the rig stick the coverage harness boots one ISO from
-# (docs/notes/coverage-roadmap.md Section 2).
+# falcon-boot: build the rig stick the coverage harness boots one ISO from.
 #
 # One stick per ISO, so the menu the harness drives has exactly one image row
 # and that row is the first one: no p3 means no pinned personal-OS entry, and

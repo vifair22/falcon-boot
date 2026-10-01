@@ -615,8 +615,7 @@ static INTN choose_uki(const menu_banner *banner, pos_pick pick,
                          (CHAR16 *)0);
 }
 
-/* ---- the shim-verified load path (DESIGN Section 7.6) ---- */
-
+/* ---- reading the UKI ---- */
 
 /* Reads the whole UKI into freshly allocated pages.
  *
@@ -870,11 +869,11 @@ static EFI_STATUS launch_uki(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent,
      * there (DESIGN Section 7.6). A UKI needs it as much: sd-stub loads its
      * kernel through the firmware's LoadImage with the UKI as the parent,
      * and an image shim's loader created is not a parent the firmware will
-     * take, so with Secure Boot off every current kernel failed with
-     * EFI_INVALID_PARAMETER (traced 2026-09-29). With Secure Boot on and
+     * take, so with Secure Boot off every current kernel fails with
+     * EFI_INVALID_PARAMETER. With Secure Boot on and
      * only shim's validation off the firmware still enforces db and refuses
-     * a MOK-signed UKI; that is answered with shim's loader below, as
-     * before, and the inner-load warning the caller printed stands. */
+     * a MOK-signed UKI; that is answered with shim's loader below, and the
+     * inner-load warning the caller printed stands. */
     status = EFI_NOT_FOUND;   /* not loaded yet */
     if (ops.via_shim && ops.table_unhooked) {
         result->stage = L"LoadImage of the UKI (firmware)";
@@ -1330,8 +1329,8 @@ static EFI_STATUS boot_shelf(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
         goto out_close;
     out(L"\r\n");
     out_dec(size);
-    /* "starting it" used to end this line; the handoff line at the launch
-     * itself says that now, and says it at the moment it becomes true. */
+    /* The handoff line at the launch says "starting", at the moment it
+     * becomes true. */
     out(L" bytes read.\r\n\r\n");
 
     /* p3 is done with: the UKI is in `buf`, and nothing after this reads

@@ -1,5 +1,5 @@
 /* falcon-boot: an ISO's boot files, read through a mounted filesystem
- * (docs/DESIGN.md Section 6.4; docs/notes/coverage-roadmap.md W2 D1).
+ * (docs/DESIGN.md Section 6.4).
  *
  * bootcfg (falcon-core/src/media/bootcfg.c) reads a configuration through
  * three callbacks and never names a filesystem. This is those callbacks over

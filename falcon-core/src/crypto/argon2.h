@@ -2,7 +2,7 @@
  *
  * Purpose. The KDF of a LUKS2 keyslot made the ordinary way: `cryptsetup
  * luksFormat` defaults to argon2id, and a station's shelf is made by
- * cryptsetup on the machine (docs/notes/argon2-totp.md Section 1). luks.c
+ * cryptsetup on the machine (DESIGN Section 3). luks.c
  * derives the keyslot key with this.
  *
  * Reasoning. The module never allocates. Argon2's cost is its memory, tens

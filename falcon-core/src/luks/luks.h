@@ -15,7 +15,7 @@
  * Scope. Read only, one passphrase attempt at a time, pbkdf2 and argon2id
  * keyslots and aes-xts-plain64 segments. An argon2id slot is what a default
  * `cryptsetup luksFormat` produces, which is how a station's shelf is made
- * (docs/notes/argon2-totp.md Section 1). Its memory is the caller's
+ * (DESIGN Section 3). Its memory is the caller's
  * (luks_kdf_mem): this module allocates nothing, and the three places it
  * runs get memory three different ways. A slot that needs more than the
  * caller can give is reported as LUKS_ERR_KDF_MEMORY with the amount, never

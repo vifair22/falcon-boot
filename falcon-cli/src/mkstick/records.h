@@ -61,7 +61,7 @@ int records_find(const mks_records *r, ident_role role, int from);
 
 /* Nonzero when this entry is one a loader reads for a `boot` record: on GPT
  * the ESP or the falcon boot type, on MBR a FAT type byte or its hidden
- * form (docs/notes/station-rework.md section 9). */
+ * form (DESIGN Section 3). */
 int records_boot_candidate(const part_table *t, const part_entry *p);
 
 /* The index of the boot partition: the first candidate whose record decodes

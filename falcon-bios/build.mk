@@ -1,4 +1,4 @@
-# falcon-bios: the BIOS loader (docs/notes/bios-route.md).
+# falcon-bios: the BIOS loader (docs/DESIGN.md Sections 3.3 and 11.3).
 #
 # This file names the modules, links stages 1 and 2, which every app shares,
 # and says how a stage 3 is linked; which modules a stage 3 takes is its
@@ -6,7 +6,7 @@
 #
 # Not built by `all`, and that is deliberate: the route is opt-in, installed
 # onto a stick by `mkstick bios` rather than by every `mkstick create`
-# (Section 7.3). `make bios` builds it, `make test-bios-img` makes a disk
+# (DESIGN Section 3.3). `make bios` builds it, `make test-bios-img` makes a disk
 # image the rig can boot, and neither is on the path of a normal build or of
 # `make test`.
 #
@@ -17,15 +17,14 @@
 #
 # Everything is 32-bit x86: 16-bit real-mode code and 32-bit protected-mode
 # code in ELF32 objects, which gas takes perfectly well with .code16 and
-# .code32. One image runs on every processor from the Pentium on; what a newer one
+# .code32. One image runs on every processor from the i586 on; what a newer one
 # adds (SSE, AES-NI) is switched on by asking CPUID at run time, not by a
-# second build (docs/notes/bios-route.md Section 6h).
+# second build.
 #
 # The assembly is gas .S, preprocessed, so biosdefs.h is the single place the
-# addresses are written (Section 5.2). It is also the one part of the tree
-# outside every analyzer the project gates on, which is Section 7.2's risk and
-# the reason Section 5.3 confines assembly to transport and keeps every
-# decision in C.
+# addresses are written. It is also the one part of the tree outside every
+# analyzer the project gates on, which is why assembly here is confined to
+# transport and every decision stays in C.
 
 BIOS := falcon-bios/src
 BIOS_OBJ := $(OBJ)/bios
@@ -55,17 +54,16 @@ BIOS_ASFLAGS := -m32 -c -Wa,--fatal-warnings -I$(BIOS) $(CORE_INC)
 
 # The C half. Freestanding and i586, with the repo warning set.
 #
-# -march=i586 is the floor the loader runs on: a Pentium, which stage2.S
+# -march=i586 is the floor the loader runs on: an i586, which stage2.S
 # checks for (CPUID) before protected mode, and which DevLink recovery's
-# machines need (DESIGN Section 12.5). It was i686 until 2026-09-27; what
-# that allowed and a Pentium lacks is CMOV, and dropping it cost nothing
-# measurable (PBKDF2-SHA256 and portable AES-XTS within 1% either way, -m32
-# on a current processor). tools/check-floor.sh holds every linked image to
+# machines need (DESIGN Section 12.5). An i586 lacks CMOV, and dropping to
+# it costs nothing measurable in PBKDF2-SHA256 or portable AES-XTS, -m32 on
+# a current processor. tools/check-floor.sh holds every linked image to
 # it, since an object built before a flag change is not rebuilt by one.
 # -mtune=generic because -march alone also schedules for that processor,
-# which cost the p3 unlock 6% on a current one (233 ms against 220 in a
-# benchmark of luks_unlock, measured at i686); tuning changes no instruction
-# the floor lacks. -mno-sse and -mgeneral-regs-only
+# which costs the p3 unlock noticeably on a current one, in a benchmark of
+# luks_unlock; tuning changes no instruction the floor lacks. -mno-sse and
+# -mgeneral-regs-only
 # are not style:
 # the mode switch enables SSE only on a processor that has it, and never the
 # x87, so a compiler that decided to use either would fault on an
@@ -420,11 +418,10 @@ endef
 #
 # The image is not in `all` or `test`, but these are: three halves of ordinary
 # host C with no BIOS in them, holding the arithmetic the one part of the tree
-# with no analyzer over it depends on (Section 7.2). Testing them is the whole
-# point of having written them separately - and two have already been wrong
-# once, in a way the machine did not report: an unpadded initrd read as a
-# corrupt archive, and a kernel placed past the identity map of the loader's
-# long-mode days triple-faulted.
+# with no analyzer over it depends on. Testing them is the whole point of
+# having written them separately: an unpadded initrd reads as a corrupt
+# archive, and a kernel placed past the identity map of the loader's
+# long-mode days triple-faults, in ways the machine does not report.
 BIOS_TESTS := $(addprefix falcon-bios/tests/,main.c vcdcore_test.c vfdcore_test.c \
 	linuxcore_test.c e820_test.c jumpini_test.c jmod_test.c lowmem_test.c \
 	atacore_test.c usbcore_test.c pcccore_test.c bootpart_test.c \
@@ -530,7 +527,7 @@ test-station-bios: station $(BIOS_RIGBOOT) $(BIOS_TICKSTOP) $(MKSTICK)
 test-station-fixtures: station $(MKSTICK)
 	falcon-bios/tools/run-station-fixture-rig.sh
 
-# DevLink recovery (DESIGN Section 12.5) off the rig stick on a Pentium with
+# DevLink recovery (DESIGN Section 12.5) off the rig stick on an i586 with
 # 32 MB, by both BIOS routes and both of its entries, the agent reached on
 # COM1 (falcon-bios/tools/run-devlink-rig.sh). Skipped when the ISO or the
 # devlink client is not there.

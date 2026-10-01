@@ -52,42 +52,29 @@ typedef struct {
 
 /* Blesses a bare payload in place.
  *
- * Before anything is opened for writing this prints, to stdout, what is about
- * to happen to which file, because it is the one operation in this tool that
- * changes media the user did not produce (Section 7.2 and the asymmetry
- * Section 7.7 draws out). It does not prompt: this tool is the non-interactive
- * engine both the host and the on-stick appliance drive, and the per-item "I
- * vouch for this" confirmation of Section 7.5 belongs to the appliance. Under
+ * Prints, to stdout, what is about to happen to which file before opening
+ * anything for writing: the one operation here that changes media the user
+ * did not produce (Section 7.2). It does not prompt - the per-item "I vouch
+ * for this" confirmation of Section 7.5 is the appliance's job - and under
  * dry_run it prints and stops.
  *
- * Signing discipline: ADD our signature, never replace what is there. The
- * payload is somebody else's binary and its existing signature is what makes
- * it boot on machines that have never heard of this stick - memtest's loader
- * ships signed by the Microsoft UEFI CA - so stripping that to add ours would
- * trade "boots almost everywhere" for "boots here", silently, on a file the
- * user did not write. This is the mirror image of the rule for artifacts we
- * produce ourselves (the UKI wraps, and the user's own sign-uki script), where
- * stripping first is right precisely because the old signature is a previous
- * version of ours.
+ * Signing discipline: ADD our signature, never replace what is there,
+ * because a payload is somebody else's binary rather than an artifact we
+ * produce; payload.c's header has the reasoning (DESIGN Section 7.5).
  *
- * Nothing stacks, because a payload that already carries this certificate is
- * reported and SKIPPED rather than signed again. The result is checked three
- * ways before it replaces the original - one more signature than before, ours
- * among them, and the bytes that were there still there - and the replacement
- * is a rename within the same directory, so a failure anywhere leaves the
- * original payload exactly as it was.
+ * Nothing stacks: a payload already carrying this certificate is reported
+ * and SKIPPED rather than signed again. The result is checked three ways
+ * against the original - one more signature, ours among them, and the old
+ * bytes untouched - before a rename within the same directory replaces it,
+ * so a failure anywhere leaves the original exactly as it was.
  *
- * NO MANIFEST RECORD is written, for either shape. A record exists to point
- * the loader at a SECOND artifact (the signed wrap of a blessed ISO) and to
- * say whether that artifact still matches the file beside it. A payload has
- * no second artifact: the file is the artifact, the loader boots it whether
- * or not anything names it, and the one fact a record could carry - that it
- * is signed - the loader already reads out of the file's own PE headers when
- * it labels the entry. A record would be a second, editable, and therefore
- * disagreeable source of truth about a fact the artifact carries itself.
+ * NO MANIFEST RECORD is written, for either shape: a record points the
+ * loader at a second artifact, which a blessed ISO's wrap is and a payload
+ * has none - the file is the artifact, and the one fact a record could add,
+ * that it is signed, the loader already reads from the PE's own headers.
  *
- * A refusal to write anything is SGN_ERR_*; SGN_OK covers both "signed it" and
- * "it was already signed with this key", which are distinguished on stdout. */
+ * A refusal to write anything is SGN_ERR_*; SGN_OK covers both "signed it"
+ * and "it was already signed with this key", distinguished on stdout. */
 int sgn_payload_bless(const sgn_payload_opts *o);
 
 /* ---- the decisions above, exposed so they can be exercised ----

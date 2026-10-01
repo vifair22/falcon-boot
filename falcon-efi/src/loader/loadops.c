@@ -14,22 +14,8 @@
       { 0x8b, 0x54, 0x2a, 0xbe, 0xff, 0xdf, 0x2f, 0xb3 } }
 
 /* Non-volatile so it survives the appliance's reboot, and runtime-accessible
- * so the booted OS can set it too (DESIGN Section 6.3.1).
- *
- * Runtime access was added deliberately and is not a widening of what this
- * variable can cause. efivarfs exposes only runtime-accessible variables, so
- * without it a chooser running in the personal OS cannot ask for a next boot
- * at all, and the loader is the sole writer of a marker only the loader reads.
- *
- * It grants nothing, because the value has never been trusted: these bytes are
- * raw and untrusted on the way back in, and what they name still has to survive
- * validation against the manifest before a single byte of it is acted on. A
- * root process that sets this can therefore only select among entries that
- * already pass validation, which is exactly the authority UEFI's own BootNext
- * hands to root, and BootNext is runtime-writable by design. What it must NOT
- * become is a channel that skips that validation; if a future change ever acts
- * on this value without checking it, this attribute is the thing that turns
- * that bug into a local privilege escalation. */
+ * so the booted OS can set it too (DESIGN Section 6.3.1). loadops.h has what
+ * that requires of the reader. */
 #define FALCON_NEXT_BOOT_ATTRS (EFI_VARIABLE_NON_VOLATILE | \
                                 EFI_VARIABLE_BOOTSERVICE_ACCESS | \
                                 EFI_VARIABLE_RUNTIME_ACCESS)

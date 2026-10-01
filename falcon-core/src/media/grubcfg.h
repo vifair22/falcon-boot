@@ -1,5 +1,5 @@
 /* falcon-boot: the grub.cfg the loader serves in place of an ISO's own
- * (docs/notes/d3-spike.md, D3b).
+ * (DESIGN Section 6.4, D3b).
  *
  * With Secure Boot on, an ISO whose kernel shim will not run as a second
  * stage (no .sbat) still boots through its own chain: its MS-signed shim,

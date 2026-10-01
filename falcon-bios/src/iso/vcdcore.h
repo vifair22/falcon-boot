@@ -1,5 +1,5 @@
 /* falcon-bios: what the virtual CD's INT 13h handler needs to know, worked
- * out where it can be tested (docs/notes/bios-route.md Section 7.1).
+ * out where it can be tested.
  *
  * The resident handler is 16-bit real-mode assembly, which is the one part
  * of this tree no analyzer and no test reaches. So it is given as little to

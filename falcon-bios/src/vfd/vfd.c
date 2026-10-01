@@ -1,5 +1,4 @@
-/* falcon-bios: an El Torito floppy image served as a memory disk
- * (docs/notes/bios-route.md Sections 4.1 and 7.1).
+/* falcon-bios: an El Torito floppy image served as a memory disk.
  *
  * Some media boot a BIOS through a floppy-emulation image rather than a
  * no-emulation CD: the catalog's media type is 1, 2 or 3, and the BIOS is

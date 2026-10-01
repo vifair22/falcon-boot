@@ -1,5 +1,5 @@
 /* Tests for falcon-core/src/media/medium.c: a medium as the set of
- * filesystems in it (docs/notes/iso-reader-route.md stage C).
+ * filesystems in it (DESIGN Section 6, the ISO path).
  *
  * These run against the ISO and FAT fixtures the other media suites build,
  * because the thing being tested is assembly rather than parsing: the parsers

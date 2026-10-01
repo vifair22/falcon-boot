@@ -6,9 +6,7 @@
  * and UDF drivers, the ones the loader uses (DESIGN Section 6.4), and shells
  * out to sbsign rather than reimplementing Authenticode signing, which is
  * the vendoring line DESIGN Section 8.1 draws. The UKI wrap itself is built here
- * (uki.c), not by ukify: DESIGN Section 8.1 says why. It never reimplements
- * signing and it never holds anything but the key file the user pointed it
- * at, which stays the caller's problem to keep encrypted at rest.
+ * (uki.c), not by ukify: DESIGN Section 8.1 says why.
  *
  * Built as a portable static binary because the identical implementation
  * runs on the user's host and inside the on-stick signing appliance's

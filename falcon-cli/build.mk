@@ -135,9 +135,9 @@ uninstall:
 # the tool.
 #
 # payload.c is compiled in and deliberately left out of the coverage report:
-# about 150 of its 611 lines are pure logic with tests on them, and the rest
-# is loop-mounting a FAT volume out of an .img and shelling out to sbsign.
-# Reported whole it comes to 23%, which says nothing true about either half.
+# a part of it is pure logic with tests on them, and the rest is
+# loop-mounting a FAT volume out of an .img and shelling out to sbsign.
+# Reported whole, the coverage figure says nothing true about either half.
 # The repo's answer to that shape is a split (blesscore.c beside bless.c),
 # and until payload.c gets one this is a known
 # compromise rather than an oversight.

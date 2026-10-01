@@ -3,8 +3,8 @@
  *
  * The firmware-free half of apps/station/efi_main.c and bios_main.c: the
  * rows the loader found, the names STATION.INI, the default and next boot
- * call them by (docs/notes/station-rework.md section 10), what a STATION.INI
- * section changes or adds, and the order the menu shows them in. Each
+ * call them by (DESIGN Section 12.7), what a STATION.INI section changes or
+ * adds, and the order the menu shows them in. Each
  * loader finds its rows and boots them; everything here is decided on bytes
  * a test can write, which is why it is its own file, and one file, so the
  * two stations cannot come to read one STATION.INI two ways.
@@ -29,8 +29,8 @@
 #define STROWS_MAX       64u
 #define STROWS_LABEL_MAX 128u
 
-/* The words both stations give the rows they find (docs/notes/
- * station-rework.md section 11), as ASCII: a loader widens one by writing
+/* The words both stations give the rows they find (DESIGN Section
+ * 12.10), as ASCII: a loader widens one by writing
  * u"" or L"" before it, and the installer writes them into STATION.INI and
  * `station status` prints them as they are, so all three say one thing. A
  * boot sector's loader is media/vbr.c's vbr_loader_name. */
@@ -106,7 +106,7 @@ void strows_init(strows *r);
 /* A zeroed row of this kind at the end, or NULL when the list is full. */
 strow *strows_add(strows *r, strow_kind kind);
 
-/* The generated names (station-rework.md section 10). A disk's partition is
+/* The generated names (DESIGN Section 12.7). A disk's partition is
  * `gpt-<first 8 hex of the DiskGUID>-p<n>` or `mbr-<signature>-p<n>`, the
  * disk itself (part 0) the same without `-p<n>`; a firmware entry is
  * `nxt-<4 hex>`; a UKI is `uki-<its file name less .efi>`, every character

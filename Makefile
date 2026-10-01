@@ -12,8 +12,8 @@
 #   falcon-winjump/    the WinPE jump binary, a Win64 console program
 #   falcon-hook/       the program appended to an ISO's initrd that rebuilds
 #                      the ISO as a block device (freestanding Linux, built
-#                      at two widths: x86-64 and i686)
-#   falcon-bios/       the opt-in BIOS loader: i686, flat 32-bit protected
+#                      at two widths: x86-64 and i586)
+#   falcon-bios/       the opt-in BIOS loader: i586, flat 32-bit protected
 #                      mode, three stages; not in `all` (`make bios`)
 #
 # Each component's build.mk lists its own sources and targets. This file holds
@@ -28,8 +28,8 @@
 #   host            hosted Linux, linked into the host tools
 #   winjump         hosted mingw, linked into winjump.exe
 #   winjump32       hosted i686 mingw, linked into winjump32.exe
-#   hook, hook32    freestanding static Linux, x86-64 and i686: falcon-hook
-#   bios            freestanding i686: falcon-bios's three stages
+#   hook, hook32    freestanding static Linux, x86-64 and i586: falcon-hook
+#   bios            freestanding i586: falcon-bios's three stages
 #   test            hosted Linux at -O0 with --coverage, linked into the tests
 #
 # The same falcon-core source is compiled in up to three flavours, which is
@@ -162,7 +162,7 @@ SEMVER := $(shell cat release_version)
 BUILD_STAMP := $(shell date +%Y%m%d.%H%M)
 VERSION := $(SEMVER)_$(BUILD_STAMP).$(VARIANT)
 # The stationary build (docs/DESIGN.md Section 12) and falcon jump (Section
-# 14) name themselves apart, so a screen photo says which loader is running.
+# 13) name themselves apart, so a screen photo says which loader is running.
 VERSION_STATION := $(SEMVER)_$(BUILD_STAMP).station-$(VARIANT)
 VERSION_STATION_LEGACY := $(SEMVER)_$(BUILD_STAMP).station-legacy-$(VARIANT)
 VERSION_JUMP := $(SEMVER)_$(BUILD_STAMP).jump-$(VARIANT)
@@ -189,7 +189,7 @@ build/version.h: version-stamp ;
 # Every unit under test is EFI-free and reaches the outside world only through
 # callbacks or caller-supplied buffers, so each compiles and runs unchanged in
 # a host process; that is the whole reason they are shaped that way
-# (docs/DESIGN.md Sections 6 and 6.2). Each component's build.mk names its
+# (docs/DESIGN.md Section 9). Each component's build.mk names its
 # test sources and the units they exercise; every test binary also links the
 # shared support in falcon-core/tests/support.
 #
@@ -342,9 +342,9 @@ test: $(TEST_BINS)
 # Strict, unlike `test`. The image-backed suites skip when their fixtures are
 # absent and a skip is not a failure, which is right for a machine that cannot
 # build them (most need mkfs and a loop mount, so sudo) and wrong here:
-# measured without them this tree reported 69% with falcon-core/src/fs/ext4.c,
-# falcon-core/src/luks and falcon-core/src/luks/af.c at zero. `make
-# test-fixtures` builds them.
+# without them, falcon-core/src/fs/ext4.c, falcon-core/src/luks and
+# falcon-core/src/luks/af.c sit at zero coverage while the overall figure
+# looks fine. `make test-fixtures` builds them.
 #
 # suspicious-hits: the corruption sweeps call the crypto inner loops hundreds
 # of millions of times, and gcovr treats any count past 2^32 as the symptom of
@@ -368,9 +368,8 @@ coverage: test
 #
 # The cost of that choice, which is what this target is for: the suites that
 # read these images SKIP when the images are absent, and a skipped cmocka
-# suite does not fail. Before this target existed nothing built them, so a
-# clean checkout ran 392 tests, reported green, and left the ext4 and LUKS
-# readers at zero coverage.
+# suite does not fail. Without this target, a clean checkout runs its tests,
+# reports green, and leaves the ext4 and LUKS readers at zero coverage.
 test-fixtures: test-image test-ext4 test-jbd2 test-fat test-luks test-isoview test-trust \
 	test-iso9660 test-udf test-wim test-uefiboot test-biosboot
 
@@ -409,7 +408,7 @@ check-tools:
 # Built first: cppcheck reads compile_commands.json, whose entries include the
 # generated blob sources (build/gen/*_blob.c). Without them it loads no
 # project, checks nothing and reports zero findings, which is how the gate
-# passed for a week without running cppcheck at all (found 2026-09-26).
+# passed for a week without running cppcheck at all.
 analyze: all bios
 	tools/analyze.sh
 
@@ -445,8 +444,7 @@ CC_DB_TEST_INC = case "$$src" in \
 # other flavour builds (jump's FAT-only registry). The rest of the core it
 # links is already entered under the loader's flags; without
 # it, a component's worth of C would sit outside cppcheck, -fanalyzer and
-# clang-tidy, which is the one thing Section 7.2 of the BIOS note says not to
-# let happen.
+# clang-tidy, which is not allowed to happen.
 CC_DB_BIOS := $(foreach s,$(filter-out $(EFI_APP_SRCS) $(HOST_SRCS),$(sort $(BIOS_CSRCS))),$(s):$(BIOS_OBJ)/$(s:.c=.o))
 # falcon-bios's assembly, under the flags its pattern rule assembles with, so
 # an editor resolves biosdefs.h and the macros it defines. The analyzers are

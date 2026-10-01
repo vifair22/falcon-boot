@@ -36,19 +36,18 @@
  * already in the field.
  *
  *   p2  ISO library (exFAT)   ebd0a0a2-b9e5-4433-87c0-68b6b72699c7
- *       Microsoft basic data. NOT a falcon-minted GUID, and that is the
- *       decision of 2026-09-13 rather than an oversight: Windows' partmgr
- *       creates no volume for a GPT partition whose type it does not
- *       recognise, so a falcon-typed p2 gets no drive letter, cannot be
- *       dragged and dropped onto from a Windows host (DESIGN Section 1,
- *       in-scope item 2) and cannot be found by the jump binary inside WinPE
- *       (Section 6.3). Measured; see docs/notes/windows-route.md. p2 must be
- *       visible to Windows, so p2 wears a type Windows knows.
+ *       Microsoft basic data. NOT a falcon-minted GUID, deliberately:
+ *       Windows' partmgr creates no volume for a GPT partition whose type
+ *       it does not recognise, so a falcon-typed p2 gets no drive letter,
+ *       cannot be dragged and dropped onto from a Windows host (DESIGN
+ *       Section 1, in-scope item 2) and cannot be found by the jump binary
+ *       inside WinPE (Section 6.3). p2 must be visible to Windows, so p2
+ *       wears a type Windows knows.
  *   p3  UKI shelf (LUKS2)     9cb02e90-85f4-4af7-9af3-1f9d6a95feaf
- *       Minted once (2026-09-13, uuidgen v4) and kept, for the mirror-image
- *       reason: p3 must NOT be visible to Windows. A basic-data-typed LUKS
- *       volume is one Windows offers to format, and the offer is aimed at
- *       the partition holding the stick's only copy of its MOK private key.
+ *       A falcon-minted type (uuidgen v4), for the mirror-image reason: p3
+ *       must NOT be visible to Windows. A basic-data-typed LUKS volume is
+ *       one Windows offers to format, and the offer is aimed at the
+ *       partition holding the stick's only copy of its MOK private key.
  *       An unrecognised type is what keeps Windows' hands off it.
  *
  * The other two partitions keep their standard types:
@@ -73,7 +72,7 @@ extern const uint8_t gpt_guid_msbasic[GPT_GUID_LEN];
 extern const uint8_t falcon_guid_shelf[GPT_GUID_LEN];
 extern const uint8_t gpt_guid_esp[GPT_GUID_LEN];
 /* A station's `boot` partition on a GPT disk (docs/DESIGN.md Section 12.2):
- * d0acb249-f895-4e0d-ab0d-cfbb6f48ae36, minted 2026-09-26. Unrecognised by
+ * d0acb249-f895-4e0d-ab0d-cfbb6f48ae36, falcon-minted. Unrecognised by
  * Windows, so it gets no volume; stage 2 reads only ESP- and this-typed
  * partitions on GPT when it looks for the `boot` record. */
 extern const uint8_t falcon_guid_boot[GPT_GUID_LEN];

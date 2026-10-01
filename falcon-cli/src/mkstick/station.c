@@ -1379,8 +1379,8 @@ static void status_uefi(stn_tally *t, stn_scan *s, stationini *ini,
 
 /* A LUKS2 shelf's keyslots: each one's KDF and cost, what the loaders
  * cannot use, and a slot asking for more memory than this machine has,
- * which the loader refuses with a page saying so (docs/notes/argon2-totp.md
- * Section 1). mkstick makes no shelf; one made by hand with cryptsetup has
+ * which the loader refuses with a page saying so (DESIGN Section 12).
+ * mkstick makes no shelf; one made by hand with cryptsetup has
  * whatever cost cryptsetup benchmarked on the machine that made it. */
 static void shelf_slots(const stn_disk *sd, const part_entry *p)
 {

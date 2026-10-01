@@ -1,5 +1,5 @@
 /* falcon-boot: the ISO extent map handed to falcon-hook (docs/DESIGN.md
- * Section 6.4; docs/notes/coverage-roadmap.md W1, L2).
+ * Section 6.4).
  *
  * The loader boots an ISO's kernel; the kernel's initramfs then looks for
  * the ISO's contents as a block device, which exists only as a file on p2.
@@ -42,7 +42,7 @@
  * Version 1 carried the GPT unique partition GUID at 16 instead. Each
  * version refuses the other: a wrap blessed before version 2 carries a hook
  * that reads version 1, finds no ISO device under a current loader, and is
- * blessed again (docs/notes/station-rework.md: no legacy paths).
+ * blessed again: no legacy paths.
  *
  * EFI-free and allocation-free, shared by the loader (encode), falcon-hook
  * (decode, inside a foreign initramfs) and the host tests.

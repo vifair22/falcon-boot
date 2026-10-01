@@ -1,4 +1,4 @@
-/* Boot predictions (src/secboot: der, x509, authenticode, siglist, trust;
+/* Boot predictions (src/trust: der, x509, authenticode, siglist, trust;
  * DESIGN Section 7.8).
  *
  * Three kinds of test:
@@ -1269,8 +1269,7 @@ static void test_real_distro_shim(void **state)
 
 /* Every Microsoft certificate the rig's varstore carries, recognised by name
  * one at a time. The fingerprint table is 128 hand-copied bytes; this is what
- * catches a transcription error in it (one did get through: the UEFI CA 2023
- * entry, until this test existed). */
+ * catches a transcription error in it. */
 static void test_real_ms_names(void **state)
 {
     static const struct {

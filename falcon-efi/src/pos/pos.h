@@ -11,35 +11,25 @@
  * filesystem code of its own, and it is the only module in the loader that ever
  * holds the passphrase.
  *
- * How the image is handed to LoadImage, and why that changed. A LUKS volume
- * has no firmware-readable device path: that is the point of encrypting it,
- * and it is why this path began life handing LoadImage a memory BUFFER while
- * the ISO path named a device path. The buffer shape verified honestly (shim
- * checks the bytes it is given against db + MOK + SBAT either way), but it
- * left the started image's LoadedImage->DeviceHandle NULL, and sd-stub finds
- * its companion credentials by scanning the directory next to the image on
- * that device handle. No device, no handoff.
+ * How the image is handed to LoadImage. A LUKS volume has no
+ * firmware-readable device path, and a load from a memory BUFFER leaves the
+ * started image's LoadedImage->DeviceHandle NULL, while sd-stub finds its
+ * companion credentials by scanning the directory next to the image on that
+ * device handle. No device, no handoff.
  *
- * So this module now builds one: falcon-efi/src/loader/credfs.c publishes the
+ * So this module builds one: falcon-efi/src/loader/credfs.c publishes the
  * UKI bytes and the credential as a synthetic read-only filesystem in RAM, and
  * the UKI is loaded BY DEVICE PATH off it (DESIGN Sections 5 step 4 and 5.1).
  * The buffer call survives only as the fallback for when that filesystem cannot
  * be published, and it is reported on screen when it is taken, because a silent
  * fallback is a personal OS that asks for the passphrase twice.
  *
- * None of this is a security change, in either direction:
- *
- *   - Verification stays entirely the platform's. Both shapes go through the
- *     shim-verified load path of Section 7.6, which refuses an image that does
- *     not verify with EFI_SECURITY_VIOLATION (measured, docs/notes/
- *     shim-spike.md Section 4.2) and permits everything when Secure Boot is
- *     off. This module installs no security protocol and overrides nothing.
- *   - The credential is DATA handed to an already-verified image, never code
- *     and never a verification decision. Publishing a filesystem changes where
- *     bytes come from, not what is allowed to run.
+ * Both shapes go through the shim-verified load path of Section 7.6, which
+ * refuses an image that does not verify with EFI_SECURITY_VIOLATION and
+ * permits everything when Secure Boot is off.
  *
  * This module is the only one in the loader that ever holds the passphrase,
- * and now the only one that hands it on. Lifetime: the typed buffer is wiped
+ * and the only one that hands it on. Lifetime: the typed buffer is wiped
  * the moment the unlock succeeds, having first been copied into the buffer
  * credfs serves; credfs_teardown wipes that copy on every path out of the
  * launch, successful or not.

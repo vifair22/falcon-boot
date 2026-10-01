@@ -20,10 +20,6 @@
  * --print reads whichever marker this machine would use and reports it as
  * key=value lines for a script (the format is in the help below and in
  * docs/Manual.md Section 3.5), changing nothing.
- *
- * This replaces archusb's `archusb-boot-next` writer, which wrote the BIOS
- * marker to LBA 2047 of the disk with dd: that sector is inside the first
- * partition on an MBR disk whose first partition starts at 63.
  */
 
 #include <mkstick/mkstick.h>

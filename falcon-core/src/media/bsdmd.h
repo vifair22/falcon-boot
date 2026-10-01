@@ -1,5 +1,5 @@
 /* falcon-boot: making a BSD ISO boot itself as a memory disk
- * (docs/notes/bsd-route.md; docs/notes/coverage-roadmap.md M7).
+ * (DESIGN Section 6.4).
  *
  * A FreeBSD kernel loses its install medium at ExitBootServices exactly as a
  * Linux one does, and falcon-hook cannot help: it is an initramfs mechanism.
@@ -18,15 +18,6 @@
  * it off the same virtual CD it booted from. Nothing else is published and
  * nothing is copied.
  *
- * The route that was measured first and rejected (2026-09-19) published a
- * second Block I/O device carrying a synthetic GPT and FAT32 volume with the
- * ISO as its one file. It works, but `md_image_name` needs a loader device
- * name (`disk0p1`) and that index is the loader's enumeration order, which
- * nothing here can predict: a machine with two disks moves it. Escaping that
- * meant patching the ISO's Lua to search the devices, which is a second
- * in-place patch of a file that differs between FreeBSD 13, 14, 15 and every
- * derivative. Reading the file off currdev needs no device name at all.
- *
  * Two edits, both of which fit the byte-range overlay the virtual CD already
  * serves (falcon-efi/src/iso/overlay.h), so no ISO is ever written to:
  *
@@ -37,10 +28,6 @@
  *      to exactly the length it replaced. The same in-place trick D3b uses
  *      for grub.cfg. /boot/loader.conf is the wrong file: it is a few
  *      hundred bytes with no room, and defaults are read first anyway.
- *
- * Measured end to end on 2026-09-19 under OVMF with Secure Boot off:
- * FreeBSD 15.1 bootonly, pfSense Plus 24.06 and OPNsense 25.1 all print
- * `md0: Preloaded image </FALCONBS.IMG;1>` and reach their installers.
  */
 
 #ifndef FALCON_BSDMD_H

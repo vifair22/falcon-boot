@@ -80,7 +80,7 @@ static int legacy_boot(const strow *w)
  * resident still hooks INT 13h and 15h and holds the BDA's memory and disk
  * counts. The system never reads the card through it, and Windows 2000
  * froze on the A21m started on top of it; with it released it starts
- * (docs/notes/station-rework.md). A row on the drive jump serves keeps it,
+ * (DESIGN Section 13.6). A row on the drive jump serves keeps it,
  * since that is the only way the system reads its disk. */
 static void legacy_handover(uint8_t drive)
 {

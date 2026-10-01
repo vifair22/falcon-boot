@@ -4,9 +4,7 @@
  * the superblock carries incompat RECOVER: the journal may hold committed
  * blocks the filesystem proper does not. Hibernation leaves it that way every
  * time (the OS is asleep, not unmounted) and so does a power cut. A reader
- * that ignored the journal would hand back stale metadata, so ext4.c used to
- * refuse such a shelf outright, which left a hibernated machine unable to
- * boot the very UKI that would resume it.
+ * that ignored the journal would hand back stale metadata.
  *
  * What it does instead. The journal's committed transactions are read the way
  * the kernel's own recovery reads them (fs/jbd2/recovery.c: a scan pass that

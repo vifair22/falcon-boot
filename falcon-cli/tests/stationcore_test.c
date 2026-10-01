@@ -366,7 +366,7 @@ static void test_labels(void **state)
 
     (void)state;
     memset(&f, 0, sizeof f);
-    /* The loaders' words (station-rework.md section 11). */
+    /* The loaders' words (DESIGN Section 12). */
     f.kind = STN_F_PART;
     f.os = VBR_LOADER_NTLDR;
     f.disk.kind = PART_KIND_MBR;

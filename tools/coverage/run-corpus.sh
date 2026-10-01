@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # falcon-boot: run the coverage corpus through the harness and regenerate the
-# scorecard (docs/notes/coverage-roadmap.md Section 2).
+# scorecard.
 #
 # For every corpus row whose ISO is present and verified (tools/coverage/
 # corpus-fetch.sh), and for every requested state and route:
@@ -25,19 +25,11 @@
 #   --routes "dnd chain blessed"  which routes (default all three)
 #   --jobs N                  cases in flight at once (default 3; each takes
 #                             FALCON_CASE_MEM, 4 GiB by default). KEEP IT
-#                             LOW. Measured 2026-09-20: at --jobs 10 a Kali
-#                             blessed case panicked in the guest with
-#                             "Attempted to kill init", passed on its own,
-#                             and passed in another Secure Boot state off the
-#                             same stick. Disk contention starves a guest
-#                             into failures that read as product bugs, and a
-#                             flaky cell is worse than a slow run.
-#                             2026-09-26: --jobs 8 over the UEFI columns
-#                             (339 cases) matched the baseline exactly; at
-#                             --jobs 12 over the BIOS columns 3 of 372
-#                             failed (two panics, one timeout) and all three
-#                             passed alone. Run wide, then rerun every
-#                             changed case alone before calling it.
+#                             LOW: disk contention starves a guest into
+#                             failures that read as product bugs, and a
+#                             flaky cell is worse than a slow run. Run wide,
+#                             then rerun every changed case alone before
+#                             calling it.
 #   --timeout S               seconds from the keypress to a verdict (300)
 #   --force                   rerun cases that already have a result
 #   --no-scorecard            leave docs/coverage.md alone
@@ -53,7 +45,6 @@ STICKS=build/coverage/sticks
 RUNS=build/coverage/runs
 
 STATES="off ms own"
-# All three by default.
 #
 # chain was on request only, which meant it had no baseline, and that showed:
 # when the survey moved off the firmware the only way to argue the chainload
@@ -158,7 +149,7 @@ while IFS=$'\t' read -r id tier family sha file source arch; do
                     > "$out/result"
                 continue
             fi
-            # Width: the UEFI loader is x86-64, and the Pentium III column
+            # Width: the UEFI loader is x86-64, and the i686 column
             # has no long mode for a 64-bit kernel.
             if [[ "$arch" == i686 && "$st" != bios* ]]; then
                 mkdir -p "$out"

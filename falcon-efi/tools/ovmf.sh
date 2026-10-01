@@ -3,8 +3,7 @@
 #
 # Distros disagree about both the directory and the file names, and this stick
 # roams between an Arch laptop and a Gentoo workstation, so one hardcoded path
-# is wrong on one of them by construction. It was: every rig target failed on
-# the laptop with "cannot stat .../OvmfX64/OVMF_VARS.secboot.fd".
+# is wrong on one of them by construction.
 #
 #   Gentoo   /usr/share/edk2/OvmfX64/  OVMF_CODE.fd, OVMF_VARS.secboot.fd
 #   Arch     /usr/share/edk2/x64/      OVMF_CODE.4m.fd, OVMF_CODE.secboot.4m.fd

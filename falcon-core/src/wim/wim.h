@@ -1,6 +1,6 @@
 /* falcon-boot: reading a WIM, and the one patch the loader makes to Windows
  * install media's boot.wim (docs/DESIGN.md Section 6.3, moved into the loader
- * by Section 6.4; docs/notes/coverage-roadmap.md M6).
+ * by Section 6.4).
  *
  * The patch is DESIGN 6.3's: in the boot image, \Windows\System32\
  * winpeshl.exe becomes the jump binary (falcon-winjump), the original is

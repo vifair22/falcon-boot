@@ -16,13 +16,10 @@
  * consumes it as the `cryptsetup.passphrase` credential to unlock p4. See
  * falcon-efi/src/pos/pos.c for the naming that chain requires.
  *
- * Security posture. The credential is DATA handed to an image the platform
- * has already verified, never code and never a verification decision. This
- * module installs no security protocol, overrides nothing, and its existence
- * changes nothing about what will load: the image on it is loaded through the
- * same shim-verified path as everything else (DESIGN Section 7.6), and is
- * refused exactly when it would have been refused from anywhere else. All it
- * changes is where the bytes come from.
+ * The credential is data handed to an image the platform has already
+ * verified. The image on this filesystem is loaded through the shim-verified
+ * path (DESIGN Section 7.6); the module changes only where the bytes come
+ * from.
  *
  * Lifetime. RAM only; nothing here is ever written to storage. Entries marked
  * secret are wiped by credfs_teardown when the image comes back (DESIGN

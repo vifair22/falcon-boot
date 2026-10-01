@@ -77,17 +77,14 @@ static const family_desc g_families[] = {
      * Manjaro ISO boots direct and blesses in every Secure Boot state with
      * nothing added, because falcon-hook publishes the medium under its own
      * label and the stock hook finds it there. The column stays empty until
-     * a medium turns up that needs one. Before this row existed the medium
-     * classified as memtest, on the strength of the /boot/memtest image
-     * Manjaro ships beside itself. */
+     * a medium turns up that needs one. */
     { FAMILY_MANJARO, "Manjaro",
       (void *)0, 0,
       FAMILY_TRI_UNKNOWN, FAMILY_TRI_UNKNOWN, 0 },
 
     /* antiX and MX. Neither is live-boot nor casper: the tree is /antiX and
      * the initrd finds linuxfs in it by searching mounted media, which is
-     * why no fragment is needed here either. Same measurement and same
-     * history as Manjaro above, including the memtest misread. */
+     * why no fragment is needed here either. */
     { FAMILY_ANTIX, "antiX/MX",
       (void *)0, 0,
       FAMILY_TRI_UNKNOWN, FAMILY_TRI_UNKNOWN, 0 },
@@ -130,10 +127,9 @@ static const family_desc g_families[] = {
     /* memtest is a bare EFI binary: it needs no cmdline, no initramfs and no
      * backing media once loaded, which is what the three columns below say.
      * They do NOT say it needs no blessing. What the platform verifies for a
-     * bare payload is the payload itself, so Secure Boot wants a signature on
-     * it however self-contained it is (DESIGN Section 7.2, decided 2026-09-13
-     * after this family proved unbootable on a db with no Microsoft CA). That
-     * is the bless tool's business and not a column here. */
+     * bare payload is the payload itself, so Secure Boot wants a signature
+     * on it however self-contained it is (DESIGN Section 7.2). That is the
+     * bless tool's business and not a column here. */
     /* devlink-rescue's 32-bit RAM-only Linux (DESIGN Section 12.5). It needs
      * nothing from its medium once the kernel runs (its squashfs is inside
      * its initramfs), and its agent owns COM1. */
@@ -172,7 +168,7 @@ static const family_desc g_families[] = {
      * DESIGN Section 6.2, which is a Linux initramfs mechanism. FreeBSD has
      * no initramfs, so it needs the other answer entirely - the medium loaded
      * into RAM by the ISO's own loader before the kernel starts
-     * (falcon-efi/src/bsd, docs/notes/bsd-route.md). */
+     * (falcon-efi/src/bsd, DESIGN Section 6.4). */
     { FAMILY_BSD, "FreeBSD family",
       (void *)0, 0,
       FAMILY_TRI_NO, FAMILY_TRI_NO, 0 },
@@ -349,7 +345,7 @@ const family_desc *family_detect(const family_probe *p)
     /* Windows 2000/XP text-mode setup: no /sources and no WinPE - the installer
      * is i386/setupldr.bin reading i386/txtsetup.sif. The loader injects the
      * virtual-CD driver into that setup rather than patching a boot.wim
-     * (windows-route.md 7.4). */
+     * (DESIGN Section 6.3). */
     if (probe_exists(p, "/i386/txtsetup.sif") &&
         probe_exists(p, "/i386/setupldr.bin"))
         return family_by_id(FAMILY_WINDOWS);
@@ -396,11 +392,8 @@ const family_desc *family_detect(const family_probe *p)
         return family_by_id(FAMILY_ARCH);
 
     /* Each of these ships something the memtest last resort below would
-     * otherwise claim, or nothing distinctive at all, and each was reading
-     * as unknown or as memtest before it had a row. NixOS is the clearest
-     * case: it carries /boot/memtest.bin beside its own kernel, and used to
-     * be special-cased into an explicit "unknown" purely to keep the memtest
-     * check off it. A real fingerprint says the same thing better. */
+     * otherwise claim, or nothing distinctive at all. NixOS is the clearest
+     * case: it carries /boot/memtest.bin beside its own kernel. */
     if (probe_exists(p, "/.alpine-release") ||
         probe_exists(p, "/apks/.boot_repository"))
         return family_by_id(FAMILY_ALPINE);

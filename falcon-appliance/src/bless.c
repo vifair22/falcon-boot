@@ -194,7 +194,7 @@ static void sign_all(const stick_parts *parts, int confirmed,
      * unless both happened. */
     if (confirmed) {
         /* The consent was given in the loader's menu, over exactly this
-         * list (DESIGN Section 7.5, revised): printed again here so the
+         * list (DESIGN Section 7.5): printed again here so the
          * console says what is being signed as it is signed. */
         say("\nconfirmed in the loader's menu:\n");
         for (i = 0; i < g_cand_n; i++) {

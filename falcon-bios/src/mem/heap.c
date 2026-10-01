@@ -1,5 +1,4 @@
-/* falcon-bios: memory above the loader (docs/notes/bios-route.md Section
- * 4.3).
+/* falcon-bios: memory above the loader.
  *
  * Everything else in this build places its buffers as statics, because every
  * other route knows how big they are: a command line, a setup header, a
@@ -15,9 +14,7 @@
  * Above 64 MB so it is clear of everything this loader places, and below
  * 4 GiB: a 32-bit base is what an override the BIOS moves is described by,
  * and 4 GiB is the end of what the loader itself can write (biosdefs.h,
- * ADDR_END). When the loader ran in long mode the ceiling was its one-
- * gigabyte identity map instead, and a run near 3 GB on a 4 GB machine took
- * the first store past it and triple faulted.
+ * ADDR_END).
  */
 
 #include <start/bios.h>

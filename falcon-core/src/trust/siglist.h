@@ -12,7 +12,7 @@
  * SbatLevelRT is the other revocation input: shim's text list of the minimum
  * generation each SBAT component must carry.
  *
- * Read-only, EFI-free, and as strict as the rest of src/secboot: a list whose
+ * Read-only, EFI-free, and as strict as the rest of src/trust: a list whose
  * sizes do not add up ends the walk rather than being guessed at, and the
  * caller treats the rest of that variable as absent.
  */

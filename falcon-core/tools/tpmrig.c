@@ -6,7 +6,7 @@
  * ours: a real TPM (libtpms, under swtpm) either accepts the HMACs, the
  * salt and the policy, or it does not.
  *
- * What it does, per TPM version (docs/notes/argon2-totp.md Section 2):
+ * What it does, per TPM version (DESIGN Section 12.15):
  * define the seed's NV index sealed to PCRs 0, 2, 4 and 7, write a 20-byte
  * seed, read it back through the encrypted path and compare, check that the
  * seed never appeared on the wire during that read (and, on 1.2, that it

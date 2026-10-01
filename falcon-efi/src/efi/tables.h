@@ -286,11 +286,9 @@ typedef struct {
      * OsIndications is the platform's, and is the one exception: setting
      * EFI_OS_INDICATIONS_BOOT_TO_FW_UI asks the firmware to show its own
      * settings UI on the next boot (Section 7.4). It is written only on an
-     * explicit menu selection, it changes no enforcement state, and the
-     * firmware clears it itself. Read-modify-write, because the other bits
-     * are somebody else's pending capsule updates.
-     *
-     * No variable gates a load, and nothing here decides what may run. */
+     * explicit menu selection, and the firmware clears it itself.
+     * Read-modify-write, because the other bits are somebody else's pending
+     * capsule updates. */
     EFI_STATUS (EFIAPI *GetVariable)(CHAR16 *VariableName,
                                      EFI_GUID *VendorGuid,
                                      UINT32 *Attributes,

@@ -1,6 +1,5 @@
 /* falcon-boot: Windows install media, patched at boot (docs/DESIGN.md
- * Section 6.3, moved into the loader by Section 6.4; docs/notes/
- * coverage-roadmap.md M6).
+ * Section 6.3, moved into the loader by Section 6.4).
  *
  * A stock Windows ISO boots through the virtual CD to WinPE and then Setup
  * cannot find its install source, because the ISO stopped existing at

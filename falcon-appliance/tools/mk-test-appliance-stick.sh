@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # falcon-boot: build the stick the signing-appliance proof boots
-# (docs/DESIGN.md Section 7.5, build order step 8).
+# (docs/DESIGN.md Section 7.5).
 #
 # Unlike falcon-efi/tools/mk-test-stick.sh, this one is built by the PRODUCT
 # tool: `falcon-boot-mkstick create` partitions it, generates a real MOK

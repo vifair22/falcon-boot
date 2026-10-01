@@ -1,5 +1,5 @@
 /* falcon-boot: BSD install media, booted as its own memory disk
- * (docs/DESIGN.md Section 6.4; docs/notes/bsd-route.md; M7).
+ * (docs/DESIGN.md Section 6.4).
  *
  * A FreeBSD kernel loses the virtual CD at ExitBootServices exactly as a
  * Linux one does, and falcon-hook cannot follow it: the hook is an initramfs
@@ -7,7 +7,7 @@
  * has instead is a memory disk: it will load a file into RAM before it starts
  * the kernel, and the kernel will mount root from it. No kernel module, and
  * nothing that has to be rebuilt per release, which is what the GEOM-module
- * route Ventoy takes would cost (docs/notes/ventoy-survey.md).
+ * route Ventoy takes would cost.
  *
  * The file it loads is the ISO, read off the virtual CD the loader is already
  * serving: falcon-core/src/media/bsdmd.c adds one directory record naming the

@@ -24,9 +24,9 @@ IMG=build/win-spike/premise-p2.img
 MNT=build/win-spike/premise-mnt
 
 # Frozen in falcon-core/src/part/part.h. Microsoft basic data, so Windows gives
-# p2 a drive letter; the loader then tells it apart from any other basic-data
-# volume by the partition NAME below, and requires both (DESIGN Section 3,
-# 2026-09-13).
+# p2 a drive letter; the loader tells it apart from any other basic-data
+# volume by its identity record (DESIGN Section 3.1), not by the partition
+# NAME below, which is cosmetic for a person reading a partition editor.
 GUID_ISO=EBD0A0A2-B9E5-4433-87C0-68B6B72699C7
 NAME_ISO=FALCON-ISO
 

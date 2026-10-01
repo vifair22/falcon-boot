@@ -21,7 +21,7 @@ one boot:
   N/A          the route does not exist for this media (Windows has no bless)
   ERROR        the harness failed, not the loader; always worth a look
 
-The summary measures the roadmap's targets (Section 2): for each tier, the
+The summary measures, for each tier, the
 share of ISOs that boot with Secure Boot off by drag and drop, and the share
 that boot with Secure Boot on by any route the product offers.
 """
@@ -38,7 +38,7 @@ STATES = [('off', 'SB off'), ('ms', 'SB on, MS CA'), ('own', 'SB on, own keys'),
           # so it is reported beside
           # the three rather than among them, and its blessed cell is N/A.
           ('bios', 'BIOS'),
-          # The same on a Pentium III: no long mode, so the 32-bit ISOs
+          # The same on an i686: no long mode, so the 32-bit ISOs
           # (corpus.tsv, arch) and nothing else.
           ('bios32', 'BIOS, Pentium III')]
 ROUTE_ORDER = ['dnd', 'chain', 'blessed']
@@ -142,7 +142,7 @@ def main():
         any_result = False
         # Per column: did the row pass, and does the column apply to it.
         # A column whose every result for this row is N/A (a 32-bit ISO
-        # under UEFI, a 64-bit one on the Pentium III) is left out of that
+        # under UEFI, a 64-bit one on an i686) is left out of that
         # column's denominator rather than counted as a failure.
         ok = {}
         applies = {}

@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# falcon-boot: the TPM rig (docs/notes/argon2-totp.md Section 2), each case
+# falcon-boot: the TPM rig (DESIGN Section 12.15), each case
 # booted headless under OVMF with a software TPM (swtpm, through
 # falcon-efi/tools/swtpm.sh) and judged from serial, with Secure Boot off
 # (uefi-*) and on (uefi-sb-*, the test MOK enrolled and its cert in db).
 #
-# What the firmware here does, measured 2026-09-28 with the probe below
+# What the firmware here does, with the probe below
 # (falcon-efi/tools/tpm-probe/): Gentoo's sys-firmware/edk2-bin-202408
 # (/usr/share/edk2/OvmfX64/OVMF_CODE.fd and OVMF_CODE.secboot.fd) supports
 # both. With a TPM 2.0 on TIS or CRB it installs EFI_TCG2_PROTOCOL

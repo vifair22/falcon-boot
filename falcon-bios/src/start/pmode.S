@@ -1,12 +1,10 @@
-/* falcon-bios: real mode to 32-bit protected mode (docs/notes/bios-route.md
- * Section 5.3, job 2 of the five the assembly is allowed to do).
+/* falcon-bios: real mode to 32-bit protected mode.
  *
  * Entered in 16-bit real mode, returns never: it far-jumps into 32-bit code
  * at the address the caller put in `pmode_entry`. Everything after that jump
  * is C's, which is the whole point of doing this early.
  *
- * WHY PROTECTED MODE AND NOT LONG MODE. This loader went to long mode first
- * (Section 5.1) and came back (Section 6h): the machines a BIOS route is for
+ * WHY PROTECTED MODE AND NOT LONG MODE. The machines a BIOS route is for
  * include ones with no 64-bit mode, and a flat 32-bit environment runs on
  * every one of them and on every newer one too. What a newer processor adds
  * is taken by asking CPUID here and in falcon-core, not by building twice.
@@ -43,9 +41,9 @@ pmode_enter:
 	/* The BIOS call re-enables interrupts. SeaBIOS's INT 15h handler ends
 	 * with sti whatever the caller's flags were, and the cli above is
 	 * therefore undone by the very next instruction unless it is repeated
-	 * here. Measured when this was the long-mode switch: a timer tick
-	 * landed mid-way through writing low memory and the machine wandered
-	 * into the BIOS ROM (CS=f000, CR0 still 0x10). */
+	 * here. Without it a timer tick lands mid-way through writing low
+	 * memory and the machine wanders into the BIOS ROM (CS=f000, CR0 still
+	 * 0x10). */
 	cli
 
 	inb     $0x92, %al

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # falcon-core/src/tpm against swtpm, TPM 2.0 then TPM 1.2
-# (docs/notes/argon2-totp.md Section 2).
+# (DESIGN Section 12.15).
 #
 # Each version gets a fresh swtpm with its state under build/tpm-rig/:
 #

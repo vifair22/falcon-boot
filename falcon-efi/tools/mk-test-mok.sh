@@ -2,10 +2,7 @@
 # Build the Secure Boot test rig's key material: a throwaway MOK keypair and a
 # copy of the OVMF Secure Boot varstore that already trusts it.
 #
-# THIS IS RIG SCAFFOLDING, NOT THE PRODUCT'S KEY MODEL. DESIGN Section 7.5 is
-# the real one: the MOK private key lives encrypted on p3, never travels in the
-# clear, and is only ever used by Linux userland (the host tool or the on-stick
-# signing appliance). The loader neither signs nor holds a key, here or there.
+# THIS IS RIG SCAFFOLDING, NOT THE PRODUCT'S KEY MODEL (DESIGN Section 7.5).
 # Everything this script writes lands under build/ and is disposable; delete
 # build/mok-test to start over with a new key.
 #
@@ -109,10 +106,9 @@ fi
 # MokSBState must be NON_VOLATILE|BOOTSERVICE_ACCESS (0x3) and must NOT carry
 # RUNTIME_ACCESS: shim deletes and ignores any MokSBState that the running OS
 # could have written, so a 0x7 mask produces a varstore that looks permissive
-# to a human reading it and boots fully enforcing. Measured both ways under
-# OVMF secboot with Fedora shim 16.1 on 2026-09-13; 0x3 yields MokSBStateRT
-# (0x6, volatile) beside it and unsigned images load, 0x7 yields neither
-# variable and unsigned images are refused.
+# to a human reading it and boots fully enforcing. Under OVMF secboot with
+# Fedora shim, 0x3 yields MokSBStateRT (0x6, volatile) beside it and unsigned
+# images load, 0x7 yields neither variable and unsigned images are refused.
 echo "== seeding a second varstore with MokSBState (validation disabled)"
 cat > "$MOKSB_JSON" <<EOF
 {

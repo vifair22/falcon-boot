@@ -1,5 +1,5 @@
 /* falcon-bios: BSD media served as its own memory disk
- * (docs/DESIGN.md Section 6.4, docs/notes/bsd-route.md, bios-route.md 4.5).
+ * (docs/DESIGN.md Section 6.4).
  *
  * The third boot route, and the one that needs neither a Linux boot protocol
  * nor anything of ours running after the handover. FreeBSD's loader can
@@ -53,7 +53,7 @@
  * The ceiling is the loader's own reach, and it differs by architecture. The
  * amd64 loader stages below 4 GB. The i386 loader runs under BTX, which maps
  * only the low ~1 GB, so an image the loader copies into RAM there runs off the
- * end of that window and halts BTX (docs/notes/bsd-route.md). A ~1 GB i386
+ * end of that window and halts BTX. A ~1 GB i386
  * memory disk cannot fit, so it is refused here with a message a reader can
  * act on rather than served and left to crash. */
 #define STAGING_SLOP  (192ull * 1024ull * 1024ull)

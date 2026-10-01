@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# falcon-boot: the UEFI station's rig (docs/DESIGN.md Sections 13.3-13.8),
+# falcon-boot: the UEFI station's rig (docs/DESIGN.md Sections 12.3-12.8),
 # each case booted headless under OVMF and judged from serial, with Secure
 # Boot off (uefi-*) and on (uefi-sb-*, the test MOK enrolled, and its cert
 # in db standing in for Microsoft's, so the firmware starts the fake

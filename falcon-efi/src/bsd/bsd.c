@@ -30,7 +30,7 @@
 
 /* The ceiling the same file imposes: the staged image has to live under
  * 4 GB, because that is as far as the amd64 kernel's first page tables
- * reach. Measured 2026-09-19: OPNsense 25.1's 2.2 GB DVD fails here with
+ * reach. OPNsense 25.1's 2.2 GB DVD fails here with
  * "efi_check_space: Unable to expand staging area" on a machine with 8 GB. */
 #define STAGING_MAX 0x100000000ull
 
@@ -229,7 +229,7 @@ static EFI_STATUS serve_blessed(void *ctx, EFI_SYSTEM_TABLE *st,
      * it believes it came from: FreeBSD's loader works currdev out from
      * there, and everything it then reads - its Lua, its kernel, the memory
      * disk - is on that medium. Its BYTES are the signed copy off p2, and
-     * those are what the platform verifies. Measured 2026-09-19: published
+     * those are what the platform verifies. Published
      * on the synthetic filesystem instead, the same loader gets as far as
      * "Failed to find bootable partition" and stops. */
     ir->stage = L"naming the blessed loader as the medium's";

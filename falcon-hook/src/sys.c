@@ -3,8 +3,8 @@
  *
  * The hook is built twice, x86-64 and i686, because it runs inside the
  * booted kernel's initramfs and has to be the kernel's width: falcon-bios
- * boots 32-bit kernels as well as 64-bit ones (docs/notes/bios-route.md
- * Section 6h). Everything above this file is the same source for both. What
+ * boots 32-bit kernels as well as 64-bit ones (DESIGN Section 6.4).
+ * Everything above this file is the same source for both. What
  * differs is how a system call is made and how the process starts, and each
  * of those is one short block below; <asm/unistd.h> gives the right numbers
  * for whichever width the compiler is targeting.

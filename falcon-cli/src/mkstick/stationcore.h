@@ -20,7 +20,7 @@
  *     (NTLDR, BOOTMGR, IO.SYS, GRUB, ...), and whether another disk's MBR is
  *     worth chaining (DESIGN Section 12.3);
  *   - the entries' names, as the loaders generate them
- *     (docs/notes/station-rework.md section 10), and the STATION.INI the
+ *     (DESIGN Section 12), and the STATION.INI the
  *     installer writes from what it found (Section 12.7);
  *   - the backup file's header: which sectors of which disks were saved,
  *     and which of them `remove` puts back.
@@ -146,7 +146,7 @@ int stn_mbr_chainable(const uint8_t *lba0);
 /* Nonzero for what the installer makes the default: a Windows or a DOS. */
 int stn_is_windows_or_dos(vbr_loader l);
 
-/* ---- entry names (docs/notes/station-rework.md section 10) ---- */
+/* ---- entry names (DESIGN Section 12) ---- */
 
 /* The name a loader gives a found entry: mbr-<sig>-p<n> or
  * gpt-<first 8 hex of the DiskGUID>-p<n> for a partition (part > 0),

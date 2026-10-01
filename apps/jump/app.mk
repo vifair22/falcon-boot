@@ -1,8 +1,8 @@
 # jump: a boot floppy for an old BIOS machine (docs/DESIGN.md Section 13).
 #
-# The core so far (Section 13): the machine's own disks and
-# memtest86+ off the floppy, with JUMP.INI's default and countdown. No
-# module, no resident. Not in `all`: `make jump`.
+# The machine's own disks and memtest86+ off the floppy, with JUMP.INI's
+# default and countdown, and the module drivers (Section 13.4) with their
+# CD, USB and CF routes (Section 13.6). Not in `all`: `make jump`.
 
 JUMP := apps/jump
 

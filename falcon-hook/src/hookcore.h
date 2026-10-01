@@ -100,7 +100,7 @@ int hook_iso_names(const uint8_t *pvd, char *label, size_t label_cap,
 /* Bytes hook_dm_table needs for n extents. */
 size_t hook_dm_table_size(uint32_t n_extents);
 
-/* ---- nudges (docs/notes/coverage-roadmap.md M4) ----
+/* ---- nudges (DESIGN Section 6.4) ----
  *
  * Some initramfs scripts look for their media by a list of device names that
  * a device-mapper device is not on. Where the script can be taught with one

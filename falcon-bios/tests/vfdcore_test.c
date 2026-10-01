@@ -1,9 +1,8 @@
 /* Tests for falcon-bios/src/vfd/vfdcore.c: the geometry of an emulated floppy and
  * the CHS-to-LBA arithmetic the resident handler copies.
  *
- * The handler is 16-bit real-mode assembly no analyzer or test reaches
- * (docs/notes/bios-route.md Section 7.2), so what it must not get wrong is
- * worked out here.
+ * The handler is 16-bit real-mode assembly no analyzer or test reaches, so
+ * what it must not get wrong is worked out here.
  */
 
 #include "tests.h"

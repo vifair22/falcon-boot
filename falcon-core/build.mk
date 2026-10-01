@@ -10,8 +10,8 @@ CORE := falcon-core/src
 
 CORE_CRYPTO   := $(addprefix $(CORE)/crypto/,crypto.c sha1.c sha256.c sha512.c \
 	hash.c hmac.c pbkdf2.c aes.c xts.c aesni.c blake2b.c argon2.c)
-# The public-key and session crypto under the TPM path (docs/notes/
-# argon2-totp.md Section 2): AES-CFB, P-256 ECDH over bn.c, the TPM 2.0 KDFs,
+# The public-key and session crypto under the TPM path (DESIGN Section
+# 12.15): AES-CFB, P-256 ECDH over bn.c, the TPM 2.0 KDFs,
 # RSAES-OAEP for the 1.2 transport, and the TOTP code. Apart from
 # CORE_CRYPTO so the loaders that link that list whole do not carry it.
 CORE_CRYPTO_TPM := $(addprefix $(CORE)/crypto/,cfb.c bn.c p256.c kdf.c \
@@ -102,7 +102,7 @@ CORE_UCS2 := $(CORE)/lib/ucs2.c
 
 # The exFAT image carries the bootable payloads when they exist, so they are
 # built first: the El Torito ISO for the CD flavour, the GPT and superfloppy
-# .img pair for the disk flavour (DESIGN Section 6 stage 2).
+# .img pair for the disk flavour (DESIGN Section 6).
 test-image: test-iso test-img
 	falcon-core/tools/mk-test-exfat.sh
 
@@ -184,7 +184,7 @@ $(eval $(call test_bin,core,$(CORE_TESTS) $(CORE_UUT)))
 # the two XTS implementations skip themselves on a CPU without AES-NI.
 $(TEST_OBJ)/falcon-core/src/crypto/aesni.o: TEST_CFLAGS += -maes
 
-# ---- the TPM rig (docs/notes/argon2-totp.md Section 2) ----
+# ---- the TPM rig (DESIGN Section 12.15) ----
 #
 # falcon-core/src/tpm against swtpm in both TPM versions, end to end:
 # falcon-core/tools/run-tpm-rig.sh starts an swtpm per version with its

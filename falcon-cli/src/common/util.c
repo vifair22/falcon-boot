@@ -115,9 +115,9 @@ cli_status util_copy_file(const char *src, const char *dst, mode_t mode)
         }
     }
 
-    /* The mode is set explicitly rather than left to open()'s umask dance:
-     * the private key's 0600 is a security requirement (DESIGN Section 7.5),
-     * not a default. */
+    /* fchmod re-applies the mode: open()'s mode argument is masked by
+     * umask, so the created file is not guaranteed to land at the exact
+     * mode requested. */
     if (fchmod(out, mode) != 0) {
         rc = set_error_errno(CLI_ERR_IO, "chmod %s", dst);
         goto done;

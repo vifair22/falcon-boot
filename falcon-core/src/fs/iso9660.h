@@ -5,9 +5,7 @@
  * EFI-free, every device access through a byte-addressed read callback, every
  * context caller-allocated. The loader runs it over an ISO file on p2 to find
  * a Linux kernel for direct boot (Section 6.4), and the sign tool runs it over
- * the same file to find what to wrap (Section 8.1); before this driver both
- * jobs went through bsdtar in userland and could not happen in the loader at
- * all.
+ * the same file to find what to wrap (Section 8.1).
  *
  * Which of an image's name spaces is read. A disc carries one primary tree
  * and may carry supplementary ones; the driver picks ONE tree at mount and

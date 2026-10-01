@@ -13,17 +13,14 @@
  * ISO's extents on the physical disk at boot (the same extent map the BIOS
  * virtual CD and falcon-hook use) and hands them to the driver through
  * falcon-winjump; the driver reads those raw disk sectors and serves them as
- * CD sectors. Until that path is wired, the backing is a pool buffer the
- * userland side fills through an IOCTL, which is enough to bring the device
+ * CD sectors. A pool buffer the userland side fills through an IOCTL is the
+ * fallback the test tool uses instead, enough on its own to bring the device
  * and its CDFS mount up. `backing_read` is the seam between the two.
  *
  * Nothing of this survives the install: the driver runs only in the
- * installer's WinPE, and the Windows it lays down has its own boot with
- * driver-signing enforcement on. 32-bit Windows enforces no kernel-mode
- * signing, so this loads unsigned there; 64-bit needs the served boot
- * configuration put into test-signing mode and the driver signed with a
- * throwaway certificate, which Secure Boot on refuses (the platform opt-out,
- * DESIGN Section 7).
+ * installer's WinPE. 32-bit WinPE enforces no kernel-mode code signing, so
+ * the unsigned driver loads there; 64-bit WinPE enforces it and does not
+ * load the driver at all (DESIGN Section 6.3).
  *
  * Built for both widths from this one source, as the hook and winjump are.
  */
@@ -37,7 +34,7 @@
 #include <media/extmap.h>
 #include <winjumpcore.h>
 
-/* Piece 3 (windows-route.md 7.4): the boot-start backing, for Windows 2000/XP
+/* Piece 3 (DESIGN Section 6.3): the boot-start backing, for Windows 2000/XP
  * text-mode setup, which has no WinPE and so no winjump to hand the driver its
  * disk and extents through SET_BACKING. The loader (win_xp_boot) instead patches
  * an extent map into this driver's served copy: it scans the .sys for the magic
@@ -485,7 +482,7 @@ static int disk_sector_read(void *ctx, uint64_t off, uint32_t len, void *buf)
  * a system thread's kernel stack. */
 static wj_scratch g_match;
 
-/* Piece 3 (windows-route.md 7.4): resolve the baked extent map to a live
+/* Piece 3 (DESIGN Section 6.3): resolve the baked extent map to a live
  * backing, on its own thread so notify_mountmgr's wait (and the CDFS mount and
  * reads it triggers, serviced by the other thread) do not deadlock. Finds the
  * stick by the same match winjump makes (the ISO library's /.falcon record at
@@ -1086,14 +1083,13 @@ NTSTATUS NTAPI DriverEntry(PDRIVER_OBJECT drv, PUNICODE_STRING reg)
      * path the kernel bugchecks 0x7B with OBJECT_NAME_NOT_FOUND after this
      * driver has loaded and resolved its backing: it cannot resolve the ARC
      * name of its boot device to this CD. Aliasing the standard CD-ROM device
-     * name to this device is a first step. Rig-measured 2026-09-25:
-     * \Device\CdRom0 is FREE and this link is created (the CDROM0_LINKED
-     * marker), yet 0x7B still follows - so the boot ARC path the kernel
-     * resolves is NOT cdrom(0). The remaining work is to find the path
-     * setupldr set (enumerate \ArcName, or read how it names an El Torito
-     * no-emulation CD served over INT 13h) and make it resolve here
-     * (windows-route.md 7.4). A WinPE build leaves map_len zero and is
-     * untouched. */
+     * name to this device is a first step: \Device\CdRom0 is FREE and this
+     * link is created (the CDROM0_LINKED marker), yet 0x7B still follows -
+     * so the boot ARC path the kernel resolves is NOT cdrom(0). The
+     * remaining work is to find the path setupldr set (enumerate \ArcName,
+     * or read how it names an El Torito no-emulation CD served over
+     * INT 13h) and make it resolve here (DESIGN Section 6.3). A WinPE build
+     * leaves map_len zero and is untouched. */
     if (g_bake.map_len != 0) {
         extmap_hdr bh;
 

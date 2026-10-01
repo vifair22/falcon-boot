@@ -1,5 +1,5 @@
 /* falcon-bios: installing the virtual CD and handing the machine to the
- * medium's own bootloader (docs/notes/bios-route.md Sections 4.1 and 7.1).
+ * medium's own bootloader.
  *
  * The chainload route, which is the one a BIOS build exists for: isolinux,
  * an ISO's own GRUB, FreeBSD's loader and Windows' bootmgr all read their

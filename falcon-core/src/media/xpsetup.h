@@ -1,5 +1,5 @@
 /* falcon-core: Windows 2000/XP text-mode setup driver injection (DESIGN
- * Section 6.3, windows-route.md 7.4).
+ * Section 6.3).
  *
  * 2000 and XP have no WinPE, so winjump cannot run: the loader instead injects
  * falcon-vdisk as a boot-start driver into text-mode setup by editing the

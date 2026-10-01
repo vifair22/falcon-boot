@@ -6,11 +6,11 @@
 # same thing about themselves, separates them by the .uname kernel version
 # (falcon-efi/src/pos/pos.c, choose_uki). Every branch of that has a unit test
 # over a crafted PE in falcon-core/tests/osrel_test.c, and none of it was ever
-# read off a real filesystem until this script existed: the sd-stub fixture from
-# mk-test-uki.sh deliberately carries no .osrel, so the rig's shelf produced two
-# filename rows and exercised none of the labelling.
+# read off a real filesystem otherwise: the sd-stub fixture from
+# mk-test-uki.sh deliberately carries no .osrel, so the rig's shelf produces two
+# filename rows and exercises none of the labelling.
 #
-# That gap is not academic. The bug the user hit on 2026-09-15 ("It only showed
+# That gap is not academic. A bug ("It only showed
 # Personal OS: efi name") was osrel_find bounding the section range by the
 # 8 KB header window instead of by the file, and it was invisible to the unit
 # tests because their crafted PEs were 6.7 KB: smaller than the window, so the

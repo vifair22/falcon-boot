@@ -1,9 +1,7 @@
 /* falcon-boot: the shim-preferring image load path (DESIGN Section 7.6).
  *
- * One home for the resolver that three launch paths (ISO chainload, the
- * personal-OS UKI, blessed UKIs) previously carried as deliberate copies:
- * the third copy was the agreed promotion trigger, and this file is the
- * promotion.
+ * The one resolver every launch path (ISO chainload, the personal-OS UKI,
+ * blessed UKIs) takes its loader from.
  *
  * Preferring SHIM_IMAGE_LOADER over gBS->LoadImage is not about capability:
  * the spike measured the two to be the same function on shim 16.x under
@@ -12,10 +10,8 @@
  * meant, keeps working if a future shim stops patching the table, and is
  * the interface upstream maintains.
  *
- * The fallback is not a weakening. With Secure Boot off there is nothing to
- * verify and the firmware's LoadImage is the honest loader; with Secure
- * Boot on and no shim in the chain the firmware's LoadImage is the
- * enforcing one. Either way the decision is the platform's, never ours.
+ * The fallback is the firmware's LoadImage: with Secure Boot off it verifies
+ * nothing, and with Secure Boot on and no shim in the chain it enforces db.
  */
 
 #ifndef FALCON_EFI_LOADOPS_H
@@ -33,7 +29,7 @@ typedef struct {
      * is the only way an operator can tell the paths apart. */
     BOOLEAN via_shim;
     /* Shim's loader protocol is installed, but the boot-services table still
-     * holds the firmware's LoadImage. Measured 2026-09-13 (notes Section 11):
+     * holds the firmware's LoadImage (DESIGN Section 7.6):
      * shim installs SHIM_LOCK and SHIM_IMAGE_LOADER unconditionally and
      * patches the table only under secure_mode(), so this is the state shim
      * is in whenever validation is off -- either because Secure Boot is off,
@@ -55,8 +51,8 @@ typedef struct {
  * recognise to a saved system_unload_image / system_start_image, and shim
  * fills those in only from hook_system_services(), i.e. only under
  * secure_mode(). With validation off they are still NULL and the forward is
- * a call through zero. Measured, and it is a #GP with RIP=0 (notes Section
- * 11.4). Pairing them is what makes that unreachable. */
+ * a call through zero, a #GP with RIP=0 (DESIGN Section 7.6). Pairing them is
+ * what makes that unreachable. */
 void resolve_load_ops(EFI_BOOT_SERVICES *bs, load_ops *ops);
 
 /* TRUE when an image we launch will be unable to load an inner PE of its own
@@ -68,8 +64,8 @@ void resolve_load_ops(EFI_BOOT_SERVICES *bs, load_ops *ops);
  * variable is set and shim's loader protocol is present (systemd 261
  * src/boot/linux.c). In the validation-disabled state those two conditions
  * hold while gBS->LoadImage is the firmware's, which knows db only and
- * refuses the unsigned inner kernel with EFI_ACCESS_DENIED. Measured as the
- * cause of the UAT failure; see notes Section 11.
+ * refuses the unsigned inner kernel with EFI_ACCESS_DENIED (DESIGN Section
+ * 7.6).
  *
  * Three conditions, all read from the live platform rather than inferred
  * from policy: shim's loader is present, the boot-services table is not
@@ -77,10 +73,8 @@ void resolve_load_ops(EFI_BOOT_SERVICES *bs, load_ops *ops);
  * it from the table rather than from MokSBState is deliberate -- it detects
  * the mechanism that breaks rather than one cause of it.
  *
- * This grants nothing and gates nothing. Every caller must launch exactly as
- * it would have; the return value may only change what the user is told.
- * Using it to refuse a boot would be the Section 7.3 regression, in the one
- * state where the user has explicitly asked the platform to stop refusing. */
+ * Every caller launches exactly as it would without it; the return value
+ * changes only what the user is told (DESIGN Section 7.3). */
 BOOLEAN load_ops_inner_load_blocked(EFI_SYSTEM_TABLE *st, const load_ops *ops);
 
 /* The explanation and the two ways out, shared verbatim by every launch site
@@ -104,12 +98,9 @@ const CHAR16 *load_ops_inner_load_advice(void);
  * which is exactly what Section 5.1's rejected volatile-variable design did
  * not have.
  *
- * Nothing about enforcement changes: NVRAM is not the stick, and what it names
- * still has to survive validation against the manifest before a single byte of
- * it is acted on. That last clause is load-bearing rather than reassuring: the
- * variable is runtime-accessible, so the booted OS can write it, and the
- * validation is the only thing standing between "root asked for this" and
- * "this ran". */
+ * The variable is runtime-accessible, so the booted OS can write it, and what
+ * it names must be validated against the manifest before any of it is acted
+ * on. */
 #define LOADER_NEXT_BOOT_NAME L"FalconNextBoot"
 
 /* Reads the marker and DELETES it, in that order, unconditionally.
@@ -128,9 +119,8 @@ UINTN loader_next_boot_take(EFI_SYSTEM_TABLE *st, void *buf, UINTN cap);
 
 /* Sets the marker to an ASCII path, or clears it when name is NULL or empty.
  * Non-volatile so it survives the reboot the appliance performs, and
- * runtime-accessible so a chooser in the booted OS can set it too; see the
- * attribute definition in loadops.c for why that grants nothing. Returns the
- * firmware's status. */
+ * runtime-accessible so a chooser in the booted OS can set it too (see the
+ * marker above). Returns the firmware's status. */
 EFI_STATUS loader_next_boot_set(EFI_SYSTEM_TABLE *st, const char *name);
 
 /* ---- the appliance's reboot comes back here (DESIGN Section 6.3.1) ----
@@ -191,13 +181,8 @@ EFI_STATUS loader_evlog_set(EFI_SYSTEM_TABLE *st, const void *rec, UINTN len);
  * asks the firmware to show its settings UI on the next boot instead of
  * booting anything. The firmware clears it, exactly as it clears BootNext.
  *
- * THIS CHANGES NO ENFORCEMENT STATE AND IS NOT A ROUTE AROUND ANY. It is the
- * opposite: Secure Boot can only be turned off by a person standing at the
- * machine in the firmware's own UI, and invariant 3 says that is the only
- * legitimate way. This row does not make that decision, it delivers the user
- * to the place where they can make it. What it removes is guessing which key
- * this vendor wants held at power-on - which differs on every machine the
- * stick visits, is the actual difficulty, and is not a security boundary.
+ * The row delivers the user to the firmware's own UI, where Secure Boot is
+ * changed, without guessing which key this vendor wants held at power-on.
  *
  * It earns its place because of one specific dead end: when validation is
  * disabled with Secure Boot still on, a UKI cannot boot

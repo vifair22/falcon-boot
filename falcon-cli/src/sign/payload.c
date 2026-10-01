@@ -1,48 +1,23 @@
 /* falcon-boot-sign: blessing a bare EFI payload (docs/DESIGN.md Section 7.2).
  * See payload.h for the contract and for why no manifest record is written.
  *
- * Two things here are worth the reader's attention before the code.
- *
- * THE SIGNING DISCIPLINE, AND WHY IT IS THE OPPOSITE OF sign-uki's. sbsign
- * appends a certificate and never replaces one, so a tool that signs the same
- * file twice stacks certificates on it. The repo's answer to that, in the
- * user's own sign-uki script, is to strip every signature first so exactly one
- * remains: ours. That is right for an artifact WE produce - our UKI wraps,
- * where we are the only legitimate signer and the old signature is a previous
- * version of our own.
- *
- * It is WRONG here, and the distinction is worth learning once. A payload is
- * somebody else's binary: memtest's loader ships signed by the Microsoft
- * UEFI CA, which is what makes it boot on nearly every machine in the world
- * today. Stripping that to add ours would make it boot on this user's laptop
- * (whose db carries only their key) and stop it booting everywhere else - a
- * strict regression, performed silently, on a file the user did not write. So
- * this path ADDS trust rather than replacing it: every signature already there
- * is preserved, ours is appended beside it, and the result is checked to
- * confirm both. Blessing does not stack our own certificate either, because a
- * payload that already carries ours is recognised and left alone.
- *
- * Strip when we own the artifact; append when we are adding trust to someone
- * else's.
+ * THE SIGNING DISCIPLINE: sbsign appends a certificate and never replaces
+ * one, so sign-uki strips first (it is our own UKI wraps, and the old
+ * signature is a previous version of ours) but this path never strips. A
+ * payload is somebody else's binary - memtest's loader ships signed by the
+ * Microsoft UEFI CA - so this path adds our certificate beside what is
+ * already there and verifies both afterward; a payload already carrying
+ * ours is recognised and left alone (DESIGN Section 7.5).
  *
  * HOW THE .img IS OPENED. The payload inside an image lives in a FAT
- * filesystem, and it has to be REPLACED by a longer file, which is a
- * filesystem write. The tool does not implement one: the kernel's own vfat
- * driver does the work, reached through a loop device configured for one
- * partition's byte range. The alternative, mtools, is one more package that
- * has to exist both on the user's host and inside the on-stick appliance's
- * initramfs, where the only binaries are the five staged there on purpose; the
- * syscalls below need nothing staged at all. The cost is that this path needs
- * root, which the appliance already is and a host user must ask for, and the
- * message says so rather than failing obscurely.
- *
- * That is a mount of media the user did not produce, which
- * falcon-cli/src/sign's ISO reader deliberately avoids. The difference is that
- * reading an ISO has a root-free answer (list it with a helper) and writing
- * into a FAT image does not, and that the user has explicitly asked for this
- * image to be modified. The mount is as narrow as the flags allow: read-only
- * for the survey pass, nosuid/nodev/noexec always, and torn down before the
- * next volume is looked at.
+ * filesystem and has to be REPLACED by a longer file: a filesystem write
+ * the tool does not implement itself. The kernel's own vfat driver does
+ * it, reached through a loop device over one partition's byte range, which
+ * needs nothing staged in the on-stick appliance beyond the five binaries
+ * already there; the path needs root, which the appliance already is and
+ * a host user must ask for. The mount is read-only for the survey pass,
+ * nosuid/nodev/noexec always, and torn down before the next volume is
+ * looked at.
  */
 
 #include <sign/sign.h>

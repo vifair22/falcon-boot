@@ -35,8 +35,8 @@ static void raw(EFI_SYSTEM_TABLE *st, const CHAR16 *s)
 
 /* Erases the n characters left of the cursor. The "\b \b" shape works on
  * both console behaviors the spec permits: OVMF's backspace is destructive
- * (measured 2026-09-13: a bare \b wipes the glyph it crosses, which is why
- * the hint cannot be cursor-parked), and on a non-destructive console the
+ * (a bare \b wipes the glyph it crosses, which is why the hint cannot be
+ * cursor-parked), and on a non-destructive console the
  * explicit space does the erasing.
  *
  * Composed into one string per chunk rather than one OutputString per
@@ -138,8 +138,8 @@ static INTN prompt_run(EFI_SYSTEM_TABLE *st, const CHAR16 *prompt,
     if (prompt != (void *)0)
         out(st, prompt);
     /* systemd renders this hint dim and parks the cursor before it; OVMF
-     * renders DARKGRAY as black-on-black and its backspace is destructive
-     * (both measured from screendumps, 2026-09-13), so the hint inherits
+     * renders DARKGRAY as black-on-black and its backspace is destructive,
+     * so the hint inherits
      * the prompt's attribute and the cursor rests after it. The first
      * keystroke erases it, exactly as systemd's does. */
     out(st, hint);

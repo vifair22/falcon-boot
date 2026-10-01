@@ -1,5 +1,5 @@
 /* falcon-hook: a block driver the initramfs lacks, brought in from the ISO
- * (docs/notes/coverage-roadmap.md M4).
+ * (docs/DESIGN.md Section 6.4).
  *
  * The Debian installer's initramfs has neither dm-mod nor loop, built in or
  * as a module; the ISO carries both, in the kernel's own module packages

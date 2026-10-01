@@ -46,7 +46,7 @@
  * its CD drive by cutting its own path back to the hardware part, the way a
  * real CD's PciRoot/Pci/Sata/CDROM becomes PciRoot/Pci/Sata, is left with
  * nothing under a media root: VMware ESXi's loader does exactly that and
- * failed with "get_boot_device: Not found" (traced 2026-09-19). */
+ * fails with "get_boot_device: Not found". */
 #define FALCON_ISO_MEDIA_GUID \
     { 0x887579f6, 0x4287, 0x4bc4, \
       { 0x99, 0x92, 0x15, 0xa3, 0xb5, 0x61, 0xce, 0x63 } }
@@ -869,12 +869,9 @@ static EFI_STATUS chainload(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
      * payload that loads and connects a driver of its own (VMware ESXi's
      * loader and its ISO9660 driver) then fails: the firmware's LoadImage
      * refuses a parent it did not load, and its ConnectController faults on
-     * the driver (traced 2026-09-19). Nothing about what may run changes:
-     * with shim not enforcing, neither loader verifies anything the other
-     * would refuse, except that the firmware still enforces db when Secure
-     * Boot is on and only shim's validation is off. That refusal is answered
-     * the way this loader always answered that state, with shim's loader,
-     * which is the user's MokSBState choice honoured. */
+     * the driver. The firmware still enforces db when Secure Boot is on and
+     * only shim's validation is off; that refusal is answered by loading
+     * through shim's loader (DESIGN Section 7.6). */
     status = EFI_NOT_FOUND;   /* not loaded yet */
     if (ops.via_shim && ops.table_unhooked) {
         result->stage = L"LoadImage of \\EFI\\BOOT\\BOOTX64.EFI (firmware)";
@@ -1198,22 +1195,15 @@ EFI_STATUS iso_boot_overlaid_served(EFI_SYSTEM_TABLE *st,
  * The menu's label for a medium: what family it is, whether its default
  * loader carries a signature, and what the boot predictions make of it.
  *
- * None of it goes near the firmware. Before this the survey published a
- * virtual block device, made the firmware bind its partition and filesystem
- * drivers to it, read four files back through EFI_FILE_PROTOCOL and tore the
- * whole thing down, once per entry at menu-draw time. Now falcon-core opens
- * the image file on p2 and answers from it (docs/notes/iso-reader-route.md).
+ * None of it goes near the firmware: falcon-core opens the image file on p2
+ * and answers from it (DESIGN Section 6). Three things follow:
  *
- * Three things follow, and they are the reason for the work rather than a
- * side effect:
- *
- *   - no ConnectController per entry, which is the firmware call the ESXi
- *     work already found faults in some implementations;
- *   - no case-folding retry. That existed because EDK2's UDF driver matches
- *     case-sensitively; fs_lookup does not, so one spelling finds the file on
- *     every medium;
- *   - no PROBE_LIMIT. The cap existed because each probe cost a device
- *     publish and teardown. Reading a few files off p2 does not.
+ *   - no ConnectController per entry, the firmware call some implementations
+ *     fault in (the ESXi case above);
+ *   - one spelling finds a file on every medium: fs_lookup folds case, where
+ *     EDK2's UDF driver matches case-sensitively;
+ *   - no cap on how many entries are probed: a probe is a few reads off p2,
+ *     not a device published and torn down.
  *
  * What still asks the firmware is the chainload, and only the chainload:
  * LoadImage is handed a device path to a volume the platform mounted itself,

@@ -4,8 +4,7 @@
  * The line: this module answers "which images are here, in what order, and
  * what does each row say". Unlocking the shelf, the chooser itself, and
  * booting the pick are the caller's. It was the UEFI loader's alone until
- * falcon-bios needed the same rows, which it had been drawing as bare file
- * names.
+ * falcon-bios needed the same rows.
  *
  * Caller-allocated, as everywhere else in falcon-core. The list holds
  * directory and file caches read out of the shelf, which on an encrypted p3

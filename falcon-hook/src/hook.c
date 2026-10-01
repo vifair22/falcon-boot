@@ -1,6 +1,5 @@
 /* falcon-hook: recreate the ISO as a block device, then hand over to the
- * distro's own init (docs/DESIGN.md Section 6.4; docs/notes/
- * coverage-roadmap.md L2).
+ * distro's own init (docs/DESIGN.md Section 6.4).
  *
  * The loader boots an ISO's kernel with the ISO's own cmdline plus
  * rdinit=/falcon/hook, and appends a cpio carrying this binary to the ISO's
@@ -197,8 +196,7 @@ static long read_file(const char *path, void *buf, size_t cap)
  * BIOS-era one is exactly the machine likely to sit behind a PIIX or ICH
  * IDE controller instead. Without them /sys/block is still empty when the
  * scan runs - the hook is pre-udev, so nothing else loads them - and the
- * stick's partition "never appears" though it is right there. Measured
- * 2026-09-20 on QEMU's i440fx, which is what a BIOS target looks like. */
+ * stick's partition "never appears" though it is right there. */
 static char *g_modules[] = {
     "modprobe", "-q", "-a",
     "dm_mod", "ahci", "ata_piix", "ata_generic", "pata_acpi", "libata",
@@ -299,8 +297,8 @@ static int disk_read(void *ctx, uint64_t off, uint64_t len, void *buf)
  * place: it mounts the exFAT volume at that offset and reads its /.falcon
  * record (media/extfind.h). That links falcon-core's exFAT driver, the fs
  * registry trimmed to it (fs_reg_exfat.c) and the record reader into the
- * hook, in place of the GPT parser it used to link: about 7 KB of stripped
- * binary at either width (33.6 to 41.0 KB x86-64, 37.4 to 44.4 KB i686).
+ * hook: about 7 KB of stripped binary at either width (33.6 to 41.0 KB
+ * x86-64, 37.4 to 44.4 KB i686).
  * The cheaper tests do not name a partition: every disk has something at
  * LBA 2048, a second falcon stick has an exFAT volume there too, and only
  * the record tells them apart. Nothing reads a partition table: the start

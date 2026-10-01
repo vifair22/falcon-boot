@@ -1,7 +1,6 @@
 /* falcon-bios's host test binary.
  *
- * What is testable here is what Section 5.3 of docs/notes/bios-route.md
- * insists on: the decisions. The assembly is transport and is exercised by
+ * What is testable here is the decisions. The assembly is transport and is exercised by
  * booting it under SeaBIOS (falcon-efi/tools/run-qemu.sh --bios), and the
  * rest of the C is a thin layer over BIOS interrupts that only exist on a
  * machine. What is left is the arithmetic: the virtual CD's INT 13h handler

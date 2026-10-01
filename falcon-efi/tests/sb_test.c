@@ -15,8 +15,8 @@
  *     "Unknown" folded into "yes" would put a permissive-mode warning on a
  *     machine that is enforcing normally; folded into "no" it would hide one
  *     on a machine that is not. Both directions are tested.
- *   - sb_state_read asks for MokSBStateRT and never for MokSBState. Measured
- *     on Fedora shim 16.1 under OVMF secboot (2026-09-13): MokSBState is the
+ *   - sb_state_read asks for MokSBStateRT and never for MokSBState. On shim
+ *     16.1, MokSBState is the
  *     user's request and shim deletes it outright when the running OS could
  *     have written it, while MokSBStateRT is the mirror shim creates only
  *     after it has decided to stop validating. Reading the request would tell
@@ -24,8 +24,8 @@
  *     refused to turn it off. The fake fails the test if the wrong name or
  *     the wrong vendor GUID is ever asked for.
  *
- * Nothing here tests an enforcement decision, because the module makes none
- * and must never be given one (DESIGN Section 7.3).
+ * Nothing here tests an enforcement decision; the module makes none (DESIGN
+ * Section 7.3).
  */
 
 #include "tests.h"

@@ -9,9 +9,9 @@
 #ifndef FALCON_VDISK_IO_H
 #define FALCON_VDISK_IO_H
 
-/* The medium's size, and the point where the raw-disk extents that back it
- * will be told to the driver (a later revision). For now it also brings the
- * backing store into being at that size. */
+/* The medium's size for the pool backing store (IOCTL_FALCON_VDISK_SET_BACKING
+ * below is where the raw-disk extents are told to the driver instead); this
+ * also brings the pool backing store into being at that size. */
 #define IOCTL_FALCON_VDISK_SET_GEOMETRY \
     CTL_CODE(0x00000022, 0x800, 0, 0)
 

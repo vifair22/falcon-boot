@@ -1,22 +1,18 @@
-/* falcon-bios: the C half, entered once protected mode is up
- * (docs/notes/bios-route.md Sections 1 and 5.3).
+/* falcon-bios: the C half, entered once protected mode is up.
  *
- * What this file is for, at this stage of the route, is to be the evidence
- * for Section 1's claim rather than a loader: falcon-core is EFI-free by
- * construction, the per-platform boundary is a read callback, and a BIOS
- * build is its fourth consumer after the host tests, the CLI tools and the
- * signing appliance. So it asks falcon-core to parse a real GPT over a
- * callback whose other end is INT 13h, with not one line of falcon-core
- * changed to allow it.
+ * falcon-core is EFI-free by construction and the per-platform boundary is a
+ * read callback, so a BIOS build is its fourth consumer after the host
+ * tests, the CLI tools and the signing appliance. This file has falcon-core
+ * parse a real GPT over a callback whose other end is INT 13h, with not one
+ * line of falcon-core changed to allow it.
  *
  * It runs as stage 3, read in above a megabyte by stage 2 and reaching the
  * BIOS back down through the gate; nothing here is size-constrained.
  *
- * The ISO scan and the boot paths come next and are mostly already
- * written: `medium.c` assembles a medium's volumes over the same callback,
- * `bootcfg.c` reads an ISO's own boot configuration, and falcon-hook ports
- * untouched because it runs in the initramfs and has no opinion about
- * firmware.
+ * The ISO scan and the boot paths run over the same callback: `medium.c`
+ * assembles a medium's volumes over it, `bootcfg.c` reads an ISO's own boot
+ * configuration, and falcon-hook is unchanged because it runs in the
+ * initramfs and has no opinion about firmware.
  */
 
 #include <start/bios.h>
@@ -438,7 +434,7 @@ static int boot_windows(const survey_entry *e)
 }
 
 /* Windows 2000/XP text-mode setup media: the virtual-CD driver injected into
- * setup (DESIGN Section 6.3, windows-route.md 7.4). 0 when the medium is not
+ * setup (DESIGN Section 6.3). 0 when the medium is not
  * 2000/XP media, so the caller boots it as it is. */
 static int boot_windows_xp(const survey_entry *e)
 {
@@ -458,8 +454,8 @@ static int boot_windows_xp(const survey_entry *e)
     return 1;
 }
 
-/* A BSD medium served as its own memory disk (docs/notes/bsd-route.md). 0
- * when the medium is not one this route applies to. */
+/* A BSD medium served as its own memory disk (DESIGN Section 6.4). 0 when
+ * the medium is not one this route applies to. */
 static int boot_bsd(const survey_entry *e)
 {
     boot_result r;

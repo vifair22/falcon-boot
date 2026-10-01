@@ -4,8 +4,7 @@
  * bridge disc whose ISO9660 side is a one-file stub (Microsoft's oscdimg puts
  * a README there and everything else only in UDF), so reading any of it -
  * boot.wim for the loader's patch of Section 6.4, the edition list for the
- * sign tool - needs this driver. Before it, the sign tool shelled out to 7-Zip
- * and the loader could not read Windows media at all.
+ * sign tool - needs this driver.
  *
  * Scope, matched to what oscdimg and mkudffs actually write:
  *   - 2048-byte logical blocks, the only size an ISO image has; anything else

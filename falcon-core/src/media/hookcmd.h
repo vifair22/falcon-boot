@@ -1,5 +1,5 @@
 /* falcon-boot: the cmdline of a boot falcon-hook rebuilds the ISO for
- * (docs/DESIGN.md Section 6.4; docs/notes/coverage-roadmap.md L2).
+ * (docs/DESIGN.md Section 6.4).
  *
  * The ISO's own CD entry (falcon-core/src/media/bootcfg.c) already says how
  * the distro boots from its CD. falcon-hook recreates that CD as

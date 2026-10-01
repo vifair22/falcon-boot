@@ -16,15 +16,15 @@
 #
 # --userland is the other floor: a static Linux program that runs on the
 # machine itself, the station bundle's mkstick (DESIGN Section 12.14), whose
-# floor is the Pentium III it was first used on. CMOV and the rest of the
+# floor is the i686 it was first used on. CMOV and the rest of the
 # i686 set are fine there, and so are MMX and SSE; SSE2 and everything after
 # are not, in any function the program can reach without asking CPUID first.
 # What does ask is exempt by name: glibc's string routines chosen at run time
 # (__memcpy_sse2 and the like, _sse2, _ssse3, _sse4_2, _sse42, _avx*,
 # _evex*) and falcon-core's aesni_*. This is the check that would have
-# stopped a mkstick linked against a libc built for the build host
-# (2026-09-27: Gentoo's -march=znver3 glibc put AVX in _dl_aux_init, and the
-# A21m took #UD on the first instruction of the program).
+# stopped a mkstick linked against a libc built for the build host: a
+# distro glibc built with a newer -march can put AVX in _dl_aux_init, and
+# the station then takes #UD on the first instruction of the program.
 #
 # Usage: check-floor.sh [--userland] ELF...
 set -euo pipefail

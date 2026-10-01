@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # falcon-boot: build the fixture Unified Kernel Image the rig boots
-# (docs/DESIGN.md Sections 5.1, 10 and 11 step 6).
+# (docs/DESIGN.md Sections 5.1 and 10).
 #
 # Produces a real sd-stub UKI, because the thing under test is sd-stub's
 # companion-credential pickup and nothing else can stand in for it: the loader
@@ -108,8 +108,8 @@ echo "   initrd: $INITRD ($(stat -c%s "$INITRD") bytes)"
 # /etc/os-release in, so this fixture carries .uname and a PRETTY_NAME of
 # "Arch Linux" whether or not we ask for them. Left alone deliberately, because
 # that is what the product's own UKIs carry too, but it does mean personal.efi
-# and unsigned.efi are a label COLLISION on the rig's shelf rather than the two
-# unlabelled rows the comment here used to claim.
+# and unsigned.efi are a label COLLISION on the rig's shelf rather than two
+# unlabelled rows.
 echo "== ukify build"
 ukify build \
     --linux="$KERNEL" \

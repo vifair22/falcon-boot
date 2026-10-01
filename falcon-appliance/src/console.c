@@ -21,10 +21,7 @@
  * LAST one becomes /dev/console, and /dev/console is the only console a
  * process can READ from. Name a serial port the machine does not really have
  * and you get a console that prints (through the kernel's other console, on
- * screen) yet answers every read with EOF. Measured on real hardware
- * 2026-09-13: the appliance ran, printed its whole survey to the laptop
- * screen, reached "press Enter" and rebooted instantly, because the /dev
- * /console behind it was a serial port with nothing on the other end.
+ * screen) yet answers every read with EOF.
  *
  * So this program does not trust /dev/console to be the one the user is at.
  * It opens every console it can (/dev/console, the screen, the rig's serial
@@ -292,9 +289,9 @@ ssize_t read_secret(char *buf, size_t cap)
     return (ssize_t)len;
 }
 
-/* Reads a small file whole (the loader-delivered credential). Returns the
- * byte count, 0 for empty, -1 when absent or unreadable; never an error the
- * caller must act on, since the interactive prompt is the fallback. */
+/* Reads a line from the console with echo left on, for a typed answer the
+ * user should see as they type it (a mark, or "yes"). Returns the length,
+ * or -1 on EOF/error. */
 
 ssize_t read_line(char *buf, size_t cap)
 {

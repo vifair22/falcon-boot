@@ -44,7 +44,7 @@ int station_add_own_shelf(void);
 
 /* The page a route leaves when it comes back: the label, "<route> failed
  * while <stage>", the advice and the key line, as every station route
- * draws it (docs/notes/station-rework.md section 11). */
+ * draws it (DESIGN Section 12). */
 void station_failed(const uint16_t *label, const char *route,
                     const boot_result *r);
 

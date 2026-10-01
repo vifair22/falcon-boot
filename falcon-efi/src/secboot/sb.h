@@ -2,11 +2,8 @@
  * 7.4, 9).
  *
  * This module reads three EFI variables and says what they mean in words the
- * menu can print. That is its entire job. Nothing here decides what may boot:
- * enforcement belongs to shim and the firmware, never to this loader, and no
- * caller may use these values to gate a load. The invariant is worth stating
- * at the top of the header because the temptation to "just check secure_boot
- * before launching" is exactly the regression DESIGN Section 7.3 forbids.
+ * menu can print. No caller uses these values to gate a load (DESIGN Section
+ * 7.3).
  *
  * A variable that is absent is a defined state, not a failure: no MokSBStateRT
  * means shim validation is enabled, which is the common case and the one the
@@ -65,8 +62,7 @@ const CHAR16 *sb_mode_label(sb_mode m);
 
 /* Nonzero when the mode must not slip past the user: Secure Boot looks on,
  * yet shim has been told to stop validating, so this machine runs unsigned
- * EFI code (DESIGN Section 7.4). The caller renders it accordingly; this
- * function grants no permission and changes nothing. */
+ * EFI code (DESIGN Section 7.4). The caller renders it accordingly. */
 int sb_mode_needs_warning(sb_mode m);
 
 #endif /* FALCON_SB_H */

@@ -7,9 +7,9 @@
 # thresholds wrong does not fail, it follows the wrong chain, so each width
 # needs a volume of its own to read.
 #
-# All three appear on real media. Measured across the 36 corpus ISOs on
-# 2026-09-19: the El Torito boot image is FAT12 on 26 of them, FAT16 on 6 and
-# FAT32 on both Arch snapshots.
+# All three appear on real media. Across the corpus ISOs, the El Torito boot
+# image is FAT12 on most of them, FAT16 on a handful, and FAT32 on both Arch
+# snapshots.
 #
 #   build/test-fat12.img   1.4 MiB, 512-byte sectors, 1 sector per cluster
 #   build/test-fat16.img   64 MiB,  4 sectors per cluster

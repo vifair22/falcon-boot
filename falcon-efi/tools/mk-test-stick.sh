@@ -38,9 +38,9 @@
 # why the two need separate fixtures.
 #
 # What those two images ARE is the real sd-stub UKI from
-# falcon-efi/tools/mk-test-uki.sh when it has been built, because step 6 of the
-# build order tests the passphrase handoff and only a genuine sd-stub can
-# perform the pickup. The old stand-in payload remains available behind
+# falcon-efi/tools/mk-test-uki.sh when it has been built, because testing the
+# passphrase handoff needs a genuine sd-stub to perform the pickup. The old
+# stand-in payload remains available behind
 # --payload-uki for the cases that only need "a PE the platform will judge" and
 # want a 30 KB one.
 #
@@ -69,7 +69,7 @@
 #                        BIOS-only case)
 #
 # THIS IS RIG SCAFFOLDING. The product's stick is built by the host tooling of
-# DESIGN Section 8 (step 7), which generates a real MOK keypair and keeps the
+# DESIGN Section 8, which generates a real MOK keypair and keeps the
 # private key encrypted on p3. Nothing here is that; everything lands under
 # build/ and the passphrase is a well-known string on purpose.
 #
@@ -321,8 +321,8 @@ mount_rw_owned "/dev/mapper/$MAPPER"
 # enrolled test MOK) and unsigned.efi is the same image without a signature,
 # which shim must refuse under Secure Boot.
 #
-# Default source is the sd-stub fixture UKI, because step 6 tests the
-# credential handoff and nothing but a real sd-stub performs the pickup. The
+# Default source is the sd-stub fixture UKI, because testing the credential
+# handoff needs a real sd-stub to perform the pickup. The
 # stand-in payload is kept behind --payload-uki (and is the automatic fallback
 # when the fixture has not been built) for the cases that only need a PE the
 # platform will judge.
@@ -355,7 +355,7 @@ echo "   /uki populated from the $UKI_KIND"
 
 # The label fixtures (falcon-efi/tools/mk-test-labels.sh). personal.efi and
 # unsigned.efi test what the loader LOADS; these test what it CALLS things,
-# which is a separate path and was for a while a broken one. They are tiny, they
+# which is a separate path. They are tiny, they
 # do not boot, and the chooser only appears when the shelf holds more than one
 # image, so staging them also keeps that screen on the default rig run.
 if [[ "$LABELS" -eq 0 ]]; then

@@ -22,7 +22,7 @@
  * order they are shown in are falcon-core's media/strows.c, the UEFI
  * station's list too; this file finds the rows and boots them. The
  * sentences are the UEFI station's (apps/station/efi_main.c), listed in
- * docs/notes/station-rework.md section 11; a change to one is a change to
+ * DESIGN Section 12; a change to one is a change to
  * the other (CLAUDE.md, "One screen, two loaders").
  */
 

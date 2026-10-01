@@ -11,7 +11,7 @@
 
 VDISK_SRC := falcon-vdisk/src/vdisk.c
 
-# The EFI-free falcon-core the boot-start backing (piece 3) reuses: the extent
+# The EFI-free falcon-core the boot-start backing reuses: the extent
 # map, the disk match (the ISO library's /.falcon record, read with exFAT
 # behind a registry of one) and the run conversion winjump also uses in
 # userland. Linked into the .sys the same way winjump links them into its

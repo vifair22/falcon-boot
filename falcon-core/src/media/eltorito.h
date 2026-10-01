@@ -1,4 +1,4 @@
-/* falcon-boot: the El Torito boot catalog (docs/notes/iso-reader-route.md).
+/* falcon-boot: the El Torito boot catalog (DESIGN Section 6, the ISO path).
  *
  * Why this exists. Under UEFI the firmware's own partition driver walks this
  * catalog and publishes the boot image as a volume, so the loader has never

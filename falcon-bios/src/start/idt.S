@@ -1,4 +1,4 @@
-/* falcon-bios: the protected-mode IDT (docs/notes/bios-route.md Section 5.3).
+/* falcon-bios: the protected-mode IDT.
  *
  * WHY THERE IS ONE. Protected mode with no IDT loaded does not ignore an
  * exception: the IDT register still describes the real-mode vector table

@@ -1,5 +1,4 @@
-/* falcon-boot: the on-stick signing appliance's PID 1 (DESIGN Section 7.5,
- * build order step 8).
+/* falcon-boot: the on-stick signing appliance's PID 1 (DESIGN Section 7.5).
  *
  * The appliance is a signed UKI that boots under full Secure Boot, surveys the
  * ISO library on p2 and blesses what the user vouches for, through the SAME
@@ -20,9 +19,7 @@
  *
  *   Windows install media is owed nothing. The loader patches its boot.wim in
  *   memory as it boots it (DESIGN Section 6.4), so the survey reports it and
- *   leaves it alone. Until 2026-09-19 the appliance had a second half that
- *   PREPARED such media, staging a patched boot.wim on p2 without the key;
- *   the loader's patch replaced it.
+ *   leaves it alone.
  *
  * The survey reads p2 alone, and p3 is opened only once it has found
  * something to sign. A run with nothing pending decrypts no key and asks for
@@ -32,7 +29,7 @@
  * (list.c). When the user blesses from the loader's menu, the paths they
  * confirmed there arrive as a credential beside the passphrase, and this
  * program signs exactly those, with no UI of its own, and reboots (DESIGN
- * Section 7.5, revised 2026-09-18). Without a list it is the interactive
+ * Section 7.5). Without a list it is the interactive
  * appliance described above. `FalconNextBoot` stays the loader's variable
  * and its whole lifecycle the loader's (DESIGN Section 6.3.1: one component
  * sets it and clears it); nothing here reads it or writes it.
@@ -85,7 +82,7 @@
  * falcon-core/src/media/family.c, which is the reader and the table
  * `falcon-boot-sign` itself uses, so the survey cannot put an image in a queue
  * the tool will then refuse it from. The set of file names the survey looks at
- * is the LOADER's set (falcon-efi/src/efi /main.c: *.iso, *.img, *.efi),
+ * is the LOADER's set (apps/stick/efi_main.c: *.iso, *.img, *.efi),
  * because an appliance that disagreed with the menu about what counts as media
  * would be unable to bless something the user can see and boot.
  *

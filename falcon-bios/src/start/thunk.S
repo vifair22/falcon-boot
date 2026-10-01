@@ -1,5 +1,4 @@
-/* falcon-bios: the real-mode thunk (docs/notes/bios-route.md Section 5.3,
- * job 3 of the five).
+/* falcon-bios: the real-mode thunk.
  *
  * Calls a BIOS interrupt from 32-bit protected mode and comes back.
  * Everything the loader wants from the firmware is behind one of these:
@@ -19,9 +18,7 @@
  *                  -> a far jump with a real-mode segment, and the IVT
  *                     restored
  *
- * and the ascent is the same in reverse. It was twice as long when the loader
- * ran in long mode (Section 6h): paging and EFER.LME had to come off and go
- * back on around every call.
+ * and the ascent is the same in reverse.
  *
  * THE REGISTER BLOCK IS THE INTERFACE. The caller fills it, calls
  * thunk_bios with the vector in `thunk_vector`, and reads the results back

@@ -1,6 +1,6 @@
 /* falcon-boot: the .sbat section shim demands of its second stage.
  *
- * DESIGN Section 9, measured in docs/notes/shim-spike.md Section 5.1: shim's
+ * DESIGN Section 9: shim's
  * pe.c verify_sbat_section() returns EFI_SECURITY_VIOLATION when the image it
  * is about to start carries no .sbat section, because in_protocol is false on
  * shim's own second-stage load. So a correctly MOK-signed falcon-boot.efi is

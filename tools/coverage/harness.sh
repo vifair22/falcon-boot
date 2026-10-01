@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # falcon-boot: run the coverage harness inside its container
-# (tools/coverage/Dockerfile, docs/notes/coverage-roadmap.md Section 2).
+# (tools/coverage/Dockerfile, tools/coverage/run-case.sh,
+# tools/coverage/scorecard.py).
 #
 # Wraps `docker run` with the four things the harness needs and nothing else:
 # /dev/kvm, privileged (mk-case-stick.sh calls `sudo losetup`), the repository

@@ -207,9 +207,6 @@ UINTN bless_dropped(void)
     return g_cache.dropped;
 }
 
-/* ---- the shim-verified load path (DESIGN Section 7.6) ---- */
-
-
 /* ---- reading the wrap ---- */
 
 /* Reads the whole image into freshly allocated pages.
@@ -404,8 +401,8 @@ static EFI_STATUS launch_image(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent,
 
     /* Shim is here but not enforcing: load through the firmware, exactly as
      * falcon-efi/src/iso/iso.c's chainload does and for the reason argued
-     * there. It matters for a blessed image too, which is what was missing
-     * until 2026-09-19: shim's loader refuses pfSense's loader.efi with
+     * there. It matters for a blessed image too: shim's loader refuses
+     * pfSense's loader.efi with
      * EFI_UNSUPPORTED whatever key it carries, so a blessed BSD medium that
      * the firmware runs perfectly well could not start at all, Secure Boot
      * off included. */

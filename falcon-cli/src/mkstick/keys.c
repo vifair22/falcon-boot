@@ -88,8 +88,8 @@ cli_status mok_sign(const mok_keys *k, const char *in, const char *out)
     log_debug("sbsign %s -> %s", in, out);
     /* sbsign warns "data remaining: gaps between PE/COFF sections?" about our
      * mingw output. It says the same about Fedora's own gnu-efi binaries and
-     * both verify under shim (docs/notes/shim-spike.md Section 5.2), so the
-     * warning is noise rather than a signal. */
+     * both verify under shim, so the warning is noise rather than a
+     * signal. */
     rc = proc_runl_quiet("sbsign", "--key", k->key, "--cert", k->crt,
                          "--output", out, in, PROC_END);
     if (rc != CLI_OK)

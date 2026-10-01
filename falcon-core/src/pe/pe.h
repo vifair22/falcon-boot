@@ -18,8 +18,7 @@
  * not an option. So `len` (bytes in buf) and `total` (the file's length) are
  * kept apart throughout: the headers must be inside the window because they
  * are read here, while a range this module hands back is checked against the
- * FILE and is expected to lie outside the window. Conflating the two was a
- * real bug once (pos/osrel.c, 2026-09-15).
+ * FILE and is expected to lie outside the window.
  *
  * EFI-free and allocation-free, like the filesystem drivers, so it is tested
  * off the firmware. Every input is untrusted: these bytes come off a p2 ISO

@@ -1,5 +1,4 @@
-/* falcon-bios: floppy-emulation El Torito, the part that can be tested
- * (docs/notes/bios-route.md Sections 4.1 and 7.1).
+/* falcon-bios: floppy-emulation El Torito, the part that can be tested.
  *
  * Some media boot a BIOS through an El Torito image that emulates a floppy
  * rather than a no-emulation CD: the catalog's media type is 1, 2 or 3

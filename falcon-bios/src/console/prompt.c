@@ -1,5 +1,4 @@
-/* falcon-bios: the masked passphrase prompt (docs/DESIGN.md Section 5,
- * docs/notes/bios-route.md Section 4.4).
+/* falcon-bios: the masked passphrase prompt (docs/DESIGN.md Section 5).
  *
  * Its own translation unit for the same reason the loader's is
  * (falcon-efi/src/console/prompt.c): "what has held the secret" should have

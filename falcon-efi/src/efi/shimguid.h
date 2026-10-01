@@ -1,5 +1,5 @@
-/* falcon-boot: the one shim interface the loader speaks (DESIGN Section 7.6,
- * branch B), kept in its own header so the shim-specific surface is exactly
+/* falcon-boot: the one shim interface the loader speaks (DESIGN Section
+ * 7.6), kept in its own header so the shim-specific surface is exactly
  * one file wide and easy to audit.
  *
  * SHIM_IMAGE_LOADER is what shim >= 16.0 installs, unconditionally, alongside
@@ -7,16 +7,12 @@
  * the PE loading themselves, which is the only way an image signed with our
  * MOK (rather than with a key in db) can load while Secure Boot is on.
  *
- * Nothing here relaxes anything. We call a verifying loader; we do not install
- * one, we do not override the platform's, and we hold no key. When the
- * protocol is absent (Secure Boot off, or no shim in the chain) the loader
- * falls back to the firmware's own LoadImage, which is equally the platform's
- * decision.
+ * When the protocol is absent (Secure Boot off, or no shim in the chain) the
+ * loader falls back to the firmware's own LoadImage.
  *
  * GUID and member order are from rhboot/shim lib/guid.c:38 and
  * include/loader-proto.h at commit 72fd4b70e7562d25234204249462da97080ef56f,
- * and were confirmed at runtime by the spike (docs/notes/shim-spike.md
- * Sections 2.2 and 4.1).
+ * and were confirmed at runtime by the spike.
  */
 
 #ifndef FALCON_SHIMGUID_H

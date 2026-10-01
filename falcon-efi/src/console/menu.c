@@ -31,14 +31,9 @@
  * blt into a write-combining framebuffer. */
 static CHAR16 g_row[TUI_ROW_MAX];
 
-/* The content block, fixed for the run.
- *
- * It used to live in menu_run's locals, which meant the menu was the only
- * screen that had one: the passphrase prompt, every confirmation and every
- * error drew from column zero while the menu sat in a centred block, and on
- * a wide console they did not look like the same program. The frame is
- * module state now and menu_screen/menu_out draw inside it, so a caller gets
- * the layout by writing text rather than by knowing about it. */
+/* The content block, fixed for the run. Module state rather than menu_run's
+ * locals, so every screen draws inside it through menu_screen/menu_out, not
+ * only the menu. */
 typedef struct {
     tui_frame f;
     UINTN col;          /* cursor column within the text area, for wrapping */

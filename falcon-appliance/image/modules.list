@@ -10,9 +10,9 @@
 # carried here on the strength of what a real machine looks like, not on the
 # strength of a green test run.
 #
-# Reach the stick: the rig's emulated SATA hid the gap until the appliance met
-# actual hardware (2026-09-13) and found no block device to survey. A falcon
-# stick is a USB stick by definition, so the bus it arrives on is not optional.
+# Reach the stick: the rig's emulated SATA never exercises the stick's real
+# bus. A falcon stick is a USB stick by definition, so the bus it arrives on
+# is not optional.
 # Both drivers are listed because which one claims a given bridge is the
 # bridge's choice, not ours.
 #

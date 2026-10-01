@@ -7,7 +7,7 @@
  *
  * A default has to name something, but the entries it can name are not all
  * in the file: the loader finds some itself and names them by rule
- * (docs/notes/station-rework.md Section 10, "Autodetected entry names").
+ * (DESIGN Section 12.7, "Autodetected entry names").
  * So a default that names no section is accepted only when it has the shape
  * of such a name; whether that entry exists is the loader's to find out on
  * the machine, since the parser cannot. Anything else naming no section is
@@ -199,7 +199,7 @@ static int disk_tail_ok(const char *a, const char *b)
     return 1;
 }
 
-/* The loader's generated names (station-rework.md Section 10). [a, b) is
+/* The loader's generated names (DESIGN Section 12.7). [a, b) is
  * already a name. */
 static int autoname_ok(const char *a, const char *b)
 {

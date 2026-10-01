@@ -1,6 +1,6 @@
 # Station fixtures
 
-Disks for the station rig (docs/notes/station-rework.md): each is a raw
+Disks for the station rig (DESIGN Section 12.11): each is a raw
 image with an MBR, one active primary partition and an OS on it that boots on
 its own under SeaBIOS on an i440fx machine. The station finds them as a
 machine's existing OSes and chainloads them.

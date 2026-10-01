@@ -1,11 +1,8 @@
 /* falcon-boot mkstick: the MOK keypair and the signing calls.
  *
- * DESIGN Section 7.5 in code form. The public cert travels (p1, for
- * enrollment); the private key does not travel in the clear and lands only
- * inside p3's LUKS volume at mode 0600. Nothing in this file ever writes key
- * material to p1 or p2, and the loader is not involved in any of it: signing
- * is a private-key operation that happens here, in Linux userland, or in the
- * on-stick signing appliance, and nowhere else.
+ * The public cert travels (p1, for enrollment); the private key lands only
+ * inside p3's LUKS volume at mode 0600, and nothing in this file writes key
+ * material to p1 or p2 (DESIGN Section 7.5).
  *
  * The signing itself is `sbsign`, shelled out to. That is the intended
  * vendoring line of DESIGN Section 8: reimplementing Authenticode PE signing

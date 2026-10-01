@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # falcon-boot: build the on-stick signing appliance as a UKI
-# (docs/DESIGN.md Section 7.5, build order step 8).
+# (docs/DESIGN.md Section 7.5).
 #
 # Output:
 #   build/appliance/appliance-uki.efi          unsigned, the artifact mkstick
@@ -14,7 +14,7 @@
 #
 #   sbsign       signs the UKI wrap, and appends to a bare payload
 #   sbverify     counts the signatures a bare payload carries before and after
-#                (DESIGN Section 7.2: blessing one must ADD ours and keep the
+#                (DESIGN Section 4.2: blessing one must ADD ours and keep the
 #                vendor's, and the count is one of the three checks that says
 #                so). Only the payload path runs it, and it refuses up front
 #                without it rather than part way through
@@ -34,14 +34,13 @@
 # vmlinuz (exfat, loop and vfat, plus what modules.dep says they need). There is no shell, no interpreter, no network tooling, and no
 # package manager.
 #
-# What that costs, measured 2026-09-19 on this host: 19 MB of initramfs
-# uncompressed, 6.2 MB compressed, a 22.9 MB UKI of which 16.6 MB is the
-# kernel, and under ten seconds to build. The day before it was 27 MB: the
-# Windows preparation route (7-Zip with its 7z.so, the libstdc++ only it
-# needed, and libwim) went when the loader took over patching Windows media
-# (DESIGN Section 6.4). Before 2026-09-18 the initramfs was 97 MB: ukify's
-# Python runtime (33 MB) and the ICU tables behind the host bsdtar's XAR
-# support (32 MB) are what went.
+# What that costs on this host: 19 MB of initramfs uncompressed, 6.2 MB
+# compressed, a 22.9 MB UKI of which 16.6 MB is the kernel, and under ten
+# seconds to build. The Windows preparation route (7-Zip with its 7z.so, the
+# libstdc++ only it needed, and libwim) is gone: the loader patches Windows
+# media at boot instead (DESIGN Section 6.4). ukify's Python runtime (33 MB)
+# and the ICU tables behind the host bsdtar's XAR support (32 MB) are gone
+# the same way: neither tool runs here.
 #
 # Usage: falcon-appliance/image/mk-appliance.sh
 # Env:
@@ -81,9 +80,9 @@ MOK_CRT="${MOK_CRT:-build/mok-test/falcon-test-mok.crt}"
 # types into (ttyS0 carries the firmware and loader log, and is write-only
 # there). The appliance opens every console it can and reads from whichever one
 # answers (falcon-appliance/src/console.c), so the ORDER of
-# these no longer decides whether its prompts can be answered - which it did
-# until 2026-09-13, when a laptop with no ttyS1 made /dev/console a dead device
-# and every prompt read EOF.
+# these no longer decides whether its prompts can be answered: a machine
+# with no ttyS1 would otherwise make /dev/console a dead device and leave
+# every prompt reading EOF.
 #
 # Order still decides one thing: /dev/console is the LAST console= named, and
 # that is what the helper tools the appliance runs inherit for their own
@@ -299,11 +298,9 @@ done
 # The dynamic loader, at the path each binary NAMES (PT_INTERP), which is not
 # necessarily the path ldd prints. On Arch /lib64 is a symlink into /usr, so
 # ldd reports /usr/lib64/ld-linux-x86-64.so.2 while every binary asks the
-# kernel for /lib64/ld-linux-x86-64.so.2. Staging only the former built an
-# image (2026-09-15) in which every dynamic program failed to exec with
-# ENOENT: bsdtar and cryptsetup both "missing" while plainly present. The
-# Gentoo host this was first built on has a real /lib64, which is why the
-# walk above was enough there.
+# kernel for /lib64/ld-linux-x86-64.so.2; staging only the former leaves every
+# dynamic program unable to exec, ENOENT on an interpreter path that is
+# plainly present under the other name.
 for b in "${BINARIES[@]}"; do
     i=$(interp "$ROOT$b")
     if [[ -n "$i" && ! -e "$ROOT$i" ]]; then
@@ -350,8 +347,9 @@ printf 'root:x:0:\n' > "$ROOT/etc/group"
 # the ELF loader it names, or the #! line of a script. Checked over /init and
 # the bin directories as staged rather than over the BINARIES list, so a
 # program that arrives some other way is held to it too, and through symlinks
-# resolved inside the image. Libraries are not exec'd and are not checked. This is the check that would have stopped
-# the 2026-09-15 image before it reached a stick.
+# resolved inside the image. Libraries are not exec'd and are not checked.
+# This is the check that would have caught the ENOENT failure above before
+# it reached a stick.
 echo "== checking every staged program's interpreter"
 bad=0
 while IFS= read -r -d '' f; do
@@ -388,10 +386,8 @@ echo "   initramfs: $INITRD ($(stat -c%s "$INITRD") bytes compressed, $RAW raw)"
 #
 # Built by the sign tool's own UKI builder, the one that wraps every blessed
 # kernel, so the image and what it produces are laid out by one
-# implementation. The .osrel names what the image is, which does not depend on
-# where it was built: the first appliance, built with ukify's host default on
-# the Gentoo workstation, announced itself in the loader menu as "Gentoo
-# Linux".
+# implementation. The .osrel below names what the image is explicitly, so it
+# does not depend on where it was built.
 echo "== building the UKI"
 APPLIANCE_OSREL=$(mktemp)
 cat > "$APPLIANCE_OSREL" <<'OSREL'

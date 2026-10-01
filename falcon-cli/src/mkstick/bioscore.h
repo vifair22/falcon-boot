@@ -1,6 +1,5 @@
 /* falcon-boot mkstick: the arithmetic of putting falcon-bios on a disk, with
- * no I/O in it (docs/DESIGN.md Section 3.3; the layout contract is
- * docs/notes/station-rework.md section 9).
+ * no I/O in it (docs/DESIGN.md Section 3.3).
  *
  * Why this is a separate file. The BIOS route writes to places no file
  * owns: the boot code at the head of LBA 0, a run of sectors between LBA 0
@@ -183,10 +182,8 @@ int bioscore_is_installed(const uint8_t *mbr, const uint8_t *stage1,
  * partition named BIOS_BOOT_NAME, in whatever slot it took. `mkstick bios
  * --reserve` makes it in slot BIOS_BOOT_SLOT; `station install` in the
  * first free one, which on a disk with four partitions before it is not
- * slot 5, and a check on the slot took that one for a real partition in
- * stage 2's way (mkstick update, 2026-09-30). The one definition, so the
- * commands that make it and the report that reads it back cannot disagree
- * about what it looks like. */
+ * slot 5. The one definition, so the commands that make it and the report
+ * that reads it back cannot disagree about what it looks like. */
 int bioscore_is_reserve(const part_table *t, const part_entry *p);
 
 /* ---- the backup a write is preceded by ----

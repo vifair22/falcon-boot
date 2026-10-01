@@ -19,7 +19,7 @@
 #
 #   misc-include-cleaner falcon-efi/src/efi/uefi.h is a deliberate umbrella over
 # the split EFI headers, so every spec typedef reached through it is "not
-# directly included". 304 findings, all of them that.
+# directly included".
 #
 #   clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling Wants
 # the C11 Annex K _s functions. Freestanding: there is no libc to provide them,
@@ -43,9 +43,9 @@
 #       is how a const string reaches a non-const UEFI output parameter
 #       without tripping gcc -Wcast-qual, also in the standard CFLAGS.
 #
-#   misc-no-recursion apps/stick/efi_main.c scan_dir recurses on purpose;
-# frame size is policed by -Wstack-usage=32768, which is the control that
-# actually matters here.
+#   misc-no-recursion falcon-core/src/media/survey.c walk() recurses on
+# purpose; frame size is policed by -Wstack-usage=32768, which is the
+# control that actually matters here.
 #
 #   clang-analyzer-optin.performance.Padding
 #       Struct field order follows the spec layout or reading order. Padding
@@ -60,7 +60,7 @@
 # Deliberately left ON despite currently firing (see the baseline file):
 #
 #   bugprone-implicit-widening-of-multiplication-result
-#       All 23 current hits are audited false positives (small compile-time
+#       The current hits are audited false positives (small compile-time
 #       constants times bounded indices), but this is exactly the check that
 #       would catch a real overflow in the exFAT/ext4/ISO parsers, which read
 #       attacker-supplied media. It stays on and the current hits are

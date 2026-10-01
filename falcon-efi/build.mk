@@ -43,7 +43,7 @@ EFI_APP_SRCS :=
 # Boot on (apps/stick/efi_sbat.c has the details). sbsign warns "data
 # remaining: gaps between PE/COFF sections?" about our mingw output; it says
 # the same about Fedora's own gnu-efi binaries and both verify under shim
-# (docs/notes/shim-spike.md Section 5.2).
+# (DESIGN Section 7.6).
 define efi_app
 $(1)_EFI_OBJS := $$(patsubst %.c,$$(EFI_OBJ)/%.o,$(3))
 EFI_APP_SRCS += $(3)
@@ -155,7 +155,7 @@ test-img: $(PAYLOAD)
 	falcon-efi/tools/mk-test-img.sh
 
 # The sd-stub UKI the credential handoff is tested against (DESIGN Section 5.1
-# and Section 11 step 6). It needs the test MOK, because the Secure Boot half
+# and Section 10). It needs the test MOK, because the Secure Boot half
 # of that test boots the SIGNED copy. The kernel comes out of an Arch ISO the
 # script reads and never writes; ARCH_ISO overrides where it looks.
 test-uki: $(FIXTURE_UKI)
@@ -178,7 +178,7 @@ test-stick: $(EFI_SIGNED) test-iso test-uki cli bios
 test-station: $(STANDIN) station test-uki cli
 	falcon-efi/tools/mk-test-station.sh
 
-# The core step's matrix cells (docs/notes/station-rework.md section 6), each
+# The core step's matrix cells (DESIGN Section 10), each
 # booted headless and judged from serial: the stick alone, beside a second
 # stick, an MBR data disk and another install's records, a 4Kn stick, and
 # the station, under both firmwares. Builds its own disks (sudo, loop
@@ -186,7 +186,7 @@ test-station: $(STANDIN) station test-uki cli
 test-core: all bios station cli payload
 	falcon-efi/tools/run-core-rig.sh
 
-# The UEFI station's own cases (DESIGN Sections 13.3-13.8), under OVMF with
+# The UEFI station's own cases (DESIGN Sections 12.3-12.8), under OVMF with
 # Secure Boot off and on: the list, STATION.INI's default and countdown,
 # BootNext into a fake Windows Boot Manager, the same loaded off its ESP,
 # memtest, next boot and the error pages. It boots copies of the disk
@@ -195,9 +195,9 @@ test-station-uefi: $(EFI_STATION_SIGNED) $(STANDIN) $(STANDIN_SIGNED) cli
 	@test -f build/test-station.img || $(MAKE) --no-print-directory test-station
 	falcon-efi/tools/run-station-rig.sh
 
-# The TPM rig (docs/notes/argon2-totp.md Section 2): the probe, alone and
-# started by the UEFI station, and the station's TOTP check (DESIGN Section
-# 12.15) enrolled by mkstick between boots, under OVMF with swtpm as a TPM
+# The TPM rig: the probe, alone and started by the UEFI station, and the
+# station's TOTP check (DESIGN Section 12.15) enrolled by mkstick between
+# boots, under OVMF with swtpm as a TPM
 # 2.0 (TIS and CRB) and a TPM 1.2, Secure Boot off and on. With no swtpm it says so and
 # builds nothing; a case whose OVMF has no support for its TPM version
 # SKIPs. The station cases boot copies of the disk test-station made, and

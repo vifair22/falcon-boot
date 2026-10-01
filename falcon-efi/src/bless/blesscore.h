@@ -12,18 +12,14 @@
  * exercised by booting a machine is a rule nobody checks. Everything here runs
  * unchanged in a host process against a string literal.
  *
- * Security posture, restated because it is the thing most likely to be
- * "hardened" by mistake. The manifest is plain text on writable, unverified
- * exFAT: anyone with the stick edits it freely, and nothing in it is trusted.
- * It selects which signed UKI a menu entry launches; it does not decide
- * whether that UKI may run, which is shim's answer at load time and the
- * platform's to enforce (Sections 7.2, 7.6). So the failure this code must
- * never have is not "a forged record got in" (a forged record can only name
- * an image the platform will judge on its own merits) but "bad input turned
- * into bad behaviour": a path that matches the wrong file, an out-of-bounds
- * read, or an error the loader has to handle at menu-draw time. Hence: the
- * lookup is total, a manifest that will not parse yields zero records, and
- * an absent one is indistinguishable from an empty one.
+ * The manifest is plain text on writable exFAT and nothing in it is trusted.
+ * It selects which signed UKI a menu entry launches; whether that UKI runs is
+ * shim's answer at load time (Sections 7.2, 7.6). The failure this code must
+ * not have is bad input turned into bad behaviour: a path that matches the
+ * wrong file, an out-of-bounds read, or an error the loader has to handle at
+ * menu-draw time. Hence: the lookup is total, a manifest that will not parse
+ * yields zero records, and an absent one is indistinguishable from an empty
+ * one.
  *
  * The deliberate non-check is the hash. Section 8.1 has the loader compare
  * size only, because hashing a multi-gigabyte ISO to draw a menu is not a

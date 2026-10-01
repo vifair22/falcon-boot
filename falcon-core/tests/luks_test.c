@@ -627,7 +627,7 @@ static void test_mem_put(void *ctx, void *mem, uint32_t kib)
 }
 
 /* A default `cryptsetup luksFormat` makes an argon2id keyslot, and a
- * station's shelf is made that way (docs/notes/argon2-totp.md Section 1).
+ * station's shelf is made that way (DESIGN Section 3).
  * The fixture is t=4, m=65536 KiB, 4 lanes: the unlock has to agree with
  * cryptsetup's own derivation, through the digest, and a caller that cannot
  * supply 64 MiB has to be told so with the amount rather than told its

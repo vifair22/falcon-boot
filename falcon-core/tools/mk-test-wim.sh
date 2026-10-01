@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # falcon-boot: build the WIM fixture falcon-core/src/wim is tested against
-# (docs/notes/coverage-roadmap.md M6).
+# (DESIGN Section 6.3).
 #
 # wimlib writes it, LZX-compressed in 32 KiB chunks like Microsoft's own
 # boot.wim, with two images and the second marked bootable, which is the

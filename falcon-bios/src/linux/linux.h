@@ -1,5 +1,4 @@
-/* falcon-bios: booting a Linux kernel directly (docs/notes/bios-route.md
- * Section 4.2). See linux.c.
+/* falcon-bios: booting a Linux kernel directly. See linux.c.
  */
 
 #ifndef FALCON_BIOS_LINUX_H

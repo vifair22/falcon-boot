@@ -1,5 +1,4 @@
-/* falcon-bios: what the C half of the loader may ask of the assembly half
- * (docs/notes/bios-route.md Section 5.3).
+/* falcon-bios: what the C half of the loader may ask of the assembly half.
  *
  * The rule that shapes this file: the assembly is transport and nothing
  * else. Five jobs are allowed to be written in it (the MBR, the mode switch,

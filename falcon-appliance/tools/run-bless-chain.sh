@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # falcon-boot: blessing from the loader's menu, end to end, in one QEMU
-# session (docs/DESIGN.md Section 7.5, the appliance's role revised
-# 2026-09-18; docs/notes/coverage-roadmap.md M3).
+# session (docs/DESIGN.md Section 7.5).
 #
 # The chain, stage by stage:
 #

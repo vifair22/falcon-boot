@@ -1,7 +1,7 @@
 /* falcon-boot: the fixture UKI's /init (docs/DESIGN.md Sections 5.1 and 10).
  *
- * The smallest program that can answer the one question step 6 of the build
- * order asks: did the passphrase the loader typed into a synthetic filesystem
+ * The smallest program that can answer one question: did the passphrase the
+ * loader typed into a synthetic filesystem
  * arrive in the initramfs as a systemd credential? sd-stub packs the
  * `.cred` files it finds in the `<uki>.efi.extra.d` directory next to the
  * image into a cpio and merges that into the initrd, so by the time PID 1

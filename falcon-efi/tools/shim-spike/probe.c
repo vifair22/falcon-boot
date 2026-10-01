@@ -31,7 +31,7 @@
  * so for those SBAT is optional. A freestanding mingw PE has no such section
  * unless we place one, and without it the probe is refused under Secure Boot
  * no matter how correctly it is signed -- the failure looks identical to a
- * bad signature, which is why it is worth stating here.
+ * bad signature.
  *
  * Format is the SBAT CSV of shim's SBAT.md: the mandatory sbat,1 version row
  * first, then one row per component. The generation number (field 2) is what
@@ -286,20 +286,19 @@ static void try_load(CHAR16 *label, EFI_HANDLE self, EFI_HANDLE device,
     BS->FreePool(dp);
 }
 
-/* ---- 2026-09-13 addition: the loader x source matrix ----
+/* ---- the loader x source matrix ----
  *
- * The original probe above measured one cell of a four-cell grid: the
- * boot-services LoadImage, given a device path. That was enough while the
- * only question was "does a MOK-signed image load under Secure Boot", and it
- * is not enough for the question that came out of UAT: in the state where
- * shim honours MokSBState and stops validating, which of the two loaders is
- * which, and does either still take a buffer?
+ * The probe above measures one cell of a four-cell grid: the boot-services
+ * LoadImage, given a device path. That answers "does a MOK-signed image load
+ * under Secure Boot". It does not answer, in the state where shim honours
+ * MokSBState and stops validating, which of the two loaders is which, and
+ * whether either still takes a buffer.
  *
  * It matters because a UKI's stub does not load its inner kernel from a file.
  * It has the kernel in memory already, as a section of itself, and hands it
  * to LoadImage as a SourceBuffer with a memmap device path. So "device path,
  * boot services" is precisely the cell that does not describe what sd-stub
- * does, and the cell it does use was never measured.
+ * does, and the cell it does use is not measured above.
  */
 
 /* Read a staged payload into pool memory, so the buffer half of the matrix

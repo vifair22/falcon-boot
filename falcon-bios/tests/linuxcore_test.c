@@ -3,12 +3,10 @@
  *
  * Every case here is a kernel this loader must refuse or an address it must
  * get exactly right, because none of them says anything when it is wrong: a
- * kernel placed past what the loader can address faults (it triple-faulted
- * past the identity map of the long-mode loader), and an initrd segment
- * one byte short of alignment is reported by the kernel as a corrupt
- * archive. The padding case is a regression test - it shipped unpadded once,
- * and Arch booted while Debian did not, purely because Arch's initrd happens
- * to be a multiple of four.
+ * kernel placed past what the loader can address faults, and an initrd
+ * segment one byte short of alignment is reported by the kernel as a corrupt
+ * archive. Unpadded, Arch boots while Debian does not, purely because Arch's
+ * initrd happens to be a multiple of four.
  */
 
 #include "tests.h"

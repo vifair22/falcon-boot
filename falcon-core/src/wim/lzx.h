@@ -1,5 +1,4 @@
-/* falcon-boot: LZX decompression as a WIM uses it (docs/notes/
- * coverage-roadmap.md M6).
+/* falcon-boot: LZX decompression as a WIM uses it (DESIGN Section 6.4).
  *
  * The loader reads a Windows boot.wim to patch it at boot, and Microsoft
  * compresses its resources with LZX. This is the WIM flavour of the format

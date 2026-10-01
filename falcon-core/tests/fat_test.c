@@ -1,5 +1,5 @@
 /* Tests for falcon-core/src/fs/fat.c against real mkfs.vfat volumes
- * (falcon-core/tools/mk-test-fat.sh, docs/notes/iso-reader-route.md stage B).
+ * (falcon-core/tools/mk-test-fat.sh, DESIGN Section 6, the ISO path).
  *
  * Real images rather than synthesised ones, because the things most likely to
  * be wrong here are the things a hand-built fixture would get wrong in the

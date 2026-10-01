@@ -2,9 +2,9 @@
  * (docs/DESIGN.md Sections 6.4 and 7.8)?
  *
  * The UEFI menu lists every image on p2, and a BIOS-only one (an isolinux
- * medium with a kernel that has no EFI stub, Windows XP install media) used
- * to look like any other row until it was chosen and failed while looking for
- * an EFI System Partition. This module answers the question the row's
+ * medium with a kernel that has no EFI stub, Windows XP install media)
+ * otherwise looks like any other row until chosen, and fails while looking
+ * for an EFI System Partition. This module answers the question the row's
  * {BIOS ONLY} tag states, from the medium's own bytes, before anything is
  * chosen.
  *

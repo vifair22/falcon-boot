@@ -1,5 +1,4 @@
-/* falcon-bios: the resident INT 13h handler that serves an ISO as a CD
- * (docs/notes/bios-route.md Sections 4.1 and 7.1).
+/* falcon-bios: the resident INT 13h handler that serves an ISO as a CD.
  *
  * WHY THIS EXISTS. An ISO's own bootloader - isolinux, the ISO's GRUB,
  * FreeBSD's loader, Windows' bootmgr - reads its medium through INT 13h and
@@ -9,7 +8,7 @@
  *
  * WHAT IT IS ALLOWED TO DECIDE: as little as possible. It is 16-bit
  * real-mode assembly, which is the one part of this tree that no analyzer
- * and no test reaches (Section 7.2), so the arithmetic it performs is worked
+ * and no test reaches, so the arithmetic it performs is worked
  * out in vcdcore.c, tested there, and handed over as a table. What is left
  * here is a linear scan, one multiply, one add, and a re-issued read.
  *

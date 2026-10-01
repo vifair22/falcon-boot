@@ -1,4 +1,4 @@
-/* falcon-bios link script (docs/notes/bios-route.md Section 5.3).
+/* falcon-bios link script (docs/DESIGN.md Section 3.3).
  *
  * Two images, linked separately, because they load at different addresses and
  * neither may contain a relocation: real-mode code is position-dependent and
@@ -39,13 +39,13 @@ SECTIONS
 
     /* .bss is NOT in the image.
      *
-     * It was, at first, because there is no runtime to clear it: stage 1
-     * reads stage 2 off the disk and jumps to it. But stage 3 has its own
-     * loader - stage 2 - and megabytes of buffers it has no reason to carry
-     * on disk, so stage 3's header declares a memory size as well as a file
-     * size and stage 2 zeroes the difference.
+     * Stage 3 has its own loader - stage 2 - and megabytes of buffers it
+     * has no reason to carry on disk, so stage 3's header declares a memory
+     * size as well as a file size and stage 2 zeroes the difference.
      *
-     * Stage 1 does no such thing, so stage 2 must have an empty .bss. The
+     * Stage 1 is no such loader: it reads stage 2 off the disk and jumps to
+     * it, with no runtime to clear anything, so stage 2 must have an empty
+     * .bss. The
      * build checks that rather than trusting it: a static added to a stage 2
      * source would otherwise start life holding whatever the BIOS left at
      * that address. */

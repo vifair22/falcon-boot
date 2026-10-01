@@ -9,7 +9,7 @@
 
 /* ---- the pending list and the selection ceremony ----
  *
- * DESIGN Section 7.5 (select-then-sign, 2026-09-13): the user marks the images
+ * DESIGN Section 7.5 (select-then-sign): the user marks the images
  * one at a time, the whole marked set is shown back once, and only a typed
  * "yes" over that reviewed set starts any work. The listing is grouped by
  * folder so it reads like the loader's own folder-view menu (Section 6 stage

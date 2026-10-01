@@ -60,7 +60,7 @@ $(HOOK_BLOB): $(HOOK_BIN)
 # ---- the 32-bit build ----
 #
 # The same sources for a 32-bit kernel's initramfs, which falcon-bios boots
-# (docs/notes/bios-route.md Section 6h). src/sys.c is the only file that
+# (DESIGN Section 11.3). src/sys.c is the only file that
 # knows the width. i586 as falcon-bios is, since it runs on the same
 # machine, and tools/check-floor.sh holds it to that. libgcc goes back in by
 # name for the 64-bit division 32-bit code calls out for, which -nostdlib

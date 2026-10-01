@@ -1,5 +1,4 @@
-/* falcon-bios: the memory map, from INT 15h AX=E820
- * (docs/notes/bios-route.md Section 4.2).
+/* falcon-bios: the memory map, from INT 15h AX=E820.
  *
  * The kernel needs this and cannot get it itself: by the time it runs, the
  * BIOS call that answers is gone, because the machine is in protected mode

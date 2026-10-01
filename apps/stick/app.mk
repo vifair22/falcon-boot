@@ -3,7 +3,7 @@
 # Every route: the personal OS off p3, virtual media and direct boot for what
 # is on p2, blessing, Windows and BSD media, and the boot predictions. `all`
 # builds the UEFI image; the BIOS one is opt-in (`make bios`,
-# docs/notes/bios-route.md Section 7.3). The order below is the link order.
+# DESIGN Section 3.3). The order below is the link order.
 
 STICK := apps/stick
 

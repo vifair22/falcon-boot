@@ -25,8 +25,8 @@ typedef struct {
     nxt_target target;                 /* the partition and file it names */
 } nxt_row;
 
-/* The description of the station's own firmware entry (docs/notes/
- * station-rework.md section 10), which is never a row: choosing it would
+/* The description of the station's own firmware entry (DESIGN Section
+ * 12.3), which is never a row: choosing it would
  * reboot into this screen. */
 #define NXT_OWN_LABEL L"falcon"
 

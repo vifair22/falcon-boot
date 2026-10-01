@@ -1,5 +1,5 @@
 /* falcon-boot appliance: the MOK keypair off p3, read in process (DESIGN
- * Section 7.5; docs/notes/coverage-roadmap.md Section 6, step 1).
+ * Section 7.5).
  *
  * p3 is opened with falcon-core's LUKS2 (the same unlock the loader runs),
  * read through its decrypting reader, and its ext4 is walked with core's

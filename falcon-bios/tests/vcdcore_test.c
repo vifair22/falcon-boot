@@ -3,8 +3,7 @@
  *
  * This is the arithmetic the resident INT 13h handler performs, in the one
  * place it can be checked: the handler itself is 16-bit real-mode assembly
- * and no analyzer or test in this repository reaches it
- * (docs/notes/bios-route.md Section 7.2).
+ * and no analyzer or test in this repository reaches it.
  */
 
 #include "tests.h"

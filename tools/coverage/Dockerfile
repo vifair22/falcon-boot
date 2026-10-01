@@ -1,5 +1,5 @@
 # falcon-boot: the coverage harness's environment
-# (docs/notes/coverage-roadmap.md Section 2, tools/coverage/run-corpus.sh).
+# (tools/coverage/run-corpus.sh, tools/coverage/scorecard.py).
 #
 # One image that builds the tree and boots the corpus under OVMF. It exists so
 # the measurement is not tied to whichever machine the stick last booted on:
@@ -81,8 +81,8 @@ RUN python3 -m venv /opt/virt-firmware \
 
 # Fail the build rather than the first corpus run.
 #
-# REGENERATE THIS LIST, DO NOT EXTEND IT FROM MEMORY. It has been wrong three
-# times, and each time the symptom was not "command not found" but a silently
+# REGENERATE THIS LIST, DO NOT EXTEND IT FROM MEMORY. A hand-extended list
+# degrades silently: the symptom is not "command not found" but a silently
 # degraded result. From the repository root:
 #
 #   grep -hoE '^[[:space:]]*(if +)?[a-z][a-z0-9_.-]{2,}' \
@@ -93,7 +93,7 @@ RUN python3 -m venv /opt/virt-firmware \
 # machine. tcpdump is the one that proves the point: run-case.sh calls it
 # unguarded for one of its four PASS conditions, so without it every case
 # whose only evidence is the DHCP capture ran to the 300 second timeout and
-# was recorded FAIL. 34 of them, on the first corpus run here.
+# was recorded FAIL.
 #
 # Two entries here are scar tissue, both from the same failure mode: a build
 # step that shells out, swallows the error and yields an empty result.

@@ -1,8 +1,6 @@
-/* falcon-bios: the read callback, over INT 13h (docs/notes/bios-route.md
- * Sections 1 and 4.1).
+/* falcon-bios: the read callback, over INT 13h.
  *
- * This file is the claim Section 1 makes about the whole route, in code: the
- * per-platform boundary is a read callback, so falcon-core links unchanged
+ * The route's per-platform boundary is this read callback, so falcon-core links unchanged
  * and a BIOS build is its fourth consumer after the host tests, the CLI
  * tools and the appliance. Everything above this - GPT, exFAT, ISO9660, UDF,
  * FAT, the El Torito catalog, the medium's volume set - is the same code the

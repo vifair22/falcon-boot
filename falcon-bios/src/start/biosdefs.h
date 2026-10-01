@@ -1,5 +1,4 @@
-/* falcon-bios: the constants both the assembly and the C side need
- * (docs/notes/bios-route.md Section 5.2).
+/* falcon-bios: the constants both the assembly and the C side need.
  *
  * This file is the whole reason the assembly is gas `.S` rather than NASM.
  * A `.S` is preprocessed, so a load address written here reaches the linker
@@ -66,8 +65,7 @@
  * recipe writes (apps/jump/app.mk). */
 #define FD_STAGE3_SECTOR 98
 
-/* The single BIOS layout (docs/DESIGN.md Section 3.3; the contract is
- * docs/notes/station-rework.md section 9). The core rework's streams build
+/* The single BIOS layout (docs/DESIGN.md Section 3.3). Everything builds
  * against these names; nothing else writes the numbers.
  *
  * Stage 1 does not know where stage 2 is: the installer writes stage 2's
@@ -94,11 +92,10 @@
 #define STAGE2_MAGIC    0x32534F42
 
 /* Where the loader runs: flat 32-bit protected mode, paging off, so a
- * linear address is a physical one (docs/notes/bios-route.md Section 6h).
+ * linear address is a physical one.
  *
- * The whole loader is i686 code, which is what lets one image boot the
- * machines this route exists for as well as the ones it was first written
- * on. What a newer processor has, it gets by asking rather than by a second
+ * The whole loader is i586 code, which is what lets one image boot the
+ * oldest machines this route exists for as well as every newer one. What a newer processor has, it gets by asking rather than by a second
  * build: stage 2 turns the SSE state on when CPUID says there is SSE, and
  * falcon-core's AES path uses AES-NI when CPUID says there is AES-NI. Long
  * mode buys a BIOS loader nothing: every object it places goes below 4 GiB,
@@ -168,7 +165,7 @@
 #define DRIVEPARM_ADDR  (BIOS_SCRATCH + 0x40)   /* 30 bytes */
 #define E820_ADDR       (BIOS_SCRATCH + 0x80)   /* 24 bytes, one entry */
 
-/* ---- where a Linux payload goes (bios-route.md Section 4.2) ----
+/* ---- where a Linux payload goes (DESIGN Section 11.3.6) ----
  *
  * The zero page and the command line at the addresses every BIOS loader has
  * used for them since LILO, which is the useful property: a kernel's
@@ -243,7 +240,7 @@
 #define GZ_STAGE_ADDR   0x00600000
 
 
-/* ---- the virtual CD's resident (bios-route.md Section 7.1) ----
+/* ---- the virtual CD's resident (DESIGN Section 11.3.4) ----
  *
  * One paragraph-aligned block in conventional memory, taken by shrinking
  * what the BIOS data area says the machine has, which is how MEMDISK and

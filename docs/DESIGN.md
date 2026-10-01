@@ -43,7 +43,7 @@ change it.
    bios` builds it and `mkstick bios` installs it (Section 3.3). The loader
    runs in i586 protected mode, asks CPUID for what a newer processor adds,
    and appends a falcon-hook of the kernel's width, so one image serves
-   machines with and without a 64-bit mode (bios-route.md Section 6h).
+   machines with and without a 64-bit mode (Section 13.8).
    One stick serves every machine; its ISO library carries the 32-bit ISOs.
 7. **The station.** Each loader built again as a machine's own boot loader,
    in place of GRUB, systemd-boot or the Windows MBR: Windows 98 to 11,
@@ -3398,7 +3398,7 @@ What each links, beyond the shared console, disk and loader plumbing:
 
 No boot predictions are linked, so no row carries a trust tag. The version
 type is `station-release` and `station-legacy-release`; the SBAT component is
-`falcon-boot-station`, its own generation, so a revocation for a parser the
+`falcon-boot-pos`, its own generation, so a revocation for a parser the
 station does not link cannot stop it booting.
 
 ### 12.2 Layout

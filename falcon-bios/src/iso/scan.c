@@ -1,5 +1,5 @@
-/* falcon-bios: what an ISO on p2 holds (docs/notes/bios-route.md Section 4,
- * and DESIGN Section 6.4 for the same job under UEFI).
+/* falcon-bios: what an ISO on p2 holds (DESIGN Section 6.4 for the same
+ * job under UEFI).
  *
  * This is the point of the whole route, in one file. Everything here is
  * falcon-core, unmodified, over a chain of read callbacks whose far end is
@@ -41,7 +41,7 @@
  * x86-64 one is the binary the UEFI loader appends, for the same reason: it
  * runs in the initramfs and has no opinion about which firmware started the
  * kernel. It does have to be the kernel's width, and this loader boots
- * 32-bit kernels too (bios-route.md Section 6h), so the i686 build rides
+ * 32-bit kernels too, so the i586 build rides
  * along and the kernel's own header decides which one goes. */
 extern const unsigned char falcon_hook_bin[];
 extern const size_t falcon_hook_bin_len;

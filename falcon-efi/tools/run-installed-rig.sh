@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # falcon-boot: stations made by the installer, booted (docs/DESIGN.md
-# Sections 12.9, 12.11; docs/notes/station-rework.md section 6). Every disk
+# Sections 12.9, 12.11). Every disk
 # here is a machine's disk before falcon: partitions of its own and free
 # space, and `mkstick station install` puts the station on it as a user
 # does. Nothing is copied onto a disk by hand afterwards: the firmware

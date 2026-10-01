@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# falcon-boot: the signing appliance's acceptance run (DESIGN Section 7.5,
-# build order step 8).
+# falcon-boot: the signing appliance's acceptance run (DESIGN Section 7.5).
 #
 # Boots build/appliance/appliance-stick.img under OVMF with Secure Boot ON and
 # a varstore that trusts the stick's own MOK, drives the loader into the

@@ -2,8 +2,8 @@
  * that says what the firmware offers for a TPM, on the console and so on
  * the rig's serial, one "FALCON-TPM ..." line per fact.
  *
- * It answers the question the TOTP work (docs/notes/argon2-totp.md Section
- * 2) cannot be tested without: does this OVMF install EFI_TCG2_PROTOCOL
+ * It answers the question the TOTP check (DESIGN Section 12.15) cannot be
+ * tested without: does this OVMF install EFI_TCG2_PROTOCOL
  * for a TPM 2.0, EFI_TCG_PROTOCOL for a TPM 1.2, and does it measure the
  * boot, which is what a PCR0 that is not all zeroes shows. It reads PCR0
  * the way the loader will talk to the TPM, through the protocol's command

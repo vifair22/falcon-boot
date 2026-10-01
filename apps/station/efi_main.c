@@ -20,8 +20,7 @@
  * What it shares with the stick's loader it shares by calling the same
  * modules, so the sentences a route says are pos.c's and menu.c's here as
  * there. The station's own sentences are falcon-bios's station's, word for
- * word (docs/notes/station-rework.md section 11), and a change to one is a
- * change to the other.
+ * word, and a change to one is a change to the other.
  */
 
 #include <efi/uefi.h>
@@ -49,8 +48,7 @@
 #define WIDEN_(s) L##s
 #define WIDEN(s) WIDEN_(s)
 
-/* Where the station keeps its files on its ESP (docs/notes/station-rework.md
- * section 10). */
+/* Where the station keeps its files on its ESP (DESIGN Section 12.2). */
 #define STATION_INI_PATH L"\\EFI\\falcon\\STATION.INI"
 #define MEMTEST_PATH     L"\\EFI\\falcon\\memtest.efi"
 

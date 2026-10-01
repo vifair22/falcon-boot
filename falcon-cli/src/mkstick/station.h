@@ -23,7 +23,7 @@
 #define STN_MAX_DISKS 8u
 #define STN_MAX_FOUND 32u
 
-/* The files a station carries (docs/notes/station-rework.md section 10). */
+/* The files a station carries (DESIGN Section 12). */
 #define STN_ESP_DIR       "EFI/falcon"
 #define STN_ESP_SHIM      "shimx64.efi"
 /* The loader's name on the ESP: shim's next stage, and with --no-shim the

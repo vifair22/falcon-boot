@@ -1,5 +1,5 @@
 /* falcon-boot: an ISO's own boot configuration, read (docs/DESIGN.md
- * Section 6.4; docs/notes/coverage-roadmap.md W3).
+ * Section 6.4).
  *
  * A Linux ISO says how it boots: which kernel, which initramfs, which
  * cmdline. Reading that instead of keeping a per-family table is what lets

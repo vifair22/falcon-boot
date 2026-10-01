@@ -1,5 +1,5 @@
-/* falcon-boot: talking to a TPM, 1.2 or 2.0 (docs/notes/argon2-totp.md
- * Section 2).
+/* falcon-boot: talking to a TPM, 1.2 or 2.0 (DESIGN Section
+ * 12.15).
  *
  * Purpose. The station's TOTP seed lives in TPM NV storage, readable only
  * when the PCRs match a known-good boot, and travels to falcon encrypted.

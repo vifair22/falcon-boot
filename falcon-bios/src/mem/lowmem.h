@@ -1,5 +1,5 @@
 /* falcon-bios: taking a block off the top of conventional memory for a
- * resident (docs/notes/bios-route.md Section 7.1; DESIGN Section 13.6).
+ * resident (DESIGN Section 13.6).
  *
  * The only region a chainloaded bootloader leaves alone below a megabyte is
  * one the BIOS says is not there, so a resident lives in kilobytes the word

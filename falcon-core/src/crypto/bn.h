@@ -1,7 +1,7 @@
 /* falcon-boot: fixed-width modular arithmetic for public-key operations.
  *
- * Purpose. Two consumers, both in the TPM path (docs/notes/argon2-totp.md
- * Section 2): the P-256 field under the TPM 2.0 session salt (p256.c), and
+ * Purpose. Two consumers, both in the TPM path (DESIGN
+ * Section 12.15): the P-256 field under the TPM 2.0 session salt (p256.c), and
  * the RSA public-key operation that carries a TPM 1.2 transport session's
  * secret to the SRK (rsa.c). Neither needs more than modular multiplication,
  * addition, subtraction and exponentiation over a fixed odd modulus.

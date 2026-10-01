@@ -1,4 +1,4 @@
-# falcon-boot coverage corpus (docs/notes/coverage-roadmap.md Section 2).
+# falcon-boot coverage corpus.
 #
 # One ISO per row, pinned by SHA-256. tools/coverage/corpus-fetch.sh fetches
 # and verifies them into $FALCON_CORPUS (default /srv/falcon/corpus);
@@ -6,7 +6,7 @@
 #
 # Columns, tab-separated:
 #   id        short stable name; the scorecard row and the harness's file name
-#   tier      A, B or C (roadmap Section 2)
+#   tier      A, B or C
 #   family    what the ISO is, for the scorecard; not what family.c says
 #   sha256    of the file as published
 #   file      the name it is stored under in the corpus directory
@@ -16,8 +16,8 @@
 #   arch      optional: i686 for a 32-bit ISO, absent for x86_64. A 32-bit
 #             ISO runs in the BIOS columns only (the UEFI loader is x86-64
 #             and has no blessed route to offer it), and a 64-bit one is not
-#             run in bios32, the Pentium III column, where its kernel is
-#             refused by design (docs/notes/bios-route.md Section 6h)
+#             run in bios32, the i686 column, where its kernel is
+#             refused by design
 #
 # Rows are added as a family is worked on. A row is removed only when its URL
 # dies and a successor is pinned in its place.
@@ -42,9 +42,8 @@ clonezilla-3.3.3-15	A	debian-live	482518ea32af3b82ed15d09e2e7714806775deb62aeed8
 gentoo-min-20260913	A	gentoo	4f155acdffd6b9ea88c69a06a22fb4db1ca780d37fd11dd370510ec28a3ab546	install-amd64-minimal-20260913T163055Z.iso	https://distfiles.gentoo.org/releases/amd64/autobuilds/20260913T163055Z/install-amd64-minimal-20260913T163055Z.iso
 # Hiren's is Tier C, not A: the project's last release is 1.0.8 (2024) and
 # its Windows 10 1809-era bootmgr faults on firmware that write-protects
-# loader pages, as a bare CD with nothing of ours in the chain (measured
-# 2026-09-19 under edk2 202508). Tracked, no target; Macrium's rescue disc
-# is Tier A's WinPE.
+# loader pages, as a bare CD with nothing of ours in the chain. Tracked, no
+# target; Macrium's rescue disc is Tier A's WinPE.
 hbcd-pe-1.0.8	C	windows-pe	8c4c670c9c84d6c4b5a9c32e0aa5a55d8c23de851d259207d54679ea774c2498	HBCD_PE_x64.iso	https://www.hirensbootcd.org/files/HBCD_PE_x64.iso
 gparted-1.8.1-6	A	debian-live	d789c38779f0d6f7026c12f44c2c52a04f66e28a1aea7d51f3045ad1bbf28411	gparted-live-1.8.1-6-amd64.iso	https://downloads.sourceforge.net/project/gparted/gparted-live-stable/1.8.1-6/gparted-live-1.8.1-6-amd64.iso
 cachyos-260809	A	arch	959f6577f45e25ee9fd8c220fd221b08e4ea79412c7315c0f922dd6d86d5e33c	cachyos-desktop-linux-260809.iso	https://cdn77.cachyos.org/ISO/desktop/260809/cachyos-desktop-linux-260809.iso
@@ -73,7 +72,7 @@ alpine-std-x86-3.24.2	B	alpine	deb7d2fbd0749c7ff1bdfeb9d2541da6d611a902869ea1d16
 archlinux32-2024.07.10	A	arch	5f16c0f006a096c62dedc7d33d24d4e7721e07d7e26b3be902bef77c8da3482b	archlinux32-2024.07.10-i686.iso	https://mirror.archlinux32.org/archisos/archlinux32-2024.07.10-i686.iso	i686
 debian-netinst-12.15-i386	B	debian-installer	71506f6fa501d4ad50d0835666f5102e9c9b090123ca2668b995a911009c0a69	debian-12.15.0-i386-netinst.iso	https://cdimage.debian.org/cdimage/archive/12.15.0/i386/iso-cd/debian-12.15.0-i386-netinst.iso	i686
 #
-# 32-bit media, 2026-09-24: the BIOS columns only (the arch column). The
+# 32-bit media: the BIOS columns only (the arch column). The
 # zipped upstreams (FreeDOS, ReactOS, memtest86+) are local rows naming
 # the zip and its hash, since corpus-fetch.sh does not unpack archives.
 # FreeDOS, memtest86+, ReactOS and Haiku write nothing to serial and take
@@ -93,10 +92,10 @@ antix-26-386-full	A	antix	64289e3bd26459e7d1acaf702eb411729c3bed87b2c2ab4a3836ed
 tinycore-17.1	B	tinycore	877f65d7e4fd2629ff06ebdd24dc982b50141fe3f8c8b0e7f01e089cec365357	TinyCore-17.1.iso	https://distro.ibiblio.org/tinycorelinux/17.x/x86/release/TinyCore-17.1.iso	i686
 slackware-15.0-dvd	B	slackware	f795ef602707bcd0c2e615e88b307f71a18039ee54c89a0109588500258991c2	slackware-15.0-install-dvd.iso	https://mirrors.slackware.com/slackware/slackware-iso/slackware-15.0-iso/slackware-15.0-install-dvd.iso	i686
 #
-# Windows before 10, 2026-09-25, supplied by the user (Microsoft no longer
+# Windows before 10, supplied by the user (Microsoft no longer
 # offers them). 2000 and XP install through a text-mode setup with no WIM,
 # which the Windows route does not reach; Vista and 7 have a WIM but a
-# WinPE that cannot attach an ISO; 8.1 has both (bios-route.md 6k).
+# WinPE that cannot attach an ISO; 8.1 has both.
 windows-2000-pro-x86	C	windows	0d901b135b29826e34588e3a9facd33dbed299be38a773fe36c75a13ea2740c1	windows-2000-pro-x86.iso	local:Windows 2000 Professional (W2PFPP_EN), i386, supplied by the user	i686
 windows-xp-pro-sp3-x86	C	windows	fd8c8d42c1581e8767217fe800bfc0d5649c0ad20d754c927d6c763e446d1927	windows-xp-pro-sp3-x86.iso	local:Windows XP Professional SP3 volume licence (x14-73974), i386, supplied by the user	i686
 windows-xp-pro-x64	C	windows	7c24e588a16021cb88c37935d42b91ecbbd47de319b00ff39745f0f5577585c6	windows-xp-pro-x64.iso	local:Windows XP Professional x64 (ARMPXVOL_EN), supplied by the user

@@ -163,9 +163,9 @@ void say_block_devices(void)
  * attach a SCSI device and publish /sys/block/sdX. There is no udev in here to
  * wait on, so waiting is this loop.
  *
- * The rig never showed it: an emulated SATA disk is present before init runs,
- * so a single pass always succeeded there and the race was invisible until the
- * appliance met a real USB stick (2026-09-13) and reported no stick found.
+ * The rig never shows it: an emulated SATA disk is present before init runs,
+ * so a single pass always succeeds there, and the race surfaces only against
+ * a real USB stick.
  *
  * Bounded by wall clock rather than attempt count, for the same reason the
  * same guard in falcon-winjump is: one pass costs whatever its slowest device

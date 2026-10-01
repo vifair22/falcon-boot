@@ -1,5 +1,4 @@
-/* falcon-bios: the personal OS, unwrapped (docs/notes/bios-route.md Section
- * 4.4; docs/DESIGN.md Section 5).
+/* falcon-bios: the personal OS, unwrapped (docs/DESIGN.md Section 5).
  *
  * A UKI is PE32+ and has no BIOS entry point, so the verb here is not
  * "chainload". It is unwrapped: `.linux` inside a UKI is a plain bzImage

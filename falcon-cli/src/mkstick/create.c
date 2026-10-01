@@ -107,7 +107,7 @@ static const cli_opt create_opts[] = {
       DEFAULT_STAGE3 ")" }
 };
 
-/* ---- filesystem choices (DESIGN Section 9) ----
+/* ---- filesystem choices (DESIGN Section 8) ----
  *
  * The flags exist so the CLI surface is future-proof, and the lists exist so
  * it stays honest: a driver target DESIGN sanctions but nobody has written is
@@ -123,7 +123,7 @@ static const cli_opt create_opts[] = {
 static const char *const p2_implemented[] = { "exfat" };
 static const char *const p3_implemented[] = { "ext4" };
 
-/* Sanctioned in DESIGN Section 9, write on demand. Named in the refusal so a
+/* Sanctioned in DESIGN Section 8, write on demand. Named in the refusal so a
  * user asking for one learns it is planned rather than rejected. */
 static const char *const sanctioned[] = {
     "exfat", "ext4", "fat32", "xfs", "btrfs"

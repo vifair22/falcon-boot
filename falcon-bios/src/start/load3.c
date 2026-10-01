@@ -1,8 +1,7 @@
 /* falcon-bios: stage 2's last job, finding stage 3 and reading it in
- * (docs/notes/bios-route.md Section 6; docs/DESIGN.md Section 3.3).
+ * (docs/DESIGN.md Section 3.3).
  *
- * This is C rather than more assembly for the reason Section 5.3 gives: it
- * decides things - whether the header is a header, how many sectors that
+ * This is C rather than more assembly because it decides things - whether the header is a header, how many sectors that
  * length is, what to say when the read fails - and everything decidable is C.
  * The transport underneath it is bios_disk_read, the same callback
  * falcon-core reads a partition table through.

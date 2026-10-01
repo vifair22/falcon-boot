@@ -1,6 +1,6 @@
 # shellcheck shell=bash
 # A software TPM for the rigs, sourced (falcon-efi/tools/run-tpm-rig.sh;
-# docs/notes/argon2-totp.md Section 2).
+# DESIGN Section 12.15).
 #
 # One swtpm per boot, in the version a case names: "2" for a TPM 2.0 on the
 # TIS interface, "2crb" for a TPM 2.0 on CRB (what firmware TPMs, Intel PTT

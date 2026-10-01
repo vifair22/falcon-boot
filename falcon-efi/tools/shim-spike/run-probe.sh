@@ -52,7 +52,7 @@ rm -rf "$ESP"
 mkdir -p "$ESP/EFI/BOOT"
 
 # Second-stage name and MokManager name are compiled into each shim; these
-# are the values read out of the binaries (see docs/notes/shim-spike.md).
+# are the values read out of the binaries (DESIGN Section 7.6).
 case "$variant" in
     none)
         cp "$PROBE" "$ESP/EFI/BOOT/BOOTX64.EFI"

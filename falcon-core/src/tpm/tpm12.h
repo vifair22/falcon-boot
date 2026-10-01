@@ -1,5 +1,5 @@
 /* falcon-boot: the TPM 1.2 commands the TOTP seed needs
- * (docs/notes/argon2-totp.md Section 2).
+ * (DESIGN Section 12.15).
  *
  * The seed is an NV area whose pcrInfoRead names the PCRs chosen at
  * enrollment and their composite then (digestAtRelease), with no read

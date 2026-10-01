@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# falcon-boot: the core step's matrix cells (docs/notes/station-rework.md
-# section 6), each booted headless and judged from serial like
+# falcon-boot: the core step's matrix cells (docs/DESIGN.md Section 10),
+# each booted headless and judged from serial like
 # falcon-bios/tools/run-jump-rig.sh. UEFI is OVMF (ovmf.sh finds it), BIOS
 # is QEMU's SeaBIOS.
 #
@@ -72,7 +72,7 @@
 #                  a stick whose p3 argon2id slot asks for 512 MiB, in a
 #                  384 MiB machine: the passphrase is refused with the page
 #                  that says how much the slot needs and how much is free
-#                  (docs/notes/argon2-totp.md Section 1)
+#                  (DESIGN Section 5)
 #   probe-keys-uefi, probe-keys-bios
 #                  stick-a on a disk QEMU throttles to SLOW_BPS: Esc at the
 #                  root, pressed while rows are still pending, acts within
@@ -102,7 +102,7 @@
 #                  ignored the journal would find personal.efi, one before
 #                  this did not boot at all), and falcon-bios says on serial
 #                  that it read the shelf through its journal
-#   64-only-bios32 the same stick under SeaBIOS on a Pentium III (no long
+#   64-only-bios32 the same stick under SeaBIOS on an i686 (no long
 #                  mode): an ISO whose every kernel is 64-bit is listed with
 #                  {64-BIT ONLY}, a multi-arch one (a 64-bit and a 32-bit
 #                  kernel) is not, and choosing the first shows its page and
@@ -419,7 +419,7 @@ boot() {
                 -drive "if=pflash,format=raw,file=$R/vars.fd")
         ;;
     bios) fwargs=(-machine pc) ;;
-    # The coverage harness's bios32 column: a Pentium III, no long mode.
+    # The coverage harness's bios32 column: an i686, no long mode.
     bios32) fwargs=(-machine pc); cpu=pentium3 ;;
     esac
     rm -f "$R/serial.log" "$R/mon.sock"

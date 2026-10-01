@@ -9,8 +9,8 @@
  *                           confirmed at MokManager. Absent is the normal,
  *                           validating case.
  *
- * Measured under OVMF secboot with Fedora shim 16.1, 2026-09-13, which is why
- * the RT mirror rather than MokSBState itself is what this module reads:
+ * The RT mirror rather than MokSBState itself is what this module reads,
+ * because shim 16.1 does this:
  *
  *   MokSBState   written NV+BS (attr 0x3):  present here, value 1, and shim
  *                honours it -> MokSBStateRT appears alongside it, attr 0x6

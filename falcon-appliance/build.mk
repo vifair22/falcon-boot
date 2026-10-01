@@ -1,5 +1,5 @@
 # falcon-appliance: the on-stick signing appliance (docs/DESIGN.md Section
-# 7.5, build order step 8). A kernel plus an initramfs whose PID 1 is
+# 7.5). A kernel plus an initramfs whose PID 1 is
 # falcon-appliance/src, built into a UKI by the recipe in
 # falcon-appliance/image; mkstick signs it and stages it on p3.
 

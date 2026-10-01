@@ -176,7 +176,7 @@ static void test_family_windows(void **state)
 
 /* Windows 2000/XP: no /sources, no WinPE - the text-mode setup loader and its
  * script live in /i386. Detected as Windows so the loader takes the
- * driver-injection route (windows-route.md 7.4). Both halves are required, so
+ * driver-injection route (DESIGN Section 6.3). Both halves are required, so
  * an unrelated ISO that happens to carry a txtsetup.sif is not mistaken for it. */
 static void test_family_windows_xp(void **state)
 {

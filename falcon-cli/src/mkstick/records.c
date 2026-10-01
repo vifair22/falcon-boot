@@ -22,7 +22,7 @@
 static const uint8_t luks2_magic[6] = { 'L', 'U', 'K', 'S', 0xba, 0xbe };
 
 /* The MBR type bytes a FAT volume wears, and their hidden forms (the
- * contract's list: docs/notes/station-rework.md section 9). */
+ * contract's list: DESIGN Section 3). */
 static const uint8_t fat_types[] = {
     0x01, 0x04, 0x06, 0x0B, 0x0C, 0x0E, 0xEF,
     0x11, 0x14, 0x16, 0x1B, 0x1C, 0x1E

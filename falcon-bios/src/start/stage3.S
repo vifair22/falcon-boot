@@ -1,5 +1,4 @@
-/* falcon-bios stage 3: the header and the entry
- * (docs/notes/bios-route.md Section 6).
+/* falcon-bios stage 3: the header and the entry.
  *
  * WHY THERE IS A THIRD STAGE. Stage 2 is linked where real mode and protected
  * mode agree on what an address means, which puts a ceiling of about 33 KB on

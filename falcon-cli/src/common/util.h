@@ -33,8 +33,7 @@ cli_status util_mkdir_p(const char *path, mode_t mode);
 
 /* Overwrite a file's bytes before unlinking it. Used for the private key's
  * staging copy. Best effort by definition on a journalling filesystem, and
- * the comment at the call site says so; it still beats leaving the key in a
- * temp file for the next process that reuses the block. */
+ * the comment at the call site says so. */
 cli_status util_shred(const char *path);
 
 /* dst = a "/" b, with the separator collapsed. Fails rather than truncates. */

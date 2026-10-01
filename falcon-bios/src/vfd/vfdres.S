@@ -1,5 +1,5 @@
 /* falcon-bios: the resident INT 13h handler that serves an El Torito floppy
- * image as a memory disk (docs/notes/bios-route.md Sections 4.1 and 7.1).
+ * image as a memory disk.
  *
  * WHY THIS EXISTS. Some media boot a BIOS through a floppy-emulation El
  * Torito image (media type 1, 2 or 3) rather than a no-emulation CD: the

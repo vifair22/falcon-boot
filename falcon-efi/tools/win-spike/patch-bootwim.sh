@@ -7,7 +7,7 @@
 # This is the "bless-time" WinPE patch feasibility spike for falcon-boot. It
 # proves the whole preparation is Linux-only: no Windows host, no ISO rewrite.
 #
-# The design hinges on two measured facts (see the spike report):
+# The design hinges on two measured facts (DESIGN Section 6.3):
 #   1. wimlib rewrites boot.wim smaller than Microsoft ships it (garbage
 #      collection of slack plus better LZX), so after injecting a small signed
 #      driver the patched WIM is still <= the original byte length.

@@ -1,5 +1,5 @@
 /* falcon-boot: the TPM 2.0 commands the TOTP seed needs
- * (docs/notes/argon2-totp.md Section 2).
+ * (DESIGN Section 12.15).
  *
  * The seed is an NV index whose only read authorisation is a policy: a
  * PolicyPCR over the PCRs chosen at enrollment, bound to their values then

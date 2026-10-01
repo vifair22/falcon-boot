@@ -493,10 +493,9 @@ static void test_bless_suffix(void **state)
     assert_null(bless_suffix(&hit));
 }
 
-/* A prepared record, as an appliance from before DESIGN Section 6.4 wrote
- * it: the loader patches Windows media itself now, so manifest_parse skips
- * the record and its ISO boots plain, with no label. A blessed record beside
- * it is unaffected. */
+/* A kind=prepared record: the loader patches Windows media itself (DESIGN
+ * Section 6.4), so manifest_parse skips the record and its ISO boots plain,
+ * with no label. A blessed record beside it is unaffected. */
 static const char g_manifest_prepared[] =
     "# falcon-boot manifest\n"
     "\n"

@@ -9,14 +9,10 @@
  * validation left on: everything the boot executes is covered by a signature
  * the machine has enrolled.
  *
- * What this module is NOT. It does not verify the UKI and it holds no key:
- * the image is handed to the same shim-verified load path everything else
- * goes through (DESIGN Section 7.6), which enforces when Secure Boot is on
- * and permits when it is off, and a refusal here is the platform's answer
- * reported verbatim. There is no override, no fallback that relaxes
- * anything, and no path by which a manifest edit changes what may run: the
- * manifest chooses which image is offered to the platform, never whether the
- * platform accepts it (see blesscore.h for the full posture).
+ * The image is handed to the shim-verified load path (DESIGN Section 7.6),
+ * and a refusal is the platform's answer reported verbatim. The manifest
+ * chooses which image is offered to the platform, not whether the platform
+ * accepts it.
  *
  * Two halves, split by whether firmware is involved. blesscore.{h,c} holds
  * the record cache and the Section 8.1 freshness rule and is host-tested;
@@ -152,7 +148,7 @@ void bless_set_map(const UINT8 *map, UINTN len);
  * all, and handed to the shim-verified load path of Section 7.6, which
  * enforces when Secure Boot is on and permits when it is off.
  *
- * Nothing is verified here and nothing is relaxed. A payload the platform
+ * A payload the platform
  * refuses comes back EFI_SECURITY_VIOLATION with the two doors named, one of
  * which is signing the file itself, since that is what the platform is
  * looking at.

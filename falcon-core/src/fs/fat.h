@@ -1,4 +1,4 @@
-/* falcon-boot: read-only FAT12/16/32 (docs/notes/iso-reader-route.md stage B).
+/* falcon-boot: read-only FAT12/16/32 (DESIGN Section 6, the ISO path).
  *
  * Why the loader needs a FAT driver at all, given that exFAT is next door and
  * the firmware has one of its own:
@@ -10,7 +10,7 @@
  *      actually boots, and the menu's survey has to keep asking the firmware.
  *   2. p1 is vfat. Nothing in falcon-core can read the stick's own ESP today;
  *      the loader goes through the firmware's Simple File System protocol,
- *      which a BIOS build would not have (docs/notes/bios-route.md).
+ *      which a BIOS build would not have.
  *
  * exFAT is a different filesystem and exfat.c does not read this one: no FAT
  * chain, no 8.3 names, no LFN. They share a marketing name and nothing else.

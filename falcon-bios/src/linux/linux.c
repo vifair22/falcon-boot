@@ -1,5 +1,4 @@
-/* falcon-bios: booting a Linux kernel directly
- * (docs/notes/bios-route.md Section 4.2).
+/* falcon-bios: booting a Linux kernel directly.
  *
  * The 32-bit entry of the x86 boot protocol, which is the one route into a
  * kernel that does not require going back to real mode, and the one every
@@ -8,9 +7,7 @@
  * 32-bit protected mode with paging off, which is exactly the state the
  * protocol asks for, so the handoff is: read the setup header out of the
  * image, load the protected-mode half somewhere it will accept, fill in a
- * zero page, and jump. (It took the 64-bit entry while the loader ran in
- * long mode, and could not boot a 32-bit kernel at all; bios-route.md
- * Section 6h.)
+ * zero page, and jump.
  *
  * WHAT THE PROTOCOL REQUIRES AT THE JUMP, and every one of these is a way to
  * fail silently if it is wrong:
@@ -327,8 +324,8 @@ extern const uint8_t linux_move_stub[];
 extern const uint32_t linux_move_stub_len;
 
 /* Never returns. Everything the kernel needs is in memory; this is the
- * handoff itself, and it is the fifth and last of Section 5.3's assembly
- * jobs, written here as inline asm because it is six instructions and
+ * handoff itself, and it is the fifth and last of the assembly jobs
+ * bios.h lists, written here as inline asm because it is six instructions and
  * separating them from the values they use would help nobody.
  *
  * A nonzero `move` is a staged kernel: `move` bytes at `from` go to `entry`

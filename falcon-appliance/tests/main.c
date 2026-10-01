@@ -1,8 +1,8 @@
 /* falcon-appliance's host test binary. The appliance is PID 1 in an initramfs
- * and cannot be stood in for by a host process; route.c, its half of the
- * Windows auto-prep contract (DESIGN Section 6.3.1), is split out so it can
- * be: three enums in and one out. stickid.c, which partitions are the
- * stick's, is split out the same way.
+ * and cannot be stood in for by a host process; route.c, what each file on p2
+ * is owed (DESIGN Sections 7.2 and 7.5), is split out so it can be: three
+ * enums in and one out. stickid.c, which partitions are the stick's, is
+ * split out the same way.
  */
 
 #include "tests.h"

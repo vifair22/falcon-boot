@@ -3,7 +3,7 @@
 # under OVMF and hand the operator a machine where the question can be asked
 # directly. The question: does WinPE mount the UDF volume of an attached
 # disk-class VHD whose content is the ISO itself? If yes, the Windows
-# injector needs no driver (see docs/notes when this spike is written up).
+# injector needs no driver (DESIGN Section 6.3).
 #
 # Interactive by design; drive it from the QEMU window:
 #   1. "Press any key to boot from CD"  ->  press a key

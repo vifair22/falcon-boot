@@ -2,12 +2,11 @@
  *
  * ONE pass, one inventory, every consumer reads it.
  *
- * Before this module each path ran its own enumeration loop: the ISO scan
- * looked for exFAT volumes, the personal-OS scan looked for LUKS2 headers,
- * and a third would have looked for something else. Three loops over the same
- * handles is three chances to disagree about what is plugged in, and the
- * failure mode is the quiet one: a device discovered for one purpose and
- * missed for another, with nothing on screen to say so.
+ * One enumeration loop per consumer (the ISO scan looking for exFAT, the
+ * personal-OS scan for LUKS2 headers) is that many chances to disagree about
+ * what is plugged in, and the failure mode is the quiet one: a device
+ * discovered for one purpose and missed for another, with nothing on screen
+ * to say so.
  *
  * So the Block I/O handles are enumerated exactly once, at startup, and every
  * handle is classified there and then: is media present, does it carry a

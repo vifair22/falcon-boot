@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# falcon-boot: boot one coverage case and judge it (docs/notes/
-# coverage-roadmap.md Section 2).
+# falcon-boot: boot one coverage case and judge it.
 #
 # A case is one stick (tools/coverage/mk-case-stick.sh) booted under OVMF in
 # one Secure Boot state, with one route taken at the loader's menu. The stick
@@ -53,7 +52,7 @@
 #   STATE    off | ms | own | bios | bios32   (tools/coverage/states.sh)
 #   ROUTE    dnd      Enter on the image row: whatever the loader does by
 #                     default with an unblessed image
-#            chain    the chainload key: the ISO's own EFI loader (M2), or
+#            chain    the chainload key: the ISO's own EFI loader, or
 #                     under bios its own BIOS loader through the resident
 #                     INT 13h handler
 #            blessed  Enter on a blessed image row
@@ -101,8 +100,8 @@ rm -f "$SERIAL" "$PCAP" "$MON" "$RESULT" "$OUTDIR/screen.png"
 # This script runs under `set -e`, so any command that fails on its way to
 # the verdict took it out with no result file and a stale mon.sock beside
 # it. The scorecard then had no cell to render and the corpus showed a
-# silent gap - which is what two ESXi cases did, twice, while the loader's
-# own serial said it had behaved correctly. A cell reading ERROR with an
+# silent gap, even though the loader's own serial said it had behaved
+# correctly. A cell reading ERROR with an
 # exit status is a defect somebody can chase; a missing cell has to be
 # noticed first.
 #
@@ -514,8 +513,8 @@ done
 # and falcon-bios appends it to a direct boot itself, but a direct or chained
 # boot under UEFI runs the ISO's OWN cmdline and many of them write to the
 # screen alone. Clonezilla's default entry is "Clonezilla live (VGA
-# 800x600)": measured 2026-09-20, its screenshot shows ocs-scan-disk running
-# and listing the disk it found, while serial stayed empty for 300s. The
+# 800x600)": its screenshot shows ocs-scan-disk running and listing the
+# disk it found, while serial stays empty for 300s. The
 # reason says which entry, so the next reader does not have to rediscover
 # that.
 # `|| true`: no such line is the common case under pipefail, and set -e

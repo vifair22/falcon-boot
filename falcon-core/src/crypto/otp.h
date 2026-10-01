@@ -1,7 +1,7 @@
 /* falcon-boot: one-time codes, HOTP (RFC 4226) and TOTP (RFC 6238), both
  * HMAC-SHA1.
  *
- * Purpose. The station's tamper check (docs/notes/argon2-totp.md Section 2):
+ * Purpose. The station's tamper check (DESIGN Section 12.15):
  * the TPM releases a 20-byte seed only when the boot measured what it did at
  * enrollment, and falcon shows the code the seed gives for the current
  * 30-second step. The user compares it with an authenticator that holds the

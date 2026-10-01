@@ -61,8 +61,8 @@ cli_status mkstick_guid_selfcheck(void);
 #define MKS_P2_BLESSED_DIR "falcon/blessed"
 
 /* The stick's p3 keyslot cost: argon2id at one fixed cost every machine
- * the stick boots can meet (DESIGN Section 3, docs/notes/argon2-totp.md
- * Section 1 and open item 1). This is the one place it is written; mkstick
+ * the stick boots can meet (DESIGN Section 3). This is the one place it
+ * is written; mkstick
  * create formats with it, status measures p3's slots against it, and
  * falcon-efi/tools/mk-test-stick.sh reads the numbers out of this file for
  * the rig stick.
@@ -72,8 +72,7 @@ cli_status mkstick_guid_selfcheck(void);
  * 548 MHz), linear in memory and passes, so 64 MiB costs 5.4 s at time 2
  * and 10.5 s at time 4 there, against 0.20 s and 0.39 s on an i9.
  *
- * Memory 32 MiB with time 4: the same work as the 64 MiB, time 2 first
- * decided (about 5.4 s on the A21m at 548 MHz, 0.2 s on an i9), since
+ * Memory 32 MiB with time 4: the same work as 64 MiB at time 2, since
  * cryptsetup will not go below time 4 (below). Half the memory an attacker
  * needs per guess, still memory-hard, and a 512 MB Pentium III has it free
  * above falcon-bios's 64 MB heap floor many times over.

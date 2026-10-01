@@ -1,5 +1,5 @@
 /* falcon-bios: Windows install media, patched at boot
- * (docs/DESIGN.md Section 6.4, docs/notes/bios-route.md Section 4.3).
+ * (docs/DESIGN.md Section 6.4).
  *
  * What the virtual CD serves, against the ISO it serves from, which is the
  * UEFI route's list unchanged because the computation is the same file's
@@ -96,8 +96,8 @@ static uint8_t  g_map[EXTMAP_HDR_LEN + EXTMAP_MAX_EXTENTS * EXTMAP_EXT_LEN];
 /* What Windows asks of a processor before it runs. PAE every Windows of the
  * WIM era needs. NX and SSE2 only Windows 8 and later need: without them
  * bootmgr or winload resets with nothing on screen (measured on the harness's
- * Pentium III, which has neither), but Vista and 7 run without either, so
- * `modern` gates that half. A Pentium III boots Vista or 7 x86 and not Windows
+ * i686, which has neither), but Vista and 7 run without either, so `modern`
+ * gates that half. An i686 without them boots Vista or 7 x86 and not Windows
  * 10 x86. Returns the missing feature, or NULL when the processor will do. */
 static const char *win_cpu_lacks(int modern)
 {
@@ -605,8 +605,8 @@ static const uint8_t XP_BAKE_MAGIC[16] = {
 };
 
 /* Writes the extent map into the driver's baked struct in the served .sys, so
- * its DriverEntry finds the stick and the ISO's bytes with no winjump (piece 3,
- * windows-route.md 7.4). Best effort: without it the driver still loads, it
+ * its DriverEntry finds the stick and the ISO's bytes with no winjump. Best
+ * effort: without it the driver still loads, it
  * just cannot reach its boot device. */
 static void xp_bake_map(uint8_t *sys, size_t sys_len,
                         const uint8_t *map, size_t map_len)
@@ -628,8 +628,8 @@ static void xp_bake_map(uint8_t *sys, size_t sys_len,
 }
 
 /* Windows 2000/XP have no WinPE, so the loader cannot patch a running PE; it
- * injects falcon-vdisk into text-mode setup instead (DESIGN Section 6.3,
- * windows-route.md 7.4). The served ISO is edited in memory the way the
+ * injects falcon-vdisk into text-mode setup instead (DESIGN Section 6.3).
+ * The served ISO is edited in memory the way the
  * boot.wim relocation edits an ISO 9660-only medium, but the targets are
  * i386/txtsetup.sif and a new i386/_FALCON.SYS:
  *   - txtsetup.sif grows by three lines (txtsetup_inject) and is served whole
@@ -644,9 +644,8 @@ static void xp_bake_map(uint8_t *sys, size_t sys_len,
  * not 2000/XP media, so the caller boots it as it is. Returns only when it did
  * not boot, with *r filled in.
  *
- * This wires the driver in; giving its DriverEntry the stick's extents at
- * boot-start with no winjump (piece 3, windows-route.md 7.4) is separate, so
- * for now setup loads the driver and then cannot reach its boot device. */
+ * The driver's DriverEntry gets the stick's extents at boot-start from the
+ * map xp_bake_map writes into the served .sys, with no winjump. */
 int win_xp_boot(bios_disk *d, fs_vol *p2, const part_entry *p2part,
                 const fs_dirent *iso, boot_result *r, int *not_xp)
 {

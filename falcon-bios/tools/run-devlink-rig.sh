@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # falcon-boot: DevLink recovery (docs/DESIGN.md Section 12.5) off the stick,
-# on the machine it is for: SeaBIOS, a Pentium (-cpu pentium, no CMOV) and
+# on the machine it is for: SeaBIOS, an i586 (-cpu pentium, no CMOV) and
 # 32 MB. Each case boots the rig stick (mk-test-stick.sh) with the ISO in its
 # library and is judged from both serial ports: COM1 carries falcon-bios's
 # lines until the kernel starts and then belongs to the devlink agent, which

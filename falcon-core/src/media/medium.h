@@ -1,5 +1,5 @@
 /* falcon-boot: a medium as the set of filesystems in it
- * (docs/notes/iso-reader-route.md stage C).
+ * (DESIGN Section 6, the ISO path).
  *
  * A CD is not one filesystem. It is a primary ISO9660 tree, possibly a
  * supplementary Joliet one, possibly Rock Ridge over the primary one,
@@ -13,10 +13,9 @@
  * ---- this is the per-platform boundary ----
  *
  * Under UEFI, `read` and `ctx` are an open fs_file on the exFAT partition.
- * Under BIOS they are INT 13h behind the same signature
- * (docs/notes/bios-route.md Section 1). Nothing below can tell the
- * difference, which is the property a BIOS build needs and the reason this
- * module is in falcon-core rather than in the loader.
+ * Under BIOS they are INT 13h behind the same signature. Nothing below can
+ * tell the difference, which is the property a BIOS build needs and the
+ * reason this module is in falcon-core rather than in the loader.
  *
  * ---- what it does NOT do ----
  *

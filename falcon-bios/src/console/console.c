@@ -1,4 +1,4 @@
-/* falcon-bios: serial output (docs/notes/bios-route.md Section 6).
+/* falcon-bios: serial output.
  *
  * COM1 directly rather than INT 10h, and the reason is the same one stage 1
  * brings the port up before it does anything else: a machine with no usable

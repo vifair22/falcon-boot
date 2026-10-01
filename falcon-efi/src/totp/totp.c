@@ -193,7 +193,7 @@ static void put_hex32(wbuf *w, uint32_t v)
 }
 
 /* Firmware time as seconds since the epoch, taken as UTC whatever time zone
- * it names: the design's choice (docs/notes/argon2-totp.md Section 2), and
+ * it names: the design's choice (DESIGN Section 12.15), and
  * what an authenticator on a phone compares against. */
 static int clock_now(EFI_SYSTEM_TABLE *st, uint64_t *now)
 {

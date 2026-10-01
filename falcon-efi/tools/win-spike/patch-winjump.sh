@@ -4,12 +4,13 @@
 # \sources\boot.wim, Linux-side, and overlay the result back into the ISO in
 # place at its original byte length.
 #
-# This is the rig-side stand-in for what DESIGN Section 6.3 will have the
-# bless tool do. The difference is deliberate and is the whole reason this
-# proof needs no loader changes: bless will compute an override list and serve
-# the patched WIM from a sidecar, leaving the user's ISO untouched, whereas
-# this script writes the same bytes straight into the ISO. The bytes WinPE
-# sees are identical either way, so what boots here is what will boot there.
+# This is the rig-side stand-in for what the loader does at boot (DESIGN
+# Section 6.3): bless leaves Windows media alone, and the loader patches
+# boot.wim in memory as it serves the virtual CD. The difference is
+# deliberate and is the whole reason this proof needs no loader changes:
+# the loader's patch leaves the user's ISO untouched, whereas this script
+# writes the same bytes straight into the ISO. The bytes WinPE sees are
+# identical either way, so what boots here is what will boot there.
 #
 # The three injected entries, all in \Windows\System32 of one WIM image:
 #   winpeshl.exe        <- our jump binary (replaces Microsoft's)

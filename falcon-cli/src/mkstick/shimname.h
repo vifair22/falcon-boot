@@ -5,10 +5,10 @@
  * second stage; which filename that is, is a compile-time option of the shim
  * build, and our loader has to be installed under exactly that name or shim
  * finds nothing. The 2026-09-12 spike measured `\\grubx64.efi` on Fedora and
- * Debian 16.1 and `\\grub.efi` on openSUSE 16.1 (docs/notes/shim-spike.md
- * Section 2), which is precisely why DESIGN Section 4 says to read the name
- * from the binary rather than assume it: a future shim swap must be a data
- * change, not a code change nobody remembers to make.
+ * Debian 16.1 and `\\grub.efi` on openSUSE 16.1, which is precisely why
+ * DESIGN Section 4 says to read the name from the binary rather than
+ * assume it: a future shim swap must be a data change, not a code change
+ * nobody remembers to make.
  *
  * The technique, and why it is sound. Shim's Makefile passes the default as
  *   -DDEFAULT_LOADER='L"\\\\grubx64.efi"'

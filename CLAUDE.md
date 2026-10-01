@@ -317,7 +317,7 @@ falcon-efi and falcon-bios, which never share a set, may both have a `pos/`.
   opt-in and not built by `all`, and so is putting it on a stick: `mkstick
   bios <target>` installs it, `mkstick create` does not. A BIOS machine has
   no Secure Boot, no shim and no db, so this route has no blessed path and
-  installing it changes what a stick can reach (bios-route.md Section 7.3).
+  installing it changes what a stick can reach (DESIGN Section 3.3).
   One layout for every BIOS install (DESIGN Section 3.3): stage 1 in the
   440 bytes of boot code at the head of LBA 0, with stage 2's place patched
   in by the installer (LBA and length, read by AH=42h or by CHS); stage 2

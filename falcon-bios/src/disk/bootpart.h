@@ -1,5 +1,4 @@
-/* falcon-bios: finding the `boot` partition (docs/DESIGN.md Section 3.3;
- * docs/notes/station-rework.md section 9).
+/* falcon-bios: finding the `boot` partition (docs/DESIGN.md Section 3.3).
  *
  * The FAT partition whose boot sector carries an identity record with role
  * `boot` is where stage 3 and the next-boot marker are, at the sectors the

@@ -1,12 +1,12 @@
-/* falcon-bios stage 1: the master boot record (docs/notes/bios-route.md
- * Sections 4.1 and 5.3; docs/DESIGN.md Section 3.3).
+/* falcon-bios stage 1: the master boot record (docs/DESIGN.md Section
+ * 3.3).
  *
  * 512 bytes. The BIOS loads this one sector to 0x7C00 in 16-bit real mode
  * with DL holding the drive it came from, and jumps to byte 0. Everything
  * this file does is get stage 2 into memory and jump to it; every decision
- * worth making is made in C, up there, which is Section 5.3's rule.
+ * worth making is made in C, up there.
  *
- * gas rather than NASM (Section 5.2): .S is preprocessed, so the load
+ * gas rather than NASM: .S is preprocessed, so the load
  * address, the offsets and the serial port live in one header that the C
  * side can include too, rather than being written down twice.
  *

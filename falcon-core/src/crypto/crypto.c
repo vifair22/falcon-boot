@@ -49,11 +49,9 @@ int crypto_has_aesni(void)
      * the AES instructions, so bit 25 is the one that gates correctness on
      * x86-64, where SSE2 is architectural.
      *
-     * On i686 (falcon-bios, docs/notes/bios-route.md Section 6h) SSE2 is
-     * not architectural, so EDX bit 26 is asked as well, though every part
-     * with AES-NI has it. This probe was x86-64 only until a benchmark of
-     * the p3 unlock showed the i686 loader on the portable path on a CPU
-     * with AES-NI: 229 ms against 197. */
+     * On i686 (falcon-bios, DESIGN Section 13.8) SSE2 is not
+     * architectural, so EDX bit 26 is asked as well, though every part
+     * with AES-NI has it. */
     if (__get_cpuid(1u, &eax, &ebx, &ecx, &edx) == 0) {
         return 0;
     }

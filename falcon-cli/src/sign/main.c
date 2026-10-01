@@ -20,11 +20,9 @@
  * signed, and re-blessing is the only way to take it back.
  *
  * What this tool never does: sign anything itself (it shells out to sbsign,
- * Section 8.1), decrypt p3, prompt for a passphrase, or relax any
- * enforcement anywhere. The private key is a file path the caller hands it,
- * and keeping that file encrypted at rest is the caller's job: on the
- * on-stick appliance it is cryptsetup that has just opened p3, and on a host
- * it is whatever the user's own key hygiene is (Section 7.5).
+ * Section 8.1), decrypt p3, or prompt for a passphrase. The private key is
+ * a file path the caller hands it; keeping it encrypted at rest is the
+ * caller's job (Section 7.5).
  */
 
 #include <sign/sign.h>
@@ -501,7 +499,7 @@ static int append_hook(const char *initrd)
     return rc;
 }
 
-/* ---- blessing a BSD medium (docs/notes/bsd-route.md, M7 part 2) ---- */
+/* ---- blessing a BSD medium (M7 part 2) ---- */
 
 /* The file inside the medium that the platform will be asked to run. Every
  * FreeBSD derivative keeps its loader here; it is also what the ISO's El

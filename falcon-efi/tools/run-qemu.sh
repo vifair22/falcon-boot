@@ -15,7 +15,7 @@
 #               falcon-efi/tools/mk-test-mok.sh). See the SECBOOT block below.
 #   --bios      SeaBIOS instead of OVMF: no pflash, no varstore, no Secure
 #               Boot, and the machine boots whatever is in the first drive's
-#               MBR. For falcon-bios work (docs/notes/bios-route.md); it
+#               MBR. For falcon-bios work (DESIGN Section 11.3); it
 #               refuses to combine with --secboot, which has no meaning on a
 #               platform with no db. Nothing about the UEFI paths changes.
 #

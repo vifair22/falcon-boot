@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # falcon-hook: boot one ISO's own kernel with the hook, without the loader
-# (docs/notes/coverage-roadmap.md M1).
+# (DESIGN Section 6.4).
 #
-# The rig the M1 exit is measured in. OVMF starts the ISO's kernel directly
+# OVMF starts the ISO's kernel directly
 # (QEMU -kernel/-initrd), with:
 #
 #   initrd   the ISO's own initrd(s), padded to 4 bytes, then a cpio holding

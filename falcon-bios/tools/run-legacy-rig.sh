@@ -26,8 +26,8 @@
 #   cf        the rig's PC Card bridge (falcon-pcc.c) with a CF card
 #   cf3v      carrying falcon-bios, the second a 3.3 V-only card: its
 #             stage 3 loads off the card as drive 0x81
-#   devlink   DevLink recovery off the station partition's /uki, on a
-#             Pentium (-cpu pentium) with 32 MB: the devlink client
+#   devlink   DevLink recovery off the station partition's /uki, on an
+#             i586 (-cpu pentium) with 32 MB: the devlink client
 #             reaches its agent on COM1
 #   windows   Windows 2000 from its own disk through the partition chain:
 #             screens are saved for NTLDR, the splash and the desktop

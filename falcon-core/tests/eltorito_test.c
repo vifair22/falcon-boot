@@ -1,5 +1,5 @@
 /* Tests for falcon-core/src/media/eltorito.c: the boot catalog reader
- * (docs/notes/iso-reader-route.md).
+ * (DESIGN Section 6, the ISO path).
  *
  * The contracts that matter are the two the corpus sweep of 2026-09-19 turned
  * up, because both are places a reasonable implementation would go wrong:

@@ -15,7 +15,7 @@ tools/analyze.sh --update-baseline
 ## Run it in the harness container
 
 The baseline is only meaningful beside a fixed set of analyzer versions, so
-the gate answers to one environment (decided 2026-09-20, recorded in
+the gate answers to one environment (recorded in
 `tools/analyze-baseline.txt` Section 0):
 
 ```sh
@@ -119,7 +119,7 @@ nothing. If one becomes necessary it belongs at the repo root, passed with
 
 ## Current status
 
-Baseline as of the first clean run: **27 entries, all triaged.**
+Current baseline: **27 entries, all triaged.**
 
 | Stage | Findings | Baselined |
 | --- | --- | --- |

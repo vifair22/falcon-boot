@@ -1,5 +1,5 @@
 /* Tests for falcon-core/src/media/bsdmd.c: the two byte edits that make a BSD
- * ISO boot itself as a memory disk (docs/notes/bsd-route.md, M7).
+ * ISO boot itself as a memory disk (DESIGN Section 6.4).
  *
  * The contracts that matter are that no existing byte moves (the record goes
  * in a directory extent's free tail, the config is exactly as long as the

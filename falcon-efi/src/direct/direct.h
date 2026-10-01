@@ -1,5 +1,5 @@
 /* falcon-boot: direct kernel boot of an ISO on p2 (docs/DESIGN.md Section
- * 6.4; docs/notes/coverage-roadmap.md W2 D1).
+ * 6.4).
  *
  * The ISO's own boot configuration names a kernel, initrds and a cmdline for
  * booting from its CD (falcon-core/src/media/bootcfg.c). This path reads all
@@ -50,7 +50,7 @@ typedef struct {
  * what boots it with Secure Boot off. ISO_SHIM loads the ISO's own shim
  * instead, which verifies the kernel against its vendor's certificate: on a
  * machine whose db trusts the Microsoft CA, a stock distro ISO boots with
- * Secure Boot on and no blessing (docs/notes/coverage-roadmap.md W2 D3a). */
+ * Secure Boot on and no blessing (DESIGN Section 11.2.10). */
 typedef enum {
     DIRECT_VIA_KERNEL = 0,
     DIRECT_VIA_ISO_SHIM
@@ -81,7 +81,7 @@ EFI_STATUS direct_map_build(EFI_SYSTEM_TABLE *st, fs_vol *p2,
                             const fs_dirent *iso, const UINT8 **map,
                             UINTN *len);
 
-/* D3b (docs/notes/d3-spike.md): boots iso through its own loader chain
+/* D3b (DESIGN Section 11.2.11): boots iso through its own loader chain
  * (its shim, its signed GRUB) with its grub.cfg's bytes replaced by one of
  * ours (falcon-core/src/media/grubcfg.h) and falcon-hook's archive served
  * past the ISO's end as one more initrd. For Secure Boot on, where the

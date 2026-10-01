@@ -313,7 +313,7 @@ typedef struct {
  * once the rows were probed lazily. It cannot happen: *s is tested before
  * each read and s advances only in the body, so a literal is read up to its
  * terminator and no further. The analyzer loses the literal's extent over a
- * long call chain (docs/notes/analyze-baseline.txt, section 5). Scoped to
+ * long call chain. Scoped to
  * this function, as falcon-cli/src/common/proc.c scopes its fd-leak one. */
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wanalyzer-out-of-bounds"
@@ -1121,9 +1121,9 @@ typedef enum {
 } boot_route;
 
 /* Enter's route: direct, in every state. Where the platform is not
- * enforcing the kernel is loaded as it is (docs/notes/coverage-roadmap.md
- * W2 D1); where it is, through the ISO's own shim, which is what the
- * platform trusts there and which verifies the distro's kernel (D3a). c and
+ * enforcing the kernel is loaded as it is (DESIGN Section 11.2.9); where it
+ * is, through the ISO's own shim, which is what the platform trusts there
+ * and which verifies the distro's kernel (D3a, Section 11.2.10). c and
  * d pick a route explicitly. UX only: every route loads through the same
  * verifying path. */
 static boot_route default_route(void)
@@ -1191,7 +1191,7 @@ static BOOLEAN boot_direct(EFI_HANDLE image_handle, const CHAR16 *label,
     return TRUE;
 }
 
-/* ---- BSD media, served as its own memory disk (docs/notes/bsd-route.md) ---- */
+/* ---- BSD media, served as its own memory disk (DESIGN Section 6.4) ---- */
 
 /* Returns FALSE when the medium is not one this route applies to, with
  * nothing served, so the caller chainloads instead. */
@@ -1721,11 +1721,7 @@ static sb_mode banner_init(menu_banner *b, const CHAR16 *title)
  * It deliberately does NOT wait for a keypress: the banner is the persistent
  * carrier of the state, on every redraw and in warning colours, and making a
  * user acknowledge a setting they themselves confirmed at MokManager would buy
- * nothing that the banner does not already say.
- *
- * Nothing here reads back into a decision. The loader's behaviour is byte for
- * byte the same in this state as outside it: shim is what stopped enforcing,
- * and this function only explains that it did. */
+ * nothing that the banner does not already say. */
 static void permissive_notice(sb_mode mode)
 {
     if (!sb_mode_needs_warning(mode))

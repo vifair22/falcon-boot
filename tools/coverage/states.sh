@@ -2,7 +2,7 @@
 # falcon-boot: the Secure Boot states the coverage harness boots under,
 # sourced by tools/coverage/run-case.sh and tools/coverage/stage-loader.sh.
 #
-# The scorecard columns of docs/notes/coverage-roadmap.md Section 2:
+# The scorecard columns (tools/coverage/run-case.sh):
 #
 #   off  plain OVMF, blank varstore. Nothing verifies anything.
 #   ms   Secure Boot OVMF, Microsoft's KEK and both UEFI CAs in db, the test
@@ -20,21 +20,19 @@
 # rig's. An extra signature changes nothing the Authenticode hash covers.
 #
 #   bios SeaBIOS, and not a Secure Boot state at all: there is no pflash, no
-#        varstore, no db and no shim (docs/notes/bios-route.md Section 3). It
+#        varstore, no db and no shim (DESIGN Section 2). It
 #        is a fourth column because a BIOS machine shares nothing with the
-#        other three, which Section 7.4 of that note says is the cost of a
-#        second platform.
+#        other three; that is the cost of a second platform.
 #
 #        The case stick is the only drive, and boots itself: it carries
 #        falcon-bios's stages where every stick keeps them (DESIGN Section
 #        3.3), put on by stage-loader.sh, so the column measures a stick
 #        booting on a BIOS machine and nothing else.
 #
-#   bios32 the bios column on a Pentium III (QEMU's pentium3 model): no long
-#        mode, no SSE2, no AES-NI. The floor falcon-bios runs on
-#        (docs/notes/bios-route.md Section 6h), and the column the 32-bit
-#        ISOs are judged in. A 64-bit ISO there fails by design, with the
-#        loader saying why.
+#   bios32 the bios column on an i686 (QEMU's pentium3 model): no long
+#        mode, no SSE2, no AES-NI. The floor falcon-bios runs on, and the
+#        column the 32-bit ISOs are judged in. A 64-bit ISO there fails
+#        by design, with the loader saying why.
 
 . falcon-efi/tools/ovmf.sh
 
@@ -113,8 +111,8 @@ states_prepare() {
         # the varstore is copied from a blank one first, so any failure leaves
         # a SETUP MODE varstore in place, and setup mode enforces nothing.
         # Every case in the `own` column would then pass and the column would
-        # measure air. Found 2026-09-19 porting the harness to a machine whose
-        # virt-firmware was old enough to reject --secure-boot.
+        # measure air. A virt-firmware old enough to reject --secure-boot
+        # fails exactly this way.
         if ! virt-fw-vars --inplace "$OWN_VARS" --no-microsoft \
             --set-pk "$OWN_OWNER_GUID" "$OWN_CRT" \
             --add-kek "$OWN_OWNER_GUID" "$OWN_CRT" \

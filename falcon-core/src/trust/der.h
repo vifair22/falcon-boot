@@ -17,7 +17,7 @@
  * Nothing here allocates or copies: a span is a pointer into the caller's
  * buffer plus a length, and every result is another span inside it.
  *
- * EFI-free, like everything under src/secboot except the variable reads, so it
+ * EFI-free, like everything under src/trust except the variable reads, so it
  * is tested off the firmware and fuzzed by the corruption sweep.
  */
 

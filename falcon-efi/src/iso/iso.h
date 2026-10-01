@@ -2,17 +2,12 @@
  *
  * Presents a file living on the exFAT partition as a virtual block device,
  * lets the firmware's own drivers parse it, and chainloads the ESP they
- * surface through the platform's verifying LoadImage. Nothing here verifies,
- * overrides or relaxes anything: the payload is loaded by device path so the
- * firmware (and shim behind it) makes the security decision, exactly as it
- * would for the same media plugged in directly (DESIGN Sections 2 and 7).
+ * surface through the platform's verifying LoadImage, by device path, as for
+ * the same media plugged in directly (DESIGN Sections 2 and 7).
  *
  * Two media flavors, one publisher (DESIGN Section 6 stage 2): the flavor
  * decides what the firmware is asked to PARSE, never what it is allowed to
  * RUN. Everything past "an ESP surfaced" is the same code for both.
- *
- * Family detection and initrd injection (DESIGN Section 6.2) attach to this
- * module at step 4; the stages below are already separate for that reason.
  */
 
 #ifndef FALCON_ISO_H
@@ -126,11 +121,10 @@ EFI_STATUS iso_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
  * a writable partition; a partially honoured byte map would be indistinguish-
  * able from a correct one at the point where it matters.
  *
- * NOTE: nothing about verification changes here. The payload is still named to
- * the platform's LoadImage by device path and the platform still decides what
- * may run (DESIGN Sections 7.2 and 7.6). An overlay changes which BYTES the
- * medium serves, never which images are allowed to execute; a payload whose
- * bytes we substituted is verified exactly as any other is. */
+ * The overlay serves bytes; the image is verified as served. The payload is
+ * named to the platform's LoadImage by device path (DESIGN Sections 7.2 and
+ * 7.6), so a payload whose bytes were substituted is verified as any other
+ * is. */
 EFI_STATUS iso_boot_overlaid(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
                              fs_vol *vol, const fs_dirent *file,
                              iso_media_kind kind, const iso_overlay *ovl,
@@ -167,9 +161,8 @@ typedef EFI_STATUS (*iso_served_fn)(void *ctx, EFI_SYSTEM_TABLE *st,
  * it, and everything is torn down afterwards exactly as it is for a
  * chainload.
  *
- * Nothing about verification changes: what the callback starts goes through
- * the same shim-verified load path as everything else, and this module never
- * sees the image. */
+ * What the callback starts goes through the shim-verified load path (DESIGN
+ * Section 7.6); this module never sees the image. */
 EFI_STATUS iso_boot_overlaid_served(EFI_SYSTEM_TABLE *st,
                                     EFI_HANDLE parent_image, fs_vol *vol,
                                     const fs_dirent *file,
@@ -178,15 +171,17 @@ EFI_STATUS iso_boot_overlaid_served(EFI_SYSTEM_TABLE *st,
                                     iso_served_fn served, void *ctx,
                                     iso_boot_result *result);
 
-/* Looks inside the medium without booting anything: builds the same virtual
- * device, lets the firmware surface the ESP, reads the two facts the menu
- * labels with, and tears the device down again. Nothing is loaded and nothing
- * is started, so this cannot run code off the medium.
+/* Looks inside the medium without booting anything: opens the image file on
+ * vol with falcon-core (media/medium.c), with no device published and no
+ * firmware driver bound, and reads what the menu labels with: the family,
+ * whether the default loader is signed, whether a UEFI machine can boot it,
+ * and the boot prediction. Nothing is loaded and nothing is started, so this
+ * cannot run code off the medium.
  *
  * *out is always filled in, including on failure (family unknown, sig
  * NO_EFI/UNKNOWN), because a scan that cannot classify a medium still has to
- * show the entry. The return value is the firmware status for the caller that
- * wants it; a scan may ignore it. */
+ * show the entry. The return value is the status for the caller that wants
+ * it; a scan may ignore it. */
 EFI_STATUS iso_survey_media(EFI_SYSTEM_TABLE *st, fs_vol *vol,
                             const fs_dirent *file, iso_media_kind kind,
                             const trust_stores *stores, iso_survey *out);

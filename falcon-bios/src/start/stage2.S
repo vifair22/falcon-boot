@@ -1,4 +1,4 @@
-/* falcon-bios stage 2 (docs/notes/bios-route.md Section 6).
+/* falcon-bios stage 2.
  *
  * Entered by stage 1 in 16-bit real mode at STAGE2_LOAD with DL holding the
  * drive the machine booted from. Its whole job is to reach 32-bit protected
@@ -11,8 +11,7 @@
  * from real mode and stage 3 is not.
  *
  * Everything decidable moves to C as soon as there is a C environment to
- * decide it in, which is Section 5.3's rule and the reason this file is not
- * allowed to grow.
+ * decide it in, which is the reason this file is not allowed to grow.
  */
 
 #include <start/biosdefs.h>
@@ -116,7 +115,7 @@ stage2_begin:
 	 *
 	 * Bitwise, no table: a table is a kilobyte stage 2 would carry to save
 	 * a few milliseconds once. 32-bit registers in real mode are the
-	 * 386's; the i586 floor is checked just after, by code this has
+	 * i386's; the i586 floor is checked just after, by code this has
 	 * already vouched for. */
 	movw    %dx, %bp             /* the boot drive, kept across the loop */
 	movw    $STAGE2_LOAD, %si
@@ -163,8 +162,8 @@ stage2_begin:
 	call    mem_check
 
 	/* Into protected mode, and never back. Everything past the jump is a
-	 * place C can run, which is Section 5.3's rule: the assembly is
-	 * transport, and every decision belongs above it. */
+	 * place C can run: the assembly is transport, and every decision
+	 * belongs above it. */
 	movw    $msg_pmode, %si
 	call    puts
 
@@ -174,7 +173,7 @@ stage2_begin:
 	.code32
 stage2_32:
 	/* Into C, with the drive the BIOS handed us. Everything decidable
-	 * lives up there (Section 5.3), and this is the last thing the
+	 * lives up there, and this is the last thing the
 	 * assembly decides.
 	 *
 	 * What C does with it is read stage 3 off the same disk and jump to
@@ -234,8 +233,7 @@ puts_rm:
 
 /* ---- what the machine has to have ----
  *
- * The loader is built for i586 (and everything since; it was
- * i686 until DevLink recovery's machines needed less, DESIGN Section 12.5).
+ * The loader is built for i586 and everything since (DESIGN Section 13.8).
  * What is asked for is CPUID, which every i586 has, which marks the
  * floor better than any instruction the compiler might pick, and which the
  * rest of the loader asks things of

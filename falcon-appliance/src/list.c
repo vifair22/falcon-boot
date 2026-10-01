@@ -1,5 +1,5 @@
 /* falcon-boot appliance: the bless list the loader delivered (DESIGN Section
- * 7.5, "the appliance's role, revised").
+ * 7.5).
  *
  * The user chose what to bless in the loader's menu and confirmed it there;
  * the loader hands the paths over as a credential beside the passphrase, and
