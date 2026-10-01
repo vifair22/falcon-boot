@@ -1,7 +1,7 @@
 /* falcon jump's USB modules: the devices on the controllers the module was
  * linked with, and USB mass storage on them (DESIGN Sections 13.4 and 13.6).
  *
- * Enumeration of the root ports and one level of hub (hub.c), then for a
+ * Enumeration of the root ports and two levels of hub (hub.c), then for a
  * stick SCSI over Bulk-Only Transport, the module's operations and its
  * resident INT 13h (hw/blk13.c), and for a boot keyboard hid.c and the
  * resident's INT 16h. The host controller is a usbhc (usbhc.h): UHCI.MOD
@@ -24,6 +24,9 @@
 
 #define DEVS_MAX 4u
 #define ADDR_MAX 127u
+/* The hubs walked below a root port: a hub on a root port and one on its
+ * ports, so a keyboard's own hub plugged into a desk hub is reached. */
+#define HUB_LEVELS 2u
 #define SECTOR   512u
 /* The most one READ(10) or WRITE(10) carries: 16 KB, what a UHCI bulk call
  * moves before it loops. */
@@ -257,15 +260,17 @@ static int handed_on(unsigned root, unsigned depth, const char *what)
 
 static void device(unsigned root, int low, unsigned depth);
 
+/* The depth of the devices on a hub's ports, through hub_walk's context. */
+static unsigned g_depth[HUB_LEVELS] = { 1u, 2u };
+
 static void hub_child(void *ctx, unsigned root, int low)
 {
-    (void)ctx;
-    device(root, low, 1u);
+    device(root, low, *(unsigned *)ctx);
 }
 
-/* The device just reset on root port `root`, or on a port of the hub
- * there when `depth` is 1, and answering at address 0: given an address,
- * and kept as a stick or a keyboard, or walked as a hub. */
+/* The device just reset on root port `root`, or behind `depth` hubs on it,
+ * and answering at address 0: given an address, and kept as a stick or a
+ * keyboard, or walked as a hub. */
 static void device(unsigned root, int low, unsigned depth)
 {
     static uint8_t buf[256];
@@ -307,14 +312,15 @@ static void device(unsigned root, int low, unsigned depth)
     if (dd.dev_class == USB_CLASS_HUB) {
         if (handed_on(root, depth, "a hub"))
             return;
-        if (depth > 0) {
-            log_s("falcon-bios: USB: a hub behind a hub, not walked\n");
+        if (depth >= HUB_LEVELS) {
+            log_s("falcon-bios: USB: a hub behind two hubs, not walked\n");
             return;
         }
-        log_port("a hub", root);
+        log_port(depth > 0 ? "a hub, behind a hub" : "a hub", root);
         /* bConfigurationValue: a hub has the one configuration. */
         if (set_config(root, addr, mps0, low, buf[5]) == USBHC_OK)
-            (void)hub_walk(g_hc, root, addr, mps0, hub_child, (void *)0);
+            (void)hub_walk(g_hc, root, addr, mps0, hub_child,
+                           &g_depth[depth]);
         return;
     }
     if (usb_find_msc(buf, total, &m) == 0) {
@@ -343,7 +349,9 @@ static void device(unsigned root, int low, unsigned depth)
             return;
         if (set_config(root, addr, mps0, low, k.config) == USBHC_OK &&
             hid_attach(g_hc, root, addr, mps0, low, &k) == 0)
-            log_port(depth > 0 ? "a keyboard, behind the hub" : "a keyboard",
+            log_port(depth == 0   ? "a keyboard"
+                     : depth == 1 ? "a keyboard, behind a hub"
+                                  : "a keyboard, behind two hubs",
                      root);
         return;
     }

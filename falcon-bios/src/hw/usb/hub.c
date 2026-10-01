@@ -1,13 +1,15 @@
-/* falcon jump's USB modules: one level of hub (DESIGN Section 13.4).
+/* falcon jump's USB modules: a hub's ports (DESIGN Section 13.4).
  *
  * A keyboard is as often behind a hub as on a root port, and a keyboard
  * often holds its own: a two- or three-port hub with the keyboard on one of
- * its ports. The hub runs at full speed on UHCI or OHCI (EHCI hands it to
- * its companion, ehci.c), so a device behind it is reached as one on a root
- * port is, through the hub's root port, with only the low-speed marking on
- * a low-speed device's transfers. No transaction translator, no split
- * transactions, and no hub's interrupt endpoint: the ports are read once,
- * by GET_STATUS, when the module probes.
+ * its ports, itself perhaps plugged into a desk hub. msc.c walks two levels
+ * of them, calling this for each hub. A hub runs at full speed on UHCI or
+ * OHCI (EHCI hands it to its companion, ehci.c), so a device behind it is
+ * reached as one on a root port is, through the root port the hubs hang
+ * from, with only the low-speed marking on a low-speed device's transfers.
+ * No transaction translator, no split transactions, and no hub's interrupt
+ * endpoint: the ports are read once, by GET_STATUS, when the module
+ * probes.
  */
 
 #include <hw/usb/hub.h>
