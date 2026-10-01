@@ -1,6 +1,6 @@
-/* falcon-bios: a disk's own boot code (docs/DESIGN.md Section 14, route
+/* falcon-bios: a disk's own boot code (docs/DESIGN.md Section 13, route
  * MBR), falcon jump's. The station's chains, with the drive swap and the
- * partition boot sector, are chain.c's (Section 13.4).
+ * partition boot sector, are chain.c's (Section 12.4).
  *
  * A disk is started exactly as the BIOS would start it had that disk been
  * first in its boot order. Its LBA 0 goes to

@@ -243,7 +243,7 @@ typedef enum {
 
 /* UEFI spec 8.3.1. TimeZone is minutes from UTC or
  * EFI_UNSPECIFIED_TIMEZONE; the station's TOTP code reads the clock as UTC
- * whatever it says (DESIGN Section 13.15). */
+ * whatever it says (DESIGN Section 12.15). */
 typedef struct {
     UINT16 Year;
     UINT8  Month;

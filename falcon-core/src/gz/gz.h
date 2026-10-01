@@ -1,6 +1,6 @@
 /* falcon-core: a gzip member, inflated (RFC 1952 around RFC 1951).
  *
- * For falcon jump (docs/DESIGN.md Section 14.3): stage 3 goes on the floppy
+ * For falcon jump (docs/DESIGN.md Section 13.3): stage 3 goes on the floppy
  * compressed, since on a floppy the bytes read are the time taken, and stage
  * 2 inflates it. Written for that reader: no allocation, no state between
  * calls, every buffer the caller's, and no .bss, since stage 2 has no loader

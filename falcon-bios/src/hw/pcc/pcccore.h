@@ -1,6 +1,6 @@
 /* falcon jump's PCC.MOD: a PC Card's card information structure and the
  * ExCA window registers, apart from the socket they describe (DESIGN
- * Section 14.4).
+ * Section 13.4).
  *
  * A 16-bit PC Card says what it is in its CIS, a chain of tuples in its
  * attribute memory; a CardBus bridge reaches the card through windows it

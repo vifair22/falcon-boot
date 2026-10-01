@@ -1,9 +1,9 @@
-# station: falcon as a machine's own boot loader (docs/DESIGN.md Section 13).
+# station: falcon as a machine's own boot loader (docs/DESIGN.md Section 12).
 #
 # The personal OS off a shelf on the boot disk, and the machine's other
 # systems: the firmware's boot entries under UEFI, another disk's MBR under
 # BIOS. A separate link rather than a mode, so what is not listed here it
-# cannot run; Section 13.1 is the argument. Not in `all`: `make station`.
+# cannot run; Section 12.1 is the argument. Not in `all`: `make station`.
 #
 # fs/ is ext4 alone on UEFI (CORE_FS_EXT4): the only filesystem that build
 # mounts, and so the only one discover_scan's identification pass probes
@@ -42,7 +42,7 @@ STATION_BIOS := $(STATION)/bios_main.c $(BIOS_MOD_station)
 STATION_BIOS += $(BIOS_MOD_pos) $(BIOS_MOD_prompt) $(BIOS_MOD_console) $(BIOS_MOD_linux)
 STATION_BIOS += $(BIOS_MOD_chain) $(BIOS_MOD_lowmem)  # partition and disk chains, the swap's memory
 STATION_BIOS += $(CORE_STROWS) $(CORE_STATIONINI)   # the list, and STATION.INI
-STATION_BIOS += $(BIOS_MOD_marker) $(CORE)/media/nextboot.c  # next boot (Section 13.8)
+STATION_BIOS += $(BIOS_MOD_marker) $(CORE)/media/nextboot.c  # next boot (Section 12.8)
 STATION_BIOS += $(CORE)/manifest/manifest.c  # nextboot.c's path rules
 STATION_BIOS += $(BIOS_MOD_install) $(CORE_IDENT) $(CORE_IDENT_FS)  # the shelf by its record
 STATION_BIOS += $(BIOS_MOD_e820) $(BIOS_MOD_disk) $(BIOS_MOD_serial)

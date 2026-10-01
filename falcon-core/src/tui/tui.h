@@ -155,7 +155,7 @@ void tui_menu_layout(const tui_frame *f, size_t count, tui_menu *m);
 
 /* The same with `status` lines directly under the banner, before the blank
  * that precedes the list: the UEFI station's TOTP code (DESIGN Section
- * 13.15). At most TUI_STATUS_ROWS; they come out of the list's rows when
+ * 12.15). At most TUI_STATUS_ROWS; they come out of the list's rows when
  * the screen is full. tui_menu_layout is this with none. */
 #define TUI_STATUS_ROWS 2u
 void tui_menu_layout_status(const tui_frame *f, size_t count,

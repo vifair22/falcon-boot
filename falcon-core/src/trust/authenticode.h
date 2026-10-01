@@ -81,7 +81,7 @@ int ac_hash(const ac_layout *l, ac_read_fn read, void *ctx, uint8_t *scratch,
 
 /* The same hash in another algorithm: SHA-1 is what a TPM 1.2 event log
  * records an image by, and the station's TOTP enrollment finds the station
- * in that log by it (docs/DESIGN.md Section 13.15). out holds
+ * in that log by it (docs/DESIGN.md Section 12.15). out holds
  * h->digest_len bytes. */
 int ac_hash_with(const ac_layout *l, const hash_desc *h, ac_read_fn read,
                  void *ctx, uint8_t *scratch, size_t scratch_len,

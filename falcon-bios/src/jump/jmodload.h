@@ -1,5 +1,5 @@
 /* falcon jump: reading a module off the floppy into its slot and starting
- * it (DESIGN Section 14.4). */
+ * it (DESIGN Section 13.4). */
 
 #ifndef FALCON_BIOS_JMODLOAD_H
 #define FALCON_BIOS_JMODLOAD_H

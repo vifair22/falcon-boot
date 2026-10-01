@@ -1,5 +1,5 @@
 /* falcon-boot mkstick: `station`, the station's installer (docs/DESIGN.md
- * Section 13.9), shared between its three subcommands.
+ * Section 12.9), shared between its three subcommands.
  *
  * station.c holds the dispatch, what the installer finds on the machine's
  * disks (the scan), the FAT reads and mtools writes both install and status
@@ -74,7 +74,7 @@ cli_status stn_scan_disks(stn_scan *s, const char *target,
                           const char *const *also, size_t n_also,
                           int only_named);
 
-/* What the loaders will find on those disks (DESIGN Section 13.3): the
+/* What the loaders will find on those disks (DESIGN Section 12.3): the
  * partitions whose boot sector names a loader, the other disks whose MBR is
  * worth chaining; with `uefi`, Windows on a disk's ESP. The target's own
  * MBR and falcon's partitions are not offered. */
@@ -138,7 +138,7 @@ cli_status stn_image_digest(const uint8_t *img, size_t n, int sha1,
  * loader and before the reboot that would run it: this boot's measurement
  * of the loader it replaced (old_sha1, old_sha256) is taken as the new
  * one's, so the seal holds what the new loader will read (DESIGN Section
- * 13.15). The enrolled [totp]'s PCRs and label are kept; the seed is new,
+ * 12.15). The enrolled [totp]'s PCRs and label are kept; the seed is new,
  * and printed as enroll prints it. The last four are reseal's options, for
  * the rig; NULL for the machine's own TPM and logs. */
 typedef struct {

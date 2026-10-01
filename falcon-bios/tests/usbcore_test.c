@@ -1,6 +1,6 @@
 /* Tests for falcon-bios/src/hw/usb/usbcore.c and hw/scsi/scsi.c: the USB and
  * Bulk-Only Transport layouts falcon jump's USB modules send and read
- * (DESIGN Section 14.4), and the SCSI answers a stick gives.
+ * (DESIGN Section 13.4), and the SCSI answers a stick gives.
  */
 
 #include "tests.h"

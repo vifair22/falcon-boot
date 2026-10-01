@@ -203,7 +203,7 @@ static size_t build_map(fs_vol *p2, const part_entry *part, const fs_dirent *iso
 /* Open what the entry names and hand it to the boot protocol.
  *
  * The cmdline is rendered without an ISO path: finding the medium is
- * falcon-hook's job (DESIGN Section 12.4), and it is told where the ISO is
+ * falcon-hook's job (DESIGN Section 11.4), and it is told where the ISO is
  * by the extent map in its own cpio, appended after the entry's initrds.
  * A map that cannot be built (too many fragments, no record on p2) boots the
  * entry without the hook rather than not at all, and says so; the kernel

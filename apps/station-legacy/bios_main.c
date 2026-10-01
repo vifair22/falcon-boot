@@ -1,4 +1,4 @@
-/* falcon-bios, station-legacy (docs/DESIGN.md Section 13.10): stage 3's
+/* falcon-bios, station-legacy (docs/DESIGN.md Section 12.10): stage 3's
  * entry point in falcon-bios-station-legacy-stage3.bin.
  *
  * The BIOS station (falcon-bios's station/station.c), plus the rows falcon

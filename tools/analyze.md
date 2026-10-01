@@ -16,7 +16,7 @@ tools/analyze.sh --update-baseline
 
 The baseline is only meaningful beside a fixed set of analyzer versions, so
 the gate answers to one environment (decided 2026-09-20, recorded in
-`docs/notes/analyze-baseline.txt` Section 0):
+`tools/analyze-baseline.txt` Section 0):
 
 ```sh
 tools/coverage/harness.sh -- tools/analyze.sh
@@ -64,7 +64,7 @@ partial run never reports the rest of the baseline as stale.
 
 ## The baseline
 
-`docs/notes/analyze-baseline.txt`. Each data line is tab separated:
+`tools/analyze-baseline.txt`. Each data line is tab separated:
 
 ```
 stage <TAB> file <TAB> check-id <TAB> message

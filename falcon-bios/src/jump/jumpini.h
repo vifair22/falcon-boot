@@ -1,5 +1,5 @@
 /* falcon jump: JUMP.INI, the floppy's optional default and countdown
- * (docs/DESIGN.md Section 14.7).
+ * (docs/DESIGN.md Section 13.7).
  *
  *     default=hdd        ; hdd, memtest, cd, usb or cf
  *     timeout=5          ; seconds; any key stops the countdown

@@ -4,7 +4,7 @@
  * and how it has to be emitted holds here unchanged; read it there.
  *
  * What differs is the component name, and that is the decision of
- * 2026-09-24 (DESIGN Section 13.1). A generation is revoked per component,
+ * 2026-09-24 (DESIGN Section 12.1). A generation is revoked per component,
  * and the stick's loader carries parsers this build does not link (WIM, UDF,
  * the boot predictions' X.509). A defect in one of them bumps falcon-boot's
  * generation, and a stationary loader sharing that name would stop booting

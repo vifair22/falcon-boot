@@ -1,5 +1,5 @@
 /* falcon jump's ATA.MOD: ATAPI CD drives on the legacy IDE channels
- * (docs/DESIGN.md Section 14.4 and 14.6).
+ * (docs/DESIGN.md Section 13.4 and 13.6).
  *
  * A module, not stage 3: linked at JMOD_SLOT_ATA, read off the floppy only
  * when the CD route is chosen, and left resident behind the reverse thunk
@@ -14,7 +14,7 @@
  * IRQ handler is not left an interrupt it did not ask for.
  *
  * The legacy channels only (0x1F0 and 0x170), which is what the machines
- * Section 14 is for put their optical drive on: the ThinkPad A21m's PIIX4,
+ * Section 13 is for put their optical drive on: the ThinkPad A21m's PIIX4,
  * and QEMU's. A controller in PCI native mode is a later change.
  */
 

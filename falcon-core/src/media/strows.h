@@ -1,5 +1,5 @@
-/* falcon-boot: the station's list, as data (docs/DESIGN.md Sections 13.3,
- * 13.7 and 13.8). Shared by both loaders.
+/* falcon-boot: the station's list, as data (docs/DESIGN.md Sections 12.3,
+ * 12.7 and 12.8). Shared by both loaders.
  *
  * The firmware-free half of apps/station/efi_main.c and bios_main.c: the
  * rows the loader found, the names STATION.INI, the default and next boot
@@ -40,7 +40,7 @@
 #define STROWS_LABEL_PARTITION "Partition"
 #define STROWS_LABEL_BOOTMGR   "Windows Boot Manager"
 #define STROWS_LABEL_FWSETUP   "Reboot to firmware setup"
-/* station-legacy's routes, as jump labels them (DESIGN Section 13.10). */
+/* station-legacy's routes, as jump labels them (DESIGN Section 12.10). */
 #define STROWS_LABEL_CD        "CD drive"
 #define STROWS_LABEL_USB       "USB stick"
 #define STROWS_LABEL_CF        "CF card (PC Card)"
@@ -64,7 +64,7 @@ typedef enum {
     STROW_VBR,       /* BIOS: a primary partition's boot sector, chained */
     STROW_MBR,       /* BIOS: another disk's MBR, chained */
     STROW_ROUTE      /* BIOS, station-legacy: one of jump's routes (DESIGN
-                        Section 13.10); ref says which */
+                        Section 12.10); ref says which */
 } strow_kind;
 
 /* Which loader's rules strows_apply follows where the two differ: what a
@@ -130,7 +130,7 @@ void strows_label_part_ascii(char *label, size_t cap, const char *what,
  * '\' the same. */
 int strows_path_eq(const char *a, const char *b);
 
-/* Applies STATION.INI's entry sections (DESIGN Section 13.7):
+/* Applies STATION.INI's entry sections (DESIGN Section 12.7):
  *
  *   - `uki`: the UKI row of that file, or a new one behind the prompt;
  *   - UEFI, `disk` with `method = efi` or `efi`: the ESP row on that disk

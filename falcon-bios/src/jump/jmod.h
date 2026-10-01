@@ -1,5 +1,5 @@
 /* falcon jump: what a module is, to the core that loads it and to the module
- * itself (docs/DESIGN.md Section 14.4).
+ * itself (docs/DESIGN.md Section 13.4).
  *
  * A module is a driver linked at a fixed slot (biosdefs.h, JMOD_SLOT_ADDR),
  * read off the floppy into it, and entered through its init. It begins with

@@ -1,5 +1,5 @@
 /* falcon-boot mkstick: what `mkstick update` does to a disk, decided from
- * what is on it (docs/DESIGN.md Section 13.14). The pure half, host-tested:
+ * what is on it (docs/DESIGN.md Section 12.14). The pure half, host-tested:
  * update.c reads the disk into an upd_facts and acts on the upd_plan.
  *
  * Five kinds of install, told apart by their records and a few files:

@@ -20,7 +20,7 @@ Scope is deliberately narrow: the UEFI loader is x86-64 only, with no
 32-bit UEFI. The BIOS loader is opt-in (`make bios`, `falcon-boot-mkstick
 bios`): a BIOS machine has no Secure Boot, so on that route nothing is
 verified and nothing needs blessing. It is i586 code and runs on any
-processor from the Pentium on, booting 32-bit and 64-bit kernels, and
+i586 or later processor, booting 32-bit and 64-bit kernels, and
 takes what a newer processor adds (SSE, AES-NI) by asking CPUID at run
 time.
 
@@ -65,7 +65,7 @@ falcon-cli/        host tools: falcon-boot-mkstick, falcon-boot-sign
 falcon-appliance/  the on-stick signing appliance: PID 1 and its image recipe
 falcon-winjump/    the WinPE program that attaches a Windows ISO for Setup
 falcon-hook/       the initrd program that maps an ISO for a Linux distro
-docs/              DESIGN.md (the design; Section 12 draws every boot route),
+docs/              DESIGN.md (the design; Section 11 draws every boot route),
                    Manual.md (the operator's reference), notes/
 ```
 

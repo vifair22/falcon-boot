@@ -1,5 +1,5 @@
 /* falcon jump: the reverse thunk, a module's INT 13h entry from real mode
- * (docs/DESIGN.md Section 14.6).
+ * (docs/DESIGN.md Section 13.6).
  *
  * WHY THIS EXISTS. A bootloader started off a CD or a USB stick reads its
  * medium through INT 13h in real mode, and the driver that can answer is a
@@ -209,7 +209,7 @@ jres_rm16:
 4:	popw    %bp
 	iret
 
-/* ---- INT 15h: the memory map, for the USB route (DESIGN Section 14.6) ----
+/* ---- INT 15h: the memory map, for the USB route (DESIGN Section 13.6) ----
  *
  * vcdres.S's INT 15h half, for a route with no virtual CD to carry one: the
  * E820 map jres.c carved (e820_carve, host-tested), E801's two counts held

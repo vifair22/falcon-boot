@@ -12,7 +12,7 @@
  *
  * It also saves the firmware's event log, whole, as \falcon-evlog.bin on the
  * volume it was loaded from: the TOTP cases enroll from it on the host, as
- * mkstick enrolls from securityfs on a machine (DESIGN Section 13.15). Run
+ * mkstick enrolls from securityfs on a machine (DESIGN Section 12.15). Run
  * by the station, the log holds the station's own measurement and then the
  * probe's.
  *

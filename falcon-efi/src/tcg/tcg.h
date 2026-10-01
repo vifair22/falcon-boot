@@ -1,4 +1,4 @@
-/* falcon-boot: the TPM, reached through the firmware (DESIGN Section 13.15).
+/* falcon-boot: the TPM, reached through the firmware (DESIGN Section 12.15).
  *
  * Purpose. falcon-core/src/tpm is the command layer and has no transport;
  * this module is its transport under UEFI and its randomness. A TPM 2.0 is

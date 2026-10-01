@@ -1,5 +1,5 @@
 /* falcon jump's ATA.MOD: the ATAPI command blocks and the answers, apart from
- * the port I/O (DESIGN Section 14.4).
+ * the port I/O (DESIGN Section 13.4).
  *
  * What a CD drive says back is byte layouts - a model string with its bytes
  * swapped in pairs, a capacity that is only a CD's at 2048 bytes a block -

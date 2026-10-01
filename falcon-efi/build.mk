@@ -26,7 +26,7 @@ EFI_MOD_task          := $(EFI_SRC)/task/task.c
 EFI_MOD_bless         := $(EFI_SRC)/bless/bless.c $(EFI_SRC)/bless/blesscore.c
 EFI_MOD_nxt           := $(EFI_SRC)/nxt/nxt.c $(EFI_SRC)/nxt/nxtcore.c
 EFI_MOD_esp           := $(EFI_SRC)/esp/esp.c
-# The UEFI station's TOTP check (DESIGN Section 13.15): the TPM reached
+# The UEFI station's TOTP check (DESIGN Section 12.15): the TPM reached
 # through EFI_TCG2_PROTOCOL or EFI_TCG_PROTOCOL, and the code and its lines.
 EFI_MOD_tcg           := $(EFI_SRC)/tcg/tcg.c
 EFI_MOD_totp          := $(EFI_SRC)/totp/totp.c
@@ -173,7 +173,7 @@ test-stick: $(EFI_SIGNED) test-iso test-uki cli bios
 	falcon-efi/tools/mk-test-stick.sh
 
 # The rig's station disk: a machine's disk with the station put on it by
-# `mkstick station install` (DESIGN Section 13.9); the rigs boot it under
+# `mkstick station install` (DESIGN Section 12.9); the rigs boot it under
 # both firmwares.
 test-station: $(STANDIN) station test-uki cli
 	falcon-efi/tools/mk-test-station.sh
@@ -197,7 +197,7 @@ test-station-uefi: $(EFI_STATION_SIGNED) $(STANDIN) $(STANDIN_SIGNED) cli
 
 # The TPM rig (docs/notes/argon2-totp.md Section 2): the probe, alone and
 # started by the UEFI station, and the station's TOTP check (DESIGN Section
-# 13.15) enrolled by mkstick between boots, under OVMF with swtpm as a TPM
+# 12.15) enrolled by mkstick between boots, under OVMF with swtpm as a TPM
 # 2.0 (TIS and CRB) and a TPM 1.2, Secure Boot off and on. With no swtpm it says so and
 # builds nothing; a case whose OVMF has no support for its TPM version
 # SKIPs. The station cases boot copies of the disk test-station made, and
@@ -213,7 +213,7 @@ test-tpm-rig:
 	fi
 
 # Stations the installer put on a machine's disk, booted (DESIGN Section
-# 13.11): a GPT disk with Windows under OVMF, Secure Boot off and on, to
+# 12.11): a GPT disk with Windows under OVMF, Secure Boot off and on, to
 # its menu, its default and the shelf's UKI; a 4Kn GPT disk with both
 # stations under OVMF and SeaBIOS (NVMe), and its remove --full; a 4Kn MBR
 # disk under SeaBIOS. Builds its own disks (sudo, loop devices).

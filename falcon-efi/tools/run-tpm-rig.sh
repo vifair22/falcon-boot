@@ -26,7 +26,7 @@
 #   station   the UEFI station (make test-station's disk) with the probe as
 #             its memtest.efi, started as the default: the station boots
 #             with a TPM attached and what it starts still sees one.
-#   totp      the station's TOTP check (DESIGN Section 13.15), over four
+#   totp      the station's TOTP check (DESIGN Section 12.15), over four
 #             boots of one TPM state (SWTPM_KEEP) with the clock at
 #             RTC_BASE:
 #               1. the station starts the probe, which saves the firmware's
@@ -56,7 +56,7 @@
 #             machine runs; only the TPM's transport is swapped.
 #   totp-update  totp's steps 1 and 2, then `mkstick update` to a station
 #             loader with another Authenticode digest, resealing from the
-#             old loader's boot log (DESIGN Section 13.14); the next boot
+#             old loader's boot log (DESIGN Section 12.14); the next boot
 #             shows the code of the secret update printed.
 #
 # A case whose firmware installs no protocol for its TPM version SKIPs and
@@ -396,7 +396,7 @@ totp_enrolled() {
     [[ -z $why ]] && { mcopy -i "$R/totp.img@@1M" ::/falcon-evlog.bin "$R/evlog.bin" 2>/dev/null ||
         why="the probe saved no event log"; }
     # The station saves edk2's log on a 1.2 behind EFI_TCG_PROTOCOL, and on
-    # nothing else (DESIGN Section 13.15); a 1.2 enrollment is from that.
+    # nothing else (DESIGN Section 12.15); a 1.2 enrollment is from that.
     saved=()
     if [[ -z $why && $tpm == tpm12 ]]; then
         if mcopy -i "$R/totp.img@@1M" ::/falcon-evsave.bin "$R/evsave.bin" 2>/dev/null; then

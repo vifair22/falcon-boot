@@ -1,5 +1,5 @@
 /* falcon jump's drivers: the SCSI command blocks and answers both of them
- * speak (DESIGN Section 14.4).
+ * speak (DESIGN Section 13.4).
  *
  * An ATAPI CD drive and a USB stick are both told what to do in SCSI: the
  * same READ(10), READ CAPACITY and REQUEST SENSE, carried in a 12-byte ATAPI

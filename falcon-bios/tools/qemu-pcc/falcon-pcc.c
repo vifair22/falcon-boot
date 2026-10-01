@@ -1,6 +1,6 @@
 /*
  * falcon-pcc: a PC Card bridge with a CompactFlash card in it, for falcon
- * jump's rig (docs/DESIGN.md Section 14.9).
+ * jump's rig (docs/DESIGN.md Section 13.9).
  *
  * QEMU models no PC Card bridge on x86, and falcon jump's PCC.MOD has to be
  * proven against one before it meets a ThinkPad A21m's TI PCI-1450. This is

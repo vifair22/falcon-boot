@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # falcon-cli: `mkstick station install|status|remove` end to end, on image
-# files (docs/DESIGN.md Section 13.9). No root: the installer formats with
+# files (docs/DESIGN.md Section 12.9). No root: the installer formats with
 # mkfs.fat --offset, writes files with mtools and stamps a shelf with
 # debugfs or cryptsetup, all of which take an image file as it is.
 #

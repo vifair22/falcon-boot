@@ -1,5 +1,5 @@
 /* falcon jump's PCC.MOD: a CompactFlash card in a PC Card slot, as a disk
- * (DESIGN Section 14.4; the CF route of 14.1).
+ * (DESIGN Section 13.4; the CF route of 13.1).
  *
  * The slot is a CardBus bridge's 16-bit side, found on the PCI bus by its
  * class (0x0607): the ThinkPad A21m's TI PCI-1450, and every laptop bridge
@@ -22,7 +22,7 @@
  * Card drivers have put it since DOS: it is only open while the CIS is
  * read, and closed before the machine is handed on. The I/O windows are
  * 0x1E0-0x1EF for the first card and 0x1C0-0x1CF for a second, a range the
- * machines Section 14 is for leave unused.
+ * machines Section 13 is for leave unused.
  *
  * The resident half (int13 through hw/blk13.c) uses only this module, as
  * every module's must (jump/jmod.h).

@@ -1,6 +1,6 @@
 #!/bin/sh
 # falcon station bundle: update the BIOS station on a disk from this
-# directory (docs/DESIGN.md Section 13.14). Built by `make station-bundle`
+# directory (docs/DESIGN.md Section 12.14). Built by `make station-bundle`
 # and run from DevLink recovery on the machine, or on any Linux with the disk
 # attached.
 #

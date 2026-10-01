@@ -1,4 +1,4 @@
-/* falcon jump's OHCI.MOD (DESIGN Section 14.4): USB mass storage on the
+/* falcon jump's OHCI.MOD (DESIGN Section 13.4): USB mass storage on the
  * machine's OHCI controllers. The storage half is msc.c, shared with the
  * other controllers' modules; this is only which controller.
  */

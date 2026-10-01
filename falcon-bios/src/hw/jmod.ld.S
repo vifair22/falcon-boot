@@ -1,4 +1,4 @@
-/* falcon jump's module link script (docs/DESIGN.md Section 14.4).
+/* falcon jump's module link script (docs/DESIGN.md Section 13.4).
  *
  * Preprocessed, as the assembly is, so a module's slot comes from biosdefs.h
  * and is written in one place: the build defines JMOD_SLOT to the slot's

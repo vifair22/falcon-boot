@@ -1,5 +1,5 @@
 /* Tests for falcon-bios/src/hw/pcc/pcccore.c: a PC Card's CIS and the ExCA
- * window registers falcon jump's PCC.MOD programs (DESIGN Section 14.4).
+ * window registers falcon jump's PCC.MOD programs (DESIGN Section 13.4).
  *
  * The CIS is the one falcon-bios/tools/qemu-pcc/falcon-pcc.c gives the rig's
  * CompactFlash card, which is the CF standard's shape: a memory-mapped

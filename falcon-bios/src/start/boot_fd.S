@@ -1,5 +1,5 @@
 /* falcon-bios stage 1 for a floppy: falcon jump's boot sector (docs/DESIGN.md
- * Section 14.3).
+ * Section 13.3).
  *
  * The same job as boot.S, on a different medium: get stage 2 into memory at
  * STAGE2_LOAD and jump to it with DL naming the boot drive. Stage 2 is the

@@ -122,7 +122,7 @@ EFI_STATUS pos_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
 EFI_STATUS pos_boot_pick(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
                          pos_pick want, pos_result *result);
 
-/* ---- the station's rows (DESIGN Section 13.3) ----
+/* ---- the station's rows (DESIGN Section 12.3) ----
  *
  * The station lists a plaintext shelf's UKIs one row each, since their
  * names can be read without a passphrase, and an encrypted shelf as one row
@@ -169,7 +169,7 @@ EFI_STATUS pos_boot_file(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
  * the launch returns; NULL or len 0 clears it. Not a secret, and not wiped. */
 void pos_set_bless_list(const void *data, UINTN len);
 
-/* The UEFI station's TOTP check (DESIGN Section 13.15): `note` writes its
+/* The UEFI station's TOTP check (DESIGN Section 12.15): `note` writes its
  * lines on the passphrase page before the first prompt, `handover` runs
  * just before the UKI is started. Either may be NULL; the stick sets
  * neither. */

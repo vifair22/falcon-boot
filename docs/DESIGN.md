@@ -1,12 +1,9 @@
 # falcon-boot Design
 
-falcon-boot (formerly airies-boot; renamed 2026-09-13 before first
-real-hardware enrollment).
-
 A single-purpose, auditable multi-boot loader for x86: 64-bit UEFI first,
 with a BIOS loader alongside that runs on 32-bit processors as well. A distilled Ventoy: drag-and-drop ISO booting, plus a
 first-class path for booting a personal LUKS-backed OS via a Unified Kernel
-Image. Section 12 draws every route both loaders take.
+Image. Section 11 draws every route both loaders take.
 
 Status: pre-1.0 MVP. This document is the source of truth for architecture and
 scope. It is written to be read cold, months from now, by the person who has to
@@ -18,11 +15,9 @@ change it.
 ### In scope (MVP)
 
 1. UEFI x64 firmware, and x86 BIOS through a separate, opt-in loader
-   (`falcon-bios/`; decision 2026-09-20, below). The BIOS loader is i586
-   and runs on every processor from the Pentium on, booting 32-bit and
-   64-bit kernels (decision 2026-09-24, item 6; the floor lowered from the
-   Pentium Pro on 2026-09-27, Section 14.8). No IA32 UEFI, ever (see
-   Non-goals).
+   (`falcon-bios/`, item 6). The BIOS loader is i586 and runs on every
+   i586 or later processor, booting 32-bit and 64-bit kernels (Section
+   13.8). No IA32 UEFI (see Non-goals).
 2. Drag-and-drop ISO booting from an exFAT partition, Ventoy-style: copy an
    `.iso` onto the stick from any OS, it appears in the menu, it boots. No
    host-side registration step. (When Secure Boot is ON, unsigned media that does
@@ -31,113 +26,57 @@ change it.
 3. Booting a personal OS: a Unified Kernel Image (UKI) sitting on a small
    LUKS2+ext4 partition, whose initramfs then unlocks the real root/home on a
    second LUKS2 partition and pivots into it.
-4. Never weaken the machine's Secure Boot posture, chaining through Fedora's
-   shim-x64 16.1 (dual MS-signed, 2011 + 2023 CAs; decision 2026-09-12, see
-   Section 4 and docs/notes/shim-spike.md): uphold Secure Boot when it is on,
-   load freely when it is off. See Section 2 for the posture and Section 7
-   for the trust model and coverage matrix.
-5. **Windows install media (decision 2026-09-13).** A stock Windows installer
-   ISO drag-and-drops like any other and reaches a working Setup, in all three
-   Secure Boot states. Promoted from an explicitly deferred non-goal to a
-   required, first-class capability: "windows must work." The mechanism is
-   Section 6.3 and the trust model it needs is Section 7.7. The cost is
-   stated honestly in both: Windows is the one family whose support is an
-   ongoing tracking commitment rather than a finished feature, because
-   everything it leans on inside `boot.wim` is undocumented or
-   version-dependent and Microsoft can change it in any build. That cost was
-   weighed and accepted, not overlooked.
-6. **BIOS (decision 2026-09-20).** Moved out of the non-goals once
-   `docs/notes/bios-route.md` measured what it costs. It was set aside on
-   the belief that it meant a second loader with the logic written twice.
-   It does not: falcon-core is firmware-free and takes a read callback, so a
-   BIOS loader supplies INT 13h where the UEFI loader supplies Block I/O and
-   shares everything above it. The micro-OS considered as the alternative
-   is rejected in that note (it would boot payloads outside `LoadImage`,
-   the one place anything is verified). A BIOS machine has no Secure Boot,
-   so on that route nothing is verified, nothing is blessed and the
-   appliance has no job; Section 7's invariants are vacuous there, not
-   upheld. It is opt-in for that reason: `make bios` builds it and
-   `mkstick bios` installs it (Section 3.3). Widened 2026-09-24 to machines with no 64-bit
-   mode: the loader moved from long mode to i686 protected mode, asks CPUID
-   for what a newer processor adds, and appends a falcon-hook of the
-   kernel's width, so one image serves both (bios-route.md Section 6h). The
-   second, 32-bit stick made for those machines was retired on 2026-09-26:
-   every machine goes through the one stick, whose ISO library carries the
-   32-bit ISOs.
-7. **The station (decision 2026-09-21, re-scoped 2026-09-26).** Each loader
-   built again as a machine's own boot loader, in place of GRUB,
-   systemd-boot or the Windows MBR: Windows 98 to 11, Linux as UKIs on a
-   shelf, memtest86+, on MBR and GPT disks, with a `STATION.INI`; and
-   station-legacy, the BIOS station with falcon jump's CD, CF and USB
-   routes. Chosen at compile time, so the stick's parsers are not in it at
-   all. Section 13.
-8. **A boot floppy, falcon jump (decision 2026-09-25).** A third BIOS
-   loader, on a FAT12 floppy that stays in an old machine's drive: it boots
-   the machine's disks and memtest86+, and the CD and USB sticks that
-   machine's BIOS cannot boot, loading a driver off the floppy only for the
-   route chosen. Section 14.
+4. Chaining through Fedora's shim-x64 16.1 (dual MS-signed, 2011 + 2023
+   CAs; Section 4): Secure Boot upheld when
+   it is on, loading freely when it is off. Section 2 has the posture,
+   Section 7 the trust model and coverage matrix.
+5. **Windows install media.** A stock Windows installer ISO drag-and-drops
+   like any other and reaches a working Setup, in all three Secure Boot
+   states. The mechanism is Section 6.3 and the trust model it needs is
+   Section 7.7. What it relies on inside `boot.wim` is undocumented or
+   version-dependent and can change in any Windows build.
+6. **BIOS.** falcon-core is firmware-free and takes a read callback, so the
+   BIOS loader supplies INT 13h where the UEFI loader supplies Block I/O
+   and shares everything above it. A BIOS
+   machine has no Secure Boot, so on that route nothing is verified or
+   blessed and Section 7's invariants do not apply; hence opt-in: `make
+   bios` builds it and `mkstick bios` installs it (Section 3.3). The loader
+   runs in i586 protected mode, asks CPUID for what a newer processor adds,
+   and appends a falcon-hook of the kernel's width, so one image serves
+   machines with and without a 64-bit mode (bios-route.md Section 6h).
+   One stick serves every machine; its ISO library carries the 32-bit ISOs.
+7. **The station.** Each loader built again as a machine's own boot loader,
+   in place of GRUB, systemd-boot or the Windows MBR: Windows 98 to 11,
+   Linux as UKIs on a shelf, memtest86+, on MBR and GPT disks, with a
+   `STATION.INI`; and station-legacy, the BIOS station with falcon jump's
+   CD, CF and USB routes. Chosen at compile time, so the stick's parsers are
+   not in it at all. Section 13.
+8. **A boot floppy, falcon jump.** A third BIOS loader, on a FAT12 floppy
+   that stays in an old machine's drive: it boots the machine's disks and
+   memtest86+, and the CD and USB sticks that machine's BIOS cannot boot,
+   loading a driver off the floppy only for the route chosen. Section 14.
 
 ### Non-goals
 
-Rejected, not deferred (decisions 2026-09-12; BIOS was on this list until
-2026-09-20, item 6 above):
-
-- IA32 (32-bit UEFI). Effectively extinct: it existed on the 2013-2015
-  Atom tablet class and is rarer in the wild today than BIOS-only machines.
-  Not worth a second UEFI loader. A 32-bit processor under a BIOS is in
-  scope (item 1); what is rejected is 32-bit UEFI firmware.
-
-Explicitly deferred, not forgotten:
+- IA32 (32-bit UEFI). A 32-bit processor under a BIOS is in scope (item 1).
 - ISOs that need Ventoy's runtime driver injection to boot. The injection
-  *plumbing* is built in from day one (Section 6), but the per-family
-  injectors that would cover these are not. Windows sat in this bullet until
-  2026-09-13 and was moved out of it on a correction, not a change of
-  appetite: Windows never needed runtime injection in the first place
-  (Section 6.3).
+  plumbing is built in (Section 6), but the per-family injectors that would
+  cover these are not. Windows needs no runtime injection (Section 6.3).
 - Persistence overlays for live ISOs.
-- A graphical/framebuffer menu with themes. MVP menu is text via
-  Simple Text Output.
-
+- A graphical/framebuffer menu with themes. The menu is text via Simple
+  Text Output.
 
 ## 2. Secure Boot posture (read this first)
 
-**Governing principle: falcon-boot must never weaken the machine's Secure Boot
-posture.** It behaves according to the firmware's current Secure Boot state:
+falcon-boot never changes what the platform allows to run. Every image the
+loader launches goes through shim's verification (Section 7.6): with Secure
+Boot on, only what verifies against db or the MOK boots; with it off, shim
+permits everything. The loader does no signature checking of its own and
+installs no security-protocol override. It reads `SecureBoot` and `SetupMode`
+for UX only (Section 7.8). Section 7 is the trust model and the coverage
+matrix.
 
-- **Secure Boot ON:** uphold it. The loader boots only payloads that verify
-  against the platform trust chain (db / MOK, through shim). Anything that does
-  not verify is refused, exactly as it would be if booted directly.
-- **Secure Boot OFF:** there is nothing to uphold, so the loader chainloads
-  whatever the user selects.
-
-We do not implement our own signature checking, and we never disable the
-platform's. The behavior above is obtained by *deferring to shim* rather than
-by adding code:
-
-- We always chainload through a shim-verified load path, and we never install
-  a security-protocol override. Exactly which entry point that is (firmware
-  `LoadImage` intercepted by shim's security hook, or shim's own image-loader
-  protocol) is firmware/shim plumbing resolved by the step-1 spike; see
-  Section 7.6. Either way, verification is shim's.
-- shim already keys its verification off the firmware `SecureBoot` state: it
-  enforces signatures when Secure Boot is on and allows everything when it is
-  off. Because every image our loader launches goes through shim's verification
-  hook, "uphold SB when on, load anything when off" falls out of the platform
-  for free.
-
-We do read the `SecureBoot` (and `SetupMode`) EFI variables ourselves, but only
-for UX: to label each menu entry with its verification status and to print an
-actionable message when Secure Boot blocks an unsigned selection.
-
-This is a deliberate reversal of an earlier design that overrode verification to
-force unsigned media to boot under Secure Boot. That approach reduced security
-and has been removed; see Section 7 for the trust model and coverage matrix that
-replace it.
-
-The personal-OS path (UKI on LUKS, Section 5) is a separate story: it stays
-fully signature-verified end to end, because we build and sign those artifacts
-ourselves.
-
+The personal OS (Section 5) is signed by us end to end.
 
 ## 3. On-disk layout
 
@@ -150,9 +89,8 @@ p3  UKI shelf  LUKS2 -> ext4    ~1 GB   personal-OS UKI + signing-appliance UKI 
 p4  root+home  LUKS2 -> ext4    bulk    real root and home, argon2id keyslot
 ```
 
-A stick is always GPT and always has all four (decision 2026-09-26: the
-BIOS-only layout without p1 went with the 32-bit stick it was made for).
-The loaders read MBR disks as well (3.2), for the station of Section 13 and
+A stick is always GPT and always has all four.
+The loaders read MBR disks as well (3.2), for the station of Section 12 and
 for the disks a machine already has; nothing makes an MBR stick.
 
 Rationale per partition:
@@ -171,59 +109,44 @@ Rationale per partition:
   with falcon-core's single-threaded argon2id in either loader. mkstick
   writes one fixed, conservative cost every machine the stick boots can meet
   (32 MiB, time 4, 4 lanes; `MKS_STICK_KDF_*` in
-  `falcon-cli/src/mkstick/mkstick.h`, docs/notes/argon2-totp.md Section 1).
-  Until 2026-09-28 this was a pbkdf2 keyslot, because the loaders had no
-  argon2id; they now unlock argon2id and pbkdf2 both, and a slot that asks
-  for more memory than the machine can give is refused with a page saying
-  how much it needs and how much is free. We control p3's creation
-  (Section 8), so we mandate this. p3 holds the personal-OS UKI, the
-  signing-appliance UKI (Section 7.5), and the MOK private key, all encrypted at
-  rest under this one keyslot. Roughly 1 GB. The private key living here (under
-  LUKS), never on the readable exFAT partition and never in the loader, is
-  central to the key model in Section 7.5.
+  `falcon-cli/src/mkstick/mkstick.h`).
+  The loaders unlock argon2id and pbkdf2 both, and a slot that asks for
+  more memory than the machine can give is refused with a page saying how
+  much it needs and how much is free. mkstick creates p3 (Section 8).
+  p3 holds the personal-OS UKI, the signing-appliance UKI
+  (Section 7.5), and the MOK private key, all encrypted at rest under this
+  one keyslot. Roughly 1 GB. Key placement is invariant 4 (Section 7).
 - **p4 root+home, argon2id.** p4 is unlocked by the *Linux* kernel inside the
   UKI's initramfs, where argon2id is fine, so it keeps the strong default. p4 is
-  a separate partition from p3 purely so that EFI-land never has to understand or
-  mount the real root filesystem. EFI touches p3 only.
+  separate from p3 so that EFI never mounts the real root filesystem. EFI
+  touches p3 only.
 
 p3 and p4 share the same passphrase (Section 5).
 
-**p3 encryption is the default, not a requirement (decision 2026-09-13).**
-mkstick can create p3 plaintext (`--p3-plain`), for users who want the UKI
-shelf simple or firmware-readable. Consequences, all of which the tooling
-states at creation time rather than letting the user discover:
+**p3 encryption is the default, not a requirement.**
+mkstick can create p3 plaintext (`--p3-plain`), for a UKI shelf that is
+simple or firmware-readable. mkstick states the consequences at creation:
 
 - No LUKS on p3 means **no on-stick private key**: the signing appliance
   (Section 7.5) cannot exist on that stick, and blessing is external-host
-  only. The key model's invariant is unchanged - the private key lives
-  encrypted or it does not live on the stick at all.
-- The loader skips the passphrase prompt entirely and the credential
-  handoff (Section 5.1) is simply not used; the initramfs prompts for p4
-  itself. Still a single prompt, just later and owned by the OS.
-- Integrity is unaffected: the UKI is signed and shim verifies it off a
-  plaintext shelf exactly as off a decrypted one. What is given up is
-  confidentiality of the UKI contents (embedded initramfs included) and
-  the appliance. A legitimate trade, the user's to make.
+  only.
+- The loader skips the passphrase prompt and the credential handoff
+  (Section 5.1) is not used; the initramfs prompts for p4 itself, still a
+  single prompt.
+- The UKI is signed and shim verifies it off a plaintext shelf as off a
+  decrypted one. What is given up is confidentiality of the UKI contents
+  (embedded initramfs included) and the appliance.
 - The p3 filesystem choice is orthogonal (see the fs_ops registry,
-  Section 9); note that p3's filesystem never meets the personal OS's own
-  initramfs - p3 is read by our EFI driver alone, and the initramfs
+  Section 9); p3 is read by our EFI driver alone, and the initramfs
   unlocks and mounts p4 directly.
 
-Both loaders read a plaintext shelf; until 2026-09-26 only the UEFI one did.
+Both loaders read a plaintext shelf.
 
-### 3.1 Identification: the identity record (decision 2026-09-26)
+### 3.1 Identification: the identity record
 
 Every partition falcon made carries an **identity record**, and the record,
-not the partition table, says what the partition is. It replaces the
-2026-09-13 rule, which identified p2 by the Microsoft basic-data type plus
-the GPT name `FALCON-ISO` and p3 by the falcon shelf type GUID, and let a
-loader take any disk's partitions. That rule had four failures the audit of
-docs/notes/station-rework.md found in the code: an MBR disk has no type
-GUIDs and no names, so nothing on one could be falcon's; two falcon disks
-attached at once merged their ISO libraries into one menu and let the
-appliance write blesses to the other stick; a name is user-editable and not
-unique; and the extent map named p2 by a GPT-only GUID that silently failed
-to match on MBR.
+not the partition table, says what the partition is, on GPT and MBR
+disks alike.
 
 The record's fields:
 
@@ -240,13 +163,12 @@ The record's fields:
 
 **One install ID per install.** `mkstick create` draws one 128-bit install
 ID for a stick and writes it into every partition's record; `mkstick
-station install` does the same for a station (Section 13). A loader starts
-from the partition it knows it booted from, reads that record's install ID,
-and then takes only partitions carrying the same ID, on whichever disk they
-are. A stick is one unit: a second stick's p2 or p3 can never be mixed in,
-whatever is plugged in, and nothing is decided by disk order. A station
-whose shelf is on a second disk (its ESP on the Windows disk, its Linux on
-another) is still one unit for the same reason.
+station install` does the same for a station (Section 12). A loader starts
+from the partition it booted from, reads that record's install ID, and
+takes only partitions carrying the same ID, on whichever disk they are. A
+second stick's p2 or p3 is never mixed in, and nothing is decided by disk
+order. A station whose shelf is on a second disk (its ESP on the Windows
+disk, its Linux on another) is one unit the same way.
 
 **Where the record is, by filesystem.** Each place is readable without a
 passphrase and without the partition table's help:
@@ -265,20 +187,19 @@ passphrase and without the partition table's help:
   the root, `/.falcon`, one line of text, `falcon 1 <role> <install id>`.
   exFAT's boot code is covered by its boot checksum and ext4 has no
   unowned bytes fsck leaves alone, and the loaders mount these volumes
-  anyway. The same record in text; `cat` shows it.
+  anyway. The same record in text.
 
-**The partition type only narrows the search.** The types themselves stay
-what they are and for the same reasons: p2 keeps the Microsoft basic-data
+**The partition type only narrows the search.** p2 keeps the Microsoft basic-data
 type, because Windows' `partmgr` creates no volume for a GPT partition whose
-type it does not recognise (measured in WinPE 10.0.26100, where a
-falcon-typed p2 had no volume and no drive letter, `docs/notes/windows-route.md`),
+type it does not recognise (in WinPE 10.0.26100 a falcon-typed p2 has no
+volume and no drive letter),
 and drag-and-drop from Windows and winjump inside WinPE both need that
 volume. p3 keeps the falcon shelf type `9CB02E90-85F4-4AF7-9AF3-1F9D6A95FEAF`
 and p4 the Linux LUKS type, because Windows offers to format a basic-data
 partition it cannot read, and p3 holds the stick's only copy of its MOK
-private key; their unrecognised types keep Windows' hands off them. p1 keeps
-the ESP type the firmware needs. None of these is matched as identity any
-more; the GPT name `FALCON-ISO` is written for a person reading a
+private key; their unrecognised types keep Windows off them. p1 keeps
+the ESP type the firmware needs. None of these is matched as identity; the
+GPT name `FALCON-ISO` is written for a person reading a
 partition editor and is read by nothing.
 
 There is no probe-everything fallback. A disk with no record is not
@@ -287,13 +208,11 @@ falcon's. The rig images carry records like any stick (Section 10).
 **Everything that finds a partition uses the record.** The extent map that
 falcon-hook and falcon-winjump rebuild an ISO from (Section 6.4) names p2 by
 the install ID and the partition's start, not by a GPT partition GUID, so
-it works on either table and the two readers find p2 as the loaders do. The
-signing appliance is told its stick's install ID by the loader, in its
-credential, and opens only partitions carrying it; its fallback of taking
-the first exFAT and LUKS pair on any disk goes. `mkstick status` reads the
-records.
+it works on either table. The signing appliance is told its stick's install ID by the loader, in its
+credential, and opens only partitions carrying it; with no install ID it
+opens nothing. `mkstick status` reads the records.
 
-### 3.2 Partition tables (decision 2026-09-26)
+### 3.2 Partition tables
 
 `falcon-core/src/part` reads both tables and hands every consumer one
 table-neutral partition record: start, length, the type as a GUID or an MBR
@@ -307,7 +226,7 @@ disk signature at offset 440).
   the backup at the disk's end, said on serial.
 - **MBR.** The four primary entries and the extended chain's logical
   partitions, numbered as Linux numbers them (1-4 primary, 5 on logical).
-  Only a primary is ever chained (Section 13.4): DOS, Windows 9x and NT boot
+  Only a primary is ever chained (Section 12.4): DOS, Windows 9x and NT boot
   from nothing else.
 - **Sector sizes.** 512 and 4096 alike, in core, under every driver (3.4).
 
@@ -322,7 +241,7 @@ backing up LBA 0.
 `mkstick create` refuses a disk with a valid MBR table as it refuses one
 with a GPT: an MBR Windows disk is not an empty one.
 
-### 3.3 The BIOS boot area (decision 2026-09-26)
+### 3.3 The BIOS boot area
 
 One layout for every BIOS install, stick, station and jump's floppy:
 
@@ -330,35 +249,36 @@ One layout for every BIOS install, stick, station and jump's floppy:
 |---|---|
 | LBA 0, bytes 0-439 | stage 1; the table, signature and `0x55AA` behind it are kept |
 | after LBA 0, before the first partition | stage 2: LBA 34 on GPT (after the entry array, in the `FALCON-BIOS` EF02 partition on a stick), LBA 1 on MBR. The installer writes its start and real length into stage 1 |
-| the `boot` partition's reserved sectors | stage 3 (compressed, Section 12.3.2) and the next-boot marker, at the offsets its record gives |
+| the `boot` partition's reserved sectors | stage 3 (compressed, Section 11.3.2) and the next-boot marker, at the offsets its record gives |
 
 Stage 2 finds stage 3 by reading the boot disk's table (none on a floppy: the
 volume starts at LBA 0) and taking the first partition whose boot sector
 carries a `boot` record naming a stage 3. A station installed for UEFI and
 BIOS both has a `boot` record with no stage 3 (stage 3 sector 0) on its
 ESP, which comes first on a GPT disk, and the real one on its station
-partition. Stage 2 no longer has a stage 3 LBA of its own, and nothing
-is written at LBA 98 or 2047 any more. The marker is a sector of the `boot`
+partition. Stage 2 has no stage 3 LBA of its own. The marker is a sector of the `boot`
 partition (Section 6.3.1).
 
-Why a FAT partition's reserved sectors: an old MBR disk has only 62 sectors
-before its first partition (the A21m's Windows 2000 partition starts at 63,
-and the disk has nothing free at its end), which holds stage 2 and nothing
-more, and jump's floppy already kept its stage 3 this way. The reserved
-sectors are outside every file, so the filesystem never moves them.
+An old MBR disk can have only 62 sectors before its first partition and
+nothing free at its end, which holds stage 2 and nothing more; stage 3 goes
+in the FAT partition's reserved sectors, which are outside every file, so
+the filesystem never moves them.
 
 Stage 1 reads with INT 13h extensions when AH=41h says they are there, and
 by CHS otherwise (from AH=08h's geometry, as jump's floppy stage 1 does), so
 a BIOS without extensions boots it too.
 
-### 3.4 Sector sizes and BIOS reach (decision 2026-09-26)
+### 3.4 Sector sizes and BIOS reach
 
 Every driver reads through the loaders' read callback, which takes whole
 sectors. The drivers ask for 512 or 1024 bytes at a time (a LUKS2 keyslot
 area, the ext4 superblock, a FAT boot sector), which on a 4096-byte-sector
-disk is not a whole sector, so today a 4Kn disk neither unlocks nor mounts.
-Core gains one re-blocking layer under the callback, and every driver reads
-any length at any offset on either sector size.
+disk is not a whole sector. `falcon-core/src/blk/rebl.c` is one re-blocking
+layer under the callback: it passes the sector-aligned middle of a request
+straight to the device read and bounces only a ragged head or tail through
+a sector-sized buffer the loader owns, so every driver reads any length at
+any offset on either sector size. The UEFI loader's discovery and
+falcon-bios's disk reads both go through it.
 
 On BIOS the same holds wherever the firmware presents the disk: every
 count of the BIOS layout is of the disk's own sectors (stage 1's LBA and
@@ -395,12 +315,10 @@ p1 holds exactly four files. Section 4.3 says why that list is closed.
 is one such key per stick and it signs the loader, every UKI, and every
 blessed wrap.
 
-Shim vendor decision (2026-09-12, spike data in `docs/notes/shim-spike.md`):
-Fedora's shim-x64 16.1 over the earlier SUSE assumption. Rationale: dual
-MS signatures (2011 + 2023; the 2011 CA retirement will strand single-signed
-shims), the smallest vendor trust surface of the classified candidates (one
-Fedora CA, no vendor dbx payload), pinnable Koji package URLs, and >= 16.0
-is required anyway for the SHIM_IMAGE_LOADER load path (Section 7.6).
+The shim is Fedora's shim-x64 16.1: it
+carries both Microsoft signatures (2011 + 2023), its vendor trust is one
+Fedora CA with no vendor dbx payload, and it is pinned by Koji package URL.
+The SHIM_IMAGE_LOADER load path (Section 7.6) needs shim 16.0 or later.
 
 Boot chain under Secure Boot:
 
@@ -411,82 +329,52 @@ Boot chain under Secure Boot:
    empty for our key, so shim launches MokManager, which prompts the user to
    enroll `falcon-boot.cer`. After enrollment and reboot, shim verifies our
    loader against MOK. Passes.
-3. Our loader runs. For the ISO path it chainloads payloads without a signature
-   requirement (Section 7). For the UKI path it loads only our-signed artifacts,
-   which shim verifies honestly (Section 5).
+3. Our loader runs. For the ISO path it imposes no signature requirement of
+   its own: it loads the payload through the shim-verified load path
+   (Section 7.6), which enforces or permits by the platform's state. For the UKI path it loads only our-signed artifacts,
+   which shim verifies (Section 5).
 
 **Next-stage name.** Shim's default next-stage loader filename is compiled
-into the shim binary. The spike confirmed Fedora 16.1 uses `grubx64.efi`
-(and openSUSE still `grub.efi` / `MokManager.efi`). The install tool
-(Section 8) must still read the actual embedded default path out of the
-specific shim binary being installed and name our loader to match, rather
-than assuming, so a future shim swap stays a data change.
+into the shim binary; Fedora 16.1's is `grubx64.efi`. The install tool
+(Section 8) reads the embedded default path out of the shim binary being
+installed and names our loader to match, so a different shim is a data
+change.
 
 
 ### 4.1 How each binary is signed, and why
 
-Three rules. They are short, and every one of them has been got wrong at
-least once.
-
-**1. Our loader and our UKIs carry exactly one signature: ours.** Nothing
-else has any business signing them, and a second signature on them is a sign
-that `sbsign` was run twice (see 4.2).
+**1. Our loader and our UKIs carry exactly one signature: ours.** A second
+signature on them means `sbsign` was run twice (see 4.2).
 
 **2. shim and MokManager keep the signatures they shipped with, and gain
-ours on top.** Both halves matter, and they cover different machines:
+ours on top.** The two cover different machines:
 
-- The **vendor** signatures are what boot the stick on an ordinary machine,
-  whose db trusts the Microsoft CAs. This is the common case and the whole
-  reason for chaining through a Microsoft-signed shim at all.
-- **Ours** is what boots the stick on a machine whose owner has enrolled only
-  their own keys, where db holds no Microsoft CA and shim would otherwise be
-  refused by the firmware before it ever runs. Enrolling the stick's cert as
-  a MOK does not help here: MOK is read by shim, and shim is the binary being
-  rejected. The cert has to be reachable by the *firmware*, which means db,
+- The **vendor** signatures boot the stick on a machine whose db trusts the
+  Microsoft CAs.
+- **Ours** boots the stick on a machine whose db holds only its owner's
+  keys and no Microsoft CA, where the firmware would refuse shim. A MOK
+  does not help there, since MOK is read by shim; the cert has to be in db
   and the binary has to carry a signature by it.
 
-Dropping either set halves the machines the stick boots, silently, and in a
-way that only shows up on the next machine it is carried to.
-
-MokManager is the weaker case of the two and is signed anyway. Fedora's shim
-carries the Fedora CA in its `.vendor_cert`, and that is the cert that signed
-`mmx64.efi`, so shim can already load MokManager on its own authority.
-Appending ours costs nothing and removes shim's vendor cert as the single
-point of failure for the enrollment UI.
+Fedora's shim carries the Fedora CA in its `.vendor_cert`, the cert that
+signed `mmx64.efi`, so shim can load MokManager on its own authority; ours
+is appended anyway so shim's vendor cert is not the single point of failure
+for the enrollment UI.
 
 **3. Never a third party's key, and in particular never a machine's db key.**
-It is tempting, when a machine trusts only its own keys, to sign the stick's
-shim with that machine's db key, because it is right there and it works. It
-is the wrong trade twice over:
-
-- It makes the stick's boot chain depend on a key that belongs to one
-  machine, so the stick stops being portable in exactly the way that matters.
-- It puts a signature from a key that signs binaries that machine's firmware
-  trusts onto a device that leaves the house.
-
-Use the stick's own MOK key and enrol its public cert in that machine's db
-instead. The cert is public and enrolling it grants the machine nothing it
-did not already choose to grant.
-
-**Removed 2026-09-30.** `BOOTX64.EFI` carried a third signature by a
-self-signed certificate `CN=Database Key`, the Gentoo workstation's sbctl db
-key, generated 2026-09-02. It was added so that the stick would boot that
-workstation, whose db carries no Microsoft CA, and it is exactly rule 3. It
-was stripped and replaced with a signature by the stick's own MOK, which is
-enrolled in that workstation's db and in the T430's. The MS 2011 and MS 2023
-signatures were preserved through the rewrite.
+That would make the stick's chain depend on one machine's key and carry a
+signature by that machine's trusted key off-site. Sign with the stick's own
+MOK key and enrol its public cert in that machine's db instead.
 
 ### 4.2 sbsign appends; it never replaces
 
 `sbsign` adds a certificate entry and leaves every existing one in place. Run
-it twice and the binary carries two identical signatures. This has bitten
-this project more than once, including on the UKI, and the symptom is never
-a failure: everything still boots, because firmware only needs one entry to
-verify, so it goes unnoticed until someone lists the signatures.
+it twice and the binary carries two identical signatures. Everything still
+boots, since firmware needs only one entry to verify, so it shows only when
+the signatures are listed.
 
 `sbattach --remove` removes **one entry per call**, not the whole table, so
-stripping a binary with three signatures takes three calls. Check the result
-rather than assuming:
+stripping a binary with three signatures takes three calls. Check the result:
 
 ```sh
 sbverify --list BOOTX64.EFI | grep '^signature'
@@ -501,9 +389,8 @@ identical bytes means an identical digest, which means the surviving vendor
 signatures still verify.
 
 **`sbverify --cert` cannot be trusted on a multiply-signed binary.** It
-returns success for a certificate that signed nothing in the image; measured
-2026-09-30 against `BOOTX64.EFI` with a freshly generated unrelated
-certificate, which it passed. Use it only on a binary with exactly one
+returns success for a certificate that signed nothing in the image (a
+freshly generated, unrelated certificate passes against `BOOTX64.EFI`). Use it only on a binary with exactly one
 signature. To answer "is this signed by the key in db", compare certificate
 fingerprints instead:
 
@@ -511,31 +398,24 @@ fingerprints instead:
 openssl x509 -in falcon-mok.crt -noout -fingerprint -sha256
 ```
 
-`archusb`'s `archusb-status-collect` already identifies signers by subject
-for this reason.
+`archusb`'s `archusb-status-collect` identifies signers by subject for this
+reason.
 
 ### 4.3 The ESP is not a storage location
 
-p1 holds the four files in the table above and nothing else. Not a backup of
-the binary being replaced, not a TPM event log, not a dump, not a note, not a
-spare copy of an ISO. There is room, and that is not a reason.
+p1 holds the four files in the table above and nothing else: no backups,
+TPM event logs, dumps, notes or ISOs.
 
 - It is vfat with no journal, written by firmware and by every OS that
-  touches the machine, and it is the first thing a repair tool reformats.
-  Nothing whose loss would matter should be the only copy there.
-- Anything extra is something a reader has to classify. A stray
-  `BOOTX64.EFI.orig` beside `BOOTX64.EFI` is one hurried glance away from
-  being taken for part of the chain.
+  touches the machine, and the first thing a repair tool reformats.
+- A stray file such as `BOOTX64.EFI.orig` beside `BOOTX64.EFI` can be taken
+  for part of the chain.
 - The partition is 64 MiB on purpose. A closed list is auditable at a glance,
   and `mkstick` can assert it.
 
-Backups, captures and working files belong on p2 (exFAT, which is what the
-user-facing partition is for) or on p3 beside the key. A binary that came
-from a distribution does not need backing up at all: Fedora's shim is a
-pinnable Koji URL, recorded in `docs/notes/shim-spike.md`.
-
-Audited 2026-09-30: the stick's p1 held a `BOOTX64.EFI.orig` left behind by
-a signing session. Removed. p1 is 2.3 MiB of 62 MiB used.
+Backups, captures and working files belong on p2 or on p3 beside the key.
+Fedora's shim needs no backup: it is a pinned Koji URL
+(`falcon-efi/tools/shim-spike/fetch-shims.sh`).
 
 
 ## 5. Personal OS path: UKI on LUKS, with passphrase handoff
@@ -551,42 +431,34 @@ Flow:
 4. Loader synthesizes a **virtual read-only filesystem** carrying the UKI plus
    a credential file holding the passphrase (Section 5.1), then
    `LoadImage`/`StartImage` the UKI from that filesystem. The UKI is signed by
-   our key, so it passes shim verification honestly (via the shim-verified
-   load path, Section 7.6). Full verification applies on this path.
+   our key and launched through the shim-verified load path (Section 7.6).
 5. The UKI's sd-stub packs the credential into the initrd; the initramfs's
    `systemd-cryptsetup` consumes it to unlock **p4** (LUKS2, argon2id) and
    pivots into the real root. Consuming it takes one small unit override in the
-   initramfs, for the reason recorded below.
+   initramfs (below).
 
-p3 and p4 share the passphrase precisely so this handoff is "reuse the string
-the user already typed." p4 is separate only so EFI never mounts root.
-
-**As built (2026-09-13, the whole flow above):** discovery, prompt, unlock,
-ext4 read, the shim-verified launch, and the credential handoff all work end
-to end in the QEMU rig (0.22 s unlock at 100k pbkdf2 iterations; sd-stub
-delivered the credential from our synthetic filesystem under Secure Boot ON
-with zero initramfs modifications). Notes that survive from the build:
+p3 and p4 share the passphrase so this handoff reuses the string the user
+already typed. p4 is separate only so EFI never mounts root.
 
 - The UKI is launched **by device path off the synthetic credential
-  filesystem** (falcon-efi/src/loader/credfs.c). A `SourceBuffer` load survives only as a
+  filesystem** (falcon-efi/src/loader/credfs.c). A `SourceBuffer` load is a
   loudly-warned fallback when the credfs publish fails; it is still
   shim-verified but cannot deliver credentials.
 - The credential is named **`cryptsetup.passphrase.cred`** (systemd strips
   the `.cred` suffix to form the credential name; `systemd-cryptsetup`
   hardcodes `cryptsetup.passphrase`). Content is raw passphrase bytes, no
   trailing newline, no NUL.
-- **The "no hook needed" claim was wrong, and a real initramfs disproved it
-  (2026-09-13).** Delivery was right; consumption was not. PID 1 files every
+- **Consumption needs a drop-in.** PID 1 files every
   credential arriving from sd-stub under `/run/credentials/@encrypted/`, not
   `@system`, because the ESP is untrusted and credentials delivered through it
   are expected to be `systemd-creds` blobs. The generated unit's
   `ImportCredential=cryptsetup.*` therefore tries to **decrypt** our plaintext
   passphrase, fails, and the service dies at step `CREDENTIALS` with `EINVAL`
-  (status 243) - before `systemd-cryptsetup` runs at all, so not even the
-  interactive fallback prompt happens. The user-visible symptom is a bare
+  (status 243) before `systemd-cryptsetup` runs, so there is no interactive
+  fallback prompt either. The symptom is a bare
   `Failed to start Cryptography Setup for <name>` into emergency mode.
 
-  The fix lives entirely on the OS side, not the loader side: a
+  The fix is on the OS side: a
   `systemd-cryptsetup@.service` drop-in that clears `ImportCredential=` and
   names the file by path, taking the plaintext route instead.
 
@@ -597,8 +469,8 @@ with zero initramfs modifications). Notes that survive from the build:
   ```
 
   It ships as the `falcon-credential` mkinitcpio install hook
-  (the archusb repo, `install/falcon-credential`) rather than as a hand-edit, so
-  `mkinitcpio -P` after a kernel or systemd update keeps it. Measured: with the
+  (the archusb repo, `install/falcon-credential`), so
+  `mkinitcpio -P` after a kernel or systemd update keeps it. With the
   drop-in the unlock succeeds from the credential with no prompt; without it
   the unit cannot start.
 
@@ -606,29 +478,14 @@ with zero initramfs modifications). Notes that survive from the build:
   fix.** `/run` is one tmpfs across the pivot, so
   `/run/credentials/@encrypted/cryptsetup.passphrase` is still present when the
   real root's `systemd-cryptsetup-generator` runs, and every unit it writes from
-  `/etc/crypttab` inherits the same fatal `ImportCredential=cryptsetup.*`.
-  Observed on real hardware 2026-09-15: p4 unlocked from the credential exactly
-  as designed, and then p3's own `cryptefi` unit - which has a keyfile and needs
-  no credential at all - died at `CREDENTIALS` before opening it, leaving `/efi`
-  unmounted behind a `nofail`. `install/falcon-credential.conf` is the
-  real-root half.
+  `/etc/crypttab` inherits the same fatal `ImportCredential=cryptsetup.*`:
+  without it, p3's own `cryptefi` unit (keyfile, no credential needed) dies
+  at `CREDENTIALS` before opening it, leaving `/efi` unmounted behind a
+  `nofail`. `install/falcon-credential.conf` is the real-root half.
 
-  Both files live in the **archusb** repo
-  (https://git.airies.net/vifair22/archusb), not here: they are configuration
-  of the install, not code in the loader. This section says why they are
-  needed; that repo is where they ship from.
-
-  The general shape worth remembering: this credential is delivered once but
-  lands somewhere two different systemd instances will read it, and the
-  generator applies `ImportCredential=` to *every* crypttab entry rather than
-  only the one we meant. A fix scoped to the initramfs is half a fix.
-
-  Why the rig missed it: the fixture UKI proved delivery, name and bytes, but
-  its `/init` was a shell script, not systemd - so nothing ever exercised the
-  credential *import* path. Proof-by-reading of systemd 261 read the consumer
-  (`systemd-cryptsetup`) and not the gatekeeper (PID 1's credential filing).
-  A fixture that does not run the real consumer is not proof of consumption.
-- **UKI discovery convention (settled):** the loader looks in `/uki/` first,
+  Both files ship from the **archusb** repo
+  (https://git.airies.net/vifair22/archusb), not this one.
+- **UKI discovery convention:** the loader looks in `/uki/` first,
   then `/EFI/Linux/` (the Boot Loader Specification location, so a p3
   populated by `kernel-install` still boots), taking regular files with a
   case-insensitive `.efi` suffix, sorted by name; one match boots directly,
@@ -652,14 +509,12 @@ through **sd-stub's companion-credential pickup**:
   calls `LoadImage` with that device path.
 - `systemd-cryptsetup` consumes credentials (`cryptsetup.passphrase`), given
   a systemd-based initramfs and the `falcon-credential` drop-in Section 5
-  describes (the stock `ImportCredential=` cannot read a plaintext
-  credential). Both are build-time properties of the UKI.
+  describes. Both are build-time properties of the UKI.
 
-Lifetime and exposure: the credential exists only in RAM (the virtual
+Lifetime: the credential exists only in RAM (the virtual
 filesystem evaporates at `ExitBootServices`; the cpio copy lives inside the
 initramfs), is root-only, and stays under `/run/credentials/` across the
-pivot, which is why the real root needs the drop-in too (Section 5). It never
-touches persistent storage and is never world-readable. If
+pivot, which is why the real root needs the drop-in too (Section 5). If
 `LoadImage`/`StartImage` fails, the loader zeroes the credential buffer and
 tears down the virtual filesystem before returning to the menu. If the boot
 succeeds, the loader's copy is zeroed at `ExitBootServices` by a
@@ -667,38 +522,17 @@ notification the credential filesystem registers when it serves a secret,
 after sd-stub has packed its own; the LUKS key schedule and p3's plaintext
 caches are released once the UKI is read, before it starts. The BIOS loader
 does the same from `linux_boot`'s last act, and also clears the BIOS
-keyboard ring the passphrase was typed through (Section 12.3.7).
+keyboard ring the passphrase was typed through (Section 11.3.7).
 
-All three open questions of this design are now VERIFIED in the QEMU rig
-(2026-09-13, systemd 261 sd-stub, shim 16.1): the `.extra.d` naming and
-pickup rules behave as documented; sd-stub accepts unauthenticated `.cred`
-files under Secure Boot ON (credentials are data, not code); and pickup
-works from our synthetic filesystem exactly as from a real ESP. Measured
-detail worth keeping: both the firmware and shim loaders size the image via
+sd-stub accepts unauthenticated `.cred` files under Secure Boot ON
+(credentials are data, not code), and picks them up from the synthetic
+filesystem as from a real ESP. Both the firmware and shim loaders size the image via
 `SetPosition(max)`/`GetPosition`, never `GetInfo`, and sd-stub enumerates
-`.extra.d` through directory `Read` one `EFI_FILE_INFO` record at a time -
-a synthetic filesystem must implement all of that surface.
-
-**Rejected: volatile EFI variable.** An earlier design stashed the passphrase
-in a volatile (`BOOTSERVICE_ACCESS | RUNTIME_ACCESS`, not `NON_VOLATILE`) EFI
-variable, with the initramfs reading it via efivarfs and then deleting it.
-This does not work as specified: the UEFI spec makes volatile variables
-**read-only after `ExitBootServices`** (a runtime `SetVariable` on them fails,
-and deletion is a `SetVariable`), so the wipe is impossible and the passphrase
-would sit in the variable store until reboot. Worse, efivarfs exposes
-variables as mode-0644 files, making the secret readable by any local user for
-the whole session. Do not resurrect this design.
-
-**Fallback kept in reserve** if an sd-stub detail does not cooperate: a
-dedicated random keyfile, generated at mkstick time, stored on p3, and
-enrolled as an extra p4 keyslot; the loader passes the keyfile (never the
-passphrase) through the volatile variable. The wipe is still impossible, but
-what leaks is a revocable p4 keyslot key, not the passphrase that also opens
-p3 and the MOK key. Strictly worse than the credential route; use only if the
-credential route fails.
+`.extra.d` through directory `Read` one `EFI_FILE_INFO` record at a time;
+a synthetic filesystem implements all of that surface.
 
 
-### 5.2 Wrong passphrases (decided 2026-09-29)
+### 5.2 Wrong passphrases
 
 Both loaders count the wrong passphrases of a boot across every prompt,
 whichever shelf and however often the row is chosen again, and give
@@ -715,41 +549,66 @@ included, is the same line:
 
     wrong passphrase.
 
-The prompt carries no attempt count either. Telling the person at the
-keyboard how long they wait and how many tries are left helps only the one
-guessing; the owner who mistyped needs neither number.
+The prompt carries no attempt count either: both numbers help only someone
+guessing.
 
-What it buys is a rate, five guesses a power cycle and half a minute of
-waiting among them, against someone at the keyboard of a machine that
-stays whole (a station's case). It does nothing against a copy of the
-shelf, which is ground offline, where argon2id's cost is the defence, and
-the count does not survive a power cycle: nothing the loader could keep it
-in would.
+It limits guesses at the keyboard of a machine that stays whole (a
+station's case) to five a power cycle with half a minute of waiting among
+them. It does nothing against an offline copy of the shelf, where argon2id's
+cost is the defence, and the count does not survive a power cycle.
 
-Considered and rejected: *three tries and back to the menu* (the earlier
-rule), which limits nothing, since the row can be chosen again at once.
+### 5.3 What the shelf holds, and what it is not
 
-### 5.4 A shelf its OS left mounted (decided 2026-09-30)
+p3 is the shelf. Like p1 (Section 4.3) its contents are a closed list: it is
+small, and it is what has to be right for the stick to boot.
 
-A shelf's OS mounts it read-write (the T430's is `/efi`), and ext4 sets
+| Path | What it is | Read by |
+|---|---|---|
+| `/falcon-mok.key` | the MOK private key, mode 0600 | the signing appliance, and the host `sign` tool |
+| `/falcon-mok.crt` | its public half, the same certificate as p1's `falcon-boot.cer` | signing and enrollment |
+| `/uki/<name>.efi` | every bootable UKI: the personal OS, its rollback, the signing appliance | the loader's shelf scan |
+| `/vmlinuz-<kernel>` | one plain kernel copy per installed kernel | mkinitcpio, never the loader |
+| `/lost+found` | ext4's own | the filesystem |
+
+**The kernel copies are load-bearing.** Arch's `linux` package ships the
+kernel only at `usr/lib/modules/<kver>/vmlinuz`, and mkinitcpio's pacman
+script maintains a copy at whatever absolute path `ALL_kver` names, provided
+no package owns that path. `ALL_kver` points at `/efi/vmlinuz-linux`, and
+that is how the UKI gets rebuilt on a kernel upgrade. Delete them and the
+next upgrade rebuilds nothing, silently. archusb's `install/` presets record
+the reasoning.
+
+**Only `*.efi` directly under `/uki` is visible to the loader.**
+`falcon-core/src/media/shelf.c` matches on the `.efi` suffix and nothing
+else. A file named `appliance-uki.efi.prev` is not a rollback:
+the loader will never offer it, and it is recoverable only by unlocking p3
+from another machine and renaming it. A rollback has to end in `.efi`, and
+its name decides where it falls in the chooser's sort, which is plain
+ordering by name: `-` is 0x2D and `.` is 0x2E, so `arch-usb-prev.efi` sorts
+before `arch-usb.efi`.
+
+**Not on the shelf:** ISO images, captures, notes, and backups of anything
+that can be rebuilt (the signing appliance is built from this repository and
+the UKIs are regenerated by mkinitcpio). p2 is the partition for files, and
+it is 96 GiB.
+
+### 5.4 A shelf its OS left mounted
+
+A shelf's OS mounts it read-write (at `/efi`), and ext4 sets
 incompat `recover` for as long as it is mounted that way: the journal may
 hold committed blocks the filesystem proper does not. Hibernation leaves it
-so every time, since the OS is asleep and not unmounted, and the image in
-swap counts on the shelf staying exactly as it left it. A power cut leaves
-it the same way. The ext4 driver refused such a volume, because reading
-around the journal hands back stale metadata, so a hibernated machine could
-not boot the UKI that would resume it. The advice the refusal gave, fsck
-from another system, is the one thing that corrupts a hibernated OS's shelf
-when it resumes.
+so every time, and the image in swap counts on the shelf staying exactly as
+it left it; a power cut leaves it the same way. Reading such a volume around
+the journal hands back stale metadata, and an fsck from another system
+corrupts a hibernated OS's shelf when it resumes.
 
-Every reader of a shelf now reads it in that state through its journal,
+Every reader of a shelf reads it in that state through its journal,
 replayed in memory and never written: `falcon-core/src/fs/jbd2.c`, reached
 through `fs_mount_journal`. It follows the kernel's recovery
 (`fs/jbd2/recovery.c`): a scan that finds where the valid log ends, the
 revoke records, then the block tags. The result is a table of the newest
 committed copy of each block rather than writes, and every read of the
-volume goes through it. Nothing reaches the disk, so the OS that resumes
-finds the shelf as it left it. Both loaders' shelf mounts and their
+volume goes through it. Both loaders' shelf mounts and their
 discovery (a plaintext shelf's `/.falcon`) use it, and so do the appliance,
 `mkstick status` and `station install` (which, run on the machine it
 installs on, always meets a shelf mounted right now).
@@ -777,7 +636,7 @@ installs on, always meets a shelf mounted right now).
   sets `incompat revoke` in memory at the first revoke and writes it to the
   superblock later, so a crashed or hibernated journal can hold revoke
   blocks its superblock does not admit to. Skipping them serves a freed
-  block's old copy after the block was reused (the fixture caught it).
+  block's old copy after the block was reused.
 - **Memory.** The table is 24 bytes a tag in the replayed transactions,
   counted by the scan, plus one block of scratch; a 64 MiB journal asks for
   at most about 400 KiB. The caller supplies it, as argon2id's memory is
@@ -797,575 +656,353 @@ freeze filesystems before it hibernates, and ext4's freeze empties the
 journal and clears `recover`, so the shelf is clean when the loader reads
 it. It is a defence, not a requirement.
 
-Considered and rejected: *the OS mounts the shelf read-only* and remounts it
-for a kernel install, which every machine has to remember and which a power
-cut still defeats; *replaying fast commits*, whose record format has changed
-across kernels, for a window of seconds; *ignoring `recover`*, which reads
-stale metadata.
-
-### 5.3 What the shelf holds, and what it is not
-
-p3 is the shelf. Like p1 (Section 4.3) its contents are a closed list, for
-the same reasons: it is small, it is what has to be right for the stick to
-boot at all, and anything extra is something a later reader has to classify
-before they can trust what is there.
-
-| Path | What it is | Read by |
-|---|---|---|
-| `/falcon-mok.key` | the MOK private key, mode 0600 | the signing appliance, and the host `sign` tool |
-| `/falcon-mok.crt` | its public half, the same certificate as p1's `falcon-boot.cer` | signing and enrollment |
-| `/uki/<name>.efi` | every bootable UKI: the personal OS, its rollback, the signing appliance | the loader's shelf scan |
-| `/vmlinuz-<kernel>` | one plain kernel copy per installed kernel | mkinitcpio, never the loader |
-| `/lost+found` | ext4's own | the filesystem |
-
-**The kernel copies are load-bearing, not leftovers.** They look exactly like
-clutter and they are not. Arch's `linux` package ships the kernel only at
-`usr/lib/modules/<kver>/vmlinuz`, and mkinitcpio's pacman script maintains a
-copy at whatever absolute path `ALL_kver` names, provided no package owns
-that path. Pointing `ALL_kver` at `/efi/vmlinuz-linux` is therefore a
-supported idiom rather than a hack, and it is how the UKI gets rebuilt on a
-kernel upgrade. Delete them and the next upgrade rebuilds nothing, silently.
-The reasoning is recorded in full in archusb's `install/` presets.
-
-**Only `*.efi` directly under `/uki` is visible to the loader.**
-`falcon-core/src/media/shelf.c` matches on the `.efi` suffix and nothing
-else. A file named `appliance-uki.efi.prev` is consequently not a rollback:
-it is a copy the loader will never offer, recoverable only by unlocking p3
-from another machine and renaming it. A rollback has to end in `.efi`, and
-its name decides where it falls in the chooser's sort, which is plain
-ordering by name: `-` is 0x2D and `.` is 0x2E, so `arch-usb-prev.efi` sorts
-before `arch-usb.efi`.
-
-**Not on the shelf:** ISO images, captures, notes, and backups of anything
-that can be rebuilt. The signing appliance is built from this repository and
-the UKIs are regenerated by mkinitcpio, so neither needs a spare copy living
-next to the original. p2 is the partition for files, and it is 96 GiB.
-
-Audited 2026-09-30 on the main stick. `uki/appliance-uki.efi.prev` was 21 MiB
-the loader could not boot, and was removed the same day; the shelf is now
-230 MiB of 974 MiB and matches the table above exactly. What the audit leaves
-open is that there is no `arch-usb-prev.efi`, so the personal OS has no
-rollback image, though a second kernel (`arch-lts.efi`) covers most of what
-one would be for.
-
 ## 6. ISO path: drag-and-drop mechanism
 
 No host-side registration. The stages:
 
 1. **Scan.** At boot, the exFAT driver enumerates `*.iso` and `*.img` on p2.
-   That listing is the menu, presented **by folder** (decision 2026-09-13,
-   Ventoy tree-view style): each menu screen shows the current directory's
-   subfolders and images, entering a folder descends, ".." (or ESC) goes
-   up, and ESC at the root exits to firmware. The pinned entries (personal
-   OS) live at the root screen. Purely presentation: the scan, the labels,
-   the bless lookup and the boot paths all keep operating on full p2 paths.
-   Dropping a file on from any OS is the entire "add" workflow.
+   That listing is the menu, presented **by folder** (Ventoy tree-view
+   style): each menu screen shows the current directory's subfolders and
+   images, entering a folder descends, ".." (or ESC) goes up, and ESC at the
+   root exits to firmware. The pinned entries (personal OS) live at the root
+   screen. Purely presentation: the scan, the labels, the bless lookup and
+   the boot paths all operate on full p2 paths. Each row's label (family,
+   signature, prediction) comes from falcon-core reading the image file on
+   p2 (`media/medium.c`), with no virtual device published for it. Dropping
+   a file on from any OS is the entire "add" workflow.
 2. **Present as virtual media.** On selection, register an `EFI_BLOCK_IO`
    (and `EFI_DISK_IO`) device whose reads are served from the file's bytes
-   by the exFAT driver. **Two media flavors, one publisher** (decision
-   2026-09-13): a `.iso` is typed as a CD-ROM (2048-byte blocks, El Torito
-   parsed by firmware, below); a `.img` is typed as a disk (512-byte
-   sectors), and the firmware's GPT/MBR partition path plus FAT driver
-   surface its ESP - or bind FAT directly for a partition-table-less
-   superfloppy image. Everything downstream (family/signature probing,
-   chainload, verification, teardown) is identical for both. `.img` means
-   raw bytes only: container formats (vhd/vdi/qcow2) are refused, since the
-   whole mechanism is "let firmware parse what it already knows." The
-   post-ExitBootServices media-finding story (6.1) applies to `.img`
-   exactly as to `.iso`; memtest-class images that need no backing media
-   after load are the degenerate happy case, and PassMark memtest86's
-   MS-signed binary boots verified under Secure Boot with no preparation.
+   by the exFAT driver. **Two media flavors, one publisher**: a `.iso` is
+   typed as a CD-ROM (2048-byte blocks, El Torito parsed by firmware,
+   below); a `.img` is typed as a disk (512-byte sectors), and the
+   firmware's GPT/MBR partition path plus FAT driver surface its ESP - or
+   bind FAT directly for a partition-table-less superfloppy image.
+   Everything downstream (family/signature probing, chainload,
+   verification, teardown) is identical for both. `.img` means raw bytes
+   only: container formats (vhd/vdi/qcow2) are refused. The
+   post-ExitBootServices media-finding problem (6.1) applies to `.img`
+   exactly as to `.iso`; memtest-class images need no backing media after
+   load, and PassMark memtest86's MS-signed binary boots verified under
+   Secure Boot with no preparation.
 3. **Let firmware parse it.** `ConnectController` (recursive) on the virtual
    device. The UEFI spec mandates El Torito boot support for CD-ROM media: the
    firmware's *partition* driver recognizes the El Torito boot catalog and
    surfaces the ISO's embedded EFI System Partition image, which the
-   firmware's FAT driver then mounts. No ISO9660 *filesystem* driver is
-   involved or required, and **we do not write an ISO9660 reader.**
-   (Superseded 2026-09-18 by Section 6.4: a Linux kernel lives in the ISO9660
-   tree, and direct kernel boot needs it. The El Torito route stays how the
-   ISO's own loader is chainloaded.) Fallback
-   kept in pocket for ISOs with a defective El Torito entry: present the
-   isohybrid as a 512-byte-sector disk instead and let the firmware's GPT/MBR
-   partition path find the same embedded ESP.
+   firmware's FAT driver then mounts. This is how the ISO's own loader is
+   chainloaded. falcon-core's ISO9660 and UDF readers serve everything else
+   (the survey, direct kernel boot, the Windows and BSD patches; Section
+   6.4), since a Linux kernel lives in the ISO9660 tree rather than in the El
+   Torito image.
 4. **Chainload through the verifying `LoadImage`.** `LoadImage` the ISO's
-   embedded `\EFI\BOOT\BOOTX64.EFI`, then `StartImage`. We never override or
-   disable verification; the call goes through shim as usual (Section 7), so:
+   embedded `\EFI\BOOT\BOOTX64.EFI`, then `StartImage`, through shim
+   (Section 7.6):
    - Secure Boot ON: shim verifies the payload. A distro ISO whose
      `\EFI\BOOT\BOOTX64.EFI` is its own MS-signed shim passes, and that inner
      shim verifies its kernel with its own vendor cert. An unsigned payload is
-     refused; the menu entry was already marked unverified and we print why.
+     refused; the menu entry is already marked unverified and the loader
+     prints why.
    - Secure Boot OFF: shim allows the load, and any ISO boots.
 
-**Landmine, measured 2026-09-13: EDK2's UdfDxe is case-sensitive.** On the UDF
-volume a firmware UDF driver publishes (Windows install media, Section 6.3),
-`\EFI\BOOT\BOOTX64.EFI` returns NOT_FOUND while `\efi\boot\bootx64.efi` opens
-the same file. The FAT driver folds case; the UDF driver compares byte for
-byte. Any path we hand the firmware for UDF media must match the case recorded
-on the volume. The El Torito ESP child is FAT and is unaffected; only the UDF
-view of the same medium cares.
+**EDK2's UdfDxe is case-sensitive.** On the UDF volume a firmware UDF driver
+publishes (Windows install media, Section 6.3), `\EFI\BOOT\BOOTX64.EFI`
+returns NOT_FOUND while `\efi\boot\bootx64.efi` opens the same file. The FAT
+driver folds case; the UDF driver compares byte for byte. Any path handed to
+the firmware for UDF media matches the case recorded on the volume, and the
+chainload picks its volume by the exact boot path (`select_boot_volume`). The
+El Torito ESP child is FAT and is unaffected.
 
 ### 6.1 The post-ExitBootServices problem
 
-Stages 2-5 all live in boot services. The virtual CD is a boot-services fiction:
-it evaporates the instant the distro kernel calls `ExitBootServices`. The
-distro's initramfs then hunts for its squashfs on a CD-ROM that no longer
-exists, and drops to an emergency shell. This is the single hardest problem in
-the whole project and the reason Ventoy is enormous.
+Stages 2-4 all live in boot services. The virtual CD is a boot-services fiction:
+it evaporates the instant the distro kernel calls `ExitBootServices`. A stock
+distro initramfs then hunts for its squashfs on a CD-ROM that no longer
+exists, and drops to an emergency shell.
 
-**This is a Linux problem, not a universal one (correction, 2026-09-13.)**
-An earlier version of this document filed Windows install media under "ISOs
-that need Ventoy's runtime driver injection." That was wrong. Windows has no
-post-`ExitBootServices` media problem at all: the Windows boot manager reads
-`\sources\boot.wim` off our virtual CD *while still in boot services* and
-materialises WinPE as a RAM disk, so by the time the virtual media evaporates
-nothing is looking for it, and WinPE then re-enumerates hardware with its own
-drivers and finds our exFAT p2 natively. None of the framework below applies
-to Windows. Its actual problem is later and narrower; see Section 6.3.
+**This is a Linux (and BSD) problem, not a universal one.** Windows has no
+post-`ExitBootServices` media problem at the boot stage: the Windows boot
+manager reads `\sources\boot.wim` off the virtual CD *while still in boot
+services* and materialises WinPE as a RAM disk, and WinPE then re-enumerates
+hardware with its own drivers and finds the exFAT p2 natively. The framework
+below does not apply to Windows; its problem is later and narrower (Section
+6.3).
 
-Two handling strategies, and we build the framework for both:
+Two handling strategies, and the framework carries both:
 
 - **Native find-the-ISO (the easy families).** Many distros' stock initramfs can
   locate the ISO *file* on a normal partition given the right cmdline:
   `iso-scan/filename=` (Debian/Ubuntu casper, dracut/Fedora),
   `img_loop=` / `img_dev=` (Arch archiso), `rd.live.image` and friends. For
-  these we inject nothing at boot; we just supply the cmdline from a per-family
+  these nothing is injected at boot; the cmdline comes from a per-family
   template. In the framework this is the degenerate "empty injector" case.
 - **Runtime injection (the Ventoy tax).** For families whose initramfs cannot
-  find a file-backed ISO, we recreate the ISO as a block device *after*
-  ExitBootServices. This means: compute the ISO file's extent map on p2 (the
-  list of physical LBA ranges backing the contiguous or fragmented file),
-  append a compressed cpio segment to the initrd carrying (a) that extent map,
-  (b) an early hook and a small kernel helper that assembles a device-mapper
-  target over p2 using those extents and exposes it where the distro expects its
-  media, and then let the stock initramfs proceed.
+  find a file-backed ISO, the ISO is recreated as a block device *after*
+  ExitBootServices: the ISO file's extent map on p2 (the list of physical LBA
+  ranges backing the contiguous or fragmented file) and falcon-hook (Section
+  6.4) are appended to the initrd as a cpio segment, falcon-hook assembles a
+  device-mapper target over p2 from those extents and exposes it where the
+  distro expects its media, and the stock initramfs proceeds.
 
 ### 6.2 Injection framework (built in MVP, injectors filled in over time)
 
-Because runtime injection is where Ventoy's line count lives, the MVP does not
-ship every injector, but it *does* ship the machinery so injectors are pure
-data/scripts dropped into a registry, never core surgery:
+Injectors are data dropped into a registry, never core surgery:
 
 - **Family detection.** Fingerprint the mounted ISO's ESP / directory layout
   (`/casper`, `/live`, `/arch`, `/LiveOS`, presence of specific bootloaders) to
-  classify it into a family.
+  classify it into a family (`falcon-core/src/media/family.c`).
 - **Per-family descriptor.** A registry entry per family carrying: the cmdline
-  template, whether it needs injection or just a cmdline, (if injection) the
-  hook payload to append, and what the family's stock initramfs can consume:
-  whether it includes exFAT support (needed to `iso-scan` a file on p2) and
-  device-mapper support (needed by the extent-map hook). We cannot ship kernel
-  modules (they must match the running kernel), so these facts gate which
-  strategy each family can use and are recorded per family, never assumed.
+  template, whether it needs injection or just a cmdline, and what the
+  family's stock initramfs can consume: whether it includes exFAT support
+  (needed to `iso-scan` a file on p2) and device-mapper support (needed by
+  the extent-map hook). Kernel modules cannot be shipped (they must match the
+  running kernel), so these facts gate which strategy each family can use
+  and are recorded per family, never assumed.
 - **Extent-map computation.** In the exFAT driver, resolve an ISO file to its
-  ordered list of physical extents on p2. Needed by any injector; also validates
-  the "ISO must be resolvable to raw LBAs" assumption at add-nothing time.
-- **initrd cpio append.** Load the ISO's initrd into memory, concatenate our
-  cpio segment, pass the combined image to the kernel. Standard early-initramfs
-  override mechanism.
-- **Assets on p2.** Injection payloads (hook scripts, the helper module blobs)
-  live on p2 under a reserved directory so they travel with the stick and can be
-  updated without reflashing.
+  ordered list of physical extents on p2 (`media/extmap.c`).
+- **initrd cpio append.** Load the ISO's initrd into memory, concatenate the
+  cpio segment (`media/cpio.c`), pass the combined image to the kernel.
+  Standard early-initramfs override mechanism.
+- **Assets.** The one injection payload, falcon-hook (Section 6.4), is
+  embedded in the loaders as generated C arrays (`falcon-hook/build.mk`) and
+  is updated with them. The reserved directory `p2:/falcon/` holds the
+  blessed artifacts (Section 8.1) and `windows.cfg` (Section 6.4).
 
-MVP ships: family detection, the descriptor registry, extent-map computation,
-the cpio-append path, and native-cmdline injectors for the tested families
-(Debian/Ubuntu, Fedora, Arch, SystemRescue, Gentoo; memtest needs no ISO
-backing at all). Gentoo's live media (dracut since 2025) finds its root by the
-ISO's volume label, which carries the release date, so its template uses a
-third placeholder, `%LABEL%`: the bless tool reads the label from the ISO's
-primary volume descriptor and refuses one with anything outside
-`[A-Za-z0-9._-]` rather than escaping it into a signed cmdline. Blessed Gentoo
-20260510 was booted end to end under QEMU from an exFAT disk (2026-09-18). Full runtime-injection payloads for the hard families are stubs behind the
-same interface.
+The registry carries native-cmdline templates for Debian/Ubuntu, Fedora,
+Arch, SystemRescue and Gentoo; memtest needs no ISO backing at all. Gentoo's
+live media (dracut) finds its root by the ISO's volume label, which carries
+the release date, so its template uses a third placeholder, `%LABEL%`: the
+bless tool reads the label from the ISO's primary volume descriptor and
+refuses one with anything outside `[A-Za-z0-9._-]` rather than escaping it
+into a signed cmdline. The runtime-injection payload for the hard families
+is falcon-hook (Section 6.4).
 
-### 6.3 Windows install media (decision 2026-09-13)
+### 6.3 Windows install media
 
-Required capability, per Section 1. The research record, with sources and the
-measurements quoted below, is `docs/notes/windows-route.md`.
+Required capability, per Section 1.
 
-Section 6.1 states the correction this whole subsection rests on: Windows is
-the easy case, not the hard one. What fails on a stock Windows ISO booted from
-our virtual CD is not WinPE, which comes up fine. It is Setup, afterwards,
-looking for `\sources\install.wim` on media that no longer exists. The fix is
-to make Windows mount the ISO **for itself**, from Windows userland, once it
-is up. That is one boot-time byte patch and one user-mode executable, and no
-injection framework at all.
+What fails on a stock Windows ISO booted from the virtual CD (Section 6.1) is
+not WinPE, which comes up fine. It is Setup, afterwards, looking for
+`\sources\install.wim` on media that no longer exists. The fix is to make
+Windows mount the ISO **for itself**, from Windows userland, once it is up:
+one boot-time patch of `boot.wim` (Section 6.4) and one user-mode
+executable, falcon-winjump, and no injection framework.
 
-**Mechanism (Ventoy's shape, with all preparation moved to Linux bless time).**
-*Superseded 2026-09-18 by Section 6.4: the WIM patch moves into the loader and
-is applied at boot. The mechanism below (the jump binary, VirtDisk, which
-image to patch, the measurements) stands; where the patch is computed does
-not.*
+**WinPE facts the mechanism rests on.**
 
-- Stock WinPE already ships every component this needs, all Microsoft-signed
-  and present in *both* images of the Win11 25H2 `boot.wim` (measured):
-  `virtdisk.dll`, `vhdmp.sys`, `vdrvroot.sys`, `cdrom.sys`, `udfs.sys`,
-  `exfat.sys`, `winpeshl.exe`. We ship none of them and load none of them.
+- Stock WinPE ships every component this needs, all Microsoft-signed and
+  present in *both* images of the Win11 25H2 `boot.wim`: `virtdisk.dll`,
+  `vhdmp.sys`, `vdrvroot.sys`, `cdrom.sys`, `udfs.sys`, `exfat.sys`,
+  `winpeshl.exe`. falcon-boot ships none of them and loads none of them.
 - Windows' inbox Win32 VirtDisk API (`OpenVirtualDisk` plus
   `AttachVirtualDisk` with `VIRTUAL_STORAGE_TYPE_DEVICE_ISO`) attaches an ISO
   *file* as a genuine CD-ROM class device (`\Device\CdRomN`), which
   `cdrom.sys` and `udfs.sys` then mount as ordinary UDF.
   `ATTACH_VIRTUAL_DISK_FLAG_READ_ONLY` is **mandatory** for an ISO
-  (documented by Microsoft, not a choice we make), and
+  (documented by Microsoft), and
   `ATTACH_VIRTUAL_DISK_FLAG_PERMANENT_LIFETIME` is what keeps the mount alive
   after the calling process exits.
-- There is no inbox CLI for this. `diskpart` handles VHD/VHDX only (measured:
-  attaching a footered ISO yields a disk-class device with no partition table
-  and no mountable volume), and `Mount-DiskImage` is PowerShell, which WinPE
-  does not have. So we write a small native Win64 executable, on the order of
-  100 lines, against `virtdisk.dll`. **The same `x86_64-w64-mingw32-gcc` that
-  builds our EFI loader builds it**, and `virtdisk.h` plus `libvirtdisk.a` are
-  already present in that toolchain: the Windows route adds **zero new
-  toolchain dependencies**, which is a large part of why it won.
-- Delivery: at bless time, in Linux userland, we patch the ISO's
-  `\sources\boot.wim` to replace `\Windows\System32\winpeshl.exe` with that
-  jump binary, preserving the original alongside it (e.g.
-  `winpeshl_orig.exe`). At runtime the jump binary attaches the ISO read-only
-  from the exFAT partition and then executes the original `winpeshl.exe`, so
-  Windows Setup proceeds exactly as it would have and finds `install.wim` on a
-  real, mounted CD-ROM.
+- There is no inbox CLI for this. `diskpart` handles VHD/VHDX only (attaching
+  a footered ISO yields a disk-class device with no partition table and no
+  mountable volume), and `Mount-DiskImage` is PowerShell, which WinPE does
+  not have.
 
-**No third-party kernel driver, and the reason is not the obvious one.**
-Windows kernel-mode driver trust chains to Microsoft's own hard-coded roots
-and has nothing whatever to do with our MOK or the UEFI `db`. That settles
-one thing permanently: we could never sign a driver ourselves, at any price
-short of a Partner Center account and an attestation submission, so writing
-our own `.sys` looked dead. *Superseded 2026-09-25: see "Our own driver, after
-all" below. The argument is about the installed OS; the installer's WinPE does
-not enforce kernel signing the same way, which reopens exactly this door.* It
-does **not** settle the third-party candidates, and
-the record has to be explicit so nobody re-derives the wrong reason later:
-**ImDisk and Arsenal Image Mounter are both genuinely
-Microsoft-attestation-signed in 2026 and would load with Secure Boot ON.**
-They were rejected on other grounds entirely.
+**winjump.** `falcon-winjump/` is a small native Win64 executable against
+`virtdisk.dll`, built by the same `x86_64-w64-mingw32-gcc` that builds the
+EFI loader (`virtdisk.h` and `libvirtdisk.a` are in that toolchain), and a
+second time for i686 for 32-bit media. The served `boot.wim` has
+`\Windows\System32\winpeshl.exe` replaced by winjump, with the original
+alongside it as `winpeshl_orig.exe` (Section 6.4). At runtime winjump
+attaches the ISO read-only from the exFAT partition and then executes the
+original `winpeshl.exe`, so Windows Setup proceeds as it would have and
+finds `install.wim` on a real, mounted CD-ROM. The image patched is the one
+the WIM header names as bootable (`falcon-core/src/wim/wim.c`), index 2
+(Setup) on Win11 25H2. winjump suppresses the critical-error dialog an empty
+floppy drive raises when it probes drives (`SEM_FAILCRITICALERRORS`).
 
-- **ImDisk:** redistributing a GPLv2 kernel blob on every stick, to solve a
-  problem the inbox `vhdmp.sys` already solves, and the project is declared
-  legacy by its own author.
-- **Arsenal Image Mounter:** AGPLv3, and its root-enumerated PnP install walks
-  into a documented WinPE 26100 PnP regression in which injected drivers land
-  in `CM_PROB_REINSTALL`. Technically it has the best CD-ROM emulation of any
-  candidate; that did not save it.
+**falcon-vdisk.** Where `AttachVirtualDisk` cannot serve - Vista and 7, whose
+WinPE has no ISO support and cannot read the exFAT partition the ISO lives
+on, and 2000/XP, which have no WinPE - winjump loads `falcon-vdisk`
+(`falcon-vdisk/`; a native NT CD-ROM driver, built for both widths from one
+source as the hook and winjump are) with `CreateService`/`StartService` and
+hands it the ISO's physical-disk extents: the same extent map the Linux
+route computes (Section 6.4), carried in winjump's cfg rather than an EFI
+variable. The driver serves those raw disk sectors as a read-only CD-ROM
+device that CDFS and UDFS mount, reading the ISO straight off the disk, so
+an ISO of any size is served from where it already lies, never copied into
+RAM. It answers the size query UDFS issues before mounting an install DVD's
+UDF tree, and `IOCTL_DISK_CHECK_VERIFY` (which CDFS's mount issues, besides
+the CD-ROM and storage variants). A filesystem may issue reads above
+`PASSIVE_LEVEL`, so the lower-disk read runs on a dedicated servicing
+thread, never inline in the dispatch routine, and it is `ZwReadFile` through
+a nonpaged bounce buffer, not a hand-built IRP forwarding the caller's
+mapped MDL.
 
-Held in reserve rather than rejected outright: if a rig test ever shows
-`AttachVirtualDisk` unusable, the third-party pick is **ImDisk**, because its
-non-PnP design makes `CreateService` plus `StartService` the entire install
-and sidesteps the 26100 regression. In the event the reserve was not needed:
-we wrote our own instead.
-
-**Our own driver, after all (2026-09-25).** The signing argument above is
-about the *installed* OS. The installer's WinPE is a different enforcement
-regime, and that is where the driver runs:
+Kernel-mode code signing decides where the driver loads. Windows
+kernel-mode driver trust chains to Microsoft's own roots, not to the MOK or
+the UEFI `db`, but the driver runs only in the installer's WinPE:
 
 - 32-bit WinPE, which every 32-bit Windows installer boots, enforces no
-  kernel-mode code signing at all: an unsigned `.sys` loads. `falcon-vdisk`
-  loads there with nothing signed.
-- 64-bit WinPE enforces KMCS, but the boot configuration is ours to set as the
-  ISO is served: `testsigning` in the served BCD lets a self-signed driver
-  load. It is the platform opt-out of Section 7, refused under Secure Boot ON
-  exactly as the rest of the model is, and it touches only the installer's
-  WinPE - the OS it lays down boots with its own enforcement intact.
+  kernel-mode code signing: the unsigned `falcon-vdisk` loads.
+- 64-bit WinPE enforces KMCS and does not load the unsigned driver; the
+  loader does not put the served BCD into test-signing mode. On BIOS the
+  resident CD (below) makes the driver unnecessary. On UEFI the corpus's
+  64-bit media older than 8 fail before WinPE, with no EFI System Partition
+  found on the medium (docs/coverage.md).
 
-So `falcon-vdisk` (`falcon-vdisk/`; a native NT CD-ROM driver, built for both
-widths from one source as the hook and winjump are) is the fallback for media
-`AttachVirtualDisk` cannot serve: Vista and 7 (whose WinPE has no ISO support,
-and no way to read the exFAT partition the ISO lives on either) and 2000/XP
-(no WinPE at all). winjump loads it with `CreateService`/`StartService`, hands
-it the ISO's physical-disk extents - the same extent map the Linux route
-computes (Section 6.4), carried in winjump's cfg rather than an EFI variable -
-and it serves those raw disk sectors as a read-only CD-ROM device that CDFS
-mounts. It reads the ISO straight off the disk, so an ISO of any size is
-served from where it already lies, never copied into RAM.
+On BIOS the ISO is a resident INT 13h CD that never vanishes, so WinPE
+reaches winpeshl and winjump runs; the BIOS winjump config carries the
+extent map. Under EFI the virtual CD is destroyed at ExitBootServices, and
+Windows 7 and Vista WinPE wait on it at "Starting Windows" before winpeshl
+runs, so falcon-vdisk loads too late. An EFI RAM disk is a medium Windows
+keeps across ExitBootServices, but OVMF's RamDiskDxe publishes a Block I/O
+its CDFS, PartitionDxe and FatDxe do not bind to, so Windows 7/Vista under
+EFI is unvalidated in OVMF.
 
-The read path is proven in a Windows 10 x86 WinPE (2026-09-25): the driver
-loads unsigned, the mount manager gives it a drive letter, CDFS mounts it, and
-`dir E:\sources` lists `install.wim` read from the disk through the driver.
-
-The corpus then split the pre-8 case by firmware (docs/notes/windows-route.md
-Section 7). On BIOS the ISO is a resident INT 13h CD that never vanishes, so
-WinPE reaches winpeshl and winjump runs; four separate bugs then kept it from
-serving the install source, all now fixed - the "No disk in drive A:" dialog
-winjump raised probing an empty floppy, the extent map the BIOS winjump config
-had never carried, UDFS declining to mount the install DVD's UDF tree until the
-driver answered a size query, and the harness not recognising pre-8 Setup.
-Windows 7 (x86 and x64) and Vista x86 now boot end to end; vista-sp1-x64 does
-not, because its boot.wim winpeshl patch does not take.
-
-On EFI the ISO is a firmware Block I/O CD destroyed at ExitBootServices, and
-Windows 7 and Vista WinPE hang before winpeshl at "Starting Windows", waiting
-on that vanished device, so loading falcon-vdisk from winpeshl is too late. The
-fix is a medium Windows keeps across ExitBootServices (an EFI RAM disk), tried
-in three shapes - a persistent CD, a persistent GPT+ESP disk, and a
-non-persistent disk in loader memory - and OVMF's RamDiskDxe mounts none of
-their filesystems: it publishes a Block I/O the firmware's CDFS, PartitionDxe
-and FatDxe do not bind to. That is a firmware limit of the corpus; real firmware
-may mount it, and the bench confirmed Win7 boots from a medium that stays. So
-Windows 7/Vista under EFI is a real-hardware question, unvalidatable in OVMF.
-Three WinPE-specific hazards were found and fixed there: CDFS's mount issues
-`IOCTL_DISK_CHECK_VERIFY` (not only the CD-ROM and storage variants); a
-filesystem may issue reads above `PASSIVE_LEVEL`, so the lower-disk read runs
-on a dedicated servicing thread, never inline in the dispatch routine; and the
-lower-disk read is `ZwReadFile` through a nonpaged bounce buffer, not a
-hand-built IRP forwarding the caller's mapped MDL, which faulted in the disk
-stack.
-
-**Loader side: two new layers, and they are pure data.** The virtual-media
-publisher of Section 6 stage 2 grows:
+**The overlay layer.** The virtual-media publisher of Section 6 stage 2
+carries two layers (`falcon-efi/src/iso/overlay.h`):
 
 - an **override list**: (byte offset in the virtual image, length, replacement
-  bytes served from a sidecar file on p2), answered from the sidecar instead
-  of from the ISO;
-- an **append region**: virtual sectors past the end of the ISO, backed by a
-  sidecar on p2.
+  bytes), answered from memory the loader holds or from another p2 file
+  instead of from the ISO;
+- an **append region**: virtual sectors past the end of the ISO, backed the
+  same way.
 
-No WIM parsing, no UDF parsing and no Windows knowledge enters EFI-land. The
-loader applies a byte map that Linux userland computed. The single
-interposition point is `iso_read_blocks()` in `falcon-efi/src/iso/iso.c`, because the
-entire read path is one `fs_file_read` call (Section 9).
+The layer itself has no WIM, UDF or Windows knowledge; it applies a byte map.
+The loader computes the map at boot (`falcon-efi/src/win/winpatch.c`, with
+`falcon-core/src/wim` and core's UDF driver; Section 6.4). The single
+interposition point is `iso_read_blocks()` in `falcon-efi/src/iso/iso.c`,
+because the entire read path is one `fs_file_read` call (Section 9). D3b's
+grub.cfg (Section 7.2) and the BSD memory-disk edits (Section 6.4) use the
+same two layers.
 
-Reusability, recorded with its consequence rather than as a selling point:
-these are exactly the two layers the "overlay a modified `grub.cfg`" idea
-of Section 7.2 needed. That idea was discussed and adopted on 2026-09-19
-(D3b, Section 7.2), and uses both layers from memory the loader computes.
-
-**Patch shape: size-preserving whole-file substitution (MVP choice).** Two
-shapes were measured.
-
-- **Size-preserving whole-file substitution (chosen).** wimlib repacks
-  Microsoft's own `boot.wim` *smaller* than shipped (measured: `wimoptimize`
-  alone -697 KB; a full LZX recompress -6.73 MB), and a WIM tolerates trailing
-  zero padding (measured: padded back to the original's exact 593,121,462
-  bytes, `wimverify` passes, injected payload intact). So the patched WIM is
-  padded to the original's exact length and the override becomes **one
-  contiguous byte-range substitution**, with no ISO 9660 or UDF metadata
-  rewritten at all. `boot.wim` was verified to be a single contiguous extent
-  in the real Win11 25H2 ISO, at byte offset 22,095,872. The cost is about
-  570 MB of p2 per blessed Windows ISO, and space is the cheapest resource on
-  the stick.
-- **Delta plus UDF surgery (fallback and optimisation).** Ventoy's own
-  approach: append the WIM's tail as new virtual sectors, and override the UDF
-  File Entry's information length and allocation descriptors plus the
-  partition descriptor's sector count. Cheaper in space, dearer in risk: UDF
-  descriptors carry CRC-16 tags that must be recomputed, and the layout
-  details are version-dependent. Not the MVP choice.
-
-The size-preserving shape wins because it removes every piece of byte-level
-UDF and WIM-header surgery from the critical path, which is where the risk
-actually lives, and because the one assumption it does rest on - that a
-patched WIM fits back in the original's footprint - has been measured on the
-real media rather than argued. (The research note ranks these the other way
-round. It was written before the repack-size and zero-padding measurements,
-which is what settled it; the note stands as the record of the reasoning at
-the time. Note that "fits and verifies" is not "boots": see the unproven list
-at the end of this subsection.)
-
-**Guard, required.** The bless tool MUST refuse when the patched WIM exceeds
-the original's allocated length, with an actionable message naming both sizes,
-rather than truncating it or silently switching shape. The repack margin is
-real but it is Microsoft's to change in any build.
+**Patch shape.** Ventoy's: the WIM's tail appended as new virtual sectors and
+the UDF File Entry and Partition Descriptors overridden, all computed by the
+loader in memory (Section 6.4).
 
 **Nothing on this path is signed, and nothing verified is touched.**
 `boot.wim` is not a PE, is not Authenticode-signed, carries no integrity table
 in the shipped media, and the BCD binds no hash to it. Secure Boot verifies
 `bootmgfw.efi`, then `winload.efi`, then the kernel; all three stay untouched
-and Microsoft-signed. Two consequences, both worth stating plainly because
-they invert the intuition the rest of this document builds:
+and Microsoft-signed. So:
 
 - **A Windows ISO needs no blessing to boot under Secure Boot ON.** Every
-  component the platform verifies is already Microsoft-signed and already in
-  `db`, so enforcement has nothing to object to. Our patch fixes
-  media-finding, nothing else. (This follows from the chain, and the premise
-  underneath it is no longer chain-derived: a stock Windows ISO now boots
-  through our existing virtual CD to the Setup GUI in the rig, measured
-  2026-09-13. See the premise-check block below.)
-- **Our MOK is irrelevant to the Windows path end to end.** It is not used,
-  not needed, and (research note Section 3) invisible to Windows in any case.
+  component the platform verifies is already Microsoft-signed and in `db`;
+  the patch fixes media-finding only.
+- **The MOK is not used on the Windows path**, and (research note Section 3)
+  is invisible to Windows.
 
-**Known constraint, to verify in the rig.** Win11 Setup launched from WinPE
-additionally requires the WinPE-WMI and WinPE-SecureStartup optional
-components present, or it falsely reports that the machine fails the minimum
-hardware requirements.
-
-**Premise check: PROVEN (measured 2026-09-13, rig scripts in
-`falcon-efi/tools/win-spike/`).** The cheapest and most load-bearing assumption of the
-whole route holds: a stock, **unmodified** Win11 25H2 ISO, sitting on a p2 that
-carries the falcon ISO type GUID, boots through the virtual CD we **already
-have**, with no loader changes, all the way to the Windows Setup GUI. Facts
-worth keeping:
+**Booting facts.**
 
 - **`\EFI\BOOT\BOOTX64.EFI` inside a Windows ISO's El Torito image is not
   `bootmgfw.efi`. It is `cdboot.efi`**, the stub that draws "Press any key to
   boot from CD or DVD..." and returns `EFI_TIMEOUT`
   (0x8000000000000012) if no key arrives. It draws that prompt through GOP and
-  never on ConOut, so a serial log shows nothing whatever and the run looks
-  like an instant silent failure. This cost a debugging session; write it
-  down once. **Any headless rig test of a Windows ISO must send a keypress.**
-  The same `EFI_TIMEOUT` reproduces on a real CD-ROM with no keypress, so it
-  is not an artefact of our virtual device.
-- OVMF does contain `UdfDxe`, it binds to our vendor-path virtual device, and
-  it publishes a SimpleFileSystem for the UDF volume with the whole Windows
-  tree visible (`efi/microsoft/boot/bcd` and `sources/boot.wim` both present).
-  Our virtual CD's child handle tree is structurally identical to a real
+  never on ConOut, so a serial log shows nothing and the run looks like an
+  instant silent failure. **Any headless rig test of a Windows ISO must send
+  a keypress.** The same `EFI_TIMEOUT` reproduces on a real CD-ROM with no
+  keypress, so it is not an artefact of the virtual device.
+- OVMF's `UdfDxe` binds to the vendor-path virtual device and publishes a
+  SimpleFileSystem for the UDF volume with the whole Windows tree visible
+  (`efi/microsoft/boot/bcd` and `sources/boot.wim` both present). The
+  virtual CD's child handle tree is structurally identical to a real
   CD-ROM's: El Torito entry, FAT ESP child, UDF volume. The firmware installs
-  `EFI_DISK_IO` on our handle by itself, so we need not. BlockIo revision 1
-  and our `MEDIA_VENDOR_DP` node are both fine; neither PartitionDxe nor
-  UdfDxe cares. (The case-sensitivity landmine that goes with this is recorded
-  at the end of Section 6.)
-- **Rejected: load the UDF volume's `bootmgfw.efi` directly** to skip the
-  press-any-key prompt. It fails with `EFI_LOAD_ERROR` on a real CD-ROM too,
-  so the route is dead for everyone and not just for us.
-- UX nicety to bank, explicitly not designed here: users booting a Windows ISO
-  see Microsoft's press-any-key prompt, which is normal for a DVD and mildly
-  odd from a stick. Once the override layer exists it could patch the El
-  Torito boot catalog to skip it. Not a blocker and not a plan.
+  `EFI_DISK_IO` on the handle by itself. BlockIo revision 1 and the
+  `MEDIA_VENDOR_DP` node are both fine; neither PartitionDxe nor UdfDxe
+  cares. (The case-sensitivity constraint that goes with this is at the end
+  of Section 6's stages.)
+- The UDF volume's `bootmgfw.efi` cannot be loaded directly to skip the
+  press-any-key prompt: it fails with `EFI_LOAD_ERROR` on a real CD-ROM too.
+  The chainload takes the El Torito volume's `cdboot.efi`
+  (`select_boot_volume`), and users booting a Windows ISO see Microsoft's
+  press-any-key prompt.
 
-**The next wall, now known.** Setup comes up and then cannot find
-`install.wim` once the virtual CD evaporates at `ExitBootServices`. That is
-exactly the failure this subsection's mechanism exists to remove, and proving
-the removal is the next thing to do.
+#### 6.3.1 Automatic on-stick preparation and the next-boot handoff
 
-**Still unproven**, and the rig work is Section 11 step 11: that a real
-`bootmgr`/`winload` boots the patched, padded and overlaid `boot.wim`; that
-the jump binary's `AttachVirtualDisk` works from WinPE against a file on our
-exFAT p2; which WIM image index to patch (1, 2, or both - measured: the boot
-image index is 2, Setup, not 1); and Windows Setup reaching the install screen
-end to end.
+Windows needs no preparation: the loader patches `boot.wim` at boot (Section
+6.4). This subsection is the next-boot handoff, `FalconNextBoot`: a marker
+that names one entry to boot on the next boot without drawing the menu. Its
+writers are the loader, before it launches the signing appliance for a bless
+(the appliance returns and the loader boots the entry the user picked;
+Section 7.5), and the booted OS through `falcon-boot-mkstick next-boot
+<value>`.
 
-#### 6.3.1 Automatic on-stick preparation and the next-boot handoff (decision 2026-09-13)
+**On UEFI: a non-volatile EFI variable the loader owns.** The UEFI loader has
+no write path to the stick (falcon-bios has exactly one, the marker sector
+below): every filesystem driver in EFI-land is read-only and the stick is
+configured from Linux userland (Section 9). It could read a marker file on p2
+but never clear one. The marker is therefore an EFI variable,
+`FalconNextBoot`, non-volatile, and the loader takes it on every boot:
 
-*Superseded by Section 6.4: the loader patches `boot.wim` at boot. On-stick
-preparation was removed on 2026-09-19 with everything that served it (the
-appliance's preparation half, `falcon-boot-sign prepare`, the sidecars under
-`p2:/falcon/prepared/`, the `kind=prepared` record of Section 8.1). What this
-section says about preparation, batching and sidecars is the record of that
-design. The `FalconNextBoot` handoff below still applies, and gains a second
-user: after a bless the appliance returns and the loader boots the entry the
-user picked (Section 7.5).*
+- it **reads** it, **deletes** it at once, then **validates** what it names
+  (below), and only then boots it without a menu.
 
-Preparation is not a host errand. The user drops a Windows ISO and selects it;
-the loader detects that it is unprepared, says so, and offers to prepare it.
-Accepting boots the signing appliance, which patches the ISO, stages the
-artifacts and reboots; on that next boot the loader boots the prepared entry
-**directly, without drawing the menu**. Net cost to the user: one confirmation
-and one automatic reboot, once per ISO, ever. Every later boot of that ISO is
-immediate. Why this shape rather than host-only preparation is Section 8.
+The delete is legal here because the loader runs before `ExitBootServices`.
+If the boot it names fails, the marker is already gone and the user lands on
+the menu with an actionable message. This is what the firmware's own
+`BootNext` does.
 
-**The reboot is unavoidable and is not a design failure.** Windows Setup starts
-as an EFI application (`bootmgfw.efi`) and needs boot services. The appliance
-is Linux, running after `ExitBootServices`; there is no way back to firmware
-from there except a reboot. Nobody kexecs Windows.
+**The appliance never touches EFI variables.** It writes the stick. The loader,
+which can both set and clear the marker, owns its lifecycle.
 
-**Batching.** If several unprepared Windows ISOs are present, the appliance
-prepares all of them in that one run. Dropping three ISOs costs one reboot,
-not three.
+**The reboot comes back to the stick: `BootNext`.** The appliance reboots
+with `RB_AUTOBOOT`, which follows the firmware's boot order. A stick reached
+through a one-time boot pick is not in it, so the reboot would land on the
+internal disk and the marker would wait, unread, until the stick next booted
+and then fire unasked. Before launching the appliance the loader therefore
+sets `BootNext` to `BootCurrent`, the option this boot came through, and
+clears it again if the appliance returns without rebooting. The firmware
+deletes `BootNext` when it acts on it, so this is a one-shot of the
+platform's own kind. When there is no `BootCurrent`, or the option it names
+is gone (some firmware runs a boot-menu pick as a transient option), nothing
+is written and the loader says the reboot will follow the boot order. The
+appliance writes no EFI variable; both are the loader's.
 
-**The next-boot handoff: a non-volatile EFI variable the loader owns.** The
-UEFI loader has no write path to the stick at all (falcon-bios has exactly
-one, the marker sector below, because a BIOS offers nowhere else to keep
-it) - every filesystem driver in
-EFI-land is read-only by design and the stick is configured from Linux
-userland (Section 9) - so it can read
-a marker file on p2 but can never clear one, and a one-shot that cannot be
-cleared is not a one-shot. The mechanism is therefore an EFI variable, e.g.
-`FalconNextBoot`, non-volatile, and its whole lifecycle belongs to the loader:
+**Runtime access, so the booted OS can ask too.** The variable carries
+`RUNTIME_ACCESS` alongside `NON_VOLATILE` and `BOOTSERVICE_ACCESS`. efivarfs
+exposes only runtime-accessible variables, so this is what lets
+`falcon-boot-mkstick next-boot` write it. The write is a one-line efivarfs
+write and the loader's read-and-delete gives the one-shot semantics, with no
+state on the stick and no reset service.
 
-- the loader **sets** it immediately before launching the appliance for
-  preparation;
-- on the next boot the loader **reads** it, **deletes** it at once, then
-  **validates** against the manifest (Section 8.1) that the named entry really
-  is prepared, and only then boots it without a menu.
+The bytes are untrusted on the way back in, and what they name is
+**validated before any of it is acted on**, so a root process that sets this
+can only select among entries the user could have picked from the menu: the
+authority UEFI's own runtime-writable `BootNext` gives root. **Any code path
+that acts on this value without validating it first is a local privilege
+escalation.**
 
-The delete is legal here because the loader runs before `ExitBootServices`;
-contrast Section 5.1's rejected volatile-variable design, which needed a delete
-*after* `ExitBootServices` and could not have one. If preparation failed, the
-marker is already gone and the user lands on the menu with an actionable
-message. This is idiomatic rather than clever: it is what the firmware's own
-`BootNext` does. It stays inside the invariants too - NVRAM is not the stick,
-and nothing about enforcement changes.
-
-**The appliance never touches EFI variables.** It writes the stick, which is
-its job. One component owns the marker's lifecycle, and it is the one that can
-both set and clear it.
-
-**The reboot comes back to the stick: `BootNext` (decision 2026-09-20).**
-The appliance reboots with `RB_AUTOBOOT`, which follows the firmware's boot
-order. A stick reached through a one-time boot pick is not in it, so the
-reboot landed on the internal disk and the marker waited, unread, until the
-stick next booted and then fired unasked. Before launching the appliance the
-loader therefore sets `BootNext` to `BootCurrent`, the option this boot came
-through, and clears it again if the appliance returns without rebooting. The
-firmware deletes `BootNext` when it acts on it, so this is a one-shot of the
-platform's own kind. When there is no `BootCurrent`, or the option it names is
-gone (some firmware runs a boot-menu pick as a transient option), nothing is
-written and the loader says the reboot will follow the boot order. The
-appliance still writes no EFI variable; both are the loader's.
-
-**Runtime access, so the booted OS can ask too (decision 2026-09-15).** The
-variable carries `RUNTIME_ACCESS` alongside `NON_VOLATILE` and
-`BOOTSERVICE_ACCESS`. efivarfs exposes only runtime-accessible variables, so
-without it nothing in Linux can see or write this one, and the reboot chooser
-in the personal OS (the archusb repo's `archusb-boot-next`) has no way to say
-"next time, boot that". With it, the chooser is a one-line `efivar` write and
-the loader's existing read-and-delete gives the one-shot semantics for free -
-no state on the stick, and no reset service to clear a marker afterwards.
-
-This grants nothing, and the reason is the sequence above rather than the
-attribute: the bytes are untrusted on the way back in, and what they name is
-**validated against the manifest before a single byte of it is acted on**. A
-root process that sets this can therefore only select among entries that
-already pass validation - exactly the authority UEFI's own `BootNext` hands to
-root, and `BootNext` is runtime-writable by design. Root on the personal OS can
-already rewrite anything on the stick it can mount; what it cannot do is forge
-a signature, and this does not help it.
-
-Stated as a constraint rather than a reassurance, because it is the kind of
-thing a later change breaks by accident: **any code path that acts on this
-value without validating it first is a local privilege escalation**, and it is
-runtime access that makes it one. The validation is not an optimisation to
-skip when the value "looks fine".
-
-**What the marker may name, and the reserved namespace (decision
-2026-09-15).** The value is a path on p2, matched against paths the scan found
-and never used to index anything. Acting on it is the same dispatch the menu
-performs (`bless_hit_action`), deliberately not a second policy: an entry that
-would chainload from the menu chainloads here, and one that would be offered
-preparation is offered it here. It previously accepted only prepared entries,
-which made sense while the loader was the only writer; it is not a rule worth
-keeping now that the booted OS can queue any entry the user could have picked
-by hand.
+**What the marker may name, and the reserved namespace.** The value is a path
+on p2, matched against paths the scan found and never used to index
+anything. Acting on it is the same dispatch the menu performs
+(`bless_hit_action`), not a second policy: an entry that would boot
+blessed from the menu boots blessed here, and one that would boot plain
+boots plain here.
 
 One target is not a file. The personal OS is pinned into the menu rather than
 found by the scan, so naming it needs a value that cannot collide with a
 filename. Values beginning with **`:`** are reserved, and `:personal` is the
-first of them. The colon is load-bearing rather than decorative: exFAT forbids
-it in a filename, so no path the scan can build will ever land in the reserved
-namespace, and a reserved value can never shadow a real entry. `@personal` was
-considered and rejected for exactly that reason - a file called `@personal` is
-perfectly legal, and would have become silently unbootable.
+first of them. exFAT forbids `:` in a filename, so no path the scan can build
+lands in the reserved namespace, where a prefix such as `@` would collide
+with a legal filename.
 
-Reserved values are tested **before** the path lookup. A reserved value would
-never match a path anyway, but testing afterwards would report "not on the
-stick any more" for something that was never a file, which is a confusing way
-to say "unrecognised". A reserved value this build does not know is refused
-rather than looked up, so a marker written by a newer loader fails visibly
-instead of silently doing nothing.
+Reserved values are tested **before** the path lookup, so an unrecognised one
+is not reported as "not on the stick any more". A reserved value this build
+does not know is refused rather than looked up, so a marker written by a newer
+loader fails visibly.
 
-Reserved values are untrusted like any other. `:personal` grants nothing the
-menu does not: the entry prompts for the passphrase exactly as it would if the
-user had selected it by hand, so naming it skips a keypress and nothing else.
+`:personal` prompts for the passphrase exactly as the menu entry does; naming
+it skips a keypress and nothing else.
 
 The value rules above (decode, the path match, the reserved namespace) are
 `falcon-core/src/media/nextboot.c`, which both loaders link.
 
-**On BIOS: one sector, not a variable (decision 2026-09-24).** A BIOS has no
-variable store and no `BootNext`, and nothing in the BIOS specifications lets
-an operating system set either. So on the BIOS route the marker is a sector
-the install carries. Since 2026-09-26 it is a sector of the `boot`
+**On BIOS: one sector, not a variable.** A BIOS has no variable store and no
+`BootNext`, and nothing in the BIOS specifications lets an operating system
+set either. So on the BIOS route the marker is a sector of the `boot`
 partition, at the offset that partition's identity record gives (Section
-3.1, 3.3); until then it was LBA 2047, the last sector of the gap in front of
-p1, which on an MBR disk whose first partition starts at 63 is inside that
-partition. It is written from Linux by a falcon-cli command (`falcon-boot-mkstick
-next-boot <value>`), which finds the `boot` partition by its record the way
-stage 2 does; it replaces archusb's `archusb-boot-next`, which wrote LBA 2047
-with `dd` when there is no `/sys/firmware/efi`. The sector is text:
+3.1, 3.3). It is written from Linux by `falcon-boot-mkstick next-boot
+<value>`, which finds the `boot` partition by its record the way stage 2
+does, and which uses this sector when there is no `/sys/firmware/efi`. The
+sector is text:
 
     falcon-next-boot 1
     <the RTC's reading when it was set, decimal seconds>
@@ -1375,10 +1012,8 @@ and zeros to the end of the sector (`media/nextboot.h` has the parse, which
 refuses every byte out of place). The marker is one whole sector of the
 disk, whatever its size: on a 4Kn disk the loader reads and clears 4096
 bytes and mkstick writes 4096, the text in the first 512 and zeros to the
-sector's end. A disk moves nothing smaller than its sector, and keeping the
-text inside 512 bytes makes the two sizes one record to every reader. The
-value is the variable's, and everything this section says about validating
-it holds unchanged.
+sector's end, so the two sizes are one record to every reader. The value is
+the variable's, and the validation above applies unchanged.
 
 The loader takes it the way it takes the variable: read, **cleared**, then
 believed (`falcon-bios/src/disk/marker.c`). Clearing is a write, and this is the
@@ -1386,83 +1021,54 @@ one place a loader writes the stick. It is bounded three ways: one sector,
 in the `boot` partition's reserved sectors, outside every file; only when the sector begins with the magic,
 so a sector that is not a marker is never touched; and only ever to zero.
 If the zero does not read back (a write-protected stick), the marker is not
-acted on, because a one-shot that cannot be cleared is not a one-shot.
+acted on.
 `marker.c` is linked into the stage 3 of the stick and of the station
-(Section 13.8, where it is how Linux says "Windows next"); stage 2 and jump
+(Section 12.8, where it is how Linux says "Windows next"); stage 2 and jump
 carry no code that can write a disk.
 
-What `BootNext` did cannot be replaced: a reboot from Linux follows the
-machine's boot order, and a stick picked from a boot menu is not in it. The
-marker then waits until the stick is next booted, which could be days
-later. So it is **dated**, and honoured only within ten minutes of being set
-(`NEXTBOOT_WINDOW_SECONDS`). The date is the RTC's own digits read as though
-they were UTC, on both sides: Linux's `/sys/class/rtc/rtc0/since_epoch` and
-INT 1Ah read through `nextboot_rtc_seconds`. A BIOS machine keeps its RTC in
-whatever zone the installed OS prefers, and reading one clock one way on both
-sides makes the zone cancel out. What can still break it is something
+What `BootNext` does on UEFI has no BIOS equivalent: a reboot from Linux
+follows the machine's boot order, and a stick picked from a boot menu is not
+in it. The marker then waits until the stick is next booted, which could be
+days later. So it is **dated**, and honoured only within ten minutes of being
+set (`NEXTBOOT_WINDOW_SECONDS`). The date is the RTC's own digits read as
+though they were UTC, on both sides: Linux's `/sys/class/rtc/rtc0/since_epoch`
+and INT 1Ah read through `nextboot_rtc_seconds`. A BIOS machine keeps its RTC
+in whatever zone the installed OS prefers, and reading one clock one way on
+both sides makes the zone cancel out. What can still break it is something
 rewriting the RTC between the two readings (an NTP sync that sets the
 hardware clock): a correction of up to two minutes backwards is allowed
 (`NEXTBOOT_SKEW_SECONDS`), since an RTC a few seconds fast reads earlier once
 corrected; anything larger reads as stale or as set in the future and is
-refused, which is the safe direction.
-
-**Sidecar layout: named by the source ISO's checksum (decision 2026-09-13).**
-Prepared artifacts live under the reserved directory of Section 6.2, in a
-folder named by the checksum of the ISO they were computed from
-(`p2:/falcon/prepared/<sha256>/`, Section 8.1), so the link between an ISO and
-its artifacts is intrinsic rather than by filename. Two consequences fall out
-for free:
-
-- renaming or moving the ISO on p2 does not orphan its artifacts;
-- replacing the ISO with a different build changes the checksum, so the old
-  artifacts are simply not found and preparation re-runs automatically. There
-  is no staleness check to write, and none to get wrong.
-
-The cost, stated honestly and to be repeated in the Manual: roughly 570 MB of
-p2 per prepared Windows ISO, which is the padded `boot.wim` of the
-size-preserving patch shape above.
+refused.
 
 
-### 6.4 Coverage model: the loader does the runtime media work (decision 2026-09-18)
+### 6.4 Coverage model: the loader does the runtime media work
 
-The product promise, in the user's words: **with Secure Boot off, drag, drop,
-boot anything; with Secure Boot on, drag, drop, bless, boot.** Everything in
-this subsection follows from holding the design to that, and the evidence
-behind it is `docs/notes/ventoy-survey.md` (what Ventoy supports and how) and
-`docs/notes/coverage-roadmap.md` (the plan, the alternatives and the
-milestones).
+The product promise: **with Secure Boot off, drag, drop, boot anything; with
+Secure Boot on, drag, drop, bless, boot.**
 
-**The rule that replaces the old split.** The loader does all *runtime*
-media work; the signing appliance does only what needs the private key
-(Section 7.5, revised the same day). Before this decision the line was "no
-parsing of dropped media in the trusted binary", and it was not a principled
-line: the loader already parses attacker-writable exFAT on p2, ext4 inside
-LUKS, and X.509 and PKCS#7 out of every PE it predicts (Section 7.8). Media
-parsers are acceptable in the loader on the terms those already meet: they
-live in `falcon-core`, EFI-free, host-tested, with corruption sweeps and
-fuzzing, and they only ever read.
+**The rule.** The loader does all *runtime* media work; the signing
+appliance does only what needs the private key (Section 7.5). Media parsers
+in the loader live in `falcon-core`, EFI-free, host-tested, with corruption
+sweeps and fuzzing, and only ever read.
 
 What that puts in the loader, each a milestone in the roadmap:
 
-- **A read-only ISO9660 (+ Rock Ridge) and UDF reader in `falcon-core`**,
-  registered in the filesystem registry like exFAT and ext4. This reverses
-  stage 3's "we do not write an ISO9660 reader": that was right while nothing
-  needed a file out of the ISO's tree, and a Linux kernel lives there, not in
-  the El Torito image the firmware publishes. The sign tool uses the same
-  reader, which retires bsdtar and 7-Zip from the bless path.
+- **A read-only ISO9660 (+ Rock Ridge, Joliet) and UDF reader in
+  `falcon-core`**, registered in the filesystem registry like exFAT and
+  ext4. A Linux kernel lives in the ISO's tree, not in the El Torito image
+  the firmware publishes. The sign tool uses the same reader.
 - **Boot-config parsing**: the ISO's own GRUB, systemd-boot and isolinux
-  configuration, to find the kernel, the initrd and the default cmdline. The
-  per-family kernel table in the sign tool becomes the fallback.
-- **Direct kernel boot**: the loader boots an ISO's kernel itself, through
-  the same shim-verified load path as everything else (Section 7.6), from a
-  buffer, with the cmdline in its load options and the initrd served over
-  the `LINUX_EFI_INITRD_MEDIA_GUID` LoadFile2 protocol. Built that way rather
-  than on the synthetic filesystem of Section 5.1 with `initrd=`: LoadFile2
-  needs no filesystem and no path, and every kernel in the corpus is newer
-  than 5.8, where the EFI stub gained it. `initrd=` on the synthetic
-  filesystem stays the fallback for an older kernel if the corpus ever shows
-  one. No sd-stub is involved, so this also works where UKIs cannot, with
-  validation disabled (Section 7.4).
+  configuration (`media/bootcfg.c`), to find the kernel, the initrd and the
+  default cmdline. The per-family kernel table in the sign tool is the
+  fallback.
+- **Direct kernel boot** (`falcon-efi/src/direct`): the loader boots an
+  ISO's kernel itself, through the same shim-verified load path as
+  everything else (Section 7.6), from a buffer, with the cmdline in its load
+  options and the initrd served over the `LINUX_EFI_INITRD_MEDIA_GUID`
+  LoadFile2 protocol, which every kernel from 5.8 on supports. No sd-stub is
+  involved, so this also works where UKIs cannot, with validation disabled
+  (Section 7.4).
 - **The generic device hook ("falcon-hook")**: a cpio segment appended to
   the distro's own initrd, which rebuilds the ISO as a block device over the
   raw partition (device-mapper linear, or loop with an offset for a
@@ -1472,54 +1078,43 @@ What that puts in the loader, each a milestone in the roadmap:
   computed at boot, so a moved or rewritten ISO needs nothing redone. They
   reach the hook in the initrd itself (`/falcon/map`) on a direct boot, as a
   credential sd-stub packs beside a blessed wrap, or, for wraps older than
-  that credential, in a volatile EFI variable (Section 12.4). It is built
-  at two widths from one source, x86-64 and i686: the UEFI loader appends
+  that credential, in a volatile EFI variable (Section 11.4). It is built
+  at two widths from one source, x86-64 and i586: the UEFI loader appends
   the x86-64 one, and falcon-bios whichever the kernel's setup header asks
-  for (Section 12.3.6). Per-family
-  cmdline templates stay the preferred route where a family has one; the
+  for (Section 11.3.6). Per-family
+  cmdline templates are the preferred route where a family has one; the
   hook is what reaches the rest, with per-family nudges learned from
   Ventoy's hooks where label matching alone is not enough.
-- **Windows WIM surgery at boot**, reversing the rejection recorded in
-  Section 8: the loader patches `boot.wim` as it serves it, the way Ventoy
-  does, instead of the appliance preparing a sidecar. Both objections
-  recorded there were weighed again and did not survive the new rule: the
-  parsing objection is the one this subsection answers, and the churn
-  objection (every Windows fix is a newly signed loader) is accepted as the
-  price of Windows being drag-drop-boot in every Secure Boot state. The
-  patched WIM is not something Secure Boot verifies and `bootmgfw.efi` stays
-  Microsoft-signed, so Windows needs neither blessing nor the appliance on
-  any machine whose db trusts the Microsoft CA.
+- **Windows WIM surgery at boot**: the loader patches `boot.wim` as it
+  serves it, the way Ventoy does. The patched WIM is not something Secure
+  Boot verifies and `bootmgfw.efi` stays Microsoft-signed, so Windows needs
+  neither blessing nor the appliance on any machine whose db trusts the
+  Microsoft CA. A Windows fix is a new loader build.
 
-What it does not change: the four invariants of Section 7, checked the way
-Section 7.7 checks the patched path. The loader still never signs and holds
-no key; every image still goes through the shim-verified load path, so under
-Secure Boot a kernel the platform does not trust is still refused; nothing
-here relaxes enforcement; the key stays on p3. Under Secure Boot the
-direct-boot route boots only what verifies, which in practice is a blessed
-wrap, and that is the "bless" in the promise.
+Under Secure Boot the direct-boot route boots only what verifies (Section
+7.7), which in practice is a blessed wrap.
 
-**Status (2026-09-19): built, Linux, Windows and BSD.** The ISO9660/UDF reader, boot-config parsing, falcon-hook and direct
-kernel boot are in, and blessed wraps carry falcon-hook too, built from the
-ISO's own CD entry (the loader sets the extent variable around a blessed
-boot as it does around a direct one). Measured under OVMF by the coverage
-harness (`docs/coverage.md`): every Tier A Linux ISO on hand boots
-unmodified with Secure Boot off (Enter boots direct; `c` chainloads the
-ISO's own loader, `d` forces direct), and blessed in all three Secure Boot
-states. The Tier B installers (Debian netinst, Alpine, Proxmox) boot direct
-too, through the hook's fallbacks: the extent map carried in the initrd, a
-loop device where the kernel has no device-mapper, a module package read out
-of the ISO's own pool where the initramfs has neither, and a short table of
-per-distro nudges (roadmap M4). With Secure Boot on, Enter takes the same
-route through the ISO's own shim when the kernel carries SBAT metadata
-(Fedora), which boots it with no blessing wherever db trusts the Microsoft
-CA (`docs/notes/d3-spike.md`); other kernels go through the ISO's own
-signed GRUB with our grub.cfg (D3b), and chainload only when that cannot
-apply either (Section 12.2.2).
+**Linux.** Blessed wraps carry falcon-hook too, built from the ISO's own CD
+entry (the loader sets the extent variable around a blessed boot as it does
+around a direct one). With Secure Boot off, Enter on a Linux ISO boots
+direct; `c` chainloads the ISO's own loader, `d` forces direct. Every Tier A
+Linux ISO in the coverage corpus (`docs/coverage.md`) boots unmodified with
+Secure Boot off, and blessed in all three Secure Boot states. The Tier B
+installers (Debian netinst, Alpine, Proxmox) boot direct through the hook's
+fallbacks: the extent map carried in the initrd, a loop device where the
+kernel has no device-mapper, a module package read out of the ISO's own pool
+where the initramfs has neither, and a short table of per-distro nudges
+(roadmap M4). With Secure Boot on, Enter takes the same route through the
+ISO's own shim when the kernel carries SBAT metadata (D3a: Fedora, Rocky,
+Alma), which boots it with no blessing wherever db trusts the Microsoft CA;
+other kernels go through the ISO's own signed
+GRUB with a grub.cfg of ours (D3b), and chainload only when that cannot
+apply either (Section 11.2.2).
 
-Windows (roadmap M6) boots from a stock ISO with nothing prepared. When Enter
-lands on a Windows row, the loader reads `\sources\boot.wim` out of the ISO's
-UDF tree, patches it in memory (`falcon-core/src/wim`), and serves the ISO
-through the virtual CD with the patch laid over it (`falcon-efi/src/win`).
+**Windows** (roadmap M6) boots from a stock ISO with nothing prepared. When
+Enter lands on a Windows row, the loader reads `\sources\boot.wim` out of the
+ISO's UDF tree, patches it in memory (`falcon-core/src/wim`), and serves the
+ISO through the virtual CD with the patch laid over it (`falcon-efi/src/win`).
 The patch is Ventoy's shape, so nothing of the original moves. The jump
 binary, its configuration, a new boot-image metadata resource and a new
 lookup table go after the WIM's end, uncompressed, and only the 208-byte
@@ -1529,26 +1124,26 @@ sorted copy in which `winpeshl.exe` names the jump binary's stream and
 boot.wim's File Entry gains an extent over blocks past the ISO's end, the
 Partition Descriptors grow to cover them, and a copy of the anchor goes at
 the new last block. Every one of those is an override of whole blocks, from
-memory. Measured under OVMF: Windows 11 25H2 and Server 2025 reach Setup
-with Secure Boot off and on (Microsoft CA), and Setup reads `install.wim` through the ISO that
-winjump attached from Windows. bootmgr, winload and the kernel are served
-byte for byte, so the platform verifies Microsoft's signatures as it would
-from a DVD. An ISO the loader cannot patch (no boot.wim, not LZX, no
-winpeshl.exe) boots as it is.
+memory. Setup reads `install.wim` through the ISO that winjump attached from
+Windows. bootmgr, winload and the kernel are served byte for byte, so the
+platform verifies Microsoft's signatures as it would from a DVD; a stock
+Windows ISO boots through the patch on UEFI with Secure Boot off and on
+(Microsoft CA), and on BIOS. An ISO the loader cannot patch (no boot.wim,
+not LZX, no winpeshl.exe) boots as it is.
 
 The user's Windows options live on the stick, not in the loader:
 `p2:/falcon/windows.cfg`, read by winjump from the volume it found the ISO
 on. `win11_bypass=1` sets the LabConfig keys Setup reads before it judges
 the machine (TPM, Secure Boot, RAM, CPU, storage), and `unattend=<path>`
 names an answer file relative to the stick's root, which winjump copies to
-`X:\` and names in `HKLM\SYSTEM\Setup\UnattendFile`. Ventoy's BypassNRO has
-no key: it has to reach the installed system's registry, which an answer
-file does without a process outliving Setup. Measured on a VM with no TPM:
-stock, Setup stops at the requirements screen; with both options it goes
+`X:\` and names in `HKLM\SYSTEM\Setup\UnattendFile`. There is no BypassNRO
+key: that setting has to reach the installed system's registry, which an
+answer file does without a process outliving Setup. On a machine with no
+TPM, stock Setup stops at the requirements screen; with both options it goes
 from the product key straight to disk selection.
 
-BSD media (roadmap M7) takes a third route, because a FreeBSD kernel loses
-the virtual CD exactly as a Linux one does and has no initramfs for
+**BSD** media (roadmap M7) takes a third route, because a FreeBSD kernel
+loses the virtual CD exactly as a Linux one does and has no initramfs for
 falcon-hook to ride in. What it has instead is a loader that will load a file
 into RAM as a memory disk and mount root from it, which needs no kernel module
 and nothing per release. The file is the ISO, and the loader reads it out of
@@ -1560,685 +1155,396 @@ are byte ranges served through the same override layer Windows uses, so
 nothing on p2 is written and no ISO9660 length changes
 (`falcon-core/src/media/bsdmd.c`, `falcon-efi/src/bsd`).
 
-The cost is RAM, and it has a ceiling that is FreeBSD's rather than ours: the
-staged image has to sit in one run below 4 GB, which is as far as the amd64
-kernel's first page tables reach. The loader asks for that allocation and
-gives it straight back before it serves anything, and says plainly when the
-machine cannot give it. Measured under OVMF with Secure Boot off: FreeBSD
-15.1 and pfSense Plus 24.06 reach their installers with their networks up;
-OPNsense 25.1's 2.2 GB DVD is refused, by us before the boot rather than by
-FreeBSD's loader in the middle of it (`docs/notes/bsd-route.md`).
+The cost is RAM, with a ceiling that is FreeBSD's: the staged image has to
+sit in one run below 4 GB, which is as far as the amd64 kernel's first page
+tables reach. The loader asks for that allocation and gives it straight back
+before it serves anything, and says so when the machine cannot give it.
+FreeBSD 15.1 and pfSense Plus 24.06 reach their installers with their
+networks up; OPNsense 25.1's 2.2 GB DVD is refused before the boot rather
+than by FreeBSD's loader in the middle of it.
 
 ## 7. Security model
 
-Governing principle (Section 2): falcon-boot never weakens the machine's Secure
-Boot posture, and it never holds or uses a signing secret. All control over what
-is trusted rests with the user, exercised on a host they control or through the
-platform's own physical-presence mechanisms. It rests neither with us (the loader
-ships no way to relax enforcement) nor with an attacker (no secret is reachable
-from removable media, and no enforcement change is reachable without physical
-presence).
+Four invariants. A change that breaks one is a regression.
 
-Two invariants make this concrete and must never be violated:
-
-1. **The loader verifies; it never signs.** Verification of anything the loader
-   launches is performed by shim (Section 7.1). The loader never performs a
-   signing operation and never holds a private key. Signing is a private-key
-   operation that happens only in Linux userland (Section 7.5).
-2. **Enforcement is the platform's, never the loader's.** The loader never
-   changes what is allowed to run. It reads Secure Boot state only to inform the
-   user. Every relaxation of enforcement is a platform mechanism the user invokes
-   with physical presence (Section 7.4).
-
-We do not implement our own verification and we do not disable the platform's.
-We launch everything through a shim-verified load path (Section 7.6); shim
-enforces or permits according to the firmware `SecureBoot` state. The behavior
-we want falls out of deferring to shim, not from adding code.
+1. **The loader verifies; it never signs.** Verification of everything the
+   loader launches is shim's (7.1, 7.6). No signing operation and no private
+   key in the loader; signing is Linux userland's (7.5).
+2. **Enforcement is the platform's.** The loader launches through the
+   shim-verified load path (7.6), which enforces or permits by the firmware's
+   `SecureBoot` state. The loader reads that state for UX only.
+3. **Nothing in the loader relaxes signature enforcement.** The opt-outs are
+   the platform's, gated by physical presence (7.4).
+4. **The private MOK key lives encrypted on p3** (7.5). Never on p2, never in
+   the loader.
 
 ### 7.1 Trust chain
 
-- **Loader integrity.** firmware -> shim -> our loader. The firmware will not run
-  a tampered or substituted loader; ours must be MOK-signed. Honest and intact
-  regardless of what we boot next.
-- **ISO path.** The loader launches the ISO's payload with the normal verifying
-  `LoadImage`:
-  - Secure Boot ON -> shim verifies the payload against db / MOK / shim's vendor
-    cert / SBAT. It boots only if it verifies. Unsigned payloads are refused.
-  - Secure Boot OFF -> shim permits everything, the payload boots.
-- **UKI path.** shim -> our loader -> our-signed UKI (personal OS and the signing
-  appliance, Section 7.5), verified end to end because we build and sign them.
-  Under Secure Boot ON this is enforced; the UKI must carry our signature.
-  MOK-signed images are not verifiable by the firmware's own `LoadImage`
-  against db alone, so this path depends on the shim-verified load path
-  resolved in Section 7.6.
+- **Loader integrity.** firmware -> shim -> our loader, MOK-signed.
+- **ISO path.** The loader launches the ISO's payload through the verifying
+  `LoadImage`. Secure Boot on: shim verifies it against db, MOK, its vendor
+  cert and SBAT, and refuses what does not verify. Secure Boot off: shim
+  permits everything.
+- **UKI path.** shim -> our loader -> a UKI we signed (the personal OS, the
+  appliance; 7.5). MOK-signed images are not verifiable by the firmware's own
+  `LoadImage` against db alone, so this path depends on 7.6.
 
 ### 7.2 What boots, by Secure Boot state (coverage)
 
-This is not a limit we impose; it is what Secure Boot means. An unsigned payload
-does not boot under Secure Boot, whether launched by us or directly.
-
 **Everything below about distro-signed media assumes the machine's db trusts
-the Microsoft UEFI CA.** That is the overwhelmingly common case and it is what
-makes "drag-and-drop just works" true, but it is an assumption about the
-machine, not a property of the stick, and it does not hold on a machine whose
-owner has enrolled only their own keys. Measured on real hardware
-(2026-09-13): on a laptop whose db carries only the user's own certificate,
-NO stock distro ISO boots, because what the firmware is asked to verify is
-that distro's own MS-signed shim. shim checks db (no Microsoft CA), then MOK
-(that vendor's key is not there), and refuses. Correctly.
+the Microsoft UEFI CA.** It is an assumption about the machine, not a property
+of the stick. On a machine whose db carries only the user's own certificate,
+no stock distro ISO boots, because what the firmware verifies is that
+distro's MS-signed shim, which chains to neither db nor MOK. On such a
+machine blessing is the only route: a blessed wrap is signed with the user's
+MOK and shim verifies it against MOK independently of db. The stick's own
+chain (Section 4.1) needs the stick's cert in that machine's db, not only in
+MOK, because the binary the firmware verifies is shim itself. Windows install
+media cannot be blessed (the binary verified is Microsoft's `bootmgfw.efi`,
+which we neither sign nor replace; the patch of Section 6.4 signs nothing),
+so without the Microsoft CA in db it does not boot under Secure Boot at all:
+enrol the CA or turn Secure Boot off for that job. The Manual says so.
 
-On such a machine the coverage inverts, and usefully so: **blessing is the
-only route, and it works**, because a blessed wrap is signed with the user's
-own MOK and shim verifies it against MOK independently of db. The stick's own
-chain (shim carrying our MOK signature alongside its Microsoft pair, loader
-and UKIs MOK-signed; Section 4.1) is unaffected, which is why the loader, the
-menu and the p3 unlock all work there while no unblessed ISO will start. It
-requires the stick's cert in that machine's db, not only in MOK, because the
-binary the firmware verifies is shim itself.
-
-The exception that cannot be blessed is **Windows install media**. The
-loader's patch (Section 6.4) signs nothing; the binary the firmware verifies is Microsoft's
-`bootmgfw.efi`, which we neither sign nor replace. On a machine without the
-Microsoft CA in db, Windows media therefore cannot boot under Secure Boot at
-all, and the honest answers are to enrol the Microsoft CA or to turn Secure
-Boot off for that job. The Manual must say so plainly rather than let a user
-conclude the patch failed.
-
-- **Secure Boot OFF:** (target of Section 6.4; not yet true of the build)
-  every templated ISO drag-and-drops and boots. Nothing to
-  uphold, nothing to sign.
+- **Secure Boot OFF:** every templated ISO drag-and-drops and boots.
 - **Secure Boot ON, validation on (default):**
   - *Distro ISOs shipping their own MS-signed shim* (Ubuntu, Fedora, Debian,
-    recent Arch, SystemRescue, ...): boot with no preparation, verified.
-    Their `\EFI\BOOT\BOOTX64.EFI` is an MS-signed shim, so it passes db; that
-    inner shim verifies its own kernel with its embedded vendor cert. Real
-    end-to-end Secure Boot, still drag-and-drop. Be blunt about the limit:
-    because the distro's own bootloader runs its own `grub.cfg`, we do not
-    insert `iso-scan` or inject the initrd on this route, and stock ISO
-    configs carry no such argument (they are written for real CD/USB media,
-    which no longer exists after `ExitBootServices`). Expect this route to
-    verify and launch the kernel and then usually *fail* to find its squashfs
-    and drop to an emergency shell (Section 6.1). Under Secure Boot ON,
-    blessing is the reliable route to a live desktop; this route is "verified
-    launch, best-effort media," and the Manual must not oversell it.
-    *Superseded for Enter's default 2026-09-19 (Section 6.4, D3a and D3b):*
-    the loader now boots such an ISO through that same chain with our cmdline
-    and falcon-hook. Where the kernel carries `.sbat`, the ISO's shim runs it
-    as its second stage (D3a); otherwise the ISO is served with its
-    `grub.cfg`'s bytes replaced by one of ours and the hook's archive past its
-    end, and the ISO's own signed GRUB boots it (D3b). Decided 2026-09-19:
-    serving our own configuration to another vendor's signed GRUB is
-    acceptable. It changes what the kernel is told and what is in its
-    initramfs, never what may run; GRUB's configuration is unverified by
-    GRUB's own design on every distro. Measurements are in
-    `docs/notes/d3-spike.md`. The route stays best-effort for an ISO whose
+    recent Arch, SystemRescue, ...): boot with no preparation, verified. Their
+    `\EFI\BOOT\BOOTX64.EFI` passes db and verifies its own kernel with its
+    embedded vendor cert. Enter boots such an ISO through that chain with our
+    cmdline and falcon-hook (Section 6.4, D3a and D3b): where the kernel
+    carries `.sbat`, the ISO's shim runs it as its second stage (D3a);
+    otherwise the ISO is served with its `grub.cfg`'s bytes replaced by one of
+    ours and the hook's archive past its end, and the ISO's own signed GRUB
+    boots it (D3b). GRUB does not verify its configuration on any distro.
+    Best-effort for an ISO whose
     GRUB reads a different configuration first.
-  - *User-blessed media:* the reliable route. The bless step (Section 7.5)
-    wraps the ISO's kernel, its initrds and falcon-hook in a UKI signed with
-    the MOK key, with the hooked cmdline built from the ISO's own CD entry
-    (Section 12.2.6), media-finding included. The `iso-scan`-style templates
-    remain for an ISO whose wrap cannot carry the hook. Works for signed and
-    unsigned ISOs alike. Blessing runs either on an external host the user
-    controls or on the on-stick signing appliance; both keep the private key
-    encrypted and out of the loader.
-  - *Windows install media:* verified with **no blessing and nothing signed by
-    us**, because a Windows ISO's `\EFI\BOOT\BOOTX64.EFI` is Microsoft's own
-    `bootmgfw.efi` and everything downstream of it is Microsoft-signed
-    (Section 6.3). The media-finding fix Windows does need is a byte patch,
-    not a signature, so it sits on a different axis from this matrix entirely;
-    see Section 7.7. (Follows from the chain; the rig has now booted a stock
-    Windows ISO through our virtual CD to the Setup GUI, measured 2026-09-13,
-    Section 6.3. What remains for step 11 is the media-finding fix, not the
-    verification story.)
-  - *Unsigned, unblessed media* (memtest, older/niche rescue ISOs): refused, with
-    an actionable message pointing at the two doors: bless it, or use the
-    permissive opt-in (Section 7.4).
+  - *User-blessed media:* the reliable route. The bless step (7.5) wraps the
+    ISO's kernel, its initrds and falcon-hook in a UKI signed with the MOK
+    key, with the hooked cmdline built from the ISO's own CD entry (Section
+    11.2.6). The `iso-scan`-style templates serve an ISO whose wrap cannot
+    carry the hook. Signed and unsigned ISOs alike.
+  - *Windows install media:* verified with nothing signed by us: the ISO's
+    `\EFI\BOOT\BOOTX64.EFI` is Microsoft's `bootmgfw.efi` and everything
+    downstream of it is Microsoft-signed (Section 6.3). The media-finding fix
+    is a byte patch, not a signature (7.7).
+  - *Unsigned, unblessed media* (memtest, older rescue ISOs): refused, with a
+    message naming the two doors: bless it, or the opt-out of 7.4.
   - *Bare EFI payloads* (`.efi` binaries, and `.img` images whose payload is
-    one, memtest being the example): these boot as themselves, so what the
-    platform verifies IS the file on p2. They are in scope for the menu and
-    for blessing (decision 2026-09-13, after memtest was found unbootable on
-    a machine whose db carries no Microsoft CA). An earlier comment in the
-    bless tool called memtest a family that "needs no blessing"; that was
-    right about cmdline and media injection, which it genuinely needs none
-    of, and wrong about signatures, which Secure Boot needs regardless of how
-    self-contained a payload is.
+    one; memtest): they boot as themselves, so what the platform verifies is
+    the file on p2. In scope for the menu and for blessing. **Blessing these
+    modifies the user's file, and the tool says so before it does**: signing
+    a PE appends a certificate, and there is nothing beside the payload to put
+    it in. A `.efi` is signed in place; for a `.img` the payload inside its
+    filesystem is. The review that authorises it names the file and says it
+    will be written to.
+- **Secure Boot ON, validation off (user opt-in, 7.4):** shim permits
+  everything; every ISO boots with nothing signed, on that machine.
 
-    **Blessing these MODIFIES the user's file, and the tool says so before it
-    does** (decision 2026-09-13). That is a deliberate exception to the
-    property the Windows patch upholds (the ISO is never written), and the
-    reason is mechanical rather than philosophical: signing a PE appends a
-    certificate, so the payload grows, and there is nothing beside it to put
-    the signature in. For a
-    `.efi` the file is signed in place; for a `.img` the payload inside its
-    filesystem is. Both are the user's own media, the act is theirs to
-    authorise, and the review that authorises it names the file and states
-    plainly that it will be written to. Anything quieter would be worse: a
-    silent in-place modification is exactly the thing Section 7.7 exists to
-    prevent.
-- **Secure Boot ON, validation off (user opt-in, Section 7.4):** shim permits
-  everything, so every ISO drag-and-drops with nothing signed, on that machine.
+Windows is the one path that covers all three states, including validation
+off, where no UKI boots (7.4): its chain is `db`-signed end to end through
+the firmware's own `LoadImage` and contains no MOK-signed image.
 
-**Windows should be the only path that covers all three states above**,
-including the validation-off state, where no UKI can boot at all - not ours,
-not a blessed wrap (Section 7.4's limitation, measured). Windows is unaffected
-because it goes through the firmware's own `LoadImage` to an MS-signed
-`bootmgfw`, which `db` accepts in every state; there is no MOK-signed image
-anywhere in its chain to be refused. So in the one state where blessing and
-the personal OS are both unavailable, Windows keeps working. Derived from the
-chain and from the measured shim behaviour behind 7.4, not yet observed
-directly; it is on step 11's list.
-
-The only combination that cannot exist is "drag-and-drop an arbitrary *unsigned*
-ISO with reliable media-finding *and* keep Secure Boot validation on," because
-that requires either our signature on the kernel (blessing) or the distro doing
-its own media-finding. Everything else has a clean home above.
+An unsigned ISO with reliable media-finding and Secure Boot validation on is
+not a combination: it needs our signature on the kernel (blessing) or the
+distro's own media-finding.
 
 ### 7.3 Discipline (what must stay true)
 
-- No mechanism that relaxes signature enforcement exists anywhere in the loader.
-  If one is ever proposed, it is a design regression: it would place an
-  enforcement change inside a trusted, MOK-signed binary reachable without
-  physical presence, which is exactly the class of thing SBAT revocation exists
-  to remove, and it would move control off the user.
-- The loader never signs and never holds a private key (Section 7.5).
-- The loader reads `SecureBoot` / `SetupMode` / `MokSBState` only to drive UX
-  (per-entry verification labels, actionable messages, a state banner), never to
-  change what is allowed to run. Enforcement is shim's job. The same holds for
-  `db`, `dbx`, `MokListRT`, `MokListXRT` and `SbatLevelRT`, which it reads to
-  predict refusals (Section 7.8): a prediction is a label, never an input to a
-  boot path.
-- The Manual documents each Secure Boot state, how to bless media, and how to use
-  the platform opt-out.
+- No mechanism that relaxes signature enforcement exists in the loader.
+- The loader never signs and never holds a private key (7.5).
+- `SecureBoot`, `SetupMode` and `MokSBState` are read to drive UX (labels,
+  messages, the state banner); `db`, `dbx`, `MokListRT`, `MokListXRT` and
+  `SbatLevelRT` to predict refusals (7.8). A prediction is a label, never an
+  input to a boot path.
+- The Manual documents each Secure Boot state, how to bless media, and the
+  platform opt-out.
 
 ### 7.4 User opt-out and permissive mode
 
-A user who wants the classic "boot anything" experience can have it, through
-mechanisms the platform already provides. We do not build any of them; we inherit
-them for free by deferring to shim, and we make them discoverable.
+Two platform mechanisms, both gated by physical presence, neither built by us:
 
-Two sanctioned mechanisms, both gated by physical presence:
-
-- **Firmware Secure Boot off.** The user disables Secure Boot in firmware setup.
-  shim then permits everything; the loader boots any ISO.
+- **Firmware Secure Boot off.** shim permits everything; the loader boots any
+  ISO.
 - **shim `MokSBState` (`mokutil --disable-validation`).** Confirmed at the
-  MokManager screen with a one-time password and physical presence on the next
-  boot. This tells shim to stop validating even while firmware Secure Boot stays
-  on. After that, the loader boots any ISO, with nothing signed. This is the
-  frictionless classic-mode opt-in: one deliberate action, no per-ISO signing.
+  MokManager screen with a one-time password on the next boot. shim stops
+  validating while firmware Secure Boot stays on; the loader boots any ISO
+  with nothing signed, no per-ISO signing.
 
-Why this is a platform opt-out and not an enforcement mechanism we own: the
-relaxation is performed by shim, the platform's own maintained component, only
-after a human confirms it at the MokManager screen. No attacker without physical
-presence can trigger it, and our loader is unchanged either way. This is the line
-between a platform opt-out (physical-presence gated, sanctioned) and a relaxation
-baked into a signed binary (reachable without physical presence, the thing we
-refuse to build).
+What the Manual states:
 
-Properties the user should know, and the Manual must state:
+- `MokSBState` lives in that machine's firmware NVRAM. It is per-machine and
+  does not travel with the stick.
+- With validation off, that machine runs all unsigned EFI code, not only
+  ours. The loader shows a banner when it detects the state.
+- **The opt-out is for the ISO path; it turns UKIs off.** With Secure Boot on
+  and validation disabled, no UKI boots: ours, a blessed wrap, or anyone
+  else's (notes Section 11). sd-stub loads its inner kernel through
+  `gBS->LoadImage`, and in this state shim installs its loader protocol but
+  does not hook the boot-services table (7.6), so that call is the firmware's
+  own `LoadImage`, which refuses everything not in db. Blessing and the
+  opt-out are alternatives, not a stack: the opt-out disables blessing and the
+  personal OS on that machine until validation is re-enabled. The loader
+  detects the state before the slow image read, warns, and attaches advice
+  when the started image fails (`falcon-efi/src/loader/loadops.c`). Windows
+  media keeps working in this state (7.2).
 
-- `MokSBState` is stored in that machine's firmware NVRAM. It is **per-machine**,
-  does not travel with the stick, and must be set on each machine where the user
-  wants permissive mode. A stick cannot carry "disable everyone's Secure Boot."
-- With validation off, that machine runs *all* unsigned EFI code, not only ours.
-  It is a machine-level choice, and the loader shows a clear banner when it
-  detects the state so it is never a surprise.
-- **The opt-out is for the ISO path; it turns UKIs off.** Measured 2026-09-13
-  (notes Section 11): with Secure Boot on and validation disabled, a UKI
-  cannot boot - ours, a blessed wrap, or anyone else's. sd-stub loads its
-  inner kernel through `gBS->LoadImage`, and in this state shim installs its
-  loader protocol but does not hook the boot-services table (Section 7.6), so
-  that call is the firmware's own `LoadImage`, which refuses everything not
-  in db - the unsigned inner kernel and MOK-signed images alike. Blessing and
-  the opt-out are therefore **alternatives, not a stack**: choosing the
-  opt-out disables blessing (and the personal OS) on that machine until
-  validation is re-enabled. This is an upstream shim/sd-stub interaction, not
-  ours to fix (Section 7.3); the loader detects the state before the slow
-  image read, warns, and attaches actionable advice when the started image
-  fails (falcon-efi/src/loader/loadops.c). **Windows media is the exception that keeps
-  working in this state** (Section 7.2): its chain is `db`-signed end to end
-  and contains no UKI, so the opt-out costs it nothing.
+The loader's part is UX: detect `SecureBoot` and `MokSBState`, show the mode,
+and when an unsigned selection is refused name the two doors. The host tool
+can run `mokutil --disable-validation`.
 
-What we build here is UX only: detect `SecureBoot` / `MokSBState`, show the
-current mode, and when an unsigned selection is refused under enforcement, guide
-the user to the two doors (bless, or opt in via the platform). The host tool can
-run `mokutil --disable-validation` for the user; whether the loader itself can
-request the MokManager prompt by setting the shim request variable is a
-convenience to verify, with the host-tool path as the certain fallback.
+The sb module reads `MokSBStateRT`, not `MokSBState`. `MokSBState` (shim lock
+GUID, one byte, `NON_VOLATILE|BOOTSERVICE_ACCESS`) is the request MokManager
+writes; shim deletes and ignores a copy carrying `RUNTIME_ACCESS`, which the
+running OS could have written. shim 16.1 publishes the volatile `MokSBStateRT`
+mirror (`BOOTSERVICE_ACCESS|RUNTIME_ACCESS`) only after it honours the
+request, so reading the request would report permissive mode on a machine
+where shim had refused it. Rig note: the varstore injection in
+`falcon-efi/tools/mk-test-mok.sh` writes `MokSBState` with attribute mask
+0x3; a 0x7 copy produces a varstore that looks permissive and boots fully
+enforcing.
 
-We ship no in-loader enforcement toggle. Rejected for the reasons in 7.3.
+**Reboot to firmware setup.** Both opt-outs end at a screen the loader cannot
+draw, and the advice printed when a UKI cannot boot with validation disabled
+(`load_ops_inner_load_blocked`, 7.6) sends the user there. The root menu's
+last row sets `OsIndications` bit 0, `EFI_OS_INDICATIONS_BOOT_TO_FW_UI`, and
+resets; the firmware clears the bit itself, as it clears `BootNext`. Three
+constraints:
 
-Measured detail (Fedora shim 16.1 under OVMF secboot, 2026-09-13) that the
-loader's sb module depends on: the variable the loader reads is
-`MokSBStateRT`, not `MokSBState`. `MokSBState` (shim lock GUID, one byte,
-`NON_VOLATILE|BOOTSERVICE_ACCESS`) is the *request* MokManager writes; shim
-deletes and ignores any copy that carries `RUNTIME_ACCESS`, because the
-running OS could have written that one. Only after shim decides to honor
-the request does it publish the volatile `MokSBStateRT` mirror
-(`BOOTSERVICE_ACCESS|RUNTIME_ACCESS`). The mirror is therefore the only
-honest signal: reporting the request would announce permissive mode on a
-machine where shim had just refused it. Rig note: the varstore injection
-in falcon-efi/tools/mk-test-mok.sh writes `MokSBState` with attribute mask 0x3; a
-0x7 copy produces a varstore that looks permissive to a human and boots
-fully enforcing.
-
-**Getting to firmware setup (decision 2026-09-15).** Both sanctioned opt-outs
-above end at a screen the loader cannot draw, and until now the loader could
-only name it. The root menu therefore carries a **Reboot to firmware setup**
-row: it sets `OsIndications` bit 0,
-`EFI_OS_INDICATIONS_BOOT_TO_FW_UI`, and resets. The firmware clears the bit
-itself, exactly as it clears `BootNext`.
-
-This is not a third opt-out and it is not a relaxation. It changes no
-enforcement state, reads no policy and decides nothing: it delivers the user to
-the firmware's own UI, where the decision is made by a person standing at the
-machine - which is what "gated by physical presence" above already required.
-What it removes is not a security step but a guessing game, namely which key
-this vendor wants held at power-on, which differs on every machine a roaming
-stick visits.
-
-It earns its place because of one specific dead end. With validation disabled
-and Secure Boot still on, a UKI cannot boot at all
-(`load_ops_inner_load_blocked`, Section 7.6), and the advice the loader prints
-tells the user to go to firmware setup - advice they previously had no way to
-act on from where they were standing.
-
-Three constraints, because this row reboots the machine:
-
-- **Drawn only when the firmware advertises the capability** in
-  `OsIndicationsSupported`. A row that reboots into nothing is worse than no
-  row.
-- **Last on the root screen.** The menu opens with the first row selected, so
-  the top is where a mistimed Enter lands, and this is the one row where that
-  matters. Being the rarest thing anyone came for puts it at the bottom anyway.
-- **Confirmed**, with the reason on screen, and read-modify-write on
-  `OsIndications` so a pending capsule-update request from somebody else is not
-  silently dropped.
-
-Verified under OVMF 2026-09-15: the row appears, `n` returns to the menu, `y`
-resets and the firmware comes up on its setup entry.
+- Drawn only when `OsIndicationsSupported` advertises the capability.
+- Last on the root screen: the menu opens with the first row selected, and a
+  mistimed Enter must not land here.
+- Confirmed, with the reason on screen, and read-modify-write on
+  `OsIndications` so a pending capsule-update request is not dropped.
 
 ### 7.5 Key model and signing
 
-The whole model rests on an asymmetry:
+- The **public cert** travels on p1, is enrolled in MOK, and is what shim
+  verifies against.
+- The **private key** stays encrypted on p3 under LUKS: never on p2, never in
+  the loader.
 
-- The **public cert** travels on the stick (p1) and is what gets enrolled in MOK
-  and what shim uses to verify. Public; leaking it does nothing.
-- The **private key** stays encrypted on p3 under LUKS. It is never on the
-  readable exFAT partition, and it is never in the loader.
+**Where signing happens.** Two userland routes, one `sign` implementation
+built as a portable static binary for both:
 
-**Why the loader never signs.** Signing an ISO's kernel is a private-key
-operation, so it requires the private key wherever it runs. Loader integrity
-(which Secure Boot provides) is code integrity, not key confidentiality: a
-verified, untampered loader still cannot safely hold a signing key, because the
-threat is not a tampered loader but offline reading of the key from removable
-media, and a key inside the loader would make the loader a passphrase-gated
-signing oracle. Both are rejected. The private key stays where a private key
-belongs: encrypted at rest, used only in an authenticated Linux userland.
+1. **External host** the user controls, running the `sign` tool (Section 8).
+   The key can additionally sit behind a passphrase or a hardware token there.
+2. **On-stick signing appliance.** A minimal UKI (our static PID 1, `sbsign`
+   and the `sign` tool), signed by us, no network, a boot entry in the loader
+   menu. Interactively it boots, unlocks p3 with the passphrase and reads the
+   MOK private key, lists the pending unsigned ISOs grouped by folder as the
+   loader's menu groups them, takes per-ISO selection (a bulk mark exists;
+   nothing is pre-marked) followed by a review naming every path and a typed
+   "yes" over it, wraps each kernel with the initrds of the ISO's own CD
+   entry and falcon-hook as a UKI with the hooked cmdline (7.2), signs it,
+   stages it with its manifest record per Section 8.1, and reboots to the
+   loader. Windows media is reported and left
+   alone.
 
-**Where signing happens.** Two userland routes, both keeping the key encrypted at
-rest and out of the loader:
+**Residuals:**
 
-1. **External host** the user controls, running the `sign` tool (Section 8). The
-   key can additionally sit behind a passphrase or a hardware token there. Right
-   for a portable signed toolkit built and maintained from a home machine.
-2. **On-stick signing appliance.** A minimal UKI (our static PID 1, sbsign and
-   the portable `sign` tool; the first design had busybox and cryptsetup), built and signed by us so it boots under full
-   Secure Boot, with no network and no purpose beyond signing. It is a boot entry
-   in the loader menu. On selection it:
-   - boots (our-signed UKI, passes Secure Boot),
-   - unlocks p3 with the passphrase and reads the MOK private key,
-   - lists the pending unsigned ISOs (grouped by folder, matching the
-     loader's menu) and requires **per-ISO selection followed by a batch
-     review**: ISOs are marked (individually as the normal case; a bulk
-     mark exists as a convenience), the marked set is then shown as a
-     review that names every path, and a typed "yes" over that review
-     releases the batch. The review-plus-yes is the binding "I vouch for
-     these" act of the trust model: nothing is ever pre-marked, every path
-     about to be signed is on screen at the moment of confirmation, and
-     that is what stops a dropped-in malicious ISO from being blessed
-     silently (UX decision 2026-09-13: select-then-sign replaces the
-     original ask-as-you-go loop),
-   - for each selected ISO, extracts the kernel, wraps and signs it as a
-     minimal UKI with the derived `iso-scan` cmdline embedded, and stages it
-     plus its manifest record per Section 8.1,
-   - for a Windows ISO, *prepared* rather than signed it (the patch of
-     Section 6.3, no key involved) until 2026-09-19, when preparation was
-     removed because Section 6.4 moved the patch into the loader; the
-     appliance now reports Windows media and leaves it alone,
-   - reboots to the loader.
+- Blessing costs a reboot cycle (drop, sign, reboot, boot). The opt-out of 7.4
+  covers "boot it now without signing", for the ISO path only.
+- The key on p3 shares the passphrase with the OS. An attacker with the
+  passphrase already has the OS. A second passphrase or a hardware token is
+  host hygiene the user can add.
+- A thin wrap (`--no-initrd`, Section 8.1) signs the kernel and cmdline only;
+  Linux does not verify initrds.
 
-   The appliance makes the stick self-hosting for signing: a portable signed
-   toolkit can be extended from the stick itself, with no external box. Because
-   the appliance is network-less and single-purpose, the window in which the key
-   is decrypted is small and hardened, smaller than booting a full OS to sign.
+**The appliance's role.** The loader does all runtime media work (Section
+6.4); the appliance does only what needs the private key:
 
-The `sign` logic is identical in both routes; build it as a portable static
-binary that runs both on a host and inside the appliance initramfs, so there is
-one implementation.
-
-**Residuals** (acceptable for a personal toolkit, stated for honesty):
-
-- Blessing requires a reboot cycle (drop, sign, reboot, boot). The appliance
-  makes the signing leg fast, and the permissive opt-in (7.4) covers the "boot it
-  right now without signing" case - for the ISO path only; the opt-out and
-  blessing are alternatives, not a stack (see 7.4).
-- Concentration: the key on p3 shares the passphrase with the OS. A passphrase
-  compromise yields the OS and the key together, but an attacker who has the
-  passphrase already controls the OS, so the key is not the weakest link. A
-  second passphrase or a hardware token for the key is normal host hygiene the
-  user can add; it is not something the loader manages.
-- On the bless path the kernel is our-signed, but the initrd it loads from p2
-  is not signature-verified (Linux does not verify initrds; virtually every
-  distro's normal boot has the same property). An attacker with write access
-  to the stick can swap the initrd and get code execution in that boot. This
-  matches the status quo of ordinary distro boots; stated for honesty.
-
-**The appliance's role, revised (decision 2026-09-18).** With Section 6.4 the
-loader does all runtime media work, and the appliance keeps only what needs
-the private key. The flow above changes in three ways:
-
-- **Consent moves to the loader's menu.** The user blesses one ISO from its
-  row (a key on a `{NOT BLESSED}` row, Section 7.8) or presses one key to
-  bless everything new, and confirms there. The loader, which has to unlock
-  p3 anyway to load the appliance, sets `FalconNextBoot` to the entry the
-  user picked and boots the appliance with the passphrase and the list of
-  paths as credentials on the synthetic filesystem of Section 5.1
-  (`falcon.bless.cred`, format in `falcon-core/src/manifest/blesslist.h`).
-  The appliance signs exactly that list and reboots, and the loader boots the
-  entry the user picked. One reboot, no second UI. The marker stays the
-  loader's to set and clear, as Section 6.3.1 has it, so the
-  appliance never writes an EFI variable. Built 2026-09-18: `b` on a row
-  blesses that image, `a` blesses everything new, and
+- **Consent is given in the loader's menu.** `b` on a `{NOT BLESSED}` row
+  (7.8) blesses that image, `a` blesses everything new, each confirmed there.
+  The loader, which unlocks p3 anyway to load the appliance, sets
+  `FalconNextBoot` to the entry the user picked and boots the appliance with
+  the passphrase and the list of paths as credentials on the synthetic
+  filesystem of Section 5.1 (`falcon.bless.cred`, format in
+  `falcon-core/src/manifest/blesslist.h`). The appliance signs exactly that
+  list and reboots; the loader boots the entry. The marker is the loader's to
+  set and clear (Section 6.3.1); the appliance never writes an EFI variable.
+  The list never touches disk, so nothing written to p2 can add to it.
   `falcon-appliance/tools/run-bless-chain.sh` proves the round trip under
   Secure Boot. Without a list the appliance is the interactive one above. The
-  list never touches disk, so nothing written to p2 can add to it; it is as
-  trustworthy as the loader, which is the trust anchor already. This reverses
-  Section 6.3.1's "the appliance receives no instruction from the loader",
-  which was right while the loader had no bless UI. The appliance still
-  refuses a path that is not a file on p2 and prints each one as it signs.
-- **Windows preparation and the p2 survey leave it.** Both were runtime media
-  work; the loader already knows every file on p2 and which rows need a
-  blessing. Preparation left on 2026-09-19; the survey remains for the
-  interactive appliance, which only blesses.
-- **Its userland collapses to our code plus `sbsign`.** The MOK key is read
-  out of p3 with `falcon-core`'s own LUKS2 and ext4 code, the code the loader
-  unlocks p3 with, into a memory-only file handed to `sbsign` as
-  `/proc/self/fd/N`, so the key never reaches a filesystem, not even tmpfs;
-  that retires cryptsetup and dm-crypt (done 2026-09-19,
-  `falcon-appliance/src/shelf.c`). ISOs are read with `falcon-core`'s ISO9660/UDF
-  reader, retiring bsdtar, 7-Zip and libstdc++; Windows leaving retires
-  wimlib. PID 1 and the sign tool become one static binary. What remains is
-  the kernel, that binary, `sbsign` and its libcrypto, and the exFAT and vfat
-  modules to write p2.
+  appliance refuses a path that is not a file on p2 and prints each one as it
+  signs.
+- **The p2 survey serves the interactive appliance only.**
+- **Its userland is our code plus `sbsign`.** The MOK key is read out of p3
+  with `falcon-core`'s LUKS2 and ext4 code into a memory-only file handed to
+  `sbsign` as `/proc/self/fd/N`, so it never reaches a filesystem, tmpfs
+  included (`falcon-appliance/src/shelf.c`). ISOs are read with
+  `falcon-core`'s ISO9660/UDF reader. PID 1 and the sign tool are one static
+  binary. The image holds the kernel, that binary, `sbsign` with its
+  libcrypto, and the exFAT and vfat modules to write p2.
 
-### 7.6 Load-path plumbing (verified by the shim spike, 2026-09-12/13)
+### 7.6 Load-path plumbing
 
-The firmware's native `LoadImage` verifies against db/dbx only; it knows
-nothing about MOK. Our loader itself is verified *by shim*, so it is fine
-regardless; but our UKIs and blessed kernels are MOK-signed images loaded *by
-us*, and they pass a `LoadImage`-style load only if shim provides the
-verification. The branches below were the candidate mechanisms; the spike
-(full data in `docs/notes/shim-spike.md`, measured on Fedora shim 15.8 and
-16.1, openSUSE 16.1, Debian 16.1) settled which ones exist:
+The firmware's `LoadImage` verifies against db/dbx only and knows nothing
+about MOK. Our loader is verified by shim; our UKIs and blessed kernels are
+MOK-signed images loaded by us, and load only if shim provides the
+verification. The behaviour below is shim 16.x's (Fedora, openSUSE and
+Debian 16.1); where 15.8 differs it is said.
 
-- **Branch A: shim hooks the Security/Security2 architectural protocols**
-  (`OVERRIDE_SECURITY_POLICY`, a shim compile-time option). **Measured: no
-  current distro shim compiles this in** (confirmed by disassembly xref count
-  and a runtime probe on all four binaries). Dead in practice.
-- **Branch B: shim's image-loader protocol** (`SHIM_IMAGE_LOADER`, first
-  ships in shim **16.0**, not 15.7 as this section previously guessed). Shim
-  installs a `LoadImage`/`StartImage`-alike that verifies against
-  db + MOK + SBAT and performs the PE loading itself. **Measured: present
-  and working on Fedora/openSUSE/Debian 16.1; MOK-signed images load, unsigned
-  images are refused with `EFI_SECURITY_VIOLATION`, everything loads with SB
-  off.** This is the chosen branch.
-- **The mechanism the branches missed, found by the spike:** under Secure
-  Boot, shim >= 16.0 also **patches `gBS->LoadImage`/`StartImage` in the
-  system table in place** (`hook_system_services`); the patched pointers are
-  identical to the protocol's. So on shim 16.x a plain `gBS->LoadImage` IS
-  the MOK-verifying path, and with SB off the pointers are the firmware's
-  own. On 15.8 the hook merely forwards to firmware (MOK never consulted),
-  which is why the minimum shim version we ship is 16.0.
+- **shim's image-loader protocol** (`SHIM_IMAGE_LOADER`, shim 16.0 and
+  later): a `LoadImage` and `StartImage` that verify against db + MOK + SBAT
+  and do the PE loading. MOK-signed images load, unsigned images are refused
+  with `EFI_SECURITY_VIOLATION`, everything loads with Secure Boot off.
+- **The boot-services hook:** under Secure Boot, shim >= 16.0 also patches
+  `gBS->LoadImage` and `StartImage` in the system table in place
+  (`hook_system_services`), with the protocol's own pointers. On 16.x a plain
+  `gBS->LoadImage` is the MOK-verifying path; with Secure Boot off the
+  pointers are the firmware's. On shim 15.8 the hook forwards to firmware and
+  MOK is never consulted, so the minimum shim shipped is 16.0.
+- No distro shim compiles in `OVERRIDE_SECURITY_POLICY` (the Security and
+  Security2 protocol hooks).
+- Any MS-signed shim passes db on any machine; the vendor is chosen by
+  feature.
 
-**Protocol presence and the table hook are independent** (measured
-2026-09-13, notes Section 11; this section previously read as though they
-arrive together, which is true in only two of the three states).
+**Protocol presence and the table hook are independent** (notes Section 11).
 `install_shim_protocols()` runs unconditionally; `hook_system_services()`
-runs only under `secure_mode()`, which `MokSBState` turns off. So with
-Secure Boot on and validation disabled, `SHIM_IMAGE_LOADER` is present and
-permits everything while `gBS->LoadImage` is the firmware's and refuses
-everything not in db - the state behind the 7.4 UKI limitation. The loader's
-`resolve_load_ops()` records this as `table_unhooked` and derives "an image
-we launch cannot load its own inner PE" from it AND Secure Boot being on
-(the table is equally unhooked with SB off, and nothing is wrong there).
-Detection reads the live table, not `MokSBStateRT`: it detects the mechanism
-that breaks, not one cause of it.
+runs only under `secure_mode()`, which `MokSBState` turns off. With Secure
+Boot on and validation disabled, `SHIM_IMAGE_LOADER` is present and permits
+everything while `gBS->LoadImage` is the firmware's and refuses everything
+not in db: the state behind 7.4's UKI limitation. `resolve_load_ops()`
+records this as `table_unhooked` and derives "an image we launch cannot load
+its own inner PE" from it and Secure Boot being on (the table is equally
+unhooked with Secure Boot off). It reads the live table, not `MokSBStateRT`:
+the mechanism that breaks, not one cause.
 
-**An ISO payload is loaded by the firmware when shim is not enforcing**
-(decided 2026-09-19, traced on VMware ESXi 8.0U3). An image shim's loader
-created is not an image to the firmware, and a payload that loads and
-connects a UEFI driver of its own hits that: ESXi's loader loads VMware's
-ISO9660 driver and connects it to the CD, and the firmware's `LoadImage`
-refused a parent it had not loaded (`EFI_INVALID_PARAMETER`) while its
-`ConnectController` faulted inside DxeCore on a shim-loaded driver. So
-`falcon-efi/src/iso/iso.c` loads the payload with `gBS->LoadImage` when
-`resolve_load_ops()` reports `table_unhooked`, which is shim saying it is not
-enforcing. Nothing about what may run changes: in that state neither loader
-verifies what the other would refuse. The one asymmetry is Secure Boot on
-with `MokSBState` off, where the firmware still enforces db; that refusal is
-answered by loading through shim's loader as before, which is the user's
-platform opt-out honoured rather than overridden.
+**An ISO payload is loaded by the firmware when shim is not enforcing.** An
+image shim's loader created is not an image to the firmware: on VMware ESXi
+8.0U3, ESXi's loader loads VMware's ISO9660 driver and connects it to the CD,
+and the firmware's `LoadImage` refuses a parent it did not load
+(`EFI_INVALID_PARAMETER`) while `ConnectController` faults inside DxeCore on
+a shim-loaded driver. So `falcon-efi/src/iso/iso.c` loads the payload with
+`gBS->LoadImage` when `resolve_load_ops()` reports `table_unhooked`. The one
+asymmetry is Secure Boot on with `MokSBState` off, where the firmware still
+enforces db; that refusal is answered by loading through shim's loader.
 
 The same rule, firmware first when shim is not enforcing and shim's loader
-when the firmware refuses, now covers every image falcon launches: an ESP's
-`bootmgfw.efi` (`esp/esp.c`, Windows Boot Manager loads winload.efi with
-itself as the parent), a blessed image (`bless/bless.c`, 2026-09-19:
-shim's loader refuses pfSense's loader.efi outright), and the personal OS's
-UKI (`pos/pos.c`, 2026-09-29): sd-stub loads the kernel inside a UKI through
-the firmware's `LoadImage` with the UKI as the parent, so with Secure Boot
-off a UKI shim had loaded failed with `EFI_INVALID_PARAMETER` on every
-current kernel, which the station and installed rigs' Secure-Boot-off UKI
-cases showed. A MOK-signed image under Secure Boot on with `MokSBState` off
-is still the firmware's refusal answered with shim's loader, and still the
-inner-load limitation of 7.4.
+when the firmware refuses, covers every image falcon launches: an ESP's
+`bootmgfw.efi` (`esp/esp.c`; Windows Boot Manager loads winload.efi with
+itself as the parent), a blessed image (`bless/bless.c`; shim's loader
+refuses pfSense's loader.efi outright), and the personal OS's UKI
+(`pos/pos.c`; sd-stub loads the kernel inside a UKI through the firmware's
+`LoadImage` with the UKI as the parent, so with Secure Boot off a UKI shim
+had loaded fails with `EFI_INVALID_PARAMETER`).
 
-**Pairing rule** (measured, notes Section 11.4): the three members of a
-resolved load path - `LoadImage`, `StartImage`, `UnloadImage` - must come
-from one source and be used as a set. shim's `shim_start_image()` and
-`shim_unload_image()` forward handles they do not recognise through saved
-firmware pointers that are populated only under `secure_mode()`; in every
-non-enforcing state they are NULL and the forward is a call through zero
-(a measured #GP, machine down). Mixing `gBS` and `SHIM_IMAGE_LOADER`
-members is therefore a crash, not a style problem; falcon-efi/src/loader/loadops.c
-resolves once and hands out the set.
-- **Branch C (last resort, still unbuilt, requires amending this document):**
-  `shim_lock->Verify` plus our own PE loader. Not needed.
-- **Branch D: vendor choice is free.** Any MS-signed shim passes db on any
-  machine; choose by feature, not sentiment.
+**Pairing rule** (notes Section 11.4): `LoadImage`, `StartImage` and
+`UnloadImage` come from one source and are used as a set. shim's
+`shim_start_image()` and `shim_unload_image()` forward handles they do not
+recognise through saved firmware pointers that are populated only under
+`secure_mode()`; in every non-enforcing state they are NULL and the forward
+is a call through zero (a #GP). `falcon-efi/src/loader/loadops.c` resolves
+once and hands out the set.
 
-Loader shape settled by the spike: locate `SHIM_IMAGE_LOADER` at startup and
-prefer it; fall back to `gBS->LoadImage` (which shim has patched under SB on
-16.x, and which is the firmware's honest loader otherwise). The invariants
-are untouched either way: verification is shim's, enforcement is the
-platform's, and the loader neither relaxes nor signs. The phrase "verifying
-`LoadImage`" elsewhere in this document means this load path.
+Loader shape: locate `SHIM_IMAGE_LOADER` at startup and prefer it; fall back
+to `gBS->LoadImage`. "Verifying `LoadImage`" elsewhere in this document means
+this load path.
 
-Two operational facts from the spike that gate other sections: our loader
-binary MUST carry a `.sbat` section or shim 16.x refuses it with the same
-`EFI_SECURITY_VIOLATION` a bad signature gives (Section 9 has the build
-mechanics); and images loaded *through* the hook are exempt from that
-section requirement (measured both ways), so blessed bare kernels are not
-SBAT-blocked. Still unverified: real MokManager enrollment on hardware, a
-signed bzImage end to end, and `StartImage` semantics of the protocol;
-procedures are in `docs/notes/shim-spike.md` Section 9.
+The loader binary carries a `.sbat` section, without which shim 16.x refuses
+it with `EFI_SECURITY_VIOLATION` (Section 9 has the build mechanics). Images
+loaded through the hook are exempt, so blessed bare kernels are not
+SBAT-blocked.
 
-Note the ISO path does not depend on any of this: a distro ISO's inner shim
-is MS-signed and passes db through the firmware's own `LoadImage` natively.
+The distro ISO path does not depend on any of this: the ISO's inner shim is
+MS-signed and passes db through the firmware's own `LoadImage`.
 
 ### 7.7 Two kinds of modification: signed media and media patched at boot
 
-falcon-boot makes **two** kinds of modification to media the user did not
-produce. They are peers, and that is why this is a section of the security
-model rather than a paragraph buried in the ISO path:
-
-- **Signed media (blessing, Section 7.5).** We sign a vendor's kernel with the
-  user's MOK and boot that signed wrap instead of the vendor's own chain.
+- **Signed media (blessing, 7.5).** A vendor's kernel signed with the user's
+  MOK, booted as a wrap instead of the vendor's own chain.
 - **Media patched at boot (Section 6.4).** The loader serves altered bytes of
-  a vendor's image for one boot, so that the vendor's own chain can find its
-  media: a user-mode executable inside Windows' `boot.wim`, a Linux ISO's
-  `grub.cfg` and an extra initrd for its own signed GRUB (D3b), or a BSD
-  medium's own loader configuration and one directory record, so that its
-  loader mounts the medium out of RAM. No signature is involved anywhere.
+  a vendor's image for one boot so the vendor's own chain can find its media:
+  a user-mode executable inside Windows' `boot.wim`, a Linux ISO's `grub.cfg`
+  and an extra initrd for its own signed GRUB (D3b), or a BSD medium's
+  `loader.conf` and one directory record so its loader mounts the medium out
+  of RAM. No signature is involved.
 
-A blessed BSD medium is both at once, and is the one case where the signature
-covers less than a Linux blessing does. What is signed is the medium's own
-`loader.efi`, because a UKI wraps a kernel and an initramfs and a FreeBSD
-medium has neither; that loader then reads a kernel and modules off the
-medium, which nothing verifies. That is FreeBSD's own design rather than
-something this adds, and the medium is still served patched, so both halves of
-this section apply to it. It is named here rather than left to be inferred.
+A blessed BSD medium is both, and the one case where the signature covers less
+than a Linux blessing: what is signed is the medium's own `loader.efi`,
+because a FreeBSD medium has no kernel-plus-initramfs to wrap, and that loader
+then reads a kernel and modules off the medium that nothing verifies.
+FreeBSD's own design.
 
-Neither changes what the platform will enforce. They differ in what they
-leave behind, which is what decides how each is authorised (below).
+The patched path signs nothing and reads no key; it launches the vendor's
+`db`-signed first stage (`bootmgfw.efi`, the ISO's shim) through the same
+load path as any other payload; the override and append layers serve bytes
+and cannot make an image verify that would not have verified, and are
+reachable only from a menu entry the user selected. A signature is visible to
+the platform and to anyone inspecting the wrap afterwards; a byte patch is
+visible to nothing, which is why it is documented here and in the Manual. The
+user's ISO on p2 is never modified: it stays byte-identical to what the
+vendor published and verifiable against the vendor's hash. The patch exists
+only in the bytes the loader serves for that boot, computed in memory
+(Section 6.4).
 
-**The four invariants hold on the patched path, checked one at a time**,
-because a new capability is exactly the moment that check is worth writing
-down rather than assuming:
+**Authorisation follows what is left behind.** Signing keeps the
+review-and-yes of 7.5: a blessing lasts and extends trust to every machine
+that trusts the user's MOK. A patch made at boot needs no step beyond
+selecting the entry: it lasts one boot, is written nowhere, extends no trust,
+and the platform verifies the same vendor-signed binaries it would from a DVD.
 
-1. *The loader verifies; it never signs.* The patched path performs no
-   signing operation at all and needs no private key.
-2. *Enforcement is the platform's, never the loader's.* Untouched.
-   `bootmgfw.efi`, or the ISO's shim, is launched through the same verifying
-   load path as any other ISO payload and passes `db` on its own Microsoft
-   signature; everything after it is verified by the vendor's own chain.
-3. *No mechanism that relaxes signature enforcement exists in the loader.* The
-   override and append layers serve bytes. They cannot make an image verify
-   that would not otherwise have verified, and they are not reachable by
-   anything but a menu entry the user selected. (Ventoy's own
-   `VTOY_SECURE_BOOT_POLICY` bypass, which is a real enforcement relaxation,
-   is rejected here as it is everywhere else in this document; we never need
-   it for Windows.)
-4. *The private MOK key stays encrypted on p3 and never travels.* The
-   patched path never reads it and does not care that it exists (Section 8).
+### 7.8 Boot predictions
 
-**The honest asymmetry, stated loudly on purpose.** A signature is *visible*:
-the platform sees it, refuses it when it is wrong, and anyone can inspect the
-signed wrap after the fact. A byte patch is visible to nothing. It is not
-verified, not recorded in any chain, and the WinPE it produces is
-indistinguishable from an unpatched one from the inside. That invisibility is
-exactly why the technique works and exactly why it has to be documented here
-and in the Manual rather than discovered years from now by someone reading a
-hex dump.
+A certificate table's presence does not say whether a machine trusts the
+signer. On a machine whose PK, KEK and db are the user's own sbctl keys and
+carry no Microsoft certificate, kubuntu, memtest and Windows ISOs all carry
+certificate tables and are all refused.
 
-**The mitigating property, and it is a real one.** The user's ISO file on p2
-is **never modified**. It stays byte-identical to what the vendor published
-and stays SHA-256 verifiable against the vendor's published hash, which
-matters most for precisely the family whose users are most likely to be
-checking. The patch exists only in the bytes the loader serves for that one
-boot, computed in memory by the loader (Section 6.4), and is inert on any
-machine that boots the same ISO some other way.
+Each entry carries a prediction of whether the platform will accept it on
+this machine, computed from the inputs shim uses: the image's certificate
+table, `db`, `dbx`, `MokListRT`, `MokListXRT` and `SbatLevelRT`. An entry
+predicted to be refused is drawn in yellow with a one-word reason. Every
+entry stays selectable and selecting one hands it to the load path. The
+verdict type lives in the label builder and the refusal screen; no function
+in `iso`, `bless`, `pos` or `loader` takes it.
 
-**Authorisation follows what is left behind (decided 2026-09-19).** Signing
-keeps the review-and-yes of Section 7.5 (nothing pre-marked, every path on
-screen, a typed "yes"), because a blessing lasts and extends trust: the wrap
-boots under Secure Boot on every machine that trusts the user's MOK, from then
-on. A patch made at boot needs no consent step beyond selecting the entry. It
-lasts one boot, is written nowhere, extends no trust, and leaves the ISO
-byte-identical; the platform verifies the same vendor-signed binaries it would
-from a DVD. A confirmation on every such boot would be friction without
-protection. Until 2026-09-19 the Windows patch went through the signing gate,
-because the appliance computed it offline and wrote it to the stick.
+**A prediction, not verification.** No RSA or ECDSA, no comparison of the
+signed Authenticode digest against the image; certificates are matched
+structurally (below). Shim is the verifier. Accepted consequences:
 
-### 7.8 Boot predictions (decided 2026-09-17)
-
-**The problem, measured.** On a Dell Latitude 5411 whose PK, KEK and db are
-the user's own sbctl keys and carry no Microsoft certificate, the menu
-labelled kubuntu, memtest and both Windows ISOs `signed`. All four were true
-and all four were refused. The label reported that a certificate table was
-present, which was the rule until now: the words described what was found
-on the medium and deliberately stopped short of a verdict. On a machine that
-trusts Microsoft that rule is harmless, because "signed" and "boots" nearly
-coincide. On a machine that does not, the label answers the wrong question
-and the user finds out by selecting every entry in turn. Section 7.2 already
-recorded the machine class; the menu had nothing to say about it.
-
-**The decision.** Each entry carries a *prediction* of whether the platform
-will accept it on this machine, computed from the same inputs shim uses:
-the image's certificate table, `db`, `dbx`, `MokListRT`, `MokListXRT` and
-`SbatLevelRT`. An entry predicted to be refused is drawn in yellow with a
-one-word reason. Nothing else changes: every entry stays selectable, and
-selecting one hands it to the shim-verified load path exactly as before.
-
-**Why this does not cross Section 7.3.** The prediction is a label. It is
-computed from public variables any OS can read, it is never consulted by
-any boot path, and a wrong prediction in either direction changes only what
-the screen says before shim answers. Structurally: the verdict type lives
-in the label builder and the details screen, and no function in `iso`,
-`bless`, `pos` or `loader` takes it as a parameter. A future change that
-passes a verdict into a boot path, or greys an entry out, or skips the
-confirm for a predicted refusal, is the Section 7.3 regression and is
-rejected here in advance. Greying out in particular was considered and
-rejected: it is the loader deciding what may run, and it would hide the
-platform's own refusal message, which is the most authoritative answer the
-user can get.
-
-**It is a prediction, not verification, and says so.** The loader performs
-no RSA or ECDSA operation and does not compare the signed Authenticode
-digest against the image. It matches certificates structurally (below). The
-consequences, all accepted:
-
-- A tampered image whose certificate table is intact predicts "boots" and is
-  then refused by shim. The refusal message covers it.
-- Only the first stage is predicted: the file the loader hands to
-  `LoadImage`. Kubuntu's shim trusting Canonical's grub, or an unblessed
-  Arch ISO's systemd-boot loading an unsigned kernel through the firmware's
-  own `LoadImage`, is out of reach. "Boots" means "the first file will
-  load", and the Manual says so.
+- A tampered image with an intact certificate table predicts "boots" and is
+  then refused by shim.
+- Only the first stage is predicted: the file handed to `LoadImage`.
+  Kubuntu's shim trusting Canonical's grub, or an unblessed Arch ISO's
+  systemd-boot loading an unsigned kernel through the firmware's `LoadImage`,
+  is out of reach. The Manual says so.
 - **Yellow only on a positive finding.** Anything the loader cannot parse,
-  cannot read, or does not recognise produces no verdict and the entry keeps
-  its normal colour. A false yellow teaches the user to ignore yellow; a
-  missed prediction costs one refusal message, which is the status quo.
+  read or recognise produces no verdict and the entry keeps its colour.
 
 #### Machine state: the banner
 
 The banner's state segment names what the machine trusts, so a row's reason
-can be read against it without opening firmware setup:
+can be read against it:
 
     falcon-boot 0.1.0  SB: on  trusts: MOK, MS UEFI CA, +1
 
 The wording follows the other states' labels (`SB: off`, `SB: setup mode`).
-When the title and this segment do not both fit, the title gives way: the
-state is what the user needs, and a clipped version string loses nothing.
+When the title and this segment do not both fit, the title gives way.
 
-- `MOK`: the certificate on this stick's p1 (`falcon-boot.cer`) is present
-  in `MokListRT`, compared byte for byte. Named once, as `MOK`, because that
-  is the word the Manual and the enrollment flow use.
+- `MOK`: the certificate on this stick's p1 (`falcon-boot.cer`) is in
+  `MokListRT`, compared byte for byte. The word the Manual and the enrollment
+  flow use.
 - `MS UEFI CA`: the Microsoft Corporation UEFI CA 2011 or the Microsoft UEFI
-  CA 2023 is in `db`. This is the third-party CA: distro shims, memtest,
-  vendor tools. It is what Dell's "Enable Microsoft UEFI CA" toggle adds.
-- `MS Windows`: the Microsoft Windows Production PCA 2011 or the Windows
-  UEFI CA 2023 is in `db`. Separate from the above because they are
-  separate certificates with separate owners' toggles, and the machine that
-  prompted this section is the case where a user might hold one and not the
-  other.
+  CA 2023 is in `db`. The third-party CA: distro shims, memtest, vendor
+  tools; what Dell's "Enable Microsoft UEFI CA" toggle adds.
+- `MS Windows`: the Microsoft Windows Production PCA 2011 or the Windows UEFI
+  CA 2023 is in `db`. Separate because they are separate certificates with
+  separate toggles, and a user may hold one and not the other.
 - `+N`: certificates in `db` or `MokListRT` the loader does not recognise,
-  counted, not named. The user's own db key is one of these, as is shim's
-  vendor certificate (shim mirrors it into `MokListRT`, which is why
-  `mokutil --list-enrolled` shows `fedoraca` on a machine that never
-  enrolled it).
+  counted. The user's own db key is one, as is shim's vendor certificate
+  (shim mirrors it into `MokListRT`, which is why `mokutil --list-enrolled`
+  shows `fedoraca` on a machine that never enrolled it).
 
-Recognition is by SHA-256 of the certificate's DER, against constants for
-the four Microsoft certificates. Names are for display; matching (below)
-never uses the recognised name. The 2011/2023 split is deliberately absent
-from the banner: it matters only when one generation is revoked, and then
-the entry says `{REVOKED}`.
+Recognition is by SHA-256 of the certificate's DER against constants for the
+four Microsoft certificates. Names are for display; matching (below) never
+uses them. The 2011/2023 split is not in the banner: it matters only when one
+generation is revoked, and then the entry says `{REVOKED}`.
 
-`trusts: ?` when db could not be read (below), because the list would be a
-guess. Secure Boot off, setup mode, or unknown: the segment is the existing
-`sb_mode_label` text and no trust list is shown, because nothing is
-enforced and no entry gets a verdict. Validation disabled (`MokSBStateRT`):
-the existing shouted label, unchanged, for the same reason plus the one
-exception below.
+`trusts: ?` when db could not be read (below). Secure Boot off, setup mode or
+unknown: the segment is the `sb_mode_label` text and no trust list, since
+nothing is enforced and no entry gets a verdict. Validation disabled
+(`MokSBStateRT`): the shouted label, plus the one exception below.
 
 #### Entry rows
 
@@ -2249,24 +1555,18 @@ exception below.
 
 The bracket says who signed the first stage; the braces say why it is
 predicted to be refused and appear only then. The two tags sit in aligned
-columns and the name is what gets truncated when a row is short, for the
-reason the old suffix builder gave: a truncated name is still
-recognisable, a truncated tag misstates what was found. The family name
-("Ubuntu install media") leaves the row; the ISO boot result screen
-already reports it, the file name carries it for every family we detect,
-and the column is worth more to the signer. The tags are separate fields
-of the row rather than text appended to the label, so the label stays the
-entry's path on p2 (which retired the old "suffix clipped the path" case).
+columns and the name is what gets truncated when a row is short. The family
+name ("Ubuntu install media") is not on the row; the ISO boot result screen
+reports it and the file name carries it. The tags are separate fields of the
+row, so the label stays the entry's path on p2.
 
-Bracket vocabulary: `[blessed]`, `[blessed, stale]`, `[unsigned]`, `[MS UEFI
-CA]`, `[MS Windows]`, `[MOK]` for a MOK-signed first stage that is not a
-bless (the personal OS, the appliance), `[no efi]` for a medium with no
-`\EFI\BOOT\BOOTX64.EFI` on any of its volumes, and otherwise the CN of the topmost certificate in the
-signer's chain, cut to 16 columns. (`[not prepared]`, a media-finding fact
-about Windows rather than a signature fact, left with preparation on
-2026-09-19.) Yellow is reserved for "this will not boot here"
-(shim refusing the first stage, `{BIOS ONLY}`, or on falcon-bios `{EFI
-ONLY}` and `{64-BIT ONLY}`) so that it always answers one question.
+Bracket vocabulary: `[blessed]`, `[blessed, stale]`, `[unsigned]`,
+`[MS UEFI CA]`, `[MS Windows]`, `[MOK]` for a MOK-signed first stage that is
+not a bless (the personal OS, the appliance), `[no efi]` for a medium with no
+`\EFI\BOOT\BOOTX64.EFI` on any of its volumes, and otherwise the CN of the
+topmost certificate in the signer's chain, cut to 16 columns. Yellow is
+reserved for "this will not boot here": shim refusing the first stage,
+`{BIOS ONLY}`, or on falcon-bios `{EFI ONLY}` and `{64-BIT ONLY}`.
 
 Reasons, exhaustive:
 
@@ -2281,249 +1581,213 @@ Reasons, exhaustive:
 | `{EFI ONLY}` | falcon-bios only: an ISO no BIOS route can boot (below) | boot the stick in UEFI mode |
 | `{64-BIT ONLY}` | falcon-bios only, on a processor without long mode: an ISO every way into which needs one (below) | boot it on a 64-bit machine |
 
-`{BIOS ONLY}` (decided 2026-09-27) is the one reason that is not a
-prediction about a signature. It is a fact about the medium, read by
-`falcon-core/src/media/uefiboot.c` during the survey, and it is shown in
-every Secure Boot state. An ISO is BIOS-only when neither way the UEFI
-loader boots an ISO can reach it:
+`{BIOS ONLY}` is the one reason that is not about a signature. It is a fact
+about the medium, read by `falcon-core/src/media/uefiboot.c` during the
+survey and shown in every Secure Boot state. An ISO is BIOS-only when neither
+way the UEFI loader boots an ISO can reach it:
 
 1. It has no UEFI boot image of its own: no El Torito entry for platform
    0xEF, no `\EFI\BOOT\BOOTX64.EFI` on any of its volumes, and no
-   `\bootmgr.efi`. Any one of them is a UEFI medium, whatever it holds: a
+   `\bootmgr.efi`. Any one of them makes a UEFI medium, whatever it holds: a
    0xEF image with only `BOOTIA32.EFI` (Windows 8.1 and 10 x86) is left
    alone.
-2. Its kernel cannot be booted directly (DIR, 12.2.9): the kernel the
-   default CD entry of its boot configuration names is a bzImage with no PE
-   header, or a PE for a processor other than x86-64. Windows media has no
-   kernel for this route, so for the Windows family (`media/family.c`) the
-   first test is the whole rule.
+2. Its kernel cannot be booted directly (DIR, 11.2.9): the kernel the default
+   CD entry of its boot configuration names is a bzImage with no PE header,
+   or a PE for a processor other than x86-64. Windows media has no kernel for
+   this route, so for the Windows family (`media/family.c`) the first test is
+   the whole rule.
 
 Anything the medium does not prove is not marked: no boot configuration, a
 kernel that cannot be read, bytes that are neither a PE nor a bzImage, a
-`.img`. What that marks, by
-the known layouts of the corpus's Windows media: 2000, XP (both), Vista RTM
-x86 and 7 x86; and DevLink recovery (13.5), an isolinux medium around a
+`.img`. By the corpus's Windows media this marks 2000, XP (both), Vista RTM
+x86 and 7 x86; and DevLink recovery (12.5), an isolinux medium around a
 32-bit kernel.
 
-The row stays selectable, like every other. Enter, `c` and `d` all show a
-page saying the image boots only on a BIOS machine and how to get there,
-and return to the menu. Nothing is handed to the load path, because there
-is nothing on the medium it could load: the chainload finds no boot image
-and the direct route's LoadImage takes only an x86-64 PE. That is why this
-does not cross Section 7.3 where greying out a predicted refusal would: no
-signature is judged and no image the platform could have run is withheld.
-`b` and `a` leave the row out; a BIOS machine needs no blessing.
+The row stays selectable. Enter, `c` and `d` show a page saying the image
+boots only on a BIOS machine and how to get there, and return to the menu;
+nothing is handed to the load path, since the chainload finds no boot image
+and the direct route's LoadImage takes only an x86-64 PE. `b` and `a` leave
+the row out.
 
 Colours: an unselected predicted row is `EFI_YELLOW` on black. The selection
 bar is black on light gray, and yellow on light gray is unreadable, so a
-selected predicted row is black on `EFI_BROWN` (which firmware renders as
-dark yellow): the bar itself changes colour rather than the text on it.
-`{BIOS ONLY}` is drawn in the same colours: yellow answers "this entry will
-not boot on this machine", and for every other reason that is because shim
-will refuse its first stage.
+selected predicted row is black on `EFI_BROWN` (rendered as dark yellow): the
+bar changes colour rather than the text on it. `{BIOS ONLY}` uses the same
+colours.
 
-#### The BIOS menu's tags (decided 2026-09-27)
+#### The BIOS menu's tags
 
-falcon-bios has no signatures to predict, and until now its rows carried no
-tags at all, so a medium it cannot boot looked like any other until it was
-chosen. Two reasons, both facts about the medium read by
-`falcon-core/src/media/biosboot.c`, and both drawn in the colours above:
+falcon-bios has no signatures to predict. Two reasons, both facts about the
+medium read by `falcon-core/src/media/biosboot.c`, drawn in the colours
+above:
 
-- `{EFI ONLY}`: no BIOS route can reach the medium. Its El Torito catalog
-  has no entry the virtual CD boots from (`elt_bios_entry`, the one rule
-  the virtual CD and the tag share: the default entry unless it says 0xEF,
-  else the first x86 entry), AND no entry of its boot configuration's CD
-  reading names a kernel with the x86 boot protocol's setup header ("HdrS"
-  at 0x202), which is what the direct route (12.3.6) starts. Every entry
-  counts, not only the default: the rule would rather miss a mark than make
-  a false one. For the Windows family the first test is the whole rule. A
-  hard-disk emulation image is one the virtual CD refuses today, but it is
-  a BIOS boot image, and a medium carrying one is not marked.
+- `{EFI ONLY}`: no BIOS route can reach the medium. Its El Torito catalog has
+  no entry the virtual CD boots from (`elt_bios_entry`, the one rule the
+  virtual CD and the tag share: the default entry unless it says 0xEF, else
+  the first x86 entry), AND no entry of its boot configuration's CD reading
+  names a kernel with the x86 boot protocol's setup header ("HdrS" at 0x202),
+  which the direct route (11.3.6) starts. Every entry counts, not only the
+  default. For the Windows family the first test is the whole rule. The
+  virtual CD refuses a hard-disk emulation image, but it is a BIOS boot
+  image, and a medium carrying one is not marked.
 - `{64-BIT ONLY}`: shown only when the processor has no long mode
-  (`linux_cpu_is_64`), and only for a medium that proves every way in
-  needs one. Linux: every entry of the CD configuration names a kernel that
-  could be read, every one is a bzImage whose header is new enough to say
-  its width (protocol 2.12, xloadflags), and every one says 64-bit. One
-  32-bit entry is enough to leave a medium unmarked, which is the point: a
-  multi-arch medium (Debian netinst) boots on either processor. BSD: the
-  kernel at `/boot/kernel/kernel` is an ELF64 for x86-64. Windows is never
-  marked, because its width is boot.wim's and reading that is too heavy for
-  a label; the Windows route refuses a 64-bit WinPE after it is chosen.
+  (`linux_cpu_is_64`), and only for a medium that proves every way in needs
+  one. Linux: every entry of the CD configuration names a kernel that could
+  be read, every one is a bzImage whose header is new enough to say its width
+  (protocol 2.12, xloadflags), and every one says 64-bit; one 32-bit entry
+  leaves a medium unmarked, which is how a multi-arch medium (Debian netinst)
+  boots on either processor. BSD: the kernel at `/boot/kernel/kernel` is an
+  ELF64 for x86-64. Windows is never marked, because its width is boot.wim's
+  and reading that is too heavy for a label; the Windows route refuses a
+  64-bit WinPE after it is chosen.
 
 In both rules the tools a medium carries beside the OS (a memory tester, a
 `.c32` module) are not asked, since `bootcfg_read` never picks one. Anything
 unproven is not marked: a catalog or a kernel that did not read, a kernel
 path GRUB would compute, a header too old to state its width, a `.img`.
 
-The rows stay selectable. Enter, `c` and `d` all show a page with the label,
-what the medium needs, and what to do, then return to the menu; nothing is
-handed to a route, since none of them could start what is on it. The BSD
-route asks the same question at boot time for a medium that reaches it
-unmarked (the next-boot marker, a row not yet drawn): an amd64 kernel on a
-processor without long mode is refused with the same sentence, as
-`linux_boot` refuses a 64-bit kernel.
+The rows stay selectable. Enter, `c` and `d` show a page with the label, what
+the medium needs, and what to do, then return to the menu. The BSD route asks
+the same question at boot time for a medium that reaches it unmarked (the
+next-boot marker, a row not yet drawn): an amd64 kernel on a processor without
+long mode is refused with the same sentence `linux_boot` uses for a 64-bit
+kernel.
 
-#### Background probing (decided 2026-09-27, in the background 2026-09-30)
+#### Background probing
 
-Both sticks' menus look inside every entry on the stick in the background,
-for as long as a menu is up, instead of before the menu appears or only
-while a row is on screen. The probe runs on a task of its own
-(falcon-efi/src/task/task.c, falcon-bios/src/task/task.c): a coroutine on
-a stack of its own, 256 KiB on UEFI and 128 KiB on BIOS, switched to and
-from with the callee-saved registers and the stack pointer. It is not a
-thread. An application processor may not call boot services, a timer
-event's notify runs at raised TPL where the main flow cannot, and INT 13h
-is not re-entrant on a machine with one processor.
+Both sticks' menus look inside every entry in the background, for as long as
+a menu is up. The probe runs on a task of its own
+(`falcon-efi/src/task/task.c`, `falcon-bios/src/task/task.c`): a coroutine on
+a stack of its own, 256 KiB on UEFI and 128 KiB on BIOS, switched to and from
+with the callee-saved registers and the stack pointer. Not a thread: an
+application processor may not call boot services, a timer event's notify
+runs at raised TPL where the main flow cannot, and INT 13h is not re-entrant
+on a machine with one processor.
 
 - **It yields at the read layer.** Every read of the library goes through
-  `discover_read` (UEFI) or `bios_disk_bytes` (BIOS), which makes a long
-  read in pieces of 256 KiB and calls a hook before each. From inside the
-  task the hook switches back to the menu when a key is waiting or the
-  tick has passed (50 ms on UEFI; a new BIOS clock tick, or 32 reads
-  without one, since a machine can reach the menu with IRQ0 never
-  delivered). So a keystroke waits for at most one piece of one read.
+  `discover_read` (UEFI) or `bios_disk_bytes` (BIOS), which makes a long read
+  in pieces of 256 KiB and calls a hook before each. From inside the task the
+  hook switches back to the menu when a key is waiting or the tick has passed
+  (50 ms on UEFI; a new BIOS clock tick, or 32 reads without one, since a
+  machine can reach the menu with IRQ0 never delivered). A keystroke waits
+  for at most one piece of one read.
 - **The menu steps it whenever no key is waiting** (`menu_run_probed`,
   `screen_menu_tagged`, each with a `step` and a `fill` callback), fills
   every pending row on screen from what it has found, and repaints those
-  rows, or the whole window when a tag column widens. Rows not looked
-  inside yet show `...` (core's `tui_tag_pending`). While there is work a
-  spinner, `/-\|`, turns in the banner's last cell, which the banner's
-  right padding keeps free. There is no progress line.
+  rows, or the whole window when a tag column widens. Rows not looked inside
+  yet show `...` (core's `tui_tag_pending`). While there is work a spinner,
+  `/-\|`, turns in the banner's last cell, which the banner's right padding
+  keeps free. There is no progress line.
 - **The order is core's** (`survey_next_probe`), asked again before every
-  entry: the entry under the selection, then the files directly in the
-  folder on screen, then everything under that folder depth first, then
-  the rest of the library from the top. Moving the selection, or into
-  another folder, reorders what comes next; the entry being looked inside
-  is finished first.
-- **It outlives the menu call.** A folder change returns from the menu as
-  it always did, and the next call resumes the same task.
-- **What stops it:** anything that leaves the menu to act (a boot, `b`,
-  `a`, the personal OS, leaving the loader) shares the mounts and buffers
-  the probe uses, so it stops the probe first (`probe_stop`). The entry it
-  was inside is left unprobed (`probed` and `done` are set last) and looked
-  inside again later.
+  entry: the entry under the selection, then the files directly in the folder
+  on screen, then everything under that folder depth first, then the rest of
+  the library from the top. Moving the selection, or into another folder,
+  reorders what comes next; the entry being looked inside is finished first.
+- **It outlives the menu call.** A folder change returns from the menu, and
+  the next call resumes the same task.
+- **What stops it:** anything that leaves the menu to act (a boot, `b`, `a`,
+  the personal OS, leaving the loader) shares the mounts and buffers the probe
+  uses, so it stops the probe first (`probe_stop`). The entry it was inside is
+  left unprobed (`probed` and `done` are set last) and looked inside again
+  later.
 - A menu with no probe (the stations, the personal-OS chooser, falcon jump)
-  draws as it always did.
+  has no pending rows and no spinner.
 
-The first version (2026-09-27) probed the whole window before painting it,
-so the first page waited for its rows with the list area empty and no key
-read: on real hardware, a folder of ISOs off a USB 2 stick looked hung. The
-second (2026-09-29) probed the window a row at a time with the keys read
-between rows, which still held a key up for as long as one row took: seconds
-for a large medium over BIOS INT 13h.
+Enter on a row still pending looks inside it before the route's page, under
+`checking the image...`, rather than with the menu frozen.
 
-Enter on a row still pending looks inside it before the route's page,
-under `checking the image...` (below), rather than with the menu frozen.
+#### Startup steps
 
-#### Startup steps (2026-09-29)
-
-Every loader says what it is doing between its first screen and its menu,
-one line at the page's first row (`menu_busy`, `screen_busy`, core's
+Every loader says what it is doing between its first screen and its menu, one
+line at the page's first row (`menu_busy`, `screen_busy`, core's
 `tui_busy_*`), each step overwriting the last: `reading the Secure Boot
 keys`, `finding disks`, `reading the shelf`, `reading the ISO library`,
 `reading the TPM` (the UEFI station with `[totp]`), `finding boot entries`
 (the stations) and `reading the floppy` (falcon jump). The BIOS loaders set
-the screen up before their disk scans for this, where they used to set it
-up after. The line is also the only clue on a machine where one step is
-slow, which is how the slow one is found. falcon jump's CD, USB and CF
-routes say each module load and device bring-up on the route's page the
-same way (`loading ATA.MOD...`, `looking for a falcon stick...`).
+the screen up before their disk scans for this. The line is also the only
+clue on a machine where one step is slow. falcon jump's CD, USB and CF routes
+say each module load and device bring-up on the route's page the same way
+(`loading ATA.MOD...`, `looking for a falcon stick...`).
 
-This replaced `PROBE_LIMIT` (256 on the UEFI loader), which probed that many
-media before the menu and left the rest with a `[?]` bracket until chosen.
-The cost of a probe is a handful of reads off p2, so a stick of any size now
-reaches its menu in the time one screenful takes, and no row is ever drawn
-unprobed. What needs an entry looked inside before its row has been drawn
-does the look itself, through the same function the menu calls
-(`target_probe` in apps/stick/efi_main.c, `probe_entry` in
-apps/stick/bios_main.c): a boot from the next-boot marker, `b`, and `a`,
-which looks inside every image it might list so its list is the one it was
-before. The bless lookup and the next-boot match read no medium and still
-run for every entry before the menu.
+No medium is probed before the menu, so a stick of any size reaches its menu
+in the time the survey takes. What needs an entry looked inside before its
+row has been drawn does the look itself, through the function the menu calls
+(`target_probe` in `apps/stick/efi_main.c`, `probe_entry` in
+`apps/stick/bios_main.c`): a boot from the next-boot marker, `b`, and `a`,
+which looks inside every image it might list. The bless lookup and the
+next-boot match read no medium and run for every entry before the menu.
 
-The evidence goes on the screen shown when the platform refuses an entry,
-which is where the question gets asked (there is no per-entry details
-screen): one line per certificate-table entry, `signer <- anchor (list)`,
-where the anchor is what the chain reached or, when nothing reached it,
-the known CA in it or the issuer it ends at, plus the list or SBAT entry
-that revoked it. Nothing is shown for an entry the prediction said nothing
-about.
+The evidence goes on the screen shown when the platform refuses an entry
+(there is no per-entry details screen): one line per certificate-table entry,
+`signer <- anchor (list)`, where the anchor is what the chain reached or, when
+nothing reached it, the known CA in it or the issuer it ends at, plus the list
+or SBAT entry that revoked it. Nothing is shown for an entry the prediction
+said nothing about.
 
 **Stores that could not be read.** db absent or unreadable, or MokListRT
-unreadable (absent just means nothing is enrolled), sets the stores
-incomplete. Incomplete stores never predict `{UNTRUSTED}` or `{NOT
-BLESSED}`: "nothing we could read trusts this" is not "nothing trusts
-this". `OK` and `REVOKED` are positive findings and still stand. dbx,
-MokListXRT and SbatLevelRT only ever add a refusal, so failing to read one
-costs a possible `{REVOKED}` and makes nothing else uncertain.
+unreadable (absent means nothing is enrolled), sets the stores incomplete.
+Incomplete stores never predict `{UNTRUSTED}` or `{NOT BLESSED}`. `OK` and
+`REVOKED` are positive findings and still stand. dbx, MokListXRT and
+SbatLevelRT only ever add a refusal, so failing to read one costs a possible
+`{REVOKED}` and makes nothing else uncertain.
 
 #### Verdict rules
 
-Evaluated once per entry, when the background probe reaches it (above),
-only when the mode is Secure Boot
-on with validation on, except the `{VALIDATION OFF}` rule which applies only
-in that mode:
+Evaluated once per entry, when the background probe reaches it, only when the
+mode is Secure Boot on with validation on, except the `{VALIDATION OFF}` rule
+which applies only in that mode:
 
 1. The image evaluated is the first stage: the ISO's `\EFI\BOOT\BOOTX64.EFI`
    (already read by the survey), a bare payload itself, or for a fresh bless
    the wrap UKI. For the wrap only the PE headers and the certificate table
    are read, a few KiB at the end of a ~250 MB file.
 2. The personal OS gets no signer evaluation: its UKI is on p3, which is not
-   unlocked until the entry is selected. It needs none. The loader is
-   MOK-signed and is running under Secure Boot with validation on, so the
-   MOK is enrolled, and the MOK is what signs the UKI. Only the
+   unlocked until the entry is selected, and the loader running MOK-signed
+   under validation means the MOK that signs the UKI is enrolled. Only the
    `{VALIDATION OFF}` rule applies to it.
 3. `{REVOKED}` if any top-level signature's chain contains a certificate
    present in `dbx` or `MokListXRT`, or the image's Authenticode SHA-256 is
-   present in either as a hash entry, or any component in the image's
-   `.sbat` section carries a generation below the same component's line in
-   `SbatLevelRT`. Revocation is checked first because it wins in the
-   platform too: EDK2 and shim both reject on a `dbx` hit before consulting
-   `db`.
+   present in either as a hash entry, or any component in the image's `.sbat`
+   section carries a generation below the same component's line in
+   `SbatLevelRT`. Checked first because it wins in the platform too: EDK2 and
+   shim both reject on a `dbx` hit before consulting `db`.
 4. Trusted if any top-level signature's chain reaches an anchor in `db` or
    `MokListRT`, or the image's Authenticode hash is present in either as a
    hash entry. Any one passing signature suffices, as in EDK2 and shim.
-5. Otherwise `{UNTRUSTED}` if a certificate table exists, `{NOT BLESSED}`
-   (or `{BLESS STALE}`) if it does not.
-6. A missing `.sbat` section is not a finding. Whether shim refuses it
-   depends on which list verified the image (Section 9's SBAT notes), and a
-   rule the loader cannot state exactly is a false yellow waiting to happen.
+5. Otherwise `{UNTRUSTED}` if a certificate table exists, `{NOT BLESSED}` (or
+   `{BLESS STALE}`) if it does not.
+6. A missing `.sbat` section is not a finding. Whether shim refuses it depends
+   on which list verified the image (Section 9's SBAT notes).
 
-The Authenticode hash is computed only for images up to 32 MiB. First
-stages are shims, systemd-boot, grub and bootmgr, all well under it; the
-cap exists so a 250 MB UKI never costs a full read to check a hash `dbx`
-will not contain.
+The Authenticode hash is computed only for images up to 32 MiB. First stages
+(shims, systemd-boot, grub, bootmgr) are well under it.
 
 #### Certificate matching
 
-"Chains to an anchor" is structural, and the rule is fixed here so that it
-is the same in the parser, the tests and the Manual:
+"Chains to an anchor" is structural, and the rule is fixed here so the parser,
+the tests and the Manual agree:
 
-- Only top-level `WIN_CERTIFICATE` entries of type `WIN_CERT_TYPE_PKCS_SIGNED_DATA`
-  count. Nested signatures (the `1.3.6.1.4.1.311.2.4.1` unauthenticated
-  attribute) are ignored, because neither EDK2 nor shim honours them.
-- Per entry: find the signer certificate in the SignedData certificate set
-  by the SignerInfo's issuer and serial. Walk upward through the set by
-  issuer name, at most 8 steps, stopping at a self-issued certificate or a
-  missing issuer.
+- Only top-level `WIN_CERTIFICATE` entries of type
+  `WIN_CERT_TYPE_PKCS_SIGNED_DATA` count. Nested signatures (the
+  `1.3.6.1.4.1.311.2.4.1` unauthenticated attribute) are ignored; neither
+  EDK2 nor shim honours them.
+- Per entry: find the signer certificate in the SignedData certificate set by
+  the SignerInfo's issuer and serial. Walk upward through the set by issuer
+  name, at most 8 steps, stopping at a self-issued certificate or a missing
+  issuer.
 - A certificate `C` in that walk reaches anchor `A` if `A`'s DER equals
   `C`'s. The top of the walk (the certificate whose issuer the signature does
   not include) may also reach `A` by name: `A`'s subject equals `C`'s issuer
   byte for byte AND, where `C` has an Authority Key Identifier and `A` has a
   Subject Key Identifier, the two are equal. A certificate lower in the walk
-  is judged through its included issuer instead, never by name.
-- **A self-issued certificate reaches only an anchor that IS it.** This rule
-  was added after measuring the Dell (2026-09-17): sbctl's certificates carry
-  no extensions at all, so there is no key identifier to disambiguate them,
-  every one is named `CN=Database Key`, and that db holds two distinct ones.
-  Without the rule, anything signed by any sbctl key would read as trusted on
-  every sbctl machine. (The design previously leaned on key identifiers for
-  this; they do not exist on the certificates that need them.)
-- The accepted residual, pinned by the corruption sweep: a forged
-  certificate whose subject was altered but whose issuer still names an
-  identifier-less anchor matches by name and predicts "boots". Telling it
-  apart from a certificate that anchor really issued needs the signature
-  check the loader does not do; shim refuses it at load.
+  is judged through its included issuer, never by name.
+- **A self-issued certificate reaches only an anchor that is it.** sbctl's
+  certificates carry no extensions, so there is no key identifier, every one
+  is named `CN=Database Key`, and one db can hold two distinct ones.
+- The accepted residual, pinned by the corruption sweep: a forged certificate
+  whose subject was altered but whose issuer still names an identifier-less
+  anchor matches by name and predicts "boots". Telling it apart needs the
+  signature check the loader does not do; shim refuses it at load.
 - `db` and `MokListRT` entries are `EFI_SIGNATURE_LIST`s. `EFI_CERT_X509_GUID`
   entries are anchors, `EFI_CERT_SHA256_GUID` entries are image hashes, and
   every other type is skipped, not an error. `dbx` and `MokListXRT` are read
@@ -2535,76 +1799,48 @@ Every ISO dropped on p2 feeds its certificate table to this code, inside a
 MOK-signed binary, before anything is verified. It is held to the ext4 and
 LUKS standard: EFI-free over a buffer, a DER walker with explicit length
 checks at every level, a nesting cap, no allocation (it returns offsets into
-the caller's buffer), and a cmocka suite built on real fixtures (the stick's
-shim, a distro shim, a Windows `bootmgfw.efi`, sbctl and Microsoft
-certificates, the secboot OVMF varstore's `db`) plus a corruption sweep in
-the pattern of `test_ext4_corruption_sweep`. A malformed table produces no
-verdict, never a crash and never a yellow row.
+the caller's buffer), and a cmocka suite on real fixtures (the stick's shim, a
+distro shim, a Windows `bootmgfw.efi`, sbctl and Microsoft certificates, the
+secboot OVMF varstore's `db`) plus a corruption sweep in the pattern of
+`test_ext4_corruption_sweep`. A malformed table produces no verdict, never a
+crash and never a yellow row.
 
-Rejected alternatives:
+### 7.9 Idle power-off
 
-- **Machine modes instead of per-entry verdicts** ("SB on with the MS CA and
-  our MOK", and so on). The question is per image, and "the MS CA" is two
-  certificates with two generations; the mode list either misses cases or
-  becomes the certificate list. The banner carries the machine facts,
-  rows carry the answer.
-- **Verifying signatures in the loader.** It would make the prediction
-  exact for tampered images and nothing else, at the cost of RSA in
-  EFI-land, and it is one step from the loader holding an opinion it might
-  one day act on. Shim is the verifier.
-- **Greying out or hiding predicted refusals.** Above.
+When a page that waits for a key (a menu, a menu whose countdown a key
+stopped, the passphrase prompt, a "press any key" page) has waited
+`TUI_IDLE_SECONDS` (300) with no key, the machine is powered off. On every
+loader: the stick and the station on both firmwares, and falcon jump. The
+station's `STATION.INI` may change the time (`[general] poweroff`, 0 never,
+12.7).
 
-
-### 7.9 Idle power-off (decided 2026-09-29)
-
-A loader left at a page that waits for a key (a menu, a menu whose
-countdown a key stopped, the passphrase prompt, a "press any key" page)
-would show it until someone came, and a panel shown one image for days
-keeps it. So when a page has waited `TUI_IDLE_SECONDS` (300) with no key,
-the machine is powered off, as Windows does at its BitLocker prompt. On
-every loader: the stick and the station on both firmwares, and falcon jump.
-The station's `STATION.INI` may change the time (`[general] poweroff`, 0
-never, 13.7).
-
-- What restarts the time: a page starting to wait, each key, and each
-  second of a countdown (a countdown ends in a boot of its own, and one
-  longer than the idle time must not be cut short). The status lines'
-  refresh (the TOTP code) does not. A page starting to wait counts because
-  the time runs across what the loader launched: memtest quit after an hour
-  comes back to a fresh five minutes, not to a timer long fired.
+- What restarts the time: a page starting to wait, each key, and each second
+  of a countdown (a countdown ends in a boot of its own). The status lines'
+  refresh (the TOTP code) does not. A page starting to wait counts because the
+  time runs across what the loader launched: memtest quit after an hour comes
+  back to a fresh five minutes.
 - Before the power-off: the passphrase prompt's buffer is wiped, the BIOS
   keyboard ring too, and on the UEFI station the TOTP seed (`totp_wipe`).
 - UEFI: `console/idle.c`, a timer event every wait waits on beside
   `WaitForKey`, then `ResetSystem(EfiResetShutdown)`.
-- BIOS: `screen_key` polls the keyboard against `cdclock` (the ticks and
-  the RTC, 13.7's reason) and calls `power/power.c`: APM's "all devices
-  off" (INT 15h AX=5307h), which the machines of the A21m's era answer and
-  SeaBIOS turns into ACPI S5 itself; then ACPI S5 directly, the sleep type
-  from the DSDT's `\_S5` into the FADT's PM1 control blocks, ACPI handed
-  over through the SMI command port first when the firmware left it off
-  (`power/acpicore.c`, host-tested, reads the tables). Stage 2, which has
-  no screen, keeps its plain wait. Measured on the A21m (2026-09-30): APM
-  powers it off.
-- When nothing powers the machine off (UEFI's `ResetSystem` returning, no
-  APM and no S5 on BIOS), BIOS turns the screen off (the VGA sequencer's
+- BIOS: `screen_key` polls the keyboard against `cdclock` (the ticks and the
+  RTC, 12.7's reason) and calls `power/power.c`: APM's "all devices off"
+  (INT 15h AX=5307h), which the machines of the A21m's era answer and SeaBIOS
+  turns into ACPI S5 itself; then ACPI S5 directly, the sleep type from the
+  DSDT's `\_S5` into the FADT's PM1 control blocks, ACPI handed over through
+  the SMI command port first when the firmware left it off
+  (`power/acpicore.c`, host-tested, reads the tables). Stage 2, which has no
+  screen, keeps its plain wait.
+- When nothing powers the machine off (UEFI's `ResetSystem` returning, no APM
+  and no S5 on BIOS), BIOS turns the screen off (the VGA sequencer's
   screen-off bit, text memory kept) until a key, which is swallowed; the
   prompt then starts again empty. UEFI starts the time again.
 
-Considered and rejected:
-
-- *Blanking the screen and waiting.* It stops the burn-in and leaves a
-  machine on for nothing; off is what an unattended pre-boot screen wants,
-  and a key is all it costs to come back to on a machine that has to be
-  switched on anyway.
-- *Booting the default.* The page waiting is the one where a person chose
-  not to: a stopped countdown, or a passphrase nobody typed.
-- *Rebooting.* It lands on the same page.
-
 ## 8. Host tooling (userland, C)
 
-EFI-land stays freestanding and lean. The device-configuration tooling is
-ordinary Linux userland C and is allowed to shell out to system tools rather
-than reimplementing cryptography or filesystem creation:
+The device-configuration tooling is ordinary Linux userland C and shells out
+to system tools rather than reimplementing cryptography or filesystem
+creation:
 
 - `falcon-boot-mkstick` (or subcommands): partition (GPT), format p1 FAT32 and
   p2 exFAT (`mkfs.fat`, `mkfs.exfat`), and create p3/p4 via `cryptsetup
@@ -2613,14 +1849,13 @@ than reimplementing cryptography or filesystem creation:
   --pbkdf-force-iterations 4 --pbkdf-parallel 4`; cryptsetup's benchmarked
   argon2id on p4), then `mkfs.ext4` inside each. cryptsetup's host-side
   benchmark would size p3's cost for the host, which the next machine may not
-  have. **Measured and decided (2026-09-28, docs/notes/argon2-totp.md open
-  item 1):** falcon-core's argon2id costs about 42 ms per MiB per pass on the
-  A21m (Pentium III, 548 MHz), linear, and lanes filled in turn cost nothing.
-  64 MiB, because a 512 MB Pentium III has it free several times over; 4
-  lanes, free for the loaders and parallel for Linux; time 4, cryptsetup's
-  floor for argon2 (the decision was time 2, which cryptsetup refuses), 10.5 s
-  on the A21m and 0.39 s on an i9. It replaces the pbkdf2 keyslot at 200000
-  iterations decided 2026-09-13, when the loaders had no argon2id.
+  have. falcon-core's argon2id costs about 42 ms per MiB per pass on the
+  A21m (i686, 548 MHz), linear in memory and passes, and lanes filled in
+  turn cost nothing. p3's cost (`MKS_STICK_KDF_*` in
+  `falcon-cli/src/mkstick/mkstick.h`): 32 MiB, which the A21m's 512 MB has
+  free many times over above falcon-bios's heap floor; 4 lanes, free for the
+  loaders and parallel for Linux; time 4, cryptsetup's floor for argon2.
+  That is about 5.4 s on the A21m and 0.2 s on an i9.
 - Install shim + MokManager + our loader + cert onto p1, naming our loader to
   match the shim's embedded next-stage path (Section 4).
 - Write the identity records (Section 3.1): one random install ID per
@@ -2646,7 +1881,8 @@ than reimplementing cryptography or filesystem creation:
   export the public cert to p1 for enrollment.
 - Sign our loader, the personal-OS UKI, and the signing-appliance UKI with the
   MOK key via `sbsign`.
-- Build/stage the personal-OS UKI (via `ukify` or equivalent) with our initramfs
+- Build/stage the personal-OS UKI (the sign tool's own builder, byte-identical
+  to ukify; see below) with our initramfs
   handoff hook (Section 5.1) baked in, and build the signing-appliance UKI
   (Section 7.5): a minimal initramfs of our static PID 1, sbsign and the
   portable `sign` tool.
@@ -2659,111 +1895,34 @@ than reimplementing cryptography or filesystem creation:
   and not needed for ISOs that already ship their own MS-signed shim and
   find their own media.
 
-**Bless now covers two operations (decision 2026-09-13).** `falcon-boot sign`
-*signs* Linux media and *patches* Windows media (Sections 6.3 and 7.7). One
-command, one confirmation gate, one manifest, two outputs. Consequences that
-land on this section:
+**Bless signs; it does not patch.** `falcon-boot sign` signs Linux and BSD
+media. It refuses Windows media, whose boot chain is Microsoft-signed and
+boots as it is: the loader patches `boot.wim` at boot (Sections 6.4 and
+7.7). The Windows patch tracks details that are undocumented or
+version-dependent and can change in any Windows build: the `winpeshl.exe`
+replacement, which WIM image index is the boot image (2, Setup, not 1), the
+UDF layout, and WinPE's component requirements. Linux families' cmdline
+templates are stable and a new release usually needs nothing.
 
-*The bullets below on wimlib and on-stick preparation are superseded: Section
-6.4 moved the patch into the loader, and preparation was removed on
-2026-09-19. wimlib is now needed only to build the WIM test fixture
-(`falcon-core/tools/mk-test-wim.sh`).*
-
-- **wimlib becomes a host-tooling dependency** (`app-arch/wimlib` on Gentoo),
-  joining `cryptsetup`, `sbsign` and `mkfs.*` on the intended
-  vendoring line described at the end of Section 8.1. The tool shells out to
-  it; we no more reimplement LZX and solid WIM resources than we reimplement
-  Authenticode.
-- **The Windows path needs no private key**, so it works on a `--p3-plain`
-  stick (Section 3), where signing cannot. The only thing it asks of the stick
-  is space on p2. One caveat that follows from Section 3 rather than from the
-  Windows path: a `--p3-plain` stick has no signing appliance at all, so the
-  on-stick preparation of the next bullet does not exist there and preparation
-  is host-only on that stick.
-- **On the stick, automatically (decision 2026-09-13, reversing an earlier
-  "host-only for MVP" entry in this section).** Windows ISO preparation runs in
-  the signing appliance, on the stick, without the user going to find a Linux
-  box. **The appliance therefore carries wimlib.** The flow and the next-boot
-  handoff are Section 6.3.1.
-
-  The reason is the drag-and-drop contract of Section 1, in-scope item 2, which
-  is this project's flagship promise. Requiring a separate Linux host with
-  wimlib installed for every Windows ISO breaks that promise far more severely
-  than blessing does. Blessing breaks drag-and-drop only under Secure Boot ON,
-  and only because of a platform constraint we did not create; Windows
-  preparation would break it *always*, Secure Boot OFF included, for a
-  media-finding problem that Ventoy solves with no per-ISO step at all. Being
-  strictly worse than the thing we are distilling, on the flagship use case, by
-  choice, is not acceptable.
-
-  The measured costs are what make this affordable, and they now support the
-  design rather than a deferred option: 23-106 MB peak RSS, roughly 1.2 GB of
-  scratch space, and seconds of CPU for a full repack.
-
-- **Reversed 2026-09-18 (Section 6.4); kept for the record: rejected, do the
-  WIM surgery at boot time, in the loader, the way Ventoy
-  does** (decompress the WIM metadata, parse the `SYSTEM` registry hive to find
-  the configured PE shell, rebuild the resource, recompute the SHA-1 hashes,
-  all inside the bootloader). Estimated at 2500-3500 lines of new freestanding
-  code including an LZX decompressor, a UDF reader and SHA-1. Rejected on two
-  grounds, and both belong in the record:
-
-  1. *It puts the volatile, Microsoft-tracking logic inside the trust anchor.*
-     Windows internals are precisely the part of this route that rots (see the
-     tracking-commitment bullet below). In that design every Windows
-     compatibility fix ships as a newly signed loader, with MOK re-signing and
-     an SBAT generation question attached. In the chosen design the same fix is
-     an appliance or host-tool update, and the trust anchor never moves.
-  2. *It parses attacker-controlled data pre-boot inside a trusted binary.* A
-     dropped ISO is untrusted input, and this design would parse it inside a
-     Secure-Boot-trusted, MOK-signed binary with no ASLR, no NX guarantees and
-     no process isolation. A memory-safety bug in an LZX decompressor or a UDF
-     reader there is pre-boot code execution in a trusted context, which is
-     exactly the class of defect SBAT revocation exists to clean up after
-     (Section 7.3). In the chosen design the identical parsing happens in Linux
-     userland, after the trust boundary, where the same bug is a crashed tool.
-     This is a security argument consistent with the existing invariants, not a
-     matter of taste.
-
-  It remains available later as a **pure optimisation**, not as a rethink: if
-  Windows ISOs ever land often enough that the one-time prepare-and-reboot
-  grates, the bless-side logic will by then be written and tested, so moving it
-  into EFI-land is a port of known-good code rather than a research project.
-  The two objections above do not expire, and would have to be re-weighed
-  against a convenience gain that is one reboot per ISO.
-- **Windows support is an ongoing tracking commitment**, and this is the real
-  price of the Section 1 decision. The `winpeshl.exe` replacement, which WIM
-  image index is the boot image (measured: 2, Setup, not 1), the UDF layout
-  details, and WinPE's component requirements are all undocumented or
-  version-dependent, and Microsoft can change any of them in any Windows
-  build. Linux families are not like this: their cmdline templates are stable
-  and a new release usually needs nothing. Ventoy's history is largely a
-  record of chasing exactly this, and we should expect the same shape of
-  maintenance, at a much smaller scale.
-
-### 8.1 Blessed artifacts and the manifest (decided 2026-09-13)
+### 8.1 Blessed artifacts and the manifest
 
 The bless output is always a **signed UKI wrap** (sd-stub + kernel +
 embedded `.cmdline` + **embedded `.initrd` by default**, `.sbat` inherited
 from the stub), never a bare signed bzImage. Embedding the ISO's initramfs
-costs p2 space (~100-250 MB per blessed ISO) but makes the entire blessed
+costs p2 space (~100-250 MB per blessed ISO) and makes the entire blessed
 boot chain signed, which closes the unsigned-initrd residual of Section 7.5
-for blessed media outright; space is the cheapest resource on the stick.
+for blessed media.
 `--no-initrd` produces the kernel+cmdline-only wrap for space-constrained
-sticks, reopening that residual for the ISO's initrd read from p2 at boot
-(delivery mechanism for that thinner shape - likely sd-stub companion
-pickup via the Section 5.1 machinery - is an unspiked question; do not
-build it without verifying sd-stub's actual companion-initrd support).
-Two more reasons the wrap is a UKI, one forced and one earned:
+sticks, reopening that residual for this medium. The loader does not
+deliver the ISO's initrd from p2 to a thin wrap.
+Two more reasons the wrap is a UKI:
 
-- Forced: the shim load path may enforce SBAT on everything it loads, and
-  raw bzImages carry no `.sbat` (Section 7.6 spike).
-- Earned: p2 is writable, unverified exFAT, so anything not covered by a
-  signature is attacker-editable with stick access. Embedding the cmdline in
-  the signed wrap means tampering with p2 cannot inject kernel arguments
-  into a blessed boot; the kernel + cmdline verify or the boot refuses.
-  (The initrd read off p2 remains unverified; that residual is recorded in
-  Section 7.5 and matches ordinary distro boots.)
+- The shim load path may enforce SBAT on everything it loads, and
+  raw bzImages carry no `.sbat` (Section 7.6).
+- p2 is writable, unverified exFAT. Embedding the cmdline in the signed
+  wrap means tampering with p2 cannot inject kernel arguments into a
+  blessed boot; the kernel + cmdline verify or the boot refuses. (An
+  initrd read off p2 is unverified; Section 7.5.)
 
 On-stick layout, under the reserved directory of Section 6.2:
 
@@ -2784,23 +1943,12 @@ family=arch                                  # registry id (Section 6.2)
 ```
 
 A record needs `iso=`, `size=` and `uki=`. A `kind=` key, if present, must
-say `blessed`; any other value drops the record, since a kind nobody knows is
-a record nobody should act on.
+say `blessed`; any other value drops the record.
 
-**Retired: prepared records (removed 2026-09-19).** From 2026-09-13 to
-2026-09-19 a second kind existed for Windows media prepared on the stick
-(Section 6.3.1): `kind=prepared`, no `uki=`, and `splice=<iso_off>:<len>:<name>`
-lines naming a patched `boot.wim` under `p2:/falcon/prepared/<sha256>/`. The
-loader patches Windows media itself now (Section 6.4). A stick an older
-appliance wrote may still carry such a record, so the parser skips any block
-with `kind=prepared` or a `splice=` line whole, as it skips a malformed one,
-and the records around it parse unchanged: the stick's blessed ISOs keep
-booting blessed and the Windows ISO boots as if it had no record. The next
-bless rewrites the file without it. The sidecar folders are inert and may be
-deleted by hand.
-
-Unknown keys stay ignored, as they always have, so a later version may add
-one without invalidating today's files.
+The parser skips any block with `kind=prepared` or a `splice=` line whole,
+as it skips a malformed one, and the records around it parse unchanged; the
+ISO such a block names boots as if it had no record. The next bless
+rewrites the file without it. Unknown keys are ignored.
 
 Loader behavior: a menu entry whose path matches a manifest record *and*
 whose current file size equals `size=` is labeled blessed and boots the
@@ -2808,117 +1956,101 @@ named UKI (served to LoadImage through the synthetic-filesystem machinery
 of Section 5.1, since exFAT has no firmware device path; shim verifies as
 always). A size mismatch means the ISO changed after blessing: the entry is
 labeled stale-blessed and boots as if unblessed. The `sha256=` field is
-authoritative for the *bless tool* (re-bless detection and appliance
-listing); the loader deliberately checks only the size, because hashing a
-multi-GB ISO at menu time is not a boot loader's job, and the security of
-the boot does not rest on the manifest at all: everything the manifest can
-influence is either signed (the UKI) or already-unverified data an attacker
-could edit directly (the manifest itself, the initrd). Corrupt or absent
-manifest degrades to "nothing is blessed," never to an error.
+for the *bless tool* (re-bless detection and appliance listing); the loader
+checks only the size, since hashing a multi-GB ISO at menu time is too slow
+and everything the manifest can influence is either signed (the UKI) or
+already-unverified data on p2 (the manifest itself, the initrd). Corrupt or
+absent manifest degrades to "nothing is blessed," never to an error.
 
-Shelling out to `cryptsetup`, `sbsign`, `mkfs.*`, `bsdtar`, `wimlib` and
-`7z` is the intended vendoring line: reimplementing argon2id, Authenticode PE
-signing, ext4 creation, WIM compression or a UDF reader in-repo would be
-madness for a config tool that runs on a full Linux box. The `sign` tool
-shells out to `sbsign`; it never reimplements signing, in either the host or
-appliance route.
+The host tools shell out to `cryptsetup`, `sbsign` and `mkfs.*`: they do
+not reimplement LUKS2 formatting, Authenticode PE signing or filesystem
+creation. The `sign` tool shells out to `sbsign` for signing in both the
+host and appliance routes.
 
-**`ukify` left that line (decision 2026-09-18).** The UKI wrap is built by the
-sign tool itself (`falcon-cli/src/sign/uki.c`). Two things moved it:
-
-- *The appliance is not a full Linux box.* ukify runs after p3 is unlocked,
-  inside the window the appliance exists to keep small, and it is a Python
-  program: it brought an interpreter and its standard library into that
-  window, about 33 MB of the 60 MB initramfs, for one job.
-- *The job is small.* Wrapping a kernel is appending sections to sd-stub and
-  updating a handful of header fields, a few hundred lines against the
-  `falcon-core/src/pe` reader the loader already uses. None of the items on
-  the line above are like that.
+The UKI wrap is built by the sign tool itself (`falcon-cli/src/sign/uki.c`),
+appending sections to sd-stub and updating header fields with the
+`falcon-core/src/pe` reader the loader uses. The appliance carries no
+Python runtime.
 
 The builder's contract is byte-identity with ukify 261 for the same inputs:
 the same section order and alignment, the same `.sbat` merge (stub, then
 kernel, then the `uki` generation line), the same NX_COMPAT rule and the same
 whitespace collapse of the cmdline. `falcon-cli/tools/cmp-ukify.sh` checks it
 over real kernels and is the check to repeat when systemd moves. One output
-difference is deliberate: a blessed wrap's `.osrel` is now a fixed "falcon-boot
+difference is deliberate: a blessed wrap's `.osrel` is a fixed "falcon-boot
 blessed media" rather than ukify's default of the building host's own
-os-release, so a wrap no longer depends on where it was blessed. `falcon-boot-sign
+os-release, so a wrap does not depend on where it was blessed. `falcon-boot-sign
 uki` offers the same builder for images the tool does not bless; the
 appliance's own UKI is built with it. Test fixtures under `falcon-efi/tools`
-still call ukify, which is a development dependency only.
+call ukify, which is a development dependency only, as is `wimlib`
+(`app-arch/wimlib`), which builds the WIM test fixture
+(`falcon-core/tools/mk-test-wim.sh`).
 
-Two of those are Windows-driven and differ in how hard a requirement they
-are (both measured 2026-09-13):
-
-- **`wimlib`** (`app-arch/wimlib`) was required to prepare Windows media:
-  it rewrote `boot.wim`. Preparation was removed on 2026-09-19 (Section
-  6.4), and wimlib now only builds the WIM test fixture.
-- **`7z`** is a **soft** dependency of the bless tool, and the reason is
-  worth stating because it is not obvious. `bsdtar` reads ISO 9660 and Rock
-  Ridge but not UDF, and Microsoft builds install media with `oscdimg -u1`,
-  whose ISO 9660 namespace is a stub `README.TXT` while every real file
-  lives only in UDF. `xorriso` was checked and is no better. So the tool
-  lists both namespaces and takes their union, tagging each entry with the
-  reader that produced it so Linux media keeps the exact bsdtar path it has
-  always used. Without `7z` the tool still blesses Linux media normally and
-  says plainly what it cannot see, rather than misreporting Windows media as
-  an unknown family.
-
+The sign tool reads an ISO in process, without mounting it, through
+falcon-core's filesystem registry and its ISO9660 and UDF drivers
+(`falcon-cli/src/sign/isoprobe.c`), the same code the loader reads it with
+at boot. The registry probes UDF before ISO9660: Microsoft builds install
+media with `oscdimg -u1`, whose ISO 9660 namespace is a stub `README.TXT`
+while every real file lives only in UDF.
 
 ## 9. EFI application internals
 
 - **Language/ABI:** freestanding C11, MS x64 ABI, built to PE32+ directly with
   `x86_64-w64-mingw32-gcc`. No gnu-efi, no EDK2. We carry our own minimal UEFI
   headers (the protocols and GUIDs we actually use) under
-  `falcon-efi/src/efi/`. This avoids gnu-efi's ELF-then-objcopy dance and its
-  `uefi_call_wrapper` cruft, which exist to solve problems mingw solved.
+  `falcon-efi/src/efi/`. mingw emits PE32+ and the MS ABI directly, so
+  gnu-efi's ELF-then-objcopy step and `uefi_call_wrapper` are not needed.
 - **Build:** Makefile-based. Full strict warning set per repo C standard, adapted
   for freestanding (`-ffreestanding -fno-stack-protector` where the environment
   forces it, `-mno-red-zone`, `-fshort-wchar`). Build variants under `build/`.
 - **SBAT:** shim refuses second-stage binaries without a valid `.sbat`
-  section (confirmed empirically on 16.1; the refusal is the same opaque
+  section (shim 16.1; the refusal is the same opaque
   `EFI_SECURITY_VIOLATION` a bad signature gives). Our loader carries one.
-  Build mechanics, measured: a `__attribute__((section(".sbat")))` const
+  Build mechanics: a `__attribute__((section(".sbat")))` const
   array in the mingw build works; `objcopy --add-section` post-link does
-  NOT produce a section shim accepts. Decide our SBAT component name and
-  generation policy once and record them here; bumping the generation is
-  the revocation lever. UKIs get `.sbat` from sd-stub for free (the wrap
-  merges it, Section 8.1);
+  NOT produce a section shim accepts. Each EFI app declares its own
+  component in `apps/<app>/efi_sbat.c`, after the mandatory `sbat,1` row:
+  the stick is `falcon-boot`, the UEFI station `falcon-boot-pos` (its own
+  name so a generation bump for a parser only the stick links does not
+  revoke the station, Section 12.1). Both are at generation 1, vendor
+  `falcon`, with the version field a literal tracking `release_version`.
+  The generation is the revocation lever, bumped only for a released
+  security defect, never for an ordinary release. UKIs get `.sbat` from
+  sd-stub for free (the wrap merges it, Section 8.1);
   images loaded through shim's hook (blessed kernels) are exempt from the
   requirement.
 - **Crypto in EFI:** LUKS2 unlock needs argon2id or pbkdf2 and AES-XTS-512
   sector decryption. AES-NI intrinsics for XTS, with a portable C fallback
-  selected by CPUID at runtime. Keep the primitives small and
-  self-contained; this is the one place in EFI-land where we write crypto,
-  and it is deliberately the minimum: SHA-256 and SHA-512, HMAC and PBKDF2
-  parameterized over both, BLAKE2b and Argon2id (the caller's memory, lanes
-  filled in turn), AES-XTS decrypt. SHA-512 earns its ~150 lines because a LUKS2 header names
-  its hash in four independent places and `cryptsetup --hash sha512` (which
-  the user's own p4 header used for its digest) switches all four; a loader
-  that cannot hash cannot unlock, and the parameterization costs less than
-  the support burden of a "sha256-only" constraint on mkstick.
+  selected by CPUID at runtime. The primitives (`CORE_CRYPTO`): SHA-1 (WIM
+  stream names), SHA-256 and SHA-512, HMAC and PBKDF2 parameterized over
+  them, BLAKE2b and Argon2id (the caller's memory, lanes filled in turn),
+  AES-XTS decrypt. SHA-512 (~150 lines) is there because a LUKS2 header
+  names its hash in four independent places and `cryptsetup --hash sha512`
+  (which the user's own p4 header used for its digest) switches all four.
+  The UEFI station alone also links `CORE_CRYPTO_TPM` for its TOTP check
+  (Section 12.15): AES-CFB, P-256 ECDH over `bn.c`, the TPM 2.0 KDFs,
+  RSAES-OAEP for the TPM 1.2 transport, and the RFC 6238 code (`otp.c`).
 - **Filesystem drivers in EFI:** read-only, always; the stick is configured
   from Linux userland, never written by the loader. Drivers sit behind a
-  common vtable (decision 2026-09-13): `fs_ops {name, probe, mount,
+  common vtable: `fs_ops {name, probe, mount,
   dir_open_root, dir_open, dir_next, file_open, file_read, extents}` over
   the shared byte-read callback, registered in a static table (one adapter
   file per driver, `fs_<driver>.c`, and a table a build picks:
-  `fs_reg_all.c`, or the station's ext4 and FAT, Section 13.1). `extents` is
+  `fs_reg_all.c` on the stick, `fs_reg_ext4.c` in the UEFI station,
+  `fs_reg_station.c` (ext4 and FAT) in the BIOS one, Section 12.1). `extents` is
   an **optional capability**: the injection framework needs file-to-LBA
   resolution on p2, and a driver that cannot provide it (btrfs CoW and
   compression can make "the file's raw LBAs" not exist) still serves the
-  menu and boot paths, with the degradation surfaced honestly rather than
-  failed weirdly. Consumers select a driver through the registry (role GUID
+  menu and boot paths and reports the missing capability. Consumers select a driver through the registry (role GUID
   hint first, probe order second), never by naming a driver directly, so a
   new filesystem is one driver plus one registry row.
-  **Sanctioned driver targets** (write on demand, not ahead of it): exFAT
-  and ext4 (implemented), FAT32, xfs, btrfs. Per-target caveats recorded
-  now: FAT32 on p2 cannot hold >4 GB ISOs; btrfs likely ships without
-  `extents`. A new driver's checklist: EFI-free over the byte-read
+  The drivers are exFAT, ext4 (with `jbd2.c`), FAT12/16/32, ISO9660 (Rock
+  Ridge, Joliet) and UDF; xfs and btrfs are not implemented. FAT32 on p2
+  cannot hold >4 GB ISOs. A new driver's checklist: EFI-free over the byte-read
   callback, host-testable, constrained feature set matched to what its
   mkfs actually emits (the ext4 driver's approach), cmocka suite with a
   fixture image, and zero warnings under the repo flag set.
-- **Device discovery (decision 2026-09-13):** ONE pass, one inventory,
+- **Device discovery:** ONE pass, one inventory,
   every consumer reads it. A `discover` module enumerates the Block I/O
   handles once at startup and classifies each: media present, LUKS2 magic,
   filesystem identification through the fs_ops registry, and the identity
@@ -2930,7 +2062,9 @@ are (both measured 2026-09-13):
   per-handle reads), mounting stays lazy per consumer. Re-scan is the
   same single entry point run again.
 - **Apps, components and modules.** The loaders are apps, one directory
-  each under `apps/`: `stick` (this loader) and `station` (Section 13). An
+  each under `apps/`: `stick` (this loader, UEFI and BIOS), `station`
+  (Section 12, UEFI and BIOS), `station-legacy` (Section 12.10, BIOS only)
+  and `jump` (Section 13, a BIOS boot floppy). An
   app is its entry points and an `app.mk` listing the modules it links; what
   it does not list, it cannot run. The modules live in components, each with
   its own `src/`: `falcon-core` (the EFI-free libraries every other component
@@ -2940,53 +2074,86 @@ are (both measured 2026-09-13):
   `falcon-winjump` and `falcon-vdisk` (Section 6.3). One non-recursive
   Makefile builds them all; CLAUDE.md has the directory-by-directory map. The loader's modules, named by directory, with
   the core modules they lean on:
-  - `console` - text menu over Simple Text Output/Input. Lists ISOs, the personal-OS
-    entry, and the signing-appliance entry (Section 7.5); shows per-entry
-    verification labels and the Secure Boot state banner.
-  - `fs` (core) - the driver registry above and its read-only drivers: `exfat.c`
-    (file read + directory enumeration + extent map) and `ext4.c` (p3 only;
-    constrained mkfs feature set at install), with `jbd2.c`, its journal
-    replayed in memory for a shelf an OS left mounted (Section 5.4).
+  - `console` - text menu over Simple Text Output/Input, drawn from core's
+    `tui`. Lists ISOs, the personal-OS entry, and the signing-appliance
+    entry (Section 7.5); shows per-entry verification labels and the Secure
+    Boot state banner. `prompt.c` is the masked passphrase prompt; `idle.c`
+    the idle power-off (Section 7.9).
+  - `task` - one coroutine on its own stack beside the main flow, which the
+    background probe runs on (Section 7.8). Stick only.
+  - `discover` - the single discovery pass above (`discover.c`) and the
+    device-path half (`partefi.c`); `disks.c`, the station only, names a
+    partition as STATION.INI names it (Section 12).
+  - `fs` (core) - the driver registry above and its read-only drivers:
+    `exfat.c` (file read + directory enumeration + extent map), `ext4.c`
+    (constrained mkfs feature set at install) with `jbd2.c`, its journal
+    replayed in memory for a shelf an OS left mounted (Section 5.4),
+    `fat.c` (FAT12/16/32), `iso9660.c` and `udf.c`; `crc32c.c` is shared.
+  - `mem` - `jnlmem.c`, the pages a shelf's journal table lives in (Section
+    5.4), shared by `pos` and `discover`.
   - `luks` (core) - LUKS2 header parse, argon2id and pbkdf2 keyslots (the
-    caller supplies argon2id's memory), AES-XTS decrypt. Unlocks p3 only; the
-    module reads the UKI bytes off p3 and never exposes the p3 private key (that
-    file is read by the signing appliance in userland, not by the loader).
+    caller supplies argon2id's memory), AES-XTS decrypt. Unlocks p3 only and
+    reads the UKI bytes off it; the MOK private key on p3 is read by the
+    signing appliance in userland, not by the loader (Section 7.5).
   - `iso` - virtual BlockIO/DiskIO over an exFAT-backed image file; family
     detect; injection framework; and the override/append layer of Section 6.3.
     That layer is one interposition in `iso_read_blocks()` (falcon-efi/src/iso/iso.c),
     which is the only place the whole read path touches the backing file: an
-    ordered list of (offset, length, sidecar source) substitutions, plus an
-    append region of virtual sectors past the end of the file. Pure data, and
-    deliberately so - no format knowledge, no WIM or UDF parsing, no Windows
-    knowledge in EFI-land. The byte map is computed by the bless tool on
-    Linux and read from a sidecar on p2.
+    ordered list of (offset, length, source) substitutions, plus an
+    append region of virtual sectors past the end of the file. A source is
+    another p2 file or memory the loader holds (`iso/overlay.h`, header-only
+    and EFI-free). The layer itself is pure data with no format knowledge;
+    the byte maps laid over it come from `win` and `bsd`.
+  - `direct` - direct kernel boot of an ISO (Section 6.4): kernel and initrds
+    read with core's ISO drivers, falcon-hook appended, the extent map set,
+    the initrd served over LoadFile2, the kernel loaded through `loader`.
+  - `win` - Windows install media patched at boot (Section 6.4):
+    `winpatch.c` reads boot.wim from the ISO's UDF tree, patches it with
+    core's `wim` (falcon-winjump in place of winpeshl.exe) and serves the
+    result through the override layer from memory.
+  - `bsd` - BSD media served as its own memory disk (Section 6.4): core's
+    `media/bsdmd.c` edits laid over the virtual CD.
+  - `pos` - the personal-OS path (Section 5), the only module that holds the
+    passphrase.
+  - `bless` - blessed media (Section 8.1); `blesscore.c` is its EFI-free,
+    host-tested half.
   - `secboot` - `sb.c` reads `SecureBoot` / `SetupMode` / `MokSBState` for UX
-    only (per-entry verification labels, refusal messages, state banner). No
-    enforcement logic and no signing; enforcement is shim's, signing is
-    userland's (Section 7). `trustefi.c` reads the five variables the boot
+    only (per-entry verification labels, refusal messages, state banner;
+    Section 7). `trustefi.c` reads the five variables the boot
     predictions (Section 7.8) judge against, once at startup.
   - `trust` (core) - the boot predictions themselves, EFI-free: the PE
     certificate table walk, the DER/PKCS#7 reader, `EFI_SIGNATURE_LIST` and
     `SbatLevelRT` parsing, and the pure verdict function over them. Their
     output is read by the menu's label builder and the refusal screen and by
     nothing else.
-  - `loader` - shim-verified load glue (Section 7.6; never relaxes
-    verification and never signs, see Section 7), cmdline construction, and
-    the virtual credential-filesystem handoff (Section 5.1). It also owns the
-    whole lifecycle of the `FalconNextBoot` variable (Section 6.3.1): the only
-    place in the loader that writes an EFI variable, and the only one that
-    deletes it.
+  - `loader` - shim-verified load glue (Section 7.6), cmdline construction, and
+    the virtual credential-filesystem handoff (Section 5.1). It is the only
+    module that writes or deletes an EFI variable: the whole lifecycle of
+    `FalconNextBoot` (Section 6.3.1), the extent map variable falcon-hook
+    can read from efivarfs (Section 6.4), and `FalconEvLog`, the event log the UEFI station
+    saves for enrollment (Section 12.15).
+  - `nxt` - the station's route to the firmware's other boot entries
+    (BootOrder, Boot####, BootNext and a reset); `nxtcore.c` is the
+    host-tested parse. Station only.
+  - `esp` - the station's files on a firmware-mounted volume
+    (`bootmgfw.efi`, `memtest.efi`) loaded by device path through `loader`,
+    and its STATION.INI read. Station only.
+  - `tcg`, `totp` - the UEFI station's TOTP check (Section 12.15): `tcg.c`
+    is core's `tpm` transport through `EFI_TCG2_PROTOCOL` or
+    `EFI_TCG_PROTOCOL` and its randomness; `totp.c` reads the sealed seed
+    once before anything is loaded and composes the code line. Station
+    only.
 
 
 ## 10. Test rig
 
 - QEMU + OVMF. Both plain (`/usr/share/edk2/OvmfX64/OVMF_CODE.fd`) and Secure
-  Boot (`OVMF_CODE.secboot.fd`) builds are present on this machine. The
+  Boot (`OVMF_CODE.secboot.fd`) builds are used. The
   shipped `OVMF_VARS.secboot.fd` is already fully enrolled (MS 2011+2023
   db/KEK, Red Hat PK, populated dbx), so the SB rig needs no key setup
   beyond MOK; `virt-fw-vars` can inject `MokList` into a varstore copy to
-  test MOK verification without the interactive MokManager UI (procedure in
-  `docs/notes/shim-spike.md`). Both OVMF builds are release builds: the
+  test MOK verification without the interactive MokManager UI
+  (`falcon-efi/tools/mk-test-mok.sh`). Both OVMF builds are release builds: the
   `-debugcon` log stays empty, do not chase that.
 - Buildable disk image with the four-partition layout, populated by the host
   tool, booted under QEMU with a writable copy of OVMF_VARS for MOK enrollment
@@ -2997,249 +2164,26 @@ are (both measured 2026-09-13):
   4Kn stick on NVMe under both firmwares; the station disk under both. Each
   case is judged from serial, through the personal OS to the fixture UKI's
   report of both credentials.
-- Real hardware last, for the shim/MokManager enrollment flow, which is the
+- Real hardware for the shim/MokManager enrollment flow, which is the
   least QEMU-friendly step.
 
 
-## 11. MVP build order
+## 11. Boot flows
 
-MEASURED ON REAL HARDWARE (2026-09-20), UEFI, each with Secure Boot on and
-off: the personal OS end to end (p3 unlock, the UKI launched, p4 unlocked
-from the credential with no second prompt), a blessed Linux ISO, and a stock
-Windows ISO through the boot.wim patch. The bless flow ran from the menu
-unattended (`b`/`a`, the appliance signs, `BootNext` returns to the stick,
-the ISO boots; Section 6.3.1). On a second machine whose db trusts
-Microsoft, with Secure Boot on and the ISOs unblessed: D3a booted Fedora
-Workstation 44, and D3b booted Kubuntu 26.04 (its kernel carries no `.sbat`).
+Every route both loaders take, the stationary build's (11.5) and falcon
+jump's (11.6) included, from power-on to the point where the booted system
+stands on its own: Linux has found its medium and mounted root, Windows
+Setup has found its install source, FreeBSD has mounted root from its memory
+disk. Where a route never gets there through us, the diagram says where it
+stops.
 
-MEASURED ON REAL HARDWARE (2026-09-23), BIOS through CSM: falcon-bios stages
-1 to 3 reached the menu on an ASUS VivoBook 14 (8th-gen Intel), booting a
-protective MBR with no active flag (`docs/notes/bios-route.md` Section 6f).
-The same day, on an ASUS TP410UAR through CSM, the personal OS booted end to
-end over BIOS: p3 unlocked, the UKI unwrapped, p4 unlocked from the
-credential with no second prompt. The other four BIOS routes (a direct
-Linux ISO, an ISO's own loader through the virtual CD, BSD, Windows) were
-measured on 2026-09-30, below.
-
-MEASURED ON REAL HARDWARE (2026-09-29), UEFI with Secure Boot on: the
-ThinkPad T430 (coreboot and MrChromebox edk2, TPM 1.2 behind
-EFI_TCG_PROTOCOL, the machine's own key as PK, KEK and db, no shim) boots
-the UEFI station straight from its firmware entry (`station install
---no-shim`, 13.2), and the station shows the TOTP code of 13.15: enrolled
-from coreboot's log and the edk2 log the station saved, sealed to PCRs 2,
-4, 5 and 7, read after the station sends `TPM_ContinueSelfTest`.
-
-MEASURED ON REAL HARDWARE (2026-09-30): the T430's shelf, left mounted by a
-hibernated OS, read through its journal (5.4) and the OS resumed. `mkstick
-update` (13.14) brought the main stick to master 9dbb4d1, both halves
-(stages 2 and 3 and the loader read back as the build, signed from p3's
-MOK), and the T430's own station likewise, signed from its shelf's MOK and
-its TOTP seed resealed on the TPM 1.2 in the same run (13.15): the code
-matched after the reboot. The library's background probe kept the menu's
-keys live over a USB 1.1 stick on BIOS (7.8). The A21m took station-legacy
-at 411611c from a station bundle, and its jump floppy shows stage 2's
-loading line and spinner (14.3); the idle power-off turned it off through
-APM (7.9). The stick's four remaining BIOS routes booted on a BIOS machine:
-a Linux ISO direct, an ISO's own loader through the virtual CD, Windows
-install media, and BSD.
-
-I686 IN THE RIG (2026-09-24): falcon-bios is i686 in 32-bit protected mode
-and promotes at run time (docs/notes/bios-route.md Section 6h). On SeaBIOS
-with a Pentium III (the harness's `bios32` column) Alpine x86 and Arch Linux
-32 boot direct with the i686 falcon-hook; on the host CPU Arch x86_64,
-Windows 11 and the personal OS still pass. The 32-bit stick (retired
-2026-09-26, Section 1), booted read-only on the same Pentium III: its Arch
-Linux 32 personal OS end to end with the credential handoff, and its ISOs.
-On hardware (2026-09-24), a Windows 7 era machine in BIOS mode booted the
-32-bit stick to its personal OS. Unmeasured on hardware: a processor
-without a 64-bit mode, and the 32-bit stick's ISOs.
-
-A BLESSED ISO BOOTS ON REAL HARDWARE (2026-09-13): on that same laptop, the
-on-stick appliance blessed the Arch ISO and it booted all the way into the
-live environment under Secure Boot, on a machine that trusts nothing from
-Microsoft. That is the bless pipeline end to end outside the rig - appliance
-survey, MOK signing of the UKI wrap, shim verifying it against the enrolled
-MOK, and the iso-scan cmdline finding the medium after ExitBootServices.
-Windows preparation also completed on the same run. The appliance needed
-three hardware fixes to get there, all of them things the rig cannot test:
-USB storage modules, a console it can actually read, and a wait for the bus
-to enumerate.
-
-Step 10 (real hardware) is PARTLY DONE, measured 2026-09-13 on the user's
-laptop, whose db carries only their own certificate and no Microsoft CA:
-firmware verified the shim (dual-signed with that db key, see Section 4),
-shim launched MokManager unprompted, enrolling `falcon-boot.cer` from the ESP
-worked, the loader ran MOK-verified, the menu drew, and **p3 unlocked** - our
-own LUKS2 header parse, PBKDF2-HMAC-SHA256 and AES-XTS decrypt running on
-real firmware rather than OVMF. No ISO booted, which is correct and is the
-db-has-no-Microsoft-CA case now recorded in Section 7.2. Still unmeasured on
-hardware: a blessed wrap booting, the personal OS end to end (p4 was an empty
-container at the time), and the Windows path.
-
-Status (2026-09-13): steps 1-6 are DONE and proven in the QEMU rig, including
-the Secure Boot ON halves (shim plumbing spike results in Section 7.6 and
-docs/notes/shim-spike.md; personal-OS unlock, shim-verified UKI launch, and
-the sd-stub credential handoff in Sections 5/5.1). Partition identification
-per Section 3 is implemented (falcon GPT type GUIDs, probe-everything
-fallback for unstamped rigs). Step 4's injectors are the framework plus
-native-cmdline descriptors, per the plan; nothing consumes the cmdline
-templates until the bless path lands. Steps 7 and 8 are also
-done: the falcon-boot-mkstick and falcon-boot-sign host tools exist (a
-mkstick-created stick boots Secure Boot ON end to end with its own generated
-MOK), the loader-side blessed-boot path consumes the Section 8.1 manifest
-(fresh boots the signed wrap, stale degrades to the ordinary path, labels in
-the menu), .img files boot as the second virtual-media flavor (real memtest86
-verified under SB ON), and the on-stick signing appliance blesses ISOs in
-QEMU end to end (unlock p3 read-only, per-ISO confirm, sign, manifest,
-reboot, idempotent second run). Step 9 (permissive-mode
-UX) is done: the MokSBState opt-in is proven in the rig (unsigned media
-boots with SB nominally on, banner and notice unmissable, refusals carry
-both doors consistently). Remaining: step 10 (real hardware / UAT), step 11
-(Windows install media, new 2026-09-13, Section 6.3; its premise check is
-done - a stock Win11 ISO reaches the Setup GUI on our existing virtual CD -
-and the rest of the step is open), Manual.md, and the
-falcon-boot rename during polish. The earlier "Windows injectors" entry here
-was struck: Windows needs no injector, for the reason in Section 6.1.
-
-1. OVMF hello-world: mingw PE loader that prints and reads a key. Proves
-   toolchain + test rig. Then the **shim plumbing spike**, which gates several
-   designs (Sections 5.1, 7.6, 8, 9):
-   - classify the shim binary we intend to ship: version, Security2 hook
-     present, image-loader protocol present (GUID/strings inspection first,
-     it is cheap and static);
-   - under OVMF secboot, attempt to load a throwaway MOK-signed binary and
-     pick the Section 7.6 branch;
-   - check whether the chosen path enforces SBAT on a raw signed bzImage
-     (decides the bless tool's output format, Section 8);
-   - verify sd-stub `.cred` pickup rules and that pickup works from a
-     synthetic filesystem (Section 5.1);
-   - confirm for the record that volatile EFI variables are read-only after
-     `ExitBootServices` (Section 5.1's rejection rationale).
-2. Text menu + read-only exFAT: enumerate `*.iso` on p2 and list them.
-3. ISO boot: virtual BlockIO + ConnectController + verifying `LoadImage` of the
-   embedded bootloader (never relaxes verification). Prove one family end to end
-   first with Secure Boot OFF (Arch is a good first target: archiso finds its
-   media natively). Then prove the Secure Boot ON case boots a shim-carrying
-   distro ISO (e.g. Fedora) and refuses an unsigned one with a clear message.
-4. SB-state UX (`sb` module) + injection framework: family detection, descriptor
-   registry, extent map, cpio-append. Native-cmdline injectors for the tested
-   families; per-entry verification labels; Secure Boot state banner.
-5. UKI path: read-only ext4 + LUKS2/pbkdf2/AES-XTS unlock of p3 (argon2id since
-   2026-09-28) + LoadImage the
-   personal-OS UKI.
-6. Passphrase handoff: virtual credential filesystem synthesized by the
-   loader, sd-stub `.cred` pickup, `systemd-cryptsetup` consumes the credential
-   via the `falcon-credential` drop-in, p4 unlock (Section 5.1).
-7. Host tooling: `mkstick`, MOK keygen (private key onto p3, cert onto p1), shim
-   install with correct next-stage naming, signing our loader/UKIs, and the
-   portable `falcon-boot sign` tool for blessing media.
-8. Signing appliance: minimal signing-appliance UKI (our static PID 1, sbsign
-   and the portable `sign` tool), as a loader menu entry; unlock p3, per-ISO
-   confirm, sign, stage manifest, reboot (Section 7.5).
-9. Permissive-mode UX: detect `MokSBState`, banner, and guidance to the platform
-   opt-out (Section 7.4).
-10. Real-hardware shim/MOK enrollment.
-11. Windows install media (Section 6.3; scope decision 2026-09-13, research
-    record in `docs/notes/windows-route.md`). It is last in the list but it
-    does not depend on step 10 and can run in parallel with it. The internal
-    order is chosen so that any failure is attributable to one change:
-    - **DONE (2026-09-13).** Boot a stock, **unmodified** Windows ISO on the
-      virtual CD we already have and confirm it reaches WinPE and only then
-      fails looking for `install.wim`. It does: a Win11 25H2 ISO reaches the
-      Setup GUI with no loader changes, and the failure that follows is
-      exactly `install.wim` going missing with the virtual CD. Measured detail,
-      including the `cdboot.efi` press-any-key trap that makes a headless run
-      look like a silent failure, is in Section 6.3;
-    - write the mingw jump binary and run it **by hand** from the WinPE
-      command prompt (Shift+F10) against the ISO on p2, before touching a
-      single WIM byte. This de-risks the entire route for an afternoon's work.
-      The failure to watch for is `OpenVirtualDisk` returning
-      `ERROR_VIRTDISK_PROVIDER_NOT_FOUND`, which is the code Ventoy itself
-      treats as "not supported";
-    - the wimlib patch plus zero-pad of `boot.wim`, tested first by rebuilding
-      an ISO around the patched file, and only then through the override
-      layer;
-    - the loader's override/append layer (Section 9) and its sidecar format;
-    - the bless tool's Windows path: family detection, the patch, the sidecar
-      folder named by the ISO checksum (Section 6.3.1), the manifest record
-      decision (Section 8.1), and the guard that refuses an over-length
-      patched WIM;
-    - the automatic preparation flow of Section 6.3.1: wimlib in the appliance
-      initramfs, batching of several unprepared ISOs in one run, and the
-      `FalconNextBoot` variable the loader sets, then reads, deletes and
-      validates against the manifest before booting an entry menu-less.
-
-    Proven so far: the premise (first bullet), and with it that our virtual
-    CD's handle tree is structurally what firmware expects of a real CD-ROM,
-    UDF volume included (Section 6.3).
-
-    Open items carried into this step, none of them yet proven: whether a real
-    `bootmgr`/`winload` boots the patched, padded and overlaid `boot.wim`;
-    whether `AttachVirtualDisk` works from WinPE against a file on our exFAT
-    p2; which WIM image index to patch (1, 2, or both; the boot image is
-    index 2); whether Win11 Setup needs the WinPE-WMI and WinPE-SecureStartup
-    optional components present to stop falsely reporting a hardware-
-    requirements failure; whether a Windows ISO behaves the same under Secure
-    Boot ON as the chain in Section 7.2 says it must; and Windows Setup
-    reaching the install screen end to end.
-12. Boot predictions (Section 7.8, decided 2026-09-17). IMPLEMENTED
-    2026-09-17, everything below the last bullet: falcon-core/src/trust
-    (der, x509, authenticode, siglist, trust, probe) and the variable reads in
-    falcon-efi/src/secboot/trustefi.c, over a new falcon-core/src/pe that
-    osrel and the ISO survey now share. 28 new tests including a byte-flip
-    sweep under ASan, the Authenticode hash checked against sbsign's digest
-    for every fixture, and a real Fedora shim against the real Microsoft
-    certificates. In the rig, every tag was confirmed against what shim then
-    did, under both a Microsoft db and a db holding one sbctl-shaped key. The
-    same code, run on the host against the Dell's own variables and every
-    boot file on the stick, gives exactly the manual analysis that prompted
-    the section. Internal order, each piece testable before the next exists:
-    - `EFI_SIGNATURE_LIST` and `SbatLevelRT` parsers, tested against the
-      secboot OVMF varstore and the variables dumped from real machines;
-    - the DER/PKCS#7 reader and PE certificate-table walk, tested against the
-      fixture binaries named in 7.8, then the corruption sweep;
-    - the pure verdict function, table-tested over (image, stores) pairs that
-      reproduce the Dell's db: the stick's shim trusted, kubuntu and Windows
-      untrusted, `Shell.efi` not blessed, the blessed Arch wrap trusted;
-    - the firmware half: read the five variables once, next to `sb_state_read`;
-    - the banner trust list, then the row tags, colours and details screen;
-    - real hardware: the Dell (no Microsoft CA) and the Lenovo must each show
-      the prediction that matches what actually boots.
-13. Coverage (Section 6.4, decided 2026-09-18). Milestones, their exit
-    criteria and the alternatives if a path does not scale are in
-    `docs/notes/coverage-roadmap.md`; in order:
-    - M0: the ISO corpus, the QEMU harness and the generated scorecard;
-    - the ISO9660/UDF reader in `falcon-core`, used first by the sign tool;
-    - M1: falcon-hook and the extent variable;
-    - M2: direct kernel boot and boot-config parsing (SB off drag-and-drop);
-    - M3: bless from the menu, the slimmed appliance, wraps carrying
-      falcon-hook (SB on drag-drop-bless-boot);
-    - M4: family breadth, driven by the scorecard;
-    - Windows WIM surgery in the loader, and winjump parity (Win11 bypass,
-      unattend, WinPE shells);
-    - M5: spikes for key-less Secure Boot on MS-signed distros.
-
-
-## 12. Boot flows
-
-Every route both loaders take, the stationary build's (12.5) and falcon
-jump's (12.6) included,
-from power-on to the point where the booted
-system stands on its own: Linux has found its medium and mounted root,
-Windows Setup has found its install source, FreeBSD has mounted root from
-its memory disk. Where a route never gets there through us, the diagram says
-where it stops and why.
-
-Traced from the code (2026-09-21, at `0c00a62`), not from the notes. The
-notes in `docs/notes/` record how each route was reached and stay the
-history; where they and this section disagree, this section is the design.
-A change to a route changes its diagram in the same commit.
+Traced from the code. A change to a route changes its diagram in the same
+commit.
 
 The three-letter names are the route codes the loaders draw on screen
-(Manual Section 1). Diagrams name functions so a reader can land in the code;
-line numbers are left out because they would be stale within a week.
+(Manual Section 1). Diagrams name functions, not line numbers.
 
-### 12.1 The stick, as the loaders see it
+### 11.1 The stick, as the loaders see it
 
 | region | holds | read by |
 |---|---|---|
@@ -3253,7 +2197,7 @@ line numbers are left out because they would be stale within a week.
 | p4 | LUKS2: the personal OS's LVM (root, home) | the personal OS's initramfs |
 
 Stages 1 and 2 live in front of p1 and stage 3 inside it, so installing
-them changes no partition (Section 12.3.1). Every reader identifies p2 and
+them changes no partition (Section 11.3.1). Every reader identifies p2 and
 p3 by their records (Section 3.1): p1's `boot` record names the install,
 and p2's `/.falcon` and p3's LUKS2 token must carry its ID. The UEFI loader,
 falcon-hook, winjump, falcon-vdisk and the appliance do; so does
@@ -3261,9 +2205,9 @@ falcon-bios, which finds p1 by its record (`falcon-bios/src/disk/bootpart.c`,
 in stage 2) and p2 and p3 on any BIOS disk (`disk/install.c`). p4 has no
 role any loader needs.
 
-### 12.2 UEFI
+### 11.2 UEFI
 
-#### 12.2.1 Power-on to the menu
+#### 11.2.1 Power-on to the menu
 
 ```mermaid
 flowchart TD
@@ -3303,7 +2247,7 @@ a menu with no library and no shelf: nothing on any disk is taken without
 the install ID (Section 3.1). MBR partitions are rows like GPT ones; the
 table's kind is never consulted.
 
-#### 12.2.2 The menu and route selection
+#### 11.2.2 The menu and route selection
 
 Rows are the Personal OS (first, when p3 qualifies), the survey's folders and
 images, and Firmware Setup (last, when the firmware supports booting to its
@@ -3363,12 +2307,12 @@ flag, set at the start and cleared once it has decided the medium is its own:
 A failure after the flag is cleared is reported and returns to the menu; it
 does not fall through. `BLS` and `BLB` never fall through at all.
 
-#### 12.2.3 Shared machinery
+#### 11.2.3 Shared machinery
 
 | piece | where | what it is |
 |---|---|---|
 | load ops | `loader/loadops.c`, `resolve_load_ops` | shim's `SHIM_IMAGE_LOADER` LoadImage/StartImage when shim is present, the firmware's otherwise. `table_unhooked` means shim is present but not enforcing; the chainload and `launch_image` then try the firmware's LoadImage first, since shim's own loader refuses some images the firmware accepts (pfSense's loader). `direct_boot` always uses shim's. |
-| credfs | `loader/credfs.c` | a read-only Simple File System on a vendor-media device path, served from the loader's buffers. Lets an image be loaded by device path (so it has a DeviceHandle to read siblings from) without a real volume. |
+| credfs | `loader/credfs.c` | a read-only Simple File System on a vendor-media device path, served from the loader's buffers. An image loaded from it by device path has a DeviceHandle to read siblings from. |
 | LoadFile2 initrd | `direct/direct.c`, `initrd_publish` | the Linux initrd media GUID handle the kernel's EFI stub pulls its initrd from. |
 | virtual CD | `iso/iso.c`, `iso_open` | Block I/O over the p2 file: 2048-byte blocks for an ISO, 512 for an `.img`, read-only, `VenHw` device path. `ConnectController` lets the firmware's El Torito and FAT drivers mount the boot image. |
 | overlay | `iso/overlay.h`, `iso_read_blocks` | memory ranges laid over the virtual CD's reads, and an append region past the ISO's end. Each read is split at overlay boundaries. |
@@ -3379,7 +2323,7 @@ does not fall through. `BLS` and `BLB` never fall through at all.
 Everything above is a boot-services object and is gone at
 ExitBootServices, except `FalconIsoMap`.
 
-#### 12.2.4 POS: the personal OS
+#### 11.2.4 POS: the personal OS
 
 ```mermaid
 sequenceDiagram
@@ -3416,7 +2360,7 @@ failure: a wrong passphrase retries after a wait, five a boot and then
 power off (5.2), any other unlock error stops; a refused
 UKI tears down credfs, wipes the credential and prints the refusal evidence.
 
-#### 12.2.5 APP: the signing appliance
+#### 11.2.5 APP: the signing appliance
 
 ```mermaid
 sequenceDiagram
@@ -3448,7 +2392,7 @@ it just made possible. Picked from the Personal OS chooser instead, it runs
 with no list and asks. If it returns without rebooting, the loader clears the
 marker and `BootNext`.
 
-#### 12.2.6 BLS: a blessed wrap
+#### 11.2.6 BLS: a blessed wrap
 
 The wrap is built by `falcon-boot-sign` (`falcon-cli/src/sign`): sd-stub, the
 ISO's kernel, a `.initrd` of the ISO's initrds with the falcon-hook cpio
@@ -3471,7 +2415,7 @@ sequenceDiagram
     K->>K: falcon-map.cred packed, .initrd served over LoadFile2, ExitBootServices
     K->>H: rdinit=/falcon/hook
     H->>H: map from /.extra/credentials/falcon-map.cred
-    H->>D: /dev/mapper/falcon-iso under the ISO's label (12.4)
+    H->>D: /dev/mapper/falcon-iso under the ISO's label (11.4)
     Note over D: the distro finds its medium, mounts root
 ```
 
@@ -3480,9 +2424,9 @@ back to `FalconIsoMap` or hands over unchanged. Under validation disabled
 with Secure Boot on, the firmware refuses sd-stub's inner kernel load; the
 loader predicts that and warns before starting.
 
-#### 12.2.7 BLB: a blessed BSD medium
+#### 11.2.7 BLB: a blessed BSD medium
 
-The same edits and virtual CD as BSD (12.2.12), but the loader started is the
+The same edits and virtual CD as BSD (11.2.12), but the loader started is the
 MOK-signed copy of the medium's loader from `/falcon/blessed/`.
 
 ```mermaid
@@ -3503,18 +2447,18 @@ sequenceDiagram
     Note over K: root cd9660 from /dev/md0
 ```
 
-Passing both FilePath and SourceBuffer is what makes the signed copy start
-with the medium as its device. No other route does it. The kernel and
-modules are FreeBSD's loader's to verify, and it does not.
+Passing both FilePath and SourceBuffer starts the signed copy with the
+medium as its device; no other route does it. FreeBSD's loader does not
+verify the kernel or modules.
 
-#### 12.2.8 EFI: a bare `.efi` on p2
+#### 11.2.8 EFI: a bare `.efi` on p2
 
 `boot_payload` reads the file, publishes it alone on credfs, and loads it by
 path (firmware first when shim is not enforcing, else shim), then starts it.
 The payload is the target; nothing follows. No extent map, no initrd, no
 fallback.
 
-#### 12.2.9 DIR: direct kernel boot
+#### 11.2.9 DIR: direct kernel boot
 
 Taken when `g_mode` is not `ON`: Secure Boot off, validation disabled, setup
 mode or unknown.
@@ -3540,7 +2484,7 @@ sequenceDiagram
     K->>K: ExitBootServices
     K->>H: rdinit=/falcon/hook
     H->>H: map from /falcon/map
-    H->>D: /dev/mapper/falcon-iso (12.4)
+    H->>D: /dev/mapper/falcon-iso (11.4)
     Note over D: the distro finds its medium, mounts root
 ```
 
@@ -3548,7 +2492,7 @@ On failure after the entry is chosen (too many fragments, LoadImage refused,
 out of memory): an error screen with "press c", and no automatic fallback.
 If the kernel returns, the initrd is withdrawn and `FalconIsoMap` cleared.
 
-#### 12.2.10 D3A: the ISO's own shim, then its kernel
+#### 11.2.10 D3A: the ISO's own shim, then its kernel
 
 Taken when `g_mode` is `ON` and the kernel carries `.sbat`.
 
@@ -3572,16 +2516,14 @@ sequenceDiagram
     K->>L: initrd over LoadFile2
     K->>K: ExitBootServices
     K->>H: rdinit=/falcon/hook, map from /falcon/map
-    H->>D: /dev/mapper/falcon-iso (12.4)
+    H->>D: /dev/mapper/falcon-iso (11.4)
     Note over D: the distro finds its medium, mounts root
 ```
 
 The ISO's shim comes from the ISO9660/UDF tree, not from the El Torito
-image; they are normally the same file. Whether shim strips the leading
-`vmlinuz` before the kernel sees the options is unmeasured
-(`docs/notes/d3-spike.md`).
+image; they are normally the same file.
 
-#### 12.2.11 D3B: the ISO's own GRUB, with our grub.cfg
+#### 11.2.11 D3B: the ISO's own GRUB, with our grub.cfg
 
 Taken when `g_mode` is `ON` and D3A said `no_entry`.
 
@@ -3610,7 +2552,7 @@ sequenceDiagram
     G->>K: kernel verified through the ISO shim's SHIM_LOCK
     K->>K: ExitBootServices, the virtual CD is gone
     K->>H: rdinit=/falcon/hook, map from /falcon/map
-    Note over H: 12.4 onward, as DIR
+    Note over H: 11.4 onward, as DIR
 ```
 
 Our cfg is:
@@ -3624,11 +2566,11 @@ menuentry 'falcon-boot' {
 }
 ```
 
-Best-effort by design (Section 7.2): a GRUB whose embedded prefix reads a
-different configuration first, or sets `$root` to a partition rather than
-the CD, never sees ours.
+Best-effort (Section 7.2): a GRUB whose embedded prefix reads a different
+configuration first, or sets `$root` to a partition rather than the CD,
+never sees ours.
 
-#### 12.2.12 BSD: a BSD medium as its own memory disk
+#### 11.2.12 BSD: a BSD medium as its own memory disk
 
 ```mermaid
 sequenceDiagram
@@ -3651,11 +2593,11 @@ sequenceDiagram
     Note over K: root cd9660 from /dev/md0
 ```
 
-`loader.efi` is unsigned, so this route is refused under Secure Boot; BLB is
-the Secure Boot route. The file edited is `/boot/defaults/loader.conf`, not
-`/boot/loader.conf`, which a medium may not have.
+`loader.efi` is unsigned, so Secure Boot refuses this route; BLB is the
+Secure Boot route. The file edited is `/boot/defaults/loader.conf`; a medium
+may have no `/boot/loader.conf`.
 
-#### 12.2.13 WIN: Windows install media
+#### 11.2.13 WIN: Windows install media
 
 ```mermaid
 sequenceDiagram
@@ -3683,13 +2625,12 @@ sequenceDiagram
     Note over ST: install.wim found on the attached CD
 ```
 
-Microsoft's binaries are served byte for byte and verified by the platform;
-the patched WIM is not something Secure Boot verifies (Section 7.7). WinPE
-sees p2 through its own `exfat.sys`, which is how winjump finds the file.
-Every winjump failure still starts the original shell, logged to
-`X:\falcon-winjump.log`.
+Microsoft's binaries are served byte for byte; the patched WIM is not
+verified (Section 7.7). WinPE sees p2 through its own `exfat.sys`, which is
+how winjump finds the file. Every winjump failure still starts the original
+shell, logged to `X:\falcon-winjump.log`.
 
-#### 12.2.14 CHN and IMG: the medium's own loader
+#### 11.2.14 CHN and IMG: the medium's own loader
 
 ```mermaid
 sequenceDiagram
@@ -3707,13 +2648,13 @@ sequenceDiagram
     P->>P: ExitBootServices: the virtual device is gone
 ```
 
-This route never makes a Linux live medium stand on its own: nothing is
-appended and nothing carries a map, so an initramfs looking for its CD after
-ExitBootServices finds nothing (Section 6.1). It exists for media that need
-nothing after load (memtest-class images, WinPE in its RAM disk) and as the
-fallback when the routes above cannot read the medium.
+Nothing is appended and no map is set, so a Linux live initramfs looking
+for its CD after ExitBootServices finds nothing (Section 6.1). The route
+serves media that need nothing after load (memtest-class images, WinPE in
+its RAM disk), and is the fallback when the routes above cannot read the
+medium.
 
-#### 12.2.15 Failure paths
+#### 11.2.15 Failure paths
 
 Every route returns to the dispatcher on failure. The screen says what
 failed and at which step, the advice, and on a Secure Boot refusal the
@@ -3726,32 +2667,31 @@ option), and the confirmed Firmware Setup reset. A console that stops
 answering `WaitForEvent` is treated as Escape, so the menu unwinds to the
 firmware rather than spinning.
 
-### 12.3 BIOS
+### 11.3 BIOS
 
-#### 12.3.1 The boot area
+#### 11.3.1 The boot area
 
 Section 3.3's layout. Stage 1 goes in the 440 bytes of boot code in LBA 0,
 with stage 2's first LBA (LE32 at 0x1B2) and its length in sectors (LE16 at
 0x1B6) written into its last six by the installer; the table behind is
 kept. Stage 2 goes in front of the first partition: LBA 34 on a GPT disk,
-LBA 1 on an MBR disk, and it is at most 62 sectors (the build checks), which
-is what an old MBR disk with its first partition at 63 leaves it. Stage 3
+LBA 1 on an MBR disk, at most 62 sectors (the build checks; an old MBR
+disk's first partition at 63 leaves no more). Stage 3
 goes in the `boot` partition's reserved sectors, from the sector its record
 names (32 as the installers write it) to no further than the reserved count
 in the FAT BPB, and the next-boot marker is the sector the record names (8).
 jump's floppy keeps its own layout: stage 2 at LBA 34 and stage 3 at 98 of
-the FAT12 volume, which is the `boot` volume itself (12.6).
+the FAT12 volume, which is the `boot` volume itself (11.6).
 
-A stage 1 whose fields are zero says `no stage 2` rather than reading
-anything, and a falcon stage 1 in front of a half-written stage 2 fails its
-`BOS2` check and says so rather than running it. The rig disks are made by
+A stage 1 whose fields are zero says `no stage 2` and reads nothing; a
+half-written stage 2 fails stage 1's `BOS2` check, which says so. The rig disks are made by
 `falcon-bios/tools/mk-rig-disk.sh` from files alone (`sfdisk`, `sgdisk`,
 `mkfs.fat --offset`, `mkfs.exfat` on a file, and `mkstick ident` for the
 reserved count and the boot record); jump's floppy, which has no table,
 gets its record from `mkstick ident --write-boot-at`, which writes one at a
 byte offset with the sectors given.
 
-#### 12.3.2 Power-on to the menu
+#### 11.3.2 Power-on to the menu
 
 ```mermaid
 flowchart TD
@@ -3811,18 +2751,16 @@ flowchart TD
 ```
 
 The whole loader is i586 code in flat 32-bit protected mode, and one image
-runs on every processor from the Pentium on. What a newer processor
+runs on every i586 or later processor. What a newer processor
 adds is taken by asking CPUID, not by a second build: the SSE state above,
 AES-NI in falcon-core's AES path, and long mode, which only a 64-bit kernel
-needs and 12.3.6 checks for (the menu's `{64-BIT ONLY}`, 7.8, asks the
+needs and 11.3.6 checks for (the menu's `{64-BIT ONLY}`, 7.8, asks the
 same question before a row is chosen). Paging stays off, so everything the loader
-places is below 4 GiB (`ADDR_END`). docs/notes/bios-route.md Section 6h has
-why this replaced long mode.
+places is below 4 GiB (`ADDR_END`).
 
-Stage 2 is linked at 0x7E00 and stays there: the thunk and the IDT in it are
-used by stage 3 for the rest of the boot. Its head is a gate at fixed
-addresses, because stage 3 is linked separately and shares no symbols with
-it:
+Stage 2 is linked at 0x7E00 and stays there: stage 3 uses its thunk and IDT
+for the rest of the boot. Stage 3 is linked separately and shares no
+symbols with it, so its head is a gate at fixed addresses:
 
 | address | field |
 |---|---|
@@ -3835,7 +2773,7 @@ it:
 | 0x7E40 | the interrupt vector |
 | 0x7E41 | the boot drive |
 | 0x7E42 | the boot record's marker sector, 16 bits (0 for none), written by `load3.c` |
-| 0x7E44 | SI at `boot16`'s jump, 16 bits, DS 0: the partition chain's entry (13.4), 0 for every other route |
+| 0x7E44 | SI at `boot16`'s jump, 16 bits, DS 0: the partition chain's entry (12.4), 0 for every other route |
 | 0x7E48 | the real-mode target of `boot16`, offset then segment |
 | 0x7E4C | stage 2's length, written by the build; its CRC-32 follows the image |
 
@@ -3846,14 +2784,13 @@ length into 0x7E4C and appends the CRC-32 of that many bytes (gzip's,
 taken from gzip's trailer, so no other tool computes it); `stage2_begin`
 recomputes it, bitwise, over what stage 1 read, and a mismatch is
 `fatal_rm` with the reason. Stage 1 has no room for the check (its code is
-413 of the 434 bytes it may use), and a medium that reads back wrong without an error is
-the reason for it: falcon jump's floppies did, on the A21m (14.3).
+413 of the 434 bytes it may use). A floppy can read back wrong without an
+error (13.3).
 
-#### 12.3.3 The thunk: a BIOS call from protected mode
+#### 11.3.3 The thunk: a BIOS call from protected mode
 
-Stage 3 runs in 32-bit protected mode, and the BIOS runs only in real mode.
-Every disk read, every cursor move and every key goes through this round
-trip.
+Stage 3 runs in 32-bit protected mode and the BIOS only in real mode;
+every disk read, cursor move and key goes through this round trip.
 
 ```mermaid
 sequenceDiagram
@@ -3884,13 +2821,13 @@ back. Stage 3 writes the screen's cells into VGA text memory at 0xB8000
 directly (falcon-bios/src/console/screen.c). INT 15h AH=87h is used only by the
 resident CD handler, from real mode.
 
-#### 12.3.4 Memory map
+#### 11.3.4 Memory map
 
 | range | what | lifetime |
 |---|---|---|
 | 0x0000-0x03FF | real-mode IVT; INT 13h hooked by a chainload | permanent |
 | 0x0400-0x04FF | BDA; 0x413 is conventional memory in KiB, lowered 16 by a chainload | permanent |
-| 0x0600-0x07FF | the station's partition chain: the disk's LBA 0, its entry marked active, DS:SI at the entry (13.4) | handed over |
+| 0x0600-0x07FF | the station's partition chain: the disk's LBA 0, its entry marked active, DS:SI at the entry (12.4) | handed over |
 | 0x1000-0x10FF | disk packet, drive parameters, E820 slot | per call |
 | below 0x7000 | real-mode stack during a thunk | per call |
 | 0x3000-0x311F | the Linux handoff: the move stub at 0x3000, the handoff GDT at 0x3100 | copied at the handoff, handed to the kernel |
@@ -3902,7 +2839,7 @@ resident CD handler, from real mode.
 | 0x90000-0x97FFF | bounce buffer | every read |
 | BDA top - 16 KiB | the resident CD handler: data, runs, El Torito packet, launch stub at +0x530, INT 13h entry at +0x570, INT 15h entry at +0xA00, carved E820 map at +0xB00, overlay pool at +0x1000; never below 0x98000 | permanent after a chainload; reserved in the map it hands on |
 | BDA top - 1 KiB (station) | the drive swap (`swapres.S`): the previous INT 13h vector, the drive, the handler at +0x10, 84 bytes | permanent after a chain of a disk that is not 0x80 |
-| BDA top - 3 KiB (falcon jump) | the reverse thunk (`rthunk.S`): far pointers, its GDT, the saved caller, the INT 13h entry at +0x90, the INT 15h entry at +0x300 and its carved map at +0x400 (the `USB` and `PCC` routes'), the release record at +0xB00 (`FJRS`, the vectors and BDA counts it replaced); below it the virtual CD's block on `CDR` | permanent after a route hands over, until station-legacy releases it for a chain to another disk (12.5.2); reserved in the map it hands on |
+| BDA top - 3 KiB (falcon jump) | the reverse thunk (`rthunk.S`): far pointers, its GDT, the saved caller, the INT 13h entry at +0x90, the INT 15h entry at +0x300 and its carved map at +0x400 (the `USB` and `PCC` routes'), the release record at +0xB00 (`FJRS`, the vectors and BDA counts it replaced); below it the virtual CD's block on `CDR` | permanent after a route hands over, until station-legacy releases it for a chain to another disk (11.5.2); reserved in the map it hands on |
 | 0x100000 | stage 3: 16-byte header, entry at +0x10, then its image and `.bss` (at most 0x6F0000 together) | whole loader |
 | 0xB8000-0xB8F9F | VGA text memory, the 80x25 screen stage 3 draws | whole loader |
 | 0x600000 | stage 2's partition list and sector buffer while it looks for the boot partition (`STAGE2_SCRATCH`), then the compressed stage 3 it inflates | until stage 3 runs |
@@ -3913,19 +2850,19 @@ resident CD handler, from real mode.
 | highest fit in 64 MiB-4 GiB | `heap.c`: the patched boot.wim tail | through the chainload, served by AH=87h; the appended part reserved in the map it hands on |
 | 4 GiB | `ADDR_END`: paging is off, so nothing is placed above it | |
 
-`mem_check` refuses a machine whose EBDA reaches below 0x98000, because the
-bounce buffer is there. The fixed addresses are in
+`mem_check` refuses a machine whose EBDA reaches below 0x98000 (the bounce
+buffer). The fixed addresses are in
 `falcon-bios/src/start/biosdefs.h`, except that floor (`stage2.S`).
 
-#### 12.3.5 The menu and route selection
+#### 11.3.5 The menu and route selection
 
-The menu is the UEFI loader's (12.2), drawn from the same layout
+The menu is the UEFI loader's (11.2), drawn from the same layout
 (`falcon-core/src/tui`): Personal OS first at the root when p3 is LUKS2,
 ".." first in a folder, then the survey's folders and images. Keys: up and
 down, Enter, `c` (chainload), `d` (direct), Escape (up a folder, or at the
 root INT 18h, which hands the machine back to the BIOS; a reset if it
-returns). There is no Secure Boot, no shim and no blessing, so five routes,
-dispatched in `boot_plain`'s order as on UEFI.
+returns). No Secure Boot, no shim, no blessing: five routes, dispatched in
+`boot_plain`'s order as on UEFI.
 
 ```mermaid
 flowchart TD
@@ -3949,8 +2886,8 @@ flowchart TD
 The rows carry `{EFI ONLY}` and, on a processor without long mode, `{64-BIT
 ONLY}` (7.8), filled by `probe_entry` (`scan_probe`, then
 `biosboot_medium`) as the menu first draws each row. `boot_plain` reads the
-same answer first on every key, so a tagged row takes no route: its page
-says what the medium needs and the menu comes back.
+same answer first on every key: a tagged row takes no route, its page says
+what the medium needs and the menu comes back.
 
 Unlike the UEFI loader, a BSD medium that is not one the memory-disk route
 applies to goes on to the direct boot. `DIR` goes on to `CHN`, as on the
@@ -3958,10 +2895,10 @@ UEFI loader, when it stops before committing because the medium is not one
 it can take (`boot_result.fallthrough`): no filesystem or boot entry it can
 read, a kernel that is not on the medium, or one `linux_boot` refuses before
 placing anything (`linux_not_taken`). A 64-bit kernel on a processor without
-long mode is not one of those: the medium's own loader would start the same
-kernel.
+long mode is not one of those (the medium's own loader would start the same
+kernel).
 
-#### 12.3.6 DIR: direct kernel boot
+#### 11.3.6 DIR: direct kernel boot
 
 ```mermaid
 sequenceDiagram
@@ -3983,7 +2920,7 @@ sequenceDiagram
     L->>L: screen_info from INT 10h and the BDA, after the route's last line: mode, columns, rows, cursor, VGA
     L->>K: GDT (0x10, 0x18) copied to 0x3100; a staged kernel is moved down by the stub at 0x3000; jump to code32_start, ESI = zero page (32-bit entry, either width)
     K->>H: rdinit=/falcon/hook, map from /falcon/map
-    H->>D: /dev/mapper/falcon-iso (12.4)
+    H->>D: /dev/mapper/falcon-iso (11.4)
     Note over D: the distro finds its medium, mounts root
 ```
 
@@ -3992,10 +2929,10 @@ is resident at handoff: the IVT and BDA are untouched. A map that cannot be
 built (too many fragments) boots without the hook, and the kernel is left to
 find its medium itself.
 
-#### 12.3.7 POS: the personal OS
+#### 11.3.7 POS: the personal OS
 
-A UKI is a PE image for UEFI's sd-stub, which cannot run under a BIOS. The
-loader unwraps it instead and does sd-stub's credential packing itself.
+sd-stub cannot run under a BIOS: the loader unwraps the UKI and does
+sd-stub's credential packing itself.
 
 ```mermaid
 sequenceDiagram
@@ -4021,13 +2958,13 @@ sequenceDiagram
     Note over I: root /dev/mapper/vgusb-root mounted, switch-root
 ```
 
-The initramfs sees exactly what sd-stub would have given it. AES-NI in
-`luks_unlock` is why `pmode.S` sets CR4.OSFXSR when CPUID reports SSE: UEFI
+The initramfs sees what sd-stub would have given it. `pmode.S` sets
+CR4.OSFXSR when CPUID reports SSE, for AES-NI in `luks_unlock`: UEFI
 firmware sets it, a BIOS leaves it clear, and the first SSE instruction
-would fault. A processor without AES-NI unlocks on falcon-core's portable
-AES path, slower and otherwise the same.
+would fault. Without AES-NI, `luks_unlock` takes falcon-core's portable AES
+path.
 
-#### 12.3.8 CHN: the resident virtual CD
+#### 11.3.8 CHN: the resident virtual CD
 
 ```mermaid
 sequenceDiagram
@@ -4055,10 +2992,10 @@ sequenceDiagram
 Other drives pass through to the previous handler. Writes fail. Reads past
 the medium's end up to 64 sectors of padding return zeros.
 
-What stays in use behind the handoff is hidden from what comes next. The
-BDA's lowered count hides the handler's 16 KiB from anything that asks for
+What stays in use behind the handoff is hidden. The BDA's lowered count
+hides the handler's 16 KiB from anything that asks for
 conventional memory. The INT 15h half hides it, and the appended region the
-handler serves from extended memory (Windows' tail, 12.3.9), from anything
+handler serves from extended memory (Windows' tail, 11.3.9), from anything
 that asks for the map: it answers E820 from a copy of the BIOS's map with
 both ranges carved out as reserved (`e820_carve`, host tested), caps E801's
 count of 64 KiB blocks above 16 MiB below the appended region, and passes
@@ -4066,11 +3003,10 @@ every other INT 15h call, the handler's own AH=87h included, to the BIOS.
 The rig checks it with `make test-bios-probe`, a medium whose boot image
 prints the map it is handed (`falcon-bios/tools/memprobe.S`).
 
-Unlike UEFI's virtual CD, this one outlives the handoff: anything that keeps
-reading through INT 13h keeps working, including bootmgr and winload, which
-drop back to real mode for each read. A protected-mode kernel that does not
-call the BIOS loses it, so a Linux live ISO chainloaded here has no hook and
-no map and finds its medium only if its initramfs can do so unaided.
+Unlike UEFI's virtual CD, this one outlives the handoff for anything that
+reads through INT 13h, bootmgr and winload included (they drop back to real
+mode for each read). A protected-mode kernel that does not call the BIOS
+loses it: a Linux live ISO chainloaded here has no hook and no map.
 
 A medium whose BIOS boot image is a floppy emulation (El Torito media type 1,
 2 or 3) rather than a no-emulation CD is served differently: `vcd_chainload`
@@ -4079,20 +3015,20 @@ image - 2.88 MB at most - into extended memory and installs a smaller
 resident (`vfdres.S`) that answers INT 13h for drive 0x00 as a memory disk,
 copying each read out of the image with AH=87h. It is a flat disk, so the
 geometry (`vfdcore.c`, host-tested) is only how a CHS read is named. It hooks
-INT 13h alone and does not hide the image from the memory map, which is sound
-for media that read the floppy once as they load: memtest86+ boots this way.
-Haiku's 2.88M floppy boots its loader but then wants the rest of Haiku off
-the CD, which is not co-resident, so it does not complete. Hard-disk
-emulation (media type 4) is not implemented; no corpus medium needs it.
+INT 13h alone and does not hide the image from the memory map; media that
+read the floppy once as they load, memtest86+ among them, boot this way.
+Haiku's 2.88M floppy boots its loader, which then wants the rest of Haiku
+off the CD, not co-resident, and does not complete. Hard-disk emulation
+(media type 4) is not implemented.
 
-#### 12.3.9 WIN: Windows install media
+#### 11.3.9 WIN: Windows install media
 
-The same patch as the UEFI route (12.2.13), computed by the same falcon-core
-code; only the serving differs, and which build of winjump goes in. The jump
-binary replaces `winpeshl.exe`, and a 32-bit WinPE cannot start a 64-bit
-program, so falcon-bios embeds winjump twice (x64 and i686, one source) and
-reads the machine type out of the boot image's own `winpeshl.exe` headers
-(`wim_winpeshl`, `wim_read_head`, `pe_parse`). A 64-bit boot.wim on a
+The same patch as the UEFI route (11.2.13), computed by the same falcon-core
+code; the serving differs, and so does which build of winjump goes in.
+falcon-bios embeds winjump twice (x64 and i686, one source) and picks the
+one matching the machine type in the boot image's own `winpeshl.exe` headers
+(`wim_winpeshl`, `wim_read_head`, `pe_parse`), since a 32-bit WinPE cannot
+start a 64-bit program. A 64-bit boot.wim on a
 processor without long mode is refused with a sentence, as `linux.c` refuses
 a 64-bit kernel. The UEFI loader embeds the x64 build only: 32-bit Windows
 starts from 32-bit UEFI, which is out of scope (Section 1).
@@ -4109,7 +3045,7 @@ sequenceDiagram
     L->>L: winpeshl.exe's PE machine: i386 is winjump32, AMD64 winjump (and long mode needed)
     L->>L: wim_patch_build with that build
     L->>L: UDF edits into the overlay pool, the tail as an append past the end
-    L->>R: CHN (12.3.8), etfsboot at 07C0:0000
+    L->>R: CHN (11.3.8), etfsboot at 07C0:0000
     R->>M: bootmgr
     M->>R: BCD, boot.sdi, boot.wim
     R->>R: tail blocks copied down with INT 15h AH=87h
@@ -4120,9 +3056,9 @@ sequenceDiagram
     Note over ST: install.wim found on the attached CD
 ```
 
-#### 12.3.10 BSD: a BSD medium as its own memory disk
+#### 11.3.10 BSD: a BSD medium as its own memory disk
 
-The same two edits as the UEFI route (12.2.12), laid into the resident's
+The same two edits as the UEFI route (11.2.12), laid into the resident's
 overlay pool. Once the medium is known to be one the route applies to, an
 amd64 kernel (`/boot/kernel/kernel`, `biosboot_elf_is_64`) on a processor
 without long mode is refused ("checking the processor"), as `linux_boot`
@@ -4133,15 +3069,14 @@ through the handler, the loader reads `FALCONBS.IMG;1` whole through it (the
 zero padding past the end is what lets it read the last block), and the
 kernel mounts root from `/dev/md0`.
 
-#### 12.3.11 Failure paths
+#### 11.3.11 Failure paths
 
-No failure halts, because on a machine with no serial cable a halt is a
-hang.
+No failure halts.
 
 | where | what happens |
 |---|---|
 | stage 1 | reason on screen and serial, a key, `jmp FFFF:0` |
-| stage 2, real mode (`fatal_rm`) | older than a Pentium (no CPUID), EBDA too low, A20 closed: reason, a key, reset |
+| stage 2, real mode (`fatal_rm`) | older than i586 (no CPUID), EBDA too low, A20 closed: reason, a key, reset |
 | stage 2 and 3, protected mode (`bios_fatal`) | no partition with a boot record, a damaged table, stage 3 missing, malformed or past its volume's reserved sectors, or `stage 3 returned`: reason, a key, reset |
 | a processor exception (`idt.S`, `fault.c`) | vector and name, EIP, error code, through `bios_fatal`; a second fault while reporting resets at once |
 | a route | message, "press any key to return to the menu" |
@@ -4151,7 +3086,7 @@ A reset is port 0xCF9, then the 8042's reset line, then an empty IDT and a
 fault, which triple-faults any processor. The window between entering
 protected mode and `fault_install` has no IDT.
 
-### 12.4 falcon-hook to root
+### 11.4 falcon-hook to root
 
 Shared by DIR, D3A, D3B and BLS on UEFI and DIR on BIOS. It runs as PID 1
 from `rdinit=/falcon/hook` before the distro's init, as the binary of the
@@ -4198,42 +3133,40 @@ How each family then finds its root on the device the hook made:
 | debian-installer | the ISO premounted at `/cdrom` |
 | Alpine | loop, then its own scan |
 
-### 12.5 The stationary build
+### 11.5 The stationary build
 
-*Both diagrams are the station of Section 13 as built on 2026-09-27, traced
-from its code.*
+*Both diagrams are the station of Section 12, traced from its code.*
 
-Section 13's second build of each loader. Its POS route is the stick's
-(12.2.4, 12.3.7); what is new is how it gets there and the routes out to
-the machine's other systems. Both builds exist (`make station`) and both
-diagrams are traced from their code.
+Section 12's second build of each loader (`make station`). Its POS route
+is the stick's (11.2.4, 11.3.7); what is new is how it gets there and the
+routes out to the machine's other systems.
 
-#### 12.5.1 UEFI
+#### 11.5.1 UEFI
 
-The station of Section 13, built (2026-09-27): the list of 13.3,
-`STATION.INI` (13.7) and next boot (13.8); the TOTP check (13.15) added
-2026-09-28, and the saved event log it is enrolled from 2026-09-29. `apps/station/efi_main.c` finds
+The station of Section 12: the list of 12.3, `STATION.INI` (12.7), next
+boot (12.8), and the TOTP check (12.15) with the saved event log it is
+enrolled from. `apps/station/efi_main.c` finds
 the rows and boots them; `media/strows.c` is the list as data (the names,
 what an INI section changes or adds, the order), host-tested.
 
 ```mermaid
 flowchart TD
     FW["Firmware<br/>boot entry falcon"] -- "\EFI\falcon\shimx64.efi" --> SHIM["shim<br/>verifies grubx64.efi (falcon-boot-station.efi) against db / MokList"]
-    FW -- "--no-shim: \EFI\falcon\grubx64.efi,<br/>verified against db (13.2)" --> MAIN
+    FW -- "--no-shim: \EFI\falcon\grubx64.efi,<br/>verified against db (12.2)" --> MAIN
     SHIM --> MAIN["efi_main (apps/station/efi_main.c)"]
     MAIN --> NB["loader_next_boot_take<br/>FalconNextBoot read, then deleted"]
     NB --> DISC["discover_scan: the ESP's boot record, every Block I/O handle<br/>disks_scan: each whole disk's table (MBR or GPT)<br/>esp_connect_all: a filesystem driver on every partition"]
     DISC --> POSS["pos_scan<br/>shelves carrying the ESP's install ID, any disk (3.1)"]
-    POSS --> SAVE["totp_save_log: on a TPM 1.2 behind EFI_TCG only,<br/>edk2's event log and PCRs 0-15 into FalconEvLog (13.15)"]
+    POSS --> SAVE["totp_save_log: on a TPM 1.2 behind EFI_TCG only,<br/>edk2's event log and PCRs 0-15 into FalconEvLog (12.15)"]
     SAVE --> INI{"\EFI\falcon\STATION.INI<br/>on the loader's ESP?"}
     INI -- "no" --> ROWS
-    INI -- "parses" --> TOTP{"[totp] section? (13.15)"}
+    INI -- "parses" --> TOTP{"[totp] section? (12.15)"}
     INI -- "error, too large, unreadable" --> ERR["page: STATION.INI line n: why<br/>no default, no countdown; a key"]
     ERR --> ROWS
     TOTP -- "no" --> ROWS
     TOTP -- "yes" --> SEAL["totp_load: the TPM through EFI_TCG2 / EFI_TCG,<br/>the seed unsealed once, before anything is loaded;<br/>the code, or why not, under the banner from here on"]
     SEAL --> ROWS
-    ROWS["rows (13.3):<br/>Personal OS (encrypted), one row per plaintext UKI,<br/>nxt_scan: BootOrder's offered entries but BootCurrent and falcon,<br/>each ESP whose bootmgfw.efi no entry names,<br/>memtest.efi on the loader's ESP, Firmware Setup<br/>then strows_apply: the INI's sections change or add rows"]
+    ROWS["rows (12.3):<br/>Personal OS (encrypted), one row per plaintext UKI,<br/>nxt_scan: BootOrder's offered entries but BootCurrent and falcon,<br/>each ESP whose bootmgfw.efi no entry names,<br/>memtest.efi on the loader's ESP, Firmware Setup<br/>then strows_apply: the INI's sections change or add rows"]
     ROWS --> NX{"next boot named?"}
     NX -- "an entry" --> BOOT
     NX -- "nothing it names" --> NXS["page: the marker names x, and no entry has that name; a key"]
@@ -4242,8 +3175,8 @@ flowchart TD
     LIST{"list, in the INI's order, Firmware Setup last<br/>first time: the default highlighted, and its countdown"}
     LIST -- "countdown ends, or Enter" --> BOOT{"the row's route"}
     LIST -- "Escape" --> OUT["return to firmware"]
-    BOOT -- "Personal OS" --> PR["prompt, chooser, POS (12.2.4)"]
-    BOOT -- "a UKI" --> POS["POS (12.2.4): its shelf, that file;<br/>behind the prompt when it is the encrypted shelf's"]
+    BOOT -- "Personal OS" --> PR["prompt, chooser, POS (11.2.4)"]
+    BOOT -- "a UKI" --> POS["POS (11.2.4): its shelf, that file;<br/>behind the prompt when it is the encrypted shelf's"]
     BOOT -- "firmware entry" --> NXT["NXT: BootNext = Boot####, reset"]
     BOOT -- "an ESP's image" --> ESP["ESP: esp_boot, the file on its volume by device path<br/>through loadops (the firmware's loader when shim is not enforcing, 7.6)"]
     BOOT -- "memtest" --> MEM["MEM: esp_boot, \EFI\falcon\memtest.efi"]
@@ -4256,30 +3189,28 @@ flowchart TD
 ```
 
 `NXT` leaves falcon entirely: the firmware boots the entry on the next
-start as though falcon had not run, and for a Windows sealed with BitLocker
-that is the point (13.4). Nothing falcon did survives the reset except that
-`BootNext` has been consumed. `ESP` and `MEM` start the image as a child of
-this loader: it is verified by shim's loader when shim enforces and loaded
-by the firmware's otherwise, exactly as an ISO's own loader is (12.2.14),
-because Windows Boot Manager loads `winload.efi` through the firmware with
-its own handle as the parent. The default and its countdown belong to the
+start as though falcon had not run (12.4, BitLocker). Nothing falcon did
+survives the reset except that `BootNext` has been consumed. `ESP` and `MEM`
+start the image as a child of this loader, through shim's loader when shim
+enforces and the firmware's otherwise, as an ISO's own loader is (11.2.14);
+Windows Boot Manager loads `winload.efi` through the firmware with its own
+handle as the parent. The default and its countdown belong to the
 first list only; a boot that comes back to the list gets neither. With a
-`[totp]` section (13.15) every route out wipes the seed first (the ESP and
+`[totp]` section (12.15) every route out wipes the seed first (the ESP and
 MEM handover, the UKI's StartImage, `BootNext`, firmware setup, the return
 to firmware), and a list the user comes back to says the code is shown
 again after a restart.
 
-#### 12.5.2 BIOS
+#### 11.5.2 BIOS
 
-Traced from `falcon-bios/src/station/station.c` as built on 2026-09-27
-(Section 13), which `apps/station/bios_main.c` and
+Traced from `falcon-bios/src/station/station.c` (Section 12), which `apps/station/bios_main.c` and
 `apps/station-legacy/bios_main.c` both run (`station_main`); station-legacy
 adds its rows, their route and the release of jump's reverse thunk at the
 three places marked.
 
 ```mermaid
 flowchart TD
-    S12["stages 1 and 2, as 12.3.2<br/>the boot partition is the station partition"] --> BM["bios_main, station_main (station/station.c)<br/>e820_read"]
+    S12["stages 1 and 2, as 11.3.2<br/>the boot partition is the station partition"] --> BM["bios_main, station_main (station/station.c)<br/>e820_read"]
     BM --> DSK["scan_disks: the boot drive, then every drive the BDA counts (0x475)<br/>each one's table (MBR or GPT) and disk id"]
     DSK --> IR["on the boot drive: install_boot_record (the install ID),<br/>marker_take (the marker sector, cleared before it is believed)"]
     IR --> SP["read_station: the station partition mounted (FAT)<br/>/MEMTEST.BIN present? /STATION.INI parsed (stationini.c)"]
@@ -4301,9 +3232,9 @@ flowchart TD
     NN --> LIST{"menu: strows_arrange, strows_default;<br/>screen_menu_timed, a countdown on the default, the first menu only"}
     LIST -- "Escape" --> RF["INT 18h, else bios_reboot"]
     LIST -- "a row, or the countdown" --> ROW{"the row's kind"}
-    ROW -- "shelf or UKI" --> POS["POS (12.3.7): pos_run_pick,<br/>a UKI row boots its file without the chooser"]
-    ROW -- "memtest" --> MEM["MEM: MEMTEST.BIN through linux_boot, as jump's (12.6)"]
-    ROW -- "cd, cf, usb (station-legacy)" --> JR["CDR, PCC, USB: jroute_boot, jump's routes (12.6),<br/>the drivers read off the station partition"]
+    ROW -- "shelf or UKI" --> POS["POS (11.3.7): pos_run_pick,<br/>a UKI row boots its file without the chooser"]
+    ROW -- "memtest" --> MEM["MEM: MEMTEST.BIN through linux_boot, as jump's (11.6)"]
+    ROW -- "cd, cf, usb (station-legacy)" --> JR["CDR, PCC, USB: jroute_boot, jump's routes (11.6),<br/>the drivers read off the station partition"]
     JR -- "comes back" --> FAIL
     ROW -- "partition" --> VBR["VBR (chain.c): primary, MBR disk, 512-byte sectors?<br/>LBA 0 read, the entry marked active in the copy,<br/>the boot sector read, 0x55AA, the swap's 1 KB asked for"]
     VBR -- "refused, unreadable, no 0x55AA,<br/>no memory for the swap" --> FAIL["&lt;route&gt; failed while ..., a key"]
@@ -4325,32 +3256,31 @@ flowchart TD
 ```
 
 The drive swap is the only thing the station leaves behind, and only on a
-chain of a disk that is not 0x80 (Section 13.4): 84 bytes in the kilobyte
+chain of a disk that is not 0x80 (Section 12.4): 84 bytes in the kilobyte
 taken off the BDA's count, the IVT's INT 13h pointing at it, and nothing
 else changed. A chain of the disk that is already 0x80, and every other
 route, leave the IVT, the BDA and the memory map as the BIOS left them.
 MEM hands over as jump's does; POS as the stick's. On station-legacy,
-CDR, USB and PCC leave what they leave under jump (12.6): the reverse
+CDR, USB and PCC leave what they leave under jump (11.6): the reverse
 thunk and the driver's slot, and on CDR the virtual CD over them.
 
 A station-legacy that jump's PCC or USB route started runs on top of that
 route's reverse thunk. A VBR or MBR chain to any other drive releases it
 first, after the chain's last read (`jres_release`, from the release record
-jump keeps in the block): the system then starts with the IVT and the BDA as
-the BIOS left them, and only the driver's slot at 15-16 MB, which nothing
-calls again, and a powered PC Card slot remain. Windows 2000 froze on the
-A21m started on top of the thunk (2026-09-27; neither the INT 13h and 15h
-hooks nor the counts were singled out, since the release undoes all of
-them). A chain to the drive the thunk serves keeps it, since it is how that
-system reads its disk.
+jump keeps in the block): the system starts with the IVT and the BDA as the
+BIOS left them, and only the driver's slot at 15-16 MB, which nothing calls
+again, and a powered PC Card slot remain. Windows 2000 freezes when started
+on top of the thunk. A chain to the drive the thunk serves keeps
+it; that system reads its disk through it.
 
-### 12.6 falcon jump
+### 11.6 falcon jump
 
-Section 14's boot floppy, as built at Section 14.11 step 6: the machine's
+Section 13's boot floppy: the machine's
 disks, memtest86+, a no-emulation or floppy-emulation disc in an IDE CD
 drive, a falcon stick on a USB port, and a CompactFlash card in a PC Card
-slot. `USB` joins
-the menu as a row when step 4 lands.
+slot. Beside a row per disk and Memory test, the menu has a CD drive, a CF
+card (PC Card) and a USB stick row, each when its module is on the floppy
+and its controller in the machine (`jroute_offered`).
 
 ```mermaid
 flowchart TD
@@ -4359,7 +3289,7 @@ flowchart TD
     RD -- fails --> F1["fail: reason, key, jump to FFFF:0"]
     RD -- ok --> MG{"0x7E04 holds BOS2?"}
     MG -- no --> F1
-    MG -- yes --> S2["Stage 2, as 12.3.2"]
+    MG -- yes --> S2["Stage 2, as 11.3.2"]
     S2 --> PR{"bios_disk_probe (disk.c)<br/>AH=48h, then AH=41h"}
     PR -- "neither" --> GEO["AH=08h: the geometry, vfd_geometry_int13<br/>reads by AH=02h from here on"]
     PR -- "either" --> L3
@@ -4380,12 +3310,12 @@ flowchart TD
     MENU -- "CD drive" --> LD["jroute_boot, jmod_load: ATA.MOD read to 6 MB, inflated to JMOD_SLOT_ATA (15 MB)<br/>E820 says 15-16 MB is RAM; header checked; .bss zeroed; init"]
     LD --> PB["ops.probe: IDENTIFY PACKET DEVICE on 0x1F0 and 0x170,<br/>master and slave; READ CAPACITY; the first with a disc"]
     PB --> CAT{"the catalog through ops.read (disc_read)<br/>vcd_boot_entry: its media type"}
-    CAT -- "floppy emulation" --> VFD["vfd_serve over disc_read: the image to the heap above 64 MB,<br/>vfdres.S as drive 0x00; nothing of the module stays (12.3.8)"]
+    CAT -- "floppy emulation" --> VFD["vfd_serve over disc_read: the image to the heap above 64 MB,<br/>vfdres.S as drive 0x00; nothing of the module stays (11.3.8)"]
     CAT -- "hard-disk emulation, or no catalog" --> MENU
     CAT -- "no emulation" --> RT["jres_install: rthunk.S's block below the BDA's count (3 KB)<br/>INT 13h for drive 0xEF to ops.int13, stack at the slot's top;<br/>INT 18h, 19h: a cold reset"]
     RT --> PR2["bios_disk_probe(0xEF): AH=48h through the thunk, 2048-byte sectors"]
     PR2 --> VCD["vcd_chainload_drive: the catalog over 0xEF, one run,<br/>keep ranges: the thunk block and 15-16 MB (E820, E801 both halves, AH=88h)"]
-    VCD --> CD["the disc's boot image at 0x7C00, DL = 0xE0 (12.3.8)"]
+    VCD --> CD["the disc's boot image at 0x7C00, DL = 0xE0 (11.3.8)"]
     CD --> RD13["its reads: 0xE0 (vcdres.S) re-issues to 0xEF,<br/>rthunk.S: saves the caller, A20 on, protected mode, ops.int13, back"]
     VCD -- "refused" --> RM["jres_remove"]
     RM --> MENU
@@ -4394,7 +3324,7 @@ flowchart TD
     EN --> GPT{"bootpart_find through ops.read:<br/>a partition with a boot record?"}
     GPT -- "no falcon stick" --> MENU
     GPT -- "yes" --> RU["jres_install for the next BIOS disk (BDA 0x475 + 0x80),<br/>INT 15h hooked too: the block and 15-16 MB carved;<br/>INT 18h, 19h: a cold reset; what it changed kept in the block's release record"]
-    RU --> MB["BDA count + 1; mbr_boot: LBA 0 through the thunk to 0x7C00,<br/>DL = that drive; the stick's falcon-bios from there (12.3)"]
+    RU --> MB["BDA count + 1; mbr_boot: LBA 0 through the thunk to 0x7C00,<br/>DL = that drive; the stick's falcon-bios from there (11.3)"]
     MB -- "unreadable, no 0x55AA" --> RM2["BDA count back, jres_remove"]
     RM2 --> MENU
     MENU -- "CF card (PC Card)" --> LP["jmod_load: PCC.MOD to JMOD_SLOT_PCC"]
@@ -4407,31 +3337,23 @@ flowchart TD
 
 The CD, USB and CF branches are falcon-bios's `jump/routes.c`
 (`jroute_init`, `jroute_offered`, `jroute_boot`), which station-legacy
-links too (13.10); `apps/jump/bios_main.c` is the menu, `JUMP.INI`, `MBR`,
+links too (12.10); `apps/jump/bios_main.c` is the menu, `JUMP.INI`, `MBR`,
 `MEM` and the pages around a route.
 
-`MBR` and `MEM` leave nothing resident, as the station's do but for its drive swap (12.5.2).
+`MBR` and `MEM` leave nothing resident, as the station's do but for its drive swap (11.5.2).
 `CDR` leaves two: the stick's virtual CD, unchanged but for serving a whole
 drive as one run, and under it the reverse thunk and `ATA.MOD`. The floppy
-is read by CHS wherever its BIOS has no extensions, SeaBIOS's included, so
-the rig exercises the same path an old machine takes.
+is read by CHS wherever its BIOS has no extensions, SeaBIOS's included, as
+on an old machine.
 
-## 13. The station: falcon as a machine's boot loader (decided 2026-09-26)
+## 12. The station: falcon as a machine's boot loader
 
-Status (2026-09-27): both stations are built and rig-proven, UEFI under
-OVMF with Secure Boot off and on (`make test-station-uefi`) and BIOS under
-SeaBIOS (`make test-station-bios`, 13.11; 12.5.1 and 12.5.2 draw them): the
-list of 13.3, `STATION.INI`, the countdown, 13.4's routes (the firmware
-entry and `bootmgfw.efi` on UEFI, the partition chain, another disk's MBR
-and the drive swap on BIOS), memtest and next boot. The installer (13.9) is
-built, on disks of 512- and 4096-byte sectors, and the rigs boot what it
-writes, a 4Kn disk under both firmwares included (`make
-test-station-installed`). Designed 2026-09-26. This replaces the stationary build
-of 2026-09-21, which was the stick's loader with the ISO library taken out: it
-booted a personal OS off a shelf and handed the machine to other disks, but
-leaned on the stick's view of the world (a shelf found by rule on any disk,
-GPT only, the stages in the GPT gap, no default and no timeout). The audit
-behind this section, and every decision in it, are docs/notes/station-rework.md.
+The station is falcon as a machine's own boot loader, UEFI and BIOS, each
+rig-tested (12.11; 11.5.1 and 11.5.2 draw its routes): the list of 12.3,
+`STATION.INI`, the countdown, 12.4's routes (the firmware entry and
+`bootmgfw.efi` on UEFI, the partition chain, another disk's MBR and the
+drive swap on BIOS), memtest and next boot. The installer (12.9) writes it
+to disks of 512- and 4096-byte sectors.
 
 Each build has one job:
 
@@ -4445,34 +3367,33 @@ Each build has one job:
 The station boots:
 
 - **Windows, 98 to 11.** On BIOS by chaining a partition's boot sector or
-  another disk's MBR (13.4); on UEFI through the firmware's own entry, or
-  `bootmgfw.efi` through the shim-verified path where an entry asks (13.4).
+  another disk's MBR (12.4); on UEFI through the firmware's own entry, or
+  `bootmgfw.efi` through the shim-verified path where an entry asks (12.4).
 - **Linux, as UKIs on a shelf**, found and unlocked as the personal OS is on
-  a stick (Section 5), LUKS2 or plaintext, on both loaders (13.5).
-- **memtest86+** (13.6).
+  a stick (Section 5), LUKS2 or plaintext, on both loaders (12.5).
+- **memtest86+** (12.6).
 
-Entries are found on their own (13.3); `STATION.INI` sets a default, a
+Entries are found on their own (12.3); `STATION.INI` sets a default, a
 timeout and an order, and adds, hides or relabels entries, including ones on
-other disks (13.7).
+other disks (12.7).
 
-### 13.1 Why a build and not an option
+### 12.1 Why a build and not an option
 
-Unchanged from 2026-09-21: the stick's loader carries everything drag-and-drop
-needs (ISO9660, UDF and exFAT readers, the WIM reader, the boot.wim patch, the
-virtual CD, the bless flow, the boot predictions' DER, X.509 and Authenticode
-parsers, and two embedded binaries), and Section 7.8 already names the
-parsers as attack surface. A machine that boots its own systems reaches none
-of it. So the station links less, and what it does not link it cannot run:
-the answer to "what can this loader do" is its source list. It is a separate
-link through the same shared modules, not `#ifdef`s through them; what
-differs is the entry point (`apps/station/`, `apps/station-legacy/`).
+The stick's loader carries everything drag-and-drop needs (ISO9660, UDF
+and exFAT readers, the WIM reader, the boot.wim patch, the virtual CD, the
+bless flow, the boot predictions' DER, X.509 and Authenticode parsers, and
+two embedded binaries), parsers Section 7.8 names as attack surface, and a
+machine that boots its own systems reaches none of it. The station is a
+separate link through the same shared modules, not `#ifdef`s through them,
+and links only what it runs; what differs is the entry point
+(`apps/station/`, `apps/station-legacy/`).
 
 What each links, beyond the shared console, disk and loader plumbing:
 
 | | station | station-legacy |
 |---|---|---|
 | UEFI | `pos/`, `nxt/`, `esp/` (bootmgfw and memtest through `loadops`), core's `media/strows.c` (the list, both loaders'), `discover/disks.c` (disks named as the INI names them), core `luks`, `fs` (ext4; an ESP is read by the firmware's own FAT driver), `part`, `media/shelf.c`, `media/stationini.c` | none: legacy is BIOS only |
-| BIOS | `pos.c`, `linux.c` (UKIs, memtest), `mbr/chain.c` and `vbrcore.c` (13.4's partition chain and another disk's MBR) with core's `media/vbr.c` (what a boot sector is), `mbr/swapres.S` (the drive swap), `marker.c`, core's `media/strows.c` and `media/stationini.c` as UEFI's, `fs` (ext4 and FAT, for the station partition) and `media/cpio.c` | the station's, plus the route module lifted out of jump (`jump/routes.c`, 13.10), `jmod`, `jres`, `mbr.c` and `bootpart.c` (a stick or a card started from its LBA 0), the virtual CD, `vfd`, the heap and `gz` |
+| BIOS | `pos.c`, `linux.c` (UKIs, memtest), `mbr/chain.c` and `vbrcore.c` (12.4's partition chain and another disk's MBR) with core's `media/vbr.c` (what a boot sector is), `mbr/swapres.S` (the drive swap), `marker.c`, core's `media/strows.c` and `media/stationini.c` as UEFI's, `fs` (ext4 and FAT, for the station partition) and `media/cpio.c` | the station's, plus the route module shared with jump (`jump/routes.c`, 12.10), `jmod`, `jres`, `mbr.c` and `bootpart.c` (a stick or a card started from its LBA 0), the virtual CD, `vfd`, the heap and `gz` |
 | leaves out | the ISO library, direct boot, Windows and BSD media, blessing, boot predictions, falcon-hook, falcon-winjump | as the station |
 
 No boot predictions are linked, so no row carries a trust tag. The version
@@ -4480,36 +3401,35 @@ type is `station-release` and `station-legacy-release`; the SBAT component is
 `falcon-boot-station`, its own generation, so a revocation for a parser the
 station does not link cannot stop it booting.
 
-### 13.2 Layout
+### 12.2 Layout
 
-Nothing is repartitioned or resized by falcon. The installer (13.9) needs
+Nothing is repartitioned or resized by falcon. The installer (12.9) needs
 the space it uses to be free already.
 
 **UEFI.** The machine's ESP: shim, MokManager, the loader as `grubx64.efi`,
-the public cert, memtest86+ signed with the MOK (13.6) and `STATION.INI`, all
+the public cert, memtest86+ signed with the MOK (12.6) and `STATION.INI`, all
 in `\EFI\falcon\`, named by a firmware boot entry of its own. The ESP's boot
 sector carries the station's `boot` record (Section 3.1) in bytes UEFI never
 executes; the installer backs up the sector it changes. No extra partition.
 
 **UEFI without shim** (`station install --no-shim`). The same, less shim and
 MokManager: the firmware entry names `grubx64.efi` itself, and the firmware
-verifies it against db, which must hold the cert. That is the user's to
-arrange through the platform (the T430 has its own key as PK, KEK and db,
-and no Microsoft keys). Nothing in the loader changes: with no shim in the
-chain, what it launches goes through the firmware's `LoadImage`, which is
-then the enforcing one (7.6, `loader/loadops.h`). `station status` takes
-`grubx64.efi` as the mark of a UEFI install, with or without shim before
-it, and checks its signature against the cert beside it with `sbverify`.
+verifies it against db, which must hold the cert, put there through the
+platform (a coreboot and edk2 machine with its own key as PK, KEK and db
+and no Microsoft keys, for one). With no shim in the chain, what the loader
+launches goes through the firmware's `LoadImage`, the enforcing one (7.6,
+`loader/loadops.h`). `station status` takes `grubx64.efi` as the mark of a
+UEFI install, with or without shim before it, and checks its signature
+against the cert beside it with `sbverify`.
 
 **BIOS, MBR disk.** Stage 1 in LBA 0's boot code, the table, signature and
 `0x55AA` kept. Stage 2 from LBA 1, before the first partition. A **station
 partition**: FAT32, hidden (type 0x1C, so no Windows from 98 to 11 gives it a
 drive letter or offers to check it), holding stage 3 and the next-boot marker
 in its reserved sectors and, as files, `STATION.INI`, `MEMTEST.BIN` and, on
-legacy, the drivers. On the A21m, whose Windows 2000 partition fills the
-disk, the NTFS partition is shrunk first (with ntfsresize, from DevLink
-recovery or any Linux), and about 64 MB at the end becomes the station
-partition.
+legacy, the drivers. Where an NTFS partition fills the disk (the A21m's
+Windows 2000), it is shrunk first (with ntfsresize, from DevLink recovery
+or any Linux), and about 64 MB at the end becomes the station partition.
 
 **BIOS, GPT disk.** Stage 2 in the `FALCON-BIOS` EF02 partition at LBA 34;
 the station partition as on MBR, typed with a falcon type GUID of its own
@@ -4519,14 +3439,14 @@ the station partition as on MBR, typed with a falcon type GUID of its own
 station's install ID: LUKS2 with the falcon token, or plaintext ext4 with
 `/.falcon`. On station-legacy the station partition may also carry a `/uki`
 directory, read as a plaintext shelf, which is where DevLink recovery lives
-(13.10). mkstick makes no shelf: one made with `cryptsetup luksFormat` is
+(12.10). mkstick makes no shelf: one made with `cryptsetup luksFormat` is
 argon2id at the cost cryptsetup benchmarked on the machine that made it,
 and the loaders open it at that cost. `station status` shows each keyslot's
 KDF and cost, and warns when an argon2id slot asks for more memory than the
 machine running it has; a loader short of the memory refuses the slot with
 a page giving both numbers.
 
-### 13.3 What the menu offers without being told
+### 12.3 What the menu offers without being told
 
 The loader finds its `boot` partition (UEFI: the ESP it was started from;
 BIOS: the partition stage 2 found), reads the install ID, and builds rows:
@@ -4545,7 +3465,7 @@ BIOS: the partition stage 2 found), reads the install ID, and builds rows:
   disk, carrying `\EFI\Microsoft\Boot\bootmgfw.efi` that no firmware entry
   names (the entry's HARDDRIVE node and file path, matched to the disk and
   partition by `discover/disks.c`), labelled "Windows Boot Manager (disk
-  gpt:1a2b3c4d, partition 1)" and booted by 13.4's `method = efi` route.
+  gpt:1a2b3c4d, partition 1)" and booted by 12.4's `method = efi` route.
 - **Windows and other systems, BIOS:** on every disk, each MBR primary
   partition whose boot sector is a known loader, labelled by what was found
   and where ("Windows (NTLDR) (disk mbr:cdcccdcc, partition 1)"); and each
@@ -4571,7 +3491,7 @@ BIOS: the partition stage 2 found), reads the install ID, and builds rows:
 
 Anything else is added in `STATION.INI`.
 
-### 13.4 Windows
+### 12.4 Windows
 
 **BIOS, a partition on any disk: the boot-sector chain** (route `VBR`,
 `falcon-bios/src/mbr/chain.c`). The Windows MBR's own job, done by falcon.
@@ -4583,7 +3503,7 @@ What the boot sector finds when it starts:
 | DS:SI | 0000:07BE + 16 x slot, that entry in the copy |
 | 0000:7C00 | the partition's first sector, which must end in `0x55AA`, its BPB made to agree (below) |
 | DL | the drive: 0x80 behind the swap, else the disk's own number |
-| CS:IP | 0000:7C00, from `boot16` (12.3.2): real mode, DS = ES = SS = 0, SP 0x7000, interrupts on |
+| CS:IP | 0000:7C00, from `boot16` (11.3.2): real mode, DS = ES = SS = 0, SP 0x7000, interrupts on |
 
 DOS's `IO.SYS`, NT's `NTLDR` and Vista's `BOOTMGR` boot sectors find
 themselves through DS:SI or through their own BPB's hidden-sectors field
@@ -4599,11 +3519,10 @@ unchanged but for its status byte, are what it needs. Refused with a
 sentence before anything is copied: a logical partition, an extended
 container, a partition on a GPT disk, a disk whose sectors are not 512
 bytes, and a table that no longer has the entry the row was built from.
-What 9x needs beyond this is measured on hardware before it is called
-done. Under QEMU (2026-09-27, `make test-station-fixtures`) Windows 98 SE
-reaches its desktop through this chain from the station's own disk, and
-from a second disk behind the swap; behind the swap it then shows its
-"Performance Warning" (the Master Boot Record has been modified), which
+Windows 98 SE reaches its desktop through this chain from the station's
+own disk, and from a second disk behind the swap (`make
+test-station-fixtures`); behind the swap it shows its "Performance
+Warning" (the Master Boot Record has been modified), which
 Windows 9x raises when it finds INT 13h hooked by code it does not know,
 and with which it runs that disk in MS-DOS compatibility mode.
 
@@ -4649,17 +3568,16 @@ loads `\EFI\Microsoft\Boot\bootmgfw.efi` (or the file it names) by device
 path through `loadops`, the shim-verified path every other launch takes: no
 reset, and no firmware entry needed, which is what a disk moved in from
 another machine or an NVRAM reset leaves. The route's page says, before the
-load, that BitLocker will ask for the recovery key if the volume is sealed:
-a menu row has no room for the sentence, and the page is on screen at the
-moment it becomes true. The image is loaded as an ISO's own loader is
-(12.5.1): through shim's loader when shim enforces, through the firmware's
+load, that BitLocker will ask for the recovery key if the volume is sealed.
+The image is loaded as an ISO's own loader is
+(11.5.1): through shim's loader when shim enforces, through the firmware's
 otherwise, because `bootmgfw.efi` loads `winload.efi` through the firmware
 with its own handle as the parent.
 
 Windows 98, ME, 2000 and XP under UEFI, and legacy under UEFI, are out of
 scope: none of them has a UEFI boot path.
 
-### 13.5 Linux
+### 12.5 Linux
 
 UKIs on a shelf, as Section 5 and the stick's personal OS: the shelf is
 unlocked with an argon2id or pbkdf2 keyslot and the passphrase is handed to the UKI as an
@@ -4670,16 +3588,16 @@ around a 32-bit kernel is a BIOS row like any other. A 64-bit UKI on a
 processor without long mode is refused with a sentence, as the stick refuses
 one.
 
-**DevLink recovery** (decision 2026-09-27) is devlink-rescue's 32-bit kernel
+**DevLink recovery** is devlink-rescue's 32-bit kernel
 and initrd, the image that repository builds as "classic": a RAM-only Linux
-carrying the devlink agent, for a Pentium-class to XP-era machine whose own
+carrying the devlink agent, for an i586 to XP-era machine whose own
 system will not boot, in as little as 32 MB. It is never on an encrypted
 shelf: the machines it is for should not have to unlock anything. On the
 stick it is an ISO in the library (devlink-rescue builds it with isolinux,
 BIOS El Torito only), booted like any ISO; the UEFI loader lists it and
 marks it `{BIOS ONLY}` (7.8), as it marks every ISO with no UEFI boot image
 and no kernel it could start directly. On a
-station it appears only on station-legacy (13.10): a machine modern enough
+station it appears only on station-legacy (12.10): a machine modern enough
 for the plain station boots the stick's ISO from USB, or has no use for it.
 
 Its agent owns COM1, so the direct route recognises the medium (a family of
@@ -4689,7 +3607,7 @@ its own in `media/family.c`, with `owns_serial` set) and appends
 32-bit kernel with no EFI stub has nothing to wrap.
 
 `make test-devlink` (falcon-bios/tools/run-devlink-rig.sh) boots it off the
-rig stick under SeaBIOS on a Pentium with 32 MB, by the direct route and the
+rig stick under SeaBIOS on an i586 with 32 MB, by the direct route and the
 chainload and with both of its entries, and passes when the devlink client
 reaches the agent on COM1 (and, for the serial entry, the kernel log is on
 COM2); under OVMF it checks the `{BIOS ONLY}` row. The direct route boots
@@ -4699,18 +3617,18 @@ on a copy whose `rescue` kernel is renamed away.
 The OS keeps its UKIs up to date the way the personal OS does: the shelf
 mounted at `/efi` and a hook that builds and signs each UKI with the MOK.
 
-### 13.6 memtest86+
+### 12.6 memtest86+
 
 BIOS: `MEMTEST.BIN` in the station partition, any build carrying the x86
-boot protocol header, booted through `linux.c` as jump boots it (Section 14),
+boot protocol header, booted through `linux.c` as jump boots it (Section 13),
 staged and moved when it is fixed at 1 MB: the row `memtest`, route
 `MEM`. UEFI: memtest86+'s `.efi`, signed
-with the MOK by the installer (13.9) as the POS hook signs UKIs, so it boots
-in every Secure Boot state, and loaded as 13.4's `bootmgfw.efi` is, from
+with the MOK by the installer (12.9) as the POS hook signs UKIs, so it boots
+in every Secure Boot state, and loaded as 12.4's `bootmgfw.efi` is, from
 `\EFI\falcon\memtest.efi` on the loader's own ESP (route `MEM`). Its row
 appears only when the file is there.
 
-### 13.7 STATION.INI
+### 12.7 STATION.INI
 
 On the ESP (`\EFI\falcon\STATION.INI`) or in the station partition's root.
 One `[section]` per entry and `[general]` for the rest:
@@ -4734,7 +3652,7 @@ swap = no
 hide = yes
 ```
 
-- A section whose `disk` and `part` match an entry the loader found (13.3)
+- A section whose `disk` and `part` match an entry the loader found (12.3)
   changes that entry (label, hide, order); one that matches nothing adds an
   entry. A section's name is how `default` and the next-boot marker name it.
 - Keys: `disk` (`gpt:<DiskGUID>` or `mbr:<signature>`), `part` (a number;
@@ -4744,11 +3662,11 @@ hide = yes
   `poweroff` (seconds with no key before the machine is powered off, 0
   never, 300 when absent; 7.9);
   `[totp]` is the UEFI station's TOTP check, which has keys of its own
-  (13.15).
-- Strict, as `JUMP.INI` is (Section 14.7): a key it does not know, a value it
+  (12.15).
+- Strict, as `JUMP.INI` is (Section 13.7): a key it does not know, a value it
   cannot parse, a key given twice, or a timeout with no default is an error
-  naming the line, and the result is no default and no countdown. A typo
-  must not become a different default.
+  naming the line, and the result is no default and no countdown, so a typo
+  cannot become a different default.
 - The installer writes the file with a default (the Windows or Linux it
   found) and a five-second timeout, so an unattended reboot, Windows
   Update's included, comes back to that system. With no file the menu
@@ -4775,7 +3693,7 @@ loaders), the first rule that applies:
   efi` would start its `bootmgfw.efi`.
 - UEFI, `efi` alone: that path on the loader's own ESP, a new row unless one
   is there.
-- BIOS, `disk` with `part`: the partition row found there (13.4's chain);
+- BIOS, `disk` with `part`: the partition row found there (12.4's chain);
   else a new one, whose disk and partition are looked for when it is chosen
   (a logical one is refused then, with its sentence). `disk` alone: that
   disk's MBR row, else a new one. `swap = no` turns the drive swap off for
@@ -4797,7 +3715,7 @@ gets no countdown. `order` puts the rows it names first, in its order, and
 Firmware Setup stays last whatever it says. On an error the entries up to
 it still apply.
 
-### 13.8 Next boot
+### 12.8 Next boot
 
 Linux asks for one boot of a given entry with `falcon-boot-mkstick next-boot
 <section>`: on UEFI it sets the `FalconNextBoot` variable, on BIOS it writes
@@ -4806,7 +3724,7 @@ takes it as the stick does, cleared before it is believed and dated on BIOS,
 and boots that entry without the menu. It is how "restart into Windows"
 works from the Linux side.
 
-The value is an entry's name, a section's or a generated one (13.7), hidden
+The value is an entry's name, a section's or a generated one (12.7), hidden
 rows included, since a row hidden from the list may still be one Linux asks
 for. A UKI on the encrypted shelf has no row until the shelf is unlocked, so
 `uki-<stem>` that no row carries is `<stem>.efi` there, behind the prompt:
@@ -4816,7 +3734,7 @@ is a marker set more than ten minutes ago, one the clock could not date,
 and one that would not clear. A boot that comes back lands on the list,
 without the countdown.
 
-### 13.9 The installer
+### 12.9 The installer
 
 `falcon-boot-mkstick station install | remove | status`, the stick maker's
 disk I/O, backups and stage splicing reused.
@@ -4828,7 +3746,7 @@ disk I/O, backups and stage splicing reused.
   0x1C or the falcon type on GPT), its record, stage 3 and the files. It
   writes a signature on any disk the station will name that has none, and
   stamps the shelf it is pointed at (the falcon token, or `/.falcon`). It
-  writes `STATION.INI` from what it found (13.7).
+  writes `STATION.INI` from what it found (12.7).
 - **Backups first.** Everything it will change is copied to a file the user
   keeps before anything is written: LBA 0 through the first partition's
   start, the station partition's first sectors, the ESP's boot sector, the
@@ -4843,55 +3761,52 @@ disk I/O, backups and stage splicing reused.
   the shelf would sit past 8 GB or 128 GiB (Section 3.4).
 - **status** reads the records, the stages and the INI, and says what boots.
 
-It never resizes a filesystem. A tool that shrinks NTFS or ext4 on
-someone's OS disk is a different tool with a different risk, and
-ntfsresize and resize2fs already exist.
+It never resizes a filesystem; ntfsresize and resize2fs do that.
 
-Built (2026-09-27): `falcon-cli/src/mkstick/station.c` (the dispatch, the
-scan, `remove`, `status`), `stationinst.c` (`install`) and `stationcore.c`,
-the host-tested half that decides where and what (free space, the MBR entry
+The code is `falcon-cli/src/mkstick/station.c` (the dispatch, the scan,
+`remove`, `status`), `stationinst.c` (`install`) and `stationcore.c`, the
+host-tested half that decides where and what (free space, the MBR entry
 and its CHS, a boot sector's loader, entry names, the INI, the backup's
-header). The Manual's Section 3.6 is its reference. What the code settled:
+header). The Manual's Section 3.6 is its reference.
 
 - **Where.** The station partition takes the highest free run that holds it,
-  MiB-aligned where the run allows and 4 KiB-aligned where it does not (the
-  A21m's free space ends where its last cylinder did). On MBR it is a
-  primary, `0x1C`, its CHS fields from the geometry the disk's own entries
-  use; the entry is part of LBA 0 and so written last with stage 1. On GPT
-  `sgdisk` adds it, and the `FALCON-BIOS` partition when the disk has none,
-  before anything is formatted. `mkfs.fat` formats it at its offset of the
-  whole disk and mtools writes its files, so nothing is mounted and an
-  image needs no root.
-- **Sector sizes** (2026-09-27). Disks of 512- and 4096-byte sectors, MBR
-  and GPT, as 3.4 has the loaders read them: every count is the disk's own
-  sectors (the free space, the alignment, stage 2 at LBA 34 on GPT and 1 on
-  MBR, the record's sectors, the backup's runs), and `mkfs.fat -S` gives the
-  station partition's FAT the disk's sector, which the BIOS reads its
-  reserved sectors in. FAT32's 65525 clusters of at least one sector make
-  a 4Kn station partition 288 MiB by default and 272 MiB at least, the
-  arithmetic that makes a 4Kn ESP 260 MB. A 4Kn image is written through a
-  loop device with 4096-byte sectors, and a loop device is an image: the
-  machine's other disks are not scanned for it and no firmware entry is
-  read or made.
+  MiB-aligned where the run allows and 4 KiB-aligned where it does not
+  (free space can end where an old disk's last cylinder did). On MBR it is
+  a primary, `0x1C`, its CHS fields from the geometry the disk's own
+  entries use; the entry is part of LBA 0 and so written last with stage 1.
+  On GPT `sgdisk` adds it, and the `FALCON-BIOS` partition when the disk
+  has none, before anything is formatted. `mkfs.fat` formats it at its
+  offset of the whole disk and mtools writes its files, so nothing is
+  mounted and an image needs no root.
+- **Sector sizes.** Disks of 512- and 4096-byte sectors, MBR and GPT, as
+  3.4 has the loaders read them: every count is the disk's own sectors (the
+  free space, the alignment, stage 2 at LBA 34 on GPT and 1 on MBR, the
+  record's sectors, the backup's runs), and `mkfs.fat -S` gives the station
+  partition's FAT the disk's sector, which the BIOS reads its reserved
+  sectors in. FAT32's 65525 clusters of at least one sector make a 4Kn
+  station partition 288 MiB by default and 272 MiB at least, the arithmetic
+  that makes a 4Kn ESP 260 MB. A 4Kn image is written through a loop device
+  with 4096-byte sectors, and a loop device is an image: the machine's
+  other disks are not scanned for it and no firmware entry is read or made.
 - **Two boot records on one disk.** A GPT disk with both stations carries
   the ESP's record (stage 3 and marker 0) and the station partition's.
   The one with a stage 3 is the BIOS one, as the installer and `status`
   take it, and as stage 2's `bootpart_find` does: it passes over a boot
   record whose stage 3 sector is 0, so the ESP, first in the table, is not
   taken for the station partition.
-- **What it finds** is 13.3's rule, run over every disk of the machine (a
+- **What it finds** is 12.3's rule, run over every disk of the machine (a
   block device) or the image and `--also`; the firmware's entries only on
   the machine that booted. `--no-scan` limits a block device to itself, for
   a disk prepared for another machine. A disk the INI names with signature
   0 gets one; two such disks are told apart by which was read, not by the
-  id they share until then.
+  id they share before then.
 - **The INI** has a section only for what the loader chains (a partition, a
   disk's MBR, Windows on an ESP), named by what it is, so a person edits a
   label without looking up a signature; a UKI or firmware entry is named by
   its generated name when it is the default, except a UKI on a LUKS2
   shelf: no row carries `uki-<stem>` before the shelf is unlocked, so that
   default is a `[linux]` section with `uki = <file>`, the row that prompts
-  and boots that file (13.7). Nothing found is a file of one comment line,
+  and boots that file (12.7). Nothing found is a file of one comment line,
   no default and no countdown. It is formatted with
   `stationini_format` and parsed back before it is written.
 - **The backup** is one file for every disk the install touches: a header
@@ -4903,30 +3818,26 @@ header). The Manual's Section 3.6 is its reference. What the code settled:
   until the user deletes it. `--full` writes back everything, which is the
   disk as it was.
 - **The shelf** is stamped through the tools that own its format:
-  `cryptsetup token` (an earlier falcon token removed first) or `debugfs`
-  writing `/.falcon` into the unmounted ext4, and read back with the
-  loaders' code before the install goes on.
+  `cryptsetup token` (any falcon token already there removed first) or
+  `debugfs` writing `/.falcon` into the unmounted ext4, and read back with
+  the loaders' code before the install goes on.
 
-### 13.10 station-legacy
-
-Status (2026-09-27): built and rig-proven on a copy of the A21m's disk
-(13.11, `make test-station-legacy`).
+### 12.10 station-legacy
 
 The BIOS station plus the rows jump offers: **CD drive**, **USB stick**, **CF
 card (PC Card)**, each when its controller is on the PCI bus and its driver
 is in the station partition. The drivers, the reverse thunk, the virtual CD
-and the routes are jump's (Section 14.4-14.6), lifted out of
-`apps/jump/bios_main.c` into a falcon-bios module both link
-(`falcon-bios/src/jump/routes.c`). Jump keeps its floppy and its menu;
+and the routes are jump's (Section 13.4-13.6), in a falcon-bios module both
+link (`falcon-bios/src/jump/routes.c`). Jump keeps its floppy and its menu;
 station-legacy reads the same `*.MOD` files from its station partition
 instead, which `mkstick station install --bios --legacy` copies there. A
 falcon stick found on USB is booted as jump boots it (its own stages, served
 as the next BIOS disk); a CD as the stick's virtual CD serves it; a CF card
-as the next BIOS disk through `PCC.MOD`. The ATA disk driver gained 48-bit
-LBA here (`hw/ata/atadisk.c`, `atacore.c`'s `ata_addressing`): LBA28 for any
+as the next BIOS disk through `PCC.MOD`. The ATA disk driver takes 48-bit
+LBA (`hw/ata/atadisk.c`, `atacore.c`'s `ata_addressing`): LBA28 for any
 transfer it reaches, 48-bit commands for one past sector 0x0FFFFFFE on a
 disk whose IDENTIFY says it takes them, since an IDE disk or CF card in an
-old laptop can be larger than 128 GiB today.
+old laptop can be larger than 128 GiB.
 
 The station itself is one module, `falcon-bios/src/station/station.c`,
 which both station apps run: station-legacy's `bios_main.c` adds its rows
@@ -4939,7 +3850,7 @@ and memtest. Its version type is `station-legacy-release`; its stages 1
 and 2 are every app's, and the installer's `--legacy` takes its stage 3
 (`build/bin/falcon-bios-station-legacy-stage3.bin`).
 
-DevLink recovery (13.5) is a row here and nowhere else on a station: its
+DevLink recovery (12.5) is a row here and nowhere else on a station: its
 kernel and initrd wrapped as a UKI by `falcon-boot-sign uki --bios-only`
 (the kernel has no EFI stub, so the UKI is one only falcon-bios, which
 unwraps it and never runs sd-stub, can start; `make devlink-uki` builds it
@@ -4948,13 +3859,13 @@ recovery"`), in the station partition's `/uki`, read as a plaintext shelf
 (`station_add_own_shelf`) with no prompt, the row labelled by its
 `.osrel` name alone.
 
-The first target is the ThinkPad A21m: Windows 2000 on its only disk, and the
-CD, USB and CF routes jump already boots on it.
+The machine it is shaped for is the ThinkPad A21m: Windows 2000 on its only
+disk, a Pentium III with no TPM, and a CD drive, USB and a PC Card slot its
+BIOS cannot boot from.
 
-### 13.11 The rig
+### 12.11 The rig
 
-Every cell of docs/notes/station-rework.md section 6 has a rig case before
-the build is called done.
+Every cell of the station matrix has a rig case.
 
 The UEFI station's are `make test-station-uefi`
 (`falcon-efi/tools/run-station-rig.sh`), each under OVMF with Secure Boot
@@ -5034,13 +3945,13 @@ A21m's disk:
   the backing file of a qcow2 overlay grown for the station partition and
   presented by `qemu-nbd` to `mkstick station install --bios`, each boot a
   throwaway overlay on that, on the machine the fixture was verified on
-  (i440fx, a Pentium II, 128 MB, TCG). Every system twice: as the station's
+  (i440fx, an i686, 128 MB, TCG). Every system twice: as the station's
   own disk, its default found and counted down to, and as a second disk
   behind the drive swap, given to the installer with `--also`. FreeDOS 1.4
   reaches `C:\>` both ways and by its own MBR behind the swap, judged from
   VGA text; Windows 98 SE reaches its desktop both ways, judged by the
-  taskbar in a screendump (13.4 has what it says behind the swap). Windows
-  95 OSR2's cases skip until `win95.img` exists.
+  taskbar in a screendump (12.4 has what it says behind the swap). Windows
+  95 OSR2's cases skip when `win95.img` is absent.
 - **A copy of the A21m's disk image** (Windows 2000 SP4, MBR, NTFS at 63)
   with the station installed on it by the installer: a qcow2 overlay of the
   image, presented by `qemu-nbd` for ntfsresize, sfdisk and the installer
@@ -5055,15 +3966,14 @@ A21m's disk:
   installer's shrink clears the dirty flag ntfsresize sets (`ntfsfix -d`),
   so a boot is not a CHKDSK and a reboot. The station's countdown boots its
   default through the partition chain to NTLDR, the Windows 2000 splash and
-  its desktop, where the first boot opens the Found New Hardware wizard
-  (2026-09-27).
-- **A machine whose tick count stands still** (`no-ticks`): once Windows
-  2000 had reset the rig's machine, SeaBIOS answered every INT 16h with
-  interrupts off and IRQ0 stayed pending, so the tick count at 0040:006C
-  never moved and a countdown timed by it stood at five seconds for good.
-  The countdown now takes whichever of the ticks and the RTC's seconds
-  (INT 1Ah) says more time has gone (`console/cdclock.c`, host-tested). The
-  case boots the station through a floppy that masks IRQ0 first
+  its desktop, where the first boot opens the Found New Hardware wizard.
+- **A machine whose tick count stands still** (`no-ticks`): a machine can
+  reach the menu with IRQ0 never delivered (under SeaBIOS, after Windows
+  2000 has reset the machine, every INT 16h is answered with interrupts off
+  and IRQ0 stays pending), so the tick count at 0040:006C never moves. The
+  countdown takes whichever of the ticks and the RTC's seconds (INT 1Ah)
+  says more time has gone (`console/cdclock.c`, host-tested). The case
+  boots the station through a floppy that masks IRQ0 first
   (`falcon-bios/tools/tickstop.S`) and expects the default to boot.
 - **station-legacy on a copy of the A21m's disk** (`make
   test-station-legacy`, `falcon-bios/tools/run-legacy-rig.sh`): installed
@@ -5071,71 +3981,45 @@ A21m's disk:
   and memtest86+ through the same qcow2 overlay path
   (`A21M_DIR=build/a21m-legacy`), each boot a throwaway overlay, the PIIX4
   machine. Each case stops the countdown and takes its row with keys sent
-  through the monitor, the rows' order read off serial. The cases
-  (2026-09-27): the menu with every device attached (Windows, CD drive,
-  CF card, USB stick, DevLink recovery, memtest); the rig's memprobe disc
-  in an IDE ATAPI drive on the secondary channel, booted and reporting its
-  memory map; the jump rig's falcon stick on UHCI, OHCI and EHCI, its own
-  stages off the drive the thunk serves and its library mounted; a CF card
-  in the rig's PC Card bridge, 5 V and 3.3 V-only, its stage 3 off drive
-  0x81; DevLink recovery on `-cpu pentium -m 32`, the devlink client
-  reaching its agent on COM1; and Windows 2000 through the partition chain
-  to its splash and desktop, judged from screendumps.
+  through the monitor, the rows' order read off serial. The cases: the
+  menu with every device attached (Windows, CD drive, CF card, USB stick,
+  DevLink recovery, memtest); the rig's memprobe disc in an IDE ATAPI drive
+  on the secondary channel, booted and reporting its memory map; the jump
+  rig's falcon stick on UHCI, OHCI and EHCI, its own stages off the drive
+  the thunk serves and its library mounted; a CF card in the rig's PC Card
+  bridge, 5 V and 3.3 V-only, its stage 3 off drive 0x81; DevLink recovery
+  on `-cpu pentium -m 32`, the devlink client reaching its agent on COM1;
+  and Windows 2000 through the partition chain to its splash and desktop,
+  judged from screendumps.
 - **The installer on images** (`make test-station-install`): an MBR disk of
   the A21m's shape with a Windows 98 second disk and a LUKS2 shelf, a GPT
   disk with an ESP, Windows and a plaintext shelf; install, status, remove,
   and `remove --full` back to the original bytes. `status` shows each list
   as the loader builds it, through `media/strows.c`, in the loaders' words.
 
-Still to be written:
+The rigs have no case for Windows XP behind the BIOS station, Windows on a
+second disk of a GPT BIOS station, or Windows 7-11 beside a station on an
+MBR disk under UEFI.
 
-- **Windows 95 OSR2**, once there is a key to install it with, and
-  **Windows XP** behind the BIOS station.
-- **Windows on a second disk of a GPT BIOS station**, and Windows 7-11 on
-  an MBR disk under UEFI (the station on MBR is rigged, Windows beside it
-  is not).
+### 12.12 Constraints
 
-### 13.12 Considered and rejected
+The constraints the station keeps:
 
-Reversed on 2026-09-26, each for the new scope's reason:
+- An unattended reboot comes back to its system: `STATION.INI` sets a
+  default and a timeout, and lives on the ESP or the station partition,
+  never on the sealed shelf.
+- The installer uses free space only, backs up everything before writing,
+  has a remove, and never resizes a filesystem (12.9).
+- BIOS chains swap the chained disk to 0x80 by default (12.4).
+- On UEFI, Windows boots through its firmware entry by default;
+  `bootmgfw.efi` is chainloaded only per entry (12.4).
+- The station is its own build, not a runtime option on the stick's loader
+  (12.1).
+- A disk with no record is never probed for a shelf (Section 3.1), so a
+  plugged-in stick's shelf cannot stand in for a station's.
+- Sticks are GPT; only stations meet MBR disks.
 
-- *"A config file for a default and a timeout"* (rejected 2026-09-21: a
-  default matters only when nobody is there, and the personal OS needs a
-  person). The station now boots Windows and memtest, which need nobody,
-  and an unattended reboot has to come back to its system. `STATION.INI`
-  lives on the ESP or the station partition, never on the sealed shelf.
-- *"An `mkstick install` mode"* (deferred). The station replaces a machine's
-  boot loader; a hand procedure that starts with `sgdisk -Z` is not how that
-  is done. The installer's answer to "a tool trusted with a disk it did not
-  create" is 13.9: free space only, everything backed up first, a remove.
-- *"A drive swap for BIOS chains by default"* (deferred until measured).
-  DOS, Windows 9x and `NTLDR` are now in scope and all need 0x80.
-- *"Chainloading bootmgfw by default"* stays rejected; per entry it is 13.4.
-
-Still rejected:
-
-- **A runtime option on the stick's loader** (13.1).
-- **Resizing filesystems in the installer** (13.9).
-- **A probe-everything fallback for a disk with no record** (Section 3.1). It
-  is what let a plugged-in stick's shelf stand in for a station's.
-- **MBR sticks.** Sticks stay GPT; only stations meet MBR disks.
-
-### 13.13 Build order
-
-1. **Core** (docs/notes/station-rework.md decisions 1-9, 15, 16, 20-22): the
-   partition reader for both tables, identity records and install IDs, 4Kn,
-   the single BIOS layout with stage 3 and the marker found by record, stage
-   1's CHS path, the stick and jump moved onto it, the extent map and the
-   appliance keyed by install ID, the corpus sticks carrying their own
-   stages, the 32-bit stick's tooling removed. Both sticks rewritten.
-2. **The station**, UEFI and BIOS, with the installer, `STATION.INI`, the
-   partition chain, the drive swap and next boot.
-3. **station-legacy**, installed on the A21m (built and rig-proven
-   2026-09-27, 13.10).
-
-Each is merged and rig-proven before the next starts.
-
-### 13.14 Updating a station
+### 12.14 Updating a station
 
 There are two ways, and neither reinstalls. `mkstick update` runs on Linux
 beside a build and updates both halves of a station, and a stick too. The
@@ -5155,14 +4039,14 @@ brings each half to the loaders in `--from` (default `build/bin`):
   partition carries any `*.MOD`. It is found by stage 2's own rule
   (`records_bios_boot`, `falcon-bios/src/disk/bootpart.c`): an ESP's UEFI
   station record carries stage 3 at 0, so on a disk with both stations
-  the first boot record is the ESP's, and `mkstick bios`, `next-boot` and
-  status went there before this rule was theirs too.
+  the first boot record is the ESP's. `mkstick bios`, `next-boot` and
+  `status` find it by the same rule.
 - *a UEFI station*: an ESP carrying the install's record with a loader in
   `\EFI\falcon`.
 - *both*: both halves. Any other disk is refused, and so is one whose
   partitions it writes are mounted.
 
-The BIOS half is `mkstick bios`'s install called in process (13.9's
+The BIOS half is `mkstick bios`'s install called in process (12.9's
 layout, every sector saved to `--backup-dir` first, LBA 0 last), then
 stage 3 read back and compared. `mkstick bios` knows a `FALCON-BIOS`
 reservation by its name in any slot: the installer makes it in whatever
@@ -5183,7 +4067,7 @@ written with mtools and read back.
 
 A pending next-boot marker is cleared, since the stages are written as
 `mkstick bios` writes them. A UEFI station with `[totp]` is resealed in
-the same run (13.15). `make test-core`'s `update-*` cases age a stick and
+the same run (12.15). `make test-core`'s `update-*` cases age a stick and
 a station (a stand-in over the loader, stage 3's header zeroed), update
 them and boot each under OVMF with Secure Boot and under SeaBIOS; the
 refusal case checks a blank disk is left as it was.
@@ -5204,7 +4088,7 @@ its boot record (`mkstick ident`), refuses a boot partition with no
 `STATION.INI` (a falcon stick's), says what it will write and what it
 keeps, asks, and then:
 
-- rewrites the stages with the bundle's `mkstick bios` (13.9's stage
+- rewrites the stages with the bundle's `mkstick bios` (12.9's stage
   layout, found by record, every sector it overwrites saved to a backup
   beside the bundle first, LBA 0 last), with station-legacy's stage 3 when
   the station partition carries any `*.MOD` and the plain station's
@@ -5220,9 +4104,9 @@ backup>`, or the previous version's bundle.
 The bundle brings its own mkstick so that the machine needs only `sh`,
 `tar`, `sha256sum` and mtools, which DevLink recovery has, and so that a
 falcon whose update steps change brings the tool that knows them. The
-recovery image (13.5) changes only when what is around devlink does:
+recovery image (12.5) changes only when what is around devlink does:
 devlink updates itself in place. A bundle is BIOS only: the UEFI station's
-loader is signed with the MOK (13.9), which a machine being updated does not
+loader is signed with the MOK (12.9), which a machine being updated does not
 hold. A bundle is not signed: the manifest catches a damaged copy, and on a
 BIOS machine, which enforces nothing, a signature would guard only the
 transfer. `make test-station-bundle` (`falcon-bios/tools/run-bundle-rig.sh`)
@@ -5237,37 +4121,30 @@ From DevLink recovery:
 (`gunzip | tar`, since busybox's tar may be built without `-z`.) The
 bundle is built in the harness container: its mkstick is static, so it
 carries its libc's code, and a libc built for the build host's processor
-gives a program the machine cannot run. The A21m took #UD on the first
-instruction of a mkstick linked against Gentoo's `-march=znver3` glibc;
-`make station-bundle` now runs `tools/check-floor.sh --userland` on it,
-which refuses SSE2 and later outside CPUID-dispatched code. The same
-mkstick then found no boot record on the A21m: built without
-`_FILE_OFFSET_BITS=64`, a 32-bit glibc's `off_t` stops at 2 GiB and the
-station partition starts at 9.99 GB. The 32-bit build defines it. And
-recovery's mtools, also 32-bit, wraps an `@@offset` past 4 GiB, so on a
-disk `update.sh` hands mtools the station partition's own node (checked
-against sysfs's start for it) and keeps `@@offset` for image files. The
-rig's disk is a sparse 12 GiB with the station partition past 4 GiB,
-updated through a loop device's partition node.
+gives a program an older machine cannot run. `make station-bundle` runs
+`tools/check-floor.sh --userland` on it, which refuses SSE2 and later
+outside CPUID-dispatched code. The 32-bit build defines
+`_FILE_OFFSET_BITS=64`, since a 32-bit glibc's `off_t` otherwise stops at
+2 GiB and a station partition can start past it. Recovery's mtools, also
+32-bit, wraps an `@@offset` past 4 GiB, so on a disk `update.sh` hands
+mtools the station partition's own node (checked against sysfs's start for
+it) and keeps `@@offset` for image files. The rig's disk is a sparse 12 GiB
+with the station partition past 4 GiB, updated through a loop device's
+partition node.
 
-### 13.15 The TOTP check (decided 2026-09-28)
+### 12.15 The TOTP check
 
-Status (2026-09-28): built for the UEFI station and rig-proven under OVMF
-with swtpm as a TPM 2.0 and a TPM 1.2, Secure Boot off and on (`make
-test-tpm-rig`, the `totp` cases). Unmeasured on hardware. Not in
-falcon-bios; `docs/notes/argon2-totp.md` Section 2 has the reasons and the
-settled details below.
+The TOTP check is the UEFI station's; falcon-bios has none. `make
+test-tpm-rig` runs it under OVMF with swtpm as a TPM 2.0 and a TPM 1.2,
+Secure Boot off and on.
 
-**What it is for.** The personal OS's passphrase is typed into the
-station's own prompt, so a check that the machine was not tampered with
-has to come before that prompt, and only the station can show one. Reading
-the PCRs and comparing them proves nothing, since a tampered firmware
-reports what it likes. What firmware cannot do is make the TPM release a
-secret sealed to values it never measured. So the seed of an RFC 6238 code
-is sealed to the PCRs of a known-good boot, the station asks the TPM for
-it and shows the code, and the user compares it with an authenticator
-before typing. A label, like the boot predictions (7.8): the station boots
-on whatever the TPM says, enforces nothing and signs nothing.
+**What it is for.** The seed of an RFC 6238 code is sealed to the PCRs of
+a known-good boot; the station asks the TPM for it before the personal OS's
+passphrase prompt and shows the code, and the user compares it with an
+authenticator before typing. A PCR read alone proves nothing, since a
+tampered firmware reports what it likes, but it cannot make the TPM release
+a secret sealed to values it never measured. A label, like the boot
+predictions (7.8): the station boots whatever the TPM answers.
 
 **STATION.INI.** Enrollment writes a `[totp]` section, and the station
 does nothing without one:
@@ -5332,18 +4209,17 @@ release the seed, the same places say why instead:
 in `totp.c`'s static memory until another program is about to run: the
 ESP and MEM routes' handover, the UKI's StartImage (pos.c's second hook),
 `BootNext` and the firmware-setup reset, and the return to firmware all
-wipe it first. Reading once is not a saving but a necessity: anything the
-station loads extends PCR 4 whether it then runs or not, and a second read
-after that would be refused as a changed boot. Keeping it past a handover
-would leave it in memory the next program can read. A menu that comes back
+wipe it first. It is read once because anything the station loads extends
+PCR 4 whether it then runs or not, and a later read would be refused as a
+changed boot. A menu that comes back
 after a program ran says "The TOTP code is shown again after a restart."
 
 **Enrollment.** `mkstick station totp enroll <disk> [--pcrs 0,2,4,7]
 [--owner-auth-file F] [--label NAME]`, run on the station's machine from a
 system the station started, over `/dev/tpmrm0` (2.0) or `/dev/tpm0` (1.2)
 with the same `tpm/` code. The PCR values to seal to are not the ones the
-TPM holds when Linux runs: the station has since loaded a UKI (PCR 4) and
-shim has logged the key that verified it (PCR 7). They come from the
+TPM holds when Linux runs: by then the station has loaded a UKI (PCR 4)
+and shim has logged the key that verified it (PCR 7). They come from the
 firmware's event log (securityfs), replayed up to the event that measured
 the station's own image, found by the Authenticode hash of
 `\EFI\falcon\grubx64.efi` in the log's bank (`tpm/evlog.c`,
@@ -5358,7 +4234,7 @@ mount when the ESP is mounted, mtools when it is not), and the secret is
 printed once, as base32 and an `otpauth://totp/falcon-station:<name>` URI,
 and as a QR code when `qrencode` is installed.
 
-**Two logs.** coreboot with an edk2 payload and a TPM 1.2 (the T430) keeps
+**Two logs.** coreboot with an edk2 payload and a TPM 1.2 keeps
 two event logs, one per ACPI TCPA table: coreboot's, PCR 2 alone, which is
 the one Linux reads, and edk2's, which holds PCRs 0 to 7's separators, the
 images in PCR 4, the GPT and boot variables in PCR 5, and the authority in
@@ -5384,7 +4260,7 @@ extends after the menu, 0 to 3 and 6 (a later load moves PCR 4 and 7,
 ExitBootServices PCR 5), which also shows the record and Linux's log to be
 of this boot. The variable is writable by root, as the files enrollment
 reads are; root at enrollment already sees the seed. Without the record
-(an older station, a TPM 2.0), enrollment is the one-log path above.
+(no `FalconEvLog`, as on a TPM 2.0), enrollment is the one-log path above.
 
 The owner authorises every NV operation (7.5's rule, one secret the user
 already holds): `--owner-auth-file` is the file's bytes on 2.0, and on 1.2
@@ -5401,9 +4277,9 @@ tries a command the TPM answers with `TPM_RETRY`, `TPM_NEEDS_SELFTEST` or
 `TPM_DOING_SELFTEST` again every 100 ms for three seconds. A firmware that
 sends `TPM_Startup` alone leaves the tests that cover RSA deferred, so
 EstablishTransport, the first command needing them, is refused with
-`TPM_NEEDS_SELFTEST` (the T430's coreboot and edk2, 2026-09-29). Linux's
-driver sends the command itself, which is why enrollment and `check` never
-see it, and OVMF sends it, which is why the TPM rig did not.
+`TPM_NEEDS_SELFTEST` (coreboot with edk2 does this). Linux's driver sends
+the command itself, so enrollment and `check` never meet it, and so does
+OVMF, so the TPM rig does not either.
 
 `check` is the station's read run from the OS: it must end in the PCR
 refusal, since the OS's PCRs are not the station's, and any other answer
@@ -5415,7 +4291,7 @@ station update: the old seed cannot be read back from the OS, whose PCRs
 are not the station's, so a new one is made and the authenticator's entry
 replaced. `remove` deletes the index as the owner and the section.
 
-`mkstick update` (13.14) reseals before the reboot rather than after it.
+`mkstick update` (12.14) reseals before the reboot rather than after it.
 The new loader changes one event, the station's own image in PCR 4, so the
 replay that predicts the station's PCRs is run with the old loader's
 Authenticode digest replaced by the new one's there
@@ -5423,7 +4299,8 @@ Authenticode digest replaced by the new one's there
 they are and then replays them with the substitution). The certificate
 is the same, so PCR 7's authority event does not move. A reseal that fails
 leaves the loader written and says to run `reseal` from the updated
-system; until then the station warns instead of showing a code.
+system; the station shows the warning in place of a code until it is
+resealed.
 
 **The rig.** `falcon-efi/tools/run-tpm-rig.sh`'s `totp` cases boot the
 station disk four times over one swtpm state with the guest clock pinned:
@@ -5437,107 +4314,61 @@ code once the probe has run, and the prompt page shows it; then the other
 OVMF build, which moves PCR 0 as a firmware update does, brings the
 warning, and the station still boots its default.
 
-Considered and rejected:
-
-- *Sealing to the PCRs as mkstick reads them.* Wrong for PCR 4 and 7 on
-  every machine: the OS runs after the station's own loads.
-- *Reading the seed every thirty seconds.* The first load after the first
-  read moves PCR 4, and the TPM rightly refuses every read after it.
-- *The TPM's GetRandom as the session's randomness.* An interposer reads
-  it and derives the salt.
-- *A check that refuses to boot.* Enforcement is the platform's (7.2); the
-  station has no business deciding what the user may start.
-- *Keeping a copy of the seed for reseal.* Anything sealed on disk has to
-  be kept in step with the TPM, and anything readable from the OS is
-  readable by what the check is for.
-
-## 14. falcon jump: a boot floppy (decided 2026-09-25)
-
-Status (2026-09-26): steps 1 to 6 of 14.11 are built and rig-proven under
-SeaBIOS (`make jump`, `make test-jump`): the floppy, its CHS boot sector,
-`MBR`, `MEM` and `JUMP.INI`; the module format, the reverse thunk,
-`ATA.MOD` and `CDR`, which boots the Arch Linux ISO from an IDE CD to its
-login prompt, and a floppy-emulation disc; `EHCI.MOD`, `UHCI.MOD`,
-`OHCI.MOD` and `USB`, which boots a falcon stick's own falcon-bios off a
-UHCI, OHCI or (high speed) EHCI port, on any of up to four controllers of
-each kind; and `PCC.MOD` and `PCC`, which boots a CompactFlash card in a PC
-Card slot as a disk, proven against the rig's model of the A21m's TI
-PCI-1450 (14.9). Section 12.6 draws it. Not provable in the rig: EHCI
-handing a full-speed stick to its companion, since QEMU's EHCI enables such
-a device itself where the silicon does not; and anything the real bridge
-does that the model does not. Disks the BIOS cannot see are the design
-below.
-
-Measured on the ThinkPad A21m (2026-09-26): `MBR` to its Windows 2000, `MEM`
-to memtest86+ running, and
-`CDR` to a Windows install disc through Setup, from the countdown stopped
-by a key; `ATA.MOD` found the UJDA310 and served
-the no-emulation disc as drive 0xE0. `PCC` from the countdown too, to a
-2 GB SanDisk CompactFlash card in a CF adapter in the first slot of the
-A21m's PCI-1450: its falcon-bios read its stages off the card as drive
-0x81. The card takes only 3.3 V, and the bridge powers it only when the
-socket control register and the ExCA power register's VCC field both ask
-for 3.3 V (the rig's model now does the same, and `cf3v` is that card).
-And `USB`, to the 128 GB 32-bit stick on the A21m's UHCI (USB 1.1): its
-stages loaded as drive 0x81 through `UHCI.MOD`, and its falcon-bios
-mounted p2 and listed its ISOs. Every route of 14.1 is measured on the
-A21m.
+## 13. falcon jump: a boot floppy
 
 A floppy that lives in the drive of an old BIOS machine and is its boot
 manager. It boots the machine's own disks by default, memtest86+ on request,
-and on a key press the two things such a BIOS cannot boot on its own: a CD
-in an IDE drive, and a falcon stick in a USB port. It is a third loader app
-beside the stick and the station, built from falcon-bios's modules plus the
-drivers this section adds.
+and on a key press the things such a BIOS cannot boot on its own: a CD in an
+IDE drive, a falcon stick in a USB port, and a CompactFlash card in a PC
+Card slot. It is a third loader app beside the stick and the station, built
+from falcon-bios's modules plus the drivers this section adds. `make jump`
+builds it and `make test-jump` boots every route under SeaBIOS (13.9);
+Section 11.6 draws it.
 
-Section 7's invariants are untouched: jump holds no key and signs nothing,
-and a BIOS has no enforcement for it to relax.
-
-### 14.1 What it boots, and what it does not
+### 13.1 What it boots, and what it does not
 
 | Code | Route | Needs |
 |---|---|---|
-| `MBR` | a disk the BIOS already sees, its own boot code at 0x7C00 (13.4's route, `mbr.c`) | nothing loaded |
+| `MBR` | a disk the BIOS already sees, its own boot code at 0x7C00 (12.4's route, `mbr.c`) | nothing loaded |
 | `MEM` | memtest86+ off the floppy, through the x86 boot protocol (`linux.c`) | nothing loaded |
 | `CDR` | the CD in an IDE drive, El Torito no-emulation or floppy emulation | `ATA.MOD`, resident |
-| `USB` | a falcon stick in a USB port, as drive 0x80 | a host controller module (`EHCI.MOD`, `UHCI.MOD` or `OHCI.MOD`), resident |
+| `USB` | a falcon stick in a USB port, as the next BIOS disk | a host controller module (`EHCI.MOD`, `UHCI.MOD` or `OHCI.MOD`), resident |
 | `PCC` | a CompactFlash card in a PC Card slot (a CF-to-PC Card adapter), as a disk | `PCC.MOD`, resident |
 
-Not in scope, and why:
+Not in scope:
 
-- **ISOs and disk images.** falcon-boot on a stick does that, and jump's
-  `USB` route is how an old machine gets to it. A second implementation
-  in jump would be two places to fix every ISO bug.
+- **ISOs and disk images.** falcon-boot on a stick does that, reached
+  through jump's `USB` route.
 - **Other USB sticks.** The resident serves any mass-storage device; the
   menu offers only falcon sticks (their GPT carries falcon's partition
-  identities, `part/`). Widened when a need turns up, not before.
+  identities, `part/`).
 - **Hard-disk emulation CDs** (El Torito media type 4). The image can be
   hundreds of MB, so it cannot be copied into memory as a floppy image is,
-  and streaming it needs a resident the MVP's CD route does not. They are
-  rare. Refused with a sentence.
+  and the CD route has no resident that streams it. Refused with a
+  sentence.
 - **Disks the BIOS cannot see** (an add-in controller with no option ROM, a
-  disk past an old BIOS's size limit). The MVP boots the disks INT 13h
-  already has; `ATA.MOD` serving them is the same resident as `PCC`, and
-  comes with it.
+  disk past an old BIOS's size limit). jump boots the disks INT 13h already
+  has.
 - **USB keyboards.** PS/2 only. Taking a USB controller from the BIOS ends
   its legacy keyboard emulation, on EHCI for the companion controllers too,
-  so a USB keyboard would need a HID driver in jump to keep working.
+  so a USB keyboard would need a HID driver in jump.
 
-### 14.2 Speed: why nothing loads until it is needed
+No route serves a disk on an IDE channel the BIOS does not boot.
 
-The tool this replaces (Plop) enumerates every controller and device at
-every boot, and USB enumeration is slow by specification: at least 50 ms of
-port reset per port, 100 ms for a device to settle, and taking EHCI from
-the BIOS's SMI handler on top. Paid at every boot, it is the delay.
+### 13.2 Speed: why nothing loads until it is needed
+
+USB enumeration is slow by specification: at least 50 ms of port reset per
+port, 100 ms for a device to settle, and taking EHCI from the BIOS's SMI
+handler on top.
 
 A floppy reads at roughly 30-50 KB/s. So the core is small (screen, a PCI
 class scan, the menu, the INI) and is on screen in about a second; the
-default route loads nothing more at all. A driver is read off the floppy
-only when its route is chosen, and only for a controller the PCI scan found
+default route loads nothing more. A driver is read off the floppy only
+when its route is chosen, and only for a controller the PCI scan found
 (class 0x0C03 prog-if 0x00/0x10/0x20 for UHCI/OHCI/EHCI, 0x0101 for IDE).
 USB is enumerated only after the key that asks for it.
 
-### 14.3 The floppy
+### 13.3 The floppy
 
 A 1.44 MB FAT12 volume, so it mounts in Linux and its files are replaced
 with `mcopy` or `cp`:
@@ -5546,113 +4377,94 @@ with `mcopy` or `cp`:
 |---|---|
 | sector 0 | the boot sector: the BPB, then the stage 1 that reads the reserved sectors |
 | reserved sectors | stage 2 (falcon-bios's, unchanged) and jump's stage 3, the core, padded so the root directory starts a track |
-| `JUMP.INI` | optional, 14.7 |
+| `JUMP.INI` | optional, 13.7 |
 | `MEMTEST.BIN` | memtest86+, any build carrying the x86 boot protocol header |
-| `*.MOD` | the drivers, 14.4 |
+| `*.MOD` | the drivers, 13.4 |
 
 The core goes in the reserved sectors (the BPB's reserved-sector count is
 raised to cover it) rather than in a file, so the boot sector reads one
-fixed range and parses no filesystem. FAT12 in 512 bytes of assembly is
-possible (DOS does it), and is the kind of decision
-docs/notes/bios-route.md Section 5.3 keeps out of assembly. Everything
-after the core is read as files, through falcon-core's `fat.c`.
+fixed range and parses no filesystem.
+Everything after the core is read as files, through falcon-core's `fat.c`.
 
-**The floppy is the layout every install has (decision 2026-09-26).** Section
-3.3 made this arrangement, stage 3 in a FAT volume's reserved sectors, the
-BIOS layout of the stick and the station too. The floppy's boot sector
-carries a `boot` identity record at 0x1DC (Section 3.1), and stage 2 finds
-stage 3 by it as it does on a disk; the floppy is a volume with no
-partition table in front of it. The USB route recognises a falcon stick by
-its records rather than its GPT roles.
+**The floppy is the layout every install has.** Stage 3 in a FAT volume's
+reserved sectors is the BIOS layout of the stick and the station too
+(Section 3.3). The floppy's boot sector carries a `boot` identity record at
+0x1DC (Section 3.1), and stage 2 finds stage 3 by it as it does on a disk;
+the floppy is a volume with no partition table in front of it. The USB
+route recognises a falcon stick by its records rather than its GPT roles.
 
 **CHS, not LBA.** A BIOS's floppy support rarely answers INT 13h AH=41h/42h,
 so jump's stage 1 reads by AH=02h with the geometry from the BPB, three
 tries with a reset between (a drive's motor spins up on the first). Stage 2
-is the stick's; what changes in shared code is that `load3.c` and `disk.c`
-gain a CHS path, taken when AH=41h says the boot drive has no extensions.
-That is the one change jump makes outside its own files. The arithmetic is
-`vfd/vfdcore.c`'s, which already had it for the emulated floppy: a real
-floppy's geometry is the same shape, read from AH=08h
-(`vfd_geometry_int13`) rather than from a media type.
+is the stick's; `load3.c` and `disk.c` take a CHS path when AH=41h says the
+boot drive has no extensions. The arithmetic is `vfd/vfdcore.c`'s: a real
+floppy's geometry is read from AH=08h (`vfd_geometry_int13`) rather than
+from a media type.
 
 On a floppy every read call waits half a revolution (about 100 ms) for its
-first sector, whatever it asks for, so the calls are what cost. The boot
-sector reads only stage 2's real length, which the build writes into it
-(`FD_S2_SECTORS_OFF`), not the 64 sectors the stick reserves. A read that
-ends before its track does fills a track cache instead (`disk.c`,
-`TRACK_CACHE_ADDR`), so a FAT walk's single sectors and stage 3's header
-cost one revolution per track rather than one each. Measured on the
-ThinkPad A21m (2026-09-26), stage 1 to the menu: 7.3 s before these, 5.8 s
-after; of what remains, stage 3's 73 KB was 2.8 s, which only reading fewer
-bytes shortens.
+first sector, so the calls are what cost. The boot sector reads only stage
+2's real length, which the build writes into it (`FD_S2_SECTORS_OFF`), not
+the 64 sectors the stick reserves. A read that ends before its track does
+fills a track cache instead (`disk.c`, `TRACK_CACHE_ADDR`), so a FAT walk's
+single sectors and stage 3's header cost one revolution per track rather
+than one each.
 
-Those seconds were a blinking cursor: stage 1 and stage 2 log to serial
-only, and the screen is stage 3's. Stage 2 now puts one line on it,
-`falcon-boot: loading` and a `/-\|` spinner turned a step for every read
-call that returns (`bios_disk_on_call`), a track on a floppy and a 32 KB
-bounce buffer on anything AH=42h reads; teletype, screen only, the cursor
-column from the BDA so it starts on a line of its own. Stage 3 clears it
-with its first page, and a fatal before then is written under it. Every
-BIOS medium has it; only on a floppy is it there long enough to see. The
-jump rig's `s3crc` case reads the line and the fatal off VGA text memory.
-Seen on the A21m (2026-09-30).
+Stage 1 and stage 2 log to serial only, and the screen is stage 3's, so
+stage 2 puts one line on it: `falcon-boot: loading` and a `/-\|` spinner
+turned a step for every read call that returns (`bios_disk_on_call`), a
+track on a floppy and a 32 KB bounce buffer on anything AH=42h reads;
+teletype, screen only, the cursor column from the BDA so it starts on a
+line of its own. Stage 3 clears it with its first page, and a fatal before
+then is written under it. Every BIOS medium has it. The jump rig's `s3crc`
+case reads the line and the fatal off VGA text memory.
 
-So stage 3 is on the floppy compressed: a "BOSZ" header and a gzip member
+Stage 3 is on the floppy compressed: a "BOSZ" header and a gzip member
 of the whole ordinary stage 3 (`falcon-bios/tools/mk-stage3z.sh`, `gzip -9
 -n`), 37 KB in place of 73. Stage 2 reads it to 6 MB and inflates it to
 where stage 3 always runs (`load3.c`, falcon-core's `gz/`, written from
 RFCs 1951 and 1952 with no allocation and no .bss, since stage 2 has no
-loader to clear one), then checks it as it checks any stage 3. Deflate,
-not LZ4 (44 KB, a smaller decoder) nor LZMA (34 KB, a decoder twice the
-size): at a floppy's rate the decoder is read on every boot too, and
-deflate's 4 KB in stage 2 buys back the most. The gzip member's CRC-32 and
-length cover the inflated stage 3, so a floppy that reads wrong stops with
-a sentence instead of running what it read. Every app's stage 3 is stored
-this way, the stick's and the station's too (`bios_app` in
-`falcon-bios/build.mk` packs each one), and it is the only form stage 2
-loads: every build gets the check, and the stick's stage 3 is 197 KB to
-read instead of 429 KB, which on USB 1.1 is most of stage 2's time.
+loader to clear one), then checks it as it checks any stage 3. The decoder
+is read on every boot too, and is 4 KB of stage 2. The gzip member's CRC-32
+and length cover the inflated stage 3, so a floppy that reads wrong stops
+with a sentence. Every app's stage 3 is stored this way, the stick's and
+the station's too (`bios_app` in `falcon-bios/build.mk` packs each one),
+and it is the only form stage 2 loads; the stick's stage 3 is 197 KB to
+read instead of 429 KB.
 
 What stage 3 reads before its menu is laid out to cost one revolution.
 Stage 3 needs three things off the floppy: the BPB in sector 0, the root
 directory (JUMP.INI, and which of MEMTEST.BIN and the modules are there),
-and JUMP.INI's cluster. Read where mformat puts them by default they are
-three tracks, each a seek and a revolution: 1.2 s on the A21m between stage
-3 starting and its PCI scan. Sector 0 is not read at all: the BIOS put it
-at 0x7C00, and nothing writes there before a route starts, so the floppy's
-read callback in `bios_main.c` answers it from memory. The build pads the
-reserved sectors until the root directory starts a track (`app.mk` formats,
-reads the FAT's length back, and formats again), and copies JUMP.INI first,
-so its one cluster is the first after the root directory and in the same
-track. The FAT itself is not read for a file of one cluster. Measured on the
-A21m, stage 1 to the menu: 3.7 s with stage 3 compressed, 2.9 s with this
-(stage 3's start to its PCI scan, 1.2 s to 0.4 s). What remains is stage 2
-(0.7 s) and stage 3 (1.5 s), which are bytes. A JUMP.INI edited on the
-floppy later may be given another cluster, and costs one more track; the
-file still reads.
+and JUMP.INI's cluster. Where mformat puts them by default they are three
+tracks, each a seek and a revolution. Sector 0 is not read at all: the BIOS
+put it at 0x7C00, and nothing writes there before a route starts, so the
+floppy's read callback in `bios_main.c` answers it from memory. The build
+pads the reserved sectors until the root directory starts a track (`app.mk`
+formats, reads the FAT's length back, and formats again), and copies
+JUMP.INI first, so its one cluster is the first after the root directory
+and in the same track. The FAT itself is not read for a file of one
+cluster. On the A21m, stage 1 to the menu takes 2.9 s: stage 2 0.7 s, stage
+3 1.5 s, and 0.4 s from stage 3's start to its PCI scan. A JUMP.INI edited
+on the floppy later may be given another cluster, and costs one more track.
 
-The modules are stored compressed as well (14.4). None is read before a
-route is chosen, so that saves nothing before the menu, and costs it the
-inflater stage 3 now links: 4 KB, about 2 KB compressed, well under a
-revolution.
+The modules are stored compressed as well (13.4). None is read before a
+route is chosen; stage 3 links the inflater for them, 4 KB, about 2 KB
+compressed.
 
-**Every link is checked, up to the modules.** A floppy wears, and on the
-A21m two in a day came to read back sectors that no longer matched what
-was written, sometimes with no error from the drive. What each stage reads
-is checked before it runs: stage 2 by its own CRC-32 (12.3.2), stage 3
-and every module by their gzip members' CRC-32 and length. A stage 3 or a
-module that fails is read once more, from the disk rather than the track
-cache, since a misread is often not repeated; a second failure is a
-sentence naming the disk. The rig flips one byte of each (`s2crc`,
-`s3crc`, `modcrc`) and expects the sentence. JUMP.INI and MEMTEST.BIN are
-left unchecked: both are files a person puts on the floppy by hand,
-JUMP.INI's parser refuses a line it cannot read, and memtest86+ is the
-test a failing machine is booted for.
+**Every link is checked, up to the modules.** A floppy can read back
+sectors that no longer match what was written, sometimes with no error from
+the drive. What each stage reads is checked before it runs: stage 2 by its
+own CRC-32 (11.3.2), stage 3 and every module by their gzip members' CRC-32
+and length. A stage 3 or a module that fails is read once more, from the
+disk rather than the track cache; a second failure is a sentence naming the
+disk. The rig flips one byte of each (`s2crc`, `s3crc`, `modcrc`) and
+expects the sentence. JUMP.INI and MEMTEST.BIN are left unchecked:
+JUMP.INI's parser refuses a line it cannot read, and memtest86+ is itself
+the test.
 
 `make jump` builds `build/bin/falcon-jump.img`, the whole floppy, with
 mtools (no loop device, no sudo).
 
-### 14.4 Modules
+### 13.4 Modules
 
 A module is a driver as a separately linked flat image, read from its file
 into memory and called.
@@ -5679,64 +4491,59 @@ into memory and called.
   calls nothing in the core by symbol and links its own copy of the core
   routines it uses.
 - **The set.** `ATA.MOD` (ATAPI on the legacy IDE channels), `UHCI.MOD`,
-  `OHCI.MOD`, `EHCI.MOD` (one host controller each, root ports only in the
-  MVP), and `PCC.MOD` (a CardBus bridge's PC Card socket and the ATA disk
-  on the card in it). A USB module is its host controller
+  `OHCI.MOD`, `EHCI.MOD` (one host controller each, root ports only), and
+  `PCC.MOD` (a CardBus bridge's PC Card socket and the ATA disk on the card
+  in it). A USB module is its host controller
   and the whole storage stack (enumeration, Bulk-Only Transport, SCSI:
   `hw/usb/msc.c` over the small interface `usbhc.h` a controller offers),
   one image per controller rather than a controller module and a separate
-  `USB.MOD`: that keeps the module interface to one storage table with no
-  calls between modules, and only the module for the controller that is
-  there is read. The storage half and the SCSI blocks (`hw/scsi`) are one
-  source each; only the built images repeat them. A module's INT 13h
-  answers are `hw/blk13.c`, shared by every module.
+  `USB.MOD`, so there are no calls between modules and only the module for
+  the controller that is there is read. The storage half and the SCSI
+  blocks (`hw/scsi`) are one source each; only the built images repeat
+  them. A module's INT 13h answers are `hw/blk13.c`, shared by every module.
 - **Stored compressed.** A module goes on the floppy as a gzip member
   (`gzip -9 -n`, the build's `$(NAME).MOD.gz` under the `.MOD` name),
   about 60% of its size: 16 sectors fewer for a USB route that reads EHCI
   and UHCI. `jmodload.c` reads the file to `JMOD_GZ_STAGE` (6 MB, stage 2's
   staging area, free once stage 3 runs) and inflates it into its slot; the
-  member's CRC-32 catches a floppy that read wrong before the header is
-  even checked. A module is always compressed, so it is always checked:
-  a file without gzip's magic is refused as not a module. One that fails
-  its check is read again, past the track cache (`bios_disk_forget`),
-  before the route says so.
+  member's CRC-32 is checked before the header. A file without gzip's magic
+  is refused as not a module. One that fails its check is read again, past
+  the track cache (`bios_disk_forget`), before the route says so.
 - **Where the code lives.** `falcon-bios/src/hw/`, one directory per driver,
   and each driver's decisions in a host-tested half beside it, as
   `vcdcore.c` is to `vcdres.S`: descriptor parsing, BOT's CBW and CSW, SCSI
-  command blocks, transfer descriptor layout. A driver that is wrong about
-  hardware fails silently on a real machine, which is the reason for the
-  split.
+  command blocks, transfer descriptor layout.
 
-### 14.5 Power-on to the menu
+### 13.5 Power-on to the menu
 
-Section 12.6 draws what step 1 built, traced from the code. The design for
-the whole menu, the later routes included:
+Section 11.6 draws power-on to every route of 13.1, traced from the code.
+In outline:
 
 ```mermaid
 flowchart TD
     BIOS["BIOS<br/>sector 0 of the floppy to 0x7C00, DL = 0x00"] --> S1["Stage 1, the floppy boot sector (real mode)<br/>BPB geometry, COM1 up"]
     S1 --> RD{"INT 13h AH=02h, CHS<br/>the reserved sectors to 0x7E00<br/>3 tries, AH=00h reset between"}
     RD -- fails --> F1["fail: reason, key, jump to FFFF:0"]
-    RD -- ok --> S2["Stage 2, as 12.3.2<br/>CPU floor, A20, protected mode"]
+    RD -- ok --> S2["Stage 2, as 11.3.2<br/>CPU floor, A20, protected mode"]
     S2 --> L3["stage3_load: no extensions on DL,<br/>so the CHS path"]
     L3 --> BM["bios_main (apps/jump/bios_main.c)<br/>e820_read"]
-    BM --> FAT["fat_mount on the floppy<br/>JUMP.INI, if present (14.7)"]
+    BM --> FAT["fat_mount on the floppy<br/>JUMP.INI, if present (13.7)"]
     FAT --> PCI["PCI class scan: what each route could use<br/>no driver loaded"]
     PCI --> DSK["the disks INT 13h already has (BDA 0x475)"]
     DSK --> MENU{"menu<br/>a countdown only if JUMP.INI sets one"}
     MENU -- "a disk" --> MBR["MBR"]
     MENU -- "Memory test" --> MEM["MEM"]
-    MENU -- "CD" --> CDR["CDR: load ATA.MOD, 14.6"]
-    MENU -- "USB" --> USB["USB: load the host controller modules and USB.MOD, 14.6"]
+    MENU -- "CD" --> CDR["CDR: load ATA.MOD, 13.6"]
+    MENU -- "USB" --> USB["USB: load EHCI.MOD, UHCI.MOD and OHCI.MOD, 13.6"]
 ```
 
-`MBR` and `MEM` leave nothing behind, as the station's routes do (12.5.2).
+`MBR` and `MEM` leave nothing behind, as the station's routes do (11.5.2).
 
-### 14.6 The residents
+### 13.6 The residents
 
-`CDR` and `USB` hand the machine to a bootloader that reads its medium
-through INT 13h, so the driver that found the medium has to stay and answer
-it. That is the one hard part of jump.
+`CDR`, `USB` and `PCC` hand the machine to a bootloader that reads its
+medium through INT 13h, so the driver that found the medium has to stay and
+answer it.
 
 **The reverse thunk.** A resident's INT 13h entry is called in real mode,
 but the driver is protected-mode C at its slot above a megabyte. The entry
@@ -5749,8 +4556,8 @@ stage 2's thunk. Drivers poll; nothing in them takes an interrupt.
 `vcdres.S` does (the BDA's count at 0x413 is lowered). The driver's slot and
 arena are extended memory, kept out of what the next loader is told it can
 use: the E820 map is carved (`e820_carve`) and E801's answer capped, as the
-stick's resident already does, and INT 15h AH=88h is answered too, since
-some of the loaders these machines run predate E801.
+stick's resident does, and INT 15h AH=88h is answered too, since some of
+the loaders these machines run predate E801.
 
 **A medium that gives up.** The block also takes INT 18h and INT 19h, and
 both end in a cold reset (`rthunk.S`, `jres_reset`): 0x0000 into the BDA's
@@ -5760,17 +4567,15 @@ INT 18h is what a bootloader calls when it has nothing to boot (falcon's own
 "returning to firmware" is one), and the BIOS answers it by starting its
 next boot device without a POST, on top of everything this route left: INT
 13h and 15h hooked, the BDA's count lowered, a module in 15-16 MB, on `PCC`
-a slot still powered with its I/O window open. On the A21m that started
-Windows 2000 from the disk, which bugchecked (STOP 0x0A) on a real-mode
-vector taken for a kernel pointer. A reset rather than an undo: the list of
-what to undo grows with jump, and a reset has no list. The rig's `giveup`
-case boots a card whose boot sector is INT 18h and expects the reset.
+a slot still powered with its I/O window open. An OS started on top of that
+can fault on it: Windows 2000 bugchecks (STOP 0x0A) on a real-mode vector
+taken for a kernel pointer. The rig's `giveup` case boots a card whose boot
+sector is INT 18h and expects the reset.
 
 **Virtual 8086 mode.** A caller in v86 mode (DOS with EMM386, the real-mode
 half of Windows 9x) cannot be taken into protected mode: the CR0 write
-faults to the monitor. The stub checks and fails the call with an error
-rather than trying. DOS with a memory manager cannot read a CD or stick
-through jump; booting one without it can.
+faults to the monitor. The stub checks and fails the call with an error.
+DOS with a memory manager cannot read a CD or stick through jump.
 
 **CD.** `ATA.MOD` finds the ATAPI drive and answers raw 2048-byte reads for
 it on a private drive number (0xEF) through the reverse thunk. The stick's
@@ -5787,25 +4592,26 @@ hardware and nothing about El Torito. The catalog's entry decides:
   left behind. `vfd.c` takes a read callback in place of an ISO file for
   this. The image goes where `vfd.c`'s heap puts it, above 64 MB, so this
   kind of disc needs a machine with more than that;
-- hard-disk emulation: refused (14.1).
+- hard-disk emulation: refused (13.1).
 
 **USB.** The modules for the controllers present (`EHCI.MOD`, then
 `UHCI.MOD`, then `OHCI.MOD`; each finds its controllers on the PCI bus
-itself and takes them from the BIOS) enumerate their root ports in turn.
-EHCI goes first because a device that is not high speed does not enable on
-its port after a reset: `EHCI.MOD` hands that port to its companion (the
-port owner bit), and the UHCI or OHCI module after it finds the device
-there. Then the first stick with a partition carrying a `boot` record
-(`bootpart_find`, as stage 2 finds one) is booted. It becomes the next BIOS disk
-after the ones the BIOS has (the BDA's count at 0x475 goes up by one), not
-0x80 with the BIOS's disks moved up: falcon-bios never assumes 0x80, and
-the station's drive swap (13.4) is for chaining an OS that expects 0x80,
-not for a falcon stick, whose stages take the drive DL names. The reverse thunk answers that
+itself, up to four of each kind, and takes them from the BIOS) enumerate
+their root ports in turn. EHCI goes first because a device that is not high
+speed does not enable on its port after a reset: `EHCI.MOD` hands that port
+to its companion (the port owner bit), and the UHCI or OHCI module after it
+finds the device there. Then the first stick with a partition carrying a
+`boot` record (`bootpart_find`, as stage 2 finds one) is booted. It becomes
+the next BIOS disk after the ones the BIOS has (the BDA's count at 0x475
+goes up by one), not 0x80 with the BIOS's disks moved up: falcon-bios's
+stages take the drive DL names, and the station's drive swap (12.4) is for
+chaining an OS that expects 0x80. The reverse thunk answers that
 drive, and since there is no virtual CD on this route, its own INT 15h half
 carves the block and the module region out of the memory map (E820, E801's
 two halves, AH=88h). Then the stick's LBA 0 goes to 0x7C00 with DL naming
-it (`mbr.c`), and falcon-bios on the stick takes it from there. A second
-stick, or a stick behind a hub, is a later change.
+it (`mbr.c`), and falcon-bios on the stick takes it from there. Only root
+ports are enumerated, so a stick behind a hub is not found, and only the
+first falcon stick is booted.
 
 **CF.** `PCC.MOD` finds the CardBus bridges by class (0x0607) and brings a
 16-bit card up as Linux's yenta and i82365 drivers do: card detect, VCC
@@ -5815,53 +4621,40 @@ enable, reset, READY; memory window 0 onto the card's attribute memory at
 CIS is read); the CIS parsed (`pcccore.c`) for a fixed-disk function and
 the configuration entry that decodes I/O at any base, written to the
 configuration option register; I/O window 0 at 0x1E0, and the card is then
-an ATA disk (`hw/ata/atadisk.c`). It boots as any disk does, whatever is
-on it: its LBA 0, as the next BIOS disk, through the reverse thunk with
-its INT 15h half, as `USB` does (`boot_module_disk`).
+an ATA disk (`hw/ata/atadisk.c`). A card that takes only 3.3 V is powered
+by the bridge only when the socket control register and the ExCA power
+register's VCC field both ask for 3.3 V. It boots as any disk does,
+whatever is on it: its LBA 0, as the next BIOS disk, through the reverse
+thunk with its INT 15h half, as `USB` does (`boot_module_disk`).
 
-**Shared with station-legacy (decision 2026-09-26, built 2026-09-27).** The
-routes above are `falcon-bios/src/jump/routes.c` (`BIOS_MOD_jroutes`),
-lifted out of `apps/jump/bios_main.c`, which jump and station-legacy
-(Section 13.10) both link, so a route is written once. Each app keeps its
-own menu and pages and hands the module its own FAT volume: jump its
-floppy, station-legacy its station partition. `jmod_load`'s sentences name
-that volume ("the floppy", "the disk").
+**Shared with station-legacy.** The routes above are
+`falcon-bios/src/jump/routes.c` (`BIOS_MOD_jroutes`), which jump and
+station-legacy (Section 12.10) both link. Each app keeps its own menu and
+pages and hands the module its own FAT volume: jump its floppy,
+station-legacy its station partition. `jmod_load`'s sentences name that
+volume ("the floppy", "the disk").
 
-### 14.7 JUMP.INI
+### 13.7 JUMP.INI
 
 Optional. Without it there is no default and no countdown: the menu waits.
 With it:
 
-    default=hdd        ; hdd, memtest, cd or usb
+    default=hdd        ; hdd, memtest, cd, usb or cf
     timeout=5          ; seconds; any key stops the countdown
 
 A key the file does not know, or a value it cannot parse, is a line on the
-screen naming it, and the menu then waits as if there were no file: a typo
-must not become a different default silently.
+screen naming it, and the menu then waits as if there were no file.
 
-This was the second reversal of "no config file, no default, no timeout".
-The station's own rejection (2026-09-21) was that its default would boot a
-system that needs a person at the keyboard and its config would sit where it
-cannot be read; jump's default boots the machine's own disk, which is what a
-floppy that stays in the drive should do when nobody is there. The station
-reversed it too on 2026-09-26, once it booted Windows and memtest (13.12),
-and `STATION.INI` is this file's parser generalised (13.7).
+`STATION.INI` (12.7) is written in this file's shape.
 
-### 14.8 Processor floor
+### 13.8 Processor floor
 
-The floor is the Pentium (i586), for jump, the stick's loader and
-falcon-hook32 alike. The MVP was i686; nothing in the loader's own code
-assumed more than a Pentium (no CMOV in its assembly, no SSE), so the 586
-build was a compiler flag and stage 2's check, taken on 2026-09-27 when
-DevLink recovery (13.5) needed it: its machines start at the Pentium, and
-the stick is how it reaches them. Stage 2 asks for CPUID, and
-`tools/check-floor.sh` refuses any linked image that carries CMOV, FCMOV or
-FCOMI, which is what catches an object built before the flag changed.
-Dropping CMOV cost nothing measurable (PBKDF2-SHA256 and portable AES-XTS
-within 1%). Few machines are older than a Pentium and have a CD drive or
-USB.
+The floor is i586, for jump, the stick's loader and falcon-hook32 alike,
+since DevLink recovery's machines (12.5) start at i586. Stage 2 asks for
+CPUID, and `tools/check-floor.sh` refuses any linked image that carries
+CMOV, FCMOV or FCOMI.
 
-### 14.9 The rig
+### 13.9 The rig
 
 QEMU with SeaBIOS, the image as the floppy (`-drive if=floppy`), a
 `piix3-usb-uhci`, `pci-ohci` or `usb-ehci` controller with a `usb-storage`
@@ -5871,15 +4664,14 @@ stick (the rig's GPT disk with the stick's stages written in), and an
 a one-second countdown, judged from the serial log, and one case more for
 the menu itself: a five-second countdown stopped by a key sent through
 QEMU's monitor, which must boot nothing until Enter, and then the row the
-key moved to. Neither needs a change
-to SeaBIOS: the floppy boots first, and
-jump reads the CD drive and the USB stick through its own drivers, never
-through the BIOS, so SeaBIOS's support cannot stand in for them. SeaBIOS
-does list the stick as a disk of its own before jump takes the controller,
-so in the rig the stick is served one drive number higher than it would be
-on a BIOS that cannot see USB, and SeaBIOS's own entry for it stops
-answering once jump has the controller. The `USB` route never uses that
-entry.
+key moved to. SeaBIOS is unchanged: the floppy boots first, and jump reads
+the CD drive and the USB stick through its own drivers. SeaBIOS does list
+the stick as a disk of its own before jump takes the controller, so in the
+rig the stick is served one drive number higher than it would be on a BIOS
+that cannot see USB, and SeaBIOS's own entry for it stops answering once
+jump has the controller. The `USB` route never uses that entry. The rig
+cannot show EHCI handing a full-speed stick to its companion, since QEMU's
+EHCI enables such a device itself where the silicon does not.
 
 QEMU models no PC Card bridge on x86, so the rig brings its own:
 `falcon-bios/tools/qemu-pcc/falcon-pcc.c`, a device modelled on the A21m's
@@ -5888,8 +4680,8 @@ the ExCA set at +0x800) holding a CompactFlash card (a CIS with the CF
 standard's configuration entries, the configuration option register at
 0x200, an ATA task file over a drive image). Its memory and I/O windows are
 real mappings in QEMU's address spaces, moved and enabled as the ExCA
-registers are written, so `PCC.MOD` meets the register interface it will
-meet on silicon, not a shortcut past it. `build-qemu.sh` builds the QEMU
+registers are written, and it powers the card only as the real bridge does
+(13.6; the `cf3v` case is a 3.3 V card). `build-qemu.sh` builds the QEMU
 release the machine runs with that one device added, into
 `build/qemu-pcc/`; the `cf` case of the rig runs on it. With `lba48=on`
 the card has the 48-bit feature set (READ and WRITE SECTORS EXT, the task
@@ -5899,44 +4691,12 @@ card past 128 GiB whose boot partition starts past sector 2^28
 `PCC.MOD`, which `atadisk.c` addresses with 48-bit commands for any
 transfer LBA28 cannot reach (`atacore.c`'s `ata_addressing`, host-tested),
 and LBA28 everywhere else. Without them the case fails at stage 2's
-partition table read. It is test
-equipment, GPL-2.0-or-later as QEMU is, and never part of falcon.
+partition table read. It is test equipment, GPL-2.0-or-later as QEMU is,
+and not part of falcon. What the real bridge does that the model does not
+is outside what the rig shows.
 
-The first machine is the ThinkPad A21m (its repository's
+The machine this floppy is for is the ThinkPad A21m (its repository's
 `docs/HARDWARE.md`): a PIIX4 with UHCI and the IDE optical bay, a TI
 PCI-1450 CardBus bridge, and COM1 cabled to a workstation for the serial
-log.
+log. Every route of 13.1 boots on it.
 
-### 14.10 Considered and rejected
-
-- **Enumerating everything at boot**, Plop's model. It is the delay (14.2).
-- **One image with every driver.** Every boot, the default one included,
-  would read drivers it does not use off a floppy.
-- **Position-independent modules and a relocator in the core.** More code
-  to write and test, and to reach at every boot, for a handful of drivers
-  fixed slots serve.
-- **Resident drivers in conventional memory.** Every loader respects the
-  BDA's count, but its top moves with the EBDA, so a driver there needs a
-  run-time address, and so relocation; and 640 KB is what DOS-era loaders
-  are short of. Extended memory with the map carved costs one more INT 15h
-  answer.
-- **FAT12 in the boot sector.** The reserved sectors do the same job with no
-  filesystem code in assembly (14.3).
-- **ISOs and images in jump.** falcon-boot does it, one `USB` route away.
-- **A fixed default at build time.** The point of the floppy is that it is
-  set per machine, and rebuilding an image to change a timeout is not that.
-
-### 14.11 Build order
-
-1. The floppy image, its boot sector, the CHS path in `load3.c` and
-   `disk.c`, and the core: the menu, `JUMP.INI`, `MBR` and `MEM`. It boots a
-   machine's disks and memtest, and is the first thing tried on the A21m.
-2. The module format and loader, `ATA.MOD`, the reverse thunk, and `CDR`
-   with no-emulation discs.
-3. Floppy-emulation discs: `vfd.c` over a read callback.
-4. `UHCI.MOD`, and `USB` to a falcon stick. To be proven on the A21m.
-5. `OHCI.MOD` and `EHCI.MOD`, over the same `msc.c`.
-6. `PCC.MOD` and `PCC`. Proven against the rig's model; to be proven on the
-   A21m.
-7. Disks the BIOS cannot see: `hw/ata/atadisk.c`, which `PCC.MOD` already
-   drives a card through, on an IDE channel the BIOS does not boot.

@@ -59,7 +59,7 @@
 
 /* How many substitutions one medium may carry.
  *
- * The largest set today is Windows (DESIGN Section 12.2.13): one or two
+ * The largest set today is Windows (DESIGN Section 11.2.13): one or two
  * Partition Descriptors, boot.wim's File Entry and its header, and the
  * appended tail, five at most. D3b and BSD use two each. Eight is that
  * plus room, and it is a BOUND rather than a capacity target: the set is

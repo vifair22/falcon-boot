@@ -1,11 +1,11 @@
 /* falcon-boot mkstick: `station`, installing falcon as a machine's own boot
- * loader (docs/DESIGN.md Section 13.9). See station.h for the split.
+ * loader (docs/DESIGN.md Section 12.9). See station.h for the split.
  *
  * `station install` is stationinst.c. Here: the dispatch, the scan of the
  * machine's disks that install and status both run, the FAT reads and
  * mtools writes, `remove` and `status`.
  *
- * The scan is the installer's half of DESIGN Section 13.3: the loaders run
+ * The scan is the installer's half of DESIGN Section 12.3: the loaders run
  * the same rules at boot. Both read the partition tables with falcon-core's
  * reader and a boot sector's names with the same rule, so what `status`
  * lists is what the menu shows; where they cannot agree (the UEFI loader
@@ -906,7 +906,7 @@ static void label_wide(uint16_t *out, size_t cap, const char *in)
     out[i] = 0;
 }
 
-/* What station-legacy adds to the BIOS list (DESIGN Section 13.10;
+/* What station-legacy adds to the BIOS list (DESIGN Section 12.10;
  * apps/station-legacy/bios_main.c, legacy_rows): jump's routes, each when
  * its driver is in the station partition, and the partition's own /uki. A
  * route's row also needs its controller on the machine's PCI bus, which is
@@ -937,7 +937,7 @@ static void add_route_row(strows *rows, const char *name, const char *label)
 }
 
 /* The list a station shows, built as the loader builds it (DESIGN Section
- * 13.3; apps/station/efi_main.c and bios_main.c, rows_find and
+ * 12.3; apps/station/efi_main.c and bios_main.c, rows_find and
  * build_rows) from what was found, then STATION.INI applied, ordered and
  * defaulted by media/strows.c, the module both loaders use. The UEFI
  * firmware-setup row is left out: whether the firmware offers it is known
@@ -1125,7 +1125,7 @@ static void status_bios(stn_tally *t, stn_scan *s, stationini *ini,
     uint64_t len;
 
     cli_log_blank();
-    log_info("BIOS (DESIGN Sections 3.3, 13.2)");
+    log_info("BIOS (DESIGN Sections 3.3, 12.2)");
     if (boot < 0) {
         log_info("  --   no station partition: BIOS is not installed");
         return;
@@ -1310,7 +1310,7 @@ static void status_uefi(stn_tally *t, stn_scan *s, stationini *ini,
     char path[128];
 
     cli_log_blank();
-    log_info("UEFI (DESIGN Section 13.2)");
+    log_info("UEFI (DESIGN Section 12.2)");
     if (e < 0) {
         log_info("  --   no ESP on this disk");
         return;
@@ -1443,7 +1443,7 @@ static int status_shelf(stn_scan *s, const uint8_t *id)
     int encrypted = 0;
 
     cli_log_blank();
-    log_info("the shelf (DESIGN Section 13.2)");
+    log_info("the shelf (DESIGN Section 12.2)");
     for (k = 0; k < s->n_disks; k++) {
         const stn_disk *sd = &s->disks[k];
 

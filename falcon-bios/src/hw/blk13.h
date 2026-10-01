@@ -1,5 +1,5 @@
 /* falcon jump's drivers: INT 13h for one block device, the half every
- * module's resident entry shares (DESIGN Section 14.6).
+ * module's resident entry shares (DESIGN Section 13.6).
  *
  * The reverse thunk hands a module the caller's registers; this reads the
  * call out of them, asks the device, and writes the answer back. Which

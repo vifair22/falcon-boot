@@ -157,7 +157,7 @@ static void gpt_disk(tdisk *d, const uint8_t *const *types, unsigned n)
 }
 
 /* A boot record whose stage 3 sector is `stage3`: 0 is an ESP's on a
- * station installed for UEFI as well (DESIGN Section 13.2). */
+ * station installed for UEFI as well (DESIGN Section 12.2). */
 static void fat_boot_s3(tdisk *d, uint32_t lba, uint16_t reserved,
                         uint8_t id0, uint16_t stage3)
 {

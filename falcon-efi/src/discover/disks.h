@@ -1,5 +1,5 @@
 /* falcon-boot: where a partition is, in falcon's names for disks
- * (docs/DESIGN.md Sections 3.2, 13.3).
+ * (docs/DESIGN.md Sections 3.2, 12.3).
  *
  * The station names another system's partition the way STATION.INI does:
  * the disk by its GPT DiskGUID or MBR signature, the partition by its

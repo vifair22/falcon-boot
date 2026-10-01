@@ -1,6 +1,6 @@
 /* falcon-boot EFI application entry point.
  *
- * Steps 2, 3 and 5 of the MVP build order (docs/DESIGN.md Section 11): take the
+ * The stick's UEFI entry point: take the
  * one device inventory falcon-efi/src/discover/discover.c builds (Section 9),
  * enumerate *.iso and *.img on the ISO library volumes through the filesystem
  * registry, present the text menu, and hand the selection to whichever path

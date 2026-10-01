@@ -1,5 +1,5 @@
 /* falcon jump's drivers: PCI configuration space through the PC's
- * mechanism #1, ports 0xCF8 and 0xCFC (DESIGN Section 14.4).
+ * mechanism #1, ports 0xCF8 and 0xCFC (DESIGN Section 13.4).
  *
  * A module finds its own controller, so it needs no word from the core
  * about where the controller is. Inline, as modrt.h is: nothing here may be
@@ -58,7 +58,7 @@ typedef struct {
 /* The `nth` function (from 0) whose class code, masked with `mask`, is
  * `cls` (class << 16 | subclass << 8 | programming interface); 0 when there
  * is one. Every bus is tried, which costs a few thousand port reads, a few
- * milliseconds on the machines Section 14 is for: call it once per thing
+ * milliseconds on the machines Section 13 is for: call it once per thing
  * wanted, never once per programming interface. (It was, for IDE, and 128
  * passes cost the ThinkPad A21m about two seconds before its menu.) */
 static inline int pci_find_class_mask(uint32_t cls, uint32_t mask,

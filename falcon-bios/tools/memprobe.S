@@ -4,7 +4,7 @@
  * virtual CD like any medium's own bootloader (`c` on its row). It asks the
  * questions a chainloaded bootmgr or kernel asks - INT 12h, INT 15h E820 in
  * full, E801 - and prints every answer to COM1, which is how the resident's
- * INT 15h half (DESIGN Section 12.3.8) is checked against what vcd.c meant
+ * INT 15h half (DESIGN Section 11.3.8) is checked against what vcd.c meant
  * it to say. The resident is the one part of the tree no host test reaches,
  * so this is its test.
  *

@@ -8,7 +8,7 @@
 # that reason, and each one carries the reason.
 #
 # Run it through tools/analyze.sh, which supplies the compilation database and
-# gates the result against docs/notes/analyze-baseline.txt.
+# gates the result against tools/analyze-baseline.txt.
 #
 # Enabled families: bugprone-*, clang-analyzer-*, performance-*, portability-*,
 # misc-*. cert-* is deliberately not enabled: on this tree it is entirely

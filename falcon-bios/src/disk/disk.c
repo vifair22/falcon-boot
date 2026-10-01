@@ -220,7 +220,7 @@ int bios_disk_read(void *ctx, uint64_t off, uint64_t len, void *buf)
 
 /* A drive AH=48h did not answer. If AH=41h says it has the extensions after
  * all, it stays on AH=42h at 512 bytes, as before there was a CHS path;
- * otherwise AH=08h's geometry, and AH=02h from then on (DESIGN Section 14.3).
+ * otherwise AH=08h's geometry, and AH=02h from then on (DESIGN Section 13.3).
  * Nonzero when the drive answered either. */
 static int probe_chs(bios_disk *d)
 {

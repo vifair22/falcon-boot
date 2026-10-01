@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # The processor floor, checked on what was linked rather than on the flags
-# it was compiled with (DESIGN Section 12.3, docs/notes/bios-route.md
-# Section 6h). falcon-bios and falcon-hook32 are built -march=i586 and run
-# on a Pentium; stage 2's cpu_check refuses anything older. What a Pentium
-# does not have and a Pentium Pro does is CMOV, FCMOV and FCOMI/FUCOMI, and
+# it was compiled with (DESIGN Section 11.3 and 13.8). falcon-bios and
+# falcon-hook32 are built -march=i586; stage 2's cpu_check refuses anything
+# older. What an i586 does not have and an i686 does is CMOV, FCMOV and
+# FCOMI/FUCOMI, and
 # an image carrying one faults with #UD in whichever function the compiler
 # chose to put it, which is the worst place to learn it.
 #
@@ -15,7 +15,7 @@
 # needs nothing from this list, so nothing is exempt.
 #
 # --userland is the other floor: a static Linux program that runs on the
-# machine itself, the station bundle's mkstick (DESIGN Section 13.14), whose
+# machine itself, the station bundle's mkstick (DESIGN Section 12.14), whose
 # floor is the Pentium III it was first used on. CMOV and the rest of the
 # i686 set are fine there, and so are MMX and SSE; SSE2 and everything after
 # are not, in any function the program can reach without asking CPUID first.

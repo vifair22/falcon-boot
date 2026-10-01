@@ -1,5 +1,5 @@
 /* falcon jump's UHCI.MOD: the Universal Host Controller, USB 1.1's Intel
- * controller (DESIGN Section 14.4), as a usbhc for msc.c.
+ * controller (DESIGN Section 13.4), as a usbhc for msc.c.
  *
  * The ThinkPad A21m's PIIX4 is one, and so is QEMU's piix3-usb-uhci; every
  * Intel and VIA chipset of the era has one or more.
@@ -17,7 +17,7 @@
  * support runs this controller from its SMI handler. Writing 0x8F00 to the
  * legacy support register (PCI 0xC0) turns that off and clears what it left
  * pending, as Linux's uhci-hcd does; after it, the BIOS's USB keyboard is
- * gone, which is why falcon jump takes PS/2 only (Section 14.1).
+ * gone, which is why falcon jump takes PS/2 only (Section 13.1).
  */
 
 #include <hw/usb/uhci.h>

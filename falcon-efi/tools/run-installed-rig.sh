@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # falcon-boot: stations made by the installer, booted (docs/DESIGN.md
-# Sections 13.9, 13.11; docs/notes/station-rework.md section 6). Every disk
+# Sections 12.9, 12.11; docs/notes/station-rework.md section 6). Every disk
 # here is a machine's disk before falcon: partitions of its own and free
 # space, and `mkstick station install` puts the station on it as a user
 # does. Nothing is copied onto a disk by hand afterwards: the firmware
@@ -424,7 +424,7 @@ def harddrive(f):
     # MBR: the partition's number, and the disk signature in the node's
     # first four signature bytes (MBRType 1, SignatureType 1).
     hd = struct.pack("<BBHIQQ", 4, 1, 42, int(f[3]), int(f[0]), int(f[1]))
-    return hd + struct.pack("<I", int(f[2], 16)) + bytes(12) + bytes([1, 1])
+    return hd + struct.pack("<I", int(f[2], 16)) + bytes(11) + bytes([1, 1])
 end = bytes([0x7F, 0xFF, 4, 0])
 def option(desc, pre, hd, path):
     name = (path + "\0").encode("utf-16-le")

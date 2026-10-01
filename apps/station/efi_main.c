@@ -1,18 +1,18 @@
-/* falcon-boot, the station (docs/DESIGN.md Section 13): the entry point of
+/* falcon-boot, the station (docs/DESIGN.md Section 12): the entry point of
  * falcon-boot-station.efi.
  *
  * A machine's own boot loader rather than a stick's. It lists what the
- * machine has (Section 13.3): the UKIs on the shelves carrying the install
+ * machine has (Section 12.3): the UKIs on the shelves carrying the install
  * ID of the ESP it was started from, every firmware boot entry but its own,
  * each ESP whose Windows Boot Manager no firmware entry names, memtest86+
  * off its own ESP, and Firmware Setup. \EFI\falcon\STATION.INI on that ESP
  * sets a default and a countdown, an order, and changes or adds entries
- * (13.7); FalconNextBoot names one entry to boot once without the menu
- * (13.8). Its [totp] section has the TPM release a seed sealed to a
+ * (12.7); FalconNextBoot names one entry to boot once without the menu
+ * (12.8). Its [totp] section has the TPM release a seed sealed to a
  * known-good boot, whose code is shown under the banner and above the
- * passphrase prompt (13.15). It links nothing else: no ISO, Windows media, BSD, bless or
+ * passphrase prompt (12.15). It links nothing else: no ISO, Windows media, BSD, bless or
  * boot-prediction code is in this image, which is the reason it is a
- * separate link and not a mode of the stick's loader (Section 13.1).
+ * separate link and not a mode of the stick's loader (Section 12.1).
  *
  * The rows as data, STATION.INI's effect on them and their order are
  * station/strows.c, host-tested; this file finds them and boots them.
@@ -384,7 +384,7 @@ static BOOLEAN boot_row(const strow *w)
     }
 }
 
-/* ---- finding the rows (DESIGN Section 13.3) ---- */
+/* ---- finding the rows (DESIGN Section 12.3) ---- */
 
 static void copy_ascii(char *dst, UINTN cap, const char *src)
 {
@@ -498,7 +498,7 @@ static void rows_find(void)
         ucs2_copy(w->label, STROWS_LABEL_MAX, L"" STROWS_LABEL_FWSETUP);
 }
 
-/* ---- STATION.INI (DESIGN Section 13.7) ---- */
+/* ---- STATION.INI (DESIGN Section 12.7) ---- */
 
 /* Reads and parses it. A file that is missing is no configuration and
  * says nothing; one that is there and will not do is said once, before
@@ -554,7 +554,7 @@ static void default_missing(void)
     wait_key(&key);
 }
 
-/* ---- the TOTP check (DESIGN Section 13.15) ---- */
+/* ---- the TOTP check (DESIGN Section 12.15) ---- */
 
 /* The passphrase page's lines, for pos.c's hook. */
 static void totp_note(void)
@@ -568,7 +568,7 @@ static void totp_tick(void)
     totp_page_tick(g_st);
 }
 
-/* ---- next boot (DESIGN Section 13.8) ---- */
+/* ---- next boot (DESIGN Section 12.8) ---- */
 
 /* The marker was read and deleted before anything else ran; this is the
  * boot it asks for, without the menu. A name that is not an entry's falls

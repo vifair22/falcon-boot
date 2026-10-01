@@ -1,5 +1,5 @@
 /* falcon-boot: the firmware's TPM event log, replayed (docs/DESIGN.md
- * Section 13.15).
+ * Section 12.15).
  *
  * Purpose. The station's TOTP seed is sealed to the PCR values the TPM holds
  * while the station's menu runs. Enrollment runs later, from the OS the
@@ -96,7 +96,7 @@ int evlog_replay_init(uint16_t alg, evlog_replay *out);
  * as `to` instead: the values the same boot would have reached had another
  * image been measured in that one's place. mkstick update seals the TOTP
  * seed to a station loader not booted yet this way, before the reboot that
- * would run it (docs/DESIGN.md Section 13.15). A stop digest is still
+ * would run it (docs/DESIGN.md Section 12.15). A stop digest is still
  * matched against what the log says. Digests are r's bank's length. Set
  * after evlog_replay_init; it lasts for the replay. */
 void evlog_replay_substitute(evlog_replay *r, unsigned int pcr,

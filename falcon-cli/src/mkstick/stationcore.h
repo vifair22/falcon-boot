@@ -1,5 +1,5 @@
 /* falcon-boot mkstick: the arithmetic and the decisions of `station
- * install`, with no I/O in them (docs/DESIGN.md Section 13.9).
+ * install`, with no I/O in them (docs/DESIGN.md Section 12.9).
  *
  * Why this is a separate file, for the same reason bioscore.c is: an
  * installer that puts a partition into someone's MBR, a stage into the
@@ -18,10 +18,10 @@
  *     BIOS reads, the disk signature a disk the station names must have;
  *   - what a boot sector is: the loaders a partition's first sector names
  *     (NTLDR, BOOTMGR, IO.SYS, GRUB, ...), and whether another disk's MBR is
- *     worth chaining (DESIGN Section 13.3);
+ *     worth chaining (DESIGN Section 12.3);
  *   - the entries' names, as the loaders generate them
  *     (docs/notes/station-rework.md section 10), and the STATION.INI the
- *     installer writes from what it found (Section 13.7);
+ *     installer writes from what it found (Section 12.7);
  *   - the backup file's header: which sectors of which disks were saved,
  *     and which of them `remove` puts back.
  */
@@ -132,7 +132,7 @@ uint32_t stn_mbr_sig(const uint8_t *lba0);
 void     stn_mbr_set_sig(uint8_t *lba0, uint32_t sig);
 
 /* Nonzero when another disk's LBA 0 is worth offering as a chain (DESIGN
- * Section 13.3): the BIOS station's own rule, media/vbr.c's
+ * Section 12.3): the BIOS station's own rule, media/vbr.c's
  * vbr_mbr_bootable (0x55AA, boot code in the first 440 bytes, an active
  * entry). A disk that merely ends in 0x55AA fails after the jump. */
 int stn_mbr_chainable(const uint8_t *lba0);
@@ -196,7 +196,7 @@ typedef struct {
  * <n>)" for an ESP's bootmgfw.efi. */
 void stn_found_label(stn_found *f);
 
-/* STATION.INI from what was found (DESIGN Section 13.7). One section per
+/* STATION.INI from what was found (DESIGN Section 12.7). One section per
  * partition, disk and ESP Windows found, named by what it is (windows, dos,
  * grub, syslinux, disk; -2, -3 when there are several) and carrying its
  * disk, partition and label, so a person edits a label or hides a row
@@ -207,7 +207,7 @@ void stn_found_label(stn_found *f);
  * countdown when there is not. A UKI default on an encrypted shelf is a
  * section of its own, `linux` with `uki = <file>`: the loader has no row
  * named uki-<stem> before the shelf is unlocked, and a `uki` section is
- * the row that prompts for the shelf and boots that file (Section 13.7). */
+ * the row that prompts for the shelf and boots that file (Section 12.7). */
 stn_status stn_ini_build(const stn_found *f, size_t n, unsigned timeout,
                          stationini *out);
 

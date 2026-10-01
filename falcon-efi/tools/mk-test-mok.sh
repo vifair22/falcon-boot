@@ -14,7 +14,7 @@
 # copy of the varstore with virt-fw-vars. That shortcut skips the enrollment
 # UI only: shim still reads MokList and still performs the verification
 # itself, so what the rig then measures is the real MOK load path. Testing the
-# enrollment UX is a separate, interactive job (DESIGN Section 11 step 10).
+# enrollment UX is a separate, interactive job.
 #
 # Deps: openssl, and virt-firmware's virt-fw-vars - from PATH when the
 # environment packages it, otherwise from a venv this script creates (no

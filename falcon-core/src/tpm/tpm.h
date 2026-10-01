@@ -27,7 +27,7 @@
  * Interactions. tpm2.h and tpm12.h are the two command sets, evlog.h the
  * firmware's event log replayed for enrollment. The UEFI station reads the
  * seed (falcon-efi/src/totp, over falcon-efi/src/tcg) and mkstick's
- * `station totp` enrolls it (docs/DESIGN.md Section 13.15).
+ * `station totp` enrolls it (docs/DESIGN.md Section 12.15).
  */
 
 #ifndef FALCON_TPM_TPM_H

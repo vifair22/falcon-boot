@@ -113,7 +113,7 @@ static uint32_t find_boot(bios_disk *d, bootpart *bp)
  * all. The member goes to GZ_STAGE_ADDR and is inflated to STAGE3_LOAD, its
  * CRC-32 and length checked, which is the check that the disk gave back what
  * was written; and it is half the bytes to read, which on a floppy or USB
- * 1.1 is most of the time stage 2 takes (DESIGN Section 14.3). */
+ * 1.1 is most of the time stage 2 takes (DESIGN Section 13.3). */
 void stage3_load(uint8_t drive);
 
 void stage3_load(uint8_t drive)
@@ -144,7 +144,7 @@ void stage3_load(uint8_t drive)
     /* A drive that does not answer is left at 512-byte sectors and AH=42h,
      * which is what a stick is, and what stage 3 assumes too; the read below
      * is what decides whether that was right. A floppy answers AH=08h and is
-     * read by CHS (DESIGN Section 14.3). */
+     * read by CHS (DESIGN Section 13.3). */
     if (!bios_disk_probe(&d, drive))
         bios_puts("falcon-bios: the boot drive answered neither AH=48h nor AH=08h\n");
     else if (d.geom.sectors != 0)

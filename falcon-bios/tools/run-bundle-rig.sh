@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # falcon-boot: a station updated from a station bundle (docs/DESIGN.md
-# Section 13.14), the way DevLink recovery updates one in the field.
+# Section 12.14), the way DevLink recovery updates one in the field.
 #
 # A scratch MBR disk (sparse, the station partition past 4 GiB) with a
 # partition of its own gets station-legacy from the installer, with memtest

@@ -88,7 +88,7 @@ INTN menu_run_keys(EFI_SYSTEM_TABLE *st, const menu_banner *banner,
                    const menu_keys *keys, CHAR16 *which);
 
 /* Lines under the banner that the caller keeps current: the UEFI station's
- * TOTP code (DESIGN Section 13.15). The menu asks for them when it opens
+ * TOTP code (DESIGN Section 12.15). The menu asks for them when it opens
  * and again every second while it waits, and repaints the lines whose text
  * or colour changed; how many there are is fixed by the first answer (at
  * most MENU_STATUS_ROWS, and the list gives up rows for them). The menu
@@ -113,7 +113,7 @@ typedef struct {
  * a countdown in the key line: when it runs out, `sel` is returned as if
  * enter had been pressed (*which = L'\r'), and any key stops it for the
  * rest of the menu's life. The station's STATION.INI default and timeout
- * (DESIGN Section 13.7); falcon-bios's screen_menu_timed is the same menu,
+ * (DESIGN Section 12.7); falcon-bios's screen_menu_timed is the same menu,
  * line for line. A firmware that will not make a timer gets no countdown:
  * the menu then waits, which is what a menu with no timeout does anyway.
  * status, when given, is drawn under the banner and refreshed on the same

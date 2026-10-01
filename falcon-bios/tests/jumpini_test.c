@@ -1,5 +1,5 @@
 /* Tests for falcon-bios/src/jump/jumpini.c: JUMP.INI, falcon jump's default
- * and countdown (docs/DESIGN.md Section 14.7).
+ * and countdown (docs/DESIGN.md Section 13.7).
  *
  * What matters most is the failure side: a file jump cannot read exactly
  * must leave no default and no countdown, never a different one.

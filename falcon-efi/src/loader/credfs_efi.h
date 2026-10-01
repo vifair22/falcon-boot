@@ -96,7 +96,7 @@ typedef struct {
 
 typedef struct CREDFS_EFI_FILE_PROTOCOL CREDFS_EFI_FILE_PROTOCOL;
 
-/* Spec 13.5, revision 1, in ABI order. */
+/* Spec 12.5, revision 1, in ABI order. */
 struct CREDFS_EFI_FILE_PROTOCOL {
     UINT64 Revision;
     EFI_STATUS (EFIAPI *Open)(CREDFS_EFI_FILE_PROTOCOL *This,

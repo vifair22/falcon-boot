@@ -655,7 +655,7 @@ static void restore(void)
     screen_cursor(1);
 }
 
-/* ---- the countdown (DESIGN Section 14.7) ----
+/* ---- the countdown (DESIGN Section 13.7) ----
  *
  * Timed by console/cdclock.c: the BIOS's tick count in the data area, 18.2
  * a second, which IRQ0 advances while the thunk is in real mode, and the

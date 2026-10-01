@@ -68,7 +68,7 @@ typedef struct {
     /* Take a bzImage with no EFI stub (its setup header, "HdrS" at 0x202,
      * and no PE header): a UKI that sd-stub cannot start, for falcon-bios,
      * which unwraps .linux and never runs the stub. DevLink recovery's
-     * 32-bit kernel in station-legacy's /uki (DESIGN Section 13.10). */
+     * 32-bit kernel in station-legacy's /uki (DESIGN Section 12.10). */
     int         bios_only;
 } uki_spec;
 

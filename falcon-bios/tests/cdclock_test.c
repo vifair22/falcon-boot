@@ -1,6 +1,6 @@
 /* Tests for falcon-bios/src/console/cdclock.c: the menu countdown's clock,
  * which must end a countdown when either the tick count or the RTC moves
- * (DESIGN Section 13.7). */
+ * (DESIGN Section 12.7). */
 
 #include "tests.h"
 

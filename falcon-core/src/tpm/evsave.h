@@ -1,5 +1,5 @@
 /* falcon-boot: the firmware's TPM 1.2 event log as the UEFI station saves
- * it (docs/DESIGN.md Section 13.15).
+ * it (docs/DESIGN.md Section 12.15).
  *
  * Purpose. On coreboot with an edk2 payload and a TPM 1.2 there are two
  * event logs, and Linux reads only coreboot's (PCR 2). edk2's, which holds

@@ -34,7 +34,7 @@
  * THE LOADER'S ONLY DISK WRITE IS HERE. Everything else falcon-bios does to
  * a disk is a read (disk.c), and this file is linked into the stick's and
  * the station's stage 3 alone (the station's marker is how "restart into
- * Windows" works, DESIGN Section 13.8): stage 2 and jump carry no code that
+ * Windows" works, DESIGN Section 12.8): stage 2 and jump carry no code that
  * can write a disk at all, rather than code that happens not to be called.
  */
 

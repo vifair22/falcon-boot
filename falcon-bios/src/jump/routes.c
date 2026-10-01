@@ -1,6 +1,6 @@
 /* falcon-bios: jump's routes through its drivers. See routes.h.
  *
- * Lifted out of apps/jump/bios_main.c (DESIGN Section 13.10) so that jump
+ * Lifted out of apps/jump/bios_main.c (DESIGN Section 12.10) so that jump
  * and station-legacy boot a CD, a stick and a card one way.
  */
 
@@ -42,7 +42,7 @@ static fs_vol *g_vol;
 static int     g_have_ata;
 static int     g_have_pcc;
 
-/* What the PCI scan found (DESIGN Section 14.2): the routes a controller
+/* What the PCI scan found (DESIGN Section 13.2): the routes a controller
  * exists for. */
 static int g_pci_ide;
 static int g_pci_cardbus;

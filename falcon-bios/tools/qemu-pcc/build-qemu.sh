@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # falcon jump's PC Card rig: QEMU with falcon-pcc.c built in (docs/DESIGN.md
-# Section 14.9).
+# Section 13.9).
 #
 # QEMU models no PC Card bridge on x86, so the rig builds one: this fetches
 # the QEMU release the machine already runs (its BIOS files and behaviour

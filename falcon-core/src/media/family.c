@@ -134,7 +134,7 @@ static const family_desc g_families[] = {
      * it however self-contained it is (DESIGN Section 7.2, decided 2026-09-13
      * after this family proved unbootable on a db with no Microsoft CA). That
      * is the bless tool's business and not a column here. */
-    /* devlink-rescue's 32-bit RAM-only Linux (DESIGN Section 13.5). It needs
+    /* devlink-rescue's 32-bit RAM-only Linux (DESIGN Section 12.5). It needs
      * nothing from its medium once the kernel runs (its squashfs is inside
      * its initramfs), and its agent owns COM1. */
     { FAMILY_DEVLINK, "DevLink recovery",

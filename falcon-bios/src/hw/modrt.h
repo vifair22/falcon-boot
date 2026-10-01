@@ -1,5 +1,5 @@
 /* falcon jump: what a module's code may lean on, which is only itself
- * (docs/DESIGN.md Section 14.4, jump/jmod.h).
+ * (docs/DESIGN.md Section 13.4, jump/jmod.h).
  *
  * Port I/O and a delay, inline, so a module's resident half needs nothing
  * the core provides: by the time it answers a bootloader's INT 13h call, the

@@ -17,13 +17,13 @@
 # missing analyzer is reported and skipped, not an error, so the script stays
 # usable on a machine that has only part of the toolchain.
 #
-# See docs/notes/analyze.md for usage and suppression policy.
+# See tools/analyze.md for usage and suppression policy.
 
 set -euo pipefail
 
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 WORK="$ROOT/build/analyze"
-BASELINE="$ROOT/docs/notes/analyze-baseline.txt"
+BASELINE="$ROOT/tools/analyze-baseline.txt"
 DB="$ROOT/compile_commands.json"
 
 # gcc quotes identifiers with U+2018/U+2019 under a UTF-8 locale, which would
@@ -52,7 +52,7 @@ stages (default: all three)
 options
   -j N, --jobs N      parallelism for the rebuild/lint stages (default: nproc)
   --strict            ignore the baseline; fail on any finding at all
-  --update-baseline   rewrite docs/notes/analyze-baseline.txt from this run
+  --update-baseline   rewrite tools/analyze-baseline.txt from this run
                       and exit 0 (the file's leading comment block is kept)
   -h, --help          this text
 

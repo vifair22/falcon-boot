@@ -1,5 +1,5 @@
 /* falcon jump: the header a module begins with, as the module declares it
- * (docs/DESIGN.md Section 14.4). jump/jmod.h has the same bytes as offsets,
+ * (docs/DESIGN.md Section 13.4). jump/jmod.h has the same bytes as offsets,
  * which is how the core reads them; this is the i686 layout that puts them
  * there. The link script (jmod.ld.S) places the section first in the slot
  * and defines the two ends.

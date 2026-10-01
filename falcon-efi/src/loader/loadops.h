@@ -151,7 +151,7 @@ EFI_STATUS loader_boot_next_self(EFI_SYSTEM_TABLE *st);
 void loader_boot_next_clear(EFI_SYSTEM_TABLE *st);
 
 /* BootNext set to a named option, for the stationary build's NXT route
- * (DESIGN Section 13.4): the firmware boots Boot<option> on the next start
+ * (DESIGN Section 12.4): the firmware boots Boot<option> on the next start
  * as it would from its own boot menu. The same write as
  * loader_boot_next_self, with the option chosen by the user rather than
  * read from BootCurrent. EFI_NOT_FOUND when Boot<option> does not exist;
@@ -174,7 +174,7 @@ EFI_STATUS loader_boot_next_set(EFI_SYSTEM_TABLE *st, UINT16 option);
 EFI_STATUS loader_isomap_set(EFI_SYSTEM_TABLE *st, const void *map, UINTN len);
 void loader_isomap_clear(EFI_SYSTEM_TABLE *st);
 
-/* ---- the station's saved event log (DESIGN Section 13.15) ----
+/* ---- the station's saved event log (DESIGN Section 12.15) ----
  *
  * FalconEvLog, under our vendor GUID: edk2's TPM 1.2 event log and the PCRs
  * as the station found them (falcon-core/src/tpm/evsave.h has the record),

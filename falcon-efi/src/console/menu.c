@@ -405,7 +405,7 @@ static BOOLEAN is_commit_key(const menu_keys *keys, CHAR16 c)
     return FALSE;
 }
 
-/* ---- the countdown (DESIGN Section 13.7) ----
+/* ---- the countdown (DESIGN Section 12.7) ----
  *
  * One periodic timer at a second, waited on beside the keyboard. The key
  * line carries the count while it runs, in falcon-bios's words

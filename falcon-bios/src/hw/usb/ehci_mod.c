@@ -1,4 +1,4 @@
-/* falcon jump's EHCI.MOD (DESIGN Section 14.4): USB mass storage on the
+/* falcon jump's EHCI.MOD (DESIGN Section 13.4): USB mass storage on the
  * machine's EHCI controllers, high-speed devices only; a full- or low-speed
  * one is handed to the port's companion, for UHCI.MOD or OHCI.MOD. The
  * storage half is msc.c, shared with the other controllers' modules.

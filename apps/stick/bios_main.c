@@ -817,7 +817,7 @@ static const char *table_error(int rc)
 /* This install's library and shelf, from whichever disk carries them: a
  * partition counts only when its own record names the boot partition's
  * install (DESIGN Section 3.1), and the first of each role is taken. The
- * shelf counts only when it opens (DESIGN Section 13.3, as the UEFI loader
+ * shelf counts only when it opens (DESIGN Section 12.3, as the UEFI loader
  * has it). Every partition's record is said on serial, the ones that are
  * not this install's too, so a log shows what was passed over and why. */
 static void claim_roles(bios_disk *d, const part_table *t)

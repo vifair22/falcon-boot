@@ -57,7 +57,7 @@ BIOS_ASFLAGS := -m32 -c -Wa,--fatal-warnings -I$(BIOS) $(CORE_INC)
 #
 # -march=i586 is the floor the loader runs on: a Pentium, which stage2.S
 # checks for (CPUID) before protected mode, and which DevLink recovery's
-# machines need (DESIGN Section 13.5). It was i686 until 2026-09-27; what
+# machines need (DESIGN Section 12.5). It was i686 until 2026-09-27; what
 # that allowed and a Pentium lacks is CMOV, and dropping it cost nothing
 # measurable (PBKDF2-SHA256 and portable AES-XTS within 1% either way, -m32
 # on a current processor). tools/check-floor.sh holds every linked image to
@@ -121,15 +121,15 @@ BIOS_MOD_bsd     := $(BIOS)/bsd/bsd.c
 BIOS_MOD_win     := $(BIOS)/win/win.c
 BIOS_MOD_mbr     := $(BIOS)/mbr/mbr.c
 # The station's chains, a partition's boot sector and another disk's MBR,
-# with the drive swap (DESIGN Section 13.4); vbrcore.c is the tested half,
+# with the drive swap (DESIGN Section 12.4); vbrcore.c is the tested half,
 # and core's vbr.c what a boot sector is.
 BIOS_MOD_chain   := $(BIOS)/mbr/chain.c $(BIOS)/mbr/vbrcore.c $(CORE_VBR)
 BIOS_MOD_jumpini := $(BIOS)/jump/jumpini.c
 BIOS_MOD_jmod    := $(BIOS)/jump/jmod.c $(BIOS)/jump/jmodload.c $(BIOS)/jump/jres.c
-# The CD, USB and CF routes through those drivers (DESIGN Sections 14.6 and
-# 13.10), for jump and station-legacy alike; each app keeps its own menu.
+# The CD, USB and CF routes through those drivers (DESIGN Sections 13.6 and
+# 12.10), for jump and station-legacy alike; each app keeps its own menu.
 BIOS_MOD_jroutes := $(BIOS)/jump/routes.c
-# The BIOS station's list and routes (DESIGN Section 13), run by the station
+# The BIOS station's list and routes (DESIGN Section 12), run by the station
 # and station-legacy apps.
 BIOS_MOD_station := $(BIOS)/station/station.c
 
@@ -203,7 +203,7 @@ $(BIOS_STAGE1): $(BIOS_OBJ)/$(BIOS)/start/boot.o $(BIOS)/start/bios.ld
 	@end=$$(nm $@.elf | awk '$$3 == "stage1_end" { print $$1 }'); \
 	echo "   stage 1: $$(( 0x$$end - 0x7C00 )) of $(STAGE1_S2_LBA_OFF_CHECK) bytes of code"
 
-# Stage 1 for a floppy (DESIGN Section 14.3): a FAT12 boot sector, BPB and
+# Stage 1 for a floppy (DESIGN Section 13.3): a FAT12 boot sector, BPB and
 # all, that reads the same stage 2 from the volume's reserved sectors by CHS.
 BIOS_FD_STAGE1 := $(BIN)/falcon-bios-fd-stage1.bin
 
@@ -385,7 +385,7 @@ endef
 
 # $(call jump_module,<name>,<slot macro>,<C sources>)
 #
-# One of falcon jump's drivers (DESIGN Section 14.4): a flat image linked at
+# One of falcon jump's drivers (DESIGN Section 13.4): a flat image linked at
 # its slot, which is the address the core reads it to, built to
 # build/bin/mod/<NAME>.MOD, the name the floppy carries it under. The link
 # script is preprocessed with the slot's index, so the address is
@@ -409,7 +409,7 @@ $$($(1)_MOD): $$($(1)_MOD_OBJS) build/gen/jmod-$(1).ld
 	@tools/check-floor.sh $$@.elf
 	objcopy -O binary -j .image $$@.elf $$@
 
-# What goes on the floppy (DESIGN Section 14.3): the module as a gzip
+# What goes on the floppy (DESIGN Section 13.3): the module as a gzip
 # member, which jmodload.c inflates into its slot. -n, so the member carries
 # no name or time and the same module compresses to the same bytes.
 $$($(1)_MOD).gz: $$($(1)_MOD)
@@ -517,12 +517,12 @@ $(BIOS_TICKSTOP): $(BIOS_OBJ)/falcon-bios/tools/tickstop.o $(BIOS)/start/bios.ld
 		echo "ERROR: $@ is $$sz bytes, not 512"; exit 1; \
 	fi
 
-# The BIOS station rig (DESIGN Section 13.11): the partition chain, the
+# The BIOS station rig (DESIGN Section 12.11): the partition chain, the
 # drive swap, STATION.INI and next boot under SeaBIOS, judged from serial.
 test-station-bios: station $(BIOS_RIGBOOT) $(BIOS_TICKSTOP) $(MKSTICK)
 	falcon-bios/tools/run-station-rig.sh
 
-# The BIOS station in front of real systems (DESIGN Section 13.11): the
+# The BIOS station in front of real systems (DESIGN Section 12.11): the
 # fixture disks of tools/fixtures/README.md (FreeDOS, Windows 98 SE, Windows
 # 95 when there is one) with the station installed by `mkstick station
 # install`, as the station's own disk and as a second disk behind the drive
@@ -530,7 +530,7 @@ test-station-bios: station $(BIOS_RIGBOOT) $(BIOS_TICKSTOP) $(MKSTICK)
 test-station-fixtures: station $(MKSTICK)
 	falcon-bios/tools/run-station-fixture-rig.sh
 
-# DevLink recovery (DESIGN Section 13.5) off the rig stick on a Pentium with
+# DevLink recovery (DESIGN Section 12.5) off the rig stick on a Pentium with
 # 32 MB, by both BIOS routes and both of its entries, the agent reached on
 # COM1 (falcon-bios/tools/run-devlink-rig.sh). Skipped when the ISO or the
 # devlink client is not there.

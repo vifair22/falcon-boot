@@ -1,4 +1,4 @@
-/* falcon jump: installing the reverse thunk (rthunk.S; DESIGN Section 14.6).
+/* falcon jump: installing the reverse thunk (rthunk.S; DESIGN Section 13.6).
  *
  * After jres_install, an INT 13h call for `drive` from real mode reaches
  * `entry` (a module's jmod_ops.int13) in protected mode on the stack at

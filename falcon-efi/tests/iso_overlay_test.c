@@ -42,7 +42,7 @@
  * What is deliberately NOT here: reading anything. The split never
  * dereferences an fs_file, so the sidecar handles below are address-distinct
  * dummies and no volume is mounted. Proving that the bytes arrive is the rig's
- * job (DESIGN Section 11 step 11), and no host process can stand in for it.
+ * job, and no host process can stand in for it.
  */
 
 #include "tests.h"

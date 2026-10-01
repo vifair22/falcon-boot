@@ -72,7 +72,7 @@
 extern const uint8_t gpt_guid_msbasic[GPT_GUID_LEN];
 extern const uint8_t falcon_guid_shelf[GPT_GUID_LEN];
 extern const uint8_t gpt_guid_esp[GPT_GUID_LEN];
-/* A station's `boot` partition on a GPT disk (docs/DESIGN.md Section 13.2):
+/* A station's `boot` partition on a GPT disk (docs/DESIGN.md Section 12.2):
  * d0acb249-f895-4e0d-ab0d-cfbb6f48ae36, minted 2026-09-26. Unrecognised by
  * Windows, so it gets no volume; stage 2 reads only ESP- and this-typed
  * partitions on GPT when it looks for the `boot` record. */

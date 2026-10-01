@@ -64,7 +64,7 @@ int vfd_chs_to_lba(const vfd_geom *g, uint16_t cyl, uint8_t head,
                    uint8_t sector, uint32_t *lba);
 
 /* The inverse, for reading a real floppy rather than serving an image
- * (falcon-bios/src/disk/disk.c, DESIGN Section 14.3): the CHS INT 13h AH=02h
+ * (falcon-bios/src/disk/disk.c, DESIGN Section 13.3): the CHS INT 13h AH=02h
  * takes for a linear sector. VFD_ERR_RANGE past the geometry's last sector. */
 int vfd_lba_to_chs(const vfd_geom *g, uint32_t lba, uint16_t *cyl,
                    uint8_t *head, uint8_t *sector);

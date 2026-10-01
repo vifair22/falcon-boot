@@ -1,6 +1,6 @@
 # station-legacy: the BIOS station plus falcon jump's routes and DevLink
 # recovery, for a machine whose BIOS cannot boot a CD, a USB stick or a CF
-# card on its own (docs/DESIGN.md Section 13.10). BIOS only. Not in `all`:
+# card on its own (docs/DESIGN.md Section 12.10). BIOS only. Not in `all`:
 # `make station-legacy`.
 #
 # The station's link, plus what jump's routes need: the drivers' loader and
@@ -15,7 +15,7 @@ LEGACY_BIOS := $(STATION_LEGACY)/bios_main.c $(BIOS_MOD_station)
 LEGACY_BIOS += $(BIOS_MOD_pos) $(BIOS_MOD_prompt) $(BIOS_MOD_console) $(BIOS_MOD_linux)
 LEGACY_BIOS += $(BIOS_MOD_chain) $(BIOS_MOD_lowmem)  # partition and disk chains, the swap's memory
 LEGACY_BIOS += $(CORE_STROWS) $(CORE_STATIONINI)   # the list, and STATION.INI
-LEGACY_BIOS += $(BIOS_MOD_marker) $(CORE)/media/nextboot.c  # next boot (Section 13.8)
+LEGACY_BIOS += $(BIOS_MOD_marker) $(CORE)/media/nextboot.c  # next boot (Section 12.8)
 LEGACY_BIOS += $(CORE)/manifest/manifest.c  # nextboot.c's path rules
 LEGACY_BIOS += $(BIOS_MOD_install) $(CORE_IDENT) $(CORE_IDENT_FS)  # the shelf by its record
 LEGACY_BIOS += $(BIOS_MOD_jnlmem)      # a hibernated shelf, read through its journal
@@ -40,7 +40,7 @@ $(BIOS_OBJ)/$(STATION_LEGACY)/bios_main.o: build/version.h
 station-legacy: $(BIOS_STAGE1) $(BIOS_STAGE2) $(BIOS_STATION_LEGACY_STAGE3) \
 	$(JUMP_MODS)
 
-# DevLink recovery (DESIGN Sections 13.5 and 13.10): devlink-rescue's
+# DevLink recovery (DESIGN Sections 12.5 and 12.10): devlink-rescue's
 # classic kernel and initrd wrapped as a UKI for the station partition's
 # /uki, built here from that repository's images rather than kept as a
 # binary. Its kernel has no EFI stub, so the UKI is --bios-only: falcon-bios
@@ -76,7 +76,7 @@ test-station-legacy: station-legacy devlink-uki $(MKSTICK)
 test-cfstation: station-legacy devlink-uki jump $(MKSTICK)
 	falcon-bios/tools/run-cfstation-rig.sh
 
-# A station update for a machine in the field (DESIGN Section 13.14): one
+# A station update for a machine in the field (DESIGN Section 12.14): one
 # tar per version with everything update.sh writes, a MANIFEST it checks
 # first, and the static i686 mkstick that does the writing, so the machine
 # needs sh, tar, sha256sum and mtools and no falcon of its own. Both stage

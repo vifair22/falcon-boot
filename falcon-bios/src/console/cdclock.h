@@ -1,4 +1,4 @@
-/* falcon-bios: the menu countdown's clock (DESIGN Section 13.7), apart from
+/* falcon-bios: the menu countdown's clock (DESIGN Section 12.7), apart from
  * the BIOS calls that read it.
  *
  * Two clocks, and the countdown takes whichever says more time has gone.

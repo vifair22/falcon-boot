@@ -1,5 +1,5 @@
 /* Tests for falcon-core/src/media/stationini.c: STATION.INI, the station's
- * configuration (docs/DESIGN.md Section 13.7).
+ * configuration (docs/DESIGN.md Section 12.7).
  *
  * The parser is strict because a typo must not become a different default:
  * every error below has to leave no default and no countdown, and name the

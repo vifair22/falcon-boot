@@ -1,5 +1,5 @@
 /* Tests for falcon-efi/src/nxt/nxtcore.c, the parsing half of the
- * stationary build's NXT rows (docs/DESIGN.md Section 13.4).
+ * stationary build's NXT rows (docs/DESIGN.md Section 12.4).
  *
  * Every byte parsed there was written into NVRAM by something other than
  * falcon: an OS installer, a firmware update, a vendor tool. The hostile

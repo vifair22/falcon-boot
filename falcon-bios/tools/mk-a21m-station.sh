@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # falcon-bios: the A21m's disk with the station installed on it
-# (docs/DESIGN.md Section 13.11), made the way the Manual says a person
+# (docs/DESIGN.md Section 12.11), made the way the Manual says a person
 # does it: shrink Windows 2000's NTFS with ntfsresize, shorten its partition
 # entry to match, then `falcon-boot-mkstick station install --bios` into the
 # space that leaves at the end of the disk.

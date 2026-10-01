@@ -1,4 +1,4 @@
-/* falcon-boot: what a boot sector is (docs/DESIGN.md Section 13.3).
+/* falcon-boot: what a boot sector is (docs/DESIGN.md Section 12.3).
  *
  * The loader a partition's boot sector starts, by the file names and
  * messages its code holds, and the words a row gives it; what kind of BPB

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # falcon-bios: boot the A21m's disk with the station on it under SeaBIOS
-# (docs/DESIGN.md Section 13.11), as the A21m would: a Pentium III, 512 MB,
+# (docs/DESIGN.md Section 12.11), as the A21m would: a Pentium III, 512 MB,
 # the disk on IDE. mk-a21m-station.sh makes the disk: a qcow2 overlay of
 # the original image with the station installed in it.
 #

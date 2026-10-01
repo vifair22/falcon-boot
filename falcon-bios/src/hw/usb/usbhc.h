@@ -1,6 +1,6 @@
 /* falcon jump's USB modules: what a host controller driver offers the
  * mass-storage half (msc.c), so one msc.c serves UHCI, OHCI and EHCI, each
- * linked into its own module (DESIGN Section 14.4).
+ * linked into its own module (DESIGN Section 13.4).
  */
 
 #ifndef FALCON_BIOS_USBHC_H

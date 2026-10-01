@@ -1,4 +1,4 @@
-/* falcon-bios: the station's chains (docs/DESIGN.md Section 13.4, routes
+/* falcon-bios: the station's chains (docs/DESIGN.md Section 12.4, routes
  * VBR and MBR).
  *
  * THE PARTITION CHAIN is the Windows MBR's job done by falcon. What a DOS
@@ -31,7 +31,7 @@
  * never leaves conventional memory taken or a vector hooked.
  *
  * 0x0600-0x07FF and 0x7C00-0x7DFF are free when this runs: nothing of the
- * loader lives there (Section 12.3.4), and nothing calls the BIOS between
+ * loader lives there (Section 11.3.4), and nothing calls the BIOS between
  * the copies and the jump, so the bounce buffer cannot overwrite them.
  */
 

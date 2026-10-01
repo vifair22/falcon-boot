@@ -6,109 +6,46 @@ LUKS-backed OS booted via a UKI.
 
 ## Read this first
 
-**`docs/DESIGN.md` is the authoritative design and the source of truth.** Read it
-before proposing or changing any architecture. It argues its decisions and
-records the alternatives that were considered and rejected, so do not reintroduce
-a rejected approach without re-reading why it was rejected. `README.md` is the
-short public summary of the same model.
+**`docs/DESIGN.md` is the design and the source of truth.** Read it before
+proposing or changing any architecture. It describes how falcon-boot works,
+in the present tense; it is not a decision log and records no history (git
+does). `README.md` is the short public summary of the same model.
 
-DESIGN Section 12 draws every boot route of both loaders, traced from the
+DESIGN Section 11 draws every boot route of both loaders, traced from the
 code, from power-on to the booted system standing on its own. A change to a
 route (its order, a fallthrough, what it hands over, what stays resident)
-updates its diagram in the same commit. Section 12 is where a route's shape
+updates its diagram in the same commit. Section 11 is where a route's shape
 is looked up before its code is read.
 
-Coverage (docs/notes/coverage-roadmap.md, 2026-09-20): M0-M7 are done. The
-corpus harness and scorecard exist (`docs/coverage.md`), and both run in a
-container on binhost-builder rather than on a workstation. falcon-core reads
-ISO9660/Rock Ridge/Joliet, UDF, FAT12/16/32 and an ISO's own GRUB,
-systemd-boot and isolinux configuration, and assembles a medium's volumes
-itself (`media/medium.c`), which is what the menu's survey now uses instead
-of publishing a block device and asking the firmware
-(docs/notes/iso-reader-route.md); falcon-hook rebuilds the ISO as a device-mapper
-device inside the distro's initramfs; and with Secure Boot off the loader
-boots an unblessed Linux ISO's kernel directly (Enter; `c` chainloads its own
-loader, `d` forces direct); with it on, through the ISO's own shim when the
-kernel carries `.sbat` (Fedora, Rocky, Alma; D3a), else through the ISO's own
-signed GRUB with a grub.cfg of ours served in its place and falcon-hook as a
-blocklist initrd past the ISO's end (D3b; `docs/notes/d3-spike.md`). Blessed wraps
-carry the hook too. `b` on a
-row or `a` for everything new blesses from the menu through the appliance.
-The Tier B installers (Debian netinst, Alpine, Proxmox) boot direct through
-the hook's fallbacks. A stock Windows ISO boots in every state whose db
-trusts Microsoft: the loader patches its boot.wim in memory as the virtual CD
-serves it (falcon-winjump in place of winpeshl.exe), and Setup finds its
-source through the ISO winjump attaches from Windows. BSD media (M7) boots by a third
-route: the served ISO gains one directory record naming itself as a file and
-the md_image settings in its loader.conf, so FreeBSD's own loader mounts root
-from a memory disk. Blessing it signs that loader with the MOK and starts the
-signed copy with the medium named to the platform as its device: FreeBSD
-passes in every Secure Boot state, pfSense only with it off, since shim will
-not parse pfSense's loader at all (docs/notes/bsd-route.md).
-
-Status: pre-1.0 MVP. Build-order steps 1-9 are done and step 10 (real
-hardware) is partly done; `docs/DESIGN.md` Section 11's status header is the
-record. The loader, the personal-OS path with its passphrase handoff (the
-UKI published on `credfs` with `<uki>.efi.extra.d/cryptsetup.passphrase.cred`
-beside it, which sd-stub packs into the initrd), mkstick, the sign tool and
-the signing appliance all exist and are proven in the QEMU/OVMF rig under
-both Secure Boot states (`make test-stick`, `make run-stick` /
-`run-stick-secboot`, `falcon-appliance/tools/`). Measured on real hardware
-(2026-09-13): shim/MOK enrollment, the p3 unlock, and a blessed Arch ISO
-booting under Secure Boot on a machine that trusts nothing from Microsoft.
-Measured on real hardware (2026-09-20), UEFI with Secure Boot on and off:
-the personal OS end to end, blessed Linux ISOs (blessed from the menu, with
-`BootNext` back to the stick), a stock Windows ISO, and with Secure Boot on
-D3a (an unblessed Fedora) and D3b (an unblessed Kubuntu). Measured on real
-hardware (2026-09-23), BIOS through CSM: the personal OS end to end, p4
-unlocked from the credential with no second prompt. Measured on real
-hardware (2026-09-24), BIOS: the since-retired 32-bit stick to its Arch
-Linux 32 personal OS on a Windows 7 era machine. Measured on real
-hardware (2026-09-26 and 27), BIOS on a Pentium III with no 64-bit mode
-(the ThinkPad A21m): falcon jump's five routes, and station-legacy
-installed on its internal disk with every row (the chains to Windows 2000,
-memtest, DevLink recovery's UKI, jump's CD, USB and CF routes), updated in
-place from a station bundle (DESIGN Section 13.14). Measured on real
-hardware (2026-09-29), UEFI with Secure Boot on (the ThinkPad T430:
-coreboot and edk2, its own key as PK, KEK and db, no shim): the UEFI
-station installed with `--no-shim`, and its TOTP code released by a TPM
-1.2, enrolled from the two event logs (DESIGN Section 13.15). Measured on
-real hardware (2026-09-30): the T430's hibernated shelf read through its
-journal; `mkstick update` on the main stick and on the T430's station, its
-TOTP seed resealed to the new loader in the same run; the background probe
-over a USB 1.1 stick on BIOS; the A21m's station-legacy at 411611c from a
-station bundle, its jump floppy with stage 2's loading spinner, and its
-idle power-off through APM; and the stick's four remaining BIOS routes
-(direct boot, the virtual CD, Windows media, BSD).
+What exists, proven in the QEMU/OVMF and SeaBIOS rigs and on real hardware:
+the stick's UEFI and BIOS loaders with every route (the personal OS with its
+passphrase handoff, the virtual CD, direct kernel boot with falcon-hook, D3a
+and D3b under Secure Boot, blessed media, the Windows boot.wim patch with
+winjump and falcon-vdisk, the BSD memory disk); mkstick, the sign tool and
+the on-stick signing appliance; the UEFI and BIOS stations with the
+installer, STATION.INI, the station bundle update and the TPM-backed TOTP
+check; falcon jump and station-legacy for machines without a 64-bit mode;
+and the coverage harness (`docs/coverage.md`), which runs in a container on
+binhost-builder. Status: pre-1.0.
 
 ## Non-negotiable security invariants (DESIGN.md Section 7)
 
-These are hard rules. If a change would break one, it is a regression, stop and
-flag it rather than implement it.
+A change that breaks one of these is a regression: stop and flag it.
 
-1. **The loader verifies; it never signs.** The loader never performs a signing
-   operation and never holds a private key. Signing is a private-key operation
-   that happens only in Linux userland (an external host, or the on-stick signing
-   appliance). See Section 7.5.
-2. **Enforcement is the platform's, never the loader's.** The loader never
-   changes what is allowed to run. It launches everything through a
-   shim-verified load path (see Section 7.6 for which entry point that is),
-   which enforces when Secure Boot is on and permits when it is off. The
-   loader reads Secure Boot state only for UX.
-3. **No mechanism that relaxes signature enforcement exists in the loader.**
-   There is no security-protocol override and no in-loader "disable enforcement"
-   toggle. The user opts out of enforcement only through platform,
-   physical-presence mechanisms (firmware Secure Boot off, or shim `MokSBState`
-   via `mokutil --disable-validation`). See Sections 7.3 and 7.4.
-4. **The private MOK key stays encrypted on p3 and never on the readable exFAT
-   partition and never in the loader.** The public cert travels for enrollment;
-   the private key does not travel in the clear. See Section 7.5.
+1. **The loader verifies; it never signs.** No signing operation and no
+   private key in the loader. Signing happens in Linux userland only (a host,
+   or the on-stick appliance). Section 7.5.
+2. **Enforcement is the platform's.** Everything is launched through the
+   shim-verified load path (Section 7.6). The loader reads Secure Boot state
+   for UX only.
+3. **Nothing in the loader relaxes signature enforcement.** The opt-outs are
+   the platform's: firmware Secure Boot off, or shim's `MokSBState`.
+   Sections 7.3 and 7.4.
+4. **The private MOK key lives encrypted on p3.** Never on p2, never in the
+   loader. Section 7.5.
 
-Consequence, stated so nobody "fixes" it: drag-and-drop of an arbitrary *unsigned*
-ISO with reliable media-finding while Secure Boot validation stays on is
-intentionally impossible. The paths for that case are blessing (sign the kernel
-with the MOK key) or the platform opt-out, not any loader-side relaxation. This
-is by design; it is not a gap to close.
+An unsigned ISO with Secure Boot validation on is therefore blessed or not
+booted; there is no third path to add.
 
 ## Build and layout
 
@@ -130,12 +67,12 @@ falcon-efi and falcon-bios, which never share a set, may both have a `pos/`.
 
 - `apps/` the loaders, one directory per build: `stick/` (every route, the
   loader on a falcon stick; `all` builds its UEFI image, `make bios` its
-  BIOS one), `station/` (DESIGN Section 13, falcon as a machine's own
+  BIOS one), `station/` (DESIGN Section 12, falcon as a machine's own
   boot loader; `make station`; its UEFI build alone has the TPM-backed
-  TOTP check of Section 13.15), `station-legacy/` (Section 13.10, the
+  TOTP check of Section 12.15), `station-legacy/` (Section 12.10, the
   BIOS station plus jump's CD, USB and CF routes and DevLink recovery's
   UKI; `make station-legacy`, `make devlink-uki`, and `make station-bundle`,
-  the update a station in the field takes, Section 13.14) and `jump/` (DESIGN Section 14, a boot
+  the update a station in the field takes, Section 12.14) and `jump/` (DESIGN Section 13, a boot
   floppy for an old BIOS machine; `make jump` builds the whole 1.44 MB
   image with mtools, its core in the FAT12 volume's reserved sectors). An app is its entry points (`efi_main.c`,
   `efi_sbat.c`, `bios_main.c`) and an `app.mk` that lists, one line per
@@ -152,10 +89,10 @@ falcon-efi and falcon-bios, which never share a set, may both have a `pos/`.
     portable fallback): the only crypto in the stick's loader. The UEFI
     station also links `CORE_CRYPTO_TPM` (`cfb`, `bn`, `p256`, `kdf`, `rsa`,
     `otp`: AES-CFB, P-256 ECDH, the TPM 2.0 KDFs, RSAES-OAEP and the RFC 6238
-    code) for its TOTP check (DESIGN Section 13.15); nothing there signs or
+    code) for its TOTP check (DESIGN Section 12.15); nothing there signs or
     verifies an image.
   - `tpm/` the TPM command layer, 2.0 and 1.2, over one transport
-    callback and one randomness callback (DESIGN Section 13.15): the
+    callback and one randomness callback (DESIGN Section 12.15): the
     seed's NV index sealed to PCRs, the salted, encrypted session that
     reads it (ECDH P-256 and AES-CFB on 2.0, an MGF1 transport to the SRK
     on 1.2), the pinned key checks, and `evlog.c`, the firmware's event
@@ -216,7 +153,7 @@ falcon-efi and falcon-bios, which never share a set, may both have a `pos/`.
     own idea of what is on a stick. `shelf.c` is the personal-OS chooser's
     rows: the UKIs in p3's `/uki` (or `/EFI/Linux`), their `.osrel` names,
     order and qualifiers, again for both loaders. `strows.c` is the
-    station's list as data, both stations' (DESIGN Section 13.7): the
+    station's list as data, both stations' (DESIGN Section 12.7): the
     generated names, what a STATION.INI section changes or adds (a
     firmware entry or an ESP on UEFI, a chain on BIOS), the order and the
     default, and the rows' words (`STROWS_LABEL_*`), which `station
@@ -229,8 +166,7 @@ falcon-efi and falcon-bios, which never share a set, may both have a `pos/`.
     catalog and `medium.c` assembles what a medium holds into a set of
     mounted volumes (UDF, then ISO9660, then the El Torito boot image) over
     one read callback, which is the job the firmware's ConnectController does
-    today and the per-platform boundary a BIOS build would need
-    (docs/notes/iso-reader-route.md).
+    today and the per-platform boundary a BIOS build would need.
   - `gz/` inflate and the gzip member around it (RFCs 1951, 1952): every
     BIOS stage 3 is stored as a gzip member, which stage 2 inflates and
     checks, and so is every falcon jump module; no allocation and no .bss.
@@ -262,8 +198,8 @@ falcon-efi and falcon-bios, which never share a set, may both have a `pos/`.
     entries (NXT, BootNext and a reset): `nxtcore.c` parses BootOrder and
     Boot#### (the description, and the partition and file its device path
     names) and is host-tested, `nxt.c` reads the variables.
-  - `esp/` the station's other way into a system (DESIGN Sections 13.4,
-    13.6; routes ESP and MEM): a file on a firmware-mounted volume
+  - `esp/` the station's other way into a system (DESIGN Sections 12.4,
+    12.6; routes ESP and MEM): a file on a firmware-mounted volume
     (`bootmgfw.efi`, `memtest.efi`) loaded by device path through
     `loadops`, and the reads STATION.INI and the ESP rows need.
   - `loader/` the shim-verified load path (`loadops.c`, DESIGN Section 7.6)
@@ -285,7 +221,7 @@ falcon-efi and falcon-bios, which never share a set, may both have a `pos/`.
   - `secboot/` Secure Boot state for UX (`sb.c`) and the variable reads the
     boot predictions judge against (`trustefi.c`).
   - `tcg/` and `totp/` the UEFI station's TOTP check (DESIGN Section
-    13.15), linked by that app alone: `tcg.c` is core's `tpm/` transport
+    12.15), linked by that app alone: `tcg.c` is core's `tpm/` transport
     through `EFI_TCG2_PROTOCOL` SubmitCommand or `EFI_TCG_PROTOCOL`
     PassThroughToTpm (no TPM driver) and its randomness (EFI_RNG, RDRAND,
     the TPM, the counter, hashed together); `totp.c` reads the seed once
@@ -314,19 +250,19 @@ falcon-efi and falcon-bios, which never share a set, may both have a `pos/`.
     ISO and images, the throwaway test MOK, the sd-stub fixture UKI with its
     `/init` in `uki-init/`, the four-partition test stick, and
     `mk-test-station.sh`, a disk `mkstick station install` puts the station
-    on, `make test-station`) and the two spikes
-    whose findings are in `docs/notes/`.
+    on, `make test-station`) and the two spike
+    tool directories (`shim-spike/`, `win-spike/`).
 - `falcon-cli/` host tooling, Linux userland C never linked into the loader:
   `src/mkstick`, `src/sign`, and their shared `src/common`. May shell out to
   `cryptsetup`, `sbsign`, `mkfs.*`; it builds UKIs itself (`sign/uki.c`,
   byte-identical to ukify). The sign tool is also linked
   static for the appliance. `mkstick station totp enroll|reseal|remove`
   (`mkstick/totp.c`, its pure half `totpcore.c`) enrolls the UEFI
-  station's TOTP seed from the machine's own OS (DESIGN Section 13.15).
+  station's TOTP seed from the machine's own OS (DESIGN Section 12.15).
   `mkstick update` (`mkstick/update.c`, what a disk is in `updatecore.c`)
   brings a stick or a station to the build in place, both halves, signing
   with the MOK read off the shelf into sealed memfds (`shelfkey.c`) and
-  resealing a TOTP station to the new loader (DESIGN Section 13.14).
+  resealing a TOTP station to the new loader (DESIGN Section 12.14).
 - `falcon-appliance/` the on-stick signing appliance. `src/` is PID 1, split
   by job (`appliance.h` has the map: `main`, `console`, `stick`, `run`,
   `survey`, `list`, `select`, `shelf` (p3 read in process with core's LUKS2
@@ -358,10 +294,9 @@ falcon-efi and falcon-bios, which never share a set, may both have a `pos/`.
   BIOS virtual CD and falcon-hook use) since WinPE cannot read the exFAT the
   ISO lives on. winjump loads it (CreateService/StartService) and hands it
   the extents through `src/vdiskio.h`. 32-bit Windows loads it unsigned;
-  64-bit needs the served boot config put into test-signing mode and the
-  driver signed with a throwaway cert, which Secure Boot on refuses (the
-  platform opt-out, DESIGN Section 7). Runs only in the installer's WinPE;
-  the installed Windows keeps signing enforcement.
+  64-bit WinPE enforces kernel-mode code signing and does not (the served
+  BCD is not put into test-signing mode). Runs only in the installer's
+  WinPE; the installed Windows keeps signing enforcement.
 - `falcon-hook/` the program the loader appends to an ISO's initrd (DESIGN
   Section 6.4): freestanding static Linux, no libc, built twice, x86-64
   (`falcon-hook`) and i586 (`falcon-hook32`) from the same source: `src/sys.c`
@@ -378,7 +313,7 @@ falcon-efi and falcon-bios, which never share a set, may both have a `pos/`.
   loaders embed the stripped binaries as generated C arrays (the UEFI loader
   the x86-64 one, falcon-bios both, appending whichever matches the kernel).
   `tools/run-hook-rig.sh` boots it under QEMU without the loader.
-- `falcon-bios/` the BIOS loader (docs/notes/bios-route.md). The image is
+- `falcon-bios/` the BIOS loader. The image is
   opt-in and not built by `all`, and so is putting it on a stick: `mkstick
   bios <target>` installs it, `mkstick create` does not. A BIOS machine has
   no Secure Boot, no shim and no db, so this route has no blessed path and
@@ -410,7 +345,7 @@ falcon-efi and falcon-bios, which never share a set, may both have a `pos/`.
   A21m's PC Card bridge, since QEMU has none (its `lba48=on` card is the
   `cf48` case, a sparse card past 128 GiB that `hw/ata/atadisk.c` reads
   with 48-bit commands). `make station` links the
-  station's stage 3 (DESIGN Section 13) from `src/station/station.c`,
+  station's stage 3 (DESIGN Section 12) from `src/station/station.c`,
   which `apps/station/bios_main.c` and `apps/station-legacy/bios_main.c`
   both run (`station_main`, with a hook for station-legacy's own rows):
   the UKIs off the shelves carrying its install ID, memtest86+, and
@@ -484,8 +419,8 @@ falcon-efi and falcon-bios, which never share a set, may both have a `pos/`.
   drive answers neither AH=48h nor AH=41h, which is a floppy.
 
   It is i586 code in flat 32-bit protected mode, paging off, and one image
-  runs on every processor from the Pentium on (docs/notes/bios-route.md
-  Section 6h; DESIGN Section 14.8 for the floor, which
+  runs on every i586 or later processor (DESIGN Section 13.8 for the
+  floor, which
   `tools/check-floor.sh` holds every linked image to): what a newer processor adds is taken by asking CPUID at run
   time, not by a second build. `pmode.S` switches the SSE state on only when
   CPUID reports SSE, falcon-core's AES path picks AES-NI by CPUID, and a
@@ -548,14 +483,14 @@ falcon-efi and falcon-bios, which never share a set, may both have a `pos/`.
   is the thing to remember here - `pmode.S` sets CR4.OSFXSR because
   falcon-core's AES-NI path needs it, and nothing is placed at or above
   4 GiB (`ADDR_END`), since paging is off. The coverage harness judges it in
-  two columns, `bios` (the host CPU) and `bios32` (a Pentium III).
+  two columns, `bios` (the host CPU) and `bios32` (an i686).
 - `docs/` DESIGN.md (authoritative) and Manual.md (the operator's reference:
   the route codes so far). `tools/` at the root
   holds only what spans the repo: `analyze.sh`; `arch-iso.sh`, sourced by
   the three scripts that take a kernel out of the rig's Arch ISO, which
   default to the copy on this stick's p2 (mounted read-only for the run
   when it is not already; `ARCH_ISO` overrides); and `coverage/`, the corpus
-  harness of docs/notes/coverage-roadmap.md (a pinned ISO manifest, one rig
+  harness (a pinned ISO manifest, one rig
   stick per ISO, each booted under OVMF in three Secure Boot states and
   judged from serial, a DHCP capture and the media read after the kernel
   starts, rendered to `docs/coverage.md`). `coverage/Dockerfile` is the
@@ -601,21 +536,31 @@ on go to serial only.
 ## Tone: no preaching
 
 This applies to everything with a reader: strings the loader prints, CLI
-output, docs, and the assistant's own replies in a session.
+output, docs, code comments, and the assistant's own replies in a session.
 
-State the fact. Stop. A reader who wants the reasoning opens `docs/DESIGN.md`,
-which is where the reasoning belongs.
+State the fact. Stop.
+
+Each kind of writing has one job:
+
+- `docs/DESIGN.md` says how it works. A rejected alternative is one sentence,
+  what and why, not a re-argued case. A security invariant is stated once, in
+  Section 7, and referenced by number everywhere else.
+- `docs/Manual.md` says how to use it.
+- The mermaid diagrams (DESIGN Section 11) show it.
+- A code comment explains what the code does not make obvious: an invariant
+  the code relies on, a hardware or format quirk, why the obvious approach
+  was not taken. Design and policy live in DESIGN.md; point at the section
+  (`DESIGN Section 7.6`), do not restate it. Any dev can read what the code
+  does.
 
 Cut:
 
 - Restating a security invariant at the point of use. "This changes nothing
-  about what may run", "the loader cannot and must not do that itself". The
-  invariants are in Section 7 and in this file. A prompt is not the place to
-  re-argue them.
+  about what may run", "the loader cannot and must not do that itself".
 - Reassurance. "Nothing here decides what may run", "this is safe".
 - Consequences the reader already knows. "Anything unsaved is lost" before a
   reboot.
-- Justifying the design to the person using it. Confidence needs no defence.
+- Justifying the design to the reader. Confidence needs no defence.
 
 Keep:
 
@@ -626,6 +571,3 @@ Keep:
 A confirmation is a question and its keys, not an essay:
 
     Reboot into firmware setup? y to reboot, any other key to go back.
-
-Code comments are exempt. They argue, at length, for the next maintainer.
-That is the one audience that wants the reasoning inline.

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# falcon-boot: the rig's station disk (docs/DESIGN.md Section 13), made the
+# falcon-boot: the rig's station disk (docs/DESIGN.md Section 12), made the
 # way a user makes one: a machine's disk with its own partitions and free
 # space, and `mkstick station install` putting the station on it (Section
-# 13.9). The rig boots what the installer writes, so an installer that
+# 12.9). The rig boots what the installer writes, so an installer that
 # stops working stops this script first.
 #
 # Before the install:

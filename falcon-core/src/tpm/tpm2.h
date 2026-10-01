@@ -123,7 +123,7 @@ int tpm2_seed_enroll(tpm_dev *d, const uint8_t *owner_auth, size_t auth_len,
 
 /* The same with the PCR values given rather than read: the values the
  * PCRs will hold when the station runs, which is not what they hold in the
- * OS enrollment runs from (docs/DESIGN.md Section 13.15; mkstick replays
+ * OS enrollment runs from (docs/DESIGN.md Section 12.15; mkstick replays
  * the firmware's event log for them). values is one per set bit of
  * pcr_mask, ascending. */
 int tpm2_seed_enroll_values(tpm_dev *d, const uint8_t *owner_auth,

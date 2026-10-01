@@ -205,7 +205,7 @@ typedef struct {
     uint8_t  drive;         /* what the BIOS booted from; rarely 0x80 */
     uint32_t sector_size;   /* 512 for a disk, 2048 for a CD */
     /* Zero sectors: read by LBA, AH=42h. Otherwise the drive has no INT 13h
-     * extensions (a floppy, DESIGN Section 14.3) and is read by AH=02h with
+     * extensions (a floppy, DESIGN Section 13.3) and is read by AH=02h with
      * the geometry AH=08h gave. */
     vfd_geom geom;
 } bios_disk;

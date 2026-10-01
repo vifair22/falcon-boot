@@ -1,5 +1,5 @@
 /* Tests for falcon-cli/src/mkstick/stationcore.c: the decisions of `station
- * install` (docs/DESIGN.md Section 13.9).
+ * install` (docs/DESIGN.md Section 12.9).
  *
  * The disks here are the ones the installer meets: the A21m's, whose
  * Windows 2000 partition starts at 63 and ran to the end until it was

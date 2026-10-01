@@ -1,5 +1,5 @@
 /* falcon jump's OHCI.MOD: the Open Host Controller, USB 1.1's other
- * controller (DESIGN Section 14.4), as a usbhc for msc.c.
+ * controller (DESIGN Section 13.4), as a usbhc for msc.c.
  *
  * What the chipsets that are not Intel's or VIA's put on the board (SiS, ALi,
  * OPTi), and most add-in cards (NEC); QEMU's pci-ohci.

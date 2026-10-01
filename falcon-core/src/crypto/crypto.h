@@ -3,7 +3,7 @@
  * Purpose. The LUKS2 unlock of p3 is where EFI-land needs cryptography, and
  * Section 9 fixes the scope: SHA-2, PBKDF2-HMAC, Argon2id with the BLAKE2b
  * under it (docs/notes/argon2-totp.md Section 1), and AES-XTS *decrypt*.
- * The UEFI station alone adds the TOTP check's (Section 13.15): SHA-1 and
+ * The UEFI station alone adds the TOTP check's (Section 12.15): SHA-1 and
  * HMAC-SHA1 for the code and the TPM 1.2 session, and CORE_CRYPTO_TPM
  * (AES-CFB, P-256 ECDH, the TPM 2.0 KDFs, RSAES-OAEP), which the stick
  * does not link. None of it signs, and none of it verifies an image. This

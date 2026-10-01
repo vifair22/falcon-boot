@@ -1,5 +1,5 @@
 /* falcon-core: STATION.INI, the station's configuration (docs/DESIGN.md
- * Section 13.7).
+ * Section 12.7).
  *
  *     [general]
  *     default = win2k          ; a section name, or an autodetected entry's
@@ -14,7 +14,7 @@
  *     label = Windows 2000
  *     swap  = no               ; BIOS chain of another disk: no drive swap
  *
- *     [totp]                   ; the UEFI station's TOTP check (13.15)
+ *     [totp]                   ; the UEFI station's TOTP check (12.15)
  *     tpm   = 2.0              ; or 1.2
  *     index = 0x01800FA1       ; the seed's NV index
  *     pcrs  = 0, 2, 4, 7       ; what it is sealed to, 0 to 15
@@ -34,7 +34,7 @@
  * image, disk (+part) => a BIOS chain (on UEFI: the firmware entry, or the
  * disk's ESP bootmgfw.efi with method = efi).
  *
- * Strict, as JUMP.INI is (DESIGN 14.7): a key it does not know, a value it
+ * Strict, as JUMP.INI is (DESIGN 13.7): a key it does not know, a value it
  * cannot parse, a key given twice, a section given twice, a timeout with no
  * default, or a default naming no section is an error naming the line; the
  * result is then no default and no countdown (the entries still parse up to

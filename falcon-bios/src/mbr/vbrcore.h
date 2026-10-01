@@ -1,5 +1,5 @@
 /* falcon-bios: the decisions of a chain to a partition's boot sector or
- * another disk's MBR (docs/DESIGN.md Sections 13.3 and 13.4), apart from
+ * another disk's MBR (docs/DESIGN.md Sections 12.3 and 12.4), apart from
  * the BIOS so the host tests reach them.
  *
  * What a DOS or Windows MBR does before it jumps, done by falcon on

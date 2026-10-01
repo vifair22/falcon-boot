@@ -9,8 +9,7 @@
  * What that shortcut does and does not skip. It skips the ENROLLMENT UI only.
  * Shim still reads MokList and still performs every verification itself, so
  * what a run against this varstore measures is the real MOK load path.
- * Testing the enrollment UX is a separate, interactive job (DESIGN Section 11
- * step 10).
+ * Testing the enrollment UX is a separate, interactive job.
  *
  * This command never touches a stick, never generates or reads a private key,
  * and is not part of building one. It shells out to virt-fw-vars from the

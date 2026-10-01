@@ -1,5 +1,5 @@
 /* falcon jump's USB modules: the byte layouts of USB and of Bulk-Only
- * Transport, apart from any host controller (DESIGN Section 14.4).
+ * Transport, apart from any host controller (DESIGN Section 13.4).
  *
  * A setup packet, a descriptor, a command block wrapper: each is a layout a
  * driver must get exactly right, and gets no error back for getting wrong,

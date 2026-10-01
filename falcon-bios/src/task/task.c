@@ -7,7 +7,7 @@
  * task_start that pops into task_boot with the task in ebx.
  *
  * The frame, from the saved stack pointer up: edi, esi, ebx, ebp, the return
- * address. The processor floor is the Pentium (DESIGN Section 14.8), so the
+ * address. The processor floor is the Pentium (DESIGN Section 13.8), so the
  * unreachable end of task_boot is a jump to itself rather than ud2, which
  * came with the Pentium Pro.
  */

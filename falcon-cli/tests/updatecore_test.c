@@ -1,5 +1,5 @@
 /* Tests for falcon-cli/src/mkstick/updatecore.c: what `mkstick update`
- * decides a disk is, and so what it writes (docs/DESIGN.md Section 13.14).
+ * decides a disk is, and so what it writes (docs/DESIGN.md Section 12.14).
  *
  * The refusals matter as much as the plans: an update that took a disk for
  * something it is not would write stages over somebody's boot code.

@@ -1,6 +1,6 @@
 /* falcon-boot: the stationary build's routes out to the machine's other
  * systems through the firmware's own boot entries (docs/DESIGN.md Section
- * 13.4, route NXT).
+ * 12.4, route NXT).
  *
  * A row is a Boot#### entry the firmware's own boot menu would offer, other
  * than the one this boot came through. Choosing it sets BootNext and resets:

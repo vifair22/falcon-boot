@@ -1,5 +1,5 @@
 /* Tests for falcon-core/src/tpm/evlog.c: the event log replay the station's
- * TOTP enrollment seals to (docs/DESIGN.md Section 13.15).
+ * TOTP enrollment seals to (docs/DESIGN.md Section 12.15).
  *
  * The logs are built here, event by event, in both formats, and the
  * expected PCRs are extended alongside by hand, so each test states what a

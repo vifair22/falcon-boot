@@ -17,7 +17,7 @@ appl_job appl_route(manifest_bless state, family_id fam)
      *
      * DevLink recovery, because it is BIOS-only: its 32-bit kernel has no
      * EFI stub, so a wrap would be a UKI nothing on UEFI can start, and on
-     * BIOS nothing is verified (DESIGN Section 13.5).
+     * BIOS nothing is verified (DESIGN Section 12.5).
      *
      * Everything else is blessed, BSD included, though what is signed there
      * is the medium's own loader rather than a wrap (M7 part 2). */

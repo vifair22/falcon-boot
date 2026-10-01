@@ -27,7 +27,7 @@ int vcd_chainload(bios_disk *d, fs_vol *p2, const part_entry *p2part,
                   const fs_dirent *iso, fs_file *isofile, boot_result *r);
 
 /* The same for a whole drive whose sectors are the medium's CD sectors
- * (falcon jump's CD route, DESIGN Section 14.6: a drive a module answers
+ * (falcon jump's CD route, DESIGN Section 13.6: a drive a module answers
  * through the reverse thunk). `n_cd` is the disc's length in CD sectors. */
 int vcd_chainload_drive(bios_disk *d, uint64_t n_cd, boot_result *r);
 

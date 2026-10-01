@@ -1,5 +1,5 @@
 /* falcon jump's USB modules: USB mass storage over whatever host controller
- * the module was linked with (DESIGN Section 14.4 and 14.6).
+ * the module was linked with (DESIGN Section 13.4 and 13.6).
  *
  * Enumeration of the root ports, then SCSI over Bulk-Only Transport, then
  * the module's operations and its resident INT 13h (hw/blk13.c). The host

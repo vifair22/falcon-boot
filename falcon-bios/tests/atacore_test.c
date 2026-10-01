@@ -1,5 +1,5 @@
 /* Tests for falcon-bios/src/hw/ata/atacore.c: the ATAPI command blocks
- * falcon jump's ATA.MOD sends and the answers it reads (DESIGN Section 14.4).
+ * falcon jump's ATA.MOD sends and the answers it reads (DESIGN Section 13.4).
  */
 
 #include "tests.h"

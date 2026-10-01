@@ -1,8 +1,8 @@
-/* falcon-bios: the BIOS station (docs/DESIGN.md Section 13), as a module
+/* falcon-bios: the BIOS station (docs/DESIGN.md Section 12), as a module
  * the station apps run. See station.c.
  *
  * apps/station/ runs it as it is; apps/station-legacy/ adds jump's routes
- * and DevLink recovery (Section 13.10) through the two calls below. What an
+ * and DevLink recovery (Section 12.10) through the two calls below. What an
  * app does not link it cannot run: the hooks are how station-legacy's rows
  * reach the list without the plain station linking a byte of them.
  */
@@ -19,7 +19,7 @@
 typedef struct {
     const char     *name;      /* for serial: "station" */
     const uint16_t *title;     /* the banner: u"falcon-boot " and a version */
-    /* The app's own rows, added after the ones the station finds (13.3)
+    /* The app's own rows, added after the ones the station finds (12.3)
      * and before memtest and STATION.INI, which then applies to them as to
      * any found row. `vol` is the station partition, mounted, or NULL. May
      * be NULL. */

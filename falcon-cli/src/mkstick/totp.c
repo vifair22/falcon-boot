@@ -1,5 +1,5 @@
 /* falcon-boot mkstick: `station totp enroll|reseal|remove`, the UEFI
- * station's TOTP check (docs/DESIGN.md Section 13.15).
+ * station's TOTP check (docs/DESIGN.md Section 12.15).
  *
  * Enrollment runs on the station's machine, from a system the station
  * started, and talks to the TPM through the kernel (/dev/tpmrm0 for a TPM

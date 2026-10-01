@@ -71,7 +71,7 @@ The BIOS loader mirrors its screen to serial (COM1) as the ANSI sequences
 OVMF's terminal sends for the UEFI loader, so the code is on serial for
 either loader, drawn where it is on the screen.
 
-The BIOS loader is one image for every processor from the Pentium on,
+The BIOS loader is one image for every i586 or later processor,
 and boots 32-bit and 64-bit kernels alike. On a processor with no 64-bit
 mode, a 64-bit kernel is refused before it starts, on `DIR` or `POS`:
 
@@ -80,10 +80,10 @@ mode, a 64-bit kernel is refused before it starts, on `DIR` or `POS`:
     the kernel is 64-bit and this processor has no 64-bit mode
 
 (`personal OS boot failed while starting the kernel` on `POS`). A key
-returns to the menu. A processor older than a Pentium stops before the
+returns to the menu. A processor older than i586 stops before the
 menu, on screen and serial:
 
-    falcon-bios: this processor is older than a Pentium, which this loader needs
+    falcon-bios: this processor is older than i586, which this loader needs
     press any key to reboot.
 
 ### 1.3 Fallthrough
@@ -101,18 +101,18 @@ A route falls through only before it has committed to the medium. A
 failure after that is reported on screen and the key returns to the menu.
 
 A code seen on an error screen names the route that failed, which is the
-first thing to report with it. `docs/DESIGN.md` Section 12 draws each
+first thing to report with it. `docs/DESIGN.md` Section 11 draws each
 route.
 
 ### 1.4 Stationary build
 
-The build for a machine's own disk (`docs/DESIGN.md` Section 13):
+The build for a machine's own disk (`docs/DESIGN.md` Section 12):
 `falcon-boot-station.efi` for UEFI, and `falcon-bios-station-stage3.bin` as stage 3
 behind the stick's stages 1 and 2 for BIOS.
 
 UEFI opens at its list, with `STATION.INI`'s default highlighted and, when
 it sets a timeout, "Booting in 5 s. Any key stops the countdown." in the key
-line (`docs/DESIGN.md` Sections 13.3 and 13.7):
+line (`docs/DESIGN.md` Sections 12.3 and 12.7):
 
 | code | route | reached by |
 |---|---|---|
@@ -159,7 +159,7 @@ list when a `uki` section sets the default:
 BIOS opens at the passphrase prompt; Escape there goes to the list.
 
 BIOS opens at its list the same way, `STATION.INI` read from the station
-partition's root (`docs/DESIGN.md` Sections 12.5.2 and 13):
+partition's root (`docs/DESIGN.md` Sections 11.5.2 and 13):
 
 | code | route | reached by |
 |---|---|---|
@@ -174,12 +174,11 @@ SYSLINUX); another disk is a row when its LBA 0 has boot code and an active
 entry. `STATION.INI` adds the rest. A chain of a disk that is not 0x80
 swaps that disk with 0x80 for everything it boots (`swap = no` in its
 section turns that off), and leaves 1 KB of conventional memory taken: the
-BDA's count at 0x413 reads 1 KB less. `docs/notes/station-rework.md`
-section 11 lists every sentence these screens say.
+BDA's count at 0x413 reads 1 KB less.
 
 ### 1.5 falcon jump
 
-The boot floppy (`docs/DESIGN.md` Section 14), `build/bin/falcon-jump.img`
+The boot floppy (`docs/DESIGN.md` Section 13), `build/bin/falcon-jump.img`
 from `make jump`. Written to a floppy with `dd if=build/bin/falcon-jump.img
 of=/dev/fd0`; it is an ordinary FAT12 volume after that, and its files are
 changed with `mcopy` or by mounting it.
@@ -226,7 +225,7 @@ JUMP_INI=<file>` copies one on.
 
 ## 2. Installing the station
 
-The station (`docs/DESIGN.md` Section 13) is falcon as a machine's own boot
+The station (`docs/DESIGN.md` Section 12) is falcon as a machine's own boot
 loader, beside the systems already on its disks. `falcon-boot-mkstick
 station install` puts it there (3.6); this section is the order a person
 does it in. `/dev/X` is the machine's disk.
@@ -494,7 +493,7 @@ LBA 2047 with `dd`; a pending marker there is no longer read.
         [--force] [--dry-run]
     falcon-boot-mkstick station status <disk> [--also <disk>]... [--no-scan]
 
-Installs the station on a machine's disk (DESIGN Section 13.9). One new
+Installs the station on a machine's disk (DESIGN Section 12.9). One new
 install ID is drawn and written into every record the station has: the
 station partition's, the ESP's and the shelf's.
 
@@ -596,7 +595,7 @@ its signature is checked against `falcon-boot.cer` when `sbverify` and
 fails at), the shelf carrying the install ID, and the rows each menu shows
 with the default marked. It exits nonzero when a stage or file is missing.
 
-**totp** (UEFI; DESIGN Section 13.15):
+**totp** (UEFI; DESIGN Section 12.15):
 
     falcon-boot-mkstick station totp enroll <disk> [--pcrs 0,2,4,7]
         [--owner-auth-file <file>] [--label <name>]
@@ -634,7 +633,7 @@ is printed with the step that got it, as the station's own line prints it
         [--owner-auth-file <file>] [--dry-run] [--yes]
 
 Brings a stick or a station to the loaders in `--from` (default
-`build/bin`), in place (DESIGN Section 13.14). What the disk is comes from
+`build/bin`), in place (DESIGN Section 12.14). What the disk is comes from
 its records:
 
 | disk | found by | written |

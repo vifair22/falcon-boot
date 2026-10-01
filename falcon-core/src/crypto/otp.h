@@ -13,7 +13,7 @@
  * caller's business (the firmware clock in the loader).
  *
  * Interactions. The UEFI station's TOTP lines (falcon-efi/src/totp,
- * docs/DESIGN.md Section 13.15); vectors from RFC 4226 Appendix D and RFC
+ * docs/DESIGN.md Section 12.15); vectors from RFC 4226 Appendix D and RFC
  * 6238 Appendix B in falcon-core/tests/tpmcrypto_test.c.
  */
 

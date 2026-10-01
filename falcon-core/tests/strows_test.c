@@ -1,6 +1,6 @@
 /* Tests for falcon-core/src/media/strows.c: the stations' rows, their
  * names, what a STATION.INI section does to them, and the order they are
- * shown in (docs/DESIGN.md Sections 13.3, 13.7, 13.8).
+ * shown in (docs/DESIGN.md Sections 12.3, 12.7, 12.8).
  *
  * The STATION.INI here is the parser's output written by hand, so these
  * tests say what the loader does with a configuration, not how one is
@@ -364,7 +364,7 @@ static void test_full(void **state)
 }
 
 /* What the BIOS station finds on the rig's two disks (DESIGN Section
- * 13.3): the encrypted shelf's row, Windows on disk A's first
+ * 12.3): the encrypted shelf's row, Windows on disk A's first
  * partition, disk B's MBR, memtest. */
 static void found_bios(strows *r)
 {

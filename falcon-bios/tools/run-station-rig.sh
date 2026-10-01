@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The BIOS station's rig (docs/DESIGN.md Section 13.11): the partition
+# The BIOS station's rig (docs/DESIGN.md Section 12.11): the partition
 # chain, the drive swap, STATION.INI and next boot, booted headless under
 # SeaBIOS and judged from serial. Real systems behind the station (FreeDOS,
 # Windows 9x) are run-station-fixture-rig.sh's.

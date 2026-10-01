@@ -1,5 +1,5 @@
 /* falcon-boot: the firmware's TPM protocols and its random number protocol,
- * as far as the station's TOTP check uses them (DESIGN Section 13.15).
+ * as far as the station's TOTP check uses them (DESIGN Section 12.15).
  *
  * TCG EFI Protocol Specification rev 1.22: EFI_TCG2_PROTOCOL for a TPM 2.0
  * (Section 6), EFI_TCG_PROTOCOL for a TPM 1.2 (Section 7). Only the command

@@ -540,7 +540,7 @@ static void test_uki_build_end_to_end(void **state)
 }
 
 /* A bzImage with no EFI stub, for falcon-bios's /uki (DESIGN Section
- * 13.10): refused as it always was, taken with bios_only, and a file that
+ * 12.10): refused as it always was, taken with bios_only, and a file that
  * is not a bzImage refused either way. */
 static void test_uki_build_bios_only(void **state)
 {

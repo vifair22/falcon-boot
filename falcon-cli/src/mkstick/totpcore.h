@@ -1,5 +1,5 @@
 /* falcon-boot mkstick: the pure half of `station totp` (docs/DESIGN.md
- * Section 13.15), split from totp.c so it runs under the host tests.
+ * Section 12.15), split from totp.c so it runs under the host tests.
  *
  * What the enrollment computes rather than asks a device: the PCR list it
  * is given, the owner authorisation made from a file, the base32 secret and

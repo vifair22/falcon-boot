@@ -25,7 +25,7 @@ on binhost-builder, with the media they were made from:
 ## Use
 
 `make test-station-fixtures` (falcon-bios/tools/run-station-fixture-rig.sh,
-docs/DESIGN.md Section 13.11) boots each image behind the BIOS station. It
+docs/DESIGN.md Section 12.11) boots each image behind the BIOS station. It
 reads them from `build/fixtures/` and checks each against the sha256 above;
 copy them there sparse (scp would write the 2 GB image whole):
 

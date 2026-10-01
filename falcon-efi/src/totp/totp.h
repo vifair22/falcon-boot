@@ -1,4 +1,4 @@
-/* falcon-boot: the UEFI station's TOTP check (DESIGN Section 13.15).
+/* falcon-boot: the UEFI station's TOTP check (DESIGN Section 12.15).
  *
  * Purpose. When STATION.INI has a [totp] section, the station asks the TPM
  * for the seed it holds sealed to the PCRs of a known-good boot, and shows

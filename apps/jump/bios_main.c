@@ -1,11 +1,11 @@
-/* falcon jump (docs/DESIGN.md Section 14): stage 3's entry point in
+/* falcon jump (docs/DESIGN.md Section 13): stage 3's entry point in
  * falcon-bios-jump-stage3.bin, the core of the boot floppy.
  *
  * It boots the machine's own disks (route MBR), memtest86+ off the floppy
  * (route MEM) and the disc in an IDE CD drive (route CDR), with an optional
  * default and countdown from JUMP.INI. MBR and MEM load nothing and leave
  * nothing resident; CDR reads ATA.MOD off the floppy and leaves it behind
- * the reverse thunk, under the stick's own virtual CD (Section 14.6). USB
+ * the reverse thunk, under the stick's own virtual CD (Section 13.6). USB
  * reads a host controller's module and leaves it behind the thunk, serving
  * a falcon stick as the next BIOS disk; PCC does the same with PCC.MOD and
  * a CompactFlash card. Those three routes are falcon-bios's jump/routes.c,
@@ -126,7 +126,7 @@ static void scan_disks(void)
 /* The floppy's read callback: bios_disk_read, except that sector 0 comes
  * from STAGE1_LOAD, where the BIOS put it. Reading it again costs a seek
  * back to cylinder 0 and a revolution, about a third of a second, for 512
- * bytes already in memory (DESIGN Section 14.3). What is at STAGE1_LOAD is
+ * bytes already in memory (DESIGN Section 13.3). What is at STAGE1_LOAD is
  * the sector as the BIOS read it, with boot_fd.S's variables since
  * written into its code; the BPB and the signature, which are all the FAT
  * driver reads of it, are as on the disk. Nothing writes STAGE1_LOAD before

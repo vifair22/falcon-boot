@@ -161,7 +161,7 @@ SEMVER := $(shell cat release_version)
 # Repo-standard full version: SEMVER_YYYYMMDD.HHMM.TYPE.
 BUILD_STAMP := $(shell date +%Y%m%d.%H%M)
 VERSION := $(SEMVER)_$(BUILD_STAMP).$(VARIANT)
-# The stationary build (docs/DESIGN.md Section 13) and falcon jump (Section
+# The stationary build (docs/DESIGN.md Section 12) and falcon jump (Section
 # 14) name themselves apart, so a screen photo says which loader is running.
 VERSION_STATION := $(SEMVER)_$(BUILD_STAMP).station-$(VARIANT)
 VERSION_STATION_LEGACY := $(SEMVER)_$(BUILD_STAMP).station-legacy-$(VARIANT)
@@ -299,10 +299,9 @@ include falcon-efi/build.mk
 include falcon-cli/build.mk
 include falcon-appliance/build.mk
 
-# The freestanding image is not in `all`: an unfinished route behind a
-# decision nobody has taken (docs/notes/bios-route.md Section 7.3), so
-# `make bios` is opt-in. Its host-testable C is in `test` like everything
-# else, because it is ordinary C and is the half that can be checked.
+# The BIOS image is opt-in (`make bios`, not `all`): a BIOS install changes
+# what a stick can reach (DESIGN Section 3.3). Its host-testable C is in
+# `test` like everything else.
 include falcon-bios/build.mk
 
 # The loaders, each one app (apps/<app>/app.mk) composed from the platform
@@ -406,7 +405,7 @@ check-tools:
 	echo "Toolchain OK."
 
 # Static analysis gate: cppcheck + gcc -fanalyzer + clang-tidy, baseline
-# managed in docs/notes/analyze-baseline.txt (see docs/notes/analyze.md).
+# managed in tools/analyze-baseline.txt (see tools/analyze.md).
 # Built first: cppcheck reads compile_commands.json, whose entries include the
 # generated blob sources (build/gen/*_blob.c). Without them it loads no
 # project, checks nothing and reports zero findings, which is how the gate

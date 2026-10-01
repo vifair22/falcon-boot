@@ -1,4 +1,4 @@
-/* falcon-bios, the station (docs/DESIGN.md Section 13): stage 3's entry
+/* falcon-bios, the station (docs/DESIGN.md Section 12): stage 3's entry
  * point in falcon-bios-station-stage3.bin.
  *
  * The station itself is falcon-bios's station/station.c, which

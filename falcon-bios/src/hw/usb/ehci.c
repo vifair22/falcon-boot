@@ -1,5 +1,5 @@
 /* falcon jump's EHCI.MOD: the Enhanced Host Controller, USB 2.0 (DESIGN
- * Section 14.4), as a usbhc for msc.c.
+ * Section 13.4), as a usbhc for msc.c.
  *
  * On every chipset from about 2002 beside one or more UHCI or OHCI
  * companions, which run the full- and low-speed devices on the same

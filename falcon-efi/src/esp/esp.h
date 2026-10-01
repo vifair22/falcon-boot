@@ -1,5 +1,5 @@
 /* falcon-boot: images on an ESP, loaded by device path (docs/DESIGN.md
- * Sections 13.4 and 13.6, route ESP).
+ * Sections 12.4 and 12.6, route ESP).
  *
  * The station's other way into a system: rather than BootNext and a reset
  * (nxt/), load the file off the volume the firmware already mounted, through
@@ -31,7 +31,7 @@ typedef struct {
     disks_part part;
 } esp_vol;
 
-/* The volume this loader was read from: the station's ESP (Section 13.2).
+/* The volume this loader was read from: the station's ESP (Section 12.2).
  * NULL when the firmware did not say. */
 EFI_HANDLE esp_own(EFI_SYSTEM_TABLE *st, EFI_HANDLE image);
 

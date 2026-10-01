@@ -1,5 +1,5 @@
 /* falcon-boot: the firmware's own boot entries, as the stationary build's NXT
- * rows (docs/DESIGN.md Section 13.4).
+ * rows (docs/DESIGN.md Section 12.4).
  *
  * The EFI-free half: a Boot#### variable's bytes in, a row or a refusal out,
  * and BootOrder's bytes in, a list of option numbers out. Every byte here is
@@ -42,8 +42,8 @@ int nxt_option_parse(const uint8_t *buf, size_t len, uint32_t *attrs,
 /* What an entry boots, read out of its device path: the partition its
  * HARDDRIVE node names and the file its FILEPATH nodes name. The station
  * needs both to tell which firmware entry is a given disk's Windows (a
- * STATION.INI section naming a disk, DESIGN Section 13.7) and whether an
- * ESP's bootmgfw.efi already has an entry (13.3). Only the first instance
+ * STATION.INI section naming a disk, DESIGN Section 12.7) and whether an
+ * ESP's bootmgfw.efi already has an entry (12.3). Only the first instance
  * of the path is read. */
 #define NXT_PATH_MAX 128u
 

@@ -1,5 +1,5 @@
 /* Tests for falcon-bios/src/jump/jmod.c: the check a module passes before
- * falcon jump runs it (docs/DESIGN.md Section 14.4).
+ * falcon jump runs it (docs/DESIGN.md Section 13.4).
  *
  * Every refusal is a module that would have been jumped into otherwise: one
  * from another build, one linked for another slot, one whose file is cut

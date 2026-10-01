@@ -15,7 +15,7 @@ typedef struct {
 static const nudge g_nudges[] = {
     /* Debian live-boot (Debian, Kali, Clonezilla, Tails): its device scan
      * excludes dm-* by name, and live-media= names a device it mounts as
-     * is. Measured on debian-live 13.7 (falcon-hook/tools/run-hook-rig.sh). */
+     * is. Measured on debian-live 12.7 (falcon-hook/tools/run-hook-rig.sh). */
     { "boot=live", "live-media=" HOOKCMD_DEVICE },
 };
 

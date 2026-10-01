@@ -1,5 +1,5 @@
 /* falcon-bios: the drive swap, the station's one resident (docs/DESIGN.md
- * Section 13.4; installed by mbr/chain.c).
+ * Section 12.4; installed by mbr/chain.c).
  *
  * WHY THIS EXISTS. DOS, Windows 9x and NTLDR's boot.ini (`rdisk(N)`) name
  * disks by BIOS order and expect the disk they boot from to be 0x80,

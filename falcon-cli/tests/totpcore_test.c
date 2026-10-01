@@ -1,5 +1,5 @@
 /* Tests for falcon-cli/src/mkstick/totpcore.c: the pure half of `station
- * totp` (docs/DESIGN.md Section 13.15).
+ * totp` (docs/DESIGN.md Section 12.15).
  *
  * The base32 vectors are RFC 4648 Section 10's; the URI is the Key Uri
  * Format authenticators read, checked whole; the STATION.INI update must

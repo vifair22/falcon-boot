@@ -22,7 +22,7 @@ int pos_run(bios_disk *d, const part_entry *shelf, boot_result *r);
 
 /* pos_run, but when `want` is not NULL the image booted is the first it
  * says yes to, without the chooser (the station's rows for one UKI, DESIGN
- * Section 13.3); none is a failure saying so. */
+ * Section 12.3); none is a failure saying so. */
 typedef int (*pos_pick_fn)(const fs_dirent *uki, void *ctx);
 int pos_run_pick(bios_disk *d, const part_entry *shelf, pos_pick_fn want,
                  void *ctx, boot_result *r);

@@ -1,4 +1,4 @@
-/* The station's filesystem registry (DESIGN Section 13): ext4, the shelf's
+/* The station's filesystem registry (DESIGN Section 12): ext4, the shelf's
  * filesystem, and FAT, the station partition's (STATION.INI and
  * MEMTEST.BIN on BIOS) and the ESP's. ext4 first, so a shelf is asked for
  * by its own driver before FAT's probe runs over it. As with fs_reg_ext4.c,

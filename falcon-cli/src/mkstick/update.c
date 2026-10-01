@@ -1,5 +1,5 @@
 /* falcon-boot mkstick: `update`, a stick or a station brought to the
- * loaders as built now, in place (docs/DESIGN.md Section 13.14).
+ * loaders as built now, in place (docs/DESIGN.md Section 12.14).
  *
  * What the disk is comes from updatecore.c; this file reads the disk into
  * its facts and carries out the plan. The halves:

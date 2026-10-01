@@ -852,7 +852,7 @@ case_station() { # case_station CASE FIRMWARE
     id=$("$MKSTICK" ident build/test-station.img |
          awk -F '\t' '$2 == "boot" { print $3; exit }')
     boot "$2" build/test-station.img:boot
-    # Either station opens at its menu (DESIGN Section 13.3), the shelf's
+    # Either station opens at its menu (DESIGN Section 12.3), the shelf's
     # row first; Enter on it is the prompt.
     wait_for "Personal OS (encrypted)" 90 || why="no Personal OS row"
     sleep 1

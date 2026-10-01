@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# falcon jump's rig (docs/DESIGN.md Section 14.9): every route booted
+# falcon jump's rig (docs/DESIGN.md Section 13.9): every route booted
 # headless under SeaBIOS and judged from the serial log.
 #
 # One case per route, each a JUMP.INI naming it with a one-second countdown,
@@ -28,7 +28,7 @@
 #   giveup    the cf route to a card whose boot sector only calls INT 18h,
 #             a medium with nothing to boot: jump's resident resets the
 #             machine, which comes back to the floppy, rather than the BIOS
-#             starting its next device on top of the resident (DESIGN 14.6)
+#             starting its next device on top of the resident (DESIGN 13.6)
 #   s2crc     one byte of stage 2 flipped on the floppy: stage 2's own
 #             CRC-32 stops it before it runs past its first sector
 #   s3crc     one byte of the compressed stage 3 flipped: stage 2 reads it

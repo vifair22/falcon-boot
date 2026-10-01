@@ -1,6 +1,6 @@
-# jump: a boot floppy for an old BIOS machine (docs/DESIGN.md Section 14).
+# jump: a boot floppy for an old BIOS machine (docs/DESIGN.md Section 13).
 #
-# The core so far (Section 14.11 step 1): the machine's own disks and
+# The core so far (Section 13): the machine's own disks and
 # memtest86+ off the floppy, with JUMP.INI's default and countdown. No
 # module, no resident. Not in `all`: `make jump`.
 
@@ -25,7 +25,7 @@ $(eval $(call bios_app,jump,$(BIOS_JUMP_STAGE3),\
 
 $(BIOS_OBJ)/$(JUMP)/bios_main.o: build/version.h
 
-# The drivers (DESIGN Section 14.4), each a module read off the floppy only
+# The drivers (DESIGN Section 13.4), each a module read off the floppy only
 # for the route that needs it.
 $(eval $(call jump_module,ATA,JMOD_SLOT_ATA,\
 	$(BIOS)/hw/ata/ata.c $(BIOS)/hw/ata/atacore.c $(BIOS)/hw/scsi/scsi.c \
@@ -47,7 +47,7 @@ $(eval $(call jump_module,OHCI,JMOD_SLOT_OHCI,\
 	$(BIOS)/hw/usb/usbcore.c $(BIOS)/hw/scsi/scsi.c $(BIOS)/hw/blk13.c \
 	$(CORE_LIBC)))
 
-# The floppy (Section 14.3): a 1.44 MB FAT12 volume whose reserved sectors
+# The floppy (Section 13.3): a 1.44 MB FAT12 volume whose reserved sectors
 # hold stage 2 at STAGE2_LBA and stage 3 at FD_STAGE3_SECTOR, behind jump's
 # boot sector. mformat -B keeps the boot sector's code and writes the BPB,
 # the reserved count included, for the volume it makes; `mkstick ident
@@ -86,7 +86,7 @@ $(JUMP_IMG): $(BIOS_FD_STAGE1) $(BIOS_STAGE2) $(BIOS_JUMP_STAGE3) \
 	@# The reserved sectors end where stage 3 does, padded so the root
 	@# directory starts a track: it and the first cluster, JUMP.INI's, are
 	@# then one track, and stage 3 reads one track before its menu rather
-	@# than one per file (DESIGN Section 14.3). The FAT's length depends on
+	@# than one per file (DESIGN Section 13.3). The FAT's length depends on
 	@# the reserved count, so the pad is taken from a first format and the
 	@# second is checked.
 	@s3=$$(( ($$(stat -c %s $(BIOS_JUMP_STAGE3)) + 511) / 512 )); \

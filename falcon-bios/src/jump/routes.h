@@ -1,5 +1,5 @@
-/* falcon-bios: jump's routes through its drivers (DESIGN Sections 14.6 and
- * 13.10), for every app that offers them: falcon jump, off its floppy, and
+/* falcon-bios: jump's routes through its drivers (DESIGN Sections 13.6 and
+ * 12.10), for every app that offers them: falcon jump, off its floppy, and
  * station-legacy, off its station partition.
  *
  * CDR (the disc in an IDE CD drive, through ATA.MOD), USB (a falcon stick on
@@ -11,7 +11,7 @@
  * behind the reverse thunk.
  *
  * A route is offered, as jump always offered it, when its driver is on the
- * volume and its controller is on the PCI bus (DESIGN Section 14.2): a PCI
+ * volume and its controller is on the PCI bus (DESIGN Section 13.2): a PCI
  * class scan and a directory lookup, nothing loaded to find out.
  */
 

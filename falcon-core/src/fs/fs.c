@@ -3,7 +3,7 @@
  * share. The adapters themselves, one per driver, are fs_<driver>.c, and the
  * table is fs_reg_all.c or fs_reg_ext4.c: a build links the table it wants
  * and with it only the drivers that table names, which is how the
- * stationary build (DESIGN Section 13) carries ext4 and nothing else.
+ * stationary build (DESIGN Section 12) carries ext4 and nothing else.
  *
  * The adapters are deliberately thin and deliberately not clever. Each one
  * casts the caller's opaque blob to its driver's context, rebuilds the

@@ -1,6 +1,6 @@
 /* falcon-bios station rig: a floppy boot sector that masks IRQ0 and then
  * boots the first hard disk as the BIOS would (docs/DESIGN.md Section
- * 13.11, the no-ticks case).
+ * 12.11, the no-ticks case).
  *
  * With IRQ0 masked in the PIC the BIOS's tick count at 0040:006C never
  * moves, which is the state the rig's machine was left in after Windows

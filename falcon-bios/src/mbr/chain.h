@@ -1,5 +1,5 @@
 /* falcon-bios: the station's two chains, a partition's boot sector and
- * another disk's MBR, with the drive swap (docs/DESIGN.md Section 13.4).
+ * another disk's MBR, with the drive swap (docs/DESIGN.md Section 12.4).
  * See chain.c; the decisions are vbrcore.c's.
  */
 

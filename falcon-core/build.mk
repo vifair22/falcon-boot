@@ -17,7 +17,7 @@ CORE_CRYPTO   := $(addprefix $(CORE)/crypto/,crypto.c sha1.c sha256.c sha512.c \
 CORE_CRYPTO_TPM := $(addprefix $(CORE)/crypto/,cfb.c bn.c p256.c kdf.c \
 	rsa.c otp.c)
 # The TPM command layer, 2.0 and 1.2, over a transport callback: the UEFI
-# station's TOTP read and mkstick's enrollment (DESIGN Section 13.15).
+# station's TOTP read and mkstick's enrollment (DESIGN Section 12.15).
 CORE_TPM      := $(addprefix $(CORE)/tpm/,tpm.c tpm2.c tpm12.c)
 # The firmware's event log replayed to the station's own measurement, which
 # is what enrollment seals to. mkstick's alone: the loader never reads it.
@@ -25,15 +25,15 @@ CORE_TPM_EVLOG := $(CORE)/tpm/evlog.c
 CORE_TPM_EVSAVE := $(CORE)/tpm/evsave.c
 CORE_FS       := $(addprefix $(CORE)/fs/,exfat.c ext4.c jbd2.c crc32c.c fat.c iso9660.c \
 	udf.c fs.c fs_exfat.c fs_ext4.c fs_fat.c fs_iso9660.c fs_udf.c fs_reg_all.c)
-# The stationary build's (DESIGN Section 13): ext4 and its adapter, and a
+# The stationary build's (DESIGN Section 12): ext4 and its adapter, and a
 # registry that names nothing else.
 CORE_FS_EXT4  := $(addprefix $(CORE)/fs/,ext4.c jbd2.c crc32c.c fs.c fs_ext4.c \
 	fs_reg_ext4.c)
-# The station's (DESIGN Section 13): ext4 for the shelf and FAT for the
+# The station's (DESIGN Section 12): ext4 for the shelf and FAT for the
 # station partition or the ESP it reads STATION.INI and memtest86+ from.
 CORE_FS_STATION := $(addprefix $(CORE)/fs/,ext4.c jbd2.c crc32c.c fat.c fs.c \
 	fs_ext4.c fs_fat.c fs_reg_station.c)
-# falcon jump's (DESIGN Section 14.3): FAT, for the floppy it boots from.
+# falcon jump's (DESIGN Section 13.3): FAT, for the floppy it boots from.
 CORE_FS_FAT   := $(addprefix $(CORE)/fs/,fat.c fs.c fs_fat.c fs_reg_fat.c)
 # The extent map's readers (falcon-hook, falcon-winjump, falcon-vdisk):
 # exFAT, the ISO library's filesystem, for its /.falcon record.
@@ -67,21 +67,21 @@ CORE_UEFIBOOT := $(CORE)/media/uefiboot.c
 # processor (the BIOS menu's {EFI ONLY} and {64-BIT ONLY}). Apart from
 # CORE_MEDIA for the same reason: only the BIOS stick asks.
 CORE_BIOSBOOT := $(CORE)/media/biosboot.c
-# STATION.INI (DESIGN Section 13.7): the station's configuration, one
+# STATION.INI (DESIGN Section 12.7): the station's configuration, one
 # parser for both loaders and the installer's writer. Apart from CORE_MEDIA
 # because only the station and mkstick read it.
 CORE_STATIONINI := $(CORE)/media/stationini.c
-# The station's list as data (DESIGN Sections 13.3, 13.7, 13.8): the rows'
+# The station's list as data (DESIGN Sections 12.3, 12.7, 12.8): the rows'
 # generated names, what a STATION.INI section changes or adds, the order and
 # the default. One module for both stations, so the two lists follow one set
 # of rules.
 CORE_STROWS   := $(CORE)/media/strows.c
-# What a boot sector is (DESIGN Section 13.3): the loader its code names and
+# What a boot sector is (DESIGN Section 12.3): the loader its code names and
 # the row's words for it, for the BIOS station and the installer alike.
 CORE_VBR      := $(CORE)/media/vbr.c
 CORE_WIM      := $(addprefix $(CORE)/wim/,lzx.c wim.c)
 # gzip, inflated: falcon jump's stage 3 is stored compressed on its floppy
-# and stage 2 inflates it (DESIGN Section 14.3).
+# and stage 2 inflates it (DESIGN Section 13.3).
 CORE_GZ       := $(CORE)/gz/gz.c
 # The screen layout both loaders draw from: geometry and row composition,
 # no drawing.

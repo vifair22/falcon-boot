@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # The BIOS station with real systems behind it (docs/DESIGN.md Section
-# 13.11): the fixture disks of tools/fixtures/README.md, each with the
+# 12.11): the fixture disks of tools/fixtures/README.md, each with the
 # station put on the machine by `falcon-boot-mkstick station install
 # --bios`, booted under SeaBIOS on the machine the fixtures were verified
 # on (i440fx, a Pentium II, 128 MB, Cirrus VGA, TCG), and judged by what

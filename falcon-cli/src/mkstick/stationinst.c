@@ -1,8 +1,8 @@
 /* falcon-boot mkstick: `station install`, falcon onto a machine's own disk
- * as its boot loader (docs/DESIGN.md Section 13.9).
+ * as its boot loader (docs/DESIGN.md Section 12.9).
  *
  * The disk is someone's. It has a Windows, or a Linux, or both, and the
- * installer's whole contract with it is DESIGN 13.9: it takes space that is
+ * installer's whole contract with it is DESIGN 12.9: it takes space that is
  * already free and never moves a partition; everything it will change is
  * copied to the backup file before the first byte is written; LBA 0 goes
  * down last, so an install that stops anywhere leaves the old boot code in

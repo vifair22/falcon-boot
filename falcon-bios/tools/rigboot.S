@@ -1,5 +1,5 @@
 /* falcon-bios station rig: a synthetic boot sector (docs/DESIGN.md Section
- * 13.11), what run-station-rig.sh installs in the rig disks' partitions and
+ * 12.11), what run-station-rig.sh installs in the rig disks' partitions and
  * MBRs in place of an operating system's.
  *
  * It reports, on COM1, what it was handed, as one line the rig judges:

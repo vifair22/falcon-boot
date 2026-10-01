@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# station-legacy's rig (docs/DESIGN.md Sections 13.10 and 13.11): the
+# station-legacy's rig (docs/DESIGN.md Sections 12.10 and 12.11): the
 # A21m's disk with station-legacy installed on it by the installer
 # (`mkstick station install --bios --legacy`), booted under SeaBIOS as the
 # A21m would be, and every row of its menu taken in turn.

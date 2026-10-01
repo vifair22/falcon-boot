@@ -28,7 +28,7 @@ MKSTICK_CORE := $(CORE_PART) $(CORE_FS) $(CORE_LUKS) $(CORE_CRYPTO) \
 	$(CORE_VBR) $(CORE_STROWS) \
 	$(CORE_TPM) $(CORE_CRYPTO_TPM) $(CORE_TPM_EVLOG) $(CORE_TPM_EVSAVE) \
 	$(addprefix $(CORE)/trust/,der.c x509.c authenticode.c)
-# The last two lines are `station totp` (DESIGN Section 13.15): the TPM
+# The last two lines are `station totp` (DESIGN Section 12.15): the TPM
 # command layer the station reads the seed with, the event log replay and
 # the record the station saves edk2's 1.2 log in, and the Authenticode hash
 # the station's measurement is found by.
@@ -106,7 +106,7 @@ test-isoview:
 	falcon-cli/tools/mk-test-isoview.sh
 
 # `mkstick station install|status|remove` end to end on image files, MBR
-# and GPT, BIOS and UEFI (docs/DESIGN.md Section 13.9). No root.
+# and GPT, BIOS and UEFI (docs/DESIGN.md Section 12.9). No root.
 test-station-install: $(MKSTICK) bios station
 	falcon-cli/tools/test-station-install.sh
 

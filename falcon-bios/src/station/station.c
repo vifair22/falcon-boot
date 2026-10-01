@@ -1,16 +1,16 @@
-/* falcon-bios, the station (docs/DESIGN.md Section 13): the BIOS station's
+/* falcon-bios, the station (docs/DESIGN.md Section 12): the BIOS station's
  * list and routes, which apps/station/bios_main.c and
  * apps/station-legacy/bios_main.c both run (station_main); the second adds
  * rows of its own through station_app (station.h).
  *
  * The BIOS half of a machine's own boot loader. It lists what it finds
- * (Section 13.3): the UKIs on every shelf carrying its install ID, each
+ * (Section 12.3): the UKIs on every shelf carrying its install ID, each
  * primary partition whose boot sector is a known loader and each other disk
  * whose MBR has boot code and an active entry, on every disk, and
  * memtest86+ when the station partition carries MEMTEST.BIN. STATION.INI,
  * in the station partition's root, relabels, hides, orders and adds to
- * them and sets a default and a countdown (13.7); a next-boot marker names
- * one entry to start without the menu (13.8).
+ * them and sets a default and a countdown (12.7); a next-boot marker names
+ * one entry to start without the menu (12.8).
  *
  * Routes: POS (a UKI off a shelf, pos.c), VBR (a partition's boot sector)
  * and MBR (another disk's own boot code), both chain.c, with the drive swap
@@ -107,7 +107,7 @@ static char       g_ini_text[INI_MAX];
 
 static strows g_rows;
 
-/* The next-boot marker (DESIGN Section 13.8), taken off the station
+/* The next-boot marker (DESIGN Section 12.8), taken off the station
  * partition before anything else is decided. */
 static marker_state g_next_state;
 static char         g_next[NEXTBOOT_MAX];
@@ -225,7 +225,7 @@ static int station_read(void *ctx, uint64_t off, uint64_t len, void *buf)
 }
 
 /* The station partition is the boot partition stage 2 found (DESIGN
- * Section 13.2): STATION.INI and MEMTEST.BIN at its root. One that will not
+ * Section 12.2): STATION.INI and MEMTEST.BIN at its root. One that will not
  * mount leaves both out and says so on serial; everything else still
  * boots. */
 static void read_station(void)
@@ -278,7 +278,7 @@ static void read_station(void)
         screen_idle_set(g_ini.poweroff);
 }
 
-/* ---- the rows (DESIGN Section 13.3) ---- */
+/* ---- the rows (DESIGN Section 12.3) ---- */
 
 /* An ASCII copy of a UCS-2 file name; what is not ASCII becomes '?', which
  * matches no file, so such a UKI boots from its shelf's chooser only. */
@@ -365,7 +365,7 @@ static void find_shelves(void)
 
 /* A UKI on the station partition's own shelf: a row labelled by its .osrel
  * name alone, since it is not the personal OS (DevLink recovery, DESIGN
- * Section 13.10). */
+ * Section 12.10). */
 static void add_own_uki(const shelf_uki *u, void *ctx)
 {
     static const uint16_t prefix[] = u"Personal OS: ";
@@ -737,7 +737,7 @@ static int next_boot_uki(void)
     return 1;
 }
 
-/* The next-boot marker, acted on (DESIGN Section 13.8), as the UEFI
+/* The next-boot marker, acted on (DESIGN Section 12.8), as the UEFI
  * station's next_boot_run with the BIOS marker's own states. The marker was
  * cleared before any of this ran. */
 static void next_boot_run(void)

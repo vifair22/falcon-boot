@@ -277,7 +277,7 @@
  * megabyte. Only the second and third are ours; the BIOS fills the rest. */
 #define VCD_OFF_MOVEGDT  0x00B0   /* 48 bytes */
 
-/* The INT 15h half (DESIGN Section 12.3.8): the vector it chains to, how many
+/* The INT 15h half (DESIGN Section 11.3.8): the vector it chains to, how many
  * entries of the memory map it answers E820 with (0: it answers none and the
  * BIOS answers them all), and the ceilings on E801's two counts: 64 KB
  * blocks above 16 MB, and KB between 1 and 16 MB. */
@@ -325,7 +325,7 @@
 #define VCD_STAGE_ADDR   0x00020000
 
 /* The drive swap (falcon-bios/src/mbr/swapres.S, chain.c; DESIGN Section
- * 13.4): the station's one resident, an INT 13h hook that exchanges one
+ * 12.4): the station's one resident, an INT 13h hook that exchanges one
  * disk's number with 0x80 on every call, so a system chained off a second
  * disk finds itself at 0x80 as it would had the BIOS booted it. The whole
  * block is the old vector, the drive and the handler, under a hundred
@@ -374,7 +374,7 @@
  * two routes never run together. */
 #define VFD_STAGE_ADDR   VCD_STAGE_ADDR
 
-/* ---- falcon jump's modules (docs/DESIGN.md Section 14.4) ----
+/* ---- falcon jump's modules (docs/DESIGN.md Section 13.4) ----
  *
  * A driver is a flat image linked at a fixed slot, read off the floppy into
  * that slot, and left there for as long as it serves a drive. The slots are
@@ -397,7 +397,7 @@
 #define JMOD_SLOT_USB    4
 #define JMOD_SLOT_PCC    5
 
-/* A module is stored on the floppy as a gzip member (DESIGN Section 14.3),
+/* A module is stored on the floppy as a gzip member (DESIGN Section 13.3),
  * read here whole and inflated into its slot. GZ_STAGE_ADDR again: stage 2
  * is done with it by the time stage 3 runs, and it is inside the memory
  * stage 3 has to itself, below STAGE3_STACK and above the image, which

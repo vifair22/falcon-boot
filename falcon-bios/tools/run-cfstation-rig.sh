@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # station-legacy on a CompactFlash card, reached through falcon jump
-# (docs/DESIGN.md Sections 13.10 and 14): the shape a card is tried in on
+# (docs/DESIGN.md Sections 12.10 and 14): the shape a card is tried in on
 # the A21m before station-legacy goes onto its internal disk.
 #
 # The A21m's BIOS cannot boot a PC Card, so the machine starts falcon jump
