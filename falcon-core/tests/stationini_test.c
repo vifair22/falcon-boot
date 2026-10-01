@@ -211,11 +211,13 @@ static void test_default_autonames(void **state)
     static const char *const ok[] = {
         "memtest", "mbr-cdcccdcc", "mbr-CDCCCDCC-p1", "gpt-0011aabb-p12",
         "gpt-0011aabb", "nxt-0003", "nxt-ABcd", "uki-arch-linux", "uki-x", "pos",
+        "cd", "cf", "usb",
     };
     static const char *const bad[] = {
         "memtes", "mbr-cdcccdc", "mbr-cdcccdcg", "mbr-cdcccdcc-", "mbr-cdcccdcc-p",
         "mbr-cdcccdcc-q1", "mbr-cdcccdcc-p1x", "mbr-cdcccdccx", "gpt-", "nxt-003",
         "nxt-00030", "nxt-000g", "uki-", "foo-bar1", "abcd", "po", "poss",
+        "c", "cdr", "usbs",
     };
     char buf[96];
     size_t i;

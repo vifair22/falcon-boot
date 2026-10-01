@@ -199,11 +199,12 @@ static int disk_tail_ok(const char *a, const char *b)
     return 1;
 }
 
-/* The loader's generated names (DESIGN Section 12.7). [a, b) is
- * already a name. */
+/* The loader's generated names (DESIGN Sections 12.7 and 12.10:
+ * station-legacy's `cd`, `cf` and `usb` too). [a, b) is already a name. */
 static int autoname_ok(const char *a, const char *b)
 {
-    if (span_eq(a, b, "memtest") || span_eq(a, b, "pos"))
+    if (span_eq(a, b, "memtest") || span_eq(a, b, "pos") ||
+        span_eq(a, b, "cd") || span_eq(a, b, "cf") || span_eq(a, b, "usb"))
         return 1;
     if (b - a < 5)
         return 0;
