@@ -2845,12 +2845,12 @@ resident CD handler, from real mode.
 | 0x90000-0x97FFF | bounce buffer | every read |
 | BDA top - 16 KiB | the resident CD handler: data, runs, El Torito packet, launch stub at +0x530, INT 13h entry at +0x570, INT 15h entry at +0xA00, carved E820 map at +0xB00, overlay pool at +0x1000; never below 0x98000 | permanent after a chainload; reserved in the map it hands on |
 | BDA top - 1 KiB (station) | the drive swap (`swapres.S`): the previous INT 13h vector, the drive, the handler at +0x10, 84 bytes | permanent after a chain of a disk that is not 0x80 |
-| BDA top - 3 KiB (falcon jump) | the reverse thunk (`rthunk.S`): far pointers, its GDT, the saved caller, the INT 13h entry at +0x90, the INT 16h entry at +0x240 (the `USB` route's, when a module found a keyboard), the INT 15h entry at +0x300 and its carved map at +0x400 (the `USB` and `PCC` routes'), the release record at +0xB00 (`FJRS`, the vectors and BDA counts it replaced) and the keyboard entries at +0xB14; below it the virtual CD's block on `CDR` | permanent after a route hands over, until station-legacy releases it for a chain to another disk (11.5.2); reserved in the map it hands on |
+| BDA top - 3 KiB (falcon jump) | the reverse thunk (`rthunk.S`): far pointers, its GDT, the saved caller, the INT 13h entry at +0x90, the INT 16h entry at +0x240 (the `USB` route's, when a module found a keyboard), the INT 15h entry at +0x300 and its carved map at +0x400 (the `USB` and `PCC` routes'), the release record at +0xB00 (`FJRS`, the vectors and BDA counts it replaced) and the keyboard entries at +0xB14; below it the virtual CD's block on `CDR`. As the keyboard block (13.6) it hooks no INT 13h: INT 16h, 15h, 18h and 19h only, DRIVE 0 | permanent after a route hands over, and as the keyboard block after `MBR` or a floppy-emulation disc while a `USB` route's keyboards are up, until station-legacy releases it for a chain to another disk (11.5.2); reserved in the map it hands on |
 | 0x100000 | stage 3: 16-byte header, entry at +0x10, then its image and `.bss` (at most 0x6F0000 together) | whole loader |
 | 0xB8000-0xB8F9F | VGA text memory, the 80x25 screen stage 3 draws | whole loader |
 | 0x600000 | stage 2's partition list and sector buffer while it looks for the boot partition (`STAGE2_SCRATCH`), then the compressed stage 3 it inflates | until stage 3 runs |
 | 0x7F0000-0x7FFFFF | stage 2's protected-mode stack, then stage 3's, ESP from 0x800000 | whole loader |
-| 0xF00000-0xFFFFFF (falcon jump) | the module slots, eight of 128 KiB (`JMOD_REGION`): `ATA.MOD` at 0xF00000, `UHCI.MOD` at 0xF20000, `OHCI.MOD` at 0xF40000, `EHCI.MOD` at 0xF60000, `PCC.MOD` at 0xFA0000 | from the module's load; permanent after `CDR` hands over, reserved in E820, E801 and AH=88h |
+| 0xF00000-0xFFFFFF (falcon jump) | the module slots, eight of 128 KiB (`JMOD_REGION`): `ATA.MOD` at 0xF00000, `UHCI.MOD` at 0xF20000, `OHCI.MOD` at 0xF40000, `EHCI.MOD` at 0xF60000, `PCC.MOD` at 0xFA0000 | from the module's load; kept while a `USB` route's keyboards are up (13.6); permanent after a route hands over with a module or the keyboard block resident, reserved in E820, E801 and AH=88h |
 | 0x1000000 | the kernel's protected-mode part (aligned up; `pref_address` for a non-relocatable kernel); one fixed below here, at 1 MB (memtest86+), is staged here instead, above its own footprint, and moved down at the handoff | handed to the kernel |
 | highest fit below the kernel's `initrd_addr_max` | the initrds, placed from E820 | handed to the kernel |
 | highest fit in 64 MiB-4 GiB | `heap.c`: the patched boot.wim tail | through the chainload, served by AH=87h; the appended part reserved in the map it hands on |
@@ -3248,9 +3248,9 @@ flowchart TD
     FIX --> CP["LBA 0 to 0000:0600, the boot sector to 0000:7C00"]
     ROW -- "disk" --> MBR["MBR (chain.c): LBA 0, 0x55AA, the swap's 1 KB asked for;<br/>LBA 0 to 0000:7C00"]
     MBR -- "unreadable, no 0x55AA" --> FAIL
-    CP --> JRL{"station-legacy only (legacy_handover, chain_before_handover):<br/>INT 13h leads to a falcon jump block (JRES_MAGIC)<br/>serving a drive other than this one?"}
+    CP --> JRL{"station-legacy only (legacy_handover, chain_before_handover):<br/>INT 13h, else INT 16h or 15h, leads to a falcon jump block (JRES_MAGIC)<br/>not serving this drive?"}
     MBR --> JRL
-    JRL -- "yes" --> JRR["jres_release: from the block's release record, IVT 13h, 15h, 18h, 19h<br/>and the BDA's memory and disk counts back where nothing changed them since"]
+    JRL -- "yes" --> JRR["jres_release: from the block's release record, IVT 13h, 15h, 16h, 18h, 19h<br/>and the BDA's memory and disk counts back where nothing changed them since;<br/>its own USB route's keyboards released (jroute_kbd_release)"]
     JRL -- "no" --> SW
     JRR --> SW{"the disk not 0x80, swap not no?"}
     SW -- "yes" --> RES["swapres.S to the BDA top - 1 KB (lowmem.c),<br/>IVT 13h to it; DL 0x80"]
@@ -3271,8 +3271,9 @@ CDR, USB and PCC leave what they leave under jump (11.6): the reverse
 thunk and the driver's slot, and on CDR the virtual CD over them.
 
 A station-legacy that jump's PCC or USB route started runs on top of that
-route's reverse thunk. A VBR or MBR chain to any other drive releases it
-first, after the chain's last read (`jres_release`, from the release record
+route's reverse thunk, and one jump's MBR route started while USB keyboards
+were up on top of the keyboard block (13.6). A VBR or MBR chain to any
+other drive releases it first, after the chain's last read (`jres_release`, from the release record
 jump keeps in the block): the system starts with the IVT and the BDA as the
 BIOS left them, and only the driver's slot at 15-16 MB, which nothing calls
 again, and a powered PC Card slot remain. Windows 2000 freezes when started
@@ -3308,17 +3309,21 @@ flowchart TD
     INI -- "a line it cannot take" --> REP["the line and why, a key<br/>no default"]
     INI -- "yes, or no file" --> MENU
     REP --> MENU{"menu: a disk row each, Memory test, CD, USB and CF when offered<br/>a countdown only for a default whose row is there"}
-    MENU -- "a disk, or the countdown on it" --> MBR["MBR (mbr.c): LBA 0 to 0x7C00, DL = that drive<br/>boot16: real mode, jump 0000:7C00"]
-    MENU -- "Memory test" --> MEM["MEM: MEMTEST.BIN through linux_boot<br/>no initrd, empty command line<br/>fixed at 1 MB: staged at 16 MB, moved down at the handoff"]
-    MENU -- "Escape" --> RF["INT 18h, else bios_reboot"]
-    MBR -- "unreadable, no 0x55AA" --> MENU
+    MENU -- "a disk, or the countdown on it" --> KB{"USB keyboards up?"}
+    KB -- "yes" --> KBI["jroute_kbd_install: the keyboard block (jres_install_keyboards),<br/>INT 16h for them on the first one's slot stack, no INT 13h;<br/>INT 15h: the block and 15-16 MB carved; INT 18h, 19h: a cold reset"]
+    KB -- "no" --> MBR
+    KBI --> MBR["MBR (mbr.c): LBA 0 to 0x7C00, DL = that drive<br/>boot16: real mode, jump 0000:7C00"]
+    MENU -- "Memory test" --> MEM["MEM: the keyboards released (jroute_kbd_release);<br/>MEMTEST.BIN through linux_boot, no initrd, empty command line<br/>fixed at 1 MB: staged at 16 MB, moved down at the handoff"]
+    MENU -- "Escape" --> RF["the keyboards released; INT 18h, else bios_reboot"]
+    MBR -- "unreadable, no 0x55AA" --> KBR["jres_remove when the block went in; the keyboards stay up"]
+    KBR --> MENU
     MEM -- "refused or unreadable" --> MENU
     MENU -- "CD drive" --> LD["jroute_boot, jmod_load: ATA.MOD read to 6 MB, inflated to JMOD_SLOT_ATA (15 MB)<br/>E820 says 15-16 MB is RAM; header checked; .bss zeroed; init"]
     LD --> PB["ops.probe: IDENTIFY PACKET DEVICE on 0x1F0 and 0x170,<br/>master and slave; READ CAPACITY; the first with a disc"]
     PB --> CAT{"the catalog through ops.read (disc_read)<br/>vcd_boot_entry: its media type"}
-    CAT -- "floppy emulation" --> VFD["vfd_serve over disc_read: the image to the heap above 64 MB,<br/>vfdres.S as drive 0x00; nothing of the module stays (11.3.8)"]
+    CAT -- "floppy emulation" --> VFD["vfd_serve over disc_read: the image to the heap above 64 MB,<br/>vfdres.S as drive 0x00; nothing of ATA.MOD stays (11.3.8);<br/>USB keyboards up: the keyboard block first, as for MBR"]
     CAT -- "hard-disk emulation, or no catalog" --> MENU
-    CAT -- "no emulation" --> RT["jres_install: rthunk.S's block below the BDA's count (3 KB)<br/>INT 13h for drive 0xEF to ops.int13, stack at the slot's top;<br/>INT 18h, 19h: a cold reset"]
+    CAT -- "no emulation" --> RT["jres_install: rthunk.S's block below the BDA's count (3 KB)<br/>INT 13h for drive 0xEF to ops.int13, stack at the slot's top;<br/>INT 16h for USB keyboards that are up; INT 18h, 19h: a cold reset"]
     RT --> PR2["bios_disk_probe(0xEF): AH=48h through the thunk, 2048-byte sectors"]
     PR2 --> VCD["vcd_chainload_drive: the catalog over 0xEF, one run,<br/>keep ranges: the thunk block and 15-16 MB (E820, E801 both halves, AH=88h)"]
     VCD --> CD["the disc's boot image at 0x7C00, DL = 0xE0 (11.3.8)"]
@@ -3328,7 +3333,7 @@ flowchart TD
     MENU -- "USB stick" --> LU["for EHCI.MOD, UHCI.MOD, OHCI.MOD in turn, each on the floppy with its controller on the bus:<br/>jmod_load to its slot; init: msc.c over ehci.c, uhci.c or ohci.c"]
     LU --> EN["ops.probe: every controller of that kind (up to four), taken from the BIOS, reset;<br/>each root port, and each port of up to two hubs below one, reset and enumerated:<br/>a stick: INQUIRY, READ CAPACITY; a boot keyboard: kept (hid.c), ops.int16 set<br/>EHCI hands a port whose device does not enable, or that holds a hub or a keyboard, to its companion"]
     EN --> GPT{"bootpart_find through ops.read, until one is:<br/>a partition with a boot record?<br/>the modules after it brought up all the same, for their keyboards"}
-    GPT -- "no falcon stick" --> KG["the USB keyboards end with the route (serial)"]
+    GPT -- "no falcon stick" --> KG["the modules and their keyboards stay up (serial);<br/>stage 3 polls each module's int16 itself before every INT 16h AH=01h"]
     KG --> MENU
     GPT -- "yes" --> RU["jres_install for the next BIOS disk (BDA 0x475 + 0x80),<br/>INT 15h hooked too: the block and 15-16 MB carved;<br/>INT 16h when a module found a keyboard: each module's int16, then the BIOS's handler;<br/>INT 18h, 19h: a cold reset; what it changed kept in the block's release record"]
     RU --> FR{"BDA count + 1<br/>a boot record on the disk?<br/>(bootpart_find through ops.read, before jres_install)"}
@@ -3350,12 +3355,15 @@ The CD, USB and CF branches are falcon-bios's `jump/routes.c`
 links too (12.10); `apps/jump/bios_main.c` is the menu, `JUMP.INI`, `MBR`,
 `MEM` and the pages around a route.
 
-`MBR` and `MEM` leave nothing resident, as the station's do but for its drive swap (11.5.2).
+`MEM` leaves nothing resident, and `MBR` nothing but the keyboard block
+when a `USB` route left keyboards up (13.6), with the modules that answer
+for them.
 `CDR` leaves two: the stick's virtual CD, unchanged but for serving a whole
 drive as one run, and under it the reverse thunk and `ATA.MOD`. `USB` and
 `PCC` leave the reverse thunk and their module, every USB module that found
 a keyboard (INT 16h reaches it until the system started from the stick
-takes the controllers itself or station-legacy releases the block, 11.5.2),
+takes the controllers itself or station-legacy releases the block, 11.5.2;
+`CDR` and `PCC` take the keyboards a `USB` route left up the same way),
 and on a disk with no falcon record the drive swap on top of them. The floppy
 is read by CHS wherever its BIOS has no extensions, SeaBIOS's included, as
 on an old machine.
@@ -4515,7 +4523,9 @@ into memory and called.
   table of services (serial output), and the module fills in a table of
   what it offers: probe, describe a device, read, choose the device to
   serve, `int13`, the resident entry, and `int16`, the keyboard entry,
-  which a USB module's probe fills in when it found a keyboard. The
+  which a USB module's probe fills in when it found a keyboard. The core
+  calls `int16` itself too, directly in protected mode, while a `USB`
+  route's keyboards are up and a menu waits (13.6). The
   services exist only while the core does. Once the medium's bootloader
   runs, the core is gone, so `int13`, `int16` and everything they reach use
   only the module itself: its own port I/O, its own delays (reads of port
@@ -4697,11 +4707,40 @@ never come back to poll. Every other call goes straight through. So a USB
 keyboard works from the moment the route hands over, for everything that
 reads the keyboard through the BIOS: the stick's loader, a medium's
 bootloader, DOS, station-legacy's menu off a stick. A system that drives
-the controllers itself (Linux, Windows) resets them. The hook goes when
-the block does: on a route that comes back (no falcon stick, or one that
-will not start), the USB keyboards end with it, the BIOS's emulation
-already gone, and only a PS/2 keyboard answers jump's menu until a reset;
-serial says so.
+the controllers itself (Linux, Windows) resets them.
+
+**Keyboards after a route comes back.** A `USB` route that comes back (no
+falcon stick, a module refused, or a stick that will not start) takes back
+the stick's INT 13h service and the block, and keeps the modules loaded
+and the list of the keyboards' `int16` entries (`routes.c`; serial says
+how many stayed up): the BIOS's own USB keyboard ended when the module
+took the controller, and does not come back without a reset. Stage 3
+then polls them itself. Every wait for a key goes through INT 16h AH=01h
+(`screen.c`'s `key_waiting`, and `bios_getkey`, which waits by AH=01h
+rather than the BIOS's AH=00h while there are keyboards), and before each
+AH=01h `bios_key_poll` calls each module's `int16` directly: stage 3 is in
+protected mode with interrupts off, as the reverse thunk runs it, so there
+is no mode switch. One poll per AH=01h, as the hook makes, and the AH=01h
+itself goes through the thunk with interrupts on, so a PS/2 key still
+arrives. The menu, its countdown and every page's key see the USB keys.
+What happens to them next is the next route's:
+
+- `CDR` and `PCC`: their `jres_install` takes the keyboards, as `USB` does.
+- `MBR`, and a floppy-emulation disc on `CDR`: nothing of their own stays
+  resident, so the keyboard block goes in before the handover
+  (`jres_install_keyboards`): the same block with no INT 13h hook and
+  DRIVE 0, INT 16h for the keyboards on the first keyboard module's slot
+  stack, INT 15h carving the block and the module region, INT 18h and 19h
+  to the reset. A handover that comes back removes it, and the keyboards
+  stay up. `jres_release` finds the block behind INT 16h or INT 15h when
+  INT 13h does not lead to one.
+- `USB` again: the modules are read over the ones that are up, and the
+  keyboards are found afresh.
+- `MEM` and Escape release them (serial says so): memtest86+ drives the
+  keyboard itself and tests the memory the modules sit in, and INT 18h
+  goes back to the BIOS. Only a PS/2 keyboard answers from there.
+- station-legacy's chain to a system on another disk releases them with
+  any jump block that does not serve that disk (11.5.2).
 
 **The drive number.** `boot_module_disk`, which hands over for both `USB`
 and `PCC`, numbers the disk by what is on it. A disk with a partition
@@ -4783,7 +4822,13 @@ behind a `usb-hub` behind another, and `kbd-ehci` on a root port of an ICH9 EHCI
 where it enables at high speed and `EHCI.MOD` hands it to the companion.
 `kbd-legacy` boots station-legacy from the stick instead (`mkstick station
 install --bios --legacy` on an image) and types Escape into its menu,
-which runs on top of the resident. SeaBIOS is unchanged: the floppy boots
+which runs on top of the resident. Two more put the keyboard on the UHCI
+with no stick, so the `USB` route comes back with it up: `kbd-giveup`
+types Enter on the failure page and Escape on jump's menu, judged by the
+keyboards released before INT 18h; `kbd-hdd` chooses the disk row instead
+(Up to the top, Enter), and the hdd case's falcon-bios starts on top of
+the keyboard block and takes Escape on its menu through it, which ends in
+the block's reset. SeaBIOS is unchanged: the floppy boots
 first, and jump reads the CD drive and the USB stick through its own
 drivers. SeaBIOS does list the stick as a disk of its own before jump takes the controller, so in the
 rig the stick is served one drive number higher than it would be on a BIOS

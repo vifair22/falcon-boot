@@ -42,7 +42,8 @@ const char *jroute_code(jroute k);
 
 /* Boots the route, writing its own lines into the page the caller started.
  * Returns only when it could not hand over, with everything it installed
- * taken back and r saying why. */
+ * taken back but the keyboards a USB route keeps up (below), and r saying
+ * why. */
 void jroute_boot(jroute k, boot_result *r);
 
 /* ---- the keyboards a USB route leaves up (DESIGN Section 13.6) ----

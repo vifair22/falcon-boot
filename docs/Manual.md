@@ -1772,7 +1772,7 @@ The menu lists, in this order:
 
 | row | code | route | there when |
 |---|---|---|---|
-| `Disk 0x80`, `Disk 0x81`, ... | `MBR` | the disk's LBA 0 at 0x7C00 with DL naming that disk; nothing resident | the BIOS counts the disk and its LBA 0 carries the boot signature |
+| `Disk 0x80`, `Disk 0x81`, ... | `MBR` | the disk's LBA 0 at 0x7C00 with DL naming that disk; nothing resident but the USB keyboards, when a `USB` route left them up | the BIOS counts the disk and its LBA 0 carries the boot signature |
 | `CD drive` | `CDR` | the disc in the first drive on the legacy IDE channels that has one, through `ATA.MOD` | the floppy holds `ATA.MOD` and an IDE controller is on the PCI bus |
 | `CF card (PC Card)` | `PCC` | the first CompactFlash card in a PC Card slot, through `PCC.MOD`: its own MBR, whatever is on it; a falcon card as the next BIOS disk, any other as drive 0x80 behind the drive swap | the floppy holds `PCC.MOD` and a CardBus bridge is on the bus |
 | `USB stick` | `USB` | the first falcon stick (a partition carrying a `boot` record) on a root port of any controller, or behind up to two hubs on one, through `EHCI.MOD`, `UHCI.MOD` and `OHCI.MOD`, as the next BIOS disk; the stick's own stages take it from there | the floppy holds a USB driver and its controller is on the bus |
@@ -1789,7 +1789,7 @@ RAM at 15-16 MB, which is 16 MB of memory. A no-emulation disc (every
 Linux, BSD and Windows 2000-on disc) is served by the stick's virtual CD
 as drive 0xE0. A floppy-emulation disc (DOS and Win9x boot discs, vendor
 utility CDs) is read into memory above 64 MB and served as a floppy, so it
-needs more than 64 MB, and nothing of the driver stays. A disc that asks
+needs more than 64 MB, and nothing of the CD driver stays. A disc that asks
 for hard-disk emulation is refused. `PCC` reads the card's configuration
 through memory at 0xD0000, and the first card's registers sit at I/O
 0x1E0-0x1EF. `USB` loads every USB driver on the floppy, and a USB keyboard
@@ -1800,7 +1800,11 @@ whatever it starts that reads the keyboard through the BIOS; DOS under
 EMM386 does not see it. A hub or a keyboard on a USB 2.0 (EHCI) port is
 handed to that port's USB 1.1 companion controller, where the hub runs at
 full speed. When the route comes back to jump's menu, the USB keyboard
-stops with it until a reset, and only a PS/2 one answers.
+stays up: it answers the failure page and the menu, and whatever the menu
+starts next that reads the keyboard through the BIOS (a disk, a CD, a CF
+card). Memory test and Escape let it go, as does station-legacy when it
+starts a system on another disk; after that only a PS/2 keyboard answers
+until a reset.
 A card or stick with no falcon record on it (DOS, Windows 9x, any other
 system's MBR) boots as drive C: (0x80), and for that boot the machine's own
 first disk is 0x81; a falcon card or stick boots as the disk after the
