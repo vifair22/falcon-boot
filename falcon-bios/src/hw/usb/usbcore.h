@@ -1,5 +1,6 @@
-/* falcon jump's USB modules: the byte layouts of USB and of Bulk-Only
- * Transport, apart from any host controller (DESIGN Section 13.4).
+/* falcon jump's USB modules: the byte layouts of USB (devices, hubs, boot
+ * keyboards) and of Bulk-Only Transport, apart from any host controller
+ * (DESIGN Section 13.4).
  *
  * A setup packet, a descriptor, a command block wrapper: each is a layout a
  * driver must get exactly right, and gets no error back for getting wrong,
@@ -19,6 +20,9 @@
 #define USB_DESC_CONFIG    2u
 #define USB_DESC_INTERFACE 4u
 #define USB_DESC_ENDPOINT  5u
+#define USB_DESC_HUB       0x29u
+
+#define USB_CLASS_HUB      9u
 
 /* The standard requests, as setup packets. */
 void usb_setup_get_descriptor(uint8_t out[USB_SETUP_LEN], uint8_t type,
@@ -31,6 +35,7 @@ void usb_setup_clear_halt(uint8_t out[USB_SETUP_LEN], uint8_t ep);
 void usb_setup_bot_reset(uint8_t out[USB_SETUP_LEN], uint8_t iface);
 
 typedef struct {
+    uint8_t  dev_class;      /* bDeviceClass: USB_CLASS_HUB for a hub */
     uint8_t  max_packet0;    /* endpoint 0's packet size */
     uint16_t vendor;
     uint16_t product;
@@ -59,6 +64,64 @@ typedef struct {
  * subclass 6, protocol 0x50) with one bulk IN and one bulk OUT endpoint.
  * 0 when it finds one; -1 when it does not, or the descriptor is malformed. */
 int usb_find_msc(const uint8_t *cfg, size_t len, usb_msc_if *out);
+
+/* ---- HID boot keyboards (HID 1.11 Sections 7.2 and B.1) ---- */
+
+/* SET_PROTOCOL to interface `iface`: 0 is the boot protocol, whose 8-byte
+ * report needs no report descriptor parsed. */
+void usb_setup_set_protocol(uint8_t out[USB_SETUP_LEN], uint8_t iface,
+                            uint8_t protocol);
+/* SET_IDLE with duration 0: a report only when something changes. */
+void usb_setup_set_idle(uint8_t out[USB_SETUP_LEN], uint8_t iface);
+
+typedef struct {
+    uint8_t  config;         /* bConfigurationValue */
+    uint8_t  iface;
+    uint8_t  ep;             /* the interrupt IN endpoint, 0x80 set */
+    uint16_t mps;
+} usb_kbd_if;
+
+/* Walks a whole configuration descriptor for a boot-protocol keyboard
+ * interface (class 3, subclass 1, protocol 1) and its interrupt IN
+ * endpoint. 0 when it finds one; -1 when it does not, or the descriptor is
+ * malformed. */
+int usb_find_kbd(const uint8_t *cfg, size_t len, usb_kbd_if *out);
+
+/* ---- hubs (USB 2.0 Section 11.24) ---- */
+
+#define HUB_PORT_RESET        4u    /* features, for SET and CLEAR_FEATURE */
+#define HUB_PORT_POWER        8u
+#define HUB_C_PORT_CONNECTION 16u
+#define HUB_C_PORT_ENABLE     17u
+#define HUB_C_PORT_RESET      20u
+
+#define HUB_PS_CONNECTION 0x0001u   /* wPortStatus */
+#define HUB_PS_ENABLE     0x0002u
+#define HUB_PS_RESET      0x0010u
+#define HUB_PS_LOW        0x0200u
+#define HUB_PC_RESET      0x0010u   /* wPortChange */
+
+/* GET_DESCRIPTOR for the hub class descriptor, `len` bytes of it. */
+void usb_setup_hub_descriptor(uint8_t out[USB_SETUP_LEN], uint16_t len);
+/* SET_FEATURE (`set`) or CLEAR_FEATURE of `feature` on downstream port
+ * `port`, numbered from 1. */
+void usb_setup_port_feature(uint8_t out[USB_SETUP_LEN], uint8_t port,
+                            uint16_t feature, int set);
+/* GET_STATUS of downstream port `port`: four bytes back. */
+void usb_setup_port_status(uint8_t out[USB_SETUP_LEN], uint8_t port);
+
+typedef struct {
+    uint8_t  ports;          /* bNbrPorts */
+    uint16_t power_ms;       /* bPwrOn2PwrGood, in milliseconds */
+} usb_hub_desc;
+
+/* The hub descriptor's first seven bytes. 0, or -1 when it is not one. */
+int usb_parse_hub(const uint8_t *d, size_t len, usb_hub_desc *out);
+
+/* A port's GET_STATUS answer: wPortStatus and wPortChange. 0, or -1 when
+ * it is short. */
+int usb_parse_port_status(const uint8_t *d, size_t len, uint16_t *status,
+                          uint16_t *change);
 
 /* ---- Bulk-Only Transport ---- */
 

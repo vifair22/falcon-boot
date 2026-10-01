@@ -1,6 +1,7 @@
-/* Tests for falcon-bios/src/hw/usb/usbcore.c and hw/scsi/scsi.c: the USB and
- * Bulk-Only Transport layouts falcon jump's USB modules send and read
- * (DESIGN Section 13.4), and the SCSI answers a stick gives.
+/* Tests for falcon-bios/src/hw/usb/usbcore.c and hw/scsi/scsi.c: the USB
+ * (devices, hubs, boot keyboards) and Bulk-Only Transport layouts falcon
+ * jump's USB modules send and read (DESIGN Section 13.4), and the SCSI
+ * answers a stick gives.
  */
 
 #include "tests.h"
@@ -51,6 +52,7 @@ static void test_device(void **state)
     (void)state;
     assert_int_equal(usb_parse_device(k_device, 8u, &d), 0);
     assert_int_equal(d.max_packet0, 64);
+    assert_int_equal(d.dev_class, 0);
     assert_int_equal(usb_parse_device(k_device, sizeof k_device, &d), 0);
     assert_int_equal(d.vendor, 0x0627u);
     assert_int_equal(d.n_configs, 1);
@@ -117,6 +119,98 @@ static void test_find_msc(void **state)
     /* One running past the end. */
     assert_int_equal(usb_find_msc(k_msc_cfg, sizeof k_msc_cfg - 3u, &m), -1);
     assert_int_equal(usb_config_total(k_device, sizeof k_device), 0);
+}
+
+static void test_find_kbd(void **state)
+{
+    usb_kbd_if k;
+    uint8_t bad[sizeof k_composite_cfg];
+
+    (void)state;
+    assert_int_equal(usb_find_kbd(k_composite_cfg, sizeof k_composite_cfg,
+                                  &k), 0);
+    assert_int_equal(k.config, 3);
+    assert_int_equal(k.iface, 0);
+    assert_int_equal(k.ep, 0x83);
+    assert_int_equal(k.mps, 8);
+    assert_int_equal(usb_find_kbd(k_msc_cfg, sizeof k_msc_cfg, &k), -1);
+
+    /* A mouse: boot interface subclass, protocol 2. */
+    memcpy(bad, k_composite_cfg, sizeof bad);
+    bad[16] = 0x02;
+    assert_int_equal(usb_find_kbd(bad, sizeof bad, &k), -1);
+    /* A keyboard whose only endpoint is an OUT. */
+    memcpy(bad, k_composite_cfg, sizeof bad);
+    bad[20] = 0x03;
+    assert_int_equal(usb_find_kbd(bad, sizeof bad, &k), -1);
+    memcpy(bad, k_composite_cfg, sizeof bad);
+    bad[18] = 0;
+    assert_int_equal(usb_find_kbd(bad, sizeof bad, &k), -1);
+}
+
+/* QEMU's usb-hub: eight ports, bPwrOn2PwrGood 10 (20 ms). */
+static const uint8_t k_hub[] = { 0x0A, 0x29, 8, 0x0A, 0x00, 10, 0, 0, 0xFF };
+
+static void test_hub(void **state)
+{
+    static const uint8_t get_hub[] = { 0xA0, 0x06, 0x00, 0x29, 0, 0, 8, 0 };
+    static const uint8_t power[] = { 0x23, 0x03, 8, 0, 3, 0, 0, 0 };
+    static const uint8_t c_reset[] = { 0x23, 0x01, 20, 0, 1, 0, 0, 0 };
+    static const uint8_t status[] = { 0xA3, 0x00, 0, 0, 2, 0, 4, 0 };
+    static const uint8_t answer[] = { 0x03, 0x03, 0x10, 0x00 };
+    uint8_t p[USB_SETUP_LEN];
+    usb_hub_desc h;
+    uint16_t st = 0;
+    uint16_t ch = 0;
+    uint8_t dev[18];
+
+    (void)state;
+    usb_setup_hub_descriptor(p, 8u);
+    assert_memory_equal(p, get_hub, sizeof p);
+    usb_setup_port_feature(p, 3u, HUB_PORT_POWER, 1);
+    assert_memory_equal(p, power, sizeof p);
+    usb_setup_port_feature(p, 1u, HUB_C_PORT_RESET, 0);
+    assert_memory_equal(p, c_reset, sizeof p);
+    usb_setup_port_status(p, 2u);
+    assert_memory_equal(p, status, sizeof p);
+
+    assert_int_equal(usb_parse_hub(k_hub, sizeof k_hub, &h), 0);
+    assert_int_equal(h.ports, 8);
+    assert_int_equal(h.power_ms, 20);
+    assert_int_equal(usb_parse_hub(k_hub, 6u, &h), -1);
+    assert_int_equal(usb_parse_hub(k_device, sizeof k_device, &h), -1);
+
+    /* Connected, enabled, low speed; the reset finished. */
+    assert_int_equal(usb_parse_port_status(answer, sizeof answer, &st, &ch),
+                     0);
+    assert_int_equal(st & HUB_PS_CONNECTION, HUB_PS_CONNECTION);
+    assert_int_equal(st & HUB_PS_ENABLE, HUB_PS_ENABLE);
+    assert_int_equal(st & HUB_PS_LOW, HUB_PS_LOW);
+    assert_int_equal(ch & HUB_PC_RESET, HUB_PC_RESET);
+    assert_int_equal(usb_parse_port_status(answer, 3u, &st, &ch), -1);
+
+    /* A hub says so in its device descriptor. */
+    memcpy(dev, k_device, sizeof dev);
+    dev[4] = USB_CLASS_HUB;
+    {
+        usb_device_desc d;
+
+        assert_int_equal(usb_parse_device(dev, 8u, &d), 0);
+        assert_int_equal(d.dev_class, USB_CLASS_HUB);
+    }
+}
+
+static void test_hid_requests(void **state)
+{
+    static const uint8_t proto[] = { 0x21, 0x0B, 0, 0, 1, 0, 0, 0 };
+    static const uint8_t idle[] = { 0x21, 0x0A, 0, 0, 1, 0, 0, 0 };
+    uint8_t p[USB_SETUP_LEN];
+
+    (void)state;
+    usb_setup_set_protocol(p, 1u, 0u);
+    assert_memory_equal(p, proto, sizeof p);
+    usb_setup_set_idle(p, 1u);
+    assert_memory_equal(p, idle, sizeof p);
 }
 
 static void test_bot(void **state)
@@ -192,6 +286,9 @@ int run_usbcore_tests(void)
         cmocka_unit_test(test_setup_packets),
         cmocka_unit_test(test_device),
         cmocka_unit_test(test_find_msc),
+        cmocka_unit_test(test_find_kbd),
+        cmocka_unit_test(test_hub),
+        cmocka_unit_test(test_hid_requests),
         cmocka_unit_test(test_bot),
         cmocka_unit_test(test_scsi_capacity),
     };
