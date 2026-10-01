@@ -202,9 +202,15 @@ floppy-emulation disc (DOS and Win9x boot discs, vendor utility CDs), which
 is read into memory above 64 MB and so needs more than that. The USB stick row is there when the floppy holds
 `EHCI.MOD`, `UHCI.MOD` or `OHCI.MOD` and the machine has that controller; the route
 boots the first falcon stick (an ISO library or a shelf in its GPT) on a
-root port of any of them, as the BIOS disk after the machine's
-own, and needs 16 MB like the CD. A USB keyboard stops working once it runs:
-jump takes the controller from the BIOS, so the machine wants a PS/2 one. The CF card (PC Card) row is there when the floppy
+root port of any of them, or behind a hub on one, as the BIOS disk after the
+machine's own, and needs 16 MB like the CD. A USB keyboard works once the
+route has started, on a root port or behind one hub (a hub inside the
+keyboard included), for the stick's loader and whatever it starts that
+reads the keyboard through the BIOS; DOS under EMM386 does not see it. A
+hub or a keyboard on a USB 2.0 (EHCI) port is handed to that port's USB
+1.1 companion controller, where the hub runs at full speed. When the route
+comes back to jump's menu, the USB keyboard stops with it until a reset,
+and only a PS/2 one answers. The CF card (PC Card) row is there when the floppy
 holds `PCC.MOD` and the machine has a CardBus bridge; the route boots the
 first CompactFlash card in a slot as a disk, its own MBR whatever is on it,
 and needs 16 MB like the others. While it reads the card's configuration it
