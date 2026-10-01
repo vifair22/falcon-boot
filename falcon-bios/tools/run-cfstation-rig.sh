@@ -41,12 +41,8 @@
 #   foreign   a card whose LBA 0 is rigboot.S: DL 0x80, 0x80 reads the
 #             card, the BDA counts two disks and 0x81 reads the internal
 #             disk
-#   freedos   the FreeDOS fixture (tools/fixtures/README.md) as the card,
-#             for C:\> on the screen and the swap on serial. A known
-#             failure, reported as KNOWN and not counted: the kernel finds
-#             the card as C: and the internal disk as D:, then stops with
-#             an invalid opcode (with HIMEMX and DOS=HIGH) or a divide by
-#             zero (without) before COMMAND.COM is read
+#   freedos   the FreeDOS fixture (tools/fixtures/README.md) as the card:
+#             C:\> on the screen, the swap on serial
 #
 # Usage: falcon-bios/tools/run-cfstation-rig.sh [case...]   (default: all)
 # Env:   A21M_IMG  the A21m's disk image as the internal disk (default: the
@@ -345,13 +341,8 @@ for c in "${CASES[@]}"; do
         wait_prompt freedos 90 || WHY="no C:\\> on screen ($R/freedos.txt, $R/freedos.png)"
         halt
         [[ -z "$WHY" ]] && WHY=$(swap_missing)
-        log_text "$R/com1.log" > "$R/freedos.log"
-        if [[ -z "$WHY" ]]; then
-            result freedos 1 "C:\\> on screen, card swapped with 0x80 ($R/freedos.png)"
-        else
-            printf 'KNOWN %-8s %s; screen ends: %s\n' freedos "$WHY" \
-                "$(grep -v '^$' "$R/freedos.txt" 2>/dev/null | tail -2 | paste -sd' ')"
-        fi
+        result freedos "$([[ -z "$WHY" ]] && echo 1 || echo 0)" \
+            "${WHY:-C:\\> on screen, card swapped with 0x80 ($R/freedos.png)}"
         ;;
     *)
         echo "unknown case: $c" >&2

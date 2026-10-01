@@ -17,6 +17,18 @@
 
 static uint8_t g_last;
 
+/* Whether the drive is answered as a fixed disk. A CF card or a stick
+ * reports removable media, but served under a hard disk's number (0x80 up,
+ * below the CD numbers) it is answered as BIOSes answer a hard disk: with a
+ * removable answer to AH=15h, DOS asks AH=16h for a media change before
+ * its reads, takes the failure as one, and drops what it has read. */
+static int fixed(const blk13_dev *d, const jmod_regs *r)
+{
+    uint8_t dl = (uint8_t)(r->edx & 0xFFu);
+
+    return !d->removable || (dl >= 0x80u && dl < 0xE0u);
+}
+
 /* A byte of low memory, read the way start/bios.h's peek8 does, so the
  * compiler takes no view on an object at a small constant address. */
 static uint8_t low8(uint32_t addr)
@@ -134,10 +146,19 @@ void blk13_call(const blk13_dev *d, jmod_regs *r)
         answer(r, 0, 0);
         return;
     }
-    case 0x15:                                 /* drive type */
-        answer(r, d->removable ? 0x02u : 0x03u, 0);
-        r->flags = 0;
+    case 0x15: {                               /* drive type */
+        uint32_t n = d->sectors > 0xFFFFFFFFu ? 0xFFFFFFFFu
+                                              : (uint32_t)d->sectors;
+
+        if (!fixed(d, r)) {
+            answer(r, 0x02u, 0);
+            return;
+        }
+        r->ecx = (r->ecx & 0xFFFF0000u) | (n >> 16);
+        r->edx = (r->edx & 0xFFFF0000u) | (n & 0xFFFFu);
+        answer(r, 0x03u, 0);
         return;
+    }
     case 0x41:                                 /* extensions present? */
         if ((r->ebx & 0xFFFFu) != 0x55AAu) {
             answer(r, 0x01u, 1);
@@ -166,7 +187,7 @@ void blk13_call(const blk13_dev *d, jmod_regs *r)
         }
         v = 0x1Au;
         memcpy(p, &v, 2);
-        v = d->removable ? 0x0004u : 0x0000u;
+        v = fixed(d, r) ? 0x0000u : 0x0004u;
         memcpy(p + 2, &v, 2);
         memcpy(p + 4, &z, 4);
         memcpy(p + 8, &z, 4);

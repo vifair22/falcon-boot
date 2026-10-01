@@ -4011,8 +4011,8 @@ A21m's disk:
   chain; its own CF card row, recorded; and cards with no falcon record
   behind the drive swap (13.6): `rigboot.S` as the card's MBR, reporting DL
   0x80, the card as 0x80, two disks counted and the internal disk as 0x81;
-  and the FreeDOS fixture, a known failure: its kernel finds the card as C:
-  and the internal disk as D:, then stops before `COMMAND.COM` is read.
+  and the FreeDOS fixture to `C:\>` with its own `FDCONFIG.SYS` (HIMEMX,
+  `DOS=HIGH`), judged from VGA text.
 - **The installer on images** (`make test-station-install`): an MBR disk of
   the A21m's shape with a Windows 98 second disk and a LUKS2 shelf, a GPT
   disk with an ESP, Windows and a plaintext shelf; install, status, remove,
@@ -4593,6 +4593,13 @@ a slot still powered with its I/O window open. An OS started on top of that
 can fault on it: Windows 2000 bugchecks (STOP 0x0A) on a real-mode vector
 taken for a kernel pointer. The rig's `giveup` case boots a card whose boot
 sector is INT 18h and expects the reset.
+
+**A disk's number decides its answers.** A CF card or a stick reports
+removable media, but under a hard disk's number every module answers it
+as a fixed disk (`hw/blk13.c`): AH=15h is type 3 with its sector count,
+AH=48h's flags carry no removable bit, and AH=08h's DL is the BDA's disk
+count. A removable answer sends DOS to AH=16h for a media change before
+its reads; FreeDOS took the failure as a change and lost what it had read.
 
 **Virtual 8086 mode.** A caller in v86 mode (DOS with EMM386, the real-mode
 half of Windows 9x) cannot be taken into protected mode: the CR0 write
