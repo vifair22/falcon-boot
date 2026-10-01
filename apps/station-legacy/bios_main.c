@@ -78,16 +78,17 @@ static int legacy_boot(const strow *w)
 /* A Windows or Boot code row starting a system on a disk the BIOS serves
  * itself: when falcon jump's CF or USB route started this station, its
  * resident still hooks INT 13h and 15h and holds the BDA's memory and disk
- * counts. The system never reads the card through it, and Windows 2000
- * froze on the A21m started on top of it; with it released it starts
- * (DESIGN Section 13.6). A row on the drive jump serves keeps it,
- * since that is the only way the system reads its disk. */
+ * counts; when jump's MBR route did with USB keyboards up, its keyboard
+ * block hooks INT 15h and 16h. The system never reads the card through it,
+ * and Windows 2000 froze on the A21m started on top of it; with it
+ * released it starts (DESIGN Section 13.6). A row on the drive jump serves
+ * keeps it, since that is the only way the system reads its disk. The
+ * keyboards this station's own USB row left up go too. */
 static void legacy_handover(uint8_t drive)
 {
-    uint8_t served = jres_drive();
-
-    if (served != 0 && served != drive)
+    if (jres_drive() != drive)
         (void)jres_release();
+    jroute_kbd_release();
 }
 
 static const station_app k_app = {

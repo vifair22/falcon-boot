@@ -144,6 +144,17 @@ static inline char bios_ascii(uint16_t c, char fallback)
  * character otherwise. */
 int bios_getkey(void);
 
+/* Whether a key is waiting in the BIOS's ring (INT 16h AH=01h), without
+ * taking it and without polling. Nonzero if so. */
+int bios_key_ready(void);
+
+/* Polls the keyboards the BIOS cannot read and stage 3 can: falcon jump's
+ * USB modules, kept up after a route came back (DESIGN Section 13.6). Each
+ * key goes into the BIOS's ring, where bios_key_ready and INT 16h find it.
+ * Nonzero when there are such keyboards; a stage without them links a
+ * no-op that says 0. */
+int bios_key_poll(void);
+
 /* Zeroes the BIOS's keyboard ring buffer. INT 16h hands a key over by
  * moving the ring's head past it, not by erasing it, so after a passphrase
  * the last fifteen or so of its characters are still in the BIOS data area

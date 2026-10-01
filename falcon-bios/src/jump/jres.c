@@ -78,8 +78,10 @@ static int carve(uint8_t *at, uint32_t b, const e820_range *keep,
     return 0;
 }
 
-int jres_install(uint8_t drive, uint32_t entry, uint32_t stack_top,
-                 const e820_range *keep, unsigned n_keep, uint32_t *base)
+/* `hook13` 0 is the keyboard block: INT 13h left alone, DRIVE 0. */
+static int install(int hook13, uint8_t drive, uint32_t entry,
+                   uint32_t stack_top, const e820_range *keep,
+                   unsigned n_keep, uint32_t *base)
 {
     size_t len = (size_t)((uintptr_t)jres_blob_end -
                           (uintptr_t)jres_blob_start);
@@ -91,14 +93,15 @@ int jres_install(uint8_t drive, uint32_t entry, uint32_t stack_top,
     uint8_t *desc;
     unsigned i;
 
-    if (seg == 0 || len > JRES_BYTES)
+    if (seg == 0 || len > JRES_BYTES || (!hook13 && g_nkbd == 0))
         return -1;
     b = (uint32_t)seg * 16u;
     at = (uint8_t *)(uintptr_t)b;
     memcpy(at, jres_blob_start, len);
 
-    put32(at + JRES_OFF_OLDINT13, peek32(IVT_INT13));
-    at[JRES_OFF_DRIVE] = drive;
+    if (hook13)
+        put32(at + JRES_OFF_OLDINT13, peek32(IVT_INT13));
+    at[JRES_OFF_DRIVE] = hook13 ? drive : 0;
     put32(at + JRES_OFF_GDTR + 2u, b + JRES_OFF_GDT);
     put32(at + JRES_OFF_ENTRY, entry);
     put32(at + JRES_OFF_STACK, stack_top);
@@ -137,7 +140,8 @@ int jres_install(uint8_t drive, uint32_t entry, uint32_t stack_top,
         put32(at + JRES_OFF_OLDINT16, peek32(IVT_INT16));
 
     lowmem_take(seg);
-    poke32(IVT_INT13, ((uint32_t)seg << 16) | (uint32_t)JRES_OFF_CODE);
+    if (hook13)
+        poke32(IVT_INT13, ((uint32_t)seg << 16) | (uint32_t)JRES_OFF_CODE);
     if (keep != (const e820_range *)0)
         poke32(IVT_INT15, ((uint32_t)seg << 16) | (uint32_t)JRES_OFF_CODE15);
     /* No chaining: both end in a cold reset (rthunk.S, jres_reset). */
@@ -148,8 +152,12 @@ int jres_install(uint8_t drive, uint32_t entry, uint32_t stack_top,
     g_seg = seg;
     if (base != (uint32_t *)0)
         *base = b;
-    bios_puts("falcon-bios: reverse thunk for drive ");
-    bios_put_hex64(drive);
+    if (hook13) {
+        bios_puts("falcon-bios: reverse thunk for drive ");
+        bios_put_hex64(drive);
+    } else {
+        bios_puts("falcon-bios: reverse thunk for no drive");
+    }
     bios_puts(" at ");
     bios_put_hex64(b);
     if (g_nkbd != 0) {
@@ -160,6 +168,18 @@ int jres_install(uint8_t drive, uint32_t entry, uint32_t stack_top,
     bios_puts("\n");
     g_nkbd = 0;
     return 0;
+}
+
+int jres_install(uint8_t drive, uint32_t entry, uint32_t stack_top,
+                 const e820_range *keep, unsigned n_keep, uint32_t *base)
+{
+    return install(1, drive, entry, stack_top, keep, n_keep, base);
+}
+
+int jres_install_keyboards(uint32_t stack_top, const e820_range *keep,
+                           unsigned n_keep)
+{
+    return install(0, 0, 0, stack_top, keep, n_keep, (uint32_t *)0);
 }
 
 /* Puts back what the block at `seg` changed outside itself, from its
@@ -200,17 +220,31 @@ void jres_remove(void)
     g_seg = 0;
 }
 
-/* The segment of the falcon jump block INT 13h leads to, or 0. */
-static uint16_t found(void)
+/* The segment of the falcon jump block the vector at `ivt` leads to, as
+ * its entry at offset `off`, or 0. */
+static uint16_t behind(uint32_t ivt, uint32_t off)
 {
-    uint32_t v13 = peek32(IVT_INT13);
-    uint16_t seg = (uint16_t)(v13 >> 16);
+    uint32_t v = peek32(ivt);
+    uint16_t seg = (uint16_t)(v >> 16);
     uint32_t b = (uint32_t)seg * 16u;
 
-    if ((v13 & 0xFFFFu) != JRES_OFF_CODE || b == 0 ||
-        b + JRES_BYTES > 0xA0000u ||
+    if ((v & 0xFFFFu) != off || b == 0 || b + JRES_BYTES > 0xA0000u ||
         peek32(b + JRES_OFF_MAGIC) != JRES_MAGIC)
         return 0;
+    return seg;
+}
+
+/* The block INT 13h leads to; else the keyboard block, which hooks no INT
+ * 13h, by INT 16h, or by INT 15h should something have hooked INT 16h
+ * since. */
+static uint16_t found(void)
+{
+    uint16_t seg = behind(IVT_INT13, JRES_OFF_CODE);
+
+    if (seg == 0)
+        seg = behind(IVT_INT16, JRES_OFF_CODE16);
+    if (seg == 0)
+        seg = behind(IVT_INT15, JRES_OFF_CODE15);
     return seg;
 }
 
@@ -232,8 +266,12 @@ uint8_t jres_release(void)
     release(seg);
     if (seg == g_seg)
         g_seg = 0;
-    bios_puts("falcon-bios: released falcon jump's resident for drive ");
-    bios_put_hex64(drive);
+    if (drive != 0) {
+        bios_puts("falcon-bios: released falcon jump's resident for drive ");
+        bios_put_hex64(drive);
+    } else {
+        bios_puts("falcon-bios: released falcon jump's keyboard resident");
+    }
     bios_puts(" at ");
     bios_put_hex64((uint64_t)seg * 16u);
     bios_puts("\n");

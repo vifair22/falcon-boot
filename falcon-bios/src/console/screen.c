@@ -357,16 +357,14 @@ void screen_raw(const char *s)
 
 /* ---- the keyboard ---- */
 
-/* INT 16h AH=01h: the zero flag is clear when a key is waiting. It does not
- * take the key, so the read that follows is what consumes it. */
-#define FLAG_ZERO 0x0040u
-
+/* Every wait for a key comes through here or bios_getkey, so a keyboard
+ * stage 3 polls itself (bios_key_poll) is read wherever the BIOS's is: the
+ * menu, its countdown, every page's key. One poll per call, as the
+ * resident's INT 16h hook makes one per AH=01h. */
 static int key_waiting(void)
 {
-    thunk_regs.eax = 0x0100u;
-    thunk_vector = 0x16;
-    thunk_bios();
-    return (thunk_regs.flags & FLAG_ZERO) == 0;
+    (void)bios_key_poll();
+    return bios_key_ready();
 }
 
 static int rtc_seconds(void);

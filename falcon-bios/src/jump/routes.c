@@ -22,6 +22,7 @@
 
 #include <part/table.h>
 #include <media/eltorito.h>
+#include <lib/string.h>
 
 /* The BDA's count of fixed disks, which is how many drive numbers from 0x80
  * up the BIOS answers for. */
@@ -68,6 +69,23 @@ static usb_mod g_usb[] = {
     { "OHCI", "/OHCI.MOD", "loading OHCI.MOD", JMOD_SLOT_OHCI, PCI_OHCI, 0 },
 };
 #define N_USB (sizeof g_usb / sizeof g_usb[0])
+
+/* The keyboards up (DESIGN Section 13.6): the int16 entries of the USB
+ * modules that found one, from the last USB route that brought them up,
+ * and the slot of the first, whose stack the keyboard block runs them on.
+ * A route that comes back keeps them, since taking the controllers ended
+ * the BIOS's own USB keyboard for good; stage 3 polls them itself
+ * (bios_key_poll), and the next handover that leaves the keyboard to the
+ * BIOS installs them behind INT 16h. */
+static uint32_t g_kbd[N_USB];
+static unsigned g_nkbd;
+static unsigned g_kbd_slot;
+
+/* The module region, carved out of the map a handover passes on while a
+ * module stays: every slot, whichever modules are in it. */
+static const e820_range k_keep_mods = {
+    JMOD_REGION, JMOD_REGION_END - JMOD_REGION
+};
 
 static int has_file(const char *path)
 {
@@ -222,8 +240,14 @@ static void boot_cd(boot_result *r)
     }
     if (e->media == ELT_MEDIA_1200K || e->media == ELT_MEDIA_1440K ||
         e->media == ELT_MEDIA_2880K) {
-        /* Never returns on success. */
+        /* Never returns on success. A DOS boot disc reads its keyboard
+         * through the BIOS, so USB keyboards that are up go behind INT 16h
+         * first. */
+        int kb = jroute_kbd_install();
+
         (void)vfd_serve(disc_read, &g_disc, e, r);
+        if (kb == 0)
+            jroute_kbd_remove();
         return;
     }
     if (e->media != ELT_MEDIA_NONE) {
@@ -233,6 +257,7 @@ static void boot_cd(boot_result *r)
     }
 
     r->stage = "installing the CD driver";
+    jres_keyboards(g_kbd, g_nkbd);
     if (ops.serve(i, (uint8_t)CD_RAW_DRIVE) != 0 ||
         jres_install((uint8_t)CD_RAW_DRIVE, (uint32_t)(uintptr_t)ops.int13,
                      JMOD_SLOT_ADDR(JMOD_SLOT_ATA) + JMOD_SLOT_BYTES,
@@ -281,9 +306,6 @@ static int is_falcon_disk(jmod_ops *ops, unsigned idx)
 static void boot_module_disk(jmod_ops *ops, unsigned idx, unsigned slot,
                              boot_result *r)
 {
-    static const e820_range keep = {
-        JMOD_REGION, JMOD_REGION_END - JMOD_REGION
-    };
     bios_disk disk;
     uint32_t base = 0;
     uint8_t ndisks = peek8(BDA_NDISKS);
@@ -291,9 +313,10 @@ static void boot_module_disk(jmod_ops *ops, unsigned idx, unsigned slot,
     int swap = !is_falcon_disk(ops, idx);
 
     r->stage = "installing the driver";
+    jres_keyboards(g_kbd, g_nkbd);
     if (ndisks >= 0x7Fu || ops->serve(idx, drive) != 0 ||
         jres_install(drive, (uint32_t)(uintptr_t)ops->int13,
-                     JMOD_SLOT_ADDR(slot) + JMOD_SLOT_BYTES, &keep, 1u,
+                     JMOD_SLOT_ADDR(slot) + JMOD_SLOT_BYTES, &k_keep_mods, 1u,
                      &base) != 0) {
         r->advice = "this machine will not give up the conventional memory "
                     "the driver needs.";
@@ -352,20 +375,22 @@ static void boot_cf(boot_result *r)
  * (boot_module_disk); the stick's own stage 1 takes it from there. Every
  * module is brought up, the ones after the stick's too: taking a controller
  * ends the BIOS's keyboard emulation on it and on EHCI's companions, and a
- * module answers for the keyboards it found through the resident's INT 16h
- * hook (DESIGN Section 13.6). */
+ * module answers for the keyboards it found, through the resident's INT 16h
+ * hook after a handover and through stage 3's own poll when the route
+ * comes back (DESIGN Section 13.6). */
 static void boot_usb(boot_result *r)
 {
     static jmod_ops ops[N_USB];
-    uint32_t kbd[N_USB];
-    unsigned nkbd = 0;
     jmod_dev dev;
     const char *why = (const char *)0;
     unsigned found_any = 0;
     unsigned stick = N_USB;
     unsigned at = 0;
+    int refused = 0;
     unsigned m;
 
+    /* The modules are read over whatever an earlier run left up. */
+    g_nkbd = 0;
     for (m = 0; m < N_USB; m++) {
         unsigned n;
         unsigned i;
@@ -377,7 +402,8 @@ static void boot_usb(boot_result *r)
                       &why) != 0) {
             if (stick == N_USB) {
                 r->advice = why;
-                return;
+                refused = 1;
+                break;
             }
             continue;
         }
@@ -385,8 +411,11 @@ static void boot_usb(boot_result *r)
                                : "looking for a keyboard");
         n = ops[m].probe();
         found_any += n;
-        if (ops[m].int16 != 0)
-            kbd[nkbd++] = (uint32_t)(uintptr_t)ops[m].int16;
+        if (ops[m].int16 != 0) {
+            if (g_nkbd == 0)
+                g_kbd_slot = g_usb[m].slot;
+            g_kbd[g_nkbd++] = (uint32_t)(uintptr_t)ops[m].int16;
+        }
         for (i = 0; stick == N_USB && i < n; i++) {
             if (ops[m].dev(i, &dev) == 0 && is_falcon_disk(&ops[m], i)) {
                 stick = m;
@@ -394,20 +423,69 @@ static void boot_usb(boot_result *r)
             }
         }
     }
-    if (stick == N_USB) {
+    if (refused) {
+        /* The advice names the module that was refused. */
+    } else if (stick == N_USB) {
         r->advice = found_any == 0 ? "there is no USB storage on the ports."
                                    : "none of the USB storage is a falcon stick.";
     } else {
         (void)ops[stick].dev(at, &dev);
         screen_out(dev.label);
         screen_out("\n\n");
-        jres_keyboards(kbd, nkbd);
         boot_module_disk(&ops[stick], at, g_usb[stick].slot, r);
-        jres_keyboards((const uint32_t *)0, 0);
     }
-    if (nkbd != 0)
-        bios_puts("falcon-bios: USB: the route is over, and its keyboards "
-                  "with it; a PS/2 keyboard still answers\n");
+    if (g_nkbd != 0) {
+        bios_puts("falcon-bios: USB: the route came back; ");
+        bios_put_dec(g_nkbd);
+        bios_puts(g_nkbd == 1u ? " module's keyboards stay up\n"
+                               : " modules' keyboards stay up\n");
+    }
+}
+
+int bios_key_poll(void)
+{
+    jmod_regs regs;
+    unsigned i;
+
+    if (g_nkbd == 0)
+        return 0;
+    /* Stage 3 runs in protected mode with interrupts off, as the reverse
+     * thunk calls these, so the entry is called here directly; it ignores
+     * the registers, as it does the hook's. */
+    for (i = 0; i < g_nkbd; i++) {
+        memset(&regs, 0, sizeof regs);
+        ((void (*)(jmod_regs *))(uintptr_t)g_kbd[i])(&regs);
+    }
+    return 1;
+}
+
+int jroute_kbd_install(void)
+{
+    if (g_nkbd == 0)
+        return 1;
+    jres_keyboards(g_kbd, g_nkbd);
+    if (jres_install_keyboards(JMOD_SLOT_ADDR(g_kbd_slot) + JMOD_SLOT_BYTES,
+                               &k_keep_mods, 1u) != 0) {
+        jres_keyboards((const uint32_t *)0, 0);
+        bios_puts("falcon-bios: no conventional memory for the keyboard "
+                  "block; the USB keyboards end at the handover\n");
+        return -1;
+    }
+    return 0;
+}
+
+void jroute_kbd_remove(void)
+{
+    jres_remove();
+}
+
+void jroute_kbd_release(void)
+{
+    if (g_nkbd == 0)
+        return;
+    g_nkbd = 0;
+    bios_puts("falcon-bios: USB: the keyboards are released; only a PS/2 "
+              "keyboard answers from here\n");
 }
 
 void jroute_boot(jroute k, boot_result *r)

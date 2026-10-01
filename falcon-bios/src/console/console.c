@@ -138,11 +138,38 @@ void bios_screen_puts(const char *s)
     }
 }
 
+/* INT 16h AH=01h: the zero flag is clear when a key is waiting. It does not
+ * take the key, so the read that follows is what consumes it. */
+#define FLAG_ZERO 0x0040u
+
+int bios_key_ready(void)
+{
+    thunk_regs.eax = 0x0100u;
+    thunk_vector = 0x16;
+    thunk_bios();
+    return (thunk_regs.flags & FLAG_ZERO) == 0;
+}
+
+/* No keyboard but the BIOS's own: stage 2, and every stage 3 that does not
+ * link falcon jump's routes (jump/routes.c has the strong one). */
+__attribute__((weak)) int bios_key_poll(void)
+{
+    return 0;
+}
+
 int bios_getkey(void)
 {
     uint8_t scan;
     uint8_t ascii;
 
+    /* The BIOS's own AH=00h waits inside the BIOS, where nothing comes back
+     * to poll a keyboard only stage 3 can reach; so the wait is here, one
+     * poll and one AH=01h at a time, the AH=01h with interrupts on so a
+     * PS/2 key still arrives. */
+    if (bios_key_poll() != 0) {
+        while (!bios_key_ready())
+            (void)bios_key_poll();
+    }
     thunk_regs.eax = 0x0000u;          /* AH=00h, wait for a key */
     thunk_vector = 0x16;
     thunk_bios();
