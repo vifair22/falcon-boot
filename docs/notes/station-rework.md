@@ -566,6 +566,28 @@ signed loader as e25925c7.... Backups on the T430 in `~/falcon-backups/`:
 `stick-bios-2026-09-30-1e340ee.bin` and `grubx64-c869513.efi` (the
 c869513 loader, 2b2ec5e1...).
 
+Updated again 2026-09-30 to master 9dbb4d1 (the background probe merged),
+the first time with `mkstick update` rather than the two steps: from the
+T430 with the stick at /dev/sdb, the MOK read off p3 into memory. Built on
+binhost-builder; stage 1 was unchanged, stages 2 and 3 read back as the
+build's (b57e6aef..., a1fcff24...), the signed loader is 9f128372...
+(0.1.0_20261001.0019). Backups on the T430 in `~/falcon-backups/`:
+`sdb-bios-20260930-192057.bin` and `sdb-stick-loader-20260930-192057.efi`
+(the 1e340ee loader, e25925c7...).
+
+The T430's own station went the same day to master 9dbb4d1 with `mkstick
+update /dev/sda`, run from the station's own boot: the MOK read off the
+shelf (sda2, mounted at /efi, read through its journal), the loader
+`0.1.0_20261001.0019.station-release` (013242ad...) written over the
+`0.1.0_20260930.0456` one, which is `~/falcon-backups/sda-station-loader-
+20260930-194826.efi`, and the TOTP seed resealed in the same run on the
+TPM 1.2 (PCRs 2, 4, 7, from the saved log after the kernel's, PCR 4's
+loader event substituted). The first run refused with "no shelf carries
+this station's install ID": the station scan never filled its shelf
+fields, and the rig's station update cases had passed `--key`, so they
+never looked. After the fix, rebooted: the code under the banner matched
+the new secret (the user, 2026-09-30).
+
 ### Next
 
 1. Nothing on the falcon side. The DevLink session's own: w98link 9caa3ef

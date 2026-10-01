@@ -651,13 +651,14 @@ updated() {     # updated IMG ESP-PART LOADER S3PART
         { echo "no backup of the old loader"; return; }
 }
 
-# The rig's sticks are made by mk-test-stick.sh, which signs with the test
-# MOK and leaves it off p3; a stick `mkstick create` makes has it there,
-# which is the key update reads. The aged copy is given it.
-key_onto_p3() { # key_onto_p3 IMG
+# The rig's sticks and station are made signed with the test MOK and with
+# it off the shelf; a stick `mkstick create` makes, or a station the
+# installer made, has it there, which is the key update reads. The aged
+# copy is given it.
+key_onto() { # key_onto IMG SHELF-PART
     LOOP=$(sudo losetup -f --show -P "$1")
     MAPPER=falcon-core-rig-upd
-    printf '%s' "$PASS" | sudo cryptsetup open "${LOOP}p3" "$MAPPER" -
+    printf '%s' "$PASS" | sudo cryptsetup open "${LOOP}p$2" "$MAPPER" -
     MNT=$(mktemp -d)
     sudo mount "/dev/mapper/$MAPPER" "$MNT"
     sudo install -m 0600 build/mok-test/falcon-test-mok.key "$MNT/falcon-mok.key"
@@ -674,7 +675,7 @@ key_onto_p3() { # key_onto_p3 IMG
 case_update_stick() { # case_update_stick CASE FIRMWARE
     local img=$R/stick-upd.img why=
     cp --sparse=always "$R/stick-a.img" "$img"
-    key_onto_p3 "$img"
+    key_onto "$img" 3
     age "$img" 1 /EFI/BOOT/grubx64.efi 1
     rm -rf "$R/upd-backup"
     mkdir -p "$R/upd-backup"
@@ -701,12 +702,12 @@ case_update_station() { # case_update_station CASE FIRMWARE
     cp --sparse=always build/test-station.img "$img"
     stn=$(sgdisk -p "$img" | awk '$7 == "FALCON-STATION" { print $1 }')
     [[ -n "$stn" ]] || { result "$1" 0 "the station disk has no FALCON-STATION"; return; }
+    key_onto "$img" 2
+    ( umask 077; printf '%s' "$PASS" > "$R/pass" )
     age "$img" 1 /EFI/falcon/grubx64.efi "$stn"
     rm -rf "$R/upd-backup"
     mkdir -p "$R/upd-backup"
-    "$MKSTICK" update "$img" --from build/bin \
-        --key build/mok-test/falcon-test-mok.key \
-        --cert build/mok-test/falcon-test-mok.crt \
+    "$MKSTICK" update "$img" --from build/bin --passphrase-file "$R/pass" \
         --backup-dir "$R/upd-backup" --yes >"$R/$1-update.log" 2>&1 ||
         why="mkstick update failed: $(tail -1 "$R/$1-update.log")"
     [[ -z "$why" ]] && why=$(updated "$img" 1 /EFI/falcon/grubx64.efi "$stn")
@@ -722,7 +723,7 @@ case_update_station() { # case_update_station CASE FIRMWARE
         halt
     fi
     if [[ -z "$why" ]]; then
-        result "$1" 1 "aged station updated, both halves; the prompt came up"
+        result "$1" 1 "aged station updated from its shelf's MOK, both halves; the prompt came up"
     else
         result "$1" 0 "$why"
     fi
