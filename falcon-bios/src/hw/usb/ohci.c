@@ -1,5 +1,5 @@
 /* falcon jump's OHCI.MOD: the Open Host Controller, USB 1.1's other
- * controller (DESIGN Section 13.4), as a usbhc for msc.c.
+ * controller (DESIGN Section 13.4), as a usbhc for msc.c and hid.c.
  *
  * What the chipsets that are not Intel's or VIA's put on the board (SiS, ALi,
  * OPTi), and most add-in cards (NEC); QEMU's pci-ohci.
@@ -7,7 +7,9 @@
  * Registers are memory mapped (BAR0), which with paging off is an ordinary
  * pointer. One endpoint descriptor for control and one for bulk, each put on
  * its list for one transfer at a time and polled until the controller has
- * retired its transfer descriptors; no interrupts, no periodic list. Unlike
+ * retired its transfer descriptors; no interrupts, no periodic list. A
+ * keyboard's interrupt endpoint goes on the bulk list the same way, for a
+ * few frames at a time, and is taken off again with nothing pending. Unlike
  * UHCI, a transfer descriptor carries up to a page of data, not one packet,
  * and the controller keeps a bulk endpoint's data toggle in the endpoint
  * descriptor itself.
@@ -90,6 +92,8 @@
 #define PORTS_MAX   15u
 #define TD_MAX      32u
 #define WAIT_XFER   500000u      /* 10 us steps: 5 s */
+#define WAIT_INTR   300u         /* 10 us steps: three frames */
+#define FRAME_US    1000u
 
 typedef struct {
     volatile uint32_t ctl;
@@ -397,6 +401,58 @@ static int ohci_bulk(unsigned port, uint8_t addr, uint8_t ep, uint16_t mps,
     return rc;
 }
 
+static int ohci_intr(unsigned port, uint8_t addr, uint8_t ep, uint16_t mps,
+                     int low, void *data, uint32_t len, uint32_t *done,
+                     uint8_t *toggle)
+{
+    uint32_t td0 = phys(&g_td[0]);
+    uint32_t tail = phys(&g_td[1]);
+    uint32_t steps;
+    uint32_t cc;
+    unsigned local;
+    ohci_ed *ed;
+    int rc;
+
+    *done = 0;
+    if (mps == 0 || len == 0 || len > mps || use(port, &local) != 0)
+        return USBHC_ERR;
+    ed = &g_ed_bulk[g_cur];
+    ed->ctl = ED_SKIP | (uint32_t)(addr & 0x7Fu) |
+              ((uint32_t)(ep & 0x0Fu) << 7) | (low ? ED_LOW : 0u) |
+              ((uint32_t)mps << 16);
+    td_fill(&g_td[0], TD_IN | TD_ROUND, data, len);
+    memset((void *)&g_td[1], 0, sizeof g_td[1]);
+    ed->tail = tail;
+    ed->head = td0 | ((*toggle & 1u) ? ED_CARRY : 0u);
+    ed->ctl &= ~ED_SKIP;
+    wr(HC_CMDSTAT, CMD_BLF);
+    for (steps = 0; steps < WAIT_INTR &&
+                    (ed->head & ~0xFu) == td0 && (ed->head & ED_HALTED) == 0;
+         steps++)
+        io_delay_us(10);
+    ed->ctl |= ED_SKIP;
+    /* The controller finishes a transaction it had started within the
+     * frame; after that it reads the skipped descriptor no further. */
+    if ((ed->head & ~0xFu) == td0 && (ed->head & ED_HALTED) == 0)
+        io_delay_us(FRAME_US);
+
+    cc = TD_CC(g_td[0].ctl);
+    if ((ed->head & ~0xFu) == td0 && (ed->head & ED_HALTED) == 0)
+        rc = USBHC_NAK;
+    else if (cc == CC_STALL)
+        rc = USBHC_STALL;
+    else if (cc != 0 && cc != CC_UNDERRUN)
+        rc = USBHC_ERR;
+    else {
+        *done = g_td[0].cbp != 0 ? g_td[0].cbp - phys(data) : len;
+        rc = USBHC_OK;
+    }
+    *toggle = (ed->head & ED_CARRY) != 0 ? 1u : 0u;
+    ed->head = tail | (ed->head & ED_CARRY);
+    return rc;
+}
+
 const usbhc ohci_hc = {
-    ohci_start, ohci_port_reset, ohci_control, ohci_bulk
+    ohci_start, ohci_port_reset, ohci_control, ohci_bulk, ohci_intr,
+    (void (*)(unsigned))0
 };

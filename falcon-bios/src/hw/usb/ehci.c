@@ -21,7 +21,11 @@
  * A DEVICE THAT IS NOT HIGH SPEED does not enable on an EHCI port after a
  * reset. The port is handed to its companion controller (the port owner
  * bit), and UHCI.MOD or OHCI.MOD, tried after this one, finds it there
- * (the USB route's order, apps/jump/bios_main.c).
+ * (the USB route's order, jump/routes.c). So is a port holding a hub or a
+ * keyboard, once msc.c has read what it is (`release`): this controller has
+ * no interrupt transfers, and a keyboard behind a high-speed hub would need
+ * split transactions, where on the companion the hub runs at full speed
+ * and its keyboard is reached as one on a root port is.
  */
 
 #include <hw/usb/ehci.h>
@@ -492,6 +496,17 @@ static int ehci_bulk(unsigned port, uint8_t addr, uint8_t ep, uint16_t mps,
     return rc;
 }
 
+static void ehci_release(unsigned port)
+{
+    unsigned p;
+
+    if (use(port, &p) == 0)
+        release(OP_PORT + p * 4u);
+}
+
 const usbhc ehci_hc = {
-    ehci_start, ehci_port_reset, ehci_control, ehci_bulk
+    ehci_start, ehci_port_reset, ehci_control, ehci_bulk,
+    (int (*)(unsigned, uint8_t, uint8_t, uint16_t, int, void *, uint32_t,
+             uint32_t *, uint8_t *))0,
+    ehci_release
 };
