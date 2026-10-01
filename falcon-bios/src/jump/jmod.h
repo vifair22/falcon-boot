@@ -11,8 +11,8 @@
  * services (serial output) and the module fills in a table of operations.
  * The services exist only while the core does: once the medium's own
  * bootloader is running, the core is gone and so is everything in that
- * table. So jmod_ops.int13, the resident entry, uses nothing but the module
- * itself - its own port I/O, its own delays off the PIT, its own buffers.
+ * table. So jmod_ops.int13 and int16, the resident entries, use nothing but
+ * the module itself - its own port I/O, its own delays, its own buffers.
  * probe, dev, read and serve run while the core is there and may log.
  */
 
@@ -23,7 +23,7 @@
 #include <stdint.h>
 
 #define JMOD_MAGIC 0x444D4A46u   /* "FJMD" */
-#define JMOD_ABI   1u
+#define JMOD_ABI   2u
 
 /* The header, at the slot's first byte. Offsets rather than a struct on the
  * core's side, so the check reads the same bytes whatever compiler reads
@@ -105,6 +105,10 @@ typedef struct {
     int (*serve)(unsigned idx, uint8_t drive);
     /* The resident entry: an INT 13h call for that drive. */
     void (*int13)(jmod_regs *r);
+    /* The resident's keyboard entry (DESIGN Section 13.6): polls the
+     * keyboards probe found and puts their keys into the BIOS's ring and
+     * shift flags. probe fills it in when it found one; 0 otherwise. */
+    void (*int16)(jmod_regs *r);
 } jmod_ops;
 
 typedef int (*jmod_init_fn)(const jmod_services *svc, jmod_ops *ops);

@@ -1,7 +1,7 @@
 /* falcon jump: what a module's code may lean on, which is only itself
  * (docs/DESIGN.md Section 13.4, jump/jmod.h).
  *
- * Port I/O and a delay, inline, so a module's resident half needs nothing
+ * Port I/O, low memory and a delay, inline, so a module's resident half needs nothing
  * the core provides: by the time it answers a bootloader's INT 13h call, the
  * core is gone.
  *
@@ -47,6 +47,17 @@ static inline uint16_t inw(uint16_t port)
 static inline void outl(uint16_t port, uint32_t v)
 {
     __asm__ __volatile__("outl %0, %1" : : "a"(v), "Nd"(port));
+}
+
+/* A pointer to absolute low memory (the BIOS data area), laundered through
+ * asm as start/bios.h's peek and poke are: a compiler takes a dereference
+ * of a constant near zero for a null-pointer bug and warns that it is one. */
+static inline uint8_t *low_mem(uint32_t addr)
+{
+    uint8_t *p;
+
+    __asm__("" : "=r"(p) : "0"((uintptr_t)addr));
+    return p;
 }
 
 /* About `us` microseconds, at least. */

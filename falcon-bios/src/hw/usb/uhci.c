@@ -1,5 +1,5 @@
 /* falcon jump's UHCI.MOD: the Universal Host Controller, USB 1.1's Intel
- * controller (DESIGN Section 13.4), as a usbhc for msc.c.
+ * controller (DESIGN Section 13.4), as a usbhc for msc.c and hid.c.
  *
  * The ThinkPad A21m's PIIX4 is one, and so is QEMU's piix3-usb-uhci; every
  * Intel and VIA chipset of the era has one or more.
@@ -9,15 +9,17 @@
  * element pointer and polled until the controller has retired them. One
  * transfer at a time, no interrupts, no periodic traffic: all a bootloader's
  * INT 13h call needs, and nothing that could run while the resident is not
- * being called. The frame list, the queue head and the descriptors are in
- * this module's .bss, which with paging off is where the controller reads
- * them.
+ * being called. A keyboard's interrupt endpoint is polled the same way, one
+ * descriptor hung from the same queue head for a few frames and taken off
+ * again, so nothing is left for the controller to write into memory between
+ * calls. The frame list, the queue head and the descriptors are in this
+ * module's .bss, which with paging off is where the controller reads them.
  *
  * TAKING THE CONTROLLER FROM THE BIOS. A BIOS with USB keyboard or disk
  * support runs this controller from its SMI handler. Writing 0x8F00 to the
  * legacy support register (PCI 0xC0) turns that off and clears what it left
  * pending, as Linux's uhci-hcd does; after it, the BIOS's USB keyboard is
- * gone, which is why falcon jump takes PS/2 only (Section 13.1).
+ * gone, and hid.c answers for it (Section 13.4).
  */
 
 #include <hw/usb/uhci.h>
@@ -80,6 +82,14 @@
 /* How long a transfer may take, in 10 us steps: 5 s. A stick that is still
  * spinning up its flash controller answers the first reads slowly. */
 #define WAIT_XFER  500000u
+/* How long an interrupt IN waits for a report: three frames by the
+ * controller's own frame counter, then the device has nothing to say. The
+ * counter rather than a delay, because a port read is no clock on an
+ * emulator, and a window that closes before the controller has run a frame
+ * never sees a report. The step bound is for a controller that has stopped
+ * counting. */
+#define INTR_FRAMES 3u
+#define WAIT_FRAMES 100000u
 
 typedef struct {
     volatile uint32_t link;
@@ -382,6 +392,51 @@ static int uhci_bulk(unsigned port, uint8_t addr, uint8_t ep, uint16_t mps,
     return USBHC_OK;
 }
 
+static int uhci_intr(unsigned port, uint8_t addr, uint8_t ep, uint16_t mps,
+                     int low, void *data, uint32_t len, uint32_t *done,
+                     uint8_t *toggle)
+{
+    uint32_t steps;
+    uint32_t st;
+    uint16_t f0;
+
+    *done = 0;
+    if (mps == 0 || mps > 64u || len == 0 || len > mps ||
+        port >= g_nctl * UHCI_PORTS)
+        return USBHC_ERR;
+    use(port);
+    if ((rd16(REG_STS) & STS_HALTED) != 0)
+        return USBHC_ERR;
+    td_fill(&g_td[0], (uhci_td *)0, low, PID_IN, addr, ep, *toggle, data,
+            len);
+    f0 = rd16(REG_FRNUM);
+    g_qhp->element = phys(&g_td[0]);
+    for (steps = 0; steps < WAIT_FRAMES &&
+                    (g_td[0].status & TD_ACTIVE) != 0 &&
+                    ((rd16(REG_FRNUM) - f0) & 0x7FFu) < INTR_FRAMES;
+         steps++)
+        io_delay_us(10);
+    g_qhp->element = LINK_T;
+    /* A device that answered as the queue head was emptied: the controller
+     * writes the descriptor back within the frame it is in. */
+    f0 = rd16(REG_FRNUM);
+    for (steps = 0; steps < WAIT_FRAMES &&
+                    (g_td[0].status & TD_ACTIVE) != 0 &&
+                    ((rd16(REG_FRNUM) - f0) & 0x7FFu) < 1u;
+         steps++)
+        io_delay_us(10);
+    st = g_td[0].status;
+    g_td[0].status &= ~TD_ACTIVE;
+    if ((st & TD_ACTIVE) != 0)
+        return USBHC_NAK;
+    if ((st & TD_ERRORS) != 0)
+        return (st & TD_STALLED) != 0 ? USBHC_STALL : USBHC_ERR;
+    *done = (st + 1u) & 0x7FFu;
+    *toggle ^= 1u;
+    return USBHC_OK;
+}
+
 const usbhc uhci_hc = {
-    uhci_start, uhci_port_reset, uhci_control, uhci_bulk
+    uhci_start, uhci_port_reset, uhci_control, uhci_bulk, uhci_intr,
+    (void (*)(unsigned))0
 };

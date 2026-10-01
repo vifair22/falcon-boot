@@ -14,6 +14,8 @@
 #   usb-ohci  on each controller: jump knows it by its boot record, and the
 #   usb-ehci  stick's own stage 3 loads off the drive the reverse thunk
 #             serves and finds its library by record
+#   usb-hub-stick  the rig stick behind a usb-hub on the UHCI, found
+#             through the hub and booted the same way
 #   cf        a CompactFlash card in the PC Card bridge falcon-pcc.c models,
 #             carrying falcon-bios: its stage 3 loads off the card
 #   cf3v      the same with a card that takes only 3.3 V, as the A21m's
@@ -46,6 +48,22 @@
 #             Enter then boots the row Down moved to (the CD drive, empty in
 #             QEMU's default machine), not the default. The keys go in
 #             through QEMU's monitor.
+#   kbd       the usb route with a usb-kbd beside the stick on the UHCI,
+#             which QEMU then sends every key to, and SeaBIOS's own USB
+#             keyboard ends when jump takes the controller: Escape typed on
+#             the stick's menu, read through the resident's INT 16h hook,
+#             takes the stick back to the BIOS (INT 18h), which the resident
+#             answers with its reset (DESIGN 13.6)
+#   kbd-hub   the same keyboard behind a usb-hub on the UHCI's second port
+#   kbd-hub2  and behind a usb-hub behind another, the deepest msc.c walks
+#   kbd-ehci  an ICH9 EHCI with its three UHCI companions, the stick and
+#             the keyboard on EHCI root ports: the keyboard enables there
+#             at high speed, EHCI.MOD hands its port to the companion, and
+#             UHCI.MOD finds it
+#   kbd-legacy  as kbd, with station-legacy on the stick in place of the
+#             stick's loader (`mkstick station install --bios --legacy` on
+#             an image with one FAT32 partition): Escape on the station's
+#             menu, which runs on top of jump's resident, is its INT 18h
 #
 # The cf case needs the QEMU build-qemu.sh makes; the rest the system's.
 #
@@ -237,11 +255,64 @@ usb() {       # usb CASE HC-DEVICES...
         'p2 mounted as exfat'
 }
 
+# The stick behind a hub: as usb, with the hub between, and the module must
+# have walked it.
+usb_hub_stick() {
+    floppy usb
+    boot "$QEMU" -device piix3-usb-uhci,id=hc \
+        -device usb-hub,bus=hc.0,port=1 \
+        -drive if=none,id=stick,format=raw,file="$R/stick.img" \
+        -device usb-storage,bus=hc.0,port=1.1,drive=stick
+    judge usb-hub-stick 'boot drive 0x8[1-9a-f], sector size 512' \
+        'a hub on root port' 'boot partition p1 at LBA' \
+        'p2  LBA [0-9.]*  \[library\]' 'p2 mounted as exfat'
+}
+
+# The usb route with a USB keyboard and no PS/2 key: once the menu of what
+# the stick holds is up (serial carries `menu`), Escape through QEMU's
+# monitor, which goes to the newest keyboard, the USB one. The stick's
+# loader answers Escape on its empty list with INT 18h, as station-legacy
+# does on its list, and the resident answers that with a reset. PASS needs
+# the module to have found the keyboard (`found`), INT 16h hooked for it,
+# and the reset. The stick is $R/stick.img unless STICK names another.
+kbd_case() {  # kbd_case CASE FOUND MENU QEMU-ARGS...
+    local c=$1 found=$2 menu=$3 stick=${STICK:-$R/stick.img} qpid i
+    shift 3
+    floppy usb
+    cp build/test-bios.img "$R/disk.img"
+    rm -f "$R/serial.log" "$R/mon.sock"
+    "$QEMU" -L /usr/share/qemu -machine pc -cpu pentium3 -m 128 \
+        -display none -boot a \
+        -drive if=floppy,format=raw,file="$R/jump.img" \
+        -drive file="$R/disk.img",format=raw,if=ide,index=0 \
+        -drive if=none,id=stick,format=raw,file="$stick" \
+        -serial file:"$R/serial.log" \
+        -monitor unix:"$R/mon.sock",server,nowait "$@" >/dev/null 2>&1 &
+    qpid=$!
+    for ((i = 0; i < TIMEOUT * 10; i++)); do
+        [[ -f "$R/serial.log" ]] && log_text | grep -aq -- "$menu" && break
+        kill -0 "$qpid" 2>/dev/null || break
+        sleep 0.1
+    done
+    sleep 1
+    monitor "sendkey esc"
+    for ((i = 0; i < 100; i++)); do
+        log_text | grep -aq 'returned to the BIOS; resetting' && break
+        sleep 0.1
+    done
+    monitor quit
+    wait "$qpid" 2>/dev/null || true
+    log_text > "$R/serial.txt"
+    judge "$c" 'returned to the BIOS; resetting' "$found" \
+        'INT 16h for [0-9]'
+}
+
 FAILED=0
 CASES=("$@")
 [[ ${#CASES[@]} -gt 0 ]] ||
-    CASES=(hdd cd usb-uhci usb-ohci usb-ehci cf cf3v cf48 giveup mem s2crc s3crc
-           stick3crc modcrc chs menu)
+    CASES=(hdd cd usb-uhci usb-ohci usb-ehci usb-hub-stick cf cf3v cf48 giveup
+           mem s2crc s3crc stick3crc modcrc chs menu kbd kbd-hub kbd-hub2
+           kbd-ehci kbd-legacy)
 
 for c in "${CASES[@]}"; do
     case $c in
@@ -259,6 +330,7 @@ for c in "${CASES[@]}"; do
     usb-uhci) usb usb-uhci -device piix3-usb-uhci,id=hc ;;
     usb-ohci) usb usb-ohci -device pci-ohci,id=hc ;;
     usb-ehci) usb usb-ehci -device usb-ehci,id=hc ;;
+    usb-hub-stick) usb_hub_stick ;;
     cf|cf3v)
         if [[ ! -x "$QPCC" ]]; then
             printf 'SKIP  %-9s no rig QEMU (falcon-bios/tools/qemu-pcc/build-qemu.sh)\n' "$c"
@@ -364,6 +436,62 @@ for c in "${CASES[@]}"; do
             'no INT 13h extensions, reading by CHS' 'C is running'
         ;;
     menu) menu_case ;;
+    kbd)
+        kbd_case kbd 'a keyboard on root port' 'no entries | esc back' \
+            -device piix3-usb-uhci,id=hc \
+            -device usb-storage,bus=hc.0,port=1,drive=stick \
+            -device usb-kbd,bus=hc.0,port=2
+        ;;
+    kbd-hub)
+        kbd_case kbd-hub 'a keyboard, behind a hub on root port' \
+            'no entries | esc back' -device piix3-usb-uhci,id=hc \
+            -device usb-storage,bus=hc.0,port=1,drive=stick \
+            -device usb-hub,bus=hc.0,port=2 \
+            -device usb-kbd,bus=hc.0,port=2.1
+        ;;
+    kbd-hub2)
+        kbd_case kbd-hub2 'a keyboard, behind two hubs on root port' \
+            'no entries | esc back' -device piix3-usb-uhci,id=hc \
+            -device usb-storage,bus=hc.0,port=1,drive=stick \
+            -device usb-hub,bus=hc.0,port=2 \
+            -device usb-hub,bus=hc.0,port=2.1 \
+            -device usb-kbd,bus=hc.0,port=2.1.1
+        ;;
+    kbd-ehci)
+        kbd_case kbd-ehci 'handed to the companion controller' \
+            'no entries | esc back' \
+            -device ich9-usb-ehci1,id=ehci,addr=1d.7,multifunction=on \
+            -device ich9-usb-uhci1,addr=1d.0,multifunction=on,masterbus=ehci.0,firstport=0 \
+            -device ich9-usb-uhci2,addr=1d.1,multifunction=on,masterbus=ehci.0,firstport=2 \
+            -device ich9-usb-uhci3,addr=1d.2,multifunction=on,masterbus=ehci.0,firstport=4 \
+            -device usb-storage,bus=ehci.0,port=1,drive=stick \
+            -device usb-kbd,bus=ehci.0,port=3
+        # Twice: EHCI.MOD naming the port it hands on, UHCI.MOD finding it.
+        if [[ $(grep -ac 'a keyboard on root port' "$R/serial.txt") -lt 2 ]]; then
+            echo "FAIL  kbd-ehci  the companion's module did not find the keyboard"
+            FAILED=1
+        fi
+        ;;
+    kbd-legacy)
+        make --no-print-directory station-legacy \
+            build/bin/falcon-boot-mkstick >/dev/null
+        rm -f "$R/legacy.img" "$R/legacy.bak"
+        truncate -s 256M "$R/legacy.img"
+        printf 'label: dos\nunit: sectors\nstart=2048, size=262144, type=c\n' |
+            sfdisk -q "$R/legacy.img"
+        mkfs.fat -F 32 --offset 2048 -n DATA "$R/legacy.img" 131072 \
+            >/dev/null 2>&1
+        build/bin/falcon-boot-mkstick station install "$R/legacy.img" \
+            --bios --legacy --no-scan --backup "$R/legacy.bak" \
+            >"$R/legacy-install.log" 2>&1 ||
+            { tail -5 "$R/legacy-install.log"; exit 1; }
+        STICK=$R/legacy.img kbd_case kbd-legacy 'a keyboard on root port' \
+            'entries, [0-9]* shown' \
+            -device piix3-usb-uhci,id=hc \
+            -device usb-storage,bus=hc.0,port=1,drive=stick \
+            -device usb-kbd,bus=hc.0,port=2
+        rm -f "$R/legacy.img"
+        ;;
     mem)
         if [[ -z "${MEMTEST:-}" ]]; then
             echo "SKIP  mem       no MEMTEST"

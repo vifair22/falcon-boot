@@ -2845,7 +2845,7 @@ resident CD handler, from real mode.
 | 0x90000-0x97FFF | bounce buffer | every read |
 | BDA top - 16 KiB | the resident CD handler: data, runs, El Torito packet, launch stub at +0x530, INT 13h entry at +0x570, INT 15h entry at +0xA00, carved E820 map at +0xB00, overlay pool at +0x1000; never below 0x98000 | permanent after a chainload; reserved in the map it hands on |
 | BDA top - 1 KiB (station) | the drive swap (`swapres.S`): the previous INT 13h vector, the drive, the handler at +0x10, 84 bytes | permanent after a chain of a disk that is not 0x80 |
-| BDA top - 3 KiB (falcon jump) | the reverse thunk (`rthunk.S`): far pointers, its GDT, the saved caller, the INT 13h entry at +0x90, the INT 15h entry at +0x300 and its carved map at +0x400 (the `USB` and `PCC` routes'), the release record at +0xB00 (`FJRS`, the vectors and BDA counts it replaced); below it the virtual CD's block on `CDR` | permanent after a route hands over, until station-legacy releases it for a chain to another disk (11.5.2); reserved in the map it hands on |
+| BDA top - 3 KiB (falcon jump) | the reverse thunk (`rthunk.S`): far pointers, its GDT, the saved caller, the INT 13h entry at +0x90, the INT 16h entry at +0x240 (the `USB` route's, when a module found a keyboard), the INT 15h entry at +0x300 and its carved map at +0x400 (the `USB` and `PCC` routes'), the release record at +0xB00 (`FJRS`, the vectors and BDA counts it replaced) and the keyboard entries at +0xB14; below it the virtual CD's block on `CDR` | permanent after a route hands over, until station-legacy releases it for a chain to another disk (11.5.2); reserved in the map it hands on |
 | 0x100000 | stage 3: 16-byte header, entry at +0x10, then its image and `.bss` (at most 0x6F0000 together) | whole loader |
 | 0xB8000-0xB8F9F | VGA text memory, the 80x25 screen stage 3 draws | whole loader |
 | 0x600000 | stage 2's partition list and sector buffer while it looks for the boot partition (`STAGE2_SCRATCH`), then the compressed stage 3 it inflates | until stage 3 runs |
@@ -3325,14 +3325,15 @@ flowchart TD
     CD --> RD13["its reads: 0xE0 (vcdres.S) re-issues to 0xEF,<br/>rthunk.S: saves the caller, A20 on, protected mode, ops.int13, back"]
     VCD -- "refused" --> RM["jres_remove"]
     RM --> MENU
-    MENU -- "USB stick" --> LU["for EHCI.MOD, UHCI.MOD, OHCI.MOD, each on the floppy with its controller on the bus:<br/>jmod_load to its slot; init: msc.c over ehci.c, uhci.c or ohci.c<br/>EHCI hands a port whose device does not enable to its companion"]
-    LU --> EN["ops.probe: every controller of that kind (up to four), taken from the BIOS, reset;<br/>each root port reset, enumerated, INQUIRY, READ CAPACITY"]
-    EN --> GPT{"bootpart_find through ops.read:<br/>a partition with a boot record?"}
-    GPT -- "no falcon stick" --> MENU
-    GPT -- "yes" --> RU["jres_install for the next BIOS disk (BDA 0x475 + 0x80),<br/>INT 15h hooked too: the block and 15-16 MB carved;<br/>INT 18h, 19h: a cold reset; what it changed kept in the block's release record"]
-    RU --> MB["BDA count + 1; mbr_boot: LBA 0 through the thunk to 0x7C00,<br/>DL = that drive; the stick's falcon-bios from there (11.3)"]
-    MB -- "unreadable, no 0x55AA" --> RM2["BDA count back, jres_remove"]
-    RM2 --> MENU
+    MENU -- "USB stick" --> LU["for EHCI.MOD, UHCI.MOD, OHCI.MOD in turn, each on the floppy with its controller on the bus:<br/>jmod_load to its slot; init: msc.c over ehci.c, uhci.c or ohci.c"]
+    LU --> EN["ops.probe: every controller of that kind (up to four), taken from the BIOS, reset;<br/>each root port, and each port of up to two hubs below one, reset and enumerated:<br/>a stick: INQUIRY, READ CAPACITY; a boot keyboard: kept (hid.c), ops.int16 set<br/>EHCI hands a port whose device does not enable, or that holds a hub or a keyboard, to its companion"]
+    EN --> GPT{"bootpart_find through ops.read, until one is:<br/>a partition with a boot record?<br/>the modules after it brought up all the same, for their keyboards"}
+    GPT -- "no falcon stick" --> KG["the USB keyboards end with the route (serial)"]
+    KG --> MENU
+    GPT -- "yes" --> RU["jres_install for the next BIOS disk (BDA 0x475 + 0x80),<br/>INT 15h hooked too: the block and 15-16 MB carved;<br/>INT 16h when a module found a keyboard: each module's int16, then the BIOS's handler;<br/>INT 18h, 19h: a cold reset; what it changed kept in the block's release record"]
+    RU --> MB["BDA count + 1; mbr_boot: LBA 0 through the thunk to 0x7C00,<br/>DL = that drive; the stick's falcon-bios from there (11.3), its keys through INT 16h"]
+    MB -- "unreadable, no 0x55AA" --> RM2["BDA count back, jres_remove: INT 16h with the rest"]
+    RM2 --> KG
     MENU -- "CF card (PC Card)" --> LP["jmod_load: PCC.MOD to JMOD_SLOT_PCC"]
     LP --> SK["ops.probe: each CardBus bridge (class 0x0607), BAR0: socket regs, ExCA at +0x800<br/>card detect, VCC, reset, READY; memory window 0 at 0xD0000 onto attribute memory"]
     SK --> CI{"pcccore.c: the CIS: a fixed disk, CONFIG,<br/>a contiguous-I/O entry?"}
@@ -3348,7 +3349,11 @@ links too (12.10); `apps/jump/bios_main.c` is the menu, `JUMP.INI`, `MBR`,
 
 `MBR` and `MEM` leave nothing resident, as the station's do but for its drive swap (11.5.2).
 `CDR` leaves two: the stick's virtual CD, unchanged but for serving a whole
-drive as one run, and under it the reverse thunk and `ATA.MOD`. The floppy
+drive as one run, and under it the reverse thunk and `ATA.MOD`. `USB` leaves
+the reverse thunk, the module that serves the stick, and every USB module
+that found a keyboard, which INT 16h reaches until the system started from
+the stick takes the controllers itself or station-legacy releases the
+block (11.5.2). The floppy
 is read by CHS wherever its BIOS has no extensions, SeaBIOS's included, as
 on an old machine.
 
@@ -4355,9 +4360,6 @@ Not in scope:
 - **Disks the BIOS cannot see** (an add-in controller with no option ROM, a
   disk past an old BIOS's size limit). jump boots the disks INT 13h already
   has.
-- **USB keyboards.** PS/2 only. Taking a USB controller from the BIOS ends
-  its legacy keyboard emulation, on EHCI for the companion controllers too,
-  so a USB keyboard would need a HID driver in jump.
 
 No route serves a disk on an IDE channel the BIOS does not boot.
 
@@ -4490,23 +4492,52 @@ into memory and called.
 - **Two tables, and when each may be used.** The core calls init with a
   table of services (serial output), and the module fills in a table of
   what it offers: probe, describe a device, read, choose the device to
-  serve, and `int13`, the resident entry. The services exist only while the
-  core does. Once the medium's bootloader runs, the core is gone, so
-  `int13` and everything it reaches use only the module itself: its own
-  port I/O, its own delays (reads of port 0x80), its own buffers. A module
-  calls nothing in the core by symbol and links its own copy of the core
-  routines it uses.
+  serve, `int13`, the resident entry, and `int16`, the keyboard entry,
+  which a USB module's probe fills in when it found a keyboard. The
+  services exist only while the core does. Once the medium's bootloader
+  runs, the core is gone, so `int13`, `int16` and everything they reach use
+  only the module itself: its own port I/O, its own delays (reads of port
+  0x80), its own buffers. A module calls nothing in the core by symbol and
+  links its own copy of the core routines it uses.
 - **The set.** `ATA.MOD` (ATAPI on the legacy IDE channels), `UHCI.MOD`,
-  `OHCI.MOD`, `EHCI.MOD` (one host controller each, root ports only), and
-  `PCC.MOD` (a CardBus bridge's PC Card socket and the ATA disk on the card
-  in it). A USB module is its host controller
-  and the whole storage stack (enumeration, Bulk-Only Transport, SCSI:
-  `hw/usb/msc.c` over the small interface `usbhc.h` a controller offers),
-  one image per controller rather than a controller module and a separate
-  `USB.MOD`, so there are no calls between modules and only the module for
-  the controller that is there is read. The storage half and the SCSI
-  blocks (`hw/scsi`) are one source each; only the built images repeat
+  `OHCI.MOD`, `EHCI.MOD` (one host controller each, its root ports and two
+  levels of hub), and `PCC.MOD` (a CardBus bridge's PC Card socket and the
+  ATA disk on the card in it). A USB module is its host controller and the
+  whole device stack over the small interface `usbhc.h` a controller
+  offers: enumeration (`hw/usb/msc.c`), the hub levels (`hub.c`), storage
+  (Bulk-Only Transport and SCSI, `msc.c`) and a boot-protocol keyboard
+  (`hid.c`). One image per controller rather than a controller module and
+  a separate `USB.MOD`, so there are no calls between modules and only the
+  module for the controller that is there is read. The device half and the
+  SCSI blocks (`hw/scsi`) are one source each; only the built images repeat
   them. A module's INT 13h answers are `hw/blk13.c`, shared by every module.
+- **The hub levels.** A hub on a root port is configured, its ports
+  powered, and each port with a device reset, its speed read from the
+  port's status, and the device enumerated through the root port the hub
+  hangs from (`hub.c`). A hub on one of its ports is walked the same way,
+  a keyboard's own hub in a desk hub; a hub below that is not. The hubs run
+  at full speed on UHCI or OHCI, so a low-speed device behind them needs
+  only the low-speed marking on its transfers, as on a root port: no
+  transaction translator and no split transactions. EHCI has no interrupt transfers
+  here, and a keyboard behind a high-speed hub would need split
+  transactions, so `EHCI.MOD` hands a root port that holds a hub or a
+  keyboard to its companion controller (the port owner bit), and with it
+  the whole tree below the port, where the UHCI or OHCI module after it
+  finds them. A stick behind a hub is found the same way, at full speed.
+- **The keyboard.** A HID interface of the boot subclass and keyboard
+  protocol is put into the boot protocol (SET_PROTOCOL) with no idle
+  reports (SET_IDLE 0), and its interrupt IN endpoint read one packet at a
+  time: a single transfer descriptor on the controller's one queue head
+  for three frames by its own frame counter, then taken off, so nothing is
+  left on a schedule to write into memory between calls (`usbhc.h`'s
+  `intr`, UHCI and OHCI only). The 8-byte report's new keys become what
+  the PC keyboard would ring: US layout, scan code set 1 and the extended
+  codes, Shift, Ctrl, Alt and the three locks, which are the BDA's bits at
+  0x417 and so shared with a PS/2 keyboard; the cursor keys ring 00h as the
+  keypad's do, which is how an AH=00h caller tells an arrow. A held key
+  repeats after half a second, about nine times a second, by the BIOS tick
+  count. That decoding is `hidcore.c`, host-tested; `hid.c` reads the
+  endpoint and writes the result into the BDA's ring and its shift flags.
 - **Stored compressed.** A module goes on the floppy as a gzip member
   (`gzip -9 -n`, the build's `$(NAME).MOD.gz` under the `.MOD` name),
   about 60% of its size: 16 sectors fewer for a USB route that reads EHCI
@@ -4518,7 +4549,8 @@ into memory and called.
 - **Where the code lives.** `falcon-bios/src/hw/`, one directory per driver,
   and each driver's decisions in a host-tested half beside it, as
   `vcdcore.c` is to `vcdres.S`: descriptor parsing, BOT's CBW and CSW, SCSI
-  command blocks, transfer descriptor layout.
+  command blocks, transfer descriptor layout, and a keyboard report's keys
+  and the BIOS's keyboard ring (`hidcore.c`).
 
 ### 13.5 Power-on to the menu
 
@@ -4580,8 +4612,10 @@ sector is INT 18h and expects the reset.
 
 **Virtual 8086 mode.** A caller in v86 mode (DOS with EMM386, the real-mode
 half of Windows 9x) cannot be taken into protected mode: the CR0 write
-faults to the monitor. The stub checks and fails the call with an error.
-DOS with a memory manager cannot read a CD or stick through jump.
+faults to the monitor. The stub checks and fails an INT 13h call with an
+error, and sends an INT 16h call to the BIOS without polling the
+keyboards. DOS with a memory manager cannot read a CD or stick through
+jump, nor type on a USB keyboard.
 
 **CD.** `ATA.MOD` finds the ATAPI drive and answers raw 2048-byte reads for
 it on a private drive number (0xEF) through the reverse thunk. The stick's
@@ -4603,11 +4637,15 @@ hardware and nothing about El Torito. The catalog's entry decides:
 **USB.** The modules for the controllers present (`EHCI.MOD`, then
 `UHCI.MOD`, then `OHCI.MOD`; each finds its controllers on the PCI bus
 itself, up to four of each kind, and takes them from the BIOS) enumerate
-their root ports in turn. EHCI goes first because a device that is not high
-speed does not enable on its port after a reset: `EHCI.MOD` hands that port
-to its companion (the port owner bit), and the UHCI or OHCI module after it
-finds the device there. Then the first stick with a partition carrying a
-`boot` record (`bootpart_find`, as stage 2 finds one) is booted. It becomes
+their root ports, and two hub levels, in turn (13.4). EHCI goes first
+because a device that is not high speed does not enable on its port after
+a reset: `EHCI.MOD` hands that port to its companion (the port owner bit),
+and the UHCI or OHCI module after it finds the device there; so it does
+with a port holding a hub or a keyboard. The first stick with a partition
+carrying a `boot` record (`bootpart_find`, as stage 2 finds one) is
+booted, and every module present is brought up all the same, the ones
+after the stick's included: taking a controller ends the BIOS's own USB
+keyboard on it, and taking EHCI ends it on the companions too. It becomes
 the next BIOS disk after the ones the BIOS has (the BDA's count at 0x475
 goes up by one), not 0x80 with the BIOS's disks moved up: falcon-bios's
 stages take the drive DL names, and the station's drive swap (12.4) is for
@@ -4615,9 +4653,25 @@ chaining an OS that expects 0x80. The reverse thunk answers that
 drive, and since there is no virtual CD on this route, its own INT 15h half
 carves the block and the module region out of the memory map (E820, E801's
 two halves, AH=88h). Then the stick's LBA 0 goes to 0x7C00 with DL naming
-it (`mbr.c`), and falcon-bios on the stick takes it from there. Only root
-ports are enumerated, so a stick behind a hub is not found, and only the
+it (`mbr.c`), and falcon-bios on the stick takes it from there. Only the
 first falcon stick is booted.
+
+**Keyboards.** When a module found a keyboard, the block hooks INT 16h too.
+AH=01h and 11h poll each such module's keyboards once (`int16`, through the
+same mode switch as `int13`, on the stick module's stack) and go on to the
+BIOS's handler, which answers from its ring, where the poll put any key as
+the keyboard interrupt would have. AH=00h and 10h poll until the BIOS's own
+AH=01h or 11h says a key is waiting, with interrupts on between polls so a
+PS/2 key still arrives, then go on to the BIOS's read: its own wait would
+never come back to poll. Every other call goes straight through. So a USB
+keyboard works from the moment the route hands over, for everything that
+reads the keyboard through the BIOS: the stick's loader, a medium's
+bootloader, DOS, station-legacy's menu off a stick. A system that drives
+the controllers itself (Linux, Windows) resets them. The hook goes when
+the block does: on a route that comes back (no falcon stick, or one that
+will not start), the USB keyboards end with it, the BIOS's emulation
+already gone, and only a PS/2 keyboard answers jump's menu until a reset;
+serial says so.
 
 **CF.** `PCC.MOD` finds the CardBus bridges by class (0x0607) and brings a
 16-bit card up as Linux's yenta and i82365 drivers do: card detect, VCC
@@ -4670,9 +4724,21 @@ stick (the rig's GPT disk with the stick's stages written in), and an
 a one-second countdown, judged from the serial log, and one case more for
 the menu itself: a five-second countdown stopped by a key sent through
 QEMU's monitor, which must boot nothing until Enter, and then the row the
-key moved to. SeaBIOS is unchanged: the floppy boots first, and jump reads
-the CD drive and the USB stick through its own drivers. SeaBIOS does list
-the stick as a disk of its own before jump takes the controller, so in the
+key moved to. `usb-hub-stick` boots the rig stick from behind a
+`usb-hub`, judged as the other USB cases are. Five cases more type on a
+`usb-kbd` (QEMU sends the
+monitor's keys to the newest keyboard, and SeaBIOS's own USB keyboard ends
+when jump takes the controller): Escape on the rig stick's empty menu,
+which only the resident's INT 16h hook can deliver, and which the stick's
+loader answers with INT 18h and the resident with its reset. `kbd` puts
+the keyboard on a UHCI root port, `kbd-hub` behind a `usb-hub`, `kbd-hub2`
+behind a `usb-hub` behind another, and `kbd-ehci` on a root port of an ICH9 EHCI with its three UHCI companions,
+where it enables at high speed and `EHCI.MOD` hands it to the companion.
+`kbd-legacy` boots station-legacy from the stick instead (`mkstick station
+install --bios --legacy` on an image) and types Escape into its menu,
+which runs on top of the resident. SeaBIOS is unchanged: the floppy boots
+first, and jump reads the CD drive and the USB stick through its own
+drivers. SeaBIOS does list the stick as a disk of its own before jump takes the controller, so in the
 rig the stick is served one drive number higher than it would be on a BIOS
 that cannot see USB, and SeaBIOS's own entry for it stops answering once
 jump has the controller. The `USB` route never uses that entry. The rig

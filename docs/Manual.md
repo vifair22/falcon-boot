@@ -1775,7 +1775,7 @@ The menu lists, in this order:
 | `Disk 0x80`, `Disk 0x81`, ... | `MBR` | the disk's LBA 0 at 0x7C00 with DL naming that disk; nothing resident | the BIOS counts the disk and its LBA 0 carries the boot signature |
 | `CD drive` | `CDR` | the disc in the first drive on the legacy IDE channels that has one, through `ATA.MOD` | the floppy holds `ATA.MOD` and an IDE controller is on the PCI bus |
 | `CF card (PC Card)` | `PCC` | the first CompactFlash card in a PC Card slot, through `PCC.MOD`, as the next BIOS disk: its own MBR, whatever is on it | the floppy holds `PCC.MOD` and a CardBus bridge is on the bus |
-| `USB stick` | `USB` | the first falcon stick (a partition carrying a `boot` record) on a root port, through `EHCI.MOD`, then `UHCI.MOD`, then `OHCI.MOD`, as the next BIOS disk; the stick's own stages take it from there | the floppy holds a USB driver and its controller is on the bus |
+| `USB stick` | `USB` | the first falcon stick (a partition carrying a `boot` record) on a root port of any controller, or behind up to two hubs on one, through `EHCI.MOD`, `UHCI.MOD` and `OHCI.MOD`, as the next BIOS disk; the stick's own stages take it from there | the floppy holds a USB driver and its controller is on the bus |
 | `Memory test (memtest86+)` | `MEM` | `MEMTEST.BIN`, started through the x86 boot protocol | the floppy holds `MEMTEST.BIN` |
 
 With no row the list reads `(no disk with boot code, and no MEMTEST.BIN)`.
@@ -1792,8 +1792,14 @@ utility CDs) is read into memory above 64 MB and served as a floppy, so it
 needs more than 64 MB, and nothing of the driver stays. A disc that asks
 for hard-disk emulation is refused. `PCC` reads the card's configuration
 through memory at 0xD0000, and the first card's registers sit at I/O
-0x1E0-0x1EF. A USB keyboard stops working once a USB route runs: jump
-takes the controller from the BIOS, so the machine wants a PS/2 one.
+0x1E0-0x1EF. `USB` loads every USB driver on the floppy, and a USB keyboard
+works once the route has started, on a root port or behind up to two hubs
+(a hub inside the keyboard counts as one), for the stick's loader and
+whatever it starts that reads the keyboard through the BIOS; DOS under
+EMM386 does not see it. A hub or a keyboard on a USB 2.0 (EHCI) port is
+handed to that port's USB 1.1 companion controller, where the hub runs at
+full speed. When the route comes back to jump's menu, the USB keyboard
+stops with it until a reset, and only a PS/2 one answers.
 
 ### 9.4 Jump's pages
 

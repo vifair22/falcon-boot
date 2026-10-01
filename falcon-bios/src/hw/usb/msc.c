@@ -1,18 +1,21 @@
-/* falcon jump's USB modules: USB mass storage over whatever host controller
- * the module was linked with (DESIGN Section 13.4 and 13.6).
+/* falcon jump's USB modules: the devices on the controllers the module was
+ * linked with, and USB mass storage on them (DESIGN Sections 13.4 and 13.6).
  *
- * Enumeration of the root ports, then SCSI over Bulk-Only Transport, then
- * the module's operations and its resident INT 13h (hw/blk13.c). The host
- * controller is a usbhc (usbhc.h): UHCI.MOD links uhci.c, and OHCI and EHCI
- * modules link the same file with theirs. Root ports only; a hub is a later
- * change.
+ * Enumeration of the root ports and two levels of hub (hub.c), then for a
+ * stick SCSI over Bulk-Only Transport, the module's operations and its
+ * resident INT 13h (hw/blk13.c), and for a boot keyboard hid.c and the
+ * resident's INT 16h. The host controller is a usbhc (usbhc.h): UHCI.MOD
+ * links uhci.c, and OHCI and EHCI modules link the same file with theirs.
  *
  * Like every module, what the resident reaches uses nothing of the core
- * (jump/jmod.h): the services table is dropped when serve() is called.
+ * (jump/jmod.h): the services table is dropped when serve() is called, and
+ * by the first keyboard call.
  */
 
 #include <hw/usb/msc.h>
 #include <hw/usb/usbcore.h>
+#include <hw/usb/hub.h>
+#include <hw/usb/hid.h>
 #include <hw/scsi/scsi.h>
 #include <hw/blk13.h>
 #include <hw/modrt.h>
@@ -20,6 +23,10 @@
 #include <lib/string.h>
 
 #define DEVS_MAX 4u
+#define ADDR_MAX 127u
+/* The hubs walked below a root port: a hub on a root port and one on its
+ * ports, so a keyboard's own hub plugged into a desk hub is reached. */
+#define HUB_LEVELS 2u
 #define SECTOR   512u
 /* The most one READ(10) or WRITE(10) carries: 16 KB, what a UHCI bulk call
  * moves before it loops. */
@@ -39,10 +46,14 @@ typedef struct {
 
 static const usbhc *g_hc;
 static const jmod_services *g_svc;   /* probe time only */
+static jmod_ops *g_ops;
 static msc_dev g_dev[DEVS_MAX];
 static unsigned g_ndev;
 static unsigned g_serve = DEVS_MAX;
 static uint32_t g_tag;
+/* The next address handed out, on whichever of the module's controllers:
+ * one count keeps them apart without asking which bus a device is on. */
+static uint8_t g_next_addr;
 
 static int serve_read(uint64_t lba, uint32_t count, void *buf);
 static int serve_write(uint64_t lba, uint32_t count, const void *buf);
@@ -54,6 +65,16 @@ static void log_s(const char *s)
 {
     if (g_svc != (const jmod_services *)0)
         g_svc->log(s);
+}
+
+static void log_port(const char *what, unsigned root)
+{
+    log_s("falcon-bios: USB: ");
+    log_s(what);
+    log_s(" on root port ");
+    if (g_svc != (const jmod_services *)0)
+        g_svc->log_hex(root);
+    log_s("\n");
 }
 
 static int clear_halt(msc_dev *d, uint8_t ep)
@@ -187,57 +208,14 @@ static void label_from_inquiry(msc_dev *d, const uint8_t *q)
     d->label[n] = '\0';
 }
 
-/* The device on `port`, as address port + 1. 0 when it is a mass storage
- * device this module can read. */
-static int enumerate(unsigned port, msc_dev *d)
+/* The SCSI half of bringing a stick up, once it is configured: what it is,
+ * and its size. 0 when it is a disk this module can read. */
+static int msc_attach(msc_dev *d)
 {
-    static uint8_t buf[256];
-    uint8_t setup[USB_SETUP_LEN];
-    usb_device_desc dd;
-    uint16_t total;
+    static uint8_t buf[36];
     uint8_t cdb[SCSI_CDB_MAX];
     size_t n;
     uint32_t block;
-
-    memset(d, 0, sizeof *d);
-    d->port = port;
-    if (g_hc->port_reset(port, &d->low) != 1)
-        return -1;
-
-    /* Its first eight bytes at address 0, which is where it answers until
-     * it is given one; endpoint 0's packet size is in them. */
-    usb_setup_get_descriptor(setup, USB_DESC_DEVICE, 0, 8u);
-    if (g_hc->control(port, 0, 8u, d->low, setup, buf, 8u) != USBHC_OK ||
-        usb_parse_device(buf, 8u, &dd) != 0)
-        return -1;
-    d->mps0 = dd.max_packet0;
-    usb_setup_set_address(setup, (uint8_t)(port + 1u));
-    if (g_hc->control(port, 0, d->mps0, d->low, setup, (void *)0, 0) !=
-        USBHC_OK)
-        return -1;
-    d->addr = (uint8_t)(port + 1u);
-    io_delay_us(10000);              /* SET_ADDRESS recovery */
-
-    usb_setup_get_descriptor(setup, USB_DESC_CONFIG, 0, 9u);
-    if (g_hc->control(d->port, d->addr, d->mps0, d->low, setup, buf, 9u) !=
-        USBHC_OK)
-        return -1;
-    total = usb_config_total(buf, 9u);
-    if (total < 9u)
-        return -1;
-    if (total > sizeof buf)
-        total = (uint16_t)sizeof buf;
-    usb_setup_get_descriptor(setup, USB_DESC_CONFIG, 0, total);
-    if (g_hc->control(d->port, d->addr, d->mps0, d->low, setup, buf, total) !=
-            USBHC_OK ||
-        usb_find_msc(buf, total, &d->m) != 0) {
-        log_s("falcon-bios: USB: a device that is not mass storage\n");
-        return -1;
-    }
-    usb_setup_set_config(setup, d->m.config);
-    if (g_hc->control(d->port, d->addr, d->mps0, d->low, setup, (void *)0, 0) !=
-        USBHC_OK)
-        return -1;
 
     n = scsi_cdb_inquiry(cdb, 36u);
     if (command_retry(d, cdb, n, 1, buf, 36u) != 0)
@@ -256,20 +234,154 @@ static int enumerate(unsigned port, msc_dev *d)
     return 0;
 }
 
+static int set_config(unsigned root, uint8_t addr, uint8_t mps0, int low,
+                      uint8_t value)
+{
+    uint8_t setup[USB_SETUP_LEN];
+
+    usb_setup_set_config(setup, value);
+    return g_hc->control(root, addr, mps0, low, setup, (void *)0, 0);
+}
+
+/* A hub or a keyboard on a controller with no interrupt transfers (EHCI):
+ * a root port's goes to the companion controller, whose module finds it
+ * again (ehci.c). 1 when this module leaves it. */
+static int handed_on(unsigned root, unsigned depth, const char *what)
+{
+    if (g_hc->intr != 0)
+        return 0;
+    if (depth == 0 && g_hc->release != 0) {
+        g_hc->release(root);
+        log_port(what, root);
+        log_s("falcon-bios: USB:   handed to the companion controller\n");
+    }
+    return 1;
+}
+
+static void device(unsigned root, int low, unsigned depth);
+
+/* The depth of the devices on a hub's ports, through hub_walk's context. */
+static unsigned g_depth[HUB_LEVELS] = { 1u, 2u };
+
+static void hub_child(void *ctx, unsigned root, int low)
+{
+    device(root, low, *(unsigned *)ctx);
+}
+
+/* The device just reset on root port `root`, or behind `depth` hubs on it,
+ * and answering at address 0: given an address, and kept as a stick or a
+ * keyboard, or walked as a hub. */
+static void device(unsigned root, int low, unsigned depth)
+{
+    static uint8_t buf[256];
+    uint8_t setup[USB_SETUP_LEN];
+    usb_device_desc dd;
+    usb_msc_if m;
+    usb_kbd_if k;
+    uint16_t total;
+    uint8_t addr;
+    uint8_t mps0;
+
+    /* Its first eight bytes at address 0, which is where it answers until
+     * it is given one; endpoint 0's packet size and its class are in
+     * them. */
+    usb_setup_get_descriptor(setup, USB_DESC_DEVICE, 0, 8u);
+    if (g_hc->control(root, 0, 8u, low, setup, buf, 8u) != USBHC_OK ||
+        usb_parse_device(buf, 8u, &dd) != 0 || g_next_addr > ADDR_MAX)
+        return;
+    mps0 = dd.max_packet0;
+    addr = g_next_addr++;
+    usb_setup_set_address(setup, addr);
+    if (g_hc->control(root, 0, mps0, low, setup, (void *)0, 0) != USBHC_OK)
+        return;
+    io_delay_us(10000);              /* SET_ADDRESS recovery */
+
+    usb_setup_get_descriptor(setup, USB_DESC_CONFIG, 0, 9u);
+    if (g_hc->control(root, addr, mps0, low, setup, buf, 9u) != USBHC_OK)
+        return;
+    total = usb_config_total(buf, 9u);
+    if (total < 9u)
+        return;
+    if (total > sizeof buf)
+        total = (uint16_t)sizeof buf;
+    usb_setup_get_descriptor(setup, USB_DESC_CONFIG, 0, total);
+    if (g_hc->control(root, addr, mps0, low, setup, buf, total) !=
+        USBHC_OK)
+        return;
+
+    if (dd.dev_class == USB_CLASS_HUB) {
+        if (handed_on(root, depth, "a hub"))
+            return;
+        if (depth >= HUB_LEVELS) {
+            log_s("falcon-bios: USB: a hub behind two hubs, not walked\n");
+            return;
+        }
+        log_port(depth > 0 ? "a hub, behind a hub" : "a hub", root);
+        /* bConfigurationValue: a hub has the one configuration. */
+        if (set_config(root, addr, mps0, low, buf[5]) == USBHC_OK)
+            (void)hub_walk(g_hc, root, addr, mps0, hub_child,
+                           &g_depth[depth]);
+        return;
+    }
+    if (usb_find_msc(buf, total, &m) == 0) {
+        msc_dev *d;
+
+        if (g_ndev >= DEVS_MAX)
+            return;
+        d = &g_dev[g_ndev];
+        memset(d, 0, sizeof *d);
+        d->port = root;
+        d->addr = addr;
+        d->mps0 = mps0;
+        d->low = low;
+        d->m = m;
+        if (set_config(root, addr, mps0, low, m.config) != USBHC_OK ||
+            msc_attach(d) != 0)
+            return;
+        log_s("falcon-bios: USB: ");
+        log_s(d->label);
+        log_s("\n");
+        g_ndev++;
+        return;
+    }
+    if (usb_find_kbd(buf, total, &k) == 0) {
+        if (handed_on(root, depth, "a keyboard"))
+            return;
+        if (set_config(root, addr, mps0, low, k.config) == USBHC_OK &&
+            hid_attach(g_hc, root, addr, mps0, low, &k) == 0)
+            log_port(depth == 0   ? "a keyboard"
+                     : depth == 1 ? "a keyboard, behind a hub"
+                                  : "a keyboard, behind two hubs",
+                     root);
+        return;
+    }
+    log_s("falcon-bios: USB: a device that is neither storage, a keyboard "
+          "nor a hub\n");
+}
+
+/* The resident's keyboard entry: hid.c behind the INT 16h hook. */
+static void msc_int16(jmod_regs *r)
+{
+    (void)r;
+    /* The core that lent the services is gone by the first call. */
+    g_svc = (const jmod_services *)0;
+    hid_poll();
+}
+
 static unsigned msc_probe(void)
 {
     unsigned ports = g_hc->start();
     unsigned p;
 
     g_ndev = 0;
-    for (p = 0; p < ports && g_ndev < DEVS_MAX; p++) {
-        if (enumerate(p, &g_dev[g_ndev]) != 0)
-            continue;
-        log_s("falcon-bios: USB: ");
-        log_s(g_dev[g_ndev].label);
-        log_s("\n");
-        g_ndev++;
+    g_next_addr = 1;
+    for (p = 0; p < ports; p++) {
+        int low = 0;
+
+        if (g_hc->port_reset(p, &low) == 1)
+            device(p, low, 0);
     }
+    g_ops->int16 = hid_count() != 0 ? msc_int16 : (void (*)(jmod_regs *))0;
     return g_ndev;
 }
 
@@ -349,6 +461,7 @@ int msc_init(const usbhc *hc, const jmod_services *svc, jmod_ops *ops)
 {
     g_hc = hc;
     g_svc = svc;
+    g_ops = ops;
     ops->probe = msc_probe;
     ops->dev = msc_dev_info;
     ops->read = msc_read;

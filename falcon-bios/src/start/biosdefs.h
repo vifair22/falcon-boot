@@ -402,7 +402,8 @@
 #define JMOD_GZ_STAGE    GZ_STAGE_ADDR
 
 /* The reverse thunk (falcon-bios/src/jump/rthunk.S, jres.c): the real-mode
- * INT 13h entry a module's resident half is reached through. One block in
+ * INT 13h and INT 16h entries a module's resident half is reached through.
+ * One block in
  * conventional memory, taken from the BDA's count as the virtual CD's is,
  * data at fixed offsets and then code, position independent: it is copied
  * wherever the count leaves room. The far pointers are part-filled by the
@@ -427,6 +428,9 @@
 #define JRES_OFF_OLDINT15 0x68   /* far pointer to the previous INT 15h */
 #define JRES_OFF_REGS     0x70   /* jmod_regs, 32 bytes */
 #define JRES_OFF_CODE     0x90   /* the INT 13h entry */
+/* The INT 16h entry (the USB route's, when a module found a keyboard):
+ * the keyboards polled, then the BIOS's handler. */
+#define JRES_OFF_CODE16   0x240
 /* The INT 15h half (the USB route's; the CD route's virtual CD has its own):
  * the memory map with the resident's memory carved out of it, as
  * vcdres.S's, in the same twenty-byte entries. */
@@ -448,6 +452,11 @@
 #define JRES_OFF_OLDINT19 0xB08  /* far pointer */
 #define JRES_OFF_OLDKB    0xB0C  /* word: the BDA's memory count before */
 #define JRES_OFF_OLDNDISK 0xB0E  /* byte: the BDA's disk count before */
+#define JRES_OFF_OLDINT16 0xB10  /* far pointer */
+#define JRES_OFF_NKBD     0xB14  /* byte: keyboard entries; 0 hooks no INT 16h */
+#define JRES_OFF_CALL     0xB15  /* byte: 0 the INT 13h entry, 1 the keyboards */
+#define JRES_OFF_KBD      0xB18  /* dwords: the modules' int16, linear */
+#define JRES_KBD_MAX      3
 #define JRES_MAGIC        0x53524A46u  /* "FJRS", little-endian */
 #define JRES_BYTES        0xC00  /* 3 KB, what the BDA loses */
 

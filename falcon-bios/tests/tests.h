@@ -12,6 +12,7 @@ int run_jmod_tests(void);
 int run_lowmem_tests(void);
 int run_atacore_tests(void);
 int run_usbcore_tests(void);
+int run_hidcore_tests(void);
 int run_pcccore_tests(void);
 int run_bootpart_tests(void);
 int run_vbrcore_tests(void);
