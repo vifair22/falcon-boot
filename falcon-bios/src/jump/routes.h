@@ -45,4 +45,28 @@ const char *jroute_code(jroute k);
  * taken back and r saying why. */
 void jroute_boot(jroute k, boot_result *r);
 
+/* ---- the keyboards a USB route leaves up (DESIGN Section 13.6) ----
+ *
+ * A USB route that found keyboards keeps them when it comes back: the
+ * modules stay loaded, stage 3 polls them while it waits for a key
+ * (bios_key_poll, in start/bios.h), and a later handover decides what
+ * becomes of them. */
+
+/* For a handover to something that reads the keyboard through the BIOS
+ * with no module of its own resident (a disk's boot code, a floppy
+ * emulation disc): the keyboard block behind INT 16h, the module region
+ * carved out of the map. 0 when it is installed, 1 when no keyboards are
+ * up, -1 when the machine would not give up the memory (said on serial;
+ * the handover goes on without them). */
+int jroute_kbd_install(void);
+
+/* Takes back what jroute_kbd_install installed, for a handover that came
+ * back. The keyboards stay up. */
+void jroute_kbd_remove(void);
+
+/* Lets the keyboards go before a handover that has no use for them
+ * (memtest86+, which drives the keyboard itself and tests the memory the
+ * modules sit in; INT 18h; a system on another disk), said on serial. */
+void jroute_kbd_release(void);
+
 #endif /* FALCON_BIOS_ROUTES_H */

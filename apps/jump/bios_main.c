@@ -3,8 +3,9 @@
  *
  * It boots the machine's own disks (route MBR), memtest86+ off the floppy
  * (route MEM) and the disc in an IDE CD drive (route CDR), with an optional
- * default and countdown from JUMP.INI. MBR and MEM load nothing and leave
- * nothing resident; CDR reads ATA.MOD off the floppy and leaves it behind
+ * default and countdown from JUMP.INI. MBR and MEM load nothing; MEM leaves
+ * nothing resident, and MBR only the keyboard block when a USB route left
+ * keyboards up (Section 13.6); CDR reads ATA.MOD off the floppy and leaves it behind
  * the reverse thunk, under the stick's own virtual CD (Section 13.6). USB
  * reads a host controller's module and leaves it behind the thunk, serving
  * a falcon stick as the next BIOS disk; PCC does the same with PCC.MOD and
@@ -196,9 +197,13 @@ static void read_floppy(uint8_t drive)
     (void)jump_ini_parse(g_ini, (size_t)ini.size, &g_cfg);
 }
 
+/* A disk's own boot code reads the keyboard through the BIOS, so USB
+ * keyboards a route left up go behind INT 16h for it (DESIGN Section
+ * 13.6); with none up, nothing is resident. */
 static void boot_disk(disk_row *row)
 {
     boot_result r;
+    int kb;
 
     boot_result_init(&r);
     screen_mode("MBR");
@@ -206,7 +211,10 @@ static void boot_disk(disk_row *row)
     screen_out("booting: ");
     screen_out16(row->label);
     screen_out("\n\n");
+    kb = jroute_kbd_install();
     (void)mbr_boot(&row->disk, &r);
+    if (kb == 0)
+        jroute_kbd_remove();
 
     screen_page();
     screen_out16(row->label);
@@ -225,6 +233,7 @@ static void boot_memtest(void)
     screen_page();
     screen_out("booting: memtest86+\n\n");
 
+    jroute_kbd_release();
     r.stage = "opening MEMTEST.BIN";
     if (fs_file_open(&g_vol, &f, &g_memtest) == FS_OK) {
         k.read = fs_file_read_cb;
@@ -266,6 +275,7 @@ static void return_to_firmware(void)
     screen_mode((const char *)0);
     screen_page();
     screen_out("falcon-boot: returning to firmware.\n");
+    jroute_kbd_release();
     thunk_vector = 0x18;
     thunk_bios();
     bios_reboot();
