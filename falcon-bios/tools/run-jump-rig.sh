@@ -46,6 +46,17 @@
 #             Enter then boots the row Down moved to (the CD drive, empty in
 #             QEMU's default machine), not the default. The keys go in
 #             through QEMU's monitor.
+#   kbd       the usb route with a usb-kbd beside the stick on the UHCI,
+#             which QEMU then sends every key to, and SeaBIOS's own USB
+#             keyboard ends when jump takes the controller: Escape typed on
+#             the stick's menu, read through the resident's INT 16h hook,
+#             takes the stick back to the BIOS (INT 18h), which the resident
+#             answers with its reset (DESIGN 13.6)
+#   kbd-hub   the same keyboard behind a usb-hub on the UHCI's second port
+#   kbd-ehci  an ICH9 EHCI with its three UHCI companions, the stick and
+#             the keyboard on EHCI root ports: the keyboard enables there
+#             at high speed, EHCI.MOD hands its port to the companion, and
+#             UHCI.MOD finds it
 #
 # The cf case needs the QEMU build-qemu.sh makes; the rest the system's.
 #
@@ -237,11 +248,48 @@ usb() {       # usb CASE HC-DEVICES...
         'p2 mounted as exfat'
 }
 
+# The usb route with a USB keyboard and no PS/2 key: once the stick's menu
+# is up, Escape through QEMU's monitor, which goes to the newest keyboard,
+# the USB one. The stick's loader answers Escape on its empty list with INT
+# 18h, and the resident with a reset. PASS needs the module to have found
+# the keyboard (`found`), INT 16h hooked for it, and the reset.
+kbd_case() {  # kbd_case CASE FOUND QEMU-ARGS...
+    local c=$1 found=$2 qpid i
+    shift 2
+    floppy usb
+    cp build/test-bios.img "$R/disk.img"
+    rm -f "$R/serial.log" "$R/mon.sock"
+    "$QEMU" -L /usr/share/qemu -machine pc -cpu pentium3 -m 128 \
+        -display none -boot a \
+        -drive if=floppy,format=raw,file="$R/jump.img" \
+        -drive file="$R/disk.img",format=raw,if=ide,index=0 \
+        -drive if=none,id=stick,format=raw,file="$R/stick.img" \
+        -serial file:"$R/serial.log" \
+        -monitor unix:"$R/mon.sock",server,nowait "$@" >/dev/null 2>&1 &
+    qpid=$!
+    for ((i = 0; i < TIMEOUT * 10; i++)); do
+        [[ -f "$R/serial.log" ]] && log_text | grep -aq 'esc back' && break
+        kill -0 "$qpid" 2>/dev/null || break
+        sleep 0.1
+    done
+    sleep 1
+    monitor "sendkey esc"
+    for ((i = 0; i < 100; i++)); do
+        log_text | grep -aq 'returned to the BIOS; resetting' && break
+        sleep 0.1
+    done
+    monitor quit
+    wait "$qpid" 2>/dev/null || true
+    log_text > "$R/serial.txt"
+    judge "$c" 'returned to the BIOS; resetting' "$found" \
+        'INT 16h for [0-9]'
+}
+
 FAILED=0
 CASES=("$@")
 [[ ${#CASES[@]} -gt 0 ]] ||
     CASES=(hdd cd usb-uhci usb-ohci usb-ehci cf cf3v cf48 giveup mem s2crc s3crc
-           stick3crc modcrc chs menu)
+           stick3crc modcrc chs menu kbd kbd-hub kbd-ehci)
 
 for c in "${CASES[@]}"; do
     case $c in
@@ -364,6 +412,33 @@ for c in "${CASES[@]}"; do
             'no INT 13h extensions, reading by CHS' 'C is running'
         ;;
     menu) menu_case ;;
+    kbd)
+        kbd_case kbd 'a keyboard on root port' \
+            -device piix3-usb-uhci,id=hc \
+            -device usb-storage,bus=hc.0,port=1,drive=stick \
+            -device usb-kbd,bus=hc.0,port=2
+        ;;
+    kbd-hub)
+        kbd_case kbd-hub 'a keyboard, behind the hub on root port' \
+            -device piix3-usb-uhci,id=hc \
+            -device usb-storage,bus=hc.0,port=1,drive=stick \
+            -device usb-hub,bus=hc.0,port=2 \
+            -device usb-kbd,bus=hc.0,port=2.1
+        ;;
+    kbd-ehci)
+        kbd_case kbd-ehci 'handed to the companion controller' \
+            -device ich9-usb-ehci1,id=ehci,addr=1d.7,multifunction=on \
+            -device ich9-usb-uhci1,addr=1d.0,multifunction=on,masterbus=ehci.0,firstport=0 \
+            -device ich9-usb-uhci2,addr=1d.1,multifunction=on,masterbus=ehci.0,firstport=2 \
+            -device ich9-usb-uhci3,addr=1d.2,multifunction=on,masterbus=ehci.0,firstport=4 \
+            -device usb-storage,bus=ehci.0,port=1,drive=stick \
+            -device usb-kbd,bus=ehci.0,port=3
+        # Twice: EHCI.MOD naming the port it hands on, UHCI.MOD finding it.
+        if [[ $(grep -ac 'a keyboard on root port' "$R/serial.txt") -lt 2 ]]; then
+            echo "FAIL  kbd-ehci  the companion's module did not find the keyboard"
+            FAILED=1
+        fi
+        ;;
     mem)
         if [[ -z "${MEMTEST:-}" ]]; then
             echo "SKIP  mem       no MEMTEST"
