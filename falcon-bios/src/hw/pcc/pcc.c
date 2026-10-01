@@ -204,7 +204,14 @@ static int configure(uint16_t io)
     for (i = 0; i < CIS_BYTES; i++)
         cis[i] = attr[2u * i];       /* attribute memory: even bytes only */
     if (pcc_cis_parse(cis, sizeof cis, &c) != 0) {
+        /* Which of two failures this is, bytes that never arrived (0xFF or
+         * 0x00 throughout) or tuples the parser does not take, is told by
+         * the bytes themselves, so the first sixteen go to serial. */
         log_s("falcon-bios: PCC.MOD: the card's CIS could not be read\n");
+        for (i = 0; i < 16u; i += 4u)
+            log_v("CIS bytes", ((uint32_t)cis[i] << 24) |
+                               ((uint32_t)cis[i + 1u] << 16) |
+                               ((uint32_t)cis[i + 2u] << 8) | cis[i + 3u]);
         return -1;
     }
     if (c.funcid != FUNCID_FIXED_DISK) {
