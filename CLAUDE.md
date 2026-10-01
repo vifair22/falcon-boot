@@ -72,7 +72,13 @@ place from a station bundle (DESIGN Section 13.14). Measured on real
 hardware (2026-09-29), UEFI with Secure Boot on (the ThinkPad T430:
 coreboot and edk2, its own key as PK, KEK and db, no shim): the UEFI
 station installed with `--no-shim`, and its TOTP code released by a TPM
-1.2, enrolled from the two event logs (DESIGN Section 13.15). Still
+1.2, enrolled from the two event logs (DESIGN Section 13.15). Measured on
+real hardware (2026-09-30): the T430's hibernated shelf read through its
+journal; `mkstick update` on the main stick and on the T430's station, its
+TOTP seed resealed to the new loader in the same run; the background probe
+over a USB 1.1 stick on BIOS; the A21m's station-legacy at 411611c from a
+station bundle, its jump floppy with stage 2's loading spinner, and its
+idle power-off through APM. Still
 unmeasured on hardware: the stick's other four BIOS routes (direct boot, the virtual CD,
 Windows media, BSD).
 

@@ -2583,7 +2583,8 @@ never, 13.7).
   from the DSDT's `\_S5` into the FADT's PM1 control blocks, ACPI handed
   over through the SMI command port first when the firmware left it off
   (`power/acpicore.c`, host-tested, reads the tables). Stage 2, which has
-  no screen, keeps its plain wait.
+  no screen, keeps its plain wait. Measured on the A21m (2026-09-30): APM
+  powers it off.
 - When nothing powers the machine off (UEFI's `ResetSystem` returning, no
   APM and no S5 on BIOS), BIOS turns the screen off (the VGA sequencer's
   screen-off bit, text memory kept) until a key, which is swallowed; the
@@ -3027,6 +3028,18 @@ the UEFI station straight from its firmware entry (`station install
 --no-shim`, 13.2), and the station shows the TOTP code of 13.15: enrolled
 from coreboot's log and the edk2 log the station saved, sealed to PCRs 2,
 4, 5 and 7, read after the station sends `TPM_ContinueSelfTest`.
+
+MEASURED ON REAL HARDWARE (2026-09-30): the T430's shelf, left mounted by a
+hibernated OS, read through its journal (5.4) and the OS resumed. `mkstick
+update` (13.14) brought the main stick to master 9dbb4d1, both halves
+(stages 2 and 3 and the loader read back as the build, signed from p3's
+MOK), and the T430's own station likewise, signed from its shelf's MOK and
+its TOTP seed resealed on the TPM 1.2 in the same run (13.15): the code
+matched after the reboot. The library's background probe kept the menu's
+keys live over a USB 1.1 stick on BIOS (7.8). The A21m took station-legacy
+at 411611c from a station bundle, and its jump floppy shows stage 2's
+loading line and spinner (14.3); the idle power-off turned it off through
+APM (7.9).
 
 I686 IN THE RIG (2026-09-24): falcon-bios is i686 in 32-bit protected mode
 and promotes at run time (docs/notes/bios-route.md Section 6h). On SeaBIOS
