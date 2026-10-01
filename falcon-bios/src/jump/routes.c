@@ -10,6 +10,8 @@
 #include <jump/jmodload.h>
 #include <jump/jres.h>
 #include <mbr/mbr.h>
+#include <mbr/chain.h>
+#include <mem/lowmem.h>
 #include <console/screen.h>
 #include <mem/e820.h>
 #include <iso/vcd.h>
@@ -252,11 +254,11 @@ static void boot_cd(boot_result *r)
     jres_remove();
 }
 
-/* Whether the device the module calls `idx` is a falcon stick: a partition
+/* Whether the device the module calls `idx` is a falcon disk: a partition
  * on it, read through the module, carries a `boot` record, which is what
- * the stick's own stage 2 will look for once it is started (DESIGN Section
+ * the disk's own stage 2 will look for once it is started (DESIGN Section
  * 3.3). Any install's: the app has none of its own to match. */
-static int is_falcon_stick(jmod_ops *ops, unsigned idx)
+static int is_falcon_disk(jmod_ops *ops, unsigned idx)
 {
     static part_entry parts[PARTS_MAX];
     static uint8_t sec[512];
@@ -272,8 +274,10 @@ static int is_falcon_stick(jmod_ops *ops, unsigned idx)
 /* A disk a module serves, booted as the BIOS disk after the machine's own:
  * the module resident behind the reverse thunk with its memory carved out
  * of INT 15h, the BDA's disk count one higher while it runs, and the disk's
- * LBA 0 at 0x7C00 with DL naming it. Returns only when it could not hand
- * over, with everything it installed taken back. */
+ * LBA 0 at 0x7C00. A falcon disk is handed over with DL naming it, any
+ * other behind the station's drive swap (chain.c) with DL 0x80 (DESIGN
+ * Section 13.6 has the rule). Returns only when it could not hand over,
+ * with everything it installed taken back. */
 static void boot_module_disk(jmod_ops *ops, unsigned idx, unsigned slot,
                              boot_result *r)
 {
@@ -284,6 +288,7 @@ static void boot_module_disk(jmod_ops *ops, unsigned idx, unsigned slot,
     uint32_t base = 0;
     uint8_t ndisks = peek8(BDA_NDISKS);
     uint8_t drive = (uint8_t)(0x80u + ndisks);
+    int swap = !is_falcon_disk(ops, idx);
 
     r->stage = "installing the driver";
     if (ndisks >= 0x7Fu || ops->serve(idx, drive) != 0 ||
@@ -297,9 +302,21 @@ static void boot_module_disk(jmod_ops *ops, unsigned idx, unsigned slot,
     poke8(BDA_NDISKS, (uint8_t)(ndisks + 1u));
     if (!bios_disk_probe(&disk, drive)) {
         r->advice = "the driver did not answer through INT 13h.";
-    } else {
+    } else if (!swap) {
+        bios_puts("falcon-bios: drive ");
+        bios_put_hex64(drive);
+        bios_puts(" carries a falcon boot record; no drive swap\n");
         r->stage = "starting the disk";
         (void)mbr_boot(&disk, r);
+    } else if (lowmem_segment(SWAP_BYTES) == 0) {
+        r->stage = "installing the drive swap";
+        r->advice = "this machine will not give up the conventional memory "
+                    "the drive swap needs.";
+    } else {
+        bios_puts("falcon-bios: drive ");
+        bios_put_hex64(drive);
+        bios_puts(" carries no falcon boot record; swapping it with 0x80\n");
+        (void)chain_disk(&disk, 1, r);
     }
     poke8(BDA_NDISKS, ndisks);
     jres_remove();
@@ -371,7 +388,7 @@ static void boot_usb(boot_result *r)
         if (ops[m].int16 != 0)
             kbd[nkbd++] = (uint32_t)(uintptr_t)ops[m].int16;
         for (i = 0; stick == N_USB && i < n; i++) {
-            if (ops[m].dev(i, &dev) == 0 && is_falcon_stick(&ops[m], i)) {
+            if (ops[m].dev(i, &dev) == 0 && is_falcon_disk(&ops[m], i)) {
                 stick = m;
                 at = i;
             }

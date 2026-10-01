@@ -3331,8 +3331,11 @@ flowchart TD
     GPT -- "no falcon stick" --> KG["the USB keyboards end with the route (serial)"]
     KG --> MENU
     GPT -- "yes" --> RU["jres_install for the next BIOS disk (BDA 0x475 + 0x80),<br/>INT 15h hooked too: the block and 15-16 MB carved;<br/>INT 16h when a module found a keyboard: each module's int16, then the BIOS's handler;<br/>INT 18h, 19h: a cold reset; what it changed kept in the block's release record"]
-    RU --> MB["BDA count + 1; mbr_boot: LBA 0 through the thunk to 0x7C00,<br/>DL = that drive; the stick's falcon-bios from there (11.3), its keys through INT 16h"]
+    RU --> FR{"BDA count + 1<br/>a boot record on the disk?<br/>(bootpart_find through ops.read, before jres_install)"}
+    FR -- "yes: a falcon disk" --> MB["mbr_boot: LBA 0 through the thunk to 0x7C00,<br/>DL = that drive; the stick's falcon-bios from there (11.3)"]
+    FR -- "no: a foreign MBR" --> SW["chain_disk (12.4): LBA 0 through the thunk to 0x7C00;<br/>swapres.S's 1 KB below the thunk's block, installed last:<br/>that drive and 0x80 exchanged; DL = 0x80"]
     MB -- "unreadable, no 0x55AA" --> RM2["BDA count back, jres_remove: INT 16h with the rest"]
+    SW -- "unreadable, no 0x55AA,<br/>no memory for the swap" --> RM2
     RM2 --> KG
     MENU -- "CF card (PC Card)" --> LP["jmod_load: PCC.MOD to JMOD_SLOT_PCC"]
     LP --> SK["ops.probe: each CardBus bridge (class 0x0607), BAR0: socket regs, ExCA at +0x800<br/>card detect, VCC, reset, READY; memory window 0 at 0xD0000 onto attribute memory"]
@@ -3349,11 +3352,11 @@ links too (12.10); `apps/jump/bios_main.c` is the menu, `JUMP.INI`, `MBR`,
 
 `MBR` and `MEM` leave nothing resident, as the station's do but for its drive swap (11.5.2).
 `CDR` leaves two: the stick's virtual CD, unchanged but for serving a whole
-drive as one run, and under it the reverse thunk and `ATA.MOD`. `USB` leaves
-the reverse thunk, the module that serves the stick, and every USB module
-that found a keyboard, which INT 16h reaches until the system started from
-the stick takes the controllers itself or station-legacy releases the
-block (11.5.2). The floppy
+drive as one run, and under it the reverse thunk and `ATA.MOD`. `USB` and
+`PCC` leave the reverse thunk and their module, every USB module that found
+a keyboard (INT 16h reaches it until the system started from the stick
+takes the controllers itself or station-legacy releases the block, 11.5.2),
+and on a disk with no falcon record the drive swap on top of them. The floppy
 is read by CHS wherever its BIOS has no extensions, SeaBIOS's included, as
 on an old machine.
 
@@ -3562,7 +3565,9 @@ and the caller's DL, except after AH=08h and AH=15h, which answer in DL
 answered for the swapped numbers, which is what the booted system asks.
 The BDA's disk count is left alone, since both disks exist either way, and
 so are the fixed disk parameter tables behind INT 41h and 46h, which
-nothing in scope reads for a disk INT 13h answers for.
+nothing in scope reads for a disk INT 13h answers for. falcon jump's CF and
+USB routes install the same swap, through `chain_disk`, under a disk with
+no falcon record (13.6).
 
 BIOS machines are taken to have no TPM sealing: the BIOS measured falcon's
 MBR, not Windows', and nothing on BIOS can hand that back.
@@ -3945,7 +3950,8 @@ A21m's disk:
 - **Synthetic boot sectors** (`test-station-bios`):
   `falcon-bios/tools/rigboot.S` reports on
   serial DL, DS:SI, the 16-byte entry, its BPB's hidden sectors, the
-  entry's type and which disk INT 13h answers for 0x80 and for DL. The rig
+  entry's type, which disk INT 13h answers for 0x80, for DL and for 0x81,
+  and the BDA's disk count. The rig
   installs it in two rig disks' partitions and MBRs and judges own-disk
   primaries of type 0x0C (hidden sectors patched) and 0x0B, a logical
   partition refused, a second disk's partition with the swap on and off, a
@@ -4002,6 +4008,22 @@ A21m's disk:
   on `-cpu pentium -m 32`, the devlink client reaching its agent on COM1;
   and Windows 2000 through the partition chain to its splash and desktop,
   judged from screendumps.
+- **station-legacy on a CF card** (`make test-cfstation`,
+  `falcon-bios/tools/run-cfstation-rig.sh`): falcon jump's CF route boots
+  the card in the rig's PC Card bridge (13.9) on the PIIX4 machine, and
+  the card's station takes it from there. The internal disk is
+  station-legacy installed on a stand-in for the A21m's disk
+  (`falcon-bios/tools/mk-legacy-disk.sh`: MBR, a FAT32 partition at 63
+  whose boot sector is `rigboot.S` tagged NTLDR, the station partition
+  after it), or the A21m's image with `A21M_IMG`. The cases: the card's
+  menu; its Windows (NTLDR) row, with jump's resident released before the
+  chain; its own CF card row, recorded; and cards with no falcon record
+  behind the drive swap (13.6): `rigboot.S` as the card's MBR, reporting DL
+  0x80, the card as 0x80, two disks counted and the internal disk as 0x81;
+  the FreeDOS fixture to `C:\>` with its own `FDCONFIG.SYS` (HIMEMX,
+  `DOS=HIGH`); and, given `W98_CF`, a Windows 98 SE system card (`FORMAT
+  /S`, FAT32 by LBA) answering `ver` at `C:\>`; both judged from VGA
+  text.
 - **The installer on images** (`make test-station-install`): an MBR disk of
   the A21m's shape with a Windows 98 second disk and a LUKS2 shelf, a GPT
   disk with an ESP, Windows and a plaintext shelf; install, status, remove,
@@ -4610,6 +4632,13 @@ can fault on it: Windows 2000 bugchecks (STOP 0x0A) on a real-mode vector
 taken for a kernel pointer. The rig's `giveup` case boots a card whose boot
 sector is INT 18h and expects the reset.
 
+**A disk's number decides its answers.** A CF card or a stick reports
+removable media, but under a hard disk's number every module answers it
+as a fixed disk (`hw/blk13.c`): AH=15h is type 3 with its sector count,
+AH=48h's flags carry no removable bit, and AH=08h's DL is the BDA's disk
+count. A removable answer sends DOS to AH=16h for a media change before
+its reads; FreeDOS took the failure as a change and lost what it had read.
+
 **Virtual 8086 mode.** A caller in v86 mode (DOS with EMM386, the real-mode
 half of Windows 9x) cannot be taken into protected mode: the CR0 write
 faults to the monitor. The stub checks and fails an INT 13h call with an
@@ -4647,9 +4676,7 @@ booted, and every module present is brought up all the same, the ones
 after the stick's included: taking a controller ends the BIOS's own USB
 keyboard on it, and taking EHCI ends it on the companions too. It becomes
 the next BIOS disk after the ones the BIOS has (the BDA's count at 0x475
-goes up by one), not 0x80 with the BIOS's disks moved up: falcon-bios's
-stages take the drive DL names, and the station's drive swap (12.4) is for
-chaining an OS that expects 0x80. The reverse thunk answers that
+goes up by one). The reverse thunk answers that
 drive, and since there is no virtual CD on this route, its own INT 15h half
 carves the block and the module region out of the memory map (E820, E801's
 two halves, AH=88h). Then the stick's LBA 0 goes to 0x7C00 with DL naming
@@ -4673,6 +4700,20 @@ will not start), the USB keyboards end with it, the BIOS's emulation
 already gone, and only a PS/2 keyboard answers jump's menu until a reset;
 serial says so.
 
+**The drive number.** `boot_module_disk`, which hands over for both `USB`
+and `PCC`, numbers the disk by what is on it. A disk with a partition
+carrying a `boot` record (`bootpart_find`) keeps the next number, DL naming
+it: falcon-bios's stages take the drive DL names. Any other disk, a foreign
+MBR, goes behind the station's drive swap (12.4, `chain_disk`): its LBA 0
+at 0x7C00 with DL 0x80, `swapres.S` installed last over the reverse thunk,
+so INT 13h for 0x80 reaches the served disk and for 0x81 the machine's
+first disk, as DOS and Windows 9x booting from it expect; the BDA's count
+stays one higher. A falcon disk is never swapped: a station on it numbers
+the machine's disk 0x81, and the release of jump's resident before it
+chains that disk (12.10) restores INT 13h past the swap, after which 0x81
+no longer exists. `USB` boots only falcon sticks, so the swap is `PCC`'s in
+practice.
+
 **CF.** `PCC.MOD` finds the CardBus bridges by class (0x0607) and brings a
 16-bit card up as Linux's yenta and i82365 drivers do: card detect, VCC
 through the socket control register and the ExCA power register's output
@@ -4684,8 +4725,10 @@ configuration option register; I/O window 0 at 0x1E0, and the card is then
 an ATA disk (`hw/ata/atadisk.c`). A card that takes only 3.3 V is powered
 by the bridge only when the socket control register and the ExCA power
 register's VCC field both ask for 3.3 V. It boots as any disk does,
-whatever is on it: its LBA 0, as the next BIOS disk, through the reverse
-thunk with its INT 15h half, as `USB` does (`boot_module_disk`).
+whatever is on it: its LBA 0 through the reverse thunk with its INT 15h
+half, as `USB` does (`boot_module_disk`), a falcon card as the next BIOS
+disk and any other as 0x80 behind the drive swap, so DOS or Windows 9x on
+a card starts from it as C:.
 
 **Shared with station-legacy.** The routes above are
 `falcon-bios/src/jump/routes.c` (`BIOS_MOD_jroutes`), which jump and

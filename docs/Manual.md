@@ -1774,7 +1774,7 @@ The menu lists, in this order:
 |---|---|---|---|
 | `Disk 0x80`, `Disk 0x81`, ... | `MBR` | the disk's LBA 0 at 0x7C00 with DL naming that disk; nothing resident | the BIOS counts the disk and its LBA 0 carries the boot signature |
 | `CD drive` | `CDR` | the disc in the first drive on the legacy IDE channels that has one, through `ATA.MOD` | the floppy holds `ATA.MOD` and an IDE controller is on the PCI bus |
-| `CF card (PC Card)` | `PCC` | the first CompactFlash card in a PC Card slot, through `PCC.MOD`, as the next BIOS disk: its own MBR, whatever is on it | the floppy holds `PCC.MOD` and a CardBus bridge is on the bus |
+| `CF card (PC Card)` | `PCC` | the first CompactFlash card in a PC Card slot, through `PCC.MOD`: its own MBR, whatever is on it; a falcon card as the next BIOS disk, any other as drive 0x80 behind the drive swap | the floppy holds `PCC.MOD` and a CardBus bridge is on the bus |
 | `USB stick` | `USB` | the first falcon stick (a partition carrying a `boot` record) on a root port of any controller, or behind up to two hubs on one, through `EHCI.MOD`, `UHCI.MOD` and `OHCI.MOD`, as the next BIOS disk; the stick's own stages take it from there | the floppy holds a USB driver and its controller is on the bus |
 | `Memory test (memtest86+)` | `MEM` | `MEMTEST.BIN`, started through the x86 boot protocol | the floppy holds `MEMTEST.BIN` |
 
@@ -1800,6 +1800,12 @@ EMM386 does not see it. A hub or a keyboard on a USB 2.0 (EHCI) port is
 handed to that port's USB 1.1 companion controller, where the hub runs at
 full speed. When the route comes back to jump's menu, the USB keyboard
 stops with it until a reset, and only a PS/2 one answers.
+A card or stick with no falcon record on it (DOS, Windows 9x, any other
+system's MBR) boots as drive C: (0x80), and for that boot the machine's own
+first disk is 0x81; a falcon card or stick boots as the disk after the
+machine's own, and the numbers stay as they are. DOS on the card reads it
+only in real mode: with EMM386 or another memory manager loaded, reads of
+C: fail.
 
 ### 9.4 Jump's pages
 

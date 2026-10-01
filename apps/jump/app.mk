@@ -9,6 +9,7 @@ JUMP := apps/jump
 JUMP_BIOS := $(JUMP)/bios_main.c
 JUMP_BIOS += $(BIOS_MOD_console) $(BIOS_MOD_jumpini)
 JUMP_BIOS += $(BIOS_MOD_mbr)          # the disks the BIOS already sees
+JUMP_BIOS += $(BIOS_MOD_chain)        # a foreign disk on the CF or USB route, behind the drive swap
 JUMP_BIOS += $(BIOS_MOD_linux)        # memtest86+, through the boot protocol
 JUMP_BIOS += $(BIOS_MOD_jmod)         # the drivers, read off the floppy
 JUMP_BIOS += $(BIOS_MOD_jroutes)      # CD, USB and CF through them
@@ -21,7 +22,7 @@ JUMP_BIOS += $(CORE_GZ)               # the modules are stored compressed
 JUMP_BIOS += $(CORE_PART) $(CORE_PE) $(CORE_LIBC) $(CORE_UCS2) $(CORE_TUI)
 
 $(eval $(call bios_app,jump,$(BIOS_JUMP_STAGE3),\
-	$(BIOS_RES_iso) $(BIOS_RES_vfd) $(BIOS_RES_jres),$(JUMP_BIOS),))
+	$(BIOS_RES_swap) $(BIOS_RES_iso) $(BIOS_RES_vfd) $(BIOS_RES_jres),$(JUMP_BIOS),))
 
 $(BIOS_OBJ)/$(JUMP)/bios_main.o: build/version.h
 
