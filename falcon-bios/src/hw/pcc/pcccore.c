@@ -240,3 +240,46 @@ int pcc_io_window(uint16_t base, uint16_t len, uint8_t regs[4])
     regs[3] = (uint8_t)(stop >> 8);
     return 0;
 }
+
+/* Slot `i`'s claim in slots: 0 when no ROM starts there. */
+static uint32_t rom_slots(const uint8_t *hdr, uint32_t i)
+{
+    const uint8_t *h = hdr + 3u * i;
+    uint32_t bytes;
+
+    if (h[0] != 0x55u || h[1] != 0xAAu)
+        return 0;
+    bytes = (uint32_t)h[2] * 512u;
+    if (bytes == 0)
+        return 1;
+    return (bytes + PCC_ROM_SLOT - 1u) / PCC_ROM_SLOT;
+}
+
+int32_t pcc_attr_pick(const uint8_t *hdr, uint32_t from)
+{
+    uint32_t a;
+
+    if (hdr == (const uint8_t *)0 || from >= PCC_ROM_END)
+        return -1;
+    if (from < PCC_WIN_FIRST)
+        from = PCC_WIN_FIRST;
+    a = (from + PCC_WIN_SIZE - 1u) & ~(PCC_WIN_SIZE - 1u);
+    for (; a + PCC_WIN_SIZE <= PCC_ROM_END; a += PCC_WIN_SIZE) {
+        uint32_t first = (a - PCC_ROM_BASE) / PCC_ROM_SLOT;
+        uint32_t last = first + PCC_WIN_SIZE / PCC_ROM_SLOT;   /* exclusive */
+        uint32_t i;
+        int taken = 0;
+
+        /* Any ROM starting at or before the page's last slot whose claim
+         * reaches into the page. */
+        for (i = 0; i < last && !taken; i++) {
+            uint32_t n = rom_slots(hdr, i);
+
+            if (n != 0 && i + n > first)
+                taken = 1;
+        }
+        if (!taken)
+            return (int32_t)a;
+    }
+    return -1;
+}

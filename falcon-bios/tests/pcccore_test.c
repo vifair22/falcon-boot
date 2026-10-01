@@ -120,6 +120,59 @@ static void test_windows(void **state)
     assert_int_equal(pcc_io_window(0x1E0u, 0, io), -1);
 }
 
+/* An option ROM of `size` bytes (its size byte, 512-byte units) at `at`. */
+static void rom_at(uint8_t *hdr, uint32_t at, uint32_t size)
+{
+    uint8_t *h = hdr + 3u * ((at - PCC_ROM_BASE) / PCC_ROM_SLOT);
+
+    h[0] = 0x55;
+    h[1] = 0xAA;
+    h[2] = (uint8_t)(size / 512u);
+}
+
+static void test_pick(void **state)
+{
+    uint8_t hdr[3u * PCC_ROM_SLOTS];
+    uint32_t a;
+
+    (void)state;
+    /* Nothing: the first candidate, above the video BIOS's 32 KB. */
+    memset(hdr, 0xFF, sizeof hdr);
+    assert_int_equal(pcc_attr_pick(hdr, 0), 0xC8000);
+    /* The video BIOS, then the A21m's 6 KB boot agent at 0xD0000: the
+     * candidates between are free, and the one at 0xD0000 skips to the
+     * first 4 KB past the agent's last 2 KB. */
+    rom_at(hdr, 0xC0000u, 0x8000u);
+    assert_int_equal(pcc_attr_pick(hdr, 0), 0xC8000);
+    rom_at(hdr, 0xD0000u, 6u * 1024u);
+    assert_int_equal(pcc_attr_pick(hdr, 0xD0000u), 0xD2000);
+    /* A later `from` starts the search there, rounded up to 4 KB. */
+    assert_int_equal(pcc_attr_pick(hdr, 0xD2001u), 0xD3000);
+    /* A ROM at a 2 KB boundary takes the 4 KB page it is in. */
+    memset(hdr, 0xFF, sizeof hdr);
+    rom_at(hdr, 0xC8800u, 2048u);
+    assert_int_equal(pcc_attr_pick(hdr, 0), 0xC9000);
+    /* A ROM starting below a candidate whose size runs past its start:
+     * 0xC8000 for 9 KB covers 0xCA000's first bytes. */
+    memset(hdr, 0xFF, sizeof hdr);
+    rom_at(hdr, 0xC8000u, 9u * 1024u);
+    assert_int_equal(pcc_attr_pick(hdr, 0), 0xCB000);
+    /* A size byte of 0 still claims its header's 2 KB. */
+    memset(hdr, 0xFF, sizeof hdr);
+    rom_at(hdr, 0xC8000u, 0);
+    assert_int_equal(pcc_attr_pick(hdr, 0), 0xC9000);
+    /* ROMs throughout: nothing. */
+    for (a = PCC_ROM_BASE; a < PCC_ROM_END; a += 0x8000u)
+        rom_at(hdr, a, 0x8000u);
+    assert_int_equal(pcc_attr_pick(hdr, 0), -1);
+    /* The last page is 0xEF000; nothing past it. */
+    memset(hdr, 0xFF, sizeof hdr);
+    assert_int_equal(pcc_attr_pick(hdr, 0xEE001u), 0xEF000);
+    assert_int_equal(pcc_attr_pick(hdr, 0xEF001u), -1);
+    assert_int_equal(pcc_attr_pick(hdr, 0xFFFFFFFFu), -1);
+    assert_int_equal(pcc_attr_pick(NULL, 0), -1);
+}
+
 int run_pcccore_tests(void)
 {
     const struct CMUnitTest tests[] = {
@@ -127,6 +180,7 @@ int run_pcccore_tests(void)
         cmocka_unit_test(test_fixed_only),
         cmocka_unit_test(test_refusals),
         cmocka_unit_test(test_windows),
+        cmocka_unit_test(test_pick),
     };
 
     return cmocka_run_group_tests_name("pcccore", tests, NULL, NULL);
