@@ -4870,7 +4870,8 @@ types Enter on the failure page and Escape on jump's menu, judged by the
 keyboards released before INT 18h; `kbd-hdd` chooses the disk row instead
 (Up to the top, Enter), and the hdd case's falcon-bios starts on top of
 the keyboard block and takes Escape on its menu through it, which ends in
-the block's reset. SeaBIOS is unchanged: the floppy boots
+the block's reset. SeaBIOS does nothing for jump (its one patch, below,
+is for the PC Card bridge's header): the floppy boots
 first, and jump reads the CD drive and the USB stick through its own
 drivers. SeaBIOS does list the stick as a disk of its own before jump takes the controller, so in the
 rig the stick is served one drive number higher than it would be on a BIOS
@@ -4881,13 +4882,47 @@ EHCI enables such a device itself where the silicon does not.
 
 QEMU models no PC Card bridge on x86, so the rig brings its own:
 `falcon-bios/tools/qemu-pcc/falcon-pcc.c`, a device modelled on the A21m's
-TI PCI-1450 (its IDs and class, BAR0 with the CardBus socket registers and
-the ExCA set at +0x800) holding a CompactFlash card (a CIS with the CF
-standard's configuration entries, the configuration option register at
-0x200, an ATA task file over a drive image). Its memory and I/O windows are
+TI PCI-1450, one socket per instance, attached as the A21m has it: two
+functions of one device (`addr=7.0,multifunction=on` and `addr=7.1`), the
+card in the first and the second socket empty. Each function is a CardBus
+bridge's PCI header (type 2) with the PCI-1450's IDs, class and the A21m's
+subsystem, every register at the A21m's own value (its config space read
+under Linux): BAR0 with the CardBus socket registers and the ExCA set at
++0x800, the capabilities pointer and secondary status, the bus numbers
+(presets, the A21m's BIOS's 2-5 and 6-9 by default, `cardbus-bus` and
+`subordinate-bus` to change them), the CardBus latency timer, two memory
+and two I/O windows, INTA on function 0 and INTB on function 1, bridge
+control, the legacy 16-bit I/O base, TI's system control, multifunction
+routing, retry, card, device and diagnostic registers, and the power
+management capability at 0xA0. What is writable is stored and read back;
+the CardBus windows forward nothing, since there is no CardBus card. The
+function's PCI interrupt is raised for a socket event its mask enables
+(a forced one too, which is how yenta tests the line), for an ExCA card
+status change its mask enables and ExCA routes to PCI, and for the card's
+IREQ, its ATA interrupt as the PIO protocols assert it, while bridge
+control routes IREQ to PCI; TI's interrupt mode registers are stored and
+change nothing, and ISA routing of either interrupt is not modelled. The
+card is a CompactFlash card (a CIS with the CF standard's configuration
+entries and the A21m's SanDisk's manufacturer identification, the
+configuration option register at 0x200, an ATA task file over a drive
+image). The bridge's memory and I/O windows are
 real mappings in QEMU's address spaces, moved and enabled as the ExCA
 registers are written, and it powers the card only as the real bridge does
-(13.6; the `cf3v` case is a 3.3 V card). With `shadow-roms=on` the
+(13.6; the `cf3v` case is a 3.3 V card, and the one on a single function).
+SeaBIOS sizes a CardBus bridge's bus numbers and windows as BARs, since it
+tells a bridge from a device by class 0x0604 alone, and stops at the
+capabilities pointer with "out of 32bit address space"; `build-qemu.sh`
+builds the release's own SeaBIOS with one patch
+(`falcon-bios/tools/qemu-pcc/seabios-cardbus.patch`: a type-2 header has
+BAR0 only) into `build/qemu-pcc/share/`, which the rig's QEMU is given
+before `/usr/share/qemu` with `-L`. `devlink-pcc`
+(`falcon-bios/tools/run-devlink-rig.sh`, part of `make test-devlink`)
+boots the DevLink recovery ISO's serial entry from a CD drive on that QEMU
+with the model attached, and judges from the kernel log that yenta binds
+both functions with the PCI interrupt it has seen delivered, that the
+pcmcia core registers the card on the first socket and hands it that
+interrupt, that pata_pcmcia identifies it and sd finds its partition, and
+that the second socket is seen with nothing in it. With `shadow-roms=on` the
 16 KB segments an option ROM touches keep the window's accesses from it,
 as a chipset that shadows them does; the `cf-rom` case boots with dummy
 ROMs (`-option-rom`) placed so one starts at 0xD0000, and judges the window

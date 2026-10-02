@@ -3288,7 +3288,7 @@ case, judged from serial.
 | `test-cfstation` | station-legacy on a CF card through jump's CF route, the A21m's disk behind it | the rig QEMU; the A21m image (`A21M_IMG`, default `~/a21m-image/DJSA-210.img`) |
 | `test-station-bundle` | a station-legacy updated from the bundle by its own `update.sh`, and its refusals | sudo; memtest86+ at `MEMTEST` (default `build/memtest/mt86p_810_i586`); it builds the bundle unless `BUNDLE` names one |
 | `test-jump` | every falcon jump route under SeaBIOS | the rig QEMU for the CF case; `MEMTEST` for the memtest case |
-| `test-devlink` | DevLink recovery off the rig stick on an i586 with 32 MB | the ISO (`DEVLINK_ISO`) and client (`DEVLINK_CLIENT`); skipped without them |
+| `test-devlink` | DevLink recovery off the rig stick on an i586 with 32 MB, and its kernel on the rig QEMU with the PC Card bridge model attached, the CF card brought up as a disk | the ISO (`DEVLINK_ISO`) and client (`DEVLINK_CLIENT`); the rig QEMU for the bridge case; skipped without them |
 | `test-appliance` | the appliance stick under Secure Boot, two appliance runs, then the stick checked on the host | `test-appliance-stick`; sudo |
 
 The rig QEMU is `qemu-system-i386` with a model of the A21m's PC Card
@@ -3297,9 +3297,12 @@ bridge. Build it once:
     falcon-bios/tools/qemu-pcc/build-qemu.sh
 
 It fetches the QEMU release matching the `qemu-system-i386` on PATH
-(`QEMU_VERSION` overrides) and builds `build/qemu-pcc/build/qemu-system-i386`.
-A case that needs it and does not find it is a SKIP, or for
-`test-cfstation` an exit.
+(`QEMU_VERSION` overrides) and builds `build/qemu-pcc/build/qemu-system-i386`,
+and that release's SeaBIOS with one patch for the bridge's header
+(`falcon-bios/tools/qemu-pcc/seabios-cardbus.patch`) into
+`build/qemu-pcc/share/`, which the rigs give it with `-L` before
+`/usr/share/qemu`. A case that needs it and does not find it is a SKIP, or
+for `test-cfstation` an exit.
 
 **Test-only flags.** These point the TPM commands at the rig instead of the
 machine. They are not for use on a real station.
