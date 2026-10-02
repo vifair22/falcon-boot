@@ -3321,7 +3321,7 @@ flowchart TD
     KBR --> MENU
     MEM -- "refused or unreadable" --> MENU
     MENU -- "CD drive" --> LD["jroute_boot, jmod_load: ATA.MOD read to 6 MB, inflated to JMOD_SLOT_ATA (15 MB)<br/>the map says 15-16 MB is RAM; header checked; .bss zeroed; init"]
-    LD --> PB["ops.probe: IDENTIFY PACKET DEVICE on 0x1F0 and 0x170,<br/>master and slave; READ CAPACITY; the first with a disc"]
+    LD --> PB["ops.probe: the PCI IDE controllers (class 0x0101), each channel at its BARs' ports (native)<br/>or the legacy pair (compatibility); the legacy pair alone with no controller<br/>IDENTIFY PACKET DEVICE, master and slave; READ CAPACITY; the first with a disc"]
     PB --> CAT{"the catalog through ops.read (disc_read)<br/>vcd_boot_entry: its media type"}
     CAT -- "floppy emulation" --> VFD["vfd_serve over disc_read: the image to the heap above 64 MB,<br/>vfdres.S as drive 0x00; nothing of ATA.MOD stays (11.3.8);<br/>USB keyboards up: the keyboard block first, as for MBR"]
     CAT -- "hard-disk emulation, or no catalog" --> MENU
@@ -4535,7 +4535,11 @@ into memory and called.
   only the module itself: its own port I/O, its own delays (reads of port
   0x80), its own buffers. A module calls nothing in the core by symbol and
   links its own copy of the core routines it uses.
-- **The set.** `ATA.MOD` (ATAPI on the legacy IDE channels), `UHCI.MOD`,
+- **The set.** `ATA.MOD` (ATAPI on the IDE channels: each PCI IDE
+  controller's, at the ports its BARs hold for a channel in native mode
+  and the legacy pair for one in compatibility mode, or the legacy pair
+  alone on a machine with no PCI IDE controller; `atacore.c`'s
+  `ata_channel_list`, host-tested), `UHCI.MOD`,
   `OHCI.MOD`, `EHCI.MOD` (one host controller each, its root ports and two
   levels of hub), and `PCC.MOD` (a CardBus bridge's PC Card socket and the
   ATA disk on the card in it). A USB module is its host controller and the
@@ -4828,7 +4832,16 @@ CMOV, FCMOV or FCOMI.
 QEMU with SeaBIOS, the image as the floppy (`-drive if=floppy`), a
 `piix3-usb-uhci`, `pci-ohci` or `usb-ehci` controller with a `usb-storage`
 stick (the rig's GPT disk with the stick's stages written in), and an
-`ide-cd`. `make test-jump` runs every route that way
+`ide-cd`; `cd-native` puts the same disc on a `cmd646-ide`, a PCI IDE
+controller in native mode, and judges `ATA.MOD` finding the disc at the
+ports the controller's BARs hold. SeaBIOS maps every IDE-class device at
+the legacy ports whatever its programming interface says, which puts a
+controller that decodes its BARs over the floppy controller's 0x3F4, so
+that case loads an option ROM of the rig's (`tools/natide.S`, built to
+`build/natide.rom`): run by SeaBIOS after its PCI setup and before the
+boot, it writes I/O BARs from 0xE000 into every class 0x0101 function
+with a native bit, as a BIOS that knows native mode does. `make test-jump`
+runs every route that way
 (`falcon-bios/tools/run-jump-rig.sh`), each case a `JUMP.INI` default with
 a one-second countdown, judged from the serial log, and one case more for
 the menu itself: a five-second countdown stopped by a key sent through
@@ -4884,9 +4897,10 @@ and judges the probe naming the range and serving the card at 0x1C0.
 before the floppy (`-boot order=c`), which clears the bridge's BAR0 and
 its memory decoding as a BIOS that does not know CardBus leaves them and
 chains the floppy, and judges the probe assigning the page itself.
-`build-qemu.sh` builds the QEMU
-release the machine runs with that one device added, into
-`build/qemu-pcc/`; the `cf` case of the rig runs on it. With `lba48=on`
+`build-qemu.sh` builds the QEMU release the machine runs with that one
+device added and `cmd646-ide` turned on (no x86 machine type selects it),
+into `build/qemu-pcc/`; the `cf` cases and `cd-native` run on it. With
+`lba48=on`
 the card has the 48-bit feature set (READ and WRITE SECTORS EXT, the task
 file's registers as two-deep FIFOs), and the `cf48` case boots a sparse
 card past 128 GiB whose boot partition starts past sector 2^28

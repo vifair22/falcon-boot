@@ -1773,7 +1773,7 @@ The menu lists, in this order:
 | row | code | route | there when |
 |---|---|---|---|
 | `Disk 0x80`, `Disk 0x81`, ... | `MBR` | the disk's LBA 0 at 0x7C00 with DL naming that disk; nothing resident but the USB keyboards, when a `USB` route left them up | the BIOS counts the disk and its LBA 0 carries the boot signature |
-| `CD drive` | `CDR` | the disc in the first drive on the legacy IDE channels that has one, through `ATA.MOD` | the floppy holds `ATA.MOD` and an IDE controller is on the PCI bus |
+| `CD drive` | `CDR` | the disc in the first drive on the IDE channels that has one, through `ATA.MOD`: each PCI IDE controller's channels, in native or compatibility mode | the floppy holds `ATA.MOD` and an IDE controller is on the PCI bus |
 | `CF card (PC Card)` | `PCC` | the first CompactFlash card in a PC Card slot, through `PCC.MOD`: its own MBR, whatever is on it; a falcon card as the next BIOS disk, any other as drive 0x80 behind the drive swap | the floppy holds `PCC.MOD` and a CardBus bridge is on the bus |
 | `USB stick` | `USB` | the first falcon stick (a partition carrying a `boot` record) on a root port of any controller, or behind up to two hubs on one, through `EHCI.MOD`, `UHCI.MOD` and `OHCI.MOD`, as the next BIOS disk; the stick's own stages take it from there | the floppy holds a USB driver and its controller is on the bus |
 | `Memory test (memtest86+)` | `MEM` | `MEMTEST.BIN`, started through the x86 boot protocol | the floppy holds `MEMTEST.BIN` |
