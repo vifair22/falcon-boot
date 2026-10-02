@@ -139,8 +139,8 @@ $(JUMP_IMG): $(BIOS_FD_STAGE1) $(BIOS_STAGE2) $(BIOS_JUMP_STAGE3) \
 jump: $(JUMP_IMG)
 
 # Every route booted under SeaBIOS and judged from serial
-# (falcon-bios/tools/run-jump-rig.sh); the CF case needs the rig's QEMU
-# (falcon-bios/tools/qemu-pcc/build-qemu.sh).
+# (falcon-bios/tools/run-jump-rig.sh); the CF and cd-native cases need the
+# rig's QEMU (falcon-bios/tools/qemu-pcc/build-qemu.sh).
 test-jump: jump
 	falcon-bios/tools/run-jump-rig.sh
 

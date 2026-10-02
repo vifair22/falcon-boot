@@ -515,6 +515,20 @@ $(BIOS_TICKSTOP): $(BIOS_OBJ)/falcon-bios/tools/tickstop.o $(BIOS)/start/bios.ld
 		echo "ERROR: $@ is $$sz bytes, not 512"; exit 1; \
 	fi
 
+# The jump rig's option ROM for a PCI IDE controller in native mode
+# (falcon-bios/tools/natide.S): run by SeaBIOS after its own PCI setup has
+# put the controller at the legacy ports, it writes the controller's I/O
+# BARs. 512 bytes, the last one making the sum zero.
+BIOS_NATIDE_ROM := build/natide.rom
+
+$(BIOS_NATIDE_ROM): $(BIOS_OBJ)/falcon-bios/tools/natide.o $(BIOS)/start/bios.ld
+	@mkdir -p $(@D)
+	$(CC_HOST) $(BIOS_LDFLAGS) -Wl,-Ttext,0 -Wl,-e,_start -o $@.elf $<
+	objcopy -O binary -j .text $@.elf $@
+	@python3 -c 'import sys; p = sys.argv[1]; b = bytearray(open(p, "rb").read()); \
+		assert len(b) == 512, "%s is %d bytes, not 512" % (p, len(b)); \
+		b[-1] = (-sum(b[:-1])) & 0xFF; open(p, "wb").write(b)' $@
+
 # The jump rig's no-E820 boot sector (falcon-bios/tools/noe820.S): hooks
 # INT 15h to fail E820 (and E801 too, when the rig patches its mode byte)
 # and boots the floppy under it, so stage 3 builds its map from the older
