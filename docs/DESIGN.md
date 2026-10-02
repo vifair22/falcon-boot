@@ -1238,7 +1238,15 @@ enrol the CA or turn Secure Boot off for that job. The Manual says so.
     filesystem is. The review that authorises it names the file and says it
     will be written to.
 - **Secure Boot ON, validation off (user opt-in, 7.4):** shim permits
-  everything; every ISO boots with nothing signed, on that machine.
+  everything; every ISO boots with nothing signed, on that machine, with
+  one exception: a payload shim's own loader cannot load (pfSense's
+  `loader.efi`, 7.6) is refused, since the firmware's `LoadImage` still
+  enforces db and shim's is the only other way in. A blessed BSD medium
+  signs that same loader and boots; a blessed Linux wrap is a UKI and does
+  not (7.4). Chaining hands the medium's own loader a machine whose
+  firmware still reports Secure Boot on, and one that enforces its own
+  policy from that flag (Pop!_OS's systemd-boot with its unsigned kernel,
+  ESXi 8's loader) fails there as it does with validation on.
 
 An unsigned ISO with reliable media-finding and Secure Boot validation on is
 not a combination: it needs our signature on the kernel (blessing) or the
