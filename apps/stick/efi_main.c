@@ -436,8 +436,8 @@ static void tags_build(iso_target *t, const iso_survey *survey)
 }
 
 /* Enough of a PE for its data directory array; iso_pe_signature says what it
- * does with less. */
-#define PAYLOAD_HEAD 1024u
+ * does with less, and iso.c's PE_HEAD_MAX why a page. */
+#define PAYLOAD_HEAD 4096u
 
 /* A file handle carries a multi-kilobyte driver cache, and this one is live
  * only for the length of one header read; static for the reason every other
