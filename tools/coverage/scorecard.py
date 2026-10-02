@@ -34,6 +34,9 @@ MANIFEST = os.path.join(ROOT, 'tools', 'coverage', 'corpus.tsv')
 RUNS = os.path.join(ROOT, 'build', 'coverage', 'runs')
 
 STATES = [('off', 'SB off'), ('ms', 'SB on, MS CA'), ('own', 'SB on, own keys'),
+          # Secure Boot on with shim's validation off (MokSBState, DESIGN
+          # 7.4): run on request, and reported without a target.
+          ('moksb', 'SB on, validation off'),
           # Not a Secure Boot state: a BIOS machine has no db and no shim,
           # so it is reported beside
           # the three rather than among them, and its blessed cell is N/A.
@@ -47,7 +50,11 @@ ROUTE_NAMES = {'dnd': 'drop', 'chain': 'chain', 'blessed': 'bless'}
 # CA, which is the overwhelmingly common machine. Secure Boot on with only the
 # user's own keys is reported beside them without a target: media whose only
 # signature is Microsoft's cannot boot there at all (DESIGN 7.2), so holding
-# one number to both machines would only ever measure that.
+# one number to both machines would only ever measure that. Validation off
+# carries no target either: drop and chain there should match Secure Boot
+# off row for row (DESIGN 7.2), and a blessed wrap is a UKI, which 7.4 says
+# does not boot in that state, so a refusal in its bless cell is the
+# expected result and a pass would be the finding.
 TARGETS = {'A': (100, 95), 'B': (90, None), 'C': (None, None)}
 
 
@@ -115,6 +122,11 @@ def main():
     w('trusts the Microsoft CA. Secure Boot on with only the stick owner\'s')
     w('keys is reported beside them, without a target: media signed only by')
     w('Microsoft cannot boot on such a machine at all (DESIGN 7.2).')
+    w('Secure Boot on with shim\'s validation off (MokSBState, DESIGN 7.4)')
+    w('is run on request and reported without a target too: every ISO boots')
+    w('there as with Secure Boot off, and a blessed wrap is a UKI, which')
+    w('does not boot in that state, so a refusal in its bless cell is the')
+    w('expected result and a pass would be the finding.')
     w('')
     w('A cell reading "no userland on serial ... after starting <entry>" is a')
     w('measurement limit and not necessarily a failure. This harness reads')
@@ -165,9 +177,10 @@ def main():
                 if v in ('FAIL', 'ERROR') or (v == 'REFUSED' and rt == 'blessed'):
                     fails.append((r['id'], st, rt, v, res['reason']))
             applies[st] = not verdicts or any(v != 'N/A' for v in verdicts)
-            if st in ('off', 'bios', 'bios32'):
-                # SB off and both BIOS columns headline the drop route: it
-                # is the product's default, and the headline is what it does.
+            if st in ('off', 'moksb', 'bios', 'bios32'):
+                # SB off, validation off and both BIOS columns headline the
+                # drop route: it is the product's default, and the headline
+                # is what it does.
                 ok[st] = (result(r['id'], st, 'dnd') or {}).get(
                     'verdict') == 'PASS'
             else:
@@ -187,8 +200,9 @@ def main():
     w('## Summary')
     w('')
     w('| tier | ISOs run | SB off, drop | target | SB on, MS CA | target | '
-      'SB on, own keys | BIOS, drop | BIOS, i686, drop |')
-    w('|---|---|---|---|---|---|---|---|---|')
+      'SB on, own keys | SB on, validation off, drop | BIOS, drop | '
+      'BIOS, i686, drop |')
+    w('|---|---|---|---|---|---|---|---|---|---|')
     def frac(t, st):
         passed, n = t.get(st, (0, 0))
         return '%d/%d (%d%%)' % (passed, n, 100 * passed // n) if n else '-'
@@ -196,11 +210,12 @@ def main():
     for tier in sorted(tally):
         t = tally[tier]
         toff, tms = TARGETS.get(tier, (None, None))
-        w('| %s | %d | %s | %s | %s | %s | %s | %s | %s |'
+        w('| %s | %d | %s | %s | %s | %s | %s | %s | %s | %s |'
           % (tier, t['n'], frac(t, 'off'),
              '%d%%' % toff if toff else '-',
              frac(t, 'ms'), '%d%%' % tms if tms else '-',
-             frac(t, 'own'), frac(t, 'bios'), frac(t, 'bios32')))
+             frac(t, 'own'), frac(t, 'moksb'), frac(t, 'bios'),
+             frac(t, 'bios32')))
     w('')
     w('## Matrix')
     w('')

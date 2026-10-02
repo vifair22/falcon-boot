@@ -19,6 +19,16 @@
 # the ms firmware accepts on Microsoft's signature and the own firmware on the
 # rig's. An extra signature changes nothing the Authenticode hash covers.
 #
+#   moksb the ms firmware with the ms varstore plus MokSBState, the byte
+#        MokManager writes after `mokutil --disable-validation`
+#        (falcon-efi/tools/mk-test-mok.sh writes it; the attribute mask is
+#        load-bearing and the script's comment says why). DESIGN Section 7.2's
+#        "Secure Boot on, validation off": shim installs its loader protocol
+#        and permits everything, but does not hook the boot-services table,
+#        so every ISO boots and no UKI does (Section 7.4). Run on request
+#        (run-corpus.sh --states moksb); the headline columns are the three
+#        above.
+#
 #   bios SeaBIOS, and not a Secure Boot state at all: there is no pflash, no
 #        varstore, no db and no shim (DESIGN Section 2). It
 #        is a fourth column because a BIOS machine shares nothing with the
@@ -42,6 +52,7 @@ OWN_KEY=$OWN_DIR/own-db.key
 OWN_CRT=$OWN_DIR/own-db.crt
 OWN_VARS=$OWN_DIR/OVMF_VARS.own.fd
 MS_VARS=build/mok-test/OVMF_VARS.secboot.mok.fd
+MOKSB_VARS=build/mok-test/OVMF_VARS.secboot.moksb.fd
 MOK_CRT_STATES=build/mok-test/falcon-test-mok.crt
 SHIM_SRC=build/shim/bins/fedora-16.1-shimx64.efi
 SHIM_DUAL=$STATES_DIR/shimx64-dual.efi
@@ -173,8 +184,16 @@ state_firmware() {   # state_firmware STATE DEST
         states_prepare
         cp -f "$OWN_VARS" "$2"
         ;;
+    moksb)
+        STATE_CODE=$(ovmf_find CODE secboot)
+        STATE_SECURE=1
+        [[ -f "$MOKSB_VARS" ]] || {
+            echo "ERROR: $MOKSB_VARS missing (run falcon-efi/tools/mk-test-mok.sh)" >&2
+            return 1; }
+        cp -f "$MOKSB_VARS" "$2"
+        ;;
     *)
-        echo "ERROR: unknown state $1 (off, ms, own, bios)" >&2
+        echo "ERROR: unknown state $1 (off, ms, own, moksb, bios, bios32)" >&2
         return 1
         ;;
     esac

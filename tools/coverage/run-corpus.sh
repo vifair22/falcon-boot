@@ -18,10 +18,13 @@
 # scorecard prints the loader version each case ran against.
 #
 # Usage: tools/coverage/run-corpus.sh [options] [ID...]
-#   --states "off ms own"     which states (default the three Secure Boot
-#                             ones; `bios` and `bios32` are the SeaBIOS
-#                             columns and are not among them, so they are
-#                             asked for by name)
+#   --states "off ms own"     which states (default the three headline Secure
+#                             Boot ones; `moksb`, Secure Boot on with shim's
+#                             validation off, is run on request, since a
+#                             state is a full pass over the corpus; `bios`
+#                             and `bios32` are the SeaBIOS columns and are
+#                             not among them either, so they are asked for
+#                             by name)
 #   --routes "dnd chain blessed"  which routes (default all three)
 #   --jobs N                  cases in flight at once (default 3; each takes
 #                             FALCON_CASE_MEM, 4 GiB by default). KEEP IT

@@ -2164,8 +2164,9 @@ while every real file lives only in UDF.
   report of both credentials.
 - The coverage harness (`tools/coverage/`): one rig stick per ISO of a pinned
   corpus (`corpus.tsv`), each booted under OVMF with Secure Boot off, on with
-  the Microsoft CA and on with the user's own keys, and under SeaBIOS on the
-  host CPU and on an i686, by every route; each case judged from serial, a
+  the Microsoft CA, on with the user's own keys and, on request, on with
+  shim's validation off (7.4), and under SeaBIOS on the host CPU and on an
+  i686, by every route; each case judged from serial, a
   DHCP capture and the medium read after the kernel starts (`run-case.sh`),
   and rendered to `docs/coverage.md` by `scorecard.py`. It runs in a
   container (`harness.sh`, `Dockerfile`) on binhost-builder; `harness.sh
