@@ -185,6 +185,76 @@ static void test_isoprobe_kernel_table_refusals(void **state)
     iso_view_close(v);
 }
 
+/* What a bless signs for a family blessed by its own loader: the member
+ * family_bless_loader names, found case-insensitively (memtest86+'s Rock
+ * Ridge name is bootx64.efi), and a refusal that names the missing file. */
+static void test_isoprobe_loader_path(void **state)
+{
+    static const char *const memtest_x64[] = {
+        "boot/", "boot/floppy.img", "boot.catalog", "EFI/", "EFI/BOOT/",
+        "EFI/BOOT/bootx64.efi", NULL
+    };
+    static const char *const memtest_i586[] = {
+        "boot/", "boot/floppy.img", "boot.catalog", "EFI/", "EFI/BOOT/",
+        "EFI/BOOT/bootia32.efi", NULL
+    };
+    static const char *const bsd[] = {
+        "boot/", "boot/kernel/", "boot/kernel/kernel", "boot/defaults/",
+        "boot/defaults/loader.conf", "boot/loader.efi", "EFI/",
+        "EFI/BOOT/", "EFI/BOOT/BOOTX64.EFI", NULL
+    };
+    iso_view *v = NULL;
+    const char *m;
+
+    (void)state;
+    assert_int_equal(iso_view_from_paths(memtest_x64, NULL, &v), SGN_OK);
+    m = iso_loader_path(v, FAMILY_MEMTEST);
+    assert_non_null(m);
+    assert_string_equal(m, "EFI/BOOT/bootx64.efi");
+    /* memtest has no kernel to wrap; its bless is the loader above. */
+    assert_null(iso_kernel_path(v, FAMILY_MEMTEST));
+    assert_non_null(strstr(sgn_error(), "no kernel to wrap"));
+    /* A family whose bless is a wrap has no loader to sign. */
+    assert_null(iso_loader_path(v, FAMILY_ARCH));
+    assert_non_null(strstr(sgn_error(), "wrapping its kernel"));
+    assert_null(iso_loader_path(NULL, FAMILY_MEMTEST));
+    iso_view_close(v);
+
+    /* The 32-bit build carries no x86-64 loader to sign. */
+    assert_int_equal(iso_view_from_paths(memtest_i586, NULL, &v), SGN_OK);
+    assert_null(iso_loader_path(v, FAMILY_MEMTEST));
+    assert_non_null(strstr(sgn_error(), "no /EFI/BOOT/BOOTX64.EFI"));
+    iso_view_close(v);
+
+    /* BSD signs /boot/loader.efi, not the El Torito image's copy. */
+    assert_int_equal(iso_view_from_paths(bsd, NULL, &v), SGN_OK);
+    m = iso_loader_path(v, FAMILY_BSD);
+    assert_non_null(m);
+    assert_string_equal(m, "boot/loader.efi");
+    iso_view_close(v);
+}
+
+/* The manifest's family= field: every registry row has a slug of its own, so
+ * no family is written, or listed in a refusal, as "unknown". */
+static void test_isoprobe_family_slugs(void **state)
+{
+    size_t count = 0;
+    const family_desc *tab = family_table(&count);
+    size_t i, j;
+
+    (void)state;
+    assert_string_equal(sgn_family_slug(FAMILY_UNKNOWN), "unknown");
+    assert_string_equal(sgn_family_slug(FAMILY_DEVLINK), "devlink");
+    for (i = 0; i < count; i++) {
+        if (tab[i].id == FAMILY_UNKNOWN)
+            continue;
+        assert_string_not_equal(sgn_family_slug(tab[i].id), "unknown");
+        for (j = 0; j < i; j++)
+            assert_string_not_equal(sgn_family_slug(tab[i].id),
+                                    sgn_family_slug(tab[j].id));
+    }
+}
+
 static void test_isoprobe_gentoo_names(void **state)
 {
     static const char *const paths[] = {
@@ -610,6 +680,8 @@ int run_isoprobe_tests(void)
         cmocka_unit_test(test_isoprobe_matching_rules),
         cmocka_unit_test(test_isoprobe_kernel_table_refusals),
         cmocka_unit_test(test_isoprobe_gentoo_names),
+        cmocka_unit_test(test_isoprobe_loader_path),
+        cmocka_unit_test(test_isoprobe_family_slugs),
         cmocka_unit_test(test_isoprobe_volume_label),
         cmocka_unit_test(test_which_reports_the_full_path),
     };

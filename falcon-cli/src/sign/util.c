@@ -532,6 +532,7 @@ static const family_slug g_slugs[] = {
     { FAMILY_NIXOS,         "nixos" },
     { FAMILY_PROXMOX,       "proxmox" },
     { FAMILY_ESXI,          "esxi" },
+    { FAMILY_DEVLINK,       "devlink" },
 };
 
 const char *sgn_family_slug(family_id id)

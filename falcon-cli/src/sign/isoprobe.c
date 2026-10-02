@@ -747,10 +747,10 @@ static const kernel_row g_kernels[] = {
     { FAMILY_ARCH,          k_arch },
     { FAMILY_SYSTEMRESCUE,  k_systemrescue },
     { FAMILY_GENTOO,        k_gentoo },
-    /* FAMILY_MEMTEST is a bare EFI binary with no kernel to wrap, and it
-     * needs no blessing: it boots with no cmdline and no backing media.
-     * FAMILY_WINDOWS boots no Linux kernel at all. Both are absent rather
-     * than empty so the "no entry" message can say why. */
+    /* FAMILY_BSD and FAMILY_MEMTEST are blessed by signing their own
+     * loader (iso_loader_path), not by wrapping a kernel. FAMILY_WINDOWS
+     * boots no Linux kernel at all. All three are absent rather than empty
+     * so the "no entry" message can say why. */
 };
 
 const char *iso_kernel_path(iso_view *v, family_id id)
@@ -778,9 +778,31 @@ const char *iso_kernel_path(iso_view *v, family_id id)
     }
     sgn_set_error(SGN_ERR_FORMAT,
                   "family '%s' has no kernel to wrap: it does not boot a "
-                  "Linux kernel from the ISO, so blessing does not apply",
+                  "Linux kernel from the ISO",
                   family_by_id(id)->name);
     return NULL;
+}
+
+const char *iso_loader_path(iso_view *v, family_id id)
+{
+    const char *want = family_bless_loader(id);
+    const char *match = NULL;
+
+    if (v == NULL)
+        return NULL;
+    if (want == NULL) {
+        sgn_set_error(SGN_ERR_FORMAT,
+                      "family '%s' is blessed by wrapping its kernel, not by "
+                      "signing its own loader", family_by_id(id)->name);
+        return NULL;
+    }
+    if (!iso_view_find(v, want, &match) || match == NULL) {
+        sgn_set_error(SGN_ERR_FORMAT,
+                      "this medium has no %s, so there is nothing to sign "
+                      "for it", want);
+        return NULL;
+    }
+    return match;
 }
 
 const char *iso_initrd_path(iso_view *v, family_id id, const char *kernel)
