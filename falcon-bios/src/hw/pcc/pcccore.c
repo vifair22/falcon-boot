@@ -241,6 +241,18 @@ int pcc_io_window(uint16_t base, uint16_t len, uint8_t regs[4])
     return 0;
 }
 
+int pcc_io_free(const uint8_t *ports)
+{
+    unsigned i;
+
+    if (ports == (const uint8_t *)0)
+        return 0;
+    for (i = 0; i < PCC_IO_PORTS; i++)
+        if (ports[i] != 0xFFu)
+            return 0;
+    return 1;
+}
+
 /* Slot `i`'s claim in slots: 0 when no ROM starts there. */
 static uint32_t rom_slots(const uint8_t *hdr, uint32_t i)
 {
@@ -282,4 +294,43 @@ int32_t pcc_attr_pick(const uint8_t *hdr, uint32_t from)
             return (int32_t)a;
     }
     return -1;
+}
+
+uint32_t pcc_bar_pick(const pcc_range *used, unsigned n, uint64_t ram_top)
+{
+    uint64_t lo = PCC_BAR_FIRST;
+    uint32_t a;
+
+    if (n != 0 && used == (const pcc_range *)0)
+        return 0;
+    if (ram_top > lo)
+        lo = (ram_top + PCC_BAR_SIZE - 1u) & ~(uint64_t)(PCC_BAR_SIZE - 1u);
+    if (lo + PCC_BAR_SIZE > PCC_BAR_END)
+        return 0;
+    a = PCC_BAR_END - PCC_BAR_SIZE;
+    for (;;) {
+        /* The next candidate is the page under the lowest-starting range
+         * that touches `a`. */
+        uint32_t below = a;
+        int taken = 0;
+        unsigned i;
+
+        for (i = 0; i < n; i++) {
+            uint64_t b = used[i].base;
+            uint64_t e = b + used[i].len;
+            uint32_t page;
+
+            if (used[i].len == 0 || b >= (uint64_t)a + PCC_BAR_SIZE || e <= a)
+                continue;
+            taken = 1;
+            page = used[i].base & ~(PCC_BAR_SIZE - 1u);
+            if (page < below)
+                below = page;
+        }
+        if (!taken)
+            return a;
+        if (below < lo + PCC_BAR_SIZE)
+            return 0;
+        a = below - PCC_BAR_SIZE;
+    }
 }

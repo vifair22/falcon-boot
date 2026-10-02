@@ -23,9 +23,10 @@
  * address there is free on every machine (the A21m shadows a mini-PCI
  * card's boot ROM at 0xD0000, where PC Card drivers have put it since DOS).
  * It is only open while the CIS is read, and closed before the machine is
- * handed on. The I/O windows are 0x1E0-0x1EF for the first card and
- * 0x1C0-0x1CF for a second, a range the machines Section 13 is for leave
- * unused.
+ * handed on. A card's I/O window is the first of 0x1E0, 0x1C0, 0x1A0 and
+ * 0x180 (sixteen ports each) that nothing on the machine answers at: a
+ * free ISA range reads 0xFF on every port; a third IDE channel at 0x1E8,
+ * or the card in the socket before, does not.
  *
  * The resident half (int13 through hw/blk13.c) uses only this module, as
  * every module's must (jump/jmod.h).
@@ -81,6 +82,7 @@ static const uint16_t k_io_bases[SOCKETS_MAX] = {
 
 typedef struct {
     atadisk disk;
+    uint32_t regs;                   /* its socket registers, for release */
 } pcc_dev;
 
 static const jmod_services *g_svc;   /* probe time only */
@@ -102,10 +104,10 @@ static void log_s(const char *s)
         g_svc->log(s);
 }
 
-/* "falcon-bios: PCC.MOD: <what> 0x<v>". A socket that yields no disk says
- * which step it stopped at and what the register said, on serial: on a real
- * bridge the reason is otherwise a guess. */
-static void log_v(const char *what, uint32_t v)
+/* "falcon-bios: PCC.MOD: <what> 0x<v><tail>". A socket that yields no disk
+ * says which step it stopped at and what the register said, on serial: on
+ * a real bridge the reason is otherwise a guess. */
+static void log_vt(const char *what, uint32_t v, const char *tail)
 {
     if (g_svc == (const jmod_services *)0)
         return;
@@ -113,7 +115,12 @@ static void log_v(const char *what, uint32_t v)
     g_svc->log(what);
     g_svc->log(" ");
     g_svc->log_hex(v);
-    g_svc->log("\n");
+    g_svc->log(tail);
+}
+
+static void log_v(const char *what, uint32_t v)
+{
+    log_vt(what, v, "\n");
 }
 
 static uint8_t exca_rd(uint32_t r)
@@ -183,6 +190,28 @@ static void power_down(void)
     exca_wr(X_INTCTL, 0);
     exca_wr(X_POWER, 0);
     sock_wr(SOCK_CONTROL, 0);
+}
+
+/* The first I/O window base nothing answers at (pcc_io_free). A card
+ * served from an earlier socket answers at its own base, so it is passed
+ * over with the rest. 0 when none is free. */
+static uint16_t io_pick(void)
+{
+    unsigned b;
+
+    for (b = 0; b < SOCKETS_MAX; b++) {
+        uint16_t base = k_io_bases[b];
+        uint8_t ports[PCC_IO_PORTS];
+        unsigned i;
+
+        for (i = 0; i < PCC_IO_PORTS; i++)
+            ports[i] = inb((uint16_t)(base + i));
+        if (pcc_io_free(ports))
+            return base;
+        log_vt("I/O at", base, " answers already\n");
+    }
+    log_s("falcon-bios: PCC.MOD: no free I/O window for the card\n");
+    return 0;
 }
 
 /* The option-ROM area's headers (pcccore.h), read once per probe before
@@ -306,7 +335,147 @@ static int configure(uint16_t io)
     exca_wr(X_INTCTL, IC_RESET | IC_IOCARD);
     exca_wr(X_ENABLE, EN_IO0);       /* and the memory window closed */
     io_delay_us(1000);
+    log_v("I/O window at", io);
     return 0;
+}
+
+/* ---- a BAR0 the BIOS left unassigned ---- */
+
+#define RANGES_MAX 64u
+static pcc_range g_ranges[RANGES_MAX];
+
+static int add_range(unsigned *n, const pcc_range *r)
+{
+    if (*n == RANGES_MAX)
+        return -1;
+    g_ranges[(*n)++] = *r;
+    return 0;
+}
+
+/* The BAR at `reg` of the function at `loc` as a range, when it is a
+ * memory BAR assigned below 4 GB: its length by the size probe (all ones
+ * written, the bits that stay clear are the size, the value put back).
+ * The dwords the BAR took, 1 or 2, so the caller steps past a 64-bit one's
+ * upper half; *got says whether a range came of it. */
+static unsigned bar_range(const pci_loc *loc, uint8_t reg, pcc_range *out,
+                          int *got)
+{
+    uint32_t v = pci_read32(loc->bus, loc->dev, loc->fn, reg);
+    uint64_t base = v & ~0xFu;
+    unsigned words = 1;
+    uint32_t m;
+
+    *got = 0;
+    if ((v & 1u) != 0)
+        return 1;                    /* I/O */
+    if ((v & 6u) == 4u) {            /* 64-bit: the upper half next */
+        words = 2;
+        base |= (uint64_t)pci_read32(loc->bus, loc->dev, loc->fn,
+                                     (uint8_t)(reg + 4u)) << 32;
+    }
+    pci_write32(loc->bus, loc->dev, loc->fn, reg, 0xFFFFFFFFu);
+    m = pci_read32(loc->bus, loc->dev, loc->fn, reg) & ~0xFu;
+    pci_write32(loc->bus, loc->dev, loc->fn, reg, v);
+    if (m == 0 || base == 0 || base >= 0x100000000ull)
+        return words;                /* not implemented, unassigned, high */
+    out->base = (uint32_t)base;
+    out->len = ~m + 1u;
+    *got = 1;
+    return words;
+}
+
+/* A bridge's memory window [base, limit]; none when the limit is below the
+ * base, which is how a BIOS leaves a window it did not open. */
+static int window_range(uint32_t base, uint32_t limit, pcc_range *out)
+{
+    if (base == 0 || limit < base)
+        return 0;
+    out->base = base;
+    out->len = (uint32_t)((uint64_t)limit - base + 1u);
+    return 1;
+}
+
+/* Every memory range a function on the bus decodes, in one walk: its
+ * memory BARs, and the windows of a PCI-to-PCI (header type 1) or CardBus
+ * (type 2) bridge. The count, or -1 when the table is too small for the
+ * bus. */
+static int collect_ranges(void)
+{
+    pci_loc loc;
+    unsigned n = 0;
+
+    loc.bus = 0;
+    loc.dev = 0;
+    loc.fn = PCI_FN_START;
+    while (pci_next(&loc) == 0) {
+        uint32_t hdr;
+        unsigned nbars;
+        uint8_t reg;
+        uint32_t w;
+        pcc_range r;
+
+        hdr = (pci_read32(loc.bus, loc.dev, loc.fn, 0x0C) >> 16) & 0x7Fu;
+        nbars = hdr == 0 ? 6u : hdr == 1u ? 2u : hdr == 2u ? 1u : 0;
+        for (reg = 0x10; reg < 0x10u + 4u * nbars; ) {
+            int got;
+            unsigned words = bar_range(&loc, reg, &r, &got);
+
+            if (got && add_range(&n, &r) != 0)
+                return -1;
+            reg = (uint8_t)(reg + 4u * words);
+        }
+        if (hdr == 1u) {             /* 1 MB units; prefetchable may be 64-bit */
+            w = pci_read32(loc.bus, loc.dev, loc.fn, 0x20);
+            if (window_range((w & 0xFFF0u) << 16, (w & 0xFFF00000u) | 0xFFFFFu,
+                             &r) && add_range(&n, &r) != 0)
+                return -1;
+            w = pci_read32(loc.bus, loc.dev, loc.fn, 0x24);
+            if (pci_read32(loc.bus, loc.dev, loc.fn, 0x28) == 0 &&
+                window_range((w & 0xFFF0u) << 16, (w & 0xFFF00000u) | 0xFFFFFu,
+                             &r) && add_range(&n, &r) != 0)
+                return -1;
+        } else if (hdr == 2u) {      /* 4 KB units */
+            if (window_range(pci_read32(loc.bus, loc.dev, loc.fn, 0x1C) & ~0xFFFu,
+                             pci_read32(loc.bus, loc.dev, loc.fn, 0x20) | 0xFFFu,
+                             &r) && add_range(&n, &r) != 0)
+                return -1;
+            if (window_range(pci_read32(loc.bus, loc.dev, loc.fn, 0x24) & ~0xFFFu,
+                             pci_read32(loc.bus, loc.dev, loc.fn, 0x28) | 0xFFFu,
+                             &r) && add_range(&n, &r) != 0)
+                return -1;
+        }
+    }
+    return (int)n;
+}
+
+/* BAR0 left at 0 by a BIOS that does not know CardBus: a 4 KB page above
+ * RAM and every range on the bus (pcc_bar_pick), written and read back.
+ * The page, or 0 when there is none or the function does not take it. */
+static uint32_t assign_bar0(const pci_loc *loc)
+{
+    int n = collect_ranges();
+    uint32_t page;
+    uint32_t rd;
+
+    if (n < 0) {
+        log_s("falcon-bios: PCC.MOD: more memory ranges on the bus than the "
+              "table holds; the socket registers stay unassigned\n");
+        return 0;
+    }
+    page = pcc_bar_pick(g_ranges, (unsigned)n,
+                        g_svc != (const jmod_services *)0 ? g_svc->mem_top : 0);
+    if (page == 0) {
+        log_s("falcon-bios: PCC.MOD: no free page for the socket registers\n");
+        return 0;
+    }
+    pci_write32(loc->bus, loc->dev, loc->fn, 0x10, page);
+    rd = pci_read32(loc->bus, loc->dev, loc->fn, 0x10);
+    if ((rd & ~0xFu) != page) {
+        log_v("the socket registers did not take their page, BAR0", rd);
+        return 0;
+    }
+    log_v("socket registers assigned at", page);
+    return page;
 }
 
 static unsigned pcc_probe(void)
@@ -319,6 +488,7 @@ static unsigned pcc_probe(void)
         pci_loc loc;
         uint32_t bar;
         uint32_t cmd;
+        uint16_t io;
         pcc_dev *d = &g_dev[g_ndev];
 
         if (pci_find_class(0x060700u, nth, &loc) != 0)
@@ -327,8 +497,13 @@ static unsigned pcc_probe(void)
         log_v("CardBus bridge at bus/dev/fn",
               ((uint32_t)loc.bus << 16) | ((uint32_t)loc.dev << 8) | loc.fn);
         log_v("its socket registers (BAR0)", bar);
-        if ((bar & 1u) != 0 || (bar & ~0xFFFu) == 0)
-            continue;                /* no socket registers assigned */
+        if ((bar & 1u) != 0)
+            continue;                /* an I/O range: not socket registers */
+        if ((bar & ~0xFFFu) == 0) {
+            bar = assign_bar0(&loc);
+            if (bar == 0)
+                continue;
+        }
         if (!roms_read) {
             read_roms();
             roms_read = 1;
@@ -340,13 +515,15 @@ static unsigned pcc_probe(void)
 
         if (power_up() != 0)
             continue;
-        if (configure(k_io_bases[g_ndev]) != 0) {
+        io = io_pick();
+        if (io == 0 || configure(io) != 0) {
             power_down();
             continue;
         }
         memset(&d->disk, 0, sizeof d->disk);
-        d->disk.base = k_io_bases[g_ndev];
-        d->disk.ctrl = (uint16_t)(k_io_bases[g_ndev] + 0x0Eu);
+        d->disk.base = io;
+        d->disk.ctrl = (uint16_t)(io + 0x0Eu);
+        d->regs = g_regs;
         if (atadisk_identify(&d->disk) != 0) {
             log_s("falcon-bios: PCC.MOD: the card did not answer as ATA\n");
             power_down();
@@ -401,6 +578,18 @@ static int pcc_serve(unsigned idx, uint8_t drive)
     return 0;
 }
 
+static void pcc_release(void)
+{
+    unsigned i;
+
+    for (i = 0; i < g_ndev; i++) {
+        g_regs = g_dev[i].regs;
+        power_down();
+    }
+    g_ndev = 0;
+    g_serve = SOCKETS_MAX;
+}
+
 static void pcc_int13(jmod_regs *r)
 {
     if (g_serve >= g_ndev) {
@@ -419,6 +608,7 @@ static int pcc_init(const jmod_services *svc, jmod_ops *ops)
     ops->read = pcc_read;
     ops->serve = pcc_serve;
     ops->int13 = pcc_int13;
+    ops->release = pcc_release;
     return 0;
 }
 

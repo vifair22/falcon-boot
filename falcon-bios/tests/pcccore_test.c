@@ -173,6 +173,76 @@ static void test_pick(void **state)
     assert_int_equal(pcc_attr_pick(NULL, 0), -1);
 }
 
+/* A free ISA range reads 0xFF on every port; one port answering otherwise
+ * is enough to pass it over. */
+static void test_io_free(void **state)
+{
+    uint8_t p[PCC_IO_PORTS];
+
+    (void)state;
+    memset(p, 0xFF, sizeof p);
+    assert_int_equal(pcc_io_free(p), 1);
+    /* A third IDE channel's status register at base + 7. */
+    p[7] = 0x50;
+    assert_int_equal(pcc_io_free(p), 0);
+    memset(p, 0xFF, sizeof p);
+    p[PCC_IO_PORTS - 1u] = 0x7F;
+    assert_int_equal(pcc_io_free(p), 0);
+    memset(p, 0x00, sizeof p);
+    assert_int_equal(pcc_io_free(p), 0);
+    assert_int_equal(pcc_io_free(NULL), 0);
+}
+
+/* The page for a socket's registers: the highest under the APICs that
+ * nothing on the bus decodes, as SeaBIOS fills the top of that region
+ * with the small BARs it places last. */
+static void test_bar_pick(void **state)
+{
+    pcc_range used[4];
+    const uint64_t ram = 128u * 1024u * 1024u;
+
+    (void)state;
+    /* Nothing on the bus: the top page. */
+    assert_int_equal(pcc_bar_pick(NULL, 0, ram), 0xFEBFF000u);
+    /* A VGA's 4 KB at the top and a NIC's 128 KB under it: the page
+     * between them is the first free. */
+    used[0].base = 0xFEBFF000u; used[0].len = 0x1000u;
+    used[1].base = 0xFEB80000u; used[1].len = 0x20000u;
+    assert_int_equal(pcc_bar_pick(used, 2, ram), 0xFEBFE000u);
+    /* The NIC moved up against the VGA: under both. */
+    used[1].base = 0xFEBDF000u;
+    assert_int_equal(pcc_bar_pick(used, 2, ram), 0xFEBDE000u);
+    /* A range that is not page aligned takes both pages it touches. */
+    used[2].base = 0xFEBDE800u; used[2].len = 0x100u;
+    assert_int_equal(pcc_bar_pick(used, 3, ram), 0xFEBDD000u);
+    /* A 16 MB framebuffer from 0xF0000000 leaves the rest. */
+    used[3].base = 0xF0000000u; used[3].len = 0x1000000u;
+    assert_int_equal(pcc_bar_pick(used, 4, ram), 0xFEBDD000u);
+    /* The whole region decoded: nothing. */
+    used[0].base = 0xF0000000u; used[0].len = 0x0EC00000u;
+    assert_int_equal(pcc_bar_pick(used, 1, ram), 0);
+    /* A window that ends at 4 GB exactly covers the region too. */
+    used[0].base = 0xE0000000u; used[0].len = 0x20000000u;
+    assert_int_equal(pcc_bar_pick(used, 1, ram), 0);
+    /* Ranges above the region or ending at its start do not count. */
+    used[0].base = 0xFEC00000u; used[0].len = 0x1000u;
+    used[1].base = 0xEF000000u; used[1].len = 0x01000000u;
+    assert_int_equal(pcc_bar_pick(used, 2, ram), 0xFEBFF000u);
+    /* An empty range counts for nothing either. */
+    used[0].base = 0xFEBFF000u; used[0].len = 0;
+    assert_int_equal(pcc_bar_pick(used, 1, ram), 0xFEBFF000u);
+    /* RAM reaching into the region: nothing below its top, rounded up. */
+    assert_int_equal(pcc_bar_pick(NULL, 0, 0xFEBFF000u), 0xFEBFF000u);
+    assert_int_equal(pcc_bar_pick(NULL, 0, 0xFEBFE001u), 0xFEBFF000u);
+    used[0].base = 0xFEBFF000u; used[0].len = 0x1000u;
+    assert_int_equal(pcc_bar_pick(used, 1, 0xFEBFE001u), 0);
+    assert_int_equal(pcc_bar_pick(NULL, 0, 0xFEBFF001u), 0);
+    assert_int_equal(pcc_bar_pick(NULL, 0, 0xFEC00000u), 0);
+    assert_int_equal(pcc_bar_pick(NULL, 0, 0x100000000ull), 0);
+    assert_int_equal(pcc_bar_pick(NULL, 0, 0), 0xFEBFF000u);
+    assert_int_equal(pcc_bar_pick(NULL, 1, ram), 0);
+}
+
 int run_pcccore_tests(void)
 {
     const struct CMUnitTest tests[] = {
@@ -181,6 +251,8 @@ int run_pcccore_tests(void)
         cmocka_unit_test(test_refusals),
         cmocka_unit_test(test_windows),
         cmocka_unit_test(test_pick),
+        cmocka_unit_test(test_io_free),
+        cmocka_unit_test(test_bar_pick),
     };
 
     return cmocka_run_group_tests_name("pcccore", tests, NULL, NULL);

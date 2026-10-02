@@ -3345,11 +3345,13 @@ flowchart TD
     SW -- "unreadable, no 0x55AA,<br/>no memory for the swap" --> RM2
     RM2 --> KG
     MENU -- "CF card (PC Card)" --> LP["jmod_load: PCC.MOD to JMOD_SLOT_PCC"]
-    LP --> SK["ops.probe: each CardBus bridge (class 0x0607), BAR0: socket regs, ExCA at +0x800<br/>card detect, VCC, reset, READY; memory window 0 at a free 4 KB of the option-ROM area onto attribute memory"]
+    LP --> SK["ops.probe: each CardBus bridge (class 0x0607), BAR0: socket regs (a page assigned when the BIOS left it 0), ExCA at +0x800<br/>card detect, VCC, reset, READY; memory window 0 at a free 4 KB of the option-ROM area onto attribute memory"]
     SK --> CI{"pcccore.c: the CIS: a fixed disk, CONFIG,<br/>a contiguous-I/O entry?"}
     CI -- "no" --> MENU
-    CI -- "yes" --> IO["its index to the COR; I/O window 0 at 0x1E0, the memory window closed;<br/>atadisk.c: IDENTIFY DEVICE"]
+    CI -- "yes" --> IO["its index to the COR; I/O window 0 at the first of 0x1E0, 0x1C0, 0x1A0, 0x180 nothing answers at, the memory window closed;<br/>atadisk.c: IDENTIFY DEVICE"]
     IO --> MB2["boot_module_disk: as the USB branch, from jres_install on"]
+    MB2 -- "comes back" --> PD["ops.release: every socket powered down, its windows closed"]
+    PD --> MENU
 ```
 
 The CD, USB and CF branches are falcon-bios's `jump/routes.c`
@@ -4758,7 +4760,14 @@ chains that disk (12.10) restores INT 13h past the swap, after which 0x81
 no longer exists. `USB` boots only falcon sticks, so the swap is `PCC`'s in
 practice.
 
-**CF.** `PCC.MOD` finds the CardBus bridges by class (0x0607) and brings a
+**CF.** `PCC.MOD` finds the CardBus bridges by class (0x0607). A bridge
+whose socket registers the BIOS never placed on the bus (BAR0 reads 0: a
+BIOS that does not know CardBus leaves the A21m's second socket so) is
+given a 4 KB page by the probe: the highest below 0xFEC00000, where the
+APICs begin, at or above 0xF0000000 and the top of RAM (`mem_top` in the
+services table), that no memory BAR on the bus, sized by the probe every
+BIOS makes, and no bridge window already decodes (`pcc_bar_pick`,
+host-tested), written to BAR0 and read back before it is used. It brings a
 16-bit card up as Linux's yenta and i82365 drivers do: card detect, VCC
 through the socket control register and the ExCA power register's output
 enable, reset, READY; memory window 0 onto the card's attribute memory at
@@ -4771,14 +4780,21 @@ free on every machine, because an added card's option ROM can be shadowed
 at any of them.
 Then the CIS parsed (`pcccore.c`) for a fixed-disk function and the
 configuration entry that decodes I/O at any base, written to the
-configuration option register; I/O window 0 at 0x1E0, and the card is then
-an ATA disk (`hw/ata/atadisk.c`). A card that takes only 3.3 V is powered
+configuration option register; I/O window 0 at the first of 0x1E0, 0x1C0,
+0x1A0 and 0x180 whose sixteen ports all read 0xFF, a bus nothing drives
+(`pcc_io_free`): a range something answers at (a third IDE channel at
+0x1E8 on some boards, the card in the socket before) is named on serial
+and passed over, and a socket with no free range is powered down and
+skipped. The card is then an ATA disk (`hw/ata/atadisk.c`). A card that
+takes only 3.3 V is powered
 by the bridge only when the socket control register and the ExCA power
 register's VCC field both ask for 3.3 V. It boots as any disk does,
 whatever is on it: its LBA 0 through the reverse thunk with its INT 15h
 half, as `USB` does (`boot_module_disk`), a falcon card as the next BIOS
 disk and any other as 0x80 behind the drive swap, so DOS or Windows 9x on
-a card starts from it as C:.
+a card starts from it as C:. A route that comes back without a handover
+powers every socket it brought up down and closes its windows (`release`
+in the module's table).
 
 **Shared with station-legacy.** The routes above are
 `falcon-bios/src/jump/routes.c` (`BIOS_MOD_jroutes`), which jump and
@@ -4862,7 +4878,13 @@ registers are written, and it powers the card only as the real bridge does
 16 KB segments an option ROM touches keep the window's accesses from it,
 as a chipset that shadows them does; the `cf-rom` case boots with dummy
 ROMs (`-option-rom`) placed so one starts at 0xD0000, and judges the window
-opened outside all of their segments. `build-qemu.sh` builds the QEMU
+opened outside all of their segments. `cf-io` adds an `isa-ide` at 0x1E0
+and judges the probe naming the range and serving the card at 0x1C0.
+`cf-nobar` boots through `nobar.S`, a boot sector on a disk image booted
+before the floppy (`-boot order=c`), which clears the bridge's BAR0 and
+its memory decoding as a BIOS that does not know CardBus leaves them and
+chains the floppy, and judges the probe assigning the page itself.
+`build-qemu.sh` builds the QEMU
 release the machine runs with that one device added, into
 `build/qemu-pcc/`; the `cf` case of the rig runs on it. With `lba48=on`
 the card has the 48-bit feature set (READ and WRITE SECTORS EXT, the task

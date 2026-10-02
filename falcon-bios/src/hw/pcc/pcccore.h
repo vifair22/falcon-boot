@@ -55,6 +55,14 @@ int pcc_mem_window(uint32_t host, uint32_t size, uint32_t card, int attr,
  * [base, base + len). -1 on a range the window cannot express. */
 int pcc_io_window(uint16_t base, uint16_t len, uint8_t regs[4]);
 
+/* An I/O window's ports, as the caller reads them before the window is
+ * placed: PCC_IO_PORTS bytes from the base. */
+#define PCC_IO_PORTS 16u
+
+/* Whether a range that read as `ports` is free: every port 0xFF, a bus
+ * nothing drives. Anything answering at one of them reads otherwise. */
+int pcc_io_free(const uint8_t *ports);
+
 /* The option-ROM area the attribute memory window is placed in, as the
  * caller reads it: the first three bytes at every 2 KB boundary from
  * PCC_ROM_BASE, PCC_ROM_SLOTS of them, three bytes each. It stops at
@@ -76,5 +84,23 @@ int pcc_io_window(uint16_t base, uint16_t len, uint8_t regs[4]);
  * from there for its byte 2 in 512-byte units, rounded up to 2 KB, and at
  * least the 2 KB its header is in. -1 when there is none. */
 int32_t pcc_attr_pick(const uint8_t *hdr, uint32_t from);
+
+/* A memory range something on the PCI bus decodes, [base, base + len),
+ * below 4 GB: a function's memory BAR, or a bridge's window. */
+typedef struct {
+    uint32_t base;
+    uint32_t len;
+} pcc_range;
+
+/* Where a socket's registers go when the BIOS left BAR0 unassigned: a 4 KB
+ * page in [PCC_BAR_FIRST, PCC_BAR_END), where the APICs begin, above RAM. */
+#define PCC_BAR_FIRST  0xF0000000u
+#define PCC_BAR_END    0xFEC00000u        /* exclusive */
+#define PCC_BAR_SIZE   0x1000u
+
+/* The highest 4 KB page below PCC_BAR_END, at or above PCC_BAR_FIRST and
+ * at or above `ram_top` (one past the highest byte of RAM), that none of
+ * the `n` ranges in `used` touches. 0 when there is none. */
+uint32_t pcc_bar_pick(const pcc_range *used, unsigned n, uint64_t ram_top);
 
 #endif /* FALCON_BIOS_PCCCORE_H */
