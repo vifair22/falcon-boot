@@ -4,8 +4,10 @@
  *
  * QEMU models no PC Card bridge on x86, and falcon jump's PCC.MOD has to be
  * proven against one before it meets a ThinkPad A21m's TI PCI-1450. This is
- * that bridge as the A21m's PCI bus shows it, one socket, with one
- * CompactFlash card inserted:
+ * that bridge as the A21m's PCI bus shows it, one socket per instance, so
+ * the A21m's two sockets are two functions of one device
+ * (`-device falcon-pcc,addr=7.0,multifunction=on,drive=cf
+ * -device falcon-pcc,addr=7.1`, the second an empty socket):
  *
  *   - a CardBus bridge's PCI header (type 2) with the PCI-1450's IDs and
  *     class and the A21m's subsystem: BAR0 the socket registers, the
@@ -30,8 +32,10 @@
  *     0xC0000-0xEFFFF an option ROM touches (the PAM granularity of the
  *     A21m's 440BX): the bridge does not see memory window 0's accesses
  *     there, and they reach whatever the segment holds;
- *   - the card: a CIS with the CompactFlash standard's entries (memory
- *     mapped, contiguous I/O, primary IDE), and ATA PIO over a drive:
+ *   - the card, when `drive=` names its image (without one the socket is
+ *     empty: card detect says so and nothing else answers): a CIS with the
+ *     CompactFlash standard's entries (memory mapped, contiguous I/O,
+ *     primary IDE), and ATA PIO over the drive:
  *     IDENTIFY DEVICE, READ SECTORS, WRITE SECTORS, LBA28, and with
  *     `lba48=on` the 48-bit feature set (READ and WRITE SECTORS EXT, the
  *     task file's registers as two-deep FIFOs, HOB reads), which a card
@@ -101,6 +105,7 @@ OBJECT_DECLARE_SIMPLE_TYPE(FalconPccState, FALCON_PCC)
 /* CardBus socket registers. */
 #define SOCK_PRESENT   0x08
 #define SOCK_CONTROL   0x10
+#define PS_CD          (3u << 1)
 #define PS_16BIT       (1u << 4)
 #define PS_5V          (1u << 10)
 #define PS_3V          (1u << 11)
@@ -176,6 +181,11 @@ struct FalconPccState {
     uint64_t cur;
 };
 
+static bool has_card(FalconPccState *s)
+{
+    return s->blk != NULL;
+}
+
 /* ---- the card's CIS ---- */
 
 static void cis_put(FalconPccState *s, const uint8_t *b, unsigned n)
@@ -224,14 +234,14 @@ static bool powered(FalconPccState *s)
 
     if (vcc != 0x20 && vcc != 0x30)
         return false;
-    if (s->volts == 3 && vcc != 0x30)
+    if (has_card(s) && s->volts == 3 && vcc != 0x30)
         return false;
     return (s->exca[X_POWER] & 0x80) != 0;
 }
 
 static bool running(FalconPccState *s)
 {
-    return powered(s) && (s->exca[X_INTCTL] & IC_RESET) != 0;
+    return has_card(s) && powered(s) && (s->exca[X_INTCTL] & IC_RESET) != 0;
 }
 
 /* The segments an option ROM touches, read the first time the window
@@ -616,16 +626,20 @@ static uint64_t bar_read(void *opaque, hwaddr off, unsigned size)
 {
     FalconPccState *s = opaque;
 
-    if (off == SOCK_PRESENT && size == 4)
+    if (off == SOCK_PRESENT && size == 4) {
+        if (!has_card(s))
+            return PS_CD;                        /* both detects high */
         return PS_16BIT | PS_3V |                /* card in, both detects low */
                (s->volts == 3 ? 0 : PS_5V);
+    }
     if (off == SOCK_CONTROL && size == 4)
         return s->sock_control;
     if (off >= EXCA && off < EXCA + 0x100 && size == 1) {
         uint8_t r = (uint8_t)(off - EXCA);
 
         if (r == X_STATUS)
-            return ST_CD | (powered(s) ? ST_POWERON : 0) |
+            return !has_card(s) ? 0 :
+                   ST_CD | (powered(s) ? ST_POWERON : 0) |
                    (running(s) ? ST_READY : 0);
         if (r == 0x00)
             return 0x84;                          /* i82365SL-compatible */
@@ -783,24 +797,23 @@ static void falcon_pcc_reset_hold(Object *obj, ResetType type)
 static void falcon_pcc_realize(PCIDevice *pdev, Error **errp)
 {
     FalconPccState *s = FALCON_PCC(pdev);
-    int64_t len;
 
-    if (!s->blk) {
-        error_setg(errp, "falcon-pcc needs drive=, the CF card's image");
-        return;
+    if (s->blk) {
+        int64_t len;
+
+        if (blk_set_perm(s->blk, BLK_PERM_CONSISTENT_READ | BLK_PERM_WRITE,
+                         BLK_PERM_ALL, errp) < 0)
+            return;
+        len = blk_getlength(s->blk);
+        if (len < 512) {
+            error_setg(errp, "falcon-pcc: the card's image is too small");
+            return;
+        }
+        s->sectors = (uint64_t)len / 512;
+        if (!s->lba48 && s->sectors > 0x0FFFFFFF)
+            s->sectors = 0x0FFFFFFF;
+        cis_build(s);
     }
-    if (blk_set_perm(s->blk, BLK_PERM_CONSISTENT_READ | BLK_PERM_WRITE,
-                     BLK_PERM_ALL, errp) < 0)
-        return;
-    len = blk_getlength(s->blk);
-    if (len < 512) {
-        error_setg(errp, "falcon-pcc: the card's image is too small");
-        return;
-    }
-    s->sectors = (uint64_t)len / 512;
-    if (!s->lba48 && s->sectors > 0x0FFFFFFF)
-        s->sectors = 0x0FFFFFFF;
-    cis_build(s);
 
     pdev->config[PCI_HEADER_TYPE] |= PCI_HEADER_TYPE_CARDBUS;
     pci_set_word(pdev->config + PCI_STATUS,
@@ -862,7 +875,7 @@ static void falcon_pcc_class_init(ObjectClass *klass, FALCON_PCC_CLASS_DATA *dat
     rc->phases.hold = falcon_pcc_reset_hold;
     device_class_set_props(dc, falcon_pcc_props);
     set_bit(DEVICE_CATEGORY_BRIDGE, dc->categories);
-    dc->desc = "falcon rig: PC Card bridge with a CompactFlash card";
+    dc->desc = "falcon rig: PC Card bridge, one socket, a CompactFlash card";
 }
 
 static const TypeInfo falcon_pcc_types[] = {

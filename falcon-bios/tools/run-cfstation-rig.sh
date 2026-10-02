@@ -185,7 +185,8 @@ boot() {
         -drive if=none,id=d0,file="$R/hdd.qcow2",format=qcow2 \
         -device ide-hd,drive=d0,bus=ide.0,unit=0$DISK \
         -drive if=none,id=cf,file="$R/cf.qcow2",format=qcow2 \
-        -device falcon-pcc,drive=cf -device piix3-usb-uhci,id=hc \
+        -device falcon-pcc,addr=7.0,multifunction=on,drive=cf \
+        -device falcon-pcc,addr=7.1 -device piix3-usb-uhci,id=hc \
         -serial file:"$R/com1.log" -monitor unix:"$R/mon.sock",server,nowait \
         >"$R/qemu.log" 2>&1 &
     QPID=$!

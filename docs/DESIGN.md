@@ -4882,24 +4882,26 @@ EHCI enables such a device itself where the silicon does not.
 
 QEMU models no PC Card bridge on x86, so the rig brings its own:
 `falcon-bios/tools/qemu-pcc/falcon-pcc.c`, a device modelled on the A21m's
-TI PCI-1450, one socket: a CardBus bridge's PCI header (type 2) with the
-PCI-1450's IDs, class and the A21m's subsystem, every register at the
-A21m's own value (its config space read under Linux): BAR0 with the
-CardBus socket registers and the ExCA set at +0x800, the capabilities
-pointer and secondary status, the bus numbers (presets, the A21m's BIOS's
-2-5 and 6-9 by default, `cardbus-bus` and `subordinate-bus` to change
-them), the CardBus latency timer, two memory and two I/O windows, INTA on
-function 0 and INTB on function 1, bridge control, the legacy 16-bit I/O
-base, TI's system control, multifunction routing, retry, card, device and
-diagnostic registers, and the power management capability at 0xA0. What
-is writable is stored and read back; the CardBus windows forward nothing,
-since there is no CardBus card. The card is a CompactFlash card (a CIS
-with the CF standard's configuration entries, the configuration option
-register at 0x200, an ATA task file over a drive image). The bridge's
-memory and I/O windows are
+TI PCI-1450, one socket per instance, attached as the A21m has it: two
+functions of one device (`addr=7.0,multifunction=on` and `addr=7.1`), the
+card in the first and the second socket empty. Each function is a CardBus
+bridge's PCI header (type 2) with the PCI-1450's IDs, class and the A21m's
+subsystem, every register at the A21m's own value (its config space read
+under Linux): BAR0 with the CardBus socket registers and the ExCA set at
++0x800, the capabilities pointer and secondary status, the bus numbers
+(presets, the A21m's BIOS's 2-5 and 6-9 by default, `cardbus-bus` and
+`subordinate-bus` to change them), the CardBus latency timer, two memory
+and two I/O windows, INTA on function 0 and INTB on function 1, bridge
+control, the legacy 16-bit I/O base, TI's system control, multifunction
+routing, retry, card, device and diagnostic registers, and the power
+management capability at 0xA0. What is writable is stored and read back;
+the CardBus windows forward nothing, since there is no CardBus card. The
+card is a CompactFlash card (a CIS with the CF standard's configuration
+entries, the configuration option register at 0x200, an ATA task file
+over a drive image). The bridge's memory and I/O windows are
 real mappings in QEMU's address spaces, moved and enabled as the ExCA
 registers are written, and it powers the card only as the real bridge does
-(13.6; the `cf3v` case is a 3.3 V card).
+(13.6; the `cf3v` case is a 3.3 V card, and the one on a single function).
 SeaBIOS sizes a CardBus bridge's bus numbers and windows as BARs, since it
 tells a bridge from a device by class 0x0604 alone, and stops at the
 capabilities pointer with "out of 32bit address space"; `build-qemu.sh`

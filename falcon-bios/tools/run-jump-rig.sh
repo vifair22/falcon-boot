@@ -28,10 +28,14 @@
 #   usb-hub-stick  the rig stick behind a usb-hub on the UHCI, found
 #             through the hub and booted the same way
 #   cf        a CompactFlash card in the PC Card bridge falcon-pcc.c models,
-#             carrying falcon-bios: its stage 3 loads off the card
+#             carrying falcon-bios: its stage 3 loads off the card. The
+#             bridge is attached as the A21m has it, two functions of one
+#             device with the card in the first and the second socket
+#             empty, in every cf case but cf3v
 #   cf3v      the same with a card that takes only 3.3 V, as the A21m's
 #             SanDisk reports itself: the bridge powers it only when both
-#             of its voltage registers ask for 3.3 V
+#             of its voltage registers ask for 3.3 V. The one case on a
+#             single function, the model's single-function shape
 #   cf48      a card past 128 GiB (mk-rig-disk.sh big, sparse) whose boot
 #             partition starts past sector 2^28: its stage 2 reads stage 3
 #             from there through PCC.MOD, which takes 48-bit commands for
@@ -116,6 +120,11 @@ QPCC=build/qemu-pcc/build/qemu-system-i386
 # The rig QEMU's BIOS files: its own SeaBIOS first (build-qemu.sh), the
 # machine's for the rest.
 QPCC_L=(-L build/qemu-pcc/share -L /usr/share/qemu)
+# The bridge as the A21m has it: two functions of one device, the card in
+# the first and the second socket empty. Slot 7 (3 is the default NIC's)
+# puts both at IRQ 11, as the A21m's BIOS does.
+PCC2=(-device falcon-pcc,addr=7.0,multifunction=on,drive=cf
+      -device falcon-pcc,addr=7.1)
 TIMEOUT=45
 
 mkdir -p "$R"
@@ -459,8 +468,7 @@ cf_rom() {
     cp build/test-bios.img "$R/cf.img"
     floppy cf
     boot "$QPCC" "${q[@]}" -option-rom "$R/rom1-agent.bin" \
-        -drive if=none,id=cf,format=raw,file="$R/cf.img" \
-        -device falcon-pcc,drive=cf
+        -drive if=none,id=cf,format=raw,file="$R/cf.img" "${PCC2[@]}"
     first=$(grep -ao 'an option ROM at 0x[0-9a-f]*, bytes 0x1800' \
         "$R/serial.txt" | head -1 | sed 's/.* at \(0x[0-9a-f]*\),.*/\1/' ||
         true)
@@ -474,7 +482,7 @@ cf_rom() {
     cp build/test-bios.img "$R/cf.img"
     boot "$QPCC" "${q[@]}" "${ROMS[@]}" \
         -drive if=none,id=cf,format=raw,file="$R/cf.img" \
-        -device falcon-pcc,drive=cf,shadow-roms=on
+        "${PCC2[0]}" "${PCC2[1]},shadow-roms=on" "${PCC2[@]:2}"
     chosen=$(grep -ao 'attribute memory window at 0x[0-9a-f]*' \
         "$R/serial.txt" | tail -1 | sed 's/.* //' || true)
     while read -r at len; do
@@ -583,8 +591,13 @@ for c in "${CASES[@]}"; do
         fi
         cp build/test-bios.img "$R/cf.img"
         floppy cf
-        boot "$QPCC" -drive if=none,id=cf,format=raw,file="$R/cf.img" \
-            -device falcon-pcc,drive=cf$([[ $c == cf3v ]] && echo ,volts=3)
+        if [[ $c == cf3v ]]; then
+            boot "$QPCC" -drive if=none,id=cf,format=raw,file="$R/cf.img" \
+                -device falcon-pcc,drive=cf,volts=3
+        else
+            boot "$QPCC" -drive if=none,id=cf,format=raw,file="$R/cf.img" \
+                "${PCC2[@]}"
+        fi
         judge "$c" 'boot drive 0x81, sector size 512'
         ;;
     cf48)
@@ -595,7 +608,7 @@ for c in "${CASES[@]}"; do
         falcon-bios/tools/mk-rig-disk.sh big "$R/cf48.img" >/dev/null
         floppy cf
         boot "$QPCC" -drive if=none,id=cf,format=raw,file="$R/cf48.img" \
-            -device falcon-pcc,drive=cf,lba48=on
+            "${PCC2[0]}" "${PCC2[1]},lba48=on" "${PCC2[@]:2}"
         rm -f "$R/cf48.img"
         judge cf48 'boot partition p1 at LBA 268437504' \
             'stage 3 inflated' 'boot drive 0x81, sector size 512'
@@ -615,8 +628,7 @@ for c in "${CASES[@]}"; do
         cp build/test-bios.img "$R/cf.img"
         floppy cf
         boot "$QPCC" -device isa-ide,iobase=0x1e0,iobase2=0x3e6,irq=11 \
-            -drive if=none,id=cf,format=raw,file="$R/cf.img" \
-            -device falcon-pcc,drive=cf
+            -drive if=none,id=cf,format=raw,file="$R/cf.img" "${PCC2[@]}"
         judge cf-io 'boot drive 0x81, sector size 512' \
             'I/O at 0x1e0 answers already' 'I/O window at 0x1c0'
         ;;
@@ -637,8 +649,7 @@ for c in "${CASES[@]}"; do
             -cpu pentium3 -m 128 -display none -boot order=c \
             -drive if=floppy,format=raw,file="$R/jump.img" \
             -drive file="$R/nobar.img",format=raw,if=ide,index=0 \
-            -drive if=none,id=cf,format=raw,file="$R/cf.img" \
-            -device falcon-pcc,drive=cf \
+            -drive if=none,id=cf,format=raw,file="$R/cf.img" "${PCC2[@]}" \
             -serial file:"$R/serial.log" -monitor none >/dev/null 2>&1 || true
         log_text > "$R/serial.txt"
         judge cf-nobar 'boot drive 0x81, sector size 512' \
@@ -659,7 +670,7 @@ for c in "${CASES[@]}"; do
             dd of="$R/cf.img" bs=1 seek=510 conv=notrunc status=none
         floppy cf
         boot "$QPCC" -drive if=none,id=cf,format=raw,file="$R/cf.img" \
-            -device falcon-pcc,drive=cf
+            "${PCC2[@]}"
         if grep -aq 'returned to the BIOS; resetting' "$R/serial.txt" &&
            [[ $(grep -ac 'stage 1, floppy' "$R/serial.txt") -ge 2 ]]; then
             echo "PASS  giveup    INT 18h reset the machine, back to the floppy"
