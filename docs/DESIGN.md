@@ -2846,7 +2846,7 @@ resident CD handler, from real mode.
 | 0x20000 | Linux cmdline; or the staged El Torito boot image (up to 63 KiB) on a chainload | handed over |
 | 0x90000-0x97FFF | bounce buffer | every read |
 | BDA top - 16 KiB | the resident CD handler: data, runs, El Torito packet, launch stub at +0x530, INT 13h entry at +0x570, INT 15h entry at +0xA00, carved E820 map at +0xB00, overlay pool at +0x1000; never below 0x98000 | permanent after a chainload; reserved in the map it hands on |
-| BDA top - 1 KiB (station) | the drive swap (`swapres.S`): the previous INT 13h vector, the drive, the handler at +0x10, 84 bytes | permanent after a chain of a disk that is not 0x80 |
+| BDA top - 1 KiB (station) | the drive swap (`swapres.S`): the drive, the INT 13h entry at +0x10 (the Safe MBR Hook header, 11.3.8, whose smhnext slot is the previous vector, then the handler at +0x2B), 111 bytes | permanent after a chain of a disk that is not 0x80 |
 | BDA top - 3 KiB (falcon jump) | the reverse thunk (`rthunk.S`): far pointers, its GDT, the saved caller, the INT 13h entry at +0x90, the INT 16h entry at +0x240 (the `USB` route's, when a module found a keyboard), the INT 15h entry at +0x300 and its carved map at +0x400 (the `USB` and `PCC` routes'), the release record at +0xB00 (`FJRS`, the vectors and BDA counts it replaced) and the keyboard entries at +0xB14; below it the virtual CD's block on `CDR`. As the keyboard block (13.6) it hooks no INT 13h: INT 16h, 15h, 18h and 19h only, DRIVE 0 | permanent after a route hands over, and as the keyboard block after `MBR` or a floppy-emulation disc while a `USB` route's keyboards are up, until station-legacy releases it for a chain to another disk (11.5.2); reserved in the map it hands on |
 | 0x100000 | stage 3: 16-byte header, entry at +0x10, then its image and `.bss` (at most 0x6F0000 together) | whole loader |
 | 0xB8000-0xB8F9F | VGA text memory, the 80x25 screen stage 3 draws | whole loader |
@@ -2999,6 +2999,20 @@ sequenceDiagram
 
 Other drives pass through to the previous handler. Writes fail. Reads past
 the medium's end up to 64 sectors of padding return zeros.
+
+Every INT 13h entry a falcon-bios resident installs (this handler's, the
+virtual floppy's below, the drive swap's (12.4) and jump's reverse thunk's
+(13.6)) begins with the Windows 98 DDK's `SafeMBRHook` structure: a short
+jump over it, `$INT13SF`, the vendor ID `FALCON  `, the previous handler
+(the block's one copy of it, which the handler chains through) and flags.
+The flags stay 0, since a hook may declare itself safe only when what it
+does is what Windows 98's own IDE driver provides, and a vendor
+protected-mode driver is what sets the flag for one that does not. Windows
+98's I/O supervisor walks the chain at startup and lists a handler whose
+flag is clear, or that has no structure, as an unknown hooker in
+`IOS.LOG` (`UnKnown int 13 hooker MBRINT13` for the hook it found in
+place of the BIOS's); with the flag set the line is gone. The other
+vectors a block hooks have no header.
 
 What stays in use behind the handoff is hidden. The BDA's lowered count
 hides the handler's 16 KiB from anything that asks for
@@ -3547,10 +3561,11 @@ container, a partition on a GPT disk, a disk whose sectors are not 512
 bytes, and a table that no longer has the entry the row was built from.
 Windows 98 SE reaches its desktop through this chain from the station's
 own disk, and from a second disk behind the swap (`make
-test-station-fixtures`); behind the swap it shows its "Performance
-Warning" (the Master Boot Record has been modified), which
-Windows 9x raises when it finds INT 13h hooked by code it does not know,
-and with which it runs that disk in MS-DOS compatibility mode.
+test-station-fixtures`); behind the swap it keeps that disk on its
+real-mode mapper (MS-DOS compatibility mode), since the swap's Safe MBR
+Hook flag is clear (11.3.8). The "Performance Warning" that the Master
+Boot Record has been modified is what Windows 9x raises for an INT 13h
+hook with no header.
 
 **BIOS, another disk: its MBR, with a drive swap** (route `MBR`, also
 `chain.c`). The disk's LBA 0 to 0000:7C00, DL as above and SI 0, but the
@@ -3856,7 +3871,8 @@ The BIOS station plus the rows jump offers: **CD drive**, **USB stick**, **CF
 card (PC Card)**, each when its controller is on the PCI bus and its driver
 is in the station partition. The drivers, the reverse thunk, the virtual CD
 and the routes are jump's (Section 13.4-13.6), in a falcon-bios module both
-link (`falcon-bios/src/jump/routes.c`). Jump keeps its floppy and its menu;
+link (`falcon-bios/src/jump/routes.c`); each resident's INT 13h entry
+carries the Safe MBR Hook header (11.3.8). Jump keeps its floppy and its menu;
 station-legacy reads the same `*.MOD` files from its station partition
 instead, which `mkstick station install --bios --legacy` copies there. A
 falcon stick found on USB is booted as jump boots it (its own stages, served
@@ -4033,9 +4049,12 @@ A21m's disk:
   behind the drive swap (13.6): `rigboot.S` as the card's MBR, reporting DL
   0x80, the card as 0x80, two disks counted and the internal disk as 0x81;
   the FreeDOS fixture to `C:\>` with its own `FDCONFIG.SYS` (HIMEMX,
-  `DOS=HIGH`); and, given `W98_CF`, a Windows 98 SE system card (`FORMAT
+  `DOS=HIGH`); given `W98_CF`, a Windows 98 SE system card (`FORMAT
   /S`, FAT32 by LBA) answering `ver` at `C:\>`; both judged from VGA
-  text.
+  text; and, given `W98_IOS_CF`, a Windows 98 SE installation booted to
+  its desktop, the drive swap's and the reverse thunk's Safe MBR Hook
+  headers (11.3.8) read out of memory, and its `IOS.LOG` read off the
+  card's overlay and quoted in the verdict.
 - **The installer on images** (`make test-station-install`): an MBR disk of
   the A21m's shape with a Windows 98 second disk and a LUKS2 shelf, a GPT
   disk with an ESP, Windows and a plaintext shelf; install, status, remove,
@@ -4631,7 +4650,8 @@ but the driver is protected-mode C at its slot above a megabyte. The entry
 is a small real-mode stub in conventional memory that saves the caller's
 state, enters protected mode with jump's own GDT and interrupts off, calls
 the driver, and returns to real mode and the caller, the opposite way from
-stage 2's thunk. Drivers poll; nothing in them takes an interrupt.
+stage 2's thunk. Its INT 13h entry begins with the Safe MBR Hook header
+(11.3.8), flags 0. Drivers poll; nothing in them takes an interrupt.
 
 **Memory.** The stub and its state take conventional memory the way
 `vcdres.S` does (the BDA's count at 0x413 is lowered). The driver's slot and
