@@ -1,4 +1,4 @@
-/* falcon jump's ATA.MOD: ATAPI CD drives on the legacy IDE channels
+/* falcon jump's ATA.MOD: ATAPI CD drives on the IDE channels
  * (docs/DESIGN.md Section 13.4 and 13.6).
  *
  * A module, not stage 3: linked at JMOD_SLOT_ATA, read off the floppy only
@@ -13,13 +13,16 @@
  * drive's own interrupt is masked (nIEN) while a command runs, so the BIOS's
  * IRQ handler is not left an interrupt it did not ask for.
  *
- * The legacy channels only (0x1F0 and 0x170), which is what the machines
- * Section 13 is for put their optical drive on: the ThinkPad A21m's PIIX4,
- * and QEMU's. A controller in PCI native mode is a later change.
+ * The channels probed are the PCI IDE controllers' (class 0x0101): a
+ * channel in native mode at the ports its BARs name, one in compatibility
+ * mode at the legacy pair (0x1F0, 0x170), the legacy pair alone when there
+ * is no PCI IDE controller (atacore.c's ata_channel_list). The PCI walk is
+ * the probe's; the resident half never touches configuration space.
  */
 
 #include <hw/jmodhdr.h>
 #include <hw/modrt.h>
+#include <hw/pci.h>
 #include <hw/ata/atacore.h>
 #include <hw/blk13.h>
 
@@ -53,7 +56,9 @@
 #define WAIT_SHORT  100000u      /* 1 s */
 #define WAIT_LONG   1000000u     /* 10 s */
 
-#define DEVS_MAX 4u
+#define DEVS_MAX  4u
+#define CTRLS_MAX 4u                      /* PCI IDE controllers walked */
+#define CHANS_MAX (2u * CTRLS_MAX)
 
 typedef struct {
     uint16_t base;
@@ -75,18 +80,21 @@ static blk13_dev g_blk = {
     ATAPI_SECTOR, 0, 1, serve_read, 0, BYTE_LIMIT / ATAPI_SECTOR
 };
 
-static const struct {
-    uint16_t base;
-    uint16_t ctrl;
-} k_channels[] = {
-    { 0x1F0u, 0x3F6u },
-    { 0x170u, 0x376u },
-};
-
 static void log_s(const char *s)
 {
     if (g_svc != (const jmod_services *)0)
         g_svc->log(s);
+}
+
+static void log_x(uint32_t v)
+{
+    if (g_svc != (const jmod_services *)0)
+        g_svc->log_hex(v);
+}
+
+static void log_bdf(const pci_loc *l)
+{
+    log_x(((uint32_t)l->bus << 16) | ((uint32_t)l->dev << 8) | l->fn);
 }
 
 /* 400 ns for the device's status to settle after a select: four reads of
@@ -259,27 +267,101 @@ static void capacity(ata_dev *d)
         d->sectors = 0;
 }
 
-static unsigned ata_probe(void)
+/* The PCI IDE controllers, each by its ordinal: one walk of the bus per
+ * controller and a last one that finds none (pci.h). Its programming
+ * interface and BARs into `out`, its location into `loc`. */
+static unsigned find_controllers(ata_ide_ctrl *out, pci_loc *loc)
 {
-    unsigned c;
+    unsigned n;
+
+    for (n = 0; n < CTRLS_MAX; n++) {
+        pci_loc *l = &loc[n];
+        unsigned i;
+
+        if (pci_find_class_mask(0x010100u, 0xFFFF00u, n, l) != 0)
+            break;
+        out[n].progif = (uint8_t)(pci_read32(l->bus, l->dev, l->fn, 0x08) >> 8);
+        for (i = 0; i < 4u; i++)
+            out[n].bar[i] = pci_read32(l->bus, l->dev, l->fn,
+                                       (uint8_t)(0x10u + 4u * i));
+        log_s("falcon-bios: ATA.MOD: IDE controller at bus/dev/fn ");
+        log_bdf(l);
+        log_s(", programming interface ");
+        log_x(out[n].progif);
+        log_s("\n");
+    }
+    return n;
+}
+
+/* A BIOS that does not know a controller in native mode leaves its I/O
+ * space decode off, and then nothing answers at its BARs. The command
+ * register's upper half is status, write-one-to-clear: masked off. */
+static void decode_on(const pci_loc *l)
+{
+    uint32_t cmd = pci_read32(l->bus, l->dev, l->fn, 0x04);
+
+    if ((cmd & 1u) != 0)
+        return;
+    pci_write32(l->bus, l->dev, l->fn, 0x04, (cmd & 0xFFFFu) | 1u);
+    log_s("falcon-bios: ATA.MOD: I/O space decode was off at bus/dev/fn ");
+    log_bdf(l);
+    log_s("; on\n");
+}
+
+static void probe_channel(const ata_chan *c)
+{
     unsigned sl;
 
-    g_ndev = 0;
-    for (c = 0; c < sizeof k_channels / sizeof k_channels[0]; c++) {
-        for (sl = 0; sl < 2u && g_ndev < DEVS_MAX; sl++) {
-            ata_dev *d = &g_dev[g_ndev];
+    for (sl = 0; sl < 2u && g_ndev < DEVS_MAX; sl++) {
+        ata_dev *d = &g_dev[g_ndev];
 
-            d->base = k_channels[c].base;
-            d->ctrl = k_channels[c].ctrl;
-            d->slave = (uint8_t)sl;
-            if (!identify(d))
-                continue;
-            capacity(d);
-            log_s("falcon-bios: ATA.MOD: ");
-            log_s(d->model);
-            log_s(d->sectors != 0 ? ", a disc in it\n" : ", no disc\n");
-            g_ndev++;
+        d->base = c->base;
+        d->ctrl = c->ctrl;
+        d->slave = (uint8_t)sl;
+        if (!identify(d))
+            continue;
+        capacity(d);
+        log_s("falcon-bios: ATA.MOD: ");
+        log_x(c->base);
+        log_s(sl == 0 ? " master: " : " slave: ");
+        log_s(d->model);
+        log_s(d->sectors != 0 ? ", a disc in it\n" : ", no disc\n");
+        g_ndev++;
+    }
+}
+
+static unsigned ata_probe(void)
+{
+    ata_ide_ctrl ctrls[CTRLS_MAX];
+    pci_loc locs[CTRLS_MAX];
+    ata_chan chans[CHANS_MAX];
+    unsigned nctrl;
+    unsigned nchan;
+    unsigned i;
+
+    g_ndev = 0;
+    nctrl = find_controllers(ctrls, locs);
+    if (nctrl == 0)
+        log_s("falcon-bios: ATA.MOD: no PCI IDE controller; the legacy channels\n");
+    nchan = ata_channel_list(ctrls, nctrl, chans, CHANS_MAX);
+    for (i = 0; i < nchan; i++) {
+        const ata_chan *c = &chans[i];
+
+        if (c->mode == ATA_CHAN_UNASSIGNED) {
+            const pci_loc *l = &locs[c->ctrl_idx];
+
+            log_s("falcon-bios: ATA.MOD: bus/dev/fn ");
+            log_bdf(l);
+            log_s(c->channel == 0 ? " primary" : " secondary");
+            log_s(" channel native, no I/O port assigned; skipped\n");
+            continue;
         }
+        if (c->ctrl_idx != ATA_CHAN_NO_CTRL)
+            decode_on(&locs[c->ctrl_idx]);
+        log_s("falcon-bios: ATA.MOD: channel at ");
+        log_x(c->base);
+        log_s(c->mode == ATA_CHAN_NATIVE ? " native\n" : " compat\n");
+        probe_channel(c);
     }
     return g_ndev;
 }
