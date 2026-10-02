@@ -108,18 +108,22 @@
 #                  kernel) is not, and choosing the first shows its page and
 #                  returns to the menu
 #   validation-off-uefi
-#                  a stick with a blessed ISO (mk-test-blessed-stick.sh) and
-#                  a second, unsigned copy of the payload ISO, under OVMF
-#                  with Secure Boot on and shim's MokSBState set (DESIGN
-#                  Section 7.4; the varstore mk-test-mok.sh writes beside
-#                  the enforcing one): the banner says validation is
-#                  disabled, the Personal OS row and the blessed row carry
-#                  {VALIDATION OFF}, and the unsigned ISO and the stale
-#                  record's ISO carry no brace
+#                  a stick with a blessed ISO (mk-test-blessed-stick.sh), a
+#                  second copy of the payload ISO and an ISO whose tree
+#                  carries an unsigned BOOTX64.EFI, under OVMF with Secure
+#                  Boot on and shim's MokSBState set (DESIGN Section 7.4;
+#                  the varstore mk-test-mok.sh writes beside the enforcing
+#                  one): the banner says validation is disabled, the
+#                  Personal OS row and the blessed row carry
+#                  {VALIDATION OFF}, the tree ISO is [unsigned] with no
+#                  brace where validation on would say {NOT BLESSED}, and
+#                  the payload copy and the stale record's ISO carry none
 #   validation-off-pos-uefi
 #                  the same machine: Enter on the personal OS warns before
-#                  the read, the UKI comes back refused with the advice of
-#                  DESIGN Section 7.4, and the page returns to the menu
+#                  the read, hands over, and the stub reports the firmware
+#                  refusing its kernel (DESIGN Section 7.4); the page with
+#                  the advice is judged when the image comes back, which
+#                  the fixture UKI does not under OVMF (case_voff_pos)
 #   validation-off-iso-uefi
 #                  the same machine: the unsigned payload ISO boots
 #   validation-off-station-uefi
@@ -217,8 +221,13 @@ EFI_ONLY_ISO=b-efi-only.iso
 X64_ISO=b-64-only.iso
 MULTI_ISO=b-multi.iso
 # The validation-off stick's second copy of the payload ISO, under a name no
-# bless record claims, so one row stays [unsigned] beside the stale one.
+# bless record claims, so one row boots the ordinary way beside the stale
+# one; and an ISO with an unsigned \EFI\BOOT\BOOTX64.EFI in its tree, the
+# row the predictions mark {NOT BLESSED} with validation on. The payload ISO
+# cannot be that row: its loader is inside its El Torito image only, and the
+# survey draws it [no efi].
 UNSIGNED_ISO=unsigned-test.iso
+TREE_ISO=unsigned-tree.iso
 
 build_sticks() {
     STICK_ID=$ID_A TEST_STICK_IMG=$R/stick-a.img \
@@ -231,11 +240,18 @@ build_sticks() {
         P3_KDF_MEMORY_KIB=$((512 * 1024)) STICK_ISOS="kdf-stick.iso" \
         falcon-efi/tools/mk-test-stick.sh --no-labels >"$R/stick-kdf.build" 2>&1
     # The validation-off cases' stick: a second copy of the payload ISO under
-    # a name no record claims, then the blessed ISO and the stale record for
-    # payload-test.iso that mk-test-blessed-stick.sh adds.
+    # a name no record claims, the tree ISO (the unsigned payload as
+    # \EFI\BOOT\BOOTX64.EFI, no El Torito entry: the survey's first stage,
+    # nothing the firmware boots), then the blessed ISO and the stale record
+    # for payload-test.iso that mk-test-blessed-stick.sh adds.
+    rm -rf "$R/tree-iso"
+    mkdir -p "$R/tree-iso/EFI/BOOT"
+    cp build/test/payload.efi "$R/tree-iso/EFI/BOOT/BOOTX64.EFI"
+    xorriso -as mkisofs -quiet -r -J -V UNSIGNED_TREE -o "$R/$TREE_ISO" \
+        "$R/tree-iso" >"$R/stick-voff.build" 2>&1
     STICK_ID=$ID_A TEST_STICK_IMG=$R/stick-voff.img \
-        STICK_ISO_FILES="build/test-payload.iso:$UNSIGNED_ISO" \
-        falcon-efi/tools/mk-test-stick.sh --no-labels >"$R/stick-voff.build" 2>&1
+        STICK_ISO_FILES="build/test-payload.iso:$UNSIGNED_ISO $R/$TREE_ISO:$TREE_ISO" \
+        falcon-efi/tools/mk-test-stick.sh --no-labels >>"$R/stick-voff.build" 2>&1
     STICK_IMG=$R/stick-voff.img falcon-efi/tools/mk-test-blessed-stick.sh \
         >>"$R/stick-voff.build" 2>&1
 }
@@ -1151,6 +1167,8 @@ VOFF_BANNER='SB: on (shim validation DISABLED)'
 VOFF_TAG='{VALIDATION OFF}'
 VOFF_POS_ROW='Personal OS \(encrypted\) +\{VALIDATION OFF\}'
 VOFF_ADVICE='so shim left the'
+# sd-stub's own line for the firmware's refusal of its kernel (src/boot/linux.c).
+VOFF_REFUSED='Error loading kernel image'
 
 case_voff_menu() { # case_voff_menu CASE
     local why= one
@@ -1168,9 +1186,12 @@ case_voff_menu() { # case_voff_menu CASE
             why="the Personal OS row is not drawn with $VOFF_TAG"
     fi
     # Rows that boot the ordinary way have no reason in this state: the
-    # probe has been inside each (its brackets are filled) and drew no brace.
-    for one in "$UNSIGNED_ISO:\[unsigned\]" \
-               "$VOFF_STALE_ISO:\[unsigned\] \[blessed, stale\]"; do
+    # probe has been inside each (its brackets are filled) and drew no
+    # brace. The tree ISO is the one with a verdict to suppress; the
+    # payload ISO and its stale twin have no first stage to predict.
+    for one in "$TREE_ISO:\[unsigned\]" \
+               "$UNSIGNED_ISO:\[no efi\]" \
+               "$VOFF_STALE_ISO:\[no efi\] +\[blessed, stale\]"; do
         [[ -n "$why" ]] && break
         wait_for_re "${one%%:*} +${one#*:}" 30 ||
             why="${one%%:*} is not drawn ${one#*:}"
@@ -1180,17 +1201,22 @@ case_voff_menu() { # case_voff_menu CASE
     done
     halt
     if [[ -z "$why" ]]; then
-        result "$1" 1 "banner validation off; $VOFF_TAG on the Personal OS and $VOFF_BLESSED_ISO; $UNSIGNED_ISO and $VOFF_STALE_ISO untagged"
+        result "$1" 1 "banner validation off; $VOFF_TAG on the Personal OS and $VOFF_BLESSED_ISO; $TREE_ISO [unsigned] with no brace; $UNSIGNED_ISO and $VOFF_STALE_ISO untagged"
     else
         result "$1" 0 "$why"
     fi
 }
 
 # Enter on the personal OS: the prompt, the chooser (this shelf has two
-# UKIs), the warning before the read, then the page the refused UKI comes
-# back to, with the advice, and the menu again.
+# UKIs), the warning before the read, the handover, and the stub's own line
+# that the firmware refused its kernel (DESIGN Section 7.4). The fixture
+# UKI does not come back from there under OVMF: after the refusal the
+# machine faults inside the firmware, on the bless route too, with 4 GB and
+# with SMM on alike, so the page with the advice is judged only when it
+# appears. The corpus's blessed wraps come back and show it
+# (docs/coverage.md, the moksb-blessed column).
 case_voff_pos() { # case_voff_pos CASE
-    local why= i
+    local why= i after
     boot uefi-moksb "$R/stick-voff.img:boot"
     wait_for "Personal OS (encrypted)" 90 || why="no Personal OS row"
     if [[ -z "$why" ]]; then
@@ -1217,21 +1243,32 @@ case_voff_pos() { # case_voff_pos CASE
             why="no warning before the read"
     fi
     if [[ -z "$why" ]]; then
-        wait_for "$VOFF_ADVICE" 120 || why="the page after the UKI has no advice"
+        wait_for "handing over to the image" 120 || why="no handover"
+    fi
+    if [[ -z "$why" ]]; then
+        wait_for_re "$VOFF_REFUSED|$VOFF_ADVICE|FALCON-UKI-INIT" 120 ||
+            why="the image neither reported a refusal nor came back"
     fi
     if [[ -z "$why" ]]; then
         has "FALCON-UKI-INIT" && why="the UKI started"
-        has "the image exited, status" || has "personal OS boot failed while" ||
-            why="${why:-the page does not report the UKI exit}"
-        wait_for "press any key to return to the menu" 10 ||
-            why="${why:-the page has no way back}"
     fi
     if [[ -z "$why" ]]; then
-        menu_back || why="the menu did not come back"
+        # The page after the image, when the image comes back at all.
+        if wait_for_re "the image exited, status|personal OS boot failed while" 20; then
+            after="the page with the advice, the menu again"
+            wait_for "$VOFF_ADVICE" 10 || why="the page after the UKI has no advice"
+            [[ -n "$why" ]] || wait_for "press any key to return to the menu" 10 ||
+                why="the page has no way back"
+            [[ -n "$why" ]] || menu_back || why="the menu did not come back"
+        elif has "Exception Type"; then
+            after="then the machine faulted in a firmware driver"
+        else
+            after="then nothing came back"
+        fi
     fi
     halt
     if [[ -z "$why" ]]; then
-        result "$1" 1 "warned before the read; the UKI came back refused, with the advice; the menu again"
+        result "$1" 1 "warned before the read; the firmware refused the UKI's kernel; $after"
     else
         result "$1" 0 "$why"
     fi
