@@ -1,4 +1,4 @@
-/* falcon-bios: the memory map, from INT 15h AX=E820.
+/* falcon-bios: the memory map, as the BIOS describes it.
  *
  * The kernel needs this and cannot get it itself: by the time it runs, the
  * BIOS call that answers is gone, because the machine is in protected mode
@@ -10,78 +10,14 @@
  * whose size is not known until it is read, and the only way to know whether
  * the address chosen for it is memory at all.
  *
- * E820 IS ASKED IN A LOOP AND THE BIOS DECIDES WHEN IT ENDS. EBX carries a
- * continuation value that is opaque, starts at zero, and is zero again on
- * the last entry - though not every BIOS does that, so carry ends it too.
- * The entry is written to ES:DI, which is why the buffer is in the low 64 KB
- * and not a static here: this file links into stage 3, above a megabyte.
+ * This file is the arithmetic over a map, host-tested: the map a BIOS
+ * without E820 describes with the older calls (e820_synth), where an initrd
+ * goes, what a resident carves out, the ceilings a resident answers E801
+ * with. The calls themselves, and the copy every consumer reads, are in
+ * e820_bios.c.
  */
 
-#include <start/bios.h>
 #include <mem/e820.h>
-
-#include <lib/string.h>
-
-#define E820_SMAP 0x534D4150u   /* "SMAP", which the BIOS echoes in EAX */
-
-static e820_entry g_map[E820_MAX];
-static unsigned   g_count;
-static int        g_read;
-
-unsigned e820_read(void)
-{
-    volatile e820_entry *slot = (volatile e820_entry *)(uintptr_t)E820_ADDR;
-    uint32_t next = 0;
-
-    if (g_read)
-        return g_count;
-    g_read = 1;
-    g_count = 0;
-
-    do {
-        /* The length is asked for as 24 so a BIOS that has the ACPI
-         * attributes word reports it; one that does not writes 20 and
-         * leaves the rest alone, which is why the slot is cleared each
-         * time rather than once. */
-        memset((void *)(uintptr_t)slot, 0, sizeof *slot);
-        slot->attrs = 1;        /* the value to assume when none is written */
-
-        thunk_regs.eax = 0xE820u;
-        thunk_regs.ebx = next;
-        thunk_regs.ecx = 24;
-        thunk_regs.edx = E820_SMAP;
-        thunk_regs.edi = (uint32_t)E820_ADDR;
-        thunk_regs.es = 0;
-        thunk_vector = 0x15;
-        thunk_bios();
-
-        if ((thunk_regs.flags & BIOS_FLAG_CARRY) != 0)
-            break;
-        if (thunk_regs.eax != E820_SMAP)
-            break;
-        /* A zero-length entry is not an entry. Some BIOSes emit one rather
-         * than ending the loop. */
-        if (slot->len != 0 && g_count < E820_MAX) {
-            g_map[g_count] = *slot;
-            g_count++;
-        }
-        next = thunk_regs.ebx;
-    } while (next != 0 && g_count < E820_MAX);
-
-    return g_count;
-}
-
-unsigned e820_count(void)
-{
-    return g_count;
-}
-
-const e820_entry *e820_at(unsigned i)
-{
-    if (i >= g_count)
-        return (const e820_entry *)0;
-    return &g_map[i];
-}
 
 uint64_t e820_place_in(const e820_entry *map, unsigned n, uint64_t size,
                        uint64_t align, uint64_t low, uint64_t high)
@@ -256,8 +192,6 @@ uint16_t e820_e801_cap(const e820_range *res, unsigned n_res)
     return (uint16_t)((lowest - floor) >> 16);
 }
 
-/* The cached map, which is the only one the loader has. Split from the line
- * above it so the arithmetic can be handed a map a test wrote. */
 int e820_is_ram_in(const e820_entry *map, unsigned n, uint64_t base,
                    uint64_t len)
 {
@@ -296,22 +230,6 @@ int e820_is_ram_in(const e820_entry *map, unsigned n, uint64_t base,
     return at >= end;
 }
 
-int e820_is_ram(uint64_t base, uint64_t len)
-{
-    return e820_is_ram_in(g_map, g_count, base, len);
-}
-
-uint64_t e820_place_high(uint64_t size, uint64_t align, uint64_t low,
-                         uint64_t high)
-{
-    return e820_place_in(g_map, g_count, size, align, low, high);
-}
-
-uint64_t e820_largest(uint64_t low, uint64_t high)
-{
-    return e820_largest_in(g_map, g_count, low, high);
-}
-
 uint16_t e820_e801_cap_low(const e820_range *res, unsigned n_res)
 {
     const uint64_t one = 1024ull * 1024ull;
@@ -339,4 +257,67 @@ uint16_t e820_e801_cap_low(const e820_range *res, unsigned n_res)
     if (lowest >= sixteen)
         return 0xFFFFu;
     return (uint16_t)((lowest - one) >> 10);
+}
+
+/* The 1-16 MB and above-16 MB halves of AX=E801's answer, or the AX=0 form
+ * where the counts are in CX and DX. 0 when the answer is not one: a BIOS
+ * that has no E801 and left AX alone leaves 0xE801 in it, which is more
+ * than the 15 MB the low half can mean. */
+static int synth_e801(const e820_legacy *in, e820_entry *out, unsigned cap,
+                      unsigned *k)
+{
+    const uint64_t one = 1024ull * 1024ull;
+    const uint64_t sixteen = 16ull * 1024ull * 1024ull;
+    uint32_t kb = in->e801_ax != 0 ? in->e801_ax : in->e801_cx;
+    uint32_t blocks = in->e801_bx != 0 ? in->e801_bx : in->e801_dx;
+    uint64_t end;
+
+    if (kb > 0x3C00u)
+        return 0;
+    end = one + (uint64_t)kb * 1024ull;
+    /* Below 16 MB the count is contiguous from 1 MB, so what it stops short
+     * of is a hole (the ISA hole at 15 MB, or memory the machine does not
+     * have): reserved, so nothing is placed in it. */
+    if (carve_emit(out, cap, k, one, end, E820_USABLE, 1u) != 0 ||
+        carve_emit(out, cap, k, end, sixteen, E820_RESERVED, 1u) != 0)
+        return 1;
+    carve_emit(out, cap, k, sixteen, sixteen + (uint64_t)blocks * 65536ull,
+               E820_USABLE, 1u);
+    return 1;
+}
+
+unsigned e820_synth(const e820_legacy *in, e820_entry *out, unsigned cap,
+                    e820_from *from)
+{
+    const uint64_t one = 1024ull * 1024ull;
+    const uint64_t video = 0xA0000ull;
+    e820_from src = E820_FROM_BDA;
+    unsigned k = 0;
+    uint64_t low;
+
+    if (from != (e820_from *)0)
+        *from = E820_FROM_NONE;
+    if (in == (const e820_legacy *)0 || out == (e820_entry *)0)
+        return 0;
+
+    /* Conventional memory as the BDA counts it; what the BIOS keeps above
+     * its count (the EBDA), then the video and ROM area up to 1 MB. */
+    low = (uint64_t)in->base_kb * 1024ull;
+    if (low > video)
+        low = video;
+    if (carve_emit(out, cap, &k, 0, low, E820_USABLE, 1u) != 0 ||
+        carve_emit(out, cap, &k, low, video, E820_RESERVED, 1u) != 0 ||
+        carve_emit(out, cap, &k, video, one, E820_RESERVED, 1u) != 0)
+        return k;
+
+    if (in->e801 && synth_e801(in, out, cap, &k)) {
+        src = E820_FROM_E801;
+    } else if (in->ah88) {
+        carve_emit(out, cap, &k, one, one + (uint64_t)in->ah88_ax * 1024ull,
+                   E820_USABLE, 1u);
+        src = E820_FROM_88;
+    }
+    if (from != (e820_from *)0)
+        *from = src;
+    return k;
 }

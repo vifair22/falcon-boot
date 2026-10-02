@@ -23,8 +23,9 @@ typedef struct {
  * and what the kernel expects when it sees the count at the limit. */
 #define E820_MAX 128u
 
-/* Reads the map once and caches it. Returns the number of entries, which is
- * 0 when the BIOS has no E820 at all. */
+/* Reads the map once and caches it: INT 15h AX=E820, or on a BIOS without
+ * it the map e820_synth builds from the older calls. Returns the number of
+ * entries. */
 unsigned e820_read(void);
 
 unsigned e820_count(void);
@@ -101,5 +102,40 @@ uint16_t e820_e801_cap(const e820_range *res, unsigned n_res);
  * `res` that reaches into that stretch (falcon jump's drivers, at 15 MB), or
  * 0xFFFF (no limit) when none does. */
 uint16_t e820_e801_cap_low(const e820_range *res, unsigned n_res);
+
+/* What the older calls answer on a BIOS without E820, as the registers come
+ * back: the BDA's count of conventional memory in KB (0x413); INT 15h
+ * AX=E801, when it returned with carry clear, with AX and CX the KB between
+ * 1 and 16 MB and BX and DX the 64 KB blocks above 16 MB; and INT 15h
+ * AH=88h, when it returned with carry clear, with AX the KB above 1 MB. */
+typedef struct {
+    uint16_t base_kb;
+    int      e801;
+    uint16_t e801_ax;
+    uint16_t e801_bx;
+    uint16_t e801_cx;
+    uint16_t e801_dx;
+    int      ah88;
+    uint16_t ah88_ax;
+} e820_legacy;
+
+/* Which call a map came from. */
+typedef enum {
+    E820_FROM_NONE = 0,
+    E820_FROM_E820,
+    E820_FROM_E801,
+    E820_FROM_88,
+    E820_FROM_BDA       /* neither older call answered: conventional memory only */
+} e820_from;
+
+/* The map those answers describe, into `out` (at most `cap` entries, the
+ * count written returned; six is enough for every answer): conventional
+ * memory from the BDA's count, the EBDA above it and the video and ROM
+ * area to 1 MB reserved, then extended memory from E801 (the 1-16 MB count,
+ * the hole it stops short of reserved, the count above 16 MB) or, when that
+ * call is absent or its count is not one, from AH=88h. Every entry's attrs
+ * is 1, as an E820 entry's is taken to be. *from says which. */
+unsigned e820_synth(const e820_legacy *in, e820_entry *out, unsigned cap,
+                    e820_from *from);
 
 #endif /* FALCON_BIOS_E820_H */
