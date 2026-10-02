@@ -1290,6 +1290,7 @@ EFI_STATUS iso_survey_media(EFI_SYSTEM_TABLE *st, fs_vol *vol,
     out->family = family_by_id(FAMILY_UNKNOWN);
     out->sig = ISO_SIG_UNKNOWN;
     out->uefi = UEFIBOOT_UNKNOWN;
+    out->uki = 0;
     memset(&out->trust, 0, sizeof(out->trust));
     if (st == (void *)0 || vol == (void *)0 || file == (void *)0)
         return EFI_INVALID_PARAMETER;
