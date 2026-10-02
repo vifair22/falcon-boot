@@ -395,24 +395,25 @@ static int window_range(uint32_t base, uint32_t limit, pcc_range *out)
     return 1;
 }
 
-/* Every memory range a function on the bus decodes: its memory BARs, and
- * the windows of a PCI-to-PCI (header type 1) or CardBus (type 2) bridge.
- * The count, or -1 when the table is too small for the bus. */
+/* Every memory range a function on the bus decodes, in one walk: its
+ * memory BARs, and the windows of a PCI-to-PCI (header type 1) or CardBus
+ * (type 2) bridge. The count, or -1 when the table is too small for the
+ * bus. */
 static int collect_ranges(void)
 {
-    unsigned nth;
+    pci_loc loc;
     unsigned n = 0;
 
-    for (nth = 0; ; nth++) {
-        pci_loc loc;
+    loc.bus = 0;
+    loc.dev = 0;
+    loc.fn = PCI_FN_START;
+    while (pci_next(&loc) == 0) {
         uint32_t hdr;
         unsigned nbars;
         uint8_t reg;
         uint32_t w;
         pcc_range r;
 
-        if (pci_find_class_mask(0, 0, nth, &loc) != 0)
-            break;
         hdr = (pci_read32(loc.bus, loc.dev, loc.fn, 0x0C) >> 16) & 0x7Fu;
         nbars = hdr == 0 ? 6u : hdr == 1u ? 2u : hdr == 2u ? 1u : 0;
         for (reg = 0x10; reg < 0x10u + 4u * nbars; ) {
