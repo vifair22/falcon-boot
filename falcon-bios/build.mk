@@ -515,6 +515,21 @@ $(BIOS_TICKSTOP): $(BIOS_OBJ)/falcon-bios/tools/tickstop.o $(BIOS)/start/bios.ld
 		echo "ERROR: $@ is $$sz bytes, not 512"; exit 1; \
 	fi
 
+# The jump rig's no-E820 boot sector (falcon-bios/tools/noe820.S): hooks
+# INT 15h to fail E820 (and E801 too, when the rig patches its mode byte)
+# and boots the floppy under it, so stage 3 builds its map from the older
+# calls as it would on a BIOS without E820.
+BIOS_NOE820 := build/noe820.bin
+
+$(BIOS_NOE820): $(BIOS_OBJ)/falcon-bios/tools/noe820.o $(BIOS)/start/bios.ld
+	@mkdir -p $(@D)
+	$(CC_HOST) $(BIOS_LDFLAGS) -Wl,-Ttext,0x7C00 -Wl,-e,_start -o $@.elf $<
+	objcopy -O binary -j .text $@.elf $@
+	@sz=$$(stat -c %s $@); \
+	if [ "$$sz" -ne 512 ]; then \
+		echo "ERROR: $@ is $$sz bytes, not 512"; exit 1; \
+	fi
+
 # The BIOS station rig (DESIGN Section 12.11): the partition chain, the
 # drive swap, STATION.INI and next boot under SeaBIOS, judged from serial.
 test-station-bios: station $(BIOS_RIGBOOT) $(BIOS_TICKSTOP) $(MKSTICK)

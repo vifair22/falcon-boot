@@ -10,6 +10,12 @@
 #             drive 0x80
 #   cd        the rig's memprobe disc in an IDE CD drive: it boots and
 #             reports the memory map it was handed
+#   noe820    the cd case booted under a hard disk boot sector
+#             (tools/noe820.S) whose INT 15h filter fails E820, as a BIOS
+#             without the call does: stage 3 builds its map from E801, and
+#             memprobe reports that map with usable memory from 1 MB and
+#             the resident's block carved out
+#   noe820-88 the same with E801 failed too, so the map comes from AH=88h
 #   usb-uhci  the rig stick (build/test-bios-gpt.img, a GPT falcon stick)
 #   usb-ohci  on each controller: jump knows it by its boot record, and the
 #   usb-ehci  stick's own stage 3 loads off the drive the reverse thunk
@@ -96,7 +102,7 @@ QPCC=build/qemu-pcc/build/qemu-system-i386
 TIMEOUT=45
 
 mkdir -p "$R"
-make --no-print-directory bios test-bios-img test-bios-probe >/dev/null
+make --no-print-directory bios test-bios-img test-bios-probe build/noe820.bin >/dev/null
 
 def() {       # def NAME: its value in biosdefs.h
     sed -n "s/^#define[ \t]*$1[ \t]*\([0-9]*\).*/\1/p" \
@@ -478,7 +484,8 @@ cf_rom() {
 FAILED=0
 CASES=("$@")
 [[ ${#CASES[@]} -gt 0 ]] ||
-    CASES=(hdd cd usb-uhci usb-ohci usb-ehci usb-hub-stick cf cf3v cf48 cf-rom
+    CASES=(hdd cd noe820 noe820-88 usb-uhci usb-ohci usb-ehci usb-hub-stick
+           cf cf3v cf48 cf-rom
            giveup
            mem s2crc s3crc stick3crc modcrc chs menu kbd kbd-hub kbd-hub2
            kbd-ehci kbd-legacy kbd-giveup kbd-hdd)
@@ -495,6 +502,35 @@ for c in "${CASES[@]}"; do
         floppy cd
         boot "$QEMU" -drive file=build/memprobe.iso,media=cdrom,if=ide,index=2
         judge cd 'MEMPROBE DONE'
+        ;;
+    noe820|noe820-88)
+        # The shim as the hard disk's MBR, booted first (-boot c), the
+        # floppy still drive 0 under it, the memprobe disc as in cd. PASS
+        # needs the shim's line, stage 3 saying which call its map came
+        # from, and in the map memprobe was handed usable memory from 1 MB
+        # and the resident's block (vcd.c says where it went) reserved.
+        head -c 4194304 /dev/zero > "$R/noe820.img"
+        dd if=build/noe820.bin of="$R/noe820.img" conv=notrunc status=none
+        from='memory map from E801'
+        if [[ $c == noe820-88 ]]; then
+            printf '\x01' |
+                dd of="$R/noe820.img" bs=1 seek=508 conv=notrunc status=none
+            from='memory map from AH=88h'
+        fi
+        floppy cd
+        rm -f "$R/serial.log"
+        timeout "$TIMEOUT" "$QEMU" -L /usr/share/qemu -machine pc \
+            -cpu pentium3 -m 128 -display none -boot c \
+            -drive if=floppy,format=raw,file="$R/jump.img" \
+            -drive file="$R/noe820.img",format=raw,if=ide,index=0 \
+            -drive file=build/memprobe.iso,media=cdrom,if=ide,index=2 \
+            -serial file:"$R/serial.log" -monitor none >/dev/null 2>&1 || true
+        log_text > "$R/serial.txt"
+        blk=$(grep -ao 'serving the medium on drive 0x[0-9a-f]* from 0x[0-9a-f]*' \
+            "$R/serial.txt" | tail -1 | sed 's/.* from 0x//' || true)
+        judge "$c" "$from" 'NOE820: INT 15h E820 fails' 'MEMPROBE DONE' \
+            'MEMPROBE E820 0000000000100000 [0-9A-F]* 00000001' \
+            "MEMPROBE E820 $(printf %016X "0x${blk:-0}") [0-9A-F]* 00000002"
         ;;
     usb-uhci) usb usb-uhci -device piix3-usb-uhci,id=hc ;;
     usb-ohci) usb usb-ohci -device pci-ohci,id=hc ;;
