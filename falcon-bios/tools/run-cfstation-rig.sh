@@ -48,6 +48,20 @@
 #             until a key, so `ver` is typed once the handover is on
 #             serial, and the answer and C:\> are judged from VGA text,
 #             the swap from serial. Skipped without the image
+#   win98-ios a Windows 98 SE installation on a card (W98_IOS_CF: one
+#             active FAT32 partition at 63, a real-mode driver in
+#             CONFIG.SYS serving the card by PIO at 0x1E0, the ports the
+#             rig's card sits on), booted to its desktop: the screen is
+#             watched until it leaves text mode and is then left to
+#             settle; the Safe MBR Hook headers of the drive swap and the
+#             reverse thunk (DESIGN 11.3.8, the structure Windows 98's I/O
+#             supervisor reads at each INT 13h hook) are read out of
+#             memory at the segments serial named; the machine is halted
+#             and C:\WINDOWS\IOS.LOG read off the card's overlay. Judged
+#             by the desktop and the headers. What IOS wrote about the
+#             hooks is kept and quoted in the verdict: with the flags 0 it
+#             lists falcon's hook as unknown, and a driver that takes the
+#             hook over is what changes that. Skipped without the image
 #
 # Usage: falcon-bios/tools/run-cfstation-rig.sh [case...]   (default: all)
 # Env:   A21M_IMG  the A21m's disk image as the internal disk (default: the
@@ -56,6 +70,8 @@
 #                  station cases
 #        FIXTURES  where freedos.img is (default build/fixtures)
 #        W98_CF    the win98 case's card (default $FIXTURES/win98cf.img)
+#        W98_IOS_CF  the win98-ios case's card (default
+#                  $FIXTURES/cf-98-bridge.img)
 set -euo pipefail
 
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)
@@ -64,6 +80,7 @@ R=build/cfstation-rig
 A21M_IMG=${A21M_IMG:-}
 FIX=${FIXTURES:-build/fixtures}
 W98_CF=${W98_CF:-$FIX/win98cf.img}
+W98_IOS_CF=${W98_IOS_CF:-$FIX/cf-98-bridge.img}
 QPCC=build/qemu-pcc/build/qemu-system-i386
 MEMTEST=${MEMTEST:-build/memtest/mt86p_810_i586}
 MACHINE=pc,x-south-bridge=piix4-isa
@@ -171,6 +188,37 @@ shot() {
         rm -f "$R/$1.ppm"
     return 0
 }
+# The height of the screen as QEMU draws it now: 400 in VGA text mode, 480
+# or more once Windows 98 has drawn its desktop.
+screen_height() {
+    rm -f "$R/probe.ppm"
+    mon "screendump $R/probe.ppm"
+    sleep 0.5
+    [[ -s "$R/probe.ppm" ]] && sed -n '2s/^[0-9]* //p' "$R/probe.ppm" || echo 0
+}
+
+# A constant from biosdefs.h, as build.mk reads them.
+bdef() { sed -n "s/^#define $1 *\(0x[0-9A-Fa-f]*\).*/\1/p" falcon-bios/src/start/biosdefs.h; }
+
+# The Safe MBR Hook header at a resident's INT 13h entry, read out of the
+# guest at SEG:OFF: the short jump, the signature and ID, smhnext when
+# NEXT (eight hex digits as the bytes lie) is given, and flags 0. Prints
+# what is wrong, nothing when the header is as biosdefs.h writes it.
+hook_header() {  # hook_header NAME SEG OFF [NEXT]
+    local f=$R/$1.hdr got
+    rm -f "$f"
+    mon "pmemsave $(( $2 * 16 + $3 )) 27 $f"
+    sleep 0.3
+    [[ -s "$f" ]] || { echo "no memory dump of the $1's header"; return; }
+    got=$(od -An -tx1 -N3 "$f" | tr -d ' \n')
+    [[ $got == eb1990 ]] || { echo "$1: no short jump at its entry ($got)"; return; }
+    got=$(dd if="$f" bs=1 skip=3 count=16 status=none)
+    [[ $got == '$INT13SFFALCON  ' ]] || { echo "$1: no signature and ID at its entry ('$got')"; return; }
+    got=$(od -An -tx1 -j19 -N4 "$f" | tr -d ' \n')
+    [[ -z "${4:-}" || $got == "$4" ]] || { echo "$1: smhnext is $got, not $4"; return; }
+    got=$(od -An -tx1 -j23 -N4 "$f" | tr -d ' \n')
+    [[ $got == 00000000 ]] || { echo "$1: flags are $got, not 0"; return; }
+}
 
 # Both disks on throwaway overlays, so neither a run nor Windows writes the
 # card or the internal disk.
@@ -268,7 +316,7 @@ swap_missing() {
 }
 
 CASES=("$@")
-[[ ${#CASES[@]} -gt 0 ]] || CASES=(menu windows cf foreign freedos win98)
+[[ ${#CASES[@]} -gt 0 ]] || CASES=(menu windows cf foreign freedos win98 win98-ios)
 
 for c in "${CASES[@]}"; do
     case $c in
@@ -359,6 +407,81 @@ for c in "${CASES[@]}"; do
         [[ -z "$WHY" ]] && WHY=$(swap_missing)
         result "$c" "$([[ -z "$WHY" ]] && echo 1 || echo 0)" \
             "${WHY:-C:\\> on screen, card swapped with 0x80 ($R/$c.png)}"
+        ;;
+    win98-ios)
+        CARD=$W98_IOS_CF
+        if [[ ! -f "$CARD" ]]; then
+            echo "SKIP  $c  no $CARD"
+            continue
+        fi
+        rm -f "$R/$c.vga" "$R/$c.txt" "$R/$c.png" "$R/$c.img" "$R/$c.ioslog"
+        TIMEOUT=480 boot
+        WHY=
+        wait_for 'handing over' 60 || WHY="jump never handed over"
+        # IOS runs and writes its log before the desktop is drawn, and the
+        # desktop is the first screen taller than text mode's 400 lines
+        # (the logo is 320x400). Left to settle after it, for the lazy
+        # writer.
+        if [[ -z "$WHY" ]]; then
+            up=0
+            for (( i = 0; i < 60; i++ )); do
+                sleep 5
+                kill -0 "$QPID" 2>/dev/null || break
+                [[ "$(screen_height)" -ge 480 ]] && { up=1; break; }
+            done
+            if [[ $up -eq 1 ]]; then
+                sleep 90
+            else
+                WHY="the screen never left text mode in 300 s"
+            fi
+            mon "pmemsave 0xb8000 4000 $R/$c.vga"
+            sleep 0.2
+            [[ -s "$R/$c.vga" ]] && vga_text "$R/$c.vga" > "$R/$c.txt"
+            shot "$c"
+        fi
+        # The headers, where serial says the blocks went: the swap's
+        # smhnext must be the reverse thunk's entry, the hook it replaced.
+        HDR=
+        if kill -0 "$QPID" 2>/dev/null; then
+            swapseg=$(log_text "$R/com1.log" |
+                grep -aoE 'INT 13h resident at segment 0x[0-9a-f]+' |
+                grep -oE '0x[0-9a-f]+$' | tail -1)
+            thunk=$(log_text "$R/com1.log" |
+                grep -aoE 'reverse thunk for drive 0x81 at 0x[0-9a-f]+' |
+                grep -oE '0x[0-9a-f]+$' | tail -1)
+            if [[ -n "$swapseg" && -n "$thunk" ]]; then
+                next=$(printf '%02x%02x%02x%02x' \
+                    $(( $(bdef JRES_OFF_CODE) & 0xFF )) \
+                    $(( $(bdef JRES_OFF_CODE) >> 8 )) \
+                    $(( thunk / 16 & 0xFF )) $(( thunk / 16 >> 8 )))
+                HDR=$(hook_header swap "$swapseg" "$(bdef SWAP_OFF_CODE)" "$next")
+                [[ -n "$HDR" ]] ||
+                    HDR=$(hook_header thunk "$(( thunk / 16 ))" "$(bdef JRES_OFF_CODE)")
+            else
+                HDR="serial names no swap segment or thunk address"
+            fi
+        fi
+        halt
+        [[ -z "$WHY" ]] && WHY=$(swap_missing)
+        [[ -z "$WHY" ]] && WHY=$HDR
+        # The card's overlay flattened, and the log copied out of the
+        # partition the MBR's first entry starts at.
+        IOS=
+        if [[ -z "$WHY" ]]; then
+            qemu-img convert -O raw "$R/cf.qcow2" "$R/$c.img"
+            start=$(od -An -tu4 -j454 -N4 "$R/$c.img" | tr -d ' ')
+            if mcopy -n -i "$R/$c.img@@$(( start * 512 ))" \
+                    ::/WINDOWS/IOS.LOG "$R/$c.ioslog" 2>/dev/null; then
+                IOS=$(grep -ai 'int 13 hooker' "$R/$c.ioslog" | tr -d '\r' |
+                    paste -sd ';' | sed 's/;/; /g')
+                IOS="IOS.LOG: ${IOS:-no INT 13h hooker named} ($R/$c.ioslog)"
+            else
+                WHY="no C:\\WINDOWS\\IOS.LOG on the card ($R/$c.txt, $R/$c.png)"
+            fi
+            rm -f "$R/$c.img"
+        fi
+        result "$c" "$([[ -z "$WHY" ]] && echo 1 || echo 0)" \
+            "${WHY:-desktop up over both headers; $IOS; card swapped with 0x80}"
         ;;
     *)
         echo "unknown case: $c" >&2
