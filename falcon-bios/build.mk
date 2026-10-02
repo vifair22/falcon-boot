@@ -530,6 +530,20 @@ $(BIOS_NOE820): $(BIOS_OBJ)/falcon-bios/tools/noe820.o $(BIOS)/start/bios.ld
 		echo "ERROR: $@ is $$sz bytes, not 512"; exit 1; \
 	fi
 
+# The jump rig's no-BAR disk (falcon-bios/tools/nobar.S): clears every
+# CardBus bridge's BAR0, as a BIOS that does not know CardBus leaves it,
+# and boots the floppy.
+BIOS_NOBAR := build/nobar.bin
+
+$(BIOS_NOBAR): $(BIOS_OBJ)/falcon-bios/tools/nobar.o $(BIOS)/start/bios.ld
+	@mkdir -p $(@D)
+	$(CC_HOST) $(BIOS_LDFLAGS) -Wl,-Ttext,0x7C00 -Wl,-e,_start -o $@.elf $<
+	objcopy -O binary -j .text $@.elf $@
+	@sz=$$(stat -c %s $@); \
+	if [ "$$sz" -ne 512 ]; then \
+		echo "ERROR: $@ is $$sz bytes, not 512"; exit 1; \
+	fi
+
 # The BIOS station rig (DESIGN Section 12.11): the partition chain, the
 # drive swap, STATION.INI and next boot under SeaBIOS, judged from serial.
 test-station-bios: station $(BIOS_RIGBOOT) $(BIOS_TICKSTOP) $(MKSTICK)

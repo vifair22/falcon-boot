@@ -23,7 +23,7 @@
 #include <stdint.h>
 
 #define JMOD_MAGIC 0x444D4A46u   /* "FJMD" */
-#define JMOD_ABI   3u
+#define JMOD_ABI   4u
 
 /* The header, at the slot's first byte. Offsets rather than a struct on the
  * core's side, so the check reads the same bytes whatever compiler reads
@@ -68,6 +68,10 @@ typedef struct {
     uint32_t abi;
     void (*log)(const char *s);
     void (*log_hex)(uint64_t v);
+    /* One past the highest byte of usable RAM in the E820 map; 0 without a
+     * map. Where a module placing a device's registers on the bus starts
+     * looking above. */
+    uint64_t mem_top;
 } jmod_services;
 
 #define JMOD_DEV_CD   1u

@@ -40,6 +40,11 @@
 #   cf-io     the cf case with an isa-ide squatting 0x1E0-0x1E7, a third
 #             IDE channel's ports: the probe reads the range answered, says
 #             so, and serves the card at 0x1C0, where it boots
+#   cf-nobar  the cf case booted through tools/nobar.S on a disk (-boot
+#             order=c): it clears the bridge's BAR0 and memory decoding, as
+#             a BIOS that does not know CardBus leaves them, and chains the
+#             floppy; the probe assigns the socket registers a page itself,
+#             says where, and the card boots
 #   mem       memtest86+, when MEMTEST names a build with the boot protocol
 #             header: the handoff to it
 #   giveup    the cf route to a card whose boot sector only calls INT 18h,
@@ -488,7 +493,7 @@ FAILED=0
 CASES=("$@")
 [[ ${#CASES[@]} -gt 0 ]] ||
     CASES=(hdd cd noe820 noe820-88 usb-uhci usb-ohci usb-ehci usb-hub-stick
-           cf cf3v cf48 cf-rom cf-io
+           cf cf3v cf48 cf-rom cf-io cf-nobar
            giveup
            mem s2crc s3crc stick3crc modcrc chs menu kbd kbd-hub kbd-hub2
            kbd-ehci kbd-legacy kbd-giveup kbd-hdd)
@@ -582,6 +587,32 @@ for c in "${CASES[@]}"; do
             -device falcon-pcc,drive=cf
         judge cf-io 'boot drive 0x81, sector size 512' \
             'I/O at 0x1e0 answers already' 'I/O window at 0x1c0'
+        ;;
+    cf-nobar)
+        if [[ ! -x "$QPCC" ]]; then
+            printf 'SKIP  %-9s no rig QEMU (falcon-bios/tools/qemu-pcc/build-qemu.sh)\n' "$c"
+            continue
+        fi
+        # The shim as a disk's sector 0, booted before the floppy; the
+        # floppy is still drive 0, which the shim chains to.
+        make --no-print-directory build/nobar.bin >/dev/null
+        head -c 1048576 /dev/zero > "$R/nobar.img"
+        dd if=build/nobar.bin of="$R/nobar.img" conv=notrunc status=none
+        cp build/test-bios.img "$R/cf.img"
+        floppy cf
+        rm -f "$R/serial.log"
+        timeout "$TIMEOUT" "$QPCC" -L /usr/share/qemu -machine pc \
+            -cpu pentium3 -m 128 -display none -boot order=c \
+            -drive if=floppy,format=raw,file="$R/jump.img" \
+            -drive file="$R/nobar.img",format=raw,if=ide,index=0 \
+            -drive if=none,id=cf,format=raw,file="$R/cf.img" \
+            -device falcon-pcc,drive=cf \
+            -serial file:"$R/serial.log" -monitor none >/dev/null 2>&1 || true
+        log_text > "$R/serial.txt"
+        judge cf-nobar 'boot drive 0x81, sector size 512' \
+            "NOBAR: a CardBus bridge's BAR0 cleared" \
+            'its socket registers (BAR0) 0x0$' \
+            'socket registers assigned at 0x[0-9a-f]'
         ;;
     giveup)
         if [[ ! -x "$QPCC" ]]; then

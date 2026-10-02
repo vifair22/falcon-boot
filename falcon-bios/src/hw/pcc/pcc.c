@@ -339,6 +339,144 @@ static int configure(uint16_t io)
     return 0;
 }
 
+/* ---- a BAR0 the BIOS left unassigned ---- */
+
+#define RANGES_MAX 64u
+static pcc_range g_ranges[RANGES_MAX];
+
+static int add_range(unsigned *n, const pcc_range *r)
+{
+    if (*n == RANGES_MAX)
+        return -1;
+    g_ranges[(*n)++] = *r;
+    return 0;
+}
+
+/* The BAR at `reg` of the function at `loc` as a range, when it is a
+ * memory BAR assigned below 4 GB: its length by the size probe (all ones
+ * written, the bits that stay clear are the size, the value put back).
+ * The dwords the BAR took, 1 or 2, so the caller steps past a 64-bit one's
+ * upper half; *got says whether a range came of it. */
+static unsigned bar_range(const pci_loc *loc, uint8_t reg, pcc_range *out,
+                          int *got)
+{
+    uint32_t v = pci_read32(loc->bus, loc->dev, loc->fn, reg);
+    uint64_t base = v & ~0xFu;
+    unsigned words = 1;
+    uint32_t m;
+
+    *got = 0;
+    if ((v & 1u) != 0)
+        return 1;                    /* I/O */
+    if ((v & 6u) == 4u) {            /* 64-bit: the upper half next */
+        words = 2;
+        base |= (uint64_t)pci_read32(loc->bus, loc->dev, loc->fn,
+                                     (uint8_t)(reg + 4u)) << 32;
+    }
+    pci_write32(loc->bus, loc->dev, loc->fn, reg, 0xFFFFFFFFu);
+    m = pci_read32(loc->bus, loc->dev, loc->fn, reg) & ~0xFu;
+    pci_write32(loc->bus, loc->dev, loc->fn, reg, v);
+    if (m == 0 || base == 0 || base >= 0x100000000ull)
+        return words;                /* not implemented, unassigned, high */
+    out->base = (uint32_t)base;
+    out->len = ~m + 1u;
+    *got = 1;
+    return words;
+}
+
+/* A bridge's memory window [base, limit]; none when the limit is below the
+ * base, which is how a BIOS leaves a window it did not open. */
+static int window_range(uint32_t base, uint32_t limit, pcc_range *out)
+{
+    if (base == 0 || limit < base)
+        return 0;
+    out->base = base;
+    out->len = (uint32_t)((uint64_t)limit - base + 1u);
+    return 1;
+}
+
+/* Every memory range a function on the bus decodes: its memory BARs, and
+ * the windows of a PCI-to-PCI (header type 1) or CardBus (type 2) bridge.
+ * The count, or -1 when the table is too small for the bus. */
+static int collect_ranges(void)
+{
+    unsigned nth;
+    unsigned n = 0;
+
+    for (nth = 0; ; nth++) {
+        pci_loc loc;
+        uint32_t hdr;
+        unsigned nbars;
+        uint8_t reg;
+        uint32_t w;
+        pcc_range r;
+
+        if (pci_find_class_mask(0, 0, nth, &loc) != 0)
+            break;
+        hdr = (pci_read32(loc.bus, loc.dev, loc.fn, 0x0C) >> 16) & 0x7Fu;
+        nbars = hdr == 0 ? 6u : hdr == 1u ? 2u : hdr == 2u ? 1u : 0;
+        for (reg = 0x10; reg < 0x10u + 4u * nbars; ) {
+            int got;
+            unsigned words = bar_range(&loc, reg, &r, &got);
+
+            if (got && add_range(&n, &r) != 0)
+                return -1;
+            reg = (uint8_t)(reg + 4u * words);
+        }
+        if (hdr == 1u) {             /* 1 MB units; prefetchable may be 64-bit */
+            w = pci_read32(loc.bus, loc.dev, loc.fn, 0x20);
+            if (window_range((w & 0xFFF0u) << 16, (w & 0xFFF00000u) | 0xFFFFFu,
+                             &r) && add_range(&n, &r) != 0)
+                return -1;
+            w = pci_read32(loc.bus, loc.dev, loc.fn, 0x24);
+            if (pci_read32(loc.bus, loc.dev, loc.fn, 0x28) == 0 &&
+                window_range((w & 0xFFF0u) << 16, (w & 0xFFF00000u) | 0xFFFFFu,
+                             &r) && add_range(&n, &r) != 0)
+                return -1;
+        } else if (hdr == 2u) {      /* 4 KB units */
+            if (window_range(pci_read32(loc.bus, loc.dev, loc.fn, 0x1C) & ~0xFFFu,
+                             pci_read32(loc.bus, loc.dev, loc.fn, 0x20) | 0xFFFu,
+                             &r) && add_range(&n, &r) != 0)
+                return -1;
+            if (window_range(pci_read32(loc.bus, loc.dev, loc.fn, 0x24) & ~0xFFFu,
+                             pci_read32(loc.bus, loc.dev, loc.fn, 0x28) | 0xFFFu,
+                             &r) && add_range(&n, &r) != 0)
+                return -1;
+        }
+    }
+    return (int)n;
+}
+
+/* BAR0 left at 0 by a BIOS that does not know CardBus: a 4 KB page above
+ * RAM and every range on the bus (pcc_bar_pick), written and read back.
+ * The page, or 0 when there is none or the function does not take it. */
+static uint32_t assign_bar0(const pci_loc *loc)
+{
+    int n = collect_ranges();
+    uint32_t page;
+    uint32_t rd;
+
+    if (n < 0) {
+        log_s("falcon-bios: PCC.MOD: more memory ranges on the bus than the "
+              "table holds; the socket registers stay unassigned\n");
+        return 0;
+    }
+    page = pcc_bar_pick(g_ranges, (unsigned)n,
+                        g_svc != (const jmod_services *)0 ? g_svc->mem_top : 0);
+    if (page == 0) {
+        log_s("falcon-bios: PCC.MOD: no free page for the socket registers\n");
+        return 0;
+    }
+    pci_write32(loc->bus, loc->dev, loc->fn, 0x10, page);
+    rd = pci_read32(loc->bus, loc->dev, loc->fn, 0x10);
+    if ((rd & ~0xFu) != page) {
+        log_v("the socket registers did not take their page, BAR0", rd);
+        return 0;
+    }
+    log_v("socket registers assigned at", page);
+    return page;
+}
+
 static unsigned pcc_probe(void)
 {
     unsigned nth;
@@ -358,8 +496,13 @@ static unsigned pcc_probe(void)
         log_v("CardBus bridge at bus/dev/fn",
               ((uint32_t)loc.bus << 16) | ((uint32_t)loc.dev << 8) | loc.fn);
         log_v("its socket registers (BAR0)", bar);
-        if ((bar & 1u) != 0 || (bar & ~0xFFFu) == 0)
-            continue;                /* no socket registers assigned */
+        if ((bar & 1u) != 0)
+            continue;                /* an I/O range: not socket registers */
+        if ((bar & ~0xFFFu) == 0) {
+            bar = assign_bar0(&loc);
+            if (bar == 0)
+                continue;
+        }
         if (!roms_read) {
             read_roms();
             roms_read = 1;

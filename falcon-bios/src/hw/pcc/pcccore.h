@@ -85,4 +85,22 @@ int pcc_io_free(const uint8_t *ports);
  * least the 2 KB its header is in. -1 when there is none. */
 int32_t pcc_attr_pick(const uint8_t *hdr, uint32_t from);
 
+/* A memory range something on the PCI bus decodes, [base, base + len),
+ * below 4 GB: a function's memory BAR, or a bridge's window. */
+typedef struct {
+    uint32_t base;
+    uint32_t len;
+} pcc_range;
+
+/* Where a socket's registers go when the BIOS left BAR0 unassigned: a 4 KB
+ * page in [PCC_BAR_FIRST, PCC_BAR_END), where the APICs begin, above RAM. */
+#define PCC_BAR_FIRST  0xF0000000u
+#define PCC_BAR_END    0xFEC00000u        /* exclusive */
+#define PCC_BAR_SIZE   0x1000u
+
+/* The highest 4 KB page below PCC_BAR_END, at or above PCC_BAR_FIRST and
+ * at or above `ram_top` (one past the highest byte of RAM), that none of
+ * the `n` ranges in `used` touches. 0 when there is none. */
+uint32_t pcc_bar_pick(const pcc_range *used, unsigned n, uint64_t ram_top);
+
 #endif /* FALCON_BIOS_PCCCORE_H */

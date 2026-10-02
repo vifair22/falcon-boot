@@ -18,9 +18,26 @@ static void svc_log_hex(uint64_t v)
     bios_put_hex64(v);
 }
 
-static const jmod_services g_svc = {
-    JMOD_ABI, svc_log, svc_log_hex
+static jmod_services g_svc = {
+    JMOD_ABI, svc_log, svc_log_hex, 0
 };
+
+/* One past the highest byte of usable RAM in the map (jmod.h, mem_top). */
+static uint64_t ram_top(void)
+{
+    unsigned n = e820_count();
+    unsigned i;
+    uint64_t top = 0;
+
+    for (i = 0; i < n; i++) {
+        const e820_entry *e = e820_at(i);
+
+        if (e != (const e820_entry *)0 && e->type == E820_USABLE &&
+            e->base + e->len > top)
+            top = e->base + e->len;
+    }
+    return top;
+}
 
 /* What the modules are read off, as the sentences name it. */
 static const char *g_medium = "floppy";
@@ -151,6 +168,7 @@ int jmod_load(fs_vol *vol, const char *path, unsigned slot_idx,
     bios_puts(" bytes\n");
 
     memset(ops, 0, sizeof *ops);
+    g_svc.mem_top = ram_top();
     if (((jmod_init_fn)(uintptr_t)info.init)(&g_svc, ops) != 0 ||
         ops->probe == 0 || ops->dev == 0 || ops->read == 0 ||
         ops->serve == 0 || ops->int13 == 0) {
