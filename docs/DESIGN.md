@@ -1540,7 +1540,9 @@ generation is revoked, and then the entry says `{REVOKED}`.
 `trusts: ?` when db could not be read (below). Secure Boot off, setup mode or
 unknown: the segment is the `sb_mode_label` text and no trust list, since
 nothing is enforced and no entry gets a verdict. Validation disabled
-(`MokSBStateRT`): the shouted label, plus the one exception below.
+(`MokSBStateRT`): the shouted label, plus `{VALIDATION OFF}` on the UKI
+rows, which is keyed on the load path's own finding (7.6), not on the
+variable.
 
 #### Entry rows
 
@@ -1561,8 +1563,9 @@ Bracket vocabulary: `[blessed]`, `[blessed, stale]`, `[unsigned]`,
 not a bless (the personal OS, the appliance), `[no efi]` for a medium with no
 `\EFI\BOOT\BOOTX64.EFI` on any of its volumes, and otherwise the CN of the
 topmost certificate in the signer's chain, cut to 16 columns. Yellow is
-reserved for "this will not boot here": shim refusing the first stage,
-`{BIOS ONLY}`, or on falcon-bios `{EFI ONLY}` and `{64-BIT ONLY}`.
+reserved for "this will not boot here": shim refusing the first stage, a
+UKI with validation off, `{BIOS ONLY}`, or on falcon-bios `{EFI ONLY}` and
+`{64-BIT ONLY}`.
 
 Reasons, exhaustive:
 
@@ -1572,7 +1575,7 @@ Reasons, exhaustive:
 | `{NOT BLESSED}` | no certificate table, no bless record | bless it, or the 7.4 opt-out |
 | `{BLESS STALE}` | the bless record is stale (8.1), so the ordinary path runs, and it predicts refused | re-bless |
 | `{REVOKED}` | a signer certificate or the image hash is in `dbx` or `MokListXRT`, or an SBAT generation is below `SbatLevelRT` | newer media |
-| `{VALIDATION OFF}` | a UKI entry (personal OS, fresh bless, appliance) with validation disabled (Section 7.4) | re-enable validation |
+| `{VALIDATION OFF}` | a UKI entry (the personal OS, a fresh bless, a bare payload with a `.linux` section, the station's UKI rows) when `load_ops_inner_load_blocked` holds for this boot (7.6): validation disabled (Section 7.4) | re-enable validation |
 | `{BIOS ONLY}` | an ISO this machine cannot boot at all, in any Secure Boot state (below) | boot the stick in BIOS mode |
 | `{EFI ONLY}` | falcon-bios only: an ISO no BIOS route can boot (below) | boot the stick in UEFI mode |
 | `{64-BIT ONLY}` | falcon-bios only, on a processor without long mode: an ISO every way into which needs one (below) | boot it on a 64-bit machine |
@@ -1730,8 +1733,9 @@ SbatLevelRT only ever add a refusal, so failing to read one costs a possible
 #### Verdict rules
 
 Evaluated once per entry, when the background probe reaches it, only when the
-mode is Secure Boot on with validation on, except the `{VALIDATION OFF}` rule
-which applies only in that mode:
+mode is Secure Boot on with validation on, except the `{VALIDATION OFF}` rule,
+which applies whenever `load_ops_inner_load_blocked` holds (7.6) and then
+replaces every other:
 
 1. The image evaluated is the first stage: the ISO's `\EFI\BOOT\BOOTX64.EFI`
    (already read by the survey), a bare payload itself, or for a fresh bless
