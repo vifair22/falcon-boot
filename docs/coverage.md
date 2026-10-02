@@ -24,10 +24,10 @@ is run on request and reported without a target too: every ISO boots
 there as with Secure Boot off, except a payload shim's own loader
 cannot load (DESIGN 7.6, pfSense); a blessed Linux wrap is a UKI,
 which does not boot in that state, so a refusal in its bless cell is
-the expected result, while a blessed BSD medium signs its own loader
-and boots. A chained loader still sees the firmware's Secure Boot
-flag on, and one that enforces its own policy from it fails as with
-validation on.
+the expected result, while a blessed BSD medium or memtest86+ is its
+own loader, signed, and boots. A chained loader still sees the
+firmware's Secure Boot flag on, and one that enforces its own policy
+from it fails as with validation on.
 
 A cell reading "no userland on serial ... after starting <entry>" is a
 measurement limit and not necessarily a failure. This harness reads
@@ -41,7 +41,7 @@ example (2026-09-20): its default entry is "Clonezilla live (VGA
 and listing the disk it found, and serial stayed empty for 300s. Read
 the screenshot before believing one of these.
 
-Loader: 0.1.0_20260927.1737.release, 0.1.0_20260927.1813.release, 0.1.0_20260927.1858.release, 0.1.0_20261002.1741.release, 0.1.0_20261002.1747.release, 0.1.0_20261002.1857.release
+Loader: 0.1.0_20260927.1737.release, 0.1.0_20260927.1813.release, 0.1.0_20260927.1858.release, 0.1.0_20261002.1741.release, 0.1.0_20261002.1747.release, 0.1.0_20261002.1857.release, 0.1.0_20261002.2048.release
 
 ## Summary
 
@@ -49,7 +49,7 @@ Loader: 0.1.0_20260927.1737.release, 0.1.0_20260927.1813.release, 0.1.0_20260927
 |---|---|---|---|---|---|---|---|---|---|
 | A | 27 | 22/22 (100%) | 100% | 22/22 (100%) | 95% | 19/22 (86%) | 22/22 (100%) | 27/27 (100%) | 4/5 (80%) |
 | B | 13 | 9/9 (100%) | 90% | 9/9 (100%) | - | 9/9 (100%) | 9/9 (100%) | 13/13 (100%) | 4/4 (100%) |
-| C | 22 | 6/10 (60%) | - | 3/10 (30%) | - | 1/10 (10%) | 5/10 (50%) | 11/22 (50%) | 3/12 (25%) |
+| C | 23 | 7/11 (63%) | - | 4/11 (36%) | - | 2/11 (18%) | 6/11 (54%) | 12/23 (52%) | 3/12 (25%) |
 
 ## Matrix
 
@@ -104,6 +104,7 @@ Loader: 0.1.0_20260927.1737.release, 0.1.0_20260927.1813.release, 0.1.0_20260927
 | haiku-r1b6-x86_gcc2h | C | haiku | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | FAIL | FAIL | N/A | FAIL | FAIL | N/A |
 | clonezilla-3.2.0-5-i686 | A | debian-live | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | PASS | FAIL | N/A | PASS | FAIL | N/A |
 | gparted-1.6.0-10-i686 | A | debian-live | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | PASS | FAIL | N/A | PASS | FAIL | N/A |
+| memtest86plus-8.10-x86_64 | C | memtest | PASS | PASS | PASS | REFUSED | REFUSED | PASS | REFUSED | REFUSED | PASS | PASS | PASS | PASS | PASS | PASS | N/A | N/A | N/A | N/A |
 | memtest86plus-8.10-i586 | C | memtest | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | PASS | PASS | N/A | PASS | PASS | N/A |
 | antix-26-386-full | A | antix | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | PASS | FAIL | N/A | PASS | FAIL | N/A |
 | tinycore-17.1 | B | tinycore | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | PASS | PASS | N/A | PASS | PASS | N/A |
