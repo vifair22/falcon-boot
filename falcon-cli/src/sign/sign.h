@@ -224,6 +224,11 @@ const char *iso_kernel_path(iso_view *v, family_id id);
  * neither is in the ISO. */
 const char *iso_initrd_path(iso_view *v, family_id id, const char *kernel);
 
+/* The member a bless signs for a family whose bless is its own loader
+ * (family_bless_loader), resolved against the ISO. NULL when the family has
+ * no such loader or the ISO lacks it, and the error buffer says which. */
+const char *iso_loader_path(iso_view *v, family_id id);
+
 /* The ISO9660 volume label (the Primary Volume Descriptor's volume
  * identifier), trailing padding removed, into out. It goes into a signed
  * cmdline as %LABEL%, so anything but [A-Za-z0-9._-] is refused rather than

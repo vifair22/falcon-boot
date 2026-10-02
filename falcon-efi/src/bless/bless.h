@@ -85,10 +85,10 @@ bless_state bless_lookup(const fs_vol *vol, const CHAR16 *path,
 /* Records that were parsed but had nowhere to go (BLESS_MAX_RECORDS). */
 UINTN bless_dropped(void);
 
-/* The boot prediction for the wrap a fresh record names (DESIGN Section 7.8):
- * its certificate table and .sbat, read off p2 without reading the image. The
- * wrap is ~250 MB, well past TRUST_HASH_MAX, so no hash is taken and the
- * verdict is the signer's. TRUST_NO_VERDICT on anything unusual. A label: the
+/* The boot prediction for the image a fresh record names (DESIGN Section
+ * 7.8), a wrap or a signed loader: its certificate table and .sbat, read off
+ * p2. A wrap is ~250 MB, well past TRUST_HASH_MAX, so no hash is taken and
+ * the verdict is the signer's. TRUST_NO_VERDICT on anything unusual. A label: the
  * launch below neither takes nor reads it. */
 void bless_uki_trust(const bless_hit *hit, const trust_stores *stores,
                      trust_result *out);
@@ -109,22 +109,20 @@ void bless_uki_trust(const bless_hit *hit, const trust_stores *stores,
 EFI_STATUS bless_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
                       const bless_hit *hit, bless_result *result);
 
-/* The same launch, with the image named to the platform as load_path instead
- * of being published on the synthetic filesystem.
+/* The same launch for a signed copy of a medium's own loader
+ * (family_bless_loader), which is not a UKI: no inner-load warning, since it
+ * loads no PE of its own through gBS->LoadImage (DESIGN Section 7.4).
  *
- * One caller: a blessed BSD medium (falcon-efi/src/bsd). What is signed there
- * is a copy of the medium's own loader, and that loader works out the device
- * it came from and reads its kernel, its configuration and its memory disk
- * from it. Published on a filesystem with no Block I/O behind it, it finds
- * nothing and stops at "Failed to find bootable partition"; named as the
- * medium's own \EFI\BOOT\BOOTX64.EFI, it finds the medium, which is where
- * those files are.
+ * load_path names the image to the platform instead of publishing it on the
+ * synthetic filesystem. A blessed BSD medium (falcon-efi/src/bsd) needs that:
+ * its loader works out the device it came from and reads its kernel, its
+ * configuration and its memory disk from it, and published on a filesystem
+ * with no Block I/O behind it, it stops at "Failed to find bootable
+ * partition". Named as the medium's own \EFI\BOOT\BOOTX64.EFI, it finds the
+ * medium. The bytes handed to LoadImage are still the signed copy off p2.
  *
- * The bytes handed to LoadImage are still the signed copy off p2, and those
- * are what the platform verifies. The path only says which device the
- * started image should treat as its own.
- *
- * load_path NULL is exactly bless_boot. */
+ * load_path NULL publishes it alone, as bless_boot does: memtest86+, which
+ * reads nothing beside itself. */
 EFI_STATUS bless_boot_as(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
                          const bless_hit *hit,
                          EFI_DEVICE_PATH_PROTOCOL *load_path,

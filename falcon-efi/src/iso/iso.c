@@ -455,9 +455,11 @@ static EFI_STATUS collect_iso_volumes(EFI_BOOT_SERVICES *bs, iso_device *dev,
 #define PROBE_PATH_MAX 128u
 
 /* Enough for a PE's DOS stub, COFF header, optional header and the whole
- * data directory array. Anything with a further e_lfanew is not a PE we can
- * read with a single short read, and we say so rather than guess. */
-#define PE_HEAD_MAX 1024u
+ * data directory array. A page, not a kilobyte: memtest86+ keeps its x86
+ * boot-protocol setup code in front of the PE header, whose e_lfanew is
+ * 0x471. Anything with a further e_lfanew is not a PE we can read with a
+ * single short read, and we say so rather than guess. */
+#define PE_HEAD_MAX 4096u
 
 /* The probe's ctx is the ESP's root directory handle itself; there is no
  * per-probe state worth a wrapper struct. */

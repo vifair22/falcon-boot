@@ -154,7 +154,7 @@ with one is drawn yellow.
 | `{NOT BLESSED}` | UEFI | Secure Boot on; unsigned |
 | `{BLESS STALE}` | UEFI | Secure Boot on; one of the two above, with a stale blessing |
 | `{REVOKED}` | UEFI | Secure Boot on; dbx, MokListX or the SBAT level revokes it |
-| `{VALIDATION OFF}` | UEFI | shim validation disabled; on the personal OS row, a blessed row, a `.efi` that is a UKI, and the station's UKI rows |
+| `{VALIDATION OFF}` | UEFI | shim validation disabled; on the personal OS row, a blessed Linux row, a `.efi` that is a UKI, and the station's UKI rows |
 | `{BIOS ONLY}` | UEFI | every state; the medium has no UEFI boot loader and no kernel UEFI can start |
 | `{EFI ONLY}` | BIOS | the medium has no BIOS boot image and no kernel falcon-bios can start |
 | `{64-BIT ONLY}` | BIOS | the medium needs long mode, and this processor has none |
@@ -273,7 +273,7 @@ route's first line. The cases are in Section 2.3.
 |---|---|---|
 | `POS` | personal OS: a UKI from p3, with the passphrase credential beside it | the personal OS row |
 | `APP` | the signing appliance, a UKI from p3 | `b` on a row, `a` anywhere |
-| `BLS` | a blessed wrap: the MOK-signed UKI built for a Linux ISO | Enter on a blessed row |
+| `BLS` | a blessed wrap: the MOK-signed UKI built for a Linux ISO; or memtest86+'s own loader, MOK-signed | Enter on a blessed row |
 | `BLB` | a blessed BSD medium: its loader, MOK-signed, started with the medium as its device | Enter on a blessed BSD row |
 | `EFI` | a bare `.efi` file on p2, launched as itself | Enter, `c` or `d` on a `.efi` row |
 | `DIR` | direct kernel boot: the ISO's kernel and initrds with falcon-hook appended | Enter or `d` on a Linux ISO, Secure Boot not on (off, validation disabled, setup mode, unknown) |
@@ -559,6 +559,7 @@ measured result for each ISO.
 | Linux ISO with no signed loader of its own | `DIR` | refused: bless it | refused: bless it | `DIR` | `DIR` |
 | Windows install media | `WIN` | `WIN` | refused | `WIN` | `WIN`, `WXP` |
 | BSD medium | `BSD` | blessed only: `BLB` | blessed only: `BLB` | `BSD` | `BSD` |
+| memtest86+ ISO | `CHN` | blessed only: `BLS` | blessed only: `BLS` | `CHN`; blessed `BLS` | `CHN` |
 | `.efi` on p2, unsigned | `EFI` | blessed only | blessed only | `EFI` | not listed |
 
 A refusal with Secure Boot on is the platform's. With it on, a row the
@@ -582,7 +583,8 @@ Boot on wherever that MOK is enrolled (`docs/DESIGN.md` Sections 7.5 and
 8.1). For a Linux ISO the sign tool wraps the ISO's kernel, its initrds and
 falcon-hook in a UKI, signs it, writes it under p2's `falcon/blessed/` and
 adds a record to `falcon/blessed/manifest`; the ISO is not changed. A BSD
-medium's loader is signed the same way and boots as `BLB`. A `.efi` on p2,
+medium's own loader is signed instead and boots as `BLB`; so is
+memtest86+'s, which boots as `BLS`. A `.efi` on p2,
 or the EFI payload inside a `.img`, is signed in place: **the file itself
 is rewritten**, with the signature appended to the ones it carries.
 
@@ -817,7 +819,8 @@ name: it must start with `appliance`, in any case.
 Blesses one ISO, `.efi` or `.img` from a Linux host. `bless` may be left
 out. `--key` and `--cert` are the stick's MOK pair (p3's `/falcon-mok.key`
 and `/falcon-mok.crt`, or `create --key-out`'s copy). `--help` prints the
-usage and the known families with the cmdline template of each.
+usage and the known families with the cmdline template of each, or
+`(signs its own loader)`.
 
 | option | |
 |---|---|
@@ -857,7 +860,11 @@ prints:
       sha256   <hex>
       manifest /mnt/p2/falcon/blessed/manifest (record added)
 
-A BSD medium prints `loader` in place of `uki` and `cmdline`.
+A BSD medium or memtest86+ prints `loader` in place of `uki` and
+`cmdline`; the loader is written as `<name>.efi`. memtest86+'s 32-bit ISO has
+no x86-64 loader to sign:
+
+    this medium has no /EFI/BOOT/BOOTX64.EFI, so there is nothing to sign for it
 
 `uki` builds an unsigned UKI from parts, for an image the tool does not
 bless (the appliance, a personal OS):

@@ -110,6 +110,9 @@ static void usage(FILE *f)
 "distro looks for its media; signs that wrap with the MOK key, and records\n"
 "it in the p2 manifest (docs/DESIGN.md Sections 6.4, 7.5, 8 and 8.1).\n"
 "\n"
+"A FreeBSD or memtest86+ ISO is blessed by signing its own EFI loader into\n"
+"<stick>/" BLESSED_DIR " instead; the ISO is not modified.\n"
+"\n"
 "A .efi or a .img takes the bare-payload path instead (Section 7.2): it is\n"
 "signed in place, which MODIFIES YOUR FILE. Only --key, --cert and --dry-run\n"
 "apply there.\n"
@@ -153,9 +156,11 @@ static void usage(FILE *f)
     for (i = 0; i < n; i++) {
         if (tab[i].id == FAMILY_UNKNOWN)
             continue;
-        (void)fprintf(f, "  %-14s %-22s %s\n", sgn_family_slug(tab[i].id),
+        (void)fprintf(f, "  %-16s %-22s %s\n", sgn_family_slug(tab[i].id),
                       tab[i].name,
-                      tab[i].cmdline_template != NULL
+                      family_bless_loader(tab[i].id) != NULL
+                          ? "(signs its own loader)"
+                      : tab[i].cmdline_template != NULL
                           ? tab[i].cmdline_template : "(no cmdline needed)");
     }
 }
@@ -499,30 +504,19 @@ static int append_hook(const char *initrd)
     return rc;
 }
 
-/* ---- blessing a BSD medium (M7 part 2) ---- */
+/* ---- blessing a medium by signing its own loader ---- */
 
-/* The file inside the medium that the platform will be asked to run. Every
- * FreeBSD derivative keeps its loader here; it is also what the ISO's El
- * Torito boot image carries as \EFI\BOOT\BOOTX64.EFI. */
-#define BSD_LOADER_MEMBER "/boot/loader.efi"
-
-/* Blessing a BSD medium is signing the medium's own loader.
- *
- * There is no wrap to build, because a UKI wraps a Linux kernel and its
- * initramfs and a FreeBSD medium has neither: the kernel is loaded by that
- * loader, from the medium, after the platform has already decided whether the
- * loader may run. So the artifact standing behind the ISO is a signed copy of
- * /boot/loader.efi, and the loader publishes the medium beside it with the
- * memory-disk edits of M7 part 1 (falcon-efi/src/bsd).
- *
- * What the user's key vouches for is therefore narrower than a Linux wrap,
- * where the signature covers the kernel and its initramfs together. That is
- * FreeBSD's own design rather than something this adds; DESIGN Section 7.7
- * says it in the terms the user sees.
+/* The family's loader (family_bless_loader), signed, is the artifact behind
+ * the ISO; there is no wrap. A FreeBSD medium has no kernel-plus-initramfs
+ * for a UKI: its /boot/loader.efi reads the kernel off the medium, which the
+ * loader serves as a memory disk (falcon-efi/src/bsd; DESIGN Section 7.7 for
+ * what the signature then covers). memtest86+ is one self-contained EFI
+ * binary, \EFI\BOOT\BOOTX64.EFI, that reads nothing after it starts.
  */
-static int bless_bsd(const options *o, iso_view *view, const family_desc *fam)
+static int bless_loader(const options *o, iso_view *view,
+                        const family_desc *fam)
 {
-    const char *member = NULL;
+    const char *member;
     char efi_name[MANIFEST_NAME_MAX];
     char iso_arg[MANIFEST_PATH_MAX + 2u];
     char blessed_dir[PATH_MAX];
@@ -537,16 +531,13 @@ static int bless_bsd(const options *o, iso_view *view, const family_desc *fam)
     int replaced = 0;
     int rc;
 
-    if (!iso_view_find(view, BSD_LOADER_MEMBER, &member) || member == NULL) {
-        sgn_set_error(SGN_ERR_FORMAT,
-                      "this medium has no " BSD_LOADER_MEMBER ", so there is "
-                      "nothing to sign for it");
-        return SGN_ERR_FORMAT;
-    }
+    member = iso_loader_path(view, fam->id);
+    if (member == NULL)
+        return SGN_ERR_FORMAT;     /* iso_loader_path set the message */
     sgn_log(SGN_LOG_INFO, "loader: /%s", member);
     /* Said rather than refused, because the caller is usually a script that
      * passes the same arguments for every medium: nothing here builds a
-     * cmdline, since the kernel is chosen by the loader being signed. */
+     * cmdline. */
     if (o->cmdline_extra != NULL)
         sgn_log(SGN_LOG_INFO, "--cmdline-extra ignored: this medium takes no "
                               "kernel arguments from us");
@@ -717,11 +708,12 @@ static int bless(const options *o)
     fam = family_detect(&probe);
     sgn_log(SGN_LOG_INFO, "family: %s (%s)", fam->name, sgn_family_slug(fam->id));
 
-    /* A BSD medium is signed, not wrapped, so it never needs sd-stub and
+    /* A medium blessed by signing its own loader never needs sd-stub and
      * takes none of what follows. --cmdline or --kernel means the user is
      * describing a Linux wrap, and is left to the path that builds one. */
-    if (fam->id == FAMILY_BSD && o->cmdline == NULL && o->kernel == NULL) {
-        rc = bless_bsd(o, view, fam);
+    if (family_bless_loader(fam->id) != NULL && o->cmdline == NULL &&
+        o->kernel == NULL) {
+        rc = bless_loader(o, view, fam);
         goto out;
     }
 
@@ -881,9 +873,9 @@ static int bless(const options *o)
                             cmdline, sizeof(cmdline));
     } else {
         sgn_set_error(SGN_ERR_FORMAT,
-                      "family '%s' has no cmdline template: it needs no "
-                      "kernel arguments, which means it needs no blessing "
-                      "either. Pass --cmdline to override.", fam->name);
+                      "family '%s' has no cmdline template and the ISO has "
+                      "no boot entry to take one from. Pass --cmdline.",
+                      fam->name);
         rc = SGN_ERR_FORMAT;
         goto out;
     }

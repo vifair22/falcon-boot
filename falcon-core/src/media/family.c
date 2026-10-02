@@ -10,7 +10,9 @@
  *                     /images/pxeboot  vmlinuz+initrd on installer media
  *   archiso           /arch            archisobasedir=arch
  *   SystemRescue      /sysresccd       archiso with its own base directory
- *   memtest           /boot/memtest    no Linux userland at all
+ *   memtest           /boot/memtest    no Linux userland at all; 6.x and
+ *                                      later by what their EFI loader
+ *                                      calls itself
  *   Windows           /sources         install.wim or install.esd
  *   Gentoo            /boot/gentoo.igz genkernel's names, kept when the live
  *                                      media moved to dracut
@@ -124,12 +126,6 @@ static const family_desc g_families[] = {
       (void *)0, 0,
       FAMILY_TRI_NO, FAMILY_TRI_NO, 0 },
 
-    /* memtest is a bare EFI binary: it needs no cmdline, no initramfs and no
-     * backing media once loaded, which is what the three columns below say.
-     * They do NOT say it needs no blessing. What the platform verifies for a
-     * bare payload is the payload itself, so Secure Boot wants a signature
-     * on it however self-contained it is (DESIGN Section 7.2). That is the
-     * bless tool's business and not a column here. */
     /* devlink-rescue's 32-bit RAM-only Linux (DESIGN Section 12.5). It needs
      * nothing from its medium once the kernel runs (its squashfs is inside
      * its initramfs), and its agent owns COM1. */
@@ -137,6 +133,10 @@ static const family_desc g_families[] = {
       (void *)0, 0,
       FAMILY_TRI_NO, FAMILY_TRI_NO, 1 },
 
+    /* memtest is a bare EFI binary: it needs no cmdline, no initramfs and no
+     * backing media once loaded, which is what the three columns below say.
+     * They do NOT say it needs no blessing: what the platform verifies is
+     * the binary itself, so blessing signs it (family_bless_loader). */
     { FAMILY_MEMTEST, "memtest",
       (void *)0, 0,
       FAMILY_TRI_NO, FAMILY_TRI_NO, 0 },
@@ -231,6 +231,67 @@ static int probe_head_contains(const family_probe *p, const char *path,
     return buf_contains(head, got, needle);
 }
 
+/* Reads exactly len bytes at off. A short or failed read is no match. */
+static int probe_read_exact(const family_probe *p, const char *path,
+                            uint64_t off, void *buf, size_t len)
+{
+    size_t got = 0;
+
+    if (p->read == (void *)0)
+        return 0;
+    memset(buf, 0, len);
+    if (p->read(p->ctx, path, off, buf, len, &got) != 0)
+        return 0;
+    return got == len;
+}
+
+/* memtest86+ 6.0 and later ship an ISO whose only EFI loader is the tester
+ * itself, under the removable-media name, beside /boot/floppy.img: no file
+ * the fingerprints below could name. The loader is also an x86 boot-protocol
+ * image, and the setup header's kernel_version field (0x20E, an offset less
+ * 0x200) points at the binary's own name for itself, "Memtest86+ v8.10".
+ * Both widths: the i586 ISO carries BOOTIA32.EFI only. */
+#define BZ_HDR_OFF      0x200u
+#define BZ_HDR_LEN      16u
+#define BZ_MAGIC_OFF    2u      /* "HdrS", within the header read */
+#define BZ_KVER_OFF     14u     /* kernel_version, within the header read */
+#define MEMTEST_SELF    "Memtest86+"
+
+static const char *const g_memtest_loaders[] = {
+    "/EFI/BOOT/BOOTX64.EFI",
+    "/EFI/BOOT/BOOTIA32.EFI",
+};
+
+static int loader_is_memtest(const family_probe *p, const char *path)
+{
+    uint8_t hdr[BZ_HDR_LEN];
+    char self[sizeof(MEMTEST_SELF) - 1u];
+    uint16_t kver;
+
+    if (!probe_read_exact(p, path, BZ_HDR_OFF, hdr, sizeof(hdr)) ||
+        memcmp(hdr + BZ_MAGIC_OFF, "HdrS", 4) != 0)
+        return 0;
+    kver = (uint16_t)(hdr[BZ_KVER_OFF] | (hdr[BZ_KVER_OFF + 1u] << 8));
+    if (kver == 0)
+        return 0;
+    if (!probe_read_exact(p, path, (uint64_t)kver + BZ_HDR_OFF, self,
+                          sizeof(self)))
+        return 0;
+    return memcmp(self, MEMTEST_SELF, sizeof(self)) == 0;
+}
+
+static int memtest_loader(const family_probe *p)
+{
+    size_t i;
+
+    for (i = 0; i < sizeof(g_memtest_loaders) / sizeof(g_memtest_loaders[0]);
+         i++) {
+        if (loader_is_memtest(p, g_memtest_loaders[i]))
+            return 1;
+    }
+    return 0;
+}
+
 /* archiso ships systemd-boot entries that spell out archisobasedir=<dir>.
  * The entry filenames have changed across archiso releases, so the candidate
  * list is the versions in circulation rather than one guess. */
@@ -304,6 +365,18 @@ const family_desc *family_detect_payload(const char *name)
             return family_by_id(FAMILY_MEMTEST);
     }
     return family_by_id(FAMILY_UNKNOWN);
+}
+
+const char *family_bless_loader(family_id id)
+{
+    switch (id) {
+    case FAMILY_BSD:
+        return "/boot/loader.efi";
+    case FAMILY_MEMTEST:
+        return "/EFI/BOOT/BOOTX64.EFI";
+    default:
+        return (const char *)0;
+    }
 }
 
 const family_desc *family_by_id(family_id id)
@@ -442,13 +515,15 @@ const family_desc *family_detect(const family_probe *p)
      * blacklist.cfg its DIMM exclusion list, and no other family ships
      * either. Without them that image classifies as unknown, because its ESP
      * is a bare /EFI/BOOT with the loader under the removable-media default
-     * name rather than a memtest-shaped one. */
+     * name rather than a memtest-shaped one. The loader check is memtest86+
+     * 6.0 and later, read last because it is the one that opens a file. */
     if (probe_exists(p, "/boot/memtest") ||
         probe_exists(p, "/boot/memtest.bin") ||
         probe_exists(p, "/EFI/BOOT/memtest.efi") ||
         probe_exists(p, "/memtest.efi") ||
         probe_exists(p, "/EFI/BOOT/mt86.png") ||
-        probe_exists(p, "/EFI/BOOT/blacklist.cfg"))
+        probe_exists(p, "/EFI/BOOT/blacklist.cfg") ||
+        memtest_loader(p))
         return family_by_id(FAMILY_MEMTEST);
 
     return family_by_id(FAMILY_UNKNOWN);

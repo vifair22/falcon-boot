@@ -1222,13 +1222,15 @@ enrol the CA or turn Secure Boot off for that job. The Manual says so.
     ISO's kernel, its initrds and falcon-hook in a UKI signed with the MOK
     key, with the hooked cmdline built from the ISO's own CD entry (Section
     11.2.6). The `iso-scan`-style templates serve an ISO whose wrap cannot
-    carry the hook. Signed and unsigned ISOs alike.
+    carry the hook. Signed and unsigned ISOs alike. A FreeBSD medium and
+    memtest86+ have no kernel to wrap: the bless signs the medium's own EFI
+    loader instead (8.1).
   - *Windows install media:* verified with nothing signed by us: the ISO's
     `\EFI\BOOT\BOOTX64.EFI` is Microsoft's `bootmgfw.efi` and everything
     downstream of it is Microsoft-signed (Section 6.3). The media-finding fix
     is a byte patch, not a signature (7.7).
-  - *Unsigned, unblessed media* (memtest, older rescue ISOs): refused, with a
-    message naming the two doors: bless it, or the opt-out of 7.4.
+  - *Unsigned, unblessed media* (memtest86+, older rescue ISOs): refused,
+    with a message naming the two doors: bless it, or the opt-out of 7.4.
   - *Bare EFI payloads* (`.efi` binaries, and `.img` images whose payload is
     one; memtest): they boot as themselves, so what the platform verifies is
     the file on p2. In scope for the menu and for blessing. **Blessing these
@@ -1242,8 +1244,8 @@ enrol the CA or turn Secure Boot off for that job. The Manual says so.
   one exception: a payload shim's own loader cannot load (pfSense's
   `loader.efi`, 7.6) is refused, since the firmware's `LoadImage` still
   enforces db and shim's is the only other way in. A blessed BSD medium
-  signs that same loader and boots; a blessed Linux wrap is a UKI and does
-  not (7.4). Chaining hands the medium's own loader a machine whose
+  signs that same loader and boots, as does a blessed memtest86+; a blessed
+  Linux wrap is a UKI and does not (7.4). Chaining hands the medium's own loader a machine whose
   firmware still reports Secure Boot on, and one that enforces its own
   policy from that flag (Pop!_OS's systemd-boot with its unsigned kernel,
   ESXi 8's loader) fails there as it does with validation on.
@@ -1339,9 +1341,9 @@ built as a portable static binary for both:
    loader's menu groups them, takes per-ISO selection (a bulk mark exists;
    nothing is pre-marked) followed by a review naming every path and a typed
    "yes" over it, wraps each kernel with the initrds of the ISO's own CD
-   entry and falcon-hook as a UKI with the hooked cmdline (7.2), signs it,
-   stages it with its manifest record per Section 8.1, and reboots to the
-   loader. Windows media is reported and left
+   entry and falcon-hook as a UKI with the hooked cmdline (7.2), or takes a
+   FreeBSD medium's or memtest86+'s own loader, signs it, stages it with its
+   manifest record per Section 8.1, and reboots to the loader. Windows media is reported and left
    alone.
 
 **Residuals:**
@@ -1583,7 +1585,7 @@ Reasons, exhaustive:
 | `{NOT BLESSED}` | no certificate table, no bless record | bless it, or the 7.4 opt-out |
 | `{BLESS STALE}` | the bless record is stale (8.1), so the ordinary path runs, and it predicts refused | re-bless |
 | `{REVOKED}` | a signer certificate or the image hash is in `dbx` or `MokListXRT`, or an SBAT generation is below `SbatLevelRT` | newer media |
-| `{VALIDATION OFF}` | a UKI entry (the personal OS, a fresh bless, a bare payload with a `.linux` section, the station's UKI rows) when `load_ops_inner_load_blocked` holds for this boot (7.6): validation disabled (Section 7.4) | re-enable validation |
+| `{VALIDATION OFF}` | a UKI entry (the personal OS, a fresh bless that is a wrap, a bare payload with a `.linux` section, the station's UKI rows) when `load_ops_inner_load_blocked` holds for this boot (7.6): validation disabled (Section 7.4) | re-enable validation |
 | `{BIOS ONLY}` | an ISO this machine cannot boot at all, in any Secure Boot state (below) | boot the stick in BIOS mode |
 | `{EFI ONLY}` | falcon-bios only: an ISO no BIOS route can boot (below) | boot the stick in UEFI mode |
 | `{64-BIT ONLY}` | falcon-bios only, on a processor without long mode: an ISO every way into which needs one (below) | boot it on a 64-bit machine |
@@ -1747,8 +1749,9 @@ replaces every other:
 
 1. The image evaluated is the first stage: the ISO's `\EFI\BOOT\BOOTX64.EFI`
    (already read by the survey), a bare payload itself, or for a fresh bless
-   the wrap UKI. For the wrap only the PE headers and the certificate table
-   are read, a few KiB at the end of a ~250 MB file.
+   the blessed image: the wrap UKI, or the medium's signed loader. For the
+   wrap only the PE headers and the certificate table are read, a few KiB at
+   the end of a ~250 MB file.
 2. The personal OS gets no signer evaluation: its UKI is on p3, which is not
    unlocked until the entry is selected, and the loader running MOK-signed
    under validation means the MOK that signs the UKI is enrolled. Only the
@@ -1897,14 +1900,16 @@ creation:
 - `falcon-boot sign <iso>`: the bless step (Section 7.5). Extracts the ISO's
   kernel and wraps it, per Section 8.1, into a minimal signed UKI with its
   initrds and falcon-hook, whose embedded cmdline is the ISO's own CD entry
-  plus the hook's arguments; the ISO stays on p2 for the hook to map. Built as a **portable static
+  plus the hook's arguments; the ISO stays on p2 for the hook to map. For a
+  FreeBSD medium or memtest86+ it signs the medium's own loader instead
+  (8.1). Built as a **portable static
   binary** so the identical implementation runs both on an external host and
   inside the on-stick signing appliance. Not needed when Secure Boot is off,
   and not needed for ISOs that already ship their own MS-signed shim and
   find their own media.
 
-**Bless signs; it does not patch.** `falcon-boot sign` signs Linux and BSD
-media. It refuses Windows media, whose boot chain is Microsoft-signed and
+**Bless signs; it does not patch.** `falcon-boot sign` signs Linux, BSD and
+memtest86+ media. It refuses Windows media, whose boot chain is Microsoft-signed and
 boots as it is: the loader patches `boot.wim` at boot (Sections 6.4 and
 7.7). The Windows patch tracks details that are undocumented or
 version-dependent and can change in any Windows build: the `winpeshl.exe`
@@ -1914,9 +1919,13 @@ templates are stable and a new release usually needs nothing.
 
 ### 8.1 Blessed artifacts and the manifest
 
-The bless output is always a **signed UKI wrap** (sd-stub + kernel +
-embedded `.cmdline` + **embedded `.initrd` by default**, `.sbat` inherited
-from the stub), never a bare signed bzImage. Embedding the ISO's initramfs
+The bless output for Linux media is a **signed UKI wrap** (sd-stub + kernel
++ embedded `.cmdline` + **embedded `.initrd` by default**, `.sbat` inherited
+from the stub), never a bare signed bzImage. A FreeBSD medium and memtest86+
+have no kernel for a wrap: their output is the medium's own EFI loader,
+signed with the MOK (`family_bless_loader` in `media/family.c` names it:
+`/boot/loader.efi`, `\EFI\BOOT\BOOTX64.EFI`). FreeBSD's loader then reads
+an unverified kernel off the medium (7.7); memtest86+ reads nothing. Embedding the ISO's initramfs
 costs p2 space (~100-250 MB per blessed ISO) and makes the entire blessed
 boot chain signed, which closes the unsigned-initrd residual of Section 7.5
 for blessed media.
@@ -1936,6 +1945,7 @@ On-stick layout, under the reserved directory of Section 6.2:
 
 ```
 p2:/falcon/blessed/<name>.uki      signed UKI wraps, one per blessed ISO
+p2:/falcon/blessed/<name>.efi      a medium's own loader, signed (FreeBSD, memtest86+)
 p2:/falcon/blessed/manifest        the manifest, plain ASCII text
 ```
 
@@ -1946,7 +1956,7 @@ ISO, keys before the next `iso=` belong to the current block:
 iso=Linux/archlinux-2026.01.01-x86_64.iso   # path relative to p2 root
 size=1538670592                              # byte size at bless time
 sha256=<hex>                                 # ISO hash at bless time
-uki=archlinux-2026.01.01-x86_64.uki          # file under /falcon/blessed/
+uki=archlinux-2026.01.01-x86_64.uki          # file under /falcon/blessed/, .uki or .efi
 family=arch                                  # registry id (Section 6.2)
 ```
 
@@ -1960,7 +1970,7 @@ rewrites the file without it. Unknown keys are ignored.
 
 Loader behavior: a menu entry whose path matches a manifest record *and*
 whose current file size equals `size=` is labeled blessed and boots the
-named UKI (served to LoadImage through the synthetic-filesystem machinery
+named image (served to LoadImage through the synthetic-filesystem machinery
 of Section 5.1, since exFAT has no firmware device path; shim verifies as
 always). A size mismatch means the ISO changed after blessing: the entry is
 labeled stale-blessed and boots as if unblessed. The `sha256=` field is
@@ -2411,12 +2421,14 @@ it just made possible. Picked from the Personal OS chooser instead, it runs
 with no list and asks. If it returns without rebooting, the loader clears the
 marker and `BootNext`.
 
-#### 11.2.6 BLS: a blessed wrap
+#### 11.2.6 BLS: a blessed wrap, or memtest86+
 
 The wrap is built by `falcon-boot-sign` (`falcon-cli/src/sign`): sd-stub, the
 ISO's kernel, a `.initrd` of the ISO's initrds with the falcon-hook cpio
 appended (no map; the map is not known until boot), and the cmdline
-`hookcmd_build` gives the ISO's CD entry, signed with the MOK.
+`hookcmd_build` gives the ISO's CD entry, signed with the MOK. For
+memtest86+ the blessed image is its own loader, signed
+(`family_bless_loader`).
 
 ```mermaid
 sequenceDiagram
@@ -2425,23 +2437,32 @@ sequenceDiagram
     participant K as sd-stub, kernel
     participant H as falcon-hook
     participant D as distro init
-    L->>L: direct_map_set: the extent map, FalconIsoMap
-    L->>L: read /falcon/blessed/uki from p2
-    L->>L: credfs: uki, uki.extra.d/falcon-map.cred
-    L->>S: LoadImage by credfs path
-    S-->>L: verified against MokList
-    L->>K: StartImage
-    K->>K: falcon-map.cred packed, .initrd served over LoadFile2, ExitBootServices
-    K->>H: rdinit=/falcon/hook
-    H->>H: map from /.extra/credentials/falcon-map.cred
-    H->>D: /dev/mapper/falcon-iso under the ISO's label (11.4)
-    Note over D: the distro finds its medium, mounts root
+    alt a wrap (bless_boot)
+        L->>L: direct_map_set: the extent map, FalconIsoMap
+        L->>L: read /falcon/blessed/uki from p2
+        L->>L: credfs: uki, uki.extra.d/falcon-map.cred
+        L->>S: LoadImage by credfs path
+        S-->>L: verified against MokList
+        L->>K: StartImage
+        K->>K: falcon-map.cred packed, .initrd served over LoadFile2, ExitBootServices
+        K->>H: rdinit=/falcon/hook
+        H->>H: map from /.extra/credentials/falcon-map.cred
+        H->>D: /dev/mapper/falcon-iso under the ISO's label (11.4)
+        Note over D: the distro finds its medium, mounts root
+    else memtest86+ (bless_boot_as)
+        L->>L: read /falcon/blessed/efi from p2
+        L->>L: credfs: the image alone
+        L->>S: LoadImage by credfs path
+        S-->>L: verified against MokList
+        Note over L: StartImage: memtest86+ runs from memory, reads nothing
+    end
 ```
 
 A map that fails to build is not fatal: the wrap boots, and the hook falls
 back to `FalconIsoMap` or hands over unchanged. Under validation disabled
 with Secure Boot on, the firmware refuses sd-stub's inner kernel load; the
-loader predicts that and warns before starting.
+loader predicts that and warns before starting a wrap. memtest86+ loads no
+image of its own and gets neither the map nor the warning.
 
 #### 11.2.7 BLB: a blessed BSD medium
 
