@@ -572,8 +572,12 @@ static void target_probe(iso_target *t)
         iso_survey_media(g_st, &g_vols[t->vol], &t->ent, t->kind, &g_stores,
                          &survey);
     t->fam = survey.family->id;
-    t->probed = 1;
     tags_build(t, &survey);
+    /* Last, after the tags: tags_build reads the UKI wrap behind a fresh
+     * bless (bless_uki_trust), and discover_read yields from inside the
+     * probe. Set before it, the menu's fill ran during that read and
+     * copied empty tag columns off an entry it then counted as done. */
+    t->probed = 1;
 }
 
 /* ---- folder view (DESIGN Section 6 stage 1) ---- */
