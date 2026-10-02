@@ -431,6 +431,153 @@ static void test_family_memtest(void **state)
                      FAMILY_TRI_NO);
 }
 
+/* memtest86+ 6.0 and later: an ISO of /boot/floppy.img and one EFI loader
+ * under the removable-media name, which is also an x86 boot-protocol image.
+ * Laid out as mt86plus_8.10_x86_64.iso's bootx64.efi is: "HdrS" at 0x202,
+ * kernel_version 0x0260 at 0x20E, so the name at 0x460. */
+#define MT_LOADER_LEN 0x480u
+
+/* A tree whose files carry bytes rather than C strings. data NULL is a path
+ * that exists and cannot be read. */
+typedef struct {
+    const char *path;
+    const char *data;
+    size_t      len;
+} blob_file;
+
+typedef struct {
+    const blob_file *files;
+    size_t           n;
+} blob_tree;
+
+static const blob_file *blob_find(const blob_tree *t, const char *path)
+{
+    size_t i;
+
+    for (i = 0; i < t->n; i++) {
+        if (strcmp(t->files[i].path, path) == 0)
+            return &t->files[i];
+    }
+    return NULL;
+}
+
+static int blob_exists(void *ctx, const char *path)
+{
+    return blob_find(ctx, path) != NULL;
+}
+
+static int blob_read(void *ctx, const char *path, uint64_t off, void *buf,
+                     size_t len, size_t *got)
+{
+    const blob_file *f = blob_find(ctx, path);
+    size_t take;
+
+    *got = 0;
+    if (f == NULL || f->data == NULL)
+        return -1;
+    if (off >= f->len)
+        return 0;
+    take = f->len - (size_t)off;
+    if (take > len)
+        take = len;
+    memcpy(buf, f->data + off, take);
+    *got = take;
+    return 0;
+}
+
+static family_id blob_detect(const blob_file *files, size_t n)
+{
+    blob_tree t = { files, n };
+    family_probe p = { blob_exists, blob_read, &t };
+
+    return family_detect(&p)->id;
+}
+
+static void mt_loader(char *buf, uint16_t kver, const char *self)
+{
+    memset(buf, 0, MT_LOADER_LEN);
+    buf[0] = 'M';
+    buf[1] = 'Z';
+    memcpy(buf + 0x202, "HdrS", 4);
+    buf[0x20E] = (char)(kver & 0xFFu);
+    buf[0x20F] = (char)(kver >> 8);
+    if (self != NULL)
+        memcpy(buf + 0x200 + kver, self, strlen(self));
+}
+
+static void test_family_memtest86plus_iso(void **state)
+{
+    static char loader[MT_LOADER_LEN];
+    const blob_file x64[] = {
+        { "/EFI/BOOT/BOOTX64.EFI", loader, MT_LOADER_LEN },
+        { "/boot/floppy.img", NULL, 0 },
+    };
+    const blob_file ia32[] = {
+        { "/EFI/BOOT/BOOTIA32.EFI", loader, MT_LOADER_LEN },
+        { "/boot/floppy.img", NULL, 0 },
+    };
+
+    (void)state;
+    mt_loader(loader, 0x0260, "Memtest86+ v8.10");
+    assert_int_equal(blob_detect(x64, 2), FAMILY_MEMTEST);
+    assert_int_equal(blob_detect(ia32, 2), FAMILY_MEMTEST);
+    /* The loader alone is the fingerprint. */
+    assert_int_equal(blob_detect(x64, 1), FAMILY_MEMTEST);
+}
+
+/* What is not memtest86+: a Linux EFI-stub kernel as the removable-media
+ * loader (its kernel_version is the kernel's), a header with no version
+ * pointer, a pointer past the end of the file, and a file too short for the
+ * header. */
+static void test_family_memtest86plus_lookalikes(void **state)
+{
+    static char linux_stub[MT_LOADER_LEN];
+    static char no_kver[MT_LOADER_LEN];
+    static char far_kver[MT_LOADER_LEN];
+    const blob_file stub[] = {
+        { "/EFI/BOOT/BOOTX64.EFI", linux_stub, MT_LOADER_LEN },
+    };
+    const blob_file zero[] = {
+        { "/EFI/BOOT/BOOTX64.EFI", no_kver, MT_LOADER_LEN },
+    };
+    const blob_file far[] = {
+        { "/EFI/BOOT/BOOTX64.EFI", far_kver, MT_LOADER_LEN },
+    };
+    const blob_file shrt[] = {
+        { "/EFI/BOOT/BOOTX64.EFI", linux_stub, 0x204u },
+    };
+
+    (void)state;
+    mt_loader(linux_stub, 0x0260, "6.12.48 (builder) #1 SMP");
+    mt_loader(no_kver, 0, NULL);
+    mt_loader(far_kver, 0x0260, NULL);
+    far_kver[0x20E] = (char)0x00;
+    far_kver[0x20F] = (char)0x40;
+    assert_int_equal(blob_detect(stub, 1), FAMILY_UNKNOWN);
+    assert_int_equal(blob_detect(zero, 1), FAMILY_UNKNOWN);
+    assert_int_equal(blob_detect(far, 1), FAMILY_UNKNOWN);
+    assert_int_equal(blob_detect(shrt, 1), FAMILY_UNKNOWN);
+}
+
+/* The member a bless signs: the medium's own loader for the two families
+ * whose bless is not a UKI wrap, nothing for the rest. */
+static void test_family_bless_loader(void **state)
+{
+    size_t count = 0;
+    const family_desc *tab = family_table(&count);
+    size_t i;
+
+    (void)state;
+    assert_string_equal(family_bless_loader(FAMILY_BSD), "/boot/loader.efi");
+    assert_string_equal(family_bless_loader(FAMILY_MEMTEST),
+                        "/EFI/BOOT/BOOTX64.EFI");
+    for (i = 0; i < count; i++) {
+        if (tab[i].id == FAMILY_BSD || tab[i].id == FAMILY_MEMTEST)
+            continue;
+        assert_null(family_bless_loader(tab[i].id));
+    }
+}
+
 /* NixOS's minimal ISO, as it ships (26.05): memtest86+ is a menu extra
  * beside a Linux live root, not the medium.
  *
@@ -1061,6 +1208,9 @@ int run_family_tests(void)
         cmocka_unit_test(test_family_arch_loader_entry),
         cmocka_unit_test(test_family_arch_loader_entry_other_basedir),
         cmocka_unit_test(test_family_memtest),
+        cmocka_unit_test(test_family_memtest86plus_iso),
+        cmocka_unit_test(test_family_memtest86plus_lookalikes),
+        cmocka_unit_test(test_family_bless_loader),
         cmocka_unit_test(test_family_memtest_extra_on_nixos),
         cmocka_unit_test(test_family_installer_media),
         cmocka_unit_test(test_family_esxi_needs_both_halves),

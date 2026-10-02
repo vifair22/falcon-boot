@@ -132,6 +132,13 @@ const family_desc *family_detect(const family_probe *p);
  * name is the base name, ASCII, with or without its extension. */
 const family_desc *family_detect_payload(const char *name);
 
+/* The file inside the medium that blessing signs, for a family whose bless
+ * is the medium's own loader rather than a UKI wrap around a kernel (DESIGN
+ * Section 8.1): FreeBSD's /boot/loader.efi, memtest86+'s removable-media
+ * loader. NULL for every other family. The sign tool extracts it; the loader
+ * reads a non-NULL answer as "a fresh bless of this medium is not a UKI". */
+const char *family_bless_loader(family_id id);
+
 const family_desc *family_by_id(family_id id);
 
 /* The whole registry, for callers that enumerate it (help text, tests). */
