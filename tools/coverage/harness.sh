@@ -27,8 +27,18 @@
 #   --build-dir DIR host directory bound over the repo's build/, so a clone
 #                   on a small disk can put artifacts on a big one; empty
 #                   to use the repo's own build/ (default /srv/falcon/build)
-# Env: the same three as the options, FALCON_HARNESS_IMAGE, FALCON_CORPUS,
-#      FALCON_BUILD_DIR.
+#   --sticks DIR    host directory bound over build/coverage/sticks; empty
+#                   to keep the sticks inside the build directory (default
+#                   /srv/build/cache/falcon/sticks when it exists and the
+#                   build directory is the default one)
+# Env: the same four as the options, FALCON_HARNESS_IMAGE, FALCON_CORPUS,
+#      FALCON_BUILD_DIR, FALCON_STICKS_DIR.
+#
+# The case sticks live apart from the build directory on the binhost because
+# they are most of its size (about 200 GB for the corpus) and the work disk is
+# shared with the binhost's build roots. They need a local disk: every case
+# reads its stick. A symlink in their place would dangle inside the container,
+# whose build/ is a bind mount, so the directory is mounted instead.
 
 set -euo pipefail
 
@@ -44,6 +54,8 @@ if [[ -d /srv/falcon/build ]]; then
 else
     BUILD_DIR="${FALCON_BUILD_DIR-}"
 fi
+STICKS_DEFAULT=/srv/build/cache/falcon/sticks
+STICKS_DIR="${FALCON_STICKS_DIR-unset}"
 BUILD=0
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -51,6 +63,7 @@ while [[ $# -gt 0 ]]; do
     --image) IMAGE=$2; shift 2 ;;
     --corpus) CORPUS=$2; shift 2 ;;
     --build-dir) BUILD_DIR=$2; shift 2 ;;
+    --sticks) STICKS_DIR=$2; shift 2 ;;
     -h|--help) sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     --) shift; break ;;
     -*) echo "ERROR: unknown option $1" >&2; exit 1 ;;
@@ -100,6 +113,18 @@ MOUNTS=(-v "$REPO:/work" -v /dev:/dev)
 if [[ -n $BUILD_DIR ]]; then
     mkdir -p "$BUILD_DIR"
     MOUNTS+=(-v "$BUILD_DIR:/work/build")
+fi
+if [[ $STICKS_DIR == unset ]]; then
+    STICKS_DIR=
+    [[ $BUILD_DIR == /srv/falcon/build && -d $STICKS_DEFAULT ]] &&
+        STICKS_DIR=$STICKS_DEFAULT
+fi
+if [[ -n $STICKS_DIR ]]; then
+    [[ -n $BUILD_DIR ]] || {
+        echo "ERROR: --sticks needs a build directory to mount under" >&2
+        exit 1; }
+    mkdir -p "$STICKS_DIR"
+    MOUNTS+=(-v "$STICKS_DIR:/work/build/coverage/sticks")
 fi
 
 # Interactive only when there is a terminal, so the same line works from a

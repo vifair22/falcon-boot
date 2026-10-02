@@ -3337,11 +3337,14 @@ With `--tpm-socket` the event log is not checked against the TPM's PCRs.
 | `--image NAME` | `FALCON_HARNESS_IMAGE` | `falcon-boot-harness` |
 | `--corpus DIR` | `FALCON_CORPUS` | `/srv/falcon/corpus` |
 | `--build-dir DIR` | `FALCON_BUILD_DIR` | `/srv/falcon/build` when that directory exists, bound over the repository's `build/`; else empty, the repository's own |
+| `--sticks DIR` | `FALCON_STICKS_DIR` | `/srv/build/cache/falcon/sticks` when it exists and the build directory is `/srv/falcon/build`, bound over `build/coverage/sticks`; else empty, the sticks stay in the build directory |
 
 The image is built when absent. It needs `docker`. The corpus directory and
 `/dev/kvm` are needed for the corpus run; with a command, a missing corpus
 is not mounted and a missing `/dev/kvm` is a warning (a build works, a rig
-does not). The container runs as root; what it wrote under `build/` and
+does not). The case sticks are most of the corpus's disk use, so on the
+binhost they sit on the cache disk and are mounted into the container; a
+symlink in their place would not resolve inside it. The container runs as root; what it wrote under `build/` and
 `compile_commands.json` is chowned to the caller afterwards. With a command
 it runs that command:
 
