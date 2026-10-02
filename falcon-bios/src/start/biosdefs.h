@@ -240,6 +240,36 @@
 #define GZ_STAGE_ADDR   0x00600000
 
 
+/* ---- the Safe MBR Hook header (DESIGN Section 11.3.8) ----
+ *
+ * Windows 98's I/O supervisor walks the INT 13h chain at startup and
+ * reads the 98 DDK's SafeMBRHook structure at each handler's entry: a
+ * short jump over the header, `$INT13SF`, a vendor ID, the previous
+ * handler, and flags whose bit 0 says the hook is safe to take over. Every
+ * INT 13h entry a falcon-bios resident installs begins with it, flags 0,
+ * and keeps the previous vector in its smhnext slot, so each block's
+ * X_OFF_OLDINT13 is X_OFF_CODE + SMH_OFF_NEXT and the handler proper is at
+ * X_OFF_CODE + SMH_BYTES. The other vectors a block hooks (INT 15h, 16h)
+ * have no header. */
+#define SMH_OFF_NEXT     19       /* smhnext inside the header */
+#define SMH_BYTES        27       /* the header; the handler follows it */
+
+#ifdef __ASSEMBLER__
+/* The header, at a resident's INT 13h entry: `.org X_OFF_CODE`, this, the
+ * handler. The .org inside is the check that smhnext is at X_OFF_OLDINT13,
+ * which the C side writes and the handler chains through. */
+.macro safe_mbr_hook oldint13
+	jmp     1f
+	nop
+	.ascii  "$INT13SF"
+	.ascii  "FALCON  "
+	.org    \oldint13
+	.long   0                    /* smhnext: the previous handler, installed */
+	.long   0                    /* smhflgs */
+1:
+.endm
+#endif
+
 /* ---- the virtual CD's resident (DESIGN Section 11.3.4) ----
  *
  * One paragraph-aligned block in conventional memory, taken by shrinking
@@ -252,7 +282,6 @@
  * it was copied to. The offsets are here, `.org` places them in vcd.S, and
  * the build checks the two agree.
  */
-#define VCD_OFF_OLDINT13 0x0000   /* far pointer to the previous handler */
 #define VCD_OFF_DRIVE    0x0004   /* byte: the drive we answer for */
 #define VCD_OFF_PHYS     0x0005   /* byte: the drive the runs are on */
 #define VCD_OFF_NRUNS    0x0006   /* word */
@@ -298,7 +327,10 @@
 #define VCD_OFF_LLEN     0x0524   /* word: bytes */
 #define VCD_OFF_LDRIVE   0x0526   /* byte: what to hand over in DL */
 #define VCD_OFF_LAUNCH   0x0530
-#define VCD_OFF_CODE     0x0570
+#define VCD_OFF_CODE     0x0570   /* the INT 13h entry: the header, then */
+                                  /* the handler at + SMH_BYTES */
+#define VCD_OFF_OLDINT13 (VCD_OFF_CODE + SMH_OFF_NEXT) /* far pointer to */
+                                  /* the previous handler */
 
 /* The INT 15h entry, and the memory map it answers with: the BIOS's own,
  * with the resident and anything it serves from extended memory carved out
@@ -329,9 +361,11 @@
  * bytes; SWAP_BYTES is what the BDA loses, since conventional memory is
  * taken in whole kilobytes. The offsets, as swapres.S lays them out with
  * .org and the build checks: */
-#define SWAP_OFF_OLDINT13 0x0000  /* far pointer to the previous handler */
 #define SWAP_OFF_DRIVE    0x0004  /* byte: the disk exchanged with 0x80 */
-#define SWAP_OFF_CODE     0x0010  /* the INT 13h handler */
+#define SWAP_OFF_CODE     0x0010  /* the INT 13h entry: the header, then */
+                                  /* the handler at + SMH_BYTES */
+#define SWAP_OFF_OLDINT13 (SWAP_OFF_CODE + SMH_OFF_NEXT) /* far pointer to */
+                                  /* the previous handler */
 #define SWAP_BYTES        0x0400  /* 1 KB, what the BDA loses */
 
 /* The floppy-emulation resident (falcon-bios/src/vfd/vfdres.S, vfd.c), for a
@@ -348,7 +382,6 @@
  * that RAM being usable afterwards is harmless, and not carving the map
  * keeps the resident to one interrupt. The offsets, as vfdres.S lays them
  * out with .org and the build checks: */
-#define VFD_OFF_OLDINT13 0x0000   /* far pointer to the previous handler */
 #define VFD_OFF_DRIVE    0x0008   /* byte: the drive we answer for (0x00) */
 #define VFD_OFF_HEADS    0x0009   /* byte */
 #define VFD_OFF_SECTORS  0x000A   /* byte: sectors per track */
@@ -364,7 +397,10 @@
 #define VFD_OFF_DBT      0x0070   /* 11 bytes: the disk base table AH=08h returns */
 #define VFD_OFF_LDRIVE   0x007C   /* byte: the drive handed over in DL */
 #define VFD_OFF_LAUNCH   0x0080   /* the launch stub */
-#define VFD_OFF_CODE     0x00C0   /* the INT 13h handler */
+#define VFD_OFF_CODE     0x00C0   /* the INT 13h entry: the header, then */
+                                  /* the handler at + SMH_BYTES */
+#define VFD_OFF_OLDINT13 (VFD_OFF_CODE + SMH_OFF_NEXT) /* far pointer to */
+                                  /* the previous handler */
 
 /* Where sector 0 of the image is staged for the launch stub to copy to
  * 0x7C00: the same conventional address the CD's boot image uses, since the
@@ -409,7 +445,6 @@
  * wherever the count leaves room. The far pointers are part-filled by the
  * assembly (their offsets) and part by the installer (the block's segment
  * and linear address). The build checks the offsets against the .org's. */
-#define JRES_OFF_OLDINT13 0x00   /* far pointer to the previous handler */
 #define JRES_OFF_DRIVE    0x04   /* byte: the drive the module answers */
 #define JRES_OFF_A20      0x05   /* byte: port 0x92 as the caller had it */
 #define JRES_OFF_GDTR     0x08   /* 6 bytes: this block's GDT */
@@ -427,7 +462,10 @@
 #define JRES_OFF_GDT      0x40   /* 5 descriptors */
 #define JRES_OFF_OLDINT15 0x68   /* far pointer to the previous INT 15h */
 #define JRES_OFF_REGS     0x70   /* jmod_regs, 32 bytes */
-#define JRES_OFF_CODE     0x90   /* the INT 13h entry */
+#define JRES_OFF_CODE     0x90   /* the INT 13h entry: the header, then */
+                                 /* the handler at + SMH_BYTES */
+#define JRES_OFF_OLDINT13 (JRES_OFF_CODE + SMH_OFF_NEXT) /* far pointer to */
+                                 /* the previous handler */
 /* The INT 16h entry (the USB route's, when a module found a keyboard):
  * the keyboards polled, then the BIOS's handler. */
 #define JRES_OFF_CODE16   0x240

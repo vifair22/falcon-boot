@@ -26,8 +26,9 @@
  * POSITION INDEPENDENCE, as vcdres.S: the block is copied to whatever
  * segment mem/lowmem.c leaves room at, so its two fields are reached as
  * numeric offsets from biosdefs.h with a CS override, and every jump is
- * relative. The block is SWAP_OFF_CODE plus the handler, under a hundred
- * bytes; the build checks it fits SWAP_BYTES.
+ * relative. The block is SWAP_OFF_CODE, the Safe MBR Hook header
+ * (biosdefs.h) and the handler, about a hundred bytes; the build checks it
+ * fits SWAP_BYTES.
  */
 
 #include <start/biosdefs.h>
@@ -38,14 +39,13 @@
 	.globl  swap_blob_end
 
 swap_blob_start:
-	.org    SWAP_OFF_OLDINT13
-	.long   0
 	.org    SWAP_OFF_DRIVE
 	.byte   0
 
 	.org    SWAP_OFF_CODE
 	.globl  swap_entry
 swap_entry:
+	safe_mbr_hook SWAP_OFF_OLDINT13
 	pushw   %bp
 	movw    %sp, %bp             /* 2(%bp) IP, 4(%bp) CS, 6(%bp) FLAGS */
 	pushw   %dx                  /* -2(%bp): the caller's DX */
