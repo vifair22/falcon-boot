@@ -23,7 +23,7 @@
 #include <stdint.h>
 
 #define JMOD_MAGIC 0x444D4A46u   /* "FJMD" */
-#define JMOD_ABI   4u
+#define JMOD_ABI   3u
 
 /* The header, at the slot's first byte. Offsets rather than a struct on the
  * core's side, so the check reads the same bytes whatever compiler reads
