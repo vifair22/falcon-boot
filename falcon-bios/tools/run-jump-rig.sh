@@ -16,6 +16,11 @@
 #             memprobe reports that map with usable memory from 1 MB and
 #             the resident's block carved out
 #   noe820-88 the same with E801 failed too, so the map comes from AH=88h
+#   cd-native the same disc on a cmd646-ide, a PCI IDE controller in native
+#             mode (the rig's QEMU), its I/O BARs assigned by the rig's
+#             option ROM (tools/natide.S) where SeaBIOS had mapped it at the
+#             legacy ports: ATA.MOD finds the channel at the ports the BARs
+#             hold, says so on serial, and the disc boots from it
 #   usb-uhci  the rig stick (build/test-bios-gpt.img, a GPT falcon stick)
 #   usb-ohci  on each controller: jump knows it by its boot record, and the
 #   usb-ehci  stick's own stage 3 loads off the drive the reverse thunk
@@ -95,7 +100,8 @@
 #             starts with the keyboard block behind INT 16h, and Escape on
 #             its menu reaches it there and comes back to the block's reset
 #
-# The cf case needs the QEMU build-qemu.sh makes; the rest the system's.
+# The cf cases and cd-native need the QEMU build-qemu.sh makes; the rest
+# the system's.
 #
 # Usage: falcon-bios/tools/run-jump-rig.sh [case...]   (default: all)
 # Env:   MEMTEST  memtest86+ for the mem case (skipped without it)
@@ -110,7 +116,8 @@ QPCC=build/qemu-pcc/build/qemu-system-i386
 TIMEOUT=45
 
 mkdir -p "$R"
-make --no-print-directory bios test-bios-img test-bios-probe build/noe820.bin >/dev/null
+make --no-print-directory bios test-bios-img test-bios-probe build/noe820.bin \
+    build/natide.rom >/dev/null
 
 def() {       # def NAME: its value in biosdefs.h
     sed -n "s/^#define[ \t]*$1[ \t]*\([0-9]*\).*/\1/p" \
@@ -492,8 +499,8 @@ cf_rom() {
 FAILED=0
 CASES=("$@")
 [[ ${#CASES[@]} -gt 0 ]] ||
-    CASES=(hdd cd noe820 noe820-88 usb-uhci usb-ohci usb-ehci usb-hub-stick
-           cf cf3v cf48 cf-rom cf-io cf-nobar
+    CASES=(hdd cd noe820 noe820-88 cd-native usb-uhci usb-ohci usb-ehci
+           usb-hub-stick cf cf3v cf48 cf-rom cf-io cf-nobar
            giveup
            mem s2crc s3crc stick3crc modcrc chs menu kbd kbd-hub kbd-hub2
            kbd-ehci kbd-legacy kbd-giveup kbd-hdd)
@@ -539,6 +546,27 @@ for c in "${CASES[@]}"; do
         judge "$c" "$from" 'NOE820: INT 15h E820 fails' 'MEMPROBE DONE' \
             'MEMPROBE E820 0000000000100000 [0-9A-F]* 00000001' \
             "MEMPROBE E820 $(printf %016X "0x${blk:-0}") [0-9A-F]* 00000002"
+        ;;
+    cd-native)
+        if [[ ! -x "$QPCC" ]]; then
+            printf 'SKIP  %-9s no rig QEMU (falcon-bios/tools/qemu-pcc/build-qemu.sh)\n' "$c"
+            continue
+        fi
+        # SeaBIOS maps every IDE-class device at the legacy ports whatever
+        # its mode, which puts the cmd646's control block over the floppy
+        # controller's 0x3F4; natide.rom, run in the option ROM scan after
+        # that, gives it I/O BARs from 0xE000. The machine keeps its
+        # piix3-ide with the hdd disk on the legacy pair, so the disc must
+        # be found on a native channel, at a port of four digits.
+        floppy cd
+        boot "$QPCC" -option-rom build/natide.rom \
+            -device cmd646-ide,id=ide2 \
+            -drive file=build/memprobe.iso,media=cdrom,if=none,id=cd2 \
+            -device ide-cd,bus=ide2.0,drive=cd2
+        judge cd-native 'MEMPROBE DONE' \
+            'NATIDE: native IDE controller at bus/dev/fn' \
+            'ATA.MOD: channel at 0x[0-9a-f]\{4\} native' \
+            'ATA.MOD: 0x[0-9a-f]\{4\} master: QEMU DVD-ROM, a disc in it'
         ;;
     usb-uhci) usb usb-uhci -device piix3-usb-uhci,id=hc ;;
     usb-ohci) usb usb-ohci -device pci-ohci,id=hc ;;

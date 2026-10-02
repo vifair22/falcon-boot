@@ -4,14 +4,15 @@
 #
 # QEMU models no PC Card bridge on x86, so the rig builds one: this fetches
 # the QEMU release the machine already runs (its BIOS files and behaviour
-# otherwise the same), adds falcon-pcc.c as a device, and builds
-# qemu-system-i386 alone into build/qemu-pcc/. Idempotent: an existing tree
-# is reused and only rebuilt.
+# otherwise the same), adds falcon-pcc.c as a device, turns on cmd646-ide
+# (a PCI IDE controller in native mode, which no x86 machine type selects;
+# the cd-native case), and builds qemu-system-i386 alone into
+# build/qemu-pcc/. Idempotent: an existing tree is reused and only rebuilt.
 #
 # Usage: falcon-bios/tools/qemu-pcc/build-qemu.sh
 # Output: build/qemu-pcc/build/qemu-system-i386; run it with
 #         -L /usr/share/qemu for the BIOS files and
-#         -device falcon-pcc,drive=<id>.
+#         -device falcon-pcc,drive=<id>, or -device cmd646-ide,id=<id>.
 set -euo pipefail
 
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../.." && pwd)
@@ -37,6 +38,9 @@ grep -q falcon-pcc "$SRC/hw/misc/meson.build" ||
 grep -q FALCON_PCC "$SRC/hw/misc/Kconfig" ||
     printf "\nconfig FALCON_PCC\n    bool\n    default y if TEST_DEVICES\n    depends on PCI\n" \
         >> "$SRC/hw/misc/Kconfig"
+grep -q IDE_CMD646 "$SRC/configs/devices/i386-softmmu/default.mak" ||
+    printf "\nCONFIG_IDE_CMD646=y\n" \
+        >> "$SRC/configs/devices/i386-softmmu/default.mak"
 
 if [[ ! -f "$DIR/build/build.ninja" ]]; then
     mkdir -p "$DIR/build"
