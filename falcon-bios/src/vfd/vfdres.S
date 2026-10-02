@@ -16,14 +16,15 @@
  * position independent, for the reasons vcdres.S's header gives.
  *
  * THE BLOCK (biosdefs.h has every offset):
- *   0x0000  the previous INT 13h vector, chained for a drive not ours
  *   0x0008  the drive we answer for, and the emulated geometry
  *   0x0014  the image's physical address in extended memory
  *   0x0020  scratch: an AH=87h source and destination and a read count
  *   0x0040  the descriptor table INT 15h AH=87h reads
  *   0x0070  the disk base table AH=08h hands back
  *   0x0080  the launch stub
- *   0x00C0  the handler
+ *   0x00C0  the INT 13h entry: the Safe MBR Hook header (biosdefs.h),
+ *           whose smhnext slot is the previous INT 13h vector, chained
+ *           for a drive not ours; then the handler
  */
 
 #include <start/biosdefs.h>
@@ -34,8 +35,6 @@
 	.globl  vfd_blob_end
 
 vfd_blob_start:
-	.org    VFD_OFF_OLDINT13
-	.long   0
 	.org    VFD_OFF_DRIVE
 	.byte   0
 	.org    VFD_OFF_HEADS
@@ -102,6 +101,7 @@ vfd_launch:
 /* ---- the handler ---- */
 	.globl  vfd_entry
 vfd_entry:
+	safe_mbr_hook VFD_OFF_OLDINT13
 	/* Not our drive: on to whoever had the vector, as a jump so their iret
 	 * returns to the original caller. */
 	cmpb    %dl, %cs:VFD_OFF_DRIVE

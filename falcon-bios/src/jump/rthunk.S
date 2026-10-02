@@ -60,8 +60,6 @@
 
 	.code16
 jres_blob_start:
-	.org    JRES_OFF_OLDINT13
-	.long   0
 	.org    JRES_OFF_DRIVE
 	.byte   0
 	.org    JRES_OFF_A20
@@ -110,6 +108,7 @@ jres_blob_start:
 
 	.org    JRES_OFF_CODE
 jres_int13:
+	safe_mbr_hook JRES_OFF_OLDINT13
 	cmpb    %cs:JRES_OFF_DRIVE, %dl
 	je      1f
 	ljmp    *%cs:JRES_OFF_OLDINT13
