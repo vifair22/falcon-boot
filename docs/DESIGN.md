@@ -1274,7 +1274,7 @@ What the Manual states:
   ours. The loader shows a banner when it detects the state.
 - **The opt-out is for the ISO path; it turns UKIs off.** With Secure Boot on
   and validation disabled, no UKI boots: ours, a blessed wrap, or anyone
-  else's (notes Section 11). sd-stub loads its inner kernel through
+  else's. sd-stub loads its inner kernel through
   `gBS->LoadImage`, and in this state shim installs its loader protocol but
   does not hook the boot-services table (7.6), so that call is the firmware's
   own `LoadImage`, which refuses everything not in db. Blessing and the
@@ -1395,7 +1395,7 @@ Debian 16.1); where 15.8 differs it is said.
 - Any MS-signed shim passes db on any machine; the vendor is chosen by
   feature.
 
-**Protocol presence and the table hook are independent** (notes Section 11).
+**Protocol presence and the table hook are independent.**
 `install_shim_protocols()` runs unconditionally; `hook_system_services()`
 runs only under `secure_mode()`, which `MokSBState` turns off. With Secure
 Boot on and validation disabled, `SHIM_IMAGE_LOADER` is present and permits
@@ -1425,7 +1425,7 @@ refuses pfSense's loader.efi outright), and the personal OS's UKI
 `LoadImage` with the UKI as the parent, so with Secure Boot off a UKI shim
 had loaded fails with `EFI_INVALID_PARAMETER`).
 
-**Pairing rule** (notes Section 11.4): `LoadImage`, `StartImage` and
+**Pairing rule:** `LoadImage`, `StartImage` and
 `UnloadImage` come from one source and are used as a set. shim's
 `shim_start_image()` and `shim_unload_image()` forward handles they do not
 recognise through saved firmware pointers that are populated only under
