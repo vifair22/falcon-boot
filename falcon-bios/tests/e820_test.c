@@ -1,5 +1,6 @@
-/* Tests for falcon-bios/src/mem/e820.c's placement arithmetic, which is what
- * chooses an initrd's address.
+/* Tests for falcon-bios/src/mem/e820.c: the placement arithmetic, which is
+ * what chooses an initrd's address, and the map built for a BIOS without
+ * E820.
  *
  * The map a machine hands back is the one thing here nobody can arrange on
  * demand: a hole under 4 GB, a usable region that straddles the ceiling the
@@ -329,6 +330,165 @@ static void test_largest(void **state)
                                      4096ull * MIB), 2048ull * MIB - 64ull * MIB);
 }
 
+/* ---- the map a BIOS without E820 describes with the older calls ---- */
+
+/* What a 128 MB machine with E801 answers: 15 MB between 1 and 16 MB, 1792
+ * blocks above. Conventional memory from the BDA's count, the EBDA and the
+ * video area reserved, then the two extended runs, every attrs 1. */
+static void test_synth_e801(void **state)
+{
+    e820_legacy in = { 639u, 1, 0x3C00u, 1792u, 0x3C00u, 1792u, 1, 0xFC00u };
+    e820_entry out[8];
+    e820_from from = E820_FROM_NONE;
+    unsigned n;
+    unsigned i;
+
+    (void)state;
+    memset(out, 0, sizeof out);
+    n = e820_synth(&in, out, 8, &from);
+    assert_int_equal(from, E820_FROM_E801);
+    assert_int_equal(n, 5);
+    assert_int_equal(out[0].base, 0);
+    assert_int_equal(out[0].len, 639ull * KIB);
+    assert_int_equal(out[0].type, E820_USABLE);
+    assert_int_equal(out[1].base, 639ull * KIB);
+    assert_int_equal(out[1].len, 0xA0000ull - 639ull * KIB);
+    assert_int_equal(out[1].type, E820_RESERVED);
+    assert_int_equal(out[2].base, 0xA0000ull);
+    assert_int_equal(out[2].len, 0x60000ull);
+    assert_int_equal(out[2].type, E820_RESERVED);
+    assert_int_equal(out[3].base, 1ull * MIB);
+    assert_int_equal(out[3].len, 15ull * MIB);
+    assert_int_equal(out[3].type, E820_USABLE);
+    assert_int_equal(out[4].base, 16ull * MIB);
+    assert_int_equal(out[4].len, 112ull * MIB);
+    assert_int_equal(out[4].type, E820_USABLE);
+    for (i = 0; i < n; i++)
+        assert_int_equal(out[i].attrs, 1);
+    assert_int_equal(out[5].type, 0);
+
+    /* What the consumers ask of it: the module region is RAM, an initrd
+     * goes at the top. */
+    assert_true(e820_is_ram_in(out, n, 0x00F00000ull, 1ull * MIB));
+    assert_int_equal(e820_place_in(out, n, 4ull * MIB, 4096u, 16ull * MIB,
+                                   128ull * MIB), 124ull * MIB);
+}
+
+/* A 15 MB machine whose E801 count stops at 14 MB: the hole up to 16 MB is
+ * reserved and there is nothing above it, so the module region is not RAM.
+ * And the AX=0 form, where the counts are in CX and DX. */
+static void test_synth_e801_hole(void **state)
+{
+    e820_legacy in = { 639u, 1, 0x3800u, 0, 0x3800u, 0, 0, 0 };
+    e820_legacy cxdx = { 639u, 1, 0, 0, 0x3C00u, 16u, 0, 0 };
+    e820_entry out[8];
+    e820_from from;
+    unsigned n;
+
+    (void)state;
+    n = e820_synth(&in, out, 8, &from);
+    assert_int_equal(from, E820_FROM_E801);
+    assert_int_equal(n, 5);
+    assert_int_equal(out[3].base, 1ull * MIB);
+    assert_int_equal(out[3].len, 14ull * MIB);
+    assert_int_equal(out[3].type, E820_USABLE);
+    assert_int_equal(out[4].base, 15ull * MIB);
+    assert_int_equal(out[4].len, 1ull * MIB);
+    assert_int_equal(out[4].type, E820_RESERVED);
+    assert_false(e820_is_ram_in(out, n, 0x00F00000ull, 1ull * MIB));
+
+    n = e820_synth(&cxdx, out, 8, &from);
+    assert_int_equal(from, E820_FROM_E801);
+    assert_int_equal(n, 5);
+    assert_int_equal(out[3].len, 15ull * MIB);
+    assert_int_equal(out[4].base, 16ull * MIB);
+    assert_int_equal(out[4].len, 1ull * MIB);
+    assert_int_equal(out[4].type, E820_USABLE);
+}
+
+/* AH=88h: one run from 1 MB, when E801 is absent and when it answered with
+ * AX left as it was called (no E801 either, whatever the carry said). */
+static void test_synth_88(void **state)
+{
+    e820_legacy in = { 639u, 0, 0, 0, 0, 0, 1, 0xFC00u };
+    e820_legacy bogus = { 639u, 1, 0xE801u, 0, 0, 0, 1, 0x3C00u };
+    e820_entry out[8];
+    e820_from from;
+    unsigned n;
+
+    (void)state;
+    n = e820_synth(&in, out, 8, &from);
+    assert_int_equal(from, E820_FROM_88);
+    assert_int_equal(n, 4);
+    assert_int_equal(out[3].base, 1ull * MIB);
+    assert_int_equal(out[3].len, 0xFC00ull * KIB);
+    assert_int_equal(out[3].type, E820_USABLE);
+    assert_int_equal(out[3].attrs, 1);
+
+    n = e820_synth(&bogus, out, 8, &from);
+    assert_int_equal(from, E820_FROM_88);
+    assert_int_equal(n, 4);
+    assert_int_equal(out[3].len, 15ull * MIB);
+    assert_true(e820_is_ram_in(out, n, 0x00F00000ull, 1ull * MIB));
+}
+
+/* Neither call: conventional memory alone. A BDA count of 0 has no usable
+ * entry, one past 640 KB is held to the video area, and a 640 KB count has
+ * no EBDA entry. */
+static void test_synth_bda(void **state)
+{
+    e820_legacy in = { 639u, 0, 0, 0, 0, 0, 0, 0 };
+    e820_entry out[8];
+    e820_from from;
+    unsigned n;
+
+    (void)state;
+    n = e820_synth(&in, out, 8, &from);
+    assert_int_equal(from, E820_FROM_BDA);
+    assert_int_equal(n, 3);
+    assert_int_equal(out[2].base, 0xA0000ull);
+    assert_int_equal(out[2].len, 0x60000ull);
+    assert_int_equal(e820_largest_in(out, n, 1ull * MIB, 4096ull * MIB), 0);
+
+    in.base_kb = 0;
+    n = e820_synth(&in, out, 8, &from);
+    assert_int_equal(n, 2);
+    assert_int_equal(out[0].base, 0);
+    assert_int_equal(out[0].len, 0xA0000ull);
+    assert_int_equal(out[0].type, E820_RESERVED);
+
+    in.base_kb = 1024u;
+    n = e820_synth(&in, out, 8, &from);
+    assert_int_equal(n, 2);
+    assert_int_equal(out[0].len, 0xA0000ull);
+    assert_int_equal(out[0].type, E820_USABLE);
+    assert_int_equal(out[1].base, 0xA0000ull);
+
+    in.base_kb = 640u;
+    n = e820_synth(&in, out, 8, &from);
+    assert_int_equal(n, 2);
+    assert_int_equal(out[0].len, 0xA0000ull);
+    assert_int_equal(out[0].type, E820_USABLE);
+}
+
+/* No room is a truncated map, the count written; a bad argument is 0. */
+static void test_synth_refusals(void **state)
+{
+    e820_legacy in = { 639u, 1, 0x3C00u, 1792u, 0, 0, 1, 0xFC00u };
+    e820_entry out[8];
+    e820_from from = E820_FROM_E820;
+
+    (void)state;
+    assert_int_equal(e820_synth(&in, out, 2, &from), 2);
+    assert_int_equal(e820_synth(&in, out, 4, &from), 4);
+    assert_int_equal(from, E820_FROM_E801);
+    assert_int_equal(e820_synth(&in, out, 0, &from), 0);
+    assert_int_equal(e820_synth(NULL, out, 8, &from), 0);
+    assert_int_equal(from, E820_FROM_NONE);
+    assert_int_equal(e820_synth(&in, NULL, 8, &from), 0);
+    assert_int_equal(e820_synth(&in, out, 8, NULL), 5);
+}
+
 int run_e820_tests(void)
 {
     const struct CMUnitTest tests[] = {
@@ -343,6 +503,11 @@ int run_e820_tests(void)
         cmocka_unit_test(test_is_ram),
         cmocka_unit_test(test_e801_cap_low),
         cmocka_unit_test(test_largest),
+        cmocka_unit_test(test_synth_e801),
+        cmocka_unit_test(test_synth_e801_hole),
+        cmocka_unit_test(test_synth_88),
+        cmocka_unit_test(test_synth_bda),
+        cmocka_unit_test(test_synth_refusals),
     };
 
     return cmocka_run_group_tests_name("bios e820", tests, NULL, NULL);
