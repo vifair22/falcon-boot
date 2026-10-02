@@ -137,8 +137,12 @@ unique within each such set, so `#include <fs/exfat.h>` means one file, and
   `git archive HEAD | ssh vifair@172.20.0.170 'mkdir -p /srv/falcon/repo-<sha>
   && tar -x -C /srv/falcon/repo-<sha>'`, then there
   `tools/coverage/harness.sh --build-dir /srv/falcon/build-<sha> make test`
-  (or `make analyze`, or no command for the corpus). `/srv/falcon/build-c3e0ffd`
-  has fixtures built.
+  (or `make analyze`, or no command for the corpus). A fresh build
+  directory needs `make test-fixtures`, the shim binaries from
+  `/srv/falcon/build/shim/bins` and the DevLink UKI from
+  `/srv/falcon/devlink-recovery.efi`; `/srv/falcon/build` is the corpus's
+  own, and its case sticks are mounted from `/srv/build/cache/falcon/sticks`.
+  Delete a `build-<x>` and `repo-<x>` pair once its branch has landed.
 - `release_version` at the root is the version; everything tags off it
   (`FALCON_SEMVER` and the timestamped `FALCON_VERSION` in
   `build/version.h`, the SBAT rows, the banners).
