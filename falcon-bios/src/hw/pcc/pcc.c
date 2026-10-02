@@ -23,9 +23,10 @@
  * address there is free on every machine (the A21m shadows a mini-PCI
  * card's boot ROM at 0xD0000, where PC Card drivers have put it since DOS).
  * It is only open while the CIS is read, and closed before the machine is
- * handed on. The I/O windows are 0x1E0-0x1EF for the first card and
- * 0x1C0-0x1CF for a second, a range the machines Section 13 is for leave
- * unused.
+ * handed on. A card's I/O window is the first of 0x1E0, 0x1C0, 0x1A0 and
+ * 0x180 (sixteen ports each) that nothing on the machine answers at: a
+ * free ISA range reads 0xFF on every port; a third IDE channel at 0x1E8,
+ * or the card in the socket before, does not.
  *
  * The resident half (int13 through hw/blk13.c) uses only this module, as
  * every module's must (jump/jmod.h).
@@ -81,6 +82,7 @@ static const uint16_t k_io_bases[SOCKETS_MAX] = {
 
 typedef struct {
     atadisk disk;
+    uint32_t regs;                   /* its socket registers, for release */
 } pcc_dev;
 
 static const jmod_services *g_svc;   /* probe time only */
@@ -102,10 +104,10 @@ static void log_s(const char *s)
         g_svc->log(s);
 }
 
-/* "falcon-bios: PCC.MOD: <what> 0x<v>". A socket that yields no disk says
- * which step it stopped at and what the register said, on serial: on a real
- * bridge the reason is otherwise a guess. */
-static void log_v(const char *what, uint32_t v)
+/* "falcon-bios: PCC.MOD: <what> 0x<v><tail>". A socket that yields no disk
+ * says which step it stopped at and what the register said, on serial: on
+ * a real bridge the reason is otherwise a guess. */
+static void log_vt(const char *what, uint32_t v, const char *tail)
 {
     if (g_svc == (const jmod_services *)0)
         return;
@@ -113,7 +115,12 @@ static void log_v(const char *what, uint32_t v)
     g_svc->log(what);
     g_svc->log(" ");
     g_svc->log_hex(v);
-    g_svc->log("\n");
+    g_svc->log(tail);
+}
+
+static void log_v(const char *what, uint32_t v)
+{
+    log_vt(what, v, "\n");
 }
 
 static uint8_t exca_rd(uint32_t r)
@@ -183,6 +190,28 @@ static void power_down(void)
     exca_wr(X_INTCTL, 0);
     exca_wr(X_POWER, 0);
     sock_wr(SOCK_CONTROL, 0);
+}
+
+/* The first I/O window base nothing answers at (pcc_io_free). A card
+ * served from an earlier socket answers at its own base, so it is passed
+ * over with the rest. 0 when none is free. */
+static uint16_t io_pick(void)
+{
+    unsigned b;
+
+    for (b = 0; b < SOCKETS_MAX; b++) {
+        uint16_t base = k_io_bases[b];
+        uint8_t ports[PCC_IO_PORTS];
+        unsigned i;
+
+        for (i = 0; i < PCC_IO_PORTS; i++)
+            ports[i] = inb((uint16_t)(base + i));
+        if (pcc_io_free(ports))
+            return base;
+        log_vt("I/O at", base, " answers already\n");
+    }
+    log_s("falcon-bios: PCC.MOD: no free I/O window for the card\n");
+    return 0;
 }
 
 /* The option-ROM area's headers (pcccore.h), read once per probe before
@@ -306,6 +335,7 @@ static int configure(uint16_t io)
     exca_wr(X_INTCTL, IC_RESET | IC_IOCARD);
     exca_wr(X_ENABLE, EN_IO0);       /* and the memory window closed */
     io_delay_us(1000);
+    log_v("I/O window at", io);
     return 0;
 }
 
@@ -319,6 +349,7 @@ static unsigned pcc_probe(void)
         pci_loc loc;
         uint32_t bar;
         uint32_t cmd;
+        uint16_t io;
         pcc_dev *d = &g_dev[g_ndev];
 
         if (pci_find_class(0x060700u, nth, &loc) != 0)
@@ -340,13 +371,15 @@ static unsigned pcc_probe(void)
 
         if (power_up() != 0)
             continue;
-        if (configure(k_io_bases[g_ndev]) != 0) {
+        io = io_pick();
+        if (io == 0 || configure(io) != 0) {
             power_down();
             continue;
         }
         memset(&d->disk, 0, sizeof d->disk);
-        d->disk.base = k_io_bases[g_ndev];
-        d->disk.ctrl = (uint16_t)(k_io_bases[g_ndev] + 0x0Eu);
+        d->disk.base = io;
+        d->disk.ctrl = (uint16_t)(io + 0x0Eu);
+        d->regs = g_regs;
         if (atadisk_identify(&d->disk) != 0) {
             log_s("falcon-bios: PCC.MOD: the card did not answer as ATA\n");
             power_down();
@@ -401,6 +434,18 @@ static int pcc_serve(unsigned idx, uint8_t drive)
     return 0;
 }
 
+static void pcc_release(void)
+{
+    unsigned i;
+
+    for (i = 0; i < g_ndev; i++) {
+        g_regs = g_dev[i].regs;
+        power_down();
+    }
+    g_ndev = 0;
+    g_serve = SOCKETS_MAX;
+}
+
 static void pcc_int13(jmod_regs *r)
 {
     if (g_serve >= g_ndev) {
@@ -419,6 +464,7 @@ static int pcc_init(const jmod_services *svc, jmod_ops *ops)
     ops->read = pcc_read;
     ops->serve = pcc_serve;
     ops->int13 = pcc_int13;
+    ops->release = pcc_release;
     return 0;
 }
 

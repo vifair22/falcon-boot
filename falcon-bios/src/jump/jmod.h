@@ -23,7 +23,7 @@
 #include <stdint.h>
 
 #define JMOD_MAGIC 0x444D4A46u   /* "FJMD" */
-#define JMOD_ABI   2u
+#define JMOD_ABI   3u
 
 /* The header, at the slot's first byte. Offsets rather than a struct on the
  * core's side, so the check reads the same bytes whatever compiler reads
@@ -109,6 +109,11 @@ typedef struct {
      * keyboards probe found and puts their keys into the BIOS's ring and
      * shift flags. probe fills it in when it found one; 0 otherwise. */
     void (*int16)(jmod_regs *r);
+    /* What probe took from the machine, given back: a socket powered down,
+     * its windows closed. The route calls it when it comes back without a
+     * handover. 0 when there is nothing to give back (the USB modules keep
+     * their keyboards up, DESIGN Section 13.6). */
+    void (*release)(void);
 } jmod_ops;
 
 typedef int (*jmod_init_fn)(const jmod_services *svc, jmod_ops *ops);

@@ -363,11 +363,15 @@ static void boot_cf(boot_result *r)
     n = ops.probe();
     if (n == 0 || ops.dev(0, &dev) != 0) {
         r->advice = "there is no CompactFlash card in a PC Card slot.";
-        return;
+    } else {
+        screen_out(dev.label);
+        screen_out("\n\n");
+        boot_module_disk(&ops, 0, JMOD_SLOT_PCC, r);
     }
-    screen_out(dev.label);
-    screen_out("\n\n");
-    boot_module_disk(&ops, 0, JMOD_SLOT_PCC, r);
+    /* Back without a handover: the slots powered down, their windows
+     * closed. */
+    if (ops.release != (void (*)(void))0)
+        ops.release();
 }
 
 /* USB: the first falcon stick on any controller a module is there for

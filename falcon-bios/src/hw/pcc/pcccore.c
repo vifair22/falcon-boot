@@ -241,6 +241,18 @@ int pcc_io_window(uint16_t base, uint16_t len, uint8_t regs[4])
     return 0;
 }
 
+int pcc_io_free(const uint8_t *ports)
+{
+    unsigned i;
+
+    if (ports == (const uint8_t *)0)
+        return 0;
+    for (i = 0; i < PCC_IO_PORTS; i++)
+        if (ports[i] != 0xFFu)
+            return 0;
+    return 1;
+}
+
 /* Slot `i`'s claim in slots: 0 when no ROM starts there. */
 static uint32_t rom_slots(const uint8_t *hdr, uint32_t i)
 {

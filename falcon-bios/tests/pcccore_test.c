@@ -173,6 +173,26 @@ static void test_pick(void **state)
     assert_int_equal(pcc_attr_pick(NULL, 0), -1);
 }
 
+/* A free ISA range reads 0xFF on every port; one port answering otherwise
+ * is enough to pass it over. */
+static void test_io_free(void **state)
+{
+    uint8_t p[PCC_IO_PORTS];
+
+    (void)state;
+    memset(p, 0xFF, sizeof p);
+    assert_int_equal(pcc_io_free(p), 1);
+    /* A third IDE channel's status register at base + 7. */
+    p[7] = 0x50;
+    assert_int_equal(pcc_io_free(p), 0);
+    memset(p, 0xFF, sizeof p);
+    p[PCC_IO_PORTS - 1u] = 0x7F;
+    assert_int_equal(pcc_io_free(p), 0);
+    memset(p, 0x00, sizeof p);
+    assert_int_equal(pcc_io_free(p), 0);
+    assert_int_equal(pcc_io_free(NULL), 0);
+}
+
 int run_pcccore_tests(void)
 {
     const struct CMUnitTest tests[] = {
@@ -181,6 +201,7 @@ int run_pcccore_tests(void)
         cmocka_unit_test(test_refusals),
         cmocka_unit_test(test_windows),
         cmocka_unit_test(test_pick),
+        cmocka_unit_test(test_io_free),
     };
 
     return cmocka_run_group_tests_name("pcccore", tests, NULL, NULL);

@@ -37,6 +37,9 @@
 #             hiding the bridge in every 16 KB segment a ROM touches: the
 #             probe names the ROMs, opens its window past them (trying the
 #             free pages the shadow still covers first) and the card boots
+#   cf-io     the cf case with an isa-ide squatting 0x1E0-0x1E7, a third
+#             IDE channel's ports: the probe reads the range answered, says
+#             so, and serves the card at 0x1C0, where it boots
 #   mem       memtest86+, when MEMTEST names a build with the boot protocol
 #             header: the handoff to it
 #   giveup    the cf route to a card whose boot sector only calls INT 18h,
@@ -485,7 +488,7 @@ FAILED=0
 CASES=("$@")
 [[ ${#CASES[@]} -gt 0 ]] ||
     CASES=(hdd cd noe820 noe820-88 usb-uhci usb-ohci usb-ehci usb-hub-stick
-           cf cf3v cf48 cf-rom
+           cf cf3v cf48 cf-rom cf-io
            giveup
            mem s2crc s3crc stick3crc modcrc chs menu kbd kbd-hub kbd-hub2
            kbd-ehci kbd-legacy kbd-giveup kbd-hdd)
@@ -566,6 +569,19 @@ for c in "${CASES[@]}"; do
             continue
         fi
         cf_rom
+        ;;
+    cf-io)
+        if [[ ! -x "$QPCC" ]]; then
+            printf 'SKIP  %-9s no rig QEMU (falcon-bios/tools/qemu-pcc/build-qemu.sh)\n' "$c"
+            continue
+        fi
+        cp build/test-bios.img "$R/cf.img"
+        floppy cf
+        boot "$QPCC" -device isa-ide,iobase=0x1e0,iobase2=0x3e6,irq=11 \
+            -drive if=none,id=cf,format=raw,file="$R/cf.img" \
+            -device falcon-pcc,drive=cf
+        judge cf-io 'boot drive 0x81, sector size 512' \
+            'I/O at 0x1e0 answers already' 'I/O window at 0x1c0'
         ;;
     giveup)
         if [[ ! -x "$QPCC" ]]; then

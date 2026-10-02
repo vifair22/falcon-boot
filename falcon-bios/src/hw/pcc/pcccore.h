@@ -55,6 +55,14 @@ int pcc_mem_window(uint32_t host, uint32_t size, uint32_t card, int attr,
  * [base, base + len). -1 on a range the window cannot express. */
 int pcc_io_window(uint16_t base, uint16_t len, uint8_t regs[4]);
 
+/* An I/O window's ports, as the caller reads them before the window is
+ * placed: PCC_IO_PORTS bytes from the base. */
+#define PCC_IO_PORTS 16u
+
+/* Whether a range that read as `ports` is free: every port 0xFF, a bus
+ * nothing drives. Anything answering at one of them reads otherwise. */
+int pcc_io_free(const uint8_t *ports);
+
 /* The option-ROM area the attribute memory window is placed in, as the
  * caller reads it: the first three bytes at every 2 KB boundary from
  * PCC_ROM_BASE, PCC_ROM_SLOTS of them, three bytes each. It stops at
