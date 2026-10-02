@@ -2822,7 +2822,9 @@ next-boot marker, goes the other way through the same buffer. Services used:
 INT 13h AH=42h, AH=43h (`marker.c` only, one sector) and AH=48h, INT 1Ah
 AH=02h and AH=04h (the RTC, to date the marker), INT 10h (the 80x25 text mode, cursor shape and position, and
 teletype for stages 1 and 2 and `bios_fatal`), INT 16h AH=00h and AH=01h,
-INT 15h E820, and INT 18h when Escape at the root menu hands the machine
+INT 15h E820 (on a BIOS without it, AX=E801 and AH=88h: the map is built
+from their answers and the BDA's count at 0x413, `e820_synth`, host
+tested), and INT 18h when Escape at the root menu hands the machine
 back. Stage 3 writes the screen's cells into VGA text memory at 0xB8000
 directly (falcon-bios/src/console/screen.c). INT 15h AH=87h is used only by the
 resident CD handler, from real mode.
@@ -2921,7 +2923,7 @@ sequenceDiagram
     L->>B: kernel's protected-mode part to 16 MiB, in 64 KiB chunks (a kernel fixed below that is staged there, stage_at)
     L->>L: cmdline to 0x20000
     L->>B: initrds, hook last, 4-byte padded, at e820_place_high below initrd_addr_max
-    L->>L: zero page at 0x10000: setup header, loader type 0xFF, E820 as the BIOS gave it
+    L->>L: zero page at 0x10000: setup header, loader type 0xFF, the memory map as read (11.3.3)
     L->>L: "starting <entry>" on screen
     L->>L: screen_info from INT 10h and the BDA, after the route's last line: mode, columns, rows, cursor, VGA
     L->>K: GDT (0x10, 0x18) copied to 0x3100; a staged kernel is moved down by the stub at 0x3000; jump to code32_start, ESI = zero page (32-bit entry, either width)
@@ -3002,7 +3004,7 @@ What stays in use behind the handoff is hidden. The BDA's lowered count
 hides the handler's 16 KiB from anything that asks for
 conventional memory. The INT 15h half hides it, and the appended region the
 handler serves from extended memory (Windows' tail, 11.3.9), from anything
-that asks for the map: it answers E820 from a copy of the BIOS's map with
+that asks for the map: it answers E820 from a copy of the loader's map with
 both ranges carved out as reserved (`e820_carve`, host tested), caps E801's
 count of 64 KiB blocks above 16 MiB below the appended region, and passes
 every other INT 15h call, the handler's own AH=87h included, to the BIOS.
@@ -3318,7 +3320,7 @@ flowchart TD
     MBR -- "unreadable, no 0x55AA" --> KBR["jres_remove when the block went in; the keyboards stay up"]
     KBR --> MENU
     MEM -- "refused or unreadable" --> MENU
-    MENU -- "CD drive" --> LD["jroute_boot, jmod_load: ATA.MOD read to 6 MB, inflated to JMOD_SLOT_ATA (15 MB)<br/>E820 says 15-16 MB is RAM; header checked; .bss zeroed; init"]
+    MENU -- "CD drive" --> LD["jroute_boot, jmod_load: ATA.MOD read to 6 MB, inflated to JMOD_SLOT_ATA (15 MB)<br/>the map says 15-16 MB is RAM; header checked; .bss zeroed; init"]
     LD --> PB["ops.probe: IDENTIFY PACKET DEVICE on 0x1F0 and 0x170,<br/>master and slave; READ CAPACITY; the first with a disc"]
     PB --> CAT{"the catalog through ops.read (disc_read)<br/>vcd_boot_entry: its media type"}
     CAT -- "floppy emulation" --> VFD["vfd_serve over disc_read: the image to the heap above 64 MB,<br/>vfdres.S as drive 0x00; nothing of ATA.MOD stays (11.3.8);<br/>USB keyboards up: the keyboard block first, as for MBR"]
@@ -4816,7 +4818,12 @@ a one-second countdown, judged from the serial log, and one case more for
 the menu itself: a five-second countdown stopped by a key sent through
 QEMU's monitor, which must boot nothing until Enter, and then the row the
 key moved to. `usb-hub-stick` boots the rig stick from behind a
-`usb-hub`, judged as the other USB cases are. Five cases more type on a
+`usb-hub`, judged as the other USB cases are. `noe820` boots the `CD`
+route under a hard disk boot sector (`falcon-bios/tools/noe820.S`, booted
+first) whose INT 15h filter fails E820 as a BIOS without the call does,
+and `noe820-88` fails E801 through it too: judged by stage 3 saying which
+call its map came from, and by the map memprobe is handed, usable memory
+from 1 MB with the resident's block reserved. Five cases more type on a
 `usb-kbd` (QEMU sends the
 monitor's keys to the newest keyboard, and SeaBIOS's own USB keyboard ends
 when jump takes the controller): Escape on the rig stick's empty menu,
