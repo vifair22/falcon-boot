@@ -30,6 +30,7 @@
 #include <tui/tui.h>
 #include <pos/pos.h>
 #include <trust/probe.h>
+#include <pe/pe.h>
 #include <secboot/sb.h>
 #include <secboot/trustefi.h>
 
@@ -50,6 +51,11 @@ static EFI_SYSTEM_TABLE *g_st;
  * colours are built from these and no boot path reads either. */
 static trust_stores g_stores;
 static sb_mode g_mode = SB_MODE_UNKNOWN;
+/* An image we launch cannot load its own inner PE on this boot
+ * (load_ops_inner_load_blocked, DESIGN Section 7.6): the one prediction
+ * that is read off the load path rather than the stores. Resolved once at
+ * startup for the rows; every launch resolves its own. */
+static BOOLEAN g_uki_blocked = FALSE;
 
 EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st);
 
@@ -337,16 +343,17 @@ static void wbuf_ascii(wbuf *w, const char *s)
 /* Why the platform is expected to refuse this entry, or NULL (DESIGN Section
  * 7.8's reason table). Said only when Secure Boot will actually be enforcing:
  * with it off, in setup mode or unknown, nothing is refused and nothing is
- * predicted. With shim validation disabled, the one thing that fails is an
- * image that loads a PE of its own through the firmware, which is every UKI
- * (DESIGN Section 7.4); a fresh bless boots one. */
+ * predicted. When a UKI's inner load is blocked (g_uki_blocked), the one
+ * thing that fails is an image that loads a PE of its own through the
+ * firmware, which is every UKI (DESIGN Section 7.4): a fresh bless boots
+ * one, and so does a bare payload with a .linux section. */
 static const CHAR16 *why_refused(const iso_target *t, BOOLEAN uki)
 {
     const manifest_record *r = t->hit.rec;
     BOOLEAN stale = (r != (const manifest_record *)0 &&
                      t->hit.state == BLESS_STALE) ? TRUE : FALSE;
 
-    if (g_mode == SB_MODE_ON_VALIDATION_DISABLED)
+    if (g_uki_blocked)
         return uki ? L"{VALIDATION OFF}" : (const CHAR16 *)0;
     if (g_mode != SB_MODE_ON)
         return (const CHAR16 *)0;
@@ -414,7 +421,7 @@ static void tags_build(iso_target *t, const iso_survey *survey)
 
     if (t->shape == ENTRY_MEDIA)
         t->bios_only = survey->uefi == UEFIBOOT_NO ? 1 : 0;
-    why = why_refused(t, uki);
+    why = why_refused(t, (uki || survey->uki != 0) ? TRUE : FALSE);
     /* In every Secure Boot state: it is not a prediction about a signature
      * but a fact about the medium, and a fresh blessing is the one thing
      * that would boot something else in its place. */
@@ -437,6 +444,23 @@ static void tags_build(iso_target *t, const iso_survey *survey)
  * buffer that size in this file is. */
 static fs_file g_payload_file;
 
+/* sd-stub keeps the kernel in a section named .linux and loads it through
+ * gBS->LoadImage, so a payload whose section table names one is stopped by
+ * the state that stops the personal OS (DESIGN Section 7.4). Read off the
+ * head the signature came from; a table that runs past it is no finding
+ * (Section 7.8). */
+static int payload_is_uki(const void *head, UINTN len, UINT64 total)
+{
+    pe_hdr h;
+    size_t off, size;
+    int rc;
+
+    if (pe_parse(head, (size_t)len, &h) != PE_OK)
+        return 0;
+    rc = pe_find_section(&h, head, (size_t)total, ".linux", &off, &size);
+    return rc == PE_OK ? 1 : 0;
+}
+
 /* The two facts the menu labels with, for a bare EFI payload (DESIGN Section
  * 7.2). The same two an ISO's survey reports, found the only way they can be
  * found for a payload: the family from the file name, because a lone PE has
@@ -458,6 +482,7 @@ static void payload_survey(fs_vol *vol, const fs_dirent *ent, iso_survey *out)
     out->family = family_by_id(FAMILY_UNKNOWN);
     out->sig = ISO_SIG_UNKNOWN;
     out->uefi = UEFIBOOT_UNKNOWN;
+    out->uki = 0;
     memset(&out->trust, 0, sizeof(out->trust));
 
     while (ent->name[i] != 0 && i + 1 < sizeof(name)) {
@@ -483,6 +508,7 @@ static void payload_survey(fs_vol *vol, const fs_dirent *ent, iso_survey *out)
     if (fs_file_read(&g_payload_file, 0, want, head) != FS_OK)
         return;
     out->sig = iso_pe_signature(head, (UINTN)want);
+    out->uki = payload_is_uki(head, (UINTN)want, size);
     /* The prediction reads the payload whole when it is small enough to
      * hash, which a payload always is; it is the file the platform will be
      * asked to verify, so it is the file the prediction is about. */
@@ -546,8 +572,12 @@ static void target_probe(iso_target *t)
         iso_survey_media(g_st, &g_vols[t->vol], &t->ent, t->kind, &g_stores,
                          &survey);
     t->fam = survey.family->id;
-    t->probed = 1;
     tags_build(t, &survey);
+    /* Last, after the tags: tags_build reads the UKI wrap behind a fresh
+     * bless (bless_uki_trust), and discover_read yields from inside the
+     * probe. Set before it, the menu's fill ran during that read and
+     * copied empty tag columns off an entry it then counted as done. */
+    t->probed = 1;
 }
 
 /* ---- folder view (DESIGN Section 6 stage 1) ---- */
@@ -649,7 +679,7 @@ static UINTN view_build(const iso_list *list, const CHAR16 *cur, UINTN cur_len,
             /* The personal OS is a UKI, the one thing the permissive state
              * cannot boot (DESIGN Section 7.4); in every other state the
              * running loader is proof its MOK is enrolled (Section 7.8). */
-            if (g_mode == SB_MODE_ON_VALIDATION_DISABLED) {
+            if (g_uki_blocked) {
                 ucs2_copy(view[n].why, MENU_TAG_MAX, L"{VALIDATION OFF}");
                 view[n].caution = 1;
             }
@@ -1909,6 +1939,12 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
     trust_stores_load(st, image_handle, &g_stores);
     permissive_notice(banner_init(&banner,
                                   L"falcon-boot " WIDEN(FALCON_VERSION)));
+    {
+        load_ops ops;
+
+        resolve_load_ops(st->BootServices, &ops);
+        g_uki_blocked = load_ops_inner_load_blocked(st, &ops);
+    }
 
     /* One pass over the Block I/O handles for the whole loader (DESIGN
      * Section 9): media, LUKS2 magic, filesystem and identity record for

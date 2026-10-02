@@ -107,6 +107,29 @@
 #                  {64-BIT ONLY}, a multi-arch one (a 64-bit and a 32-bit
 #                  kernel) is not, and choosing the first shows its page and
 #                  returns to the menu
+#   validation-off-uefi
+#                  a stick with a blessed ISO (mk-test-blessed-stick.sh), a
+#                  second copy of the payload ISO and an ISO whose tree
+#                  carries an unsigned BOOTX64.EFI, under OVMF with Secure
+#                  Boot on and shim's MokSBState set (DESIGN Section 7.4;
+#                  the varstore mk-test-mok.sh writes beside the enforcing
+#                  one): the banner says validation is disabled, the
+#                  Personal OS row and the blessed row carry
+#                  {VALIDATION OFF}, the tree ISO is [unsigned] with no
+#                  brace where validation on would say {NOT BLESSED}, and
+#                  the payload copy and the stale record's ISO carry none
+#   validation-off-pos-uefi
+#                  the same machine: Enter on the personal OS warns before
+#                  the read, hands over, and the stub reports the firmware
+#                  refusing its kernel (DESIGN Section 7.4); the page with
+#                  the advice is judged when the image comes back, which
+#                  the fixture UKI does not under OVMF (case_voff_pos)
+#   validation-off-iso-uefi
+#                  the same machine: the unsigned payload ISO boots
+#   validation-off-station-uefi
+#                  the station disk under the same firmware: the banner,
+#                  {VALIDATION OFF} on its Personal OS row, and Enter on it
+#                  is the prompt
 #
 # Every image is built from image files; loop devices on them need sudo, as
 # mk-test-stick.sh does. Nothing touches a real disk.
@@ -197,6 +220,14 @@ STUB_ISO=a-efi-stub.iso
 EFI_ONLY_ISO=b-efi-only.iso
 X64_ISO=b-64-only.iso
 MULTI_ISO=b-multi.iso
+# The validation-off stick's second copy of the payload ISO, under a name no
+# bless record claims, so one row boots the ordinary way beside the stale
+# one; and an ISO with an unsigned \EFI\BOOT\BOOTX64.EFI in its tree, the
+# row the predictions mark {NOT BLESSED} with validation on. The payload ISO
+# cannot be that row: its loader is inside its El Torito image only, and the
+# survey draws it [no efi].
+UNSIGNED_ISO=unsigned-test.iso
+TREE_ISO=unsigned-tree.iso
 
 build_sticks() {
     STICK_ID=$ID_A TEST_STICK_IMG=$R/stick-a.img \
@@ -208,6 +239,21 @@ build_sticks() {
     STICK_ID=$ID_K TEST_STICK_IMG=$R/stick-kdf.img \
         P3_KDF_MEMORY_KIB=$((512 * 1024)) STICK_ISOS="kdf-stick.iso" \
         falcon-efi/tools/mk-test-stick.sh --no-labels >"$R/stick-kdf.build" 2>&1
+    # The validation-off cases' stick: a second copy of the payload ISO under
+    # a name no record claims, the tree ISO (the unsigned payload as
+    # \EFI\BOOT\BOOTX64.EFI, no El Torito entry: the survey's first stage,
+    # nothing the firmware boots), then the blessed ISO and the stale record
+    # for payload-test.iso that mk-test-blessed-stick.sh adds.
+    rm -rf "$R/tree-iso"
+    mkdir -p "$R/tree-iso/EFI/BOOT"
+    cp build/test/payload.efi "$R/tree-iso/EFI/BOOT/BOOTX64.EFI"
+    xorriso -as mkisofs -quiet -r -J -V UNSIGNED_TREE -o "$R/$TREE_ISO" \
+        "$R/tree-iso" >"$R/stick-voff.build" 2>&1
+    STICK_ID=$ID_A TEST_STICK_IMG=$R/stick-voff.img \
+        STICK_ISO_FILES="build/test-payload.iso:$UNSIGNED_ISO $R/$TREE_ISO:$TREE_ISO" \
+        falcon-efi/tools/mk-test-stick.sh --no-labels >>"$R/stick-voff.build" 2>&1
+    STICK_IMG=$R/stick-voff.img falcon-efi/tools/mk-test-blessed-stick.sh \
+        >>"$R/stick-voff.build" 2>&1
 }
 
 # MBR: p1 FAT32 (0x0C), p2 exFAT (0x07), p3 extended holding p5 FAT16
@@ -318,6 +364,7 @@ build_all() {
     # The fixture UKI and the test MOK are built once (make test-uki,
     # make sign) and reused; this rig never rebuilds them.
     for f in build/test/fixture-uki.efi build/mok-test/falcon-test-mok.key \
+             build/mok-test/OVMF_VARS.secboot.moksb.fd \
              build/shim/bins/fedora-16.1-shimx64.efi; do
         [[ -f "$f" ]] || { echo "ERROR: $f missing (make test-uki sign)" >&2; exit 1; }
     done
@@ -404,13 +451,19 @@ boot() {
         n=$(( n + 1 ))
     done
     case $fw in
-    uefi|uefi-sb)
+    uefi|uefi-sb|uefi-moksb)
         if [[ $fw == uefi ]]; then
             code=$(ovmf_find CODE plain)
             vars=$(ovmf_find VARS plain)
-        else
+        elif [[ $fw == uefi-sb ]]; then
             code=$(ovmf_find CODE secboot)
             vars=build/mok-test/OVMF_VARS.secboot.mok.fd
+        else
+            # The same MOK plus MokSBState: Secure Boot on, shim validating
+            # nothing (DESIGN Section 7.4). Copied afresh like the others,
+            # so no boot inherits the enforcing varstore.
+            code=$(ovmf_find CODE secboot)
+            vars=build/mok-test/OVMF_VARS.secboot.moksb.fd
         fi
         cp "$vars" "$R/vars.fd"
         chmod u+w "$R/vars.fd"
@@ -450,7 +503,7 @@ pos() {
 # From the passphrase prompt on: the passphrase, the chooser's row, the
 # UKI's report. pos_unlock SECONDS waits that long for the prompt.
 pos_unlock() {
-    local rows idx i
+    local i
     POS_WHY=
     wait_for "passphrase for the encrypted partition" "$1" ||
         { POS_WHY="no passphrase prompt"; return 1; }
@@ -467,18 +520,26 @@ pos_unlock() {
         'BEGIN { printf "%.2f", b - a }')
     sleep 1
     if ! log_text "$R/serial.log" | grep -aq FALCON-UKI-INIT; then
-        rows=$(log_text "$R/serial.log" | grep -aoE '[A-Za-z ]+\([a-z0-9-]+\.efi\)' |
-               sed 's/^ *//' | awk '!seen[$0]++')
-        idx=$(printf '%s\n' "$rows" | grep -n 'personal\.efi' | head -1 | cut -d: -f1)
-        [[ -n "$idx" ]] || { POS_WHY="the chooser has no personal.efi"; return 1; }
-        for (( i = 1; i < idx; i++ )); do
-            mon "sendkey down"
-            sleep 0.1
-        done
-        mon "sendkey ret"
+        choose_personal || return 1
     fi
     wait_for "FALCON-UKI-DONE" 120 || { POS_WHY="the UKI never reported"; return 1; }
     return 0
+}
+
+# The chooser's row for personal.efi, on a shelf with more than one UKI: the
+# rows as the serial drew them, down to it, Enter. Sets POS_WHY when there
+# is no such row.
+choose_personal() {
+    local rows idx i
+    rows=$(log_text "$R/serial.log" | grep -aoE '[A-Za-z ]+\([a-z0-9-]+\.efi\)' |
+           sed 's/^ *//' | awk '!seen[$0]++')
+    idx=$(printf '%s\n' "$rows" | grep -n 'personal\.efi' | head -1 | cut -d: -f1)
+    [[ -n "$idx" ]] || { POS_WHY="the chooser has no personal.efi"; return 1; }
+    for (( i = 1; i < idx; i++ )); do
+        mon "sendkey down"
+        sleep 0.1
+    done
+    mon "sendkey ret"
 }
 
 # grep reads to the end rather than -q: under pipefail, a grep that quits at
@@ -1064,6 +1125,215 @@ case_bios_tags() { # case_bios_tags CASE FIRMWARE TAGGED TAG PAGE PLAIN...
     fi
 }
 
+# ---- validation off (DESIGN Section 7.4) ----
+
+wait_for_re() { # wait_for_re REGEX SECONDS: 0 once the log matches it
+    local i
+    for (( i = 0; i < $2 * 10; i++ )); do
+        log_text "$R/serial.log" | grep -aqE -- "$1" && return 0
+        kill -0 "$QPID" 2>/dev/null || { log_text "$R/serial.log" |
+            grep -aqE -- "$1"; return; }
+        sleep 0.1
+    done
+    return 1
+}
+
+# The tag columns a root-screen row was drawn with, every drawing of it:
+# its brackets and, when there is one, the brace after them.
+row_tags() {    # row_tags NAME
+    squeezed | grep -aoE -- "$1( \[[^]]*\])+( \{[A-Z0-9 -]+\})?"
+}
+
+# Any key on a route's page, then the menu's key hint drawn once more.
+menu_back() {   # menu_back: 0 once the menu is back
+    local n i
+    n=$(log_text "$R/serial.log" | grep -aoF "c chain | d direct" | wc -l)
+    mon "sendkey spc"
+    for (( i = 0; i < 100; i++ )); do
+        (( $(log_text "$R/serial.log" | grep -aoF "c chain | d direct" |
+             wc -l) > n )) && return 0
+        sleep 0.1
+    done
+    return 1
+}
+
+# The validation-off stick's rows (build_sticks), and the words the loader
+# uses for the state: sb_mode_label's (falcon-efi/src/secboot/sb.c), the
+# row's reason (DESIGN Section 7.8), and load_ops_inner_load_advice's
+# (falcon-efi/src/loader/loadops.c).
+VOFF_BLESSED_ISO=blessed-test.iso
+VOFF_STALE_ISO=payload-test.iso
+VOFF_BANNER='SB: on (shim validation DISABLED)'
+VOFF_TAG='{VALIDATION OFF}'
+VOFF_POS_ROW='Personal OS \(encrypted\) +\{VALIDATION OFF\}'
+VOFF_ADVICE='so shim left the'
+# sd-stub's own line for the firmware's refusal of its kernel (src/boot/linux.c).
+VOFF_REFUSED='Error loading kernel image'
+
+case_voff_menu() { # case_voff_menu CASE
+    local why= one
+    boot uefi-moksb "$R/stick-voff.img:boot"
+    wait_for "$VOFF_BLESSED_ISO" 90 || why="the menu never listed $VOFF_BLESSED_ISO"
+    if [[ -z "$why" ]]; then
+        has "$VOFF_BANNER" || why="the banner does not say validation is disabled"
+    fi
+    if [[ -z "$why" ]]; then
+        wait_for_re "$VOFF_BLESSED_ISO +\[blessed\] +\{VALIDATION OFF\}" 30 ||
+            why="$VOFF_BLESSED_ISO is not drawn [blessed] $VOFF_TAG"
+    fi
+    if [[ -z "$why" ]]; then
+        log_text "$R/serial.log" | grep -aqE "$VOFF_POS_ROW" ||
+            why="the Personal OS row is not drawn with $VOFF_TAG"
+    fi
+    # Rows that boot the ordinary way have no reason in this state: the
+    # probe has been inside each (its brackets are filled) and drew no
+    # brace. The tree ISO is the one with a verdict to suppress; the
+    # payload ISO and its stale twin have no first stage to predict.
+    for one in "$TREE_ISO:\[unsigned\]" \
+               "$UNSIGNED_ISO:\[no efi\]" \
+               "$VOFF_STALE_ISO:\[no efi\] +\[blessed, stale\]"; do
+        [[ -n "$why" ]] && break
+        wait_for_re "${one%%:*} +${one#*:}" 30 ||
+            why="${one%%:*} is not drawn ${one#*:}"
+        [[ -n "$why" ]] && break
+        row_tags "${one%%:*}" | grep -aqF "{" &&
+            why="${one%%:*} is drawn with a brace"
+    done
+    halt
+    if [[ -z "$why" ]]; then
+        result "$1" 1 "banner validation off; $VOFF_TAG on the Personal OS and $VOFF_BLESSED_ISO; $TREE_ISO [unsigned] with no brace; $UNSIGNED_ISO and $VOFF_STALE_ISO untagged"
+    else
+        result "$1" 0 "$why"
+    fi
+}
+
+# Enter on the personal OS: the prompt, the chooser (this shelf has two
+# UKIs), the warning before the read, the handover, and the stub's own line
+# that the firmware refused its kernel (DESIGN Section 7.4). The fixture
+# UKI does not come back from there under OVMF: after the refusal the
+# machine faults inside the firmware, on the bless route too, with 4 GB and
+# with SMM on alike, so the page with the advice is judged only when it
+# appears. The corpus's blessed wraps come back and show it
+# (docs/coverage.md, the moksb-blessed column).
+case_voff_pos() { # case_voff_pos CASE
+    local why= i after
+    boot uefi-moksb "$R/stick-voff.img:boot"
+    wait_for "Personal OS (encrypted)" 90 || why="no Personal OS row"
+    if [[ -z "$why" ]]; then
+        sleep 1
+        mon "sendkey ret"
+        wait_for "passphrase for the encrypted partition" 30 ||
+            why="no passphrase prompt"
+    fi
+    if [[ -z "$why" ]]; then
+        sleep 0.5
+        send_keys "$PASS"
+        for (( i = 0; i < 900; i++ )); do
+            log_text "$R/serial.log" |
+                grep -aq 'personal\.efi\|very unlikely to start' && break
+            sleep 0.1
+        done
+        sleep 0.5
+        if ! has "very unlikely to start on this machine"; then
+            choose_personal || why=$POS_WHY
+        fi
+    fi
+    if [[ -z "$why" ]]; then
+        wait_for "very unlikely to start on this machine" 30 ||
+            why="no warning before the read"
+    fi
+    if [[ -z "$why" ]]; then
+        wait_for "handing over to the image" 120 || why="no handover"
+    fi
+    if [[ -z "$why" ]]; then
+        wait_for_re "$VOFF_REFUSED|$VOFF_ADVICE|FALCON-UKI-INIT" 120 ||
+            why="the image neither reported a refusal nor came back"
+    fi
+    if [[ -z "$why" ]]; then
+        has "FALCON-UKI-INIT" && why="the UKI started"
+    fi
+    if [[ -z "$why" ]]; then
+        # The page after the image, when the image comes back at all.
+        if wait_for_re "the image exited, status|personal OS boot failed while" 20; then
+            after="the page with the advice, the menu again"
+            wait_for "$VOFF_ADVICE" 10 || why="the page after the UKI has no advice"
+            [[ -n "$why" ]] || wait_for "press any key to return to the menu" 10 ||
+                why="the page has no way back"
+            [[ -n "$why" ]] || menu_back || why="the menu did not come back"
+        elif has "Exception Type"; then
+            after="then the machine faulted in a firmware driver"
+        else
+            after="then nothing came back"
+        fi
+    fi
+    halt
+    if [[ -z "$why" ]]; then
+        result "$1" 1 "warned before the read; the firmware refused the UKI's kernel; $after"
+    else
+        result "$1" 0 "$why"
+    fi
+}
+
+# The unsigned payload ISO, Enter on its row: the payload runs.
+case_voff_iso() { # case_voff_iso CASE
+    local why= row i
+    boot uefi-moksb "$R/stick-voff.img:boot"
+    wait_for "$UNSIGNED_ISO" 90 || why="the menu never listed $UNSIGNED_ISO"
+    if [[ -z "$why" ]]; then
+        sleep 1
+        row=$(row_of "$UNSIGNED_ISO") || true
+        [[ -n "$row" ]] || why="no row for $UNSIGNED_ISO"
+    fi
+    if [[ -z "$why" ]]; then
+        for (( i = 0; i < row; i++ )); do
+            mon "sendkey down"
+            sleep 0.2
+        done
+        sleep 0.3
+        mon "sendkey ret"
+        wait_for "FALCON-PAYLOAD-OK" 90 || why="the payload never ran"
+    fi
+    if [[ -z "$why" ]]; then
+        wait_for "the payload exited, status" 30 || why="no page after the payload"
+        wait_for "press any key to return to the menu" 10 ||
+            why="${why:-the page has no way back}"
+    fi
+    if [[ -z "$why" ]]; then
+        menu_back || why="the menu did not come back"
+    fi
+    halt
+    if [[ -z "$why" ]]; then
+        result "$1" 1 "$UNSIGNED_ISO ran its payload; the menu again"
+    else
+        result "$1" 0 "$why"
+    fi
+}
+
+# The station under the same firmware: its banner, its Personal OS row
+# tagged, and Enter on it the prompt, as case_station judges.
+case_voff_station() { # case_voff_station CASE
+    local why=
+    boot uefi-moksb build/test-station.img:boot
+    wait_for "Personal OS (encrypted)" 90 || why="no Personal OS row"
+    if [[ -z "$why" ]]; then
+        has "$VOFF_BANNER" || why="the banner does not say validation is disabled"
+        wait_for_re "$VOFF_POS_ROW" 10 ||
+            why="${why:-the Personal OS row is not drawn with $VOFF_TAG}"
+    fi
+    if [[ -z "$why" ]]; then
+        sleep 1
+        mon "sendkey ret"
+        wait_for "passphrase for the encrypted partition" 90 ||
+            why="no passphrase prompt"
+    fi
+    halt
+    if [[ -z "$why" ]]; then
+        result "$1" 1 "banner validation off; $VOFF_TAG on the Personal OS row; Enter on it is the prompt"
+    else
+        result "$1" 0 "$why"
+    fi
+}
+
 build_all
 
 A_ISOS="archlinux-fake.iso"
@@ -1073,10 +1343,13 @@ CASES=("$@")
            mbr-disk-uefi mbr-disk-bios foreign-uefi foreign-bios 4kn-uefi
            4kn-bios 4kn-bios-marker station-uefi station-bios
            station-stick-uefi station-stick-bios bios-only-uefi
-           bios-only-uefi-sb efi-only-bios 64-only-bios32 kdf-memory-uefi
-           kdf-memory-bios hibernated-uefi hibernated-bios probe-keys-uefi
-           probe-keys-bios update-stick-uefi-sb update-stick-bios
-           update-station-uefi-sb update-station-bios update-refuse)
+           bios-only-uefi-sb efi-only-bios 64-only-bios32
+           validation-off-uefi validation-off-pos-uefi
+           validation-off-iso-uefi validation-off-station-uefi
+           kdf-memory-uefi kdf-memory-bios hibernated-uefi hibernated-bios
+           probe-keys-uefi probe-keys-bios update-stick-uefi-sb
+           update-stick-bios update-station-uefi-sb update-station-bios
+           update-refuse)
 
 for c in "${CASES[@]}"; do
     case $c in
@@ -1129,6 +1402,10 @@ for c in "${CASES[@]}"; do
         case_bios_tags "$c" bios32 "$X64_ISO" "{64-BIT ONLY}" \
             "this image needs a 64-bit processor" \
             "$MULTI_ISO" "$BIOS_ONLY_ISO" "$STUB_ISO" ;;
+    validation-off-uefi)         case_voff_menu "$c" ;;
+    validation-off-pos-uefi)     case_voff_pos "$c" ;;
+    validation-off-iso-uefi)     case_voff_iso "$c" ;;
+    validation-off-station-uefi) case_voff_station "$c" ;;
     *) echo "unknown case: $c" >&2; exit 2 ;;
     esac
 done

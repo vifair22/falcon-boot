@@ -143,6 +143,12 @@ static EFI_STATUS wait_key(EFI_INPUT_KEY *key)
     return idle_wait_key(g_st, key);
 }
 
+/* An image we launch cannot load its own inner PE on this boot
+ * (load_ops_inner_load_blocked, DESIGN Section 7.6): the one boot
+ * prediction this build keeps, since it needs no stores. Resolved once at
+ * startup for the rows; every launch resolves its own. */
+static BOOLEAN g_uki_blocked = FALSE;
+
 /* The banner is the title and the Secure Boot state. The stick's banner
  * names what the machine trusts when enforcing, which is read by the boot
  * predictions this build leaves out; here the state's own label stands in
@@ -658,6 +664,12 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
     }
 
     permissive_notice(banner_init(&banner));
+    {
+        load_ops ops;
+
+        resolve_load_ops(st->BootServices, &ops);
+        g_uki_blocked = load_ops_inner_load_blocked(st, &ops);
+    }
 
     /* Each startup step says itself on the page's first row, so a slow
      * machine shows where the time goes (the permissive notice starts a row
@@ -719,11 +731,20 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
         shown = strows_arrange(&g_rows, g_have_ini ? &g_ini : 0, order,
                                STROWS_MAX);
         for (i = 0; i < shown; i++) {
-            ucs2_copy(view[i].label, MENU_PATH_MAX,
-                      g_rows.row[order[i]].label);
+            const strow *w = &g_rows.row[order[i]];
+
+            ucs2_copy(view[i].label, MENU_PATH_MAX, w->label);
             view[i].sig[0] = 0;
             view[i].why[0] = 0;
             view[i].caution = 0;
+            /* The shelf's UKIs and a plaintext one load their kernel the way
+             * the stick's personal OS does, and are stopped by the same
+             * state (DESIGN Section 7.4). */
+            if (g_uki_blocked &&
+                (w->kind == STROW_POS || w->kind == STROW_UKI)) {
+                ucs2_copy(view[i].why, MENU_TAG_MAX, L"{VALIDATION OFF}");
+                view[i].caution = 1;
+            }
         }
         /* The default and its countdown are for the first menu only: a
          * boot that came back is someone at the keyboard, or a loop. */

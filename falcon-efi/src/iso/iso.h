@@ -73,6 +73,10 @@ typedef struct {
      * loader (sig NO_EFI); UEFIBOOT_YES or UNKNOWN for everything else, and
      * NO is the {BIOS ONLY} row. */
     uefiboot_answer    uefi;
+    /* Nonzero for a bare payload whose section table names sd-stub's
+     * .linux: it boots the way the personal OS does, and is refused where
+     * that is (DESIGN Section 7.4). A medium's survey leaves it 0. */
+    int                uki;
 } iso_survey;
 
 /* Signature presence read out of the head of a PE image: data directory 4,

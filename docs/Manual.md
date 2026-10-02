@@ -154,7 +154,7 @@ with one is drawn yellow.
 | `{NOT BLESSED}` | UEFI | Secure Boot on; unsigned |
 | `{BLESS STALE}` | UEFI | Secure Boot on; one of the two above, with a stale blessing |
 | `{REVOKED}` | UEFI | Secure Boot on; dbx, MokListX or the SBAT level revokes it |
-| `{VALIDATION OFF}` | UEFI | shim validation disabled; on a blessed row and on the personal OS row |
+| `{VALIDATION OFF}` | UEFI | shim validation disabled; on the personal OS row, a blessed row, a `.efi` that is a UKI, and the station's UKI rows |
 | `{BIOS ONLY}` | UEFI | every state; the medium has no UEFI boot loader and no kernel UEFI can start |
 | `{EFI ONLY}` | BIOS | the medium has no BIOS boot image and no kernel falcon-bios can start |
 | `{64-BIT ONLY}` | BIOS | the medium needs long mode, and this processor has none |
