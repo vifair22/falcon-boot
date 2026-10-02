@@ -178,7 +178,8 @@ boot() {
     rm -f "$R/com1.log" "$R/mon.sock" "$R/hdd.qcow2" "$R/cf.qcow2"
     qemu-img create -q -f qcow2 -F raw -b "$(realpath "$HDD")" "$R/hdd.qcow2"
     qemu-img create -q -f qcow2 -F raw -b "$(realpath "$CARD")" "$R/cf.qcow2"
-    timeout "$TIMEOUT" "$QPCC" -L /usr/share/qemu -machine "$MACHINE" \
+    timeout "$TIMEOUT" "$QPCC" -L build/qemu-pcc/share -L /usr/share/qemu \
+        -machine "$MACHINE" \
         -cpu pentium3 -m 512 -display none -net none -vga cirrus -boot a \
         -drive if=floppy,format=raw,file="$R/jump.img",readonly=on \
         -drive if=none,id=d0,file="$R/hdd.qcow2",format=qcow2 \

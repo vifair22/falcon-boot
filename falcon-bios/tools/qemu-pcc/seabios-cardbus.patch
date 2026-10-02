@@ -1,0 +1,20 @@
+SeaBIOS sizes a CardBus bridge's bus numbers, windows and bridge control as
+if they were BARs 1-5 and an expansion ROM, since it tells a bridge from a
+device by class 0x0604 alone: the capabilities pointer at 0x14 reads back
+as a BAR of an impossible size, and PCI setup stops at "out of 32bit address
+space". A CardBus bridge (header type 2) has BAR0 only; build-qemu.sh
+applies this to the SeaBIOS in the QEMU release it builds (docs/DESIGN.md
+Section 13.9).
+
+--- a/src/fw/pciinit.c
++++ b/src/fw/pciinit.c
+@@ -886,6 +886,9 @@ static int pci_bios_check_devices(struct pci_bus *busses)
+             if ((pci->class == PCI_CLASS_BRIDGE_PCI) &&
+                 (i >= PCI_BRIDGE_NUM_REGIONS && i < PCI_ROM_SLOT))
+                 continue;
++            /* A CardBus bridge's header holds one BAR. */
++            if ((pci->header_type & 0x7f) == PCI_HEADER_TYPE_CARDBUS && i > 0)
++                continue;
+             int type, is64;
+             u64 size;
+             pci_bios_get_bar(pci, i, &type, &size, &is64);

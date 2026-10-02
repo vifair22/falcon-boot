@@ -4,12 +4,22 @@
  *
  * QEMU models no PC Card bridge on x86, and falcon jump's PCC.MOD has to be
  * proven against one before it meets a ThinkPad A21m's TI PCI-1450. This is
- * that bridge's register interface as a CardBus bridge's 16-bit side
- * presents it, with one CompactFlash card inserted:
+ * that bridge as the A21m's PCI bus shows it, one socket, with one
+ * CompactFlash card inserted:
  *
- *   - a PCI function with the PCI-1450's IDs and class (0x0607), BAR0 the
- *     CardBus socket registers, the ExCA registers at +0x800;
- *   - ExCA, the i82365SL's register set: interface status, power, interrupt
+ *   - a CardBus bridge's PCI header (type 2) with the PCI-1450's IDs and
+ *     class and the A21m's subsystem: BAR0 the socket registers, the
+ *     capabilities pointer and secondary status, the bus numbers and the
+ *     CardBus latency timer, two memory and two I/O windows, the interrupt
+ *     pin (INTA on function 0, INTB on function 1), bridge control, the
+ *     legacy 16-bit I/O base, TI's registers at 0x80-0x9F and the power
+ *     management capability at 0xA0. Every default is the A21m's, read from
+ *     its config space under Linux. What is writable is stored and read
+ *     back; the CardBus windows forward nothing, since no CardBus card is
+ *     modelled, and the bus numbers are presets (`cardbus-bus`,
+ *     `subordinate-bus`; by default the A21m's BIOS's, 2-5 and 6-9);
+ *   - the CardBus socket registers (present state, control) and ExCA, the
+ *     i82365SL's register set at +0x800: interface status, power, interrupt
  *     and general control (reset, card type), window enables, memory window
  *     0 and I/O window 0, and TI's page register for the memory window;
  *   - the windows as real mappings, moved and switched as those registers
@@ -28,8 +38,9 @@
  *     past 128 GiB needs. Off, a card larger than that says 2^28 - 1
  *     sectors, as a card without the feature set would.
  *
- * A model, so it is exactly as right as its reading of the specifications;
- * where the silicon is looser or stricter, only the A21m says. It is test
+ * A model, so it is exactly as right as its reading of the specifications
+ * and of the A21m's registers; where the silicon is looser or stricter,
+ * only the A21m says. It is test
  * equipment, built into a QEMU for the rig by build-qemu.sh, and never part
  * of falcon.
  *
@@ -41,6 +52,7 @@
 #include "qapi/error.h"
 #include "hw/pci/pci.h"
 #include "hw/pci/pci_device.h"
+#include "hw/resettable.h"
 /* QEMU 11 moved these four; 10.0, which the coverage harness's Debian runs,
  * has them at the older paths. build-qemu.sh builds the release on PATH, so
  * both have to compile. */
@@ -62,6 +74,29 @@
 
 #define TYPE_FALCON_PCC "falcon-pcc"
 OBJECT_DECLARE_SIMPLE_TYPE(FalconPccState, FALCON_PCC)
+
+/* The type-2 header past BAR0, and the PCI-1450's own registers. */
+#define CB_CAP_PTR         0x14
+#define CB_SEC_STATUS      0x16
+#define CB_PRIMARY_BUS     0x18
+#define CB_CARDBUS_BUS     0x19
+#define CB_SUBORDINATE_BUS 0x1A
+#define CB_LATENCY         0x1B
+#define CB_MEM_BASE0       0x1C
+#define CB_IO_BASE0        0x2C
+#define CB_BRIDGE_CONTROL  0x3E
+#define CB_SUBSYS_VENDOR   0x40
+#define CB_LEGACY_BASE     0x44
+#define TI_SYSTEM_CONTROL  0x80
+#define TI_MFUNC_ROUTING   0x8C
+#define TI_RETRY_STATUS    0x90
+#define TI_CARD_CONTROL    0x91
+#define TI_DEVICE_CONTROL  0x92
+#define TI_DIAGNOSTIC      0x93
+#define TI_PM_CAP          0xA0
+
+#define BC_IREQ_ISA        0x0080  /* bridge control: IREQ to ISA, not PCI */
+#define SC_SOCACTIVE       0x00002000u
 
 /* CardBus socket registers. */
 #define SOCK_PRESENT   0x08
@@ -112,6 +147,8 @@ struct FalconPccState {
 
     uint32_t sock_control;
     uint8_t volts;          /* 0: a card taking 5 V or 3.3 V; 3: 3.3 V only */
+    uint8_t cardbus_bus;    /* the properties; 0xFF: the A21m's, by function */
+    uint8_t subordinate_bus;
     uint8_t exca[256];
     uint8_t cor;
 
@@ -638,6 +675,111 @@ static const MemoryRegionOps bar_ops = {
     .impl = { .min_access_size = 1, .max_access_size = 4 },
 };
 
+/* ---- the PCI header and the PCI-1450's registers ---- */
+
+/* What a write may change; everything else in the header past BAR0 and in
+ * TI's space is read-only, including the registers whose bits the A21m's
+ * dump does not settle. */
+static void config_masks(PCIDevice *pdev)
+{
+    uint8_t *w = pdev->wmask, *w1c = pdev->w1cmask;
+
+    memset(w + 0x40, 0, PCI_CONFIG_SPACE_SIZE - 0x40);
+    w[PCI_LATENCY_TIMER] = 0xF8;
+    pci_set_word(w1c + CB_SEC_STATUS, 0xF900);
+    w[CB_PRIMARY_BUS] = 0xFF;
+    w[CB_CARDBUS_BUS] = 0xFF;
+    w[CB_SUBORDINATE_BUS] = 0xFF;
+    w[CB_LATENCY] = 0xF8;
+    pci_set_long(w + CB_MEM_BASE0, 0xFFFFF000);        /* memory 0 and 1 */
+    pci_set_long(w + CB_MEM_BASE0 + 4, 0xFFFFF000);
+    pci_set_long(w + CB_MEM_BASE0 + 8, 0xFFFFF000);
+    pci_set_long(w + CB_MEM_BASE0 + 12, 0xFFFFF000);
+    pci_set_long(w + CB_IO_BASE0, 0xFFFFFFFC);         /* I/O 0 and 1 */
+    pci_set_long(w + CB_IO_BASE0 + 4, 0xFFFFFFFC);
+    pci_set_long(w + CB_IO_BASE0 + 8, 0xFFFFFFFC);
+    pci_set_long(w + CB_IO_BASE0 + 12, 0xFFFFFFFC);
+    pci_set_word(w + CB_BRIDGE_CONTROL, 0x07EF);
+    pci_set_long(w + CB_LEGACY_BASE, 0x0000FFFC);
+    /* System control: all but SOCACTIVE and INTERROGATE, which are status. */
+    pci_set_long(w + TI_SYSTEM_CONTROL, 0xFFFFDEFF);
+    pci_set_long(w + TI_MFUNC_ROUTING, 0x0FFFFFFF);
+    w[TI_RETRY_STATUS] = 0xC0;                         /* the enables */
+    w1c[TI_RETRY_STATUS] = 0x3E;                       /* the expiries */
+    w[TI_CARD_CONTROL] = 0xFE;
+    w[TI_DEVICE_CONTROL] = 0xFF;
+    w[TI_DIAGNOSTIC] = 0xFF;
+    pci_set_word(w + TI_PM_CAP + 4, 0x0103);           /* PMCSR: state, PME */
+    pci_set_word(w1c + TI_PM_CAP + 4, 0x8000);
+}
+
+/* The A21m's values (its config space read under Linux) for everything
+ * the PCI core does not reset itself. The windows start closed; the bus
+ * numbers are the presets. */
+static void config_reset(FalconPccState *s)
+{
+    PCIDevice *pdev = PCI_DEVICE(s);
+    uint8_t *c = pdev->config;
+    unsigned fn = PCI_FUNC(pdev->devfn);
+    uint8_t cb = s->cardbus_bus != 0xFF ? s->cardbus_bus : fn == 0 ? 2 : 6;
+    uint8_t sub = s->subordinate_bus != 0xFF ? s->subordinate_bus
+                                             : fn == 0 ? 5 : 9;
+
+    memset(c + CB_CAP_PTR, 0, PCI_CONFIG_SPACE_SIZE - CB_CAP_PTR);
+    c[CB_CAP_PTR] = TI_PM_CAP;
+    pci_set_word(c + CB_SEC_STATUS, 0x0200);           /* DEVSEL medium */
+    c[CB_PRIMARY_BUS] = 0;
+    c[CB_CARDBUS_BUS] = cb;
+    c[CB_SUBORDINATE_BUS] = sub;
+    c[CB_LATENCY] = 0xB0;
+    c[PCI_INTERRUPT_PIN] = (uint8_t)(1 + fn);
+    pci_set_word(c + CB_BRIDGE_CONTROL, 0x05C0);
+    pci_set_word(c + CB_SUBSYS_VENDOR, 0x1014);        /* IBM */
+    pci_set_word(c + CB_SUBSYS_VENDOR + 2, 0x0130);
+    pci_set_long(c + CB_LEGACY_BASE, 0x00000001);
+    pci_set_long(c + TI_SYSTEM_CONTROL, 0x0844D079);
+    pci_set_long(c + 0x84, 0x000000C0);
+    pci_set_long(c + 0x88, 0x80018080);
+    pci_set_long(c + TI_MFUNC_ROUTING, 0x00001000);    /* MFUNC3: IRQSER */
+    c[TI_RETRY_STATUS] = 0xC0;
+    c[TI_CARD_CONTROL] = 0x02;
+    c[TI_DEVICE_CONTROL] = 0x66;         /* interrupts all serialised */
+    c[TI_DIAGNOSTIC] = 0x40;             /* CardBus interrupts to PCI */
+    c[TI_PM_CAP] = PCI_CAP_ID_PM;
+    c[TI_PM_CAP + 1] = 0;
+    pci_set_word(c + TI_PM_CAP + 2, 0xFE11);
+    pci_set_word(c + TI_PM_CAP + 4, 0x0000);
+    c[TI_PM_CAP + 6] = 0xC0;
+    c[TI_PM_CAP + 7] = 0;
+}
+
+/* SOCACTIVE in the system control register, read-only: the socket is
+ * powered and its card out of reset. The A21m showed it on the function
+ * whose socket Linux had brought up. */
+static uint32_t falcon_pcc_config_read(PCIDevice *pdev, uint32_t addr, int len)
+{
+    FalconPccState *s = FALCON_PCC(pdev);
+    uint32_t v = pci_default_read_config(pdev, addr, len);
+
+    if (addr <= TI_SYSTEM_CONTROL + 1 && addr + len > TI_SYSTEM_CONTROL + 1 &&
+        running(s))
+        v |= (SC_SOCACTIVE >> 8) << (8 * (TI_SYSTEM_CONTROL + 1 - addr));
+    return v;
+}
+
+static void falcon_pcc_reset_hold(Object *obj, ResetType type)
+{
+    FalconPccState *s = FALCON_PCC(obj);
+
+    config_reset(s);
+    s->sock_control = 0;
+    memset(s->exca, 0, sizeof s->exca);
+    s->devctl = 0;
+    s->feature = 0;
+    card_reset(s);
+    remap(s);
+}
+
 static void falcon_pcc_realize(PCIDevice *pdev, Error **errp)
 {
     FalconPccState *s = FALCON_PCC(pdev);
@@ -659,6 +801,12 @@ static void falcon_pcc_realize(PCIDevice *pdev, Error **errp)
     if (!s->lba48 && s->sectors > 0x0FFFFFFF)
         s->sectors = 0x0FFFFFFF;
     cis_build(s);
+
+    pdev->config[PCI_HEADER_TYPE] |= PCI_HEADER_TYPE_CARDBUS;
+    pci_set_word(pdev->config + PCI_STATUS,
+                 PCI_STATUS_CAP_LIST | PCI_STATUS_DEVSEL_MEDIUM);
+    config_masks(pdev);
+    config_reset(s);
     card_reset(s);
 
     memory_region_init_io(&s->bar, OBJECT(s), &bar_ops, s, "falcon-pcc-bar",
@@ -684,6 +832,9 @@ static void falcon_pcc_realize(PCIDevice *pdev, Error **errp)
 static const Property falcon_pcc_props[] = {
     DEFINE_PROP_DRIVE("drive", FalconPccState, blk),
     DEFINE_PROP_UINT8("volts", FalconPccState, volts, 0),
+    DEFINE_PROP_UINT8("cardbus-bus", FalconPccState, cardbus_bus, 0xFF),
+    DEFINE_PROP_UINT8("subordinate-bus", FalconPccState, subordinate_bus,
+                      0xFF),
     DEFINE_PROP_BOOL("lba48", FalconPccState, lba48, false),
     DEFINE_PROP_BOOL("shadow-roms", FalconPccState, shadow_roms, false),
 };
@@ -700,12 +851,15 @@ static void falcon_pcc_class_init(ObjectClass *klass, FALCON_PCC_CLASS_DATA *dat
 {
     DeviceClass *dc = DEVICE_CLASS(klass);
     PCIDeviceClass *k = PCI_DEVICE_CLASS(klass);
+    ResettableClass *rc = RESETTABLE_CLASS(klass);
 
     k->realize = falcon_pcc_realize;
+    k->config_read = falcon_pcc_config_read;
     k->vendor_id = 0x104C;               /* Texas Instruments */
     k->device_id = 0xAC1B;               /* PCI-1450 */
     k->revision = 0x03;
     k->class_id = 0x0607;                /* CardBus bridge */
+    rc->phases.hold = falcon_pcc_reset_hold;
     device_class_set_props(dc, falcon_pcc_props);
     set_bit(DEVICE_CATEGORY_BRIDGE, dc->categories);
     dc->desc = "falcon rig: PC Card bridge with a CompactFlash card";

@@ -100,8 +100,8 @@
 #             starts with the keyboard block behind INT 16h, and Escape on
 #             its menu reaches it there and comes back to the block's reset
 #
-# The cf cases and cd-native need the QEMU build-qemu.sh makes; the rest
-# the system's.
+# The cf cases and cd-native need the QEMU build-qemu.sh makes, and run
+# with its SeaBIOS; the rest the system's.
 #
 # Usage: falcon-bios/tools/run-jump-rig.sh [case...]   (default: all)
 # Env:   MEMTEST  memtest86+ for the mem case (skipped without it)
@@ -113,6 +113,9 @@ cd "$ROOT"
 R=build/jump-rig
 QEMU=${QEMU:-qemu-system-i386}
 QPCC=build/qemu-pcc/build/qemu-system-i386
+# The rig QEMU's BIOS files: its own SeaBIOS first (build-qemu.sh), the
+# machine's for the rest.
+QPCC_L=(-L build/qemu-pcc/share -L /usr/share/qemu)
 TIMEOUT=45
 
 mkdir -p "$R"
@@ -141,10 +144,11 @@ floppy() {    # floppy DEFAULT [SECONDS]
 }
 
 boot() {      # boot QEMU-BINARY ARGS...
-    local q=$1
+    local q=$1 l=(-L /usr/share/qemu)
     shift
+    [[ $q == "$QPCC" ]] && l=("${QPCC_L[@]}")
     cp build/test-bios.img "$R/disk.img"
-    timeout "$TIMEOUT" "$q" -L /usr/share/qemu -machine pc -cpu pentium3 \
+    timeout "$TIMEOUT" "$q" "${l[@]}" -machine pc -cpu pentium3 \
         -m 128 -display none -boot a \
         -drive if=floppy,format=raw,file="$R/jump.img" \
         -drive file="$R/disk.img",format=raw,if=ide,index=0 \
@@ -629,7 +633,7 @@ for c in "${CASES[@]}"; do
         cp build/test-bios.img "$R/cf.img"
         floppy cf
         rm -f "$R/serial.log"
-        timeout "$TIMEOUT" "$QPCC" -L /usr/share/qemu -machine pc \
+        timeout "$TIMEOUT" "$QPCC" "${QPCC_L[@]}" -machine pc \
             -cpu pentium3 -m 128 -display none -boot order=c \
             -drive if=floppy,format=raw,file="$R/jump.img" \
             -drive file="$R/nobar.img",format=raw,if=ide,index=0 \

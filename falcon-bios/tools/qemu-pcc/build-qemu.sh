@@ -7,11 +7,14 @@
 # otherwise the same), adds falcon-pcc.c as a device, turns on cmd646-ide
 # (a PCI IDE controller in native mode, which no x86 machine type selects;
 # the cd-native case), and builds qemu-system-i386 alone into
-# build/qemu-pcc/. Idempotent: an existing tree is reused and only rebuilt.
+# build/qemu-pcc/. It also builds the release's own SeaBIOS with
+# seabios-cardbus.patch (the patch says why) to build/qemu-pcc/share/, for
+# the rig to put before /usr/share/qemu with -L. Idempotent: an existing
+# tree is reused and only rebuilt.
 #
 # Usage: falcon-bios/tools/qemu-pcc/build-qemu.sh
 # Output: build/qemu-pcc/build/qemu-system-i386; run it with
-#         -L /usr/share/qemu for the BIOS files and
+#         -L build/qemu-pcc/share -L /usr/share/qemu for the BIOS files and
 #         -device falcon-pcc,drive=<id>, or -device cmd646-ide,id=<id>.
 set -euo pipefail
 
@@ -56,5 +59,23 @@ if ! ninja -C "$DIR/build" qemu-system-i386 > "$DIR/ninja.log" 2>&1; then
     grep -E 'error|FAILED' "$DIR/ninja.log" | head -20 >&2
     echo "ERROR: the QEMU build failed; $DIR/ninja.log has all of it" >&2
     exit 1
+fi
+
+# The release's SeaBIOS (roms/seabios in its tarball), patched, built the
+# way the release builds its bios-256k.bin. The patch's own text is the
+# guard against applying it twice.
+SEABIOS="$SRC/roms/seabios"
+PATCH="$ROOT/falcon-bios/tools/qemu-pcc/seabios-cardbus.patch"
+grep -q "A CardBus bridge's header holds one BAR" "$SEABIOS/src/fw/pciinit.c" ||
+    patch -s -d "$SEABIOS" -p1 < "$PATCH"
+mkdir -p "$DIR/share"
+if [[ ! -f "$DIR/share/bios-256k.bin" || "$DIR/share/bios-256k.bin" -ot "$PATCH" ]]; then
+    if ! make -C "$SRC/roms" PYTHON=python3 build-seabios-config-seabios-256k \
+            > "$DIR/seabios.log" 2>&1; then
+        tail -20 "$DIR/seabios.log" >&2
+        echo "ERROR: the SeaBIOS build failed; $DIR/seabios.log has all of it" >&2
+        exit 1
+    fi
+    cp "$SEABIOS/builds/seabios-256k/bios.bin" "$DIR/share/bios-256k.bin"
 fi
 echo "$DIR/build/qemu-system-i386"

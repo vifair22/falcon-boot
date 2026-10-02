@@ -3297,9 +3297,12 @@ bridge. Build it once:
     falcon-bios/tools/qemu-pcc/build-qemu.sh
 
 It fetches the QEMU release matching the `qemu-system-i386` on PATH
-(`QEMU_VERSION` overrides) and builds `build/qemu-pcc/build/qemu-system-i386`.
-A case that needs it and does not find it is a SKIP, or for
-`test-cfstation` an exit.
+(`QEMU_VERSION` overrides) and builds `build/qemu-pcc/build/qemu-system-i386`,
+and that release's SeaBIOS with one patch for the bridge's header
+(`falcon-bios/tools/qemu-pcc/seabios-cardbus.patch`) into
+`build/qemu-pcc/share/`, which the rigs give it with `-L` before
+`/usr/share/qemu`. A case that needs it and does not find it is a SKIP, or
+for `test-cfstation` an exit.
 
 **Test-only flags.** These point the TPM commands at the rig instead of the
 machine. They are not for use on a real station.
