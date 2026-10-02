@@ -87,6 +87,13 @@ fi
 if [[ $BUILD -eq 1 ]] || ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
     echo "building $IMAGE"
     docker build -t "$IMAGE" -f tools/coverage/Dockerfile tools/coverage
+    # Every edit to the Dockerfile's package list makes a new apt layer of
+    # about 3 GB and leaves the old one in the build cache, where nothing
+    # else removes it. The filter is host-wide, which is the binhost's own
+    # policy for its build cache; records newer than two days survive, so a
+    # rebuild that follows soon after still finds its layers.
+    docker builder prune -f --filter until=48h >/dev/null ||
+        echo "warning: could not prune the docker build cache" >&2
 fi
 
 # A missing corpus is worth saying plainly: every case would be skipped and the
