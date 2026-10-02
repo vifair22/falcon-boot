@@ -91,3 +91,81 @@ ata_addr ata_addressing(int lba48, uint64_t lba, uint32_t count)
         return ATA_ADDR_LBA48;
     return ATA_ADDR_NONE;
 }
+
+static int chan_listed(const ata_chan *out, unsigned n, uint16_t base)
+{
+    unsigned i;
+
+    for (i = 0; i < n; i++) {
+        if (out[i].mode != ATA_CHAN_UNASSIGNED && out[i].base == base)
+            return 1;
+    }
+    return 0;
+}
+
+/* An I/O BAR's port, or 0: bit 0 marks I/O space, bit 1 is reserved, and a
+ * port above 0xFFFF is one no x86 instruction can address. */
+static uint16_t io_bar_port(uint32_t bar)
+{
+    if ((bar & 1u) == 0 || (bar >> 16) != 0)
+        return 0;
+    return (uint16_t)(bar & 0xFFFCu);
+}
+
+unsigned ata_channel_list(const ata_ide_ctrl *ctrls, unsigned nctrl,
+                          ata_chan *out, unsigned cap)
+{
+    static const uint16_t legacy[2][2] = {
+        { 0x1F0u, 0x3F6u },
+        { 0x170u, 0x376u },
+    };
+    unsigned n = 0;
+    unsigned i;
+    unsigned ch;
+
+    if (out == (ata_chan *)0)
+        return 0;
+    if (nctrl == 0 || ctrls == (const ata_ide_ctrl *)0) {
+        for (ch = 0; ch < 2u && n < cap; ch++) {
+            out[n].base = legacy[ch][0];
+            out[n].ctrl = legacy[ch][1];
+            out[n].mode = ATA_CHAN_COMPAT;
+            out[n].ctrl_idx = ATA_CHAN_NO_CTRL;
+            out[n].channel = (uint8_t)ch;
+            n++;
+        }
+        return n;
+    }
+    for (i = 0; i < nctrl; i++) {
+        for (ch = 0; ch < 2u; ch++) {
+            ata_chan c;
+
+            c.ctrl_idx = (uint8_t)i;
+            c.channel = (uint8_t)ch;
+            if ((ctrls[i].progif & (ch == 0 ? 1u : 4u)) != 0) {
+                uint16_t cmd = io_bar_port(ctrls[i].bar[2u * ch]);
+                uint16_t ctl = io_bar_port(ctrls[i].bar[2u * ch + 1u]);
+
+                if (cmd == 0 || ctl == 0) {
+                    c.mode = ATA_CHAN_UNASSIGNED;
+                    c.base = 0;
+                    c.ctrl = 0;
+                } else {
+                    c.mode = ATA_CHAN_NATIVE;
+                    c.base = cmd;
+                    c.ctrl = (uint16_t)(ctl + 2u);
+                }
+            } else {
+                c.mode = ATA_CHAN_COMPAT;
+                c.base = legacy[ch][0];
+                c.ctrl = legacy[ch][1];
+            }
+            if (c.mode != ATA_CHAN_UNASSIGNED && chan_listed(out, n, c.base))
+                continue;
+            if (n >= cap)
+                return n;
+            out[n++] = c;
+        }
+    }
+    return n;
+}

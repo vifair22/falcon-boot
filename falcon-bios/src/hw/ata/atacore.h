@@ -55,4 +55,41 @@ typedef enum {
  * 2^28 - 1 (128 GiB), or of more than 256 sectors. */
 ata_addr ata_addressing(int lba48, uint64_t lba, uint32_t count);
 
+/* How a PCI IDE controller runs one of its channels, and where. */
+typedef enum {
+    ATA_CHAN_COMPAT = 0,     /* compatibility mode: the legacy ports */
+    ATA_CHAN_NATIVE,         /* native mode: the ports its BARs name */
+    ATA_CHAN_UNASSIGNED      /* native, and no I/O port in the BARs: no ports */
+} ata_chan_mode;
+
+#define ATA_CHAN_NO_CTRL 0xFFu   /* ctrl_idx: the legacy pair with no controller */
+
+typedef struct {
+    uint16_t base;        /* the command block; 0 when unassigned */
+    uint16_t ctrl;        /* the control register; 0 when unassigned */
+    uint8_t  mode;        /* ata_chan_mode */
+    uint8_t  ctrl_idx;    /* the controller in the list it came from */
+    uint8_t  channel;     /* 0 primary, 1 secondary */
+} ata_chan;
+
+/* A PCI IDE controller (class 0x0101) as its configuration space says it:
+ * the programming interface (offset 0x09) and BARs 0-3 (0x10-0x1C), raw. */
+typedef struct {
+    uint8_t  progif;
+    uint32_t bar[4];
+} ata_ide_ctrl;
+
+/* The channels to probe, from the PCI IDE controllers found. A channel in
+ * native mode (programming interface bit 0 for the primary, bit 2 for the
+ * secondary) is at the I/O ports its BARs hold (0 and 1 for the primary, 2
+ * and 3 for the secondary; the control register two past the second), one
+ * in compatibility mode at the legacy pair (0x1F0/0x3F6, 0x170/0x376). A
+ * native channel whose BAR holds no I/O port (bit 0 clear, zero, or past
+ * the 16-bit port space) is listed as unassigned, so the caller can say so.
+ * A pair of ports already listed is not listed again, so the legacy pair
+ * appears once however many controllers claim it; with no controller at
+ * all, the list is the legacy pair. The count, at most `cap`. */
+unsigned ata_channel_list(const ata_ide_ctrl *ctrls, unsigned nctrl,
+                          ata_chan *out, unsigned cap);
+
 #endif /* FALCON_BIOS_ATACORE_H */

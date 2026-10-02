@@ -223,6 +223,137 @@ static void test_addressing(void **state)
     assert_int_equal(ata_addressing(1, 0, 0), ATA_ADDR_NONE);
 }
 
+/* The channels a controller's programming interface and BARs name. */
+static void test_channels(void **state)
+{
+    ata_ide_ctrl c[2];
+    ata_chan ch[8];
+    unsigned n;
+
+    (void)state;
+    /* No PCI IDE controller: the legacy pair. */
+    n = ata_channel_list(NULL, 0, ch, 8u);
+    assert_int_equal(n, 2);
+    assert_int_equal(ch[0].base, 0x1F0);
+    assert_int_equal(ch[0].ctrl, 0x3F6);
+    assert_int_equal(ch[0].mode, ATA_CHAN_COMPAT);
+    assert_int_equal(ch[0].ctrl_idx, ATA_CHAN_NO_CTRL);
+    assert_int_equal(ch[0].channel, 0);
+    assert_int_equal(ch[1].base, 0x170);
+    assert_int_equal(ch[1].ctrl, 0x376);
+    assert_int_equal(ch[1].channel, 1);
+    assert_int_equal(ata_channel_list(NULL, 0, ch, 1u), 1);
+    assert_int_equal(ata_channel_list(NULL, 0, NULL, 8u), 0);
+
+    /* A PIIX3 as QEMU's pc machine carries it: both channels in
+     * compatibility mode (0x80, bus master only), its BARs unused. */
+    memset(c, 0, sizeof c);
+    c[0].progif = 0x80;
+    n = ata_channel_list(c, 1u, ch, 8u);
+    assert_int_equal(n, 2);
+    assert_int_equal(ch[0].mode, ATA_CHAN_COMPAT);
+    assert_int_equal(ch[0].base, 0x1F0);
+    assert_int_equal(ch[0].ctrl_idx, 0);
+    assert_int_equal(ch[1].mode, ATA_CHAN_COMPAT);
+    assert_int_equal(ch[1].base, 0x170);
+    assert_int_equal(ch[1].ctrl, 0x376);
+
+    /* A CMD646 (0x8F): both native, at the ports the BIOS put in its
+     * BARs, the control register two past BAR1 and BAR3. */
+    c[0].progif = 0x8F;
+    c[0].bar[0] = 0xC001;
+    c[0].bar[1] = 0xC011;
+    c[0].bar[2] = 0xC021;
+    c[0].bar[3] = 0xC031;
+    n = ata_channel_list(c, 1u, ch, 8u);
+    assert_int_equal(n, 2);
+    assert_int_equal(ch[0].mode, ATA_CHAN_NATIVE);
+    assert_int_equal(ch[0].base, 0xC000);
+    assert_int_equal(ch[0].ctrl, 0xC012);
+    assert_int_equal(ch[0].channel, 0);
+    assert_int_equal(ch[1].mode, ATA_CHAN_NATIVE);
+    assert_int_equal(ch[1].base, 0xC020);
+    assert_int_equal(ch[1].ctrl, 0xC032);
+    assert_int_equal(ch[1].channel, 1);
+
+    /* Mixed: the primary native, the secondary compatibility (0x8B: bits 1
+     * and 3 say only that a channel could switch). */
+    c[0].progif = 0x8B;
+    n = ata_channel_list(c, 1u, ch, 8u);
+    assert_int_equal(n, 2);
+    assert_int_equal(ch[0].mode, ATA_CHAN_NATIVE);
+    assert_int_equal(ch[0].base, 0xC000);
+    assert_int_equal(ch[1].mode, ATA_CHAN_COMPAT);
+    assert_int_equal(ch[1].base, 0x170);
+    c[0].progif = 0x84;
+    n = ata_channel_list(c, 1u, ch, 8u);
+    assert_int_equal(n, 2);
+    assert_int_equal(ch[0].mode, ATA_CHAN_COMPAT);
+    assert_int_equal(ch[0].base, 0x1F0);
+    assert_int_equal(ch[1].mode, ATA_CHAN_NATIVE);
+    assert_int_equal(ch[1].base, 0xC020);
+
+    /* A native channel the BIOS assigned no port: listed unassigned, with
+     * no ports, so it is said and not probed. A zero BAR, a memory BAR, a
+     * control BAR missing, and a port past the 16-bit space. */
+    c[0].progif = 0x8F;
+    c[0].bar[0] = 0;
+    n = ata_channel_list(c, 1u, ch, 8u);
+    assert_int_equal(n, 2);
+    assert_int_equal(ch[0].mode, ATA_CHAN_UNASSIGNED);
+    assert_int_equal(ch[0].base, 0);
+    assert_int_equal(ch[0].ctrl, 0);
+    assert_int_equal(ch[0].ctrl_idx, 0);
+    assert_int_equal(ch[0].channel, 0);
+    assert_int_equal(ch[1].mode, ATA_CHAN_NATIVE);
+    assert_int_equal(ch[1].base, 0xC020);
+    c[0].bar[0] = 0xC000;               /* memory space */
+    assert_int_equal(ata_channel_list(c, 1u, ch, 8u), 2);
+    assert_int_equal(ch[0].mode, ATA_CHAN_UNASSIGNED);
+    c[0].bar[0] = 0xC001;
+    c[0].bar[1] = 0;
+    assert_int_equal(ata_channel_list(c, 1u, ch, 8u), 2);
+    assert_int_equal(ch[0].mode, ATA_CHAN_UNASSIGNED);
+    c[0].bar[1] = 0x1C011;
+    assert_int_equal(ata_channel_list(c, 1u, ch, 8u), 2);
+    assert_int_equal(ch[0].mode, ATA_CHAN_UNASSIGNED);
+
+    /* Two controllers both in compatibility mode: the legacy pair once. */
+    memset(c, 0, sizeof c);
+    c[0].progif = 0x80;
+    c[1].progif = 0x00;
+    n = ata_channel_list(c, 2u, ch, 8u);
+    assert_int_equal(n, 2);
+    assert_int_equal(ch[0].base, 0x1F0);
+    assert_int_equal(ch[0].ctrl_idx, 0);
+    assert_int_equal(ch[1].base, 0x170);
+    assert_int_equal(ch[1].ctrl_idx, 0);
+
+    /* One in compatibility mode and one native: four channels, the
+     * native ones marked with their controller. */
+    c[1].progif = 0x8F;
+    c[1].bar[0] = 0xC001;
+    c[1].bar[1] = 0xC011;
+    c[1].bar[2] = 0xC021;
+    c[1].bar[3] = 0xC031;
+    n = ata_channel_list(c, 2u, ch, 8u);
+    assert_int_equal(n, 4);
+    assert_int_equal(ch[2].mode, ATA_CHAN_NATIVE);
+    assert_int_equal(ch[2].base, 0xC000);
+    assert_int_equal(ch[2].ctrl_idx, 1);
+    assert_int_equal(ch[3].base, 0xC020);
+    assert_int_equal(ch[3].ctrl_idx, 1);
+    /* The list stops at cap. */
+    assert_int_equal(ata_channel_list(c, 2u, ch, 3u), 3);
+    /* Two unassigned channels are both listed: each is said. */
+    c[0].progif = 0x8F;
+    n = ata_channel_list(c, 2u, ch, 8u);
+    assert_int_equal(n, 4);
+    assert_int_equal(ch[0].mode, ATA_CHAN_UNASSIGNED);
+    assert_int_equal(ch[1].mode, ATA_CHAN_UNASSIGNED);
+    assert_int_equal(ch[2].mode, ATA_CHAN_NATIVE);
+}
+
 int run_atacore_tests(void)
 {
     const struct CMUnitTest tests[] = {
@@ -233,6 +364,7 @@ int run_atacore_tests(void)
         cmocka_unit_test(test_identify_disk),
         cmocka_unit_test(test_identify_lba48),
         cmocka_unit_test(test_addressing),
+        cmocka_unit_test(test_channels),
     };
 
     return cmocka_run_group_tests_name("atacore", tests, NULL, NULL);
