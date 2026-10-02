@@ -19,6 +19,15 @@ The headline columns are Secure Boot off and Secure Boot on where db
 trusts the Microsoft CA. Secure Boot on with only the stick owner's
 keys is reported beside them, without a target: media signed only by
 Microsoft cannot boot on such a machine at all (DESIGN 7.2).
+Secure Boot on with shim's validation off (MokSBState, DESIGN 7.4)
+is run on request and reported without a target too: every ISO boots
+there as with Secure Boot off, except a payload shim's own loader
+cannot load (DESIGN 7.6, pfSense); a blessed Linux wrap is a UKI,
+which does not boot in that state, so a refusal in its bless cell is
+the expected result, while a blessed BSD medium signs its own loader
+and boots. A chained loader still sees the firmware's Secure Boot
+flag on, and one that enforces its own policy from it fails as with
+validation on.
 
 A cell reading "no userland on serial ... after starting <entry>" is a
 measurement limit and not necessarily a failure. This harness reads
@@ -32,82 +41,82 @@ example (2026-09-20): its default entry is "Clonezilla live (VGA
 and listing the disk it found, and serial stayed empty for 300s. Read
 the screenshot before believing one of these.
 
-Loader: 0.1.0_20260920.1824.release, 0.1.0_20260924.1655.release, 0.1.0_20260925.0145.release, 0.1.0_20260925.0152.release, 0.1.0_20260925.0358.release, 0.1.0_20260925.0506.release, 0.1.0_20260925.0643.release, 0.1.0_20260925.0904.release, 0.1.0_20260925.1627.release, 0.1.0_20260925.1701.release, 0.1.0_20260925.1721.release, 0.1.0_20260925.1942.release, 0.1.0_20260925.2013.release, 0.1.0_20260925.2027.release, 0.1.0_20260925.2053.release, 0.1.0_20260925.2111.release, 0.1.0_20260925.2112.release
+Loader: 0.1.0_20260927.1737.release, 0.1.0_20260927.1813.release, 0.1.0_20260927.1858.release, 0.1.0_20261002.1741.release, 0.1.0_20261002.1747.release, 0.1.0_20261002.1857.release
 
 ## Summary
 
-| tier | ISOs run | SB off, drop | target | SB on, MS CA | target | SB on, own keys | BIOS, drop | BIOS, i686, drop |
-|---|---|---|---|---|---|---|---|---|
-| A | 27 | 22/22 (100%) | 100% | 22/22 (100%) | 95% | 19/22 (86%) | 27/27 (100%) | 4/5 (80%) |
-| B | 13 | 9/9 (100%) | 90% | 9/9 (100%) | - | 9/9 (100%) | 13/13 (100%) | 3/4 (75%) |
-| C | 22 | 6/10 (60%) | - | 3/10 (30%) | - | 1/10 (10%) | 9/22 (40%) | 3/12 (25%) |
+| tier | ISOs run | SB off, drop | target | SB on, MS CA | target | SB on, own keys | SB on, validation off, drop | BIOS, drop | BIOS, i686, drop |
+|---|---|---|---|---|---|---|---|---|---|
+| A | 27 | 22/22 (100%) | 100% | 22/22 (100%) | 95% | 19/22 (86%) | 22/22 (100%) | 27/27 (100%) | 4/5 (80%) |
+| B | 13 | 9/9 (100%) | 90% | 9/9 (100%) | - | 9/9 (100%) | 9/9 (100%) | 13/13 (100%) | 4/4 (100%) |
+| C | 22 | 6/10 (60%) | - | 3/10 (30%) | - | 1/10 (10%) | 5/10 (50%) | 11/22 (50%) | 3/12 (25%) |
 
 ## Matrix
 
-| ISO | tier | family | SB off drop | SB off chain | SB off bless | SB on, MS CA drop | SB on, MS CA chain | SB on, MS CA bless | SB on, own keys drop | SB on, own keys chain | SB on, own keys bless | BIOS drop | BIOS chain | BIOS bless | BIOS, i686 drop | BIOS, i686 chain | BIOS, i686 bless |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| debian-live-13.7 | A | debian-live | PASS | FAIL | PASS | PASS | FAIL | PASS | FAIL | FAIL | PASS | PASS | FAIL | - | N/A | N/A | N/A |
-| fedora-ws-44 | A | fedora-live | PASS | FAIL | PASS | PASS | FAIL | PASS | REFUSED | REFUSED | PASS | PASS | FAIL | - | N/A | N/A | N/A |
-| ubuntu-26.04.1 | A | casper | PASS | FAIL | PASS | PASS | FAIL | PASS | FAIL | FAIL | PASS | PASS | FAIL | - | N/A | N/A | N/A |
-| kubuntu-26.04 | A | casper | PASS | FAIL | PASS | PASS | FAIL | PASS | FAIL | FAIL | PASS | PASS | FAIL | - | N/A | N/A | N/A |
-| mint-22.3 | A | casper | PASS | FAIL | PASS | PASS | FAIL | PASS | FAIL | FAIL | PASS | PASS | FAIL | - | N/A | N/A | N/A |
-| opensuse-tw-20260916 | A | suse-live | PASS | FAIL | PASS | PASS | FAIL | PASS | FAIL | FAIL | PASS | PASS | FAIL | - | N/A | N/A | N/A |
-| manjaro-26.1.0 | A | manjaro | PASS | FAIL | PASS | FAIL | FAIL | PASS | FAIL | FAIL | PASS | PASS | FAIL | - | N/A | N/A | N/A |
-| arch-2026.09.01 | A | arch | PASS | FAIL | PASS | REFUSED | REFUSED | PASS | REFUSED | REFUSED | PASS | PASS | FAIL | - | N/A | N/A | N/A |
-| arch-2026.01.01 | A | arch | PASS | FAIL | PASS | REFUSED | REFUSED | PASS | REFUSED | REFUSED | PASS | PASS | FAIL | - | N/A | N/A | N/A |
-| systemrescue-13.02 | A | systemrescue | PASS | FAIL | PASS | REFUSED | REFUSED | PASS | REFUSED | REFUSED | PASS | PASS | FAIL | - | N/A | N/A | N/A |
-| kali-2026.2 | A | debian-live | PASS | FAIL | PASS | REFUSED | REFUSED | PASS | FAIL | FAIL | PASS | PASS | FAIL | - | N/A | N/A | N/A |
-| clonezilla-3.3.3-15 | A | debian-live | PASS | FAIL | PASS | FAIL | FAIL | PASS | FAIL | FAIL | PASS | PASS | FAIL | - | N/A | N/A | N/A |
-| gentoo-min-20260913 | A | gentoo | PASS | FAIL | PASS | FAIL | FAIL | PASS | FAIL | FAIL | PASS | PASS | FAIL | - | N/A | N/A | N/A |
-| hbcd-pe-1.0.8 | C | windows-pe | PASS | PASS | UNBLESSABLE | PASS | PASS | UNBLESSABLE | REFUSED | REFUSED | UNBLESSABLE | PASS | PASS | - | N/A | N/A | N/A |
-| gparted-1.8.1-6 | A | debian-live | PASS | FAIL | PASS | PASS | FAIL | PASS | FAIL | FAIL | PASS | PASS | FAIL | - | N/A | N/A | N/A |
-| cachyos-260809 | A | arch | PASS | FAIL | PASS | FAIL | FAIL | PASS | FAIL | FAIL | PASS | PASS | FAIL | - | N/A | N/A | N/A |
-| mx-25.2 | A | antix | PASS | FAIL | PASS | PASS | FAIL | PASS | FAIL | FAIL | PASS | PASS | FAIL | - | N/A | N/A | N/A |
-| popos-24.04-20 | A | casper | PASS | PASS | PASS | FAIL | FAIL | PASS | FAIL | FAIL | PASS | PASS | PASS | - | N/A | N/A | N/A |
-| debian-netinst-13.7 | B | debian-installer | PASS | FAIL | PASS | PASS | FAIL | PASS | FAIL | FAIL | PASS | PASS | FAIL | - | N/A | N/A | N/A |
-| alpine-ext-3.24.2 | B | alpine | PASS | FAIL | PASS | REFUSED | REFUSED | PASS | REFUSED | REFUSED | PASS | PASS | FAIL | - | N/A | N/A | N/A |
-| proxmox-ve-9.2-1 | B | proxmox | PASS | FAIL | PASS | PASS | FAIL | PASS | FAIL | FAIL | PASS | PASS | FAIL | - | N/A | N/A | N/A |
-| rocky-boot-10.2 | B | anaconda | PASS | FAIL | PASS | PASS | FAIL | PASS | REFUSED | REFUSED | PASS | PASS | FAIL | - | N/A | N/A | N/A |
-| alma-boot-10.2 | B | anaconda | PASS | FAIL | PASS | PASS | FAIL | PASS | REFUSED | REFUSED | PASS | PASS | FAIL | - | N/A | N/A | N/A |
-| void-base-20250202 | B | void | PASS | FAIL | PASS | REFUSED | REFUSED | PASS | REFUSED | REFUSED | PASS | PASS | FAIL | - | N/A | N/A | N/A |
-| nixos-min-26.05 | B | nixos | PASS | FAIL | PASS | FAIL | FAIL | PASS | FAIL | FAIL | PASS | PASS | FAIL | - | N/A | N/A | N/A |
-| leap-agama-16.0 | B | suse-installer | PASS | FAIL | PASS | PASS | FAIL | PASS | FAIL | FAIL | PASS | PASS | FAIL | - | N/A | N/A | N/A |
-| truenas-25.10.7 | B | truenas | PASS | FAIL | PASS | FAIL | FAIL | PASS | FAIL | FAIL | PASS | PASS | FAIL | - | N/A | N/A | N/A |
-| freebsd-bootonly-15.1 | C | freebsd | PASS | PASS | PASS | FAIL | FAIL | PASS | FAIL | FAIL | PASS | PASS | FAIL | - | N/A | N/A | N/A |
-| gentoo-min-20260510 | A | gentoo | PASS | FAIL | PASS | FAIL | FAIL | PASS | FAIL | FAIL | PASS | PASS | FAIL | - | N/A | N/A | N/A |
-| windows-11-25h2 | A | windows | PASS | FAIL | N/A | PASS | FAIL | N/A | REFUSED | REFUSED | N/A | PASS | FAIL | - | N/A | N/A | N/A |
-| windows-server-2025 | A | windows | PASS | FAIL | N/A | PASS | FAIL | N/A | REFUSED | REFUSED | N/A | PASS | FAIL | - | N/A | N/A | N/A |
-| esxi-7.0u3l | C | esxi | PASS | PASS | UNBLESSABLE | FAIL | FAIL | UNBLESSABLE | REFUSED | REFUSED | UNBLESSABLE | - | PASS | - | N/A | N/A | N/A |
-| esxi-8.0u3 | C | esxi | PASS | PASS | UNBLESSABLE | FAIL | FAIL | UNBLESSABLE | REFUSED | REFUSED | UNBLESSABLE | - | PASS | - | N/A | N/A | N/A |
-| macrium-rescue-8.0 | A | windows-pe | PASS | PASS | UNBLESSABLE | PASS | PASS | UNBLESSABLE | REFUSED | REFUSED | UNBLESSABLE | PASS | PASS | - | N/A | N/A | N/A |
-| opnsense-25.1 | C | freebsd | FAIL | FAIL | FAIL | FAIL | FAIL | FAIL | FAIL | FAIL | FAIL | - | FAIL | - | N/A | N/A | N/A |
-| pfsense-plus-24.06b7 | C | freebsd | PASS | FAIL | PASS | FAIL | FAIL | FAIL | FAIL | FAIL | FAIL | FAIL | FAIL | - | N/A | N/A | N/A |
-| bazzite-stable | A | bazzite | PASS | FAIL | PASS | FAIL | FAIL | PASS | FAIL | FAIL | PASS | PASS | FAIL | - | N/A | N/A | N/A |
-| alpine-std-x86-3.24.2 | B | alpine | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | PASS | FAIL | N/A | PASS | FAIL | N/A |
-| archlinux32-2024.07.10 | A | arch | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | PASS | FAIL | N/A | PASS | FAIL | N/A |
-| debian-netinst-12.15-i386 | B | debian-installer | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | PASS | FAIL | N/A | PASS | FAIL | N/A |
-| windows-10-22h2-x86 | A | windows | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | PASS | FAIL | N/A | FAIL | FAIL | N/A |
-| freedos-1.4-live | C | freedos | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | FAIL | FAIL | N/A | FAIL | FAIL | N/A |
-| reactos-0.4.16 | C | reactos | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | FAIL | FAIL | N/A | FAIL | FAIL | N/A |
-| freebsd-disc1-14.5-i386 | C | freebsd | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | FAIL | FAIL | N/A | FAIL | FAIL | N/A |
-| openbsd-7.9-i386 | C | openbsd | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | FAIL | FAIL | N/A | FAIL | FAIL | N/A |
-| netbsd-10.2-i386 | C | netbsd | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | FAIL | FAIL | N/A | FAIL | FAIL | N/A |
-| haiku-r1b6-x86_gcc2h | C | haiku | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | FAIL | FAIL | N/A | FAIL | FAIL | N/A |
-| clonezilla-3.2.0-5-i686 | A | debian-live | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | PASS | FAIL | N/A | PASS | FAIL | N/A |
-| gparted-1.6.0-10-i686 | A | debian-live | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | PASS | FAIL | N/A | PASS | FAIL | N/A |
-| memtest86plus-8.10-i586 | C | memtest | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | PASS | FAIL | N/A | PASS | FAIL | N/A |
-| antix-26-386-full | A | antix | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | PASS | FAIL | N/A | PASS | FAIL | N/A |
-| tinycore-17.1 | B | tinycore | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | PASS | PASS | N/A | PASS | PASS | N/A |
-| slackware-15.0-dvd | B | slackware | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | PASS | PASS | N/A | FAIL | FAIL | N/A |
-| windows-2000-pro-x86 | C | windows | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | FAIL | FAIL | N/A | FAIL | FAIL | N/A |
-| windows-xp-pro-sp3-x86 | C | windows | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | FAIL | FAIL | N/A | FAIL | FAIL | N/A |
-| windows-xp-pro-x64 | C | windows | FAIL | FAIL | N/A | FAIL | FAIL | N/A | FAIL | FAIL | N/A | FAIL | FAIL | N/A | N/A | N/A | N/A |
-| windows-vista-x86 | C | windows | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | PASS | FAIL | N/A | PASS | - | N/A |
-| windows-vista-sp1-x64 | C | windows | FAIL | FAIL | N/A | FAIL | FAIL | N/A | FAIL | FAIL | N/A | PASS | - | N/A | N/A | N/A | N/A |
-| windows-7-sp1-x86 | C | windows | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | PASS | - | N/A | PASS | - | N/A |
-| windows-7-x64 | C | windows | FAIL | FAIL | N/A | REFUSED | REFUSED | N/A | REFUSED | REFUSED | N/A | PASS | - | N/A | N/A | N/A | N/A |
-| windows-8.1-x86 | C | windows | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | PASS | - | N/A | FAIL | - | N/A |
-| windows-8.1-x64 | C | windows | PASS | FAIL | N/A | PASS | FAIL | N/A | REFUSED | REFUSED | N/A | PASS | - | N/A | N/A | N/A | N/A |
+| ISO | tier | family | SB off drop | SB off chain | SB off bless | SB on, MS CA drop | SB on, MS CA chain | SB on, MS CA bless | SB on, own keys drop | SB on, own keys chain | SB on, own keys bless | SB on, validation off drop | SB on, validation off chain | SB on, validation off bless | BIOS drop | BIOS chain | BIOS bless | BIOS, i686 drop | BIOS, i686 chain | BIOS, i686 bless |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| debian-live-13.7 | A | debian-live | PASS | FAIL | PASS | PASS | FAIL | PASS | FAIL | FAIL | PASS | PASS | FAIL | FAIL | PASS | FAIL | N/A | N/A | N/A | N/A |
+| fedora-ws-44 | A | fedora-live | PASS | FAIL | PASS | PASS | FAIL | PASS | REFUSED | REFUSED | PASS | PASS | FAIL | FAIL | PASS | FAIL | N/A | N/A | N/A | N/A |
+| ubuntu-26.04.1 | A | casper | PASS | FAIL | PASS | PASS | FAIL | PASS | FAIL | FAIL | PASS | PASS | FAIL | FAIL | PASS | FAIL | N/A | N/A | N/A | N/A |
+| kubuntu-26.04 | A | casper | PASS | FAIL | PASS | PASS | FAIL | PASS | FAIL | FAIL | PASS | PASS | FAIL | FAIL | PASS | FAIL | N/A | N/A | N/A | N/A |
+| mint-22.3 | A | casper | PASS | FAIL | PASS | PASS | FAIL | PASS | FAIL | FAIL | PASS | PASS | FAIL | FAIL | PASS | FAIL | N/A | N/A | N/A | N/A |
+| opensuse-tw-20260916 | A | suse-live | PASS | FAIL | PASS | PASS | FAIL | PASS | FAIL | FAIL | PASS | PASS | FAIL | FAIL | PASS | FAIL | N/A | N/A | N/A | N/A |
+| manjaro-26.1.0 | A | manjaro | PASS | FAIL | PASS | FAIL | FAIL | PASS | FAIL | FAIL | PASS | PASS | FAIL | FAIL | PASS | FAIL | N/A | N/A | N/A | N/A |
+| arch-2026.09.01 | A | arch | PASS | FAIL | PASS | REFUSED | REFUSED | PASS | REFUSED | REFUSED | PASS | PASS | FAIL | FAIL | PASS | FAIL | N/A | N/A | N/A | N/A |
+| arch-2026.01.01 | A | arch | PASS | FAIL | PASS | REFUSED | REFUSED | PASS | REFUSED | REFUSED | PASS | PASS | FAIL | FAIL | PASS | FAIL | N/A | N/A | N/A | N/A |
+| systemrescue-13.02 | A | systemrescue | PASS | FAIL | PASS | REFUSED | REFUSED | PASS | REFUSED | REFUSED | PASS | PASS | FAIL | FAIL | PASS | FAIL | N/A | N/A | N/A | N/A |
+| kali-2026.2 | A | debian-live | PASS | FAIL | PASS | REFUSED | REFUSED | PASS | FAIL | FAIL | PASS | PASS | FAIL | FAIL | PASS | FAIL | N/A | N/A | N/A | N/A |
+| clonezilla-3.3.3-15 | A | debian-live | PASS | FAIL | PASS | FAIL | FAIL | PASS | FAIL | FAIL | PASS | PASS | FAIL | FAIL | PASS | FAIL | N/A | N/A | N/A | N/A |
+| gentoo-min-20260913 | A | gentoo | PASS | FAIL | PASS | FAIL | FAIL | PASS | FAIL | FAIL | PASS | PASS | FAIL | FAIL | PASS | FAIL | N/A | N/A | N/A | N/A |
+| hbcd-pe-1.0.8 | C | windows-pe | PASS | PASS | UNBLESSABLE | PASS | PASS | UNBLESSABLE | REFUSED | REFUSED | UNBLESSABLE | PASS | PASS | UNBLESSABLE | PASS | PASS | N/A | N/A | N/A | N/A |
+| gparted-1.8.1-6 | A | debian-live | PASS | FAIL | PASS | PASS | FAIL | PASS | FAIL | FAIL | PASS | PASS | FAIL | FAIL | PASS | FAIL | N/A | N/A | N/A | N/A |
+| cachyos-260809 | A | arch | PASS | FAIL | PASS | FAIL | FAIL | PASS | FAIL | FAIL | PASS | PASS | FAIL | FAIL | PASS | FAIL | N/A | N/A | N/A | N/A |
+| mx-25.2 | A | antix | PASS | FAIL | PASS | PASS | FAIL | PASS | FAIL | FAIL | PASS | PASS | FAIL | FAIL | PASS | FAIL | N/A | N/A | N/A | N/A |
+| popos-24.04-20 | A | casper | PASS | PASS | PASS | FAIL | FAIL | PASS | FAIL | FAIL | PASS | PASS | FAIL | FAIL | PASS | PASS | N/A | N/A | N/A | N/A |
+| debian-netinst-13.7 | B | debian-installer | PASS | FAIL | PASS | PASS | FAIL | PASS | FAIL | FAIL | PASS | PASS | FAIL | FAIL | PASS | FAIL | N/A | N/A | N/A | N/A |
+| alpine-ext-3.24.2 | B | alpine | PASS | FAIL | PASS | REFUSED | REFUSED | PASS | REFUSED | REFUSED | PASS | PASS | FAIL | FAIL | PASS | FAIL | N/A | N/A | N/A | N/A |
+| proxmox-ve-9.2-1 | B | proxmox | PASS | FAIL | PASS | PASS | FAIL | PASS | FAIL | FAIL | PASS | PASS | FAIL | FAIL | PASS | FAIL | N/A | N/A | N/A | N/A |
+| rocky-boot-10.2 | B | anaconda | PASS | FAIL | PASS | PASS | FAIL | PASS | REFUSED | REFUSED | PASS | PASS | FAIL | FAIL | PASS | FAIL | N/A | N/A | N/A | N/A |
+| alma-boot-10.2 | B | anaconda | PASS | FAIL | PASS | PASS | FAIL | PASS | REFUSED | REFUSED | PASS | PASS | FAIL | FAIL | PASS | FAIL | N/A | N/A | N/A | N/A |
+| void-base-20250202 | B | void | PASS | FAIL | PASS | REFUSED | REFUSED | PASS | REFUSED | REFUSED | PASS | PASS | FAIL | FAIL | PASS | FAIL | N/A | N/A | N/A | N/A |
+| nixos-min-26.05 | B | nixos | PASS | FAIL | PASS | FAIL | FAIL | PASS | FAIL | FAIL | PASS | PASS | FAIL | FAIL | PASS | FAIL | N/A | N/A | N/A | N/A |
+| leap-agama-16.0 | B | suse-installer | PASS | FAIL | PASS | PASS | FAIL | PASS | FAIL | FAIL | PASS | PASS | FAIL | FAIL | PASS | FAIL | N/A | N/A | N/A | N/A |
+| truenas-25.10.7 | B | truenas | PASS | FAIL | PASS | FAIL | FAIL | PASS | FAIL | FAIL | PASS | PASS | FAIL | FAIL | PASS | FAIL | N/A | N/A | N/A | N/A |
+| freebsd-bootonly-15.1 | C | freebsd | PASS | PASS | PASS | FAIL | FAIL | PASS | FAIL | FAIL | PASS | PASS | PASS | PASS | PASS | PASS | N/A | N/A | N/A | N/A |
+| gentoo-min-20260510 | A | gentoo | PASS | FAIL | PASS | FAIL | FAIL | PASS | FAIL | FAIL | PASS | PASS | FAIL | FAIL | PASS | FAIL | N/A | N/A | N/A | N/A |
+| windows-11-25h2 | A | windows | PASS | FAIL | N/A | PASS | FAIL | N/A | REFUSED | REFUSED | N/A | PASS | FAIL | N/A | PASS | FAIL | N/A | N/A | N/A | N/A |
+| windows-server-2025 | A | windows | PASS | FAIL | N/A | PASS | FAIL | N/A | REFUSED | REFUSED | N/A | PASS | FAIL | N/A | PASS | FAIL | N/A | N/A | N/A | N/A |
+| esxi-7.0u3l | C | esxi | PASS | PASS | UNBLESSABLE | FAIL | FAIL | UNBLESSABLE | REFUSED | REFUSED | UNBLESSABLE | PASS | PASS | UNBLESSABLE | PASS | PASS | N/A | N/A | N/A | N/A |
+| esxi-8.0u3 | C | esxi | PASS | PASS | UNBLESSABLE | FAIL | FAIL | UNBLESSABLE | REFUSED | REFUSED | UNBLESSABLE | PASS | FAIL | UNBLESSABLE | PASS | PASS | N/A | N/A | N/A | N/A |
+| macrium-rescue-8.0 | A | windows-pe | PASS | PASS | UNBLESSABLE | PASS | PASS | UNBLESSABLE | REFUSED | REFUSED | UNBLESSABLE | PASS | PASS | UNBLESSABLE | PASS | PASS | N/A | N/A | N/A | N/A |
+| opnsense-25.1 | C | freebsd | FAIL | FAIL | FAIL | FAIL | FAIL | FAIL | FAIL | FAIL | FAIL | FAIL | FAIL | FAIL | FAIL | FAIL | N/A | N/A | N/A | N/A |
+| pfsense-plus-24.06b7 | C | freebsd | PASS | FAIL | PASS | FAIL | FAIL | FAIL | FAIL | FAIL | FAIL | FAIL | FAIL | FAIL | FAIL | FAIL | N/A | N/A | N/A | N/A |
+| bazzite-stable | A | bazzite | PASS | FAIL | PASS | FAIL | FAIL | PASS | FAIL | FAIL | PASS | PASS | FAIL | FAIL | PASS | FAIL | N/A | N/A | N/A | N/A |
+| alpine-std-x86-3.24.2 | B | alpine | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | PASS | FAIL | N/A | PASS | FAIL | N/A |
+| archlinux32-2024.07.10 | A | arch | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | PASS | FAIL | N/A | PASS | FAIL | N/A |
+| debian-netinst-12.15-i386 | B | debian-installer | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | PASS | FAIL | N/A | PASS | FAIL | N/A |
+| windows-10-22h2-x86 | A | windows | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | PASS | FAIL | N/A | FAIL | FAIL | N/A |
+| freedos-1.4-live | C | freedos | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | FAIL | FAIL | N/A | FAIL | FAIL | N/A |
+| reactos-0.4.16 | C | reactos | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | FAIL | FAIL | N/A | FAIL | FAIL | N/A |
+| freebsd-disc1-14.5-i386 | C | freebsd | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | FAIL | FAIL | N/A | FAIL | FAIL | N/A |
+| openbsd-7.9-i386 | C | openbsd | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | FAIL | FAIL | N/A | FAIL | FAIL | N/A |
+| netbsd-10.2-i386 | C | netbsd | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | FAIL | FAIL | N/A | FAIL | FAIL | N/A |
+| haiku-r1b6-x86_gcc2h | C | haiku | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | FAIL | FAIL | N/A | FAIL | FAIL | N/A |
+| clonezilla-3.2.0-5-i686 | A | debian-live | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | PASS | FAIL | N/A | PASS | FAIL | N/A |
+| gparted-1.6.0-10-i686 | A | debian-live | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | PASS | FAIL | N/A | PASS | FAIL | N/A |
+| memtest86plus-8.10-i586 | C | memtest | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | PASS | PASS | N/A | PASS | PASS | N/A |
+| antix-26-386-full | A | antix | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | PASS | FAIL | N/A | PASS | FAIL | N/A |
+| tinycore-17.1 | B | tinycore | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | PASS | PASS | N/A | PASS | PASS | N/A |
+| slackware-15.0-dvd | B | slackware | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | PASS | PASS | N/A | PASS | PASS | N/A |
+| windows-2000-pro-x86 | C | windows | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | FAIL | FAIL | N/A | FAIL | FAIL | N/A |
+| windows-xp-pro-sp3-x86 | C | windows | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | FAIL | FAIL | N/A | FAIL | FAIL | N/A |
+| windows-xp-pro-x64 | C | windows | FAIL | FAIL | N/A | FAIL | FAIL | N/A | FAIL | FAIL | N/A | FAIL | FAIL | N/A | FAIL | FAIL | N/A | N/A | N/A | N/A |
+| windows-vista-x86 | C | windows | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | PASS | FAIL | N/A | PASS | FAIL | N/A |
+| windows-vista-sp1-x64 | C | windows | FAIL | FAIL | N/A | FAIL | FAIL | N/A | FAIL | FAIL | N/A | FAIL | FAIL | N/A | PASS | FAIL | N/A | N/A | N/A | N/A |
+| windows-7-sp1-x86 | C | windows | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | PASS | FAIL | N/A | PASS | FAIL | N/A |
+| windows-7-x64 | C | windows | FAIL | FAIL | N/A | REFUSED | REFUSED | N/A | REFUSED | REFUSED | N/A | FAIL | FAIL | N/A | PASS | FAIL | N/A | N/A | N/A | N/A |
+| windows-8.1-x86 | C | windows | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | PASS | FAIL | N/A | FAIL | FAIL | N/A |
+| windows-8.1-x64 | C | windows | PASS | FAIL | N/A | PASS | FAIL | N/A | REFUSED | REFUSED | N/A | PASS | FAIL | N/A | PASS | FAIL | N/A | N/A | N/A | N/A |
 
 ## Failures
 
@@ -117,136 +126,192 @@ Loader: 0.1.0_20260920.1824.release, 0.1.0_20260924.1655.release, 0.1.0_20260925
 | debian-live-13.7 | ms | chain | FAIL | no userland within 300s (screen: text console) |
 | debian-live-13.7 | own | drop | FAIL | back at the menu: direct boot failed while LoadImage of \EFI\BOOT\BOOTX64.EFI (shim): 0x80000000000000 (screen: text console) |
 | debian-live-13.7 | own | chain | FAIL | back at the menu: direct boot failed while LoadImage of \EFI\BOOT\BOOTX64.EFI (shim): 0x80000000000000 (screen: text console) |
+| debian-live-13.7 | moksb | chain | FAIL | no userland within 300s (screen: text console) |
+| debian-live-13.7 | moksb | bless | FAIL | back at the menu: the blessed image exited, status 0x8000000000000002 (screen: text console) |
 | debian-live-13.7 | bios | chain | FAIL | no userland within 300s (screen: text console) |
 | fedora-ws-44 | off | chain | FAIL | no userland within 300s (screen: text console) |
 | fedora-ws-44 | ms | chain | FAIL | no userland within 300s (screen: text console) |
+| fedora-ws-44 | moksb | chain | FAIL | no userland within 300s (screen: text console) |
+| fedora-ws-44 | moksb | bless | FAIL | back at the menu: the blessed image exited, status 0x8000000000000002 (screen: text console) |
 | fedora-ws-44 | bios | chain | FAIL | no userland within 300s (screen: text console) |
 | ubuntu-26.04.1 | off | chain | FAIL | no userland within 300s (screen: text console) |
 | ubuntu-26.04.1 | ms | chain | FAIL | no userland within 300s (screen: text console) |
 | ubuntu-26.04.1 | own | drop | FAIL | back at the menu: direct boot failed while LoadImage of \EFI\BOOT\BOOTX64.EFI (shim): 0x80000000000000 (screen: text console) |
 | ubuntu-26.04.1 | own | chain | FAIL | back at the menu: direct boot failed while LoadImage of \EFI\BOOT\BOOTX64.EFI (shim): 0x80000000000000 (screen: text console) |
+| ubuntu-26.04.1 | moksb | chain | FAIL | no userland within 300s (screen: text console) |
+| ubuntu-26.04.1 | moksb | bless | FAIL | back at the menu: the blessed image exited, status 0x8000000000000002 (screen: text console) |
 | ubuntu-26.04.1 | bios | chain | FAIL | no userland within 300s (screen: text console) |
 | kubuntu-26.04 | off | chain | FAIL | no userland within 300s (screen: text console) |
 | kubuntu-26.04 | ms | chain | FAIL | no userland within 300s (screen: text console) |
 | kubuntu-26.04 | own | drop | FAIL | back at the menu: direct boot failed while LoadImage of \EFI\BOOT\BOOTX64.EFI (shim): 0x80000000000000 (screen: text console) |
 | kubuntu-26.04 | own | chain | FAIL | back at the menu: direct boot failed while LoadImage of \EFI\BOOT\BOOTX64.EFI (shim): 0x80000000000000 (screen: text console) |
+| kubuntu-26.04 | moksb | chain | FAIL | no userland within 300s (screen: text console) |
+| kubuntu-26.04 | moksb | bless | FAIL | back at the menu: the blessed image exited, status 0x8000000000000002 (screen: text console) |
 | kubuntu-26.04 | bios | chain | FAIL | no userland within 300s (screen: text console) |
 | mint-22.3 | off | chain | FAIL | no userland within 300s (screen: text console) |
 | mint-22.3 | ms | chain | FAIL | no userland within 300s (screen: text console) |
 | mint-22.3 | own | drop | FAIL | back at the menu: direct boot failed while LoadImage of \EFI\BOOT\BOOTX64.EFI (shim): 0x80000000000000 (screen: text console) |
 | mint-22.3 | own | chain | FAIL | back at the menu: direct boot failed while LoadImage of \EFI\BOOT\BOOTX64.EFI (shim): 0x80000000000000 (screen: text console) |
+| mint-22.3 | moksb | chain | FAIL | no userland within 300s (screen: text console) |
+| mint-22.3 | moksb | bless | FAIL | back at the menu: the blessed image exited, status 0x8000000000000002 (screen: text console) |
 | mint-22.3 | bios | chain | FAIL | no userland within 300s (screen: text console) |
 | opensuse-tw-20260916 | off | chain | FAIL | no userland within 300s (screen: text console) |
 | opensuse-tw-20260916 | ms | chain | FAIL | no userland within 300s (screen: text console) |
 | opensuse-tw-20260916 | own | drop | FAIL | back at the menu: direct boot failed while LoadImage of \EFI\BOOT\BOOTX64.EFI (shim): 0x80000000000000 (screen: text console) |
 | opensuse-tw-20260916 | own | chain | FAIL | back at the menu: direct boot failed while LoadImage of \EFI\BOOT\BOOTX64.EFI (shim): 0x80000000000000 (screen: text console) |
+| opensuse-tw-20260916 | moksb | chain | FAIL | no userland within 300s (screen: graphical) |
+| opensuse-tw-20260916 | moksb | bless | FAIL | back at the menu: the blessed image exited, status 0x8000000000000002 (screen: text console) |
 | opensuse-tw-20260916 | bios | chain | FAIL | no userland within 300s (screen: text console) |
 | manjaro-26.1.0 | off | chain | FAIL | no userland within 300s (screen: text console) |
 | manjaro-26.1.0 | ms | drop | FAIL | back at the menu: direct boot failed while LoadImage of \EFI\BOOT\BOOTX64.EFI (shim): 0x80000000000000 (screen: text console) |
 | manjaro-26.1.0 | ms | chain | FAIL | back at the menu: direct boot failed while LoadImage of \EFI\BOOT\BOOTX64.EFI (shim): 0x80000000000000 (screen: text console) |
 | manjaro-26.1.0 | own | drop | FAIL | back at the menu: direct boot failed while LoadImage of \EFI\BOOT\BOOTX64.EFI (shim): 0x80000000000000 (screen: text console) |
 | manjaro-26.1.0 | own | chain | FAIL | back at the menu: direct boot failed while LoadImage of \EFI\BOOT\BOOTX64.EFI (shim): 0x80000000000000 (screen: text console) |
+| manjaro-26.1.0 | moksb | chain | FAIL | no userland within 300s (screen: graphical) |
+| manjaro-26.1.0 | moksb | bless | FAIL | back at the menu: the blessed image exited, status 0x8000000000000002 (screen: text console) |
 | manjaro-26.1.0 | bios | chain | FAIL | no userland within 300s (screen: text console) |
 | arch-2026.09.01 | off | chain | FAIL | no userland within 300s (screen: text console) |
+| arch-2026.09.01 | moksb | chain | FAIL | back at the menu: the payload exited, status 0x8000000000000002 (screen: text console) |
+| arch-2026.09.01 | moksb | bless | FAIL | back at the menu: the blessed image exited, status 0x8000000000000002 (screen: text console) |
 | arch-2026.09.01 | bios | chain | FAIL | no userland within 300s (screen: text console) |
 | arch-2026.01.01 | off | chain | FAIL | no userland within 300s (screen: text console) |
+| arch-2026.01.01 | moksb | chain | FAIL | back at the menu: the payload exited, status 0x8000000000000002 (screen: text console) |
+| arch-2026.01.01 | moksb | bless | FAIL | back at the menu: the blessed image exited, status 0x8000000000000002 (screen: text console) |
 | arch-2026.01.01 | bios | chain | FAIL | no userland within 300s (screen: text console) |
 | systemrescue-13.02 | off | chain | FAIL | no userland within 300s (screen: text console) |
+| systemrescue-13.02 | moksb | chain | FAIL | no userland within 300s (screen: graphical) |
+| systemrescue-13.02 | moksb | bless | FAIL | back at the menu: the blessed image exited, status 0x8000000000000002 (screen: text console) |
 | systemrescue-13.02 | bios | chain | FAIL | no userland within 300s (screen: text console) |
 | kali-2026.2 | off | chain | FAIL | no userland within 300s (screen: text console) |
 | kali-2026.2 | own | drop | FAIL | back at the menu: direct boot failed while LoadImage of \EFI\BOOT\BOOTX64.EFI (shim): 0x80000000000000 (screen: text console) |
 | kali-2026.2 | own | chain | FAIL | back at the menu: direct boot failed while LoadImage of \EFI\BOOT\BOOTX64.EFI (shim): 0x80000000000000 (screen: text console) |
+| kali-2026.2 | moksb | chain | FAIL | no userland within 300s (screen: text console) |
+| kali-2026.2 | moksb | bless | FAIL | back at the menu: the blessed image exited, status 0x8000000000000002 (screen: text console) |
 | kali-2026.2 | bios | chain | FAIL | no userland within 300s (screen: text console) |
 | clonezilla-3.3.3-15 | off | chain | FAIL | no userland within 300s (screen: text console) |
 | clonezilla-3.3.3-15 | ms | drop | FAIL | no userland within 300s (screen: text console) |
 | clonezilla-3.3.3-15 | ms | chain | FAIL | no userland within 300s (screen: text console) |
 | clonezilla-3.3.3-15 | own | drop | FAIL | back at the menu: direct boot failed while LoadImage of \EFI\BOOT\BOOTX64.EFI (shim): 0x80000000000000 (screen: text console) |
 | clonezilla-3.3.3-15 | own | chain | FAIL | back at the menu: direct boot failed while LoadImage of \EFI\BOOT\BOOTX64.EFI (shim): 0x80000000000000 (screen: text console) |
+| clonezilla-3.3.3-15 | moksb | chain | FAIL | no userland within 300s (screen: graphical) |
+| clonezilla-3.3.3-15 | moksb | bless | FAIL | back at the menu: the blessed image exited, status 0x8000000000000002 (screen: text console) |
 | clonezilla-3.3.3-15 | bios | chain | FAIL | no userland within 300s (screen: text console) |
 | gentoo-min-20260913 | off | chain | FAIL | no userland within 300s (screen: text console) |
 | gentoo-min-20260913 | ms | drop | FAIL | back at the menu: direct boot failed while LoadImage of \EFI\BOOT\BOOTX64.EFI (shim): 0x80000000000000 (screen: text console) |
 | gentoo-min-20260913 | ms | chain | FAIL | back at the menu: direct boot failed while LoadImage of \EFI\BOOT\BOOTX64.EFI (shim): 0x80000000000000 (screen: text console) |
 | gentoo-min-20260913 | own | drop | FAIL | back at the menu: direct boot failed while LoadImage of \EFI\BOOT\BOOTX64.EFI (shim): 0x80000000000000 (screen: text console) |
 | gentoo-min-20260913 | own | chain | FAIL | back at the menu: direct boot failed while LoadImage of \EFI\BOOT\BOOTX64.EFI (shim): 0x80000000000000 (screen: text console) |
+| gentoo-min-20260913 | moksb | chain | FAIL | no userland within 300s (screen: graphical) |
+| gentoo-min-20260913 | moksb | bless | FAIL | back at the menu: the blessed image exited, status 0x8000000000000002 (screen: text console) |
 | gentoo-min-20260913 | bios | chain | FAIL | no userland within 300s (screen: text console) |
 | gparted-1.8.1-6 | off | chain | FAIL | no userland within 300s (screen: text console) |
 | gparted-1.8.1-6 | ms | chain | FAIL | no userland within 300s (screen: text console) |
 | gparted-1.8.1-6 | own | drop | FAIL | back at the menu: direct boot failed while LoadImage of \EFI\BOOT\BOOTX64.EFI (shim): 0x80000000000000 (screen: text console) |
 | gparted-1.8.1-6 | own | chain | FAIL | back at the menu: direct boot failed while LoadImage of \EFI\BOOT\BOOTX64.EFI (shim): 0x80000000000000 (screen: text console) |
+| gparted-1.8.1-6 | moksb | chain | FAIL | no userland within 300s (screen: Windows Setup) |
+| gparted-1.8.1-6 | moksb | bless | FAIL | back at the menu: the blessed image exited, status 0x8000000000000002 (screen: text console) |
 | gparted-1.8.1-6 | bios | chain | FAIL | no userland within 300s (screen: text console) |
 | cachyos-260809 | off | chain | FAIL | no userland within 300s (screen: text console) |
 | cachyos-260809 | ms | drop | FAIL | back at the menu: direct boot failed while LoadImage of \EFI\BOOT\BOOTX64.EFI (shim): 0x80000000000000 (screen: text console) |
 | cachyos-260809 | ms | chain | FAIL | back at the menu: direct boot failed while LoadImage of \EFI\BOOT\BOOTX64.EFI (shim): 0x80000000000000 (screen: text console) |
 | cachyos-260809 | own | drop | FAIL | back at the menu: direct boot failed while LoadImage of \EFI\BOOT\BOOTX64.EFI (shim): 0x80000000000000 (screen: text console) |
 | cachyos-260809 | own | chain | FAIL | back at the menu: direct boot failed while LoadImage of \EFI\BOOT\BOOTX64.EFI (shim): 0x80000000000000 (screen: text console) |
+| cachyos-260809 | moksb | chain | FAIL | no userland within 300s (screen: text console) |
+| cachyos-260809 | moksb | bless | FAIL | back at the menu: the blessed image exited, status 0x8000000000000002 (screen: text console) |
 | cachyos-260809 | bios | chain | FAIL | no userland within 300s (screen: text console) |
 | mx-25.2 | off | chain | FAIL | no userland within 300s (screen: graphical) |
 | mx-25.2 | ms | chain | FAIL | no userland within 300s (screen: graphical) |
 | mx-25.2 | own | drop | FAIL | back at the menu: direct boot failed while LoadImage of \EFI\BOOT\BOOTX64.EFI (shim): 0x80000000000000 (screen: text console) |
 | mx-25.2 | own | chain | FAIL | back at the menu: direct boot failed while LoadImage of \EFI\BOOT\BOOTX64.EFI (shim): 0x80000000000000 (screen: text console) |
+| mx-25.2 | moksb | chain | FAIL | no userland within 300s (screen: graphical) |
+| mx-25.2 | moksb | bless | FAIL | no userland within 300s (screen: text console) |
 | mx-25.2 | bios | chain | FAIL | no userland within 300s (screen: text console) |
 | popos-24.04-20 | ms | drop | FAIL | back at the menu: direct boot failed while LoadImage of \EFI\BOOT\BOOTX64.EFI (shim): 0x80000000000000 (screen: text console) |
 | popos-24.04-20 | ms | chain | FAIL | back at the menu: direct boot failed while LoadImage of \EFI\BOOT\BOOTX64.EFI (shim): 0x80000000000000 (screen: text console) |
 | popos-24.04-20 | own | drop | FAIL | back at the menu: direct boot failed while LoadImage of \EFI\BOOT\BOOTX64.EFI (shim): 0x80000000000000 (screen: text console) |
 | popos-24.04-20 | own | chain | FAIL | back at the menu: direct boot failed while LoadImage of \EFI\BOOT\BOOTX64.EFI (shim): 0x80000000000000 (screen: text console) |
+| popos-24.04-20 | moksb | chain | FAIL | the guest powered off or reset |
+| popos-24.04-20 | moksb | bless | FAIL | back at the menu: the blessed image exited, status 0x8000000000000002 (screen: text console) |
 | debian-netinst-13.7 | off | chain | FAIL | no userland within 300s (screen: graphical) |
 | debian-netinst-13.7 | ms | chain | FAIL | no userland within 300s (screen: graphical) |
 | debian-netinst-13.7 | own | drop | FAIL | back at the menu: direct boot failed while LoadImage of \EFI\BOOT\BOOTX64.EFI (shim): 0x80000000000000 (screen: text console) |
 | debian-netinst-13.7 | own | chain | FAIL | back at the menu: direct boot failed while LoadImage of \EFI\BOOT\BOOTX64.EFI (shim): 0x80000000000000 (screen: text console) |
+| debian-netinst-13.7 | moksb | chain | FAIL | no userland within 300s (screen: graphical) |
+| debian-netinst-13.7 | moksb | bless | FAIL | back at the menu: the blessed image exited, status 0x8000000000000002 (screen: text console) |
 | debian-netinst-13.7 | bios | chain | FAIL | no userland within 300s (screen: graphical) |
 | alpine-ext-3.24.2 | off | chain | FAIL | no userland within 300s (screen: text console) |
+| alpine-ext-3.24.2 | moksb | chain | FAIL | no userland within 300s (screen: text console) |
+| alpine-ext-3.24.2 | moksb | bless | FAIL | back at the menu: the blessed image exited, status 0x8000000000000002 (screen: text console) |
 | alpine-ext-3.24.2 | bios | chain | FAIL | no userland within 300s (screen: text console) |
 | proxmox-ve-9.2-1 | off | chain | FAIL | no userland within 300s (screen: text console) |
 | proxmox-ve-9.2-1 | ms | chain | FAIL | no userland within 300s (screen: text console) |
 | proxmox-ve-9.2-1 | own | drop | FAIL | back at the menu: direct boot failed while LoadImage of \EFI\BOOT\BOOTX64.EFI (shim): 0x80000000000000 (screen: text console) |
 | proxmox-ve-9.2-1 | own | chain | FAIL | back at the menu: direct boot failed while LoadImage of \EFI\BOOT\BOOTX64.EFI (shim): 0x80000000000000 (screen: text console) |
+| proxmox-ve-9.2-1 | moksb | chain | FAIL | no userland within 300s (screen: text console) |
+| proxmox-ve-9.2-1 | moksb | bless | FAIL | back at the menu: the blessed image exited, status 0x8000000000000002 (screen: text console) |
 | proxmox-ve-9.2-1 | bios | chain | FAIL | no userland within 300s (screen: text console) |
 | rocky-boot-10.2 | off | chain | FAIL | no userland within 300s (screen: text console) |
 | rocky-boot-10.2 | ms | chain | FAIL | no userland within 300s (screen: text console) |
+| rocky-boot-10.2 | moksb | chain | FAIL | no userland within 300s (screen: text console) |
+| rocky-boot-10.2 | moksb | bless | FAIL | back at the menu: the blessed image exited, status 0x8000000000000002 (screen: text console) |
 | rocky-boot-10.2 | bios | chain | FAIL | no userland within 300s (screen: text console) |
 | alma-boot-10.2 | off | chain | FAIL | no userland within 300s (screen: text console) |
 | alma-boot-10.2 | ms | chain | FAIL | no userland within 300s (screen: text console) |
+| alma-boot-10.2 | moksb | chain | FAIL | no userland within 300s (screen: text console) |
+| alma-boot-10.2 | moksb | bless | FAIL | back at the menu: the blessed image exited, status 0x8000000000000002 (screen: text console) |
 | alma-boot-10.2 | bios | chain | FAIL | no userland within 300s (screen: text console) |
 | void-base-20250202 | off | chain | FAIL | no userland within 300s (screen: text console) |
+| void-base-20250202 | moksb | chain | FAIL | no userland within 300s (screen: text console) |
+| void-base-20250202 | moksb | bless | FAIL | back at the menu: the blessed image exited, status 0x8000000000000002 (screen: text console) |
 | void-base-20250202 | bios | chain | FAIL | no userland within 300s (screen: text console) |
 | nixos-min-26.05 | off | chain | FAIL | no userland within 300s (screen: text console) |
 | nixos-min-26.05 | ms | drop | FAIL | back at the menu: direct boot failed while LoadImage of \EFI\BOOT\BOOTX64.EFI (shim): 0x80000000000000 (screen: text console) |
 | nixos-min-26.05 | ms | chain | FAIL | back at the menu: direct boot failed while LoadImage of \EFI\BOOT\BOOTX64.EFI (shim): 0x80000000000000 (screen: text console) |
 | nixos-min-26.05 | own | drop | FAIL | back at the menu: direct boot failed while LoadImage of \EFI\BOOT\BOOTX64.EFI (shim): 0x80000000000000 (screen: text console) |
 | nixos-min-26.05 | own | chain | FAIL | back at the menu: direct boot failed while LoadImage of \EFI\BOOT\BOOTX64.EFI (shim): 0x80000000000000 (screen: text console) |
+| nixos-min-26.05 | moksb | chain | FAIL | no userland within 300s (screen: text console) |
+| nixos-min-26.05 | moksb | bless | FAIL | back at the menu: the blessed image exited, status 0x8000000000000002 (screen: text console) |
 | nixos-min-26.05 | bios | chain | FAIL | no userland within 300s (screen: text console) |
 | leap-agama-16.0 | off | chain | FAIL | no userland within 300s (screen: text console) |
 | leap-agama-16.0 | ms | chain | FAIL | no userland within 300s (screen: text console) |
 | leap-agama-16.0 | own | drop | FAIL | back at the menu: direct boot failed while LoadImage of \EFI\BOOT\BOOTX64.EFI (shim): 0x80000000000000 (screen: text console) |
 | leap-agama-16.0 | own | chain | FAIL | back at the menu: direct boot failed while LoadImage of \EFI\BOOT\BOOTX64.EFI (shim): 0x80000000000000 (screen: text console) |
+| leap-agama-16.0 | moksb | chain | FAIL | no userland within 300s (screen: text console) |
+| leap-agama-16.0 | moksb | bless | FAIL | back at the menu: the blessed image exited, status 0x8000000000000002 (screen: text console) |
 | leap-agama-16.0 | bios | chain | FAIL | no userland within 300s (screen: Windows Setup) |
 | truenas-25.10.7 | off | chain | FAIL | no userland within 300s (screen: text console) |
 | truenas-25.10.7 | ms | drop | FAIL | back at the menu: direct boot failed while LoadImage of \EFI\BOOT\BOOTX64.EFI (shim): 0x80000000000000 (screen: text console) |
 | truenas-25.10.7 | ms | chain | FAIL | back at the menu: direct boot failed while LoadImage of \EFI\BOOT\BOOTX64.EFI (shim): 0x80000000000000 (screen: text console) |
 | truenas-25.10.7 | own | drop | FAIL | back at the menu: direct boot failed while LoadImage of \EFI\BOOT\BOOTX64.EFI (shim): 0x80000000000000 (screen: text console) |
 | truenas-25.10.7 | own | chain | FAIL | back at the menu: direct boot failed while LoadImage of \EFI\BOOT\BOOTX64.EFI (shim): 0x80000000000000 (screen: text console) |
+| truenas-25.10.7 | moksb | chain | FAIL | no userland within 300s (screen: graphical) |
+| truenas-25.10.7 | moksb | bless | FAIL | back at the menu: the blessed image exited, status 0x8000000000000002 (screen: text console) |
 | truenas-25.10.7 | bios | chain | FAIL | no userland within 300s (screen: text console) |
 | freebsd-bootonly-15.1 | ms | drop | FAIL | back at the menu: the memory-disk boot failed while LoadImage of \EFI\BOOT\BOOTX64.EFI (shim): 0x80000 (screen: text console) |
 | freebsd-bootonly-15.1 | ms | chain | FAIL | back at the menu: the memory-disk boot failed while LoadImage of \EFI\BOOT\BOOTX64.EFI (shim): 0x80000 (screen: text console) |
 | freebsd-bootonly-15.1 | own | drop | FAIL | back at the menu: the memory-disk boot failed while LoadImage of \EFI\BOOT\BOOTX64.EFI (shim): 0x80000 (screen: text console) |
 | freebsd-bootonly-15.1 | own | chain | FAIL | back at the menu: the memory-disk boot failed while LoadImage of \EFI\BOOT\BOOTX64.EFI (shim): 0x80000 (screen: text console) |
-| freebsd-bootonly-15.1 | bios | chain | FAIL | no userland within 300s (screen: graphical) |
 | gentoo-min-20260510 | off | chain | FAIL | no userland within 300s (screen: text console) |
 | gentoo-min-20260510 | ms | drop | FAIL | back at the menu: direct boot failed while LoadImage of \EFI\BOOT\BOOTX64.EFI (shim): 0x80000000000000 (screen: text console) |
 | gentoo-min-20260510 | ms | chain | FAIL | back at the menu: direct boot failed while LoadImage of \EFI\BOOT\BOOTX64.EFI (shim): 0x80000000000000 (screen: text console) |
 | gentoo-min-20260510 | own | drop | FAIL | back at the menu: direct boot failed while LoadImage of \EFI\BOOT\BOOTX64.EFI (shim): 0x80000000000000 (screen: text console) |
 | gentoo-min-20260510 | own | chain | FAIL | back at the menu: direct boot failed while LoadImage of \EFI\BOOT\BOOTX64.EFI (shim): 0x80000000000000 (screen: text console) |
+| gentoo-min-20260510 | moksb | chain | FAIL | no userland within 300s (screen: graphical) |
+| gentoo-min-20260510 | moksb | bless | FAIL | back at the menu: the blessed image exited, status 0x8000000000000002 (screen: text console) |
 | gentoo-min-20260510 | bios | chain | FAIL | no userland within 300s (screen: text console) |
 | windows-11-25h2 | off | chain | FAIL | no userland within 300s (screen: Windows Setup) |
 | windows-11-25h2 | ms | chain | FAIL | no userland within 300s (screen: Windows Setup) |
+| windows-11-25h2 | moksb | chain | FAIL | no userland within 300s (screen: Windows Setup) |
 | windows-11-25h2 | bios | chain | FAIL | no userland within 300s (screen: Windows Setup) |
 | windows-server-2025 | off | chain | FAIL | no userland within 300s (screen: Windows Setup) |
 | windows-server-2025 | ms | chain | FAIL | no userland within 300s (screen: Windows Setup) |
+| windows-server-2025 | moksb | chain | FAIL | no userland within 300s (screen: Windows Setup) |
 | windows-server-2025 | bios | chain | FAIL | no userland within 300s (screen: Windows Setup) |
 | esxi-7.0u3l | ms | drop | FAIL | no userland within 300s (screen: text console) |
 | esxi-7.0u3l | ms | chain | FAIL | no userland within 300s (screen: text console) |
 | esxi-8.0u3 | ms | drop | FAIL | no userland within 300s (screen: text console) |
 | esxi-8.0u3 | ms | chain | FAIL | no userland within 300s (screen: text console) |
+| esxi-8.0u3 | moksb | chain | FAIL | no userland within 300s (screen: text console) |
 | opnsense-25.1 | off | drop | FAIL | back at the menu: the memory-disk boot failed while checking memory for the image: 0x8000000000000009 (screen: text console) |
 | opnsense-25.1 | off | chain | FAIL | no userland within 300s (screen: text console) |
 | opnsense-25.1 | off | bless | FAIL | back at the menu: blessed boot failed while checking memory for the image: 0x8000000000000009 (screen: text console) |
@@ -256,6 +321,10 @@ Loader: 0.1.0_20260920.1824.release, 0.1.0_20260924.1655.release, 0.1.0_20260925
 | opnsense-25.1 | own | drop | FAIL | back at the menu: the memory-disk boot failed while checking memory for the image: 0x8000000000000009 (screen: text console) |
 | opnsense-25.1 | own | chain | FAIL | back at the menu: the memory-disk boot failed while checking memory for the image: 0x8000000000000009 (screen: text console) |
 | opnsense-25.1 | own | bless | FAIL | back at the menu: blessed boot failed while checking memory for the image: 0x8000000000000009 (screen: text console) |
+| opnsense-25.1 | moksb | drop | FAIL | back at the menu: the memory-disk boot failed while checking memory for the image: 0x8000000000000009 (screen: text console) |
+| opnsense-25.1 | moksb | chain | FAIL | no userland within 300s (screen: text console) |
+| opnsense-25.1 | moksb | bless | FAIL | no userland within 300s (screen: text console) |
+| opnsense-25.1 | bios | drop | FAIL | no userland within 300s (screen: text console) |
 | opnsense-25.1 | bios | chain | FAIL | no userland within 300s (screen: text console) |
 | pfsense-plus-24.06b7 | off | chain | FAIL | no userland within 300s (screen: text console) |
 | pfsense-plus-24.06b7 | ms | drop | FAIL | back at the menu: the memory-disk boot failed while LoadImage of \EFI\BOOT\BOOTX64.EFI (shim): 0x80000 (screen: text console) |
@@ -264,6 +333,9 @@ Loader: 0.1.0_20260920.1824.release, 0.1.0_20260924.1655.release, 0.1.0_20260925
 | pfsense-plus-24.06b7 | own | drop | FAIL | back at the menu: the memory-disk boot failed while LoadImage of \EFI\BOOT\BOOTX64.EFI (shim): 0x80000 (screen: text console) |
 | pfsense-plus-24.06b7 | own | chain | FAIL | back at the menu: the memory-disk boot failed while LoadImage of \EFI\BOOT\BOOTX64.EFI (shim): 0x80000 (screen: text console) |
 | pfsense-plus-24.06b7 | own | bless | FAIL | back at the menu: blessed boot failed while LoadImage of the image (shim): 0x8000000000000003 (screen: text console) |
+| pfsense-plus-24.06b7 | moksb | drop | FAIL | back at the menu: the memory-disk boot failed while LoadImage of \EFI\BOOT\BOOTX64.EFI (shim): 0x80000 (screen: text console) |
+| pfsense-plus-24.06b7 | moksb | chain | FAIL | back at the menu: boot failed while LoadImage of \EFI\BOOT\BOOTX64.EFI (shim): 0x8000000000000003 (screen: text console) |
+| pfsense-plus-24.06b7 | moksb | bless | FAIL | no userland within 300s (screen: text console) |
 | pfsense-plus-24.06b7 | bios | drop | FAIL | no userland within 300s (screen: text console) |
 | pfsense-plus-24.06b7 | bios | chain | FAIL | no userland within 300s (screen: text console) |
 | bazzite-stable | off | chain | FAIL | no userland within 300s (screen: text console) |
@@ -271,6 +343,8 @@ Loader: 0.1.0_20260920.1824.release, 0.1.0_20260924.1655.release, 0.1.0_20260925
 | bazzite-stable | ms | chain | FAIL | no userland within 300s (screen: text console) |
 | bazzite-stable | own | drop | FAIL | back at the menu: direct boot failed while LoadImage of \EFI\BOOT\BOOTX64.EFI (shim): 0x80000000000000 (screen: text console) |
 | bazzite-stable | own | chain | FAIL | back at the menu: direct boot failed while LoadImage of \EFI\BOOT\BOOTX64.EFI (shim): 0x80000000000000 (screen: text console) |
+| bazzite-stable | moksb | chain | FAIL | no userland within 300s (screen: text console) |
+| bazzite-stable | moksb | bless | FAIL | back at the menu: the blessed image exited, status 0x8000000000000002 (screen: text console) |
 | bazzite-stable | bios | chain | FAIL | no userland within 300s (screen: text console) |
 | alpine-std-x86-3.24.2 | bios | chain | FAIL | no userland within 300s (screen: text console) |
 | alpine-std-x86-3.24.2 | bios32 | chain | FAIL | no userland within 300s (screen: text console) |
@@ -280,41 +354,37 @@ Loader: 0.1.0_20260920.1824.release, 0.1.0_20260924.1655.release, 0.1.0_20260925
 | debian-netinst-12.15-i386 | bios32 | chain | FAIL | no userland within 300s (screen: graphical) |
 | windows-10-22h2-x86 | bios | chain | FAIL | no userland within 300s (screen: Windows Setup) |
 | windows-10-22h2-x86 | bios32 | drop | FAIL | back at the menu: boot failed while checking the processor (screen: text console) |
-| windows-10-22h2-x86 | bios32 | chain | FAIL | no userland within 300s (screen: text console) |
+| windows-10-22h2-x86 | bios32 | chain | FAIL | back at the menu: boot failed while checking the processor (screen: text console) |
 | freedos-1.4-live | bios | drop | FAIL | no userland within 300s (screen: text console) |
 | freedos-1.4-live | bios | chain | FAIL | no userland within 300s (screen: text console) |
-| freedos-1.4-live | bios32 | drop | FAIL | back at the menu: direct boot failed while starting the kernel (screen: text console) |
+| freedos-1.4-live | bios32 | drop | FAIL | no userland within 300s (screen: text console) |
 | freedos-1.4-live | bios32 | chain | FAIL | no userland within 300s (screen: text console) |
 | reactos-0.4.16 | bios | drop | FAIL | no userland within 300s (screen: graphical) |
 | reactos-0.4.16 | bios | chain | FAIL | no userland within 300s (screen: graphical) |
 | reactos-0.4.16 | bios32 | drop | FAIL | no userland within 300s (screen: graphical) |
 | reactos-0.4.16 | bios32 | chain | FAIL | no userland within 300s (screen: graphical) |
 | freebsd-disc1-14.5-i386 | bios | drop | FAIL | back at the menu: the memory-disk boot failed while checking memory for the image (screen: text console) |
-| freebsd-disc1-14.5-i386 | bios | chain | FAIL | no userland within 300s (screen: text console) |
-| freebsd-disc1-14.5-i386 | bios32 | drop | FAIL | no userland within 300s (screen: text console) |
-| freebsd-disc1-14.5-i386 | bios32 | chain | FAIL | no userland within 300s (screen: text console) |
-| openbsd-7.9-i386 | bios | drop | FAIL | no userland within 300s (screen: text console) |
-| openbsd-7.9-i386 | bios | chain | FAIL | no userland within 300s (screen: text console) |
-| openbsd-7.9-i386 | bios32 | drop | FAIL | back at the menu: direct boot failed while reading the ISO's boot configuration (screen: text console) |
-| openbsd-7.9-i386 | bios32 | chain | FAIL | no userland within 300s (screen: text console) |
+| freebsd-disc1-14.5-i386 | bios | chain | FAIL | back at the menu: the memory-disk boot failed while checking memory for the image (screen: text console) |
+| freebsd-disc1-14.5-i386 | bios32 | drop | FAIL | back at the menu: the memory-disk boot failed while checking memory for the image (screen: text console) |
+| freebsd-disc1-14.5-i386 | bios32 | chain | FAIL | back at the menu: the memory-disk boot failed while checking memory for the image (screen: text console) |
+| openbsd-7.9-i386 | bios | drop | FAIL | no userland within 300s (screen: graphical) |
+| openbsd-7.9-i386 | bios | chain | FAIL | no userland within 300s (screen: graphical) |
+| openbsd-7.9-i386 | bios32 | drop | FAIL | no userland within 300s (screen: graphical) |
+| openbsd-7.9-i386 | bios32 | chain | FAIL | no userland within 300s (screen: graphical) |
 | netbsd-10.2-i386 | bios | drop | FAIL | no userland within 300s (screen: text console) |
-| netbsd-10.2-i386 | bios | chain | FAIL | back at the menu: direct boot failed while reading the ISO's boot configuration (screen: text console) |
-| netbsd-10.2-i386 | bios32 | drop | FAIL | back at the menu: direct boot failed while reading the ISO's boot configuration (screen: text console) |
-| netbsd-10.2-i386 | bios32 | chain | FAIL | back at the menu: direct boot failed while reading the ISO's boot configuration (screen: text console) |
+| netbsd-10.2-i386 | bios | chain | FAIL | no userland within 300s (screen: text console) |
+| netbsd-10.2-i386 | bios32 | drop | FAIL | no userland within 300s (screen: text console) |
+| netbsd-10.2-i386 | bios32 | chain | FAIL | no userland within 300s (screen: text console) |
 | haiku-r1b6-x86_gcc2h | bios | drop | FAIL | no userland within 300s (screen: text console) |
-| haiku-r1b6-x86_gcc2h | bios | chain | FAIL | back at the menu: boot failed while reading the ISO's boot catalog (screen: text console) |
-| haiku-r1b6-x86_gcc2h | bios32 | drop | FAIL | back at the menu: direct boot failed while reading the ISO's boot configuration (screen: text console) |
-| haiku-r1b6-x86_gcc2h | bios32 | chain | FAIL | back at the menu: boot failed while reading the ISO's boot catalog (screen: text console) |
+| haiku-r1b6-x86_gcc2h | bios | chain | FAIL | no userland within 300s (screen: text console) |
+| haiku-r1b6-x86_gcc2h | bios32 | drop | FAIL | no userland within 300s (screen: text console) |
+| haiku-r1b6-x86_gcc2h | bios32 | chain | FAIL | no userland within 300s (screen: text console) |
 | clonezilla-3.2.0-5-i686 | bios | chain | FAIL | no userland within 300s (screen: text console) |
 | clonezilla-3.2.0-5-i686 | bios32 | chain | FAIL | no userland within 300s (screen: text console) |
 | gparted-1.6.0-10-i686 | bios | chain | FAIL | no userland within 300s (screen: text console) |
 | gparted-1.6.0-10-i686 | bios32 | chain | FAIL | no userland within 300s (screen: text console) |
-| memtest86plus-8.10-i586 | bios | chain | FAIL | back at the menu: boot failed while reading the ISO's boot catalog (screen: text console) |
-| memtest86plus-8.10-i586 | bios32 | chain | FAIL | back at the menu: boot failed while reading the ISO's boot catalog (screen: text console) |
 | antix-26-386-full | bios | chain | FAIL | no userland within 300s (screen: text console) |
 | antix-26-386-full | bios32 | chain | FAIL | no userland within 300s (screen: text console) |
-| slackware-15.0-dvd | bios32 | drop | FAIL | no userland on serial within 300s after starting huge.s (screen: text console) |
-| slackware-15.0-dvd | bios32 | chain | FAIL | no userland within 300s (screen: text console) |
 | windows-2000-pro-x86 | bios | drop | FAIL | no userland within 300s (screen: graphical) |
 | windows-2000-pro-x86 | bios | chain | FAIL | no userland within 300s (screen: graphical) |
 | windows-2000-pro-x86 | bios32 | drop | FAIL | no userland within 300s (screen: graphical) |
@@ -329,18 +399,33 @@ Loader: 0.1.0_20260920.1824.release, 0.1.0_20260924.1655.release, 0.1.0_20260925
 | windows-xp-pro-x64 | ms | chain | FAIL | back at the menu: boot failed while finding the medium's EFI System Partition: 0x800000000000000e (screen: text console) |
 | windows-xp-pro-x64 | own | drop | FAIL | back at the menu: boot failed while finding the medium's EFI System Partition: 0x800000000000000e (screen: text console) |
 | windows-xp-pro-x64 | own | chain | FAIL | back at the menu: boot failed while finding the medium's EFI System Partition: 0x800000000000000e (screen: text console) |
+| windows-xp-pro-x64 | moksb | drop | FAIL | back at the menu: boot failed while finding the medium's EFI System Partition: 0x800000000000000d (screen: text console) |
+| windows-xp-pro-x64 | moksb | chain | FAIL | back at the menu: boot failed while finding the medium's EFI System Partition: 0x800000000000000d (screen: text console) |
 | windows-xp-pro-x64 | bios | drop | FAIL | no userland within 300s (screen: graphical) |
 | windows-xp-pro-x64 | bios | chain | FAIL | no userland within 300s (screen: graphical) |
-| windows-vista-x86 | bios | chain | FAIL | no userland within 300s (screen: graphical) |
+| windows-vista-x86 | bios | chain | FAIL | no userland within 300s (screen: Windows Setup) |
+| windows-vista-x86 | bios32 | chain | FAIL | no userland within 300s (screen: Windows Setup) |
 | windows-vista-sp1-x64 | off | drop | FAIL | back at the menu: boot failed while finding the medium's EFI System Partition: 0x800000000000000e (screen: text console) |
 | windows-vista-sp1-x64 | off | chain | FAIL | back at the menu: boot failed while finding the medium's EFI System Partition: 0x800000000000000e (screen: text console) |
 | windows-vista-sp1-x64 | ms | drop | FAIL | back at the menu: boot failed while finding the medium's EFI System Partition: 0x800000000000000e (screen: text console) |
 | windows-vista-sp1-x64 | ms | chain | FAIL | back at the menu: boot failed while finding the medium's EFI System Partition: 0x800000000000000e (screen: text console) |
 | windows-vista-sp1-x64 | own | drop | FAIL | back at the menu: boot failed while finding the medium's EFI System Partition: 0x800000000000000e (screen: text console) |
 | windows-vista-sp1-x64 | own | chain | FAIL | back at the menu: boot failed while finding the medium's EFI System Partition: 0x800000000000000e (screen: text console) |
+| windows-vista-sp1-x64 | moksb | drop | FAIL | back at the menu: boot failed while finding the medium's EFI System Partition: 0x800000000000000d (screen: text console) |
+| windows-vista-sp1-x64 | moksb | chain | FAIL | back at the menu: boot failed while finding the medium's EFI System Partition: 0x800000000000000d (screen: text console) |
+| windows-vista-sp1-x64 | bios | chain | FAIL | no userland within 300s (screen: Windows Setup) |
+| windows-7-sp1-x86 | bios | chain | FAIL | no userland within 300s (screen: Windows Setup) |
+| windows-7-sp1-x86 | bios32 | chain | FAIL | no userland within 300s (screen: Windows Setup) |
 | windows-7-x64 | off | drop | FAIL | no userland within 300s (screen: text console) |
 | windows-7-x64 | off | chain | FAIL | no userland within 300s (screen: text console) |
+| windows-7-x64 | moksb | drop | FAIL | no userland within 300s (screen: text console) |
+| windows-7-x64 | moksb | chain | FAIL | no userland within 300s (screen: text console) |
+| windows-7-x64 | bios | chain | FAIL | no userland within 300s (screen: Windows Setup) |
+| windows-8.1-x86 | bios | chain | FAIL | no userland within 300s (screen: Windows Setup) |
 | windows-8.1-x86 | bios32 | drop | FAIL | back at the menu: boot failed while checking the processor (screen: text console) |
+| windows-8.1-x86 | bios32 | chain | FAIL | no userland within 300s (screen: text console) |
 | windows-8.1-x64 | off | chain | FAIL | no userland within 300s (screen: Windows Setup) |
 | windows-8.1-x64 | ms | chain | FAIL | no userland within 300s (screen: Windows Setup) |
+| windows-8.1-x64 | moksb | chain | FAIL | no userland within 300s (screen: Windows Setup) |
+| windows-8.1-x64 | bios | chain | FAIL | no userland within 300s (screen: Windows Setup) |
 

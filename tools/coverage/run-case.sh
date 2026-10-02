@@ -49,7 +49,7 @@
 # and ERROR for a harness problem (QEMU would not start, the menu never came).
 #
 # Usage: tools/coverage/run-case.sh STICK STATE ROUTE OUTDIR [TIMEOUT]
-#   STATE    off | ms | own | bios | bios32   (tools/coverage/states.sh)
+#   STATE    off | ms | own | moksb | bios | bios32   (tools/coverage/states.sh)
 #   ROUTE    dnd      Enter on the image row: whatever the loader does by
 #                     default with an unblessed image
 #            chain    the chainload key: the ISO's own EFI loader, or

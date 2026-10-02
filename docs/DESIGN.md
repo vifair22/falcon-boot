@@ -1238,7 +1238,15 @@ enrol the CA or turn Secure Boot off for that job. The Manual says so.
     filesystem is. The review that authorises it names the file and says it
     will be written to.
 - **Secure Boot ON, validation off (user opt-in, 7.4):** shim permits
-  everything; every ISO boots with nothing signed, on that machine.
+  everything; every ISO boots with nothing signed, on that machine, with
+  one exception: a payload shim's own loader cannot load (pfSense's
+  `loader.efi`, 7.6) is refused, since the firmware's `LoadImage` still
+  enforces db and shim's is the only other way in. A blessed BSD medium
+  signs that same loader and boots; a blessed Linux wrap is a UKI and does
+  not (7.4). Chaining hands the medium's own loader a machine whose
+  firmware still reports Secure Boot on, and one that enforces its own
+  policy from that flag (Pop!_OS's systemd-boot with its unsigned kernel,
+  ESXi 8's loader) fails there as it does with validation on.
 
 An unsigned ISO with reliable media-finding and Secure Boot validation on is
 not a combination: it needs our signature on the kernel (blessing) or the
@@ -1274,7 +1282,7 @@ What the Manual states:
   ours. The loader shows a banner when it detects the state.
 - **The opt-out is for the ISO path; it turns UKIs off.** With Secure Boot on
   and validation disabled, no UKI boots: ours, a blessed wrap, or anyone
-  else's (notes Section 11). sd-stub loads its inner kernel through
+  else's. sd-stub loads its inner kernel through
   `gBS->LoadImage`, and in this state shim installs its loader protocol but
   does not hook the boot-services table (7.6), so that call is the firmware's
   own `LoadImage`, which refuses everything not in db. Blessing and the
@@ -1395,7 +1403,7 @@ Debian 16.1); where 15.8 differs it is said.
 - Any MS-signed shim passes db on any machine; the vendor is chosen by
   feature.
 
-**Protocol presence and the table hook are independent** (notes Section 11).
+**Protocol presence and the table hook are independent.**
 `install_shim_protocols()` runs unconditionally; `hook_system_services()`
 runs only under `secure_mode()`, which `MokSBState` turns off. With Secure
 Boot on and validation disabled, `SHIM_IMAGE_LOADER` is present and permits
@@ -1425,7 +1433,7 @@ refuses pfSense's loader.efi outright), and the personal OS's UKI
 `LoadImage` with the UKI as the parent, so with Secure Boot off a UKI shim
 had loaded fails with `EFI_INVALID_PARAMETER`).
 
-**Pairing rule** (notes Section 11.4): `LoadImage`, `StartImage` and
+**Pairing rule:** `LoadImage`, `StartImage` and
 `UnloadImage` come from one source and are used as a set. shim's
 `shim_start_image()` and `shim_unload_image()` forward handles they do not
 recognise through saved firmware pointers that are populated only under
@@ -2164,8 +2172,9 @@ while every real file lives only in UDF.
   report of both credentials.
 - The coverage harness (`tools/coverage/`): one rig stick per ISO of a pinned
   corpus (`corpus.tsv`), each booted under OVMF with Secure Boot off, on with
-  the Microsoft CA and on with the user's own keys, and under SeaBIOS on the
-  host CPU and on an i686, by every route; each case judged from serial, a
+  the Microsoft CA, on with the user's own keys and, on request, on with
+  shim's validation off (7.4), and under SeaBIOS on the host CPU and on an
+  i686, by every route; each case judged from serial, a
   DHCP capture and the medium read after the kernel starts (`run-case.sh`),
   and rendered to `docs/coverage.md` by `scorecard.py`. It runs in a
   container (`harness.sh`, `Dockerfile`) on binhost-builder; `harness.sh
