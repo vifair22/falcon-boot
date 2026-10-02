@@ -512,17 +512,13 @@ void bless_uki_trust(const bless_hit *hit, const trust_stores *stores,
     trust_probe(stores, fs_file_read_cb, &g_file, fs_file_size(&g_file), out);
 }
 
-EFI_STATUS bless_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
-                      const bless_hit *hit, bless_result *result)
-{
-    return bless_boot_as(st, parent_image, hit,
-                         (EFI_DEVICE_PATH_PROTOCOL *)0, result);
-}
-
-EFI_STATUS bless_boot_as(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
-                         const bless_hit *hit,
-                         EFI_DEVICE_PATH_PROTOCOL *load_path,
-                         bless_result *result)
+/* uki: the image is a wrap whose stub loads its kernel through
+ * gBS->LoadImage, so the validation-off state stops it (DESIGN Section 7.4).
+ * A signed loader (bless_boot_as) loads no PE of its own. */
+static EFI_STATUS blessed_launch(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
+                                 const bless_hit *hit,
+                                 EFI_DEVICE_PATH_PROTOCOL *load_path,
+                                 BOOLEAN uki, bless_result *result)
 {
     EFI_BOOT_SERVICES *bs;
     fs_vol *vol;
@@ -577,7 +573,7 @@ EFI_STATUS bless_boot_as(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
      * The boot proceeds either way. Nothing below reads inner_blocked to
      * decide anything; it only decides what is said (DESIGN Section 7.3). */
     resolve_load_ops(bs, &ops);
-    inner_blocked = load_ops_inner_load_blocked(st, &ops);
+    inner_blocked = uki ? load_ops_inner_load_blocked(st, &ops) : FALSE;
     if (inner_blocked)
         out(L"warning: this image is very unlikely to start on this machine;"
             L"\r\n         see the note after it exits.\r\n\r\n");
@@ -625,6 +621,21 @@ EFI_STATUS bless_boot_as(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
     if (EFI_ERROR(status))
         result->status = status;
     return status;
+}
+
+EFI_STATUS bless_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
+                      const bless_hit *hit, bless_result *result)
+{
+    return blessed_launch(st, parent_image, hit,
+                          (EFI_DEVICE_PATH_PROTOCOL *)0, TRUE, result);
+}
+
+EFI_STATUS bless_boot_as(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
+                         const bless_hit *hit,
+                         EFI_DEVICE_PATH_PROTOCOL *load_path,
+                         bless_result *result)
+{
+    return blessed_launch(st, parent_image, hit, load_path, FALSE, result);
 }
 
 /* ---- bare EFI payloads (DESIGN Section 7.2) ---- */

@@ -384,16 +384,20 @@ static const CHAR16 *why_refused(const iso_target *t, BOOLEAN uki)
 static void tags_build(iso_target *t, const iso_survey *survey)
 {
     const CHAR16 *state = bless_suffix(&t->hit);
-    BOOLEAN uki = (bless_hit_action(&t->hit) == BLESS_ACT_UKI) ? TRUE : FALSE;
+    BOOLEAN fresh = (bless_hit_action(&t->hit) == BLESS_ACT_UKI) ? TRUE : FALSE;
+    /* A fresh bless of a family blessed by signing its own loader boots that
+     * loader, not a UKI (DESIGN Section 7.8). */
+    BOOLEAN uki = (fresh && family_bless_loader(t->fam) == (const char *)0)
+                      ? TRUE : FALSE;
     const CHAR16 *why;
     wbuf w = { t->sig, MENU_TAG_MAX, 0 };
 
-    if (uki)
+    if (fresh)
         bless_uki_trust(&t->hit, &g_stores, &t->trust);
     else
         t->trust = survey->trust;
 
-    if (uki && state != (const CHAR16 *)0) {
+    if (fresh && state != (const CHAR16 *)0) {
         /* A fresh bless boots the wrap the bless tool signed with the MOK.
          * "[blessed]" says how it got signed, which is the useful fact; the
          * suffix carries two spaces of separator that a column does not. */
@@ -421,11 +425,11 @@ static void tags_build(iso_target *t, const iso_survey *survey)
 
     if (t->shape == ENTRY_MEDIA)
         t->bios_only = survey->uefi == UEFIBOOT_NO ? 1 : 0;
-    why = why_refused(t, (uki || survey->uki != 0) ? TRUE : FALSE);
+    why = why_refused(t, (uki || (!fresh && survey->uki != 0)) ? TRUE : FALSE);
     /* In every Secure Boot state: it is not a prediction about a signature
      * but a fact about the medium, and a fresh blessing is the one thing
      * that would boot something else in its place. */
-    if (t->bios_only && !uki)
+    if (t->bios_only && !fresh)
         why = L"{BIOS ONLY}";
     t->why[0] = 0;
     t->caution = 0;
@@ -1049,6 +1053,11 @@ static void boot_blessed(EFI_HANDLE image_handle, const CHAR16 *label,
 
         status = bsd_boot_blessed(g_st, image_handle, &g_vols[target->vol],
                                   &target->ent, &target->hit, &result, &bres);
+    } else if (family_bless_loader(target->fam) != (const char *)0) {
+        /* memtest86+: its own loader, signed, published alone. It reads
+         * nothing from the medium, so no extent map. */
+        status = bless_boot_as(g_st, image_handle, &target->hit,
+                               (EFI_DEVICE_PATH_PROTOCOL *)0, &result);
     } else {
         /* A wrap the sign tool built with falcon-hook in its initrd finds the
          * ISO through the extent map, as a direct boot does; an older wrap
