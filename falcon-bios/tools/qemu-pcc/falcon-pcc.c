@@ -20,14 +20,26 @@
  *     back; the CardBus windows forward nothing, since no CardBus card is
  *     modelled, and the bus numbers are presets (`cardbus-bus`,
  *     `subordinate-bus`; by default the A21m's BIOS's, 2-5 and 6-9);
- *   - the CardBus socket registers (present state, control) and ExCA, the
- *     i82365SL's register set at +0x800: interface status, power, interrupt
- *     and general control (reset, card type), window enables, memory window
- *     0 and I/O window 0, and TI's page register for the memory window;
+ *   - the CardBus socket registers (event, mask, present state, force,
+ *     control) and ExCA, the i82365SL's register set at +0x800: interface
+ *     status, power, interrupt and general control (reset, card type, the
+ *     IREQ and CSC routing), card status change and its mask, window
+ *     enables, memory window 0 and I/O window 0, and TI's page register for
+ *     the memory window;
+ *   - the function's PCI interrupt: raised for a socket event its mask
+ *     enables (a forced one too, which is how yenta's probe tests the
+ *     line), for an ExCA card status change its mask enables and the ExCA
+ *     routing sends to PCI, and for the card's IREQ (its ATA interrupt)
+ *     while bridge control routes IREQ to PCI. TI's interrupt mode
+ *     registers (serial or parallel, the multifunction routing) are stored
+ *     and change nothing; routing either interrupt to an ISA IRQ is not
+ *     modelled;
  *   - the windows as real mappings, moved and switched as those registers
  *     are written: memory window 0 onto the card's attribute memory (its
  *     CIS, and the configuration option register at 0x200), I/O window 0
- *     onto its ATA task file once the card is configured for I/O;
+ *     onto its ATA task file once the card is configured for I/O. A 32-bit
+ *     access through the I/O window reaches the card as two 16-bit ones at
+ *     consecutive addresses, as the bridge splits it;
  *   - with `shadow-roms=on`, a chipset that shadows every 16 KB segment of
  *     0xC0000-0xEFFFF an option ROM touches (the PAM granularity of the
  *     A21m's 440BX): the bridge does not see memory window 0's accesses
@@ -35,8 +47,9 @@
  *   - the card, when `drive=` names its image (without one the socket is
  *     empty: card detect says so and nothing else answers): a CIS with the
  *     CompactFlash standard's entries (memory mapped, contiguous I/O,
- *     primary IDE), and ATA PIO over the drive:
- *     IDENTIFY DEVICE, READ SECTORS, WRITE SECTORS, LBA28, and with
+ *     primary IDE) and the A21m's SanDisk's manufacturer identification,
+ *     and ATA PIO over the drive: IDENTIFY DEVICE, READ SECTORS, WRITE
+ *     SECTORS, LBA28, INTRQ as the PIO protocols assert it, and with
  *     `lba48=on` the 48-bit feature set (READ and WRITE SECTORS EXT, the
  *     task file's registers as two-deep FIFOs, HOB reads), which a card
  *     past 128 GiB needs. Off, a card larger than that says 2^28 - 1
@@ -44,9 +57,8 @@
  *
  * A model, so it is exactly as right as its reading of the specifications
  * and of the A21m's registers; where the silicon is looser or stricter,
- * only the A21m says. It is test
- * equipment, built into a QEMU for the rig by build-qemu.sh, and never part
- * of falcon.
+ * only the A21m says. It is test equipment, built into a QEMU for the rig
+ * by build-qemu.sh, and never part of falcon.
  *
  * GPL-2.0-or-later, as QEMU is.
  */
@@ -103,29 +115,44 @@ OBJECT_DECLARE_SIMPLE_TYPE(FalconPccState, FALCON_PCC)
 #define SC_SOCACTIVE       0x00002000u
 
 /* CardBus socket registers. */
+#define SOCK_EVENT     0x00
+#define SOCK_MASK      0x04
 #define SOCK_PRESENT   0x08
+#define SOCK_FORCE     0x0C
 #define SOCK_CONTROL   0x10
+#define EV_CSTSCHG     (1u << 0)
+#define EV_CD          (3u << 1)
+#define EV_PWRCYCLE    (1u << 3)
+#define EV_ALL         0x0Fu
 #define PS_CD          (3u << 1)
+#define PS_PWRCYCLE    (1u << 3)
 #define PS_16BIT       (1u << 4)
 #define PS_5V          (1u << 10)
 #define PS_3V          (1u << 11)
+#define PS_5VSOCKET    (1u << 28)
+#define PS_3VSOCKET    (1u << 29)
 
 /* ExCA, at BAR0 + 0x800. */
 #define EXCA           0x800
 #define X_STATUS       0x01
 #define X_POWER        0x02
 #define X_INTCTL       0x03
+#define X_CSC          0x04
+#define X_CSCINT       0x05
 #define X_ENABLE       0x06
 #define X_IOCTL        0x07
 #define X_IO0          0x08
 #define X_MEM0         0x10
 #define X_PAGE0        0x40
 
+#define ST_BVD         0x03      /* both battery lines: fine, no status change */
 #define ST_CD          0x0C      /* both card detects */
 #define ST_READY       0x20
 #define ST_POWERON     0x40
 #define IC_RESET       0x40      /* 1: reset released */
 #define IC_IOCARD      0x20
+#define IC_CSC_PCI     0x10      /* TI: card status change to PCI, not ISA */
+#define CSC_READY      0x04
 #define EN_MEM0        0x01
 #define EN_IO0         0x40
 
@@ -141,6 +168,9 @@ OBJECT_DECLARE_SIMPLE_TYPE(FalconPccState, FALCON_PCC)
 #define A_DRDY 0x40
 #define A_DRQ  0x08
 #define A_ERR  0x01
+#define DC_NIEN 0x02
+#define DC_SRST 0x04
+#define DC_HOB  0x80
 
 struct FalconPccState {
     PCIDevice parent_obj;
@@ -150,11 +180,16 @@ struct FalconPccState {
     BlockBackend *blk;
     uint64_t sectors;
 
+    uint32_t sock_event;
+    uint32_t sock_mask;
     uint32_t sock_control;
     uint8_t volts;          /* 0: a card taking 5 V or 3.3 V; 3: 3.3 V only */
     uint8_t cardbus_bus;    /* the properties; 0xFF: the A21m's, by function */
     uint8_t subordinate_bus;
     uint8_t exca[256];
+    uint8_t csc;            /* ExCA card status change, cleared by a read */
+    bool was_powered;
+    bool was_running;
     uint8_t cor;
 
     uint8_t cis[128];
@@ -174,6 +209,7 @@ struct FalconPccState {
     uint8_t device;
     uint8_t status;
     uint8_t error;
+    bool intrq;             /* pending until the status register is read */
     uint8_t buf[512];
     unsigned pos;
     unsigned remain;
@@ -197,10 +233,14 @@ static void cis_put(FalconPccState *s, const uint8_t *b, unsigned n)
 static void cis_build(FalconPccState *s)
 {
     /* A CompactFlash card's, trimmed to what a host reads: device info,
-     * FUNCID fixed disk, CONFIG (registers at 0x200, last index 3), and the
-     * CF standard's entries: 0 memory mapped (default), 1 contiguous I/O on
-     * 16 address lines' worth (4 decoded), 2 the primary IDE range. */
+     * MANFID (SanDisk, CFA: the A21m's card's, and the pair Linux's
+     * pata_pcmcia binds by without a userspace acknowledgement of the
+     * function ID), FUNCID fixed disk, CONFIG (registers at 0x200, last
+     * index 3), and the CF standard's entries: 0 memory mapped (default), 1
+     * contiguous I/O on 16 address lines' worth (4 decoded), 2 the primary
+     * IDE range. */
     static const uint8_t device[] = { 0x01, 0x03, 0xD9, 0x01, 0xFF };
+    static const uint8_t manfid[] = { 0x20, 0x04, 0x45, 0x00, 0x01, 0x04 };
     static const uint8_t funcid[] = { 0x21, 0x02, 0x04, 0x01 };
     static const uint8_t config[] = { 0x1A, 0x05, 0x01, 0x03, 0x00, 0x02,
                                       0x0F };
@@ -215,6 +255,7 @@ static void cis_build(FalconPccState *s)
 
     s->cis_len = 0;
     cis_put(s, device, sizeof device);
+    cis_put(s, manfid, sizeof manfid);
     cis_put(s, funcid, sizeof funcid);
     cis_put(s, config, sizeof config);
     cis_put(s, e0, sizeof e0);
@@ -223,11 +264,13 @@ static void cis_build(FalconPccState *s)
     cis_put(s, end, sizeof end);
 }
 
-/* ---- window decoding ---- */
+/* ---- power, interrupts ---- */
 
 /* VCC as the socket control register holds it: 0x20 is 5 V, 0x30 3.3 V.
  * A card that takes only 3.3 V gets nothing at 5 V; the bridge refuses the
- * request, as the PCI-1450 does. */
+ * request, as the PCI-1450 does. Power is VCC alone: the ExCA output
+ * enable (the power register's bit 7) is what lets the card answer, and a
+ * host applies it after it has seen the socket powered. */
 static bool powered(FalconPccState *s)
 {
     uint32_t vcc = s->sock_control & 0x70;
@@ -236,13 +279,57 @@ static bool powered(FalconPccState *s)
         return false;
     if (has_card(s) && s->volts == 3 && vcc != 0x30)
         return false;
-    return (s->exca[X_POWER] & 0x80) != 0;
+    return true;
 }
 
 static bool running(FalconPccState *s)
 {
-    return has_card(s) && powered(s) && (s->exca[X_INTCTL] & IC_RESET) != 0;
+    return has_card(s) && powered(s) && (s->exca[X_POWER] & 0x80) != 0 &&
+           (s->exca[X_INTCTL] & IC_RESET) != 0;
 }
+
+static bool configured(FalconPccState *s)
+{
+    return running(s) && (s->cor & 0x3F) != 0;
+}
+
+/* The function's PCI interrupt is the OR of the three sources. */
+static void update_irq(FalconPccState *s)
+{
+    PCIDevice *pdev = PCI_DEVICE(s);
+    uint16_t bctl = pci_get_word(pdev->config + CB_BRIDGE_CONTROL);
+    uint32_t ev = s->sock_event, mask = s->sock_mask;
+    bool level = false;
+
+    if (((ev & EV_CSTSCHG) && (mask & EV_CSTSCHG)) ||
+        ((ev & EV_CD) && (mask & EV_CD)) ||
+        ((ev & EV_PWRCYCLE) && (mask & EV_PWRCYCLE)))
+        level = true;
+    if ((s->csc & s->exca[X_CSCINT] & 0x0F) != 0 &&
+        (s->exca[X_INTCTL] & IC_CSC_PCI) != 0)
+        level = true;
+    if (s->intrq && (s->devctl & DC_NIEN) == 0 && configured(s) &&
+        (s->exca[X_INTCTL] & IC_IOCARD) != 0 && (bctl & BC_IREQ_ISA) == 0)
+        level = true;
+    pci_set_irq(pdev, level ? 1 : 0);
+}
+
+/* After anything that can change the socket's power or the card's reset:
+ * the events the bridge reports for them. */
+static void note_state(FalconPccState *s)
+{
+    bool p = powered(s), r = running(s);
+
+    if (p != s->was_powered)
+        s->sock_event |= EV_PWRCYCLE;
+    if (r != s->was_running)
+        s->csc |= CSC_READY;
+    s->was_powered = p;
+    s->was_running = r;
+    update_irq(s);
+}
+
+/* ---- window decoding ---- */
 
 /* The segments an option ROM touches, read the first time the window
  * opens: by then POST has placed every ROM, and the window has not yet
@@ -306,11 +393,12 @@ static void remap(FalconPccState *s)
     }
     memory_region_set_enabled(&s->attr, mem);
     if (io) {
-        uint16_t start = (uint16_t)(x[X_IO0] | (x[X_IO0 + 1] << 8));
-        uint16_t stop = (uint16_t)(x[X_IO0 + 2] | (x[X_IO0 + 3] << 8));
+        uint16_t io_start = (uint16_t)(x[X_IO0] | (x[X_IO0 + 1] << 8));
+        uint16_t io_stop = (uint16_t)(x[X_IO0 + 2] | (x[X_IO0 + 3] << 8));
 
-        memory_region_set_size(&s->io, stop >= start ? stop - start + 1u : 1u);
-        memory_region_set_address(&s->io, start);
+        memory_region_set_size(&s->io, io_stop >= io_start ?
+                               io_stop - io_start + 1u : 1u);
+        memory_region_set_address(&s->io, io_start);
     }
     memory_region_set_enabled(&s->io, io);
     memory_region_transaction_commit();
@@ -355,6 +443,7 @@ static void attr_write(void *opaque, hwaddr off, uint64_t v, unsigned size)
     if (a == CONFIG_BASE) {
         s->cor = (uint8_t)v;
         remap(s);
+        update_irq(s);
     }
 }
 
@@ -418,11 +507,20 @@ static void ata_identify(FalconPccState *s)
     }
 }
 
+/* The command is done, or a block is ready: INTRQ, as every PIO protocol
+ * asserts it, until the host reads the status register. */
+static void ata_done(FalconPccState *s, uint8_t status)
+{
+    s->status = status;
+    s->intrq = true;
+    update_irq(s);
+}
+
 static void ata_abort(FalconPccState *s)
 {
     s->error = 0x04;
-    s->status = A_DRDY | A_ERR;
     s->remain = 0;
+    ata_done(s, A_DRDY | A_ERR);
 }
 
 static bool ata_fetch(FalconPccState *s)
@@ -433,8 +531,25 @@ static bool ata_fetch(FalconPccState *s)
         return false;
     }
     s->pos = 0;
-    s->status = A_DRDY | A_DRQ;
+    ata_done(s, A_DRDY | A_DRQ);
     return true;
+}
+
+/* The signature a device leaves in the task file after a reset: an ATA
+ * device, not a packet one. */
+static void ata_reset(FalconPccState *s)
+{
+    s->status = A_DRDY;
+    s->error = 0x01;
+    s->remain = 0;
+    s->count = 1;
+    s->lba[0] = 1;
+    s->lba[1] = 0;
+    s->lba[2] = 0;
+    s->hob_count = 0;
+    s->hob_lba[0] = s->hob_lba[1] = s->hob_lba[2] = 0;
+    s->device = 0;
+    s->intrq = false;
 }
 
 static void ata_command(FalconPccState *s, uint8_t cmd)
@@ -449,13 +564,15 @@ static void ata_command(FalconPccState *s, uint8_t cmd)
     unsigned count_ext = (unsigned)s->count | ((unsigned)s->hob_count << 8);
 
     s->error = 0;
+    s->intrq = false;
+    update_irq(s);
     switch (cmd) {
     case 0xEC:                           /* IDENTIFY DEVICE */
         ata_identify(s);
         s->pos = 0;
         s->remain = 1;
         s->writing = false;
-        s->status = A_DRDY | A_DRQ;
+        ata_done(s, A_DRDY | A_DRQ);
         return;
     case 0x20:
     case 0x21:                           /* READ SECTORS */
@@ -478,7 +595,7 @@ static void ata_command(FalconPccState *s, uint8_t cmd)
         s->remain = s->count ? s->count : 256;
         s->writing = true;
         s->pos = 0;
-        s->status = A_DRDY | A_DRQ;
+        s->status = A_DRDY | A_DRQ;      /* the first block: no INTRQ */
         return;
     case 0x24:                           /* READ SECTORS EXT */
         if (!s->lba48 || (s->device & 0x40) == 0) {
@@ -504,7 +621,8 @@ static void ata_command(FalconPccState *s, uint8_t cmd)
     case 0xEF:                           /* SET FEATURES */
     case 0x91:                           /* INITIALIZE DEVICE PARAMETERS */
     case 0xE5:                           /* CHECK POWER MODE */
-        s->status = A_DRDY;
+    case 0xE7:                           /* FLUSH CACHE */
+        ata_done(s, A_DRDY);
         return;
     default:
         ata_abort(s);
@@ -524,23 +642,30 @@ static void ata_word_done(FalconPccState *s)
     }
     s->cur++;
     if (--s->remain == 0) {
-        s->status = A_DRDY;
+        if (s->writing)
+            ata_done(s, A_DRDY);
+        else
+            s->status = A_DRDY;          /* a read ends without INTRQ */
         return;
     }
     if (s->writing) {
         s->pos = 0;
-        s->status = A_DRDY | A_DRQ;
+        ata_done(s, A_DRDY | A_DRQ);
     } else {
         ata_fetch(s);
     }
 }
 
+/* A device 0 only: with device 1 selected the card answers nothing, so a
+ * host probing for a second device finds none. */
 static uint64_t io_read(void *opaque, hwaddr off, unsigned size)
 {
     FalconPccState *s = opaque;
 
-    if (!running(s) || (s->cor & 0x3F) == 0)
+    if (!configured(s))
         return size == 2 ? 0xFFFF : 0xFF;
+    if ((s->device & 0x10) != 0)
+        return 0;
     switch (off & 0xF) {
     case 0x0: {
         uint64_t v;
@@ -555,12 +680,15 @@ static uint64_t io_read(void *opaque, hwaddr off, unsigned size)
         return v;
     }
     case 0x1: return s->error;
-    case 0x2: return (s->devctl & 0x80) ? s->hob_count : s->count;
-    case 0x3: return (s->devctl & 0x80) ? s->hob_lba[0] : s->lba[0];
-    case 0x4: return (s->devctl & 0x80) ? s->hob_lba[1] : s->lba[1];
-    case 0x5: return (s->devctl & 0x80) ? s->hob_lba[2] : s->lba[2];
+    case 0x2: return (s->devctl & DC_HOB) ? s->hob_count : s->count;
+    case 0x3: return (s->devctl & DC_HOB) ? s->hob_lba[0] : s->lba[0];
+    case 0x4: return (s->devctl & DC_HOB) ? s->hob_lba[1] : s->lba[1];
+    case 0x5: return (s->devctl & DC_HOB) ? s->hob_lba[2] : s->lba[2];
     case 0x6: return s->device;
     case 0x7:
+        s->intrq = false;
+        update_irq(s);
+        return s->status;
     case 0xE: return s->status;
     default:  return 0xFF;
     }
@@ -570,7 +698,9 @@ static void io_write(void *opaque, hwaddr off, uint64_t v, unsigned size)
 {
     FalconPccState *s = opaque;
 
-    if (!running(s) || (s->cor & 0x3F) == 0)
+    if (!configured(s))
+        return;
+    if ((s->device & 0x10) != 0 && (off & 0xF) != 0x6 && (off & 0xF) != 0xE)
         return;
     switch (off & 0xF) {
     case 0x0:
@@ -593,11 +723,9 @@ static void io_write(void *opaque, hwaddr off, uint64_t v, unsigned size)
     case 0x7: ata_command(s, (uint8_t)v); return;
     case 0xE:
         s->devctl = (uint8_t)v;
-        if ((v & 0x04) != 0) {           /* SRST */
-            s->status = A_DRDY;
-            s->error = 0x01;
-            s->remain = 0;
-        }
+        if ((v & DC_SRST) != 0)
+            ata_reset(s);
+        update_irq(s);
         return;
     default:
         return;
@@ -608,7 +736,7 @@ static const MemoryRegionOps io_ops = {
     .read = io_read,
     .write = io_write,
     .endianness = DEVICE_LITTLE_ENDIAN,
-    .valid = { .min_access_size = 1, .max_access_size = 2 },
+    .valid = { .min_access_size = 1, .max_access_size = 4 },
     .impl = { .min_access_size = 1, .max_access_size = 2 },
 };
 
@@ -617,43 +745,109 @@ static const MemoryRegionOps io_ops = {
 static void card_reset(FalconPccState *s)
 {
     s->cor = 0;
-    s->status = A_DRDY;
-    s->error = 0x01;
-    s->remain = 0;
+    ata_reset(s);
+}
+
+static uint32_t present_state(FalconPccState *s)
+{
+    uint32_t v = PS_5VSOCKET | PS_3VSOCKET;
+
+    if (!has_card(s))
+        return v | PS_CD;
+    v |= PS_16BIT | PS_3V | (s->volts == 3 ? 0 : PS_5V);
+    if (powered(s))
+        v |= PS_PWRCYCLE;
+    return v;
+}
+
+static uint8_t exca_read(FalconPccState *s, uint8_t r)
+{
+    uint8_t v;
+
+    switch (r) {
+    case 0x00:
+        return 0x84;                              /* i82365SL-compatible */
+    case X_STATUS:
+        if (!has_card(s))
+            return 0;
+        return ST_BVD | ST_CD | (powered(s) ? ST_POWERON : 0) |
+               (running(s) ? ST_READY : 0);
+    case X_CSC:
+        v = s->csc;
+        s->csc = 0;
+        update_irq(s);
+        return v;
+    default:
+        return s->exca[r];
+    }
+}
+
+static void exca_write(FalconPccState *s, uint8_t r, uint8_t v)
+{
+    uint8_t old = s->exca[r];
+
+    s->exca[r] = v;
+    if (r == X_INTCTL && (old & IC_RESET) != 0 && (v & IC_RESET) == 0)
+        card_reset(s);
+    /* The PCI-1450 takes the ExCA VCC field as a request too, and the
+     * last one written is the one the socket applies. */
+    if (r == X_POWER)
+        s->sock_control = (s->sock_control & ~0x70u) |
+            ((v & 0x18) == 0x10 ? 0x20u : (v & 0x18) == 0x18 ? 0x30u : 0);
+    if (r == X_POWER && !powered(s))
+        card_reset(s);
+    remap(s);
+    note_state(s);
 }
 
 static uint64_t bar_read(void *opaque, hwaddr off, unsigned size)
 {
     FalconPccState *s = opaque;
+    uint32_t v;
+    unsigned i;
 
-    if (off == SOCK_PRESENT && size == 4) {
-        if (!has_card(s))
-            return PS_CD;                        /* both detects high */
-        return PS_16BIT | PS_3V |                /* card in, both detects low */
-               (s->volts == 3 ? 0 : PS_5V);
+    if (off >= EXCA && off < EXCA + 0x100) {
+        v = 0;
+        for (i = 0; i < size && off + i < EXCA + 0x100; i++)
+            v |= (uint32_t)exca_read(s, (uint8_t)(off + i - EXCA)) << (8 * i);
+        return v;
     }
-    if (off == SOCK_CONTROL && size == 4)
-        return s->sock_control;
-    if (off >= EXCA && off < EXCA + 0x100 && size == 1) {
-        uint8_t r = (uint8_t)(off - EXCA);
-
-        if (r == X_STATUS)
-            return !has_card(s) ? 0 :
-                   ST_CD | (powered(s) ? ST_POWERON : 0) |
-                   (running(s) ? ST_READY : 0);
-        if (r == 0x00)
-            return 0x84;                          /* i82365SL-compatible */
-        return s->exca[r];
+    switch (off & ~3u) {
+    case SOCK_EVENT:   v = s->sock_event; break;
+    case SOCK_MASK:    v = s->sock_mask; break;
+    case SOCK_PRESENT: v = present_state(s); break;
+    case SOCK_CONTROL: v = s->sock_control; break;
+    default:           v = 0; break;
     }
-    return 0;
+    return (v >> (8 * (off & 3))) & (size == 4 ? 0xFFFFFFFFu :
+                                     size == 2 ? 0xFFFFu : 0xFFu);
 }
 
-static void bar_write(void *opaque, hwaddr off, uint64_t v, unsigned size)
+static void bar_write(void *opaque, hwaddr off, uint64_t val, unsigned size)
 {
     FalconPccState *s = opaque;
+    uint32_t v = (uint32_t)val << (8 * (off & 3));
+    uint32_t m = (size == 4 ? 0xFFFFFFFFu : size == 2 ? 0xFFFFu : 0xFFu)
+                 << (8 * (off & 3));
+    unsigned i;
 
-    if (off == SOCK_CONTROL && size == 4) {
-        s->sock_control = (uint32_t)v & 0x77;
+    if (off >= EXCA && off < EXCA + 0x100) {
+        for (i = 0; i < size && off + i < EXCA + 0x100; i++)
+            exca_write(s, (uint8_t)(off + i - EXCA), (uint8_t)(val >> (8 * i)));
+        return;
+    }
+    switch (off & ~3u) {
+    case SOCK_EVENT:                              /* write 1 to clear */
+        s->sock_event &= ~(v & m & EV_ALL);
+        break;
+    case SOCK_MASK:
+        s->sock_mask = (s->sock_mask & ~m) | (v & m & EV_ALL);
+        break;
+    case SOCK_FORCE:
+        s->sock_event |= v & m & EV_ALL;
+        break;
+    case SOCK_CONTROL:
+        s->sock_control = ((s->sock_control & ~m) | (v & m)) & 0x77;
         /* The ExCA VCC field reads back what the socket was asked for. */
         s->exca[X_POWER] = (uint8_t)((s->exca[X_POWER] & ~0x18) |
             ((s->sock_control & 0x70) == 0x20 ? 0x10 :
@@ -661,24 +855,11 @@ static void bar_write(void *opaque, hwaddr off, uint64_t v, unsigned size)
         if (!powered(s))
             card_reset(s);
         remap(s);
+        break;
+    default:
         return;
     }
-    if (off >= EXCA && off < EXCA + 0x100 && size == 1) {
-        uint8_t r = (uint8_t)(off - EXCA);
-        uint8_t old = s->exca[r];
-
-        s->exca[r] = (uint8_t)v;
-        if (r == X_INTCTL && (old & IC_RESET) != 0 && (v & IC_RESET) == 0)
-            card_reset(s);
-        /* The PCI-1450 takes the ExCA VCC field as a request too, and the
-         * last one written is the one the socket applies. */
-        if (r == X_POWER)
-            s->sock_control = (s->sock_control & ~0x70u) |
-                ((v & 0x18) == 0x10 ? 0x20u : (v & 0x18) == 0x18 ? 0x30u : 0);
-        if (r == X_POWER && !powered(s))
-            card_reset(s);
-        remap(s);
-    }
+    note_state(s);
 }
 
 static const MemoryRegionOps bar_ops = {
@@ -781,17 +962,33 @@ static uint32_t falcon_pcc_config_read(PCIDevice *pdev, uint32_t addr, int len)
     return v;
 }
 
+static void falcon_pcc_config_write(PCIDevice *pdev, uint32_t addr,
+                                    uint32_t val, int len)
+{
+    FalconPccState *s = FALCON_PCC(pdev);
+
+    pci_default_write_config(pdev, addr, val, len);
+    if (addr <= CB_BRIDGE_CONTROL && addr + len > CB_BRIDGE_CONTROL)
+        update_irq(s);
+}
+
 static void falcon_pcc_reset_hold(Object *obj, ResetType type)
 {
     FalconPccState *s = FALCON_PCC(obj);
 
     config_reset(s);
+    s->sock_event = 0;
+    s->sock_mask = 0;
     s->sock_control = 0;
     memset(s->exca, 0, sizeof s->exca);
+    s->csc = 0;
+    s->was_powered = false;
+    s->was_running = false;
     s->devctl = 0;
     s->feature = 0;
     card_reset(s);
     remap(s);
+    update_irq(s);
 }
 
 static void falcon_pcc_realize(PCIDevice *pdev, Error **errp)
@@ -868,6 +1065,7 @@ static void falcon_pcc_class_init(ObjectClass *klass, FALCON_PCC_CLASS_DATA *dat
 
     k->realize = falcon_pcc_realize;
     k->config_read = falcon_pcc_config_read;
+    k->config_write = falcon_pcc_config_write;
     k->vendor_id = 0x104C;               /* Texas Instruments */
     k->device_id = 0xAC1B;               /* PCI-1450 */
     k->revision = 0x03;

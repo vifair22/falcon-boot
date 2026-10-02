@@ -573,8 +573,10 @@ test-station-fixtures: station $(MKSTICK)
 
 # DevLink recovery (DESIGN Section 12.5) off the rig stick on an i586 with
 # 32 MB, by both BIOS routes and both of its entries, the agent reached on
-# COM1 (falcon-bios/tools/run-devlink-rig.sh). Skipped when the ISO or the
-# devlink client is not there.
+# COM1, and its kernel on the rig's QEMU with the PC Card bridge model
+# attached, the card brought up as a disk (DESIGN Section 13.9)
+# (falcon-bios/tools/run-devlink-rig.sh). Skipped when the ISO, the devlink
+# client or the rig QEMU is not there.
 test-devlink: all bios cli payload
 	falcon-bios/tools/run-devlink-rig.sh
 

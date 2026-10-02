@@ -3288,7 +3288,7 @@ case, judged from serial.
 | `test-cfstation` | station-legacy on a CF card through jump's CF route, the A21m's disk behind it | the rig QEMU; the A21m image (`A21M_IMG`, default `~/a21m-image/DJSA-210.img`) |
 | `test-station-bundle` | a station-legacy updated from the bundle by its own `update.sh`, and its refusals | sudo; memtest86+ at `MEMTEST` (default `build/memtest/mt86p_810_i586`); it builds the bundle unless `BUNDLE` names one |
 | `test-jump` | every falcon jump route under SeaBIOS | the rig QEMU for the CF case; `MEMTEST` for the memtest case |
-| `test-devlink` | DevLink recovery off the rig stick on an i586 with 32 MB | the ISO (`DEVLINK_ISO`) and client (`DEVLINK_CLIENT`); skipped without them |
+| `test-devlink` | DevLink recovery off the rig stick on an i586 with 32 MB, and its kernel on the rig QEMU with the PC Card bridge model attached, the CF card brought up as a disk | the ISO (`DEVLINK_ISO`) and client (`DEVLINK_CLIENT`); the rig QEMU for the bridge case; skipped without them |
 | `test-appliance` | the appliance stick under Secure Boot, two appliance runs, then the stick checked on the host | `test-appliance-stick`; sudo |
 
 The rig QEMU is `qemu-system-i386` with a model of the A21m's PC Card

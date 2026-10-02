@@ -4896,9 +4896,16 @@ control, the legacy 16-bit I/O base, TI's system control, multifunction
 routing, retry, card, device and diagnostic registers, and the power
 management capability at 0xA0. What is writable is stored and read back;
 the CardBus windows forward nothing, since there is no CardBus card. The
+function's PCI interrupt is raised for a socket event its mask enables
+(a forced one too, which is how yenta tests the line), for an ExCA card
+status change its mask enables and ExCA routes to PCI, and for the card's
+IREQ, its ATA interrupt as the PIO protocols assert it, while bridge
+control routes IREQ to PCI; TI's interrupt mode registers are stored and
+change nothing, and ISA routing of either interrupt is not modelled. The
 card is a CompactFlash card (a CIS with the CF standard's configuration
-entries, the configuration option register at 0x200, an ATA task file
-over a drive image). The bridge's memory and I/O windows are
+entries and the A21m's SanDisk's manufacturer identification, the
+configuration option register at 0x200, an ATA task file over a drive
+image). The bridge's memory and I/O windows are
 real mappings in QEMU's address spaces, moved and enabled as the ExCA
 registers are written, and it powers the card only as the real bridge does
 (13.6; the `cf3v` case is a 3.3 V card, and the one on a single function).
@@ -4908,7 +4915,14 @@ capabilities pointer with "out of 32bit address space"; `build-qemu.sh`
 builds the release's own SeaBIOS with one patch
 (`falcon-bios/tools/qemu-pcc/seabios-cardbus.patch`: a type-2 header has
 BAR0 only) into `build/qemu-pcc/share/`, which the rig's QEMU is given
-before `/usr/share/qemu` with `-L`. With `shadow-roms=on` the
+before `/usr/share/qemu` with `-L`. `devlink-pcc`
+(`falcon-bios/tools/run-devlink-rig.sh`, part of `make test-devlink`)
+boots the DevLink recovery ISO's serial entry from a CD drive on that QEMU
+with the model attached, and judges from the kernel log that yenta binds
+both functions with the PCI interrupt it has seen delivered, that the
+pcmcia core registers the card on the first socket and hands it that
+interrupt, that pata_pcmcia identifies it and sd finds its partition, and
+that the second socket is seen with nothing in it. With `shadow-roms=on` the
 16 KB segments an option ROM touches keep the window's accesses from it,
 as a chipset that shadows them does; the `cf-rom` case boots with dummy
 ROMs (`-option-rom`) placed so one starts at 0xD0000, and judges the window

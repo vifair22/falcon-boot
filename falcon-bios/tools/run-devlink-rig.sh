@@ -21,6 +21,16 @@
 #                        the kernel log reaches COM2
 #   devlink-uefi         the same stick under OVMF: the row is drawn
 #                        {BIOS ONLY} (DESIGN Section 7.8)
+#   devlink-pcc          the ISO's serial entry booted straight from a CD
+#                        drive on the rig's QEMU (falcon-bios/tools/qemu-pcc,
+#                        DESIGN Section 13.9) with the PC Card bridge model
+#                        attached as the A21m has it, two functions of one
+#                        device and a CompactFlash card in the first: the
+#                        kernel's yenta binds both functions with a PCI
+#                        interrupt it has seen delivered, the pcmcia core
+#                        registers the card, pata_pcmcia brings it up as a
+#                        disk, and the second socket is seen empty; all
+#                        from the kernel log on COM2. Needs no client
 #
 # The ISO menu is read from VGA text memory through QEMU's monitor, since
 # isolinux says nothing on serial. The ISO is devlink-rescue's classic build;
@@ -44,10 +54,16 @@ ISO=${DEVLINK_ISO:-$HOME/git/home/devlink-rescue/build/classic/images/devlink-re
 CLIENT=${DEVLINK_CLIENT:-$HOME/git/home/devlink/build/bin/devlink}
 TIMEOUT=240
 
+QPCC=build/qemu-pcc/build/qemu-system-i386
+
 CASES=("$@")
 [[ ${#CASES[@]} -gt 0 ]] ||
     CASES=(devlink-dir-rescue devlink-dir-serial devlink-chn-rescue
-           devlink-chn-serial devlink-uefi)
+           devlink-chn-serial devlink-uefi devlink-pcc)
+NEED_STICK=0
+for c in "${CASES[@]}"; do
+    [[ $c == devlink-pcc ]] || NEED_STICK=1
+done
 
 if [[ ! -f "$ISO" ]]; then
     for c in "${CASES[@]}"; do
@@ -308,7 +324,79 @@ case_uefi() {
     fi
 }
 
-build
+# The bridge model on the rig's QEMU, the ISO in a CD drive (-boot d) and
+# the serial entry chosen on isolinux's menu, as devlink-chn-serial chooses
+# it. The card is the jump rig's (build/test-bios.img, an MBR disk with one
+# partition). Judged from the kernel log on COM2, a line per thing the
+# model has to get right for an OS not written against it:
+#   - yenta finds both functions ("CardBus bridge found") with a bus
+#     behind each (no "no bus associated"), and its probe saw the forced
+#     card-status-change interrupt arrive (no "probing PCI interrupt
+#     failed"), so the socket keeps its PCI interrupt (no "no PCI IRQ");
+#   - the pcmcia core registers the card on the first socket, the ISA IRQ
+#     mask is empty and the card is given the PCI interrupt;
+#   - pata_pcmcia identifies it (the CFA line) and sd sees its partition;
+#   - the second socket is seen, with nothing in it.
+case_pcc() {
+    local c=$1 why='' line
+    if [[ ! -x "$QPCC" ]]; then
+        printf 'SKIP  %-19s %s\n' "$c" "no rig QEMU (falcon-bios/tools/qemu-pcc/build-qemu.sh)"
+        return
+    fi
+    make --no-print-directory test-bios-img >/dev/null
+    cp build/test-bios.img "$R/cf.img"
+    rm -f "$R/com1.log" "$R/com2.log" "$R/mon.sock"
+    timeout "$TIMEOUT" "$QPCC" -L build/qemu-pcc/share -L /usr/share/qemu \
+        -machine pc -cpu pentium -m 32 -enable-kvm -display none -net none \
+        -cdrom "$ISO" -boot d \
+        -drive if=none,id=cf,format=raw,file="$R/cf.img" \
+        -device falcon-pcc,addr=7.0,multifunction=on,drive=cf \
+        -device falcon-pcc,addr=7.1 \
+        -serial file:"$R/com1.log" -serial file:"$R/com2.log" \
+        -monitor "unix:$R/mon.sock,server,nowait" >"$R/qemu.log" 2>&1 &
+    QPID=$!
+    wait_screen "devlink-rescue" 60 || why="isolinux's menu never came up"
+    if [[ -z "$why" ]]; then
+        mon "sendkey down"
+        sleep 0.3
+        mon "sendkey ret"
+        wait_for "Linux version" 60 com2.log || why="no kernel log on COM2"
+    fi
+    if [[ -z "$why" ]]; then
+        # The card is added in the background once pcmcia-up has run and
+        # libata probes it after that; sd's partition line is the end.
+        wait_for " sda: sda1" 120 com2.log || why="sd never saw the card's partition"
+    fi
+    halt
+    if [[ -z "$why" ]]; then
+        local k="$R/com2.log"
+        for line in 'yenta_cardbus 0000:00:07.0: CardBus bridge found' \
+                    'yenta_cardbus 0000:00:07.1: CardBus bridge found' \
+                    'yenta_cardbus 0000:00:07.0: ISA IRQ mask 0x0000, PCI irq 11' \
+                    'yenta_cardbus 0000:00:07.1: ISA IRQ mask 0x0000, PCI irq 11' \
+                    'pccard: PCMCIA card inserted into slot 0' \
+                    'pcmcia: registering new device' '(IRQ: 11)' \
+                    'PATA max PIO0 cmd' 'irq 11 lpm-pol' \
+                    'CFA: FALCON RIG CF, 1.0, max PIO0' \
+                    ' sda: sda1'; do
+            has "$line" com2.log || { why="COM2 never said: $line"; break; }
+        done
+    fi
+    if [[ -z "$why" ]]; then
+        for line in 'no bus associated' 'probing PCI interrupt failed' \
+                    'no PCI IRQ' 'unable to apply power' 'delaying card_add' \
+                    'inserted into slot 1' 'qc timeout' 'failed to IDENTIFY'; do
+            ! has "$line" com2.log || { why="COM2 said: $line"; break; }
+        done
+    fi
+    if [[ -z "$why" ]]; then
+        result "$c" 1 "$(log_text "$R/com2.log" | grep -a -m1 'PATA max PIO0' | sed 's/.*\] //'); sda1"
+    else
+        result "$c" 0 "$why"
+    fi
+}
+
+[[ $NEED_STICK -eq 1 ]] && build
 
 for c in "${CASES[@]}"; do
     case $c in
@@ -317,6 +405,7 @@ for c in "${CASES[@]}"; do
     devlink-chn-rescue) case_bios "$c" chn devlink-recovery.iso rescue ;;
     devlink-chn-serial) case_bios "$c" chn devlink-recovery.iso serial ;;
     devlink-uefi)       case_uefi "$c" ;;
+    devlink-pcc)        case_pcc "$c" ;;
     *) echo "unknown case: $c" >&2; exit 2 ;;
     esac
 done
