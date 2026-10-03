@@ -19,6 +19,14 @@
 
 #include <efi/uefi.h>
 
+/* 50614485-081b-4b7c-8b54-2abeffdf2fb3: falcon-boot's own vendor GUID for EFI
+ * variables. Ours alone, so nothing we write can collide with a platform or
+ * shim variable, and so a variable dumper shows at a glance which of these
+ * belong to this loader. */
+#define FALCON_VENDOR_GUID \
+    { 0x50614485, 0x081b, 0x4b7c, \
+      { 0x8b, 0x54, 0x2a, 0xbe, 0xff, 0xdf, 0x2f, 0xb3 } }
+
 typedef struct {
     EFI_STATUS (EFIAPI *LoadImage)(BOOLEAN, EFI_HANDLE,
                                    EFI_DEVICE_PATH_PROTOCOL *, void *, UINTN,
@@ -201,5 +209,17 @@ BOOLEAN fw_setup_available(EFI_SYSTEM_TABLE *st);
  * else's work. Returns FALSE when the variable could not be written or the
  * reset did not happen, having already said why on screen. */
 BOOLEAN loader_boot_to_fw_setup(EFI_SYSTEM_TABLE *st);
+
+/* ---- boot timing (DESIGN Section 5.5; loader/bli.h) ----
+ *
+ * loader_time_init is efi_main's: t0 is the counter as efi_main's first
+ * statement read it, and info the LoaderInfo string. It decides the
+ * counter's rate (a calibration happens here, after t0 was taken) and sets
+ * the startup variables. loader_time_exec is the UKI launches' (pos.c,
+ * bless.c), called immediately before StartImage: the counter, then
+ * LoaderTimeExecUSec and FalconTimeWaitUSec. Both say what they set on
+ * serial (console/serial.h) and carry on whatever the firmware answers. */
+void loader_time_init(EFI_SYSTEM_TABLE *st, UINT64 t0, const CHAR16 *info);
+void loader_time_exec(EFI_SYSTEM_TABLE *st);
 
 #endif /* FALCON_EFI_LOADOPS_H */

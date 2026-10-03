@@ -15,6 +15,7 @@ STATION := apps/station
 STATION_EFI := $(STATION)/efi_main.c $(STATION)/efi_sbat.c
 STATION_EFI += $(EFI_MOD_loader)        # shim-verified load path, credfs
 STATION_EFI += $(EFI_MOD_console) $(CORE_TUI)
+STATION_EFI += $(EFI_MOD_tsc)          # the boot-timing variables' clock, the wait
 STATION_EFI += $(EFI_MOD_discover) $(CORE_IDENT) $(CORE_IDENT_FS)  # rows, by record
 STATION_EFI += $(EFI_MOD_disks) $(CORE_PART)  # partitions named as STATION.INI names them
 STATION_EFI += $(CORE_BLK)             # any length at any offset, under discover_read
@@ -33,7 +34,7 @@ STATION_EFI += $(CORE_LIBC) $(CORE_UCS2)
 
 $(eval $(call efi_app,station,falcon-boot-station,$(STATION_EFI)))
 
-$(EFI_OBJ)/$(STATION)/efi_main.o: build/version.h
+$(EFI_OBJ)/$(STATION)/efi_main.o $(EFI_OBJ)/$(STATION)/efi_sbat.o: build/version.h
 
 # The routes: POS off the shelves, VBR and MBR (chain.c) with the drive swap,
 # the one resident, and MEM through linux.c. No ISO scan, and so neither

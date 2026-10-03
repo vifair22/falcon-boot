@@ -4,14 +4,10 @@
 #include <media/extmap.h>
 #include <tpm/evsave.h>
 #include <secboot/sb.h>
-
-/* 50614485-081b-4b7c-8b54-2abeffdf2fb3: falcon-boot's own vendor GUID for EFI
- * variables. Ours alone, so nothing we write can collide with a platform or
- * shim variable, and so a variable dumper shows at a glance which of these
- * belong to this loader. */
-#define FALCON_VENDOR_GUID \
-    { 0x50614485, 0x081b, 0x4b7c, \
-      { 0x8b, 0x54, 0x2a, 0xbe, 0xff, 0xdf, 0x2f, 0xb3 } }
+#include <loader/bli.h>
+#include <tsc/tsc.h>
+#include <tsc/tsccore.h>
+#include <console/serial.h>
 
 /* Non-volatile so it survives the appliance's reboot, and runtime-accessible
  * so the booted OS can set it too (DESIGN Section 6.3.1). loadops.h has what
@@ -328,4 +324,79 @@ BOOLEAN loader_boot_to_fw_setup(EFI_SYSTEM_TABLE *st)
      * driver is holding things open. The caller says so; the indication is
      * left set, because the next reboot by any means will still honour it. */
     return FALSE;
+}
+
+/* ---- boot timing ---- */
+
+/* name, then v in decimal, appended to an ASCII line. */
+static void put_kv(char *line, UINTN cap, UINTN *at, const char *name,
+                   UINT64 v)
+{
+    CHAR16 dec[21];
+    UINTN n = tsc_dec16(v, 0, dec, 21u);
+    UINTN i;
+
+    for (i = 0; name[i] != '\0' && *at + 1u < cap; i++)
+        line[(*at)++] = name[i];
+    for (i = 0; i < n && *at + 1u < cap; i++)
+        line[(*at)++] = (char)dec[i];
+    line[*at] = '\0';
+}
+
+static void put_str(char *line, UINTN cap, UINTN *at, const char *s)
+{
+    UINTN i;
+
+    for (i = 0; s[i] != '\0' && *at + 1u < cap; i++)
+        line[(*at)++] = s[i];
+    line[*at] = '\0';
+}
+
+void loader_time_init(EFI_SYSTEM_TABLE *st, UINT64 t0, const CHAR16 *info)
+{
+    static const char *const how_name[] = { "none", "cpuid", "stall" };
+    char line[160];
+    UINTN at = 0;
+    tsc_hz_how how;
+    UINT64 hz;
+    UINT64 usec;
+    EFI_STATUS s;
+
+    if (st == (EFI_SYSTEM_TABLE *)0)
+        return;
+    hz = tsc_hz(st->BootServices, &how);
+    usec = tsc_usec(t0, hz);
+    s = bli_set_init(st, usec, info);
+
+    put_kv(line, sizeof line, &at, "falcon-bli: tsc_hz=", hz);
+    put_str(line, sizeof line, &at, " via=");
+    put_str(line, sizeof line, &at, how_name[(unsigned)how % 3u]);
+    put_kv(line, sizeof line, &at, " LoaderTimeInitUSec=", usec);
+    if (EFI_ERROR(s))
+        put_str(line, sizeof line, &at, " set=failed");
+    serial_line(st, line);
+}
+
+void loader_time_exec(EFI_SYSTEM_TABLE *st)
+{
+    UINT64 now = tsc_read();
+    char line[160];
+    UINTN at = 0;
+    UINT64 hz;
+    UINT64 usec;
+    UINT64 wait;
+    EFI_STATUS s;
+
+    if (st == (EFI_SYSTEM_TABLE *)0)
+        return;
+    hz = tsc_hz(st->BootServices, (tsc_hz_how *)0);
+    usec = tsc_usec(now, hz);
+    wait = tsc_usec(tsc_wait_ticks(), hz);
+    s = bli_set_exec(st, usec, wait);
+
+    put_kv(line, sizeof line, &at, "falcon-bli: LoaderTimeExecUSec=", usec);
+    put_kv(line, sizeof line, &at, " FalconTimeWaitUSec=", wait);
+    if (EFI_ERROR(s))
+        put_str(line, sizeof line, &at, " set=failed");
+    serial_line(st, line);
 }

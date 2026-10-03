@@ -11,6 +11,7 @@ STICK_EFI := $(STICK)/efi_main.c $(STICK)/efi_sbat.c
 STICK_EFI += $(EFI_MOD_loader)          # shim-verified load path, credfs
 STICK_EFI += $(EFI_MOD_console) $(CORE_TUI)
 STICK_EFI += $(EFI_MOD_task)           # the background probe's own stack
+STICK_EFI += $(EFI_MOD_tsc)            # the boot-timing variables' clock, the wait
 STICK_EFI += $(EFI_MOD_discover) $(CORE_IDENT) $(CORE_IDENT_FS)  # rows, by record
 STICK_EFI += $(CORE_BLK)               # any length at any offset, under discover_read
 STICK_EFI += $(CORE_PART)              # a disk image's own table (media/medium.c)
@@ -30,7 +31,7 @@ STICK_EFI += $(CORE_LIBC) $(CORE_UCS2)
 
 $(eval $(call efi_app,stick,falcon-boot,$(STICK_EFI)))
 
-$(EFI_OBJ)/$(STICK)/efi_main.o: build/version.h
+$(EFI_OBJ)/$(STICK)/efi_main.o $(EFI_OBJ)/$(STICK)/efi_sbat.o: build/version.h
 
 sbat-check: sbat-check-stick
 

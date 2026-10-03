@@ -657,6 +657,64 @@ freeze filesystems before it hibernates, and ext4's freeze empties the
 journal and clears `recover`, so the shelf is clean when the loader reads
 it. It is a defence, not a requirement.
 
+### 5.5 Boot timing
+
+Both UEFI loaders set systemd's Boot Loader Interface timing variables
+(https://systemd.io/BOOT_LOADER_INTERFACE/), so `systemd-analyze` on an OS
+booted from a UKI splits its boot into firmware, loader and kernel. They are
+written as systemd-boot writes them: UTF-16 with the terminator counted in
+the size, attributes `BOOTSERVICE_ACCESS | RUNTIME_ACCESS` (volatile), under
+the Loader GUID `4a67b082-0a4c-41cf-b6c7-440b29bb8c4f`. Falcon adds one of
+its own under its own GUID, `50614485-081b-4b7c-8b54-2abeffdf2fb3`.
+
+| Variable | Value | Set |
+|---|---|---|
+| `LoaderTimeInitUSec` | microseconds from processor reset to `efi_main`'s first statement | at startup |
+| `LoaderInfo` | `falcon-boot <FALCON_VERSION>` (the station: `FALCON_VERSION_STATION`) | at startup |
+| `LoaderFirmwareInfo` | `<FirmwareVendor> <major>.<minor>` of the system table's `FirmwareRevision`, the minor two digits at least | at startup |
+| `LoaderFirmwareType` | `UEFI <major>.<minor>` of the system table's revision | at startup |
+| `LoaderTimeExecUSec` | microseconds from processor reset to the UKI's `StartImage` | immediately before a UKI's `StartImage` |
+| `FalconTimeWaitUSec` | microseconds spent waiting on the keyboard up to then (falcon's GUID) | beside `LoaderTimeExecUSec` |
+
+A UKI is what `pos` launches (the personal OS and the signing appliance off
+the stick's shelf; the station's encrypted-shelf row and its plaintext UKI
+rows) and a blessed wrap (`bless_boot`). Nothing else sets an exec time:
+chainloaded media, direct kernel boot, Windows, BSD, memtest86+, bare EFI
+payloads, and the station's firmware entries and ESP loaders. A UKI that
+returns has both exec variables deleted (`bli_clear_exec`), so a later boot
+by another route does not carry them. Both calls are
+in `loader` (`loader_time_init`, `loader_time_exec`), the variables'
+formats in `loader/bli.c`.
+
+`LoaderDevicePartUUID` is sd-stub's: it sets it from the device the UKI was
+loaded from when that names a partition, which the credential filesystem
+does not. The BIOS loader has no variables to set.
+
+**The clock** is the TSC (`tsc/`), read by `efi_main`'s first statement. Its
+rate is CPUID leaf 0x15's crystal times its ratio, with leaf 0x16's base
+frequency standing in for a crystal 0x15 does not enumerate (Intel only, as
+systemd-boot reads them); without those, the counter is counted across one
+10 ms `Stall`. The rate is decided once, after the init timestamp is taken,
+and kept. A rate outside 100 MHz-20 GHz is no rate, and then no time
+variable is written. Microseconds are floor(ticks * 10^6 / rate), computed
+without systemd-boot's overflow past about two hours of uptime. systemd-boot
+writes no times under a hypervisor; falcon does, since a KVM guest's counter
+starts at the guest's reset.
+
+**The wait** is wall time blocked on input: each menu from its first paint
+to the key or the countdown that ends it (the background probe and the TOTP
+line included), the passphrase prompt, and every "press any key" page
+(`idle_wait_key`). The wait after a wrong passphrase is not in it.
+Falcon's own work is `LoaderTimeExecUSec - LoaderTimeInitUSec -
+FalconTimeWaitUSec`.
+
+A variable the firmware will not set is left unset and the boot goes on.
+Each step says what it measured and set on the first serial port
+(`console/serial.c`): `falcon-bli: tsc_hz=<Hz> via=<cpuid|stall|none>
+LoaderTimeInitUSec=<us>` at startup, `falcon-bli: LoaderTimeExecUSec=<us>
+FalconTimeWaitUSec=<us>` at the launch, each with ` set=failed` when a write
+was refused.
+
 ## 6. ISO path: drag-and-drop mechanism
 
 No host-side registration. The stages:
@@ -2098,7 +2156,11 @@ while every real file lives only in UDF.
     `tui`. Lists ISOs, the personal-OS entry, and the signing-appliance
     entry (Section 7.5); shows per-entry verification labels and the Secure
     Boot state banner. `prompt.c` is the masked passphrase prompt; `idle.c`
-    the idle power-off (Section 7.9).
+    the idle power-off (Section 7.9); `serial.c` writes diagnostics to the
+    first serial port.
+  - `tsc` - the time-stamp counter, its rate and the wait on the keyboard
+    (Section 5.5); `tsccore.c` is the host-tested arithmetic. `tcg` seeds
+    its RNG from the counter.
   - `task` - one coroutine on its own stack beside the main flow, which the
     background probe runs on (Section 7.8). Stick only.
   - `discover` - the single discovery pass above (`discover.c`) and the
@@ -2150,8 +2212,9 @@ while every real file lives only in UDF.
     the virtual credential-filesystem handoff (Section 5.1). It is the only
     module that writes or deletes an EFI variable: the whole lifecycle of
     `FalconNextBoot` (Section 6.3.1), the extent map variable falcon-hook
-    can read from efivarfs (Section 6.4), and `FalconEvLog`, the event log the UEFI station
-    saves for enrollment (Section 12.15).
+    can read from efivarfs (Section 6.4), `FalconEvLog`, the event log the UEFI station
+    saves for enrollment (Section 12.15), and the boot-timing variables
+    (`bli.c`, Section 5.5).
   - `nxt` - the station's route to the firmware's other boot entries
     (BootOrder, Boot####, BootNext and a reset); `nxtcore.c` is the
     host-tested parse. Station only.
@@ -2183,7 +2246,10 @@ while every real file lives only in UDF.
   second stick, an MBR data disk and a disk of another install's records; a
   4Kn stick on NVMe under both firmwares; the station disk under both. Each
   case is judged from serial, through the personal OS to the fixture UKI's
-  report of both credentials.
+  report of both credentials. The timing cases, there and in the station
+  rig, judge the variables of Section 5.5 from the loader's serial line and
+  from efivarfs as the fixture UKI's kernel reads it, against the kernel's
+  own TSC rate (`falcon-efi/tools/bli-judge.sh`).
 - The coverage harness (`tools/coverage/`): one rig stick per ISO of a pinned
   corpus (`corpus.tsv`), each booted under OVMF with Secure Boot off, on with
   the Microsoft CA, on with the user's own keys and, on request, on with
@@ -3693,6 +3759,9 @@ on a copy whose `rescue` kernel is renamed away.
 
 The OS keeps its UKIs up to date the way the personal OS does: the shelf
 mounted at `/efi` and a hook that builds and signs each UKI with the MOK.
+
+The UEFI station sets the boot-timing variables as the stick does (Section
+5.5): at startup, and before each UKI row's `StartImage`.
 
 ### 12.6 memtest86+
 

@@ -6,9 +6,10 @@
 
 EFI_SRC := falcon-efi/src
 
-EFI_MOD_loader        := $(EFI_SRC)/loader/loadops.c $(EFI_SRC)/loader/credfs.c
+EFI_MOD_loader        := $(EFI_SRC)/loader/loadops.c $(EFI_SRC)/loader/credfs.c \
+                         $(EFI_SRC)/loader/bli.c
 EFI_MOD_console       := $(EFI_SRC)/console/menu.c $(EFI_SRC)/console/prompt.c \
-                         $(EFI_SRC)/console/idle.c
+                         $(EFI_SRC)/console/idle.c $(EFI_SRC)/console/serial.c
 EFI_MOD_discover      := $(EFI_SRC)/discover/discover.c $(EFI_SRC)/discover/partefi.c
 # Partitions named as STATION.INI names them: disk id and number.
 EFI_MOD_disks         := $(EFI_SRC)/discover/disks.c
@@ -30,6 +31,9 @@ EFI_MOD_esp           := $(EFI_SRC)/esp/esp.c
 # through EFI_TCG2_PROTOCOL or EFI_TCG_PROTOCOL, and the code and its lines.
 EFI_MOD_tcg           := $(EFI_SRC)/tcg/tcg.c
 EFI_MOD_totp          := $(EFI_SRC)/totp/totp.c
+# The time-stamp counter: the boot-timing variables' clock (loader/bli.c),
+# the wait on the keyboard (console/), and the tcg RNG seed's counter.
+EFI_MOD_tsc           := $(EFI_SRC)/tsc/tsc.c $(EFI_SRC)/tsc/tsccore.c
 
 # Every source some app links, for compile_commands.json and the analyzers.
 EFI_APP_SRCS :=
@@ -236,14 +240,16 @@ run-stick-secboot:
 # ---- tests ----
 #
 # The loader's EFI-free parts: the bless record cache and preparation state,
-# the virtual-media override arithmetic (a header, included by its test), and
-# the Secure Boot state reader, whose whole platform is one GetVariable.
+# the virtual-media override arithmetic (a header, included by its test), the
+# Secure Boot state reader, whose whole platform is one GetVariable, the
+# counter's arithmetic, and the boot-timing variables through a fake
+# SetVariable.
 
 EFI_TESTS := $(addprefix falcon-efi/tests/,main.c bless_test.c \
-	iso_overlay_test.c sb_test.c nxt_test.c)
+	iso_overlay_test.c sb_test.c nxt_test.c tsc_test.c bli_test.c)
 
 EFI_UUT := $(EFI_SRC)/bless/blesscore.c $(EFI_SRC)/secboot/sb.c \
-	$(EFI_SRC)/nxt/nxtcore.c \
+	$(EFI_SRC)/nxt/nxtcore.c $(EFI_SRC)/tsc/tsccore.c $(EFI_SRC)/loader/bli.c \
 	$(CORE_MANIFEST) $(CORE)/media/family.c $(CORE_PART)
 
 $(eval $(call test_bin,efi,$(EFI_TESTS) $(EFI_UUT)))
@@ -254,6 +260,7 @@ $(eval $(call test_bin,efi,$(EFI_TESTS) $(EFI_UUT)))
 # literals are the wrong width. sb_test.c itself is built without it and uses
 # u"..." literals, which are 16-bit under either setting.
 $(TEST_OBJ)/$(EFI_SRC)/secboot/sb.o: TEST_CFLAGS += -fshort-wchar
+$(TEST_OBJ)/$(EFI_SRC)/loader/bli.o: TEST_CFLAGS += -fshort-wchar
 
 ALL_TEST_SRCS += $(EFI_TESTS)
 ALL_UUT_SRCS  += $(EFI_UUT)

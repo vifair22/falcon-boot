@@ -1,5 +1,6 @@
 #include <console/menu.h>
 #include <console/idle.h>
+#include <tsc/tsc.h>
 
 #include <lib/string.h>
 #include <lib/ucs2.h>
@@ -588,6 +589,11 @@ static INTN run(EFI_SYSTEM_TABLE *st, const menu_banner *banner,
                 const menu_keys *keys, CHAR16 *which, UINTN sel,
                 UINTN seconds, const menu_probe *probe,
                 const menu_status *status);
+static INTN page(EFI_SYSTEM_TABLE *st, const menu_banner *banner,
+                 const menu_entry *entries, menu_entry *rows, UINTN count,
+                 const menu_keys *keys, CHAR16 *which, UINTN sel,
+                 UINTN seconds, const menu_probe *probe,
+                 const menu_status *status);
 
 INTN menu_run_keys(EFI_SYSTEM_TABLE *st, const menu_banner *banner,
                    const menu_entry *entries, UINTN count,
@@ -614,11 +620,28 @@ INTN menu_run_probed(EFI_SYSTEM_TABLE *st, const menu_banner *banner,
                probe, (const menu_status *)0);
 }
 
+/* A menu is a wait on the keyboard from its first paint to the key or the
+ * countdown that ends it, the probe's slices included (tsc.h). */
 static INTN run(EFI_SYSTEM_TABLE *st, const menu_banner *banner,
                 const menu_entry *entries, menu_entry *rows, UINTN count,
                 const menu_keys *keys, CHAR16 *which, UINTN sel,
                 UINTN seconds, const menu_probe *probe,
                 const menu_status *status)
+{
+    INTN r;
+
+    tsc_wait_begin();
+    r = page(st, banner, entries, rows, count, keys, which, sel, seconds,
+             probe, status);
+    tsc_wait_end();
+    return r;
+}
+
+static INTN page(EFI_SYSTEM_TABLE *st, const menu_banner *banner,
+                 const menu_entry *entries, menu_entry *rows, UINTN count,
+                 const menu_keys *keys, CHAR16 *which, UINTN sel,
+                 UINTN seconds, const menu_probe *probe,
+                 const menu_status *status)
 {
     static menu_view v;
     UINTN top = 0, painted = 0;

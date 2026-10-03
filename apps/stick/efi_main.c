@@ -12,6 +12,7 @@
 #include <efi/uefi.h>
 #include <efi/blockio.h>
 #include <loader/loadops.h>
+#include <tsc/tsc.h>
 #include <bless/bless.h>
 #include <discover/discover.h>
 #include <fs/fs.h>
@@ -1870,6 +1871,9 @@ static void next_boot_run(EFI_HANDLE image_handle, iso_list *list)
 
 EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
 {
+    /* LoaderTimeInitUSec's counter, before anything else runs (DESIGN
+     * Section 5.5). */
+    UINT64 t0 = tsc_read();
     iso_list list;
     menu_entry *view = (menu_entry *)0;
     menu_banner banner;
@@ -1887,6 +1891,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
     g_st = st;
 
     st->BootServices->SetWatchdogTimer(0, 0, 0, (CHAR16 *)0);
+    loader_time_init(st, t0, L"falcon-boot " WIDEN(FALCON_VERSION));
     idle_start(st, TUI_IDLE_SECONDS);
     st->ConOut->Reset(st->ConOut, FALSE);
     /* Before anything is drawn, and once: SetMode clears the screen. */

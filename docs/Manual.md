@@ -1040,6 +1040,41 @@ A shelf that does not mount fails at `mounting the filesystem inside it`
 Setting `/sys/power/freeze_filesystems` to 1 in the OS leaves the shelf
 clean when it hibernates (`docs/DESIGN.md` Section 5.4).
 
+### 5.6 Boot timing
+
+The UEFI loaders, the stick and the station, write the variables systemd
+reads to time a boot (`docs/DESIGN.md` Section 5.5) whenever they start a
+UKI. On the booted OS:
+
+    systemd-analyze
+    systemd-analyze blame
+    bootctl status
+
+`systemd-analyze` splits the boot into firmware, loader and kernel:
+
+- **firmware** is everything before falcon starts: the firmware's own
+  start, its boot manager, and shim.
+- **loader** is from falcon's start to the UKI's start. It includes the
+  time the menu was up, its countdown, the time at the passphrase prompt
+  and the image chooser, and the unlock and the read of the UKI.
+- **kernel** starts with the UKI's sd-stub.
+
+`bootctl status` names the loader (`falcon-boot <version>`) and the
+firmware under "Current Boot Loader".
+
+`FalconTimeWaitUSec` is the part of the loader span spent waiting on the
+keyboard. This prints the firmware, falcon's own work (the loader span
+without the wait), the wait, and the time since the kernel's clock
+started; each file is a 4-byte attribute word, then the value in UTF-16:
+
+    v() { tail -c +5 /sys/firmware/efi/efivars/$1 | tr -d '\0'; }; L=4a67b082-0a4c-41cf-b6c7-440b29bb8c4f; i=$(v LoaderTimeInitUSec-$L); e=$(v LoaderTimeExecUSec-$L); w=$(v FalconTimeWaitUSec-50614485-081b-4b7c-8b54-2abeffdf2fb3); awk -v i="$i" -v e="$e" -v w="$w" -v k="$(cut -d' ' -f1 /proc/uptime)" 'BEGIN { printf "firmware %.3f s, falcon %.3f s, wait %.3f s, kernel to now %.3f s\n", i/1e6, (e-i-w)/1e6, w/1e6, k }'
+
+Booted from a route that is not a UKI (an ISO, Windows, memtest86+), the
+exec time and the wait are not written, and systemd-analyze shows neither
+the firmware nor the loader span. The BIOS loader writes none of them. The serial port gets a
+`falcon-bli:` line at startup and another at the UKI's start, naming the
+counter's rate and how it was measured (`cpuid` or `stall`).
+
 ## 6. Windows media
 
 A Windows install ISO on p2 boots as it is, with Secure Boot on or off, on
@@ -3285,7 +3320,7 @@ case, judged from serial.
 
 | target | boots | needs |
 |---|---|---|
-| `test-core` | the stick under both firmwares alone, beside a second stick, an MBR disk and another install's records; a 4Kn stick on NVMe; the station | sudo; the fixture UKI and test MOK |
+| `test-core` | the stick under both firmwares alone, beside a second stick, an MBR disk and another install's records; a 4Kn stick on NVMe; the station; the boot-timing variables | sudo; the fixture UKI and test MOK |
 | `test-station-uefi` | the UEFI station's cases, Secure Boot off and on | `build/test-station.img` (made when absent) |
 | `test-station-installed` | stations the installer put on GPT, 4Kn GPT and 4Kn MBR disks | sudo |
 | `test-tpm-rig` | the TPM probe and the UEFI station's TOTP check, swtpm as TPM 2.0 (TIS, CRB) and 1.2, Secure Boot off and on | `swtpm` (else one SKIP line); `build/test-station.img` for the station cases |
