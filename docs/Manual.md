@@ -1012,7 +1012,8 @@ iterations because the loader tries every keyslot after a mistyped
 passphrase: an argon2id slot there would cost a second full derivation, and
 the keyfile's 512 random bits need no stretching. `nofail` keeps a shelf
 that will not open from stopping the boot. The thinkpad-t430 repository's
-`gentoo/etc/crypttab` is this, in use.
+`docs/gentoo-install.md` ("Boot chain", "Shelf keyfile") walks through it,
+and its `gentoo/etc/crypttab` is this in use.
 
 The initramfs drop-in goes in through the initramfs builder, so a rebuild
 keeps it. archusb (https://git.airies.net/vifair22/archusb) ships it as the
