@@ -61,6 +61,25 @@ uint64_t tsc_usec(uint64_t ticks, uint64_t hz)
     return (ticks / hz) * 1000000u + (ticks % hz) * 1000000u / hz;
 }
 
+uint32_t tsc_eff_mhz(uint64_t hz, uint64_t daperf, uint64_t dmperf)
+{
+    uint64_t q, r;
+
+    if (!tsc_hz_sane(hz) || daperf == 0 || dmperf == 0)
+        return 0;
+    /* hz is under 2^35, so r * hz stays under 2^63 while dmperf is under
+     * 2^28. Halving both deltas keeps their ratio. */
+    while (dmperf >= TSC_PERF_SPAN) {
+        daperf >>= 1;
+        dmperf >>= 1;
+    }
+    q = daperf / dmperf;
+    r = daperf % dmperf;
+    if (q >= TSC_PERF_RATIO_MAX)
+        return 0;
+    return (uint32_t)((hz * q + hz * r / dmperf) / 1000000u);
+}
+
 void tsc_span_open(tsc_span *s, uint64_t now)
 {
     if (s->depth++ == 0)

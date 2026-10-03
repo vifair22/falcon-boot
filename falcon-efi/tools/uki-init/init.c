@@ -38,6 +38,7 @@
 #include <sys/reboot.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <cpuid.h>
 #include <x86intrin.h>
 
 /* Must match FALCON_TEST_PASS in falcon-efi/tools/mk-test-stick.sh. */
@@ -157,7 +158,7 @@ static ssize_t read_file(const char *path, unsigned char *buf, size_t cap)
  * judge against the loader's own serial line. Beside them, the kernel's
  * TSC rate from its log and the counter now in microseconds at that rate:
  * a clock the loader had no hand in, for the rig to hold the loader's
- * timestamps and rate against. */
+ * timestamps and rate against; and whether a hypervisor is present. */
 
 #define LOADER_GUID "4a67b082-0a4c-41cf-b6c7-440b29bb8c4f"
 #define FALCON_GUID "50614485-081b-4b7c-8b54-2abeffdf2fb3"
@@ -225,6 +226,18 @@ static unsigned long kernel_tsc_khz(void)
     return khz;
 }
 
+/* CPUID.1:ECX bit 31, as the loader's APERF/MPERF guard reads it
+ * (falcon-efi/src/tsc/tsc.c): 1 under a hypervisor, where FalconKdfInfo
+ * must name no clock. */
+static unsigned hypervisor(void)
+{
+    unsigned a, b, c, d;
+
+    if (__get_cpuid(1u, &a, &b, &c, &d) == 0)
+        return 0;
+    return (c >> 31) & 1u;
+}
+
 static void bli_report(void)
 {
     static const char *const loader[] = {
@@ -241,16 +254,18 @@ static void bli_report(void)
     for (i = 0; i < sizeof loader / sizeof loader[0]; i++)
         bli_var(loader[i], LOADER_GUID);
     bli_var("FalconTimeWaitUSec", FALCON_GUID);
+    bli_var("FalconTimeKdfUSec", FALCON_GUID);
+    bli_var("FalconKdfInfo", FALCON_GUID);
 
     /* Read after the variables, so it is later than all of them. */
     khz = kernel_tsc_khz();
     if (khz != 0) {
         unsigned __int128 t = __rdtsc();
 
-        outf("FALCON-BLI-KERNEL tsc_khz=%lu now_usec=%llu\n", khz,
-             (unsigned long long)(t * 1000u / khz));
+        outf("FALCON-BLI-KERNEL tsc_khz=%lu now_usec=%llu hypervisor=%u\n",
+             khz, (unsigned long long)(t * 1000u / khz), hypervisor());
     } else {
-        outf("FALCON-BLI-KERNEL tsc_khz=0\n");
+        outf("FALCON-BLI-KERNEL tsc_khz=0 hypervisor=%u\n", hypervisor());
     }
 }
 

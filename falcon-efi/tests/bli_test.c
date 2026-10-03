@@ -33,7 +33,7 @@ static const EFI_GUID guid_falcon = {
 
 #define REC_MAX 8
 #define NAME_MAX 40
-#define DATA_MAX 128
+#define DATA_MAX 256
 
 typedef struct {
     char     name[NAME_MAX];
@@ -174,38 +174,124 @@ static void test_init_long_vendor_left_unset(void **state)
     assert_null(find("LoaderFirmwareInfo"));
 }
 
+/* The unlocks the tests describe: a cryptsetup default slot on four
+ * processors with the clock known, and a pbkdf2 slot on one without. */
+static const bli_kdf kdf_a = {
+    BLI_KDF_ARGON2ID, "ssse3", 4u, 4u, 524288u, 4u, 0u, 1612345u, 1197u
+};
+static const bli_kdf kdf_p = {
+    BLI_KDF_PBKDF2, "avx2", 1u, 0u, 0u, 0u, 1000000u, 999u, 0u
+};
+
+static void assert_info(const bli_kdf *k, const char *want)
+{
+    char out[BLI_KDF_INFO_MAX];
+
+    assert_int_equal(bli_kdf_info(k, out, sizeof out), strlen(want));
+    assert_string_equal(out, want);
+}
+
+static void test_kdf_info(void **state)
+{
+    bli_kdf k = kdf_a;
+
+    (void)state;
+    assert_info(&kdf_a, "argon2id ssse3 4 processors 4 lanes 524288 KiB "
+                        "t=4 1612 ms 1197 MHz");
+    /* No APERF/MPERF, or a hypervisor: the clock is left out. */
+    k.mhz = 0;
+    assert_info(&k, "argon2id ssse3 4 processors 4 lanes 524288 KiB t=4 "
+                    "1612 ms");
+    k.level = NULL;
+    assert_info(&k, "argon2id ? 4 processors 4 lanes 524288 KiB t=4 "
+                    "1612 ms");
+    assert_info(&kdf_p, "pbkdf2 1 processors 1000000 iterations 0 ms");
+    k = kdf_p;
+    k.kind = BLI_KDF_NONE;
+    k.mhz = 800u;
+    assert_info(&k, "none 1 processors 0 ms 800 MHz");
+}
+
+static void test_kdf_info_widest_fits(void **state)
+{
+    bli_kdf k = {
+        BLI_KDF_ARGON2ID, "portable", UINT32_MAX, UINT32_MAX, UINT32_MAX,
+        UINT32_MAX, 0u, UINT64_MAX, UINT32_MAX
+    };
+    char out[BLI_KDF_INFO_MAX];
+
+    (void)state;
+    assert_info(&k, "argon2id portable 4294967295 processors 4294967295 "
+                    "lanes 4294967295 KiB t=4294967295 18446744073709551 ms "
+                    "4294967295 MHz");
+    /* A buffer under the widest line is refused whole. */
+    assert_int_equal(bli_kdf_info(&k, out, BLI_KDF_INFO_MAX - 1u), 0u);
+    assert_string_equal(out, "");
+    assert_int_equal(bli_kdf_info(NULL, out, sizeof out), 0u);
+    assert_int_equal(bli_kdf_info(&k, NULL, sizeof out), 0u);
+}
+
+/* The unlock that led to the launch: its time and its line, falcon's. */
+static void test_exec_kdf(void **state)
+{
+    (void)state;
+    reset();
+    assert_int_equal(bli_set_exec(&fake_st, 9876543u, 4500000u, &kdf_a),
+                     EFI_SUCCESS);
+    assert_int_equal(nrec, 4u);
+    assert_var("LoaderTimeExecUSec", &guid_loader, "9876543");
+    assert_var("FalconTimeWaitUSec", &guid_falcon, "4500000");
+    assert_var("FalconTimeKdfUSec", &guid_falcon, "1612345");
+    assert_var("FalconKdfInfo", &guid_falcon,
+               "argon2id ssse3 4 processors 4 lanes 524288 KiB t=4 "
+               "1612 ms 1197 MHz");
+    reset();
+    fail_name = "FalconTimeKdfUSec";
+    assert_int_equal(bli_set_exec(&fake_st, 5u, 1u, &kdf_p),
+                     EFI_DEVICE_ERROR);
+    assert_var("FalconKdfInfo", &guid_falcon,
+               "pbkdf2 1 processors 1000000 iterations 0 ms");
+}
+
 static void test_exec(void **state)
 {
     (void)state;
     reset();
-    assert_int_equal(bli_set_exec(&fake_st, 9876543u, 4500000u), EFI_SUCCESS);
+    assert_int_equal(bli_set_exec(&fake_st, 9876543u, 4500000u, NULL),
+                     EFI_SUCCESS);
     assert_int_equal(nrec, 2u);
     assert_var("LoaderTimeExecUSec", &guid_loader, "9876543");
     /* falcon's own, under falcon's GUID, never the Loader one. */
     assert_var("FalconTimeWaitUSec", &guid_falcon, "4500000");
 }
 
-/* A UKI that returns leaves no exec time behind for a later boot: both are
- * deleted (size 0) under the GUIDs they were written with. */
+/* A UKI that returns leaves no exec time behind for a later boot: all four
+ * are deleted (size 0) under the GUIDs they were written with. */
 static void test_clear_exec(void **state)
 {
     (void)state;
     reset();
     bli_clear_exec(&fake_st);
-    assert_int_equal(nrec, 2u);
+    assert_int_equal(nrec, 4u);
     assert_string_equal(recs[0].name, "LoaderTimeExecUSec");
     assert_memory_equal(&recs[0].guid, &guid_loader, sizeof(EFI_GUID));
     assert_int_equal(recs[0].size, 0u);
     assert_string_equal(recs[1].name, "FalconTimeWaitUSec");
     assert_memory_equal(&recs[1].guid, &guid_falcon, sizeof(EFI_GUID));
     assert_int_equal(recs[1].size, 0u);
+    assert_string_equal(recs[2].name, "FalconTimeKdfUSec");
+    assert_memory_equal(&recs[2].guid, &guid_falcon, sizeof(EFI_GUID));
+    assert_int_equal(recs[2].size, 0u);
+    assert_string_equal(recs[3].name, "FalconKdfInfo");
+    assert_memory_equal(&recs[3].guid, &guid_falcon, sizeof(EFI_GUID));
+    assert_int_equal(recs[3].size, 0u);
 }
 
 static void test_exec_zero_wait_is_written(void **state)
 {
     (void)state;
     reset();
-    (void)bli_set_exec(&fake_st, 9876543u, 0);
+    (void)bli_set_exec(&fake_st, 9876543u, 0, NULL);
     assert_var("FalconTimeWaitUSec", &guid_falcon, "0");
 }
 
@@ -213,7 +299,7 @@ static void test_exec_without_clock_writes_nothing(void **state)
 {
     (void)state;
     reset();
-    assert_int_equal(bli_set_exec(&fake_st, 0, 100u), EFI_SUCCESS);
+    assert_int_equal(bli_set_exec(&fake_st, 0, 100u, &kdf_a), EFI_SUCCESS);
     assert_int_equal(nrec, 0u);
 }
 
@@ -227,7 +313,7 @@ static void test_failure_is_reported_and_the_rest_written(void **state)
     assert_int_equal(nrec, 4u);
     reset();
     fail_name = "LoaderTimeExecUSec";
-    assert_int_equal(bli_set_exec(&fake_st, 5u, 1u), EFI_DEVICE_ERROR);
+    assert_int_equal(bli_set_exec(&fake_st, 5u, 1u, NULL), EFI_DEVICE_ERROR);
     assert_non_null(find("FalconTimeWaitUSec"));
 }
 
@@ -237,12 +323,12 @@ static void test_no_set_variable(void **state)
     reset();
     fake_rt.SetVariable = NULL;
     assert_int_equal(bli_set_init(&fake_st, 5u, u"x"), EFI_UNSUPPORTED);
-    assert_int_equal(bli_set_exec(&fake_st, 5u, 1u), EFI_UNSUPPORTED);
+    assert_int_equal(bli_set_exec(&fake_st, 5u, 1u, NULL), EFI_UNSUPPORTED);
     fake_st.RuntimeServices = NULL;
     assert_int_equal(bli_set_init(&fake_st, 5u, u"x"), EFI_UNSUPPORTED);
-    assert_int_equal(bli_set_exec(&fake_st, 5u, 1u), EFI_UNSUPPORTED);
+    assert_int_equal(bli_set_exec(&fake_st, 5u, 1u, NULL), EFI_UNSUPPORTED);
     assert_int_equal(bli_set_init(NULL, 5u, u"x"), EFI_INVALID_PARAMETER);
-    assert_int_equal(bli_set_exec(NULL, 5u, 1u), EFI_INVALID_PARAMETER);
+    assert_int_equal(bli_set_exec(NULL, 5u, 1u, NULL), EFI_INVALID_PARAMETER);
     assert_int_equal(nrec, 0u);
 }
 
@@ -254,6 +340,9 @@ int run_bli_tests(void)
         cmocka_unit_test(test_init_without_clock_or_vendor),
         cmocka_unit_test(test_init_long_vendor_left_unset),
         cmocka_unit_test(test_exec),
+        cmocka_unit_test(test_kdf_info),
+        cmocka_unit_test(test_kdf_info_widest_fits),
+        cmocka_unit_test(test_exec_kdf),
         cmocka_unit_test(test_clear_exec),
         cmocka_unit_test(test_exec_zero_wait_is_written),
         cmocka_unit_test(test_exec_without_clock_writes_nothing),

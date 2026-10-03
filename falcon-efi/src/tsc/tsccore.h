@@ -4,7 +4,8 @@
  * The EFI-free half of tsc/: what CPUID's leaves 0x15 and 0x16 say the
  * counter's rate is, what a calibration window measured, ticks to
  * microseconds, a span accumulator for the time spent waiting on the
- * keyboard, and a number as UTF-16 decimal. Every input is a value the
+ * keyboard, the effective core clock across an interval, and a number as
+ * UTF-16 decimal. Every input is a value the
  * firmware half (tsc.c) read, so the host suite reaches every case,
  * including counters near 2^64.
  */
@@ -50,6 +51,18 @@ uint64_t tsc_hz_window(uint64_t t0, uint64_t t1, uint32_t usec);
  * counter passes about 1.8e13 (two hours at 2.6 GHz). 0 when hz is not
  * sane. */
 uint64_t tsc_usec(uint64_t ticks, uint64_t hz);
+
+/* The effective core clock in MHz across an interval: the counter's rate
+ * times dAPERF / dMPERF, both MSRs read on one processor at the interval's
+ * ends (IA32_APERF counts at the clock the core runs at, IA32_MPERF at a
+ * fixed one, both only while it executes). Floor, exact while dmperf is
+ * under TSC_PERF_SPAN and within a part in 2^27 above it. 0 when hz is not
+ * sane, either delta is 0, or the ratio is TSC_PERF_RATIO_MAX or more, which
+ * no processor runs at and so is a counter that wrapped or was reset. */
+#define TSC_PERF_SPAN      (1ull << 28)
+#define TSC_PERF_RATIO_MAX 16u
+
+uint32_t tsc_eff_mhz(uint64_t hz, uint64_t daperf, uint64_t dmperf);
 
 /* Ticks accumulated across spans that may nest: only the outermost span
  * counts, so a wait inside a wait is not counted twice. A close with no

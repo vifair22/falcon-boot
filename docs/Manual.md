@@ -1132,15 +1132,27 @@ UKI. On the booted OS:
 firmware under "Current Boot Loader".
 
 `FalconTimeWaitUSec` is the part of the loader span spent waiting on the
-keyboard. This prints the firmware, falcon's own work (the loader span
-without the wait), the wait, and the time since the kernel's clock
-started; each file is a 4-byte attribute word, then the value in UTF-16:
+keyboard. After an unlock, `FalconTimeKdfUSec` is the part spent deriving
+the keyslots, and `FalconKdfInfo` describes that unlock in one line: the
+block function, the processors, the slot's lanes, memory and passes, the
+time, and the boot processor's effective clock while it ran, which is
+below the processor's rated clock when the firmware holds it there:
 
-    v() { tail -c +5 /sys/firmware/efi/efivars/$1 | tr -d '\0'; }; L=4a67b082-0a4c-41cf-b6c7-440b29bb8c4f; i=$(v LoaderTimeInitUSec-$L); e=$(v LoaderTimeExecUSec-$L); w=$(v FalconTimeWaitUSec-50614485-081b-4b7c-8b54-2abeffdf2fb3); awk -v i="$i" -v e="$e" -v w="$w" -v k="$(cut -d' ' -f1 /proc/uptime)" 'BEGIN { printf "firmware %.3f s, falcon %.3f s, wait %.3f s, kernel to now %.3f s\n", i/1e6, (e-i-w)/1e6, w/1e6, k }'
+    argon2id avx2 4 processors 4 lanes 1048576 KiB t=4 1612 ms 2394 MHz
+
+The clock is left out where the processor does not count it (no
+APERF/MPERF) and under a hypervisor. This prints the firmware, falcon's
+own work (the loader span without the wait) with the keyslots' part of
+it, the wait, the time since the kernel's clock started, and the unlock's
+line; each file is a 4-byte attribute word, then the value in UTF-16:
+
+    v() { tail -c +5 /sys/firmware/efi/efivars/$1-$2 2>/dev/null | tr -d '\0'; }; L=4a67b082-0a4c-41cf-b6c7-440b29bb8c4f; F=50614485-081b-4b7c-8b54-2abeffdf2fb3; i=$(v LoaderTimeInitUSec $L); e=$(v LoaderTimeExecUSec $L); w=$(v FalconTimeWaitUSec $F); d=$(v FalconTimeKdfUSec $F); awk -v i="$i" -v e="$e" -v w="$w" -v d="$d" -v k="$(cut -d' ' -f1 /proc/uptime)" 'BEGIN { printf "firmware %.3f s, falcon %.3f s (keyslots %.3f s), wait %.3f s, kernel to now %.3f s\n", i/1e6, (e-i-w)/1e6, d/1e6, w/1e6, k }'; v FalconKdfInfo $F; echo
 
 Booted from a route that is not a UKI (an ISO, Windows, memtest86+), the
 exec time and the wait are not written, and systemd-analyze shows neither
-the firmware nor the loader span. The BIOS loader writes none of them. The serial port gets a
+the firmware nor the loader span. A UKI booted without an unlock (a
+plaintext shelf, a blessed ISO) has no keyslot time or line. The BIOS
+loader writes none of them. The serial port gets a
 `falcon-bli:` line at startup and another at the UKI's start, naming the
 counter's rate and how it was measured (`cpuid` or `stall`).
 
@@ -2628,9 +2640,11 @@ after another below that. Each unlock says on serial what it ran on and
 how long the keyslots took (falcon-bios to the 55 ms its clock counts in):
 
     falcon-pos: argon2id block function: avx2
-    falcon-pos: argon2id ran on 4 processors in 370 ms
+    falcon-pos: argon2id ran on 4 processors in 370 ms: argon2id avx2 4 processors 4 lanes 262144 KiB t=4 370 ms 2394 MHz
 
-which is the figure to compare with the table's. `auto` is the level the loaders pick on this processor, which they say on
+which is the figure to compare with the table's. The UEFI loader's line
+ends with the unlock's `FalconKdfInfo` (Section 5.6), the effective clock
+included; falcon-bios's ends at the time. `auto` is the level the loaders pick on this processor, which they say on
 serial at every unlock (`argon2id block function:`). A level the
 processor cannot run is refused. The memory is allocated once and touched
 before the first cell, so page faults are not timed; a row larger than

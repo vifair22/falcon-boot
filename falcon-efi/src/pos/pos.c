@@ -507,6 +507,43 @@ static int pool_worth(void)
     return 0;
 }
 
+/* The last unlock's derivations (loader/bli.h), for FalconTimeKdfUSec and
+ * FalconKdfInfo at the launch it leads to. g_kdf_valid is set by an unlock
+ * that opened a slot and cleared at the start of every boot_shelf, so a
+ * plaintext launch carries none. */
+static bli_kdf g_kdf;
+static int     g_kdf_valid;
+
+/* What k says of a keyslot: the one with JSON id `id` when opened, else the
+ * last usable one, the last luks_unlock tried. */
+static void kdf_slot(const luks_vol *v, int opened, uint32_t id, bli_kdf *k)
+{
+    size_t n = 0, i;
+
+    k->kind = BLI_KDF_NONE;
+    if (luks_slot_count(v, &n) != LUKS_OK)
+        return;
+    for (i = 0; i < n; i++) {
+        luks_slot_info si;
+
+        if (luks_slot_at(v, i, &si) != LUKS_OK || !si.usable)
+            continue;
+        if (opened && si.id != id)
+            continue;
+        if (si.kdf == LUKS_KDF_ARGON2ID) {
+            k->kind = BLI_KDF_ARGON2ID;
+            k->lanes = si.kdf_lanes;
+            k->memory_kib = si.kdf_memory_kib;
+            k->passes = si.kdf_time;
+        } else if (si.kdf == LUKS_KDF_PBKDF2) {
+            k->kind = BLI_KDF_PBKDF2;
+            k->iterations = si.kdf_iterations;
+        }
+        if (opened)
+            return;
+    }
+}
+
 static int unlock_any(UINTN *which)
 {
     int other_err = LUKS_OK;
@@ -515,29 +552,35 @@ static int unlock_any(UINTN *which)
     int rc = LUKS_ERR_NOKEY;
     xstate_saved xs;
     luks_kdf_mem km = g_kdf_mem;
-    char num[48];
-    tsc_hz_how how;
-    uint32_t procs;
-    UINT64 t0, ms;
+    char line[96 + BLI_KDF_INFO_MAX];
+    uint32_t slot = 0;
+    UINTN tried = POS_MAX_VOLS;
+    UINT64 t0, t1, hz;
+    UINT64 a0 = 0, m0 = 0, a1 = 0, m1 = 0;
+    int perf;
     UINTN i, k;
 
     *which = 0;
+    g_kdf_valid = 0;
+    memset(&g_kdf, 0, sizeof g_kdf);
     /* The AVX state for argon2id's block function, borrowed for the
      * derivations and given back before anything else runs (xstate.h);
      * then the other processors, which must run the level it gives. */
     xstate_borrow(&xs);
-    serial_note("falcon-pos: argon2id block function: ",
-                crypto_simd_name(crypto_simd_level()));
+    g_kdf.level = crypto_simd_name(crypto_simd_level());
+    serial_note("falcon-pos: argon2id block function: ", g_kdf.level);
     g_mp.started = 0;
     if (pool_worth())
         km.run = mp_lanes_start(g_st->BootServices, &g_mp,
                                 crypto_simd_level());
+    /* The boot processor's clock across the derivations, for FalconKdfInfo:
+     * whether the firmware runs the cores below their boosted clock. */
+    perf = tsc_perf_read(&a0, &m0);
     t0 = tsc_read();
     for (i = 0; i < g_shelf_n; i++) {
-        uint32_t slot = 0;
-
         if (!g_shelf[i].encrypted || !g_shelf[i].usable)
             continue;
+        tried = i;
         rc = luks_unlock(&g_shelf[i].vol, g_pass, (size_t)g_pass_len, &km,
                          &g_mk, &slot);
         if (rc == LUKS_OK) {
@@ -556,19 +599,32 @@ static int unlock_any(UINTN *which)
             other_err = rc;
         }
     }
+    t1 = tsc_read();
+    if (perf)
+        perf = tsc_perf_read(&a1, &m1);
 
-    ms = tsc_usec(tsc_read() - t0, tsc_hz(g_st->BootServices, &how)) / 1000u;
-    procs = mp_lanes_count(&g_mp);
+    hz = tsc_hz(g_st->BootServices, (tsc_hz_how *)0);
+    g_kdf.procs = mp_lanes_count(&g_mp);
     mp_lanes_stop(g_st->BootServices, &g_mp);
     xstate_return(&xs);
     /* The keyslots' time without the release of the workers, which is the
      * firmware's, so the figure compares with mkstick kdf-bench's. */
+    g_kdf.usec = tsc_usec(t1 - t0, hz);
+    g_kdf.mhz = perf ? tsc_eff_mhz(hz, a1 - a0, m1 - m0) : 0u;
+    if (tried < g_shelf_n)
+        kdf_slot(&g_shelf[tried].vol, rc == LUKS_OK, slot, &g_kdf);
+    g_kdf_valid = rc == LUKS_OK;
+
+    /* The head is the line the rigs have long matched; the info follows. */
     k = 0;
-    put_dec(num, sizeof num, &k, procs);
-    put_str(num, sizeof num, &k, " processors in ");
-    put_dec(num, sizeof num, &k, ms);
-    put_str(num, sizeof num, &k, " ms");
-    serial_note("falcon-pos: argon2id ran on ", num);
+    put_str(line, sizeof line, &k, "falcon-pos: argon2id ran on ");
+    put_dec(line, sizeof line, &k, g_kdf.procs);
+    put_str(line, sizeof line, &k, " processors in ");
+    put_dec(line, sizeof line, &k, g_kdf.usec / 1000u);
+    put_str(line, sizeof line, &k, " ms: ");
+    if (k + BLI_KDF_INFO_MAX <= sizeof line)
+        k += bli_kdf_info(&g_kdf, line + k, sizeof line - k);
+    serial_line(g_st, line);
 
     if (rc == LUKS_OK)
         return LUKS_OK;
@@ -1047,7 +1103,7 @@ static EFI_STATUS launch_uki(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent,
         L"\r\n\r\n");
 
     result->stage = L"StartImage";
-    loader_time_exec(st);
+    loader_time_exec(st, g_kdf_valid ? &g_kdf : (const bli_kdf *)0);
     status = ops.StartImage(child, &exit_size, &exit_data);
     bli_clear_exec(st);
     /* StartImage unloads an application that returns, so the child handle is
@@ -1272,6 +1328,7 @@ static EFI_STATUS boot_shelf(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
 
     g_st = st;
     bs = st->BootServices;
+    g_kdf_valid = 0;
     result->stage = L"starting";
     result->status = EFI_SUCCESS;
     result->advice = (const CHAR16 *)0;

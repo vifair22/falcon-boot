@@ -460,7 +460,7 @@ static EFI_STATUS launch_image(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent,
 
     result->stage = L"StartImage";
     if (uki)
-        loader_time_exec(st);
+        loader_time_exec(st, (const bli_kdf *)0);
     status = ops.StartImage(child, &exit_size, &exit_data);
     if (uki)
         bli_clear_exec(st);

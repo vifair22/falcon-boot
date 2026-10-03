@@ -13,6 +13,13 @@
 /* RDTSC: ticks since the processor came out of reset. */
 UINT64 tsc_read(void);
 
+/* IA32_APERF and IA32_MPERF on the calling processor, for the effective
+ * clock (tsccore.h, tsc_eff_mhz). 1 with both read; 0, with neither read,
+ * when CPUID leaf 6 does not enumerate them or a hypervisor is present
+ * (CPUID.1:ECX bit 31): a guest may take #GP on them, and the firmware's
+ * handler for an exception it did not expect halts. */
+int tsc_perf_read(UINT64 *aperf, UINT64 *mperf);
+
 /* How the rate was had, for the serial line. */
 typedef enum {
     TSC_HZ_NONE  = 0,   /* no sane answer: no timestamps this boot */

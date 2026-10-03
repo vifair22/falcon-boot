@@ -33,6 +33,35 @@ static void cpuid(UINT32 leaf, UINT32 r[4])
                      : "a"(leaf), "c"(0u));
 }
 
+#define MSR_MPERF 0xE7u
+#define MSR_APERF 0xE8u
+
+static UINT64 rdmsr(UINT32 msr)
+{
+    UINT32 lo, hi;
+
+    __asm__ volatile("rdmsr" : "=a"(lo), "=d"(hi) : "c"(msr));
+    return ((UINT64)hi << 32) | lo;
+}
+
+int tsc_perf_read(UINT64 *aperf, UINT64 *mperf)
+{
+    UINT32 r[4];
+
+    cpuid(0, r);
+    if (r[0] < 6u)
+        return 0;
+    cpuid(1u, r);
+    if ((r[2] & 0x80000000u) != 0)
+        return 0;
+    cpuid(6u, r);
+    if ((r[2] & 1u) == 0)
+        return 0;
+    *mperf = rdmsr(MSR_MPERF);
+    *aperf = rdmsr(MSR_APERF);
+    return 1;
+}
+
 static UINT64 hz_from_cpuid(void)
 {
     tsc_cpuid c;

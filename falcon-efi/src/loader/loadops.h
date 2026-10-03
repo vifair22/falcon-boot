@@ -18,6 +18,7 @@
 #define FALCON_EFI_LOADOPS_H
 
 #include <efi/uefi.h>
+#include <loader/bli.h>
 
 /* 50614485-081b-4b7c-8b54-2abeffdf2fb3: falcon-boot's own vendor GUID for EFI
  * variables. Ours alone, so nothing we write can collide with a platform or
@@ -217,9 +218,11 @@ BOOLEAN loader_boot_to_fw_setup(EFI_SYSTEM_TABLE *st);
  * counter's rate (a calibration happens here, after t0 was taken) and sets
  * the startup variables. loader_time_exec is the UKI launches' (pos.c,
  * bless.c), called immediately before StartImage: the counter, then
- * LoaderTimeExecUSec and FalconTimeWaitUSec. Both say what they set on
- * serial (console/serial.h) and carry on whatever the firmware answers. */
+ * LoaderTimeExecUSec and FalconTimeWaitUSec, and with kdf, the unlock that
+ * led to this launch (NULL for none), FalconTimeKdfUSec and FalconKdfInfo.
+ * Both say what they set on serial (console/serial.h) and carry on
+ * whatever the firmware answers. */
 void loader_time_init(EFI_SYSTEM_TABLE *st, UINT64 t0, const CHAR16 *info);
-void loader_time_exec(EFI_SYSTEM_TABLE *st);
+void loader_time_exec(EFI_SYSTEM_TABLE *st, const bli_kdf *kdf);
 
 #endif /* FALCON_EFI_LOADOPS_H */
