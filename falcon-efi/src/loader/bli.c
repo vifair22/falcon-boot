@@ -107,7 +107,82 @@ EFI_STATUS bli_set_init(EFI_SYSTEM_TABLE *st, UINT64 usec,
     return first;
 }
 
-EFI_STATUS bli_set_exec(EFI_SYSTEM_TABLE *st, UINT64 usec, UINT64 wait_usec)
+static void put_a(char *out, UINTN cap, UINTN *at, const char *s)
+{
+    while (*s != '\0' && *at + 1u < cap)
+        out[(*at)++] = *s++;
+}
+
+static void put_u(char *out, UINTN cap, UINTN *at, UINT64 v)
+{
+    CHAR16 dec[21];
+    UINTN n = tsc_dec16(v, 0, dec, 21u);
+    UINTN i;
+
+    for (i = 0; i < n && *at + 1u < cap; i++)
+        out[(*at)++] = (char)dec[i];
+}
+
+UINTN bli_kdf_info(const bli_kdf *k, char *out, UINTN cap)
+{
+    UINTN at = 0;
+
+    if (out == (char *)0 || cap == 0)
+        return 0;
+    out[0] = '\0';
+    if (k == (const bli_kdf *)0 || cap < BLI_KDF_INFO_MAX)
+        return 0;
+    if (k->kind == BLI_KDF_ARGON2ID) {
+        put_a(out, cap, &at, "argon2id ");
+        put_a(out, cap, &at, k->level != (const char *)0 ? k->level : "?");
+        put_a(out, cap, &at, " ");
+    } else if (k->kind == BLI_KDF_PBKDF2) {
+        put_a(out, cap, &at, "pbkdf2 ");
+    } else {
+        put_a(out, cap, &at, "none ");
+    }
+    put_u(out, cap, &at, k->procs);
+    put_a(out, cap, &at, " processors ");
+    if (k->kind == BLI_KDF_ARGON2ID) {
+        put_u(out, cap, &at, k->lanes);
+        put_a(out, cap, &at, " lanes ");
+        put_u(out, cap, &at, k->memory_kib);
+        put_a(out, cap, &at, " KiB t=");
+        put_u(out, cap, &at, k->passes);
+        put_a(out, cap, &at, " ");
+    } else if (k->kind == BLI_KDF_PBKDF2) {
+        put_u(out, cap, &at, k->iterations);
+        put_a(out, cap, &at, " iterations ");
+    }
+    put_u(out, cap, &at, k->usec / 1000u);
+    put_a(out, cap, &at, " ms");
+    if (k->mhz != 0) {
+        put_a(out, cap, &at, " ");
+        put_u(out, cap, &at, k->mhz);
+        put_a(out, cap, &at, " MHz");
+    }
+    out[at] = '\0';
+    return at;
+}
+
+static EFI_STATUS set_kdf(EFI_RUNTIME_SERVICES *rt, EFI_GUID *falcon,
+                          const bli_kdf *kdf)
+{
+    EFI_STATUS first = EFI_SUCCESS;
+    char line[BLI_KDF_INFO_MAX];
+    CHAR16 val[BLI_KDF_INFO_MAX];
+    UINTN n, i;
+
+    keep(&first, set_dec(rt, falcon, BLI_KDF_NAME, kdf->usec));
+    n = bli_kdf_info(kdf, line, sizeof line);
+    for (i = 0; i <= n; i++)
+        val[i] = (CHAR16)(unsigned char)line[i];
+    keep(&first, set_str(rt, falcon, BLI_KDF_INFO_NAME, val));
+    return first;
+}
+
+EFI_STATUS bli_set_exec(EFI_SYSTEM_TABLE *st, UINT64 usec, UINT64 wait_usec,
+                        const bli_kdf *kdf)
 {
     EFI_GUID loader = BLI_LOADER_GUID;
     EFI_GUID falcon = FALCON_VENDOR_GUID;
@@ -123,6 +198,8 @@ EFI_STATUS bli_set_exec(EFI_SYSTEM_TABLE *st, UINT64 usec, UINT64 wait_usec)
         return EFI_SUCCESS;
     keep(&first, set_dec(rt, &loader, L"LoaderTimeExecUSec", usec));
     keep(&first, set_dec(rt, &falcon, BLI_WAIT_NAME, wait_usec));
+    if (kdf != (const bli_kdf *)0)
+        keep(&first, set_kdf(rt, &falcon, kdf));
     return first;
 }
 
@@ -140,5 +217,9 @@ void bli_clear_exec(EFI_SYSTEM_TABLE *st)
     (void)rt->SetVariable((CHAR16 *)(uintptr_t)L"LoaderTimeExecUSec", &loader,
                           BLI_ATTRS, 0, (void *)0);
     (void)rt->SetVariable((CHAR16 *)(uintptr_t)BLI_WAIT_NAME, &falcon,
+                          BLI_ATTRS, 0, (void *)0);
+    (void)rt->SetVariable((CHAR16 *)(uintptr_t)BLI_KDF_NAME, &falcon,
+                          BLI_ATTRS, 0, (void *)0);
+    (void)rt->SetVariable((CHAR16 *)(uintptr_t)BLI_KDF_INFO_NAME, &falcon,
                           BLI_ATTRS, 0, (void *)0);
 }

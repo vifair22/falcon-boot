@@ -670,8 +670,8 @@ Both UEFI loaders set systemd's Boot Loader Interface timing variables
 booted from a UKI splits its boot into firmware, loader and kernel. They are
 written as systemd-boot writes them: UTF-16 with the terminator counted in
 the size, attributes `BOOTSERVICE_ACCESS | RUNTIME_ACCESS` (volatile), under
-the Loader GUID `4a67b082-0a4c-41cf-b6c7-440b29bb8c4f`. Falcon adds one of
-its own under its own GUID, `50614485-081b-4b7c-8b54-2abeffdf2fb3`.
+the Loader GUID `4a67b082-0a4c-41cf-b6c7-440b29bb8c4f`. Falcon adds three
+of its own under its own GUID, `50614485-081b-4b7c-8b54-2abeffdf2fb3`.
 
 | Variable | Value | Set |
 |---|---|---|
@@ -681,14 +681,19 @@ its own under its own GUID, `50614485-081b-4b7c-8b54-2abeffdf2fb3`.
 | `LoaderFirmwareType` | `UEFI <major>.<minor>` of the system table's revision | at startup |
 | `LoaderTimeExecUSec` | microseconds from processor reset to the UKI's `StartImage` | immediately before a UKI's `StartImage` |
 | `FalconTimeWaitUSec` | microseconds spent waiting on the keyboard up to then (falcon's GUID) | beside `LoaderTimeExecUSec` |
+| `FalconTimeKdfUSec` | microseconds the keyslot derivations of the unlock that led to this launch took (falcon's GUID) | beside `LoaderTimeExecUSec`, after an unlock |
+| `FalconKdfInfo` | that unlock in one line (falcon's GUID; below) | beside `FalconTimeKdfUSec` |
 
 A UKI is what `pos` launches (the personal OS and the signing appliance off
 the stick's shelf; the station's encrypted-shelf row and its plaintext UKI
 rows) and a blessed wrap (`bless_boot`). Nothing else sets an exec time:
 chainloaded media, direct kernel boot, Windows, BSD, memtest86+, bare EFI
 payloads, and the station's firmware entries and ESP loaders. A UKI that
-returns has both exec variables deleted (`bli_clear_exec`), so a later boot
-by another route does not carry them. Both calls are
+returns has the exec variables, falcon's three included, deleted
+(`bli_clear_exec`), so a later boot by another route does not carry them.
+The two KDF variables are written only for a launch that follows an
+unlock in the same `pos` attempt; a plaintext shelf's UKI and a blessed
+wrap have none. Both calls are
 in `loader` (`loader_time_init`, `loader_time_exec`), the variables'
 formats in `loader/bli.c`.
 
@@ -714,12 +719,36 @@ line included), the passphrase prompt, and every "press any key" page
 Falcon's own work is `LoaderTimeExecUSec - LoaderTimeInitUSec -
 FalconTimeWaitUSec`.
 
+**The keyslots** are timed on the same clock, on the boot processor, from
+before the first `luks_unlock` to after the last, the start and release
+of the other processors excluded; `FalconTimeKdfUSec` is therefore at
+most falcon's own work. `FalconKdfInfo` describes the slot that opened:
+
+    argon2id <level> <P> processors <L> lanes <M> KiB t=<T> <ms> ms <MHz> MHz
+    pbkdf2 <P> processors <I> iterations <ms> ms <MHz> MHz
+
+`<level>` is the block function (`portable`, `sse2`, `ssse3`, `avx2`),
+`<P>` the processors that ran lanes, `<ms>` the time in milliseconds,
+floored. `<MHz>` is the boot processor's effective clock across the
+derivations, the counter's rate times dAPERF / dMPERF of `IA32_APERF`
+(0xE8) and `IA32_MPERF` (0xE7) read before and after (`tsc_eff_mhz`); it
+shows a firmware that runs the cores below their boosted clock. The MSRs
+are read only when CPUID leaf 6 enumerates them (ECX bit 0) and no
+hypervisor is present (CPUID.1:ECX bit 31), since a guest may take #GP on
+them and the firmware halts on an exception it does not expect; without
+them ` <MHz> MHz` is left out. The same line ends the unlock's serial line,
+`falcon-pos: argon2id ran on <P> processors in <ms> ms: <info>`, which is
+also written for an unlock that fails, describing the last slot tried.
+falcon-bios times its keyslots by the BIOS tick and reads no MSR: its IDT
+treats every exception as fatal, and it has no counter rate to scale
+dAPERF / dMPERF by.
+
 A variable the firmware will not set is left unset and the boot goes on.
 Each step says what it measured and set on the first serial port
 (`console/serial.c`): `falcon-bli: tsc_hz=<Hz> via=<cpuid|stall|none>
 LoaderTimeInitUSec=<us>` at startup, `falcon-bli: LoaderTimeExecUSec=<us>
-FalconTimeWaitUSec=<us>` at the launch, each with ` set=failed` when a write
-was refused.
+FalconTimeWaitUSec=<us>` at the launch, with ` FalconTimeKdfUSec=<us>` after
+an unlock, each with ` set=failed` when a write was refused.
 
 ## 6. ISO path: drag-and-drop mechanism
 
@@ -2182,8 +2211,9 @@ while every real file lives only in UDF.
     Boot state banner. `prompt.c` is the masked passphrase prompt; `idle.c`
     the idle power-off (Section 7.9); `serial.c` writes diagnostics to the
     first serial port.
-  - `tsc` - the time-stamp counter, its rate and the wait on the keyboard
-    (Section 5.5); `tsccore.c` is the host-tested arithmetic. `tcg` seeds
+  - `tsc` - the time-stamp counter, its rate, the wait on the keyboard and
+    the APERF/MPERF read behind the effective clock (Section 5.5);
+    `tsccore.c` is the host-tested arithmetic. `tcg` seeds
     its RNG from the counter.
   - `task` - one coroutine on its own stack beside the main flow, which the
     background probe runs on (Section 7.8). Stick only.

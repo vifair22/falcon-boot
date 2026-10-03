@@ -252,6 +252,48 @@ static void test_dec_too_small(void **state)
     }
 }
 
+/* ---- the effective clock ---- */
+
+static void test_eff_mhz(void **state)
+{
+    (void)state;
+    /* APERF with MPERF: the counter's own rate, floored. */
+    assert_int_equal(tsc_eff_mhz(HZ_T430, 1000u, 1000u), 2594u);
+    /* A core held under its rate. */
+    assert_int_equal(tsc_eff_mhz(HZ_T430, 461u, 1000u), 1195u);
+    /* Boosted, over deltas past TSC_PERF_SPAN: 2^40 and 1.5 times it. */
+    assert_int_equal(tsc_eff_mhz(HZ_T430, 3ull << 39, 1ull << 40), 3891u);
+}
+
+static void test_eff_mhz_near_2_64(void **state)
+{
+    (void)state;
+    /* Worked in 128-bit arithmetic: floor(hz * da / dm / 10^6). */
+    assert_int_equal(tsc_eff_mhz(HZ_T430, UINT64_MAX, UINT64_MAX), 2594u);
+    assert_int_equal(tsc_eff_mhz(HZ_T430, UINT64_MAX, UINT64_MAX >> 1),
+                     5188u);
+    /* The largest product the arithmetic forms: the fastest sane rate, a
+     * remainder just under TSC_PERF_SPAN, the ratio just under the cap. */
+    assert_int_equal(tsc_eff_mhz(TSC_HZ_MAX,
+                                 16u * (TSC_PERF_SPAN - 1u) - 1u,
+                                 TSC_PERF_SPAN - 1u),
+                     319999u);
+}
+
+static void test_eff_mhz_no_answer(void **state)
+{
+    (void)state;
+    assert_int_equal(tsc_eff_mhz(HZ_T430, 0, 1000u), 0u);
+    assert_int_equal(tsc_eff_mhz(HZ_T430, 1000u, 0), 0u);
+    assert_int_equal(tsc_eff_mhz(0, 1000u, 1000u), 0u);
+    assert_int_equal(tsc_eff_mhz(TSC_HZ_MAX + 1u, 1000u, 1000u), 0u);
+    /* A ratio no processor runs at: a counter wrapped or reset. */
+    assert_int_equal(tsc_eff_mhz(HZ_T430, 16u, 1u), 0u);
+    assert_int_equal(tsc_eff_mhz(HZ_T430, 15u, 1u), 38911u);
+    /* A delta that halves to nothing beside a large one. */
+    assert_int_equal(tsc_eff_mhz(HZ_T430, 1u, 1ull << 40), 0u);
+}
+
 int run_tsc_tests(void)
 {
     const struct CMUnitTest tests[] = {
@@ -259,6 +301,9 @@ int run_tsc_tests(void)
         cmocka_unit_test(test_usec_matches_systemd_where_it_does_not_overflow),
         cmocka_unit_test(test_usec_near_2_64),
         cmocka_unit_test(test_usec_insane_rate_is_zero),
+        cmocka_unit_test(test_eff_mhz),
+        cmocka_unit_test(test_eff_mhz_near_2_64),
+        cmocka_unit_test(test_eff_mhz_no_answer),
         cmocka_unit_test(test_cpuid_crystal),
         cmocka_unit_test(test_cpuid_base_frequency),
         cmocka_unit_test(test_cpuid_no_answer),

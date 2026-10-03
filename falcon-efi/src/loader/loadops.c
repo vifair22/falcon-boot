@@ -377,7 +377,7 @@ void loader_time_init(EFI_SYSTEM_TABLE *st, UINT64 t0, const CHAR16 *info)
     serial_line(st, line);
 }
 
-void loader_time_exec(EFI_SYSTEM_TABLE *st)
+void loader_time_exec(EFI_SYSTEM_TABLE *st, const bli_kdf *kdf)
 {
     UINT64 now = tsc_read();
     char line[160];
@@ -392,10 +392,12 @@ void loader_time_exec(EFI_SYSTEM_TABLE *st)
     hz = tsc_hz(st->BootServices, (tsc_hz_how *)0);
     usec = tsc_usec(now, hz);
     wait = tsc_usec(tsc_wait_ticks(), hz);
-    s = bli_set_exec(st, usec, wait);
+    s = bli_set_exec(st, usec, wait, usec != 0 ? kdf : (const bli_kdf *)0);
 
     put_kv(line, sizeof line, &at, "falcon-bli: LoaderTimeExecUSec=", usec);
     put_kv(line, sizeof line, &at, " FalconTimeWaitUSec=", wait);
+    if (usec != 0 && kdf != (const bli_kdf *)0)
+        put_kv(line, sizeof line, &at, " FalconTimeKdfUSec=", kdf->usec);
     if (EFI_ERROR(s))
         put_str(line, sizeof line, &at, " set=failed");
     serial_line(st, line);
