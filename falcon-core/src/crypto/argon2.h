@@ -12,17 +12,26 @@
  * caller hands over the block, argon2_mem_kib says how big it must be, and
  * this file only fills it.
  *
- * Lanes are filled one after another, slice by slice: every lane's segment
- * of slice s before any lane's segment of slice s+1. That is the order the
- * specification's synchronisation points allow, since a segment only ever
- * references other lanes' blocks from slices already finished, so the result
- * is the one a parallel implementation with a thread per lane produces, only
- * slower. There are no threads in a loader to have.
+ * Lanes. Every lane's segment of slice s is filled before any lane's
+ * segment of slice s+1, which is all the specification's synchronisation
+ * points ask: a segment only references other lanes' blocks from slices
+ * already finished, so within a slice the lanes are independent and may run
+ * in any order or at once. How they run is the caller's (argon2_runner): in
+ * turn on one processor when it gives none, one lane a processor where the
+ * platform can start others. The module has no idea of a processor; the
+ * runner is the one place that does, which keeps this file the same in the
+ * loaders, the host tools and the benchmark.
  *
- * Stack. One 1 KiB block in argon2id and two in the segment fill, about
- * 3.5 KiB in all: the EFI build's 32 KiB frame limit and falcon-bios's
- * stage 3 stack both have room, and nothing here scales with the cost
- * parameters.
+ * Block function. G, the compression every block goes through, comes in
+ * portable C and in SSE2, SSSE3 and AVX2 (argon2_simd.h), one picked per
+ * derivation by what the processor can run (crypto_simd_level). The output
+ * is the same whichever runs; only the time differs.
+ *
+ * Stack. One 1 KiB block in argon2id, and five in each segment's job
+ * (argon2_job), about 5.5 KiB on whichever stack runs it: the EFI build's
+ * 32 KiB frame limit, falcon-bios's stage 3 stack and the 32 KiB edk2 gives
+ * an application processor all have room, and nothing here scales with the
+ * cost parameters.
  *
  * Interactions. Built on blake2b.c; called from falcon-core/src/luks/luks.c.
  */
@@ -59,7 +68,28 @@ typedef struct {
  * 4 * lanes (m' in the RFC). 0 when m_cost or lanes are out of range. */
 uint32_t argon2_mem_kib(uint32_t m_cost, uint32_t lanes);
 
+/* One segment: the job for lane `lane` of the slice a runner was handed.
+ * ctx is argon2id's and opaque to the runner. */
+typedef void (*argon2_job)(void *ctx, uint32_t lane);
+
+/* How one slice's segments are run.
+ *
+ * run calls job(ctx, l) exactly once for every l in 0..lanes-1, in any
+ * order, on any processor, and returns only once every call has returned.
+ * Exactly once is not a nicety: after the first pass a segment XORs into
+ * the blocks it fills, so a lane run twice is a wrong key, not a slow one.
+ * The runner also owns memory ordering: what was written before run is
+ * visible to every job, and what every job wrote is visible to the caller
+ * when run returns. self is the runner's own state. */
+typedef struct {
+    void (*run)(void *self, argon2_job job, void *ctx, uint32_t lanes);
+    void  *self;
+} argon2_runner;
+
 /* Derives out_len bytes (>= 4) into out.
+ *
+ * run says how a slice's lanes are run; NULL runs them in turn on the
+ * calling processor. Any runner gives the same output.
  *
  * mem is the caller's, at least argon2_mem_kib(p->m_cost, p->lanes) KiB,
  * mem_kib says how much it is, and it must be 8-byte aligned. It is wiped
@@ -70,6 +100,18 @@ uint32_t argon2_mem_kib(uint32_t m_cost, uint32_t lanes);
  * CRYPTO_ERR_NOSPACE when mem_kib is short; CRYPTO_ERR_UNSUPPORTED when the
  * memory would not fit this build's address space. */
 int argon2id(const argon2_params *p, void *mem, uint32_t mem_kib,
-             uint8_t *out, size_t out_len);
+             const argon2_runner *run, uint8_t *out, size_t out_len);
+
+/* argon2id with the block function's instruction set named: a
+ * CRYPTO_SIMD_* level (crypto.h), or ARGON2_SIMD_AUTO for the highest this
+ * processor can run now, which is what argon2id uses. Every level gives the
+ * same output; naming one is for the tests, which run each the build host
+ * has, and the benchmark, which times them. A level above what the
+ * processor can run is CRYPTO_ERR_UNSUPPORTED, before mem is touched. */
+#define ARGON2_SIMD_AUTO (-1)
+
+int argon2id_simd(const argon2_params *p, void *mem, uint32_t mem_kib,
+                  const argon2_runner *run, int simd, uint8_t *out,
+                  size_t out_len);
 
 #endif /* FALCON_CRYPTO_ARGON2_H */

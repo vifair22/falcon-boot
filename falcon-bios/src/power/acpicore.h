@@ -19,7 +19,9 @@
  * since falcon-bios has paging off (the XSDT's 64-bit pointers are used
  * only when they fit).
  *
- * Interactions. power/power.c is the one caller. Freestanding, no
+ * The table walk is also how mp/mp.c finds the MADT (acpi_find_table).
+ *
+ * Interactions. power/power.c and mp/mp.c are the callers. Freestanding, no
  * allocation: a small window is read at a time.
  */
 
@@ -53,6 +55,13 @@ enum {
 /* The S5 values. ebda is the EBDA's physical address, 0 when the BDA
  * names none. */
 int acpi_find_s5(acpi_read_fn rd, void *ctx, uint32_t ebda, acpi_s5 *out);
+
+/* Any table the RSDT (or an XSDT whose pointers fit) lists, by its four
+ * byte signature ("APIC" is the MADT, mp/mpcore.c's): its address and
+ * length, once its checksum holds. ACPI_NO_FADT when no table carries the
+ * signature, a name that predates this function. */
+int acpi_find_table(acpi_read_fn rd, void *ctx, uint32_t ebda,
+                    const char *sig, uint32_t *addr, uint32_t *len);
 
 /* The \_S5 package in `aml` (a DSDT's body or part of one): SLP_TYPa and
  * SLP_TYPb. ACPI_NO_S5 when it is not there or not constants. */

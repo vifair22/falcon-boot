@@ -807,7 +807,7 @@ static int kdf_derive(luks_vol *v, kdf_in *k, const void *pass,
     ap.t_cost = k->time;
     ap.m_cost = k->memory;
     ap.lanes = k->lanes;
-    rc = argon2id(&ap, block, kib, out, out_len);
+    rc = argon2id(&ap, block, kib, mem->run, out, out_len);
     if (mem->put != NULL) {
         mem->put(mem->ctx, block, kib);
     }

@@ -12,7 +12,7 @@
 STATION_LEGACY := apps/station-legacy
 
 LEGACY_BIOS := $(STATION_LEGACY)/bios_main.c $(BIOS_MOD_station)
-LEGACY_BIOS += $(BIOS_MOD_pos) $(BIOS_MOD_prompt) $(BIOS_MOD_console) $(BIOS_MOD_linux)
+LEGACY_BIOS += $(BIOS_MOD_pos) $(BIOS_MOD_mp) $(CORE_XSTATE) $(BIOS_MOD_prompt) $(BIOS_MOD_console) $(BIOS_MOD_linux)
 LEGACY_BIOS += $(BIOS_MOD_chain) $(BIOS_MOD_lowmem)  # partition and disk chains, the swap's memory
 LEGACY_BIOS += $(CORE_STROWS) $(CORE_STATIONINI)   # the list, and STATION.INI
 LEGACY_BIOS += $(BIOS_MOD_marker) $(CORE)/media/nextboot.c  # next boot (Section 12.8)
@@ -32,7 +32,8 @@ LEGACY_BIOS += $(CORE_GZ)             # the drivers are stored compressed
 LEGACY_BIOS += $(CORE_LIBC) $(CORE_UCS2) $(CORE_TUI)
 
 $(eval $(call bios_app,station_legacy,$(BIOS_STATION_LEGACY_STAGE3),\
-	$(BIOS_RES_swap) $(BIOS_RES_iso) $(BIOS_RES_vfd) $(BIOS_RES_jres),$(LEGACY_BIOS),))
+	$(BIOS_RES_swap) $(BIOS_RES_iso) $(BIOS_RES_vfd) $(BIOS_RES_jres) \
+	$(BIOS_OBJ_aptramp),$(LEGACY_BIOS),))
 
 $(BIOS_OBJ)/$(STATION_LEGACY)/bios_main.o: build/version.h
 

@@ -14,6 +14,7 @@
  */
 
 #include <crypto/argon2.h>
+#include <crypto/argon2_simd.h>
 #include <crypto/blake2b.h>
 #include <crypto/crypto.h>
 #include <lib/string.h>
@@ -35,6 +36,7 @@ typedef struct {
     blk r;            /* G's working copy */
     blk input;        /* data-independent addressing: the counter block */
     blk address;      /* ... and the 128 pseudo-random values it yields */
+    uint64_t simd[ARGON2_SIMD_SCRATCH_WORDS];   /* a vector fill's state */
 } work;
 
 typedef struct {
@@ -44,6 +46,8 @@ typedef struct {
     uint32_t sl;      /* segment length in blocks, q / 4 */
     uint32_t mprime;  /* total blocks */
     uint32_t passes;
+    argon2_fill_fn fill;   /* a vector level's block function, or NULL */
+    void (*wipe)(void);    /* ... and its register wipe */
 } inst;
 
 static uint64_t ror64(uint64_t x, unsigned int n)
@@ -154,8 +158,9 @@ static void perm(uint64_t *r, const uint8_t *idx)
  * which is all the address generator ever passes.
  *
  * The reference keeps the pre-permutation R in a second temporary; here next
- * holds it instead, which is the same sum with one block less of stack. R is
- * complete before next is written, so ref may be next (the address block is
+ * holds it instead, which is the same sum with one block less of stack.
+ * Word i of R is made and folded into next in one step, and reads only
+ * word i of ref and prev, so ref may be next (the address block is
  * compressed in place). */
 static void fill_block(blk *r, const blk *prev, const blk *ref, blk *next,
                        int with_xor)
@@ -164,10 +169,10 @@ static void fill_block(blk *r, const blk *prev, const blk *ref, blk *next,
     unsigned int i, k;
 
     for (i = 0; i < QWORDS; i++) {
-        r->v[i] = ref->v[i] ^ ((prev != NULL) ? prev->v[i] : 0u);
-    }
-    for (i = 0; i < QWORDS; i++) {
-        next->v[i] = with_xor ? (next->v[i] ^ r->v[i]) : r->v[i];
+        uint64_t x = ref->v[i] ^ ((prev != NULL) ? prev->v[i] : 0u);
+
+        r->v[i] = x;
+        next->v[i] = with_xor ? (next->v[i] ^ x) : x;
     }
     /* Rows: the eight 16-word runs. */
     for (i = 0; i < 8u; i++) {
@@ -288,10 +293,54 @@ static void fill_segment(const inst *in, work *w, uint32_t pass,
         }
         ref_col = ref_index(in, pass, slice, i, (uint32_t)pr,
                             ref_lane == lane);
-        fill_block(&w->r, &mem[prev], &mem[(size_t)in->q * ref_lane + ref_col],
-                   &mem[curr], pass != 0u);
+        if (in->fill != NULL) {
+            in->fill(w->simd, mem[prev].v,
+                     mem[(size_t)in->q * ref_lane + ref_col].v, mem[curr].v,
+                     pass != 0u);
+        } else {
+            fill_block(&w->r, &mem[prev],
+                       &mem[(size_t)in->q * ref_lane + ref_col], &mem[curr],
+                       pass != 0u);
+        }
     }
 }
+
+/* ---- one slice's lanes ------------------------------------------------ */
+
+/* What a segment's job needs besides its lane. */
+typedef struct {
+    const inst *in;
+    uint32_t    pass;
+    uint32_t    slice;
+} slice_ctx;
+
+/* The scratch is the job's own, on whichever stack runs it, so lanes on
+ * different processors share nothing but the memory block, and each wipes
+ * its own before it returns: the scratch, and on a vector level the
+ * registers of the processor that ran it. */
+static void segment_job(void *ctx, uint32_t lane)
+{
+    const slice_ctx *sc = (const slice_ctx *)ctx;
+    work w;
+
+    fill_segment(sc->in, &w, sc->pass, sc->slice, lane);
+    if (sc->in->wipe != NULL) {
+        sc->in->wipe();
+    }
+    crypto_wipe(&w, sizeof w);
+}
+
+static void run_in_turn(void *self, argon2_job job, void *ctx, uint32_t lanes)
+{
+    uint32_t l;
+
+    (void)self;
+    for (l = 0; l < lanes; l++) {
+        job(ctx, l);
+    }
+}
+
+static const argon2_runner in_turn = { run_in_turn, NULL };
 
 /* ---- the whole derivation (RFC 9106 Section 3.2) ---------------------- */
 
@@ -351,12 +400,57 @@ uint32_t argon2_mem_kib(uint32_t m_cost, uint32_t lanes)
     return (m_cost / (4u * lanes)) * (4u * lanes);
 }
 
-int argon2id(const argon2_params *p, void *mem, uint32_t mem_kib,
-             uint8_t *out, size_t out_len)
+/* The block function a level names, or CRYPTO_ERR_UNSUPPORTED when this
+ * processor cannot run it. */
+static int pick_level(inst *in, int simd)
 {
+    int best = crypto_simd_level();
+
+    if (simd == ARGON2_SIMD_AUTO) {
+        simd = best;
+    } else if (simd < CRYPTO_SIMD_NONE || simd > CRYPTO_SIMD_AVX2) {
+        return CRYPTO_ERR_BAD_ARG;
+    } else if (simd > best) {
+        return CRYPTO_ERR_UNSUPPORTED;
+    }
+    switch (simd) {
+    case CRYPTO_SIMD_SSE2:
+        in->fill = argon2_fill_sse2;
+        in->wipe = argon2_wipe_sse2;
+        break;
+    case CRYPTO_SIMD_SSSE3:
+        in->fill = argon2_fill_ssse3;
+        in->wipe = argon2_wipe_ssse3;
+        break;
+    case CRYPTO_SIMD_AVX2:
+        in->fill = argon2_fill_avx2;
+        in->wipe = argon2_wipe_avx2;
+        break;
+    default:
+        in->fill = NULL;
+        in->wipe = NULL;
+        break;
+    }
+    return CRYPTO_OK;
+}
+
+int argon2id(const argon2_params *p, void *mem, uint32_t mem_kib,
+             const argon2_runner *run, uint8_t *out, size_t out_len)
+{
+    return argon2id_simd(p, mem, mem_kib, run, ARGON2_SIMD_AUTO, out,
+                         out_len);
+}
+
+int argon2id_simd(const argon2_params *p, void *mem, uint32_t mem_kib,
+                  const argon2_runner *run, int simd, uint8_t *out,
+                  size_t out_len)
+{
+    int rc;
+
     blake2b_ctx c;
     uint8_t pin[PRIME_IN_LEN];
-    work w;
+    blk tag;
+    slice_ctx sc;
     inst in;
     uint32_t l, pass, slice, i;
 
@@ -385,6 +479,15 @@ int argon2id(const argon2_params *p, void *mem, uint32_t mem_kib,
     }
     if (mem_kib < in.mprime) {
         return CRYPTO_ERR_NOSPACE;
+    }
+    if (run == NULL) {
+        run = &in_turn;
+    } else if (run->run == NULL) {
+        return CRYPTO_ERR_BAD_ARG;
+    }
+    rc = pick_level(&in, simd);
+    if (rc != CRYPTO_OK) {
+        return rc;
     }
     in.mem = mem;
     in.lanes = p->lanes;
@@ -420,31 +523,31 @@ int argon2id(const argon2_params *p, void *mem, uint32_t mem_kib,
     }
     crypto_wipe(pin, sizeof pin);
 
-    /* Slice by slice, every lane's segment before the next slice: the order
-     * the synchronisation points permit, and the reason one thread gives
-     * the parallel result. */
+    /* Slice by slice, every lane's segment before the next slice: the
+     * synchronisation points are the runner's returns. */
+    sc.in = &in;
     for (pass = 0; pass < in.passes; pass++) {
         for (slice = 0; slice < SYNC_POINTS; slice++) {
-            for (l = 0; l < in.lanes; l++) {
-                fill_segment(&in, &w, pass, slice, l);
-            }
+            sc.pass = pass;
+            sc.slice = slice;
+            run->run(run->self, segment_job, &sc, in.lanes);
         }
     }
 
     /* The tag: H' over the XOR of every lane's last column. */
-    memcpy(&w.r, &in.mem[in.q - 1u], sizeof w.r);
+    memcpy(&tag, &in.mem[in.q - 1u], sizeof tag);
     for (l = 1; l < in.lanes; l++) {
         const blk *b = &in.mem[(size_t)l * in.q + in.q - 1u];
 
         for (i = 0; i < QWORDS; i++) {
-            w.r.v[i] ^= b->v[i];
+            tag.v[i] ^= b->v[i];
         }
     }
-    blk_to_bytes(&w.r);
-    h_prime(out, (uint32_t)out_len, (const uint8_t *)&w.r,
+    blk_to_bytes(&tag);
+    h_prime(out, (uint32_t)out_len, (const uint8_t *)&tag,
             ARGON2_BLOCK_BYTES);
 
-    crypto_wipe(&w, sizeof w);
+    crypto_wipe(&tag, sizeof tag);
     for (i = 0; i < in.mprime; i++) {
         crypto_wipe(&in.mem[i], sizeof in.mem[i]);
     }

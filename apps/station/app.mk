@@ -21,7 +21,7 @@ STATION_EFI += $(EFI_MOD_disks) $(CORE_PART)  # partitions named as STATION.INI 
 STATION_EFI += $(CORE_BLK)             # any length at any offset, under discover_read
 STATION_EFI += $(CORE_FS_EXT4) $(CORE_PE) $(CORE_LUKS) $(CORE_CRYPTO)
 STATION_EFI += $(EFI_MOD_secboot)       # state for UX only: no predictions
-STATION_EFI += $(EFI_MOD_pos) $(addprefix $(CORE)/media/,osrel.c shelf.c nextboot.c)
+STATION_EFI += $(EFI_MOD_pos) $(EFI_MOD_mp) $(CORE_XSTATE) $(addprefix $(CORE)/media/,osrel.c shelf.c nextboot.c)
 STATION_EFI += $(EFI_MOD_jnlmem)       # a hibernated shelf, read through its journal
 STATION_EFI += $(CORE)/manifest/manifest.c
 STATION_EFI += $(EFI_MOD_nxt)           # other systems through BootNext
@@ -40,7 +40,7 @@ $(EFI_OBJ)/$(STATION)/efi_main.o $(EFI_OBJ)/$(STATION)/efi_sbat.o: build/version
 # the one resident, and MEM through linux.c. No ISO scan, and so neither
 # falcon-hook blob.
 STATION_BIOS := $(STATION)/bios_main.c $(BIOS_MOD_station)
-STATION_BIOS += $(BIOS_MOD_pos) $(BIOS_MOD_prompt) $(BIOS_MOD_console) $(BIOS_MOD_linux)
+STATION_BIOS += $(BIOS_MOD_pos) $(BIOS_MOD_mp) $(CORE_XSTATE) $(BIOS_MOD_prompt) $(BIOS_MOD_console) $(BIOS_MOD_linux)
 STATION_BIOS += $(BIOS_MOD_chain) $(BIOS_MOD_lowmem)  # partition and disk chains, the swap's memory
 STATION_BIOS += $(CORE_STROWS) $(CORE_STATIONINI)   # the list, and STATION.INI
 STATION_BIOS += $(BIOS_MOD_marker) $(CORE)/media/nextboot.c  # next boot (Section 12.8)
@@ -54,7 +54,8 @@ STATION_BIOS += $(CORE_PART) $(CORE_FS_STATION) $(CORE_PE) $(CORE_CRYPTO) $(CORE
 STATION_BIOS += $(addprefix $(CORE)/media/,cpio.c osrel.c shelf.c)
 STATION_BIOS += $(CORE_LIBC) $(CORE_UCS2) $(CORE_TUI)
 
-$(eval $(call bios_app,station,$(BIOS_STATION_STAGE3),$(BIOS_RES_swap),$(STATION_BIOS),))
+$(eval $(call bios_app,station,$(BIOS_STATION_STAGE3),\
+	$(BIOS_RES_swap) $(BIOS_OBJ_aptramp),$(STATION_BIOS),))
 
 $(BIOS_OBJ)/$(STATION)/bios_main.o: build/version.h
 

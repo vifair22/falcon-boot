@@ -15,6 +15,13 @@
  *             with the exact command beside it. The multi-lane rows are the
  *             ones that prove filling lanes one after another gives the
  *             parallel result; the m=100, p=3 row exercises m' < m.
+ *   Levels    the reference CLI rows again at every block-function level
+ *             this processor runs (portable, SSE2, SSSE3, AVX2), named
+ *             through argon2id_simd.
+ *   Runners   the same reference CLI rows again through argon2_runner:
+ *             lanes in reverse, and one thread a lane (pthreads), each of
+ *             which must give the reference output, with every lane of
+ *             every slice run exactly once.
  */
 
 #include "tests.h"
@@ -29,10 +36,12 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <pthread.h>
 
 #include <crypto/crypto.h>
 #include <crypto/blake2b.h>
 #include <crypto/argon2.h>
+#include <crypto/lanes.h>
 
 static uint8_t nib(char c)
 {
@@ -210,7 +219,8 @@ static void test_argon2id_rfc9106(void **state)
     mem = malloc(32u * 1024u);
     assert_non_null(mem);
     clock_gettime(CLOCK_MONOTONIC, &t0);
-    assert_int_equal(argon2id(&p, mem, 32, out, sizeof out), CRYPTO_OK);
+    assert_int_equal(argon2id(&p, mem, 32, NULL, out, sizeof out),
+                     CRYPTO_OK);
     printf("[ INFO     ] argon2id RFC 9106 vector: %.3f ms\n", ms_since(&t0));
     assert_hex(out, sizeof out,
         "0d640df58d78766c08c037a34a8b53c9d01ef0452d75b65eb52520e96b01e659");
@@ -218,41 +228,42 @@ static void test_argon2id_rfc9106(void **state)
 }
 
 /* `echo -n password | argon2 somesalt -id <args> -r`, argon2 20190702. */
-static void test_argon2id_reference_cli(void **state)
+static const struct {
+    uint32_t    t, m, p, l;
+    const char *want;
+} cli_rows[] = {
+    /* -t 2 -k 64 -p 1 -l 32 */
+    { 2, 64, 1, 32,
+      "16a1a498734609dd01456da406de9f3d9da93e6c86c300a12fc1465214ce4922" },
+    /* -t 3 -k 1024 -p 4 -l 32 */
+    { 3, 1024, 4, 32,
+      "e3c3ff0547f31c037b332f7539fe30f6be8aabc4cf765d10eb34847a8f3fa43c" },
+    /* -t 1 -k 8 -p 1 -l 4 */
+    { 1, 8, 1, 4, "6b7a947d" },
+    /* -t 4 -k 256 -p 2 -l 64 */
+    { 4, 256, 2, 64,
+      "48e689ee725c5bd939a9f45c246b8f4e65f2fb7fdf3b4381f8b41843e72a96e7"
+      "59e8f310e80a0b35e1a0daa5c4f515316dad8bd5849b9599caf1a7c5a80d64d8" },
+    /* -t 2 -k 100 -p 3 -l 100 */
+    { 2, 100, 3, 100,
+      "d98ff35be4929d949cd4de3dcf10482d8a006a5809bae1c331feae87936a1f4e"
+      "a0434327ff12c78557fc368fc6c7ac185f8ae722254afc7754cd6c1bf2517030"
+      "1463e34fd1495bd02cf900c3df6aecfda17b00658ff0b59f8726eac34a52d1b6"
+      "2d96ab74" },
+    /* -t 1 -k 4096 -p 1 -l 32 */
+    { 1, 4096, 1, 32,
+      "c885b78ca85ce3a260677140728184a30addeafc8ffd64d2cbfc144440269707" },
+};
+
+/* Every reference CLI row at one block-function level. */
+static void check_cli_rows(int simd)
 {
-    static const struct {
-        uint32_t    t, m, p, l;
-        const char *want;
-    } rows[] = {
-        /* -t 2 -k 64 -p 1 -l 32 */
-        { 2, 64, 1, 32,
-          "16a1a498734609dd01456da406de9f3d9da93e6c86c300a12fc1465214ce4922" },
-        /* -t 3 -k 1024 -p 4 -l 32 */
-        { 3, 1024, 4, 32,
-          "e3c3ff0547f31c037b332f7539fe30f6be8aabc4cf765d10eb34847a8f3fa43c" },
-        /* -t 1 -k 8 -p 1 -l 4 */
-        { 1, 8, 1, 4, "6b7a947d" },
-        /* -t 4 -k 256 -p 2 -l 64 */
-        { 4, 256, 2, 64,
-          "48e689ee725c5bd939a9f45c246b8f4e65f2fb7fdf3b4381f8b41843e72a96e7"
-          "59e8f310e80a0b35e1a0daa5c4f515316dad8bd5849b9599caf1a7c5a80d64d8" },
-        /* -t 2 -k 100 -p 3 -l 100 */
-        { 2, 100, 3, 100,
-          "d98ff35be4929d949cd4de3dcf10482d8a006a5809bae1c331feae87936a1f4e"
-          "a0434327ff12c78557fc368fc6c7ac185f8ae722254afc7754cd6c1bf2517030"
-          "1463e34fd1495bd02cf900c3df6aecfda17b00658ff0b59f8726eac34a52d1b6"
-          "2d96ab74" },
-        /* -t 1 -k 4096 -p 1 -l 32 */
-        { 1, 4096, 1, 32,
-          "c885b78ca85ce3a260677140728184a30addeafc8ffd64d2cbfc144440269707" },
-    };
     uint8_t out[100];
     size_t i;
 
-    (void)state;
-    for (i = 0; i < sizeof rows / sizeof rows[0]; i++) {
+    for (i = 0; i < sizeof cli_rows / sizeof cli_rows[0]; i++) {
         argon2_params p;
-        uint32_t kib = argon2_mem_kib(rows[i].m, rows[i].p);
+        uint32_t kib = argon2_mem_kib(cli_rows[i].m, cli_rows[i].p);
         void *mem;
 
         memset(&p, 0, sizeof p);
@@ -260,15 +271,69 @@ static void test_argon2id_reference_cli(void **state)
         p.pwd_len = 8;
         p.salt = "somesalt";
         p.salt_len = 8;
-        p.t_cost = rows[i].t;
-        p.m_cost = rows[i].m;
-        p.lanes = rows[i].p;
-        assert_true(kib != 0u && kib <= rows[i].m);
+        p.t_cost = cli_rows[i].t;
+        p.m_cost = cli_rows[i].m;
+        p.lanes = cli_rows[i].p;
+        assert_true(kib != 0u && kib <= cli_rows[i].m);
         mem = malloc((size_t)kib * 1024u);
         assert_non_null(mem);
-        assert_int_equal(argon2id(&p, mem, kib, out, rows[i].l), CRYPTO_OK);
-        assert_hex(out, rows[i].l, rows[i].want);
+        assert_int_equal(argon2id_simd(&p, mem, kib, NULL, simd, out,
+                                       cli_rows[i].l), CRYPTO_OK);
+        assert_hex(out, cli_rows[i].l, cli_rows[i].want);
         free(mem);
+    }
+}
+
+static void test_argon2id_reference_cli(void **state)
+{
+    (void)state;
+    check_cli_rows(ARGON2_SIMD_AUTO);
+}
+
+/* Each block function by name: portable C everywhere, and every vector
+ * level this machine can run, which on the build host is all of them. The
+ * levels it cannot run are said, not passed in silence. */
+static void test_argon2id_levels(void **state)
+{
+    int best = crypto_simd_level();
+    int level;
+
+    (void)state;
+    for (level = CRYPTO_SIMD_NONE; level <= CRYPTO_SIMD_AVX2; level++) {
+        if (level > best) {
+            printf("[ INFO     ] argon2id %s: not on this processor\n",
+                   crypto_simd_name(level));
+            continue;
+        }
+        check_cli_rows(level);
+    }
+}
+
+/* A level out of range is refused, and one above the processor's is
+ * unsupported, both before the block is touched. */
+static void test_argon2id_level_refusals(void **state)
+{
+    argon2_params p;
+    uint8_t out[32];
+    uint64_t mem[8 * 128];
+
+    (void)state;
+    memset(&p, 0, sizeof p);
+    p.pwd = "password";
+    p.pwd_len = 8;
+    p.salt = "somesalt";
+    p.salt_len = 8;
+    p.t_cost = 1;
+    p.m_cost = 8;
+    p.lanes = 1;
+    assert_int_equal(argon2id_simd(&p, mem, 8, NULL, -2, out, sizeof out),
+                     CRYPTO_ERR_BAD_ARG);
+    assert_int_equal(argon2id_simd(&p, mem, 8, NULL, CRYPTO_SIMD_AVX2 + 1,
+                                   out, sizeof out), CRYPTO_ERR_BAD_ARG);
+    if (crypto_simd_level() < CRYPTO_SIMD_AVX2) {
+        assert_int_equal(argon2id_simd(&p, mem, 8, NULL, CRYPTO_SIMD_AVX2,
+                                       out, sizeof out),
+                         CRYPTO_ERR_UNSUPPORTED);
     }
 }
 
@@ -301,13 +366,13 @@ static void test_argon2id_memory(void **state)
     mem = malloc(200u * 1024u);
     assert_non_null(mem);
     memset(mem, 0xa5, 200u * 1024u);
-    assert_int_equal(argon2id(&p, mem, 95, out, sizeof out),
+    assert_int_equal(argon2id(&p, mem, 95, NULL, out, sizeof out),
                      CRYPTO_ERR_NOSPACE);
     /* Refused before a byte was written. */
     for (i = 0; i < 200u * 1024u; i++) {
         assert_int_equal(mem[i], 0xa5);
     }
-    assert_int_equal(argon2id(&p, mem, 200, out, sizeof out), CRYPTO_OK);
+    assert_int_equal(argon2id(&p, mem, 200, NULL, out, sizeof out), CRYPTO_OK);
     for (i = 0; i < 96u * 1024u; i++) {
         if (mem[i] != 0u) {
             fail_msg("byte %zu of the block was not wiped", i);
@@ -335,37 +400,278 @@ static void test_argon2id_bad_args(void **state)
     p.t_cost = 1;
     p.m_cost = 8;
     p.lanes = 1;
-    assert_int_equal(argon2id(&p, mem, 8, out, sizeof out), CRYPTO_OK);
+    assert_int_equal(argon2id(&p, mem, 8, NULL, out, sizeof out), CRYPTO_OK);
 
-    assert_int_equal(argon2id(NULL, mem, 8, out, 32), CRYPTO_ERR_BAD_ARG);
-    assert_int_equal(argon2id(&p, NULL, 8, out, 32), CRYPTO_ERR_BAD_ARG);
-    assert_int_equal(argon2id(&p, mem, 8, NULL, 32), CRYPTO_ERR_BAD_ARG);
-    assert_int_equal(argon2id(&p, mem, 8, out, 3), CRYPTO_ERR_BAD_ARG);
+    assert_int_equal(argon2id(NULL, mem, 8, NULL, out, 32),
+                     CRYPTO_ERR_BAD_ARG);
+    assert_int_equal(argon2id(&p, NULL, 8, NULL, out, 32), CRYPTO_ERR_BAD_ARG);
+    assert_int_equal(argon2id(&p, mem, 8, NULL, NULL, 32), CRYPTO_ERR_BAD_ARG);
+    assert_int_equal(argon2id(&p, mem, 8, NULL, out, 3), CRYPTO_ERR_BAD_ARG);
     /* Misaligned. */
-    assert_int_equal(argon2id(&p, (uint8_t *)mem + 4, 8, out, 32),
+    assert_int_equal(argon2id(&p, (uint8_t *)mem + 4, 8, NULL, out, 32),
                      CRYPTO_ERR_BAD_ARG);
 
     q = p; q.t_cost = 0;
-    assert_int_equal(argon2id(&q, mem, 8, out, 32), CRYPTO_ERR_BAD_ARG);
+    assert_int_equal(argon2id(&q, mem, 8, NULL, out, 32), CRYPTO_ERR_BAD_ARG);
     q = p; q.salt_len = 7;
-    assert_int_equal(argon2id(&q, mem, 8, out, 32), CRYPTO_ERR_BAD_ARG);
+    assert_int_equal(argon2id(&q, mem, 8, NULL, out, 32), CRYPTO_ERR_BAD_ARG);
     q = p; q.salt = NULL;
-    assert_int_equal(argon2id(&q, mem, 8, out, 32), CRYPTO_ERR_BAD_ARG);
+    assert_int_equal(argon2id(&q, mem, 8, NULL, out, 32), CRYPTO_ERR_BAD_ARG);
     q = p; q.pwd = NULL;
-    assert_int_equal(argon2id(&q, mem, 8, out, 32), CRYPTO_ERR_BAD_ARG);
+    assert_int_equal(argon2id(&q, mem, 8, NULL, out, 32), CRYPTO_ERR_BAD_ARG);
     q = p; q.secret_len = 1;
-    assert_int_equal(argon2id(&q, mem, 8, out, 32), CRYPTO_ERR_BAD_ARG);
+    assert_int_equal(argon2id(&q, mem, 8, NULL, out, 32), CRYPTO_ERR_BAD_ARG);
     q = p; q.ad_len = 1;
-    assert_int_equal(argon2id(&q, mem, 8, out, 32), CRYPTO_ERR_BAD_ARG);
+    assert_int_equal(argon2id(&q, mem, 8, NULL, out, 32), CRYPTO_ERR_BAD_ARG);
     q = p; q.m_cost = 7;
-    assert_int_equal(argon2id(&q, mem, 8, out, 32), CRYPTO_ERR_BAD_ARG);
+    assert_int_equal(argon2id(&q, mem, 8, NULL, out, 32), CRYPTO_ERR_BAD_ARG);
     q = p; q.lanes = 0;
-    assert_int_equal(argon2id(&q, mem, 8, out, 32), CRYPTO_ERR_BAD_ARG);
+    assert_int_equal(argon2id(&q, mem, 8, NULL, out, 32), CRYPTO_ERR_BAD_ARG);
     q = p; q.lanes = 2;
-    assert_int_equal(argon2id(&q, mem, 8, out, 32), CRYPTO_ERR_BAD_ARG);
+    assert_int_equal(argon2id(&q, mem, 8, NULL, out, 32), CRYPTO_ERR_BAD_ARG);
     /* An empty password is legal. */
     q = p; q.pwd = NULL; q.pwd_len = 0;
-    assert_int_equal(argon2id(&q, mem, 8, out, 32), CRYPTO_OK);
+    assert_int_equal(argon2id(&q, mem, 8, NULL, out, 32), CRYPTO_OK);
+}
+
+/* ---- runners ---------------------------------------------------------- */
+
+#define RUN_MAX_LANES 8u
+
+/* What a runner saw: the calls, and per call how often each lane ran. */
+typedef struct {
+    uint32_t slices;
+    uint32_t bad;        /* calls where some lane did not run exactly once */
+} run_log;
+
+static void log_slice(run_log *g, const uint32_t *hits, uint32_t lanes)
+{
+    uint32_t l;
+
+    g->slices++;
+    for (l = 0; l < lanes; l++) {
+        if (hits[l] != 1u) {
+            g->bad++;
+            return;
+        }
+    }
+}
+
+typedef struct {
+    argon2_job job;
+    void      *ctx;
+    uint32_t   lane;
+    uint32_t  *hit;
+} lane_arg;
+
+static void run_lane(lane_arg *a)
+{
+    a->job(a->ctx, a->lane);
+    (*a->hit)++;
+}
+
+static void run_reverse(void *self, argon2_job job, void *ctx, uint32_t lanes)
+{
+    uint32_t hits[RUN_MAX_LANES] = { 0 };
+    uint32_t l;
+
+    assert_true(lanes <= RUN_MAX_LANES);
+    for (l = lanes; l-- > 0u;) {
+        lane_arg a = { job, ctx, l, &hits[l] };
+
+        run_lane(&a);
+    }
+    log_slice((run_log *)self, hits, lanes);
+}
+
+static void *lane_thread(void *arg)
+{
+    run_lane((lane_arg *)arg);
+    return NULL;
+}
+
+/* One thread a lane, created and joined per slice: pthread_join is the
+ * barrier, and the ordering the runner contract asks for. */
+static void run_threads(void *self, argon2_job job, void *ctx, uint32_t lanes)
+{
+    uint32_t hits[RUN_MAX_LANES] = { 0 };
+    pthread_t th[RUN_MAX_LANES];
+    lane_arg a[RUN_MAX_LANES];
+    uint32_t l;
+
+    assert_true(lanes <= RUN_MAX_LANES);
+    for (l = 0; l < lanes; l++) {
+        a[l].job = job;
+        a[l].ctx = ctx;
+        a[l].lane = l;
+        a[l].hit = &hits[l];
+        assert_int_equal(pthread_create(&th[l], NULL, lane_thread, &a[l]), 0);
+    }
+    for (l = 0; l < lanes; l++) {
+        assert_int_equal(pthread_join(th[l], NULL), 0);
+    }
+    log_slice((run_log *)self, hits, lanes);
+}
+
+/* `echo -n password | argon2 somesalt -id <args> -r`, argon2 20190702,
+ * through a runner. */
+static void check_runner(void (*fn)(void *, argon2_job, void *, uint32_t))
+{
+    static const struct {
+        uint32_t    t, m, p;
+        const char *want;
+    } rows[] = {
+        /* -t 3 -k 1024 -p 4 -l 32 */
+        { 3, 1024, 4,
+          "e3c3ff0547f31c037b332f7539fe30f6be8aabc4cf765d10eb34847a8f3fa43c" },
+        /* -t 2 -k 100 -p 3 -l 32 */
+        { 2, 100, 3,
+          "8b443eb7df2d72e5e2a9f49d609efce929dbc2db2a153d2f76fea016b97d856d" },
+        /* -t 2 -k 64 -p 1 -l 32 */
+        { 2, 64, 1,
+          "16a1a498734609dd01456da406de9f3d9da93e6c86c300a12fc1465214ce4922" },
+    };
+    uint8_t out[32];
+    size_t i;
+
+    for (i = 0; i < sizeof rows / sizeof rows[0]; i++) {
+        run_log g = { 0, 0 };
+        argon2_runner r = { fn, &g };
+        argon2_params p;
+        uint32_t kib = argon2_mem_kib(rows[i].m, rows[i].p);
+        void *mem = malloc((size_t)kib * 1024u);
+
+        assert_non_null(mem);
+        memset(&p, 0, sizeof p);
+        p.pwd = "password";
+        p.pwd_len = 8;
+        p.salt = "somesalt";
+        p.salt_len = 8;
+        p.t_cost = rows[i].t;
+        p.m_cost = rows[i].m;
+        p.lanes = rows[i].p;
+        assert_int_equal(argon2id(&p, mem, kib, &r, out, sizeof out),
+                         CRYPTO_OK);
+        assert_hex(out, sizeof out, rows[i].want);
+        /* Four synchronisation points a pass, every one a runner call. */
+        assert_int_equal(g.slices, 4u * rows[i].t);
+        assert_int_equal(g.bad, 0);
+        free(mem);
+    }
+}
+
+static void test_argon2id_runner_reverse(void **state)
+{
+    (void)state;
+    check_runner(run_reverse);
+}
+
+static void test_argon2id_runner_threads(void **state)
+{
+    (void)state;
+    check_runner(run_threads);
+}
+
+/* ---- the lane pool (crypto/lanes.c) ---------------------------------- */
+
+typedef struct {
+    lanes_pool *pool;
+    int         ok;
+    int         served;
+} pool_worker;
+
+static void *pool_thread(void *arg)
+{
+    pool_worker *w = (pool_worker *)arg;
+
+    w->served = lanes_serve(w->pool, w->ok);
+    return NULL;
+}
+
+/* One pool for every reference row in turn, as one unlock tries keyslot
+ * after keyslot: lane counts 1, 4, 1, 2, 3 and 1 one after another through
+ * the same workers, which is where a lane number from one slice paired
+ * with another's count would run a lane twice. Five threads offered,
+ * three admitted, one of them unable to run the level and so not. */
+static void test_argon2id_lanes_pool(void **state)
+{
+    lanes_pool pool;
+    argon2_runner r = { lanes_run, &pool };
+    pthread_t th[5];
+    pool_worker w[5];
+    uint8_t out[100];
+    size_t i;
+    int k, served = 0;
+
+    (void)state;
+    lanes_init(&pool, 3, crypto_simd_level());
+    for (k = 0; k < 5; k++) {
+        w[k].pool = &pool;
+        w[k].ok = (k != 1);
+        w[k].served = -1;
+        assert_int_equal(pthread_create(&th[k], NULL, pool_thread, &w[k]), 0);
+    }
+    for (i = 0; i < sizeof cli_rows / sizeof cli_rows[0]; i++) {
+        argon2_params p;
+        uint32_t kib = argon2_mem_kib(cli_rows[i].m, cli_rows[i].p);
+        void *mem = malloc((size_t)kib * 1024u);
+
+        assert_non_null(mem);
+        memset(&p, 0, sizeof p);
+        p.pwd = "password";
+        p.pwd_len = 8;
+        p.salt = "somesalt";
+        p.salt_len = 8;
+        p.t_cost = cli_rows[i].t;
+        p.m_cost = cli_rows[i].m;
+        p.lanes = cli_rows[i].p;
+        assert_int_equal(argon2id(&p, mem, kib, &r, out, cli_rows[i].l),
+                         CRYPTO_OK);
+        assert_hex(out, cli_rows[i].l, cli_rows[i].want);
+        free(mem);
+    }
+    lanes_stop(&pool);
+    for (k = 0; k < 5; k++) {
+        assert_int_equal(pthread_join(th[k], NULL), 0);
+        served += w[k].served;
+    }
+    assert_int_equal(w[1].served, 0);
+    assert_int_equal(served, 3);
+    assert_int_equal(lanes_joined(&pool), 3);
+}
+
+/* The stick's fixed cost is not pooled; a shelf at cryptsetup's own cost
+ * is; one lane never is. */
+static void test_lanes_worth(void **state)
+{
+    (void)state;
+    assert_false(lanes_worth(32768, 4, 4));             /* 128 MiB-passes */
+    assert_false(lanes_worth(131072, 3, 4));            /* 384 */
+    assert_true(lanes_worth(131072, 4, 4));             /* 512 */
+    assert_true(lanes_worth(1048576, 12, 4));           /* 1 GiB, t=12 */
+    assert_false(lanes_worth(1048576, 12, 1));
+    assert_true(lanes_worth(4194304, 0xffffffffu, 2));  /* no overflow */
+}
+
+/* A runner with no function is refused before the block is touched. */
+static void test_argon2id_runner_bad(void **state)
+{
+    argon2_runner r = { NULL, NULL };
+    argon2_params p;
+    uint8_t out[32];
+    uint64_t mem[8 * 128];
+
+    (void)state;
+    memset(&p, 0, sizeof p);
+    p.pwd = "password";
+    p.pwd_len = 8;
+    p.salt = "somesalt";
+    p.salt_len = 8;
+    p.t_cost = 1;
+    p.m_cost = 8;
+    p.lanes = 1;
+    assert_int_equal(argon2id(&p, mem, 8, &r, out, sizeof out),
+                     CRYPTO_ERR_BAD_ARG);
 }
 
 int run_argon2_tests(void)
@@ -376,8 +682,15 @@ int run_argon2_tests(void)
         cmocka_unit_test(test_blake2b_bad_args),
         cmocka_unit_test(test_argon2id_rfc9106),
         cmocka_unit_test(test_argon2id_reference_cli),
+        cmocka_unit_test(test_argon2id_levels),
+        cmocka_unit_test(test_argon2id_level_refusals),
         cmocka_unit_test(test_argon2id_memory),
         cmocka_unit_test(test_argon2id_bad_args),
+        cmocka_unit_test(test_argon2id_runner_reverse),
+        cmocka_unit_test(test_argon2id_runner_threads),
+        cmocka_unit_test(test_argon2id_runner_bad),
+        cmocka_unit_test(test_argon2id_lanes_pool),
+        cmocka_unit_test(test_lanes_worth),
     };
 
     return cmocka_run_group_tests_name("argon2", tests, NULL, NULL);

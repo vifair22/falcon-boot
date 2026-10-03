@@ -25,6 +25,7 @@ static const cli_cmd *const commands[] = {
     &mks_cmd_bios,
     &mks_cmd_create,
     &mks_cmd_ident,
+    &mks_cmd_kdf_bench,
     &mks_cmd_keygen,
     &mks_cmd_next_boot,
     &mks_cmd_station,

@@ -11,7 +11,7 @@ MKSTICK_SRCS := $(CLI_COMMON) $(addprefix $(CLI)/mkstick/,main.c cleanup.c \
 	disk.c guid.c keys.c pass.c shimname.c create.c keygen.c inspect.c \
 	varstore.c bios.c bioscore.c records.c identcmd.c nextcmd.c nextcore.c \
 	nextio.c devio.c station.c stationinst.c stationcore.c totp.c totpcore.c \
-	update.c updatecore.c shelfkey.c)
+	update.c updatecore.c shelfkey.c kdfbench.c kdfbenchcore.c)
 
 # The core modules `mkstick status` reuses verbatim. Every one is EFI-free by
 # construction (device access through a byte-read callback), which is exactly
@@ -91,6 +91,12 @@ $(HOST32_OBJ)/%.o: %.c
 # AES-NI alone, as falcon-bios builds it: crypto.c's CPUID probe takes this
 # path only on a processor that has it, which a Pentium III does not.
 $(HOST32_OBJ)/falcon-core/src/crypto/aesni.o: HOST32_CFLAGS += -msse2 -maes
+# Argon2id's vector block functions, each its own level and gated the same
+# way; tools/check-floor.sh --userland passes them by their _sse2, _ssse3
+# and _avx2 names.
+$(HOST32_OBJ)/falcon-core/src/crypto/argon2_sse2.o: HOST32_CFLAGS += -msse2
+$(HOST32_OBJ)/$(ARGON2_SIMD_SSSE3): HOST32_CFLAGS += -mssse3
+$(HOST32_OBJ)/$(ARGON2_SIMD_AVX2): HOST32_CFLAGS += -mavx2
 
 $(MKSTICK32): $(MKSTICK32_OBJS)
 	@mkdir -p $(@D)
@@ -144,13 +150,15 @@ uninstall:
 
 CLI_TESTS := $(addprefix falcon-cli/tests/,main.c isoprobe_test.c \
 	payload_test.c uki_test.c util_test.c bioscore_test.c records_test.c \
-	nextio_test.c stationcore_test.c totpcore_test.c updatecore_test.c)
+	nextio_test.c stationcore_test.c totpcore_test.c updatecore_test.c \
+	kdfbenchcore_test.c)
 
 # records.c reads through disk.c's byte reader, which brings the process and
 # cleanup helpers disk.c also holds; they are linked, not tested, here.
 CLI_UUT := $(addprefix $(CLI)/sign/,isoprobe.c payload.c uki.c util.c) \
 	$(addprefix $(CLI)/mkstick/,bioscore.c records.c nextcore.c nextio.c \
-		disk.c cleanup.c stationcore.c totpcore.c updatecore.c) \
+		disk.c cleanup.c stationcore.c totpcore.c updatecore.c \
+		kdfbenchcore.c) \
 	$(addprefix $(CLI)/common/,status.c log.c proc.c util.c jmem.c) \
 	$(CORE)/media/family.c $(CORE)/media/bootcfg.c $(CORE)/media/nextboot.c \
 	$(CORE_MANIFEST) $(CORE_MANIFEST_WRITE) \

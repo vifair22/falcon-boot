@@ -39,6 +39,9 @@
 #include <luks/luks.h>
 #include <pe/pe.h>
 #include <crypto/crypto.h>
+#include <crypto/xstate.h>
+#include <crypto/lanes.h>
+#include <mp/mp.h>
 #include <mem/heap.h>
 #include <mem/jnlmem.h>
 #include <media/cpio.h>
@@ -422,7 +425,9 @@ static void kdf_put(void *ctx, void *mem, uint32_t kib)
     heap_reset();
 }
 
-static const luks_kdf_mem g_kdf_mem = { kdf_get, kdf_put, (void *)0 };
+static const luks_kdf_mem g_kdf_mem = {
+    kdf_get, kdf_put, (void *)0, (void *)0
+};
 
 
 /* Appends v in decimal at r->buf + *n, cut to fit like boot_result_advise. */
@@ -487,6 +492,75 @@ static void mount_advice(boot_result *r, int rc, const char *otherwise)
     }
 }
 
+/* Workers worth starting for this shelf's keyslots: one fewer than the
+ * most lanes any argon2id slot costly enough for them has (lanes_worth),
+ * 0 when none is. */
+static uint32_t lanes_wanted(void)
+{
+    size_t n = 0, k;
+    uint32_t want = 0;
+
+    if (luks_slot_count(&g_vol, &n) != LUKS_OK)
+        return 0;
+    for (k = 0; k < n; k++) {
+        luks_slot_info si;
+
+        if (luks_slot_at(&g_vol, k, &si) == LUKS_OK && si.usable &&
+            si.kdf == LUKS_KDF_ARGON2ID &&
+            lanes_worth(si.kdf_memory_kib, si.kdf_time, si.kdf_lanes) &&
+            si.kdf_lanes - 1u > want)
+            want = si.kdf_lanes - 1u;
+    }
+    return want;
+}
+
+/* Decimal, for a serial line. */
+static void puts_dec(uint32_t v)
+{
+    char d[11];
+    int n = 0;
+
+    do {
+        d[n++] = (char)('0' + (int)(v % 10u));
+        v /= 10u;
+    } while (v != 0u);
+    while (n > 0) {
+        char s[2] = { d[--n], 0 };
+
+        bios_puts(s);
+    }
+}
+
+/* The keyslots on every processor worth it (mp/mp.h), the AVX state
+ * borrowed for them (xstate.h), both given back before anything else runs;
+ * what ran and how long the keyslots took said on serial, the time by the
+ * BIOS tick count, to the 55 ms it counts in. */
+static int unlock_once(uint32_t *slot)
+{
+    luks_kdf_mem km = g_kdf_mem;
+    xstate_saved xs;
+    uint32_t t0, procs;
+    int rc;
+
+    xstate_borrow(&xs);
+    bios_puts("falcon-bios: argon2id block function: ");
+    bios_puts(crypto_simd_name(crypto_simd_level()));
+    bios_puts("\n");
+    km.run = mp_start(crypto_simd_level(), lanes_wanted());
+    t0 = peek32(0x46Cu);
+    rc = luks_unlock(&g_vol, g_pass, g_pass_len, &km, &g_mk, slot);
+    t0 = peek32(0x46Cu) - t0;
+    procs = mp_count();
+    mp_stop();
+    xstate_return(&xs);
+    bios_puts("falcon-bios: argon2id ran on ");
+    puts_dec(procs);
+    bios_puts(" processors in ");
+    puts_dec(t0 * 10000u / 182u);
+    bios_puts(" ms\n");
+    return rc;
+}
+
 /* Prompt, retry, and report, as the UEFI loader does. LUKS_OK, POS_ABORTED
  * for escape, or the LUKS status to report. */
 static int prompt_and_unlock(void)
@@ -502,8 +576,7 @@ static int prompt_and_unlock(void)
             return POS_ABORTED;
 
         screen_out("unlocking...\n");
-        rc = luks_unlock(&g_vol, g_pass, g_pass_len, &g_kdf_mem, &g_mk,
-                         &slot);
+        rc = unlock_once(&slot);
         if (rc == LUKS_OK)
             return LUKS_OK;
         if (rc != LUKS_ERR_NOKEY)

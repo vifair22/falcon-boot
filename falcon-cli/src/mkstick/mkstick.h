@@ -138,6 +138,7 @@ void mks_slot_describe(const luks_slot_info *info, char *buf, size_t cap);
 extern const cli_cmd mks_cmd_bios;
 extern const cli_cmd mks_cmd_create;
 extern const cli_cmd mks_cmd_ident;
+extern const cli_cmd mks_cmd_kdf_bench;
 extern const cli_cmd mks_cmd_keygen;
 extern const cli_cmd mks_cmd_next_boot;
 extern const cli_cmd mks_cmd_station;

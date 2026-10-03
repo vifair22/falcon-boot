@@ -9,7 +9,8 @@
  * the BIOS stages take are measured before anything is written to them, and
  * records.c, nextcore.c and nextio.c, the identity records and the
  * next-boot marker, and stationcore.c, where `station install` puts a
- * station and what its STATION.INI says.
+ * station and what its STATION.INI says, and kdfbenchcore.c, the lists and
+ * table of `mkstick kdf-bench`.
  */
 
 #include "tests.h"
@@ -22,6 +23,7 @@ int main(void)
 
     failed += run_bioscore_tests();
     failed += run_isoprobe_tests();
+    failed += run_kdfbenchcore_tests();
     failed += run_payload_tests();
     failed += run_records_tests();
     failed += run_nextio_tests();

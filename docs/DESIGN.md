@@ -2107,9 +2107,27 @@ while every real file lives only in UDF.
   sector decryption. AES-NI intrinsics for XTS, with a portable C fallback
   selected by CPUID at runtime. The primitives (`CORE_CRYPTO`): SHA-1 (WIM
   stream names), SHA-256 and SHA-512, HMAC and PBKDF2 parameterized over
-  them, BLAKE2b and Argon2id (the caller's memory, lanes filled in turn),
-  AES-XTS decrypt. SHA-512 (~150 lines) is there because a LUKS2 header
-  names its hash in four independent places and `cryptsetup --hash sha512`
+  them, BLAKE2b and Argon2id (the caller's memory, a slice's lanes run by
+  the caller's `argon2_runner`, in turn when it gives none), AES-XTS
+  decrypt. Argon2id's block function comes in portable C, SSE2, SSSE3 and
+  AVX2 (`crypto/argon2_simd.h`), one object per instruction set built with
+  that set's flag alone, picked by `crypto_simd_level` as AES-NI is, and
+  every level gives the reference's output (`argon2_test.c` runs each).
+  AVX2 needs its register state on (CR4.OSXSAVE, XCR0), which no loader
+  can assume: both borrow it around `luks_unlock` and give it back
+  (`crypto/xstate.c`, ring 0 only), with every ymm register cleared, so a
+  firmware, a kernel or a chained DOS boot sector inherits the CR4 and XCR0
+  it would have had. Each unlock says its level on serial. A slice's lanes
+  are independent, and `crypto/lanes.c` shares them out over a pool: the
+  caller and any workers take lanes off one atomic word that carries the
+  slice's lane count beside the next lane, so a late worker cannot pair one
+  slice's lane with another's count and run a lane twice. The workers are
+  started once an unlock and spin between slices; `lanes_worth` keeps a
+  cheap slot (under 512 MiB-passes, the stick's) on one processor, since
+  starting them and seeing them back costs a firmware up to 100 ms. The
+  host tests and `mkstick kdf-bench` run the pool on threads. SHA-512 (~150
+  lines) is there because a LUKS2 header names its hash in four
+  independent places and `cryptsetup --hash sha512`
   (which the user's own p4 header used for its digest) switches all four.
   The UEFI station alone also links `CORE_CRYPTO_TPM` for its TOTP check
   (Section 12.15): AES-CFB, P-256 ECDH over `bn.c`, the TPM 2.0 KDFs,
@@ -2202,7 +2220,18 @@ while every real file lives only in UDF.
   - `bsd` - BSD media served as its own memory disk (Section 6.4): core's
     `media/bsdmd.c` edits laid over the virtual CD.
   - `pos` - the personal-OS path (Section 5), the only module that holds the
-    passphrase.
+    passphrase. Its argon2id block is 2 MiB aligned, so the firmware's
+    large pages cover it: the derivation's random walk over the block is
+    paced by the TLB, and on 4 KiB pages four processors barely beat one.
+  - `mp` - argon2id's lanes on the other processors (`mp.c`): core's lane
+    pool with the application processors as workers, started once an
+    unlock by a non-blocking `StartupAllAPs` and waited for when it is
+    done. A worker borrows its own processor's AVX state and gives it back.
+    `mpcore.c`, host-tested, picks the workers from `GetProcessorInfo`: the
+    first usable thread of each core the boot processor is not on, or every
+    usable processor when the firmware reports no topology. No MP services
+    or one processor is lanes in turn. Each unlock says on serial how many
+    processors ran it and how long the keyslots took.
   - `bless` - blessed media (Section 8.1); `blesscore.c` is its EFI-free,
     host-tested half.
   - `secboot` - `sb.c` reads `SecureBoot` / `SetupMode` / `MokSBState` for UX
@@ -2437,7 +2466,10 @@ sequenceDiagram
     U->>L: Enter on Personal OS
     L->>U: masked passphrase prompt
     U->>L: passphrase (3 tries, Escape backs out)
-    L->>FC: luks_unlock p3 (argon2id or PBKDF2, AES-XTS), luks_dev_open, fs_mount_journal ext4 (a journal left by a hibernated OS replayed in memory, 5.4)
+    L->>L: borrow the AVX state; a slot of 512 MiB-passes or more: StartupAllAPs, the other cores on the lane pool (mp/)
+    L->>FC: luks_unlock p3 (argon2id or PBKDF2, AES-XTS)
+    L->>L: the workers released and seen back, the AVX state given back, on every core
+    L->>FC: luks_dev_open, fs_mount_journal ext4 (a journal left by a hibernated OS replayed in memory, 5.4)
     FC-->>L: /uki/*.efi, else /EFI/Linux/*.efi
     L->>U: chooser (skipped for one image)
     L->>L: read the UKI into pages
@@ -2456,7 +2488,9 @@ sequenceDiagram
 The OS half (the drop-in, the cmdline naming p4 and root) is the archusb
 repository's; Section 5 says why the drop-in exists.
 
-Resident at handoff: credfs and sd-stub's LoadFile2, both boot-services. On
+Resident at handoff: credfs and sd-stub's LoadFile2, both boot-services.
+The other processors are back with the firmware before the shelf is
+mounted, its dispatch finished and their CR4 and XCR0 as it had them. On
 failure: a wrong passphrase retries after a wait, five a boot and then
 power off (5.2), any other unlock error stops; a refused
 UKI tears down credfs, wipes the credential and prints the refusal evidence.
@@ -2865,7 +2899,9 @@ flowchart TD
 The whole loader is i586 code in flat 32-bit protected mode, and one image
 runs on every i586 or later processor. What a newer processor
 adds is taken by asking CPUID, not by a second build: the SSE state above,
-AES-NI in falcon-core's AES path, and long mode, which only a 64-bit kernel
+AES-NI in falcon-core's AES path, argon2id's SSE2, SSSE3 and AVX2 block
+functions (the AVX state borrowed for the unlock and given back), the other
+processors for its lanes (11.3.7), and long mode, which only a 64-bit kernel
 needs and 11.3.6 checks for (the menu's `{64-BIT ONLY}`, 7.8, asks the
 same question before a row is chosen). Paging stays off, so everything the loader
 places is below 4 GiB (`ADDR_END`).
@@ -2945,6 +2981,7 @@ resident CD handler, from real mode.
 | 0x1000-0x10FF | disk packet, drive parameters, E820 slot | per call |
 | below 0x7000 | real-mode stack during a thunk | per call |
 | 0x3000-0x311F | the Linux handoff: the move stub at 0x3000, the handoff GDT at 0x3100 | copied at the handoff, handed to the kernel |
+| 0x5000-0x53FF | the page the other processors start in for an unlock (`aptramp.S`): data, an IDT of halts, the code | while the keyslots run; the processors are sent INIT before anything else |
 | a free 4 KB in the option-ROM area, chosen at run time (falcon jump) | a PC Card's attribute memory, through the bridge's memory window 0 | while `PCC.MOD` reads the CIS; closed before the handoff |
 | 0x7C00-0x7DFF | stage 1; later the chainloaded boot image | stage 1 dies at the jump |
 | 0x7E00-0xFDFF | stage 2 (at most 62 sectors; 25 KiB used): gate, thunk, GDT, IDT, fault reporting, the boot partition search | until the target starts |
@@ -3058,7 +3095,10 @@ sequenceDiagram
     U->>L: Enter on Personal OS
     alt LUKS2 shelf
         L->>U: masked passphrase (INT 16h), five a boot with a wait after each wrong one, then power off (5.2)
-        L->>FC: luks_unlock p3, luks_dev_open, fs_mount_journal ext4 (5.4)
+        L->>L: borrow the AVX state; a slot of 512 MiB-passes or more: the MADT's other cores woken by INIT and two startup IPIs into 0x5000 (mp/aptramp.S), on the lane pool
+        L->>FC: luks_unlock p3
+        L->>L: the workers released and halted, each sent INIT, the local APIC's SVR as found, the AVX state given back
+        L->>FC: luks_dev_open, fs_mount_journal ext4 (5.4)
     else plaintext shelf
         L->>FC: fs_mount_journal straight off the partition, no prompt and no credential
     end
@@ -3076,7 +3116,36 @@ The initramfs sees what sd-stub would have given it. `pmode.S` sets
 CR4.OSFXSR when CPUID reports SSE, for AES-NI in `luks_unlock`: UEFI
 firmware sets it, a BIOS leaves it clear, and the first SSE instruction
 would fault. Without AES-NI, `luks_unlock` takes falcon-core's portable AES
-path.
+path. The AVX state is off in protected mode until something turns it on:
+`pos.c` borrows it around `luks_unlock` for argon2id's AVX2 block function
+and gives it back (CR4.OSXSAVE clear and XCR0 at its reset value again,
+every ymm register zero) before anything is loaded, so what boots next
+finds the processor's state as the BIOS left it. The vector objects are
+built to realign their own stack frames, since nothing in falcon-bios
+promises a 16-byte stack to a function it calls and a legacy SSE operand
+on a misaligned stack slot is #GP.
+
+A keyslot worth it (`lanes_worth`) runs on the other processors too
+(`mp/mp.c`). A BIOS has nothing that starts one, so falcon-bios does what
+an operating system does: the processors from ACPI's MADT, found by
+`power/acpicore.c`'s table walk; one worker a core, the boot processor's
+excepted (`mpcore.c`, the thread bits from CPUID leaf 0Bh), as many as the
+slot has lanes less one, at most 15; the local APIC, xAPIC or x2APIC as
+the BIOS left it, its SVR software-enabled for the sends and put back
+after; INIT, 10 ms, a startup IPI to vector 5, 200 us, another. The page
+at 0x5000 takes each from real mode to the flat protected mode stage 3
+runs in: the cache back on (INIT leaves CR0.CD and NW set, and an
+uncached processor is no help), the boot processor's GDT, an IDT of its
+own whose every gate halts (a fault on a worker stops that worker rather
+than triple faulting, which some chipsets turn into a reset), the SSE
+state, a 16 KiB stack from stage 3's `.bss` by a ticket, then
+`mp_ap_main`: the worker's own AVX borrow, the lane pool, the return.
+After the keyslots each halts in that page with interrupts off and is
+sent INIT, which is the state POST left it in: a kernel brings it up
+again (the rig's UKI reports every processor online), a chained DOS
+never knows. A processor with no local APIC, a machine with no MADT or one
+processor, or a local APIC the BIOS left disabled, runs the lanes in
+turn.
 
 #### 11.3.8 CHN: the resident virtual CD
 

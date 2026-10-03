@@ -69,4 +69,27 @@ int crypto_ct_eq(const void *a, const void *b, size_t n);
  */
 int crypto_has_aesni(void);
 
+/* The vector instruction sets argon2id's block function comes in, lowest
+ * first; each level's processors have every level below it. */
+enum {
+    CRYPTO_SIMD_NONE  = 0,   /* portable C */
+    CRYPTO_SIMD_SSE2  = 1,
+    CRYPTO_SIMD_SSSE3 = 2,
+    CRYPTO_SIMD_AVX2  = 3,
+};
+
+/* The highest CRYPTO_SIMD_* this processor can run now, probed the same way
+ * and for the same reason as crypto_has_aesni.
+ *
+ * "Now" is the point for AVX2. Its registers exist only once the system
+ * software has turned their state on (CR4.OSXSAVE and XCR0), so the answer
+ * is the processor's CPUID bits and what XGETBV says is enabled, never the
+ * bits alone: a loader that has not borrowed the AVX state (xstate.h) gets
+ * SSSE3 on a processor that has AVX2, and an AVX2 instruction would fault. */
+int crypto_simd_level(void);
+
+/* A CRYPTO_SIMD_* level's name for a diagnostic line: "portable", "sse2",
+ * "ssse3", "avx2"; "?" for anything else. */
+const char *crypto_simd_name(int level);
+
 #endif /* FALCON_CRYPTO_H */

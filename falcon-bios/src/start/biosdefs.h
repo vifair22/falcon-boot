@@ -189,6 +189,29 @@
 
 #define STAGE3_LOAD     0x100000
 
+/* The page the other processors start in for an unlock (mp/aptramp.S,
+ * mp/mp.c), copied there before each start. A startup IPI names a 4 KB
+ * page below a megabyte by its number and starts the processor in real
+ * mode at its first byte. Between the Linux stub and the real-mode stack,
+ * which grows down from 0x7000 only a few hundred bytes, and used only
+ * while the keyslots run: nothing else lives in it. Data at fixed offsets,
+ * filled by mp.c, then the IDT the processors run under and the code; the
+ * offsets are the .org's in the assembly. */
+#define APT_ADDR        0x00005000
+#define APT_VECTOR      (APT_ADDR >> 12)
+#define APT_OFF_GDTR    0x08     /* 6 bytes: the boot processor's GDTR */
+#define APT_OFF_IDTR    0x10     /* 6 bytes: this page's IDT */
+#define APT_OFF_ENTRY   0x18     /* dword: the C entry, mp_ap_main */
+#define APT_OFF_STACKS  0x1C     /* dword: the stacks' base */
+#define APT_OFF_STACKB  0x20     /* dword: bytes a stack */
+#define APT_OFF_NSTACK  0x24     /* dword: stacks */
+#define APT_OFF_TICKET  0x28     /* dword: processors arrived */
+#define APT_OFF_IDT     0x40     /* 32 gates, every one the halt */
+#define APT_IDT_GATES   32
+#define APT_OFF_HALT    0x140    /* the halt every fault lands on */
+#define APT_OFF_CODE    0x150
+#define APT_BYTES       0x400
+
 /* Stage 2's own memory once it is in protected mode, both borrowed from
  * stage 3's, which is not there yet.
  *
