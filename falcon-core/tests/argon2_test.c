@@ -41,6 +41,7 @@
 #include <crypto/crypto.h>
 #include <crypto/blake2b.h>
 #include <crypto/argon2.h>
+#include <crypto/lanes.h>
 
 static uint8_t nib(char c)
 {
@@ -571,6 +572,87 @@ static void test_argon2id_runner_threads(void **state)
     check_runner(run_threads);
 }
 
+/* ---- the lane pool (crypto/lanes.c) ---------------------------------- */
+
+typedef struct {
+    lanes_pool *pool;
+    int         ok;
+    int         served;
+} pool_worker;
+
+static void *pool_thread(void *arg)
+{
+    pool_worker *w = (pool_worker *)arg;
+
+    w->served = lanes_serve(w->pool, w->ok);
+    return NULL;
+}
+
+/* One pool for every reference row in turn, as one unlock tries keyslot
+ * after keyslot: lane counts 1, 4, 1, 2, 3 and 1 one after another through
+ * the same workers, which is where a lane number from one slice paired
+ * with another's count would run a lane twice. Five threads offered,
+ * three admitted, one of them unable to run the level and so not. */
+static void test_argon2id_lanes_pool(void **state)
+{
+    lanes_pool pool;
+    argon2_runner r = { lanes_run, &pool };
+    pthread_t th[5];
+    pool_worker w[5];
+    uint8_t out[100];
+    size_t i;
+    int k, served = 0;
+
+    (void)state;
+    lanes_init(&pool, 3, crypto_simd_level());
+    for (k = 0; k < 5; k++) {
+        w[k].pool = &pool;
+        w[k].ok = (k != 1);
+        w[k].served = -1;
+        assert_int_equal(pthread_create(&th[k], NULL, pool_thread, &w[k]), 0);
+    }
+    for (i = 0; i < sizeof cli_rows / sizeof cli_rows[0]; i++) {
+        argon2_params p;
+        uint32_t kib = argon2_mem_kib(cli_rows[i].m, cli_rows[i].p);
+        void *mem = malloc((size_t)kib * 1024u);
+
+        assert_non_null(mem);
+        memset(&p, 0, sizeof p);
+        p.pwd = "password";
+        p.pwd_len = 8;
+        p.salt = "somesalt";
+        p.salt_len = 8;
+        p.t_cost = cli_rows[i].t;
+        p.m_cost = cli_rows[i].m;
+        p.lanes = cli_rows[i].p;
+        assert_int_equal(argon2id(&p, mem, kib, &r, out, cli_rows[i].l),
+                         CRYPTO_OK);
+        assert_hex(out, cli_rows[i].l, cli_rows[i].want);
+        free(mem);
+    }
+    lanes_stop(&pool);
+    for (k = 0; k < 5; k++) {
+        assert_int_equal(pthread_join(th[k], NULL), 0);
+        served += w[k].served;
+    }
+    assert_int_equal(w[1].served, 0);
+    assert_int_equal(served, 3);
+    assert_int_equal(lanes_joined(&pool), 3);
+}
+
+/* The stick's fixed cost is not pooled; a shelf at cryptsetup's own cost
+ * is; one lane never is. */
+static void test_lanes_worth(void **state)
+{
+    (void)state;
+    assert_false(lanes_worth(32768, 4, 4));             /* 128 MiB-passes */
+    assert_false(lanes_worth(131072, 3, 4));            /* 384 */
+    assert_true(lanes_worth(131072, 4, 4));             /* 512 */
+    assert_true(lanes_worth(1048576, 12, 4));           /* 1 GiB, t=12 */
+    assert_false(lanes_worth(1048576, 12, 1));
+    assert_true(lanes_worth(4194304, 0xffffffffu, 2));  /* no overflow */
+}
+
 /* A runner with no function is refused before the block is touched. */
 static void test_argon2id_runner_bad(void **state)
 {
@@ -607,6 +689,8 @@ int run_argon2_tests(void)
         cmocka_unit_test(test_argon2id_runner_reverse),
         cmocka_unit_test(test_argon2id_runner_threads),
         cmocka_unit_test(test_argon2id_runner_bad),
+        cmocka_unit_test(test_argon2id_lanes_pool),
+        cmocka_unit_test(test_lanes_worth),
     };
 
     return cmocka_run_group_tests_name("argon2", tests, NULL, NULL);

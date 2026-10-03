@@ -22,6 +22,8 @@ EFI_MOD_direct        := $(EFI_SRC)/direct/direct.c
 EFI_MOD_bsd           := $(EFI_SRC)/bsd/bsd.c
 EFI_MOD_win           := $(EFI_SRC)/win/winpatch.c
 EFI_MOD_pos           := $(EFI_SRC)/pos/pos.c
+# argon2id's lanes on the other processors, through MP services
+EFI_MOD_mp            := $(EFI_SRC)/mp/mp.c $(EFI_SRC)/mp/mpcore.c
 EFI_MOD_jnlmem        := $(EFI_SRC)/mem/jnlmem.c
 EFI_MOD_task          := $(EFI_SRC)/task/task.c
 EFI_MOD_bless         := $(EFI_SRC)/bless/bless.c $(EFI_SRC)/bless/blesscore.c
@@ -246,10 +248,12 @@ run-stick-secboot:
 # SetVariable.
 
 EFI_TESTS := $(addprefix falcon-efi/tests/,main.c bless_test.c \
-	iso_overlay_test.c sb_test.c nxt_test.c tsc_test.c bli_test.c)
+	iso_overlay_test.c sb_test.c nxt_test.c tsc_test.c bli_test.c \
+	mpcore_test.c)
 
 EFI_UUT := $(EFI_SRC)/bless/blesscore.c $(EFI_SRC)/secboot/sb.c \
 	$(EFI_SRC)/nxt/nxtcore.c $(EFI_SRC)/tsc/tsccore.c $(EFI_SRC)/loader/bli.c \
+	$(EFI_SRC)/mp/mpcore.c \
 	$(CORE_MANIFEST) $(CORE)/media/family.c $(CORE_PART)
 
 $(eval $(call test_bin,efi,$(EFI_TESTS) $(EFI_UUT)))

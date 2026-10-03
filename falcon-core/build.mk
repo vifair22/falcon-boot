@@ -10,7 +10,7 @@ CORE := falcon-core/src
 
 CORE_CRYPTO   := $(addprefix $(CORE)/crypto/,crypto.c sha1.c sha256.c sha512.c \
 	hash.c hmac.c pbkdf2.c aes.c xts.c aesni.c blake2b.c argon2.c \
-	argon2_sse2.c argon2_ssse3.c argon2_avx2.c)
+	argon2_sse2.c argon2_ssse3.c argon2_avx2.c lanes.c)
 # The public-key and session crypto under the TPM path (DESIGN Section
 # 12.15): AES-CFB, P-256 ECDH over bn.c, the TPM 2.0 KDFs,
 # RSAES-OAEP for the 1.2 transport, and the TOTP code. Apart from

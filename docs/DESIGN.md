@@ -2117,8 +2117,17 @@ while every real file lives only in UDF.
   can assume: both borrow it around `luks_unlock` and give it back
   (`crypto/xstate.c`, ring 0 only), with every ymm register cleared, so a
   firmware, a kernel or a chained DOS boot sector inherits the CR4 and XCR0
-  it would have had. Each unlock says its level on serial. SHA-512 (~150 lines) is there because a LUKS2 header
-  names its hash in four independent places and `cryptsetup --hash sha512`
+  it would have had. Each unlock says its level on serial. A slice's lanes
+  are independent, and `crypto/lanes.c` shares them out over a pool: the
+  caller and any workers take lanes off one atomic word that carries the
+  slice's lane count beside the next lane, so a late worker cannot pair one
+  slice's lane with another's count and run a lane twice. The workers are
+  started once an unlock and spin between slices; `lanes_worth` keeps a
+  cheap slot (under 512 MiB-passes, the stick's) on one processor, since
+  starting them and seeing them back costs a firmware up to 100 ms. The
+  host tests and `mkstick kdf-bench` run the pool on threads. SHA-512 (~150
+  lines) is there because a LUKS2 header names its hash in four
+  independent places and `cryptsetup --hash sha512`
   (which the user's own p4 header used for its digest) switches all four.
   The UEFI station alone also links `CORE_CRYPTO_TPM` for its TOTP check
   (Section 12.15): AES-CFB, P-256 ECDH over `bn.c`, the TPM 2.0 KDFs,
@@ -2211,7 +2220,18 @@ while every real file lives only in UDF.
   - `bsd` - BSD media served as its own memory disk (Section 6.4): core's
     `media/bsdmd.c` edits laid over the virtual CD.
   - `pos` - the personal-OS path (Section 5), the only module that holds the
-    passphrase.
+    passphrase. Its argon2id block is 2 MiB aligned, so the firmware's
+    large pages cover it: the derivation's random walk over the block is
+    paced by the TLB, and on 4 KiB pages four processors barely beat one.
+  - `mp` - argon2id's lanes on the other processors (`mp.c`): core's lane
+    pool with the application processors as workers, started once an
+    unlock by a non-blocking `StartupAllAPs` and waited for when it is
+    done. A worker borrows its own processor's AVX state and gives it back.
+    `mpcore.c`, host-tested, picks the workers from `GetProcessorInfo`: the
+    first usable thread of each core the boot processor is not on, or every
+    usable processor when the firmware reports no topology. No MP services
+    or one processor is lanes in turn. Each unlock says on serial how many
+    processors ran it and how long the keyslots took.
   - `bless` - blessed media (Section 8.1); `blesscore.c` is its EFI-free,
     host-tested half.
   - `secboot` - `sb.c` reads `SecureBoot` / `SetupMode` / `MokSBState` for UX

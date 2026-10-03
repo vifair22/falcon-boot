@@ -9,9 +9,9 @@
  *
  * Lanes run as the loaders run them. --threads 1 is one after another on
  * one processor, which is what a loader does with no other processor to
- * start. More threads is a pool given each slice, the calling thread
- * taking lanes too, which is the shape the loaders' multicore runners
- * have: a lane a processor, the next slice only when all are done.
+ * start. More threads is the loaders' own lane pool (crypto/lanes.c), its
+ * workers threads here where they are processors there, the calling
+ * thread taking lanes too.
  *
  * The memory is allocated once, at the largest size asked for, and touched
  * before the first cell, so the kernel's first-touch page faults are not
@@ -24,7 +24,6 @@
 
 #include <errno.h>
 #include <pthread.h>
-#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -34,132 +33,56 @@
 #include <common/log.h>
 #include <crypto/argon2.h>
 #include <crypto/crypto.h>
+#include <crypto/lanes.h>
 
 #define DEFAULT_MEMORY  "64,128,256,512,1024"
 #define DEFAULT_PASSES  "1,2,4,8"
 #define DEFAULT_LANES   4u
 
-/* ---- the pool ---- */
+/* ---- the workers ---- */
 
+/* The loaders' pool (crypto/lanes.c), its workers threads here where they
+ * are processors there. */
 typedef struct {
-    pthread_mutex_t mu;
-    pthread_cond_t  go;          /* a slice is posted, or the pool stops */
-    pthread_cond_t  done;        /* every lane of the slice has run */
-    unsigned        generation;  /* bumped once a slice */
-    int             stop;
-    argon2_job      job;
-    void           *ctx;
-    uint32_t        lanes;
-    atomic_uint     next;        /* the next lane to take */
-    uint32_t        finished;    /* lanes run, under mu */
-    pthread_t       th[KDFB_LANES_MAX];
-    unsigned        nth;         /* worker threads, the caller not counted */
-} pool;
-
-/* Takes lanes until none is left. The counter is what makes every lane
- * run exactly once whoever takes it, the runner contract's first half. */
-static void take_lanes(pool *p)
-{
-    uint32_t ran = 0;
-
-    for (;;) {
-        unsigned l = atomic_fetch_add(&p->next, 1u);
-
-        if (l >= p->lanes)
-            break;
-        p->job(p->ctx, (uint32_t)l);
-        ran++;
-    }
-    if (ran != 0) {
-        (void)pthread_mutex_lock(&p->mu);
-        p->finished += ran;
-        if (p->finished == p->lanes)
-            (void)pthread_cond_signal(&p->done);
-        (void)pthread_mutex_unlock(&p->mu);
-    }
-}
+    lanes_pool pool;
+    pthread_t  th[LANES_MAX];
+    unsigned   nth;
+} bench_pool;
 
 static void *worker(void *arg)
 {
-    pool *p = (pool *)arg;
-    unsigned seen = 0;
-
-    for (;;) {
-        (void)pthread_mutex_lock(&p->mu);
-        while (!p->stop && p->generation == seen)
-            (void)pthread_cond_wait(&p->go, &p->mu);
-        if (p->stop) {
-            (void)pthread_mutex_unlock(&p->mu);
-            return NULL;
-        }
-        seen = p->generation;
-        (void)pthread_mutex_unlock(&p->mu);
-        take_lanes(p);
-    }
+    (void)lanes_serve((lanes_pool *)arg, 1);
+    return NULL;
 }
 
-/* The argon2_runner: post the slice, take lanes alongside the workers,
- * return when all have run. The mutex is the ordering the contract's
- * second half asks for: the slice's inputs are published under it, and
- * every lane's writes are under it before the caller sees finished. */
-static void pool_run(void *self, argon2_job job, void *ctx, uint32_t lanes)
-{
-    pool *p = (pool *)self;
-
-    (void)pthread_mutex_lock(&p->mu);
-    p->job = job;
-    p->ctx = ctx;
-    p->lanes = lanes;
-    p->finished = 0;
-    atomic_store(&p->next, 0u);
-    p->generation++;
-    (void)pthread_cond_broadcast(&p->go);
-    (void)pthread_mutex_unlock(&p->mu);
-
-    take_lanes(p);
-
-    (void)pthread_mutex_lock(&p->mu);
-    while (p->finished != p->lanes)
-        (void)pthread_cond_wait(&p->done, &p->mu);
-    (void)pthread_mutex_unlock(&p->mu);
-}
-
-static cli_status pool_start(pool *p, unsigned workers)
+static void pool_stop(bench_pool *bp)
 {
     unsigned i;
 
-    memset(p, 0, sizeof *p);
-    atomic_init(&p->next, 0u);
-    if (pthread_mutex_init(&p->mu, NULL) != 0 ||
-        pthread_cond_init(&p->go, NULL) != 0 ||
-        pthread_cond_init(&p->done, NULL) != 0)
-        return set_error(CLI_ERR_INTERNAL, "cannot set up the thread pool");
+    lanes_stop(&bp->pool);
+    for (i = 0; i < bp->nth; i++)
+        (void)pthread_join(bp->th[i], NULL);
+    bp->nth = 0;
+}
+
+static cli_status pool_start(bench_pool *bp, unsigned workers, int level)
+{
+    unsigned i;
+
+    bp->nth = 0;
+    lanes_init(&bp->pool, workers, level);
     for (i = 0; i < workers; i++) {
-        int e = pthread_create(&p->th[i], NULL, worker, p);
+        int e = pthread_create(&bp->th[i], NULL, worker, &bp->pool);
 
         if (e != 0) {
+            pool_stop(bp);
             errno = e;
             return set_error_errno(CLI_ERR_INTERNAL, "starting thread %u",
                                    i + 1u);
         }
-        p->nth++;
+        bp->nth++;
     }
     return CLI_OK;
-}
-
-static void pool_stop(pool *p)
-{
-    unsigned i;
-
-    (void)pthread_mutex_lock(&p->mu);
-    p->stop = 1;
-    (void)pthread_cond_broadcast(&p->go);
-    (void)pthread_mutex_unlock(&p->mu);
-    for (i = 0; i < p->nth; i++)
-        (void)pthread_join(p->th[i], NULL);
-    (void)pthread_cond_destroy(&p->done);
-    (void)pthread_cond_destroy(&p->go);
-    (void)pthread_mutex_destroy(&p->mu);
 }
 
 /* ---- the command ---- */
@@ -210,8 +133,8 @@ static cli_status bench_run(const cli_args *a)
     size_t nmem, npass, i, j;
     long ncpu = sysconf(_SC_NPROCESSORS_ONLN);
     int level, eff;
-    argon2_runner runner = { pool_run, NULL };
-    pool p;
+    argon2_runner runner = { lanes_run, NULL };
+    bench_pool bp;
     void *block = NULL;
     char line[256];
     cli_status rc;
@@ -232,7 +155,8 @@ static cli_status bench_run(const cli_args *a)
         ncpu = 1;
     threads = lanes < (uint32_t)ncpu ? lanes : (uint32_t)ncpu;
     if (cli_value(a, "threads", NULL) != NULL) {
-        rc = list_opt(a, "threads", NULL, 1u, KDFB_LANES_MAX, &threads, &one);
+        rc = list_opt(a, "threads", NULL, 1u, LANES_MAX + 1u, &threads,
+                      &one);
         if (rc != CLI_OK)
             return rc;
     }
@@ -260,13 +184,12 @@ static cli_status bench_run(const cli_args *a)
     memset(block, 0x5a, (size_t)max_kib * 1024u);
 
     if (threads > 1u) {
-        rc = pool_start(&p, threads - 1u);
+        rc = pool_start(&bp, threads - 1u, eff);
         if (rc != CLI_OK) {
-            pool_stop(&p);
             free(block);
             return rc;
         }
-        runner.self = &p;
+        runner.self = &bp.pool;
     }
 
     (void)printf("argon2id in falcon-core: %s block function, %lu lanes on "
@@ -327,7 +250,7 @@ static cli_status bench_run(const cli_args *a)
                      "--pbkdf-memory <MiB x 1024> --pbkdf-force-iterations "
                      "<t> --pbkdf-parallel %lu\n", (unsigned long)lanes);
     if (threads > 1u)
-        pool_stop(&p);
+        pool_stop(&bp);
     free(block);
     return rc;
 }

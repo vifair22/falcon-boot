@@ -2622,8 +2622,15 @@ privileges and touches no device.
 | `--level` | `auto` | the block function: `auto`, `portable`, `sse2`, `ssse3`, `avx2` |
 | `--repeat` | 1 | runs a cell, the fastest kept |
 
-Both loaders run a slot's lanes one after another, which is `--threads
-1`. `auto` is the level the loaders pick on this processor, which they say on
+The UEFI loaders run a slot's lanes on one processor a lane, up to the
+machine's cores, when the slot costs at least 512 MiB-passes, and one
+after another below that; falcon-bios runs them one after another. Each
+unlock says on serial what it ran on and how long the keyslots took:
+
+    falcon-pos: argon2id block function: avx2
+    falcon-pos: argon2id ran on 4 processors in 370 ms
+
+which is the figure to compare with the table's. `auto` is the level the loaders pick on this processor, which they say on
 serial at every unlock (`argon2id block function:`). A level the
 processor cannot run is refused. The memory is allocated once and touched
 before the first cell, so page faults are not timed; a row larger than

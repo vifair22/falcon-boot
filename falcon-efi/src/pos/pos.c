@@ -15,6 +15,9 @@
 #include <crypto/crypto.h>
 #include <crypto/xstate.h>
 #include <console/serial.h>
+#include <mp/mp.h>
+#include <tsc/tsc.h>
+#include <tsc/tsccore.h>
 #include <discover/discover.h>
 #include <fs/fs.h>
 #include <mem/jnlmem.h>
@@ -308,21 +311,31 @@ UINTN pos_scan(EFI_SYSTEM_TABLE *st)
 static EFI_PHYSICAL_ADDRESS g_kdf_addr;
 static UINTN                g_kdf_pages;
 
+/* argon2id's block, 2 MiB aligned inside an allocation 2 MiB larger.
+ * Its every access is a random one across the whole block, so it is paced
+ * by the TLB: a firmware maps memory with 2 MiB pages, and splits a range
+ * into 4 KiB ones only where an attribute change starts or ends inside
+ * one (edk2 marks data no-execute that way), so a block on 2 MiB
+ * boundaries keeps its large pages whatever happens at the allocation's
+ * ends. */
+#define KDF_ALIGN ((uint64_t)2u << 20)
+
 static void *kdf_get(void *ctx, uint32_t kib)
 {
     EFI_BOOT_SERVICES *bs = g_st->BootServices;
-    UINTN pages = (UINTN)(((uint64_t)kib * 1024u + EFI_PAGE_SIZE - 1u) /
-                          EFI_PAGE_SIZE);
+    UINTN pages = (UINTN)(((uint64_t)kib * 1024u + KDF_ALIGN +
+                           EFI_PAGE_SIZE - 1u) / EFI_PAGE_SIZE);
 
     (void)ctx;
     g_kdf_addr = 0;
     g_kdf_pages = 0;
-    if (pages == 0 ||
+    if (kib == 0 ||
         bs->AllocatePages(AllocateAnyPages, EfiLoaderData, pages,
                           &g_kdf_addr) != EFI_SUCCESS)
         return (void *)0;
     g_kdf_pages = pages;
-    return (void *)(uintptr_t)g_kdf_addr;
+    return (void *)(uintptr_t)((g_kdf_addr + KDF_ALIGN - 1u) &
+                               ~(KDF_ALIGN - 1u));
 }
 
 static void kdf_put(void *ctx, void *mem, uint32_t kib)
@@ -428,42 +441,108 @@ static const CHAR16 *kdf_advice(void)
     return buf;
 }
 
+/* Into buf at *at, which stays at the terminator, as much as fits. */
+static void put_str(char *buf, UINTN cap, UINTN *at, const char *s)
+{
+    while (*s != '\0' && *at + 1u < cap)
+        buf[(*at)++] = *s++;
+    buf[*at] = '\0';
+}
+
+static void put_dec(char *buf, UINTN cap, UINTN *at, UINT64 v)
+{
+    char d[21];
+    UINTN n = 0;
+
+    do {
+        d[n++] = (char)('0' + (int)(v % 10u));
+        v /= 10u;
+    } while (v != 0u);
+    while (n > 0u && *at + 1u < cap)
+        buf[(*at)++] = d[--n];
+    buf[*at] = '\0';
+}
+
+/* head, then name, as one line on serial. */
+static void serial_note(const char *head, const char *name)
+{
+    char line[96];
+    UINTN n = 0;
+
+    while (*head != '\0' && n + 1u < sizeof line)
+        line[n++] = *head++;
+    while (*name != '\0' && n + 1u < sizeof line)
+        line[n++] = *name++;
+    line[n] = '\0';
+    serial_line(g_st, line);
+}
+
+/* The other processors serving argon2id lanes for an unlock (mp/mp.h).
+ * Static because the application processors read it while unlock_any
+ * runs. */
+static mp_lanes g_mp;
+
+/* Whether any keyslot an unlock may try costs enough to run its lanes on
+ * the other processors (lanes_worth): a cheap one, the stick's, finishes
+ * before the firmware would see the workers back. */
+static int pool_worth(void)
+{
+    UINTN i;
+
+    for (i = 0; i < g_shelf_n; i++) {
+        size_t n = 0, k;
+
+        if (!g_shelf[i].encrypted || !g_shelf[i].usable ||
+            luks_slot_count(&g_shelf[i].vol, &n) != LUKS_OK)
+            continue;
+        for (k = 0; k < n; k++) {
+            luks_slot_info si;
+
+            if (luks_slot_at(&g_shelf[i].vol, k, &si) == LUKS_OK &&
+                si.usable && si.kdf == LUKS_KDF_ARGON2ID &&
+                lanes_worth(si.kdf_memory_kib, si.kdf_time, si.kdf_lanes))
+                return 1;
+        }
+    }
+    return 0;
+}
+
 static int unlock_any(UINTN *which)
 {
     int other_err = LUKS_OK;
     int saw_nokey = 0;
     int saw_mem = 0;
+    int rc = LUKS_ERR_NOKEY;
     xstate_saved xs;
-    UINTN i;
+    luks_kdf_mem km = g_kdf_mem;
+    char num[48];
+    tsc_hz_how how;
+    uint32_t procs;
+    UINT64 t0, ms;
+    UINTN i, k;
 
     *which = 0;
     /* The AVX state for argon2id's block function, borrowed for the
-     * derivations and given back before anything else runs (xstate.h). */
+     * derivations and given back before anything else runs (xstate.h);
+     * then the other processors, which must run the level it gives. */
     xstate_borrow(&xs);
-    {
-        static const char head[] = "falcon-pos: argon2id block function: ";
-        const char *name = crypto_simd_name(crypto_simd_level());
-        char line[sizeof head + 16];
-        UINTN n = sizeof head - 1u;
-
-        memcpy(line, head, n);
-        while (*name != '\0' && n + 1u < sizeof line)
-            line[n++] = *name++;
-        line[n] = '\0';
-        serial_line(g_st, line);
-    }
+    serial_note("falcon-pos: argon2id block function: ",
+                crypto_simd_name(crypto_simd_level()));
+    g_mp.started = 0;
+    if (pool_worth())
+        km.run = mp_lanes_start(g_st->BootServices, &g_mp,
+                                crypto_simd_level());
+    t0 = tsc_read();
     for (i = 0; i < g_shelf_n; i++) {
         uint32_t slot = 0;
-        int rc;
 
         if (!g_shelf[i].encrypted || !g_shelf[i].usable)
             continue;
-        rc = luks_unlock(&g_shelf[i].vol, g_pass, (size_t)g_pass_len,
-                         &g_kdf_mem, &g_mk, &slot);
+        rc = luks_unlock(&g_shelf[i].vol, g_pass, (size_t)g_pass_len, &km,
+                         &g_mk, &slot);
         if (rc == LUKS_OK) {
-            xstate_return(&xs);
             *which = i;
-            return LUKS_OK;
+            break;
         }
         if (rc == LUKS_ERR_NOKEY) {
             saw_nokey = 1;
@@ -478,7 +557,21 @@ static int unlock_any(UINTN *which)
         }
     }
 
+    ms = tsc_usec(tsc_read() - t0, tsc_hz(g_st->BootServices, &how)) / 1000u;
+    procs = mp_lanes_count(&g_mp);
+    mp_lanes_stop(g_st->BootServices, &g_mp);
     xstate_return(&xs);
+    /* The keyslots' time without the release of the workers, which is the
+     * firmware's, so the figure compares with mkstick kdf-bench's. */
+    k = 0;
+    put_dec(num, sizeof num, &k, procs);
+    put_str(num, sizeof num, &k, " processors in ");
+    put_dec(num, sizeof num, &k, ms);
+    put_str(num, sizeof num, &k, " ms");
+    serial_note("falcon-pos: argon2id ran on ", num);
+
+    if (rc == LUKS_OK)
+        return LUKS_OK;
     if (saw_mem)
         return LUKS_ERR_KDF_MEMORY;
     if (saw_nokey)

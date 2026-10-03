@@ -24,7 +24,7 @@ STICK_EFI += $(addprefix $(CORE)/media/,bootcfg.c bootfs.c eltorito.c medium.c \
 	hookcmd.c grubcfg.c bsdmd.c extmap.c survey.c)
 STICK_EFI += $(CORE_UEFIBOOT)          # the {BIOS ONLY} tag
 STICK_EFI += $(HOOK_BLOB)              # appended to a direct boot's initrd
-STICK_EFI += $(EFI_MOD_pos) $(CORE_XSTATE) $(addprefix $(CORE)/media/,osrel.c shelf.c nextboot.c)
+STICK_EFI += $(EFI_MOD_pos) $(EFI_MOD_mp) $(CORE_XSTATE) $(addprefix $(CORE)/media/,osrel.c shelf.c nextboot.c)
 STICK_EFI += $(EFI_MOD_jnlmem)         # a hibernated shelf, read through its journal
 STICK_EFI += $(EFI_MOD_bless) $(CORE_MANIFEST)
 STICK_EFI += $(CORE_LIBC) $(CORE_UCS2)
