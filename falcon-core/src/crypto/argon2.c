@@ -158,8 +158,9 @@ static void perm(uint64_t *r, const uint8_t *idx)
  * which is all the address generator ever passes.
  *
  * The reference keeps the pre-permutation R in a second temporary; here next
- * holds it instead, which is the same sum with one block less of stack. R is
- * complete before next is written, so ref may be next (the address block is
+ * holds it instead, which is the same sum with one block less of stack.
+ * Word i of R is made and folded into next in one step, and reads only
+ * word i of ref and prev, so ref may be next (the address block is
  * compressed in place). */
 static void fill_block(blk *r, const blk *prev, const blk *ref, blk *next,
                        int with_xor)
@@ -168,10 +169,10 @@ static void fill_block(blk *r, const blk *prev, const blk *ref, blk *next,
     unsigned int i, k;
 
     for (i = 0; i < QWORDS; i++) {
-        r->v[i] = ref->v[i] ^ ((prev != NULL) ? prev->v[i] : 0u);
-    }
-    for (i = 0; i < QWORDS; i++) {
-        next->v[i] = with_xor ? (next->v[i] ^ r->v[i]) : r->v[i];
+        uint64_t x = ref->v[i] ^ ((prev != NULL) ? prev->v[i] : 0u);
+
+        r->v[i] = x;
+        next->v[i] = with_xor ? (next->v[i] ^ x) : x;
     }
     /* Rows: the eight 16-word runs. */
     for (i = 0; i < 8u; i++) {
