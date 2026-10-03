@@ -469,11 +469,13 @@ already typed. p4 is separate only so EFI never mounts root.
   LoadCredential=cryptsetup.passphrase:/.extra/credentials/cryptsetup.passphrase.cred
   ```
 
-  It ships as the `falcon-credential` mkinitcpio install hook
-  (the archusb repo, `install/falcon-credential`), so
-  `mkinitcpio -P` after a kernel or systemd update keeps it. With the
-  drop-in the unlock succeeds from the credential with no prompt; without it
-  the unit cannot start.
+  It ships as an initramfs build hook, so a rebuild after a kernel or
+  systemd update keeps it: for mkinitcpio the `falcon-credential` install
+  hook (the archusb repo, `install/falcon-credential`), for dracut the
+  `99falcon-credential` module (the thinkpad-t430 repo,
+  `gentoo/usr/lib/dracut/modules.d/99falcon-credential/`). With the drop-in
+  the unlock succeeds from the credential with no prompt; without it the
+  unit cannot start.
 
   **The same failure recurs after switch-root, and needs its own copy of the
   fix.** `/run` is one tmpfs across the pivot, so
@@ -482,10 +484,14 @@ already typed. p4 is separate only so EFI never mounts root.
   `/etc/crypttab` inherits the same fatal `ImportCredential=cryptsetup.*`:
   without it, p3's own `cryptefi` unit (keyfile, no credential needed) dies
   at `CREDENTIALS` before opening it, leaving `/efi` unmounted behind a
-  `nofail`. `install/falcon-credential.conf` is the real-root half.
+  `nofail`. The real-root half clears the import and loads nothing: every
+  unit there opens with a keyfile, and a `LoadCredential=` naming a file
+  absent on a boot without falcon would fail the unit.
 
-  Both files ship from the **archusb** repo
-  (https://git.airies.net/vifair22/archusb), not this one.
+  Both halves ship from the OS's own repository, not this one: **archusb**
+  (https://git.airies.net/vifair22/archusb, Arch, mkinitcpio) and
+  **thinkpad-t430** (https://git.airies.net/vifair22/thinkpad-t430, Gentoo
+  with systemd, dracut).
 - **UKI discovery convention:** the loader looks in `/uki/` first,
   then `/EFI/Linux/` (the Boot Loader Specification location, so a p3
   populated by `kernel-install` still boots), taking regular files with a

@@ -973,16 +973,61 @@ The UKI's sd-stub puts it in the initramfs at
 `/.extra/credentials/cryptsetup.passphrase.cred`. The BIOS loader unwraps
 the UKI and builds that credential archive itself, to the same path.
 
-The OS needs a systemd initramfs and a `systemd-cryptsetup@.service`
-drop-in that reads the file, in the initramfs and in the real root
-(`docs/DESIGN.md` Section 5.1):
+The OS needs a systemd initramfs and two `systemd-cryptsetup@.service`
+drop-ins, named for example `falcon-credential.conf` (`docs/DESIGN.md`
+Sections 5 and 5.1). The initramfs one reads the file:
 
     [Service]
     ImportCredential=
     LoadCredential=cryptsetup.passphrase:/.extra/credentials/cryptsetup.passphrase.cred
 
-archusb ships both as its `falcon-credential` mkinitcpio hook. Without the
-drop-in the OS's unlock unit fails.
+The real root's, in `/etc/systemd/system/systemd-cryptsetup@.service.d/`,
+only clears the import, since a `LoadCredential=` there fails every boot
+that did not come through falcon:
+
+    [Service]
+    ImportCredential=
+
+Without the initramfs drop-in the root's unlock unit fails; without the
+real root's, every `/etc/crypttab` unit fails, the shelf's included.
+
+The initramfs drop-in goes in through the initramfs builder, so a rebuild
+keeps it. archusb (https://git.airies.net/vifair22/archusb) ships it as the
+`falcon-credential` mkinitcpio install hook.
+
+For dracut, a module puts it in. This one is the thinkpad-t430 repository's
+(https://git.airies.net/vifair22/thinkpad-t430,
+`gentoo/usr/lib/dracut/modules.d/99falcon-credential/module-setup.sh`), in
+use on Gentoo with systemd since 2026-09-29, with the initramfs drop-in kept
+at `/etc/falcon/initrd-cryptsetup.conf`:
+
+    #!/bin/bash
+    check() {
+        # systemd-cryptsetup lives in systemd's utility directory, not on
+        # PATH, so require_binaries cannot find it by name.
+        [[ -x "${systemdutildir}/systemd-cryptsetup" ]] || return 1
+        return 0
+    }
+
+    depends() {
+        echo systemd crypt
+    }
+
+    install() {
+        inst_simple /etc/falcon/initrd-cryptsetup.conf \
+            /etc/systemd/system/systemd-cryptsetup@.service.d/falcon-credential.conf
+    }
+
+and a `dracut.conf.d` file enables it beside the systemd initramfs:
+
+    add_dracutmodules+=" systemd crypt falcon-credential "
+
+`lsinitrd <uki> | grep falcon-credential` shows the drop-in in a built
+image. The same repository's `kernel-install` plugin
+(`gentoo/etc/kernel/install.d/95-falcon-shelf.install`) is an example of
+putting each signed UKI on the shelf as `<name>-<kver>.efi` and keeping
+`<name>.efi` as a copy of the newest, so a STATION.INI default naming
+`<name>.efi` survives kernel updates.
 
 When the handoff cannot be made the boot goes on, and the OS asks for the
 passphrase again:

@@ -97,7 +97,9 @@ measurements in `docs/coverage.md` are made.
 The personal OS this loader boots is a separate project:
 [archusb](https://git.airies.net/vifair22/archusb) holds the Arch install's
 build runbook, its configuration, and the OS-side half of the passphrase
-handoff (DESIGN Section 5.1).
+handoff (DESIGN Section 5.1) as a mkinitcpio hook.
+[thinkpad-t430](https://git.airies.net/vifair22/thinkpad-t430) holds the
+same half for an installed Gentoo with systemd, as a dracut module.
 
 ## Licence
 
