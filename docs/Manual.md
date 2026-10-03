@@ -991,6 +991,29 @@ that did not come through falcon:
 Without the initramfs drop-in the root's unlock unit fails; without the
 real root's, every `/etc/crypttab` unit fails, the shelf's included.
 
+The credential reaches the initramfs only, so the running system opens the
+shelf with a keyfile kept on the encrypted root, in a second keyslot. Without
+one the shelf stays locked after boot, and nothing can put the next UKI on
+it. As root, with the shelf's partition and a mapper name:
+
+    install -d -m 700 /etc/cryptsetup-keys.d
+    ( umask 077; head -c 64 /dev/urandom > /etc/cryptsetup-keys.d/<name>.key )
+    cryptsetup luksAddKey --pbkdf pbkdf2 --pbkdf-force-iterations 1000 \
+        <shelf-partition> /etc/cryptsetup-keys.d/<name>.key
+
+and in `/etc/crypttab` and `/etc/fstab`:
+
+    <name>  UUID=<shelf-luks-uuid>  /etc/cryptsetup-keys.d/<name>.key  luks,discard,nofail
+    /dev/mapper/<name>  /efi  ext4  defaults,noatime,nofail  0 2
+
+`cryptsetup luksUUID <shelf-partition>` gives the UUID. The passphrase
+keeps keyslot 0 at its own cost. The keyfile's slot is pbkdf2 at 1000
+iterations because the loader tries every keyslot after a mistyped
+passphrase: an argon2id slot there would cost a second full derivation, and
+the keyfile's 512 random bits need no stretching. `nofail` keeps a shelf
+that will not open from stopping the boot. The thinkpad-t430 repository's
+`gentoo/etc/crypttab` is this, in use.
+
 The initramfs drop-in goes in through the initramfs builder, so a rebuild
 keeps it. archusb (https://git.airies.net/vifair22/archusb) ships it as the
 `falcon-credential` mkinitcpio install hook.
