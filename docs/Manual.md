@@ -3185,6 +3185,7 @@ the harness's Dockerfile and this table to it):
 | `curl` | curl | harness | fetch-shims.sh, corpus-fetch.sh, build-qemu.sh |
 | `aria2c` | aria2 | harness | corpus-fetch.sh |
 | `git` | git | harness | build-qemu.sh fetches QEMU |
+| `falcon-asm` | falcon-asm (source) | editor | an editor's language server for the GAS .S files: hover, highlighting and local labels (https://git.airies.net/vifair22/falcon-asm, `make install`) |
 <!-- deps:end -->
 
 The host compiler is `CC_HOST` (default `gcc`).

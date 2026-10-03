@@ -1,6 +1,7 @@
 # tool	check	debian package	group	need	purpose
-# package: space-separated when one tool needs several; a (pip) or (base)
-#          suffix marks one apt does not install.
+# package: space-separated when one tool needs several; a (pip), (base) or
+#          (source) suffix marks one apt does not install, (source) being
+#          built from its own repository.
 # check: cmd:<prog>[|<alt>] (on PATH), pkgconf:<name> (pkg-config finds it),
 #        file:<path>[|<alt>] (one exists), m32 (gcc -m32 has a libgcc).
 # Rendered into docs/Manual.md 13.1 by `tools/deps.sh markdown`; checked by
@@ -56,3 +57,4 @@ tcpdump	cmd:tcpdump	tcpdump	harness	optional	the harness's DHCP capture
 curl	cmd:curl	curl	harness	optional	fetch-shims.sh, corpus-fetch.sh, build-qemu.sh
 aria2c	cmd:aria2c	aria2	harness	optional	corpus-fetch.sh
 git	cmd:git	git	harness	optional	build-qemu.sh fetches QEMU
+falcon-asm	cmd:falcon-asm	falcon-asm(source)	editor	optional	an editor's language server for the GAS .S files: hover, highlighting and local labels (https://git.airies.net/vifair22/falcon-asm, `make install`)
