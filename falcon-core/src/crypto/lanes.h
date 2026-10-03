@@ -22,10 +22,11 @@
  * which a freestanding loader does not link. The low half never reaches
  * the high one: a lane past the last is taken at most once a participant a
  * slice, and a slice of more than LANES_POOLED lanes is not pooled at all
- * but run in turn by the caller. Taking a lane and learning how many there are is then
- * one atomic step: a worker arriving late never pairs a lane number from
- * one slice with another slice's count, which between two keyslots with
- * different lane counts would run a lane twice and derive a wrong key. A
+ * but run in turn by the caller. Taking a lane and learning how many there
+ * are is then one atomic step: a worker arriving late never pairs a lane
+ * number from one slice with another slice's count, which between two
+ * keyslots with different lane counts would run a lane twice and derive a
+ * wrong key. A
  * taker that gets a valid lane holds it until the lane is counted as
  * finished, and the caller posts nothing new until every lane is, so the
  * job and its context read after the take are that lane's slice's.

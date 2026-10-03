@@ -2622,10 +2622,10 @@ privileges and touches no device.
 | `--level` | `auto` | the block function: `auto`, `portable`, `sse2`, `ssse3`, `avx2` |
 | `--repeat` | 1 | runs a cell, the fastest kept |
 
-The UEFI loaders run a slot's lanes on one processor a lane, up to the
+Both loaders run a slot's lanes on one processor a lane, up to the
 machine's cores, when the slot costs at least 512 MiB-passes, and one
-after another below that; falcon-bios runs them one after another. Each
-unlock says on serial what it ran on and how long the keyslots took:
+after another below that. Each unlock says on serial what it ran on and
+how long the keyslots took (falcon-bios to the 55 ms its clock counts in):
 
     falcon-pos: argon2id block function: avx2
     falcon-pos: argon2id ran on 4 processors in 370 ms

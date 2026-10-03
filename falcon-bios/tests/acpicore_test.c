@@ -218,6 +218,35 @@ static void test_parse(void **state)
     assert_int_equal(acpi_s5_word(0xFF), 0x3C00);
 }
 
+/* Any table by signature: the MADT mp/mp.c asks for, the FADT, one that
+ * is not there, and one whose checksum does not hold. */
+static void test_find_table(void **state)
+{
+    uint32_t at = 0, len = 0;
+
+    (void)state;
+    machine(0xF0000u, 0, 100, k_s5_byte, sizeof k_s5_byte);
+    checksum(0x90000u, 44, 0x90009u);
+    assert_int_equal(acpi_find_table(mem_read, NULL, 0, "APIC", &at, &len),
+                     ACPI_OK);
+    assert_int_equal(at, 0x90000u);
+    assert_int_equal(len, 44);
+    assert_int_equal(acpi_find_table(mem_read, NULL, 0, "FACP", &at, &len),
+                     ACPI_OK);
+    assert_int_equal(at, FADT);
+    assert_int_equal(len, 116);
+    assert_int_equal(acpi_find_table(mem_read, NULL, 0, "HPET", &at, &len),
+                     ACPI_NO_FADT);
+    g_mem[0x90000u + 20] ^= 1;
+    assert_int_equal(acpi_find_table(mem_read, NULL, 0, "APIC", &at, &len),
+                     ACPI_BAD_TABLE);
+    assert_int_equal(acpi_find_table(mem_read, NULL, 0, NULL, &at, &len),
+                     ACPI_NO_RSDP);
+    memset(g_mem, 0, sizeof g_mem);
+    assert_int_equal(acpi_find_table(mem_read, NULL, 0, "APIC", &at, &len),
+                     ACPI_NO_RSDP);
+}
+
 int run_acpicore_tests(void)
 {
     const struct CMUnitTest tests[] = {
@@ -226,6 +255,7 @@ int run_acpicore_tests(void)
         cmocka_unit_test(test_ebda_xsdt),
         cmocka_unit_test(test_refusals),
         cmocka_unit_test(test_parse),
+        cmocka_unit_test(test_find_table),
     };
 
     return cmocka_run_group_tests_name("acpicore", tests, NULL, NULL);

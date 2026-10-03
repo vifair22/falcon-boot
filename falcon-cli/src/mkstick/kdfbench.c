@@ -203,7 +203,7 @@ static cli_status bench_run(const cli_args *a)
     (void)fflush(stdout);
 
     for (i = 0; i < nmem && rc == CLI_OK; i++) {
-        double secs[KDFB_MAX_COLS];
+        double secs[KDFB_MAX_COLS] = { 0 };
 
         for (j = 0; j < npass; j++) {
             argon2_params ap;

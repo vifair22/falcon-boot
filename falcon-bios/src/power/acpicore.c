@@ -68,9 +68,10 @@ static int rsdp_in(acpi_read_fn rd, void *ctx, uint32_t base, uint32_t len,
     return 0;
 }
 
-/* The FADT's address from the RSDT (or an XSDT whose pointers fit). */
-static int find_fadt(acpi_read_fn rd, void *ctx, const uint8_t rsdp[36],
-                     uint32_t *fadt)
+/* A table's address from the RSDT (or an XSDT whose pointers fit), by its
+ * signature. ACPI_NO_FADT when none carries it. */
+static int find_sig(acpi_read_fn rd, void *ctx, const uint8_t rsdp[36],
+                    const char *want, uint32_t *found)
 {
     uint8_t hdr[HDR_LEN];
     uint32_t sdt = le32(rsdp + 16);
@@ -99,8 +100,8 @@ static int find_fadt(acpi_read_fn rd, void *ctx, const uint8_t rsdp[36],
         at = le32(e);
         if (at == 0 || rd(ctx, at, sig, 4) != 0)
             continue;
-        if (memcmp(sig, "FACP", 4) == 0) {
-            *fadt = at;
+        if (memcmp(sig, want, 4) == 0) {
+            *found = at;
             return ACPI_OK;
         }
     }
@@ -202,6 +203,36 @@ static int dsdt_s5(acpi_read_fn rd, void *ctx, uint32_t dsdt, acpi_s5 *out)
     return ACPI_NO_S5;
 }
 
+/* The RSDP: the EBDA's first kilobyte, then 0xE0000-0xFFFFF. */
+static int find_rsdp(acpi_read_fn rd, void *ctx, uint32_t ebda,
+                     uint8_t rsdp[36])
+{
+    return (ebda != 0 && rsdp_in(rd, ctx, ebda, 1024, rsdp)) ||
+           rsdp_in(rd, ctx, 0xE0000u, 0x20000u, rsdp);
+}
+
+int acpi_find_table(acpi_read_fn rd, void *ctx, uint32_t ebda,
+                    const char *sig, uint32_t *addr, uint32_t *len)
+{
+    uint8_t rsdp[36];
+    uint8_t hdr[HDR_LEN];
+    uint32_t at = 0;
+    int rc;
+
+    if (rd == NULL || sig == NULL || addr == NULL || len == NULL)
+        return ACPI_NO_RSDP;
+    if (!find_rsdp(rd, ctx, ebda, rsdp))
+        return ACPI_NO_RSDP;
+    rc = find_sig(rd, ctx, rsdp, sig, &at);
+    if (rc != ACPI_OK)
+        return rc;
+    if (rd(ctx, at, hdr, HDR_LEN) != 0 || !table_ok(rd, ctx, at, le32(hdr + 4)))
+        return ACPI_BAD_TABLE;
+    *addr = at;
+    *len = le32(hdr + 4);
+    return ACPI_OK;
+}
+
 int acpi_find_s5(acpi_read_fn rd, void *ctx, uint32_t ebda, acpi_s5 *out)
 {
     uint8_t rsdp[36];
@@ -214,10 +245,9 @@ int acpi_find_s5(acpi_read_fn rd, void *ctx, uint32_t ebda, acpi_s5 *out)
     if (rd == NULL || out == NULL)
         return ACPI_NO_RSDP;
     memset(out, 0, sizeof *out);
-    if (!(ebda != 0 && rsdp_in(rd, ctx, ebda, 1024, rsdp)) &&
-        !rsdp_in(rd, ctx, 0xE0000u, 0x20000u, rsdp))
+    if (!find_rsdp(rd, ctx, ebda, rsdp))
         return ACPI_NO_RSDP;
-    rc = find_fadt(rd, ctx, rsdp, &fadt);
+    rc = find_sig(rd, ctx, rsdp, "FACP", &fadt);
     if (rc != ACPI_OK)
         return rc;
     if (rd(ctx, fadt, f, HDR_LEN) != 0)

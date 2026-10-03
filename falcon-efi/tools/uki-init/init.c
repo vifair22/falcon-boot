@@ -254,6 +254,27 @@ static void bli_report(void)
     }
 }
 
+/* The processors the kernel brought up, as sysfs lists them ("0-3"). A
+ * loader that started the others for its keyslots (falcon-efi/src/mp,
+ * falcon-bios/src/mp) has to hand them back where the kernel can start
+ * them again; one it left running its own code, or halted where INIT
+ * cannot reach, is missing here. Read after bli_report mounted sysfs. */
+static void cpus_report(void)
+{
+    unsigned char buf[64];
+    ssize_t n = read_file("/sys/devices/system/cpu/online", buf,
+                          sizeof buf - 1u);
+
+    if (n <= 0) {
+        outf("FALCON-UKI-CPUS unknown\n");
+        return;
+    }
+    while (n > 0 && (buf[n - 1] == '\n' || buf[n - 1] == ' '))
+        n--;
+    buf[n] = 0;
+    outf("FALCON-UKI-CPUS %s\n", (const char *)buf);
+}
+
 int main(void)
 {
     unsigned char buf[READ_MAX];
@@ -312,6 +333,7 @@ int main(void)
         outf("FALCON-CRED-FAIL\n");
 
     bli_report();
+    cpus_report();
 
     outf("FALCON-UKI-DONE\n");
     /* A human watching the QEMU window needs a moment to read the result;

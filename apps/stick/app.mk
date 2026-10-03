@@ -36,7 +36,7 @@ $(EFI_OBJ)/$(STICK)/efi_main.o $(EFI_OBJ)/$(STICK)/efi_sbat.o: build/version.h
 sbat-check: sbat-check-stick
 
 STICK_BIOS := $(STICK)/bios_main.c
-STICK_BIOS += $(BIOS_MOD_scan) $(BIOS_MOD_pos) $(CORE_XSTATE) $(BIOS_MOD_prompt) $(BIOS_MOD_console) $(BIOS_MOD_linux)
+STICK_BIOS += $(BIOS_MOD_scan) $(BIOS_MOD_pos) $(BIOS_MOD_mp) $(CORE_XSTATE) $(BIOS_MOD_prompt) $(BIOS_MOD_console) $(BIOS_MOD_linux)
 STICK_BIOS += $(BIOS_MOD_iso) $(BIOS_MOD_vfd) $(BIOS_MOD_bsd) $(BIOS_MOD_win)
 STICK_BIOS += $(BIOS_MOD_lowmem)       # the residents' blocks
 STICK_BIOS += $(BIOS_MOD_heap)         # the Windows tail, the floppy image, argon2id
@@ -53,7 +53,7 @@ STICK_BIOS += $(CORE_BIOSBOOT)         # the {EFI ONLY} and {64-BIT ONLY} tags
 STICK_BIOS += $(CORE_IDENT) $(CORE_IDENT_FS)  # the records, and the library's ID for the extent map
 
 $(eval $(call bios_app,stick,$(BIOS_STAGE3),\
-	$(BIOS_RES_iso) $(BIOS_RES_vfd),\
+	$(BIOS_RES_iso) $(BIOS_RES_vfd) $(BIOS_OBJ_aptramp),\
 	$(STICK_BIOS),\
 	$(BIOS_HOOK_OBJ) $(BIOS_HOOK32_OBJ) $(BIOS_WINJUMP_OBJ) \
 	$(BIOS_WINJUMP32_OBJ) $(BIOS_VDISK_OBJ)))

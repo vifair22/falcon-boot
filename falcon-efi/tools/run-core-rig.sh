@@ -150,6 +150,9 @@
 #   lanes-cheap-uefi
 #                  stick-a, at the stick's own cost, on four processors:
 #                  one, since the workers would cost more than they save
+#   lanes-bios, lanes-smt-bios, lanes-alone-bios, lanes-cheap-bios
+#                  the same four under SeaBIOS, falcon-bios waking the
+#                  other processors itself (falcon-bios/src/mp)
 #   timing-stall-uefi
 #                  the same on a processor whose CPUID stops at leaf 0xD,
 #                  as the T430's i5-3320M does: the rate comes from the
@@ -693,16 +696,17 @@ case_timing() { # case_timing CASE CPU VIA
     fi
 }
 
-# argon2id's lanes on the other processors (falcon-efi/src/mp): STICK
-# under OVMF with SMP QEMU's -smp, unlocked, and the loader's serial line
+# argon2id's lanes on the other processors (falcon-efi/src/mp under OVMF,
+# falcon-bios/src/mp under SeaBIOS): STICK under FIRMWARE with SMP QEMU's
+# -smp, unlocked, and the loader's serial line
 # naming WANT processors, the boot one and the workers that joined. A wrong
 # passphrase goes first, so the timed attempt is the second: the first
 # write to a page of a fresh guest is the host's page fault, taken one
 # vCPU at a time, which a machine of its own never pays.
-case_lanes() { # case_lanes CASE STICK SMP WANT
-    local c=$1 stick=$2 why= got
-    shift
-    MEM=2048 BOOT_SMP=$2 boot uefi "$stick:boot"
+case_lanes() { # case_lanes CASE FIRMWARE STICK SMP WANT
+    local c=$1 fw=$2 stick=$3 why= got
+    shift 2
+    MEM=2048 BOOT_SMP=$2 boot "$fw" "$stick:boot"
     wait_for "Personal OS (encrypted)" 90 || why="no Personal OS row"
     if [[ -z "$why" ]]; then
         sleep 1
@@ -723,8 +727,15 @@ case_lanes() { # case_lanes CASE STICK SMP WANT
     ms=$(sed -n 's/.* in \([0-9]*\) ms/\1/p' <<< "$line")
     [[ -z "$why" && "$got" != "$3" ]] &&
         why="lanes ran on ${got:-no} processors, not $3"
+    # Every processor handed back: the kernel brought all of them up.
+    local cpus want_cpus
+    cpus=$(log_text "$R/serial.log" | sed -n 's/.*FALCON-UKI-CPUS \([^ ]*\).*/\1/p' | head -n 1)
+    want_cpus=0-$(( ${2%%,*} - 1 ))
+    [[ ${2%%,*} == 1 ]] && want_cpus=0
+    [[ -z "$why" && "$cpus" != "$want_cpus" ]] &&
+        why="the kernel brought up CPUs ${cpus:-unknown}, not $want_cpus"
     if [[ -z "$why" ]]; then
-        result "$c" 1 "unlocked with lanes on $got processors (-smp $2); keyslots $ms ms, unlock $UNLOCK_S s"
+        result "$c" 1 "unlocked with lanes on $got processors (-smp $2); keyslots $ms ms, unlock $UNLOCK_S s; kernel CPUs $cpus"
     else
         result "$c" 0 "$why"
     fi
@@ -1445,7 +1456,8 @@ CASES=("$@")
            probe-keys-uefi probe-keys-bios update-stick-uefi-sb
            update-stick-bios update-station-uefi-sb update-station-bios
            update-refuse timing-uefi timing-stall-uefi lanes-uefi
-           lanes-smt-uefi lanes-alone-uefi lanes-cheap-uefi)
+           lanes-smt-uefi lanes-alone-uefi lanes-cheap-uefi lanes-bios
+           lanes-smt-bios lanes-alone-bios lanes-cheap-bios)
 
 for c in "${CASES[@]}"; do
     case $c in
@@ -1508,11 +1520,15 @@ for c in "${CASES[@]}"; do
     # cores is every lane its own; four cores of two threads leave the
     # second threads out and come to the same; one processor is the
     # baseline. stick-a's p3, the stick's own cost, is not worth them.
-    lanes-uefi)        case_lanes "$c" "$R/stick-kdf.img" 4 4 ;;
-    lanes-smt-uefi)    case_lanes "$c" "$R/stick-kdf.img" \
-                           "8,sockets=1,cores=4,threads=2" 4 ;;
-    lanes-alone-uefi)  case_lanes "$c" "$R/stick-kdf.img" 1 1 ;;
-    lanes-cheap-uefi)  case_lanes "$c" "$R/stick-a.img" 4 1 ;;
+    lanes-uefi|lanes-bios)
+        case_lanes "$c" "${c#lanes-}" "$R/stick-kdf.img" 4 4 ;;
+    lanes-smt-uefi|lanes-smt-bios)
+        case_lanes "$c" "${c#lanes-smt-}" "$R/stick-kdf.img" \
+            "8,sockets=1,cores=4,threads=2" 4 ;;
+    lanes-alone-uefi|lanes-alone-bios)
+        case_lanes "$c" "${c#lanes-alone-}" "$R/stick-kdf.img" 1 1 ;;
+    lanes-cheap-uefi|lanes-cheap-bios)
+        case_lanes "$c" "${c#lanes-cheap-}" "$R/stick-a.img" 4 1 ;;
     timing-uefi)       case_timing "$c" host "" ;;
     timing-stall-uefi) case_timing "$c" host,level=0xd stall ;;
     *) echo "unknown case: $c" >&2; exit 2 ;;

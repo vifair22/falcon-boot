@@ -115,6 +115,9 @@ BIOS_MOD_task    := $(BIOS)/task/task.c    # a second stack, for the background 
 BIOS_MOD_lowmem  := $(BIOS)/mem/lowmem.c $(BIOS)/mem/lowmem_bda.c
 BIOS_MOD_linux   := $(BIOS)/linux/linux.c $(BIOS)/linux/linuxcore.c
 BIOS_MOD_pos     := $(BIOS)/pos/pos.c
+# argon2id's lanes on the other processors (mp/mp.h); the ACPI walk that
+# finds them is BIOS_MOD_console's, which every app linking this links
+BIOS_MOD_mp      := $(BIOS)/mp/mp.c $(BIOS)/mp/mpcore.c
 BIOS_MOD_bsd     := $(BIOS)/bsd/bsd.c
 BIOS_MOD_win     := $(BIOS)/win/win.c
 BIOS_MOD_mbr     := $(BIOS)/mbr/mbr.c
@@ -302,6 +305,9 @@ BIOS_RES_iso := $(BIOS_OBJ)/$(BIOS)/iso/vcdres.o
 BIOS_RES_vfd := $(BIOS_OBJ)/$(BIOS)/vfd/vfdres.o
 BIOS_RES_jres := $(BIOS_OBJ)/$(BIOS)/jump/rthunk.o
 BIOS_RES_swap := $(BIOS_OBJ)/$(BIOS)/mbr/swapres.o
+# Not a resident: the page the other processors start in, copied below a
+# megabyte for an unlock (mp/aptramp.S), with BIOS_MOD_mp.
+BIOS_OBJ_aptramp := $(BIOS_OBJ)/$(BIOS)/mp/aptramp.o
 
 # The hook's blobs, which are generated (falcon-hook/build.mk). The x86-64
 # one is the same object the UEFI loader embeds: falcon-hook runs in the
@@ -440,13 +446,13 @@ endef
 BIOS_TESTS := $(addprefix falcon-bios/tests/,main.c vcdcore_test.c vfdcore_test.c \
 	linuxcore_test.c e820_test.c jumpini_test.c jmod_test.c lowmem_test.c \
 	atacore_test.c usbcore_test.c hidcore_test.c pcccore_test.c bootpart_test.c \
-	vbrcore_test.c cdclock_test.c acpicore_test.c)
+	vbrcore_test.c cdclock_test.c acpicore_test.c mpcore_test.c)
 BIOS_UUT := $(BIOS)/iso/vcdcore.c $(BIOS)/vfd/vfdcore.c $(BIOS)/linux/linuxcore.c $(BIOS)/mem/e820.c \
 	$(BIOS)/jump/jumpini.c $(BIOS)/jump/jmod.c $(BIOS)/mem/lowmem.c \
 	$(BIOS)/hw/ata/atacore.c $(BIOS)/hw/scsi/scsi.c $(BIOS)/hw/usb/usbcore.c \
 	$(BIOS)/hw/usb/hidcore.c \
 	$(BIOS)/hw/pcc/pcccore.c $(BIOS)/disk/bootpart.c $(BIOS)/mbr/vbrcore.c \
-	$(BIOS)/console/cdclock.c $(BIOS)/power/acpicore.c
+	$(BIOS)/console/cdclock.c $(BIOS)/power/acpicore.c $(BIOS)/mp/mpcore.c
 # What bootpart.c and vbrcore.c are built on, linked into the test binary
 # but counted under core's own tests.
 BIOS_TEST_CORE := $(CORE_PART) $(CORE_IDENT) $(CORE_VBR)
