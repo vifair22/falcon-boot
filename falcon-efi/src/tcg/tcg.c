@@ -8,6 +8,7 @@
 #include <lib/string.h>
 #include <tpm/tpm12.h>
 #include <tpm/tpm2.h>
+#include <tsc/tsc.h>
 
 static tpm_dev g_dev;
 static EFI_TCG2_PROTOCOL *g_tcg2;
@@ -78,14 +79,6 @@ static int rng(void *ctx, uint8_t *out, size_t n)
     return 0;
 }
 
-static uint64_t rdtsc(void)
-{
-    uint32_t lo, hi;
-
-    __asm__ volatile("rdtsc" : "=a"(lo), "=d"(hi));
-    return ((uint64_t)hi << 32) | lo;
-}
-
 static int have_rdrand(void)
 {
     uint32_t a = 1, b, c = 0, d;
@@ -139,7 +132,7 @@ static void seed(EFI_SYSTEM_TABLE *st, tpm_version ver)
     memset(&t, 0, sizeof t);
     (void)st->RuntimeServices->GetTime(&t, (void *)0);
     sha256_update(&h, &t, sizeof t);
-    v = rdtsc();
+    v = tsc_read();
     sha256_update(&h, &v, sizeof v);
     sha256_final(&h, g_pool);
     crypto_wipe(buf, sizeof buf);

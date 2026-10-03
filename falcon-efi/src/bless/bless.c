@@ -346,11 +346,13 @@ static EFI_STATUS publish_image(EFI_SYSTEM_TABLE *st, void *buf, UINT64 size)
  * that the file itself has not been signed yet.
  *
  * *retain is set on the one path that leaves the image's pages published: see
- * the caller, which owns the allocation. */
+ * the caller, which owns the allocation. uki: the image is a wrap, and its
+ * start sets the exec timestamp (DESIGN Section 5.5). */
 static EFI_STATUS launch_image(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent,
                                void *buf, UINT64 size,
                                EFI_DEVICE_PATH_PROTOCOL *named,
-                               const load_ops *opsp, BOOLEAN inner_blocked,
+                               const load_ops *opsp, BOOLEAN uki,
+                               BOOLEAN inner_blocked,
                                const CHAR16 *refused, UINT8 *retain,
                                bless_result *result)
 {
@@ -456,6 +458,8 @@ static EFI_STATUS launch_image(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent,
         L"\r\n\r\n");
 
     result->stage = L"StartImage";
+    if (uki)
+        loader_time_exec(st);
     status = ops.StartImage(child, &exit_size, &exit_data);
     /* StartImage unloads an application that returns, so the child handle is
      * gone either way; only its exit data is ours to release. */
@@ -596,7 +600,7 @@ static EFI_STATUS blessed_launch(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
     /* The blessed wording of the refusal main.c reports for an unblessed ISO:
      * here the image IS ours, so the actionable half is the key, not the
      * blessing. */
-    status = launch_image(st, parent_image, buf, size, load_path, &ops,
+    status = launch_image(st, parent_image, buf, size, load_path, &ops, uki,
                           inner_blocked,
                           L"the blessed image is not signed with a key this "
                           L"machine has enrolled.\r\n\r\nRe-bless the ISO "
@@ -696,7 +700,7 @@ EFI_STATUS bless_payload_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
      * blessing a payload does (DESIGN Section 7.2) - and it says so, because
      * that bless is the one that writes to the user's own file. */
     status = launch_image(st, parent_image, buf, size,
-                          (EFI_DEVICE_PATH_PROTOCOL *)0, &ops, FALSE,
+                          (EFI_DEVICE_PATH_PROTOCOL *)0, &ops, FALSE, FALSE,
                           L"this EFI payload is not signed with a key this "
                           L"machine has enrolled.\r\n\r\nBless it with the "
                           L"sign tool, which rewrites the payload file itself; "

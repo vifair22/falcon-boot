@@ -53,7 +53,8 @@ void idle_expired(void);
 __attribute__((noreturn)) void idle_power_off(void);
 
 /* A page's wait for one key: WaitForKey or the timer, the power-off on
- * the timer. Starts the idle time itself. */
+ * the timer. Starts the idle time itself, and counts as a wait on the
+ * keyboard (tsc/tsc.h). */
 EFI_STATUS idle_wait_key(EFI_SYSTEM_TABLE *st, EFI_INPUT_KEY *key);
 
 #endif /* FALCON_EFI_IDLE_H */

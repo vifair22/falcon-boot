@@ -25,6 +25,7 @@
 
 #include <efi/uefi.h>
 #include <loader/loadops.h>
+#include <tsc/tsc.h>
 #include <discover/discover.h>
 #include <discover/disks.h>
 #include <esp/esp.h>
@@ -627,6 +628,9 @@ static void next_boot_run(void)
 
 EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
 {
+    /* LoaderTimeInitUSec's counter, before anything else runs (DESIGN
+     * Section 5.5). */
+    UINT64 t0 = tsc_read();
     static menu_entry view[STROWS_MAX];
     static size_t order[STROWS_MAX];
     /* No row carries a trust tag here: this build links no predictions. */
@@ -642,6 +646,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
     g_image = image_handle;
 
     st->BootServices->SetWatchdogTimer(0, 0, 0, (CHAR16 *)0);
+    loader_time_init(st, t0, L"falcon-boot " WIDEN(FALCON_VERSION_STATION));
     /* STATION.INI may change the time once it is read. */
     idle_start(st, TUI_IDLE_SECONDS);
     st->ConOut->Reset(st->ConOut, FALSE);

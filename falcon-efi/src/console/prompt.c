@@ -9,6 +9,7 @@
 #include <console/menu.h>
 #include <console/idle.h>
 #include <crypto/crypto.h>
+#include <tsc/tsc.h>
 
 /* Control characters the console delivers in UnicodeChar with ScanCode 0
  * (UEFI spec 12.3, Table 12.3). CR is the only commit key: LF never arrives
@@ -113,7 +114,9 @@ INTN menu_prompt_secret(EFI_SYSTEM_TABLE *st, const CHAR16 *prompt,
     if (st == (void *)0 || buf == (void *)0 || cap == 0)
         return -1;
     tick = tick_start(st);
+    tsc_wait_begin();
     r = prompt_run(st, prompt, buf, cap, tick);
+    tsc_wait_end();
     tick_stop(st, tick);
     return r;
 }

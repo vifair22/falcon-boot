@@ -931,6 +931,7 @@ static EFI_STATUS launch_uki(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent,
         L"\r\n\r\n");
 
     result->stage = L"StartImage";
+    loader_time_exec(st);
     status = ops.StartImage(child, &exit_size, &exit_data);
     /* StartImage unloads an application that returns, so the child handle is
      * gone either way; only its exit data is ours to release. */
