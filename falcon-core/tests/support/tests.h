@@ -42,6 +42,7 @@ int run_records_tests(void);
 int run_nextio_tests(void);
 int run_stationcore_tests(void);
 int run_updatecore_tests(void);
+int run_kdfbenchcore_tests(void);
 int run_totpcore_tests(void);
 int run_isoprobe_tests(void);
 int run_payload_tests(void);

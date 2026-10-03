@@ -1977,8 +1977,8 @@ reason goes to serial only.
 ## 10. falcon-boot-mkstick
 
 The stick maker (`docs/DESIGN.md` Section 8). Its commands are `bios`,
-`create`, `ident`, `keygen`, `next-boot`, `station`, `status`, `update` and
-`varstore`. `falcon-boot-mkstick <command> --help` prints a command's
+`create`, `ident`, `kdf-bench`, `keygen`, `next-boot`, `station`,
+`status`, `update` and `varstore`. `falcon-boot-mkstick <command> --help` prints a command's
 options, and a usage error prints the same help after the error. Every
 command takes `--verbose` (every command it runs is shown) and `--quiet`
 (warnings and errors only). It exits 0 on success and 1 on any failure.
@@ -2599,6 +2599,50 @@ MokManager's enrollment. It prints the line that boots it:
     boot it with: MOK_VARS=<out.fd> VARS_FILE=build/vars-run.fd falcon-efi/tools/run-qemu.sh --stick --secboot
 
 Section 13.4 has the rig.
+
+### 10.10 kdf-bench
+
+    falcon-boot-mkstick kdf-bench [--memory <MiB,...>] [--time <n,...>]
+        [--lanes <n>] [--threads <n>] [--level <name>] [--repeat <n>]
+
+Times falcon-core's argon2id, the code both loaders unlock a shelf with,
+and prints the seconds one derivation takes for each memory size (rows)
+and pass count (columns). It recommends nothing; the table is for
+choosing a keyslot's cost for a machine, which `cryptsetup luksFormat`'s
+own benchmark cannot do, since it times Linux's implementation. Run it on
+the machine the slot is for, with nothing else busy. It needs no
+privileges and touches no device.
+
+| option | default | what it does |
+|---|---|---|
+| `--memory` | 64,128,256,512,1024 | the rows, in MiB, up to 4096 |
+| `--time` | 1,2,4,8 | the columns: passes, cryptsetup's `--pbkdf-force-iterations` |
+| `--lanes` | 4 | cryptsetup's `--pbkdf-parallel` |
+| `--threads` | the lanes, at most the processors | 1 runs the lanes one after another |
+| `--level` | `auto` | the block function: `auto`, `portable`, `sse2`, `ssse3`, `avx2` |
+| `--repeat` | 1 | runs a cell, the fastest kept |
+
+Both loaders run a slot's lanes one after another, which is `--threads
+1`. `auto` is the level the loaders pick on this processor, which they say on
+serial at every unlock (`argon2id block function:`). A level the
+processor cannot run is refused. The memory is allocated once and touched
+before the first cell, so page faults are not timed; a row larger than
+the machine can allocate stops the command before anything is timed.
+
+    $ falcon-boot-mkstick kdf-bench --memory 256,1024 --time 1,4
+    argon2id in falcon-core: avx2 block function, 4 lanes on 4 threads
+    seconds an unlock attempt takes; rows memory, columns passes
+
+      memory  t=1      t=4
+     256 MiB  0.06     0.21
+    1024 MiB  0.28     0.81
+
+    cryptsetup luksAddKey --pbkdf argon2id --pbkdf-memory <MiB x 1024> --pbkdf-force-iterations <t> --pbkdf-parallel 4
+
+The cell is one attempt. A wrong passphrase costs every keyslot the
+passphrase is tried against (DESIGN Section 5.2), so a shelf with a
+second argon2id slot pays twice for a typo; the keyfile slot Section 5.3
+adds is pbkdf2 for that reason.
 
 ## 11. Signing, and what lives where
 
