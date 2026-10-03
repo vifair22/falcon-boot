@@ -44,6 +44,7 @@ swap_blob_start:
 
 	.org    SWAP_OFF_CODE
 	.globl  swap_entry
+/* falcon-asm: handler=service vector=0x13 */
 swap_entry:
 	safe_mbr_hook SWAP_OFF_OLDINT13
 	pushw   %bp

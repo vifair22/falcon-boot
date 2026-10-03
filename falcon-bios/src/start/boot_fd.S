@@ -118,7 +118,7 @@ next:
 	movw    chs_dx, %dx
 	movb    boot_drive, %dl
 	movw    dest, %bx
-	int     $0x13
+	int     $0x13  /* falcon-asm: ignore=loader-sector-count-unproven: the installer patches the count from stage 2's size; the build caps stage 2 at STAGE2_MBR_MAX_SECTORS, the installer at its reservation, and stage 2 checks its own length and CRC */
 	jnc     3f
 	xorb    %ah, %ah
 	movb    boot_drive, %dl
@@ -155,6 +155,7 @@ fail:
 	int     $0x16
 	ljmp    $0xFFFF, $0x0000
 
+/* falcon-asm: cc=custom args=si clobbers=ax,bx preserves=all */
 screen_puts:
 	pushw   %si
 1:	lodsb
@@ -167,6 +168,7 @@ screen_puts:
 2:	popw    %si
 	ret
 
+/* falcon-asm: cc=custom clobbers=ax,dx preserves=all */
 serial_init:
 	movw    $(SERIAL_PORT + 1), %dx
 	movb    $0x00, %al
@@ -189,6 +191,7 @@ serial_init:
 	ret
 
 /* si = NUL-terminated string. Clobbers ax, bx, cx, dx. */
+/* falcon-asm: cc=custom args=si clobbers=ax,bx,cx,dx preserves=all */
 serial_puts:
 	pushw   %si
 1:	lodsb

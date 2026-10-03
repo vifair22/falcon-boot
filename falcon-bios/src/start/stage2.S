@@ -193,6 +193,7 @@ halt32:
 	.code16
 
 /* al = byte. Prints two hex digits, high nibble first. */
+/* falcon-asm: cc=custom args=ax preserves=all */
 put_hex8:
 	pushw   %ax
 	pushw   %bx
@@ -206,6 +207,7 @@ put_hex8:
 	popw    %ax
 	ret
 
+/* falcon-asm: cc=custom args=ax preserves=all */
 put_nibble:
 	pushw   %ax
 	cmpb    $10, %al
@@ -218,8 +220,8 @@ put_nibble:
 	ret
 
 /* si = NUL-terminated string. */
+/* falcon-asm: cc=custom args=si preserves=all */
 puts:
-puts_rm:
 	pushw   %ax
 	pushw   %si
 1:	lodsb
@@ -242,6 +244,7 @@ puts_rm:
  * of those runs first. tools/check-floor.sh keeps CMOV and the other
  * i686 instructions out of every image the build links.
  */
+/* falcon-asm: cc=custom clobbers=ax,cx preserves=all */
 cpu_check:
 	pushfl
 	popl    %eax
@@ -264,6 +267,7 @@ cpu_check:
  * the disk bounce buffer below 0x98000 is written without asking. On nearly every machine the count is 639; a
  * board whose EBDA reaches below 608 would have its own data overwritten,
  * and fail somewhere inside the next BIOS call. */
+/* falcon-asm: cc=custom clobbers=ax preserves=all */
 mem_check:
 	pushw   %ds
 	xorw    %ax, %ax
@@ -281,6 +285,7 @@ mem_check:
  * that come before there is a C environment to call it from. Never
  * returns, and never halts, which on a machine with no serial cable would
  * be indistinguishable from a hang. */
+/* falcon-asm: cc=custom args=si clobbers=all */
 fatal_rm:
 	sti                          /* INT 16h waits on IRQ1 */
 	call    puts
@@ -309,6 +314,7 @@ fatal_rm:
 	ljmp    $0xFFFF, $0x0000     /* the reset vector */
 
 /* About half a second: port 0x80 takes a microsecond a write on any board. */
+/* falcon-asm: cc=custom clobbers=cx preserves=all */
 io_delay:
 	movl    $500000, %ecx
 1:	outb    %al, $0x80
@@ -316,6 +322,7 @@ io_delay:
 	ret
 
 /* si = NUL-terminated string, through INT 10h teletype. Preserves si. */
+/* falcon-asm: cc=custom args=si preserves=all */
 screen_puts:
 	pushw   %ax
 	pushw   %bx
@@ -339,6 +346,7 @@ screen_puts:
  * never empties is the one thing that could stop the boot here, and COM1
  * is a log, not a requirement. A port with nothing behind it reads all ones
  * and passes at once. */
+/* falcon-asm: cc=custom args=ax preserves=all */
 putc:
 	pushw   %ax
 	pushw   %bx

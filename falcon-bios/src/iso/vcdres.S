@@ -130,6 +130,7 @@ vcd_launch:
 	.org    VCD_OFF_CODE
 /* ---- the handler ---- */
 	.globl  vcd_entry
+/* falcon-asm: handler=service vector=0x13 */
 vcd_entry:
 	safe_mbr_hook VCD_OFF_OLDINT13
 	/* Not ours: straight on to whoever had the vector before us. A jump
@@ -633,6 +634,7 @@ fail:
  * above included, goes to the BIOS as if this were not here. */
 	.org    VCD_OFF_CODE15
 	.globl  vcd_entry15
+/* falcon-asm: handler=service vector=0x15 */
 vcd_entry15:
 	cmpw    $0xE801, %ax
 	je      e801_capped

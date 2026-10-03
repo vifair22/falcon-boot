@@ -23,7 +23,7 @@
 _start:
 	.byte   0x55, 0xAA
 	.byte   1
-init:
+init:  /* falcon-asm: ignore=unused-label: the option ROM's entry, reached at offset 3 by the BIOS that runs it */
 	pushal
 	movw    $0xE000, %bp              /* the next controller's first port */
 	xorl    %edi, %edi                /* dev << 11 */
@@ -69,6 +69,7 @@ next_dev:
 /* The function at esi: BARs 0-3 at bp, bp+8, bp+0x10, bp+0x18, I/O space
  * decode on (the command register's status half is write-one-to-clear and
  * is masked off), and the line on COM1. */
+/* falcon-asm: cc=custom args=si,bp returns=bp clobbers=ax,bx,dx preserves=all */
 assign:
 	movzwl  %bp, %ebx
 	orl     $1, %ebx
@@ -111,6 +112,7 @@ assign:
 	addw    $0x20, %bp
 	ret
 
+/* falcon-asm: cc=custom args=ax returns=ax clobbers=dx preserves=all */
 cfg_read:                             /* eax: the address; eax out */
 	movw    $0xCF8, %dx
 	outl    %eax, %dx

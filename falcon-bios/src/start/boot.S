@@ -148,7 +148,7 @@ next:
 2:	movw    %ax, DAP_CNT(%si)
 	movb    $0x42, %ah
 4:	movb    boot_drive, %dl
-	int     $0x13
+	int     $0x13  /* falcon-asm: ignore=loader-sector-count-unproven: the installer patches the count from stage 2's size; the build caps stage 2 at STAGE2_MBR_MAX_SECTORS, the installer at its reservation, and stage 2 checks its own length and CRC */
 	jnc     5f
 	xorb    %ah, %ah             /* AH=00h, reset the drive */
 	movb    boot_drive, %dl
@@ -190,6 +190,7 @@ fail:
 /* si = NUL-terminated string, each character through INT 10h teletype and
  * then to COM1, polled: there is no interrupt handler yet at this point in
  * the boot. Clobbers ax, bx, cx, dx, si. */
+/* falcon-asm: cc=custom args=si clobbers=ax,bx,cx,dx,si preserves=all */
 puts:
 	lodsb
 	testb   %al, %al
@@ -217,6 +218,7 @@ puts:
  * SERIAL_PORT to SERIAL_PORT + 5, so the high byte is SERIAL_PORT's): six
  * writes as data is half the bytes of six writes as code.
  */
+/* falcon-asm: cc=custom clobbers=ax,cx,dx,si preserves=all */
 serial_init:
 	movw    $serial_tab, %si
 	movw    $6, %cx

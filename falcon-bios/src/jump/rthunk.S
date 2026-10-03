@@ -107,7 +107,8 @@ jres_blob_start:
 	.fill   32, 1, 0
 
 	.org    JRES_OFF_CODE
-jres_int13:
+/* falcon-asm: handler=service vector=0x13 */
+jres_int13:  /* falcon-asm: ignore=unused-label: reached by its offset, JRES_OFF_CODE, from the INT 13h vector jres.c sets */
 	safe_mbr_hook JRES_OFF_OLDINT13
 	cmpb    %cs:JRES_OFF_DRIVE, %dl
 	je      1f
@@ -250,7 +251,8 @@ jres_rm16:
  * straight through.
  */
 	.org    JRES_OFF_CODE16
-jres_int16:
+/* falcon-asm: handler=service vector=0x16 */
+jres_int16:  /* falcon-asm: ignore=unused-label: reached by its offset, JRES_OFF_CODE16, from the INT 16h vector jres.c sets */
 	cmpb    $0x01, %ah
 	je      2f
 	cmpb    $0x11, %ah
@@ -293,7 +295,8 @@ jres_kbd:
  * replaced, and the flags come back from that handler's iret into ours.
  */
 	.org    JRES_OFF_CODE15
-jres_int15:
+/* falcon-asm: handler=service vector=0x15 */
+jres_int15:  /* falcon-asm: ignore=unused-label: reached by its offset, JRES_OFF_CODE15, from the INT 15h vector jres.c sets */
 	cmpw    $0xE801, %ax
 	je      e801
 	cmpb    $0x88, %ah
@@ -395,7 +398,7 @@ fail15:
  * which is what re-initialises the PC Card bridge. Then the reset three
  * ways, as stage2.S's fatal_rm does it. */
 	.org    JRES_OFF_RESET
-jres_reset:
+jres_reset:  /* falcon-asm: ignore=unused-label: reached by its offset, JRES_OFF_RESET, from the INT 18h and 19h vectors jres.c sets */
 	cli
 	xorw    %ax, %ax
 	movw    %ax, %ds

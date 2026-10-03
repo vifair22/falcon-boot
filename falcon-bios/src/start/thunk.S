@@ -90,7 +90,7 @@ thunk_bios:
 	 * below. A table of 256 stubs would be the alternative; this is one
 	 * byte, and with paging off nothing makes the code read-only. */
 	movzbl  thunk_vector, %eax
-	movb    %al, real_int_op + 1
+	movb    %al, real_int_op + 1  /* falcon-asm: ignore=self-modifying-code: one int instruction for every vector, as the comment above says */
 
 	cli
 	ljmp    $SEL_CODE16, $thunk_16

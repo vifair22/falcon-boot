@@ -100,6 +100,7 @@ vfd_launch:
 	.org    VFD_OFF_CODE
 /* ---- the handler ---- */
 	.globl  vfd_entry
+/* falcon-asm: handler=service vector=0x13 */
 vfd_entry:
 	safe_mbr_hook VFD_OFF_OLDINT13
 	/* Not our drive: on to whoever had the vector, as a jump so their iret

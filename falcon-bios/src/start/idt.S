@@ -50,7 +50,7 @@ fault_install:
 	movw    %dx, 6(%edi)         /* offset 31:16 */
 	addl    $FAULT_STUB, %eax
 	addl    $8, %edi
-	loop    1b
+	loop    1b                   /* falcon-asm: ignore=slow-loop: 32 passes, once, in stage 2, where bytes are what is scarce */
 	lidt    idt_desc
 	popl    %edi
 	ret
