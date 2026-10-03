@@ -125,3 +125,20 @@ EFI_STATUS bli_set_exec(EFI_SYSTEM_TABLE *st, UINT64 usec, UINT64 wait_usec)
     keep(&first, set_dec(rt, &falcon, BLI_WAIT_NAME, wait_usec));
     return first;
 }
+
+void bli_clear_exec(EFI_SYSTEM_TABLE *st)
+{
+    EFI_GUID loader = BLI_LOADER_GUID;
+    EFI_GUID falcon = FALCON_VENDOR_GUID;
+    EFI_RUNTIME_SERVICES *rt;
+
+    if (st == (EFI_SYSTEM_TABLE *)0)
+        return;
+    rt = st->RuntimeServices;
+    if (rt == (EFI_RUNTIME_SERVICES *)0 || rt->SetVariable == (void *)0)
+        return;
+    (void)rt->SetVariable((CHAR16 *)(uintptr_t)L"LoaderTimeExecUSec", &loader,
+                          BLI_ATTRS, 0, (void *)0);
+    (void)rt->SetVariable((CHAR16 *)(uintptr_t)BLI_WAIT_NAME, &falcon,
+                          BLI_ATTRS, 0, (void *)0);
+}

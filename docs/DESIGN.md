@@ -680,7 +680,9 @@ A UKI is what `pos` launches (the personal OS and the signing appliance off
 the stick's shelf; the station's encrypted-shelf row and its plaintext UKI
 rows) and a blessed wrap (`bless_boot`). Nothing else sets an exec time:
 chainloaded media, direct kernel boot, Windows, BSD, memtest86+, bare EFI
-payloads, and the station's firmware entries and ESP loaders. Both calls are
+payloads, and the station's firmware entries and ESP loaders. A UKI that
+returns has both exec variables deleted (`bli_clear_exec`), so a later boot
+by another route does not carry them. Both calls are
 in `loader` (`loader_time_init`, `loader_time_exec`), the variables'
 formats in `loader/bli.c`.
 

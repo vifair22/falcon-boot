@@ -9,6 +9,7 @@
 #include <media/strows.h>
 
 #include <loader/loadops.h>
+#include <loader/bli.h>
 
 #include <loader/credfs.h>
 #include <crypto/crypto.h>
@@ -933,6 +934,7 @@ static EFI_STATUS launch_uki(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent,
     result->stage = L"StartImage";
     loader_time_exec(st);
     status = ops.StartImage(child, &exit_size, &exit_data);
+    bli_clear_exec(st);
     /* StartImage unloads an application that returns, so the child handle is
      * gone either way; only its exit data is ours to release. */
     if (exit_data != (CHAR16 *)0)

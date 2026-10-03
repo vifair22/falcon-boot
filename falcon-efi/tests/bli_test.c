@@ -61,7 +61,8 @@ static EFI_STATUS EFIAPI fake_set(CHAR16 *name, EFI_GUID *guid, UINT32 attrs,
     r->guid = *guid;
     r->attrs = attrs;
     r->size = size;
-    memcpy(r->data, data, size);
+    if (size > 0)
+        memcpy(r->data, data, size);
     if (fail_name != NULL && strcmp(r->name, fail_name) == 0)
         return EFI_DEVICE_ERROR;
     return EFI_SUCCESS;
@@ -184,6 +185,22 @@ static void test_exec(void **state)
     assert_var("FalconTimeWaitUSec", &guid_falcon, "4500000");
 }
 
+/* A UKI that returns leaves no exec time behind for a later boot: both are
+ * deleted (size 0) under the GUIDs they were written with. */
+static void test_clear_exec(void **state)
+{
+    (void)state;
+    reset();
+    bli_clear_exec(&fake_st);
+    assert_int_equal(nrec, 2u);
+    assert_string_equal(recs[0].name, "LoaderTimeExecUSec");
+    assert_memory_equal(&recs[0].guid, &guid_loader, sizeof(EFI_GUID));
+    assert_int_equal(recs[0].size, 0u);
+    assert_string_equal(recs[1].name, "FalconTimeWaitUSec");
+    assert_memory_equal(&recs[1].guid, &guid_falcon, sizeof(EFI_GUID));
+    assert_int_equal(recs[1].size, 0u);
+}
+
 static void test_exec_zero_wait_is_written(void **state)
 {
     (void)state;
@@ -237,6 +254,7 @@ int run_bli_tests(void)
         cmocka_unit_test(test_init_without_clock_or_vendor),
         cmocka_unit_test(test_init_long_vendor_left_unset),
         cmocka_unit_test(test_exec),
+        cmocka_unit_test(test_clear_exec),
         cmocka_unit_test(test_exec_zero_wait_is_written),
         cmocka_unit_test(test_exec_without_clock_writes_nothing),
         cmocka_unit_test(test_failure_is_reported_and_the_rest_written),

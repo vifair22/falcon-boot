@@ -44,4 +44,8 @@ EFI_STATUS bli_set_init(EFI_SYSTEM_TABLE *st, UINT64 usec,
  * EFI_SUCCESS, or the first failure. */
 EFI_STATUS bli_set_exec(EFI_SYSTEM_TABLE *st, UINT64 usec, UINT64 wait_usec);
 
+/* When a started UKI returns: deletes the two, so an image booted later
+ * this boot by a route that sets neither does not inherit them. */
+void bli_clear_exec(EFI_SYSTEM_TABLE *st);
+
 #endif /* FALCON_EFI_BLI_H */

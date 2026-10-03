@@ -6,6 +6,7 @@
 #include <bless/bless.h>
 
 #include <loader/loadops.h>
+#include <loader/bli.h>
 
 #include <loader/credfs.h>
 #include <lib/string.h>
@@ -461,6 +462,8 @@ static EFI_STATUS launch_image(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent,
     if (uki)
         loader_time_exec(st);
     status = ops.StartImage(child, &exit_size, &exit_data);
+    if (uki)
+        bli_clear_exec(st);
     /* StartImage unloads an application that returns, so the child handle is
      * gone either way; only its exit data is ours to release. */
     if (exit_data != (CHAR16 *)0)
