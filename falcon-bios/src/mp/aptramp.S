@@ -66,7 +66,7 @@ ap16:
 	lgdtl   APT_OFF_GDTR
 	movl    %cr0, %eax
 	orl     $1, %eax             /* CR0.PE */
-	movl    %eax, %cr0           /* falcon-asm: ignore=mode-switch-a20: pmode.S opened A20 at boot, and the gate is the chipset's, every processor's */
+	movl    %eax, %cr0           /* falcon-asm: a20=../start/pmode.S:pmode_enter */
 	ljmpl   $SEL_CODE32, $(APT_ADDR + ap32 - aptramp_start)
 
 	.code32

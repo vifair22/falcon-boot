@@ -23,7 +23,7 @@
 _start:
 	.byte   0x55, 0xAA
 	.byte   1
-init:  /* falcon-asm: ignore=unused-label: the option ROM's entry, reached at offset 3 by the BIOS that runs it */
+init:  /* falcon-asm: reached=offset: the option ROM's entry, at offset 3 */
 	pushal
 	movw    $0xE000, %bp              /* the next controller's first port */
 	xorl    %edi, %edi                /* dev << 11 */

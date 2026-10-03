@@ -176,7 +176,7 @@ puts:
 
 /* In the order the report prints them. */
 m_head:   .asciz "\r\nRIGBOOT dl="
-/* falcon-asm: ignore-begin=unused-label: walked one after another from m_head, in the order the report prints them */
+/* falcon-asm: reached=sequence: walked one after another from m_head, in the order the report prints them */
 m_dssi:   .asciz " dssi="
 m_entry:  .asciz " entry="
 m_hidden: .asciz " hidden="
@@ -186,7 +186,6 @@ m_sigdl:  .asciz " sigdl="
 m_ndisks: .asciz " ndisks="
 m_sig81:  .asciz " sig81="
 m_end:    .asciz "\r\n"
-/* falcon-asm: ignore-end=unused-label */
 m_fail:   .asciz "--------"
 
 	.globl  rigboot_code_end
