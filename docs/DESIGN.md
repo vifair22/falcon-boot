@@ -2244,7 +2244,10 @@ while every real file lives only in UDF.
   second stick, an MBR data disk and a disk of another install's records; a
   4Kn stick on NVMe under both firmwares; the station disk under both. Each
   case is judged from serial, through the personal OS to the fixture UKI's
-  report of both credentials.
+  report of both credentials. The timing cases, there and in the station
+  rig, judge the variables of Section 5.5 from the loader's serial line and
+  from efivarfs as the fixture UKI's kernel reads it, against the kernel's
+  own TSC rate (`falcon-efi/tools/bli-judge.sh`).
 - The coverage harness (`tools/coverage/`): one rig stick per ISO of a pinned
   corpus (`corpus.tsv`), each booted under OVMF with Secure Boot off, on with
   the Microsoft CA, on with the user's own keys and, on request, on with

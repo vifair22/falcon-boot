@@ -130,6 +130,19 @@
 #                  the station disk under the same firmware: the banner,
 #                  {VALIDATION OFF} on its Personal OS row, and Enter on it
 #                  is the prompt
+#   timing-uefi    stick-a under OVMF with 3 s spent at the menu and 2 s at
+#                  the prompt, then the personal OS: the boot-timing
+#                  variables (DESIGN Section 5.5) as the booted kernel reads
+#                  them from efivarfs equal what the loader logged on
+#                  serial, are volatile and in systemd-boot's formats,
+#                  0 < init < exec, 5 s <= wait < exec - init, and the
+#                  loader's TSC rate is within 1% of the kernel's for the
+#                  same counter (falcon-efi/tools/bli-judge.sh). The
+#                  rate comes however the host's CPUID allows
+#   timing-stall-uefi
+#                  the same on a processor whose CPUID stops at leaf 0xD,
+#                  as the T430's i5-3320M does: the rate comes from the
+#                  Stall calibration, and is held to the same 1%
 #
 # Every image is built from image files; loop devices on them need sudo, as
 # mk-test-stick.sh does. Nothing touches a real disk.
@@ -142,6 +155,7 @@ set -euo pipefail
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)
 cd "$ROOT"
 . falcon-efi/tools/ovmf.sh
+. falcon-efi/tools/bli-judge.sh
 
 R=build/core-rig
 PASS="${FALCON_TEST_PASS:-falcon-test}"
@@ -419,7 +433,8 @@ send_keys() {   # send_keys TEXT: one sendkey per character, then Enter
 # only the disks QEMU's boot order lists, so a disk with no bootindex is
 # one the UEFI loader never sees.
 boot() {
-    local fw=$1 d img opts n=0 idx=1 args=() fwargs=() vars code cpu=host
+    local fw=$1 d img opts n=0 idx=1 args=() fwargs=() vars code
+    local cpu=${BOOT_CPU:-host}
     shift
     for d in "$@"; do
         img=${d%%:*}
@@ -632,6 +647,37 @@ case_4kn_marker() { # case_4kn_marker CASE
         result "$1" 1 "4096-byte marker taken and cleared; the personal OS booted from it"
     else
         result "$1" 0 "$why"
+    fi
+}
+
+# The boot-timing variables through the personal OS: 3 s at the menu and
+# 2 s at the prompt before the passphrase, so at least 5 s of the wait is
+# the rig's. CPU is QEMU's -cpu; VIA is how the loader must have had the
+# rate.
+case_timing() { # case_timing CASE CPU VIA
+    local c=$1 why=
+    BOOT_CPU=$2 boot uefi "$R/stick-a.img:boot"
+    wait_for "Personal OS (encrypted)" 90 || why="no Personal OS row"
+    if [[ -z "$why" ]]; then
+        sleep 3
+        mon "sendkey ret"
+        wait_for "passphrase for the encrypted partition" 30 ||
+            why="no passphrase prompt"
+    fi
+    if [[ -z "$why" ]]; then
+        sleep 2
+        pos_unlock 1 || why=$POS_WHY
+    fi
+    halt
+    if [[ -z "$why" ]]; then
+        log_text "$R/serial.log" > "$R/$c.txt"
+        bli_judge "$R/$c.txt" 5000000 "$3"
+        why=$BLI_WHY
+    fi
+    if [[ -z "$why" ]]; then
+        result "$c" 1 "$BLI_DETAIL"
+    else
+        result "$c" 0 "$why"
     fi
 }
 
@@ -1349,7 +1395,7 @@ CASES=("$@")
            kdf-memory-uefi kdf-memory-bios hibernated-uefi hibernated-bios
            probe-keys-uefi probe-keys-bios update-stick-uefi-sb
            update-stick-bios update-station-uefi-sb update-station-bios
-           update-refuse)
+           update-refuse timing-uefi timing-stall-uefi)
 
 for c in "${CASES[@]}"; do
     case $c in
@@ -1406,6 +1452,10 @@ for c in "${CASES[@]}"; do
     validation-off-pos-uefi)     case_voff_pos "$c" ;;
     validation-off-iso-uefi)     case_voff_iso "$c" ;;
     validation-off-station-uefi) case_voff_station "$c" ;;
+    # The host's own leaves, whichever way they answer; level=0xd hides
+    # 0x15 and 0x16, as an Ivy Bridge has neither.
+    timing-uefi)       case_timing "$c" host "" ;;
+    timing-stall-uefi) case_timing "$c" host,level=0xd stall ;;
     *) echo "unknown case: $c" >&2; exit 2 ;;
     esac
 done

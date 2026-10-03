@@ -52,6 +52,12 @@
 #                16 s after the next three, then the power-off (DESIGN
 #                Section 5.2)
 #   retry        a wrong passphrase, no wait, then the right one: the UKI
+#   timing       default = linux ([linux] uki = personal.efi), timeout = 3:
+#                the countdown runs out, 2 s at the prompt, the UKI. The
+#                boot-timing variables (DESIGN Section 5.5) are judged as
+#                run-core-rig.sh's timing cases judge them, the wait at
+#                least the countdown and the prompt's 2 s
+#                (falcon-efi/tools/bli-judge.sh)
 #
 # Nothing touches a real disk or this machine's variables: every disk is an
 # image file and every varstore a copy under build/station-rig.
@@ -69,6 +75,7 @@ set -euo pipefail
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)
 cd "$ROOT"
 . falcon-efi/tools/ovmf.sh
+. falcon-efi/tools/bli-judge.sh
 
 R=build/station-rig
 PASS="${FALCON_TEST_PASS:-falcon-test}"
@@ -598,6 +605,29 @@ case_retry() {
     result "$c" "$why" "a wrong passphrase, no wait, then the right one: the UKI"
 }
 
+case_timing() {
+    local c=$1 fw=$2 why=
+    station_image $'[general]\ndefault = linux\ntimeout = 3\n\n[linux]\nuki = personal.efi\n'
+    NEXT= NO_WIN_ENTRY=0 boot "$fw"
+    wait_for "Booting in 3 s" 90 || why="no countdown"
+    if [[ -z "$why" ]]; then
+        wait_for "passphrase for the encrypted partition" 30 ||
+            why="the countdown did not reach the prompt"
+    fi
+    if [[ -z "$why" ]]; then
+        sleep 2
+        send_keys "$PASS"
+        wait_for "FALCON-UKI-DONE" 120 || why="the UKI never reported"
+    fi
+    halt
+    if [[ -z "$why" ]]; then
+        log_text "$R/serial.log" > "$R/$c.txt"
+        bli_judge "$R/$c.txt" 4500000
+        why=$BLI_WHY
+    fi
+    result "$c" "$why" "$BLI_DETAIL"
+}
+
 # ---- run ----
 
 make --no-print-directory station cli "$STANDIN" "$LOADER" \
@@ -607,7 +637,7 @@ build_win_disk
 
 ALL=(menu countdown key-stops nxt method-efi esp-found next-boot next-uki
      next-unknown ini-error no-default unsigned idle-menu idle-countdown
-     idle-prompt bad-pass retry)
+     idle-prompt bad-pass retry timing)
 CASES=("$@")
 if [[ ${#CASES[@]} -eq 0 ]]; then
     for c in "${ALL[@]}"; do CASES+=("uefi-$c"); done
@@ -638,6 +668,7 @@ for c in "${CASES[@]}"; do
     idle-prompt)  case_idle_prompt "$c" "$fw" ;;
     bad-pass)     case_bad_pass "$c" "$fw" ;;
     retry)        case_retry "$c" "$fw" ;;
+    timing)       case_timing "$c" "$fw" ;;
     *) echo "unknown case: $c" >&2; exit 2 ;;
     esac
 done

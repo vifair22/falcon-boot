@@ -31,10 +31,14 @@
 #include <fcntl.h>
 #include <stdio.h>
 #include <string.h>
+#include <stdint.h>
+#include <stdlib.h>
+#include <sys/klog.h>
 #include <sys/mount.h>
 #include <sys/reboot.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <x86intrin.h>
 
 /* Must match FALCON_TEST_PASS in falcon-efi/tools/mk-test-stick.sh. */
 #define EXPECT_PASS "falcon-test"
@@ -145,6 +149,111 @@ static ssize_t read_file(const char *path, unsigned char *buf, size_t cap)
     return total;
 }
 
+/* ---- the boot-timing variables (DESIGN Section 5.5) ----
+ *
+ * What systemd-analyze would read: each variable as efivarfs shows it, a
+ * 4-byte attribute word and the value, which the loader writes as UTF-16
+ * with its terminator. Printed as FALCON-BLI-VAR lines for the rig to
+ * judge against the loader's own serial line. Beside them, the kernel's
+ * TSC rate from its log and the counter now in microseconds at that rate:
+ * a clock the loader had no hand in, for the rig to hold the loader's
+ * timestamps and rate against. */
+
+#define LOADER_GUID "4a67b082-0a4c-41cf-b6c7-440b29bb8c4f"
+#define FALCON_GUID "50614485-081b-4b7c-8b54-2abeffdf2fb3"
+#define EFIVARS "/sys/firmware/efi/efivars"
+
+static void bli_var(const char *name, const char *guid)
+{
+    unsigned char buf[512];
+    char path[256];
+    char val[256];
+    ssize_t n;
+    size_t i, w = 0;
+    unsigned attrs;
+    int nul = 0;
+
+    snprintf(path, sizeof path, EFIVARS "/%s-%s", name, guid);
+    n = read_file(path, buf, sizeof buf);
+    if (n < 4) {
+        outf("FALCON-BLI-VAR %s missing\n", name);
+        return;
+    }
+    attrs = (unsigned)buf[0] | (unsigned)buf[1] << 8 |
+            (unsigned)buf[2] << 16 | (unsigned)buf[3] << 24;
+    for (i = 4; i + 1 < (size_t)n && w + 1 < sizeof val; i += 2) {
+        unsigned u = (unsigned)buf[i] | (unsigned)buf[i + 1] << 8;
+
+        if (u == 0) {
+            nul = i + 2 == (size_t)n;
+            break;
+        }
+        val[w++] = u >= 0x20 && u < 0x7f ? (char)u : '?';
+    }
+    val[w] = '\0';
+    outf("FALCON-BLI-VAR %s attrs=0x%x nul=%d value=%s\n", name, attrs, nul,
+         val);
+}
+
+/* The kernel's TSC rate in kHz, from the last "tsc: Detected" or "tsc:
+ * Refined TSC clocksource calibration:" line in its log; 0 if neither. */
+static unsigned long kernel_tsc_khz(void)
+{
+    static char log[1 << 20];
+    unsigned long khz = 0;
+    char *p;
+    int n = klogctl(3, log, (int)sizeof log - 1);
+
+    if (n <= 0)
+        return 0;
+    log[n] = '\0';
+    for (p = log; (p = strstr(p, "tsc: ")) != NULL; p++) {
+        const char *q = NULL;
+
+        if (strncmp(p, "tsc: Detected ", 14) == 0)
+            q = p + 14;
+        else if (strncmp(p, "tsc: Refined TSC clocksource calibration: ",
+                         42) == 0)
+            q = p + 42;
+        if (q != NULL) {
+            double mhz = strtod(q, NULL);
+
+            if (mhz > 0)
+                khz = (unsigned long)(mhz * 1000.0 + 0.5);
+        }
+    }
+    return khz;
+}
+
+static void bli_report(void)
+{
+    static const char *const loader[] = {
+        "LoaderTimeInitUSec", "LoaderTimeExecUSec", "LoaderInfo",
+        "LoaderFirmwareInfo", "LoaderFirmwareType",
+    };
+    unsigned long khz;
+    size_t i;
+
+    (void)mkdir("/sys", 0755);
+    (void)mount("sysfs", "/sys", "sysfs", 0, NULL);
+    if (mount("efivarfs", EFIVARS, "efivarfs", MS_RDONLY, NULL) != 0)
+        outf("FALCON-BLI-EFIVARFS unavailable\n");
+    for (i = 0; i < sizeof loader / sizeof loader[0]; i++)
+        bli_var(loader[i], LOADER_GUID);
+    bli_var("FalconTimeWaitUSec", FALCON_GUID);
+
+    /* Read after the variables, so it is later than all of them. */
+    khz = kernel_tsc_khz();
+    if (khz != 0) {
+        unsigned __int128 t = __rdtsc();
+
+        outf("FALCON-BLI-KERNEL tsc_khz=%lu now_usec=%llu\n", khz,
+             (unsigned long long)(t * 1000u / khz));
+    } else {
+        outf("FALCON-BLI-KERNEL tsc_khz=0\n");
+    }
+}
+
 int main(void)
 {
     unsigned char buf[READ_MAX];
@@ -201,6 +310,8 @@ int main(void)
         outf("FALCON-CRED-OK\n");
     else
         outf("FALCON-CRED-FAIL\n");
+
+    bli_report();
 
     outf("FALCON-UKI-DONE\n");
     /* A human watching the QEMU window needs a moment to read the result;

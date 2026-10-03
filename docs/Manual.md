@@ -3320,7 +3320,7 @@ case, judged from serial.
 
 | target | boots | needs |
 |---|---|---|
-| `test-core` | the stick under both firmwares alone, beside a second stick, an MBR disk and another install's records; a 4Kn stick on NVMe; the station | sudo; the fixture UKI and test MOK |
+| `test-core` | the stick under both firmwares alone, beside a second stick, an MBR disk and another install's records; a 4Kn stick on NVMe; the station; the boot-timing variables | sudo; the fixture UKI and test MOK |
 | `test-station-uefi` | the UEFI station's cases, Secure Boot off and on | `build/test-station.img` (made when absent) |
 | `test-station-installed` | stations the installer put on GPT, 4Kn GPT and 4Kn MBR disks | sudo |
 | `test-tpm-rig` | the TPM probe and the UEFI station's TOTP check, swtpm as TPM 2.0 (TIS, CRB) and 1.2, Secure Boot off and on | `swtpm` (else one SKIP line); `build/test-station.img` for the station cases |
