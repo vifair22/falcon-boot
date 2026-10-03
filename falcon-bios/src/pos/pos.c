@@ -39,6 +39,7 @@
 #include <luks/luks.h>
 #include <pe/pe.h>
 #include <crypto/crypto.h>
+#include <crypto/xstate.h>
 #include <mem/heap.h>
 #include <mem/jnlmem.h>
 #include <media/cpio.h>
@@ -495,6 +496,7 @@ static int prompt_and_unlock(void)
 {
     for (;;) {
         uint32_t slot = 0;
+        xstate_saved xs;
         int rc;
         unsigned wait;
 
@@ -504,8 +506,16 @@ static int prompt_and_unlock(void)
             return POS_ABORTED;
 
         screen_out("unlocking...\n");
+        /* The AVX state, off in protected mode, borrowed for argon2id's
+         * block function and given back before anything else runs
+         * (xstate.h). */
+        xstate_borrow(&xs);
+        bios_puts("falcon-bios: argon2id block function: ");
+        bios_puts(crypto_simd_name(crypto_simd_level()));
+        bios_puts("\n");
         rc = luks_unlock(&g_vol, g_pass, g_pass_len, &g_kdf_mem, &g_mk,
                          &slot);
+        xstate_return(&xs);
         if (rc == LUKS_OK)
             return LUKS_OK;
         if (rc != LUKS_ERR_NOKEY)

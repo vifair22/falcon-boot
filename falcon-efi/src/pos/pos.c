@@ -13,6 +13,8 @@
 
 #include <loader/credfs.h>
 #include <crypto/crypto.h>
+#include <crypto/xstate.h>
+#include <console/serial.h>
 #include <discover/discover.h>
 #include <fs/fs.h>
 #include <mem/jnlmem.h>
@@ -431,9 +433,25 @@ static int unlock_any(UINTN *which)
     int other_err = LUKS_OK;
     int saw_nokey = 0;
     int saw_mem = 0;
+    xstate_saved xs;
     UINTN i;
 
     *which = 0;
+    /* The AVX state for argon2id's block function, borrowed for the
+     * derivations and given back before anything else runs (xstate.h). */
+    xstate_borrow(&xs);
+    {
+        static const char head[] = "falcon-pos: argon2id block function: ";
+        const char *name = crypto_simd_name(crypto_simd_level());
+        char line[sizeof head + 16];
+        UINTN n = sizeof head - 1u;
+
+        memcpy(line, head, n);
+        while (*name != '\0' && n + 1u < sizeof line)
+            line[n++] = *name++;
+        line[n] = '\0';
+        serial_line(g_st, line);
+    }
     for (i = 0; i < g_shelf_n; i++) {
         uint32_t slot = 0;
         int rc;
@@ -443,6 +461,7 @@ static int unlock_any(UINTN *which)
         rc = luks_unlock(&g_shelf[i].vol, g_pass, (size_t)g_pass_len,
                          &g_kdf_mem, &g_mk, &slot);
         if (rc == LUKS_OK) {
+            xstate_return(&xs);
             *which = i;
             return LUKS_OK;
         }
@@ -459,6 +478,7 @@ static int unlock_any(UINTN *which)
         }
     }
 
+    xstate_return(&xs);
     if (saw_mem)
         return LUKS_ERR_KDF_MEMORY;
     if (saw_nokey)

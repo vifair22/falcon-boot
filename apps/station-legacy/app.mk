@@ -12,7 +12,7 @@
 STATION_LEGACY := apps/station-legacy
 
 LEGACY_BIOS := $(STATION_LEGACY)/bios_main.c $(BIOS_MOD_station)
-LEGACY_BIOS += $(BIOS_MOD_pos) $(BIOS_MOD_prompt) $(BIOS_MOD_console) $(BIOS_MOD_linux)
+LEGACY_BIOS += $(BIOS_MOD_pos) $(CORE_XSTATE) $(BIOS_MOD_prompt) $(BIOS_MOD_console) $(BIOS_MOD_linux)
 LEGACY_BIOS += $(BIOS_MOD_chain) $(BIOS_MOD_lowmem)  # partition and disk chains, the swap's memory
 LEGACY_BIOS += $(CORE_STROWS) $(CORE_STATIONINI)   # the list, and STATION.INI
 LEGACY_BIOS += $(BIOS_MOD_marker) $(CORE)/media/nextboot.c  # next boot (Section 12.8)

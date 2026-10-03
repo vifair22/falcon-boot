@@ -22,8 +22,13 @@
  * runner is the one place that does, which keeps this file the same in the
  * loaders, the host tools and the benchmark.
  *
- * Stack. One 1 KiB block in argon2id, and three in each segment's job
- * (argon2_job), about 3.5 KiB on whichever stack runs it: the EFI build's
+ * Block function. G, the compression every block goes through, comes in
+ * portable C and in SSE2, SSSE3 and AVX2 (argon2_simd.h), one picked per
+ * derivation by what the processor can run (crypto_simd_level). The output
+ * is the same whichever runs; only the time differs.
+ *
+ * Stack. One 1 KiB block in argon2id, and five in each segment's job
+ * (argon2_job), about 5.5 KiB on whichever stack runs it: the EFI build's
  * 32 KiB frame limit, falcon-bios's stage 3 stack and the 32 KiB edk2 gives
  * an application processor all have room, and nothing here scales with the
  * cost parameters.
@@ -96,5 +101,17 @@ typedef struct {
  * memory would not fit this build's address space. */
 int argon2id(const argon2_params *p, void *mem, uint32_t mem_kib,
              const argon2_runner *run, uint8_t *out, size_t out_len);
+
+/* argon2id with the block function's instruction set named: a
+ * CRYPTO_SIMD_* level (crypto.h), or ARGON2_SIMD_AUTO for the highest this
+ * processor can run now, which is what argon2id uses. Every level gives the
+ * same output; naming one is for the tests, which run each the build host
+ * has, and the benchmark, which times them. A level above what the
+ * processor can run is CRYPTO_ERR_UNSUPPORTED, before mem is touched. */
+#define ARGON2_SIMD_AUTO (-1)
+
+int argon2id_simd(const argon2_params *p, void *mem, uint32_t mem_kib,
+                  const argon2_runner *run, int simd, uint8_t *out,
+                  size_t out_len);
 
 #endif /* FALCON_CRYPTO_ARGON2_H */

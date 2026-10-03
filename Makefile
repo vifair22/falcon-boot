@@ -156,6 +156,21 @@ $(HOST_OBJ)/%.o: %.c
 $(EFI_OBJ)/falcon-core/src/crypto/aesni.o: EFI_CFLAGS += -maes
 $(HOST_OBJ)/falcon-core/src/crypto/aesni.o: HOST_CFLAGS += -maes
 
+# Argon2id's block function, one object per instruction set
+# (falcon-core/src/crypto/argon2_simd.h), on the same rule as AES-NI: each
+# carries its own level's flag and nothing else does, and crypto.c's
+# crypto_simd_level, built without them, decides which runs. SSE2 needs no
+# flag on x86-64. The AVX2 object is assembled with every aligned vector
+# move made unaligned in the EFI build: GCC for Windows targets cannot
+# realign the stack to 32 bytes (PR 54412), and a ymm spill to a slot that
+# is not would #GP in the firmware.
+ARGON2_SIMD_SSSE3 := falcon-core/src/crypto/argon2_ssse3.o
+ARGON2_SIMD_AVX2  := falcon-core/src/crypto/argon2_avx2.o
+$(EFI_OBJ)/$(ARGON2_SIMD_SSSE3): EFI_CFLAGS += -mssse3
+$(EFI_OBJ)/$(ARGON2_SIMD_AVX2): EFI_CFLAGS += -mavx2 -Wa,-muse-unaligned-vector-move
+$(HOST_OBJ)/$(ARGON2_SIMD_SSSE3): HOST_CFLAGS += -mssse3
+$(HOST_OBJ)/$(ARGON2_SIMD_AVX2): HOST_CFLAGS += -mavx2
+
 # ---- version ----
 SEMVER := $(shell cat release_version)
 # Repo-standard full version: SEMVER_YYYYMMDD.HHMM.TYPE.
@@ -457,7 +472,9 @@ define cc_db_emit
 		extra=""; \
 		inc=""; \
 		$(4) \
-		case "$$obj" in */crypto/aesni.o) extra=" -maes";; esac; \
+		case "$$obj" in */crypto/aesni.o) extra=" -maes";; \
+			*/crypto/argon2_ssse3.o) extra=" -mssse3";; \
+			*/crypto/argon2_avx2.o) extra=" -mavx2";; esac; \
 		printf '  {\n' >> $@; \
 		printf '    "directory": "%s",\n' '$(CURDIR)' >> $@; \
 		printf '    "command": "%s %s%s%s -MMD -MF %s.d -c -o %s %s/%s",\n' \

@@ -2107,8 +2107,17 @@ while every real file lives only in UDF.
   sector decryption. AES-NI intrinsics for XTS, with a portable C fallback
   selected by CPUID at runtime. The primitives (`CORE_CRYPTO`): SHA-1 (WIM
   stream names), SHA-256 and SHA-512, HMAC and PBKDF2 parameterized over
-  them, BLAKE2b and Argon2id (the caller's memory, lanes filled in turn),
-  AES-XTS decrypt. SHA-512 (~150 lines) is there because a LUKS2 header
+  them, BLAKE2b and Argon2id (the caller's memory, a slice's lanes run by
+  the caller's `argon2_runner`, in turn when it gives none), AES-XTS
+  decrypt. Argon2id's block function comes in portable C, SSE2, SSSE3 and
+  AVX2 (`crypto/argon2_simd.h`), one object per instruction set built with
+  that set's flag alone, picked by `crypto_simd_level` as AES-NI is, and
+  every level gives the reference's output (`argon2_test.c` runs each).
+  AVX2 needs its register state on (CR4.OSXSAVE, XCR0), which no loader
+  can assume: both borrow it around `luks_unlock` and give it back
+  (`crypto/xstate.c`, ring 0 only), with every ymm register cleared, so a
+  firmware, a kernel or a chained DOS boot sector inherits the CR4 and XCR0
+  it would have had. Each unlock says its level on serial. SHA-512 (~150 lines) is there because a LUKS2 header
   names its hash in four independent places and `cryptsetup --hash sha512`
   (which the user's own p4 header used for its digest) switches all four.
   The UEFI station alone also links `CORE_CRYPTO_TPM` for its TOTP check
@@ -2865,7 +2874,9 @@ flowchart TD
 The whole loader is i586 code in flat 32-bit protected mode, and one image
 runs on every i586 or later processor. What a newer processor
 adds is taken by asking CPUID, not by a second build: the SSE state above,
-AES-NI in falcon-core's AES path, and long mode, which only a 64-bit kernel
+AES-NI in falcon-core's AES path, argon2id's SSE2, SSSE3 and AVX2 block
+functions (the AVX state borrowed for the unlock and given back), and long
+mode, which only a 64-bit kernel
 needs and 11.3.6 checks for (the menu's `{64-BIT ONLY}`, 7.8, asks the
 same question before a row is chosen). Paging stays off, so everything the loader
 places is below 4 GiB (`ADDR_END`).
@@ -3076,7 +3087,14 @@ The initramfs sees what sd-stub would have given it. `pmode.S` sets
 CR4.OSFXSR when CPUID reports SSE, for AES-NI in `luks_unlock`: UEFI
 firmware sets it, a BIOS leaves it clear, and the first SSE instruction
 would fault. Without AES-NI, `luks_unlock` takes falcon-core's portable AES
-path.
+path. The AVX state is off in protected mode until something turns it on:
+`pos.c` borrows it around `luks_unlock` for argon2id's AVX2 block function
+and gives it back (CR4.OSXSAVE clear and XCR0 at its reset value again,
+every ymm register zero) before anything is loaded, so what boots next
+finds the processor's state as the BIOS left it. The vector objects are
+built to realign their own stack frames, since nothing in falcon-bios
+promises a 16-byte stack to a function it calls and a legacy SSE operand
+on a misaligned stack slot is #GP.
 
 #### 11.3.8 CHN: the resident virtual CD
 

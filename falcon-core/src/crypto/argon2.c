@@ -14,6 +14,7 @@
  */
 
 #include <crypto/argon2.h>
+#include <crypto/argon2_simd.h>
 #include <crypto/blake2b.h>
 #include <crypto/crypto.h>
 #include <lib/string.h>
@@ -35,6 +36,7 @@ typedef struct {
     blk r;            /* G's working copy */
     blk input;        /* data-independent addressing: the counter block */
     blk address;      /* ... and the 128 pseudo-random values it yields */
+    uint64_t simd[ARGON2_SIMD_SCRATCH_WORDS];   /* a vector fill's state */
 } work;
 
 typedef struct {
@@ -44,6 +46,8 @@ typedef struct {
     uint32_t sl;      /* segment length in blocks, q / 4 */
     uint32_t mprime;  /* total blocks */
     uint32_t passes;
+    argon2_fill_fn fill;   /* a vector level's block function, or NULL */
+    void (*wipe)(void);    /* ... and its register wipe */
 } inst;
 
 static uint64_t ror64(uint64_t x, unsigned int n)
@@ -288,8 +292,15 @@ static void fill_segment(const inst *in, work *w, uint32_t pass,
         }
         ref_col = ref_index(in, pass, slice, i, (uint32_t)pr,
                             ref_lane == lane);
-        fill_block(&w->r, &mem[prev], &mem[(size_t)in->q * ref_lane + ref_col],
-                   &mem[curr], pass != 0u);
+        if (in->fill != NULL) {
+            in->fill(w->simd, mem[prev].v,
+                     mem[(size_t)in->q * ref_lane + ref_col].v, mem[curr].v,
+                     pass != 0u);
+        } else {
+            fill_block(&w->r, &mem[prev],
+                       &mem[(size_t)in->q * ref_lane + ref_col], &mem[curr],
+                       pass != 0u);
+        }
     }
 }
 
@@ -304,13 +315,17 @@ typedef struct {
 
 /* The scratch is the job's own, on whichever stack runs it, so lanes on
  * different processors share nothing but the memory block, and each wipes
- * its own before it returns. */
+ * its own before it returns: the scratch, and on a vector level the
+ * registers of the processor that ran it. */
 static void segment_job(void *ctx, uint32_t lane)
 {
     const slice_ctx *sc = (const slice_ctx *)ctx;
     work w;
 
     fill_segment(sc->in, &w, sc->pass, sc->slice, lane);
+    if (sc->in->wipe != NULL) {
+        sc->in->wipe();
+    }
     crypto_wipe(&w, sizeof w);
 }
 
@@ -384,9 +399,53 @@ uint32_t argon2_mem_kib(uint32_t m_cost, uint32_t lanes)
     return (m_cost / (4u * lanes)) * (4u * lanes);
 }
 
+/* The block function a level names, or CRYPTO_ERR_UNSUPPORTED when this
+ * processor cannot run it. */
+static int pick_level(inst *in, int simd)
+{
+    int best = crypto_simd_level();
+
+    if (simd == ARGON2_SIMD_AUTO) {
+        simd = best;
+    } else if (simd < CRYPTO_SIMD_NONE || simd > CRYPTO_SIMD_AVX2) {
+        return CRYPTO_ERR_BAD_ARG;
+    } else if (simd > best) {
+        return CRYPTO_ERR_UNSUPPORTED;
+    }
+    switch (simd) {
+    case CRYPTO_SIMD_SSE2:
+        in->fill = argon2_fill_sse2;
+        in->wipe = argon2_wipe_sse2;
+        break;
+    case CRYPTO_SIMD_SSSE3:
+        in->fill = argon2_fill_ssse3;
+        in->wipe = argon2_wipe_ssse3;
+        break;
+    case CRYPTO_SIMD_AVX2:
+        in->fill = argon2_fill_avx2;
+        in->wipe = argon2_wipe_avx2;
+        break;
+    default:
+        in->fill = NULL;
+        in->wipe = NULL;
+        break;
+    }
+    return CRYPTO_OK;
+}
+
 int argon2id(const argon2_params *p, void *mem, uint32_t mem_kib,
              const argon2_runner *run, uint8_t *out, size_t out_len)
 {
+    return argon2id_simd(p, mem, mem_kib, run, ARGON2_SIMD_AUTO, out,
+                         out_len);
+}
+
+int argon2id_simd(const argon2_params *p, void *mem, uint32_t mem_kib,
+                  const argon2_runner *run, int simd, uint8_t *out,
+                  size_t out_len)
+{
+    int rc;
+
     blake2b_ctx c;
     uint8_t pin[PRIME_IN_LEN];
     blk tag;
@@ -424,6 +483,10 @@ int argon2id(const argon2_params *p, void *mem, uint32_t mem_kib,
         run = &in_turn;
     } else if (run->run == NULL) {
         return CRYPTO_ERR_BAD_ARG;
+    }
+    rc = pick_level(&in, simd);
+    if (rc != CRYPTO_OK) {
+        return rc;
     }
     in.mem = mem;
     in.lanes = p->lanes;

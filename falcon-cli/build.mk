@@ -91,6 +91,12 @@ $(HOST32_OBJ)/%.o: %.c
 # AES-NI alone, as falcon-bios builds it: crypto.c's CPUID probe takes this
 # path only on a processor that has it, which a Pentium III does not.
 $(HOST32_OBJ)/falcon-core/src/crypto/aesni.o: HOST32_CFLAGS += -msse2 -maes
+# Argon2id's vector block functions, each its own level and gated the same
+# way; tools/check-floor.sh --userland passes them by their _sse2, _ssse3
+# and _avx2 names.
+$(HOST32_OBJ)/falcon-core/src/crypto/argon2_sse2.o: HOST32_CFLAGS += -msse2
+$(HOST32_OBJ)/$(ARGON2_SIMD_SSSE3): HOST32_CFLAGS += -mssse3
+$(HOST32_OBJ)/$(ARGON2_SIMD_AVX2): HOST32_CFLAGS += -mavx2
 
 $(MKSTICK32): $(MKSTICK32_OBJS)
 	@mkdir -p $(@D)

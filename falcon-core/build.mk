@@ -9,11 +9,15 @@
 CORE := falcon-core/src
 
 CORE_CRYPTO   := $(addprefix $(CORE)/crypto/,crypto.c sha1.c sha256.c sha512.c \
-	hash.c hmac.c pbkdf2.c aes.c xts.c aesni.c blake2b.c argon2.c)
+	hash.c hmac.c pbkdf2.c aes.c xts.c aesni.c blake2b.c argon2.c \
+	argon2_sse2.c argon2_ssse3.c argon2_avx2.c)
 # The public-key and session crypto under the TPM path (DESIGN Section
 # 12.15): AES-CFB, P-256 ECDH over bn.c, the TPM 2.0 KDFs,
 # RSAES-OAEP for the 1.2 transport, and the TOTP code. Apart from
 # CORE_CRYPTO so the loaders that link that list whole do not carry it.
+# The AVX register state, borrowed around an unlock (crypto/xstate.h). Ring 0
+# only, so the loaders link it and no host build does.
+CORE_XSTATE := $(CORE)/crypto/xstate.c
 CORE_CRYPTO_TPM := $(addprefix $(CORE)/crypto/,cfb.c bn.c p256.c kdf.c \
 	rsa.c otp.c)
 # The TPM command layer, 2.0 and 1.2, over a transport callback: the UEFI
@@ -183,6 +187,10 @@ $(eval $(call test_bin,core,$(CORE_TESTS) $(CORE_UUT)))
 # path lives in crypto.c without it, and the vector tests that would compare
 # the two XTS implementations skip themselves on a CPU without AES-NI.
 $(TEST_OBJ)/falcon-core/src/crypto/aesni.o: TEST_CFLAGS += -maes
+# Argon2id's vector block functions, as the root Makefile builds them; the
+# tests run every level the build host has against the reference vectors.
+$(TEST_OBJ)/$(ARGON2_SIMD_SSSE3): TEST_CFLAGS += -mssse3
+$(TEST_OBJ)/$(ARGON2_SIMD_AVX2): TEST_CFLAGS += -mavx2
 
 # ---- the TPM rig (DESIGN Section 12.15) ----
 #

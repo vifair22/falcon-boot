@@ -148,6 +148,21 @@ $(BIOS_OBJ)/falcon-core/src/crypto/aesni.o: BIOS_CFLAGS := \
 	$(filter-out -mno-sse -mno-mmx -mgeneral-regs-only,$(BIOS_CFLAGS)) \
 	-msse2 -maes
 
+# Argon2id's vector block functions (falcon-core/src/crypto/argon2_simd.h),
+# each its own level, the same three flags out, and gated by crypto.c as
+# AES-NI is. SSE needs pmode.S's CR4.OSFXSR; AVX2 needs the AVX state, which
+# is off in protected mode until something turns it on, and pos.c borrows
+# it around the unlock (crypto/xstate.h). -mincoming-stack-boundary=2:
+# nothing in this build promises a 16-byte stack to a function it calls,
+# and a legacy SSE instruction with a misaligned stack operand is #GP, so
+# these objects realign their own frames where they keep vectors there.
+BIOS_SIMD_CFLAGS = $(filter-out -mno-sse -mno-mmx -mgeneral-regs-only,$(BIOS_CFLAGS)) \
+	-mincoming-stack-boundary=2
+$(BIOS_OBJ)/falcon-core/src/crypto/argon2_sse2.o: BIOS_CFLAGS := \
+	$(BIOS_SIMD_CFLAGS) -msse2
+$(BIOS_OBJ)/$(ARGON2_SIMD_SSSE3): BIOS_CFLAGS := $(BIOS_SIMD_CFLAGS) -mssse3
+$(BIOS_OBJ)/$(ARGON2_SIMD_AVX2): BIOS_CFLAGS := $(BIOS_SIMD_CFLAGS) -mavx2
+
 # --no-warn-rwx-segments: the output is a flat image loaded by a jump, with
 # one segment holding code and data together. There is nothing to separate
 # them into and nothing that would enforce it if there were.
