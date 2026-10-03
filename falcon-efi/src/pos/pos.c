@@ -333,7 +333,9 @@ static void kdf_put(void *ctx, void *mem, uint32_t kib)
     g_kdf_pages = 0;
 }
 
-static const luks_kdf_mem g_kdf_mem = { kdf_get, kdf_put, (void *)0 };
+static const luks_kdf_mem g_kdf_mem = {
+    kdf_get, kdf_put, (void *)0, (void *)0
+};
 
 /* The smallest ask of an argon2id slot the firmware could not supply, from
  * the last unlock_any that returned LUKS_ERR_KDF_MEMORY. */

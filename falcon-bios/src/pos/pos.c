@@ -422,7 +422,9 @@ static void kdf_put(void *ctx, void *mem, uint32_t kib)
     heap_reset();
 }
 
-static const luks_kdf_mem g_kdf_mem = { kdf_get, kdf_put, (void *)0 };
+static const luks_kdf_mem g_kdf_mem = {
+    kdf_get, kdf_put, (void *)0, (void *)0
+};
 
 
 /* Appends v in decimal at r->buf + *n, cut to fit like boot_result_advise. */

@@ -46,7 +46,7 @@ static void kdf_put(void *ctx, void *mem, uint32_t kib)
     free(mem);
 }
 
-static const luks_kdf_mem kdf_mem = { kdf_get, kdf_put, NULL };
+static const luks_kdf_mem kdf_mem = { kdf_get, kdf_put, NULL, NULL };
 
 /* One file off the shelf into a sealed memfd; the read buffer is wiped as
  * soon as the bytes are in it. The descriptor, or -1 with the error set. */

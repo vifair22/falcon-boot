@@ -293,6 +293,39 @@ static void fill_segment(const inst *in, work *w, uint32_t pass,
     }
 }
 
+/* ---- one slice's lanes ------------------------------------------------ */
+
+/* What a segment's job needs besides its lane. */
+typedef struct {
+    const inst *in;
+    uint32_t    pass;
+    uint32_t    slice;
+} slice_ctx;
+
+/* The scratch is the job's own, on whichever stack runs it, so lanes on
+ * different processors share nothing but the memory block, and each wipes
+ * its own before it returns. */
+static void segment_job(void *ctx, uint32_t lane)
+{
+    const slice_ctx *sc = (const slice_ctx *)ctx;
+    work w;
+
+    fill_segment(sc->in, &w, sc->pass, sc->slice, lane);
+    crypto_wipe(&w, sizeof w);
+}
+
+static void run_in_turn(void *self, argon2_job job, void *ctx, uint32_t lanes)
+{
+    uint32_t l;
+
+    (void)self;
+    for (l = 0; l < lanes; l++) {
+        job(ctx, l);
+    }
+}
+
+static const argon2_runner in_turn = { run_in_turn, NULL };
+
 /* ---- the whole derivation (RFC 9106 Section 3.2) ---------------------- */
 
 static void blk_from_bytes(blk *b)
@@ -352,11 +385,12 @@ uint32_t argon2_mem_kib(uint32_t m_cost, uint32_t lanes)
 }
 
 int argon2id(const argon2_params *p, void *mem, uint32_t mem_kib,
-             uint8_t *out, size_t out_len)
+             const argon2_runner *run, uint8_t *out, size_t out_len)
 {
     blake2b_ctx c;
     uint8_t pin[PRIME_IN_LEN];
-    work w;
+    blk tag;
+    slice_ctx sc;
     inst in;
     uint32_t l, pass, slice, i;
 
@@ -385,6 +419,11 @@ int argon2id(const argon2_params *p, void *mem, uint32_t mem_kib,
     }
     if (mem_kib < in.mprime) {
         return CRYPTO_ERR_NOSPACE;
+    }
+    if (run == NULL) {
+        run = &in_turn;
+    } else if (run->run == NULL) {
+        return CRYPTO_ERR_BAD_ARG;
     }
     in.mem = mem;
     in.lanes = p->lanes;
@@ -420,31 +459,31 @@ int argon2id(const argon2_params *p, void *mem, uint32_t mem_kib,
     }
     crypto_wipe(pin, sizeof pin);
 
-    /* Slice by slice, every lane's segment before the next slice: the order
-     * the synchronisation points permit, and the reason one thread gives
-     * the parallel result. */
+    /* Slice by slice, every lane's segment before the next slice: the
+     * synchronisation points are the runner's returns. */
+    sc.in = &in;
     for (pass = 0; pass < in.passes; pass++) {
         for (slice = 0; slice < SYNC_POINTS; slice++) {
-            for (l = 0; l < in.lanes; l++) {
-                fill_segment(&in, &w, pass, slice, l);
-            }
+            sc.pass = pass;
+            sc.slice = slice;
+            run->run(run->self, segment_job, &sc, in.lanes);
         }
     }
 
     /* The tag: H' over the XOR of every lane's last column. */
-    memcpy(&w.r, &in.mem[in.q - 1u], sizeof w.r);
+    memcpy(&tag, &in.mem[in.q - 1u], sizeof tag);
     for (l = 1; l < in.lanes; l++) {
         const blk *b = &in.mem[(size_t)l * in.q + in.q - 1u];
 
         for (i = 0; i < QWORDS; i++) {
-            w.r.v[i] ^= b->v[i];
+            tag.v[i] ^= b->v[i];
         }
     }
-    blk_to_bytes(&w.r);
-    h_prime(out, (uint32_t)out_len, (const uint8_t *)&w.r,
+    blk_to_bytes(&tag);
+    h_prime(out, (uint32_t)out_len, (const uint8_t *)&tag,
             ARGON2_BLOCK_BYTES);
 
-    crypto_wipe(&w, sizeof w);
+    crypto_wipe(&tag, sizeof tag);
     for (i = 0; i < in.mprime; i++) {
         crypto_wipe(&in.mem[i], sizeof in.mem[i]);
     }

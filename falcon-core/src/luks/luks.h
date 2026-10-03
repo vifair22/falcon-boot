@@ -36,6 +36,7 @@
 #include <stdint.h>
 #include <stddef.h>
 
+#include <crypto/argon2.h>
 #include <crypto/xts.h>
 
 /* Status codes, repo convention: OK zero, errors negative. */
@@ -124,17 +125,22 @@ typedef struct {
     uint32_t kdf_need_kib;
 } luks_vol;
 
-/* Where an argon2id keyslot's memory comes from.
+/* What the platform gives an argon2id keyslot: its memory, and how its
+ * lanes run.
  *
  * get returns a block of kib KiB, 8-byte aligned, or NULL when it cannot be
  * had; put takes it back, already wiped, and may be NULL. The UEFI loader
  * answers with AllocatePages, falcon-bios with its heap, a host tool with
  * malloc. One block is outstanding at a time, and it is put back before
- * luks_unlock moves to the next slot. */
+ * luks_unlock moves to the next slot.
+ *
+ * run is handed to argon2id as it is (argon2.h): NULL runs the lanes in
+ * turn on the calling processor. */
 typedef struct {
     void *(*get)(void *ctx, uint32_t kib);
     void  (*put)(void *ctx, void *mem, uint32_t kib);
     void  *ctx;
+    const argon2_runner *run;
 } luks_kdf_mem;
 
 /* The recovered volume key. Contains key material: crypto_wipe it when the
