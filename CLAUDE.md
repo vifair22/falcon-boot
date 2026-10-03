@@ -133,16 +133,16 @@ unique within each such set, so `#include <fs/exfat.h>` means one file, and
   carries all of it: `tools/coverage/harness.sh make test` (docker; `/dev/kvm`
   for the rigs; the repo's own `build/` when the binhost's `/srv/falcon` is
   not there; output chowned back to the caller). That is how the T430 builds.
-  Heavy runs and the corpus go to binhost-builder: ship the tree with
-  `git archive HEAD | ssh vifair@172.20.0.170 'mkdir -p /srv/falcon/repo-<sha>
-  && tar -x -C /srv/falcon/repo-<sha>'`, then there
-  `tools/coverage/harness.sh --build-dir /srv/falcon/build-<sha> make test`
-  (or `make analyze`, or no command for the corpus). A fresh build
-  directory needs `make test-fixtures`, the shim binaries from
-  `/srv/falcon/build/shim/bins` and the DevLink UKI from
-  `/srv/falcon/devlink-recovery.efi`; `/srv/falcon/build` is the corpus's
-  own, and its case sticks are mounted from `/srv/build/cache/falcon/sticks`.
-  Delete a `build-<x>` and `repo-<x>` pair once its branch has landed.
+  Heavy runs and the corpus go to binhost-builder: rsync the working tree
+  into its one checkout, `rsync -a --delete --exclude=/.git --exclude=/build
+  --exclude=/compile_commands.json ./ vifair@172.20.0.170:/srv/falcon/repo/`
+  (no pull there; GitLab is where work is kept safe), then there
+  `tools/coverage/harness.sh make test` (or `make analyze`, or no command
+  for the corpus) against the default build directory, `/srv/falcon/build`,
+  whose case sticks are mounted from `/srv/build/cache/falcon/sticks`. No
+  `repo-<sha>` or `build-<sha>` copies. The harness image is the baseline
+  toolchain: a `make analyze` finding on a workstation with a newer
+  clang-tidy is real only when the harness reports it too.
 - `release_version` at the root is the version; everything tags off it
   (`FALCON_SEMVER` and the timestamped `FALCON_VERSION` in
   `build/version.h`, the SBAT rows, the banners).
