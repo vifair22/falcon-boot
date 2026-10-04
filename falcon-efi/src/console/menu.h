@@ -55,6 +55,15 @@ void menu_init(EFI_SYSTEM_TABLE *st);
 void menu_screen(EFI_SYSTEM_TABLE *st);
 void menu_out(EFI_SYSTEM_TABLE *st, const CHAR16 *s);
 
+/* The block's `row` blanked and the cursor at its first text column, for a
+ * screen that rewrites a line in place: the passphrase prompt and the status
+ * under it (DESIGN Section 5.2). */
+void menu_line(EFI_SYSTEM_TABLE *st, UINTN row);
+
+/* Erases the n glyphs menu_out wrote left of the cursor, back across a wrap
+ * to the end of the row above: the passphrase prompt's echo. */
+void menu_erase(EFI_SYSTEM_TABLE *st, UINTN n);
+
 /* The route a boot is taking, as a short code (docs/Manual.md, "Route
  * codes"), drawn in the block's top right corner now and by every
  * menu_screen after it, so a module that clears the screen does not lose it.

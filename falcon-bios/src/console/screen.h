@@ -38,6 +38,12 @@ void screen_out_dec(uint64_t v);
  * goes back to the end of the row above. */
 void screen_raw(const char *s);
 
+/* The row the cursor is on, and that row of the block blanked with the cursor
+ * at its first text column: menu_line's pair, for the passphrase prompt and
+ * the status under it (DESIGN Section 5.2). */
+size_t screen_row(void);
+void screen_line(size_t row);
+
 /* The route code (docs/Manual.md, "Route codes"), drawn at the block's top
  * right now and by every screen_page after it. A literal, or NULL to stop. */
 void screen_mode(const char *code);

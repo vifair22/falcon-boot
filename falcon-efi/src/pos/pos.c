@@ -1157,15 +1157,32 @@ static void unlock_wait(unsigned seconds)
         ;
 }
 
+/* The prompt keeps its row and the status its row under it, for every
+ * attempt (DESIGN Section 5.2): a retry blanks what the last one wrote,
+ * redraws the empty prompt, and leaves "wrong passphrase." under it until
+ * the next Enter replaces it with "unlocking...". */
 static int prompt_and_unlock(UINTN *which)
 {
+    UINTN row;
+    UINTN end = 0;
+    BOOLEAN retry = FALSE;
+
+    if (g_note != (void (*)(void))0)
+        g_note();
+    row = (UINTN)g_st->ConOut->Mode->CursorRow;
     for (;;) {
         INTN len;
         int rc;
         unsigned wait;
+        UINTN r;
 
-        if (g_note != (void (*)(void))0)
-            g_note();
+        if (retry) {
+            for (r = row; r <= end; r++)
+                menu_line(g_st, r);
+            menu_line(g_st, row + 1u);
+            out(L"wrong passphrase.");
+            menu_line(g_st, row);
+        }
         out(L"passphrase for the encrypted partition: ");
 
         len = menu_prompt_secret(g_st, (const CHAR16 *)0, g_pass,
@@ -1177,6 +1194,10 @@ static int prompt_and_unlock(UINTN *which)
         }
         g_pass_len = (UINTN)len;
 
+        /* The prompt's Enter left the cursor on the row under its end,
+         * which a long entry's wrap moved down. */
+        end = (UINTN)g_st->ConOut->Mode->CursorRow;
+        menu_line(g_st, end);
         out(L"unlocking...\r\n");
         rc = unlock_any(which);
         if (rc == LUKS_OK)
@@ -1193,13 +1214,14 @@ static int prompt_and_unlock(UINTN *which)
          * derivation, and the last wrong one powers off with the same
          * sentence as the others. */
         if (g_failures >= TUI_UNLOCK_TRIES) {
+            menu_line(g_st, end);
             out(L"wrong passphrase.\r\n");
             g_st->BootServices->Stall(3000000u);
             idle_power_off();
         }
         wait = tui_unlock_delay(g_failures);
         unlock_wait(wait);
-        out(L"wrong passphrase.\r\n\r\n");
+        retry = TRUE;
     }
 }
 

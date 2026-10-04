@@ -561,20 +561,35 @@ static int unlock_once(uint32_t *slot)
     return rc;
 }
 
-/* Prompt, retry, and report, as the UEFI loader does. LUKS_OK, POS_ABORTED
- * for escape, or the LUKS status to report. */
+/* Prompt, retry, and report, as the UEFI loader does, on the same rows
+ * (falcon-efi/src/pos/pos.c). LUKS_OK, POS_ABORTED for escape, or the LUKS
+ * status to report. */
 static int prompt_and_unlock(void)
 {
+    size_t row = screen_row();
+    size_t end = 0;
+    int retry = 0;
+
     for (;;) {
         uint32_t slot = 0;
         int rc;
         unsigned wait;
+        size_t r;
 
+        if (retry) {
+            for (r = row; r <= end; r++)
+                screen_line(r);
+            screen_line(row + 1u);
+            screen_out("wrong passphrase.");
+            screen_line(row);
+        }
         screen_out("passphrase for the encrypted partition: ");
 
         if (prompt_passphrase(g_pass, sizeof g_pass, &g_pass_len) != 0)
             return POS_ABORTED;
 
+        end = screen_row();
+        screen_line(end);
         screen_out("unlocking...\n");
         rc = unlock_once(&slot);
         if (rc == LUKS_OK)
@@ -587,13 +602,14 @@ static int prompt_and_unlock(void)
         /* Not said, as the UEFI loader does not say it
          * (falcon-efi/src/pos/pos.c): the wait runs under "unlocking...". */
         if (g_failures >= TUI_UNLOCK_TRIES) {
+            screen_line(end);
             screen_out("wrong passphrase.\n");
             screen_pause(3);
             screen_power_off();
         }
         wait = tui_unlock_delay(g_failures);
         screen_pause(wait);
-        screen_out("wrong passphrase.\n\n");
+        retry = 1;
     }
 }
 

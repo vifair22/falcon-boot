@@ -38,6 +38,10 @@ static CHAR16 g_row[TUI_ROW_MAX];
 typedef struct {
     tui_frame f;
     UINTN col;          /* cursor column within the text area, for wrapping */
+    /* Rows the current line has wrapped onto since its last line break, so
+     * menu_erase at the start of one knows there is more of the line above
+     * it: the passphrase prompt's echo runs across the wrap. */
+    UINTN cont;
     BOOLEAN ready;
 } menu_frame;
 
@@ -180,6 +184,7 @@ static void frame_ensure(EFI_SYSTEM_TABLE *st)
     screen_dims(st, &cols, &rows);
     tui_frame_init(&g_frame.f, cols, rows);
     g_frame.col = 0;
+    g_frame.cont = 0;
     g_frame.ready = TRUE;
 }
 
@@ -226,7 +231,31 @@ void menu_screen(EFI_SYSTEM_TABLE *st)
     st->ConOut->SetCursorPosition(st->ConOut, g_frame.f.text_col,
                                   tui_page_row(&g_frame.f));
     g_frame.col = 0;
+    g_frame.cont = 0;
     mode_draw(st);
+}
+
+/* The block's row blanked in the text attribute, whatever the caller was
+ * writing in, and the cursor parked at its first text column. */
+static void blank_row(EFI_SYSTEM_TABLE *st, UINTN row)
+{
+    INT32 attr = st->ConOut->Mode->Attribute;
+
+    st->ConOut->SetAttribute(st->ConOut, TUI_ATTR_TEXT);
+    draw_row(st, row, g_frame.f.left, g_frame.f.width, L"");
+    st->ConOut->SetAttribute(st->ConOut, (UINTN)attr);
+    st->ConOut->SetCursorPosition(st->ConOut, g_frame.f.text_col, row);
+}
+
+void menu_line(EFI_SYSTEM_TABLE *st, UINTN row)
+{
+    if (st == (void *)0) {
+        return;
+    }
+    frame_ensure(st);
+    blank_row(st, row);
+    g_frame.col = 0;
+    g_frame.cont = 0;
 }
 
 /* One line at tui_page_row, overwritten by the next: the screen is whatever
@@ -287,19 +316,65 @@ void menu_out(EFI_SYSTEM_TABLE *st, const CHAR16 *s)
             st->ConOut->SetCursorPosition(st->ConOut, g_frame.f.text_col,
                                           (UINTN)st->ConOut->Mode->CursorRow);
             g_frame.col = 0;
+            g_frame.cont = 0;
             i++;
             continue;
         }
         if (g_frame.f.text_width != 0 && g_frame.col >= g_frame.f.text_width) {
+            /* The row wrapped onto may hold an earlier line, as the
+             * passphrase prompt's status under it does. */
             out(st, L"\r\n");
-            st->ConOut->SetCursorPosition(st->ConOut, g_frame.f.text_col,
-                                          (UINTN)st->ConOut->Mode->CursorRow);
+            blank_row(st, (UINTN)st->ConOut->Mode->CursorRow);
             g_frame.col = 0;
+            g_frame.cont++;
         }
         chunk[0] = c;
         out(st, chunk);
         g_frame.col++;
         i++;
+    }
+}
+
+/* A row's worth at a time, in one OutputString of spaces: every call is a
+ * ConSplitter dispatch to every console, and Tab erasing a long entry is
+ * where a call per glyph showed. */
+void menu_erase(EFI_SYSTEM_TABLE *st, UINTN n)
+{
+    static CHAR16 spaces[TUI_ROW_MAX + 1u];
+    UINTN row;
+
+    if (st == (void *)0) {
+        return;
+    }
+    frame_ensure(st);
+    row = (UINTN)st->ConOut->Mode->CursorRow;
+    while (n > 0) {
+        UINTN k;
+        UINTN i;
+
+        if (g_frame.col == 0) {
+            if (g_frame.cont == 0 || row == 0 || g_frame.f.text_width == 0) {
+                break;
+            }
+            g_frame.cont--;
+            row--;
+            g_frame.col = g_frame.f.text_width;
+        }
+        k = (n < g_frame.col) ? n : g_frame.col;
+        if (k > TUI_ROW_MAX) {
+            k = TUI_ROW_MAX;
+        }
+        for (i = 0; i < k; i++) {
+            spaces[i] = L' ';
+        }
+        spaces[k] = L'\0';
+        g_frame.col -= k;
+        n -= k;
+        st->ConOut->SetCursorPosition(st->ConOut,
+                                      g_frame.f.text_col + g_frame.col, row);
+        out(st, spaces);
+        st->ConOut->SetCursorPosition(st->ConOut,
+                                      g_frame.f.text_col + g_frame.col, row);
     }
 }
 
