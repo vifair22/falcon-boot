@@ -938,6 +938,9 @@ under `unlocking...`, and every refusal is
 
     wrong passphrase.
 
+on the row under the prompt, which is redrawn empty in place for the next
+attempt. The refusal stays until Enter replaces it with `unlocking...`.
+
 On the UEFI station the TOTP code above the prompt is redrawn when it
 rolls.
 

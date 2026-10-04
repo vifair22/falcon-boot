@@ -20,52 +20,11 @@
 #define CHAR_CR        0x000D
 
 /* The prompt is a screen like any other and sits in the same block. The
- * asterisks and the backspaces that follow go through the raw console, not
- * through menu_out: they are cursor motion within a line the frame has
- * already indented, and re-indenting them would fight it. */
+ * asterisks go through menu_out too, so a long entry wraps inside the block
+ * and menu_erase can follow it back across the wrap. */
 static void out(EFI_SYSTEM_TABLE *st, const CHAR16 *s)
 {
     menu_out(st, s);
-}
-
-/* Cursor motion and single glyphs, unframed on purpose; see out() above. */
-static void raw(EFI_SYSTEM_TABLE *st, const CHAR16 *s)
-{
-    st->ConOut->OutputString(st->ConOut, (CHAR16 *)(uintptr_t)s);
-}
-
-/* Erases the n characters left of the cursor. The "\b \b" shape works on
- * both console behaviors the spec permits: OVMF's backspace is destructive
- * (a bare \b wipes the glyph it crosses, which is why the hint cannot be
- * cursor-parked), and on a non-destructive console the
- * explicit space does the erasing.
- *
- * Composed into one string per chunk rather than one OutputString per
- * character, for the reason menu.c's row buffer exists: every call is a
- * ConSplitter dispatch to every registered console. Erasing a long entry on
- * Tab was the visible case.
- *
- * The buffer holds backspaces and spaces and never a passphrase byte, so it
- * is outside the wiping discipline the rest of this file is under. */
-#define ERASE_CHUNK 64u
-
-static void erase_back(EFI_SYSTEM_TABLE *st, UINTN n)
-{
-    static CHAR16 buf[3u * ERASE_CHUNK + 1u];
-    UINTN i;
-
-    while (n != 0) {
-        UINTN k = (n < ERASE_CHUNK) ? n : ERASE_CHUNK;
-
-        for (i = 0; i < k; i++) {
-            buf[i * 3u]      = L'\b';
-            buf[i * 3u + 1u] = L' ';
-            buf[i * 3u + 2u] = L'\b';
-        }
-        buf[k * 3u] = L'\0';
-        raw(st, buf);
-        n -= k;
-    }
 }
 
 static void (*g_tick)(void);
@@ -177,7 +136,7 @@ static INTN prompt_run(EFI_SYSTEM_TABLE *st, const CHAR16 *prompt,
              * machine does (console/idle.h). */
             crypto_wipe(buf, (size_t)cap);
             if (!silent)
-                erase_back(st, len);
+                menu_erase(st, len);
             len = 0;
             idle_expired();
             continue;
@@ -204,11 +163,11 @@ static INTN prompt_run(EFI_SYSTEM_TABLE *st, const CHAR16 *prompt,
         }
         if (key.UnicodeChar == CHAR_TAB) {
             if (hint_shown) {
-                erase_back(st, sizeof(hint) / sizeof(hint[0]) - 1);
+                menu_erase(st, sizeof(hint) / sizeof(hint[0]) - 1);
                 hint_shown = FALSE;
             }
             if (!silent) {
-                erase_back(st, len);
+                menu_erase(st, len);
                 silent = TRUE;
             }
             continue;
@@ -221,7 +180,7 @@ static INTN prompt_run(EFI_SYSTEM_TABLE *st, const CHAR16 *prompt,
                  * otherwise leave its earlier tail sitting past len. */
                 buf[len] = '\0';
                 if (!silent)
-                    raw(st, L"\b \b");
+                    menu_erase(st, 1);
             }
             continue;
         }
@@ -233,12 +192,12 @@ static INTN prompt_run(EFI_SYSTEM_TABLE *st, const CHAR16 *prompt,
         if (len + 1 >= cap)
             continue;
         if (hint_shown) {
-            erase_back(st, sizeof(hint) / sizeof(hint[0]) - 1);
+            menu_erase(st, sizeof(hint) / sizeof(hint[0]) - 1);
             hint_shown = FALSE;
         }
         buf[len++] = (char)key.UnicodeChar;
         if (!silent)
-            raw(st, L"*");
+            out(st, L"*");
     }
 
     /* WaitForEvent failed, which means the console is gone; treat it as a

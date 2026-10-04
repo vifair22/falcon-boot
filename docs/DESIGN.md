@@ -559,6 +559,14 @@ included, is the same line:
 The prompt carries no attempt count either: both numbers help only someone
 guessing.
 
+The prompt and its status keep their rows for every attempt of a prompt
+(UEFI: `menu_line`; BIOS: `screen_line`): Enter writes `unlocking...` on the
+row under the prompt; a refusal blanks both, redraws the empty prompt in
+place, and puts `wrong passphrase.` under it, where it stays until the next
+Enter replaces it. On the UEFI station the TOTP code stays above, redrawn
+in place when it rolls. An entry long enough to wrap clears the row it
+wraps onto, so the echo never lands on the status.
+
 It limits guesses at the keyboard of a machine that stays whole (a
 station's case) to five a power cycle with half a minute of waiting among
 them. It does nothing against an offline copy of the shelf, where argon2id's

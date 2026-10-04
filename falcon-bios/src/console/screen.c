@@ -274,6 +274,31 @@ void screen_mode(const char *code)
         mode_draw();
 }
 
+/* The block's row blanked and the cursor at its first text column. */
+static void blank_row(size_t row)
+{
+    tui_row_text(g_row, g_frame.width, (const uint16_t *)0);
+    emit_row(row, g_frame.left, TUI_ATTR_TEXT);
+    g_cur_row = row;
+    g_cur_col = g_frame.text_col;
+    ser_goto(g_cur_row, g_cur_col);
+}
+
+size_t screen_row(void)
+{
+    return g_cur_row;
+}
+
+void screen_line(size_t row)
+{
+    if (row >= ROWS)
+        return;
+    blank_row(row);
+    g_wrap = 0;
+    g_cont = 0;
+    hw_cursor_at(g_cur_row, g_cur_col);
+}
+
 /* One unit of text: the line break re-indents, the right edge wraps. */
 static void out_unit(uint16_t c)
 {
@@ -285,7 +310,10 @@ static void out_unit(uint16_t c)
         return;
     }
     if (g_frame.text_width != 0 && g_wrap >= g_frame.text_width) {
+        /* The row wrapped onto may hold an earlier line, as the passphrase
+         * prompt's status under it does. */
         newline();
+        blank_row(g_cur_row);
         g_cont++;
     }
     glyph(c);
