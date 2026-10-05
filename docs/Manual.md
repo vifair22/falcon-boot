@@ -2015,7 +2015,7 @@ passphrase is read from `/dev/tty` with echo off.
         [--p1-size <size>] [--iso-size <size|rest>] [--p3-size <size>]
         [--p4-size <size|rest>] [--passphrase-file <file>]
         [--shim <dir>] [--loader <file>] [--uki <file>]... [--cn <name>]
-        [--cert-out <file>] [--key-out <dir>] [--p3-plain]
+        [--key <file> --cert <file>] [--cert-out <file>] [--key-out <dir>] [--p3-plain]
         [--p2-fs <fs>] [--p3-fs <fs>] [--stage3 <file>]
 
 Makes the four-partition stick of DESIGN Section 3 on a block device or an
@@ -2035,8 +2035,9 @@ exist, and that every `--uki` exists.
 | `--passphrase-file` | prompt | the p3 and p4 passphrase; the prompt is `passphrase for p3 and p4: ` then `repeat: ` |
 | `--shim` | `build/shim/bins` | the directory holding shim and MokManager (Section 13.6) |
 | `--loader` | `build/bin/falcon-boot.efi` | the loader to sign and install |
-| `--uki` | none | a UKI to sign with the new MOK and put in p3's `/uki`; repeatable; two with the same basename are refused |
-| `--cn` | `falcon-boot MOK` | the MOK certificate's subject CN |
+| `--uki` | none | a UKI to sign with the MOK and put in p3's `/uki`; repeatable; two with the same basename are refused |
+| `--cn` | `falcon-boot MOK` | the new MOK certificate's subject CN; refused with `--key` |
+| `--key`, `--cert` | a new MOK | an existing MOK private key and its certificate, both PEM, instead of a new pair: a replacement stick keeps the MOK the machines already enrolled. The key must be the certificate's, checked before anything is written. The first boot needs no enrollment where that certificate is enrolled |
 | `--cert-out` | none | also writes the public certificate here, PEM |
 | `--key-out` | none | also writes `falcon-mok.key` (0600) and `falcon-mok.crt` into this directory, made 0700 if new |
 | `--p3-plain` | off | p3 without LUKS; requires `--key-out` |

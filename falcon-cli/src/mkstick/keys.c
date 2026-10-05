@@ -78,6 +78,64 @@ cli_status mok_generate(const mok_keys *k, const char *cn)
     return CLI_OK;
 }
 
+/* Big enough for an RSA-4096 public key in PEM, and any smaller one. */
+#define PUBKEY_PEM_MAX 2048u
+
+cli_status mok_check_pair(const char *key, const char *cert)
+{
+    char from_key[PUBKEY_PEM_MAX];
+    char from_cert[PUBKEY_PEM_MAX];
+    size_t nk = 0;
+    size_t nc = 0;
+    cli_status rc;
+
+    if (!util_is_file(key))
+        return set_error(CLI_ERR_NOTFOUND, "no MOK key at %s", key);
+    if (!util_is_file(cert))
+        return set_error(CLI_ERR_NOTFOUND, "no MOK certificate at %s", cert);
+    rc = proc_capture_l(from_key, sizeof from_key, &nk, "openssl", "pkey",
+                        "-in", key, "-pubout", PROC_END);
+    if (rc != CLI_OK)
+        return rc;
+    rc = proc_capture_l(from_cert, sizeof from_cert, &nc, "openssl", "x509",
+                        "-in", cert, "-noout", "-pubkey", PROC_END);
+    if (rc != CLI_OK)
+        return rc;
+    if (nk == 0 || nk != nc || memcmp(from_key, from_cert, nk) != 0)
+        return set_error(CLI_ERR_USAGE, "%s is not the private key of %s",
+                         key, cert);
+    return CLI_OK;
+}
+
+cli_status mok_import(const mok_keys *k, const char *key, const char *cert)
+{
+    mode_t old_umask;
+    cli_status rc;
+
+    if (util_is_file(k->key))
+        return set_error(CLI_ERR_EXISTS,
+                         "%s already exists; refusing to replace a MOK key "
+                         "that existing signatures depend on", k->key);
+    rc = mok_check_pair(key, cert);
+    if (rc != CLI_OK)
+        return rc;
+
+    log_info("using the existing MOK from %s", cert);
+    old_umask = umask(0077);
+    rc = util_copy_file(key, k->key, 0600);
+    if (rc == CLI_OK)
+        rc = util_copy_file(cert, k->crt, 0644);
+    if (rc == CLI_OK)
+        rc = proc_runl_quiet("openssl", "x509", "-in", k->crt,
+                             "-outform", "DER", "-out", k->cer, PROC_END);
+    (void)umask(old_umask);
+    if (rc != CLI_OK)
+        return rc;
+    if (chmod(k->cer, 0644) != 0)
+        return set_error_errno(CLI_ERR_IO, "chmod %s", k->cer);
+    return CLI_OK;
+}
+
 cli_status mok_sign(const mok_keys *k, const char *in, const char *out)
 {
     cli_status rc;

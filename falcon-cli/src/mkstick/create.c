@@ -89,9 +89,13 @@ static const cli_opt create_opts[] = {
     { "loader", CLI_OPT_VALUE, 0, "<file>",
       "the falcon-boot.efi to sign and install" },
     { "uki", CLI_OPT_VALUE, 1, "<file>",
-      "a UKI to sign with the new MOK and stage on p3:/uki" },
+      "a UKI to sign with the MOK and stage on p3:/uki" },
     { "cn", CLI_OPT_VALUE, 0, "<name>",
       "subject CN of the MOK certificate" },
+    { "key", CLI_OPT_VALUE, 0, "<file>",
+      "an existing MOK private key (PEM) instead of a new one" },
+    { "cert", CLI_OPT_VALUE, 0, "<file>",
+      "its certificate (PEM), with --key" },
     { "cert-out", CLI_OPT_VALUE, 0, "<file>",
       "also write the PUBLIC certificate here, in PEM form" },
     { "key-out", CLI_OPT_VALUE, 0, "<dir>",
@@ -945,6 +949,8 @@ static cli_status create_run(const cli_args *a)
     const char *cn = cli_value(a, "cn", MOK_DEFAULT_CN);
     const char *cert_out = cli_value(a, "cert-out", NULL);
     const char *key_out = cli_value(a, "key-out", NULL);
+    const char *key_in = cli_value(a, "key", NULL);
+    const char *cert_in = cli_value(a, "cert", NULL);
     const char *stage3 = cli_value(a, "stage3", DEFAULT_STAGE3);
     const int force = cli_flag(a, "force");
     uint8_t install_id[IDENT_ID_LEN];
@@ -973,6 +979,19 @@ static cli_status create_run(const cli_args *a)
     rc = mkstick_guid_selfcheck();
     if (rc != CLI_OK)
         return rc;
+
+    if ((key_in == NULL) != (cert_in == NULL))
+        return set_error(CLI_ERR_USAGE, "--key and --cert go together");
+    if (key_in != NULL && cli_value(a, "cn", NULL) != NULL)
+        return set_error(CLI_ERR_USAGE, "--cn names a new MOK; --key brings "
+                         "one whose certificate is already made");
+    /* Before the first byte is written: a key that does not match its
+     * certificate would leave a wiped disk and a stick nothing trusts. */
+    if (key_in != NULL) {
+        rc = mok_check_pair(key_in, cert_in);
+        if (rc != CLI_OK)
+            return rc;
+    }
 
     plan_fs.p3_plain = cli_flag(a, "p3-plain");
     rc = fs_choose(a, "p2-fs", p2_implemented,
@@ -1144,7 +1163,10 @@ static cli_status create_run(const cli_args *a)
     rc = mok_paths(&keys, keydir);
     if (rc != CLI_OK)
         goto out;
-    rc = mok_generate(&keys, cn);
+    if (key_in != NULL)
+        rc = mok_import(&keys, key_in, cert_in);
+    else
+        rc = mok_generate(&keys, cn);
     if (rc != CLI_OK)
         goto out;
 
@@ -1152,7 +1174,7 @@ static cli_status create_run(const cli_args *a)
                    "falcon-boot-signed.efi");
     if (rc != CLI_OK)
         goto out;
-    log_info("signing the loader with the new MOK");
+    log_info("signing the loader with the MOK");
     rc = mok_sign(&keys, loader, signed_loader);
     if (rc != CLI_OK)
         goto out;
@@ -1222,8 +1244,13 @@ out:
     if (rc == CLI_OK) {
         cli_log_blank();
         log_info("%s is ready (install ID %s).", disk.path, idhex);
-        log_info("First boot with Secure Boot ON: shim launches MokManager; "
-                 "enroll p1:/%s, reboot.", MKS_ESP_CERT_NAME);
+        if (key_in != NULL)
+            log_info("The MOK is the one from %s: a machine that enrolled "
+                     "it boots this stick as it booted the last one.",
+                     cert_in);
+        else
+            log_info("First boot with Secure Boot ON: shim launches "
+                     "MokManager; enroll p1:/%s, reboot.", MKS_ESP_CERT_NAME);
         if (plan_fs.p3_plain)
             log_warn("p3 is PLAINTEXT: no signing appliance on this stick, "
                      "and the only copy of the MOK private key is the one in "

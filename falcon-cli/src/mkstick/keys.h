@@ -41,6 +41,16 @@ cli_status mok_paths(mok_keys *k, const char *dir);
  * signature already made with it. */
 cli_status mok_generate(const mok_keys *k, const char *cn);
 
+/* Does the PEM key at `key` hold the private half of the PEM certificate at
+ * `cert`? Compared as their public keys, so a mismatch is refused before a
+ * stick is built around a key its enrolled certificate does not trust. */
+cli_status mok_check_pair(const char *key, const char *cert);
+
+/* An existing keypair, copied into k->dir as mok_generate would leave a new
+ * one, with the DER copy made from the certificate: a replacement stick
+ * keeps the MOK every machine already enrolled. */
+cli_status mok_import(const mok_keys *k, const char *key, const char *cert);
+
 /* sbsign in -> out. */
 cli_status mok_sign(const mok_keys *k, const char *in, const char *out);
 
