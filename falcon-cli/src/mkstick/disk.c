@@ -208,7 +208,11 @@ cli_status disk_attach(mks_disk *d)
     cli_status rc;
 
     if (d->is_block) {
-        (void)snprintf(d->base, sizeof d->base, "%s", d->path);
+        /* The kernel's node, not a /dev/disk/by-id link: partitions are named
+         * from it (sdb1, nvme0n1p1), and a link's own partition links are
+         * named by udev (-part1) and only after it has run. */
+        if (realpath(d->path, d->base) == NULL)
+            return set_error_errno(CLI_ERR_NOTFOUND, "resolving %s", d->path);
     } else {
         char out[MKS_PATH_MAX];
         size_t len = 0;
