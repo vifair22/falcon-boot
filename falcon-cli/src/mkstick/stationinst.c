@@ -384,6 +384,7 @@ out:
 static cli_status shelf_node(const shelf_ref *sh, char *node, size_t cap)
 {
     char out[MKS_PATH_MAX];
+    char real[MKS_PATH_MAX];
     char off[32];
     char len[32];
     size_t n = 0;
@@ -393,8 +394,13 @@ static cli_status shelf_node(const shelf_ref *sh, char *node, size_t cap)
         (void)snprintf(node, cap, "%s", sh->disk);
         return CLI_OK;
     }
-    if (sh->disk_is_block)
-        return disk_partition_name(sh->disk, sh->number, node, cap);
+    /* The kernel names partitions from its own node (nvme0n1p2); a by-id
+     * link's are "-part2", so the name is built from the resolved path. */
+    if (sh->disk_is_block) {
+        if (realpath(sh->disk, real) == NULL)
+            (void)snprintf(real, sizeof real, "%s", sh->disk);
+        return disk_partition_name(real, sh->number, node, cap);
+    }
     /* e2fsprogs opens a filesystem at an offset of a file itself;
      * cryptsetup does not, and gets a loop device. */
     if (!sh->luks) {
