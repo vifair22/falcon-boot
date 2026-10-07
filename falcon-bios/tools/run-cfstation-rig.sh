@@ -86,7 +86,12 @@ MEMTEST=${MEMTEST:-build/memtest/mt86p_810_i586}
 MACHINE=pc,x-south-bridge=piix4-isa
 TIMEOUT=90
 SIG_FOREIGN=5a7a0cf1
+# DevLink recovery is on the card and in the menu only where its UKI or the
+# images it is built from exist (apps/station-legacy/app.mk).
 DEVLINK_UKI=build/devlink/devlink-recovery.efi
+DEVLINK_IMAGES=${DEVLINK_IMAGES:-$HOME/git/home/devlink-rescue/build/classic/images}
+DEVLINK=0
+[[ -f $DEVLINK_UKI || -f $DEVLINK_IMAGES/bzImage ]] && DEVLINK=1
 
 command -v socat >/dev/null || { echo "socat is needed for the monitor" >&2; exit 2; }
 [[ -x "$QPCC" ]] || { echo "no rig QEMU (falcon-bios/tools/qemu-pcc/build-qemu.sh)" >&2; exit 2; }
@@ -121,9 +126,12 @@ station_card() {
         mkfs.fat -F 32 --offset 2048 -n CFDATA "$STATION_CARD" 524288 \
             >/dev/null 2>&1
         # DevLink recovery's UKI as built, or from its images when absent.
-        [[ -f "$DEVLINK_UKI" ]] ||
-            make --no-print-directory devlink-uki >/dev/null
-        extra=(--uki "$DEVLINK_UKI")
+        extra=()
+        if [[ $DEVLINK == 1 ]]; then
+            [[ -f "$DEVLINK_UKI" ]] ||
+                make --no-print-directory devlink-uki >/dev/null
+            extra=(--uki "$DEVLINK_UKI")
+        fi
         [[ -f "$MEMTEST" ]] && extra+=(--memtest "$MEMTEST")
         build/bin/falcon-boot-mkstick station install "$STATION_CARD" --bios \
             --legacy "${extra[@]}" \
@@ -330,7 +338,9 @@ for c in "${CASES[@]}"; do
         halt
         got=$(rows)
         if [[ -z "$WHY" ]]; then
-            for want in 'Windows (NTLDR)' 'Boot code' 'DevLink recovery' 'Memory test'; do
+            wants=('Windows (NTLDR)' 'Boot code' 'Memory test')
+            [[ $DEVLINK == 1 ]] && wants+=('DevLink recovery')
+            for want in "${wants[@]}"; do
                 grep -qF -- "$want" <<<"$got" || WHY="no '$want' row"
             done
         fi

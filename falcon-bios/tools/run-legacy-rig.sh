@@ -7,7 +7,8 @@
 # The disk is mk-a21m-station.sh's, in build/a21m-legacy: a qcow2 overlay
 # of the original image (never copied, never opened for writing) with the
 # NTFS partition shrunk, the station partition in the space that leaves,
-# jump's drivers, MEMTEST.BIN and DevLink recovery's UKI in its /uki. Each
+# jump's drivers, MEMTEST.BIN and, where it exists, DevLink recovery's UKI
+# in its /uki. Each
 # boot runs on a throwaway overlay on top of that, as run-a21m-rig.sh's do.
 # The machine is QEMU's pc with the A21m's PIIX4 south bridge, a Pentium
 # III with 512 MB, the disk with the A21m's geometry.
@@ -51,22 +52,31 @@ QEMU=${QEMU:-qemu-system-i386}
 QPCC=build/qemu-pcc/build/qemu-system-i386
 CLIENT=${DEVLINK_CLIENT:-$HOME/git/home/devlink/build/bin/devlink}
 MEMTEST=${MEMTEST:-build/memtest/mt86p_810_i586}
+# DevLink recovery is in the install, the menu and the cases only where its
+# UKI or the images it is built from exist (apps/station-legacy/app.mk).
+DEVLINK_UKI=build/devlink/devlink-recovery.efi
+DEVLINK_IMAGES=${DEVLINK_IMAGES:-$HOME/git/home/devlink-rescue/build/classic/images}
+DEVLINK=0
+[[ -f $DEVLINK_UKI || -f $DEVLINK_IMAGES/bzImage ]] && DEVLINK=1
 MACHINE=pc,x-south-bridge=piix4-isa
 DISK=cyls=20784,heads=15,secs=63,bios-chs-trans=large
 TIMEOUT=90
 
 command -v socat >/dev/null || { echo "socat is needed for the monitor" >&2; exit 2; }
 mkdir -p "$R"
-make --no-print-directory station-legacy devlink-uki test-bios-img \
-    test-bios-probe >/dev/null
+make --no-print-directory station-legacy test-bios-img test-bios-probe \
+    >/dev/null
+[[ $DEVLINK == 1 ]] && make --no-print-directory devlink-uki >/dev/null
 
 # The installed disk, made once (or again with A21M_FRESH=1).
 if [[ ! -f "$IMG" || "${A21M_FRESH:-0}" == 1 ]]; then
     echo "== installing station-legacy on the A21m's disk ($IMG)"
     extra=()
     [[ -f "$MEMTEST" ]] && extra=(MEMTEST="$MEMTEST")
+    uki=()
+    [[ $DEVLINK == 1 ]] && uki=(--uki "$DEVLINK_UKI")
     env A21M_DIR="$D" "${extra[@]}" falcon-bios/tools/mk-a21m-station.sh \
-        --legacy --uki build/devlink/devlink-recovery.efi >"$R/install.log" 2>&1 ||
+        --legacy "${uki[@]}" >"$R/install.log" 2>&1 ||
         { tail -20 "$R/install.log"; exit 1; }
 fi
 
@@ -207,8 +217,11 @@ stick() {       # stick CASE HC-DEVICE
 }
 
 CASES=("$@")
-[[ ${#CASES[@]} -gt 0 ]] ||
-    CASES=(menu cd usb-uhci usb-ohci usb-ehci cf cf3v devlink windows)
+if [[ ${#CASES[@]} -eq 0 ]]; then
+    CASES=(menu cd usb-uhci usb-ohci usb-ehci cf cf3v)
+    [[ $DEVLINK == 1 ]] && CASES+=(devlink)
+    CASES+=(windows)
+fi
 
 for c in "${CASES[@]}"; do
     case $c in
@@ -227,7 +240,9 @@ for c in "${CASES[@]}"; do
         sleep 1
         shot menu
         halt
-        want=$'Windows (NTLDR)\nCD drive\nCF card (PC Card)\nUSB stick\nDevLink recovery\nMemory test'
+        want=$'Windows (NTLDR)\nCD drive\nCF card (PC Card)\nUSB stick'
+        [[ $DEVLINK == 1 ]] && want+=$'\nDevLink recovery'
+        want+=$'\nMemory test'
         got=$(rows)
         [[ -z "$WHY" && "$got" != "$want" ]] && WHY="rows: $(paste -sd, <<<"$got")"
         result menu "$([[ -z "$WHY" ]] && echo 1 || echo 0)" \
