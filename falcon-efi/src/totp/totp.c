@@ -53,9 +53,17 @@ void totp_save_log(EFI_SYSTEM_TABLE *st)
     static uint8_t log[EVLOG_CAP];
     static uint8_t rec[EVSAVE_BODY + EVLOG_CAP];
     uint8_t pcr[EVSAVE_PCRS][EVSAVE_DIGEST_LEN];
+    uint8_t pcr2[EVSAVE_PCRS][EVSAVE_DIGEST_LEN2];
     size_t len = 0;
     size_t n = 0;
 
+    if (tcg_pcrs20(st, pcr2) == TCG_OK) {
+        if (evsave_write2(rec, sizeof rec,
+                          (const uint8_t (*)[EVSAVE_DIGEST_LEN2])pcr2,
+                          &n) == EVSAVE_OK)
+            (void)loader_evlog_set(st, rec, n);
+        return;
+    }
     if (tcg_evlog12(st, log, sizeof log, &len, pcr) != TCG_OK)
         return;
     if (evsave_write(rec, sizeof rec, (const uint8_t (*)[EVSAVE_DIGEST_LEN])pcr,

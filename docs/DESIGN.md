@@ -4499,15 +4499,31 @@ after a program ran says "The TOTP code is shown again after a restart."
 system the station started, over `/dev/tpmrm0` (2.0) or `/dev/tpm0` (1.2)
 with the same `tpm/` code. The PCR values to seal to are not the ones the
 TPM holds when Linux runs: by then the station has loaded a UKI (PCR 4)
-and shim has logged the key that verified it (PCR 7). They come from the
-firmware's event log (securityfs), replayed up to the event that measured
-the station's own image, found by the Authenticode hash of
+and shim has logged the key that verified it (PCR 7). The station reads
+them itself, before it loads anything, on every boot, and saves them in
+the volatile variable `FalconEvLog` (`tpm/evsave.h`, `totp_save_log`):
+PCRs 0 to 15, the SHA-256 bank on a TPM 2.0 (version 2 of the record), the
+SHA-1 PCRs and a copy of edk2's log on a TPM 1.2 (version 1, the two logs
+below). Enrollment seals to that record, checked against the firmware's
+event log (securityfs): the log must hold the event that measured the
+station's own image, found by the Authenticode hash of
 `\EFI\falcon\grubx64.efi` in the log's bank (`tpm/evlog.c`,
-`trust/authenticode.c`). Finding that event is also the proof that this
-system was started by that station; without it enrollment refuses. The
-whole log, replayed to its end, must equal the PCRs as the TPM holds them
-now, or enrollment refuses rather than seal to values the station will
-never see. A fresh 20-byte seed from `getrandom` is sealed (tpm2.h's
+`trust/authenticode.c`), which is also the proof that this system was
+started by that station; without it enrollment refuses.
+
+On a TPM 2.0 (`totpc_station20`) the log is whole when, replayed to its
+end, it gives the PCRs as the TPM holds them now. A whole log, replayed up
+to the station's event, must give what the station read, or enrollment
+refuses rather than seal to values the station will never see. A log that
+is not whole comes from a firmware that extends PCRs it does not log (the
+AMD firmware TPM of an ASUS B550 board does, PCRs 0 to 7 at every boot,
+`falcon-cli/tests/data/b550/`): no replay of it gives the station's PCRs,
+so it is set aside and the record stands alone. Either way the record must
+be of this boot: it must equal the TPM on PCRs 0 to 3 and 6, which nothing
+extends after the station's menu, less any the log shows extended after
+the station's event (a UKI's systemd-stub extends PCR 1). A station older
+than the record saves none, and the replay alone then gives the values, as
+long as the log is whole. A fresh 20-byte seed from `getrandom` is sealed (tpm2.h's
 `tpm2_seed_enroll_values`, tpm12.h's), `[totp]` is written into
 STATION.INI with every other line of the file left as it was (through the
 mount when the ESP is mounted, mtools when it is not), and the secret is
@@ -4519,12 +4535,12 @@ two event logs, one per ACPI TCPA table: coreboot's, PCR 2 alone, which is
 the one Linux reads, and edk2's, which holds PCRs 0 to 7's separators, the
 images in PCR 4, the GPT and boot variables in PCR 5, and the authority in
 PCR 7, and which only `EFI_TCG_PROTOCOL` reaches. So on every boot where
-that protocol is the TPM's (a TPM 2.0 firmware's log reaches Linux whole),
-the station copies edk2's log as it stands and reads PCRs 0 to 15 after it,
-before it loads anything, and saves both in the volatile variable
-`FalconEvLog` (`tpm/evsave.h`, `tcg_evlog12`, `loader_evlog_set`). It does
-this with or without `[totp]`: the boot enrollment runs from is the one
-before there is one. Replayed to its end, that log is the state at the
+that protocol is the TPM's (a TPM 2.0 firmware's log reaches Linux whole,
+and its record is the PCRs alone, `tcg_pcrs20`), the station copies edk2's
+log as it stands and reads PCRs 0 to 15 after it, before it loads
+anything, and saves both in the record (`tcg_evlog12`,
+`loader_evlog_set`). It does this with or without `[totp]`: the boot
+enrollment runs from is the one before there is one. Replayed to its end, that log is the state at the
 station's menu, with nothing to stop at: edk2 logs an image's PCR 7
 authority and the first GPT after its PCR 4 event, so stopping at the
 station's image, as the one-log path does, would leave out the station's
@@ -4540,7 +4556,7 @@ extends after the menu, 0 to 3 and 6 (a later load moves PCR 4 and 7,
 ExitBootServices PCR 5), which also shows the record and Linux's log to be
 of this boot. The variable is writable by root, as the files enrollment
 reads are; root at enrollment already sees the seed. Without the record
-(no `FalconEvLog`, as on a TPM 2.0), enrollment is the one-log path above.
+(a station older than it), enrollment is the one-log replay above.
 
 The owner authorises every NV operation (7.5's rule, one secret the user
 already holds): `--owner-auth-file` is the file's bytes on 2.0, and on 1.2
@@ -4577,7 +4593,9 @@ replay that predicts the station's PCRs is run with the old loader's
 Authenticode digest replaced by the new one's there
 (`evlog_replay_substitute`; on 1.2, `totpc_merge12_as` checks the logs as
 they are and then replays them with the substitution). The certificate
-is the same, so PCR 7's authority event does not move. A reseal that fails
+is the same, so PCR 7's authority event does not move. A prediction needs
+a whole log: on a firmware that extends PCRs it does not log, the TPM 2.0
+record is checked as it is and the reseal refused. A reseal that fails
 leaves the loader written and says to run `reseal` from the updated
 system; the station shows the warning in place of a code until it is
 resealed.
@@ -4586,8 +4604,9 @@ resealed.
 station disk four times over one swtpm state with the guest clock pinned:
 the probe, started by the station, saves the event log to the ESP; mkstick
 enrolls on the host against the same state (its test-only `--tpm-socket`,
-`--event-log` and, on 1.2, `--saved-log`: the probe also copies out the
-station's `FalconEvLog`, and a 2.0 boot must have none); the station shows the code the host computes from the
+`--event-log` and `--saved-log`: the probe also copies out the station's
+`FalconEvLog`, which every boot must have, and a 2.0 enrollment must say it
+sealed to it, checked against the whole log); the station shows the code the host computes from the
 printed secret, swtpm's own log shows the seed never crossed in the clear
 (on 1.2 the enrollment's plain write is the control), the menu drops the
 code once the probe has run, and the prompt page shows it; then the other

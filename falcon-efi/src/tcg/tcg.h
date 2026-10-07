@@ -17,10 +17,11 @@
  * nothing about it: the seed is still sealed to the PCRs, only its trip
  * across the bus is weaker. Output is SHA-256(pool || counter).
  *
- * The 1.2 event log. tcg_evlog12 copies what edk2 has logged so far and
- * reads PCRs 0 to 15 alongside, for the record the station saves on every
- * boot (tpm/evsave.h); it runs only where EFI_TCG_PROTOCOL is the TPM's,
- * since a TPM 2.0 firmware's log reaches Linux whole.
+ * The PCRs for enrollment. The station saves PCRs 0 to 15 on every boot
+ * (tpm/evsave.h): tcg_evlog12 copies what edk2 has logged so far on a TPM
+ * 1.2 reached through EFI_TCG_PROTOCOL and reads the PCRs after it;
+ * tcg_pcrs20 reads the SHA-256 bank of a TPM 2.0, whose firmware's log
+ * reaches Linux whole.
  *
  * Interactions. The station's TOTP check (totp/totp.c) is the one caller.
  * The tpm_dev is this module's, static (4 KB of command and response
@@ -49,6 +50,11 @@ tcg_status tcg_open(EFI_SYSTEM_TABLE *st, tpm_version want, tpm_dev **dev);
  * does not fit. Opens and closes the transport itself. */
 tcg_status tcg_evlog12(EFI_SYSTEM_TABLE *st, uint8_t *log, size_t cap,
                        size_t *len, uint8_t pcr[16][20]);
+
+/* With EFI_TCG2_PROTOCOL: PCRs 0-15 in the SHA-256 bank. TCG_NO_PROTOCOL
+ * when there is no such protocol, TCG_NOT_PRESENT when the TPM behind it
+ * does not answer. Opens and closes the transport itself. */
+tcg_status tcg_pcrs20(EFI_SYSTEM_TABLE *st, uint8_t pcr[16][32]);
 
 /* Wipes the command buffers and the randomness pool. */
 void tcg_close(void);

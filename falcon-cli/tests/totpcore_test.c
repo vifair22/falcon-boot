@@ -243,14 +243,14 @@ static void unhex(const char *s, uint8_t *out, size_t n)
     }
 }
 
-static uint8_t *slurp(const char *name, size_t *len)
+static uint8_t *slurp_in(const char *dir, const char *name, size_t *len)
 {
     char path[512];
     uint8_t *buf;
     FILE *f;
     long n;
 
-    snprintf(path, sizeof path, "%s/t430/%s", CLI_TEST_DATA, name);
+    snprintf(path, sizeof path, "%s/%s/%s", CLI_TEST_DATA, dir, name);
     f = fopen(path, "rb");
     assert_non_null(f);
     assert_int_equal(fseek(f, 0, SEEK_END), 0);
@@ -263,6 +263,11 @@ static uint8_t *slurp(const char *name, size_t *len)
     fclose(f);
     *len = (size_t)n;
     return buf;
+}
+
+static uint8_t *slurp(const char *name, size_t *len)
+{
+    return slurp_in("t430", name, len);
 }
 
 static uint8_t g_rec[EVSAVE_BODY + 8192];
@@ -389,6 +394,182 @@ static void test_merge_saved_alone(void **state)
     free(ek);
 }
 
+/* ---- the TPM 2.0 record, on the B550's log ---- */
+
+/* PCRs 0-15 as the TPM held them in the boot evlog.bin is from. */
+static const char *const k_b550_pcr[16] = {
+    "17e02db14b5cb35635190e866a10d5696c7a1d5465769e4fe3aeb8515d773f99",
+    "9cb4a990df60ef742a249060b3a22075084db20b11b357d03112ca79dc2a1261",
+    "cc44e1bbe025d05a27eb0309772b960dc3f67fb547d520decf356bcaf3300ec7",
+    "8d22c738fcd1730fb0789cb09c0f72a0012baa3ea867723b26772c9ca0ae6571",
+    "09e4bdbc09ec7708ff549fa6f06896f9bfd6bab915b98356af71a3d5d7b50332",
+    "d2ad27e6a6e5a6983b75f2e66b3e152632dcb757dc3d4736173029a85322df5c",
+    "8d22c738fcd1730fb0789cb09c0f72a0012baa3ea867723b26772c9ca0ae6571",
+    "dcbf6c347d3b0d4ed964238e4d97da337e30ef0c66553b1e9834c5fe5804158a",
+    "0000000000000000000000000000000000000000000000000000000000000000",
+    "f9937ba6c56bd71f48e0e8aac8c6d6d427f82d20333785a61b8be81be0b06df3",
+    "b4ed9cf9ad04b04b1305f0e6c4779d6b22d54d05d3a95a4bc4cca512b37d134b",
+    "7beda3f22c4e069fc374f1acf8753a4327da75f1fcf154c916f4cc44abb88655",
+    "21679e8ea8da4e4a5a148205aa08bf7a6568fd9b07607877647b6119986d848b",
+    "3345a4e7857aa5ae65e97702ade84a3755fd6144724779536b5773128676c99c",
+    "62816aa88f122531a1c5514c5ad4935d3e243db12a794189cc77bb87d5b23550",
+    "62465c0a72bfbe12bea245c80b82a074ca5102b31f4f031552bd2ad00ac9c77f",
+};
+
+/* The station's SHA-256 Authenticode digest, PCR 4's second application. */
+static const char k_b550_station[] =
+    "3d8e399c34ff43838d1758aa5fcf7b3fc09f72345433fdacd5cc087d9e9ba5e7";
+
+#define B550_MASK 0x94u     /* PCRs 2, 4 and 7 */
+
+static uint8_t g_rec2[EVSAVE_BODY2];
+
+static size_t record2(const uint8_t pcr[16][32])
+{
+    size_t n = 0;
+
+    assert_int_equal(evsave_write2(g_rec2, sizeof g_rec2, pcr, &n),
+                     EVSAVE_OK);
+    return n;
+}
+
+/* The firmware extends PCRs it does not log: the log is set aside and the
+ * station's record stands, as long as it is of this boot. */
+static void test_station20_unlogged(void **state)
+{
+    static uint8_t live[16][32];
+    static uint8_t rec[16][32];
+    static uint8_t out[16][32];
+    uint8_t station[32];
+    size_t len = 0;
+    uint8_t *log = slurp_in("b550", "evlog.bin", &len);
+    unsigned bad = 99;
+    int whole = -1;
+    size_t n;
+    unsigned i;
+
+    (void)state;
+    for (i = 0; i < 16u; i++)
+        unhex(k_b550_pcr[i], live[i], 32);
+    unhex(k_b550_station, station, 32);
+
+    /* The station's reading: this boot's stable PCRs, and its own 4 and 7,
+     * which the OS has moved on since. */
+    memcpy(rec, live, sizeof rec);
+    memset(rec[4], 0x44, 32);
+    memset(rec[7], 0x77, 32);
+    n = record2((const uint8_t (*)[32])rec);
+    assert_int_equal(totpc_station20(g_rec2, n, log, len, station,
+                                     (const uint8_t (*)[32])live, B550_MASK,
+                                     out, &whole, &bad), TOTPC_OK);
+    assert_int_equal(whole, 0);
+    assert_memory_equal(out, rec, sizeof rec);
+
+    /* PCR 1 moved after the station (the UKI's stub extends it), so the
+     * record's PCR 1 is not held against the TPM's. */
+    memset(rec[1], 0x11, 32);
+    n = record2((const uint8_t (*)[32])rec);
+    assert_int_equal(totpc_station20(g_rec2, n, log, len, station,
+                                     (const uint8_t (*)[32])live, B550_MASK,
+                                     out, &whole, &bad), TOTPC_OK);
+
+    /* A stable PCR that is not this boot's. */
+    rec[3][0] ^= 1u;
+    n = record2((const uint8_t (*)[32])rec);
+    assert_int_equal(totpc_station20(g_rec2, n, log, len, station,
+                                     (const uint8_t (*)[32])live, B550_MASK,
+                                     out, &whole, &bad), TOTPC_ERR_BOOT);
+    assert_int_equal(bad, 3);
+    rec[3][0] ^= 1u;
+    n = record2((const uint8_t (*)[32])rec);
+
+    /* No measurement of this station in the log. */
+    station[0] ^= 1u;
+    assert_int_equal(totpc_station20(g_rec2, n, log, len, station,
+                                     (const uint8_t (*)[32])live, B550_MASK,
+                                     out, &whole, &bad), TOTPC_ERR_STATION);
+    station[0] ^= 1u;
+
+    /* A version 1 record, a broken one, and arguments. */
+    {
+        static uint8_t pcr1[16][20];
+        size_t n1 = record((const uint8_t (*)[20])pcr1, log, 16);
+
+        assert_int_equal(totpc_station20(g_rec, n1, log, len, station,
+                                         (const uint8_t (*)[32])live,
+                                         B550_MASK, out, &whole, &bad),
+                         TOTPC_ERR_LOG);
+    }
+    assert_int_equal(totpc_station20(g_rec2, n - 1u, log, len, station,
+                                     (const uint8_t (*)[32])live, B550_MASK,
+                                     out, &whole, &bad), TOTPC_ERR_LOG);
+    assert_int_equal(totpc_station20(g_rec2, n, log, len, station, NULL,
+                                     1u << 16, out, &whole, &bad),
+                     TOTPC_ERR_ARG);
+    assert_int_equal(totpc_station20(NULL, n, log, len, station, NULL,
+                                     B550_MASK, out, &whole, &bad),
+                     TOTPC_ERR_ARG);
+    free(log);
+}
+
+/* A log that accounts for the TPM (live is its own replay here): the
+ * station's record must be what the log gives up to its measurement. */
+static void test_station20_whole(void **state)
+{
+    static evlog_replay all;
+    static evlog_replay rep;
+    static uint8_t live[16][32];
+    static uint8_t rec[16][32];
+    static uint8_t out[16][32];
+    uint8_t station[32];
+    size_t len = 0;
+    uint8_t *log = slurp_in("b550", "evlog.bin", &len);
+    unsigned bad = 99;
+    int whole = -1;
+    size_t n;
+    unsigned i;
+
+    (void)state;
+    unhex(k_b550_station, station, 32);
+    assert_int_equal(evlog_replay_run(log, len, EVLOG_ALG_SHA256, 0, NULL,
+                                      &all), EVLOG_OK);
+    assert_int_equal(evlog_replay_run(log, len, EVLOG_ALG_SHA256, 4, station,
+                                      &rep), EVLOG_OK);
+    assert_true(rep.stopped);
+    for (i = 0; i < 16u; i++) {
+        memcpy(live[i], all.pcr[i], 32);
+        memcpy(rec[i], rep.pcr[i], 32);
+    }
+    n = record2((const uint8_t (*)[32])rec);
+    assert_int_equal(totpc_station20(g_rec2, n, log, len, station,
+                                     (const uint8_t (*)[32])live, B550_MASK,
+                                     out, &whole, &bad), TOTPC_OK);
+    assert_int_equal(whole, 1);
+    assert_memory_equal(out, rec, sizeof rec);
+
+    /* Without the live TPM (the rig's swtpm) the log is taken as whole. */
+    assert_int_equal(totpc_station20(g_rec2, n, log, len, station, NULL,
+                                     B550_MASK, out, &whole, &bad), TOTPC_OK);
+    assert_int_equal(whole, 1);
+
+    /* The record and a whole log disagree on PCR 7. */
+    rec[7][0] ^= 1u;
+    n = record2((const uint8_t (*)[32])rec);
+    assert_int_equal(totpc_station20(g_rec2, n, log, len, station,
+                                     (const uint8_t (*)[32])live, B550_MASK,
+                                     out, &whole, &bad), TOTPC_ERR_PCR);
+    assert_int_equal(bad, 7);
+
+    /* A PCR outside the mask may differ. */
+    rec[7][0] ^= 1u;
+    rec[5][0] ^= 1u;
+    n = record2((const uint8_t (*)[32])rec);
+    assert_int_equal(totpc_station20(g_rec2, n, log, len, station,
+                                     (const uint8_t (*)[32])live, B550_MASK,
+                                     out, &whole, &bad), TOTPC_OK);
+    free(log);
+}
+
 int run_totpcore_tests(void)
 {
     const struct CMUnitTest tests[] = {
@@ -399,6 +580,8 @@ int run_totpcore_tests(void)
         cmocka_unit_test(test_ini_update),
         cmocka_unit_test(test_merge_t430),
         cmocka_unit_test(test_merge_saved_alone),
+        cmocka_unit_test(test_station20_unlogged),
+        cmocka_unit_test(test_station20_whole),
     };
 
     return cmocka_run_group_tests_name("totpcore", tests, NULL, NULL);

@@ -474,6 +474,8 @@ static void test_evsave(void **state)
     assert_int_equal(n, EVSAVE_BODY + sizeof log);
     assert_memory_equal(buf, "FEVL", 4);
     assert_int_equal(evsave_read(buf, n, &v), EVSAVE_OK);
+    assert_int_equal(v.version, 1);
+    assert_int_equal(v.digest_len, EVSAVE_DIGEST_LEN);
     assert_int_equal(v.log_len, sizeof log);
     assert_memory_equal(v.log, log, sizeof log);
     assert_memory_equal(v.pcr, pcr, sizeof pcr);
@@ -500,6 +502,50 @@ static void test_evsave(void **state)
                                   log, 0, &n), EVSAVE_ERR_ARG);
 }
 
+/* Version 2: the SHA-256 bank and no log, read back with its version and
+ * digest length, and the same header with a log, or the wrong length,
+ * refused. */
+static void test_evsave2(void **state)
+{
+    static uint8_t pcr[EVSAVE_PCRS][EVSAVE_DIGEST_LEN2];
+    static uint8_t buf[EVSAVE_BODY2 + 8];
+    evsave_view v;
+    size_t n = 0;
+    unsigned i;
+
+    (void)state;
+    for (i = 0; i < EVSAVE_PCRS; i++)
+        memset(pcr[i], (int)(0x40u + i), EVSAVE_DIGEST_LEN2);
+    assert_int_equal(evsave_write2(buf, sizeof buf,
+                                   (const uint8_t (*)[EVSAVE_DIGEST_LEN2])pcr,
+                                   &n), EVSAVE_OK);
+    assert_int_equal(n, EVSAVE_BODY2);
+    assert_int_equal(evsave_read(buf, n, &v), EVSAVE_OK);
+    assert_int_equal(v.version, 2);
+    assert_int_equal(v.digest_len, EVSAVE_DIGEST_LEN2);
+    assert_null(v.log);
+    assert_int_equal(v.log_len, 0);
+    assert_memory_equal(v.pcr, pcr, sizeof pcr);
+
+    assert_int_equal(evsave_read(buf, n - 1u, &v), EVSAVE_ERR_FORMAT);
+    assert_int_equal(evsave_read(buf, n + 1u, &v), EVSAVE_ERR_FORMAT);
+    buf[12] = 1;
+    assert_int_equal(evsave_read(buf, n, &v), EVSAVE_ERR_FORMAT);
+    buf[12] = 0;
+    buf[8] = 20;
+    assert_int_equal(evsave_read(buf, n, &v), EVSAVE_ERR_FORMAT);
+    buf[8] = 32;
+    buf[4] = 3;
+    assert_int_equal(evsave_read(buf, n, &v), EVSAVE_ERR_FORMAT);
+
+    assert_int_equal(evsave_write2(buf, EVSAVE_BODY2 - 1u,
+                                   (const uint8_t (*)[EVSAVE_DIGEST_LEN2])pcr,
+                                   &n), EVSAVE_ERR_SPACE);
+    assert_int_equal(evsave_write2(NULL, sizeof buf,
+                                   (const uint8_t (*)[EVSAVE_DIGEST_LEN2])pcr,
+                                   &n), EVSAVE_ERR_ARG);
+}
+
 int run_evlog_tests(void)
 {
     const struct CMUnitTest tests[] = {
@@ -509,6 +555,7 @@ int run_evlog_tests(void)
         cmocka_unit_test(test_tcg2_bad),
         cmocka_unit_test(test_more),
         cmocka_unit_test(test_evsave),
+        cmocka_unit_test(test_evsave2),
     };
 
     return cmocka_run_group_tests_name("evlog", tests, NULL, NULL);

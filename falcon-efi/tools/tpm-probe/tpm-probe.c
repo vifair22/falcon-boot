@@ -16,9 +16,9 @@
  * by the station, the log holds the station's own measurement and then the
  * probe's.
  *
- * And, when the station saved one (a TPM 1.2 behind EFI_TCG_PROTOCOL), its
- * FalconEvLog record as \falcon-evsave.bin, which the 1.2 cases enroll from
- * as mkstick would from efivarfs.
+ * And, when the station saved one (every boot with a TPM), its FalconEvLog
+ * record as \falcon-evsave.bin, which the totp cases enroll from as mkstick
+ * would from efivarfs.
  *
  * Every PCR is read, not only PCR0, and every line it prints is also saved
  * as \falcon-tpm.txt. On real hardware that pair is the point: a log can
