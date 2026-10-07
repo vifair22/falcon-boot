@@ -14,6 +14,14 @@ static tpm_dev g_dev;
 static EFI_TCG2_PROTOCOL *g_tcg2;
 static EFI_TCG_PROTOCOL *g_tcg;
 
+/* The protocol's status for the last command, for tcg_diag. */
+static EFI_STATUS g_xfer_efi;
+
+/* The largest command and response the TCG2 protocol takes, from its
+ * capability; 0 for none known. */
+static UINT16 g_max_cmd;
+static UINT16 g_max_rsp;
+
 static uint8_t g_pool[SHA256_DIGEST_LEN];
 static uint64_t g_ctr;
 
@@ -22,7 +30,14 @@ static uint64_t g_ctr;
 /* The firmware writes the whole response into rsp; its header carries its
  * length, which tpm_transact checks against what it reads. The command
  * buffer is the library's and is const there; the protocols take it
- * non-const and do not write it. */
+ * non-const and do not write it.
+ *
+ * edk2's SubmitCommand refuses (EFI_INVALID_PARAMETER) a command or an
+ * output buffer larger than the TPM's MaxCommandSize or MaxResponseSize,
+ * which a discrete TPM can report as 1024 against the library's 2048-byte
+ * buffers (swtpm and AMD's firmware TPM say 4096). So the buffer offered
+ * is never more than the firmware takes; no response falcon asks for comes
+ * near either limit. */
 static int xfer(void *ctx, const uint8_t *cmd, size_t cmd_len, uint8_t *rsp,
                 size_t rsp_cap, size_t *rsp_len)
 {
@@ -34,14 +49,20 @@ static int xfer(void *ctx, const uint8_t *cmd, size_t cmd_len, uint8_t *rsp,
     if (cmd_len > 0xFFFFFFFFu || rsp_cap < 10u || rsp_cap > 0xFFFFFFFFu)
         return -1;
     memset(rsp, 0, 10);
-    if (g_tcg2 != (EFI_TCG2_PROTOCOL *)0)
+    if (g_tcg2 != (EFI_TCG2_PROTOCOL *)0) {
+        if (g_max_cmd != 0u && cmd_len > g_max_cmd)
+            return -1;
+        if (g_max_rsp != 0u && rsp_cap > g_max_rsp)
+            rsp_cap = g_max_rsp;
         s = g_tcg2->SubmitCommand(g_tcg2, (UINT32)cmd_len, in,
                                   (UINT32)rsp_cap, rsp);
+    }
     else if (g_tcg != (EFI_TCG_PROTOCOL *)0)
         s = g_tcg->PassThroughToTpm(g_tcg, (UINT32)cmd_len, in,
                                     (UINT32)rsp_cap, rsp);
     else
         return -1;
+    g_xfer_efi = s;
     if (EFI_ERROR(s))
         return -1;
     n = ((size_t)rsp[2] << 24) | ((size_t)rsp[3] << 16) |
@@ -162,6 +183,8 @@ tcg_status tcg_open(EFI_SYSTEM_TABLE *st, tpm_version want, tpm_dev **dev)
         if (p->GetCapability(p, &cap) != EFI_SUCCESS || !cap.TPMPresentFlag)
             return TCG_NOT_PRESENT;
         g_tcg2 = p;
+        g_max_cmd = cap.MaxCommandSize;
+        g_max_rsp = cap.MaxResponseSize;
     } else {
         EFI_TCG_BOOT_SERVICE_CAPABILITY cap;
         EFI_TCG_PROTOCOL *p = (EFI_TCG_PROTOCOL *)0;
@@ -188,8 +211,23 @@ tcg_status tcg_open(EFI_SYSTEM_TABLE *st, tpm_version want, tpm_dev **dev)
     return TCG_OK;
 }
 
+static void diag(tcg_diag *why, tcg_step step, EFI_STATUS efi)
+{
+    memset(why, 0, sizeof *why);
+    why->step = step;
+    why->efi = efi;
+}
+
+static void diag_pcr(tcg_diag *why, unsigned pcr, int err)
+{
+    diag(why, TCG_STEP_PCR_READ, g_xfer_efi);
+    why->pcr = pcr;
+    why->err = err;
+    why->rc = g_dev.rc;
+}
+
 tcg_status tcg_evlog12(EFI_SYSTEM_TABLE *st, uint8_t *log, size_t cap,
-                       size_t *len, uint8_t pcr[16][20])
+                       size_t *len, uint8_t pcr[16][20], tcg_diag *why)
 {
     EFI_BOOT_SERVICES *bs = st->BootServices;
     EFI_GUID g2 = EFI_TCG2_PROTOCOL_GUID;
@@ -204,6 +242,9 @@ tcg_status tcg_evlog12(EFI_SYSTEM_TABLE *st, uint8_t *log, size_t cap,
     uint64_t n;
     unsigned i;
 
+    EFI_STATUS es;
+
+    diag(why, TCG_STEP_LOCATE, EFI_SUCCESS);
     if (bs->LocateProtocol(&g2, (void *)0, (void **)&p2) == EFI_SUCCESS &&
         p2 != (EFI_TCG2_PROTOCOL *)0)
         return TCG_NO_PROTOCOL;
@@ -212,12 +253,19 @@ tcg_status tcg_evlog12(EFI_SYSTEM_TABLE *st, uint8_t *log, size_t cap,
         return TCG_NO_PROTOCOL;
     memset(&cap12, 0, sizeof cap12);
     cap12.Size = (UINT8)sizeof cap12;
-    if (p->StatusCheck(p, &cap12, &features, &loc, &last) != EFI_SUCCESS ||
-        !cap12.TPMPresentFlag || cap12.TPMDeactivatedFlag)
+    es = p->StatusCheck(p, &cap12, &features, &loc, &last);
+    if (es != EFI_SUCCESS) {
+        diag(why, TCG_STEP_CAPABILITY, es);
         return TCG_NOT_PRESENT;
+    }
+    if (!cap12.TPMPresentFlag || cap12.TPMDeactivatedFlag) {
+        diag(why, TCG_STEP_PRESENT, EFI_SUCCESS);
+        return TCG_NOT_PRESENT;
+    }
 
     /* A 1.2 log is TCG_PCR_EVENTs, 32 bytes of header and the event's
      * data; last is where the last one starts. */
+    diag(why, TCG_STEP_LOG, EFI_SUCCESS);
     if (loc == 0 || last < loc || last - loc > cap)
         return TCG_NO_PROTOCOL;
     last_ev = (const uint8_t *)(uintptr_t)last;
@@ -237,42 +285,64 @@ tcg_status tcg_evlog12(EFI_SYSTEM_TABLE *st, uint8_t *log, size_t cap,
     g_dev.xfer = xfer;
     g_tcg = p;
     for (i = 0; i < 16u; i++) {
-        if (tpm12_pcr_read(&g_dev, i, pcr[i]) != TPM_OK) {
+        int rc = tpm12_pcr_read(&g_dev, i, pcr[i]);
+
+        if (rc != TPM_OK) {
+            diag_pcr(why, i, rc);
             tcg_close();
             return TCG_NOT_PRESENT;
         }
     }
     tcg_close();
+    diag(why, TCG_STEP_NONE, EFI_SUCCESS);
     return TCG_OK;
 }
 
-tcg_status tcg_pcrs20(EFI_SYSTEM_TABLE *st, uint8_t pcr[16][32])
+tcg_status tcg_pcrs20(EFI_SYSTEM_TABLE *st, uint8_t pcr[16][32],
+                      tcg_diag *why)
 {
     EFI_BOOT_SERVICES *bs = st->BootServices;
     EFI_GUID g2 = EFI_TCG2_PROTOCOL_GUID;
     EFI_TCG2_BOOT_SERVICE_CAPABILITY cap;
     EFI_TCG2_PROTOCOL *p = (EFI_TCG2_PROTOCOL *)0;
+    EFI_STATUS es;
     unsigned i;
 
+    diag(why, TCG_STEP_LOCATE, EFI_SUCCESS);
     if (bs->LocateProtocol(&g2, (void *)0, (void **)&p) != EFI_SUCCESS ||
         p == (EFI_TCG2_PROTOCOL *)0)
         return TCG_NO_PROTOCOL;
     memset(&cap, 0, sizeof cap);
     cap.Size = (UINT8)sizeof cap;
-    if (p->GetCapability(p, &cap) != EFI_SUCCESS || !cap.TPMPresentFlag)
+    es = p->GetCapability(p, &cap);
+    if (es != EFI_SUCCESS) {
+        diag(why, TCG_STEP_CAPABILITY, es);
         return TCG_NOT_PRESENT;
+    }
+    if (!cap.TPMPresentFlag) {
+        diag(why, TCG_STEP_PRESENT, EFI_SUCCESS);
+        return TCG_NOT_PRESENT;
+    }
 
     /* No randomness is needed for a PCR read. */
     memset(&g_dev, 0, sizeof g_dev);
     g_dev.xfer = xfer;
     g_tcg2 = p;
+    g_max_cmd = cap.MaxCommandSize;
+    g_max_rsp = cap.MaxResponseSize;
     for (i = 0; i < 16u; i++) {
-        if (tpm2_pcr_read(&g_dev, i, pcr[i]) != TPM_OK) {
+        int rc;
+
+        g_xfer_efi = EFI_SUCCESS;
+        rc = tpm2_pcr_read(&g_dev, i, pcr[i]);
+        if (rc != TPM_OK) {
+            diag_pcr(why, i, rc);
             tcg_close();
             return TCG_NOT_PRESENT;
         }
     }
     tcg_close();
+    diag(why, TCG_STEP_NONE, EFI_SUCCESS);
     return TCG_OK;
 }
 
@@ -283,4 +353,6 @@ void tcg_close(void)
     g_ctr = 0;
     g_tcg2 = (EFI_TCG2_PROTOCOL *)0;
     g_tcg = (EFI_TCG_PROTOCOL *)0;
+    g_max_cmd = 0;
+    g_max_rsp = 0;
 }

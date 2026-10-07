@@ -40,6 +40,25 @@ typedef enum {
     TCG_NOT_PRESENT = 2     /* the protocol is there, the TPM is not usable */
 } tcg_status;
 
+/* Where a PCR read for the saved record stopped, for the station's
+ * FalconEvLogStatus (totp/totp.c): the step, and what answered there. */
+typedef enum {
+    TCG_STEP_NONE = 0,
+    TCG_STEP_LOCATE,        /* no such protocol */
+    TCG_STEP_CAPABILITY,    /* GetCapability or StatusCheck failed: efi */
+    TCG_STEP_PRESENT,       /* the protocol says the TPM is not usable */
+    TCG_STEP_LOG,           /* 1.2: the log is not where it says, or too big */
+    TCG_STEP_PCR_READ       /* a PCR read failed: pcr, err, and rc or efi */
+} tcg_step;
+
+typedef struct {
+    tcg_step   step;
+    unsigned   pcr;
+    int        err;         /* tpm.h's TPM_ERR_*, for TCG_STEP_PCR_READ */
+    uint32_t   rc;          /* the TPM's response code, for TPM_ERR_RC */
+    EFI_STATUS efi;         /* the protocol's status, where one failed */
+} tcg_diag;
+
 /* Opens the TPM of version `want` (TPM_VER_20 or TPM_VER_12) and seeds the
  * randomness. *dev is valid until tcg_close. */
 tcg_status tcg_open(EFI_SYSTEM_TABLE *st, tpm_version want, tpm_dev **dev);
@@ -49,12 +68,14 @@ tcg_status tcg_open(EFI_SYSTEM_TABLE *st, tpm_version want, tpm_dev **dev);
  * TCG_NO_PROTOCOL when the TPM is not a 1.2 reached that way, or the log
  * does not fit. Opens and closes the transport itself. */
 tcg_status tcg_evlog12(EFI_SYSTEM_TABLE *st, uint8_t *log, size_t cap,
-                       size_t *len, uint8_t pcr[16][20]);
+                       size_t *len, uint8_t pcr[16][20], tcg_diag *why);
 
 /* With EFI_TCG2_PROTOCOL: PCRs 0-15 in the SHA-256 bank. TCG_NO_PROTOCOL
  * when there is no such protocol, TCG_NOT_PRESENT when the TPM behind it
- * does not answer. Opens and closes the transport itself. */
-tcg_status tcg_pcrs20(EFI_SYSTEM_TABLE *st, uint8_t pcr[16][32]);
+ * does not answer. Opens and closes the transport itself. Both say in
+ * *why where they stopped. */
+tcg_status tcg_pcrs20(EFI_SYSTEM_TABLE *st, uint8_t pcr[16][32],
+                      tcg_diag *why);
 
 /* Wipes the command buffers and the randomness pool. */
 void tcg_close(void);

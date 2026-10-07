@@ -4448,7 +4448,12 @@ a 1.2 modulus 128 to 256) is an error naming the line.
 
 **The unseal.** `falcon-efi/src/tcg/` is core's `tpm/` transport through
 the firmware: `EFI_TCG2_PROTOCOL` SubmitCommand for 2.0, `EFI_TCG_PROTOCOL`
-PassThroughToTpm for 1.2. There is no TPM driver in falcon. On 2.0 the
+PassThroughToTpm for 1.2. There is no TPM driver in falcon. edk2's
+SubmitCommand refuses a command or an output buffer larger than the TPM's
+MaxCommandSize or MaxResponseSize, so the buffer offered is cut to what
+the protocol's capability says: a ThinkPad T480's discrete TPM says 1280
+bytes, under the 2048 of core's buffers, and every command failed there
+until it was. On 2.0 the
 read is a policy session salted by ECDH P-256 to the SRK (the persistent
 0x81000001 when it is an ECC P-256 storage key, else a primary made from
 the standard ECC template, the same every boot), PolicyPCR over the
@@ -4504,7 +4509,12 @@ them itself, before it loads anything, on every boot, and saves them in
 the volatile variable `FalconEvLog` (`tpm/evsave.h`, `totp_save_log`):
 PCRs 0 to 15, the SHA-256 bank on a TPM 2.0 (version 2 of the record), the
 SHA-1 PCRs and a copy of edk2's log on a TPM 1.2 (version 1, the two logs
-below). Enrollment seals to that record, checked against the firmware's
+below). Beside it, on every boot, `FalconEvLogStatus` is one line of ASCII
+saying what was saved or where the read stopped: the step (the protocol,
+its capability query, the TPM's presence, a PCR read, the variable write)
+and the firmware's or the TPM's answer there, so a machine whose firmware
+refuses can say why without a serial console. Enrollment prints it when
+there is no record. Enrollment seals to that record, checked against the firmware's
 event log (securityfs): the log must hold the event that measured the
 station's own image, found by the Authenticode hash of
 `\EFI\falcon\grubx64.efi` in the log's bank (`tpm/evlog.c`,

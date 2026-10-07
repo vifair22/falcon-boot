@@ -406,6 +406,10 @@ totp_enrolled() {
             why="the station saved no record on a TPM $ver"
         fi
     fi
+    # And says so in FalconEvLogStatus, which the probe prints.
+    if [[ -z $why ]] && ! has "FALCON-TPM evsave-status saved: TPM"; then
+        why="the station's status line does not say it saved the record"
+    fi
 
     # 2. enrollment, on the host, against the same TPM state
     if [[ -z $why ]]; then

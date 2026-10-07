@@ -2519,7 +2519,14 @@ when the saved PCRs are not of this boot (`PCR <n> is not what the station
 read`), or when a log that accounts for the TPM does not give what the
 station read. A station older than the saved PCRs saves none, and the log
 alone then gives them, as long as it accounts for the TPM; on a firmware
-whose log does not, update the station and boot it once first.
+whose log does not, update the station and boot it once first. When the
+station ran and saved none, enrollment says what the station found
+instead, from the variable `FalconEvLogStatus`:
+
+    the station saved no PCRs: TPM 2.0: reading PCR 0: the TPM answered 0x00000101
+
+(`cat` it from `/sys/firmware/efi/efivars/` on any boot; the first four
+bytes are the variable's attributes).
 
 What the code is sealed to changes with what is in the chosen PCRs:
 firmware (0, 2), the station image (4), Secure Boot's keys and the

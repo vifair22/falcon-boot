@@ -658,6 +658,39 @@ static cli_status station_pcrs_saved20(stn_esp *e, const char *log_file,
     return CLI_OK;
 }
 
+/* Says what the station wrote in FalconEvLogStatus when it saved no
+ * record: where its read stopped, or nothing when it is a station older
+ * than the status line. Only from efivarfs: the rig's --saved-log has
+ * none. */
+static void say_no_record(const char *saved_file)
+{
+    char text[EVSAVE_STATUS_MAX + 1u];
+    void *data = NULL;
+    size_t n = 0;
+
+    if (saved_file != NULL || access(TOTPC_EVSTATUS_EFIVAR, F_OK) != 0 ||
+        util_read_file(TOTPC_EVSTATUS_EFIVAR, &data, &n,
+                       EVSAVE_STATUS_MAX + 4u) != CLI_OK) {
+        cli_error_clear();
+        log_info("the station saved no PCRs; a station older than the "
+                 "record saves none, so the event log alone gives them");
+        return;
+    }
+    if (n > 4u) {
+        size_t i;
+
+        n -= 4u;
+        memcpy(text, (uint8_t *)data + 4, n);
+        for (i = 0; i < n; i++) {
+            if (text[i] < 0x20 || text[i] > 0x7E)
+                text[i] = '?';
+        }
+        text[n] = '\0';
+        log_warn("the station saved no PCRs: %s", text);
+    }
+    free(data);
+}
+
 /* The PCR values the station runs with, from the log, checked. */
 static cli_status station_pcrs(stn_esp *e, const char *log_file,
                                const char *saved_file, int live,
@@ -691,6 +724,7 @@ static cli_status station_pcrs(stn_esp *e, const char *log_file,
         }
         if (st != CLI_ERR_NOTFOUND)
             return st;
+        say_no_record(saved_file);
     } else {
         uint8_t *rec = NULL;
         size_t rec_len = 0;
@@ -707,6 +741,8 @@ static cli_status station_pcrs(stn_esp *e, const char *log_file,
                 return st;
         } else if (st != CLI_ERR_NOTFOUND) {
             return st;
+        } else {
+            say_no_record(saved_file);
         }
     }
     st = station_digest(e, ver == TPM_VER_12, digest);
