@@ -248,10 +248,7 @@ TEST_SUPPORT := falcon-core/tests/support
 
 # -D_POSIX_C_SOURCE because -std=c11 hides pread(); -O0 and --coverage because
 # gcov line counts are only meaningful without the optimiser moving code.
-# -fprofile-update=atomic because argon2_test.c runs the lanes on pthreads:
-# plain counters race there, and a lost update came out of gcov as a negative
-# branch count (GCC 68080) that gcovr refuses the whole report over.
-TEST_CFLAGS := -std=c11 -O0 -g --coverage -fprofile-update=atomic $(TEST_WARNS) \
+TEST_CFLAGS := -std=c11 -O0 -g --coverage $(TEST_WARNS) \
 	-D_POSIX_C_SOURCE=200809L -D_FILE_OFFSET_BITS=64 \
 	-DFIXTURE_IMG='"$(FIXTURE_IMG)"' \
 	-DEXT4_IMG='"$(EXT4_IMG)"' \
@@ -292,6 +289,16 @@ TEST_LDFLAGS := --coverage
 TEST_LIBS    := $(CMOCKA_LIBS)
 
 TEST_OBJ := $(OBJ)/test
+
+# argon2_test.c runs the lanes on pthreads, and plain gcov counters race
+# there: a lost update came out of gcov as a negative branch count (GCC
+# 68080), which gcovr refuses the whole report over. Atomic counters cost
+# the suite about 60% when every unit has them, so only what those threads
+# execute does.
+TEST_THREADED := $(addprefix $(TEST_OBJ)/falcon-core/,src/crypto/lanes.o \
+	src/crypto/argon2.o src/crypto/argon2_sse2.o src/crypto/argon2_ssse3.o \
+	src/crypto/argon2_avx2.o src/crypto/blake2b.o tests/argon2_test.o)
+$(TEST_THREADED): TEST_CFLAGS += -fprofile-update=atomic
 
 $(TEST_OBJ)/%.o: %.c
 	@mkdir -p $(@D)
