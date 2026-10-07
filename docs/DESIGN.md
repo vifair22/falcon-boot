@@ -302,6 +302,10 @@ installers warn when a `boot` partition or a shelf would sit past 8 GB or
 ## 4. ESP contents and the Secure Boot chain
 
 p1 holds exactly four files. Section 4.3 says why that list is closed.
+A stick goes through shim by default: it boots machines whose firmware
+keys are not its owner's, and shim is what their db trusts. A station
+does not (12.2): it is the machine's own, its cert goes into the
+machine's db, and the firmware entry names the loader.
 
 | Path | What it is | Signatures it must carry |
 |---|---|---|
@@ -3386,13 +3390,13 @@ what an INI section changes or adds, the order), host-tested.
 
 ```mermaid
 flowchart TD
-    FW["Firmware<br/>boot entry falcon"] -- "\EFI\falcon\shimx64.efi" --> SHIM["shim<br/>verifies grubx64.efi (falcon-boot-station.efi) against db / MokList"]
-    FW -- "--no-shim: \EFI\falcon\grubx64.efi,<br/>verified against db (12.2)" --> MAIN
-    SHIM --> MAIN["efi_main (apps/station/efi_main.c)"]
+    FW["Firmware<br/>boot entry falcon"] -- "\EFI\falcon\grubx64.efi (falcon-boot-station.efi),<br/>verified against db (12.2)" --> MAIN["efi_main (apps/station/efi_main.c)"]
+    FW -- "--shim: \EFI\falcon\shimx64.efi" --> SHIM["shim<br/>verifies grubx64.efi against db / MokList"]
+    SHIM --> MAIN
     MAIN --> NB["loader_next_boot_take<br/>FalconNextBoot read, then deleted"]
     NB --> DISC["discover_scan: the ESP's boot record, every Block I/O handle<br/>disks_scan: each whole disk's table (MBR or GPT)<br/>esp_connect_all: a filesystem driver on every partition"]
     DISC --> POSS["pos_scan<br/>shelves carrying the ESP's install ID, any disk (3.1)"]
-    POSS --> SAVE["totp_save_log: on a TPM 1.2 behind EFI_TCG only,<br/>edk2's event log and PCRs 0-15 into FalconEvLog (12.15)"]
+    POSS --> SAVE["totp_save_log: PCRs 0-15 into FalconEvLog (12.15),<br/>with edk2's event log on a TPM 1.2 behind EFI_TCG"]
     SAVE --> INI{"\EFI\falcon\STATION.INI<br/>on the loader's ESP?"}
     INI -- "no" --> ROWS
     INI -- "parses" --> TOTP{"[totp] section? (12.15)"}
@@ -3659,21 +3663,28 @@ station does not link cannot stop it booting.
 Nothing is repartitioned or resized by falcon. The installer (12.9) needs
 the space it uses to be free already.
 
-**UEFI.** The machine's ESP: shim, MokManager, the loader as `grubx64.efi`,
-the public cert, memtest86+ signed with the MOK (12.6) and `STATION.INI`, all
-in `\EFI\falcon\`, named by a firmware boot entry of its own. The ESP's boot
+**UEFI.** The machine's ESP: the loader as `grubx64.efi`, the public cert,
+memtest86+ signed with the MOK (12.6) and `STATION.INI`, all in
+`\EFI\falcon\`, named by a firmware boot entry of its own. The ESP's boot
 sector carries the station's `boot` record (Section 3.1) in bytes UEFI never
 executes; the installer backs up the sector it changes. No extra partition.
+The entry names `grubx64.efi` itself, and the firmware verifies it against
+db, which must hold the cert. A station is the machine's own, and so are its
+firmware keys: the cert goes into db through the platform (sbctl with the
+machine's own PK and KEK, or a coreboot and edk2 machine built with its own
+key as PK, KEK and db). With no shim in the chain, what the loader launches
+goes through the firmware's `LoadImage`, the enforcing one (7.6,
+`loader/loadops.h`). A stick is the other way round: it boots machines
+whose keys are not its owner's, so it goes through shim by default
+(Section 4).
 
-**UEFI without shim** (`station install --no-shim`). The same, less shim and
-MokManager: the firmware entry names `grubx64.efi` itself, and the firmware
-verifies it against db, which must hold the cert, put there through the
-platform (a coreboot and edk2 machine with its own key as PK, KEK and db
-and no Microsoft keys, for one). With no shim in the chain, what the loader
-launches goes through the firmware's `LoadImage`, the enforcing one (7.6,
-`loader/loadops.h`). `station status` takes `grubx64.efi` as the mark of a
-UEFI install, with or without shim before it, and checks its signature
-against the cert beside it with `sbverify`.
+**UEFI through shim** (`station install --shim <dir>`). The same, with shim
+and MokManager from dir before the loader: the firmware entry names shim,
+which verifies the loader against db or MokList, and the cert is enrolled
+with MokManager. For a machine whose db is not its owner's. `station
+status` takes `grubx64.efi` as the mark of a UEFI install, with or without
+shim before it, and checks its signature against the cert beside it with
+`sbverify`.
 
 **BIOS, MBR disk.** Stage 1 in LBA 0's boot code, the table, signature and
 `0x55AA` kept. Stage 2 from LBA 1, before the first partition. A **station
@@ -4145,9 +4156,11 @@ with Secure Boot off and is refused with it on.
 `make test-station` makes the station disk the rigs share the way a user
 does (`falcon-efi/tools/mk-test-station.sh`): an ESP, a LUKS2 shelf and a
 root partition on GPT with free space after them, and `mkstick station
-install` putting both stations on it. The one addition is shim, MokManager
-and the loader copied to `\EFI\BOOT\`, since an image has no firmware entry
-and the rigs boot it by the removable-media path.
+install --shim` putting both stations on it, through shim, since the rigs'
+OVMF trusts Microsoft's keys and the test MOK is enrolled in MokList. The
+one addition is shim, MokManager and the loader copied to `\EFI\BOOT\`,
+since an image has no firmware entry and the rigs boot it by the
+removable-media path.
 
 `make test-station-installed` (`falcon-efi/tools/run-installed-rig.sh`)
 boots stations the installer made through the `falcon` Boot0001 that
@@ -4341,7 +4354,7 @@ update exits. A station's shelf is the one carrying its install ID on any
 disk. `--key` and `--cert` name a keypair instead, for an install whose
 shelf holds none. The loader is named by shim (its next stage read out of
 `\EFI\falcon\shimx64.efi` or p1's `BOOTX64.EFI`), not taken to be
-`grubx64.efi`. The signed image must carry exactly one signature and
+`grubx64.efi`; a station without shim has `grubx64.efi`. The signed image must carry exactly one signature and
 verify against the certificate; the old loader is saved, the new one
 written with mtools and read back.
 

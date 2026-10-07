@@ -16,12 +16,14 @@
  *         in its reserved sectors, its boot record, STATION.INI and the
  *         other files; stage 2 before the first partition, stage 3 and the
  *         marker where the record says; stage 1 into LBA 0's boot code.
- *   UEFI  \EFI\falcon\ on the machine's ESP: shim, MokManager, the station
- *         loader signed with the MOK, the public cert, STATION.INI and a
+ *   UEFI  \EFI\falcon\ on the machine's ESP: the station loader signed
+ *         with the MOK as grubx64.efi, the public cert, STATION.INI and a
  *         signed memtest86+; the ESP's boot record; a firmware entry named
- *         falcon when the disk is this machine's. With --no-shim, no shim
- *         and no MokManager: the entry names the loader, grubx64.efi, and
- *         the firmware verifies it against db, which must hold the cert.
+ *         falcon when the disk is this machine's. The entry names the
+ *         loader and the firmware verifies it against db, which must hold
+ *         the cert. With --shim <dir>, shim and MokManager from dir go
+ *         before it: the entry names shim, and the cert is enrolled with
+ *         MokManager instead.
  *
  * Both are written by default where the disk allows them (an ESP for UEFI;
  * room before the first partition for BIOS's stage 2). The station's
@@ -117,10 +119,10 @@ static const cli_opt install_opts[] = {
     { "stage3", CLI_OPT_VALUE, 0, "<file>", "default " DEFAULT_STAGE3 },
     { "loader", CLI_OPT_VALUE, 0, "<file>", "default " DEFAULT_LOADER },
     { "shim", CLI_OPT_VALUE, 0, "<dir>",
-      "shimx64.efi and its MokManager (default " DEFAULT_SHIM_DIR ")" },
-    { "no-shim", CLI_OPT_FLAG, 0, NULL,
-      "UEFI without shim: the firmware entry names the loader, which the "
-      "firmware's db must trust" }
+      "UEFI through shim: shimx64.efi and its MokManager from dir ("
+      DEFAULT_SHIM_DIR " is where fetch-shims.sh puts them); without it "
+      "the firmware entry names the loader, which the firmware's db must "
+      "trust" }
 };
 
 /* ---- the shelf ---- */
@@ -1087,7 +1089,7 @@ static cli_status write_uefi(const cli_args *a, const stn_disk *td,
 {
     const part_entry *e = &td->r.parts[p->esp];
     uint64_t off = e->start_lba * td->d.sector;
-    const char *shim_dir = cli_value(a, "shim", DEFAULT_SHIM_DIR);
+    const char *shim_dir = cli_value(a, "shim", NULL);
     const char *loader = cli_value(a, "loader", DEFAULT_LOADER);
     const char *memtest = cli_value(a, "memtest-efi", NULL);
     char shim[MKS_PATH_MAX] = "";
@@ -1469,12 +1471,10 @@ static cli_status install_run(const cli_args *a)
                          "station (--esp names one)", td->d.path);
     p.uefi = ask_uefi || (!ask_bios && p.esp >= 0);
     p.bios = ask_bios || !ask_uefi;
-    p.no_shim = cli_flag(a, "no-shim");
-    if (p.no_shim && !p.uefi)
-        return set_error(CLI_ERR_USAGE, "--no-shim is for the UEFI station, "
+    p.no_shim = cli_value(a, "shim", NULL) == NULL;
+    if (!p.no_shim && !p.uefi)
+        return set_error(CLI_ERR_USAGE, "--shim is for the UEFI station, "
                          "and %s is not getting one", td->d.path);
-    if (p.no_shim && cli_value(a, "shim", NULL) != NULL)
-        return set_error(CLI_ERR_USAGE, "--no-shim and --shim together");
 
     /* ---- BIOS: the stages and the plan ---- */
     if (p.bios) {
@@ -1884,12 +1884,13 @@ const cli_cmd stn_cmd_install = {
     "first partition; stage 1 into LBA 0's boot code. Nothing is resized:\n"
     "without the free space --size needs it refuses and says how much.\n"
     "\n"
-    "UEFI: \\EFI\\falcon\\ on the ESP (shim, MokManager, the loader signed\n"
-    "with the MOK, the cert, STATION.INI, memtest.efi), the ESP's boot\n"
-    "record, and a firmware entry named falcon when the disk is this\n"
-    "machine's. The MOK pair is --key/--cert or the shelf's. --no-shim\n"
-    "leaves out shim and MokManager: the entry names the loader, and the\n"
-    "firmware's db must hold the cert.\n"
+    "UEFI: \\EFI\\falcon\\ on the ESP (the loader signed with the MOK,\n"
+    "the cert, STATION.INI, memtest.efi), the ESP's boot record, and a\n"
+    "firmware entry named falcon when the disk is this machine's. The MOK\n"
+    "pair is --key/--cert or the shelf's. The entry names the loader, and\n"
+    "the firmware's db must hold the cert. --shim <dir> puts shim and\n"
+    "MokManager from dir before it, for a firmware whose db is not yours:\n"
+    "the entry names shim, and the cert is enrolled with MokManager.\n"
     "\n"
     "Both by default, where the disk allows. STATION.INI is written from\n"
     "what is on the machine's disks: the Windows or DOS found is the default\n"

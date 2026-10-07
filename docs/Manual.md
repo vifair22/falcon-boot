@@ -480,8 +480,9 @@ stick's:
 
     SB: on  trusts: MOK, +1
 
-A station needs no shim there. `falcon-boot-mkstick station install
---no-shim` names the loader itself in the firmware entry and ends with:
+A station needs no shim there, and a default `falcon-boot-mkstick station
+install` has none: it names the loader itself in the firmware entry and
+ends with:
 
     Secure Boot on: the firmware's db must hold \EFI\falcon\falcon-boot.cer; enroll it from firmware setup.
 
@@ -1239,7 +1240,7 @@ station shows once it is there. `/dev/X` is the machine's disk.
 | `falcon-bios-station-stage3.bin`, `falcon-boot-station.efi` | `make station` |
 | `falcon-bios-station-legacy-stage3.bin` and jump's drivers in `build/bin/mod/` (station-legacy, 7.7) | `make station-legacy` |
 | `falcon-boot-mkstick` | `make` |
-| Fedora shim 16.1 and its MokManager (UEFI, unless `--no-shim`) | `falcon-efi/tools/shim-spike/fetch-shims.sh`, into `build/shim/bins/` |
+| Fedora shim 16.1 and its MokManager (UEFI with `--shim` only) | `falcon-efi/tools/shim-spike/fetch-shims.sh`, into `build/shim/bins/` |
 | a MOK key pair (UEFI) | the shelf's (`/falcon-mok.key`, `/falcon-mok.crt`), or `--key` and `--cert` |
 | memtest86+ (optional) | `--memtest`: a build carrying the x86 boot protocol header, for BIOS; `--memtest-efi`: its `.efi`, for UEFI, signed with the MOK at install |
 | `mkfs.fat`, mtools; `sgdisk` on GPT; `sbsign`, `openssl` on UEFI; `cryptsetup` or `debugfs` for a shelf | the distribution |
@@ -1287,13 +1288,20 @@ It ends:
     /dev/X boots the station (install ID <32 hex digits>).
     `falcon-boot-mkstick station remove --backup station.bak` undoes it.
 
-With Secure Boot on, the first boot through the new firmware entry stops in
-MokManager: enroll `\EFI\falcon\falcon-boot.cer` (or run `mokutil --import`
-on it before rebooting).
-
-`--no-shim` installs no shim and no MokManager: the firmware entry names
+A station has no shim by default: the firmware entry names
 `\EFI\falcon\grubx64.efi`, and with Secure Boot on the firmware's db must
-hold `falcon-boot.cer`. Enroll it from firmware setup before the first boot.
+hold `falcon-boot.cer`. Enroll it before the first boot, from firmware
+setup or, where the machine's own keys are yours, with them (`sbctl` keeps
+it as a custom db certificate: copy the PEM `falcon-mok.crt` into
+`/var/lib/sbctl/keys/custom/db/` and run `sbctl enroll-keys --custom
+--partial db`). A stick is the other way round: `mkstick create` writes shim
+by default, since it boots machines whose keys are not yours (Section 3).
+
+`--shim build/shim/bins` puts shim and MokManager before the loader, for a
+machine whose db is not yours: the firmware entry names shim, and the
+first boot with Secure Boot on stops in MokManager to enroll
+`\EFI\falcon\falcon-boot.cer` (or run `mokutil --import` on it before
+rebooting).
 
 ### 7.4 Check and remove
 
@@ -2317,7 +2325,7 @@ prompt; Escape there goes to the menu.
         [--memtest <file>] [--memtest-efi <file>] [--key <file> --cert <file>]
         [--passphrase-file <file>] [--legacy [--uki <file>]... [--mods <dir>]]
         [--also <disk>]... [--no-scan] [--backup <file>] [--force] [--dry-run]
-        [--no-shim | --shim <dir>]
+        [--shim <dir>]
         [--stage1 <file>] [--stage2 <file>] [--stage3 <file>] [--loader <file>]
     falcon-boot-mkstick station remove [<disk>] --backup <file> [--full]
         [--force] [--dry-run]
@@ -2355,8 +2363,7 @@ ESP's and the shelf's.
 | `--stage2` | `build/bin/falcon-bios-stage2.bin` | |
 | `--stage3` | `build/bin/falcon-bios-station-stage3.bin` (`falcon-bios-station-legacy-stage3.bin` with `--legacy`) | |
 | `--loader` | `build/bin/falcon-boot-station.efi` | the UEFI station's loader |
-| `--shim` | `build/shim/bins` | shim and its MokManager |
-| `--no-shim` | off | UEFI without shim: the firmware entry names the loader, and the firmware's db must hold the certificate (Section 11.1) |
+| `--shim` | none: no shim, and the firmware entry names the loader, which the firmware's db must trust (Section 11.1) | UEFI through shim: shim and its MokManager from this directory (`build/shim/bins` is where `fetch-shims.sh` puts them) |
 
 The UEFI station needs the MOK: `--key` and `--cert`, or `--shelf` to read
 the shelf's (a LUKS2 shelf asks for its passphrase). With no `--shelf` it
@@ -2396,10 +2403,10 @@ next-stage name (`grubx64.efi`) signed with the MOK, `falcon-boot.cer`,
 `STATION.INI` and `memtest.efi` (`--memtest-efi`, signed with the MOK).
 The ESP's boot sector gets the station's boot record, with stage 3 and
 marker 0. On a block device of a machine that booted with UEFI a firmware
-entry named `falcon` is created for `\EFI\falcon\shimx64.efi`; for an image
-it prints the `efibootmgr` line to run on its machine. With `--no-shim`
-there is no `shimx64.efi` or MokManager, and the entry names
-`\EFI\falcon\grubx64.efi`.
+entry named `falcon` is created for `\EFI\falcon\grubx64.efi`; for an image
+it prints the `efibootmgr` line to run on its machine. With `--shim` shim
+and MokManager are written too, and the entry names
+`\EFI\falcon\shimx64.efi`.
 
 **What it finds.** Every disk of the machine (a block-device target; an
 image's machine is the image and `--also`; `--no-scan` limits a block
@@ -2704,16 +2711,17 @@ or `create --key-out` wrote.
 | p1 `/EFI/BOOT/mmx64.efi` (MokManager) | its vendor signature as fetched (Fedora) |
 | p1 `/EFI/BOOT/grubx64.efi` (the loader) | ours only |
 | p3 `/uki/*.efi` | ours only |
-| station `\EFI\falcon\shimx64.efi`, its MokManager | as fetched |
+| station `\EFI\falcon\shimx64.efi`, its MokManager (with `--shim` only) | as fetched |
 | station `\EFI\falcon\grubx64.efi`, `\EFI\falcon\memtest.efi` | ours only |
 | p2 `/falcon/blessed/` wraps | ours only |
 
-On a machine whose db trusts Microsoft, shim boots and checks the loader
-and the UKIs against the MOK once `falcon-boot.cer` is enrolled.
+On a machine whose db trusts Microsoft, a stick's shim, or a station's
+installed with `--shim`, boots and checks the loader and the UKIs against
+the MOK once `falcon-boot.cer` is enrolled.
 
 On a machine whose db holds only its owner's keys, enrol `falcon-boot.cer`
 in **db**, not only as a MOK, and never sign anything with that machine's
-own db key. Install a station there with `station install --no-shim`
+own db key. A station there is installed as by default, without shim
 (10.6): its firmware entry names the loader, which db then trusts. A stick
 boots there only once its shim and MokManager also carry our signature,
 appended with the recipe below.
@@ -3574,8 +3582,9 @@ openSUSE shim 16.1-4.2, Debian shim-signed 1.51+16.1-2), unpacks them with
 names (`fedora-16.1-shimx64.efi`, `fedora-16.1-mmx64.efi`, ...). A package
 already downloaded is not fetched again.
 
-`mkstick create` and `station install` take shim from `--shim <dir>`
-(default `build/shim/bins`): `shimx64.efi` if present, else
+`mkstick create` takes shim from `--shim <dir>` (default `build/shim/bins`),
+and `station install` from `--shim <dir>` when it is given (it has no
+default: a station has no shim unless asked): `shimx64.efi` if present, else
 `fedora-16.1-shimx64.efi`. MokManager is the file beside it under the same
 prefix and the name the shim launches it by (`fedora-16.1-mmx64.efi`), else
 that name alone. The rig's `--secboot` uses the Fedora 16.1 pair.
