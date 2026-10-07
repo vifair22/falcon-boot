@@ -73,8 +73,9 @@ typedef struct discover_dev {
 /* What the loader's own boot partition said, for the screen. */
 typedef enum {
     DISCOVER_ID_OK = 0,      /* a `boot` record: its install ID is in use */
-    DISCOVER_ID_NO_DEVICE,   /* the firmware named no readable device for
-                                the loader's image */
+    DISCOVER_ID_NO_DEVICE,   /* the firmware named no device with Block I/O
+                                for the loader's image */
+    DISCOVER_ID_READ,        /* it did, and its first sector would not read */
     DISCOVER_ID_NONE,        /* the boot partition carries no record */
     DISCOVER_ID_BAD          /* a record that is damaged, of a version this
                                 loader does not read, or not role `boot` */
@@ -82,12 +83,23 @@ typedef enum {
 
 /* Enumerates and classifies. Safe to call again; the inventory is rebuilt.
  * image is the loader's own image handle: its LoadedImage->DeviceHandle is
- * the boot partition whose record names this install. */
+ * the boot partition whose record names this install. Every Block I/O
+ * read goes through memory below 4 GiB when the buffer is above it: a
+ * firmware that starts the loader directly, rather than through shim, can
+ * place it there, and an ASUS B550's AMI NVMe driver then refuses the read
+ * (EFI_UNSUPPORTED) rather than bouncing it. */
 void discover_scan(EFI_SYSTEM_TABLE *st, EFI_HANDLE image);
 
 /* The boot partition's record as the last scan read it. *out (may be NULL)
  * is filled on DISCOVER_ID_OK only. */
 discover_id_state discover_install(ident_rec *out);
+
+/* How the last scan found the boot partition, or where it stopped, as one
+ * line of ASCII (no terminator, *len bytes): the check, the firmware's
+ * answer, the image's device path as node types, and whether the read
+ * went through memory below 4 GiB. For a variable the booted OS reads
+ * (FalconDiscoverStatus, loader/loadops.h). */
+const char *discover_install_detail(size_t *len);
 
 /* The sentence for the screen when the state is not DISCOVER_ID_OK, or NULL:
  * what is missing and what to do. falcon-bios says the same sentences. */

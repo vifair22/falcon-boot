@@ -228,7 +228,12 @@ The other forms of the first sentence:
 |---|---|
 | both | `The falcon record on the partition this loader started from is damaged or not a boot record, so no ISO library or shelf is offered.`, then `Write the stick with a current mkstick.` |
 | UEFI | `The firmware did not name the partition this loader started from, so no ISO library or shelf is offered.` |
-| BIOS | `The partition this loader started from would not read, so no ISO library or shelf is offered.` |
+| both | `The partition this loader started from would not read, so no ISO library or shelf is offered.` |
+
+On UEFI the variable `FalconDiscoverStatus` says which check stopped it
+and what the firmware answered. It lasts until the next reboot: `cat` it
+from `/sys/firmware/efi/efivars/` in an OS started from that same boot
+(the first four bytes are its attributes).
 
 ### 1.6 Leaving the menu
 

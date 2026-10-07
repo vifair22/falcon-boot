@@ -681,6 +681,12 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
      * below it). */
     menu_busy(st, tui_busy_disks);
     discover_scan(st, image_handle);
+    {
+        size_t dlen = 0;
+        const char *detail = discover_install_detail(&dlen);
+
+        (void)loader_discover_status_set(st, detail, dlen);
+    }
     /* The shelves whose record carries the install ID of the partition this
      * loader started from, on any disk (DESIGN Section 3.1). */
     {
@@ -688,6 +694,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
             discover_install_problem(discover_install((ident_rec *)0));
 
         if (why != (const CHAR16 *)0) {
+            menu_screen(st);
             out(why);
             out(L"\r\n\r\npress any key to continue.\r\n");
             wait_key(&key);

@@ -165,7 +165,17 @@ The record's fields:
 ID for a stick and writes it into every partition's record; `mkstick
 station install` does the same for a station (Section 12). A loader starts
 from the partition it booted from, reads that record's install ID, and
-takes only partitions carrying the same ID, on whichever disk they are. A
+takes only partitions carrying the same ID, on whichever disk they are.
+The partition it booted from is its image's `DeviceHandle`, its first
+sector read through Block I/O into a buffer aligned as the device's
+`IoAlign` asks. Every Block I/O read the UEFI loaders make goes through
+memory below 4 GiB when the caller's buffer reaches above it
+(`discover.c`, `bio_read`): a firmware that starts the loader directly,
+rather than through shim, may place the image there, and with it every
+static buffer. An ASUS B550's AMI NVMe driver then refuses the read with
+`EFI_UNSUPPORTED` rather than bouncing it, where shim, which loads its next
+stage low, had hidden it. Each boot leaves how the read went in the
+volatile variable `FalconDiscoverStatus` (11.2.3). A
 second stick's p2 or p3 is never mixed in, and nothing is decided by disk
 order. A station whose shelf is on a second disk (its ESP on the Windows
 disk, its Linux on another) is one unit the same way.
@@ -2390,7 +2400,7 @@ flowchart TD
     POOLS -- no --> OOM["out of memory<br/>return to firmware"]
     POOLS -- yes --> TRUST["trust_stores_load<br/>db, dbx, MokListRT, MokListXRT,<br/>SbatLevelRT, falcon-boot.cer"]
     TRUST --> SB["banner_init / sb_state_read<br/>SecureBoot, SetupMode, MokSBStateRT<br/>to g_mode"]
-    SB --> DISC["discover_scan<br/>read_install: LoadedImage's DeviceHandle (p1), its boot sector's<br/>boot record gives the install ID; then every Block I/O handle,<br/>the boot disk's first: LUKS2 token, else /.falcon on what fs_identify claims"]
+    SB --> DISC["discover_scan<br/>read_install: LoadedImage's DeviceHandle (p1), read below 4 GiB;<br/>its boot sector's boot record gives the install ID; then every Block I/O handle,<br/>the boot disk's first: LUKS2 token, else /.falcon on what fs_identify claims"]
     DISC --> ID{"boot record<br/>read?"}
     ID -- no --> NOTE["install_notice: the sentence<br/>(no record, damaged, no device), a key<br/>no row is this install's"]
     NOTE --> POSS
@@ -2489,11 +2499,12 @@ does not fall through. `BLS` and `BLB` never fall through at all.
 | virtual CD | `iso/iso.c`, `iso_open` | Block I/O over the p2 file: 2048-byte blocks for an ISO, 512 for an `.img`, read-only, `VenHw` device path. `ConnectController` lets the firmware's El Torito and FAT drivers mount the boot image. |
 | overlay | `iso/overlay.h`, `iso_read_blocks` | memory ranges laid over the virtual CD's reads, and an append region past the ISO's end. Each read is split at overlay boundaries. |
 | extent map | `direct/direct.c`, `build_map`; `falcon-core/src/media/extmap.c` | version 2: the ISO library's install ID (off p2's `/.falcon`), p2's start LBA (its handle's HARDDRIVE node, MBR or GPT) and the block size, the ISO's size and its extents on p2. falcon-hook, winjump and falcon-vdisk find p2 from it by the record at that LBA (`media/extfind.c`) and rebuild the ISO. |
+| `FalconDiscoverStatus` | `loadops.c`, `loader_discover_status_set` | one line of ASCII, volatile, boot-and-runtime, written on every boot by both UEFI loaders: how `discover_scan` read the boot partition's record, or which check stopped it and the firmware's answer there, the handle's device path as node types, and whether the read went through memory below 4 GiB (3.1). |
 | `FalconIsoMap` | `loadops.c`, `loader_isomap_set` | the extent map as a volatile boot-and-runtime variable. Cleared if the boot returns to the menu, not otherwise. falcon-hook's last source, for wraps older than the map credential. |
 | SHIM_LOCK hide | `iso/iso.c`, `shim_lock_hide` | the stick shim's SHIM_LOCK is uninstalled for the length of a chainload, so the ISO's GRUB finds its own shim's. Only `chainload` does this: CHN, IMG, D3B, WIN, BSD. |
 
 Everything above is a boot-services object and is gone at
-ExitBootServices, except `FalconIsoMap`.
+ExitBootServices, except `FalconIsoMap` and `FalconDiscoverStatus`.
 
 #### 11.2.4 POS: the personal OS
 

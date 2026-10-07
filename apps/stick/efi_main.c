@@ -1965,6 +1965,12 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
      * every device, before any consumer looks at one. */
     menu_busy(st, tui_busy_disks);
     discover_scan(st, image_handle);
+    {
+        size_t dlen = 0;
+        const char *detail = discover_install_detail(&dlen);
+
+        (void)loader_discover_status_set(st, detail, dlen);
+    }
     install_notice();
 
     /* Header probe only: it reads a block and parses metadata, and never asks
