@@ -66,10 +66,26 @@ default:
     - when: manual
       allow_failure: true
 
+# What the suites read beyond test-fixtures, as the binhost's hand-run
+# build directory has them; without them the real-shim and Microsoft-db
+# cases are reported missing and coverage reads lower than it is. The
+# distro shims are pinned downloads (fetch-shims.sh), kept in the runner's
+# cache rather than fetched by every pipeline.
+.fixtures: &fixtures
+  - |
+    if [[ ! -d $FALCON_CI_ROOT/cache/shim/build/shim/bins ]]; then
+      FALCON_BUILD_DIR=$FALCON_CI_ROOT/cache/shim/build tools/coverage/harness.sh falcon-efi/tools/shim-spike/fetch-shims.sh
+    fi
+    mkdir -p "$FALCON_BUILD_DIR/shim"
+    cp -a "$FALCON_CI_ROOT/cache/shim/build/shim/bins" "$FALCON_BUILD_DIR/shim/"
+  - tools/coverage/harness.sh bash -c "test -s $FALCON_TEST_BOOTWIM || 7z e -so $BOOTWIM_ISO sources/boot.wim > $FALCON_TEST_BOOTWIM"
+  - tools/coverage/harness.sh make mok-test test-fixtures
+
 test:
   stage: test
   script:
-    - rc=0; tools/coverage/harness.sh make test-fixtures test-junit || rc=$?
+    - *fixtures
+    - rc=0; tools/coverage/harness.sh make test-junit || rc=$?
     - rm -rf junit && cp -r "$FALCON_BUILD_DIR/junit" junit || true
     - exit $rc
   artifacts:
@@ -88,8 +104,8 @@ coverage:
   stage: coverage
   needs: [test]
   script:
-    - tools/coverage/harness.sh bash -c "test -s $FALCON_TEST_BOOTWIM || 7z e -so $BOOTWIM_ISO sources/boot.wim > $FALCON_TEST_BOOTWIM"
-    - rc=0; tools/coverage/harness.sh make test-fixtures coverage COV_MIN="$COV_MIN" || rc=$?
+    - *fixtures
+    - rc=0; tools/coverage/harness.sh make coverage COV_MIN="$COV_MIN" || rc=$?
     - rm -rf cov && cp -r "$FALCON_BUILD_DIR/cov" cov || true
     - exit $rc
   coverage: '/^lines: (\d+\.\d+)%/'
@@ -188,5 +204,5 @@ cleanup:
       done
     - |
       docker images falcon-boot-harness --format '{{.Tag}}' |
-        grep -vxF -e latest -e "${FALCON_HARNESS_IMAGE#*:}" |
+        { grep -vxF -e latest -e "${FALCON_HARNESS_IMAGE#*:}" || true; } |
         while read -r t; do docker rmi "falcon-boot-harness:$t" || true; done
