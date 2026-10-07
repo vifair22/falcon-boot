@@ -11,7 +11,9 @@
  * NVRAM bytes in, a row or a refusal out. The time-stamp counter's
  * arithmetic (falcon-efi/src/tsc/tsccore.c) and the boot-timing variables
  * (falcon-efi/src/loader/bli.c) through a fake SetVariable. Which
- * processors take argon2id lanes (falcon-efi/src/mp/mpcore.c). The station's
+ * processors take argon2id lanes (falcon-efi/src/mp/mpcore.c). Block I/O
+ * reads through memory below 4 GiB (falcon-efi/src/discover/biolow.c),
+ * against a fake driver that refuses a buffer above it. The station's
  * list is both loaders' and is tested with falcon-core
  * (falcon-core/src/media/strows.c).
  */
@@ -31,6 +33,7 @@ int main(void)
     failed += run_tsc_tests();
     failed += run_mpcore_tests();
     failed += run_bli_tests();
+    failed += run_biolow_tests();
 
     printf("\nfalcon-efi: total failed: %d\n", failed);
     return failed == 0 ? 0 : 1;
