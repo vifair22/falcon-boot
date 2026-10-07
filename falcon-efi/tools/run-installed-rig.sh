@@ -18,10 +18,10 @@
 #   4kn   GPT on a 4096-byte-sector disk (a loop device with 4096-byte
 #         sectors, booted as NVMe with 4096-byte logical blocks, the one QEMU
 #         disk SeaBIOS offers at that size; DESIGN Section 3.4): an ESP of
-#         300 MiB, a LUKS2 shelf, free space. `station install`, both
-#         stations: the station partition (288 MiB, FAT32 of 4096-byte
-#         sectors), the FALCON-BIOS partition at LBA 34, everything counted
-#         in 4096-byte sectors.
+#         300 MiB, a LUKS2 shelf, free space. `station install`, through a
+#         link named like a by-id one, both stations: the station partition
+#         (288 MiB, FAT32 of 4096-byte sectors), the FALCON-BIOS partition at
+#         LBA 34, everything counted in 4096-byte sectors.
 #   mbr4k MBR on a 4096-byte-sector disk: a Windows partition, a LUKS2
 #         shelf, free space. `station install --bios`.
 #   gpt2  two GPT disks: the station's (an ESP with no Windows, a LUKS2
@@ -239,7 +239,11 @@ build_4kn() {
     sudo mkfs.fat -F 32 -n SYSTEM "${LOOP}p1" >/dev/null
     make_shelf "${LOOP}p2"
     cp --sparse=always "$img" "$R/4kn.orig.img"
-    install_station 4kn "$LOOP" --shelf 2 --memtest-efi "$STANDIN"
+    # Through a link named like a by-id one: the partitions are the
+    # kernel's node's (loopNp2), never the link's name with a 2.
+    ln -sfn "$LOOP" "$R/by-id-4kn-0:0"
+    install_station 4kn "$R/by-id-4kn-0:0" --shelf 2 --memtest-efi "$STANDIN"
+    rm -f "$R/by-id-4kn-0:0"
     part_facts "$LOOP" 1 > "$R/4kn.esp"
     detach
 }
