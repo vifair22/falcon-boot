@@ -56,6 +56,13 @@
 /* The variable, under falcon's vendor GUID (loader/loadops.h). */
 #define EVSAVE_VAR "FalconEvLog"
 
+/* Beside it on every boot with the record or without: one line of ASCII,
+ * no terminator, saying what the station saved or where it stopped
+ * (`saved: ...`, else the step and the TPM's or the firmware's answer).
+ * Enrollment prints it when there is no record. */
+#define EVSAVE_STATUS_VAR "FalconEvLogStatus"
+#define EVSAVE_STATUS_MAX 160u
+
 enum {
     EVSAVE_OK         = 0,
     EVSAVE_ERR_ARG    = -1,

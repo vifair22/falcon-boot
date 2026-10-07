@@ -166,6 +166,22 @@ EFI_STATUS loader_evlog_set(EFI_SYSTEM_TABLE *st, const void *rec, UINTN len)
                            FALCON_ISOMAP_ATTRS, len, (void *)(uintptr_t)rec);
 }
 
+EFI_STATUS loader_evlog_status_set(EFI_SYSTEM_TABLE *st, const char *text,
+                                   UINTN len)
+{
+    EFI_GUID vendor = FALCON_VENDOR_GUID;
+    EFI_RUNTIME_SERVICES *rt;
+
+    if (st == (EFI_SYSTEM_TABLE *)0 || text == (const char *)0 || len == 0)
+        return EFI_INVALID_PARAMETER;
+    rt = st->RuntimeServices;
+    if (rt == (EFI_RUNTIME_SERVICES *)0 || rt->SetVariable == (void *)0)
+        return EFI_UNSUPPORTED;
+    return rt->SetVariable((CHAR16 *)(uintptr_t)ISOMAP_WIDEN(EVSAVE_STATUS_VAR),
+                           &vendor, FALCON_ISOMAP_ATTRS, len,
+                           (void *)(uintptr_t)text);
+}
+
 void loader_isomap_clear(EFI_SYSTEM_TABLE *st)
 {
     EFI_GUID vendor = FALCON_EXTMAP_GUID_INIT;

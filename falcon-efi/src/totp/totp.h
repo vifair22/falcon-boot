@@ -37,7 +37,8 @@
 
 /* Saves the PCRs for enrollment (FalconEvLog, tpm/evsave.h): the SHA-256
  * bank on a TPM 2.0, the SHA-1 PCRs and the firmware's log on a 1.2 behind
- * EFI_TCG_PROTOCOL; nothing without a TPM. Before anything is loaded. */
+ * EFI_TCG_PROTOCOL; nothing without a TPM. Says in FalconEvLogStatus what
+ * it saved, or where it stopped. Before anything is loaded. */
 void totp_save_log(EFI_SYSTEM_TABLE *st);
 
 /* Reads the seed as cfg says (nothing when cfg is not present). */

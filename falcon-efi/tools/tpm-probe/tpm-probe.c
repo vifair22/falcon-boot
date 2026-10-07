@@ -573,9 +573,29 @@ static void save_evsave(void)
                                            &vendor, (UINT32 *)0, &n,
                                            buf) != EFI_SUCCESS) {
         say(L"FALCON-TPM evsave none\r\n");
+    } else {
+        save_file(L"\\falcon-evsave.bin", L"evsave", buf, n);
+    }
+
+    /* What the station says it saved, or where it stopped. */
+    n = sizeof buf - 1u;
+    if (g_st->RuntimeServices->GetVariable(
+            (CHAR16 *)(uintptr_t)L"FalconEvLogStatus", &vendor, (UINT32 *)0,
+            &n, buf) != EFI_SUCCESS) {
+        say(L"FALCON-TPM evsave-status none\r\n");
         return;
     }
-    save_file(L"\\falcon-evsave.bin", L"evsave", buf, n);
+    {
+        static CHAR16 line[200];
+        UINTN i;
+
+        for (i = 0; i < n && i < 199u; i++)
+            line[i] = (buf[i] >= 0x20 && buf[i] < 0x7F) ? (CHAR16)buf[i] : L'?';
+        line[i] = 0;
+        say(L"FALCON-TPM evsave-status ");
+        say(line);
+        say(L"\r\n");
+    }
 }
 
 EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)

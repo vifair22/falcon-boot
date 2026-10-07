@@ -184,6 +184,11 @@ void loader_isomap_clear(EFI_SYSTEM_TABLE *st);
  * TPM before it seals to anything. */
 EFI_STATUS loader_evlog_set(EFI_SYSTEM_TABLE *st, const void *rec, UINTN len);
 
+/* FalconEvLogStatus beside it (tpm/evsave.h): len bytes of ASCII, the same
+ * attributes. */
+EFI_STATUS loader_evlog_status_set(EFI_SYSTEM_TABLE *st, const char *text,
+                                   UINTN len);
+
 /* ---- boot to the firmware's own settings UI (DESIGN Section 7.4) ----
  *
  * UEFI's own one-shot: OsIndications bit 0, EFI_OS_INDICATIONS_BOOT_TO_FW_UI,

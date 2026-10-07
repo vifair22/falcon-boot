@@ -48,27 +48,138 @@ static uint32_t g_code;
  * enrollment says so. */
 #define EVLOG_CAP ((size_t)32 * 1024)
 
+/* ---- the saved record's status line (tpm/evsave.h) ---- */
+
+typedef struct {
+    char   text[EVSAVE_STATUS_MAX];
+    size_t len;
+} sline;
+
+static void sl_put(sline *l, const char *s)
+{
+    while (*s != '\0' && l->len < sizeof l->text)
+        l->text[l->len++] = *s++;
+}
+
+static void sl_hex(sline *l, uint64_t v, unsigned digits)
+{
+    static const char xd[] = "0123456789abcdef";
+    char s[19];
+    unsigned i;
+
+    s[0] = '0';
+    s[1] = 'x';
+    for (i = 0; i < digits; i++)
+        s[2 + i] = xd[(v >> (4u * (digits - 1u - i))) & 0xFu];
+    s[2 + digits] = '\0';
+    sl_put(l, s);
+}
+
+static void sl_dec(sline *l, unsigned v)
+{
+    char s[12];
+    unsigned i = sizeof s - 1u;
+
+    s[i] = '\0';
+    do {
+        s[--i] = (char)('0' + v % 10u);
+        v /= 10u;
+    } while (v != 0u && i > 0u);
+    sl_put(l, s + i);
+}
+
+/* Where a read for the record stopped, after "TPM 2.0: " or "TPM 1.2: ". */
+static void sl_diag(sline *l, const tcg_diag *d)
+{
+    switch (d->step) {
+    case TCG_STEP_CAPABILITY:
+        sl_put(l, "the protocol's capability query returned ");
+        sl_hex(l, (uint64_t)d->efi, 16);
+        break;
+    case TCG_STEP_PRESENT:
+        sl_put(l, "the firmware says the TPM is not usable");
+        break;
+    case TCG_STEP_LOG:
+        sl_put(l, "the event log is not where the firmware says, or is "
+                  "larger than the station copies");
+        break;
+    case TCG_STEP_PCR_READ:
+        sl_put(l, "reading PCR ");
+        sl_dec(l, d->pcr);
+        if (d->err == TPM_ERR_RC) {
+            sl_put(l, ": the TPM answered ");
+            sl_hex(l, d->rc, 8);
+        } else if (d->err == TPM_ERR_IO) {
+            sl_put(l, ": the protocol's command call returned ");
+            sl_hex(l, (uint64_t)d->efi, 16);
+        } else {
+            sl_put(l, ": the answer did not parse");
+        }
+        break;
+    default:
+        sl_put(l, "no protocol");
+        break;
+    }
+}
+
 void totp_save_log(EFI_SYSTEM_TABLE *st)
 {
     static uint8_t log[EVLOG_CAP];
     static uint8_t rec[EVSAVE_BODY + EVLOG_CAP];
     uint8_t pcr[EVSAVE_PCRS][EVSAVE_DIGEST_LEN];
     uint8_t pcr2[EVSAVE_PCRS][EVSAVE_DIGEST_LEN2];
+    tcg_diag why2;
+    tcg_diag why12;
+    tcg_status ts;
+    EFI_STATUS es;
     size_t len = 0;
     size_t n = 0;
+    sline l;
 
-    if (tcg_pcrs20(st, pcr2) == TCG_OK) {
+    l.len = 0;
+    ts = tcg_pcrs20(st, pcr2, &why2);
+    if (ts == TCG_OK) {
         if (evsave_write2(rec, sizeof rec,
                           (const uint8_t (*)[EVSAVE_DIGEST_LEN2])pcr2,
-                          &n) == EVSAVE_OK)
-            (void)loader_evlog_set(st, rec, n);
-        return;
+                          &n) == EVSAVE_OK) {
+            es = loader_evlog_set(st, rec, n);
+            if (es == EFI_SUCCESS) {
+                sl_put(&l, "saved: TPM 2.0, PCRs 0-15 in the SHA-256 bank");
+            } else {
+                sl_put(&l, "TPM 2.0: the PCRs were read, and writing "
+                           "FalconEvLog returned ");
+                sl_hex(&l, (uint64_t)es, 16);
+            }
+        }
+    } else if (ts == TCG_NOT_PRESENT) {
+        sl_put(&l, "TPM 2.0: ");
+        sl_diag(&l, &why2);
+    } else if (tcg_evlog12(st, log, sizeof log, &len, pcr, &why12) ==
+               TCG_OK) {
+        if (evsave_write(rec, sizeof rec,
+                         (const uint8_t (*)[EVSAVE_DIGEST_LEN])pcr, log, len,
+                         &n) == EVSAVE_OK) {
+            es = loader_evlog_set(st, rec, n);
+            if (es == EFI_SUCCESS) {
+                sl_put(&l, "saved: TPM 1.2, PCRs 0-15 and the event log, ");
+                sl_dec(&l, (unsigned)len);
+                sl_put(&l, " bytes");
+            } else {
+                sl_put(&l, "TPM 1.2: the PCRs and the log were read, and "
+                           "writing FalconEvLog returned ");
+                sl_hex(&l, (uint64_t)es, 16);
+            }
+        }
+    } else if (why12.step == TCG_STEP_LOCATE) {
+        sl_put(&l, "no TPM: the firmware offers neither EFI_TCG2_PROTOCOL "
+                   "nor EFI_TCG_PROTOCOL");
+    } else {
+        sl_put(&l, "TPM 1.2: ");
+        sl_diag(&l, &why12);
     }
-    if (tcg_evlog12(st, log, sizeof log, &len, pcr) != TCG_OK)
-        return;
-    if (evsave_write(rec, sizeof rec, (const uint8_t (*)[EVSAVE_DIGEST_LEN])pcr,
-                     log, len, &n) == EVSAVE_OK)
-        (void)loader_evlog_set(st, rec, n);
+    if (l.len == 0)
+        sl_put(&l, "the record did not fit the station's buffer");
+    (void)loader_evlog_status_set(st, l.text, l.len);
 }
 
 void totp_load(EFI_SYSTEM_TABLE *st, const stationini_totp *cfg)

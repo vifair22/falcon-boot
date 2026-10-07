@@ -32,6 +32,11 @@
 #define TOTPC_EVLOG_EFIVAR \
     "/sys/firmware/efi/efivars/FalconEvLog-50614485-081b-4b7c-8b54-2abeffdf2fb3"
 
+/* What the station saved, or where it stopped (tpm/evsave.h's
+ * EVSAVE_STATUS_VAR), as efivarfs names it. */
+#define TOTPC_EVSTATUS_EFIVAR \
+    "/sys/firmware/efi/efivars/FalconEvLogStatus-50614485-081b-4b7c-8b54-2abeffdf2fb3"
+
 enum {
     TOTPC_OK        = 0,
     TOTPC_ERR_ARG   = -1,
