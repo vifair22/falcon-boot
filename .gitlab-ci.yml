@@ -156,11 +156,13 @@ rigs:
 
 # One job per Secure Boot state, each with the whole timeout to itself; the
 # case sticks are the binhost's, built once per ISO and restaged with this
-# pipeline's loaders by every run.
+# pipeline's loaders by every run. It needs the build, not the rigs: where
+# the rigs are manual and not started, a job needing them is skipped and
+# could not be started by hand either.
 corpus:
   extends: .release-gate
   stage: corpus
-  needs: [rigs]
+  needs: [build]
   variables:
     FALCON_STICKS_DIR: /srv/build/cache/falcon/sticks
   parallel:
