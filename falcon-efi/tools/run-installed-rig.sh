@@ -13,12 +13,13 @@
 #   gpt   GPT, 512-byte sectors: an ESP carrying Windows Boot Manager (the
 #         rig's stand-in, falcon-efi/tools/payload/standin.c, signed with the
 #         test MOK), a Windows partition, a LUKS2 shelf with the fixture UKI
-#         and the MOK pair, and free space. `station install --uefi`; the
-#         varstore has falcon's entry and Windows's, as the machine would.
+#         and the MOK pair, and free space. `station install --uefi
+#         --shim`; the varstore has falcon's entry and Windows's, as the
+#         machine would.
 #   4kn   GPT on a 4096-byte-sector disk (a loop device with 4096-byte
 #         sectors, booted as NVMe with 4096-byte logical blocks, the one QEMU
 #         disk SeaBIOS offers at that size; DESIGN Section 3.4): an ESP of
-#         300 MiB, a LUKS2 shelf, free space. `station install`, through a
+#         300 MiB, a LUKS2 shelf, free space. `station install --shim`, through a
 #         link named like a by-id one, both stations: the station partition
 #         (288 MiB, FAT32 of 4096-byte sectors), the FALCON-BIOS partition at
 #         LBA 34, everything counted in 4096-byte sectors.
@@ -27,14 +28,14 @@
 #   gpt2  two GPT disks: the station's (an ESP with no Windows, a LUKS2
 #         shelf, free space) and a Windows disk behind it (its own ESP
 #         carrying the stand-in Windows Boot Manager, a Windows partition).
-#         `station install --uefi --also` the Windows disk; the varstore
+#         `station install --uefi --shim --also` the Windows disk; the varstore
 #         has falcon's entry, and in the -nxt cases a "Windows Boot
 #         Manager" entry naming the second disk's ESP.
 #   mbr   MBR, 512-byte sectors: an ESP of type 0xEF, a LUKS2 shelf, free
-#         space. `station install --uefi`; falcon's entry names the ESP by
+#         space. `station install --uefi --shim`; falcon's entry names the ESP by
 #         the disk's signature, as a firmware does on an MBR disk.
 #   noshim GPT, 512-byte sectors: an ESP, a LUKS2 shelf, free space.
-#         `station install --uefi --no-shim`; falcon's entry names
+#         `station install --uefi`, without --shim; falcon's entry names
 #         \EFI\falcon\grubx64.efi, and with Secure Boot on the test MOK in
 #         db is what verifies it, as the machine's own key does on the T430.
 #
@@ -106,6 +107,7 @@ STANDIN_SIGNED=build/test/standin-signed.efi
 FIXTURE_UKI_SIGNED=build/test/fixture-uki-signed.efi
 MOK_KEY=build/mok-test/falcon-test-mok.key
 MOK_CRT=build/mok-test/falcon-test-mok.crt
+SHIM=build/shim/bins             # the shim cases' --shim; noshim has none
 SHELF_GUID=9CB02E90-85F4-4AF7-9AF3-1F9D6A95FEAF
 GLOBAL_GUID=8be4df61-93ca-11d2-aa0d-00e098032b8c
 BOOTMGFW='\EFI\Microsoft\Boot\bootmgfw.efi'
@@ -222,7 +224,7 @@ build_gpt() {
     attach "$img"
     make_shelf "${LOOP}p3"
     detach
-    install_station gpt "$img" --uefi --shelf 3 --memtest-efi "$STANDIN"
+    install_station gpt "$img" --uefi --shelf 3 --memtest-efi "$STANDIN" --shim "$SHIM"
     part_facts "$img" 1 > "$R/gpt.esp"
 }
 
@@ -242,7 +244,7 @@ build_4kn() {
     # Through a link named like a by-id one: the partitions are the
     # kernel's node's (loopNp2), never the link's name with a 2.
     ln -sfn "$LOOP" "$R/by-id-4kn-0:0"
-    install_station 4kn "$R/by-id-4kn-0:0" --shelf 2 --memtest-efi "$STANDIN"
+    install_station 4kn "$R/by-id-4kn-0:0" --shelf 2 --memtest-efi "$STANDIN" --shim "$SHIM"
     rm -f "$R/by-id-4kn-0:0"
     part_facts "$LOOP" 1 > "$R/4kn.esp"
     detach
@@ -288,7 +290,7 @@ build_gpt2() {
     make_shelf "${LOOP}p2"
     detach
     install_station gpt2 "$img" --uefi --shelf 2 --also "$win" \
-        --memtest-efi "$STANDIN"
+        --memtest-efi "$STANDIN" --shim "$SHIM"
     part_facts "$img" 1 > "$R/gpt2.esp"
 }
 
@@ -306,7 +308,7 @@ build_mbr() {
     attach "$img"
     make_shelf "${LOOP}p2"
     detach
-    install_station mbr "$img" --uefi --shelf 2 --memtest-efi "$STANDIN"
+    install_station mbr "$img" --uefi --shelf 2 --memtest-efi "$STANDIN" --shim "$SHIM"
     echo "2048 131072 $(od -An -tx4 -j440 -N4 "$img" | tr -d ' ') 1" \
         > "$R/mbr.esp"
 }
@@ -322,7 +324,7 @@ build_noshim() {
     attach "$img"
     make_shelf "${LOOP}p2"
     detach
-    install_station noshim "$img" --uefi --no-shim --shelf 2 \
+    install_station noshim "$img" --uefi --shelf 2 \
         --memtest-efi "$STANDIN"
     part_facts "$img" 1 > "$R/noshim.esp"
 }

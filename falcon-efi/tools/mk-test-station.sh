@@ -16,7 +16,9 @@
 #   p3  Linux LUKS          LUKS2, argon2id, empty
 #       free                about 94 MiB at the end
 #
-# `station install --shelf 2`, both stations, adds:
+# `station install --shelf 2 --shim build/shim/bins`, both stations, adds
+# (through shim, since the rig's OVMF trusts Microsoft's keys and the MOK
+# goes into MokList):
 #
 #   p1                      \EFI\falcon\: shim, MokManager, the station
 #                           loader signed with the MOK, the public cert,
@@ -138,7 +140,8 @@ LOOP=
 
 echo "== station install"
 sudo "$MKSTICK" station install "$IMG" --shelf 2 --key "$MOK_KEY" \
-    --cert "$MOK_CRT" --memtest-efi "$STANDIN" --backup "$BAK" --force
+    --cert "$MOK_CRT" --memtest-efi "$STANDIN" --shim build/shim/bins \
+    --backup "$BAK" --force
 sudo chown "$(id -u):$(id -g)" "$BAK"
 
 echo "== the rig's removable-media path"

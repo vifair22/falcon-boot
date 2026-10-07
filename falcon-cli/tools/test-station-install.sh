@@ -218,9 +218,15 @@ else
     mkfs.ext4 -q -F -L FALCON-UKI -E offset=$((p3s * 512)) -d "$W/shelf-root" "$G" 64M
     cp --sparse=always "$G" "$W/gpt.orig"
 
+    # The default UEFI station has no shim; this one is through shim.
+    "$MK" station install "$G" --shelf 3 --key "$MOK/falcon-test-mok.key" \
+        --cert "$MOK/falcon-test-mok.crt" --dry-run >"$W/gpt-noshim.log" 2>&1
+    check "gpt: without --shim the entry names the loader" \
+        grep -q "no shim: the entry names grubx64.efi" "$W/gpt-noshim.log"
     "$MK" station install "$G" --shelf 3 --key "$MOK/falcon-test-mok.key" \
         --cert "$MOK/falcon-test-mok.crt" --memtest "$W/memtest.bin" \
         --memtest-efi build/bin/falcon-boot-station.efi --backup "$W/gpt.bak" \
+        --shim build/shim/bins \
         >"$W/gpt-install.log" 2>&1 && ok "gpt: install (BIOS and UEFI)" ||
         { cat "$W/gpt-install.log"; bad "gpt: install"; }
     sgdisk -p "$G" >"$W/gpt-table.txt"
