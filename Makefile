@@ -248,7 +248,10 @@ TEST_SUPPORT := falcon-core/tests/support
 
 # -D_POSIX_C_SOURCE because -std=c11 hides pread(); -O0 and --coverage because
 # gcov line counts are only meaningful without the optimiser moving code.
-TEST_CFLAGS := -std=c11 -O0 -g --coverage $(TEST_WARNS) \
+# -fprofile-update=atomic because argon2_test.c runs the lanes on pthreads:
+# plain counters race there, and a lost update came out of gcov as a negative
+# branch count (GCC 68080) that gcovr refuses the whole report over.
+TEST_CFLAGS := -std=c11 -O0 -g --coverage -fprofile-update=atomic $(TEST_WARNS) \
 	-D_POSIX_C_SOURCE=200809L -D_FILE_OFFSET_BITS=64 \
 	-DFIXTURE_IMG='"$(FIXTURE_IMG)"' \
 	-DEXT4_IMG='"$(EXT4_IMG)"' \
