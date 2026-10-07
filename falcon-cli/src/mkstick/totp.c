@@ -11,12 +11,19 @@
  * is installed, as a QR code.
  *
  * The PCR values are not the ones the TPM holds now: by the time Linux runs,
- * the station has loaded a UKI and moved PCR 4 (and shim PCR 7) on. They
- * come from the firmware's event log instead, replayed up to the event that
- * measured the station's own image (falcon-core/src/tpm/evlog.h), and the
- * log is first checked to account for the PCRs as they are now. Finding the
- * station's measurement in the log is also the proof that this system was
- * started by the station on the named disk; without it enrollment refuses.
+ * the station has loaded a UKI and moved PCR 4 (and shim PCR 7) on. The
+ * station reads them itself before it loads anything and saves them
+ * (tpm/evsave.h); enrollment seals to that record. On a TPM 2.0 the record
+ * is checked against the firmware's event log where the log accounts for
+ * the PCRs as they are now: replayed up to the event that measured the
+ * station's own image (falcon-core/src/tpm/evlog.h), it must give what the
+ * station read. A log that does not account for them, from a firmware that
+ * extends PCRs it does not log, is set aside, and the PCRs nothing extends
+ * after the station's menu show the record to be of this boot. A station
+ * older than the record saves none, and the replay alone then gives the
+ * values, as long as the log accounts for the PCRs. Finding the station's
+ * measurement in the log is also the proof that this system was started
+ * by the station on the named disk; without it enrollment refuses.
  *
  * Check runs the station's read from here, which the TPM refuses on the
  * PCRs when everything before them (index, key, secret) is right.
@@ -464,9 +471,8 @@ static cli_status station_digest(stn_esp *e, int sha1, uint8_t out[32])
 }
 
 /* The station's saved record: from efivarfs (its attribute bytes dropped),
- * or a file. CLI_ERR_NOTFOUND when there is none, which is every machine
- * but a TPM 1.2 behind EFI_TCG_PROTOCOL, and one booted by an older
- * station. */
+ * or a file. CLI_ERR_NOTFOUND when there is none: a machine booted by an
+ * older station, or whose firmware took no record. */
 static cli_status read_saved(const char *file, uint8_t **out, size_t *len)
 {
     const char *path = file != NULL ? file : TOTPC_EVLOG_EFIVAR;
@@ -564,6 +570,94 @@ static cli_status station_pcrs_saved(stn_esp *e, const char *log_file,
     return CLI_OK;
 }
 
+/* The PCR values at the station's menu on a TPM 2.0, from the record it
+ * saved, checked against the firmware's log where that log accounts for
+ * the PCRs (totpc_station20). With old256, mkstick update's reseal: the
+ * new loader's values are a prediction from the log, which needs a whole
+ * one, so the record is checked with the old loader's digest and the
+ * prediction left to the one-log path (*predict). */
+static cli_status station_pcrs_saved20(stn_esp *e, const char *log_file,
+                                       const uint8_t *rec, size_t rec_len,
+                                       int live, uint32_t mask,
+                                       const uint8_t *old256,
+                                       uint8_t vals[][32], int *predict)
+{
+    static uint8_t now[16][32];
+    static uint8_t pcr[16][32];
+    uint8_t digest[32];
+    uint8_t *log = NULL;
+    size_t len = 0;
+    unsigned bad = 0;
+    unsigned i;
+    size_t n = 0;
+    int whole = 0;
+    int rc;
+    cli_status st;
+
+    *predict = 0;
+    st = station_digest(e, 0, digest);
+    if (st != CLI_OK)
+        return st;
+    st = read_log(log_file, &log, &len);
+    if (st != CLI_OK)
+        return st;
+    if (live) {
+        for (i = 0; i < 16u; i++) {
+            rc = tpm2_pcr_read(&g_dev, i, now[i]);
+            if (rc != TPM_OK) {
+                free(log);
+                return tpm_fail(rc, "reading the PCRs");
+            }
+        }
+    }
+    rc = totpc_station20(rec, rec_len, log, len,
+                         old256 != NULL ? old256 : digest,
+                         live ? (const uint8_t (*)[32])now : NULL, mask, pcr,
+                         &whole, &bad);
+    free(log);
+    switch (rc) {
+    case TOTPC_OK:
+        break;
+    case TOTPC_ERR_STATION:
+        return set_error(CLI_ERR_INVALID, "this system was not started by "
+                         "the station on %s: the firmware's event log has no "
+                         "measurement of its \\EFI\\falcon\\%s. Enroll "
+                         "from a system the station started",
+                         e->s.disks[0].d.path, e->loader);
+    case TOTPC_ERR_BOOT:
+        return set_error(CLI_ERR_INVALID, "PCR %u is not what the station "
+                         "read: the PCRs it saved are not of this boot", bad);
+    case TOTPC_ERR_PCR:
+        return set_error(CLI_ERR_INVALID, "the event log and the PCRs the "
+                         "station read disagree on PCR %u; enrolling would "
+                         "seal to values the station never sees", bad);
+    default:
+        return set_error(CLI_ERR_INVALID, "the PCRs the station saved or the "
+                         "event log do not parse");
+    }
+    if (old256 != NULL) {
+        if (!whole)
+            return set_error(CLI_ERR_INVALID, "this firmware extends PCRs it "
+                             "does not log, so the new station's PCRs cannot "
+                             "be predicted; run `station totp reseal` from a "
+                             "boot of it");
+        *predict = 1;
+        return CLI_OK;
+    }
+    if (whole)
+        log_info("PCRs the station read, matching the event log");
+    else
+        log_info("PCRs the station read: this firmware extends PCRs it does "
+                 "not log, so the event log is set aside");
+    for (i = 0; i < STATIONINI_TOTP_PCRS; i++) {
+        if (((mask >> i) & 1u) == 0)
+            continue;
+        memcpy(vals[n], pcr[i], 32);
+        n++;
+    }
+    return CLI_OK;
+}
+
 /* The PCR values the station runs with, from the log, checked. */
 static cli_status station_pcrs(stn_esp *e, const char *log_file,
                                const char *saved_file, int live,
@@ -597,6 +691,23 @@ static cli_status station_pcrs(stn_esp *e, const char *log_file,
         }
         if (st != CLI_ERR_NOTFOUND)
             return st;
+    } else {
+        uint8_t *rec = NULL;
+        size_t rec_len = 0;
+        int predict = 0;
+
+        /* A station older than the record saves none; the log alone then
+         * stands, as before. */
+        st = read_saved(saved_file, &rec, &rec_len);
+        if (st == CLI_OK) {
+            st = station_pcrs_saved20(e, log_file, rec, rec_len, live, mask,
+                                      old256, vals, &predict);
+            free(rec);
+            if (st != CLI_OK || !predict)
+                return st;
+        } else if (st != CLI_ERR_NOTFOUND) {
+            return st;
+        }
     }
     st = station_digest(e, ver == TPM_VER_12, digest);
     if (st != CLI_OK)
@@ -664,8 +775,8 @@ static const cli_opt enroll_opts[] = {
     { "event-log", CLI_OPT_VALUE, 0, "<file>",
       "TEST ONLY: the firmware event log from a file instead of securityfs" },
     { "saved-log", CLI_OPT_VALUE, 0, "<file>",
-      "TEST ONLY: the station's saved event log from a file instead of "
-      "efivarfs" }
+      "TEST ONLY: the station's saved record (PCRs, and the 1.2 event log) "
+      "from a file instead of efivarfs" }
 };
 
 static const cli_opt remove_opts[] = {

@@ -246,6 +246,36 @@ tcg_status tcg_evlog12(EFI_SYSTEM_TABLE *st, uint8_t *log, size_t cap,
     return TCG_OK;
 }
 
+tcg_status tcg_pcrs20(EFI_SYSTEM_TABLE *st, uint8_t pcr[16][32])
+{
+    EFI_BOOT_SERVICES *bs = st->BootServices;
+    EFI_GUID g2 = EFI_TCG2_PROTOCOL_GUID;
+    EFI_TCG2_BOOT_SERVICE_CAPABILITY cap;
+    EFI_TCG2_PROTOCOL *p = (EFI_TCG2_PROTOCOL *)0;
+    unsigned i;
+
+    if (bs->LocateProtocol(&g2, (void *)0, (void **)&p) != EFI_SUCCESS ||
+        p == (EFI_TCG2_PROTOCOL *)0)
+        return TCG_NO_PROTOCOL;
+    memset(&cap, 0, sizeof cap);
+    cap.Size = (UINT8)sizeof cap;
+    if (p->GetCapability(p, &cap) != EFI_SUCCESS || !cap.TPMPresentFlag)
+        return TCG_NOT_PRESENT;
+
+    /* No randomness is needed for a PCR read. */
+    memset(&g_dev, 0, sizeof g_dev);
+    g_dev.xfer = xfer;
+    g_tcg2 = p;
+    for (i = 0; i < 16u; i++) {
+        if (tpm2_pcr_read(&g_dev, i, pcr[i]) != TPM_OK) {
+            tcg_close();
+            return TCG_NOT_PRESENT;
+        }
+    }
+    tcg_close();
+    return TCG_OK;
+}
+
 void tcg_close(void)
 {
     crypto_wipe(&g_dev, sizeof g_dev);

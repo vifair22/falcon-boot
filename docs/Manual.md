@@ -1477,8 +1477,9 @@ Enroll from a system the station started, on the station's machine:
 
     falcon-boot-mkstick station totp enroll /dev/X
 
-It reads the PCR values from the firmware's event log up to the station's
-own measurement, seals a new seed in the TPM (NV index 0x01800FA1 on 2.0,
+It takes the PCR values the station read at its menu, which it saves on
+every boot, checks them against the firmware's event log up to the
+station's own measurement, seals a new seed in the TPM (NV index 0x01800FA1 on 2.0,
 0x20000FA1 on 1.2) to PCRs 0, 2, 4 and 7 (`--pcrs` for others), writes
 `STATION.INI`'s `[totp]` section, and prints the secret once:
 
@@ -2501,13 +2502,24 @@ writes STATION.INI's `[totp]` section, and prints:
 with a QR code when `qrencode` is installed, else `qrencode is not
 installed, so there is no QR code: enter the secret by hand.`
 
-The PCR values come from the firmware's event log, and on a TPM 1.2 from
-the log the station saved at boot (`FalconEvLog`) when there is one, alone
-or after the one Linux reads; enrollment says which. It refuses when the
-log has no measurement of the station's loader (the one
-`\EFI\falcon\shimx64.efi` starts, else `\EFI\falcon\grubx64.efi`), or does
-not account for the PCRs the TPM or the station read. A station that saved
-no log has to be booted once before enrolling.
+The PCR values are the ones the station read at boot and saved
+(`FalconEvLog`), checked against the firmware's event log: on a TPM 1.2
+against the log the station saved, alone or after the one Linux reads; on
+a TPM 2.0 against the one Linux reads. Enrollment says which:
+
+| line | meaning |
+|---|---|
+| `PCRs from the event log the station saved` (`, after the kernel's`) | TPM 1.2 |
+| `PCRs the station read, matching the event log` | TPM 2.0 |
+| `PCRs the station read: this firmware extends PCRs it does not log, so the event log is set aside` | TPM 2.0 on a firmware whose log does not account for the TPM (an AMD firmware TPM on an ASUS B550 board is one) |
+
+It refuses when the log has no measurement of the station's loader (the
+one `\EFI\falcon\shimx64.efi` starts, else `\EFI\falcon\grubx64.efi`),
+when the saved PCRs are not of this boot (`PCR <n> is not what the station
+read`), or when a log that accounts for the TPM does not give what the
+station read. A station older than the saved PCRs saves none, and the log
+alone then gives them, as long as it accounts for the TPM; on a firmware
+whose log does not, update the station and boot it once first.
 
 What the code is sealed to changes with what is in the chosen PCRs:
 firmware (0, 2), the station image (4), Secure Boot's keys and the

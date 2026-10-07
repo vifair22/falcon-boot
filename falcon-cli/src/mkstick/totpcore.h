@@ -6,9 +6,11 @@
  * the otpauth URI an authenticator reads (the Key Uri Format every app
  * takes: otpauth://totp/<issuer>:<account>?secret=...&issuer=...), and the
  * new STATION.INI, which is the old one with its [totp] section replaced
- * and everything else, comments included, left as it was. And, on a TPM
- * 1.2 whose firmware keeps two logs, the PCR values the station runs with
- * from the log the station saved (tpm/evsave.h) and the one Linux reads.
+ * and everything else, comments included, left as it was. And the PCR
+ * values the station runs with from the record it saved (tpm/evsave.h):
+ * on a TPM 1.2 whose firmware keeps two logs, checked against the log the
+ * station saved and the one Linux reads; on a TPM 2.0, checked against the
+ * one Linux reads where that log accounts for the PCRs.
  */
 
 #ifndef FALCON_MKSTICK_TOTPCORE_H
@@ -37,7 +39,8 @@ enum {
     TOTPC_ERR_INI   = -3,   /* the file there does not parse */
     TOTPC_ERR_LOG   = -4,   /* the saved record or a log does not parse */
     TOTPC_ERR_STATION = -5, /* the saved log has no measurement of it */
-    TOTPC_ERR_PCR   = -6    /* no replay gives the PCRs the station read */
+    TOTPC_ERR_PCR   = -6,   /* no replay gives the PCRs the station read */
+    TOTPC_ERR_BOOT  = -7    /* the record is not of this boot */
 };
 
 /* Which logs gave the station's PCRs (totpc_merge12). */
@@ -93,6 +96,26 @@ int totpc_merge12_as(const uint8_t *fw, size_t fw_len, const uint8_t *rec,
                      size_t rec_len, const uint8_t station[20],
                      const uint8_t *as, uint8_t out[16][20], unsigned *from,
                      unsigned *bad_pcr);
+
+/* The PCRs at the station's menu on a TPM 2.0, from the version 2 record
+ * the station saved (rec) and the firmware's log as Linux reads it (log).
+ * The log must hold the station image's measurement in PCR 4 (station, its
+ * SHA-256 Authenticode digest). live, when given, is PCRs 0-15 as the TPM
+ * holds them now: the record must equal it on each of TOTPC_STABLE_PCRS
+ * the log shows nothing extending after the station's measurement
+ * (TOTPC_ERR_BOOT otherwise; a UKI's systemd-stub extends PCR 1), and the
+ * log is whole when a replay of it to
+ * its end gives live on every PCR in mask and TOTPC_STABLE_PCRS. Without
+ * live (the rig's swtpm, not the TPM that booted) the log is taken as
+ * whole. A whole log, replayed up to the station's measurement, must give
+ * the record's value on every PCR in mask (TOTPC_ERR_PCR otherwise); a log
+ * that is not whole is set aside and the record stands alone, which is a
+ * firmware that extends PCRs it does not log. out is the record's values,
+ * *whole says which it was; on an error *bad_pcr is the PCR at fault. */
+int totpc_station20(const uint8_t *rec, size_t rec_len, const uint8_t *log,
+                    size_t log_len, const uint8_t station[32],
+                    const uint8_t (*live)[32], uint32_t mask,
+                    uint8_t out[16][32], int *whole, unsigned *bad_pcr);
 
 /* STATION.INI with its [totp] replaced by t, or removed when t is NULL.
  * The text there must parse (TOTPC_ERR_INI with *err_line and the reason

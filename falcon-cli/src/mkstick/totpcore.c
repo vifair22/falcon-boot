@@ -258,7 +258,7 @@ int totpc_merge12_as(const uint8_t *fw, size_t fw_len, const uint8_t *rec,
     if (rec == NULL || station == NULL || out == NULL || from == NULL ||
         bad_pcr == NULL)
         return TOTPC_ERR_ARG;
-    if (evsave_read(rec, rec_len, &v) != EVSAVE_OK)
+    if (evsave_read(rec, rec_len, &v) != EVSAVE_OK || v.version != 1u)
         return TOTPC_ERR_LOG;
 
     /* The station's own measurement, in the log it saved: that log is the
@@ -300,4 +300,67 @@ int totpc_merge12_as(const uint8_t *fw, size_t fw_len, const uint8_t *rec,
     }
     *bad_pcr = bad;
     return TOTPC_ERR_PCR;
+}
+
+int totpc_station20(const uint8_t *rec, size_t rec_len, const uint8_t *log,
+                    size_t log_len, const uint8_t station[32],
+                    const uint8_t (*live)[32], uint32_t mask,
+                    uint8_t out[16][32], int *whole, unsigned *bad_pcr)
+{
+    static evlog_replay rep;
+    static evlog_replay all;
+    const uint32_t checked = mask | TOTPC_STABLE_PCRS;
+    evsave_view v;
+    unsigned i;
+
+    if (rec == NULL || log == NULL || station == NULL || out == NULL ||
+        whole == NULL || bad_pcr == NULL || (mask >> EVSAVE_PCRS) != 0u)
+        return TOTPC_ERR_ARG;
+    if (evsave_read(rec, rec_len, &v) != EVSAVE_OK || v.version != 2u)
+        return TOTPC_ERR_LOG;
+
+    /* The station's own measurement, in the log of the boot it ran in. */
+    if (evlog_replay_run(log, log_len, EVLOG_ALG_SHA256, 4, station, &rep) !=
+            EVLOG_OK ||
+        evlog_replay_run(log, log_len, EVLOG_ALG_SHA256, 0, NULL, &all) !=
+            EVLOG_OK)
+        return TOTPC_ERR_LOG;
+    if (!rep.stopped)
+        return TOTPC_ERR_STATION;
+
+    /* The stable PCRs the log shows nothing extending after the station's
+     * measurement: the record and the TPM agree on them when the record is
+     * of this boot. A UKI's systemd-stub extends PCR 1, so on such a boot
+     * PCR 1 drops out. Whether or not the log accounts for the TPM, it
+     * still says which PCRs moved after the station. */
+    *whole = 1;
+    if (live != NULL) {
+        for (i = 0; i < EVSAVE_PCRS; i++) {
+            if (((TOTPC_STABLE_PCRS >> i) & 1u) != 0u &&
+                memcmp(rep.pcr[i], all.pcr[i], EVSAVE_DIGEST_LEN2) == 0 &&
+                memcmp(v.pcr + (size_t)i * EVSAVE_DIGEST_LEN2, live[i],
+                       EVSAVE_DIGEST_LEN2) != 0) {
+                *bad_pcr = i;
+                return TOTPC_ERR_BOOT;
+            }
+            if (((checked >> i) & 1u) != 0u &&
+                memcmp(all.pcr[i], live[i], EVSAVE_DIGEST_LEN2) != 0)
+                *whole = 0;
+        }
+    }
+
+    /* A log that accounts for the TPM must also give what the station
+     * read; one that does not is no evidence either way. */
+    if (*whole) {
+        for (i = 0; i < EVSAVE_PCRS; i++) {
+            if (((mask >> i) & 1u) != 0u &&
+                memcmp(rep.pcr[i], v.pcr + (size_t)i * EVSAVE_DIGEST_LEN2,
+                       EVSAVE_DIGEST_LEN2) != 0) {
+                *bad_pcr = i;
+                return TOTPC_ERR_PCR;
+            }
+        }
+    }
+    memcpy(out, v.pcr, (size_t)EVSAVE_PCRS * EVSAVE_DIGEST_LEN2);
+    return TOTPC_OK;
 }

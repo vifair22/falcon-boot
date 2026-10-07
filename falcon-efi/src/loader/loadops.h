@@ -175,13 +175,13 @@ void loader_isomap_clear(EFI_SYSTEM_TABLE *st);
 
 /* ---- the station's saved event log (DESIGN Section 12.15) ----
  *
- * FalconEvLog, under our vendor GUID: edk2's TPM 1.2 event log and the PCRs
- * as the station found them (falcon-core/src/tpm/evsave.h has the record),
- * which `station totp enroll` reads from efivarfs. Volatile, for the same
- * reason as FalconIsoMap: it describes one boot, and a record left from an
- * earlier boot would be sealed to as if it were this one's. Written by the
- * station on every boot where the TPM is a 1.2 behind EFI_TCG_PROTOCOL;
- * enrollment checks it against the TPM before it seals to anything. */
+ * FalconEvLog, under our vendor GUID: the PCRs as the station found them,
+ * and on a TPM 1.2 edk2's event log (falcon-core/src/tpm/evsave.h has the
+ * record), which `station totp enroll` reads from efivarfs. Volatile, for
+ * the same reason as FalconIsoMap: it describes one boot, and a record left
+ * from an earlier boot would be sealed to as if it were this one's. Written
+ * by the station on every boot with a TPM; enrollment checks it against the
+ * TPM before it seals to anything. */
 EFI_STATUS loader_evlog_set(EFI_SYSTEM_TABLE *st, const void *rec, UINTN len);
 
 /* ---- boot to the firmware's own settings UI (DESIGN Section 7.4) ----
