@@ -1,0 +1,192 @@
+# falcon-boot pipeline.
+#
+# Every job runs on the binhost's falcon runner (shell executor, tag falcon)
+# and does its work in the harness container (tools/coverage/harness.sh),
+# the same environment as a run started by hand there.
+#
+# Every merge request: test, analyze, coverage, build.
+# A merge request into master (a release branch shipping) also runs the
+# release gate: the rigs and the corpus, whose scorecard must not lose a
+# cell master's docs/coverage.md passes. The gate's jobs can be started by
+# hand on any other pipeline.
+#
+# The jobs of one pipeline share a build directory outside the checkout
+# (FALCON_BUILD_DIR), so the fixtures `test` builds are the ones `coverage`
+# reads; the runner's checkout is cleaned between jobs. The runner takes one
+# job at a time, which is what lets those jobs share it. Whatever a job
+# publishes is copied into the checkout, because GitLab only uploads paths
+# under it.
+
+stages:
+  - test
+  - analyze
+  - coverage
+  - build
+  - rigs
+  - corpus
+
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS
+      when: never
+    - if: $CI_COMMIT_TAG
+    - if: $CI_COMMIT_BRANCH == "master"
+    - if: $CI_COMMIT_BRANCH =~ /^\d+\.\d+\.\d+$/
+
+variables:
+  FALCON_CI_ROOT: /srv/build/work/falcon/ci
+  FALCON_BUILD_DIR: $FALCON_CI_ROOT/pipelines/$CI_PIPELINE_ID
+  FALCON_STICKS_DIR: ""
+  FALCON_HARNESS_NAME: falcon-ci-$CI_JOB_ID
+  # The rigs' fixture UKI takes its kernel from this ISO; the path is the
+  # container's, where the corpus is mounted.
+  ARCH_ISO: /corpus/archlinux-2026.01.01-x86_64.iso
+  # Line coverage the gate holds: the harness measured 91.9% on 0e25572.
+  COV_MIN: "91"
+  # Strict coverage fails on a skipped test, and wim_test.c's real-WinPE case
+  # runs only against a real boot.wim: Windows 7 x64's, out of the corpus.
+  BOOTWIM_ISO: /corpus/windows-7-x64.iso
+  FALCON_TEST_BOOTWIM: build/bootwim.wim
+
+default:
+  tags: [falcon]
+  # The image is tagged by its Dockerfile, so a branch that changes the
+  # Dockerfile builds its own and a pipeline never runs a stale one.
+  before_script:
+    - export FALCON_HARNESS_IMAGE="falcon-boot-harness:$(sha256sum tools/coverage/Dockerfile | cut -c1-12)"
+    - mkdir -p "$FALCON_BUILD_DIR"
+  # A cancelled or timed-out job stops the docker client, not the container.
+  after_script:
+    - docker rm -f "$FALCON_HARNESS_NAME" >/dev/null 2>&1 || true
+
+.release-gate:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "master"
+    - when: manual
+      allow_failure: true
+
+test:
+  stage: test
+  script:
+    - rc=0; tools/coverage/harness.sh make test-fixtures test-junit || rc=$?
+    - rm -rf junit && cp -r "$FALCON_BUILD_DIR/junit" junit || true
+    - exit $rc
+  artifacts:
+    when: always
+    expire_in: 2 weeks
+    reports:
+      junit: junit/*.xml
+
+analyze:
+  stage: analyze
+  needs: [test]
+  script:
+    - tools/coverage/harness.sh make analyze
+
+coverage:
+  stage: coverage
+  needs: [test]
+  script:
+    - tools/coverage/harness.sh bash -c "test -s $FALCON_TEST_BOOTWIM || 7z e -so $BOOTWIM_ISO sources/boot.wim > $FALCON_TEST_BOOTWIM"
+    - rc=0; tools/coverage/harness.sh make test-fixtures coverage COV_MIN="$COV_MIN" || rc=$?
+    - rm -rf cov && cp -r "$FALCON_BUILD_DIR/cov" cov || true
+    - exit $rc
+  coverage: '/^lines: (\d+\.\d+)%/'
+  artifacts:
+    when: always
+    expire_in: 2 weeks
+    reports:
+      coverage_report:
+        coverage_format: cobertura
+        path: cov/coverage.xml
+
+build:
+  stage: build
+  needs: [analyze, coverage]
+  script:
+    - tools/coverage/harness.sh make all bios station station-legacy jump station-bundle
+    - rm -rf bin && cp -r "$FALCON_BUILD_DIR/bin" bin
+  artifacts:
+    expire_in: 2 weeks
+    paths:
+      - bin/
+
+# One job per rig, so a failure names its rig and a rerun repeats only it.
+# RIG is the make goals; the TPM rig's station cases need the disk
+# test-station makes and SKIP without it, so it is asked for first.
+rigs:
+  extends: .release-gate
+  stage: rigs
+  needs: [build]
+  parallel:
+    matrix:
+      - RIG:
+          - test-core
+          - test-station-uefi
+          - test-station test-tpm-rig
+          - test-station-installed
+          - test-station-install
+          - test-bios-img
+          - test-bios-probe
+          - test-station-bios
+          - test-station-fixtures
+          - test-station-legacy
+          - test-cfstation
+          - test-devlink
+          - test-jump
+  script:
+    - tools/coverage/harness.sh make $RIG
+
+# One job per Secure Boot state, each with the whole timeout to itself; the
+# case sticks are the binhost's, built once per ISO and restaged with this
+# pipeline's loaders by every run.
+corpus:
+  extends: .release-gate
+  stage: corpus
+  needs: [rigs]
+  variables:
+    FALCON_STICKS_DIR: /srv/build/cache/falcon/sticks
+  parallel:
+    matrix:
+      - STATE: ["off", "ms", "own", "moksb", "bios", "bios32"]
+  script:
+    - tools/coverage/harness.sh tools/coverage/run-corpus.sh --no-scorecard --states "$STATE"
+
+scorecard:
+  extends: .release-gate
+  stage: corpus
+  needs: [corpus]
+  script:
+    - tools/coverage/harness.sh python3 tools/coverage/scorecard.py > coverage.md
+    - git fetch --depth 1 origin master
+    - git show FETCH_HEAD:docs/coverage.md > coverage-master.md
+    - tools/coverage/scorecard-diff.py coverage-master.md coverage.md | tee scorecard-diff.txt
+  artifacts:
+    when: always
+    expire_in: 1 year
+    paths:
+      - coverage.md
+      - scorecard-diff.txt
+
+# The pipeline's build directory goes with it. Its files are root's where a
+# job was killed before the harness handed them back, so the harness deletes
+# them. Directories of pipelines cancelled before reaching this job are
+# swept here too, after three days, and so are harness images built for a
+# Dockerfile this pipeline does not use (`latest` is the hand-run one).
+cleanup:
+  stage: .post
+  when: always
+  script:
+    - |
+      for d in "$FALCON_CI_ROOT"/pipelines/*; do
+        [[ -d $d ]] || continue
+        if [[ $d == "$FALCON_BUILD_DIR" ]] || [[ -n $(find "$d" -maxdepth 0 -mtime +3) ]]; then
+          FALCON_BUILD_DIR=$d tools/coverage/harness.sh find /work/build -mindepth 1 -delete
+          rmdir "$d"
+        fi
+      done
+    - |
+      docker images falcon-boot-harness --format '{{.Tag}}' |
+        grep -vxF -e latest -e "${FALCON_HARNESS_IMAGE#*:}" |
+        while read -r t; do docker rmi "falcon-boot-harness:$t" || true; done

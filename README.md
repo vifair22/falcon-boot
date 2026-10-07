@@ -90,6 +90,13 @@ Section 13. Everything, the corpus included, runs in a container with
 `tools/coverage/harness.sh` (`harness.sh make test`), which is how the
 measurements in `docs/coverage.md` are made.
 
+The pipeline (`.gitlab-ci.yml`) runs on the binhost's `falcon` runner, each
+job in the same container: every merge request gets the tests (with JUnit
+reports), `make analyze`, the coverage gate and the build. A merge request
+into `master`, which is a release branch shipping, also runs every rig and
+the corpus under all six states, and fails if any scorecard cell that passes
+on `master` no longer does (`tools/coverage/scorecard-diff.py`).
+
 `make install` copies `falcon-boot-mkstick` and `falcon-boot-sign` into
 `/usr/local/bin`, building them first; `PREFIX` and `DESTDIR` apply.
 `make uninstall` removes them.
