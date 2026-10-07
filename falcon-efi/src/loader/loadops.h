@@ -189,6 +189,13 @@ EFI_STATUS loader_evlog_set(EFI_SYSTEM_TABLE *st, const void *rec, UINTN len);
 EFI_STATUS loader_evlog_status_set(EFI_SYSTEM_TABLE *st, const char *text,
                                    UINTN len);
 
+/* FalconDiscoverStatus: how the loader found its own boot partition, or
+ * where that stopped (discover_install_detail), len bytes of ASCII, the
+ * same attributes. Written by both UEFI loaders on every boot. */
+EFI_STATUS loader_discover_status_set(EFI_SYSTEM_TABLE *st, const char *text,
+                                      UINTN len);
+
+
 /* ---- boot to the firmware's own settings UI (DESIGN Section 7.4) ----
  *
  * UEFI's own one-shot: OsIndications bit 0, EFI_OS_INDICATIONS_BOOT_TO_FW_UI,

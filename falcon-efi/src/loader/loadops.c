@@ -166,8 +166,9 @@ EFI_STATUS loader_evlog_set(EFI_SYSTEM_TABLE *st, const void *rec, UINTN len)
                            FALCON_ISOMAP_ATTRS, len, (void *)(uintptr_t)rec);
 }
 
-EFI_STATUS loader_evlog_status_set(EFI_SYSTEM_TABLE *st, const char *text,
-                                   UINTN len)
+/* A volatile ASCII variable under our vendor GUID, for the booted OS. */
+static EFI_STATUS ascii_var_set(EFI_SYSTEM_TABLE *st, const CHAR16 *name,
+                                const char *text, UINTN len)
 {
     EFI_GUID vendor = FALCON_VENDOR_GUID;
     EFI_RUNTIME_SERVICES *rt;
@@ -177,9 +178,20 @@ EFI_STATUS loader_evlog_status_set(EFI_SYSTEM_TABLE *st, const char *text,
     rt = st->RuntimeServices;
     if (rt == (EFI_RUNTIME_SERVICES *)0 || rt->SetVariable == (void *)0)
         return EFI_UNSUPPORTED;
-    return rt->SetVariable((CHAR16 *)(uintptr_t)ISOMAP_WIDEN(EVSAVE_STATUS_VAR),
-                           &vendor, FALCON_ISOMAP_ATTRS, len,
-                           (void *)(uintptr_t)text);
+    return rt->SetVariable((CHAR16 *)(uintptr_t)name, &vendor,
+                           FALCON_ISOMAP_ATTRS, len, (void *)(uintptr_t)text);
+}
+
+EFI_STATUS loader_evlog_status_set(EFI_SYSTEM_TABLE *st, const char *text,
+                                   UINTN len)
+{
+    return ascii_var_set(st, ISOMAP_WIDEN(EVSAVE_STATUS_VAR), text, len);
+}
+
+EFI_STATUS loader_discover_status_set(EFI_SYSTEM_TABLE *st, const char *text,
+                                      UINTN len)
+{
+    return ascii_var_set(st, L"FalconDiscoverStatus", text, len);
 }
 
 void loader_isomap_clear(EFI_SYSTEM_TABLE *st)
