@@ -32,7 +32,14 @@
 #                   /srv/build/cache/falcon/sticks when it exists and the
 #                   build directory is the default one)
 # Env: the same four as the options, FALCON_HARNESS_IMAGE, FALCON_CORPUS,
-#      FALCON_BUILD_DIR, FALCON_STICKS_DIR.
+#      FALCON_BUILD_DIR, FALCON_STICKS_DIR; and for a pipeline job:
+#      FALCON_HARNESS_NAME          the container's name, so a cancelled job
+#                                   can remove the container it left running
+#      FALCON_DOCKER_CGROUP_PARENT  the cgroup the container runs under; the
+#                                   daemon starts it, so the job's own
+#                                   cgroup does not reach it
+#      ARCH_ISO, FALCON_TEST_BOOTWIM  passed through (tools/arch-iso.sh,
+#                                   falcon-core/tests/wim_test.c)
 #
 # The case sticks live apart from the build directory on the binhost because
 # they are most of its size (about 200 GB for the corpus) and the work disk is
@@ -139,6 +146,13 @@ fi
 TTY=()
 [[ -t 0 && -t 1 ]] && TTY=(-it)
 
+# The daemon starts the container, so a job's cgroup and a cancelled job's
+# signals both stop at the docker client; these carry them across.
+RUNOPTS=()
+[[ -n ${FALCON_HARNESS_NAME:-} ]] && RUNOPTS+=(--name "$FALCON_HARNESS_NAME")
+[[ -n ${FALCON_DOCKER_CGROUP_PARENT:-} ]] &&
+    RUNOPTS+=(--cgroup-parent "$FALCON_DOCKER_CGROUP_PARENT")
+
 CMD=("$@")
 [[ ${#CMD[@]} -eq 0 ]] && CMD=(tools/coverage/run-corpus.sh)
 # The container runs as root (losetup); what it wrote under /work is handed
@@ -146,10 +160,12 @@ CMD=("$@")
 CMDQ=$(printf '%q ' "${CMD[@]}")
 
 exec docker run --rm "${TTY[@]}" \
-    --privileged "${KVM[@]}" \
+    --privileged "${KVM[@]}" "${RUNOPTS[@]}" \
     "${MOUNTS[@]}" \
     -e FALCON_CORPUS=/corpus \
     -e FALCON_CASE_WJLOG \
     -e FALCON_CASE_MEM \
+    -e ARCH_ISO \
+    -e FALCON_TEST_BOOTWIM \
     -w /work \
     "$IMAGE" bash -c "$CMDQ; rc=\$?; chown -R $(id -u):$(id -g) /work/build /work/compile_commands.json 2>/dev/null; exit \$rc"

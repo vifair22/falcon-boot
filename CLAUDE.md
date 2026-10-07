@@ -143,6 +143,12 @@ unique within each such set, so `#include <fs/exfat.h>` means one file, and
   `repo-<sha>` or `build-<sha>` copies. The harness image is the baseline
   toolchain: a `make analyze` finding on a workstation with a newer
   clang-tidy is real only when the harness reports it too.
+- CI (`.gitlab-ci.yml`) runs the same harness on the binhost's `falcon`
+  runner (shell executor, one job at a time, a build directory per pipeline
+  under `/srv/build/work/falcon/ci`). Merge requests get test, analyze,
+  coverage and build; a merge request into master adds the rigs and the
+  corpus, gated by `tools/coverage/scorecard-diff.py` against master's
+  scorecard. The runner itself is gitlab-infra's.
 - `release_version` at the root is the version; everything tags off it
   (`FALCON_SEMVER` and the timestamped `FALCON_VERSION` in
   `build/version.h`, the SBAT rows, the banners).
