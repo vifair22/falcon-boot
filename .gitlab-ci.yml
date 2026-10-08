@@ -234,7 +234,8 @@ rigs:
 # did not is booted again alone before it counts, as run-corpus.sh says to:
 # a guest starved by seven others, or by the binhost's own builds, which
 # outrank the pipeline, times out where it would not have. Only a cell that
-# fails again alone fails the gate; rerun.log keeps what each rerun said.
+# fails CORPUS_RERUNS times alone fails the gate; rerun.log keeps what each
+# rerun said.
 # The verdict is in this job because the results are in the pipeline's
 # build directory, which the cleanup job removes as soon as nothing else is
 # running: a scorecard job started after a manual corpus found it empty.
@@ -249,6 +250,12 @@ corpus:
     FALCON_STICKS_DIR: /srv/build/cache/falcon/sticks
     FALCON_STICKS_MOK: /srv/build/cache/falcon/mok-test
     CORPUS_JOBS: "8"
+    # Solo attempts a regressed cell gets. slackware-15.0-dvd chained on the
+    # i686 reaches its installer's shell every time and brings its network
+    # up about four times in five, which is the only thing the harness can
+    # see there; three misses in a row is about one run in a hundred, and a
+    # cell that really broke fails every one.
+    CORPUS_RERUNS: "3"
   script:
     - *shims
     - mkdir -p "$FALCON_BUILD_DIR/mok-test" && cp -a "$FALCON_STICKS_MOK/." "$FALCON_BUILD_DIR/mok-test/"
@@ -256,11 +263,12 @@ corpus:
     - tools/coverage/harness.sh python3 tools/coverage/scorecard.py > coverage.md
     - git fetch --depth 1 origin master
     - git show FETCH_HEAD:docs/coverage.md > coverage-master.md
-    - tools/coverage/scorecard-diff.py --cases coverage-master.md coverage.md > rerun.txt || true
     - |
       : > rerun.log
-      if [[ -s rerun.txt ]]; then
-        cat rerun.txt
+      for attempt in $(seq 1 "$CORPUS_RERUNS"); do
+        tools/coverage/scorecard-diff.py --cases coverage-master.md coverage.md > rerun.txt || true
+        [[ -s rerun.txt ]] || break
+        echo "== rerun $attempt of $CORPUS_RERUNS:" $(cat rerun.txt) | tee -a rerun.log
         # One run per state and route, so the sticks are restaged once each.
         sort -k2,3 rerun.txt | awk '{k=$2" "$3; ids[k]=ids[k]" "$1} END {for (k in ids) print k ids[k]}' |
           while read -r st rt ids; do
@@ -269,7 +277,7 @@ corpus:
               --force --jobs 1 --states "$st" --routes "$rt" $ids | tee -a rerun.log
           done
         tools/coverage/harness.sh python3 tools/coverage/scorecard.py > coverage.md
-      fi
+      done
     - tools/coverage/scorecard-diff.py coverage-master.md coverage.md | tee scorecard-diff.txt
   artifacts:
     when: always
