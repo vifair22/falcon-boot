@@ -42,6 +42,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include <common/datadir.h>
 #include <common/log.h>
 #include <common/jmem.h>
 #include <common/proc.h>
@@ -64,13 +65,13 @@
 
 #include <falcon-bios/src/start/biosdefs.h>
 
-#define DEFAULT_STAGE1        "build/bin/falcon-bios-stage1.bin"
-#define DEFAULT_STAGE2        "build/bin/falcon-bios-stage2.bin"
-#define DEFAULT_STAGE3        "build/bin/falcon-bios-station-stage3.bin"
-#define DEFAULT_LEGACY_STAGE3 "build/bin/falcon-bios-station-legacy-stage3.bin"
-#define DEFAULT_LOADER        "build/bin/falcon-boot-station.efi"
-#define DEFAULT_SHIM_DIR      "build/shim/bins"
-#define DEFAULT_MODS          "build/bin/mod"
+#define DEFAULT_STAGE1        FALCON_DATADIR "/bin/falcon-bios-stage1.bin"
+#define DEFAULT_STAGE2        FALCON_DATADIR "/bin/falcon-bios-stage2.bin"
+#define DEFAULT_STAGE3        FALCON_DATADIR "/bin/falcon-bios-station-stage3.bin"
+#define DEFAULT_LEGACY_STAGE3 FALCON_DATADIR "/bin/falcon-bios-station-legacy-stage3.bin"
+#define DEFAULT_LOADER        FALCON_DATADIR "/bin/falcon-boot-station.efi"
+#define DEFAULT_SHIM_DIR      FALCON_DATADIR "/shim/bins"
+#define DEFAULT_MODS          FALCON_DATADIR "/bin/mod"
 
 #define STAGE_MAX  ((size_t)4 * 1024 * 1024)
 #define INI_MAX    8192u

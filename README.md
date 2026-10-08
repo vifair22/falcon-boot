@@ -60,6 +60,14 @@ tools/             the static-analysis gate, the processor-floor check,
 Each component has `src/`, `tests/` and `tools/` as it needs them and a
 `build.mk` the root Makefile includes; it is one build, not nine.
 
+## Releases
+
+Each release on GitLab carries mkstick and the sign tool as static x86-64
+binaries with every unsigned loader they install
+(`falcon-boot-X.Y.Z-x86_64.tar.gz`, unpacked under `/usr` it needs no path
+options), the BIOS station bundle, the falcon jump floppy image, and their
+`SHA256SUMS`. The Manual's Section 14 says how to check and install them.
+
 ## Building
 
 Requires `x86_64-w64-mingw32-gcc`. The BIOS loader and falcon-hook's 32-bit

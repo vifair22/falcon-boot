@@ -22,6 +22,7 @@ stages:
   - analyze
   - coverage
   - build
+  - release
   - rigs
   - corpus
 
@@ -129,6 +130,29 @@ build:
     expire_in: 2 weeks
     paths:
       - bin/
+
+# A tag vX.Y.Z (release_version's, on master) publishes the release
+# (release.mk, tools/release/publish.sh): the artifacts go to the package
+# registry and the release links them. memtest86+ is the fixture store's.
+release:
+  stage: release
+  needs: [build]
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/
+  variables:
+    FALCON_FIXTURES: /srv/falcon/fixtures
+  script:
+    - |
+      want="v$(cat release_version)"
+      [[ $CI_COMMIT_TAG == "$want" ]] || { echo "the tag is $CI_COMMIT_TAG, release_version says $want"; exit 1; }
+    - *shims
+    - tools/coverage/harness.sh make release MEMTEST=/fixtures/memtest/mt86p_810_i586 MEMTEST_EFI=/fixtures/memtest/mt86p_810_x86_64
+    - rm -rf release && cp -r "$FALCON_BUILD_DIR/release" release
+    - tools/release/publish.sh release
+  artifacts:
+    expire_in: never
+    paths:
+      - release/
 
 # One job per rig, so a failure names its rig and a rerun repeats only it.
 # RIG is the make goals. Every rig first gets the fixtures the rigs expect

@@ -149,6 +149,12 @@ unique within each such set, so `#include <fs/exfat.h>` means one file, and
   coverage and build; a merge request into master adds the rigs and the
   corpus, gated by `tools/coverage/scorecard-diff.py` against master's
   scorecard. The runner itself is gitlab-infra's.
+- `make release` (`release.mk`, in the harness, with `MEMTEST=` and
+  `MEMTEST_EFI=`) writes the release to `build/release/`: a mkstick built
+  with `FALCON_DATADIR=/usr/lib/falcon-boot` (`falcon-cli/src/common/
+  datadir.h`; a tree build reads `build/`), the station bundle, the jump
+  image and `SHA256SUMS`. A tag `vX.Y.Z` publishes it from CI
+  (`tools/release/publish.sh`); Manual Section 14.
 - `release_version` at the root is the version; everything tags off it
   (`FALCON_SEMVER` and the timestamped `FALCON_VERSION` in
   `build/version.h`, the SBAT rows, the banners).

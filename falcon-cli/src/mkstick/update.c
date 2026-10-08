@@ -31,6 +31,7 @@
 #include <time.h>
 #include <unistd.h>
 
+#include <common/datadir.h>
 #include <common/log.h>
 #include <common/proc.h>
 #include <common/util.h>
@@ -50,7 +51,7 @@
 
 #include <falcon-bios/src/start/biosdefs.h>
 
-#define DEFAULT_FROM "build/bin"
+#define DEFAULT_FROM FALCON_DATADIR "/bin"
 /* A loader, a stage 3 or a shim is well under this. */
 #define FILE_MAX ((size_t)16 * 1024 * 1024)
 
@@ -700,7 +701,7 @@ static cli_status update_run(const cli_args *a)
 
 static const cli_opt update_opts[] = {
     { "from", CLI_OPT_VALUE, 0, "<dir>",
-      "the built loaders (default build/bin)" },
+      "the built loaders (default " DEFAULT_FROM ")" },
     { "backup-dir", CLI_OPT_VALUE, 0, "<dir>",
       "where what is replaced is saved (default .)" },
     { "passphrase-file", CLI_OPT_VALUE, 0, "<file>",

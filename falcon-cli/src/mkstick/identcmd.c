@@ -27,6 +27,7 @@
 #include <string.h>
 #include <sys/stat.h>
 
+#include <common/datadir.h>
 #include <common/log.h>
 #include <mkstick/bioscore.h>
 #include <mkstick/disk.h>
@@ -37,7 +38,7 @@
 
 #include <falcon-bios/src/start/biosdefs.h>
 
-#define DEFAULT_STAGE3 "build/bin/falcon-bios-stage3.bin"
+#define DEFAULT_STAGE3 FALCON_DATADIR "/bin/falcon-bios-stage3.bin"
 
 static const cli_opt ident_opts[] = {
     { "write-boot", CLI_OPT_VALUE, 0, "<n>",

@@ -35,6 +35,7 @@
 
 #include <part/part.h>
 
+#include <common/datadir.h>
 #include <common/log.h>
 #include <common/proc.h>
 #include <common/util.h>
@@ -47,9 +48,9 @@
  * written a second time here. */
 #include <falcon-bios/src/start/biosdefs.h>
 
-#define DEFAULT_STAGE1 "build/bin/falcon-bios-stage1.bin"
-#define DEFAULT_STAGE2 "build/bin/falcon-bios-stage2.bin"
-#define DEFAULT_STAGE3 "build/bin/falcon-bios-stage3.bin"
+#define DEFAULT_STAGE1 FALCON_DATADIR "/bin/falcon-bios-stage1.bin"
+#define DEFAULT_STAGE2 FALCON_DATADIR "/bin/falcon-bios-stage2.bin"
+#define DEFAULT_STAGE3 FALCON_DATADIR "/bin/falcon-bios-stage3.bin"
 
 /* Big enough for the largest stage; the plan checks what actually fits. */
 #define STAGE_MAX ((size_t)4 * 1024 * 1024)
