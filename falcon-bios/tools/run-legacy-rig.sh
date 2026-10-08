@@ -66,7 +66,9 @@ command -v socat >/dev/null || { echo "socat is needed for the monitor" >&2; exi
 mkdir -p "$R"
 make --no-print-directory station-legacy test-bios-img test-bios-probe \
     >/dev/null
-[[ $DEVLINK == 1 ]] && make --no-print-directory devlink-uki >/dev/null
+if [[ -f $DEVLINK_IMAGES/bzImage ]]; then
+    make --no-print-directory devlink-uki >/dev/null
+fi
 
 # The installed disk, made once (or again with A21M_FRESH=1).
 if [[ ! -f "$IMG" || "${A21M_FRESH:-0}" == 1 ]]; then
@@ -123,7 +125,11 @@ boot() {
     rm -f "$R/com1.log" "$R/mon.sock" "$R/overlay.qcow2" "$R/qemu.log"
     qemu-img create -q -f qcow2 -F qcow2 -b "$(realpath "$IMG")" \
         "$R/overlay.qcow2"
-    timeout "$TIMEOUT" "$q" -L /usr/share/qemu -machine "$MACHINE" \
+    # The rig QEMU's bridge has a CardBus header, which only its own patched
+    # SeaBIOS (build-qemu.sh) gets past; the release's hangs in POST.
+    local l=(-L /usr/share/qemu)
+    [[ $q == "$QPCC" ]] && l=(-L build/qemu-pcc/share -L /usr/share/qemu)
+    timeout "$TIMEOUT" "$q" "${l[@]}" -machine "$MACHINE" \
         "${cpu[@]}" -display none -net none \
         -drive if=none,id=d0,file="$R/overlay.qcow2",format=qcow2 \
         -device ide-hd,drive=d0,bus=ide.0,unit=0,$DISK \
@@ -148,9 +154,11 @@ halt() {
 
 # The rows in the order the first menu drew them, one label per line.
 ROWS='Windows \(NTLDR\)|CD drive|CF card \(PC Card\)|USB stick|DevLink recovery|Memory test'
+# No rows is an answer, not an error: under pipefail grep's 1 would end the
+# rig there, silently, instead of failing the case.
 rows() {
     log_text "$R/com1.log" | sed -n '/entries, [0-9]* shown/,$p' |
-        grep -aoE "$ROWS" | awk '!seen[$0]++'
+        { grep -aoE "$ROWS" || true; } | awk '!seen[$0]++'
 }
 
 # Stops the countdown on the menu, moves to the row LABEL and presses

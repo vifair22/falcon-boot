@@ -6,15 +6,27 @@ its own under SeaBIOS on an i440fx machine. The station finds them as a
 machine's existing OSes and chainloads them.
 
 The images are too large and too licence-bound for the repository. They live
-on binhost-builder, with the media they were made from:
+on binhost-builder in the fixture store, with the media they were made from
+and the other rigs' disks:
 
-    /srv/falcon/fixtures/station/
-        freedos.img      FreeDOS 1.4, FAT16, 32 MiB
-        win98se.img      Windows 98 SE, FAT32, 2 GiB
-        win95.img        Windows 95 OSR2.5, FAT32, 2 GiB
-        media/           the source media, checked as below
-        shots/           the verification screenshots
-        scripts/         a copy of this directory
+    /srv/falcon/fixtures/
+        station/
+            freedos.img      FreeDOS 1.4, FAT16, 32 MiB
+            win98se.img      Windows 98 SE, FAT32, 2 GiB
+            win95.img        Windows 95 OSR2.5, FAT32, 2 GiB
+            media/           the source media, checked as below
+            shots/           the verification screenshots
+            scripts/         a copy of this directory
+        cf-98-bridge.img     Windows 98 SE on a CF card (W98_IOS_CF,
+                             run-cfstation-rig.sh)
+        a21m/DJSA-210.img    the A21m's disk (A21M_ORIG, mk-a21m-station.sh)
+        memtest/             memtest86+ 8.10, i586 and x86-64 (MEMTEST)
+        SHA256SUMS           over station/, memtest/ and cf-98-bridge.img
+
+The pipeline's rig jobs mount the store read-only at /fixtures
+(`FALCON_FIXTURES`, tools/coverage/harness.sh). Its copy is on Unraid at
+`Documents/Vincent/falcon-fixtures/`, checked against SHA256SUMS; the A21m
+image's original is beside it, in `Documents/Vincent/thinkpad-a21m/`.
 
 | Image | sha256 | Verified |
 |---|---|---|

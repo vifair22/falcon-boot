@@ -97,7 +97,8 @@ fixture() {   # fixture NAME: prints its path
 
 nbd_connect() {  # nbd_connect QCOW2: sets NBD
     local n
-    sudo modprobe nbd max_part=8
+    # A container shares the host's /dev and /sys, and has no modprobe.
+    [[ -d /sys/module/nbd ]] || sudo modprobe nbd max_part=8
     NBD=
     for n in $(seq 0 15); do
         if [[ ! -e /sys/block/nbd$n/pid ]]; then

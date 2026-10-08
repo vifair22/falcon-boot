@@ -157,6 +157,10 @@ rigs:
     FALCON_FIXTURES: /srv/falcon/fixtures
     A21M_ORIG: /fixtures/a21m/DJSA-210.img
     W98_IOS_CF: /fixtures/cf-98-bridge.img
+    # The skips the gate accepts, by case: run-cfstation-rig.sh's win98, a
+    # Windows 98 system card booted from CF, has no card to boot and is not
+    # worth one (win98-ios still boots Windows 98 off a card).
+    RIG_SKIP_OK: '^SKIP +win98 '
   script:
     # The rig QEMU with the PC Card bridge (build-qemu.sh), built once per
     # version of its sources and of the image it runs in, and cached; the
@@ -181,7 +185,9 @@ rigs:
     # run, and a rig that ran none passed nothing.
     - tools/coverage/harness.sh make MEMTEST=build/memtest/mt86p_810_i586 $RIG | tee rig.log
     - |
-      if grep -E '^SKIP ' rig.log; then echo "FAIL: the rig skipped the cases above"; exit 1; fi
+      if grep -E '^SKIP ' rig.log | grep -vE "$RIG_SKIP_OK"; then
+        echo "FAIL: the rig skipped the cases above"; exit 1
+      fi
       grep -qE '^PASS ' rig.log || { echo "FAIL: the rig ran no case"; exit 1; }
   artifacts:
     when: always

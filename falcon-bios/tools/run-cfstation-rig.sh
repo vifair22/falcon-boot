@@ -128,7 +128,7 @@ station_card() {
         # DevLink recovery's UKI as built, or from its images when absent.
         extra=()
         if [[ $DEVLINK == 1 ]]; then
-            [[ -f "$DEVLINK_UKI" ]] ||
+            [[ -f $DEVLINK_IMAGES/bzImage ]] &&
                 make --no-print-directory devlink-uki >/dev/null
             extra=(--uki "$DEVLINK_UKI")
         fi
@@ -283,9 +283,11 @@ wait_prompt() {  # wait_prompt CASE SECONDS
 # The station's rows in the order drawn. With no default in STATION.INI
 # the menu has no countdown, so the menu is waited for by its entry count.
 ROWS='Boot code \(disk [^)]*\)|Windows \(NTLDR\)|CD drive|CF card \(PC Card\)|USB stick|DevLink recovery|Memory test'
+# No rows is an answer, not an error: under pipefail grep's 1 would end the
+# rig there, silently, instead of failing the case.
 rows() {
     log_text "$R/com1.log" | sed -n '/entries, [0-9]* shown/,$p' |
-        grep -aoE "$ROWS" | sed 's/ *$//' | awk '!seen[$0]++'
+        { grep -aoE "$ROWS" || true; } | sed 's/ *$//' | awk '!seen[$0]++'
 }
 menu_up() { wait_for 'station-legacy.*entries, [0-9]* shown|entries, [0-9]* shown' 60; }
 choose() {      # choose LABEL-PREFIX
