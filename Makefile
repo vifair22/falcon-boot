@@ -334,6 +334,9 @@ include falcon-bios/build.mk
 APPS := stick station jump station-legacy
 include $(APPS:%=apps/%/app.mk)
 
+# The release artifacts, from what the components and apps build.
+include release.mk
+
 TESTS := core efi cli appliance hook bios winjump
 TEST_BINS := $(TESTS:%=$(BIN)/falcon-%-test)
 
