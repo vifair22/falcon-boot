@@ -129,8 +129,10 @@ build:
       - bin/
 
 # One job per rig, so a failure names its rig and a rerun repeats only it.
-# RIG is the make goals; the TPM rig's station cases need the disk
-# test-station makes and SKIP without it, so it is asked for first.
+# RIG is the make goals. Every rig first gets the fixtures the rigs expect
+# to find: the test MOK, the signed loader, the fixture UKI (its kernel from
+# ARCH_ISO), the payload, the test stick and station disks, each made once
+# per pipeline, and the rig QEMU.
 rigs:
   extends: .release-gate
   stage: rigs
@@ -140,19 +142,58 @@ rigs:
       - RIG:
           - test-core
           - test-station-uefi
-          - test-station test-tpm-rig
+          - test-tpm-rig
           - test-station-installed
           - test-station-install
-          - test-bios-img
-          - test-bios-probe
           - test-station-bios
           - test-station-fixtures
           - test-station-legacy
           - test-cfstation
-          - test-devlink
           - test-jump
+  # The rigs' disk images, from the binhost's fixture store: the A21m's
+  # disk, the DOS and Windows 9x station fixtures, the CF card with Windows
+  # 98 behind the bridge, and memtest86+.
+  variables:
+    FALCON_FIXTURES: /srv/falcon/fixtures
+    A21M_ORIG: /fixtures/a21m/DJSA-210.img
+    W98_IOS_CF: /fixtures/cf-98-bridge.img
+    # The skips the gate accepts, by case: run-cfstation-rig.sh's win98, a
+    # Windows 98 system card booted from CF, has no card to boot and is not
+    # worth one (win98-ios still boots Windows 98 off a card).
+    RIG_SKIP_OK: '^SKIP +win98 '
   script:
-    - tools/coverage/harness.sh make $RIG
+    # The rig QEMU with the PC Card bridge (build-qemu.sh), built once per
+    # version of its sources and of the image it runs in, and cached; the
+    # rigs need its binary and its SeaBIOS share/ only.
+    - |
+      key=$(cat falcon-bios/tools/qemu-pcc/* tools/coverage/Dockerfile | sha256sum | cut -c1-12)
+      qc=$FALCON_CI_ROOT/cache/qemu-pcc-$key
+      if [[ ! -x $qc/build/qemu-pcc/build/qemu-system-i386 ]]; then
+        FALCON_BUILD_DIR=$qc/build tools/coverage/harness.sh falcon-bios/tools/qemu-pcc/build-qemu.sh
+      fi
+      mkdir -p "$FALCON_BUILD_DIR/qemu-pcc/build"
+      cp -a "$qc/build/qemu-pcc/build/qemu-system-i386" "$FALCON_BUILD_DIR/qemu-pcc/build/"
+      cp -a "$qc/build/qemu-pcc/share" "$FALCON_BUILD_DIR/qemu-pcc/"
+    - |
+      mkdir -p "$FALCON_BUILD_DIR/memtest"
+      cp -a "$FALCON_FIXTURES/memtest/." "$FALCON_BUILD_DIR/memtest/"
+      ln -sfn /fixtures/station "$FALCON_BUILD_DIR/fixtures"
+    - tools/coverage/harness.sh make mok-test sign test-uki payload cli bios station
+    - tools/coverage/harness.sh bash -c "test -f build/test-stick.img || make test-stick"
+    - tools/coverage/harness.sh bash -c "test -f build/test-station.img || make test-station"
+    # Strict, as coverage is: a skipped case is a case the gate did not
+    # run, and a rig that ran none passed nothing.
+    - tools/coverage/harness.sh make MEMTEST=build/memtest/mt86p_810_i586 $RIG | tee rig.log
+    - |
+      if grep -E '^SKIP ' rig.log | grep -vE "$RIG_SKIP_OK"; then
+        echo "FAIL: the rig skipped the cases above"; exit 1
+      fi
+      grep -qE '^PASS ' rig.log || { echo "FAIL: the rig ran no case"; exit 1; }
+  artifacts:
+    when: always
+    expire_in: 2 weeks
+    paths:
+      - rig.log
 
 # One job per Secure Boot state, each with the whole timeout to itself; the
 # case sticks are the binhost's, built once per ISO and restaged with this

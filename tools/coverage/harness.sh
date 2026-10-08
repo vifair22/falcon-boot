@@ -38,8 +38,13 @@
 #      FALCON_DOCKER_CGROUP_PARENT  the cgroup the container runs under; the
 #                                   daemon starts it, so the job's own
 #                                   cgroup does not reach it
-#      ARCH_ISO, FALCON_TEST_BOOTWIM  passed through (tools/arch-iso.sh,
-#                                   falcon-core/tests/wim_test.c)
+#      FALCON_FIXTURES              a directory mounted read-only at
+#                                   /fixtures: the rigs' disk images
+#                                   (tools/fixtures/README.md)
+#      ARCH_ISO, FALCON_TEST_BOOTWIM, A21M_ORIG, W98_IOS_CF
+#                                   passed through (tools/arch-iso.sh,
+#                                   falcon-core/tests/wim_test.c, the
+#                                   A21m and CF station rigs)
 #
 # The case sticks live apart from the build directory on the binhost because
 # they are most of its size (about 200 GB for the corpus) and the work disk is
@@ -124,6 +129,7 @@ fi
 # what it is rather than buried.
 MOUNTS=(-v "$REPO:/work" -v /dev:/dev)
 [[ -d $CORPUS ]] && MOUNTS+=(-v "$CORPUS:/corpus:ro")
+[[ -n ${FALCON_FIXTURES:-} ]] && MOUNTS+=(-v "$FALCON_FIXTURES:/fixtures:ro")
 if [[ -n $BUILD_DIR ]]; then
     mkdir -p "$BUILD_DIR"
     MOUNTS+=(-v "$BUILD_DIR:/work/build")
@@ -167,5 +173,7 @@ exec docker run --rm "${TTY[@]}" \
     -e FALCON_CASE_MEM \
     -e ARCH_ISO \
     -e FALCON_TEST_BOOTWIM \
+    -e A21M_ORIG \
+    -e W98_IOS_CF \
     -w /work \
     "$IMAGE" bash -c "$CMDQ; rc=\$?; chown -R $(id -u):$(id -g) /work/build /work/compile_commands.json 2>/dev/null; exit \$rc"

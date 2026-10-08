@@ -64,9 +64,12 @@ devlink-uki: $(DEVLINK_UKI)
 # station-legacy installed on the A21m's disk by the installer and booted
 # under SeaBIOS through every row: CD, USB on each controller, CF (the rig
 # QEMU's PC Card bridge), DevLink recovery on an i586 with 32 MB, and
-# Windows 2000 (falcon-bios/tools/run-legacy-rig.sh). Needs the A21m image,
-# sudo for its qemu-nbd install, and the devlink client for its case.
-test-station-legacy: station-legacy devlink-uki $(MKSTICK)
+# Windows 2000 (falcon-bios/tools/run-legacy-rig.sh). Needs the A21m image
+# and sudo for its qemu-nbd install; DevLink recovery's row and case are
+# there only where its UKI or its images are (the UKI is rebuilt only from
+# the images), and its case needs the devlink client.
+test-station-legacy: station-legacy $(MKSTICK) \
+	$(if $(wildcard $(DEVLINK_IMAGES)/bzImage),devlink-uki)
 	falcon-bios/tools/run-legacy-rig.sh
 
 # station-legacy on a CF card, reached through falcon jump's CF route as the
