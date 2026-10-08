@@ -221,16 +221,26 @@ rigs:
     paths:
       - rig.log
 
-# The corpus, every Secure Boot state in one job: the loaders are built and
-# restaged into the case sticks once, and run-corpus.sh keeps CORPUS_JOBS
-# cases booting at a time across all of them. The case sticks are the
-# binhost's, built once per ISO; each holds its ISO, so the guests read
-# local NVMe. Their blessed images were signed when the sticks were made,
-# with the test MOK kept beside them; a pipeline's own would enroll a key
-# those signatures do not chain to, and every blessed case would be
-# refused, so the corpus takes that one. It needs the build, not the rigs:
-# where the rigs are manual and not started, a job needing them is skipped
-# and could not be started by hand either.
+# The corpus and its verdict, one job. Every Secure Boot state runs in it:
+# the loaders are built and restaged into the case sticks once, and
+# run-corpus.sh keeps CORPUS_JOBS cases booting at a time across all of
+# them. The case sticks are the binhost's, built once per ISO; each holds
+# its ISO, so the guests read local NVMe. Their blessed images were signed
+# when the sticks were made, with the test MOK kept beside them; a
+# pipeline's own would enroll a key those signatures do not chain to, and
+# every blessed case would be refused, so the corpus takes that one.
+#
+# Then the scorecard against master's. A cell master passes that this run
+# did not is booted again alone before it counts, as run-corpus.sh says to:
+# a guest starved by seven others, or by the binhost's own builds, which
+# outrank the pipeline, times out where it would not have. Only a cell that
+# fails again alone fails the gate; rerun.log keeps what each rerun said.
+# The verdict is in this job because the results are in the pipeline's
+# build directory, which the cleanup job removes as soon as nothing else is
+# running: a scorecard job started after a manual corpus found it empty.
+#
+# It needs the build, not the rigs: where the rigs are manual and not
+# started, a job needing them is skipped and could not be started by hand.
 corpus:
   extends: .release-gate
   stage: corpus
@@ -242,21 +252,7 @@ corpus:
   script:
     - *shims
     - mkdir -p "$FALCON_BUILD_DIR/mok-test" && cp -a "$FALCON_STICKS_MOK/." "$FALCON_BUILD_DIR/mok-test/"
-    - tools/coverage/harness.sh tools/coverage/run-corpus.sh --no-scorecard --jobs "$CORPUS_JOBS" --states "off ms own moksb bios bios32"
-
-# The scorecard against master's. A cell master passes that this run did not
-# is booted again alone before it counts, as run-corpus.sh says to: a guest
-# starved by eight others, or by the binhost's own builds, which outrank the
-# pipeline, times out where it would not have. Only a cell that fails again
-# alone fails the gate; rerun.log keeps what each rerun said.
-scorecard:
-  extends: .release-gate
-  stage: corpus
-  needs: [corpus]
-  variables:
-    FALCON_STICKS_DIR: /srv/build/cache/falcon/sticks
-    FALCON_STICKS_MOK: /srv/build/cache/falcon/mok-test
-  script:
+    - tools/coverage/harness.sh tools/coverage/run-corpus.sh --no-scorecard --jobs "$CORPUS_JOBS" --states "off ms own moksb bios bios32" | tee corpus.log
     - tools/coverage/harness.sh python3 tools/coverage/scorecard.py > coverage.md
     - git fetch --depth 1 origin master
     - git show FETCH_HEAD:docs/coverage.md > coverage-master.md
@@ -265,8 +261,6 @@ scorecard:
       : > rerun.log
       if [[ -s rerun.txt ]]; then
         cat rerun.txt
-        mkdir -p "$FALCON_BUILD_DIR/mok-test" && cp -a "$FALCON_STICKS_MOK/." "$FALCON_BUILD_DIR/mok-test/"
-        mkdir -p "$FALCON_BUILD_DIR/shim" && cp -a "$FALCON_CI_ROOT/cache/shim/build/shim/bins" "$FALCON_BUILD_DIR/shim/"
         # One run per state and route, so the sticks are restaged once each.
         sort -k2,3 rerun.txt | awk '{k=$2" "$3; ids[k]=ids[k]" "$1} END {for (k in ids) print k ids[k]}' |
           while read -r st rt ids; do
@@ -281,6 +275,7 @@ scorecard:
     when: always
     expire_in: 1 year
     paths:
+      - corpus.log
       - coverage.md
       - scorecard-diff.txt
       - rerun.log
