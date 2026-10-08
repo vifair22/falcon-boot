@@ -154,8 +154,8 @@ TTY=()
 
 # The daemon starts the container, so a job's cgroup and a cancelled job's
 # signals both stop at the docker client; these carry them across.
-RUNOPTS=()
-[[ -n ${FALCON_HARNESS_NAME:-} ]] && RUNOPTS+=(--name "$FALCON_HARNESS_NAME")
+NAME=${FALCON_HARNESS_NAME:-falcon-harness-$$}
+RUNOPTS=(--name "$NAME")
 [[ -n ${FALCON_DOCKER_CGROUP_PARENT:-} ]] &&
     RUNOPTS+=(--cgroup-parent "$FALCON_DOCKER_CGROUP_PARENT")
 
@@ -165,7 +165,7 @@ CMD=("$@")
 # back to the caller afterwards, whatever the command's exit status.
 CMDQ=$(printf '%q ' "${CMD[@]}")
 
-exec docker run --rm "${TTY[@]}" \
+RUN=(docker run --rm "${TTY[@]}" \
     --privileged "${KVM[@]}" "${RUNOPTS[@]}" \
     "${MOUNTS[@]}" \
     -e FALCON_CORPUS=/corpus \
@@ -176,4 +176,14 @@ exec docker run --rm "${TTY[@]}" \
     -e A21M_ORIG \
     -e W98_IOS_CF \
     -w /work \
-    "$IMAGE" bash -c "$CMDQ; rc=\$?; chown -R $(id -u):$(id -g) /work/build /work/compile_commands.json 2>/dev/null; exit \$rc"
+    "$IMAGE" bash -c "$CMDQ; rc=\$?; chown -R $(id -u):$(id -g) /work/build /work/compile_commands.json 2>/dev/null; exit \$rc")
+
+# At a terminal the client owns it, and ^C reaches the container through it.
+# Without one (a pipeline job), the container's bash is PID 1 and ignores
+# the TERM a cancelled job sends, so the run would go on to its end; the
+# container is removed instead. What it wrote is then root's, which the
+# pipeline's cleanup job deletes through the harness.
+[[ ${#TTY[@]} -gt 0 ]] && exec "${RUN[@]}"
+trap 'echo "harness: removing $NAME" >&2; docker rm -f "$NAME" >/dev/null; exit 143' TERM INT HUP
+"${RUN[@]}" &
+wait $!
