@@ -221,14 +221,16 @@ rigs:
     paths:
       - rig.log
 
-# One job per Secure Boot state, each with the whole timeout to itself; the
-# case sticks are the binhost's, built once per ISO and restaged with this
-# pipeline's loaders by every run. Their blessed images were signed when the
-# sticks were made, with the test MOK kept beside them; a pipeline's own
-# would enroll a key those signatures do not chain to, and every blessed
-# case would be refused, so the corpus takes that one. It needs the build, not the rigs: where
-# the rigs are manual and not started, a job needing them is skipped and
-# could not be started by hand either.
+# The corpus, every Secure Boot state in one job: the loaders are built and
+# restaged into the case sticks once, and run-corpus.sh keeps CORPUS_JOBS
+# cases booting at a time across all of them. The case sticks are the
+# binhost's, built once per ISO; each holds its ISO, so the guests read
+# local NVMe. Their blessed images were signed when the sticks were made,
+# with the test MOK kept beside them; a pipeline's own would enroll a key
+# those signatures do not chain to, and every blessed case would be
+# refused, so the corpus takes that one. It needs the build, not the rigs:
+# where the rigs are manual and not started, a job needing them is skipped
+# and could not be started by hand either.
 corpus:
   extends: .release-gate
   stage: corpus
@@ -236,13 +238,11 @@ corpus:
   variables:
     FALCON_STICKS_DIR: /srv/build/cache/falcon/sticks
     FALCON_STICKS_MOK: /srv/build/cache/falcon/mok-test
-  parallel:
-    matrix:
-      - STATE: ["off", "ms", "own", "moksb", "bios", "bios32"]
+    CORPUS_JOBS: "8"
   script:
     - *shims
     - mkdir -p "$FALCON_BUILD_DIR/mok-test" && cp -a "$FALCON_STICKS_MOK/." "$FALCON_BUILD_DIR/mok-test/"
-    - tools/coverage/harness.sh tools/coverage/run-corpus.sh --no-scorecard --states "$STATE"
+    - tools/coverage/harness.sh tools/coverage/run-corpus.sh --no-scorecard --jobs "$CORPUS_JOBS" --states "off ms own moksb bios bios32"
 
 scorecard:
   extends: .release-gate
