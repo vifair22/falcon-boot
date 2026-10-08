@@ -237,7 +237,6 @@ corpus:
       - STATE: ["off", "ms", "own", "moksb", "bios", "bios32"]
   script:
     - *shims
-    - *shims
     - tools/coverage/harness.sh tools/coverage/run-corpus.sh --no-scorecard --states "$STATE"
 
 scorecard:
