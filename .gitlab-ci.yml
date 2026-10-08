@@ -244,14 +244,38 @@ corpus:
     - mkdir -p "$FALCON_BUILD_DIR/mok-test" && cp -a "$FALCON_STICKS_MOK/." "$FALCON_BUILD_DIR/mok-test/"
     - tools/coverage/harness.sh tools/coverage/run-corpus.sh --no-scorecard --jobs "$CORPUS_JOBS" --states "off ms own moksb bios bios32"
 
+# The scorecard against master's. A cell master passes that this run did not
+# is booted again alone before it counts, as run-corpus.sh says to: a guest
+# starved by eight others, or by the binhost's own builds, which outrank the
+# pipeline, times out where it would not have. Only a cell that fails again
+# alone fails the gate; rerun.log keeps what each rerun said.
 scorecard:
   extends: .release-gate
   stage: corpus
   needs: [corpus]
+  variables:
+    FALCON_STICKS_DIR: /srv/build/cache/falcon/sticks
+    FALCON_STICKS_MOK: /srv/build/cache/falcon/mok-test
   script:
     - tools/coverage/harness.sh python3 tools/coverage/scorecard.py > coverage.md
     - git fetch --depth 1 origin master
     - git show FETCH_HEAD:docs/coverage.md > coverage-master.md
+    - tools/coverage/scorecard-diff.py --cases coverage-master.md coverage.md > rerun.txt || true
+    - |
+      : > rerun.log
+      if [[ -s rerun.txt ]]; then
+        cat rerun.txt
+        mkdir -p "$FALCON_BUILD_DIR/mok-test" && cp -a "$FALCON_STICKS_MOK/." "$FALCON_BUILD_DIR/mok-test/"
+        mkdir -p "$FALCON_BUILD_DIR/shim" && cp -a "$FALCON_CI_ROOT/cache/shim/build/shim/bins" "$FALCON_BUILD_DIR/shim/"
+        # One run per state and route, so the sticks are restaged once each.
+        sort -k2,3 rerun.txt | awk '{k=$2" "$3; ids[k]=ids[k]" "$1} END {for (k in ids) print k ids[k]}' |
+          while read -r st rt ids; do
+            # shellcheck disable=SC2086
+            tools/coverage/harness.sh tools/coverage/run-corpus.sh --no-scorecard \
+              --force --jobs 1 --states "$st" --routes "$rt" $ids | tee -a rerun.log
+          done
+        tools/coverage/harness.sh python3 tools/coverage/scorecard.py > coverage.md
+      fi
     - tools/coverage/scorecard-diff.py coverage-master.md coverage.md | tee scorecard-diff.txt
   artifacts:
     when: always
@@ -259,6 +283,7 @@ scorecard:
     paths:
       - coverage.md
       - scorecard-diff.txt
+      - rerun.log
 
 # The pipeline's build directory goes with it. Its files are root's where a
 # job was killed before the harness handed them back, so the harness deletes
