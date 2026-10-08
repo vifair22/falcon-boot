@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """falcon-boot: compare two coverage scorecards (docs/coverage.md).
 
-Usage: scorecard-diff.py BASELINE NEW
+Usage: scorecard-diff.py [--cases] BASELINE NEW
 
 Reads the Matrix table of each and lists every cell that changed. A cell
 that read PASS in BASELINE and reads anything else in NEW is a regression,
@@ -9,9 +9,21 @@ and so is a baseline PASS whose ISO or column NEW does not have: the release
 gate runs every state, so a missing cell is a case that did not run. Exit 1
 when there is a regression, 0 otherwise. New ISOs and new columns are
 listed and do not fail.
+
+--cases prints only the regressions, one `ID STATE ROUTE` per line in
+run-corpus.sh's terms, for a caller that reruns them alone before it calls
+any of them real.
 """
 
+import os
 import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from scorecard import ROUTE_NAMES, STATES  # noqa: E402
+
+# A Matrix column's label back to the state and route it was made from.
+COLUMNS = {'%s %s' % (name, ROUTE_NAMES[rt]): (st, rt)
+           for st, name in STATES for rt in ROUTE_NAMES}
 
 
 def matrix(path):
@@ -38,12 +50,16 @@ def matrix(path):
 
 
 def main():
-    if len(sys.argv) != 3:
+    args = sys.argv[1:]
+    cases = bool(args) and args[0] == '--cases'
+    if cases:
+        args = args[1:]
+    if len(args) != 2:
         sys.exit(__doc__.strip().splitlines()[2])
-    base, base_cols = matrix(sys.argv[1])
-    new, new_cols = matrix(sys.argv[2])
+    base, base_cols = matrix(args[0])
+    new, new_cols = matrix(args[1])
 
-    regressed, changed = [], []
+    regressed, changed, rerun = [], [], []
     for iso, cells in base.items():
         for col in base_cols:
             was = cells.get(col, "")
@@ -52,6 +68,11 @@ def main():
                 continue
             line = f"{iso:32} {col:36} {was} -> {now}"
             (regressed if was == "PASS" else changed).append(line)
+            if was == "PASS" and col in COLUMNS:
+                rerun.append("%s %s %s" % ((iso,) + COLUMNS[col]))
+    if cases:
+        print("\n".join(rerun))
+        return 1 if regressed else 0
     added = sorted(set(new) - set(base))
     added_cols = [c for c in new_cols if c not in base_cols]
 
