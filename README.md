@@ -60,6 +60,14 @@ tools/             the static-analysis gate, the processor-floor check,
 Each component has `src/`, `tests/` and `tools/` as it needs them and a
 `build.mk` the root Makefile includes; it is one build, not nine.
 
+## Releases
+
+Each release on GitLab carries mkstick and the sign tool as static x86-64
+binaries with every unsigned loader they install
+(`falcon-boot-X.Y.Z-x86_64.tar.gz`, unpacked under `/usr` it needs no path
+options), the BIOS station bundle, the falcon jump floppy image, and their
+`SHA256SUMS`. The Manual's Section 14 says how to check and install them.
+
 ## Building
 
 Requires `x86_64-w64-mingw32-gcc`. The BIOS loader and falcon-hook's 32-bit
@@ -89,6 +97,13 @@ The rigs (`make test-stick`, `test-core`, `test-station*`, `test-tpm-rig`,
 Section 13. Everything, the corpus included, runs in a container with
 `tools/coverage/harness.sh` (`harness.sh make test`), which is how the
 measurements in `docs/coverage.md` are made.
+
+The pipeline (`.gitlab-ci.yml`) runs on the binhost's `falcon` runner, each
+job in the same container: every merge request gets the tests (with JUnit
+reports), `make analyze`, the coverage gate and the build. A merge request
+into `master`, which is a release branch shipping, also runs every rig and
+the corpus under all six states, and fails if any scorecard cell that passes
+on `master` no longer does (`tools/coverage/scorecard-diff.py`).
 
 `make install` copies `falcon-boot-mkstick` and `falcon-boot-sign` into
 `/usr/local/bin`, building them first; `PREFIX` and `DESTDIR` apply.

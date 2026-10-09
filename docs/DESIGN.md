@@ -2239,9 +2239,10 @@ while every real file lives only in UDF.
     its RNG from the counter.
   - `task` - one coroutine on its own stack beside the main flow, which the
     background probe runs on (Section 7.8). Stick only.
-  - `discover` - the single discovery pass above (`discover.c`) and the
-    device-path half (`partefi.c`); `disks.c`, the station only, names a
-    partition as STATION.INI names it (Section 12).
+  - `discover` - the single discovery pass above (`discover.c`), the
+    device-path half (`partefi.c`) and Block I/O reads through memory below
+    4 GiB (`biolow.c`, host-tested; Section 3.1); `disks.c`, the station
+    only, names a partition as STATION.INI names it (Section 12).
   - `fs` (core) - the driver registry above and its read-only drivers:
     `exfat.c` (file read + directory enumeration + extent map), `ext4.c`
     (constrained mkfs feature set at install) with `jbd2.c`, its journal

@@ -86,7 +86,12 @@ MEMTEST=${MEMTEST:-build/memtest/mt86p_810_i586}
 MACHINE=pc,x-south-bridge=piix4-isa
 TIMEOUT=90
 SIG_FOREIGN=5a7a0cf1
+# DevLink recovery is on the card and in the menu only where its UKI or the
+# images it is built from exist (apps/station-legacy/app.mk).
 DEVLINK_UKI=build/devlink/devlink-recovery.efi
+DEVLINK_IMAGES=${DEVLINK_IMAGES:-$HOME/git/home/devlink-rescue/build/classic/images}
+DEVLINK=0
+[[ -f $DEVLINK_UKI || -f $DEVLINK_IMAGES/bzImage ]] && DEVLINK=1
 
 command -v socat >/dev/null || { echo "socat is needed for the monitor" >&2; exit 2; }
 [[ -x "$QPCC" ]] || { echo "no rig QEMU (falcon-bios/tools/qemu-pcc/build-qemu.sh)" >&2; exit 2; }
@@ -121,9 +126,12 @@ station_card() {
         mkfs.fat -F 32 --offset 2048 -n CFDATA "$STATION_CARD" 524288 \
             >/dev/null 2>&1
         # DevLink recovery's UKI as built, or from its images when absent.
-        [[ -f "$DEVLINK_UKI" ]] ||
-            make --no-print-directory devlink-uki >/dev/null
-        extra=(--uki "$DEVLINK_UKI")
+        extra=()
+        if [[ $DEVLINK == 1 ]]; then
+            [[ -f $DEVLINK_IMAGES/bzImage ]] &&
+                make --no-print-directory devlink-uki >/dev/null
+            extra=(--uki "$DEVLINK_UKI")
+        fi
         [[ -f "$MEMTEST" ]] && extra+=(--memtest "$MEMTEST")
         build/bin/falcon-boot-mkstick station install "$STATION_CARD" --bios \
             --legacy "${extra[@]}" \
@@ -275,9 +283,11 @@ wait_prompt() {  # wait_prompt CASE SECONDS
 # The station's rows in the order drawn. With no default in STATION.INI
 # the menu has no countdown, so the menu is waited for by its entry count.
 ROWS='Boot code \(disk [^)]*\)|Windows \(NTLDR\)|CD drive|CF card \(PC Card\)|USB stick|DevLink recovery|Memory test'
+# No rows is an answer, not an error: under pipefail grep's 1 would end the
+# rig there, silently, instead of failing the case.
 rows() {
     log_text "$R/com1.log" | sed -n '/entries, [0-9]* shown/,$p' |
-        grep -aoE "$ROWS" | sed 's/ *$//' | awk '!seen[$0]++'
+        { grep -aoE "$ROWS" || true; } | sed 's/ *$//' | awk '!seen[$0]++'
 }
 menu_up() { wait_for 'station-legacy.*entries, [0-9]* shown|entries, [0-9]* shown' 60; }
 choose() {      # choose LABEL-PREFIX
@@ -330,7 +340,9 @@ for c in "${CASES[@]}"; do
         halt
         got=$(rows)
         if [[ -z "$WHY" ]]; then
-            for want in 'Windows (NTLDR)' 'Boot code' 'DevLink recovery' 'Memory test'; do
+            wants=('Windows (NTLDR)' 'Boot code' 'Memory test')
+            [[ $DEVLINK == 1 ]] && wants+=('DevLink recovery')
+            for want in "${wants[@]}"; do
                 grep -qF -- "$want" <<<"$got" || WHY="no '$want' row"
             done
         fi

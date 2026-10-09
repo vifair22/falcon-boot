@@ -1,0 +1,311 @@
+# falcon-boot pipeline.
+#
+# Every job runs on the binhost's falcon runner (shell executor, tag falcon)
+# and does its work in the harness container (tools/coverage/harness.sh),
+# the same environment as a run started by hand there.
+#
+# Every merge request: test, analyze, coverage, build.
+# A merge request into master (a release branch shipping) also runs the
+# release gate: the rigs and the corpus, whose scorecard must not lose a
+# cell master's docs/coverage.md passes. The gate's jobs can be started by
+# hand on any other pipeline.
+#
+# The jobs of one pipeline share a build directory outside the checkout
+# (FALCON_BUILD_DIR), so the fixtures `test` builds are the ones `coverage`
+# reads; the runner's checkout is cleaned between jobs. The runner takes one
+# job at a time, which is what lets those jobs share it. Whatever a job
+# publishes is copied into the checkout, because GitLab only uploads paths
+# under it.
+
+stages:
+  - test
+  - analyze
+  - coverage
+  - build
+  - release
+  - rigs
+  - corpus
+
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS
+      when: never
+    - if: $CI_COMMIT_TAG
+    - if: $CI_COMMIT_BRANCH == "master"
+    - if: $CI_COMMIT_BRANCH =~ /^\d+\.\d+\.\d+$/
+
+variables:
+  FALCON_CI_ROOT: /srv/build/work/falcon/ci
+  FALCON_BUILD_DIR: $FALCON_CI_ROOT/pipelines/$CI_PIPELINE_ID
+  FALCON_STICKS_DIR: ""
+  FALCON_HARNESS_NAME: falcon-ci-$CI_JOB_ID
+  # The rigs' fixture UKI takes its kernel from this ISO; the path is the
+  # container's, where the corpus is mounted.
+  ARCH_ISO: /corpus/archlinux-2026.01.01-x86_64.iso
+  # Line coverage the gate holds: the harness measured 91.9% on 0e25572.
+  COV_MIN: "91"
+  # Strict coverage fails on a skipped test, and wim_test.c's real-WinPE case
+  # runs only against a real boot.wim: Windows 7 x64's, out of the corpus.
+  BOOTWIM_ISO: /corpus/windows-7-x64.iso
+  FALCON_TEST_BOOTWIM: build/bootwim.wim
+
+default:
+  tags: [falcon]
+  # The image is tagged by its Dockerfile, so a branch that changes the
+  # Dockerfile builds its own and a pipeline never runs a stale one.
+  before_script:
+    - export FALCON_HARNESS_IMAGE="falcon-boot-harness:$(sha256sum tools/coverage/Dockerfile | cut -c1-12)"
+    - mkdir -p "$FALCON_BUILD_DIR"
+  # A cancelled or timed-out job stops the docker client, not the container.
+  after_script:
+    - docker rm -f "$FALCON_HARNESS_NAME" >/dev/null 2>&1 || true
+
+.release-gate:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "master"
+    - when: manual
+      allow_failure: true
+
+# What the suites read beyond test-fixtures, as the binhost's hand-run
+# build directory has them; without them the real-shim and Microsoft-db
+# cases are reported missing and coverage reads lower than it is. The
+# distro shims are pinned downloads (fetch-shims.sh), kept in the runner's
+# cache rather than fetched by every pipeline.
+.shims: &shims
+  - |
+    if [[ ! -d $FALCON_CI_ROOT/cache/shim/build/shim/bins ]]; then
+      FALCON_BUILD_DIR=$FALCON_CI_ROOT/cache/shim/build tools/coverage/harness.sh falcon-efi/tools/shim-spike/fetch-shims.sh
+    fi
+    mkdir -p "$FALCON_BUILD_DIR/shim"
+    cp -a "$FALCON_CI_ROOT/cache/shim/build/shim/bins" "$FALCON_BUILD_DIR/shim/"
+.fixtures: &fixtures
+  - *shims
+  - tools/coverage/harness.sh bash -c "test -s $FALCON_TEST_BOOTWIM || 7z e -so $BOOTWIM_ISO sources/boot.wim > $FALCON_TEST_BOOTWIM"
+  - tools/coverage/harness.sh make mok-test test-fixtures
+
+test:
+  stage: test
+  script:
+    - *fixtures
+    - rc=0; tools/coverage/harness.sh make test-junit || rc=$?
+    - rm -rf junit && cp -r "$FALCON_BUILD_DIR/junit" junit || true
+    - exit $rc
+  artifacts:
+    when: always
+    expire_in: 2 weeks
+    reports:
+      junit: junit/*.xml
+
+analyze:
+  stage: analyze
+  needs: [test]
+  script:
+    - tools/coverage/harness.sh make analyze
+
+coverage:
+  stage: coverage
+  needs: [test]
+  script:
+    - *fixtures
+    - rc=0; tools/coverage/harness.sh make coverage COV_MIN="$COV_MIN" || rc=$?
+    - rm -rf cov && cp -r "$FALCON_BUILD_DIR/cov" cov || true
+    - exit $rc
+  coverage: '/^lines: (\d+\.\d+)%/'
+  artifacts:
+    when: always
+    expire_in: 2 weeks
+    reports:
+      coverage_report:
+        coverage_format: cobertura
+        path: cov/coverage.xml
+
+build:
+  stage: build
+  needs: [analyze, coverage]
+  script:
+    - tools/coverage/harness.sh make all bios station station-legacy jump station-bundle
+    - rm -rf bin && cp -r "$FALCON_BUILD_DIR/bin" bin
+  artifacts:
+    expire_in: 2 weeks
+    paths:
+      - bin/
+
+# A tag vX.Y.Z (release_version's, on master) publishes the release
+# (release.mk, tools/release/publish.sh): the artifacts go to the package
+# registry and the release links them. memtest86+ is the fixture store's.
+release:
+  stage: release
+  needs: [build]
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/
+  variables:
+    FALCON_FIXTURES: /srv/falcon/fixtures
+  script:
+    - |
+      want="v$(cat release_version)"
+      [[ $CI_COMMIT_TAG == "$want" ]] || { echo "the tag is $CI_COMMIT_TAG, release_version says $want"; exit 1; }
+    - *shims
+    - tools/coverage/harness.sh make release MEMTEST=/fixtures/memtest/mt86p_810_i586 MEMTEST_EFI=/fixtures/memtest/mt86p_810_x86_64
+    - rm -rf release && cp -r "$FALCON_BUILD_DIR/release" release
+    - tools/release/publish.sh release
+  artifacts:
+    expire_in: never
+    paths:
+      - release/
+
+# One job per rig, so a failure names its rig and a rerun repeats only it.
+# RIG is the make goals. Every rig first gets the fixtures the rigs expect
+# to find: the test MOK, the signed loader, the fixture UKI (its kernel from
+# ARCH_ISO), the payload, the test stick and station disks, each made once
+# per pipeline, and the rig QEMU.
+rigs:
+  extends: .release-gate
+  stage: rigs
+  needs: [build]
+  parallel:
+    matrix:
+      - RIG:
+          - test-core
+          - test-station-uefi
+          - test-tpm-rig
+          - test-station-installed
+          - test-station-install
+          - test-station-bios
+          - test-station-fixtures
+          - test-station-legacy
+          - test-cfstation
+          - test-jump
+  # The rigs' disk images, from the binhost's fixture store: the A21m's
+  # disk, the DOS and Windows 9x station fixtures, the CF card with Windows
+  # 98 behind the bridge, and memtest86+.
+  variables:
+    FALCON_FIXTURES: /srv/falcon/fixtures
+    A21M_ORIG: /fixtures/a21m/DJSA-210.img
+    W98_IOS_CF: /fixtures/cf-98-bridge.img
+    # The skips the gate accepts, by case: run-cfstation-rig.sh's win98, a
+    # Windows 98 system card booted from CF, has no card to boot and is not
+    # worth one (win98-ios still boots Windows 98 off a card).
+    RIG_SKIP_OK: '^SKIP +win98 '
+  script:
+    # The rig QEMU with the PC Card bridge (build-qemu.sh), built once per
+    # version of its sources and of the image it runs in, and cached; the
+    # rigs need its binary and its SeaBIOS share/ only.
+    - |
+      key=$(cat falcon-bios/tools/qemu-pcc/* tools/coverage/Dockerfile | sha256sum | cut -c1-12)
+      qc=$FALCON_CI_ROOT/cache/qemu-pcc-$key
+      if [[ ! -x $qc/build/qemu-pcc/build/qemu-system-i386 ]]; then
+        FALCON_BUILD_DIR=$qc/build tools/coverage/harness.sh falcon-bios/tools/qemu-pcc/build-qemu.sh
+      fi
+      mkdir -p "$FALCON_BUILD_DIR/qemu-pcc/build"
+      cp -a "$qc/build/qemu-pcc/build/qemu-system-i386" "$FALCON_BUILD_DIR/qemu-pcc/build/"
+      cp -a "$qc/build/qemu-pcc/share" "$FALCON_BUILD_DIR/qemu-pcc/"
+    - |
+      mkdir -p "$FALCON_BUILD_DIR/memtest"
+      cp -a "$FALCON_FIXTURES/memtest/." "$FALCON_BUILD_DIR/memtest/"
+      ln -sfn /fixtures/station "$FALCON_BUILD_DIR/fixtures"
+    - tools/coverage/harness.sh make mok-test sign test-uki payload cli bios station
+    - tools/coverage/harness.sh bash -c "test -f build/test-stick.img || make test-stick"
+    - tools/coverage/harness.sh bash -c "test -f build/test-station.img || make test-station"
+    # Strict, as coverage is: a skipped case is a case the gate did not
+    # run, and a rig that ran none passed nothing.
+    - tools/coverage/harness.sh make MEMTEST=build/memtest/mt86p_810_i586 $RIG | tee rig.log
+    - |
+      if grep -E '^SKIP ' rig.log | grep -vE "$RIG_SKIP_OK"; then
+        echo "FAIL: the rig skipped the cases above"; exit 1
+      fi
+      grep -qE '^PASS ' rig.log || { echo "FAIL: the rig ran no case"; exit 1; }
+  artifacts:
+    when: always
+    expire_in: 2 weeks
+    paths:
+      - rig.log
+
+# The corpus and its verdict, one job. Every Secure Boot state runs in it:
+# the loaders are built and restaged into the case sticks once, and
+# run-corpus.sh keeps CORPUS_JOBS cases booting at a time across all of
+# them. The case sticks are the binhost's, built once per ISO; each holds
+# its ISO, so the guests read local NVMe. Their blessed images were signed
+# when the sticks were made, with the test MOK kept beside them; a
+# pipeline's own would enroll a key those signatures do not chain to, and
+# every blessed case would be refused, so the corpus takes that one.
+#
+# Then the scorecard against master's. A cell master passes that this run
+# did not is booted again alone before it counts, as run-corpus.sh says to:
+# a guest starved by seven others, or by the binhost's own builds, which
+# outrank the pipeline, times out where it would not have. Only a cell that
+# fails CORPUS_RERUNS times alone fails the gate; rerun.log keeps what each
+# rerun said.
+# The verdict is in this job because the results are in the pipeline's
+# build directory, which the cleanup job removes as soon as nothing else is
+# running: a scorecard job started after a manual corpus found it empty.
+#
+# It needs the build, not the rigs: where the rigs are manual and not
+# started, a job needing them is skipped and could not be started by hand.
+corpus:
+  extends: .release-gate
+  stage: corpus
+  needs: [build]
+  variables:
+    FALCON_STICKS_DIR: /srv/build/cache/falcon/sticks
+    FALCON_STICKS_MOK: /srv/build/cache/falcon/mok-test
+    CORPUS_JOBS: "8"
+    # Solo attempts a regressed cell gets. slackware-15.0-dvd chained on the
+    # i686 reaches its installer's shell every time and brings its network
+    # up about four times in five, which is the only thing the harness can
+    # see there; three misses in a row is about one run in a hundred, and a
+    # cell that really broke fails every one.
+    CORPUS_RERUNS: "3"
+  script:
+    - *shims
+    - mkdir -p "$FALCON_BUILD_DIR/mok-test" && cp -a "$FALCON_STICKS_MOK/." "$FALCON_BUILD_DIR/mok-test/"
+    - tools/coverage/harness.sh tools/coverage/run-corpus.sh --no-scorecard --jobs "$CORPUS_JOBS" --states "off ms own moksb bios bios32" | tee corpus.log
+    - tools/coverage/harness.sh python3 tools/coverage/scorecard.py > coverage.md
+    - git fetch --depth 1 origin master
+    - git show FETCH_HEAD:docs/coverage.md > coverage-master.md
+    - |
+      : > rerun.log
+      for attempt in $(seq 1 "$CORPUS_RERUNS"); do
+        tools/coverage/scorecard-diff.py --cases coverage-master.md coverage.md > rerun.txt || true
+        [[ -s rerun.txt ]] || break
+        echo "== rerun $attempt of $CORPUS_RERUNS:" $(cat rerun.txt) | tee -a rerun.log
+        # One run per state and route, so the sticks are restaged once each.
+        sort -k2,3 rerun.txt | awk '{k=$2" "$3; ids[k]=ids[k]" "$1} END {for (k in ids) print k ids[k]}' |
+          while read -r st rt ids; do
+            # shellcheck disable=SC2086
+            tools/coverage/harness.sh tools/coverage/run-corpus.sh --no-scorecard \
+              --force --jobs 1 --states "$st" --routes "$rt" $ids | tee -a rerun.log
+          done
+        tools/coverage/harness.sh python3 tools/coverage/scorecard.py > coverage.md
+      done
+    - tools/coverage/scorecard-diff.py coverage-master.md coverage.md | tee scorecard-diff.txt
+  artifacts:
+    when: always
+    expire_in: 1 year
+    paths:
+      - corpus.log
+      - coverage.md
+      - scorecard-diff.txt
+      - rerun.log
+
+# The pipeline's build directory goes with it. Its files are root's where a
+# job was killed before the harness handed them back, so the harness deletes
+# them. Directories of pipelines cancelled before reaching this job are
+# swept here too, after three days, and so are harness images built for a
+# Dockerfile this pipeline does not use (`latest` is the hand-run one).
+cleanup:
+  stage: .post
+  when: always
+  script:
+    - |
+      for d in "$FALCON_CI_ROOT"/pipelines/*; do
+        [[ -d $d ]] || continue
+        if [[ $d == "$FALCON_BUILD_DIR" ]] || [[ -n $(find "$d" -maxdepth 0 -mtime +3) ]]; then
+          FALCON_BUILD_DIR=$d tools/coverage/harness.sh find /work/build -mindepth 1 -delete
+          rmdir "$d"
+        fi
+      done
+    - |
+      docker images falcon-boot-harness --format '{{.Tag}}' |
+        { grep -vxF -e latest -e "${FALCON_HARNESS_IMAGE#*:}" || true; } |
+        while read -r t; do docker rmi "falcon-boot-harness:$t" || true; done

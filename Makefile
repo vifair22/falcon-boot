@@ -290,6 +290,16 @@ TEST_LIBS    := $(CMOCKA_LIBS)
 
 TEST_OBJ := $(OBJ)/test
 
+# argon2_test.c runs the lanes on pthreads, and plain gcov counters race
+# there: a lost update came out of gcov as a negative branch count (GCC
+# 68080), which gcovr refuses the whole report over. Atomic counters cost
+# the suite about 60% when every unit has them, so only what those threads
+# execute does.
+TEST_THREADED := $(addprefix $(TEST_OBJ)/falcon-core/,src/crypto/lanes.o \
+	src/crypto/argon2.o src/crypto/argon2_sse2.o src/crypto/argon2_ssse3.o \
+	src/crypto/argon2_avx2.o src/crypto/blake2b.o tests/argon2_test.o)
+$(TEST_THREADED): TEST_CFLAGS += -fprofile-update=atomic
+
 $(TEST_OBJ)/%.o: %.c
 	@mkdir -p $(@D)
 	$(CC_HOST) $(TEST_CFLAGS) $(call test_inc,$<) -MMD -MF $@.d -c -o $@ $<
@@ -324,6 +334,9 @@ include falcon-bios/build.mk
 APPS := stick station jump station-legacy
 include $(APPS:%=apps/%/app.mk)
 
+# The release artifacts, from what the components and apps build.
+include release.mk
+
 TESTS := core efi cli appliance hook bios winjump
 TEST_BINS := $(TESTS:%=$(BIN)/falcon-%-test)
 
@@ -338,8 +351,8 @@ cov_empty :=
 cov_space := $(cov_empty) $(cov_empty)
 COV_FILTER := $(subst $(cov_space),|,$(patsubst %,%$$,$(subst .,\.,$(COV_UNITS))))
 
-.PHONY: all test coverage test-fixtures check-tools analyze version-stamp \
-	clean
+.PHONY: all test test-junit coverage test-fixtures check-tools analyze \
+	version-stamp clean
 
 all: $(EFI) cli winjump compile_commands.json
 
@@ -349,6 +362,18 @@ all: $(EFI) cli winjump compile_commands.json
 test: $(TEST_BINS)
 	@find $(TEST_OBJ) -name '*.gcda' -delete 2>/dev/null || true
 	@rc=0; for t in $(TEST_BINS); do $$t || rc=1; done; exit $$rc
+
+# The same run with cmocka writing one JUnit file per group instead of its
+# usual output, for the pipeline's test report. cmocka's XML mode replaces
+# stdout, so this is its own target and `make test` stays readable.
+JUNIT_DIR := build/junit
+test-junit: $(TEST_BINS)
+	@rm -rf $(JUNIT_DIR) && mkdir -p $(JUNIT_DIR)
+	@find $(TEST_OBJ) -name '*.gcda' -delete 2>/dev/null || true
+	@rc=0; for t in $(TEST_BINS); do \
+		CMOCKA_MESSAGE_OUTPUT=xml \
+		CMOCKA_XML_FILE=$(JUNIT_DIR)/$$(basename $$t)-%g.xml $$t || rc=1; \
+	done; exit $$rc
 
 # One report over all four binaries: a unit two of them link (the manifest is
 # read by both the efi and cli suites) accumulates both runs' counts in its
@@ -366,12 +391,23 @@ test: $(TEST_BINS)
 # a known gcov bug (GCC 68080) and refuses the whole report. Here the counts
 # are real, so the threshold is raised rather than the check disabled:
 # ignoring the error instead makes gcovr report those lines as UNCOVERED.
+# The check arrived in gcovr 8.0; the harness image's 7.2 has neither it nor
+# the option, so the option is passed only to a gcovr that knows it.
+#
+# COV_MIN, when set, is the line coverage the report must reach; the pipeline
+# sets it and also takes the Cobertura file for the merge request's diff view.
+COV_XML := build/cov/coverage.xml
+COV_HITS := $(if $(shell gcovr --help 2>/dev/null | grep -e --gcov-suspicious-hits-threshold),\
+	--gcov-suspicious-hits-threshold 1000000000000)
 coverage: export FALCON_TEST_STRICT = 1
 coverage: test
 	@echo
+	@mkdir -p $(dir $(COV_XML))
 	@gcovr --root . $(TEST_OBJ) \
-		--gcov-suspicious-hits-threshold 1000000000000 \
-		--filter '$(COV_FILTER)' --txt --print-summary
+		$(COV_HITS) \
+		--filter '$(COV_FILTER)' --txt --print-summary \
+		--cobertura $(COV_XML) \
+		$(if $(COV_MIN),--fail-under-line $(COV_MIN))
 
 # The image-backed fixtures, together.
 #

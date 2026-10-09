@@ -32,7 +32,19 @@
 #                   /srv/build/cache/falcon/sticks when it exists and the
 #                   build directory is the default one)
 # Env: the same four as the options, FALCON_HARNESS_IMAGE, FALCON_CORPUS,
-#      FALCON_BUILD_DIR, FALCON_STICKS_DIR.
+#      FALCON_BUILD_DIR, FALCON_STICKS_DIR; and for a pipeline job:
+#      FALCON_HARNESS_NAME          the container's name, so a cancelled job
+#                                   can remove the container it left running
+#      FALCON_DOCKER_CGROUP_PARENT  the cgroup the container runs under; the
+#                                   daemon starts it, so the job's own
+#                                   cgroup does not reach it
+#      FALCON_FIXTURES              a directory mounted read-only at
+#                                   /fixtures: the rigs' disk images
+#                                   (tools/fixtures/README.md)
+#      ARCH_ISO, FALCON_TEST_BOOTWIM, A21M_ORIG, W98_IOS_CF
+#                                   passed through (tools/arch-iso.sh,
+#                                   falcon-core/tests/wim_test.c, the
+#                                   A21m and CF station rigs)
 #
 # The case sticks live apart from the build directory on the binhost because
 # they are most of its size (about 200 GB for the corpus) and the work disk is
@@ -117,6 +129,7 @@ fi
 # what it is rather than buried.
 MOUNTS=(-v "$REPO:/work" -v /dev:/dev)
 [[ -d $CORPUS ]] && MOUNTS+=(-v "$CORPUS:/corpus:ro")
+[[ -n ${FALCON_FIXTURES:-} ]] && MOUNTS+=(-v "$FALCON_FIXTURES:/fixtures:ro")
 if [[ -n $BUILD_DIR ]]; then
     mkdir -p "$BUILD_DIR"
     MOUNTS+=(-v "$BUILD_DIR:/work/build")
@@ -139,17 +152,38 @@ fi
 TTY=()
 [[ -t 0 && -t 1 ]] && TTY=(-it)
 
+# The daemon starts the container, so a job's cgroup and a cancelled job's
+# signals both stop at the docker client; these carry them across.
+NAME=${FALCON_HARNESS_NAME:-falcon-harness-$$}
+RUNOPTS=(--name "$NAME")
+[[ -n ${FALCON_DOCKER_CGROUP_PARENT:-} ]] &&
+    RUNOPTS+=(--cgroup-parent "$FALCON_DOCKER_CGROUP_PARENT")
+
 CMD=("$@")
 [[ ${#CMD[@]} -eq 0 ]] && CMD=(tools/coverage/run-corpus.sh)
 # The container runs as root (losetup); what it wrote under /work is handed
 # back to the caller afterwards, whatever the command's exit status.
 CMDQ=$(printf '%q ' "${CMD[@]}")
 
-exec docker run --rm "${TTY[@]}" \
-    --privileged "${KVM[@]}" \
+RUN=(docker run --rm "${TTY[@]}" \
+    --privileged "${KVM[@]}" "${RUNOPTS[@]}" \
     "${MOUNTS[@]}" \
     -e FALCON_CORPUS=/corpus \
     -e FALCON_CASE_WJLOG \
     -e FALCON_CASE_MEM \
+    -e ARCH_ISO \
+    -e FALCON_TEST_BOOTWIM \
+    -e A21M_ORIG \
+    -e W98_IOS_CF \
     -w /work \
-    "$IMAGE" bash -c "$CMDQ; rc=\$?; chown -R $(id -u):$(id -g) /work/build /work/compile_commands.json 2>/dev/null; exit \$rc"
+    "$IMAGE" bash -c "$CMDQ; rc=\$?; chown -R $(id -u):$(id -g) /work/build /work/compile_commands.json 2>/dev/null; exit \$rc")
+
+# At a terminal the client owns it, and ^C reaches the container through it.
+# Without one (a pipeline job), the container's bash is PID 1 and ignores
+# the TERM a cancelled job sends, so the run would go on to its end; the
+# container is removed instead. What it wrote is then root's, which the
+# pipeline's cleanup job deletes through the harness.
+[[ ${#TTY[@]} -gt 0 ]] && exec "${RUN[@]}"
+trap 'echo "harness: removing $NAME" >&2; docker rm -f "$NAME" >/dev/null; exit 143' TERM INT HUP
+"${RUN[@]}" &
+wait $!

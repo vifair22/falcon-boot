@@ -10,7 +10,8 @@ EFI_MOD_loader        := $(EFI_SRC)/loader/loadops.c $(EFI_SRC)/loader/credfs.c 
                          $(EFI_SRC)/loader/bli.c
 EFI_MOD_console       := $(EFI_SRC)/console/menu.c $(EFI_SRC)/console/prompt.c \
                          $(EFI_SRC)/console/idle.c $(EFI_SRC)/console/serial.c
-EFI_MOD_discover      := $(EFI_SRC)/discover/discover.c $(EFI_SRC)/discover/partefi.c
+EFI_MOD_discover      := $(EFI_SRC)/discover/discover.c $(EFI_SRC)/discover/partefi.c \
+                         $(EFI_SRC)/discover/biolow.c
 # Partitions named as STATION.INI names them: disk id and number.
 EFI_MOD_disks         := $(EFI_SRC)/discover/disks.c
 # Secure Boot state, for UX. The variable reads the boot predictions judge
@@ -244,16 +245,16 @@ run-stick-secboot:
 # The loader's EFI-free parts: the bless record cache and preparation state,
 # the virtual-media override arithmetic (a header, included by its test), the
 # Secure Boot state reader, whose whole platform is one GetVariable, the
-# counter's arithmetic, and the boot-timing variables through a fake
-# SetVariable.
+# counter's arithmetic, the boot-timing variables through a fake
+# SetVariable, and Block I/O reads below 4 GiB through a fake driver.
 
 EFI_TESTS := $(addprefix falcon-efi/tests/,main.c bless_test.c \
 	iso_overlay_test.c sb_test.c nxt_test.c tsc_test.c bli_test.c \
-	mpcore_test.c)
+	mpcore_test.c biolow_test.c)
 
 EFI_UUT := $(EFI_SRC)/bless/blesscore.c $(EFI_SRC)/secboot/sb.c \
 	$(EFI_SRC)/nxt/nxtcore.c $(EFI_SRC)/tsc/tsccore.c $(EFI_SRC)/loader/bli.c \
-	$(EFI_SRC)/mp/mpcore.c \
+	$(EFI_SRC)/mp/mpcore.c $(EFI_SRC)/discover/biolow.c \
 	$(CORE_MANIFEST) $(CORE)/media/family.c $(CORE_PART)
 
 $(eval $(call test_bin,efi,$(EFI_TESTS) $(EFI_UUT)))

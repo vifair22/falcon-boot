@@ -2013,6 +2013,11 @@ command takes `--verbose` (every command it runs is shown) and `--quiet`
 (warnings and errors only). It exits 0 on success and 1 on any failure.
 `make install` puts it on `PATH` (Section 13.2).
 
+The defaults below that name `build/bin/` and `build/shim/bins/` are a tree
+build's, read from the repository root. A release's mkstick reads the same
+files under `/usr/lib/falcon-boot/bin/` and `/usr/lib/falcon-boot/shim/bins/`
+(Section 14), and `--help` prints the defaults it was built with.
+
 Sizes (`create`) are a number with an optional unit: `K`, `M`, `G` or `T`,
 powers of 1024, case-insensitive, with `iB` or `B` after it accepted
 (`64M`, `64MiB` and `64mb` are the same). A partition size is rounded down
@@ -3587,9 +3592,83 @@ openSUSE shim 16.1-4.2, Debian shim-signed 1.51+16.1-2), unpacks them with
 names (`fedora-16.1-shimx64.efi`, `fedora-16.1-mmx64.efi`, ...). A package
 already downloaded is not fetched again.
 
-`mkstick create` takes shim from `--shim <dir>` (default `build/shim/bins`),
+`mkstick create` takes shim from `--shim <dir>` (default `build/shim/bins`,
+or a release's `/usr/lib/falcon-boot/shim/bins`, which holds the Fedora 16.1
+pair alone),
 and `station install` from `--shim <dir>` when it is given (it has no
 default: a station has no shim unless asked): `shimx64.efi` if present, else
 `fedora-16.1-shimx64.efi`. MokManager is the file beside it under the same
 prefix and the name the shim launches it by (`fedora-16.1-mmx64.efi`), else
 that name alone. The rig's `--secboot` uses the Fedora 16.1 pair.
+
+## 14. Releases
+
+A release is the tag `vX.Y.Z` on `master`, where `X.Y.Z` is
+`release_version`. Its pipeline builds the files below from that commit and
+attaches them to the GitLab release, from the project's package registry.
+
+| file | what |
+|---|---|
+| `falcon-boot-X.Y.Z-x86_64.tar.gz` | mkstick and the sign tool, and everything mkstick installs |
+| `falcon-station-X.Y.Z.tar.gz` | the BIOS station bundle, for a station with only DevLink recovery (Section 7.8) |
+| `falcon-jump-X.Y.Z.img` | the falcon jump floppy, 1.44 MB, ready to write (Section 9) |
+| `SHA256SUMS` | the three files' SHA-256 |
+
+Every loader in them is unsigned: `mkstick` signs one with the MOK of the
+stick or station it installs to (Section 11.1). The signing appliance's UKI
+is not in a release; `make appliance` builds it where the stick is made
+(Section 4.3).
+
+### 14.1 Checking a download
+
+    sha256sum -c SHA256SUMS
+
+compares the files with the checksums the release page also shows. The
+tarball and the station bundle carry their own `MANIFEST`, which their
+installers check (`sha256sum -c MANIFEST`), and which catches a file that
+changed after it was unpacked.
+
+### 14.2 The main tarball
+
+One directory, `falcon-boot-X.Y.Z/`, holding the files a package installs,
+under the paths it installs them to:
+
+| path | what |
+|---|---|
+| `usr/bin/falcon-boot-mkstick` | mkstick, x86-64, linked static |
+| `usr/bin/falcon-boot-sign` | the sign tool, x86-64, linked static |
+| `usr/lib/falcon-boot/bin/` | `falcon-boot.efi` (the stick), `falcon-boot-station.efi`, the BIOS stages 1 and 2, stage 3 for the stick, the station and station-legacy, and `mod/` (jump's drivers) |
+| `usr/lib/falcon-boot/shim/bins/` | Fedora's shim 16.1 and its MokManager, signed by Microsoft's UEFI CA |
+| `usr/lib/falcon-boot/memtest/` | memtest86+ 8.10: `memtest-i586.bin` for `--memtest`, `memtest-x86_64.efi` for `--memtest-efi` |
+| `usr/share/doc/falcon-boot/` | `README.md`, this Manual, `DESIGN.md`, `LICENSE`, `THIRD-PARTY.md` (shim's and memtest86+'s licences and sources) |
+| `VERSION`, `MANIFEST` | the build's version string, and every other file's SHA-256 |
+
+Its mkstick reads its defaults from `/usr/lib/falcon-boot` (Section 10), so
+installed, it needs no path options:
+
+    tar -xzf falcon-boot-X.Y.Z-x86_64.tar.gz
+    cd falcon-boot-X.Y.Z && sha256sum -c MANIFEST
+    sudo cp -r usr/. /usr/
+
+Run from the unpacked directory instead, point it at the files:
+
+    usr/bin/falcon-boot-mkstick station install /dev/X \
+        --stage1 usr/lib/falcon-boot/bin/falcon-bios-stage1.bin ...
+
+A stick or station already made is brought to the release with
+`falcon-boot-mkstick update` (Section 10.7); its default `--from` is the
+installed `/usr/lib/falcon-boot/bin`.
+
+### 14.3 Building a release
+
+    tools/coverage/harness.sh make release \
+        MEMTEST=<memtest86+ i586> MEMTEST_EFI=<memtest86+ x86-64>
+
+writes the four files to `build/release/`. It builds in the harness
+container because the static programs carry its libc. It needs the shim
+packages (`fetch-shims.sh`, Section 13.6) and memtest86+'s release binaries
+(`mt86p_810_i586`, `mt86p_810_x86_64`), and refuses without them. The tag's
+pipeline runs the same target with the fixture store's memtest86+, checks
+that the tag is `release_version`'s, and publishes with
+`tools/release/publish.sh`.
+

@@ -54,6 +54,7 @@ int run_manifest_tests(void);
 int run_bless_tests(void);
 int run_nxt_tests(void);
 int run_tsc_tests(void);
+int run_biolow_tests(void);
 int run_bli_tests(void);
 int run_mpcore_tests(void);
 int run_strows_tests(void);

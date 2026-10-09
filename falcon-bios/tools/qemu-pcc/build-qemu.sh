@@ -45,9 +45,17 @@ grep -q IDE_CMD646 "$SRC/configs/devices/i386-softmmu/default.mak" ||
     printf "\nCONFIG_IDE_CMD646=y\n" \
         >> "$SRC/configs/devices/i386-softmmu/default.mak"
 
+# The release's own firmware path, so the ROMs it finds without -L are the
+# ones the machine's QEMU finds: Debian splits them over /usr/share/qemu,
+# /usr/share/seabios (the VGA BIOSes) and /usr/lib/ipxe/qemu, and upstream's
+# default names none of those. A tree configured before this keeps its old
+# path; remove build/qemu-pcc/build to reconfigure.
+FWPATH=$(qemu-system-i386 -L help | paste -sd:)
+
 if [[ ! -f "$DIR/build/build.ninja" ]]; then
     mkdir -p "$DIR/build"
     (cd "$DIR/build" && "$SRC/configure" --target-list=i386-softmmu \
+        --firmwarepath="$FWPATH" \
         --disable-docs --disable-werror --disable-gtk --disable-sdl \
         --disable-vnc --disable-spice --disable-opengl --disable-curl \
         --disable-xen --disable-tools --disable-guest-agent \

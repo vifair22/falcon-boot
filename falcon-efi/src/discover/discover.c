@@ -7,6 +7,7 @@
 
 #include <lib/string.h>
 #include <blk/rebl.h>
+#include <discover/biolow.h>
 #include <discover/partefi.h>
 #include <efi/devpath.h>
 #include <efi/loadedimage.h>
@@ -40,12 +41,9 @@ static char g_rec_json[LUKS_JSON_CAP];
  * and fails the others. */
 static UINT8 g_bounce[4096];
 
-/* Memory below 4 GiB for Block I/O to transfer into. A firmware that starts
- * the loader itself, rather than through shim, may place the image above
- * 4 GiB, and with it every static buffer; an ASUS B550's AMI NVMe driver
- * then refuses the read with EFI_UNSUPPORTED rather than bouncing it (DESIGN
- * Section 3.1). Allocated on first need and kept; never freed, since the
- * loader reads until it hands over. */
+/* Memory below 4 GiB for Block I/O to transfer into (biolow.h for why).
+ * Allocated on first need and kept; never freed, since the loader reads
+ * until it hands over. */
 #define LOW_BOUNCE_PAGES 16u
 static UINT8 *g_low;
 
@@ -60,35 +58,11 @@ static UINT8 *low_bounce(void)
     return g_low;
 }
 
-/* ReadBlocks into buf, through memory below 4 GiB when buf reaches above
- * it. len is whole blocks. */
 static EFI_STATUS bio_read(EFI_BLOCK_IO_PROTOCOL *bio, UINT64 lba, UINTN len,
                            void *buf)
 {
-    UINT32 bs = bio->Media->BlockSize;
-    UINTN chunk = (UINTN)LOW_BOUNCE_PAGES * 4096u;
-    UINT8 *low;
-    UINT8 *dst = (UINT8 *)buf;
-    EFI_STATUS es;
-
-    if ((uint64_t)(uintptr_t)buf + len <= 0x100000000ull)
-        return bio->ReadBlocks(bio, bio->Media->MediaId, lba, len, buf);
-    low = low_bounce();
-    if (low == (UINT8 *)0 || bs == 0u || chunk < bs)
-        return bio->ReadBlocks(bio, bio->Media->MediaId, lba, len, buf);
-    chunk -= chunk % bs;
-    while (len > 0u) {
-        UINTN n = len < chunk ? len : chunk;
-
-        es = bio->ReadBlocks(bio, bio->Media->MediaId, lba, n, low);
-        if (es != EFI_SUCCESS)
-            return es;
-        memcpy(dst, low, n);
-        dst += n;
-        lba += n / bs;
-        len -= n;
-    }
-    return EFI_SUCCESS;
+    return biolow_read(bio, lba, len, buf, low_bounce,
+                       (UINTN)LOW_BOUNCE_PAGES * 4096u);
 }
 
 /* Block I/O itself: whole blocks at block-aligned offsets, which is the only

@@ -7,7 +7,8 @@
 # The disk is mk-a21m-station.sh's, in build/a21m-legacy: a qcow2 overlay
 # of the original image (never copied, never opened for writing) with the
 # NTFS partition shrunk, the station partition in the space that leaves,
-# jump's drivers, MEMTEST.BIN and DevLink recovery's UKI in its /uki. Each
+# jump's drivers, MEMTEST.BIN and, where it exists, DevLink recovery's UKI
+# in its /uki. Each
 # boot runs on a throwaway overlay on top of that, as run-a21m-rig.sh's do.
 # The machine is QEMU's pc with the A21m's PIIX4 south bridge, a Pentium
 # III with 512 MB, the disk with the A21m's geometry.
@@ -51,22 +52,33 @@ QEMU=${QEMU:-qemu-system-i386}
 QPCC=build/qemu-pcc/build/qemu-system-i386
 CLIENT=${DEVLINK_CLIENT:-$HOME/git/home/devlink/build/bin/devlink}
 MEMTEST=${MEMTEST:-build/memtest/mt86p_810_i586}
+# DevLink recovery is in the install, the menu and the cases only where its
+# UKI or the images it is built from exist (apps/station-legacy/app.mk).
+DEVLINK_UKI=build/devlink/devlink-recovery.efi
+DEVLINK_IMAGES=${DEVLINK_IMAGES:-$HOME/git/home/devlink-rescue/build/classic/images}
+DEVLINK=0
+[[ -f $DEVLINK_UKI || -f $DEVLINK_IMAGES/bzImage ]] && DEVLINK=1
 MACHINE=pc,x-south-bridge=piix4-isa
 DISK=cyls=20784,heads=15,secs=63,bios-chs-trans=large
 TIMEOUT=90
 
 command -v socat >/dev/null || { echo "socat is needed for the monitor" >&2; exit 2; }
 mkdir -p "$R"
-make --no-print-directory station-legacy devlink-uki test-bios-img \
-    test-bios-probe >/dev/null
+make --no-print-directory station-legacy test-bios-img test-bios-probe \
+    >/dev/null
+if [[ -f $DEVLINK_IMAGES/bzImage ]]; then
+    make --no-print-directory devlink-uki >/dev/null
+fi
 
 # The installed disk, made once (or again with A21M_FRESH=1).
 if [[ ! -f "$IMG" || "${A21M_FRESH:-0}" == 1 ]]; then
     echo "== installing station-legacy on the A21m's disk ($IMG)"
     extra=()
     [[ -f "$MEMTEST" ]] && extra=(MEMTEST="$MEMTEST")
+    uki=()
+    [[ $DEVLINK == 1 ]] && uki=(--uki "$DEVLINK_UKI")
     env A21M_DIR="$D" "${extra[@]}" falcon-bios/tools/mk-a21m-station.sh \
-        --legacy --uki build/devlink/devlink-recovery.efi >"$R/install.log" 2>&1 ||
+        --legacy "${uki[@]}" >"$R/install.log" 2>&1 ||
         { tail -20 "$R/install.log"; exit 1; }
 fi
 
@@ -113,7 +125,11 @@ boot() {
     rm -f "$R/com1.log" "$R/mon.sock" "$R/overlay.qcow2" "$R/qemu.log"
     qemu-img create -q -f qcow2 -F qcow2 -b "$(realpath "$IMG")" \
         "$R/overlay.qcow2"
-    timeout "$TIMEOUT" "$q" -L /usr/share/qemu -machine "$MACHINE" \
+    # The rig QEMU's bridge has a CardBus header, which only its own patched
+    # SeaBIOS (build-qemu.sh) gets past; the release's hangs in POST.
+    local l=(-L /usr/share/qemu)
+    [[ $q == "$QPCC" ]] && l=(-L build/qemu-pcc/share -L /usr/share/qemu)
+    timeout "$TIMEOUT" "$q" "${l[@]}" -machine "$MACHINE" \
         "${cpu[@]}" -display none -net none \
         -drive if=none,id=d0,file="$R/overlay.qcow2",format=qcow2 \
         -device ide-hd,drive=d0,bus=ide.0,unit=0,$DISK \
@@ -138,9 +154,11 @@ halt() {
 
 # The rows in the order the first menu drew them, one label per line.
 ROWS='Windows \(NTLDR\)|CD drive|CF card \(PC Card\)|USB stick|DevLink recovery|Memory test'
+# No rows is an answer, not an error: under pipefail grep's 1 would end the
+# rig there, silently, instead of failing the case.
 rows() {
     log_text "$R/com1.log" | sed -n '/entries, [0-9]* shown/,$p' |
-        grep -aoE "$ROWS" | awk '!seen[$0]++'
+        { grep -aoE "$ROWS" || true; } | awk '!seen[$0]++'
 }
 
 # Stops the countdown on the menu, moves to the row LABEL and presses
@@ -207,8 +225,11 @@ stick() {       # stick CASE HC-DEVICE
 }
 
 CASES=("$@")
-[[ ${#CASES[@]} -gt 0 ]] ||
-    CASES=(menu cd usb-uhci usb-ohci usb-ehci cf cf3v devlink windows)
+if [[ ${#CASES[@]} -eq 0 ]]; then
+    CASES=(menu cd usb-uhci usb-ohci usb-ehci cf cf3v)
+    [[ $DEVLINK == 1 ]] && CASES+=(devlink)
+    CASES+=(windows)
+fi
 
 for c in "${CASES[@]}"; do
     case $c in
@@ -227,7 +248,9 @@ for c in "${CASES[@]}"; do
         sleep 1
         shot menu
         halt
-        want=$'Windows (NTLDR)\nCD drive\nCF card (PC Card)\nUSB stick\nDevLink recovery\nMemory test'
+        want=$'Windows (NTLDR)\nCD drive\nCF card (PC Card)\nUSB stick'
+        [[ $DEVLINK == 1 ]] && want+=$'\nDevLink recovery'
+        want+=$'\nMemory test'
         got=$(rows)
         [[ -z "$WHY" && "$got" != "$want" ]] && WHY="rows: $(paste -sd, <<<"$got")"
         result menu "$([[ -z "$WHY" ]] && echo 1 || echo 0)" \

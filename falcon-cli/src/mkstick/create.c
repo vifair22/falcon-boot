@@ -37,6 +37,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include <common/datadir.h>
 #include <common/log.h>
 #include <common/proc.h>
 #include <common/util.h>
@@ -57,9 +58,9 @@
  * boot record carries (DESIGN Section 3.3). */
 #include <falcon-bios/src/start/biosdefs.h>
 
-#define DEFAULT_SHIM_DIR   "build/shim/bins"
-#define DEFAULT_LOADER     "build/bin/falcon-boot.efi"
-#define DEFAULT_STAGE3     "build/bin/falcon-bios-stage3.bin"
+#define DEFAULT_SHIM_DIR   FALCON_DATADIR "/shim/bins"
+#define DEFAULT_LOADER     FALCON_DATADIR "/bin/falcon-boot.efi"
+#define DEFAULT_STAGE3     FALCON_DATADIR "/bin/falcon-bios-stage3.bin"
 
 /* Every external tool this command needs, checked before the first byte is
  * written. Discovering that mkfs.exfat is missing after p1 has been formatted
