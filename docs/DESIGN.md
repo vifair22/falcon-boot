@@ -4552,10 +4552,13 @@ to the station's event, must give what the station read, or enrollment
 refuses rather than seal to values the station will never see. A log that
 is not whole comes from a firmware that extends PCRs it does not log (the
 AMD firmware TPM of an ASUS B550 board does, PCRs 0 to 7 at every boot,
-`falcon-cli/tests/data/b550/`): no replay of it gives the station's PCRs,
-so it is set aside and the record stands alone. Either way the record must
-be of this boot: it must equal the TPM on PCRs 0 to 3 and 6, which nothing
-extends after the station's menu, less any the log shows extended after
+after the station's menu, `falcon-cli/tests/data/b550/`): it is set aside
+as evidence of what the station read, and the record stands alone. Either
+way the record must be of this boot. The log is, so when it, replayed up
+to the station's event, gives every PCR in the record, that settles it.
+Otherwise (edk2 logs PCR 7's authority and the GPT after the station's
+event, so its replay there stops short of the record) the record must
+equal the TPM on PCRs 0 to 3 and 6, less any the log shows extended after
 the station's event (a UKI's systemd-stub extends PCR 1). A station older
 than the record saves none, and the replay alone then gives the values, as
 long as the log is whole. A fresh 20-byte seed from `getrandom` is sealed (tpm2.h's

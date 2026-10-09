@@ -422,6 +422,29 @@ static const char k_b550_station[] =
 
 #define B550_MASK 0x94u     /* PCRs 2, 4 and 7 */
 
+/* The station started without shim (README.md): the TPM as it stood after
+ * the boot, and the station's digest, PCR 4's first application. */
+static const char *const k_b550_direct_pcr[16] = {
+    "17e02db14b5cb35635190e866a10d5696c7a1d5465769e4fe3aeb8515d773f99",
+    "5f51b2da472140f3f36228fcf211953122e30149561033649371844dce9b855c",
+    "cc44e1bbe025d05a27eb0309772b960dc3f67fb547d520decf356bcaf3300ec7",
+    "8d22c738fcd1730fb0789cb09c0f72a0012baa3ea867723b26772c9ca0ae6571",
+    "a076d6cef20c508631975fea64ad96edb22d69e48573ea24a6c252df39d7438d",
+    "d2ad27e6a6e5a6983b75f2e66b3e152632dcb757dc3d4736173029a85322df5c",
+    "8d22c738fcd1730fb0789cb09c0f72a0012baa3ea867723b26772c9ca0ae6571",
+    "5d5526f0246817eeb62ba746a2b8522cea2c018dc11418c054f39335d1a26d05",
+    "0000000000000000000000000000000000000000000000000000000000000000",
+    "ca4382ad02c70424fbed2e81b1eb0d9acc228b7d86ca99a434a2e1dd9ef4bfcc",
+    "5cf3e7a62612df12dd2e2072610d3587545837c4bafc9d9a8bd2c404d54288bb",
+    "7beda3f22c4e069fc374f1acf8753a4327da75f1fcf154c916f4cc44abb88655",
+    "21679e8ea8da4e4a5a148205aa08bf7a6568fd9b07607877647b6119986d848b",
+    "3345a4e7857aa5ae65e97702ade84a3755fd6144724779536b5773128676c99c",
+    "3345a4e7857aa5ae65e97702ade84a3755fd6144724779536b5773128676c99c",
+    "62465c0a72bfbe12bea245c80b82a074ca5102b31f4f031552bd2ad00ac9c77f",
+};
+static const char k_b550_direct_station[] =
+    "af44a2d64b3f2e13f9f951f1170aeda7f0ff5665fbd593343b189cad8ff0bfbd";
+
 static uint8_t g_rec2[EVSAVE_BODY2];
 
 static size_t record2(const uint8_t pcr[16][32])
@@ -431,6 +454,54 @@ static size_t record2(const uint8_t pcr[16][32])
     assert_int_equal(evsave_write2(g_rec2, sizeof g_rec2, pcr, &n),
                      EVSAVE_OK);
     return n;
+}
+
+/* The firmware extends PCRs 0 to 7 after the station's menu without logging
+ * it, so none of the station's record is what the TPM holds by the time
+ * enrollment runs. The log, replayed to the station's measurement, gives
+ * every PCR of the record, and that pins the record to this boot. */
+static void test_station20_pinned(void **state)
+{
+    static uint8_t live[16][32];
+    static uint8_t out[16][32];
+    static uint8_t rec[EVSAVE_BODY2];
+    uint8_t station[32];
+    size_t len = 0, rlen = 0;
+    uint8_t *log = slurp_in("b550", "evlog-direct.bin", &len);
+    uint8_t *saved = slurp_in("b550", "record-direct.bin", &rlen);
+    evsave_view v;
+    unsigned bad = 99;
+    int whole = -1;
+    unsigned i;
+
+    (void)state;
+    for (i = 0; i < 16u; i++)
+        unhex(k_b550_direct_pcr[i], live[i], 32);
+    unhex(k_b550_direct_station, station, 32);
+    assert_true(rlen <= sizeof rec);
+    memcpy(rec, saved, rlen);
+    assert_int_equal(evsave_read(rec, rlen, &v), EVSAVE_OK);
+    assert_int_equal(v.version, 2);
+
+    /* Every PCR the station read differs from the TPM's now. */
+    for (i = 0; i < 8u; i++)
+        assert_memory_not_equal(v.pcr + (size_t)i * 32u, live[i], 32);
+
+    assert_int_equal(totpc_station20(rec, rlen, log, len, station,
+                                     (const uint8_t (*)[32])live, B550_MASK,
+                                     out, &whole, &bad), TOTPC_OK);
+    assert_int_equal(whole, 0);
+    assert_memory_equal(out, v.pcr, sizeof out);
+
+    /* A record the log does not pin is held against the TPM, which it
+     * fails here at the first stable PCR. */
+    rec[EVSAVE_HDR + 2u * EVSAVE_DIGEST_LEN2] ^= 1u;
+    assert_int_equal(totpc_station20(rec, rlen, log, len, station,
+                                     (const uint8_t (*)[32])live, B550_MASK,
+                                     out, &whole, &bad), TOTPC_ERR_BOOT);
+    assert_int_equal(bad, 0);
+    free(saved);
+    free(log);
 }
 
 /* The firmware extends PCRs it does not log: the log is set aside and the
@@ -581,6 +652,7 @@ int run_totpcore_tests(void)
         cmocka_unit_test(test_merge_t430),
         cmocka_unit_test(test_merge_saved_alone),
         cmocka_unit_test(test_station20_unlogged),
+        cmocka_unit_test(test_station20_pinned),
         cmocka_unit_test(test_station20_whole),
     };
 

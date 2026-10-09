@@ -106,9 +106,11 @@ int totpc_merge12_as(const uint8_t *fw, size_t fw_len, const uint8_t *rec,
  * the station saved (rec) and the firmware's log as Linux reads it (log).
  * The log must hold the station image's measurement in PCR 4 (station, its
  * SHA-256 Authenticode digest). live, when given, is PCRs 0-15 as the TPM
- * holds them now: the record must equal it on each of TOTPC_STABLE_PCRS
- * the log shows nothing extending after the station's measurement
- * (TOTPC_ERR_BOOT otherwise; a UKI's systemd-stub extends PCR 1), and the
+ * holds them now: unless the log, replayed to the station's measurement,
+ * gives the record on every PCR (which pins it to this boot), the record
+ * must equal live on each of TOTPC_STABLE_PCRS the log shows nothing
+ * extending after the station's measurement (TOTPC_ERR_BOOT otherwise; a
+ * UKI's systemd-stub extends PCR 1), and the
  * log is whole when a replay of it to
  * its end gives live on every PCR in mask and TOTPC_STABLE_PCRS. Without
  * live (the rig's swtpm, not the TPM that booted) the log is taken as
