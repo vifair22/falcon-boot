@@ -472,6 +472,7 @@ static void test_station20_pinned(void **state)
     evsave_view v;
     unsigned bad = 99;
     int whole = -1;
+    int pinned = -1;
     unsigned i;
 
     (void)state;
@@ -489,8 +490,9 @@ static void test_station20_pinned(void **state)
 
     assert_int_equal(totpc_station20(rec, rlen, log, len, station,
                                      (const uint8_t (*)[32])live, B550_MASK,
-                                     out, &whole, &bad), TOTPC_OK);
+                                     out, &whole, &pinned, &bad), TOTPC_OK);
     assert_int_equal(whole, 0);
+    assert_int_equal(pinned, 1);
     assert_memory_equal(out, v.pcr, sizeof out);
 
     /* A record the log does not pin is held against the TPM, which it
@@ -498,7 +500,8 @@ static void test_station20_pinned(void **state)
     rec[EVSAVE_HDR + 2u * EVSAVE_DIGEST_LEN2] ^= 1u;
     assert_int_equal(totpc_station20(rec, rlen, log, len, station,
                                      (const uint8_t (*)[32])live, B550_MASK,
-                                     out, &whole, &bad), TOTPC_ERR_BOOT);
+                                     out, &whole, &pinned, &bad), TOTPC_ERR_BOOT);
+    assert_int_equal(pinned, 0);
     assert_int_equal(bad, 0);
     free(saved);
     free(log);
@@ -516,6 +519,7 @@ static void test_station20_unlogged(void **state)
     uint8_t *log = slurp_in("b550", "evlog.bin", &len);
     unsigned bad = 99;
     int whole = -1;
+    int pinned = -1;
     size_t n;
     unsigned i;
 
@@ -532,7 +536,7 @@ static void test_station20_unlogged(void **state)
     n = record2((const uint8_t (*)[32])rec);
     assert_int_equal(totpc_station20(g_rec2, n, log, len, station,
                                      (const uint8_t (*)[32])live, B550_MASK,
-                                     out, &whole, &bad), TOTPC_OK);
+                                     out, &whole, &pinned, &bad), TOTPC_OK);
     assert_int_equal(whole, 0);
     assert_memory_equal(out, rec, sizeof rec);
 
@@ -542,14 +546,14 @@ static void test_station20_unlogged(void **state)
     n = record2((const uint8_t (*)[32])rec);
     assert_int_equal(totpc_station20(g_rec2, n, log, len, station,
                                      (const uint8_t (*)[32])live, B550_MASK,
-                                     out, &whole, &bad), TOTPC_OK);
+                                     out, &whole, &pinned, &bad), TOTPC_OK);
 
     /* A stable PCR that is not this boot's. */
     rec[3][0] ^= 1u;
     n = record2((const uint8_t (*)[32])rec);
     assert_int_equal(totpc_station20(g_rec2, n, log, len, station,
                                      (const uint8_t (*)[32])live, B550_MASK,
-                                     out, &whole, &bad), TOTPC_ERR_BOOT);
+                                     out, &whole, &pinned, &bad), TOTPC_ERR_BOOT);
     assert_int_equal(bad, 3);
     rec[3][0] ^= 1u;
     n = record2((const uint8_t (*)[32])rec);
@@ -558,7 +562,7 @@ static void test_station20_unlogged(void **state)
     station[0] ^= 1u;
     assert_int_equal(totpc_station20(g_rec2, n, log, len, station,
                                      (const uint8_t (*)[32])live, B550_MASK,
-                                     out, &whole, &bad), TOTPC_ERR_STATION);
+                                     out, &whole, &pinned, &bad), TOTPC_ERR_STATION);
     station[0] ^= 1u;
 
     /* A version 1 record, a broken one, and arguments. */
@@ -568,17 +572,17 @@ static void test_station20_unlogged(void **state)
 
         assert_int_equal(totpc_station20(g_rec, n1, log, len, station,
                                          (const uint8_t (*)[32])live,
-                                         B550_MASK, out, &whole, &bad),
+                                         B550_MASK, out, &whole, &pinned, &bad),
                          TOTPC_ERR_LOG);
     }
     assert_int_equal(totpc_station20(g_rec2, n - 1u, log, len, station,
                                      (const uint8_t (*)[32])live, B550_MASK,
-                                     out, &whole, &bad), TOTPC_ERR_LOG);
+                                     out, &whole, &pinned, &bad), TOTPC_ERR_LOG);
     assert_int_equal(totpc_station20(g_rec2, n, log, len, station, NULL,
-                                     1u << 16, out, &whole, &bad),
+                                     1u << 16, out, &whole, &pinned, &bad),
                      TOTPC_ERR_ARG);
     assert_int_equal(totpc_station20(NULL, n, log, len, station, NULL,
-                                     B550_MASK, out, &whole, &bad),
+                                     B550_MASK, out, &whole, &pinned, &bad),
                      TOTPC_ERR_ARG);
     free(log);
 }
@@ -597,6 +601,7 @@ static void test_station20_whole(void **state)
     uint8_t *log = slurp_in("b550", "evlog.bin", &len);
     unsigned bad = 99;
     int whole = -1;
+    int pinned = -1;
     size_t n;
     unsigned i;
 
@@ -614,13 +619,13 @@ static void test_station20_whole(void **state)
     n = record2((const uint8_t (*)[32])rec);
     assert_int_equal(totpc_station20(g_rec2, n, log, len, station,
                                      (const uint8_t (*)[32])live, B550_MASK,
-                                     out, &whole, &bad), TOTPC_OK);
+                                     out, &whole, &pinned, &bad), TOTPC_OK);
     assert_int_equal(whole, 1);
     assert_memory_equal(out, rec, sizeof rec);
 
     /* Without the live TPM (the rig's swtpm) the log is taken as whole. */
     assert_int_equal(totpc_station20(g_rec2, n, log, len, station, NULL,
-                                     B550_MASK, out, &whole, &bad), TOTPC_OK);
+                                     B550_MASK, out, &whole, &pinned, &bad), TOTPC_OK);
     assert_int_equal(whole, 1);
 
     /* The record and a whole log disagree on PCR 7. */
@@ -628,7 +633,7 @@ static void test_station20_whole(void **state)
     n = record2((const uint8_t (*)[32])rec);
     assert_int_equal(totpc_station20(g_rec2, n, log, len, station,
                                      (const uint8_t (*)[32])live, B550_MASK,
-                                     out, &whole, &bad), TOTPC_ERR_PCR);
+                                     out, &whole, &pinned, &bad), TOTPC_ERR_PCR);
     assert_int_equal(bad, 7);
 
     /* A PCR outside the mask may differ. */
@@ -637,7 +642,7 @@ static void test_station20_whole(void **state)
     n = record2((const uint8_t (*)[32])rec);
     assert_int_equal(totpc_station20(g_rec2, n, log, len, station,
                                      (const uint8_t (*)[32])live, B550_MASK,
-                                     out, &whole, &bad), TOTPC_OK);
+                                     out, &whole, &pinned, &bad), TOTPC_OK);
     free(log);
 }
 

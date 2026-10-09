@@ -4632,8 +4632,10 @@ Authenticode digest replaced by the new one's there
 (`evlog_replay_substitute`; on 1.2, `totpc_merge12_as` checks the logs as
 they are and then replays them with the substitution). The certificate
 is the same, so PCR 7's authority event does not move. A prediction needs
-a whole log: on a firmware that extends PCRs it does not log, the TPM 2.0
-record is checked as it is and the reseal refused. A reseal that fails
+a log that gives what the station read: a whole one, or one that pins the
+record, since the replay that predicts stops at the station's event, which
+is as far as the pin reaches. On a firmware that extends PCRs it does not
+log before the station's menu, neither holds, and the reseal is refused. A reseal that fails
 leaves the loader written and says to run `reseal` from the updated
 system; the station shows the warning in place of a code until it is
 resealed.
