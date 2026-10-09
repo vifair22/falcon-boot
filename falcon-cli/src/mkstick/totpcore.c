@@ -305,7 +305,8 @@ int totpc_merge12_as(const uint8_t *fw, size_t fw_len, const uint8_t *rec,
 int totpc_station20(const uint8_t *rec, size_t rec_len, const uint8_t *log,
                     size_t log_len, const uint8_t station[32],
                     const uint8_t (*live)[32], uint32_t mask,
-                    uint8_t out[16][32], int *whole, unsigned *bad_pcr)
+                    uint8_t out[16][32], int *whole, int *pinned,
+                    unsigned *bad_pcr)
 {
     static evlog_replay rep;
     static evlog_replay all;
@@ -314,7 +315,8 @@ int totpc_station20(const uint8_t *rec, size_t rec_len, const uint8_t *log,
     unsigned i;
 
     if (rec == NULL || log == NULL || station == NULL || out == NULL ||
-        whole == NULL || bad_pcr == NULL || (mask >> EVSAVE_PCRS) != 0u)
+        whole == NULL || pinned == NULL || bad_pcr == NULL ||
+        (mask >> EVSAVE_PCRS) != 0u)
         return TOTPC_ERR_ARG;
     if (evsave_read(rec, rec_len, &v) != EVSAVE_OK || v.version != 2u)
         return TOTPC_ERR_LOG;
@@ -328,6 +330,19 @@ int totpc_station20(const uint8_t *rec, size_t rec_len, const uint8_t *log,
     if (!rep.stopped)
         return TOTPC_ERR_STATION;
 
+    /* The log is this boot's, so a replay of it to the station's
+     * measurement that gives every PCR the record holds pins the record to
+     * this boot whatever the TPM holds now: the B550's firmware extends
+     * PCRs 0 to 7 after the station's menu without logging it. Where the
+     * firmware logs events of the station's own load after its measurement
+     * (edk2: PCR 7's authority, the GPT), the replay stops short of the
+     * record and the TPM is asked instead. */
+    *pinned = 1;
+    for (i = 0; i < EVSAVE_PCRS; i++)
+        if (memcmp(rep.pcr[i], v.pcr + (size_t)i * EVSAVE_DIGEST_LEN2,
+                   EVSAVE_DIGEST_LEN2) != 0)
+            *pinned = 0;
+
     /* The stable PCRs the log shows nothing extending after the station's
      * measurement: the record and the TPM agree on them when the record is
      * of this boot. A UKI's systemd-stub extends PCR 1, so on such a boot
@@ -336,7 +351,7 @@ int totpc_station20(const uint8_t *rec, size_t rec_len, const uint8_t *log,
     *whole = 1;
     if (live != NULL) {
         for (i = 0; i < EVSAVE_PCRS; i++) {
-            if (((TOTPC_STABLE_PCRS >> i) & 1u) != 0u &&
+            if (!*pinned && ((TOTPC_STABLE_PCRS >> i) & 1u) != 0u &&
                 memcmp(rep.pcr[i], all.pcr[i], EVSAVE_DIGEST_LEN2) == 0 &&
                 memcmp(v.pcr + (size_t)i * EVSAVE_DIGEST_LEN2, live[i],
                        EVSAVE_DIGEST_LEN2) != 0) {
