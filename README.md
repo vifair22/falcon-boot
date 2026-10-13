@@ -66,7 +66,9 @@ Each release on GitLab carries mkstick and the sign tool as static x86-64
 binaries with every unsigned loader they install
 (`falcon-boot-X.Y.Z-x86_64.tar.gz`, unpacked under `/usr` it needs no path
 options), the BIOS station bundle, the falcon jump floppy image, and their
-`SHA256SUMS`. The Manual's Section 14 says how to check and install them.
+`SHA256SUMS`. It is also a package, `falcon-boot-bin`: in the `falcon`
+pacman repository on dl.airies.net, and in vifair-overlay. The Manual's
+Section 14 says how to check and install them.
 
 ## Building
 
