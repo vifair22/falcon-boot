@@ -62,14 +62,20 @@ static volatile uint16_t *vga(void)
 
 static void cell(size_t row, size_t col, uint16_t c, uint8_t attr)
 {
-    char ch = bios_ascii(c, '?');
+    uint8_t ch = tui_cp437(c, '?');
 
     if (row >= ROWS || col >= COLS)
         return;
-    if ((unsigned char)ch < 0x20u)
+    if (ch < 0x20u)
         ch = '?';
-    vga()[row * COLS + col] =
-        (uint16_t)(((unsigned)attr << 8) | (unsigned char)ch);
+    vga()[row * COLS + col] = (uint16_t)(((unsigned)attr << 8) | ch);
+}
+
+/* The serial mirror's byte for a cell: the code page 437 byte VGA shows,
+ * which is also what OVMF's terminal sends for the same character. */
+static void ser_glyph(uint16_t c)
+{
+    bios_putc((char)tui_cp437(c, '?'));
 }
 
 /* ---- the serial mirror ---- */
@@ -146,7 +152,7 @@ static void run(size_t row, size_t col, size_t from, size_t to, uint8_t attr)
     ser_attr(attr);
     for (i = from; i < to; i++) {
         cell(row, col + i, g_row[i], attr);
-        bios_putc(bios_ascii(g_row[i], '?'));
+        ser_glyph(g_row[i]);
     }
 }
 
@@ -203,7 +209,7 @@ static void glyph(uint16_t c)
 {
     ser_attr(TUI_ATTR_TEXT);
     cell(g_cur_row, g_cur_col, c, TUI_ATTR_TEXT);
-    bios_putc(bios_ascii(c, '?'));
+    ser_glyph(c);
     if (g_cur_col + 1u < COLS)
         g_cur_col++;
 }

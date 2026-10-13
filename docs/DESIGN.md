@@ -1799,9 +1799,13 @@ on a machine with one processor.
   `screen_menu_tagged`, each with a `step` and a `fill` callback), fills
   every pending row on screen from what it has found, and repaints those
   rows, or the whole window when a tag column widens. Rows not looked inside
-  yet show `...` (core's `tui_tag_pending`). While there is work a spinner,
-  `/-\|`, turns in the banner's last cell, which the banner's right padding
-  keeps free. There is no progress line.
+  yet show `...` (core's `tui_tag_pending`). While there is work a spinner
+  turns in the banner's last cell, which the banner's right padding keeps
+  free: `/`, `\`, `|` and the box-drawing horizontal line U+2500
+  (`TUI_HLINE`), a dash as wide as its cell. UEFI requires every console to
+  draw that character; falcon-bios writes it as code page 437's 0xC4 to
+  VGA and to serial (`tui_cp437`), the byte OVMF's PC-ANSI terminal sends
+  for it. There is no progress line.
 - **The order is core's** (`survey_next_probe`), asked again before every
   entry: the entry under the selection, then the files directly in the folder
   on screen, then everything under that folder depth first, then the rest of
@@ -4746,7 +4750,8 @@ single sectors and stage 3's header cost one revolution per track rather
 than one each.
 
 Stage 1 and stage 2 log to serial only, and the screen is stage 3's, so
-stage 2 puts one line on it: `falcon-boot: loading` and a `/-\|` spinner
+stage 2 puts one line on it: `falcon-boot: loading` and a spinner (the
+menu's four glyphs, its dash written as code page 437's 0xC4)
 turned a step for every read call that returns (`bios_disk_on_call`), a
 track on a floppy and a 32 KB bounce buffer on anything AH=42h reads;
 teletype, screen only, the cursor column from the BDA so it starts on a

@@ -51,9 +51,18 @@ void tui_busy_text(uint16_t *dst, size_t cap, const uint16_t *step)
 
 uint16_t tui_spin(unsigned phase)
 {
-    static const uint16_t glyph[4] = { u'/', u'-', u'\\', u'|' };
+    static const uint16_t glyph[4] = { u'/', TUI_HLINE, u'\\', u'|' };
 
     return glyph[phase % 4u];
+}
+
+uint8_t tui_cp437(uint16_t c, uint8_t fallback)
+{
+    if (c < 0x80u)
+        return (uint8_t)c;
+    if (c == TUI_HLINE)
+        return 0xC4u;
+    return fallback;
 }
 
 size_t tui_spin_col(const tui_menu *m)

@@ -192,10 +192,14 @@ boot_until() { # boot_until QEMU-BINARY UNTIL ARGS...
     wait "$qpid" 2>/dev/null || true
     log_text > "$R/serial.txt"
     [[ -f "$R/screen.vga" ]] &&
-        python3 -c 'import sys; d = open(sys.argv[1], "rb").read()[0::2]; print("\n".join(d[i:i + 80].decode("ascii", "replace").rstrip() for i in range(0, 2000, 80)))' \
+        python3 -c 'import sys; d = open(sys.argv[1], "rb").read()[0::2]; sys.stdout.buffer.write("".join(d[i:i + 80].decode("cp437").rstrip() + "\n" for i in range(0, 2000, 80)).encode())' \
             "$R/screen.vga" > "$R/screen.txt"
     return 0
 }
+
+# The spinner's dash as screen.txt carries it: code page 437's 0xC4,
+# decoded to U+2500, in UTF-8.
+HLINE=$'\xe2\x94\x80'
 
 # Flips one byte of the floppy image, at a byte offset.
 flip() {      # flip OFFSET
@@ -694,7 +698,7 @@ for c in "${CASES[@]}"; do
         boot_until "$QEMU" 'stage 3 did not read back as it was written, twice'
         if ! grep -aqF 'stage 3 did not read back as it was written, twice' "$R/serial.txt"; then
             judge s3crc 'stage 3 did not read back as it was written, twice'
-        elif ! grep -qE '^falcon-boot: loading [-/|\\]$' "$R/screen.txt"; then
+        elif ! grep -qE "^falcon-boot: loading ([/|\\\\]|$HLINE)\$" "$R/screen.txt"; then
             printf 'FAIL  %-9s %s\n' s3crc "no 'falcon-boot: loading' line with its spinner on the screen"
             FAILED=1
         elif ! awk '/^falcon-boot: loading/ { s = 1; next }

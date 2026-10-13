@@ -219,6 +219,18 @@ extern const uint16_t tui_list_empty[];
  * glyph, phase counting up, and tui_spin_col the column. */
 extern const uint16_t tui_tag_pending[];
 uint16_t tui_spin(unsigned phase);
+
+/* The box-drawing horizontal line, the spinner's dash: one that fills its
+ * cell, as `-` does not. UEFI requires every console to draw it
+ * (BOXDRAW_HORIZONTAL), and code page 437, the VGA text font, holds it at
+ * 0xC4. */
+#define TUI_HLINE 0x2500u
+
+/* A cell's byte in code page 437, for falcon-bios: ASCII as itself,
+ * TUI_HLINE as 0xC4, anything else as fallback. The same byte is what
+ * OVMF's PC-ANSI terminal sends on serial for TUI_HLINE, so falcon-bios's
+ * serial mirror stays the UEFI loader's byte for byte. */
+uint8_t tui_cp437(uint16_t c, uint8_t fallback);
 size_t tui_spin_col(const tui_menu *m);
 
 /* What a loader is doing while nothing else is on screen: startup, before
