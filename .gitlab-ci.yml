@@ -154,6 +154,19 @@ release:
     paths:
       - release/
 
+# The same tag puts falcon-boot-bin in the falcon pacman repository on the
+# dl host (tools/release/publish-arch.sh): built from the release this
+# pipeline made, signed with the falcon repository key, pushed with a deploy
+# key the dl host lets rsync into airies-dl/arch alone. Both keys are
+# protected variables, which only the protected v* tags see.
+publish:arch:
+  stage: release
+  needs: [release]
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/
+  script:
+    - tools/release/publish-arch.sh release
+
 # One job per rig, so a failure names its rig and a rerun repeats only it.
 # RIG is the make goals. Every rig first gets the fixtures the rigs expect
 # to find: the test MOK, the signed loader, the fixture UKI (its kernel from

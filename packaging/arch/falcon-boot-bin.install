@@ -1,0 +1,9 @@
+post_install() {
+    echo "A stick or station is brought to this version on each machine with"
+    echo "    sudo falcon-boot-mkstick update /dev/<disk>"
+    echo "(docs/Manual.md Section 10.7); installing the package changes no disk."
+}
+
+post_upgrade() {
+    post_install
+}

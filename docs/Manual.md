@@ -3659,7 +3659,37 @@ A stick or station already made is brought to the release with
 `falcon-boot-mkstick update` (Section 10.7); its default `--from` is the
 installed `/usr/lib/falcon-boot/bin`.
 
-### 14.3 Building a release
+### 14.3 Packages
+
+Each release is also a package, `falcon-boot-bin`, that installs the main
+tarball's tree as it is; installing or upgrading it changes no disk, and a
+stick or station is brought to it with `falcon-boot-mkstick update`
+(Section 10.7) on each machine.
+
+**Arch.** The tag's pipeline builds it from `packaging/arch/PKGBUILD` into
+the `falcon` repository on the dl host (`tools/release/publish-arch.sh`),
+which holds the current version alone. The packages and the repository
+database are signed with the falcon repository key,
+`6405 F892 A108 F8FB 0576  5FF8 0EC4 411B 66DB 5626`. Trust it once:
+
+    curl -sO https://dl.airies.net/arch/falcon/falcon.asc
+    sudo pacman-key --add falcon.asc
+    sudo pacman-key --lsign-key 6405F892A108F8FB05765FF80EC4411B66DB5626
+
+then add the repository to `/etc/pacman.conf` and install:
+
+    [falcon]
+    SigLevel = Required DatabaseRequired
+    Server = https://dl.airies.net/arch/$repo/$arch
+
+    sudo pacman -Sy falcon-boot-bin
+
+**Gentoo.** `app-misc/falcon-boot-bin` is in vifair-overlay. Its source is
+the release in this project's package registry, which is private: the
+binhost that builds it holds a read-only deploy token for `git.airies.net`,
+and machines install the binary package it builds.
+
+### 14.4 Building a release
 
     tools/coverage/harness.sh make release \
         MEMTEST=<memtest86+ i586> MEMTEST_EFI=<memtest86+ x86-64>

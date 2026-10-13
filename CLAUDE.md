@@ -154,7 +154,9 @@ unique within each such set, so `#include <fs/exfat.h>` means one file, and
   with `FALCON_DATADIR=/usr/lib/falcon-boot` (`falcon-cli/src/common/
   datadir.h`; a tree build reads `build/`), the station bundle, the jump
   image and `SHA256SUMS`. A tag `vX.Y.Z` publishes it from CI
-  (`tools/release/publish.sh`); Manual Section 14.
+  (`tools/release/publish.sh`) and puts `falcon-boot-bin` in the dl host's
+  `falcon` pacman repository (`packaging/arch/`, `tools/release/
+  publish-arch.sh`); Manual Section 14.
 - `release_version` at the root is the version; everything tags off it
   (`FALCON_SEMVER` and the timestamped `FALCON_VERSION` in
   `build/version.h`, the SBAT rows, the banners).
