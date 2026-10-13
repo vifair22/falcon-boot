@@ -1,0 +1,42 @@
+# falcon-boot's release tarball as an Arch package (docs/Manual.md
+# Section 14.3). The tag pipeline builds it from the tarball it has just
+# made (tools/release/publish-arch.sh), filling pkgver and the checksum in;
+# by hand, put the tarball beside this file and set both.
+pkgname=falcon-boot-bin
+pkgver=0.0.0
+pkgrel=1
+pkgdesc="falcon-boot's stick and station installer, with the unsigned loaders it installs"
+arch=(x86_64)
+url="https://git.airies.net/vifair22/falcon-boot"
+license=(GPL-3.0-or-later BSD-2-Clause GPL-2.0-only)
+# The required host tools of tools/deps.tsv; mtools writes FAT for
+# station install.
+depends=(
+    cryptsetup
+    dosfstools
+    e2fsprogs
+    exfatprogs
+    gptfdisk
+    mtools
+    openssl
+    sbsigntools
+    util-linux
+)
+# The programs are static and ship stripped; the loaders are PE images whose
+# bytes are what the MOK signs.
+options=(!strip !debug)
+install=falcon-boot-bin.install
+source=("falcon-boot-${pkgver}-x86_64.tar.gz")
+sha256sums=(SKIP)
+
+package() {
+    cd "falcon-boot-${pkgver}"
+    install -Dm755 -t "${pkgdir}/usr/bin" \
+        usr/bin/falcon-boot-mkstick usr/bin/falcon-boot-sign
+    install -d "${pkgdir}/usr/lib"
+    cp -a usr/lib/falcon-boot "${pkgdir}/usr/lib/"
+    install -Dm644 -t "${pkgdir}/usr/share/doc/falcon-boot" \
+        usr/share/doc/falcon-boot/*.md
+    install -Dm644 usr/share/doc/falcon-boot/LICENSE \
+        "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
+}

@@ -4552,10 +4552,13 @@ to the station's event, must give what the station read, or enrollment
 refuses rather than seal to values the station will never see. A log that
 is not whole comes from a firmware that extends PCRs it does not log (the
 AMD firmware TPM of an ASUS B550 board does, PCRs 0 to 7 at every boot,
-`falcon-cli/tests/data/b550/`): no replay of it gives the station's PCRs,
-so it is set aside and the record stands alone. Either way the record must
-be of this boot: it must equal the TPM on PCRs 0 to 3 and 6, which nothing
-extends after the station's menu, less any the log shows extended after
+after the station's menu, `falcon-cli/tests/data/b550/`): it is set aside
+as evidence of what the station read, and the record stands alone. Either
+way the record must be of this boot. The log is, so when it, replayed up
+to the station's event, gives every PCR in the record, that settles it.
+Otherwise (edk2 logs PCR 7's authority and the GPT after the station's
+event, so its replay there stops short of the record) the record must
+equal the TPM on PCRs 0 to 3 and 6, less any the log shows extended after
 the station's event (a UKI's systemd-stub extends PCR 1). A station older
 than the record saves none, and the replay alone then gives the values, as
 long as the log is whole. A fresh 20-byte seed from `getrandom` is sealed (tpm2.h's
@@ -4629,8 +4632,10 @@ Authenticode digest replaced by the new one's there
 (`evlog_replay_substitute`; on 1.2, `totpc_merge12_as` checks the logs as
 they are and then replays them with the substitution). The certificate
 is the same, so PCR 7's authority event does not move. A prediction needs
-a whole log: on a firmware that extends PCRs it does not log, the TPM 2.0
-record is checked as it is and the reseal refused. A reseal that fails
+a log that gives what the station read: a whole one, or one that pins the
+record, since the replay that predicts stops at the station's event, which
+is as far as the pin reaches. On a firmware that extends PCRs it does not
+log before the station's menu, neither holds, and the reseal is refused. A reseal that fails
 leaves the loader written and says to run `reseal` from the updated
 system; the station shows the warning in place of a code until it is
 resealed.

@@ -106,9 +106,11 @@ int totpc_merge12_as(const uint8_t *fw, size_t fw_len, const uint8_t *rec,
  * the station saved (rec) and the firmware's log as Linux reads it (log).
  * The log must hold the station image's measurement in PCR 4 (station, its
  * SHA-256 Authenticode digest). live, when given, is PCRs 0-15 as the TPM
- * holds them now: the record must equal it on each of TOTPC_STABLE_PCRS
- * the log shows nothing extending after the station's measurement
- * (TOTPC_ERR_BOOT otherwise; a UKI's systemd-stub extends PCR 1), and the
+ * holds them now: unless the log, replayed to the station's measurement,
+ * gives the record on every PCR (which pins it to this boot), the record
+ * must equal live on each of TOTPC_STABLE_PCRS the log shows nothing
+ * extending after the station's measurement (TOTPC_ERR_BOOT otherwise; a
+ * UKI's systemd-stub extends PCR 1), and the
  * log is whole when a replay of it to
  * its end gives live on every PCR in mask and TOTPC_STABLE_PCRS. Without
  * live (the rig's swtpm, not the TPM that booted) the log is taken as
@@ -116,11 +118,14 @@ int totpc_merge12_as(const uint8_t *fw, size_t fw_len, const uint8_t *rec,
  * the record's value on every PCR in mask (TOTPC_ERR_PCR otherwise); a log
  * that is not whole is set aside and the record stands alone, which is a
  * firmware that extends PCRs it does not log. out is the record's values,
- * *whole says which it was; on an error *bad_pcr is the PCR at fault. */
+ * *whole says which it was, *pinned whether the log replayed to the
+ * station's measurement gave the record; on an error *bad_pcr is the PCR
+ * at fault. */
 int totpc_station20(const uint8_t *rec, size_t rec_len, const uint8_t *log,
                     size_t log_len, const uint8_t station[32],
                     const uint8_t (*live)[32], uint32_t mask,
-                    uint8_t out[16][32], int *whole, unsigned *bad_pcr);
+                    uint8_t out[16][32], int *whole, int *pinned,
+                    unsigned *bad_pcr);
 
 /* STATION.INI with its [totp] replaced by t, or removed when t is NULL.
  * The text there must parse (TOTPC_ERR_INI with *err_line and the reason

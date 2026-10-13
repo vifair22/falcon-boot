@@ -570,12 +570,18 @@ static cli_status station_pcrs_saved(stn_esp *e, const char *log_file,
     return CLI_OK;
 }
 
+/* What station_pcrs_saved20 leaves to the one-log prediction. */
+enum { PREDICT_NO, PREDICT_WHOLE, PREDICT_PINNED };
+
 /* The PCR values at the station's menu on a TPM 2.0, from the record it
  * saved, checked against the firmware's log where that log accounts for
  * the PCRs (totpc_station20). With old256, mkstick update's reseal: the
- * new loader's values are a prediction from the log, which needs a whole
- * one, so the record is checked with the old loader's digest and the
- * prediction left to the one-log path (*predict). */
+ * new loader's values are a prediction from the log, so the record is
+ * checked with the old loader's digest and the prediction left to the
+ * one-log path (*predict). The log must be whole, or pin the record (it
+ * gives every PCR of it up to the station's measurement, which is all the
+ * prediction replays): *predict is PREDICT_PINNED then, and the one-log
+ * path does not hold the rest of the log against the TPM. */
 static cli_status station_pcrs_saved20(stn_esp *e, const char *log_file,
                                        const uint8_t *rec, size_t rec_len,
                                        int live, uint32_t mask,
@@ -591,10 +597,11 @@ static cli_status station_pcrs_saved20(stn_esp *e, const char *log_file,
     unsigned i;
     size_t n = 0;
     int whole = 0;
+    int pinned = 0;
     int rc;
     cli_status st;
 
-    *predict = 0;
+    *predict = PREDICT_NO;
     st = station_digest(e, 0, digest);
     if (st != CLI_OK)
         return st;
@@ -613,7 +620,7 @@ static cli_status station_pcrs_saved20(stn_esp *e, const char *log_file,
     rc = totpc_station20(rec, rec_len, log, len,
                          old256 != NULL ? old256 : digest,
                          live ? (const uint8_t (*)[32])now : NULL, mask, pcr,
-                         &whole, &bad);
+                         &whole, &pinned, &bad);
     free(log);
     switch (rc) {
     case TOTPC_OK:
@@ -636,12 +643,12 @@ static cli_status station_pcrs_saved20(stn_esp *e, const char *log_file,
                          "event log do not parse");
     }
     if (old256 != NULL) {
-        if (!whole)
+        if (!whole && !pinned)
             return set_error(CLI_ERR_INVALID, "this firmware extends PCRs it "
                              "does not log, so the new station's PCRs cannot "
                              "be predicted; run `station totp reseal` from a "
                              "boot of it");
-        *predict = 1;
+        *predict = whole ? PREDICT_WHOLE : PREDICT_PINNED;
         return CLI_OK;
     }
     if (whole)
@@ -704,6 +711,7 @@ static cli_status station_pcrs(stn_esp *e, const char *log_file,
     uint8_t digest[32];
     uint16_t alg = ver == TPM_VER_20 ? EVLOG_ALG_SHA256 : EVLOG_ALG_SHA1;
     size_t dl = ver == TPM_VER_20 ? 32u : 20u;
+    int predict = PREDICT_NO;
     uint8_t *log = NULL;
     size_t len = 0;
     unsigned i;
@@ -728,8 +736,6 @@ static cli_status station_pcrs(stn_esp *e, const char *log_file,
     } else {
         uint8_t *rec = NULL;
         size_t rec_len = 0;
-        int predict = 0;
-
         /* A station older than the record saves none; the log alone then
          * stands, as before. */
         st = read_saved(saved_file, &rec, &rec_len);
@@ -737,7 +743,7 @@ static cli_status station_pcrs(stn_esp *e, const char *log_file,
             st = station_pcrs_saved20(e, log_file, rec, rec_len, live, mask,
                                       old256, vals, &predict);
             free(rec);
-            if (st != CLI_OK || !predict)
+            if (st != CLI_OK || predict == PREDICT_NO)
                 return st;
         } else if (st != CLI_ERR_NOTFOUND) {
             return st;
@@ -776,7 +782,7 @@ static cli_status station_pcrs(stn_esp *e, const char *log_file,
     for (i = 0; i < STATIONINI_TOTP_PCRS; i++) {
         if (((mask >> i) & 1u) == 0)
             continue;
-        if (live) {
+        if (live && predict != PREDICT_PINNED) {
             uint8_t now[32];
 
             rc = ver == TPM_VER_20 ? tpm2_pcr_read(&g_dev, i, now)
