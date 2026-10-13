@@ -397,13 +397,25 @@ static void test_busy_text(void **state)
     assert_string_equal(narrow(tiny), "rea");
 }
 
+static void test_cp437(void **state)
+{
+    (void)state;
+    assert_int_equal(tui_cp437('A', '?'), 'A');
+    assert_int_equal(tui_cp437(' ', '?'), ' ');
+    assert_int_equal(tui_cp437(0x7Fu, '?'), 0x7F);
+    assert_int_equal(tui_cp437(TUI_HLINE, '?'), 0xC4);
+    assert_int_equal(tui_cp437(tui_spin(1), '?'), 0xC4);
+    assert_int_equal(tui_cp437(0x00E9u, '?'), '?');
+    assert_int_equal(tui_cp437(0x2501u, '#'), '#');
+}
+
 static void test_spinner(void **state)
 {
     tui_menu m;
 
     (void)state;
     assert_int_equal(tui_spin(0), '/');
-    assert_int_equal(tui_spin(1), '-');
+    assert_int_equal(tui_spin(1), TUI_HLINE);
     assert_int_equal(tui_spin(2), '\\');
     assert_int_equal(tui_spin(3), '|');
     assert_int_equal(tui_spin(4), '/');
@@ -452,6 +464,7 @@ int run_tui_tests(void)
         cmocka_unit_test(test_menu_status),
         cmocka_unit_test(test_strings),
         cmocka_unit_test(test_spinner),
+        cmocka_unit_test(test_cp437),
         cmocka_unit_test(test_busy_text),
         cmocka_unit_test(test_unlock_delay),
     };

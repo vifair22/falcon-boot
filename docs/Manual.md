@@ -116,7 +116,8 @@ certificate, `MS UEFI CA` and `MS Windows` are Microsoft's two CAs, and
 `+N` counts any other certificates.
 
 While the background probe is reading entries, the banner's last cell is a
-spinner (`/`, `-`, `\`, `|`). It stops when every entry has been looked at.
+spinner (`/`, a full-width dash, `\`, `|`). It stops when every entry has
+been looked at.
 
 ### 1.4 Row tags
 
