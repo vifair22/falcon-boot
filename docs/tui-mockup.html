@@ -93,6 +93,30 @@ function render(screen, platform, mirror) {
       put(H - 1, col, hk[1], 7, 0); col += hk[1].length + 3;
     });
   }
+  function listRows(y0, names, tags, top, sel, win) {
+    for (var i = 0; i < win && top + i < names.length; i++) {
+      var y = y0 + i, n = names[top + i], t = tags[top + i], on = top + i === sel;
+      var tf = t === 'blessed' ? 10 : t === '{NOT BLESSED}' ? 14 : t === 'Latest' ? 7 : 3;
+      if (on) {
+        fill(y, 3, 1, 74, ' ', 0, 3);
+        put(y, 5, pad(n, 60), 0, 3); put(y, 76 - t.length, t, 0, 3);
+      } else {
+        put(y, 5, pad(n, 60), 7, 0); put(y, 76 - t.length, t, tf, 0);
+      }
+    }
+  }
+  /* The scroll bar is the panel's right border: the track stays the border
+     line, the thumb is full blocks sized to the window's share of the list,
+     and an arrow replaces the first or last track cell while there is more
+     that way. */
+  function scrollbar(y0, h, x, total, top, win) {
+    if (total <= win) return;
+    var th = Math.max(1, Math.round(h * win / total));
+    var tp = Math.round((h - th) * top / (total - win));
+    for (var i = 0; i < th; i++) put(y0 + tp + i, x, '\u2588', 11, 0);
+    if (top > 0) put(y0, x, '\u25b2', 11, 0);
+    if (top + win < total) put(y0 + h - 1, x, '\u25bc', 11, 0);
+  }
   function sb() { return BIOS ? 'BIOS, no Secure Boot' : 'Secure Boot on, MS CA'; }
 
   /* label, UEFI tag, its colour, BIOS tag (null: row absent), its colour */
@@ -139,7 +163,7 @@ function render(screen, platform, mirror) {
     menuPanel(1);
   } else if (screen === 'chooser') {
     chrome(platform, sb(), [['enter', 'unlock'], ['tab', 'no echo'], ['esc', 'back']]);
-    box(2, 2, 9, 76, {f: 3, b: 0, title: 'Personal OS', titleF: 15, footer: 'shelf p3, LUKS2, argon2id', footerF: 7});
+    box(2, 2, 19, 76, {f: 3, b: 0, title: 'Personal OS', titleF: 15, footer: 'shelf p3, LUKS2, argon2id', footerF: 7});
     put(3, 5, 'the shelf is locked', 8, 0);
     box(8, 15, 8, 50, {style: 'double', f: 0, b: 7, textF: 0, title: 'Unlock the shelf', titleF: 1});
     shadow(8, 15, 8, 50);
@@ -151,7 +175,7 @@ function render(screen, platform, mirror) {
     put(13, 47, 'esc', 1, 7); put(13, 51, 'back', 0, 7);
   } else if (screen === 'badpass') {
     chrome(platform, sb(), [['enter', 'unlock'], ['tab', 'no echo'], ['esc', 'back']]);
-    box(2, 2, 9, 76, {f: 3, b: 0, title: 'Personal OS', titleF: 15, footer: 'shelf p3, LUKS2, argon2id', footerF: 7});
+    box(2, 2, 19, 76, {f: 3, b: 0, title: 'Personal OS', titleF: 15, footer: 'shelf p3, LUKS2, argon2id', footerF: 7});
     put(3, 5, 'the shelf is locked', 8, 0);
     box(8, 15, 9, 50, {style: 'double', f: 0, b: 7, textF: 0, title: 'Unlock the shelf', titleF: 1});
     shadow(8, 15, 9, 50);
@@ -320,6 +344,40 @@ function render(screen, platform, mirror) {
      '|                                      |',
      '+--------------------------------------+'
     ].forEach(function (l, i) { put(i, 0, l, i === 6 ? 8 : 7, 0); });
+  } else if (screen === 'longlist' || screen === 'longshelf') {
+    var shelfList = screen === 'longshelf';
+    var names = [];
+    var tagsOf = [];
+    var k2;
+    if (shelfList) {
+      chrome(platform, sb(), [['enter', 'boot'], ['up/down', 'choose'], ['pgup/pgdn', 'page'], ['esc', 'back']]);
+      for (k2 = 0; k2 < 23; k2++) {
+        names.push('Gentoo Linux 6.16.' + (30 - k2) + '-gentoo-dist (2026-09-' + (30 - k2 < 10 ? '0' : '') + (30 - k2) + ')');
+        tagsOf.push(k2 === 0 ? 'Latest' : '');
+      }
+      names.push('signing appliance'); tagsOf.push('appliance');
+      var top2 = 0, sel2 = 2, win2 = 17;
+      box(2, 2, 19, 76, {f: 3, b: 0, title: 'Personal OS', titleF: 15,
+        footer: 'shelf p3   UKI 6.16.28-gentoo-dist   34.1 MB', footerF: 7});
+      listRows(3, names, tagsOf, top2, sel2, win2);
+      scrollbar(3, win2, 77, names.length, top2, win2);
+      put(20, 77 - 9, ' 3/24 ', 7, 0);
+    } else {
+      chrome(platform, sb(), [['enter', 'boot'], ['c', 'chain'], ['d', 'direct'], ['b', 'bless'], ['pgup/pgdn', 'page'], ['esc', 'back']]);
+      for (k2 = 0; k2 < 41; k2++) {
+        names.push(['archlinux', 'ubuntu', 'debian-live', 'fedora-workstation', 'opensuse-tumbleweed',
+                    'linuxmint', 'kali-linux', 'alpine-standard'][k2 % 8] + '-' + (2020 + (k2 % 7)) + '.' +
+                   (k2 % 12 + 1 < 10 ? '0' : '') + (k2 % 12 + 1) + '-x86_64.iso');
+        tagsOf.push(['blessed', 'MS UEFI CA', '{NOT BLESSED}', 'MS UEFI CA'][k2 % 4]);
+      }
+      var top = 14, sel = 19, win = 17;
+      box(2, 2, 19, 76, {f: 3, b: 0, title: 'ISO library', titleF: 15, corner: SPIN, cornerF: 11,
+        footer: '2.6 GB   p2 exFAT   Linux   blessed by this stick\'s MOK', footerF: 7});
+      listRows(3, names, tagsOf, top, sel, win);
+      scrollbar(3, win, 77, names.length, top, win);
+      put(20, 77 - 9, ' 20/41 ', 7, 0);
+      put(21, 4, ' 41 images on p2 ', 7, 0);
+    }
   } else if (screen === 'failure') {
     chrome(platform, sb(), [['any key', 'return to the menu']]);
     menuPanel(1);
@@ -341,7 +399,7 @@ function render(screen, platform, mirror) {
   } else if (screen === 'station') {
     chrome('station  ' + platform, BIOS ? 'BIOS' : 'Secure Boot on, own keys',
       [['enter', 'boot'], ['up/down', 'choose'], ['any key', 'stops the count']]);
-    box(2, 2, 12, 50, {f: 3, b: 0, title: 'vfairfield-dt', titleF: 15, footer: 'Booting in 4 s', footerF: 14});
+    box(2, 2, 19, 50, {f: 3, b: 0, title: 'vfairfield-dt', titleF: 15, footer: 'Booting in 4 s', footerF: 14});
     [['Gentoo (Latest)', 'default'], ['Gentoo (fallback)', ''], ['Windows Boot Manager', ''],
      ['Memory test', ''], ['Reboot to firmware setup', '']].forEach(function (e, i) {
       var y = 3 + i;
@@ -368,6 +426,15 @@ function render(screen, platform, mirror) {
     put(12, 51, SPIN, 11, 0);
   }
 
+  /* The selection bar's first cell carries a '>': the one mark of the
+     selection that survives a monochrome panel and a plain serial log. On
+     UEFI the serial copy is the firmware's, so it has to be on the screen. */
+  g.forEach(function (l) {
+    for (var x = 0; x < W; x++) {
+      if (l[x].b === 3) { l[x].ch = '>'; break; }
+    }
+  });
+
   /* The serial mirror: ASCII boxes, no shade, no colour; the rigs read it. */
   if (mirror === 'serial') {
     var MAP = {};
@@ -376,10 +443,18 @@ function render(screen, platform, mirror) {
       MAP[k.h] = k === DOUBLE ? '=' : '-'; MAP[k.v] = '|';
     });
     MAP[SHADE] = ' ';
-    g.forEach(function (l) { l.forEach(function (cell) {
-      if (MAP[cell.ch] !== undefined) cell.ch = MAP[cell.ch];
-      cell.f = 7; cell.b = 0;
-    }); });
+    MAP['\u2588'] = '#'; MAP['\u25b2'] = '^'; MAP['\u25bc'] = 'v';
+    /* The selection survives as reverse video, which the harness matches;
+       its '>' is drawn on the screen itself, so it is here too. */
+    g.forEach(function (l) {
+      var first = -1;
+      l.forEach(function (cell, x) {
+        var sel = cell.b === 3;
+        if (sel && first < 0) first = x;
+        if (MAP[cell.ch] !== undefined) cell.ch = MAP[cell.ch];
+        cell.f = sel ? 0 : 7; cell.b = sel ? 7 : 0;
+      });
+    });
   }
 
   var el = document.createElement('div');
@@ -404,6 +479,9 @@ function render(screen, platform, mirror) {
 [['Stick menu (UEFI)', 'menu', 'UEFI', 'vga'],
  ['Stick menu (BIOS)', 'menu', 'BIOS', 'vga'],
  ['Serial mirror of the menu', 'menu', 'UEFI', 'serial'],
+ ['Long ISO library: scroll bar on the border', 'longlist', 'UEFI', 'vga'],
+ ['Long ISO library, serial', 'longlist', 'UEFI', 'serial'],
+ ['Long shelf: scroll bar and position', 'longshelf', 'UEFI', 'vga'],
  ['Personal OS: unlock the shelf', 'chooser', 'UEFI', 'vga'],
  ['Personal OS: wrong passphrase', 'badpass', 'UEFI', 'vga'],
  ['Personal OS: damaged shelf', 'badshelf', 'UEFI', 'vga'],
