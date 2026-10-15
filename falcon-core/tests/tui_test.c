@@ -582,6 +582,39 @@ static void test_list_countdown_runs_out(void **state)
     assert_true(screen_has("105 338"));
 }
 
+static void status_label(void *ctx, tui_status *out)
+{
+    (void)ctx;
+    memcpy(out->line[0], u"TOTP: 923 496", sizeof u"TOTP: 923 496");
+    out->attr[0] = TUI_ATTR(TUI_WHITE, TUI_BLACK);
+    memcpy(out->line[1], u"(falcon-station:thinkpad-t430)",
+           sizeof u"(falcon-station:thinkpad-t430)");
+    out->attr[1] = TUI_ATTR(TUI_LIGHTGRAY, TUI_BLACK);
+    out->n = 2;
+}
+
+/* An enrollment's label has no space to wrap at: the box widens to it
+ * rather than splitting it, and, a panel, casts no shadow. */
+static void test_status_box_fits_label(void **state)
+{
+    static const int keys[] = { TUI_KEY_ENTER };
+    tui_list l;
+    int which = 0;
+
+    (void)state;
+    start(keys, sizeof keys / sizeof keys[0]);
+    station_rows();
+    memset(&l, 0, sizeof l);
+    l.title = u"t430";
+    l.rows = g_rows;
+    l.count = 5;
+    l.status = status_label;
+    l.status_title = u"TOTP";
+    assert_int_equal(tui_list_run(&l, &which), 0);
+    assert_true(screen_has("(falcon-station:thinkpad-t430)"));
+    snapshot("status-label");
+}
+
 static void test_list_countdown_stopped_by_key(void **state)
 {
     static const int keys[] = { TUI_KEY_NONE, TUI_KEY_DOWN, TUI_KEY_NONE,
@@ -623,6 +656,7 @@ static void test_list_station_snapshot(void **state)
     (void)tui_list_run(&l, (int *)0);
     /* Escape is a key, so the count is gone; draw it with one running. */
     start(keys, 0);
+    g_status_calls = 0;
     (void)tui_list_run(&l, (int *)0);
     snapshot("station");
     assert_true(screen_has("Booting in 5 s"));
@@ -1178,6 +1212,7 @@ int run_tui_tests(void)
         cmocka_unit_test(test_list_probe),
         cmocka_unit_test(test_list_pending_shows_placeholder),
         cmocka_unit_test(test_list_countdown_runs_out),
+        cmocka_unit_test(test_status_box_fits_label),
         cmocka_unit_test(test_list_countdown_stopped_by_key),
         cmocka_unit_test(test_list_station_snapshot),
         cmocka_unit_test(test_list_idle),
