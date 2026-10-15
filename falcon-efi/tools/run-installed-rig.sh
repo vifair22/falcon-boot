@@ -579,7 +579,7 @@ case_uefi_default() {   # case_uefi_default CASE FIRMWARE
     [[ -z "$WHY" ]] && { wait_for "Memory test (memtest86+)" 5 || WHY="no memtest row"; }
     [[ -z "$WHY" ]] && { wait_for "booting: Windows Boot Manager (disk gpt:" 15 ||
         WHY="the default was not Windows"; }
-    [[ -z "$WHY" ]] && { has "restarting into it" || WHY="no NXT page"; }
+    [[ -z "$WHY" ]] && { wait_for "restarting into it" 10 || WHY="no NXT page"; }
     [[ -z "$WHY" ]] && { wait_for "FALCON-STANDIN $BOOTMGFW" 90 ||
         WHY="the firmware did not start Windows after the reset"; }
     halt
@@ -707,7 +707,7 @@ case_second() {         # case_second CASE FIRMWARE nxt|esp
     [[ -z "$WHY" ]] && { wait_for "booting: Windows" 15 ||
         WHY="the default was not Windows"; }
     if [[ -z "$WHY" && $how == nxt ]]; then
-        has "restarting into it" || WHY="no NXT page"
+        wait_for "restarting into it" 10 || WHY="no NXT page"
         [[ -z "$WHY" ]] && { wait_for "FALCON-STANDIN $BOOTMGFW" 90 ||
             WHY="the firmware did not start Windows after the reset"; }
     elif [[ -z "$WHY" ]]; then
