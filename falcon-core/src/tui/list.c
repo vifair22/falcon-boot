@@ -296,6 +296,8 @@ static void paint_spin(const view *v)
     }
 }
 
+static void log_row(const view *v, size_t i);
+
 int status_same(const tui_status *a, const tui_status *b)
 {
     size_t i;
@@ -429,6 +431,7 @@ static int fill_window(view *v, int *full)
         if (v->l->fill(v->l->ctx, i)) {
             v->l->rows[i].probed = 1;
             any = 1;
+            log_row(v, i);
         }
     }
     if (any && widths(v))
@@ -526,57 +529,70 @@ static void log_hints(void)
         log_line(line, (const uint16_t *)0);
 }
 
+/* One row as the transcript hears it: '>' when selected, the label, then
+ * its tags, two spaces apart. */
+static void log_row(const view *v, size_t i)
+{
+    uint16_t line[LOG_MAX];
+    const tui_row *w = &v->l->rows[i];
+    const uint16_t *parts[3];
+    size_t n = 0;
+    size_t p;
+
+    parts[0] = w->label;
+    parts[1] = pending(v, i) ? tui_tag_pending : w->sig;
+    parts[2] = pending(v, i) ? (const uint16_t *)0 : w->why;
+    line[n++] = i == v->sel ? u'>' : u' ';
+    line[n++] = u' ';
+    for (p = 0; p < 3u; p++) {
+        const uint16_t *s = parts[p];
+
+        if (s == (const uint16_t *)0 || s[0] == 0)
+            continue;
+        if (p != 0 && n + 2u < LOG_MAX) {
+            line[n++] = u' ';
+            line[n++] = u' ';
+        }
+        while (*s != 0 && n + 1u < LOG_MAX)
+            line[n++] = *s++;
+    }
+    line[n] = 0;
+    log_line(line, (const uint16_t *)0);
+}
+
+/* "Booting in <n> s" as the transcript hears it, each second. */
+static void log_count(const view *v)
+{
+    uint16_t line[32];
+    size_t n = 0;
+    size_t i;
+
+    for (i = 0; u"Booting in "[i] != 0; i++)
+        line[n++] = u"Booting in "[i];
+    n = put_dec(line, n, sizeof line / sizeof line[0], v->left);
+    line[n++] = u' ';
+    line[n++] = u's';
+    line[n] = 0;
+    log_line(line, (const uint16_t *)0);
+}
+
 /* The list as the transcript hears it when it opens: its title, the rows
  * the window shows with their tags, and the key hints as the bar draws
  * them, each a line of its own; a script reads a menu off serial by these
  * rather than out of the screen's colour runs. */
 static void log_list(const view *v)
 {
-    uint16_t line[LOG_MAX];
     size_t i;
 
     log_line(u"menu: ", v->l->title);
-    for (i = v->top; i < v->top + v->win && i < v->l->count; i++) {
-        const tui_row *w = &v->l->rows[i];
-        size_t n = 0;
-        const uint16_t *parts[3];
-        size_t p;
-
-        parts[0] = w->label;
-        parts[1] = pending(v, i) ? tui_tag_pending : w->sig;
-        parts[2] = pending(v, i) ? (const uint16_t *)0 : w->why;
-        line[n++] = i == v->sel ? u'>' : u' ';
-        line[n++] = u' ';
-        for (p = 0; p < 3u; p++) {
-            const uint16_t *s = parts[p];
-
-            if (s == (const uint16_t *)0 || s[0] == 0)
-                continue;
-            if (p != 0 && n + 2u < LOG_MAX) {
-                line[n++] = u' ';
-                line[n++] = u' ';
-            }
-            while (*s != 0 && n + 1u < LOG_MAX)
-                line[n++] = *s++;
-        }
-        line[n] = 0;
-        log_line(line, (const uint16_t *)0);
-    }
+    for (i = v->top; i < v->top + v->win && i < v->l->count; i++)
+        log_row(v, i);
     if (v->l->count == 0)
         log_line(u"  ", v->l->empty != (const uint16_t *)0 ? v->l->empty
                                                        : tui_list_empty);
     log_hints();
-    if (v->left != 0) {
-        size_t n = 0;
-
-        for (i = 0; u"Booting in "[i] != 0; i++)
-            line[n++] = u"Booting in "[i];
-        n = put_dec(line, n, LOG_MAX, v->left);
-        line[n++] = u' ';
-        line[n++] = u's';
-        line[n] = 0;
-        log_line(line, (const uint16_t *)0);
-    }
+    if (v->left != 0)
+        log_count(v);
 }
 
 static void paint_all(view *v)
@@ -700,6 +716,7 @@ int tui_list_run(const tui_list *l, int *which)
                     return (int)v.sel;
                 }
                 paint_bottom(&v);
+                log_count(&v);
             }
         }
         tui_flush();
