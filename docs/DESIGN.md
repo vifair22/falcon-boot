@@ -2105,11 +2105,16 @@ its status column, and marks the step before it OK; `tui_step_done` closes
 the open one with a detail (a size) in place of OK; `tui_note` puts a dim
 line under it (a drive's name, a disc's boot entry). A long read turns the
 spinner as it goes (`tui_tick`), and so does every step without asking:
-falcon-bios ticks after each INT 13h call (`bios_disk_on_call`), the UEFI
-loader before each `discover_read` (`discover_set_tick`, which never
-splits a read, since a firmware can charge per call), and argon2id every
-64 blocks on the processor that called it (`argon2_params.tick`; a lane on
-another processor never draws), so an unlock on a slow machine turns too.
+falcon-bios ticks after each INT 13h call (`bios_disk_on_call`); the UEFI
+loader before each `discover_read` and each 8 MiB piece of a longer one
+(`discover_set_tick`; large, since a firmware can charge per call) and
+after each call of a read bounced below 4 GiB; a falcon jump module in
+its delays while it probes (`jmod_services.tick`, dropped when it serves,
+13.4); argon2id every 64 blocks on the processor that called it
+(`argon2_params.tick`; a lane on another processor never draws), PBKDF2
+every 4096 iterations, and the pause after a wrong passphrase. What runs
+inside one firmware call (shim's LoadImage, a ConnectController, a TPM
+command, a floppy's first sector) holds the spinner until it returns.
 Text a route writes goes on the page under
 its steps, and the body scrolls inside the panel. A failure names the step
 that was open (`tui_stage`) or the route's own stage.
@@ -5037,7 +5042,8 @@ into memory and called.
   occupies, and present on any machine with 16 MB; the core checks the
   E820 map says it is RAM before it loads anything there.
 - **Two tables, and when each may be used.** The core calls init with a
-  table of services (serial output), and the module fills in a table of
+  table of services (serial output, and a tick its delays turn the core's
+  spinner with while it probes, 7.10), and the module fills in a table of
   what it offers: probe, describe a device, read, choose the device to
   serve, `int13`, the resident entry, and `int16`, the keyboard entry,
   which a USB module's probe fills in when it found a keyboard. The core
