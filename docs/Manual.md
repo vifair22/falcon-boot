@@ -3347,10 +3347,14 @@ the harness's Dockerfile and this table to it):
 
 The host compiler is `CC_HOST` (default `gcc`).
 
-The build variant is `VARIANT` (default `release`). It is the last field of
+The build variant is `VARIANT` (default `dev`). It is the last field of
 every version string: `<semver>_<YYYYMMDD.HHMM>.<variant>` for the stick,
 `.station-<variant>`, `.station-legacy-<variant>` and `.jump-<variant>` for
-the others. The semver is `release_version` at the repository root.
+the others. The semver is `release_version` at the repository root. A
+build says `release` only when CI made it from master: master's pipeline,
+or a tag on one of master's commits, whose release job publishes nothing
+otherwise. Every other build, by hand or in a merge request's or a
+release branch's pipeline, says `dev`.
 
 ### 13.2 Targets
 

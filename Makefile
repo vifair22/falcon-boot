@@ -38,7 +38,9 @@
 #
 # See docs/DESIGN.md for the architecture.
 
-VARIANT ?= release
+# The last field of every version string. `release` is CI's on master
+# alone (.gitlab-ci.yml); every other build is `dev`.
+VARIANT ?= dev
 
 # The component files below define targets before `all` is reached.
 .DEFAULT_GOAL := all
