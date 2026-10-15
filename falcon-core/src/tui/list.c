@@ -500,6 +500,7 @@ static void layout(view *v, const tui_list *l)
     v->win = v->pb - v->pt - 1u;
     v->sel = l->sel < l->count ? l->sel : 0;
     v->busy = l->step != 0;
+    v->spin = spin_frame();
     v->left = l->count != 0 ? l->seconds : 0;
     g_status_h = 0;
 }
@@ -674,7 +675,6 @@ int tui_list_run(const tui_list *l, int *which)
     static view v;
     size_t painted;
     uint32_t sec_at;
-    uint32_t spin_at;
     int full = 0;
 
     if (g_tui.loglen != 0)
@@ -694,7 +694,6 @@ int tui_list_run(const tui_list *l, int *which)
     if (d->touch != 0)
         d->touch(d->ctx);
     sec_at = d->clock(d->ctx);
-    spin_at = sec_at;
 
     for (;;) {
         uint32_t now;
@@ -748,10 +747,14 @@ int tui_list_run(const tui_list *l, int *which)
 
         /* The probe, a slice at a time whenever no key is waiting. */
         if (v.busy) {
-            if (now != spin_at) {
-                spin_at = now;
-                v.spin++;
+            /* A frame due goes out before the slice, which may read for a
+             * while. */
+            unsigned f = spin_frame();
+
+            if (f != v.spin) {
+                v.spin = f;
                 paint_spin(&v);
+                tui_flush();
             }
             if (!l->step(l->ctx, v.sel)) {
                 v.busy = 0;

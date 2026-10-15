@@ -6,7 +6,7 @@
   |  reading the ISO's filesystem                                       OK   |  
   |  reading the kernel                                            14.2 MB   |  
   |  reading the initrd                                             211 MB   |  
-  |  starting the kernel                                                /    |  
+  |  starting the kernel                                                |    |  
   |                                                                          |  
   |                                                                          |  
   |                                                                          |  

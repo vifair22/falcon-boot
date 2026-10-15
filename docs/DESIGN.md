@@ -2021,6 +2021,24 @@ Every glyph outside ASCII is one UEFI requires every console to draw and
 code page 437 holds: the box-drawing lines and corners, the light shade,
 the full block and the up and down triangles.
 
+The spinner is the one exception, its frames drawn rather than found in a
+font: a stick one pixel wide at 0, 45, 90 and 135 degrees, the only angles
+that are straight lines in pixels, each frame symmetric about the same
+pixel so none shifts as it turns (`falcon-core/src/tui/spin.c`, an 8x16
+and an 8x19 drawing). falcon-core puts them at the private use code points
+U+E000 to U+E003, and a display loads them. falcon-bios writes them over
+code page 437's 0x01 to 0x04 with INT 10h AX=1100h, and only when AX=1130h
+gives the ROM font, whose glyphs go back the same way at the hand-off and
+which a mode set restores. The UEFI loader adds them to the firmware's
+fonts as an HII simple font package, kept only when the console's
+TestString accepts them (edk2's graphics console draws through the HII
+database; a serial terminal or a firmware's own console driver does not),
+and removes it at the hand-off. Where a display has no glyphs of its own,
+and on serial, the frames are `| / - \`. A frame lasts 250 ms on UEFI (a
+50 ms timer), and five BIOS ticks, 275 ms, on BIOS; it is taken from the
+clock rather than counted per call, and painted and flushed before a
+probe's slice, so a slow read neither speeds it up nor holds a frame back.
+
 #### Lists
 
 `tui_list_run` draws a panel of rows, each a label and the two tag columns
@@ -2058,7 +2076,8 @@ that was open (`tui_stage`) or the route's own stage.
 A route about to hand the machine over calls `tui_handoff`: the open step is
 marked OK, the rows under the panel are cleared to grey on black, and the
 cursor is shown on the first of them (on BIOS through INT 10h, which is where
-Linux's `screen_info` takes its console's cursor from). The page stays
+Linux's `screen_info` takes its console's cursor from). The display gives
+back what it changed of the firmware's: the spinner's glyphs. The page stays
 above; what the payload writes lands under it and scrolls it away. A route
 that comes back is reported in a dialog over the last menu after a full
 repaint.
@@ -3167,8 +3186,9 @@ ES at 0, so a disk read lands in the bounce buffer at 0x90000 (32 KiB) and
 is copied up; the packet is at 0x1000. The one write, clearing the
 next-boot marker, goes the other way through the same buffer. Services used:
 INT 13h AH=42h, AH=43h (`marker.c` only, one sector) and AH=48h, INT 1Ah
-AH=02h and AH=04h (the RTC, to date the marker), INT 10h (the 80x25 text mode, cursor shape and position, and
-teletype for stages 1 and 2 and `bios_fatal`), INT 16h AH=00h and AH=01h,
+AH=02h and AH=04h (the RTC, to date the marker), INT 10h (the 80x25 text mode, cursor shape and position, the
+ROM font's address and four of its glyphs, AX=1130h and AX=1100h, for the
+spinner (7.10), and teletype for stages 1 and 2 and `bios_fatal`), INT 16h AH=00h and AH=01h,
 INT 15h E820 (on a BIOS without it, AX=E801 and AH=88h: the map is built
 from their answers and the BDA's count at 0x413, `e820_synth`, host
 tested), and INT 18h when Escape at the root menu hands the machine

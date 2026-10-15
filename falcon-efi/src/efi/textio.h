@@ -48,7 +48,8 @@ struct EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL {
                                BOOLEAN ExtendedVerification);
     EFI_STATUS (EFIAPI *OutputString)(EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL *This,
                                       CHAR16 *String);
-    void *TestString;
+    EFI_STATUS (EFIAPI *TestString)(EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL *This,
+                                    CHAR16 *String);
     EFI_STATUS (EFIAPI *QueryMode)(EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL *This,
                                    UINTN ModeNumber,
                                    UINTN *Columns,
