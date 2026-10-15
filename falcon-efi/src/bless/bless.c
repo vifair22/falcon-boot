@@ -551,6 +551,7 @@ static EFI_STATUS blessed_launch(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
 
     g_st = st;
     bs = st->BootServices;
+    loader_reads_mark(LOADER_READS_BOOT);
     result->stage = L"starting";
     result->status = EFI_SUCCESS;
     result->advice = (const CHAR16 *)0;

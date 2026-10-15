@@ -7,8 +7,9 @@
  * boot-services and runtime access, under the Loader vendor GUID
  * 4a67b082-0a4c-41cf-b6c7-440b29bb8c4f. FalconTimeWaitUSec, the time spent
  * waiting on the keyboard, FalconTimeKdfUSec, the keyslot derivations of
- * the unlock that led to the launch, and FalconKdfInfo, that unlock in one
- * line, are falcon's own and under falcon's GUID (loadops.h).
+ * the unlock that led to the launch, FalconKdfInfo, that unlock in one
+ * line, and FalconReadInfo, what the firmware's reads cost on the way, are
+ * falcon's own and under falcon's GUID (loadops.h).
  *
  * The setters take values, not the clock, so the host suite drives them
  * through a fake SetVariable. loader_time_init and loader_time_exec
@@ -32,6 +33,7 @@
 #define BLI_WAIT_NAME L"FalconTimeWaitUSec"
 #define BLI_KDF_NAME L"FalconTimeKdfUSec"
 #define BLI_KDF_INFO_NAME L"FalconKdfInfo"
+#define BLI_READ_INFO_NAME L"FalconReadInfo"
 
 /* An unlock's keyslot derivations, as pos.c measured them. */
 typedef enum {
@@ -64,6 +66,34 @@ typedef struct {
  * length, or 0 with out empty when cap is too small. */
 UINTN bli_kdf_info(const bli_kdf *k, char *out, UINTN cap);
 
+/* The firmware's reads (discover/biolow.h) in the three stretches of a boot:
+ * startup, until the menu is up; menu, while it is up and the background
+ * probe reads; boot, from the route's start to the launch, the unlock and
+ * the UKI among it. A loader with no menu has its reads in startup and
+ * boot. */
+typedef struct {
+    UINT64 calls;
+    UINT64 bytes;
+    UINT64 usec;
+} bli_read_phase;
+
+typedef struct {
+    bli_read_phase startup;
+    bli_read_phase menu;
+    bli_read_phase boot;
+} bli_reads;
+
+/* The longest line bli_read_info writes, terminator included. */
+#define BLI_READ_INFO_MAX 200u
+
+/* The reads in one line, ASCII, into out (cap bytes, terminator included);
+ * FalconReadInfo's value:
+ *   startup <C> calls <K> KiB <ms> ms, menu <...>, boot <...> <R> MB/s
+ * K rounded up, R the boot stretch's bytes per microsecond to two places,
+ * left out when the stretch took no time. Returns the length, or 0 with out
+ * empty when cap is too small. */
+UINTN bli_read_info(const bli_reads *r, char *out, UINTN cap);
+
 /* At startup: LoaderTimeInitUSec (skipped when usec is 0, as systemd-boot
  * skips it), LoaderInfo (info, "falcon-boot <version>"),
  * LoaderFirmwareInfo ("<FirmwareVendor> <major>.<minor, 2 digits>" of
@@ -80,7 +110,10 @@ EFI_STATUS bli_set_init(EFI_SYSTEM_TABLE *st, UINT64 usec,
 EFI_STATUS bli_set_exec(EFI_SYSTEM_TABLE *st, UINT64 usec, UINT64 wait_usec,
                         const bli_kdf *kdf);
 
-/* When a started UKI returns: deletes the four, so an image booted later
+/* With bli_set_exec, before the same launch: FalconReadInfo. */
+EFI_STATUS bli_set_reads(EFI_SYSTEM_TABLE *st, const bli_reads *r);
+
+/* When a started UKI returns: deletes the five, so an image booted later
  * this boot by a route that sets none does not inherit them. */
 void bli_clear_exec(EFI_SYSTEM_TABLE *st);
 

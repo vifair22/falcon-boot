@@ -573,6 +573,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
     if (g_next[0] != '\0' || g_next_bad)
         next_boot_run();
 
+    loader_reads_mark(LOADER_READS_MENU);
     for (;;) {
         size_t shown;
         size_t sel = 0;

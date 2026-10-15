@@ -28,11 +28,11 @@
  *
  * No state, no allocation and no .bss: the bounce buffer is the caller's
  * (falcon-bios stage 3 and the UEFI loader each own one), and a blk_rebl is
- * a handful of fields a loader's callback fills on its stack per call. There
- * is deliberately no cache of the last bounced sector: a cache keyed on a
- * context pointer goes stale when a disk is re-probed or a medium swapped
- * under the same pointer, and re-blocking already costs the same number of
- * device calls as a 512-byte disk makes.
+ * a handful of fields a loader's callback fills on its stack per call. A
+ * blk_rebl keeps no sector between calls: one keyed on its context pointer
+ * would go stale when a disk is re-probed or a medium swapped under the same
+ * pointer. Caching is blk/cache.h's, above this layer, keyed on the device
+ * and its generation and flushed by the caller's re-probe.
  */
 
 #ifndef FALCON_BLK_REBL_H

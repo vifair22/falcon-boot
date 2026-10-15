@@ -1899,6 +1899,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
     if (g_next_path[0] != '\0' || g_next_bad)
         next_boot_run(image_handle, &list);
 
+    loader_reads_mark(LOADER_READS_MENU);
     probe_init();
     for (;;) {
         /* c and d choose the route for an ISO row, b and a bless; on any
