@@ -3154,8 +3154,8 @@ sequenceDiagram
     T->>T: save registers and ESP, patch the vector into the INT
     T->>T: 16-bit segment, PE off, far jump into real mode
     T->>T: segments 0, SP 0x7000, lidt the real-mode IVT
-    T->>B: registers loaded, sti, int N, cli
-    B-->>T: results, flags (carry, zero)
+    T->>B: registers and ES:BP loaded, sti, int N, cli
+    B-->>T: results, ES:BP, flags (carry, zero)
     T->>T: registers written back to the block
     T->>T: lgdt, PE on, far jump to the 32-bit segment
     T->>T: data segments, ESP restored, lidt idt_desc

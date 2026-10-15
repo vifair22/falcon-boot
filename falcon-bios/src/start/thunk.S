@@ -129,15 +129,15 @@ thunk_real:
 	/* The caller's registers. DS is loaded last because everything up to
 	 * here addresses through it. */
 	movw    $thunk_regs, %si
+	movw    24(%si), %ax         /* es for the call */
+	movw    %ax, %es
+	movw    26(%si), %bp
 	movl    0(%si), %eax
 	movl    4(%si), %ebx
 	movl    8(%si), %ecx
 	movl    12(%si), %edx
 	movl    20(%si), %edi
-	movw    24(%si), %bp         /* es for the call */
 	movl    16(%si), %esi
-	pushw   %bp
-	popw    %es
 
 	sti
 real_int_op:
@@ -155,6 +155,9 @@ real_int_op:
 	movl    %ecx, 8(%si)
 	movl    %edx, 12(%si)
 	movl    %edi, 20(%si)
+	movw    %bp, 26(%si)         /* es:bp is how INT 10h AX=1130h answers */
+	movw    %es, %ax
+	movw    %ax, 24(%si)
 	popw    %ax
 	movw    %ax, 16(%si)         /* the caller's si, as returned */
 	popw    %ax
