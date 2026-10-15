@@ -2180,7 +2180,7 @@ existing FAT partition. It writes:
 | `--no-backup` | off | saves nothing |
 | `--remove` | off | undoes an install |
 | `--reserve` | off | GPT only: also claims stage 2's gap as a BIOS boot partition (type EF02, slot 5, named `FALCON-BIOS`); rewrites the partition table |
-| `--dry-run` | off | prints the plan and writes nothing |
+| `--dry-run` | off | prints the plan and where the MOK comes from, and writes nothing |
 | `--force` | off | overwrites an existing backup file, and allows `--reserve` on a disk with mounted partitions |
 
 It takes disks of 512- and 4096-byte sectors and refuses any other ("the
@@ -2611,7 +2611,7 @@ Section 12.14). The test rig's options (`--tpm-socket`, `--event-log`,
 |---|---|---|
 | `--from` | `build/bin` | the built loaders: `falcon-boot.efi`, `falcon-boot-station.efi`, the BIOS stages, and `mod/` |
 | `--backup-dir` | `.` | where what is replaced is saved |
-| `--passphrase-file` | prompt | the shelf's passphrase |
+| `--passphrase-file` | prompt | the shelf's passphrase; the open shelf's mapping is then not used |
 | `--key`, `--cert` | the shelf's | the MOK pair, for an install whose shelf does not hold it; given together |
 | `--owner-auth-file` | as for `station totp` | the TPM owner's authorisation, for the reseal |
 | `--dry-run` | off | prints the plan and writes nothing |
@@ -2631,10 +2631,13 @@ A disk with both stations gets both halves. Anything else is refused
 writes mounted. A driver missing from `--from`'s `mod/` is skipped with a
 warning and the one on the disk stays.
 
-The UEFI loader is signed with the install's MOK: update unlocks the shelf
-carrying the install ID (the passphrase is asked for once, or read from
-`--passphrase-file`) and reads the key into memory, or uses `--key` and
-`--cert`. The signed loader must verify against the certificate before it
+The UEFI loader is signed with the install's MOK, read into memory off the
+shelf carrying the install ID. On the personal OS, whose crypttab opens the
+shelf with its keyfile (Section 5.3), update reads it through that mapping
+and asks nothing (`the MOK is read off the shelf, open as
+/dev/mapper/<name>, into memory`). A shelf that is not open is unlocked
+with its passphrase, asked for once or read from `--passphrase-file`.
+`--key` and `--cert` name the pair instead. The signed loader must verify against the certificate before it
 is written, and is read back after. `sbsign` and `sbverify` must be
 installed; mtools writes the ESP.
 

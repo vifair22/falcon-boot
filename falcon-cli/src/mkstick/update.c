@@ -257,8 +257,47 @@ static cli_status gather(upd_ctx *c)
 /* The shelf the UEFI half signs with the key of: a stick's own p3, or the
  * station's, which the scan finds on whichever disk carries its install
  * ID. */
+/* A shelf its OS has open (DESIGN 12.14): the keypair read through the
+ * mapping, with no passphrase. 1 when it was, 0 when the shelf is not open
+ * or the mapping does not give the keypair, which leaves the passphrase. */
+static int open_key_mapped(shelf_key *sk, const mks_disk *sd, uint32_t num)
+{
+    char real[MKS_PATH_MAX];
+    char node[MKS_PATH_MAX];
+    char dm[256];
+    char name[256];
+    char dev[300];
+    mks_disk mapped;
+
+    if (!sd->is_block)
+        return 0;
+    if (realpath(sd->path, real) == NULL)
+        (void)snprintf(real, sizeof real, "%s", sd->path);
+    if (disk_partition_name(util_basename(real), num, node, sizeof node) !=
+        CLI_OK) {
+        cli_error_clear();
+        return 0;
+    }
+    if (!disk_luks_holder("/sys/class/block", node, dm, sizeof dm, name,
+                          sizeof name))
+        return 0;
+    (void)snprintf(dev, sizeof dev, "/dev/%s", dm);
+    if (disk_stat(&mapped, dev) != CLI_OK ||
+        shelf_key_open(sk, dev, 0, mapped.size, 0, NULL) != CLI_OK) {
+        log_warn("the shelf is open as /dev/mapper/%s, but the MOK does not "
+                 "read through it: %s", name, cli_error_msg());
+        cli_error_clear();
+        return 0;
+    }
+    log_info("the MOK is read off the shelf, open as /dev/mapper/%s, into "
+             "memory", name);
+    return 1;
+}
+
+/* dry_run: say where the MOK would come from, opening it only where that
+ * asks nothing. */
 static cli_status open_key(upd_ctx *c, const cli_args *a, shelf_key *sk,
-                           mok_keys *keys)
+                           mok_keys *keys, int dry_run)
 {
     const char *key = cli_value(a, "key", NULL);
     const char *cert = cli_value(a, "cert", NULL);
@@ -295,6 +334,15 @@ static cli_status open_key(upd_ctx *c, const cli_args *a, shelf_key *sk,
         sd = &s.disks[s.shelf_disk].d;
         p = &s.disks[s.shelf_disk].r.parts[s.shelf_part];
         luks = s.shelf_luks;
+    }
+    if (luks && cli_value(a, "passphrase-file", NULL) == NULL &&
+        open_key_mapped(sk, sd, p->number)) {
+        *keys = sk->k;
+        return CLI_OK;
+    }
+    if (luks && dry_run) {
+        log_info("the shelf is not open; its passphrase will be asked for");
+        return CLI_OK;
     }
     memset(&pass, 0, sizeof pass);
     if (luks) {
@@ -637,6 +685,12 @@ static cli_status update_run(const cli_args *a)
         return rc;
     if (dry_run) {
         /* mkstick bios's dry run says it for itself. */
+        if (c.p.uefi_stick || c.p.uefi_station) {
+            rc = open_key(&c, a, &sk, &keys, 1);
+            shelf_key_close(&sk);
+            if (rc != CLI_OK)
+                return rc;
+        }
         if (c.p.bios)
             rc = do_bios(&c, a, from, 1);
         else
@@ -647,7 +701,7 @@ static cli_status update_run(const cli_args *a)
         return set_error(CLI_ERR_USAGE, "not confirmed; nothing written");
 
     if (c.p.uefi_stick || c.p.uefi_station) {
-        rc = open_key(&c, a, &sk, &keys);
+        rc = open_key(&c, a, &sk, &keys, 0);
         if (rc != CLI_OK)
             return rc;
         if (mkdtemp(workdir) == NULL) {
@@ -736,7 +790,8 @@ const cli_cmd mks_cmd_update = {
     "\n"
     "  BIOS   stages 1-3, as `mkstick bios` writes them, the sectors they\n"
     "         replace saved to --backup-dir first; station-legacy's drivers.\n"
-    "  UEFI   the loader, signed with the install's MOK off its shelf (the\n"
+    "  UEFI   the loader, signed with the install's MOK off its shelf (read\n"
+    "         through the shelf's mapping when its OS has it open, else the\n"
     "         passphrase is asked for; the key stays in memory) or --key,\n"
     "         checked, written over the old one, which is saved first, and\n"
     "         read back.\n"

@@ -39,6 +39,7 @@ int run_survey_tests(void);
 int run_stationini_tests(void);
 int run_bioscore_tests(void);
 int run_records_tests(void);
+int run_disk_tests(void);
 int run_nextio_tests(void);
 int run_stationcore_tests(void);
 int run_updatecore_tests(void);

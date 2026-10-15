@@ -75,6 +75,15 @@ cli_status disk_settle_node(const char *node);
 cli_status disk_partition_name(const char *base, unsigned n,
                                char *out, size_t cap);
 
+/* The LUKS mapping that holds partition `part` (its kernel name, sda3) open,
+ * as sysfs under `sys` publishes it (/sys/class/block, or a test's tree):
+ * 1 with the mapping's kernel name (dm-3) in dev and its mapper name in
+ * name, 0 when no LUKS mapping holds it. More than one holder, or one that
+ * is not dm-crypt over LUKS, is 0: what is read through it would not be
+ * known to be the partition's plaintext. */
+int disk_luks_holder(const char *sys, const char *part, char *dev,
+                     size_t dev_cap, char *name, size_t name_cap);
+
 /* ---- byte reads over a file or a partition of one ----
  *
  * Shaped exactly like gpt_read_fn / luks_read_fn / exfat_read_fn, which is what

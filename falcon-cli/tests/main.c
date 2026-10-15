@@ -10,7 +10,8 @@
  * records.c, nextcore.c and nextio.c, the identity records and the
  * next-boot marker, and stationcore.c, where `station install` puts a
  * station and what its STATION.INI says, and kdfbenchcore.c, the lists and
- * table of `mkstick kdf-bench`.
+ * table of `mkstick kdf-bench`, and disk.c's lookup of a shelf its OS has
+ * open.
  */
 
 #include "tests.h"
@@ -22,6 +23,7 @@ int main(void)
     int failed = 0;
 
     failed += run_bioscore_tests();
+    failed += run_disk_tests();
     failed += run_isoprobe_tests();
     failed += run_kdfbenchcore_tests();
     failed += run_payload_tests();
