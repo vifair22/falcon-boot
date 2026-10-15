@@ -1,7 +1,6 @@
 /* falcon-boot: the idle power-off. See idle.h. */
 
 #include <console/idle.h>
-#include <tsc/tsc.h>
 
 static EFI_SYSTEM_TABLE *g_st;
 static EFI_EVENT g_ev;
@@ -68,41 +67,4 @@ void idle_power_off(void)
                                        (void *)0);
     for (;;)
         __asm__ __volatile__("hlt");
-}
-
-static EFI_STATUS wait_key(EFI_SYSTEM_TABLE *st, EFI_INPUT_KEY *key);
-
-EFI_STATUS idle_wait_key(EFI_SYSTEM_TABLE *st, EFI_INPUT_KEY *key)
-{
-    EFI_STATUS status;
-
-    tsc_wait_begin();
-    status = wait_key(st, key);
-    tsc_wait_end();
-    return status;
-}
-
-static EFI_STATUS wait_key(EFI_SYSTEM_TABLE *st, EFI_INPUT_KEY *key)
-{
-    EFI_EVENT events[2];
-    UINTN index;
-    EFI_STATUS status;
-
-    idle_touch();
-    for (;;) {
-        events[0] = st->ConIn->WaitForKey;
-        events[1] = g_ev;
-        status = st->BootServices->WaitForEvent(g_ev != (EFI_EVENT)0 ? 2u
-                                                                     : 1u,
-                                                events, &index);
-        if (EFI_ERROR(status))
-            return status;
-        if (index == 1u) {
-            idle_expired();
-            continue;
-        }
-        status = st->ConIn->ReadKeyStroke(st->ConIn, key);
-        if (status != EFI_NOT_READY)
-            return status;
-    }
 }

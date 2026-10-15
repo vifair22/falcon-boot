@@ -19,7 +19,7 @@
 #include <station/station.h>
 #include <jump/routes.h>
 #include <jump/jres.h>
-#include <console/screen.h>
+#include <tui/tui.h>
 
 #include <media/strows.h>
 
@@ -65,11 +65,8 @@ static int legacy_boot(const strow *w)
     boot_result r;
 
     boot_result_init(&r);
-    screen_mode(jroute_code(k));
-    screen_page();
-    screen_out("booting: ");
-    screen_out16(w->label);
-    screen_out("\n\n");
+    tui_code_ascii(jroute_code(k));
+    tui_boot_page(w->label, (const uint16_t *)0);
     jroute_boot(k, &r);
     station_failed(w->label, jroute_code(k), &r);
     return 1;

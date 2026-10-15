@@ -177,13 +177,19 @@ int bios_getkey(void)
     scan = (uint8_t)((thunk_regs.eax >> 8) & 0xFFu);
     ascii = (uint8_t)(thunk_regs.eax & 0xFFu);
 
-    /* The arrows have no ASCII, so the scan code is the only evidence. */
-    if (ascii == 0) {
-        if (scan == 0x48u)
-            return BIOS_KEY_UP;
-        if (scan == 0x50u)
-            return BIOS_KEY_DOWN;
-        return -1;
+    /* The arrows and the paging keys have no ASCII, so the scan code is
+     * the only evidence. An enhanced keyboard's grey keys say 0xE0 where
+     * the keypad's say 0. */
+    if (ascii == 0 || ascii == 0xE0u) {
+        switch (scan) {
+        case 0x48u: return BIOS_KEY_UP;
+        case 0x50u: return BIOS_KEY_DOWN;
+        case 0x49u: return BIOS_KEY_PGUP;
+        case 0x51u: return BIOS_KEY_PGDN;
+        case 0x47u: return BIOS_KEY_HOME;
+        case 0x4Fu: return BIOS_KEY_END;
+        default:    return -1;
+        }
     }
     return (int)ascii;
 }

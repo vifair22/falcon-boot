@@ -1,0 +1,25 @@
+ falcon-boot 0.1.2  DIR                                   Secure Boot on, MS CA 
+                                                                                
+  +- ISO library ------------------------------------------------------------+  
+  |> Personal OS                                 [MOK]                       |  
+  |  archlinux-2026.09.01-x86_64.iso             [blessed]                   |  
+  |  ubuntu-26.04.1-desktop-amd64.iso            [MS UEFI CA]                |  
+  |  W+= blessed boot failed ============================================+   |  
+  |  d|                                                                  |D} |  
+  |  f|  archlinux-2026.09.01-x86_64.iso                                 |   |  
+  |  m|                                                                  |   |  
+  |  R|  blessed boot failed while LoadImage of the image (shim):        |   |  
+  |   |  0x800000000000001a                                              |   |  
+  |   |                                                                  |   |  
+  |   |  Bless it again with falcon-boot-sign, or turn Secure Boot off   |   |  
+  |   |  in firmware setup.                                              |   |  
+  |   |                                                                  |   |  
+  |   |  press any key to return to the menu.                            |   |  
+  |   |                                                                  |   |  
+  |   +==================================================================+   |  
+  |                                                                          |  
+  +--------------------------------------------------------------------------+  
+                                                                                
+                                                                                
+                                                                                
+ any key return to the menu                                                    

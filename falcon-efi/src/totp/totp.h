@@ -24,15 +24,15 @@
  * (tpm/evsave.h says why Linux cannot read it itself).
  *
  * Interactions. tcg/ for the TPM, falcon-core's tpm/ for the unseal and
- * crypto/otp for the code; the menu's status lines (console/menu.h) and
- * pos.c's page hook are where it is drawn.
+ * crypto/otp for the code; the menu's status box and the passphrase dialog
+ * (tui/tui.h, through pos.c's hook) are where it is drawn.
  */
 
 #ifndef FALCON_TOTP_H
 #define FALCON_TOTP_H
 
 #include <efi/uefi.h>
-#include <console/menu.h>
+#include <tui/tui.h>
 #include <media/stationini.h>
 
 /* Saves the PCRs for enrollment (FalconEvLog, tpm/evsave.h): the SHA-256
@@ -47,16 +47,10 @@ void totp_load(EFI_SYSTEM_TABLE *st, const stationini_totp *cfg);
 /* Is there anything to show: a [totp] section was loaded. */
 BOOLEAN totp_configured(void);
 
-/* The menu's status lines for now; ctx is the EFI_SYSTEM_TABLE. */
-void totp_status(void *ctx, menu_status_text *out);
-
-/* The same lines on a page (the passphrase prompt's), each followed by a
- * line break, and a blank line after them; nothing when not configured. */
-void totp_page(EFI_SYSTEM_TABLE *st);
-
-/* The passphrase prompt's tick (menu_prompt_set_tick): the lines totp_page
- * drew, redrawn in place when the code has rolled. */
-void totp_page_tick(EFI_SYSTEM_TABLE *st);
+/* The lines for now, for the menu's status box and the passphrase
+ * dialog, both of which ask again every second; ctx is the
+ * EFI_SYSTEM_TABLE. None when not configured. */
+void totp_status(void *ctx, tui_status *out);
 
 /* Wipes the seed; the lines then say the code is gone until a restart. */
 void totp_wipe(void);

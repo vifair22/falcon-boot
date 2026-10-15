@@ -8,7 +8,7 @@ EFI_SRC := falcon-efi/src
 
 EFI_MOD_loader        := $(EFI_SRC)/loader/loadops.c $(EFI_SRC)/loader/credfs.c \
                          $(EFI_SRC)/loader/bli.c
-EFI_MOD_console       := $(EFI_SRC)/console/menu.c $(EFI_SRC)/console/prompt.c \
+EFI_MOD_console       := $(EFI_SRC)/console/display.c \
                          $(EFI_SRC)/console/idle.c $(EFI_SRC)/console/serial.c
 EFI_MOD_discover      := $(EFI_SRC)/discover/discover.c $(EFI_SRC)/discover/partefi.c \
                          $(EFI_SRC)/discover/biolow.c

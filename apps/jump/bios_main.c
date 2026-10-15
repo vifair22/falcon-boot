@@ -21,7 +21,7 @@
 #include <start/bios.h>
 
 #include <mbr/mbr.h>
-#include <console/screen.h>
+#include <console/display.h>
 #include <linux/linux.h>
 #include <mem/e820.h>
 #include <jump/jumpini.h>
@@ -72,21 +72,6 @@ static int       g_have_memtest;
 static jump_cfg g_cfg;
 static char     g_ini[INI_MAX];
 
-static const char k_press_any[] = "\npress any key to return to the menu.\n";
-
-static void failed(const char *what, const boot_result *r)
-{
-    screen_out("\n");
-    screen_out(what);
-    screen_out(" failed while ");
-    screen_out(r->stage);
-    screen_out("\n");
-    if (r->advice != (const char *)0) {
-        screen_out("\n");
-        screen_out(r->advice);
-        screen_out("\n");
-    }
-}
 
 /* "Disk 0x80", in UCS-2 for the menu. */
 static void disk_label(disk_row *row)
@@ -206,20 +191,13 @@ static void boot_disk(disk_row *row)
     int kb;
 
     boot_result_init(&r);
-    screen_mode("MBR");
-    screen_page();
-    screen_out("booting: ");
-    screen_out16(row->label);
-    screen_out("\n\n");
+    tui_boot_page(row->label, u"MBR");
     kb = jroute_kbd_install();
     (void)mbr_boot(&row->disk, &r);
     if (kb == 0)
         jroute_kbd_remove();
 
-    screen_page();
-    screen_out16(row->label);
-    failed("boot", &r);
-    screen_out(k_press_any);
+    tui_route_failed_a(row->label, "boot", r.stage, r.advice);
 }
 
 static void boot_memtest(void)
@@ -229,52 +207,40 @@ static void boot_memtest(void)
     linux_object k;
 
     boot_result_init(&r);
-    screen_mode("MEM");
-    screen_page();
-    screen_out("booting: memtest86+\n\n");
+    tui_boot_page(u"memtest86+", u"MEM");
 
     jroute_kbd_release();
-    r.stage = "opening MEMTEST.BIN";
+    boot_stage(&r, "opening MEMTEST.BIN");
     if (fs_file_open(&g_vol, &f, &g_memtest) == FS_OK) {
         k.read = fs_file_read_cb;
         k.ctx = &f;
         k.size = g_memtest.size;
-        r.stage = "starting memtest86+";
-        (void)linux_boot(&k, (const linux_object *)0, 0, "", (void (*)(void))0);
+        boot_stage(&r, "starting memtest86+");
+        (void)linux_boot(&k, (const linux_object *)0, 0, "", tui_handoff);
         boot_result_advise(&r, linux_why(), (const char *)0);
     }
 
-    screen_page();
-    screen_out("memtest86+");
-    failed("boot", &r);
-    screen_out(k_press_any);
+    tui_route_failed_a(u"memtest86+", "boot", r.stage, r.advice);
 }
 
 /* CD, USB and CF: jump/routes.c between this app's two pages. */
-static void boot_route(jroute k, const char *name)
+static void boot_route(jroute k, const uint16_t *name)
 {
     boot_result r;
 
     boot_result_init(&r);
-    screen_mode(jroute_code(k));
-    screen_page();
-    screen_out("booting: ");
-    screen_out(name);
-    screen_out("\n\n");
+    tui_code_ascii(jroute_code(k));
+    tui_boot_page(name, (const uint16_t *)0);
     jroute_boot(k, &r);
 
-    screen_page();
-    screen_out(name);
-    failed("boot", &r);
-    screen_out(k_press_any);
+    tui_route_failed_a(name, "boot", r.stage, r.advice);
 }
 
 /* Escape on the list: INT 18h, and a reset if the BIOS returns. */
 static void return_to_firmware(void)
 {
-    screen_mode((const char *)0);
-    screen_page();
-    screen_out("falcon-boot: returning to firmware.\n");
+    tui_leaving(0);
+    tui_handoff();
     jroute_kbd_release();
     thunk_vector = 0x18;
     thunk_bios();
@@ -285,22 +251,17 @@ static void return_to_firmware(void)
  * waits with no default. */
 static void report_ini(void)
 {
-    screen_page();
-    screen_out("JUMP.INI line ");
-    screen_out_dec(g_cfg.err_line);
-    screen_out(": ");
-    screen_out(g_cfg.why);
-    screen_out(".\n\nThe menu will wait with no default.\n"
-               "\npress any key to continue.\n");
-    (void)screen_key();
+    tui_ini_line("JUMP.INI", (unsigned)g_cfg.err_line, g_cfg.why);
 }
 
 static void list_run(void)
 {
-    static const screen_banner banner = {
-        u"falcon-boot " FALCON_VERSION_JUMP, u"BIOS", TUI_ATTR_TEXT
+    static const tui_hint hints[] = {
+        { u"enter", u"boot" }, { u"up/down", u"choose" },
+        { u"esc", u"firmware" },
     };
     static const uint16_t *labels[LIST_MAX];
+    static tui_row rows[LIST_MAX];
     static int kind[LIST_MAX];      /* ROW_*, else a g_disks slot */
     unsigned seconds = g_cfg.timeout;
 
@@ -310,8 +271,8 @@ static void list_run(void)
         int have_def = 0;
         unsigned i;
         int pick;
+        tui_list l;
 
-        screen_mode((const char *)0);
         for (i = 0; i < g_ndisks; i++) {
             if (g_cfg.def == JUMP_DEF_HDD && !have_def) {
                 def = n;
@@ -361,11 +322,21 @@ static void list_run(void)
         /* A default whose row is not there (no disk with boot code, no
          * MEMTEST.BIN, or a route this build does not have yet) is no
          * default: the menu waits rather than booting something else. */
-        pick = screen_menu_timed(&banner, labels, n, (const char *)0,
-                                 tui_hint_plain, (int *)0,
-                                 u"(no disk with boot code, and no MEMTEST.BIN)",
-                                 def,
-                                 have_def ? seconds : 0);
+        memset(rows, 0, sizeof rows);
+        for (i = 0; i < n; i++) {
+            rows[i].label = labels[i];
+            rows[i].probed = 1;
+        }
+        memset(&l, 0, sizeof l);
+        l.title = u"Boot from";
+        l.rows = rows;
+        l.count = n;
+        l.sel = def;
+        l.seconds = have_def ? seconds : 0;
+        l.hints = hints;
+        l.nhints = 3;
+        l.empty = u"(no disk with boot code, and no MEMTEST.BIN)";
+        pick = tui_list_run(&l, (int *)0);
         /* The countdown is the first menu's only; coming back from a failed
          * boot, the menu waits. */
         seconds = 0;
@@ -375,14 +346,14 @@ static void list_run(void)
         if (kind[pick] == ROW_MEMTEST)
             boot_memtest();
         else if (kind[pick] == ROW_CD)
-            boot_route(JROUTE_CD, "CD");
+            boot_route(JROUTE_CD, u"CD");
         else if (kind[pick] == ROW_USB)
-            boot_route(JROUTE_USB, "USB stick");
+            boot_route(JROUTE_USB, u"USB stick");
         else if (kind[pick] == ROW_CF)
-            boot_route(JROUTE_CF, "CF card");
+            boot_route(JROUTE_CF, u"CF card");
         else
             boot_disk(&g_disks[kind[pick]]);
-        (void)screen_key();
+        (void)tui_wait();
     }
 }
 
@@ -401,12 +372,12 @@ void bios_main(uint8_t drive)
     /* The screen first, so every startup step can say itself on it: a
      * floppy takes seconds to read, and the BIOS's own text would otherwise
      * stay up the whole time. */
-    screen_init();
-    screen_page();
-    screen_busy(tui_busy_floppy);
+    display_init();
+    tui_title(u"falcon-boot " FALCON_VERSION_JUMP, u"BIOS", TUI_ATTR_STATE);
+    tui_busy(tui_busy_floppy);
     read_floppy(drive);
     jroute_init(g_have_vol ? &g_vol : (fs_vol *)0, "floppy");
-    screen_busy(tui_busy_disks);
+    tui_busy(tui_busy_disks);
     scan_disks();
 
     if (g_cfg.err_line != 0)

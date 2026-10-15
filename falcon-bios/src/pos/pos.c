@@ -29,9 +29,7 @@
 
 #include <start/bios.h>
 #include <pos/pos.h>
-#include <console/prompt.h>
 #include <linux/linux.h>
-#include <console/screen.h>
 
 #include <part/table.h>
 #include <media/strows.h>
@@ -85,7 +83,7 @@ static int       g_plain;
 /* The images on the shelf and what the chooser calls them, from the same
  * module the UEFI loader's chooser uses (falcon-core/src/media/shelf.h). */
 static shelf_list g_images;
-static const uint16_t *g_rows[SHELF_MAX];
+static tui_row g_rows[SHELF_MAX];
 
 /* What linux_boot is handed, summed, for the line the handoff prints. */
 static uint64_t g_read;
@@ -244,13 +242,10 @@ typedef struct {
 static sect_src g_linux_src;
 static sect_src g_initrd_src;
 
-/* The UEFI loader's read says it is alive with a dot per 8 MiB, so a 60 MiB
- * image draws a short line rather than a pause that reads as a hang; the
- * sections are read here, so the dots are drawn here. */
-#define POS_DOT_EVERY ((uint64_t)8u << 20)
-
+/* The read turns the step's spinner as it goes (tui_tick), so a 60 MiB
+ * image is not a pause that reads as a hang; the sections are read here,
+ * so the spinner is turned here. */
 static uint64_t g_done;
-static uint64_t g_dot_at;
 
 static int sect_read(void *ctx, uint64_t off, uint64_t len, void *buf)
 {
@@ -259,10 +254,7 @@ static int sect_read(void *ctx, uint64_t off, uint64_t len, void *buf)
     if (fs_file_read(s->f, s->base + off, len, buf) != FS_OK)
         return -1;
     g_done += len;
-    while (g_done >= g_dot_at) {
-        screen_out(".");
-        g_dot_at += POS_DOT_EVERY;
-    }
+    tui_tick();
     return 0;
 }
 
@@ -287,11 +279,12 @@ static int mem_read(void *ctx, uint64_t off, uint64_t len, void *buf)
  * the lines the UEFI loader prints at the same point, then the wipe. */
 static void handoff(void)
 {
-    screen_out("\n");
-    screen_out_dec(g_read);
-    screen_out(" bytes read.\n\n");
-    screen_out("handing over to the image; everything below is its own "
-               "output.\n\n");
+    uint16_t got[16];
+
+    tui_size(got, sizeof got / sizeof got[0], g_read);
+    tui_step_done(got);
+    tui_step(u"handing over to the image");
+    tui_handoff();
     wipe_secrets();
 }
 
@@ -381,16 +374,14 @@ static int boot_uki(const fs_dirent *uki, boot_result *r)
                                     "credentials packed\n"
                                   : "falcon-bios: identity credential packed\n");
     } else if (g_pass_len > 0) {
-        screen_out("warning: the passphrase credential could not be packed."
-                   "\n         The initramfs will ask for the passphrase "
-                   "again.\n\n");
+        tui_note(u"warning: the passphrase credential could not be packed. "
+                 u"The initramfs will ask for the passphrase again.");
     }
 
     g_read = kernel.size;
     for (i = 0; i < n_initrd; i++)
         g_read += initrd[i].size;
     g_done = 0;
-    g_dot_at = POS_DOT_EVERY;
 
     r->stage = "starting the kernel";
     /* handoff as linux_boot's last act: the kernel, the initrd and the
@@ -566,31 +557,22 @@ static int unlock_once(uint32_t *slot)
  * status to report. */
 static int prompt_and_unlock(void)
 {
-    size_t row = screen_row();
-    size_t end = 0;
-    int retry = 0;
+    tui_secret_spec spec;
 
+    memset(&spec, 0, sizeof spec);
+    spec.title = u"Unlock the shelf";
+    spec.prompt = u"passphrase for the encrypted partition:";
     for (;;) {
         uint32_t slot = 0;
+        long len;
         int rc;
-        unsigned wait;
-        size_t r;
 
-        if (retry) {
-            for (r = row; r <= end; r++)
-                screen_line(r);
-            screen_line(row + 1u);
-            screen_out("wrong passphrase.");
-            screen_line(row);
-        }
-        screen_out("passphrase for the encrypted partition: ");
-
-        if (prompt_passphrase(g_pass, sizeof g_pass, &g_pass_len) != 0)
+        len = tui_secret(&spec, g_pass, sizeof g_pass);
+        if (len < 0)
             return POS_ABORTED;
+        g_pass_len = (size_t)len;
 
-        end = screen_row();
-        screen_line(end);
-        screen_out("unlocking...\n");
+        tui_step(u"unlocking");
         rc = unlock_once(&slot);
         if (rc == LUKS_OK)
             return LUKS_OK;
@@ -600,34 +582,48 @@ static int prompt_and_unlock(void)
         g_pass_len = 0;
         g_failures++;
         /* Not said, as the UEFI loader does not say it
-         * (falcon-efi/src/pos/pos.c): the wait runs under "unlocking...". */
+         * (falcon-efi/src/pos/pos.c): the wait runs under "unlocking". */
         if (g_failures >= TUI_UNLOCK_TRIES) {
-            screen_line(end);
-            screen_out("wrong passphrase.\n");
-            screen_pause(3);
-            screen_power_off();
+            tui_step_done(u"wrong passphrase");
+            tui_pause(3);
+            tui_power_off();
         }
-        wait = tui_unlock_delay(g_failures);
-        screen_pause(wait);
-        retry = 1;
+        tui_pause(tui_unlock_delay(g_failures));
+        tui_step_done(u"wrong passphrase");
+        spec.status = u"wrong passphrase.";
     }
 }
 
 /* Two or more images are offered; one is booted without asking. */
 static int choose_uki(void)
 {
-    static const screen_banner banner = {
-        u"falcon-boot: which image?", (const uint16_t *)0, 0
+    static const tui_hint hints[] = {
+        { u"enter", u"boot" }, { u"esc", u"back" },
     };
+    tui_list l;
     size_t i;
+    int pick;
 
     if (g_images.n == 1)
         return 0;
     shelf_label(&g_images, &g_fs);
-    for (i = 0; i < g_images.n; i++)
-        g_rows[i] = g_images.uki[i].label;
-    return screen_menu(&banner, g_rows, g_images.n, (const char *)0,
-                       tui_hint_plain, (int *)0);
+    memset(g_rows, 0, sizeof g_rows);
+    for (i = 0; i < g_images.n && i < SHELF_MAX; i++) {
+        g_rows[i].label = g_images.uki[i].label;
+        g_rows[i].probed = 1;
+    }
+    memset(&l, 0, sizeof l);
+    l.title = u"Personal OS";
+    l.rows = g_rows;
+    l.count = g_images.n;
+    l.hints = hints;
+    l.nhints = sizeof hints / sizeof hints[0];
+    pick = tui_list_run(&l, (int *)0);
+    /* The list had the screen: the page comes back, named for the image
+     * picked. */
+    if (pick >= 0)
+        tui_boot_page(g_images.uki[pick].label, (const uint16_t *)0);
+    return pick;
 }
 
 const uint16_t *pos_entry_label(void)
@@ -665,7 +661,7 @@ static int open_encrypted(boot_result *r)
         return -1;
     }
 
-    r->stage = "opening the decrypted volume";
+    boot_stage(r, "opening the decrypted volume");
     if (luks_dev_open(&g_dev, &g_vol, &g_mk) != LUKS_OK) {
         wipe_secrets();
         return -1;
@@ -675,7 +671,7 @@ static int open_encrypted(boot_result *r)
      * here is dead from this point on. */
     crypto_wipe(&g_mk, sizeof g_mk);
 
-    r->stage = "mounting the filesystem inside it";
+    boot_stage(r, "mounting the filesystem inside it");
     ops = fs_identify(luks_read, &g_dev, FS_HINT_SHELF);
     rc = ops == (const fs_ops *)0
              ? FS_ERR_BAD_SUPER
@@ -720,7 +716,7 @@ int pos_run_pick(bios_disk *d, const part_entry *shelf, pos_pick_fn want,
 
     boot_result_init(r);
     if (!pos_probe(d, shelf)) {
-        r->stage = "looking for a UKI shelf";
+        boot_stage(r, "looking for a UKI shelf");
         return -1;
     }
     if (!g_plain) {
@@ -729,7 +725,7 @@ int pos_run_pick(bios_disk *d, const part_entry *shelf, pos_pick_fn want,
             return rc;
     }
 
-    r->stage = "looking for a UKI";
+    boot_stage(r, "looking for a UKI");
     if (shelf_collect(&g_images, &g_fs) != 1) {
         r->advice = "no *.efi image was found in /uki or /EFI/Linux.";
         wipe_secrets();
@@ -759,15 +755,24 @@ int pos_run_pick(bios_disk *d, const part_entry *shelf, pos_pick_fn want,
     }
     uki = &g_images.uki[pick].ent;
 
-    screen_page();
     /* As the UEFI loader says it (falcon-efi/src/pos/pos.c). */
     if ((g_jinfo.flags & FS_JNL_FC_SKIPPED) != 0)
-        screen_out("the shelf's last few seconds of changes were not read.\n");
+        tui_out(u"the shelf's last few seconds of changes were not read.\n");
     if ((g_jinfo.flags & FS_JNL_REPLAYED) != 0)
         bios_puts("falcon-bios: the shelf is read through its journal\n");
-    screen_out("reading ");
-    screen_out16(uki->name);
-    screen_out(" ");
+    {
+        uint16_t what[8u + 64u];
+        size_t n = 0;
+        size_t i;
+
+        for (i = 0; u"reading "[i] != 0; i++)
+            what[n++] = u"reading "[i];
+        for (i = 0; uki->name[i] != 0 && n + 1u < sizeof what / sizeof what[0];
+             i++)
+            what[n++] = uki->name[i];
+        what[n] = 0;
+        tui_step(what);
+    }
     rc = boot_uki(uki, r);
     wipe_secrets();
     return rc;

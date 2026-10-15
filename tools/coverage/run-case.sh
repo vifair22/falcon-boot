@@ -270,7 +270,7 @@ serial_text() {
 # ---- the menu ----
 for ((i = 0; i < MENU_WAIT; i++)); do
     alive || finish ERROR "qemu exited before the menu ($(tail -c 200 "$OUTDIR/qemu.log" | tr '\n\t' '  '))"
-    # The menu's key legend, which both loaders draw from one layout
+    # The menu's key hints, which both loaders draw from one layout
     # (falcon-core/src/tui).
     if serial_text | grep -q 'esc back'; then
         break
@@ -289,18 +289,21 @@ sleep 2
 # The stick carries one image, but not always on the first row: a blessed
 # stick also has a /falcon directory, and whether that sorts above or below
 # the image is the alphabet's business (it sits above FreeBSD-15.1 and below
-# archlinux-2026.01.01). The selected row is the one the menu draws in
-# reverse video, so it can be read off the raw serial and the cursor walked
-# down until it is the image.
+# archlinux-2026.01.01). The selected row is the one the menu draws in the
+# selection bar's colours, black on cyan or, for a row predicted refused,
+# black on brown (falcon-core/src/tui), with a '>' in its first cell; so it
+# can be read off the raw serial and the cursor walked down until it is the
+# image.
 selected_row() {
     [[ -f "$SERIAL" ]] || return 0
-    # The last reverse-video run, up to the escape that ends it.
-    # Everything between the escape that turns reverse video on and the next
-    # escape of any kind, which is the one that turns it off again.
-    printf '%s' "$(sed -e 's/\x1b\[30m\x1b\[47m/\n@ROW@/g' "$SERIAL" |
+    # The last run in the bar's colours: the cursor move after the colours
+    # is dropped, then everything up to the next escape of any kind, which
+    # is the one the next run starts with.
+    printf '%s' "$(sed -e 's/\x1b\[30m\x1b\[4[36]m/\n@ROW@/g' "$SERIAL" |
                    grep '@ROW@' | tail -n 1 |
                    sed -e 's/.*@ROW@//' -e 's/\x1b\[[0-9;=?]*[A-Za-z]//' \
-                       -e 's/\x1b.*//' -e 's/^ *//' -e 's/ *$//')"
+                       -e 's/\x1b.*//' -e 's/^ *//' -e 's/^> *//' \
+                       -e 's/ *$//')"
 }
 # Both loaders: falcon-bios sends its menu to serial as the same ANSI
 # sequences OVMF's terminal does (falcon-bios/src/console/screen.c).
@@ -504,9 +507,10 @@ while (( $(date +%s) - T1 < TIMEOUT )); do
     fi
     sleep 1
 done
-# The loader prints "starting <entry>" as it hands over, so a timeout after
-# one is a different thing from a timeout before it: the payload was
-# launched and then said nothing this harness can read.
+# The loader says "starting <entry>..." on serial as it hands over (a step
+# of its page, falcon-core/src/tui), so a timeout after one is a different
+# thing from a timeout before it: the payload was launched and then said
+# nothing this harness can read.
 #
 # That is usually not a defect. The harness reads serial and DHCP; a
 # blessed wrap carries console=ttyS0 because mk-case-stick.sh puts it there,
@@ -520,7 +524,8 @@ done
 # `|| true`: no such line is the common case under pipefail, and set -e
 # would turn it into an ERROR instead of the FAIL below.
 started=$(grep -m1 '^ *starting ' <<<"$(serial_text | tail -n +"$((MENU_LINES + 1))")" |
-          sed 's/^[[:space:]]*starting //' | cut -c1-80 || true)
+          sed -e 's/^[[:space:]]*starting //' -e 's/\.\.\.$//' |
+          cut -c1-80 || true)
 if [[ -n "$started" ]]; then
     finish FAIL "no userland on serial within ${TIMEOUT}s after starting $started"
 fi

@@ -18,7 +18,7 @@
 #include <win/winpatch.h>
 
 #include <iso/iso.h>
-#include <console/menu.h>
+#include <tui/tui.h>
 
 #include <fs/udf.h>
 #include <wim/wim.h>
@@ -150,6 +150,7 @@ EFI_STATUS win_patched_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent,
     EFI_STATUS status = EFI_UNSUPPORTED;
 
     r->stage = L"opening the ISO";
+    tui_step(L"opening the ISO");
     r->status = EFI_SUCCESS;
     r->unpatchable = 1;
     r->advice = (const CHAR16 *)0;
@@ -161,6 +162,7 @@ EFI_STATUS win_patched_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent,
     if (fs_file_open(p2, &g_iso, iso) != FS_OK)
         return r->status = EFI_DEVICE_ERROR;
     r->stage = L"reading the ISO's UDF tree";
+    tui_step(L"reading the ISO's UDF tree");
     if (udf_mount(&g_uv, fs_file_read_cb, &g_iso) != UDF_OK ||
         udf_lookup(&g_uv, "/sources/boot.wim", &we) != UDF_OK ||
         udf_file_open(&g_uv, &g_wim, &we) != UDF_OK ||
@@ -170,6 +172,7 @@ EFI_STATUS win_patched_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent,
         return r->status = EFI_UNSUPPORTED;
 
     r->stage = L"reading boot.wim";
+    tui_step(L"reading boot.wim");
     if (wim_open(wim_rd, (void *)0, we.size, &w) != WIM_OK)
         return r->status = EFI_UNSUPPORTED;
     lookup = pool(bs, (UINTN)w.lookup.orig);
@@ -190,6 +193,7 @@ EFI_STATUS win_patched_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent,
      * is. A block of slack at the end holds the zero padding, and one more
      * the anchor. */
     r->stage = L"patching boot.wim";
+    tui_step(L"patching boot.wim");
     cfg_len = make_cfg(iso_rel, iso->size, map, map_len);
     tail_cap = wim_patch_tail_max((size_t)w.boot_meta.orig,
                                   (size_t)w.lookup.orig,
@@ -210,6 +214,7 @@ EFI_STATUS win_patched_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent,
     /* From here on the media is patchable; a failure is a real one. */
     r->unpatchable = 0;
     r->stage = L"rewriting boot.wim's UDF entry";
+    tui_step(L"rewriting boot.wim's UDF entry");
     if (fs_file_read(&g_iso, ((uint64_t)g_uv.part_start + we.icb_lbn) * BLK,
                      BLK, g_fe) != FS_OK ||
         udf_fe_append(g_fe, we.icb_lbn, tail_len,
@@ -234,6 +239,7 @@ EFI_STATUS win_patched_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent,
     }
 
     r->stage = L"rewriting the UDF partition";
+    tui_step(L"rewriting the UDF partition");
     if (udf_pd_blocks(&g_uv, pd, &npd) != UDF_OK) {
         status = EFI_UNSUPPORTED;
         goto out;
@@ -254,7 +260,7 @@ EFI_STATUS win_patched_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent,
     add_ovl(&ovl, iso->size, (uint64_t)app_blocks * BLK, app);
     ovl.extra = (uint64_t)app_blocks * BLK;
 
-    menu_out(st, L"booting with boot.wim patched in memory\r\n\r\n");
+    tui_step(L"booting with boot.wim patched in memory");
     r->stage = L"booting";
     status = iso_boot_overlaid(st, parent, p2, iso, ISO_MEDIA_CD, &ovl, &ir);
     r->stage = ir.stage;

@@ -39,8 +39,9 @@ static char g_label[STATIONINI_LABEL_MAX];
 static uint64_t g_step = (uint64_t)-1;
 static uint32_t g_code;
 
-#define ATTR_CODE TUI_ATTR(TUI_WHITE, TUI_BLACK)
-#define ATTR_WARN TUI_ATTR(TUI_YELLOW, TUI_BLACK)
+#define ATTR_CODE  TUI_ATTR(TUI_WHITE, TUI_BLACK)
+#define ATTR_LABEL TUI_ATTR(TUI_LIGHTGRAY, TUI_BLACK)
+#define ATTR_WARN  TUI_ATTR(TUI_YELLOW, TUI_BLACK)
 
 /* edk2's 1.2 log is a few kilobytes on the machines it has been read on
  * (the T430's, the TPM rig's OVMF); a firmware whose log does not fit, or
@@ -325,7 +326,7 @@ static int clock_now(EFI_SYSTEM_TABLE *st, uint64_t *now)
                          t.Second, now) == CRYPTO_OK ? 0 : -1;
 }
 
-static void line_code(EFI_SYSTEM_TABLE *st, wbuf *w, UINTN *attr)
+static void line_code(EFI_SYSTEM_TABLE *st, wbuf *w, uint8_t *attr)
 {
     char digits[8];
     uint64_t now = 0;
@@ -361,14 +362,9 @@ static void line_code(EFI_SYSTEM_TABLE *st, wbuf *w, UINTN *attr)
     *attr = ATTR_CODE;
     put(w, "TOTP: ");
     put(w, digits);
-    if (g_label[0] != '\0') {
-        put(w, "  (");
-        put(w, g_label);
-        put(w, ")");
-    }
 }
 
-void totp_status(void *ctx, menu_status_text *out)
+void totp_status(void *ctx, tui_status *out)
 {
     EFI_SYSTEM_TABLE *st = (EFI_SYSTEM_TABLE *)ctx;
     wbuf w;
@@ -380,11 +376,20 @@ void totp_status(void *ctx, menu_status_text *out)
     out->n = 1;
     out->attr[0] = ATTR_WARN;
     w.at = out->line[0];
-    w.left = MENU_STATUS_MAX;
+    w.left = TUI_STATUS_MAX;
     w.at[0] = 0;
     switch (g_state) {
     case ST_OK:
         line_code(st, &w, &out->attr[0]);
+        /* Which enrollment the code is, on a line of its own. */
+        if (g_label[0] != '\0' && out->attr[0] == ATTR_CODE) {
+            w2.at = out->line[1];
+            w2.left = TUI_STATUS_MAX;
+            w2.at[0] = 0;
+            put(&w2, g_label);
+            out->attr[1] = ATTR_LABEL;
+            out->n = 2;
+        }
         break;
     case ST_WIPED:
         put(&w, "The TOTP code is shown again after a restart.");
@@ -395,7 +400,7 @@ void totp_status(void *ctx, menu_status_text *out)
     case ST_PCR:
         put(&w, "The TPM did not release the code:");
         w2.at = out->line[1];
-        w2.left = MENU_STATUS_MAX;
+        w2.left = TUI_STATUS_MAX;
         put(&w2, "firmware, its settings or the boot chain changed since "
                  "enrollment.");
         out->attr[1] = ATTR_WARN;
@@ -424,81 +429,3 @@ void totp_status(void *ctx, menu_status_text *out)
     }
 }
 
-/* The lines totp_page last drew, and where, for totp_page_tick. */
-static menu_status_text g_page;
-static UINTN g_page_col;
-static UINTN g_page_row;
-static BOOLEAN g_page_on;
-
-static BOOLEAN line_eq(const CHAR16 *a, const CHAR16 *b)
-{
-    UINTN i;
-
-    for (i = 0; a[i] != 0 || b[i] != 0; i++)
-        if (a[i] != b[i])
-            return FALSE;
-    return TRUE;
-}
-
-void totp_page(EFI_SYSTEM_TABLE *st)
-{
-    UINTN i;
-    UINTN rows;
-
-    g_page_on = FALSE;
-    totp_status(st, &g_page);
-    if (g_page.n == 0)
-        return;
-    g_page_col = (UINTN)st->ConOut->Mode->CursorColumn;
-    for (i = 0; i < g_page.n && i < MENU_STATUS_ROWS; i++) {
-        st->ConOut->SetAttribute(st->ConOut, g_page.attr[i]);
-        menu_out(st, g_page.line[i]);
-        st->ConOut->SetAttribute(st->ConOut, TUI_ATTR_TEXT);
-        menu_out(st, L"\r\n");
-    }
-    menu_out(st, L"\r\n");
-    /* Counted back from where the cursor ended, so a page that scrolled
-     * while these were written still names the right rows. */
-    rows = i + 1u;
-    if ((UINTN)st->ConOut->Mode->CursorRow >= rows) {
-        g_page_row = (UINTN)st->ConOut->Mode->CursorRow - rows;
-        g_page_on = TRUE;
-    }
-}
-
-void totp_page_tick(EFI_SYSTEM_TABLE *st)
-{
-    static menu_status_text now;
-    INT32 col;
-    INT32 row;
-    UINTN i;
-
-    if (!g_page_on)
-        return;
-    totp_status(st, &now);
-    if (now.n != g_page.n)
-        return;
-    col = st->ConOut->Mode->CursorColumn;
-    row = st->ConOut->Mode->CursorRow;
-    for (i = 0; i < now.n && i < MENU_STATUS_ROWS; i++) {
-        UINTN old = 0;
-        UINTN len = 0;
-
-        if (line_eq(now.line[i], g_page.line[i]))
-            continue;
-        while (g_page.line[i][old] != 0)
-            old++;
-        while (now.line[i][len] != 0)
-            len++;
-        st->ConOut->SetCursorPosition(st->ConOut, g_page_col, g_page_row + i);
-        st->ConOut->SetAttribute(st->ConOut, now.attr[i]);
-        st->ConOut->OutputString(st->ConOut, now.line[i]);
-        st->ConOut->SetAttribute(st->ConOut, TUI_ATTR_TEXT);
-        /* A shorter line clears what the longer one left. */
-        while (len++ < old)
-            st->ConOut->OutputString(st->ConOut, (CHAR16 *)(uintptr_t)L" ");
-        memcpy(g_page.line[i], now.line[i], sizeof now.line[i]);
-        g_page.attr[i] = now.attr[i];
-    }
-    st->ConOut->SetCursorPosition(st->ConOut, (UINTN)col, (UINTN)row);
-}

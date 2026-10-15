@@ -19,7 +19,6 @@
 #include <start/bios.h>
 #include <bsd/bsd.h>
 #include <iso/vcd.h>
-#include <console/screen.h>
 #include <mem/e820.h>
 #include <linux/linux.h>
 
@@ -152,13 +151,13 @@ int bsd_boot(bios_disk *d, fs_vol *p2, const part_entry *p2part,
     if (not_bsd != (int *)0)
         *not_bsd = 1;
 
-    r->stage = "opening the ISO";
+    boot_stage(r, "opening the ISO");
     if (fs_file_open(p2, &g_iso, iso) != FS_OK)
         return -1;
     /* Named, not identified: a medium this route applies to is an ISO9660
      * one and the registry would just as happily claim its UDF tree, which
      * is not where loader.conf is looked up from. */
-    r->stage = "reading the ISO's filesystem";
+    boot_stage(r, "reading the ISO's filesystem");
     if (fs_mount(&g_isovol, &fs_ops_iso9660, fs_file_read_cb,
                  &g_iso) != FS_OK)
         return -1;
@@ -166,7 +165,7 @@ int bsd_boot(bios_disk *d, fs_vol *p2, const part_entry *p2part,
     /* Where the settings go, and how much room there is for them. The file
      * has to be one contiguous run so a single override can replace its
      * head, which every medium met writes it as. */
-    r->stage = "locating the ISO's loader.conf";
+    boot_stage(r, "locating the ISO's loader.conf");
     if (fs_lookup(&g_isovol, LOADER_CONF, &g_dir, &conf) != FS_OK ||
         conf.is_dir || conf.size < CONF_HEAD ||
         fs_extents(&g_isovol, &conf, &conf_ext, 1, &next) != FS_OK ||
@@ -176,7 +175,7 @@ int bsd_boot(bios_disk *d, fs_vol *p2, const part_entry *p2part,
         fs_file_read(&g_conf, 0, CONF_HEAD, g_head) != FS_OK)
         return -1;
 
-    r->stage = "placing the memory-disk record";
+    boot_stage(r, "placing the memory-disk record");
     if (bsdmd_record(iso->size, iso_read, (void *)0, &rec, g_path,
                      sizeof g_path) != BSDMD_OK) {
         r->advice = "this ISO has no free bytes in its root or /boot "
@@ -194,14 +193,14 @@ int bsd_boot(bios_disk *d, fs_vol *p2, const part_entry *p2part,
      * after the memory disk is loaded, with nothing on the screen that says
      * why. The medium's own loader would start the same kernel, so this is
      * a refusal, not a cue to chainload. */
-    r->stage = "checking the processor";
+    boot_stage(r, "checking the processor");
     if (kernel_is_amd64() && !linux_cpu_is_64()) {
         r->advice = "this image needs a 64-bit processor, and this one has "
                     "no 64-bit mode.";
         return -1;
     }
 
-    r->stage = "checking memory for the image";
+    boot_stage(r, "checking memory for the image");
     if (!staging_fits(iso->size)) {
         r->advice = loader_is_i386()
             ? "this ISO is too large for its i386 loader to hold as a memory "
@@ -213,7 +212,7 @@ int bsd_boot(bios_disk *d, fs_vol *p2, const part_entry *p2part,
         return -1;
     }
 
-    r->stage = "writing the loader settings";
+    boot_stage(r, "writing the loader settings");
     if (bsdmd_config(g_path, BSD_CONSOLE, g_head, sizeof g_head,
                      g_cfg, sizeof g_cfg,
                      &cfg_len) != BSDMD_OK) {
@@ -222,7 +221,7 @@ int bsd_boot(bios_disk *d, fs_vol *p2, const part_entry *p2part,
         return -1;
     }
 
-    r->stage = "placing the medium's edits";
+    boot_stage(r, "placing the medium's edits");
     vcd_overlay_reset();
     if (vcd_overlay(&g_iso, rec.off, rec.bytes, rec.len) != 0 ||
         vcd_overlay(&g_iso, conf_ext.vol_off, g_cfg, cfg_len) != 0) {
@@ -237,6 +236,6 @@ int bsd_boot(bios_disk *d, fs_vol *p2, const part_entry *p2part,
      * reads the whole medium out of the virtual CD after this line, and the
      * coverage harness counts media read after "starting" as the kernel's
      * (tools/coverage/run-case.sh). */
-    screen_out("handing the ISO to its own loader, as a memory disk\n");
+    tui_step(u"handing the ISO to its own loader, as a memory disk");
     return vcd_chainload(d, p2, p2part, iso, &g_iso, r);
 }

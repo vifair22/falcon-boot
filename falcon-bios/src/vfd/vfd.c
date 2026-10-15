@@ -17,7 +17,6 @@
 #include <vfd/vfd.h>
 #include <vfd/vfdcore.h>
 #include <mem/heap.h>
-#include <console/screen.h>
 
 #include <fs/fs.h>
 #include <media/eltorito.h>
@@ -54,7 +53,7 @@ int vfd_serve(fs_read_fn read, void *ctx, const elt_entry *e, boot_result *r)
     uint16_t seg;
     uint16_t equip;
 
-    r->stage = "reading the floppy image's geometry";
+    boot_stage(r, "reading the floppy image's geometry");
     if (read == (fs_read_fn)0 || e == (const elt_entry *)0)
         return -1;
     if (vfd_geometry((uint8_t)e->media, 0, &g) != VFD_OK) {
@@ -66,7 +65,7 @@ int vfd_serve(fs_read_fn read, void *ctx, const elt_entry *e, boot_result *r)
 
     /* The image, in extended memory, padded with zeros as a formatted
      * floppy's unused sectors are. */
-    r->stage = "reserving memory for the floppy image";
+    boot_stage(r, "reserving memory for the floppy image");
     heap_reset();
     if (!heap_open(image_bytes + 0x1000u)) {
         r->advice = "this machine has too little memory above 64 MB to hold "
@@ -81,7 +80,7 @@ int vfd_serve(fs_read_fn read, void *ctx, const elt_entry *e, boot_result *r)
     phys = heap_phys(buf);
     memset(buf, 0, (size_t)image_bytes);
 
-    r->stage = "reading the floppy image";
+    boot_stage(r, "reading the floppy image");
     iso_off = (uint64_t)e->lba * ELT_SECTOR;
     done = 0;
     while (done < image_bytes) {
@@ -104,7 +103,7 @@ int vfd_serve(fs_read_fn read, void *ctx, const elt_entry *e, boot_result *r)
      * 0x7C00. */
     memcpy((void *)(uintptr_t)VFD_STAGE_ADDR, buf, VFD_SECTOR);
 
-    r->stage = "reserving memory for the virtual floppy";
+    boot_stage(r, "reserving memory for the virtual floppy");
     seg = lowmem_segment(VCD_BYTES);
     if (seg == 0) {
         r->advice = "this machine will not give up the conventional memory "
@@ -151,7 +150,7 @@ int vfd_serve(fs_read_fn read, void *ctx, const elt_entry *e, boot_result *r)
     bios_puts("\nfalcon-bios: image at ");
     bios_put_hex64(phys);
     bios_puts(", handing over\n");
-    screen_out("booting the medium's floppy image\n\n");
+    tui_step(u"booting the medium's floppy image");
 
     /* The equipment word: a floppy is present (bit 0), and there is one of
      * them (bits 6-7 clear). */
@@ -166,6 +165,7 @@ int vfd_serve(fs_read_fn read, void *ctx, const elt_entry *e, boot_result *r)
     bios_boot_drive = 0x00;
     poke16(GATE_TARGET, (uint16_t)VFD_OFF_LAUNCH);
     poke16(GATE_TARGET + 2u, seg);
+    tui_handoff();
     ((void (*)(void))(uintptr_t)GATE_BOOT16)();
     return -1;
 }
