@@ -159,7 +159,9 @@ unique within each such set, so `#include <fs/exfat.h>` means one file, and
   publish-arch.sh`); Manual Section 14.
 - `release_version` at the root is the version; everything tags off it
   (`FALCON_SEMVER` and the timestamped `FALCON_VERSION` in
-  `build/version.h`, the SBAT rows, the banners).
+  `build/version.h`, the SBAT rows, the banners). The version's last field
+  is `release` only on a CI build from master (master's pipeline, or a tag
+  on master); every other build, here or on the binhost, says `dev`.
 
 ## One screen, every loader
 

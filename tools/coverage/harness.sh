@@ -175,6 +175,7 @@ RUN=(docker run --rm "${TTY[@]}" \
     -e FALCON_TEST_BOOTWIM \
     -e A21M_ORIG \
     -e W98_IOS_CF \
+    -e VARIANT \
     -w /work \
     "$IMAGE" bash -c "$CMDQ; rc=\$?; chown -R $(id -u):$(id -g) /work/build /work/compile_commands.json 2>/dev/null; exit \$rc")
 

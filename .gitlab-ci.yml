@@ -58,6 +58,17 @@ default:
   before_script:
     - export FALCON_HARNESS_IMAGE="falcon-boot-harness:$(sha256sum tools/coverage/Dockerfile | cut -c1-12)"
     - mkdir -p "$FALCON_BUILD_DIR"
+    # A build is a release only once it is on master: master's pipeline, or
+    # a tag on one of master's commits. Every other build says dev.
+    - |
+      export VARIANT=dev
+      if [[ ${CI_COMMIT_BRANCH:-} == master ]]; then
+        export VARIANT=release
+      elif [[ -n ${CI_COMMIT_TAG:-} ]] && git fetch -q --depth=500 origin master &&
+           git merge-base --is-ancestor "$CI_COMMIT_SHA" FETCH_HEAD; then
+        export VARIANT=release
+      fi
+      echo "version stamp: $VARIANT"
   # A cancelled or timed-out job stops the docker client, not the container.
   after_script:
     - docker rm -f "$FALCON_HARNESS_NAME" >/dev/null 2>&1 || true
@@ -146,6 +157,7 @@ release:
     - |
       want="v$(cat release_version)"
       [[ $CI_COMMIT_TAG == "$want" ]] || { echo "the tag is $CI_COMMIT_TAG, release_version says $want"; exit 1; }
+      [[ $VARIANT == release ]] || { echo "the tag $CI_COMMIT_TAG is not on master; nothing published"; exit 1; }
     - *shims
     - tools/coverage/harness.sh make release MEMTEST=/fixtures/memtest/mt86p_810_i586 MEMTEST_EFI=/fixtures/memtest/mt86p_810_x86_64
     - rm -rf release && cp -r "$FALCON_BUILD_DIR/release" release
