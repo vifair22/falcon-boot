@@ -137,8 +137,9 @@ typedef struct {
  * then read a sector at a time.
  *
  * run is handed to argon2id as it is (argon2.h): NULL runs the lanes in
- * turn on the calling processor. tick is argon2_params.tick, for the
- * loaders' spinner; NULL for none. */
+ * turn on the calling processor. tick is called through the derivations
+ * (argon2_params.tick, pbkdf2_tick) and the digest check, for the loaders'
+ * spinner; NULL for none. */
 typedef struct {
     void *(*get)(void *ctx, uint32_t kib);
     void  (*put)(void *ctx, void *mem, uint32_t kib);

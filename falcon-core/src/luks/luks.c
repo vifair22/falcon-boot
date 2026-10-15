@@ -637,7 +637,7 @@ int luks_falcon_token(const luks_vol *v, uint32_t *version,
  * keyslot. Until this passes, "the AF merge produced 64 bytes" says nothing
  * at all: a wrong passphrase produces 64 bytes just as readily. */
 static int verify_digest(const json_value *digests, const json_value *name,
-                         const luks_master_key *mk)
+                         const luks_master_key *mk, void (*tick)(void))
 {
     json_iter it;
     if (json_iter_init(digests, &it) != JSON_OK) {
@@ -699,8 +699,8 @@ static int verify_digest(const json_value *digests, const json_value *name,
             return LUKS_ERR_CORRUPT;
         }
         /* The master key is the PBKDF2 *password* here, not the salt. */
-        if (pbkdf2(h, mk->key, mk->len, salt, salt_len, iters,
-                   got, want_len) != CRYPTO_OK) {
+        if (pbkdf2_tick(h, mk->key, mk->len, salt, salt_len, iters,
+                        got, want_len, tick) != CRYPTO_OK) {
             return LUKS_ERR_CORRUPT;
         }
         ok = crypto_ct_eq(got, want, want_len);
@@ -782,8 +782,9 @@ static int kdf_derive(luks_vol *v, kdf_in *k, const void *pass,
     int rc;
 
     if (k->type == LUKS_KDF_PBKDF2) {
-        rc = pbkdf2(k->hash, pass, pass_len, k->salt, k->salt_len, k->iters,
-                    out, out_len);
+        rc = pbkdf2_tick(k->hash, pass, pass_len, k->salt, k->salt_len,
+                         k->iters, out, out_len,
+                         mem != NULL ? mem->tick : NULL);
         crypto_wipe(k->salt, sizeof k->salt);
         return (rc == CRYPTO_OK) ? LUKS_OK : LUKS_ERR_UNSUPPORTED;
     }
@@ -1048,7 +1049,7 @@ static int try_slot(luks_vol *v, const json_value *name,
         return rc;
     }
 
-    rc = verify_digest(digests, name, mk);
+    rc = verify_digest(digests, name, mk, mem != NULL ? mem->tick : NULL);
     if (rc != LUKS_OK) {
         crypto_wipe(mk, sizeof *mk);
     }

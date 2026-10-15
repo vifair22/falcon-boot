@@ -35,4 +35,13 @@ int pbkdf2(const hash_desc *d, const void *pass, size_t pass_len,
            const void *salt, size_t salt_len, uint32_t iterations,
            uint8_t *out, size_t out_len);
 
+/* The same, calling tick every PBKDF2_TICK iterations (when not NULL): the
+ * loaders turn a step's spinner from it through an unlock (DESIGN Section
+ * 7.10). */
+#define PBKDF2_TICK 4096u
+
+int pbkdf2_tick(const hash_desc *d, const void *pass, size_t pass_len,
+                const void *salt, size_t salt_len, uint32_t iterations,
+                uint8_t *out, size_t out_len, void (*tick)(void));
+
 #endif /* FALCON_CRYPTO_PBKDF2_H */
