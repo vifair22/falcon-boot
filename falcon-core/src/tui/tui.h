@@ -358,7 +358,7 @@ int tui_ask(const uint16_t *title, const uint16_t *text,
 int tui_wait(void);
 
 /* Waits `seconds`, then throws away the keys pressed meanwhile: the pause
- * after a wrong passphrase. */
+ * after a wrong passphrase. An open step's spinner turns through it. */
 void tui_pause(unsigned seconds);
 
 /* Off now, with the secret tui_secret is holding wiped first: the

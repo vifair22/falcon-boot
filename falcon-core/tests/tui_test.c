@@ -789,6 +789,30 @@ static void test_tick_turns_spinner(void **state)
     tui_tick();
 }
 
+/* The pause after a wrong passphrase leaves the step open: its spinner
+ * turns through the wait rather than freezing for it. */
+static void test_pause_turns_spinner(void **state)
+{
+    static const int keys[] = {
+        TUI_KEY_NONE, TUI_KEY_NONE, TUI_KEY_NONE, TUI_KEY_NONE,
+        TUI_KEY_NONE, TUI_KEY_NONE, TUI_KEY_NONE, TUI_KEY_NONE,
+        TUI_KEY_NONE, TUI_KEY_NONE, TUI_KEY_NONE, TUI_KEY_NONE,
+    };
+    size_t drawn;
+    int r;
+
+    (void)state;
+    start(keys, sizeof keys / sizeof keys[0]);
+    boot_page();
+    r = row_of("starting the kernel");
+    assert_true(r > 0);
+    drawn = g_fake.puts;
+    tui_pause(1);
+    /* A second is four frames, a whole turn: each one drawn. */
+    assert_true(g_fake.puts >= drawn + 4u);
+    assert_true(g_fake.clock >= 10u);
+}
+
 /* The frames: a stick through one pixel, so turning it half way round
  * gives the frame two on, and the diagonals mirror each other. On serial
  * and in the VGA font's own characters they are | / - \. */
@@ -1285,6 +1309,7 @@ int run_tui_tests(void)
         cmocka_unit_test(test_page_text_wraps_and_scrolls),
         cmocka_unit_test(test_tick_turns_spinner),
         cmocka_unit_test(test_spin_frames),
+        cmocka_unit_test(test_pause_turns_spinner),
         cmocka_unit_test(test_failure_over_menu),
         cmocka_unit_test(test_report_after_handoff_repaints),
         cmocka_unit_test(test_ask),
