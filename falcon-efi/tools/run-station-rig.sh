@@ -368,7 +368,7 @@ case_nxt() {
     station_image $'[general]\ndefault = nxt-0009\ntimeout = 1\n'
     NEXT= NO_WIN_ENTRY=0 boot "$fw"
     wait_for "booting: Windows Boot Manager" 90 || why="the entry was not chosen"
-    [[ -z "$why" ]] && { has "restarting into it" || why="no NXT page"; }
+    [[ -z "$why" ]] && { wait_for "restarting into it" 15 || why="no NXT page"; }
     [[ -z "$why" ]] && { wait_for "FALCON-STANDIN $BOOTMGFW" 90 ||
         why="the firmware did not start the entry after the reset"; }
     halt
