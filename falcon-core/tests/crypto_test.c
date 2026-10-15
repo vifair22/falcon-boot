@@ -597,6 +597,34 @@ static void test_pbkdf2_truncation_is_a_prefix(void **state)
     }
 }
 
+/* The tick: once every PBKDF2_TICK iterations of each output block, and
+ * the output the same as without it. */
+static unsigned g_pbkdf2_ticks;
+
+static void pbkdf2_count(void)
+{
+    g_pbkdf2_ticks++;
+}
+
+static void test_pbkdf2_tick(void **state)
+{
+    uint8_t want[64];
+    uint8_t got[64];
+
+    (void)state;
+    assert_int_equal(pbkdf2(hash_sha256(), "pw", 2, "salt", 4, 10000,
+                            want, sizeof want), CRYPTO_OK);
+    g_pbkdf2_ticks = 0;
+    assert_int_equal(pbkdf2_tick(hash_sha256(), "pw", 2, "salt", 4, 10000,
+                                 got, sizeof got, pbkdf2_count), CRYPTO_OK);
+    assert_memory_equal(got, want, sizeof want);
+    /* Two 32-byte blocks, iterations 4096 and 8192 of each. */
+    assert_int_equal(g_pbkdf2_ticks, 4);
+    assert_int_equal(pbkdf2_tick(hash_sha256(), "pw", 2, "salt", 4, 10000,
+                                 got, sizeof got, NULL), CRYPTO_OK);
+    assert_memory_equal(got, want, sizeof want);
+}
+
 static void test_pbkdf2_bad_args(void **state)
 {
     uint8_t out[32];
@@ -1028,6 +1056,7 @@ int run_crypto_tests(void)
         cmocka_unit_test(test_hmac_bad_args),
         cmocka_unit_test(test_pbkdf2_vectors),
         cmocka_unit_test(test_pbkdf2_truncation_is_a_prefix),
+        cmocka_unit_test(test_pbkdf2_tick),
         cmocka_unit_test(test_pbkdf2_bad_args),
         cmocka_unit_test(test_aes_ecb_vectors),
         cmocka_unit_test(test_aes_setkey_rejects),

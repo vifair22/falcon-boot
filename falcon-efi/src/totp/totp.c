@@ -239,6 +239,7 @@ void totp_load(EFI_SYSTEM_TABLE *st, const stationini_totp *cfg)
             if (dev->rc == TPM12_RC_NEEDS_SELFTEST)
                 (void)tpm12_continue_self_test(dev);
             st->BootServices->Stall(100000);
+            tui_tick();
         }
     }
     g_rc = dev->rc;

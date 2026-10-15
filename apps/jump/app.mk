@@ -30,26 +30,26 @@ $(BIOS_OBJ)/$(JUMP)/bios_main.o: build/version.h
 # for the route that needs it.
 $(eval $(call jump_module,ATA,JMOD_SLOT_ATA,\
 	$(BIOS)/hw/ata/ata.c $(BIOS)/hw/ata/atacore.c $(BIOS)/hw/scsi/scsi.c \
-	$(BIOS)/hw/blk13.c $(CORE_LIBC)))
+	$(BIOS)/hw/blk13.c $(BIOS)/hw/modrt.c $(CORE_LIBC)))
 $(eval $(call jump_module,UHCI,JMOD_SLOT_UHCI,\
 	$(BIOS)/hw/usb/uhci_mod.c $(BIOS)/hw/usb/uhci.c $(BIOS)/hw/usb/msc.c \
 	$(BIOS)/hw/usb/usbcore.c $(BIOS)/hw/usb/hub.c $(BIOS)/hw/usb/hid.c \
 	$(BIOS)/hw/usb/hidcore.c $(BIOS)/hw/scsi/scsi.c $(BIOS)/hw/blk13.c \
-	$(CORE_LIBC)))
+	$(BIOS)/hw/modrt.c $(CORE_LIBC)))
 $(eval $(call jump_module,PCC,JMOD_SLOT_PCC,\
 	$(BIOS)/hw/pcc/pcc.c $(BIOS)/hw/pcc/pcccore.c $(BIOS)/hw/ata/atadisk.c \
 	$(BIOS)/hw/ata/atacore.c $(BIOS)/hw/scsi/scsi.c $(BIOS)/hw/blk13.c \
-	$(CORE_LIBC)))
+	$(BIOS)/hw/modrt.c $(CORE_LIBC)))
 $(eval $(call jump_module,EHCI,JMOD_SLOT_EHCI,\
 	$(BIOS)/hw/usb/ehci_mod.c $(BIOS)/hw/usb/ehci.c $(BIOS)/hw/usb/msc.c \
 	$(BIOS)/hw/usb/usbcore.c $(BIOS)/hw/usb/hub.c $(BIOS)/hw/usb/hid.c \
 	$(BIOS)/hw/usb/hidcore.c $(BIOS)/hw/scsi/scsi.c $(BIOS)/hw/blk13.c \
-	$(CORE_LIBC)))
+	$(BIOS)/hw/modrt.c $(CORE_LIBC)))
 $(eval $(call jump_module,OHCI,JMOD_SLOT_OHCI,\
 	$(BIOS)/hw/usb/ohci_mod.c $(BIOS)/hw/usb/ohci.c $(BIOS)/hw/usb/msc.c \
 	$(BIOS)/hw/usb/usbcore.c $(BIOS)/hw/usb/hub.c $(BIOS)/hw/usb/hid.c \
 	$(BIOS)/hw/usb/hidcore.c $(BIOS)/hw/scsi/scsi.c $(BIOS)/hw/blk13.c \
-	$(CORE_LIBC)))
+	$(BIOS)/hw/modrt.c $(CORE_LIBC)))
 
 # The floppy (Section 13.3): a 1.44 MB FAT12 volume whose reserved sectors
 # hold stage 2 at STAGE2_LBA and stage 3 at FD_STAGE3_SECTOR, behind jump's

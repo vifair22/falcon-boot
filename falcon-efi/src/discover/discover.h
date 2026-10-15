@@ -127,10 +127,22 @@ int discover_read(void *ctx, uint64_t off, uint64_t len, void *buf);
  * called before each. */
 #define DISCOVER_READ_PIECE 0x40000u   /* 256 KiB */
 
+/* With no hook but a tick, the piece is this: a kernel or an initrd is one
+ * read, and a firmware can charge per call (about 70 ms on one AMI board),
+ * so it is large, and on a USB 2 stick about a quarter of a second, a
+ * spinner's frame. */
+#define DISCOVER_TICK_PIECE 0x800000u  /* 8 MiB */
+
 /* Called before every discover_read and every piece of a long one; NULL
  * (the default) for none. The stick's background probe yields to the menu
  * from it (task/task.h), so a read is where a probe can be interrupted and
  * no read is long enough to hold a keystroke up. */
 void discover_set_read_hook(void (*hook)(void));
+
+/* Called before every discover_read and every piece of one, which is
+ * DISCOVER_TICK_PIECE when no hook is set: the loaders turn a step's
+ * spinner from it (tui_tick, DESIGN Section 7.10). NULL (the default) for
+ * none. */
+void discover_set_tick(void (*tick)(void));
 
 #endif /* FALCON_DISCOVER_H */

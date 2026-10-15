@@ -12,6 +12,13 @@ void biolow_set_clock(UINT64 (*clock)(void))
     g_clock = clock;
 }
 
+static void (*g_tick)(void);
+
+void biolow_set_tick(void (*tick)(void))
+{
+    g_tick = tick;
+}
+
 void biolow_counted(biolow_count *out)
 {
     *out = g_count;
@@ -52,6 +59,8 @@ EFI_STATUS biolow_read(EFI_BLOCK_IO_PROTOCOL *bio, UINT64 lba, UINTN len,
         if (es != EFI_SUCCESS)
             return es;
         memcpy(dst, mem, n);
+        if (g_tick != (void (*)(void))0)
+            g_tick();
         dst += n;
         lba += n / bs;
         len -= n;

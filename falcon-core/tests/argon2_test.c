@@ -593,6 +593,79 @@ static void *pool_thread(void *arg)
  * the same workers, which is where a lane number from one slice paired
  * with another's count would run a lane twice. Five threads offered,
  * three admitted, one of them unable to run the level and so not. */
+/* The tick: only ever on the calling thread, and the key the same with it.
+ * In turn every lane is the caller's, so it ticks; a runner that does not
+ * mark its lanes as the caller's never does. */
+static unsigned g_ticks;
+static pthread_t g_caller;
+
+static void count_tick(void)
+{
+    assert_true(pthread_equal(pthread_self(), g_caller));
+    g_ticks++;
+}
+
+static void tick_run(const argon2_runner *r, unsigned *ticks)
+{
+    argon2_params p;
+    uint32_t kib = argon2_mem_kib(1024, 4);
+    void *mem = malloc((size_t)kib * 1024u);
+    uint8_t out[32];
+
+    assert_non_null(mem);
+    memset(&p, 0, sizeof p);
+    p.pwd = "password";
+    p.pwd_len = 8;
+    p.salt = "somesalt";
+    p.salt_len = 8;
+    p.t_cost = 3;
+    p.m_cost = 1024;
+    p.lanes = 4;
+    p.tick = count_tick;
+    g_ticks = 0;
+    g_caller = pthread_self();
+    assert_int_equal(argon2id(&p, mem, kib, r, out, sizeof out), CRYPTO_OK);
+    assert_hex(out, sizeof out,
+               "e3c3ff0547f31c037b332f7539fe30f6be8aabc4cf765d10eb34847a8f3fa43c");
+    *ticks = g_ticks;
+    free(mem);
+}
+
+static void test_argon2id_tick(void **state)
+{
+    run_log g = { 0, 0 };
+    argon2_runner reverse = { run_reverse, &g };
+    lanes_pool pool;
+    argon2_runner pooled = { lanes_run, &pool };
+    pthread_t th[3];
+    pool_worker w[3];
+    unsigned ticks;
+    int k;
+
+    (void)state;
+    /* 1024 KiB in turn: 4 lanes x 4 slices x 3 passes of 64-block
+     * segments, a tick at each one's first block, except the first slice's,
+     * whose first two blocks come from H'. */
+    tick_run(NULL, &ticks);
+    assert_int_equal(ticks, 4u * 4u * 3u - 4u);
+    tick_run(&reverse, &ticks);
+    assert_int_equal(ticks, 0);
+    /* A pool: lanes on worker threads never tick; whatever the caller
+     * took did, on its own thread (count_tick checks). */
+    lanes_init(&pool, 3, crypto_simd_level());
+    for (k = 0; k < 3; k++) {
+        w[k].pool = &pool;
+        w[k].ok = 1;
+        w[k].served = -1;
+        assert_int_equal(pthread_create(&th[k], NULL, pool_thread, &w[k]), 0);
+    }
+    tick_run(&pooled, &ticks);
+    assert_true(ticks <= 4u * 4u * 3u);
+    lanes_stop(&pool);
+    for (k = 0; k < 3; k++)
+        assert_int_equal(pthread_join(th[k], NULL), 0);
+}
+
 static void test_argon2id_lanes_pool(void **state)
 {
     lanes_pool pool;
@@ -690,6 +763,7 @@ int run_argon2_tests(void)
         cmocka_unit_test(test_argon2id_runner_threads),
         cmocka_unit_test(test_argon2id_runner_bad),
         cmocka_unit_test(test_argon2id_lanes_pool),
+        cmocka_unit_test(test_argon2id_tick),
         cmocka_unit_test(test_lanes_worth),
     };
 

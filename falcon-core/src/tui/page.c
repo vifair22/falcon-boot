@@ -764,7 +764,11 @@ void tui_pause(unsigned seconds)
 
         if (gone >= total)
             break;
-        (void)d->key(d->ctx, total - gone);
+        /* A tenth at a time, so an open step's spinner turns through it.
+         * With no keyboard left there is nothing to hold back. */
+        if (d->key(d->ctx, 1u) == TUI_KEY_GONE)
+            break;
+        tui_tick();
     }
     while (d->key(d->ctx, 0) > 0)
         ;

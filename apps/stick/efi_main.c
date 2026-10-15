@@ -1091,7 +1091,11 @@ static void boot_blessed(EFI_HANDLE image_handle, const CHAR16 *label,
     /* Which artifact stands behind the ISO is the family's answer, and the
      * family here is the loader's own from the survey, never the manifest's
      * field: the manifest is editable, and this decides how the boot is
-     * staged. What may RUN is the platform's decision on either route. */
+     * staged. What may RUN is the platform's decision on either route. A
+     * row not looked inside yet (the next-boot marker's) hashes the whole
+     * blessed UKI here, so it gets a step. */
+    if (!target->probed)
+        tui_step(tui_busy_image);
     target_probe(target);
     tui_code(target->fam == FAMILY_BSD ? L"BLB" : L"BLS");
 
@@ -1803,6 +1807,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
     st->ConOut->Reset(st->ConOut, FALSE);
     /* Before anything is drawn, and once: SetMode clears the screen. */
     display_init(st);
+    discover_set_tick(tui_tick);
     tui_title(L"falcon-boot " WIDEN(FALCON_VERSION), (const CHAR16 *)0,
               TUI_ATTR_STATE);
 

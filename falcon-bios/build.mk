@@ -99,7 +99,8 @@ BIOS_MOD_serial  := $(BIOS)/console/console.c
 # that ask for one.
 BIOS_MOD_prompt  := $(CORE_TUI_SECRET)
 BIOS_MOD_console := $(BIOS)/console/display.c $(BIOS)/console/cdclock.c \
-	$(BIOS)/power/power.c $(BIOS)/power/acpicore.c  # the idle power-off
+	$(BIOS)/power/power.c $(BIOS)/power/acpicore.c \
+	$(BIOS)/hw/modrt.c  # the idle power-off; modrt.h's delay
 BIOS_MOD_disk    := $(BIOS)/disk/disk.c $(BIOS)/vfd/vfdcore.c
 BIOS_MOD_marker  := $(BIOS)/disk/marker.c
 BIOS_MOD_install := $(BIOS)/disk/install.c   # the install's partitions, by record

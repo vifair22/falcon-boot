@@ -112,10 +112,17 @@ static int read_blocks(void *ctx, uint64_t off, uint64_t len, void *buf)
  * know the disk's block size. Built per call rather than kept per row, so a
  * medium changed under a row is read at the block size it has now. */
 static void (*g_read_hook)(void);
+static void (*g_tick)(void);
 
 void discover_set_read_hook(void (*hook)(void))
 {
     g_read_hook = hook;
+}
+
+void discover_set_tick(void (*tick)(void))
+{
+    g_tick = tick;
+    biolow_set_tick(tick);
 }
 
 static int read_piece(discover_dev *d, uint64_t off, uint64_t len, void *buf);
@@ -124,12 +131,18 @@ int discover_read(void *ctx, uint64_t off, uint64_t len, void *buf)
 {
     uint8_t *p = buf;
 
-    if (g_read_hook == (void (*)(void))0)
+    uint64_t piece = g_read_hook != (void (*)(void))0 ? DISCOVER_READ_PIECE
+                                                     : DISCOVER_TICK_PIECE;
+
+    if (g_read_hook == (void (*)(void))0 && g_tick == (void (*)(void))0)
         return read_piece(ctx, off, len, buf);
     while (len > 0) {
-        uint64_t n = len < DISCOVER_READ_PIECE ? len : DISCOVER_READ_PIECE;
+        uint64_t n = len < piece ? len : piece;
 
-        g_read_hook();
+        if (g_read_hook != (void (*)(void))0)
+            g_read_hook();
+        if (g_tick != (void (*)(void))0)
+            g_tick();
         if (read_piece(ctx, off, n, p) != 0)
             return -1;
         off += n;

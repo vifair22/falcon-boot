@@ -365,6 +365,7 @@ static void msc_int16(jmod_regs *r)
     (void)r;
     /* The core that lent the services is gone by the first call. */
     g_svc = (const jmod_services *)0;
+    modrt_tick = (void (*)(void))0;
     hid_poll();
 }
 
@@ -444,6 +445,7 @@ static int msc_serve(unsigned idx, uint8_t drive)
     g_serve = idx;
     g_blk.sectors = g_dev[idx].sectors;
     g_svc = (const jmod_services *)0;
+    modrt_tick = (void (*)(void))0;
     return 0;
 }
 
@@ -461,6 +463,7 @@ int msc_init(const usbhc *hc, const jmod_services *svc, jmod_ops *ops)
 {
     g_hc = hc;
     g_svc = svc;
+    modrt_tick = svc->tick;
     g_ops = ops;
     ops->probe = msc_probe;
     ops->dev = msc_dev_info;

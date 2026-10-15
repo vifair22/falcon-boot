@@ -15,6 +15,7 @@
 #include <mem/e820.h>
 #include <iso/vcd.h>
 #include <vfd/vfd.h>
+#include <tui/tui.h>
 #include <disk/bootpart.h>
 
 #include <hw/pci.h>
@@ -173,6 +174,7 @@ static int disc_read(void *ctx, uint64_t off, uint64_t len, void *buf)
     (void)ctx;
     if (off % ss != 0 || len % ss != 0)
         return -1;
+    tui_tick();
     return g_disc.ops->read(g_disc.idx, off / ss, (uint32_t)(len / ss),
                             buf) == 0 ? 0 : -1;
 }

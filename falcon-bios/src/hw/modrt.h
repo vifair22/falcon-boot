@@ -60,11 +60,29 @@ static inline uint8_t *low_mem(uint32_t addr)
     return p;
 }
 
-/* About `us` microseconds, at least. */
+/* The core's tick (jmod_services.tick) while a module probes: a module
+ * sets it at init and drops it where it drops the services (serve, or a
+ * resident's first call), so a resident's waits never call into a core
+ * that is gone. NULL in the core's own copy. Defined in hw/modrt.c. */
+extern void (*modrt_tick)(void);
+
+/* About `us` microseconds, at least; the core's spinner turns at each call
+ * and every millisecond of a long one, so a probe's polling and its long
+ * settles are seen to move. */
 static inline void io_delay_us(uint32_t us)
 {
-    while (us-- > 0)
+    uint32_t n = 0;
+
+    if (modrt_tick != (void (*)(void))0)
+        modrt_tick();
+    while (us-- > 0) {
         (void)inb(0x80);
+        if (++n == 1000u) {
+            n = 0;
+            if (modrt_tick != (void (*)(void))0)
+                modrt_tick();
+        }
+    }
 }
 
 #endif /* FALCON_BIOS_MODRT_H */

@@ -19,6 +19,14 @@ int pbkdf2(const hash_desc *d, const void *pass, size_t pass_len,
            const void *salt, size_t salt_len, uint32_t iterations,
            uint8_t *out, size_t out_len)
 {
+    return pbkdf2_tick(d, pass, pass_len, salt, salt_len, iterations, out,
+                       out_len, NULL);
+}
+
+int pbkdf2_tick(const hash_desc *d, const void *pass, size_t pass_len,
+                const void *salt, size_t salt_len, uint32_t iterations,
+                uint8_t *out, size_t out_len, void (*tick)(void))
+{
     hmac_key key;
     uint8_t u[HASH_MAX_DIGEST];
     uint8_t t[HASH_MAX_DIGEST];
@@ -66,6 +74,9 @@ int pbkdf2(const hash_desc *d, const void *pass, size_t pass_len,
             hmac_final(&c, u);
             for (b = 0; b < d->digest_len; b++) {
                 t[b] = (uint8_t)(t[b] ^ u[b]);
+            }
+            if (tick != NULL && j % PBKDF2_TICK == 0u) {
+                tick();
             }
         }
 
