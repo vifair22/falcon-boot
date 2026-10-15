@@ -3700,7 +3700,9 @@ installed `/usr/lib/falcon-boot/bin`.
 Each release is also a package, `falcon-boot-bin`, that installs the main
 tarball's tree as it is; installing or upgrading it changes no disk, and a
 stick or station is brought to it with `falcon-boot-mkstick update`
-(Section 10.7) on each machine.
+(Section 10.7) on each machine. Installing and upgrading print that
+command, and the TOTP reseal for after the reboot where update's own is
+refused.
 
 **Arch.** The tag's pipeline builds it from `packaging/arch/PKGBUILD` into
 the `falcon` repository on the dl host (`tools/release/publish-arch.sh`),
