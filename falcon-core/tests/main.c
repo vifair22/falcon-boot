@@ -90,6 +90,7 @@ int main(void)
     failed += run_trust_tests();
     failed += run_gz_tests();
     failed += run_rebl_tests();
+    failed += run_blkcache_tests();
     failed += run_tpmcrypto_tests();
     failed += run_tpm_tests();
     failed += run_evlog_tests();

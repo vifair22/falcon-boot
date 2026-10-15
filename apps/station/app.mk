@@ -19,6 +19,7 @@ STATION_EFI += $(EFI_MOD_tsc)          # the boot-timing variables' clock, the w
 STATION_EFI += $(EFI_MOD_discover) $(CORE_IDENT) $(CORE_IDENT_FS)  # rows, by record
 STATION_EFI += $(EFI_MOD_disks) $(CORE_PART)  # partitions named as STATION.INI names them
 STATION_EFI += $(CORE_BLK)             # any length at any offset, under discover_read
+STATION_EFI += $(CORE_BLK_CACHE)       # small reads in 64 KiB windows, under discover_read
 STATION_EFI += $(CORE_FS_EXT4) $(CORE_PE) $(CORE_LUKS) $(CORE_CRYPTO)
 STATION_EFI += $(EFI_MOD_secboot)       # state for UX only: no predictions
 STATION_EFI += $(EFI_MOD_pos) $(EFI_MOD_mp) $(CORE_XSTATE) $(addprefix $(CORE)/media/,osrel.c shelf.c nextboot.c)

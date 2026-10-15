@@ -57,6 +57,9 @@ CORE_EXTFIND  := $(CORE)/media/extmap.c $(CORE)/media/extfind.c \
 # at any offset over a device that reads whole sectors. Linked by whatever
 # hands a sector-only callback to the drivers.
 CORE_BLK      := $(CORE)/blk/rebl.c
+# Small reads served from 64 KiB windows (Section 3.4), for a firmware that
+# charges per call: the UEFI loaders, under discover_read.
+CORE_BLK_CACHE := $(CORE)/blk/cache.c
 CORE_PE       := $(CORE)/pe/pe.c
 CORE_TRUST    := $(addprefix $(CORE)/trust/,der.c x509.c authenticode.c \
 	siglist.c trust.c probe.c)
@@ -174,10 +177,10 @@ CORE_TESTS := $(addprefix falcon-core/tests/,main.c \
 	hookcmd_test.c grubcfg_test.c bsdmd_test.c xpsetup_test.c eltorito_test.c fat_test.c medium_test.c bootfs_test.c uefiboot_test.c biosboot_test.c blesslist_test.c wim_test.c part_test.c \
 	osrel_test.c pe_test.c trust_test.c survey_test.c tui_test.c shelf_test.c \
 	nextboot_test.c stationini_test.c strows_test.c vbr_test.c gz_test.c table_test.c ident_test.c identfs_test.c extfind_test.c \
-	rebl_test.c tpmcrypto_test.c tpm_test.c evlog_test.c kndev.c)
+	rebl_test.c blkcache_test.c tpmcrypto_test.c tpm_test.c evlog_test.c kndev.c)
 
 CORE_UUT := $(CORE_CRYPTO) $(CORE_FS) $(CORE_LUKS) $(CORE_PART) $(CORE_IDENT) \
-	$(CORE_IDENT_FS) $(CORE)/media/extfind.c $(CORE_BLK) $(CORE_PE) \
+	$(CORE_IDENT_FS) $(CORE)/media/extfind.c $(CORE_BLK) $(CORE_BLK_CACHE) $(CORE_PE) \
 	$(CORE_WIM) $(CORE_UCS2) $(CORE_TUI) $(CORE_TUI_SECRET) \
 	$(CORE_TRUST) $(CORE_MEDIA) $(CORE_UEFIBOOT) $(CORE_BIOSBOOT) $(CORE_STATIONINI) $(CORE_STROWS) $(CORE_VBR) $(CORE_MANIFEST) \
 	$(CORE_MANIFEST_WRITE) $(CORE_GZ) $(CORE_CRYPTO_TPM) $(CORE_TPM) \

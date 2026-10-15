@@ -290,6 +290,22 @@ a sector-sized buffer the loader owns, so every driver reads any length at
 any offset on either sector size. The UEFI loader's discovery and
 falcon-bios's disk reads both go through it.
 
+Above it in the UEFI loaders, `falcon-core/src/blk/cache.c` serves every
+read under 64 KiB from a 64 KiB-aligned window of the device, sixteen of
+them, 1 MiB below 4 GiB, least recently used replaced; a miss reads the
+whole window, cut at the device's end, in one call. Some firmware charges
+per call rather than per byte (an ASUS B550's AMI USB driver takes about
+70 ms for any read up to 64 KiB of a Kingston stick), and the drivers'
+metadata reads are a few KiB each, so it is the call count that the windows
+cut (`FalconReadInfo`, Section 5.5, counts them). Reads of 64 KiB and more,
+a UKI's among them, go straight through and are not kept. A window is keyed
+on the device's Block I/O and its `MediaId`, so a medium changed under the
+same protocol misses, and `discover_scan` drops every window, since a
+device gone since the last scan may have left its protocol's memory to
+another. The loaders write no device they read, so no window is ever out
+of date otherwise. A device with no medium, or with blocks that do not
+divide 64 KiB, is read without windows. falcon-bios has none.
+
 On BIOS the same holds wherever the firmware presents the disk: every
 count of the BIOS layout is of the disk's own sectors (stage 1's LBA and
 length, stage 2 at LBA 34, the record's stage 3 and marker sectors), so

@@ -98,6 +98,7 @@ int run_pe_tests(void);
 int run_trust_tests(void);
 int run_gz_tests(void);
 int run_rebl_tests(void);
+int run_blkcache_tests(void);
 int run_tpmcrypto_tests(void);
 int run_tpm_tests(void);
 int run_evlog_tests(void);
