@@ -95,8 +95,8 @@ static void draw(const tui_secret_spec *s, size_t shown,
             n++;
         } while (lines->line[i][at] != 0);
     }
-    if (n > TUI_STATUS_ROWS * 2u)
-        n = TUI_STATUS_ROWS * 2u;
+    if (n > (size_t)TUI_STATUS_ROWS * 2u)
+        n = (size_t)TUI_STATUS_ROWS * 2u;
     h = 9u + (n != 0 ? n + 1u : 0u);
     geometry(&row, &col);
     restore();

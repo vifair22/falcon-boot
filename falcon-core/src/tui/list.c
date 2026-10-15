@@ -95,7 +95,7 @@ static void paint_slot(const view *v, size_t slot)
     size_t cols;
     size_t own;
     size_t name_end = text_end;
-    size_t tag_at = text_end;
+    size_t tag_at;
     int sel;
     uint8_t a_name;
     uint8_t a_sig;

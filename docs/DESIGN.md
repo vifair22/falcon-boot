@@ -3003,10 +3003,12 @@ medium.
 
 #### 11.2.15 Failure paths
 
-Every route returns to the dispatcher on failure. The screen says what
-failed and at which step, the advice, and on a Secure Boot refusal the
-evidence (who signed the image, which list decided); then "press any key to
-return to the menu". Cancelling a prompt returns without the key.
+Every route returns to the dispatcher on failure. A dialog over the last
+menu says what failed and at which step, the advice, and on a Secure Boot
+refusal the evidence (who signed the image, which list decided); then
+"press any key to return to the menu" (7.10). A route that had handed over
+first repaints the whole screen under it. Cancelling a prompt returns
+without the key.
 
 Nothing in the UEFI loader halts. It leaves only three ways: a route that
 started its target, Escape at the root (back to the firmware's next boot
@@ -3477,7 +3479,7 @@ No failure halts.
 | stage 2, real mode (`fatal_rm`) | older than i586 (no CPUID), EBDA too low, A20 closed: reason, a key, reset |
 | stage 2 and 3, protected mode (`bios_fatal`) | no partition with a boot record, a damaged table, stage 3 missing, malformed or past its volume's reserved sectors, or `stage 3 returned`: reason, a key, reset |
 | a processor exception (`idt.S`, `fault.c`) | vector and name, EIP, error code, through `bios_fatal`; a second fault while reporting resets at once |
-| a route | message, "press any key to return to the menu" |
+| a route | the screen taken back (80x25 text again if the payload changed the mode) and repainted, then a dialog: what failed, at which step, the advice, "press any key to return to the menu" (7.10) |
 | the POS | no `/uki`, no images: message, secrets wiped, back to the menu; a wrong passphrase: the wait, and at the fifth the power-off of 5.2 |
 
 A reset is port 0xCF9, then the 8042's reset line, then an empty IDT and a

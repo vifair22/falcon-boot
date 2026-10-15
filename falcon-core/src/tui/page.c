@@ -641,6 +641,9 @@ void tui_out(const uint16_t *s)
         tui_page((const uint16_t *)0, g_tui.code);
     while (*s != 0)
         page_unit(*s++);
+    /* A page's text is seen as it is written: a route may write a line and
+     * then take seconds before its next step. */
+    tui_flush();
 }
 
 void tui_out_ascii(const char *s)
@@ -687,14 +690,16 @@ void tui_out_hex(uint64_t v)
 
 void tui_size(uint16_t *dst, size_t cap, uint64_t bytes)
 {
-    static const uint16_t unit[5][3] = { u"B", u"kB", u"MB", u"GB", u"TB" };
+    static const uint16_t *const unit[5] = {
+        u"B", u"kB", u"MB", u"GB", u"TB",
+    };
+    const uint16_t *name;
     uint64_t whole = bytes;
     uint64_t tenth = 0;
     size_t u = 0;
     uint16_t d[24];
     size_t n = 0;
     size_t at = 0;
-    size_t i;
 
     if (cap == 0)
         return;
@@ -715,8 +720,8 @@ void tui_size(uint16_t *dst, size_t cap, uint64_t bytes)
     }
     if (at + 1u < cap)
         dst[at++] = u' ';
-    for (i = 0; unit[u][i] != 0 && at + 1u < cap; i++)
-        dst[at++] = unit[u][i];
+    for (name = unit[u]; *name != 0 && at + 1u < cap; name++)
+        dst[at++] = *name;
     dst[at] = 0;
 }
 

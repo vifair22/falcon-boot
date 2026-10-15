@@ -1018,6 +1018,155 @@ static void test_init_small_and_large(void **state)
     start(NULL, 0);
 }
 
+/* ---- the sentences (say.c) ---- */
+
+static void test_say_routes(void **state)
+{
+    static const int keys[] = { 'x', 'x', 'y', 'n', 'x', 'x', 'x', 'x', 'x',
+                                'x', 'x' };
+
+    (void)state;
+    start(keys, sizeof keys / sizeof keys[0]);
+    tui_route_failed(u"memtest86+", u"MEM", u"LoadImage (shim)",
+                     0x800000000000001aull, 1, u"the image is not signed.");
+    assert_int_equal(tui_wait(), 'x');
+    assert_true(strstr(g_fake.log, "== MEM failed\n") != NULL);
+    assert_true(strstr(g_fake.log, "MEM failed while LoadImage (shim): "
+                                   "0x800000000000001a\n") != NULL);
+    tui_route_failed_a(u"Disk 0x80", "boot", "checking the boot signature",
+                       "Its first sector carries no boot code.");
+    assert_int_equal(tui_wait(), 'x');
+    assert_true(strstr(g_fake.log, "boot failed while checking the boot "
+                                   "signature.\n") != NULL);
+    tui_route_failed_a(u"x", "boot", NULL, NULL);
+    tui_route_exited(u"Gentoo", u"the image", 0, NULL);
+    assert_true(strstr(g_fake.log, "the image exited, status 0x0\n") != NULL);
+    assert_int_equal(tui_fw_setup_ask(), 1);
+    assert_int_equal(tui_fw_setup_ask(), 0);
+    tui_fw_setup_refused();
+    assert_true(strstr(g_fake.log, "The firmware refused the request") !=
+                NULL);
+    tui_notice(u"This install", u"no record.");
+    tui_notice_a(u"This install", "no record either.");
+    tui_ini_unread(1);
+    tui_ini_unread(0);
+    tui_ini_line("JUMP.INI", 4, "unknown key 'x'");
+    assert_true(strstr(g_fake.log, "JUMP.INI line 4: unknown key 'x'.") !=
+                NULL);
+    tui_ini_default("nxt-00ff");
+    tui_next_unknown("no-such-entry");
+    assert_true(strstr(g_fake.log, "the next-boot marker names "
+                                   "no-such-entry, and no entry has that "
+                                   "name.\n") != NULL);
+    tui_next_note("the next-boot marker could not be cleared.", 0);
+    tui_leaving(1);
+    tui_out_ascii("note: one more.\n");
+    tui_handoff();
+    assert_true(strstr(g_fake.log, "falcon-boot: returning to firmware.\n"
+                                   "note: no personal OS shelf") != NULL);
+    assert_true(g_fake.cursor_on);
+}
+
+static void test_size_and_numbers(void **state)
+{
+    uint16_t b[16];
+    char a[16];
+    size_t i;
+
+    (void)state;
+#define SIZE_IS(v, s)                                                    \
+    do {                                                                 \
+        tui_size(b, sizeof b / sizeof b[0], (v));                        \
+        for (i = 0; b[i] != 0; i++)                                      \
+            a[i] = (char)b[i];                                           \
+        a[i] = '\0';                                                     \
+        assert_string_equal(a, (s));                                     \
+    } while (0)
+    SIZE_IS(0, "0 B");
+    SIZE_IS(512, "512 B");
+    SIZE_IS(14200000ull, "14.2 MB");
+    SIZE_IS(211000000ull, "211 MB");
+    SIZE_IS(3900000000ull, "3.9 GB");
+    SIZE_IS(5000000000000000ull, "5000 TB");
+#undef SIZE_IS
+    tui_size(b, 0, 1);
+    tui_size(b, 3, 999999);
+    start(NULL, 0);
+    tui_page(u"numbers", u"T");
+    tui_out_dec(18446744073709551615ull);
+    tui_out(u" ");
+    tui_out_hex(0);
+    tui_out(u" ");
+    tui_out_hex(0xdeadbeefull);
+    tui_out(u"\n");
+    tui_out((const uint16_t *)0);
+    tui_out_ascii((const char *)0);
+    tui_style(TUI_EMPH);
+    tui_out(u"emphasised\n");
+    tui_style(TUI_DIM);
+    tui_out(u"dim\n");
+    tui_style(TUI_PLAIN);
+    tui_flush();
+    assert_true(screen_has("18446744073709551615 0x0 0xdeadbeef"));
+    assert_true(strstr(g_fake.log, "numbers\n") != NULL);
+}
+
+static void test_steps_without_a_page(void **state)
+{
+    (void)state;
+    start(NULL, 0);
+    /* A step, a note or text before any page starts one. */
+    tui_step_done(u"nothing open");
+    tui_step_ascii("a step");
+    assert_true(screen_has("a step"));
+    start(NULL, 0);
+    tui_note(u"a note first");
+    assert_true(screen_has("a note first"));
+    start(NULL, 0);
+    tui_out(u"text first\n");
+    assert_true(screen_has("text first"));
+    assert_null(tui_stage());
+    tui_code_ascii("CDR");
+    tui_flush();
+    assert_true(screen_has("CDR"));
+    tui_code_ascii(NULL);
+    tui_handoff();
+    /* After the hand-off a step is the transcript's alone. */
+    tui_out_ascii("after\n");
+    tui_busy(u"one");
+    tui_busy(NULL);
+}
+
+static void test_busy_scrolls(void **state)
+{
+    size_t i;
+
+    (void)state;
+    start(NULL, 0);
+    for (i = 0; i < 12u; i++)
+        tui_busy(u"a step of startup");
+    tui_busy(u"the last");
+    assert_true(screen_has("the last"));
+}
+
+static void test_dialog_over_screen(void **state)
+{
+    static const int keys[] = { 'k' };
+
+    (void)state;
+    start(keys, 1);
+    /* No list has been up: the dialog sits on the screen as it is. */
+    tui_page(u"a page", u"P");
+    tui_out(u"under the dialog\n");
+    tui_report(TUI_INFO, u"note", u"label");
+    tui_out(u"a line that is long enough to need wrapping at a space "
+            u"somewhere near the end of the box's width, and more\n");
+    tui_report_end(u"k to go on");
+    assert_true(screen_has("k to go on"));
+    assert_false(screen_has("any key"));
+    assert_int_equal(tui_wait(), 'k');
+}
+
 int run_tui_tests(void)
 {
     const struct CMUnitTest tests[] = {
@@ -1051,6 +1200,11 @@ int run_tui_tests(void)
         cmocka_unit_test(test_glyphs),
         cmocka_unit_test(test_title_gives_way),
         cmocka_unit_test(test_init_small_and_large),
+        cmocka_unit_test(test_say_routes),
+        cmocka_unit_test(test_size_and_numbers),
+        cmocka_unit_test(test_steps_without_a_page),
+        cmocka_unit_test(test_busy_scrolls),
+        cmocka_unit_test(test_dialog_over_screen),
     };
 
     return cmocka_run_group_tests_name("tui", tests, NULL, NULL);
