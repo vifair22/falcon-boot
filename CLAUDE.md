@@ -146,10 +146,9 @@ unique within each such set, so `#include <fs/exfat.h>` means one file, and
 - CI (`.gitlab-ci.yml`) runs the same harness on the binhost's `falcon`
   runner (shell executor, one job at a time, a build directory per pipeline
   under `/srv/build/work/falcon/ci`). Merge requests get test, analyze,
-  coverage, build, the rigs and the corpus, gated by
-  `tools/coverage/scorecard-diff.py` against master's scorecard. Into
-  master the rigs and corpus start on their own; into a release branch
-  they are started by hand, and the pipeline blocks until they pass. The runner itself is gitlab-infra's.
+  coverage and build; a merge request into master adds the rigs and the
+  corpus, gated by `tools/coverage/scorecard-diff.py` against master's
+  scorecard. The runner itself is gitlab-infra's.
 - `make release` (`release.mk`, in the harness, with `MEMTEST=` and
   `MEMTEST_EFI=`) writes the release to `build/release/`: a mkstick built
   with `FALCON_DATADIR=/usr/lib/falcon-boot` (`falcon-cli/src/common/
