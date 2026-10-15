@@ -53,4 +53,8 @@ void biolow_set_clock(UINT64 (*clock)(void));
 /* The counts so far. */
 void biolow_counted(biolow_count *out);
 
+/* Called after each call of a read that goes through low memory, which can
+ * be a hundred calls for one piece of discover_read; NULL for none. */
+void biolow_set_tick(void (*tick)(void));
+
 #endif

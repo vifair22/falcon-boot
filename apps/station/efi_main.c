@@ -221,6 +221,7 @@ static void boot_esp(const CHAR16 *code, const strow *w)
     path[i] = 0;
 
     tui_boot_page(w->label, code);
+    tui_step(L"finding its ESP");
     vol = esp_volume(w, path);
     if (vol == (EFI_HANDLE)0) {
         page_failed(w->label, code, L"finding its ESP", EFI_NOT_FOUND,
@@ -230,6 +231,7 @@ static void boot_esp(const CHAR16 *code, const strow *w)
     if (strows_path_eq(w->file, STROWS_BOOTMGFW))
         out(L"BitLocker will ask for the recovery key if the volume is "
             L"sealed.\r\n");
+    tui_step(L"loading the image");
     status = esp_boot(g_st, g_image, vol, path, handover, &result);
     if (!EFI_ERROR(status))
         page_exited(w->label, result.status, result.advice);
