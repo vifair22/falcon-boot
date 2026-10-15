@@ -161,17 +161,19 @@ int bios_key_poll(void);
  * for anything that reads low memory. */
 void bios_key_buffer_wipe(void);
 
+/* The same numbers as falcon-core's TUI_KEY_*, so a key goes to the
+ * screens as it is read. */
 #define BIOS_KEY_UP     0x100
 #define BIOS_KEY_DOWN   0x101
+#define BIOS_KEY_PGUP   0x102
+#define BIOS_KEY_PGDN   0x103
+#define BIOS_KEY_HOME   0x104
+#define BIOS_KEY_END    0x105
 #define BIOS_KEY_ENTER  0x00D
 #define BIOS_KEY_ESC    0x01B
-/* screen_key's answer when the idle power-off did not take and a key
- * woke the screen: that key is not the page's, and whatever the page held
- * that registered with screen_idle_secret was wiped. */
-#define BIOS_KEY_IDLE   (-2)
-
-/* A page's wait for a key: screen_key where stage 3 has a screen (and so
- * the idle power-off), bios_getkey where it does not. */
+/* A page's wait for a key: falcon-core's tui_wait where stage 3 has its
+ * screens up (and so the idle power-off, console/display.c), bios_getkey
+ * where it does not. */
 int bios_wait_key(void);
 
 /* Resets the machine. Does not return. */

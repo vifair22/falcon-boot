@@ -31,7 +31,7 @@
 #include <station/station.h>
 #include <pos/pos.h>
 #include <mbr/chain.h>
-#include <console/screen.h>
+#include <console/display.h>
 #include <linux/linux.h>
 #include <mem/e820.h>
 #include <disk/install.h>
@@ -112,8 +112,6 @@ static strows g_rows;
 static marker_state g_next_state;
 static char         g_next[NEXTBOOT_MAX];
 
-static const char k_press_any[] = "\npress any key to return to the menu.\n";
-
 /* The app running this list: its banner and its own rows. */
 static const station_app *g_app;
 
@@ -123,19 +121,7 @@ static const station_app *g_app;
 void station_failed(const uint16_t *label, const char *route,
                     const boot_result *r)
 {
-    screen_page();
-    screen_out16(label);
-    screen_out("\n\n");
-    screen_out(route);
-    screen_out(" failed while ");
-    screen_out(r->stage);
-    screen_out("\n");
-    if (r->advice != (const char *)0) {
-        screen_out("\n");
-        screen_out(r->advice);
-        screen_out("\n");
-    }
-    screen_out(k_press_any);
+    tui_route_failed_a(label, route, r->stage, r->advice);
 }
 
 /* ---- disks ---- */
@@ -275,7 +261,7 @@ static void read_station(void)
         bios_puts("\n");
     }
     if (g_ini.poweroff_set)
-        screen_idle_set(g_ini.poweroff);
+        display_idle_set(g_ini.poweroff);
 }
 
 /* ---- the rows (DESIGN Section 12.3) ---- */
@@ -472,9 +458,9 @@ static void find_chains(void)
 static void build_rows(void)
 {
     strows_init(&g_rows);
-    screen_busy(tui_busy_shelf);
+    tui_busy(tui_busy_shelf);
     find_shelves();
-    screen_busy(tui_busy_entries);
+    tui_busy(tui_busy_entries);
     find_chains();
     if (g_app->rows != 0)
         g_app->rows(&g_rows, g_have_vol ? &g_svol : (fs_vol *)0);
@@ -536,14 +522,10 @@ static int boot_shelf(int shelf, const uint16_t *label, const char *file)
     boot_result r;
     int rc;
 
-    screen_mode("POS");
-    screen_page();
-    screen_out("booting: ");
-    screen_out16(label);
-    screen_out("\n\n");
+    tui_boot_page(label, u"POS");
     if (shelf < 0 || (unsigned)shelf >= g_nshelves) {
         boot_result_init(&r);
-        r.stage = "looking for a UKI shelf";
+        boot_stage(&r, "looking for a UKI shelf");
         r.advice = "No shelf of this install was found.";
     } else {
         const shelf_ref *s = &g_shelves[shelf];
@@ -577,13 +559,9 @@ static void boot_chain(const strow *w)
     boot_result r;
 
     boot_result_init(&r);
-    screen_mode(code);
-    screen_page();
-    screen_out("booting: ");
-    screen_out16(w->label);
-    screen_out("\n\n");
+    tui_boot_page(w->label, w->kind == STROW_VBR ? u"VBR" : u"MBR");
     if (d < 0 || (unsigned)d >= g_ndisks) {
-        r.stage = "finding the disk";
+        boot_stage(&r, "finding the disk");
         r.advice = "The disk this entry names is not attached.";
     } else if (w->kind == STROW_MBR) {
         (void)chain_disk(&g_disks[d].disk, swap, &r);
@@ -593,7 +571,7 @@ static void boot_chain(const strow *w)
         if (p != (const part_entry *)0) {
             (void)chain_part(&g_disks[d].disk, p, swap, &r);
         } else {
-            r.stage = "finding the partition";
+            boot_stage(&r, "finding the partition");
             r.advice = "The disk has no partition of that number.";
         }
     }
@@ -607,19 +585,15 @@ static void boot_memtest(const strow *w)
     linux_object k;
 
     boot_result_init(&r);
-    screen_mode("MEM");
-    screen_page();
-    screen_out("booting: ");
-    screen_out16(w->label);
-    screen_out("\n\n");
+    tui_boot_page(w->label, u"MEM");
 
-    r.stage = "opening MEMTEST.BIN";
+    boot_stage(&r, "opening MEMTEST.BIN");
     if (g_have_memtest && fs_file_open(&g_svol, &f, &g_memtest) == FS_OK) {
         k.read = fs_file_read_cb;
         k.ctx = &f;
         k.size = g_memtest.size;
-        r.stage = "starting memtest86+";
-        (void)linux_boot(&k, (const linux_object *)0, 0, "", (void (*)(void))0);
+        boot_stage(&r, "starting memtest86+");
+        (void)linux_boot(&k, (const linux_object *)0, 0, "", tui_handoff);
         boot_result_advise(&r, linux_why(), (const char *)0);
     }
     station_failed(w->label, "MEM", &r);
@@ -664,11 +638,7 @@ static void install_notice(void)
 {
     if (install_problem(g_install_state) == (const char *)0)
         return;
-    screen_mode((const char *)0);
-    screen_page();
-    screen_out(install_problem(g_install_state));
-    screen_out("\n\npress any key to continue.\n");
-    (void)screen_key();
+    tui_notice_a(u"This install", install_problem(g_install_state));
 }
 
 /* A STATION.INI that could not be taken, or a default naming nothing here,
@@ -677,32 +647,15 @@ static void ini_notice(void)
 {
     if (g_ini_state == INI_NONE)
         return;
-    screen_mode((const char *)0);
     if (g_ini_state == INI_TOO_BIG || g_ini_state == INI_UNREAD) {
-        screen_page();
-        screen_out(g_ini_state == INI_TOO_BIG
-                       ? "STATION.INI is larger than 16 KB and was not read."
-                       : "STATION.INI could not be read.");
+        tui_ini_unread(g_ini_state == INI_TOO_BIG);
     } else if (g_ini.err_line != 0) {
-        screen_page();
-        screen_out("STATION.INI line ");
-        screen_out_dec(g_ini.err_line);
-        screen_out(": ");
-        screen_out(g_ini.why);
-        screen_out(".");
+        tui_ini_line("STATION.INI", (unsigned)g_ini.err_line, g_ini.why);
     } else if (g_ini.default_name[0] != '\0' &&
                strows_find(&g_rows, g_ini.default_name) == (strow *)0) {
         bios_puts("falcon-bios: STATION.INI's default names no entry here\n");
-        screen_page();
-        screen_out("STATION.INI's default, ");
-        screen_out(g_ini.default_name);
-        screen_out(",\nnames no entry on this machine.");
-    } else {
-        return;
+        tui_ini_default(g_ini.default_name);
     }
-    screen_out("\n\nThe menu will wait with no default.\n"
-               "\npress any key to continue.\n");
-    (void)screen_key();
 }
 
 /* A UKI on the encrypted shelf has no row of its own until it is unlocked,
@@ -732,7 +685,7 @@ static int next_boot_uki(void)
 
         ascii16(label, STATIONINI_PATH_MAX, file);
         if (boot_shelf(shelf, label, file))
-            (void)screen_key();
+            (void)tui_wait();
     }
     return 1;
 }
@@ -776,37 +729,24 @@ static void next_boot_run(void)
         w = strows_find(&g_rows, g_next);
         if (w != (strow *)0) {
             if (boot_row(w))
-                (void)screen_key();
+                (void)tui_wait();
             return;
         }
         if (next_boot_uki())
             return;
     }
 
-    screen_mode((const char *)0);
-    screen_page();
-    if (note == (const char *)0) {
-        screen_out("the next-boot marker names ");
-        screen_out(g_next);
-        screen_out(", and no entry has that name.");
-    } else {
-        screen_out(note);
-    }
-    if (g_next_state != MARKER_STUCK)
-        screen_out("\nIt has been cleared; nothing was booted from it.");
-    screen_out("\n\npress any key for the menu.\n");
-    (void)screen_key();
+    if (note == (const char *)0)
+        tui_next_unknown(g_next);
+    else
+        tui_next_note(note, g_next_state != MARKER_STUCK);
 }
 
 /* Escape on the list: INT 18h, and a reset if the BIOS returns. */
 static void return_to_firmware(size_t shown)
 {
-    screen_mode((const char *)0);
-    screen_page();
-    screen_out("falcon-boot: returning to firmware.\n");
-    if (shown == 0)
-        screen_out("note: no personal OS shelf and no other boot entry was "
-                   "found.\n");
+    tui_leaving(shown == 0);
+    tui_handoff();
     thunk_vector = 0x18;
     thunk_bios();
     bios_reboot();
@@ -814,11 +754,12 @@ static void return_to_firmware(size_t shown)
 
 static void list_run(void)
 {
-    const screen_banner banner = {
-        g_app->title, u"BIOS", TUI_ATTR_TEXT
+    static const tui_hint hints[] = {
+        { u"enter", u"boot" }, { u"up/down", u"choose" },
+        { u"esc", u"back" },
     };
     static size_t view[STROWS_MAX];
-    static const uint16_t *labels[STROWS_MAX];
+    static tui_row rows[STROWS_MAX];
     const stationini *c = g_have_ini ? &g_ini : (const stationini *)0;
     size_t shown = strows_arrange(&g_rows, c, view, STROWS_MAX);
     size_t sel = 0;
@@ -833,16 +774,26 @@ static void list_run(void)
     bios_puts(" entries, ");
     bios_put_dec(shown);
     bios_puts(" shown\n");
-    for (i = 0; i < shown; i++)
-        labels[i] = g_rows.row[view[i]].label;
+    memset(rows, 0, sizeof rows);
+    for (i = 0; i < shown; i++) {
+        rows[i].label = g_rows.row[view[i]].label;
+        rows[i].probed = 1;
+    }
 
     for (;;) {
+        tui_list l;
         int pick;
 
-        screen_mode((const char *)0);
-        pick = screen_menu_timed(&banner, labels, shown, (const char *)0,
-                                 tui_hint_plain, (int *)0,
-                                 u"(nothing to boot was found)", sel, seconds);
+        memset(&l, 0, sizeof l);
+        l.title = u"boot entries";
+        l.rows = rows;
+        l.count = shown;
+        l.sel = sel;
+        l.seconds = seconds;
+        l.hints = hints;
+        l.nhints = 3;
+        l.empty = u"(nothing to boot was found)";
+        pick = tui_list_run(&l, (int *)0);
         /* The countdown is the first menu's only; coming back from a
          * failed boot, the menu waits. */
         seconds = 0;
@@ -850,7 +801,7 @@ static void list_run(void)
             return_to_firmware(shown);
         sel = (size_t)pick;
         if (boot_row(&g_rows.row[view[pick]]))
-            (void)screen_key();
+            (void)tui_wait();
     }
 }
 
@@ -873,9 +824,9 @@ void station_main(uint8_t drive, const station_app *app)
     /* The screen first, so every startup step can say itself on it: a slow
      * disk shows where the time goes rather than leaving the BIOS's own text
      * up. */
-    screen_init();
-    screen_page();
-    screen_busy(tui_busy_disks);
+    display_init();
+    tui_title(app->title, u"BIOS", TUI_ATTR_STATE);
+    tui_busy(tui_busy_disks);
     scan_disks(drive);
     read_station();
     build_rows();

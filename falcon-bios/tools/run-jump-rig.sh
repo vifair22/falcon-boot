@@ -391,7 +391,7 @@ wait_count() { # wait_count PATTERN N QEMU-PID
 # own keys: kbd-giveup Escape, kbd-hdd the disk row.
 kbd_back_case() { # kbd_back_case CASE
     local c=$1 qpid i
-    local hint='up/down select \| enter choose \| esc back'
+    local hint='up/down choose'
     floppy usb
     cp build/test-bios.img "$R/disk.img"
     rm -f "$R/serial.log" "$R/mon.sock"
@@ -422,7 +422,7 @@ kbd_back_case() { # kbd_back_case CASE
         # The disk's falcon-bios, up to its menu: its hint, after the
         # handover.
         wait_count 'handing over' 1 "$qpid" || true
-        wait_count 'd direct \| esc back|no entries \| esc back' 1 "$qpid" ||
+        wait_count 'd direct   esc back' 1 "$qpid" ||
             true
         sleep 1
         monitor "sendkey esc"
@@ -743,21 +743,21 @@ for c in "${CASES[@]}"; do
         ;;
     menu) menu_case ;;
     kbd)
-        LEDS='usb kbd leds: 02' kbd_case kbd 'a keyboard on root port' 'no entries | esc back' \
+        LEDS='usb kbd leds: 02' kbd_case kbd 'a keyboard on root port' 'd direct   esc back' \
             -device piix3-usb-uhci,id=hc \
             -device usb-storage,bus=hc.0,port=1,drive=stick \
             -device usb-kbd,bus=hc.0,port=2
         ;;
     kbd-hub)
         kbd_case kbd-hub 'a keyboard, behind a hub on root port' \
-            'no entries | esc back' -device piix3-usb-uhci,id=hc \
+            'd direct   esc back' -device piix3-usb-uhci,id=hc \
             -device usb-storage,bus=hc.0,port=1,drive=stick \
             -device usb-hub,bus=hc.0,port=2 \
             -device usb-kbd,bus=hc.0,port=2.1
         ;;
     kbd-hub2)
         kbd_case kbd-hub2 'a keyboard, behind two hubs on root port' \
-            'no entries | esc back' -device piix3-usb-uhci,id=hc \
+            'd direct   esc back' -device piix3-usb-uhci,id=hc \
             -device usb-storage,bus=hc.0,port=1,drive=stick \
             -device usb-hub,bus=hc.0,port=2 \
             -device usb-hub,bus=hc.0,port=2.1 \
@@ -765,7 +765,7 @@ for c in "${CASES[@]}"; do
         ;;
     kbd-ehci)
         kbd_case kbd-ehci 'handed to the companion controller' \
-            'no entries | esc back' \
+            'd direct   esc back' \
             -device ich9-usb-ehci1,id=ehci,addr=1d.7,multifunction=on \
             -device ich9-usb-uhci1,addr=1d.0,multifunction=on,masterbus=ehci.0,firstport=0 \
             -device ich9-usb-uhci2,addr=1d.1,multifunction=on,masterbus=ehci.0,firstport=2 \

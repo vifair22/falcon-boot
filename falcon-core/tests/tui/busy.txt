@@ -1,0 +1,25 @@
+ falcon-boot 0.1.2                                        Secure Boot on, MS CA 
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                  +- starting -------------------------------+                  
+                  |                                          |                  
+                  |  finding disks                      OK   |                  
+                  |  reading the shelf                  OK   |                  
+                  |  reading the ISO library             /   |                  
+                  |                                          |                  
+                  +------------------------------------------+                  
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                               

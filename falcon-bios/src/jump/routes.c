@@ -12,7 +12,6 @@
 #include <mbr/mbr.h>
 #include <mbr/chain.h>
 #include <mem/lowmem.h>
-#include <console/screen.h>
 #include <mem/e820.h>
 #include <iso/vcd.h>
 #include <vfd/vfd.h>
@@ -183,9 +182,38 @@ static int disc_read(void *ctx, uint64_t off, uint64_t len, void *buf)
  * screen shows where the time goes, and kept as the stage a failure names. */
 static void step(boot_result *r, const char *what)
 {
-    r->stage = what;
-    screen_out(what);
-    screen_out("...\n");
+    boot_stage(r, what);
+}
+
+/* What the disc's boot entry is, under the catalog's step. */
+static void note_entry(const elt_entry *e)
+{
+    char line[64];
+    const char *kind;
+    size_t n = 0;
+    char d[10];
+    size_t k = 0;
+    uint32_t v = e->lba;
+
+    switch (e->media) {
+    case ELT_MEDIA_NONE:  kind = "no emulation"; break;
+    case ELT_MEDIA_1200K: kind = "1.2 MB floppy emulation"; break;
+    case ELT_MEDIA_1440K: kind = "1.44 MB floppy emulation"; break;
+    case ELT_MEDIA_2880K: kind = "2.88 MB floppy emulation"; break;
+    default:              kind = "hard-disk emulation"; break;
+    }
+    while (*kind != '\0')
+        line[n++] = *kind++;
+    for (kind = ", boot image at sector "; *kind != '\0'; kind++)
+        line[n++] = *kind;
+    do {
+        d[k++] = (char)('0' + v % 10u);
+        v /= 10u;
+    } while (v != 0 && k < sizeof d);
+    while (k > 0)
+        line[n++] = d[--k];
+    line[n] = '\0';
+    tui_note_ascii(line);
 }
 
 /* CDR: ATA.MOD, the first drive with a disc, and the disc booted as its
@@ -222,10 +250,9 @@ static void boot_cd(boot_result *r)
                            : "there is no disc in the CD drive.";
         return;
     }
-    screen_out(dev.label);
-    screen_out("\n\n");
+    tui_note_ascii(dev.label);
 
-    r->stage = "reading the disc's boot catalog";
+    boot_stage(r, "reading the disc's boot catalog");
     g_disc.ops = &ops;
     g_disc.idx = i;
     g_disc_sector = 2048u;
@@ -238,6 +265,7 @@ static void boot_cd(boot_result *r)
         r->advice = "the disc boots only on UEFI.";
         return;
     }
+    note_entry(e);
     if (e->media == ELT_MEDIA_1200K || e->media == ELT_MEDIA_1440K ||
         e->media == ELT_MEDIA_2880K) {
         /* Never returns on success. A DOS boot disc reads its keyboard
@@ -256,7 +284,7 @@ static void boot_cd(boot_result *r)
         return;
     }
 
-    r->stage = "installing the CD driver";
+    boot_stage(r, "installing the CD driver");
     jres_keyboards(g_kbd, g_nkbd);
     if (ops.serve(i, (uint8_t)CD_RAW_DRIVE) != 0 ||
         jres_install((uint8_t)CD_RAW_DRIVE, (uint32_t)(uintptr_t)ops.int13,
@@ -312,7 +340,7 @@ static void boot_module_disk(jmod_ops *ops, unsigned idx, unsigned slot,
     uint8_t drive = (uint8_t)(0x80u + ndisks);
     int swap = !is_falcon_disk(ops, idx);
 
-    r->stage = "installing the driver";
+    boot_stage(r, "installing the driver");
     jres_keyboards(g_kbd, g_nkbd);
     if (ndisks >= 0x7Fu || ops->serve(idx, drive) != 0 ||
         jres_install(drive, (uint32_t)(uintptr_t)ops->int13,
@@ -329,10 +357,10 @@ static void boot_module_disk(jmod_ops *ops, unsigned idx, unsigned slot,
         bios_puts("falcon-bios: drive ");
         bios_put_hex64(drive);
         bios_puts(" carries a falcon boot record; no drive swap\n");
-        r->stage = "starting the disk";
+        boot_stage(r, "starting the disk");
         (void)mbr_boot(&disk, r);
     } else if (lowmem_segment(SWAP_BYTES) == 0) {
-        r->stage = "installing the drive swap";
+        boot_stage(r, "installing the drive swap");
         r->advice = "this machine will not give up the conventional memory "
                     "the drive swap needs.";
     } else {
@@ -364,8 +392,7 @@ static void boot_cf(boot_result *r)
     if (n == 0 || ops.dev(0, &dev) != 0) {
         r->advice = "there is no CompactFlash card in a PC Card slot.";
     } else {
-        screen_out(dev.label);
-        screen_out("\n\n");
+        tui_note_ascii(dev.label);
         boot_module_disk(&ops, 0, JMOD_SLOT_PCC, r);
     }
     /* Back without a handover: the slots powered down, their windows
@@ -434,8 +461,7 @@ static void boot_usb(boot_result *r)
                                    : "none of the USB storage is a falcon stick.";
     } else {
         (void)ops[stick].dev(at, &dev);
-        screen_out(dev.label);
-        screen_out("\n\n");
+        tui_note_ascii(dev.label);
         boot_module_disk(&ops[stick], at, g_usb[stick].slot, r);
     }
     if (g_nkbd != 0) {
@@ -506,7 +532,7 @@ void jroute_boot(jroute k, boot_result *r)
         return;
     case JROUTE_COUNT:
     default:
-        r->stage = "choosing a route";
+        boot_stage(r, "choosing a route");
         return;
     }
 }

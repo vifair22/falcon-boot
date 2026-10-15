@@ -11,15 +11,14 @@
 #include <loader/credfs.h>
 #include <lib/string.h>
 #include <lib/ucs2.h>
-#include <console/menu.h>
+#include <tui/tui.h>
 #include <trust/probe.h>
 
-/* Read granularity for the UKI, and how often the read says it is alive. A 1
- * MiB request costs one directory-to-extent descent and a run of block reads;
- * the dot is per 8 MiB so a 200 MB wrap draws a short line rather than a wall.
- * Both match falcon-efi/src/pos, which reads the same kind of object. */
+/* Read granularity for the UKI: a 1 MiB request costs one
+ * directory-to-extent descent and a run of block reads, and between two of
+ * them the step's spinner turns. As falcon-efi/src/pos, which reads the
+ * same kind of object. */
 #define BLESS_READ_CHUNK ((UINT64)1u << 20)
-#define BLESS_DOT_EVERY  ((UINT64)8u << 20)
 
 /* Room for the longest name a filesystem here can hold, as CHAR16. The
  * synthetic filesystem reuses the UKI's own name so an operator reading a
@@ -43,24 +42,39 @@ static fs_file g_file;
 
 /* ---- console ---- */
 
-/* Inside the content block, like every other screen; see
- * falcon-efi/src/console/menu.h. */
 static void out(const CHAR16 *s)
 {
-    menu_out(g_st, s);
+    tui_out(s);
 }
 
-static void out_dec(UINT64 v)
+/* A stage of the launch: a step on the page, and what a failure names. */
+static void stage(bless_result *r, const CHAR16 *what)
 {
-    CHAR16 buf[21];
-    UINTN i = sizeof(buf) / sizeof(buf[0]) - 1;
+    r->stage = what;
+    tui_step(what);
+}
 
-    buf[i] = L'\0';
-    do {
-        buf[--i] = (CHAR16)(L'0' + (v % 10));
-        v /= 10;
-    } while (v != 0);
-    out(&buf[i]);
+/* "reading <name>" as a step, and its size when the read is done. */
+static void reading(const CHAR16 *name)
+{
+    CHAR16 what[96];
+    UINTN n = 0;
+    UINTN i;
+
+    for (i = 0; L"reading "[i] != 0; i++)
+        what[n++] = L"reading "[i];
+    for (i = 0; name[i] != 0 && n + 1u < sizeof what / sizeof what[0]; i++)
+        what[n++] = name[i];
+    what[n] = 0;
+    tui_step(what);
+}
+
+static void read_done(UINT64 size)
+{
+    CHAR16 got[16];
+
+    tui_size(got, sizeof got / sizeof got[0], size);
+    tui_step_done(got);
 }
 
 /* The manifest's names are printable ASCII by the format's own rule
@@ -223,7 +237,6 @@ static EFI_STATUS read_image(EFI_BOOT_SERVICES *bs, fs_vol *vol,
     EFI_PHYSICAL_ADDRESS addr = 0;
     UINT64 size;
     UINT64 done = 0;
-    UINT64 next_dot = BLESS_DOT_EVERY;
     UINTN pages;
     UINT8 *buf;
     EFI_STATUS status;
@@ -254,10 +267,7 @@ static EFI_STATUS read_image(EFI_BOOT_SERVICES *bs, fs_vol *vol,
             return EFI_DEVICE_ERROR;
         }
         done += n;
-        if (done >= next_dot) {
-            out(L".");
-            next_dot += BLESS_DOT_EVERY;
-        }
+        tui_tick();
     }
 
     *buf_out = buf;
@@ -375,12 +385,12 @@ static EFI_STATUS launch_image(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent,
      * believe it came from, and the synthetic filesystem would only get in
      * the way of that (bless_boot_as). */
     if (named == (EFI_DEVICE_PATH_PROTOCOL *)0) {
-        result->stage = L"publishing the image";
+        stage(result, L"publishing the image");
         status = publish_image(st, buf, size);
         if (!EFI_ERROR(status)) {
             published = TRUE;
             own_path = TRUE;
-            result->stage = L"naming the image on the synthetic filesystem";
+            stage(result, L"naming the image on the synthetic filesystem");
             status = credfs_load_path(bs, g_load_ucs2, &load_path);
             if (EFI_ERROR(status)) {
                 credfs_teardown(bs);
@@ -411,7 +421,7 @@ static EFI_STATUS launch_image(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent,
      * off included. */
     status = EFI_NOT_FOUND;   /* not loaded yet */
     if (ops.via_shim && ops.table_unhooked) {
-        result->stage = L"LoadImage of the image (firmware)";
+        stage(result, L"LoadImage of the image (firmware)");
         status = bs->LoadImage(FALSE, parent, load_path,
                                published ? (void *)0 : buf,
                                published ? (UINTN)0 : (UINTN)size, &child);
@@ -424,12 +434,13 @@ static EFI_STATUS launch_image(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent,
             if (status == EFI_SECURITY_VIOLATION && child != (EFI_HANDLE)0)
                 bs->UnloadImage(child);
             child = (EFI_HANDLE)0;
+            tui_step_done(L"refused");
         }
     }
 
     if (status != EFI_SUCCESS) {
-        result->stage = ops.via_shim ? L"LoadImage of the image (shim)"
-                                     : L"LoadImage of the image (firmware)";
+        stage(result, ops.via_shim ? L"LoadImage of the image (shim)"
+                                   : L"LoadImage of the image (firmware)");
         status = ops.LoadImage(FALSE, parent, load_path,
                                published ? (void *)0 : buf,
                                published ? (UINTN)0 : (UINTN)size, &child);
@@ -450,13 +461,10 @@ static EFI_STATUS launch_image(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent,
         return status;
     }
 
-    /* The handoff, said out loud: everything after this call is somebody
-     * else's output, and a wrap that spends seconds decompressing a kernel
-     * before it draws anything is indistinguishable from a hang unless the
-     * boundary is on screen. Pairs with the "exited" line main.c prints if it
-     * comes back. */
-    out(L"handing over to the image; everything below is its own output."
-        L"\r\n\r\n");
+    /* The hand-off (DESIGN Section 7.10): everything after this call is
+     * somebody else's output, and the page above it says where it began. */
+    stage(result, L"handing over to the image");
+    tui_handoff();
 
     result->stage = L"StartImage";
     if (uki)
@@ -556,21 +564,19 @@ static EFI_STATUS blessed_launch(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
      * to touch it, not a promise about the volume. */
     vol = (fs_vol *)(uintptr_t)hit->src;
 
-    result->stage = L"opening /falcon/blessed";
+    stage(result, L"opening /falcon/blessed");
     if (open_blessed_dir(vol, &g_dir_b) != 1) {
         result->advice = L"the blessed directory is gone from this volume. "
                          L"Re-bless the ISO.";
         return EFI_NOT_FOUND;
     }
 
-    result->stage = L"finding the blessed image the manifest names";
+    stage(result, L"finding the blessed image the manifest names");
     if (dir_find(&g_dir_b, hit->rec->uki, &ent) != 1 || ent.is_dir) {
         result->advice = L"the manifest names an image that is not on the "
                          L"stick. Re-bless the ISO.";
         return EFI_NOT_FOUND;
     }
-
-    menu_screen(st);
 
     /* Resolved and judged here rather than inside the launch so the warning
      * precedes the read: a blessed wrap carries its own initramfs and the
@@ -583,11 +589,9 @@ static EFI_STATUS blessed_launch(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
     inner_blocked = uki ? load_ops_inner_load_blocked(st, &ops) : FALSE;
     if (inner_blocked)
         out(L"warning: this image is very unlikely to start on this machine;"
-            L"\r\n         see the note after it exits.\r\n\r\n");
+            L" see the note after it exits.\r\n");
 
-    out(L"reading ");
-    out(set_name_ascii(hit->rec->uki));
-    out(L" ");
+    reading(set_name_ascii(hit->rec->uki));
     result->stage = L"reading the blessed image";
     status = read_image(bs, vol, &ent, &buf, &size, &pages);
     if (EFI_ERROR(status)) {
@@ -596,9 +600,7 @@ static EFI_STATUS blessed_launch(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
                              L"large. Re-bless the ISO.";
         return status;
     }
-    out(L"\r\n");
-    out_dec(size);
-    out(L" bytes read.\r\n\r\n");
+    read_done(size);
 
     /* The blessed wording of the refusal main.c reports for an unblessed ISO:
      * here the image IS ours, so the actionable half is the key, not the
@@ -673,8 +675,6 @@ EFI_STATUS bless_payload_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
     if (vol == (fs_vol *)0 || file == (const fs_dirent *)0)
         return EFI_INVALID_PARAMETER;
 
-    menu_screen(st);
-
     /* No inner-load warning, and FALSE passed for it below rather than the
      * platform's answer. load_ops_inner_load_blocked is about an image that
      * loads a PE of its own through gBS->LoadImage, which is what sd-stub
@@ -683,9 +683,7 @@ EFI_STATUS bless_payload_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
      * mechanism this entry never reaches. */
     resolve_load_ops(bs, &ops);
 
-    out(L"reading ");
-    out(set_name_ucs2(file->name));
-    out(L" ");
+    reading(set_name_ucs2(file->name));
     result->stage = L"reading the payload";
     status = read_image(bs, vol, file, &buf, &size, &pages);
     if (EFI_ERROR(status)) {
@@ -694,9 +692,7 @@ EFI_STATUS bless_payload_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
                              L"an EFI binary.";
         return status;
     }
-    out(L"\r\n");
-    out_dec(size);
-    out(L" bytes read.\r\n\r\n");
+    read_done(size);
 
     /* The refusal wording that fits a payload: the file on p2 IS what the
      * platform verified, so the door is signing that file, which is what

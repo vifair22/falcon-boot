@@ -42,11 +42,13 @@ typedef UINT64    EFI_LBA;
 typedef UINTN     EFI_TPL;
 
 /* An event's notification function, and the values CreateEvent takes for
- * the two kinds of event the loader creates (UEFI 2.10 Section 7.1): a
- * notification at ExitBootServices, and a plain timer the menu's countdown
- * waits on beside the keyboard. */
+ * the kinds of event the loader creates (UEFI 2.10 Section 7.1): a
+ * notification at ExitBootServices, a plain timer a wait waits on beside
+ * the keyboard, and a timer whose notification counts the screens' clock
+ * (console/display.c). */
 typedef void (EFIAPI *EFI_EVENT_NOTIFY)(EFI_EVENT Event, void *Context);
 #define EVT_SIGNAL_EXIT_BOOT_SERVICES 0x00000201u
+#define EVT_NOTIFY_SIGNAL             0x00000200u
 #define EVT_TIMER                     0x80000000u
 #define TPL_CALLBACK                  ((EFI_TPL)8)
 

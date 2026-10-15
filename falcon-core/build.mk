@@ -87,9 +87,12 @@ CORE_WIM      := $(addprefix $(CORE)/wim/,lzx.c wim.c)
 # gzip, inflated: falcon jump's stage 3 is stored compressed on its floppy
 # and stage 2 inflates it (DESIGN Section 13.3).
 CORE_GZ       := $(CORE)/gz/gz.c
-# The screen layout both loaders draw from: geometry and row composition,
-# no drawing.
-CORE_TUI      := $(CORE)/tui/tui.c
+# The screens every loader draws (DESIGN Section 7.10): the buffer, the
+# layers, the pages, dialogs and lists, over a display the loader provides.
+CORE_TUI      := $(addprefix $(CORE)/tui/,screen.c page.c list.c say.c)
+# The passphrase prompt, apart because it holds a secret and needs crypto's
+# wipe, which falcon jump does not link.
+CORE_TUI_SECRET := $(CORE)/tui/secret.c
 CORE_MANIFEST := $(CORE)/manifest/manifest.c $(CORE)/manifest/blesslist.c
 CORE_MANIFEST_WRITE := $(CORE)/manifest/manifest_write.c
 
@@ -175,7 +178,7 @@ CORE_TESTS := $(addprefix falcon-core/tests/,main.c \
 
 CORE_UUT := $(CORE_CRYPTO) $(CORE_FS) $(CORE_LUKS) $(CORE_PART) $(CORE_IDENT) \
 	$(CORE_IDENT_FS) $(CORE)/media/extfind.c $(CORE_BLK) $(CORE_PE) \
-	$(CORE_WIM) $(CORE_UCS2) $(CORE_TUI) \
+	$(CORE_WIM) $(CORE_UCS2) $(CORE_TUI) $(CORE_TUI_SECRET) \
 	$(CORE_TRUST) $(CORE_MEDIA) $(CORE_UEFIBOOT) $(CORE_BIOSBOOT) $(CORE_STATIONINI) $(CORE_STROWS) $(CORE_VBR) $(CORE_MANIFEST) \
 	$(CORE_MANIFEST_WRITE) $(CORE_GZ) $(CORE_CRYPTO_TPM) $(CORE_TPM) \
 	$(CORE_TPM_EVLOG) $(CORE_TPM_EVSAVE)

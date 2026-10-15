@@ -176,6 +176,7 @@ static void handover(uint8_t dl, uint16_t si, uint16_t swap_seg,
     poke16(GATE_SI, si);
     poke16(GATE_TARGET, (uint16_t)STAGE1_LOAD);
     poke16(GATE_TARGET + 2u, 0);
+    tui_handoff();
     ((void (*)(void))(uintptr_t)GATE_BOOT16)();
 }
 
@@ -187,14 +188,14 @@ int chain_part(bios_disk *d, const part_entry *p, int swap, boot_result *r)
     uint8_t dl = chain_dl(d, swap);
     vbr_fix fix;
 
-    r->stage = "checking the partition";
+    boot_stage(r, "checking the partition");
     if (why != (const char *)0) {
         r->advice = why;
         return -1;
     }
     slot = p->number - 1u;
 
-    r->stage = "reading the disk's partition table";
+    boot_stage(r, "reading the disk's partition table");
     if (read512(d, 0, g_mbr) != 0) {
         r->advice = "The disk did not answer a read.";
         return -1;
@@ -205,7 +206,7 @@ int chain_part(bios_disk *d, const part_entry *p, int swap, boot_result *r)
         return -1;
     }
 
-    r->stage = "reading the partition's boot sector";
+    boot_stage(r, "reading the partition's boot sector");
     if (read512(d, p->start_lba, g_vbr) != 0) {
         r->advice = "The disk did not answer a read.";
         return -1;
@@ -215,7 +216,7 @@ int chain_part(bios_disk *d, const part_entry *p, int swap, boot_result *r)
         return -1;
     }
 
-    r->stage = "installing the drive swap";
+    boot_stage(r, "installing the drive swap");
     seg = swap_reserve(d, swap);
     if (seg == 1u) {
         r->advice = "There is no conventional memory left for it;\nswap = no "
@@ -242,7 +243,7 @@ int chain_part(bios_disk *d, const part_entry *p, int swap, boot_result *r)
     memcpy((void *)(uintptr_t)VBR_MBR_COPY, g_mbr, VBR_SECTOR);
     memcpy((void *)(uintptr_t)STAGE1_LOAD, g_vbr, VBR_SECTOR);
     handover(dl, (uint16_t)VBR_ENTRY_SI(slot), seg, d->drive);
-    r->stage = "starting its boot code";
+    boot_stage(r, "starting its boot code");
     return -1;
 }
 
@@ -251,7 +252,7 @@ int chain_disk(bios_disk *d, int swap, boot_result *r)
     uint16_t seg;
     uint8_t dl = chain_dl(d, swap);
 
-    r->stage = "reading the disk's first sector";
+    boot_stage(r, "reading the disk's first sector");
     if (d->sector_size != VBR_SECTOR) {
         r->advice = "The disk's sectors are not 512 bytes, and a BIOS starts "
                     "boot code\nonly from a disk whose sectors are.";
@@ -261,13 +262,13 @@ int chain_disk(bios_disk *d, int swap, boot_result *r)
         r->advice = "The disk did not answer a read.";
         return -1;
     }
-    r->stage = "checking the boot signature";
+    boot_stage(r, "checking the boot signature");
     if (!vbr_signed(g_mbr)) {
         r->advice = "Its first sector carries no boot code.";
         return -1;
     }
 
-    r->stage = "installing the drive swap";
+    boot_stage(r, "installing the drive swap");
     seg = swap_reserve(d, swap);
     if (seg == 1u) {
         r->advice = "There is no conventional memory left for it;\nswap = no "
@@ -282,6 +283,6 @@ int chain_disk(bios_disk *d, int swap, boot_result *r)
     bios_puts("\n");
     memcpy((void *)(uintptr_t)STAGE1_LOAD, g_mbr, VBR_SECTOR);
     handover(dl, 0, seg, d->drive);
-    r->stage = "starting its boot code";
+    boot_stage(r, "starting its boot code");
     return -1;
 }

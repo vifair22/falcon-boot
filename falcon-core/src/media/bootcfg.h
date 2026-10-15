@@ -66,7 +66,7 @@ enum {
 #define BOOTCFG_PATH_MAX    192u
 #define BOOTCFG_CMDLINE_MAX 1024u
 #define BOOTCFG_INITRD_MAX  4u
-#define BOOTCFG_ENTRIES_MAX 24u
+#define BOOTCFG_ENTRIES_MAX 64u
 
 /* ${iso_path} as it survives in a parsed cmdline. Not a string any distro's
  * cmdline contains. */

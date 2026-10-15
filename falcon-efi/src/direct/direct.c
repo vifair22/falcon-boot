@@ -7,7 +7,7 @@
 #include <efi/loadfile2.h>
 #include <loader/loadops.h>
 #include <loader/credfs.h>
-#include <console/menu.h>
+#include <tui/tui.h>
 
 #include <pe/pe.h>
 #include <media/bootfs.h>
@@ -18,6 +18,42 @@
 #include <media/grubcfg.h>
 #include <iso/iso.h>
 #include <lib/string.h>
+
+/* A stage of the route: a step on the page, and what a failure names. */
+static void stage(direct_result *r, const CHAR16 *what)
+{
+    r->stage = what;
+    tui_step(what);
+}
+
+/* The open step is done; what it read is its size. */
+static void read_done(UINT64 size)
+{
+    CHAR16 got[16];
+
+    tui_size(got, sizeof got / sizeof got[0], size);
+    tui_step_done(got);
+}
+
+/* "<head><title><tail>" as a step: the hand-over to what the ISO's
+ * configuration names. */
+static void step_titled(direct_result *r, const CHAR16 *head,
+                        const CHAR16 *tail, const CHAR16 *stage_name)
+{
+    CHAR16 t[BOOTCFG_TITLE_MAX + 48u];
+    UINTN n = 0;
+    UINTN i;
+
+    for (i = 0; head[i] != 0; i++)
+        t[n++] = head[i];
+    for (i = 0; r->title[i] != '\0' && n + 32u < sizeof t / sizeof t[0]; i++)
+        t[n++] = (CHAR16)(unsigned char)r->title[i];
+    for (i = 0; tail[i] != 0 && n + 1u < sizeof t / sizeof t[0]; i++)
+        t[n++] = tail[i];
+    t[n] = 0;
+    tui_step(t);
+    r->stage = stage_name;
+}
 
 /* The hook, as make embeds it (falcon-hook/build.mk). */
 extern const unsigned char falcon_hook_bin[];
@@ -256,14 +292,14 @@ static EFI_STATUS build_map(EFI_SYSTEM_TABLE *st, fs_vol *p2,
     int rc;
 
     memset(&hdr, 0, sizeof hdr);
-    r->stage = L"reading the ISO library's record";
+    stage(r, L"reading the ISO library's record");
     if (ident_read_vol(p2, &g_rec, &rec) != IDENT_OK ||
         rec.role != IDENT_ROLE_LIBRARY) {
         r->advice = L"the ISO library has no readable /.falcon record.";
         return EFI_NOT_FOUND;
     }
     memcpy(hdr.install_id, rec.install_id, sizeof hdr.install_id);
-    r->stage = L"finding the ISO library's partition";
+    stage(r, L"finding the ISO library's partition");
     if (EFI_ERROR(part_start_lba(st, p2_handle, &hdr.part_lba))) {
         r->advice = L"the ISO library is not a partition this loader can "
                     L"name to Linux.";
@@ -272,7 +308,7 @@ static EFI_STATUS build_map(EFI_SYSTEM_TABLE *st, fs_vol *p2,
     hdr.block_size = block_size;
     hdr.iso_size = iso->size;
 
-    r->stage = L"mapping the ISO's extents on p2";
+    stage(r, L"mapping the ISO's extents on p2");
     rc = fs_extents(p2, iso, g_ext, EXTMAP_MAX_EXTENTS, &n);
     if (rc == FS_ERR_NOSPACE) {
         r->advice = L"the ISO is in too many pieces on the stick. Copy it "
@@ -343,7 +379,7 @@ static EFI_STATUS pick_entry(direct_result *r, const bootcfg_entry **out,
     const bootcfg_entry *e;
     UINTN i;
 
-    r->stage = L"reading the ISO's boot configuration";
+    stage(r, L"reading the ISO's boot configuration");
     bootfs_src(&g_bctx, &g_isovol, &src);
     if (bootcfg_read(&src, BOOTCFG_CD, scratch, CFG_SCRATCH, &g_cfg) !=
             BOOTCFG_OK ||
@@ -356,7 +392,7 @@ static EFI_STATUS pick_entry(direct_result *r, const bootcfg_entry **out,
         r->title[i] = e->title[i];
     r->title[i] = '\0';
 
-    r->stage = L"building the cmdline";
+    stage(r, L"building the cmdline");
     if (bootcfg_render(e, (const char *)0, g_cmd, sizeof g_cmd) != BOOTCFG_OK ||
         hookcmd_build(g_cmd, g_hooked, sizeof g_hooked) != HOOKCMD_OK)
         return EFI_BUFFER_TOO_SMALL;
@@ -388,7 +424,7 @@ EFI_STATUS direct_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent, fs_vol *p2,
     load_ops ops;
     EFI_STATUS status;
 
-    r->stage = L"opening the ISO";
+    stage(r, L"opening the ISO");
     r->status = EFI_SUCCESS;
     r->no_entry = 0;
     r->title[0] = '\0';
@@ -396,7 +432,7 @@ EFI_STATUS direct_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent, fs_vol *p2,
 
     if (fs_file_open(p2, &g_iso, iso) != FS_OK)
         return r->status = EFI_DEVICE_ERROR;
-    r->stage = L"reading the ISO's filesystem";
+    stage(r, L"reading the ISO's filesystem");
     if (EFI_ERROR(mount_iso())) {
         r->no_entry = 1;
         return r->status = EFI_UNSUPPORTED;
@@ -413,14 +449,16 @@ EFI_STATUS direct_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent, fs_vol *p2,
     if (EFI_ERROR(status))
         goto out;
 
-    r->stage = L"reading the kernel";
+    stage(r, L"reading the kernel");
     status = read_whole(bs, e->kernel, &kp, &kernel, &ksize);
     if (EFI_ERROR(status))
         goto out;
-    r->stage = L"reading the initrd";
+    read_done(ksize);
+    stage(r, L"reading the initrd");
     status = build_initrd(bs, e, map_len, &ip, &initrd, &isize);
     if (EFI_ERROR(status))
         goto out;
+    read_done(isize);
     if (via == DIRECT_VIA_ISO_SHIM) {
         pe_hdr ph;
         size_t so = 0, sl = 0;
@@ -430,7 +468,7 @@ EFI_STATUS direct_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent, fs_vol *p2,
          * and Ubuntu's do not, because there GRUB is the second stage and
          * checks the kernel through shim's verify protocol instead. A kernel
          * without it is not this route's to boot: the caller chainloads. */
-        r->stage = L"checking the kernel for SBAT metadata";
+        stage(r, L"checking the kernel for SBAT metadata");
         if (pe_parse(kernel, (size_t)ksize, &ph) != PE_OK ||
             pe_find_section(&ph, kernel, (size_t)ksize, ".sbat", &so, &sl) !=
                 PE_OK) {
@@ -438,7 +476,7 @@ EFI_STATUS direct_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent, fs_vol *p2,
             status = EFI_UNSUPPORTED;
             goto out;
         }
-        r->stage = L"reading the ISO's shim";
+        stage(r, L"reading the ISO's shim");
         status = read_whole(bs, ISO_SHIM_PATH, &sp, &shim, &ssize);
         if (status == EFI_NOT_FOUND)
             r->no_entry = 1;
@@ -446,11 +484,11 @@ EFI_STATUS direct_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent, fs_vol *p2,
             goto out;
     }
 
-    r->stage = L"setting FalconIsoMap";
+    stage(r, L"setting FalconIsoMap");
     status = loader_isomap_set(st, g_map, map_len);
     if (EFI_ERROR(status))
         goto out;
-    r->stage = L"publishing the initrd";
+    stage(r, L"publishing the initrd");
     status = initrd_publish(bs, initrd, (UINTN)isize);
     if (EFI_ERROR(status))
         goto out;
@@ -475,7 +513,7 @@ EFI_STATUS direct_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent, fs_vol *p2,
         tree[1].parent = CREDFS_ROOT;
         tree[1].is_dir = 0;
         tree[1].secret = 0;
-        r->stage = L"publishing the ISO's shim and kernel";
+        stage(r, L"publishing the ISO's shim and kernel");
         status = credfs_publish(st, tree, 2);
         if (EFI_ERROR(status))
             goto out;
@@ -483,12 +521,12 @@ EFI_STATUS direct_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent, fs_vol *p2,
         status = credfs_load_path(bs, g_shim_load, &shim_path);
         if (EFI_ERROR(status))
             goto out;
-        r->stage = L"LoadImage of the ISO's shim";
+        stage(r, L"LoadImage of the ISO's shim");
         status = ops.LoadImage(FALSE, parent, shim_path, (void *)0, 0,
                                &child);
     } else {
-        r->stage = ops.via_shim ? L"LoadImage of the kernel (shim)"
-                                : L"LoadImage of the kernel (firmware)";
+        stage(r, ops.via_shim ? L"LoadImage of the kernel (shim)"
+                              : L"LoadImage of the kernel (firmware)");
         status = ops.LoadImage(FALSE, parent, (EFI_DEVICE_PATH_PROTOCOL *)0,
                                kernel, (UINTN)ksize, &child);
     }
@@ -503,7 +541,7 @@ EFI_STATUS direct_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent, fs_vol *p2,
         goto out;
     }
 
-    r->stage = L"setting the cmdline";
+    stage(r, L"setting the cmdline");
     if (bs->HandleProtocol(child, &li_guid, (void **)&li) != EFI_SUCCESS) {
         ops.UnloadImage(child);
         status = EFI_LOAD_ERROR;
@@ -525,18 +563,8 @@ EFI_STATUS direct_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent, fs_vol *p2,
     li->LoadOptions = g_opts;
     li->LoadOptionsSize = (UINT32)((i + 1u) * sizeof(CHAR16));
 
-    menu_out(st, L"starting ");
-    {
-        CHAR16 t[BOOTCFG_TITLE_MAX];
-
-        for (i = 0; r->title[i] != '\0'; i++)
-            t[i] = (CHAR16)(unsigned char)r->title[i];
-        t[i] = 0;
-        menu_out(st, t);
-    }
-    menu_out(st, L"\r\n");
-
-    r->stage = L"StartImage";
+    step_titled(r, L"starting ", L"", L"StartImage");
+    tui_handoff();
     status = ops.StartImage(child, &exit_size, &exit_data);
     if (exit_data != (CHAR16 *)0)
         bs->FreePool(exit_data);
@@ -589,9 +617,8 @@ EFI_STATUS direct_grub_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent,
     iso_boot_result ir = { L"starting", EFI_SUCCESS,
                            (const family_desc *)0 };
     EFI_STATUS status;
-    UINTN i;
 
-    r->stage = L"opening the ISO";
+    stage(r, L"opening the ISO");
     r->status = EFI_SUCCESS;
     r->no_entry = 1;
     r->title[0] = '\0';
@@ -604,7 +631,7 @@ EFI_STATUS direct_grub_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent,
         return r->status = EFI_UNSUPPORTED;
     if (fs_file_open(p2, &g_iso, iso) != FS_OK)
         return r->status = EFI_DEVICE_ERROR;
-    r->stage = L"reading the ISO's filesystem";
+    stage(r, L"reading the ISO's filesystem");
     if (EFI_ERROR(mount_iso()))
         return r->status = EFI_UNSUPPORTED;
     if (bs->AllocatePool(EfiLoaderData, CFG_SCRATCH, (void **)&scratch) !=
@@ -620,7 +647,7 @@ EFI_STATUS direct_grub_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent,
      * them). It has to be one contiguous file this driver can place. */
     status = EFI_UNSUPPORTED;
     r->no_entry = 1;
-    r->stage = L"locating the ISO's grub.cfg";
+    stage(r, L"locating the ISO's grub.cfg");
     if (e->loop)
         goto out;
     {
@@ -647,7 +674,7 @@ EFI_STATUS direct_grub_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent,
     if (EFI_ERROR(status))
         goto out;
 
-    r->stage = L"building the hook's archive";
+    stage(r, L"building the hook's archive");
     hook_cap = hookcmd_archive_size(falcon_hook_bin_len, map_len);
     hook_blocks = ((UINT64)hook_cap + ISO_BLOCK - 1u) / ISO_BLOCK;
     hook = pages_get(bs, &hp, hook_blocks * ISO_BLOCK);
@@ -665,7 +692,7 @@ EFI_STATUS direct_grub_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent,
 
     /* A grub.cfg too short to hold ours (Alpine's is 182 bytes) leaves
      * nothing this route can serve. */
-    r->stage = L"writing the grub.cfg";
+    stage(r, L"writing the grub.cfg");
     if (grubcfg_write(e, g_hooked, iso->size / 512u,
                       ((UINT64)hook_len + 511u) / 512u, (size_t)cfg_ent.size,
                       (char *)cfg, (size_t)cfg_ent.size) != GRUBCFG_OK) {
@@ -685,7 +712,7 @@ EFI_STATUS direct_grub_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent,
     /* From here the ISO has a configuration this route can serve; a
      * failure is a real one. */
     r->no_entry = 0;
-    r->stage = L"setting FalconIsoMap";
+    stage(r, L"setting FalconIsoMap");
     status = loader_isomap_set(st, g_map, map_len);
     if (EFI_ERROR(status))
         goto out;
@@ -693,16 +720,8 @@ EFI_STATUS direct_grub_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent,
     /* Not "starting": GRUB reads the kernel and initrds after this line,
      * and the coverage harness counts media read after "starting" as the
      * kernel's (tools/coverage/run-case.sh). */
-    menu_out(st, L"handing ");
-    {
-        CHAR16 t[BOOTCFG_TITLE_MAX];
-
-        for (i = 0; r->title[i] != '\0'; i++)
-            t[i] = (CHAR16)(unsigned char)r->title[i];
-        t[i] = 0;
-        menu_out(st, t);
-    }
-    menu_out(st, L" to the ISO's own GRUB\r\n");
+    step_titled(r, L"handing ", L" to the ISO's own GRUB", r->stage);
+    tui_handoff();
     status = iso_boot_overlaid(st, parent, p2, iso, ISO_MEDIA_CD, &ovl, &ir);
     r->stage = ir.stage;
     r->status = ir.status;

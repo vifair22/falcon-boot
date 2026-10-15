@@ -1,0 +1,25 @@
+ falcon-boot 0.1.2  DIR                                   Secure Boot on, MS CA 
+                                                                                
+  +- booting: archlinux-2026.09.01-x86_64.iso -------------------------------+  
+  |                                                                          |  
+  |  opening the ISO                                                    OK   |  
+  |  reading the ISO's filesystem                                       OK   |  
+  |  reading the kernel                                            14.2 MB   |  
+  |  reading the initrd                                             211 MB   |  
+  |  starting the kernel                                                /    |  
+  |                                                                          |  
+  |                                                                          |  
+  |                                                                          |  
+  |                                                                          |  
+  |                                                                          |  
+  |                                                                          |  
+  |                                                                          |  
+  |                                                                          |  
+  |                                                                          |  
+  |                                                                          |  
+  |                                                                          |  
+  +--------------------------------------------------------------------------+  
+                                                                                
+                                                                                
+                                                                                
+                                                                               

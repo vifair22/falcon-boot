@@ -649,7 +649,7 @@ case_4kn_marker() { # case_4kn_marker CASE
         why="falcon-bios did not take the marker"
     if [[ -z "$why" ]] && ! pos_unlock 30; then why=$POS_WHY; fi
     if [[ -z "$why" ]]; then
-        has "enter boot | c chain" && why="the menu was drawn"
+        has "enter boot   c chain" && why="the menu was drawn"
     fi
     halt
     if [[ -z "$why" ]]; then
@@ -923,7 +923,7 @@ case_update_refuse() { # case_update_refuse CASE
 case_probe_keys() { # case_probe_keys CASE FIRMWARE
     local why= t0 t1 ms=-
     boot "$2" "$R/stick-a.img:boot:slow"
-    wait_for "enter boot | c chain" 170 || why="no menu"
+    wait_for "enter boot   c chain" 170 || why="no menu"
     [[ -z "$why" ]] && { has "..." || why="no row was pending"; }
     if [[ -z "$why" ]]; then
         sleep 2
@@ -1037,14 +1037,15 @@ case_station() { # case_station CASE FIRMWARE
     fi
 }
 
-# The first list's rows, as the serial carries them between the key hint
-# and the countdown's second line, less its first: the same text for the
-# same rows. (UEFI draws the countdown before the rows, BIOS after.)
+# The first list's rows, as the transcript has them (falcon-core/src/tui
+# writes a menu's rows on serial as it opens): the lines after "menu: "
+# up to the key hints, the selection's '>' dropped. The same text for the
+# same rows on either loader.
 first_rows() {
-    log_text "$R/serial.log" | tr -s ' \n' ' ' |
-        sed -n 's/.*| esc back\(.*\)Booting in 4 s.*/\1/p' |
-        sed 's/Booting in [0-9] s.*//; s/Booting in 5 s\. Any key stops the countdown\.//' |
-        tr -s ' '
+    log_text "$R/serial.log" |
+        awk '/^menu: / { m = 1; next } m && /^enter boot/ { exit }
+             m { sub(/^[> ] /, ""); print }' |
+        tr -s ' \n' ' '
 }
 
 # The station disk with a STATION.INI on the ESP and in the station
@@ -1144,11 +1145,11 @@ case_bios_only() { # case_bios_only CASE FIRMWARE
             why="${why:-the page has no way back}"
     fi
     if [[ -z "$why" ]]; then
-        n=$(log_text "$R/serial.log" | grep -aoF "c chain | d direct" | wc -l)
+        n=$(log_text "$R/serial.log" | grep -aoF "c chain   d direct" | wc -l)
         mon "sendkey spc"
         local i
         for (( i = 0; i < 100; i++ )); do
-            (( $(log_text "$R/serial.log" | grep -aoF "c chain | d direct" |
+            (( $(log_text "$R/serial.log" | grep -aoF "c chain   d direct" |
                  wc -l) > n )) && break
             sleep 0.1
         done
@@ -1214,10 +1215,10 @@ case_bios_tags() { # case_bios_tags CASE FIRMWARE TAGGED TAG PAGE PLAIN...
             why="${why:-the page has no way back}"
     fi
     if [[ -z "$why" ]]; then
-        n=$(log_text "$R/serial.log" | grep -aoF "c chain | d direct" | wc -l)
+        n=$(log_text "$R/serial.log" | grep -aoF "c chain   d direct" | wc -l)
         mon "sendkey spc"
         for (( i = 0; i < 100; i++ )); do
-            (( $(log_text "$R/serial.log" | grep -aoF "c chain | d direct" |
+            (( $(log_text "$R/serial.log" | grep -aoF "c chain   d direct" |
                  wc -l) > n )) && break
             sleep 0.1
         done
@@ -1253,10 +1254,10 @@ row_tags() {    # row_tags NAME
 # Any key on a route's page, then the menu's key hint drawn once more.
 menu_back() {   # menu_back: 0 once the menu is back
     local n i
-    n=$(log_text "$R/serial.log" | grep -aoF "c chain | d direct" | wc -l)
+    n=$(log_text "$R/serial.log" | grep -aoF "c chain   d direct" | wc -l)
     mon "sendkey spc"
     for (( i = 0; i < 100; i++ )); do
-        (( $(log_text "$R/serial.log" | grep -aoF "c chain | d direct" |
+        (( $(log_text "$R/serial.log" | grep -aoF "c chain   d direct" |
              wc -l) > n )) && return 0
         sleep 0.1
     done

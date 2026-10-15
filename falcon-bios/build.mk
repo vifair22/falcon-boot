@@ -95,8 +95,10 @@ BIOS_S2_COBJS := $(patsubst %.c,$(BIOS_OBJ)/%.o,$(BIOS_S2_CSRCS))
 # and the whole media layer, which is what the third stage was for: under
 # stage 2's 33 KB ceiling that had to be one driver called by name.
 BIOS_MOD_serial  := $(BIOS)/console/console.c
-BIOS_MOD_prompt  := $(BIOS)/console/prompt.c  # the passphrase, and nothing else
-BIOS_MOD_console := $(BIOS)/console/screen.c $(BIOS)/console/cdclock.c \
+# The passphrase prompt is falcon-core's (tui/secret.c), linked by the apps
+# that ask for one.
+BIOS_MOD_prompt  := $(CORE_TUI_SECRET)
+BIOS_MOD_console := $(BIOS)/console/display.c $(BIOS)/console/cdclock.c \
 	$(BIOS)/power/power.c $(BIOS)/power/acpicore.c  # the idle power-off
 BIOS_MOD_disk    := $(BIOS)/disk/disk.c $(BIOS)/vfd/vfdcore.c
 BIOS_MOD_marker  := $(BIOS)/disk/marker.c

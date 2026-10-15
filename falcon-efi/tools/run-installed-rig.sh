@@ -562,7 +562,7 @@ case_uefi_default() {   # case_uefi_default CASE FIRMWARE
     local c=$1 fw=$2
     WHY=
     boot "$fw" "$R/gpt.img" sata "$(cat "$R/gpt.esp")" 1
-    wait_for "Booting in 5 s. Any key stops the countdown." 90 ||
+    wait_for "Booting in 5 s" 90 ||
         WHY="no countdown"
     # OVMF's terminal gets the countdown line before the rows; by the
     # count's second line every row has been drawn.
@@ -579,7 +579,7 @@ case_uefi_default() {   # case_uefi_default CASE FIRMWARE
     [[ -z "$WHY" ]] && { wait_for "Memory test (memtest86+)" 5 || WHY="no memtest row"; }
     [[ -z "$WHY" ]] && { wait_for "booting: Windows Boot Manager (disk gpt:" 15 ||
         WHY="the default was not Windows"; }
-    [[ -z "$WHY" ]] && { has "restarting into it" || WHY="no NXT page"; }
+    [[ -z "$WHY" ]] && { wait_for "restarting into it" 10 || WHY="no NXT page"; }
     [[ -z "$WHY" ]] && { wait_for "FALCON-STANDIN $BOOTMGFW" 90 ||
         WHY="the firmware did not start Windows after the reset"; }
     halt
@@ -610,7 +610,7 @@ case_4kn_uefi() {       # case_4kn_uefi CASE FIRMWARE
     WHY=
     id=$(cat "$R/4kn.id")
     boot "$fw" "$R/4kn.img" nvme "$(cat "$R/4kn.esp")" 0
-    wait_for "Booting in 5 s. Any key stops the countdown." 90 ||
+    wait_for "Booting in 5 s" 90 ||
         WHY="no countdown"
     # OVMF's terminal gets the countdown line before the rows; by the
     # count's second line every row has been drawn.
@@ -698,7 +698,7 @@ case_second() {         # case_second CASE FIRMWARE nxt|esp
     [[ $how == nxt ]] && win=2
     SECOND=$R/win2.img boot "$fw" "$R/gpt2.img" sata "$(cat "$R/gpt2.esp")" \
         "$win" "$(cat "$R/win2.esp")"
-    wait_for "Booting in 5 s. Any key stops the countdown." 90 ||
+    wait_for "Booting in 5 s" 90 ||
         WHY="no countdown"
     # OVMF's terminal gets the countdown line before the rows; by the
     # count's second line every row has been drawn.
@@ -707,7 +707,7 @@ case_second() {         # case_second CASE FIRMWARE nxt|esp
     [[ -z "$WHY" ]] && { wait_for "booting: Windows" 15 ||
         WHY="the default was not Windows"; }
     if [[ -z "$WHY" && $how == nxt ]]; then
-        has "restarting into it" || WHY="no NXT page"
+        wait_for "restarting into it" 10 || WHY="no NXT page"
         [[ -z "$WHY" ]] && { wait_for "FALCON-STANDIN $BOOTMGFW" 90 ||
             WHY="the firmware did not start Windows after the reset"; }
     elif [[ -z "$WHY" ]]; then
@@ -731,7 +731,7 @@ case_mbr_uefi() {       # case_mbr_uefi CASE FIRMWARE
     WHY=
     id=$(install_id "$R/mbr.img")
     boot "$fw" "$R/mbr.img" sata "$(cat "$R/mbr.esp")" 0
-    wait_for "Booting in 5 s. Any key stops the countdown." 90 ||
+    wait_for "Booting in 5 s" 90 ||
         WHY="no countdown"
     # OVMF's terminal gets the countdown line before the rows; by the
     # count's second line every row has been drawn.
@@ -752,7 +752,7 @@ case_noshim() {         # case_noshim CASE FIRMWARE
     id=$(install_id "$R/noshim.img")
     ENTRY='\EFI\falcon\grubx64.efi' boot "$fw" "$R/noshim.img" sata \
         "$(cat "$R/noshim.esp")" 0
-    wait_for "Booting in 5 s. Any key stops the countdown." 90 ||
+    wait_for "Booting in 5 s" 90 ||
         WHY="no countdown"
     [[ -z "$WHY" ]] && { wait_for "booting: personal.efi" 15 ||
         WHY="the default was not the shelf's UKI"; }

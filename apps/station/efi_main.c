@@ -18,9 +18,9 @@
  * station/strows.c, host-tested; this file finds them and boots them.
  *
  * What it shares with the stick's loader it shares by calling the same
- * modules, so the sentences a route says are pos.c's and menu.c's here as
- * there. The station's own sentences are falcon-bios's station's, word for
- * word, and a change to one is a change to the other.
+ * modules, so the sentences a route says are pos.c's and falcon-core's
+ * (tui/say.c) here as there, and the station's own sentences are core's
+ * too, which falcon-bios's station says the same way.
  */
 
 #include <efi/uefi.h>
@@ -29,8 +29,9 @@
 #include <discover/discover.h>
 #include <discover/disks.h>
 #include <esp/esp.h>
+#include <lib/string.h>
 #include <lib/ucs2.h>
-#include <console/menu.h>
+#include <console/display.h>
 #include <console/idle.h>
 #include <media/nextboot.h>
 #include <media/stationini.h>
@@ -38,6 +39,7 @@
 #include <secboot/sb.h>
 #include <nxt/nxt.h>
 #include <media/strows.h>
+#include <media/shelf.h>
 #include <totp/totp.h>
 #include <tui/tui.h>
 
@@ -60,8 +62,8 @@
  * row may boot from. */
 #define ESP_MAX 8u
 
-/* UKIs on plaintext shelves, one row each. */
-#define IMG_MAX 8u
+/* UKIs on plaintext shelves, one row each: as many as a shelf holds. */
+#define IMG_MAX SHELF_MAX
 
 static EFI_SYSTEM_TABLE *g_st;
 static EFI_HANDLE g_image;
@@ -88,60 +90,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st);
 
 static void out(const CHAR16 *s)
 {
-    menu_out(g_st, s);
-}
-
-/* ASCII out of the INI or a marker, widened a line at a time. */
-static void out_ascii(const char *s)
-{
-    CHAR16 buf[81];
-    UINTN n = 0;
-
-    while (*s != '\0') {
-        buf[n++] = (CHAR16)(unsigned char)*s++;
-        if (n + 1u == sizeof buf / sizeof buf[0]) {
-            buf[n] = 0;
-            out(buf);
-            n = 0;
-        }
-    }
-    buf[n] = 0;
-    out(buf);
-}
-
-static void out_dec(UINTN v)
-{
-    CHAR16 buf[21];
-    UINTN i = sizeof(buf) / sizeof(buf[0]) - 1;
-
-    buf[i] = L'\0';
-    do {
-        buf[--i] = (CHAR16)(L'0' + v % 10u);
-        v /= 10u;
-    } while (v != 0);
-    out(&buf[i]);
-}
-
-static void out_hex(UINT64 v)
-{
-    CHAR16 buf[19];
-    UINTN i = sizeof(buf) / sizeof(buf[0]) - 1;
-
-    buf[i] = L'\0';
-    do {
-        UINT8 d = (UINT8)(v & 0xFu);
-        buf[--i] = (CHAR16)(d < 10 ? L'0' + d : L'a' + (d - 10));
-        v >>= 4;
-    } while (v != 0 && i > 2);
-    buf[--i] = L'x';
-    buf[--i] = L'0';
-    out(&buf[i]);
-}
-
-/* A page's "press any key", timed by the idle power-off. */
-static EFI_STATUS wait_key(EFI_INPUT_KEY *key)
-{
-    return idle_wait_key(g_st, key);
+    tui_out(s);
 }
 
 /* An image we launch cannot load its own inner PE on this boot
@@ -154,89 +103,40 @@ static BOOLEAN g_uki_blocked = FALSE;
  * names what the machine trusts when enforcing, which is read by the boot
  * predictions this build leaves out; here the state's own label stands in
  * for it. */
-static sb_mode banner_init(menu_banner *b)
+static sb_mode banner_init(void)
 {
+    static const CHAR16 title[] = L"falcon-boot " WIDEN(FALCON_VERSION_STATION);
     sb_state state;
     sb_mode mode;
 
-    b->title = L"falcon-boot " WIDEN(FALCON_VERSION_STATION);
-    b->state = (void *)0;
-    b->state_attr = EFI_TEXT_ATTR(EFI_LIGHTCYAN, EFI_BLACK);
-
+    tui_title(title, (const CHAR16 *)0, TUI_ATTR_STATE);
     if (sb_state_read(g_st->RuntimeServices, &state) != SB_OK)
         return SB_MODE_UNKNOWN;
     mode = sb_state_mode(&state);
-    b->state = sb_mode_label(mode);
-    b->state_attr = sb_mode_needs_warning(mode)
-                        ? EFI_TEXT_ATTR(EFI_YELLOW, EFI_RED)
-                        : EFI_TEXT_ATTR(EFI_LIGHTGRAY, EFI_BLACK);
+    tui_title(title, sb_mode_label(mode),
+              sb_mode_needs_warning(mode) ? TUI_ATTR_ALERT : TUI_ATTR_STATE);
     return mode;
-}
-
-/* The stick's permissive_notice, word for word. */
-static void permissive_notice(sb_mode mode)
-{
-    if (!sb_mode_needs_warning(mode))
-        return;
-
-    out(L"\r\nshim signature validation is DISABLED on this machine "
-        L"(MokSBState).\r\nEvery unsigned EFI binary runs here.\r\n\r\n"
-        L"To undo: mokutil --enable-validation from Linux, then confirm at "
-        L"MokManager\r\non the next boot.\r\n\r\n");
 }
 
 /* ---- the route pages ----
  *
- * Every route says it the same way (CLAUDE.md, "One screen, two loaders"):
- * its code, a page, "booting: <label>", the route's own lines, and when it
- * comes back a new page with the label, "<route> failed while <stage>" and
- * the advice. Each returns TRUE when it left something on screen worth a
- * key. */
-
-static void page_start(const CHAR16 *code, const CHAR16 *label)
-{
-    menu_mode(g_st, code);
-    menu_screen(g_st);
-    out(L"booting: ");
-    out(label);
-    out(L"\r\n\r\n");
-}
+ * Every route says it the same way (DESIGN Section 7.10): its code, a page,
+ * "booting: <label>", the route's own steps, and when it comes back a
+ * dialog with the label, "<route> failed while <stage>" and the advice
+ * (falcon-core's tui_route_failed). Each returns TRUE when it left
+ * something on screen worth a key. */
 
 static void page_failed(const CHAR16 *label, const CHAR16 *route,
                         const CHAR16 *stage, EFI_STATUS status,
                         const CHAR16 *advice)
 {
-    menu_screen(g_st);
-    out(label);
-    out(L"\r\n\r\n");
-    out(route);
-    out(L" failed while ");
-    out(stage);
-    out(L": ");
-    out_hex(status);
-    out(L"\r\n");
-    if (advice != (const CHAR16 *)0) {
-        out(L"\r\n");
-        out(advice);
-        out(L"\r\n");
-    }
-    out(L"\r\npress any key to return to the menu.\r\n");
+    tui_route_failed(label, route, stage, status, 1, advice);
 }
 
 static void page_exited(const CHAR16 *label, EFI_STATUS status,
                         const CHAR16 *advice)
 {
-    menu_screen(g_st);
-    out(label);
-    out(L"\r\n\r\nthe image exited, status ");
-    out_hex(status);
-    out(L"\r\n");
-    if (advice != (const CHAR16 *)0) {
-        out(L"\r\n");
-        out(advice);
-        out(L"\r\n");
-    }
-    out(L"\r\npress any key to return to the menu.\r\n");
+    tui_route_exited(label, L"the image", status, advice);
 }
 
 /* POS: a shelf's UKI. `shelf` and `file` are pos_boot_file's. FALSE when
@@ -246,7 +146,7 @@ static BOOLEAN boot_uki(const CHAR16 *label, UINTN shelf, const char *file)
     pos_result result = { L"starting", EFI_SUCCESS, (const CHAR16 *)0 };
     EFI_STATUS status;
 
-    page_start(L"POS", label);
+    tui_boot_page(label, L"POS");
     status = pos_boot_file(g_st, g_image, shelf, file, &result);
     if (status == EFI_ABORTED)
         return FALSE;
@@ -264,14 +164,14 @@ static void boot_nxt(const strow *w)
     const CHAR16 *stage = L"finding its firmware entry";
     EFI_STATUS status = EFI_NOT_FOUND;
 
-    page_start(L"NXT", w->label);
+    tui_boot_page(w->label, L"NXT");
     if (w->ref_none || w->ref >= g_nxt_n) {
         page_failed(w->label, L"NXT", stage, status,
                     L"No firmware boot entry names this disk. Set method = "
-                    L"efi in STATION.INI\r\nto start its bootmgfw.efi.");
+                    L"efi in STATION.INI to start its bootmgfw.efi.");
         return;
     }
-    out(L"restarting into it...\r\n");
+    tui_step(L"restarting into it");
     totp_wipe();
     status = nxt_boot(g_st, &g_nxt[w->ref], &stage);
     page_failed(w->label, L"NXT", stage, status,
@@ -281,8 +181,8 @@ static void boot_nxt(const strow *w)
 static void handover(void)
 {
     totp_wipe();
-    out(L"handing over to the image; everything below is its own output."
-        L"\r\n\r\n");
+    tui_step(L"handing over to the image");
+    tui_handoff();
 }
 
 /* The volume an ESP row boots from: its own when found there, the
@@ -320,7 +220,7 @@ static void boot_esp(const CHAR16 *code, const strow *w)
         path[i] = (CHAR16)(unsigned char)w->file[i];
     path[i] = 0;
 
-    page_start(code, w->label);
+    tui_boot_page(w->label, code);
     vol = esp_volume(w, path);
     if (vol == (EFI_HANDLE)0) {
         page_failed(w->label, code, L"finding its ESP", EFI_NOT_FOUND,
@@ -329,7 +229,7 @@ static void boot_esp(const CHAR16 *code, const strow *w)
     }
     if (strows_path_eq(w->file, STROWS_BOOTMGFW))
         out(L"BitLocker will ask for the recovery key if the volume is "
-            L"sealed.\r\n\r\n");
+            L"sealed.\r\n");
     status = esp_boot(g_st, g_image, vol, path, handover, &result);
     if (!EFI_ERROR(status))
         page_exited(w->label, result.status, result.advice);
@@ -340,24 +240,14 @@ static void boot_esp(const CHAR16 *code, const strow *w)
 /* The stick's reboot_to_fw_setup. */
 static BOOLEAN reboot_to_fw_setup(void)
 {
-    EFI_INPUT_KEY key;
-
-    menu_screen(g_st);
-    out(L"Reboot into this machine's firmware setup?\r\n\r\n"
-        L"press y to reboot, any other key to go back.\r\n");
-    if (EFI_ERROR(wait_key(&key)) ||
-        (key.UnicodeChar != L'y' && key.UnicodeChar != L'Y'))
+    if (!tui_fw_setup_ask())
         return FALSE;
-
-    out(L"\r\nrebooting...\r\n");
+    tui_page(L"Firmware setup", L"");
+    tui_step(L"rebooting");
     totp_wipe();
     if (loader_boot_to_fw_setup(g_st))
         return TRUE;   /* not reached: the call above resets the machine */
-
-    out(L"\r\nthe firmware refused the request, so nothing was changed.\r\n"
-        L"Use its own key at power-on instead.\r\n\r\n"
-        L"press any key for the menu.\r\n");
-    wait_key(&key);
+    tui_fw_setup_refused();
     return FALSE;
 }
 
@@ -511,7 +401,6 @@ static void rows_find(void)
  * up to an error, so those still apply. */
 static void ini_read(void)
 {
-    EFI_INPUT_KEY key;
     UINTN len = 0;
     EFI_STATUS status;
 
@@ -523,54 +412,20 @@ static void ini_read(void)
     if (status == EFI_NOT_FOUND)
         return;
 
-    menu_screen(g_st);
     if (EFI_ERROR(status)) {
-        out(status == EFI_BUFFER_TOO_SMALL
-                ? L"STATION.INI is larger than 16 KB and was not read."
-                : L"STATION.INI could not be read.");
-        out(L"\r\n\r\nThe menu will wait with no default.\r\n"
-            L"\r\npress any key to continue.\r\n");
-        wait_key(&key);
+        tui_ini_unread(status == EFI_BUFFER_TOO_SMALL);
         return;
     }
     g_have_ini = TRUE;
     if (stationini_parse(g_ini_text, len, &g_ini) == 0)
         return;
-    out(L"STATION.INI line ");
-    out_dec(g_ini.err_line);
-    out(L": ");
-    out_ascii(g_ini.why);
-    out(L".\r\n\r\nThe menu will wait with no default.\r\n"
-        L"\r\npress any key to continue.\r\n");
-    wait_key(&key);
+    tui_ini_line("STATION.INI", (unsigned)g_ini.err_line, g_ini.why);
 }
 
 /* A default that names nothing on this machine is no default, said once. */
 static void default_missing(void)
 {
-    EFI_INPUT_KEY key;
-
-    menu_screen(g_st);
-    out(L"STATION.INI's default, ");
-    out_ascii(g_ini.default_name);
-    out(L", names no entry on this machine.\r\n\r\n"
-        L"The menu will wait with no default.\r\n"
-        L"\r\npress any key to continue.\r\n");
-    wait_key(&key);
-}
-
-/* ---- the TOTP check (DESIGN Section 12.15) ---- */
-
-/* The passphrase page's lines, for pos.c's hook. */
-static void totp_note(void)
-{
-    totp_page(g_st);
-}
-
-/* Each second the prompt waits: the code, when it has rolled. */
-static void totp_tick(void)
-{
-    totp_page_tick(g_st);
+    tui_ini_default(g_ini.default_name);
 }
 
 /* ---- next boot (DESIGN Section 12.8) ---- */
@@ -580,15 +435,11 @@ static void totp_tick(void)
  * through to the menu with a line saying so. */
 static void next_boot_run(void)
 {
-    EFI_INPUT_KEY key;
     strow *w;
 
     if (g_next_bad) {
-        menu_screen(g_st);
-        out(L"the next-boot marker held something that is not an entry "
-            L"name.\r\nIt has been cleared; nothing was booted from it."
-            L"\r\n\r\npress any key for the menu.\r\n");
-        wait_key(&key);
+        tui_next_note("the next-boot marker held something that is not an "
+                      "entry name.", 1);
         return;
     }
     w = strows_find(&g_rows, g_next);
@@ -610,20 +461,15 @@ static void next_boot_run(void)
             label[i] = (CHAR16)(unsigned char)file[i];
         label[i] = 0;
         if (boot_uki(label, POS_ENCRYPTED, file))
-            wait_key(&key);
+            (void)tui_wait();
         return;
     }
     if (w == (strow *)0) {
-        menu_screen(g_st);
-        out(L"the next-boot marker names ");
-        out_ascii(g_next);
-        out(L", and no entry has that name.\r\nIt has been cleared; nothing "
-            L"was booted from it.\r\n\r\npress any key for the menu.\r\n");
-        wait_key(&key);
+        tui_next_unknown(g_next);
         return;
     }
     if (boot_row(w))
-        wait_key(&key);
+        (void)tui_wait();
 }
 
 EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
@@ -631,16 +477,16 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
     /* LoaderTimeInitUSec's counter, before anything else runs (DESIGN
      * Section 5.5). */
     UINT64 t0 = tsc_read();
-    static menu_entry view[STROWS_MAX];
+    static tui_row view[STROWS_MAX];
     static size_t order[STROWS_MAX];
-    /* No row carries a trust tag here: this build links no predictions. */
-    static const menu_keys keys = { (const CHAR16 *)0,
-                                    (const CHAR16 *)tui_hint_plain };
-    menu_status status;
-    menu_banner banner;
-    EFI_INPUT_KEY key;
+    static const tui_hint hints[] = {
+        { L"enter", L"boot" }, { L"up/down", L"choose" },
+        { L"esc", L"back" },
+    };
+    tui_list l;
     UINTN seconds = 0;
     BOOLEAN first = TRUE;
+    BOOLEAN alert;
 
     g_st = st;
     g_image = image_handle;
@@ -650,8 +496,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
     /* STATION.INI may change the time once it is read. */
     idle_start(st, TUI_IDLE_SECONDS);
     st->ConOut->Reset(st->ConOut, FALSE);
-    menu_init(st);
-    menu_screen(st);
+    display_init(st);
 
     /* The next-boot marker, first and before anything that can fail: it is
      * deleted as it is read, so nothing below can make this boot happen a
@@ -668,7 +513,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
         }
     }
 
-    permissive_notice(banner_init(&banner));
+    alert = sb_mode_needs_warning(banner_init()) ? TRUE : FALSE;
     {
         load_ops ops;
 
@@ -676,10 +521,9 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
         g_uki_blocked = load_ops_inner_load_blocked(st, &ops);
     }
 
-    /* Each startup step says itself on the page's first row, so a slow
-     * machine shows where the time goes (the permissive notice starts a row
-     * below it). */
-    menu_busy(st, tui_busy_disks);
+    /* Each startup step says itself in the startup box, so a slow machine
+     * shows where the time goes. */
+    tui_busy(tui_busy_disks);
     discover_scan(st, image_handle);
     {
         size_t dlen = 0;
@@ -694,17 +538,14 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
             discover_install_problem(discover_install((ident_rec *)0));
 
         if (why != (const CHAR16 *)0) {
-            menu_screen(st);
-            out(why);
-            out(L"\r\n\r\npress any key to continue.\r\n");
-            wait_key(&key);
-            menu_screen(st);
+            tui_notice(L"This install", why);
+            tui_busy(tui_busy_disks);
         }
     }
     (void)disks_scan(st);
     esp_connect_all(st);
     g_own = esp_own(st, image_handle);
-    menu_busy(st, tui_busy_shelf);
+    tui_busy(tui_busy_shelf);
     (void)pos_scan(st);
 
     /* Before anything is loaded, both: the saved log must be the state at
@@ -714,18 +555,17 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
     ini_read();
     if (g_have_ini) {
         if (g_ini.totp.present)
-            menu_busy(st, tui_busy_tpm);
+            tui_busy(tui_busy_tpm);
         totp_load(st, &g_ini.totp);
     }
     idle_start(st, g_have_ini && g_ini.poweroff_set
                        ? (UINT32)g_ini.poweroff
                        : TUI_IDLE_SECONDS);
     idle_set_hook(totp_wipe);
-    menu_prompt_set_tick(totp_tick);
-    pos_set_station_hooks(totp_note, totp_wipe);
-    status.fn = totp_status;
-    status.ctx = st;
-    menu_busy(st, tui_busy_entries);
+    pos_set_station_hooks(totp_configured() ? totp_status
+                                            : (void (*)(void *, tui_status *))0,
+                          st, totp_wipe);
+    tui_busy(tui_busy_entries);
     rows_find();
     if (g_have_ini)
         strows_apply(&g_rows, &g_ini, STROWS_UEFI);
@@ -739,22 +579,20 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
         size_t i;
         INTN pick;
 
-        menu_mode(st, (const CHAR16 *)0);
         shown = strows_arrange(&g_rows, g_have_ini ? &g_ini : 0, order,
                                STROWS_MAX);
+        memset(view, 0, sizeof view);
         for (i = 0; i < shown; i++) {
             const strow *w = &g_rows.row[order[i]];
 
-            ucs2_copy(view[i].label, MENU_PATH_MAX, w->label);
-            view[i].sig[0] = 0;
-            view[i].why[0] = 0;
-            view[i].caution = 0;
+            view[i].label = w->label;
+            view[i].probed = 1;
             /* The shelf's UKIs and a plaintext one load their kernel the way
              * the stick's personal OS does, and are stopped by the same
              * state (DESIGN Section 7.4). */
             if (g_uki_blocked &&
                 (w->kind == STROW_POS || w->kind == STROW_UKI)) {
-                ucs2_copy(view[i].why, MENU_TAG_MAX, L"{VALIDATION OFF}");
+                view[i].why = L"{VALIDATION OFF}";
                 view[i].caution = 1;
             }
         }
@@ -774,24 +612,31 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
             sel = 0;
         }
 
-        pick = (shown != 0)
-                   ? menu_run_timed(st, &banner, view, shown, &keys,
-                                    (CHAR16 *)0, sel, seconds,
-                                    totp_configured() ? &status
-                                                      : (menu_status *)0)
-                   : -1;
+        memset(&l, 0, sizeof l);
+        l.title = L"boot entries";
+        l.rows = view;
+        l.count = shown;
+        l.sel = sel;
+        l.seconds = (unsigned)seconds;
+        l.hints = hints;
+        l.nhints = 3;
+        l.empty = L"(nothing to boot was found)";
+        l.alert = alert ? tui_validation_off : (const CHAR16 *)0;
+        if (totp_configured()) {
+            l.status = totp_status;
+            l.status_title = L"TOTP";
+            l.ctx = st;
+        }
+        pick = (shown != 0) ? (INTN)tui_list_run(&l, (int *)0) : -1;
         seconds = 0;
 
         if (pick < 0) {
             totp_wipe();
-            menu_screen(st);
-            out(L"falcon-boot: returning to firmware.\r\n");
-            if (shown == 0)
-                out(L"note: no personal OS shelf and no other boot entry "
-                    L"was found.\r\n");
+            tui_leaving(shown == 0);
+            tui_handoff();
             return EFI_SUCCESS;
         }
         if (boot_row(&g_rows.row[order[pick]]))
-            wait_key(&key);
+            (void)tui_wait();
     }
 }

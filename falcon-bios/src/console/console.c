@@ -5,9 +5,9 @@
  * video is exactly the machine this route exists to reach, and the rig reads
  * serial (falcon-efi/tools/run-qemu.sh --bios --headless).
  *
- * The screen is falcon-bios/src/console/screen.c's, in stage 3. What is here is
- * what everything before the menu says what it is doing on, and the one
- * screen stage 2 can draw: bios_fatal's.
+ * The screens are falcon-core's, drawn through console/display.c in stage 3.
+ * What is here is what everything before the menu says what it is doing on,
+ * and the one screen stage 2 can draw: bios_fatal's.
  */
 
 #include <start/bios.h>
@@ -177,13 +177,19 @@ int bios_getkey(void)
     scan = (uint8_t)((thunk_regs.eax >> 8) & 0xFFu);
     ascii = (uint8_t)(thunk_regs.eax & 0xFFu);
 
-    /* The arrows have no ASCII, so the scan code is the only evidence. */
-    if (ascii == 0) {
-        if (scan == 0x48u)
-            return BIOS_KEY_UP;
-        if (scan == 0x50u)
-            return BIOS_KEY_DOWN;
-        return -1;
+    /* The arrows and the paging keys have no ASCII, so the scan code is
+     * the only evidence. An enhanced keyboard's grey keys say 0xE0 where
+     * the keypad's say 0. */
+    if (ascii == 0 || ascii == 0xE0u) {
+        switch (scan) {
+        case 0x48u: return BIOS_KEY_UP;
+        case 0x50u: return BIOS_KEY_DOWN;
+        case 0x49u: return BIOS_KEY_PGUP;
+        case 0x51u: return BIOS_KEY_PGDN;
+        case 0x47u: return BIOS_KEY_HOME;
+        case 0x4Fu: return BIOS_KEY_END;
+        default:    return -1;
+        }
     }
     return (int)ascii;
 }
@@ -248,8 +254,8 @@ __attribute__((noreturn)) void bios_reboot(void)
         __asm__ __volatile__("hlt");
 }
 
-/* Stage 2 has no screen module and no idle power-off; a stage 3 with one
- * gives the strong definition (console/screen.c). */
+/* Stage 2 has no screens and no idle power-off; a stage 3 with them gives
+ * the strong definition (console/display.c). */
 __attribute__((weak)) int bios_wait_key(void)
 {
     return bios_getkey();

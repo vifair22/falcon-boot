@@ -25,7 +25,7 @@
 #include <media/nextboot.h>
 #include <lib/string.h>
 #include <lib/ucs2.h>
-#include <console/menu.h>
+#include <console/display.h>
 #include <console/idle.h>
 #include <task/task.h>
 #include <tui/tui.h>
@@ -45,6 +45,10 @@
 #define MAX_ISOS  128u
 #define MAX_VOLS  4u
 
+/* A row's text: its label (a path on p2), and its two tag columns. */
+#define VIEW_LABEL_MAX 512u
+#define VIEW_TAG_MAX   48u
+
 static EFI_SYSTEM_TABLE *g_st;
 
 /* What the platform trusts and whether it is enforcing, read once at startup
@@ -60,65 +64,50 @@ static BOOLEAN g_uki_blocked = FALSE;
 
 EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st);
 
-/* Every line this file writes goes inside the content block
- * falcon-efi/src/console owns, so a confirmation or an error sits where the
- * menu sits instead of against the left edge of the console beside it. menu_out
- * handles the indent, the re-indent after a line break and the wrap. */
+/* Every line this file writes goes to the screen that is up: a route's
+ * page, or the dialog it reports in (falcon-core/src/tui). */
 static void out(const CHAR16 *s)
 {
-    menu_out(g_st, s);
+    tui_out(s);
 }
 
 static void out_hex(UINT64 v)
 {
-    CHAR16 buf[19];
-    UINTN i = sizeof(buf) / sizeof(buf[0]) - 1;
-
-    buf[i] = L'\0';
-    do {
-        UINT8 d = (UINT8)(v & 0xFu);
-        buf[--i] = (CHAR16)(d < 10 ? L'0' + d : L'a' + (d - 10));
-        v >>= 4;
-    } while (v != 0 && i > 2);
-    buf[--i] = L'x';
-    buf[--i] = L'0';
-    out(&buf[i]);
+    tui_out_hex(v);
 }
 
 static void out_dec(UINT64 v)
 {
-    CHAR16 buf[21];
-    UINTN i = sizeof(buf) / sizeof(buf[0]) - 1;
-    buf[i] = L'\0';
-    do {
-        buf[--i] = (CHAR16)(L'0' + (v % 10));
-        v /= 10;
-    } while (v != 0);
-    out(&buf[i]);
+    tui_out_dec(v);
 }
 
 /* The registry's family names are narrow strings (family.c is EFI-free on
- * purpose), and the console wants CHAR16. ASCII-only by the module's own
- * contract, so widening a byte at a time is the whole conversion. */
+ * purpose), ASCII by the module's own contract. */
 static void out_ascii(const char *s)
 {
-    CHAR16 buf[64];
-    UINTN i = 0;
-
-    if (s == (const char *)0)
-        return;
-    while (s[i] != '\0' && i + 1 < sizeof(buf) / sizeof(buf[0])) {
-        buf[i] = (CHAR16)(unsigned char)s[i];
-        i++;
-    }
-    buf[i] = 0;
-    out(buf);
+    tui_out_ascii(s);
 }
 
-/* A page's "press any key", timed by the idle power-off. */
-static EFI_STATUS wait_key(EFI_INPUT_KEY *key)
+/* A route's report: red titled "<route> failed" when it failed, grey when
+ * its image came back, the label first either way. */
+static void report_begin(EFI_STATUS status, const CHAR16 *route,
+                         const CHAR16 *label)
 {
-    return idle_wait_key(g_st, key);
+    CHAR16 title[48];
+    UINTN n = 0;
+    UINTN i;
+
+    if (!EFI_ERROR(status)) {
+        tui_report(TUI_INFO, L"returned", label);
+        return;
+    }
+    for (i = 0; route[i] != 0 && n + 8u < sizeof title / sizeof title[0];
+         i++)
+        title[n++] = route[i];
+    for (i = 0; L" failed"[i] != 0; i++)
+        title[n++] = L" failed"[i];
+    title[n] = 0;
+    tui_report(TUI_FAIL, title, label);
 }
 
 /* ---- image scan ---- */
@@ -167,8 +156,8 @@ typedef struct {
     /* The tag columns of DESIGN Section 7.8, which the view copies onto a
      * row when it draws one. Here rather than beside the label because the
      * label is the survey's. */
-    CHAR16 sig[MENU_TAG_MAX];
-    CHAR16 why[MENU_TAG_MAX];
+    CHAR16 sig[VIEW_TAG_MAX];
+    CHAR16 why[VIEW_TAG_MAX];
     UINT8  caution;
     /* Filled on every entry, including the ones no record names: the lookup
      * writes the whole hit either way, so "what does the stick say about this
@@ -315,6 +304,8 @@ typedef struct {
     UINTN   len;
 } wbuf;
 
+static void wbuf_dec(wbuf *w, UINTN v);
+
 /* gcc's analyzer reports a read past the end of a short literal here (L"[",
  * from tags_build) on every path that reaches the loop, seventeen of them
  * once the rows were probed lazily. It cannot happen: *s is tested before
@@ -391,7 +382,7 @@ static void tags_build(iso_target *t, const iso_survey *survey)
     BOOLEAN uki = (fresh && family_bless_loader(t->fam) == (const char *)0)
                       ? TRUE : FALSE;
     const CHAR16 *why;
-    wbuf w = { t->sig, MENU_TAG_MAX, 0 };
+    wbuf w = { t->sig, VIEW_TAG_MAX, 0 };
 
     if (fresh)
         bless_uki_trust(&t->hit, &g_stores, &t->trust);
@@ -435,7 +426,7 @@ static void tags_build(iso_target *t, const iso_survey *survey)
     t->why[0] = 0;
     t->caution = 0;
     if (why != (const CHAR16 *)0) {
-        ucs2_copy(t->why, MENU_TAG_MAX, why);
+        ucs2_copy(t->why, VIEW_TAG_MAX, why);
         t->caution = 1;
     }
 }
@@ -620,6 +611,13 @@ typedef struct {
     UINTN     idx;   /* flat list index; VIEW_DIR (a member) and VIEW_IMAGE */
 } view_row;
 
+/* The text behind one row of the menu; the list's rows point into it. */
+typedef struct {
+    CHAR16 label[VIEW_LABEL_MAX];
+    CHAR16 sig[VIEW_TAG_MAX];
+    CHAR16 why[VIEW_TAG_MAX];
+} view_text;
+
 /* Scratch for one folder screen's worth of core rows, translated into the
  * loader's own kinds by view_build. Static because a view_row carries a full
  * path and VIEW_MAX of them is a stack this loader does not have. */
@@ -632,11 +630,19 @@ static survey_row g_view_rows[VIEW_MAX];
  * the row. */
 static void up_label(CHAR16 *dst, const CHAR16 *cur)
 {
-    wbuf w = { dst, MENU_PATH_MAX, 0 };
+    wbuf w = { dst, VIEW_LABEL_MAX, 0 };
 
     wbuf_ucs2(&w, L"..  (now in /");
     wbuf_ucs2(&w, cur);
     wbuf_ucs2(&w, L")");
+}
+
+/* The row points at its text; an empty tag is no tag. */
+static void row_point(tui_row *row, view_text *t)
+{
+    row->label = t->label;
+    row->sig = t->sig[0] != 0 ? t->sig : (const CHAR16 *)0;
+    row->why = t->why[0] != 0 ? t->why : (const CHAR16 *)0;
 }
 
 /* A view row's tag columns: an image row carries its list entry's, every
@@ -647,18 +653,19 @@ static void up_label(CHAR16 *dst, const CHAR16 *cur)
  * menu shows it pending until the background probe has been inside it
  * (probe_fill); every other row has nothing to look inside and is marked
  * done, so it never shows the placeholder. */
-static void row_tags(menu_entry *row, const iso_target *from)
+static void row_tags(tui_row *row, view_text *t, const iso_target *from)
 {
     row->probed = (from == (const iso_target *)0 || from->probed) ? 1u : 0u;
     if (from == (const iso_target *)0) {
-        row->sig[0] = 0;
-        row->why[0] = 0;
+        t->sig[0] = 0;
+        t->why[0] = 0;
         row->caution = 0;
-        return;
+    } else {
+        ucs2_copy(t->sig, VIEW_TAG_MAX, from->sig);
+        ucs2_copy(t->why, VIEW_TAG_MAX, from->why);
+        row->caution = from->caution;
     }
-    ucs2_copy(row->sig, MENU_TAG_MAX, from->sig);
-    ucs2_copy(row->why, MENU_TAG_MAX, from->why);
-    row->caution = from->caution;
+    row_point(row, t);
 }
 
 /* Paints the rows for one folder and returns how many there are: the one
@@ -670,7 +677,8 @@ static void row_tags(menu_entry *row, const iso_target *from)
  * entry, since every subfolder needs an entry beneath it to exist at all)
  * and are there so that a future cap change cannot turn into an overrun. */
 static UINTN view_build(const iso_list *list, const CHAR16 *cur, UINTN cur_len,
-                        UINTN pinned, menu_entry *view, view_row *rows)
+                        UINTN pinned, view_text *text, tui_row *view,
+                        view_row *rows)
 {
     UINTN n = 0;
     UINTN i, j;
@@ -679,22 +687,23 @@ static UINTN view_build(const iso_list *list, const CHAR16 *cur, UINTN cur_len,
         if (pinned != 0) {
             rows[n].kind = VIEW_PERSONAL;
             rows[n].idx = 0;
-            ucs2_copy(view[n].label, MENU_PATH_MAX, pos_entry_label());
-            row_tags(&view[n], (const iso_target *)0);
+            ucs2_copy(text[n].label, VIEW_LABEL_MAX, pos_entry_label());
+            row_tags(&view[n], &text[n], (const iso_target *)0);
             /* The personal OS is a UKI, the one thing the permissive state
              * cannot boot (DESIGN Section 7.4); in every other state the
              * running loader is proof its MOK is enrolled (Section 7.8). */
             if (g_uki_blocked) {
-                ucs2_copy(view[n].why, MENU_TAG_MAX, L"{VALIDATION OFF}");
+                ucs2_copy(text[n].why, VIEW_TAG_MAX, L"{VALIDATION OFF}");
                 view[n].caution = 1;
+                row_point(&view[n], &text[n]);
             }
             n++;
         }
     } else {
         rows[n].kind = VIEW_UP;
         rows[n].idx = 0;
-        up_label(view[n].label, cur);
-        row_tags(&view[n], (const iso_target *)0);
+        up_label(text[n].label, cur);
+        row_tags(&view[n], &text[n], (const iso_target *)0);
         n++;
     }
 
@@ -707,15 +716,15 @@ static UINTN view_build(const iso_list *list, const CHAR16 *cur, UINTN cur_len,
     for (i = 0; i < j && n < VIEW_MAX; i++) {
         UINTN idx = (UINTN)g_view_rows[i].index;
 
-        ucs2_copy(view[n].label, MENU_PATH_MAX, g_view_rows[i].label);
+        ucs2_copy(text[n].label, VIEW_LABEL_MAX, g_view_rows[i].label);
         if (g_view_rows[i].kind == SURVEY_ROW_DIR) {
             rows[n].kind = VIEW_DIR;
-            row_tags(&view[n], (const iso_target *)0);
+            row_tags(&view[n], &text[n], (const iso_target *)0);
         } else {
             rows[n].kind = VIEW_IMAGE;
             /* The tags come along, so a folder screen shows the same
              * columns the root would. */
-            row_tags(&view[n], &list->targets[idx]);
+            row_tags(&view[n], &text[n], &list->targets[idx]);
         }
         rows[n].idx = idx;
         n++;
@@ -723,7 +732,7 @@ static UINTN view_build(const iso_list *list, const CHAR16 *cur, UINTN cur_len,
 
     /* LAST, and on the root screen only.
      *
-     * Last is a safety property, not tidiness: menu_run opens with the first
+     * Last is a safety property, not tidiness: a menu opens with the first
      * row selected, so a row placed at the top is what a mistimed Enter hits -
      * and this row reboots the machine. It is also the rarest thing anyone
      * came here to do, so the bottom is where it belongs on both counts.
@@ -733,8 +742,8 @@ static UINTN view_build(const iso_list *list, const CHAR16 *cur, UINTN cur_len,
     if (cur_len == 0 && n < VIEW_MAX && fw_setup_available(g_st)) {
         rows[n].kind = VIEW_FWSETUP;
         rows[n].idx = 0;
-        ucs2_copy(view[n].label, MENU_PATH_MAX, L"Reboot to firmware setup");
-        row_tags(&view[n], (const iso_target *)0);
+        ucs2_copy(text[n].label, VIEW_LABEL_MAX, L"Reboot to firmware setup");
+        row_tags(&view[n], &text[n], (const iso_target *)0);
         n++;
     }
 
@@ -836,14 +845,16 @@ static void probe_stop(void)
     task_abandon(&g_probe_task);
 }
 
-/* The menu's side (console/menu.h). ctx is the list and the rows the menu
- * call was built from. */
+/* The menu's side (tui_list). ctx is the list and the rows the menu call
+ * was built from. */
 typedef struct {
     iso_list       *list;
     const view_row *rows;
+    tui_row        *view;
+    view_text      *text;
 } probe_ctx;
 
-static int probe_step(void *ctx, UINTN sel)
+static int probe_step(void *ctx, size_t sel)
 {
     const probe_ctx *pc = ctx;
     iso_list *list = pc->list;
@@ -867,7 +878,7 @@ static int probe_step(void *ctx, UINTN sel)
     return task_resume(&g_probe_task);
 }
 
-static int probe_fill(void *ctx, UINTN idx, menu_entry *e)
+static int probe_fill(void *ctx, size_t idx)
 {
     const probe_ctx *pc = ctx;
     const iso_target *t;
@@ -877,8 +888,64 @@ static int probe_fill(void *ctx, UINTN idx, menu_entry *e)
     t = &pc->list->targets[pc->rows[idx].idx];
     if (!t->probed)
         return 0;
-    row_tags(e, t);
+    row_tags(&pc->view[idx], &pc->text[idx], t);
     return 1;
+}
+
+/* The bottom border: what the highlighted image is, once it has been
+ * looked inside: its size and its family. */
+static void view_detail(void *ctx, size_t idx, uint16_t *buf, size_t cap)
+{
+    const probe_ctx *pc = ctx;
+    const iso_target *t;
+    const family_desc *f;
+    size_t n;
+
+    buf[0] = 0;
+    if (pc->rows[idx].kind != VIEW_IMAGE)
+        return;
+    t = &pc->list->targets[pc->rows[idx].idx];
+    tui_size(buf, cap, t->ent.size);
+    if (!t->probed)
+        return;
+    f = family_by_id(t->fam);
+    if (f == (const family_desc *)0 || f->name == (const char *)0)
+        return;
+    n = ucs2_len(buf);
+    if (n + 4u < cap) {
+        size_t i;
+
+        buf[n++] = u' ';
+        buf[n++] = u' ';
+        buf[n++] = u' ';
+        for (i = 0; f->name[i] != '\0' && n + 1u < cap; i++)
+            buf[n++] = (uint16_t)(unsigned char)f->name[i];
+        buf[n] = 0;
+    }
+}
+
+/* The line under the panel: how many images the library holds, and how
+ * many the probe has still to look inside. */
+static void view_note(void *ctx, uint16_t *buf, size_t cap)
+{
+    const probe_ctx *pc = ctx;
+    CHAR16 *b = (CHAR16 *)buf;
+    wbuf w = { b, cap, 0 };
+    UINTN left = 0;
+    UINTN i;
+
+    for (i = 0; i < pc->list->count; i++) {
+        if (!pc->list->targets[i].probed)
+            left++;
+    }
+    b[0] = 0;
+    wbuf_dec(&w, pc->list->count);
+    wbuf_ucs2(&w, pc->list->count == 1 ? L" image" : L" images");
+    if (left != 0) {
+        wbuf_ucs2(&w, L", ");
+        wbuf_dec(&w, left);
+        wbuf_ucs2(&w, L" still being read");
+    }
 }
 
 /* ---- entry point ---- */
@@ -900,8 +967,8 @@ static const CHAR16 *exit_note(EFI_STATUS status)
 {
     if (status == EFI_TIMEOUT)
         return L"the payload waited for a keypress and gave up. Windows media "
-               L"draws\r\n\"press any key to boot from CD\" on the graphics "
-               L"console, which this loader\r\nnever sees. Boot it again and "
+               L"draws \"press any key to boot from CD\" on the graphics "
+               L"console, which this loader never sees. Boot it again and "
                L"press a key while the screen looks empty.";
     return (const CHAR16 *)0;
 }
@@ -968,50 +1035,35 @@ static void boot_target(EFI_HANDLE image_handle, const CHAR16 *label,
                                (const family_desc *)0 };
     EFI_STATUS status;
 
-    menu_mode(g_st, target->kind == ISO_MEDIA_DISK ? L"IMG" : L"CHN");
-    menu_screen(g_st);
-    out(L"booting: ");
-    out(label);
-    out(L"\r\n\r\n");
-
+    tui_boot_page(label, target->kind == ISO_MEDIA_DISK ? L"IMG" : L"CHN");
     status = iso_boot(g_st, image_handle, &g_vols[target->vol],
                       &target->ent, target->kind, &result);
 
-    menu_screen(g_st);
-    out(label);
+    report_begin(status, L"boot", label);
     /* What the medium's ESP turned out to be, reported after the fact because
      * the payload owns the screen in between. Informational only: no cmdline
      * or initrd decision is taken from it yet (DESIGN Section 6.2). */
     if (result.family != (const family_desc *)0) {
-        out(L"\r\nfamily: ");
+        out(L"family: ");
         out_ascii(result.family->name);
+        out(L"\n");
     }
     if (!EFI_ERROR(status)) {
-        out(L"\r\nthe payload exited, status ");
-        out_hex(result.status);
-        out(L"\r\n");
-        if (exit_note(result.status) != (const CHAR16 *)0) {
-            out(L"\r\n");
-            out(exit_note(result.status));
-            out(L"\r\n");
-        }
+        tui_report_exited(L"the payload", result.status);
+        tui_report_advice(exit_note(result.status));
     } else {
-        out(L"\r\nboot failed while ");
-        out(result.stage);
-        out(L": ");
-        out_hex(result.status);
-        out(L"\r\n");
+        tui_report_failed(L"boot", result.stage, result.status, 1);
         if (result.status == EFI_SECURITY_VIOLATION) {
             /* DESIGN Section 7.2: the platform refused it, and the two ways
              * out are both the user's to take, not the loader's. */
-            out(L"\r\nthe platform refused to load this payload.\r\n\r\n"
-                L"Bless the media with the sign tool, turn Secure Boot off in "
-                L"firmware\r\nsetup, or run mokutil --disable-validation "
-                L"from Linux.\r\n");
+            tui_report_advice(L"the platform refused to load this payload. "
+                              L"Bless the media with the sign tool, turn "
+                              L"Secure Boot off in firmware setup, or run "
+                              L"mokutil --disable-validation from Linux.");
         }
     }
     refusal_evidence(status, result.status, &target->trust);
-    out(L"\r\npress any key to return to the menu.\r\n");
+    tui_report_end((const CHAR16 *)0);
 }
 
 /* A blessed entry's action (DESIGN Section 8.1): the signed UKI wrap the
@@ -1034,17 +1086,14 @@ static void boot_blessed(EFI_HANDLE image_handle, const CHAR16 *label,
     bless_result result = { L"starting", EFI_SUCCESS, (const CHAR16 *)0 };
     EFI_STATUS status;
 
-    menu_screen(g_st);
-    out(L"booting blessed: ");
-    out(label);
-    out(L"\r\n\r\n");
+    tui_boot_page(label, L"BLS");
 
     /* Which artifact stands behind the ISO is the family's answer, and the
      * family here is the loader's own from the survey, never the manifest's
      * field: the manifest is editable, and this decides how the boot is
      * staged. What may RUN is the platform's decision on either route. */
     target_probe(target);
-    menu_mode(g_st, target->fam == FAMILY_BSD ? L"BLB" : L"BLS");
+    tui_code(target->fam == FAMILY_BSD ? L"BLB" : L"BLS");
 
     if (target->fam == FAMILY_BSD) {
         /* No extent map: the hook is a Linux mechanism, and this medium
@@ -1078,26 +1127,14 @@ static void boot_blessed(EFI_HANDLE image_handle, const CHAR16 *label,
     }
     loader_isomap_clear(g_st);
 
-    menu_screen(g_st);
-    out(label);
-    if (!EFI_ERROR(status)) {
-        out(L"\r\nthe blessed image exited, status ");
-        out_hex(result.status);
-        out(L"\r\n");
-    } else {
-        out(L"\r\nblessed boot failed while ");
-        out(result.stage);
-        out(L": ");
-        out_hex(result.status);
-        out(L"\r\n");
-    }
-    if (result.advice != (const CHAR16 *)0) {
-        out(L"\r\n");
-        out(result.advice);
-        out(L"\r\n");
-    }
+    report_begin(status, L"blessed boot", label);
+    if (!EFI_ERROR(status))
+        tui_report_exited(L"the blessed image", result.status);
+    else
+        tui_report_failed(L"blessed boot", result.stage, result.status, 1);
+    tui_report_advice(result.advice);
     refusal_evidence(status, result.status, &target->trust);
-    out(L"\r\npress any key to return to the menu.\r\n");
+    tui_report_end((const CHAR16 *)0);
 }
 
 /* A bare EFI payload's action (DESIGN Section 7.2): the .efi file on p2 is
@@ -1114,40 +1151,20 @@ static void boot_payload(EFI_HANDLE image_handle, const CHAR16 *label,
     bless_result result = { L"starting", EFI_SUCCESS, (const CHAR16 *)0 };
     EFI_STATUS status;
 
-    menu_mode(g_st, L"EFI");
-    menu_screen(g_st);
-    out(L"booting: ");
-    out(label);
-    out(L"\r\n\r\n");
-
+    tui_boot_page(label, L"EFI");
     status = bless_payload_boot(g_st, image_handle, &g_vols[target->vol],
                                 &target->ent, &result);
 
-    menu_screen(g_st);
-    out(label);
+    report_begin(status, L"boot", label);
     if (!EFI_ERROR(status)) {
-        out(L"\r\nthe payload exited, status ");
-        out_hex(result.status);
-        out(L"\r\n");
-        if (exit_note(result.status) != (const CHAR16 *)0) {
-            out(L"\r\n");
-            out(exit_note(result.status));
-            out(L"\r\n");
-        }
+        tui_report_exited(L"the payload", result.status);
+        tui_report_advice(exit_note(result.status));
     } else {
-        out(L"\r\nboot failed while ");
-        out(result.stage);
-        out(L": ");
-        out_hex(result.status);
-        out(L"\r\n");
+        tui_report_failed(L"boot", result.stage, result.status, 1);
     }
-    if (result.advice != (const CHAR16 *)0) {
-        out(L"\r\n");
-        out(result.advice);
-        out(L"\r\n");
-    }
+    tui_report_advice(result.advice);
     refusal_evidence(status, result.status, &target->trust);
-    out(L"\r\npress any key to return to the menu.\r\n");
+    tui_report_end((const CHAR16 *)0);
 }
 
 /* ---- direct kernel boot (DESIGN Section 6.4) ---- */
@@ -1180,11 +1197,7 @@ static BOOLEAN boot_direct(EFI_HANDLE image_handle, const CHAR16 *label,
     discover_dev *dev = g_vol_dev[target->vol];
     EFI_STATUS status;
 
-    menu_mode(g_st, g_mode == SB_MODE_ON ? L"D3A" : L"DIR");
-    menu_screen(g_st);
-    out(L"booting: ");
-    out(label);
-    out(L"\r\n\r\n");
+    tui_boot_page(label, g_mode == SB_MODE_ON ? L"D3A" : L"DIR");
 
     status = direct_boot(g_st, image_handle, &g_vols[target->vol],
                          dev->handle, dev->bio->Media->BlockSize,
@@ -1195,7 +1208,7 @@ static BOOLEAN boot_direct(EFI_HANDLE image_handle, const CHAR16 *label,
     /* D3a needs a kernel shim will run as its second stage; the rest go
      * through the ISO's own GRUB with our configuration (D3b). */
     if (EFI_ERROR(status) && result.no_entry && g_mode == SB_MODE_ON) {
-        menu_mode(g_st, L"D3B");
+        tui_code(L"D3B");
         status = direct_grub_boot(g_st, image_handle, &g_vols[target->vol],
                                   dev->handle, dev->bio->Media->BlockSize,
                                   &target->ent, &result);
@@ -1203,31 +1216,20 @@ static BOOLEAN boot_direct(EFI_HANDLE image_handle, const CHAR16 *label,
     if (EFI_ERROR(status) && result.no_entry)
         return FALSE;
 
-    menu_screen(g_st);
-    out(label);
+    report_begin(status, L"direct boot", label);
     if (result.title[0] != '\0') {
-        out(L"\r\nentry: ");
+        out(L"entry: ");
         out_ascii(result.title);
+        out(L"\n");
     }
-    if (!EFI_ERROR(status)) {
-        out(L"\r\nthe kernel exited, status ");
-        out_hex(result.status);
-        out(L"\r\n");
-    } else {
-        out(L"\r\ndirect boot failed while ");
-        out(result.stage);
-        out(L": ");
-        out_hex(result.status);
-        out(L"\r\n");
-    }
-    if (result.advice != (const CHAR16 *)0) {
-        out(L"\r\n");
-        out(result.advice);
-        out(L"\r\n");
-    }
-    out(L"\r\npress c on the entry to boot the ISO's own loader instead."
-        L"\r\n");
-    out(L"\r\npress any key to return to the menu.\r\n");
+    if (!EFI_ERROR(status))
+        tui_report_exited(L"the kernel", result.status);
+    else
+        tui_report_failed(L"direct boot", result.stage, result.status, 1);
+    tui_report_advice(result.advice);
+    tui_report_advice(L"press c on the entry to boot the ISO's own loader "
+                      L"instead.");
+    tui_report_end((const CHAR16 *)0);
     return TRUE;
 }
 
@@ -1241,36 +1243,21 @@ static BOOLEAN boot_bsd(EFI_HANDLE image_handle, const CHAR16 *label,
     bsd_result result;
     EFI_STATUS status;
 
-    menu_mode(g_st, L"BSD");
-    menu_screen(g_st);
-    out(L"booting: ");
-    out(label);
-    out(L"\r\n\r\n");
+    tui_boot_page(label, L"BSD");
 
     status = bsd_boot(g_st, image_handle, &g_vols[target->vol],
                       &target->ent, &result);
     if (EFI_ERROR(status) && result.not_bsd)
         return FALSE;
 
-    menu_screen(g_st);
-    out(label);
-    if (!EFI_ERROR(status)) {
-        out(L"\r\nthe ISO's loader exited, status ");
-        out_hex(result.status);
-        out(L"\r\n");
-    } else {
-        out(L"\r\nthe memory-disk boot failed while ");
-        out(result.stage);
-        out(L": ");
-        out_hex(result.status);
-        out(L"\r\n");
-    }
-    if (result.advice != (const CHAR16 *)0) {
-        out(L"\r\n");
-        out(result.advice);
-        out(L"\r\n");
-    }
-    out(L"\r\npress any key to return to the menu.\r\n");
+    report_begin(status, L"the memory-disk boot", label);
+    if (!EFI_ERROR(status))
+        tui_report_exited(L"the ISO's loader", result.status);
+    else
+        tui_report_failed(L"the memory-disk boot", result.stage,
+                          result.status, 1);
+    tui_report_advice(result.advice);
+    tui_report_end((const CHAR16 *)0);
     return TRUE;
 }
 
@@ -1293,11 +1280,7 @@ static BOOLEAN boot_windows(EFI_HANDLE image_handle, const CHAR16 *label,
 
     if (!entry_path_ascii(label, path, sizeof path))
         return FALSE;
-    menu_mode(g_st, L"WIN");
-    menu_screen(g_st);
-    out(L"booting: ");
-    out(label);
-    out(L"\r\n\r\n");
+    tui_boot_page(label, L"WIN");
     /* The ISO's extent map, for winjump's driver route; empty (VirtDisk only)
      * when it cannot be built. Not set as an EFI variable, only carried in
      * the cfg the patch injects. */
@@ -1310,32 +1293,21 @@ static BOOLEAN boot_windows(EFI_HANDLE image_handle, const CHAR16 *label,
     if (EFI_ERROR(status) && result.unpatchable)
         return FALSE;
 
-    menu_screen(g_st);
-    out(label);
+    report_begin(status, L"boot", label);
     if (!EFI_ERROR(status)) {
-        out(L"\r\nthe payload exited, status ");
-        out_hex(result.status);
-        out(L"\r\n");
-        if (exit_note(result.status) != (const CHAR16 *)0) {
-            out(L"\r\n");
-            out(exit_note(result.status));
-            out(L"\r\n");
-        }
+        tui_report_exited(L"the payload", result.status);
+        tui_report_advice(exit_note(result.status));
     } else {
-        out(L"\r\nboot failed while ");
-        out(result.stage);
-        out(L": ");
-        out_hex(result.status);
-        out(L"\r\n");
+        tui_report_failed(L"boot", result.stage, result.status, 1);
         /* DESIGN Section 7.2: Windows media cannot be blessed. */
         if (result.status == EFI_SECURITY_VIOLATION)
-            out(L"\r\nthe platform refused to load this payload.\r\n\r\n"
-                L"Windows media boots under Secure Boot only with Microsoft's "
-                L"Windows CA\r\nin db: enrol it, or turn Secure Boot off in "
-                L"firmware setup.\r\n");
+            tui_report_advice(L"the platform refused to load this payload. "
+                              L"Windows media boots under Secure Boot only "
+                              L"with Microsoft's Windows CA in db: enrol it, "
+                              L"or turn Secure Boot off in firmware setup.");
     }
     refusal_evidence(status, result.status, &target->trust);
-    out(L"\r\npress any key to return to the menu.\r\n");
+    tui_report_end((const CHAR16 *)0);
     return TRUE;
 }
 
@@ -1387,13 +1359,12 @@ static BOOLEAN bless_from_menu(EFI_HANDLE image_handle, const iso_list *list,
     pos_result result = { L"starting", EFI_SUCCESS, (const CHAR16 *)0 };
     char path[MANIFEST_PATH_MAX];
     char next[MANIFEST_PATH_MAX];
-    EFI_INPUT_KEY key;
     EFI_STATUS status;
     EFI_STATUS back;
     UINTN len = 0, count = 0, unprobed = 0, i;
+    int k;
 
     next[0] = '\0';
-    menu_screen(g_st);
     /* blessable() turns on the family and on {BIOS ONLY}, which only a look
      * inside the medium knows, and `a` covers rows the menu never drew. The
      * look is what the menu would have done drawing them, so the list is the
@@ -1403,16 +1374,22 @@ static BOOLEAN bless_from_menu(EFI_HANDLE image_handle, const iso_list *list,
             unprobed++;
     }
     if (unprobed > 1) {
-        out(L"reading ");
-        out_dec(unprobed);
-        out(L" images\r\n");
+        CHAR16 what[32];
+        wbuf w = { what, sizeof what / sizeof what[0], 0 };
+
+        wbuf_ucs2(&w, L"reading ");
+        wbuf_dec(&w, unprobed);
+        wbuf_ucs2(&w, L" images");
+        tui_page(L"Bless", L"");
+        tui_step(what);
     }
     for (i = 0; i < list->count; i++) {
-        if (all || i == pick)
+        if (all || i == pick) {
             target_probe(&list->targets[i]);
+            tui_tick();
+        }
     }
-    if (unprobed > 1)
-        menu_screen(g_st);
+    tui_report(TUI_INFO, L"Bless", (const CHAR16 *)0);
     for (i = 0; i < list->count; i++) {
         if ((all ? FALSE : i != pick) || !blessable(&list->targets[i]))
             continue;
@@ -1440,8 +1417,8 @@ static BOOLEAN bless_from_menu(EFI_HANDLE image_handle, const iso_list *list,
                 L"blessing.\r\n");
         else
             out(L"Only a Linux or other non-Windows .iso is blessed. Windows "
-                L"media boots as it is:\r\nselect it and press enter.\r\n");
-        out(L"\r\npress any key to return to the menu.\r\n");
+                L"media boots as it is: select it and press enter.\r\n");
+        tui_report_end((const CHAR16 *)0);
         return TRUE;
     }
 
@@ -1473,26 +1450,28 @@ static BOOLEAN bless_from_menu(EFI_HANDLE image_handle, const iso_list *list,
         out(L" into /");
         out_ascii(next);
     }
-    out(L".\r\n\r\ny to bless, any other key to go back.\r\n");
-    if (EFI_ERROR(wait_key(&key)) ||
-        (key.UnicodeChar != L'y' && key.UnicodeChar != L'Y'))
+    out(L".\r\n");
+    tui_report_end(L"y to bless, any other key to go back.");
+    k = tui_wait();
+    if (k != 'y' && k != 'Y')
         return FALSE;
 
-    menu_screen(g_st);
     if (pinned == 0) {
+        tui_report(TUI_INFO, L"Bless", (const CHAR16 *)0);
         out(L"the signing appliance lives on this stick's encrypted shelf, and "
-            L"no shelf\r\nthis loader can open is in sight. Bless on a Linux "
-            L"host with\r\nfalcon-boot-sign instead.\r\n");
-        out(L"\r\npress any key to return to the menu.\r\n");
+            L"no shelf this loader can open is in sight. Bless on a Linux "
+            L"host with falcon-boot-sign instead.\r\n");
+        tui_report_end((const CHAR16 *)0);
         return TRUE;
     }
+    tui_page(L"signing appliance", L"APP");
     if (next[0] != '\0') {
         status = loader_next_boot_set(g_st, next);
         if (EFI_ERROR(status)) {
             out(L"the next-boot marker could not be written (");
             out_hex(status);
             out(L"); the images are still blessed, and the menu comes back "
-                L"after the\r\nreboot.\r\n\r\n");
+                L"after the reboot.\r\n");
         }
     }
     /* With or without a marker: the appliance's reboot has to land here
@@ -1501,11 +1480,10 @@ static BOOLEAN bless_from_menu(EFI_HANDLE image_handle, const iso_list *list,
     if (EFI_ERROR(back)) {
         out(L"note: no boot entry for this stick to return to (");
         out_hex(back);
-        out(L"); after signing the machine\r\nboots whatever is first in "
-            L"the firmware's boot order.\r\n\r\n");
+        out(L"); after signing the machine boots whatever is first in "
+            L"the firmware's boot order.\r\n");
     }
-    menu_mode(g_st, L"APP");
-    out(L"starting the signing appliance.\r\n\r\n");
+    tui_step(L"starting the signing appliance");
 
     pos_set_bless_list(g_bless_list, len);
     status = pos_boot_pick(g_st, image_handle, POS_PICK_APPLIANCE, &result);
@@ -1519,7 +1497,7 @@ static BOOLEAN bless_from_menu(EFI_HANDLE image_handle, const iso_list *list,
 
     if (status == EFI_ABORTED)
         return FALSE;
-    out(L"\r\n");
+    report_begin(status, L"the signing appliance", L"signing appliance");
     if (!EFI_ERROR(status)) {
         out(L"the appliance exited without rebooting, status ");
         out_hex(result.status);
@@ -1531,12 +1509,8 @@ static BOOLEAN bless_from_menu(EFI_HANDLE image_handle, const iso_list *list,
         out_hex(result.status);
         out(L"\r\n");
     }
-    if (result.advice != (const CHAR16 *)0) {
-        out(L"\r\n");
-        out(result.advice);
-        out(L"\r\n");
-    }
-    out(L"\r\npress any key to return to the menu.\r\n");
+    tui_report_advice(result.advice);
+    tui_report_end((const CHAR16 *)0);
     return TRUE;
 }
 
@@ -1545,14 +1519,13 @@ static BOOLEAN bless_from_menu(EFI_HANDLE image_handle, const iso_list *list,
  * route code and no status, only what the medium is and where it boots. */
 static void boot_bios_only(const CHAR16 *label)
 {
-    menu_screen(g_st);
-    out(label);
-    out(L"\r\nthis image boots only on a BIOS machine: it has no UEFI boot "
-        L"loader, and no\r\nkernel UEFI can start.\r\n\r\n"
-        L"Start the machine from this stick in BIOS mode (legacy or CSM) "
-        L"instead. The\r\nstick needs its BIOS loader for that "
-        L"(mkstick bios).\r\n");
-    out(L"\r\npress any key to return to the menu.\r\n");
+    tui_report(TUI_INFO, L"BIOS only", label);
+    out(L"this image boots only on a BIOS machine: it has no UEFI boot "
+        L"loader, and no kernel UEFI can start.\r\n");
+    tui_report_advice(L"Start the machine from this stick in BIOS mode "
+                      L"(legacy or CSM) instead. The stick needs its BIOS "
+                      L"loader for that (mkstick bios).");
+    tui_report_end((const CHAR16 *)0);
 }
 
 /* An entry with nothing fresh on the stick behind it: Windows media patched
@@ -1569,8 +1542,8 @@ static BOOLEAN boot_plain(EFI_HANDLE image_handle, const CHAR16 *label,
      * inside now, since nothing yet knows whether it is Windows media or
      * BIOS-only, and says so rather than leaving the menu frozen. */
     if (!t->probed) {
-        menu_screen(g_st);
-        menu_busy(g_st, tui_busy_image);
+        tui_page(label, L"");
+        tui_step(tui_busy_image);
     }
     target_probe(t);
 
@@ -1616,25 +1589,13 @@ static BOOLEAN boot_plain(EFI_HANDLE image_handle, const CHAR16 *label,
  * caller redraws the menu. On success it does not return at all. */
 static BOOLEAN reboot_to_fw_setup(void)
 {
-    EFI_INPUT_KEY key;
-
-    menu_screen(g_st);
-    out(L"Reboot into this machine's firmware setup?\r\n\r\n"
-        L"press y to reboot, any other key to go back.\r\n");
-    /* A console that cannot deliver a key is a "no": the key is not read
-     * on failure, and a reset is not something to do on stack contents. */
-    if (EFI_ERROR(wait_key(&key)) ||
-        (key.UnicodeChar != L'y' && key.UnicodeChar != L'Y'))
+    if (!tui_fw_setup_ask())
         return FALSE;
-
-    out(L"\r\nrebooting...\r\n");
+    tui_page(L"Firmware setup", L"");
+    tui_step(L"rebooting");
     if (loader_boot_to_fw_setup(g_st))
         return TRUE;   /* not reached: the call above resets the machine */
-
-    out(L"\r\nthe firmware refused the request, so nothing was changed.\r\n"
-        L"Use its own key at power-on instead.\r\n\r\n"
-        L"press any key for the menu.\r\n");
-    wait_key(&key);
+    tui_fw_setup_refused();
     return FALSE;
 }
 
@@ -1643,34 +1604,18 @@ static BOOLEAN boot_personal(EFI_HANDLE image_handle)
     pos_result result = { L"starting", EFI_SUCCESS, (const CHAR16 *)0 };
     EFI_STATUS status;
 
-    menu_mode(g_st, L"POS");
-    menu_screen(g_st);
-    out(pos_entry_label());
-    out(L"\r\n\r\n");
-
+    tui_boot_page(pos_entry_label(), L"POS");
     status = pos_boot(g_st, image_handle, &result);
 
     if (status == EFI_ABORTED)
         return FALSE; /* ESC at the prompt or at the image chooser */
 
-    out(L"\r\n");
-    if (!EFI_ERROR(status)) {
-        out(L"the image exited, status ");
-        out_hex(result.status);
-        out(L"\r\n");
-    } else {
-        out(L"personal OS boot failed while ");
-        out(result.stage);
-        out(L": ");
-        out_hex(result.status);
-        out(L"\r\n");
-    }
-    if (result.advice != (const CHAR16 *)0) {
-        out(L"\r\n");
-        out(result.advice);
-        out(L"\r\n");
-    }
-    out(L"\r\npress any key to return to the menu.\r\n");
+    if (!EFI_ERROR(status))
+        tui_route_exited(pos_entry_label(), L"the image", result.status,
+                         result.advice);
+    else
+        tui_route_failed(pos_entry_label(), L"personal OS boot",
+                         result.stage, result.status, 1, result.advice);
     return TRUE;
 }
 
@@ -1738,45 +1683,19 @@ static const CHAR16 *trust_banner(void)
  *
  * The mode is returned so the one read serves both the banner and the notice
  * below it, rather than either of them reading the variables a second time. */
-static sb_mode banner_init(menu_banner *b, const CHAR16 *title)
+static sb_mode banner_init(const CHAR16 *title)
 {
     sb_state state;
     sb_mode mode;
 
-    b->title = title;
-    b->state = (void *)0;
-    b->state_attr = EFI_TEXT_ATTR(EFI_LIGHTCYAN, EFI_BLACK);
-
+    tui_title(title, (const CHAR16 *)0, TUI_ATTR_STATE);
     if (sb_state_read(g_st->RuntimeServices, &state) != SB_OK)
         return SB_MODE_UNKNOWN;
     mode = sb_state_mode(&state);
     g_mode = mode;
-    b->state = (mode == SB_MODE_ON) ? trust_banner() : sb_mode_label(mode);
-    b->state_attr = sb_mode_needs_warning(mode)
-                        ? EFI_TEXT_ATTR(EFI_YELLOW, EFI_RED)
-                        : EFI_TEXT_ATTR(EFI_LIGHTGRAY, EFI_BLACK);
+    tui_title(title, (mode == SB_MODE_ON) ? trust_banner() : sb_mode_label(mode),
+              sb_mode_needs_warning(mode) ? TUI_ATTR_ALERT : TUI_ATTR_STATE);
     return mode;
-}
-
-/* What the banner's 33 columns cannot say (DESIGN Section 7.4): that the state
- * is the machine's rather than the stick's, that it covers every unsigned EFI
- * binary and not only what this loader launches, and how to put it back.
- *
- * Printed once, before the scan, so it is on screen for the whole slow part of
- * startup; the menu's first redraw clears it, and that is the accepted trade.
- * It deliberately does NOT wait for a keypress: the banner is the persistent
- * carrier of the state, on every redraw and in warning colours, and making a
- * user acknowledge a setting they themselves confirmed at MokManager would buy
- * nothing that the banner does not already say. */
-static void permissive_notice(sb_mode mode)
-{
-    if (!sb_mode_needs_warning(mode))
-        return;
-
-    out(L"\r\nshim signature validation is DISABLED on this machine "
-        L"(MokSBState).\r\nEvery unsigned EFI binary runs here.\r\n\r\n"
-        L"To undo: mokutil --enable-validation from Linux, then confirm at "
-        L"MokManager\r\non the next boot.\r\n\r\n");
 }
 
 /* Said once, before the menu, when the loader could not learn its install:
@@ -1785,15 +1704,11 @@ static void permissive_notice(sb_mode mode)
 static void install_notice(void)
 {
     const CHAR16 *why;
-    EFI_INPUT_KEY key;
 
     why = discover_install_problem(discover_install((ident_rec *)0));
     if (why == (const CHAR16 *)0)
         return;
-    menu_screen(g_st);
-    out(why);
-    out(L"\r\n\r\npress any key to continue.\r\n");
-    wait_key(&key);
+    tui_notice(L"This install", why);
 }
 
 /* The one-shot's second half (DESIGN Section 6.3.1): the marker has already
@@ -1810,16 +1725,11 @@ static void install_notice(void)
  * and come back, leaves the machine with nothing to repeat. */
 static void next_boot_run(EFI_HANDLE image_handle, iso_list *list)
 {
-    EFI_INPUT_KEY key;
     iso_target *t;
 
-    menu_screen(g_st);
-
     if (g_next_bad) {
-        out(L"note: the next-boot marker held something that is not a path on "
-            L"this stick.\r\nIt has been cleared; nothing was booted from it."
-            L"\r\n\r\npress any key for the menu.\r\n");
-        wait_key(&key);
+        tui_next_note("note: the next-boot marker held something that is not "
+                      "a path on this stick.", 1);
         return;
     }
     /* Reserved values first, because they can never match a path and testing
@@ -1832,21 +1742,17 @@ static void next_boot_run(EFI_HANDLE image_handle, iso_list *list)
              * is nothing on screen worth acknowledging. */
             if (!boot_personal(image_handle))
                 return;
-            wait_key(&key);
+            (void)tui_wait();
             return;
         }
-        out(L"the next-boot marker held a reserved value this loader does not "
-            L"know.\r\nIt has been cleared; nothing was booted from it."
-            L"\r\n\r\npress any key for the menu.\r\n");
-        wait_key(&key);
+        tui_next_note("the next-boot marker held a reserved value this loader "
+                      "does not know.", 1);
         return;
     }
 
     if (g_next_idx >= list->count) {
-        out(L"the ISO this boot was supposed to start is not on the stick any "
-            L"more.\r\nIt has been cleared; nothing was booted from it."
-            L"\r\n\r\npress any key for the menu.\r\n");
-        wait_key(&key);
+        tui_next_note("the ISO this boot was supposed to start is not on the "
+                      "stick any more.", 1);
         return;
     }
 
@@ -1866,7 +1772,7 @@ static void next_boot_run(EFI_HANDLE image_handle, iso_list *list)
                          default_route());
         break;
     }
-    wait_key(&key);
+    (void)tui_wait();
 }
 
 EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
@@ -1875,13 +1781,14 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
      * Section 5.5). */
     UINT64 t0 = tsc_read();
     iso_list list;
-    menu_entry *view = (menu_entry *)0;
-    menu_banner banner;
+    view_text *text = (view_text *)0;
+    static tui_row view[VIEW_MAX];
+    sb_mode mode;
     /* The folder on screen, '/'-terminated, empty at the volume root, and the
      * rows derived from it. Static because together they are three kilobytes
      * and the rest of this file keeps buffers that size off the stack. */
     static view_row rows[VIEW_MAX];
-    static CHAR16 cur[MENU_PATH_MAX];
+    static CHAR16 cur[VIEW_LABEL_MAX];
     UINTN cur_len = 0;
     UINTN vols = 0;
     /* 1 when the personal-OS entry is pinned at the top of the root screen,
@@ -1895,13 +1802,9 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
     idle_start(st, TUI_IDLE_SECONDS);
     st->ConOut->Reset(st->ConOut, FALSE);
     /* Before anything is drawn, and once: SetMode clears the screen. */
-    menu_init(st);
-    /* Startup is a screen like any other. Everything below draws with out(),
-     * and without this the first line of it landed wherever Reset left the
-     * cursor - column zero, row zero - while every screen that replaced it
-     * sat in the centred block, so the loader did not look like one program
-     * until the menu appeared. */
-    menu_screen(st);
+    display_init(st);
+    tui_title(L"falcon-boot " WIDEN(FALCON_VERSION), (const CHAR16 *)0,
+              TUI_ATTR_STATE);
 
     /* The next-boot marker, first thing and before anything that can fail
      * (DESIGN Section 6.3.1). Reading it here rather than where it is acted on
@@ -1930,14 +1833,16 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
                                        (void **)&list.storage)
         != EFI_SUCCESS ||
         st->BootServices->AllocatePool(EfiLoaderData,
-                                       VIEW_MAX * sizeof(menu_entry),
-                                       (void **)&view)
+                                       VIEW_MAX * sizeof(view_text),
+                                       (void **)&text)
         != EFI_SUCCESS ||
         st->BootServices->AllocatePool(EfiLoaderData,
                                        MAX_ISOS * sizeof(iso_target),
                                        (void **)&list.targets)
         != EFI_SUCCESS) {
-        out(L"falcon-boot: out of memory\r\n");
+        tui_route_failed(L"falcon-boot", L"startup", L"allocating memory",
+                         EFI_OUT_OF_RESOURCES, 1, (const CHAR16 *)0);
+        (void)tui_wait();
         return EFI_OUT_OF_RESOURCES;
     }
     /* .efi as well as media: a bare EFI payload boots as itself here
@@ -1947,12 +1852,11 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
 
     /* Before the banner, which names what the stores trust, and before the
      * probes, which predict against them (DESIGN Section 7.8). Each startup
-     * step says itself on the page's first row, so a slow machine shows
-     * where the time goes (the permissive notice starts a row below it). */
-    menu_busy(st, tui_busy_keys);
+     * step says itself in the startup box, so a slow machine shows where
+     * the time goes. */
+    tui_busy(tui_busy_keys);
     trust_stores_load(st, image_handle, &g_stores);
-    permissive_notice(banner_init(&banner,
-                                  L"falcon-boot " WIDEN(FALCON_VERSION)));
+    mode = banner_init(L"falcon-boot " WIDEN(FALCON_VERSION));
     {
         load_ops ops;
 
@@ -1963,7 +1867,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
     /* One pass over the Block I/O handles for the whole loader (DESIGN
      * Section 9): media, LUKS2 magic, filesystem and identity record for
      * every device, before any consumer looks at one. */
-    menu_busy(st, tui_busy_disks);
+    tui_busy(tui_busy_disks);
     discover_scan(st, image_handle);
     {
         size_t dlen = 0;
@@ -1976,11 +1880,11 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
     /* Header probe only: it reads a block and parses metadata, and never asks
      * for a passphrase, so the entry's presence costs the user nothing and
      * promises nothing about whether they know the passphrase. */
-    menu_busy(st, tui_busy_shelf);
+    tui_busy(tui_busy_shelf);
     if (pos_scan(st) != 0)
         pinned = 1;
 
-    menu_busy(st, tui_busy_library);
+    tui_busy(tui_busy_library);
     scan_all_volumes(&list, &vols);
     /* Sort first: every index into targets, and the order the menu probes
      * rows in, is the path order. */
@@ -1999,31 +1903,45 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
     for (;;) {
         /* c and d choose the route for an ISO row, b and a bless; on any
          * other row c, d and b act as enter. */
-        static const menu_keys keys = {
-            L"cdba",
-            L"enter boot | c chain | d direct | b bless | a bless new | "
-            L"esc back"
+        static const tui_hint hints[] = {
+            { L"enter", L"boot" }, { L"c", L"chain" }, { L"d", L"direct" },
+            { L"b", L"bless" }, { L"a", L"bless new" }, { L"esc", L"back" },
         };
-        probe_ctx pctx = { &list, rows };
-        const menu_probe probe = { probe_step, probe_fill, &pctx };
+        probe_ctx pctx = { &list, rows, view, text };
+        static CHAR16 title[VIEW_LABEL_MAX + 2u];
+        tui_list l;
         UINTN shown;
-        CHAR16 which = L'\r';
+        int which = TUI_KEY_ENTER;
         INTN pick;
         boot_route route;
-        EFI_INPUT_KEY key;
         UINTN sel;
 
-        /* Whatever route the last boot took, it is over: back at the menu,
-         * a later screen (a confirmation, a folder's error) must not carry
-         * its code. */
-        menu_mode(st, (const CHAR16 *)0);
-        shown = view_build(&list, cur, cur_len, pinned, view, rows);
+        shown = view_build(&list, cur, cur_len, pinned, text, view, rows);
         probe_focus(cur, cur_len);
-        pick = menu_run_probed(st, &banner, view, shown, &keys, &which,
-                               &probe);
-        route = which == L'c'   ? ROUTE_CHAIN
-                : which == L'd' ? ROUTE_DIRECT
-                                : default_route();
+        if (cur_len == 0) {
+            ucs2_copy(title, sizeof title / sizeof title[0], L"ISO library");
+        } else {
+            title[0] = L'/';
+            ucs2_copy(title + 1, sizeof title / sizeof title[0] - 1u, cur);
+        }
+        memset(&l, 0, sizeof l);
+        l.title = title;
+        l.rows = view;
+        l.count = shown;
+        l.keys = "cdba";
+        l.hints = hints;
+        l.nhints = sizeof hints / sizeof hints[0];
+        l.step = probe_step;
+        l.fill = probe_fill;
+        l.detail = view_detail;
+        l.note = view_note;
+        l.alert = sb_mode_needs_warning(mode) ? tui_validation_off
+                                              : (const CHAR16 *)0;
+        l.ctx = &pctx;
+        pick = (INTN)tui_list_run(&l, &which);
+        route = which == 'c'   ? ROUTE_CHAIN
+                : which == 'd' ? ROUTE_DIRECT
+                               : default_route();
 
         if (pick < 0) {
             /* ESC is "back": out of the folder while there is one to leave,
@@ -2033,8 +1951,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
                 continue;
             }
             probe_stop();
-            menu_screen(st);
-            out(L"falcon-boot: returning to firmware.\r\n");
+            tui_leaving(0);
             if (vols == 0)
                 out(L"note: no readable ISO volume was found.\r\n");
             if (discover_skipped() != 0) {
@@ -2054,8 +1971,9 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
                 out(L" blessed-artifact record(s) past the cap were not "
                     L"read\r\n");
             }
+            tui_handoff();
             g_st->BootServices->FreePool(list.targets);
-            g_st->BootServices->FreePool(view);
+            g_st->BootServices->FreePool(text);
             g_st->BootServices->FreePool(list.storage);
             return EFI_SUCCESS;
         }
@@ -2063,18 +1981,18 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
         sel = (UINTN)pick;
         /* A folder change keeps the probe going; everything else acts, and
          * shares what the probe uses. */
-        if (which == L'a' || (rows[sel].kind != VIEW_UP &&
-                              rows[sel].kind != VIEW_DIR))
+        if (which == 'a' || (rows[sel].kind != VIEW_UP &&
+                             rows[sel].kind != VIEW_DIR))
             probe_stop();
         /* b blesses the image row it is pressed on (on any other row it acts
          * as enter); a blesses everything new from wherever it is pressed. */
-        if (which == L'a' ||
-            (which == L'b' && rows[sel].kind == VIEW_IMAGE)) {
+        if (which == 'a' ||
+            (which == 'b' && rows[sel].kind == VIEW_IMAGE)) {
             if (bless_from_menu(image_handle, &list,
                                 rows[sel].kind == VIEW_IMAGE ? rows[sel].idx
                                                              : MAX_ISOS,
-                                which == L'a' ? TRUE : FALSE, pinned))
-                wait_key(&key);
+                                which == 'a' ? TRUE : FALSE, pinned))
+                (void)tui_wait();
             continue;
         }
         switch (rows[sel].kind) {
@@ -2082,7 +2000,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
             survey_up(cur, &cur_len);
             continue;
         case VIEW_DIR:
-            (void)survey_enter(cur, &cur_len, view[sel].label);
+            (void)survey_enter(cur, &cur_len, text[sel].label);
             continue;
         case VIEW_PERSONAL:
             if (!boot_personal(image_handle))
@@ -2116,7 +2034,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
             case BLESS_ACT_UKI:
                 /* c or d on a blessed row boots the ISO itself, the way it
                  * would boot unblessed; enter boots the blessing. */
-                if (which == L'c' || which == L'd') {
+                if (which == 'c' || which == 'd') {
                     (void)boot_plain(image_handle, entry_label(&list, idx),
                                      &list.targets[idx], route);
                     break;
@@ -2133,6 +2051,6 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
             break;
         }
         }
-        wait_key(&key);
+        (void)tui_wait();
     }
 }
