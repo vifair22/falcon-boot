@@ -4507,9 +4507,13 @@ reservation by its name in any slot: the installer makes it in whatever
 slot is free, which on the rig's station is 4.
 
 The UEFI half signs, and signing needs the MOK private key, which lives on
-the install's shelf (7.5). update opens that shelf in process with core's
-LUKS2 and ext4 (through the journal when its OS left it mounted, 5.4),
-reads the key and certificate into two sealed memfds, and hands them to
+the install's shelf (7.5). When the shelf's OS has it open (its keyfile
+slot, Manual 5.3), the partition has one dm-crypt holder whose dm UUID
+names LUKS, and update reads the shelf's ext4 through that mapping with no
+passphrase; otherwise it opens the shelf in process with core's LUKS2 and
+ext4 (through the journal when its OS left it mounted, 5.4), asking for the
+passphrase. Either way it reads the key and certificate into two sealed
+memfds, and hands them to
 `sbsign` as `/proc/self/fd/N`: the key is never a file, and is gone when
 update exits. A station's shelf is the one carrying its install ID on any
 disk. `--key` and `--cert` name a keypair instead, for an install whose

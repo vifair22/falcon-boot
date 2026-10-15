@@ -1,6 +1,7 @@
 #include <mkstick/disk.h>
 
 #include <ctype.h>
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <linux/fs.h>
@@ -36,6 +37,68 @@ cli_status disk_partition_name(const char *base, unsigned n,
         return set_error(CLI_ERR_RANGE, "partition name for %s does not fit",
                          base);
     return CLI_OK;
+}
+
+/* The first line of a small sysfs file, without its newline; 0 when it
+ * does not read. */
+static int sys_line(const char *path, char *out, size_t cap)
+{
+    FILE *f = fopen(path, "re");
+    size_t n;
+
+    if (f == NULL)
+        return 0;
+    if (fgets(out, (int)cap, f) == NULL) {
+        (void)fclose(f);
+        return 0;
+    }
+    (void)fclose(f);
+    n = strcspn(out, "\n");
+    out[n] = '\0';
+    return 1;
+}
+
+int disk_luks_holder(const char *sys, const char *part, char *dev,
+                     size_t dev_cap, char *name, size_t name_cap)
+{
+    char path[MKS_PATH_MAX];
+    char uuid[256];
+    char found[256] = "";
+    struct dirent *e;
+    DIR *dir;
+    int holders = 0;
+
+    if (snprintf(path, sizeof path, "%s/%s/holders", sys, part) >=
+        (int)sizeof path)
+        return 0;
+    dir = opendir(path);
+    if (dir == NULL)
+        return 0;
+    while ((e = readdir(dir)) != NULL) {
+        if (e->d_name[0] == '.')
+            continue;
+        holders++;
+        if (snprintf(found, sizeof found, "%s", e->d_name) >=
+            (int)sizeof found)
+            found[0] = '\0';
+    }
+    (void)closedir(dir);
+    if (holders != 1 || found[0] == '\0')
+        return 0;
+
+    /* cryptsetup names a LUKS mapping's dm UUID CRYPT-LUKS<version>-...;
+     * a plain dm-crypt, LVM or a RAID member reads otherwise. */
+    if (snprintf(path, sizeof path, "%s/%s/dm/uuid", sys, found) >=
+            (int)sizeof path ||
+        !sys_line(path, uuid, sizeof uuid) ||
+        strncmp(uuid, "CRYPT-LUKS", 10) != 0)
+        return 0;
+    if (snprintf(path, sizeof path, "%s/%s/dm/name", sys, found) >=
+            (int)sizeof path ||
+        !sys_line(path, name, name_cap) ||
+        snprintf(dev, dev_cap, "%s", found) >= (int)dev_cap)
+        return 0;
+    return 1;
 }
 
 cli_status disk_stat(mks_disk *d, const char *path)

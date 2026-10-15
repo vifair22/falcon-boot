@@ -151,6 +151,7 @@ uninstall:
 CLI_TESTS := $(addprefix falcon-cli/tests/,main.c isoprobe_test.c \
 	payload_test.c uki_test.c util_test.c bioscore_test.c records_test.c \
 	nextio_test.c stationcore_test.c totpcore_test.c updatecore_test.c \
+	disk_test.c \
 	kdfbenchcore_test.c)
 
 # records.c reads through disk.c's byte reader, which brings the process and
