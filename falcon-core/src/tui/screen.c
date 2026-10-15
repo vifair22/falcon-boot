@@ -397,6 +397,23 @@ void tui_init(const tui_display *d, size_t cols, size_t rows,
 void tui_title(const uint16_t *title, const uint16_t *state,
                uint8_t state_attr)
 {
+    /* The transcript hears the title bar when it changes: the version a
+     * photo of the screen would show, and the Secure Boot state. */
+    if (title != g_tui.title || state != g_tui.state) {
+        const uint16_t *s;
+
+        if (g_tui.loglen != 0)
+            log_end();
+        for (s = title; s != (const uint16_t *)0 && *s != 0; s++)
+            log_unit(*s);
+        if (state != (const uint16_t *)0) {
+            log_unit(u' ');
+            log_unit(u' ');
+            for (s = state; *s != 0; s++)
+                log_unit(*s);
+        }
+        log_end();
+    }
     g_tui.title = title;
     g_tui.state = state;
     g_tui.state_attr = state_attr;

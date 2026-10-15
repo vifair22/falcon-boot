@@ -1542,7 +1542,7 @@ static BOOLEAN boot_plain(EFI_HANDLE image_handle, const CHAR16 *label,
      * inside now, since nothing yet knows whether it is Windows media or
      * BIOS-only, and says so rather than leaving the menu frozen. */
     if (!t->probed) {
-        tui_boot_page(label, L"");
+        tui_page(label, L"");
         tui_step(tui_busy_image);
     }
     target_probe(t);

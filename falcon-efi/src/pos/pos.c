@@ -1171,6 +1171,7 @@ static int prompt_and_unlock(UINTN *which)
          * last wrong one powers off with the same sentence as the others. */
         if (g_failures >= TUI_UNLOCK_TRIES) {
             tui_step_done(L"wrong passphrase");
+            tui_note(L"wrong passphrase.");
             tui_pause(3);
             tui_power_off();
         }

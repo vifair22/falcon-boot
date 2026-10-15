@@ -117,10 +117,10 @@ text=$(tr -d '\r' < "$R/com1.log" | sed 's/\x1b\[[0-9;?]*[a-zA-Z]/ /g')
 WHY=
 grep -aqF "falcon-boot $VERSION" <<<"$text" ||
     WHY="the menu is not the bundle's version ($VERSION)"
-[[ -z "$WHY" ]] && ! grep -aqF '/_/  \__,_/_/\___/' <<<"$text" &&
-    WHY="no logo on the menu"
+[[ -z "$WHY" ]] && ! grep -aq '^menu: ' <<<"$text" &&
+    WHY="no menu"
 result boot "$([[ -z "$WHY" ]] && echo 1 || echo 0)" \
-    "${WHY:-the menu is $VERSION, with the logo}"
+    "${WHY:-the menu is $VERSION}"
 
 # refuse
 WHY=

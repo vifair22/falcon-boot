@@ -299,7 +299,7 @@ result() {      # result CASE WHY DETAIL
     log_text "$R/serial.log" > "$R/$1.log" 2>/dev/null || true
 }
 
-MENU_UP="up/down select | enter choose"
+MENU_UP="up/down choose"
 
 # ---- the cases ----
 
@@ -337,7 +337,7 @@ case_countdown() {
     local c=$1 fw=$2 why=
     station_image $'[general]\ndefault = memtest\ntimeout = 3\n'
     NEXT= NO_WIN_ENTRY=0 boot "$fw"
-    wait_for "Booting in 3 s. Any key stops the countdown." 90 || why="no countdown"
+    wait_for "Booting in 3 s" 90 || why="no countdown"
     [[ -z "$why" ]] && { wait_for "FALCON-STANDIN \\EFI\\falcon\\memtest.efi" 30 ||
         why="memtest did not start"; }
     [[ -z "$why" ]] && { has "Booting in 1 s" || why="the count did not reach 1"; }

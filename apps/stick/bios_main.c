@@ -600,7 +600,7 @@ static void boot_plain(size_t idx, int which)
 
     /* Looking inside the medium reads it: say so rather than leave the
      * menu frozen until the route's page. */
-    tui_boot_page(e->label, u"");
+    tui_page(e->label, u"");
     tui_step(tui_busy_image);
     p = probe_entry(idx);
 

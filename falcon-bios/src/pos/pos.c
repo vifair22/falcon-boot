@@ -585,6 +585,7 @@ static int prompt_and_unlock(void)
          * (falcon-efi/src/pos/pos.c): the wait runs under "unlocking". */
         if (g_failures >= TUI_UNLOCK_TRIES) {
             tui_step_done(u"wrong passphrase");
+            tui_note(u"wrong passphrase.");
             tui_pause(3);
             tui_power_off();
         }

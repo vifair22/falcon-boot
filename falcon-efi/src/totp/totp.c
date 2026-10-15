@@ -386,7 +386,9 @@ void totp_status(void *ctx, tui_status *out)
             w2.at = out->line[1];
             w2.left = TUI_STATUS_MAX;
             w2.at[0] = 0;
+            put(&w2, "(");
             put(&w2, g_label);
+            put(&w2, ")");
             out->attr[1] = ATTR_LABEL;
             out->n = 2;
         }
