@@ -666,7 +666,7 @@ static void test_luks_argon_slot_unlocks(void **state)
     luks_slot_info s;
     luks_master_key mk;
     test_mem tm;
-    luks_kdf_mem mem = { test_mem_get, test_mem_put, &tm, NULL };
+    luks_kdf_mem mem = { test_mem_get, test_mem_put, &tm, NULL, NULL };
     struct timespec t0, t1;
     uint32_t slot = 99;
     size_t count = 0;
@@ -947,7 +947,7 @@ static void test_luks_argon_slot_fields(void **state)
     luks_vol v;
     luks_master_key mk;
     test_mem tm;
-    luks_kdf_mem mem = { test_mem_get, test_mem_put, &tm, NULL };
+    luks_kdf_mem mem = { test_mem_get, test_mem_put, &tm, NULL, NULL };
 
     (void)state;
     load_orig_json();
@@ -1000,7 +1000,7 @@ static void test_luks_argon_slot_fields(void **state)
     assert_int_equal(v.kdf_need_kib, 60);
     /* A provider may leave put out. */
     {
-        luks_kdf_mem noput = { test_mem_get, NULL, &tm, NULL };
+        luks_kdf_mem noput = { test_mem_get, NULL, &tm, NULL, NULL };
 
         assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, &noput, &mk, NULL),
                          LUKS_ERR_NOKEY);
@@ -1461,7 +1461,7 @@ static void test_luks_area_reads(void **state)
     luks_vol v;
     luks_master_key mk;
     test_mem tm;
-    luks_kdf_mem mem = { test_mem_get, test_mem_put, &tm, NULL };
+    luks_kdf_mem mem = { test_mem_get, test_mem_put, &tm, NULL, NULL };
     const unsigned units = KEY_BYTES * AF_STRIPES / LUKS_KEYSLOT_UNIT;
 
     (void)state;

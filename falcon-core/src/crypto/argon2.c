@@ -48,7 +48,12 @@ typedef struct {
     uint32_t passes;
     argon2_fill_fn fill;   /* a vector level's block function, or NULL */
     void (*wipe)(void);    /* ... and its register wipe */
+    void (*tick)(void);    /* argon2_params.tick */
 } inst;
+
+/* Blocks between two ticks: 64 KiB of mixing, a few milliseconds on the
+ * slowest processor the loaders run on. */
+#define TICK_BLOCKS 64u
 
 static uint64_t ror64(uint64_t x, unsigned int n)
 {
@@ -241,8 +246,10 @@ static uint32_t ref_index(const inst *in, uint32_t pass, uint32_t slice,
     return (uint32_t)((start + rel) % in->q);
 }
 
+/* tick is argon2_params.tick where this runs on the calling processor,
+ * else NULL. */
 static void fill_segment(const inst *in, work *w, uint32_t pass,
-                         uint32_t slice, uint32_t lane)
+                         uint32_t slice, uint32_t lane, void (*tick)(void))
 {
     blk *mem = in->mem;
     int indep = (pass == 0u && slice < SYNC_POINTS / 2u);
@@ -278,6 +285,9 @@ static void fill_segment(const inst *in, work *w, uint32_t pass,
 
         if (curr % in->q == 1u) {
             prev = curr - 1u;
+        }
+        if (tick != NULL && i % TICK_BLOCKS == 0u) {
+            tick();
         }
         if (indep) {
             if (i % ADDR_PER_BLK == 0u) {
@@ -323,7 +333,9 @@ static void segment_job(void *ctx, uint32_t lane)
     const slice_ctx *sc = (const slice_ctx *)ctx;
     work w;
 
-    fill_segment(sc->in, &w, sc->pass, sc->slice, lane);
+    fill_segment(sc->in, &w, sc->pass, sc->slice,
+                 lane & ~ARGON2_LANE_CALLER,
+                 (lane & ARGON2_LANE_CALLER) != 0u ? sc->in->tick : NULL);
     if (sc->in->wipe != NULL) {
         sc->in->wipe();
     }
@@ -336,7 +348,7 @@ static void run_in_turn(void *self, argon2_job job, void *ctx, uint32_t lanes)
 
     (void)self;
     for (l = 0; l < lanes; l++) {
-        job(ctx, l);
+        job(ctx, l | ARGON2_LANE_CALLER);
     }
 }
 
@@ -494,6 +506,7 @@ int argon2id_simd(const argon2_params *p, void *mem, uint32_t mem_kib,
     in.q = in.mprime / p->lanes;
     in.sl = in.q / SYNC_POINTS;
     in.passes = p->t_cost;
+    in.tick = p->tick;
 
     /* H0: every input and parameter, length-prefixed. m is m_cost as given,
      * not m', which is what the reference hashes. */

@@ -290,7 +290,7 @@ static void kdf_put(void *ctx, void *mem, uint32_t kib)
     free(mem);
 }
 
-static const luks_kdf_mem kdf_mem = { kdf_get, kdf_put, NULL, NULL };
+static const luks_kdf_mem kdf_mem = { kdf_get, kdf_put, NULL, NULL, NULL };
 
 static cli_status shelf_read(const shelf_ref *sh, const mks_pass *pass,
                              stn_scan *s, const char *keydir)
