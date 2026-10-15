@@ -497,6 +497,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
     idle_start(st, TUI_IDLE_SECONDS);
     st->ConOut->Reset(st->ConOut, FALSE);
     display_init(st);
+    discover_set_tick(tui_tick);
 
     /* The next-boot marker, first and before anything that can fail: it is
      * deleted as it is read, so nothing below can make this boot happen a

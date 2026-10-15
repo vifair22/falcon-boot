@@ -2104,7 +2104,13 @@ code in the title bar. `tui_step` opens a step, in white with the spinner in
 its status column, and marks the step before it OK; `tui_step_done` closes
 the open one with a detail (a size) in place of OK; `tui_note` puts a dim
 line under it (a drive's name, a disc's boot entry). A long read turns the
-spinner as it goes (`tui_tick`). Text a route writes goes on the page under
+spinner as it goes (`tui_tick`), and so does every step without asking:
+falcon-bios ticks after each INT 13h call (`bios_disk_on_call`), the UEFI
+loader before each `discover_read` (`discover_set_tick`, which never
+splits a read, since a firmware can charge per call), and argon2id every
+64 blocks on the processor that called it (`argon2_params.tick`; a lane on
+another processor never draws), so an unlock on a slow machine turns too.
+Text a route writes goes on the page under
 its steps, and the body scrolls inside the panel. A failure names the step
 that was open (`tui_stage`) or the route's own stage.
 

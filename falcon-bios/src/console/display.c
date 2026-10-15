@@ -368,6 +368,9 @@ void display_init(void)
     bios_puts("\x1b[0m\x1b[2J");
     cdclock_start(&g_clock, peek32(BDA_TICKS), rtc_seconds());
     g_idle_clk = g_clock;
+    /* Every INT 13h call that comes back turns a step's spinner, so a
+     * long read is seen to move, on every stage 3 alike. */
+    bios_disk_on_call(tui_tick);
     tui_init(&g_display, COLS, ROWS, g_screen, g_shown, g_keep, COLS * ROWS);
     tui_flush();
     g_ready = 1;

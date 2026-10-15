@@ -133,4 +133,10 @@ int discover_read(void *ctx, uint64_t off, uint64_t len, void *buf);
  * no read is long enough to hold a keystroke up. */
 void discover_set_read_hook(void (*hook)(void));
 
+/* Called before every discover_read and every piece the hook above splits
+ * one into, and never splitting one itself, since a firmware can charge
+ * per call: the loaders turn a step's spinner from it (tui_tick, DESIGN
+ * Section 7.10). NULL (the default) for none. */
+void discover_set_tick(void (*tick)(void));
+
 #endif /* FALCON_DISCOVER_H */

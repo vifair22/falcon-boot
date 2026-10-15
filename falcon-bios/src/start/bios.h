@@ -244,8 +244,9 @@ void bios_disk_set_hook(void (*hook)(void));
 
 /* Called after every INT 13h read call that succeeds (a CHS track, an AH=42h
  * bounce buffer); NULL (the default) for none. Stage 2's spinner turns from
- * it while stage 3 is read in (start/load3.c). It lives in .data, so stage 2
- * can keep it, and each stage's copy of disk.c has its own. */
+ * it while stage 3 is read in (start/load3.c), and stage 3's display turns
+ * a step's spinner from it (tui_tick). It lives in .data, so stage 2 can
+ * keep it, and each stage's copy of disk.c has its own. */
 void bios_disk_on_call(void (*fn)(void));
 
 /* Empties the track cache, so the next read of any sector goes to the disk.

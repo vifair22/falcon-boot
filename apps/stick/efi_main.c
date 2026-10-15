@@ -1803,6 +1803,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
     st->ConOut->Reset(st->ConOut, FALSE);
     /* Before anything is drawn, and once: SetMode clears the screen. */
     display_init(st);
+    discover_set_tick(tui_tick);
     tui_title(L"falcon-boot " WIDEN(FALCON_VERSION), (const CHAR16 *)0,
               TUI_ATTR_STATE);
 
