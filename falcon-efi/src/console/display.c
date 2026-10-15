@@ -4,13 +4,24 @@
  * mode, so a smaller mode does not enlarge the text; it makes the
  * firmware's console driver centre a smaller grid and pad the rest itself.
  * Only on the largest grid is the whole screen the backdrop's.
+ *
+ * The spinner. Its frames (tui_spin_efi) are added to the firmware's fonts
+ * as a simple font package in the HII database, at falcon-core's private
+ * use code points; a console that draws through the database (edk2's
+ * graphics console) then draws them like any character. TestString says
+ * whether every console can: where one cannot (a serial terminal, a
+ * firmware's own console driver) the package is removed again and the
+ * frames go out as tui_ascii's | / - \. The package is removed before a
+ * payload has the console and added again when the screens take it back.
  */
 
 #include <console/display.h>
 #include <console/idle.h>
 #include <console/serial.h>
+#include <efi/hii.h>
 #include <tsc/tsc.h>
 
+#include <lib/string.h>
 #include <tui/tui.h>
 
 static EFI_SYSTEM_TABLE *g_st;
@@ -28,11 +39,17 @@ static INT32 g_mode = -1;
 /* A run, terminated for OutputString. */
 static CHAR16 g_run[TUI_COLS_MAX + 1u];
 
-/* The clock: tenths of a second, counted by a periodic timer's
- * notification. Counted rather than read from the TSC because a timer is
- * there on every firmware and needs no calibration. */
-static volatile UINT32 g_tenths;
+/* The clock: twentieths of a second, counted by a periodic timer's
+ * notification; tenths for the screens and a spinner frame every five.
+ * Counted rather than read from the TSC because a timer is there on every
+ * firmware and needs no calibration. */
+static volatile UINT32 g_ticks;
 static EFI_EVENT g_clock_ev;
+
+/* The spinner's glyphs in the HII database, while they are. */
+static EFI_HII_DATABASE_PROTOCOL *g_hii;
+static EFI_HII_HANDLE g_spin_pkg;
+static int g_spin_font;
 
 /* The timer a key wait with an end waits on. */
 static EFI_EVENT g_wait_ev;
@@ -41,7 +58,72 @@ static void EFIAPI clock_tick(EFI_EVENT ev, void *ctx)
 {
     (void)ev;
     (void)ctx;
-    g_tenths++;
+    g_ticks++;
+}
+
+/* A package list holding one simple font package of the spinner's four
+ * glyphs, then the end package (UEFI spec 33.3.1). */
+#define SPIN_PKG_FONT (4u + 2u + 2u + TUI_SPIN_N * EFI_NARROW_GLYPH_SIZE)
+#define SPIN_PKG_LIST (16u + 4u + SPIN_PKG_FONT + 4u)
+
+static const EFI_GUID g_spin_guid = {
+    0x9e5eff55, 0x3644, 0x431c,
+    { 0xa1, 0x2f, 0x33, 0x95, 0xed, 0x9f, 0x51, 0xa5 }
+};
+
+static void le16(UINT8 *p, UINT32 v)
+{
+    p[0] = (UINT8)v;
+    p[1] = (UINT8)(v >> 8);
+}
+
+static void le32(UINT8 *p, UINT32 v)
+{
+    le16(p, v);
+    le16(p + 2, v >> 16);
+}
+
+static void spin_font_in(void)
+{
+    static UINT8 pkg[SPIN_PKG_LIST];
+    static CHAR16 test[TUI_SPIN_N + 1u];
+    UINT8 *g;
+    UINTN k;
+    UINTN r;
+
+    if (g_spin_font || g_hii == (EFI_HII_DATABASE_PROTOCOL *)0)
+        return;
+    memcpy(pkg, &g_spin_guid, sizeof g_spin_guid);
+    le32(pkg + 16, SPIN_PKG_LIST);
+    le32(pkg + 20, SPIN_PKG_FONT | (EFI_HII_PACKAGE_SIMPLE_FONTS << 24));
+    le16(pkg + 24, TUI_SPIN_N);                 /* narrow glyphs */
+    le16(pkg + 26, 0);                          /* wide glyphs */
+    for (k = 0; k < TUI_SPIN_N; k++) {
+        g = pkg + 28 + k * EFI_NARROW_GLYPH_SIZE;
+        le16(g, (UINT32)(TUI_SPIN0 + k));
+        g[2] = 0;                               /* attributes */
+        for (r = 0; r < EFI_GLYPH_HEIGHT; r++)
+            g[3 + r] = tui_spin_efi[k][r];
+        test[k] = (CHAR16)(TUI_SPIN0 + k);
+    }
+    test[TUI_SPIN_N] = 0;
+    le32(pkg + 28 + SPIN_PKG_FONT - 8u, 4u | (EFI_HII_PACKAGE_END << 24));
+    if (g_hii->NewPackageList(g_hii, pkg, (EFI_HANDLE)0, &g_spin_pkg) !=
+        EFI_SUCCESS)
+        return;
+    if (g_st->ConOut->TestString(g_st->ConOut, test) != EFI_SUCCESS) {
+        g_hii->RemovePackageList(g_hii, g_spin_pkg);
+        return;
+    }
+    g_spin_font = 1;
+}
+
+static void spin_font_out(void)
+{
+    if (!g_spin_font)
+        return;
+    g_hii->RemovePackageList(g_hii, g_spin_pkg);
+    g_spin_font = 0;
 }
 
 static void d_put(void *ctx, size_t row, size_t col, const uint16_t *s,
@@ -51,8 +133,12 @@ static void d_put(void *ctx, size_t row, size_t col, const uint16_t *s,
     size_t i;
 
     (void)ctx;
-    for (i = 0; i < n && i < TUI_COLS_MAX; i++)
+    for (i = 0; i < n && i < TUI_COLS_MAX; i++) {
         g_run[i] = (CHAR16)s[i];
+        if (!g_spin_font && s[i] >= TUI_SPIN0 &&
+            s[i] < TUI_SPIN0 + TUI_SPIN_N)
+            g_run[i] = (CHAR16)tui_ascii(s[i], '?');
+    }
     g_run[i] = 0;
     if ((UINTN)o->Mode->Attribute != (UINTN)attr)
         o->SetAttribute(o, (UINTN)attr);
@@ -157,7 +243,19 @@ static int d_key(void *ctx, uint32_t tenths)
 static uint32_t d_clock(void *ctx)
 {
     (void)ctx;
-    return g_tenths;
+    return g_ticks / 2u;
+}
+
+static unsigned d_spin(void *ctx)
+{
+    (void)ctx;
+    return (unsigned)(g_ticks / 5u);
+}
+
+static void d_handoff(void *ctx)
+{
+    (void)ctx;
+    spin_font_out();
 }
 
 static void d_touch(void *ctx)
@@ -189,6 +287,7 @@ static void d_reclaim(void *ctx)
         o->SetMode(o, (UINTN)g_mode);
     o->SetAttribute(o, TUI_ATTR_TEXT);
     o->EnableCursor(o, FALSE);
+    spin_font_in();
 }
 
 static void d_log(void *ctx, const uint16_t *line)
@@ -216,7 +315,7 @@ static void d_wait(void *ctx, int begin)
 
 static const tui_display g_display = {
     (void *)0, d_put, d_cursor, d_key, d_clock, d_touch, d_idle_off,
-    d_power_off, d_reclaim, d_log, d_wait,
+    d_power_off, d_reclaim, d_log, d_wait, d_spin, d_handoff,
 };
 
 /* Sanity rails: a firmware reporting nonsense cannot hand the screens a
@@ -269,10 +368,19 @@ void display_init(EFI_SYSTEM_TABLE *st)
     if (st->BootServices->CreateEvent(EVT_TIMER | EVT_NOTIFY_SIGNAL,
                                       TPL_CALLBACK, clock_tick, (void *)0,
                                       &g_clock_ev) == EFI_SUCCESS)
-        st->BootServices->SetTimer(g_clock_ev, TimerPeriodic, 1000000u);
+        st->BootServices->SetTimer(g_clock_ev, TimerPeriodic, 500000u);
     if (st->BootServices->CreateEvent(EVT_TIMER, 0, (EFI_EVENT_NOTIFY)0,
                                       (void *)0, &g_wait_ev) != EFI_SUCCESS)
         g_wait_ev = (EFI_EVENT)0;
+
+    {
+        EFI_GUID hii = EFI_HII_DATABASE_PROTOCOL_GUID;
+
+        if (st->BootServices->LocateProtocol(&hii, (void *)0,
+                                             (void **)&g_hii) != EFI_SUCCESS)
+            g_hii = (EFI_HII_DATABASE_PROTOCOL *)0;
+    }
+    spin_font_in();
 
     o->SetAttribute(o, TUI_ATTR_TEXT);
     o->ClearScreen(o);

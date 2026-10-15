@@ -89,7 +89,8 @@ CORE_WIM      := $(addprefix $(CORE)/wim/,lzx.c wim.c)
 CORE_GZ       := $(CORE)/gz/gz.c
 # The screens every loader draws (DESIGN Section 7.10): the buffer, the
 # layers, the pages, dialogs and lists, over a display the loader provides.
-CORE_TUI      := $(addprefix $(CORE)/tui/,screen.c page.c list.c say.c)
+CORE_TUI      := $(addprefix $(CORE)/tui/,screen.c page.c list.c say.c \
+	spin.c)
 # The passphrase prompt, apart because it holds a secret and needs crypto's
 # wipe, which falcon jump does not link.
 CORE_TUI_SECRET := $(CORE)/tui/secret.c

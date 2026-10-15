@@ -92,18 +92,31 @@ unsigned tui_unlock_delay(unsigned failures);
 #define TUI_UP      0x25B2u   /* black up-pointing triangle */
 #define TUI_DOWN    0x25BCu   /* black down-pointing triangle */
 
+/* The spinner's four frames, a stick at 0, 45, 90 and 135 degrees: code
+ * points of the private use area a display draws from tui_spin_glyphs, or
+ * as tui_ascii's | / - \ where it cannot. */
+#define TUI_SPIN0   0xE000u
+#define TUI_SPIN_N  4u
+
 /* A glyph's byte in code page 437, the VGA text font: ASCII as itself, the
  * glyphs above as the font holds them, anything else as fallback. */
 uint8_t tui_cp437(uint16_t c, uint8_t fallback);
 
 /* A glyph as plain ASCII, for a serial line read by people and scripts:
  * corners as '+', lines as '-', '=' and '|', the shade as a space, the
- * block as '#', the triangles as '^' and 'v'. */
+ * block as '#', the triangles as '^' and 'v', the spinner's frames as
+ * '|', '/', '-' and '\\'. */
 char tui_ascii(uint16_t c, char fallback);
 
-/* The spinner's glyph for `phase`, counting up: / - \ | with the dash the
- * box-drawing line, which fills its cell as '-' does not. */
+/* The spinner's glyph for frame `phase`, counting up: TUI_SPIN0 and the
+ * three after it, turning clockwise. */
 uint16_t tui_spin(unsigned phase);
+
+/* The frames' bitmaps, one byte a row with the leftmost pixel in the top
+ * bit, for a display that loads its own glyphs: VGA's 8x16 cell and the
+ * UEFI font's 8x19 one (EFI_NARROW_GLYPH). DESIGN Section 7.10. */
+extern const uint8_t tui_spin_vga[TUI_SPIN_N][16];
+extern const uint8_t tui_spin_efi[TUI_SPIN_N][19];
 
 /* ---- keys ----
  *
@@ -172,6 +185,15 @@ typedef struct {
     /* A wait on the user starts (1) or ends (0): the UEFI loader counts the
      * time spent waiting out of its boot timing. NULL when unused. */
     void (*wait)(void *ctx, int begin);
+
+    /* The spinner's frame now, from the display's own timer: one every
+     * 250 ms, or every fifth BIOS tick. NULL counts it from `clock`. */
+    unsigned (*spin)(void *ctx);
+
+    /* The payload is about to have the display (tui_handoff): what the
+     * display changed of the firmware's goes back, falcon-bios's font.
+     * reclaim takes it again. NULL when there is nothing to give back. */
+    void (*handoff)(void *ctx);
 } tui_display;
 
 /* One cell of the screen buffer. */

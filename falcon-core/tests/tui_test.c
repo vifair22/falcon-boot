@@ -43,6 +43,7 @@ typedef struct {
     unsigned idles;
     unsigned reclaims;
     unsigned waits;
+    unsigned handoffs;
     int      power;
     char     log[8192];
     size_t   loglen;
@@ -147,9 +148,15 @@ static void f_wait(void *ctx, int begin)
     ((fake *)ctx)->waits++;
 }
 
+static void f_handoff(void *ctx)
+{
+    ((fake *)ctx)->handoffs++;
+}
+
+/* No spin: the frames come from the clock, one every 2.5 tenths. */
 static const tui_display g_disp = {
     &g_fake, f_put, f_cursor, f_key, f_clock, f_touch, f_idle, f_power,
-    f_reclaim, f_log, f_wait,
+    f_reclaim, f_log, f_wait, (unsigned (*)(void *))0, f_handoff,
 };
 
 static tui_cell g_screen[FCOLS * FROWS];
@@ -724,6 +731,7 @@ static void test_handoff(void **state)
     boot_page();
     tui_handoff();
     snapshot("handoff");
+    assert_int_equal(g_fake.handoffs, 1);
     assert_true(g_fake.cursor_on);
     assert_int_equal(g_fake.cursor_row, 21);
     assert_int_equal(g_fake.cursor_col, 0);
@@ -770,12 +778,70 @@ static void test_tick_turns_spinner(void **state)
     before = g_fake.ch[r][72];
     tui_tick();                         /* no time has passed */
     assert_int_equal(g_fake.ch[r][72], before);
-    g_fake.clock++;
+    g_fake.clock += 2u;                 /* 200 ms: the same frame */
     tui_tick();
-    assert_int_not_equal(g_fake.ch[r][72], before);
+    assert_int_equal(g_fake.ch[r][72], before);
+    g_fake.clock += 1u;                 /* 300 ms: the next */
+    tui_tick();
+    assert_int_equal(g_fake.ch[r][72], before + 1u);
     tui_busy(u"one");
-    g_fake.clock++;
+    g_fake.clock += 3u;
     tui_tick();
+}
+
+/* The frames: a stick through one pixel, so turning it half way round
+ * gives the frame two on, and the diagonals mirror each other. On serial
+ * and in the VGA font's own characters they are | / - \. */
+static int px(const uint8_t *rows, size_t r, unsigned c)
+{
+    return (rows[r] & (0x80u >> c)) != 0;
+}
+
+static void spin_shape(const uint8_t (*f)[19], const uint8_t (*v)[16],
+                       size_t h, size_t mid)
+{
+    unsigned k;
+    size_t r;
+    unsigned c;
+
+    for (k = 0; k < TUI_SPIN_N; k++) {
+        const uint8_t *g = f != NULL ? f[k] : v[k];
+        unsigned on = 0;
+
+        for (r = 0; r < h; r++) {
+            for (c = 0; c < 8u; c++) {
+                if (!px(g, r, c))
+                    continue;
+                on++;
+                /* Symmetric about (mid, 3). */
+                assert_true(2u * mid >= r && 6u >= c);
+                assert_true(px(g, 2u * mid - r, 6u - c));
+            }
+        }
+        assert_int_equal(on, (k % 2u) ? 5u : 7u);
+        assert_true(px(g, mid, 3u));
+    }
+    for (r = 0; r < h; r++)
+        for (c = 0; c < 7u; c++)
+            assert_int_equal(px(f != NULL ? f[1] : v[1], r, c),
+                             px(f != NULL ? f[3] : v[3], r, 6u - c));
+}
+
+static void test_spin_frames(void **state)
+{
+    unsigned k;
+
+    (void)state;
+    spin_shape(tui_spin_efi, NULL, 19u, 8u);
+    spin_shape(NULL, tui_spin_vga, 16u, 7u);
+    for (k = 0; k < 8u; k++)
+        assert_int_equal(tui_spin(k), TUI_SPIN0 + k % TUI_SPIN_N);
+    assert_int_equal(tui_ascii(tui_spin(0), '?'), '|');
+    assert_int_equal(tui_ascii(tui_spin(1), '?'), '/');
+    assert_int_equal(tui_ascii(tui_spin(2), '?'), '-');
+    assert_int_equal(tui_ascii(tui_spin(3), '?'), '\\');
+    assert_int_equal(tui_cp437(tui_spin(3), '?'), '\\');
+    assert_int_equal(tui_ascii(TUI_SPIN0 + TUI_SPIN_N, '?'), '?');
 }
 
 /* ---- dialogs ---- */
@@ -993,9 +1059,6 @@ static void test_glyphs(void **state)
     assert_int_equal(tui_ascii(TUI_UP, '?'), '^');
     assert_int_equal(tui_ascii(TUI_DOWN, '?'), 'v');
     assert_int_equal(tui_ascii(0x00E9u, '?'), '?');
-    assert_int_equal(tui_spin(0), '/');
-    assert_int_equal(tui_spin(1), TUI_HLINE);
-    assert_int_equal(tui_spin(6), '\\');
     assert_int_equal(tui_unlock_delay(0), 0);
     assert_int_equal(tui_unlock_delay(1), 0);
     assert_int_equal(tui_unlock_delay(2), 4);
@@ -1221,6 +1284,7 @@ int run_tui_tests(void)
         cmocka_unit_test(test_handoff),
         cmocka_unit_test(test_page_text_wraps_and_scrolls),
         cmocka_unit_test(test_tick_turns_spinner),
+        cmocka_unit_test(test_spin_frames),
         cmocka_unit_test(test_failure_over_menu),
         cmocka_unit_test(test_report_after_handoff_repaints),
         cmocka_unit_test(test_ask),

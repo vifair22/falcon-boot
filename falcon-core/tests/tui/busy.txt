@@ -11,7 +11,7 @@
                   |                                          |                  
                   |  finding disks                      OK   |                  
                   |  reading the shelf                  OK   |                  
-                  |  reading the ISO library             /   |                  
+                  |  reading the ISO library             |   |                  
                   |                                          |                  
                   +------------------------------------------+                  
                                                                                 

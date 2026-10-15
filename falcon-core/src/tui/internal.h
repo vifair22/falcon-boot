@@ -91,8 +91,7 @@ typedef struct {
     int    step_shown;         /* the step's line is still on the page */
     size_t step_row;
     uint16_t step[STEP_MAX];
-    unsigned spin;
-    uint32_t spin_at;
+    unsigned spin;             /* the frame drawn */
 
     /* The startup box. */
     uint16_t busy[BUSY_MAX][STEP_MAX];
@@ -132,6 +131,8 @@ size_t border_text(size_t row, size_t at, size_t end, const uint16_t *s,
                    uint8_t a);
 void shadow(size_t row, size_t col, size_t h, size_t w);
 void mark(size_t row);
+/* The spinner's frame now (tui_display.spin, or the clock). */
+unsigned spin_frame(void);
 void mark_all(void);
 
 /* The layers under every surface: the backdrop, and the chrome with the

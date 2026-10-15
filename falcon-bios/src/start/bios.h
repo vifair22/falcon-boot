@@ -37,8 +37,8 @@ typedef struct {
     uint32_t edx;
     uint32_t esi;
     uint32_t edi;
-    uint16_t es;
-    uint16_t pad0;
+    uint16_t es;      /* in and out, as bp */
+    uint16_t bp;
     uint16_t flags;   /* the carry bit is how a BIOS call says it failed */
     uint16_t pad1;
 } bios_regs;

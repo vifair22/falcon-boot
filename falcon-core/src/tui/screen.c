@@ -40,7 +40,12 @@ uint8_t tui_cp437(uint16_t c, uint8_t fallback)
     case TUI_BLOCK: return 0xDBu;
     case TUI_UP:    return 0x1Eu;
     case TUI_DOWN:  return 0x1Fu;
-    default:        return fallback;
+    default:
+        /* The spinner's frames are a display's own glyphs; the font's
+         * are their ASCII. */
+        if (c >= TUI_SPIN0 && c < TUI_SPIN0 + TUI_SPIN_N)
+            return (uint8_t)tui_ascii(c, (char)fallback);
+        return fallback;
     }
 }
 
@@ -64,15 +69,27 @@ char tui_ascii(uint16_t c, char fallback)
     case TUI_BLOCK: return '#';
     case TUI_UP:    return '^';
     case TUI_DOWN:  return 'v';
-    default:        return fallback;
+    default:
+        if (c >= TUI_SPIN0 && c < TUI_SPIN0 + TUI_SPIN_N)
+            return "|/-\\"[c - TUI_SPIN0];
+        return fallback;
     }
 }
 
 uint16_t tui_spin(unsigned phase)
 {
-    static const uint16_t glyph[4] = { u'/', TUI_HLINE, u'\\', u'|' };
+    return (uint16_t)(TUI_SPIN0 + phase % TUI_SPIN_N);
+}
 
-    return glyph[phase % 4u];
+unsigned spin_frame(void)
+{
+    const tui_display *d = g_tui.d;
+
+    if (d->spin != 0)
+        return d->spin(d->ctx);
+    /* 250 ms from the clock's tenths, for a display with no timer of its
+     * own (the host fake). */
+    return d->clock != 0 ? (unsigned)(d->clock(d->ctx) * 2u / 5u) : 0;
 }
 
 unsigned tui_unlock_delay(unsigned failures)

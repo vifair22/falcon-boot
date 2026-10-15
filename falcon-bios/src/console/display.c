@@ -15,6 +15,14 @@
  * colours. The glyphs go as ASCII (tui_ascii): a box is +, - and |, the
  * backdrop blank. falcon-core sends only the cells that changed, so a
  * moved selection is two rows on the line, not a screen.
+ *
+ * The spinner. Its frames (tui_spin_vga) are loaded into the font over
+ * characters 0x01-0x04, which nothing here prints, with the BIOS's own call
+ * (INT 10h AX=1100h), and the ROM's glyphs for them go back the same way
+ * before a payload has the screen. Only when the BIOS says where its ROM
+ * font is (AX=1130h): without that they could not go back, and the frames
+ * are the font's | / - \ instead. A frame lasts five ticks of the BIOS
+ * clock, 275 ms, the nearest the 18.2 Hz tick comes to 250.
  */
 
 #include <start/bios.h>
@@ -30,6 +38,8 @@
 #define ROWS      ((size_t)25u)
 #define BDA_TICKS 0x46Cu
 #define BDA_MODE  0x449u
+#define SPIN_CHAR 0x01u
+#define SPIN_TICKS 5u
 
 static tui_cell g_screen[COLS * ROWS];
 static tui_cell g_shown[COLS * ROWS];
@@ -46,6 +56,12 @@ static unsigned g_idle = TUI_IDLE_SECONDS;
  * something: the attribute last sent (0x100 when none has been), and where
  * the terminal's cursor is (SIZE_MAX when not known). */
 static unsigned g_ser_attr = 0x100u;
+
+/* The ROM's 8x16 font as AX=1130h gave it (0:0 when it did not), and
+ * whether the spinner's frames are in the font now. */
+static uint16_t g_rom_seg;
+static uint16_t g_rom_off;
+static int g_spin_font;
 static size_t g_ser_row = (size_t)-1;
 static size_t g_ser_col = (size_t)-1;
 
@@ -121,6 +137,50 @@ static int rtc_seconds(void)
     return (int)((thunk_regs.edx >> 8) & 0xFFu);
 }
 
+/* AX=1100h: n glyphs of 16 bytes from es:bp into font block 0, from
+ * character `first`, without setting the mode again. */
+static void font_load(uint16_t es, uint16_t bp, unsigned first, unsigned n)
+{
+    thunk_regs.es = es;
+    thunk_regs.bp = bp;
+    int10(0x1100u, 0x1000u, n, first);     /* BH=16 bytes, BL=block 0 */
+}
+
+/* The ROM font's address, asked once the mode is set: AX=1130h BH=06h
+ * answers in es:bp. */
+static void font_find(void)
+{
+    thunk_regs.es = 0;
+    thunk_regs.bp = 0;
+    int10(0x1130u, 0x0600u, 0, 0);
+    g_rom_seg = thunk_regs.es;
+    g_rom_off = thunk_regs.bp;
+}
+
+static void spin_font_in(void)
+{
+    uint8_t *at = (uint8_t *)(uintptr_t)FONT_ADDR;
+    size_t k;
+    size_t r;
+
+    if (g_rom_seg == 0 && g_rom_off == 0)
+        return;
+    for (k = 0; k < TUI_SPIN_N; k++)
+        for (r = 0; r < 16u; r++)
+            at[k * 16u + r] = tui_spin_vga[k][r];
+    font_load(0, (uint16_t)FONT_ADDR, SPIN_CHAR, TUI_SPIN_N);
+    g_spin_font = 1;
+}
+
+static void spin_font_out(void)
+{
+    if (!g_spin_font)
+        return;
+    font_load(g_rom_seg, (uint16_t)(g_rom_off + SPIN_CHAR * 16u), SPIN_CHAR,
+              TUI_SPIN_N);
+    g_spin_font = 0;
+}
+
 static uint32_t tenths_since(cdclock *c)
 {
     return cdclock_tenths(c, peek32(BDA_TICKS), rtc_seconds());
@@ -147,6 +207,10 @@ static void d_put(void *ctx, size_t row, size_t col, const uint16_t *s,
         return;
     for (i = 0; i < n && col + i < COLS; i++) {
         uint8_t ch = tui_cp437(s[i], (uint8_t)'?');
+
+        if (g_spin_font && s[i] >= TUI_SPIN0 &&
+            s[i] < TUI_SPIN0 + TUI_SPIN_N)
+            ch = (uint8_t)(SPIN_CHAR + (s[i] - TUI_SPIN0));
 
         vga()[row * COLS + col + i] = (uint16_t)(((unsigned)attr << 8) | ch);
         ser_attr(attr);
@@ -195,6 +259,19 @@ static uint32_t d_clock(void *ctx)
 {
     (void)ctx;
     return tenths_since(&g_clock);
+}
+
+static unsigned d_spin(void *ctx)
+{
+    (void)ctx;
+    return (unsigned)(peek32(BDA_TICKS) / SPIN_TICKS);
+}
+
+/* The ROM's glyphs back over the spinner's, for the payload. */
+static void d_handoff(void *ctx)
+{
+    (void)ctx;
+    spin_font_out();
 }
 
 static void d_touch(void *ctx)
@@ -248,6 +325,9 @@ static void d_reclaim(void *ctx)
     (void)ctx;
     if (peek8(BDA_MODE) != 0x03u)
         int10(0x0003u, 0, 0, 0);
+    /* Setting the mode loads the ROM font; either way the frames go in
+     * again, over whatever the payload left. */
+    spin_font_in();
     int10(0x0100u, 0, 0x2000u, 0);
     g_ser_attr = 0x100u;
     g_ser_row = (size_t)-1;
@@ -267,7 +347,8 @@ static void d_log(void *ctx, const uint16_t *line)
 
 static const tui_display g_display = {
     (void *)0, d_put, d_cursor, d_key, d_clock, d_touch, d_idle_off,
-    d_power_off, d_reclaim, d_log, (void (*)(void *, int))0,
+    d_power_off, d_reclaim, d_log, (void (*)(void *, int))0, d_spin,
+    d_handoff,
 };
 
 void display_idle_set(unsigned seconds)
@@ -280,6 +361,8 @@ void display_init(void)
     size_t i;
 
     int10(0x0003u, 0, 0, 0);                /* AH=00h AL=03h: 80x25 text */
+    font_find();
+    spin_font_in();
     for (i = 0; i < COLS * ROWS; i++)
         vga()[i] = 0;
     bios_puts("\x1b[0m\x1b[2J");

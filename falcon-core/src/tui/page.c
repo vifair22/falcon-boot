@@ -221,11 +221,9 @@ static void open_step(const uint16_t *what, size_t n)
     g_tui.step_row = g_tui.body_row;
     g_tui.step_open = 1;
     g_tui.step_shown = 1;
-    g_tui.spin = 0;
-    if (g_tui.d->clock != 0)
-        g_tui.spin_at = g_tui.d->clock(g_tui.d->ctx);
+    g_tui.spin = spin_frame();
     {
-        uint16_t s = tui_spin(0);
+        uint16_t s = tui_spin(g_tui.spin);
 
         put_n(g_tui.step_row, spin_col(), &s, 1, A_SPIN);
     }
@@ -296,28 +294,26 @@ void tui_note_ascii(const char *s)
 void tui_tick(void)
 {
     const tui_display *d = g_tui.d;
-    uint32_t now;
+    unsigned now;
     uint16_t s;
 
     if (d == (const tui_display *)0 || d->clock == 0)
         return;
     if (g_tui.surface == SURF_BUSY) {
-        now = d->clock(d->ctx);
-        if (now == g_tui.spin_at)
+        now = spin_frame();
+        if (now == g_tui.spin)
             return;
-        g_tui.spin_at = now;
-        g_tui.spin++;
+        g_tui.spin = now;
         tui_busy((const uint16_t *)0);
         return;
     }
     if (g_tui.surface != SURF_PAGE || !g_tui.step_open ||
         !g_tui.step_shown)
         return;
-    now = d->clock(d->ctx);
-    if (now == g_tui.spin_at)
+    now = spin_frame();
+    if (now == g_tui.spin)
         return;
-    g_tui.spin_at = now;
-    g_tui.spin++;
+    g_tui.spin = now;
     s = tui_spin(g_tui.spin);
     put_n(g_tui.step_row, spin_col(), &s, 1, A_SPIN);
     tui_flush();
@@ -336,6 +332,8 @@ void tui_handoff(void)
         below = g_tui.rows - 4u;
     fill(below, 0, g_tui.rows - below, g_tui.cols, u' ', TUI_ATTR_TEXT);
     tui_flush();
+    if (d->handoff != 0)
+        d->handoff(d->ctx);
     if (d->cursor != 0)
         d->cursor(d->ctx, 1, below, 0);
     g_tui.surface = SURF_GONE;
@@ -354,7 +352,7 @@ void tui_busy(const uint16_t *step)
     if (g_tui.surface != SURF_BUSY) {
         g_tui.nbusy = 0;
         g_tui.surface = SURF_BUSY;
-        g_tui.spin = 0;
+        g_tui.spin = spin_frame();
     }
     if (step != (const uint16_t *)0) {
         if (g_tui.nbusy == BUSY_MAX) {
