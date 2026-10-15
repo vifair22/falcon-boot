@@ -306,7 +306,7 @@ selected_row() {
                        -e 's/ *$//')"
 }
 # Both loaders: falcon-bios sends its menu to serial as the same ANSI
-# sequences OVMF's terminal does (falcon-bios/src/console/screen.c).
+# sequences OVMF's terminal does (falcon-bios/src/console/display.c).
 for ((i = 0; i < 8; i++)); do
     row=$(selected_row)
     [[ "$row" == *.iso* || "$row" == *.img* ]] && break

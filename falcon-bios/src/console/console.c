@@ -5,9 +5,9 @@
  * video is exactly the machine this route exists to reach, and the rig reads
  * serial (falcon-efi/tools/run-qemu.sh --bios --headless).
  *
- * The screen is falcon-bios/src/console/screen.c's, in stage 3. What is here is
- * what everything before the menu says what it is doing on, and the one
- * screen stage 2 can draw: bios_fatal's.
+ * The screens are falcon-core's, drawn through console/display.c in stage 3.
+ * What is here is what everything before the menu says what it is doing on,
+ * and the one screen stage 2 can draw: bios_fatal's.
  */
 
 #include <start/bios.h>
@@ -254,8 +254,8 @@ __attribute__((noreturn)) void bios_reboot(void)
         __asm__ __volatile__("hlt");
 }
 
-/* Stage 2 has no screen module and no idle power-off; a stage 3 with one
- * gives the strong definition (console/screen.c). */
+/* Stage 2 has no screens and no idle power-off; a stage 3 with them gives
+ * the strong definition (console/display.c). */
 __attribute__((weak)) int bios_wait_key(void)
 {
     return bios_getkey();

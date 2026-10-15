@@ -96,10 +96,10 @@ struct EFI_BOOT_SERVICES {
     EFI_STATUS (EFIAPI *FreePool)(void *Buffer);
 
     /* Event and timer */
-    /* Typed for the two events the loader creates: a notification at
+    /* Typed for the events the loader creates: a notification at
      * ExitBootServices, which is the last moment code of ours runs on a
-     * boot that does not come back (loader/credfs.c), and the menu's
-     * countdown timer (console/menu.c). */
+     * boot that does not come back (loader/credfs.c), and the screens'
+     * clock and key-wait timers (console/display.c). */
     EFI_STATUS (EFIAPI *CreateEvent)(UINT32 Type, EFI_TPL NotifyTpl,
                                      EFI_EVENT_NOTIFY NotifyFunction,
                                      void *NotifyContext, EFI_EVENT *Event);
@@ -110,9 +110,9 @@ struct EFI_BOOT_SERVICES {
                                       UINTN *Index);
     void *SignalEvent;
     EFI_STATUS (EFIAPI *CloseEvent)(EFI_EVENT Event);
-    /* The menu's key and tick poll while it fills a page's tags a row at a
-     * time (console/menu.c): EFI_SUCCESS when signalled, EFI_NOT_READY
-     * when not. */
+    /* The key and idle poll while a menu steps its probe
+     * (console/display.c): EFI_SUCCESS when signalled, EFI_NOT_READY when
+     * not. */
     EFI_STATUS (EFIAPI *CheckEvent)(EFI_EVENT Event);
 
     /* Protocol handler */

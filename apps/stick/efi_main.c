@@ -732,7 +732,7 @@ static UINTN view_build(const iso_list *list, const CHAR16 *cur, UINTN cur_len,
 
     /* LAST, and on the root screen only.
      *
-     * Last is a safety property, not tidiness: menu_run opens with the first
+     * Last is a safety property, not tidiness: a menu opens with the first
      * row selected, so a row placed at the top is what a mistimed Enter hits -
      * and this row reboots the machine. It is also the rarest thing anyone
      * came here to do, so the bottom is where it belongs on both counts.

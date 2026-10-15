@@ -156,7 +156,7 @@ static void put_name(const uint16_t *name)
  * row first on the root screen, ".." first in a folder, then the folders and
  * files the survey found. What a folder holds comes from falcon-core
  * (media/survey.c), so the two platforms cannot disagree about what is on a
- * stick; how the menu is drawn comes from falcon-core too (tui/tui.c), so
+ * stick; how the menu is drawn comes from falcon-core too (tui/list.c), so
  * they cannot disagree about how it looks. The UEFI menu's firmware-setup
  * row has no counterpart: nothing asks a BIOS to open its setup screen. */
 
