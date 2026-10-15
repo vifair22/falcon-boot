@@ -35,4 +35,22 @@ typedef UINT8 *(*biolow_fn)(void);
 EFI_STATUS biolow_read(EFI_BLOCK_IO_PROTOCOL *bio, UINT64 lba, UINTN len,
                        void *buf, biolow_fn low, UINTN low_len);
 
+/* What the firmware's ReadBlocks has cost this boot: every call biolow_read
+ * made, failed ones included, its bytes, and the clock's ticks across it
+ * (FalconReadInfo, DESIGN Section 5.5). Every read the loader makes of a
+ * device comes through here, so a firmware whose driver charges per call
+ * shows as a high calls-to-bytes cost. */
+typedef struct {
+    UINT64 calls;
+    UINT64 bytes;
+    UINT64 ticks;    /* 0 until a clock is set */
+} biolow_count;
+
+/* The clock the ticks are counted on; until one is set only calls and bytes
+ * are. */
+void biolow_set_clock(UINT64 (*clock)(void));
+
+/* The counts so far. */
+void biolow_counted(biolow_count *out);
+
 #endif

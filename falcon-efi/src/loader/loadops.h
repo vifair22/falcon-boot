@@ -231,10 +231,23 @@ BOOLEAN loader_boot_to_fw_setup(EFI_SYSTEM_TABLE *st);
  * the startup variables. loader_time_exec is the UKI launches' (pos.c,
  * bless.c), called immediately before StartImage: the counter, then
  * LoaderTimeExecUSec and FalconTimeWaitUSec, and with kdf, the unlock that
- * led to this launch (NULL for none), FalconTimeKdfUSec and FalconKdfInfo.
- * Both say what they set on serial (console/serial.h) and carry on
+ * led to this launch (NULL for none), FalconTimeKdfUSec and FalconKdfInfo,
+ * and FalconReadInfo (loader_reads_mark below). Both say what they set on serial (console/serial.h) and carry on
  * whatever the firmware answers. */
 void loader_time_init(EFI_SYSTEM_TABLE *st, UINT64 t0, const CHAR16 *info);
 void loader_time_exec(EFI_SYSTEM_TABLE *st, const bli_kdf *kdf);
+
+/* Where a boot's reads change stretch (bli_reads): the menu is up, and a
+ * route has started. The menu mark is taken once, the first time; the boot
+ * mark every time, so a route tried again after one that came back counts
+ * from its own start. loader_time_init starts the count's clock, and
+ * loader_time_exec writes FalconReadInfo from the marks: with no menu mark
+ * startup runs to the boot mark, and with neither everything is startup. */
+typedef enum {
+    LOADER_READS_MENU,
+    LOADER_READS_BOOT
+} loader_reads_at;
+
+void loader_reads_mark(loader_reads_at at);
 
 #endif /* FALCON_EFI_LOADOPS_H */

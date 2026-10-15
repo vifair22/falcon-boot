@@ -1188,6 +1188,21 @@ line; each file is a 4-byte attribute word, then the value in UTF-16:
 
     v() { tail -c +5 /sys/firmware/efi/efivars/$1-$2 2>/dev/null | tr -d '\0'; }; L=4a67b082-0a4c-41cf-b6c7-440b29bb8c4f; F=50614485-081b-4b7c-8b54-2abeffdf2fb3; i=$(v LoaderTimeInitUSec $L); e=$(v LoaderTimeExecUSec $L); w=$(v FalconTimeWaitUSec $F); d=$(v FalconTimeKdfUSec $F); awk -v i="$i" -v e="$e" -v w="$w" -v d="$d" -v k="$(cut -d' ' -f1 /proc/uptime)" 'BEGIN { printf "firmware %.3f s, falcon %.3f s (keyslots %.3f s), wait %.3f s, kernel to now %.3f s\n", i/1e6, (e-i-w)/1e6, d/1e6, w/1e6, k }'; v FalconKdfInfo $F; echo
 
+`FalconReadInfo` says what the firmware's reads cost on the way, in three
+stretches: until the menu was up, while it was up (the background probe),
+and from the boot's start to the UKI's (the unlock and the UKI itself),
+with the last one's rate:
+
+    tail -c +5 /sys/firmware/efi/efivars/FalconReadInfo-50614485-081b-4b7c-8b54-2abeffdf2fb3 | tr -d '\0'; echo
+    startup 112 calls 1260 KiB 7840 ms, menu 40 calls 2560 KiB 2800 ms, boot 1430 calls 91504 KiB 100000 ms 0.93 MB/s
+
+The milliseconds are the firmware's alone. A boot rate far under what the
+stick does in Linux, or a `startup` that takes tens of milliseconds a call
+for a few KiB each, is the firmware's USB driver, not the stick: the same
+stick on another machine shows the difference. The line above is an ASUS
+B550's AMI firmware with a Kingston DataTraveler Max, which costs about
+70 ms for every 64 KiB.
+
 Booted from a route that is not a UKI (an ISO, Windows, memtest86+), the
 exec time and the wait are not written, and systemd-analyze shows neither
 the firmware nor the loader span. A UKI booted without an unlock (a

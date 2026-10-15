@@ -691,7 +691,7 @@ Both UEFI loaders set systemd's Boot Loader Interface timing variables
 booted from a UKI splits its boot into firmware, loader and kernel. They are
 written as systemd-boot writes them: UTF-16 with the terminator counted in
 the size, attributes `BOOTSERVICE_ACCESS | RUNTIME_ACCESS` (volatile), under
-the Loader GUID `4a67b082-0a4c-41cf-b6c7-440b29bb8c4f`. Falcon adds three
+the Loader GUID `4a67b082-0a4c-41cf-b6c7-440b29bb8c4f`. Falcon adds four
 of its own under its own GUID, `50614485-081b-4b7c-8b54-2abeffdf2fb3`.
 
 | Variable | Value | Set |
@@ -704,13 +704,14 @@ of its own under its own GUID, `50614485-081b-4b7c-8b54-2abeffdf2fb3`.
 | `FalconTimeWaitUSec` | microseconds spent waiting on the keyboard up to then (falcon's GUID) | beside `LoaderTimeExecUSec` |
 | `FalconTimeKdfUSec` | microseconds the keyslot derivations of the unlock that led to this launch took (falcon's GUID) | beside `LoaderTimeExecUSec`, after an unlock |
 | `FalconKdfInfo` | that unlock in one line (falcon's GUID; below) | beside `FalconTimeKdfUSec` |
+| `FalconReadInfo` | what the firmware's reads cost, in three stretches (falcon's GUID; below) | beside `LoaderTimeExecUSec` |
 
 A UKI is what `pos` launches (the personal OS and the signing appliance off
 the stick's shelf; the station's encrypted-shelf row and its plaintext UKI
 rows) and a blessed wrap (`bless_boot`). Nothing else sets an exec time:
 chainloaded media, direct kernel boot, Windows, BSD, memtest86+, bare EFI
 payloads, and the station's firmware entries and ESP loaders. A UKI that
-returns has the exec variables, falcon's three included, deleted
+returns has the exec variables, falcon's four included, deleted
 (`bli_clear_exec`), so a later boot by another route does not carry them.
 The two KDF variables are written only for a launch that follows an
 unlock in the same `pos` attempt; a plaintext shelf's UKI and a blessed
@@ -764,12 +765,32 @@ falcon-bios times its keyslots by the BIOS tick and reads no MSR: its IDT
 treats every exception as fatal, and it has no counter rate to scale
 dAPERF / dMPERF by.
 
+**The reads** are every `ReadBlocks` the loader makes, all of which go
+through `discover/biolow.c`: the calls, failed ones included, their bytes,
+and the clock's ticks across them. `FalconReadInfo` splits them at two
+marks, the menu's first paint (`loader_reads_mark`, once) and the start of
+the route that launches (`pos`'s `boot_shelf` and `blessed_launch`, every
+attempt):
+
+    startup <C> calls <K> KiB <ms> ms, menu <C> calls <K> KiB <ms> ms, boot <C> calls <K> KiB <ms> ms <R> MB/s
+
+`startup` runs to the menu, `menu` is the background probe while it is up,
+and `boot` is the unlock, the shelf's lookups and the UKI. `<K>` is rounded
+up, `<ms>` floored, and `<R>` is the boot stretch's bytes over its time to
+two places, left out when that time is 0. A firmware whose USB driver
+charges a fixed cost per call or per transfer shows as a boot stretch far
+under the device's speed and a `startup` whose milliseconds are high for its
+bytes. The time is the firmware's alone: the loader's own work between the
+calls is not in it. The BIOS loader has no variables, and the station,
+whose menu is its list, takes the same two marks.
+
 A variable the firmware will not set is left unset and the boot goes on.
 Each step says what it measured and set on the first serial port
 (`console/serial.c`): `falcon-bli: tsc_hz=<Hz> via=<cpuid|stall|none>
 LoaderTimeInitUSec=<us>` at startup, `falcon-bli: LoaderTimeExecUSec=<us>
 FalconTimeWaitUSec=<us>` at the launch, with ` FalconTimeKdfUSec=<us>` after
-an unlock, each with ` set=failed` when a write was refused.
+an unlock, then `falcon-bli: FalconReadInfo=<line>`, each with
+` set=failed` when a write was refused.
 
 ## 6. ISO path: drag-and-drop mechanism
 
