@@ -2036,7 +2036,9 @@ shim's validation is off (7.4). Keys: up and down, page up and down, home
 and end, Enter, Escape, and the list's own commit keys (`c`, `d`, `b`,
 `a`). A countdown (12.7) stands on the bottom border's left, in yellow,
 while the hints say any key stops it. A status box (the station's TOTP
-lines, 12.15) stands beside the panel, its lines wrapped. Lists are capped
+lines, 12.15) stands beside the panel, a panel itself with no shadow, as
+wide as its longest word (23 to 40 columns, so an enrollment's label is
+never split) and its lines wrapped at their spaces. Lists are capped
 by their callers: an ISO library of 128 entries on either loader, a shelf of
 32 images, 64 boot-configuration entries an ISO's configuration offers.
 

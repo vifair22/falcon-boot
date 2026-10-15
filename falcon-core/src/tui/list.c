@@ -20,8 +20,10 @@ const uint16_t tui_validation_off[] =
 /* A name this narrow is where aligned tag columns stop being worth it. */
 #define NAME_MIN 12u
 
-/* The status box's width, and the gap between it and the panel. */
+/* The status box's width, widened to its longest word up to SIDE_MAX, and
+ * the gap between it and the panel. */
 #define SIDE_W   23u
+#define SIDE_MAX 40u
 #define SIDE_GAP 3u
 
 /* What one call draws, bundled because the painters are called from
@@ -370,12 +372,11 @@ static void paint_status(view *v)
     if (rows > max)
         rows = max;
     if (g_status_h != 0)
-        fill(v->pt, v->sl, g_status_h + 1u, w + 2u, TUI_SHADE, A_BACKDROP);
+        fill(v->pt, v->sl, g_status_h, w, TUI_SHADE, A_BACKDROP);
     g_status_h = rows + 4u;
     box(v->pt, v->sl, g_status_h, w, BOX_SINGLE, A_BORDER, A_BODY);
     if (v->l->status_title != (const uint16_t *)0)
         box_title(v->pt, v->sl, w, v->l->status_title, A_PTITLE);
-    shadow(v->pt, v->sl, g_status_h, w);
     rows = 0;
     for (i = 0; i < n; i++) {
         size_t at = 0;
@@ -452,6 +453,30 @@ static int is_commit(const char *keys, int c)
     return 0;
 }
 
+/* The status box's width: SIDE_W, or wide enough for the longest word its
+ * lines start with (an enrollment's label has no space to wrap at), at most
+ * SIDE_MAX. Later lines wrap at their spaces. */
+static size_t status_width(const tui_list *l)
+{
+    static tui_status s;
+    size_t w = SIDE_W;
+    size_t i;
+
+    memset(&s, 0, sizeof s);
+    l->status(l->ctx, &s);
+    for (i = 0; i < s.n && i < TUI_STATUS_ROWS; i++) {
+        size_t k;
+        size_t run = 0;
+
+        for (k = 0; k < TUI_STATUS_MAX && s.line[i][k] != 0; k++) {
+            run = s.line[i][k] == u' ' ? 0 : run + 1u;
+            if (run + 4u > w)
+                w = run + 4u;
+        }
+    }
+    return w < SIDE_MAX ? w : SIDE_MAX;
+}
+
 static void layout(view *v, const tui_list *l)
 {
     size_t al;
@@ -467,7 +492,7 @@ static void layout(view *v, const tui_list *l)
     v->have_status = l->status != 0;
     if (v->have_status && ar - al + 1u >= 60u) {
         v->sr = ar;
-        v->sl = ar + 1u - SIDE_W;
+        v->sl = ar + 1u - status_width(l);
         v->pr = v->sl - SIDE_GAP - 1u;
     } else {
         v->have_status = 0;
