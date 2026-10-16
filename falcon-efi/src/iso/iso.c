@@ -69,14 +69,14 @@ static const CHAR16 boot_file_path[] = L"\\EFI\\BOOT\\BOOTX64.EFI";
 #define ISO_MAX_VOLUMES 4u
 
 typedef struct {
-    VENDOR_DEVICE_PATH       vendor;
-    EFI_DEVICE_PATH_PROTOCOL end;
+    FALCON_VENDOR_DEVICE_PATH vendor;
+    EFI_DEVICE_PATH_PROTOCOL  end;
 } iso_device_path;
 
 /* Device path nodes are byte-packed; a compiler that padded this struct
  * would publish a path the firmware cannot walk. */
 _Static_assert(sizeof(iso_device_path) ==
-                   sizeof(VENDOR_DEVICE_PATH) +
+                   sizeof(FALCON_VENDOR_DEVICE_PATH) +
                        sizeof(EFI_DEVICE_PATH_PROTOCOL),
                "device path nodes must pack without padding");
 
@@ -256,6 +256,7 @@ static void device_init(iso_device *dev, uint64_t image_size,
                         const iso_overlay *ovl)
 {
     EFI_GUID vendor_guid = FALCON_ISO_MEDIA_GUID;
+    UINT64 instance;
 
     dev->image_size = image_size;
     dev->virt_size = virt_size;
@@ -288,11 +289,13 @@ static void device_init(iso_device *dev, uint64_t image_size,
     dev->bio.WriteBlocks = iso_write_blocks;
     dev->bio.FlushBlocks = iso_flush_blocks;
 
-    dev->path.vendor.Header.Type = HARDWARE_DEVICE_PATH;
-    dev->path.vendor.Header.SubType = HW_VENDOR_DP;
-    dp_set_node_len(&dev->path.vendor.Header,
+    dev->path.vendor.vendor.Header.Type = HARDWARE_DEVICE_PATH;
+    dev->path.vendor.vendor.Header.SubType = HW_VENDOR_DP;
+    dp_set_node_len(&dev->path.vendor.vendor.Header,
                     (UINT16)sizeof(dev->path.vendor));
-    dev->path.vendor.Guid = vendor_guid;
+    dev->path.vendor.vendor.Guid = vendor_guid;
+    instance = (UINT64)(UINTN)dev;
+    memcpy(dev->path.vendor.instance, &instance, sizeof(instance));
     dp_set_end(&dev->path.end);
 
     dev->handle = (EFI_HANDLE)0;

@@ -481,7 +481,12 @@ already typed. p4 is separate only so EFI never mounts root.
 - The UKI is launched **by device path off the synthetic credential
   filesystem** (falcon-efi/src/loader/credfs.c). A `SourceBuffer` load is a
   loudly-warned fallback when the credfs publish fails; it is still
-  shim-verified but cannot deliver credentials.
+  shim-verified but cannot deliver credentials. The filesystem's vendor
+  node carries the publishing loader's instance as vendor data, as the
+  virtual medium's does (Section 6): a falcon-boot started from a program
+  another one launched (the EFI shell, a blessed `.efi`) runs while the
+  first one's filesystem is still published, and the firmware refuses a
+  second handle with a path it already has.
 - The credential is named **`cryptsetup.passphrase.cred`** (systemd strips
   the `.cred` suffix to form the credential name; `systemd-cryptsetup`
   hardcodes `cryptsetup.passphrase`). Content is raw passphrase bytes, no

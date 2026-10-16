@@ -462,7 +462,7 @@ analyze: all bios check-deps
 # not build gets a host entry. Test sources are entered under the test flags;
 # they live outside every src/ directory, which is how tools/analyze.sh leaves
 # them out of the gate.
-CC_DB_EFI := $(foreach s,$(sort $(EFI_APP_SRCS)) $(PAYLOAD_SRC) $(STANDIN_SRC) $(TPM_PROBE_SRC),$(s):$(EFI_OBJ)/$(s:.c=.o))
+CC_DB_EFI := $(foreach s,$(sort $(EFI_APP_SRCS)) $(PAYLOAD_SRC) $(STANDIN_SRC) $(RELAUNCH_SRC) $(TPM_PROBE_SRC),$(s):$(EFI_OBJ)/$(s:.c=.o))
 CC_DB_HOST := $(foreach s,$(filter-out $(EFI_APP_SRCS),$(sort $(HOST_SRCS))),$(s):$(HOST_OBJ)/$(s:.c=.o))
 CC_DB_WINJUMP := $(foreach s,$(WINJUMP_SRCS),$(s):$(WINJUMP_OBJ)/$(s:.c=.o))
 CC_DB_TEST := $(foreach s,$(sort $(ALL_TEST_SRCS) $(TEST_SUPPORT_SRCS)),$(s):$(TEST_OBJ)/$(s:.c=.o))
