@@ -22,7 +22,9 @@
  * before a payload has the screen. Only when the BIOS says where its ROM
  * font is (AX=1130h): without that they could not go back, and the frames
  * are the font's | / - \ instead. A frame lasts five ticks of the BIOS
- * clock, 275 ms, the nearest the 18.2 Hz tick comes to 250.
+ * clock, 275 ms, the nearest the 18.2 Hz tick comes to 250. Its frames
+ * stay off the serial mirror: a tick lands inside a read, where it would
+ * split a diagnostic line half written with bios_puts.
  */
 
 #include <start/bios.h>
@@ -213,6 +215,8 @@ static void d_put(void *ctx, size_t row, size_t col, const uint16_t *s,
             ch = (uint8_t)(SPIN_CHAR + (s[i] - TUI_SPIN0));
 
         vga()[row * COLS + col + i] = (uint16_t)(((unsigned)attr << 8) | ch);
+        if (s[i] >= TUI_SPIN0 && s[i] < TUI_SPIN0 + TUI_SPIN_N)
+            continue;
         ser_attr(attr);
         ser_goto(row, col + i);
         bios_putc(tui_ascii(s[i], '?'));
