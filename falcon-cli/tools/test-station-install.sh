@@ -221,8 +221,9 @@ else
     # The default UEFI station has no shim; this one is through shim.
     "$MK" station install "$G" --shelf 3 --key "$MOK/falcon-test-mok.key" \
         --cert "$MOK/falcon-test-mok.crt" --dry-run >"$W/gpt-noshim.log" 2>&1
-    check "gpt: without --shim the entry names the loader" \
-        grep -q "no shim: the entry names grubx64.efi" "$W/gpt-noshim.log"
+    check "gpt: without --shim the entry names the jumper" \
+        grep -q "no shim: the loader is falconx64.efi and the entry names the jumper" \
+        "$W/gpt-noshim.log"
     "$MK" station install "$G" --shelf 3 --key "$MOK/falcon-test-mok.key" \
         --cert "$MOK/falcon-test-mok.crt" --memtest "$W/memtest.bin" \
         --memtest-efi build/bin/falcon-boot-station.efi --backup "$W/gpt.bak" \
