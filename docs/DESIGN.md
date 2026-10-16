@@ -1565,6 +1565,14 @@ Debian 16.1); where 15.8 differs it is said.
   `gBS->LoadImage` is the MOK-verifying path; with Secure Boot off the
   pointers are the firmware's. On shim 15.8 the hook forwards to firmware and
   MOK is never consulted, so the minimum shim shipped is 16.0.
+- **shim's loader leaves the image's memory types unset:** a LoadedImage
+  that shim 16.x's loader creates has `ImageCodeType` and `ImageDataType` 0
+  (`EfiReservedMemoryType`), where the firmware's are `EfiLoaderCode` and
+  `EfiLoaderData`; measured by the probe on Fedora, openSUSE and Debian 16.1,
+  through the protocol and through the hooked `gBS->LoadImage`. The EDK2
+  shell refuses an image whose code type is not `EfiLoaderCode` ("The image
+  is not an application"), so under Secure Boot a shell falcon launches
+  starts nothing. falcon never reads either field.
 - No distro shim compiles in `OVERRIDE_SECURITY_POLICY` (the Security and
   Security2 protocol hooks).
 - Any MS-signed shim passes db on any machine; the vendor is chosen by
