@@ -815,9 +815,13 @@ int stn_fw_path_is(const char *path, const char *want)
     if (path == NULL || want == NULL)
         return 0;
     for (i = 0; path[i] != '\0' && want[i] != '\0'; i++) {
-        char a = path[i] == '/' ? '\\' : path[i];
-        char b = want[i] == '/' ? '\\' : want[i];
+        char a = path[i];
+        char b = want[i];
 
+        if (a == '/')
+            a = '\\';
+        if (b == '/')
+            b = '\\';
         if (a >= 'a' && a <= 'z')
             a = (char)(a - 'a' + 'A');
         if (b >= 'a' && b <= 'z')
