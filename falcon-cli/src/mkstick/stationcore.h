@@ -282,6 +282,68 @@ int stn_run_restores(const stn_run *r, int full);
  * with it) rather than as its boot code alone. */
 int stn_run_whole_lba0(const stn_run *r, int full);
 
+/* ---- the ESP's names (DESIGN Section 12.2) ---- */
+
+/* The loader's name in \EFI\falcon with no shim in front of it. */
+#define STN_LOADER_NOSHIM "falconx64.efi"
+/* The name an install from before the jumper gave it: status and totp
+ * still find it, and update renames it (DESIGN Section 12.14). */
+#define STN_LOADER_OLD    "grubx64.efi"
+
+/* The no-shim loader's name on an ESP that holds `has_new` (falconx64.efi)
+ * and `has_old` (grubx64.efi): the old name only when it alone is there. */
+const char *stn_noshim_loader(int has_new, int has_old);
+
+/* SBAT's component name in the jumper's .sbat (apps/esp-jump/efi_sbat.c). */
+#define STN_JUMP_SBAT "falcon-esp-jump"
+
+/* Nonzero when img (n bytes, a whole file) is a PE image whose .sbat
+ * section's second row names STN_JUMP_SBAT: the jumper falcon writes as
+ * \EFI\BOOT\BOOTX64.EFI, and nothing else's. */
+int stn_is_esp_jump(const uint8_t *img, size_t n);
+
+typedef enum {
+    STN_JUMP_NONE = 0,    /* an install with shim: no jumper */
+    STN_JUMP_WRITE,       /* the path is free: write it */
+    STN_JUMP_RESIGN,      /* ours is there: sign and write it again */
+    STN_JUMP_TAKE         /* another system's is there: save it, then write */
+} stn_jump_action;
+
+/* What install and update do with \EFI\BOOT\BOOTX64.EFI. An install
+ * without shim always has the jumper there; one with shim never does
+ * (DESIGN Section 12.2). */
+stn_jump_action stn_jump_plan(int shim, int present, int ours);
+
+/* ---- the firmware's boot entries (efibootmgr -v) ---- */
+
+#define STN_FW_MAX 64u
+#define STN_FW_PATH_MAX 128u
+
+typedef struct {
+    unsigned n;                       /* entries labelled falcon */
+    uint16_t num[STN_FW_MAX];
+    char     path[STN_FW_MAX][STN_FW_PATH_MAX];  /* File(...), or "" */
+    unsigned n_order;                 /* BootOrder, as listed */
+    uint16_t order[STN_FW_MAX];
+} stn_fw;
+
+/* Reads `efibootmgr -v`'s output: the entries whose description is
+ * `label` (a whole word: "falcon", not "falcon-old") with the file their
+ * path names, and BootOrder. 0, or -1 for NULL. */
+int stn_fw_parse(const char *text, const char *label, stn_fw *out);
+
+/* Nonzero when an entry's file is `want`: case and the separator ignored,
+ * as FAT and the firmware ignore them. */
+int stn_fw_path_is(const char *path, const char *want);
+
+/* The index in fw of the falcon entry naming `want`, or -1. */
+int stn_fw_find(const stn_fw *fw, const char *want);
+
+/* BootOrder with `num` moved first, into out (cap entries). Returns the
+ * count. */
+unsigned stn_fw_order_first(const stn_fw *fw, uint16_t num, uint16_t *out,
+                            unsigned cap);
+
 /* ---- reach ---- */
 
 typedef enum {

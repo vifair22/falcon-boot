@@ -17,13 +17,16 @@
  *         other files; stage 2 before the first partition, stage 3 and the
  *         marker where the record says; stage 1 into LBA 0's boot code.
  *   UEFI  \EFI\falcon\ on the machine's ESP: the station loader signed
- *         with the MOK as grubx64.efi, the public cert, STATION.INI and a
- *         signed memtest86+; the ESP's boot record; a firmware entry named
- *         falcon when the disk is this machine's. The entry names the
- *         loader and the firmware verifies it against db, which must hold
- *         the cert. With --shim <dir>, shim and MokManager from dir go
- *         before it: the entry names shim, and the cert is enrolled with
- *         MokManager instead.
+ *         with the MOK as falconx64.efi, the public cert, STATION.INI and a
+ *         signed memtest86+; the jumper as \EFI\BOOT\BOOTX64.EFI, another
+ *         system's there saved beside the backup first; the ESP's boot
+ *         record; a firmware entry named falcon, first in BootOrder, when
+ *         the disk is this machine's. The entry names the jumper, which
+ *         starts the loader, and the firmware verifies both against db,
+ *         which must hold the cert. With --shim <dir>, shim and MokManager from dir go
+ *         before it and the loader is shim's next stage (grubx64.efi),
+ *         with no jumper: the entry names shim, and the cert is enrolled
+ *         with MokManager instead.
  *
  * Both are written by default where the disk allows them (an ESP for UEFI;
  * room before the first partition for BIOS's stage 2). The station's
@@ -70,6 +73,7 @@
 #define DEFAULT_STAGE3        FALCON_DATADIR "/bin/falcon-bios-station-stage3.bin"
 #define DEFAULT_LEGACY_STAGE3 FALCON_DATADIR "/bin/falcon-bios-station-legacy-stage3.bin"
 #define DEFAULT_LOADER        FALCON_DATADIR "/bin/falcon-boot-station.efi"
+#define DEFAULT_ESP_JUMP      FALCON_DATADIR "/bin/falcon-esp-jump.efi"
 #define DEFAULT_SHIM_DIR      FALCON_DATADIR "/shim/bins"
 #define DEFAULT_MODS          FALCON_DATADIR "/bin/mod"
 
@@ -1083,10 +1087,38 @@ static cli_status write_bios(const cli_args *a, const stn_disk *td,
     return rc;
 }
 
-static cli_status write_uefi(const cli_args *a, const stn_disk *td,
-                             const stn_plan *p, const mok_keys *keys,
-                             const char *workdir,
-                             const uint8_t id[IDENT_ID_LEN])
+/* Another system's \EFI\BOOT\BOOTX64.EFI, copied beside the backup file
+ * before the jumper replaces it, for `station remove` to put back. */
+static cli_status save_foreign_jump(const stn_disk *td, const stn_plan *p,
+                                    const char *backup)
+{
+    const part_entry *e = &td->r.parts[p->esp];
+    uint64_t off = e->start_lba * td->d.sector;
+    uint64_t len = (e->end_lba - e->start_lba + 1u) * td->d.sector;
+    char dst[MKS_PATH_MAX];
+    int present = 0;
+    int ours = 0;
+    cli_status rc;
+
+    rc = stn_esp_jump_state(td->d.path, off, len, &present, &ours);
+    if (rc != CLI_OK || stn_jump_plan(0, present, ours) != STN_JUMP_TAKE)
+        return rc;
+    if (snprintf(dst, sizeof dst, "%s%s", backup, STN_JUMP_BACKUP_EXT) >=
+        (int)sizeof dst)
+        return set_error(CLI_ERR_RANGE, "--backup is too long");
+    rc = stn_mtools_get(td->d.path, off, STN_ESP_BOOT_DIR "/" STN_ESP_JUMP,
+                        dst);
+    if (rc != CLI_OK)
+        return rc;
+    log_info("\\EFI\\BOOT\\%s was another system's; saved to %s",
+             STN_ESP_JUMP, dst);
+    return CLI_OK;
+}
+
+static cli_status write_uefi(const stn_disk *td, const stn_plan *p,
+                             const mok_keys *keys, const char *workdir,
+                             const uint8_t id[IDENT_ID_LEN],
+                             const cli_args *a)
 {
     const part_entry *e = &td->r.parts[p->esp];
     uint64_t off = e->start_lba * td->d.sector;
@@ -1099,12 +1131,13 @@ static cli_status write_uefi(const cli_args *a, const stn_disk *td,
     char next[SHIM_NEXT_STAGE_MAX] = "";
     char signed_loader[MKS_PATH_MAX];
     char signed_mt[MKS_PATH_MAX];
+    char signed_jump[MKS_PATH_MAX];
     char dst[MKS_PATH_MAX];
     ident_rec rec;
     cli_status rc = CLI_OK;
 
     if (p->no_shim) {
-        (void)snprintf(next, sizeof next, "%s", STN_ESP_LOADER);
+        (void)snprintf(next, sizeof next, "%s", STN_LOADER_NOSHIM);
     } else {
         rc = shim_find(shim_dir, shim, sizeof shim);
         if (rc == CLI_OK)
@@ -1123,6 +1156,12 @@ static cli_status write_uefi(const cli_args *a, const stn_disk *td,
                        STN_ESP_MEMTEST);
         if (rc == CLI_OK)
             rc = mok_sign(keys, memtest, signed_mt);
+    }
+    if (rc == CLI_OK && p->no_shim) {
+        rc = util_join(signed_jump, sizeof signed_jump, workdir,
+                       STN_ESP_JUMP);
+        if (rc == CLI_OK)
+            rc = mok_sign(keys, DEFAULT_ESP_JUMP, signed_jump);
     }
     if (rc != CLI_OK)
         return rc;
@@ -1166,6 +1205,17 @@ static cli_status write_uefi(const cli_args *a, const stn_disk *td,
                  e->number, STN_ESP_SHIM, mm_name, next, STN_ESP_CERT,
                  STATIONINI_FILE, memtest != NULL ? ", " STN_ESP_MEMTEST : "");
 
+    if (p->no_shim) {
+        rc = stn_mtools_mkdir(td->d.path, off, STN_ESP_BOOT_DIR);
+        if (rc == CLI_OK)
+            rc = stn_mtools_put(td->d.path, off, signed_jump,
+                                STN_ESP_BOOT_DIR "/" STN_ESP_JUMP);
+        if (rc != CLI_OK)
+            return rc;
+        log_info("ESP (partition %u): \\EFI\\BOOT\\%s, the jumper to %s",
+                 e->number, STN_ESP_JUMP, next);
+    }
+
     memset(&rec, 0, sizeof rec);
     rec.version = IDENT_VERSION;
     rec.role = IDENT_ROLE_BOOT;
@@ -1173,18 +1223,46 @@ static cli_status write_uefi(const cli_args *a, const stn_disk *td,
     return records_write_boot(td->d.path, off, &rec);
 }
 
+/* The plan's line for \EFI\BOOT\BOOTX64.EFI, before anything is written. */
+static void jump_summary(const stn_disk *td, const stn_plan *p)
+{
+    const part_entry *e = &td->r.parts[p->esp];
+    int present = 0;
+    int ours = 0;
+
+    if (!p->no_shim)
+        return;
+    if (stn_esp_jump_state(td->d.path, e->start_lba * td->d.sector,
+                           (e->end_lba - e->start_lba + 1u) * td->d.sector,
+                           &present, &ours) != CLI_OK) {
+        cli_error_clear();
+        return;
+    }
+    if (stn_jump_plan(0, present, ours) == STN_JUMP_TAKE)
+        log_info("          \\EFI\\BOOT\\%s: the jumper, the other system's "
+                 "saved beside the backup first", STN_ESP_JUMP);
+    else
+        log_info("          \\EFI\\BOOT\\%s: the jumper, which the entry "
+                 "names", STN_ESP_JUMP);
+}
+
+/* Without shim the entry names the jumper and goes first in BootOrder
+ * (stn_fw_jump_entry); with shim it names shimx64.efi. */
 static cli_status firmware_entry(const stn_disk *td, const stn_plan *p,
                                  int *made)
 {
     static stn_scan fw;
-    const char *first = p->no_shim ? STN_ESP_LOADER : STN_ESP_SHIM;
     char loader[64];
     char part[16];
     int ours = -1;
     cli_status rc;
 
     *made = -1;
-    (void)snprintf(loader, sizeof loader, "\\EFI\\falcon\\%s", first);
+    if (p->no_shim)
+        (void)snprintf(loader, sizeof loader, "%s", STN_ESP_JUMP_PATH);
+    else
+        (void)snprintf(loader, sizeof loader, "\\EFI\\falcon\\%s",
+                       STN_ESP_SHIM);
     if (!stn_is_machine(&td->d)) {
         log_info("firmware entry: none (an image; on its machine run "
                  "efibootmgr --create --disk <disk> --part %u --label %s "
@@ -1197,6 +1275,9 @@ static cli_status firmware_entry(const stn_disk *td, const stn_plan *p,
                  "UEFI; the disk's machine gets it with efibootmgr)");
         return CLI_OK;
     }
+    if (p->no_shim)
+        return stn_fw_jump_entry(td->d.path, td->r.parts[p->esp].number,
+                                 made);
     stn_scan_firmware(&fw, &ours);
     if (ours >= 0) {
         log_info("firmware entry: Boot%04X is already %s", (unsigned)ours,
@@ -1688,8 +1769,9 @@ static cli_status install_run(const cli_args *a)
     if (p.uefi) {
         log_info("UEFI:     \\EFI\\falcon\\ on the ESP (partition %u)%s",
                  td->r.parts[p.esp].number,
-                 p.no_shim ? ", no shim: the entry names " STN_ESP_LOADER
+                 p.no_shim ? ", no shim: the entry names " STN_LOADER_NOSHIM
                            : "");
+        jump_summary(td, &p);
         print_ini("\\EFI\\falcon\\" STATIONINI_FILE, p.ini_uefi,
                   p.ini_uefi_len);
     }
@@ -1795,6 +1877,11 @@ static cli_status install_run(const cli_args *a)
     if (rc != CLI_OK)
         goto out;
     log_info("backup:   %s (%u runs)", backup, (unsigned)bk.n_runs);
+    if (p.uefi && p.no_shim) {
+        rc = save_foreign_jump(td, &p, backup);
+        if (rc != CLI_OK)
+            goto out;
+    }
 
     /* ---- writes: the shelf, BIOS, UEFI, other disks, LBA 0 last ---- */
     if (shelf.set) {
@@ -1809,7 +1896,7 @@ static cli_status install_run(const cli_args *a)
             goto out;
     }
     if (p.uefi) {
-        rc = write_uefi(a, td, &p, &keys, tmpdir, install_id);
+        rc = write_uefi(td, &p, &keys, tmpdir, install_id, a);
         if (rc == CLI_OK)
             rc = firmware_entry(td, &p, &fw_made);
         if (rc == CLI_OK && fw_made >= 0) {
@@ -1855,7 +1942,8 @@ out:
         char w[MKS_PATH_MAX];
         size_t k;
         static const char *const leftovers[] = {
-            "grubx64.efi", "grub.efi", STN_ESP_MEMTEST
+            "grubx64.efi", "grub.efi", STN_LOADER_NOSHIM, STN_ESP_MEMTEST,
+            STN_ESP_JUMP
         };
 
         for (k = 0; k < sizeof leftovers / sizeof leftovers[0]; k++) {
@@ -1885,13 +1973,17 @@ const cli_cmd stn_cmd_install = {
     "first partition; stage 1 into LBA 0's boot code. Nothing is resized:\n"
     "without the free space --size needs it refuses and says how much.\n"
     "\n"
-    "UEFI: \\EFI\\falcon\\ on the ESP (the loader signed with the MOK,\n"
-    "the cert, STATION.INI, memtest.efi), the ESP's boot record, and a\n"
-    "firmware entry named falcon when the disk is this machine's. The MOK\n"
-    "pair is --key/--cert or the shelf's. The entry names the loader, and\n"
-    "the firmware's db must hold the cert. --shim <dir> puts shim and\n"
-    "MokManager from dir before it, for a firmware whose db is not yours:\n"
-    "the entry names shim, and the cert is enrolled with MokManager.\n"
+    "UEFI: \\EFI\\falcon\\ on the ESP (the loader signed with the MOK as\n"
+    "falconx64.efi, the cert, STATION.INI, memtest.efi), the jumper signed\n"
+    "with the MOK as \\EFI\\BOOT\\BOOTX64.EFI, the ESP's boot record, and a\n"
+    "firmware entry named falcon, first in BootOrder, when the disk is this\n"
+    "machine's. The MOK pair is --key/--cert or the shelf's. The entry names\n"
+    "the jumper, which starts the loader; with no entry the firmware's\n"
+    "removable-media path is the jumper too. The firmware's db must hold the\n"
+    "cert. Another system's BOOTX64.EFI is saved beside --backup first.\n"
+    "--shim <dir> puts shim and MokManager from dir before the loader, for a\n"
+    "firmware whose db is not yours: the entry names shim, the cert is\n"
+    "enrolled with MokManager, and there is no jumper.\n"
     "\n"
     "Both by default, where the disk allows. STATION.INI is written from\n"
     "what is on the machine's disks: the Windows or DOS found is the default\n"
