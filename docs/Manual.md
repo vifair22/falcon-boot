@@ -512,8 +512,8 @@ stick's:
     SB: on  trusts: MOK, +1
 
 A station needs no shim there, and a default `falcon-boot-mkstick station
-install` has none: it names the loader itself in the firmware entry and
-ends with:
+install` has none: its firmware entry names the jumper, which starts the
+loader, and it ends with:
 
     Secure Boot on: the firmware's db must hold \EFI\falcon\falcon-boot.cer; enroll it from firmware setup.
 
@@ -2423,7 +2423,7 @@ ESP's and the shelf's.
 | `--stage2` | `build/bin/falcon-bios-stage2.bin` | |
 | `--stage3` | `build/bin/falcon-bios-station-stage3.bin` (`falcon-bios-station-legacy-stage3.bin` with `--legacy`) | |
 | `--loader` | `build/bin/falcon-boot-station.efi` | the UEFI station's loader |
-| `--shim` | none: no shim, and the firmware entry names the loader, which the firmware's db must trust (Section 11.1) | UEFI through shim: shim and its MokManager from this directory (`build/shim/bins` is where `fetch-shims.sh` puts them) |
+| `--shim` | none: no shim, and the firmware entry names the jumper at `\EFI\BOOT\BOOTX64.EFI`, which the firmware's db must trust (Section 11.1) | UEFI through shim: shim and its MokManager from this directory (`build/shim/bins` is where `fetch-shims.sh` puts them) |
 
 The UEFI station needs the MOK: `--key` and `--cert`, or `--shelf` to read
 the shelf's (a LUKS2 shelf asks for its passphrase). With no `--shelf` it
@@ -2846,7 +2846,8 @@ the MOK once `falcon-boot.cer` is enrolled.
 On a machine whose db holds only its owner's keys, enrol `falcon-boot.cer`
 in **db**, not only as a MOK, and never sign anything with that machine's
 own db key. A station there is installed as by default, without shim
-(10.6): its firmware entry names the loader, which db then trusts. A stick
+(10.6): its firmware entry names the jumper, and db trusts it and the
+loader. A stick
 boots there only once its shim and MokManager also carry our signature,
 appended with the recipe below.
 

@@ -126,8 +126,8 @@ static const cli_opt install_opts[] = {
     { "shim", CLI_OPT_VALUE, 0, "<dir>",
       "UEFI through shim: shimx64.efi and its MokManager from dir ("
       DEFAULT_SHIM_DIR " is where fetch-shims.sh puts them); without it "
-      "the firmware entry names the loader, which the firmware's db must "
-      "trust" }
+      "the firmware entry names the jumper at \\EFI\\BOOT\\BOOTX64.EFI, "
+      "which the firmware's db must trust" }
 };
 
 /* ---- the shelf ---- */
@@ -536,7 +536,7 @@ typedef struct {
     /* what */
     int bios;
     int uefi;
-    int no_shim;                /* UEFI: the entry names the loader */
+    int no_shim;                /* UEFI: the entry names the jumper */
     /* BIOS */
     stn_region region;
     unsigned   slot;            /* MBR slot, or GPT entry number */
@@ -1769,7 +1769,8 @@ static cli_status install_run(const cli_args *a)
     if (p.uefi) {
         log_info("UEFI:     \\EFI\\falcon\\ on the ESP (partition %u)%s",
                  td->r.parts[p.esp].number,
-                 p.no_shim ? ", no shim: the entry names " STN_LOADER_NOSHIM
+                 p.no_shim ? ", no shim: the loader is " STN_LOADER_NOSHIM
+                             " and the entry names the jumper"
                            : "");
         jump_summary(td, &p);
         print_ini("\\EFI\\falcon\\" STATIONINI_FILE, p.ini_uefi,
