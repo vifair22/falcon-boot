@@ -73,6 +73,12 @@
 #                  384 MiB machine: the passphrase is refused with the page
 #                  that says how much the slot needs and how much is free
 #                  (DESIGN Section 5)
+#   relaunch-uefi  stick-a with build/test/relaunch.efi blessed on its
+#                  library, Secure Boot off: the payload, started from the menu,
+#                  starts a second falcon-boot off p1 while the first one's
+#                  credential filesystem is still published, and the
+#                  second one's personal OS still gets both credentials
+#                  (DESIGN Section 5.1)
 #   probe-keys-uefi, probe-keys-bios
 #                  stick-a on a disk QEMU throttles to SLOW_BPS: Esc at the
 #                  root, pressed while rows are still pending, acts within
@@ -175,6 +181,7 @@ R=build/core-rig
 PASS="${FALCON_TEST_PASS:-falcon-test}"
 PASS_B=falcon-other
 MKSTICK=build/bin/falcon-boot-mkstick
+SIGN_TOOL=build/bin/falcon-boot-sign
 TIMEOUT=180
 # The machine's memory, in MiB; the refusal cases boot a smaller one.
 MEM=1024
@@ -920,6 +927,86 @@ case_update_refuse() { # case_update_refuse CASE
 # takes seconds; Esc at the root, pressed while rows are still pending, has
 # to take effect within KEY_MS. The probe yields at its reads (DESIGN
 # Section 7.8), so a key waits for one read, not for the entry.
+# The rows of the newest root menu on serial, in order, Personal OS first.
+menu_row() {    # menu_row NAME: its index, 0 for the first row
+    log_text "$R/serial.log" |
+        awk '/^menu: ISO library/ { n = 0; delete r; on = 1; next }
+             on && /^ *$/ { next }
+             on && /^(> |  )/ { r[n++] = $0; next }
+             on { on = 0 }
+             END { for (i = 0; i < n; i++) print r[i] }' |
+        grep -nF -- "$1" | head -1 | awk -F: '{ print $1 - 1 }'
+}
+
+menus() { log_text "$R/serial.log" | grep -ac '^menu: ISO library'; }
+
+case_relaunch() { # case_relaunch CASE
+    local img=$R/stick-relaunch.img why= row i
+    cp --sparse=always "$R/stick-a.img" "$img"
+    attach "$img"
+    mount_part "${LOOP}p2"
+    cp build/test/relaunch.efi "$MNT/relaunch.efi"
+    # Signed with the MOK, as a blessed .efi is: such an image is served off
+    # the credential filesystem, and that filesystem staying published is
+    # the point.
+    "$SIGN_TOOL" "$MNT/relaunch.efi" --key build/mok-test/falcon-test-mok.key \
+        --cert build/mok-test/falcon-test-mok.crt >/dev/null
+    umount_part
+    detach
+    boot uefi "$img:boot"
+    wait_for "relaunch.efi" 90 || why="the menu never listed relaunch.efi"
+    if [[ -z "$why" ]]; then
+        sleep 1
+        row=$(menu_row "relaunch.efi") || true
+        [[ -n "$row" ]] || why="no row for relaunch.efi"
+    fi
+    if [[ -z "$why" ]]; then
+        for (( i = 0; i < row; i++ )); do
+            mon "sendkey down"
+            sleep 0.2
+        done
+        sleep 0.3
+        mon "sendkey ret"
+        # has, not wait_for: the second loader's first screen follows the
+        # marker at once, and wait_for's grep -q under pipefail fails on a
+        # match with that much log after it (see has).
+        for (( i = 0; i < 600; i++ )); do
+            has "FALCON-RELAUNCH-LOADED" && break
+            sleep 0.1
+        done
+        has "FALCON-RELAUNCH-LOADED" ||
+            why="the payload did not load a second falcon-boot"
+        has "naming the image on the synthetic filesystem" ||
+            why="${why:-relaunch.efi was not served off the credential filesystem}"
+    fi
+    if [[ -z "$why" ]]; then
+        for (( i = 0; i < 900; i++ )); do
+            (( $(menus) >= 2 )) && break
+            sleep 0.1
+        done
+        (( $(menus) >= 2 )) || why="the second falcon-boot never showed its menu"
+    fi
+    if [[ -z "$why" ]]; then
+        sleep 1
+        mon "sendkey ret"
+        pos_unlock 30 || why=$POS_WHY
+    fi
+    if [[ -z "$why" ]]; then
+        has "credential filesystem could not be published" &&
+            why="the second loader could not publish its credential filesystem"
+        has "FALCON-CRED-FILE cryptsetup.passphrase.cred" ||
+            why="${why:-no passphrase credential}"
+        has "FALCON-CRED-OK" || why="${why:-the passphrase credential is wrong}"
+    fi
+    halt
+    rm -f "$img"
+    if [[ -z "$why" ]]; then
+        result "$1" 1 "a falcon-boot started from relaunch.efi handed the UKI both credentials"
+    else
+        result "$1" 0 "$why"
+    fi
+}
+
 case_probe_keys() { # case_probe_keys CASE FIRMWARE
     local why= t0 t1 ms=-
     boot "$2" "$R/stick-a.img:boot:slow"
@@ -1454,7 +1541,7 @@ CASES=("$@")
            validation-off-uefi validation-off-pos-uefi
            validation-off-iso-uefi validation-off-station-uefi
            kdf-memory-uefi kdf-memory-bios hibernated-uefi hibernated-bios
-           probe-keys-uefi probe-keys-bios update-stick-uefi-sb
+           relaunch-uefi probe-keys-uefi probe-keys-bios update-stick-uefi-sb
            update-stick-bios update-station-uefi-sb update-station-bios
            update-refuse timing-uefi timing-stall-uefi lanes-uefi
            lanes-smt-uefi lanes-alone-uefi lanes-cheap-uefi lanes-bios
@@ -1493,6 +1580,7 @@ for c in "${CASES[@]}"; do
     update-station-uefi-sb) case_update_station "$c" uefi-sb ;;
     update-station-bios)    case_update_station "$c" bios ;;
     update-refuse)          case_update_refuse "$c" ;;
+    relaunch-uefi)   case_relaunch "$c" ;;
     probe-keys-uefi) case_probe_keys "$c" uefi ;;
     probe-keys-bios) case_probe_keys "$c" bios ;;
     hibernated-uefi) case_hibernated "$c" uefi ;;
