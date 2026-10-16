@@ -9,6 +9,7 @@
 #include <tsc/tsccore.h>
 #include <console/serial.h>
 #include <discover/biolow.h>
+#include <discover/discover.h>
 
 /* Non-volatile so it survives the appliance's reboot, and runtime-accessible
  * so the booted OS can set it too (DESIGN Section 6.3.1). loadops.h has what
@@ -442,6 +443,7 @@ void loader_time_init(EFI_SYSTEM_TABLE *st, UINT64 t0, const CHAR16 *info)
     usec = tsc_usec(t0, hz);
     s = bli_set_init(st, usec, info);
     biolow_set_clock(tsc_read);
+    discover_set_clock(tsc_read, hz);
 
     put_kv(line, sizeof line, &at, "falcon-bli: tsc_hz=", hz);
     put_str(line, sizeof line, &at, " via=");

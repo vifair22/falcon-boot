@@ -59,15 +59,25 @@ static UINT8 *low_bounce(void)
     return g_low;
 }
 
-/* The small-read windows (blk/cache.h): 64 KiB, the most some firmware
- * moves for the cost of one call, and 16 of them, below 4 GiB so a window
- * is never bounced. Allocated on first need; without the memory every read
- * goes straight through. */
+/* The small-read windows (blk/cache.h): up to 64 KiB, the most some
+ * firmware moves for the cost of one call, sized per device to what a tenth
+ * of a second reads (discover_set_clock), and 16 of them, below 4 GiB so a
+ * window is never bounced. Allocated on first need; without the memory
+ * every read goes straight through. */
 #define CACHE_WIN   0x10000u
 #define CACHE_SLOTS 16u
 static blk_cache g_cache;
 static blk_cache_slot g_cache_slots[CACHE_SLOTS];
 static BOOLEAN g_cache_tried;
+static UINT64 (*g_cache_clock)(void);
+static UINT64 g_cache_budget;
+
+void discover_set_clock(UINT64 (*clock)(void), UINT64 hz)
+{
+    g_cache_clock = clock;
+    g_cache_budget = hz / 10u;
+    blk_cache_set_clock(&g_cache, g_cache_clock, g_cache_budget);
+}
 
 static blk_cache *cache(void)
 {
@@ -82,6 +92,7 @@ static blk_cache *cache(void)
             EFI_SUCCESS)
         mem = (UINT8 *)(uintptr_t)addr;
     blk_cache_init(&g_cache, g_cache_slots, CACHE_SLOTS, mem, CACHE_WIN);
+    blk_cache_set_clock(&g_cache, g_cache_clock, g_cache_budget);
     return &g_cache;
 }
 

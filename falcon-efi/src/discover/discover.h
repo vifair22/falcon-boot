@@ -145,4 +145,10 @@ void discover_set_read_hook(void (*hook)(void));
  * none. */
 void discover_set_tick(void (*tick)(void));
 
+/* The clock the read windows are sized on, ticking hz times a second
+ * (blk/cache.h): a window fill may take a tenth of a second, so a probe
+ * that yields between reads lets a key through within about that on any
+ * medium. Until it is set, or with an hz of 0, every window is 64 KiB. */
+void discover_set_clock(UINT64 (*clock)(void), UINT64 hz);
+
 #endif /* FALCON_DISCOVER_H */
