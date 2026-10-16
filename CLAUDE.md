@@ -61,7 +61,8 @@ unique within each such set, so `#include <fs/exfat.h>` means one file, and
 
 - `apps/`: `stick/` (every route; `all` builds the UEFI image, `make bios`
   the BIOS one), `station/` (DESIGN Section 12; `make station`),
-  `station-legacy/` (12.10; `make station-legacy`, `make devlink-uki`,
+  `esp-jump/` (12.2, the UEFI station's `\EFI\BOOT\BOOTX64.EFI`; built
+  with `make station`), `station-legacy/` (12.10; `make station-legacy`, `make devlink-uki`,
   `make station-bundle`), `jump/` (Section 13; `make jump`). An app is its
   entry points (`efi_main.c`, `efi_sbat.c`, `bios_main.c`) and an `app.mk`
   listing what it links, one line per module with its reason. What an app

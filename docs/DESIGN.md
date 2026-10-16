@@ -331,7 +331,8 @@ p1 holds exactly four files. Section 4.3 says why that list is closed.
 A stick goes through shim by default: it boots machines whose firmware
 keys are not its owner's, and shim is what their db trusts. A station
 does not (12.2): it is the machine's own, its cert goes into the
-machine's db, and the firmware entry names the loader.
+machine's db, and the firmware entry names its jumper, which starts the
+loader.
 
 | Path | What it is | Signatures it must carry |
 |---|---|---|
@@ -2363,7 +2364,11 @@ while every real file lives only in UDF.
   component in `apps/<app>/efi_sbat.c`, after the mandatory `sbat,1` row:
   the stick is `falcon-boot`, the UEFI station `falcon-boot-pos` (its own
   name so a generation bump for a parser only the stick links does not
-  revoke the station, Section 12.1). Both are at generation 1, vendor
+  revoke the station, Section 12.1), and the station's jumper
+  `falcon-esp-jump` (12.2), which is also how mkstick tells it from another
+  system's `BOOTX64.EFI`; its version field is its own, not
+  `release_version`, so the image, and the PCR 4 measurement the TOTP seal
+  holds (12.15), change only when its code does. All are at generation 1, vendor
   `falcon`, with the version field `release_version` (`FALCON_SEMVER`,
   generated into `build/version.h`).
   The generation is the revocation lever, bumped only for a released
@@ -2433,8 +2438,9 @@ while every real file lives only in UDF.
   same single entry point run again.
 - **Apps, components and modules.** The loaders are apps, one directory
   each under `apps/`: `stick` (this loader, UEFI and BIOS), `station`
-  (Section 12, UEFI and BIOS), `station-legacy` (Section 12.10, BIOS only)
-  and `jump` (Section 13, a BIOS boot floppy). An
+  (Section 12, UEFI and BIOS), `esp-jump` (Section 12.2, the UEFI
+  station's `\EFI\BOOT\BOOTX64.EFI`), `station-legacy` (Section 12.10, BIOS
+  only) and `jump` (Section 13, a BIOS boot floppy). An
   app is its entry points and an `app.mk` listing the modules it links; what
   it does not list, it cannot run. The modules live in components, each with
   its own `src/`: `falcon-core` (the EFI-free libraries every other component
@@ -3621,8 +3627,11 @@ what an INI section changes or adds, the order), host-tested.
 
 ```mermaid
 flowchart TD
-    FW["Firmware<br/>boot entry falcon"] -- "\EFI\falcon\grubx64.efi (falcon-boot-station.efi),<br/>verified against db (12.2)" --> MAIN["efi_main (apps/station/efi_main.c)"]
-    FW -- "--shim: \EFI\falcon\shimx64.efi" --> SHIM["shim<br/>verifies grubx64.efi against db / MokList"]
+    FW["Firmware<br/>boot entry falcon, first in BootOrder"] -- "\EFI\BOOT\BOOTX64.EFI, verified against db (12.2)" --> JMP["efi_main (apps/esp-jump/efi_main.c)<br/>the firmware's LoadImage, off its own volume"]
+    FWN["Firmware<br/>no entry for the station"] -- "removable-media path:<br/>the same \EFI\BOOT\BOOTX64.EFI" --> JMP
+    JMP -- "\EFI\falcon\falconx64.efi (falcon-boot-station.efi),<br/>verified against db" --> MAIN["efi_main (apps/station/efi_main.c)"]
+    JMP -- "missing, or refused" --> JFAIL["one line: the path and the status;<br/>5 s, back to the firmware"]
+    FWS["Firmware<br/>--shim: boot entry falcon"] -- "\EFI\falcon\shimx64.efi" --> SHIM["shim<br/>verifies grubx64.efi against db / MokList"]
     SHIM --> MAIN
     MAIN --> NB["loader_next_boot_take<br/>FalconNextBoot read, then deleted"]
     NB --> DISC["discover_scan: the ESP's boot record, every Block I/O handle<br/>disks_scan: each whole disk's table (MBR or GPT)<br/>esp_connect_all: a filesystem driver on every partition"]
@@ -3894,17 +3903,34 @@ station does not link cannot stop it booting.
 Nothing is repartitioned or resized by falcon. The installer (12.9) needs
 the space it uses to be free already.
 
-**UEFI.** The machine's ESP: the loader as `grubx64.efi`, the public cert,
-memtest86+ signed with the MOK (12.6) and `STATION.INI`, all in
-`\EFI\falcon\`, named by a firmware boot entry of its own. The ESP's boot
+**UEFI.** The machine's ESP: the loader as `falconx64.efi`, the public
+cert, memtest86+ signed with the MOK (12.6) and `STATION.INI`, all in
+`\EFI\falcon\`, and the jumper as `\EFI\BOOT\BOOTX64.EFI`. The ESP's boot
 sector carries the station's `boot` record (Section 3.1) in bytes UEFI never
 executes; the installer backs up the sector it changes. No extra partition.
-The entry names `grubx64.efi` itself, and the firmware verifies it against
-db, which must hold the cert. A station is the machine's own, and so are its
+A firmware boot entry of its own, `falcon`, first in BootOrder, names the
+jumper; the firmware verifies the jumper against db, and the jumper loads
+the loader through the firmware's `LoadImage`, which verifies it against
+db too. db must hold the cert.
+
+**The jumper** (`apps/esp-jump`, `falcon-esp-jump.efi`, signed with the
+MOK) loads `\EFI\falcon\falconx64.efi` off its own volume and starts it;
+when that is missing or refused it prints the path and the status and
+returns to the firmware. With the entry and without it (an NVRAM reset,
+the disk in another machine, where the firmware boots the removable-media
+path) the firmware starts the same file, so the station has one route in
+and one measured chain (12.15). The loader stays in one place. Another
+system's `BOOTX64.EFI` (Windows', systemd-boot's, a distribution's shim)
+is saved beside the install's backup and replaced; `remove` puts it back.
+The jumper is told from it by its `.sbat` component (Section 9). An
+install with shim has neither the jumper nor an entry naming it: the
+entry names shim, and the MOK is not in such a machine's db. A station
+from before the jumper has the loader as `grubx64.efi` and an entry naming
+it; `status` and `totp` find it there, and `update` migrates it (12.14). A station is the machine's own, and so are its
 firmware keys: the cert goes into db through the platform (sbctl with the
 machine's own PK and KEK, or a coreboot and edk2 machine built with its own
-key as PK, KEK and db). With no shim in the chain, what the loader launches
-goes through the firmware's `LoadImage`, the enforcing one (7.6,
+key as PK, KEK and db). With no shim in the chain, what the jumper and the
+loader launch goes through the firmware's `LoadImage`, the enforcing one (7.6,
 `loader/loadops.h`). A stick is the other way round: it boots machines
 whose keys are not its owner's, so it goes through shim by default
 (Section 4).
@@ -3913,9 +3939,11 @@ whose keys are not its owner's, so it goes through shim by default
 and MokManager from dir before the loader: the firmware entry names shim,
 which verifies the loader against db or MokList, and the cert is enrolled
 with MokManager. For a machine whose db is not its owner's. `station
-status` takes `grubx64.efi` as the mark of a UEFI install, with or without
-shim before it, and checks its signature against the cert beside it with
-`sbverify`.
+status` takes the loader in `\EFI\falcon` (shim's next stage, else
+`falconx64.efi`) as the mark of a UEFI install and checks its signature
+against the cert beside it with `sbverify`; without shim it checks the
+jumper's the same way, and on the disk's own machine that the `falcon`
+entry names the jumper and is first in BootOrder.
 
 **BIOS, MBR disk.** Stage 1 in LBA 0's boot code, the table, signature and
 `0x55AA` kept. Stage 2 from LBA 1, before the first partition. A **station
@@ -4241,8 +4269,11 @@ without the countdown.
 disk I/O, backups and stage splicing reused.
 
 - **install** takes the disk (and, on UEFI, finds its ESP), draws the install
-  ID, and writes: on UEFI the files in `\EFI\falcon\`, the firmware entry and
-  the ESP's record; on BIOS stage 1 into LBA 0's boot code, stage 2 before the
+  ID, and writes: on UEFI the files in `\EFI\falcon\`, without shim the
+  jumper as `\EFI\BOOT\BOOTX64.EFI` (another system's there saved beside the
+  backup file first, as `<backup>.BOOTX64.EFI`), the firmware entry (without
+  shim naming the jumper, first in BootOrder, any older `falcon` entry
+  deleted) and the ESP's record; on BIOS stage 1 into LBA 0's boot code, stage 2 before the
   first partition, the station partition in space that is already free (MBR
   0x1C or the falcon type on GPT), its record, stage 3 and the files. It
   writes a signature on any disk the station will name that has none, and
@@ -4254,7 +4285,9 @@ disk I/O, backups and stage splicing reused.
   firmware entries. LBA 0 is written last, so an interrupted install leaves
   the old boot code in place.
 - **remove** restores from that file: the old boot code, the firmware entry
-  removed, falcon's files deleted. The station partition itself is left for
+  removed (and any `falcon` entry naming the jumper), falcon's files
+  deleted, the jumper with them and the `BOOTX64.EFI` it replaced put back
+  (`<backup>.BOOTX64.EFI`, or `--bootx64` for one an update saved). The station partition itself is left for
   the user to delete.
 - **Refusals.** No free space for the station partition (it says how much it
   needs); stage 2 not fitting before the first partition; a disk with a
@@ -4416,7 +4449,22 @@ boots stations the installer made through the `falcon` Boot0001 that
   UKI; under SeaBIOS stage 2 takes the station partition over the ESP and
   the shelf unlocks; `status` passes and `remove --full` gives back every
   byte outside the ESP and the shelf;
-- a 4Kn MBR disk, `--bios`, under SeaBIOS to the UKI.
+- a 4Kn MBR disk, `--bios`, under SeaBIOS to the UKI;
+- a GPT disk installed without `--shim`: the entry naming the jumper, and
+  no entry at all, the firmware booting the jumper by the removable-media
+  path, each to the prompt and the UKI, off and on; `status` checks the
+  loader's and the jumper's signatures, and `update` signs both again;
+- the same disk made into an install from before the jumper (the loader as
+  `grubx64.efi`, another system's `BOOTX64.EFI`): `update` renames the
+  loader, saves that `BOOTX64.EFI` and writes the jumper, and the entry
+  naming the jumper boots it to the UKI with Secure Boot on;
+- the same disk with another system's `BOOTX64.EFI` before the install: the
+  installer saves it and writes the jumper, and `remove` puts it back byte
+  for byte.
+
+`make test-tpm-rig`'s `totp-jump` cases enroll the TOTP check after a boot
+through the entry naming the jumper, then show the code on a boot through
+that entry and on one with no entry.
 
 OVMF connects only the disks QEMU's boot order lists, so every disk these
 rigs attach has a bootindex; a disk without one is one the UEFI loader
@@ -4589,9 +4637,24 @@ update exits. A station's shelf is the one carrying its install ID on any
 disk. `--key` and `--cert` name a keypair instead, for an install whose
 shelf holds none. The loader is named by shim (its next stage read out of
 `\EFI\falcon\shimx64.efi` or p1's `BOOTX64.EFI`), not taken to be
-`grubx64.efi`; a station without shim has `grubx64.efi`. The signed image must carry exactly one signature and
+`grubx64.efi`; a station without shim has `falconx64.efi`. The signed image must carry exactly one signature and
 verify against the certificate; the old loader is saved, the new one
 written with mtools and read back.
+
+A station without shim gets the jumper as install makes it (12.2): signed
+again where it is falcon's, written where there is none, and where another
+system's `BOOTX64.EFI` is there, that one saved to `--backup-dir` first
+(`<disk>-bootx64-<stamp>.efi`, which `station remove --bootx64` puts back).
+On the disk's own machine the `falcon` entry is made to name the jumper and
+put first in BootOrder; for another machine's disk update prints the
+`efibootmgr` line. A station from before the jumper (no jumper of ours on
+the ESP) is migrated by the same run (`updatecore.c`): the loader is
+written as `falconx64.efi` and a `grubx64.efi` saved and deleted, the old
+entry naming the loader deleted, the jumper and its entry made. Its PCR 4
+then measures the jumper before the loader, which no reseal can predict
+from the old boot's log, so `[totp]` is not resealed: update says to boot
+the updated station and run `station totp reseal`. The same holds when the
+jumper itself is a new image (its Authenticode digest moved).
 
 A pending next-boot marker is cleared, since the stages are written as
 `mkstick bios` writes them. A UEFI station with `[totp]` is resealed in
@@ -4764,10 +4827,13 @@ and the firmware's or the TPM's answer there, so a machine whose firmware
 refuses can say why without a serial console. Enrollment prints it when
 there is no record. Enrollment seals to that record, checked against the firmware's
 event log (securityfs): the log must hold the event that measured the
-station's own image, found by the Authenticode hash of
-`\EFI\falcon\grubx64.efi` in the log's bank (`tpm/evlog.c`,
-`trust/authenticode.c`), which is also the proof that this system was
-started by that station; without it enrollment refuses.
+station's own image, found by the Authenticode hash of the loader in
+`\EFI\falcon` (`falconx64.efi`, or shim's next stage) in the log's bank
+(`tpm/evlog.c`, `trust/authenticode.c`), which is also the proof that this
+system was started by that station; without it enrollment refuses. Without
+shim the jumper is in PCR 4 before the station's image on every boot,
+through the entry or the removable-media path (12.2), so the record, and
+the seal, hold it in front.
 
 On a TPM 2.0 (`totpc_station20`) the log is whole when, replayed to its
 end, it gives the PCRs as the TPM holds them now. A whole log, replayed up
