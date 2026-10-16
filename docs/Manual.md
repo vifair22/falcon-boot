@@ -607,6 +607,10 @@ and a refused payload:
     Bless the media with the sign tool, turn Secure Boot off in firmware
     setup, or run mokutil --disable-validation from Linux.
 
+A blessed EFI shell starts with Secure Boot on, but every program started
+from it is refused with `The image is not an application.` (shim's loader,
+`docs/DESIGN.md` Section 7.6). Use the shell with Secure Boot off.
+
 ## 4. Blessing
 
 Blessing signs an ISO's boot with the stick's MOK so it boots with Secure
