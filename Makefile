@@ -64,6 +64,8 @@ EFI                := $(BIN)/falcon-boot.efi
 EFI_SIGNED         := $(BIN)/falcon-boot-signed.efi
 EFI_STATION        := $(BIN)/falcon-boot-station.efi
 EFI_STATION_SIGNED := $(BIN)/falcon-boot-station-signed.efi
+EFI_ESP_JUMP       := $(BIN)/falcon-esp-jump.efi
+EFI_ESP_JUMP_SIGNED := $(BIN)/falcon-esp-jump-signed.efi
 BIOS_STAGE3        := $(BIN)/falcon-bios-stage3.bin
 BIOS_STATION_STAGE3 := $(BIN)/falcon-bios-station-stage3.bin
 BIOS_STATION_LEGACY_STAGE3 := $(BIN)/falcon-bios-station-legacy-stage3.bin
@@ -333,7 +335,7 @@ include falcon-bios/build.mk
 
 # The loaders, each one app (apps/<app>/app.mk) composed from the platform
 # modules above. After every component, because an app names their modules.
-APPS := stick station jump station-legacy
+APPS := stick station esp-jump jump station-legacy
 include $(APPS:%=apps/%/app.mk)
 
 # The release artifacts, from what the components and apps build.

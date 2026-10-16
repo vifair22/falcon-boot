@@ -11,8 +11,10 @@
  *          old one, which is saved first, then read back. The key comes
  *          off the shelf into sealed memfds (shelfkey.h) and never reaches
  *          a file; --key/--cert name it instead for an install whose shelf
- *          does not hold it (a --p3-plain stick).
- *   TOTP   a UEFI station with [totp] is resealed at once, to what the new
+ *          does not hold it (a --p3-plain stick). A station without shim
+ *          gets the jumper and the entry naming it as install makes them,
+ *          and one from before the jumper is migrated (updatecore.h).
+ *   TOTP  a UEFI station with [totp] is resealed at once, to what the new
  *          loader will measure (stn_totp_reseal_update).
  *
  * It keeps every record, STATION.INI, /uki, shim, MokManager and the
@@ -80,6 +82,9 @@ typedef struct {
     uint8_t     old1[32];
     uint8_t     old256[32];
     int         have_old;
+    /* The jumper written has another Authenticode digest than the one it
+     * replaced, so PCR 4 moves and the reseal cannot predict it. */
+    int         jump_moved;
     char        stamp[32];
 } upd_ctx;
 
@@ -229,6 +234,17 @@ static cli_status gather(upd_ctx *c)
             f->station_loader = has_file(c, c->esp_off, c->esp_len, path);
         }
         cli_error_clear();
+        f->station_shim = has_file(c, c->esp_off, c->esp_len,
+                                   "/" STN_ESP_DIR "/" STN_ESP_SHIM);
+        if (stn_esp_jump_state(c->d.path, c->esp_off, c->esp_len,
+                               &f->jump_present, &f->jump_ours) != CLI_OK) {
+            /* Unreadable is someone else's until it reads as ours. */
+            f->jump_present = 1;
+            f->jump_ours = 0;
+        }
+        cli_error_clear();
+        f->station_old_name = !f->station_shim &&
+                              strcmp(c->station_name, STN_LOADER_OLD) == 0;
         {
             static char ini[16384];
             static stationini parsed;
@@ -495,34 +511,37 @@ static cli_status verify_signed(const mok_keys *k, const char *file)
     return proc_runl_quiet("sbverify", "--cert", k->crt, file, PROC_END);
 }
 
-/* The UEFI half: the loader in dir/name on the FAT volume at [off, len),
- * signed from src, the old one saved and, for the station, measured. */
+/* The UEFI half: the image in dir/name on the FAT volume at [off, len),
+ * signed from src. The old one is saved as <what>.efi, unless `fresh`
+ * says there is none, and with `measure` its digests are kept for the
+ * reseal. */
 static cli_status do_uefi(upd_ctx *c, const cli_args *a, const mok_keys *keys,
                           uint64_t off, uint64_t len, const char *dir,
-                          const char *name, const char *src, int station,
-                          const char *workdir)
+                          const char *name, const char *src, const char *what,
+                          int measure, int fresh, const char *workdir)
 {
     char path[MKS_PATH_MAX];
     char signed_efi[MKS_PATH_MAX];
-    char backup[MKS_PATH_MAX];
-    char what[96];
+    char backup[MKS_PATH_MAX] = "";
+    char label[96];
     uint8_t *old = NULL;
     uint8_t *back = NULL;
     void *mine = NULL;
     size_t old_n = 0;
     size_t back_n = 0;
     size_t mine_n = 0;
-    cli_status rc;
+    cli_status rc = CLI_OK;
 
     (void)snprintf(path, sizeof path, "/%s/%s", dir, name);
-    (void)snprintf(what, sizeof what, "%s.efi",
-                   station ? "station-loader" : "stick-loader");
-    rc = backup_name(c, a, what, backup, sizeof backup);
-    if (rc == CLI_OK)
-        rc = read_file(c, off, len, path, &old, &old_n);
-    if (rc == CLI_OK)
-        rc = util_write_file(backup, old, old_n, 0644);
-    if (rc == CLI_OK && station) {
+    (void)snprintf(label, sizeof label, "%s.efi", what);
+    if (!fresh) {
+        rc = backup_name(c, a, label, backup, sizeof backup);
+        if (rc == CLI_OK)
+            rc = read_file(c, off, len, path, &old, &old_n);
+        if (rc == CLI_OK)
+            rc = util_write_file(backup, old, old_n, 0644);
+    }
+    if (rc == CLI_OK && measure && old != NULL) {
         rc = stn_image_digest(old, old_n, 1, c->old1);
         if (rc == CLI_OK)
             rc = stn_image_digest(old, old_n, 0, c->old256);
@@ -539,6 +558,8 @@ static cli_status do_uefi(upd_ctx *c, const cli_args *a, const mok_keys *keys,
     rc = mok_sign(keys, src, signed_efi);
     if (rc == CLI_OK)
         rc = verify_signed(keys, signed_efi);
+    if (rc == CLI_OK && fresh)
+        rc = stn_mtools_mkdir(c->d.path, off, dir);
     if (rc == CLI_OK)
         rc = stn_mtools_put(c->d.path, off, signed_efi, path + 1);
     if (rc == CLI_OK)
@@ -554,8 +575,119 @@ static cli_status do_uefi(upd_ctx *c, const cli_args *a, const mok_keys *keys,
     (void)unlink(signed_efi);
     if (rc != CLI_OK)
         return rc;
-    log_info("UEFI: %s signed, written and read back; the one it replaced "
-             "is %s", path, backup);
+    if (fresh)
+        log_info("UEFI: %s signed, written and read back", path);
+    else
+        log_info("UEFI: %s signed, written and read back; the one it "
+                 "replaced is %s", path, backup);
+    return CLI_OK;
+}
+
+/* A station without shim from before the jumper whose loader is still
+ * grubx64.efi: the old one saved and deleted, the new one written as
+ * falconx64.efi, which is the file the jumper starts. */
+static cli_status rename_loader(upd_ctx *c, const cli_args *a,
+                                const mok_keys *keys, const char *src,
+                                const char *workdir)
+{
+    char old[MKS_PATH_MAX];
+    char backup[MKS_PATH_MAX];
+    uint8_t *buf = NULL;
+    size_t n = 0;
+    cli_status rc;
+
+    (void)snprintf(old, sizeof old, "/%s/%s", STN_ESP_DIR, STN_LOADER_OLD);
+    rc = backup_name(c, a, "station-loader.efi", backup, sizeof backup);
+    if (rc == CLI_OK)
+        rc = read_file(c, c->esp_off, c->esp_len, old, &buf, &n);
+    if (rc == CLI_OK)
+        rc = util_write_file(backup, buf, n, 0644);
+    free(buf);
+    if (rc == CLI_OK)
+        rc = do_uefi(c, a, keys, c->esp_off, c->esp_len, STN_ESP_DIR,
+                     STN_LOADER_NOSHIM, src, "station-loader", 0, 1,
+                     workdir);
+    if (rc == CLI_OK)
+        rc = stn_mtools_del(c->d.path, c->esp_off, old + 1);
+    if (rc == CLI_OK)
+        log_info("UEFI: %s deleted, saved as %s", old, backup);
+    return rc;
+}
+
+/* A whole file's SHA-256 Authenticode digest, read off the ESP or a host
+ * path (esp NULL). */
+static int jump_digest(const upd_ctx *c, const char *esp, const char *host,
+                       uint8_t out[32])
+{
+    uint8_t *buf = NULL;
+    void *hbuf = NULL;
+    size_t n = 0;
+    cli_status rc;
+
+    if (esp != NULL)
+        rc = read_file(c, c->esp_off, c->esp_len, esp, &buf, &n);
+    else
+        rc = util_read_file(host, &hbuf, &n, FILE_MAX);
+    if (rc == CLI_OK)
+        rc = stn_image_digest(esp != NULL ? buf : (const uint8_t *)hbuf, n,
+                              0, out);
+    free(buf);
+    free(hbuf);
+    cli_error_clear();
+    return rc == CLI_OK;
+}
+
+/* \EFI\BOOT\BOOTX64.EFI, the jumper (DESIGN Section 12.2): written where
+ * there is none, signed again where it is ours, and where another
+ * system's is there, that one saved to --backup-dir first. */
+static cli_status do_jump(upd_ctx *c, const cli_args *a, const mok_keys *keys,
+                          const char *from, const char *workdir)
+{
+    static const char path[] = "/" STN_ESP_BOOT_DIR "/" STN_ESP_JUMP;
+    char src[MKS_PATH_MAX];
+    char backup[MKS_PATH_MAX];
+    uint8_t before[32];
+    uint8_t after[32];
+    int had;
+    cli_status rc;
+
+    (void)snprintf(src, sizeof src, "%s/falcon-esp-jump.efi", from);
+    if (!util_is_file(src))
+        return set_error(CLI_ERR_NOTFOUND, "no falcon-esp-jump.efi under %s",
+                         from);
+    had = c->p.jump == STN_JUMP_RESIGN &&
+          jump_digest(c, path, NULL, before);
+    rc = do_uefi(c, a, keys, c->esp_off, c->esp_len, STN_ESP_BOOT_DIR,
+                 STN_ESP_JUMP, src,
+                 c->p.jump == STN_JUMP_TAKE ? "bootx64" : "esp-jump", 0,
+                 c->p.jump == STN_JUMP_WRITE, workdir);
+    if (rc != CLI_OK)
+        return rc;
+    if (c->p.jump == STN_JUMP_TAKE &&
+        backup_name(c, a, "bootx64.efi", backup, sizeof backup) == CLI_OK)
+        log_info("%s was another system's; saved to %s (`station remove "
+                 "--bootx64 %s` puts it back)", STN_ESP_JUMP_PATH, backup,
+                 backup);
+    if (had)
+        c->jump_moved = !jump_digest(c, path, NULL, after) ||
+                        memcmp(before, after, sizeof before) != 0;
+    return CLI_OK;
+}
+
+/* The `falcon` entry naming the jumper, first in BootOrder, on this
+ * machine; for another machine's disk, the line to run there. */
+static cli_status jump_entry(const upd_ctx *c)
+{
+    unsigned part = c->r.parts[c->f.esp_boot].number;
+    int num = -1;
+
+    if (stn_fw_here(&c->d))
+        return stn_fw_jump_entry(c->d.path, part, &num);
+    log_info("firmware entry: not this machine's (an image, or a machine "
+             "that did not boot with UEFI); on the disk's machine delete a "
+             "%s entry that names \\EFI\\falcon\\ and run efibootmgr "
+             "--create --disk <disk> --part %u --label %s --loader '%s'",
+             STN_FW_LABEL, part, STN_FW_LABEL, STN_ESP_JUMP_PATH);
     return CLI_OK;
 }
 
@@ -594,10 +726,27 @@ static void describe(const upd_ctx *c)
                  c->r.parts[c->f.boot].number,
                  dos_path(MKS_ESP_BOOT_DIR, c->stick_name, path,
                           sizeof path));
-    if (p->uefi_station)
+    if (p->uefi_station && p->rename)
+        log_info("  write: partition %u \\EFI\\falcon\\%s in place of %s, "
+                 "signed with the station's MOK",
+                 c->r.parts[c->f.esp_boot].number, STN_LOADER_NOSHIM,
+                 STN_LOADER_OLD);
+    else if (p->uefi_station)
         log_info("  write: partition %u %s, signed with the station's MOK",
                  c->r.parts[c->f.esp_boot].number,
                  dos_path(STN_ESP_DIR, c->station_name, path, sizeof path));
+    if (p->uefi_station && p->jump != STN_JUMP_NONE)
+        log_info("  write: %s, the jumper, signed with the station's MOK%s",
+                 STN_ESP_JUMP_PATH,
+                 p->jump == STN_JUMP_TAKE ? "; the other system's there "
+                                            "saved first" : "");
+    if (p->uefi_station && p->jump != STN_JUMP_NONE)
+        log_info("  entry: %s naming %s, first in BootOrder%s", STN_FW_LABEL,
+                 STN_ESP_JUMP_PATH,
+                 stn_fw_here(&c->d) ? "" : " (on the disk's machine)");
+    if (p->totp_reenroll)
+        log_info("  totp: not resealed; PCR 4 measures the jumper from now "
+                 "on, so the check is enrolled again after the next boot");
     if (p->totp)
         log_info("  reseal: the TOTP seed, to the new loader; a new secret "
                  "for the authenticator");
@@ -636,7 +785,7 @@ static cli_status writable(const upd_ctx *c)
 {
     char where[MKS_PATH_MAX];
 
-    if (c->p.bios || c->p.uefi_stick)
+    if ((c->p.bios || c->p.uefi_stick) && c->f.boot >= 0)
         if (stn_part_mounted(&c->d, c->r.parts[c->f.boot].number, where,
                              sizeof where))
             return set_error(CLI_ERR_BUSY, "partition %u is mounted at %s; "
@@ -715,20 +864,36 @@ static cli_status update_run(const cli_args *a)
     if (rc == CLI_OK && c.p.uefi_stick) {
         (void)snprintf(src, sizeof src, "%s/falcon-boot.efi", from);
         rc = do_uefi(&c, a, &keys, c.boot_off, c.boot_len, MKS_ESP_BOOT_DIR,
-                     c.stick_name, src, 0, workdir);
+                     c.stick_name, src, "stick-loader", 0, 0, workdir);
     }
     if (rc == CLI_OK && c.p.uefi_station) {
         (void)snprintf(src, sizeof src, "%s/falcon-boot-station.efi", from);
-        rc = do_uefi(&c, a, &keys, c.esp_off, c.esp_len, STN_ESP_DIR,
-                     c.station_name, src, 1, workdir);
+        if (c.p.rename)
+            rc = rename_loader(&c, a, &keys, src, workdir);
+        else
+            rc = do_uefi(&c, a, &keys, c.esp_off, c.esp_len, STN_ESP_DIR,
+                         c.station_name, src, "station-loader", 1, 0,
+                         workdir);
     }
+    if (rc == CLI_OK && c.p.uefi_station && c.p.jump != STN_JUMP_NONE)
+        rc = do_jump(&c, a, &keys, from, workdir);
     shelf_key_close(&sk);
     if (c.p.uefi_stick || c.p.uefi_station)
         (void)rmdir(workdir);
+    if (rc == CLI_OK && c.p.uefi_station && c.p.jump != STN_JUMP_NONE)
+        rc = jump_entry(&c);
     if (rc != CLI_OK)
         return rc;
 
-    if (c.p.totp) {
+    if (c.p.totp_reenroll || c.jump_moved) {
+        log_warn("the TOTP check is not resealed: %s, so PCR 4 is not what "
+                 "it was", c.p.totp_reenroll
+                     ? "the jumper now starts the loader"
+                     : "the jumper is a new image");
+        log_warn("enroll it again: boot the updated station, then run "
+                 "`falcon-boot-mkstick station totp reseal %s` from the "
+                 "system it started", c.d.path);
+    } else if (c.p.totp) {
         stn_totp_update u;
         cli_status t;
 
@@ -794,7 +959,12 @@ const cli_cmd mks_cmd_update = {
     "         through the shelf's mapping when its OS has it open, else the\n"
     "         passphrase is asked for; the key stays in memory) or --key,\n"
     "         checked, written over the old one, which is saved first, and\n"
-    "         read back.\n"
+    "         read back. A station without shim gets \\EFI\\BOOT\\BOOTX64.EFI,\n"
+    "         the jumper (another system's there saved first), and on this\n"
+    "         machine the falcon entry naming it, first in BootOrder. One\n"
+    "         from before the jumper is migrated: its loader becomes\n"
+    "         falconx64.efi, its old entry goes, and [totp] is enrolled\n"
+    "         again (station totp reseal) after the next boot.\n"
     "  TOTP   a station with [totp] is resealed to the new loader and\n"
     "         prints a new secret; replace the authenticator's entry.\n"
     "\n"

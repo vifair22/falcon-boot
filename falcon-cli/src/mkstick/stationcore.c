@@ -5,6 +5,7 @@
 #include <mkstick/stationcore.h>
 
 #include <media/strows.h>
+#include <pe/pe.h>
 
 #include <stdio.h>
 #include <string.h>
@@ -657,4 +658,203 @@ stn_reach stn_reach_of(uint64_t end)
     if (end > STN_REACH_CHS_BYTES)
         return STN_REACH_PAST_CHS;
     return STN_REACH_OK;
+}
+
+const char *stn_noshim_loader(int has_new, int has_old)
+{
+    return (has_old && !has_new) ? STN_LOADER_OLD : STN_LOADER_NOSHIM;
+}
+
+int stn_is_esp_jump(const uint8_t *img, size_t n)
+{
+    static const char want[] = STN_JUMP_SBAT ",";
+    const char *row;
+    const char *end;
+    pe_hdr h;
+    size_t off = 0;
+    size_t len = 0;
+
+    if (img == NULL || pe_parse(img, n, &h) != PE_OK ||
+        pe_find_section(&h, img, n, ".sbat", &off, &len) != PE_OK)
+        return 0;
+    /* The first row is shim's own "sbat,1,..."; the component is the
+     * second. */
+    row = (const char *)img + off;
+    end = row + len;
+    row = memchr(row, '\n', (size_t)(end - row));
+    if (row == NULL)
+        return 0;
+    row++;
+    return (size_t)(end - row) >= sizeof want - 1u &&
+           memcmp(row, want, sizeof want - 1u) == 0;
+}
+
+stn_jump_action stn_jump_plan(int shim, int present, int ours)
+{
+    if (shim)
+        return STN_JUMP_NONE;
+    if (!present)
+        return STN_JUMP_WRITE;
+    return ours ? STN_JUMP_RESIGN : STN_JUMP_TAKE;
+}
+
+static int hex4(const char *p, uint16_t *out)
+{
+    unsigned v = 0;
+    int i;
+
+    for (i = 0; i < 4; i++) {
+        char ch = p[i];
+        unsigned d;
+
+        if (ch >= '0' && ch <= '9')
+            d = (unsigned)(ch - '0');
+        else if (ch >= 'A' && ch <= 'F')
+            d = (unsigned)(ch - 'A') + 10u;
+        else if (ch >= 'a' && ch <= 'f')
+            d = (unsigned)(ch - 'a') + 10u;
+        else
+            return -1;
+        v = v * 16u + d;
+    }
+    *out = (uint16_t)v;
+    return 0;
+}
+
+/* The file an entry's device path names: File(...) where efibootmgr
+ * prints the node by name, else what follows the last ")/" of a path that
+ * prints it bare. */
+static void fw_file(const char *dp, size_t len, char *out, size_t cap)
+{
+    const char *f = NULL;
+    const char *end = dp + len;
+    const char *p;
+    size_t n;
+
+    out[0] = '\0';
+    for (p = dp; p + 5 <= end; p++) {
+        if (memcmp(p, "File(", 5) == 0) {
+            f = p + 5;
+            break;
+        }
+    }
+    if (f != NULL) {
+        for (p = f; p < end && *p != ')'; p++)
+            ;
+    } else {
+        for (p = end; p > dp + 1; p--) {
+            if (p[-2] == ')' && p[-1] == '/')
+                break;
+        }
+        if (p <= dp + 1 || *p != '\\')
+            return;
+        f = p;
+        for (p = f; p < end && *p != ' ' && *p != '\t'; p++)
+            ;
+    }
+    n = (size_t)(p - f);
+    if (n >= cap)
+        n = cap - 1u;
+    memcpy(out, f, n);
+    out[n] = '\0';
+}
+
+int stn_fw_parse(const char *text, const char *label, stn_fw *out)
+{
+    size_t lab = label != NULL ? strlen(label) : 0;
+    const char *line = text;
+
+    if (text == NULL || label == NULL || out == NULL)
+        return -1;
+    memset(out, 0, sizeof *out);
+    while (*line != '\0') {
+        const char *eol = strchr(line, '\n');
+        size_t len = eol != NULL ? (size_t)(eol - line) : strlen(line);
+        uint16_t num;
+
+        if (len > 10u && memcmp(line, "BootOrder:", 10) == 0) {
+            const char *p = line + 10;
+            const char *e = line + len;
+
+            while (p < e && out->n_order < STN_FW_MAX) {
+                while (p < e && (*p == ' ' || *p == ','))
+                    p++;
+                if (e - p < 4 || hex4(p, &num) != 0)
+                    break;
+                out->order[out->n_order++] = num;
+                p += 4;
+            }
+        } else if (len > 9u && memcmp(line, "Boot", 4) == 0 &&
+                   hex4(line + 4, &num) == 0 &&
+                   (line[8] == '*' || line[8] == ' ')) {
+            const char *d = line + 9;
+            const char *e = line + len;
+
+            while (d < e && (*d == ' ' || *d == '*'))
+                d++;
+            if ((size_t)(e - d) >= lab && memcmp(d, label, lab) == 0 &&
+                (d + lab == e || d[lab] == '\t' || d[lab] == ' ') &&
+                out->n < STN_FW_MAX) {
+                out->num[out->n] = num;
+                fw_file(d + lab, (size_t)(e - d) - lab,
+                        out->path[out->n], STN_FW_PATH_MAX);
+                out->n++;
+            }
+        }
+        line += len;
+        if (*line == '\n')
+            line++;
+    }
+    return 0;
+}
+
+int stn_fw_path_is(const char *path, const char *want)
+{
+    size_t i;
+
+    if (path == NULL || want == NULL)
+        return 0;
+    for (i = 0; path[i] != '\0' && want[i] != '\0'; i++) {
+        char a = path[i];
+        char b = want[i];
+
+        if (a == '/')
+            a = '\\';
+        if (b == '/')
+            b = '\\';
+        if (a >= 'a' && a <= 'z')
+            a = (char)(a - 'a' + 'A');
+        if (b >= 'a' && b <= 'z')
+            b = (char)(b - 'a' + 'A');
+        if (a != b)
+            return 0;
+    }
+    return path[i] == '\0' && want[i] == '\0';
+}
+
+int stn_fw_find(const stn_fw *fw, const char *want)
+{
+    unsigned i;
+
+    for (i = 0; fw != NULL && i < fw->n; i++) {
+        if (stn_fw_path_is(fw->path[i], want))
+            return (int)i;
+    }
+    return -1;
+}
+
+unsigned stn_fw_order_first(const stn_fw *fw, uint16_t num, uint16_t *out,
+                            unsigned cap)
+{
+    unsigned n = 0;
+    unsigned i;
+
+    if (cap == 0u)
+        return 0;
+    out[n++] = num;
+    for (i = 0; i < fw->n_order && n < cap; i++) {
+        if (fw->order[i] != num)
+            out[n++] = fw->order[i];
+    }
+    return n;
 }

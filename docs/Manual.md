@@ -1288,7 +1288,7 @@ station shows once it is there. `/dev/X` is the machine's disk.
 | item | where it comes from |
 |---|---|
 | `falcon-bios-stage1.bin`, `falcon-bios-stage2.bin` | `make bios` |
-| `falcon-bios-station-stage3.bin`, `falcon-boot-station.efi` | `make station` |
+| `falcon-bios-station-stage3.bin`, `falcon-boot-station.efi`, `falcon-esp-jump.efi` | `make station` |
 | `falcon-bios-station-legacy-stage3.bin` and jump's drivers in `build/bin/mod/` (station-legacy, 7.7) | `make station-legacy` |
 | `falcon-boot-mkstick` | `make` |
 | Fedora shim 16.1 and its MokManager (UEFI with `--shim` only) | `falcon-efi/tools/shim-spike/fetch-shims.sh`, into `build/shim/bins/` |
@@ -1340,8 +1340,10 @@ It ends:
     `falcon-boot-mkstick station remove --backup station.bak` undoes it.
 
 A station has no shim by default: the firmware entry names
-`\EFI\falcon\grubx64.efi`, and with Secure Boot on the firmware's db must
-hold `falcon-boot.cer`. Enroll it before the first boot, from firmware
+the jumper, `\EFI\BOOT\BOOTX64.EFI`, which starts `\EFI\falcon\falconx64.efi`;
+a firmware that has lost the entry boots the same file by the
+removable-media path (Section 10.6). With Secure Boot on the firmware's db
+must hold `falcon-boot.cer`. Enroll the certificate before the first boot, from firmware
 setup or, where the machine's own keys are yours, with them (`sbctl` keeps
 it as a custom db certificate: copy the PEM `falcon-mok.crt` into
 `/var/lib/sbctl/keys/custom/db/` and run `sbctl enroll-keys --custom
@@ -2455,16 +2457,40 @@ device made with `losetup --sector-size 4096 -P`. A loop device is an
 image's: nothing else of this machine is scanned for it and no firmware
 entry is made.
 
-**UEFI.** Into `\EFI\falcon\` on the disk's ESP: `shimx64.efi`, MokManager
-under the name shim launches it by, the station loader under shim's
-next-stage name (`grubx64.efi`) signed with the MOK, `falcon-boot.cer`,
-`STATION.INI` and `memtest.efi` (`--memtest-efi`, signed with the MOK).
-The ESP's boot sector gets the station's boot record, with stage 3 and
-marker 0. On a block device of a machine that booted with UEFI a firmware
-entry named `falcon` is created for `\EFI\falcon\grubx64.efi`; for an image
-it prints the `efibootmgr` line to run on its machine. With `--shim` shim
-and MokManager are written too, and the entry names
+**UEFI.** Into `\EFI\falcon\` on the disk's ESP: the station loader as
+`falconx64.efi` signed with the MOK, `falcon-boot.cer`, `STATION.INI` and
+`memtest.efi` (`--memtest-efi`, signed with the MOK). The ESP's boot sector
+gets the station's boot record, with stage 3 and marker 0. Without
+`--shim` the jumper is written as `\EFI\BOOT\BOOTX64.EFI` (below), and on a
+block device of a machine that booted with UEFI a firmware entry named
+`falcon` is created for it and put first in BootOrder, any other `falcon`
+entry deleted; for an image it prints the `efibootmgr` line to run on its
+machine. With `--shim`, `shimx64.efi` and MokManager under the name shim
+launches it by are written too, the loader is named shim's next stage
+(`grubx64.efi`), there is no jumper, and the entry names
 `\EFI\falcon\shimx64.efi`.
+
+**The jumper.** Without `--shim`, `falcon-esp-jump.efi` (beside the
+loader) is signed with the MOK and written as `\EFI\BOOT\BOOTX64.EFI`:
+
+    ESP (partition 1): \EFI\BOOT\BOOTX64.EFI, the jumper to falconx64.efi
+
+The `falcon` entry names it, and a firmware with no entry for the station
+(an NVRAM reset, a firmware update that cleared its entries, the disk in
+another machine) boots the same file by the removable-media path; either
+way it starts `\EFI\falcon\falconx64.efi`. When that is missing, or the
+firmware refuses it, it prints
+
+    falcon-esp-jump: \EFI\falcon\falconx64.efi: status 0x<status>
+
+and returns to the firmware after five seconds. A `BOOTX64.EFI` already on
+the ESP is another system's; it is saved beside the backup file before the
+jumper replaces it, and `remove` puts it back:
+
+    \EFI\BOOT\BOOTX64.EFI was another system's; saved to <backup>.BOOTX64.EFI
+
+With `--shim` there is no jumper, since the MOK is not in that machine's
+db.
 
 **What it finds.** Every disk of the machine (a block-device target; an
 image's machine is the image and `--also`; `--no-scan` limits a block
@@ -2512,12 +2538,15 @@ and LBA 0 last.
 | `--backup <file>` | required: the file `station install` wrote |
 | `--full` | also puts back the partition tables, the station partition's first sectors and other disks' signatures |
 | `--force` | restores onto a disk that carries no record of this install |
+| `--bootx64 <file>` | the `BOOTX64.EFI` to put back where the jumper was (default: `<backup>.BOOTX64.EFI` when install saved one) |
 | `--dry-run` | reports and writes nothing |
 
 It reads the backup (its disk, or `<disk>` when named now), checks that a
 partition there carries the backup's install ID, and puts back LBA 0's boot
-code, stage 2's area and the ESP's boot sectors; deletes `\EFI\falcon` and
-the `falcon` firmware entry it made; deletes the `FALCON-BIOS` partition it
+code, stage 2's area and the ESP's boot sectors; deletes `\EFI\falcon`, the
+jumper (putting back the `BOOTX64.EFI` it replaced: `<backup>.BOOTX64.EFI`,
+or `--bootx64 <file>` for one `update` saved), the `falcon` firmware entry
+it made and any `falcon` entry naming the jumper; deletes the `FALCON-BIOS` partition it
 made. The station partition stays until it is deleted. `--full` restores
 every run: the partition tables whole (the station partition's entry goes),
 the station partition's first sectors, and the other disks' signatures.
@@ -2526,9 +2555,13 @@ the station partition's first sectors, and the other disks' signatures.
 
 Read-only: the install ID and every partition's record, the BIOS stages
 where stage 1 and the station partition's record put them, the ESP's files
-(`grubx64.efi` is the UEFI install, shim before it or not, and its
-signature is checked against `falcon-boot.cer` when `sbverify` and
-`openssl` are installed), each `STATION.INI` as the loaders parse it (or
+(the loader is the UEFI install: shim's next stage when shim is there,
+else `falconx64.efi`, or `grubx64.efi` on an install from before the
+jumper; its signature is checked against `falcon-boot.cer` when `sbverify`
+and `openssl` are installed), without shim `\EFI\BOOT\BOOTX64.EFI` (a
+failing check when it is not the jumper, whose signature is checked the
+same way) and, on a disk of the machine it runs on, that the `falcon`
+firmware entry names the jumper and is first in BootOrder, each `STATION.INI` as the loaders parse it (or
 the line it fails at), the shelf carrying the install ID, and the rows each
 menu shows (found systems, what STATION.INI adds, relabels and hides) with
 the default marked. On a block device every disk of this machine is read;
@@ -2578,8 +2611,11 @@ a TPM 2.0 against the one Linux reads. Enrollment says which:
 | `PCRs the station read, matching the event log` | TPM 2.0 |
 | `PCRs the station read: this firmware extends PCRs it does not log, so the event log is set aside` | TPM 2.0 on a firmware whose log does not account for the TPM (an AMD firmware TPM on an ASUS B550 board is one) |
 
-It refuses when the log has no measurement of the station's loader (the
-one `\EFI\falcon\shimx64.efi` starts, else `\EFI\falcon\grubx64.efi`),
+Without shim every boot of the station goes through the jumper, through
+the `falcon` entry or the removable-media path alike, so it is enrolled
+from either and the code shows on both. It refuses when the log has no
+measurement of the station's loader (the one
+`\EFI\falcon\shimx64.efi` starts, else `\EFI\falcon\falconx64.efi`),
 when the saved PCRs are not of this boot (`PCR <n> is not what the station
 read`), or when a log that accounts for the TPM does not give what the
 station read. A station older than the saved PCRs saves none, and the log
@@ -2624,7 +2660,7 @@ Section 12.14). The test rig's options (`--tpm-socket`, `--event-log`,
 
 | option | default | what it does |
 |---|---|---|
-| `--from` | `build/bin` | the built loaders: `falcon-boot.efi`, `falcon-boot-station.efi`, the BIOS stages, and `mod/` |
+| `--from` | `build/bin` | the built loaders: `falcon-boot.efi`, `falcon-boot-station.efi`, `falcon-esp-jump.efi`, the BIOS stages, and `mod/` |
 | `--backup-dir` | `.` | where what is replaced is saved |
 | `--passphrase-file` | prompt | the shelf's passphrase; the open shelf's mapping is then not used |
 | `--key`, `--cert` | the shelf's | the MOK pair, for an install whose shelf does not hold it; given together |
@@ -2639,7 +2675,31 @@ What the disk is comes from its records:
 | stick | a boot record, with a library and a shelf of its install ID | the loader on p1; stages 1-3 when LBA 0 holds stage 1 |
 | BIOS station | a boot record naming stage 3, with `STATION.INI` | stages 1-3 (`falcon-bios-station-stage3.bin`) |
 | station-legacy | the same, with any `*.MOD` on the partition | stages 1-3 (`falcon-bios-station-legacy-stage3.bin`) and the drivers |
-| UEFI station | the ESP's boot record, with a loader in `\EFI\falcon` | that loader |
+| UEFI station | the ESP's boot record, with a loader in `\EFI\falcon` | that loader; without shim, the jumper and its entry |
+
+A UEFI station without shim gets the jumper as install writes it (Section
+10.6): signed again where it is falcon's, written where there is none, and
+where another system's `BOOTX64.EFI` is there, that one saved first:
+
+    \EFI\BOOT\BOOTX64.EFI was another system's; saved to <dir>/<disk>-bootx64-<stamp>.efi (`station remove --bootx64 <file>` puts it back)
+
+On a disk of the machine it runs on, the `falcon` entry is made to name the
+jumper and put first in BootOrder; otherwise it prints the `efibootmgr`
+line to run on the disk's machine. `--from` must hold `falcon-esp-jump.efi`.
+
+A station installed before the jumper (no jumper of falcon's on its ESP)
+is migrated in the same run: the plan says
+
+    write: partition <n> \EFI\falcon\falconx64.efi in place of grubx64.efi, signed with the station's MOK
+    write: \EFI\BOOT\BOOTX64.EFI, the jumper, signed with the station's MOK
+    entry: falcon naming \EFI\BOOT\BOOTX64.EFI, first in BootOrder
+    totp: not resealed; PCR 4 measures the jumper from now on, so the check is enrolled again after the next boot
+
+and the old `grubx64.efi` is saved (`<disk>-station-loader-<stamp>.efi`)
+and deleted, and the entry that named it deleted. With `[totp]`, boot the
+updated station once and run `falcon-boot-mkstick station totp reseal
+<disk>` from the system it started; update says so, and it says the same
+when the jumper it wrote is a new image.
 
 A disk with both stations gets both halves. Anything else is refused
 (`<disk>: <why>; nothing written`), and so is a disk with a partition it
@@ -2665,6 +2725,8 @@ to `--backup-dir` first, `<stamp>` being `YYYYMMDD-HHMMSS`:
 |---|---|
 | `<disk>-bios-<stamp>.bin` | `falcon-boot-mkstick bios <disk> --remove --backup <file>` |
 | `<disk>-stick-loader-<stamp>.efi`, `<disk>-station-loader-<stamp>.efi` | copy it back over the loader with `mcopy` |
+| `<disk>-esp-jump-<stamp>.efi` | copy it back over `\EFI\BOOT\BOOTX64.EFI` with `mcopy` |
+| `<disk>-bootx64-<stamp>.efi` | `falcon-boot-mkstick station remove --bootx64 <file>`, or `mcopy` it back over `\EFI\BOOT\BOOTX64.EFI` |
 
 It keeps every record, `STATION.INI`, `/uki`, shim, MokManager, the
 certificate and the firmware's boot entries. It clears a pending next-boot
@@ -2773,7 +2835,8 @@ or `create --key-out` wrote.
 | p1 `/EFI/BOOT/grubx64.efi` (the loader) | ours only |
 | p3 `/uki/*.efi` | ours only |
 | station `\EFI\falcon\shimx64.efi`, its MokManager (with `--shim` only) | as fetched |
-| station `\EFI\falcon\grubx64.efi`, `\EFI\falcon\memtest.efi` | ours only |
+| station `\EFI\falcon\falconx64.efi` (`grubx64.efi` behind shim), `\EFI\falcon\memtest.efi` | ours only |
+| station `\EFI\BOOT\BOOTX64.EFI`, the jumper (without `--shim`) | ours only |
 | p2 `/falcon/blessed/` wraps | ours only |
 
 On a machine whose db trusts Microsoft, a stick's shim, or a station's
@@ -3365,7 +3428,7 @@ release branch's pipeline, says `dev`.
 | `all` | the stick's UEFI loader, `cli`, `winjump`, and `compile_commands.json` at the repository root |
 | `cli` | `falcon-boot-mkstick`, `falcon-boot-sign`, and `falcon-boot-sign-static` (the appliance's) |
 | `bios` | the stick's BIOS loader: `falcon-bios-stage1.bin`, `falcon-bios-stage2.bin`, `falcon-bios-stage3.bin` |
-| `station` | the UEFI station `falcon-boot-station.efi`, stages 1 and 2, and `falcon-bios-station-stage3.bin` |
+| `station` | the UEFI station `falcon-boot-station.efi` and its jumper `falcon-esp-jump.efi`, stages 1 and 2, and `falcon-bios-station-stage3.bin` |
 | `station-legacy` | stages 1 and 2, `falcon-bios-station-legacy-stage3.bin`, and jump's drivers in `build/bin/mod/` |
 | `devlink-uki` | `build/devlink/devlink-recovery.efi`, a `--bios-only` UKI named `DevLink recovery`, from `$(DEVLINK_IMAGES)/bzImage` and `rootfs.cpio.xz` (default `DEVLINK_IMAGES=$HOME/git/home/devlink-rescue/build/classic/images`) |
 | `station-bundle` | `falcon-station-<version>.tar.gz`: both stage 3s, stages 1 and 2, `mod/`, a stripped static `falcon-boot-mkstick32`, `update.sh`, `VERSION`, `MANIFEST` (sha256 of the rest), and `MEMTEST.BIN` with `MEMTEST=<file>` |
@@ -3692,7 +3755,7 @@ under the paths it installs them to:
 |---|---|
 | `usr/bin/falcon-boot-mkstick` | mkstick, x86-64, linked static |
 | `usr/bin/falcon-boot-sign` | the sign tool, x86-64, linked static |
-| `usr/lib/falcon-boot/bin/` | `falcon-boot.efi` (the stick), `falcon-boot-station.efi`, the BIOS stages 1 and 2, stage 3 for the stick, the station and station-legacy, and `mod/` (jump's drivers) |
+| `usr/lib/falcon-boot/bin/` | `falcon-boot.efi` (the stick), `falcon-boot-station.efi`, `falcon-esp-jump.efi`, the BIOS stages 1 and 2, stage 3 for the stick, the station and station-legacy, and `mod/` (jump's drivers) |
 | `usr/lib/falcon-boot/shim/bins/` | Fedora's shim 16.1 and its MokManager, signed by Microsoft's UEFI CA |
 | `usr/lib/falcon-boot/memtest/` | memtest86+ 8.10: `memtest-i586.bin` for `--memtest`, `memtest-x86_64.efi` for `--memtest-efi` |
 | `usr/share/doc/falcon-boot/` | `README.md`, this Manual, `DESIGN.md`, `LICENSE`, `THIRD-PARTY.md` (shim's and memtest86+'s licences and sources) |

@@ -225,7 +225,7 @@ test-tpm-rig:
 		echo "SKIP  test-tpm-rig: swtpm is not installed (Gentoo app-crypt/swtpm, Debian swtpm)."; \
 	else \
 		$(MAKE) --no-print-directory $(TPM_PROBE) $(TPM_PROBE_SIGNED) \
-			$(EFI_STATION_SIGNED) $(MKSTICK) && \
+			$(EFI_STATION_SIGNED) $(EFI_ESP_JUMP_SIGNED) $(MKSTICK) && \
 		falcon-efi/tools/run-tpm-rig.sh; \
 	fi
 
