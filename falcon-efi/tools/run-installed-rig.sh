@@ -35,9 +35,13 @@
 #         space. `station install --uefi --shim`; falcon's entry names the ESP by
 #         the disk's signature, as a firmware does on an MBR disk.
 #   noshim GPT, 512-byte sectors: an ESP, a LUKS2 shelf, free space.
-#         `station install --uefi`, without --shim; falcon's entry names
-#         \EFI\falcon\grubx64.efi, and with Secure Boot on the test MOK in
-#         db is what verifies it, as the machine's own key does on the T430.
+#         `station install --uefi`, without --shim: the loader as
+#         \EFI\falcon\falconx64.efi, the jumper as \EFI\BOOT\BOOTX64.EFI,
+#         and falcon's entry naming the jumper; with Secure Boot on the
+#         test MOK in db is what verifies both, as the machine's own key
+#         does on the T430.
+#   foreign noshim with another system's \EFI\BOOT\BOOTX64.EFI (the
+#         stand-in) on the ESP before the install.
 #
 # The cases:
 #
@@ -79,12 +83,27 @@
 #                 the installer's default (the UKI, a [linux] section)
 #                 counts down to the prompt, and the UKI reports
 #   noshim-uefi, noshim-uefi-sb
-#                 noshim under OVMF, the firmware starting the loader
-#                 itself: the default counts down to the prompt, and the UKI
-#                 reports
+#                 noshim under OVMF, falcon's entry starting the jumper and
+#                 the jumper the loader: the default counts down to the
+#                 prompt, and the UKI reports
+#   noshim-jump-uefi, noshim-jump-uefi-sb
+#                 noshim with no firmware entry for the station: the
+#                 firmware boots the disk's \EFI\BOOT\BOOTX64.EFI, the
+#                 jumper, which starts falconx64.efi, and the UKI reports
 #   noshim-status `station status` on noshim passes: no shim, the loader
-#                 signed by the cert beside it, and the ESP holds no shim or
-#                 MokManager
+#                 and the jumper signed by the cert beside them, and the
+#                 ESP holds no shim or MokManager
+#   noshim-update `mkstick update` on a copy of noshim signs the loader and
+#                 the jumper again, saving the old jumper first
+#   noshim-migrate
+#                 a copy of noshim made into an install from before the
+#                 jumper (the loader as grubx64.efi, the stand-in as
+#                 BOOTX64.EFI): `mkstick update` renames the loader, saves
+#                 the stand-in and writes the jumper, and with Secure Boot
+#                 on the entry naming the jumper boots it to the UKI
+#   foreign-jump  foreign: the installer saves the other system's
+#                 BOOTX64.EFI beside its backup and puts the jumper there;
+#                 `station remove` puts it back byte for byte
 #
 # The disks are image files; the 4096-byte-sector ones are written through
 # loop devices, which needs sudo, as do cryptsetup and the installer's
@@ -329,6 +348,24 @@ build_noshim() {
     part_facts "$img" 1 > "$R/noshim.esp"
 }
 
+# noshim's disk with another system's \EFI\BOOT\BOOTX64.EFI already on the
+# ESP (the stand-in), which the installer must leave as it was.
+build_foreign() {
+    local img=$R/foreign.img
+
+    rm -f "$img"
+    truncate -s 256M "$img"
+    sgdisk -n 1:2048:+64M -t 1:EF00 -c 1:EFI \
+        -n 2:0:+64M -t 2:"$SHELF_GUID" -c 2:FALCON-UKI "$img" >/dev/null
+    mkfs.fat -F 32 --offset 2048 -n SYSTEM "$img" $(( 64 * 1024 )) >/dev/null 2>&1
+    mmd -i "$img@@1M" ::/EFI ::/EFI/BOOT
+    mcopy -i "$img@@1M" "$STANDIN_SIGNED" ::/EFI/BOOT/BOOTX64.EFI
+    attach "$img"
+    make_shelf "${LOOP}p2"
+    detach
+    install_station foreign "$img" --uefi --shelf 2
+}
+
 build_all() {
     make --no-print-directory station cli "$STANDIN" "$STANDIN_SIGNED" \
         >/dev/null
@@ -339,7 +376,7 @@ build_all() {
     done
     if [[ "${KEEP:-0}" == 1 && -f "$R/gpt.img" && -f "$R/4kn.img" &&
           -f "$R/mbr4k.img" && -f "$R/gpt2.img" && -f "$R/mbr.img" &&
-          -f "$R/noshim.img" ]]; then
+          -f "$R/noshim.img" && -f "$R/foreign.img" ]]; then
         return
     fi
     echo "== installing the rig's stations"
@@ -349,6 +386,7 @@ build_all() {
     build_gpt2
     build_mbr
     build_noshim
+    build_foreign
 }
 
 # ---- the machine ----
@@ -438,17 +476,23 @@ def option(desc, pre, hd, path):
     dp = pre + hd + fp + end
     d = (desc + "\0").encode("utf-16-le")
     return (struct.pack("<IH", 1, len(dp)) + d + dp).hex()
-v = [{"name": "Boot0001", "guid": gguid, "attr": 7,
-      "data": option("falcon", prefix(0), harddrive(facts), shim)}]
-order = [1]
+v = []
+order = []
+# ENTRY=none: the firmware has no entry for the station (an NVRAM reset),
+# and boots the disk's removable-media path.
+if shim != "none":
+    v.append({"name": "Boot0001", "guid": gguid, "attr": 7,
+              "data": option("falcon", prefix(0), harddrive(facts), shim)})
+    order.append(1)
 if win in ("1", "2"):
     where = (prefix(0), harddrive(facts)) if win == "1" else \
         (prefix(1), harddrive(winfacts))
     v.append({"name": "Boot0009", "guid": gguid, "attr": 7,
               "data": option("Windows Boot Manager", *where, bootmgfw)})
     order.append(9)
-v.append({"name": "BootOrder", "guid": gguid, "attr": 7,
-          "data": b"".join(struct.pack("<H", n) for n in order).hex()})
+if order:
+    v.append({"name": "BootOrder", "guid": gguid, "attr": 7,
+              "data": b"".join(struct.pack("<H", n) for n in order).hex()})
 print(json.dumps({"version": 2, "variables": v}))
 EOF
 }
@@ -562,7 +606,7 @@ case_uefi_default() {   # case_uefi_default CASE FIRMWARE
     local c=$1 fw=$2
     WHY=
     boot "$fw" "$R/gpt.img" sata "$(cat "$R/gpt.esp")" 1
-    wait_for "Booting in 5 s. Any key stops the countdown." 90 ||
+    wait_for "Booting in 5 s" 90 ||
         WHY="no countdown"
     # OVMF's terminal gets the countdown line before the rows; by the
     # count's second line every row has been drawn.
@@ -579,7 +623,7 @@ case_uefi_default() {   # case_uefi_default CASE FIRMWARE
     [[ -z "$WHY" ]] && { wait_for "Memory test (memtest86+)" 5 || WHY="no memtest row"; }
     [[ -z "$WHY" ]] && { wait_for "booting: Windows Boot Manager (disk gpt:" 15 ||
         WHY="the default was not Windows"; }
-    [[ -z "$WHY" ]] && { has "restarting into it" || WHY="no NXT page"; }
+    [[ -z "$WHY" ]] && { wait_for "restarting into it" 10 || WHY="no NXT page"; }
     [[ -z "$WHY" ]] && { wait_for "FALCON-STANDIN $BOOTMGFW" 90 ||
         WHY="the firmware did not start Windows after the reset"; }
     halt
@@ -610,7 +654,7 @@ case_4kn_uefi() {       # case_4kn_uefi CASE FIRMWARE
     WHY=
     id=$(cat "$R/4kn.id")
     boot "$fw" "$R/4kn.img" nvme "$(cat "$R/4kn.esp")" 0
-    wait_for "Booting in 5 s. Any key stops the countdown." 90 ||
+    wait_for "Booting in 5 s" 90 ||
         WHY="no countdown"
     # OVMF's terminal gets the countdown line before the rows; by the
     # count's second line every row has been drawn.
@@ -698,7 +742,7 @@ case_second() {         # case_second CASE FIRMWARE nxt|esp
     [[ $how == nxt ]] && win=2
     SECOND=$R/win2.img boot "$fw" "$R/gpt2.img" sata "$(cat "$R/gpt2.esp")" \
         "$win" "$(cat "$R/win2.esp")"
-    wait_for "Booting in 5 s. Any key stops the countdown." 90 ||
+    wait_for "Booting in 5 s" 90 ||
         WHY="no countdown"
     # OVMF's terminal gets the countdown line before the rows; by the
     # count's second line every row has been drawn.
@@ -707,7 +751,7 @@ case_second() {         # case_second CASE FIRMWARE nxt|esp
     [[ -z "$WHY" ]] && { wait_for "booting: Windows" 15 ||
         WHY="the default was not Windows"; }
     if [[ -z "$WHY" && $how == nxt ]]; then
-        has "restarting into it" || WHY="no NXT page"
+        wait_for "restarting into it" 10 || WHY="no NXT page"
         [[ -z "$WHY" ]] && { wait_for "FALCON-STANDIN $BOOTMGFW" 90 ||
             WHY="the firmware did not start Windows after the reset"; }
     elif [[ -z "$WHY" ]]; then
@@ -731,7 +775,7 @@ case_mbr_uefi() {       # case_mbr_uefi CASE FIRMWARE
     WHY=
     id=$(install_id "$R/mbr.img")
     boot "$fw" "$R/mbr.img" sata "$(cat "$R/mbr.esp")" 0
-    wait_for "Booting in 5 s. Any key stops the countdown." 90 ||
+    wait_for "Booting in 5 s" 90 ||
         WHY="no countdown"
     # OVMF's terminal gets the countdown line before the rows; by the
     # count's second line every row has been drawn.
@@ -745,20 +789,51 @@ case_mbr_uefi() {       # case_mbr_uefi CASE FIRMWARE
     result "$c" "$WHY" "an ESP on MBR (mbr:$MBR_SIG): the default counted down to the prompt; UKI got both credentials"
 }
 
-# noshim: the firmware starts the loader itself, no shim in front of it.
+# noshim: the `falcon` entry names the jumper, which starts the loader; no
+# shim in front of either.
 case_noshim() {         # case_noshim CASE FIRMWARE
     local c=$1 fw=$2 id
     WHY=
     id=$(install_id "$R/noshim.img")
-    ENTRY='\EFI\falcon\grubx64.efi' boot "$fw" "$R/noshim.img" sata \
+    ENTRY='\EFI\BOOT\BOOTX64.EFI' boot "$fw" "$R/noshim.img" sata \
         "$(cat "$R/noshim.esp")" 0
-    wait_for "Booting in 5 s. Any key stops the countdown." 90 ||
+    wait_for "Booting in 5 s" 90 ||
         WHY="no countdown"
     [[ -z "$WHY" ]] && { wait_for "booting: personal.efi" 15 ||
         WHY="the default was not the shelf's UKI"; }
     [[ -z "$WHY" ]] && unlock "$id" 30
     halt
-    result "$c" "$WHY" "the firmware started grubx64.efi with no shim; the default counted down to the prompt; UKI got both credentials"
+    result "$c" "$WHY" "the falcon entry started the jumper, the jumper falconx64.efi; the default counted down to the prompt; UKI got both credentials"
+}
+
+# noshim with no firmware entry for the station: the firmware boots the
+# disk's \EFI\BOOT\BOOTX64.EFI, the jumper the installer put there, and the
+# jumper starts \EFI\falcon\falconx64.efi.
+case_noshim_jump() {    # case_noshim_jump CASE FIRMWARE
+    local c=$1 fw=$2 id n
+    WHY=
+    id=$(install_id "$R/noshim.img")
+    grep -q 'BOOTX64.EFI, the jumper to falconx64.efi' "$R/noshim.install" ||
+        WHY="the installer did not write the jumper"
+    if [[ -z "$WHY" ]]; then
+        ENTRY=none boot "$fw" "$R/noshim.img" sata \
+            "$(cat "$R/noshim.esp")" 0
+        # The jumper's one line, when it has one, is the reason.
+        wait_for "Booting in 5 s" 90 ||
+            WHY="no countdown $(log_text "$R/serial.log" |
+                grep -ao 'falcon-esp-jump: .*' | head -1)"
+        # Counted, not grep -q: the line is near the top of a long log, and
+        # a grep that stops reading there fails the pipe under pipefail.
+        n=$(log_text "$R/serial.log" |
+            grep -acF 'starting Boot0001 "UEFI QEMU HARDDISK' || true)
+        [[ -z "$WHY" && "$n" == 0 ]] &&
+            WHY="the firmware did not boot the disk's removable-media path"
+        [[ -z "$WHY" ]] && { wait_for "booting: personal.efi" 15 ||
+            WHY="the default was not the shelf's UKI"; }
+        [[ -z "$WHY" ]] && unlock "$id" 30
+        halt
+    fi
+    result "$c" "$WHY" "no firmware entry: BOOTX64.EFI, the jumper, started falconx64.efi; the default counted down to the prompt; UKI got both credentials"
 }
 
 case_noshim_status() {
@@ -768,13 +843,126 @@ case_noshim_status() {
     # shellcheck disable=SC2024
     sudo "$MKSTICK" station status "$R/noshim.img" --no-scan \
         >"$R/noshim.status" 2>&1 || WHY="station status failed"
-    [[ -z "$WHY" ]] && { grep -q 'no shim: the firmware starts grubx64.efi' "$R/noshim.status" ||
+    [[ -z "$WHY" ]] && { grep -q 'no shim: the jumper starts falconx64.efi' "$R/noshim.status" ||
         WHY="status did not say there is no shim"; }
-    [[ -z "$WHY" ]] && { grep -q '^  OK .*grubx64.efi is signed by falcon-boot.cer' "$R/noshim.status" ||
+    [[ -z "$WHY" ]] && { grep -q '^  OK .*falconx64.efi is signed by falcon-boot.cer' "$R/noshim.status" ||
         WHY="status did not check the loader's signature"; }
+    [[ -z "$WHY" ]] && { grep -q '^  OK .*BOOTX64.EFI is the jumper, signed by falcon-boot.cer' "$R/noshim.status" ||
+        WHY="status did not check the jumper"; }
     [[ -z "$WHY" ]] && mdir -b -i "$R/noshim.img@@1M" ::/EFI/falcon 2>/dev/null |
         grep -qiE 'shimx64|mmx64' && WHY="the ESP has a shim or MokManager"
-    result "$c" "$WHY" "status: no shim, the loader signed by the cert beside it"
+    result "$c" "$WHY" "status: no shim, the loader and the jumper signed by the cert beside them"
+}
+
+# `mkstick update` on a copy of noshim: the loader and the jumper are both
+# signed again, the jumper's old copy saved first.
+case_noshim_update() {
+    local c=$1 out=$R/noshim-update
+    WHY=
+    : > "$R/serial.log"
+    rm -rf "$out"
+    mkdir -p "$out"
+    cp --sparse=always "$R/noshim.img" "$out/disk.img"
+    # shellcheck disable=SC2024
+    sudo "$MKSTICK" update "$out/disk.img" --key "$MOK_KEY" --cert "$MOK_CRT" \
+        --backup-dir "$out" --yes >"$out/update.log" 2>&1 ||
+        WHY="update failed: $(tail -1 "$out/update.log")"
+    [[ -z "$WHY" ]] && { grep -q 'write: .EFI.BOOT.BOOTX64.EFI, the jumper, signed' "$out/update.log" ||
+        WHY="update did not plan the jumper"; }
+    [[ -z "$WHY" ]] && { grep -q 'UEFI: /EFI/BOOT/BOOTX64.EFI signed, written and read back; the one it replaced' "$out/update.log" ||
+        WHY="update did not write the jumper"; }
+    [[ -z "$WHY" ]] && { ls "$out"/disk.img-esp-jump-*.efi >/dev/null 2>&1 ||
+        WHY="the old jumper was not saved"; }
+    if [[ -z "$WHY" ]]; then
+        mcopy -n -i "$out/disk.img@@1M" ::/EFI/BOOT/BOOTX64.EFI "$out/jump.efi"
+        sbverify --cert "$MOK_CRT" "$out/jump.efi" >/dev/null 2>&1 ||
+            WHY="the jumper on the disk does not verify"
+    fi
+    rm -rf "$out"
+    result "$c" "$WHY" "update: falconx64.efi and the jumper signed again, the old jumper saved"
+}
+
+# foreign: another system's BOOTX64.EFI before the install. The installer
+# saves it beside the backup and puts the jumper there; `station remove`
+# puts it back byte for byte.
+case_foreign_jump() {
+    local c=$1 out=$R/foreign-remove
+    WHY=
+    : > "$R/serial.log"
+    rm -rf "$out"
+    mkdir -p "$out"
+    grep -q "BOOTX64.EFI was another system's; saved to $R/foreign.bak.BOOTX64.EFI" \
+        "$R/foreign.install" ||
+        WHY="the installer did not say where it saved BOOTX64.EFI"
+    [[ -z "$WHY" ]] && { cmp -s "$R/foreign.bak.BOOTX64.EFI" "$STANDIN_SIGNED" ||
+        WHY="the saved BOOTX64.EFI is not the other system's"; }
+    if [[ -z "$WHY" ]]; then
+        mcopy -n -i "$R/foreign.img@@1M" ::/EFI/BOOT/BOOTX64.EFI "$out/jump.efi"
+        sbverify --cert "$MOK_CRT" "$out/jump.efi" >/dev/null 2>&1 ||
+            WHY="BOOTX64.EFI after the install is not the signed jumper"
+    fi
+    if [[ -z "$WHY" ]]; then
+        cp --sparse=always "$R/foreign.img" "$out/disk.img"
+        # shellcheck disable=SC2024
+        sudo "$MKSTICK" station remove "$out/disk.img" \
+            --backup "$R/foreign.bak" >"$out/remove.log" 2>&1 ||
+            WHY="station remove failed: $(tail -1 "$out/remove.log")"
+        [[ -z "$WHY" ]] && { grep -q 'restored .EFI.BOOT.BOOTX64.EFI from' "$out/remove.log" ||
+            WHY="remove did not say it restored BOOTX64.EFI"; }
+        if [[ -z "$WHY" ]]; then
+            mcopy -n -i "$out/disk.img@@1M" ::/EFI/BOOT/BOOTX64.EFI "$out/after.efi"
+            cmp -s "$out/after.efi" "$STANDIN_SIGNED" ||
+                WHY="BOOTX64.EFI after remove is not the other system's"
+        fi
+    fi
+    rm -rf "$out"
+    result "$c" "$WHY" "another system's BOOTX64.EFI: saved by install, replaced by the jumper, put back by remove"
+}
+
+# A station without shim as installed before the jumper (the loader as
+# \EFI\falcon\grubx64.efi, the entry naming it) with another system's
+# BOOTX64.EFI, made from a copy of noshim; `mkstick update` migrates it,
+# and the entry naming the jumper boots it.
+case_noshim_migrate() { # case_noshim_migrate CASE FIRMWARE
+    local c=$1 fw=$2 out=$R/noshim-migrate id
+    WHY=
+    : > "$R/serial.log"
+    rm -rf "$out"
+    mkdir -p "$out"
+    id=$(install_id "$R/noshim.img")
+    cp --sparse=always "$R/noshim.img" "$out/disk.img"
+    mren -i "$out/disk.img@@1M" ::/EFI/falcon/falconx64.efi ::/EFI/falcon/grubx64.efi
+    mcopy -o -i "$out/disk.img@@1M" "$STANDIN_SIGNED" ::/EFI/BOOT/BOOTX64.EFI
+    # shellcheck disable=SC2024
+    sudo "$MKSTICK" update "$out/disk.img" --key "$MOK_KEY" --cert "$MOK_CRT" \
+        --backup-dir "$out" --yes >"$out/update.log" 2>&1 ||
+        WHY="update failed: $(tail -1 "$out/update.log")"
+    [[ -z "$WHY" ]] && { grep -q 'write: partition 1 .EFI.falcon.falconx64.efi in place of grubx64.efi' "$out/update.log" ||
+        WHY="update did not plan the rename"; }
+    [[ -z "$WHY" ]] && { grep -q "BOOTX64.EFI was another system's; saved to $out/disk.img-bootx64-" "$out/update.log" ||
+        WHY="update did not say where it saved BOOTX64.EFI"; }
+    [[ -z "$WHY" ]] && { grep -q 'entry: falcon naming .EFI.BOOT.BOOTX64.EFI, first in BootOrder' "$out/update.log" ||
+        WHY="update did not plan the entry"; }
+    [[ -z "$WHY" ]] && { cmp -s "$out"/disk.img-bootx64-*.efi "$STANDIN_SIGNED" ||
+        WHY="the saved BOOTX64.EFI is not the other system's"; }
+    [[ -z "$WHY" ]] && mdir -b -i "$out/disk.img@@1M" ::/EFI/falcon 2>/dev/null |
+        grep -qi 'grubx64' && WHY="grubx64.efi is still on the ESP"
+    if [[ -z "$WHY" ]]; then
+        mcopy -n -i "$out/disk.img@@1M" ::/EFI/BOOT/BOOTX64.EFI "$out/jump.efi"
+        sbverify --cert "$MOK_CRT" "$out/jump.efi" >/dev/null 2>&1 ||
+            WHY="BOOTX64.EFI after the update is not the signed jumper"
+    fi
+    if [[ -z "$WHY" ]]; then
+        ENTRY='\EFI\BOOT\BOOTX64.EFI' boot "$fw" "$out/disk.img" sata \
+            "$(cat "$R/noshim.esp")" 0
+        wait_for "Booting in 5 s" 90 || WHY="no countdown after the migration"
+        [[ -z "$WHY" ]] && { wait_for "booting: personal.efi" 15 ||
+            WHY="the default was not the shelf's UKI"; }
+        [[ -z "$WHY" ]] && unlock "$id" 30
+        halt
+    fi
+    rm -rf "$out"
+    result "$c" "$WHY" "update migrated grubx64.efi to falconx64.efi behind the jumper, saved the other BOOTX64.EFI; the entry booted it to the UKI"
 }
 
 case_4kn_remove() {
@@ -825,7 +1013,9 @@ CASES=("$@")
     CASES=(uefi-default uefi-sb-default uefi-pos uefi-sb-pos 4kn-uefi
            4kn-uefi-sb 4kn-bios 4kn-remove mbr4k-bios second-nxt
            second-sb-nxt second-esp second-sb-esp mbr-uefi mbr-uefi-sb
-           noshim-uefi noshim-uefi-sb noshim-status mbr4k-bios-bad)
+           noshim-uefi noshim-uefi-sb noshim-jump-uefi noshim-jump-uefi-sb
+           noshim-status noshim-update noshim-migrate foreign-jump
+           mbr4k-bios-bad)
 
 for c in "${CASES[@]}"; do
     case $c in
@@ -847,7 +1037,12 @@ for c in "${CASES[@]}"; do
     mbr-uefi-sb)     case_mbr_uefi "$c" uefi-sb ;;
     noshim-uefi)     case_noshim "$c" uefi ;;
     noshim-uefi-sb)  case_noshim "$c" uefi-sb ;;
+    noshim-jump-uefi)    case_noshim_jump "$c" uefi ;;
+    noshim-jump-uefi-sb) case_noshim_jump "$c" uefi-sb ;;
     noshim-status)   case_noshim_status "$c" ;;
+    noshim-update)   case_noshim_update "$c" ;;
+    noshim-migrate)  case_noshim_migrate "$c" uefi-sb ;;
+    foreign-jump)    case_foreign_jump "$c" ;;
     *) echo "unknown case: $c" >&2; exit 2 ;;
     esac
 done

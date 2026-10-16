@@ -17,6 +17,10 @@ typedef struct {
 #define EFI_SCAN_NULL  0x0000
 #define EFI_SCAN_UP    0x0001
 #define EFI_SCAN_DOWN  0x0002
+#define EFI_SCAN_HOME  0x0005
+#define EFI_SCAN_END   0x0006
+#define EFI_SCAN_PGUP  0x0009
+#define EFI_SCAN_PGDN  0x000A
 #define EFI_SCAN_ESC   0x0017
 
 typedef struct EFI_SIMPLE_TEXT_INPUT_PROTOCOL EFI_SIMPLE_TEXT_INPUT_PROTOCOL;
@@ -44,7 +48,8 @@ struct EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL {
                                BOOLEAN ExtendedVerification);
     EFI_STATUS (EFIAPI *OutputString)(EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL *This,
                                       CHAR16 *String);
-    void *TestString;
+    EFI_STATUS (EFIAPI *TestString)(EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL *This,
+                                    CHAR16 *String);
     EFI_STATUS (EFIAPI *QueryMode)(EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL *This,
                                    UINTN ModeNumber,
                                    UINTN *Columns,

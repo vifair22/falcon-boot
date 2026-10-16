@@ -262,7 +262,7 @@ static int launch(bios_disk *d, const elt_entry *e, fs_read_fn read,
 
             if (chunk > (uint32_t)sizeof g_sector)
                 chunk = (uint32_t)sizeof g_sector;
-            r->stage = "reading the medium's boot image";
+            boot_stage(r, "reading the medium's boot image");
             if (read(ctx, (uint64_t)e->lba * ELT_SECTOR + done,
                      (uint64_t)sizeof g_sector, g_sector) != 0)
                 return -1;
@@ -272,7 +272,7 @@ static int launch(bios_disk *d, const elt_entry *e, fs_read_fn read,
     }
 
     /* Where the resident will live. Not taken until the end. */
-    r->stage = "reserving memory for the virtual CD";
+    boot_stage(r, "reserving memory for the virtual CD");
     seg = lowmem_segment(VCD_BYTES);
     if (seg == 0) {
         r->advice = "this machine will not give up the conventional memory "
@@ -285,7 +285,7 @@ static int launch(bios_disk *d, const elt_entry *e, fs_read_fn read,
      * up, not the size it started. The appended region goes first because
      * the medium has to say it is there before anything may be placed in
      * it. */
-    r->stage = "placing the medium's edits";
+    boot_stage(r, "placing the medium's edits");
     if (g_redir_cd != 0) {
         /* The redirect grows the medium and maps its new sectors, run for run,
          * to where the original bytes already lie: the disk serves them, so
@@ -342,7 +342,7 @@ static int launch(bios_disk *d, const elt_entry *e, fs_read_fn read,
         }
         for (i = 0; i < g_n_keep_extra; i++)
             keep[n_keep++] = g_keep_extra[i];
-        r->stage = "building the memory map the ISO is handed";
+        boot_stage(r, "building the memory map the ISO is handed");
         g_n_carved = 0;
         if (first != (const e820_entry *)0 &&
             e820_carve(first, e820_count(), keep, n_keep, g_carved,
@@ -446,6 +446,7 @@ static int launch(bios_disk *d, const elt_entry *e, fs_read_fn read,
     bios_boot_drive = (uint8_t)VCD_DRIVE;
     poke16(GATE_TARGET, (uint16_t)VCD_OFF_LAUNCH);
     poke16(GATE_TARGET + 2u, seg);
+    tui_handoff();
     ((void (*)(void))(uintptr_t)GATE_BOOT16)();
     return -1;
 }
@@ -459,7 +460,7 @@ int vcd_chainload(bios_disk *d, fs_vol *p2, const part_entry *p2part,
     size_t i;
     int rc;
 
-    r->stage = "reading the ISO's boot catalog";
+    boot_stage(r, "reading the ISO's boot catalog");
     if (elt_parse(&cat, fs_file_read_cb, isofile, iso->size) != ELT_OK) {
         r->advice = "the medium has no El Torito boot catalog.";
         return -1;
@@ -482,7 +483,7 @@ int vcd_chainload(bios_disk *d, fs_vol *p2, const part_entry *p2part,
     }
 
     /* Where the ISO is on the disk, as runs the handler can scan. */
-    r->stage = "mapping the ISO's extents on p2";
+    boot_stage(r, "mapping the ISO's extents on p2");
     rc = fs_extents(p2, iso, g_fsext,
                     sizeof g_fsext / sizeof g_fsext[0], &n_ext);
     if (rc != FS_OK) {
@@ -515,7 +516,7 @@ int vcd_chainload_drive(bios_disk *d, uint64_t n_cd, boot_result *r)
     vcd_extent whole;
     int rc;
 
-    r->stage = "reading the disc's boot catalog";
+    boot_stage(r, "reading the disc's boot catalog");
     if (d->sector_size != VCD_CD_BYTES ||
         elt_parse(&cat, bios_disk_read, d, n_cd * VCD_CD_BYTES) != ELT_OK) {
         r->advice = "the disc has no El Torito boot catalog.";
@@ -533,7 +534,7 @@ int vcd_chainload_drive(bios_disk *d, uint64_t n_cd, boot_result *r)
     }
 
     /* The whole disc is one run: CD sector n is the drive's sector n. */
-    r->stage = "mapping the disc";
+    boot_stage(r, "mapping the disc");
     whole.off = 0;
     whole.len = n_cd * VCD_CD_BYTES;
     rc = vcd_build(&g_map, &whole, 1, 0, VCD_CD_BYTES, whole.len,

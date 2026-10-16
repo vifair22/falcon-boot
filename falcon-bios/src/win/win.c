@@ -26,7 +26,6 @@
 #include <start/bios.h>
 #include <win/win.h>
 #include <iso/vcd.h>
-#include <console/screen.h>
 #include <mem/heap.h>
 #include <linux/linux.h>
 
@@ -325,7 +324,7 @@ int win_boot(bios_disk *d, fs_vol *p2, const part_entry *p2part,
     if (unpatchable != (int *)0)
         *unpatchable = 1;
 
-    r->stage = "opening the ISO";
+    boot_stage(r, "opening the ISO");
     if (iso->size % BLK != 0)
         return -1;
     iso_blocks = (uint32_t)(iso->size / BLK);
@@ -335,7 +334,7 @@ int win_boot(bios_disk *d, fs_vol *p2, const part_entry *p2part,
     /* boot.wim comes off UDF on a Windows 7 or Vista x86 bridge disc, and off
      * ISO 9660 on an ISO 9660-only one (Vista SP1 x64). Try UDF first, since a
      * bridge disc carries both and its UDF tree is the one Windows reads. */
-    r->stage = "reading the ISO's filesystem";
+    boot_stage(r, "reading the ISO's filesystem");
     g_i9 = 0;
     if (udf_mount(&g_uv, fs_file_read_cb, &g_iso) == UDF_OK &&
         udf_lookup(&g_uv, "/sources/boot.wim", &we) == UDF_OK &&
@@ -368,7 +367,7 @@ int win_boot(bios_disk *d, fs_vol *p2, const part_entry *p2part,
         return -1;
     }
 
-    r->stage = "reading boot.wim";
+    boot_stage(r, "reading boot.wim");
     if (wim_open(wim_rd, (void *)0, wim_size, &w) != WIM_OK)
         return -1;
 
@@ -392,7 +391,7 @@ int win_boot(bios_disk *d, fs_vol *p2, const part_entry *p2part,
 
     /* Everything the patch needs at once, so a run that is big enough is
      * found once rather than discovered to be too small halfway through. */
-    r->stage = "reserving memory for the patch";
+    boot_stage(r, "reserving memory for the patch");
     heap_reset();
     if (!heap_open((uint64_t)w.lookup.orig + w.boot_meta.orig +
                    (uint64_t)tail_cap + 4u * (uint64_t)BLK + 0x10000u)) {
@@ -409,7 +408,7 @@ int win_boot(bios_disk *d, fs_vol *p2, const part_entry *p2part,
         return -1;
     }
 
-    r->stage = "reading boot.wim";
+    boot_stage(r, "reading boot.wim");
     if (wim_rd((void *)0, w.lookup.offset, w.lookup.orig, lookup) != 0 ||
         wim_read_resource(&w, wim_rd, (void *)0, &w.boot_meta, meta,
                           (size_t)w.boot_meta.orig, g_scratch) != WIM_OK)
@@ -418,7 +417,7 @@ int win_boot(bios_disk *d, fs_vol *p2, const part_entry *p2part,
     /* Which build of the jump binary: winpeshl.exe's own machine type, since
      * that is the program it replaces. Read from its first chunk, which
      * holds the headers. */
-    r->stage = "reading winpeshl.exe's headers";
+    boot_stage(r, "reading winpeshl.exe's headers");
     {
         wim_reshdr pe_res;
         size_t head_len = 0;
@@ -455,7 +454,7 @@ int win_boot(bios_disk *d, fs_vol *p2, const part_entry *p2part,
             }
             lacks = win_cpu_lacks(modern);
             if (lacks != (const char *)0) {
-                r->stage = "checking the processor";
+                boot_stage(r, "checking the processor");
                 bios_puts("falcon-bios: this processor has no ");
                 bios_puts(lacks);
                 bios_puts("\n");
@@ -483,7 +482,7 @@ int win_boot(bios_disk *d, fs_vol *p2, const part_entry *p2part,
              * Windows on a processor without long mode stops inside bootmgr
              * with nothing on screen to say why. */
             if (!linux_cpu_is_64()) {
-                r->stage = "checking the processor";
+                boot_stage(r, "checking the processor");
                 r->advice = "this is 64-bit Windows and this processor has "
                             "no 64-bit mode.";
                 return -1;
@@ -500,7 +499,7 @@ int win_boot(bios_disk *d, fs_vol *p2, const part_entry *p2part,
      * last block goes in front of it once the File Entry says how long that
      * is. A block of slack at the end holds the zero padding, and one more
      * the anchor. */
-    r->stage = "patching boot.wim";
+    boot_stage(r, "patching boot.wim");
     if (wim_patch_build(&w, lookup, meta, (size_t)w.boot_meta.orig,
                         jump, jump_len, g_cfg,
                         cfg_len, g_hdr, app + BLK, tail_cap,
@@ -509,7 +508,7 @@ int win_boot(bios_disk *d, fs_vol *p2, const part_entry *p2part,
         return -1;
     }
 
-    r->stage = "growing boot.wim";
+    boot_stage(r, "growing boot.wim");
     vcd_overlay_reset();
     /* The local flag, not g_i9: `we` is filled only on the UDF branch, and a
      * file-scope flag is one the calls in between could in principle rewrite,
@@ -588,8 +587,8 @@ int win_boot(bios_disk *d, fs_vol *p2, const part_entry *p2part,
     bios_puts("falcon-bios: boot.wim patched in memory, ");
     bios_put_dec((uint64_t)app_blocks * BLK / 1024u);
     bios_puts(" KiB served\n");
-    screen_out("booting with boot.wim patched in memory\n\n");
-    r->stage = "booting";
+    tui_step(u"booting with boot.wim patched in memory");
+    boot_stage(r, "booting");
     return vcd_chainload(d, p2, p2part, iso, &g_iso, r);
 
 no_room:
@@ -663,7 +662,7 @@ int win_xp_boot(bios_disk *d, fs_vol *p2, const part_entry *p2part,
     if (not_xp != (int *)0)
         *not_xp = 1;
 
-    r->stage = "opening the ISO";
+    boot_stage(r, "opening the ISO");
     if (iso->size % BLK != 0)
         return -1;
     iso_blocks = (uint32_t)(iso->size / BLK);
@@ -671,7 +670,7 @@ int win_xp_boot(bios_disk *d, fs_vol *p2, const part_entry *p2part,
         return -1;
 
     /* setupldr reads the primary (8.3) tree, so mount and look up there. */
-    r->stage = "reading the ISO's filesystem";
+    boot_stage(r, "reading the ISO's filesystem");
     if (iso9660_mount_primary(&g_iv_pri, fs_file_read_cb, &g_iso) != ISO9660_OK)
         return -1;
     if (iso9660_dir_open_root(&g_iv_pri, &dir) != ISO9660_OK ||
@@ -692,7 +691,7 @@ int win_xp_boot(bios_disk *d, fs_vol *p2, const part_entry *p2part,
      * rounded up to a page, plus room for the sif to grow and the driver: a
      * generous slack covers both roundings so a barely-fitting request does not
      * fail the second alloc. */
-    r->stage = "reserving memory for the driver injection";
+    boot_stage(r, "reserving memory for the driver injection");
     heap_reset();
     if (!heap_open((uint64_t)sif_len * 2u + (uint64_t)sys_len + 0x8000u)) {
         r->advice = "this machine has too little memory above 64 MB to inject "
@@ -709,12 +708,12 @@ int win_xp_boot(bios_disk *d, fs_vol *p2, const part_entry *p2part,
         return -1;
     }
 
-    r->stage = "reading txtsetup.sif";
+    boot_stage(r, "reading txtsetup.sif");
     if (iso9660_file_open(&g_iv_pri, &f, &sif) != ISO9660_OK ||
         iso9660_file_read(&f, 0, sif_len, raw) != ISO9660_OK)
         return -1;
 
-    r->stage = "injecting the driver into txtsetup.sif";
+    boot_stage(r, "injecting the driver into txtsetup.sif");
     if (txtsetup_inject((const char *)raw, sif_len, "falconcd", "_FALCON.SYS",
                         "Falcon Virtual CD", (char *)app,
                         sif_len + 0x1000u, &grown_len) != XPSETUP_OK) {
@@ -744,7 +743,7 @@ int win_xp_boot(bios_disk *d, fs_vol *p2, const part_entry *p2part,
             xp_bake_map(app + (size_t)sif_blocks * BLK, sys_len, g_map, map_len);
     }
 
-    r->stage = "growing the ISO in memory";
+    boot_stage(r, "growing the ISO in memory");
     vcd_overlay_reset();
 
     /* The appended sif and driver, served as CD sectors past the ISO's end. */
@@ -797,8 +796,8 @@ int win_xp_boot(bios_disk *d, fs_vol *p2, const part_entry *p2part,
     bios_puts("falcon-bios: 2000/XP driver injected, ");
     bios_put_dec((uint64_t)app_blocks * BLK / 1024u);
     bios_puts(" KiB served\n");
-    screen_out("booting Windows setup with the virtual-CD driver injected\n\n");
-    r->stage = "booting";
+    tui_step(u"booting Windows setup with the virtual-CD driver injected");
+    boot_stage(r, "booting");
     return vcd_chainload(d, p2, p2part, iso, &g_iso, r);
 
 no_room:

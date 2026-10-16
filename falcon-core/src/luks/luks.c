@@ -637,7 +637,7 @@ int luks_falcon_token(const luks_vol *v, uint32_t *version,
  * keyslot. Until this passes, "the AF merge produced 64 bytes" says nothing
  * at all: a wrong passphrase produces 64 bytes just as readily. */
 static int verify_digest(const json_value *digests, const json_value *name,
-                         const luks_master_key *mk)
+                         const luks_master_key *mk, void (*tick)(void))
 {
     json_iter it;
     if (json_iter_init(digests, &it) != JSON_OK) {
@@ -699,8 +699,8 @@ static int verify_digest(const json_value *digests, const json_value *name,
             return LUKS_ERR_CORRUPT;
         }
         /* The master key is the PBKDF2 *password* here, not the salt. */
-        if (pbkdf2(h, mk->key, mk->len, salt, salt_len, iters,
-                   got, want_len) != CRYPTO_OK) {
+        if (pbkdf2_tick(h, mk->key, mk->len, salt, salt_len, iters,
+                        got, want_len, tick) != CRYPTO_OK) {
             return LUKS_ERR_CORRUPT;
         }
         ok = crypto_ct_eq(got, want, want_len);
@@ -782,8 +782,9 @@ static int kdf_derive(luks_vol *v, kdf_in *k, const void *pass,
     int rc;
 
     if (k->type == LUKS_KDF_PBKDF2) {
-        rc = pbkdf2(k->hash, pass, pass_len, k->salt, k->salt_len, k->iters,
-                    out, out_len);
+        rc = pbkdf2_tick(k->hash, pass, pass_len, k->salt, k->salt_len,
+                         k->iters, out, out_len,
+                         mem != NULL ? mem->tick : NULL);
         crypto_wipe(k->salt, sizeof k->salt);
         return (rc == CRYPTO_OK) ? LUKS_OK : LUKS_ERR_UNSUPPORTED;
     }
@@ -807,6 +808,7 @@ static int kdf_derive(luks_vol *v, kdf_in *k, const void *pass,
     ap.t_cost = k->time;
     ap.m_cost = k->memory;
     ap.lanes = k->lanes;
+    ap.tick = mem->tick;
     rc = argon2id(&ap, block, kib, mem->run, out, out_len);
     if (mem->put != NULL) {
         mem->put(mem->ctx, block, kib);
@@ -819,12 +821,40 @@ static int kdf_derive(luks_vol *v, kdf_in *k, const void *pass,
     return (rc == CRYPTO_OK) ? LUKS_OK : LUKS_ERR_UNSUPPORTED;
 }
 
+/* Appends len bytes of a decrypted unit to the stripe being assembled,
+ * handing each completed stripe to the merge. */
+static int feed_stripes(af_merge_ctx *merge, uint8_t *stripe, uint32_t *sfill,
+                        uint32_t key_size, const uint8_t *unit, uint32_t len)
+{
+    uint32_t off = 0;
+
+    while (off < len) {
+        uint32_t take = key_size - *sfill;
+
+        if (take > len - off) {
+            take = len - off;
+        }
+        memcpy(stripe + *sfill, unit + off, take);
+        *sfill += take;
+        off += take;
+        if (*sfill == key_size) {
+            int rc = af_merge_stripe(merge, stripe);
+
+            if (rc != AF_OK) {
+                return rc;
+            }
+            *sfill = 0;
+        }
+    }
+    return AF_OK;
+}
+
 /* Attempt one keyslot. LUKS_OK means the master key in *mk is verified
  * against a digest; every other return leaves *mk wiped.
  *
- * Wipe discipline. salt, derived, stripe, sec, the XTS key schedule and the
- * merge accumulator each hold passphrase-derived or master-key material, and
- * each is wiped where it stops being needed rather than at a single exit.
+ * Wipe discipline. salt, derived, stripe, sec, the area block, the XTS key
+ * schedule and the merge accumulator each hold passphrase-derived or
+ * master-key material, and each is wiped where it stops being needed rather than at a single exit.
  * That is deliberate: this function has early returns above the streaming
  * loop, and a wipe at the bottom would be skipped by every one of them.
  *
@@ -844,11 +874,15 @@ static int try_slot(luks_vol *v, const json_value *name,
     uint8_t derived[LUKS_MAX_KEY];
     uint8_t stripe[LUKS_MAX_KEY];
     uint8_t sec[LUKS_KEYSLOT_UNIT];
+    uint8_t *buf = sec;
+    uint32_t buf_len = LUKS_KEYSLOT_UNIT;
+    void *blk = NULL;
+    uint32_t blk_kib = 0;
     af_merge_ctx merge;
     xts_ctx xts;
     uint32_t key_size = 0, stripes = 0, area_key_size = 0;
     uint64_t area_off = 0, area_size = 0;
-    uint64_t material, consumed = 0, s;
+    uint64_t material, span, consumed = 0, s;
     uint32_t sfill = 0;
     int rc;
 
@@ -945,46 +979,58 @@ static int try_slot(luks_vol *v, const json_value *name,
         return LUKS_ERR_UNSUPPORTED;
     }
 
-    /* Stream the keyslot area: one 512-byte XTS unit at a time, stripes fed
-     * to the merge as they complete. The 250 KB anti-forensic expansion is
-     * never resident, so this whole function fits in a small stack frame.
-     * Keyslot areas are always 512-based regardless of the data segment's
-     * sector size, and the IV counts from 0 at the area's own start. */
+    /* The keyslot area, decrypted one 512-byte XTS unit at a time and fed
+     * to the merge stripe by stripe. It is read in one call into a block
+     * from the caller's provider when one is given, and a unit at a time
+     * into sec when not: a firmware's mass-storage driver can cost tens of
+     * milliseconds per call whatever its length, and a default area is 500
+     * units. Keyslot areas are always 512-based regardless of the data
+     * segment's sector size, and the IV counts from 0 at the area's own
+     * start. */
+    span = (material + LUKS_KEYSLOT_UNIT - 1u) &
+           ~(uint64_t)(LUKS_KEYSLOT_UNIT - 1u);
+    if (mem != NULL && mem->get != NULL) {
+        blk_kib = (uint32_t)((span + 1023u) / 1024u);
+        blk = mem->get(mem->ctx, blk_kib);
+    }
+    if (blk != NULL) {
+        buf = blk;
+        buf_len = blk_kib * 1024u;
+    }
     rc = LUKS_OK;
-    for (s = 0; consumed < material; s++) {
-        uint64_t avail = material - consumed;
-        uint32_t take_off = 0;
+    for (s = 0; consumed < material && rc == LUKS_OK;) {
+        uint64_t n = span - s * LUKS_KEYSLOT_UNIT;
+        uint64_t u;
 
-        if (v->read(v->read_ctx, area_off + s * LUKS_KEYSLOT_UNIT,
-                    LUKS_KEYSLOT_UNIT, sec) != 0) {
+        if (n > buf_len) {
+            n = buf_len;
+        }
+        if (v->read(v->read_ctx, area_off + s * LUKS_KEYSLOT_UNIT, n,
+                    buf) != 0) {
             rc = LUKS_ERR_IO;
             break;
         }
-        xts_decrypt_sector(&xts, s, sec, sec, LUKS_KEYSLOT_UNIT);
-        if (avail > (uint64_t)LUKS_KEYSLOT_UNIT) {
-            avail = LUKS_KEYSLOT_UNIT;
-        }
-        while (take_off < (uint32_t)avail) {
-            uint32_t take = key_size - sfill;
+        for (u = 0; u < n && consumed < material; u += LUKS_KEYSLOT_UNIT) {
+            uint64_t avail = material - consumed;
 
-            if (take > (uint32_t)avail - take_off) {
-                take = (uint32_t)avail - take_off;
+            if (avail > (uint64_t)LUKS_KEYSLOT_UNIT) {
+                avail = LUKS_KEYSLOT_UNIT;
             }
-            memcpy(stripe + sfill, sec + take_off, take);
-            sfill += take;
-            take_off += take;
-            if (sfill == key_size) {
-                if (af_merge_stripe(&merge, stripe) != AF_OK) {
-                    rc = LUKS_ERR_CORRUPT;
-                    break;
-                }
-                sfill = 0;
+            xts_decrypt_sector(&xts, s, buf + u, buf + u, LUKS_KEYSLOT_UNIT);
+            if (feed_stripes(&merge, stripe, &sfill, key_size, buf + u,
+                             (uint32_t)avail) != AF_OK) {
+                rc = LUKS_ERR_CORRUPT;
+                break;
             }
+            consumed += avail;
+            s++;
         }
-        if (rc != LUKS_OK) {
-            break;
+    }
+    if (blk != NULL) {
+        crypto_wipe(blk, buf_len);
+        if (mem->put != NULL) {
+            mem->put(mem->ctx, blk, blk_kib);
         }
-        consumed += avail;
     }
 
     xts_wipe(&xts);
@@ -1003,7 +1049,7 @@ static int try_slot(luks_vol *v, const json_value *name,
         return rc;
     }
 
-    rc = verify_digest(digests, name, mk);
+    rc = verify_digest(digests, name, mk, mem != NULL ? mem->tick : NULL);
     if (rc != LUKS_OK) {
         crypto_wipe(mk, sizeof *mk);
     }

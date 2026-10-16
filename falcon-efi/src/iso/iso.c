@@ -24,6 +24,7 @@
 #include <media/bootfs.h>
 #include <media/medium.h>
 #include <lib/string.h>
+#include <tui/tui.h>
 #include <pe/pe.h>
 #include <trust/probe.h>
 
@@ -68,14 +69,14 @@ static const CHAR16 boot_file_path[] = L"\\EFI\\BOOT\\BOOTX64.EFI";
 #define ISO_MAX_VOLUMES 4u
 
 typedef struct {
-    VENDOR_DEVICE_PATH       vendor;
-    EFI_DEVICE_PATH_PROTOCOL end;
+    FALCON_VENDOR_DEVICE_PATH vendor;
+    EFI_DEVICE_PATH_PROTOCOL  end;
 } iso_device_path;
 
 /* Device path nodes are byte-packed; a compiler that padded this struct
  * would publish a path the firmware cannot walk. */
 _Static_assert(sizeof(iso_device_path) ==
-                   sizeof(VENDOR_DEVICE_PATH) +
+                   sizeof(FALCON_VENDOR_DEVICE_PATH) +
                        sizeof(EFI_DEVICE_PATH_PROTOCOL),
                "device path nodes must pack without padding");
 
@@ -255,6 +256,7 @@ static void device_init(iso_device *dev, uint64_t image_size,
                         const iso_overlay *ovl)
 {
     EFI_GUID vendor_guid = FALCON_ISO_MEDIA_GUID;
+    UINT64 instance;
 
     dev->image_size = image_size;
     dev->virt_size = virt_size;
@@ -287,11 +289,13 @@ static void device_init(iso_device *dev, uint64_t image_size,
     dev->bio.WriteBlocks = iso_write_blocks;
     dev->bio.FlushBlocks = iso_flush_blocks;
 
-    dev->path.vendor.Header.Type = HARDWARE_DEVICE_PATH;
-    dev->path.vendor.Header.SubType = HW_VENDOR_DP;
-    dp_set_node_len(&dev->path.vendor.Header,
+    dev->path.vendor.vendor.Header.Type = HARDWARE_DEVICE_PATH;
+    dev->path.vendor.vendor.Header.SubType = HW_VENDOR_DP;
+    dp_set_node_len(&dev->path.vendor.vendor.Header,
                     (UINT16)sizeof(dev->path.vendor));
-    dev->path.vendor.Guid = vendor_guid;
+    dev->path.vendor.vendor.Guid = vendor_guid;
+    instance = (UINT64)(UINTN)dev;
+    memcpy(dev->path.vendor.instance, &instance, sizeof(instance));
     dp_set_end(&dev->path.end);
 
     dev->handle = (EFI_HANDLE)0;
@@ -856,6 +860,7 @@ static EFI_STATUS chainload(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
     resolve_load_ops(bs, &ops);
 
     result->stage = L"reading the ISO ESP's device path";
+    tui_step(result->stage);
     status = bs->HandleProtocol(esp_handle, &dp_guid, (void **)&esp_path);
     if (EFI_ERROR(status))
         return status;
@@ -877,6 +882,7 @@ static EFI_STATUS chainload(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
     status = EFI_NOT_FOUND;   /* not loaded yet */
     if (ops.via_shim && ops.table_unhooked) {
         result->stage = L"LoadImage of \\EFI\\BOOT\\BOOTX64.EFI (firmware)";
+        tui_step(result->stage);
         status = bs->LoadImage(FALSE, parent_image, load_path, (void *)0, 0,
                                &child);
         if (status == EFI_SUCCESS) {
@@ -888,6 +894,7 @@ static EFI_STATUS chainload(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
             if (status == EFI_SECURITY_VIOLATION && child != (EFI_HANDLE)0)
                 bs->UnloadImage(child);
             child = (EFI_HANDLE)0;
+            tui_step_done(L"refused");
         }
     }
 
@@ -897,6 +904,7 @@ static EFI_STATUS chainload(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
         result->stage = ops.via_shim
                             ? L"LoadImage of \\EFI\\BOOT\\BOOTX64.EFI (shim)"
                             : L"LoadImage of \\EFI\\BOOT\\BOOTX64.EFI (firmware)";
+        tui_step(result->stage);
         status = ops.LoadImage(FALSE, parent_image, load_path, (void *)0, 0,
                                &child);
     }
@@ -914,19 +922,12 @@ static EFI_STATUS chainload(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
         return status;
     }
 
-    /* The handoff, said out loud because everything after it is silence that
-     * belongs to somebody else. A payload may legitimately draw nothing for
-     * several seconds (a kernel before it claims the framebuffer), or draw
-     * only on a console we cannot see (Windows media's cdboot.efi puts its
-     * press-any-key prompt on GOP), and both look exactly like this loader
-     * having hung on the handoff. One line makes the silence attributable.
-     * It is the last thing printed before the screen stops being ours, and it
-     * pairs with the "the payload exited" line the caller prints if it comes
-     * back. */
-    st->ConOut->OutputString(st->ConOut,
-                             (CHAR16 *)(uintptr_t)
-                             L"handing over to the payload; everything below "
-                             L"is its own output.\r\n\r\n");
+    /* The hand-off (DESIGN Section 7.10): a payload may draw nothing for
+     * seconds, or draw only on a console we cannot see (Windows media's
+     * cdboot.efi puts its press-any-key prompt on GOP); the page above the
+     * cursor says where the silence began. */
+    tui_step(L"handing over to the payload");
+    tui_handoff();
 
     result->stage = L"StartImage";
     shim_lock_hide(bs);
@@ -1001,6 +1002,7 @@ static EFI_STATUS iso_open(EFI_SYSTEM_TABLE *st, fs_vol *vol,
     vols->n = 0;
     *owned = 0;
     *stage = L"preparing the virtual media";
+    tui_step(*stage);
 
     if (g_dev.in_use) {
         *stage = L"previous virtual media still held by a driver";
@@ -1081,6 +1083,7 @@ static EFI_STATUS iso_open(EFI_SYSTEM_TABLE *st, fs_vol *vol,
     *owned = 1;
 
     *stage = L"publishing the virtual media";
+    tui_step(*stage);
     status = bs->InstallMultipleProtocolInterfaces(
         &g_dev.handle,
         &bio_guid, &g_dev.bio,
@@ -1093,6 +1096,7 @@ static EFI_STATUS iso_open(EFI_SYSTEM_TABLE *st, fs_vol *vol,
     /* Snapshot before connecting: the ISO's ESP is the filesystem that is
      * not here yet. */
     *stage = L"enumerating filesystems";
+    tui_step(*stage);
     status = sfs_handles(bs, &before, &before_n);
     if (EFI_ERROR(status))
         return status;
@@ -1104,6 +1108,7 @@ static EFI_STATUS iso_open(EFI_SYSTEM_TABLE *st, fs_vol *vol,
      * flavor's partition child gets its own FAT driver bound in the same
      * call. */
     *stage = L"ConnectController on the virtual media";
+    tui_step(*stage);
     /* Set before the call: a partial bind still leaves drivers attached, and
      * teardown must disconnect them. */
     g_dev.connected = 1;
@@ -1111,6 +1116,7 @@ static EFI_STATUS iso_open(EFI_SYSTEM_TABLE *st, fs_vol *vol,
                                    (EFI_DEVICE_PATH_PROTOCOL *)0, TRUE);
     if (!EFI_ERROR(status)) {
         *stage = L"finding the medium's EFI System Partition";
+        tui_step(*stage);
         status = collect_iso_volumes(bs, &g_dev, before, before_n, vols);
         if (!EFI_ERROR(status))
             select_boot_volume(bs, vols);

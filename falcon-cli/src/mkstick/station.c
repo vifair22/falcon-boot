@@ -255,6 +255,29 @@ cli_status stn_mtools_deltree(const char *disk, uint64_t off,
     return proc_runl_quiet("mdeltree", "-i", img, path, PROC_END);
 }
 
+cli_status stn_mtools_get(const char *disk, uint64_t off, const char *src,
+                          const char *dst)
+{
+    char img[MKS_PATH_MAX + 32];
+    char path[MKS_PATH_MAX];
+
+    mtools_image(img, sizeof img, disk, off);
+    (void)snprintf(path, sizeof path, "::/%s", src);
+    return proc_runl_quiet("mcopy", "-n", "-i", img, path, dst, PROC_END);
+}
+
+cli_status stn_mtools_del(const char *disk, uint64_t off, const char *file)
+{
+    char img[MKS_PATH_MAX + 32];
+    char path[MKS_PATH_MAX];
+
+    mtools_image(img, sizeof img, disk, off);
+    (void)snprintf(path, sizeof path, "::/%s", file);
+    if (!mtools_exists(img, path))
+        return CLI_OK;
+    return proc_runl_quiet("mdel", "-i", img, path, PROC_END);
+}
+
 /* ---- the scan ---- */
 
 static cli_status read_disk(stn_disk *sd, const char *path)
@@ -564,6 +587,90 @@ void stn_scan_firmware(stn_scan *s, int *falcon_entry)
     }
 }
 
+int stn_fw_here(const mks_disk *d)
+{
+    return stn_is_machine(d) && util_is_dir("/sys/firmware/efi") &&
+           proc_exists("efibootmgr");
+}
+
+cli_status stn_fw_read(stn_fw *fw)
+{
+    static char out[65536];
+    size_t len = 0;
+    cli_status rc;
+
+    rc = proc_capture_l(out, sizeof out, &len, "efibootmgr", "-v", PROC_END);
+    if (rc != CLI_OK)
+        return rc;
+    out[len < sizeof out ? len : sizeof out - 1u] = '\0';
+    (void)stn_fw_parse(out, STN_FW_LABEL, fw);
+    return CLI_OK;
+}
+
+cli_status stn_fw_jump_entry(const char *disk, uint32_t part, int *num)
+{
+    static stn_fw fw;
+    uint16_t order[STN_FW_MAX];
+    char list[STN_FW_MAX * 5u + 1u];
+    char hex[8];
+    char pnum[16];
+    unsigned n;
+    unsigned i;
+    int at;
+    cli_status rc;
+
+    *num = -1;
+    rc = stn_fw_read(&fw);
+    if (rc != CLI_OK)
+        return rc;
+    /* An entry of ours that names anything else is from before the jumper
+     * (the loader itself), and goes. */
+    for (i = 0; i < fw.n; i++) {
+        if (stn_fw_path_is(fw.path[i], STN_ESP_JUMP_PATH))
+            continue;
+        (void)snprintf(hex, sizeof hex, "%04X", (unsigned)fw.num[i]);
+        rc = proc_runl_quiet("efibootmgr", "-b", hex, "-B", PROC_END);
+        if (rc != CLI_OK)
+            return rc;
+        log_info("firmware entry: Boot%s (%s, %s) deleted", hex,
+                 STN_FW_LABEL, fw.path[i][0] != '\0' ? fw.path[i] : "?");
+    }
+    rc = stn_fw_read(&fw);
+    if (rc != CLI_OK)
+        return rc;
+    at = stn_fw_find(&fw, STN_ESP_JUMP_PATH);
+    if (at < 0) {
+        (void)snprintf(pnum, sizeof pnum, "%u", part);
+        rc = proc_runl_quiet("efibootmgr", "--create", "--disk", disk,
+                             "--part", pnum, "--label", STN_FW_LABEL,
+                             "--loader", STN_ESP_JUMP_PATH, PROC_END);
+        if (rc == CLI_OK)
+            rc = stn_fw_read(&fw);
+        if (rc != CLI_OK)
+            return rc;
+        at = stn_fw_find(&fw, STN_ESP_JUMP_PATH);
+        if (at < 0)
+            return set_error(CLI_ERR_IO, "efibootmgr made no %s entry for "
+                             "%s", STN_FW_LABEL, STN_ESP_JUMP_PATH);
+        log_info("firmware entry: Boot%04X %s, %s", (unsigned)fw.num[at],
+                 STN_FW_LABEL, STN_ESP_JUMP_PATH);
+    }
+    *num = fw.num[at];
+    if (fw.n_order > 0u && fw.order[0] == fw.num[at])
+        return CLI_OK;
+    n = stn_fw_order_first(&fw, fw.num[at], order, STN_FW_MAX);
+    list[0] = '\0';
+    for (i = 0; i < n; i++)
+        (void)snprintf(list + strlen(list), sizeof list - strlen(list),
+                       "%s%04X", i == 0u ? "" : ",", (unsigned)order[i]);
+    rc = proc_runl_quiet("efibootmgr", "-o", list, PROC_END);
+    if (rc != CLI_OK)
+        return rc;
+    log_info("firmware entry: Boot%04X first in BootOrder",
+             (unsigned)fw.num[at]);
+    return CLI_OK;
+}
+
 /* ---- remove ---- */
 
 static const cli_opt remove_opts[] = {
@@ -574,6 +681,9 @@ static const cli_opt remove_opts[] = {
       "sectors and other disks' signatures" },
     { "force", CLI_OPT_FLAG, 0, NULL,
       "restore onto a disk that carries no record of this install" },
+    { "bootx64", CLI_OPT_VALUE, 0, "<file>",
+      "the BOOTX64.EFI to put back where the jumper was (default: the one "
+      "install saved beside --backup, when there is one)" },
     { "dry-run", CLI_OPT_FLAG, 0, NULL, "report and write nothing" }
 };
 
@@ -630,6 +740,36 @@ static cli_status write_run(const char *path, uint32_t sector,
     if (rc == CLI_OK && fsync(dev.fd) != 0)
         rc = set_error_errno(CLI_ERR_IO, "flushing %s", path);
     (void)close(dev.fd);
+    return rc;
+}
+
+/* The BOOTX64.EFI the jumper replaced, back on the ESP: --bootx64's file
+ * (what an update saved), else the one install saved beside the backup.
+ * Neither is a jumper installed on a free path. */
+static cli_status restore_foreign_jump(const cli_args *a, const char *bpath,
+                                       const mks_disk *d, uint64_t esp_off)
+{
+    const char *named = cli_value(a, "bootx64", NULL);
+    char side[MKS_PATH_MAX];
+    const char *src = named;
+    cli_status rc;
+
+    if (src == NULL) {
+        if (snprintf(side, sizeof side, "%s%s", bpath, STN_JUMP_BACKUP_EXT) >=
+                (int)sizeof side ||
+            !util_is_file(side)) {
+            log_info("no %s beside the backup: \\EFI\\BOOT\\%s stays empty",
+                     STN_JUMP_BACKUP_EXT + 1, STN_ESP_JUMP);
+            return CLI_OK;
+        }
+        src = side;
+    }
+    if (!util_is_file(src))
+        return set_error(CLI_ERR_NOTFOUND, "--bootx64 %s is not a file", src);
+    rc = stn_mtools_put(d->path, esp_off, src,
+                        STN_ESP_BOOT_DIR "/" STN_ESP_JUMP);
+    if (rc == CLI_OK)
+        log_info("restored \\EFI\\BOOT\\%s from %s", STN_ESP_JUMP, src);
     return rc;
 }
 
@@ -736,9 +876,27 @@ static cli_status remove_run(const cli_args *a)
             log_warn("%s has no partition %u; the ESP's files stay",
                      d.path, b.esp_part);
         } else {
-            rc = stn_mtools_deltree(d.path,
-                                    r.parts[e].start_lba * d.sector,
-                                    STN_ESP_DIR);
+            uint64_t esp_off = r.parts[e].start_lba * d.sector;
+            uint64_t esp_len = (r.parts[e].end_lba - r.parts[e].start_lba +
+                                1u) * d.sector;
+            int present = 0;
+            int jump = 0;
+
+            if (stn_esp_jump_state(d.path, esp_off, esp_len, &present,
+                                   &jump) != CLI_OK)
+                cli_error_clear();
+            if (jump) {
+                rc = stn_mtools_del(d.path, esp_off,
+                                    STN_ESP_BOOT_DIR "/" STN_ESP_JUMP);
+                if (rc != CLI_OK)
+                    goto out;
+                log_info("deleted \\EFI\\BOOT\\%s, the jumper, from the ESP",
+                         STN_ESP_JUMP);
+                rc = restore_foreign_jump(a, bpath, &d, esp_off);
+                if (rc != CLI_OK)
+                    goto out;
+            }
+            rc = stn_mtools_deltree(d.path, esp_off, STN_ESP_DIR);
             if (rc != CLI_OK)
                 goto out;
             log_info("deleted \\EFI\\falcon from the ESP (partition %u)",
@@ -762,6 +920,30 @@ static cli_status remove_run(const cli_args *a)
             log_warn("firmware entry Boot%04X is not this machine's falcon "
                      "entry; left alone", (unsigned)b.fw_entry);
         }
+    }
+    /* The jumper's entry: an update makes it anew, so its number need not
+     * be the one the backup recorded. */
+    if ((b.flags & STN_FLAG_UEFI) != 0u && stn_fw_here(&d)) {
+        static stn_fw now;
+        unsigned k;
+
+        if (stn_fw_read(&now) != CLI_OK) {
+            cli_error_clear();
+            now.n = 0;
+        }
+        for (k = 0; k < now.n && rc == CLI_OK; k++) {
+            char num[8];
+
+            if (!stn_fw_path_is(now.path[k], STN_ESP_JUMP_PATH))
+                continue;
+            (void)snprintf(num, sizeof num, "%04X", (unsigned)now.num[k]);
+            rc = proc_runl_quiet("efibootmgr", "-b", num, "-B", PROC_END);
+            if (rc == CLI_OK)
+                log_info("removed firmware entry Boot%s (%s, %s)", num,
+                         STN_FW_LABEL, STN_ESP_JUMP_PATH);
+        }
+        if (rc != CLI_OK)
+            goto out;
     }
 
     /* Every run but the target's LBA 0, then that. */
@@ -820,7 +1002,9 @@ static const cli_cmd stn_cmd_remove = {
     0, 1,
     "Puts back what the backup holds: LBA 0's boot code, the boot area stage\n"
     "2 was written into, and the ESP's boot sector; deletes \\EFI\\falcon from\n"
-    "the ESP and the firmware entry named falcon it created; removes the\n"
+    "the ESP, the jumper at \\EFI\\BOOT\\BOOTX64.EFI (putting back the file it\n"
+    "replaced: <backup>.BOOTX64.EFI, or --bootx64), and the firmware entries\n"
+    "named falcon it created or that name the jumper; removes the\n"
     "FALCON-BIOS partition it made on a GPT disk. The station partition is\n"
     "left for the user to delete. --full also puts back the partition\n"
     "tables (so the station partition's entry goes), the station\n"
@@ -1212,6 +1396,48 @@ static void status_bios(stn_tally *t, stn_scan *s, stationini *ini,
         log_info("  --   no /%s: the menu waits", STATIONINI_FILE);
 }
 
+/* \EFI\falcon\<name> is on the FAT volume at [off, off + len) of disk. */
+static int esp_has(const char *disk, uint64_t off, uint64_t len,
+                   const char *name)
+{
+    char path[128];
+    char probe[16];
+    size_t got = 0;
+    int rc;
+
+    (void)snprintf(path, sizeof path, "/%s/%s", STN_ESP_DIR, name);
+    rc = stn_read_file(disk, off, len, path, probe, sizeof probe, &got);
+    return rc == FS_OK || rc == FS_ERR_RANGE;
+}
+
+cli_status stn_esp_jump_state(const char *disk, uint64_t off, uint64_t len,
+                              int *present, int *ours)
+{
+    /* The jumper is a few KiB; a foreign BOOTX64.EFI larger than this is
+     * not ours, and is read no further. */
+    const size_t max = (size_t)1024 * 1024;
+    char *buf;
+    size_t got = 0;
+    int rc;
+
+    *present = 0;
+    *ours = 0;
+    buf = malloc(max);
+    if (buf == NULL)
+        return set_error(CLI_ERR_NOMEM, "reading \\EFI\\BOOT\\" STN_ESP_JUMP);
+    rc = stn_read_file(disk, off, len, "/" STN_ESP_BOOT_DIR "/" STN_ESP_JUMP,
+                       buf, max, &got);
+    if (rc == FS_OK || rc == FS_ERR_RANGE)
+        *present = 1;
+    if (rc == FS_OK)
+        *ours = stn_is_esp_jump((const uint8_t *)buf, got);
+    free(buf);
+    if (rc != FS_OK && rc != FS_ERR_RANGE && rc != FS_ERR_NOT_FOUND)
+        return set_error(CLI_ERR_IO, "\\EFI\\BOOT\\" STN_ESP_JUMP " could "
+                         "not be read off the ESP");
+    return CLI_OK;
+}
+
 cli_status stn_esp_loader_name(const char *disk, uint64_t off, uint64_t len,
                                char *out, size_t cap)
 {
@@ -1230,7 +1456,9 @@ cli_status stn_esp_loader_name(const char *disk, uint64_t off, uint64_t len,
                        max, &got);
     if (rc == FS_ERR_NOT_FOUND) {
         free(buf);
-        (void)snprintf(out, cap, "%s", STN_ESP_LOADER);
+        (void)snprintf(out, cap, "%s", stn_noshim_loader(
+            esp_has(disk, off, len, STN_LOADER_NOSHIM),
+            esp_has(disk, off, len, STN_LOADER_OLD)));
         return CLI_OK;
     }
     if (rc != FS_OK) {
@@ -1254,10 +1482,11 @@ cli_status stn_esp_loader_name(const char *disk, uint64_t off, uint64_t len,
     return st;
 }
 
-/* Is \EFI\falcon's loader signed by \EFI\falcon\falcon-boot.cer: both
+/* Is esp_dir/name signed by \EFI\falcon\falcon-boot.cer: both
  * copied off the ESP, the cert made PEM, and sbverify asked. -1 when that
  * cannot be asked (no sbverify or openssl, a copy that failed). */
-static int loader_signed(const char *disk, uint64_t off, const char *name)
+static int loader_signed(const char *disk, uint64_t off, const char *esp_dir,
+                         const char *name)
 {
     char src[MKS_PATH_MAX];
     char dir[] = "/tmp/falcon-status.XXXXXX";
@@ -1274,7 +1503,7 @@ static int loader_signed(const char *disk, uint64_t off, const char *name)
     (void)snprintf(efi, sizeof efi, "%s/loader.efi", dir);
     (void)snprintf(cer, sizeof cer, "%s/cert.cer", dir);
     (void)snprintf(pem, sizeof pem, "%s/cert.pem", dir);
-    (void)snprintf(src, sizeof src, "::/%s/%s", STN_ESP_DIR, name);
+    (void)snprintf(src, sizeof src, "::/%s/%s", esp_dir, name);
     if (proc_runl_quiet("mcopy", "-n", "-i", img, src, efi, PROC_END) ==
             CLI_OK &&
         proc_runl_quiet("mcopy", "-n", "-i", img,
@@ -1292,6 +1521,59 @@ static int loader_signed(const char *disk, uint64_t off, const char *name)
     return good;
 }
 
+/* Without shim, the jumper and the entry naming it (DESIGN Section 12.2):
+ * the station's one way in. With shim neither is the station's. */
+static void status_jump(stn_tally *t, const stn_disk *sd, uint64_t off,
+                        uint64_t len, int shim)
+{
+    static stn_fw fw;
+    int present = 0;
+    int ours = 0;
+    int good;
+    int at;
+
+    if (shim)
+        return;
+    if (stn_esp_jump_state(sd->d.path, off, len, &present, &ours) !=
+        CLI_OK) {
+        log_info("  --   %s", cli_error_msg());
+        cli_error_clear();
+        ours = 0;
+    }
+    if (!ours) {
+        verdict(t, 0, "\\EFI\\BOOT\\%s is the jumper (%s; `mkstick update` "
+                "puts it there)", STN_ESP_JUMP,
+                present ? "it is another system's" : "there is none");
+    } else {
+        good = loader_signed(sd->d.path, off, STN_ESP_BOOT_DIR,
+                             STN_ESP_JUMP);
+        if (good < 0)
+            log_info("  --   \\EFI\\BOOT\\%s is the jumper; its signature is "
+                     "not checked", STN_ESP_JUMP);
+        else
+            verdict(t, good, "\\EFI\\BOOT\\%s is the jumper, signed by %s",
+                    STN_ESP_JUMP, STN_ESP_CERT);
+    }
+    if (!stn_fw_here(&sd->d)) {
+        log_info("  --   the firmware entry is not checked: not a disk of "
+                 "this machine, or it did not boot with UEFI");
+        return;
+    }
+    if (stn_fw_read(&fw) != CLI_OK) {
+        log_info("  --   the firmware entry is not checked: %s",
+                 cli_error_msg());
+        cli_error_clear();
+        return;
+    }
+    at = stn_fw_find(&fw, STN_ESP_JUMP_PATH);
+    verdict(t, at >= 0, "firmware entry %s names %s", STN_FW_LABEL,
+            STN_ESP_JUMP_PATH);
+    if (at >= 0)
+        verdict(t, fw.n_order > 0u && fw.order[0] == fw.num[at],
+                "Boot%04X (%s) is first in BootOrder", (unsigned)fw.num[at],
+                STN_FW_LABEL);
+}
+
 static void status_uefi(stn_tally *t, stn_scan *s, stationini *ini,
                         int *have_ini, int *memtest)
 {
@@ -1299,6 +1581,7 @@ static void status_uefi(stn_tally *t, stn_scan *s, stationini *ini,
     const char *files[2];
     char name[SHIM_NEXT_STAGE_MAX];
     int signed_ok;
+    int shim;
     stn_disk *sd = &s->disks[0];
     const mks_records *r = &sd->r;
     int e = stn_find_esp(r);
@@ -1324,7 +1607,7 @@ static void status_uefi(stn_tally *t, stn_scan *s, stationini *ini,
         CLI_OK) {
         log_info("  --   %s", cli_error_msg());
         cli_error_clear();
-        (void)snprintf(name, sizeof name, "%s", STN_ESP_LOADER);
+        (void)snprintf(name, sizeof name, "%s", STN_LOADER_NOSHIM);
     }
     files[0] = name;
     files[1] = STN_ESP_CERT;
@@ -1340,26 +1623,28 @@ static void status_uefi(stn_tally *t, stn_scan *s, stationini *ini,
             "the ESP (partition %u) carries the station's boot record",
             p->number);
     (void)snprintf(path, sizeof path, "/%s/%s", STN_ESP_DIR, STN_ESP_SHIM);
-    if (stn_read_file(sd->d.path, off, len, path, text, 16, &got) ==
-        FS_ERR_RANGE)
+    shim = stn_read_file(sd->d.path, off, len, path, text, 16, &got) ==
+           FS_ERR_RANGE;
+    if (shim)
         log_info("  --   \\EFI\\falcon\\%s present: shim starts the "
                  "loader", STN_ESP_SHIM);
     else
-        log_info("  --   no shim: the firmware starts %s and verifies it "
-                 "against db", name);
+        log_info("  --   no shim: the jumper starts %s, and the firmware "
+                 "verifies both against db", name);
     for (i = 0; i < sizeof files / sizeof files[0]; i++) {
         (void)snprintf(path, sizeof path, "/%s/%s", STN_ESP_DIR, files[i]);
         verdict(t, stn_read_file(sd->d.path, off, len, path, text, 16,
                                  &got) == FS_ERR_RANGE,
                 "\\EFI\\falcon\\%s", files[i]);
     }
-    signed_ok = loader_signed(sd->d.path, off, name);
+    signed_ok = loader_signed(sd->d.path, off, STN_ESP_DIR, name);
     if (signed_ok < 0)
         log_info("  --   the loader's signature is not checked (sbverify "
                  "or openssl is not on PATH, or a file would not copy)");
     else
         verdict(t, signed_ok, "\\EFI\\falcon\\%s is signed by %s",
                 name, STN_ESP_CERT);
+    status_jump(t, sd, off, len, shim);
     (void)snprintf(path, sizeof path, "/%s/%s", STN_ESP_DIR,
                    STN_ESP_MEMTEST);
     *memtest = (stn_read_file(sd->d.path, off, len, path, text, 16, &got) ==

@@ -23,7 +23,7 @@
 #include <stdint.h>
 
 #define JMOD_MAGIC 0x444D4A46u   /* "FJMD" */
-#define JMOD_ABI   3u
+#define JMOD_ABI   4u
 
 /* The header, at the slot's first byte. Offsets rather than a struct on the
  * core's side, so the check reads the same bytes whatever compiler reads
@@ -72,6 +72,10 @@ typedef struct {
      * map. Where a module placing a device's registers on the bus starts
      * looking above. */
     uint64_t mem_top;
+    /* Turns the core's spinner (tui_tick): a module's probe-time waits call
+     * it through modrt_tick (hw/modrt.h), which the module drops with the
+     * rest of this table when it serves. */
+    void (*tick)(void);
 } jmod_services;
 
 #define JMOD_DEV_CD   1u

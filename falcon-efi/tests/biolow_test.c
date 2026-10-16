@@ -258,6 +258,66 @@ static void test_error_mid_read(void **state)
     munmap(high, MAP_LEN);
 }
 
+/* FalconReadInfo's count: every firmware call, failed ones too, with its
+ * bytes and the clock's ticks across it. The clock here moves 35 ticks a
+ * reading, so each call costs 35. The count is the module's for the whole
+ * run, so the case works in differences. */
+static UINT64 g_ticks;
+
+static UINT64 fake_clock(void)
+{
+    g_ticks += 35u;
+    return g_ticks;
+}
+
+static void test_counted(void **state)
+{
+    fake_bio f;
+    UINT8 *high = map_at(HIGH_ADDR);
+    biolow_count a, b;
+
+    (void)state;
+    fake_init(&f);
+    biolow_set_clock(fake_clock);
+
+    biolow_counted(&a);
+    assert_int_equal(biolow_read(&f.bio, 0, 8u * BS, g_lowmem, low_fn,
+                                 LOW_LEN), EFI_SUCCESS);
+    biolow_counted(&b);
+    assert_int_equal(b.calls - a.calls, 1);
+    assert_int_equal(b.bytes - a.bytes, 8u * BS);
+    assert_int_equal(b.ticks - a.ticks, 35);
+
+    /* Bounced: each chunk is a firmware call of its own. */
+    a = b;
+    assert_int_equal(biolow_read(&f.bio, 0, 3u * LOW_LEN, high, low_fn,
+                                 LOW_LEN), EFI_SUCCESS);
+    biolow_counted(&b);
+    assert_int_equal(b.calls - a.calls, 3);
+    assert_int_equal(b.bytes - a.bytes, 3u * LOW_LEN);
+    assert_int_equal(b.ticks - a.ticks, 3u * 35u);
+
+    /* A call the firmware fails still cost what it cost. */
+    a = b;
+    f.fail_at = f.calls + 1u;
+    assert_int_equal(biolow_read(&f.bio, 0, BS, g_lowmem, low_fn, LOW_LEN),
+                     EFI_DEVICE_ERROR);
+    biolow_counted(&b);
+    assert_int_equal(b.calls - a.calls, 1);
+    assert_int_equal(b.bytes - a.bytes, BS);
+
+    /* Without a clock the calls and bytes are still counted. */
+    biolow_set_clock((UINT64 (*)(void))0);
+    a = b;
+    f.fail_at = 0;
+    assert_int_equal(biolow_read(&f.bio, 0, BS, g_lowmem, low_fn, LOW_LEN),
+                     EFI_SUCCESS);
+    biolow_counted(&b);
+    assert_int_equal(b.calls - a.calls, 1);
+    assert_int_equal(b.ticks, a.ticks);
+    munmap(high, MAP_LEN);
+}
+
 int run_biolow_tests(void)
 {
     const struct CMUnitTest tests[] = {
@@ -268,6 +328,7 @@ int run_biolow_tests(void)
         cmocka_unit_test(test_chunk_rounds_to_blocks),
         cmocka_unit_test(test_no_low_memory),
         cmocka_unit_test(test_error_mid_read),
+        cmocka_unit_test(test_counted),
     };
 
     return cmocka_run_group_tests_name("biolow", tests, setup, teardown);

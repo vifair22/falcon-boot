@@ -43,6 +43,14 @@ void upd_plan_make(const upd_facts *f, upd_plan *p)
     if (f->esp_boot >= 0 && f->station_loader) {
         p->uefi_station = 1;
         p->totp = f->totp;
+        p->jump = stn_jump_plan(f->station_shim, f->jump_present,
+                                f->jump_ours);
+        p->migrate = !f->station_shim && !f->jump_ours;
+        p->rename = !f->station_shim && f->station_old_name;
+        if (p->migrate && p->totp) {
+            p->totp = 0;
+            p->totp_reenroll = 1;
+        }
     }
     if (!p->bios && !p->uefi_station) {
         p->kind = UPD_REFUSE;

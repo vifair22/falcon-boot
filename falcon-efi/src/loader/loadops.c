@@ -8,6 +8,8 @@
 #include <tsc/tsc.h>
 #include <tsc/tsccore.h>
 #include <console/serial.h>
+#include <discover/biolow.h>
+#include <discover/discover.h>
 
 /* Non-volatile so it survives the appliance's reboot, and runtime-accessible
  * so the booted OS can set it too (DESIGN Section 6.3.1). loadops.h has what
@@ -380,6 +382,51 @@ static void put_str(char *line, UINTN cap, UINTN *at, const char *s)
     line[*at] = '\0';
 }
 
+static biolow_count g_reads_menu;
+static biolow_count g_reads_boot;
+static BOOLEAN g_reads_menu_set;
+static BOOLEAN g_reads_boot_set;
+
+void loader_reads_mark(loader_reads_at at)
+{
+    if (at == LOADER_READS_MENU) {
+        if (!g_reads_menu_set)
+            biolow_counted(&g_reads_menu);
+        g_reads_menu_set = TRUE;
+        return;
+    }
+    biolow_counted(&g_reads_boot);
+    g_reads_boot_set = TRUE;
+}
+
+static void reads_between(const biolow_count *from, const biolow_count *to,
+                          UINT64 hz, bli_read_phase *out)
+{
+    out->calls = to->calls - from->calls;
+    out->bytes = to->bytes - from->bytes;
+    out->usec = tsc_usec(to->ticks - from->ticks, hz);
+}
+
+/* The three stretches from the marks; a mark not taken is where the next
+ * one is, and a menu mark taken after the boot mark (a route that started
+ * before the menu came up and returned) is held to it. */
+static void reads_now(UINT64 hz, bli_reads *r)
+{
+    biolow_count zero = { 0, 0, 0 };
+    biolow_count now;
+    biolow_count menu;
+    biolow_count boot;
+
+    biolow_counted(&now);
+    boot = g_reads_boot_set ? g_reads_boot : now;
+    menu = g_reads_menu_set ? g_reads_menu : boot;
+    if (menu.calls > boot.calls)
+        menu = boot;
+    reads_between(&zero, &menu, hz, &r->startup);
+    reads_between(&menu, &boot, hz, &r->menu);
+    reads_between(&boot, &now, hz, &r->boot);
+}
+
 void loader_time_init(EFI_SYSTEM_TABLE *st, UINT64 t0, const CHAR16 *info)
 {
     static const char *const how_name[] = { "none", "cpuid", "stall" };
@@ -395,6 +442,8 @@ void loader_time_init(EFI_SYSTEM_TABLE *st, UINT64 t0, const CHAR16 *info)
     hz = tsc_hz(st->BootServices, &how);
     usec = tsc_usec(t0, hz);
     s = bli_set_init(st, usec, info);
+    biolow_set_clock(tsc_read);
+    discover_set_clock(tsc_read, hz);
 
     put_kv(line, sizeof line, &at, "falcon-bli: tsc_hz=", hz);
     put_str(line, sizeof line, &at, " via=");
@@ -408,7 +457,8 @@ void loader_time_init(EFI_SYSTEM_TABLE *st, UINT64 t0, const CHAR16 *info)
 void loader_time_exec(EFI_SYSTEM_TABLE *st, const bli_kdf *kdf)
 {
     UINT64 now = tsc_read();
-    char line[160];
+    bli_reads reads;
+    char line[BLI_READ_INFO_MAX + 40u];
     UINTN at = 0;
     UINT64 hz;
     UINT64 usec;
@@ -426,6 +476,15 @@ void loader_time_exec(EFI_SYSTEM_TABLE *st, const bli_kdf *kdf)
     put_kv(line, sizeof line, &at, " FalconTimeWaitUSec=", wait);
     if (usec != 0 && kdf != (const bli_kdf *)0)
         put_kv(line, sizeof line, &at, " FalconTimeKdfUSec=", kdf->usec);
+    if (EFI_ERROR(s))
+        put_str(line, sizeof line, &at, " set=failed");
+    serial_line(st, line);
+
+    reads_now(hz, &reads);
+    s = bli_set_reads(st, &reads);
+    at = 0;
+    put_str(line, sizeof line, &at, "falcon-bli: FalconReadInfo=");
+    at += bli_read_info(&reads, line + at, sizeof line - at);
     if (EFI_ERROR(s))
         put_str(line, sizeof line, &at, " set=failed");
     serial_line(st, line);

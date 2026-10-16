@@ -575,6 +575,7 @@ static int pcc_serve(unsigned idx, uint8_t drive)
     g_serve = idx;
     g_blk.sectors = g_dev[idx].disk.sectors;
     g_svc = (const jmod_services *)0;
+    modrt_tick = (void (*)(void))0;
     return 0;
 }
 
@@ -603,6 +604,7 @@ static void pcc_int13(jmod_regs *r)
 static int pcc_init(const jmod_services *svc, jmod_ops *ops)
 {
     g_svc = svc;
+    modrt_tick = svc->tick;
     ops->probe = pcc_probe;
     ops->dev = pcc_dev_info;
     ops->read = pcc_read;

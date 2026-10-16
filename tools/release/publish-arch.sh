@@ -37,6 +37,8 @@ DL_PATH=/mnt/cache/appdata/airies-dl/arch/falcon
 # Not under build/: in a harness checkout that is the build directory's
 # mount point, and root's.
 OUT=$(mktemp -d "${TMPDIR:-/tmp}/falcon-arch.XXXXXX")
+# mktemp's 700 would keep out the container's builder, who is not this uid.
+chmod 755 "$OUT"
 mkdir -p "$OUT/work" "$OUT/repo/x86_64"
 cp packaging/arch/PKGBUILD packaging/arch/falcon-boot-bin.install "$TAR" "$OUT/work/"
 sum=$(sha256sum "$TAR" | cut -d' ' -f1)

@@ -33,8 +33,21 @@ typedef struct EFI_DEVICE_PATH_PROTOCOL {
 typedef struct {
     EFI_DEVICE_PATH_PROTOCOL Header;
     EFI_GUID                 Guid;
-    /* Vendor-defined data may follow; ours carries none. */
+    /* Vendor-defined data may follow (FALCON_VENDOR_DEVICE_PATH). */
 } VENDOR_DEVICE_PATH;
+
+/* The vendor node of a device this loader publishes, with eight bytes of
+ * vendor data naming the publishing instance. A second falcon-boot started
+ * from a program the first one launched is alive at the same time as the
+ * first, whose devices stay published under that program. With the GUID
+ * alone the two paths would be equal: the firmware refuses a second handle
+ * with a path that is already installed, and a match by path would find the
+ * other loader's device. An array, not a UINT64, so the node packs to 28
+ * bytes with no padding. */
+typedef struct {
+    VENDOR_DEVICE_PATH vendor;
+    UINT8              instance[8];
+} FALCON_VENDOR_DEVICE_PATH;
 
 /* The Hard Drive media node (spec 10.3.5.1), as offsets rather than a struct:
  * its UINT64 fields sit at 8 and 16 behind a 4-byte header and a UINT32, and

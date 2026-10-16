@@ -17,6 +17,7 @@
 #include <stdint.h>
 #include <cmocka.h>
 
+#include <stdio.h>
 #include <string.h>
 
 #include <fs/fs.h>
@@ -24,7 +25,7 @@
 
 /* ---- an in-memory tree behind fs_ops ---- */
 
-#define NODES_MAX 32u
+#define NODES_MAX (SHELF_MAX + 8u)
 #define DATA_MAX  1024u
 
 typedef struct {
@@ -293,17 +294,16 @@ static void test_collect_nothing(void **state)
 
 static void test_collect_cap(void **state)
 {
-    static const char *names[] = {
-        "a.efi", "b.efi", "c.efi", "d.efi", "e.efi",
-        "f.efi", "g.efi", "h.efi", "i.efi", "j.efi"
-    };
+    static char names[SHELF_MAX + 2u][8];
     int uki;
     size_t i;
 
     (void)state;
     uki = add(-1, "uki", 1);
-    for (i = 0; i < sizeof names / sizeof names[0]; i++)
+    for (i = 0; i < SHELF_MAX + 2u; i++) {
+        snprintf(names[i], sizeof names[i], "u%02u.efi", (unsigned)i);
         (void)add(uki, names[i], 0);
+    }
     assert_int_equal(shelf_collect(&g_shelf, &g_vol), 1);
     assert_int_equal(g_shelf.n, SHELF_MAX);
 }

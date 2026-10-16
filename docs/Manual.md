@@ -20,22 +20,24 @@ this file cites it by section and does not repeat it.
 
 ## 1. The menu
 
-Both loaders on a stick open at the same menu: the logo, the banner, the
-list, and the key line under it. The logo is left out when the list would
-not fit beside it.
+Both loaders on a stick open at the same menu: the title bar on the top
+row, the list in a panel under it, a line of counts under the panel, and
+the key hints on the bottom row, over a backdrop of dark grey shade.
+Questions, notices and failures open in a box over the menu
+(`docs/DESIGN.md` Section 7.10; `docs/tui-mockup.html` shows every screen).
 
 ### 1.1 What is listed
 
 The UEFI loader lists every `.iso`, `.img` and `.efi` on p2; the BIOS loader
 every `.iso` and `.img`. The extension is matched without regard to case.
 Names starting with `.` are skipped, files and folders alike. Files are
-found in p2's root and up to three folders below it, at most 128 on UEFI
-and 64 on BIOS.
+found in p2's root and up to three folders below it, at most 128.
 
 The list is shown a folder at a time, sorted by name without regard to
 case: folders first, then the files in the folder. A folder is listed only
-when something under it is. Inside a folder the first row is the way back
-up, and it names the folder on screen:
+when something under it is. The panel's title is `ISO library` at the root
+and the folder's path inside one, where the first row is the way back up,
+and it names the folder too:
 
     ..  (now in /linux/)
 
@@ -48,37 +50,49 @@ sight and can be opened:
 | `Personal OS (plaintext shelf)` | a plaintext shelf with something on it to boot, and no such encrypted shelf |
 
 On UEFI the last row at the root is `Reboot to firmware setup`, when the
-firmware offers it (`OsIndicationsSupported`). It asks first:
+firmware offers it (`OsIndicationsSupported`). It asks first, in a box
+titled `Firmware setup`:
 
     Reboot into this machine's firmware setup?
 
-    press y to reboot, any other key to go back.
+    y to reboot, any other key to go back.
 
 A firmware that refuses says so, and the menu comes back:
 
-    the firmware refused the request, so nothing was changed.
-    Use its own key at power-on instead.
+    The firmware refused the request, so nothing was changed. Use its own
+    key at power-on instead.
 
     press any key for the menu.
 
-A menu with no rows at all says:
+A menu with no rows at all says, in the panel:
 
     (no ISOs found on the exFAT partition)
 
+A list longer than the panel scrolls. The panel's right border is then a
+scroll bar: a block for where the window is in the list, and an arrow at
+either end while there is more that way. The bottom border carries the
+selected row's position, `20/41`, at its right, and at its left what the
+selected image is: its size, and on UEFI its family once it has been looked
+at. The line under the panel counts the images, and while the probe is
+still reading, how many it has left: `41 images, 6 still being read`.
+
 ### 1.2 Keys
 
-The key line on each loader:
+The key hints on each loader:
 
-    enter boot | c chain | d direct | b bless | a bless new | esc back
+    enter boot   c chain   d direct   b bless   a bless new   esc back
 
-    enter boot | c chain | d direct | esc back
+    enter boot   c chain   d direct   esc back
 
-The first is UEFI, the second BIOS. An empty menu shows
-`no entries | esc back`. Letters are taken in either case.
+The first is UEFI, the second BIOS. Letters are taken in either case. The
+selected row is a cyan bar with a `>` in its first cell; a row predicted
+refused (Section 1.4) is yellow, and selected, a brown bar.
 
 | key | on |
 |---|---|
 | Up, Down | move the selection; it stops at the first and last row |
+| Page Up, Page Down | move the selection a panel's height |
+| Home, End | the first row, the last row |
 | Enter | boot the row, open the folder, go up on `..` |
 | `c` | an `.iso` or `.img` row: boot the medium's own loader (`CHN`; `IMG` for a `.img` on UEFI). Any other row: as Enter |
 | `d` | as Enter; on a blessed row, the ISO's default route without the blessing |
@@ -94,10 +108,11 @@ Which route each key takes is in Section 2. A row tagged `{BIOS ONLY}`,
 `{EFI ONLY}` or `{64-BIT ONLY}` shows a page instead, on every key
 (Section 1.4).
 
-### 1.3 The banner
+### 1.3 The title bar
 
-The banner is `falcon-boot <version>` and, after two spaces, the machine's
-state. On BIOS the state is `BIOS`. On UEFI it is the Secure Boot state:
+The title bar is `falcon-boot <version>` at the left, a route's code after
+it while one runs (Section 2), and the machine's state at the right. On
+BIOS the state is `BIOS`. On UEFI it is the Secure Boot state:
 
 | state | meaning |
 |---|---|
@@ -108,15 +123,17 @@ state. On BIOS the state is `BIOS`. On UEFI it is the Secure Boot state:
 | `SB: setup mode` | the platform has no PK, so nothing is enforced |
 | `SB: unknown` | the variables do not give a state |
 
-When the Secure Boot variables cannot be read at all, the banner has the
-title alone.
+When the Secure Boot variables cannot be read at all, the title bar has the
+title alone. When the title and the state do not both fit, the title is
+cut.
 
 The `trusts:` list names only what is there: `MOK` is this stick's own
 certificate, `MS UEFI CA` and `MS Windows` are Microsoft's two CAs, and
 `+N` counts any other certificates.
 
-While the background probe is reading entries, the banner's last cell is a
-spinner (`/`, `-`, `\`, `|`). It stops when every entry has been looked at.
+While the background probe is reading entries, a spinner turns on the
+panel's top border at its right end (`/`, a full-width dash, `\`, `|`). It
+stops when every entry has been looked at.
 
 ### 1.4 Row tags
 
@@ -159,19 +176,19 @@ with one is drawn yellow.
 | `{EFI ONLY}` | BIOS | the medium has no BIOS boot image and no kernel falcon-bios can start |
 | `{64-BIT ONLY}` | BIOS | the medium needs long mode, and this processor has none |
 
-The last three are not predictions. Any key on such a row shows a page and
-starts nothing:
+The last three are not predictions. Any key on such a row opens a box,
+titled `BIOS only`, `EFI only` or `64-bit only`, and starts nothing:
 
-    this image boots only on a BIOS machine: it has no UEFI boot loader, and no
-    kernel UEFI can start.
+    this image boots only on a BIOS machine: it has no UEFI boot loader,
+    and no kernel UEFI can start.
 
-    Start the machine from this stick in BIOS mode (legacy or CSM) instead. The
-    stick needs its BIOS loader for that (mkstick bios).
+    Start the machine from this stick in BIOS mode (legacy or CSM) instead.
+    The stick needs its BIOS loader for that (mkstick bios).
 
     press any key to return to the menu.
 
-    this image boots only on a UEFI machine: it has no BIOS boot image,
-    and no kernel falcon-bios can start.
+    this image boots only on a UEFI machine: it has no BIOS boot image, and
+    no kernel falcon-bios can start.
 
     Start the machine from this stick in UEFI mode instead.
 
@@ -183,38 +200,40 @@ starts nothing:
 
     press any key to return to the menu.
 
-Each page starts with the row's path.
+Each box starts with the row's path.
 
-### 1.5 Startup lines
+### 1.5 Startup steps
 
-Until the menu is up, each loader says the step it is on, on the page's
-first row:
+Until the menu is up, each loader lists the steps it takes in a box titled
+`starting`, each one marked OK as the next begins:
 
-| line | loader |
+| step | loader |
 |---|---|
-| `reading the Secure Boot keys...` | UEFI |
-| `finding disks...` | both |
-| `reading the shelf...` | both |
-| `reading the ISO library...` | both |
-| `checking the image...` | both; a row chosen before the probe reached it |
-| `reading the TPM...` | UEFI station |
-| `finding boot entries...` | stations |
-| `reading the floppy...` | falcon jump |
+| `reading the Secure Boot keys` | UEFI |
+| `finding disks` | both |
+| `reading the shelf` | both |
+| `reading the ISO library` | both |
+| `reading the TPM` | UEFI station |
+| `finding boot entries` | stations |
+| `reading the floppy` | falcon jump |
+
+A row chosen before the probe reached it is looked at first, under a
+`checking the image` step on a page named for the row.
 
 Before any of these, the BIOS loader's stage 2 shows
 `falcon-boot: loading` with a turning spinner while stage 3 is read.
 
-With shim validation disabled, the UEFI loader says so under the first
-step, and goes on without waiting for a key:
+With shim validation disabled, every UEFI menu says so on the line under
+its panel, in yellow on red:
 
-    shim signature validation is DISABLED on this machine (MokSBState).
-    Every unsigned EFI binary runs here.
+    shim signature validation is DISABLED (MokSBState): every unsigned EFI binary runs here
 
-    To undo: mokutil --enable-validation from Linux, then confirm at MokManager
-    on the next boot.
+`mokutil --enable-validation` from Linux, confirmed at MokManager on the
+next boot, turns it back on.
 
 When the loader cannot read its own partition's record, it says so once,
-and waits for a key; the menu then offers no ISO library and no shelf:
+in a box titled `This install`, and waits for a key; the menu then offers no
+ISO library and no shelf:
 
     The partition this loader started from has no falcon record,
     so no ISO library or shelf is offered.
@@ -237,7 +256,8 @@ from `/sys/firmware/efi/efivars/` in an OS started from that same boot
 
 ### 1.6 Leaving the menu
 
-Escape at the root leaves the loader. The page it leaves on:
+Escape at the root leaves the loader. The page it leaves on, the cursor
+under it:
 
     falcon-boot: returning to firmware.
 
@@ -262,12 +282,12 @@ that takes neither, the screen goes blank until a key. On a station,
 
 ## 2. Route codes
 
-The route code is three characters, drawn in white at the top right of the
-text block, one row above the page's first line. It says which boot path is
-running. It appears as soon as the route is chosen, before the route's first
-line, stays through any screen the route draws (the passphrase prompt, an
-error), and is removed on return to the menu. A page that starts nothing
-(Section 1.4's platform pages, the firmware-setup question) has no code.
+The route code is three characters, drawn in white in the title bar after
+the version. It says which boot path is running. It appears as soon as the
+route is chosen, before the route's first step, stays through any screen the
+route draws (the passphrase prompt, an error), and is removed on return to
+the menu. A box that starts nothing (Section 1.4's platform boxes, the
+firmware-setup question) has no code.
 
 When a route falls through to another one, the code changes before the new
 route's first line. The cases are in Section 2.3.
@@ -305,7 +325,11 @@ rather than `BLS`.
 | `CHN` | the ISO's own bootloader off the resident virtual CD | `c` on an ISO, or a fallback |
 
 The BIOS loader mirrors every screen to serial (COM1), the route code
-included.
+included, as the escape sequences OVMF's terminal sends for the UEFI
+loader's, its boxes in ASCII. Both loaders also write a transcript there:
+every page's title, each step as it starts, every line of a page or a box,
+and each menu's title, rows and key hints as it opens, one to a line
+(`docs/DESIGN.md` Section 7.10).
 
 The BIOS loader is one image for every i586 or later processor, and boots
 32-bit and 64-bit kernels alike. On a processor with no 64-bit mode, a row
@@ -347,17 +371,20 @@ route.
 
 ### 2.4 The route page
 
-Every route draws one page as it starts and, if it comes back, a second.
-The first page:
+Every route draws a page as it starts: a panel titled
 
     booting: <path>
 
-followed by the route's own lines up to the handover. `BLS` and `BLB` start
-with `booting blessed: <path>`, `POS` with the row's label, and `APP` with
-`starting the signing appliance.`
+(`POS` with the row's label, `APP` titled `signing appliance`), and in it
+the route's steps as it takes them, each marked OK, or with what it read
+(`14.2 MB`), when the next begins; the one under way has a spinner. Just
+before the payload has the machine, the last step is marked OK, the rows
+under the panel are cleared, and the cursor waits there: whatever the
+payload writes first appears under the page.
 
-When the route comes back, the second page starts with the path again, then
-one of:
+When the route comes back, a box opens over the menu: red, titled `<what>
+failed`, when it failed; grey when the booted image returned on its own. It
+starts with the path, then one of:
 
     <what> failed while <stage>: <status>
 
@@ -365,11 +392,10 @@ one of:
 
     press any key to return to the menu.
 
-on UEFI, or, when the booted image returned on its own, its exit line and
-status. On BIOS a route that comes back has failed, and the line has no
-status:
+on UEFI, or the image's exit line and status. On BIOS a route that comes
+back has failed, and the line has no status:
 
-    <what> failed while <stage>
+    <what> failed while <stage>.
 
 The advice is the route's sentence on what to do, when it has one.
 
@@ -424,10 +450,10 @@ The station's routes use the same two pages.
 
 ## 3. Secure Boot states and enrollment
 
-The UEFI loader's banner names the state the machine is in. It is read once
+The UEFI loader's title bar names the state the machine is in. It is read once
 at startup:
 
-| banner | state |
+| title bar | state |
 |---|---|
 | `SB: off` | Secure Boot off; nothing is verified |
 | `SB: on  trusts: MOK, MS UEFI CA, MS Windows, +N` | Secure Boot on; what db and MokList hold: `MOK` is this stick's certificate, `MS UEFI CA` and `MS Windows` Microsoft's two CAs, `+N` any other certificates |
@@ -480,14 +506,14 @@ Microsoft's signatures. To boot the stick there:
 
 Do not sign the stick with the machine's own db key.
 
-The banner then reads, for a db holding one owner certificate and this
+The title bar then reads, for a db holding one owner certificate and this
 stick's:
 
     SB: on  trusts: MOK, +1
 
 A station needs no shim there, and a default `falcon-boot-mkstick station
-install` has none: it names the loader itself in the firmware entry and
-ends with:
+install` has none: its firmware entry names the jumper, which starts the
+loader, and it ends with:
 
     Secure Boot on: the firmware's db must hold \EFI\falcon\falcon-boot.cer; enroll it from firmware setup.
 
@@ -517,15 +543,14 @@ A firmware that refuses says so, and its own key at power-on is the way in:
     mokutil --disable-validation
 
 `mokutil` asks for a password; on the next boot MokManager asks to confirm
-the change with characters of it. From then on the banner reads
-`SB: on (shim validation DISABLED)` in yellow on red, and each startup
-prints, before the menu:
+the change with characters of it. From then on the title bar reads
+`SB: on (shim validation DISABLED)` in yellow on red, and every menu says
+on the line under its panel, in the same colours:
 
-    shim signature validation is DISABLED on this machine (MokSBState).
-    Every unsigned EFI binary runs here.
+    shim signature validation is DISABLED (MokSBState): every unsigned EFI binary runs here
 
-    To undo: mokutil --enable-validation from Linux, then confirm at MokManager
-    on the next boot.
+To undo: `mokutil --enable-validation` from Linux, then confirm at
+MokManager on the next boot.
 
 In this state no UKI boots: the personal OS, the signing appliance and a
 blessed wrap are all refused (`docs/DESIGN.md` Section 7.4). Their rows carry
@@ -596,7 +621,7 @@ is rewritten**, with the signature appended to the ones it carries.
 
 Windows media is never blessed; it boots as it is (Section 6). The BIOS
 loader has no blessing: a blessed row boots there as if unblessed, and its
-key line has no `b` or `a`.
+key hints have no `b` or `a`.
 
 A blessed row's tag is `[blessed]`. Enter boots the blessing; `c` and `d`
 boot the ISO as if unblessed.
@@ -611,8 +636,8 @@ On the UEFI loader:
 | `a` | every image on p2 not freshly blessed, from any row |
 
 Neither takes a Windows ISO, an image tagged `{BIOS ONLY}`, or one already
-blessed. The loader reads the images first (`reading N images` when there
-are several), then asks:
+blessed. The loader reads the images first (a `reading N images` step when
+there are several), then asks, in a box titled `Bless`:
 
     Bless 2 images with the key on p3:
 
@@ -642,21 +667,23 @@ Nothing to bless is one of:
 | `Nothing new to bless.` | `a`, and every image is blessed or not blessable |
 | `This image is already blessed.` | `b` on a blessed row |
 | `This image boots only on a BIOS machine, where it needs no blessing.` | `b` on a `{BIOS ONLY}` row |
-| `Only a Linux or other non-Windows .iso is blessed. Windows media boots as it is:` / `select it and press enter.` | `b` on Windows media, or anything else not blessable |
+| `Only a Linux or other non-Windows .iso is blessed. Windows media boots as it is: select it and press enter.` | `b` on Windows media, or anything else not blessable |
 
 When the stick has no shelf the loader can open:
 
-    the signing appliance lives on this stick's encrypted shelf, and no shelf
-    this loader can open is in sight. Bless on a Linux host with
+    the signing appliance lives on this stick's encrypted shelf, and no
+    shelf this loader can open is in sight. Bless on a Linux host with
     falcon-boot-sign instead.
 
-Before starting the appliance the loader may say, and goes on:
+On the appliance's page (`signing appliance`, `APP`), before it starts, the
+loader may say, and goes on:
 
-    the next-boot marker could not be written (<status>); the images are still blessed, and the menu comes back after the
-    reboot.
+    the next-boot marker could not be written (<status>); the images are
+    still blessed, and the menu comes back after the reboot.
 
-    note: no boot entry for this stick to return to (<status>); after signing the machine
-    boots whatever is first in the firmware's boot order.
+    note: no boot entry for this stick to return to (<status>); after
+    signing the machine boots whatever is first in the firmware's boot
+    order.
 
 A shelf with no appliance on it fails with:
 
@@ -908,17 +935,16 @@ plaintext one. Its route code is `POS` on both loaders.
 The shelf is p3, the partition carrying the `shelf` record of this
 install. The loader boots the regular files ending in `.efi`, any case, in
 p3's `/uki`; when there is no `/uki`, in `/EFI/Linux`. Anything else there
-is not offered, and the chooser offers at most 8.
+is not offered, and the chooser offers at most 32.
 
-One image boots without asking. Several are offered after the unlock:
-
-    falcon-boot: which image?
+One image boots without asking. Several are offered after the unlock, in a
+panel titled `Personal OS`:
 
     Personal OS: Arch Linux 7.2.6-arch2-1
     Personal OS: Arch Linux 6.18.52-1-lts
     Personal OS: falcon-boot signing appliance
 
-    up/down select | enter choose | esc back
+    enter boot   esc back
 
 A row is `Personal OS: ` and the image's `.osrel` `PRETTY_NAME` (or
 `NAME`), or its file name when it has neither. Rows that would read the same
@@ -929,26 +955,31 @@ to the menu.
 
 ### 5.2 Unlocking
 
-    passphrase for the encrypted partition: (press TAB for no echo)
+The prompt is a box titled `Unlock the shelf` over the route's page:
 
-Each key is shown as `*`. TAB hides even those for the rest of the entry.
-Escape returns to the menu. Enter tries the passphrase against every
-keyslot, under `unlocking...`.
+    passphrase for the encrypted partition:
+    [                                            ]
+
+    enter unlock   tab no echo   esc back
+
+Each key is shown as `*` in the field. TAB hides even those for the rest of
+the entry. Escape returns to the menu. Enter closes the box and tries the
+passphrase against every keyslot, under an `unlocking` step on the page.
 
 The prompt (`POS`, on every loader and station) takes five wrong
 passphrases a boot, however often the row is chosen again. After each of
 the second, third and fourth the next attempt waits 4, 8 and 16 seconds
 (the first costs nothing); the fifth powers the machine off
 (`docs/DESIGN.md` Section 5.2). Neither is said on screen: the wait runs
-under `unlocking...`, and every refusal is
+under the `unlocking` step, and every refusal marks that step `wrong
+passphrase` and opens the box again, empty, with
 
     wrong passphrase.
 
-on the row under the prompt, which is redrawn empty in place for the next
-attempt. The refusal stays until Enter replaces it with `unlocking...`.
+under the field.
 
-On the UEFI station the TOTP code above the prompt is redrawn when it
-rolls.
+On the UEFI station the TOTP lines are in the box, under the field, kept
+current as the code rolls.
 
 A keyslot whose argon2id memory the machine cannot give fails with:
 
@@ -1157,6 +1188,21 @@ line; each file is a 4-byte attribute word, then the value in UTF-16:
 
     v() { tail -c +5 /sys/firmware/efi/efivars/$1-$2 2>/dev/null | tr -d '\0'; }; L=4a67b082-0a4c-41cf-b6c7-440b29bb8c4f; F=50614485-081b-4b7c-8b54-2abeffdf2fb3; i=$(v LoaderTimeInitUSec $L); e=$(v LoaderTimeExecUSec $L); w=$(v FalconTimeWaitUSec $F); d=$(v FalconTimeKdfUSec $F); awk -v i="$i" -v e="$e" -v w="$w" -v d="$d" -v k="$(cut -d' ' -f1 /proc/uptime)" 'BEGIN { printf "firmware %.3f s, falcon %.3f s (keyslots %.3f s), wait %.3f s, kernel to now %.3f s\n", i/1e6, (e-i-w)/1e6, d/1e6, w/1e6, k }'; v FalconKdfInfo $F; echo
 
+`FalconReadInfo` says what the firmware's reads cost on the way, in three
+stretches: until the menu was up, while it was up (the background probe),
+and from the boot's start to the UKI's (the unlock and the UKI itself),
+with the last one's rate:
+
+    tail -c +5 /sys/firmware/efi/efivars/FalconReadInfo-50614485-081b-4b7c-8b54-2abeffdf2fb3 | tr -d '\0'; echo
+    startup 112 calls 1260 KiB 7840 ms, menu 40 calls 2560 KiB 2800 ms, boot 1430 calls 91504 KiB 100000 ms 0.93 MB/s
+
+The milliseconds are the firmware's alone. A boot rate far under what the
+stick does in Linux, or a `startup` that takes tens of milliseconds a call
+for a few KiB each, is the firmware's USB driver, not the stick: the same
+stick on another machine shows the difference. The line above is an ASUS
+B550's AMI firmware with a Kingston DataTraveler Max, which costs about
+70 ms for every 64 KiB.
+
 Booted from a route that is not a UKI (an ISO, Windows, memtest86+), the
 exec time and the wait are not written, and systemd-analyze shows neither
 the firmware nor the loader span. A UKI booted without an unlock (a
@@ -1242,7 +1288,7 @@ station shows once it is there. `/dev/X` is the machine's disk.
 | item | where it comes from |
 |---|---|
 | `falcon-bios-stage1.bin`, `falcon-bios-stage2.bin` | `make bios` |
-| `falcon-bios-station-stage3.bin`, `falcon-boot-station.efi` | `make station` |
+| `falcon-bios-station-stage3.bin`, `falcon-boot-station.efi`, `falcon-esp-jump.efi` | `make station` |
 | `falcon-bios-station-legacy-stage3.bin` and jump's drivers in `build/bin/mod/` (station-legacy, 7.7) | `make station-legacy` |
 | `falcon-boot-mkstick` | `make` |
 | Fedora shim 16.1 and its MokManager (UEFI with `--shim` only) | `falcon-efi/tools/shim-spike/fetch-shims.sh`, into `build/shim/bins/` |
@@ -1294,8 +1340,10 @@ It ends:
     `falcon-boot-mkstick station remove --backup station.bak` undoes it.
 
 A station has no shim by default: the firmware entry names
-`\EFI\falcon\grubx64.efi`, and with Secure Boot on the firmware's db must
-hold `falcon-boot.cer`. Enroll it before the first boot, from firmware
+the jumper, `\EFI\BOOT\BOOTX64.EFI`, which starts `\EFI\falcon\falconx64.efi`;
+a firmware that has lost the entry boots the same file by the
+removable-media path (Section 10.6). With Secure Boot on the firmware's db
+must hold `falcon-boot.cer`. Enroll the certificate before the first boot, from firmware
 setup or, where the machine's own keys are yours, with them (`sbctl` keeps
 it as a custom db certificate: copy the PEM `falcon-mok.crt` into
 `/var/lib/sbctl/keys/custom/db/` and run `sbctl enroll-keys --custom
@@ -1323,10 +1371,11 @@ deleted. `remove --full` also puts the partition table back as it was.
 
 ### 7.5 The station's menu
 
-Both stations open at their list, `STATION.INI`'s default highlighted and,
-when it sets a timeout, the key line counting down:
+Both stations open at their list, a panel titled `boot entries`,
+`STATION.INI`'s default highlighted and, when it sets a timeout, the count
+on the panel's bottom border, with the key hints saying any key stops it:
 
-    Booting in 5 s. Any key stops the countdown.
+    Booting in 5 s
 
 Any key stops the countdown for good and is then taken as any key is, so
 Enter boots the default at once. The countdown runs on the first list only;
@@ -1512,10 +1561,11 @@ well-known secret on 1.2.
 On a TPM 1.2 the station saves its own event log at boot (`FalconEvLog`):
 boot the station once before enrolling on a machine where it has not run.
 
-On the station, the code is drawn under the banner and again above the
-passphrase prompt, where it is redrawn when it rolls:
+On the station, the code is drawn in a box titled `TOTP` beside the menu
+and again under the passphrase field, kept current as it rolls:
 
-    TOTP: 123 456  (falcon-station:<host>)
+    TOTP: 123 456
+    (falcon-station:<host>)
 
 The line in its place when there is no code:
 
@@ -2147,7 +2197,7 @@ existing FAT partition. It writes:
 | `--no-backup` | off | saves nothing |
 | `--remove` | off | undoes an install |
 | `--reserve` | off | GPT only: also claims stage 2's gap as a BIOS boot partition (type EF02, slot 5, named `FALCON-BIOS`); rewrites the partition table |
-| `--dry-run` | off | prints the plan and writes nothing |
+| `--dry-run` | off | prints the plan and where the MOK comes from, and writes nothing |
 | `--force` | off | overwrites an existing backup file, and allows `--reserve` on a disk with mounted partitions |
 
 It takes disks of 512- and 4096-byte sectors and refuses any other ("the
@@ -2373,7 +2423,7 @@ ESP's and the shelf's.
 | `--stage2` | `build/bin/falcon-bios-stage2.bin` | |
 | `--stage3` | `build/bin/falcon-bios-station-stage3.bin` (`falcon-bios-station-legacy-stage3.bin` with `--legacy`) | |
 | `--loader` | `build/bin/falcon-boot-station.efi` | the UEFI station's loader |
-| `--shim` | none: no shim, and the firmware entry names the loader, which the firmware's db must trust (Section 11.1) | UEFI through shim: shim and its MokManager from this directory (`build/shim/bins` is where `fetch-shims.sh` puts them) |
+| `--shim` | none: no shim, and the firmware entry names the jumper at `\EFI\BOOT\BOOTX64.EFI`, which the firmware's db must trust (Section 11.1) | UEFI through shim: shim and its MokManager from this directory (`build/shim/bins` is where `fetch-shims.sh` puts them) |
 
 The UEFI station needs the MOK: `--key` and `--cert`, or `--shelf` to read
 the shelf's (a LUKS2 shelf asks for its passphrase). With no `--shelf` it
@@ -2407,16 +2457,40 @@ device made with `losetup --sector-size 4096 -P`. A loop device is an
 image's: nothing else of this machine is scanned for it and no firmware
 entry is made.
 
-**UEFI.** Into `\EFI\falcon\` on the disk's ESP: `shimx64.efi`, MokManager
-under the name shim launches it by, the station loader under shim's
-next-stage name (`grubx64.efi`) signed with the MOK, `falcon-boot.cer`,
-`STATION.INI` and `memtest.efi` (`--memtest-efi`, signed with the MOK).
-The ESP's boot sector gets the station's boot record, with stage 3 and
-marker 0. On a block device of a machine that booted with UEFI a firmware
-entry named `falcon` is created for `\EFI\falcon\grubx64.efi`; for an image
-it prints the `efibootmgr` line to run on its machine. With `--shim` shim
-and MokManager are written too, and the entry names
+**UEFI.** Into `\EFI\falcon\` on the disk's ESP: the station loader as
+`falconx64.efi` signed with the MOK, `falcon-boot.cer`, `STATION.INI` and
+`memtest.efi` (`--memtest-efi`, signed with the MOK). The ESP's boot sector
+gets the station's boot record, with stage 3 and marker 0. Without
+`--shim` the jumper is written as `\EFI\BOOT\BOOTX64.EFI` (below), and on a
+block device of a machine that booted with UEFI a firmware entry named
+`falcon` is created for it and put first in BootOrder, any other `falcon`
+entry deleted; for an image it prints the `efibootmgr` line to run on its
+machine. With `--shim`, `shimx64.efi` and MokManager under the name shim
+launches it by are written too, the loader is named shim's next stage
+(`grubx64.efi`), there is no jumper, and the entry names
 `\EFI\falcon\shimx64.efi`.
+
+**The jumper.** Without `--shim`, `falcon-esp-jump.efi` (beside the
+loader) is signed with the MOK and written as `\EFI\BOOT\BOOTX64.EFI`:
+
+    ESP (partition 1): \EFI\BOOT\BOOTX64.EFI, the jumper to falconx64.efi
+
+The `falcon` entry names it, and a firmware with no entry for the station
+(an NVRAM reset, a firmware update that cleared its entries, the disk in
+another machine) boots the same file by the removable-media path; either
+way it starts `\EFI\falcon\falconx64.efi`. When that is missing, or the
+firmware refuses it, it prints
+
+    falcon-esp-jump: \EFI\falcon\falconx64.efi: status 0x<status>
+
+and returns to the firmware after five seconds. A `BOOTX64.EFI` already on
+the ESP is another system's; it is saved beside the backup file before the
+jumper replaces it, and `remove` puts it back:
+
+    \EFI\BOOT\BOOTX64.EFI was another system's; saved to <backup>.BOOTX64.EFI
+
+With `--shim` there is no jumper, since the MOK is not in that machine's
+db.
 
 **What it finds.** Every disk of the machine (a block-device target; an
 image's machine is the image and `--also`; `--no-scan` limits a block
@@ -2464,12 +2538,15 @@ and LBA 0 last.
 | `--backup <file>` | required: the file `station install` wrote |
 | `--full` | also puts back the partition tables, the station partition's first sectors and other disks' signatures |
 | `--force` | restores onto a disk that carries no record of this install |
+| `--bootx64 <file>` | the `BOOTX64.EFI` to put back where the jumper was (default: `<backup>.BOOTX64.EFI` when install saved one) |
 | `--dry-run` | reports and writes nothing |
 
 It reads the backup (its disk, or `<disk>` when named now), checks that a
 partition there carries the backup's install ID, and puts back LBA 0's boot
-code, stage 2's area and the ESP's boot sectors; deletes `\EFI\falcon` and
-the `falcon` firmware entry it made; deletes the `FALCON-BIOS` partition it
+code, stage 2's area and the ESP's boot sectors; deletes `\EFI\falcon`, the
+jumper (putting back the `BOOTX64.EFI` it replaced: `<backup>.BOOTX64.EFI`,
+or `--bootx64 <file>` for one `update` saved), the `falcon` firmware entry
+it made and any `falcon` entry naming the jumper; deletes the `FALCON-BIOS` partition it
 made. The station partition stays until it is deleted. `--full` restores
 every run: the partition tables whole (the station partition's entry goes),
 the station partition's first sectors, and the other disks' signatures.
@@ -2478,9 +2555,13 @@ the station partition's first sectors, and the other disks' signatures.
 
 Read-only: the install ID and every partition's record, the BIOS stages
 where stage 1 and the station partition's record put them, the ESP's files
-(`grubx64.efi` is the UEFI install, shim before it or not, and its
-signature is checked against `falcon-boot.cer` when `sbverify` and
-`openssl` are installed), each `STATION.INI` as the loaders parse it (or
+(the loader is the UEFI install: shim's next stage when shim is there,
+else `falconx64.efi`, or `grubx64.efi` on an install from before the
+jumper; its signature is checked against `falcon-boot.cer` when `sbverify`
+and `openssl` are installed), without shim `\EFI\BOOT\BOOTX64.EFI` (a
+failing check when it is not the jumper, whose signature is checked the
+same way) and, on a disk of the machine it runs on, that the `falcon`
+firmware entry names the jumper and is first in BootOrder, each `STATION.INI` as the loaders parse it (or
 the line it fails at), the shelf carrying the install ID, and the rows each
 menu shows (found systems, what STATION.INI adds, relabels and hides) with
 the default marked. On a block device every disk of this machine is read;
@@ -2530,8 +2611,11 @@ a TPM 2.0 against the one Linux reads. Enrollment says which:
 | `PCRs the station read, matching the event log` | TPM 2.0 |
 | `PCRs the station read: this firmware extends PCRs it does not log, so the event log is set aside` | TPM 2.0 on a firmware whose log does not account for the TPM (an AMD firmware TPM on an ASUS B550 board is one) |
 
-It refuses when the log has no measurement of the station's loader (the
-one `\EFI\falcon\shimx64.efi` starts, else `\EFI\falcon\grubx64.efi`),
+Without shim every boot of the station goes through the jumper, through
+the `falcon` entry or the removable-media path alike, so it is enrolled
+from either and the code shows on both. It refuses when the log has no
+measurement of the station's loader (the one
+`\EFI\falcon\shimx64.efi` starts, else `\EFI\falcon\falconx64.efi`),
 when the saved PCRs are not of this boot (`PCR <n> is not what the station
 read`), or when a log that accounts for the TPM does not give what the
 station read. A station older than the saved PCRs saves none, and the log
@@ -2576,9 +2660,9 @@ Section 12.14). The test rig's options (`--tpm-socket`, `--event-log`,
 
 | option | default | what it does |
 |---|---|---|
-| `--from` | `build/bin` | the built loaders: `falcon-boot.efi`, `falcon-boot-station.efi`, the BIOS stages, and `mod/` |
+| `--from` | `build/bin` | the built loaders: `falcon-boot.efi`, `falcon-boot-station.efi`, `falcon-esp-jump.efi`, the BIOS stages, and `mod/` |
 | `--backup-dir` | `.` | where what is replaced is saved |
-| `--passphrase-file` | prompt | the shelf's passphrase |
+| `--passphrase-file` | prompt | the shelf's passphrase; the open shelf's mapping is then not used |
 | `--key`, `--cert` | the shelf's | the MOK pair, for an install whose shelf does not hold it; given together |
 | `--owner-auth-file` | as for `station totp` | the TPM owner's authorisation, for the reseal |
 | `--dry-run` | off | prints the plan and writes nothing |
@@ -2591,17 +2675,44 @@ What the disk is comes from its records:
 | stick | a boot record, with a library and a shelf of its install ID | the loader on p1; stages 1-3 when LBA 0 holds stage 1 |
 | BIOS station | a boot record naming stage 3, with `STATION.INI` | stages 1-3 (`falcon-bios-station-stage3.bin`) |
 | station-legacy | the same, with any `*.MOD` on the partition | stages 1-3 (`falcon-bios-station-legacy-stage3.bin`) and the drivers |
-| UEFI station | the ESP's boot record, with a loader in `\EFI\falcon` | that loader |
+| UEFI station | the ESP's boot record, with a loader in `\EFI\falcon` | that loader; without shim, the jumper and its entry |
+
+A UEFI station without shim gets the jumper as install writes it (Section
+10.6): signed again where it is falcon's, written where there is none, and
+where another system's `BOOTX64.EFI` is there, that one saved first:
+
+    \EFI\BOOT\BOOTX64.EFI was another system's; saved to <dir>/<disk>-bootx64-<stamp>.efi (`station remove --bootx64 <file>` puts it back)
+
+On a disk of the machine it runs on, the `falcon` entry is made to name the
+jumper and put first in BootOrder; otherwise it prints the `efibootmgr`
+line to run on the disk's machine. `--from` must hold `falcon-esp-jump.efi`.
+
+A station installed before the jumper (no jumper of falcon's on its ESP)
+is migrated in the same run: the plan says
+
+    write: partition <n> \EFI\falcon\falconx64.efi in place of grubx64.efi, signed with the station's MOK
+    write: \EFI\BOOT\BOOTX64.EFI, the jumper, signed with the station's MOK
+    entry: falcon naming \EFI\BOOT\BOOTX64.EFI, first in BootOrder
+    totp: not resealed; PCR 4 measures the jumper from now on, so the check is enrolled again after the next boot
+
+and the old `grubx64.efi` is saved (`<disk>-station-loader-<stamp>.efi`)
+and deleted, and the entry that named it deleted. With `[totp]`, boot the
+updated station once and run `falcon-boot-mkstick station totp reseal
+<disk>` from the system it started; update says so, and it says the same
+when the jumper it wrote is a new image.
 
 A disk with both stations gets both halves. Anything else is refused
 (`<disk>: <why>; nothing written`), and so is a disk with a partition it
 writes mounted. A driver missing from `--from`'s `mod/` is skipped with a
 warning and the one on the disk stays.
 
-The UEFI loader is signed with the install's MOK: update unlocks the shelf
-carrying the install ID (the passphrase is asked for once, or read from
-`--passphrase-file`) and reads the key into memory, or uses `--key` and
-`--cert`. The signed loader must verify against the certificate before it
+The UEFI loader is signed with the install's MOK, read into memory off the
+shelf carrying the install ID. On the personal OS, whose crypttab opens the
+shelf with its keyfile (Section 5.3), update reads it through that mapping
+and asks nothing (`the MOK is read off the shelf, open as
+/dev/mapper/<name>, into memory`). A shelf that is not open is unlocked
+with its passphrase, asked for once or read from `--passphrase-file`.
+`--key` and `--cert` name the pair instead. The signed loader must verify against the certificate before it
 is written, and is read back after. `sbsign` and `sbverify` must be
 installed; mtools writes the ESP.
 
@@ -2614,6 +2725,8 @@ to `--backup-dir` first, `<stamp>` being `YYYYMMDD-HHMMSS`:
 |---|---|
 | `<disk>-bios-<stamp>.bin` | `falcon-boot-mkstick bios <disk> --remove --backup <file>` |
 | `<disk>-stick-loader-<stamp>.efi`, `<disk>-station-loader-<stamp>.efi` | copy it back over the loader with `mcopy` |
+| `<disk>-esp-jump-<stamp>.efi` | copy it back over `\EFI\BOOT\BOOTX64.EFI` with `mcopy` |
+| `<disk>-bootx64-<stamp>.efi` | `falcon-boot-mkstick station remove --bootx64 <file>`, or `mcopy` it back over `\EFI\BOOT\BOOTX64.EFI` |
 
 It keeps every record, `STATION.INI`, `/uki`, shim, MokManager, the
 certificate and the firmware's boot entries. It clears a pending next-boot
@@ -2722,7 +2835,8 @@ or `create --key-out` wrote.
 | p1 `/EFI/BOOT/grubx64.efi` (the loader) | ours only |
 | p3 `/uki/*.efi` | ours only |
 | station `\EFI\falcon\shimx64.efi`, its MokManager (with `--shim` only) | as fetched |
-| station `\EFI\falcon\grubx64.efi`, `\EFI\falcon\memtest.efi` | ours only |
+| station `\EFI\falcon\falconx64.efi` (`grubx64.efi` behind shim), `\EFI\falcon\memtest.efi` | ours only |
+| station `\EFI\BOOT\BOOTX64.EFI`, the jumper (without `--shim`) | ours only |
 | p2 `/falcon/blessed/` wraps | ours only |
 
 On a machine whose db trusts Microsoft, a stick's shim, or a station's
@@ -2732,7 +2846,8 @@ the MOK once `falcon-boot.cer` is enrolled.
 On a machine whose db holds only its owner's keys, enrol `falcon-boot.cer`
 in **db**, not only as a MOK, and never sign anything with that machine's
 own db key. A station there is installed as by default, without shim
-(10.6): its firmware entry names the loader, which db then trusts. A stick
+(10.6): its firmware entry names the jumper, and db trusts it and the
+loader. A stick
 boots there only once its shim and MokManager also carry our signature,
 appended with the recipe below.
 
@@ -3296,10 +3411,14 @@ the harness's Dockerfile and this table to it):
 
 The host compiler is `CC_HOST` (default `gcc`).
 
-The build variant is `VARIANT` (default `release`). It is the last field of
+The build variant is `VARIANT` (default `dev`). It is the last field of
 every version string: `<semver>_<YYYYMMDD.HHMM>.<variant>` for the stick,
 `.station-<variant>`, `.station-legacy-<variant>` and `.jump-<variant>` for
-the others. The semver is `release_version` at the repository root.
+the others. The semver is `release_version` at the repository root. A
+build says `release` only when CI made it from master: master's pipeline,
+or a tag on one of master's commits, whose release job publishes nothing
+otherwise. Every other build, by hand or in a merge request's or a
+release branch's pipeline, says `dev`.
 
 ### 13.2 Targets
 
@@ -3310,7 +3429,7 @@ the others. The semver is `release_version` at the repository root.
 | `all` | the stick's UEFI loader, `cli`, `winjump`, and `compile_commands.json` at the repository root |
 | `cli` | `falcon-boot-mkstick`, `falcon-boot-sign`, and `falcon-boot-sign-static` (the appliance's) |
 | `bios` | the stick's BIOS loader: `falcon-bios-stage1.bin`, `falcon-bios-stage2.bin`, `falcon-bios-stage3.bin` |
-| `station` | the UEFI station `falcon-boot-station.efi`, stages 1 and 2, and `falcon-bios-station-stage3.bin` |
+| `station` | the UEFI station `falcon-boot-station.efi` and its jumper `falcon-esp-jump.efi`, stages 1 and 2, and `falcon-bios-station-stage3.bin` |
 | `station-legacy` | stages 1 and 2, `falcon-bios-station-legacy-stage3.bin`, and jump's drivers in `build/bin/mod/` |
 | `devlink-uki` | `build/devlink/devlink-recovery.efi`, a `--bios-only` UKI named `DevLink recovery`, from `$(DEVLINK_IMAGES)/bzImage` and `rootfs.cpio.xz` (default `DEVLINK_IMAGES=$HOME/git/home/devlink-rescue/build/classic/images`) |
 | `station-bundle` | `falcon-station-<version>.tar.gz`: both stage 3s, stages 1 and 2, `mod/`, a stripped static `falcon-boot-mkstick32`, `update.sh`, `VERSION`, `MANIFEST` (sha256 of the rest), and `MEMTEST.BIN` with `MEMTEST=<file>` |
@@ -3637,7 +3756,7 @@ under the paths it installs them to:
 |---|---|
 | `usr/bin/falcon-boot-mkstick` | mkstick, x86-64, linked static |
 | `usr/bin/falcon-boot-sign` | the sign tool, x86-64, linked static |
-| `usr/lib/falcon-boot/bin/` | `falcon-boot.efi` (the stick), `falcon-boot-station.efi`, the BIOS stages 1 and 2, stage 3 for the stick, the station and station-legacy, and `mod/` (jump's drivers) |
+| `usr/lib/falcon-boot/bin/` | `falcon-boot.efi` (the stick), `falcon-boot-station.efi`, `falcon-esp-jump.efi`, the BIOS stages 1 and 2, stage 3 for the stick, the station and station-legacy, and `mod/` (jump's drivers) |
 | `usr/lib/falcon-boot/shim/bins/` | Fedora's shim 16.1 and its MokManager, signed by Microsoft's UEFI CA |
 | `usr/lib/falcon-boot/memtest/` | memtest86+ 8.10: `memtest-i586.bin` for `--memtest`, `memtest-x86_64.efi` for `--memtest-efi` |
 | `usr/share/doc/falcon-boot/` | `README.md`, this Manual, `DESIGN.md`, `LICENSE`, `THIRD-PARTY.md` (shim's and memtest86+'s licences and sources) |
@@ -3664,7 +3783,9 @@ installed `/usr/lib/falcon-boot/bin`.
 Each release is also a package, `falcon-boot-bin`, that installs the main
 tarball's tree as it is; installing or upgrading it changes no disk, and a
 stick or station is brought to it with `falcon-boot-mkstick update`
-(Section 10.7) on each machine.
+(Section 10.7) on each machine. Installing and upgrading print that
+command, and the TOTP reseal for after the reboot where update's own is
+refused.
 
 **Arch.** The tag's pipeline builds it from `packaging/arch/PKGBUILD` into
 the `falcon` repository on the dl host (`tools/release/publish-arch.sh`),

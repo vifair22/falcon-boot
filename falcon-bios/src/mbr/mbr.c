@@ -50,12 +50,12 @@ int mbr_bootable(bios_disk *d)
 
 int mbr_boot(bios_disk *d, boot_result *r)
 {
-    r->stage = "reading the disk's first sector";
+    boot_stage(r, "reading the disk's first sector");
     if (read_lba0(d) != 0) {
         r->advice = "The disk did not answer a read.";
         return -1;
     }
-    r->stage = "checking the boot signature";
+    boot_stage(r, "checking the boot signature");
     if (g_sector[BOOT_SIG_OFF] != 0x55 || g_sector[BOOT_SIG_OFF + 1] != 0xAA) {
         r->advice = "Its first sector carries no boot code.";
         return -1;
@@ -69,6 +69,7 @@ int mbr_boot(bios_disk *d, boot_result *r)
     bios_boot_drive = d->drive;
     poke16(GATE_TARGET, (uint16_t)STAGE1_LOAD);
     poke16(GATE_TARGET + 2u, 0);
+    tui_handoff();
     ((void (*)(void))(uintptr_t)GATE_BOOT16)();
     r->stage = "starting its boot code";
     return -1;

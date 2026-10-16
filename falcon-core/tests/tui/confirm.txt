@@ -1,0 +1,25 @@
+ falcon-boot 0.1.2                                        Secure Boot on, MS CA 
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+      += Firmware setup =================================================+      
+      |                                                                  |      
+      |  Reboot into this machine's firmware setup?                      |      
+      |                                                                  |      
+      |  y to reboot, any other key to go back.                          |      
+      |                                                                  |      
+      +==================================================================+      
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                               

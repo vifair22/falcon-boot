@@ -33,7 +33,7 @@ static const EFI_GUID guid_falcon = {
 
 #define REC_MAX 8
 #define NAME_MAX 40
-#define DATA_MAX 256
+#define DATA_MAX 512
 
 typedef struct {
     char     name[NAME_MAX];
@@ -265,14 +265,14 @@ static void test_exec(void **state)
     assert_var("FalconTimeWaitUSec", &guid_falcon, "4500000");
 }
 
-/* A UKI that returns leaves no exec time behind for a later boot: all four
+/* A UKI that returns leaves no exec time behind for a later boot: all five
  * are deleted (size 0) under the GUIDs they were written with. */
 static void test_clear_exec(void **state)
 {
     (void)state;
     reset();
     bli_clear_exec(&fake_st);
-    assert_int_equal(nrec, 4u);
+    assert_int_equal(nrec, 5u);
     assert_string_equal(recs[0].name, "LoaderTimeExecUSec");
     assert_memory_equal(&recs[0].guid, &guid_loader, sizeof(EFI_GUID));
     assert_int_equal(recs[0].size, 0u);
@@ -285,6 +285,90 @@ static void test_clear_exec(void **state)
     assert_string_equal(recs[3].name, "FalconKdfInfo");
     assert_memory_equal(&recs[3].guid, &guid_falcon, sizeof(EFI_GUID));
     assert_int_equal(recs[3].size, 0u);
+    assert_string_equal(recs[4].name, "FalconReadInfo");
+    assert_memory_equal(&recs[4].guid, &guid_falcon, sizeof(EFI_GUID));
+    assert_int_equal(recs[4].size, 0u);
+}
+
+/* The B550's boot, roughly: the UKI at 0.93 MB/s after a startup of small
+ * reads and a menu that probed in the background. */
+static const bli_reads reads_b550 = {
+    { 112u, 1290240u, 7840000u },
+    { 40u, 2621440u, 2800000u },
+    { 1430u, 93700000u, 100000000u },
+};
+
+static void assert_read_info(const bli_reads *r, const char *want)
+{
+    char out[BLI_READ_INFO_MAX];
+
+    assert_int_equal(bli_read_info(r, out, sizeof out), strlen(want));
+    assert_string_equal(out, want);
+}
+
+static void test_read_info(void **state)
+{
+    bli_reads r = reads_b550;
+
+    (void)state;
+    assert_read_info(&r, "startup 112 calls 1260 KiB 7840 ms, menu 40 calls "
+                         "2560 KiB 2800 ms, boot 1430 calls 91504 KiB "
+                         "100000 ms 0.93 MB/s");
+    /* KiB round up, so a stretch that read anything does not say 0. */
+    r.startup.bytes = 1u;
+    /* Two places, the second a leading zero. */
+    r.boot.bytes = 105u;
+    r.boot.usec = 100u;
+    assert_read_info(&r, "startup 112 calls 1 KiB 7840 ms, menu 40 calls "
+                         "2560 KiB 2800 ms, boot 1430 calls 1 KiB 0 ms "
+                         "1.05 MB/s");
+    /* A boot stretch that took no time has no rate. */
+    memset(&r, 0, sizeof r);
+    assert_read_info(&r, "startup 0 calls 0 KiB 0 ms, menu 0 calls 0 KiB "
+                         "0 ms, boot 0 calls 0 KiB 0 ms");
+}
+
+static void test_read_info_widest_fits(void **state)
+{
+    bli_reads r;
+    char out[BLI_READ_INFO_MAX];
+    UINTN n;
+
+    (void)state;
+    /* Wider than any boot: twenty digits of calls, sixteen of KiB, and a
+     * rate as large as the arithmetic gives. */
+    r.startup.calls = UINT64_MAX;
+    r.startup.bytes = UINT64_MAX / 128u;
+    r.startup.usec = UINT64_MAX;
+    r.menu = r.startup;
+    r.boot = r.startup;
+    r.boot.usec = 1u;
+    n = bli_read_info(&r, out, sizeof out);
+    assert_true(n > 0u && n < BLI_READ_INFO_MAX);
+    assert_int_equal(strlen(out), n);
+    assert_int_equal(bli_read_info(&r, out, BLI_READ_INFO_MAX - 1u), 0u);
+    assert_string_equal(out, "");
+    assert_int_equal(bli_read_info(NULL, out, sizeof out), 0u);
+    assert_int_equal(bli_read_info(&r, NULL, sizeof out), 0u);
+}
+
+static void test_set_reads(void **state)
+{
+    (void)state;
+    reset();
+    assert_int_equal(bli_set_reads(&fake_st, &reads_b550), EFI_SUCCESS);
+    assert_int_equal(nrec, 1u);
+    assert_var("FalconReadInfo", &guid_falcon,
+               "startup 112 calls 1260 KiB 7840 ms, menu 40 calls 2560 KiB "
+               "2800 ms, boot 1430 calls 91504 KiB 100000 ms 0.93 MB/s");
+    reset();
+    fail_name = "FalconReadInfo";
+    assert_int_equal(bli_set_reads(&fake_st, &reads_b550), EFI_DEVICE_ERROR);
+    reset();
+    fake_rt.SetVariable = NULL;
+    assert_int_equal(bli_set_reads(&fake_st, &reads_b550), EFI_UNSUPPORTED);
+    assert_int_equal(bli_set_reads(NULL, &reads_b550), EFI_INVALID_PARAMETER);
+    assert_int_equal(bli_set_reads(&fake_st, NULL), EFI_INVALID_PARAMETER);
 }
 
 static void test_exec_zero_wait_is_written(void **state)
@@ -344,6 +428,9 @@ int run_bli_tests(void)
         cmocka_unit_test(test_kdf_info_widest_fits),
         cmocka_unit_test(test_exec_kdf),
         cmocka_unit_test(test_clear_exec),
+        cmocka_unit_test(test_read_info),
+        cmocka_unit_test(test_read_info_widest_fits),
+        cmocka_unit_test(test_set_reads),
         cmocka_unit_test(test_exec_zero_wait_is_written),
         cmocka_unit_test(test_exec_without_clock_writes_nothing),
         cmocka_unit_test(test_failure_is_reported_and_the_rest_written),

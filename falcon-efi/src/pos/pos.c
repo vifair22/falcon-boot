@@ -26,8 +26,6 @@
 #include <lib/string.h>
 #include <lib/ucs2.h>
 #include <manifest/blesslist.h>
-#include <console/menu.h>
-#include <console/idle.h>
 #include <media/shelf.h>
 #include <tui/tui.h>
 
@@ -47,11 +45,10 @@
  * case. Returning to the menu does not start the count again. */
 static unsigned g_failures;
 
-/* Read granularity for the UKI, and how often the read says it is alive. A
- * 1 MiB request costs one extent-tree descent and a run of block reads; the
- * dot is per 8 MiB so a 60 MiB UKI draws a short line rather than a wall. */
+/* Read granularity for the UKI: a 1 MiB request costs one extent-tree
+ * descent and a run of block reads, and between two of them the step's
+ * spinner turns (tui_tick). */
 #define POS_READ_CHUNK ((uint64_t)1u << 20)
-#define POS_DOT_EVERY  ((uint64_t)8u << 20)
 
 /* A sanity bound, not a format limit: a UKI is tens of megabytes, and a
  * plausible-looking size in the gigabytes is a corrupt inode rather than a
@@ -67,29 +64,22 @@ static unsigned g_failures;
 static EFI_SYSTEM_TABLE *g_st;
 
 /* The station's TOTP lines (pos_set_station_hooks); NULL on the stick. */
-static void (*g_note)(void);
+static void (*g_lines)(void *ctx, tui_status *out);
+static void *g_lines_ctx;
 static void (*g_handover)(void);
 
 /* ---- console ---- */
 
-/* Inside the content block, like every other screen; see
- * falcon-efi/src/console/menu.h. */
 static void out(const CHAR16 *s)
 {
-    menu_out(g_st, s);
+    tui_out(s);
 }
 
-static void out_dec(UINT64 v)
+/* A stage of the boot: a step on the page, and what a failure names. */
+static void stage(pos_result *r, const CHAR16 *what)
 {
-    CHAR16 buf[21];
-    UINTN i = sizeof(buf) / sizeof(buf[0]) - 1;
-
-    buf[i] = L'\0';
-    do {
-        buf[--i] = (CHAR16)(L'0' + (v % 10));
-        v /= 10;
-    } while (v != 0);
-    out(&buf[i]);
+    r->stage = what;
+    tui_step(what);
 }
 
 /* Directory-entry names arrive as UCS-2 from the registry, whatever the
@@ -109,13 +99,6 @@ static void name_to_ucs2(CHAR16 *dst, UINTN cap, const uint16_t *name,
     dst[i] = 0;
 }
 
-static void out_name(const uint16_t *name, UINTN len)
-{
-    CHAR16 buf[64];
-
-    name_to_ucs2(buf, sizeof(buf) / sizeof(buf[0]), name, len);
-    out(buf);
-}
 
 /* ---- shelf volumes found at scan time ----
  *
@@ -197,8 +180,10 @@ static void wipe_shelf(void)
     }
 }
 
-/* The chooser's rows, filled from g_images' labels. */
-static menu_entry g_uki_entries[SHELF_MAX];
+/* The chooser's rows, pointing at g_images' labels; and whether the
+ * chooser was shown, which put a list where the page was. */
+static tui_row g_uki_rows[SHELF_MAX];
+static BOOLEAN g_chose;
 
 /* Does this volume have a keyslot this loader can use: pbkdf2 or argon2id?
  * An argon2i slot, or a KDF the LUKS module does not know, is recognised
@@ -349,7 +334,7 @@ static void kdf_put(void *ctx, void *mem, uint32_t kib)
 }
 
 static const luks_kdf_mem g_kdf_mem = {
-    kdf_get, kdf_put, (void *)0, (void *)0
+    kdf_get, kdf_put, (void *)0, (void *)0, tui_tick
 };
 
 /* The smallest ask of an argon2id slot the firmware could not supply, from
@@ -743,10 +728,12 @@ static BOOLEAN name_is(const fs_dirent *e, const char *file)
     return (BOOLEAN)(file[i] == '\0');
 }
 
-static INTN choose_uki(const menu_banner *banner, pos_pick pick,
-                       const char *file)
+static INTN choose_uki(pos_pick pick, const char *file)
 {
-    menu_keys keys;
+    static const tui_hint hints[] = {
+        { u"enter", u"boot" }, { u"esc", u"back" },
+    };
+    tui_list l;
     UINTN i;
 
     /* Named by the caller (a station row, its default, next boot): that
@@ -769,22 +756,23 @@ static INTN choose_uki(const menu_banner *banner, pos_pick pick,
 
     if (g_images.n == 1)
         return 0;
-    keys.keys = (const CHAR16 *)0;
-    keys.hint = (const CHAR16 *)tui_hint_plain;
 
     /* The rows' names, order and qualifiers are falcon-core's
      * (media/shelf.c), so falcon-bios offers the same rows. */
     shelf_label(&g_images, &g_fs);
-    for (i = 0; i < g_images.n; i++) {
-        ucs2_copy(g_uki_entries[i].label, MENU_PATH_MAX,
-                  g_images.uki[i].label);
-        g_uki_entries[i].sig[0] = 0;
-        g_uki_entries[i].why[0] = 0;
-        g_uki_entries[i].caution = 0;
+    memset(g_uki_rows, 0, sizeof g_uki_rows);
+    for (i = 0; i < g_images.n && i < SHELF_MAX; i++) {
+        g_uki_rows[i].label = g_images.uki[i].label;
+        g_uki_rows[i].probed = 1;
     }
-    /* No row here carries a trust tag, so the key line has no legend. */
-    return menu_run_keys(g_st, banner, g_uki_entries, g_images.n, &keys,
-                         (CHAR16 *)0);
+    memset(&l, 0, sizeof l);
+    l.title = u"Personal OS";
+    l.rows = g_uki_rows;
+    l.count = g_images.n;
+    l.hints = hints;
+    l.nhints = sizeof hints / sizeof hints[0];
+    g_chose = TRUE;
+    return (INTN)tui_list_run(&l, (int *)0);
 }
 
 /* ---- reading the UKI ---- */
@@ -801,7 +789,6 @@ static EFI_STATUS read_uki(EFI_BOOT_SERVICES *bs, const fs_dirent *ent,
     EFI_PHYSICAL_ADDRESS addr = 0;
     UINT64 size;
     UINT64 done = 0;
-    UINT64 next_dot = POS_DOT_EVERY;
     UINTN pages;
     UINT8 *buf;
     EFI_STATUS status;
@@ -832,10 +819,7 @@ static EFI_STATUS read_uki(EFI_BOOT_SERVICES *bs, const fs_dirent *ent,
             return EFI_DEVICE_ERROR;
         }
         done += n;
-        if (done >= next_dot) {
-            out(L".");
-            next_dot += POS_DOT_EVERY;
-        }
+        tui_tick();
     }
 
     *buf_out = buf;
@@ -1011,11 +995,11 @@ static EFI_STATUS launch_uki(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent,
      * printed while there was still a wait to spend it on. */
     *retain = 0;
 
-    result->stage = L"publishing the credential filesystem";
+    stage(result, L"publishing the credential filesystem");
     status = publish_credfs(st, ent, buf, size);
     if (!EFI_ERROR(status)) {
         published = TRUE;
-        result->stage = L"naming the UKI on the credential filesystem";
+        stage(result, L"naming the UKI on the credential filesystem");
         status = credfs_load_path(bs, g_load_ucs2, &load_path);
         if (EFI_ERROR(status)) {
             credfs_teardown(bs);
@@ -1048,7 +1032,7 @@ static EFI_STATUS launch_uki(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent,
      * inner-load warning the caller printed stands. */
     status = EFI_NOT_FOUND;   /* not loaded yet */
     if (ops.via_shim && ops.table_unhooked) {
-        result->stage = L"LoadImage of the UKI (firmware)";
+        stage(result, L"LoadImage of the UKI (firmware)");
         status = bs->LoadImage(FALSE, parent, load_path,
                                published ? (void *)0 : buf,
                                published ? (UINTN)0 : (UINTN)size, &child);
@@ -1061,11 +1045,12 @@ static EFI_STATUS launch_uki(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent,
             if (status == EFI_SECURITY_VIOLATION && child != (EFI_HANDLE)0)
                 bs->UnloadImage(child);
             child = (EFI_HANDLE)0;
+            tui_step_done(L"refused");
         }
     }
     if (status != EFI_SUCCESS) {
-        result->stage = ops.via_shim ? L"LoadImage of the UKI (shim)"
-                                     : L"LoadImage of the UKI (firmware)";
+        stage(result, ops.via_shim ? L"LoadImage of the UKI (shim)"
+                                   : L"LoadImage of the UKI (firmware)");
         status = ops.LoadImage(FALSE, parent, load_path,
                                published ? (void *)0 : buf,
                                published ? (UINTN)0 : (UINTN)size, &child);
@@ -1099,8 +1084,8 @@ static EFI_STATUS launch_uki(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent,
      * the "the image exited" line main.c prints if it comes back. */
     if (g_handover != (void (*)(void))0)
         g_handover();
-    out(L"handing over to the image; everything below is its own output."
-        L"\r\n\r\n");
+    stage(result, L"handing over to the image");
+    tui_handoff();
 
     result->stage = L"StartImage";
     loader_time_exec(st, g_kdf_valid ? &g_kdf : (const bli_kdf *)0);
@@ -1146,59 +1131,32 @@ static EFI_STATUS launch_uki(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent,
  * wipe and one return regardless of which of the several ways in this can
  * end. Returns LUKS_OK with *which set, POS_CANCELLED if the user pressed
  * ESC, or the LUKS status to report. */
-/* The wait after a wrong passphrase, with what was typed during it thrown
- * away: a key pressed while waiting is not an answer to the next prompt. */
-static void unlock_wait(unsigned seconds)
-{
-    EFI_INPUT_KEY key;
-
-    g_st->BootServices->Stall((UINTN)seconds * 1000000u);
-    while (g_st->ConIn->ReadKeyStroke(g_st->ConIn, &key) == EFI_SUCCESS)
-        ;
-}
-
-/* The prompt keeps its row and the status its row under it, for every
- * attempt (DESIGN Section 5.2): a retry blanks what the last one wrote,
- * redraws the empty prompt, and leaves "wrong passphrase." under it until
- * the next Enter replaces it with "unlocking...". */
+/* The prompt is a dialog over the page, asked again after each wrong
+ * passphrase with "wrong passphrase." under the field (DESIGN Section
+ * 5.2). The unlock is a step on the page, and so is the wait after a wrong
+ * one, which runs under it, where it reads as a slow key derivation. */
 static int prompt_and_unlock(UINTN *which)
 {
-    UINTN row;
-    UINTN end = 0;
-    BOOLEAN retry = FALSE;
+    tui_secret_spec spec;
 
-    if (g_note != (void (*)(void))0)
-        g_note();
-    row = (UINTN)g_st->ConOut->Mode->CursorRow;
+    memset(&spec, 0, sizeof spec);
+    spec.title = u"Unlock the shelf";
+    spec.prompt = u"passphrase for the encrypted partition:";
+    spec.lines = g_lines;
+    spec.ctx = g_lines_ctx;
     for (;;) {
-        INTN len;
+        long len;
         int rc;
-        unsigned wait;
-        UINTN r;
 
-        if (retry) {
-            for (r = row; r <= end; r++)
-                menu_line(g_st, r);
-            menu_line(g_st, row + 1u);
-            out(L"wrong passphrase.");
-            menu_line(g_st, row);
-        }
-        out(L"passphrase for the encrypted partition: ");
-
-        len = menu_prompt_secret(g_st, (const CHAR16 *)0, g_pass,
-                                 POS_PASS_MAX);
+        len = tui_secret(&spec, g_pass, POS_PASS_MAX);
         if (len < 0) {
-            /* ESC. menu_prompt_secret already wiped its buffer; nothing was
+            /* ESC. tui_secret already wiped its buffer; nothing was
              * attempted, so there is no key material to clear either. */
             return POS_CANCELLED;
         }
         g_pass_len = (UINTN)len;
 
-        /* The prompt's Enter left the cursor on the row under its end,
-         * which a long entry's wrap moved down. */
-        end = (UINTN)g_st->ConOut->Mode->CursorRow;
-        menu_line(g_st, end);
-        out(L"unlocking...\r\n");
+        tui_step(L"unlocking");
         rc = unlock_any(which);
         if (rc == LUKS_OK)
             return LUKS_OK;
@@ -1209,25 +1167,25 @@ static int prompt_and_unlock(UINTN *which)
         crypto_wipe(g_pass, sizeof g_pass);
         g_pass_len = 0;
         g_failures++;
-        /* The wait and the limit are not said (DESIGN Section 5.2): the wait
-         * runs under "unlocking...", where it reads as a slow key
-         * derivation, and the last wrong one powers off with the same
-         * sentence as the others. */
+        /* The wait and the limit are not said (DESIGN Section 5.2): the
+         * last wrong one powers off with the same sentence as the others. */
         if (g_failures >= TUI_UNLOCK_TRIES) {
-            menu_line(g_st, end);
-            out(L"wrong passphrase.\r\n");
-            g_st->BootServices->Stall(3000000u);
-            idle_power_off();
+            tui_step_done(L"wrong passphrase");
+            tui_note(L"wrong passphrase.");
+            tui_pause(3);
+            tui_power_off();
         }
-        wait = tui_unlock_delay(g_failures);
-        unlock_wait(wait);
-        retry = TRUE;
+        tui_pause(tui_unlock_delay(g_failures));
+        tui_step_done(L"wrong passphrase");
+        spec.status = u"wrong passphrase.";
     }
 }
 
-void pos_set_station_hooks(void (*note)(void), void (*handover)(void))
+void pos_set_station_hooks(void (*lines)(void *ctx, tui_status *out),
+                           void *ctx, void (*handover)(void))
 {
-    g_note = note;
+    g_lines = lines;
+    g_lines_ctx = ctx;
     g_handover = handover;
 }
 
@@ -1329,8 +1287,6 @@ static EFI_STATUS boot_shelf(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
                              pos_result *result)
 {
     EFI_BOOT_SERVICES *bs;
-    menu_banner banner = { L"falcon-boot: which image?", (const CHAR16 *)0,
-                           0 };
     void *buf = (void *)0;
     UINT64 size = 0;
     UINTN pages = 0;
@@ -1351,23 +1307,25 @@ static EFI_STATUS boot_shelf(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
     g_st = st;
     bs = st->BootServices;
     g_kdf_valid = 0;
+    loader_reads_mark(LOADER_READS_BOOT);
     result->stage = L"starting";
     result->status = EFI_SUCCESS;
     result->advice = (const CHAR16 *)0;
+    g_chose = FALSE;
 
     if (g_luks_usable == 0 && g_plain_usable == 0) {
-        result->stage = L"looking for a UKI shelf";
+        stage(result, L"looking for a UKI shelf");
         return EFI_NOT_FOUND;
     }
     if (shelf == POS_ENCRYPTED && g_luks_usable == 0) {
-        result->stage = L"looking for an encrypted shelf";
+        stage(result, L"looking for an encrypted shelf");
         result->advice = L"no encrypted shelf of this install was found.";
         return EFI_NOT_FOUND;
     }
     if (shelf != POS_ENCRYPTED && shelf != POS_ANY &&
         (shelf >= g_shelf_n || g_shelf[shelf].encrypted ||
          !g_shelf[shelf].usable)) {
-        result->stage = L"looking for a UKI shelf";
+        stage(result, L"looking for a UKI shelf");
         return EFI_NOT_FOUND;
     }
 
@@ -1414,7 +1372,7 @@ static EFI_STATUS boot_shelf(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
         crypto_wipe(g_pass, sizeof g_pass);
         g_pass_len = 0;
 
-        result->stage = L"opening the decrypted volume";
+        stage(result, L"opening the decrypted volume");
         if (luks_dev_open(&g_dev, &g_shelf[which].vol, &g_mk) != LUKS_OK) {
             wipe_secrets();
             return EFI_UNSUPPORTED;
@@ -1424,7 +1382,7 @@ static EFI_STATUS boot_shelf(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
          * copy here is dead from this point on. */
         crypto_wipe(&g_mk, sizeof g_mk);
 
-        result->stage = L"mounting the filesystem inside it";
+        stage(result, L"mounting the filesystem inside it");
         rc = mount_shelf(luks_read, &g_dev, (const fs_ops *)0);
         if (rc != FS_OK) {
             result->advice = mount_advice(rc,
@@ -1450,11 +1408,11 @@ static EFI_STATUS boot_shelf(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
             }
         }
         if (p == (pos_shelf *)0) {
-            result->stage = L"looking for a UKI shelf";
+            stage(result, L"looking for a UKI shelf");
             return EFI_NOT_FOUND;
         }
 
-        result->stage = L"mounting the plaintext UKI shelf";
+        stage(result, L"mounting the plaintext UKI shelf");
         rc = mount_shelf(discover_read, p->dev, p->fs);
         if (rc != FS_OK) {
             result->advice = mount_advice(rc,
@@ -1464,7 +1422,7 @@ static EFI_STATUS boot_shelf(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
         }
     }
 
-    result->stage = L"looking for a UKI";
+    stage(result, L"looking for a UKI");
     rc = shelf_collect(&g_images, &g_fs);
     if (rc != 1) {
         result->advice = L"no *.efi image was found in /uki or /EFI/Linux.";
@@ -1472,7 +1430,7 @@ static EFI_STATUS boot_shelf(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
         goto out_close;
     }
 
-    pick = choose_uki(&banner, want, file);
+    pick = choose_uki(want, file);
     if (pick == -2) {
         result->stage = L"looking for the UKI";
         result->advice = L"that UKI is not on the shelf.";
@@ -1498,7 +1456,10 @@ static EFI_STATUS boot_shelf(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
     }
     chosen = (UINTN)pick;
 
-    menu_screen(st);
+    /* The chooser had the screen: the page comes back, named for the
+     * image picked. */
+    if (g_chose)
+        tui_boot_page(g_images.uki[chosen].label, (const CHAR16 *)0);
 
     /* The personal OS is a UKI, so it loads its kernel exactly the way a
      * blessed wrap does and is stopped by exactly the same platform state.
@@ -1510,25 +1471,29 @@ static EFI_STATUS boot_shelf(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
     inner_blocked = load_ops_inner_load_blocked(st, &ops);
     if (inner_blocked)
         out(L"warning: this image is very unlikely to start on this machine;"
-            L"\r\n         see the note after it exits.\r\n\r\n");
+            L" see the note after it exits.\r\n");
 
     /* Its OS lost power after an fsync: the journal holds fast commits,
      * which are not replayed (falcon-core/src/fs/jbd2.h), so what is read is
      * the shelf as it was a few seconds earlier. The boot goes on. */
     if ((g_jinfo.flags & FS_JNL_FC_SKIPPED) != 0)
         out(L"the shelf's last few seconds of changes were not read.\r\n");
-    out(L"reading ");
-    out_name(g_images.uki[chosen].ent.name, g_images.uki[chosen].ent.name_len);
-    out(L" ");
-    result->stage = L"reading the UKI";
-    status = read_uki(bs, &g_images.uki[chosen].ent, &buf, &size, &pages);
-    if (EFI_ERROR(status))
-        goto out_close;
-    out(L"\r\n");
-    out_dec(size);
-    /* The handoff line at the launch says "starting", at the moment it
-     * becomes true. */
-    out(L" bytes read.\r\n\r\n");
+    {
+        CHAR16 what[8u + 64u];
+        CHAR16 got[16];
+
+        memcpy(what, L"reading ", sizeof L"reading ");
+        name_to_ucs2(what + 8, 64u, g_images.uki[chosen].ent.name,
+                     g_images.uki[chosen].ent.name_len);
+        tui_step(what);
+        result->stage = L"reading the UKI";
+        status = read_uki(bs, &g_images.uki[chosen].ent, &buf, &size,
+                          &pages);
+        if (EFI_ERROR(status))
+            goto out_close;
+        tui_size(got, sizeof got / sizeof got[0], size);
+        tui_step_done(got);
+    }
 
     /* p3 is done with: the UKI is in `buf`, and nothing after this reads
      * the shelf. The key schedule and the plaintext caches go now rather

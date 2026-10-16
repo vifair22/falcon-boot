@@ -763,6 +763,184 @@ static void test_strerror(void **state)
     assert_int_equal(stn_guid_bios_boot[0], 0x48);
 }
 
+/* ---- the ESP's names and the jumper (DESIGN Section 12.2) ---- */
+
+static void test_noshim_loader(void **state)
+{
+    (void)state;
+    assert_string_equal(stn_noshim_loader(0, 0), STN_LOADER_NOSHIM);
+    assert_string_equal(stn_noshim_loader(1, 0), STN_LOADER_NOSHIM);
+    /* An install from before the new name keeps its file. */
+    assert_string_equal(stn_noshim_loader(0, 1), STN_LOADER_OLD);
+    assert_string_equal(stn_noshim_loader(1, 1), STN_LOADER_NOSHIM);
+}
+
+static void test_jump_plan(void **state)
+{
+    (void)state;
+    /* shim: the MOK is not in db, so a MOK-signed jumper would not start. */
+    assert_int_equal(stn_jump_plan(1, 0, 0), STN_JUMP_NONE);
+    assert_int_equal(stn_jump_plan(1, 1, 1), STN_JUMP_NONE);
+    assert_int_equal(stn_jump_plan(0, 0, 0), STN_JUMP_WRITE);
+    assert_int_equal(stn_jump_plan(0, 1, 1), STN_JUMP_RESIGN);
+    /* Another system's is saved, then replaced: the jumper is always
+     * there without shim. */
+    assert_int_equal(stn_jump_plan(0, 1, 0), STN_JUMP_TAKE);
+}
+
+/* efibootmgr -v as efibootmgr 18 prints it, and as older ones did. */
+static void test_fw_parse(void **state)
+{
+    static const char v18[] =
+        "BootCurrent: 0003\n"
+        "Timeout: 1 seconds\n"
+        "BootOrder: 0003,0000,0001,0007\n"
+        "Boot0000* Windows Boot Manager\tHD(1,GPT,0b5f...,0x800,0x82000)/"
+        "\\EFI\\Microsoft\\Boot\\bootmgfw.efi\n"
+        "Boot0001* falcon\tHD(1,GPT,0b5f...,0x800,0x82000)/"
+        "\\EFI\\falcon\\falconx64.efi\n"
+        "Boot0003* falcon\tHD(1,GPT,0b5f...,0x800,0x82000)/"
+        "\\EFI\\BOOT\\BOOTX64.EFI\n"
+        "Boot0007* falcon-old\tHD(1,GPT,x)/\\EFI\\BOOT\\BOOTX64.EFI\n"
+        "Boot0008  falcon\n";
+    static const char old[] =
+        "BootOrder: 0002\n"
+        "Boot0002* falcon\tHD(1,GPT,x,0x800,0x100000)/"
+        "File(\\EFI\\BOOT\\bootx64.efi)RC\n";
+    static stn_fw fw;
+    uint16_t order[STN_FW_MAX];
+    unsigned n;
+
+    (void)state;
+    assert_int_equal(stn_fw_parse(v18, "falcon", &fw), 0);
+    assert_int_equal(fw.n, 3);
+    assert_int_equal(fw.num[0], 1);
+    assert_string_equal(fw.path[0], "\\EFI\\falcon\\falconx64.efi");
+    assert_int_equal(fw.num[1], 3);
+    /* An entry with no path at all is still ours, naming nothing. */
+    assert_int_equal(fw.num[2], 8);
+    assert_string_equal(fw.path[2], "");
+    assert_int_equal(fw.n_order, 4);
+    assert_int_equal(fw.order[0], 3);
+    assert_int_equal(fw.order[3], 7);
+    assert_int_equal(stn_fw_find(&fw, "\\EFI\\BOOT\\BOOTX64.EFI"), 1);
+    assert_int_equal(stn_fw_find(&fw, "\\EFI\\falcon\\shimx64.efi"), -1);
+
+    n = stn_fw_order_first(&fw, 1, order, STN_FW_MAX);
+    assert_int_equal(n, 4);
+    assert_int_equal(order[0], 1);
+    assert_int_equal(order[1], 3);
+    assert_int_equal(order[2], 0);
+    assert_int_equal(order[3], 7);
+    /* A number not in BootOrder yet goes in front of all of it. */
+    n = stn_fw_order_first(&fw, 9, order, STN_FW_MAX);
+    assert_int_equal(n, 5);
+    assert_int_equal(order[0], 9);
+
+    assert_int_equal(stn_fw_parse(old, "falcon", &fw), 0);
+    assert_int_equal(fw.n, 1);
+    assert_string_equal(fw.path[0], "\\EFI\\BOOT\\bootx64.efi");
+    assert_int_equal(stn_fw_find(&fw, "\\EFI\\BOOT\\BOOTX64.EFI"), 0);
+
+    assert_true(stn_fw_path_is("/efi/boot/BOOTX64.efi",
+                               "\\EFI\\BOOT\\BOOTX64.EFI"));
+    assert_false(stn_fw_path_is("\\EFI\\BOOT\\BOOTX64.EF",
+                                "\\EFI\\BOOT\\BOOTX64.EFI"));
+    assert_false(stn_fw_path_is(NULL, "x"));
+    assert_int_equal(stn_fw_parse(NULL, "falcon", &fw), -1);
+}
+
+/* A PE32+ with a decoy section and then `sect` holding body: the shape
+ * pe_find_section reads (falcon-core/tests/osrel_test.c builds the same). */
+#define JPE_AT    0x80u
+#define JPE_OPT   0xF0u
+#define JPE_SECT  (JPE_AT + 24u + JPE_OPT)
+#define JPE_BODY  (JPE_SECT + 40u * 2u)
+#define JPE_MAX   1024u
+
+static void jput16(uint8_t *p, uint16_t v)
+{
+    p[0] = (uint8_t)v;
+    p[1] = (uint8_t)(v >> 8);
+}
+
+static void jput32(uint8_t *p, uint32_t v)
+{
+    p[0] = (uint8_t)v;
+    p[1] = (uint8_t)(v >> 8);
+    p[2] = (uint8_t)(v >> 16);
+    p[3] = (uint8_t)(v >> 24);
+}
+
+static size_t jump_pe(uint8_t *img, const char *sect, const char *body)
+{
+    size_t blen = strlen(body);
+
+    memset(img, 0, JPE_MAX);
+    img[0] = 'M';
+    img[1] = 'Z';
+    jput32(img + 0x3C, JPE_AT);
+    img[JPE_AT] = 'P';
+    img[JPE_AT + 1] = 'E';
+    jput16(img + JPE_AT + 6, 2);
+    jput16(img + JPE_AT + 20, JPE_OPT);
+    memcpy(img + JPE_SECT, ".text", 5);
+    jput32(img + JPE_SECT + 16, 4);
+    jput32(img + JPE_SECT + 20, JPE_BODY);
+    memcpy(img + JPE_SECT + 40, sect, strlen(sect));
+    jput32(img + JPE_SECT + 40 + 16, (uint32_t)blen);
+    jput32(img + JPE_SECT + 40 + 20, JPE_BODY);
+    memcpy(img + JPE_BODY, body, blen);
+    return JPE_BODY + blen;
+}
+
+static void test_is_esp_jump(void **state)
+{
+    static const char shim_row[] =
+        "sbat,1,SBAT Version,sbat,1,https://github.com/rhboot/shim/blob/"
+        "main/SBAT.md\n";
+    uint8_t img[JPE_MAX];
+    char body[256];
+    size_t n;
+
+    (void)state;
+    (void)snprintf(body, sizeof body, "%s%s", shim_row,
+                   "falcon-esp-jump,1,falcon,falcon-esp-jump,0.1.2,u\n");
+    n = jump_pe(img, ".sbat", body);
+    assert_true(stn_is_esp_jump(img, n));
+
+    /* The station's own loader, and shim's grub, are not the jumper. */
+    (void)snprintf(body, sizeof body, "%s%s", shim_row,
+                   "falcon-boot-pos,1,falcon,falcon-boot-pos,0.1.2,u\n");
+    n = jump_pe(img, ".sbat", body);
+    assert_false(stn_is_esp_jump(img, n));
+    (void)snprintf(body, sizeof body, "%s%s", shim_row,
+                   "grub,4,Free Software Foundation,grub,2.12,u\n");
+    n = jump_pe(img, ".sbat", body);
+    assert_false(stn_is_esp_jump(img, n));
+
+    /* A name that only begins like ours. */
+    (void)snprintf(body, sizeof body, "%s%s", shim_row,
+                   "falcon-esp-jumpx,1,x,x,1,u\n");
+    n = jump_pe(img, ".sbat", body);
+    assert_false(stn_is_esp_jump(img, n));
+
+    /* Ours in the first row, where shim's own belongs, is not ours. */
+    n = jump_pe(img, ".sbat",
+                "falcon-esp-jump,1,falcon,falcon-esp-jump,0.1.2,u\n");
+    assert_false(stn_is_esp_jump(img, n));
+
+    /* No .sbat, a short row, and no PE at all. */
+    n = jump_pe(img, ".data", body);
+    assert_false(stn_is_esp_jump(img, n));
+    (void)snprintf(body, sizeof body, "%sfalcon-esp", shim_row);
+    n = jump_pe(img, ".sbat", body);
+    assert_false(stn_is_esp_jump(img, n));
+    memset(img, 0, sizeof img);
+    assert_false(stn_is_esp_jump(img, sizeof img));
+    assert_false(stn_is_esp_jump(NULL, 0));
+}
+
 int run_stationcore_tests(void)
 {
     const struct CMUnitTest tests[] = {
@@ -782,6 +960,10 @@ int run_stationcore_tests(void)
         cmocka_unit_test(test_reach),
         cmocka_unit_test(test_sizes_4kn),
         cmocka_unit_test(test_strerror),
+        cmocka_unit_test(test_noshim_loader),
+        cmocka_unit_test(test_jump_plan),
+        cmocka_unit_test(test_fw_parse),
+        cmocka_unit_test(test_is_esp_jump),
     };
 
     return cmocka_run_group_tests_name("stationcore", tests, NULL, NULL);

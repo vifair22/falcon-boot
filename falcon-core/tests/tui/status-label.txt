@@ -1,0 +1,25 @@
+ falcon-boot 0.1.2                                        Secure Boot on, MS CA 
+                                                                                
+  +- t430 ------------------------------+   +- TOTP -------------------------+  
+  |> Gentoo (Latest)            default |   |                                |  
+  |  Gentoo (fallback)                  |   | TOTP: 923 496                  |  
+  |  Windows Boot Manager               |   | (falcon-station:thinkpad-t430) |  
+  |  Memory test                        |   |                                |  
+  |  Reboot to firmware setup           |   +--------------------------------+  
+  |                                     |                                       
+  |                                     |                                       
+  |                                     |                                       
+  |                                     |                                       
+  |                                     |                                       
+  |                                     |                                       
+  |                                     |                                       
+  |                                     |                                       
+  |                                     |                                       
+  |                                     |                                       
+  |                                     |                                       
+  |                                     |                                       
+  +-------------------------------------+                                       
+                                                                                
+                                                                                
+                                                                                
+                                                                               

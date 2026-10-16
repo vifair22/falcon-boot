@@ -22,7 +22,7 @@
 #include <win/win.h>
 #include <bsd/bsd.h>
 #include <linux/linux.h>
-#include <console/screen.h>
+#include <console/display.h>
 #include <task/task.h>
 #include <mem/e820.h>
 #include <disk/marker.h>
@@ -93,7 +93,7 @@ static bios_disk        *g_p3_disk;
  *
  * ISO and IMG only: nothing on a BIOS machine runs a PE, so the .efi rows
  * the UEFI menu offers would be rows that cannot boot. */
-#define MENU_MAX 64u
+#define MENU_MAX 128u
 /* The core rows, plus "..", plus the personal-OS row. */
 #define VIEW_MAX (MENU_MAX + 2u)
 
@@ -156,7 +156,7 @@ static void put_name(const uint16_t *name)
  * row first on the root screen, ".." first in a folder, then the folders and
  * files the survey found. What a folder holds comes from falcon-core
  * (media/survey.c), so the two platforms cannot disagree about what is on a
- * stick; how the menu is drawn comes from falcon-core too (tui/tui.c), so
+ * stick; how the menu is drawn comes from falcon-core too (tui/list.c), so
  * they cannot disagree about how it looks. The UEFI menu's firmware-setup
  * row has no counterpart: nothing asks a BIOS to open its setup screen. */
 
@@ -167,11 +167,11 @@ typedef enum {
     ROW_IMAGE       /* boot survey entry g_row_index */
 } row_kind;
 
-static const uint16_t *g_labels[VIEW_MAX];
+/* The rows the list draws, their tag columns filled from the background
+ * probe (probe_fill). */
+static tui_row         g_rows[VIEW_MAX];
 static row_kind        g_kind[VIEW_MAX];
 static size_t          g_row_index[VIEW_MAX];
-/* The rows' tag columns, filled from the background probe (probe_fill). */
-static screen_tags     g_tags[VIEW_MAX];
 
 /* The ".." row doubles as the only place the current folder is named, as
  * on the UEFI menu. */
@@ -225,8 +225,10 @@ static const uint16_t *entry_why(const entry_probe *p)
 }
 
 /* The row's tags from its entry's answer. */
-static void row_tags(size_t row, screen_tags *t)
+static void row_tags(size_t row)
 {
+    tui_row *t = &g_rows[row];
+
     t->why = entry_why(&g_probe[g_row_index[row]]);
     t->caution = t->why != (const uint16_t *)0;
 }
@@ -303,15 +305,75 @@ static int probe_step(void *ctx, size_t sel)
     return task_resume(&g_probe_task);
 }
 
-static int probe_fill(void *ctx, size_t row, screen_tags *t)
+static int probe_fill(void *ctx, size_t row)
 {
     (void)ctx;
     if (g_kind[row] != ROW_IMAGE)
         return 1;
     if (!g_probe[g_row_index[row]].done)
         return 0;
-    row_tags(row, t);
+    row_tags(row);
     return 1;
+}
+
+/* Appends s, or v in decimal, at n in a buffer of cap; returns the new
+ * length, the buffer terminated. */
+static size_t add(char *b, size_t n, size_t cap, const char *s)
+{
+    while (*s != '\0' && n + 1u < cap)
+        b[n++] = *s++;
+    b[n] = '\0';
+    return n;
+}
+
+static size_t dec(char *b, size_t n, size_t cap, size_t v)
+{
+    char d[20];
+    size_t k = 0;
+
+    do {
+        d[k++] = (char)('0' + v % 10u);
+        v /= 10u;
+    } while (v != 0 && k < sizeof d);
+    while (k > 0 && n + 1u < cap)
+        b[n++] = d[--k];
+    b[n] = '\0';
+    return n;
+}
+
+/* The bottom border: the highlighted image's size. */
+static void view_detail(void *ctx, size_t row, uint16_t *buf, size_t cap)
+{
+    (void)ctx;
+    buf[0] = 0;
+    if (g_kind[row] == ROW_IMAGE)
+        tui_size(buf, cap, g_survey.entries[g_row_index[row]].ent.size);
+}
+
+/* The line under the panel: the library's count, and what the probe has
+ * still to look inside. */
+static void view_note(void *ctx, uint16_t *buf, size_t cap)
+{
+    size_t left = 0;
+    size_t n = 0;
+    size_t i;
+    char line[64];
+
+    (void)ctx;
+    for (i = 0; i < g_survey.count; i++) {
+        if (!g_probe[i].done)
+            left++;
+    }
+    n = dec(line, n, sizeof line, g_survey.count);
+    n = add(line, n, sizeof line, g_survey.count == 1 ? " image" : " images");
+    if (left != 0) {
+        n = add(line, n, sizeof line, ", ");
+        n = dec(line, n, sizeof line, left);
+        n = add(line, n, sizeof line, " still being read");
+    }
+    for (i = 0; i < n && i + 1u < cap; i++)
+        buf[i] = (uint16_t)(unsigned char)line[i];
+    buf[i] = 0;
 }
 
 static size_t view_build(void)
@@ -320,39 +382,36 @@ static size_t view_build(void)
     size_t j;
     size_t i;
 
-    for (i = 0; i < VIEW_MAX; i++) {
-        g_tags[i].sig = (const uint16_t *)0;
-        g_tags[i].why = (const uint16_t *)0;
-        g_tags[i].caution = 0;
-        /* Only an image row has anything to look inside; every other row
-         * is done as built, so it never shows the pending placeholder. */
-        g_tags[i].probed = 1;
-    }
+    /* Only an image row has anything to look inside; every other row is
+     * done as built, so it never shows the pending placeholder. */
+    memset(g_rows, 0, sizeof g_rows);
+    for (i = 0; i < VIEW_MAX; i++)
+        g_rows[i].probed = 1;
 
     if (g_cur_len == 0u) {
         if (g_pos_row) {
-            g_labels[n] = pos_entry_label();
+            g_rows[n].label = pos_entry_label();
             g_kind[n] = ROW_PERSONAL;
             n++;
         }
     } else {
         up_label();
-        g_labels[n] = g_up_label;
+        g_rows[n].label = g_up_label;
         g_kind[n] = ROW_UP;
         n++;
     }
     j = survey_view(&g_survey, g_cur, g_cur_len, g_view, VIEW_MAX - n);
     for (i = 0; i < j && n < VIEW_MAX; i++) {
-        g_labels[n] = g_view[i].label;
+        g_rows[n].label = g_view[i].label;
         g_kind[n] = (g_view[i].kind == SURVEY_ROW_DIR) ? ROW_DIR : ROW_IMAGE;
         g_row_index[n] = (size_t)g_view[i].index;
         /* An image already looked inside, on an earlier screen, has its
          * answer kept: its tags are filled here and the menu skips it. */
         if (g_kind[n] == ROW_IMAGE) {
             if (g_probe[g_row_index[n]].done)
-                row_tags(n, &g_tags[n]);
+                row_tags(n);
             else
-                g_tags[n].probed = 0;
+                g_rows[n].probed = 0;
         }
         n++;
     }
@@ -361,46 +420,66 @@ static size_t view_build(void)
 
 /* ---- boot routes, reported the way the UEFI loader reports them ---- */
 
-static const char k_press_any[] = "\npress any key to return to the menu.\n";
-
-/* A route's first screen: its code, then what is being booted. */
-static void booting(const char *code, const uint16_t *label)
+/* A route that came back: a red dialog titled "<what> failed", the label,
+ * then any line the route adds, "<what> failed while <stage>", the advice
+ * and any hint. */
+static void failed(const uint16_t *label, const char *what,
+                   const boot_result *r, const char *head, const char *line,
+                   const char *hint)
 {
-    screen_mode(code);
-    screen_page();
-    screen_out("booting: ");
-    screen_out16(label);
-    screen_out("\n\n");
-}
+    uint16_t title[48];
+    size_t n = 0;
+    size_t i;
 
-/* A route that came back: "<what> failed while <stage>", then the advice. */
-static void failed(const char *what, const boot_result *r)
-{
-    screen_out("\n");
-    screen_out(what);
-    screen_out(" failed while ");
-    screen_out(r->stage);
-    screen_out("\n");
-    if (r->advice != (const char *)0) {
-        screen_out("\n");
-        screen_out(r->advice);
-        screen_out("\n");
+    for (i = 0; what[i] != '\0' && n + 8u < sizeof title / sizeof title[0];
+         i++)
+        title[n++] = (uint16_t)(unsigned char)what[i];
+    for (i = 0; u" failed"[i] != 0; i++)
+        title[n++] = u" failed"[i];
+    title[n] = 0;
+    tui_report(TUI_FAIL, title, label);
+    if (line != (const char *)0 && line[0] != '\0') {
+        tui_out_ascii(head);
+        tui_out_ascii(line);
+        tui_out(u"\n");
     }
+    tui_report_failed_a(what, r->stage);
+    if (r->advice != (const char *)0) {
+        tui_out(u"\n");
+        tui_style(TUI_DIM);
+        tui_out_ascii(r->advice);
+        tui_out(u"\n");
+        tui_style(TUI_PLAIN);
+    }
+    if (hint != (const char *)0) {
+        tui_out(u"\n");
+        tui_style(TUI_DIM);
+        tui_out_ascii(hint);
+        tui_out(u"\n");
+        tui_style(TUI_PLAIN);
+    }
+    tui_report_end((const uint16_t *)0);
 }
 
-/* The page a tagged row shows instead of a route: nothing is loaded, so
+/* The dialog a tagged row shows instead of a route: nothing is loaded, so
  * there is no route code, only what the medium is and what to do. */
-static void refuse(const survey_entry *e, const char *why, const char *what)
+static void refuse(const survey_entry *e, const char *title, const char *why,
+                   const char *what)
 {
-    screen_mode((const char *)0);
-    screen_page();
-    screen_out16(e->label);
-    screen_out("\n");
-    screen_out(why);
-    screen_out("\n\n");
-    screen_out(what);
-    screen_out("\n");
-    screen_out(k_press_any);
+    uint16_t t[24];
+    size_t i;
+
+    for (i = 0; title[i] != '\0' && i + 1u < sizeof t / sizeof t[0]; i++)
+        t[i] = (uint16_t)(unsigned char)title[i];
+    t[i] = 0;
+    tui_report(TUI_INFO, t, e->label);
+    tui_out_ascii(why);
+    tui_out(u"\n\n");
+    tui_style(TUI_DIM);
+    tui_out_ascii(what);
+    tui_out(u"\n");
+    tui_style(TUI_PLAIN);
+    tui_report_end((const uint16_t *)0);
 }
 
 /* Windows install media with boot.wim patched in memory (DESIGN Section
@@ -420,16 +499,14 @@ static int boot_windows(const survey_entry *e)
     if (manifest_path_from_ucs2(e->label, rel, sizeof rel) != MANIFEST_OK)
         return 0;
     boot_result_init(&r);
-    booting("WIN", e->label);
+    tui_boot_page(e->label, u"WIN");
     (void)win_boot(g_p2_src.disk, &g_p2, g_p2_part, &e->ent, rel, &r,
                    &unpatchable);
     if (unpatchable)
         return 0;
 
-    screen_page();
-    screen_out16(e->label);
-    failed("boot", &r);
-    screen_out(k_press_any);
+    failed(e->label, "boot", &r, (const char *)0, (const char *)0,
+           (const char *)0);
     return 1;
 }
 
@@ -442,15 +519,13 @@ static int boot_windows_xp(const survey_entry *e)
     int not_xp = 1;
 
     boot_result_init(&r);
-    booting("WXP", e->label);
+    tui_boot_page(e->label, u"WXP");
     (void)win_xp_boot(g_p2_src.disk, &g_p2, g_p2_part, &e->ent, &r, &not_xp);
     if (not_xp)
         return 0;
 
-    screen_page();
-    screen_out16(e->label);
-    failed("Windows setup", &r);
-    screen_out(k_press_any);
+    failed(e->label, "Windows setup", &r, (const char *)0, (const char *)0,
+           (const char *)0);
     return 1;
 }
 
@@ -462,15 +537,13 @@ static int boot_bsd(const survey_entry *e)
     int not_bsd = 1;
 
     boot_result_init(&r);
-    booting("BSD", e->label);
+    tui_boot_page(e->label, u"BSD");
     (void)bsd_boot(g_p2_src.disk, &g_p2, g_p2_part, &e->ent, &r, &not_bsd);
     if (not_bsd)
         return 0;
 
-    screen_page();
-    screen_out16(e->label);
-    failed("the memory-disk boot", &r);
-    screen_out(k_press_any);
+    failed(e->label, "the memory-disk boot", &r, (const char *)0,
+           (const char *)0, (const char *)0);
     return 1;
 }
 
@@ -487,23 +560,15 @@ static void boot_direct(const survey_entry *e, const family_desc *fam)
     boot_result r;
 
     boot_result_init(&r);
-    booting("DIR", e->label);
+    tui_boot_page(e->label, u"DIR");
     (void)scan_direct(&g_p2, g_p2_part, &e->ent, g_p2_block, &r);
     if (r.fallthrough) {
         boot_target(e, fam);
         return;
     }
 
-    screen_page();
-    screen_out16(e->label);
-    if (r.title[0] != '\0') {
-        screen_out("\nentry: ");
-        screen_out(r.title);
-    }
-    failed("direct boot", &r);
-    screen_out("\npress c on the entry to boot the ISO's own loader "
-               "instead.\n");
-    screen_out(k_press_any);
+    failed(e->label, "direct boot", &r, "entry: ", r.title,
+           "press c on the entry to boot the ISO's own loader instead.");
 }
 
 /* The medium's own bootloader, off the resident virtual CD. */
@@ -512,17 +577,12 @@ static void boot_target(const survey_entry *e, const family_desc *fam)
     boot_result r;
 
     boot_result_init(&r);
-    booting("CHN", e->label);
+    tui_boot_page(e->label, u"CHN");
     (void)scan_chain(g_p2_src.disk, &g_p2, g_p2_part, &e->ent, &r);
 
-    screen_page();
-    screen_out16(e->label);
-    if (fam != (const family_desc *)0) {
-        screen_out("\nfamily: ");
-        screen_out(fam->name);
-    }
-    failed("boot", &r);
-    screen_out(k_press_any);
+    failed(e->label, "boot", &r, "family: ",
+           fam != (const family_desc *)0 ? fam->name : (const char *)0,
+           (const char *)0);
 }
 
 /* What the UEFI loader's boot_plain decides, in its order: Windows media is
@@ -538,24 +598,25 @@ static void boot_plain(size_t idx, int which)
     int chain = (which == 'c');
     int id;
 
-    /* Looking inside the medium reads it, and the menu is still up: say so
-     * rather than leave it frozen until the route's page. */
-    screen_page();
-    screen_busy(tui_busy_image);
+    /* Looking inside the medium reads it: say so rather than leave the
+     * menu frozen until the route's page. */
+    tui_page(e->label, u"");
+    tui_step(tui_busy_image);
     p = probe_entry(idx);
 
     /* Every key, c included: the chainload wants a BIOS boot image this
      * medium does not have, and direct a kernel it does not carry, or one
      * this processor cannot run (DESIGN Section 7.8). */
     if (p->efi_only) {
-        refuse(e, "this image boots only on a UEFI machine: it has no BIOS "
-                  "boot image,\nand no kernel falcon-bios can start.",
+        refuse(e, "EFI only", "this image boots only on a UEFI machine: it "
+                              "has no BIOS boot image, and no kernel "
+                              "falcon-bios can start.",
                "Start the machine from this stick in UEFI mode instead.");
         return;
     }
     if (p->needs64 && !g_cpu64) {
-        refuse(e, "this image needs a 64-bit processor, and this one has no "
-                  "64-bit mode.",
+        refuse(e, "64-bit only", "this image needs a 64-bit processor, and "
+                                 "this one has no 64-bit mode.",
                "Start it on a machine with a 64-bit processor instead.");
         return;
     }
@@ -584,14 +645,11 @@ static int boot_personal(void)
 {
     boot_result r;
 
-    screen_mode("POS");
-    screen_page();
-    screen_out16(pos_entry_label());
-    screen_out("\n\n");
+    tui_boot_page(pos_entry_label(), u"POS");
     if (pos_run(g_p3_disk, g_p3_part, &r) == POS_ABORTED)
         return 0;
-    failed("personal OS boot", &r);
-    screen_out(k_press_any);
+    tui_route_failed_a(pos_entry_label(), "personal OS boot", r.stage,
+                       r.advice);
     return 1;
 }
 
@@ -601,16 +659,15 @@ static int boot_personal(void)
  * reset instead. */
 static void return_to_firmware(void)
 {
-    screen_mode((const char *)0);
-    screen_page();
-    screen_out("falcon-boot: returning to firmware.\n");
+    tui_leaving(0);
     if (!g_p2_mounted)
-        screen_out("note: no readable ISO volume was found.\n");
+        tui_out(u"note: no readable ISO volume was found.\n");
     if (g_survey.skipped != 0) {
-        screen_out("note: ");
-        screen_out_dec(g_survey.skipped);
-        screen_out(" image(s) not shown (list full or path too long)\n");
+        tui_out(u"note: ");
+        tui_out_dec(g_survey.skipped);
+        tui_out(u" image(s) not shown (list full or path too long)\n");
     }
+    tui_handoff();
     thunk_vector = 0x18;
     thunk_bios();
     bios_reboot();
@@ -625,11 +682,7 @@ static void install_notice(void)
 
     if (why == (const char *)0)
         return;
-    screen_mode((const char *)0);
-    screen_page();
-    screen_out(why);
-    screen_out("\n\npress any key to continue.\n");
-    (void)screen_key();
+    tui_notice_a(u"This install", why);
 }
 
 /* The next-boot marker, acted on: the UEFI loader's next_boot_run, in its
@@ -670,15 +723,8 @@ static void next_boot_run(void)
         break;
     }
 
-    screen_mode((const char *)0);
-    screen_page();
     if (note != (const char *)0) {
-        screen_out("note: ");
-        screen_out(note);
-        if (g_next_state != MARKER_STUCK)
-            screen_out("\nIt has been cleared; nothing was booted from it.");
-        screen_out("\n\npress any key for the menu.\n");
-        (void)screen_key();
+        tui_next_note(note, g_next_state != MARKER_STUCK);
         return;
     }
 
@@ -688,56 +734,67 @@ static void next_boot_run(void)
     if (nextboot_is_reserved(g_next)) {
         if (nextboot_is_personal(g_next) && g_pos_row) {
             if (boot_personal())
-                (void)screen_key();
+                (void)tui_wait();
             return;
         }
-        if (nextboot_is_personal(g_next))
-            screen_out("the personal OS the next-boot marker names is not on "
-                       "this stick.");
-        else
-            screen_out("the next-boot marker held a reserved value this "
-                       "loader does not know.");
-        screen_out("\nIt has been cleared; nothing was booted from it."
-                   "\n\npress any key for the menu.\n");
-        (void)screen_key();
+        tui_next_note(nextboot_is_personal(g_next)
+                          ? "the personal OS the next-boot marker names is "
+                            "not on this stick."
+                          : "the next-boot marker held a reserved value this "
+                            "loader does not know.", 1);
         return;
     }
 
     for (i = 0; g_p2_mounted && i < g_survey.count; i++) {
         if (nextboot_names(g_survey.entries[i].label, g_next)) {
             boot_plain(i, BIOS_KEY_ENTER);
-            (void)screen_key();
+            (void)tui_wait();
             return;
         }
     }
-    screen_out("the ISO this boot was supposed to start is not on the stick "
-               "any more.\nIt has been cleared; nothing was booted from it."
-               "\n\npress any key for the menu.\n");
-    (void)screen_key();
+    tui_next_note("the ISO this boot was supposed to start is not on the "
+                  "stick any more.", 1);
 }
 
 static void menu_run(void)
 {
-    static const screen_banner banner = {
-        u"falcon-boot " FALCON_VERSION, u"BIOS", TUI_ATTR_TEXT
-    };
     /* c and d choose the route for an ISO row; on any other row they act
      * as enter. */
-    static const uint16_t hint[] =
-        u"enter boot | c chain | d direct | esc back";
-    static const screen_rows rows = { g_tags, probe_step, probe_fill,
-                                      (void *)0 };
+    static const tui_hint hints[] = {
+        { u"enter", u"boot" }, { u"c", u"chain" }, { u"d", u"direct" },
+        { u"esc", u"back" },
+    };
+    static uint16_t title[SURVEY_PATH_MAX + 2u];
 
     for (;;) {
+        tui_list l;
         size_t n;
         int which = BIOS_KEY_ENTER;
         int pick;
 
-        /* Whatever route the last boot took, it is over. */
-        screen_mode((const char *)0);
         n = view_build();
-        pick = screen_menu_tagged(&banner, g_labels, n, &rows, "cd", hint,
-                                  &which);
+        if (g_cur_len == 0u) {
+            ucs2_copy(title, sizeof title / sizeof title[0], u"ISO library");
+        } else {
+            size_t i;
+
+            title[0] = u'/';
+            for (i = 0; i < g_cur_len && i + 2u < sizeof title / 2u; i++)
+                title[i + 1u] = g_cur[i];
+            title[i + 1u] = 0;
+        }
+        memset(&l, 0, sizeof l);
+        l.title = title;
+        l.rows = g_rows;
+        l.count = n;
+        l.keys = "cd";
+        l.hints = hints;
+        l.nhints = sizeof hints / sizeof hints[0];
+        l.step = probe_step;
+        l.fill = probe_fill;
+        l.detail = view_detail;
+        l.note = view_note;
+        pick = tui_list_run(&l, &which);
 
         if (pick < 0) {
             /* Escape is "back": out of the folder while there is one to
@@ -759,7 +816,7 @@ static void menu_run(void)
             survey_up(g_cur, &g_cur_len);
             continue;
         case ROW_DIR:
-            (void)survey_enter(g_cur, &g_cur_len, g_labels[pick]);
+            (void)survey_enter(g_cur, &g_cur_len, g_rows[pick].label);
             continue;
         case ROW_PERSONAL:
             if (!boot_personal())
@@ -770,7 +827,7 @@ static void menu_run(void)
             boot_plain(g_row_index[pick], which);
             break;
         }
-        (void)screen_key();
+        (void)tui_wait();
     }
 }
 
@@ -848,17 +905,16 @@ static void claim_roles(bios_disk *d, const part_table *t)
         if (!mine)
             continue;
         if (rec.role == IDENT_ROLE_SHELF && g_p3_part == (const part_entry *)0) {
-            screen_busy(tui_busy_shelf);
+            tui_busy(tui_busy_shelf);
             if (pos_probe(d, p)) {
                 g_p3_part = p;
                 g_p3_disk = d;
             }
         } else if (rec.role == IDENT_ROLE_LIBRARY && !encrypted &&
                    g_p2_part == (const part_entry *)0) {
-            screen_busy(tui_busy_library);
+            tui_busy(tui_busy_library);
             scan_iso_partition(d, p);
         }
-        screen_busy(tui_busy_disks);
     }
 }
 
@@ -986,9 +1042,9 @@ void bios_main(uint8_t drive)
     /* The screen first, so every startup step can say itself on it: a slow
      * disk or a large library shows where the time goes rather than leaving
      * the BIOS's own text up. */
-    screen_init();
-    screen_page();
-    screen_busy(tui_busy_disks);
+    display_init();
+    tui_title(u"falcon-boot " FALCON_VERSION, u"BIOS", TUI_ATTR_STATE);
+    tui_busy(tui_busy_disks);
 
     if (!bios_disk_probe(&g_disks[0], drive))
         bios_puts("falcon-bios: the boot drive did not answer AH=48h\n");

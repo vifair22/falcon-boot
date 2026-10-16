@@ -164,6 +164,7 @@
 #define DAP_ADDR        (BIOS_SCRATCH + 0x00)   /* 16 bytes */
 #define DRIVEPARM_ADDR  (BIOS_SCRATCH + 0x40)   /* 30 bytes */
 #define E820_ADDR       (BIOS_SCRATCH + 0x80)   /* 24 bytes, one entry */
+#define FONT_ADDR       (BIOS_SCRATCH + 0xC0)   /* 64 bytes: four 8x16 glyphs */
 
 /* ---- where a Linux payload goes (DESIGN Section 11.3.6) ----
  *

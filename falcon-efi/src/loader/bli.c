@@ -165,6 +165,74 @@ UINTN bli_kdf_info(const bli_kdf *k, char *out, UINTN cap)
     return at;
 }
 
+static void put_phase(char *out, UINTN cap, UINTN *at, const char *name,
+                      const bli_read_phase *p)
+{
+    put_a(out, cap, at, name);
+    put_a(out, cap, at, " ");
+    put_u(out, cap, at, p->calls);
+    put_a(out, cap, at, " calls ");
+    put_u(out, cap, at, (p->bytes + 1023u) / 1024u);
+    put_a(out, cap, at, " KiB ");
+    put_u(out, cap, at, p->usec / 1000u);
+    put_a(out, cap, at, " ms");
+}
+
+UINTN bli_read_info(const bli_reads *r, char *out, UINTN cap)
+{
+    UINTN at = 0;
+
+    if (out == (char *)0 || cap == 0)
+        return 0;
+    out[0] = '\0';
+    if (r == (const bli_reads *)0 || cap < BLI_READ_INFO_MAX)
+        return 0;
+    put_phase(out, cap, &at, "startup", &r->startup);
+    put_phase(out, cap, &at, ", menu", &r->menu);
+    put_phase(out, cap, &at, ", boot", &r->boot);
+    if (r->boot.usec != 0) {
+        /* Bytes per microsecond is MB/s; to two places, so a stick read at
+         * under one MB/s does not show as 0. Split so neither part can
+         * overflow. */
+        UINT64 rem = r->boot.bytes % r->boot.usec;
+        UINT64 hund = r->boot.usec <= UINT64_MAX / 100u
+                          ? rem * 100u / r->boot.usec
+                          : rem / (r->boot.usec / 100u);
+        CHAR16 frac[3];
+
+        put_a(out, cap, &at, " ");
+        put_u(out, cap, &at, r->boot.bytes / r->boot.usec);
+        put_a(out, cap, &at, ".");
+        (void)tsc_dec16(hund, 2u, frac, 3u);
+        if (at + 2u < cap) {
+            out[at++] = (char)frac[0];
+            out[at++] = (char)frac[1];
+        }
+        put_a(out, cap, &at, " MB/s");
+    }
+    out[at] = '\0';
+    return at;
+}
+
+EFI_STATUS bli_set_reads(EFI_SYSTEM_TABLE *st, const bli_reads *r)
+{
+    EFI_GUID falcon = FALCON_VENDOR_GUID;
+    EFI_RUNTIME_SERVICES *rt;
+    char line[BLI_READ_INFO_MAX];
+    CHAR16 val[BLI_READ_INFO_MAX];
+    UINTN n, i;
+
+    if (st == (EFI_SYSTEM_TABLE *)0 || r == (const bli_reads *)0)
+        return EFI_INVALID_PARAMETER;
+    rt = st->RuntimeServices;
+    if (rt == (EFI_RUNTIME_SERVICES *)0 || rt->SetVariable == (void *)0)
+        return EFI_UNSUPPORTED;
+    n = bli_read_info(r, line, sizeof line);
+    for (i = 0; i <= n; i++)
+        val[i] = (CHAR16)(unsigned char)line[i];
+    return set_str(rt, &falcon, BLI_READ_INFO_NAME, val);
+}
+
 static EFI_STATUS set_kdf(EFI_RUNTIME_SERVICES *rt, EFI_GUID *falcon,
                           const bli_kdf *kdf)
 {
@@ -221,5 +289,7 @@ void bli_clear_exec(EFI_SYSTEM_TABLE *st)
     (void)rt->SetVariable((CHAR16 *)(uintptr_t)BLI_KDF_NAME, &falcon,
                           BLI_ATTRS, 0, (void *)0);
     (void)rt->SetVariable((CHAR16 *)(uintptr_t)BLI_KDF_INFO_NAME, &falcon,
+                          BLI_ATTRS, 0, (void *)0);
+    (void)rt->SetVariable((CHAR16 *)(uintptr_t)BLI_READ_INFO_NAME, &falcon,
                           BLI_ATTRS, 0, (void *)0);
 }

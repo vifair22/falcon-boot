@@ -35,7 +35,9 @@ static __attribute__((noreturn)) void die(const char *why)
  * bios_fatal starts on a new line, under it. */
 #define BDA_CURSOR_COL 0x450u
 
-static const char k_spin[4] = { '/', '-', '\\', '|' };
+/* 0xC4 is code page 437's horizontal line, the menu's TUI_HLINE: stage 2
+ * links no core, so it writes the byte the VGA font draws. */
+static const char k_spin[4] = { '/', '\xC4', '\\', '|' };
 static uint32_t g_spin __attribute__((section(".data"))) = 0;
 
 static void screen_text(const char *s)

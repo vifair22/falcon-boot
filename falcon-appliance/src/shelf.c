@@ -102,7 +102,7 @@ static void kdf_put(void *ctx, void *mem, uint32_t kib)
 }
 
 static const luks_kdf_mem g_kdf_mem = {
-    kdf_get, kdf_put, (void *)0, (void *)0
+    kdf_get, kdf_put, (void *)0, (void *)0, (void (*)(void))0
 };
 
 int shelf_unlock(const void *pass, size_t len)

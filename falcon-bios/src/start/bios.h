@@ -37,8 +37,8 @@ typedef struct {
     uint32_t edx;
     uint32_t esi;
     uint32_t edi;
-    uint16_t es;
-    uint16_t pad0;
+    uint16_t es;      /* in and out, as bp */
+    uint16_t bp;
     uint16_t flags;   /* the carry bit is how a BIOS call says it failed */
     uint16_t pad1;
 } bios_regs;
@@ -161,17 +161,19 @@ int bios_key_poll(void);
  * for anything that reads low memory. */
 void bios_key_buffer_wipe(void);
 
+/* The same numbers as falcon-core's TUI_KEY_*, so a key goes to the
+ * screens as it is read. */
 #define BIOS_KEY_UP     0x100
 #define BIOS_KEY_DOWN   0x101
+#define BIOS_KEY_PGUP   0x102
+#define BIOS_KEY_PGDN   0x103
+#define BIOS_KEY_HOME   0x104
+#define BIOS_KEY_END    0x105
 #define BIOS_KEY_ENTER  0x00D
 #define BIOS_KEY_ESC    0x01B
-/* screen_key's answer when the idle power-off did not take and a key
- * woke the screen: that key is not the page's, and whatever the page held
- * that registered with screen_idle_secret was wiped. */
-#define BIOS_KEY_IDLE   (-2)
-
-/* A page's wait for a key: screen_key where stage 3 has a screen (and so
- * the idle power-off), bios_getkey where it does not. */
+/* A page's wait for a key: falcon-core's tui_wait where stage 3 has its
+ * screens up (and so the idle power-off, console/display.c), bios_getkey
+ * where it does not. */
 int bios_wait_key(void);
 
 /* Resets the machine. Does not return. */
@@ -242,8 +244,9 @@ void bios_disk_set_hook(void (*hook)(void));
 
 /* Called after every INT 13h read call that succeeds (a CHS track, an AH=42h
  * bounce buffer); NULL (the default) for none. Stage 2's spinner turns from
- * it while stage 3 is read in (start/load3.c). It lives in .data, so stage 2
- * can keep it, and each stage's copy of disk.c has its own. */
+ * it while stage 3 is read in (start/load3.c), and stage 3's display turns
+ * a step's spinner from it (tui_tick). It lives in .data, so stage 2 can
+ * keep it, and each stage's copy of disk.c has its own. */
 void bios_disk_on_call(void (*fn)(void));
 
 /* Empties the track cache, so the next read of any sector goes to the disk.

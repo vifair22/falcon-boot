@@ -39,6 +39,7 @@
 #define FALCON_POS_H
 
 #include <efi/uefi.h>
+#include <tui/tui.h>
 
 /* Why an attempt ended, in words fit for the screen. Shaped like
  * iso_boot_result so main.c reports both paths the same way. */
@@ -159,10 +160,11 @@ EFI_STATUS pos_boot_file(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
  * the launch returns; NULL or len 0 clears it. Not a secret, and not wiped. */
 void pos_set_bless_list(const void *data, UINTN len);
 
-/* The UEFI station's TOTP check (DESIGN Section 12.15): `note` writes its
- * lines on the passphrase page before the first prompt, `handover` runs
- * just before the UKI is started. Either may be NULL; the stick sets
+/* The UEFI station's TOTP check (DESIGN Section 12.15): `lines` are shown
+ * in the passphrase dialog and kept current (tui_secret_spec), `handover`
+ * runs just before the UKI is started. Either may be NULL; the stick sets
  * neither. */
-void pos_set_station_hooks(void (*note)(void), void (*handover)(void));
+void pos_set_station_hooks(void (*lines)(void *ctx, tui_status *out),
+                           void *ctx, void (*handover)(void));
 
 #endif /* FALCON_POS_H */

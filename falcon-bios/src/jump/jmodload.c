@@ -7,6 +7,7 @@
 
 #include <gz/gz.h>
 #include <lib/string.h>
+#include <tui/tui.h>
 
 static void svc_log(const char *s)
 {
@@ -19,7 +20,7 @@ static void svc_log_hex(uint64_t v)
 }
 
 static jmod_services g_svc = {
-    JMOD_ABI, svc_log, svc_log_hex, 0
+    JMOD_ABI, svc_log, svc_log_hex, 0, tui_tick
 };
 
 /* One past the highest byte of usable RAM in the map (jmod.h, mem_top). */

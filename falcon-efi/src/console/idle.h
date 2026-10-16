@@ -8,8 +8,8 @@
  * BitLocker prompt. Nothing is booted and nothing is decided: an idle
  * machine goes off rather than on.
  *
- * What counts as activity: a page starting to wait (menu_run and its
- * kin, the passphrase prompt, a "press any key" page), each key read, and
+ * What counts as activity: a page starting to wait (a menu, the
+ * passphrase prompt, a "press any key" page), each key read, and
  * each second of a countdown, which ends in a boot of its own and must not
  * be cut short by a longer idle time. The status lines' refresh (the TOTP
  * code) is not: a changing code on an unwatched screen is still unwatched.
@@ -21,9 +21,9 @@
  * prompt wipes what has been typed. Should the firmware return from
  * ResetSystem, the wait goes on with the timer started again.
  *
- * Interactions. console/menu.c and console/prompt.c wait on idle_event()
- * beside the keyboard; the apps' wait_key is idle_wait_key; the station
- * takes `poweroff` from STATION.INI (media/stationini.h).
+ * Interactions. console/display.c waits on idle_event() beside the
+ * keyboard for every wait falcon-core's screens make; the station takes
+ * `poweroff` from STATION.INI (media/stationini.h).
  */
 
 #ifndef FALCON_EFI_IDLE_H
@@ -52,9 +52,5 @@ void idle_expired(void);
  * last wrong attempt (DESIGN Section 5.2). */
 __attribute__((noreturn)) void idle_power_off(void);
 
-/* A page's wait for one key: WaitForKey or the timer, the power-off on
- * the timer. Starts the idle time itself, and counts as a wait on the
- * keyboard (tsc/tsc.h). */
-EFI_STATUS idle_wait_key(EFI_SYSTEM_TABLE *st, EFI_INPUT_KEY *key);
 
 #endif /* FALCON_EFI_IDLE_H */

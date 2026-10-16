@@ -256,6 +256,7 @@ static void bli_report(void)
     bli_var("FalconTimeWaitUSec", FALCON_GUID);
     bli_var("FalconTimeKdfUSec", FALCON_GUID);
     bli_var("FalconKdfInfo", FALCON_GUID);
+    bli_var("FalconReadInfo", FALCON_GUID);
 
     /* Read after the variables, so it is later than all of them. */
     khz = kernel_tsc_khz();

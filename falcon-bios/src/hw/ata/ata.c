@@ -409,6 +409,7 @@ static int ata_serve(unsigned idx, uint8_t drive)
     g_blk.sectors = g_dev[idx].sectors;
     /* From here the resident answers, and the core's services go away. */
     g_svc = (const jmod_services *)0;
+    modrt_tick = (void (*)(void))0;
     return 0;
 }
 
@@ -432,6 +433,7 @@ static void ata_int13(jmod_regs *r)
 static int ata_init(const jmod_services *svc, jmod_ops *ops)
 {
     g_svc = svc;
+    modrt_tick = svc->tick;
     ops->probe = ata_probe;
     ops->dev = ata_dev_info;
     ops->read = ata_read;

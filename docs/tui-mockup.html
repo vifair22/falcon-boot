@@ -1,0 +1,512 @@
+<!doctype html>
+<!--
+  falcon-boot TUI mock-ups: the agreed look of every screen on both loaders,
+  drawn at 80x25 in the VGA palette. Open it in a browser; it needs nothing
+  else. The labels, sizes, device names, kernel log and SeaBIOS banner are
+  examples; the step and failure sentences are the loaders' own.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>falcon-boot TUI mock-ups</title>
+<style>
+body { margin: 0; padding: 24px; background: #1b1b1b; color: #ccc; font-family: sans-serif; }
+h1 { font-size: 18px; margin: 0 0 16px; }
+.grid { display: flex; flex-wrap: wrap; gap: 24px; }
+figure { margin: 0; }
+figcaption { font-size: 13px; margin-bottom: 6px; color: #aaa; }
+.scr { padding: 12px; background: #000; font-family: 'JetBrains Mono', 'DejaVu Sans Mono', monospace;
+       font-size: 15px; line-height: 18px; }
+.scr div { white-space: pre; height: 18px; overflow: hidden; }
+</style>
+</head>
+<body>
+<h1>falcon-boot TUI: layered screens, 80x25, dark grey backdrop</h1>
+<div class="grid" id="grid"></div>
+<script>
+'use strict';
+var W = 80, H = 25;
+/* The 16 colours both platforms have. UEFI's SimpleTextOutput takes only
+   the first 8 as a background, so every background below is 0-7. */
+var PAL = ['#000000', '#0000aa', '#00aa00', '#00aaaa', '#aa0000', '#aa00aa', '#aa5500', '#aaaaaa',
+           '#555555', '#5555ff', '#55ff55', '#55ffff', '#ff5555', '#ff55ff', '#ffff55', '#ffffff'];
+var SHADE = '\u2591';
+var SINGLE = {tl: '\u250c', tr: '\u2510', bl: '\u2514', br: '\u2518', h: '\u2500', v: '\u2502'};
+var DOUBLE = {tl: '\u2554', tr: '\u2557', bl: '\u255a', br: '\u255d', h: '\u2550', v: '\u2551'};
+var SPIN = '\u2502';
+
+function render(screen, platform, mirror) {
+  var g = [], r, c;
+  for (r = 0; r < H; r++) {
+    var line = [];
+    for (c = 0; c < W; c++) line.push({ch: ' ', f: 7, b: 0});
+    g.push(line);
+  }
+  var BIOS = platform === 'BIOS';
+  function rep(ch, n) { var s = ''; for (var i = 0; i < n; i++) s += ch; return s; }
+  function put(y, x, s, f, b) {
+    for (var i = 0; i < s.length; i++) {
+      var xx = x + i;
+      if (y < 0 || y >= H || xx < 0 || xx >= W) continue;
+      var cell = g[y][xx];
+      cell.ch = s.charAt(i);
+      if (f !== undefined && f !== null) cell.f = f;
+      if (b !== undefined && b !== null) cell.b = b;
+    }
+  }
+  function fill(y, x, h, w, ch, f, b) { for (var i = y; i < y + h; i++) put(i, x, rep(ch, w), f, b); }
+  function pad(s, n) { s = String(s); while (s.length < n) s += ' '; return s.slice(0, n); }
+  /* Layers 2 and 3: border, title, corner text, and a detail line set into
+     the bottom border. */
+  function box(y, x, h, w, o) {
+    var k = o.style === 'double' ? DOUBLE : SINGLE;
+    fill(y, x, h, w, ' ', o.textF === undefined ? 7 : o.textF, o.b);
+    put(y, x, k.tl + rep(k.h, w - 2) + k.tr, o.f, o.b);
+    for (var i = y + 1; i < y + h - 1; i++) { put(i, x, k.v, o.f, o.b); put(i, x + w - 1, k.v, o.f, o.b); }
+    put(y + h - 1, x, k.bl + rep(k.h, w - 2) + k.br, o.f, o.b);
+    if (o.title) put(y, x + 2, ' ' + o.title + ' ', o.titleF, o.b);
+    if (o.corner) put(y, x + w - 3 - o.corner.length, ' ' + o.corner + ' ', o.cornerF, o.b);
+    if (o.footer) put(y + h - 1, x + 2, ' ' + o.footer + ' ', o.footerF === undefined ? o.f : o.footerF, o.b);
+  }
+  /* The drop shadow darkens what is under it rather than drawing over it. */
+  function shadow(y, x, h, w) {
+    function dim(yy, xx) {
+      if (yy < 0 || yy >= H || xx < 0 || xx >= W) return;
+      var cell = g[yy][xx];
+      cell.f = 8; cell.b = 0;
+      if (cell.ch === SHADE) cell.ch = ' ';
+    }
+    for (var i = y + 1; i <= y + h; i++) { dim(i, x + w); dim(i, x + w + 1); }
+    for (var j = x + 2; j < x + w; j++) dim(y + h, j);
+  }
+  /* Layer 1: title bar and key-hint bar. */
+  function chrome(left, right, hints) {
+    fill(0, 0, 1, W, ' ', 7, 0);
+    put(0, 1, 'falcon-boot', 11, 0);
+    put(0, 13, '0.1.2', 7, 0);
+    put(0, 19, left, 15, 0);
+    put(0, W - 1 - right.length, right, 7, 0);
+    fill(H - 1, 0, 1, W, ' ', 7, 0);
+    var col = 1;
+    hints.forEach(function (hk) {
+      put(H - 1, col, hk[0], 11, 0); col += hk[0].length + 1;
+      put(H - 1, col, hk[1], 7, 0); col += hk[1].length + 3;
+    });
+  }
+  function listRows(y0, names, tags, top, sel, win) {
+    for (var i = 0; i < win && top + i < names.length; i++) {
+      var y = y0 + i, n = names[top + i], t = tags[top + i], on = top + i === sel;
+      var tf = t === 'blessed' ? 10 : t === '{NOT BLESSED}' ? 14 : t === 'Latest' ? 7 : 3;
+      if (on) {
+        fill(y, 3, 1, 74, ' ', 0, 3);
+        put(y, 5, pad(n, 60), 0, 3); put(y, 76 - t.length, t, 0, 3);
+      } else {
+        put(y, 5, pad(n, 60), 7, 0); put(y, 76 - t.length, t, tf, 0);
+      }
+    }
+  }
+  /* The scroll bar is the panel's right border: the track stays the border
+     line, the thumb is full blocks sized to the window's share of the list,
+     and an arrow replaces the first or last track cell while there is more
+     that way. */
+  function scrollbar(y0, h, x, total, top, win) {
+    if (total <= win) return;
+    var th = Math.max(1, Math.round(h * win / total));
+    var tp = Math.round((h - th) * top / (total - win));
+    for (var i = 0; i < th; i++) put(y0 + tp + i, x, '\u2588', 11, 0);
+    if (top > 0) put(y0, x, '\u25b2', 11, 0);
+    if (top + win < total) put(y0 + h - 1, x, '\u25bc', 11, 0);
+  }
+  function sb() { return BIOS ? 'BIOS, no Secure Boot' : 'Secure Boot on, MS CA'; }
+
+  /* label, UEFI tag, its colour, BIOS tag (null: row absent), its colour */
+  var LIB = [
+    ['Personal OS', 'shelf', 7, 'shelf', 7],
+    ['archlinux-2026.09.01-x86_64.iso', 'blessed', 10, '', 7],
+    ['ubuntu-26.04.1-desktop-amd64.iso', 'MS UEFI CA', 3, '', 7],
+    ['Win11_25H2_English_x64.iso', 'MS Windows', 3, '', 7],
+    ['debian-live-13.7-amd64-kde.iso', '{NOT BLESSED}', 14, '', 7],
+    ['freedos-1.4-live.iso', '{BIOS ONLY}', 8, '', 7],
+    ['windows-xp-pro-sp3-x86.iso', '{BIOS ONLY}', 8, '', 7],
+    ['memtest86plus-8.10.iso', '...', 8, '...', 8],
+    ['systemrescue-13.02-amd64.iso', '...', 8, '...', 8],
+    ['Reboot to firmware setup', '', 7, null, 7]
+  ];
+  function menuPanel(sel) {
+    var items = LIB.filter(function (e) { return !(BIOS && e[3] === null); });
+    box(2, 2, 19, 76, {f: 3, b: 0, title: 'ISO library', titleF: 15, corner: SPIN, cornerF: 11,
+      footer: BIOS ? '3.9 GB   p2 exFAT   Linux, direct boot'
+                   : '3.9 GB   p2 exFAT   Linux   blessed by this stick\'s MOK', footerF: 7});
+    items.forEach(function (e, i) {
+      var y = 3 + i, tag = BIOS ? e[3] : e[1], tf = BIOS ? e[4] : e[2];
+      if (i === sel) {
+        fill(y, 3, 1, 74, ' ', 0, 3);
+        put(y, 5, pad(e[0], 48), 0, 3);
+        put(y, 76 - tag.length, tag, 0, 3);
+      } else {
+        put(y, 5, pad(e[0], 48), 7, 0);
+        put(y, 76 - tag.length, tag, tf, 0);
+      }
+    });
+    put(21, 4, ' 8 images on p2, 2 still being read ', 7, 0);
+  }
+  function menuHints() {
+    return BIOS
+      ? [['enter', 'boot'], ['c', 'chain'], ['d', 'direct'], ['esc', 'back']]
+      : [['enter', 'boot'], ['c', 'chain'], ['d', 'direct'], ['b', 'bless'], ['a', 'bless new'], ['esc', 'back']];
+  }
+
+  /* Layer 0: the backdrop. */
+  fill(0, 0, H, W, SHADE, 8, 0);
+  if (screen === 'menu') {
+    chrome(platform, sb(), menuHints());
+    menuPanel(1);
+  } else if (screen === 'chooser') {
+    chrome(platform, sb(), [['enter', 'unlock'], ['tab', 'no echo'], ['esc', 'back']]);
+    box(2, 2, 19, 76, {f: 3, b: 0, title: 'Personal OS', titleF: 15, footer: 'shelf p3, LUKS2, argon2id', footerF: 7});
+    put(3, 5, 'the shelf is locked', 8, 0);
+    box(8, 15, 8, 50, {style: 'double', f: 0, b: 7, textF: 0, title: 'Unlock the shelf', titleF: 1});
+    shadow(8, 15, 8, 50);
+    put(10, 18, 'Passphrase for the encrypted partition:', 0, 7);
+    fill(11, 18, 1, 44, ' ', 15, 0);
+    put(11, 19, '************_', 15, 0);
+    put(13, 18, 'enter', 1, 7); put(13, 24, 'unlock', 0, 7);
+    put(13, 33, 'tab', 1, 7); put(13, 37, 'no echo', 0, 7);
+    put(13, 47, 'esc', 1, 7); put(13, 51, 'back', 0, 7);
+  } else if (screen === 'badpass') {
+    chrome(platform, sb(), [['enter', 'unlock'], ['tab', 'no echo'], ['esc', 'back']]);
+    box(2, 2, 19, 76, {f: 3, b: 0, title: 'Personal OS', titleF: 15, footer: 'shelf p3, LUKS2, argon2id', footerF: 7});
+    put(3, 5, 'the shelf is locked', 8, 0);
+    box(8, 15, 9, 50, {style: 'double', f: 0, b: 7, textF: 0, title: 'Unlock the shelf', titleF: 1});
+    shadow(8, 15, 9, 50);
+    put(10, 18, 'Passphrase for the encrypted partition:', 0, 7);
+    fill(11, 18, 1, 44, ' ', 15, 0);
+    put(11, 19, '_', 15, 0);
+    put(12, 18, 'wrong passphrase.', 4, 7);
+    put(14, 18, 'enter', 1, 7); put(14, 24, 'unlock', 0, 7);
+    put(14, 33, 'tab', 1, 7); put(14, 37, 'no echo', 0, 7);
+    put(14, 47, 'esc', 1, 7); put(14, 51, 'back', 0, 7);
+  } else if (screen === 'badshelf') {
+    chrome(platform, sb(), [['any key', 'return to the menu']]);
+    menuPanel(0);
+    box(6, 6, 12, 68, {style: 'double', f: 15, b: 4, textF: 15, title: 'Personal OS failed', titleF: 14});
+    shadow(6, 6, 12, 68);
+    put(8, 9, 'Personal OS', 15, 4);
+    put(10, 9, 'Personal OS failed while mounting the filesystem inside it:', 15, 4);
+    put(11, 9, 'Volume Corrupted', 15, 4);
+    put(13, 9, 'the shelf\'s journal is damaged; run fsck on it from another', 7, 4);
+    put(14, 9, 'system, then boot its OS once with noresume.', 7, 4);
+    put(16, 9, 'press any key to return to the menu.', 14, 4);
+  } else if (screen === 'jump') {
+    chrome('jump  BIOS', 'falcon jump floppy', [['enter', 'boot'], ['up/down', 'choose'], ['esc', 'firmware'], ['any key', 'stops the count']]);
+    box(2, 2, 11, 60, {f: 3, b: 0, title: 'Boot from', titleF: 15, footer: 'Booting in 5 s', footerF: 14});
+    [['CD drive', 'default'], ['CF card (PC Card)', ''], ['USB stick', ''], ['Disk 0x80', ''],
+     ['Memory test (memtest86+)', '']].forEach(function (e, i) {
+      var y = 3 + i;
+      if (i === 0) {
+        fill(y, 3, 1, 58, ' ', 0, 3);
+        put(y, 5, e[0], 0, 3); put(y, 60 - e[1].length, e[1], 0, 3);
+      } else {
+        put(y, 5, e[0], 7, 0);
+      }
+    });
+  } else if (screen === 'jumpboot') {
+    chrome('jump  BIOS', 'route CDR', []);
+    box(2, 2, 13, 76, {f: 3, b: 0, title: 'booting: CD', titleF: 15, corner: SPIN, cornerF: 11});
+    put(4, 5, 'loading ATA.MOD', 7, 0); put(4, 72, 'OK', 10, 0);
+    put(5, 5, 'looking for a CD drive', 7, 0); put(5, 72, 'OK', 10, 0);
+    put(6, 7, 'TOSHIBA DVD-ROM SD-C2502, secondary master', 8, 0);
+    put(7, 5, 'reading the disc\'s boot catalog', 7, 0); put(7, 72, 'OK', 10, 0);
+    put(8, 7, 'no emulation, 2048-byte sectors, load segment 07c0', 8, 0);
+    put(9, 5, 'handing the disc to the virtual CD', 15, 0);
+    put(9, 72, SPIN, 11, 0);
+  } else if (screen === 'booting') {
+    chrome(platform, sb(), []);
+    box(2, 2, 17, 76, {f: 3, b: 0, title: 'booting: archlinux-2026.09.01-x86_64.iso', titleF: 15, corner: SPIN, cornerF: 11,
+      footer: 'direct   EFI   through the ISO\'s shim', footerF: 7});
+    var steps = [
+      ['opening the ISO', 'OK'],
+      ['reading the ISO\'s filesystem', 'OK'],
+      ['reading the ISO\'s boot configuration', 'OK'],
+      ['reading the kernel', '14.2 MB'],
+      ['reading the initrd', '211 MB'],
+      ['reading the ISO\'s shim', 'OK'],
+      ['setting FalconIsoMap', 'OK'],
+      ['publishing the initrd', 'OK'],
+      ['LoadImage of the ISO\'s shim', null]
+    ];
+    steps.forEach(function (e, i) {
+      var y = 4 + i;
+      if (e[1] === null) {
+        put(y, 5, e[0], 15, 0);
+        put(y, 72, SPIN, 11, 0);
+      } else {
+        put(y, 5, e[0], 7, 0);
+        put(y, 74 - e[1].length, e[1], e[1] === 'OK' ? 10 : 7, 0);
+      }
+    });
+    put(14, 5, 'cmdline', 8, 0);
+    put(15, 5, 'archisobasedir=arch archisosearchuuid=2026-09-01-08-21-44-00', 7, 0);
+    put(16, 5, 'falcon.iso=p2:/archlinux-2026.09.01-x86_64.iso', 7, 0);
+  } else if (screen === 'post' || screen === 'fatal') {
+    fill(0, 0, H, W, ' ', 7, 0);
+    put(0, 0, 'SeaBIOS (version 1.16.3-debian-1.16.3-2)', 7, 0);
+    put(2, 0, 'iPXE (https://ipxe.org) 00:03.0 CA00 PCI2.10 PnP PMM+7EFD0B20+7EF30B20 CA00', 7, 0);
+    put(5, 0, 'Booting from Hard Disk...', 7, 0);
+    if (screen === 'post') {
+      put(6, 0, '_', 7, 0);
+    } else {
+      put(6, 0, 'falcon-bios: this processor is older than i586, which this loader needs', 7, 0);
+      put(7, 0, 'press any key to reboot.', 7, 0);
+      put(8, 0, '_', 7, 0);
+    }
+  } else if (screen === 'bootbios' || screen === 'handoff' || screen === 'handoff2') {
+    var done = screen !== 'bootbios';
+    chrome(platform, sb(), []);
+    box(2, 2, 17, 76, {f: 3, b: 0, title: 'booting: archlinux-2026.09.01-x86_64.iso', titleF: 15,
+      corner: done ? '' : SPIN, cornerF: 11, footer: 'direct   BIOS   Linux boot protocol', footerF: 7});
+    [['opening the ISO', 'OK'], ['reading the ISO\'s filesystem', 'OK'],
+     ['reading the ISO\'s boot configuration', 'OK'], ['reading the kernel', '14.2 MB'],
+     ['reading the initrd', '211 MB'], ['building the cmdline', 'OK'],
+     ['starting the kernel', done ? 'OK' : null]].forEach(function (e, i) {
+      var y = 4 + i;
+      if (e[1] === null) {
+        put(y, 5, e[0], 15, 0);
+        put(y, 72, SPIN, 11, 0);
+      } else {
+        put(y, 5, e[0], 7, 0);
+        put(y, 74 - e[1].length, e[1], e[1] === 'OK' ? 10 : 7, 0);
+      }
+    });
+    put(14, 5, 'cmdline', 8, 0);
+    put(15, 5, 'archisobasedir=arch archisosearchuuid=2026-09-01-08-21-44-00', 7, 0);
+    put(16, 5, 'falcon.iso=p2:/archlinux-2026.09.01-x86_64.iso', 7, 0);
+    if (done) {
+      /* The release: colours back to 07 and the rows from the cursor down
+         cleared, so the next program writes onto plain lines. */
+      fill(20, 0, 5, W, ' ', 7, 0);
+      put(20, 0, 'Decompressing Linux... Parsing ELF... done.', 7, 0);
+      put(21, 0, 'Booting the kernel (entry_offset: 0x0000000000b41a60).', 7, 0);
+      put(22, 0, '_', 7, 0);
+    }
+    if (screen === 'handoff2') {
+      var KLOG = [
+        '[    0.000000] Linux version 6.16.4-arch1-1 (linux@archlinux) (gcc (GCC) 15.2.1)',
+        '[    0.000000] Command line: archisobasedir=arch archisosearchuuid=2026-09-01-0',
+        '[    0.000000] BIOS-provided physical RAM map:',
+        '[    0.000000] BIOS-e820: [mem 0x0000000000000000-0x000000000009fbff] usable',
+        '[    0.000000] BIOS-e820: [mem 0x0000000000100000-0x000000007ffdffff] usable',
+        '[    0.000000] DMI: QEMU Standard PC (i440FX + PIIX, 1996), BIOS 1.16.3',
+        '[    0.214377] Console: colour VGA+ 80x25',
+        '[    0.981204] falcon-hook: ISO at p2 sector 2101248, 1.4 GB, 3 extents',
+        '[    1.402113] loop0: detected capacity change from 0 to 2883584',
+        '[    1.733015] Run /init as init process',
+        ':: running early hook [udev]',
+        ':: mounting \'/dev/loop0\' on real root',
+        '_'
+      ];
+      var shift = 11;
+      for (var k = 0; k < shift; k++) {
+        g.shift();
+        var blank = [];
+        for (var cc = 0; cc < W; cc++) blank.push({ch: ' ', f: 7, b: 0});
+        g.push(blank);
+      }
+      put(11, 0, ' ', 7, 0);
+      KLOG.forEach(function (l, i) { put(12 + i, 0, l, 7, 0); });
+    }
+  } else if (screen === 'failbios') {
+    chrome(platform, sb(), [['any key', 'return to the menu']]);
+    menuPanel(5);
+    box(6, 6, 12, 68, {style: 'double', f: 15, b: 4, textF: 15, title: 'virtual CD failed', titleF: 14});
+    shadow(6, 6, 12, 68);
+    put(8, 9, 'freedos-1.4-live.iso', 15, 4);
+    put(10, 9, 'virtual CD failed while reading the ISO\'s boot catalog', 15, 4);
+    put(13, 9, 'the ISO has no El Torito boot catalog.', 7, 4);
+    put(16, 9, 'press any key to return to the menu.', 14, 4);
+  } else if (screen === 'serlog') {
+    fill(0, 0, H, W, ' ', 7, 0);
+    ['falcon-bios: stage 2 running in real mode',
+     'falcon-bios: boot drive 0x80',
+     'falcon-bios: entering protected mode',
+     'falcon-bios: boot partition 1, LBA 2048',
+     'falcon-bios: stage 3 inflated, 412736 bytes',
+     '',
+     '  (stage 3: the TUI starts; from here serial carries its ANSI mirror)',
+     '',
+     'falcon-boot 0.1.2 BIOS                                     BIOS, no Secure Boot',
+     '',
+     '+- starting ---------------------------+',
+     '|                                      |',
+     '|  finding disks              OK       |',
+     '|  looking for the shelf      OK       |',
+     '|  reading the ISO library    |        |',
+     '|                                      |',
+     '+--------------------------------------+'
+    ].forEach(function (l, i) { put(i, 0, l, i === 6 ? 8 : 7, 0); });
+  } else if (screen === 'longlist' || screen === 'longshelf') {
+    var shelfList = screen === 'longshelf';
+    var names = [];
+    var tagsOf = [];
+    var k2;
+    if (shelfList) {
+      chrome(platform, sb(), [['enter', 'boot'], ['up/down', 'choose'], ['pgup/pgdn', 'page'], ['esc', 'back']]);
+      for (k2 = 0; k2 < 23; k2++) {
+        names.push('Gentoo Linux 6.16.' + (30 - k2) + '-gentoo-dist (2026-09-' + (30 - k2 < 10 ? '0' : '') + (30 - k2) + ')');
+        tagsOf.push(k2 === 0 ? 'Latest' : '');
+      }
+      names.push('signing appliance'); tagsOf.push('appliance');
+      var top2 = 0, sel2 = 2, win2 = 17;
+      box(2, 2, 19, 76, {f: 3, b: 0, title: 'Personal OS', titleF: 15,
+        footer: 'shelf p3   UKI 6.16.28-gentoo-dist   34.1 MB', footerF: 7});
+      listRows(3, names, tagsOf, top2, sel2, win2);
+      scrollbar(3, win2, 77, names.length, top2, win2);
+      put(20, 77 - 9, ' 3/24 ', 7, 0);
+    } else {
+      chrome(platform, sb(), [['enter', 'boot'], ['c', 'chain'], ['d', 'direct'], ['b', 'bless'], ['pgup/pgdn', 'page'], ['esc', 'back']]);
+      for (k2 = 0; k2 < 41; k2++) {
+        names.push(['archlinux', 'ubuntu', 'debian-live', 'fedora-workstation', 'opensuse-tumbleweed',
+                    'linuxmint', 'kali-linux', 'alpine-standard'][k2 % 8] + '-' + (2020 + (k2 % 7)) + '.' +
+                   (k2 % 12 + 1 < 10 ? '0' : '') + (k2 % 12 + 1) + '-x86_64.iso');
+        tagsOf.push(['blessed', 'MS UEFI CA', '{NOT BLESSED}', 'MS UEFI CA'][k2 % 4]);
+      }
+      var top = 14, sel = 19, win = 17;
+      box(2, 2, 19, 76, {f: 3, b: 0, title: 'ISO library', titleF: 15, corner: SPIN, cornerF: 11,
+        footer: '2.6 GB   p2 exFAT   Linux   blessed by this stick\'s MOK', footerF: 7});
+      listRows(3, names, tagsOf, top, sel, win);
+      scrollbar(3, win, 77, names.length, top, win);
+      put(20, 77 - 9, ' 20/41 ', 7, 0);
+      put(21, 4, ' 41 images on p2 ', 7, 0);
+    }
+  } else if (screen === 'failure') {
+    chrome(platform, sb(), [['any key', 'return to the menu']]);
+    menuPanel(1);
+    box(6, 6, 12, 68, {style: 'double', f: 15, b: 4, textF: 15, title: 'blessed boot failed', titleF: 14});
+    shadow(6, 6, 12, 68);
+    put(8, 9, 'archlinux-2026.09.01-x86_64.iso', 15, 4);
+    put(10, 9, 'blessed boot failed while LoadImage of the image (shim):', 15, 4);
+    put(11, 9, '0x800000000000001a', 15, 4);
+    put(13, 9, 'Bless it again with falcon-boot-sign, or turn Secure Boot', 7, 4);
+    put(14, 9, 'off in firmware setup.', 7, 4);
+    put(16, 9, 'press any key to return to the menu.', 14, 4);
+  } else if (screen === 'confirm') {
+    chrome(platform, sb(), [['y', 'reboot'], ['any other key', 'go back']]);
+    menuPanel(9);
+    box(9, 13, 7, 54, {style: 'double', f: 0, b: 7, textF: 0, title: 'Firmware setup', titleF: 1});
+    shadow(9, 13, 7, 54);
+    put(11, 16, 'Reboot into this machine\'s firmware setup?', 0, 7);
+    put(13, 16, 'y', 1, 7); put(13, 18, 'to reboot, any other key to go back.', 0, 7);
+  } else if (screen === 'station') {
+    chrome('station  ' + platform, BIOS ? 'BIOS' : 'Secure Boot on, own keys',
+      [['enter', 'boot'], ['up/down', 'choose'], ['any key', 'stops the count']]);
+    box(2, 2, 19, 50, {f: 3, b: 0, title: 'vfairfield-dt', titleF: 15, footer: 'Booting in 4 s', footerF: 14});
+    [['Gentoo (Latest)', 'default'], ['Gentoo (fallback)', ''], ['Windows Boot Manager', ''],
+     ['Memory test', ''], ['Reboot to firmware setup', '']].forEach(function (e, i) {
+      var y = 3 + i;
+      if (i === 0) {
+        fill(y, 3, 1, 48, ' ', 0, 3);
+        put(y, 5, e[0], 0, 3); put(y, 50 - e[1].length, e[1], 0, 3);
+      } else {
+        put(y, 5, e[0], 7, 0);
+      }
+    });
+    box(2, 55, 7, 23, {f: 3, b: 0, title: 'TOTP', titleF: 15, footer: 'PCRs 2 4 7', footerF: 8});
+    put(4, 60, '482 917', 15, 0);
+    box(11, 55, 7, 23, {f: 3, b: 0, title: 'This machine', titleF: 15});
+    put(12, 57, 'shelf   dtshelf', 7, 0);
+    put(13, 57, 'TPM     2.0 fTPM', 7, 0);
+    put(14, 57, 'shim    none', 7, 0);
+  } else if (screen === 'busy') {
+    chrome(platform, sb(), []);
+    box(8, 20, 8, 40, {f: 3, b: 0, title: 'starting', titleF: 15, corner: SPIN, cornerF: 11});
+    shadow(8, 20, 8, 40);
+    put(10, 23, pad('finding disks', 28) + 'OK', 7, 0);
+    put(11, 23, pad('looking for the shelf', 28) + 'OK', 7, 0);
+    put(12, 23, pad('reading the ISO library', 28), 15, 0);
+    put(12, 51, SPIN, 11, 0);
+  }
+
+  /* The selection bar's first cell carries a '>': the one mark of the
+     selection that survives a monochrome panel and a plain serial log. On
+     UEFI the serial copy is the firmware's, so it has to be on the screen. */
+  g.forEach(function (l) {
+    for (var x = 0; x < W; x++) {
+      if (l[x].b === 3) { l[x].ch = '>'; break; }
+    }
+  });
+
+  /* The serial mirror: ASCII boxes, no shade, no colour; the rigs read it. */
+  if (mirror === 'serial') {
+    var MAP = {};
+    [SINGLE, DOUBLE].forEach(function (k) {
+      MAP[k.tl] = '+'; MAP[k.tr] = '+'; MAP[k.bl] = '+'; MAP[k.br] = '+';
+      MAP[k.h] = k === DOUBLE ? '=' : '-'; MAP[k.v] = '|';
+    });
+    MAP[SHADE] = ' ';
+    MAP['\u2588'] = '#'; MAP['\u25b2'] = '^'; MAP['\u25bc'] = 'v';
+    /* The selection survives as reverse video, which the harness matches;
+       its '>' is drawn on the screen itself, so it is here too. */
+    g.forEach(function (l) {
+      var first = -1;
+      l.forEach(function (cell, x) {
+        var sel = cell.b === 3;
+        if (sel && first < 0) first = x;
+        if (MAP[cell.ch] !== undefined) cell.ch = MAP[cell.ch];
+        cell.f = sel ? 0 : 7; cell.b = sel ? 7 : 0;
+      });
+    });
+  }
+
+  var el = document.createElement('div');
+  el.className = 'scr';
+  g.forEach(function (l) {
+    var row = document.createElement('div'), cur = null, span = null;
+    l.forEach(function (cell) {
+      if (!cur || cur.f !== cell.f || cur.b !== cell.b) {
+        cur = cell;
+        span = document.createElement('span');
+        span.style.color = PAL[cell.f];
+        span.style.background = PAL[cell.b];
+        row.appendChild(span);
+      }
+      span.textContent += cell.ch;
+    });
+    el.appendChild(row);
+  });
+  return el;
+}
+
+[['Stick menu (UEFI)', 'menu', 'UEFI', 'vga'],
+ ['Stick menu (BIOS)', 'menu', 'BIOS', 'vga'],
+ ['Serial mirror of the menu', 'menu', 'UEFI', 'serial'],
+ ['Long ISO library: scroll bar on the border', 'longlist', 'UEFI', 'vga'],
+ ['Long ISO library, serial', 'longlist', 'UEFI', 'serial'],
+ ['Long shelf: scroll bar and position', 'longshelf', 'UEFI', 'vga'],
+ ['Personal OS: unlock the shelf', 'chooser', 'UEFI', 'vga'],
+ ['Personal OS: wrong passphrase', 'badpass', 'UEFI', 'vga'],
+ ['Personal OS: damaged shelf', 'badshelf', 'UEFI', 'vga'],
+ ['Failure page', 'failure', 'UEFI', 'vga'],
+ ['Confirm: firmware setup', 'confirm', 'UEFI', 'vga'],
+ ['Station: countdown and TOTP', 'station', 'UEFI', 'vga'],
+ ['Startup', 'busy', 'UEFI', 'vga'],
+ ['BIOS 1. stages 1-2: the screen is the BIOS\'s, untouched', 'post', 'BIOS', 'vga'],
+ ['BIOS 1. stages 1-2 fatal: a plain line and a key', 'fatal', 'BIOS', 'vga'],
+ ['BIOS 1. serial during stages 1-3', 'serlog', 'BIOS', 'vga'],
+ ['BIOS 2. stage 3: the TUI\'s first frame', 'busy', 'BIOS', 'vga'],
+ ['BIOS 2. a route running', 'bootbios', 'BIOS', 'vga'],
+ ['BIOS 3. hand-off: page kept, rows below cleared', 'handoff', 'BIOS', 'vga'],
+ ['BIOS 3. a moment later: the kernel scrolls it away', 'handoff2', 'BIOS', 'vga'],
+ ['BIOS 4. back from a failed route: full redraw', 'failbios', 'BIOS', 'vga'],
+ ['Booting an entry (direct, UEFI)', 'booting', 'UEFI', 'vga'],
+ ['falcon jump: menu', 'jump', 'BIOS', 'vga'],
+ ['falcon jump: booting the CD', 'jumpboot', 'BIOS', 'vga']].forEach(function (s) {
+  var fig = document.createElement('figure');
+  var cap = document.createElement('figcaption');
+  cap.textContent = s[0];
+  fig.appendChild(cap);
+  fig.appendChild(render(s[1], s[2], s[3]));
+  document.getElementById('grid').appendChild(fig);
+});
+</script>
+</body>
+</html>

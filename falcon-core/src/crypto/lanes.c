@@ -36,8 +36,9 @@ void lanes_init(lanes_pool *p, uint32_t workers, int level)
     __atomic_thread_fence(__ATOMIC_SEQ_CST);
 }
 
-/* Takes lanes of whatever slice is posted until none is left. */
-static void take(lanes_pool *p)
+/* Takes lanes of whatever slice is posted until none is left; `caller` is
+ * ARGON2_LANE_CALLER when this is the processor that called argon2id. */
+static void take(lanes_pool *p, uint32_t caller)
 {
     for (;;) {
         uint32_t v = __atomic_fetch_add(&p->slot, 1u, __ATOMIC_ACQ_REL);
@@ -50,7 +51,7 @@ static void take(lanes_pool *p)
             return;
         job = __atomic_load_n(&p->job, __ATOMIC_ACQUIRE);
         ctx = __atomic_load_n(&p->ctx, __ATOMIC_ACQUIRE);
-        job(ctx, lane);
+        job(ctx, lane | caller);
         (void)__atomic_add_fetch(&p->finished, 1u, __ATOMIC_RELEASE);
     }
 }
@@ -72,7 +73,7 @@ int lanes_serve(lanes_pool *p, int ok)
          * load runs, so a waiting worker never writes the word, and the
          * count of lanes taken past the last one stays small. */
         if ((v & 0xffffu) < (v >> 16))
-            take(p);
+            take(p, 0);
         else
             relax();
     }
@@ -86,7 +87,7 @@ void lanes_run(void *self, argon2_job job, void *ctx, uint32_t lanes)
 
     if (lanes > LANES_POOLED) {
         for (l = 0; l < lanes; l++)
-            job(ctx, l);
+            job(ctx, l | ARGON2_LANE_CALLER);
         return;
     }
     __atomic_store_n(&p->job, job, __ATOMIC_RELEASE);
@@ -96,7 +97,7 @@ void lanes_run(void *self, argon2_job job, void *ctx, uint32_t lanes)
      * slices wrote, is visible to whoever takes from the new word. */
     __atomic_store_n(&p->slot, lanes << 16, __ATOMIC_SEQ_CST);
 
-    take(p);
+    take(p, ARGON2_LANE_CALLER);
     while (__atomic_load_n(&p->finished, __ATOMIC_ACQUIRE) != lanes)
         relax();
 }

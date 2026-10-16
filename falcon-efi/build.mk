@@ -8,7 +8,7 @@ EFI_SRC := falcon-efi/src
 
 EFI_MOD_loader        := $(EFI_SRC)/loader/loadops.c $(EFI_SRC)/loader/credfs.c \
                          $(EFI_SRC)/loader/bli.c
-EFI_MOD_console       := $(EFI_SRC)/console/menu.c $(EFI_SRC)/console/prompt.c \
+EFI_MOD_console       := $(EFI_SRC)/console/display.c \
                          $(EFI_SRC)/console/idle.c $(EFI_SRC)/console/serial.c
 EFI_MOD_discover      := $(EFI_SRC)/discover/discover.c $(EFI_SRC)/discover/partefi.c \
                          $(EFI_SRC)/discover/biolow.c
@@ -119,6 +119,16 @@ $(STANDIN): $(EFI_OBJ)/$(STANDIN_SRC:.c=.o)
 $(STANDIN_SIGNED): $(STANDIN) $(MOK_KEY)
 	sbsign --key $(MOK_KEY) --cert $(MOK_CRT) --output $@ $<
 
+# The core rig's relaunch-uefi payload: started from a falcon-boot, it
+# starts a second one off the stick's ESP (falcon-efi/tools/payload/
+# relaunch.c).
+RELAUNCH_SRC := falcon-efi/tools/payload/relaunch.c
+RELAUNCH := build/test/relaunch.efi
+
+$(RELAUNCH): $(EFI_OBJ)/$(RELAUNCH_SRC:.c=.o)
+	@mkdir -p $(@D)
+	$(CC) $(EFI_LDFLAGS) -o $@ $<
+
 # The TPM rig's probe (falcon-efi/tools/run-tpm-rig.sh): what the firmware
 # offers for a TPM 2.0 and a TPM 1.2, and PCR0 read through each protocol.
 TPM_PROBE_SRC := falcon-efi/tools/tpm-probe/tpm-probe.c
@@ -190,7 +200,7 @@ test-station: $(STANDIN) station test-uki cli
 # stick, an MBR data disk and another install's records, a 4Kn stick, and
 # the station, under both firmwares. Builds its own disks (sudo, loop
 # devices on image files); the fixture UKI and test MOK must exist.
-test-core: all bios station cli payload
+test-core: all bios station cli payload $(RELAUNCH)
 	falcon-efi/tools/run-core-rig.sh
 
 # The UEFI station's own cases (DESIGN Sections 12.3-12.8), under OVMF with
@@ -215,7 +225,7 @@ test-tpm-rig:
 		echo "SKIP  test-tpm-rig: swtpm is not installed (Gentoo app-crypt/swtpm, Debian swtpm)."; \
 	else \
 		$(MAKE) --no-print-directory $(TPM_PROBE) $(TPM_PROBE_SIGNED) \
-			$(EFI_STATION_SIGNED) $(MKSTICK) && \
+			$(EFI_STATION_SIGNED) $(EFI_ESP_JUMP_SIGNED) $(MKSTICK) && \
 		falcon-efi/tools/run-tpm-rig.sh; \
 	fi
 

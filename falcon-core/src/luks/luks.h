@@ -125,22 +125,27 @@ typedef struct {
     uint32_t kdf_need_kib;
 } luks_vol;
 
-/* What the platform gives an argon2id keyslot: its memory, and how its
- * lanes run.
+/* What the platform gives a keyslot: an argon2id slot's memory, how its
+ * lanes run, and the block every slot's area is read into.
  *
  * get returns a block of kib KiB, 8-byte aligned, or NULL when it cannot be
  * had; put takes it back, already wiped, and may be NULL. The UEFI loader
  * answers with AllocatePages, falcon-bios with its heap, a host tool with
- * malloc. One block is outstanding at a time, and it is put back before
- * luks_unlock moves to the next slot.
+ * malloc. One block is outstanding at a time: an argon2id slot's is put
+ * back before its area's is asked for, and both before luks_unlock moves
+ * to the next slot. An area block refused is not an error; the area is
+ * then read a sector at a time.
  *
  * run is handed to argon2id as it is (argon2.h): NULL runs the lanes in
- * turn on the calling processor. */
+ * turn on the calling processor. tick is called through the derivations
+ * (argon2_params.tick, pbkdf2_tick) and the digest check, for the loaders'
+ * spinner; NULL for none. */
 typedef struct {
     void *(*get)(void *ctx, uint32_t kib);
     void  (*put)(void *ctx, void *mem, uint32_t kib);
     void  *ctx;
     const argon2_runner *run;
+    void  (*tick)(void);
 } luks_kdf_mem;
 
 /* The recovered volume key. Contains key material: crypto_wipe it when the
@@ -197,10 +202,11 @@ int luks_slot_at(const luks_vol *v, size_t i, luks_slot_info *out);
  *                             or a KDF nobody here knows
  *   LUKS_ERR_UNSUPPORTED      the cipher or a hash is outside our scope
  *
- * Stack cost is a few kilobytes: the keyslot area is streamed one
- * LUKS_KEYSLOT_UNIT sector at a time straight into the AF merge, so the
- * 250 KB anti-forensic expansion is never held, and argon2id works in the
- * caller's block with about 3.5 KiB of its own. */
+ * Stack cost is a few kilobytes: the keyslot area is read into a block of
+ * mem's, or a LUKS_KEYSLOT_UNIT sector at a time without one, and decrypted
+ * straight into the AF merge, so the 250 KB anti-forensic expansion is
+ * never on the stack; argon2id works in the caller's block with about
+ * 3.5 KiB of its own. */
 int luks_unlock(luks_vol *v, const void *pass, size_t pass_len,
                 const luks_kdf_mem *mem, luks_master_key *mk,
                 uint32_t *slot_id);

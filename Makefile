@@ -38,7 +38,9 @@
 #
 # See docs/DESIGN.md for the architecture.
 
-VARIANT ?= release
+# The last field of every version string. `release` is CI's on master
+# alone (.gitlab-ci.yml); every other build is `dev`.
+VARIANT ?= dev
 
 # The component files below define targets before `all` is reached.
 .DEFAULT_GOAL := all
@@ -62,6 +64,8 @@ EFI                := $(BIN)/falcon-boot.efi
 EFI_SIGNED         := $(BIN)/falcon-boot-signed.efi
 EFI_STATION        := $(BIN)/falcon-boot-station.efi
 EFI_STATION_SIGNED := $(BIN)/falcon-boot-station-signed.efi
+EFI_ESP_JUMP       := $(BIN)/falcon-esp-jump.efi
+EFI_ESP_JUMP_SIGNED := $(BIN)/falcon-esp-jump-signed.efi
 BIOS_STAGE3        := $(BIN)/falcon-bios-stage3.bin
 BIOS_STATION_STAGE3 := $(BIN)/falcon-bios-station-stage3.bin
 BIOS_STATION_LEGACY_STAGE3 := $(BIN)/falcon-bios-station-legacy-stage3.bin
@@ -331,7 +335,7 @@ include falcon-bios/build.mk
 
 # The loaders, each one app (apps/<app>/app.mk) composed from the platform
 # modules above. After every component, because an app names their modules.
-APPS := stick station jump station-legacy
+APPS := stick station esp-jump jump station-legacy
 include $(APPS:%=apps/%/app.mk)
 
 # The release artifacts, from what the components and apps build.
@@ -460,7 +464,7 @@ analyze: all bios check-deps
 # not build gets a host entry. Test sources are entered under the test flags;
 # they live outside every src/ directory, which is how tools/analyze.sh leaves
 # them out of the gate.
-CC_DB_EFI := $(foreach s,$(sort $(EFI_APP_SRCS)) $(PAYLOAD_SRC) $(STANDIN_SRC) $(TPM_PROBE_SRC),$(s):$(EFI_OBJ)/$(s:.c=.o))
+CC_DB_EFI := $(foreach s,$(sort $(EFI_APP_SRCS)) $(PAYLOAD_SRC) $(STANDIN_SRC) $(RELAUNCH_SRC) $(TPM_PROBE_SRC),$(s):$(EFI_OBJ)/$(s:.c=.o))
 CC_DB_HOST := $(foreach s,$(filter-out $(EFI_APP_SRCS),$(sort $(HOST_SRCS))),$(s):$(HOST_OBJ)/$(s:.c=.o))
 CC_DB_WINJUMP := $(foreach s,$(WINJUMP_SRCS),$(s):$(WINJUMP_OBJ)/$(s:.c=.o))
 CC_DB_TEST := $(foreach s,$(sort $(ALL_TEST_SRCS) $(TEST_SUPPORT_SRCS)),$(s):$(TEST_OBJ)/$(s:.c=.o))

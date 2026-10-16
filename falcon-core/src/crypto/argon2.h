@@ -62,6 +62,10 @@ typedef struct {
     uint32_t    t_cost;       /* passes, >= 1 */
     uint32_t    m_cost;       /* KiB, >= 8 * lanes */
     uint32_t    lanes;        /* parallelism p, 1..2^24-1 */
+    /* Called every few dozen blocks while the derivation runs, and only on
+     * the processor that called argon2id: the loaders turn a spinner from
+     * it (DESIGN Section 7.10). NULL for none. */
+    void      (*tick)(void);
 } argon2_params;
 
 /* The memory argon2id fills, in KiB: m_cost rounded down to a multiple of
@@ -69,13 +73,19 @@ typedef struct {
 uint32_t argon2_mem_kib(uint32_t m_cost, uint32_t lanes);
 
 /* One segment: the job for lane `lane` of the slice a runner was handed.
- * ctx is argon2id's and opaque to the runner. */
+ * ctx is argon2id's and opaque to the runner. A runner adds
+ * ARGON2_LANE_CALLER to the lane when it runs the job on the processor that
+ * called argon2id, the one place argon2_params.tick may run; a lane is at
+ * most 24 bits, so the flag is clear of it. */
 typedef void (*argon2_job)(void *ctx, uint32_t lane);
+
+#define ARGON2_LANE_CALLER 0x80000000u
 
 /* How one slice's segments are run.
  *
  * run calls job(ctx, l) exactly once for every l in 0..lanes-1, in any
- * order, on any processor, and returns only once every call has returned.
+ * order, on any processor, and returns only once every call has returned;
+ * l carries ARGON2_LANE_CALLER where the call is on the calling processor.
  * Exactly once is not a nicety: after the first pass a segment XORs into
  * the blocks it fills, so a lane run twice is a wrong key, not a slow one.
  * The runner also owns memory ordering: what was written before run is

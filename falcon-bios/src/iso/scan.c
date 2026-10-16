@@ -23,7 +23,6 @@
 #include <iso/scan.h>
 #include <linux/linux.h>
 #include <iso/vcd.h>
-#include <console/screen.h>
 
 #include <fs/fs.h>
 #include <media/medium.h>
@@ -156,9 +155,17 @@ static const char *g_title;
  * same moment: every read done, nothing of this loader left to run. */
 static void dir_handoff(void)
 {
-    screen_out("starting ");
-    screen_out(g_title);
-    screen_out("\n");
+    char what[8u + BOOTCFG_TITLE_MAX];
+    size_t n = 0;
+    size_t i;
+
+    for (i = 0; "starting "[i] != '\0'; i++)
+        what[n++] = "starting "[i];
+    for (i = 0; g_title[i] != '\0' && n + 1u < sizeof what; i++)
+        what[n++] = g_title[i];
+    what[n] = '\0';
+    tui_step_ascii(what);
+    tui_handoff();
 }
 
 /* Where the ISO sits on p2, encoded for the hook (DESIGN Section 6.4).
@@ -220,7 +227,7 @@ static int boot_entry(const bootcfg_entry *e, fs_vol *p2,
     unsigned i;
     int is_64 = 1;
 
-    r->stage = "reading the kernel";
+    boot_stage(r, "reading the kernel");
     if (e->kernel_unresolved) {
         r->advice = "the entry names its kernel through a value only GRUB "
                     "could compute.";
@@ -241,7 +248,7 @@ static int boot_entry(const bootcfg_entry *e, fs_vol *p2,
     (void)linux_probe(&kernel, &is_64);
     log_str("kernel width: ", is_64 ? "64-bit" : "32-bit");
 
-    r->stage = "reading the initrd";
+    boot_stage(r, "reading the initrd");
     for (i = 0; i < e->n_initrd && i < BOOTCFG_INITRD_MAX; i++) {
         if (bootfs_open(&g_bctx, e->initrd[i], &g_initrd[i], &size) != FS_OK) {
             boot_result_advise(r, "the entry's initrd is not on the medium: ",
@@ -253,7 +260,7 @@ static int boot_entry(const bootcfg_entry *e, fs_vol *p2,
         g_obj[i].size = size;
     }
 
-    r->stage = "building the cmdline";
+    boot_stage(r, "building the cmdline");
     if (bootcfg_render(e, (const char *)0, g_cmd, sizeof g_cmd) != BOOTCFG_OK)
         return -1;
 
@@ -280,9 +287,9 @@ static int boot_entry(const bootcfg_entry *e, fs_vol *p2,
         bios_put_dec(wrote);
         bios_puts(" bytes\n");
     } else {
-        screen_out("warning: falcon-hook cannot be told where this ISO is on "
-                   "the stick,\n         so the kernel has to find its "
-                   "medium by itself.\n\n");
+        tui_note(u"warning: falcon-hook cannot be told where this ISO is "
+                 u"on the stick, so the kernel has to find its medium by "
+                 u"itself.");
     }
 
     /* A system that owns COM1 (family.h, owns_serial) gets the screen
@@ -292,7 +299,7 @@ static int boot_entry(const bootcfg_entry *e, fs_vol *p2,
         return -1;
     log_str("cmdline: ", cmd);
 
-    r->stage = "starting the kernel";
+    boot_stage(r, "starting the kernel");
     g_title = e->title;
     (void)linux_boot(&kernel, g_obj, i, cmd, dir_handoff);
     boot_result_advise(r, linux_why(), (const char *)0);
@@ -309,11 +316,11 @@ static fs_vol *open_medium(fs_vol *p2, const fs_dirent *ent, boot_result *r)
     unsigned i;
     unsigned n;
 
-    r->stage = "opening the ISO";
+    boot_stage(r, "opening the ISO");
     if (fs_file_open(p2, &g_iso, ent) != FS_OK)
         return (fs_vol *)0;
 
-    r->stage = "reading the ISO's filesystem";
+    boot_stage(r, "reading the ISO's filesystem");
     if (medium_open(&g_medium, fs_file_read_cb, &g_iso, ent->size) != 0)
         return (fs_vol *)0;
 
@@ -386,7 +393,7 @@ int scan_direct(fs_vol *p2, const part_entry *p2part, const fs_dirent *ent,
         return -1;
     }
 
-    r->stage = "reading the ISO's boot configuration";
+    boot_stage(r, "reading the ISO's boot configuration");
     bootfs_src(&g_bctx, cfgvol, &g_src);
     if (bootcfg_read(&g_src, BOOTCFG_CD, g_scratch, sizeof g_scratch,
                      &g_cfg) != BOOTCFG_OK ||
@@ -420,13 +427,13 @@ int scan_direct(fs_vol *p2, const part_entry *p2part, const fs_dirent *ent,
 int scan_chain(bios_disk *d, fs_vol *p2, const part_entry *p2part,
                const fs_dirent *ent, boot_result *r)
 {
-    r->stage = "finding p2's GPT entry";
+    boot_stage(r, "finding p2's GPT entry");
     if (p2part == (const part_entry *)0) {
         r->advice = "the ISO's partition has no GPT entry this loader can "
                     "serve it from.";
         return -1;
     }
-    r->stage = "opening the ISO";
+    boot_stage(r, "opening the ISO");
     if (fs_file_open(p2, &g_iso, ent) != FS_OK)
         return -1;
     return vcd_chainload(d, p2, p2part, ent, &g_iso, r);

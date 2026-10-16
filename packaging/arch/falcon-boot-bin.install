@@ -2,6 +2,11 @@ post_install() {
     echo "A stick or station is brought to this version on each machine with"
     echo "    sudo falcon-boot-mkstick update /dev/<disk>"
     echo "(docs/Manual.md Section 10.7); installing the package changes no disk."
+    echo "--dry-run shows what it would write. On the personal OS the shelf is"
+    echo "open and no passphrase is asked for. A station with TOTP is resealed"
+    echo "and prints a new secret for the authenticator; where that is refused,"
+    echo "run \`sudo falcon-boot-mkstick station totp reseal /dev/<disk>\` after"
+    echo "the reboot."
 }
 
 post_upgrade() {

@@ -1,0 +1,25 @@
+ falcon-boot 0.1.2                                        Secure Boot on, MS CA 
+                                                                                
+  +- ISO library ------------------------------------------------------------+  
+  |  Personal OS                                 [MOK]                       |  
+  |> archlinux-2026.09.01-x86_64.iso             [blessed]                   |  
+  |  ubuntu-26.04.1-desktop-amd64.iso            [MS UEFI CA]                |  
+  |  Win11_25H2_English_x64.iso                  [MS Windows]                |  
+  |  debian-live-13.7-amd64-kde.iso              [unsigned]    {NOT BLESSED} |  
+  |  freedos-1.4-live.iso                        [no efi]      {BIOS ONLY}   |  
+  |  memtest86plus-8.10.iso                      [MS UEFI CA]                |  
+  |  Reboot to firmware setup                                                |  
+  |                                                                          |  
+  |                                                                          |  
+  |                                                                          |  
+  |                                                                          |  
+  |                                                                          |  
+  |                                                                          |  
+  |                                                                          |  
+  |                                                                          |  
+  |                                                                          |  
+  +- 3.9 GB   p2 exFAT   Linux ----------------------------------------------+  
+     8 images on p2                                                             
+                                                                                
+                                                                                
+ enter boot   c chain   d direct   b bless   a bless new   esc back            

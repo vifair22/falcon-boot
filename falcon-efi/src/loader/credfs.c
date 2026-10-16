@@ -40,14 +40,14 @@ static const CHAR16 credfs_label[] = L"FALCON-CRED";
 static const CHAR16 credfs_root_name[] = L"\\";
 
 typedef struct {
-    VENDOR_DEVICE_PATH       vendor;
-    EFI_DEVICE_PATH_PROTOCOL end;
+    FALCON_VENDOR_DEVICE_PATH vendor;
+    EFI_DEVICE_PATH_PROTOCOL  end;
 } credfs_device_path;
 
 /* Device path nodes are byte-packed; a compiler that padded this struct would
  * publish a path the firmware cannot walk. */
 _Static_assert(sizeof(credfs_device_path) ==
-                   sizeof(VENDOR_DEVICE_PATH) +
+                   sizeof(FALCON_VENDOR_DEVICE_PATH) +
                        sizeof(EFI_DEVICE_PATH_PROTOCOL),
                "device path nodes must pack without padding");
 
@@ -551,6 +551,7 @@ EFI_STATUS credfs_publish(EFI_SYSTEM_TABLE *st, const credfs_entry *entries,
     EFI_GUID dp_guid = EFI_DEVICE_PATH_PROTOCOL_GUID;
     EFI_GUID vendor_guid = FALCON_CREDFS_MEDIA_GUID;
     EFI_STATUS status;
+    UINT64 instance;
     UINTN i;
 
     if (st == (EFI_SYSTEM_TABLE *)0 || entries == (const credfs_entry *)0)
@@ -572,10 +573,14 @@ EFI_STATUS credfs_publish(EFI_SYSTEM_TABLE *st, const credfs_entry *entries,
     g_fs.sfs.Revision = EFI_FILE_SYSTEM_PROTOCOL_REVISION;
     g_fs.sfs.OpenVolume = credfs_open_volume;
 
-    g_fs.path.vendor.Header.Type = MEDIA_DEVICE_PATH;
-    g_fs.path.vendor.Header.SubType = MEDIA_VENDOR_DP;
-    dp_set_node_len(&g_fs.path.vendor.Header, (UINT16)sizeof(g_fs.path.vendor));
-    g_fs.path.vendor.Guid = vendor_guid;
+    g_fs.path.vendor.vendor.Header.Type = MEDIA_DEVICE_PATH;
+    g_fs.path.vendor.vendor.Header.SubType = MEDIA_VENDOR_DP;
+    dp_set_node_len(&g_fs.path.vendor.vendor.Header,
+                    (UINT16)sizeof(g_fs.path.vendor));
+    g_fs.path.vendor.vendor.Guid = vendor_guid;
+    /* This loader's own state is where no other live instance's is. */
+    instance = (UINT64)(UINTN)&g_fs;
+    memcpy(g_fs.path.vendor.instance, &instance, sizeof(instance));
     dp_set_end(&g_fs.path.end);
 
     g_fs.handle = (EFI_HANDLE)0;

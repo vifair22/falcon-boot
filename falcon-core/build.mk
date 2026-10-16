@@ -57,6 +57,9 @@ CORE_EXTFIND  := $(CORE)/media/extmap.c $(CORE)/media/extfind.c \
 # at any offset over a device that reads whole sectors. Linked by whatever
 # hands a sector-only callback to the drivers.
 CORE_BLK      := $(CORE)/blk/rebl.c
+# Small reads served from 64 KiB windows (Section 3.4), for a firmware that
+# charges per call: the UEFI loaders, under discover_read.
+CORE_BLK_CACHE := $(CORE)/blk/cache.c
 CORE_PE       := $(CORE)/pe/pe.c
 CORE_TRUST    := $(addprefix $(CORE)/trust/,der.c x509.c authenticode.c \
 	siglist.c trust.c probe.c)
@@ -87,9 +90,13 @@ CORE_WIM      := $(addprefix $(CORE)/wim/,lzx.c wim.c)
 # gzip, inflated: falcon jump's stage 3 is stored compressed on its floppy
 # and stage 2 inflates it (DESIGN Section 13.3).
 CORE_GZ       := $(CORE)/gz/gz.c
-# The screen layout both loaders draw from: geometry and row composition,
-# no drawing.
-CORE_TUI      := $(CORE)/tui/tui.c
+# The screens every loader draws (DESIGN Section 7.10): the buffer, the
+# layers, the pages, dialogs and lists, over a display the loader provides.
+CORE_TUI      := $(addprefix $(CORE)/tui/,screen.c page.c list.c say.c \
+	spin.c)
+# The passphrase prompt, apart because it holds a secret and needs crypto's
+# wipe, which falcon jump does not link.
+CORE_TUI_SECRET := $(CORE)/tui/secret.c
 CORE_MANIFEST := $(CORE)/manifest/manifest.c $(CORE)/manifest/blesslist.c
 CORE_MANIFEST_WRITE := $(CORE)/manifest/manifest_write.c
 
@@ -171,11 +178,11 @@ CORE_TESTS := $(addprefix falcon-core/tests/,main.c \
 	hookcmd_test.c grubcfg_test.c bsdmd_test.c xpsetup_test.c eltorito_test.c fat_test.c medium_test.c bootfs_test.c uefiboot_test.c biosboot_test.c blesslist_test.c wim_test.c part_test.c \
 	osrel_test.c pe_test.c trust_test.c survey_test.c tui_test.c shelf_test.c \
 	nextboot_test.c stationini_test.c strows_test.c vbr_test.c gz_test.c table_test.c ident_test.c identfs_test.c extfind_test.c \
-	rebl_test.c tpmcrypto_test.c tpm_test.c evlog_test.c kndev.c)
+	rebl_test.c blkcache_test.c tpmcrypto_test.c tpm_test.c evlog_test.c kndev.c)
 
 CORE_UUT := $(CORE_CRYPTO) $(CORE_FS) $(CORE_LUKS) $(CORE_PART) $(CORE_IDENT) \
-	$(CORE_IDENT_FS) $(CORE)/media/extfind.c $(CORE_BLK) $(CORE_PE) \
-	$(CORE_WIM) $(CORE_UCS2) $(CORE_TUI) \
+	$(CORE_IDENT_FS) $(CORE)/media/extfind.c $(CORE_BLK) $(CORE_BLK_CACHE) $(CORE_PE) \
+	$(CORE_WIM) $(CORE_UCS2) $(CORE_TUI) $(CORE_TUI_SECRET) \
 	$(CORE_TRUST) $(CORE_MEDIA) $(CORE_UEFIBOOT) $(CORE_BIOSBOOT) $(CORE_STATIONINI) $(CORE_STROWS) $(CORE_VBR) $(CORE_MANIFEST) \
 	$(CORE_MANIFEST_WRITE) $(CORE_GZ) $(CORE_CRYPTO_TPM) $(CORE_TPM) \
 	$(CORE_TPM_EVLOG) $(CORE_TPM_EVSAVE)

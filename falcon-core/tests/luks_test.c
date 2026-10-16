@@ -85,6 +85,7 @@
 #define SEG_SECTOR 4096u
 #define KEY_BYTES  64u
 #define AF_STRIPES 4000u
+#define AREA_KIB   (KEY_BYTES * AF_STRIPES / 1024u)
 #define PBKDF_ITER 10000u
 
 /* Both header copies (0 and 16384) plus the keyslot area (32768 + 258048),
@@ -588,27 +589,48 @@ static void test_luks_secondary_header_fallback(void **state)
 
 /* ----------------------------------------------------------- argon2id */
 
-/* The memory argon2id slots ask for, as the loaders will supply it: a
- * provider that hands out up to cap KiB and counts what it was asked. */
+/* The memory keyslots ask for, as the loaders will supply it: a provider
+ * that hands out up to cap KiB and records what it was asked, in order. */
+#define TEST_MEM_ASKS 8u
+
 typedef struct {
     uint32_t cap;       /* KiB; 0 refuses everything */
     unsigned gets;
     unsigned puts;
     uint32_t last_kib;
-    void    *last;
+    uint32_t kib[TEST_MEM_ASKS];
+    void    *held[TEST_MEM_ASKS];   /* granted and not put back */
 } test_mem;
 
 static void *test_mem_get(void *ctx, uint32_t kib)
 {
     test_mem *m = ctx;
+    void *p;
 
+    if (m->gets < TEST_MEM_ASKS) {
+        m->kib[m->gets] = kib;
+    }
     m->gets++;
     m->last_kib = kib;
     if (kib > m->cap) {
         return NULL;
     }
-    m->last = malloc((size_t)kib * 1024u);
-    return m->last;
+    p = malloc((size_t)kib * 1024u);
+    assert_non_null(p);
+    assert_true(m->gets <= TEST_MEM_ASKS);
+    m->held[m->gets - 1u] = p;
+    return p;
+}
+
+/* Frees what a provider with no put was left holding. */
+static void test_mem_drop(test_mem *m)
+{
+    unsigned i;
+
+    for (i = 0; i < TEST_MEM_ASKS; i++) {
+        free(m->held[i]);
+        m->held[i] = NULL;
+    }
 }
 
 static void test_mem_put(void *ctx, void *mem, uint32_t kib)
@@ -619,9 +641,15 @@ static void test_mem_put(void *ctx, void *mem, uint32_t kib)
 
     m->puts++;
     assert_int_equal(kib, m->last_kib);
-    /* argon2id wipes the block before handing it back. */
+    /* argon2id wipes its block before handing it back, and luks.c wipes
+     * the keyslot area's. */
     for (i = 0; i < (size_t)kib * 1024u; i += 4093u) {
         assert_int_equal(b[i], 0);
+    }
+    for (i = 0; i < TEST_MEM_ASKS; i++) {
+        if (m->held[i] == mem) {
+            m->held[i] = NULL;
+        }
     }
     free(mem);
 }
@@ -638,7 +666,7 @@ static void test_luks_argon_slot_unlocks(void **state)
     luks_slot_info s;
     luks_master_key mk;
     test_mem tm;
-    luks_kdf_mem mem = { test_mem_get, test_mem_put, &tm, NULL };
+    luks_kdf_mem mem = { test_mem_get, test_mem_put, &tm, NULL, NULL };
     struct timespec t0, t1;
     uint32_t slot = 99;
     size_t count = 0;
@@ -689,15 +717,18 @@ static void test_luks_argon_slot_unlocks(void **state)
     assert_int_equal(slot, 0);
     assert_int_equal(mk.len, KEY_BYTES);
     assert_int_equal(v.kdf_need_kib, 0);
-    assert_int_equal(tm.gets, 1);
-    assert_int_equal(tm.puts, 1);
+    /* The derivation's block, then the keyslot area's. */
+    assert_int_equal(tm.gets, 2);
+    assert_int_equal(tm.puts, 2);
+    assert_int_equal(tm.kib[0], 65536);
+    assert_int_equal(tm.kib[1], AREA_KIB);
     crypto_wipe(&mk, sizeof mk);
 
     /* The wrong passphrase runs the same derivation and fails the digest. */
     assert_int_equal(luks_unlock(&v, "wrong", 5, &mem, &mk, NULL),
                      LUKS_ERR_NOKEY);
-    assert_int_equal(tm.gets, 2);
-    assert_int_equal(tm.puts, 2);
+    assert_int_equal(tm.gets, 4);
+    assert_int_equal(tm.puts, 4);
 }
 
 /* ------------------------------------------------------ ext4 over luks */
@@ -916,7 +947,7 @@ static void test_luks_argon_slot_fields(void **state)
     luks_vol v;
     luks_master_key mk;
     test_mem tm;
-    luks_kdf_mem mem = { test_mem_get, test_mem_put, &tm, NULL };
+    luks_kdf_mem mem = { test_mem_get, test_mem_put, &tm, NULL, NULL };
 
     (void)state;
     load_orig_json();
@@ -959,22 +990,23 @@ static void test_luks_argon_slot_fields(void **state)
                               "\"memory\":63,\"cpus\":3"), LUKS_OK);
     assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, &mem, &mk, NULL),
                      LUKS_ERR_NOKEY);
-    assert_int_equal(tm.gets, 1);
-    assert_int_equal(tm.last_kib, 60);
-    assert_int_equal(tm.puts, 1);
+    assert_int_equal(tm.gets, 2);
+    assert_int_equal(tm.kib[0], 60);
+    assert_int_equal(tm.kib[1], AREA_KIB);
+    assert_int_equal(tm.puts, 2);
     /* ... and without a provider, the need is m', not the header's m. */
     assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, NULL, &mk, NULL),
                      LUKS_ERR_KDF_MEMORY);
     assert_int_equal(v.kdf_need_kib, 60);
     /* A provider may leave put out. */
     {
-        luks_kdf_mem noput = { test_mem_get, NULL, &tm, NULL };
+        luks_kdf_mem noput = { test_mem_get, NULL, &tm, NULL, NULL };
 
         assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, &noput, &mk, NULL),
                          LUKS_ERR_NOKEY);
-        assert_int_equal(tm.gets, 2);
-        assert_int_equal(tm.puts, 1);
-        free(tm.last);
+        assert_int_equal(tm.gets, 4);
+        assert_int_equal(tm.puts, 2);
+        test_mem_drop(&tm);
     }
     mem_reset();
 }
@@ -1350,10 +1382,9 @@ static void test_luks_digest_refusals(void **state)
     }
 }
 
-/* A read that fails partway through the keyslot area. The loader streams
- * 258 KB of it one 512-byte unit at a time, so an unreadable stick is the
- * likely failure and it has to surface as I/O rather than as a wrong
- * passphrase. */
+/* A read that fails partway through the keyslot area. The loader reads
+ * 250 KB of it, so an unreadable stick is the likely failure and it has to
+ * surface as I/O rather than as a wrong passphrase. */
 static uint64_t io_cut;
 
 static int cut_read(void *ctx, uint64_t off, uint64_t len, void *buf)
@@ -1410,6 +1441,75 @@ static void test_luks_io_failures(void **state)
                      LUKS_ERR_NOSPACE);
     assert_int_equal(luks_open(&v, fd_read, &img_fd, json_buf,
                                JSON_AREA + 1u), LUKS_OK);
+}
+
+/* How many reads the keyslot area costs. A firmware's mass-storage driver
+ * can charge tens of milliseconds a call whatever its length, so with a
+ * provider the area is one read; without one, or with one that refuses, it
+ * is a read per 512-byte unit and opens all the same. A failed read still
+ * wipes the block and gives it back (test_mem_put checks the wipe). */
+static unsigned reads;
+
+static int count_read(void *ctx, uint64_t off, uint64_t len, void *buf)
+{
+    reads++;
+    return cut_read(ctx, off, len, buf);
+}
+
+static void test_luks_area_reads(void **state)
+{
+    luks_vol v;
+    luks_master_key mk;
+    test_mem tm;
+    luks_kdf_mem mem = { test_mem_get, test_mem_put, &tm, NULL, NULL };
+    const unsigned units = KEY_BYTES * AF_STRIPES / LUKS_KEYSLOT_UNIT;
+
+    (void)state;
+    io_cut = UINT64_MAX;
+    assert_int_equal(luks_open(&v, count_read, &img_fd, json_buf,
+                               sizeof json_buf), LUKS_OK);
+
+    reads = 0;
+    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, NULL, &mk, NULL),
+                     LUKS_OK);
+    assert_int_equal(reads, units);
+    crypto_wipe(&mk, sizeof mk);
+
+    memset(&tm, 0, sizeof tm);
+    tm.cap = 1024;
+    reads = 0;
+    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, &mem, &mk, NULL),
+                     LUKS_OK);
+    assert_int_equal(reads, 1);
+    assert_int_equal(tm.gets, 1);
+    assert_int_equal(tm.puts, 1);
+    assert_int_equal(tm.kib[0], AREA_KIB);
+    crypto_wipe(&mk, sizeof mk);
+
+    /* The wrong passphrase reads the same. */
+    reads = 0;
+    assert_int_equal(luks_unlock(&v, "wrong", 5, &mem, &mk, NULL),
+                     LUKS_ERR_NOKEY);
+    assert_int_equal(reads, 1);
+    assert_int_equal(tm.puts, 2);
+
+    memset(&tm, 0, sizeof tm);
+    tm.cap = AREA_KIB - 1u;
+    reads = 0;
+    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, &mem, &mk, NULL),
+                     LUKS_OK);
+    assert_int_equal(reads, units);
+    assert_int_equal(tm.gets, 1);
+    assert_int_equal(tm.puts, 0);
+    crypto_wipe(&mk, sizeof mk);
+
+    memset(&tm, 0, sizeof tm);
+    tm.cap = 1024;
+    io_cut = 32768u;
+    assert_int_equal(luks_unlock(&v, PASS, PASS_LEN, &mem, &mk, NULL),
+                     LUKS_ERR_IO);
+    assert_int_equal(tm.gets, 1);
+    assert_int_equal(tm.puts, 1);
 }
 
 /* ------------------------------------------------- the AF splitter alone */
@@ -2404,6 +2504,7 @@ int run_luks_tests(void)
         cmocka_unit_test(test_luks_keyslot_refusals),
         cmocka_unit_test(test_luks_digest_refusals),
         cmocka_unit_test(test_luks_io_failures),
+        cmocka_unit_test(test_luks_area_reads),
         cmocka_unit_test(test_af_merge_guards),
     };
     int failed;

@@ -4,7 +4,7 @@
 
 #include <iso/iso.h>
 #include <iso/overlay.h>
-#include <console/menu.h>
+#include <tui/tui.h>
 
 #include <fs/fs.h>
 #include <media/bsdmd.h>
@@ -99,6 +99,7 @@ static EFI_STATUS bsd_run(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
     EFI_STATUS status;
 
     result->stage = L"opening the ISO";
+    tui_step(L"opening the ISO");
     result->status = EFI_SUCCESS;
     result->not_bsd = 1;
     result->advice = (const CHAR16 *)0;
@@ -108,6 +109,7 @@ static EFI_STATUS bsd_run(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
         return result->status = EFI_DEVICE_ERROR;
 
     result->stage = L"reading the ISO's filesystem";
+    tui_step(L"reading the ISO's filesystem");
     if (fs_mount(&g_isovol, &fs_ops_iso9660, fs_file_read_cb, &g_iso) !=
         FS_OK)
         return result->status = EFI_UNSUPPORTED;
@@ -116,6 +118,7 @@ static EFI_STATUS bsd_run(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
      * has to be one contiguous run so a single override can replace its
      * head, which every medium met writes it as. */
     result->stage = L"locating the ISO's loader.conf";
+    tui_step(L"locating the ISO's loader.conf");
     if (fs_lookup(&g_isovol, LOADER_CONF, &g_dir, &conf) != FS_OK ||
         conf.is_dir || conf.size < CONF_HEAD ||
         fs_extents(&g_isovol, &conf, &conf_ext, 1, &next) != FS_OK ||
@@ -128,6 +131,7 @@ static EFI_STATUS bsd_run(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
 
     /* The record naming the medium as a file inside itself. */
     result->stage = L"placing the memory-disk record";
+    tui_step(L"placing the memory-disk record");
     if (bsdmd_record(file->size, iso_read, (void *)0, &rec, path,
                      sizeof path) != BSDMD_OK) {
         result->advice = L"this ISO has no free bytes in its root or /boot "
@@ -140,6 +144,7 @@ static EFI_STATUS bsd_run(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
     result->not_bsd = 0;
 
     result->stage = L"checking memory for the image";
+    tui_step(L"checking memory for the image");
     if (!staging_fits(bs, file->size)) {
         result->advice = L"this machine has too little memory below 4 GB to "
                          L"hold the image, which is where FreeBSD's loader "
@@ -149,6 +154,7 @@ static EFI_STATUS bsd_run(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
     }
 
     result->stage = L"writing the loader settings";
+    tui_step(L"writing the loader settings");
     if (bs->AllocatePool(EfiLoaderData, BSDMD_CFG_MAX, (void **)&cfg) !=
             EFI_SUCCESS ||
         bs->AllocatePool(EfiLoaderData, BSDMD_REC_MAX, (void **)&recbuf) !=
@@ -177,7 +183,8 @@ static EFI_STATUS bsd_run(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
     /* Not "starting": the ISO's loader reads the whole medium out of the
      * virtual CD after this line, and the coverage harness counts media read
      * after "starting" as the kernel's (tools/coverage/run-case.sh). */
-    menu_out(st, handoff);
+    tui_step(handoff);
+    tui_handoff();
     status = iso_boot_overlaid_served(st, parent_image, vol, file,
                                       ISO_MEDIA_CD, &ovl, served, ctx, &ir);
     result->stage = ir.stage;
@@ -197,7 +204,7 @@ EFI_STATUS bsd_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
                     fs_vol *vol, const fs_dirent *file, bsd_result *result)
 {
     return bsd_run(st, parent_image, vol, file, (iso_served_fn)0, (void *)0,
-                   L"handing the ISO to its own loader, as a memory disk\r\n",
+                   L"handing the ISO to its own loader, as a memory disk",
                    result);
 }
 
@@ -259,7 +266,7 @@ EFI_STATUS bsd_boot_blessed(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
     ctx.launched = 0;
     status = bsd_run(st, parent_image, vol, file, serve_blessed, &ctx,
                      L"handing the ISO to its blessed loader, as a memory "
-                     L"disk\r\n", result);
+                     L"disk", result);
     /* The medium could not be served, so nothing was launched: the blessed
      * result the caller reports has to carry what actually stopped it. */
     if (!ctx.launched) {

@@ -290,6 +290,29 @@ a sector-sized buffer the loader owns, so every driver reads any length at
 any offset on either sector size. The UEFI loader's discovery and
 falcon-bios's disk reads both go through it.
 
+Above it in the UEFI loaders, `falcon-core/src/blk/cache.c` serves every
+read under a device's window from a window-aligned copy of the device,
+sixteen slots of up to 64 KiB, 1 MiB below 4 GiB, least recently used
+replaced; a miss reads the whole window, cut at the device's end, in one
+call. Some firmware charges per call rather than per byte (an ASUS B550's
+AMI USB driver takes about 70 ms for any read up to 64 KiB of a Kingston
+stick), and the drivers' metadata reads are a few KiB each, so it is the
+call count that the windows cut (`FalconReadInfo`, Section 5.5, counts
+them). A window's fill is also how long a key waits while the menu's probe
+reads (Section 7.8), so each device's window is sized from its own fills on
+the loader's clock: every full fill scales the next window by a tenth of a
+second over what it took, to a power of two from 4 KiB to 64 KiB. A device
+starts at 64 KiB and keeps it on any medium that reads 64 KiB in a tenth of
+a second, a per-call firmware included; a medium slower than that settles
+where a fill fits. Reads of a device's window and more, a UKI's among them,
+go straight through and are not kept. A window is keyed
+on the device's Block I/O and its `MediaId`, so a medium changed under the
+same protocol misses, and `discover_scan` drops every window, since a
+device gone since the last scan may have left its protocol's memory to
+another, and forgets every device's window size with them. The loaders
+write no device they read, so no window is ever out of date otherwise. A device with no medium, or with blocks that do not
+divide 64 KiB, is read without windows. falcon-bios has none.
+
 On BIOS the same holds wherever the firmware presents the disk: every
 count of the BIOS layout is of the disk's own sectors (stage 1's LBA and
 length, stage 2 at LBA 34, the record's stage 3 and marker sectors), so
@@ -315,7 +338,8 @@ p1 holds exactly four files. Section 4.3 says why that list is closed.
 A stick goes through shim by default: it boots machines whose firmware
 keys are not its owner's, and shim is what their db trusts. A station
 does not (12.2): it is the machine's own, its cert goes into the
-machine's db, and the firmware entry names the loader.
+machine's db, and the firmware entry names its jumper, which starts the
+loader.
 
 | Path | What it is | Signatures it must carry |
 |---|---|---|
@@ -458,7 +482,12 @@ already typed. p4 is separate only so EFI never mounts root.
 - The UKI is launched **by device path off the synthetic credential
   filesystem** (falcon-efi/src/loader/credfs.c). A `SourceBuffer` load is a
   loudly-warned fallback when the credfs publish fails; it is still
-  shim-verified but cannot deliver credentials.
+  shim-verified but cannot deliver credentials. The filesystem's vendor
+  node carries the publishing loader's instance as vendor data, as the
+  virtual medium's does (Section 6): a falcon-boot started from a program
+  another one launched (the EFI shell, a blessed `.efi`) runs while the
+  first one's filesystem is still published, and the firmware refuses a
+  second handle with a path it already has.
 - The credential is named **`cryptsetup.passphrase.cred`** (systemd strips
   the `.cred` suffix to form the credential name; `systemd-cryptsetup`
   hardcodes `cryptsetup.passphrase`). Content is raw passphrase bytes, no
@@ -561,25 +590,24 @@ whichever shelf and however often the row is chosen again, and give
 nearly always the owner's typo; after the second, third and fourth the next
 attempt waits 4, 8 and 16 seconds (`tui_unlock_delay`), with the keys
 pressed during the wait thrown away; the fifth powers the machine off, the passphrase
-wiped first (UEFI: `idle_power_off`, EfiResetShutdown then a cold reset;
-BIOS: `screen_power_off`, 7.9's APM then ACPI S5, then a reset). Neither
-the wait nor the limit is said. The wait runs under `unlocking...`, before
-the refusal is printed, where it reads as a slow key derivation (an
-argon2id slot already takes a second or two), and every refusal, the fifth
-included, is the same line:
+wiped first (`tui_power_off`: UEFI's EfiResetShutdown then a cold reset,
+BIOS's 7.9 APM then ACPI S5, then a reset). Neither the wait nor the limit
+is said. The wait runs under the page's `unlocking` step, before the
+refusal is shown, where it reads as a slow key derivation (an argon2id slot
+already takes a second or two), and every refusal, the fifth included, is
+the same line:
 
     wrong passphrase.
 
 The prompt carries no attempt count either: both numbers help only someone
 guessing.
 
-The prompt and its status keep their rows for every attempt of a prompt
-(UEFI: `menu_line`; BIOS: `screen_line`): Enter writes `unlocking...` on the
-row under the prompt; a refusal blanks both, redraws the empty prompt in
-place, and puts `wrong passphrase.` under it, where it stays until the next
-Enter replaces it. On the UEFI station the TOTP code stays above, redrawn
-in place when it rolls. An entry long enough to wrap clears the row it
-wraps onto, so the echo never lands on the status.
+The prompt is a dialog over the route's page (`tui_secret`, 7.10): the
+prompt, the field, and the status under it. Enter closes it and the page
+opens an `unlocking` step; a refusal marks that step `wrong passphrase`
+and opens the dialog again, empty, with `wrong passphrase.` under the
+field. On the UEFI station the TOTP lines sit in the dialog under the
+field, kept current as the code rolls.
 
 It limits guesses at the keyboard of a machine that stays whole (a
 station's case) to five a power cycle with half a minute of waiting among
@@ -692,7 +720,7 @@ Both UEFI loaders set systemd's Boot Loader Interface timing variables
 booted from a UKI splits its boot into firmware, loader and kernel. They are
 written as systemd-boot writes them: UTF-16 with the terminator counted in
 the size, attributes `BOOTSERVICE_ACCESS | RUNTIME_ACCESS` (volatile), under
-the Loader GUID `4a67b082-0a4c-41cf-b6c7-440b29bb8c4f`. Falcon adds three
+the Loader GUID `4a67b082-0a4c-41cf-b6c7-440b29bb8c4f`. Falcon adds four
 of its own under its own GUID, `50614485-081b-4b7c-8b54-2abeffdf2fb3`.
 
 | Variable | Value | Set |
@@ -705,13 +733,14 @@ of its own under its own GUID, `50614485-081b-4b7c-8b54-2abeffdf2fb3`.
 | `FalconTimeWaitUSec` | microseconds spent waiting on the keyboard up to then (falcon's GUID) | beside `LoaderTimeExecUSec` |
 | `FalconTimeKdfUSec` | microseconds the keyslot derivations of the unlock that led to this launch took (falcon's GUID) | beside `LoaderTimeExecUSec`, after an unlock |
 | `FalconKdfInfo` | that unlock in one line (falcon's GUID; below) | beside `FalconTimeKdfUSec` |
+| `FalconReadInfo` | what the firmware's reads cost, in three stretches (falcon's GUID; below) | beside `LoaderTimeExecUSec` |
 
 A UKI is what `pos` launches (the personal OS and the signing appliance off
 the stick's shelf; the station's encrypted-shelf row and its plaintext UKI
 rows) and a blessed wrap (`bless_boot`). Nothing else sets an exec time:
 chainloaded media, direct kernel boot, Windows, BSD, memtest86+, bare EFI
 payloads, and the station's firmware entries and ESP loaders. A UKI that
-returns has the exec variables, falcon's three included, deleted
+returns has the exec variables, falcon's four included, deleted
 (`bli_clear_exec`), so a later boot by another route does not carry them.
 The two KDF variables are written only for a launch that follows an
 unlock in the same `pos` attempt; a plaintext shelf's UKI and a blessed
@@ -765,12 +794,32 @@ falcon-bios times its keyslots by the BIOS tick and reads no MSR: its IDT
 treats every exception as fatal, and it has no counter rate to scale
 dAPERF / dMPERF by.
 
+**The reads** are every `ReadBlocks` the loader makes, all of which go
+through `discover/biolow.c`: the calls, failed ones included, their bytes,
+and the clock's ticks across them. `FalconReadInfo` splits them at two
+marks, the menu's first paint (`loader_reads_mark`, once) and the start of
+the route that launches (`pos`'s `boot_shelf` and `blessed_launch`, every
+attempt):
+
+    startup <C> calls <K> KiB <ms> ms, menu <C> calls <K> KiB <ms> ms, boot <C> calls <K> KiB <ms> ms <R> MB/s
+
+`startup` runs to the menu, `menu` is the background probe while it is up,
+and `boot` is the unlock, the shelf's lookups and the UKI. `<K>` is rounded
+up, `<ms>` floored, and `<R>` is the boot stretch's bytes over its time to
+two places, left out when that time is 0. A firmware whose USB driver
+charges a fixed cost per call or per transfer shows as a boot stretch far
+under the device's speed and a `startup` whose milliseconds are high for its
+bytes. The time is the firmware's alone: the loader's own work between the
+calls is not in it. The BIOS loader has no variables, and the station,
+whose menu is its list, takes the same two marks.
+
 A variable the firmware will not set is left unset and the boot goes on.
 Each step says what it measured and set on the first serial port
 (`console/serial.c`): `falcon-bli: tsc_hz=<Hz> via=<cpuid|stall|none>
 LoaderTimeInitUSec=<us>` at startup, `falcon-bli: LoaderTimeExecUSec=<us>
 FalconTimeWaitUSec=<us>` at the launch, with ` FalconTimeKdfUSec=<us>` after
-an unlock, each with ` set=failed` when a write was refused.
+an unlock, then `falcon-bli: FalconReadInfo=<line>`, each with
+` set=failed` when a write was refused.
 
 ## 6. ISO path: drag-and-drop mechanism
 
@@ -1374,7 +1423,7 @@ distro's own media-finding.
 - No mechanism that relaxes signature enforcement exists in the loader.
 - The loader never signs and never holds a private key (7.5).
 - `SecureBoot`, `SetupMode` and `MokSBState` are read to drive UX (labels,
-  messages, the state banner); `db`, `dbx`, `MokListRT`, `MokListXRT` and
+  messages, the title bar's state); `db`, `dbx`, `MokListRT`, `MokListXRT` and
   `SbatLevelRT` to predict refusals (7.8). A prediction is a label, never an
   input to a boot path.
 - The Manual documents each Secure Boot state, how to bless media, and the
@@ -1396,7 +1445,8 @@ What the Manual states:
 - `MokSBState` lives in that machine's firmware NVRAM. It is per-machine and
   does not travel with the stick.
 - With validation off, that machine runs all unsigned EFI code, not only
-  ours. The loader shows a banner when it detects the state.
+  ours. The loader says so in its title bar and under every menu when it
+  detects the state (7.10).
 - **The opt-out is for the ISO path; it turns UKIs off.** With Secure Boot on
   and validation disabled, no UKI boots: ours, a blessed wrap, or anyone
   else's. sd-stub loads its inner kernel through
@@ -1633,10 +1683,10 @@ structurally (below). Shim is the verifier. Accepted consequences:
 - **Yellow only on a positive finding.** Anything the loader cannot parse,
   read or recognise produces no verdict and the entry keeps its colour.
 
-#### Machine state: the banner
+#### Machine state: the title bar
 
-The banner's state segment names what the machine trusts, so a row's reason
-can be read against it:
+The title bar's state segment names what the machine trusts, so a row's
+reason can be read against it:
 
     falcon-boot 0.1.0  SB: on  trusts: MOK, MS UEFI CA, +1
 
@@ -1659,7 +1709,7 @@ When the title and this segment do not both fit, the title gives way.
 
 Recognition is by SHA-256 of the certificate's DER against constants for the
 four Microsoft certificates. Names are for display; matching (below) never
-uses them. The 2011/2023 split is not in the banner: it matters only when one
+uses them. The 2011/2023 split is not in the title bar: it matters only when one
 generation is revoked, and then the entry says `{REVOKED}`.
 
 `trusts: ?` when db could not be read (below). Secure Boot off, setup mode or
@@ -1734,10 +1784,10 @@ and the direct route's LoadImage takes only an x86-64 PE. `b` and `a` leave
 the row out.
 
 Colours: an unselected predicted row is `EFI_YELLOW` on black. The selection
-bar is black on light gray, and yellow on light gray is unreadable, so a
-selected predicted row is black on `EFI_BROWN` (rendered as dark yellow): the
-bar changes colour rather than the text on it. `{BIOS ONLY}` uses the same
-colours.
+bar is black on cyan, and yellow on cyan is hard to read, so a selected
+predicted row is black on `EFI_BROWN` (rendered as dark yellow): the bar
+changes colour rather than the text on it (7.10). `{BIOS ONLY}` uses the
+same colours.
 
 #### The BIOS menu's tags
 
@@ -1795,13 +1845,15 @@ on a machine with one processor.
   (50 ms on UEFI; a new BIOS clock tick, or 32 reads without one, since a
   machine can reach the menu with IRQ0 never delivered). A keystroke waits
   for at most one piece of one read.
-- **The menu steps it whenever no key is waiting** (`menu_run_probed`,
-  `screen_menu_tagged`, each with a `step` and a `fill` callback), fills
-  every pending row on screen from what it has found, and repaints those
-  rows, or the whole window when a tag column widens. Rows not looked inside
-  yet show `...` (core's `tui_tag_pending`). While there is work a spinner,
-  `/-\|`, turns in the banner's last cell, which the banner's right padding
-  keeps free. There is no progress line.
+- **The menu steps it whenever no key is waiting** (`tui_list_run`, with
+  a `step` and a `fill` callback, 7.10), fills every pending row on screen
+  from what it has found, and repaints those rows, or the whole window when
+  a tag column widens. Rows not looked inside yet show `...` (core's
+  `tui_tag_pending`). While there is work a spinner turns on the panel's
+  top border, at its right end: `/`, `\`, `|` and the box-drawing
+  horizontal line U+2500 (`TUI_HLINE`), a dash as wide as its cell. The
+  line under the panel counts the library's images and those still to be
+  read.
 - **The order is core's** (`survey_next_probe`), asked again before every
   entry: the entry under the selection, then the files directly in the folder
   on screen, then everything under that folder depth first, then the rest of
@@ -1818,20 +1870,20 @@ on a machine with one processor.
   has no pending rows and no spinner.
 
 Enter on a row still pending looks inside it before the route's page, under
-`checking the image...`, rather than with the menu frozen.
+a `checking the image` step, rather than with the menu frozen.
 
 #### Startup steps
 
-Every loader says what it is doing between its first screen and its menu, one
-line at the page's first row (`menu_busy`, `screen_busy`, core's
-`tui_busy_*`), each step overwriting the last: `reading the Secure Boot
+Every loader says what it is doing between its first screen and its menu,
+in the startup box (`tui_busy`, core's `tui_busy_*`), one line per step,
+each finished step marked OK as the next starts: `reading the Secure Boot
 keys`, `finding disks`, `reading the shelf`, `reading the ISO library`,
 `reading the TPM` (the UEFI station with `[totp]`), `finding boot entries`
 (the stations) and `reading the floppy` (falcon jump). The BIOS loaders set
-the screen up before their disk scans for this. The line is also the only
-clue on a machine where one step is slow. falcon jump's CD, USB and CF routes
-say each module load and device bring-up on the route's page the same way
-(`loading ATA.MOD...`, `looking for a falcon stick...`).
+the screen up before their disk scans for this. The box is also the only
+clue on a machine where one step is slow. falcon jump's CD, USB and CF
+routes say each module load and device bring-up as steps of the route's
+page the same way (`loading ATA.MOD`, `looking for a falcon stick`).
 
 No medium is probed before the menu, so a stick of any size reaches its menu
 in the time the survey takes. What needs an entry looked inside before its
@@ -1945,12 +1997,15 @@ station's `STATION.INI` may change the time (`[general] poweroff`, 0 never,
   refresh (the TOTP code) does not. A page starting to wait counts because the
   time runs across what the loader launched: memtest quit after an hour comes
   back to a fresh five minutes.
-- Before the power-off: the passphrase prompt's buffer is wiped, the BIOS
-  keyboard ring too, and on the UEFI station the TOTP seed (`totp_wipe`).
-- UEFI: `console/idle.c`, a timer event every wait waits on beside
-  `WaitForKey`, then `ResetSystem(EfiResetShutdown)`.
-- BIOS: `screen_key` polls the keyboard against `cdclock` (the ticks and the
-  RTC, 12.7's reason) and calls `power/power.c`: APM's "all devices off"
+- Before the power-off: the passphrase prompt's buffer is wiped (core's
+  `tui_secret`, on the display's `TUI_KEY_IDLE`), the BIOS keyboard ring
+  too, and on the UEFI station the TOTP seed (`totp_wipe`).
+- UEFI: `console/idle.c`, a timer event every key wait of
+  `console/display.c` waits on beside `WaitForKey`, then
+  `ResetSystem(EfiResetShutdown)`.
+- BIOS: `console/display.c`'s key wait polls the keyboard against `cdclock`
+  (the ticks and the RTC, 12.7's reason) and calls `power/power.c`: APM's
+  "all devices off"
   (INT 15h AX=5307h), which the machines of the A21m's era answer and SeaBIOS
   turns into ACPI S5 itself; then ACPI S5 directly, the sleep type from the
   DSDT's `\_S5` into the FADT's PM1 control blocks, ACPI handed over through
@@ -1961,6 +2016,183 @@ station's `STATION.INI` may change the time (`[general] poweroff`, 0 never,
   and no S5 on BIOS), BIOS turns the screen off (the VGA sequencer's
   screen-off bit, text memory kept) until a key, which is swallowed; the
   prompt then starts again empty. UEFI starts the time again.
+
+### 7.10 The screens
+
+Every screen of every loader is falcon-core's (`falcon-core/src/tui`): its
+layers, its layout and its sentences. A loader provides a display
+(`tui_display`): a run of cells put at a row and column in one attribute,
+the cursor shown or hidden, a key read within a time, the time in tenths of
+a second, the idle power-off (7.9), the display taken back after a payload
+had it, and a line for serial. The UEFI loader's is
+`falcon-efi/src/console/display.c`, over Simple Text Output and Input;
+falcon-bios's is `falcon-bios/src/console/display.c`, over VGA text memory,
+INT 16h and COM1. `docs/tui-mockup.html` is the look.
+
+#### The buffer
+
+The screen is retained. Every call draws into a cell buffer, a glyph and an
+attribute byte per cell, and marks the rows it changed. `tui_flush`
+compares those rows with a second buffer, what the display was last sent,
+and sends only what changed, as runs of one attribute that may carry up to
+four unchanged cells rather than break. A moved selection is two rows'
+changes; a keystroke in the passphrase field is one cell. The bottom right
+cell is never sent: a console scrolls when it is written.
+
+After a payload had the display (a route that came back), `tui_repaint`
+forgets what the display shows and asks it to take itself back: falcon-bios
+sets 80x25 text again if the mode changed, the UEFI loader its mode. The
+next flush sends every cell. A third buffer keeps the last menu, which a
+dialog is drawn over.
+
+falcon-bios draws 80x25. The UEFI loader takes the console's largest text
+mode up to `TUI_COLS_MAX` by `TUI_ROWS_MAX` (240 by 80): panels take the
+screen's height and up to 116 columns of its width, centred; dialogs keep
+their width.
+
+#### Layers
+
+- **Backdrop**: U+2591 light shade, dark grey on black. UEFI takes only the
+  first eight colours as a background, and dark grey is not one of them, so
+  the grey is a glyph.
+- **Chrome**: the title bar on the first row (the title's first word in
+  light cyan and the rest grey, a route's code in white, and the Secure Boot
+  state at the right in its colours, 7.4; when both do not fit the title
+  gives way), and the key hints on the last (each key in light cyan, its
+  word in grey).
+- **Panel**: a single-line cyan box, its title in white on the top border.
+  A list, or a page of steps.
+- **Dialog**: a double-line box with a drop shadow, the cells under it
+  darkened (the shade blanked). Grey for a notice or a question, black on
+  light grey with a blue title; red for a failure, white on red with a
+  yellow title.
+
+Every glyph outside ASCII is one UEFI requires every console to draw and
+code page 437 holds: the box-drawing lines and corners, the light shade,
+the full block and the up and down triangles.
+
+The spinner is the one exception, its frames drawn rather than found in a
+font: a stick one pixel wide at 0, 45, 90 and 135 degrees, the only angles
+that are straight lines in pixels, each frame symmetric about the same
+pixel so none shifts as it turns (`falcon-core/src/tui/spin.c`, an 8x16
+and an 8x19 drawing). falcon-core puts them at the private use code points
+U+E000 to U+E003, and a display loads them. falcon-bios writes them over
+code page 437's 0x01 to 0x04 with INT 10h AX=1100h, and only when AX=1130h
+gives the ROM font, whose glyphs go back the same way at the hand-off and
+which a mode set restores. The UEFI loader adds them to the firmware's
+fonts as an HII simple font package, kept only when the console's
+TestString accepts them (edk2's graphics console draws through the HII
+database; a serial terminal or a firmware's own console driver does not),
+and removes it at the hand-off. Where a display has no glyphs of its own,
+the frames are `| / - \`. falcon-bios's serial mirror leaves them out: a
+tick comes inside a read, and would split a diagnostic line half written.
+A frame lasts 250 ms on UEFI (a 50 ms timer), and five BIOS ticks, 275 ms,
+on BIOS; it is taken from the clock rather than counted per call, and
+painted and flushed before a probe's slice, so a slow read neither speeds
+it up nor holds a frame back.
+
+#### Lists
+
+`tui_list_run` draws a panel of rows, each a label and the two tag columns
+of 7.8. The selected row is a black-on-cyan bar with a `>` in its first
+cell; a row predicted refused is yellow, and selected, black on brown. When
+the list is longer than the panel the right border is a scroll bar: a thumb
+of full blocks sized to the window's share, and a triangle at either end
+while there is more that way. The bottom border carries the highlighted
+row's detail at its left (an image's size, and on UEFI its family) and its position at
+its right (`20/41`). The line under the panel is the list's note (how many
+images, how many still being read), or in yellow on red the alert that
+shim's validation is off (7.4). Keys: up and down, page up and down, home
+and end, Enter, Escape, and the list's own commit keys (`c`, `d`, `b`,
+`a`). A countdown (12.7) stands on the bottom border's left, in yellow,
+while the hints say any key stops it. A status box (the station's TOTP
+lines, 12.15) stands beside the panel, a panel itself with no shadow, as
+wide as its longest word (23 to 40 columns, so an enrollment's label is
+never split) and its lines wrapped at their spaces. Lists are capped
+by their callers: an ISO library of 128 entries on either loader, a shelf of
+32 images, 64 boot-configuration entries an ISO's configuration offers.
+
+#### Pages and steps
+
+A route's page (`tui_boot_page`) is a panel titled `booting: <label>`, its
+code in the title bar. `tui_step` opens a step, in white with the spinner in
+its status column, and marks the step before it OK; `tui_step_done` closes
+the open one with a detail (a size) in place of OK; `tui_note` puts a dim
+line under it (a drive's name, a disc's boot entry). A long read turns the
+spinner as it goes (`tui_tick`), and so does every step without asking:
+falcon-bios ticks after each INT 13h call (`bios_disk_on_call`); the UEFI
+loader before each `discover_read` and each 8 MiB piece of a longer one
+(`discover_set_tick`; large, since a firmware can charge per call) and
+after each call of a read bounced below 4 GiB; a falcon jump module in
+its delays while it probes (`jmod_services.tick`, dropped when it serves,
+13.4); argon2id every 64 blocks on the processor that called it
+(`argon2_params.tick`; a lane on another processor never draws), PBKDF2
+every 4096 iterations, and the pause after a wrong passphrase. What runs
+inside one firmware call (shim's LoadImage, a ConnectController, a TPM
+command, a floppy's first sector) holds the spinner until it returns.
+Text a route writes goes on the page under
+its steps, and the body scrolls inside the panel. A failure names the step
+that was open (`tui_stage`) or the route's own stage.
+
+#### The hand-off
+
+A route about to hand the machine over calls `tui_handoff`: the open step is
+marked OK, the rows under the panel are cleared to grey on black, and the
+cursor is shown on the first of them (on BIOS through INT 10h, which is where
+Linux's `screen_info` takes its console's cursor from). The display gives
+back what it changed of the firmware's: the spinner's glyphs. The page stays
+above; what the payload writes lands under it and scrolls it away. A route
+that comes back is reported in a dialog over the last menu after a full
+repaint.
+
+falcon-bios's stages 1 and 2, and falcon jump's boot sector, run before any
+of this exists and draw nothing: they say what they are doing on serial,
+and a fatal one says it as a line of BIOS teletype under whatever the BIOS
+left, then `press any key to reboot.` (3.3).
+
+#### Dialogs
+
+`tui_report` starts a dialog of a kind and a title, over the last menu, with
+an optional first line; text follows, wrapped at its spaces, and
+`tui_report_end` adds the key line (`press any key to return to the
+menu.`). `tui_ask` is a question and its keys. The sentences both loaders
+say are written once, in `say.c`: a route failed (`<route> failed while
+<stage>: <status>`, the status left out on BIOS) or came back (`<what>
+exited, status <status>`), the firmware-setup question, a STATION.INI or
+JUMP.INI it could not take, a next-boot marker it could not act on, and the
+page a loader leaves on.
+
+#### The passphrase
+
+`tui_secret` (`secret.c`, its own file, so what has held a passphrase has a
+one-file answer) is a dialog over the route's page: the prompt, a field
+that shows an asterisk per key, Tab to stop the echo, the status under the
+field and any status lines (5.2). It takes printable ASCII alone, wipes
+what was typed on escape and on the idle time, and gives the page back
+when it closes.
+
+#### Serial
+
+Two things go to serial. The screen's copy: under OVMF its terminal turns
+every Simple Text Output call into an escape sequence; falcon-bios's
+display sends the same sequences itself (the colour, then the cursor's
+position, then the text) with each glyph as ASCII (`tui_ascii`: a corner
+`+`, a line `-`, `=` or `|`, the shade blank, a block `#`). And a
+transcript, each line on its own: a page's title, each step as it opens
+(`reading the kernel...`), each line of a page or a dialog, a menu's title,
+visible rows and hints when it opens, a countdown's start, the status box's
+lines when they change, and the title bar. The rigs and the coverage
+harness read the transcript; the harness finds the selected row in the
+screen's copy by the bar's colours.
+
+#### Tests
+
+`falcon-core/tests/tui_test.c` runs the screens over a fake display that
+records every cell, plays keys from a script, and moves its clock only when
+a wait times out. Whole screens are compared with snapshots in
+`falcon-core/tests/tui/` (the glyphs as ASCII, then each cell's foreground
+and background as hex digits); `FALCON_TUI_SNAP=write` rewrites them after
+a change that meant to move them.
 
 ## 8. Host tooling (userland, C)
 
@@ -2146,7 +2378,11 @@ while every real file lives only in UDF.
   component in `apps/<app>/efi_sbat.c`, after the mandatory `sbat,1` row:
   the stick is `falcon-boot`, the UEFI station `falcon-boot-pos` (its own
   name so a generation bump for a parser only the stick links does not
-  revoke the station, Section 12.1). Both are at generation 1, vendor
+  revoke the station, Section 12.1), and the station's jumper
+  `falcon-esp-jump` (12.2), which is also how mkstick tells it from another
+  system's `BOOTX64.EFI`; its version field is its own, not
+  `release_version`, so the image, and the PCR 4 measurement the TOTP seal
+  holds (12.15), change only when its code does. All are at generation 1, vendor
   `falcon`, with the version field `release_version` (`FALCON_SEMVER`,
   generated into `build/version.h`).
   The generation is the revocation lever, bumped only for a released
@@ -2216,8 +2452,9 @@ while every real file lives only in UDF.
   same single entry point run again.
 - **Apps, components and modules.** The loaders are apps, one directory
   each under `apps/`: `stick` (this loader, UEFI and BIOS), `station`
-  (Section 12, UEFI and BIOS), `station-legacy` (Section 12.10, BIOS only)
-  and `jump` (Section 13, a BIOS boot floppy). An
+  (Section 12, UEFI and BIOS), `esp-jump` (Section 12.2, the UEFI
+  station's `\EFI\BOOT\BOOTX64.EFI`), `station-legacy` (Section 12.10, BIOS
+  only) and `jump` (Section 13, a BIOS boot floppy). An
   app is its entry points and an `app.mk` listing the modules it links; what
   it does not list, it cannot run. The modules live in components, each with
   its own `src/`: `falcon-core` (the EFI-free libraries every other component
@@ -2227,12 +2464,11 @@ while every real file lives only in UDF.
   `falcon-winjump` and `falcon-vdisk` (Section 6.3). One non-recursive
   Makefile builds them all; CLAUDE.md has the directory-by-directory map. The loader's modules, named by directory, with
   the core modules they lean on:
-  - `console` - text menu over Simple Text Output/Input, drawn from core's
-    `tui`. Lists ISOs, the personal-OS entry, and the signing-appliance
-    entry (Section 7.5); shows per-entry verification labels and the Secure
-    Boot state banner. `prompt.c` is the masked passphrase prompt; `idle.c`
-    the idle power-off (Section 7.9); `serial.c` writes diagnostics to the
-    first serial port.
+  - `console` - the display falcon-core's screens are drawn on
+    (`display.c`, Section 7.10): Simple Text Output and Input, the text
+    mode, the clock. `idle.c` is the idle power-off (Section 7.9);
+    `serial.c` writes diagnostics, and the screens' transcript, to the first
+    serial port.
   - `tsc` - the time-stamp counter, its rate, the wait on the keyboard and
     the APERF/MPERF read behind the effective clock (Section 5.5);
     `tsccore.c` is the host-tested arithmetic. `tcg` seeds
@@ -2288,7 +2524,7 @@ while every real file lives only in UDF.
   - `bless` - blessed media (Section 8.1); `blesscore.c` is its EFI-free,
     host-tested half.
   - `secboot` - `sb.c` reads `SecureBoot` / `SetupMode` / `MokSBState` for UX
-    only (per-entry verification labels, refusal messages, state banner;
+    only (per-entry verification labels, refusal messages, the title bar's state;
     Section 7). `trustefi.c` reads the five variables the boot
     predictions (Section 7.8) judge against, once at startup.
   - `trust` (core) - the boot predictions themselves, EFI-free: the PE
@@ -2856,10 +3092,12 @@ medium.
 
 #### 11.2.15 Failure paths
 
-Every route returns to the dispatcher on failure. The screen says what
-failed and at which step, the advice, and on a Secure Boot refusal the
-evidence (who signed the image, which list decided); then "press any key to
-return to the menu". Cancelling a prompt returns without the key.
+Every route returns to the dispatcher on failure. A dialog over the last
+menu says what failed and at which step, the advice, and on a Secure Boot
+refusal the evidence (who signed the image, which list decided); then
+"press any key to return to the menu" (7.10). A route that had handed over
+first repaints the whole screen under it. Cancelling a prompt returns
+without the key.
 
 Nothing in the UEFI loader halts. It leaves only three ways: a route that
 started its target, Escape at the root (back to the firmware's next boot
@@ -2940,7 +3178,7 @@ flowchart TD
     DSK --> REC["install_part_record per partition: a LUKS2 falcon token,<br/>or /.falcon on what the registry mounts;<br/>only the boot record's install ID counts"]
     REC --> P2["library: fs_mount (exFAT), survey_volume (.iso, .img)"]
     REC --> P3["shelf: pos_probe, LUKS2 or plaintext"]
-    P2 --> SI["linux_cpu_is_64, once: {64-BIT ONLY} is drawn only without it<br/>screen_init: 80x25 text, VGA memory"]
+    P2 --> SI["linux_cpu_is_64, once: {64-BIT ONLY} is drawn only without it<br/>display_init: 80x25 text, VGA memory"]
     P3 --> SI
     SI --> NB{"a marker taken?"}
     NB -- "no" --> MENU["menu"]
@@ -3003,8 +3241,8 @@ sequenceDiagram
     T->>T: save registers and ESP, patch the vector into the INT
     T->>T: 16-bit segment, PE off, far jump into real mode
     T->>T: segments 0, SP 0x7000, lidt the real-mode IVT
-    T->>B: registers loaded, sti, int N, cli
-    B-->>T: results, flags (carry, zero)
+    T->>B: registers and ES:BP loaded, sti, int N, cli
+    B-->>T: results, ES:BP, flags (carry, zero)
     T->>T: registers written back to the block
     T->>T: lgdt, PE on, far jump to the 32-bit segment
     T->>T: data segments, ESP restored, lidt idt_desc
@@ -3016,13 +3254,14 @@ ES at 0, so a disk read lands in the bounce buffer at 0x90000 (32 KiB) and
 is copied up; the packet is at 0x1000. The one write, clearing the
 next-boot marker, goes the other way through the same buffer. Services used:
 INT 13h AH=42h, AH=43h (`marker.c` only, one sector) and AH=48h, INT 1Ah
-AH=02h and AH=04h (the RTC, to date the marker), INT 10h (the 80x25 text mode, cursor shape and position, and
-teletype for stages 1 and 2 and `bios_fatal`), INT 16h AH=00h and AH=01h,
+AH=02h and AH=04h (the RTC, to date the marker), INT 10h (the 80x25 text mode, cursor shape and position, the
+ROM font's address and four of its glyphs, AX=1130h and AX=1100h, for the
+spinner (7.10), and teletype for stages 1 and 2 and `bios_fatal`), INT 16h AH=00h and AH=01h,
 INT 15h E820 (on a BIOS without it, AX=E801 and AH=88h: the map is built
 from their answers and the BDA's count at 0x413, `e820_synth`, host
 tested), and INT 18h when Escape at the root menu hands the machine
 back. Stage 3 writes the screen's cells into VGA text memory at 0xB8000
-directly (falcon-bios/src/console/screen.c). INT 15h AH=87h is used only by the
+directly (falcon-bios/src/console/display.c). INT 15h AH=87h is used only by the
 resident CD handler, from real mode.
 
 #### 11.3.4 Memory map
@@ -3330,7 +3569,7 @@ No failure halts.
 | stage 2, real mode (`fatal_rm`) | older than i586 (no CPUID), EBDA too low, A20 closed: reason, a key, reset |
 | stage 2 and 3, protected mode (`bios_fatal`) | no partition with a boot record, a damaged table, stage 3 missing, malformed or past its volume's reserved sectors, or `stage 3 returned`: reason, a key, reset |
 | a processor exception (`idt.S`, `fault.c`) | vector and name, EIP, error code, through `bios_fatal`; a second fault while reporting resets at once |
-| a route | message, "press any key to return to the menu" |
+| a route | the screen taken back (80x25 text again if the payload changed the mode) and repainted, then a dialog: what failed, at which step, the advice, "press any key to return to the menu" (7.10) |
 | the POS | no `/uki`, no images: message, secrets wiped, back to the menu; a wrong passphrase: the wait, and at the fifth the power-off of 5.2 |
 
 A reset is port 0xCF9, then the 8042's reset line, then an empty IDT and a
@@ -3402,8 +3641,11 @@ what an INI section changes or adds, the order), host-tested.
 
 ```mermaid
 flowchart TD
-    FW["Firmware<br/>boot entry falcon"] -- "\EFI\falcon\grubx64.efi (falcon-boot-station.efi),<br/>verified against db (12.2)" --> MAIN["efi_main (apps/station/efi_main.c)"]
-    FW -- "--shim: \EFI\falcon\shimx64.efi" --> SHIM["shim<br/>verifies grubx64.efi against db / MokList"]
+    FW["Firmware<br/>boot entry falcon, first in BootOrder"] -- "\EFI\BOOT\BOOTX64.EFI, verified against db (12.2)" --> JMP["efi_main (apps/esp-jump/efi_main.c)<br/>the firmware's LoadImage, off its own volume"]
+    FWN["Firmware<br/>no entry for the station"] -- "removable-media path:<br/>the same \EFI\BOOT\BOOTX64.EFI" --> JMP
+    JMP -- "\EFI\falcon\falconx64.efi (falcon-boot-station.efi),<br/>verified against db" --> MAIN["efi_main (apps/station/efi_main.c)"]
+    JMP -- "missing, or refused" --> JFAIL["one line: the path and the status;<br/>5 s, back to the firmware"]
+    FWS["Firmware<br/>--shim: boot entry falcon"] -- "\EFI\falcon\shimx64.efi" --> SHIM["shim<br/>verifies grubx64.efi against db / MokList"]
     SHIM --> MAIN
     MAIN --> NB["loader_next_boot_take<br/>FalconNextBoot read, then deleted"]
     NB --> DISC["discover_scan: the ESP's boot record, every Block I/O handle<br/>disks_scan: each whole disk's table (MBR or GPT)<br/>esp_connect_all: a filesystem driver on every partition"]
@@ -3415,7 +3657,7 @@ flowchart TD
     INI -- "error, too large, unreadable" --> ERR["page: STATION.INI line n: why<br/>no default, no countdown; a key"]
     ERR --> ROWS
     TOTP -- "no" --> ROWS
-    TOTP -- "yes" --> SEAL["totp_load: the TPM through EFI_TCG2 / EFI_TCG,<br/>the seed unsealed once, before anything is loaded;<br/>the code, or why not, under the banner from here on"]
+    TOTP -- "yes" --> SEAL["totp_load: the TPM through EFI_TCG2 / EFI_TCG,<br/>the seed unsealed once, before anything is loaded;<br/>the code, or why not, in the menu's status box from here on"]
     SEAL --> ROWS
     ROWS["rows (12.3):<br/>Personal OS (encrypted), one row per plaintext UKI,<br/>nxt_scan: BootOrder's offered entries but BootCurrent and falcon,<br/>each ESP whose bootmgfw.efi no entry names,<br/>memtest.efi on the loader's ESP, Firmware Setup<br/>then strows_apply: the INI's sections change or add rows"]
     ROWS --> NX{"next boot named?"}
@@ -3470,7 +3712,7 @@ flowchart TD
     CH --> APP["station-legacy only (legacy_rows): jroute_init over the station<br/>partition, the rows cd, cf, usb whose driver and controller are there;<br/>station_add_own_shelf: each UKI in its /uki a row by its .osrel name"]
     APP --> MT["memtest when MEMTEST.BIN is there"]
     MT --> INI["strows_apply (media/strows.c, STROWS_BIOS):<br/>the INI's sections change, hide or add rows"]
-    INI --> SI["screen_init: 80x25 text, VGA memory"]
+    INI --> SI["display_init: 80x25 text, VGA memory"]
     SI --> NOTE{"install unknown, STATION.INI line refused,<br/>or a default naming nothing here?"}
     NOTE -- "yes" --> NS["the sentence, a key; no default"]
     NOTE -- "no" --> NB
@@ -3480,7 +3722,7 @@ flowchart TD
     NB -- "bad, stale, undated, stuck,<br/>or naming nothing here" --> NN["a note, a key"]
     NB -- "no" --> LIST
     ENC --> LIST
-    NN --> LIST{"menu: strows_arrange, strows_default: the default selected;<br/>screen_menu_timed, its countdown on the first menu only"}
+    NN --> LIST{"menu: strows_arrange, strows_default: the default selected;<br/>tui_list_run, its countdown on the first menu only"}
     LIST -- "Escape" --> RF["INT 18h, else bios_reboot"]
     LIST -- "a row, or the countdown" --> ROW{"the row's kind"}
     ROW -- "shelf or UKI" --> POS["POS (11.3.7): pos_run_pick,<br/>a UKI row boots its file without the chooser"]
@@ -3675,17 +3917,34 @@ station does not link cannot stop it booting.
 Nothing is repartitioned or resized by falcon. The installer (12.9) needs
 the space it uses to be free already.
 
-**UEFI.** The machine's ESP: the loader as `grubx64.efi`, the public cert,
-memtest86+ signed with the MOK (12.6) and `STATION.INI`, all in
-`\EFI\falcon\`, named by a firmware boot entry of its own. The ESP's boot
+**UEFI.** The machine's ESP: the loader as `falconx64.efi`, the public
+cert, memtest86+ signed with the MOK (12.6) and `STATION.INI`, all in
+`\EFI\falcon\`, and the jumper as `\EFI\BOOT\BOOTX64.EFI`. The ESP's boot
 sector carries the station's `boot` record (Section 3.1) in bytes UEFI never
 executes; the installer backs up the sector it changes. No extra partition.
-The entry names `grubx64.efi` itself, and the firmware verifies it against
-db, which must hold the cert. A station is the machine's own, and so are its
+A firmware boot entry of its own, `falcon`, first in BootOrder, names the
+jumper; the firmware verifies the jumper against db, and the jumper loads
+the loader through the firmware's `LoadImage`, which verifies it against
+db too. db must hold the cert.
+
+**The jumper** (`apps/esp-jump`, `falcon-esp-jump.efi`, signed with the
+MOK) loads `\EFI\falcon\falconx64.efi` off its own volume and starts it;
+when that is missing or refused it prints the path and the status and
+returns to the firmware. With the entry and without it (an NVRAM reset,
+the disk in another machine, where the firmware boots the removable-media
+path) the firmware starts the same file, so the station has one route in
+and one measured chain (12.15). The loader stays in one place. Another
+system's `BOOTX64.EFI` (Windows', systemd-boot's, a distribution's shim)
+is saved beside the install's backup and replaced; `remove` puts it back.
+The jumper is told from it by its `.sbat` component (Section 9). An
+install with shim has neither the jumper nor an entry naming it: the
+entry names shim, and the MOK is not in such a machine's db. A station
+from before the jumper has the loader as `grubx64.efi` and an entry naming
+it; `status` and `totp` find it there, and `update` migrates it (12.14). A station is the machine's own, and so are its
 firmware keys: the cert goes into db through the platform (sbctl with the
 machine's own PK and KEK, or a coreboot and edk2 machine built with its own
-key as PK, KEK and db). With no shim in the chain, what the loader launches
-goes through the firmware's `LoadImage`, the enforcing one (7.6,
+key as PK, KEK and db). With no shim in the chain, what the jumper and the
+loader launch goes through the firmware's `LoadImage`, the enforcing one (7.6,
 `loader/loadops.h`). A stick is the other way round: it boots machines
 whose keys are not its owner's, so it goes through shim by default
 (Section 4).
@@ -3694,9 +3953,11 @@ whose keys are not its owner's, so it goes through shim by default
 and MokManager from dir before the loader: the firmware entry names shim,
 which verifies the loader against db or MokList, and the cert is enrolled
 with MokManager. For a machine whose db is not its owner's. `station
-status` takes `grubx64.efi` as the mark of a UEFI install, with or without
-shim before it, and checks its signature against the cert beside it with
-`sbverify`.
+status` takes the loader in `\EFI\falcon` (shim's next stage, else
+`falconx64.efi`) as the mark of a UEFI install and checks its signature
+against the cert beside it with `sbverify`; without shim it checks the
+jumper's the same way, and on the disk's own machine that the `falcon`
+entry names the jumper and is first in BootOrder.
 
 **BIOS, MBR disk.** Stage 1 in LBA 0's boot code, the table, signature and
 `0x55AA` kept. Stage 2 from LBA 1, before the first partition. A **station
@@ -3955,10 +4216,10 @@ hide = yes
   waits.
 
 One parser serves both loaders and the installer (`media/stationini.c`),
-and the countdown is `screen_menu_timed` on BIOS and `menu_run_timed` on
-UEFI, one menu with the same key line: "Booting in 5 s. Any key stops the
-countdown." Any key stops it for good and is then taken as any key is, so
-Enter on the default boots it at once. It runs on the first list only: a
+and the countdown is core's (`tui_list_run`, Section 7.10) on both
+loaders: `Booting in 5 s` on the list's bottom border, and the hints saying
+any key stops it. Any key stops it for good and is then taken as any key
+is, so Enter on the default boots it at once. It runs on the first list only: a
 boot that comes back to the list is someone at the keyboard, or a loop.
 
 What a section matches (`media/strows.c`, host-tested, one module for both
@@ -4022,8 +4283,11 @@ without the countdown.
 disk I/O, backups and stage splicing reused.
 
 - **install** takes the disk (and, on UEFI, finds its ESP), draws the install
-  ID, and writes: on UEFI the files in `\EFI\falcon\`, the firmware entry and
-  the ESP's record; on BIOS stage 1 into LBA 0's boot code, stage 2 before the
+  ID, and writes: on UEFI the files in `\EFI\falcon\`, without shim the
+  jumper as `\EFI\BOOT\BOOTX64.EFI` (another system's there saved beside the
+  backup file first, as `<backup>.BOOTX64.EFI`), the firmware entry (without
+  shim naming the jumper, first in BootOrder, any older `falcon` entry
+  deleted) and the ESP's record; on BIOS stage 1 into LBA 0's boot code, stage 2 before the
   first partition, the station partition in space that is already free (MBR
   0x1C or the falcon type on GPT), its record, stage 3 and the files. It
   writes a signature on any disk the station will name that has none, and
@@ -4035,7 +4299,9 @@ disk I/O, backups and stage splicing reused.
   firmware entries. LBA 0 is written last, so an interrupted install leaves
   the old boot code in place.
 - **remove** restores from that file: the old boot code, the firmware entry
-  removed, falcon's files deleted. The station partition itself is left for
+  removed (and any `falcon` entry naming the jumper), falcon's files
+  deleted, the jumper with them and the `BOOTX64.EFI` it replaced put back
+  (`<backup>.BOOTX64.EFI`, or `--bootx64` for one an update saved). The station partition itself is left for
   the user to delete.
 - **Refusals.** No free space for the station partition (it says how much it
   needs); stage 2 not fitting before the first partition; a disk with a
@@ -4197,7 +4463,22 @@ boots stations the installer made through the `falcon` Boot0001 that
   UKI; under SeaBIOS stage 2 takes the station partition over the ESP and
   the shelf unlocks; `status` passes and `remove --full` gives back every
   byte outside the ESP and the shelf;
-- a 4Kn MBR disk, `--bios`, under SeaBIOS to the UKI.
+- a 4Kn MBR disk, `--bios`, under SeaBIOS to the UKI;
+- a GPT disk installed without `--shim`: the entry naming the jumper, and
+  no entry at all, the firmware booting the jumper by the removable-media
+  path, each to the prompt and the UKI, off and on; `status` checks the
+  loader's and the jumper's signatures, and `update` signs both again;
+- the same disk made into an install from before the jumper (the loader as
+  `grubx64.efi`, another system's `BOOTX64.EFI`): `update` renames the
+  loader, saves that `BOOTX64.EFI` and writes the jumper, and the entry
+  naming the jumper boots it to the UKI with Secure Boot on;
+- the same disk with another system's `BOOTX64.EFI` before the install: the
+  installer saves it and writes the jumper, and `remove` puts it back byte
+  for byte.
+
+`make test-tpm-rig`'s `totp-jump` cases enroll the TOTP check after a boot
+through the entry naming the jumper, then show the code on a boot through
+that entry and on one with no entry.
 
 OVMF connects only the disks QEMU's boot order lists, so every disk these
 rigs attach has a bootindex; a disk without one is one the UEFI loader
@@ -4358,17 +4639,36 @@ reservation by its name in any slot: the installer makes it in whatever
 slot is free, which on the rig's station is 4.
 
 The UEFI half signs, and signing needs the MOK private key, which lives on
-the install's shelf (7.5). update opens that shelf in process with core's
-LUKS2 and ext4 (through the journal when its OS left it mounted, 5.4),
-reads the key and certificate into two sealed memfds, and hands them to
+the install's shelf (7.5). When the shelf's OS has it open (its keyfile
+slot, Manual 5.3), the partition has one dm-crypt holder whose dm UUID
+names LUKS, and update reads the shelf's ext4 through that mapping with no
+passphrase; otherwise it opens the shelf in process with core's LUKS2 and
+ext4 (through the journal when its OS left it mounted, 5.4), asking for the
+passphrase. Either way it reads the key and certificate into two sealed
+memfds, and hands them to
 `sbsign` as `/proc/self/fd/N`: the key is never a file, and is gone when
 update exits. A station's shelf is the one carrying its install ID on any
 disk. `--key` and `--cert` name a keypair instead, for an install whose
 shelf holds none. The loader is named by shim (its next stage read out of
 `\EFI\falcon\shimx64.efi` or p1's `BOOTX64.EFI`), not taken to be
-`grubx64.efi`; a station without shim has `grubx64.efi`. The signed image must carry exactly one signature and
+`grubx64.efi`; a station without shim has `falconx64.efi`. The signed image must carry exactly one signature and
 verify against the certificate; the old loader is saved, the new one
 written with mtools and read back.
+
+A station without shim gets the jumper as install makes it (12.2): signed
+again where it is falcon's, written where there is none, and where another
+system's `BOOTX64.EFI` is there, that one saved to `--backup-dir` first
+(`<disk>-bootx64-<stamp>.efi`, which `station remove --bootx64` puts back).
+On the disk's own machine the `falcon` entry is made to name the jumper and
+put first in BootOrder; for another machine's disk update prints the
+`efibootmgr` line. A station from before the jumper (no jumper of ours on
+the ESP) is migrated by the same run (`updatecore.c`): the loader is
+written as `falconx64.efi` and a `grubx64.efi` saved and deleted, the old
+entry naming the loader deleted, the jumper and its entry made. Its PCR 4
+then measures the jumper before the loader, which no reseal can predict
+from the old boot's log, so `[totp]` is not resealed: update says to boot
+the updated station and run `station totp reseal`. The same holds when the
+jumper itself is a new image (its Authenticode digest moved).
 
 A pending next-boot marker is cleared, since the stages are written as
 `mkstick bios` writes them. A UEFI station with `[totp]` is resealed in
@@ -4499,12 +4799,12 @@ alone.
 
 **The code and its lines.** HMAC-SHA1, six digits, thirty-second steps of
 the firmware clock read as UTC whatever time zone it names. The menu draws
-it on the line under the banner, `TOTP: 123 456  (falcon-station:desk)`,
-and asks for it every second on the countdown's timer, so it changes at
-each step with or without a countdown (`menu_run_timed`'s status lines,
-laid out by `tui_menu_layout_status`). The personal OS's page shows it
-again above the passphrase prompt (pos.c's hook). When the TPM will not
-release the seed, the same places say why instead:
+it in a box beside the list, `TOTP: 123 456` over the enrollment's label
+`(falcon-station:desk)`, and asks for it every second, so it changes at
+each step with or without a countdown (the list's status box, Section
+7.10). The passphrase dialog shows it again under the field (pos.c's
+hook). When the TPM will not release the seed, the same places say why
+instead:
 
 - a PCR mismatch: "The TPM did not release the code:" / "firmware, its
   settings or the boot chain changed since enrollment."
@@ -4541,10 +4841,13 @@ and the firmware's or the TPM's answer there, so a machine whose firmware
 refuses can say why without a serial console. Enrollment prints it when
 there is no record. Enrollment seals to that record, checked against the firmware's
 event log (securityfs): the log must hold the event that measured the
-station's own image, found by the Authenticode hash of
-`\EFI\falcon\grubx64.efi` in the log's bank (`tpm/evlog.c`,
-`trust/authenticode.c`), which is also the proof that this system was
-started by that station; without it enrollment refuses.
+station's own image, found by the Authenticode hash of the loader in
+`\EFI\falcon` (`falconx64.efi`, or shim's next stage) in the log's bank
+(`tpm/evlog.c`, `trust/authenticode.c`), which is also the proof that this
+system was started by that station; without it enrollment refuses. Without
+shim the jumper is in PCR 4 before the station's image on every boot,
+through the entry or the removable-media path (12.2), so the record, and
+the seal, hold it in front.
 
 On a TPM 2.0 (`totpc_station20`) the log is whole when, replayed to its
 end, it gives the PCRs as the TPM holds them now. A whole log, replayed up
@@ -4746,7 +5049,8 @@ single sectors and stage 3's header cost one revolution per track rather
 than one each.
 
 Stage 1 and stage 2 log to serial only, and the screen is stage 3's, so
-stage 2 puts one line on it: `falcon-boot: loading` and a `/-\|` spinner
+stage 2 puts one line on it: `falcon-boot: loading` and a spinner (the
+menu's four glyphs, its dash written as code page 437's 0xC4)
 turned a step for every read call that returns (`bios_disk_on_call`), a
 track on a floppy and a 32 KB bounce buffer on anything AH=42h reads;
 teletype, screen only, the cursor column from the BDA so it starts on a
@@ -4818,7 +5122,8 @@ into memory and called.
   occupies, and present on any machine with 16 MB; the core checks the
   E820 map says it is RAM before it loads anything there.
 - **Two tables, and when each may be used.** The core calls init with a
-  table of services (serial output), and the module fills in a table of
+  table of services (serial output, and a tick its delays turn the core's
+  spinner with while it probes, 7.10), and the module fills in a table of
   what it offers: probe, describe a device, read, choose the device to
   serve, `int13`, the resident entry, and `int16`, the keyboard entry,
   which a USB module's probe fills in when it found a keyboard. The core
@@ -5019,7 +5324,7 @@ and the list of the keyboards' `int16` entries (`routes.c`; serial says
 how many stayed up): the BIOS's own USB keyboard ended when the module
 took the controller, and does not come back without a reset. Stage 3
 then polls them itself. Every wait for a key goes through INT 16h AH=01h
-(`screen.c`'s `key_waiting`, and `bios_getkey`, which waits by AH=01h
+(`display.c`'s `key_waiting`, and `bios_getkey`, which waits by AH=01h
 rather than the BIOS's AH=00h while there are keyboards), and before each
 AH=01h `bios_key_poll` calls each module's `int16` directly: stage 3 is in
 protected mode with interrupts off, as the reverse thunk runs it, so there

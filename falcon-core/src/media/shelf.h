@@ -21,9 +21,10 @@
 #include <fs/fs.h>
 #include <media/osrel.h>
 
-/* How many images a chooser offers. A shelf built to DESIGN Section 7.5
- * holds the personal OS, a rollback copy or two, and the appliance. */
-#define SHELF_MAX 8u
+/* How many images a chooser offers, a list that scrolls past a screen. A
+ * shelf built to DESIGN Section 7.5 holds the personal OS, a rollback copy
+ * or two, and the appliance; one a kernel package fills holds more. */
+#define SHELF_MAX 32u
 
 /* A row's label, in UCS-2 units including the terminator: the loaders'
  * menu row width. */

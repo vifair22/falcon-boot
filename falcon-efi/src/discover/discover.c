@@ -7,6 +7,7 @@
 
 #include <lib/string.h>
 #include <blk/rebl.h>
+#include <blk/cache.h>
 #include <discover/biolow.h>
 #include <discover/partefi.h>
 #include <efi/devpath.h>
@@ -58,6 +59,43 @@ static UINT8 *low_bounce(void)
     return g_low;
 }
 
+/* The small-read windows (blk/cache.h): up to 64 KiB, the most some
+ * firmware moves for the cost of one call, sized per device to what a tenth
+ * of a second reads (discover_set_clock), and 16 of them, below 4 GiB so a
+ * window is never bounced. Allocated on first need; without the memory
+ * every read goes straight through. */
+#define CACHE_WIN   0x10000u
+#define CACHE_SLOTS 16u
+static blk_cache g_cache;
+static blk_cache_slot g_cache_slots[CACHE_SLOTS];
+static BOOLEAN g_cache_tried;
+static UINT64 (*g_cache_clock)(void);
+static UINT64 g_cache_budget;
+
+void discover_set_clock(UINT64 (*clock)(void), UINT64 hz)
+{
+    g_cache_clock = clock;
+    g_cache_budget = hz / 10u;
+    blk_cache_set_clock(&g_cache, g_cache_clock, g_cache_budget);
+}
+
+static blk_cache *cache(void)
+{
+    EFI_PHYSICAL_ADDRESS addr = 0xFFFFFFFFu;
+    UINT8 *mem = (UINT8 *)0;
+
+    if (g_cache_tried || g_bs == (EFI_BOOT_SERVICES *)0)
+        return &g_cache;
+    g_cache_tried = TRUE;
+    if (g_bs->AllocatePages(AllocateMaxAddress, EfiLoaderData,
+                            CACHE_SLOTS * CACHE_WIN / 4096u, &addr) ==
+            EFI_SUCCESS)
+        mem = (UINT8 *)(uintptr_t)addr;
+    blk_cache_init(&g_cache, g_cache_slots, CACHE_SLOTS, mem, CACHE_WIN);
+    blk_cache_set_clock(&g_cache, g_cache_clock, g_cache_budget);
+    return &g_cache;
+}
+
 static EFI_STATUS bio_read(EFI_BLOCK_IO_PROTOCOL *bio, UINT64 lba, UINTN len,
                            void *buf)
 {
@@ -85,10 +123,17 @@ static int read_blocks(void *ctx, uint64_t off, uint64_t len, void *buf)
  * know the disk's block size. Built per call rather than kept per row, so a
  * medium changed under a row is read at the block size it has now. */
 static void (*g_read_hook)(void);
+static void (*g_tick)(void);
 
 void discover_set_read_hook(void (*hook)(void))
 {
     g_read_hook = hook;
+}
+
+void discover_set_tick(void (*tick)(void))
+{
+    g_tick = tick;
+    biolow_set_tick(tick);
 }
 
 static int read_piece(discover_dev *d, uint64_t off, uint64_t len, void *buf);
@@ -97,12 +142,18 @@ int discover_read(void *ctx, uint64_t off, uint64_t len, void *buf)
 {
     uint8_t *p = buf;
 
-    if (g_read_hook == (void (*)(void))0)
+    uint64_t piece = g_read_hook != (void (*)(void))0 ? DISCOVER_READ_PIECE
+                                                     : DISCOVER_TICK_PIECE;
+
+    if (g_read_hook == (void (*)(void))0 && g_tick == (void (*)(void))0)
         return read_piece(ctx, off, len, buf);
     while (len > 0) {
-        uint64_t n = len < DISCOVER_READ_PIECE ? len : DISCOVER_READ_PIECE;
+        uint64_t n = len < piece ? len : piece;
 
-        g_read_hook();
+        if (g_read_hook != (void (*)(void))0)
+            g_read_hook();
+        if (g_tick != (void (*)(void))0)
+            g_tick();
         if (read_piece(ctx, off, n, p) != 0)
             return -1;
         off += n;
@@ -124,7 +175,15 @@ static int read_piece(discover_dev *d, uint64_t off, uint64_t len, void *buf)
     r.sector_size = d->bio->Media->BlockSize;
     r.bounce = g_bounce;
     r.bounce_len = (uint32_t)sizeof g_bounce;
-    return blk_rebl_read(&r, off, len, buf);
+    /* A medium that is not there, or blocks that do not divide a window, is
+     * read as it always was. The device's identity for the cache is its
+     * Block I/O and MediaId, so a medium changed under it misses. */
+    if (!d->bio->Media->MediaPresent || CACHE_WIN % r.sector_size != 0)
+        return blk_rebl_read(&r, off, len, buf);
+    return blk_cache_read(cache(), d->bio, d->bio->Media->MediaId,
+                          ((uint64_t)d->bio->Media->LastBlock + 1u) *
+                              r.sector_size,
+                          blk_rebl_read, &r, off, len, buf);
 }
 
 /* Cheap first question about an unknown volume: is there a LUKS2 primary
@@ -395,6 +454,9 @@ void discover_scan(EFI_SYSTEM_TABLE *st, EFI_HANDLE image)
     g_skipped = 0;
     g_id_state = DISCOVER_ID_NO_DEVICE;
     memset(&g_install, 0, sizeof g_install);
+    /* A device gone since the last scan may have left its Block I/O's
+     * memory to another, so a window keyed on the old one could match. */
+    blk_cache_flush(&g_cache);
 
     if (st == (EFI_SYSTEM_TABLE *)0)
         return;

@@ -1,0 +1,25 @@
+ falcon-boot 0.1.2                                        Secure Boot on, MS CA 
+                                                                                
+  +- vfairfield-dt --------------------------------+   +- TOTP --------------+  
+  |> Gentoo (Latest)                       default |   |                     |  
+  |  Gentoo (fallback)                             |   | 482 917             |  
+  |  Windows Boot Manager                          |   | PCRs 2 4 7          |  
+  |  Memory test                                   |   |                     |  
+  |  Reboot to firmware setup                      |   +---------------------+  
+  |                                                |                            
+  |                                                |                            
+  |                                                |                            
+  |                                                |                            
+  |                                                |                            
+  |                                                |                            
+  |                                                |                            
+  |                                                |                            
+  |                                                |                            
+  |                                                |                            
+  |                                                |                            
+  |                                                |                            
+  +- Booting in 5 s -------------------------------+                            
+                                                                                
+                                                                                
+                                                                                
+ any key stops the count                                                       

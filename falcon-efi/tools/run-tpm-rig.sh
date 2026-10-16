@@ -58,6 +58,13 @@
 #             loader with another Authenticode digest, resealing from the
 #             old loader's boot log (DESIGN Section 12.14); the next boot
 #             shows the code of the secret update printed.
+#   totp-jump  the station without shim (DESIGN Section 12.2): the loader
+#             as \EFI\falcon\falconx64.efi, the jumper as
+#             \EFI\BOOT\BOOTX64.EFI, and the `falcon` entry naming it.
+#             totp's steps 1 and 2 with the first boot through that entry,
+#             then the code on a boot through the entry and on one with no
+#             entry at all, through the removable-media path: the jumper
+#             either way, so the same PCR 4 and the code both times.
 #
 # A case whose firmware installs no protocol for its TPM version SKIPs and
 # says so: that is this OVMF, not falcon. OVMF_DIR points the rig at
@@ -82,6 +89,7 @@ PROBE=build/test/tpm-probe.efi
 PROBE_SIGNED=build/test/tpm-probe-signed.efi
 STATION=build/test-station.img
 LOADER=build/bin/falcon-boot-station-signed.efi
+JUMPER=build/bin/falcon-esp-jump-signed.efi
 MOK_VARS=build/mok-test/OVMF_VARS.secboot.mok.fd
 MOK_CRT=build/mok-test/falcon-test-mok.crt
 MKSTICK=build/bin/falcon-boot-mkstick
@@ -146,6 +154,46 @@ station_disk() {  # station_disk IMAGE EFI
     printf '[general]\ndefault = memtest\ntimeout = %s\n' "${INI_TIMEOUT:-1}" \
         > "$R/STATION.INI"
     mcopy -o -i "$img@@1M" "$R/STATION.INI" ::/EFI/falcon/STATION.INI
+    # JUMP=1: a station without shim, as `station install` lays it out
+    # (DESIGN Section 12.2): the loader as \EFI\falcon\falconx64.efi and
+    # the jumper as \EFI\BOOT\BOOTX64.EFI, no shim anywhere.
+    if [[ ${JUMP:-0} == 1 ]]; then
+        mdel -i "$img@@1M" ::/EFI/falcon/shimx64.efi ::/EFI/falcon/mmx64.efi \
+            ::/EFI/falcon/grubx64.efi ::/EFI/BOOT/grubx64.efi \
+            ::/EFI/BOOT/mmx64.efi 2>/dev/null || true
+        mcopy -o -i "$img@@1M" "$LOADER" ::/EFI/falcon/falconx64.efi
+        mcopy -o -i "$img@@1M" "$JUMPER" ::/EFI/BOOT/BOOTX64.EFI
+    fi
+}
+
+# ENTRY_JUMP=1: the varstore gets the `falcon` entry install makes without
+# shim, naming the disk's \EFI\BOOT\BOOTX64.EFI, first in BootOrder; with
+# none the firmware boots the same file by the removable-media path.
+jump_entry_json() {     # jump_entry_json IMAGE
+    local facts
+    facts=$(sgdisk -i 1 "$1" | awk '
+        /^First sector:/          { s = $3 }
+        /^Partition size:/        { n = $3 }
+        /^Partition unique GUID:/ { g = $4 }
+        END { print s, n, g }')
+    python3 - $facts <<'EOF'
+import json, struct, sys, uuid
+start, size, guid = sys.argv[1:4]
+pre = struct.pack("<BBHII", 2, 1, 12, 0x0A0341D0, 0)
+pre += struct.pack("<BBHBB", 1, 1, 6, 2, 0x1F)
+pre += struct.pack("<BBHHHH", 3, 0x12, 10, 0, 0xFFFF, 0)
+hd = struct.pack("<BBHIQQ", 4, 1, 42, 1, int(start), int(size))
+hd += uuid.UUID(guid).bytes_le + bytes([2, 2])
+name = ("\\EFI\\BOOT\\BOOTX64.EFI" + "\0").encode("utf-16-le")
+fp = struct.pack("<BBH", 4, 4, 4 + len(name)) + name
+dp = pre + hd + fp + bytes([0x7F, 0xFF, 4, 0])
+desc = "falcon\0".encode("utf-16-le")
+g = "8be4df61-93ca-11d2-aa0d-00e098032b8c"
+print(json.dumps({"version": 2, "variables": [
+    {"name": "Boot0001", "guid": g, "attr": 7,
+     "data": (struct.pack("<IH", 1, len(dp)) + desc + dp).hex()},
+    {"name": "BootOrder", "guid": g, "attr": 7, "data": "0100"}]}))
+EOF
 }
 
 # ---- the machine ----
@@ -198,6 +246,10 @@ boot_once() {
         "$VFV" --inplace "$R/vars.fd" \
             --add-db 5eedd15c-0000-4000-8000-00000000d00b "$MOK_CRT" \
             >/dev/null 2>&1
+    fi
+    if [[ ${ENTRY_JUMP:-0} == 1 ]]; then
+        jump_entry_json "$disk" > "$R/vars.json"
+        "$VFV" --inplace "$R/vars.fd" --set-json "$R/vars.json" >/dev/null 2>&1
     fi
     case $tpm in
     tpm2)    swtpm_start 2 "$TPM_DIR" ;;
@@ -538,6 +590,59 @@ case_totp() {
     result "$c" "$why" "code $shown matches the seed, off the wire, gone after a handover, above the prompt; PCR 0 moved: warned"
 }
 
+# The code shown on a boot of the enrolled totp disk; sets why on a miss.
+jump_code() {   # jump_code STEP ENTRY_JUMP WANT-ROUTE
+    local log=$R/$c-$1.log n
+    ENTRY_JUMP=$2 boot "$fw" "$tpm" "$R/totp.img"
+    wait_for "FALCON-TPM-PROBE-DONE" 120 || why="boot $1 did not reach the probe"
+    halt
+    log_text "$R/serial.log" > "$log"
+    # Counted rather than grep -q: a pipe cut short fails under pipefail.
+    n=$(grep -acF "starting Boot0001 \"$3" "$log" || true)
+    [[ -z $why && $n == 0 ]] && why="boot $1 was not through $3"
+    shown=$(grep -aoE 'TOTP: [0-9]{3} [0-9]{3}' "$log" | head -n 1 | cut -c7-)
+    if [[ -z $why && -z $shown ]]; then
+        why="boot $1 ($3) showed no code: $(grep -aoE 'The TPM did not release[^|]{0,60}|TPM[^|]{0,70}' "$log" | head -n 1)"
+    elif [[ -z $why ]] && ! grep -qx -- "$shown" <<<"$want"; then
+        why="boot $1 ($3): the code $shown is not the seed's for the clock"
+    fi
+}
+
+# The station without shim (JUMP=1): enrolled from a boot through the
+# `falcon` entry, which names the jumper; then the code on a boot through
+# that entry and on one with no entry, where the firmware's removable-media
+# path is the same jumper. PCR 4 measures the jumper and then the loader on
+# both, so both unseal (DESIGN Section 12.15).
+case_totp_jump() {
+    local c=$1 fw=$2 tpm=$3 why= ver= out= secret= chk= shown= want= base= s2= n=
+    local saved=() owner=()
+    why=$(fw_missing "$fw")
+    [[ -n $why ]] && { skip "$c" "$why"; return; }
+    [[ -f "$STATION" ]] || { skip "$c" "$STATION missing (make test-station)"; return; }
+    [[ -x "$MKSTICK" ]] || { skip "$c" "$MKSTICK missing (make cli)"; return; }
+    [[ -f "$JUMPER" ]] || { skip "$c" "$JUMPER missing (make station sign)"; return; }
+    [[ -n "$VFV" ]] || { skip "$c" "virt-fw-vars is not installed"; return; }
+    command -v python3 >/dev/null || { skip "$c" "python3 is not installed"; return; }
+    command -v swtpm_setup >/dev/null || { skip "$c" "swtpm_setup is not installed"; return; }
+
+    export JUMP=1 ENTRY_JUMP=1
+    totp_enrolled || { unset JUMP ENTRY_JUMP; return 0; }
+    unset ENTRY_JUMP
+    n=$(grep -acF 'starting Boot0001 "falcon' "$R/$c-1.log" || true)
+    [[ -z $why && $n == 0 ]] && why="the enrolled boot was not through the falcon entry"
+    base=$(date -u -d "${RTC_BASE/T/ }" +%s)
+    want=$(codes_for "$secret" "$base")
+    [[ -z $why ]] && jump_code 2 1 "falcon"
+    s2=$shown
+    [[ -z $why ]] && jump_code 3 0 "UEFI QEMU HARDDISK"
+    unset JUMP
+
+    TPM_DIR=$R/swtpm
+    RTC_ARGS=()
+    unset SWTPM_KEEP
+    result "$c" "$why" "enrolled after a boot through the jumper; code $s2 through the falcon entry, $shown with no entry"
+}
+
 # A station loader whose Authenticode digest is not the build's: one byte
 # of a section's slack (past its VirtualSize, inside SizeOfRawData) is
 # hashed and never loaded, so the loader runs as before.
@@ -644,7 +749,9 @@ ALL=(uefi-tpm2-probe uefi-tpm2crb-probe uefi-tpm12-probe
      uefi-sb-tpm2-station uefi-sb-tpm12-station
      uefi-tpm2-totp uefi-tpm12-totp uefi-sb-tpm2-totp uefi-sb-tpm12-totp
      uefi-tpm2-totp-update uefi-tpm12-totp-update
-     uefi-sb-tpm2-totp-update uefi-sb-tpm12-totp-update)
+     uefi-sb-tpm2-totp-update uefi-sb-tpm12-totp-update
+     uefi-tpm2-totp-jump uefi-tpm12-totp-jump
+     uefi-sb-tpm2-totp-jump uefi-sb-tpm12-totp-jump)
 CASES=("$@")
 [[ ${#CASES[@]} -eq 0 ]] && CASES=("${ALL[@]}")
 
@@ -665,6 +772,7 @@ for c in "${CASES[@]}"; do
     station) case_station "$c" "$fw" "$tpm" ;;
     totp)    case_totp "$c" "$fw" "$tpm" ;;
     totp-update) case_totp_update "$c" "$fw" "$tpm" ;;
+    totp-jump) case_totp_jump "$c" "$fw" "$tpm" ;;
     *) echo "unknown case: $c" >&2; exit 2 ;;
     esac
 done

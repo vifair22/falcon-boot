@@ -11,6 +11,7 @@
 #define FALCON_BIOS_RESULT_H
 
 #include <media/bootcfg.h>
+#include <tui/tui.h>
 
 /* Room for advice built at run time: a sentence and a path on the medium. */
 #define BOOT_ADVICE_MAX 256u
@@ -25,6 +26,14 @@ typedef struct {
      * route, as the UEFI loader does (docs/Manual.md, Section 2.3). */
     int         fallthrough;
 } boot_result;
+
+/* A stage of the route: a step on its page (falcon-core's tui_step), and
+ * what a failure names. */
+static inline void boot_stage(boot_result *r, const char *stage)
+{
+    r->stage = stage;
+    tui_step_ascii(stage);
+}
 
 /* Before a route runs. */
 static inline void boot_result_init(boot_result *r)

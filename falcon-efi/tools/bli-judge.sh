@@ -16,12 +16,15 @@
 #   - efivarfs has LoaderTimeInitUSec, LoaderTimeExecUSec,
 #     FalconTimeWaitUSec and FalconTimeKdfUSec with exactly the values the
 #     loader logged, FalconKdfInfo exactly as the unlock's
-#     "falcon-pos: argon2id ran on ... ms: <info>" line says it, and
+#     "falcon-pos: argon2id ran on ... ms: <info>" line says it,
+#     FalconReadInfo exactly as the loader logged it at the launch, and
 #     LoaderInfo, LoaderFirmwareInfo and LoaderFirmwareType in
 #     systemd-boot's formats; every one volatile (attributes 0x6: boot
 #     services and runtime, not non-volatile) and NUL-terminated;
 #   - 0 < init < exec, MIN-WAIT-US <= wait < exec - init, and
 #     0 < kdf <= exec - init - wait, with the info's milliseconds kdf's;
+#   - the boot stretch of FalconReadInfo read something (the UKI) in no
+#     more milliseconds than exec - init;
 #   - under a hypervisor (the kernel's CPUID.1:ECX bit 31), the info names
 #     no clock: the loader did not read APERF/MPERF there;
 #   - the loader's rate is within 1% of the rate the kernel found for the
@@ -55,6 +58,10 @@ bli_judge() {
             lk = field($0, "FalconTimeKdfUSec")
             kinfo_exec = kinfo
         }
+        /falcon-bli: FalconReadInfo=/ {
+            rinfo = substr($0, index($0, "FalconReadInfo=") + 15)
+            sub(/[ \t\r]+$/, "", rinfo)
+        }
         /FALCON-BLI-VAR / {
             s = substr($0, index($0, "FALCON-BLI-VAR ") + 15)
             split(s, f, " ")
@@ -82,7 +89,8 @@ bli_judge() {
             if (noefivarfs) fail("the kernel could not mount efivarfs")
             n = split("LoaderTimeInitUSec LoaderTimeExecUSec LoaderInfo " \
                       "LoaderFirmwareInfo LoaderFirmwareType " \
-                      "FalconTimeWaitUSec FalconTimeKdfUSec FalconKdfInfo",
+                      "FalconTimeWaitUSec FalconTimeKdfUSec FalconKdfInfo " \
+                      "FalconReadInfo",
                       names, " ")
             for (i = 1; i <= n; i++) {
                 k = names[i]
@@ -113,6 +121,18 @@ bli_judge() {
             kms = substr(kinfo_exec, RSTART + 1, RLENGTH - 4)
             if (kms + 0 != int(lk / 1000))
                 fail("FalconKdfInfo says " kms " ms, FalconTimeKdfUSec " lk " us")
+            if (rinfo == "") fail("the loader logged no read info at the launch")
+            if (val["FalconReadInfo"] != rinfo)
+                fail("FalconReadInfo reads \"" val["FalconReadInfo"] \
+                     "\", the loader logged \"" rinfo "\"")
+            if (!match(rinfo, /boot [0-9]+ calls [0-9]+ KiB [0-9]+ ms/))
+                fail("FalconReadInfo has no boot stretch: \"" rinfo "\"")
+            split(substr(rinfo, RSTART, RLENGTH), rb, " ")
+            if (!(rb[2] + 0 > 0) || !(rb[4] + 0 > 0))
+                fail("FalconReadInfo says the boot read nothing: \"" rinfo "\"")
+            if (rb[6] * 1000 > le - li)
+                fail("FalconReadInfo boot reads took " rb[6] " ms, over " \
+                     "exec - init " le - li " us")
             if (val["LoaderInfo"] !~ /^falcon-boot [0-9]/)
                 fail("LoaderInfo is \"" val["LoaderInfo"] "\"")
             if (val["LoaderFirmwareInfo"] !~ /^.+ [0-9]+\.[0-9][0-9]+$/)
@@ -141,10 +161,11 @@ bli_judge() {
                 fail("exec " le " us does not precede the kernel now " now " us")
             printf "OK tsc %d Hz by %s (kernel %d kHz, %+.3f%%); " \
                    "init %d us, exec %d us, wait %d us, kdf %d us, " \
-                   "kernel now %d us; %s; %s; %s; %s (hypervisor %s)\n",
+                   "kernel now %d us; %s; %s; %s; %s (hypervisor %s); " \
+                   "reads %s\n",
                    hz, how, khz, dev * 100, li, le, lw, lk, now,
                    val["LoaderInfo"], val["LoaderFirmwareInfo"],
-                   val["LoaderFirmwareType"], kinfo_exec, hv
+                   val["LoaderFirmwareType"], kinfo_exec, hv, rinfo
         }' "$log")
     case $out in
     "OK "*)  BLI_DETAIL=${out#OK } ;;

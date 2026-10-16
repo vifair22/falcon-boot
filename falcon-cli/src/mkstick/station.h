@@ -26,10 +26,16 @@
 /* The files a station carries (DESIGN Section 12). */
 #define STN_ESP_DIR       "EFI/falcon"
 #define STN_ESP_SHIM      "shimx64.efi"
-/* The loader's name on the ESP: shim's next stage, and with --no-shim the
- * file the firmware entry names itself. */
-#define STN_ESP_LOADER    "grubx64.efi"
+/* The loader's name is shim's next stage when shim is there, and
+ * stationcore.h's STN_LOADER_NOSHIM when it is not. */
 #define STN_ESP_CERT      "falcon-boot.cer"
+/* The removable-media path, where an install without shim puts the jumper
+ * (apps/esp-jump), and which its firmware entry names. */
+#define STN_ESP_BOOT_DIR  "EFI/BOOT"
+#define STN_ESP_JUMP      "BOOTX64.EFI"
+#define STN_ESP_JUMP_PATH "\\EFI\\BOOT\\BOOTX64.EFI"
+/* Beside the install's backup file: the BOOTX64.EFI the jumper replaced. */
+#define STN_JUMP_BACKUP_EXT ".BOOTX64.EFI"
 #define STN_ESP_MEMTEST   "memtest.efi"
 #define STN_BIOS_MEMTEST  "MEMTEST.BIN"
 #define STN_FW_LABEL      "falcon"
@@ -99,6 +105,10 @@ cli_status stn_mtools_put_text(const char *disk, uint64_t off,
                                const char *text, size_t len, const char *dst);
 cli_status stn_mtools_deltree(const char *disk, uint64_t off,
                               const char *dir);
+cli_status stn_mtools_del(const char *disk, uint64_t off, const char *file);
+/* A file off the volume (src, under its root) to a host path. */
+cli_status stn_mtools_get(const char *disk, uint64_t off, const char *src,
+                          const char *dst);
 
 /* Is partition `number` of this disk mounted? Always 0 for an image. */
 int stn_part_mounted(const mks_disk *d, uint32_t number, char *where,
@@ -117,11 +127,29 @@ int stn_part_index(const mks_records *r, uint32_t n);
 int stn_find_esp(const mks_records *r);
 
 /* The loader's name in \EFI\falcon of the FAT volume at [off, off + len)
- * of disk: the next stage shimx64.efi there names, or STN_ESP_LOADER when
- * there is no shim (--no-shim). What install wrote, so what status, totp
- * and update read. */
+ * of disk: the next stage shimx64.efi there names, or stn_noshim_loader's
+ * when there is no shim (--no-shim). What install wrote, so what status,
+ * totp and update read. */
 cli_status stn_esp_loader_name(const char *disk, uint64_t off, uint64_t len,
                                char *out, size_t cap);
+
+/* \EFI\BOOT\BOOTX64.EFI on that volume: *present when it is there, *ours
+ * when it is falcon's jumper (stn_is_esp_jump). */
+cli_status stn_esp_jump_state(const char *disk, uint64_t off, uint64_t len,
+                              int *present, int *ours);
+
+/* Can the firmware entries be read and written for this disk: a disk of
+ * this machine, which booted with UEFI, with efibootmgr on PATH. */
+int stn_fw_here(const mks_disk *d);
+
+/* This machine's entries labelled falcon, and BootOrder. */
+cli_status stn_fw_read(stn_fw *fw);
+
+/* The `falcon` entry naming STN_ESP_JUMP_PATH on partition `part` of disk,
+ * first in BootOrder: any falcon entry naming another file deleted, the
+ * jumper's made when there is none, BootOrder rewritten when it is not
+ * first. *num is its number. */
+cli_status stn_fw_jump_entry(const char *disk, uint32_t part, int *num);
 
 extern const cli_cmd stn_cmd_install;
 
