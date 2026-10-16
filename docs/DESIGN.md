@@ -2071,10 +2071,12 @@ fonts as an HII simple font package, kept only when the console's
 TestString accepts them (edk2's graphics console draws through the HII
 database; a serial terminal or a firmware's own console driver does not),
 and removes it at the hand-off. Where a display has no glyphs of its own,
-and on serial, the frames are `| / - \`. A frame lasts 250 ms on UEFI (a
-50 ms timer), and five BIOS ticks, 275 ms, on BIOS; it is taken from the
-clock rather than counted per call, and painted and flushed before a
-probe's slice, so a slow read neither speeds it up nor holds a frame back.
+the frames are `| / - \`. falcon-bios's serial mirror leaves them out: a
+tick comes inside a read, and would split a diagnostic line half written.
+A frame lasts 250 ms on UEFI (a 50 ms timer), and five BIOS ticks, 275 ms,
+on BIOS; it is taken from the clock rather than counted per call, and
+painted and flushed before a probe's slice, so a slow read neither speeds
+it up nor holds a frame back.
 
 #### Lists
 
