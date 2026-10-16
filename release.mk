@@ -68,7 +68,7 @@ release-check:
 # from /, so a package is that directory copied, and a person can run
 # usr/bin/falcon-boot-mkstick from it with --from and --shim pointed in.
 release: release-check $(MKSTICK_REL) $(SIGN_STATIC) $(EFI) $(EFI_STATION) \
-		$(BIOS_STAGE1) $(BIOS_STAGE2) $(BIOS_STAGE3) $(BIOS_STATION_STAGE3) \
+		$(EFI_ESP_JUMP) $(BIOS_STAGE1) $(BIOS_STAGE2) $(BIOS_STAGE3) $(BIOS_STATION_STAGE3) \
 		$(BIOS_STATION_LEGACY_STAGE3) $(JUMP_MODS) station-bundle jump
 	@rm -rf $(RELEASE_DIR)
 	@mkdir -p $(RELEASE_STAGE)/usr/bin \
@@ -78,8 +78,8 @@ release: release-check $(MKSTICK_REL) $(SIGN_STATIC) $(EFI) $(EFI_STATION) \
 		$(RELEASE_STAGE)/usr/share/doc/falcon-boot
 	strip -o $(RELEASE_STAGE)/usr/bin/falcon-boot-mkstick $(MKSTICK_REL)
 	strip -o $(RELEASE_STAGE)/usr/bin/falcon-boot-sign $(SIGN_STATIC)
-	cp $(EFI) $(EFI_STATION) $(BIOS_STAGE1) $(BIOS_STAGE2) $(BIOS_STAGE3) \
-		$(BIOS_STATION_STAGE3) $(BIOS_STATION_LEGACY_STAGE3) \
+	cp $(EFI) $(EFI_STATION) $(EFI_ESP_JUMP) $(BIOS_STAGE1) $(BIOS_STAGE2) \
+		$(BIOS_STAGE3) $(BIOS_STATION_STAGE3) $(BIOS_STATION_LEGACY_STAGE3) \
 		$(RELEASE_STAGE)$(RELEASE_DATADIR)/bin/
 	cp $(JUMP_MODS) $(JUMP_MODS:.gz=) $(RELEASE_STAGE)$(RELEASE_DATADIR)/bin/mod/
 	cp $(RELEASE_SHIM) $(RELEASE_STAGE)$(RELEASE_DATADIR)/shim/bins/

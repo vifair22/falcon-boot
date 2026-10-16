@@ -60,6 +60,6 @@ $(eval $(call bios_app,station,$(BIOS_STATION_STAGE3),\
 
 $(BIOS_OBJ)/$(STATION)/bios_main.o: build/version.h
 
-station: $(EFI_STATION) $(BIOS_STAGE1) $(BIOS_STAGE2) $(BIOS_STATION_STAGE3)
+station: $(EFI_STATION) $(EFI_ESP_JUMP) $(BIOS_STAGE1) $(BIOS_STAGE2) $(BIOS_STATION_STAGE3)
 
 .PHONY: station
