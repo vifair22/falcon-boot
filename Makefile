@@ -473,6 +473,14 @@ coverage: test
 test-fixtures: test-image test-ext4 test-jbd2 test-fat test-luks test-isoview test-trust \
 	test-iso9660 test-udf test-wim test-uefiboot test-biosboot
 
+# One fixture at a time, under -j too. mk-test-jbd2.sh snapshots a mounted
+# filesystem whose committed metadata must not have reached its home blocks
+# yet, and the other fixture scripts run a plain `sync`, which writes every
+# filesystem's home; one running beside it leaves a jbd2 image with nothing to
+# replay, and test_jbd2_fixtures_meaningful fails. (GNU make 4.4: with
+# prerequisites, .NOTPARALLEL serialises only those.)
+.NOTPARALLEL: test-fixtures
+
 # Verify the toolchain before attempting a build. The EFI target needs the
 # mingw cross-gcc that emits PE32+ directly; the test rig and the host tooling
 # need the userland utilities we shell out to.
