@@ -120,7 +120,12 @@ if [[ $BUILD -eq 0 ]] && ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
 fi
 if [[ $BUILD -eq 1 ]]; then
     echo "building $IMAGE" >&2
-    docker build -t "$IMAGE" -f tools/coverage/Dockerfile tools/coverage
+    # One plain manifest: by default the build wraps the image in an OCI
+    # index with an attestation manifest, and the GitLab registry refuses to
+    # take that index ("blob unknown to registry"); vifair-overlay's CI has
+    # the same flags for the same reason.
+    docker build --provenance=false --sbom=false \
+        -t "$IMAGE" -f tools/coverage/Dockerfile tools/coverage
     # Every edit to the Dockerfile's package list makes a new apt layer of
     # about 3 GB and leaves the old one in the build cache, where nothing
     # else removes it. The filter is host-wide, which is the binhost's own
