@@ -2589,8 +2589,10 @@ while every real file lives only in UDF.
   i686, by every route; each case judged from serial, a
   DHCP capture and the medium read after the kernel starts (`run-case.sh`),
   and rendered to `docs/coverage.md` by `scorecard.py`. It runs in a
-  container (`harness.sh`, `Dockerfile`) on binhost-builder; `harness.sh
-  make test` runs the test suite in the same environment.
+  container (`harness.sh`, `Dockerfile`) on binhost-builder. Every build
+  runs in that container too: the Makefile hands its goals to `harness.sh`
+  outside it, and CI publishes the image, tagged by the Dockerfile's hash,
+  to the project's registry for workstations to pull.
 - Real hardware for the shim/MokManager enrollment flow, which is the
   least QEMU-friendly step.
 

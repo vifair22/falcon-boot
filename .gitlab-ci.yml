@@ -41,6 +41,11 @@ variables:
   FALCON_BUILD_DIR: $FALCON_CI_ROOT/pipelines/$CI_PIPELINE_ID
   FALCON_STICKS_DIR: ""
   FALCON_HARNESS_NAME: falcon-ci-$CI_JOB_ID
+  # The harness image is the registry's, tagged by the Dockerfile's hash
+  # (tools/coverage/harness.sh). A pipeline that builds one publishes it, and
+  # every workstation's `make` pulls that.
+  FALCON_HARNESS_REPO: $CI_REGISTRY_IMAGE/harness
+  FALCON_HARNESS_PUSH: "1"
   # The rigs' fixture UKI takes its kernel from this ISO; the path is the
   # container's, where the corpus is mounted.
   ARCH_ISO: /corpus/archlinux-2026.01.01-x86_64.iso
@@ -56,7 +61,7 @@ default:
   # The image is tagged by its Dockerfile, so a branch that changes the
   # Dockerfile builds its own and a pipeline never runs a stale one.
   before_script:
-    - export FALCON_HARNESS_IMAGE="falcon-boot-harness:$(sha256sum tools/coverage/Dockerfile | cut -c1-12)"
+    - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY" >/dev/null
     - mkdir -p "$FALCON_BUILD_DIR"
     # A build is a release only once it is on master: master's pipeline, or
     # a tag on one of master's commits. Every other build says dev.
@@ -317,8 +322,9 @@ corpus:
 # The pipeline's build directory goes with it. Its files are root's where a
 # job was killed before the harness handed them back, so the harness deletes
 # them. Directories of pipelines cancelled before reaching this job are
-# swept here too, after three days, and so are harness images built for a
-# Dockerfile this pipeline does not use (`latest` is the hand-run one).
+# swept here too, after three days, and so are the runner's copies of
+# harness images for a Dockerfile this pipeline does not use; the registry
+# keeps them.
 cleanup:
   stage: .post
   when: always
@@ -327,11 +333,13 @@ cleanup:
       for d in "$FALCON_CI_ROOT"/pipelines/*; do
         [[ -d $d ]] || continue
         if [[ $d == "$FALCON_BUILD_DIR" ]] || [[ -n $(find "$d" -maxdepth 0 -mtime +3) ]]; then
-          FALCON_BUILD_DIR=$d tools/coverage/harness.sh find /work/build -mindepth 1 -delete
+          FALCON_BUILD_DIR=$d tools/coverage/harness.sh find build -mindepth 1 -delete
           rmdir "$d"
         fi
       done
     - |
-      docker images falcon-boot-harness --format '{{.Tag}}' |
-        { grep -vxF -e latest -e "${FALCON_HARNESS_IMAGE#*:}" || true; } |
-        while read -r t; do docker rmi "falcon-boot-harness:$t" || true; done
+      keep="$FALCON_HARNESS_REPO:$(sha256sum tools/coverage/Dockerfile | cut -c1-12)"
+      docker images --format '{{.Repository}}:{{.Tag}}' |
+        { grep -E "^($FALCON_HARNESS_REPO|falcon-boot-harness):" || true; } |
+        { grep -vxF "$keep" || true; } |
+        while read -r i; do docker rmi "$i" || true; done
