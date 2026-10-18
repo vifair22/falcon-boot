@@ -129,14 +129,10 @@ RUN set -eu; \
     done; \
     test "$missing" -eq 0
 
-# Where harness.sh mounts things. Declared so a `docker run` that forgets one
-# fails on an empty directory instead of writing into the image.
-#
-# /work rather than /src: tools/analyze.sh recognises the repository's own
-# src/ directories by matching "/src/" in an absolute path, and a tree
-# mounted at /src makes every path match, which puts the whole test suite
-# into a gate built to exclude it. harness.sh says more.
-VOLUME ["/work", "/corpus"]
-WORKDIR /work
+# Where harness.sh mounts the corpus. Declared so a `docker run` that forgets
+# it fails on an empty directory instead of writing into the image. The
+# repository is mounted at its host path, which harness.sh also makes the
+# working directory.
+VOLUME ["/corpus"]
 
 CMD ["/bin/bash"]

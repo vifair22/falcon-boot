@@ -3347,12 +3347,34 @@ land in `build/obj/<flavour>/`, binaries in `build/bin/`, fixtures and rig
 artifacts elsewhere under `build/`. `make clean` removes `build/` and
 `compile_commands.json`.
 
+The build runs in the harness container (13.5). Outside it, the Makefile
+reads no further than handing its goals, flags and command-line variables to
+`tools/coverage/harness.sh make`, once per invocation. The image is the one
+the checkout's Dockerfile describes, pulled from the project's registry:
+
+    docker login registry.git.airies.net:443
+
+once per machine, with a token that can read the registry. Without it the
+first `make` builds the image locally (about 3.5 GB, several minutes).
+
+Six goals act on the host and run there: `install`, `uninstall`, `run`,
+`run-secboot`, `run-stick` and `run-stick-secboot`. The container first
+builds what each needs (`install` the two programs, `run` the loader,
+`run-secboot` the signed loader); `run*` needs QEMU and OVMF on the host.
+
+| variable | effect |
+|---|---|
+| `FALCON_NATIVE=1` | build with the host's toolchain (13.1), not the container |
+| `FALCON_HARNESS` | set inside the container; the Makefile builds there |
+
 ### 13.1 Toolchain
 
     make check-tools
 
 prints one line per missing tool and `Toolchain OK.` when the required one
-is there. It exits nonzero only when a required tool is missing.
+is there. It exits nonzero only when a required tool is missing. Run as
+`make check-tools`, it checks the container; with `FALCON_NATIVE=1`, the
+host.
 
 Every tool, from `tools/deps.tsv` (the one list; `make check-deps` holds
 the harness's Dockerfile and this table to it):
@@ -3482,8 +3504,9 @@ needs `make test-fixtures` before `make test` is green.
 
     make test-fixtures
 
-builds every image fixture those suites read. Several need passwordless
-sudo for a loop mount:
+builds every image fixture those suites read. Several need a loop mount,
+which the container makes as root; with `FALCON_NATIVE=1` they need
+passwordless sudo:
 
 | target | needs |
 |---|---|
@@ -3661,25 +3684,33 @@ With `--tpm-socket` the event log is not checked against the TPM's PCRs.
 
 `tools/coverage/harness.sh` runs a command in the harness container
 (`tools/coverage/Dockerfile`), privileged, with `/dev/kvm`, the host's
-`/dev`, the repository at `/work` and the corpus read-only at `/corpus`:
+`/dev`, the repository at its own path (the working directory) and the
+corpus read-only at `/corpus`:
 
     tools/coverage/harness.sh [options] [--] [command...]
 
 | option | env | default |
 |---|---|---|
 | `--build` | | build the image even when it exists |
-| `--image NAME` | `FALCON_HARNESS_IMAGE` | `falcon-boot-harness` |
+| `--image NAME` | `FALCON_HARNESS_IMAGE` | `$FALCON_HARNESS_REPO:` the first 12 hex digits of the Dockerfile's SHA-256 |
+| | `FALCON_HARNESS_REPO` | `registry.git.airies.net:443/vifair22/falcon-boot/harness` |
+| | `FALCON_HARNESS_PUSH` | `1` pushes the image when the registry lacks it (the pipeline sets it) |
 | `--corpus DIR` | `FALCON_CORPUS` | `/srv/falcon/corpus` |
 | `--build-dir DIR` | `FALCON_BUILD_DIR` | `/srv/falcon/build` when that directory exists, bound over the repository's `build/`; else empty, the repository's own |
 | `--sticks DIR` | `FALCON_STICKS_DIR` | `/srv/build/cache/falcon/sticks` when it exists and the build directory is `/srv/falcon/build`, bound over `build/coverage/sticks`; else empty, the sticks stay in the build directory |
 
-The image is built when absent. It needs `docker`. The corpus directory and
+An absent image is pulled, and built when the pull fails. It needs
+`docker`. The container sees `FALCON_HARNESS=1`, `MAKEFLAGS`, `VARIANT`,
+`ARCH_ISO`, `A21M_ORIG`, `W98_IOS_CF`, `FALCON_KEEP`, `FALCON_UDFEDIT_KEEP`
+and every `FALCON_CASE_*`, `FALCON_TEST_*` and `FALCON_TUI_*` set on the
+host; no other variable of the host's. The corpus directory and
 `/dev/kvm` are needed for the corpus run; with a command, a missing corpus
 is not mounted and a missing `/dev/kvm` is a warning (a build works, a rig
 does not). The case sticks are most of the corpus's disk use, so on the
 binhost they sit on the cache disk and are mounted into the container; a
-symlink in their place would not resolve inside it. The container runs as root; what it wrote under `build/` and
-`compile_commands.json` is chowned to the caller afterwards. With a command
+symlink in their place would not resolve inside it. The container runs as
+root; every file root wrote under the repository is chowned to the caller
+afterwards, whatever the command's exit status. With a command
 it runs that command:
 
     tools/coverage/harness.sh make test
