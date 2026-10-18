@@ -19,8 +19,8 @@
 # The image is the registry's, tagged by the Dockerfile's hash, so a checkout
 # runs the image its Dockerfile describes: pulled when absent, built when the
 # pull fails (no `docker login` to the registry, or a Dockerfile no pipeline
-# has published yet), and pushed after a build when FALCON_HARNESS_PUSH=1,
-# which the pipeline sets.
+# has published yet), and pushed when the registry lacks it and
+# FALCON_HARNESS_PUSH=1, which the pipeline sets.
 #
 # Usage: tools/coverage/harness.sh [options] [--] [command...]
 #   --build         (re)build the image before running
@@ -38,7 +38,7 @@
 #      FALCON_HARNESS_REPO          the image's repository (default
 #                                   registry.git.airies.net:443/vifair22/
 #                                   falcon-boot/harness)
-#      FALCON_HARNESS_PUSH          1 pushes an image this run built
+#      FALCON_HARNESS_PUSH          1 pushes the image when the registry lacks it
 #      FALCON_CASE_*, FALCON_TEST_*, FALCON_TUI_*, FALCON_KEEP,
 #      FALCON_UDFEDIT_KEEP, MAKEFLAGS
 #                                   passed through: the cases', tests' and
@@ -121,9 +121,6 @@ fi
 if [[ $BUILD -eq 1 ]]; then
     echo "building $IMAGE" >&2
     docker build -t "$IMAGE" -f tools/coverage/Dockerfile tools/coverage
-    if [[ ${FALCON_HARNESS_PUSH:-} == 1 ]]; then
-        docker push -q "$IMAGE"
-    fi
     # Every edit to the Dockerfile's package list makes a new apt layer of
     # about 3 GB and leaves the old one in the build cache, where nothing
     # else removes it. The filter is host-wide, which is the binhost's own
@@ -131,6 +128,13 @@ if [[ $BUILD -eq 1 ]]; then
     # rebuild that follows soon after still finds its layers.
     docker builder prune -f --filter until=48h >/dev/null ||
         echo "warning: could not prune the docker build cache" >&2
+fi
+# Whatever the local copy came from (this build, an earlier one, a hand-run
+# harness on the same daemon), the registry is what workstations pull.
+if [[ ${FALCON_HARNESS_PUSH:-} == 1 ]] &&
+    ! docker manifest inspect "$IMAGE" >/dev/null 2>&1; then
+    echo "pushing $IMAGE" >&2
+    docker push -q "$IMAGE"
 fi
 
 # A missing corpus is worth saying plainly: every case would be skipped and the

@@ -3694,7 +3694,7 @@ corpus read-only at `/corpus`:
 | `--build` | | build the image even when it exists |
 | `--image NAME` | `FALCON_HARNESS_IMAGE` | `$FALCON_HARNESS_REPO:` the first 12 hex digits of the Dockerfile's SHA-256 |
 | | `FALCON_HARNESS_REPO` | `registry.git.airies.net:443/vifair22/falcon-boot/harness` |
-| | `FALCON_HARNESS_PUSH` | `1` pushes an image this run built (the pipeline sets it) |
+| | `FALCON_HARNESS_PUSH` | `1` pushes the image when the registry lacks it (the pipeline sets it) |
 | `--corpus DIR` | `FALCON_CORPUS` | `/srv/falcon/corpus` |
 | `--build-dir DIR` | `FALCON_BUILD_DIR` | `/srv/falcon/build` when that directory exists, bound over the repository's `build/`; else empty, the repository's own |
 | `--sticks DIR` | `FALCON_STICKS_DIR` | `/srv/build/cache/falcon/sticks` when it exists and the build directory is `/srv/falcon/build`, bound over `build/coverage/sticks`; else empty, the sticks stay in the build directory |
