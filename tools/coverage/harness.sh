@@ -5,24 +5,26 @@
 #
 # Wraps `docker run` with the four things the harness needs and nothing else:
 # /dev/kvm, privileged (mk-case-stick.sh calls `sudo losetup`), the repository
-# at /work and the corpus read-only at /corpus.
+# at its own path and the corpus read-only at /corpus.
 #
-# /work, not /src, and the name is load-bearing. tools/analyze.sh keeps test
-# sources out of the gate by matching the substring "/src/" against each
-# absolute path from the compile database, which is how the repository's
-# own src/ directories are recognised. Mounting the tree at /src made every
-# path in it match, so the gate silently linted the whole test suite: 357 of
-# 403 findings in a run here were test files that were never meant to be in
-# it. Any mount point whose name collides with a directory the tree uses
-# would do the same.
+# The repository is mounted where it is on the host, so the paths a build
+# records (compile_commands.json, gcov data, compiler messages) name files
+# the host's editor and tools can open.
 #
 # With no command it runs the full corpus. Any other command runs in the same
 # environment, which is what makes `harness.sh make test` and
-# `harness.sh bash` work without a second wrapper.
+# `harness.sh bash` work without a second wrapper. Outside the container the
+# Makefile hands every goal here (its "where the build runs").
+#
+# The image is the registry's, tagged by the Dockerfile's hash, so a checkout
+# runs the image its Dockerfile describes: pulled when absent, built when the
+# pull fails (no `docker login` to the registry, or a Dockerfile no pipeline
+# has published yet), and pushed after a build when FALCON_HARNESS_PUSH=1,
+# which the pipeline sets.
 #
 # Usage: tools/coverage/harness.sh [options] [--] [command...]
 #   --build         (re)build the image before running
-#   --image NAME    image tag (default falcon-boot-harness)
+#   --image NAME    image (default $FALCON_HARNESS_REPO:<Dockerfile hash>)
 #   --corpus DIR    corpus on the host (default /srv/falcon/corpus)
 #   --build-dir DIR host directory bound over the repo's build/, so a clone
 #                   on a small disk can put artifacts on a big one; empty
@@ -32,7 +34,18 @@
 #                   /srv/build/cache/falcon/sticks when it exists and the
 #                   build directory is the default one)
 # Env: the same four as the options, FALCON_HARNESS_IMAGE, FALCON_CORPUS,
-#      FALCON_BUILD_DIR, FALCON_STICKS_DIR; and for a pipeline job:
+#      FALCON_BUILD_DIR, FALCON_STICKS_DIR;
+#      FALCON_HARNESS_REPO          the image's repository (default
+#                                   registry.git.airies.net:443/vifair22/
+#                                   falcon-boot/harness)
+#      FALCON_HARNESS_PUSH          1 pushes an image this run built
+#      FALCON_CASE_*, FALCON_TEST_*, FALCON_TUI_*, FALCON_KEEP,
+#      FALCON_UDFEDIT_KEEP, MAKEFLAGS
+#                                   passed through: the cases', tests' and
+#                                   rigs' switches and the Makefile's flags.
+#                                   Not every FALCON_*: a tag pipeline's
+#                                   signing and deploy keys are FALCON_*;
+#      and for a pipeline job:
 #      FALCON_HARNESS_NAME          the container's name, so a cancelled job
 #                                   can remove the container it left running
 #      FALCON_DOCKER_CGROUP_PARENT  the cgroup the container runs under; the
@@ -57,7 +70,8 @@ set -euo pipefail
 cd "$(dirname "$0")/../.."
 REPO=$PWD
 
-IMAGE="${FALCON_HARNESS_IMAGE:-falcon-boot-harness}"
+HARNESS_REPO="${FALCON_HARNESS_REPO:-registry.git.airies.net:443/vifair22/falcon-boot/harness}"
+IMAGE="${FALCON_HARNESS_IMAGE:-$HARNESS_REPO:$(sha256sum tools/coverage/Dockerfile | cut -c1-12)}"
 CORPUS="${FALCON_CORPUS:-/srv/falcon/corpus}"
 # The binhost's layout is the default where it exists; elsewhere the repo's
 # own build/ and no corpus, which is enough for `harness.sh make ...`.
@@ -84,7 +98,8 @@ while [[ $# -gt 0 ]]; do
 done
 
 command -v docker >/dev/null 2>&1 || {
-    echo "ERROR: docker is not on PATH" >&2; exit 1; }
+    echo "ERROR: docker is not on PATH (FALCON_NATIVE=1 builds with the host's toolchain)" >&2
+    exit 1; }
 KVM=()
 if [[ -e /dev/kvm ]]; then
     KVM=(--device /dev/kvm)
@@ -96,9 +111,19 @@ else
     echo "warning: no /dev/kvm; a build works, a rig will not" >&2
 fi
 
-if [[ $BUILD -eq 1 ]] || ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
-    echo "building $IMAGE"
+if [[ $BUILD -eq 0 ]] && ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
+    echo "pulling $IMAGE" >&2
+    docker pull -q "$IMAGE" >/dev/null ||
+        { echo "harness: $IMAGE could not be pulled; building it" \
+            "(docker login ${IMAGE%%/*} fetches it next time, once a" \
+            "pipeline has published this Dockerfile)" >&2; BUILD=1; }
+fi
+if [[ $BUILD -eq 1 ]]; then
+    echo "building $IMAGE" >&2
     docker build -t "$IMAGE" -f tools/coverage/Dockerfile tools/coverage
+    if [[ ${FALCON_HARNESS_PUSH:-} == 1 ]]; then
+        docker push -q "$IMAGE"
+    fi
     # Every edit to the Dockerfile's package list makes a new apt layer of
     # about 3 GB and leaves the old one in the build cache, where nothing
     # else removes it. The filter is host-wide, which is the binhost's own
@@ -127,12 +152,15 @@ fi
 # Sharing /dev lets the container see every device on the box. It is already
 # --privileged, so this widens nothing that was closed; it is listed here as
 # what it is rather than buried.
-MOUNTS=(-v "$REPO:/work" -v /dev:/dev)
+MOUNTS=(-v "$REPO:$REPO" -v /dev:/dev)
 [[ -d $CORPUS ]] && MOUNTS+=(-v "$CORPUS:/corpus:ro")
 [[ -n ${FALCON_FIXTURES:-} ]] && MOUNTS+=(-v "$FALCON_FIXTURES:/fixtures:ro")
+# A bind target that does not exist is made by the daemon, as root, and the
+# hand-back below sees the mount, not the directory under it; so each target
+# is made here first, as the caller.
 if [[ -n $BUILD_DIR ]]; then
-    mkdir -p "$BUILD_DIR"
-    MOUNTS+=(-v "$BUILD_DIR:/work/build")
+    mkdir -p "$BUILD_DIR" "$REPO/build"
+    MOUNTS+=(-v "$BUILD_DIR:$REPO/build")
 fi
 if [[ $STICKS_DIR == unset ]]; then
     STICKS_DIR=
@@ -143,8 +171,8 @@ if [[ -n $STICKS_DIR ]]; then
     [[ -n $BUILD_DIR ]] || {
         echo "ERROR: --sticks needs a build directory to mount under" >&2
         exit 1; }
-    mkdir -p "$STICKS_DIR"
-    MOUNTS+=(-v "$STICKS_DIR:/work/build/coverage/sticks")
+    mkdir -p "$STICKS_DIR" "$BUILD_DIR/coverage/sticks"
+    MOUNTS+=(-v "$STICKS_DIR:$REPO/build/coverage/sticks")
 fi
 
 # Interactive only when there is a terminal, so the same line works from a
@@ -159,25 +187,27 @@ RUNOPTS=(--name "$NAME")
 [[ -n ${FALCON_DOCKER_CGROUP_PARENT:-} ]] &&
     RUNOPTS+=(--cgroup-parent "$FALCON_DOCKER_CGROUP_PARENT")
 
+ENVS=(-e FALCON_HARNESS=1 -e FALCON_CORPUS=/corpus)
+for v in ARCH_ISO A21M_ORIG W98_IOS_CF VARIANT MAKEFLAGS FALCON_KEEP FALCON_UDFEDIT_KEEP \
+    $(compgen -e | grep -E '^FALCON_(CASE|TEST|TUI)_' || true); do
+    [[ -n ${!v+set} ]] && ENVS+=(-e "$v")
+done
+
 CMD=("$@")
 [[ ${#CMD[@]} -eq 0 ]] && CMD=(tools/coverage/run-corpus.sh)
-# The container runs as root (losetup); what it wrote under /work is handed
-# back to the caller afterwards, whatever the command's exit status.
+# The container runs as root (losetup); what it wrote in the repository and
+# the build directory is handed back to the caller afterwards, whatever the
+# command's exit status. Only root's files: the case sticks and the rest are
+# someone's already.
 CMDQ=$(printf '%q ' "${CMD[@]}")
+REPOQ=$(printf '%q' "$REPO")
+GIVEBACK="find $REPOQ -path $REPOQ/.git -prune -o -uid 0 -print0 | xargs -0r chown -h $(id -u):$(id -g)"
 
 RUN=(docker run --rm "${TTY[@]}" \
     --privileged "${KVM[@]}" "${RUNOPTS[@]}" \
-    "${MOUNTS[@]}" \
-    -e FALCON_CORPUS=/corpus \
-    -e FALCON_CASE_WJLOG \
-    -e FALCON_CASE_MEM \
-    -e ARCH_ISO \
-    -e FALCON_TEST_BOOTWIM \
-    -e A21M_ORIG \
-    -e W98_IOS_CF \
-    -e VARIANT \
-    -w /work \
-    "$IMAGE" bash -c "$CMDQ; rc=\$?; chown -R $(id -u):$(id -g) /work/build /work/compile_commands.json 2>/dev/null; exit \$rc")
+    "${MOUNTS[@]}" "${ENVS[@]}" \
+    -w "$REPO" \
+    "$IMAGE" bash -c "$CMDQ; rc=\$?; $GIVEBACK; exit \$rc")
 
 # At a terminal the client owns it, and ^C reaches the container through it.
 # Without one (a pipeline job), the container's bash is PID 1 and ignores

@@ -72,19 +72,25 @@ Section 14 says how to check and install them.
 
 ## Building
 
-Requires `x86_64-w64-mingw32-gcc`. The BIOS loader and falcon-hook's 32-bit
-build need the host gcc's 32-bit libgcc (`gcc-multilib` on Debian) and
-`i686-w64-mingw32-gcc` for the 32-bit winjump; the host tools need
-`cryptsetup`, `sbsign` and `mkfs.exfat`/`mkfs.ext4`; the rigs need QEMU with
-OVMF and SeaBIOS, and the floppy needs mtools. `make check-tools` names what
-is missing. A machine without the toolchain builds in the harness container
-instead: `tools/coverage/harness.sh make` (docker; everything is in the
-container).
+Requires docker. `make` runs every goal in the harness container
+(`tools/coverage/Dockerfile`), the toolchain CI uses, pulled from the
+project's registry once `docker login registry.git.airies.net:443` has been
+run, and built locally otherwise. `make install` and `make run*` act on the
+host after the container builds what they need; `run*` needs QEMU with OVMF
+on the host.
+
+`FALCON_NATIVE=1` builds with the host's own toolchain instead:
+`x86_64-w64-mingw32-gcc`, the host gcc's 32-bit libgcc (`gcc-multilib` on
+Debian) for the BIOS loader and falcon-hook's 32-bit build,
+`i686-w64-mingw32-gcc` for the 32-bit winjump, `cryptsetup`, `sbsign` and
+`mkfs.exfat`/`mkfs.ext4` for the host tools, QEMU with OVMF and SeaBIOS for
+the rigs and mtools for the floppy. `make check-tools` names what is
+missing.
 
 ```sh
 make check-tools     # what is missing, and what each tool is for
 make                 # the UEFI loader, host tools and winjump into build/bin/
-make test-fixtures   # the images the image-backed tests read (needs sudo)
+make test-fixtures   # the images the image-backed tests read
 make test            # every component's host tests
 make coverage        # the tests, strictly, with one coverage report
 make analyze         # cppcheck, gcc -fanalyzer and clang-tidy, gated
@@ -96,9 +102,9 @@ make run             # the test stick under QEMU/OVMF with a display window
 
 The rigs (`make test-stick`, `test-core`, `test-station*`, `test-tpm-rig`,
 `test-jump`, `test-bios-img` and the rest) are listed in the Manual's
-Section 13. Everything, the corpus included, runs in a container with
-`tools/coverage/harness.sh` (`harness.sh make test`), which is how the
-measurements in `docs/coverage.md` are made.
+Section 13. The corpus runs in the same container, through
+`tools/coverage/harness.sh` with no command, which is how the measurements
+in `docs/coverage.md` are made.
 
 The pipeline (`.gitlab-ci.yml`) runs on the binhost's `falcon` runner, each
 job in the same container: every merge request gets the tests (with JUnit

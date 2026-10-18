@@ -38,6 +38,51 @@
 #
 # See docs/DESIGN.md for the architecture.
 
+# ---- where the build runs ----
+#
+# In the harness container (tools/coverage/harness.sh), the toolchain CI
+# runs. Outside it, this file reads no further: every goal is handed to the
+# container, and a workstation needs docker and none of the toolchain.
+# FALCON_HARNESS is set inside the container; FALCON_NATIVE=1 builds with
+# the host's toolchain instead. Bash's completion parses the whole file
+# natively, to list its targets.
+#
+# The host goals act on this machine: the container builds what each needs
+# (falcon_needs.<goal>, checked against the build's own names below), then
+# the goal runs here with those files taken as up to date.
+FALCON_HOST_GOALS := install uninstall run run-secboot run-stick run-stick-secboot
+falcon_needs.install := build/bin/falcon-boot-mkstick build/bin/falcon-boot-sign
+falcon_needs.run := build/bin/falcon-boot.efi
+falcon_needs.run-secboot := build/bin/falcon-boot-signed.efi
+
+ifeq ($(FALCON_HARNESS)$(FALCON_NATIVE)$(__BASH_MAKE_COMPLETION__),)
+
+# The flags as make parsed them (-j, -k, -n, the command line's variables),
+# taken before a jobserver is attached that the container could not reach.
+falcon_makeflags := $(MAKEFLAGS)
+falcon_host := $(filter $(FALCON_HOST_GOALS),$(MAKECMDGOALS))
+falcon_inner := $(filter-out $(FALCON_HOST_GOALS),$(MAKECMDGOALS)) \
+	$(foreach g,$(falcon_host),$(falcon_needs.$(g)))
+
+.DEFAULT_GOAL := falcon-container
+.PHONY: falcon-container $(MAKECMDGOALS)
+
+# Once for all the goals. No goals at all is the inner make's default goal;
+# host goals that need nothing built start no container.
+ifneq ($(strip $(falcon_inner))$(if $(MAKECMDGOALS),,default),)
+falcon-container:
+	+@MAKEFLAGS='$(subst ','\'',$(falcon_makeflags))' tools/coverage/harness.sh make $(falcon_inner)
+else
+falcon-container: ;
+endif
+
+$(filter-out $(FALCON_HOST_GOALS),$(MAKECMDGOALS)): falcon-container ; @:
+
+$(falcon_host): falcon-container
+	+@$(MAKE) FALCON_NATIVE=1 $(addprefix -o ,$(falcon_needs.$@)) $@
+
+else
+
 # The last field of every version string. `release` is CI's on master
 # alone (.gitlab-ci.yml); every other build is `dev`.
 VARIANT ?= dev
@@ -545,4 +590,11 @@ compile_commands.json: Makefile $(wildcard falcon-*/build.mk apps/*/app.mk)
 clean:
 	rm -rf build compile_commands.json
 
+# The host goals' needs, named before this file's build was read.
+ifneq ($(falcon_needs.install) $(falcon_needs.run) $(falcon_needs.run-secboot),$(MKSTICK) $(SIGN) $(EFI) $(EFI_SIGNED))
+$(error falcon_needs.* no longer name $(MKSTICK) $(SIGN) $(EFI) $(EFI_SIGNED))
+endif
+
 -include $(shell find $(OBJ) -name '*.o.d' 2>/dev/null)
+
+endif
