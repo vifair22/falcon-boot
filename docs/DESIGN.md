@@ -2766,7 +2766,7 @@ sequenceDiagram
     U->>L: Enter on Personal OS
     L->>U: masked passphrase prompt
     U->>L: passphrase (3 tries, Escape backs out)
-    L->>L: borrow the AVX state; a slot of 512 MiB-passes or more: StartupAllAPs, the other cores on the lane pool (mp/)
+    L->>L: borrow the AVX state, and for a slot of 512 MiB-passes or more StartupAllAPs puts the other cores on the lane pool (mp/)
     L->>FC: luks_unlock p3 (argon2id or PBKDF2, AES-XTS)
     L->>L: the workers released and seen back, the AVX state given back, on every core
     L->>FC: luks_dev_open, fs_mount_journal ext4 (a journal left by a hibernated OS replayed in memory, 5.4)
@@ -2811,8 +2811,8 @@ sequenceDiagram
     L->>L: credfs: uki, passphrase .cred, falcon.bless.cred (the list), falcon.ident.cred (the install ID)
     L->>S: LoadImage by path (MOK-signed), StartImage
     S->>A: sd-stub, kernel, /init = falcon-boot-appliance-init
-    A->>A: modules; the install ID from falcon.ident.cred (none: refuse, unlock nothing)
-    A->>A: find_stick (30 s): the exFAT /.falcon and the LUKS2 token carrying it, any disk; mount p2, read the manifest
+    A->>A: modules, then the install ID from falcon.ident.cred (none: refuse, unlock nothing)
+    A->>A: find_stick (30 s): the exFAT /.falcon and the LUKS2 token carrying it, any disk, then mount p2 and read the manifest
     A->>A: survey only the listed paths
     A->>A: shelf_open p3 read-only in process (core LUKS2, ext4) with the passphrase .cred
     A->>A: MOK key and cert into sealed memfds
@@ -3372,7 +3372,7 @@ sequenceDiagram
     L->>L: zero page at 0x10000: setup header, loader type 0xFF, the memory map as read (11.3.3)
     L->>L: "starting <entry>" on screen
     L->>L: screen_info from INT 10h and the BDA, after the route's last line: mode, columns, rows, cursor, VGA
-    L->>K: GDT (0x10, 0x18) copied to 0x3100; a staged kernel is moved down by the stub at 0x3000; jump to code32_start, ESI = zero page (32-bit entry, either width)
+    L->>K: GDT (0x10, 0x18) copied to 0x3100, a staged kernel moved down by the stub at 0x3000, jump to code32_start with ESI = zero page (32-bit entry, either width)
     K->>H: rdinit=/falcon/hook, map from /falcon/map
     H->>D: /dev/mapper/falcon-iso (11.4)
     Note over D: the distro finds its medium, mounts root
@@ -3398,7 +3398,7 @@ sequenceDiagram
     U->>L: Enter on Personal OS
     alt LUKS2 shelf
         L->>U: masked passphrase (INT 16h), five a boot with a wait after each wrong one, then power off (5.2)
-        L->>L: borrow the AVX state; a slot of 512 MiB-passes or more: the MADT's other cores woken by INIT and two startup IPIs into 0x5000 (mp/aptramp.S), on the lane pool
+        L->>L: borrow the AVX state, and for a slot of 512 MiB-passes or more the MADT's other cores, woken by INIT and two startup IPIs into 0x5000 (mp/aptramp.S), join the lane pool
         L->>FC: luks_unlock p3
         L->>L: the workers released and halted, each sent INIT, the local APIC's SVR as found, the AVX state given back
         L->>FC: luks_dev_open, fs_mount_journal ext4 (5.4)
