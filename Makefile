@@ -578,6 +578,21 @@ define cc_db_emit
 	done
 endef
 
+# The database names the mingw include directory of the machine that wrote
+# it, the harness's, which a workstation building in the container does not
+# have. falcon-vdisk is the one component whose entries read mingw's own
+# headers (the DDK); .clangd points the editor at this copy of them, links
+# followed.
+EDITOR_MINGW := build/editor/mingw-include
+ifneq ($(VDISK_X64_DDK),)
+all: $(EDITOR_MINGW)/.stamp
+$(EDITOR_MINGW)/.stamp: $(VDISK_X64_DDK)/ntddk.h
+	rm -rf $(EDITOR_MINGW)
+	mkdir -p $(EDITOR_MINGW)
+	cp -rL $(VDISK_X64_DDK)/../. $(EDITOR_MINGW)/
+	touch $@
+endif
+
 # `make compdb` for people; the file target is what everything depends on.
 compdb: compile_commands.json
 .PHONY: compdb
