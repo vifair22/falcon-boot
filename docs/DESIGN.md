@@ -2940,7 +2940,7 @@ sequenceDiagram
     participant B as FreeBSD loader
     participant K as FreeBSD kernel
     L->>L: bsd_run: directory record, loader.conf settings, staging check
-    L->>F: virtual CD with the two overrides, ConnectController
+    L->>F: virtual CD with the two overrides and the window, ConnectController
     L->>L: read the signed loader from /falcon/blessed/
     L->>F: LoadImage, FilePath = the medium's EFI\BOOT\BOOTX64.EFI, SourceBuffer = the signed copy
     F-->>L: verified against MokList, DeviceHandle = the medium
@@ -3084,11 +3084,11 @@ sequenceDiagram
     participant B as FreeBSD loader
     participant K as FreeBSD kernel
     L->>FC: mount ISO9660, /boot/defaults/loader.conf (one extent, 1 KiB or more)
-    L->>FC: bsdmd_record: a FALCONBS.IMG record in free bytes of / or /boot, extent 0, length = the ISO
-    L->>L: staging check: ISO + 192 MiB below 4 GiB
+    L->>FC: bsdmd_record: a FALCONBS.IMG record in free bytes of / or /boot, its extent a window past the ISO's end, length = the ISO
+    L->>L: staging check: ISO + 192 MiB below 4 GiB (2^48 on AArch64)
     L->>FC: bsdmd_config over the file's opening comment block
     Note right of FC: md_image_load, md_image_type, md_image_name,<br/>vfs.root.mountfrom=cd9660:/dev/md0
-    L->>F: virtual CD with the two overrides, ConnectController
+    L->>F: virtual CD with the two overrides and the window (the ISO again), ConnectController
     L->>F: chainload loader.efi (SHIM_LOCK hidden)
     F->>B: start
     B->>B: currdev cd0, reads the edited loader.conf
@@ -3096,6 +3096,14 @@ sequenceDiagram
     B->>K: md image preloaded
     Note over K: root cd9660 from /dev/md0
 ```
+
+The window: FreeBSD's loader zeroes a file's block cache (libsa
+`cd9660.c`), so a file at sector 0 has its first block taken as cached and
+copied from a NULL buffer. On x86-64 that reads page 0; AAVMF maps no page
+there and the loader faults. FALCONBS.IMG's bytes are therefore the virtual
+CD's appended region, which serves the ISO a second time; falcon-bios keeps
+sector 0, where the false hit reads the interrupt table and the system area
+it stands for is never read.
 
 `loader.efi` is unsigned, so Secure Boot refuses this route; BLB is the
 Secure Boot route. The file edited is `/boot/defaults/loader.conf`; a medium

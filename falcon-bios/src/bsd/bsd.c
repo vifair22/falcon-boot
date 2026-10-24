@@ -176,7 +176,10 @@ int bsd_boot(bios_disk *d, fs_vol *p2, const part_entry *p2part,
         return -1;
 
     boot_stage(r, "placing the memory-disk record");
-    if (bsdmd_record(iso->size, iso_read, (void *)0, &rec, g_path,
+    /* Sector 0: the false cache hit bsdmd.h describes reads the real-mode
+     * interrupt table here, harmlessly, as FreeBSD never reads the system
+     * area of a medium it mounts. */
+    if (bsdmd_record(iso->size, 0, iso_read, (void *)0, &rec, g_path,
                      sizeof g_path) != BSDMD_OK) {
         r->advice = "this ISO has no free bytes in its root or /boot "
                     "directory for the record this route adds.";

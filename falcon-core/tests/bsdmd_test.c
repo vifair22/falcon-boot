@@ -134,7 +134,7 @@ static void test_bsdmd_record_root(void **state)
 
     (void)state;
     build_iso(SEC, SEC);
-    assert_int_equal(bsdmd_record(iso_size, iso_read, NULL, &e, path,
+    assert_int_equal(bsdmd_record(iso_size, 0, iso_read, NULL, &e, path,
                                   sizeof path), BSDMD_OK);
     assert_string_equal(path, "/FALCONBS.IMG;1");
     assert_int_equal(e.len, 48u);               /* 33 + 14, padded to even */
@@ -155,6 +155,13 @@ static void test_bsdmd_record_root(void **state)
     assert_int_equal(e.bytes[32], 14);
     assert_memory_equal(e.bytes + 33, "FALCONBS.IMG;1", 14);
     assert_int_equal(e.bytes[47], 0);           /* the pad byte */
+
+    /* A window past the medium (bsdmd.h): the extent names it. */
+    assert_int_equal(bsdmd_record(iso_size, SECTORS, iso_read, NULL, &e, path,
+                                  sizeof path), BSDMD_OK);
+    assert_int_equal(le32(e.bytes + 2), SECTORS);
+    assert_int_equal(be32(e.bytes + 6), SECTORS);
+    assert_int_equal(le32(e.bytes + 10), (uint32_t)iso_size);
 }
 
 /* A root directory with no room falls through to /boot rather than failing:
@@ -167,7 +174,7 @@ static void test_bsdmd_record_boot(void **state)
     (void)state;
     /* 20 free bytes is less than the 48 a record needs. */
     build_iso(20, SEC);
-    assert_int_equal(bsdmd_record((uint64_t)SECTORS * SEC, iso_read, NULL,
+    assert_int_equal(bsdmd_record((uint64_t)SECTORS * SEC, 0, iso_read, NULL,
                                   &e, path, sizeof path), BSDMD_OK);
     assert_string_equal(path, "/boot/FALCONBS.IMG;1");
     assert_true(e.off >= (uint64_t)BOOT_LBA * SEC);
@@ -181,7 +188,7 @@ static void test_bsdmd_record_no_room(void **state)
 
     (void)state;
     build_iso(20, 20);
-    assert_int_equal(bsdmd_record((uint64_t)SECTORS * SEC, iso_read, NULL,
+    assert_int_equal(bsdmd_record((uint64_t)SECTORS * SEC, 0, iso_read, NULL,
                                   &e, path, sizeof path), BSDMD_ERR_NO_ROOM);
 }
 
@@ -193,30 +200,30 @@ static void test_bsdmd_record_errors(void **state)
 
     (void)state;
     build_iso(SEC, SEC);
-    assert_int_equal(bsdmd_record(0, iso_read, NULL, &e, path, sizeof path),
+    assert_int_equal(bsdmd_record(0, 0, iso_read, NULL, &e, path, sizeof path),
                      BSDMD_ERR_ARG);
-    assert_int_equal(bsdmd_record(1024, NULL, NULL, &e, path, sizeof path),
+    assert_int_equal(bsdmd_record(1024, 0, NULL, NULL, &e, path, sizeof path),
                      BSDMD_ERR_ARG);
-    assert_int_equal(bsdmd_record(1024, iso_read, NULL, NULL, path,
+    assert_int_equal(bsdmd_record(1024, 0, iso_read, NULL, NULL, path,
                                   sizeof path), BSDMD_ERR_ARG);
-    assert_int_equal(bsdmd_record(1024, iso_read, NULL, &e, small,
+    assert_int_equal(bsdmd_record(1024, 0, iso_read, NULL, &e, small,
                                   sizeof small), BSDMD_ERR_ARG);
     /* Past what an ISO9660 length field can express. */
-    assert_int_equal(bsdmd_record(0x100000000ull, iso_read, NULL, &e, path,
+    assert_int_equal(bsdmd_record(0x100000000ull, 0, iso_read, NULL, &e, path,
                                   sizeof path), BSDMD_ERR_TOO_BIG);
 
     /* Not a medium at all. */
     memset(g_iso, 0, sizeof g_iso);
-    assert_int_equal(bsdmd_record(1024, iso_read, NULL, &e, path,
+    assert_int_equal(bsdmd_record(1024, 0, iso_read, NULL, &e, path,
                                   sizeof path), BSDMD_ERR_NOT_ISO);
 
     /* A read that fails is an error, never a guess. */
     build_iso(SEC, SEC);
     g_fail_at = 16;
-    assert_int_equal(bsdmd_record(1024, iso_read, NULL, &e, path,
+    assert_int_equal(bsdmd_record(1024, 0, iso_read, NULL, &e, path,
                                   sizeof path), BSDMD_ERR_IO);
     g_fail_at = ROOT_LBA;
-    assert_int_equal(bsdmd_record(1024, iso_read, NULL, &e, path,
+    assert_int_equal(bsdmd_record(1024, 0, iso_read, NULL, &e, path,
                                   sizeof path), BSDMD_ERR_IO);
     g_fail_at = -1;
 }
