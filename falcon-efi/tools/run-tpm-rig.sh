@@ -104,6 +104,9 @@ SCALE=1
 SUFFIX=
 ARCH_OPT=()
 MEMTEST_LABEL="Memory test (memtest86+)"
+# The name the firmware gives the disk's own boot option: OVMF's for an IDE
+# disk, AAVMF's for a virtio one.
+DISK_BOOT_NAME="UEFI QEMU HARDDISK"
 
 # Where the running case's swtpm keeps its state; the totp cases use their
 # own. RTC_ARGS sets the guest's clock (the totp cases). OTHER_FW=1 boots
@@ -247,19 +250,17 @@ boot() {
 boot_once() {
     local fw=$1 tpm=$2 disk=$3 code vars
     if [[ $ARCH == aa64 ]]; then
-        local plain secure
-        plain=$(aavmf_find CODE plain)
+        local secure
         secure=$(aavmf_find CODE secboot)
         # Debian builds TCG2 into the Secure Boot AAVMF alone; with a blank
-        # store (no PK) it is a machine with Secure Boot off.
+        # store (no PK) it is a machine with Secure Boot off. The other
+        # firmware is its strict-NX build: TCG2 too, and another PCR 0.
+        code=$secure
+        [[ $OTHER_FW == 1 ]] && code=${secure%.fd}.strictnx.fd
         if [[ $fw == uefi ]]; then
-            code=$secure
             vars=$(aavmf_find VARS plain)
-            [[ $OTHER_FW == 1 ]] && code=$plain
         else
-            code=$secure
             vars=$MOK_VARS
-            [[ $OTHER_FW == 1 ]] && code=$plain
         fi
     elif [[ $fw == uefi ]]; then
         code=$(ovmf_find CODE plain)
@@ -606,7 +607,8 @@ case_totp() {
         [[ -z $why ]] && { wait_for "passphrase for the encrypted partition" 30 ||
             why="no passphrase prompt"; }
         # Past a 30-second step at the prompt: the code is redrawn in place.
-        [[ -z $why ]] && sleep 32
+        # An emulated guest's clock runs behind the host's, so SCALE steps.
+        [[ -z $why ]] && sleep $(( 32 * SCALE ))
         halt
         log_text "$R/serial.log" > "$R/$c-3b.log"
         [[ -z $why ]] && { awk '/booting: Personal OS/ { p = 1 } p' "$R/$c-3b.log" |
@@ -678,7 +680,7 @@ case_totp_jump() {
     want=$(codes_for "$secret" "$base")
     [[ -z $why ]] && jump_code 2 1 "falcon"
     s2=$shown
-    [[ -z $why ]] && jump_code 3 0 "UEFI QEMU HARDDISK"
+    [[ -z $why ]] && jump_code 3 0 "$DISK_BOOT_NAME"
     unset JUMP
 
     TPM_DIR=$R/swtpm
@@ -808,6 +810,7 @@ set_arch() {    # set_arch x64|aa64
         UP=AA64 LOW=aa64 SCALE=${AA64_SCALE:-6}
         SUFFIX=-aa64 ARCH_OPT=(--arch aa64)
         MEMTEST_LABEL="Memory test (MemTest86)"
+        DISK_BOOT_NAME="UEFI Misc Device"
         PROBE=build/test/tpm-probe-aa64.efi
         PROBE_SIGNED=build/test/tpm-probe-aa64-signed.efi
         STATION=build/test-station-aa64.img
@@ -823,6 +826,7 @@ set_arch() {    # set_arch x64|aa64
         UP=X64 LOW=x64 SCALE=1
         SUFFIX= ARCH_OPT=()
         MEMTEST_LABEL="Memory test (memtest86+)"
+        DISK_BOOT_NAME="UEFI QEMU HARDDISK"
         PROBE=build/test/tpm-probe.efi
         PROBE_SIGNED=build/test/tpm-probe-signed.efi
         STATION=build/test-station.img
