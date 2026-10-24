@@ -2,7 +2,7 @@
 
 One USB stick that boots the ISOs you copy onto it, and an encrypted
 operating system of your own beside them: on UEFI machines, x86-64 and
-AArch64, and on BIOS PCs back to 32-bit i686 processors, with Secure Boot
+AArch64, and on BIOS PCs back to 32-bit i586 processors, with Secure Boot
 on or off.
 
 ![The stick's menu under UEFI](docs/img/stick-menu.png)
@@ -23,10 +23,10 @@ GPL-3.0-or-later.
 
 | form | what it is | runs on |
 |---|---|---|
-| **The stick** | A USB stick with four partitions: the boot partition, an exFAT ISO library, an encrypted shelf of personal-OS images, and an encrypted root for that OS (Manual Section 10.1). | UEFI on x86-64 and AArch64; BIOS on i686 and later, 32-bit machines included |
-| **The station** | falcon installed on a machine's own disk as its boot loader, beside what is already there: a boot list with a countdown, Windows Boot Manager, other firmware entries, memtest86+, the personal OS, and on UEFI a TOTP code released by the TPM only while the firmware and boot chain are what they were at enrollment, to compare with an authenticator before typing the passphrase (Manual Section 7). | UEFI on x86-64 and AArch64; BIOS on i686 and later |
-| **station-legacy** | The BIOS station plus falcon jump's drivers, for a machine whose BIOS cannot boot a CD, a USB stick or a CF card (Manual Section 7.7). | BIOS, i686 and later |
-| **falcon jump** | A 1.44 MB boot floppy with its own IDE CD, USB (UHCI, OHCI, EHCI) and PC Card drivers: it boots the CD drive, a falcon stick on USB or a CompactFlash card on machines whose BIOS cannot (Manual Section 9). | BIOS, i686 and later |
+| **The stick** | A USB stick with four partitions: the boot partition, an exFAT ISO library, an encrypted shelf of personal-OS images, and an encrypted root for that OS (Manual Section 10.1). | UEFI on x86-64 and AArch64; BIOS on i586 and later, 32-bit machines included |
+| **The station** | falcon installed on a machine's own disk as its boot loader, beside what is already there: a boot list with a countdown, Windows Boot Manager, other firmware entries, memtest86+, the personal OS, and on UEFI a TOTP code released by the TPM only while the firmware and boot chain are what they were at enrollment, to compare with an authenticator before typing the passphrase (Manual Section 7). | UEFI on x86-64 and AArch64; BIOS on i586 and later |
+| **station-legacy** | The BIOS station plus falcon jump's drivers, for a machine whose BIOS cannot boot a CD, a USB stick or a CF card (Manual Section 7.7). | BIOS, i586 and later |
+| **falcon jump** | A 1.44 MB boot floppy with its own IDE CD, USB (UHCI, OHCI, EHCI) and PC Card drivers: it boots the CD drive, a falcon stick on USB or a CompactFlash card on machines whose BIOS cannot (Manual Section 9). | BIOS, i586 and later |
 | **The signing appliance** | A small Linux image on the stick that signs media with the stick's own key, so it boots with Secure Boot on. Started from the menu; no other computer needed (Manual Section 4.2). | UEFI |
 
 ![The station's boot list and TOTP code](docs/img/station.png)
@@ -55,7 +55,7 @@ while it boots (Manual Section 2).
 
 Every release is tested by booting 63 ISOs under six firmware states:
 Secure Boot off; on with Microsoft's keys; on with only your own keys; on
-with shim's validation off; BIOS; and BIOS on a 32-bit i686. A merge
+with shim's validation off; BIOS; and BIOS on a 32-bit processor. A merge
 into `master` fails if any image that booted before no longer does.
 
 The mainstream tier, 27 images (Debian, Fedora, Ubuntu, Mint, openSUSE,
@@ -90,7 +90,7 @@ same idea in a different direction:
   encrypted shelf, one passphrase from power-on to desktop.
 - **It doubles as a machine's boot loader.** The station, with a TPM-sealed
   TOTP check before the passphrase.
-- **It reaches old hardware.** A BIOS loader for 32-bit i686 machines,
+- **It reaches old hardware.** A BIOS loader for 32-bit i586 machines,
   Windows XP Setup, and a floppy for machines that cannot boot USB at
   all.
 - **One codebase, written to be read.** Both loaders, the host tools and
@@ -199,7 +199,7 @@ falcon-core/       firmware-free libraries every other component links:
                    LUKS2, partition tables, the PE walker, boot predictions,
                    media logic, WIM, the manifest, the screen layout
 falcon-efi/        the UEFI loader (x86-64 and AArch64 PE32+) and its QEMU/OVMF rigs
-falcon-bios/       the BIOS loader (three stages into 32-bit protected mode, i686),
+falcon-bios/       the BIOS loader (three stages into i586 protected mode),
                    jump's drivers, and the SeaBIOS rigs
 falcon-cli/        host tools: falcon-boot-mkstick, falcon-boot-sign
 falcon-appliance/  the on-stick signing appliance: PID 1 and its image recipe
