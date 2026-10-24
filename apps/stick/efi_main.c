@@ -10,6 +10,7 @@
  */
 
 #include <efi/uefi.h>
+#include <efi/arch.h>
 #include <efi/blockio.h>
 #include <loader/loadops.h>
 #include <tsc/tsc.h>
@@ -176,6 +177,11 @@ typedef struct {
      * Set from the survey that probed it, so it waits on `probed` like fam.
      * The row carries {BIOS ONLY} and boot_plain refuses it with a page. */
     UINT8 bios_only;
+    /* The medium's only UEFI way in is the other 64-bit architecture's
+     * (uefiboot.h, UEFIBOOT_OTHER): {X64 ONLY} on AArch64, {ARM64 ONLY} on
+     * x86-64, refused with a page like bios_only. It can still be blessed:
+     * the wrap boots on that architecture's machines. */
+    UINT8 other_arch;
     /* The boot prediction for what this entry boots (DESIGN Section 7.8):
      * the ISO's default loader, the payload itself, or a fresh bless's wrap.
      * TRUST_NO_VERDICT until probed. Drawn, and shown when the platform
@@ -223,6 +229,7 @@ static void targets_build(iso_list *list)
         t->fam = FAMILY_UNKNOWN;
         t->probed = 0;
         t->bios_only = 0;
+        t->other_arch = 0;
         memset(&t->trust, 0, sizeof(t->trust));
         t->sig[0] = 0;
         t->why[0] = 0;
@@ -419,14 +426,18 @@ static void tags_build(iso_target *t, const iso_survey *survey)
             wbuf_ucs2(&w, state);
     }
 
-    if (t->shape == ENTRY_MEDIA)
+    if (t->shape == ENTRY_MEDIA) {
         t->bios_only = survey->uefi == UEFIBOOT_NO ? 1 : 0;
+        t->other_arch = survey->uefi == UEFIBOOT_OTHER ? 1 : 0;
+    }
     why = why_refused(t, (uki || (!fresh && survey->uki != 0)) ? TRUE : FALSE);
     /* In every Secure Boot state: it is not a prediction about a signature
      * but a fact about the medium, and a fresh blessing is the one thing
      * that would boot something else in its place. */
     if (t->bios_only && !fresh)
         why = L"{BIOS ONLY}";
+    if (t->other_arch && !fresh)
+        why = L"{" EFI_ARCH_OTHER_TAG " ONLY}";
     t->why[0] = 0;
     t->caution = 0;
     if (why != (const CHAR16 *)0) {
@@ -1536,6 +1547,18 @@ static void boot_bios_only(const CHAR16 *label)
     tui_report_end((const CHAR16 *)0);
 }
 
+/* The page a row only the other architecture boots shows instead of a
+ * route, on boot_bios_only's terms. */
+static void boot_other_arch(const CHAR16 *label)
+{
+    tui_report(TUI_INFO, L"" EFI_ARCH_OTHER_TAG " only", label);
+    out(L"this image boots only on " EFI_ARCH_OTHER_NAME L" machine: its UEFI "
+        L"boot loader and its kernel are built for that processor.\r\n");
+    tui_report_advice(L"Start that machine from this stick instead: the stick "
+                      L"carries a loader for both.");
+    tui_report_end((const CHAR16 *)0);
+}
+
 /* An entry with nothing fresh on the stick behind it: Windows media patched
  * as it is served, a Linux ISO's kernel booted directly, or the chainload
  * this loader has always done. c (ROUTE_CHAIN) always chainloads.
@@ -1559,6 +1582,10 @@ static BOOLEAN boot_plain(EFI_HANDLE image_handle, const CHAR16 *label,
      * medium does not have, and direct wants a kernel this one's is not. */
     if (t->bios_only) {
         boot_bios_only(label);
+        return TRUE;
+    }
+    if (t->other_arch) {
+        boot_other_arch(label);
         return TRUE;
     }
 
