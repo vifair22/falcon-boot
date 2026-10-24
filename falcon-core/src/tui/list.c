@@ -11,7 +11,7 @@
 
 #include <lib/string.h>
 
-const uint16_t tui_list_empty[] = u"(no ISOs found on the exFAT partition)";
+const uint16_t tui_list_empty[] = u"(no ISOs found in the ISO library)";
 const uint16_t tui_tag_pending[] = u"...";
 const uint16_t tui_validation_off[] =
     u"shim signature validation is DISABLED (MokSBState): every unsigned "

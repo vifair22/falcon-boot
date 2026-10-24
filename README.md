@@ -204,7 +204,8 @@ cell that passes on `master` no longer does
 ```
 apps/              the loaders: stick/, station/, esp-jump/, station-legacy/, jump/
 falcon-core/       firmware-free libraries every other component links:
-                   crypto, TPM, the exFAT, ext4, FAT, ISO9660 and UDF drivers,
+                   crypto, TPM, the exFAT, ext4, FAT, ISO9660, UDF, btrfs
+                   and xfs drivers,
                    LUKS2, partition tables, the PE walker, boot predictions,
                    media logic, WIM, the manifest, the screen layout
 falcon-efi/        the UEFI loader (x86-64 and AArch64 PE32+) and its QEMU/OVMF rigs

@@ -28,13 +28,13 @@ change it.
    bless keeps (Section 8.1); GRUB's `devicetree` command is not read, as
    no medium in the corpus uses it. Under U-Boot an isohybrid ISO boots as
    a disk (Section 6 stage 3).
-2. Drag-and-drop ISO booting from an exFAT partition, Ventoy-style: copy an
+2. Drag-and-drop ISO booting from an exFAT (or FAT32) partition, Ventoy-style: copy an
    `.iso` onto the stick from any OS, it appears in the menu, it boots. No
    host-side registration step. (When Secure Boot is ON, unsigned media that does
    not ship its own signed chain requires the optional `sign` bless step; see
    Section 7.)
 3. Booting a personal OS: a Unified Kernel Image (UKI) sitting on a small
-   LUKS2+ext4 partition, whose initramfs then unlocks the real root/home on a
+   LUKS2 partition (ext4 inside, or FAT32), whose initramfs then unlocks the real root/home on a
    second LUKS2 partition and pivots into it.
 4. Chaining through Fedora's shim-x64 16.1 (dual MS-signed, 2011 + 2023
    CAs; Section 4): Secure Boot upheld when
@@ -94,8 +94,8 @@ GPT, four partitions:
 
 ```
 p1  ESP        FAT32   ~64 MB   loader + shim + MokManager + our public cert; BIOS stage 3 in its reserved sectors
-p2  ISOs       exFAT   bulk     the ISO library (drag-and-drop target) + injection assets
-p3  UKI shelf  LUKS2 -> ext4    ~1 GB   personal-OS UKI + signing-appliance UKI + MOK private key (closed list: Section 5.3), argon2id keyslot at the stick's fixed cost
+p2  ISOs       exFAT   bulk     the ISO library (drag-and-drop target) + injection assets; FAT32 by --p2-fs
+p3  UKI shelf  LUKS2 -> ext4    ~1 GB   personal-OS UKI + signing-appliance UKI + MOK private key (closed list: Section 5.3), argon2id keyslot at the stick's fixed cost; ext4 or another filesystem by --p3-fs
 p4  root+home  LUKS2 -> ext4    bulk    real root and home, argon2id keyslot
 ```
 
@@ -111,7 +111,16 @@ Rationale per partition:
   as a station's and jump's floppy.
 - **p2 exFAT.** exFAT so large ISOs (>4 GB) fit and any modern OS
   (Windows/macOS/Linux) can drop files on it. Firmware does not read exFAT, so
-  we bring our own read-only exFAT driver (Section 6).
+  we bring our own read-only exFAT driver (Section 6). `mkstick create
+  --p2-fs fat32` makes it FAT32 instead, which every OS and every WinPE also
+  reads, at the price of no file of 4 GiB or more (most Windows ISOs) and
+  more fragmentation: exFAT stores a file as one run with no chain, FAT
+  follows a chain, and an ISO in more than `EXTMAP_MAX_EXTENTS` (500) runs
+  boots without falcon-hook (Section 6.2). Nothing else changes: both are
+  read through the fs registry, and the extent map's readers (falcon-hook,
+  winjump, falcon-vdisk) link exFAT and FAT both (`fs_reg_library.c`). A
+  Linux filesystem on p2 would lose the drag-and-drop hosts and WinPE, so
+  p2 offers none.
 - **p3 UKI shelf, argon2id at the stick's fixed cost.** LUKS2 here uses an
   **argon2id** keyslot, but not at the cost `cryptsetup luksFormat`
   benchmarks: that is sized for the machine running it (up to a gigabyte of
@@ -149,6 +158,14 @@ simple or firmware-readable. mkstick states the consequences at creation:
 - The p3 filesystem choice is orthogonal (see the fs_ops registry,
   Section 9); p3 is read by our EFI driver alone, and the initramfs
   unlocks and mounts p4 directly.
+
+**p3's filesystem** is ext4 unless `mkstick create --p3-fs` names another:
+FAT32, btrfs or xfs (whose p3 is at least 320 MiB: `mkfs.xfs` makes nothing
+under 300 MB, and the LUKS2 header comes first). Only the loaders' own drivers read it, so the choice is whatever
+the OS that maintains the shelf writes best; the loaders read each the same
+way (Section 5.4 for one left mounted). FAT keeps no file modes, so the
+MOK key's 0600 is the mount's on a FAT shelf: mkstick mounts it
+`umask=0077`, and a host's `/etc/fstab` line for it does the same.
 
 Both loaders read a plaintext shelf.
 
@@ -203,11 +220,12 @@ passphrase and without the partition table's help:
   `{"type":"falcon","keyslots":[],"version":1,"role":"shelf","install_id":"<32 hex>"}`.
   It is read before any key is known, survives cryptsetup's own operations
   and is shown and edited by `cryptsetup token`.
-- **exFAT and a plaintext ext4 shelf** (p2, p3 with `--p3-plain`): a file at
+- **The library and a plaintext shelf** (p2, p3 with `--p3-plain`): a file at
   the root, `/.falcon`, one line of text, `falcon 1 <role> <install id>`.
-  exFAT's boot code is covered by its boot checksum and ext4 has no
-  unowned bytes fsck leaves alone, and the loaders mount these volumes
-  anyway. The same record in text.
+  exFAT's boot code is covered by its boot checksum, ext4 has no
+  unowned bytes fsck leaves alone, a FAT shelf's boot sector is not
+  claimed as a record (that form names a `boot` partition), and the loaders
+  mount these volumes anyway. The same record in text.
 
 **The partition type only narrows the search.** p2 keeps the Microsoft basic-data
 type, because Windows' `partmgr` creates no volume for a GPT partition whose
@@ -483,7 +501,8 @@ Flow:
 1. User selects the personal-OS entry in our menu.
 2. Loader prompts for the passphrase.
 3. Loader unlocks **p3** (LUKS2, argon2id or pbkdf2) using our LUKS + AES-XTS stack
-   (Section 6), and reads the UKI off the ext4 inside.
+   (Section 6), and reads the UKI off the filesystem inside (ext4 by
+   default; Section 3).
 4. Loader synthesizes a **virtual read-only filesystem** carrying the UKI plus
    a credential file holding the passphrase (Section 5.1), then
    `LoadImage`/`StartImage` the UKI from that filesystem. The UKI is signed by
@@ -641,7 +660,7 @@ small, and it is what has to be right for the stick to boot.
 | `/falcon-mok.crt` | its public half, the same certificate as p1's `falcon-boot.cer` | signing and enrollment |
 | `/uki/<name>.efi` | every bootable UKI: the personal OS, its rollback, the signing appliance | the loader's shelf scan |
 | `/vmlinuz-<kernel>` | one plain kernel copy per installed kernel | mkinitcpio, never the loader |
-| `/lost+found` | ext4's own | the filesystem |
+| `/lost+found` | ext4's own, on an ext4 shelf | the filesystem |
 
 **The kernel copies are load-bearing.** Arch's `linux` package ships the
 kernel only at `usr/lib/modules/<kver>/vmlinuz`, and mkinitcpio's pacman
@@ -722,6 +741,47 @@ installs on, always meets a shelf mounted right now).
   (`falcon-cli/src/common/jmem.c`). The scratch block held plaintext from
   the shelf, so each is wiped when it is given up. Memory that cannot be
   had is a page like 5.2's argon2id one: what it needs, what is free.
+
+A FAT shelf has no journal. Linux sets its dirty bit while it is mounted
+and the loaders read it as it stands: what a hibernated OS wrote back is
+there, and what it had not is not, which is the state the OS resumes over.
+Nothing is replayed, so the page never says the last changes were not
+read; a power cut in the middle of a write can leave a FAT shelf that needs
+`fsck.fat` from another system, as it would anywhere.
+
+A btrfs shelf needs nothing replayed. It is copy-on-write: a commit writes
+new trees and then the superblock that names them, so the superblock always
+names a tree that was whole when it was written, and a hibernated or
+interrupted OS leaves the last commit's (`falcon-core/src/fs/btrfs.c`).
+What a commit does not cover is the log tree, the fsyncs since it, which is
+not read: the booting page says `the shelf's last few seconds of changes
+were not read.`, as for ext4's fast commits. The reader holds no node
+whole: a node (16 KiB by default) is read through the volume's 4 KiB
+window, and its crc32c is streamed through the same window the first time
+a mount visits it.
+
+An xfs shelf's log is replayed in memory when it is not clean
+(`falcon-core/src/fs/xfslog.c`), as the kernel's recovery would replay it
+and never written. Clean is the last whole record before the head being
+the unmount record alone; the head is where the cycle number stamped on
+every 512-byte block of the log drops, moved back over any block of the
+in-flight iclogs that still carries the older cycle, and over a last
+record that runs past it or fails its crc32c. From the last record's tail
+to the head, the committed transactions' buffer items (their dirty
+128-byte chunks, less the buffers a later cancel record names) and inode
+items (the log's core converted to the disk's byte order, the data fork
+copied, a B+tree root laid out at the fork's capacity) are laid over the
+volume as 512-byte blocks, sorted, which every read goes through; a block
+or inode whose own LSN is past the transaction's is newer on disk and left.
+The checksum of a block the replay wrote is not checked. Intents to free
+extents or update the rmap and refcount trees are not finished: they change
+nothing this reader reads. An unfinished bmap or exchange intent changes
+what a file maps, and only the kernel finishes it: that volume is refused
+with `the filesystem's log needs Linux to finish it; mount it once from
+Linux.` The memory is asked for once, sized by a first walk (16 bytes a
+transaction, 16 a cancel, 8 an intent, and 524 for every block the items
+could touch), from the same `fs_jmem` as ext4's table, with the same page
+when it cannot be had.
 
 On the OS side, `/sys/power/freeze_filesystems` set to 1 makes the kernel
 freeze filesystems before it hibernates, and ext4's freeze empties the
@@ -840,7 +900,7 @@ an unlock, then `falcon-bli: FalconReadInfo=<line>`, each with
 
 No host-side registration. The stages:
 
-1. **Scan.** At boot, the exFAT driver enumerates `*.iso` and `*.img` on p2.
+1. **Scan.** At boot, p2's driver (exFAT, or FAT) enumerates `*.iso` and `*.img` on p2.
    That listing is the menu, presented **by folder** (Ventoy tree-view
    style): each menu screen shows the current directory's subfolders and
    images, entering a folder descends, ".." (or ESC) goes up, and ESC at the
@@ -908,7 +968,7 @@ exists, and drops to an emergency shell.
 post-`ExitBootServices` media problem at the boot stage: the Windows boot
 manager reads `\sources\boot.wim` off the virtual CD *while still in boot
 services* and materialises WinPE as a RAM disk, and WinPE then re-enumerates
-hardware with its own drivers and finds the exFAT p2 natively. The framework
+hardware with its own drivers and finds p2 natively (exFAT or FAT32). The framework
 below does not apply to Windows; its problem is later and narrower (Section
 6.3).
 
@@ -942,7 +1002,7 @@ Injectors are data dropped into a registry, never core surgery:
   the extent-map hook). Kernel modules cannot be shipped (they must match the
   running kernel), so these facts gate which strategy each family can use
   and are recorded per family, never assumed.
-- **Extent-map computation.** In the exFAT driver, resolve an ISO file to its
+- **Extent-map computation.** In p2's driver (exFAT or FAT), resolve an ISO file to its
   ordered list of physical extents on p2 (`media/extmap.c`).
 - **initrd cpio append.** Load the ISO's initrd into memory, concatenate the
   cpio segment (`media/cpio.c`), pass the combined image to the kernel.
@@ -997,7 +1057,7 @@ EFI loader (`virtdisk.h` and `libvirtdisk.a` are in that toolchain), and a
 second time for i686 for 32-bit media. The served `boot.wim` has
 `\Windows\System32\winpeshl.exe` replaced by winjump, with the original
 alongside it as `winpeshl_orig.exe` (Section 6.4). At runtime winjump
-attaches the ISO read-only from the exFAT partition and then executes the
+attaches the ISO read-only from the library partition and then executes the
 original `winpeshl.exe`, so Windows Setup proceeds as it would have and
 finds `install.wim` on a real, mounted CD-ROM. The image patched is the one
 the WIM header names as bootable (`falcon-core/src/wim/wim.c`), index 2
@@ -1005,7 +1065,7 @@ the WIM header names as bootable (`falcon-core/src/wim/wim.c`), index 2
 floppy drive raises when it probes drives (`SEM_FAILCRITICALERRORS`).
 
 **falcon-vdisk.** Where `AttachVirtualDisk` cannot serve - Vista and 7, whose
-WinPE has no ISO support and cannot read the exFAT partition the ISO lives
+WinPE has no ISO support and cannot read an exFAT partition the ISO lives
 on, and 2000/XP, which have no WinPE - winjump loads `falcon-vdisk`
 (`falcon-vdisk/`; a native NT CD-ROM driver, built for both widths from one
 source as the hook and winjump are) with `CreateService`/`StartService` and
@@ -2245,11 +2305,14 @@ to system tools rather than reimplementing cryptography or filesystem
 creation:
 
 - `falcon-boot-mkstick` (or subcommands): partition (GPT), format p1 FAT32 and
-  p2 exFAT (`mkfs.fat`, `mkfs.exfat`), and create p3/p4 via `cryptsetup
+  p2 exFAT (`mkfs.fat`, `mkfs.exfat`; `mkfs.fat -F 32` for `--p2-fs
+  fat32`), and create p3/p4 via `cryptsetup
   luksFormat` with the correct KDF per partition (argon2id at the stick's
   fixed cost on p3, `--pbkdf argon2id --pbkdf-memory 32768
   --pbkdf-force-iterations 4 --pbkdf-parallel 4`; cryptsetup's benchmarked
-  argon2id on p4), then `mkfs.ext4` inside each. cryptsetup's host-side
+  argon2id on p4), then `mkfs.ext4` inside each (or, on p3, the
+  filesystem `--p3-fs` names: `mkfs.fat -F 32`, `mkfs.btrfs`,
+  `mkfs.xfs`). cryptsetup's host-side
   benchmark would size p3's cost for the host, which the next machine may not
   have. falcon-core's argon2id costs about 42 ms per MiB per pass on the
   A21m (i686, 548 MHz), linear in memory and passes, and lanes filled in
@@ -2334,7 +2397,7 @@ Two more reasons the wrap is a UKI:
 
 - The shim load path may enforce SBAT on everything it loads, and
   raw bzImages carry no `.sbat` (Section 7.6).
-- p2 is writable, unverified exFAT. Embedding the cmdline in the signed
+- p2 is writable, unverified exFAT or FAT. Embedding the cmdline in the signed
   wrap means tampering with p2 cannot inject kernel arguments into a
   blessed boot; the kernel + cmdline verify or the boot refuses. (An
   initrd read off p2 is unverified; Section 7.5.)
@@ -2369,7 +2432,8 @@ rewrites the file without it. Unknown keys are ignored.
 Loader behavior: a menu entry whose path matches a manifest record *and*
 whose current file size equals `size=` is labeled blessed and boots the
 named image (served to LoadImage through the synthetic-filesystem machinery
-of Section 5.1, since exFAT has no firmware device path; shim verifies as
+of Section 5.1, since p2 is read by the loader's own driver, not the
+firmware's; shim verifies as
 always). A size mismatch means the ISO changed after blessing: the entry is
 labeled stale-blessed and boots as if unblessed. The `sha256=` field is
 recorded and nothing compares it: the loader and the appliance's survey
@@ -2490,7 +2554,8 @@ while every real file lives only in UDF.
   the shared byte-read callback, registered in a static table (one adapter
   file per driver, `fs_<driver>.c`, and a table a build picks:
   `fs_reg_all.c` on the stick, `fs_reg_ext4.c` in the UEFI station,
-  `fs_reg_station.c` (ext4 and FAT) in the BIOS one, Section 12.1). `extents` is
+  `fs_reg_station.c` (ext4 and FAT) in the BIOS one, Section 12.1;
+  `fs_reg_library.c`, exFAT and FAT, in the extent map's readers). `extents` is
   an **optional capability**: the injection framework needs file-to-LBA
   resolution on p2, and a driver that cannot provide it (btrfs CoW and
   compression can make "the file's raw LBAs" not exist) still serves the
@@ -2498,8 +2563,9 @@ while every real file lives only in UDF.
   hint first, probe order second), never by naming a driver directly, so a
   new filesystem is one driver plus one registry row.
   The drivers are exFAT, ext4 (with `jbd2.c`), FAT12/16/32, ISO9660 (Rock
-  Ridge, Joliet) and UDF; xfs and btrfs are not implemented. FAT32 on p2
-  cannot hold >4 GB ISOs. A new driver's checklist: EFI-free over the byte-read
+  Ridge, Joliet), UDF, btrfs and xfs. The FAT driver
+  also reads a FAT32 library or shelf (Section 3); a FAT32 p2 cannot hold
+  an ISO of 4 GiB or more. A new driver's checklist: EFI-free over the byte-read
   callback, host-testable, constrained feature set matched to what its
   mkfs actually emits (the ext4 driver's approach), cmocka suite with a
   fixture image, and zero warnings under the repo flag set.
@@ -2549,7 +2615,13 @@ while every real file lives only in UDF.
     `exfat.c` (file read + directory enumeration + extent map), `ext4.c`
     (constrained mkfs feature set at install) with `jbd2.c`, its journal
     replayed in memory for a shelf an OS left mounted (Section 5.4),
-    `fat.c` (FAT12/16/32), `iso9660.c` and `udf.c`; `crc32c.c` is shared.
+    `fat.c` (FAT12/16/32), `iso9660.c`, `udf.c` and `btrfs.c` (one
+    device, SINGLE and DUP chunks, crc32c, the default subvolume; a
+    compressed extent is refused when a read reaches it), `xfs.c` (v5,
+    an internal log, data forks in extents and B+tree form, directories in
+    short form and every block form, read through their data blocks) with
+    `xfslog.c`, its log replayed in memory (Section 5.4);
+    `crc32c.c` is shared.
   - `mem` - `jnlmem.c`, the pages a shelf's journal table lives in (Section
     5.4), shared by `pos` and `discover`.
   - `luks` (core) - LUKS2 header parse, argon2id and pbkdf2 keyslots (the
@@ -2679,8 +2751,8 @@ The three-letter names are the route codes the loaders draw on screen
 | LBA 1-33 | GPT header and 128-entry array | both loaders, falcon-hook, the appliance |
 | LBA 34 on | BIOS stage 2, its real length (at most 62 sectors); inside the `FALCON-BIOS` EF02 partition when the installer made one | stage 1 |
 | p1 `FALCON-ESP` | FAT32 ESP: shim as `EFI\BOOT\BOOTX64.EFI`, MokManager, falcon-boot as `grubx64.efi`, `falcon-boot.cer`; the `boot` record at byte 0x1DC of its boot sector; in its reserved sectors the BIOS next-boot marker (sector 8) and BIOS stage 3 (from sector 32) | UEFI firmware, shim; stage 2 (`load3.c`) and `marker.c` |
-| p2 `FALCON-ISO` | exFAT: the media, `falcon/blessed/`, the manifest, `falcon/windows.cfg`; `/.falcon`, the `library` record | both loaders, falcon-hook (as raw extents), winjump, the appliance |
-| p3 | LUKS2 + ext4: UKIs in `/uki`, the MOK key pair; the `falcon` token, the `shelf` record | both loaders, the appliance |
+| p2 `FALCON-ISO` | exFAT or FAT32: the media, `falcon/blessed/`, the manifest, `falcon/windows.cfg`; `/.falcon`, the `library` record | both loaders, falcon-hook (as raw extents), winjump, the appliance |
+| p3 | LUKS2 + ext4, FAT32, btrfs or xfs: UKIs in `/uki`, the MOK key pair; the `falcon` token, the `shelf` record | both loaders, the appliance |
 | p4 | LUKS2: the personal OS's LVM (root, home) | the personal OS's initramfs |
 
 Stages 1 and 2 live in front of p1 and stage 3 inside it, so installing
@@ -2827,7 +2899,7 @@ sequenceDiagram
     L->>L: borrow the AVX state, and for a slot of 512 MiB-passes or more StartupAllAPs puts the other cores on the lane pool (mp/)
     L->>FC: luks_unlock p3 (argon2id or PBKDF2, AES-XTS)
     L->>L: the workers released and seen back, the AVX state given back, on every core
-    L->>FC: luks_dev_open, fs_mount_journal ext4 (a journal left by a hibernated OS replayed in memory, 5.4)
+    L->>FC: luks_dev_open, fs_mount_journal on the shelf's filesystem (an ext4 journal left by a hibernated OS replayed in memory, 5.4)
     FC-->>L: /uki/*.efi, else /EFI/Linux/*.efi
     L->>U: chooser (skipped for one image)
     L->>L: read the UKI into pages
@@ -2870,9 +2942,9 @@ sequenceDiagram
     L->>S: LoadImage by path (MOK-signed), StartImage
     S->>A: sd-stub, kernel, /init = falcon-boot-appliance-init
     A->>A: modules, then the install ID from falcon.ident.cred (none: refuse, unlock nothing)
-    A->>A: find_stick (30 s): the exFAT /.falcon and the LUKS2 token carrying it, any disk, then mount p2 and read the manifest
+    A->>A: find_stick (30 s): the library's /.falcon and the LUKS2 token carrying it, any disk, then mount p2 (exfat, else vfat) and read the manifest
     A->>A: survey only the listed paths
-    A->>A: shelf_open p3 read-only in process (core LUKS2, ext4) with the passphrase .cred
+    A->>A: shelf_open p3 read-only in process (core LUKS2 and fs) with the passphrase .cred
     A->>A: MOK key and cert into sealed memfds
     A->>A: falcon-boot-sign-static per ISO: /falcon/blessed/, manifest
     A->>F: reboot
@@ -3138,7 +3210,7 @@ sequenceDiagram
 ```
 
 Microsoft's binaries are served byte for byte; the patched WIM is not
-verified (Section 7.7). WinPE sees p2 through its own `exfat.sys`, which is
+verified (Section 7.7). WinPE sees p2 through its own `exfat.sys` (or `fastfat.sys`), which is
 how winjump finds the file. Every winjump failure still starts the original
 shell, logged to `X:\falcon-winjump.log`.
 
@@ -3253,7 +3325,7 @@ flowchart TD
     IR --> MK["marker_take: the boot partition's marker sector<br/>a marker is zeroed, read back, then parsed and dated (6.3.1)"]
     MK --> DSK["install_drives: the boot drive, then every drive<br/>the BDA counts; each one's table, MBR or GPT"]
     DSK --> REC["install_part_record per partition: a LUKS2 falcon token,<br/>or /.falcon on what the registry mounts;<br/>only the boot record's install ID counts"]
-    REC --> P2["library: fs_mount (exFAT), survey_volume (.iso, .img)"]
+    REC --> P2["library: fs_mount (exFAT or FAT), survey_volume (.iso, .img)"]
     REC --> P3["shelf: pos_probe, LUKS2 or plaintext"]
     P2 --> SI["linux_cpu_is_64, once: {64-BIT ONLY} is drawn only without it<br/>display_init: 80x25 text, VGA memory"]
     P3 --> SI
@@ -3468,7 +3540,7 @@ sequenceDiagram
         L->>L: borrow the AVX state, and for a slot of 512 MiB-passes or more the MADT's other cores, woken by INIT and two startup IPIs into 0x5000 (mp/aptramp.S), join the lane pool
         L->>FC: luks_unlock p3
         L->>L: the workers released and halted, each sent INIT, the local APIC's SVR as found, the AVX state given back
-        L->>FC: luks_dev_open, fs_mount_journal ext4 (5.4)
+        L->>FC: luks_dev_open, fs_mount_journal (5.4)
     else plaintext shelf
         L->>FC: fs_mount_journal straight off the partition, no prompt and no credential
     end
@@ -3670,7 +3742,7 @@ sequenceDiagram
     H->>H: the init to exec: falcon.init=, else /init
     H->>H: map: /falcon/map, else /.extra/credentials/falcon-map.cred, else FalconIsoMap in efivarfs
     H->>KN: the initramfs's own modprobe: dm_mod, storage and USB drivers, loop, isofs
-    H->>KN: poll /sys/block (30 s) for the disk of the map's block size whose exFAT volume at the map's LBA has a /.falcon record carrying the map's install ID (extfind)
+    H->>KN: poll /sys/block (30 s) for the disk of the map's block size whose volume at the map's LBA (exFAT or FAT) has a /.falcon record carrying the map's install ID (extfind)
     H->>KN: the partition device: /sys/block/DISK/PART/start at that LBA (else the whole disk at an offset)
     alt device-mapper
         H->>KN: dm-linear, one read-only target per extent: /dev/mapper/falcon-iso

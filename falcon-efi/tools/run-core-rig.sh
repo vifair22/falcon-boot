@@ -126,6 +126,25 @@
 #                  ignored the journal would find personal.efi, one before
 #                  this did not boot at all), and falcon-bios says on serial
 #                  that it read the shelf through its journal
+#   fs-p3-fat-uefi, fs-p3-fat-bios
+#                  a stick `mkstick create --p3-fs fat32` made: judged as
+#                  uefi-stick, the shelf inside p3's LUKS2 read by the FAT
+#                  driver
+#   fs-p2-fat-uefi, fs-p2-fat-bios
+#                  the same for `--p2-fs fat32`: the library listed off a
+#                  FAT32 p2
+#   fs-p3-btrfs-uefi, fs-p3-btrfs-bios
+#                  the same for `--p3-fs btrfs`: the shelf read by the
+#                  btrfs driver
+#   fs-p3-xfs-uefi, fs-p3-xfs-bios
+#                  the same for `--p3-fs xfs`, its 320 MiB p3
+#   fs-p3-xfs-dirty-uefi, fs-p3-xfs-dirty-bios
+#                  that stick with its UKI renamed to resumed.efi, fsynced,
+#                  and the filesystem shut down with nothing written back:
+#                  the loader replays the log and boots resumed.efi
+#   fs-p2-fat-iso-uefi
+#                  that stick under OVMF: payload-test.iso, a file on the
+#                  FAT32 library, boots through the virtual CD
 #   64-only-bios32 the same stick under SeaBIOS on an i686 (no long
 #                  mode): an ISO whose every kernel is 64-bit is listed with
 #                  {64-BIT ONLY}, a multi-arch one (a 64-bit and a 32-bit
@@ -307,6 +326,86 @@ build_sticks() {
         falcon-efi/tools/mk-test-stick.sh --no-labels >>"$R/stick-voff.build" 2>&1
     STICK_IMG=$R/stick-voff.img falcon-efi/tools/mk-test-blessed-stick.sh \
         >>"$R/stick-voff.build" 2>&1
+}
+
+# A stick of one filesystem choice, made by `mkstick create --p2-fs
+# --p3-fs` (and `mkstick bios`) the first time a case asks for it:
+# $R/stick-NAME.img, its library holding NAME.iso, its install ID in
+# $R/stick-NAME.id. 1 GiB, so p3 has the 320 MiB xfs asks for.
+fs_stick() {    # fs_stick NAME P2_FS P3_FS
+    local img=$R/stick-$1.img log=$R/stick-$1.build p2
+    [[ -f "$img" && "${FS_BUILT[$1]:-}${KEEP:-0}" == *1* ]] && return 0
+    rm -f "$img"
+    truncate -s 1G "$img"
+    ( umask 077; printf '%s' "$PASS" > "$R/pass" )
+    attach "$img"
+    # shellcheck disable=SC2024  # the log is ours, not root's
+    sudo "$MKSTICK" --quiet create "$LOOP" --force \
+        --p1-size 300M --iso-size 128M --p3-size 320M --p4-size rest \
+        --p2-fs "$2" --p3-fs "$3" \
+        --passphrase-file "$R/pass" --shim build/shim/bins \
+        --loader build/bin/falcon-boot.efi --uki build/test/fixture-uki.efi \
+        --cn "falcon-boot $1 rig" >"$log" 2>&1 || { rm -f "$R/pass"; detach; return 1; }
+    rm -f "$R/pass"
+    p2=$(sudo "$MKSTICK" ident "$LOOP" | awk -F '\t' '$2 == "library" { print $1 }')
+    [[ -n "$p2" ]] || { detach; return 1; }
+    mount_part "${LOOP}p$p2"
+    dd if=/dev/zero of="$MNT/$1.iso" bs=1M count=1 status=none
+    cp build/test-payload.iso "$MNT/payload-test.iso"
+    umount_part
+    # shellcheck disable=SC2024
+    sudo "$MKSTICK" --quiet bios --reserve --no-backup \
+        --stage1 build/bin/falcon-bios-stage1.bin \
+        --stage2 build/bin/falcon-bios-stage2.bin \
+        --stage3 build/bin/falcon-bios-stage3.bin "$LOOP" >>"$log" 2>&1 ||
+        { detach; return 1; }
+    sudo "$MKSTICK" ident "$LOOP" |
+        awk -F '\t' '$2 == "boot" { print $3 }' > "$R/stick-$1.id"
+    detach
+    FS_BUILT[$1]=1
+}
+declare -A FS_BUILT=()
+
+# fs_case CASE FIRMWARE NAME P2_FS P3_FS: stick_case on that stick.
+fs_case() {
+    if ! fs_stick "$3" "$4" "$5"; then
+        result "$1" 0 "the $3 stick did not build ($R/stick-$3.build)"
+        return
+    fi
+    stick_case "$1" "$2" "$(cat "$R/stick-$3.id")" "$3.iso" "" "" \
+        "$R/stick-$3.img:boot"
+}
+
+# fs_iso CASE NAME P2_FS P3_FS: payload-test.iso off that stick's library,
+# through the virtual CD, under OVMF.
+fs_iso() {
+    local why= row i
+    if ! fs_stick "$2" "$3" "$4"; then
+        result "$1" 0 "the $2 stick did not build ($R/stick-$2.build)"
+        return
+    fi
+    boot uefi "$R/stick-$2.img:boot"
+    wait_for payload-test.iso 90 || why="the menu never listed payload-test.iso"
+    if [[ -z "$why" ]]; then
+        sleep 1
+        row=$(row_of payload-test.iso) || true
+        [[ -n "$row" ]] || why="no row for payload-test.iso"
+    fi
+    if [[ -z "$why" ]]; then
+        for (( i = 0; i < row; i++ )); do
+            mon "sendkey down"
+            sleep 0.2
+        done
+        sleep 0.3
+        mon "sendkey ret"
+        wait_for "FALCON-PAYLOAD-OK" 90 || why="the payload never ran"
+    fi
+    halt
+    if [[ -z "$why" ]]; then
+        result "$1" 1 "payload-test.iso ran its payload off a $3 library"
+    else
+        result "$1" 0 "$why"
+    fi
 }
 
 # MBR: p1 FAT32 (0x0C), p2 exFAT (0x07), p3 extended holding p5 FAT16
@@ -1146,6 +1245,57 @@ hibernated_disk() {
     [[ "$feat" == *needs_recovery* ]]
 }
 
+# The xfs stick as a crash leaves it: its UKI copied to resumed.efi and the
+# original deleted, fsynced, then shut down with the log forced and
+# nothing written back, so resumed.efi is in the log alone. p3 is the
+# third partition mkstick create makes.
+xfs_dirty_disk() {
+    local img=$R/stick-p3-xfs-dirty.img
+    fs_stick p3-xfs exfat xfs || return 1
+    rm -f "$img"
+    cp --sparse=always "$R/stick-p3-xfs.img" "$img"
+    MAPPER=falcon-core-rig-xfs
+    LOOP=$(sudo losetup -f --show -P "$img")
+    printf '%s' "$PASS" | sudo cryptsetup open "${LOOP}p3" "$MAPPER" -
+    MNT=$(mktemp -d)
+    sudo mount "/dev/mapper/$MAPPER" "$MNT"
+    sudo cp "$MNT/uki/fixture-uki.efi" "$MNT/uki/resumed.efi"
+    sudo xfs_io -c fsync "$MNT/uki/resumed.efi"
+    sudo rm "$MNT/uki/fixture-uki.efi"
+    sudo xfs_io -c fsync "$MNT/uki"
+    sudo xfs_io -x -c 'shutdown -f' "$MNT"
+    sudo umount "$MNT"
+    rmdir "$MNT"
+    MNT=
+    sudo cryptsetup close "$MAPPER"
+    MAPPER=
+    sudo losetup -d "$LOOP"
+    LOOP=
+}
+
+case_xfs_dirty() { # case_xfs_dirty CASE FIRMWARE
+    local why= id
+    xfs_dirty_disk || why="the dirty xfs stick did not build"
+    id=$(cat "$R/stick-p3-xfs.id" 2>/dev/null)
+    [[ -z "$why" ]] && boot "$2" "$R/stick-p3-xfs-dirty.img:boot"
+    [[ -z "$why" ]] && { wait_for "p3-xfs.iso" 90 || why="the menu never listed p3-xfs.iso"; }
+    if [[ -z "$why" ]] && ! pos; then why=$POS_WHY; fi
+    [[ -z "$why" ]] && { has "reading resumed.efi" ||
+        why="the loader did not read the UKI the log names"; }
+    [[ -z "$why" ]] && { has "FALCON-CRED-HEAD falcon.ident.cred [falcon 1 boot $id" ||
+        why="falcon.ident.cred missing or not install $id"; }
+    if [[ -z "$why" && "$2" == bios ]]; then
+        has "falcon-bios: the shelf is read through its journal" ||
+            why="stage 3 did not say it read the log"
+    fi
+    halt
+    if [[ -z "$why" ]]; then
+        result "$1" 1 "the xfs shelf's log replayed: resumed.efi booted"
+    else
+        result "$1" 0 "$why"
+    fi
+}
+
 case_hibernated() { # case_hibernated CASE FIRMWARE
     local why=
     hibernated_disk || why="the copy's shelf does not need recovery"
@@ -1650,6 +1800,10 @@ CASES=("$@")
            validation-off-uefi validation-off-pos-uefi
            validation-off-iso-uefi validation-off-station-uefi
            kdf-memory-uefi kdf-memory-bios hibernated-uefi hibernated-bios
+           fs-p3-fat-uefi fs-p3-fat-bios fs-p2-fat-uefi fs-p2-fat-bios
+           fs-p2-fat-iso-uefi fs-p3-btrfs-uefi fs-p3-btrfs-bios
+           fs-p3-xfs-uefi fs-p3-xfs-bios fs-p3-xfs-dirty-uefi
+           fs-p3-xfs-dirty-bios
            relaunch-uefi relaunch-uefi-sb probe-keys-uefi probe-keys-bios
            update-stick-uefi-sb update-stick-bios update-station-uefi-sb
            update-station-bios
@@ -1702,6 +1856,17 @@ for c in "${CASES[@]}"; do
     relaunch-uefi-sb) case_relaunch "$c" uefi-sb ;;
     probe-keys-uefi) case_probe_keys "$c" uefi ;;
     probe-keys-bios) case_probe_keys "$c" bios ;;
+    fs-p3-fat-uefi|fs-p3-fat-bios)
+        fs_case "$c" "${c##*-}" p3-fat exfat fat32 ;;
+    fs-p2-fat-uefi|fs-p2-fat-bios)
+        fs_case "$c" "${c##*-}" p2-fat fat32 ext4 ;;
+    fs-p2-fat-iso-uefi) fs_iso "$c" p2-fat fat32 ext4 ;;
+    fs-p3-btrfs-uefi|fs-p3-btrfs-bios)
+        fs_case "$c" "${c##*-}" p3-btrfs exfat btrfs ;;
+    fs-p3-xfs-uefi|fs-p3-xfs-bios)
+        fs_case "$c" "${c##*-}" p3-xfs exfat xfs ;;
+    fs-p3-xfs-dirty-uefi|fs-p3-xfs-dirty-bios)
+        case_xfs_dirty "$c" "${c##*-}" ;;
     hibernated-uefi) case_hibernated "$c" uefi ;;
     hibernated-bios) case_hibernated "$c" bios ;;
     station-uefi)  case_station "$c" uefi ;;

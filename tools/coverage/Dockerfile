@@ -44,6 +44,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         python3-venv python3-dev libcrypt-dev \
         gdisk util-linux fdisk \
         dosfstools exfatprogs e2fsprogs mtools udftools ntfs-3g \
+        btrfs-progs xfsprogs \
         cryptsetup-bin openssl sbsigntool \
         systemd-ukify systemd-boot-efi \
         wimtools 7zip libarchive-tools xorriso cpio zstd \
@@ -56,6 +57,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # TPM state with; without it they skip.
 # fdisk is for sfdisk, which mk-test-biosboot.sh partitions its fixtures with;
 # trixie moved it out of util-linux.
+# btrfs-progs and xfsprogs are for the btrfs and xfs shelves: the fixtures
+# (mk-test-btrfs.sh, mk-test-xfs.sh) and mkstick create --p3-fs.
 # ntfs-3g is for ntfsresize and ntfsfix, which mk-a21m-station.sh takes the
 # A21m's NTFS partition down with before station-legacy goes on.
 # gcovr is `make coverage`'s report.
@@ -158,7 +161,8 @@ RUN set -eu; \
              clang ld.lld llvm-strip \
              qemu-system-x86_64 qemu-system-aarch64 sgdisk losetup blkid \
              openssl cryptsetup sbsign sbverify mkfs.fat mkfs.exfat \
-             mkfs.ext4 mkudffs mformat bsdtar ukify wimlib-imagex xorriso \
+             mkfs.ext4 mkfs.btrfs mkfs.xfs mkudffs mformat bsdtar ukify \
+             wimlib-imagex xorriso \
              cpio zstd socat aria2c readelf sha256sum virt-fw-vars 7z sudo \
              pkg-config xxd tcpdump qemu-img mcopy mmd fsck.ext4 truncate \
              cmp find xargs swtpm swtpm_setup sfdisk ntfsresize ntfsfix \

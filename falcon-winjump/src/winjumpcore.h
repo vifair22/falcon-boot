@@ -12,9 +12,10 @@
  * within the ISO library's partition, which the map names by the library's
  * install ID and its first LBA. winjump reads the same map (the loader drops
  * it in boot.wim beside winjump), finds the disk that holds that library the
- * way falcon-hook does (falcon-core/src/media/extfind.h: the exFAT volume at
- * the map's LBA whose /.falcon record carries the map's install ID, read
- * over raw sectors, since this WinPE cannot mount exFAT), and turns the
+ * way falcon-hook does (falcon-core/src/media/extfind.h: the exFAT or FAT
+ * volume at the map's LBA whose /.falcon record carries the map's install
+ * ID, read over raw sectors, since this WinPE cannot mount exFAT), and
+ * turns the
  * partition-relative runs into absolute disk extents for the driver.
  * falcon-vdisk does the same from the kernel for 2000/XP setup.
  *

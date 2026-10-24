@@ -11,10 +11,10 @@
 
 WINJUMP := $(BIN)/winjump.exe
 # winjumpcore.c and core's extent map finder (the map, the record reader and
-# exFAT behind a registry of one) are shared with the host tests; the driver
+# exFAT and FAT behind the library registry) are shared with the host tests; the driver
 # blob is per-width and added to each build's object list below.
 WINJUMP_SRCS := falcon-winjump/src/winjump.c falcon-winjump/src/winjumpcore.c \
-	$(CORE_EXTFIND) $(CORE_FS_EXFAT) $(CORE_UCS2)
+	$(CORE_EXTFIND) $(CORE_FS_LIBRARY) $(CORE_UCS2)
 WINJUMP_OBJ := $(OBJ)/winjump
 WINJUMP_OBJS := $(WINJUMP_SRCS:%.c=$(WINJUMP_OBJ)/%.o)
 
@@ -260,9 +260,10 @@ winjump-a64: $(WINJUMP_A64)
 #
 # Only winjumpcore.c is host-testable: the rest of winjump.c is Win32 glue
 # that runs in a WinPE. The test links core's extent map finder, as winjump
-# does, and the synthetic exFAT builder the core tests use.
+# does, the synthetic exFAT builder the core tests use, and the FAT32
+# library fixture (make test-fat).
 WINJUMP_TESTS := falcon-winjump/tests/main.c falcon-winjump/tests/winjumpcore_test.c
-WINJUMP_UUT := falcon-winjump/src/winjumpcore.c $(CORE_EXTFIND) $(CORE_FS_EXFAT) \
+WINJUMP_UUT := falcon-winjump/src/winjumpcore.c $(CORE_EXTFIND) $(CORE_FS_LIBRARY) \
 	$(CORE_UCS2)
 
 $(eval $(call test_bin,winjump,$(WINJUMP_TESTS) $(WINJUMP_UUT)))

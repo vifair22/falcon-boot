@@ -475,7 +475,10 @@ static void mount_advice(boot_result *r, int rc, const char *otherwise)
         advise_str(r, &n, " MiB free.");
         r->buf[n] = '\0';
         r->advice = r->buf;
-    } else if (rc == FS_ERR_NEEDS_RECOVERY || rc == FS_ERR_DIRTY) {
+    } else if (rc == FS_ERR_NEEDS_RECOVERY) {
+        r->advice = "the filesystem's log needs Linux to finish it; mount it "
+                    "once from Linux.";
+    } else if (rc == FS_ERR_DIRTY) {
         r->advice = "the filesystem was not cleanly unmounted; run fsck on it "
                     "from Linux.";
     } else {

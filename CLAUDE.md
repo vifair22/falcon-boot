@@ -71,7 +71,8 @@ unique within each such set, so `#include <fs/exfat.h>` means one file, and
   access goes through a read callback and every buffer is the caller's,
   which is what lets the loaders, the host tools and the appliance run one
   implementation and the host tests exercise it. Modules: `crypto`, `tpm`,
-  `fs` (the registry and the exfat, ext4+jbd2, fat, iso9660 and udf drivers),
+  `fs` (the registry and the exfat, ext4+jbd2, fat, iso9660, udf, btrfs
+  and xfs drivers),
   `luks`, `part`, `ident`, `pe`, `trust`, `media`, `gz`, `wim`, `manifest`,
   `tui`, `blk`, `lib`. DESIGN Section 9 is the inventory. `tests/` is the
   suite, `tests/support/` what every component's tests link, `tools/` the

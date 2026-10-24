@@ -102,6 +102,8 @@ cli_status mkstick_guid_selfcheck(void);
 #define MKS_MIN_P1 ((uint64_t)16 * 1024 * 1024)
 #define MKS_MIN_P2 ((uint64_t) 8 * 1024 * 1024)
 #define MKS_MIN_P3 ((uint64_t)48 * 1024 * 1024)
+/* --p3-fs xfs: mkfs.xfs makes nothing under 300 MB, inside LUKS2. */
+#define MKS_MIN_P3_XFS ((uint64_t)320 * 1024 * 1024)
 #define MKS_MIN_P4 ((uint64_t)24 * 1024 * 1024)
 
 /* Alignment for every partition start and the slack left at both ends for the

@@ -4,11 +4,11 @@
  * Finds p2 as the loaders do, by its record (DESIGN Section 3.1): every
  * partition of the image's table (MBR or GPT) whose volume carries a
  * /.falcon record of role library, read with falcon-core's own readers. It
- * resolves the ISO's runs with the exFAT extent map, encodes them with
- * media/extmap.c (the library's install ID, its first LBA), and prints the
- * result in the JSON that virt-fw-vars
- * --set-json takes, so a varstore can carry FalconIsoMap into an OVMF boot
- * that starts the kernel directly (falcon-hook/tools/run-hook-rig.sh).
+ * resolves the ISO's runs with the volume's extent map (exFAT or FAT),
+ * encodes them with media/extmap.c (the library's install ID, its first
+ * LBA), and prints the result in the JSON that virt-fw-vars --set-json
+ * takes, so a varstore can carry FalconIsoMap into an OVMF boot that starts
+ * the kernel directly (falcon-hook/tools/run-hook-rig.sh).
  *
  * Usage: falcon-hook-mkextmap STICK.img NAME-ON-P2-ROOT
  */
@@ -79,9 +79,10 @@ int main(int argc, char **argv)
         return 1;
     }
     /* g_base is p2's, and g_rec.vol is p2 mounted. */
-    if (g_rec.vol.ops != &fs_ops_exfat ||
+    if (!fs_has_extents(&g_rec.vol) ||
         fs_dir_open_root(&g_rec.vol, &g_dir) != FS_OK) {
-        fprintf(stderr, "%s: p2 is not a readable exFAT volume\n", argv[1]);
+        fprintf(stderr, "%s: p2 is not a volume whose files map to extents\n",
+                argv[1]);
         return 1;
     }
     while (fs_dir_next(&g_dir, &e) == 1) {
