@@ -122,8 +122,8 @@ were unblessed. `b` and `a` open a confirmation before anything runs; the
 pages are in Section 4.
 
 Which route each key takes is in Section 2. A row tagged `{BIOS ONLY}`,
-`{EFI ONLY}` or `{64-BIT ONLY}` shows a page instead, on every key
-(Section 1.4).
+`{X64 ONLY}`, `{ARM64 ONLY}`, `{EFI ONLY}` or `{64-BIT ONLY}` shows a page
+instead, on every key (Section 1.4).
 
 ### 1.3 The title bar
 
@@ -190,17 +190,34 @@ with one is drawn yellow.
 | `{REVOKED}` | UEFI | Secure Boot on; dbx, MokListX or the SBAT level revokes it |
 | `{VALIDATION OFF}` | UEFI | shim validation disabled; on the personal OS row, a blessed Linux row, a `.efi` that is a UKI, and the station's UKI rows |
 | `{BIOS ONLY}` | UEFI | every state; the medium has no UEFI boot loader and no kernel UEFI can start |
-| `{EFI ONLY}` | BIOS | the medium has no BIOS boot image and no kernel falcon-bios can start |
+| `{ARM64 ONLY}` | UEFI on x86-64 | every state; the medium's only UEFI loader, or its kernel, is ARM64's |
+| `{X64 ONLY}` | UEFI on AArch64 | every state; the medium's only UEFI loader, or its kernel, is x86-64's |
+| `{EFI ONLY}` | BIOS | the medium has no BIOS boot image and no kernel falcon-bios can start, and an x86-64 machine's UEFI can start it |
+| `{ARM64 ONLY}` | BIOS | the same, but its only UEFI loader is ARM64's, so this PC's UEFI could not start it either |
 | `{64-BIT ONLY}` | BIOS | the medium needs long mode, and this processor has none |
 
-The last three are not predictions. Any key on such a row opens a box,
-titled `BIOS only`, `EFI only` or `64-bit only`, and starts nothing:
+One stick serves every machine: p1 carries the x86-64 and the AArch64
+UEFI loaders and the BIOS stages, the library holds media for any of them,
+and each machine tags what only another can boot. The shelf may hold UKIs
+for both architectures; each loader lists its own machine's alone.
+
+The last six are not predictions. Any key on such a row opens a box,
+titled `BIOS only`, `ARM64 only`, `X64 only`, `EFI only` or `64-bit only`,
+and starts nothing:
 
     this image boots only on a BIOS machine: it has no UEFI boot loader,
     and no kernel UEFI can start.
 
     Start the machine from this stick in BIOS mode (legacy or CSM) instead.
     The stick needs its BIOS loader for that (mkstick bios).
+
+    press any key to return to the menu.
+
+    this image boots only on an ARM64 (AArch64) machine: its UEFI boot
+    loader and its kernel are built for that processor.
+
+    Start that machine from this stick instead: the stick carries a loader
+    for both.
 
     press any key to return to the menu.
 
@@ -3323,7 +3340,10 @@ no route code:
 | loader | tag | text |
 |---|---|---|
 | UEFI | `{BIOS ONLY}` | `this image boots only on a BIOS machine: it has no UEFI boot loader, and no kernel UEFI can start.` then `Start the machine from this stick in BIOS mode (legacy or CSM) instead. The stick needs its BIOS loader for that (mkstick bios).` |
+| UEFI on x86-64 | `{ARM64 ONLY}` | `this image boots only on an ARM64 (AArch64) machine: its UEFI boot loader and its kernel are built for that processor.` then `Start that machine from this stick instead: the stick carries a loader for both.` |
+| UEFI on AArch64 | `{X64 ONLY}` | `this image boots only on an x86-64 machine: its UEFI boot loader and its kernel are built for that processor.` then `Start that machine from this stick instead: the stick carries a loader for both.` |
 | BIOS | `{EFI ONLY}` | `this image boots only on a UEFI machine: it has no BIOS boot image, and no kernel falcon-bios can start.` then `Start the machine from this stick in UEFI mode instead.` |
+| BIOS | `{ARM64 ONLY}` | `this image boots only on an ARM64 (AArch64) machine: its UEFI boot loader and its kernel are built for that processor.` then `Start that machine from this stick instead: the stick carries a loader for it.` |
 | BIOS | `{64-BIT ONLY}` | `this image needs a 64-bit processor, and this one has no 64-bit mode.` then `Start it on a machine with a 64-bit processor instead.` |
 
 ### 12.4 A boot that hangs on a black screen
