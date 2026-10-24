@@ -2,6 +2,7 @@
 
 #include <direct/direct.h>
 
+#include <efi/arch.h>
 #include <efi/devpath.h>
 #include <efi/loadedimage.h>
 #include <efi/loadfile2.h>
@@ -83,9 +84,9 @@ static CHAR16 g_opts[BOOTCFG_CMDLINE_MAX + 160u];
  * two files have on the synthetic filesystem it is loaded from. The kernel
  * sits beside it because shim reads its second stage from the device it was
  * itself loaded from. */
-#define ISO_SHIM_PATH "/EFI/BOOT/BOOTX64.EFI"
-static const CHAR16 g_shim_name[] = L"shimx64.efi";
-static const CHAR16 g_shim_load[] = L"\\shimx64.efi";
+#define ISO_SHIM_PATH "/EFI/BOOT/BOOT" EFI_ARCH_UP ".EFI"
+static const CHAR16 g_shim_name[] = L"shim" EFI_ARCH_LOW ".efi";
+static const CHAR16 g_shim_load[] = L"\\shim" EFI_ARCH_LOW ".efi";
 static const CHAR16 g_kernel_name[] = L"vmlinuz";
 static const CHAR16 g_kernel_arg[] = L"\\vmlinuz ";
 

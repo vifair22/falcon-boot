@@ -1,4 +1,5 @@
-/* falcon-boot: the time-stamp counter. See tsc.h. */
+/* falcon-boot: the time-stamp counter, or AArch64's generic timer. See
+ * tsc.h. */
 
 #include <tsc/tsc.h>
 #include <tsc/tsccore.h>
@@ -17,6 +18,8 @@ static UINT64 g_hz;
 static tsc_hz_how g_how;
 static BOOLEAN g_decided;
 static tsc_span g_wait;
+
+#if defined(__x86_64__)
 
 UINT64 tsc_read(void)
 {
@@ -62,7 +65,7 @@ int tsc_perf_read(UINT64 *aperf, UINT64 *mperf)
     return 1;
 }
 
-static UINT64 hz_from_cpuid(void)
+static UINT64 hz_from_arch(void)
 {
     tsc_cpuid c;
     UINT32 r[4];
@@ -87,6 +90,46 @@ static UINT64 hz_from_cpuid(void)
     return tsc_hz_cpuid(&c);
 }
 
+#define TSC_HZ_ARCH TSC_HZ_CPUID
+
+#elif defined(__aarch64__)
+
+/* The generic timer's virtual count. The isb keeps the read from being
+ * taken ahead of the code before it. */
+UINT64 tsc_read(void)
+{
+    UINT64 v;
+
+    __asm__ volatile("isb; mrs %0, cntvct_el0" : "=r"(v) : : "memory");
+    return v;
+}
+
+/* The activity monitors (FEAT_AMU) are optional and EL0/EL1 access to them
+ * is the firmware's to grant: no effective clock here. */
+int tsc_perf_read(UINT64 *aperf, UINT64 *mperf)
+{
+    (void)aperf;
+    (void)mperf;
+    return 0;
+}
+
+/* CNTFRQ_EL0, which the firmware sets to the counter's rate. It is far
+ * below a TSC's (24 MHz on Apple silicon, 62.5 MHz under QEMU), so it is
+ * held to its own sanity bound rather than tsccore's. */
+static UINT64 hz_from_arch(void)
+{
+    UINT64 f;
+
+    __asm__ volatile("mrs %0, cntfrq_el0" : "=r"(f));
+    return f >= 1000000u && f <= 10000000000ull ? f : 0;
+}
+
+#define TSC_HZ_ARCH TSC_HZ_CNTFRQ
+
+#else
+#error "tsc.c: no counter for this architecture"
+#endif
+
 /* systemd-boot reports no timestamps at all under a hypervisor, on the
  * ground that a guest's counter need not count from reset. This does not
  * skip them: under KVM the guest's counter starts at the guest's own reset,
@@ -95,8 +138,8 @@ UINT64 tsc_hz(EFI_BOOT_SERVICES *bs, tsc_hz_how *how)
 {
     if (!g_decided) {
         g_decided = TRUE;
-        g_hz = hz_from_cpuid();
-        g_how = g_hz != 0 ? TSC_HZ_CPUID : TSC_HZ_NONE;
+        g_hz = hz_from_arch();
+        g_how = g_hz != 0 ? TSC_HZ_ARCH : TSC_HZ_NONE;
         if (g_hz == 0 && bs != (EFI_BOOT_SERVICES *)0 &&
             bs->Stall != (void *)0) {
             UINT64 t0 = tsc_read();

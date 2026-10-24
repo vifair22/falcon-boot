@@ -100,6 +100,8 @@ static int rng(void *ctx, uint8_t *out, size_t n)
     return 0;
 }
 
+#if defined(__x86_64__)
+
 static int have_rdrand(void)
 {
     uint32_t a = 1, b, c = 0, d;
@@ -123,6 +125,38 @@ static int rdrand64(uint64_t *v)
     }
     return 0;
 }
+
+#elif defined(__aarch64__)
+
+/* FEAT_RNG: ID_AA64ISAR0_EL1.RNDR, bits 63:60. */
+static int have_rdrand(void)
+{
+    uint64_t isar0;
+
+    __asm__ volatile("mrs %0, id_aa64isar0_el1" : "=r"(isar0));
+    return (int)((isar0 >> 60) != 0);
+}
+
+/* One RNDR word, by its encoding so no -march is needed. A failed read sets
+ * Z and returns 0; it is retried a few times like RDRAND's. */
+static int rdrand64(uint64_t *v)
+{
+    int i;
+
+    for (i = 0; i < 10; i++) {
+        uint64_t ok;
+
+        __asm__ volatile("mrs %0, s3_3_c2_c4_0; cset %1, ne"
+                         : "=r"(*v), "=r"(ok) : : "cc");
+        if (ok)
+            return 1;
+    }
+    return 0;
+}
+
+#else
+#error "tcg.c: no instruction RNG for this architecture"
+#endif
 
 static void seed(EFI_SYSTEM_TABLE *st, tpm_version ver)
 {

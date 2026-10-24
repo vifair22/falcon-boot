@@ -10,10 +10,11 @@
 
 #include <efi/uefi.h>
 
-/* RDTSC: ticks since the processor came out of reset. */
+/* Ticks since the processor came out of reset: RDTSC on x86-64, the
+ * generic timer's CNTVCT_EL0 on AArch64. */
 UINT64 tsc_read(void);
 
-/* IA32_APERF and IA32_MPERF on the calling processor, for the effective
+/* IA32_APERF and IA32_MPERF on the calling processor (none on AArch64), for the effective
  * clock (tsccore.h, tsc_eff_mhz). 1 with both read; 0, with neither read,
  * when CPUID leaf 6 does not enumerate them or a hypervisor is present
  * (CPUID.1:ECX bit 31): a guest may take #GP on them, and the firmware's
@@ -24,7 +25,8 @@ int tsc_perf_read(UINT64 *aperf, UINT64 *mperf);
 typedef enum {
     TSC_HZ_NONE  = 0,   /* no sane answer: no timestamps this boot */
     TSC_HZ_CPUID = 1,   /* leaves 0x15 and 0x16 */
-    TSC_HZ_STALL = 2    /* counted across gBS->Stall */
+    TSC_HZ_STALL = 2,   /* counted across gBS->Stall */
+    TSC_HZ_CNTFRQ = 3   /* AArch64: CNTFRQ_EL0, as the firmware set it */
 } tsc_hz_how;
 
 /* The counter's rate in Hz, 0 when it could not be had. The first call

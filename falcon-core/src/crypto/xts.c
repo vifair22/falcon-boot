@@ -6,6 +6,14 @@
 #include <crypto/crypto.h>
 #include <lib/string.h>
 
+/* aesni.c is x86 only; elsewhere crypto_has_aesni is 0 and the portable
+ * path is the only one. */
+#if defined(__x86_64__) || defined(__i386__)
+#define XTS_HAVE_AESNI 1
+#else
+#define XTS_HAVE_AESNI 0
+#endif
+
 /* t <- t * x in GF(2^128) over the little-endian XTS representation:
  * a one-bit left shift of the 128-bit value, with a carry out of the top
  * reduced by x^128 + x^7 + x^2 + x + 1 (IEEE 1619 Section 5.2). Written
@@ -19,7 +27,7 @@ static void gf_double(uint8_t *t)
     for (i = 0; i < AES_BLOCK; i++) {
         uint8_t next = (uint8_t)(t[i] >> 7);
 
-        t[i] = (uint8_t)(((t[i] << 1) & 0xffu) | carry);
+        t[i] = (uint8_t)((((unsigned)t[i] << 1) & 0xffu) | carry);
         carry = next;
     }
     if (carry != 0u) {
@@ -55,6 +63,7 @@ static int setkey(xts_ctx *c, const uint8_t *key, size_t key_len, int use_ni)
     half = key_len / 2u;
 
     memset(c, 0, sizeof *c);
+#if XTS_HAVE_AESNI
     if (use_ni) {
         c->impl = XTS_IMPL_AESNI;
         rc = aesni_setkey_dec(&c->k.n.data_dec, key, half);
@@ -64,7 +73,11 @@ static int setkey(xts_ctx *c, const uint8_t *key, size_t key_len, int use_ni)
         if (rc == CRYPTO_OK) {
             rc = aesni_setkey_enc(&c->k.n.tweak, key + half, half);
         }
-    } else {
+    } else
+#else
+    (void)use_ni;
+#endif
+    {
         c->impl = XTS_IMPL_PORTABLE;
         rc = aes_setkey(&c->k.p.data, key, half);
         if (rc == CRYPTO_OK) {
@@ -128,10 +141,13 @@ static void xts_portable(const aes_key *data_key, const aes_key *tweak_key,
 void xts_decrypt_sector(const xts_ctx *c, uint64_t sector,
                         const uint8_t *in, uint8_t *out, size_t len)
 {
+#if XTS_HAVE_AESNI
     if (c->impl == XTS_IMPL_AESNI) {
         aesni_xts_decrypt(&c->k.n.data_dec, &c->k.n.tweak, sector,
                           in, out, len);
-    } else {
+    } else
+#endif
+    {
         xts_portable(&c->k.p.data, &c->k.p.tweak, sector, in, out, len, 0);
     }
 }
@@ -139,10 +155,13 @@ void xts_decrypt_sector(const xts_ctx *c, uint64_t sector,
 void xts_encrypt_sector(const xts_ctx *c, uint64_t sector,
                         const uint8_t *in, uint8_t *out, size_t len)
 {
+#if XTS_HAVE_AESNI
     if (c->impl == XTS_IMPL_AESNI) {
         aesni_xts_encrypt(&c->k.n.data_enc, &c->k.n.tweak, sector,
                           in, out, len);
-    } else {
+    } else
+#endif
+    {
         xts_portable(&c->k.p.data, &c->k.p.tweak, sector, in, out, len, 1);
     }
 }

@@ -15,6 +15,7 @@
 
 #include <iso/iso.h>
 #include <iso/overlay.h>
+#include <efi/arch.h>
 #include <efi/blockio.h>
 #include <efi/devpath.h>
 #include <efi/sfs.h>
@@ -54,13 +55,13 @@
 
 /* Removable-media default path: every El Torito ESP that expects to be
  * booted by firmware puts its loader here (UEFI spec 3.5.1.1). */
-static const CHAR16 boot_file_path[] = L"\\EFI\\BOOT\\BOOTX64.EFI";
+static const CHAR16 boot_file_path[] = L"\\EFI\\BOOT\\BOOT" EFI_ARCH_UP ".EFI";
 
 /* The same path in the ASCII, forward-slash form the probe helpers take. The
  * two spellings have to stay identical character for character, case
  * included: one is the string LoadImage is handed and the other is what
  * decides which volume gets handed it. */
-#define ISO_BOOT_PATH "/EFI/BOOT/BOOTX64.EFI"
+#define ISO_BOOT_PATH "/EFI/BOOT/BOOT" EFI_ARCH_UP ".EFI"
 
 /* How many of our own volumes are kept. A medium publishes one (a plain ESP)
  * or two (an El Torito FAT boot image plus the ISO's own filesystem); the
@@ -881,7 +882,7 @@ static EFI_STATUS chainload(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
      * through shim's loader (DESIGN Section 7.6). */
     status = EFI_NOT_FOUND;   /* not loaded yet */
     if (ops.via_shim && ops.table_unhooked) {
-        result->stage = L"LoadImage of \\EFI\\BOOT\\BOOTX64.EFI (firmware)";
+        result->stage = L"LoadImage of \\EFI\\BOOT\\BOOT" EFI_ARCH_UP ".EFI (firmware)";
         tui_step(result->stage);
         status = bs->LoadImage(FALSE, parent_image, load_path, (void *)0, 0,
                                &child);
@@ -902,8 +903,8 @@ static EFI_STATUS chainload(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
      * why the image is always named rather than handed over as bytes. */
     if (status != EFI_SUCCESS) {
         result->stage = ops.via_shim
-                            ? L"LoadImage of \\EFI\\BOOT\\BOOTX64.EFI (shim)"
-                            : L"LoadImage of \\EFI\\BOOT\\BOOTX64.EFI (firmware)";
+                            ? L"LoadImage of \\EFI\\BOOT\\BOOT" EFI_ARCH_UP ".EFI (shim)"
+                            : L"LoadImage of \\EFI\\BOOT\\BOOT" EFI_ARCH_UP ".EFI (firmware)";
         tui_step(result->stage);
         status = ops.LoadImage(FALSE, parent_image, load_path, (void *)0, 0,
                                &child);

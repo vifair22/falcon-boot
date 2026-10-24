@@ -313,15 +313,19 @@ static void wbuf_dec(wbuf *w, UINTN v);
  * terminator and no further. The analyzer loses the literal's extent over a
  * long call chain. Scoped to
  * this function, as falcon-cli/src/common/proc.c scopes its fd-leak one. */
+#if !defined(__clang__)
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wanalyzer-out-of-bounds"
+#endif
 static void wbuf_ucs2(wbuf *w, const CHAR16 *s)
 {
     while (*s != 0 && w->len + 1 < w->cap)
         w->buf[w->len++] = *s++;
     w->buf[w->len] = 0;
 }
+#if !defined(__clang__)
 #pragma GCC diagnostic pop
+#endif
 
 static void wbuf_ascii(wbuf *w, const char *s)
 {
