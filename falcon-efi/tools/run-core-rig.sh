@@ -4,6 +4,10 @@
 # falcon-bios/tools/run-jump-rig.sh. UEFI is OVMF (ovmf.sh finds it), BIOS
 # is QEMU's SeaBIOS.
 #
+#   chain-uefi-aa64
+#                  the rig stick under AAVMF: a-efi-stub.iso, whose kernel
+#                  is an x86-64 EFI stub, is tagged {X64 ONLY}, and c on
+#                  payload-test.iso runs its BOOTAA64.EFI
 #   uefi-stick-aa64, uefi-stick-aa64-sb
 #                  the same under AAVMF on qemu-system-aarch64's virt
 #                  machine, Secure Boot off and on: the AArch64 loader
@@ -1514,6 +1518,38 @@ case_voff_pos() { # case_voff_pos CASE
     fi
 }
 
+# AArch64's chainload: c on the payload ISO starts its BOOTAA64.EFI, which
+# the x64 one sits beside; and an ISO whose only way in is an x86-64 EFI
+# stub kernel is tagged for that machine.
+case_chain_aa64() { # case_chain_aa64 CASE FIRMWARE
+    local why= row i
+    boot "$2" "$R/stick-a.img:boot"
+    wait_for "payload-test.iso" 90 || why="the menu never listed payload-test.iso"
+    if [[ -z "$why" ]]; then
+        wait_for_re 'a-efi-stub\.iso .*\{X64 ONLY\}' 60 ||
+            why="a-efi-stub.iso is not tagged {X64 ONLY}"
+    fi
+    if [[ -z "$why" ]]; then
+        row=$(row_of "payload-test.iso") || true
+        [[ -n "$row" ]] || why="no row for payload-test.iso"
+    fi
+    if [[ -z "$why" ]]; then
+        for (( i = 0; i < row; i++ )); do
+            mon "sendkey down"
+            sleep 0.2
+        done
+        sleep 0.3
+        mon "sendkey c"
+        wait_for "FALCON-PAYLOAD-OK" 90 || why="the payload never ran"
+    fi
+    halt
+    if [[ -z "$why" ]]; then
+        result "$1" 1 "{X64 ONLY} on the x86-64 stub ISO; c chainloaded the payload's BOOTAA64.EFI"
+    else
+        result "$1" 0 "$why"
+    fi
+}
+
 # The unsigned payload ISO, Enter on its row: the payload runs.
 case_voff_iso() { # case_voff_iso CASE
     local why= row i
@@ -1580,7 +1616,7 @@ A_ISOS="archlinux-fake.iso"
 CASES=("$@")
 [[ ${#CASES[@]} -gt 0 ]] ||
     CASES=(uefi-stick uefi-stick-sb uefi-stick-aa64 uefi-stick-aa64-sb
-           bios-stick two-sticks-uefi two-sticks-bios
+           chain-uefi-aa64 bios-stick two-sticks-uefi two-sticks-bios
            mbr-disk-uefi mbr-disk-bios foreign-uefi foreign-bios 4kn-uefi
            4kn-bios 4kn-bios-marker station-uefi station-bios
            station-stick-uefi station-stick-bios bios-only-uefi
@@ -1599,6 +1635,7 @@ for c in "${CASES[@]}"; do
     case $c in
     uefi-stick)    stick_case "$c" uefi "$ID_A" "$A_ISOS" "" "" "$R/stick-a.img:boot" ;;
     uefi-stick-sb) stick_case "$c" uefi-sb "$ID_A" "$A_ISOS" "" "" "$R/stick-a.img:boot" ;;
+    chain-uefi-aa64) case_chain_aa64 "$c" uefi-aa64 ;;
     uefi-stick-aa64|uefi-stick-aa64-sb)
         stick_case "$c" "uefi-aa64${c#uefi-stick-aa64}" "$ID_A" "$A_ISOS" "" "" \
             "$R/stick-a.img:boot" ;;
