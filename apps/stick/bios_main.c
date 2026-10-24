@@ -107,6 +107,7 @@ static survey_row   g_view[VIEW_MAX];
 typedef struct {
     uint8_t done;
     uint8_t efi_only;   /* no route here reaches it: {EFI ONLY} */
+    uint8_t arm64_only; /* and only an ARM64 machine's UEFI can: {ARM64 ONLY} */
     uint8_t needs64;    /* every way in needs long mode */
 } entry_probe;
 
@@ -206,6 +207,7 @@ static const entry_probe *probe_entry(size_t idx)
     if (e->media == SURVEY_MEDIA_CD) {
         scan_probe(&g_p2, &e->ent, &r);
         p->efi_only = r.boots == BIOSBOOT_NO;
+        p->arm64_only = (uint8_t)(p->efi_only && r.arm64);
         p->needs64 = r.needs64 == BIOSBOOT_YES;
     }
     p->done = 1;
@@ -217,6 +219,8 @@ static const entry_probe *probe_entry(size_t idx)
  * not can run. */
 static const uint16_t *entry_why(const entry_probe *p)
 {
+    if (p->arm64_only)
+        return u"{ARM64 ONLY}";
     if (p->efi_only)
         return u"{EFI ONLY}";
     if (p->needs64 && !g_cpu64)
@@ -607,6 +611,14 @@ static void boot_plain(size_t idx, int which)
     /* Every key, c included: the chainload wants a BIOS boot image this
      * medium does not have, and direct a kernel it does not carry, or one
      * this processor cannot run (DESIGN Section 7.8). */
+    if (p->arm64_only) {
+        refuse(e, "ARM64 only", "this image boots only on an ARM64 (AArch64) "
+                                "machine: its UEFI boot loader and its kernel "
+                                "are built for that processor.",
+               "Start that machine from this stick instead: the stick "
+               "carries a loader for it.");
+        return;
+    }
     if (p->efi_only) {
         refuse(e, "EFI only", "this image boots only on a UEFI machine: it "
                               "has no BIOS boot image, and no kernel "

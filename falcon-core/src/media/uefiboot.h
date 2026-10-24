@@ -99,6 +99,12 @@ uefiboot_answer uefiboot_kernel(const void *head, size_t len,
 uefiboot_answer uefiboot_has_image(medium *m, uefiboot_work *w,
                                    uint16_t machine);
 
+/* The same, with the caller's iterator and dirent rather than a whole
+ * uefiboot_work: falcon-bios asks it, as an x86-64 machine, which UEFI
+ * machine a medium it cannot boot is for (media/biosboot.h). */
+uefiboot_answer uefiboot_image_in(medium *m, fs_dir *walk, fs_dirent *ent,
+                                  uint16_t machine);
+
 /* The whole rule over an opened medium. fam is what family_detect made of
  * it; scratch is bootcfg_read's (256 KiB is ample, as for the direct route).
  * Reads the medium; changes nothing. */

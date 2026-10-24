@@ -10,6 +10,10 @@
 #
 #   build/test-bios-efionly.iso    a UEFI El Torito image only, no boot
 #                                  configuration: boots NO ({EFI ONLY})
+#   build/test-bios-arm64.iso      an ARM64 medium: \EFI\BOOT\BOOTAA64.EFI
+#                                  in its tree and in a UEFI El Torito
+#                                  image, nothing else: boots NO, and only
+#                                  ARM64's UEFI can ({ARM64 ONLY})
 #   build/test-bios-data.iso       a data disc: no boot record, no
 #                                  configuration, no UEFI loader; neither
 #                                  loader can start it, so boots is UNKNOWN
@@ -77,12 +81,12 @@ elf() {         # elf FILE CLASS MACHINE_LO
     put "$1" 18 "$3" 00
 }
 
-efi_image() {   # efi_image IMG: a FAT boot image holding BOOTX64.EFI
+efi_image() {   # efi_image IMG [NAME]: a FAT boot image holding BOOTX64.EFI
     rm -f "$1"
     mkfs.fat -C "$1" 1440 >/dev/null
     mmd -i "$1" ::/EFI ::/EFI/BOOT
     printf 'not a loader\n' > "$W/loader"
-    mcopy -i "$1" "$W/loader" ::/EFI/BOOT/BOOTX64.EFI
+    mcopy -i "$1" "$W/loader" "::/EFI/BOOT/${2:-BOOTX64.EFI}"
 }
 
 # isolinux with one LABEL per kernel given, each at /boot/<name>.
@@ -116,6 +120,13 @@ mkdir -p "$W/t1/efi"
 efi_image "$W/t1/efi/efiboot.img"
 "${XO[@]}" -V BIOS_EFIONLY -e efi/efiboot.img -no-emul-boot \
     -o build/test-bios-efionly.iso "$W/t1"
+
+echo "== build/test-bios-arm64.iso"
+mkdir -p "$W/t13/efi" "$W/t13/EFI/BOOT"
+efi_image "$W/t13/efi/efiboot.img" BOOTAA64.EFI
+printf 'not a loader\n' > "$W/t13/EFI/BOOT/BOOTAA64.EFI"
+"${XO[@]}" -V BIOS_ARM64 -e efi/efiboot.img -no-emul-boot \
+    -o build/test-bios-arm64.iso "$W/t13"
 
 echo "== build/test-bios-data.iso"
 mkdir -p "$W/t0"

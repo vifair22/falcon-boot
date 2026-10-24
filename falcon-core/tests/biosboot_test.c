@@ -26,6 +26,7 @@
 
 #define FIX_EFIONLY   "build/test-bios-efionly.iso"
 #define FIX_DATA      "build/test-bios-data.iso"
+#define FIX_ARM64     "build/test-bios-arm64.iso"
 #define FIX_EFIKERNEL "build/test-bios-efikernel.iso"
 #define FIX_64        "build/test-bios-64.iso"
 #define FIX_MULTI     "build/test-bios-multi.iso"
@@ -245,7 +246,21 @@ static void test_medium_efi_only(void **state)
     (void)state;
     r = ask(FIX_EFIONLY, NULL);
     assert_int_equal(r.boots, BIOSBOOT_NO);
+    assert_int_equal(r.arm64, 0);
     /* Nothing here runs at all, so no width is claimed. */
+    assert_int_equal(r.needs64, BIOSBOOT_UNKNOWN);
+}
+
+/* Its only UEFI loader is ARM64's: {ARM64 ONLY}, since an x86-64 PC's UEFI
+ * could not start it either. */
+static void test_medium_arm64_only(void **state)
+{
+    biosboot_result r;
+
+    (void)state;
+    r = ask(FIX_ARM64, NULL);
+    assert_int_equal(r.boots, BIOSBOOT_NO);
+    assert_int_equal(r.arm64, 1);
     assert_int_equal(r.needs64, BIOSBOOT_UNKNOWN);
 }
 
@@ -401,6 +416,7 @@ int run_biosboot_tests(void)
     };
     const struct CMUnitTest media[] = {
         cmocka_unit_test(test_medium_efi_only),
+        cmocka_unit_test(test_medium_arm64_only),
         cmocka_unit_test(test_medium_data_disc),
         cmocka_unit_test(test_medium_efi_image_bios_kernel),
         cmocka_unit_test(test_medium_64),

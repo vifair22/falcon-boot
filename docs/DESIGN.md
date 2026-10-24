@@ -1836,8 +1836,8 @@ not a bless (the personal OS, the appliance), `[no efi]` for a medium with no
 `\EFI\BOOT\BOOTX64.EFI` on any of its volumes, and otherwise the CN of the
 topmost certificate in the signer's chain, cut to 16 columns. Yellow is
 reserved for "this will not boot here": shim refusing the first stage, a
-UKI with validation off, `{BIOS ONLY}`, or on falcon-bios `{EFI ONLY}` and
-`{64-BIT ONLY}`.
+UKI with validation off, `{BIOS ONLY}`, `{X64 ONLY}`, `{ARM64 ONLY}`, or on
+falcon-bios `{EFI ONLY}`, `{ARM64 ONLY}` and `{64-BIT ONLY}`.
 
 Reasons, exhaustive:
 
@@ -1849,8 +1849,8 @@ Reasons, exhaustive:
 | `{REVOKED}` | a signer certificate or the image hash is in `dbx` or `MokListXRT`, or an SBAT generation is below `SbatLevelRT` | newer media |
 | `{VALIDATION OFF}` | a UKI entry (the personal OS, a fresh bless that is a wrap, a bare payload with a `.linux` section, the station's UKI rows) when `load_ops_inner_load_blocked` holds for this boot (7.6): validation disabled (Section 7.4) | re-enable validation |
 | `{BIOS ONLY}` | an ISO this machine cannot boot at all, in any Secure Boot state (below) | boot the stick in BIOS mode |
-| `{X64 ONLY}`, `{ARM64 ONLY}` | an ISO only the other 64-bit architecture's machine boots: on AArch64 an x86-64 one, on x86-64 an ARM64 one (below) | boot it on that machine |
-| `{EFI ONLY}` | falcon-bios only: an ISO no BIOS route can boot (below) | boot the stick in UEFI mode |
+| `{X64 ONLY}`, `{ARM64 ONLY}` | an ISO only the other 64-bit architecture's machine boots: on AArch64 an x86-64 one, on x86-64 an ARM64 one (below); on falcon-bios `{ARM64 ONLY}` too, for one only an ARM64 machine's UEFI boots | boot it on that machine |
+| `{EFI ONLY}` | falcon-bios only: an ISO no BIOS route can boot, and an x86-64 machine's UEFI can (below) | boot the stick in UEFI mode |
 | `{64-BIT ONLY}` | falcon-bios only, on a processor without long mode: an ISO every way into which needs one (below) | boot it on a 64-bit machine |
 
 `{BIOS ONLY}` is the one reason that is not about a signature. It is a fact
@@ -1895,8 +1895,8 @@ same colours.
 
 #### The BIOS menu's tags
 
-falcon-bios has no signatures to predict. Two reasons, both facts about the
-medium read by `falcon-core/src/media/biosboot.c`, drawn in the colours
+falcon-bios has no signatures to predict. Three reasons, all facts about
+the medium read by `falcon-core/src/media/biosboot.c`, drawn in the colours
 above:
 
 - `{EFI ONLY}`: no BIOS route can reach the medium. Its El Torito catalog has
@@ -1907,7 +1907,12 @@ above:
   which the direct route (11.3.6) starts. Every entry counts, not only the
   default. For the Windows family the first test is the whole rule. The
   virtual CD refuses a hard-disk emulation image, but it is a BIOS boot
-  image, and a medium carrying one is not marked.
+  image, and a medium carrying one is not marked. Which UEFI machine boots
+  it instead is the UEFI menu's own rule 1 (`uefiboot_image_in`), asked as
+  an x86-64 machine: an x86-64 loader, or a 0xEF entry taken at its word,
+  is `{EFI ONLY}`; nothing but `\EFI\BOOT\BOOTAA64.EFI` is
+  `{ARM64 ONLY}`, since this PC's own UEFI could not start it either; and
+  neither leaves the row unmarked (a data disc).
 - `{64-BIT ONLY}`: shown only when the processor has no long mode
   (`linux_cpu_is_64`), and only for a medium that proves every way in needs
   one. Linux: every entry of the CD configuration names a kernel that could
@@ -3462,7 +3467,7 @@ flowchart TD
     ROW{"row, key"}
     ROW -- "Personal OS" --> POS[POS]
     ROW -- "Escape at the root" --> FW["INT 18h"]
-    ROW -- "image, Enter / c / d" --> TAG{"{EFI ONLY}, or<br/>{64-BIT ONLY} here?"}
+    ROW -- "image, Enter / c / d" --> TAG{"{ARM64 ONLY}, {EFI ONLY},<br/>or {64-BIT ONLY} here?"}
     TAG -- yes --> TP["page: what it needs, what to do"]
     TAG -- "no, c" --> CHN[CHN]
     TAG -- "no, Enter or d" --> MED["scan_family<br/>medium_open, family_detect"]
@@ -3476,8 +3481,8 @@ flowchart TD
     DIR -- "no CD boot entry, or not a Linux kernel it can start" --> CHN
 ```
 
-The rows carry `{EFI ONLY}` and, on a processor without long mode, `{64-BIT
-ONLY}` (7.8), filled by `probe_entry` (`scan_probe`, then
+The rows carry `{EFI ONLY}` or `{ARM64 ONLY}` and, on a processor without
+long mode, `{64-BIT ONLY}` (7.8), filled by `probe_entry` (`scan_probe`, then
 `biosboot_medium`) as the menu first draws each row. `boot_plain` reads the
 same answer first on every key: a tagged row takes no route, its page says
 what the medium needs and the menu comes back.
