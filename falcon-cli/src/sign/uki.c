@@ -296,6 +296,7 @@ int uki_layout(uint8_t *img, size_t img_len, uki_part *parts, size_t n,
     uint16_t nsect;
     uint8_t *sbat_hdr = NULL;
     uint8_t *opt;
+    int sbat_part = 0;
     size_t i;
 
     if (img == NULL || out_len == NULL || (n > 0u && parts == NULL) ||
@@ -344,7 +345,13 @@ int uki_layout(uint8_t *img, size_t img_len, uki_part *parts, size_t n,
         return refuse("headers overlap the first section");
     if (sbat_hdr == NULL)
         return refuse("has no .sbat section");
-    if (sbat_len > rd32(sbat_hdr + S_RAWSIZE)) {
+    /* A merge longer than the stub's section goes in a .sbat of its own,
+     * which the caller passes as a part; the stub's is then renamed, so
+     * shim finds one .sbat (ukify does the same). */
+    for (i = 0; i < n; i++)
+        if (strcmp(parts[i].name, ".sbat") == 0)
+            sbat_part = 1;
+    if (sbat_len > rd32(sbat_hdr + S_RAWSIZE) && !sbat_part) {
         sgn_set_error(SGN_ERR_FORMAT,
                       "merged .sbat is %zu bytes, the stub's section holds %u",
                       sbat_len, rd32(sbat_hdr + S_RAWSIZE));
@@ -400,8 +407,16 @@ int uki_layout(uint8_t *img, size_t img_len, uki_part *parts, size_t n,
         vend = va + parts[i].len;
     }
 
-    /* The stub's own .sbat, rewritten where it stands. */
-    {
+    /* The stub's own .sbat, rewritten where it stands, or renamed when the
+     * merge is a part of its own. */
+    if (sbat_part) {
+        /* A section name fills its eight bytes; it has no terminator. */
+        static const uint8_t renamed[PE_SECT_NAME] = {
+            '.', 's', 'b', 'a', 't', '.', 's', 't'
+        };
+
+        memcpy(sbat_hdr, renamed, sizeof renamed);
+    } else {
         uint32_t ptr = rd32(sbat_hdr + S_RAWPTR);
         uint32_t size = rd32(sbat_hdr + S_RAWSIZE);
 
@@ -676,10 +691,11 @@ int uki_build(const uki_spec *spec)
     uint64_t initrd_size = 0;
     char *sbat = NULL;
     size_t sbat_len = 0;
+    int sbat_own = 0;
     char *cmdline = NULL;
-    uki_part parts[5];
-    const char *src[5];
-    const char *mem[5];
+    uki_part parts[6];
+    const char *src[6];
+    const char *mem[6];
     size_t n = 0;
     uint64_t out_len = 0;
     uint64_t pos;
@@ -757,17 +773,20 @@ int uki_build(const uki_spec *spec)
         in_len[1] = kf.sbat_len;
         in[2] = uki_sbat;
         in_len[2] = sizeof(uki_sbat) - 1u;
-        /* The merge is written back into the stub's own .sbat, so that
-         * section's size is the bound; uki_layout checks it again. */
-        sbat = malloc(ssize);
+        /* The merge goes back into the stub's own .sbat when it fits, and
+         * into a .sbat of its own when not: a kernel that is itself a
+         * stub image (Fedora's arm64 one carries its devicetrees that way)
+         * brings that stub's lines too. */
+        sbat = malloc(SBAT_MAX);
         if (sbat == NULL) {
             sgn_set_error(SGN_ERR_IO, "out of memory");
             rc = SGN_ERR_IO;
             goto out;
         }
-        rc = uki_sbat_merge(in, in_len, 3, sbat, ssize, &sbat_len);
+        rc = uki_sbat_merge(in, in_len, 3, sbat, SBAT_MAX, &sbat_len);
         if (rc != SGN_OK)
             goto out;
+        sbat_own = sbat_len > ssize;
     }
 
     /* ukify's order. */
@@ -776,6 +795,8 @@ int uki_build(const uki_spec *spec)
         parts[n].code = (is_code); src[n] = (path); mem[n] = (text); n++; \
     } while (0)
     ADD(".osrel", strlen(spec->osrel), 0, NULL, spec->osrel);
+    if (sbat_own)
+        ADD(".sbat", sbat_len, 0, NULL, sbat);
     ADD(".cmdline", strlen(cmdline), 0, NULL, cmdline);
     if (kf.have_uname)
         ADD(".uname", strlen(kf.uname), 0, NULL, kf.uname);

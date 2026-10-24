@@ -325,6 +325,25 @@ static void test_uki_layout_places_sections(void **state)
     assert_int_equal(rd32(g_stub + TABLE + 40u + 8u), sizeof(g_merged) - 1u);
 }
 
+/* A merge longer than the stub's .sbat: its own section, the stub's
+ * renamed so shim finds one. */
+static void test_uki_layout_gives_a_long_sbat_its_own_section(void **state)
+{
+    char big[0x300];
+    uki_part p[1] = { { ".sbat", sizeof(big), 0, 0, 0 } };
+    uint64_t out_len = 0;
+
+    (void)state;
+    memset(big, 'a', sizeof(big));
+    assert_int_equal(uki_layout(g_stub, sizeof(g_stub), p, 1, big,
+                                sizeof(big), 0, &out_len), SGN_OK);
+    assert_memory_equal(g_stub + TABLE + 40u, ".sbat.st", 8);
+    assert_memory_equal(g_stub + TABLE + 2u * 40u, ".sbat\0\0\0", 8);
+    assert_int_equal(p[0].raw_size, 0x400u);
+    /* The stub's section keeps what it had. */
+    assert_memory_equal(g_stub + 0x600, STUB_SBAT, strlen(STUB_SBAT));
+}
+
 static void test_uki_layout_clears_nx_for_a_kernel_without_it(void **state)
 {
     uki_part p[1] = { { ".linux", 1, 1, 0, 0 } };
@@ -811,6 +830,8 @@ int run_uki_tests(void)
         cmocka_unit_test(test_uki_sbat_merge_reports_no_space),
         cmocka_unit_test(test_uki_cmdline_collapses_whitespace),
         cmocka_unit_test_setup(test_uki_layout_places_sections, setup_stub),
+        cmocka_unit_test_setup(test_uki_layout_gives_a_long_sbat_its_own_section,
+                               setup_stub),
         cmocka_unit_test_setup(test_uki_layout_clears_nx_for_a_kernel_without_it,
                                setup_stub),
         cmocka_unit_test_setup(test_uki_layout_rounds_size_of_headers,
