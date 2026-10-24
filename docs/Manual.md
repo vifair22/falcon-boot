@@ -3053,7 +3053,7 @@ below.
 | `opening the ISO`, `reading the ISO's filesystem` | - | Copy the ISO again. |
 | `locating the ISO's loader.conf` | - | Press `c`. |
 | `placing the memory-disk record` | `this ISO has no free bytes in its root or /boot directory for the record this route adds.` | Press `c`. |
-| `checking memory for the image` | `this machine has too little memory below 4 GB to hold the image, which is where FreeBSD's loader has to put it. Press c to boot the ISO's own loader instead.` | As it says. |
+| `checking memory for the image` | `this machine has too little memory below 4 GB to hold the image, which is where FreeBSD's loader has to put it. Press c to boot the ISO's own loader instead.` (on AArch64: `too little free memory in one run`) | As it says. |
 | `writing the loader settings` | `this ISO's loader.conf has no comment block long enough to hold the memory-disk settings.` | Press `c`. |
 
 The medium is then served as the CHN route serves it, and its later stages

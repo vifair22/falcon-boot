@@ -21,7 +21,7 @@
 #define CONF_HEAD 1024u
 
 /* What the route needs free, above the image's own size, in a single run
- * below 4 GB: FreeBSD's loader stages the kernel and its modules in the same
+ * below STAGING_MAX: FreeBSD's loader stages the kernel and its modules in the same
  * region as the memory disk, starting at a 64 MB area it then grows, with
  * 8 MB of slop at the end for the kernel's earliest allocations
  * (stand/efi/loader/copy.c). 192 MB covers that with room for the module set
@@ -31,8 +31,17 @@
 /* The ceiling the same file imposes: the staged image has to live under
  * 4 GB, because that is as far as the amd64 kernel's first page tables
  * reach. OPNsense 25.1's 2.2 GB DVD fails here with
- * "efi_check_space: Unable to expand staging area" on a machine with 8 GB. */
+ * "efi_check_space: Unable to expand staging area" on a machine with 8 GB.
+ * The arm64 loader's ceiling is 2^48, what older arm64 kernels address;
+ * below 4 GB there would refuse images it stages above, where most of an
+ * arm64 machine's RAM is. */
+#if defined(__aarch64__)
+#define STAGING_MAX 0x1000000000000ull
+#define STAGING_SHORT L"this machine has too little free memory in one run to "
+#else
 #define STAGING_MAX 0x100000000ull
+#define STAGING_SHORT L"this machine has too little memory below 4 GB to "
+#endif
 
 static fs_file g_iso;
 static fs_vol  g_isovol;
@@ -50,7 +59,7 @@ static int iso_read(void *ctx, uint64_t off, uint64_t len, void *buf)
 /* Can FreeBSD's loader stage an image this size?
  *
  * Asked by doing what it will do: allocate that many contiguous pages below
- * 4 GB and give them straight back. An estimate from the memory map would
+ * its ceiling and give them straight back. An estimate from the memory map would
  * have to model the firmware's own fragmentation; an allocation IS the
  * question, and the pages are held for the length of one call. */
 static BOOLEAN staging_fits(EFI_BOOT_SERVICES *bs, UINT64 size)
@@ -146,7 +155,7 @@ static EFI_STATUS bsd_run(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
     result->stage = L"checking memory for the image";
     tui_step(L"checking memory for the image");
     if (!staging_fits(bs, file->size)) {
-        result->advice = L"this machine has too little memory below 4 GB to "
+        result->advice = STAGING_SHORT
                          L"hold the image, which is where FreeBSD's loader "
                          L"has to put it. Press c to boot the ISO's own "
                          L"loader instead.";
