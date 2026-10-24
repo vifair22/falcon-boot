@@ -79,6 +79,13 @@ typedef struct {
  * filesystem error. */
 int shelf_collect(shelf_list *s, fs_vol *fs);
 
+/* Drops the images built for the other 64-bit UEFI architecture: on an
+ * x86-64 machine an ARM64 UKI, and the reverse, which this machine's
+ * firmware would refuse to load. An image whose head is not a PE, or cannot
+ * be read, is kept, for the boot to say what is wrong with it. machine is
+ * the loader's PE machine; returns how many are left. */
+size_t shelf_keep_machine(shelf_list *s, fs_vol *fs, uint16_t machine);
+
 /* Is this the signing appliance? */
 int shelf_is_appliance(const fs_dirent *e);
 

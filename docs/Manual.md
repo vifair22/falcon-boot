@@ -1004,7 +1004,7 @@ The other failures while unlocking:
 | `the partition could not be read.` | a read error |
 | `the volume is outside what this loader supports.` | a LUKS2 header or cipher the loader does not take |
 | `the decrypted volume is not a filesystem this loader can read.` | not ext4 inside |
-| `no *.efi image was found in /uki or /EFI/Linux.` | |
+| `no *.efi image for this machine was found in /uki or /EFI/Linux.` | none, or only images for the other architecture: the chooser lists a machine's own (x86-64 or ARM64) UKIs alone |
 
 ### 5.3 The passphrase handoff
 
@@ -3072,7 +3072,7 @@ refusal sentence of 12.3.
 | (same) | `the shelf's journal is damaged; run fsck on it from another system, then boot its OS once with noresume.` | As it says. |
 | (same) | `reading the shelf's journal needs <n> MiB of memory; this machine has <m> MiB free.` | Run `fsck` on the shelf from another system. |
 | (same) | `the filesystem was not cleanly unmounted; run fsck on it from Linux.` | As it says. |
-| `looking for a UKI` | `no *.efi image was found in /uki or /EFI/Linux.` | Put a signed UKI in `/uki` (11.1). |
+| `looking for a UKI` | `no *.efi image for this machine was found in /uki or /EFI/Linux.` | Put a signed UKI for this machine's architecture in `/uki` (11.1). |
 | `looking for the UKI` | `that UKI is not on the shelf.` | The marker or STATION.INI names a file that is gone. |
 | `looking for the signing appliance` | `no signing-appliance image is on this stick's shelf. Bless the ISO on a Linux host with falcon-boot-sign instead.` | As it says, or stage the appliance UKI on p3. |
 | `reading the UKI` | - | p3 failed a read. |
