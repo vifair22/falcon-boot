@@ -830,16 +830,19 @@ Each waits for Enter.
 
     make appliance
 
-builds `build/appliance/appliance-uki.efi`, unsigned. It needs passwordless
-sudo, `bsdtar`, and sd-stub at
-`/usr/lib/systemd/boot/efi/linuxx64.efi.stub`. Its kernel and modules come
-from an Arch ISO: `ARCH_ISO=<path>`, or by default
-`Linux/archlinux-2026.01.01-x86_64.iso` on the one attached `FALCON-ISO`
-partition, mounted read-only for the run. `APPLIANCE_KERNEL=<file>` names
-the kernel instead, and `APPLIANCE_CMDLINE` replaces its cmdline (default
-`console=ttyS1,115200 console=tty0 quiet loglevel=3 panic=15`). When the
-rig's test MOK exists it also writes `appliance-uki-signed.efi`, signed with
-that key, for the rig.
+builds `build/appliance/appliance-uki.efi`, unsigned, and
+
+    make appliance-aa64
+
+the same image for an AArch64 machine, `appliance-uki-aa64.efi`. Both build
+in the harness (`make` runs there), which carries both sd-stubs and the
+arm64 `sbsign`. Their kernel and modules are Fedora's, at the build
+`tools/fetch-fedora-kernel.sh` pins; the first build downloads it into
+`build/fedora-kernel/`. `APPLIANCE_KERNEL=<file>` names the kernel instead,
+and `APPLIANCE_CMDLINE` replaces its cmdline (default
+`console=ttyS1,115200 console=tty0 quiet loglevel=3 panic=15`, `ttyAMA0` on
+AArch64). When the rig's test MOK exists each also writes a `-signed.efi`
+copy, signed with that key, for the rig.
 
 On a new stick, `create` signs and stages it:
 
@@ -3415,6 +3418,7 @@ the harness's Dockerfile and this table to it):
 | `mtools` | mtools | build | make jump and station install write FAT with mtools |
 | `sd-stub` | systemd-boot-efi | build | the stub a UKI is built on (sign uki, the fixture UKI, the appliance) |
 | `arm64 sd-stub` | systemd-boot-efi:arm64 | build | the stub an arm64 kernel's UKI is built on |
+| `arm64 sbsign, sbverify` | sbsigntool:arm64 (download) libssl3t64:arm64 libuuid1:arm64 | build | the AArch64 appliance image's signer, unpacked to /opt/arm64-sbsigntool, with its arm64 libraries |
 | `zstd` | zstd | build | the appliance image's initramfs |
 | `cryptsetup` (required) | cryptsetup-bin | host tools | mkstick create: p3's LUKS2 |
 | `openssl` (required) | openssl | host tools | mkstick keygen and create: the MOK keypair |
@@ -3496,9 +3500,8 @@ release branch's pipeline, says `dev`.
 Every path without a directory is in `build/bin/`. `bios`, `station`,
 `station-legacy`, `jump`, `appliance` and `station-bundle` are not in `all`.
 
-`appliance` takes its kernel and modules out of the Arch ISO
-(`tools/arch-iso.sh`: the copy on this stick's p2 by default, `ARCH_ISO`
-overrides). Build `station-bundle` and `mkstick32` in the harness container
+`appliance` and `appliance-aa64` take their kernel and modules from
+Fedora's packages (`tools/fetch-fedora-kernel.sh`). Build `station-bundle` and `mkstick32` in the harness container
 (13.5), whose image has the 32-bit static libc:
 
     tools/coverage/harness.sh make station-bundle MEMTEST=<file>
@@ -3662,6 +3665,7 @@ It is always rebuilt from the template.
 | `test-bios-img` | `build/test-bios.img` (MBR) and `build/test-bios-gpt.img` (GPT) | no root |
 | `test-bios-probe` | `build/memprobe.iso`, a medium that reports the memory map it is handed | `xorriso` |
 | `test-appliance-stick` | `build/appliance/appliance-stick.img` | sudo |
+| `test-appliance-stick-aa64` | `build/appliance/appliance-stick-aa64.img`, the same for AArch64 | sudo |
 
 **Rigs.** Each boots headless and prints a PASS, FAIL or SKIP line per
 case, judged from serial.
@@ -3680,6 +3684,7 @@ case, judged from serial.
 | `test-jump` | every falcon jump route under SeaBIOS | the rig QEMU for the CF case; `MEMTEST` for the memtest case |
 | `test-devlink` | DevLink recovery off the rig stick on an i586 with 32 MB, and its kernel on the rig QEMU with the PC Card bridge model attached, the CF card brought up as a disk | the ISO (`DEVLINK_ISO`) and client (`DEVLINK_CLIENT`); the rig QEMU for the bridge case; skipped without them |
 | `test-appliance` | the appliance stick under Secure Boot, two appliance runs, then the stick checked on the host | `test-appliance-stick`; sudo |
+| `test-appliance-aa64` | the same on QEMU's virt under AAVMF, emulated | `test-appliance-stick-aa64`; sudo |
 
 The rig QEMU is `qemu-system-i386` with a model of the A21m's PC Card
 bridge. Build it once:

@@ -7,6 +7,8 @@
 #                                              signs and stages on p3:/uki
 #   build/appliance/appliance-uki-signed.efi   signed with the rig's test MOK,
 #                                              for a hand-staged rig stick
+# With APPLIANCE_ARCH=aa64, appliance-uki-aa64.efi and its signed copy: the
+# same image for an AArch64 machine.
 #
 # The appliance is a kernel plus an initramfs that contains one program of our
 # own (falcon-appliance/src, PID 1) and the programs blessing shells out to
@@ -30,8 +32,12 @@
 # agree today.
 #
 # Everything else in the image is closure: the shared libraries those programs
-# need (walked with ldd), and the kernel modules Arch ships outside its
-# vmlinuz (exfat, loop and vfat, plus what modules.dep says they need). There is no shell, no interpreter, no network tooling, and no
+# need (walked with ldd, or by their ELF NEEDED entries for arm64, which ldd
+# cannot run here), and the kernel modules Fedora ships outside its vmlinuz
+# (modules.list, plus what each one's depends= names). The kernel is Fedora's
+# for both architectures (tools/fetch-fedora-kernel.sh), so there is one
+# source to keep current. Both sd-stubs are in the image, so either
+# architecture's appliance blesses either architecture's media. There is no shell, no interpreter, no network tooling, and no
 # package manager.
 #
 # What that costs on this host: 19 MB of initramfs uncompressed, 6.2 MB
@@ -44,34 +50,50 @@
 #
 # Usage: falcon-appliance/image/mk-appliance.sh
 # Env:
-#   ARCH_ISO      kernel and module source (default: the one on this
-#                 stick's p2, mounted read-only if it is not already;
-#                 tools/arch-iso.sh)
+#   APPLIANCE_ARCH     x64 (default) or aa64
 #   APPLIANCE_CMDLINE  kernel cmdline baked into the signed image
 #   MOK_KEY/MOK_CRT    test MOK for the optional signed copy
-#
-# Needs passwordless sudo: the kernel modules live inside the ISO's squashfs,
-# which is read through two loop mounts (nothing is written to either).
 
 set -euo pipefail
 
 cd "$(dirname "$0")/../.."
 
-. tools/arch-iso.sh
-ISO_KERNEL_PATH=arch/boot/x86_64/vmlinuz-linux
-ISO_SFS_PATH=arch/x86_64/airootfs.sfs
-STUB=/usr/lib/systemd/boot/efi/linuxx64.efi.stub
+APPLIANCE_ARCH="${APPLIANCE_ARCH:-x64}"
+STUB_DIR=/usr/lib/systemd/boot/efi
+case "$APPLIANCE_ARCH" in
+x64)
+    FARCH=x86_64 SUFFIX= STUB=$STUB_DIR/linuxx64.efi.stub
+    SIGN_STATIC=build/bin/falcon-boot-sign-static
+    INIT=build/bin/falcon-boot-appliance-init
+    TOOLS_ROOT=
+    SERIAL_TTY=ttyS1
+    ;;
+aa64)
+    FARCH=aarch64 SUFFIX=-aa64 STUB=$STUB_DIR/linuxaa64.efi.stub
+    SIGN_STATIC=build/bin/falcon-boot-sign-static-aa64
+    INIT=build/bin/falcon-boot-appliance-init-aa64
+    # Debian's arm64 sbsign and sbverify, unpacked in the harness image;
+    # their libraries are the arm64 multiarch ones.
+    TOOLS_ROOT=/opt/arm64-sbsigntool
+    # virt's one serial port carries the loader's log and the typing.
+    SERIAL_TTY=ttyAMA0
+    ;;
+*)
+    echo "ERROR: APPLIANCE_ARCH is x64 or aa64" >&2
+    exit 2
+    ;;
+esac
 
 OUT=build/appliance
-WORK="$OUT/work"
+WORK="$OUT/work$SUFFIX"
 ROOT="$WORK/root"
-KERNEL="${APPLIANCE_KERNEL:-build/test/fixture-vmlinuz}"
-INITRD="$OUT/appliance-initrd.zst"
-UKI="$OUT/appliance-uki.efi"
-UKI_SIGNED="$OUT/appliance-uki-signed.efi"
+KDIR=build/fedora-kernel/$FARCH
+KERNEL="${APPLIANCE_KERNEL:-$KDIR/vmlinuz}"
+INITRD="$OUT/appliance-initrd$SUFFIX.zst"
+UKI="$OUT/appliance-uki$SUFFIX.efi"
+UKI_SIGNED="$OUT/appliance-uki$SUFFIX-signed.efi"
 
 SIGN=build/bin/falcon-boot-sign
-SIGN_STATIC=build/bin/falcon-boot-sign-static
 MOK_KEY="${MOK_KEY:-build/mok-test/falcon-test-mok.key}"
 MOK_CRT="${MOK_CRT:-build/mok-test/falcon-test-mok.crt}"
 
@@ -92,12 +114,11 @@ MOK_CRT="${MOK_CRT:-build/mok-test/falcon-test-mok.crt}"
 #
 # loglevel=3 keeps kernel chatter from interleaving with the prompts, and
 # panic=15 makes a panic end in a reboot rather than a hang nobody can exit.
-CMDLINE="${APPLIANCE_CMDLINE:-console=ttyS1,115200 console=tty0 quiet loglevel=3 panic=15}"
+CMDLINE="${APPLIANCE_CMDLINE:-console=$SERIAL_TTY,115200 console=tty0 quiet loglevel=3 panic=15}"
 
-# PID 1, built by the Makefile (falcon-appliance/build.mk) from
+# PID 1 is $INIT above, built by the Makefile (falcon-appliance/build.mk) from
 # falcon-appliance/src with the repo's host flag set and linked static: the
 # dynamic loader in this image exists for the other programs, not for this one.
-INIT=build/bin/falcon-boot-appliance-init
 
 # The image's contents are data beside this script: the programs `sign`
 # execs (programs.list) and the kernel modules the flow needs by name
@@ -111,33 +132,14 @@ mapfile -t BINARIES < <(read_list "$IMAGE_DIR/programs.list")
 
 mapfile -t MODULES < <(read_list "$IMAGE_DIR/modules.list")
 
-WORK_MNT_ISO=
-WORK_MNT_SFS=
-
-cleanup() {
-    if [[ -n "$WORK_MNT_SFS" ]]; then
-        sudo umount "$WORK_MNT_SFS" 2>/dev/null || true
-        rmdir "$WORK_MNT_SFS" 2>/dev/null || true
-        WORK_MNT_SFS=
-    fi
-    if [[ -n "$WORK_MNT_ISO" ]]; then
-        sudo umount "$WORK_MNT_ISO" 2>/dev/null || true
-        rmdir "$WORK_MNT_ISO" 2>/dev/null || true
-        WORK_MNT_ISO=
-    fi
-    arch_iso_release
-}
-trap cleanup EXIT
-arch_iso_resolve
-
-for t in bsdtar cpio readelf zstd sudo; do
+for t in bsdtar cpio readelf zstd xz strings; do
     command -v "$t" >/dev/null 2>&1 || {
         echo "ERROR: $t not found" >&2
         exit 1
     }
 done
 for b in "${BINARIES[@]}"; do
-    [[ -x "$b" ]] || { echo "ERROR: $b not found" >&2; exit 1; }
+    [[ -x "$TOOLS_ROOT$b" ]] || { echo "ERROR: $TOOLS_ROOT$b not found" >&2; exit 1; }
 done
 [[ -f "$STUB" ]] || {
     echo "ERROR: sd-stub not found at $STUB (install systemd-boot)" >&2
@@ -163,84 +165,79 @@ mkdir -p "$ROOT"
 
 # ---- kernel ----
 #
-# The same Arch vmlinuz the fixture UKI uses, extracted the same way
-# (falcon-efi/tools/mk-test-uki.sh): bsdtar reads ISO9660 directly, so no mount
-# and no sudo, and the ISO is only ever read.
-if [[ ! -f "$KERNEL" ]]; then
-    [[ -f "$ARCH_ISO" ]] || {
-        echo "ERROR: $ARCH_ISO not found (set ARCH_ISO or APPLIANCE_KERNEL)" >&2
-        exit 1
-    }
-    echo "== extracting $ISO_KERNEL_PATH"
-    mkdir -p "$(dirname "$KERNEL")"
-    bsdtar -x -f "$ARCH_ISO" -C "$WORK" "$ISO_KERNEL_PATH"
-    cp "$WORK/$ISO_KERNEL_PATH" "$KERNEL"
+# Fedora's, at the build tools/fetch-fedora-kernel.sh pins: its vmlinuz (an
+# EFI-stub bzImage on x86-64, a zboot PE on AArch64) and its core modules.
+if [[ ! -f "$KERNEL" || ! -d "$KDIR/modules" ]]; then
+    tools/fetch-fedora-kernel.sh "$FARCH"
 fi
-KVER=$(file -b "$KERNEL" | sed -n 's/.*version \([^ ]*\).*/\1/p')
-[[ -n "$KVER" ]] || { echo "ERROR: cannot read the kernel version of $KERNEL" >&2; exit 1; }
+KVER=$(cat "$KDIR/kver")
 echo "   kernel: $KERNEL ($(stat -c%s "$KERNEL") bytes, $KVER)"
 
 # ---- kernel modules ----
 #
-# Arch ships exFAT, loop and vfat as modules, so the appliance cannot mount
-# p2 or reach into a .img payload without carrying them. They live in the
-# ISO's squashfs rather than in its initramfs, hence the two read-only loop
-# mounts. Decompressed here so /init needs nothing from the kernel beyond
-# finit_module; the module signature is inside the .ko and survives, which is
-# what lets these load on a kernel that came up under Secure Boot.
-echo "== extracting kernel modules from $(basename "$ARCH_ISO")"
-[[ -f "$ARCH_ISO" ]] || { echo "ERROR: $ARCH_ISO not found" >&2; exit 1; }
-WORK_MNT_ISO=$(mktemp -d)
-sudo mount -o loop,ro "$ARCH_ISO" "$WORK_MNT_ISO"
-WORK_MNT_SFS=$(mktemp -d)
-sudo mount -o loop,ro "$WORK_MNT_ISO/$ISO_SFS_PATH" "$WORK_MNT_SFS"
+# Fedora ships exFAT, loop, vfat and the USB storage drivers as modules, so
+# the appliance cannot mount p2 or reach into a .img payload without
+# carrying them. Decompressed here so /init needs nothing from the kernel
+# beyond finit_module; the module signature is inside the .ko and survives,
+# which is what lets these load on a kernel that came up under Secure Boot.
+# The packages carry no modules.dep (depmod writes it at install), so each
+# module's own .modinfo says what it needs (depends=), and anything in
+# modules.builtin is in the kernel already.
+MODDIR="$KDIR/modules"
+BUILTIN="$MODDIR/modules.builtin"
 
-MODDIR="$WORK_MNT_SFS/usr/lib/modules/$KVER"
-[[ -d "$MODDIR" ]] || {
-    echo "ERROR: the ISO has no modules for $KVER (found: $(ls "$WORK_MNT_SFS/usr/lib/modules" 2>/dev/null))" >&2
-    exit 1
+# The module file for a name, as depends= or modules.list spells it: the
+# kernel turns '-' into '_' in a module's name, the file keeps its own.
+mod_file() {
+    local n=$1 alt
+    alt=${n//_/-}
+    find "$MODDIR/kernel" \( -name "$n.ko.xz" -o -name "$alt.ko.xz" \
+         -o -name "${n//-/_}.ko.xz" \) -print -quit
 }
-DEPFILE="$MODDIR/modules.dep"
-[[ -f "$DEPFILE" ]] || { echo "ERROR: no modules.dep in the ISO's module tree" >&2; exit 1; }
 
-# Depth-first over modules.dep so a module is always staged after everything
-# it needs. /init loads the staged files in name order, which is why they get
-# a sequence number: dependency order is decided here, once, against the
-# kernel's own metadata, rather than rediscovered in PID 1.
+is_builtin() {
+    local n=$1
+    grep -qE "/(${n//_/[-_]}|${n//-/[-_]})\.ko$" "$BUILTIN"
+}
+
 declare -A SEEN=()
 ORDER=()
 
+# Depth-first, so a module is always staged after everything it needs; /init
+# loads the staged files in name order, which is why they get a sequence
+# number.
 resolve() {
-    local mod="$1" deps d
-    [[ -n "${SEEN[$mod]:-}" ]] && return 0
-    SEEN[$mod]=1
-    deps=$(awk -v m="$mod" -F':' '$1 == m { print $2 }' "$DEPFILE")
-    # Listed nearest-first, so the far end of the list is loaded first.
-    for d in $(printf '%s\n' $deps | tac); do
+    local name=$1 f deps d
+    [[ -n "${SEEN[$name]:-}" ]] && return 0
+    SEEN[$name]=1
+    is_builtin "$name" && return 0
+    f=$(mod_file "$name")
+    [[ -n "$f" ]] || { echo "ERROR: no $name module in $MODDIR" >&2; exit 1; }
+    deps=$(xz -dc "$f" | strings | sed -n 's/^depends=//p' | head -1)
+    for d in ${deps//,/ }; do
         resolve "$d"
     done
-    ORDER+=("$mod")
+    ORDER+=("$f")
 }
 
+echo "== resolving kernel modules"
 for want in "${MODULES[@]}"; do
-    path=$(awk -F':' -v w="/$want.ko.zst" \
-        'index($1, w) == length($1) - length(w) + 1 { print $1; exit }' "$DEPFILE")
-    [[ -n "$path" ]] || { echo "ERROR: no $want module in the ISO's tree" >&2; exit 1; }
-    resolve "$path"
+    if is_builtin "$want"; then
+        echo "   module: $want is built in"
+        continue
+    fi
+    resolve "$want"
 done
 
 mkdir -p "$ROOT/modules"
 n=0
-for m in "${ORDER[@]}"; do
-    src="$MODDIR/$m"
-    [[ -f "$src" ]] || { echo "ERROR: $m missing from the ISO's module tree" >&2; exit 1; }
-    base=$(basename "$m" .zst)
+for f in "${ORDER[@]}"; do
+    base=$(basename "$f" .xz)
     dst=$(printf '%s/modules/%02d-%s' "$ROOT" "$n" "$base")
-    zstd -dqf "$src" -o "$dst"
+    xz -dc "$f" > "$dst"
     echo "   module: $(basename "$dst") ($(stat -c%s "$dst") bytes)"
     n=$(( n + 1 ))
 done
-cleanup
 
 # ---- /init ----
 echo "== staging /init"
@@ -257,20 +254,51 @@ echo "== staging binaries and their library closure"
 mkdir -p "$ROOT/usr/bin" "$ROOT/usr/sbin" "$ROOT/bin" "$ROOT/sbin"
 
 copy_to_root() {
-    # $1 absolute source path; staged at the same absolute path in the image,
-    # because that is what the dynamic loader and every shebang expect.
-    local src="$1"
-    local dst="$ROOT$1"
+    # $1 absolute path in the image; staged from $2, or from the same path
+    # here, because that is what the dynamic loader and every shebang expect.
+    local dst="$ROOT$1" src="${2:-$1}"
 
     mkdir -p "$(dirname "$dst")"
     cp -L "$src" "$dst"
 }
 
+# The arm64 libraries, where Debian's multiarch puts them; the arm64 dynamic
+# loader searches these by default, so the image needs no cache for them.
+A64_LIBDIRS=(/usr/lib/aarch64-linux-gnu /lib/aarch64-linux-gnu)
+
+a64_find() {
+    local d
+    for d in "${A64_LIBDIRS[@]}"; do
+        [[ -e "$d/$1" ]] && { printf '%s' "$d/$1"; return 0; }
+    done
+    return 1
+}
+
+# Prints the absolute path of every shared object a binary needs. x86-64:
+# ldd, which runs the binary's loader. arm64: the NEEDED entries, followed
+# by hand through the multiarch directories, since an arm64 loader does not
+# run here.
 closure() {
-    # Prints the absolute path of every shared object a binary needs,
-    # including the dynamic loader itself.
-    ldd "$1" 2>/dev/null |
-        sed -n -e 's/.*=> \(\/[^ ]*\).*/\1/p' -e 's/^[[:space:]]*\(\/[^ ]*\) (0x.*/\1/p'
+    if [[ -z "$TOOLS_ROOT" ]]; then
+        ldd "$1" 2>/dev/null |
+            sed -n -e 's/.*=> \(\/[^ ]*\).*/\1/p' -e 's/^[[:space:]]*\(\/[^ ]*\) (0x.*/\1/p'
+        return
+    fi
+    local -A seen=()
+    local queue=("$1") f lib path
+    while [[ ${#queue[@]} -gt 0 ]]; do
+        f=${queue[0]}
+        queue=("${queue[@]:1}")
+        for lib in $(readelf -d "$f" 2>/dev/null |
+                     sed -n 's/.*(NEEDED).*\[\(.*\)\]/\1/p'); do
+            [[ -n "${seen[$lib]:-}" ]] && continue
+            seen[$lib]=1
+            path=$(a64_find "$lib") ||
+                { echo "ERROR: $lib, which $f needs, is not installed" >&2; exit 1; }
+            printf '%s\n' "$path"
+            queue+=("$path")
+        done
+    done
 }
 
 # The ELF interpreter a program asks the kernel for (PT_INTERP), or nothing
@@ -283,12 +311,12 @@ interp() {
 
 LIBS=()
 for b in "${BINARIES[@]}"; do
-    if [[ "$(head -c2 "$b")" == '#!' ]]; then
+    if [[ "$(head -c2 "$TOOLS_ROOT$b")" == '#!' ]]; then
         echo "ERROR: $b is a script, and the image has no shell to run it" >&2
         exit 1
     fi
-    copy_to_root "$b"
-    mapfile -t -O "${#LIBS[@]}" LIBS < <(closure "$b")
+    copy_to_root "$b" "$TOOLS_ROOT$b"
+    mapfile -t -O "${#LIBS[@]}" LIBS < <(closure "$TOOLS_ROOT$b")
 done
 mapfile -t LIBS < <(printf '%s\n' "${LIBS[@]}" | sort -u)
 for l in "${LIBS[@]}"; do
@@ -304,7 +332,11 @@ done
 for b in "${BINARIES[@]}"; do
     i=$(interp "$ROOT$b")
     if [[ -n "$i" && ! -e "$ROOT$i" ]]; then
-        copy_to_root "$i"
+        if [[ -n "$TOOLS_ROOT" ]]; then
+            copy_to_root "$i" "$(a64_find "$(basename "$i")")"
+        else
+            copy_to_root "$i"
+        fi
     fi
 done
 echo "   binaries: ${#BINARIES[@]} + bsdtar, libraries: ${#LIBS[@]}"
@@ -318,14 +350,20 @@ echo "   binaries: ${#BINARIES[@]} + bsdtar, libraries: ${#LIBS[@]}"
 # cache built from it.
 mkdir -p "$ROOT/etc"
 printf '%s\n' "${LIBS[@]}" | xargs -r -n1 dirname | sort -u > "$ROOT/etc/ld.so.conf"
-ldconfig -r "$ROOT" 2>/dev/null || {
-    echo "ERROR: ldconfig could not build the image's library cache" >&2
-    exit 1
-}
+# The host's ldconfig builds a cache for its own architecture only; the arm64
+# libraries sit in the directories the arm64 loader searches anyway.
+if [[ -z "$TOOLS_ROOT" ]]; then
+    ldconfig -r "$ROOT" 2>/dev/null || {
+        echo "ERROR: ldconfig could not build the image's library cache" >&2
+        exit 1
+    }
+fi
 
-# The tool the whole appliance exists to run, and the stub it wraps with.
+# The tool the whole appliance exists to run, and the stubs it wraps with:
+# both, so it blesses an ISO of either architecture.
 cp "$SIGN_STATIC" "$ROOT/usr/bin/falcon-boot-sign-static"
-copy_to_root "$STUB"
+copy_to_root "$STUB_DIR/linuxx64.efi.stub"
+copy_to_root "$STUB_DIR/linuxaa64.efi.stub"
 
 # ---- the rest of the filesystem ----
 #

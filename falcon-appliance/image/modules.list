@@ -5,8 +5,9 @@
 #
 # The appliance's hardware needs are exactly three: reach the stick, draw on a
 # screen, and read a keyboard. The rig can only ever test the middle one, since
-# QEMU hands the stick over as emulated SATA and the keyboard as PS/2, and both
-# of those drivers are built into the kernel. So the first and the third are
+# QEMU hands the stick over as emulated SATA (virtio on AArch64) and the
+# keyboard as PS/2 (built-in USB HID on AArch64), and those drivers are built
+# into the kernel. So the first and the third are
 # carried here on the strength of what a real machine looks like, not on the
 # strength of a green test run.
 #
@@ -43,8 +44,8 @@
 # Names are the ones modules.dep uses, hyphens and all, because the resolver
 # looks them up literally rather than going through modprobe's aliasing.
 # Only list what is actually a module: the host controller (xhci-pci,
-# xhci-hcd) and the SCSI disk layer (sd_mod) are built into Arch's kernel and
-# naming them here is a build failure, correctly, since the same failure is
+# xhci-hcd) and the SCSI disk layer (sd_mod) are built into Fedora's kernel,
+# on both architectures, and naming them here is a build failure, correctly, since the same failure is
 # what a typo deserves.
 
 exfat           # p2
