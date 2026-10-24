@@ -383,7 +383,11 @@ static void rows_find(void)
         copy_ascii(w->name, sizeof w->name, "memtest");
         w->own_esp = 1;
         w->ref_none = 1;
+#if defined(__aarch64__)
+        ucs2_copy(w->label, STROWS_LABEL_MAX, L"" STROWS_LABEL_MEMTEST_AA64);
+#else
         ucs2_copy(w->label, STROWS_LABEL_MAX, L"" STROWS_LABEL_MEMTEST);
+#endif
     }
 
     /* Firmware Setup last for the stick's reason: a mistimed Enter lands

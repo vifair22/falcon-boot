@@ -117,7 +117,7 @@ HOOK_A64_OBJS := $(patsubst %.c,$(HOOK_A64_OBJ)/%.o,$(HOOK_SRCS))
 
 $(HOOK_A64_BIN): $(HOOK_A64_OBJS)
 	@mkdir -p $(@D)
-	$(CC_A64_LINUX) -fuse-ld=lld $(HOOK_LDFLAGS) -o $@ $(HOOK_A64_OBJS)
+	$(CC_A64_LINUX) -fuse-ld=lld $(filter-out -no-pie,$(HOOK_LDFLAGS)) -o $@ $(HOOK_A64_OBJS)
 	llvm-strip -s $@
 
 HOOK_A64_BLOB := build/gen/falcon_hook_a64_blob.c

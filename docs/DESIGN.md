@@ -3983,6 +3983,13 @@ path) the firmware starts the same file, so the station has one route in
 and one measured chain (12.15). The loader stays in one place. Another
 system's `BOOTX64.EFI` (Windows', systemd-boot's, a distribution's shim)
 is saved beside the install's backup and replaced; `remove` puts it back.
+
+**AArch64.** The same station, built for that machine (Section 9): the
+loader as `falconaa64.efi`, the jumper as `\EFI\BOOT\BOOTAA64.EFI`, shim as
+`shimaa64.efi`, and the `falcon` entry naming whichever starts it. An
+AArch64 station is UEFI only. The installer, `update` and `remove` take the
+station's architecture from `--arch` or the host's own, since an image may
+be made on one machine for another.
 The jumper is told from it by its `.sbat` component (Section 9). An
 install with shim has neither the jumper nor an entry naming it: the
 entry names shim, and the MOK is not in such a machine's db. A station
@@ -4216,7 +4223,9 @@ staged and moved when it is fixed at 1 MB: the row `memtest`, route
 with the MOK by the installer (12.9) as the POS hook signs UKIs, so it boots
 in every Secure Boot state, and loaded as 12.4's `bootmgfw.efi` is, from
 `\EFI\falcon\memtest.efi` on the loader's own ESP (route `MEM`). Its row
-appears only when the file is there.
+appears only when the file is there. memtest86+ has no AArch64 build; an
+AArch64 station's `memtest.efi` is PassMark's MemTest86, and its row says
+so.
 
 ### 12.7 STATION.INI
 

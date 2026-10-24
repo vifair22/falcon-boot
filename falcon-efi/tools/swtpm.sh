@@ -52,7 +52,9 @@ swtpm_start() {  # swtpm_start <2|2crb|1.2> <dir>
     local args=(socket --tpmstate "dir=$dir/state"
                 --ctrl "type=unixio,path=$sock"
                 --pid "file=$dir/swtpm.pid")
-    local dev=tpm-tis
+    # tpm-tis on an x86 machine; virt has no ISA bus and takes the
+    # sysbus device (SWTPM_TIS_DEV=tpm-tis-device).
+    local dev=${SWTPM_TIS_DEV:-tpm-tis}
 
     swtpm_stop
     case $ver in

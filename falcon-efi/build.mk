@@ -58,6 +58,21 @@ $(call efi_link,$(1),$(2),$(3),EFI_OBJ,CC,EFI_LDFLAGS,$$(CC:gcc=objdump))
 $(call efi_link,$(1)-aa64,$(2)-aa64,$$(patsubst $$(HOOK_BLOB),$$(HOOK_A64_BLOB),$$(filter-out $$(EFI_X86_ONLY),$(3))),EFI_AA64_OBJ,CC_AA64,EFI_AA64_LDFLAGS,$$(OBJDUMP_AA64))
 endef
 
+# Shim's loader refuses a section that has no bytes in the file and is not
+# marked uninitialised data ("inside image headers", EFI_UNSUPPORTED). lld
+# folds .bss into .data, so an AArch64 image whose data is all zero has one;
+# every AArch64 link is checked. $(1) the image.
+define pe_raw_check
+	@llvm-readobj --sections $(1) | awk ' \
+		$$1 == "Name:" { n = $$2; r = -1 } \
+		$$1 == "RawDataSize:" { r = $$2 } \
+		/IMAGE_SCN_CNT_UNINITIALIZED_DATA/ { r = 1 } \
+		$$1 == "]" && r == 0 { print n; bad = 1 } \
+		END { exit bad }' >&2 || { \
+		echo "ERROR: $(1): the sections above have no file data and are not .bss; shim refuses the image" >&2; \
+		rm -f $(1); exit 1; }
+endef
+
 # $(call efi_link,<app>,<image name>,<sources>,<objdir var>,<cc var>,
 #                 <ldflags var>,<objdump>)
 define efi_link
@@ -66,6 +81,7 @@ $(1)_EFI_OBJS := $$(patsubst %.c,$$($(4))/%.o,$(3))
 $$(BIN)/$(2).efi: $$($(1)_EFI_OBJS)
 	@mkdir -p $$(@D)
 	$$($(5)) $$($(6)) -o $$@ $$($(1)_EFI_OBJS)
+	$(if $(filter CC_AA64,$(5)),$$(call pe_raw_check,$$@))
 
 sbat-check-$(1): $$(BIN)/$(2).efi
 	@$(7) -h $$< | grep -q '\.sbat' || { \
@@ -137,7 +153,20 @@ $(STANDIN): $(EFI_OBJ)/$(STANDIN_SRC:.c=.o)
 	@mkdir -p $(@D)
 	$(CC) $(EFI_LDFLAGS) -o $@ $<
 
+# The same for an AArch64 station.
+STANDIN_AA64 := build/test/standin-aa64.efi
+
+$(STANDIN_AA64): $(EFI_AA64_OBJ)/$(STANDIN_SRC:.c=.o)
+	@mkdir -p $(@D)
+	$(CC_AA64) $(EFI_AA64_LDFLAGS) -o $@ $<
+	$(call pe_raw_check,$@)
+
 $(STANDIN_SIGNED): $(STANDIN) $(MOK_KEY)
+	sbsign --key $(MOK_KEY) --cert $(MOK_CRT) --output $@ $<
+
+STANDIN_AA64_SIGNED := build/test/standin-aa64-signed.efi
+
+$(STANDIN_AA64_SIGNED): $(STANDIN_AA64) $(MOK_KEY)
 	sbsign --key $(MOK_KEY) --cert $(MOK_CRT) --output $@ $<
 
 # The core rig's relaunch-uefi payload: started from a falcon-boot, it
@@ -161,6 +190,21 @@ $(TPM_PROBE): $(EFI_OBJ)/$(TPM_PROBE_SRC:.c=.o)
 	$(CC) $(EFI_LDFLAGS) -o $@ $<
 
 $(TPM_PROBE_SIGNED): $(TPM_PROBE) $(MOK_KEY)
+	sbsign --key $(MOK_KEY) --cert $(MOK_CRT) --output $@ $<
+
+TPM_PROBE_AA64 := build/test/tpm-probe-aa64.efi
+TPM_PROBE_AA64_SIGNED := build/test/tpm-probe-aa64-signed.efi
+
+$(TPM_PROBE_AA64): $(EFI_AA64_OBJ)/$(TPM_PROBE_SRC:.c=.o)
+	@mkdir -p $(@D)
+	$(CC_AA64) $(EFI_AA64_LDFLAGS) -o $@ $<
+	$(call pe_raw_check,$@)
+
+# The probe's data is all zero buffers: kept as file bytes, so its .data is
+# not the empty section pe_raw_check refuses.
+$(EFI_AA64_OBJ)/$(TPM_PROBE_SRC:.c=.o): EFI_AA64_CFLAGS += -fno-zero-initialized-in-bss
+
+$(TPM_PROBE_AA64_SIGNED): $(TPM_PROBE_AA64) $(MOK_KEY)
 	sbsign --key $(MOK_KEY) --cert $(MOK_CRT) --output $@ $<
 
 # Stage the loader as the removable-media default path on a vvfat-backed ESP,
@@ -223,6 +267,11 @@ test-stick: $(EFI_SIGNED) $(EFI_AA64_SIGNED) test-iso test-uki cli bios
 # both firmwares.
 test-station: $(STANDIN) station test-uki cli
 	falcon-efi/tools/mk-test-station.sh
+
+# The same disk with an AArch64 station on it, UEFI only.
+test-station-aa64: $(STANDIN_AA64) $(EFI_STATION_AA64) $(EFI_ESP_JUMP_AA64) \
+		test-uki cli
+	STATION_ARCH=aa64 falcon-efi/tools/mk-test-station.sh
 
 # The core step's matrix cells (DESIGN Section 10), each
 # booted headless and judged from serial: the stick alone, beside a second

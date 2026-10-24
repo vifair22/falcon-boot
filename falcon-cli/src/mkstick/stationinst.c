@@ -72,8 +72,8 @@
 #define DEFAULT_STAGE2        FALCON_DATADIR "/bin/falcon-bios-stage2.bin"
 #define DEFAULT_STAGE3        FALCON_DATADIR "/bin/falcon-bios-station-stage3.bin"
 #define DEFAULT_LEGACY_STAGE3 FALCON_DATADIR "/bin/falcon-bios-station-legacy-stage3.bin"
-#define DEFAULT_LOADER        FALCON_DATADIR "/bin/falcon-boot-station.efi"
-#define DEFAULT_ESP_JUMP      FALCON_DATADIR "/bin/falcon-esp-jump.efi"
+#define DEFAULT_BIN           FALCON_DATADIR "/bin"
+#define DEFAULT_LOADER        DEFAULT_BIN "/falcon-boot-station.efi"
 #define DEFAULT_SHIM_DIR      FALCON_DATADIR "/shim/bins"
 #define DEFAULT_MODS          FALCON_DATADIR "/bin/mod"
 
@@ -82,6 +82,8 @@
 #define SHELF_KEY_MAX ((size_t)64 * 1024)
 
 static const cli_opt install_opts[] = {
+    { "arch", CLI_OPT_VALUE, 0, "<x64|aa64>",
+      "the machine the station boots (default: this one's)" },
     { "bios", CLI_OPT_FLAG, 0, NULL,
       "install the BIOS station (default: both, where the disk allows)" },
     { "uefi", CLI_OPT_FLAG, 0, NULL,
@@ -122,7 +124,8 @@ static const cli_opt install_opts[] = {
     { "stage1", CLI_OPT_VALUE, 0, "<file>", "default " DEFAULT_STAGE1 },
     { "stage2", CLI_OPT_VALUE, 0, "<file>", "default " DEFAULT_STAGE2 },
     { "stage3", CLI_OPT_VALUE, 0, "<file>", "default " DEFAULT_STAGE3 },
-    { "loader", CLI_OPT_VALUE, 0, "<file>", "default " DEFAULT_LOADER },
+    { "loader", CLI_OPT_VALUE, 0, "<file>",
+      "default " DEFAULT_LOADER ", or -aa64.efi for --arch aa64" },
     { "shim", CLI_OPT_VALUE, 0, "<dir>",
       "UEFI through shim: shimx64.efi and its MokManager from dir ("
       DEFAULT_SHIM_DIR " is where fetch-shims.sh puts them); without it "
@@ -1106,8 +1109,7 @@ static cli_status save_foreign_jump(const stn_disk *td, const stn_plan *p,
     if (snprintf(dst, sizeof dst, "%s%s", backup, STN_JUMP_BACKUP_EXT) >=
         (int)sizeof dst)
         return set_error(CLI_ERR_RANGE, "--backup is too long");
-    rc = stn_mtools_get(td->d.path, off, STN_ESP_BOOT_DIR "/" STN_ESP_JUMP,
-                        dst);
+    rc = stn_mtools_get(td->d.path, off, stn_n()->jump_rel, dst);
     if (rc != CLI_OK)
         return rc;
     log_info("\\EFI\\BOOT\\%s was another system's; saved to %s",
@@ -1123,7 +1125,9 @@ static cli_status write_uefi(const stn_disk *td, const stn_plan *p,
     const part_entry *e = &td->r.parts[p->esp];
     uint64_t off = e->start_lba * td->d.sector;
     const char *shim_dir = cli_value(a, "shim", NULL);
-    const char *loader = cli_value(a, "loader", DEFAULT_LOADER);
+    char dloader[MKS_PATH_MAX];
+    char djump[MKS_PATH_MAX];
+    const char *loader;
     const char *memtest = cli_value(a, "memtest-efi", NULL);
     char shim[MKS_PATH_MAX] = "";
     char mm[MKS_PATH_MAX] = "";
@@ -1136,16 +1140,22 @@ static cli_status write_uefi(const stn_disk *td, const stn_plan *p,
     ident_rec rec;
     cli_status rc = CLI_OK;
 
+    (void)snprintf(dloader, sizeof dloader, "%s/%s", DEFAULT_BIN,
+                   stn_n()->loader_file);
+    (void)snprintf(djump, sizeof djump, "%s/%s", DEFAULT_BIN,
+                   stn_n()->jump_file);
+    loader = cli_value(a, "loader", dloader);
     if (p->no_shim) {
         (void)snprintf(next, sizeof next, "%s", STN_LOADER_NOSHIM);
     } else {
-        rc = shim_find(shim_dir, "x64", shim, sizeof shim);
+        rc = shim_find(shim_dir, stn_n()->low, shim, sizeof shim);
         if (rc == CLI_OK)
             rc = shim_next_stage_name(shim, next, sizeof next);
         if (rc == CLI_OK)
             rc = shim_mokmanager_name(shim, mm_name, sizeof mm_name);
         if (rc == CLI_OK)
-            rc = shim_find_mokmanager(shim, "x64", mm_name, mm, sizeof mm);
+            rc = shim_find_mokmanager(shim, stn_n()->low, mm_name, mm,
+                                      sizeof mm);
     }
     if (rc == CLI_OK)
         rc = util_join(signed_loader, sizeof signed_loader, workdir, next);
@@ -1161,7 +1171,7 @@ static cli_status write_uefi(const stn_disk *td, const stn_plan *p,
         rc = util_join(signed_jump, sizeof signed_jump, workdir,
                        STN_ESP_JUMP);
         if (rc == CLI_OK)
-            rc = mok_sign(keys, DEFAULT_ESP_JUMP, signed_jump);
+            rc = mok_sign(keys, djump, signed_jump);
     }
     if (rc != CLI_OK)
         return rc;
@@ -1209,7 +1219,7 @@ static cli_status write_uefi(const stn_disk *td, const stn_plan *p,
         rc = stn_mtools_mkdir(td->d.path, off, STN_ESP_BOOT_DIR);
         if (rc == CLI_OK)
             rc = stn_mtools_put(td->d.path, off, signed_jump,
-                                STN_ESP_BOOT_DIR "/" STN_ESP_JUMP);
+                                stn_n()->jump_rel);
         if (rc != CLI_OK)
             return rc;
         log_info("ESP (partition %u): \\EFI\\BOOT\\%s, the jumper to %s",
@@ -1446,7 +1456,7 @@ static cli_status install_run(const cli_args *a)
     const char *key = cli_value(a, "key", NULL);
     const char *cert = cli_value(a, "cert", NULL);
     int dry = cli_flag(a, "dry-run");
-    int ask_bios = cli_flag(a, "bios");
+    int ask_bios;
     int ask_uefi = cli_flag(a, "uefi");
     unsigned long size_mib = 0;
     uint64_t want;
@@ -1476,6 +1486,17 @@ static cli_status install_run(const cli_args *a)
     rc = mkstick_guid_selfcheck();
     if (rc != CLI_OK)
         return rc;
+    rc = stn_arch_option(a);
+    if (rc != CLI_OK)
+        return rc;
+    ask_bios = cli_flag(a, "bios");
+    /* An AArch64 machine has UEFI and nothing else. */
+    if (strcmp(stn_n()->low, "x64") != 0) {
+        if (ask_bios || cli_flag(a, "legacy"))
+            return set_error(CLI_ERR_USAGE, "--bios and --legacy are for x86 "
+                             "machines; an AArch64 station is UEFI only");
+        ask_uefi = 1;
+    }
     if (size_text != NULL) {
         char *end = NULL;
 
@@ -1767,11 +1788,11 @@ static cli_status install_run(const cli_args *a)
         }
     }
     if (p.uefi) {
-        log_info("UEFI:     \\EFI\\falcon\\ on the ESP (partition %u)%s",
+        log_info("UEFI:     \\EFI\\falcon\\ on the ESP (partition %u)%s%s%s",
                  td->r.parts[p.esp].number,
-                 p.no_shim ? ", no shim: the loader is " STN_LOADER_NOSHIM
-                             " and the entry names the jumper"
-                           : "");
+                 p.no_shim ? ", no shim: the loader is " : "",
+                 p.no_shim ? STN_LOADER_NOSHIM : "",
+                 p.no_shim ? " and the entry names the jumper" : "");
         jump_summary(td, &p);
         print_ini("\\EFI\\falcon\\" STATIONINI_FILE, p.ini_uefi,
                   p.ini_uefi_len);
@@ -1942,8 +1963,8 @@ out:
     if (made_tmp) {
         char w[MKS_PATH_MAX];
         size_t k;
-        static const char *const leftovers[] = {
-            "grubx64.efi", "grub.efi", STN_LOADER_NOSHIM, STN_ESP_MEMTEST,
+        const char *const leftovers[] = {
+            STN_LOADER_OLD, "grub.efi", STN_LOADER_NOSHIM, STN_ESP_MEMTEST,
             STN_ESP_JUMP
         };
 

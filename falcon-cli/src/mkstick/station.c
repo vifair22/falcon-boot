@@ -189,6 +189,22 @@ static int mtools_exists(const char *img, const char *path)
     return 1;
 }
 
+cli_status stn_arch_option(const cli_args *a)
+{
+    const char *arch = cli_value(a, "arch", NULL);
+
+    if (arch == NULL) {
+        if (stn_arch_host() == NULL)
+            return set_error(CLI_ERR_USAGE, "this machine is neither x86-64 "
+                             "nor AArch64; pass --arch x64 or --arch aa64");
+        (void)stn_n();
+        return CLI_OK;
+    }
+    if (stn_arch_set(arch) != 0)
+        return set_error(CLI_ERR_USAGE, "--arch %s: x64 or aa64", arch);
+    return CLI_OK;
+}
+
 cli_status stn_mtools_mkdir(const char *disk, uint64_t off, const char *dir)
 {
     char img[MKS_PATH_MAX + 32];
@@ -674,6 +690,8 @@ cli_status stn_fw_jump_entry(const char *disk, uint32_t part, int *num)
 /* ---- remove ---- */
 
 static const cli_opt remove_opts[] = {
+    { "arch", CLI_OPT_VALUE, 0, "<x64|aa64>",
+      "the machine the station boots (default: this one's)" },
     { "backup", CLI_OPT_VALUE, 0, "<file>",
       "the file `station install` wrote (required)" },
     { "full", CLI_OPT_FLAG, 0, NULL,
@@ -766,14 +784,13 @@ static cli_status restore_foreign_jump(const cli_args *a, const char *bpath,
     }
     if (!util_is_file(src))
         return set_error(CLI_ERR_NOTFOUND, "--bootx64 %s is not a file", src);
-    rc = stn_mtools_put(d->path, esp_off, src,
-                        STN_ESP_BOOT_DIR "/" STN_ESP_JUMP);
+    rc = stn_mtools_put(d->path, esp_off, src, stn_n()->jump_rel);
     if (rc == CLI_OK)
         log_info("restored \\EFI\\BOOT\\%s from %s", STN_ESP_JUMP, src);
     return rc;
 }
 
-static cli_status remove_run(const cli_args *a)
+static cli_status remove_run_arch(const cli_args *a)
 {
     static uint8_t hdr[STN_BK_HDR];
     static mks_records r;
@@ -886,8 +903,7 @@ static cli_status remove_run(const cli_args *a)
                                    &jump) != CLI_OK)
                 cli_error_clear();
             if (jump) {
-                rc = stn_mtools_del(d.path, esp_off,
-                                    STN_ESP_BOOT_DIR "/" STN_ESP_JUMP);
+                rc = stn_mtools_del(d.path, esp_off, stn_n()->jump_rel);
                 if (rc != CLI_OK)
                     goto out;
                 log_info("deleted \\EFI\\BOOT\\%s, the jumper, from the ESP",
@@ -993,6 +1009,13 @@ out:
     return rc;
 }
 
+static cli_status remove_run(const cli_args *a)
+{
+    cli_status rc = stn_arch_option(a);
+
+    return rc != CLI_OK ? rc : remove_run_arch(a);
+}
+
 static const cli_cmd stn_cmd_remove = {
     "remove",
     "undo `station install` from its backup",
@@ -1018,6 +1041,8 @@ static const cli_cmd stn_cmd_remove = {
 /* ---- status ---- */
 
 static const cli_opt status_opts[] = {
+    { "arch", CLI_OPT_VALUE, 0, "<x64|aa64>",
+      "the machine the station boots (default: this one's)" },
     { "also", CLI_OPT_VALUE, 1, "<disk>",
       "another disk or image of the same machine, to list its systems" },
     { "no-scan", CLI_OPT_FLAG, 0, NULL,
@@ -1194,7 +1219,10 @@ static void print_rows(const stn_scan *s, const stationini *ini, int have_ini,
     w = memtest ? strows_add(&rows, STROW_MEMTEST) : NULL;
     if (w != NULL) {
         (void)snprintf(w->name, sizeof w->name, "memtest");
-        label_wide(w->label, STROWS_LABEL_MAX, STROWS_LABEL_MEMTEST);
+        label_wide(w->label, STROWS_LABEL_MAX,
+                   strcmp(stn_n()->low, "aa64") == 0
+                       ? STROWS_LABEL_MEMTEST_AA64
+                       : STROWS_LABEL_MEMTEST);
         w->own_esp = (uint8_t)(fw == STROWS_UEFI);
     }
     if (have_ini)
@@ -1424,17 +1452,16 @@ cli_status stn_esp_jump_state(const char *disk, uint64_t off, uint64_t len,
     *ours = 0;
     buf = malloc(max);
     if (buf == NULL)
-        return set_error(CLI_ERR_NOMEM, "reading \\EFI\\BOOT\\" STN_ESP_JUMP);
-    rc = stn_read_file(disk, off, len, "/" STN_ESP_BOOT_DIR "/" STN_ESP_JUMP,
-                       buf, max, &got);
+        return set_error(CLI_ERR_NOMEM, "reading %s", STN_ESP_JUMP_PATH);
+    rc = stn_read_file(disk, off, len, stn_n()->jump_abs, buf, max, &got);
     if (rc == FS_OK || rc == FS_ERR_RANGE)
         *present = 1;
     if (rc == FS_OK)
         *ours = stn_is_esp_jump((const uint8_t *)buf, got);
     free(buf);
     if (rc != FS_OK && rc != FS_ERR_RANGE && rc != FS_ERR_NOT_FOUND)
-        return set_error(CLI_ERR_IO, "\\EFI\\BOOT\\" STN_ESP_JUMP " could "
-                         "not be read off the ESP");
+        return set_error(CLI_ERR_IO, "%s could not be read off the ESP",
+                         STN_ESP_JUMP_PATH);
     return CLI_OK;
 }
 
@@ -1452,8 +1479,7 @@ cli_status stn_esp_loader_name(const char *disk, uint64_t off, uint64_t len,
     buf = malloc(max);
     if (buf == NULL)
         return set_error(CLI_ERR_NOMEM, "reading shim off the ESP");
-    rc = stn_read_file(disk, off, len, "/" STN_ESP_DIR "/" STN_ESP_SHIM, buf,
-                       max, &got);
+    rc = stn_read_file(disk, off, len, stn_n()->shim_abs, buf, max, &got);
     if (rc == FS_ERR_NOT_FOUND) {
         free(buf);
         (void)snprintf(out, cap, "%s", stn_noshim_loader(
@@ -1463,8 +1489,8 @@ cli_status stn_esp_loader_name(const char *disk, uint64_t off, uint64_t len,
     }
     if (rc != FS_OK) {
         free(buf);
-        return set_error(CLI_ERR_IO, "\\EFI\\falcon\\" STN_ESP_SHIM " could "
-                         "not be read off the ESP");
+        return set_error(CLI_ERR_IO, "\\EFI\\falcon\\%s could not be read "
+                         "off the ESP", STN_ESP_SHIM);
     }
     /* shim is public; the copy is only so its name table can be read by the
      * one reader there is (shimname.c), which takes a path. */
@@ -1798,7 +1824,7 @@ static int status_shelf(stn_scan *s, const uint8_t *id)
     return encrypted;
 }
 
-static cli_status status_run(const cli_args *a)
+static cli_status status_run_arch(const cli_args *a)
 {
     static stn_scan s;
     static stationini ini_bios;
@@ -1924,6 +1950,13 @@ static cli_status status_run(const cli_args *a)
         return set_error(CLI_ERR_INVALID, "the station on %s is incomplete",
                          s.disks[0].d.path);
     return CLI_OK;
+}
+
+static cli_status status_run(const cli_args *a)
+{
+    cli_status rc = stn_arch_option(a);
+
+    return rc != CLI_OK ? rc : status_run_arch(a);
 }
 
 static const cli_cmd stn_cmd_status = {

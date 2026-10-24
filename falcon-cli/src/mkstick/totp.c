@@ -805,6 +805,8 @@ static cli_status station_pcrs(stn_esp *e, const char *log_file,
 /* ---- the commands ---- */
 
 static const cli_opt enroll_opts[] = {
+    { "arch", CLI_OPT_VALUE, 0, "<x64|aa64>",
+      "the machine the station boots (default: this one's)" },
     { "pcrs", CLI_OPT_VALUE, 0, "<list>",
       "PCRs to seal to, 0 to 15 (default " TOTP_PCRS_DEFAULT ")" },
     { "owner-auth-file", CLI_OPT_VALUE, 0, "<file>",
@@ -822,6 +824,8 @@ static const cli_opt enroll_opts[] = {
 };
 
 static const cli_opt remove_opts[] = {
+    { "arch", CLI_OPT_VALUE, 0, "<x64|aa64>",
+      "the machine the station boots (default: this one's)" },
     { "owner-auth-file", CLI_OPT_VALUE, 0, "<file>",
       "the TPM owner's authorisation (default: none on 2.0, the "
       "well-known secret on 1.2)" },
@@ -1119,7 +1123,7 @@ cli_status stn_totp_reseal_update(const stn_totp_update *u)
     return enroll(&in);
 }
 
-static cli_status enroll_run(const cli_args *a)
+static cli_status enroll_run_arch(const cli_args *a)
 {
     enroll_in in;
 
@@ -1127,7 +1131,14 @@ static cli_status enroll_run(const cli_args *a)
     return enroll(&in);
 }
 
-static cli_status reseal_run(const cli_args *a)
+static cli_status enroll_run(const cli_args *a)
+{
+    cli_status rc = stn_arch_option(a);
+
+    return rc != CLI_OK ? rc : enroll_run_arch(a);
+}
+
+static cli_status reseal_run_arch(const cli_args *a)
 {
     enroll_in in;
 
@@ -1135,7 +1146,14 @@ static cli_status reseal_run(const cli_args *a)
     return enroll(&in);
 }
 
-static cli_status remove_run(const cli_args *a)
+static cli_status reseal_run(const cli_args *a)
+{
+    cli_status rc = stn_arch_option(a);
+
+    return rc != CLI_OK ? rc : reseal_run_arch(a);
+}
+
+static cli_status remove_run_arch(const cli_args *a)
 {
     static stn_esp e;
     owner_auth o;
@@ -1186,9 +1204,18 @@ static cli_status remove_run(const cli_args *a)
     return CLI_OK;
 }
 
+static cli_status remove_run(const cli_args *a)
+{
+    cli_status rc = stn_arch_option(a);
+
+    return rc != CLI_OK ? rc : remove_run_arch(a);
+}
+
 /* ---- check ---- */
 
 static const cli_opt check_opts[] = {
+    { "arch", CLI_OPT_VALUE, 0, "<x64|aa64>",
+      "the machine the station boots (default: this one's)" },
     { "tpm-socket", CLI_OPT_VALUE, 0, "<path>",
       "TEST ONLY: swtpm's socket instead of /dev/tpmrm0 or /dev/tpm0" }
 };
@@ -1198,7 +1225,7 @@ static const cli_opt check_opts[] = {
  * refusing on the PCRs is the answer that shows everything before them
  * (the index, the pinned key, the SRK's secret on 1.2) is right; any other
  * refusal names the step. */
-static cli_status check_run(const cli_args *a)
+static cli_status check_run_arch(const cli_args *a)
 {
     static stn_esp e;
     const stationini_totp *t;
@@ -1277,6 +1304,13 @@ static cli_status check_run(const cli_args *a)
     default:
         return tpm_fail(rc, "reading the seed");
     }
+}
+
+static cli_status check_run(const cli_args *a)
+{
+    cli_status rc = stn_arch_option(a);
+
+    return rc != CLI_OK ? rc : check_run_arch(a);
 }
 
 static const cli_cmd totp_check = {
