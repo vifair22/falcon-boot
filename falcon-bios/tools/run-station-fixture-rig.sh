@@ -38,7 +38,7 @@
 # Usage: falcon-bios/tools/run-station-fixture-rig.sh [case...]  (default: all)
 # Env:   FIXTURES  where freedos.img, win98se.img, win95.img are
 #                  (default build/fixtures; tools/fixtures/README.md says
-#                  how to copy them, sparse, from binhost-builder)
+#                  how to copy them, sparse, from the build host)
 #        QEMU      qemu-system-i386 (default: on PATH)
 set -euo pipefail
 

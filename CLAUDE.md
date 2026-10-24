@@ -26,7 +26,7 @@ the on-stick signing appliance; the UEFI and BIOS stations with the
 installer, STATION.INI, the station bundle update and the TPM-backed TOTP
 check; falcon jump and station-legacy for machines without a 64-bit mode;
 and the coverage harness (`docs/coverage.md`), which runs in a container on
-binhost-builder. Status: pre-1.0.
+the build host. Status: pre-1.0.
 
 ## Non-negotiable security invariants (DESIGN.md Section 7)
 
@@ -143,9 +143,9 @@ unique within each such set, so `#include <fs/exfat.h>` means one file, and
   container (`harness.sh bash`; `/dev/kvm` for the rigs; the repo's own
   `build/` when the binhost's `/srv/falcon` is not there; what root wrote
   is chowned back to the caller). Heavy runs and the corpus go to
-  binhost-builder: rsync the working tree
+  the build host: rsync the working tree
   into its one checkout, `rsync -a --delete --exclude=/.git --exclude=/build
-  --exclude=/compile_commands.json ./ vifair@172.20.0.170:/srv/falcon/repo/`
+  --exclude=/compile_commands.json ./ builder@buildhost:/srv/falcon/repo/`
   (no pull there; GitLab is where work is kept safe), then there
   `tools/coverage/harness.sh make test` (or `make analyze`, or no command
   for the corpus) against the default build directory, `/srv/falcon/build`,

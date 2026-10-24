@@ -4,7 +4,7 @@
 # 0. Which toolchain this file answers to
 # ==========================================================================
 #
-# binhost-builder's harness container, and only it. Decided 2026-09-20.
+# the build host's harness container, and only it. Decided 2026-09-20.
 #
 # The gate compares a run against this file, so the file is only meaningful
 # next to a fixed set of analyzer versions. The container pins them

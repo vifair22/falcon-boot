@@ -6,7 +6,7 @@
 # docs/coverage.md is evidence, and evidence produced on one laptop with an
 # undeclared toolchain is evidence nobody else can reproduce.
 #
-# Debian trixie because binhost-builder runs trixie, so the container's kernel
+# Debian trixie because the build host runs trixie, so the container's kernel
 # interfaces (loop, dm, kvm) are the ones its packages were built against.
 #
 # It runs as root and still installs sudo, which looks redundant and is not:
