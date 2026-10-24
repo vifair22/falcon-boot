@@ -38,6 +38,51 @@
 #
 # See docs/DESIGN.md for the architecture.
 
+# ---- where the build runs ----
+#
+# In the harness container (tools/coverage/harness.sh), the toolchain CI
+# runs. Outside it, this file reads no further: every goal is handed to the
+# container, and a workstation needs docker and none of the toolchain.
+# FALCON_HARNESS is set inside the container; FALCON_NATIVE=1 builds with
+# the host's toolchain instead. Bash's completion parses the whole file
+# natively, to list its targets.
+#
+# The host goals act on this machine: the container builds what each needs
+# (falcon_needs.<goal>, checked against the build's own names below), then
+# the goal runs here with those files taken as up to date.
+FALCON_HOST_GOALS := install uninstall run run-secboot run-stick run-stick-secboot
+falcon_needs.install := build/bin/falcon-boot-mkstick build/bin/falcon-boot-sign
+falcon_needs.run := build/bin/falcon-boot.efi
+falcon_needs.run-secboot := build/bin/falcon-boot-signed.efi
+
+ifeq ($(FALCON_HARNESS)$(FALCON_NATIVE)$(__BASH_MAKE_COMPLETION__),)
+
+# The flags as make parsed them (-j, -k, -n, the command line's variables),
+# taken before a jobserver is attached that the container could not reach.
+falcon_makeflags := $(MAKEFLAGS)
+falcon_host := $(filter $(FALCON_HOST_GOALS),$(MAKECMDGOALS))
+falcon_inner := $(filter-out $(FALCON_HOST_GOALS),$(MAKECMDGOALS)) \
+	$(foreach g,$(falcon_host),$(falcon_needs.$(g)))
+
+.DEFAULT_GOAL := falcon-container
+.PHONY: falcon-container $(MAKECMDGOALS)
+
+# Once for all the goals. No goals at all is the inner make's default goal;
+# host goals that need nothing built start no container.
+ifneq ($(strip $(falcon_inner))$(if $(MAKECMDGOALS),,default),)
+falcon-container:
+	+@MAKEFLAGS='$(subst ','\'',$(falcon_makeflags))' tools/coverage/harness.sh make $(falcon_inner)
+else
+falcon-container: ;
+endif
+
+$(filter-out $(FALCON_HOST_GOALS),$(MAKECMDGOALS)): falcon-container ; @:
+
+$(falcon_host): falcon-container
+	+@$(MAKE) FALCON_NATIVE=1 $(addprefix -o ,$(falcon_needs.$@)) $@
+
+else
+
 # The last field of every version string. `release` is CI's on master
 # alone (.gitlab-ci.yml); every other build is `dev`.
 VARIANT ?= dev
@@ -428,6 +473,14 @@ coverage: test
 test-fixtures: test-image test-ext4 test-jbd2 test-fat test-luks test-isoview test-trust \
 	test-iso9660 test-udf test-wim test-uefiboot test-biosboot
 
+# One fixture at a time, under -j too. mk-test-jbd2.sh snapshots a mounted
+# filesystem whose committed metadata must not have reached its home blocks
+# yet, and the other fixture scripts run a plain `sync`, which writes every
+# filesystem's home; one running beside it leaves a jbd2 image with nothing to
+# replay, and test_jbd2_fixtures_meaningful fails. (GNU make 4.4: with
+# prerequisites, .NOTPARALLEL serialises only those.)
+.NOTPARALLEL: test-fixtures
+
 # Verify the toolchain before attempting a build. The EFI target needs the
 # mingw cross-gcc that emits PE32+ directly; the test rig and the host tooling
 # need the userland utilities we shell out to.
@@ -525,6 +578,21 @@ define cc_db_emit
 	done
 endef
 
+# The database names the mingw include directory of the machine that wrote
+# it, the harness's, which a workstation building in the container does not
+# have. falcon-vdisk is the one component whose entries read mingw's own
+# headers (the DDK); .clangd points the editor at this copy of them, links
+# followed.
+EDITOR_MINGW := build/editor/mingw-include
+ifneq ($(VDISK_X64_DDK),)
+all: $(EDITOR_MINGW)/.stamp
+$(EDITOR_MINGW)/.stamp: $(VDISK_X64_DDK)/ntddk.h
+	rm -rf $(EDITOR_MINGW)
+	mkdir -p $(EDITOR_MINGW)
+	cp -rL $(VDISK_X64_DDK)/../. $(EDITOR_MINGW)/
+	touch $@
+endif
+
 # `make compdb` for people; the file target is what everything depends on.
 compdb: compile_commands.json
 .PHONY: compdb
@@ -545,4 +613,11 @@ compile_commands.json: Makefile $(wildcard falcon-*/build.mk apps/*/app.mk)
 clean:
 	rm -rf build compile_commands.json
 
+# The host goals' needs, named before this file's build was read.
+ifneq ($(falcon_needs.install) $(falcon_needs.run) $(falcon_needs.run-secboot),$(MKSTICK) $(SIGN) $(EFI) $(EFI_SIGNED))
+$(error falcon_needs.* no longer name $(MKSTICK) $(SIGN) $(EFI) $(EFI_SIGNED))
+endif
+
 -include $(shell find $(OBJ) -name '*.o.d' 2>/dev/null)
+
+endif

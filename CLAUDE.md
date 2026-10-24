@@ -26,7 +26,7 @@ the on-stick signing appliance; the UEFI and BIOS stations with the
 installer, STATION.INI, the station bundle update and the TPM-backed TOTP
 check; falcon jump and station-legacy for machines without a 64-bit mode;
 and the coverage harness (`docs/coverage.md`), which runs in a container on
-binhost-builder. Status: pre-1.0.
+the build host. Status: pre-1.0.
 
 ## Non-negotiable security invariants (DESIGN.md Section 7)
 
@@ -115,6 +115,15 @@ unique within each such set, so `#include <fs/exfat.h>` means one file, and
 
 ## Building and testing
 
+- `make` runs in the harness container wherever it is typed: outside it, the
+  Makefile hands every goal to `tools/coverage/harness.sh`, which pulls the
+  image for the checkout's Dockerfile from the registry (one `docker login
+  registry.git.airies.net:443`) or builds it, and mounts the repository at
+  its own path, so `compile_commands.json` stays valid for the host's
+  editor. The host goals (`install`, `uninstall`, `run`, `run-secboot`,
+  `run-stick`, `run-stick-secboot`) run on the host after the container
+  builds what they need. A workstation needs docker, and QEMU only for
+  `run*`. `FALCON_NATIVE=1` builds with the host's toolchain.
 - `make check-tools` names what is missing. Objects land in
   `build/obj/<flavour>/<source path>.o`, binaries in `build/bin/` (the UEFI
   loader is `build/bin/falcon-boot.efi`), fixtures and rig artifacts under
@@ -122,7 +131,7 @@ unique within each such set, so `#include <fs/exfat.h>` means one file, and
   on its own by `make compdb` (no toolchain needed).
 - `make test` runs every component's suite. A fresh build directory needs
   `make test-fixtures` first (twelve image-backed tests read them; it calls
-  `losetup`, so sudo). `make coverage` runs the suites strictly with a
+  `losetup`, which the privileged container does as root). `make coverage` runs the suites strictly with a
   report; `make analyze` runs cppcheck, gcc's analyzer and clang-tidy
   against `tools/analyze-baseline.txt`.
 - Rigs: `make test-stick`, `run-stick`, `run-stick-secboot`, `test-core`,
@@ -130,23 +139,24 @@ unique within each such set, so `#include <fs/exfat.h>` means one file, and
   `test-tpm-rig`, `test-tpm`, `test-bios-img`, `test-bios-probe`,
   `test-jump`, `test-station-bios`, `test-station-fixtures`,
   `test-station-legacy`, `test-devlink`.
-- A machine without the toolchain builds in the harness container, which
-  carries all of it: `tools/coverage/harness.sh make test` (docker; `/dev/kvm`
-  for the rigs; the repo's own `build/` when the binhost's `/srv/falcon` is
-  not there; output chowned back to the caller). That is how the T430 builds.
-  Heavy runs and the corpus go to binhost-builder: rsync the working tree
+- `tools/coverage/harness.sh <command>` runs anything else in the same
+  container (`harness.sh bash`; `/dev/kvm` for the rigs; the repo's own
+  `build/` when the binhost's `/srv/falcon` is not there; what root wrote
+  is chowned back to the caller). Heavy runs and the corpus go to
+  the build host: rsync the working tree
   into its one checkout, `rsync -a --delete --exclude=/.git --exclude=/build
-  --exclude=/compile_commands.json ./ vifair@172.20.0.170:/srv/falcon/repo/`
+  --exclude=/compile_commands.json ./ builder@buildhost:/srv/falcon/repo/`
   (no pull there; GitLab is where work is kept safe), then there
   `tools/coverage/harness.sh make test` (or `make analyze`, or no command
   for the corpus) against the default build directory, `/srv/falcon/build`,
   whose case sticks are mounted from `/srv/build/cache/falcon/sticks`. No
   `repo-<sha>` or `build-<sha>` copies. The harness image is the baseline
-  toolchain: a `make analyze` finding on a workstation with a newer
-  clang-tidy is real only when the harness reports it too.
+  toolchain: a `make analyze` finding from a `FALCON_NATIVE=1` build with a
+  newer clang-tidy is real only when the harness reports it too.
 - CI (`.gitlab-ci.yml`) runs the same harness on the binhost's `falcon`
   runner (shell executor, one job at a time, a build directory per pipeline
-  under `/srv/build/work/falcon/ci`). Merge requests get test, analyze,
+  under `/srv/build/work/falcon/ci`). A pipeline that builds a harness image
+  pushes it to the project's registry. Merge requests get test, analyze,
   coverage and build; a merge request into master adds the rigs and the
   corpus, gated by `tools/coverage/scorecard-diff.py` against master's
   scorecard. The runner itself is gitlab-infra's.

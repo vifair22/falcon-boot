@@ -90,7 +90,11 @@ mkdir -p "$OUTDIR"
 OUTDIR=$(readlink -f "$OUTDIR")
 SERIAL="$OUTDIR/serial.log"
 PCAP="$OUTDIR/net.pcap"
-MON="$OUTDIR/mon.sock"
+# The monitor's socket lives in a directory of its own under /tmp, not in
+# OUTDIR: a UNIX socket's path is limited to 108 bytes, and a case's OUTDIR
+# under a CI job's checkout is longer than that.
+MONDIR=$(mktemp -d "${TMPDIR:-/tmp}/falcon-mon.XXXXXX")
+MON="$MONDIR/mon.sock"
 VARS="$OUTDIR/vars.fd"
 RESULT="$OUTDIR/result"
 rm -f "$SERIAL" "$PCAP" "$MON" "$RESULT" "$OUTDIR/screen.png"
@@ -117,6 +121,7 @@ on_exit() {
     [[ -f "$RESULT" ]] && exit "$rc"
     [[ -n "${QPID:-}" ]] && kill "$QPID" 2>/dev/null
     rm -f "$MON" "${VARS:-}" 2>/dev/null
+    rmdir "$MONDIR" 2>/dev/null
     printf 'ERROR\texited %s before reaching a verdict\t%s\n' "$rc" \
         "$(( $(date +%s) - ${T0:-$(date +%s)} ))" > "$RESULT"
     exit "$rc"
@@ -176,6 +181,7 @@ finish() {   # finish VERDICT REASON
         QPID=
     fi
     rm -f "$MON" "$VARS"
+    rmdir "$MONDIR" 2>/dev/null || true
     local reason=$2
     [[ "$1" != PASS && -n "$what" ]] && reason="$reason (screen: $what)"
     printf '%s\t%s\t%s\n' "$1" "$reason" "$secs" > "$RESULT"

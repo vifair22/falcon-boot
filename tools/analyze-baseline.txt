@@ -4,7 +4,7 @@
 # 0. Which toolchain this file answers to
 # ==========================================================================
 #
-# binhost-builder's harness container, and only it. Decided 2026-09-20.
+# the build host's harness container, and only it. Decided 2026-09-20.
 #
 # The gate compares a run against this file, so the file is only meaningful
 # next to a fixed set of analyzer versions. The container pins them
@@ -25,9 +25,10 @@
 # absolute path from the compile database. The harness used to mount the
 # tree at /src, so every path matched and the gate linted the whole test
 # suite: 403 entries, 357 of them in tests/ and 131 of them clang parse
-# errors rather than findings. The mount is /work now
-# (tools/coverage/harness.sh) and the numbers below are what the gate was
-# always meant to report.
+# errors rather than findings. analyze.sh now matches each path relative to
+# the repository, so where the tree is mounted (its own host path, by
+# tools/coverage/harness.sh) does not change the gate, and the numbers below
+# are what the gate was always meant to report.
 #
 # falcon-cli/src/sign/util.c fd-leak x3: gcc's analyzer has no model for exec, so
 # each dup2 onto a standard descriptor in the forked child before execvp
