@@ -34,7 +34,7 @@ change it.
    not ship its own signed chain requires the optional `sign` bless step; see
    Section 7.)
 3. Booting a personal OS: a Unified Kernel Image (UKI) sitting on a small
-   LUKS2+ext4 partition, whose initramfs then unlocks the real root/home on a
+   LUKS2 partition (ext4 inside, or FAT32), whose initramfs then unlocks the real root/home on a
    second LUKS2 partition and pivots into it.
 4. Chaining through Fedora's shim-x64 16.1 (dual MS-signed, 2011 + 2023
    CAs; Section 4): Secure Boot upheld when
@@ -95,7 +95,7 @@ GPT, four partitions:
 ```
 p1  ESP        FAT32   ~64 MB   loader + shim + MokManager + our public cert; BIOS stage 3 in its reserved sectors
 p2  ISOs       exFAT   bulk     the ISO library (drag-and-drop target) + injection assets
-p3  UKI shelf  LUKS2 -> ext4    ~1 GB   personal-OS UKI + signing-appliance UKI + MOK private key (closed list: Section 5.3), argon2id keyslot at the stick's fixed cost
+p3  UKI shelf  LUKS2 -> ext4    ~1 GB   personal-OS UKI + signing-appliance UKI + MOK private key (closed list: Section 5.3), argon2id keyslot at the stick's fixed cost; ext4 or another filesystem by --p3-fs
 p4  root+home  LUKS2 -> ext4    bulk    real root and home, argon2id keyslot
 ```
 
@@ -150,6 +150,13 @@ simple or firmware-readable. mkstick states the consequences at creation:
   Section 9); p3 is read by our EFI driver alone, and the initramfs
   unlocks and mounts p4 directly.
 
+**p3's filesystem** is ext4 unless `mkstick create --p3-fs` names another:
+FAT32. Only the loaders' own drivers read it, so the choice is whatever
+the OS that maintains the shelf writes best; the loaders read each the same
+way (Section 5.4 for one left mounted). FAT keeps no file modes, so the
+MOK key's 0600 is the mount's on a FAT shelf: mkstick mounts it
+`umask=0077`, and a host's `/etc/fstab` line for it does the same.
+
 Both loaders read a plaintext shelf.
 
 ### 3.1 Identification: the identity record
@@ -203,11 +210,12 @@ passphrase and without the partition table's help:
   `{"type":"falcon","keyslots":[],"version":1,"role":"shelf","install_id":"<32 hex>"}`.
   It is read before any key is known, survives cryptsetup's own operations
   and is shown and edited by `cryptsetup token`.
-- **exFAT and a plaintext ext4 shelf** (p2, p3 with `--p3-plain`): a file at
+- **exFAT and a plaintext shelf** (p2, p3 with `--p3-plain`): a file at
   the root, `/.falcon`, one line of text, `falcon 1 <role> <install id>`.
-  exFAT's boot code is covered by its boot checksum and ext4 has no
-  unowned bytes fsck leaves alone, and the loaders mount these volumes
-  anyway. The same record in text.
+  exFAT's boot code is covered by its boot checksum, ext4 has no
+  unowned bytes fsck leaves alone, a FAT shelf's boot sector is not
+  claimed as a record (that form names a `boot` partition), and the loaders
+  mount these volumes anyway. The same record in text.
 
 **The partition type only narrows the search.** p2 keeps the Microsoft basic-data
 type, because Windows' `partmgr` creates no volume for a GPT partition whose
@@ -483,7 +491,8 @@ Flow:
 1. User selects the personal-OS entry in our menu.
 2. Loader prompts for the passphrase.
 3. Loader unlocks **p3** (LUKS2, argon2id or pbkdf2) using our LUKS + AES-XTS stack
-   (Section 6), and reads the UKI off the ext4 inside.
+   (Section 6), and reads the UKI off the filesystem inside (ext4 by
+   default; Section 3).
 4. Loader synthesizes a **virtual read-only filesystem** carrying the UKI plus
    a credential file holding the passphrase (Section 5.1), then
    `LoadImage`/`StartImage` the UKI from that filesystem. The UKI is signed by
@@ -641,7 +650,7 @@ small, and it is what has to be right for the stick to boot.
 | `/falcon-mok.crt` | its public half, the same certificate as p1's `falcon-boot.cer` | signing and enrollment |
 | `/uki/<name>.efi` | every bootable UKI: the personal OS, its rollback, the signing appliance | the loader's shelf scan |
 | `/vmlinuz-<kernel>` | one plain kernel copy per installed kernel | mkinitcpio, never the loader |
-| `/lost+found` | ext4's own | the filesystem |
+| `/lost+found` | ext4's own, on an ext4 shelf | the filesystem |
 
 **The kernel copies are load-bearing.** Arch's `linux` package ships the
 kernel only at `usr/lib/modules/<kver>/vmlinuz`, and mkinitcpio's pacman
@@ -722,6 +731,13 @@ installs on, always meets a shelf mounted right now).
   (`falcon-cli/src/common/jmem.c`). The scratch block held plaintext from
   the shelf, so each is wiped when it is given up. Memory that cannot be
   had is a page like 5.2's argon2id one: what it needs, what is free.
+
+A FAT shelf has no journal. Linux sets its dirty bit while it is mounted
+and the loaders read it as it stands: what a hibernated OS wrote back is
+there, and what it had not is not, which is the state the OS resumes over.
+Nothing is replayed, so the page never says the last changes were not
+read; a power cut in the middle of a write can leave a FAT shelf that needs
+`fsck.fat` from another system, as it would anywhere.
 
 On the OS side, `/sys/power/freeze_filesystems` set to 1 makes the kernel
 freeze filesystems before it hibernates, and ext4's freeze empties the
@@ -2249,7 +2265,8 @@ creation:
   luksFormat` with the correct KDF per partition (argon2id at the stick's
   fixed cost on p3, `--pbkdf argon2id --pbkdf-memory 32768
   --pbkdf-force-iterations 4 --pbkdf-parallel 4`; cryptsetup's benchmarked
-  argon2id on p4), then `mkfs.ext4` inside each. cryptsetup's host-side
+  argon2id on p4), then `mkfs.ext4` inside each (or, on p3, the
+  filesystem `--p3-fs` names: `mkfs.fat -F 32`). cryptsetup's host-side
   benchmark would size p3's cost for the host, which the next machine may not
   have. falcon-core's argon2id costs about 42 ms per MiB per pass on the
   A21m (i686, 548 MHz), linear in memory and passes, and lanes filled in
@@ -2498,8 +2515,8 @@ while every real file lives only in UDF.
   hint first, probe order second), never by naming a driver directly, so a
   new filesystem is one driver plus one registry row.
   The drivers are exFAT, ext4 (with `jbd2.c`), FAT12/16/32, ISO9660 (Rock
-  Ridge, Joliet) and UDF; xfs and btrfs are not implemented. FAT32 on p2
-  cannot hold >4 GB ISOs. A new driver's checklist: EFI-free over the byte-read
+  Ridge, Joliet) and UDF; xfs and btrfs are not implemented. The FAT driver
+  also reads a FAT32 shelf (Section 3). FAT32 on p2 cannot hold >4 GB ISOs. A new driver's checklist: EFI-free over the byte-read
   callback, host-testable, constrained feature set matched to what its
   mkfs actually emits (the ext4 driver's approach), cmocka suite with a
   fixture image, and zero warnings under the repo flag set.
@@ -2680,7 +2697,7 @@ The three-letter names are the route codes the loaders draw on screen
 | LBA 34 on | BIOS stage 2, its real length (at most 62 sectors); inside the `FALCON-BIOS` EF02 partition when the installer made one | stage 1 |
 | p1 `FALCON-ESP` | FAT32 ESP: shim as `EFI\BOOT\BOOTX64.EFI`, MokManager, falcon-boot as `grubx64.efi`, `falcon-boot.cer`; the `boot` record at byte 0x1DC of its boot sector; in its reserved sectors the BIOS next-boot marker (sector 8) and BIOS stage 3 (from sector 32) | UEFI firmware, shim; stage 2 (`load3.c`) and `marker.c` |
 | p2 `FALCON-ISO` | exFAT: the media, `falcon/blessed/`, the manifest, `falcon/windows.cfg`; `/.falcon`, the `library` record | both loaders, falcon-hook (as raw extents), winjump, the appliance |
-| p3 | LUKS2 + ext4: UKIs in `/uki`, the MOK key pair; the `falcon` token, the `shelf` record | both loaders, the appliance |
+| p3 | LUKS2 + ext4 or FAT32: UKIs in `/uki`, the MOK key pair; the `falcon` token, the `shelf` record | both loaders, the appliance |
 | p4 | LUKS2: the personal OS's LVM (root, home) | the personal OS's initramfs |
 
 Stages 1 and 2 live in front of p1 and stage 3 inside it, so installing
@@ -2827,7 +2844,7 @@ sequenceDiagram
     L->>L: borrow the AVX state, and for a slot of 512 MiB-passes or more StartupAllAPs puts the other cores on the lane pool (mp/)
     L->>FC: luks_unlock p3 (argon2id or PBKDF2, AES-XTS)
     L->>L: the workers released and seen back, the AVX state given back, on every core
-    L->>FC: luks_dev_open, fs_mount_journal ext4 (a journal left by a hibernated OS replayed in memory, 5.4)
+    L->>FC: luks_dev_open, fs_mount_journal on the shelf's filesystem (an ext4 journal left by a hibernated OS replayed in memory, 5.4)
     FC-->>L: /uki/*.efi, else /EFI/Linux/*.efi
     L->>U: chooser (skipped for one image)
     L->>L: read the UKI into pages
@@ -2872,7 +2889,7 @@ sequenceDiagram
     A->>A: modules, then the install ID from falcon.ident.cred (none: refuse, unlock nothing)
     A->>A: find_stick (30 s): the exFAT /.falcon and the LUKS2 token carrying it, any disk, then mount p2 and read the manifest
     A->>A: survey only the listed paths
-    A->>A: shelf_open p3 read-only in process (core LUKS2, ext4) with the passphrase .cred
+    A->>A: shelf_open p3 read-only in process (core LUKS2 and fs) with the passphrase .cred
     A->>A: MOK key and cert into sealed memfds
     A->>A: falcon-boot-sign-static per ISO: /falcon/blessed/, manifest
     A->>F: reboot
@@ -3468,7 +3485,7 @@ sequenceDiagram
         L->>L: borrow the AVX state, and for a slot of 512 MiB-passes or more the MADT's other cores, woken by INIT and two startup IPIs into 0x5000 (mp/aptramp.S), join the lane pool
         L->>FC: luks_unlock p3
         L->>L: the workers released and halted, each sent INIT, the local APIC's SVR as found, the AVX state given back
-        L->>FC: luks_dev_open, fs_mount_journal ext4 (5.4)
+        L->>FC: luks_dev_open, fs_mount_journal (5.4)
     else plaintext shelf
         L->>FC: fs_mount_journal straight off the partition, no prompt and no credential
     end

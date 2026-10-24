@@ -126,6 +126,10 @@
 #                  ignored the journal would find personal.efi, one before
 #                  this did not boot at all), and falcon-bios says on serial
 #                  that it read the shelf through its journal
+#   fs-p3-fat-uefi, fs-p3-fat-bios
+#                  a stick `mkstick create --p3-fs fat32` made: judged as
+#                  uefi-stick, the shelf inside p3's LUKS2 read by the FAT
+#                  driver
 #   64-only-bios32 the same stick under SeaBIOS on an i686 (no long
 #                  mode): an ISO whose every kernel is 64-bit is listed with
 #                  {64-BIT ONLY}, a multi-arch one (a 64-bit and a 32-bit
@@ -307,6 +311,53 @@ build_sticks() {
         falcon-efi/tools/mk-test-stick.sh --no-labels >>"$R/stick-voff.build" 2>&1
     STICK_IMG=$R/stick-voff.img falcon-efi/tools/mk-test-blessed-stick.sh \
         >>"$R/stick-voff.build" 2>&1
+}
+
+# A stick of one filesystem choice, made by `mkstick create --p2-fs
+# --p3-fs` (and `mkstick bios`) the first time a case asks for it:
+# $R/stick-NAME.img, its library holding NAME.iso, its install ID in
+# $R/stick-NAME.id. 1 GiB, so p3 has the 320 MiB xfs asks for.
+fs_stick() {    # fs_stick NAME P2_FS P3_FS
+    local img=$R/stick-$1.img log=$R/stick-$1.build p2
+    [[ -f "$img" && "${FS_BUILT[$1]:-}${KEEP:-0}" == *1* ]] && return 0
+    rm -f "$img"
+    truncate -s 1G "$img"
+    ( umask 077; printf '%s' "$PASS" > "$R/pass" )
+    attach "$img"
+    # shellcheck disable=SC2024  # the log is ours, not root's
+    sudo "$MKSTICK" --quiet create "$LOOP" --force \
+        --p1-size 300M --iso-size 128M --p3-size 320M --p4-size rest \
+        --p2-fs "$2" --p3-fs "$3" \
+        --passphrase-file "$R/pass" --shim build/shim/bins \
+        --loader build/bin/falcon-boot.efi --uki build/test/fixture-uki.efi \
+        --cn "falcon-boot $1 rig" >"$log" 2>&1 || { rm -f "$R/pass"; detach; return 1; }
+    rm -f "$R/pass"
+    p2=$(sudo "$MKSTICK" ident "$LOOP" | awk -F '\t' '$2 == "library" { print $1 }')
+    [[ -n "$p2" ]] || { detach; return 1; }
+    mount_part "${LOOP}p$p2"
+    dd if=/dev/zero of="$MNT/$1.iso" bs=1M count=1 status=none
+    umount_part
+    # shellcheck disable=SC2024
+    sudo "$MKSTICK" --quiet bios --reserve --no-backup \
+        --stage1 build/bin/falcon-bios-stage1.bin \
+        --stage2 build/bin/falcon-bios-stage2.bin \
+        --stage3 build/bin/falcon-bios-stage3.bin "$LOOP" >>"$log" 2>&1 ||
+        { detach; return 1; }
+    sudo "$MKSTICK" ident "$LOOP" |
+        awk -F '\t' '$2 == "boot" { print $3 }' > "$R/stick-$1.id"
+    detach
+    FS_BUILT[$1]=1
+}
+declare -A FS_BUILT=()
+
+# fs_case CASE FIRMWARE NAME P2_FS P3_FS: stick_case on that stick.
+fs_case() {
+    if ! fs_stick "$3" "$4" "$5"; then
+        result "$1" 0 "the $3 stick did not build ($R/stick-$3.build)"
+        return
+    fi
+    stick_case "$1" "$2" "$(cat "$R/stick-$3.id")" "$3.iso" "" "" \
+        "$R/stick-$3.img:boot"
 }
 
 # MBR: p1 FAT32 (0x0C), p2 exFAT (0x07), p3 extended holding p5 FAT16
@@ -1650,6 +1701,7 @@ CASES=("$@")
            validation-off-uefi validation-off-pos-uefi
            validation-off-iso-uefi validation-off-station-uefi
            kdf-memory-uefi kdf-memory-bios hibernated-uefi hibernated-bios
+           fs-p3-fat-uefi fs-p3-fat-bios
            relaunch-uefi relaunch-uefi-sb probe-keys-uefi probe-keys-bios
            update-stick-uefi-sb update-stick-bios update-station-uefi-sb
            update-station-bios
@@ -1702,6 +1754,8 @@ for c in "${CASES[@]}"; do
     relaunch-uefi-sb) case_relaunch "$c" uefi-sb ;;
     probe-keys-uefi) case_probe_keys "$c" uefi ;;
     probe-keys-bios) case_probe_keys "$c" bios ;;
+    fs-p3-fat-uefi|fs-p3-fat-bios)
+        fs_case "$c" "${c##*-}" p3-fat exfat fat32 ;;
     hibernated-uefi) case_hibernated "$c" uefi ;;
     hibernated-bios) case_hibernated "$c" bios ;;
     station-uefi)  case_station "$c" uefi ;;

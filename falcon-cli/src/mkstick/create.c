@@ -118,25 +118,29 @@ static const cli_opt create_opts[] = {
 
 /* ---- filesystem choices (DESIGN Section 8) ----
  *
- * The flags exist so the CLI surface is future-proof, and the lists exist so
- * it stays honest: a driver target DESIGN sanctions but nobody has written is
- * refused by name rather than accepted into a stick the loader cannot read.
+ * Per role, because the roles are not interchangeable. p2 must be readable
+ * by every desktop OS the user drags an ISO from, and by WinPE, and must
+ * resolve a file to its extents for the injection framework (DESIGN
+ * Section 6.2). p3 is read by our driver alone.
  *
- * Per role rather than one list, because the roles are not interchangeable.
- * p2 must be readable by every desktop OS the user drags an ISO from and must
- * carry the extent map the injection framework resolves files through (DESIGN
- * Section 6.2), which is exFAT today. p3 is read by our driver alone.
- *
- * `implemented` is cross-checked against the loader's own registry, so this
+ * Each list is cross-checked against the loader's own registry, so this
  * tool cannot offer to create something the loader could not then mount. */
 static const char *const p2_implemented[] = { "exfat" };
-static const char *const p3_implemented[] = { "ext4" };
+static const char *const p3_implemented[] = { "ext4", "fat32" };
 
-/* Sanctioned in DESIGN Section 8, write on demand. Named in the refusal so a
- * user asking for one learns it is planned rather than rejected. */
+/* Every filesystem mkstick makes, so a name that is another partition's
+ * choice is refused as that rather than as unknown. */
 static const char *const sanctioned[] = {
     "exfat", "ext4", "fat32", "xfs", "btrfs"
 };
+
+/* The name a choice goes by in the loader's registry. mkstick says fat32
+ * because that is the FAT it makes; the driver reads FAT12/16/32 and is
+ * registered as "fat". */
+static const char *registry_name(const char *fs)
+{
+    return strcmp(fs, "fat32") == 0 ? "fat" : fs;
+}
 
 static int in_list(const char *const *list, size_t n, const char *name)
 {
@@ -154,28 +158,37 @@ static cli_status fs_choose(const cli_args *a, const char *opt,
                             const char *dflt, const char **out)
 {
     const char *want = cli_value(a, opt, dflt);
+    char names[64];
+    size_t used = 0;
+    size_t i;
 
     *out = dflt;
     if (in_list(impl, n, want)) {
         /* The loader's registry is the authority on "implemented": if these
          * two ever disagree, the stick is the thing that would not boot. */
-        if (fs_by_name(want) == NULL)
+        if (fs_by_name(registry_name(want)) == NULL)
             return set_error(CLI_ERR_INTERNAL,
                              "%s is listed here but no loader driver claims "
                              "that name", want);
         *out = want;
         return CLI_OK;
     }
+    names[0] = '\0';
+    for (i = 0; i < n; i++) {
+        int w = snprintf(names + used, sizeof names - used, "%s%s",
+                         i == 0 ? "" : ", ", impl[i]);
+
+        if (w < 0 || (size_t)w >= sizeof names - used)
+            break;
+        used += (size_t)w;
+    }
     if (in_list(sanctioned, sizeof sanctioned / sizeof sanctioned[0], want))
         return set_error(CLI_ERR_USAGE,
-                         "--%s %s: driver not yet implemented for this "
-                         "partition; implemented: %s. Sanctioned targets "
-                         "(DESIGN Section 9): exfat, ext4, fat32, xfs, btrfs",
-                         opt, want, impl[0]);
+                         "--%s %s: not a filesystem for this partition; "
+                         "it takes %s", opt, want, names);
     return set_error(CLI_ERR_USAGE,
-                     "--%s %s: no such filesystem driver; implemented: %s. "
-                     "Sanctioned targets (DESIGN Section 9): exfat, ext4, "
-                     "fat32, xfs, btrfs", opt, want, impl[0]);
+                     "--%s %s: no such filesystem; this partition takes %s",
+                     opt, want, names);
 }
 
 /* What `create` was asked to build, beyond the sizes. Gathered once so the
@@ -614,6 +627,9 @@ static cli_status make_fs(const char *fs, const char *label, const char *dev)
         return proc_runl_quiet("mkfs.exfat", "-n", label, dev, PROC_END);
     if (strcmp(fs, "ext4") == 0)
         return proc_runl_quiet("mkfs.ext4", "-q", "-L", label, dev, PROC_END);
+    if (strcmp(fs, "fat32") == 0)
+        return proc_runl_quiet("mkfs.fat", "-F", "32", "-n", label, dev,
+                               PROC_END);
     return set_error(CLI_ERR_INTERNAL, "no mkfs rule for %s", fs);
 }
 
@@ -730,13 +746,31 @@ p4:
     return cleanup_pop();
 }
 
-static cli_status mount_at(const char *device, const char *mountpoint)
+static cli_status mount_with(const char *device, const char *mountpoint,
+                             const char *opts)
 {
-    cli_status rc = proc_runl_quiet("mount", device, mountpoint, PROC_END);
+    cli_status rc = (opts != NULL)
+        ? proc_runl_quiet("mount", "-o", opts, device, mountpoint, PROC_END)
+        : proc_runl_quiet("mount", device, mountpoint, PROC_END);
 
     if (rc != CLI_OK)
         return rc;
     return cleanup_push_mount(mountpoint);
+}
+
+static cli_status mount_at(const char *device, const char *mountpoint)
+{
+    return mount_with(device, mountpoint, NULL);
+}
+
+/* FAT keeps no modes, so the 0600 the key is written with is the mount's,
+ * not the file's: umask=0077 keeps it root's while this mount stands. */
+static cli_status mount_shelf(const char *device, const char *mountpoint,
+                              const fs_plan *plan)
+{
+    return mount_with(device, mountpoint,
+                      strcmp(plan->p3_fs, "fat32") == 0 ? "umask=0077"
+                                                         : NULL);
 }
 
 /* One architecture's Secure Boot chain on p1 (DESIGN Section 4): shim as
@@ -867,7 +901,7 @@ static cli_status install_shelf(const cli_args *a, const mks_disk *d,
     cli_status rc;
 
     if (plan->p3_plain) {
-        rc = mount_at(d->part[2], mnt);
+        rc = mount_shelf(d->part[2], mnt, plan);
         if (rc != CLI_OK)
             return rc;
     } else {
@@ -886,7 +920,7 @@ static cli_status install_shelf(const cli_args *a, const mks_disk *d,
         (void)snprintf(mapper_path, sizeof mapper_path, "/dev/mapper/%s",
                        mapper);
 
-        rc = mount_at(mapper_path, mnt);
+        rc = mount_shelf(mapper_path, mnt, plan);
         if (rc != CLI_OK) {
             (void)cleanup_pop();
             return rc;
@@ -1353,9 +1387,9 @@ const cli_cmd mks_cmd_create = {
     "A target that already carries an MBR or GPT partition table is refused\n"
     "without --force.\n"
     "\n"
-    "--p2-fs/--p3-fs accept the filesystems the loader can actually read today\n"
-    "(exfat for p2, ext4 for p3) and name the sanctioned-but-unwritten targets\n"
-    "of Section 9 in the refusal.\n"
+    "--p2-fs takes exfat; --p3-fs takes ext4 or fat32. A FAT shelf keeps no\n"
+    "file modes: mount it with umask=0077 on a host, as mkstick does, or the\n"
+    "MOK key is readable by every user there.\n"
     "\n"
     "Needs root (loop devices, device-mapper, mount).\n",
     create_run

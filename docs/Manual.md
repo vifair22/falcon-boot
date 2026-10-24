@@ -1024,7 +1024,7 @@ The other failures while unlocking:
 | `the passphrase did not open any keyslot.` | |
 | `the partition could not be read.` | a read error |
 | `the volume is outside what this loader supports.` | a LUKS2 header or cipher the loader does not take |
-| `the decrypted volume is not a filesystem this loader can read.` | not ext4 inside |
+| `the decrypted volume is not a filesystem this loader can read.` | not ext4 or FAT32 inside |
 | `no *.efi image for this machine was found in /uki or /EFI/Linux.` | none, or only images for the other architecture: the chooser lists a machine's own (x86-64 or ARM64) UKIs alone |
 
 ### 5.3 The passphrase handoff
@@ -1070,6 +1070,11 @@ and in `/etc/crypttab` and `/etc/fstab`:
 
     <name>  UUID=<shelf-luks-uuid>  /etc/cryptsetup-keys.d/<name>.key  luks,discard,nofail
     /dev/mapper/<name>  /efi  ext4  defaults,noatime,nofail  0 2
+
+A FAT32 shelf keeps no file modes, so its line carries them, or the MOK
+key is readable by every user:
+
+    /dev/mapper/<name>  /efi  vfat  umask=0077,noatime,nofail  0 2
 
 `cryptsetup luksUUID <shelf-partition>` gives the UUID. The passphrase
 keeps keyslot 0 at its own cost. The keyfile's slot is pbkdf2 at 1000
@@ -2136,7 +2141,7 @@ exist, and that every `--uki` exists.
 | `--key-out` | none | also writes `falcon-mok.key` (0600) and `falcon-mok.crt` into this directory, made 0700 if new |
 | `--p3-plain` | off | p3 without LUKS; requires `--key-out` |
 | `--p2-fs` | `exfat` | p2's filesystem; `exfat` is the only one accepted |
-| `--p3-fs` | `ext4` | p3's filesystem; `ext4` is the only one accepted |
+| `--p3-fs` | `ext4` | p3's filesystem: `ext4` or `fat32` (DESIGN Section 3). A FAT32 shelf is mounted `umask=0077` while the key is written |
 | `--stage3` | `build/bin/falcon-bios-stage3.bin` | the BIOS stage 3 p1's reserved sectors are sized for |
 
 With neither `--iso-size` nor `--p4-size`, what is left after p1 and p3 is
@@ -2150,12 +2155,12 @@ What it makes:
 |---|---|---|
 | p1 | ESP, `FALCON-ESP`, FAT32 | `/EFI/BOOT/BOOTX64.EFI` (shim), MokManager under the name shim launches it by, the loader under shim's next-stage name; the same for AArch64 (`BOOTAA64.EFI`, `mmaa64.efi`, `grubaa64.efi`); `/falcon-boot.cer` |
 | p2 | Microsoft basic data, `FALCON-ISO`, exFAT | `/falcon/blessed/`, `/.falcon` |
-| p3 | falcon shelf, `FALCON-UKI`, LUKS2 and ext4 | `/uki/` with each `--uki`, `/falcon-mok.key` (0600), `/falcon-mok.crt` |
+| p3 | falcon shelf, `FALCON-UKI`, LUKS2 and the `--p3-fs` filesystem | `/uki/` with each `--uki`, `/falcon-mok.key` (0600), `/falcon-mok.crt` |
 | p4 | Linux LUKS, `FALCON-ROOT`, LUKS2 and ext4 | empty |
 
 p3's keyslot is argon2id at 32768 KiB, time 4, 4 lanes, `aes-xts-plain64`
 with a 512-bit key. p4 takes cryptsetup's own argon2id cost. Both share the
-one passphrase. With `--p3-plain`, p3 is ext4 alone and holds `/uki/`,
+one passphrase. With `--p3-plain`, p3 is its filesystem alone and holds `/uki/`,
 `/falcon-mok.crt` and `/.falcon`, with no private key; the loader asks for
 no passphrase and the initramfs prompts for p4 itself.
 
@@ -3092,7 +3097,7 @@ refusal sentence of 12.3.
 | `unlocking the encrypted partition` | `this keyslot needs <n> MiB of memory; this machine has <m> MiB free.` | Boot on a machine with more memory, or add a keyslot with less Argon2id memory from Linux. |
 | `unlocking the encrypted partition` | `the volume is outside what this loader supports.` | Check the LUKS2 header with `cryptsetup luksDump`. |
 | `opening the decrypted volume` | - | Report it. |
-| `mounting the filesystem inside it`, `mounting the plaintext UKI shelf` | `the decrypted volume is not a filesystem this loader can read.` / `the shelf is not a filesystem this loader can read.` | The shelf is not ext4. |
+| `mounting the filesystem inside it`, `mounting the plaintext UKI shelf` | `the decrypted volume is not a filesystem this loader can read.` / `the shelf is not a filesystem this loader can read.` | The shelf is not ext4 or FAT32. |
 | (same) | `the shelf's journal is damaged; run fsck on it from another system, then boot its OS once with noresume.` | As it says. |
 | (same) | `reading the shelf's journal needs <n> MiB of memory; this machine has <m> MiB free.` | Run `fsck` on the shelf from another system. |
 | (same) | `the filesystem was not cleanly unmounted; run fsck on it from Linux.` | As it says. |
@@ -3436,7 +3441,7 @@ the harness's Dockerfile and this table to it):
 | `sbsign, sbverify, sbattach` (required) | sbsigntool | host tools | MOK signatures, their check, and stripping one |
 | `mkfs.exfat` (required) | exfatprogs | host tools | p2 |
 | `mkfs.ext4` (required) | e2fsprogs | host tools | p3 and the station partition |
-| `mkfs.fat` (required) | dosfstools | host tools | p1 and a BIOS boot partition |
+| `mkfs.fat` (required) | dosfstools | host tools | p1, a BIOS boot partition, and a FAT32 p3 |
 | `sgdisk` (required) | gdisk | host tools | GPT |
 | `sfdisk` (required) | fdisk | host tools | MBR |
 | `losetup, blockdev, partx` (required) | util-linux | host tools | images as block devices |
