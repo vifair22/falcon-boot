@@ -36,6 +36,8 @@
  * boot sector's loader is media/vbr.c's vbr_loader_name. */
 #define STROWS_LABEL_POS       "Personal OS (encrypted)"
 #define STROWS_LABEL_MEMTEST   "Memory test (memtest86+)"
+/* AArch64 has no memtest86+: its station's memtest.efi is PassMark's. */
+#define STROWS_LABEL_MEMTEST_AA64 "Memory test (MemTest86)"
 #define STROWS_LABEL_BOOTCODE  "Boot code"
 #define STROWS_LABEL_PARTITION "Partition"
 #define STROWS_LABEL_BOOTMGR   "Windows Boot Manager"

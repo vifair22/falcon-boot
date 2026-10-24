@@ -54,6 +54,7 @@ cli_status mkstick_guid_selfcheck(void);
 /* ---- on-stick paths (DESIGN Sections 4, 7.5 and 8.1) ---- */
 #define MKS_ESP_BOOT_DIR   "EFI/BOOT"
 #define MKS_ESP_SHIM_NAME  "BOOTX64.EFI"   /* removable-media default path */
+#define MKS_ESP_SHIM_NAME_AA64 "BOOTAA64.EFI" /* the same on AArch64 */
 #define MKS_ESP_CERT_NAME  "falcon-boot.cer"
 #define MKS_P3_UKI_DIR     "uki"
 #define MKS_P3_KEY_NAME    "falcon-mok.key"   /* mode 0600, LUKS-encrypted */

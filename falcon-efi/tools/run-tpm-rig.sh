@@ -94,6 +94,19 @@ MOK_VARS=build/mok-test/OVMF_VARS.secboot.mok.fd
 MOK_CRT=build/mok-test/falcon-test-mok.crt
 MKSTICK=build/bin/falcon-boot-mkstick
 TIMEOUT=180
+# x64, or aa64 for the aa64- cases (set_arch): the images, the names on the
+# ESP, the firmware, the bus, the TPM's device, and SCALE, which stretches
+# every wait for an emulated machine.
+ARCH=x64
+UP=X64
+LOW=x64
+SCALE=1
+SUFFIX=
+ARCH_OPT=()
+MEMTEST_LABEL="Memory test (memtest86+)"
+# The name the firmware gives the disk's own boot option: OVMF's for an IDE
+# disk, AAVMF's for a virtio one.
+DISK_BOOT_NAME="UEFI QEMU HARDDISK"
 
 # Where the running case's swtpm keeps its state; the totp cases use their
 # own. RTC_ARGS sets the guest's clock (the totp cases). OTHER_FW=1 boots
@@ -139,7 +152,7 @@ probe_disk() {  # probe_disk IMAGE EFI
     mkfs.fat -F 32 --offset 2048 -n TPMPROBE "$img" $(( 46 * 1024 )) \
         >/dev/null 2>&1
     mmd -i "$img@@1M" ::/EFI ::/EFI/BOOT
-    mcopy -i "$img@@1M" "$efi" ::/EFI/BOOT/BOOTX64.EFI
+    mcopy -i "$img@@1M" "$efi" "::/EFI/BOOT/BOOT$UP.EFI"
 }
 
 # The station disk, copied, with the loader as built now and the probe as
@@ -148,7 +161,7 @@ station_disk() {  # station_disk IMAGE EFI
     local img=$1 efi=$2 dir
     cp --reflink=auto "$STATION" "$img"
     for dir in falcon BOOT; do
-        mcopy -o -i "$img@@1M" "$LOADER" ::/EFI/$dir/grubx64.efi
+        mcopy -o -i "$img@@1M" "$LOADER" "::/EFI/$dir/grub$LOW.efi"
     done
     mcopy -o -i "$img@@1M" "$efi" ::/EFI/falcon/memtest.efi
     printf '[general]\ndefault = memtest\ntimeout = %s\n' "${INI_TIMEOUT:-1}" \
@@ -158,11 +171,12 @@ station_disk() {  # station_disk IMAGE EFI
     # (DESIGN Section 12.2): the loader as \EFI\falcon\falconx64.efi and
     # the jumper as \EFI\BOOT\BOOTX64.EFI, no shim anywhere.
     if [[ ${JUMP:-0} == 1 ]]; then
-        mdel -i "$img@@1M" ::/EFI/falcon/shimx64.efi ::/EFI/falcon/mmx64.efi \
-            ::/EFI/falcon/grubx64.efi ::/EFI/BOOT/grubx64.efi \
-            ::/EFI/BOOT/mmx64.efi 2>/dev/null || true
-        mcopy -o -i "$img@@1M" "$LOADER" ::/EFI/falcon/falconx64.efi
-        mcopy -o -i "$img@@1M" "$JUMPER" ::/EFI/BOOT/BOOTX64.EFI
+        mdel -i "$img@@1M" "::/EFI/falcon/shim$LOW.efi" \
+            "::/EFI/falcon/mm$LOW.efi" "::/EFI/falcon/grub$LOW.efi" \
+            "::/EFI/BOOT/grub$LOW.efi" "::/EFI/BOOT/mm$LOW.efi" \
+            2>/dev/null || true
+        mcopy -o -i "$img@@1M" "$LOADER" "::/EFI/falcon/falcon$LOW.efi"
+        mcopy -o -i "$img@@1M" "$JUMPER" "::/EFI/BOOT/BOOT$UP.EFI"
     fi
 }
 
@@ -176,15 +190,19 @@ jump_entry_json() {     # jump_entry_json IMAGE
         /^Partition size:/        { n = $3 }
         /^Partition unique GUID:/ { g = $4 }
         END { print s, n, g }')
-    python3 - $facts <<'EOF'
+    python3 - $facts "$ARCH" "$UP" <<'EOF'
 import json, struct, sys, uuid
-start, size, guid = sys.argv[1:4]
+start, size, guid, arch, up = sys.argv[1:6]
 pre = struct.pack("<BBHII", 2, 1, 12, 0x0A0341D0, 0)
-pre += struct.pack("<BBHBB", 1, 1, 6, 2, 0x1F)
-pre += struct.pack("<BBHHHH", 3, 0x12, 10, 0, 0xFFFF, 0)
+if arch == "aa64":
+    # PciRoot(0)/Pci(5,0): virt's virtio-blk, at the address boot gives it.
+    pre += struct.pack("<BBHBB", 1, 1, 6, 0, 5)
+else:
+    pre += struct.pack("<BBHBB", 1, 1, 6, 2, 0x1F)
+    pre += struct.pack("<BBHHHH", 3, 0x12, 10, 0, 0xFFFF, 0)
 hd = struct.pack("<BBHIQQ", 4, 1, 42, 1, int(start), int(size))
 hd += uuid.UUID(guid).bytes_le + bytes([2, 2])
-name = ("\\EFI\\BOOT\\BOOTX64.EFI" + "\0").encode("utf-16-le")
+name = ("\\EFI\\BOOT\\BOOT" + up + ".EFI" + "\0").encode("utf-16-le")
 fp = struct.pack("<BBH", 4, 4, 4 + len(name)) + name
 dp = pre + hd + fp + bytes([0x7F, 0xFF, 4, 0])
 desc = "falcon\0".encode("utf-16-le")
@@ -206,7 +224,7 @@ mon() { printf '%s\n' "$*" | socat - "UNIX-CONNECT:$R/mon.sock" >/dev/null 2>&1 
 
 wait_for() {    # wait_for PATTERN SECONDS
     local i
-    for (( i = 0; i < $2 * 10; i++ )); do
+    for (( i = 0; i < $2 * 10 * SCALE; i++ )); do
         log_text "$R/serial.log" | grep -aqF -- "$1" && return 0
         kill -0 "$QPID" 2>/dev/null || { log_text "$R/serial.log" |
             grep -aqF -- "$1"; return; }
@@ -231,7 +249,20 @@ boot() {
 
 boot_once() {
     local fw=$1 tpm=$2 disk=$3 code vars
-    if [[ $fw == uefi ]]; then
+    if [[ $ARCH == aa64 ]]; then
+        local secure
+        secure=$(aavmf_find CODE secboot)
+        # Debian builds TCG2 into the Secure Boot AAVMF alone; with a blank
+        # store (no PK) it is a machine with Secure Boot off. The other
+        # firmware is its strict-NX build: TCG2 too, and another PCR 0.
+        code=$secure
+        [[ $OTHER_FW == 1 ]] && code=${secure%.fd}.strictnx.fd
+        if [[ $fw == uefi ]]; then
+            vars=$(aavmf_find VARS plain)
+        else
+            vars=$MOK_VARS
+        fi
+    elif [[ $fw == uefi ]]; then
         code=$(ovmf_find CODE plain)
         vars=$(ovmf_find VARS plain)
         [[ $OTHER_FW == 1 ]] && code=$(ovmf_find CODE secboot)
@@ -257,6 +288,20 @@ boot_once() {
     tpm12)   swtpm_start 1.2 "$TPM_DIR" ;;
     esac
     rm -f "$R/serial.log" "$R/mon.sock"
+    if [[ $ARCH == aa64 ]]; then
+        timeout "$(( TIMEOUT * SCALE ))" qemu-system-aarch64 -machine virt \
+            -m 1024 -cpu max -display none -net none \
+            -drive "if=pflash,format=$(fw_format "$code"),readonly=on,file=$code" \
+            -drive "if=pflash,format=$(fw_format "$vars"),file=$R/vars.fd" \
+            -device qemu-xhci -device usb-kbd -device ramfb \
+            -drive "if=none,id=d0,format=raw,file=$disk" \
+            -device virtio-blk-pci,drive=d0,addr=5,bootindex=0 \
+            "${SWTPM_QEMU[@]}" "${RTC_ARGS[@]}" \
+            -serial "file:$R/serial.log" \
+            -monitor "unix:$R/mon.sock,server,nowait" >"$R/qemu.log" 2>&1 &
+        QPID=$!
+        return
+    fi
     timeout "$TIMEOUT" qemu-system-x86_64 -machine q35 -m 1024 \
         -enable-kvm -cpu host -display none -net none \
         -drive "if=pflash,format=raw,readonly=on,file=$code" \
@@ -366,7 +411,7 @@ case_station() {
     fi
     station_disk "$R/station.img" "$(probe_efi "$fw")"
     boot "$fw" "$tpm" "$R/station.img"
-    wait_for "booting: Memory test (memtest86+)" 90 || why="the station did not start its default"
+    wait_for "booting: $MEMTEST_LABEL" 90 || why="the station did not start its default"
     [[ -z "$why" ]] && { wait_for "FALCON-TPM-PROBE-DONE" 30 || why="the probe did not run"; }
     halt
     if [[ -z "$why" ]]; then
@@ -477,14 +522,14 @@ totp_enrolled() {
         owner=(--owner-auth-file "$TPM_DIR/owner.bin")
     fi
     if [[ -z $why ]]; then
-        out=$("$MKSTICK" station totp enroll "$R/totp.img" --pcrs 0,2,4,7 \
+        out=$("$MKSTICK" station totp enroll "$R/totp.img" "${ARCH_OPT[@]}" --pcrs 0,2,4,7 \
                 --label rig --tpm-socket "$TPM_DIR/server.sock" \
                 --event-log "$R/evlog.bin" "${saved[@]}" "${owner[@]}" 2>&1) || why="enroll failed: $(printf '%s' "$out" | tail -n 1)"
         printf '%s\n' "$out" > "$R/$c-enroll.log"
         # The station's read from the host: this TPM's PCRs have moved past
         # the station's, so everything before them must check out.
         if [[ -z $why ]]; then
-            chk=$("$MKSTICK" station totp check "$R/totp.img" \
+            chk=$("$MKSTICK" station totp check "$R/totp.img" "${ARCH_OPT[@]}" \
                     --tpm-socket "$TPM_DIR/server.sock" 2>&1) || true
             printf '%s\n' "$chk" > "$R/$c-check.log"
             grep -qF "the TPM refused on the PCRs" <<<"$chk" ||
@@ -562,7 +607,8 @@ case_totp() {
         [[ -z $why ]] && { wait_for "passphrase for the encrypted partition" 30 ||
             why="no passphrase prompt"; }
         # Past a 30-second step at the prompt: the code is redrawn in place.
-        [[ -z $why ]] && sleep 32
+        # An emulated guest's clock runs behind the host's, so SCALE steps.
+        [[ -z $why ]] && sleep $(( 32 * SCALE ))
         halt
         log_text "$R/serial.log" > "$R/$c-3b.log"
         [[ -z $why ]] && { awk '/booting: Personal OS/ { p = 1 } p' "$R/$c-3b.log" |
@@ -634,7 +680,7 @@ case_totp_jump() {
     want=$(codes_for "$secret" "$base")
     [[ -z $why ]] && jump_code 2 1 "falcon"
     s2=$shown
-    [[ -z $why ]] && jump_code 3 0 "UEFI QEMU HARDDISK"
+    [[ -z $why ]] && jump_code 3 0 "$DISK_BOOT_NAME"
     unset JUMP
 
     TPM_DIR=$R/swtpm
@@ -687,15 +733,15 @@ case_totp_update() {
         mkdir -p "$R/upd-from" "$R/upd-backup"
         cp build/bin/falcon-bios-stage1.bin build/bin/falcon-bios-stage2.bin \
            build/bin/falcon-bios-station-stage3.bin "$R/upd-from/"
-        other_loader build/bin/falcon-boot-station.efi \
-            "$R/upd-from/falcon-boot-station.efi" ||
+        other_loader "build/bin/falcon-boot-station$SUFFIX.efi" \
+            "$R/upd-from/falcon-boot-station$SUFFIX.efi" ||
             why="the station loader has no section slack to change"
     fi
     if [[ -z $why ]]; then
         swtpm_serve "$ver" "$TPM_DIR" || why="swtpm would not serve its state"
     fi
     if [[ -z $why ]]; then
-        out=$("$MKSTICK" update "$R/totp.img" --from "$R/upd-from" \
+        out=$("$MKSTICK" update "$R/totp.img" "${ARCH_OPT[@]}" --from "$R/upd-from" \
                 --key build/mok-test/falcon-test-mok.key --cert "$MOK_CRT" \
                 --backup-dir "$R/upd-backup" \
                 --tpm-socket "$TPM_DIR/server.sock" --event-log "$R/evlog.bin" \
@@ -714,9 +760,9 @@ case_totp_update() {
     # firmware's entry for \EFI\falcon.
     if [[ -z $why ]]; then
         rm -f "$R/upd-loader.efi"
-        mcopy -n -i "$R/totp.img@@1M" ::/EFI/falcon/grubx64.efi "$R/upd-loader.efi"
+        mcopy -n -i "$R/totp.img@@1M" "::/EFI/falcon/grub$LOW.efi" "$R/upd-loader.efi"
         cmp -s "$R/upd-loader.efi" "$LOADER" && why="the loader on the ESP is the old one"
-        mcopy -o -i "$R/totp.img@@1M" "$R/upd-loader.efi" ::/EFI/BOOT/grubx64.efi
+        mcopy -o -i "$R/totp.img@@1M" "$R/upd-loader.efi" "::/EFI/BOOT/grub$LOW.efi"
     fi
 
     # 4. the new loader shows the new secret's code
@@ -755,7 +801,47 @@ ALL=(uefi-tpm2-probe uefi-tpm2crb-probe uefi-tpm12-probe
 CASES=("$@")
 [[ ${#CASES[@]} -eq 0 ]] && CASES=("${ALL[@]}")
 
+# AArch64: the probe, the station disk and images built for it, AAVMF, the
+# TPM on virt's sysbus. virt has no CRB or 1.2 device, so only tpm2 cases.
+set_arch() {    # set_arch x64|aa64
+    [[ $1 == "$ARCH" ]] && return
+    ARCH=$1
+    if [[ $ARCH == aa64 ]]; then
+        UP=AA64 LOW=aa64 SCALE=${AA64_SCALE:-6}
+        SUFFIX=-aa64 ARCH_OPT=(--arch aa64)
+        MEMTEST_LABEL="Memory test (MemTest86)"
+        DISK_BOOT_NAME="UEFI Misc Device"
+        PROBE=build/test/tpm-probe-aa64.efi
+        PROBE_SIGNED=build/test/tpm-probe-aa64-signed.efi
+        STATION=build/test-station-aa64.img
+        LOADER=build/bin/falcon-boot-station-aa64-signed.efi
+        JUMPER=build/bin/falcon-esp-jump-aa64-signed.efi
+        MOK_VARS=build/mok-test/AAVMF_VARS.secboot.mok.fd
+        export SWTPM_TIS_DEV=tpm-tis-device
+        make --no-print-directory "$PROBE" "$PROBE_SIGNED" "$LOADER" \
+            "$JUMPER" >/dev/null
+        [[ -f $STATION ]] ||
+            { echo "ERROR: $STATION missing (make test-station-aa64)" >&2; exit 1; }
+    else
+        UP=X64 LOW=x64 SCALE=1
+        SUFFIX= ARCH_OPT=()
+        MEMTEST_LABEL="Memory test (memtest86+)"
+        DISK_BOOT_NAME="UEFI QEMU HARDDISK"
+        PROBE=build/test/tpm-probe.efi
+        PROBE_SIGNED=build/test/tpm-probe-signed.efi
+        STATION=build/test-station.img
+        LOADER=build/bin/falcon-boot-station-signed.efi
+        JUMPER=build/bin/falcon-esp-jump-signed.efi
+        MOK_VARS=build/mok-test/OVMF_VARS.secboot.mok.fd
+        unset SWTPM_TIS_DEV
+    fi
+}
+
 for c in "${CASES[@]}"; do
+    case $c in
+    aa64-*) set_arch aa64; c=${c#aa64-}; label=aa64-$c ;;
+    *)      set_arch x64; label=$c ;;
+    esac
     case $c in
     uefi-sb-*) fw=uefi-sb; rest=${c#uefi-sb-} ;;
     uefi-*)    fw=uefi;    rest=${c#uefi-} ;;
@@ -768,11 +854,11 @@ for c in "${CASES[@]}"; do
     *) echo "unknown TPM in case: $c" >&2; exit 2 ;;
     esac
     case $name in
-    probe)   case_probe "$c" "$fw" "$tpm" ;;
-    station) case_station "$c" "$fw" "$tpm" ;;
-    totp)    case_totp "$c" "$fw" "$tpm" ;;
-    totp-update) case_totp_update "$c" "$fw" "$tpm" ;;
-    totp-jump) case_totp_jump "$c" "$fw" "$tpm" ;;
+    probe)   case_probe "$label" "$fw" "$tpm" ;;
+    station) case_station "$label" "$fw" "$tpm" ;;
+    totp)    case_totp "$label" "$fw" "$tpm" ;;
+    totp-update) case_totp_update "$label" "$fw" "$tpm" ;;
+    totp-jump) case_totp_jump "$label" "$fw" "$tpm" ;;
     *) echo "unknown case: $c" >&2; exit 2 ;;
     esac
 done
