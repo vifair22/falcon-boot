@@ -10,6 +10,7 @@
 # `make check-deps`.
 x86_64-w64-mingw32-gcc	cmd:x86_64-w64-mingw32-gcc	gcc-mingw-w64-x86-64	build	required	the UEFI images, winjump.exe and the x64 vdisk driver (or build in the harness image)
 aarch64-w64-mingw32-clang	cmd:aarch64-w64-mingw32-clang	llvm-mingw(release)	build	optional	the AArch64 UEFI images and the ARM64 winjump: llvm-mingw 20261020, ucrt, after gcc-mingw on PATH (its x86_64- and i686- wrappers are clang) (or build in the harness image)
+arm64 kernel headers	file:/usr/aarch64-linux-gnu/include/asm/unistd.h	linux-libc-dev-arm64-cross	build	optional	falcon-hook for arm64 kernels, built by llvm-mingw's clang and ld.lld (or the harness image)
 gcc	cmd:gcc	build-essential	build	required	host tools, tests and the BIOS loader (CC_HOST)
 make	cmd:make	make	build	required	the one build
 pkg-config	cmd:pkg-config	pkg-config	build	required	finds cmocka for the test binaries

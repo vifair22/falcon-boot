@@ -1561,9 +1561,18 @@ static void parse_grub_file(parser *p, const char *path, int loop)
     cpy(p->res->source, sizeof p->res->source, path, (uint8_t *)0);
 }
 
+/* GRUB's platform directory and $grub_cpu, as GRUB on the machine this is
+ * built for would have them. The AArch64 loader is built for that
+ * machine; the host tools read media as an x86-64 one would. */
+#if defined(__aarch64__)
+#define GRUB_CPU "arm64"
+#else
+#define GRUB_CPU "x86_64"
+#endif
+
 static const char *const g_grub_cd[] = {
     "/boot/grub/grub.cfg", "/boot/grub2/grub.cfg", "/EFI/BOOT/grub.cfg",
-    "/boot/grub/x86_64-efi/grub.cfg", (const char *)0
+    "/boot/grub/" GRUB_CPU "-efi/grub.cfg", (const char *)0
 };
 const char *const *bootcfg_grub_cd_paths(void)
 {
@@ -1587,10 +1596,10 @@ static void parser_reset(parser *p, const bootcfg_src *src, char *scratch,
     p->scratch = scratch;
     p->cap = cap;
     p->res = res;
-    /* What GRUB would have on an x86-64 UEFI machine, for configs that
-     * branch on it or build paths from it. */
+    /* What GRUB would have on this UEFI machine, for configs that branch on
+     * it or build paths from it. */
     var_set(p, "grub_platform", "efi");
-    var_set(p, "grub_cpu", "x86_64");
+    var_set(p, "grub_cpu", GRUB_CPU);
     /* $root names the device GRUB booted from, and every use of it in a
      * distro config is a "($root)" device prefix, which a path here drops
      * anyway. Known, and empty, so it does not mark entries unresolved. */

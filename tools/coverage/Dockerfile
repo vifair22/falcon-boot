@@ -32,6 +32,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libcmocka-dev \
         qemu-system-x86 qemu-utils ovmf swtpm swtpm-tools imagemagick \
         qemu-system-arm qemu-efi-aarch64 xz-utils \
+        linux-libc-dev-arm64-cross \
         tcpdump \
         python3-venv python3-dev libcrypt-dev \
         gdisk util-linux fdisk \
@@ -82,7 +83,10 @@ RUN python3 -m venv /opt/virt-firmware \
 
 # llvm-mingw for the AArch64 UEFI images and the ARM64 winjump. Debian has
 # no aarch64-w64-mingw32 toolchain, and plain clang with lld cannot build
-# winjump, which needs a mingw CRT. A pinned upstream release, checked
+# winjump, which needs a mingw CRT. Its clang and ld.lld also build the
+# arm64 falcon-hook, against linux-libc-dev-arm64-cross's headers above:
+# Debian's gcc-aarch64-linux-gnu conflicts with gcc-multilib, which the
+# BIOS loader needs. A pinned upstream release, checked
 # against the digest its release page publishes; the x64 images stay on
 # Debian's gcc-mingw. xz-utils above unpacks it.
 ARG LLVM_MINGW_VERSION=20261020
@@ -134,6 +138,7 @@ RUN set -eu; \
         *) echo "MISSING: x86_64-w64-mingw32-gcc is not Debian's gcc-mingw"; \
            missing=1 ;; esac; \
     for t in x86_64-w64-mingw32-gcc aarch64-w64-mingw32-clang \
+             clang ld.lld llvm-strip \
              qemu-system-x86_64 qemu-system-aarch64 sgdisk losetup blkid \
              openssl cryptsetup sbsign sbverify mkfs.fat mkfs.exfat \
              mkfs.ext4 mkudffs mformat bsdtar ukify wimlib-imagex xorriso \
@@ -147,6 +152,9 @@ RUN set -eu; \
         echo "MISSING: pkg-config cannot answer for cmocka"; missing=1; }; \
     test -f /usr/lib/systemd/boot/efi/linuxx64.efi.stub || { \
         echo "MISSING: sd-stub; every blessed stick would fail to build"; \
+        missing=1; }; \
+    test -f /usr/aarch64-linux-gnu/include/asm/unistd.h || { \
+        echo "MISSING: arm64 kernel headers; falcon-hook-a64 cannot build"; \
         missing=1; }; \
     test -f /usr/share/AAVMF/AAVMF_CODE.fd || { \
         echo "MISSING: AAVMF; the AArch64 rigs have no firmware"; missing=1; }; \

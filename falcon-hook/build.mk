@@ -2,7 +2,7 @@
 # rebuilds the ISO as a block device before the distro's init looks for its
 # media (docs/DESIGN.md Section 6.4).
 #
-# Freestanding x86-64 Linux: its own system calls and startup
+# Freestanding Linux, x86-64, i586 and AArch64: its own system calls and startup
 # (src/sys.c), falcon-core's mem* routines, and no libc, because it runs in
 # initramfs images whose libc (glibc, musl, none) is not ours to assume. Linked
 # static and non-PIE: nothing in an initramfs relocates it. The loader carries
@@ -95,7 +95,42 @@ $(HOOK32_BLOB): $(HOOK32_BIN)
 	       -e 's/^unsigned int falcon_hook32_bin_len/const size_t falcon_hook32_bin_len/'; \
 	} > $@
 
-hook: $(HOOK_BIN) $(HOOK32_BIN)
+# ---- the AArch64 build ----
+#
+# The same sources for an arm64 kernel's initramfs, which the AArch64 loader
+# boots: clang and ld.lld (llvm-mingw's in the harness) against Debian's
+# arm64 kernel headers, which is all a program with no libc needs. The
+# loader for that architecture embeds it in place of the x86-64 one, and the
+# sign tool carries both, to wrap either architecture's kernel.
+A64_LINUX_HEADERS ?= /usr/aarch64-linux-gnu/include
+CC_A64_LINUX ?= clang --target=aarch64-linux-gnu -isystem $(A64_LINUX_HEADERS)
+HOOK_A64_OBJ := $(OBJ)/hook-a64
+
+$(HOOK_A64_OBJ)/%.o: %.c
+	@mkdir -p $(@D)
+	$(CC_A64_LINUX) $(HOOK_CFLAGS) -ffunction-sections -fdata-sections \
+		-MMD -MF $@.d -c -o $@ $<
+
+HOOK_A64_BIN := $(BIN)/falcon-hook-a64
+HOOK_A64_OBJS := $(patsubst %.c,$(HOOK_A64_OBJ)/%.o,$(HOOK_SRCS))
+
+$(HOOK_A64_BIN): $(HOOK_A64_OBJS)
+	@mkdir -p $(@D)
+	$(CC_A64_LINUX) -fuse-ld=lld $(HOOK_LDFLAGS) -o $@ $(HOOK_A64_OBJS)
+	llvm-strip -s $@
+
+HOOK_A64_BLOB := build/gen/falcon_hook_a64_blob.c
+
+$(HOOK_A64_BLOB): $(HOOK_A64_BIN)
+	@mkdir -p $(@D)
+	@{ echo '/* generated from $(HOOK_A64_BIN) by make; do not edit */'; \
+	   echo '#include <stddef.h>'; \
+	   xxd -i -n falcon_hook_a64_bin $< | \
+	   sed -e 's/^unsigned char/const unsigned char/' \
+	       -e 's/^unsigned int falcon_hook_a64_bin_len/const size_t falcon_hook_a64_bin_len/'; \
+	} > $@
+
+hook: $(HOOK_BIN) $(HOOK32_BIN) $(HOOK_A64_BIN)
 
 .PHONY: hook
 
