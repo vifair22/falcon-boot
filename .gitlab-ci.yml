@@ -207,6 +207,7 @@ rigs:
           - test-station-legacy
           - test-cfstation
           - test-jump
+          - test-aa64
   # The rigs' disk images, from the binhost's fixture store: the A21m's
   # disk, the DOS and Windows 9x station fixtures, the CF card with Windows
   # 98 behind the bridge, and memtest86+.
