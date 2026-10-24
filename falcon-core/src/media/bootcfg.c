@@ -1566,13 +1566,15 @@ static void parse_grub_file(parser *p, const char *path, int loop)
  * machine; the host tools read media as an x86-64 one would. */
 #if defined(__aarch64__)
 #define GRUB_CPU "arm64"
+#define GRUB_CPU_CFG "/boot/grub/arm64-efi/grub.cfg"
 #else
 #define GRUB_CPU "x86_64"
+#define GRUB_CPU_CFG "/boot/grub/x86_64-efi/grub.cfg"
 #endif
 
 static const char *const g_grub_cd[] = {
     "/boot/grub/grub.cfg", "/boot/grub2/grub.cfg", "/EFI/BOOT/grub.cfg",
-    "/boot/grub/" GRUB_CPU "-efi/grub.cfg", (const char *)0
+    GRUB_CPU_CFG, (const char *)0
 };
 const char *const *bootcfg_grub_cd_paths(void)
 {

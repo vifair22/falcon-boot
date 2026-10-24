@@ -18,18 +18,30 @@
  * media carries BOOTAA64.EFI, which is what counts there. */
 static const char *const g_loaders_x64[] = {
     "/EFI/BOOT/BOOTX64.EFI",
-    "/bootmgr.efi",
-    (const char *)0
+    "/bootmgr.efi"
 };
 
 static const char *const g_loaders_aa64[] = {
-    "/EFI/BOOT/BOOTAA64.EFI",
-    (const char *)0
+    "/EFI/BOOT/BOOTAA64.EFI"
 };
 
-static const char *const *loaders(uint16_t machine)
+typedef struct {
+    const char *const *names;
+    unsigned n;
+} loader_set;
+
+static loader_set loaders(uint16_t machine)
 {
-    return machine == PE_MACHINE_ARM64 ? g_loaders_aa64 : g_loaders_x64;
+    loader_set s;
+
+    if (machine == PE_MACHINE_ARM64) {
+        s.names = g_loaders_aa64;
+        s.n = (unsigned)(sizeof g_loaders_aa64 / sizeof g_loaders_aa64[0]);
+    } else {
+        s.names = g_loaders_x64;
+        s.n = (unsigned)(sizeof g_loaders_x64 / sizeof g_loaders_x64[0]);
+    }
+    return s;
 }
 
 /* The architecture whose removable-media loader is not this one's. */
@@ -73,16 +85,16 @@ uefiboot_answer uefiboot_kernel(const void *head, size_t len,
     return bz ? UEFIBOOT_NO : UEFIBOOT_UNKNOWN;
 }
 
-/* Whether any of the medium's volumes carries one of names. */
-static int has_loader(medium *m, uefiboot_work *w, const char *const *names)
+/* Whether any of the medium's volumes carries one of the set's names. */
+static int has_loader(medium *m, uefiboot_work *w, loader_set set)
 {
     unsigned i, j;
 
     for (i = 0; i < medium_count(m); i++) {
         fs_vol *v = medium_vol_at(m, i);
 
-        for (j = 0; names[j] != (const char *)0; j++) {
-            if (fs_lookup(v, names[j], &w->walk, &w->ent) == FS_OK &&
+        for (j = 0; j < set.n; j++) {
+            if (fs_lookup(v, set.names[j], &w->walk, &w->ent) == FS_OK &&
                 !w->ent.is_dir)
                 return 1;
         }

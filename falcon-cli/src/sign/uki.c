@@ -530,8 +530,8 @@ typedef struct {
 
 /* uki_uname_generic over the whole kernel, a window at a time, each window
  * overlapping the last by enough to hold a banner split across them. */
-#define SCAN_WINDOW (1024u * 1024u)
-#define SCAN_OVERLAP 256u
+#define SCAN_WINDOW ((size_t)1024 * 1024)
+#define SCAN_OVERLAP ((size_t)256)
 
 static int uname_scan(int fd, uint64_t size, char *out, size_t cap)
 {
@@ -870,7 +870,7 @@ uint16_t uki_kernel_machine(const char *path)
 
 /* A gzip member's trailer holds its size mod 2^32; a kernel claiming more
  * than this is not one. */
-#define GZ_KERNEL_MAX (512u * 1024u * 1024u)
+#define GZ_KERNEL_MAX ((size_t)512 * 1024 * 1024)
 
 int uki_kernel_unpack(const char *path)
 {
