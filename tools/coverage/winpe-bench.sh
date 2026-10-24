@@ -34,8 +34,10 @@ CMDS=("$@")
 
 mkdir -p "$OUT"
 TOOLS=$OUT/tools.img
-MON=$OUT/mon.sock
-rm -f "$TOOLS" "$MON" "$OUT"/cmd-*.png "$OUT"/cmd-*.ppm
+# Under /tmp: a UNIX socket's path is limited to 108 bytes (run-case.sh).
+MONDIR=$(mktemp -d "${TMPDIR:-/tmp}/falcon-mon.XXXXXX")
+MON=$MONDIR/mon.sock
+rm -f "$TOOLS" "$OUT"/cmd-*.png "$OUT"/cmd-*.ppm
 # A partitioned disk with one FAT16 volume: Windows does not mount a bare
 # filesystem on a fixed disk, only on removable media. One MBR entry, type
 # 0x06, written directly: it is sixteen bytes, and every Windows reads it.
@@ -64,7 +66,7 @@ qemu-system-x86_64 -machine pc -m "${BENCH_MEM:-2048}" "${ACCEL[@]}" \
     -boot d -display none -net none \
     -monitor "unix:$MON,server,nowait" &
 QEMU=$!
-trap 'kill "$QEMU" 2>/dev/null || true' EXIT
+trap 'kill "$QEMU" 2>/dev/null || true; rm -rf "$MONDIR"' EXIT
 
 mon() { echo "$1" | socat - UNIX-CONNECT:"$MON" >/dev/null 2>&1 || true; }
 shot() { mon "screendump $(readlink -f "$OUT")/$1.ppm"; sleep 1; }
@@ -110,4 +112,5 @@ done
 mon quit
 wait "$QEMU" 2>/dev/null || true
 trap - EXIT
+rm -rf "$MONDIR"
 ls "$OUT"

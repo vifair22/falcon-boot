@@ -6,7 +6,7 @@ its own under SeaBIOS on an i440fx machine. The station finds them as a
 machine's existing OSes and chainloads them.
 
 The images are too large and too licence-bound for the repository. They live
-on binhost-builder in the fixture store, with the media they were made from
+on the build host in the fixture store, with the media they were made from
 and the other rigs' disks:
 
     /srv/falcon/fixtures/
@@ -41,7 +41,7 @@ docs/DESIGN.md Section 12.11) boots each image behind the BIOS station. It
 reads them from `build/fixtures/` and checks each against the sha256 above;
 copy them there sparse (scp would write the 2 GB image whole):
 
-    ssh vifair@172.20.0.170 \
+    ssh builder@buildhost \
         'tar -cSf - -C /srv/falcon/fixtures/station freedos.img win98se.img' |
         tar -xSf - -C build/fixtures/
 
@@ -81,7 +81,7 @@ again (prefilled from msbatch.inf), and the script's default nudge, Alt+A
 then Enter, walks it. The boot after Setup's last restart hung behind the
 startup logo in both runs made; the script restarts QEMU when two nudges
 change nothing, and the cold start reaches the desktop. About 70 minutes
-under TCG on binhost-builder. The key file is written from the
+under TCG on the build host. The key file is written from the
 thinkpad-a21m repository's `docs/LICENSES.md` for the run and deleted after
 it; the image's registry holds the key, as any installed Windows does.
 
@@ -96,7 +96,7 @@ Windows 95 OSR2.5 (the OEM key in the thinkpad-a21m repository's
 
 Two things this one needs that 98 SE does not:
 
-- `--icount 2`. TCG on binhost-builder's i9 is still fast enough to fault
+- `--icount 2`. TCG on the build host's i9 is still fast enough to fault
   Windows 95's IOS timing loop at the first boot from C: ("While initializing
   device IOS: Windows protection error"); `-icount shift=2` holds the guest
   at 250 MHz. The station rig boots the image the same way (its `w95-own`
@@ -111,7 +111,7 @@ Two things this one needs that 98 SE does not:
   the key is on screen are deleted afterwards.
 
 Setup's last stage stops on the Add Printer Wizard once; Esc cancels it.
-About 25 minutes on binhost-builder. The licence dialog is Yes/No, hence
+About 25 minutes on the build host. The licence dialog is Yes/No, hence
 `alt-y`.
 
 ## Media

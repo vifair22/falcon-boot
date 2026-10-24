@@ -78,7 +78,8 @@ manifest() { # dir out
     {
         echo "# falcon-boot jbd2 fixture manifest, as the kernel recovers it"
         echo "# columns: type TAB path TAB size TAB sha256"
-        find "$dir" -mindepth 1 -printf '%y\t%P\t%s\n' |
+        # As root: lost+found is root's, mode 0700, in the oracle's mount.
+        sudo find "$dir" -mindepth 1 -printf '%y\t%P\t%s\n' |
             LC_ALL=C sort -t'	' -k2,2 |
         while IFS=$'\t' read -r ty path size; do
             sum='-'

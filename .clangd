@@ -1,0 +1,7 @@
+# falcon-vdisk's entries name the harness's mingw DDK, which exists only in
+# the container; `make` copies those headers to build/editor (Makefile,
+# EDITOR_MINGW).
+If:
+  PathMatch: falcon-vdisk/.*
+CompileFlags:
+  Add: [-isystem, build/editor/mingw-include/ddk, -isystem, build/editor/mingw-include]

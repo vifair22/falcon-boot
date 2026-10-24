@@ -73,12 +73,14 @@
 #                  384 MiB machine: the passphrase is refused with the page
 #                  that says how much the slot needs and how much is free
 #                  (DESIGN Section 5)
-#   relaunch-uefi  stick-a with build/test/relaunch.efi blessed on its
-#                  library, Secure Boot off: the payload, started from the menu,
-#                  starts a second falcon-boot off p1 while the first one's
+#   relaunch-uefi, relaunch-uefi-sb
+#                  stick-a with build/test/relaunch.efi blessed on its
+#                  library: the payload, started from the menu, starts a
+#                  second falcon-boot off p1 while the first one's
 #                  credential filesystem is still published, and the
 #                  second one's personal OS still gets both credentials
-#                  (DESIGN Section 5.1)
+#                  (DESIGN Section 5.1). Under Secure Boot the payload's
+#                  LoadImage is shim's (DESIGN Section 7.6)
 #   probe-keys-uefi, probe-keys-bios
 #                  stick-a on a disk QEMU throttles to SLOW_BPS: Esc at the
 #                  root, pressed while rows are still pending, acts within
@@ -940,7 +942,7 @@ menu_row() {    # menu_row NAME: its index, 0 for the first row
 
 menus() { log_text "$R/serial.log" | grep -ac '^menu: ISO library'; }
 
-case_relaunch() { # case_relaunch CASE
+case_relaunch() { # case_relaunch CASE FIRMWARE
     local img=$R/stick-relaunch.img why= row i
     cp --sparse=always "$R/stick-a.img" "$img"
     attach "$img"
@@ -953,7 +955,7 @@ case_relaunch() { # case_relaunch CASE
         --cert build/mok-test/falcon-test-mok.crt >/dev/null
     umount_part
     detach
-    boot uefi "$img:boot"
+    boot "$2" "$img:boot"
     wait_for "relaunch.efi" 90 || why="the menu never listed relaunch.efi"
     if [[ -z "$why" ]]; then
         sleep 1
@@ -1541,8 +1543,9 @@ CASES=("$@")
            validation-off-uefi validation-off-pos-uefi
            validation-off-iso-uefi validation-off-station-uefi
            kdf-memory-uefi kdf-memory-bios hibernated-uefi hibernated-bios
-           relaunch-uefi probe-keys-uefi probe-keys-bios update-stick-uefi-sb
-           update-stick-bios update-station-uefi-sb update-station-bios
+           relaunch-uefi relaunch-uefi-sb probe-keys-uefi probe-keys-bios
+           update-stick-uefi-sb update-stick-bios update-station-uefi-sb
+           update-station-bios
            update-refuse timing-uefi timing-stall-uefi lanes-uefi
            lanes-smt-uefi lanes-alone-uefi lanes-cheap-uefi lanes-bios
            lanes-smt-bios lanes-alone-bios lanes-cheap-bios)
@@ -1580,7 +1583,8 @@ for c in "${CASES[@]}"; do
     update-station-uefi-sb) case_update_station "$c" uefi-sb ;;
     update-station-bios)    case_update_station "$c" bios ;;
     update-refuse)          case_update_refuse "$c" ;;
-    relaunch-uefi)   case_relaunch "$c" ;;
+    relaunch-uefi)   case_relaunch "$c" uefi ;;
+    relaunch-uefi-sb) case_relaunch "$c" uefi-sb ;;
     probe-keys-uefi) case_probe_keys "$c" uefi ;;
     probe-keys-bios) case_probe_keys "$c" bios ;;
     hibernated-uefi) case_hibernated "$c" uefi ;;

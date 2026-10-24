@@ -367,8 +367,20 @@ static void try_cell(CHAR16 *label, EFI_IMAGE_LOAD load, EFI_IMAGE_UNLOAD unload
 
     st = load(0, self, dp, buf, size, &loaded);
     if (st == EFI_SUCCESS) {
+        EFI_LOADED_IMAGE_PROTOCOL *li = 0;
+
         put(u"LOADED   handle=");
         put_hex((UINT64)loaded);
+        /* The EDK2 shell refuses to start an image whose ImageCodeType is
+         * not EfiLoaderCode (1); shim's loader builds its own LoadedImage. */
+        if (loaded &&
+            !EFI_ERROR(BS->HandleProtocol(loaded, &GUID_LOADED_IMAGE,
+                                          (void **)&li)) && li) {
+            put(u" code=");
+            put_dec(li->ImageCodeType);
+            put(u" data=");
+            put_dec(li->ImageDataType);
+        }
         if (loaded && unload)
             unload(loaded);
     } else {
@@ -446,6 +458,11 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *systab)
         report_ptr(u"ParentHandle       ", li->ParentHandle);
         put(u"  ImageSize          : ");
         put_hex(li->ImageSize);
+        line();
+        put(u"  ImageCodeType      : ");
+        put_dec(li->ImageCodeType);
+        put(u" data ");
+        put_dec(li->ImageDataType);
         line();
     } else {
         put(u"  LoadedImage unavailable");
