@@ -76,9 +76,16 @@ typedef struct {
  * The root directory is tried first and /boot second, because a record may
  * live anywhere the loader can walk to and the root's last extent sector is
  * occasionally full. Reads the ISO through read/ctx; writes nothing.
+ *
+ * extent is the sector the file's bytes start at: 0, the medium itself, or
+ * a window past its end that serves the medium again. FreeBSD's loader
+ * (libsa cd9660.c) zeroes a file's block cache, so a first read of sector 0
+ * is taken for a cached block that was never read and copied from a NULL
+ * buffer; a caller that can serve such a window gives its sector.
  */
-int bsdmd_record(uint64_t iso_size, bsdmd_read_fn read, void *ctx,
-                 bsdmd_record_edit *out, char *path, size_t path_cap);
+int bsdmd_record(uint64_t iso_size, uint32_t extent, bsdmd_read_fn read,
+                 void *ctx, bsdmd_record_edit *out, char *path,
+                 size_t path_cap);
 
 /* Writes the four settings over loader.conf's opening comment block.
  *

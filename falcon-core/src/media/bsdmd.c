@@ -147,16 +147,17 @@ static int append_point(bsdmd_read_fn read, void *ctx, uint32_t lba,
     return BSDMD_OK;
 }
 
-static void build_record(uint32_t iso_size, uint8_t *rec, uint32_t rec_len)
+static void build_record(uint32_t iso_size, uint32_t extent, uint8_t *rec,
+                         uint32_t rec_len)
 {
     size_t n = cstr_len(BSDMD_ISO_NAME);
 
     memset(rec, 0, rec_len);
     rec[0] = (uint8_t)rec_len;
     rec[1] = 0;                                 /* no extended attributes */
-    /* The file IS the medium: it starts at the first sector and runs the
-     * whole length. Nothing is stored twice. */
-    put_both32(rec + REC_EXTENT, 0);
+    /* The file IS the medium, at sector 0 or at a window serving it again
+     * (bsdmd.h): its whole length, nothing stored twice. */
+    put_both32(rec + REC_EXTENT, extent);
     put_both32(rec + REC_SIZE, iso_size);
     rec[18] = 126;                              /* 2026 */
     rec[19] = 1;
@@ -167,8 +168,9 @@ static void build_record(uint32_t iso_size, uint8_t *rec, uint32_t rec_len)
     memcpy(rec + REC_NAME, BSDMD_ISO_NAME, n);
 }
 
-int bsdmd_record(uint64_t iso_size, bsdmd_read_fn read, void *ctx,
-                 bsdmd_record_edit *out, char *path, size_t path_cap)
+int bsdmd_record(uint64_t iso_size, uint32_t extent, bsdmd_read_fn read,
+                 void *ctx, bsdmd_record_edit *out, char *path,
+                 size_t path_cap)
 {
     static const char *const dirs[] = { "", "BOOT" };
     uint32_t rec_len = (uint32_t)(REC_NAME + cstr_len(BSDMD_ISO_NAME));
@@ -210,7 +212,7 @@ int bsdmd_record(uint64_t iso_size, bsdmd_read_fn read, void *ctx,
 
         out->off = off;
         out->len = rec_len;
-        build_record((uint32_t)iso_size, out->bytes, rec_len);
+        build_record((uint32_t)iso_size, extent, out->bytes, rec_len);
 
         /* The path the loader is told to load. The directory component is
          * lower case because that is the Rock Ridge name every one of these
