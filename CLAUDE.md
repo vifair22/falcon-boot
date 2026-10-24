@@ -138,7 +138,7 @@ unique within each such set, so `#include <fs/exfat.h>` means one file, and
   `test-station`, `test-station-uefi`, `test-station-installed`,
   `test-tpm-rig`, `test-tpm`, `test-bios-img`, `test-bios-probe`,
   `test-jump`, `test-station-bios`, `test-station-fixtures`,
-  `test-station-legacy`, `test-devlink`.
+  `test-station-legacy`, `test-devlink`, `test-aa64`.
 - `tools/coverage/harness.sh <command>` runs anything else in the same
   container (`harness.sh bash`; `/dev/kvm` for the rigs; the repo's own
   `build/` when the binhost's `/srv/falcon` is not there; what root wrote
