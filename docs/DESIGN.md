@@ -2310,6 +2310,13 @@ an unverified kernel off the medium (7.7); memtest86+ reads nothing. Embedding t
 costs p2 space (~100-250 MB per blessed ISO) and makes the entire blessed
 boot chain signed, which closes the unsigned-initrd residual of Section 7.5
 for blessed media.
+A kernel that is itself a stub image (Fedora's arm64 kernel: sd-stub, the
+kernel as its `.linux`, and the devicetrees it picks among) is unwrapped:
+its `.linux` is the wrap's kernel and its `.dtb`, `.dtbauto`, `.hwids` and
+`.uname` come along. Wrapped whole, its own stub would ask shim to verify
+the kernel inside, which nothing signed. A merged `.sbat` longer than the
+stub's section becomes a `.sbat` of its own and the stub's is renamed
+`.sbat.st`.
 `--no-initrd` produces the kernel+cmdline-only wrap for space-constrained
 sticks, reopening that residual for this medium. The loader does not
 deliver the ISO's initrd from p2 to a thin wrap.

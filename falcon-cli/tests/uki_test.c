@@ -641,6 +641,64 @@ static void test_uki_build_merges_the_kernel_sbat(void **state)
     free(img);
 }
 
+/* A kernel that is itself a stub image: its .linux is what is wrapped, its
+ * devicetree sections and .uname come along, and nothing else of it. */
+static void test_uki_build_unwraps_a_stub_image(void **state)
+{
+    static const char dtb[] = "DTB-AUTO";
+    static const char hwids[] = "HWIDS";
+    static const char uname[] = "6.19.10-test";
+    char stub[256];
+    char kernel[256];
+    char initrd[256];
+    char out[256];
+    uint8_t o[0x1400];
+    uint8_t k[0x800];
+    uki_spec spec = { 0 };
+    uint8_t *img = NULL;
+    size_t len = 0;
+    pe_hdr h;
+    size_t off;
+    size_t size;
+
+    (void)state;
+    make_inputs(stub, kernel, initrd, sizeof(stub));
+    build_pe(k, sizeof(k), 1, 0);
+    add_bzimage(k, "9.9.9-inner (me@host) #1");
+    build_pe(o, sizeof(o), 0, 0);
+    wr16(o + COFF + 2, 5u);
+    sect(o, 1, ".dtbauto", 0x2000u, sizeof(dtb) - 1u, 0x600u, 0x200u);
+    memcpy(o + 0x600, dtb, sizeof(dtb) - 1u);
+    sect(o, 2, ".hwids", 0x3000u, sizeof(hwids) - 1u, 0x800u, 0x200u);
+    memcpy(o + 0x800, hwids, sizeof(hwids) - 1u);
+    sect(o, 3, ".uname", 0x4000u, sizeof(uname) - 1u, 0xA00u, 0x200u);
+    memcpy(o + 0xA00, uname, sizeof(uname) - 1u);
+    sect(o, 4, ".linux", 0x5000u, sizeof(k), 0xC00u, sizeof(k));
+    memcpy(o + 0xC00, k, sizeof(k));
+    put("stub-image", o, sizeof(o), kernel, sizeof(kernel));
+    (void)snprintf(out, sizeof(out), "%s/unwrapped.efi", g_dir);
+
+    spec.stub = stub;
+    spec.kernel = kernel;
+    spec.initrd = NULL;
+    spec.cmdline = "quiet";
+    spec.osrel = "ID=x\n";
+    spec.out = out;
+    assert_int_equal(uki_build(&spec), SGN_OK);
+    read_back(out, &img, &len);
+    expect_section(img, len, ".linux", k, sizeof(k));
+    expect_section(img, len, ".dtbauto", dtb, sizeof(dtb) - 1u);
+    expect_section(img, len, ".hwids", hwids, sizeof(hwids) - 1u);
+    expect_section(img, len, ".uname", uname, sizeof(uname) - 1u);
+    /* The inner kernel is NX_COMPAT, the stub image around it not. */
+    assert_int_equal(img[OPT + 71] & 0x01, 0x01);
+    assert_int_equal(pe_parse(img, len, &h), PE_OK);
+    assert_int_equal(pe_find_section(&h, img, len, ".linux", &off, &size),
+                     PE_OK);
+    assert_int_equal(rd32(img + off), rd32(k));
+    free(img);
+}
+
 static void test_uki_build_refuses_bad_inputs(void **state)
 {
     char stub[256];
@@ -842,6 +900,7 @@ int run_uki_tests(void)
         cmocka_unit_test(test_uki_build_end_to_end),
         cmocka_unit_test(test_uki_build_bios_only),
         cmocka_unit_test(test_uki_build_merges_the_kernel_sbat),
+        cmocka_unit_test(test_uki_build_unwraps_a_stub_image),
         cmocka_unit_test(test_uki_build_refuses_bad_inputs),
         cmocka_unit_test(test_uki_main_arguments),
     };
