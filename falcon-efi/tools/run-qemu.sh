@@ -19,6 +19,9 @@
 #               refuses to combine with --secboot, which has no meaning on a
 #               platform with no db. Nothing about the UEFI paths changes.
 #
+#   --uboot     --aa64 under U-Boot's UEFI instead of AAVMF: a devicetree
+#               machine (UBOOT_BIN, default Debian's qemu_arm64 build); not
+#               with --secboot
 #   --aa64      the AArch64 loader (build/bin/falcon-boot-aa64.efi) on
 #               qemu-system-aarch64's virt machine under AAVMF: BOOTAA64.EFI,
 #               shimaa64's names under --secboot, an xhci keyboard and ramfb
@@ -114,6 +117,11 @@ while [[ $# -gt 0 ]]; do
         AA64=1
         shift
         ;;
+    --uboot)
+        UBOOT=1
+        AA64=1
+        shift
+        ;;
     --stick)
         STICK=1
         shift
@@ -156,6 +164,21 @@ if [[ "${AA64:-0}" -eq 1 ]]; then
     fi
     # The copy keeps its source's format, which fw_format reads off the name.
     [[ -z "${VARS_FILE:-}" && "$VARS_SRC" == *.qcow2 ]] && VARS="${VARS%.fd}.qcow2"
+fi
+# U-Boot's UEFI on virt: a devicetree machine. QEMU hands U-Boot the DTB it
+# generates and U-Boot installs it as the EFI configuration table; there is
+# no ACPI. U-Boot keeps its variables in a file on the ESP and has no
+# enrolled keys here, so there is no pflash and no Secure Boot.
+UBOOT_BIN="${UBOOT_BIN:-/usr/lib/u-boot/qemu_arm64/u-boot.bin}"
+if [[ "${UBOOT:-0}" -eq 1 ]]; then
+    if [[ "$SECBOOT" -eq 1 ]]; then
+        echo "ERROR: --uboot runs without Secure Boot (U-Boot has no keys here)" >&2
+        exit 1
+    fi
+    [[ -f "$UBOOT_BIN" ]] ||
+        { echo "ERROR: U-Boot not found at $UBOOT_BIN (u-boot-qemu; set UBOOT_BIN)" >&2; exit 1; }
+    CODE=$UBOOT_BIN
+    ESP="$BUILD/esp-aa64-uboot"
 fi
 
 if [[ "${BIOS:-0}" -eq 1 && "$SECBOOT" -eq 1 ]]; then
@@ -212,8 +235,10 @@ fi
 # Writable per-checkout copy of the varstore so MOK/SB enrollment state
 # persists across runs but never touches the system-wide file. Delete it to
 # factory-reset the virtual NVRAM.
-[[ -f "$VARS" ]] || cp "$VARS_SRC" "$VARS"
-chmod u+w "$VARS"
+if [[ "${UBOOT:-0}" -ne 1 ]]; then
+    [[ -f "$VARS" ]] || cp "$VARS_SRC" "$VARS"
+    chmod u+w "$VARS"
+fi
 
 # What the firmware is given to boot from.
 #
@@ -301,6 +326,12 @@ if [[ "${AA64:-0}" -eq 1 ]]; then
         -drive if=pflash,format="$(fw_format "$VARS")",file="$VARS"
         -device qemu-xhci -device usb-kbd -device ramfb
     )
+    if [[ "${UBOOT:-0}" -eq 1 ]]; then
+        FIRMWARE=(
+            -machine virt -bios "$UBOOT_BIN"
+            -device qemu-xhci -device usb-kbd -device ramfb
+        )
+    fi
 fi
 
 exec "$QEMU" \
