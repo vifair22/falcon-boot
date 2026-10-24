@@ -3755,7 +3755,7 @@ result is skipped unless `--force`. Its options:
 
 | option | default |
 |---|---|
-| `--states "..."` | `off ms own`; `moksb` (Secure Boot on, validation off), `bios` and `bios32` are asked for by name |
+| `--states "..."` | `off ms own`; `moksb` (Secure Boot on, validation off), `bios`, `bios32` and the AArch64 columns `a64-off a64-ms a64-own` (virt under AAVMF, emulated, each wait `FALCON_CASE_A64_SCALE` (4) times as long) are asked for by name |
 | `--routes "..."` | `dnd chain blessed` |
 | `--jobs N` | 3, each case taking `FALCON_CASE_MEM` (4 GiB) |
 | `--timeout S` | 300 seconds from the keypress to a verdict |
@@ -3767,6 +3767,12 @@ The corpus is `tools/coverage/corpus.tsv`, fetched and checked against its
 pinned SHA-256s with:
 
     tools/coverage/corpus-fetch.sh [--local DIR]... [ID...]
+
+Its arm64 rows run in the a64 columns alone. Two have no download to
+fetch: `efi-shell-aa64-2025.02` is built, in the harness, by
+`tools/coverage/mk-shell-iso.sh` (Debian's EDK II shell in an El Torito
+image), and `memtest86-11-arm64` is `memtest86-usb.img` out of PassMark's
+`memtest86-usb.zip`.
 
 ### 13.6 Shim binaries
 

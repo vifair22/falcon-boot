@@ -38,6 +38,8 @@
 #   OUT          output path without the .img suffix
 #   --blessed    also produce OUT.blessed.img
 #   --reuse      keep an existing OUT.img and only (re)make the blessed copy
+#   --arm64      an arm64 ISO: the blessed wrap's serial console is virt's
+#                ttyAMA0
 #   --bless-arg  passed through to falcon-boot-sign (repeatable), e.g.
 #                --bless-arg --kernel --bless-arg 'boot/vmlinuz*'
 #
@@ -61,11 +63,13 @@ shift 2
 
 BLESSED=0
 REUSE=0
+ARM64=0
 BLESS_ARGS=()
 while [[ $# -gt 0 ]]; do
     case "$1" in
     --blessed) BLESSED=1; shift ;;
     --reuse) REUSE=1; shift ;;
+    --arm64) ARM64=1; shift ;;
     --bless-arg)
         [[ $# -ge 2 ]] || { echo "ERROR: --bless-arg needs a value" >&2; exit 1; }
         BLESS_ARGS+=("$2")
@@ -86,6 +90,7 @@ MOK_CRT=build/mok-test/falcon-test-mok.crt
 # there and nowhere else, and a harness that cannot read "could not find the
 # ISO" can only time out. The kernel still prints to both.
 BLESS_CONSOLE="console=tty0 console=ttyS0,115200"
+[[ $ARM64 -eq 1 ]] && BLESS_CONSOLE="console=tty0 console=ttyAMA0,115200"
 
 [[ -f "$ISO" ]] || { echo "ERROR: $ISO not found" >&2; exit 1; }
 for t in sgdisk mformat mkfs.exfat losetup; do
