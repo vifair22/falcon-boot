@@ -24,6 +24,9 @@ SUSE=https://provo-mirror.opensuse.org/tumbleweed/repo/oss/x86_64
 DEBIAN=https://deb.debian.org/debian/pool/main/s/shim-signed
 
 FEDORA_161=shim-x64-16.1-7.x86_64.rpm
+# The AArch64 build of the same release. Signed by the Microsoft UEFI CA
+# 2023 alone, where the x64 one carries 2011 as well.
+FEDORA_161_AA64=shim-aa64-16.1-7.aarch64.rpm
 FEDORA_158=shim-x64-15.8-5.x86_64.rpm
 SUSE_161=shim-16.1-4.2.x86_64.rpm
 DEBIAN_161=shim-signed_1.51+16.1-2_amd64.deb
@@ -38,6 +41,7 @@ fetch() {
 }
 
 fetch "$KOJI/16.1/7/x86_64" "$FEDORA_161"
+fetch "$KOJI/16.1/7/aarch64" "$FEDORA_161_AA64"
 fetch "$KOJI/15.8/5/x86_64" "$FEDORA_158"
 fetch "$SUSE"               "$SUSE_161"
 fetch "$DEBIAN"             "$DEBIAN_161"
@@ -54,12 +58,15 @@ unpack() {
 }
 
 unpack fedora-16.1  "$FEDORA_161"
+unpack fedora-16.1-aa64 "$FEDORA_161_AA64"
 unpack fedora-15.8  "$FEDORA_158"
 unpack suse-16.1    "$SUSE_161"
 unpack debian-16.1  "$DEBIAN_161"
 
 cp "$EXTRACT/fedora-16.1/usr/lib/efi/shim/16.1-7/EFI/fedora/shimx64.efi" "$BINS/fedora-16.1-shimx64.efi"
 cp "$EXTRACT/fedora-16.1/usr/lib/efi/shim/16.1-7/EFI/fedora/mmx64.efi"   "$BINS/fedora-16.1-mmx64.efi"
+cp "$EXTRACT/fedora-16.1-aa64/usr/lib/efi/shim/16.1-7/EFI/fedora/shimaa64.efi" "$BINS/fedora-16.1-shimaa64.efi"
+cp "$EXTRACT/fedora-16.1-aa64/usr/lib/efi/shim/16.1-7/EFI/fedora/mmaa64.efi"   "$BINS/fedora-16.1-mmaa64.efi"
 cp "$EXTRACT/fedora-15.8/usr/lib/efi/shim/15.8-5/EFI/fedora/shimx64.efi" "$BINS/fedora-15.8-shimx64.efi"
 cp "$EXTRACT/fedora-15.8/usr/lib/efi/shim/15.8-5/EFI/fedora/mmx64.efi"   "$BINS/fedora-15.8-mmx64.efi"
 cp "$EXTRACT/suse-16.1/usr/share/efi/x86_64/shim.efi"                    "$BINS/suse-16.1-shim.efi"

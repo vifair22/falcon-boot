@@ -166,9 +166,11 @@ run: $(EFI)
 	falcon-efi/tools/run-qemu.sh
 
 # Throwaway test MOK and a matching OVMF varstore. Test-rig scaffolding only.
-mok-test: $(MOK_KEY)
+mok-test: $(MOK_KEY) $(MOK_DIR)/AAVMF_VARS.secboot.mok.fd
 
-$(MOK_KEY):
+# The AArch64 varstores come from the same run; a build directory made
+# before they existed gets them by running it again (it keeps the key).
+$(MOK_KEY) $(MOK_DIR)/AAVMF_VARS.secboot.mok.fd:
 	falcon-efi/tools/mk-test-mok.sh
 
 # The stick loader signed with the test MOK, so shim accepts it as a second
