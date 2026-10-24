@@ -127,7 +127,8 @@ static const cli_opt create_opts[] = {
  * Each list is cross-checked against the loader's own registry, so this
  * tool cannot offer to create something the loader could not then mount. */
 static const char *const p2_implemented[] = { "exfat", "fat32" };
-static const char *const p3_implemented[] = { "ext4", "fat32", "btrfs" };
+static const char *const p3_implemented[] = { "ext4", "fat32", "btrfs",
+                                               "xfs" };
 
 /* Every filesystem mkstick makes, so a name that is another partition's
  * choice is refused as that rather than as unknown. */
@@ -644,6 +645,9 @@ static cli_status make_fs(const char *fs, const char *label, const char *dev)
                                PROC_END);
     if (strcmp(fs, "btrfs") == 0)
         return proc_runl_quiet("mkfs.btrfs", "-q", "-f", "-L", label, dev,
+                               PROC_END);
+    if (strcmp(fs, "xfs") == 0)
+        return proc_runl_quiet("mkfs.xfs", "-q", "-f", "-L", label, dev,
                                PROC_END);
     return set_error(CLI_ERR_INTERNAL, "no mkfs rule for %s", fs);
 }
@@ -1184,6 +1188,13 @@ static cli_status create_run(const cli_args *a)
     rc = plan_layout(a, disk.size, &plan);
     if (rc != CLI_OK)
         return rc;
+    /* mkfs.xfs makes nothing under 300 MB, and the LUKS2 header comes out
+     * of the partition first. */
+    if (strcmp(plan_fs.p3_fs, "xfs") == 0 &&
+        plan.size[2] < MKS_MIN_P3_XFS)
+        return set_error(CLI_ERR_RANGE, "--p3-fs xfs needs --p3-size %s or "
+                         "more", util_format_size(MKS_MIN_P3_XFS, sizetext,
+                                                  sizeof sizetext));
     for (i = 0; i < MKS_PARTS; i++)
         log_info("  p%zu %s", i + 1u,
                  util_format_size(plan.size[i], sizetext, sizeof sizetext));
@@ -1415,9 +1426,11 @@ const cli_cmd mks_cmd_create = {
     "A target that already carries an MBR or GPT partition table is refused\n"
     "without --force.\n"
     "\n"
-    "--p2-fs takes exfat or fat32; --p3-fs takes ext4, fat32 or btrfs. A FAT\n"
-    "shelf keeps no file modes: mount it with umask=0077 on a host, as mkstick\n"
-    "does, or the MOK key is readable by every user there.\n"
+    "--p2-fs takes exfat or fat32; --p3-fs takes ext4, fat32, btrfs or xfs.\n"
+    "A FAT shelf keeps no file modes: mount it with umask=0077 on a host, as\n"
+    "mkstick does, or the MOK key is readable by every user there. xfs needs\n"
+    "a p3 of 320M or more (mkfs.xfs makes none under 300 MB, and LUKS2 takes\n"
+    "16 MiB).\n"
     "\n"
     "Needs root (loop devices, device-mapper, mount).\n",
     create_run

@@ -520,7 +520,7 @@ coverage: test
 # read these images SKIP when the images are absent, and a skipped cmocka
 # suite does not fail. Without this target, a clean checkout runs its tests,
 # reports green, and leaves the ext4 and LUKS readers at zero coverage.
-test-fixtures: test-image test-ext4 test-jbd2 test-fat test-btrfs test-luks test-isoview test-trust \
+test-fixtures: test-image test-ext4 test-jbd2 test-fat test-btrfs test-xfs test-luks test-isoview test-trust \
 	test-iso9660 test-udf test-wim test-uefiboot test-biosboot
 
 # One fixture at a time, under -j too. mk-test-jbd2.sh snapshots a mounted

@@ -46,6 +46,7 @@
 #include <fs/udf.h>
 #include <fs/fat.h>
 #include <fs/btrfs.h>
+#include <fs/xfs.h>
 #include <fs/fs.h>
 
 /* The blob sizes are a compile-time contract with every registered driver;
@@ -107,7 +108,7 @@ static void test_fs_registry_lookup(void **state)
 
     (void)state;
 
-    assert_int_equal(fs_driver_count(), 6);
+    assert_int_equal(fs_driver_count(), 7);
     for (i = 0; i < fs_driver_count(); i++)
         assert_non_null(fs_driver_at(i));
     assert_null(fs_driver_at(fs_driver_count()));
@@ -142,6 +143,10 @@ static void test_fs_registry_lookup(void **state)
     assert_null(fs_ops_btrfs.extents);
     assert_non_null(fs_ops_btrfs.mount_journal);
     assert_ptr_equal(fs_driver_at(5), &fs_ops_btrfs);
+    assert_ptr_equal(fs_by_name("xfs"), &fs_ops_xfs);
+    assert_int_equal(fs_ops_xfs.role, FS_HINT_SHELF);
+    assert_null(fs_ops_xfs.extents);
+    assert_ptr_equal(fs_driver_at(6), &fs_ops_xfs);
 
     assert_null(fs_by_name("zfs"));
     assert_null(fs_by_name(NULL));
@@ -396,6 +401,14 @@ static void test_fs_status_map_sweeps(void **state)
             assert_int_not_equal(mapped, FS_ERR_CORRUPT);
     }
     assert_int_equal(fs_status_from_btrfs(-99), FS_ERR_CORRUPT);
+    for (rc = -1; rc >= XFS_ERR_NEEDS_RECOVERY; rc--) {
+        int mapped = fs_status_from_xfs(rc);
+
+        assert_true(mapped < 0);
+        if (rc != XFS_ERR_CORRUPT)
+            assert_int_not_equal(mapped, FS_ERR_CORRUPT);
+    }
+    assert_int_equal(fs_status_from_xfs(-99), FS_ERR_CORRUPT);
 }
 
 /* ---- name conversion ---- */

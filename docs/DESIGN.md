@@ -160,7 +160,8 @@ simple or firmware-readable. mkstick states the consequences at creation:
   unlocks and mounts p4 directly.
 
 **p3's filesystem** is ext4 unless `mkstick create --p3-fs` names another:
-FAT32 or btrfs. Only the loaders' own drivers read it, so the choice is whatever
+FAT32, btrfs or xfs (whose p3 is at least 320 MiB: `mkfs.xfs` makes nothing
+under 300 MB, and the LUKS2 header comes first). Only the loaders' own drivers read it, so the choice is whatever
 the OS that maintains the shelf writes best; the loaders read each the same
 way (Section 5.4 for one left mounted). FAT keeps no file modes, so the
 MOK key's 0600 is the mount's on a FAT shelf: mkstick mounts it
@@ -758,6 +759,15 @@ were not read.`, as for ext4's fast commits. The reader holds no node
 whole: a node (16 KiB by default) is read through the volume's 4 KiB
 window, and its crc32c is streamed through the same window the first time
 a mount visits it.
+
+An xfs shelf is read only when its log is clean: the last whole record
+before the log's head is the unmount record alone
+(`falcon-core/src/fs/xfs.c`). The head is where the cycle number every
+512-byte block of the log is stamped with drops, moved back over any block
+of the in-flight iclogs before it that still carries the older cycle, and
+back over a last record that runs past it. A log that needs recovery is
+refused with `the filesystem was not cleanly unmounted; run fsck on it from
+Linux.`
 
 On the OS side, `/sys/power/freeze_filesystems` set to 1 makes the kernel
 freeze filesystems before it hibernates, and ext4's freeze empties the
@@ -2287,7 +2297,8 @@ creation:
   fixed cost on p3, `--pbkdf argon2id --pbkdf-memory 32768
   --pbkdf-force-iterations 4 --pbkdf-parallel 4`; cryptsetup's benchmarked
   argon2id on p4), then `mkfs.ext4` inside each (or, on p3, the
-  filesystem `--p3-fs` names: `mkfs.fat -F 32`, `mkfs.btrfs`). cryptsetup's host-side
+  filesystem `--p3-fs` names: `mkfs.fat -F 32`, `mkfs.btrfs`,
+  `mkfs.xfs`). cryptsetup's host-side
   benchmark would size p3's cost for the host, which the next machine may not
   have. falcon-core's argon2id costs about 42 ms per MiB per pass on the
   A21m (i686, 548 MHz), linear in memory and passes, and lanes filled in
@@ -2538,7 +2549,7 @@ while every real file lives only in UDF.
   hint first, probe order second), never by naming a driver directly, so a
   new filesystem is one driver plus one registry row.
   The drivers are exFAT, ext4 (with `jbd2.c`), FAT12/16/32, ISO9660 (Rock
-  Ridge, Joliet), UDF and btrfs; xfs is not implemented. The FAT driver
+  Ridge, Joliet), UDF, btrfs and xfs. The FAT driver
   also reads a FAT32 library or shelf (Section 3); a FAT32 p2 cannot hold
   an ISO of 4 GiB or more. A new driver's checklist: EFI-free over the byte-read
   callback, host-testable, constrained feature set matched to what its
@@ -2592,8 +2603,10 @@ while every real file lives only in UDF.
     replayed in memory for a shelf an OS left mounted (Section 5.4),
     `fat.c` (FAT12/16/32), `iso9660.c`, `udf.c` and `btrfs.c` (one
     device, SINGLE and DUP chunks, crc32c, the default subvolume; a
-    compressed extent is refused when a read reaches it); `crc32c.c` is
-    shared.
+    compressed extent is refused when a read reaches it) and `xfs.c` (v5,
+    an internal log, data forks in extents and B+tree form, directories in
+    short form and every block form, read through their data blocks);
+    `crc32c.c` is shared.
   - `mem` - `jnlmem.c`, the pages a shelf's journal table lives in (Section
     5.4), shared by `pos` and `discover`.
   - `luks` (core) - LUKS2 header parse, argon2id and pbkdf2 keyslots (the
@@ -2724,7 +2737,7 @@ The three-letter names are the route codes the loaders draw on screen
 | LBA 34 on | BIOS stage 2, its real length (at most 62 sectors); inside the `FALCON-BIOS` EF02 partition when the installer made one | stage 1 |
 | p1 `FALCON-ESP` | FAT32 ESP: shim as `EFI\BOOT\BOOTX64.EFI`, MokManager, falcon-boot as `grubx64.efi`, `falcon-boot.cer`; the `boot` record at byte 0x1DC of its boot sector; in its reserved sectors the BIOS next-boot marker (sector 8) and BIOS stage 3 (from sector 32) | UEFI firmware, shim; stage 2 (`load3.c`) and `marker.c` |
 | p2 `FALCON-ISO` | exFAT or FAT32: the media, `falcon/blessed/`, the manifest, `falcon/windows.cfg`; `/.falcon`, the `library` record | both loaders, falcon-hook (as raw extents), winjump, the appliance |
-| p3 | LUKS2 + ext4, FAT32 or btrfs: UKIs in `/uki`, the MOK key pair; the `falcon` token, the `shelf` record | both loaders, the appliance |
+| p3 | LUKS2 + ext4, FAT32, btrfs or xfs: UKIs in `/uki`, the MOK key pair; the `falcon` token, the `shelf` record | both loaders, the appliance |
 | p4 | LUKS2: the personal OS's LVM (root, home) | the personal OS's initramfs |
 
 Stages 1 and 2 live in front of p1 and stage 3 inside it, so installing

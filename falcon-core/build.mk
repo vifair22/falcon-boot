@@ -28,8 +28,8 @@ CORE_TPM      := $(addprefix $(CORE)/tpm/,tpm.c tpm2.c tpm12.c)
 CORE_TPM_EVLOG := $(CORE)/tpm/evlog.c
 CORE_TPM_EVSAVE := $(CORE)/tpm/evsave.c
 CORE_FS       := $(addprefix $(CORE)/fs/,exfat.c ext4.c jbd2.c crc32c.c fat.c iso9660.c \
-	udf.c btrfs.c fs.c fs_exfat.c fs_ext4.c fs_fat.c fs_iso9660.c fs_udf.c \
-	fs_btrfs.c fs_reg_all.c)
+	udf.c btrfs.c xfs.c fs.c fs_exfat.c fs_ext4.c fs_fat.c fs_iso9660.c \
+	fs_udf.c fs_btrfs.c fs_xfs.c fs_reg_all.c)
 # The stationary build's (DESIGN Section 12): ext4 and its adapter, and a
 # registry that names nothing else.
 CORE_FS_EXT4  := $(addprefix $(CORE)/fs/,ext4.c jbd2.c crc32c.c fs.c fs_ext4.c \
@@ -137,6 +137,11 @@ test-fat:
 test-btrfs:
 	falcon-core/tools/mk-test-btrfs.sh
 
+# xfs: one image from a protofile (no sudo), and two that need a loop mount
+# (sudo): a fragmented file, and a log left needing recovery.
+test-xfs:
+	falcon-core/tools/mk-test-xfs.sh
+
 # The media fixtures (DESIGN Section 6.4): ISO9660 in its three name spaces
 # plus Rock Ridge relocation from xorriso (no sudo), and UDF from mkudffs and
 # the kernel's writer (sudo, for the loop mount).
@@ -171,7 +176,7 @@ test-luks:
 test-trust: $(EFI)
 	falcon-core/tools/mk-test-trust.sh
 
-.PHONY: test-image test-ext4 test-jbd2 test-fat test-btrfs test-luks test-trust test-iso9660 test-udf \
+.PHONY: test-image test-ext4 test-jbd2 test-fat test-btrfs test-xfs test-luks test-trust test-iso9660 test-udf \
 	test-wim test-uefiboot test-biosboot
 
 # ---- tests ----
@@ -181,7 +186,7 @@ CORE_TESTS := $(addprefix falcon-core/tests/,main.c \
 	exfat_fixture_test.c cpio_test.c family_test.c manifest_test.c \
 	crypto_test.c argon2_test.c json_test.c luks_test.c ext4_test.c jbd2_test.c fs_test.c \
 	iso9660_test.c udf_test.c udfedit_test.c media_fs_test.c bootcfg_test.c extmap_test.c \
-	hookcmd_test.c grubcfg_test.c bsdmd_test.c xpsetup_test.c eltorito_test.c fat_test.c btrfs_test.c medium_test.c bootfs_test.c uefiboot_test.c biosboot_test.c blesslist_test.c wim_test.c part_test.c \
+	hookcmd_test.c grubcfg_test.c bsdmd_test.c xpsetup_test.c eltorito_test.c fat_test.c btrfs_test.c xfs_test.c medium_test.c bootfs_test.c uefiboot_test.c biosboot_test.c blesslist_test.c wim_test.c part_test.c \
 	osrel_test.c pe_test.c trust_test.c survey_test.c tui_test.c shelf_test.c \
 	nextboot_test.c stationini_test.c strows_test.c vbr_test.c gz_test.c table_test.c ident_test.c identfs_test.c extfind_test.c \
 	rebl_test.c blkcache_test.c tpmcrypto_test.c tpm_test.c evlog_test.c kndev.c)

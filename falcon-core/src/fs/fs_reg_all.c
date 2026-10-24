@@ -19,7 +19,8 @@ const fs_ops *const fs_registry[] = {
     &fs_ops_udf,
     &fs_ops_iso9660,
     &fs_ops_fat,
-    &fs_ops_btrfs
+    &fs_ops_btrfs,
+    &fs_ops_xfs
 };
 
 const size_t fs_registry_n = sizeof fs_registry / sizeof fs_registry[0];

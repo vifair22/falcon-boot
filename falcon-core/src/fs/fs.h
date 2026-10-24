@@ -97,8 +97,8 @@ typedef int (*fs_read_fn)(void *ctx, uint64_t off, uint64_t len, void *buf);
  *
  * 4352 = a 4 KiB sector/block cache plus 256 bytes of bookkeeping, which
  * covers every directory and file context in the tree (udf_file, a 2 KiB
- * block and 128 allocation descriptors, is about 3.6 KB). A volume takes
- * 512 more: btrfs_vol keeps
+ * block and 128 allocation descriptors, is about 3.6 KB; xfs_dir, an
+ * inode's fork, is under 2 KB). A volume takes 512 more: btrfs_vol keeps
  * its chunk map beside its 4 KiB window (ext4_vol, 4248, is the next
  * fattest). fs.c asserts each driver fits; a driver that wants more changes
  * these numbers, and everything that declares one of these objects grows
@@ -343,6 +343,7 @@ extern const fs_ops fs_ops_udf;
 extern const fs_ops fs_ops_iso9660;
 extern const fs_ops fs_ops_fat;
 extern const fs_ops fs_ops_btrfs;
+extern const fs_ops fs_ops_xfs;
 
 /* The mapping tables, for the same reason: a test enumerates every value of
  * each driver's enum and asserts it maps. An unmapped code maps to
@@ -354,5 +355,6 @@ int fs_status_from_iso9660(int rc);
 int fs_status_from_udf(int rc);
 int fs_status_from_fat(int rc);
 int fs_status_from_btrfs(int rc);
+int fs_status_from_xfs(int rc);
 
 #endif /* FALCON_FS_H */

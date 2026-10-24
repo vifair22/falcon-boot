@@ -1024,7 +1024,7 @@ The other failures while unlocking:
 | `the passphrase did not open any keyslot.` | |
 | `the partition could not be read.` | a read error |
 | `the volume is outside what this loader supports.` | a LUKS2 header or cipher the loader does not take |
-| `the decrypted volume is not a filesystem this loader can read.` | not ext4, FAT32 or btrfs inside, or a btrfs outside the set (more than one device, a checksum other than crc32c) |
+| `the decrypted volume is not a filesystem this loader can read.` | not ext4, FAT32, btrfs or xfs inside, or one outside its driver's set (a btrfs of more than one device or a checksum other than crc32c; an xfs v4, with an external log or a realtime device) |
 | `no *.efi image for this machine was found in /uki or /EFI/Linux.` | none, or only images for the other architecture: the chooser lists a machine's own (x86-64 or ARM64) UKIs alone |
 
 ### 5.3 The passphrase handoff
@@ -2141,7 +2141,7 @@ exist, and that every `--uki` exists.
 | `--key-out` | none | also writes `falcon-mok.key` (0600) and `falcon-mok.crt` into this directory, made 0700 if new |
 | `--p3-plain` | off | p3 without LUKS; requires `--key-out` |
 | `--p2-fs` | `exfat` | p2's filesystem: `exfat` or `fat32`. FAT32 holds no file of 4 GiB or more, which rules out most Windows ISOs; create says so before it writes anything |
-| `--p3-fs` | `ext4` | p3's filesystem: `ext4`, `fat32` or `btrfs` (DESIGN Section 3); `btrfs` needs `mkfs.btrfs`. A FAT32 shelf is mounted `umask=0077` while the key is written |
+| `--p3-fs` | `ext4` | p3's filesystem: `ext4`, `fat32`, `btrfs` or `xfs` (DESIGN Section 3); `btrfs` needs `mkfs.btrfs`, `xfs` needs `mkfs.xfs` and a `--p3-size` of `320M` or more. A FAT32 shelf is mounted `umask=0077` while the key is written |
 | `--stage3` | `build/bin/falcon-bios-stage3.bin` | the BIOS stage 3 p1's reserved sectors are sized for |
 
 With neither `--iso-size` nor `--p4-size`, what is left after p1 and p3 is
@@ -3097,7 +3097,7 @@ refusal sentence of 12.3.
 | `unlocking the encrypted partition` | `this keyslot needs <n> MiB of memory; this machine has <m> MiB free.` | Boot on a machine with more memory, or add a keyslot with less Argon2id memory from Linux. |
 | `unlocking the encrypted partition` | `the volume is outside what this loader supports.` | Check the LUKS2 header with `cryptsetup luksDump`. |
 | `opening the decrypted volume` | - | Report it. |
-| `mounting the filesystem inside it`, `mounting the plaintext UKI shelf` | `the decrypted volume is not a filesystem this loader can read.` / `the shelf is not a filesystem this loader can read.` | The shelf is not ext4, FAT32 or btrfs. |
+| `mounting the filesystem inside it`, `mounting the plaintext UKI shelf` | `the decrypted volume is not a filesystem this loader can read.` / `the shelf is not a filesystem this loader can read.` | The shelf is not ext4, FAT32, btrfs or xfs. |
 | (same) | `the shelf's journal is damaged; run fsck on it from another system, then boot its OS once with noresume.` | As it says. |
 | (same) | `reading the shelf's journal needs <n> MiB of memory; this machine has <m> MiB free.` | Run `fsck` on the shelf from another system. |
 | (same) | `the filesystem was not cleanly unmounted; run fsck on it from Linux.` | As it says. |
