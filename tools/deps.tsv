@@ -52,6 +52,7 @@ qemu-system-x86_64	cmd:qemu-system-x86_64	qemu-system-x86	rigs	optional	the UEFI
 qemu-system-i386	cmd:qemu-system-i386	qemu-system-x86	rigs	optional	the BIOS rigs (SeaBIOS on an i686)
 qemu-system-aarch64	cmd:qemu-system-aarch64	qemu-system-arm	rigs	optional	the AArch64 UEFI rigs (TCG on an x86 host)
 AAVMF	file:/usr/share/AAVMF/AAVMF_CODE.fd|/usr/share/edk2/ArmVirtQemu-AARCH64/QEMU_EFI.qcow2|/usr/share/edk2/aarch64/QEMU_EFI-pflash.raw	qemu-efi-aarch64	rigs	optional	the AArch64 rigs' firmware, plain and Secure Boot
+U-Boot	file:/usr/lib/u-boot/qemu_arm64/u-boot.bin	u-boot-qemu	rigs	optional	the devicetree rig: U-Boot's UEFI on virt
 xz	cmd:xz	xz-utils	harness	optional	unpacks the llvm-mingw release into the harness image
 qemu-img, qemu-nbd	cmd:qemu-img	qemu-utils	rigs	optional	rig disks, overlays and the station fixture disks
 OVMF	file:/usr/share/edk2/OvmfX64/OVMF_CODE.fd|/usr/share/edk2/x64/OVMF_CODE.4m.fd|/usr/share/OVMF/OVMF_CODE_4M.fd|/usr/share/edk2-ovmf/OVMF_CODE.fd	ovmf	rigs	optional	the UEFI rigs' firmware, plain and Secure Boot

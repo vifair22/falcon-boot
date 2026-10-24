@@ -1128,6 +1128,50 @@ static EFI_STATUS iso_open(EFI_SYSTEM_TABLE *st, fs_vol *vol,
     return status;
 }
 
+/* Whether the firmware's FAT driver reads a FAT whose sector size is not
+ * the device's block size. U-Boot's does not: it surfaces the El Torito
+ * image as a partition of the 2048-byte device and then refuses its 512-byte
+ * FAT ("FAT sector size mismatch"). EDK2's reads through Disk I/O and does
+ * not care. A device published, torn down and published again is not bound
+ * a second time there, so this is asked before anything is published. */
+static BOOLEAN firmware_reads_eltorito_fat(const EFI_SYSTEM_TABLE *st)
+{
+    static const CHAR16 uboot[] = L"Das U-Boot";
+    const CHAR16 *v = st->FirmwareVendor;
+    UINTN i;
+
+    if (v == (const CHAR16 *)0)
+        return TRUE;
+    for (i = 0; uboot[i] != 0; i++)
+        if (v[i] != uboot[i])
+            return TRUE;
+    return FALSE;
+}
+
+/* Whether the image is also a disk: an isohybrid MBR with an ESP entry, or
+ * a protective one before a GPT. Booted as 512-byte media, such an image
+ * is the stick it was written for, and the firmware finds its ESP by the
+ * partition table instead of by El Torito. */
+static BOOLEAN image_is_hybrid(fs_vol *vol, const fs_dirent *file)
+{
+    fs_file f;
+    uint8_t mbr[512];
+    unsigned i;
+
+    if (fs_file_open(vol, &f, file) != FS_OK ||
+        fs_file_read(&f, 0, sizeof mbr, mbr) != FS_OK)
+        return FALSE;
+    if (mbr[510] != 0x55u || mbr[511] != 0xAAu)
+        return FALSE;
+    for (i = 0; i < 4u; i++) {
+        uint8_t type = mbr[446u + 16u * i + 4u];
+
+        if (type == 0xEFu || type == 0xEEu)
+            return TRUE;
+    }
+    return FALSE;
+}
+
 EFI_STATUS iso_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
                     fs_vol *vol, const fs_dirent *file, iso_media_kind kind,
                     iso_boot_result *result)
@@ -1167,6 +1211,11 @@ EFI_STATUS iso_boot_overlaid_served(EFI_SYSTEM_TABLE *st,
     result->status = EFI_SUCCESS;
     result->family = (const family_desc *)0;
 
+    /* A CD the firmware cannot boot by El Torito, published as the disk it
+     * also is (firmware_reads_eltorito_fat, image_is_hybrid). */
+    if (kind == ISO_MEDIA_CD && !firmware_reads_eltorito_fat(st) &&
+        image_is_hybrid(vol, file))
+        kind = ISO_MEDIA_DISK;
     status = iso_open(st, vol, file, kind, ovl, &result->stage, &vols, &owned);
     if (!EFI_ERROR(status) && served != (iso_served_fn)0) {
         /* The caller's image, with the medium published beside it. No

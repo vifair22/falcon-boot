@@ -38,7 +38,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         gcc-mingw-w64-x86-64 gcc-mingw-w64-i686 \
         libcmocka-dev \
         qemu-system-x86 qemu-utils ovmf swtpm swtpm-tools imagemagick \
-        qemu-system-arm qemu-efi-aarch64 xz-utils \
+        qemu-system-arm qemu-efi-aarch64 u-boot-qemu xz-utils \
         libc6-dev:arm64 libgcc-14-dev:arm64 systemd-boot-efi:arm64 \
         tcpdump \
         python3-venv python3-dev libcrypt-dev \
@@ -180,6 +180,8 @@ RUN set -eu; \
         missing=1; }; \
     test -f /usr/share/AAVMF/AAVMF_CODE.fd || { \
         echo "MISSING: AAVMF; the AArch64 rigs have no firmware"; missing=1; }; \
+    test -f /usr/lib/u-boot/qemu_arm64/u-boot.bin || { \
+        echo "MISSING: U-Boot; the devicetree rig has no firmware"; missing=1; }; \
     for f in --enroll-microsoft --secure-boot --add-mok --set-pk; do \
         virt-fw-vars --help 2>&1 | grep -q -- "$f" || { \
             echo "MISSING: virt-fw-vars has no $f"; missing=1; }; \

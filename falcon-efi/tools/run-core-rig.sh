@@ -12,8 +12,14 @@
 #                  the same under AAVMF on qemu-system-aarch64's virt
 #                  machine, Secure Boot off and on: the AArch64 loader
 #                  through shimaa64, and the arm64 fixture UKI the shelf
-#                  offers it (personal-aa64.efi). Emulated on an x86-64
-#                  host, so every wait is AA64_SCALE (6) times as long
+#                  offers it (personal-aa64.efi), whose kernel came up on
+#                  ACPI. Emulated on an x86-64 host, so every wait is
+#                  AA64_SCALE (6) times as long
+#   uefi-stick-aa64-uboot, chain-uefi-aa64-uboot
+#                  uefi-stick-aa64 and chain-uefi-aa64 under U-Boot's UEFI
+#                  (UBOOT_BIN), a devicetree machine: the fixture UKI's
+#                  kernel came up on the devicetree U-Boot was given, and
+#                  the virtual CD binds under U-Boot's block driver
 #   uefi-stick     the rig stick (mk-test-stick.sh) as the only disk under
 #                  OVMF, Secure Boot off: the menu lists its library, the
 #                  personal OS unlocks (p3 is argon2id at the stick's cost),
@@ -489,10 +495,14 @@ boot() {
         img=${d%%:*}
         opts=":${d#*:}:"
         [[ "$d" == *:* ]] || opts=::
+        # U-Boot keeps its variables in a file on the ESP it booted from,
+        # so its disks are snapshots: no case leaves that file behind.
+        local snap=
+        [[ $fw == uefi-aa64-uboot ]] && snap=,snapshot=on
         if [[ "$opts" == *:slow:* ]]; then
-            args+=(-drive "if=none,id=d$n,format=raw,file=$img,throttling.bps-total=$SLOW_BPS")
+            args+=(-drive "if=none,id=d$n,format=raw,file=$img,throttling.bps-total=$SLOW_BPS$snap")
         else
-            args+=(-drive "if=none,id=d$n,format=raw,file=$img")
+            args+=(-drive "if=none,id=d$n,format=raw,file=$img$snap")
         fi
         local dev
         if [[ "$opts" == *:4k:* ]]; then
@@ -551,6 +561,11 @@ boot() {
         fwargs=(-machine virt
                 -drive "if=pflash,format=$(fw_format "$code"),readonly=on,file=$code"
                 -drive "if=pflash,format=$(fw_format "$vars"),file=$R/vars.fd"
+                -device qemu-xhci -device usb-kbd -device ramfb)
+        ;;
+    uefi-aa64-uboot)
+        fwargs=(-machine virt
+                -bios "${UBOOT_BIN:-/usr/lib/u-boot/qemu_arm64/u-boot.bin}"
                 -device qemu-xhci -device usb-kbd -device ramfb)
         ;;
     bios) fwargs=(-machine pc) ;;
@@ -662,6 +677,16 @@ stick_case() {  # stick_case CASE FIRMWARE ID ISO ABSENT SEEN DISK...
         has "FALCON-CRED-OK" || why="${why:-the passphrase credential is wrong}"
         has "FALCON-CRED-HEAD falcon.ident.cred [falcon 1 boot $id" ||
             why="${why:-falcon.ident.cred missing or not install $id}"
+        # What described the machine reached the kernel: U-Boot's
+        # devicetree, AAVMF's ACPI.
+        case $fw in
+        uefi-aa64-uboot)
+            has "FALCON-UKI-FIRMWARE devicetree" ||
+                why="${why:-the kernel did not come up on the devicetree}" ;;
+        uefi-aa64*)
+            has "FALCON-UKI-FIRMWARE acpi" ||
+                why="${why:-the kernel did not come up on ACPI}" ;;
+        esac
     fi
     if [[ -z "$why" && -n "$absent" ]]; then
         local a
@@ -1616,7 +1641,8 @@ A_ISOS="archlinux-fake.iso"
 CASES=("$@")
 [[ ${#CASES[@]} -gt 0 ]] ||
     CASES=(uefi-stick uefi-stick-sb uefi-stick-aa64 uefi-stick-aa64-sb
-           chain-uefi-aa64 bios-stick two-sticks-uefi two-sticks-bios
+           chain-uefi-aa64 uefi-stick-aa64-uboot chain-uefi-aa64-uboot
+           bios-stick two-sticks-uefi two-sticks-bios
            mbr-disk-uefi mbr-disk-bios foreign-uefi foreign-bios 4kn-uefi
            4kn-bios 4kn-bios-marker station-uefi station-bios
            station-stick-uefi station-stick-bios bios-only-uefi
@@ -1636,6 +1662,10 @@ for c in "${CASES[@]}"; do
     uefi-stick)    stick_case "$c" uefi "$ID_A" "$A_ISOS" "" "" "$R/stick-a.img:boot" ;;
     uefi-stick-sb) stick_case "$c" uefi-sb "$ID_A" "$A_ISOS" "" "" "$R/stick-a.img:boot" ;;
     chain-uefi-aa64) case_chain_aa64 "$c" uefi-aa64 ;;
+    chain-uefi-aa64-uboot) case_chain_aa64 "$c" uefi-aa64-uboot ;;
+    uefi-stick-aa64-uboot)
+        stick_case "$c" uefi-aa64-uboot "$ID_A" "$A_ISOS" "" "" \
+            "$R/stick-a.img:boot" ;;
     uefi-stick-aa64|uefi-stick-aa64-sb)
         stick_case "$c" "uefi-aa64${c#uefi-stick-aa64}" "$ID_A" "$A_ISOS" "" "" \
             "$R/stick-a.img:boot" ;;

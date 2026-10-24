@@ -19,7 +19,10 @@ change it.
    9), and x86 BIOS through a separate, opt-in loader
    (`falcon-bios/`, item 6). The BIOS loader is i586 and runs on every
    i586 or later processor, booting 32-bit and 64-bit kernels (Section
-   13.8). No IA32 UEFI (see Non-goals).
+   13.8). No IA32 UEFI (see Non-goals). An AArch64 machine's firmware
+   describes it with ACPI (AAVMF, servers, laptops) or a devicetree
+   (U-Boot's UEFI, boards); the loader reads neither, and the firmware's
+   table reaches the kernel through the EFI configuration table untouched.
 2. Drag-and-drop ISO booting from an exFAT partition, Ventoy-style: copy an
    `.iso` onto the stick from any OS, it appears in the menu, it boots. No
    host-side registration step. (When Secure Boot is ON, unsigned media that does
@@ -869,7 +872,13 @@ No host-side registration. The stages:
    chainloaded. falcon-core's ISO9660 and UDF readers serve everything else
    (the survey, direct kernel boot, the Windows and BSD patches; Section
    6.4), since a Linux kernel lives in the ISO9660 tree rather than in the El
-   Torito image.
+   Torito image. U-Boot's partition code surfaces the El Torito image too,
+   but its FAT driver refuses a 512-byte FAT on 2048-byte media, so under
+   U-Boot an isohybrid ISO (an MBR entry of type 0xEF or 0xEE) is published
+   as a disk of 512-byte sectors instead, the stick it was written to be,
+   and the firmware finds its ESP by the partition table (`iso/iso.c`). The
+   choice is made before publishing: U-Boot does not bind a device that was
+   published, torn down and published again.
 4. **Chainload through the verifying `LoadImage`.** `LoadImage` the ISO's
    embedded `\EFI\BOOT\BOOTX64.EFI`, then `StartImage`, through shim
    (Section 7.6):
@@ -3133,8 +3142,9 @@ sequenceDiagram
     participant F as Firmware
     participant S as shim
     participant P as the medium's loader
-    L->>F: virtual CD (2048) or disk (512, .img), ConnectController
-    F-->>L: volumes: El Torito boot image, or the image's ESP
+    L->>F: virtual CD (2048), or disk (512): a .img, or an isohybrid .iso under U-Boot
+    L->>F: ConnectController
+    F-->>L: volumes: El Torito boot image, or the ESP by the partition table
     L->>L: select_boot_volume: the one with EFI\BOOT\BOOTX64.EFI
     L->>S: LoadImage by device path
     L->>L: hide SHIM_LOCK
