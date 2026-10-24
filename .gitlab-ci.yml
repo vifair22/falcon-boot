@@ -88,14 +88,17 @@ default:
 # build directory has them; without them the real-shim and Microsoft-db
 # cases are reported missing and coverage reads lower than it is. The
 # distro shims are pinned downloads (fetch-shims.sh), kept in the runner's
-# cache rather than fetched by every pipeline.
+# cache rather than fetched by every pipeline. The cache is keyed by the
+# script, so one that pins more (the AArch64 shims) fills a new one rather
+# than reusing a cache that lacks them.
 .shims: &shims
   - |
-    if [[ ! -d $FALCON_CI_ROOT/cache/shim/build/shim/bins ]]; then
-      FALCON_BUILD_DIR=$FALCON_CI_ROOT/cache/shim/build tools/coverage/harness.sh falcon-efi/tools/shim-spike/fetch-shims.sh
+    shim_cache=$FALCON_CI_ROOT/cache/shim-$(sha256sum falcon-efi/tools/shim-spike/fetch-shims.sh | cut -c1-12)
+    if [[ ! -d $shim_cache/build/shim/bins ]]; then
+      FALCON_BUILD_DIR=$shim_cache/build tools/coverage/harness.sh falcon-efi/tools/shim-spike/fetch-shims.sh
     fi
     mkdir -p "$FALCON_BUILD_DIR/shim"
-    cp -a "$FALCON_CI_ROOT/cache/shim/build/shim/bins" "$FALCON_BUILD_DIR/shim/"
+    cp -a "$shim_cache/build/shim/bins" "$FALCON_BUILD_DIR/shim/"
 .fixtures: &fixtures
   - *shims
   - tools/coverage/harness.sh bash -c "test -s $FALCON_TEST_BOOTWIM || 7z e -so $BOOTWIM_ISO sources/boot.wim > $FALCON_TEST_BOOTWIM"
