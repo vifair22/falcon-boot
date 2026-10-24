@@ -127,13 +127,24 @@ static const cli_opt create_opts[] = {
  * Each list is cross-checked against the loader's own registry, so this
  * tool cannot offer to create something the loader could not then mount. */
 static const char *const p2_implemented[] = { "exfat", "fat32" };
-static const char *const p3_implemented[] = { "ext4", "fat32" };
+static const char *const p3_implemented[] = { "ext4", "fat32", "btrfs" };
 
 /* Every filesystem mkstick makes, so a name that is another partition's
  * choice is refused as that rather than as unknown. */
 static const char *const sanctioned[] = {
     "exfat", "ext4", "fat32", "xfs", "btrfs"
 };
+
+/* The program that makes a choice, for the PATH check before anything is
+ * written; mkfs.fat and mkfs.exfat are on the required list already. */
+static const char *mkfs_tool(const char *fs)
+{
+    if (strcmp(fs, "btrfs") == 0)
+        return "mkfs.btrfs";
+    if (strcmp(fs, "xfs") == 0)
+        return "mkfs.xfs";
+    return NULL;
+}
 
 /* The name a choice goes by in the loader's registry. mkstick says fat32
  * because that is the FAT it makes; the driver reads FAT12/16/32 and is
@@ -630,6 +641,9 @@ static cli_status make_fs(const char *fs, const char *label, const char *dev)
         return proc_runl_quiet("mkfs.ext4", "-q", "-L", label, dev, PROC_END);
     if (strcmp(fs, "fat32") == 0)
         return proc_runl_quiet("mkfs.fat", "-F", "32", "-n", label, dev,
+                               PROC_END);
+    if (strcmp(fs, "btrfs") == 0)
+        return proc_runl_quiet("mkfs.btrfs", "-q", "-f", "-L", label, dev,
                                PROC_END);
     return set_error(CLI_ERR_INTERNAL, "no mkfs rule for %s", fs);
 }
@@ -1132,6 +1146,10 @@ static cli_status create_run(const cli_args *a)
                              "rather than reimplementing it (DESIGN Section "
                              "8)", required_tools[i]);
     }
+    if (mkfs_tool(plan_fs.p3_fs) != NULL &&
+        !proc_exists(mkfs_tool(plan_fs.p3_fs)))
+        return set_error(CLI_ERR_NOTFOUND, "--p3-fs %s needs %s on PATH",
+                         plan_fs.p3_fs, mkfs_tool(plan_fs.p3_fs));
 
     /* Loop devices, device-mapper and mount are all root-only, and finding
      * that out three steps in would leave a partitioned, unformatted stick. */
@@ -1397,9 +1415,9 @@ const cli_cmd mks_cmd_create = {
     "A target that already carries an MBR or GPT partition table is refused\n"
     "without --force.\n"
     "\n"
-    "--p2-fs takes exfat or fat32; --p3-fs takes ext4 or fat32. A FAT shelf keeps no\n"
-    "file modes: mount it with umask=0077 on a host, as mkstick does, or the\n"
-    "MOK key is readable by every user there.\n"
+    "--p2-fs takes exfat or fat32; --p3-fs takes ext4, fat32 or btrfs. A FAT\n"
+    "shelf keeps no file modes: mount it with umask=0077 on a host, as mkstick\n"
+    "does, or the MOK key is readable by every user there.\n"
     "\n"
     "Needs root (loop devices, device-mapper, mount).\n",
     create_run

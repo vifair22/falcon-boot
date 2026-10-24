@@ -32,7 +32,9 @@ openssl	cmd:openssl	openssl	host tools	required	mkstick keygen and create: the M
 sbsign, sbverify, sbattach	cmd:sbsign	sbsigntool	host tools	required	MOK signatures, their check, and stripping one
 mkfs.exfat	cmd:mkfs.exfat	exfatprogs	host tools	required	p2
 mkfs.ext4	cmd:mkfs.ext4	e2fsprogs	host tools	required	p3 and the station partition
-mkfs.fat	cmd:mkfs.fat	dosfstools	host tools	required	p1 and a BIOS boot partition
+mkfs.fat	cmd:mkfs.fat	dosfstools	host tools	required	p1, a BIOS boot partition, and a FAT32 p2 or p3
+mkfs.btrfs	cmd:mkfs.btrfs	btrfs-progs	host tools	optional	a btrfs p3 (--p3-fs btrfs), and the btrfs fixtures
+mkfs.xfs, xfs_io	cmd:mkfs.xfs	xfsprogs	host tools	optional	an xfs p3 (--p3-fs xfs), and the xfs fixtures
 sgdisk	cmd:sgdisk	gdisk	host tools	required	GPT
 sfdisk	cmd:sfdisk	fdisk	host tools	required	MBR
 losetup, blockdev, partx	cmd:losetup	util-linux	host tools	required	images as block devices

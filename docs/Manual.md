@@ -1024,7 +1024,7 @@ The other failures while unlocking:
 | `the passphrase did not open any keyslot.` | |
 | `the partition could not be read.` | a read error |
 | `the volume is outside what this loader supports.` | a LUKS2 header or cipher the loader does not take |
-| `the decrypted volume is not a filesystem this loader can read.` | not ext4 or FAT32 inside |
+| `the decrypted volume is not a filesystem this loader can read.` | not ext4, FAT32 or btrfs inside, or a btrfs outside the set (more than one device, a checksum other than crc32c) |
 | `no *.efi image for this machine was found in /uki or /EFI/Linux.` | none, or only images for the other architecture: the chooser lists a machine's own (x86-64 or ARM64) UKIs alone |
 
 ### 5.3 The passphrase handoff
@@ -2141,7 +2141,7 @@ exist, and that every `--uki` exists.
 | `--key-out` | none | also writes `falcon-mok.key` (0600) and `falcon-mok.crt` into this directory, made 0700 if new |
 | `--p3-plain` | off | p3 without LUKS; requires `--key-out` |
 | `--p2-fs` | `exfat` | p2's filesystem: `exfat` or `fat32`. FAT32 holds no file of 4 GiB or more, which rules out most Windows ISOs; create says so before it writes anything |
-| `--p3-fs` | `ext4` | p3's filesystem: `ext4` or `fat32` (DESIGN Section 3). A FAT32 shelf is mounted `umask=0077` while the key is written |
+| `--p3-fs` | `ext4` | p3's filesystem: `ext4`, `fat32` or `btrfs` (DESIGN Section 3); `btrfs` needs `mkfs.btrfs`. A FAT32 shelf is mounted `umask=0077` while the key is written |
 | `--stage3` | `build/bin/falcon-bios-stage3.bin` | the BIOS stage 3 p1's reserved sectors are sized for |
 
 With neither `--iso-size` nor `--p4-size`, what is left after p1 and p3 is
@@ -3097,7 +3097,7 @@ refusal sentence of 12.3.
 | `unlocking the encrypted partition` | `this keyslot needs <n> MiB of memory; this machine has <m> MiB free.` | Boot on a machine with more memory, or add a keyslot with less Argon2id memory from Linux. |
 | `unlocking the encrypted partition` | `the volume is outside what this loader supports.` | Check the LUKS2 header with `cryptsetup luksDump`. |
 | `opening the decrypted volume` | - | Report it. |
-| `mounting the filesystem inside it`, `mounting the plaintext UKI shelf` | `the decrypted volume is not a filesystem this loader can read.` / `the shelf is not a filesystem this loader can read.` | The shelf is not ext4 or FAT32. |
+| `mounting the filesystem inside it`, `mounting the plaintext UKI shelf` | `the decrypted volume is not a filesystem this loader can read.` / `the shelf is not a filesystem this loader can read.` | The shelf is not ext4, FAT32 or btrfs. |
 | (same) | `the shelf's journal is damaged; run fsck on it from another system, then boot its OS once with noresume.` | As it says. |
 | (same) | `reading the shelf's journal needs <n> MiB of memory; this machine has <m> MiB free.` | Run `fsck` on the shelf from another system. |
 | (same) | `the filesystem was not cleanly unmounted; run fsck on it from Linux.` | As it says. |
@@ -3442,6 +3442,8 @@ the harness's Dockerfile and this table to it):
 | `mkfs.exfat` (required) | exfatprogs | host tools | p2 |
 | `mkfs.ext4` (required) | e2fsprogs | host tools | p3 and the station partition |
 | `mkfs.fat` (required) | dosfstools | host tools | p1, a BIOS boot partition, and a FAT32 p2 or p3 |
+| `mkfs.btrfs` | btrfs-progs | host tools | a btrfs p3 (--p3-fs btrfs), and the btrfs fixtures |
+| `mkfs.xfs, xfs_io` | xfsprogs | host tools | an xfs p3 (--p3-fs xfs), and the xfs fixtures |
 | `sgdisk` (required) | gdisk | host tools | GPT |
 | `sfdisk` (required) | fdisk | host tools | MBR |
 | `losetup, blockdev, partx` (required) | util-linux | host tools | images as block devices |

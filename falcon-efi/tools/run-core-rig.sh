@@ -133,6 +133,9 @@
 #   fs-p2-fat-uefi, fs-p2-fat-bios
 #                  the same for `--p2-fs fat32`: the library listed off a
 #                  FAT32 p2
+#   fs-p3-btrfs-uefi, fs-p3-btrfs-bios
+#                  the same for `--p3-fs btrfs`: the shelf read by the
+#                  btrfs driver
 #   fs-p2-fat-iso-uefi
 #                  that stick under OVMF: payload-test.iso, a file on the
 #                  FAT32 library, boots through the virtual CD
@@ -1741,7 +1744,7 @@ CASES=("$@")
            validation-off-iso-uefi validation-off-station-uefi
            kdf-memory-uefi kdf-memory-bios hibernated-uefi hibernated-bios
            fs-p3-fat-uefi fs-p3-fat-bios fs-p2-fat-uefi fs-p2-fat-bios
-           fs-p2-fat-iso-uefi
+           fs-p2-fat-iso-uefi fs-p3-btrfs-uefi fs-p3-btrfs-bios
            relaunch-uefi relaunch-uefi-sb probe-keys-uefi probe-keys-bios
            update-stick-uefi-sb update-stick-bios update-station-uefi-sb
            update-station-bios
@@ -1799,6 +1802,8 @@ for c in "${CASES[@]}"; do
     fs-p2-fat-uefi|fs-p2-fat-bios)
         fs_case "$c" "${c##*-}" p2-fat fat32 ext4 ;;
     fs-p2-fat-iso-uefi) fs_iso "$c" p2-fat fat32 ext4 ;;
+    fs-p3-btrfs-uefi|fs-p3-btrfs-bios)
+        fs_case "$c" "${c##*-}" p3-btrfs exfat btrfs ;;
     hibernated-uefi) case_hibernated "$c" uefi ;;
     hibernated-bios) case_hibernated "$c" bios ;;
     station-uefi)  case_station "$c" uefi ;;

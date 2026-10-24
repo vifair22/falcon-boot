@@ -96,12 +96,14 @@ typedef int (*fs_read_fn)(void *ctx, uint64_t off, uint64_t len, void *buf);
 /* Opaque per-object storage, sized for the largest registered driver.
  *
  * 4352 = a 4 KiB sector/block cache plus 256 bytes of bookkeeping, which
- * covers every context in the tree today (the fattest is ext4_vol at 4248;
- * udf_file, a 2 KiB block and 128 allocation descriptors, is about 3.6 KB)
- * with room for a driver that carries a slightly wider header. fs.c asserts
- * each driver fits; a future driver that wants more changes these numbers and
- * everything that declares one of these objects grows with it. */
-#define FS_VOL_SIZE  4352u
+ * covers every directory and file context in the tree (udf_file, a 2 KiB
+ * block and 128 allocation descriptors, is about 3.6 KB). A volume takes
+ * 512 more: btrfs_vol keeps
+ * its chunk map beside its 4 KiB window (ext4_vol, 4248, is the next
+ * fattest). fs.c asserts each driver fits; a driver that wants more changes
+ * these numbers, and everything that declares one of these objects grows
+ * with it. */
+#define FS_VOL_SIZE  4864u
 #define FS_DIR_SIZE  4352u
 #define FS_FILE_SIZE 4352u
 
@@ -340,6 +342,7 @@ extern const fs_ops fs_ops_ext4;
 extern const fs_ops fs_ops_udf;
 extern const fs_ops fs_ops_iso9660;
 extern const fs_ops fs_ops_fat;
+extern const fs_ops fs_ops_btrfs;
 
 /* The mapping tables, for the same reason: a test enumerates every value of
  * each driver's enum and asserts it maps. An unmapped code maps to
@@ -350,5 +353,6 @@ int fs_status_from_ext4(int rc);
 int fs_status_from_iso9660(int rc);
 int fs_status_from_udf(int rc);
 int fs_status_from_fat(int rc);
+int fs_status_from_btrfs(int rc);
 
 #endif /* FALCON_FS_H */
