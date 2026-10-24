@@ -454,8 +454,8 @@ fingerprints instead:
 openssl x509 -in falcon-mok.crt -noout -fingerprint -sha256
 ```
 
-`archusb`'s `archusb-status-collect` identifies signers by subject for this
-reason.
+A host tool that reports what signed a binary identifies signers by subject
+for this reason.
 
 ### 4.3 The ESP is not a storage location
 
@@ -530,12 +530,9 @@ already typed. p4 is separate only so EFI never mounts root.
   ```
 
   It ships as an initramfs build hook, so a rebuild after a kernel or
-  systemd update keeps it: for mkinitcpio the `falcon-credential` install
-  hook (the archusb repo, `install/falcon-credential`), for dracut the
-  `99falcon-credential` module (the thinkpad-t430 repo,
-  `gentoo/usr/lib/dracut/modules.d/99falcon-credential/`). With the drop-in
-  the unlock succeeds from the credential with no prompt; without it the
-  unit cannot start.
+  systemd update keeps it: a mkinitcpio install hook, or a dracut module
+  (`docs/personal-os.md` has both). With the drop-in the unlock succeeds from
+  the credential with no prompt; without it the unit cannot start.
 
   **The same failure recurs after switch-root, and needs its own copy of the
   fix.** `/run` is one tmpfs across the pivot, so
@@ -548,10 +545,9 @@ already typed. p4 is separate only so EFI never mounts root.
   unit there opens with a keyfile, and a `LoadCredential=` naming a file
   absent on a boot without falcon would fail the unit.
 
-  Both halves ship from the OS's own repository, not this one: **archusb**
-  (https://git.airies.net/vifair22/archusb, Arch, mkinitcpio) and
-  **thinkpad-t430** (https://git.airies.net/vifair22/thinkpad-t430, Gentoo
-  with systemd, dracut).
+  Both halves belong to the OS, not this project; `docs/personal-os.md` is
+  the guide to building them (Arch with mkinitcpio, dracut for other systemd
+  distributions).
 - **UKI discovery convention:** the loader looks in `/uki/` first,
   then `/EFI/Linux/` (the Boot Loader Specification location, so a p3
   populated by `kernel-install` still boots), taking regular files with a
@@ -652,8 +648,7 @@ kernel only at `usr/lib/modules/<kver>/vmlinuz`, and mkinitcpio's pacman
 script maintains a copy at whatever absolute path `ALL_kver` names, provided
 no package owns that path. `ALL_kver` points at `/efi/vmlinuz-linux`, and
 that is how the UKI gets rebuilt on a kernel upgrade. Delete them and the
-next upgrade rebuilds nothing, silently. archusb's `install/` presets record
-the reasoning.
+next upgrade rebuilds nothing, silently.
 
 **Only `*.efi` directly under `/uki` is visible to the loader.**
 `falcon-core/src/media/shelf.c` matches on the `.efi` suffix and nothing
@@ -2848,8 +2843,8 @@ sequenceDiagram
     Note over I: root /dev/mapper/vgusb-root mounted, switch-root
 ```
 
-The OS half (the drop-in, the cmdline naming p4 and root) is the archusb
-repository's; Section 5 says why the drop-in exists.
+The OS half (the drop-in, the cmdline naming p4 and root) is the OS's own
+(`docs/personal-os.md`); Section 5 says why the drop-in exists.
 
 Resident at handoff: credfs and sd-stub's LoadFile2, both boot-services.
 The other processors are back with the firmware before the shelf is

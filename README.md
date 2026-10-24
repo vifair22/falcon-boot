@@ -126,11 +126,12 @@ Section 3.1). `docs/Manual.md` is the full reference: the menu, every
 route, blessing, the personal OS, the station and `STATION.INI`, jump, every
 `falcon-boot-mkstick` command, and what to do on each failure page.
 
-The personal OS itself is a separate project:
-[archusb](https://git.airies.net/vifair22/archusb) holds an Arch install's
-build runbook and the OS side of the passphrase handoff as a mkinitcpio
-hook, and [thinkpad-t430](https://git.airies.net/vifair22/thinkpad-t430)
-the same for Gentoo with systemd, as a dracut module.
+The personal OS is your own install, not part of this project.
+[docs/personal-os.md](docs/personal-os.md) is the guide: the small contract
+an OS meets to boot from the shelf (a signed UKI and a one-file initramfs
+drop-in for the passphrase handoff), a worked Arch build with mkinitcpio, the
+dracut equivalent for other systemd distributions, and the rest left to your
+distribution's normal tooling.
 
 ![falcon jump's menu](docs/img/jump.png)
 
