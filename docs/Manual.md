@@ -1168,6 +1168,7 @@ A shelf that does not mount fails at `mounting the filesystem inside it`
 | `the shelf's journal is damaged; run fsck on it from another system, then boot its OS once with noresume.` | as it says; `noresume` keeps a hibernated OS from resuming over the repaired shelf |
 | `reading the shelf's journal needs N MiB of memory; this machine has M MiB free.` | boot it on a machine with more memory |
 | `the filesystem was not cleanly unmounted; run fsck on it from Linux.` | as it says |
+| `the filesystem's log needs Linux to finish it; mount it once from Linux.` | an xfs log with a file mapping change still to finish (DESIGN 5.4): mount it, unmount it, boot again |
 
 Setting `/sys/power/freeze_filesystems` to 1 in the OS leaves the shelf
 clean when it hibernates (`docs/DESIGN.md` Section 5.4).
@@ -3101,6 +3102,7 @@ refusal sentence of 12.3.
 | (same) | `the shelf's journal is damaged; run fsck on it from another system, then boot its OS once with noresume.` | As it says. |
 | (same) | `reading the shelf's journal needs <n> MiB of memory; this machine has <m> MiB free.` | Run `fsck` on the shelf from another system. |
 | (same) | `the filesystem was not cleanly unmounted; run fsck on it from Linux.` | As it says. |
+| (same) | `the filesystem's log needs Linux to finish it; mount it once from Linux.` | As it says. |
 | `looking for a UKI` | `no *.efi image for this machine was found in /uki or /EFI/Linux.` | Put a signed UKI for this machine's architecture in `/uki` (11.1). |
 | `looking for the UKI` | `that UKI is not on the shelf.` | The marker or STATION.INI names a file that is gone. |
 | `looking for the signing appliance` | `no signing-appliance image is on this stick's shelf. Bless the ISO on a Linux host with falcon-boot-sign instead.` | As it says, or stage the appliance UKI on p3. |

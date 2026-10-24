@@ -7,7 +7,8 @@
 #                             data fork is a B+tree, and prealloc.bin, 4 KiB
 #                             written into a 1 MiB fallocate, the rest
 #                             unwritten
-#   build/test-xfs-dirty.img  late.txt, 5 bytes of 'l', fsynced, then the
+#   build/test-xfs-dirty.img  late.txt (5 bytes of 'l'), late/ (300 files)
+#                             and frag2.bin (40 extents), fsynced, then the
 #                             filesystem shut down with its log flushed and
 #                             nothing written back: a log that needs
 #                             recovery
@@ -113,6 +114,29 @@ mount_rw "$OUT/test-xfs-dirty.img"
 # shutdown -f forces the log again and stops anything being written back,
 # so the directory and the inode are in the log alone.
 xfs_io -f -c 'pwrite -S 0x6c 0 5' -c fsync "$MNT/late.txt" >/dev/null
+# More of the same: a directory of 300 (leaf form) and a file of 40 extents
+# (a B+tree root in the inode), every one fsynced, the directories too.
+python3 - "$MNT" <<'PY'
+import os, sys
+m = sys.argv[1]
+os.mkdir(os.path.join(m, 'late'))
+for i in range(300):
+    p = os.path.join(m, 'late', 'f%04d' % i)
+    with open(p, 'w') as f:
+        f.write('late %d\n' % i)
+        f.flush()
+        os.fsync(f.fileno())
+fd = os.open(os.path.join(m, 'frag2.bin'), os.O_WRONLY | os.O_CREAT, 0o644)
+for k in range(40):
+    os.pwrite(fd, bytes(((k * 8192 + i) % 239) for i in range(4096)),
+              k * 8192)
+os.fsync(fd)
+os.close(fd)
+for d in (os.path.join(m, 'late'), m):
+    fd = os.open(d, os.O_RDONLY)
+    os.fsync(fd)
+    os.close(fd)
+PY
 sudo xfs_io -x -c 'shutdown -f' "$MNT" >/dev/null
 sudo umount "$MNT"
 rmdir "$MNT"

@@ -12,7 +12,8 @@
  * blocks, needsrepair and anything newer.
  *
  * A log that is not clean (no unmount record at its head) is
- * XFS_ERR_NEEDS_RECOVERY from xfs_mount.
+ * XFS_ERR_NEEDS_RECOVERY from xfs_mount, and replayed in memory by
+ * xfs_mount_journal (xfslog.c).
  *
  * Memory is the volume's 4 KiB window; a structure that crosses it is read
  * across, and every checksum is streamed through it (crc32c, with the
@@ -38,8 +39,21 @@ enum {
     XFS_ERR_RANGE          = -5,
     XFS_ERR_UNSUPPORTED    = -6,
     XFS_ERR_CSUM           = -7,
-    XFS_ERR_NEEDS_RECOVERY = -8
+    XFS_ERR_NEEDS_RECOVERY = -8,
+    XFS_ERR_JOURNAL        = -9,
+    XFS_ERR_NOMEM          = -10
 };
+
+/* Where a log replay's memory comes from (xfs_mount_journal): asked for
+ * once, sized exactly, put back when the mount fails, and the caller's to
+ * release after the last read of the volume, which reads through it. */
+typedef struct {
+    void *(*get)(void *ctx, size_t bytes);
+    void  (*put)(void *ctx, void *mem, size_t bytes);
+    void  *ctx;
+} xfs_mem;
+
+#define XFS_REPLAYED 0x1u       /* read through its replayed log */
 
 #define XFS_WIN         4096u
 #define XFS_NAME_MAX    255u
@@ -64,6 +78,22 @@ typedef struct {
 
     uint64_t log_off;           /* the internal log, bytes */
     uint64_t log_bbs;           /* in 512-byte basic blocks */
+
+    uint32_t flags;             /* XFS_REPLAYED */
+
+    /* A replayed log's overlay: 512-byte blocks, ovl_idx sorting them by
+     * ovl_bb; read and ctx then read through it, the device's are kept. */
+    xfs_read_fn dev_read;
+    void    *dev_ctx;
+    uint64_t *ovl_bb;
+    uint32_t *ovl_idx;
+    uint8_t  *ovl_data;
+    uint32_t ovl_n;
+    uint32_t ovl_cap;
+    void    *mem;
+    size_t   mem_len;
+    void   (*mem_put)(void *ctx, void *mem, size_t bytes);
+    void    *mem_ctx;
 
     /* The window: XFS_WIN bytes at win_off; ~0 invalid. */
     uint64_t win_off;
@@ -111,6 +141,14 @@ int xfs_probe(xfs_read_fn read, void *ctx);
 
 /* The superblock, and the log's head. */
 int xfs_mount(xfs_vol *v, xfs_read_fn read, void *ctx);
+
+/* xfs_mount, except that a log that is not clean is replayed in memory,
+ * never written: XFS_REPLAYED in v->flags. XFS_ERR_NOMEM with *need the
+ * bytes mem was asked for; XFS_ERR_JOURNAL for a log that is damaged;
+ * XFS_ERR_NEEDS_RECOVERY for one whose unfinished intents only the kernel
+ * finishes. */
+int xfs_mount_journal(xfs_vol *v, xfs_read_fn read, void *ctx,
+                      const xfs_mem *mem, size_t *need);
 
 int xfs_dir_open_root(xfs_vol *v, xfs_dir *d);
 int xfs_dir_open(xfs_vol *v, xfs_dir *d, const xfs_dirent *e);

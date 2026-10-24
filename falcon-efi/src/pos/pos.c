@@ -670,7 +670,10 @@ static const CHAR16 *mount_advice(int rc, const CHAR16 *otherwise)
         buf[n] = 0;
         return buf;
     }
-    if (rc == FS_ERR_NEEDS_RECOVERY || rc == FS_ERR_DIRTY)
+    if (rc == FS_ERR_NEEDS_RECOVERY)
+        return L"the filesystem's log needs Linux to finish it; mount it "
+               L"once from Linux.";
+    if (rc == FS_ERR_DIRTY)
         return L"the filesystem was not cleanly unmounted; run fsck on it "
                L"from Linux.";
     return otherwise;

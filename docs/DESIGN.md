@@ -760,14 +760,28 @@ whole: a node (16 KiB by default) is read through the volume's 4 KiB
 window, and its crc32c is streamed through the same window the first time
 a mount visits it.
 
-An xfs shelf is read only when its log is clean: the last whole record
-before the log's head is the unmount record alone
-(`falcon-core/src/fs/xfs.c`). The head is where the cycle number every
-512-byte block of the log is stamped with drops, moved back over any block
-of the in-flight iclogs before it that still carries the older cycle, and
-back over a last record that runs past it. A log that needs recovery is
-refused with `the filesystem was not cleanly unmounted; run fsck on it from
-Linux.`
+An xfs shelf's log is replayed in memory when it is not clean
+(`falcon-core/src/fs/xfslog.c`), as the kernel's recovery would replay it
+and never written. Clean is the last whole record before the head being
+the unmount record alone; the head is where the cycle number stamped on
+every 512-byte block of the log drops, moved back over any block of the
+in-flight iclogs that still carries the older cycle, and over a last
+record that runs past it or fails its crc32c. From the last record's tail
+to the head, the committed transactions' buffer items (their dirty
+128-byte chunks, less the buffers a later cancel record names) and inode
+items (the log's core converted to the disk's byte order, the data fork
+copied, a B+tree root laid out at the fork's capacity) are laid over the
+volume as 512-byte blocks, sorted, which every read goes through; a block
+or inode whose own LSN is past the transaction's is newer on disk and left.
+The checksum of a block the replay wrote is not checked. Intents to free
+extents or update the rmap and refcount trees are not finished: they change
+nothing this reader reads. An unfinished bmap or exchange intent changes
+what a file maps, and only the kernel finishes it: that volume is refused
+with `the filesystem's log needs Linux to finish it; mount it once from
+Linux.` The memory is asked for once, sized by a first walk (16 bytes a
+transaction, 16 a cancel, 8 an intent, and 524 for every block the items
+could touch), from the same `fs_jmem` as ext4's table, with the same page
+when it cannot be had.
 
 On the OS side, `/sys/power/freeze_filesystems` set to 1 makes the kernel
 freeze filesystems before it hibernates, and ext4's freeze empties the
@@ -2603,9 +2617,10 @@ while every real file lives only in UDF.
     replayed in memory for a shelf an OS left mounted (Section 5.4),
     `fat.c` (FAT12/16/32), `iso9660.c`, `udf.c` and `btrfs.c` (one
     device, SINGLE and DUP chunks, crc32c, the default subvolume; a
-    compressed extent is refused when a read reaches it) and `xfs.c` (v5,
+    compressed extent is refused when a read reaches it), `xfs.c` (v5,
     an internal log, data forks in extents and B+tree form, directories in
-    short form and every block form, read through their data blocks);
+    short form and every block form, read through their data blocks) with
+    `xfslog.c`, its log replayed in memory (Section 5.4);
     `crc32c.c` is shared.
   - `mem` - `jnlmem.c`, the pages a shelf's journal table lives in (Section
     5.4), shared by `pos` and `discover`.

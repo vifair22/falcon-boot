@@ -28,7 +28,7 @@ CORE_TPM      := $(addprefix $(CORE)/tpm/,tpm.c tpm2.c tpm12.c)
 CORE_TPM_EVLOG := $(CORE)/tpm/evlog.c
 CORE_TPM_EVSAVE := $(CORE)/tpm/evsave.c
 CORE_FS       := $(addprefix $(CORE)/fs/,exfat.c ext4.c jbd2.c crc32c.c fat.c iso9660.c \
-	udf.c btrfs.c xfs.c fs.c fs_exfat.c fs_ext4.c fs_fat.c fs_iso9660.c \
+	udf.c btrfs.c xfs.c xfslog.c fs.c fs_exfat.c fs_ext4.c fs_fat.c fs_iso9660.c \
 	fs_udf.c fs_btrfs.c fs_xfs.c fs_reg_all.c)
 # The stationary build's (DESIGN Section 12): ext4 and its adapter, and a
 # registry that names nothing else.

@@ -401,7 +401,7 @@ static void test_fs_status_map_sweeps(void **state)
             assert_int_not_equal(mapped, FS_ERR_CORRUPT);
     }
     assert_int_equal(fs_status_from_btrfs(-99), FS_ERR_CORRUPT);
-    for (rc = -1; rc >= XFS_ERR_NEEDS_RECOVERY; rc--) {
+    for (rc = -1; rc >= XFS_ERR_NOMEM; rc--) {
         int mapped = fs_status_from_xfs(rc);
 
         assert_true(mapped < 0);

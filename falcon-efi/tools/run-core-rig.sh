@@ -138,6 +138,10 @@
 #                  btrfs driver
 #   fs-p3-xfs-uefi, fs-p3-xfs-bios
 #                  the same for `--p3-fs xfs`, its 320 MiB p3
+#   fs-p3-xfs-dirty-uefi, fs-p3-xfs-dirty-bios
+#                  that stick with its UKI renamed to resumed.efi, fsynced,
+#                  and the filesystem shut down with nothing written back:
+#                  the loader replays the log and boots resumed.efi
 #   fs-p2-fat-iso-uefi
 #                  that stick under OVMF: payload-test.iso, a file on the
 #                  FAT32 library, boots through the virtual CD
@@ -1241,6 +1245,57 @@ hibernated_disk() {
     [[ "$feat" == *needs_recovery* ]]
 }
 
+# The xfs stick as a crash leaves it: its UKI copied to resumed.efi and the
+# original deleted, fsynced, then shut down with the log forced and
+# nothing written back, so resumed.efi is in the log alone. p3 is the
+# third partition mkstick create makes.
+xfs_dirty_disk() {
+    local img=$R/stick-p3-xfs-dirty.img
+    fs_stick p3-xfs exfat xfs || return 1
+    rm -f "$img"
+    cp --sparse=always "$R/stick-p3-xfs.img" "$img"
+    MAPPER=falcon-core-rig-xfs
+    LOOP=$(sudo losetup -f --show -P "$img")
+    printf '%s' "$PASS" | sudo cryptsetup open "${LOOP}p3" "$MAPPER" -
+    MNT=$(mktemp -d)
+    sudo mount "/dev/mapper/$MAPPER" "$MNT"
+    sudo cp "$MNT/uki/fixture-uki.efi" "$MNT/uki/resumed.efi"
+    sudo xfs_io -c fsync "$MNT/uki/resumed.efi"
+    sudo rm "$MNT/uki/fixture-uki.efi"
+    sudo xfs_io -c fsync "$MNT/uki"
+    sudo xfs_io -x -c 'shutdown -f' "$MNT"
+    sudo umount "$MNT"
+    rmdir "$MNT"
+    MNT=
+    sudo cryptsetup close "$MAPPER"
+    MAPPER=
+    sudo losetup -d "$LOOP"
+    LOOP=
+}
+
+case_xfs_dirty() { # case_xfs_dirty CASE FIRMWARE
+    local why= id
+    xfs_dirty_disk || why="the dirty xfs stick did not build"
+    id=$(cat "$R/stick-p3-xfs.id" 2>/dev/null)
+    [[ -z "$why" ]] && boot "$2" "$R/stick-p3-xfs-dirty.img:boot"
+    [[ -z "$why" ]] && { wait_for "p3-xfs.iso" 90 || why="the menu never listed p3-xfs.iso"; }
+    if [[ -z "$why" ]] && ! pos; then why=$POS_WHY; fi
+    [[ -z "$why" ]] && { has "reading resumed.efi" ||
+        why="the loader did not read the UKI the log names"; }
+    [[ -z "$why" ]] && { has "FALCON-CRED-HEAD falcon.ident.cred [falcon 1 boot $id" ||
+        why="falcon.ident.cred missing or not install $id"; }
+    if [[ -z "$why" && "$2" == bios ]]; then
+        has "falcon-bios: the shelf is read through its journal" ||
+            why="stage 3 did not say it read the log"
+    fi
+    halt
+    if [[ -z "$why" ]]; then
+        result "$1" 1 "the xfs shelf's log replayed: resumed.efi booted"
+    else
+        result "$1" 0 "$why"
+    fi
+}
+
 case_hibernated() { # case_hibernated CASE FIRMWARE
     local why=
     hibernated_disk || why="the copy's shelf does not need recovery"
@@ -1747,7 +1802,8 @@ CASES=("$@")
            kdf-memory-uefi kdf-memory-bios hibernated-uefi hibernated-bios
            fs-p3-fat-uefi fs-p3-fat-bios fs-p2-fat-uefi fs-p2-fat-bios
            fs-p2-fat-iso-uefi fs-p3-btrfs-uefi fs-p3-btrfs-bios
-           fs-p3-xfs-uefi fs-p3-xfs-bios
+           fs-p3-xfs-uefi fs-p3-xfs-bios fs-p3-xfs-dirty-uefi
+           fs-p3-xfs-dirty-bios
            relaunch-uefi relaunch-uefi-sb probe-keys-uefi probe-keys-bios
            update-stick-uefi-sb update-stick-bios update-station-uefi-sb
            update-station-bios
@@ -1809,6 +1865,8 @@ for c in "${CASES[@]}"; do
         fs_case "$c" "${c##*-}" p3-btrfs exfat btrfs ;;
     fs-p3-xfs-uefi|fs-p3-xfs-bios)
         fs_case "$c" "${c##*-}" p3-xfs exfat xfs ;;
+    fs-p3-xfs-dirty-uefi|fs-p3-xfs-dirty-bios)
+        case_xfs_dirty "$c" "${c##*-}" ;;
     hibernated-uefi) case_hibernated "$c" uefi ;;
     hibernated-bios) case_hibernated "$c" bios ;;
     station-uefi)  case_station "$c" uefi ;;

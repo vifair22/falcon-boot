@@ -8,6 +8,7 @@
  */
 
 #include <fs/xfs.h>
+#include <fs/xfsint.h>
 #include <fs/crc32c.h>
 
 #include <lib/string.h>
@@ -147,6 +148,10 @@ static int crc_check(xfs_vol *v, uint64_t at, uint32_t len, uint32_t field)
 
     if (rc != XFS_OK)
         return rc;
+    /* A block the log replay wrote is the log's word, and its checksum was
+     * not recomputed (xfslog.c). */
+    if (xfslog_covers(v, at, len))
+        return XFS_OK;
     while (done < len) {
         uint32_t avail = 0;
         const uint8_t *p = win_at(v, at + done, &avail);
@@ -477,26 +482,27 @@ static int log_head(xfs_vol *v, uint64_t *head)
     return XFS_OK;
 }
 
-/* Clean when the last whole record before the head is the unmount record
- * alone. */
-static int log_clean(xfs_vol *v)
+/* The head, and the last whole record before it: a record that runs past
+ * the head did not finish, and the one before it is the last. */
+int xfs_log_last(xfs_vol *v, uint64_t *head, uint64_t *last)
 {
     uint64_t n = v->log_bbs;
-    uint64_t head;
     unsigned tries;
-    int rc = log_head(v, &head);
+    int rc = log_head(v, head);
 
+    *last = ~(uint64_t)0;
     if (rc != XFS_OK)
         return rc;
     for (tries = 0; tries < 4u; tries++) {
         uint8_t h[324];
         uint64_t rec = ~(uint64_t)0;
         uint64_t k;
+        uint64_t dist;
         uint32_t hdr_bbs;
         uint64_t len_bbs;
 
         for (k = 1; k <= LOG_SCAN && k <= n; k++) {
-            uint64_t bb = (head + n - k) % n;
+            uint64_t bb = (*head + n - k) % n;
             uint8_t w[4];
 
             rc = rd(v, v->log_off + bb * BB, 4, w);
@@ -508,7 +514,7 @@ static int log_clean(xfs_vol *v)
             }
         }
         if (rec == ~(uint64_t)0)
-            return XFS_ERR_NEEDS_RECOVERY;
+            return XFS_OK;
         rc = rd(v, v->log_off + rec * BB, sizeof h, h);
         if (rc != XFS_OK)
             return rc;
@@ -516,26 +522,56 @@ static int log_clean(xfs_vol *v)
         if ((be32(h + 8) & 2u) != 0 && be32(h + 320) > 32768u)
             hdr_bbs = (be32(h + 320) + 32767u) / 32768u;
         len_bbs = ((uint64_t)be32(h + 12) + BB - 1u) / BB;
-        /* A record that runs past the head did not finish: the one before
-         * it is the last. */
-        if (((head + n - rec) % n == 0 ? n : (head + n - rec) % n) <
-            hdr_bbs + len_bbs) {
-            head = rec;
+        dist = (*head + n - rec) % n;
+        if ((dist == 0 ? n : dist) < hdr_bbs + len_bbs) {
+            *head = rec;
             continue;
         }
-        if (be32(h + 40) != 1u)
-            return XFS_ERR_NEEDS_RECOVERY;
-        {
-            uint8_t op[12];
-
-            rc = rd(v, v->log_off + ((rec + hdr_bbs) % n) * BB, sizeof op, op);
-            if (rc != XFS_OK)
-                return rc;
-            return (op[9] & OP_UNMOUNT) != 0 ? XFS_OK
-                                             : XFS_ERR_NEEDS_RECOVERY;
-        }
+        *last = rec;
+        return XFS_OK;
     }
-    return XFS_ERR_NEEDS_RECOVERY;
+    return XFS_OK;
+}
+
+/* Clean when the last whole record before the head is the unmount record
+ * alone. */
+static int log_clean(xfs_vol *v)
+{
+    uint64_t head;
+    uint64_t rec;
+    uint8_t h[48];
+    uint8_t op[12];
+    uint32_t hdr_bbs;
+    int rc = xfs_log_last(v, &head, &rec);
+
+    if (rc != XFS_OK)
+        return rc;
+    if (rec == ~(uint64_t)0)
+        return XFS_ERR_NEEDS_RECOVERY;
+    rc = rd(v, v->log_off + rec * BB, sizeof h, h);
+    if (rc != XFS_OK)
+        return rc;
+    if (be32(h + 40) != 1u)
+        return XFS_ERR_NEEDS_RECOVERY;
+    {
+        uint8_t s[4];
+
+        rc = rd(v, v->log_off + rec * BB + 320u, 4, s);
+        if (rc != XFS_OK)
+            return rc;
+        hdr_bbs = (be32(h + 8) & 2u) != 0 && be32(s) > 32768u
+                      ? (be32(s) + 32767u) / 32768u : 1u;
+    }
+    rc = rd(v, v->log_off + ((rec + hdr_bbs) % v->log_bbs) * BB, sizeof op,
+            op);
+    if (rc != XFS_OK)
+        return rc;
+    return (op[9] & OP_UNMOUNT) != 0 ? XFS_OK : XFS_ERR_NEEDS_RECOVERY;
+}
+
+int xfs_rd(xfs_vol *v, uint64_t at, uint32_t len, void *out)
+{
+    return rd(v, at, len, out);
 }
 
 /* ---- mount ---- */
@@ -551,7 +587,7 @@ int xfs_probe(xfs_read_fn read, void *ctx)
     return be32(m) == SB_MAGIC ? XFS_OK : XFS_ERR_NOT_XFS;
 }
 
-int xfs_mount(xfs_vol *v, xfs_read_fn read, void *ctx)
+static int mount_sb(xfs_vol *v, xfs_read_fn read, void *ctx)
 {
     uint8_t sb[264];
     uint32_t incompat;
@@ -609,7 +645,28 @@ int xfs_mount(xfs_vol *v, xfs_read_fn read, void *ctx)
     v->log_bbs = ((uint64_t)be32(sb + 96) << v->blocklog) / BB;
     if (v->log_bbs < 2u)
         return XFS_ERR_CORRUPT;
-    return log_clean(v);
+    return XFS_OK;
+}
+
+int xfs_mount(xfs_vol *v, xfs_read_fn read, void *ctx)
+{
+    int rc = mount_sb(v, read, ctx);
+
+    return rc != XFS_OK ? rc : log_clean(v);
+}
+
+int xfs_mount_journal(xfs_vol *v, xfs_read_fn read, void *ctx,
+                      const xfs_mem *mem, size_t *need)
+{
+    int rc = mount_sb(v, read, ctx);
+
+    *need = 0;
+    if (rc != XFS_OK)
+        return rc;
+    rc = log_clean(v);
+    if (rc != XFS_ERR_NEEDS_RECOVERY)
+        return rc;
+    return xfslog_replay(v, mem, need);
 }
 
 /* ---- directories ---- */

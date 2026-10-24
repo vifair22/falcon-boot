@@ -24,7 +24,9 @@ static const fs_status_row xfs_rows[] = {
     { XFS_ERR_RANGE,          FS_ERR_RANGE },
     { XFS_ERR_UNSUPPORTED,    FS_ERR_UNSUPPORTED },
     { XFS_ERR_CSUM,           FS_ERR_CSUM },
-    { XFS_ERR_NEEDS_RECOVERY, FS_ERR_NEEDS_RECOVERY }
+    { XFS_ERR_NEEDS_RECOVERY, FS_ERR_NEEDS_RECOVERY },
+    { XFS_ERR_JOURNAL,        FS_ERR_JOURNAL },
+    { XFS_ERR_NOMEM,          FS_ERR_NOMEM }
 };
 
 int fs_status_from_xfs(int rc)
@@ -89,6 +91,31 @@ static int xfs_mount_op(fs_vol *v, fs_read_fn read, void *ctx)
     return fs_status_from_xfs(xfs_mount(xvol(v), read, ctx));
 }
 
+/* fs_jmem and xfs_mem are the same contract spelled twice, so that fs.h
+ * names no driver's header (fs_ext4.c does the same). */
+static int xfs_mount_journal_op(fs_vol *v, fs_read_fn read, void *ctx,
+                                const fs_jmem *mem, fs_jinfo *info)
+{
+    xfs_mem m = { 0, 0, 0 };
+    size_t need = 0;
+    int rc;
+
+    if (mem != (const fs_jmem *)0) {
+        m.get = mem->get;
+        m.put = mem->put;
+        m.ctx = mem->ctx;
+    }
+    rc = xfs_mount_journal(xvol(v), read, ctx,
+                           mem != (const fs_jmem *)0 ? &m
+                                                     : (const xfs_mem *)0,
+                           &need);
+    info->need = need;
+    info->flags = 0;
+    if (rc == XFS_OK && (xvol(v)->flags & XFS_REPLAYED) != 0)
+        info->flags |= FS_JNL_REPLAYED;
+    return fs_status_from_xfs(rc);
+}
+
 static int xfs_dir_open_root_op(fs_vol *v, fs_dir *d)
 {
     return fs_status_from_xfs(xfs_dir_open_root(xvol(v), xdir(d)));
@@ -145,7 +172,5 @@ const fs_ops fs_ops_xfs = {
      * one (DESIGN Section 9). */
     (int (*)(fs_vol *, const fs_dirent *, fs_extent *, size_t, size_t *))0,
     (const char *(*)(const fs_vol *))0,
-    /* A log that needs recovery is refused by mount. */
-    (int (*)(fs_vol *, fs_read_fn, void *, const struct fs_jmem_s *,
-             struct fs_jinfo_s *))0
+    xfs_mount_journal_op
 };

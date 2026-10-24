@@ -253,10 +253,44 @@ static void test_xfs_registry(void **state)
     fclose(m.fp);
 }
 
-/* A log with no unmount record at its head. */
+/* A log with no unmount record at its head: refused by a plain mount,
+ * replayed by a journal mount, its last changes there to read. */
+static void *heap_get(void *ctx, size_t n)
+{
+    size_t *got = ctx;
+
+    *got = n;
+    return test_malloc(n);
+}
+
+static void heap_put(void *ctx, void *mem, size_t n)
+{
+    (void)ctx;
+    (void)n;
+    test_free(mem);
+}
+
+static void *no_get(void *ctx, size_t n)
+{
+    (void)ctx;
+    (void)n;
+    return NULL;
+}
+
 static void test_xfs_dirty(void **state)
 {
     static fs_vol vol;
+    size_t got = 0;
+    xfs_mem mem = { heap_get, heap_put, &got };
+    xfs_mem none = { no_get, heap_put, NULL };
+    size_t need = 0;
+    xfs_dirent e;
+    xfs_dir late;
+    uint8_t seen[300];
+    unsigned n = 0;
+    uint32_t i;
+    fs_jinfo info;
+    int rc;
     img m;
 
     (void)state;
@@ -264,6 +298,58 @@ static void test_xfs_dirty(void **state)
     assert_int_equal(xfs_mount(&g_v, img_read, &m), XFS_ERR_NEEDS_RECOVERY);
     assert_int_equal(fs_mount(&vol, &fs_ops_xfs, img_read, &m),
                      FS_ERR_NEEDS_RECOVERY);
+
+    /* No memory: the size it wanted, and nothing left mounted. */
+    assert_int_equal(xfs_mount_journal(&g_v, img_read, &m, &none, &need),
+                     XFS_ERR_NOMEM);
+    assert_true(need > 0);
+
+    assert_int_equal(xfs_mount_journal(&g_v, img_read, &m, &mem, &need),
+                     XFS_OK);
+    assert_int_equal(g_v.flags, XFS_REPLAYED);
+    assert_int_equal(got, need);
+
+    root_find("late.txt", &e);
+    assert_int_equal(xfs_file_open(&g_v, &g_f, &e), XFS_OK);
+    assert_int_equal(g_f.inode.size, 5);
+    assert_int_equal(xfs_file_read(&g_f, 0, 5, g_buf), XFS_OK);
+    assert_memory_equal(g_buf, "lllll", 5);
+
+    root_find("late", &e);
+    assert_int_equal(xfs_dir_open(&g_v, &late, &e), XFS_OK);
+    memset(seen, 0, sizeof seen);
+    while ((rc = xfs_dir_next(&late, &e)) == 1) {
+        unsigned k = 0;
+        unsigned c;
+
+        for (c = 1; c < 5; c++)
+            k = k * 10u + (unsigned)(e.name[c] - '0');
+        assert_true(k < 300u);
+        assert_int_equal(seen[k], 0);
+        seen[k] = 1;
+        n++;
+    }
+    assert_int_equal(rc, 0);
+    assert_int_equal(n, 300);
+
+    root_find("frag2.bin", &e);
+    assert_int_equal(xfs_file_open(&g_v, &g_f, &e), XFS_OK);
+    assert_int_equal(g_f.inode.size, 39u * 8192u + 4096u);
+    assert_int_equal(xfs_file_read(&g_f, 0, g_f.inode.size, g_buf), XFS_OK);
+    for (i = 0; i < g_f.inode.size; i++)
+        assert_int_equal(g_buf[i], (i % 8192u) < 4096u ? i % 239u : 0u);
+    heap_put(NULL, g_v.mem, g_v.mem_len);
+
+    /* Through the registry, as a shelf is mounted. */
+    {
+        fs_jmem jm = { heap_get, heap_put, &got };
+
+        assert_int_equal(fs_mount_journal(&vol, &fs_ops_xfs, img_read, &m,
+                                          &jm, &info), FS_OK);
+        assert_int_equal(info.flags, FS_JNL_REPLAYED);
+        assert_int_equal(info.need, got);
+        test_free(((xfs_vol *)(void *)vol.priv.b)->mem);
+    }
     fclose(m.fp);
 }
 
