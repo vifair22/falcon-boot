@@ -3681,7 +3681,7 @@ It is always rebuilt from the template.
 |---|---|---|
 | `payload` | `build/test/payload.efi` | |
 | `test-iso`, `test-img` | the payload as an El Torito ISO, and a GPT and superfloppy `.img` | sudo |
-| `test-uki` | `build/test/fixture-uki.efi`, an sd-stub UKI, and its signed copy | the test MOK; the Arch ISO (`ARCH_ISO`) |
+| `test-uki` | `build/test/fixture-uki.efi`, an sd-stub UKI, and its signed copy; `build/test/fixture-uki-aa64.efi` and its signed copy are the AArch64 one (`UKI_ARCH=aa64`), on Fedora's arm64 kernel (`tools/fetch-fedora-kernel.sh`) | the test MOK; the Arch ISO (`ARCH_ISO`) |
 | `test-stick` | `build/test-stick.img`, the four-partition stick with the BIOS stages | sudo |
 | `test-station` | `build/test-station.img`, a disk with the station installed | sudo |
 | `test-bios-img` | `build/test-bios.img` (MBR) and `build/test-bios-gpt.img` (GPT) | no root |
