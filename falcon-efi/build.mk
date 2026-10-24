@@ -55,7 +55,7 @@ EFI_APP_SRCS :=
 define efi_app
 EFI_APP_SRCS += $(3)
 $(call efi_link,$(1),$(2),$(3),EFI_OBJ,CC,EFI_LDFLAGS,$$(CC:gcc=objdump))
-$(call efi_link,$(1)-aa64,$(2)-aa64,$$(patsubst $$(HOOK_BLOB),$$(HOOK_A64_BLOB),$$(filter-out $$(EFI_X86_ONLY),$(3))),EFI_AA64_OBJ,CC_AA64,EFI_AA64_LDFLAGS,$$(OBJDUMP_AA64))
+$(call efi_link,$(1)-aa64,$(2)-aa64,$$(patsubst $$(WINJUMP_BLOB),$$(WINJUMP_A64_BLOB),$$(patsubst $$(HOOK_BLOB),$$(HOOK_A64_BLOB),$$(filter-out $$(EFI_X86_ONLY),$(3)))),EFI_AA64_OBJ,CC_AA64,EFI_AA64_LDFLAGS,$$(OBJDUMP_AA64))
 endef
 
 # Shim's loader refuses a section that has no bytes in the file and is not
