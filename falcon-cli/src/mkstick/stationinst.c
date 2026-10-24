@@ -1139,13 +1139,13 @@ static cli_status write_uefi(const stn_disk *td, const stn_plan *p,
     if (p->no_shim) {
         (void)snprintf(next, sizeof next, "%s", STN_LOADER_NOSHIM);
     } else {
-        rc = shim_find(shim_dir, shim, sizeof shim);
+        rc = shim_find(shim_dir, "x64", shim, sizeof shim);
         if (rc == CLI_OK)
             rc = shim_next_stage_name(shim, next, sizeof next);
         if (rc == CLI_OK)
             rc = shim_mokmanager_name(shim, mm_name, sizeof mm_name);
         if (rc == CLI_OK)
-            rc = shim_find_mokmanager(shim, mm_name, mm, sizeof mm);
+            rc = shim_find_mokmanager(shim, "x64", mm_name, mm, sizeof mm);
     }
     if (rc == CLI_OK)
         rc = util_join(signed_loader, sizeof signed_loader, workdir, next);
