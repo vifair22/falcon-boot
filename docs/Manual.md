@@ -17,6 +17,23 @@ this file cites it by section and does not repeat it.
 11. Signing, and what lives where
 12. Troubleshooting by failure page
 13. Building and testing
+14. Releases
+
+## Start here
+
+To make a bootable stick and nothing more:
+
+1. Install `falcon-boot-bin` on Arch, or unpack the release tarball under `/`
+   (Section 14).
+2. `sudo falcon-boot-mkstick create /dev/disk/by-id/usb-<your stick> --force`
+   (Section 10), then `falcon-boot-mkstick bios <device>` if you want the BIOS
+   loader too.
+3. Copy `.iso` files onto the partition labelled `FALCON-ISO`. They appear in
+   the menu and boot.
+
+With Secure Boot on, the first boot enrolls the MOK in MokManager (Section
+3.1). Everything past Section 1 is the operator's reference: come back for the
+station, blessing, the personal OS, falcon jump, or a failure page.
 
 ## 1. The menu
 
@@ -1059,19 +1076,14 @@ keeps keyslot 0 at its own cost. The keyfile's slot is pbkdf2 at 1000
 iterations because the loader tries every keyslot after a mistyped
 passphrase: an argon2id slot there would cost a second full derivation, and
 the keyfile's 512 random bits need no stretching. `nofail` keeps a shelf
-that will not open from stopping the boot. The thinkpad-t430 repository's
-`docs/gentoo-install.md` ("Boot chain", "Shelf keyfile") walks through it,
-and its `gentoo/etc/crypttab` is this in use.
+that will not open from stopping the boot.
 
 The initramfs drop-in goes in through the initramfs builder, so a rebuild
-keeps it. archusb (https://git.airies.net/vifair22/archusb) ships it as the
-`falcon-credential` mkinitcpio install hook.
+keeps it. On Arch it is a `falcon-credential` mkinitcpio install hook; see
+`docs/personal-os.md` for that recipe.
 
-For dracut, a module puts it in. This one is the thinkpad-t430 repository's
-(https://git.airies.net/vifair22/thinkpad-t430,
-`gentoo/usr/lib/dracut/modules.d/99falcon-credential/module-setup.sh`), in
-use on Gentoo with systemd since 2026-09-29, with the initramfs drop-in kept
-at `/etc/falcon/initrd-cryptsetup.conf`:
+For dracut, a module puts it in, with the initramfs drop-in kept at
+`/etc/falcon/initrd-cryptsetup.conf`:
 
     #!/bin/bash
     check() {
@@ -1095,11 +1107,9 @@ and a `dracut.conf.d` file enables it beside the systemd initramfs:
     add_dracutmodules+=" systemd crypt falcon-credential "
 
 `lsinitrd <uki> | grep falcon-credential` shows the drop-in in a built
-image. The same repository's `kernel-install` plugin
-(`gentoo/etc/kernel/install.d/95-falcon-shelf.install`) is an example of
-putting each signed UKI on the shelf as `<name>-<kver>.efi` and keeping
-`<name>.efi` as a copy of the newest, so a STATION.INI default naming
-`<name>.efi` survives kernel updates.
+image. A `kernel-install` plugin can automate the shelf side: put each signed
+UKI on the shelf as `<name>-<kver>.efi` and keep `<name>.efi` as a copy of the
+newest, so a STATION.INI default naming `<name>.efi` survives kernel updates.
 
 When the handoff cannot be made the boot goes on, and the OS asks for the
 passphrase again:
