@@ -23,6 +23,11 @@ change it.
    describes it with ACPI (AAVMF, servers, laptops) or a devicetree
    (U-Boot's UEFI, boards); the loader reads neither, and the firmware's
    table reaches the kernel through the EFI configuration table untouched.
+   A distribution that picks its own devicetree does it in its kernel image
+   (Fedora's arm64 kernel: sd-stub with `.dtbauto` and `.hwids`), which a
+   bless keeps (Section 8.1); GRUB's `devicetree` command is not read, as
+   no medium in the corpus uses it. Under U-Boot an isohybrid ISO boots as
+   a disk (Section 6 stage 3).
 2. Drag-and-drop ISO booting from an exFAT partition, Ventoy-style: copy an
    `.iso` onto the stick from any OS, it appears in the menu, it boots. No
    host-side registration step. (When Secure Boot is ON, unsigned media that does
