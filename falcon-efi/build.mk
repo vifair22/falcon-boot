@@ -43,28 +43,36 @@ EFI_APP_SRCS :=
 
 # $(call efi_app,<app>,<image name>,<sources>)
 #
-# One UEFI image: the link, the check that its .sbat section survived, and a
-# copy signed with the rig's test MOK. Without .sbat shim refuses the image
-# under Secure Boot with the same opaque EFI_SECURITY_VIOLATION a bad
-# signature gives, and the mistake is invisible until someone turns Secure
-# Boot on (apps/stick/efi_sbat.c has the details). sbsign warns "data
-# remaining: gaps between PE/COFF sections?" about our mingw output; it says
-# the same about Fedora's own gnu-efi binaries and both verify under shim
-# (DESIGN Section 7.6).
+# One UEFI image per architecture: <image name>.efi for x64 and
+# <image name>-aa64.efi for AArch64, each with the check that its .sbat
+# section survived the link, and a copy signed with the rig's test MOK.
+# Without .sbat shim refuses the image under Secure Boot with the same opaque
+# EFI_SECURITY_VIOLATION a bad signature gives, and the mistake is invisible
+# until someone turns Secure Boot on (apps/stick/efi_sbat.c has the details).
+# sbsign warns "data remaining: gaps between PE/COFF sections?" about our
+# mingw output; it says the same about Fedora's own gnu-efi binaries and
+# both verify under shim (DESIGN Section 7.6).
 define efi_app
-$(1)_EFI_OBJS := $$(patsubst %.c,$$(EFI_OBJ)/%.o,$(3))
 EFI_APP_SRCS += $(3)
+$(call efi_link,$(1),$(2),$(3),EFI_OBJ,CC,EFI_LDFLAGS,$$(CC:gcc=objdump))
+$(call efi_link,$(1)-aa64,$(2)-aa64,$$(filter-out $$(EFI_X86_ONLY),$(3)),EFI_AA64_OBJ,CC_AA64,EFI_AA64_LDFLAGS,$$(OBJDUMP_AA64))
+endef
+
+# $(call efi_link,<app>,<image name>,<sources>,<objdir var>,<cc var>,
+#                 <ldflags var>,<objdump>)
+define efi_link
+$(1)_EFI_OBJS := $$(patsubst %.c,$$($(4))/%.o,$(3))
 
 $$(BIN)/$(2).efi: $$($(1)_EFI_OBJS)
 	@mkdir -p $$(@D)
-	$$(CC) $$(EFI_LDFLAGS) -o $$@ $$($(1)_EFI_OBJS)
+	$$($(5)) $$($(6)) -o $$@ $$($(1)_EFI_OBJS)
 
 sbat-check-$(1): $$(BIN)/$(2).efi
-	@$$(CC:gcc=objdump) -h $$< | grep -q '\.sbat' || { \
+	@$(7) -h $$< | grep -q '\.sbat' || { \
 		echo "ERROR: $$< has no .sbat section; shim will refuse it" >&2; \
 		exit 1; }
 	@echo ".sbat section present:"
-	@$$(CC:gcc=objdump) -s -j .sbat $$< | sed -n '3,$$$$p'
+	@$(7) -s -j .sbat $$< | sed -n '3,$$$$p'
 
 $$(BIN)/$(2)-signed.efi: $$(BIN)/$(2).efi $$(MOK_KEY)
 	@$$(MAKE) --no-print-directory sbat-check-$(1)
@@ -73,6 +81,11 @@ $$(BIN)/$(2)-signed.efi: $$(BIN)/$(2).efi $$(MOK_KEY)
 
 .PHONY: sbat-check-$(1)
 endef
+
+# Every AArch64 image (DESIGN Section 3); `make aa64`.
+aa64: $(EFI_AA64) $(EFI_STATION_AA64) $(EFI_ESP_JUMP_AA64)
+
+.PHONY: aa64
 
 # ---- the rig (docs/DESIGN.md Section 10) ----
 
@@ -186,7 +199,7 @@ $(FIXTURE_UKI): falcon-efi/tools/mk-test-uki.sh \
 # so both are prerequisites; the script degrades to an unsigned stick on its
 # own if the test MOK is absent. mkstick writes the boot record and puts the
 # BIOS stages on, so the stick boots under SeaBIOS too (Section 3.3).
-test-stick: $(EFI_SIGNED) test-iso test-uki cli bios
+test-stick: $(EFI_SIGNED) $(EFI_AA64_SIGNED) test-iso test-uki cli bios
 	falcon-efi/tools/mk-test-stick.sh
 
 # The rig's station disk: a machine's disk with the station put on it by

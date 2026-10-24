@@ -429,7 +429,8 @@ static void reads_now(UINT64 hz, bli_reads *r)
 
 void loader_time_init(EFI_SYSTEM_TABLE *st, UINT64 t0, const CHAR16 *info)
 {
-    static const char *const how_name[] = { "none", "cpuid", "stall" };
+    static const char *const how_name[] = { "none", "cpuid", "stall",
+                                           "cntfrq" };
     char line[160];
     UINTN at = 0;
     tsc_hz_how how;
@@ -447,7 +448,8 @@ void loader_time_init(EFI_SYSTEM_TABLE *st, UINT64 t0, const CHAR16 *info)
 
     put_kv(line, sizeof line, &at, "falcon-bli: tsc_hz=", hz);
     put_str(line, sizeof line, &at, " via=");
-    put_str(line, sizeof line, &at, how_name[(unsigned)how % 3u]);
+    put_str(line, sizeof line, &at,
+            how_name[(unsigned)how % (sizeof how_name / sizeof how_name[0])]);
     put_kv(line, sizeof line, &at, " LoaderTimeInitUSec=", usec);
     if (EFI_ERROR(s))
         put_str(line, sizeof line, &at, " set=failed");

@@ -65,6 +65,11 @@ void idle_power_off(void)
                                        (void *)0);
     g_st->RuntimeServices->ResetSystem(EfiResetCold, EFI_SUCCESS, 0,
                                        (void *)0);
-    for (;;)
+    for (;;) {
+#if defined(__aarch64__)
+        __asm__ __volatile__("wfi");
+#else
         __asm__ __volatile__("hlt");
+#endif
+    }
 }

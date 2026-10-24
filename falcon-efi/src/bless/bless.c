@@ -25,8 +25,6 @@
  * failure line sees the file the manifest named rather than a placeholder. */
 #define BLESS_NAME_MAX 256u
 
-static EFI_SYSTEM_TABLE *g_st;
-
 /* The records, and the volumes they were read from. Static because the cache
  * is ~16 KB and the loader's frames are policed at 32 KB, and because it
  * outlives every call here: a menu entry is booted long after the scan that
@@ -175,7 +173,6 @@ UINTN bless_load(EFI_SYSTEM_TABLE *st, fs_vol *vol)
 
     if (st == (EFI_SYSTEM_TABLE *)0 || vol == (fs_vol *)0)
         return 0;
-    g_st = st;
     bs = st->BootServices;
 
     /* Every early return below is "nothing is blessed on this volume", which
@@ -549,7 +546,6 @@ static EFI_STATUS blessed_launch(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
     if (st == (EFI_SYSTEM_TABLE *)0 || result == (bless_result *)0)
         return EFI_INVALID_PARAMETER;
 
-    g_st = st;
     bs = st->BootServices;
     loader_reads_mark(LOADER_READS_BOOT);
     result->stage = L"starting";
@@ -667,7 +663,6 @@ EFI_STATUS bless_payload_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
     if (st == (EFI_SYSTEM_TABLE *)0 || result == (bless_result *)0)
         return EFI_INVALID_PARAMETER;
 
-    g_st = st;
     bs = st->BootServices;
     result->stage = L"starting";
     result->status = EFI_SUCCESS;

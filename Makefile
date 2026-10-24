@@ -111,6 +111,10 @@ EFI_STATION        := $(BIN)/falcon-boot-station.efi
 EFI_STATION_SIGNED := $(BIN)/falcon-boot-station-signed.efi
 EFI_ESP_JUMP       := $(BIN)/falcon-esp-jump.efi
 EFI_ESP_JUMP_SIGNED := $(BIN)/falcon-esp-jump-signed.efi
+EFI_AA64           := $(BIN)/falcon-boot-aa64.efi
+EFI_AA64_SIGNED    := $(BIN)/falcon-boot-aa64-signed.efi
+EFI_STATION_AA64   := $(BIN)/falcon-boot-station-aa64.efi
+EFI_ESP_JUMP_AA64  := $(BIN)/falcon-esp-jump-aa64.efi
 BIOS_STAGE3        := $(BIN)/falcon-bios-stage3.bin
 BIOS_STATION_STAGE3 := $(BIN)/falcon-bios-station-stage3.bin
 BIOS_STATION_LEGACY_STAGE3 := $(BIN)/falcon-bios-station-legacy-stage3.bin
@@ -170,6 +174,36 @@ EFI_OBJ := $(OBJ)/efi-$(VARIANT)
 $(EFI_OBJ)/%.o: %.c
 	@mkdir -p $(@D)
 	$(CC) $(EFI_CFLAGS) -MMD -MF $@.d -c -o $@ $<
+
+# ---- the freestanding EFI flavour, AArch64 ----
+#
+# The same images for AArch64 UEFI, by llvm-mingw's clang: its driver takes
+# the mingw link line above unchanged. AArch64 has no red zone to switch
+# off, and clang spells the frame limit -Wframe-larger-than. Each app links
+# here as <image>-aa64.efi. A source that is x86 only keeps its x86 body
+# behind __x86_64__ and builds an equivalent, or a stub never reached,
+# under __aarch64__, so the apps' source lists serve both.
+CC_AA64 := aarch64-w64-mingw32-clang
+OBJDUMP_AA64 := aarch64-w64-mingw32-objdump
+
+EFI_AA64_CFLAGS := $(filter-out -mno-red-zone -Wstack-usage=%,$(EFI_CFLAGS)) \
+	-Wframe-larger-than=32768
+
+# lld names the subsystem where GNU ld takes its number.
+EFI_AA64_LDFLAGS := -nostdlib -shared -Wl,--subsystem,efi_application \
+	-e efi_main -Wl,--no-insert-timestamp -s
+
+EFI_AA64_OBJ := $(OBJ)/efi-aa64-$(VARIANT)
+
+# Sources with no AArch64 body at all, left out of every aa64 link: the
+# x86 SIMD block functions, whose callers reach them only behind an x86
+# guard (falcon-core/src/crypto/argon2.c, xts.c).
+EFI_X86_ONLY := $(addprefix falcon-core/src/crypto/,aesni.c argon2_sse2.c \
+	argon2_ssse3.c argon2_avx2.c)
+
+$(EFI_AA64_OBJ)/%.o: %.c
+	@mkdir -p $(@D)
+	$(CC_AA64) $(EFI_AA64_CFLAGS) -MMD -MF $@.d -c -o $@ $<
 
 # ---- the hosted Linux flavour ----
 #

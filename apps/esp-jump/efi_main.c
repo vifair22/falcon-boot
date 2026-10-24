@@ -1,15 +1,16 @@
-/* falcon-esp-jump: the UEFI station's \EFI\BOOT\BOOTX64.EFI (docs/DESIGN.md
- * Section 12.2).
+/* falcon-esp-jump: the UEFI station's \EFI\BOOT\BOOTX64.EFI, or
+ * BOOTAA64.EFI on AArch64 (docs/DESIGN.md Section 12.2).
  *
  * A station without shim boots through this image whichever way the
  * firmware gets there: the `falcon` entry names it, and with no entry the
  * firmware's removable-media path is it. So the measured chain is the same
- * on both (12.15). It starts \EFI\falcon\falconx64.efi off the volume it
- * was read from, through the firmware's LoadImage, which is the verifying
- * one with nothing in front of it (Section 7.6).
+ * on both (12.15). It starts \EFI\falcon\falconx64.efi (falconaa64.efi)
+ * off the volume it was read from, through the firmware's LoadImage, which
+ * is the verifying one with nothing in front of it (Section 7.6).
  */
 
 #include <efi/uefi.h>
+#include <efi/arch.h>
 #include <efi/devpath.h>
 #include <efi/loadedimage.h>
 #include <lib/string.h>
@@ -17,7 +18,7 @@
 
 EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st);
 
-static const CHAR16 k_loader[] = L"\\EFI\\falcon\\falconx64.efi";
+static const CHAR16 k_loader[] = L"\\EFI\\falcon\\falcon" EFI_ARCH_LOW ".efi";
 
 /* Long enough to read the line before the firmware moves on. */
 #define FAIL_PAUSE_US 5000000u

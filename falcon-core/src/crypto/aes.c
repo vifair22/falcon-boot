@@ -90,7 +90,7 @@ static const uint8_t inv_sbox[256] = {
 
 static uint8_t xtime(uint8_t a)
 {
-    return (uint8_t)(((a << 1) & 0xffu) ^ (((a >> 7) & 1u) * 0x1bu));
+    return (uint8_t)((((unsigned)a << 1) & 0xffu) ^ ((((unsigned)a >> 7) & 1u) * 0x1bu));
 }
 
 static uint32_t sub_word(uint32_t w)
