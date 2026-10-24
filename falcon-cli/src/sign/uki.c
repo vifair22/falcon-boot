@@ -5,6 +5,7 @@
 #include <sign/sign.h>
 
 #include <pe/pe.h>
+#include <gz/gz.h>
 
 #include <errno.h>
 #include <fcntl.h>
@@ -88,6 +89,33 @@ static int pow2(uint32_t a)
 }
 
 /* ------------------------------------------------------------ uname */
+
+int uki_uname_generic(const uint8_t *k, size_t len, char *out, size_t cap)
+{
+    static const char banner[] = "Linux version ";
+    const size_t bl = sizeof(banner) - 1u;
+    size_t i;
+
+    if (k == NULL || out == NULL || cap == 0u)
+        return 0;
+    for (i = 0; i + bl < len; i++) {
+        size_t v = i + bl;
+        size_t e = v;
+
+        if (memcmp(k + i, banner, bl) != 0 || k[v] < '0' || k[v] > '9')
+            continue;
+        while (e < len && k[e] > ' ' && k[e] < 0x7fu)
+            e++;
+        if (e + 1u >= len || k[e] != ' ' || k[e + 1u] != '(')
+            continue;
+        if (e - v + 1u > cap || e - v > UKI_UNAME_MAX)
+            return 0;
+        memcpy(out, k + v, e - v);
+        out[e - v] = '\0';
+        return 1;
+    }
+    return 0;
+}
 
 static int version_char(char c)
 {
@@ -488,16 +516,46 @@ static int read_at(int fd, uint64_t off, void *buf, size_t n, const char *path)
     return SGN_OK;
 }
 
-/* What the kernel contributes besides its bytes: whether it is NX_COMPAT, its
- * own .sbat if it has one, and its version for .uname. */
+/* What the kernel contributes besides its bytes: its machine, whether it is
+ * NX_COMPAT, its own .sbat if it has one, and its version for .uname. */
 typedef struct {
     uint64_t size;
+    uint16_t machine;
     int      nx;
     char    *sbat;
     size_t   sbat_len;
     char     uname[UKI_UNAME_MAX + 1u];
     int      have_uname;
 } kernel_facts;
+
+/* uki_uname_generic over the whole kernel, a window at a time, each window
+ * overlapping the last by enough to hold a banner split across them. */
+#define SCAN_WINDOW (1024u * 1024u)
+#define SCAN_OVERLAP 256u
+
+static int uname_scan(int fd, uint64_t size, char *out, size_t cap)
+{
+    uint8_t *buf = malloc(SCAN_WINDOW);
+    uint64_t at = 0;
+    int found = 0;
+
+    if (buf == NULL)
+        return 0;
+    while (at < size && !found) {
+        size_t want = (size - at) < SCAN_WINDOW ? (size_t)(size - at)
+                                                : SCAN_WINDOW;
+        ssize_t r = pread(fd, buf, want, (off_t)at);
+
+        if (r <= 0)
+            break;
+        found = uki_uname_generic(buf, (size_t)r, out, cap);
+        if ((size_t)r < SCAN_WINDOW)
+            break;
+        at += SCAN_WINDOW - SCAN_OVERLAP;
+    }
+    free(buf);
+    return found;
+}
 
 static int read_kernel(const char *path, int bios_only, kernel_facts *kf)
 {
@@ -564,6 +622,7 @@ static int read_kernel(const char *path, int bios_only, kernel_facts *kf)
         goto out;
     }
     kf->nx = (rd16(head + h.opt + OPT_DLLCHAR) & DLLCHAR_NX) != 0u;
+    kf->machine = h.machine;
 
     switch (pe_find_section(&h, head, (size_t)kf->size, ".sbat", &off,
                             &size)) {
@@ -593,6 +652,9 @@ static int read_kernel(const char *path, int bios_only, kernel_facts *kf)
     }
 
     kf->have_uname = uki_uname(head, head_len, kf->uname, sizeof(kf->uname));
+    if (!kf->have_uname)
+        kf->have_uname = uname_scan(fd, kf->size, kf->uname,
+                                    sizeof(kf->uname));
 
 out:
     free(head);
@@ -608,6 +670,7 @@ int uki_build(const uki_spec *spec)
 {
     static const char uki_sbat[] = SBAT_HEADER "\n" UKI_SBAT_UKI_LINE "\n";
     kernel_facts kf;
+    const char *stub_path;
     char *stub = NULL;
     size_t stub_len = 0;
     uint64_t initrd_size = 0;
@@ -626,7 +689,7 @@ int uki_build(const uki_spec *spec)
     int rc;
     size_t i;
 
-    if (spec == NULL || spec->stub == NULL || spec->kernel == NULL ||
+    if (spec == NULL || spec->kernel == NULL ||
         spec->cmdline == NULL || spec->osrel == NULL || spec->out == NULL) {
         sgn_set_error(SGN_ERR_INTERNAL, "uki_build: incomplete spec");
         return SGN_ERR_INTERNAL;
@@ -635,12 +698,27 @@ int uki_build(const uki_spec *spec)
     rc = read_kernel(spec->kernel, spec->bios_only, &kf);
     if (rc != SGN_OK)
         return rc;
+    stub_path = spec->stub;
+    if (stub_path == NULL) {
+        /* A bzImage with no EFI stub is x86's; falcon-bios unwraps it and
+         * the stub around it never runs. */
+        stub_path = uki_default_stub(spec->bios_only && kf.machine == 0
+                                         ? (uint16_t)PE_MACHINE_AMD64
+                                         : kf.machine);
+        if (stub_path == NULL) {
+            sgn_set_error(SGN_ERR_FORMAT, "%s: no sd-stub for its machine "
+                          "(0x%04x); pass --stub", spec->kernel,
+                          (unsigned)kf.machine);
+            rc = SGN_ERR_FORMAT;
+            goto out;
+        }
+    }
     if (spec->initrd != NULL) {
         rc = sgn_file_size(spec->initrd, &initrd_size);
         if (rc != SGN_OK)
             goto out;
     }
-    rc = sgn_read_file(spec->stub, &stub, &stub_len, STUB_MAX);
+    rc = sgn_read_file(stub_path, &stub, &stub_len, STUB_MAX);
     if (rc != SGN_OK)
         goto out;
     cmdline = malloc(strlen(spec->cmdline) + 1u);
@@ -661,7 +739,15 @@ int uki_build(const uki_spec *spec)
             pe_find_section(&h, stub, stub_len, ".sbat", &soff, &ssize) !=
                 PE_OK) {
             sgn_set_error(SGN_ERR_FORMAT, "%s: not a PE image with a .sbat "
-                          "section", spec->stub);
+                          "section", stub_path);
+            rc = SGN_ERR_FORMAT;
+            goto out;
+        }
+        if (!spec->bios_only && h.machine != kf.machine) {
+            sgn_set_error(SGN_ERR_FORMAT, "%s is for machine 0x%04x and %s "
+                          "for 0x%04x; a stub starts only its own machine's "
+                          "kernel", stub_path, (unsigned)h.machine,
+                          spec->kernel, (unsigned)kf.machine);
             rc = SGN_ERR_FORMAT;
             goto out;
         }
@@ -756,6 +842,83 @@ out:
 
 /* ------------------------------------------------------------ uki verb */
 
+const char *uki_default_stub(uint16_t machine)
+{
+    if (machine == PE_MACHINE_AMD64)
+        return UKI_STUB_X64;
+    if (machine == PE_MACHINE_ARM64)
+        return UKI_STUB_AA64;
+    return NULL;
+}
+
+uint16_t uki_kernel_machine(const char *path)
+{
+    uint8_t head[KERNEL_HEAD];
+    pe_hdr h;
+    ssize_t r;
+    int fd = open(path, O_RDONLY | O_CLOEXEC);
+
+    if (fd < 0)
+        return 0;
+    r = pread(fd, head, sizeof(head), 0);
+    (void)close(fd);
+    if (r <= 0 || pe_parse(head, (size_t)r, &h) != PE_OK ||
+        h.magic != PE_MAGIC_PE32P)
+        return 0;
+    return h.machine;
+}
+
+/* A gzip member's trailer holds its size mod 2^32; a kernel claiming more
+ * than this is not one. */
+#define GZ_KERNEL_MAX (512u * 1024u * 1024u)
+
+int uki_kernel_unpack(const char *path)
+{
+    char *in = NULL;
+    size_t in_len = 0;
+    uint8_t *out = NULL;
+    size_t want;
+    size_t got = 0;
+    int rc;
+
+    rc = sgn_read_file(path, &in, &in_len, GZ_KERNEL_MAX);
+    if (rc != SGN_OK)
+        return rc;
+    if (in_len < 18u || (uint8_t)in[0] != 0x1fu || (uint8_t)in[1] != 0x8bu) {
+        free(in);
+        return SGN_OK;
+    }
+    want = (size_t)(uint8_t)in[in_len - 4u] |
+           ((size_t)(uint8_t)in[in_len - 3u] << 8) |
+           ((size_t)(uint8_t)in[in_len - 2u] << 16) |
+           ((size_t)(uint8_t)in[in_len - 1u] << 24);
+    if (want == 0u || want > GZ_KERNEL_MAX) {
+        free(in);
+        sgn_set_error(SGN_ERR_FORMAT, "%s: a gzip member of %zu bytes is "
+                      "not a kernel", path, want);
+        return SGN_ERR_FORMAT;
+    }
+    out = malloc(want);
+    if (out == NULL) {
+        free(in);
+        sgn_set_error(SGN_ERR_IO, "out of memory");
+        return SGN_ERR_IO;
+    }
+    if (gz_member((const uint8_t *)in, in_len, out, want, &got) != GZ_OK ||
+        got != want) {
+        sgn_set_error(SGN_ERR_FORMAT, "%s: the gzip member does not unpack",
+                      path);
+        rc = SGN_ERR_FORMAT;
+    } else {
+        rc = sgn_write_file_atomic(path, out, got);
+        if (rc == SGN_OK)
+            sgn_log(SGN_LOG_INFO, "unpacked the kernel (%zu bytes)", got);
+    }
+    free(in);
+    free(out);
+    return rc;
+}
+
 static void uki_usage(FILE *f)
 {
     (void)fprintf(f,
@@ -770,7 +933,8 @@ static void uki_usage(FILE *f)
 "the tool does not bless, such as the signing appliance itself. Sign the\n"
 "result with sbsign.\n"
 "\n"
-"  --stub <file>   default: " UKI_DEFAULT_STUB "\n"
+"  --stub <file>   default: the kernel's machine's, " UKI_STUB_X64 "\n"
+"                  or " UKI_STUB_AA64 "\n"
 "  --bios-only     the kernel is a bzImage with no EFI stub; the UKI boots\n"
 "                  only where falcon-bios unwraps it, never through sd-stub\n");
 }
@@ -785,7 +949,6 @@ int sgn_uki_main(int argc, char **argv)
     int rc;
 
     memset(&spec, 0, sizeof(spec));
-    spec.stub = UKI_DEFAULT_STUB;
 
     for (i = 1; i < argc; i++) {
         const char *a = argv[i];
