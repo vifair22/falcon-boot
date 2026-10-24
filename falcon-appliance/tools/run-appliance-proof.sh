@@ -50,9 +50,24 @@ cd "$(dirname "$0")/../.."
 . tools/rig-part.sh
 
 OUT=build/appliance
-IMG="$OUT/appliance-stick.img"
-CERT="$OUT/appliance-mok.crt"
-MOK_VARS="$OUT/OVMF_VARS.secboot.mok.fd"
+APPLIANCE_ARCH="${APPLIANCE_ARCH:-x64}"
+if [[ $APPLIANCE_ARCH == aa64 ]]; then
+    # virt under AAVMF, emulated: one serial port for the loader's log and
+    # the appliance's console both, and every wait SCALE times as long.
+    SUFFIX=-aa64
+    MOK_VARS="$OUT/AAVMF_VARS.secboot.mok.fd"
+    QEMU_BIN=qemu-system-aarch64
+    ARCH_ARGS=(--aa64)
+    SCALE=${AA64_SCALE:-6}
+else
+    SUFFIX=
+    MOK_VARS="$OUT/OVMF_VARS.secboot.mok.fd"
+    QEMU_BIN=qemu-system-x86_64
+    ARCH_ARGS=()
+    SCALE=1
+fi
+IMG="$OUT/appliance-stick$SUFFIX.img"
+CERT="$OUT/appliance-mok$SUFFIX.crt"
 VARS_RUN="$OUT/vars-run.fd"
 SERIAL0="$OUT/loader-serial.log"
 CONSOLE="$OUT/console"          # $CONSOLE.in / $CONSOLE.out, the ttyS1 FIFOs
@@ -98,7 +113,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-for t in qemu-system-x86_64 socat sbverify sha256sum blkid; do
+for t in "$QEMU_BIN" socat sbverify sha256sum blkid; do
     command -v "$t" >/dev/null 2>&1 || { echo "ERROR: $t not found" >&2; exit 1; }
 done
 [[ -f "$IMG" ]] || {
@@ -125,7 +140,7 @@ fail() {
 wait_for() {
     local file="$1" pat="$2" secs="${3:-120}" i=0
 
-    while (( i < secs * 10 )); do
+    while (( i < secs * 10 * SCALE )); do
         if grep -aqF "$pat" "$file" 2>/dev/null; then
             return 0
         fi
@@ -141,7 +156,7 @@ wait_for() {
 wait_for_from() {
     local file="$1" off="$2" pat="$3" secs="${4:-120}" i=0
 
-    while (( i < secs * 10 )); do
+    while (( i < secs * 10 * SCALE )); do
         if tail -c "+$(( off + 1 ))" "$file" 2>/dev/null |
                awk -v pat="$pat" 'index($0, pat) { found = 1 }
                                   END { exit found ? 0 : 1 }'; then
@@ -408,18 +423,39 @@ mkfifo "$CONSOLE.in" "$CONSOLE.out"
 
 # 2 GiB because the initramfs is ~77 MiB uncompressed and the signing run
 # keeps the extracted kernel and the unsigned wrap in a tmpfs on purpose.
-STICK_IMG="$IMG" MOK_VARS="$MOK_VARS" VARS_FILE="$VARS_RUN" \
-SERIAL_LOG="$SERIAL0" MON_SOCK="$MON" QEMU_MEM=2048 \
-    falcon-efi/tools/run-qemu.sh --stick --secboot --headless \
-        -serial "pipe:$CONSOLE" &
+if [[ $APPLIANCE_ARCH == aa64 ]]; then
+    STICK_IMG="$IMG" MOK_VARS_AA64="$MOK_VARS" VARS_FILE="$VARS_RUN" \
+    SERIAL_PIPE="$CONSOLE" MON_SOCK="$MON" QEMU_MEM=2048 \
+        falcon-efi/tools/run-qemu.sh "${ARCH_ARGS[@]}" --stick --secboot \
+            --headless -smp 2 &
+else
+    STICK_IMG="$IMG" MOK_VARS="$MOK_VARS" VARS_FILE="$VARS_RUN" \
+    SERIAL_LOG="$SERIAL0" MON_SOCK="$MON" QEMU_MEM=2048 \
+        falcon-efi/tools/run-qemu.sh --stick --secboot --headless \
+            -serial "pipe:$CONSOLE" &
+fi
 QEMU_PID=$!
 
 # The reader has to be running before the guest writes anything, or the FIFO
 # backs up; the writer end is held open for the whole session so the guest
-# never sees EOF on its console.
-( cat "$CONSOLE.out" > "$CONSOLE_LOG" ) &
+# never sees EOF on its console. With one port it is both logs.
+if [[ $APPLIANCE_ARCH == aa64 ]]; then
+    ( cat "$CONSOLE.out" | tee "$SERIAL0" > "$CONSOLE_LOG" ) &
+else
+    ( cat "$CONSOLE.out" > "$CONSOLE_LOG" ) &
+fi
 READER_PID=$!
 exec 3> "$CONSOLE.in"
+
+# The offset of the appliance's banner at or after MARK. On a machine with
+# one serial port the loader's menu is in the same log, folder rows and all,
+# so a run's checks start at its banner.
+banner_mark() {   # banner_mark MARK -> offset
+    local at
+    at=$(tail -c "+$(( $1 + 1 ))" "$CONSOLE_LOG" |
+         grep -a -b -o "falcon-boot signing appliance" | head -n 1 | cut -d: -f1)
+    echo $(( $1 + ${at:-0} ))
+}
 
 # ---- run 1: mark one image, review it, sign it ----
 
@@ -430,6 +466,7 @@ enter_appliance
 
 wait_for "$CONSOLE_LOG" "falcon-boot signing appliance" 180
 T_UP=$(date +%s%N)
+RUN1_MARK=$(banner_mark "$RUN1_MARK")
 echo "   appliance is up"
 echo "   TIMING boot-to-console $(( (T_UP - T_LAUNCH) / 1000000 )) ms" \
      "(from the menu selection, so it includes the loader reading the image)"
@@ -527,6 +564,7 @@ RUN2_MARK=$(size_of "$CONSOLE_LOG")
 enter_appliance
 
 wait_for_from "$CONSOLE_LOG" "$RUN2_MARK" "falcon-boot signing appliance" 180
+RUN2_MARK=$(banner_mark "$RUN2_MARK")
 
 wait_for_from "$CONSOLE_LOG" "$RUN2_MARK" "survey: " 300
 SURVEY2=$(tail -c "+$(( RUN2_MARK + 1 ))" "$CONSOLE_LOG" |
@@ -647,14 +685,26 @@ echo "             sha256=$REC_SHA (recomputed on the host: matches)"
 # The cmdline is the half of the bless that tampering with p2 cannot reach,
 # so it is worth reading back out of the signed image rather than trusting the
 # tool's own report of it.
-CMDLINE=$(objcopy -O binary --only-section=.cmdline "$UKI" /dev/stdout |
-          tr -d '\0')
+# llvm-objcopy where there is one: GNU objcopy here reads x86 PE alone, and
+# llvm-objcopy's -O binary writes a PE whole, so the section is dumped.
+OBJCOPY=$(command -v llvm-objcopy || command -v objcopy)
+"$OBJCOPY" --dump-section ".cmdline=$OUT/cmdline.bin" "$UKI" "$OUT/uki.tmp"
+CMDLINE=$(tr -d '\0' < "$OUT/cmdline.bin")
+rm -f "$OUT/cmdline.bin" "$OUT/uki.tmp"
 echo "   cmdline:  $CMDLINE"
-[[ "$CMDLINE" == *"img_dev=UUID=$P2_UUID"* ]] ||
-    fail "the signed cmdline does not name p2 (UUID=$P2_UUID): $CMDLINE"
-[[ "$CMDLINE" == *"img_loop=/$REC_ISO"* ]] ||
-    fail "the signed cmdline does not point at the ISO: $CMDLINE"
-echo "             names p2 by the serial that partition really carries"
+if [[ $APPLIANCE_ARCH == aa64 ]]; then
+    # Fedora's family: the ISO named by its path, which dracut's iso-scan
+    # looks for on every partition.
+    [[ "$CMDLINE" == *"iso-scan/filename=/$REC_ISO"* ]] ||
+        fail "the signed cmdline does not point at the ISO: $CMDLINE"
+    echo "             names the ISO by its path inside p2"
+else
+    [[ "$CMDLINE" == *"img_dev=UUID=$P2_UUID"* ]] ||
+        fail "the signed cmdline does not name p2 (UUID=$P2_UUID): $CMDLINE"
+    [[ "$CMDLINE" == *"img_loop=/$REC_ISO"* ]] ||
+        fail "the signed cmdline does not point at the ISO: $CMDLINE"
+    echo "             names p2 by the serial that partition really carries"
+fi
 
 # Nothing the appliance produced may contain the private key, and nothing
 # outside p3 may hold a copy of it. Checked rather than asserted.

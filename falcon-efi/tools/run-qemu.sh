@@ -56,6 +56,8 @@
 #               earlier run would silently supply the OLD MokList.
 #   SERIAL_LOG  --headless serial log        (default build/serial.log)
 #   MON_SOCK    --headless monitor socket    (default build/mon.sock)
+#   SERIAL_PIPE --headless with the one serial port on the FIFO pair
+#               SERIAL_PIPE.in/.out instead of SERIAL_LOG
 
 set -euo pipefail
 
@@ -263,6 +265,16 @@ if [[ "$HEADLESS" -eq 1 ]]; then
         -serial "file:$SERIAL_LOG"
         -monitor "unix:$MON_SOCK,server,nowait"
     )
+    # A machine with one serial port (virt), when something must type into
+    # it too: the port is the FIFO pair SERIAL_PIPE.in/.out, and the caller
+    # reads the log from .out.
+    if [[ -n "${SERIAL_PIPE:-}" ]]; then
+        CONSOLE=(
+            -display none
+            -serial "pipe:$SERIAL_PIPE"
+            -monitor "unix:$MON_SOCK,server,nowait"
+        )
+    fi
 fi
 
 # SeaBIOS takes no pflash and writes no debug port, and i440fx is the machine

@@ -37,6 +37,15 @@ $(APPLIANCE_INIT): $(APPLIANCE_INIT_OBJS)
 	@mkdir -p $(@D)
 	$(CC_HOST) $(HOST_LDFLAGS) -static -o $@ $(APPLIANCE_INIT_OBJS)
 
+# The same PID 1 for the AArch64 appliance (Makefile, host-a64).
+APPLIANCE_INIT_A64 := $(BIN)/falcon-boot-appliance-init-aa64
+APPLIANCE_INIT_A64_OBJS := $(filter-out $(addprefix %/,$(notdir $(EFI_X86_ONLY:.c=.o))),\
+	$(APPLIANCE_INIT_SRCS:%.c=$(HOST_A64_OBJ)/%.o))
+
+$(APPLIANCE_INIT_A64): $(APPLIANCE_INIT_A64_OBJS)
+	@mkdir -p $(@D)
+	$(LD_HOST_A64) $(HOST_LDFLAGS) -static -o $@ $(APPLIANCE_INIT_A64_OBJS)
+
 # Embeds $(SIGN_STATIC), so the two routes of Section 7.5 run one
 # implementation. The image itself is wrapped by $(SIGN)'s UKI builder, the
 # one that wraps every blessed kernel. The test MOK is only for the optional
@@ -44,6 +53,11 @@ $(APPLIANCE_INIT): $(APPLIANCE_INIT_OBJS)
 appliance: $(APPLIANCE_INIT) $(SIGN) $(SIGN_STATIC) \
 		$(MOK_KEY)
 	falcon-appliance/image/mk-appliance.sh
+
+# The same appliance for AArch64: build/appliance/appliance-uki-aa64.efi.
+appliance-aa64: $(APPLIANCE_INIT_A64) $(SIGN) $(SIGN_STATIC_A64) \
+		$(MOK_KEY)
+	APPLIANCE_ARCH=aa64 falcon-appliance/image/mk-appliance.sh
 
 # Built by the product tool: mkstick generates the MOK, signs both UKIs, and
 # puts the private key on p3 - the key the appliance then reads.
@@ -53,7 +67,16 @@ test-appliance-stick: appliance $(MKSTICK) $(EFI) $(FIXTURE_UKI)
 test-appliance:
 	falcon-appliance/tools/run-appliance-proof.sh
 
-.PHONY: appliance test-appliance-stick test-appliance
+# The AArch64 stick and proof, under AAVMF with the Microsoft 2023 CA.
+test-appliance-stick-aa64: appliance-aa64 $(MKSTICK) aa64 \
+		$(FIXTURE_UKI_AA64)
+	APPLIANCE_ARCH=aa64 falcon-appliance/tools/mk-test-appliance-stick.sh
+
+test-appliance-aa64:
+	APPLIANCE_ARCH=aa64 falcon-appliance/tools/run-appliance-proof.sh
+
+.PHONY: appliance appliance-aa64 test-appliance-stick test-appliance \
+	test-appliance-stick-aa64 test-appliance-aa64
 
 # ---- tests ----
 #

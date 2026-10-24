@@ -69,6 +69,18 @@ $(SIGN_STATIC): $(SIGN_OBJS)
 	@mkdir -p $(@D)
 	$(CC_HOST) $(HOST_LDFLAGS) -static -o $@ $(SIGN_OBJS)
 
+# The same for an arm64 machine (Makefile, host-a64): the AArch64
+# appliance's sign tool, and the release's arm64 host tools. The x86 SIMD
+# objects are left out, as in the AArch64 loader.
+HOST_A64_FILTER = $(filter-out $(addprefix %/,$(notdir $(EFI_X86_ONLY:.c=.o))),$(1))
+SIGN_STATIC_A64 := $(BIN)/falcon-boot-sign-static-aa64
+SIGN_A64_OBJS := $(call HOST_A64_FILTER,$(patsubst %.c,$(HOST_A64_OBJ)/%.o,\
+	$(SIGN_SRCS) $(SIGN_CORE) $(HOOK_BLOB) $(HOOK_A64_BLOB)))
+
+$(SIGN_STATIC_A64): $(SIGN_A64_OBJS)
+	@mkdir -p $(@D)
+	$(LD_HOST_A64) $(HOST_LDFLAGS) -static -o $@ $(SIGN_A64_OBJS)
+
 # mkstick for a 32-bit machine's own Linux (the A21m's Pentium III, from
 # DevLink recovery): the same objects built -m32 for the i686 and linked
 # static, since the image it runs in has no glibc of its own. Needs a
