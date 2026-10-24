@@ -24,6 +24,13 @@ ENV DEBIAN_FRONTEND=noninteractive
 # Grouped by the job each package does, because "why is xorriso in here" is the
 # question a reader of this file actually has. The command each one provides is
 # named when the package name does not give it away.
+# arm64 as a foreign architecture, for the few arm64 packages below: the
+# libc and libgcc a static arm64 program links (the fixture UKI's init),
+# arm64 kernel headers (falcon-hook's AArch64 build), and systemd-boot's
+# arm64 stub. Debian's cross gcc for arm64 conflicts with gcc-multilib,
+# which the BIOS loader needs; llvm-mingw's clang and ld.lld below link
+# against these instead.
+RUN dpkg --add-architecture arm64
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates git make python3 sudo \
         build-essential binutils pkg-config xxd \
@@ -32,7 +39,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libcmocka-dev \
         qemu-system-x86 qemu-utils ovmf swtpm swtpm-tools imagemagick \
         qemu-system-arm qemu-efi-aarch64 xz-utils \
-        linux-libc-dev-arm64-cross \
+        libc6-dev:arm64 libgcc-14-dev:arm64 systemd-boot-efi:arm64 \
         tcpdump \
         python3-venv python3-dev libcrypt-dev \
         gdisk util-linux fdisk \
@@ -84,9 +91,8 @@ RUN python3 -m venv /opt/virt-firmware \
 # llvm-mingw for the AArch64 UEFI images and the ARM64 winjump. Debian has
 # no aarch64-w64-mingw32 toolchain, and plain clang with lld cannot build
 # winjump, which needs a mingw CRT. Its clang and ld.lld also build the
-# arm64 falcon-hook, against linux-libc-dev-arm64-cross's headers above:
-# Debian's gcc-aarch64-linux-gnu conflicts with gcc-multilib, which the
-# BIOS loader needs. A pinned upstream release, checked
+# arm64 Linux programs (falcon-hook, the fixture init) against the arm64
+# packages above. A pinned upstream release, checked
 # against the digest its release page publishes; the x64 images stay on
 # Debian's gcc-mingw. xz-utils above unpacks it.
 ARG LLVM_MINGW_VERSION=20261020
@@ -150,10 +156,13 @@ RUN set -eu; \
     done; \
     test -n "$(pkg-config --libs cmocka)" || { \
         echo "MISSING: pkg-config cannot answer for cmocka"; missing=1; }; \
+    test -f /usr/lib/systemd/boot/efi/linuxaa64.efi.stub || { \
+        echo "MISSING: the arm64 sd-stub; an arm64 kernel cannot be wrapped"; \
+        missing=1; }; \
     test -f /usr/lib/systemd/boot/efi/linuxx64.efi.stub || { \
         echo "MISSING: sd-stub; every blessed stick would fail to build"; \
         missing=1; }; \
-    test -f /usr/aarch64-linux-gnu/include/asm/unistd.h || { \
+    test -f /usr/include/aarch64-linux-gnu/asm/unistd.h || { \
         echo "MISSING: arm64 kernel headers; falcon-hook-a64 cannot build"; \
         missing=1; }; \
     test -f /usr/share/AAVMF/AAVMF_CODE.fd || { \

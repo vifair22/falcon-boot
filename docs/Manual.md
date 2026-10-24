@@ -3391,7 +3391,7 @@ the harness's Dockerfile and this table to it):
 |---|---|---|---|
 | `x86_64-w64-mingw32-gcc` (required) | gcc-mingw-w64-x86-64 | build | the UEFI images, winjump.exe and the x64 vdisk driver (or build in the harness image) |
 | `aarch64-w64-mingw32-clang` | llvm-mingw (release) | build | the AArch64 UEFI images and the ARM64 winjump: llvm-mingw 20261020, ucrt, after gcc-mingw on PATH (its x86_64- and i686- wrappers are clang) (or build in the harness image) |
-| `arm64 kernel headers` | linux-libc-dev-arm64-cross | build | falcon-hook for arm64 kernels, built by llvm-mingw's clang and ld.lld (or the harness image) |
+| `arm64 libc, libgcc and headers` | libc6-dev:arm64 libgcc-14-dev:arm64 | build | the arm64 Linux programs (falcon-hook, the fixture UKI's init), built by llvm-mingw's clang and ld.lld; dpkg --add-architecture arm64 (or the harness image) |
 | `gcc` (required) | build-essential | build | host tools, tests and the BIOS loader (CC_HOST) |
 | `make` (required) | make | build | the one build |
 | `pkg-config` (required) | pkg-config | build | finds cmocka for the test binaries |
@@ -3404,6 +3404,7 @@ the harness's Dockerfile and this table to it):
 | `i686-w64-mingw32-gcc` | gcc-mingw-w64-i686 | build | make bios: the 32-bit winjump and vdisk driver (or the harness image) |
 | `mtools` | mtools | build | make jump and station install write FAT with mtools |
 | `sd-stub` | systemd-boot-efi | build | the stub a UKI is built on (sign uki, the fixture UKI, the appliance) |
+| `arm64 sd-stub` | systemd-boot-efi:arm64 | build | the stub an arm64 kernel's UKI is built on |
 | `zstd` | zstd | build | the appliance image's initramfs |
 | `cryptsetup` (required) | cryptsetup-bin | host tools | mkstick create: p3's LUKS2 |
 | `openssl` (required) | openssl | host tools | mkstick keygen and create: the MOK keypair |

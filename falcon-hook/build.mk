@@ -99,10 +99,11 @@ $(HOOK32_BLOB): $(HOOK32_BIN)
 #
 # The same sources for an arm64 kernel's initramfs, which the AArch64 loader
 # boots: clang and ld.lld (llvm-mingw's in the harness) against Debian's
-# arm64 kernel headers, which is all a program with no libc needs. The
+# arm64 kernel headers (multiarch), which is all a program with no libc
+# needs. The
 # loader for that architecture embeds it in place of the x86-64 one, and the
 # sign tool carries both, to wrap either architecture's kernel.
-A64_LINUX_HEADERS ?= /usr/aarch64-linux-gnu/include
+A64_LINUX_HEADERS ?= /usr/include/aarch64-linux-gnu
 CC_A64_LINUX ?= clang --target=aarch64-linux-gnu -isystem $(A64_LINUX_HEADERS)
 HOOK_A64_OBJ := $(OBJ)/hook-a64
 

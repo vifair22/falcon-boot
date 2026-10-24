@@ -13,7 +13,7 @@
 #                             reserved sectors
 #   p2  ISOs  exFAT   64 MiB  two fake ISOs, plus the real payload ISO if built,
 #                             and /.falcon (role library)
-#   p3  UKI   LUKS2   64 MiB  argon2id keyslot at the stick's fixed cost and a
+#   p3  UKI   LUKS2   96 MiB  argon2id keyslot at the stick's fixed cost and a
 #                             falcon token (role shelf),
 #                             ext4 inside, /uki/*.efi
 #   p4  root  LUKS2   32 MiB  argon2id keyslot, deliberately empty
@@ -82,7 +82,7 @@ set -euo pipefail
 cd "$(dirname "$0")/../.."
 
 IMG=${TEST_STICK_IMG:-build/test-stick.img}
-SIZE_MIB=256
+SIZE_MIB=288
 PASS="${FALCON_TEST_PASS:-falcon-test}"
 
 # The stick's argon2id cost, from the one place it is written.
@@ -226,7 +226,7 @@ sgdisk \
     -n 1:1MiB:+64MiB   -t 1:ef00 -c 1:"FALCON-ESP" \
     -n 2:0:+64MiB      -t 2:EBD0A0A2-B9E5-4433-87C0-68B6B72699C7 \
                        -c 2:"FALCON-ISO" \
-    -n 3:0:+64MiB      -t 3:9CB02E90-85F4-4AF7-9AF3-1F9D6A95FEAF \
+    -n 3:0:+96MiB      -t 3:9CB02E90-85F4-4AF7-9AF3-1F9D6A95FEAF \
                        -c 3:"FALCON-UKI" \
     -n 4:0:+32MiB      -t 4:8309 -c 4:"FALCON-ROOT" \
     "$IMG" >/dev/null
@@ -369,6 +369,14 @@ else
 fi
 cp "$UKI_SRC" "$MNT/uki/unsigned.efi"
 echo "   /uki populated from the $UKI_KIND"
+# The AArch64 personal OS beside it, signed the same way. Each machine's
+# chooser lists only its own architecture's images, so the x86-64 cases see
+# the shelf they always did.
+FIXTURE_UKI_AA64_SIGNED=build/test/fixture-uki-aa64-signed.efi
+if [[ "$UNSIGNED" -eq 0 && -f "$FIXTURE_UKI_AA64_SIGNED" ]]; then
+    cp "$FIXTURE_UKI_AA64_SIGNED" "$MNT/uki/personal-aa64.efi"
+    echo "   /uki/personal-aa64.efi from the AArch64 fixture UKI"
+fi
 
 # The label fixtures (falcon-efi/tools/mk-test-labels.sh). personal.efi and
 # unsigned.efi test what the loader LOADS; these test what it CALLS things,

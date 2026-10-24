@@ -106,6 +106,7 @@ MOK_CRT := $(MOK_DIR)/falcon-test-mok.crt
 
 # The fixture UKI staged on p3 (falcon-efi/tools/mk-test-uki.sh).
 FIXTURE_UKI := build/test/fixture-uki.efi
+FIXTURE_UKI_AA64 := build/test/fixture-uki-aa64.efi
 
 # Test payload: a throwaway EFI application that goes inside the El Torito
 # ISO the rig boots (falcon-efi/tools/mk-test-iso.sh). It is not part of the
@@ -113,11 +114,18 @@ FIXTURE_UKI := build/test/fixture-uki.efi
 PAYLOAD_SRC := falcon-efi/tools/payload/payload.c
 PAYLOAD := build/test/payload.efi
 
-payload: $(PAYLOAD)
+PAYLOAD_AA64 := build/test/payload-aa64.efi
+
+payload: $(PAYLOAD) $(PAYLOAD_AA64)
 
 $(PAYLOAD): $(EFI_OBJ)/$(PAYLOAD_SRC:.c=.o)
 	@mkdir -p $(@D)
 	$(CC) $(EFI_LDFLAGS) -o $@ $<
+
+# The same for the test ISO's BOOTAA64.EFI.
+$(PAYLOAD_AA64): $(EFI_AA64_OBJ)/$(PAYLOAD_SRC:.c=.o)
+	@mkdir -p $(@D)
+	$(CC_AA64) $(EFI_AA64_LDFLAGS) -o $@ $<
 
 # The station rig's stand-in for bootmgfw.efi and memtest.efi: it prints
 # the path it was started as. Signed with the test MOK for Secure Boot on.
@@ -180,7 +188,7 @@ sign: $(EFI_SIGNED)
 run-secboot: $(EFI_SIGNED)
 	falcon-efi/tools/run-qemu.sh --secboot
 
-test-iso: $(PAYLOAD)
+test-iso: $(PAYLOAD) $(PAYLOAD_AA64)
 	falcon-efi/tools/mk-test-iso.sh
 
 test-img: $(PAYLOAD)
@@ -190,11 +198,17 @@ test-img: $(PAYLOAD)
 # and Section 10). It needs the test MOK, because the Secure Boot half
 # of that test boots the SIGNED copy. The kernel comes out of an Arch ISO the
 # script reads and never writes; ARCH_ISO overrides where it looks.
-test-uki: $(FIXTURE_UKI)
+test-uki: $(FIXTURE_UKI) $(FIXTURE_UKI_AA64)
 
 $(FIXTURE_UKI): falcon-efi/tools/mk-test-uki.sh \
 		falcon-efi/tools/uki-init/init.c $(MOK_KEY)
 	falcon-efi/tools/mk-test-uki.sh
+
+# The AArch64 one: Fedora's arm64 kernel (tools/fetch-fedora-kernel.sh).
+$(FIXTURE_UKI_AA64): falcon-efi/tools/mk-test-uki.sh \
+		falcon-efi/tools/uki-init/init.c tools/fetch-fedora-kernel.sh \
+		$(MOK_KEY)
+	UKI_ARCH=aa64 falcon-efi/tools/mk-test-uki.sh
 
 # The four-partition stick the personal-OS path needs (DESIGN Section 3). It
 # wants the signed loader for p1's shim chain and the payload for p3's /uki,
