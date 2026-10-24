@@ -463,6 +463,15 @@ while (( $(date +%s) - T1 < TIMEOUT )); do
             <<<"$after"; then
         finish PASS "the BSD installer is up on serial"
     fi
+    # PassMark MemTest86 and the EDK II shell say so on serial, and their
+    # screens are mostly black, which the memtest screen test below reads
+    # as a loader menu: MemTest86's own startup log, the shell's prompt.
+    if grep -q -E 'Retrieving hardware info|Initializing display' <<<"$after"; then
+        finish PASS "MemTest86 is running (its serial log)"
+    fi
+    if grep -q -E 'UEFI Interactive Shell|^ *Shell> ?$' <<<"$after"; then
+        finish PASS "the UEFI shell is up on serial"
+    fi
     if grep -q -E 'Kernel panic - not syncing' <<<"$after"; then
         finish FAIL "$(grep -m1 'Kernel panic' <<<"$after" | cut -c1-120)"
     fi

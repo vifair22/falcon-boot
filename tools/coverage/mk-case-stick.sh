@@ -188,8 +188,11 @@ fi
 # wrap and the manifest are new bytes.
 cp --reflink=auto "$IMG" "$OUT.blessed.img"
 mount_p2 "$OUT.blessed.img"
+# A .img is a bare EFI payload, signed in place: it has no cmdline to add to.
+CONSOLE_ARGS=(--cmdline-extra "$BLESS_CONSOLE")
+[[ $NAME == *.img ]] && CONSOLE_ARGS=()
 if ! "$SIGN" "$MNT/$NAME" --stick "$MNT" --key "$MOK_KEY" --cert "$MOK_CRT" \
-        --cmdline-extra "$BLESS_CONSOLE" "${BLESS_ARGS[@]}" \
+        "${CONSOLE_ARGS[@]}" "${BLESS_ARGS[@]}" \
         --work "$(dirname "$OUT")" --quiet; then
     unmount_p2
     rm -f "$OUT.blessed.img"
