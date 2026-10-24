@@ -499,11 +499,19 @@ function render(screen, platform, mirror) {
  ['BIOS 4. back from a failed route: full redraw', 'failbios', 'BIOS', 'vga'],
  ['Booting an entry (direct, UEFI)', 'booting', 'UEFI', 'vga'],
  ['falcon jump: menu', 'jump', 'BIOS', 'vga'],
- ['falcon jump: booting the CD', 'jumpboot', 'BIOS', 'vga']].forEach(function (s) {
+ ['falcon jump: booting the CD', 'jumpboot', 'BIOS', 'vga']].filter(function (s) {
+  /* #<screen>-<platform>-<mirror> draws that one screen alone, bare, which is
+     what tools/mockup-shots.sh photographs for the README. */
+  var one = location.hash.slice(1);
+  if (!one) return true;
+  document.body.style.padding = '0';
+  document.querySelector('h1').style.display = 'none';
+  return one === s[1] + '-' + s[2] + '-' + s[3];
+}).forEach(function (s) {
   var fig = document.createElement('figure');
   var cap = document.createElement('figcaption');
   cap.textContent = s[0];
-  fig.appendChild(cap);
+  if (!location.hash) fig.appendChild(cap);
   fig.appendChild(render(s[1], s[2], s[3]));
   document.getElementById('grid').appendChild(fig);
 });
