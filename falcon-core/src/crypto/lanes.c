@@ -13,6 +13,8 @@ static void relax(void)
 {
 #if defined(__i386__) || defined(__x86_64__)
     __builtin_ia32_pause();
+#elif defined(__aarch64__)
+    __asm__ volatile("yield");
 #endif
 }
 

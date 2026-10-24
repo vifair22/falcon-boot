@@ -33,6 +33,7 @@ STICK_EFI += $(CORE_LIBC) $(CORE_UCS2)
 $(eval $(call efi_app,stick,falcon-boot,$(STICK_EFI)))
 
 $(EFI_OBJ)/$(STICK)/efi_main.o $(EFI_OBJ)/$(STICK)/efi_sbat.o: build/version.h
+$(EFI_AA64_OBJ)/$(STICK)/efi_main.o $(EFI_AA64_OBJ)/$(STICK)/efi_sbat.o: build/version.h
 
 sbat-check: sbat-check-stick
 

@@ -102,6 +102,9 @@ SHIM_EFI="$SHIM_BINS/fedora-16.1-shimx64.efi"
 MM_EFI="$SHIM_BINS/fedora-16.1-mmx64.efi"
 EFI_PLAIN=build/bin/falcon-boot.efi
 EFI_SIGNED=build/bin/falcon-boot-signed.efi
+SHIM_AA64="$SHIM_BINS/fedora-16.1-shimaa64.efi"
+MM_AA64="$SHIM_BINS/fedora-16.1-mmaa64.efi"
+EFI_AA64_SIGNED=build/bin/falcon-boot-aa64-signed.efi
 MOK_KEY=build/mok-test/falcon-test-mok.key
 MOK_CRT=build/mok-test/falcon-test-mok.crt
 MOK_CER=build/mok-test/falcon-test-mok.cer
@@ -280,6 +283,20 @@ else
     # private key does not travel; it is not on this partition and never is.
     [[ -f "$MOK_CER" ]] && cp "$MOK_CER" "$MNT/falcon-boot.cer"
     echo "   shim -> mmx64.efi -> grubx64.efi (our signed loader)"
+fi
+# AArch64 beside it: the removable-media names differ, so one p1 boots
+# either machine. Without Fedora's shimaa64 the loader is BOOTAA64.EFI
+# itself, which boots with Secure Boot off only.
+if [[ -f "$EFI_AA64_SIGNED" ]]; then
+    if [[ "$UNSIGNED" -eq 0 && -f "$SHIM_AA64" && -f "$MM_AA64" ]]; then
+        cp "$SHIM_AA64" "$MNT/EFI/BOOT/BOOTAA64.EFI"
+        cp "$MM_AA64" "$MNT/EFI/BOOT/mmaa64.efi"
+        cp "$EFI_AA64_SIGNED" "$MNT/EFI/BOOT/grubaa64.efi"
+        echo "   shimaa64 -> mmaa64.efi -> grubaa64.efi (our signed loader)"
+    else
+        cp "$EFI_AA64_SIGNED" "$MNT/EFI/BOOT/BOOTAA64.EFI"
+        echo "   AArch64 loader staged directly as BOOTAA64.EFI (no shim)"
+    fi
 fi
 unmount_rw
 

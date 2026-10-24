@@ -12,8 +12,9 @@
  * Block I/O among them, and a timer event's notify function runs at raised
  * TPL, where the main flow cannot run until it returns.
  *
- * A switch saves what the MS x64 convention makes the callee's (rbx, rbp,
- * rdi, rsi, r12-r15, xmm6-xmm15) and the stack pointer, and nothing else.
+ * A switch saves what the calling convention makes the callee's and the
+ * stack pointer, and nothing else: rbx, rbp, rdi, rsi, r12-r15 and
+ * xmm6-xmm15 under the MS x64 convention; x19-x30 and d8-d15 under AAPCS64.
  */
 
 #ifndef FALCON_EFI_TASK_H

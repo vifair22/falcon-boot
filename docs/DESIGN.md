@@ -1,7 +1,8 @@
 # falcon-boot Design
 
-A single-purpose, auditable multi-boot loader for x86: 64-bit UEFI first,
-with a BIOS loader alongside that runs on 32-bit processors as well. A distilled Ventoy: drag-and-drop ISO booting, plus a
+A single-purpose, auditable multi-boot loader for UEFI on x86-64 and
+AArch64, with a BIOS loader alongside that runs on 32-bit x86 processors as
+well. A distilled Ventoy: drag-and-drop ISO booting, plus a
 first-class path for booting a personal LUKS-backed OS via a Unified Kernel
 Image. Section 11 draws every route both loaders take.
 
@@ -14,7 +15,8 @@ change it.
 
 ### In scope (MVP)
 
-1. UEFI x64 firmware, and x86 BIOS through a separate, opt-in loader
+1. UEFI firmware on x86-64 and AArch64, one source built twice (Section
+   9), and x86 BIOS through a separate, opt-in loader
    (`falcon-bios/`, item 6). The BIOS loader is i586 and runs on every
    i586 or later processor, booting 32-bit and 64-bit kernels (Section
    13.8). No IA32 UEFI (see Non-goals).
@@ -2369,14 +2371,27 @@ while every real file lives only in UDF.
 
 ## 9. EFI application internals
 
-- **Language/ABI:** freestanding C11, MS x64 ABI, built to PE32+ directly with
-  `x86_64-w64-mingw32-gcc`. No gnu-efi, no EDK2. We carry our own minimal UEFI
-  headers (the protocols and GUIDs we actually use) under
-  `falcon-efi/src/efi/`. mingw emits PE32+ and the MS ABI directly, so
-  gnu-efi's ELF-then-objcopy step and `uefi_call_wrapper` are not needed.
+- **Language/ABI:** freestanding C11, built to PE32+ directly: for x64 by
+  `x86_64-w64-mingw32-gcc` (the MS x64 ABI, UEFI's on x86-64), for AArch64
+  by llvm-mingw's `aarch64-w64-mingw32-clang` (AAPCS64, UEFI's there).
+  No gnu-efi, no EDK2. We carry our own minimal UEFI headers (the protocols
+  and GUIDs we actually use) under `falcon-efi/src/efi/`. mingw emits PE32+
+  and the firmware's ABI directly, so gnu-efi's ELF-then-objcopy step and
+  `uefi_call_wrapper` are not needed.
+- **Two architectures, one source.** Every UEFI app links once per
+  architecture from the same source list: `<image>.efi` for x64,
+  `<image>-aa64.efi` for AArch64 (`make aa64`). A source with an x86-only
+  body keeps it behind `__x86_64__` and has an AArch64 one beside it (the
+  counter, the task switch, the RNG instruction, the idle halt); the x86
+  SIMD block functions (AES-NI, argon2's SSE2, SSSE3 and AVX2) are left out
+  of the AArch64 link, and their callers reach them only behind the same
+  guard, so AArch64 runs the portable paths. `efi/arch.h` spells the
+  architecture's part of a UEFI file name: `BOOTX64.EFI` and `shimx64.efi`,
+  or `BOOTAA64.EFI` and `shimaa64.efi`.
 - **Build:** Makefile-based. Full strict warning set per repo C standard, adapted
   for freestanding (`-ffreestanding -fno-stack-protector` where the environment
-  forces it, `-mno-red-zone`, `-fshort-wchar`). Build variants under `build/`.
+  forces it, `-mno-red-zone` on x64, `-fshort-wchar`). Build variants under
+  `build/`; AArch64's objects under `build/obj/efi-aa64-<variant>/`.
 - **SBAT:** shim refuses second-stage binaries without a valid `.sbat`
   section (shim 16.1; the refusal is the same opaque
   `EFI_SECURITY_VIOLATION` a bad signature gives). Our loader carries one.
@@ -2478,7 +2493,9 @@ while every real file lives only in UDF.
     `serial.c` writes diagnostics, and the screens' transcript, to the first
     serial port.
   - `tsc` - the time-stamp counter, its rate, the wait on the keyboard and
-    the APERF/MPERF read behind the effective clock (Section 5.5);
+    the APERF/MPERF read behind the effective clock (Section 5.5). On
+    AArch64 the counter is the generic timer's `CNTVCT_EL0` at
+    `CNTFRQ_EL0`'s rate, and there is no effective clock;
     `tsccore.c` is the host-tested arithmetic. `tcg` seeds
     its RNG from the counter.
   - `task` - one coroutine on its own stack beside the main flow, which the
@@ -4803,7 +4820,8 @@ wrapping an NV_ReadValue the TPM answers only when the PCRs match
 
 The session's randomness (the nonces, the ECDH scalar, the transport
 secret) is SHA-256 over every source the machine has: `EFI_RNG_PROTOCOL`,
-RDRAND, the TPM's GetRandom, the time-stamp counter and the clock. The
+RDRAND (RNDR on AArch64), the TPM's GetRandom, the time-stamp counter and
+the clock. The
 TPM's own bytes cross the same bus as the seed, so they are never used
 alone.
 
