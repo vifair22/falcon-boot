@@ -137,7 +137,19 @@ $(STANDIN): $(EFI_OBJ)/$(STANDIN_SRC:.c=.o)
 	@mkdir -p $(@D)
 	$(CC) $(EFI_LDFLAGS) -o $@ $<
 
+# The same for an AArch64 station.
+STANDIN_AA64 := build/test/standin-aa64.efi
+
+$(STANDIN_AA64): $(EFI_AA64_OBJ)/$(STANDIN_SRC:.c=.o)
+	@mkdir -p $(@D)
+	$(CC_AA64) $(EFI_AA64_LDFLAGS) -o $@ $<
+
 $(STANDIN_SIGNED): $(STANDIN) $(MOK_KEY)
+	sbsign --key $(MOK_KEY) --cert $(MOK_CRT) --output $@ $<
+
+STANDIN_AA64_SIGNED := build/test/standin-aa64-signed.efi
+
+$(STANDIN_AA64_SIGNED): $(STANDIN_AA64) $(MOK_KEY)
 	sbsign --key $(MOK_KEY) --cert $(MOK_CRT) --output $@ $<
 
 # The core rig's relaunch-uefi payload: started from a falcon-boot, it
@@ -161,6 +173,16 @@ $(TPM_PROBE): $(EFI_OBJ)/$(TPM_PROBE_SRC:.c=.o)
 	$(CC) $(EFI_LDFLAGS) -o $@ $<
 
 $(TPM_PROBE_SIGNED): $(TPM_PROBE) $(MOK_KEY)
+	sbsign --key $(MOK_KEY) --cert $(MOK_CRT) --output $@ $<
+
+TPM_PROBE_AA64 := build/test/tpm-probe-aa64.efi
+TPM_PROBE_AA64_SIGNED := build/test/tpm-probe-aa64-signed.efi
+
+$(TPM_PROBE_AA64): $(EFI_AA64_OBJ)/$(TPM_PROBE_SRC:.c=.o)
+	@mkdir -p $(@D)
+	$(CC_AA64) $(EFI_AA64_LDFLAGS) -o $@ $<
+
+$(TPM_PROBE_AA64_SIGNED): $(TPM_PROBE_AA64) $(MOK_KEY)
 	sbsign --key $(MOK_KEY) --cert $(MOK_CRT) --output $@ $<
 
 # Stage the loader as the removable-media default path on a vvfat-backed ESP,
@@ -223,6 +245,11 @@ test-stick: $(EFI_SIGNED) $(EFI_AA64_SIGNED) test-iso test-uki cli bios
 # both firmwares.
 test-station: $(STANDIN) station test-uki cli
 	falcon-efi/tools/mk-test-station.sh
+
+# The same disk with an AArch64 station on it, UEFI only.
+test-station-aa64: $(STANDIN_AA64) $(EFI_STATION_AA64) $(EFI_ESP_JUMP_AA64) \
+		test-uki cli
+	STATION_ARCH=aa64 falcon-efi/tools/mk-test-station.sh
 
 # The core step's matrix cells (DESIGN Section 10), each
 # booted headless and judged from serial: the stick alone, beside a second

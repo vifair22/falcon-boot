@@ -1219,7 +1219,10 @@ static void print_rows(const stn_scan *s, const stationini *ini, int have_ini,
     w = memtest ? strows_add(&rows, STROW_MEMTEST) : NULL;
     if (w != NULL) {
         (void)snprintf(w->name, sizeof w->name, "memtest");
-        label_wide(w->label, STROWS_LABEL_MAX, STROWS_LABEL_MEMTEST);
+        label_wide(w->label, STROWS_LABEL_MAX,
+                   strcmp(stn_n()->low, "aa64") == 0
+                       ? STROWS_LABEL_MEMTEST_AA64
+                       : STROWS_LABEL_MEMTEST);
         w->own_esp = (uint8_t)(fw == STROWS_UEFI);
     }
     if (have_ini)

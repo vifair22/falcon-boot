@@ -46,6 +46,9 @@
 #
 # Usage: falcon-efi/tools/mk-test-station.sh
 # Env:   FALCON_TEST_PASS  passphrase for p2 and p3 (default "falcon-test")
+#        STATION_ARCH      x64 (default) or aa64: build/test-station-aa64.img,
+#                          an AArch64 station (UEFI only: no p4, no p5), the
+#                          arm64 fixture UKI, BOOTAA64.EFI
 #
 # Needs sudo for losetup and cryptsetup, like mk-test-stick.sh, and for the
 # installer's LUKS2 token.
@@ -54,8 +57,32 @@ set -euo pipefail
 
 cd "$(dirname "$0")/../.."
 
-IMG=build/test-station.img
-BAK=build/test-station.bak
+STATION_ARCH="${STATION_ARCH:-x64}"
+case "$STATION_ARCH" in
+x64)
+    IMG=build/test-station.img
+    BAK=build/test-station.bak
+    STANDIN=build/test/standin.efi
+    FIXTURE_UKI_SIGNED=build/test/fixture-uki-signed.efi
+    STATION_EFI=build/bin/falcon-boot-station.efi
+    UP=X64
+    INSTALL_ARGS=()
+    ;;
+aa64)
+    IMG=build/test-station-aa64.img
+    BAK=build/test-station-aa64.bak
+    STANDIN=build/test/standin-aa64.efi
+    FIXTURE_UKI_SIGNED=build/test/fixture-uki-aa64-signed.efi
+    STATION_EFI=build/bin/falcon-boot-station-aa64.efi
+    UP=AA64
+    INSTALL_ARGS=(--arch aa64 --uefi)
+    ;;
+*)
+    echo "ERROR: STATION_ARCH is x64 or aa64" >&2
+    exit 2
+    ;;
+esac
+LOW=${UP,,}
 SIZE_MIB=256
 PASS="${FALCON_TEST_PASS:-falcon-test}"
 
@@ -64,8 +91,6 @@ ROOT_GUID=CA7D7CCB-63ED-4C53-861C-1742536059CC
 
 MOK_KEY=build/mok-test/falcon-test-mok.key
 MOK_CRT=build/mok-test/falcon-test-mok.crt
-STANDIN=build/test/standin.efi
-FIXTURE_UKI_SIGNED=build/test/fixture-uki-signed.efi
 MKSTICK=build/bin/falcon-boot-mkstick
 
 export MTOOLS_SKIP_CHECK=1
@@ -92,10 +117,10 @@ cleanup() {
 trap cleanup EXIT
 
 for f in "$MOK_KEY" "$MOK_CRT" "$STANDIN" "$FIXTURE_UKI_SIGNED" "$MKSTICK" \
-         build/bin/falcon-boot-station.efi build/bin/falcon-bios-stage1.bin \
+         "$STATION_EFI" build/bin/falcon-bios-stage1.bin \
          build/bin/falcon-bios-stage2.bin \
          build/bin/falcon-bios-station-stage3.bin \
-         build/shim/bins/fedora-16.1-shimx64.efi; do
+         "build/shim/bins/fedora-16.1-shim$LOW.efi"; do
     [[ -f "$f" ]] || {
         echo "ERROR: $f missing (make test-station builds what it needs)" >&2
         exit 1
@@ -141,12 +166,13 @@ LOOP=
 echo "== station install"
 sudo "$MKSTICK" station install "$IMG" --shelf 2 --key "$MOK_KEY" \
     --cert "$MOK_CRT" --memtest-efi "$STANDIN" --shim build/shim/bins \
-    --backup "$BAK" --force
+    --backup "$BAK" --force "${INSTALL_ARGS[@]}"
 sudo chown "$(id -u):$(id -g)" "$BAK"
 
 echo "== the rig's removable-media path"
 mmd -i "$IMG@@1M" ::/EFI/BOOT
-for f in shimx64.efi:BOOTX64.EFI mmx64.efi:mmx64.efi grubx64.efi:grubx64.efi; do
+for f in "shim$LOW.efi:BOOT$UP.EFI" "mm$LOW.efi:mm$LOW.efi" \
+         "grub$LOW.efi:grub$LOW.efi"; do
     mcopy -o -i "$IMG@@1M" "::/EFI/falcon/${f%%:*}" "build/test-station.part"
     mcopy -o -i "$IMG@@1M" build/test-station.part "::/EFI/BOOT/${f#*:}"
 done

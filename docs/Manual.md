@@ -1343,6 +1343,11 @@ It ends:
     /dev/X boots the station (install ID <32 hex digits>).
     `falcon-boot-mkstick station remove --backup station.bak` undoes it.
 
+An AArch64 machine's station is the same with its own names
+(`BOOTAA64.EFI`, `falconaa64.efi`, `shimaa64.efi`), UEFI only;
+`--arch aa64` installs one from another machine, onto an image or a disk
+that machine will boot.
+
 A station has no shim by default: the firmware entry names
 the jumper, `\EFI\BOOT\BOOTX64.EFI`, which starts `\EFI\falcon\falconx64.efi`;
 a firmware that has lost the entry boots the same file by the
@@ -2392,15 +2397,16 @@ prompt; Escape there goes to the menu.
 ### 10.6 station
 
     falcon-boot-mkstick station install <disk> [--bios] [--uefi]
-        [--size <MiB>] [--shelf <n|disk:n|partition>] [--esp <n>]
+        [--arch x64|aa64] [--size <MiB>] [--shelf <n|disk:n|partition>] [--esp <n>]
         [--memtest <file>] [--memtest-efi <file>] [--key <file> --cert <file>]
         [--passphrase-file <file>] [--legacy [--uki <file>]... [--mods <dir>]]
         [--also <disk>]... [--no-scan] [--backup <file>] [--force] [--dry-run]
         [--shim <dir>]
         [--stage1 <file>] [--stage2 <file>] [--stage3 <file>] [--loader <file>]
     falcon-boot-mkstick station remove [<disk>] --backup <file> [--full]
-        [--force] [--dry-run]
+        [--arch x64|aa64] [--force] [--dry-run]
     falcon-boot-mkstick station status <disk> [--also <disk>]... [--no-scan]
+        [--arch x64|aa64]
     falcon-boot-mkstick station totp enroll|reseal|remove|check <disk> ...
 
 Section 2 gives the install procedure; this is the reference.
@@ -2415,6 +2421,7 @@ ESP's and the shelf's.
 | option | default | what it does |
 |---|---|---|
 | `--bios`, `--uefi` | both, where the disk allows | which station to install |
+| `--arch` | this machine's | the machine the station boots: `x64`, or `aa64`, whose station is UEFI only and whose names are `falconaa64.efi`, `BOOTAA64.EFI` and `shimaa64.efi`; `--bios` and `--legacy` are refused with it |
 | `--size` | 64 (288 on a 4Kn disk) | the station partition's size in MiB, at least 40 (272 on a 4Kn disk), at most 4096 |
 | `--shelf` | none: the station offers no Linux | the shelf: `n` is partition n of `<disk>`, `disk:n` partition n of another disk, anything else a partition node; it is stamped with the install ID |
 | `--esp` | the disk's ESP | the ESP's partition number |
@@ -2671,7 +2678,9 @@ Section 12.14). The test rig's options (`--tpm-socket`, `--event-log`,
 
 | option | default | what it does |
 |---|---|---|
-| `--from` | `build/bin` | the built loaders: `falcon-boot.efi`, `falcon-boot-station.efi`, `falcon-esp-jump.efi`, the BIOS stages, and `mod/` |
+| `--from` | `build/bin` | the built loaders: `falcon-boot.efi`, `falcon-boot-aa64.efi`, `falcon-boot-station.efi`, `falcon-esp-jump.efi` (with `-aa64` for an AArch64 station), the BIOS stages, and `mod/` |
+| `--shim` | `build/shim/bins` | shimaa64 and its MokManager, for a stick that has no AArch64 chain yet |
+| `--arch` | this machine's | the station's architecture, `x64` or `aa64` (10.6) |
 | `--backup-dir` | `.` | where what is replaced is saved |
 | `--passphrase-file` | prompt | the shelf's passphrase; the open shelf's mapping is then not used |
 | `--key`, `--cert` | the shelf's | the MOK pair, for an install whose shelf does not hold it; given together |
@@ -2683,7 +2692,7 @@ What the disk is comes from its records:
 
 | disk | found by | written |
 |---|---|---|
-| stick | a boot record, with a library and a shelf of its install ID | the loader on p1; stages 1-3 when LBA 0 holds stage 1 |
+| stick | a boot record, with a library and a shelf of its install ID | the loader on p1, and the AArch64 loader beside it; a stick made before it had the AArch64 chain gets shimaa64, its MokManager and the loader, when `--from` and `--shim` hold them; stages 1-3 when LBA 0 holds stage 1 |
 | BIOS station | a boot record naming stage 3, with `STATION.INI` | stages 1-3 (`falcon-bios-station-stage3.bin`) |
 | station-legacy | the same, with any `*.MOD` on the partition | stages 1-3 (`falcon-bios-station-legacy-stage3.bin`) and the drivers |
 | UEFI station | the ESP's boot record, with a loader in `\EFI\falcon` | that loader; without shim, the jumper and its entry |
