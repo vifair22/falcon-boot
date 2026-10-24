@@ -4,6 +4,8 @@
 #include <media/biosboot.h>
 
 #include <media/eltorito.h>
+#include <media/uefiboot.h>
+#include <pe/pe.h>
 #include <lib/string.h>
 
 /* The x86 boot protocol's setup header (the kernel's
@@ -249,37 +251,13 @@ static void judge_kernels(medium *m, biosboot_work *w, char *scratch,
         *needs64 = BIOSBOOT_YES;
 }
 
-/* Whether the medium shows a way in for UEFI: an El Torito entry for platform
- * 0xEF, or the removable-media loader or Windows' boot manager on one of its
- * volumes (the evidence media/uefiboot.c takes). {EFI ONLY} says the image
- * boots on UEFI, so a medium BIOS cannot start is marked only when this
- * holds; a data disc that neither can start is left unmarked, as the UEFI
- * menu leaves it. */
-static int uefi_way(medium *m, biosboot_work *w)
+/* Which UEFI machine boots what this one cannot, on media/uefiboot.c's own
+ * rule, asked as an x86-64 machine: YES is {EFI ONLY}, OTHER (only ARM64's
+ * loader) {ARM64 ONLY}. NO is a data disc neither starts, left unmarked as
+ * the UEFI menu leaves it. */
+static uefiboot_answer uefi_way(medium *m, biosboot_work *w)
 {
-    static const char *const loaders[] = {
-        "/EFI/BOOT/BOOTX64.EFI",
-        "/bootmgr.efi",
-    };
-    elt_catalog cat;
-    unsigned i, j;
-
-    if (elt_parse(&cat, m->read, m->ctx, m->size) == ELT_OK) {
-        for (i = 0; i < cat.n; i++) {
-            if (cat.entry[i].platform == ELT_PLATFORM_UEFI)
-                return 1;
-        }
-    }
-    for (i = 0; i < medium_count(m); i++) {
-        fs_vol *v = medium_vol_at(m, i);
-
-        for (j = 0; j < sizeof loaders / sizeof loaders[0]; j++) {
-            if (fs_lookup(v, loaders[j], &w->walk, &w->ent) == FS_OK &&
-                !w->ent.is_dir)
-                return 1;
-        }
-    }
-    return 0;
+    return uefiboot_image_in(m, &w->walk, &w->ent, PE_MACHINE_AMD64);
 }
 
 void biosboot_medium(medium *m, family_id fam, biosboot_work *w,
@@ -293,6 +271,7 @@ void biosboot_medium(medium *m, family_id fam, biosboot_work *w,
         return;
     out->boots = BIOSBOOT_UNKNOWN;
     out->needs64 = BIOSBOOT_UNKNOWN;
+    out->arm64 = 0;
     if (m == (medium *)0 || w == (biosboot_work *)0 ||
         scratch == (char *)0 || medium_count(m) == 0)
         return;
@@ -301,8 +280,13 @@ void biosboot_medium(medium *m, family_id fam, biosboot_work *w,
     if (fam == FAMILY_WINDOWS) {
         /* No kernel for the direct route, and a width that is boot.wim's. */
         out->boots = image;
-        if (out->boots == BIOSBOOT_NO && !uefi_way(m, w))
-            out->boots = BIOSBOOT_UNKNOWN;
+        if (out->boots == BIOSBOOT_NO) {
+            uefiboot_answer way = uefi_way(m, w);
+
+            if (way == UEFIBOOT_NO || way == UEFIBOOT_UNKNOWN)
+                out->boots = BIOSBOOT_UNKNOWN;
+            out->arm64 = (uint8_t)(way == UEFIBOOT_OTHER);
+        }
         return;
     }
     if (fam == FAMILY_BSD) {
@@ -322,8 +306,13 @@ void biosboot_medium(medium *m, family_id fam, biosboot_work *w,
 
     if (image == BIOSBOOT_YES || direct == BIOSBOOT_YES)
         out->boots = BIOSBOOT_YES;
-    else if (image == BIOSBOOT_NO && direct == BIOSBOOT_NO && uefi_way(m, w))
-        out->boots = BIOSBOOT_NO;
+    else if (image == BIOSBOOT_NO && direct == BIOSBOOT_NO) {
+        uefiboot_answer way = uefi_way(m, w);
+
+        if (way == UEFIBOOT_YES || way == UEFIBOOT_OTHER)
+            out->boots = BIOSBOOT_NO;
+        out->arm64 = (uint8_t)(way == UEFIBOOT_OTHER);
+    }
     /* A medium nothing here can start needs no processor at all. */
     out->needs64 = out->boots == BIOSBOOT_NO ? BIOSBOOT_UNKNOWN : wide;
 }

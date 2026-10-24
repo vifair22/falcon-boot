@@ -145,6 +145,11 @@
 #   fs-p2-fat-iso-uefi
 #                  that stick under OVMF: payload-test.iso, a file on the
 #                  FAT32 library, boots through the virtual CD
+#   arm64-only-bios
+#                  the same stick under SeaBIOS: an ISO whose only UEFI
+#                  loader is BOOTAA64.EFI is listed with {ARM64 ONLY}, not
+#                  {EFI ONLY} (an x86-64 PC's UEFI could not start it
+#                  either), and choosing it shows its page
 #   64-only-bios32 the same stick under SeaBIOS on an i686 (no long
 #                  mode): an ISO whose every kernel is 64-bit is listed with
 #                  {64-BIT ONLY}, a multi-arch one (a 64-bit and a 32-bit
@@ -292,6 +297,7 @@ STUB_ISO=a-efi-stub.iso
 EFI_ONLY_ISO=b-efi-only.iso
 X64_ISO=b-64-only.iso
 MULTI_ISO=b-multi.iso
+ARM64_ISO=b-arm64.iso
 # The validation-off stick's second copy of the payload ISO, under a name no
 # bless record claims, so one row boots the ordinary way beside the stale
 # one; and an ISO with an unsigned \EFI\BOOT\BOOTX64.EFI in its tree, the
@@ -303,7 +309,7 @@ TREE_ISO=unsigned-tree.iso
 
 build_sticks() {
     STICK_ID=$ID_A TEST_STICK_IMG=$R/stick-a.img \
-        STICK_ISO_FILES="build/test-uefi-biosonly.iso:$BIOS_ONLY_ISO build/test-uefi-stub.iso:$STUB_ISO build/test-bios-efionly.iso:$EFI_ONLY_ISO build/test-bios-64.iso:$X64_ISO build/test-bios-multi.iso:$MULTI_ISO" \
+        STICK_ISO_FILES="build/test-uefi-biosonly.iso:$BIOS_ONLY_ISO build/test-uefi-stub.iso:$STUB_ISO build/test-bios-efionly.iso:$EFI_ONLY_ISO build/test-bios-64.iso:$X64_ISO build/test-bios-multi.iso:$MULTI_ISO build/test-bios-arm64.iso:$ARM64_ISO" \
         falcon-efi/tools/mk-test-stick.sh --no-labels >"$R/stick-a.build" 2>&1
     STICK_ID=$ID_B TEST_STICK_IMG=$R/stick-b.img FALCON_TEST_PASS=$PASS_B \
         STICK_ISOS="second-stick.iso" \
@@ -1796,7 +1802,7 @@ CASES=("$@")
            mbr-disk-uefi mbr-disk-bios foreign-uefi foreign-bios 4kn-uefi
            4kn-bios 4kn-bios-marker station-uefi station-bios
            station-stick-uefi station-stick-bios bios-only-uefi
-           bios-only-uefi-sb efi-only-bios 64-only-bios32
+           bios-only-uefi-sb efi-only-bios arm64-only-bios 64-only-bios32
            validation-off-uefi validation-off-pos-uefi
            validation-off-iso-uefi validation-off-station-uefi
            kdf-memory-uefi kdf-memory-bios hibernated-uefi hibernated-bios
@@ -1878,6 +1884,10 @@ for c in "${CASES[@]}"; do
     efi-only-bios)
         case_bios_tags "$c" bios "$EFI_ONLY_ISO" "{EFI ONLY}" \
             "this image boots only on a UEFI machine" \
+            "$BIOS_ONLY_ISO" "$STUB_ISO" "$X64_ISO" "$MULTI_ISO" ;;
+    arm64-only-bios)
+        case_bios_tags "$c" bios "$ARM64_ISO" "{ARM64 ONLY}" \
+            "this image boots only on an ARM64 (AArch64) machine" \
             "$BIOS_ONLY_ISO" "$STUB_ISO" "$X64_ISO" "$MULTI_ISO" ;;
     64-only-bios32)
         case_bios_tags "$c" bios32 "$X64_ISO" "{64-BIT ONLY}" \

@@ -86,7 +86,8 @@ uefiboot_answer uefiboot_kernel(const void *head, size_t len,
 }
 
 /* Whether any of the medium's volumes carries one of the set's names. */
-static int has_loader(medium *m, uefiboot_work *w, loader_set set)
+static int has_loader(medium *m, fs_dir *walk, fs_dirent *ent,
+                      loader_set set)
 {
     unsigned i, j;
 
@@ -94,8 +95,8 @@ static int has_loader(medium *m, uefiboot_work *w, loader_set set)
         fs_vol *v = medium_vol_at(m, i);
 
         for (j = 0; j < set.n; j++) {
-            if (fs_lookup(v, set.names[j], &w->walk, &w->ent) == FS_OK &&
-                !w->ent.is_dir)
+            if (fs_lookup(v, set.names[j], walk, ent) == FS_OK &&
+                !ent->is_dir)
                 return 1;
         }
     }
@@ -105,14 +106,22 @@ static int has_loader(medium *m, uefiboot_work *w, loader_set set)
 uefiboot_answer uefiboot_has_image(medium *m, uefiboot_work *w,
                                    uint16_t machine)
 {
+    if (w == (uefiboot_work *)0)
+        return UEFIBOOT_UNKNOWN;
+    return uefiboot_image_in(m, &w->walk, &w->ent, machine);
+}
+
+uefiboot_answer uefiboot_image_in(medium *m, fs_dir *walk, fs_dirent *ent,
+                                  uint16_t machine)
+{
     elt_catalog cat;
     unsigned i;
 
-    if (m == (medium *)0 || w == (uefiboot_work *)0)
+    if (m == (medium *)0 || walk == (fs_dir *)0 || ent == (fs_dirent *)0)
         return UEFIBOOT_UNKNOWN;
-    if (has_loader(m, w, loaders(machine)))
+    if (has_loader(m, walk, ent, loaders(machine)))
         return UEFIBOOT_YES;
-    if (has_loader(m, w, loaders(other_machine(machine))))
+    if (has_loader(m, walk, ent, loaders(other_machine(machine))))
         return UEFIBOOT_OTHER;
     /* AArch64 counts a medium by its loader alone. An x86-64 medium's own
      * loader can sit in an El Torito image these volumes do not reach, so
