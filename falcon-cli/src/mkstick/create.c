@@ -52,6 +52,7 @@
 
 #include <fs/fs.h>
 #include <ident/ident.h>
+#include <media/extmap.h>
 #include <part/part.h>
 #include <part/table.h>
 
@@ -125,7 +126,7 @@ static const cli_opt create_opts[] = {
  *
  * Each list is cross-checked against the loader's own registry, so this
  * tool cannot offer to create something the loader could not then mount. */
-static const char *const p2_implemented[] = { "exfat" };
+static const char *const p2_implemented[] = { "exfat", "fat32" };
 static const char *const p3_implemented[] = { "ext4", "fat32" };
 
 /* Every filesystem mkstick makes, so a name that is another partition's
@@ -1086,6 +1087,15 @@ static cli_status create_run(const cli_args *a)
     if (rc != CLI_OK)
         return rc;
 
+    if (strcmp(plan_fs.p2_fs, "fat32") == 0) {
+        cli_log_blank();
+        log_warn("--p2-fs fat32: no file on p2 can be 4 GiB or larger, which "
+                 "rules out");
+        log_warn("  most Windows ISOs. A fragmented ISO with more than %u "
+                 "runs boots", (unsigned)EXTMAP_MAX_EXTENTS);
+        log_warn("  without falcon-hook (DESIGN Section 6.2).");
+    }
+
     if (plan_fs.p3_plain) {
         /* DESIGN Section 3 asks for the consequences to be stated at creation
          * time rather than discovered later, and they are stated before the
@@ -1387,7 +1397,7 @@ const cli_cmd mks_cmd_create = {
     "A target that already carries an MBR or GPT partition table is refused\n"
     "without --force.\n"
     "\n"
-    "--p2-fs takes exfat; --p3-fs takes ext4 or fat32. A FAT shelf keeps no\n"
+    "--p2-fs takes exfat or fat32; --p3-fs takes ext4 or fat32. A FAT shelf keeps no\n"
     "file modes: mount it with umask=0077 on a host, as mkstick does, or the\n"
     "MOK key is readable by every user there.\n"
     "\n"

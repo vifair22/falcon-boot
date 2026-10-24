@@ -40,8 +40,9 @@ CORE_FS_STATION := $(addprefix $(CORE)/fs/,ext4.c jbd2.c crc32c.c fat.c fs.c \
 # falcon jump's (DESIGN Section 13.3): FAT, for the floppy it boots from.
 CORE_FS_FAT   := $(addprefix $(CORE)/fs/,fat.c fs.c fs_fat.c fs_reg_fat.c)
 # The extent map's readers (falcon-hook, falcon-winjump, falcon-vdisk):
-# exFAT, the ISO library's filesystem, for its /.falcon record.
-CORE_FS_EXFAT := $(addprefix $(CORE)/fs/,exfat.c fs.c fs_exfat.c fs_reg_exfat.c)
+# exFAT and FAT, the ISO library's filesystems, for its /.falcon record.
+CORE_FS_LIBRARY := $(addprefix $(CORE)/fs/,exfat.c fat.c fs.c fs_exfat.c \
+	fs_fat.c fs_reg_library.c)
 CORE_LUKS     := $(addprefix $(CORE)/luks/,json.c af.c luks.c)
 CORE_PART     := $(CORE)/part/part.c $(CORE)/part/table.c
 # The identity record (DESIGN Section 3.1): its binary, text and LUKS token

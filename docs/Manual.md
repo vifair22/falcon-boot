@@ -83,7 +83,7 @@ A firmware that refuses says so, and the menu comes back:
 
 A menu with no rows at all says, in the panel:
 
-    (no ISOs found on the exFAT partition)
+    (no ISOs found in the ISO library)
 
 A list longer than the panel scrolls. The panel's right border is then a
 scroll bar: a block for where the window is in the list, and an arrow at
@@ -838,7 +838,7 @@ The errors before the survey:
 |---|---|
 | `ERROR: the loader passed no install ID (falcon.ident.cred).` | started some other way than from the loader |
 | `ERROR: no ISO library and LUKS shelf carry this stick's install ID.` | followed by `disks seen:` and the kernel's disks |
-| `ERROR: mounting p2: <reason>` | p2 is not readable exFAT |
+| `ERROR: mounting p2: <reason>` | p2 is neither exFAT nor FAT the kernel reads |
 | `ERROR: p3 (<dev>) is not a LUKS2 volume this appliance can open;` | p3 is plaintext or damaged |
 
 Each waits for Enter.
@@ -2127,7 +2127,7 @@ exist, and that every `--uki` exists.
 | `--force` | off | required for a block device; also overwrites a target that already carries a partition table |
 | `--size` | none | creates the image file at this size when `<target>` does not exist; ignored, with a warning, when it does |
 | `--p1-size` | `64M` | p1, the ESP |
-| `--iso-size` | half of what is left | p2, the exFAT ISO library; `rest` takes everything p4 does not |
+| `--iso-size` | half of what is left | p2, the ISO library; `rest` takes everything p4 does not |
 | `--p3-size` | `1G` | p3, the UKI shelf |
 | `--p4-size` | the rest | p4, LUKS2 root and home; `rest` takes everything p2 does not |
 | `--passphrase-file` | prompt | the p3 and p4 passphrase; the prompt is `passphrase for p3 and p4: ` then `repeat: ` |
@@ -2140,7 +2140,7 @@ exist, and that every `--uki` exists.
 | `--cert-out` | none | also writes the public certificate here, PEM |
 | `--key-out` | none | also writes `falcon-mok.key` (0600) and `falcon-mok.crt` into this directory, made 0700 if new |
 | `--p3-plain` | off | p3 without LUKS; requires `--key-out` |
-| `--p2-fs` | `exfat` | p2's filesystem; `exfat` is the only one accepted |
+| `--p2-fs` | `exfat` | p2's filesystem: `exfat` or `fat32`. FAT32 holds no file of 4 GiB or more, which rules out most Windows ISOs; create says so before it writes anything |
 | `--p3-fs` | `ext4` | p3's filesystem: `ext4` or `fat32` (DESIGN Section 3). A FAT32 shelf is mounted `umask=0077` while the key is written |
 | `--stage3` | `build/bin/falcon-bios-stage3.bin` | the BIOS stage 3 p1's reserved sectors are sized for |
 
@@ -2154,7 +2154,7 @@ What it makes:
 | partition | type, label | contents |
 |---|---|---|
 | p1 | ESP, `FALCON-ESP`, FAT32 | `/EFI/BOOT/BOOTX64.EFI` (shim), MokManager under the name shim launches it by, the loader under shim's next-stage name; the same for AArch64 (`BOOTAA64.EFI`, `mmaa64.efi`, `grubaa64.efi`); `/falcon-boot.cer` |
-| p2 | Microsoft basic data, `FALCON-ISO`, exFAT | `/falcon/blessed/`, `/.falcon` |
+| p2 | Microsoft basic data, `FALCON-ISO`, exFAT (or FAT32) | `/falcon/blessed/`, `/.falcon` |
 | p3 | falcon shelf, `FALCON-UKI`, LUKS2 and the `--p3-fs` filesystem | `/uki/` with each `--uki`, `/falcon-mok.key` (0600), `/falcon-mok.crt` |
 | p4 | Linux LUKS, `FALCON-ROOT`, LUKS2 and ext4 | empty |
 
@@ -3441,7 +3441,7 @@ the harness's Dockerfile and this table to it):
 | `sbsign, sbverify, sbattach` (required) | sbsigntool | host tools | MOK signatures, their check, and stripping one |
 | `mkfs.exfat` (required) | exfatprogs | host tools | p2 |
 | `mkfs.ext4` (required) | e2fsprogs | host tools | p3 and the station partition |
-| `mkfs.fat` (required) | dosfstools | host tools | p1, a BIOS boot partition, and a FAT32 p3 |
+| `mkfs.fat` (required) | dosfstools | host tools | p1, a BIOS boot partition, and a FAT32 p2 or p3 |
 | `sgdisk` (required) | gdisk | host tools | GPT |
 | `sfdisk` (required) | fdisk | host tools | MBR |
 | `losetup, blockdev, partx` (required) | util-linux | host tools | images as block devices |

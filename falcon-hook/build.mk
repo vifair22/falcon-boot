@@ -14,7 +14,7 @@ HOOK := falcon-hook/src
 # The extent map's reader: exFAT alone behind the registry, and the record,
 # for the /.falcon that names the ISO library (falcon-core/src/media/extfind.h).
 HOOK_SRCS := $(addprefix $(HOOK)/,sys.c hookcore.c hook.c dimod.c) \
-	$(CORE_EXTFIND) $(CORE_FS_EXFAT) $(CORE)/fs/iso9660.c $(CORE_LIBC) $(CORE_UCS2)
+	$(CORE_EXTFIND) $(CORE_FS_LIBRARY) $(CORE)/fs/iso9660.c $(CORE_LIBC) $(CORE_UCS2)
 
 HOOK_OBJ := $(OBJ)/hook
 

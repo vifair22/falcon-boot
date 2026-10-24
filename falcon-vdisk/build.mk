@@ -13,11 +13,11 @@ VDISK_SRC := falcon-vdisk/src/vdisk.c
 
 # The EFI-free falcon-core the boot-start backing reuses: the extent
 # map, the disk match (the ISO library's /.falcon record, read with exFAT
-# behind a registry of one) and the run conversion winjump also uses in
+# and FAT behind the library registry) and the run conversion winjump also uses in
 # userland. Linked into the .sys the same way winjump links them into its
 # .exe.
 VDISK_CORE_SRC := falcon-winjump/src/winjumpcore.c $(CORE_EXTFIND) \
-	$(CORE_FS_EXFAT) $(CORE_UCS2)
+	$(CORE_FS_LIBRARY) $(CORE_UCS2)
 
 VDISK_CFLAGS := -std=c11 -O2 -ffreestanding -fno-builtin \
 	-fno-stack-protector -mno-stack-arg-probe \

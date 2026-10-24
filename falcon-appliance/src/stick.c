@@ -36,8 +36,8 @@ static int skip_disk(const char *name)
     return 0;
 }
 
-/* Reads the first `len` bytes of a device, for the exFAT volume-serial
- * read, which wants a boot sector and nothing else. */
+/* Reads the first `len` bytes of a device, for the volume-serial read,
+ * which wants a boot sector and nothing else. */
 static int read_head(const char *node, void *buf, size_t len)
 {
     int fd = open(node, O_RDONLY | O_CLOEXEC);
@@ -201,20 +201,26 @@ int find_stick(stick_parts *out)
 
 /* p2's volume serial, in the form blkid reports it, because that is what the
  * family cmdline templates mean by %DEV% and what the booted initramfs will
- * resolve. Read from the exFAT VBR rather than asked of blkid: there is no
+ * resolve. Read from the boot sector rather than asked of blkid: there is no
  * udev in here to maintain /dev/disk/by-uuid, which is where the host route's
- * lookup gets it from (falcon-cli/src/sign/util.c). */
-int exfat_uuid(const char *node, char *out, size_t cap)
+ * lookup gets it from (falcon-cli/src/sign/util.c). exFAT keeps it at 100,
+ * FAT32 at 67 behind the extended boot signature at 66. */
+int p2_uuid(const char *node, char *out, size_t cap)
 {
     uint8_t vbr[512];
+    size_t at;
     uint32_t serial;
 
     if (read_head(node, vbr, sizeof(vbr)) != 0)
         return -1;
-    if (memcmp(vbr + 3, "EXFAT   ", 8) != 0)
+    if (memcmp(vbr + 3, "EXFAT   ", 8) == 0)
+        at = 100;
+    else if (memcmp(vbr + 82, "FAT32   ", 8) == 0 && vbr[66] == 0x29)
+        at = 67;
+    else
         return -1;
-    serial = (uint32_t)vbr[100] | ((uint32_t)vbr[101] << 8) |
-             ((uint32_t)vbr[102] << 16) | ((uint32_t)vbr[103] << 24);
+    serial = (uint32_t)vbr[at] | ((uint32_t)vbr[at + 1] << 8) |
+             ((uint32_t)vbr[at + 2] << 16) | ((uint32_t)vbr[at + 3] << 24);
     if (snprintf(out, cap, "%04X-%04X", (unsigned)(serial >> 16),
                  (unsigned)(serial & 0xFFFFu)) >= (int)cap)
         return -1;

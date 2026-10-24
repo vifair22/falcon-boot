@@ -130,6 +130,59 @@ static void test_disk_holds(void **state)
     synth_free(&sv);
 }
 
+/* A FAT32 library (mkstick create --p2-fs fat32), the fixture
+ * falcon-core/tools/mk-test-fat.sh builds, read in whole sectors as
+ * Windows reads a disk: winjump and falcon-vdisk link the library
+ * registry, which has FAT beside exFAT. Its record carries FAT_ID. */
+#define FAT_LIBRARY "build/test-fat32-library.img"
+
+static const uint8_t FAT_ID[16] = {
+    0x5a, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77,
+    0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0x0f
+};
+
+typedef struct {
+    FILE    *fp;
+    uint64_t base;
+} file_disk;
+
+static int file_raw_read(void *ctx, uint64_t off, uint32_t len, void *buf)
+{
+    const file_disk *d = ctx;
+    uint8_t *out = buf;
+
+    if (off % 512u != 0 || len % 512u != 0 || len == 0)
+        return -1;
+    while (len > 0 && off < d->base) {
+        *out++ = 0;
+        off++;
+        len--;
+    }
+    if (len == 0)
+        return 0;
+    if (fseek(d->fp, (long)(off - d->base), SEEK_SET) != 0 ||
+        fread(out, 1, len, d->fp) != len)
+        return -1;
+    return 0;
+}
+
+static void test_disk_holds_fat(void **state)
+{
+    file_disk d;
+    extmap_hdr h;
+
+    (void)state;
+    d.fp = fopen(FAT_LIBRARY, "rb");
+    assert_non_null(d.fp);
+    d.base = (uint64_t)PART_LBA * 512u;
+    map_hdr(&h, FAT_ID, PART_LBA, 512);
+    assert_int_equal(wj_disk_holds(&h, file_raw_read, &d, &g_scratch), WJ_OK);
+    map_hdr(&h, g_id, PART_LBA, 512);
+    assert_int_equal(wj_disk_holds(&h, file_raw_read, &d, &g_scratch),
+                     WJ_ERR_NOMATCH);
+    fclose(d.fp);
+}
+
 static void test_disk_holds_not(void **state)
 {
     static const uint8_t other[16] = { 9, 9, 9, 9, 9, 9, 9, 9,
@@ -317,6 +370,7 @@ int run_winjumpcore_tests(void)
 {
     const struct CMUnitTest tests[] = {
         cmocka_unit_test(test_disk_holds),
+        cmocka_unit_test(test_disk_holds_fat),
         cmocka_unit_test(test_disk_holds_not),
         cmocka_unit_test(test_backing_extents),
         cmocka_unit_test(test_backing_nospace),

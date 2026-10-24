@@ -130,6 +130,12 @@
 #                  a stick `mkstick create --p3-fs fat32` made: judged as
 #                  uefi-stick, the shelf inside p3's LUKS2 read by the FAT
 #                  driver
+#   fs-p2-fat-uefi, fs-p2-fat-bios
+#                  the same for `--p2-fs fat32`: the library listed off a
+#                  FAT32 p2
+#   fs-p2-fat-iso-uefi
+#                  that stick under OVMF: payload-test.iso, a file on the
+#                  FAT32 library, boots through the virtual CD
 #   64-only-bios32 the same stick under SeaBIOS on an i686 (no long
 #                  mode): an ISO whose every kernel is 64-bit is listed with
 #                  {64-BIT ONLY}, a multi-arch one (a 64-bit and a 32-bit
@@ -336,6 +342,7 @@ fs_stick() {    # fs_stick NAME P2_FS P3_FS
     [[ -n "$p2" ]] || { detach; return 1; }
     mount_part "${LOOP}p$p2"
     dd if=/dev/zero of="$MNT/$1.iso" bs=1M count=1 status=none
+    cp build/test-payload.iso "$MNT/payload-test.iso"
     umount_part
     # shellcheck disable=SC2024
     sudo "$MKSTICK" --quiet bios --reserve --no-backup \
@@ -358,6 +365,38 @@ fs_case() {
     fi
     stick_case "$1" "$2" "$(cat "$R/stick-$3.id")" "$3.iso" "" "" \
         "$R/stick-$3.img:boot"
+}
+
+# fs_iso CASE NAME P2_FS P3_FS: payload-test.iso off that stick's library,
+# through the virtual CD, under OVMF.
+fs_iso() {
+    local why= row i
+    if ! fs_stick "$2" "$3" "$4"; then
+        result "$1" 0 "the $2 stick did not build ($R/stick-$2.build)"
+        return
+    fi
+    boot uefi "$R/stick-$2.img:boot"
+    wait_for payload-test.iso 90 || why="the menu never listed payload-test.iso"
+    if [[ -z "$why" ]]; then
+        sleep 1
+        row=$(row_of payload-test.iso) || true
+        [[ -n "$row" ]] || why="no row for payload-test.iso"
+    fi
+    if [[ -z "$why" ]]; then
+        for (( i = 0; i < row; i++ )); do
+            mon "sendkey down"
+            sleep 0.2
+        done
+        sleep 0.3
+        mon "sendkey ret"
+        wait_for "FALCON-PAYLOAD-OK" 90 || why="the payload never ran"
+    fi
+    halt
+    if [[ -z "$why" ]]; then
+        result "$1" 1 "payload-test.iso ran its payload off a $3 library"
+    else
+        result "$1" 0 "$why"
+    fi
 }
 
 # MBR: p1 FAT32 (0x0C), p2 exFAT (0x07), p3 extended holding p5 FAT16
@@ -1701,7 +1740,8 @@ CASES=("$@")
            validation-off-uefi validation-off-pos-uefi
            validation-off-iso-uefi validation-off-station-uefi
            kdf-memory-uefi kdf-memory-bios hibernated-uefi hibernated-bios
-           fs-p3-fat-uefi fs-p3-fat-bios
+           fs-p3-fat-uefi fs-p3-fat-bios fs-p2-fat-uefi fs-p2-fat-bios
+           fs-p2-fat-iso-uefi
            relaunch-uefi relaunch-uefi-sb probe-keys-uefi probe-keys-bios
            update-stick-uefi-sb update-stick-bios update-station-uefi-sb
            update-station-bios
@@ -1756,6 +1796,9 @@ for c in "${CASES[@]}"; do
     probe-keys-bios) case_probe_keys "$c" bios ;;
     fs-p3-fat-uefi|fs-p3-fat-bios)
         fs_case "$c" "${c##*-}" p3-fat exfat fat32 ;;
+    fs-p2-fat-uefi|fs-p2-fat-bios)
+        fs_case "$c" "${c##*-}" p2-fat fat32 ext4 ;;
+    fs-p2-fat-iso-uefi) fs_iso "$c" p2-fat fat32 ext4 ;;
     hibernated-uefi) case_hibernated "$c" uefi ;;
     hibernated-bios) case_hibernated "$c" bios ;;
     station-uefi)  case_station "$c" uefi ;;

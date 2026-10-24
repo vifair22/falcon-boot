@@ -298,7 +298,9 @@ int main(void)
      *
      * p2 and nothing else. p3 is left alone until the survey has found
      * something to sign. */
-    if (mount(parts.p2, P2_MNT, "exfat", 0, NULL) != 0) {
+    /* exFAT, or FAT32 (DESIGN Section 3): whichever the kernel takes. */
+    if (mount(parts.p2, P2_MNT, "exfat", 0, NULL) != 0 &&
+        mount(parts.p2, P2_MNT, "vfat", 0, NULL) != 0) {
         say("ERROR: mounting p2: %s\n", strerror(errno));
         finish(0, 1);
     }
