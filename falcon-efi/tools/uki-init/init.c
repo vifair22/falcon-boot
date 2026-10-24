@@ -38,8 +38,10 @@
 #include <sys/reboot.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#if defined(__x86_64__)
 #include <cpuid.h>
 #include <x86intrin.h>
+#endif
 
 /* Must match FALCON_TEST_PASS in falcon-efi/tools/mk-test-stick.sh. */
 #define EXPECT_PASS "falcon-test"
@@ -62,7 +64,8 @@
 /* Everything the fixture proves is asserted by grepping the rig's serial
  * log, while a human doing UAT watches the QEMU window. The cmdline puts
  * tty0 last, so /dev/console (fd 1 below) is the screen; g_serial carries
- * the same bytes to ttyS0 so the headless assertions keep working. */
+ * the same bytes to ttyS0 (ttyAMA0 on AArch64) so the headless assertions
+ * keep working. */
 static int g_serial = -1;
 
 static void open_console(void)
@@ -81,7 +84,12 @@ static void open_console(void)
             (void)close(fd);
         setvbuf(stdout, NULL, _IONBF, 0);
     }
+#if defined(__aarch64__)
+    /* The virt machine's serial port is a PL011. */
+    g_serial = open("/dev/ttyAMA0", O_WRONLY | O_NOCTTY);
+#else
     g_serial = open("/dev/ttyS0", O_WRONLY | O_NOCTTY);
+#endif
 }
 
 /* printf to both the console and the serial log; every line the fixture
@@ -198,6 +206,8 @@ static void bli_var(const char *name, const char *guid)
 
 /* The kernel's TSC rate in kHz, from the last "tsc: Detected" or "tsc:
  * Refined TSC clocksource calibration:" line in its log; 0 if neither. */
+#if defined(__x86_64__)
+
 static unsigned long kernel_tsc_khz(void)
 {
     static char log[1 << 20];
@@ -238,6 +248,39 @@ static unsigned hypervisor(void)
     return (c >> 31) & 1u;
 }
 
+static unsigned long long counter(void)
+{
+    return (unsigned long long)__rdtsc();
+}
+
+#elif defined(__aarch64__)
+
+/* The generic timer the AArch64 loader counts on (falcon-efi/src/tsc), at
+ * the rate the firmware set; Linux lets user space read both. */
+static unsigned long kernel_tsc_khz(void)
+{
+    unsigned long long f;
+
+    __asm__ volatile("mrs %0, cntfrq_el0" : "=r"(f));
+    return (unsigned long)(f / 1000u);
+}
+
+/* No effective clock on AArch64, so nothing to name. */
+static unsigned hypervisor(void)
+{
+    return 0;
+}
+
+static unsigned long long counter(void)
+{
+    unsigned long long v;
+
+    __asm__ volatile("isb; mrs %0, cntvct_el0" : "=r"(v) : : "memory");
+    return v;
+}
+
+#endif
+
 static void bli_report(void)
 {
     static const char *const loader[] = {
@@ -261,7 +304,7 @@ static void bli_report(void)
     /* Read after the variables, so it is later than all of them. */
     khz = kernel_tsc_khz();
     if (khz != 0) {
-        unsigned __int128 t = __rdtsc();
+        unsigned __int128 t = counter();
 
         outf("FALCON-BLI-KERNEL tsc_khz=%lu now_usec=%llu hypervisor=%u\n",
              khz, (unsigned long long)(t * 1000u / khz), hypervisor());

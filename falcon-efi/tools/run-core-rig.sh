@@ -4,6 +4,16 @@
 # falcon-bios/tools/run-jump-rig.sh. UEFI is OVMF (ovmf.sh finds it), BIOS
 # is QEMU's SeaBIOS.
 #
+#   chain-uefi-aa64
+#                  the rig stick under AAVMF: a-efi-stub.iso, whose kernel
+#                  is an x86-64 EFI stub, is tagged {X64 ONLY}, and c on
+#                  payload-test.iso runs its BOOTAA64.EFI
+#   uefi-stick-aa64, uefi-stick-aa64-sb
+#                  the same under AAVMF on qemu-system-aarch64's virt
+#                  machine, Secure Boot off and on: the AArch64 loader
+#                  through shimaa64, and the arm64 fixture UKI the shelf
+#                  offers it (personal-aa64.efi). Emulated on an x86-64
+#                  host, so every wait is AA64_SCALE (6) times as long
 #   uefi-stick     the rig stick (mk-test-stick.sh) as the only disk under
 #                  OVMF, Secure Boot off: the menu lists its library, the
 #                  personal OS unlocks (p3 is argon2id at the stick's cost),
@@ -427,7 +437,8 @@ mon() { printf '%s\n' "$*" | socat - "UNIX-CONNECT:$R/mon.sock" >/dev/null 2>&1 
 
 wait_for() {    # wait_for PATTERN SECONDS: 0 once the log has it
     local i
-    for (( i = 0; i < $2 * 10; i++ )); do
+    # SECONDS as KVM takes them; boot scales them for an emulated machine.
+    for (( i = 0; i < $2 * 10 * ${SCALE:-1}; i++ )); do
         log_text "$R/serial.log" | grep -aqF -- "$1" && return 0
         kill -0 "$QPID" 2>/dev/null || { log_text "$R/serial.log" |
             grep -aqF -- "$1"; return; }
@@ -457,8 +468,23 @@ send_keys() {   # send_keys TEXT: one sendkey per character, then Enter
 # one the UEFI loader never sees.
 boot() {
     local fw=$1 d img opts n=0 idx=1 args=() fwargs=() vars code
-    local cpu=${BOOT_CPU:-host}
+    local cpu=${BOOT_CPU:-host} qemu=qemu-system-x86_64 accel=(-enable-kvm)
+    local aa64=0
     shift
+    # AArch64 runs on the virt machine under AAVMF, emulated on an x86-64
+    # host (TCG), so every wait in the case is scaled for it.
+    SCALE=1
+    if [[ $fw == uefi-aa64* ]]; then
+        aa64=1
+        qemu=qemu-system-aarch64
+        if [[ $(uname -m) == aarch64 && -w /dev/kvm ]]; then
+            cpu=host
+        else
+            accel=()
+            cpu=max
+            SCALE=${AA64_SCALE:-6}
+        fi
+    fi
     for d in "$@"; do
         img=${d%%:*}
         opts=":${d#*:}:"
@@ -476,6 +502,9 @@ boot() {
             dev="nvme,drive=d$n,serial=falcon4k$n,logical_block_size=4096,physical_block_size=4096"
         elif [[ "$fw" == bios || "$fw" == bios32 ]]; then
             dev="ide-hd,drive=d$n,bus=ide.$(( n / 2 )),unit=$(( n % 2 ))"
+        elif [[ $aa64 == 1 ]]; then
+            # virt has no IDE; AAVMF reads virtio-blk.
+            dev="virtio-blk-pci,drive=d$n"
         else
             dev="ide-hd,drive=d$n,bus=ide.$n"
         fi
@@ -509,14 +538,29 @@ boot() {
                 -drive "if=pflash,format=raw,readonly=on,file=$code"
                 -drive "if=pflash,format=raw,file=$R/vars.fd")
         ;;
+    uefi-aa64|uefi-aa64-sb)
+        if [[ $fw == uefi-aa64 ]]; then
+            code=$(aavmf_find CODE plain)
+            vars=$(aavmf_find VARS plain)
+        else
+            code=$(aavmf_find CODE secboot)
+            vars=build/mok-test/AAVMF_VARS.secboot.mok.fd
+        fi
+        cp "$vars" "$R/vars.fd"
+        chmod u+w "$R/vars.fd"
+        fwargs=(-machine virt
+                -drive "if=pflash,format=$(fw_format "$code"),readonly=on,file=$code"
+                -drive "if=pflash,format=$(fw_format "$vars"),file=$R/vars.fd"
+                -device qemu-xhci -device usb-kbd -device ramfb)
+        ;;
     bios) fwargs=(-machine pc) ;;
     # The coverage harness's bios32 column: an i686, no long mode.
     bios32) fwargs=(-machine pc); cpu=pentium3 ;;
     esac
     rm -f "$R/serial.log" "$R/mon.sock"
-    timeout "$TIMEOUT" qemu-system-x86_64 "${fwargs[@]}" -m "$MEM" \
+    timeout "$(( TIMEOUT * SCALE ))" "$qemu" "${fwargs[@]}" -m "$MEM" \
         -smp "${BOOT_SMP:-1}" \
-        -enable-kvm -cpu "$cpu" -display none -net none "${args[@]}" \
+        "${accel[@]}" -cpu "$cpu" -display none -net none "${args[@]}" \
         -serial "file:$R/serial.log" \
         -monitor "unix:$R/mon.sock,server,nowait" >"$R/qemu.log" 2>&1 &
     QPID=$!
@@ -551,14 +595,18 @@ pos_unlock() {
     UNLOCK_S=
     local t0=
     wait_for "unlocking..." 10 && t0=$(date +%s.%N)
-    for (( i = 0; i < 3000; i++ )); do
-        log_text "$R/serial.log" | grep -aq 'personal\.efi\|FALCON-UKI-INIT' && break
+    for (( i = 0; i < 3000 * ${SCALE:-1}; i++ )); do
+        log_text "$R/serial.log" |
+            grep -aq 'personal[-a-z0-9]*\.efi\|FALCON-UKI-INIT' && break
         sleep 0.01
     done
     [[ -n "$t0" ]] && UNLOCK_S=$(awk -v a="$t0" -v b="$(date +%s.%N)" \
         'BEGIN { printf "%.2f", b - a }')
     sleep 1
-    if ! log_text "$R/serial.log" | grep -aq FALCON-UKI-INIT; then
+    # One image for this machine is read straight away; several open the
+    # chooser first.
+    if ! log_text "$R/serial.log" |
+            grep -aq 'FALCON-UKI-INIT\|reading personal[-a-z0-9]*\.efi'; then
         choose_personal || return 1
     fi
     wait_for "FALCON-UKI-DONE" 120 || { POS_WHY="the UKI never reported"; return 1; }
@@ -1470,6 +1518,38 @@ case_voff_pos() { # case_voff_pos CASE
     fi
 }
 
+# AArch64's chainload: c on the payload ISO starts its BOOTAA64.EFI, which
+# the x64 one sits beside; and an ISO whose only way in is an x86-64 EFI
+# stub kernel is tagged for that machine.
+case_chain_aa64() { # case_chain_aa64 CASE FIRMWARE
+    local why= row i
+    boot "$2" "$R/stick-a.img:boot"
+    wait_for "payload-test.iso" 90 || why="the menu never listed payload-test.iso"
+    if [[ -z "$why" ]]; then
+        wait_for_re 'a-efi-stub\.iso .*\{X64 ONLY\}' 60 ||
+            why="a-efi-stub.iso is not tagged {X64 ONLY}"
+    fi
+    if [[ -z "$why" ]]; then
+        row=$(row_of "payload-test.iso") || true
+        [[ -n "$row" ]] || why="no row for payload-test.iso"
+    fi
+    if [[ -z "$why" ]]; then
+        for (( i = 0; i < row; i++ )); do
+            mon "sendkey down"
+            sleep 0.2
+        done
+        sleep 0.3
+        mon "sendkey c"
+        wait_for "FALCON-PAYLOAD-OK" 90 || why="the payload never ran"
+    fi
+    halt
+    if [[ -z "$why" ]]; then
+        result "$1" 1 "{X64 ONLY} on the x86-64 stub ISO; c chainloaded the payload's BOOTAA64.EFI"
+    else
+        result "$1" 0 "$why"
+    fi
+}
+
 # The unsigned payload ISO, Enter on its row: the payload runs.
 case_voff_iso() { # case_voff_iso CASE
     local why= row i
@@ -1535,7 +1615,8 @@ build_all
 A_ISOS="archlinux-fake.iso"
 CASES=("$@")
 [[ ${#CASES[@]} -gt 0 ]] ||
-    CASES=(uefi-stick uefi-stick-sb bios-stick two-sticks-uefi two-sticks-bios
+    CASES=(uefi-stick uefi-stick-sb uefi-stick-aa64 uefi-stick-aa64-sb
+           chain-uefi-aa64 bios-stick two-sticks-uefi two-sticks-bios
            mbr-disk-uefi mbr-disk-bios foreign-uefi foreign-bios 4kn-uefi
            4kn-bios 4kn-bios-marker station-uefi station-bios
            station-stick-uefi station-stick-bios bios-only-uefi
@@ -1554,6 +1635,10 @@ for c in "${CASES[@]}"; do
     case $c in
     uefi-stick)    stick_case "$c" uefi "$ID_A" "$A_ISOS" "" "" "$R/stick-a.img:boot" ;;
     uefi-stick-sb) stick_case "$c" uefi-sb "$ID_A" "$A_ISOS" "" "" "$R/stick-a.img:boot" ;;
+    chain-uefi-aa64) case_chain_aa64 "$c" uefi-aa64 ;;
+    uefi-stick-aa64|uefi-stick-aa64-sb)
+        stick_case "$c" "uefi-aa64${c#uefi-stick-aa64}" "$ID_A" "$A_ISOS" "" "" \
+            "$R/stick-a.img:boot" ;;
     bios-stick)    stick_case "$c" bios "$ID_A" "$A_ISOS" "" "" "$R/stick-a.img:boot" ;;
     two-sticks-uefi|two-sticks-bios)
         stick_case "$c" "${c#two-sticks-}" "$ID_A" "$A_ISOS" "second-stick.iso" \

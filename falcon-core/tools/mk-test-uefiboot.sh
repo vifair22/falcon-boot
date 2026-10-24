@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # falcon-boot: build the ISOs falcon-core/tests/uefiboot_test.c reads
-# (falcon-core/src/media/uefiboot.h: can an x86-64 UEFI machine boot this).
+# (falcon-core/src/media/uefiboot.h: can a UEFI machine of this
+# architecture boot this).
 #
-# Five media, each the smallest one that has the shape in question. The
+# Seven media, each the smallest one that has the shape in question. The
 # kernels are not kernels: the rule reads a kernel's head only, so a head is
 # what each one is (a setup header's "HdrS" at 0x202, and for the stub kernels
 # a PE header at 0x400 naming its processor).
@@ -18,6 +19,11 @@
 #   build/test-uefi-win-efi.iso   the same plus a 0xEF entry whose image
 #                                 holds only BOOTIA32.EFI, 8.1 and 10 x86's
 #                                 shape: YES, it is a 32-bit UEFI medium
+#   build/test-uefi-aa64.iso      the first medium plus a UEFI El Torito
+#                                 image holding BOOTAA64.EFI: YES on
+#                                 AArch64, OTHER on x86-64
+#   build/test-uefi-aa64-stub.iso isolinux-shaped, the kernel an ARM64 EFI
+#                                 stub: YES on AArch64, OTHER on x86-64
 #
 # Usage: falcon-core/tools/mk-test-uefiboot.sh
 # Needs xorriso, mkfs.fat and mtools. No sudo.
@@ -95,6 +101,7 @@ BIOS_WIN=(-b boot/etfsboot.com -c boot/boot.cat -no-emul-boot
 
 bzimage "$W/k-plain"
 stub "$W/k-stub" 64 86 0b 02
+stub "$W/k-stub-aa64" 64 aa 0b 02
 
 echo "== build/test-uefi-biosonly.iso"
 linux_tree "$W/t1" "$W/k-plain"
@@ -124,3 +131,15 @@ efi_image "$W/t5/efi/microsoft/boot/efisys.bin" BOOTIA32.EFI
 "${XO[@]}" -V UEFI_WIN_EFI "${BIOS_WIN[@]}" \
     -eltorito-alt-boot -e efi/microsoft/boot/efisys.bin -no-emul-boot \
     -o build/test-uefi-win-efi.iso "$W/t5"
+
+echo "== build/test-uefi-aa64.iso"
+linux_tree "$W/t6" "$W/k-plain"
+efi_image "$W/t6/isolinux/efiboot.img" BOOTAA64.EFI
+"${XO[@]}" -V UEFI_AA64 "${BIOS_LX[@]}" \
+    -eltorito-alt-boot -e isolinux/efiboot.img -no-emul-boot \
+    -o build/test-uefi-aa64.iso "$W/t6"
+
+echo "== build/test-uefi-aa64-stub.iso"
+linux_tree "$W/t7" "$W/k-stub-aa64"
+"${XO[@]}" -V UEFI_AA64_STUB "${BIOS_LX[@]}" \
+    -o build/test-uefi-aa64-stub.iso "$W/t7"

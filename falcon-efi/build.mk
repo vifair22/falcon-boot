@@ -55,7 +55,7 @@ EFI_APP_SRCS :=
 define efi_app
 EFI_APP_SRCS += $(3)
 $(call efi_link,$(1),$(2),$(3),EFI_OBJ,CC,EFI_LDFLAGS,$$(CC:gcc=objdump))
-$(call efi_link,$(1)-aa64,$(2)-aa64,$$(filter-out $$(EFI_X86_ONLY),$(3)),EFI_AA64_OBJ,CC_AA64,EFI_AA64_LDFLAGS,$$(OBJDUMP_AA64))
+$(call efi_link,$(1)-aa64,$(2)-aa64,$$(patsubst $$(HOOK_BLOB),$$(HOOK_A64_BLOB),$$(filter-out $$(EFI_X86_ONLY),$(3))),EFI_AA64_OBJ,CC_AA64,EFI_AA64_LDFLAGS,$$(OBJDUMP_AA64))
 endef
 
 # $(call efi_link,<app>,<image name>,<sources>,<objdir var>,<cc var>,
@@ -106,6 +106,7 @@ MOK_CRT := $(MOK_DIR)/falcon-test-mok.crt
 
 # The fixture UKI staged on p3 (falcon-efi/tools/mk-test-uki.sh).
 FIXTURE_UKI := build/test/fixture-uki.efi
+FIXTURE_UKI_AA64 := build/test/fixture-uki-aa64.efi
 
 # Test payload: a throwaway EFI application that goes inside the El Torito
 # ISO the rig boots (falcon-efi/tools/mk-test-iso.sh). It is not part of the
@@ -113,11 +114,18 @@ FIXTURE_UKI := build/test/fixture-uki.efi
 PAYLOAD_SRC := falcon-efi/tools/payload/payload.c
 PAYLOAD := build/test/payload.efi
 
-payload: $(PAYLOAD)
+PAYLOAD_AA64 := build/test/payload-aa64.efi
+
+payload: $(PAYLOAD) $(PAYLOAD_AA64)
 
 $(PAYLOAD): $(EFI_OBJ)/$(PAYLOAD_SRC:.c=.o)
 	@mkdir -p $(@D)
 	$(CC) $(EFI_LDFLAGS) -o $@ $<
+
+# The same for the test ISO's BOOTAA64.EFI.
+$(PAYLOAD_AA64): $(EFI_AA64_OBJ)/$(PAYLOAD_SRC:.c=.o)
+	@mkdir -p $(@D)
+	$(CC_AA64) $(EFI_AA64_LDFLAGS) -o $@ $<
 
 # The station rig's stand-in for bootmgfw.efi and memtest.efi: it prints
 # the path it was started as. Signed with the test MOK for Secure Boot on.
@@ -166,9 +174,11 @@ run: $(EFI)
 	falcon-efi/tools/run-qemu.sh
 
 # Throwaway test MOK and a matching OVMF varstore. Test-rig scaffolding only.
-mok-test: $(MOK_KEY)
+mok-test: $(MOK_KEY) $(MOK_DIR)/AAVMF_VARS.secboot.mok.fd
 
-$(MOK_KEY):
+# The AArch64 varstores come from the same run; a build directory made
+# before they existed gets them by running it again (it keeps the key).
+$(MOK_KEY) $(MOK_DIR)/AAVMF_VARS.secboot.mok.fd:
 	falcon-efi/tools/mk-test-mok.sh
 
 # The stick loader signed with the test MOK, so shim accepts it as a second
@@ -178,7 +188,7 @@ sign: $(EFI_SIGNED)
 run-secboot: $(EFI_SIGNED)
 	falcon-efi/tools/run-qemu.sh --secboot
 
-test-iso: $(PAYLOAD)
+test-iso: $(PAYLOAD) $(PAYLOAD_AA64)
 	falcon-efi/tools/mk-test-iso.sh
 
 test-img: $(PAYLOAD)
@@ -188,11 +198,17 @@ test-img: $(PAYLOAD)
 # and Section 10). It needs the test MOK, because the Secure Boot half
 # of that test boots the SIGNED copy. The kernel comes out of an Arch ISO the
 # script reads and never writes; ARCH_ISO overrides where it looks.
-test-uki: $(FIXTURE_UKI)
+test-uki: $(FIXTURE_UKI) $(FIXTURE_UKI_AA64)
 
 $(FIXTURE_UKI): falcon-efi/tools/mk-test-uki.sh \
 		falcon-efi/tools/uki-init/init.c $(MOK_KEY)
 	falcon-efi/tools/mk-test-uki.sh
+
+# The AArch64 one: Fedora's arm64 kernel (tools/fetch-fedora-kernel.sh).
+$(FIXTURE_UKI_AA64): falcon-efi/tools/mk-test-uki.sh \
+		falcon-efi/tools/uki-init/init.c tools/fetch-fedora-kernel.sh \
+		$(MOK_KEY)
+	UKI_ARCH=aa64 falcon-efi/tools/mk-test-uki.sh
 
 # The four-partition stick the personal-OS path needs (DESIGN Section 3). It
 # wants the signed loader for p1's shim chain and the payload for p3's /uki,

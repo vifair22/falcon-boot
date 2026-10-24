@@ -262,7 +262,6 @@ static void sign_all(const stick_parts *parts, int confirmed,
                     (char *)"--cert", g_keys.cert,
                     (char *)"--iso-path", rel_arg,
                     (char *)"--dev", dev_arg,
-                    (char *)"--stub", (char *)STUB_PATH,
                     NULL
                 };
 

@@ -348,6 +348,7 @@ loader.
 | `/EFI/BOOT/BOOTX64.EFI` | Fedora shim-x64 16.1 | Microsoft UEFI CA 2011 and Microsoft UEFI CA 2023 as shipped, plus ours when appended by hand (Manual Section 11.1) |
 | `/EFI/BOOT/mmx64.efi` | MokManager, shim's enrollment UI (Fedora naming) | Fedora Secure Boot CA as shipped, plus ours when appended by hand (Manual Section 11.1) |
 | `/EFI/BOOT/grubx64.efi` | OUR loader (see note on next-stage name) | **ours, and nothing else** |
+| `/EFI/BOOT/BOOTAA64.EFI`, `mmaa64.efi`, `grubaa64.efi` | the same chain for AArch64: Fedora shim-aa64 16.1, its MokManager, our AArch64 loader | shimaa64: Microsoft UEFI CA 2023 alone; the loader: ours |
 | `/falcon-boot.cer` | our public cert, for first-boot enrollment | not signed; it is a certificate |
 
 "Ours" throughout means the MOK keypair whose public half is
@@ -359,6 +360,12 @@ The shim is Fedora's shim-x64 16.1: it
 carries both Microsoft signatures (2011 + 2023), its vendor trust is one
 Fedora CA with no vendor dbx payload, and it is pinned by Koji package URL.
 The SHIM_IMAGE_LOADER load path (Section 7.6) needs shim 16.0 or later.
+AArch64's is the same release, shim-aa64 16.1, signed by the 2023 CA alone:
+a machine whose db holds only the 2011 CA refuses it, as Debian's
+`AAVMF_VARS.ms.fd` does. The two chains share p1 and their names do not
+meet, so one stick boots either machine; mkstick reads each shim's
+next-stage name as it does x64's, and refuses a shim whose PE machine is
+the other architecture's.
 
 Boot chain under Secure Boot:
 
@@ -540,8 +547,11 @@ already typed. p4 is separate only so EFI never mounts root.
 - **UKI discovery convention:** the loader looks in `/uki/` first,
   then `/EFI/Linux/` (the Boot Loader Specification location, so a p3
   populated by `kernel-install` still boots), taking regular files with a
-  case-insensitive `.efi` suffix, sorted by name; one match boots directly,
-  several are offered in a post-unlock chooser. mkstick stages to `/uki/`.
+  case-insensitive `.efi` suffix, sorted by name. An image whose PE
+  machine is the other 64-bit architecture's is left out (`shelf_keep_machine`),
+  so one shelf can hold an x86-64 and an ARM64 personal OS and each
+  machine offers its own; one match boots directly, several are offered in
+  a post-unlock chooser. mkstick stages to `/uki/`.
 
 ### 5.1 The handoff mechanism
 
@@ -1245,9 +1255,12 @@ What that puts in the loader, each a milestone in the roadmap:
   reach the hook in the initrd itself (`/falcon/map`) on a direct boot, as a
   credential sd-stub packs beside a blessed wrap, or, for wraps older than
   that credential, in a volatile EFI variable (Section 11.4). It is built
-  at two widths from one source, x86-64 and i586: the UEFI loader appends
-  the x86-64 one, and falcon-bios whichever the kernel's setup header asks
-  for (Section 11.3.6). Per-family
+  three ways from one source, x86-64, i586 and AArch64: each UEFI loader
+  appends its own architecture's, the sign tool the kernel's, and
+  falcon-bios whichever the kernel's setup header asks for (Section
+  11.3.6). A kernel that is one gzip member, as Debian's and Ubuntu's
+  arm64 `vmlinuz` is, is unpacked before LoadImage, and before a wrap; the
+  Image inside carries the EFI stub and the signature. Per-family
   cmdline templates are the preferred route where a family has one; the
   hook is what reaches the rest, with per-family nudges learned from
   Ventoy's hooks where label matching alone is not enough.
@@ -1762,6 +1775,7 @@ Reasons, exhaustive:
 | `{REVOKED}` | a signer certificate or the image hash is in `dbx` or `MokListXRT`, or an SBAT generation is below `SbatLevelRT` | newer media |
 | `{VALIDATION OFF}` | a UKI entry (the personal OS, a fresh bless that is a wrap, a bare payload with a `.linux` section, the station's UKI rows) when `load_ops_inner_load_blocked` holds for this boot (7.6): validation disabled (Section 7.4) | re-enable validation |
 | `{BIOS ONLY}` | an ISO this machine cannot boot at all, in any Secure Boot state (below) | boot the stick in BIOS mode |
+| `{X64 ONLY}`, `{ARM64 ONLY}` | an ISO only the other 64-bit architecture's machine boots: on AArch64 an x86-64 one, on x86-64 an ARM64 one (below) | boot it on that machine |
 | `{EFI ONLY}` | falcon-bios only: an ISO no BIOS route can boot (below) | boot the stick in UEFI mode |
 | `{64-BIT ONLY}` | falcon-bios only, on a processor without long mode: an ISO every way into which needs one (below) | boot it on a 64-bit machine |
 
@@ -1770,16 +1784,22 @@ about the medium, read by `falcon-core/src/media/uefiboot.c` during the
 survey and shown in every Secure Boot state. An ISO is BIOS-only when neither
 way the UEFI loader boots an ISO can reach it:
 
-1. It has no UEFI boot image of its own: no El Torito entry for platform
-   0xEF, no `\EFI\BOOT\BOOTX64.EFI` on any of its volumes, and no
-   `\bootmgr.efi`. Any one of them makes a UEFI medium, whatever it holds: a
-   0xEF image with only `BOOTIA32.EFI` (Windows 8.1 and 10 x86) is left
-   alone.
+1. It has no UEFI boot image of its own for this machine: on x86-64 no El
+   Torito entry for platform 0xEF, no `\EFI\BOOT\BOOTX64.EFI` on any of
+   its volumes, and no `\bootmgr.efi` (a 0xEF image with only
+   `BOOTIA32.EFI`, Windows 8.1 and 10 x86, is left alone); on AArch64 no
+   `\EFI\BOOT\BOOTAA64.EFI`.
 2. Its kernel cannot be booted directly (DIR, 11.2.9): the kernel the default
    CD entry of its boot configuration names is a bzImage with no PE header,
-   or a PE for a processor other than x86-64. Windows media has no kernel for
-   this route, so for the Windows family (`media/family.c`) the first test is
-   the whole rule.
+   or a PE for a processor other than this machine's. Windows media has no
+   kernel for this route, so for the Windows family (`media/family.c`) the
+   first test is the whole rule.
+
+The rule answers for the loader's own architecture. A medium whose only way
+in is the other 64-bit architecture's removable-media loader, or a kernel
+PE32+ for it, is `{X64 ONLY}` on AArch64 and `{ARM64 ONLY}` on x86-64, and
+is refused with a page the same way; it can still be blessed, for that
+architecture's machines.
 
 Anything the medium does not prove is not marked: no boot configuration, a
 kernel that cannot be read, bytes that are neither a PE nor a bzImage, a

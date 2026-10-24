@@ -1,5 +1,6 @@
-/* Tests for falcon-core/src/media/uefiboot.c: can an x86-64 UEFI machine
- * boot this medium.
+/* Tests for falcon-core/src/media/uefiboot.c: can a UEFI machine of this
+ * architecture boot this medium. Every medium is asked for both: x86-64,
+ * whose answers are the ones the rule has always given, and AArch64.
  *
  * The kernel half runs on heads built here byte by byte, since what it reads
  * is a handful of fields. The medium half runs on
@@ -31,6 +32,11 @@
 #define FIX_WINBIOS  "build/test-uefi-win-bios.iso"
 #define FIX_WINEFI   "build/test-uefi-win-efi.iso"
 #define FIX_RR       "build/test-iso-rr.iso"
+#define FIX_AA64     "build/test-uefi-aa64.iso"
+#define FIX_AA64STUB "build/test-uefi-aa64-stub.iso"
+
+#define X64  PE_MACHINE_AMD64
+#define AA64 PE_MACHINE_ARM64
 
 /* Static for the reason medium_test.c gives: a medium must not move once
  * opened, and the work area is tens of kilobytes. */
@@ -77,8 +83,10 @@ static family_id detect(medium *m)
     return FAMILY_UNKNOWN;
 }
 
-/* Opens path, asks the whole rule, and hands back the family it used. */
-static uefiboot_answer ask(const char *path, family_id *fam_out)
+/* Opens path, asks the whole rule for machine, and hands back the family
+ * it used. */
+static uefiboot_answer ask_for(const char *path, family_id *fam_out,
+                               uint16_t machine)
 {
     FILE *f = fopen(path, "rb");
     uefiboot_answer a;
@@ -92,11 +100,17 @@ static uefiboot_answer ask(const char *path, family_id *fam_out)
     assert_int_equal(medium_open(&g_m, img_read, f, (uint64_t)end),
                      MEDIUM_OK);
     fam = detect(&g_m);
-    a = uefiboot_medium(&g_m, fam, &g_w, g_scratch, sizeof g_scratch);
+    a = uefiboot_medium(&g_m, fam, &g_w, g_scratch, sizeof g_scratch,
+                        machine);
     fclose(f);
     if (fam_out != NULL)
         *fam_out = fam;
     return a;
+}
+
+static uefiboot_answer ask(const char *path, family_id *fam_out)
+{
+    return ask_for(path, fam_out, X64);
 }
 
 /* ---- the kernel half ---- */
@@ -128,14 +142,33 @@ static void test_kernel_bzimage_no_stub(void **state)
 {
     (void)state;
     bz_head();
-    assert_int_equal(uefiboot_kernel(g_head, sizeof g_head), UEFIBOOT_NO);
+    assert_int_equal(uefiboot_kernel(g_head, sizeof g_head, X64), UEFIBOOT_NO);
 }
 
 static void test_kernel_x64_stub(void **state)
 {
     (void)state;
     stub_head(PE_MACHINE_AMD64, 0x20bu);
-    assert_int_equal(uefiboot_kernel(g_head, sizeof g_head), UEFIBOOT_YES);
+    assert_int_equal(uefiboot_kernel(g_head, sizeof g_head, X64), UEFIBOOT_YES);
+}
+
+/* Each 64-bit architecture's stub is YES on its own machine and OTHER on
+ * the other's. */
+static void test_kernel_aa64_stub(void **state)
+{
+    (void)state;
+    stub_head(PE_MACHINE_ARM64, 0x20bu);
+    assert_int_equal(uefiboot_kernel(g_head, sizeof g_head, AA64),
+                     UEFIBOOT_YES);
+    assert_int_equal(uefiboot_kernel(g_head, sizeof g_head, X64),
+                     UEFIBOOT_OTHER);
+    stub_head(PE_MACHINE_AMD64, 0x20bu);
+    assert_int_equal(uefiboot_kernel(g_head, sizeof g_head, AA64),
+                     UEFIBOOT_OTHER);
+    /* A bzImage with no stub is NO on both. */
+    bz_head();
+    assert_int_equal(uefiboot_kernel(g_head, sizeof g_head, AA64),
+                     UEFIBOOT_NO);
 }
 
 /* A 32-bit EFI stub: a PE, so it is judged as one, and not one an x86-64
@@ -144,7 +177,7 @@ static void test_kernel_i386_stub(void **state)
 {
     (void)state;
     stub_head(0x014cu, 0x10bu);
-    assert_int_equal(uefiboot_kernel(g_head, sizeof g_head), UEFIBOOT_NO);
+    assert_int_equal(uefiboot_kernel(g_head, sizeof g_head, X64), UEFIBOOT_NO);
 }
 
 /* x86-64 in the COFF header but a PE32 optional header: not loadable. */
@@ -152,7 +185,7 @@ static void test_kernel_x64_pe32(void **state)
 {
     (void)state;
     stub_head(PE_MACHINE_AMD64, 0x10bu);
-    assert_int_equal(uefiboot_kernel(g_head, sizeof g_head), UEFIBOOT_NO);
+    assert_int_equal(uefiboot_kernel(g_head, sizeof g_head, X64), UEFIBOOT_NO);
 }
 
 /* The PE header lies past the window: not provable either way. */
@@ -160,19 +193,19 @@ static void test_kernel_mz_short(void **state)
 {
     (void)state;
     stub_head(PE_MACHINE_AMD64, 0x20bu);
-    assert_int_equal(uefiboot_kernel(g_head, 0x300), UEFIBOOT_UNKNOWN);
+    assert_int_equal(uefiboot_kernel(g_head, 0x300, X64), UEFIBOOT_UNKNOWN);
 }
 
 static void test_kernel_neither(void **state)
 {
     (void)state;
     memset(g_head, 0x5a, sizeof g_head);
-    assert_int_equal(uefiboot_kernel(g_head, sizeof g_head),
+    assert_int_equal(uefiboot_kernel(g_head, sizeof g_head, X64),
                      UEFIBOOT_UNKNOWN);
     bz_head();
     /* A head too short to reach the setup header proves nothing. */
-    assert_int_equal(uefiboot_kernel(g_head, 0x204), UEFIBOOT_UNKNOWN);
-    assert_int_equal(uefiboot_kernel(NULL, 16), UEFIBOOT_UNKNOWN);
+    assert_int_equal(uefiboot_kernel(g_head, 0x204, X64), UEFIBOOT_UNKNOWN);
+    assert_int_equal(uefiboot_kernel(NULL, 16, X64), UEFIBOOT_UNKNOWN);
 }
 
 /* ---- the medium ---- */
@@ -243,9 +276,9 @@ static void test_medium_windows_needs_family(void **state)
     assert_int_equal(medium_open(&g_m, img_read, f, (uint64_t)end),
                      MEDIUM_OK);
     assert_int_equal(uefiboot_medium(&g_m, FAMILY_UNKNOWN, &g_w, g_scratch,
-                                     sizeof g_scratch),
+                                     sizeof g_scratch, X64),
                      UEFIBOOT_UNKNOWN);
-    assert_int_equal(uefiboot_has_image(&g_m, &g_w), 0);
+    assert_int_equal(uefiboot_has_image(&g_m, &g_w, X64), UEFIBOOT_NO);
     fclose(f);
 }
 
@@ -253,13 +286,37 @@ static void test_arg_errors(void **state)
 {
     (void)state;
     assert_int_equal(uefiboot_medium(NULL, FAMILY_UNKNOWN, &g_w, g_scratch,
-                                     sizeof g_scratch),
+                                     sizeof g_scratch, X64),
                      UEFIBOOT_UNKNOWN);
-    assert_int_equal(uefiboot_has_image(NULL, &g_w), 0);
+    assert_int_equal(uefiboot_has_image(NULL, &g_w, X64), UEFIBOOT_UNKNOWN);
     memset(&g_m, 0, sizeof g_m);
     assert_int_equal(uefiboot_medium(&g_m, FAMILY_WINDOWS, &g_w, g_scratch,
-                                     sizeof g_scratch),
+                                     sizeof g_scratch, X64),
                      UEFIBOOT_UNKNOWN);
+}
+
+/* AArch64 counts a medium by its own loader or kernel; an x86-64 medium is
+ * OTHER there, a BIOS-only one NO. */
+static void test_medium_aa64_machine(void **state)
+{
+    (void)state;
+    assert_int_equal(ask_for(FIX_BIOSONLY, NULL, AA64), UEFIBOOT_NO);
+    assert_int_equal(ask_for(FIX_STUB, NULL, AA64), UEFIBOOT_OTHER);
+    assert_int_equal(ask_for(FIX_EFI, NULL, AA64), UEFIBOOT_OTHER);
+    assert_int_equal(ask_for(FIX_WINBIOS, NULL, AA64), UEFIBOOT_NO);
+}
+
+/* An ARM64 medium: YES on its own machine, OTHER on x86-64, whether the way
+ * in is its El Torito image or its kernel. */
+static void test_medium_aa64_media(void **state)
+{
+    (void)state;
+    if (!have(FIX_AA64) || !have(FIX_AA64STUB))
+        skip();
+    assert_int_equal(ask_for(FIX_AA64, NULL, AA64), UEFIBOOT_YES);
+    assert_int_equal(ask_for(FIX_AA64, NULL, X64), UEFIBOOT_OTHER);
+    assert_int_equal(ask_for(FIX_AA64STUB, NULL, AA64), UEFIBOOT_YES);
+    assert_int_equal(ask_for(FIX_AA64STUB, NULL, X64), UEFIBOOT_OTHER);
 }
 
 int run_uefiboot_tests(void)
@@ -267,6 +324,7 @@ int run_uefiboot_tests(void)
     const struct CMUnitTest kernel[] = {
         cmocka_unit_test(test_kernel_bzimage_no_stub),
         cmocka_unit_test(test_kernel_x64_stub),
+        cmocka_unit_test(test_kernel_aa64_stub),
         cmocka_unit_test(test_kernel_i386_stub),
         cmocka_unit_test(test_kernel_x64_pe32),
         cmocka_unit_test(test_kernel_mz_short),
@@ -281,6 +339,8 @@ int run_uefiboot_tests(void)
         cmocka_unit_test(test_medium_windows_efi),
         cmocka_unit_test(test_medium_unknown_kernel),
         cmocka_unit_test(test_medium_windows_needs_family),
+        cmocka_unit_test(test_medium_aa64_machine),
+        cmocka_unit_test(test_medium_aa64_media),
     };
     int failed = cmocka_run_group_tests_name("uefiboot", kernel, NULL, NULL);
 

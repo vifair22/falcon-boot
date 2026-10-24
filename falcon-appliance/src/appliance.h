@@ -25,7 +25,6 @@
 
 #define P2_MNT   "/mnt/p2"
 #define SIGN_TOOL "/usr/bin/falcon-boot-sign-static"
-#define STUB_PATH "/usr/lib/systemd/boot/efi/linuxx64.efi.stub"
 
 #define MANIFEST_PATH P2_MNT "/falcon/blessed/manifest"
 

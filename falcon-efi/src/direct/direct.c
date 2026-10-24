@@ -11,6 +11,7 @@
 #include <tui/tui.h>
 
 #include <pe/pe.h>
+#include <gz/gz.h>
 #include <media/bootfs.h>
 #include <media/extmap.h>
 #include <ident/identfs.h>
@@ -56,9 +57,17 @@ static void step_titled(direct_result *r, const CHAR16 *head,
     r->stage = stage_name;
 }
 
-/* The hook, as make embeds it (falcon-hook/build.mk). */
+/* The hook, as make embeds it (falcon-hook/build.mk), built for this
+ * loader's own architecture: a kernel this machine boots is one. */
+#if defined(__aarch64__)
+extern const unsigned char falcon_hook_a64_bin[];
+extern const size_t falcon_hook_a64_bin_len;
+#define falcon_hook_bin falcon_hook_a64_bin
+#define falcon_hook_bin_len falcon_hook_a64_bin_len
+#else
 extern const unsigned char falcon_hook_bin[];
 extern const size_t falcon_hook_bin_len;
+#endif
 
 /* What bootcfg may read a configuration file into: the sign tool's figure
  * (falcon-cli/src/sign/main.c), since both read the same files. */
@@ -192,6 +201,45 @@ static void pages_put(EFI_BOOT_SERVICES *bs, pages *p)
     if (p->pages != 0)
         (void)bs->FreePages(p->addr, p->pages);
     p->pages = 0;
+}
+
+/* The largest kernel a gzip member is unpacked to. An arm64 Image is tens
+ * of megabytes; a trailer claiming more is not a kernel. */
+#define GZ_KERNEL_MAX (512ull * 1024u * 1024u)
+
+/* A kernel that is a gzip member is unpacked in place of itself: Debian's
+ * and Ubuntu's arm64 vmlinuz is a gzipped Image, which the EFI stub inside
+ * makes a PE but which LoadImage cannot take wrapped. The signature, under
+ * Secure Boot, is the inner PE's, so LoadImage still checks it. A kernel
+ * that is not one is left alone. */
+static EFI_STATUS unpack_kernel(EFI_BOOT_SERVICES *bs, pages *kp,
+                                UINT8 **kernel, UINT64 *ksize)
+{
+    pages up = { 0, 0 };
+    const UINT8 *k = *kernel;
+    UINT64 want;
+    size_t got = 0;
+    UINT8 *out;
+
+    if (*ksize < 18u || k[0] != 0x1fu || k[1] != 0x8bu)
+        return EFI_SUCCESS;
+    want = (UINT64)k[*ksize - 4u] | ((UINT64)k[*ksize - 3u] << 8) |
+           ((UINT64)k[*ksize - 2u] << 16) | ((UINT64)k[*ksize - 1u] << 24);
+    if (want == 0 || want > GZ_KERNEL_MAX)
+        return EFI_LOAD_ERROR;
+    out = pages_get(bs, &up, want);
+    if (out == (UINT8 *)0)
+        return EFI_OUT_OF_RESOURCES;
+    if (gz_member(k, (size_t)*ksize, out, (size_t)want, &got) != GZ_OK ||
+        got != want) {
+        pages_put(bs, &up);
+        return EFI_LOAD_ERROR;
+    }
+    pages_put(bs, kp);
+    *kp = up;
+    *kernel = out;
+    *ksize = want;
+    return EFI_SUCCESS;
 }
 
 /* The ISO's filesystem: ISO9660 first, whose Rock Ridge names are the ones a
@@ -455,6 +503,13 @@ EFI_STATUS direct_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent, fs_vol *p2,
     if (EFI_ERROR(status))
         goto out;
     read_done(ksize);
+    if (ksize >= 2u && kernel[0] == 0x1fu && kernel[1] == 0x8bu) {
+        stage(r, L"unpacking the kernel");
+        status = unpack_kernel(bs, &kp, &kernel, &ksize);
+        if (EFI_ERROR(status))
+            goto out;
+        read_done(ksize);
+    }
     stage(r, L"reading the initrd");
     status = build_initrd(bs, e, map_len, &ip, &initrd, &isize);
     if (EFI_ERROR(status))

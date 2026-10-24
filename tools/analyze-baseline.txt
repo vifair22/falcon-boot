@@ -300,11 +300,11 @@ cppcheck	falcon-winjump/src/winjump.c	uninitvar	Uninitialized variable: d
 # still live), so the address never outlives the frame.
 #
 # cppcheck preprocessorErrorDirective in sys.c: cppcheck tries a
-# configuration with neither __x86_64__ nor __i386__ defined and reaches the
-# #error that refuses any other width. The build compiles exactly the two
-# configurations the file supports.
+# configuration with none of __x86_64__, __i386__ and __aarch64__ defined and
+# reaches the #error that refuses any other machine. The build compiles
+# exactly the three configurations the file supports.
 cppcheck	falcon-hook/src/hook.c	autoVariables	Address of local auto-variable assigned to a function parameter.
-cppcheck	falcon-hook/src/sys.c	preprocessorErrorDirective	#error "falcon-hook is built for x86-64 and i686 only"
+cppcheck	falcon-hook/src/sys.c	preprocessorErrorDirective	#error "falcon-hook is built for x86-64, i686 and AArch64 only"
 #
 # cppcheck preprocessorErrorDirective in efi/arch.h, task.c, tcg.c and tsc.c:
 # the same configuration with neither __x86_64__ nor __aarch64__, reaching

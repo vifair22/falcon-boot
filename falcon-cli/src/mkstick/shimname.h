@@ -42,18 +42,24 @@ cli_status shim_next_stage_name(const char *shim_path, char *out, size_t cap);
 /* The name shim launches MokManager under, read the same way. It is stored
  * with ONE backslash, so it cannot share the rule above; the two names shim
  * is known to use (`\mmx64.efi`, `\MokManager.efi`) are recognised by name
- * and whichever one this binary carries is returned. Falls back to
- * "mmx64.efi" with a warning when neither appears, because installing
- * MokManager under the wrong name costs only the enrollment UI, not the
- * boot. */
+ * and whichever one this binary carries is returned (`\mmaa64.efi` on
+ * AArch64). Falls back to mm<arch>.efi, by the shim's own PE machine, with
+ * a warning when none appears, because installing MokManager under the
+ * wrong name costs only the enrollment UI, not the boot. */
 cli_status shim_mokmanager_name(const char *shim_path, char *out, size_t cap);
 
-/* The shim binary in a directory: an unprefixed shimx64.efi, else the
- * pinned vendor's (fedora-16.1-shimx64.efi). */
-cli_status shim_find(const char *dir, char *out, size_t cap);
+/* The architecture part of the names, "x64" or "aa64", for a PE machine;
+ * NULL for one there is no shim for. */
+const char *shim_arch(unsigned machine);
+
+/* The shim binary for an architecture ("x64" or "aa64") in a directory: an
+ * unprefixed shim<arch>.efi, else the pinned vendor's
+ * (fedora-16.1-shim<arch>.efi), and either way one whose PE machine is that
+ * architecture's, so an x64 shim is never staged as BOOTAA64.EFI. */
+cli_status shim_find(const char *dir, const char *arch, char *out, size_t cap);
 
 /* MokManager beside that shim, under the name shim launches it by. */
-cli_status shim_find_mokmanager(const char *shim_path, const char *wanted,
-                                char *out, size_t cap);
+cli_status shim_find_mokmanager(const char *shim_path, const char *arch,
+                                const char *wanted, char *out, size_t cap);
 
 #endif /* FALCON_MKSTICK_SHIMNAME_H */
