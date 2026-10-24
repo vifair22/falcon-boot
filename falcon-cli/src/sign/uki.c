@@ -296,6 +296,7 @@ int uki_layout(uint8_t *img, size_t img_len, uki_part *parts, size_t n,
     uint16_t nsect;
     uint8_t *sbat_hdr = NULL;
     uint8_t *opt;
+    int sbat_part = 0;
     size_t i;
 
     if (img == NULL || out_len == NULL || (n > 0u && parts == NULL) ||
@@ -344,7 +345,13 @@ int uki_layout(uint8_t *img, size_t img_len, uki_part *parts, size_t n,
         return refuse("headers overlap the first section");
     if (sbat_hdr == NULL)
         return refuse("has no .sbat section");
-    if (sbat_len > rd32(sbat_hdr + S_RAWSIZE)) {
+    /* A merge longer than the stub's section goes in a .sbat of its own,
+     * which the caller passes as a part; the stub's is then renamed, so
+     * shim finds one .sbat (ukify does the same). */
+    for (i = 0; i < n; i++)
+        if (strcmp(parts[i].name, ".sbat") == 0)
+            sbat_part = 1;
+    if (sbat_len > rd32(sbat_hdr + S_RAWSIZE) && !sbat_part) {
         sgn_set_error(SGN_ERR_FORMAT,
                       "merged .sbat is %zu bytes, the stub's section holds %u",
                       sbat_len, rd32(sbat_hdr + S_RAWSIZE));
@@ -400,8 +407,16 @@ int uki_layout(uint8_t *img, size_t img_len, uki_part *parts, size_t n,
         vend = va + parts[i].len;
     }
 
-    /* The stub's own .sbat, rewritten where it stands. */
-    {
+    /* The stub's own .sbat, rewritten where it stands, or renamed when the
+     * merge is a part of its own. */
+    if (sbat_part) {
+        /* A section name fills its eight bytes; it has no terminator. */
+        static const uint8_t renamed[PE_SECT_NAME] = {
+            '.', 's', 'b', 'a', 't', '.', 's', 't'
+        };
+
+        memcpy(sbat_hdr, renamed, sizeof renamed);
+    } else {
         uint32_t ptr = rd32(sbat_hdr + S_RAWPTR);
         uint32_t size = rd32(sbat_hdr + S_RAWSIZE);
 
@@ -461,8 +476,8 @@ static int write_zeros(int fd, uint64_t n, const char *path)
 
 /* Exactly `len` bytes of `src` onto fd. A file that changed length since it
  * was measured is an error, not a short section. */
-static int copy_file(int fd, const char *out, const char *src, uint64_t len,
-                     uint8_t *buf)
+static int copy_file(int fd, const char *out, const char *src, uint64_t from,
+                     uint64_t len, uint8_t *buf)
 {
     int in = open(src, O_RDONLY | O_CLOEXEC);
     uint64_t left = len;
@@ -470,6 +485,11 @@ static int copy_file(int fd, const char *out, const char *src, uint64_t len,
 
     if (in < 0) {
         sgn_set_error_errno(SGN_ERR_IO, "opening %s", src);
+        return SGN_ERR_IO;
+    }
+    if (lseek(in, (off_t)from, SEEK_SET) < 0) {
+        sgn_set_error_errno(SGN_ERR_IO, "seeking in %s", src);
+        (void)close(in);
         return SGN_ERR_IO;
     }
     while (left > 0u) {
@@ -516,9 +536,28 @@ static int read_at(int fd, uint64_t off, void *buf, size_t n, const char *path)
     return SGN_OK;
 }
 
-/* What the kernel contributes besides its bytes: its machine, whether it is
- * NX_COMPAT, its own .sbat if it has one, and its version for .uname. */
+/* What a kernel that is itself a stub image (a .linux inside) brings beside
+ * that .linux: its devicetrees, the table sd-stub picks one by (systemd 257
+ * reads both), and firmware blobs. Fedora's arm64 kernel is such an image.
+ * Wrapped whole, its own stub would start the kernel inside through shim
+ * and be refused, as nothing signed that kernel; unwrapped, our stub starts
+ * it and the wrap's signature covers it, as for any kernel. */
+static const char *const g_carried[] = { ".dtb", ".dtbauto", ".hwids",
+                                         ".efifw" };
+#define CARRY_MAX 64u
+
 typedef struct {
+    char     name[PE_SECT_NAME + 1u];
+    uint64_t off;
+    uint64_t len;
+} carried_sect;
+
+/* What the kernel contributes besides its bytes: where they start in the
+ * file (a stub image's .linux, or 0), its machine, whether it is NX_COMPAT,
+ * its own .sbat if it has one, its version for .uname, and what a stub image
+ * carries beside it. */
+typedef struct {
+    uint64_t off;
     uint64_t size;
     uint16_t machine;
     int      nx;
@@ -526,6 +565,8 @@ typedef struct {
     size_t   sbat_len;
     char     uname[UKI_UNAME_MAX + 1u];
     int      have_uname;
+    carried_sect carry[CARRY_MAX];
+    size_t   ncarry;
 } kernel_facts;
 
 /* uki_uname_generic over the whole kernel, a window at a time, each window
@@ -533,7 +574,8 @@ typedef struct {
 #define SCAN_WINDOW ((size_t)1024 * 1024)
 #define SCAN_OVERLAP ((size_t)256)
 
-static int uname_scan(int fd, uint64_t size, char *out, size_t cap)
+static int uname_scan(int fd, uint64_t base, uint64_t size, char *out,
+                      size_t cap)
 {
     uint8_t *buf = malloc(SCAN_WINDOW);
     uint64_t at = 0;
@@ -544,7 +586,7 @@ static int uname_scan(int fd, uint64_t size, char *out, size_t cap)
     while (at < size && !found) {
         size_t want = (size - at) < SCAN_WINDOW ? (size_t)(size - at)
                                                 : SCAN_WINDOW;
-        ssize_t r = pread(fd, buf, want, (off_t)at);
+        ssize_t r = pread(fd, buf, want, (off_t)(base + at));
 
         if (r <= 0)
             break;
@@ -555,6 +597,69 @@ static int uname_scan(int fd, uint64_t size, char *out, size_t cap)
     }
     free(buf);
     return found;
+}
+
+/* A stub image's .linux, its .uname, and what g_carried names, into kf.
+ * Nothing when the image has no .linux. */
+static int unwrap_stub_image(int fd, const char *path, const pe_hdr *h,
+                             const uint8_t *head, size_t head_len,
+                             kernel_facts *kf)
+{
+    size_t loff;
+    size_t lsize;
+    uint16_t i;
+    size_t k;
+
+    if (pe_find_section(h, head, (size_t)kf->size, ".linux", &loff,
+                        &lsize) != PE_OK)
+        return SGN_OK;
+    if (h->sect_table + (size_t)h->nsect * PE_SECT_ENTRY > head_len) {
+        sgn_set_error(SGN_ERR_FORMAT, "%s: section table past its first "
+                      "%zu bytes", path, head_len);
+        return SGN_ERR_FORMAT;
+    }
+    for (i = 0; i < h->nsect; i++) {
+        const uint8_t *s = head + h->sect_table + (size_t)i * PE_SECT_ENTRY;
+        uint32_t vs = rd32(s + S_VSIZE);
+        pe_sect ps;
+        uint64_t len;
+
+        if (pe_section(h, head, i, &ps) != PE_OK ||
+            (uint64_t)ps.raw_ptr + ps.raw_size > kf->size)
+            continue;
+        /* VirtualSize is the content, SizeOfRawData that padded. */
+        len = (vs != 0u && vs < ps.raw_size) ? vs : ps.raw_size;
+        if (len == 0u)
+            continue;
+        if (strcmp(ps.name, ".linux") == 0) {
+            kf->off = ps.raw_ptr;
+            kf->size = len;
+        } else if (strcmp(ps.name, ".uname") == 0 && len <= UKI_UNAME_MAX) {
+            if (read_at(fd, ps.raw_ptr, kf->uname, (size_t)len, path) !=
+                SGN_OK)
+                return SGN_ERR_IO;
+            kf->uname[len] = '\0';
+            kf->have_uname = 1;
+        } else {
+            for (k = 0; k < sizeof g_carried / sizeof g_carried[0]; k++) {
+                if (strcmp(ps.name, g_carried[k]) != 0)
+                    continue;
+                if (kf->ncarry == CARRY_MAX) {
+                    sgn_set_error(SGN_ERR_FORMAT, "%s carries more than %u "
+                                  "devicetree sections", path, CARRY_MAX);
+                    return SGN_ERR_FORMAT;
+                }
+                memcpy(kf->carry[kf->ncarry].name, ps.name,
+                       sizeof kf->carry[kf->ncarry].name);
+                kf->carry[kf->ncarry].off = ps.raw_ptr;
+                kf->carry[kf->ncarry].len = len;
+                kf->ncarry++;
+            }
+        }
+    }
+    (void)loff;
+    (void)lsize;
+    return SGN_OK;
 }
 
 static int read_kernel(const char *path, int bios_only, kernel_facts *kf)
@@ -621,6 +726,27 @@ static int read_kernel(const char *path, int bios_only, kernel_facts *kf)
         rc = SGN_ERR_FORMAT;
         goto out;
     }
+    rc = unwrap_stub_image(fd, path, &h, head, head_len, kf);
+    if (rc != SGN_OK)
+        goto out;
+    if (kf->off != 0u) {
+        size_t inner = (kf->size < KERNEL_HEAD) ? (size_t)kf->size
+                                                : KERNEL_HEAD;
+
+        memset(head, 0, head_len);
+        rc = read_at(fd, kf->off, head, inner, path);
+        if (rc != SGN_OK)
+            goto out;
+        head_len = inner;
+        if (pe_parse(head, head_len, &h) != PE_OK ||
+            h.magic != PE_MAGIC_PE32P || h.opt_size < OPT_DLLCHAR + 2u ||
+            h.opt + h.opt_size > head_len) {
+            sgn_set_error(SGN_ERR_FORMAT, "%s: the kernel in its .linux is "
+                          "not an EFI-stub kernel", path);
+            rc = SGN_ERR_FORMAT;
+            goto out;
+        }
+    }
     kf->nx = (rd16(head + h.opt + OPT_DLLCHAR) & DLLCHAR_NX) != 0u;
     kf->machine = h.machine;
 
@@ -638,7 +764,7 @@ static int read_kernel(const char *path, int bios_only, kernel_facts *kf)
             rc = SGN_ERR_IO;
             goto out;
         }
-        rc = read_at(fd, off, kf->sbat, size, path);
+        rc = read_at(fd, kf->off + off, kf->sbat, size, path);
         if (rc != SGN_OK)
             goto out;
         kf->sbat_len = size;
@@ -651,9 +777,11 @@ static int read_kernel(const char *path, int bios_only, kernel_facts *kf)
         goto out;
     }
 
-    kf->have_uname = uki_uname(head, head_len, kf->uname, sizeof(kf->uname));
     if (!kf->have_uname)
-        kf->have_uname = uname_scan(fd, kf->size, kf->uname,
+        kf->have_uname = uki_uname(head, head_len, kf->uname,
+                                   sizeof(kf->uname));
+    if (!kf->have_uname)
+        kf->have_uname = uname_scan(fd, kf->off, kf->size, kf->uname,
                                     sizeof(kf->uname));
 
 out:
@@ -676,10 +804,12 @@ int uki_build(const uki_spec *spec)
     uint64_t initrd_size = 0;
     char *sbat = NULL;
     size_t sbat_len = 0;
+    int sbat_own = 0;
     char *cmdline = NULL;
-    uki_part parts[5];
-    const char *src[5];
-    const char *mem[5];
+    uki_part parts[6u + CARRY_MAX];
+    const char *src[6u + CARRY_MAX];
+    const char *mem[6u + CARRY_MAX];
+    uint64_t from[6u + CARRY_MAX];
     size_t n = 0;
     uint64_t out_len = 0;
     uint64_t pos;
@@ -757,31 +887,40 @@ int uki_build(const uki_spec *spec)
         in_len[1] = kf.sbat_len;
         in[2] = uki_sbat;
         in_len[2] = sizeof(uki_sbat) - 1u;
-        /* The merge is written back into the stub's own .sbat, so that
-         * section's size is the bound; uki_layout checks it again. */
-        sbat = malloc(ssize);
+        /* The merge goes back into the stub's own .sbat when it fits, and
+         * into a .sbat of its own when not: a kernel that is itself a
+         * stub image (Fedora's arm64 one carries its devicetrees that way)
+         * brings that stub's lines too. */
+        sbat = malloc(SBAT_MAX);
         if (sbat == NULL) {
             sgn_set_error(SGN_ERR_IO, "out of memory");
             rc = SGN_ERR_IO;
             goto out;
         }
-        rc = uki_sbat_merge(in, in_len, 3, sbat, ssize, &sbat_len);
+        rc = uki_sbat_merge(in, in_len, 3, sbat, SBAT_MAX, &sbat_len);
         if (rc != SGN_OK)
             goto out;
+        sbat_own = sbat_len > ssize;
     }
 
     /* ukify's order. */
-#define ADD(nm, length, is_code, path, text) do { \
+#define ADD(nm, length, is_code, path, at, text) do { \
         parts[n].name = (nm); parts[n].len = (length); \
-        parts[n].code = (is_code); src[n] = (path); mem[n] = (text); n++; \
+        parts[n].code = (is_code); src[n] = (path); from[n] = (at); \
+        mem[n] = (text); n++; \
     } while (0)
-    ADD(".osrel", strlen(spec->osrel), 0, NULL, spec->osrel);
-    ADD(".cmdline", strlen(cmdline), 0, NULL, cmdline);
+    ADD(".osrel", strlen(spec->osrel), 0, NULL, 0u, spec->osrel);
+    if (sbat_own)
+        ADD(".sbat", sbat_len, 0, NULL, 0u, sbat);
+    ADD(".cmdline", strlen(cmdline), 0, NULL, 0u, cmdline);
+    for (i = 0; i < kf.ncarry; i++)
+        ADD(kf.carry[i].name, kf.carry[i].len, 0, spec->kernel,
+            kf.carry[i].off, NULL);
     if (kf.have_uname)
-        ADD(".uname", strlen(kf.uname), 0, NULL, kf.uname);
-    ADD(".linux", kf.size, 1, spec->kernel, NULL);
+        ADD(".uname", strlen(kf.uname), 0, NULL, 0u, kf.uname);
+    ADD(".linux", kf.size, 1, spec->kernel, kf.off, NULL);
     if (spec->initrd != NULL)
-        ADD(".initrd", initrd_size, 0, spec->initrd, NULL);
+        ADD(".initrd", initrd_size, 0, spec->initrd, 0u, NULL);
 #undef ADD
 
     rc = uki_layout((uint8_t *)stub, stub_len, parts, n, sbat, sbat_len,
@@ -810,7 +949,7 @@ int uki_build(const uki_spec *spec)
         if (mem[i] != NULL)
             rc = write_all(fd, mem[i], (size_t)parts[i].len, spec->out);
         else
-            rc = copy_file(fd, spec->out, src[i], parts[i].len, buf);
+            rc = copy_file(fd, spec->out, src[i], from[i], parts[i].len, buf);
         if (rc != SGN_OK)
             break;
         rc = write_zeros(fd, parts[i].raw_size - parts[i].len, spec->out);

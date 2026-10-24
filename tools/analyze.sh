@@ -319,11 +319,18 @@ for e in json.load(open(db)):
     print(shlex.join(argv))
 ' "$DB" "$WORK/obj" "$ROOT" >"$WORK/fanalyzer.cmds"
 
+	# Each compile's output to a file of its own: parallel writers to one
+	# pipe interleave a long line with another's, and a mangled line is a
+	# finding the baseline does not know.
+	rm -rf "$WORK/fanalyzer.d"
+	mkdir -p "$WORK/fanalyzer.d"
 	(
 		cd "$ROOT"
-		xargs -P "$JOBS" -d '\n' -I CMD sh -c 'CMD' \
-			<"$WORK/fanalyzer.cmds"
-	) >"$WORK/fanalyzer.log" 2>&1 || true
+		xargs -P "$JOBS" -d '\n' -I CMD \
+			sh -c '( CMD ) >"$(mktemp "$1/XXXXXX")" 2>&1' _ \
+			"$WORK/fanalyzer.d" <"$WORK/fanalyzer.cmds"
+	) || true
+	cat "$WORK"/fanalyzer.d/* >"$WORK/fanalyzer.log" 2>/dev/null || true
 	normalise fanalyzer <"$WORK/fanalyzer.log" >"$WORK/fanalyzer.findings"
 }
 
@@ -337,10 +344,13 @@ stage_tidy()
 	# clang-tidy infers the mingw target from the compiler name in the
 	# database, so no --extra-arg is needed. One process per file, because
 	# clang-tidy itself is single threaded.
+	# One output file per process, as in stage_fanalyzer.
+	rm -rf "$WORK/tidy.d"
+	mkdir -p "$WORK/tidy.d"
 	printf '%s\n' "${SOURCES[@]}" |
 		xargs -P "$JOBS" -d '\n' -I FILE \
-			clang-tidy --quiet -p "$ROOT" FILE \
-			>"$WORK/tidy.raw" 2>&1 || true
+			sh -c 'clang-tidy --quiet -p "$1" "$2" >"$(mktemp "$3/XXXXXX")" 2>&1' _ \
+			"$ROOT" FILE "$WORK/tidy.d" || true
 	# The AArch64 flavour (Makefile, COMPDB_AA64): the files with an
 	# architecture branch again, as the aa64 images build them.
 	if [ -f "$ROOT/build/compdb-aa64/compile_commands.json" ]; then
@@ -348,10 +358,10 @@ stage_tidy()
 for e in json.load(open(sys.argv[1])):
     print(e["file"])' "$ROOT/build/compdb-aa64/compile_commands.json" |
 			xargs -P "$JOBS" -d '\n' -I FILE \
-				clang-tidy --quiet -p "$ROOT/build/compdb-aa64" FILE \
-				>>"$WORK/tidy.raw" 2>&1 || true
+				sh -c 'clang-tidy --quiet -p "$1" "$2" >"$(mktemp "$3/XXXXXX")" 2>&1' _ \
+				"$ROOT/build/compdb-aa64" FILE "$WORK/tidy.d" || true
 	fi
-	mv "$WORK/tidy.raw" "$WORK/tidy.log"
+	cat "$WORK"/tidy.d/* >"$WORK/tidy.log" 2>/dev/null || true
 	# HeaderFilterRegex lets a finding inside a header be reported once per
 	# translation unit that includes it. Identical diagnostic lines are the
 	# same finding, so collapse them before they reach the key set. The log

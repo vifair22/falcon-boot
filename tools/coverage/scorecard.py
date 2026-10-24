@@ -43,7 +43,12 @@ STATES = [('off', 'SB off'), ('ms', 'SB on, MS CA'), ('own', 'SB on, own keys'),
           ('bios', 'BIOS'),
           # The same on an i686: no long mode, so the 32-bit ISOs
           # (corpus.tsv, arch) and nothing else.
-          ('bios32', 'BIOS, i686')]
+          ('bios32', 'BIOS, i686'),
+          # The AArch64 machine (tools/coverage/states.sh): the arm64 ISOs
+          # and nothing else, run on request. Shown once a case has run.
+          ('a64-off', 'AArch64 SB off'), ('a64-ms', 'AArch64 SB on, MS CA'),
+          ('a64-own', 'AArch64 SB on, own keys')]
+ON_REQUEST = ('a64-off', 'a64-ms', 'a64-own')
 ROUTE_ORDER = ['dnd', 'chain', 'blessed']
 ROUTE_NAMES = {'dnd': 'drop', 'chain': 'chain', 'blessed': 'bless'}
 # Headline: Secure Boot off, and Secure Boot on where db trusts the Microsoft
@@ -95,6 +100,10 @@ def main():
               if any(result(r['id'], st, rt) for r in rows for st, _ in STATES)]
     if not routes:
         routes = ['dnd', 'blessed']
+    states = [(st, name) for st, name in STATES
+              if st not in ON_REQUEST or
+              any(result(r['id'], st, rt) for r in rows for rt in routes)]
+    a64 = [st for st, _ in states if st in ON_REQUEST]
 
     loaders = set()
     fails = []
@@ -146,7 +155,7 @@ def main():
     w('')
 
     head = ['ISO', 'tier', 'family']
-    for st, name in STATES:
+    for st, name in states:
         for rt in routes:
             head.append('%s %s' % (name, ROUTE_NAMES[rt]))
     table = ['| ' + ' | '.join(head) + ' |',
@@ -162,7 +171,7 @@ def main():
         # column's denominator rather than counted as a failure.
         ok = {}
         applies = {}
-        for st, _ in STATES:
+        for st, _ in states:
             state_ok = False
             verdicts = []
             for rt in routes:
@@ -181,7 +190,7 @@ def main():
                 if v in ('FAIL', 'ERROR') or (v == 'REFUSED' and rt == 'blessed'):
                     fails.append((r['id'], st, rt, v, res['reason']))
             applies[st] = not verdicts or any(v != 'N/A' for v in verdicts)
-            if st in ('off', 'moksb', 'bios', 'bios32'):
+            if st in ('off', 'moksb', 'bios', 'bios32', 'a64-off'):
                 # SB off, validation off and both BIOS columns headline the
                 # drop route: it is the product's default, and the headline
                 # is what it does.
@@ -193,7 +202,7 @@ def main():
         if any_result:
             t = tally.setdefault(r['tier'], {'n': 0})
             t['n'] += 1
-            for st, _ in STATES:
+            for st, _ in states:
                 if applies[st]:
                     c = t.setdefault(st, [0, 0])
                     c[0] += 1 if ok[st] else 0
@@ -203,10 +212,12 @@ def main():
     w('')
     w('## Summary')
     w('')
+    a64_names = {'a64-off': 'AArch64 SB off, drop', 'a64-ms': 'AArch64 SB on, MS CA',
+                 'a64-own': 'AArch64 SB on, own keys'}
     w('| tier | ISOs run | SB off, drop | target | SB on, MS CA | target | '
       'SB on, own keys | SB on, validation off, drop | BIOS, drop | '
-      'BIOS, i686, drop |')
-    w('|---|---|---|---|---|---|---|---|---|---|')
+      'BIOS, i686, drop |' + ''.join(' %s |' % a64_names[st] for st in a64))
+    w('|---|---|---|---|---|---|---|---|---|---|' + '---|' * len(a64))
     def frac(t, st):
         passed, n = t.get(st, (0, 0))
         return '%d/%d (%d%%)' % (passed, n, 100 * passed // n) if n else '-'
@@ -219,7 +230,7 @@ def main():
              '%d%%' % toff if toff else '-',
              frac(t, 'ms'), '%d%%' % tms if tms else '-',
              frac(t, 'own'), frac(t, 'moksb'), frac(t, 'bios'),
-             frac(t, 'bios32')))
+             frac(t, 'bios32')) + ''.join(' %s |' % frac(t, st) for st in a64))
     w('')
     w('## Matrix')
     w('')

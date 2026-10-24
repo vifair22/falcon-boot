@@ -226,8 +226,8 @@ $(MOK_KEY) $(MOK_DIR)/AAVMF_VARS.secboot.mok.fd:
 	falcon-efi/tools/mk-test-mok.sh
 
 # The stick loader signed with the test MOK, so shim accepts it as a second
-# stage (the rule is efi_app's).
-sign: $(EFI_SIGNED)
+# stage, for both machines (the rule is efi_app's).
+sign: $(EFI_SIGNED) $(EFI_AA64_SIGNED)
 
 run-secboot: $(EFI_SIGNED)
 	falcon-efi/tools/run-qemu.sh --secboot
