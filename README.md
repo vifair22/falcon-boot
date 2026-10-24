@@ -19,6 +19,8 @@ falcon-boot is written from the firmware up in C: its own UEFI loader, its
 own BIOS loader, its own filesystem, LUKS2 and Windows-image code. It is
 GPL-3.0-or-later.
 
+Just want a bootable stick? Jump to [Quick start](#quick-start).
+
 ## One loader, five forms
 
 | form | what it is | runs on |

@@ -17,6 +17,23 @@ this file cites it by section and does not repeat it.
 11. Signing, and what lives where
 12. Troubleshooting by failure page
 13. Building and testing
+14. Releases
+
+## Start here
+
+To make a bootable stick and nothing more:
+
+1. Install `falcon-boot-bin` on Arch, or unpack the release tarball under `/`
+   (Section 14).
+2. `sudo falcon-boot-mkstick create /dev/disk/by-id/usb-<your stick> --force`
+   (Section 10), then `falcon-boot-mkstick bios <device>` if you want the BIOS
+   loader too.
+3. Copy `.iso` files onto the partition labelled `FALCON-ISO`. They appear in
+   the menu and boot.
+
+With Secure Boot on, the first boot enrolls the MOK in MokManager (Section
+3.1). Everything past Section 1 is the operator's reference: come back for the
+station, blessing, the personal OS, falcon jump, or a failure page.
 
 ## 1. The menu
 
