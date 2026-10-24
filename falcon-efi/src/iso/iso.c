@@ -1250,7 +1250,7 @@ static uefiboot_answer survey_uefi(EFI_BOOT_SERVICES *bs, family_id fam)
     if (bs->AllocatePool(EfiLoaderData, SURVEY_CFG_SCRATCH,
                          (void **)&scratch) == EFI_SUCCESS) {
         a = uefiboot_medium(&g_survey_medium, fam, w, scratch,
-                            SURVEY_CFG_SCRATCH);
+                            SURVEY_CFG_SCRATCH, EFI_ARCH_MACHINE);
         bs->FreePool(scratch);
     }
     bs->FreePool(w);

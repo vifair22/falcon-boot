@@ -29,6 +29,7 @@
 
 #include <mkstick/mkstick.h>
 
+#include <ctype.h>
 #include <fcntl.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -60,6 +61,7 @@
 
 #define DEFAULT_SHIM_DIR   FALCON_DATADIR "/shim/bins"
 #define DEFAULT_LOADER     FALCON_DATADIR "/bin/falcon-boot.efi"
+#define DEFAULT_LOADER_AA64 FALCON_DATADIR "/bin/falcon-boot-aa64.efi"
 #define DEFAULT_STAGE3     FALCON_DATADIR "/bin/falcon-bios-stage3.bin"
 
 /* Every external tool this command needs, checked before the first byte is
@@ -86,9 +88,11 @@ static const cli_opt create_opts[] = {
     { "passphrase-file", CLI_OPT_VALUE, 0, "<file>",
       "read the p3/p4 passphrase from this file instead of prompting" },
     { "shim", CLI_OPT_VALUE, 0, "<dir>",
-      "directory holding shimx64.efi and its MokManager" },
+      "directory holding shimx64.efi, shimaa64.efi and their MokManagers" },
     { "loader", CLI_OPT_VALUE, 0, "<file>",
       "the falcon-boot.efi to sign and install" },
+    { "loader-aa64", CLI_OPT_VALUE, 0, "<file>",
+      "the AArch64 falcon-boot-aa64.efi (default " DEFAULT_LOADER_AA64 ")" },
     { "uki", CLI_OPT_VALUE, 1, "<file>",
       "a UKI to sign with the MOK and stage on p3:/uki" },
     { "cn", CLI_OPT_VALUE, 0, "<name>",
@@ -735,20 +739,59 @@ static cli_status mount_at(const char *device, const char *mountpoint)
     return cleanup_push_mount(mountpoint);
 }
 
-/* p1: the Secure Boot chain of DESIGN Section 4. The loader's filename is not
- * ours to choose; it is whatever this shim binary has compiled in. */
+/* One architecture's Secure Boot chain on p1 (DESIGN Section 4): shim as
+ * that architecture's removable-media loader, its MokManager, and our
+ * signed loader under the next-stage name the shim has compiled in. One p1
+ * carries x64's and AArch64's side by side; their names do not meet. */
+typedef struct {
+    const char *arch;                       /* "x64" or "aa64" */
+    const char *loader;                     /* the unsigned loader */
+    char boot_name[16];                     /* BOOTX64.EFI, BOOTAA64.EFI */
+    char shim[MKS_PATH_MAX];
+    char mm[MKS_PATH_MAX];
+    char mm_name[SHIM_NEXT_STAGE_MAX];
+    char next[SHIM_NEXT_STAGE_MAX];
+    char signed_loader[MKS_PATH_MAX];
+} esp_chain;
+
+/* Finds the chain's shim and MokManager, and reads the names out of the
+ * shim (DESIGN Section 4: a shim swap stays a data change). */
+static cli_status chain_prepare(esp_chain *c, const char *shim_dir)
+{
+    cli_status rc;
+    size_t i;
+
+    (void)snprintf(c->boot_name, sizeof c->boot_name, "BOOT%s.EFI", c->arch);
+    for (i = 4; c->boot_name[i] != '.'; i++)
+        c->boot_name[i] = (char)toupper((unsigned char)c->boot_name[i]);
+    rc = shim_find(shim_dir, c->arch, c->shim, sizeof c->shim);
+    if (rc == CLI_OK)
+        rc = shim_next_stage_name(c->shim, c->next, sizeof c->next);
+    if (rc == CLI_OK)
+        rc = shim_mokmanager_name(c->shim, c->mm_name, sizeof c->mm_name);
+    if (rc == CLI_OK)
+        rc = shim_find_mokmanager(c->shim, c->arch, c->mm_name, c->mm,
+                                  sizeof c->mm);
+    if (rc != CLI_OK)
+        return rc;
+    log_info("shim (%s): %s", c->arch, c->shim);
+    log_info("  next stage compiled in: %s", c->next);
+    log_info("  MokManager:             %s", c->mm_name);
+    return CLI_OK;
+}
+
+/* p1: every chain, the public certificate and the boot record. */
 static cli_status install_esp(const mks_disk *d, const char *mnt,
-                              const char *shim_path, const char *mm_path,
-                              const char *mm_name, const char *next_stage,
-                              const char *signed_loader, const mok_keys *keys,
+                              const esp_chain *chains, size_t n,
+                              const mok_keys *keys,
                               const uint8_t id[IDENT_ID_LEN])
 {
     ident_rec rec;
     char bootdir[MKS_PATH_MAX];
     char dst[MKS_PATH_MAX];
     cli_status rc;
+    size_t i;
 
-    log_info("p1: staging shim -> %s -> %s", mm_name, next_stage);
     rc = mount_at(d->part[0], mnt);
     if (rc != CLI_OK)
         return rc;
@@ -756,18 +799,23 @@ static cli_status install_esp(const mks_disk *d, const char *mnt,
     rc = util_join(bootdir, sizeof bootdir, mnt, MKS_ESP_BOOT_DIR);
     if (rc == CLI_OK)
         rc = util_mkdir_p(bootdir, 0755);
-    if (rc == CLI_OK)
-        rc = util_join(dst, sizeof dst, bootdir, MKS_ESP_SHIM_NAME);
-    if (rc == CLI_OK)
-        rc = util_copy_file(shim_path, dst, 0644);
-    if (rc == CLI_OK)
-        rc = util_join(dst, sizeof dst, bootdir, mm_name);
-    if (rc == CLI_OK)
-        rc = util_copy_file(mm_path, dst, 0644);
-    if (rc == CLI_OK)
-        rc = util_join(dst, sizeof dst, bootdir, next_stage);
-    if (rc == CLI_OK)
-        rc = util_copy_file(signed_loader, dst, 0644);
+    for (i = 0; i < n && rc == CLI_OK; i++) {
+        const esp_chain *c = &chains[i];
+
+        log_info("p1: staging %s: shim -> %s -> %s", c->boot_name,
+                 c->mm_name, c->next);
+        rc = util_join(dst, sizeof dst, bootdir, c->boot_name);
+        if (rc == CLI_OK)
+            rc = util_copy_file(c->shim, dst, 0644);
+        if (rc == CLI_OK)
+            rc = util_join(dst, sizeof dst, bootdir, c->mm_name);
+        if (rc == CLI_OK)
+            rc = util_copy_file(c->mm, dst, 0644);
+        if (rc == CLI_OK)
+            rc = util_join(dst, sizeof dst, bootdir, c->next);
+        if (rc == CLI_OK)
+            rc = util_copy_file(c->signed_loader, dst, 0644);
+    }
 
     /* The PUBLIC certificate, and only ever the public one. DESIGN Section 4
      * puts it at the root of p1 so MokManager can be pointed at it on first
@@ -947,6 +995,7 @@ static cli_status create_run(const cli_args *a)
     const char *target = a->pos[0];
     const char *shim_dir = cli_value(a, "shim", DEFAULT_SHIM_DIR);
     const char *loader = cli_value(a, "loader", DEFAULT_LOADER);
+    const char *loader_aa64 = cli_value(a, "loader-aa64", NULL);
     const char *cn = cli_value(a, "cn", MOK_DEFAULT_CN);
     const char *cert_out = cli_value(a, "cert-out", NULL);
     const char *key_out = cli_value(a, "key-out", NULL);
@@ -958,14 +1007,11 @@ static cli_status create_run(const cli_args *a)
     char idhex[33];
     uint32_t reserve;
     fs_plan plan_fs;
-    char shim_path[MKS_PATH_MAX];
-    char mm_path[MKS_PATH_MAX];
-    char mm_name[SHIM_NEXT_STAGE_MAX];
-    char next_stage[SHIM_NEXT_STAGE_MAX];
+    esp_chain chains[2];
+    size_t n_chains = 1;
     char tmpdir[] = "/tmp/falcon-mkstick.XXXXXX";
     char keydir[MKS_PATH_MAX];
     char mntdir[MKS_PATH_MAX];
-    char signed_loader[MKS_PATH_MAX];
     char sizetext[32];
     mks_disk disk;
     mks_pass pass;
@@ -1084,24 +1130,32 @@ static cli_status create_run(const cli_args *a)
         return set_error(CLI_ERR_NOTFOUND,
                          "no loader at %s (run make), or pass --loader",
                          loader);
-    rc = shim_find(shim_dir, shim_path, sizeof shim_path);
+    memset(chains, 0, sizeof chains);
+    chains[0].arch = "x64";
+    chains[0].loader = loader;
+    rc = chain_prepare(&chains[0], shim_dir);
     if (rc != CLI_OK)
         return rc;
 
-    /* DESIGN Section 4: read the next-stage name out of the shim rather than
-     * assuming it, so that swapping shim vendors stays a data change. */
-    rc = shim_next_stage_name(shim_path, next_stage, sizeof next_stage);
-    if (rc != CLI_OK)
-        return rc;
-    rc = shim_mokmanager_name(shim_path, mm_name, sizeof mm_name);
-    if (rc != CLI_OK)
-        return rc;
-    rc = shim_find_mokmanager(shim_path, mm_name, mm_path, sizeof mm_path);
-    if (rc != CLI_OK)
-        return rc;
-    log_info("shim:     %s", shim_path);
-    log_info("  next stage compiled in: %s", next_stage);
-    log_info("  MokManager:             %s", mm_name);
+    /* AArch64 beside it when its loader and shim are both here: named, and
+     * a stick that cannot have it is an error; by default, said and left
+     * out. */
+    chains[1].arch = "aa64";
+    chains[1].loader = loader_aa64 != NULL ? loader_aa64 : DEFAULT_LOADER_AA64;
+    if (!util_is_file(chains[1].loader)) {
+        if (loader_aa64 != NULL)
+            return set_error(CLI_ERR_NOTFOUND, "no AArch64 loader at %s",
+                             loader_aa64);
+        log_warn("no AArch64 loader at %s: the stick boots x86-64 machines "
+                 "only", chains[1].loader);
+    } else if (chain_prepare(&chains[1], shim_dir) != CLI_OK) {
+        if (loader_aa64 != NULL)
+            return CLI_ERR_NOTFOUND;
+        log_warn("%s; the stick boots x86-64 machines only", cli_error_msg());
+        cli_error_clear();
+    } else {
+        n_chains = 2;
+    }
 
     for (i = 0; i < cli_count(a, "uki"); i++) {
         const char *u = cli_at(a, "uki", i);
@@ -1171,17 +1225,22 @@ static cli_status create_run(const cli_args *a)
     if (rc != CLI_OK)
         goto out;
 
-    rc = util_join(signed_loader, sizeof signed_loader, keydir,
-                   "falcon-boot-signed.efi");
-    if (rc != CLI_OK)
-        goto out;
-    log_info("signing the loader with the MOK");
-    rc = mok_sign(&keys, loader, signed_loader);
-    if (rc != CLI_OK)
-        goto out;
+    for (i = 0; i < n_chains; i++) {
+        char name[48];
 
-    rc = install_esp(&disk, mntdir, shim_path, mm_path, mm_name, next_stage,
-                     signed_loader, &keys, install_id);
+        (void)snprintf(name, sizeof name, "falcon-boot-%s-signed.efi",
+                       chains[i].arch);
+        rc = util_join(chains[i].signed_loader,
+                       sizeof chains[i].signed_loader, keydir, name);
+        if (rc != CLI_OK)
+            goto out;
+        log_info("signing the %s loader with the MOK", chains[i].arch);
+        rc = mok_sign(&keys, chains[i].loader, chains[i].signed_loader);
+        if (rc != CLI_OK)
+            goto out;
+    }
+
+    rc = install_esp(&disk, mntdir, chains, n_chains, &keys, install_id);
     if (rc != CLI_OK)
         goto out;
 

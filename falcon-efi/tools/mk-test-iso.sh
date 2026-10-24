@@ -60,6 +60,9 @@ MNT=$(mktemp -d)
 sudo mount -o loop,uid="$(id -u)",gid="$(id -g)" "$FATIMG" "$MNT"
 mkdir -p "$MNT/EFI/BOOT"
 cp "$PAYLOAD" "$MNT/EFI/BOOT/BOOTX64.EFI"
+# The AArch64 build beside it, so the one ISO chainloads on either machine.
+[[ -f build/test/payload-aa64.efi ]] &&
+    cp build/test/payload-aa64.efi "$MNT/EFI/BOOT/BOOTAA64.EFI"
 sync
 sudo umount "$MNT"
 rmdir "$MNT"

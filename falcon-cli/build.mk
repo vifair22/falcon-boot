@@ -36,7 +36,7 @@ MKSTICK_CORE := $(CORE_PART) $(CORE_FS) $(CORE_LUKS) $(CORE_CRYPTO) \
 SIGN_SRCS := $(addprefix $(CLI)/sign/,main.c util.c isoprobe.c manifestio.c \
 	payload.c uki.c)
 
-SIGN_CORE := $(CORE_MANIFEST) $(CORE_MANIFEST_WRITE) $(CORE)/media/family.c \
+SIGN_CORE := $(CORE_MANIFEST) $(CORE_MANIFEST_WRITE) $(CORE)/media/family.c $(CORE_GZ) \
 	$(CORE)/media/bootcfg.c $(CORE)/media/hookcmd.c $(CORE)/media/cpio.c \
 	$(CORE_PART) $(CORE_PE) $(CORE_FS) $(CORE)/crypto/sha256.c \
 	$(CORE)/crypto/crypto.c
@@ -50,7 +50,7 @@ SIGN_STATIC := $(BIN)/falcon-boot-sign-static
 # The hook rides in every wrap (falcon-hook/build.mk makes the array), kept
 # out of SIGN_CORE so the analyzers never read a generated file.
 SIGN_OBJS := $(patsubst %.c,$(HOST_OBJ)/%.o,$(SIGN_SRCS) $(SIGN_CORE) \
-	$(HOOK_BLOB))
+	$(HOOK_BLOB) $(HOOK_A64_BLOB))
 
 cli: $(MKSTICK) $(SIGN) $(SIGN_STATIC)
 
@@ -165,7 +165,7 @@ CLI_UUT := $(addprefix $(CLI)/sign/,isoprobe.c payload.c uki.c util.c) \
 	$(CORE_MANIFEST) $(CORE_MANIFEST_WRITE) \
 	$(CORE_PART) $(CORE_PE) $(CORE_FS) $(CORE_LUKS) $(CORE_IDENT) \
 	$(CORE_CRYPTO) $(CORE_STATIONINI) $(CORE_VBR) $(CORE_STROWS) \
-	$(CORE_TPM_EVLOG) $(CORE_TPM_EVSAVE)
+	$(CORE_TPM_EVLOG) $(CORE_TPM_EVSAVE) $(CORE_GZ)
 
 $(eval $(call test_bin,cli,$(CLI_TESTS) $(CLI_UUT)))
 

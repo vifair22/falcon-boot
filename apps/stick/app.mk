@@ -20,6 +20,7 @@ STICK_EFI += $(CORE_FS) $(CORE_PE) $(CORE_LUKS) $(CORE_CRYPTO)
 STICK_EFI += $(EFI_MOD_secboot) $(CORE_TRUST) $(EFI_MOD_secboot_trust)  # state, and the predictions
 STICK_EFI += $(EFI_MOD_iso) $(CORE)/media/family.c $(CORE)/media/cpio.c
 STICK_EFI += $(EFI_MOD_direct) $(EFI_MOD_bsd)
+STICK_EFI += $(CORE_GZ)                # an arm64 vmlinuz is a gzipped Image
 STICK_EFI += $(EFI_MOD_win) $(CORE_WIM) $(WINJUMP_BLOB)
 STICK_EFI += $(addprefix $(CORE)/media/,bootcfg.c bootfs.c eltorito.c medium.c \
 	hookcmd.c grubcfg.c bsdmd.c extmap.c survey.c)

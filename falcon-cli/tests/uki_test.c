@@ -682,6 +682,61 @@ static void test_uki_build_refuses_bad_inputs(void **state)
     assert_int_not_equal(stat(out, &st), 0);
 }
 
+/* An arm64 stub cannot start an x86-64 kernel, nor the reverse: the build
+ * says so instead of writing a UKI that would not boot. */
+static void test_uki_build_refuses_a_stub_of_another_machine(void **state)
+{
+    char stub[256];
+    char kernel[256];
+    char initrd[256];
+    char out[256];
+    uint8_t s[STUB_LEN];
+    uki_spec spec = { 0 };
+
+    (void)state;
+    make_inputs(stub, kernel, initrd, sizeof(stub));
+    build_pe(s, sizeof(s), 1, 1);
+    wr16(s + COFF, PE_MACHINE_ARM64);
+    put("stub-aa64.efi", s, sizeof(s), stub, sizeof(stub));
+    (void)snprintf(out, sizeof(out), "%s/mismatch.efi", g_dir);
+
+    spec.stub = stub;
+    spec.kernel = kernel;
+    spec.cmdline = "quiet";
+    spec.osrel = "ID=x\n";
+    spec.out = out;
+    assert_int_equal(uki_build(&spec), SGN_ERR_FORMAT);
+    assert_non_null(strstr(sgn_error(), "only its own machine"));
+}
+
+/* ukify's scrape_generic: the first "Linux version <digit>... (" anywhere
+ * in the bytes, which is how an arm64 Image carries its version. */
+static void test_uki_uname_generic(void **state)
+{
+    static const char img[] = "\x00\x01junk Linux version x.1 (no) "
+                              "Linux version 6.12.48-arm64 (debian@build) "
+                              "#1 SMP";
+    static const char none[] = "Linux version 6.12.48-arm64 #1";
+    char out[UKI_UNAME_MAX + 1u];
+
+    (void)state;
+    assert_int_equal(uki_uname_generic((const uint8_t *)img, sizeof(img) - 1u,
+                                       out, sizeof(out)), 1);
+    assert_string_equal(out, "6.12.48-arm64");
+    assert_int_equal(uki_uname_generic((const uint8_t *)none,
+                                       sizeof(none) - 1u, out, sizeof(out)),
+                     0);
+    assert_int_equal(uki_uname_generic(NULL, 4, out, sizeof(out)), 0);
+}
+
+static void test_uki_default_stub(void **state)
+{
+    (void)state;
+    assert_string_equal(uki_default_stub(PE_MACHINE_AMD64), UKI_STUB_X64);
+    assert_string_equal(uki_default_stub(PE_MACHINE_ARM64), UKI_STUB_AA64);
+    assert_null(uki_default_stub(0x014cu));
+}
+
 /* ------------------------------------------------------------ uki verb */
 
 static void test_uki_main_arguments(void **state)
@@ -748,6 +803,9 @@ int run_uki_tests(void)
         cmocka_unit_test(test_uki_uname_reads_the_version),
         cmocka_unit_test(test_uki_uname_needs_the_whole_shape),
         cmocka_unit_test(test_uki_uname_refuses_what_is_not_a_bzimage),
+        cmocka_unit_test(test_uki_uname_generic),
+        cmocka_unit_test(test_uki_default_stub),
+        cmocka_unit_test(test_uki_build_refuses_a_stub_of_another_machine),
         cmocka_unit_test(test_uki_sbat_merge_in_order),
         cmocka_unit_test(test_uki_sbat_merge_skips_what_is_not_sbat),
         cmocka_unit_test(test_uki_sbat_merge_reports_no_space),
