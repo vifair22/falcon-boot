@@ -3210,7 +3210,7 @@ The kernel lines, shared by DIR, POS and MEM, each ending in `.`:
 | `unlocking the encrypted partition` | `the passphrase did not open any keyslot.`, `the partition could not be read.`, `this keyslot needs <n> MiB of memory; this machine has <m> MiB free.`, `the volume is outside what this loader supports.` | As on UEFI, above. |
 | `opening the decrypted volume` | - | Report it. |
 | `mounting the filesystem inside it` | `the decrypted volume is not a filesystem this loader can read.`, or one of the three journal lines given for UEFI | As on UEFI. |
-| `looking for a UKI` | `no *.efi image was found in /uki or /EFI/Linux.` | Put a UKI in `/uki`. |
+| `looking for a UKI` | `no *.efi image for this machine was found in /uki or /EFI/Linux.` | Put a UKI in `/uki`. |
 | `looking for a UKI` | `the image this entry names is not on the shelf.` | Fix the marker or STATION.INI's `uki`. |
 | `reading the UKI` | `the image is not a PE file, so it is not a UKI.` / `the image has no .linux section, so it is not a UKI.` | Replace the file. |
 | `starting the kernel` | one of the kernel lines (BIOS: DIR) | See there. |
