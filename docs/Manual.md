@@ -3676,6 +3676,7 @@ case, judged from serial.
 | `test-station-uefi` | the UEFI station's cases, Secure Boot off and on | `build/test-station.img` (made when absent) |
 | `test-station-installed` | stations the installer put on GPT, 4Kn GPT and 4Kn MBR disks | sudo |
 | `test-tpm-rig` | the TPM probe and the UEFI station's TOTP check, swtpm as TPM 2.0 (TIS, CRB) and 1.2, Secure Boot off and on | `swtpm` (else one SKIP line); `build/test-station.img` for the station cases |
+| `test-aa64` | the AArch64 station's cases from the station, installed and TPM rigs, on virt under AAVMF, emulated | sudo; `swtpm` |
 | `test-station-bios` | the BIOS station's chains, drive swap, STATION.INI and next boot under SeaBIOS | |
 | `test-station-fixtures` | the BIOS station in front of the fixture disks of `falcon-bios/tools/fixtures/` (FreeDOS, Windows 98 SE) | sudo (`qemu-nbd`) |
 | `test-station-legacy` | station-legacy on a qcow2 overlay of the A21m's disk, every row | sudo; the A21m image (`A21M_ORIG`, default `/home/vifair/a21m-image/DJSA-210.img`); the rig QEMU for its CF and menu cases; the devlink client (`DEVLINK_CLIENT`) for its DevLink case |
@@ -3795,9 +3796,10 @@ attaches them to the GitLab release, from the project's package registry.
 | file | what |
 |---|---|
 | `falcon-boot-X.Y.Z-x86_64.tar.gz` | mkstick and the sign tool, and everything mkstick installs |
+| `falcon-boot-X.Y.Z-aarch64.tar.gz` | the same, with mkstick and the sign tool for an arm64 machine |
 | `falcon-station-X.Y.Z.tar.gz` | the BIOS station bundle, for a station with only DevLink recovery (Section 7.8) |
 | `falcon-jump-X.Y.Z.img` | the falcon jump floppy, 1.44 MB, ready to write (Section 9) |
-| `SHA256SUMS` | the three files' SHA-256 |
+| `SHA256SUMS` | the four files' SHA-256 |
 
 Every loader in them is unsigned: `mkstick` signs one with the MOK of the
 stick or station it installs to (Section 11.1). The signing appliance's UKI
@@ -3816,14 +3818,16 @@ changed after it was unpacked.
 ### 14.2 The main tarball
 
 One directory, `falcon-boot-X.Y.Z/`, holding the files a package installs,
-under the paths it installs them to:
+under the paths it installs them to. The two tarballs differ in `usr/bin`
+alone: the data is both machines' loaders, so a stick made on either
+carries both chains.
 
 | path | what |
 |---|---|
-| `usr/bin/falcon-boot-mkstick` | mkstick, x86-64, linked static |
-| `usr/bin/falcon-boot-sign` | the sign tool, x86-64, linked static |
-| `usr/lib/falcon-boot/bin/` | `falcon-boot.efi` (the stick), `falcon-boot-station.efi`, `falcon-esp-jump.efi`, the BIOS stages 1 and 2, stage 3 for the stick, the station and station-legacy, and `mod/` (jump's drivers) |
-| `usr/lib/falcon-boot/shim/bins/` | Fedora's shim 16.1 and its MokManager, signed by Microsoft's UEFI CA |
+| `usr/bin/falcon-boot-mkstick` | mkstick, x86-64 or arm64, linked static |
+| `usr/bin/falcon-boot-sign` | the sign tool, x86-64 or arm64, linked static |
+| `usr/lib/falcon-boot/bin/` | `falcon-boot.efi` (the stick), `falcon-boot-station.efi`, `falcon-esp-jump.efi`, the same three with `-aa64` for AArch64, the BIOS stages 1 and 2, stage 3 for the stick, the station and station-legacy, and `mod/` (jump's drivers) |
+| `usr/lib/falcon-boot/shim/bins/` | Fedora's shim 16.1 and its MokManager for x86-64 and for AArch64, signed by Microsoft's UEFI CA (2011 for x86-64, 2023 for AArch64) |
 | `usr/lib/falcon-boot/memtest/` | memtest86+ 8.10: `memtest-i586.bin` for `--memtest`, `memtest-x86_64.efi` for `--memtest-efi` |
 | `usr/share/doc/falcon-boot/` | `README.md`, this Manual, `DESIGN.md`, `LICENSE`, `THIRD-PARTY.md` (shim's and memtest86+'s licences and sources) |
 | `VERSION`, `MANIFEST` | the build's version string, and every other file's SHA-256 |
@@ -3855,7 +3859,8 @@ refused.
 
 **Arch.** The tag's pipeline builds it from `packaging/arch/PKGBUILD` into
 the `falcon` repository on the dl host (`tools/release/publish-arch.sh`),
-which holds the current version alone. The packages and the repository
+for `x86_64` and `aarch64` (Arch Linux ARM), which holds the current
+version alone. The packages and the repository
 database are signed with the falcon repository key,
 `6405 F892 A108 F8FB 0576  5FF8 0EC4 411B 66DB 5626`. Trust it once:
 

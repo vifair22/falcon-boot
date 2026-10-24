@@ -453,7 +453,7 @@ COV_FILTER := $(subst $(cov_space),|,$(patsubst %,%$$,$(subst .,\.,$(COV_UNITS))
 .PHONY: all test test-junit coverage test-fixtures check-tools analyze \
 	version-stamp clean
 
-all: $(EFI) cli winjump compile_commands.json
+all: $(EFI) aa64 cli winjump compile_commands.json
 
 # Runs every component's tests and reports all failures before failing.
 # Stale counters from an earlier run would inflate the coverage report, so
@@ -549,7 +549,7 @@ check-deps:
 # generated blob sources (build/gen/*_blob.c). Without them it loads no
 # project, checks nothing and reports zero findings, which is how the gate
 # passed for a week without running cppcheck at all.
-analyze: all bios check-deps
+analyze: all bios check-deps $(COMPDB_AA64)
 	tools/analyze.sh
 
 # ---- compile_commands.json ----
@@ -657,6 +657,26 @@ compile_commands.json: Makefile $(wildcard falcon-*/build.mk apps/*/app.mk)
 	$(call cc_db_emit,$(CC_DB_HOOK),$(CC_HOST),$(HOOK_CFLAGS) -ffunction-sections -fdata-sections)
 	$(call cc_db_emit,$(CC_DB_VDISK),x86_64-w64-mingw32-gcc,$(VDISK_CFLAGS) $(VDISK_X64_INC))
 	$(call cc_db_emit,$(CC_DB_TEST),$(CC_HOST),$(TEST_CFLAGS),$(CC_DB_TEST_INC))
+	@sed -i '$$ s/,$$//' $@
+	@echo ']' >> $@
+
+# The AArch64 flavour's database, for the analyzer alone (tools/analyze.sh,
+# tidy): the loader sources with an architecture branch, built as the aa64
+# images build them, and the ARM64 winjump. The editor's database stays the
+# x86-64 one; a file has one entry there. The target is spelled out, as
+# llvm-mingw's wrapper adds it and clang-tidy runs no wrapper; it finds
+# llvm-mingw's headers through the -isystem, as WINJUMP_SYSINC does gcc's.
+COMPDB_AA64 := build/compdb-aa64/compile_commands.json
+CC_DB_AA64_SRCS = $(shell grep -lE '__aarch64__|__x86_64__|EFI_ARCH_' \
+	$(filter-out $(EFI_X86_ONLY),$(sort $(EFI_APP_SRCS))))
+LLVM_MINGW_A64_INC = $(shell d=$$(command -v $(CC_AA64)) && \
+	echo "-isystem $${d%/bin/*}/aarch64-w64-mingw32/include")
+
+$(COMPDB_AA64): Makefile $(wildcard falcon-*/build.mk apps/*/app.mk)
+	@mkdir -p $(@D)
+	@echo '[' > $@
+	$(call cc_db_emit,$(foreach s,$(CC_DB_AA64_SRCS),$(s):$(EFI_AA64_OBJ)/$(s:.c=.o)),$(CC_AA64),--target=aarch64-w64-mingw32 $(EFI_AA64_CFLAGS))
+	$(call cc_db_emit,$(foreach s,$(WINJUMP_SRCS),$(s):$(WINJUMP_A64_OBJ)/$(s:.c=.o)),$(CC_WINJUMP_A64),--target=aarch64-w64-mingw32 $(WINJUMP_A64_CFLAGS) $(LLVM_MINGW_A64_INC))
 	@sed -i '$$ s/,$$//' $@
 	@echo ']' >> $@
 

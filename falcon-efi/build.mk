@@ -315,6 +315,26 @@ test-tpm-rig:
 test-station-installed: station cli $(STANDIN) $(STANDIN_SIGNED)
 	falcon-efi/tools/run-installed-rig.sh
 
+# The AArch64 stations, emulated (TCG, so slow): the station rig's cases on
+# the aa64 station disk, the installed stations, and the TPM cases virt has
+# a device for. The stick's AArch64 cases are test-core's.
+AA64_STATION_CASES := $(addprefix aa64-uefi-,menu countdown next-boot) \
+	$(addprefix aa64-uefi-sb-,menu nxt method-efi esp-found next-uki \
+	next-unknown ini-error no-default unsigned key-stops bad-pass timing)
+AA64_INSTALLED_CASES := aa64-uefi-sb-default aa64-uefi-sb-pos \
+	aa64-noshim-uefi aa64-noshim-uefi-sb aa64-noshim-jump-uefi-sb
+AA64_TPM_CASES := aa64-uefi-tpm2-probe aa64-uefi-sb-tpm2-probe \
+	aa64-uefi-tpm2-station aa64-uefi-sb-tpm2-totp aa64-uefi-sb-tpm2-totp-jump
+
+test-aa64: aa64 cli $(STANDIN_AA64) $(EFI_STATION_AA64) $(EFI_ESP_JUMP_AA64)
+	@test -f build/test-station-aa64.img || \
+		$(MAKE) --no-print-directory test-station-aa64
+	falcon-efi/tools/run-station-rig.sh $(AA64_STATION_CASES)
+	falcon-efi/tools/run-installed-rig.sh $(AA64_INSTALLED_CASES)
+	falcon-efi/tools/run-tpm-rig.sh $(AA64_TPM_CASES)
+
+.PHONY: test-aa64
+
 # No prerequisite on $(TEST_STICK): rebuilding it needs sudo and takes seconds
 # of cryptsetup, so it stays an explicit `make test-stick`. The rig says so if
 # the image is missing.

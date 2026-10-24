@@ -341,6 +341,16 @@ stage_tidy()
 		xargs -P "$JOBS" -d '\n' -I FILE \
 			clang-tidy --quiet -p "$ROOT" FILE \
 			>"$WORK/tidy.raw" 2>&1 || true
+	# The AArch64 flavour (Makefile, COMPDB_AA64): the files with an
+	# architecture branch again, as the aa64 images build them.
+	if [ -f "$ROOT/build/compdb-aa64/compile_commands.json" ]; then
+		python3 -c 'import json, sys
+for e in json.load(open(sys.argv[1])):
+    print(e["file"])' "$ROOT/build/compdb-aa64/compile_commands.json" |
+			xargs -P "$JOBS" -d '\n' -I FILE \
+				clang-tidy --quiet -p "$ROOT/build/compdb-aa64" FILE \
+				>>"$WORK/tidy.raw" 2>&1 || true
+	fi
 	mv "$WORK/tidy.raw" "$WORK/tidy.log"
 	# HeaderFilterRegex lets a finding inside a header be reported once per
 	# translation unit that includes it. Identical diagnostic lines are the
