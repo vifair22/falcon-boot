@@ -49,7 +49,7 @@ sync)
     df=$(grep -vE '^\s*#' "$ROOT/tools/coverage/Dockerfile" | tr -s ' \\\n' ' ' |
          grep -oE 'apt-get install[^&]*' | sed 's/apt-get install//; s/ -y//; s/--no-install-recommends//' |
          tr -s ' ' '\n' | grep -v '^$' | sort -u)
-    ls=$(rows | cut -f3 | tr ' ' '\n' | grep -vE '\(pip\)|\(base\)|\(source\)|\(release\)|^$' | sort -u)
+    ls=$(rows | cut -f3 | tr ' ' '\n' | grep -vE '\(pip\)|\(base\)|\(source\)|\(release\)|\(download\)|^$' | sort -u)
     for p in $(comm -23 <(echo "$df") <(echo "$ls")); do
         case "$p" in ca-certificates|sudo) continue ;; esac   # the container's own
         echo "deps: Dockerfile installs $p, which tools/deps.tsv does not list"; rc=1

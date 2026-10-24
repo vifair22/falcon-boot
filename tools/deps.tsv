@@ -1,8 +1,9 @@
 # tool	check	debian package	group	need	purpose
 # package: space-separated when one tool needs several; a (pip), (base),
-#          (source) or (release) suffix marks one apt does not install,
-#          (source) being built from its own repository and (release) a
-#          pinned upstream release the Dockerfile downloads and checks.
+#          (source), (release) or (download) suffix marks one apt does not
+#          install, (source) being built from its own repository, (release) a
+#          pinned upstream release the Dockerfile downloads and checks, and
+#          (download) a Debian package fetched and unpacked, not installed.
 # check: cmd:<prog>[|<alt>] (on PATH), pkgconf:<name> (pkg-config finds it),
 #        file:<path>[|<alt>] (one exists), m32 (gcc -m32 has a libgcc).
 # Rendered into docs/Manual.md 13.1 by `tools/deps.sh markdown`; checked by
@@ -24,6 +25,7 @@ i686-w64-mingw32-gcc	cmd:i686-w64-mingw32-gcc	gcc-mingw-w64-i686	build	optional	
 mtools	cmd:mcopy	mtools	build	optional	make jump and station install write FAT with mtools
 sd-stub	file:/usr/lib/systemd/boot/efi/linuxx64.efi.stub	systemd-boot-efi	build	optional	the stub a UKI is built on (sign uki, the fixture UKI, the appliance)
 arm64 sd-stub	file:/usr/lib/systemd/boot/efi/linuxaa64.efi.stub	systemd-boot-efi:arm64	build	optional	the stub an arm64 kernel's UKI is built on
+arm64 sbsign, sbverify	file:/opt/arm64-sbsigntool/usr/bin/sbsign	sbsigntool:arm64(download) libssl3t64:arm64 libuuid1:arm64	build	optional	the AArch64 appliance image's signer, unpacked to /opt/arm64-sbsigntool, with its arm64 libraries
 zstd	cmd:zstd	zstd	build	optional	the appliance image's initramfs
 cryptsetup	cmd:cryptsetup	cryptsetup-bin	host tools	required	mkstick create: p3's LUKS2
 openssl	cmd:openssl	openssl	host tools	required	mkstick keygen and create: the MOK keypair

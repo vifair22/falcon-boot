@@ -1561,6 +1561,10 @@ built as a portable static binary for both:
   `falcon-core`'s ISO9660/UDF reader. PID 1 and the sign tool are one static
   binary. The image holds the kernel, that binary, `sbsign` with its
   libcrypto, and the exFAT and vfat modules to write p2.
+- **One image per architecture, one kernel source.** The x86-64 and
+  AArch64 appliances are the same recipe on Fedora's kernel for each
+  (`falcon-appliance/image/mk-appliance.sh`). Each carries both sd-stubs,
+  so either blesses media for either machine (Section 8.1).
 
 ### 7.6 Load-path plumbing
 

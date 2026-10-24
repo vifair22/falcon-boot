@@ -88,6 +88,17 @@ RUN python3 -m venv /opt/virt-firmware \
         "virt-firmware==${VIRT_FIRMWARE_VERSION}" \
     && ln -sf /opt/virt-firmware/bin/virt-fw-vars /usr/local/bin/virt-fw-vars
 
+# sbsign and sbverify for the AArch64 appliance image: Debian's arm64 build,
+# unpacked beside the system rather than installed (an arm64 executable
+# package cannot be installed next to the amd64 one), with the arm64
+# libraries it links installed through multiarch.
+# mk-appliance.sh stages them with their closure.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libssl3t64:arm64 libuuid1:arm64 \
+    && cd /tmp && apt-get download sbsigntool:arm64 \
+    && dpkg-deb -x sbsigntool_*_arm64.deb /opt/arm64-sbsigntool \
+    && rm -f sbsigntool_*_arm64.deb && rm -rf /var/lib/apt/lists/*
+
 # llvm-mingw for the AArch64 UEFI images and the ARM64 winjump. Debian has
 # no aarch64-w64-mingw32 toolchain, and plain clang with lld cannot build
 # winjump, which needs a mingw CRT. Its clang and ld.lld also build the
@@ -162,6 +173,8 @@ RUN set -eu; \
     test -f /usr/lib/systemd/boot/efi/linuxx64.efi.stub || { \
         echo "MISSING: sd-stub; every blessed stick would fail to build"; \
         missing=1; }; \
+    test -x /opt/arm64-sbsigntool/usr/bin/sbsign || { \
+        echo "MISSING: the arm64 sbsign for the AArch64 appliance"; missing=1; }; \
     test -f /usr/include/aarch64-linux-gnu/asm/unistd.h || { \
         echo "MISSING: arm64 kernel headers; falcon-hook-a64 cannot build"; \
         missing=1; }; \

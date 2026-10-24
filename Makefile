@@ -232,6 +232,22 @@ $(HOST_OBJ)/%.o: %.c
 	@mkdir -p $(@D)
 	$(CC_HOST) $(HOST_CFLAGS) -MMD -MF $@.d -c -o $@ $<
 
+# ---- the hosted Linux flavour, AArch64 ----
+#
+# The same userland for an arm64 machine, linked static: the appliance's
+# PID 1 and sign tool in the AArch64 appliance, and the release's arm64
+# host tools. clang and ld.lld (llvm-mingw's in the harness) against
+# Debian's arm64 libc and libgcc, installed as a foreign architecture; the
+# cross gcc conflicts with gcc-multilib.
+CC_HOST_A64 ?= clang --target=aarch64-linux-gnu
+LD_HOST_A64 := $(CC_HOST_A64) -fuse-ld=lld
+HOST_A64_CFLAGS := $(HOST_CFLAGS)
+HOST_A64_OBJ := $(OBJ)/host-a64
+
+$(HOST_A64_OBJ)/%.o: %.c
+	@mkdir -p $(@D)
+	$(CC_HOST_A64) $(HOST_A64_CFLAGS) -MMD -MF $@.d -c -o $@ $<
+
 # AES-NI intrinsics, this object only, in both flavours: -maes lets gcc emit
 # those instructions anywhere in the TU, so nothing else may carry it. The
 # CPUID probe that gates this path lives in crypto.c, built with the baseline
